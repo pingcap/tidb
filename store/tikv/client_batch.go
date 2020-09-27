@@ -17,6 +17,7 @@ package tikv
 import (
 	"context"
 	"math"
+	"runtime/trace"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -203,6 +204,7 @@ type batchCommandsClient struct {
 
 	tikvClientCfg config.TiKVClient
 	tikvLoad      *uint64
+	dialTimeout   time.Duration
 
 	// closed indicates the batch client is closed explicitly or not.
 	closed int32
@@ -217,6 +219,9 @@ func (c *batchCommandsClient) isStopped() bool {
 func (c *batchCommandsClient) send(request *tikvpb.BatchCommandsRequest, entries []*batchCommandsEntry) {
 	for i, requestID := range request.RequestIds {
 		c.batched.Store(requestID, entries[i])
+		if trace.IsEnabled() {
+			trace.Log(entries[i].ctx, "rpc", "send")
+		}
 	}
 
 	if err := c.initBatchClient(); err != nil {
@@ -272,7 +277,7 @@ func (c *batchCommandsClient) failPendingRequests(err error) {
 }
 
 func (c *batchCommandsClient) waitConnReady() (err error) {
-	dialCtx, cancel := context.WithTimeout(context.Background(), dialTimeout)
+	dialCtx, cancel := context.WithTimeout(context.Background(), c.dialTimeout)
 	for {
 		s := c.conn.GetState()
 		if s == connectivity.Ready {
@@ -356,6 +361,9 @@ func (c *batchCommandsClient) batchRecvLoop(cfg config.TiKVClient, tikvTransport
 				continue
 			}
 			entry := value.(*batchCommandsEntry)
+			if trace.IsEnabled() {
+				trace.Log(entry.ctx, "rpc", "received")
+			}
 			logutil.Eventf(entry.ctx, "receive %T response with other %d batched requests from %s", responses[i].GetCmd(), len(responses), c.target)
 			if atomic.LoadInt32(&entry.canceled) == 0 {
 				// Put the response only if the request is not canceled.
@@ -603,7 +611,7 @@ func sendBatchRequest(
 			zap.String("to", addr), zap.String("cause", ctx.Err().Error()))
 		return nil, errors.Trace(ctx.Err())
 	case <-timer.C:
-		return nil, context.DeadlineExceeded
+		return nil, errors.SuspendStack(errors.Annotate(context.DeadlineExceeded, "wait sendLoop"))
 	}
 
 	select {
@@ -618,7 +626,7 @@ func sendBatchRequest(
 			zap.String("to", addr), zap.String("cause", ctx.Err().Error()))
 		return nil, errors.Trace(ctx.Err())
 	case <-timer.C:
-		return nil, context.DeadlineExceeded
+		return nil, errors.SuspendStack(errors.Annotate(context.DeadlineExceeded, "wait recvLoop"))
 	}
 }
 

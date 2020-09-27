@@ -28,11 +28,11 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	pd "github.com/pingcap/pd/v4/client"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
+	pd "github.com/tikv/pd/client"
 	atomic2 "go.uber.org/atomic"
 	"go.uber.org/zap"
 	"golang.org/x/sync/singleflight"
@@ -685,11 +685,11 @@ func (c *RegionCache) GroupKeysByRegion(bo *Backoffer, keys [][]byte, filter fun
 
 type groupedMutations struct {
 	region    RegionVerID
-	mutations committerMutations
+	mutations CommitterMutations
 }
 
 // GroupSortedMutationsByRegion separates keys into groups by their belonging Regions.
-func (c *RegionCache) GroupSortedMutationsByRegion(bo *Backoffer, m committerMutations) ([]groupedMutations, error) {
+func (c *RegionCache) GroupSortedMutationsByRegion(bo *Backoffer, m CommitterMutations) ([]groupedMutations, error) {
 	var (
 		groups  []groupedMutations
 		lastLoc *KeyLocation
@@ -750,7 +750,7 @@ func (c *RegionCache) LoadRegionsInKeyRange(bo *Backoffer, startKey, endKey []by
 		}
 		regions = append(regions, batchRegions...)
 		endRegion := batchRegions[len(batchRegions)-1]
-		if endRegion.Contains(endKey) {
+		if endRegion.ContainsByEnd(endKey) {
 			break
 		}
 		startKey = endRegion.EndKey()

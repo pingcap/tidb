@@ -15,6 +15,7 @@ package executor
 
 import (
 	"context"
+	"runtime/trace"
 	"sync"
 	"sync/atomic"
 	"unsafe"
@@ -163,6 +164,7 @@ func (e *IndexMergeReaderExecutor) startIndexMergeProcessWorker(ctx context.Cont
 	idxMergeProcessWorker := &indexMergeProcessWorker{}
 	e.processWokerWg.Add(1)
 	go func() {
+		defer trace.StartRegion(ctx, "IndexMergeProcessWorker").End()
 		util.WithRecovery(
 			func() {
 				idxMergeProcessWorker.fetchLoop(ctx, fetch, workCh, e.resultCh, e.finished)
@@ -214,6 +216,7 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 	})
 
 	go func() {
+		defer trace.StartRegion(ctx, "IndexMergePartialIndexWorker").End()
 		defer partialWorkerWg.Done()
 		ctx1, cancel := context.WithCancel(ctx)
 		var err error
@@ -271,6 +274,7 @@ func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, 
 		worker.batchSize = worker.maxBatchSize
 	}
 	go func() {
+		defer trace.StartRegion(ctx, "IndexMergePartialTableWorker").End()
 		defer partialWorkerWg.Done()
 		ctx1, cancel := context.WithCancel(ctx)
 		var err error
@@ -396,6 +400,7 @@ func (e *IndexMergeReaderExecutor) startIndexMergeTableScanWorker(ctx context.Co
 		}
 		ctx1, cancel := context.WithCancel(ctx)
 		go func() {
+			defer trace.StartRegion(ctx, "IndexMergeTableScanWorker").End()
 			var task *lookupTableTask
 			util.WithRecovery(
 				func() { task = worker.pickAndExecTask(ctx1) },

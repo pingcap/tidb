@@ -260,6 +260,13 @@ func (e *slowQueryRetriever) parseSlowLog(ctx sessionctx.Context, reader *bufio.
 					}
 				}
 			} else if strings.HasSuffix(line, variable.SlowLogSQLSuffixStr) {
+				if strings.HasPrefix(line, "use") {
+					// `use DB` statements in the slow log is used to keep it be compatible with MySQL,
+					// since we already get the current DB from the `# DB` field, we can ignore it here,
+					// please see https://github.com/pingcap/tidb/issues/17846 for more details.
+					continue
+				}
+
 				// Get the sql string, and mark the start flag to false.
 				_, err = st.setFieldValue(tz, variable.SlowLogQuerySQLStr, string(hack.Slice(line)), e.fileLine, e.checker)
 				if err != nil {
@@ -317,6 +324,9 @@ type slowQueryTuple struct {
 	queryTime              float64
 	parseTime              float64
 	compileTime            float64
+	rewriteTime            float64
+	preprocSubqueries      uint64
+	preprocSubQueryTime    float64
 	preWriteTime           float64
 	waitPrewriteBinlogTime float64
 	commitTime             float64
@@ -369,13 +379,13 @@ func (st *slowQueryTuple) setFieldValue(tz *time.Location, field, value string, 
 		if err != nil {
 			break
 		}
-		st.time = types.NewTime(types.FromGoTime(t), mysql.TypeDatetime, types.MaxFsp)
+		st.time = types.NewTime(types.FromGoTime(t), mysql.TypeTimestamp, types.MaxFsp)
 		if checker != nil {
 			valid = checker.isTimeValid(st.time)
 		}
 		if t.Location() != tz {
 			t = t.In(tz)
-			st.time = types.NewTime(types.FromGoTime(t), mysql.TypeDatetime, types.MaxFsp)
+			st.time = types.NewTime(types.FromGoTime(t), mysql.TypeTimestamp, types.MaxFsp)
 		}
 	case variable.SlowLogTxnStartTSStr:
 		st.txnStartTs, err = strconv.ParseUint(value, 10, 64)
@@ -493,6 +503,12 @@ func (st *slowQueryTuple) setFieldValue(tz *time.Location, field, value string, 
 		st.sql = value
 	case variable.SlowLogDiskMax:
 		st.diskMax, err = strconv.ParseInt(value, 10, 64)
+	case variable.SlowLogRewriteTimeStr:
+		st.rewriteTime, err = strconv.ParseFloat(value, 64)
+	case variable.SlowLogPreprocSubQueriesStr:
+		st.preprocSubqueries, err = strconv.ParseUint(value, 10, 64)
+	case variable.SlowLogPreProcSubQueryTimeStr:
+		st.preprocSubQueryTime, err = strconv.ParseFloat(value, 64)
 	}
 	if err != nil {
 		return valid, errors.Wrap(err, "Parse slow log at line "+strconv.FormatInt(int64(lineNum), 10)+" failed. Field: `"+field+"`, error")
@@ -510,6 +526,9 @@ func (st *slowQueryTuple) convertToDatumRow() []types.Datum {
 	record = append(record, types.NewFloat64Datum(st.queryTime))
 	record = append(record, types.NewFloat64Datum(st.parseTime))
 	record = append(record, types.NewFloat64Datum(st.compileTime))
+	record = append(record, types.NewFloat64Datum(st.rewriteTime))
+	record = append(record, types.NewUintDatum(st.preprocSubqueries))
+	record = append(record, types.NewFloat64Datum(st.preprocSubQueryTime))
 	record = append(record, types.NewFloat64Datum(st.preWriteTime))
 	record = append(record, types.NewFloat64Datum(st.waitPrewriteBinlogTime))
 	record = append(record, types.NewFloat64Datum(st.commitTime))
@@ -599,6 +618,9 @@ func (e *slowQueryRetriever) getAllFiles(sctx sessionctx.Context, logFilePath st
 	if e.extractor == nil || !e.extractor.Enable {
 		file, err := os.Open(logFilePath)
 		if err != nil {
+			if os.IsNotExist(err) {
+				return nil, nil
+			}
 			return nil, err
 		}
 		return []logFile{{file: file}}, nil

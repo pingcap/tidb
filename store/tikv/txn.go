@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"runtime/trace"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -46,6 +47,13 @@ var (
 	tikvTxnCmdHistogramWithGet      = metrics.TiKVTxnCmdHistogram.WithLabelValues(metrics.LblGet)
 )
 
+// SchemaAmender is used by pessimistic transactions to amend commit mutations for schema change during 2pc.
+type SchemaAmender interface {
+	// AmendTxn is the amend entry, new mutations will be generated based on input mutations using schema change info.
+	// The returned results are mutations need to prewrite and mutations need to cleanup.
+	AmendTxn(ctx context.Context, startInfoSchema SchemaVer, change *RelatedSchemaChange, mutations CommitterMutations) (*CommitterMutations, error)
+}
+
 // tikvTxn implements kv.Transaction.
 type tikvTxn struct {
 	snapshot  *tikvSnapshot
@@ -70,6 +78,11 @@ type tikvTxn struct {
 
 	valid bool
 	dirty bool
+
+	// txnInfoSchema is the infoSchema fetched at startTS.
+	txnInfoSchema SchemaVer
+	// SchemaAmender is used amend pessimistic txn commit mutations for schema change
+	schemaAmender SchemaAmender
 }
 
 func newTiKVTxn(store *tikvStore) (*tikvTxn, error) {
@@ -215,6 +228,10 @@ func (txn *tikvTxn) SetOption(opt kv.Option, val interface{}) {
 		txn.snapshot.setSnapshotTS(val.(uint64))
 	case kv.CheckExists:
 		txn.us.SetOption(kv.CheckExists, val.(map[string]struct{}))
+	case kv.InfoSchema:
+		txn.txnInfoSchema = val.(SchemaVer)
+	case kv.SchemaAmender:
+		txn.schemaAmender = val.(SchemaAmender)
 	}
 }
 
@@ -232,6 +249,7 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 		defer span1.Finish()
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
+	defer trace.StartRegion(ctx, "CommitTxn").End()
 
 	if !txn.valid {
 		return kv.ErrInvalidTxn
@@ -339,7 +357,7 @@ func (txn *tikvTxn) rollbackPessimisticLocks() error {
 	if len(txn.lockKeys) == 0 {
 		return nil
 	}
-	return txn.committer.pessimisticRollbackMutations(NewBackofferWithVars(context.Background(), cleanupMaxBackoff, txn.vars), committerMutations{keys: txn.lockKeys})
+	return txn.committer.pessimisticRollbackMutations(NewBackofferWithVars(context.Background(), cleanupMaxBackoff, txn.vars), CommitterMutations{keys: txn.lockKeys})
 }
 
 // lockWaitTime in ms, except that kv.LockAlwaysWait(0) means always wait lock, kv.LockNowait(-1) means nowait lock
@@ -415,7 +433,7 @@ func (txn *tikvTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput
 		// If the number of keys greater than 1, it can be on different region,
 		// concurrently execute on multiple regions may lead to deadlock.
 		txn.committer.isFirstLock = len(txn.lockKeys) == 0 && len(keys) == 1
-		err = txn.committer.pessimisticLockMutations(bo, lockCtx, committerMutations{keys: keys})
+		err = txn.committer.pessimisticLockMutations(bo, lockCtx, CommitterMutations{keys: keys})
 		if lockCtx.Killed != nil {
 			// If the kill signal is received during waiting for pessimisticLock,
 			// pessimisticLockKeys would handle the error but it doesn't reset the flag.
@@ -496,7 +514,7 @@ func (txn *tikvTxn) asyncPessimisticRollback(ctx context.Context, keys [][]byte)
 		failpoint.Inject("AsyncRollBackSleep", func() {
 			time.Sleep(100 * time.Millisecond)
 		})
-		err := committer.pessimisticRollbackMutations(NewBackofferWithVars(ctx, pessimisticRollbackMaxBackoff, txn.vars), committerMutations{keys: keys})
+		err := committer.pessimisticRollbackMutations(NewBackofferWithVars(ctx, pessimisticRollbackMaxBackoff, txn.vars), CommitterMutations{keys: keys})
 		if err != nil {
 			logutil.Logger(ctx).Warn("[kv] pessimisticRollback failed.", zap.Error(err))
 		}
@@ -544,4 +562,12 @@ func (txn *tikvTxn) GetMemBufferSnapshot() kv.MemBuffer {
 
 func (txn *tikvTxn) GetSnapshot() kv.Snapshot {
 	return txn.snapshot
+}
+
+func (txn *tikvTxn) ResetStmtKeyExistErrs() {
+	txn.us.ResetStmtKeyExistErrs()
+}
+
+func (txn *tikvTxn) MergeStmtKeyExistErrs() {
+	txn.us.MergeStmtKeyExistErrs()
 }

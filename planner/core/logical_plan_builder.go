@@ -102,6 +102,8 @@ const (
 	HintTimeRange = "time_range"
 	// HintIgnorePlanCache is a hint to enforce ignoring plan cache
 	HintIgnorePlanCache = "ignore_plan_cache"
+	// HintLimitToCop is a hint enforce pushing limit or topn to coprocessor.
+	HintLimitToCop = "limit_to_cop"
 )
 
 const (
@@ -539,14 +541,15 @@ func (ds *DataSource) setPreferredStoreType(hintInfo *tableHintInfo) {
 	} else {
 		alias = &hintTableInfo{dbName: ds.DBName, tblName: ds.tableInfo.Name, selectOffset: ds.SelectBlockOffset()}
 	}
-	if hintInfo.ifPreferTiKV(alias) {
+	if hintTbl := hintInfo.ifPreferTiKV(alias); hintTbl != nil {
 		for _, path := range ds.possibleAccessPaths {
 			if path.StoreType == kv.TiKV {
 				ds.preferStoreType |= preferTiKV
+				ds.preferPartitions[preferTiKV] = hintTbl.partitions
 				break
 			}
 		}
-		if ds.preferStoreType == 0 {
+		if ds.preferStoreType&preferTiKV == 0 {
 			errMsg := fmt.Sprintf("No available path for table %s.%s with the store type %s of the hint /*+ read_from_storage */, "+
 				"please check the status of the table replica and variable value of tidb_isolation_read_engines(%v)",
 				ds.DBName.O, ds.table.Meta().Name.O, kv.TiKV.Name(), ds.ctx.GetSessionVars().GetIsolationReadEngines())
@@ -554,8 +557,11 @@ func (ds *DataSource) setPreferredStoreType(hintInfo *tableHintInfo) {
 			ds.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
 		}
 	}
-	if hintInfo.ifPreferTiFlash(alias) {
-		if ds.preferStoreType != 0 {
+	if hintTbl := hintInfo.ifPreferTiFlash(alias); hintTbl != nil {
+		// 1. `ds.tableInfo.Partition == nil`, which means the hint takes effect in the whole table.
+		// 2. `ds.preferStoreType != 0`, which means there's a hint hit the both TiKV value and TiFlash value for table.
+		// If it's satisfied the above two conditions, then we can make sure there are some hints conflicted.
+		if ds.preferStoreType != 0 && ds.tableInfo.Partition == nil {
 			errMsg := fmt.Sprintf("Storage hints are conflict, you can only specify one storage type of table %s.%s",
 				alias.dbName.L, alias.tblName.L)
 			warning := ErrInternal.GenWithStack(errMsg)
@@ -566,10 +572,11 @@ func (ds *DataSource) setPreferredStoreType(hintInfo *tableHintInfo) {
 		for _, path := range ds.possibleAccessPaths {
 			if path.StoreType == kv.TiFlash {
 				ds.preferStoreType |= preferTiFlash
+				ds.preferPartitions[preferTiFlash] = hintTbl.partitions
 				break
 			}
 		}
-		if ds.preferStoreType == 0 {
+		if ds.preferStoreType&preferTiFlash == 0 {
 			errMsg := fmt.Sprintf("No available path for table %s.%s with the store type %s of the hint /*+ read_from_storage */, "+
 				"please check the status of the table replica and variable value of tidb_isolation_read_engines(%v)",
 				ds.DBName.O, ds.table.Meta().Name.O, kv.TiFlash.Name(), ds.ctx.GetSessionVars().GetIsolationReadEngines())
@@ -1388,6 +1395,9 @@ func (b *PlanBuilder) buildLimit(src LogicalPlan, limit *ast.Limit) (LogicalPlan
 		Offset: offset,
 		Count:  count,
 	}.Init(b.ctx, b.getSelectOffset())
+	if hint := b.TableHints(); hint != nil {
+		li.limitHints = hint.limitHints
+	}
 	li.SetChildren(src)
 	return li, nil
 }
@@ -2304,6 +2314,7 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, nodeType u
 		tiflashTables, tikvTables                                                                             []hintTableInfo
 		aggHints                                                                                              aggHintInfo
 		timeRangeHint                                                                                         ast.HintTimeRange
+		limitHints                                                                                            limitHintInfo
 	)
 	for _, hint := range hints {
 		// Set warning for the hint that requires the table name.
@@ -2318,19 +2329,19 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, nodeType u
 
 		switch hint.HintName.L {
 		case TiDBMergeJoin, HintSMJ:
-			sortMergeTables = append(sortMergeTables, tableNames2HintTableInfo(b.ctx, hint.Tables, b.hintProcessor, nodeType, currentLevel)...)
+			sortMergeTables = append(sortMergeTables, tableNames2HintTableInfo(b.ctx, hint.HintName.L, hint.Tables, b.hintProcessor, nodeType, currentLevel)...)
 		case TiDBBroadCastJoin, HintBCJ:
-			BCTables = append(BCTables, tableNames2HintTableInfo(b.ctx, hint.Tables, b.hintProcessor, nodeType, currentLevel)...)
+			BCTables = append(BCTables, tableNames2HintTableInfo(b.ctx, hint.HintName.L, hint.Tables, b.hintProcessor, nodeType, currentLevel)...)
 		case HintBCJPreferLocal:
-			BCJPreferLocalTables = append(BCJPreferLocalTables, tableNames2HintTableInfo(b.ctx, hint.Tables, b.hintProcessor, nodeType, currentLevel)...)
+			BCJPreferLocalTables = append(BCJPreferLocalTables, tableNames2HintTableInfo(b.ctx, hint.HintName.L, hint.Tables, b.hintProcessor, nodeType, currentLevel)...)
 		case TiDBIndexNestedLoopJoin, HintINLJ:
-			INLJTables = append(INLJTables, tableNames2HintTableInfo(b.ctx, hint.Tables, b.hintProcessor, nodeType, currentLevel)...)
+			INLJTables = append(INLJTables, tableNames2HintTableInfo(b.ctx, hint.HintName.L, hint.Tables, b.hintProcessor, nodeType, currentLevel)...)
 		case HintINLHJ:
-			INLHJTables = append(INLHJTables, tableNames2HintTableInfo(b.ctx, hint.Tables, b.hintProcessor, nodeType, currentLevel)...)
+			INLHJTables = append(INLHJTables, tableNames2HintTableInfo(b.ctx, hint.HintName.L, hint.Tables, b.hintProcessor, nodeType, currentLevel)...)
 		case HintINLMJ:
-			INLMJTables = append(INLMJTables, tableNames2HintTableInfo(b.ctx, hint.Tables, b.hintProcessor, nodeType, currentLevel)...)
+			INLMJTables = append(INLMJTables, tableNames2HintTableInfo(b.ctx, hint.HintName.L, hint.Tables, b.hintProcessor, nodeType, currentLevel)...)
 		case TiDBHashJoin, HintHJ:
-			hashJoinTables = append(hashJoinTables, tableNames2HintTableInfo(b.ctx, hint.Tables, b.hintProcessor, nodeType, currentLevel)...)
+			hashJoinTables = append(hashJoinTables, tableNames2HintTableInfo(b.ctx, hint.HintName.L, hint.Tables, b.hintProcessor, nodeType, currentLevel)...)
 		case HintHashAgg:
 			aggHints.preferAggType |= preferHashAgg
 		case HintStreamAgg:
@@ -2343,8 +2354,9 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, nodeType u
 				dbName = model.NewCIStr(b.ctx.GetSessionVars().CurrentDB)
 			}
 			indexHintList = append(indexHintList, indexHintInfo{
-				dbName:  dbName,
-				tblName: hint.Tables[0].TableName,
+				dbName:     dbName,
+				tblName:    hint.Tables[0].TableName,
+				partitions: hint.Tables[0].PartitionList,
 				indexHint: &ast.IndexHint{
 					IndexNames: hint.Indexes,
 					HintType:   ast.HintUse,
@@ -2357,8 +2369,9 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, nodeType u
 				dbName = model.NewCIStr(b.ctx.GetSessionVars().CurrentDB)
 			}
 			indexHintList = append(indexHintList, indexHintInfo{
-				dbName:  dbName,
-				tblName: hint.Tables[0].TableName,
+				dbName:     dbName,
+				tblName:    hint.Tables[0].TableName,
+				partitions: hint.Tables[0].PartitionList,
 				indexHint: &ast.IndexHint{
 					IndexNames: hint.Indexes,
 					HintType:   ast.HintIgnore,
@@ -2368,9 +2381,9 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, nodeType u
 		case HintReadFromStorage:
 			switch hint.HintData.(model.CIStr).L {
 			case HintTiFlash:
-				tiflashTables = append(tiflashTables, tableNames2HintTableInfo(b.ctx, hint.Tables, b.hintProcessor, nodeType, currentLevel)...)
+				tiflashTables = append(tiflashTables, tableNames2HintTableInfo(b.ctx, hint.HintName.L, hint.Tables, b.hintProcessor, nodeType, currentLevel)...)
 			case HintTiKV:
-				tikvTables = append(tikvTables, tableNames2HintTableInfo(b.ctx, hint.Tables, b.hintProcessor, nodeType, currentLevel)...)
+				tikvTables = append(tikvTables, tableNames2HintTableInfo(b.ctx, hint.HintName.L, hint.Tables, b.hintProcessor, nodeType, currentLevel)...)
 			}
 		case HintIndexMerge:
 			dbName := hint.Tables[0].DBName
@@ -2378,8 +2391,9 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, nodeType u
 				dbName = model.NewCIStr(b.ctx.GetSessionVars().CurrentDB)
 			}
 			indexMergeHintList = append(indexMergeHintList, indexHintInfo{
-				dbName:  dbName,
-				tblName: hint.Tables[0].TableName,
+				dbName:     dbName,
+				tblName:    hint.Tables[0].TableName,
+				partitions: hint.Tables[0].PartitionList,
 				indexHint: &ast.IndexHint{
 					IndexNames: hint.Indexes,
 					HintType:   ast.HintUse,
@@ -2388,6 +2402,8 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, nodeType u
 			})
 		case HintTimeRange:
 			timeRangeHint = hint.HintData.(ast.HintTimeRange)
+		case HintLimitToCop:
+			limitHints.preferLimitToCop = true
 		default:
 			// ignore hints that not implemented
 		}
@@ -2404,6 +2420,7 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, nodeType u
 		aggHints:                    aggHints,
 		indexMergeHintList:          indexMergeHintList,
 		timeRangeHint:               timeRangeHint,
+		limitHints:                  limitHints,
 	})
 }
 
@@ -2755,11 +2772,11 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	if tblName.L == "" {
 		tblName = tn.Name
 	}
-	possiblePaths, err := b.getPossibleAccessPaths(tn.IndexHints, tbl, dbName, tblName)
+	possiblePaths, err := getPossibleAccessPaths(b.ctx, b.TableHints(), tn.IndexHints, tbl, dbName, tblName)
 	if err != nil {
 		return nil, err
 	}
-	possiblePaths, err = b.filterPathByIsolationRead(possiblePaths, dbName)
+	possiblePaths, err = filterPathByIsolationRead(b.ctx, possiblePaths, dbName)
 	if err != nil {
 		return nil, err
 	}
@@ -2799,7 +2816,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	}
 
 	// extract the IndexMergeHint
-	var indexMergeHints []*ast.IndexHint
+	var indexMergeHints []indexHintInfo
 	if hints := b.TableHints(); hints != nil {
 		for i, hint := range hints.indexMergeHintList {
 			if hint.tblName.L == tblName.L && hint.dbName.L == dbName.L {
@@ -2826,7 +2843,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 					}
 				}
 				if len(invalidIdxNames) == 0 {
-					indexMergeHints = append(indexMergeHints, hint.indexHint)
+					indexMergeHints = append(indexMergeHints, hint)
 				} else {
 					// Append warning if there are invalid index names.
 					errMsg := fmt.Sprintf("use_index_merge(%s) is inapplicable, check whether the indexes (%s) "+
@@ -2843,12 +2860,14 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		table:               tbl,
 		tableInfo:           tableInfo,
 		statisticTable:      statisticTable,
-		indexHints:          tn.IndexHints,
+		astIndexHints:       tn.IndexHints,
+		IndexHints:          b.TableHints().indexHintList,
 		indexMergeHints:     indexMergeHints,
 		possibleAccessPaths: possiblePaths,
 		Columns:             make([]*model.ColumnInfo, 0, len(columns)),
 		partitionNames:      tn.PartitionNames,
 		TblCols:             make([]*expression.Column, 0, len(columns)),
+		preferPartitions:    make(map[int][]model.CIStr),
 	}.Init(b.ctx, b.getSelectOffset())
 
 	var handleCol *expression.Column
@@ -3487,7 +3506,7 @@ func (b *PlanBuilder) buildUpdateLists(
 			return nil, nil, false, err
 		}
 		if idx < 0 {
-			return nil, nil, false, ErrUnknownColumn.GenWithStackByArgs(assign.Column.Name, "field_list")
+			return nil, nil, false, ErrUnknownColumn.GenWithStackByArgs(assign.Column.Name, "field list")
 		}
 		if cacheColumnsIdx {
 			columnsIdx[assign.Column] = idx

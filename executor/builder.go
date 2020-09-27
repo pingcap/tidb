@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/diagnosticspb"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/distsql"
@@ -628,9 +629,7 @@ func (b *executorBuilder) buildShow(v *plannercore.PhysicalShow) Executor {
 		// Note: "show grants" result are different from "show grants for current_user",
 		// The former determine privileges with roles, while the later doesn't.
 		vars := e.ctx.GetSessionVars()
-		e.User = vars.User
-		e.User.Hostname = vars.User.AuthHostname
-		e.User.Username = vars.User.AuthUsername
+		e.User = &auth.UserIdentity{Username: vars.User.AuthUsername, Hostname: vars.User.AuthHostname}
 		e.Roles = vars.ActiveRoles
 	}
 	if e.Tp == ast.ShowMasterStatus {
@@ -1589,6 +1588,7 @@ func (b *executorBuilder) buildUnionAll(v *plannercore.PhysicalUnionAll) Executo
 	}
 	e := &UnionExec{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID(), childExecs...),
+		concurrency:  b.ctx.GetSessionVars().Concurrency.UnionConcurrency,
 	}
 	return e
 }
@@ -2984,7 +2984,8 @@ func (b *executorBuilder) buildSQLBindExec(v *plannercore.SQLBindPlan) Executor 
 	return e
 }
 
-func newRowDecoder(ctx sessionctx.Context, schema *expression.Schema, tbl *model.TableInfo) *rowcodec.ChunkDecoder {
+// NewRowDecoder creates a chunk decoder for new row format row value decode.
+func NewRowDecoder(ctx sessionctx.Context, schema *expression.Schema, tbl *model.TableInfo) *rowcodec.ChunkDecoder {
 	getColInfoByID := func(tbl *model.TableInfo, colID int64) *model.ColumnInfo {
 		for _, col := range tbl.Columns {
 			if col.ID == colID {
@@ -3040,7 +3041,7 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 		b.err = err
 		return nil
 	}
-	decoder := newRowDecoder(b.ctx, plan.Schema(), plan.TblInfo)
+	decoder := NewRowDecoder(b.ctx, plan.Schema(), plan.TblInfo)
 	e := &BatchPointGetExec{
 		baseExecutor: newBaseExecutor(b.ctx, plan.Schema(), plan.ID()),
 		tblInfo:      plan.TblInfo,

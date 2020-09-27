@@ -23,6 +23,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"runtime/trace"
 	"strconv"
 	"strings"
 	"sync"
@@ -160,6 +161,7 @@ type session struct {
 		values map[fmt.Stringer]interface{}
 	}
 
+	currentCtx  context.Context // only use for runtime.trace, Please NEVER use it.
 	currentPlan plannercore.Plan
 
 	store kv.Storage
@@ -422,6 +424,10 @@ func (s *session) doCommit(ctx context.Context) error {
 	}
 	// Set this option for 2 phase commit to validate schema lease.
 	s.txn.SetOption(kv.SchemaChecker, domain.NewSchemaChecker(domain.GetDomain(s), s.sessionVars.TxnCtx.SchemaVersion, physicalTableIDs))
+	s.txn.SetOption(kv.InfoSchema, s.sessionVars.TxnCtx.InfoSchema)
+	if s.GetSessionVars().EnableAmendPessimisticTxn {
+		s.txn.SetOption(kv.SchemaAmender, NewSchemaAmenderForTikvTxn(s))
+	}
 
 	return s.txn.Commit(sessionctx.SetCommitCtx(ctx, s))
 }
@@ -472,7 +478,6 @@ func (s *session) doCommitWithRetry(ctx context.Context) error {
 				zap.Int64("tidb_retry_limit", s.sessionVars.RetryLimit),
 				zap.Bool("tidb_disable_txn_auto_retry", s.sessionVars.DisableTxnAutoRetry))
 		}
-
 	}
 	counter := s.sessionVars.TxnCtx.StatementCount
 	duration := time.Since(s.GetSessionVars().TxnCtx.CreateTime).Seconds()
@@ -650,11 +655,15 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 			if retryCnt == 0 {
 				// We do not have to log the query every time.
 				// We print the queries at the first try only.
+				sql := sqlForLog(st.GetTextToLog())
+				if !config.RedactLogEnabled() {
+					sql += sessVars.PreparedParams.String()
+				}
 				logutil.Logger(ctx).Warn("retrying",
 					zap.Int64("schemaVersion", schemaVersion),
 					zap.Uint("retryCnt", retryCnt),
 					zap.Int("queryNum", i),
-					zap.String("sql", sqlForLog(st.OriginText())+sessVars.PreparedParams.String()))
+					zap.String("sql", sql))
 			} else {
 				logutil.Logger(ctx).Warn("retrying",
 					zap.Int64("schemaVersion", schemaVersion),
@@ -992,6 +1001,7 @@ func (s *session) ParseSQL(ctx context.Context, sql, charset, collation string) 
 		span1 := span.Tracer().StartSpan("session.ParseSQL", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
 	}
+	defer trace.StartRegion(ctx, "ParseSQL").End()
 	s.parser.SetSQLMode(s.sessionVars.SQLMode)
 	s.parser.EnableWindowFunc(s.sessionVars.EnableWindowFunction)
 	return s.parser.Parse(sql, charset, collation)
@@ -1022,11 +1032,28 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 		StatsInfo:        plannercore.GetStatsInfo,
 		MaxExecutionTime: maxExecutionTime,
 	}
+	_, pi.Digest = s.sessionVars.StmtCtx.SQLDigest()
 	if s.sessionVars.User != nil {
 		pi.User = s.sessionVars.User.Username
 		pi.Host = s.sessionVars.User.Hostname
 	}
 	s.processInfo.Store(&pi)
+}
+
+// execStmtResult is the return value of ExecuteStmt and it implements the sqlexec.RecordSet interface.
+// Why we need a struct to wrap a RecordSet and provide another RecordSet?
+// This is because there are so many session state related things that definitely not belongs to the original
+// RecordSet, so this struct exists and RecordSet.Close() is overrided handle that.
+type execStmtResult struct {
+	sqlexec.RecordSet
+	se  *session
+	sql sqlexec.Statement
+}
+
+func (rs *execStmtResult) Close() error {
+	se := rs.se
+	err := rs.RecordSet.Close()
+	return finishStmt(context.Background(), se, err, rs.sql)
 }
 
 func (s *session) executeStatement(ctx context.Context, stmt *executor.ExecStmt, recordSets []sqlexec.RecordSet, inMulitQuery bool) ([]sqlexec.RecordSet, error) {
@@ -1341,7 +1368,7 @@ func (s *session) Txn(active bool) (kv.Transaction, error) {
 		// Transaction is lazy initialized.
 		// PrepareTxnCtx is called to get a tso future, makes s.txn a pending txn,
 		// If Txn() is called later, wait for the future to get a valid txn.
-		if err := s.txn.changePendingToValid(); err != nil {
+		if err := s.txn.changePendingToValid(s.currentCtx); err != nil {
 			logutil.BgLogger().Error("active transaction fail",
 				zap.Error(err))
 			s.txn.cleanup()
@@ -1914,6 +1941,7 @@ var builtinGlobalVariable = []string{
 	variable.TiDBHashAggPartialConcurrency,
 	variable.TiDBHashAggFinalConcurrency,
 	variable.TiDBWindowConcurrency,
+	variable.TiDBUnionConcurrency,
 	variable.TiDBBackoffLockFast,
 	variable.TiDBBackOffWeight,
 	variable.TiDBConstraintCheckInPlace,
@@ -1962,8 +1990,9 @@ var builtinGlobalVariable = []string{
 	variable.TiDBStoreLimit,
 	variable.TiDBAllowAutoRandExplicitInsert,
 	variable.TiDBSlowLogMasking,
-	variable.TiDBLogDesensitization,
+	variable.TiDBRedactLog,
 	variable.TiDBEnableTelemetry,
+	variable.TiDBEnableAmendPessimisticTxn,
 }
 
 var (
@@ -2035,6 +2064,7 @@ func (s *session) loadCommonGlobalVariablesIfNeeded() error {
 // PrepareTxnCtx starts a goroutine to begin a transaction if needed, and creates a new transaction context.
 // It is called before we execute a sql query.
 func (s *session) PrepareTxnCtx(ctx context.Context) {
+	s.currentCtx = ctx
 	if s.txn.validOrPending() {
 		return
 	}
@@ -2045,7 +2075,7 @@ func (s *session) PrepareTxnCtx(ctx context.Context) {
 		SchemaVersion: is.SchemaMetaVersion(),
 		CreateTime:    time.Now(),
 	}
-	if !s.sessionVars.IsAutocommit() {
+	if !s.sessionVars.IsAutocommit() || s.sessionVars.RetryInfo.Retrying {
 		pessTxnConf := config.GetGlobalConfig().PessimisticTxn
 		if pessTxnConf.Enable {
 			if s.sessionVars.TxnMode == ast.Pessimistic {
@@ -2141,7 +2171,7 @@ func logStmt(execStmt *executor.ExecStmt, vars *variable.SessionVars) {
 func logQuery(query string, vars *variable.SessionVars) {
 	if atomic.LoadUint32(&variable.ProcessGeneralLog) != 0 && !vars.InRestrictedSQL {
 		query = executor.QueryReplacer.Replace(query)
-		if !vars.EnableLogDesensitization {
+		if !config.RedactLogEnabled() {
 			query = query + vars.PreparedParams.String()
 		}
 		logutil.BgLogger().Info("GENERAL_LOG",

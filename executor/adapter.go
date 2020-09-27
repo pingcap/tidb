@@ -368,7 +368,19 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 	}, nil
 }
 
-func (a *ExecStmt) handleNoDelay(ctx context.Context, e Executor, isPessimistic bool) (bool, sqlexec.RecordSet, error) {
+func (a *ExecStmt) handleNoDelay(ctx context.Context, e Executor, isPessimistic bool) (handled bool, rs sqlexec.RecordSet, err error) {
+	sc := a.Ctx.GetSessionVars().StmtCtx
+	defer func() {
+		// If the stmt have no rs like `insert`, The session tracker detachment will be directly
+		// done in the `defer` function. If the rs is not nil, the detachment will be done in
+		// `rs.Close` in `handleStmt`
+		if sc != nil && rs == nil {
+			if sc.DiskTracker != nil {
+				sc.DiskTracker.DetachFromGlobalTracker()
+			}
+		}
+	}()
+
 	toCheck := e
 	if explain, ok := e.(*ExplainExec); ok {
 		if explain.analyzeExec != nil {
@@ -634,6 +646,7 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, err error) (E
 	// Rollback the statement change before retry it.
 	a.Ctx.StmtRollback()
 	a.Ctx.GetSessionVars().StmtCtx.ResetForRetry()
+	a.Ctx.GetSessionVars().RetryInfo.ResetOffset()
 
 	if err = e.Open(ctx); err != nil {
 		return nil, err
@@ -785,8 +798,14 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, succ bool, hasMoreResults boo
 	a.LogSlowQuery(txnTS, succ, hasMoreResults)
 	a.SummaryStmt(succ)
 	sessVars := a.Ctx.GetSessionVars()
-	pps := types.CloneRow(sessVars.PreparedParams)
-	sessVars.PrevStmt = FormatSQL(a.OriginText(), pps)
+	prevStmt := a.GetTextToLog()
+	if config.RedactLogEnabled() {
+		sessVars.PrevStmt = FormatSQL(prevStmt, nil)
+	} else {
+		pps := types.CloneRow(sessVars.PreparedParams)
+		sessVars.PrevStmt = FormatSQL(prevStmt, pps)
+	}
+
 	executeDuration := time.Since(sessVars.StartTime) - sessVars.DurationCompile
 	if sessVars.InRestrictedSQL {
 		sessionExecuteRunDurationInternal.Observe(executeDuration.Seconds())
@@ -809,7 +828,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	}
 	var sql stringutil.StringerFunc
 	normalizedSQL, digest := sessVars.StmtCtx.SQLDigest()
-	if sessVars.EnableLogDesensitization {
+	if config.RedactLogEnabled() {
 		sql = FormatSQL(normalizedSQL, nil)
 	} else if sensitiveStmt, ok := a.StmtNode.(ast.SensitiveStmtNode); ok {
 		sql = FormatSQL(sensitiveStmt.SecureText(), nil)
@@ -858,6 +877,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		PDTotal:           time.Duration(atomic.LoadInt64(&stmtDetail.WaitPDRespDuration)),
 		BackoffTotal:      time.Duration(atomic.LoadInt64(&stmtDetail.BackoffDuration)),
 		WriteSQLRespTotal: stmtDetail.WriteSQLRespDuration,
+		RewriteInfo:       sessVars.RewritePhaseInfo,
 	}
 	if _, ok := a.StmtNode.(*ast.CommitStmt); ok {
 		slowItems.PrevStmt = sessVars.PrevStmt.String()
@@ -999,9 +1019,8 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 // GetTextToLog return the query text to log.
 func (a *ExecStmt) GetTextToLog() string {
 	var sql string
-	sessVars := a.Ctx.GetSessionVars()
-	if sessVars.EnableLogDesensitization {
-		sql, _ = sessVars.StmtCtx.SQLDigest()
+	if config.RedactLogEnabled() {
+		sql, _ = a.Ctx.GetSessionVars().StmtCtx.SQLDigest()
 	} else if sensitiveStmt, ok := a.StmtNode.(ast.SensitiveStmtNode); ok {
 		sql = sensitiveStmt.SecureText()
 	} else {

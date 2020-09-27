@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"runtime/trace"
 	"strings"
 	"sync/atomic"
 
@@ -179,7 +180,7 @@ func (st *TxnState) changeInvalidToPending(future *txnFuture) {
 	st.txnFuture = future
 }
 
-func (st *TxnState) changePendingToValid() error {
+func (st *TxnState) changePendingToValid(ctx context.Context) error {
 	if st.txnFuture == nil {
 		return errors.New("transaction future is not set")
 	}
@@ -187,6 +188,7 @@ func (st *TxnState) changePendingToValid() error {
 	future := st.txnFuture
 	st.txnFuture = nil
 
+	defer trace.StartRegion(ctx, "WaitTsoFuture").End()
 	txn, err := future.wait()
 	if err != nil {
 		st.Transaction = nil
@@ -414,6 +416,9 @@ func (st *TxnState) cleanup() {
 			st.dirtyTableOP = st.dirtyTableOP[:0]
 		}
 	}
+	if st.Transaction != nil {
+		st.Transaction.ResetStmtKeyExistErrs()
+	}
 }
 
 // KeysNeedToLock returns the keys need to be locked.
@@ -577,6 +582,7 @@ func (s *session) StmtCommit(memTracker *memory.Tracker) error {
 			mergeToDirtyDB(dirtyDB, op)
 		}
 	}
+	st.MergeStmtKeyExistErrs()
 	return nil
 }
 

@@ -1492,16 +1492,25 @@ func (p *LogicalJoin) tryToGetBroadCastJoin(prop *property.PhysicalProperty) []P
 		return nil
 	}
 
-	if p.JoinType != InnerJoin || len(p.LeftConditions) != 0 || len(p.RightConditions) != 0 || len(p.OtherConditions) != 0 || len(p.EqualConditions) == 0 {
+	// for left join the global idx must be 1, and for right join the global idx must be 0
+	if (p.JoinType != InnerJoin && p.JoinType != LeftOuterJoin && p.JoinType != RightOuterJoin) || len(p.LeftConditions) != 0 || len(p.RightConditions) != 0 || len(p.OtherConditions) != 0 || len(p.EqualConditions) == 0 {
 		return nil
 	}
 
 	if hasPrefer, idx := p.getPreferredBCJLocalIndex(); hasPrefer {
+		if (idx == 0 && p.JoinType == RightOuterJoin) || (idx == 1 && p.JoinType == LeftOuterJoin) {
+			return nil
+		}
 		return p.tryToGetBroadCastJoinByPreferGlobalIdx(prop, 1-idx)
 	}
-	results := p.tryToGetBroadCastJoinByPreferGlobalIdx(prop, 0)
-	results = append(results, p.tryToGetBroadCastJoinByPreferGlobalIdx(prop, 1)...)
-	return results
+	if p.JoinType == InnerJoin {
+		results := p.tryToGetBroadCastJoinByPreferGlobalIdx(prop, 0)
+		results = append(results, p.tryToGetBroadCastJoinByPreferGlobalIdx(prop, 1)...)
+		return results
+	} else if p.JoinType == LeftOuterJoin {
+		return p.tryToGetBroadCastJoinByPreferGlobalIdx(prop, 1)
+	}
+	return p.tryToGetBroadCastJoinByPreferGlobalIdx(prop, 0)
 }
 
 func (p *LogicalJoin) tryToGetBroadCastJoinByPreferGlobalIdx(prop *property.PhysicalProperty, preferredGlobalIndex int) []PhysicalPlan {
@@ -1575,8 +1584,29 @@ func (p *LogicalProjection) exhaustPhysicalPlans(prop *property.PhysicalProperty
 	return []PhysicalPlan{proj}, true
 }
 
+func (lt *LogicalTopN) canPushToCop() bool {
+	// At present, only Aggregation, Limit, TopN can be pushed to cop task, and Projection will be supported in the future.
+	// When we push task to coprocessor, finishCopTask will close the cop task and create a root task in the current implementation.
+	// Thus, we can't push two different tasks to coprocessor now, and can only push task to coprocessor when the child is Datasource.
+
+	// TODO: develop this function after supporting push several tasks to coprecessor and supporting Projection to coprocessor.
+	_, ok := lt.children[0].(*DataSource)
+	return ok
+}
+
 func (lt *LogicalTopN) getPhysTopN(prop *property.PhysicalProperty) []PhysicalPlan {
-	allTaskTypes := prop.GetAllPossibleChildTaskTypes()
+	if lt.limitHints.preferLimitToCop {
+		if !lt.canPushToCop() {
+			errMsg := "Optimizer Hint LIMIT_TO_COP is inapplicable"
+			warning := ErrInternal.GenWithStack(errMsg)
+			lt.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
+			lt.limitHints.preferLimitToCop = false
+		}
+	}
+	allTaskTypes := []property.TaskType{property.CopSingleReadTaskType, property.CopDoubleReadTaskType}
+	if !lt.limitHints.preferLimitToCop {
+		allTaskTypes = append(allTaskTypes, property.RootTaskType)
+	}
 	ret := make([]PhysicalPlan, 0, len(allTaskTypes))
 	for _, tp := range allTaskTypes {
 		resultProp := &property.PhysicalProperty{TaskTp: tp, ExpectedCnt: math.MaxFloat64}
@@ -1595,8 +1625,21 @@ func (lt *LogicalTopN) getPhysLimits(prop *property.PhysicalProperty) []Physical
 	if !canPass {
 		return nil
 	}
-	allTaskTypes := prop.GetAllPossibleChildTaskTypes()
-	ret := make([]PhysicalPlan, 0, 3)
+
+	if lt.limitHints.preferLimitToCop {
+		if !lt.canPushToCop() {
+			errMsg := "Optimizer Hint LIMIT_TO_COP is inapplicable"
+			warning := ErrInternal.GenWithStack(errMsg)
+			lt.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
+			lt.limitHints.preferLimitToCop = false
+		}
+	}
+
+	allTaskTypes := []property.TaskType{property.CopSingleReadTaskType, property.CopDoubleReadTaskType}
+	if !lt.limitHints.preferLimitToCop {
+		allTaskTypes = append(allTaskTypes, property.RootTaskType)
+	}
+	ret := make([]PhysicalPlan, 0, len(allTaskTypes))
 	for _, tp := range allTaskTypes {
 		resultProp := &property.PhysicalProperty{TaskTp: tp, ExpectedCnt: float64(lt.Count + lt.Offset), Items: p.Items}
 		limit := PhysicalLimit{
@@ -1893,11 +1936,33 @@ func (p *LogicalSelection) exhaustPhysicalPlans(prop *property.PhysicalProperty)
 	return []PhysicalPlan{sel}, true
 }
 
+func (p *LogicalLimit) canPushToCop() bool {
+	// At present, only Aggregation, Limit, TopN can be pushed to cop task, and Projection will be supported in the future.
+	// When we push task to coprocessor, finishCopTask will close the cop task and create a root task in the current implementation.
+	// Thus, we can't push two different tasks to coprocessor now, and can only push task to coprocessor when the child is Datasource.
+
+	// TODO: develop this function after supporting push several tasks to coprecessor and supporting Projection to coprocessor.
+	_, ok := p.children[0].(*DataSource)
+	return ok
+}
+
 func (p *LogicalLimit) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]PhysicalPlan, bool) {
 	if !prop.IsEmpty() {
 		return nil, true
 	}
-	allTaskTypes := prop.GetAllPossibleChildTaskTypes()
+	if p.limitHints.preferLimitToCop {
+		if !p.canPushToCop() {
+			errMsg := "Optimizer Hint LIMIT_TO_COP is inapplicable"
+			warning := ErrInternal.GenWithStack(errMsg)
+			p.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
+			p.limitHints.preferLimitToCop = false
+		}
+	}
+
+	allTaskTypes := []property.TaskType{property.CopSingleReadTaskType, property.CopDoubleReadTaskType}
+	if !p.limitHints.preferLimitToCop {
+		allTaskTypes = append(allTaskTypes, property.RootTaskType)
+	}
 	ret := make([]PhysicalPlan, 0, len(allTaskTypes))
 	for _, tp := range allTaskTypes {
 		resultProp := &property.PhysicalProperty{TaskTp: tp, ExpectedCnt: float64(p.Count + p.Offset)}

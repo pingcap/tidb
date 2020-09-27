@@ -409,8 +409,6 @@ func (s *testSuiteAgg) TestAggregation(c *C) {
 	_, err = tk.Exec("select std_samp(a) from t")
 	// TODO: Fix this error message.
 	c.Assert(errors.Cause(err).Error(), Equals, "[expression:1305]FUNCTION test.std_samp does not exist")
-	_, err = tk.Exec("select var_samp(a) from t")
-	c.Assert(errors.Cause(err).Error(), Equals, "unsupported agg function: var_samp")
 
 	// For issue #14072: wrong result when using generated column with aggregate statement
 	tk.MustExec("drop table if exists t1;")
@@ -464,6 +462,21 @@ func (s *testSuiteAgg) TestAggregation(c *C) {
 	tk.MustQuery("select  stddev_pop(b) from t1 group by a order by a;").Check(testkit.Rows("<nil>", "0", "0"))
 	tk.MustQuery("select  std(b) from t1 group by a order by a;").Check(testkit.Rows("<nil>", "0", "0"))
 	tk.MustQuery("select  stddev(b) from t1 group by a order by a;").Check(testkit.Rows("<nil>", "0", "0"))
+
+	//For var_samp()/stddev_samp()
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("CREATE TABLE t1 (id int(11),value1 float(10,2));")
+	tk.MustExec("INSERT INTO t1 VALUES (1,0.00),(1,1.00), (1,2.00), (2,10.00), (2,11.00), (2,12.00), (2,13.00);")
+	result = tk.MustQuery("select id, stddev_pop(value1), var_pop(value1), stddev_samp(value1), var_samp(value1) from t1 group by id order by id;")
+	result.Check(testkit.Rows("1 0.816496580927726 0.6666666666666666 1 1", "2 1.118033988749895 1.25 1.2909944487358056 1.6666666666666667"))
+
+	// For issue #19676 The result of stddev_pop(distinct xxx) is wrong
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("CREATE TABLE t1 (id int);")
+	tk.MustExec("insert into t1 values (1),(2);")
+	tk.MustQuery("select  stddev_pop(id) from t1;").Check(testkit.Rows("0.5"))
+	tk.MustExec("insert into t1 values (1);")
+	tk.MustQuery("select  stddev_pop(distinct id) from t1;").Check(testkit.Rows("0.5"))
 }
 
 func (s *testSuiteAgg) TestAggPrune(c *C) {
@@ -1095,14 +1108,12 @@ func (s *testSuiteAgg) TestIssue15690(c *C) {
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0))
 }
 
-func (s *testSuiteAgg) TestIssue17216(c *C) {
+func (s *testSuiteAgg) TestIssue15958(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1")
-	tk.MustExec(`CREATE TABLE t1 (
-	  pk int(11) NOT NULL,
-	  col1 decimal(40,20) DEFAULT NULL
-	)`)
-	tk.MustExec(`INSERT INTO t1 VALUES (2084,0.02040000000000000000),(35324,0.02190000000000000000),(43760,0.00510000000000000000),(46084,0.01400000000000000000),(46312,0.00560000000000000000),(61632,0.02730000000000000000),(94676,0.00660000000000000000),(102244,0.01810000000000000000),(113144,0.02140000000000000000),(157024,0.02750000000000000000),(157144,0.01750000000000000000),(182076,0.02370000000000000000),(188696,0.02330000000000000000),(833,0.00390000000000000000),(6701,0.00230000000000000000),(8533,0.01690000000000000000),(13801,0.01360000000000000000),(20797,0.00680000000000000000),(36677,0.00550000000000000000),(46305,0.01290000000000000000),(76113,0.00430000000000000000),(76753,0.02400000000000000000),(92393,0.01720000000000000000),(111733,0.02690000000000000000),(152757,0.00250000000000000000),(162393,0.02760000000000000000),(167169,0.00440000000000000000),(168097,0.01360000000000000000),(180309,0.01720000000000000000),(19918,0.02620000000000000000),(58674,0.01820000000000000000),(67454,0.01510000000000000000),(70870,0.02880000000000000000),(89614,0.02530000000000000000),(106742,0.00180000000000000000),(107886,0.01580000000000000000),(147506,0.02230000000000000000),(148366,0.01340000000000000000),(167258,0.01860000000000000000),(194438,0.00500000000000000000),(10307,0.02850000000000000000),(14539,0.02210000000000000000),(27703,0.00050000000000000000),(32495,0.00680000000000000000),(39235,0.01450000000000000000),(52379,0.01640000000000000000),(54551,0.01910000000000000000),(85659,0.02330000000000000000),(104483,0.02670000000000000000),(109911,0.02040000000000000000),(114523,0.02110000000000000000),(119495,0.02120000000000000000),(137603,0.01910000000000000000),(154031,0.02580000000000000000);`)
-	tk.MustQuery("SELECT count(distinct col1) FROM t1").Check(testkit.Rows("48"))
+	tk.Se.GetSessionVars().MaxChunkSize = 2
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t(y year);`)
+	tk.MustExec(`insert into t values (2020), (2000), (2050);`)
+	tk.MustQuery(`select sum(y) from t`).Check(testkit.Rows("6070"))
+	tk.MustQuery(`select avg(y) from t`).Check(testkit.Rows("2023.3333"))
 }

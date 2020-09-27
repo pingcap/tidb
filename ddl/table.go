@@ -75,6 +75,13 @@ func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
+
+		failpoint.Inject("checkOwnerCheckAllVersionsWaitTime", func(val failpoint.Value) {
+			if val.(bool) {
+				failpoint.Return(ver, errors.New("mock create table error"))
+			}
+		})
+
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tbInfo)
 		asyncNotifyEvent(d, &util.Event{Tp: model.ActionCreateTable, TableInfo: tbInfo})

@@ -523,6 +523,7 @@ func (e *SimpleExec) executeUse(s *ast.UseStmt) error {
 	if !exists {
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(dbname)
 	}
+	e.ctx.GetSessionVars().CurrentDBChanged = dbname.O != e.ctx.GetSessionVars().CurrentDB
 	e.ctx.GetSessionVars().CurrentDB = dbname.O
 	// character_set_database is the character set used by the default database.
 	// The server sets this variable whenever the default database changes.
@@ -769,8 +770,11 @@ func (e *SimpleExec) executeAlterUser(s *ast.AlterUserStmt) error {
 		if user == nil {
 			return errors.New("Session user is empty")
 		}
+		// Use AuthHostname to search the user record, set Hostname as AuthHostname.
+		userCopy := *user
+		userCopy.Hostname = userCopy.AuthHostname
 		spec := &ast.UserSpec{
-			User:    user,
+			User:    &userCopy,
 			AuthOpt: s.CurrentAuth,
 		}
 		s.Specs = []*ast.UserSpec{spec}
@@ -783,6 +787,12 @@ func (e *SimpleExec) executeAlterUser(s *ast.AlterUserStmt) error {
 
 	failedUsers := make([]string, 0, len(s.Specs))
 	for _, spec := range s.Specs {
+		if spec.User.CurrentUser {
+			user := e.ctx.GetSessionVars().User
+			spec.User.Username = user.Username
+			spec.User.Hostname = user.AuthHostname
+		}
+
 		exists, err := userExists(e.ctx, spec.User.Username, spec.User.Hostname)
 		if err != nil {
 			return err

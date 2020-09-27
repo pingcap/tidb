@@ -17,6 +17,7 @@ import (
 	"context"
 	"fmt"
 	"runtime"
+	"runtime/trace"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -299,6 +300,7 @@ func (e *IndexLookUpMergeJoin) getFinishedTask(ctx context.Context) {
 }
 
 func (omw *outerMergeWorker) run(ctx context.Context, wg *sync.WaitGroup, cancelFunc context.CancelFunc) {
+	defer trace.StartRegion(ctx, "IndexLookupMergeJoinOuterWorker").End()
 	defer func() {
 		if r := recover(); r != nil {
 			task := &lookUpMergeJoinTask{
@@ -395,6 +397,7 @@ func (omw *outerMergeWorker) increaseBatchSize() {
 }
 
 func (imw *innerMergeWorker) run(ctx context.Context, wg *sync.WaitGroup, cancelFunc context.CancelFunc) {
+	defer trace.StartRegion(ctx, "IndexLookupMergeJoinInnerWorker").End()
 	var task *lookUpMergeJoinTask
 	defer func() {
 		wg.Done()

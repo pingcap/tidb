@@ -16,6 +16,7 @@ package executor
 import (
 	"context"
 	"fmt"
+	"runtime/trace"
 
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -50,6 +51,7 @@ type UpdateExec struct {
 }
 
 func (e *UpdateExec) exec(ctx context.Context, schema *expression.Schema, row, newData []types.Datum) error {
+	defer trace.StartRegion(ctx, "UpdateExec").End()
 	assignFlag, err := plannercore.GetUpdateColumns(e.ctx, e.OrderedList, schema.Len())
 	if err != nil {
 		return err

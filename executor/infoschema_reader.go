@@ -1564,7 +1564,12 @@ type tiflashInstanceInfo struct {
 func (e *TiFlashSystemTableRetriever) initialize(sctx sessionctx.Context, tiflashInstances set.StringSet) error {
 	store := sctx.GetStore()
 	if etcd, ok := store.(tikv.EtcdBackend); ok {
-		if addrs := etcd.EtcdAddrs(); addrs != nil {
+		var addrs []string
+		var err error
+		if addrs, err = etcd.EtcdAddrs(); err != nil {
+			return err
+		}
+		if addrs != nil {
 			domainFromCtx := domain.GetDomain(sctx)
 			if domainFromCtx != nil {
 				cli := domainFromCtx.GetEtcdClient()
@@ -1581,8 +1586,16 @@ func (e *TiFlashSystemTableRetriever) initialize(sctx sessionctx.Context, tiflas
 					if len(tiflashInstances) > 0 && !tiflashInstances.Exist(id) {
 						continue
 					}
-					// TODO: Support https in tiflash
-					url := fmt.Sprintf("http://%s", ev.Value)
+					url := fmt.Sprintf("%s://%s", util.InternalHTTPSchema(), ev.Value)
+					req, err := http.NewRequest(http.MethodGet, url, nil)
+					if err != nil {
+						return errors.Trace(err)
+					}
+					_, err = util.InternalHTTPClient().Do(req)
+					if err != nil {
+						sctx.GetSessionVars().StmtCtx.AppendWarning(err)
+						continue
+					}
 					e.instanceInfos = append(e.instanceInfos, tiflashInstanceInfo{
 						id:  id,
 						url: url,
@@ -1592,7 +1605,6 @@ func (e *TiFlashSystemTableRetriever) initialize(sctx sessionctx.Context, tiflas
 				e.initialized = true
 				return nil
 			}
-			return errors.Errorf("Etcd client not found")
 		}
 		return errors.Errorf("Etcd addrs not found")
 	}
@@ -1622,7 +1634,6 @@ func (e *TiFlashSystemTableRetriever) dataForTiFlashSystemTables(ctx sessionctx.
 	}
 	sql = fmt.Sprintf("%s LIMIT %d, %d", sql, e.rowIdx, maxCount)
 	notNumber := "nan"
-	httpClient := http.DefaultClient
 	instanceInfo := e.instanceInfos[e.instanceIdx]
 	url := instanceInfo.url
 	req, err := http.NewRequest(http.MethodGet, url, nil)
@@ -1632,7 +1643,7 @@ func (e *TiFlashSystemTableRetriever) dataForTiFlashSystemTables(ctx sessionctx.
 	q := req.URL.Query()
 	q.Add("query", sql)
 	req.URL.RawQuery = q.Encode()
-	resp, err := httpClient.Do(req)
+	resp, err := util.InternalHTTPClient().Do(req)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

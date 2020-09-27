@@ -382,7 +382,7 @@ func (s *testSuite) TestError(c *C) {
 		ErrCannotCancelDDLJob,
 	}
 	for _, err := range kvErrs {
-		code := err.ToSQLError().Code
+		code := terror.ToSQLError(err).Code
 		c.Assert(code != mysql.ErrUnknown && code == uint16(err.Code()), IsTrue, Commentf("err: %v", err))
 	}
 }

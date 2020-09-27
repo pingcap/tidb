@@ -20,7 +20,6 @@ import (
 
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/store/tikv/oracle"
-	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/memory"
 )
 
@@ -60,6 +59,10 @@ const (
 	CollectRuntimeStats
 	// CheckExist map for key existence check.
 	CheckExists
+	// InfoSchema is schema version used by txn startTS.
+	InfoSchema
+	// SchemaAmender is used to amend mutations for pessimistic transactions
+	SchemaAmender
 )
 
 // Priority value for transaction priority.
@@ -215,6 +218,8 @@ type Transaction interface {
 	// If a key doesn't exist, there shouldn't be any corresponding entry in the result map.
 	BatchGet(ctx context.Context, keys []Key) (map[string][]byte, error)
 	IsPessimistic() bool
+	ResetStmtKeyExistErrs()
+	MergeStmtKeyExistErrs()
 }
 
 // LockCtx contains information for LockKeys method.
@@ -341,8 +346,6 @@ type ResultSubset interface {
 	GetData() []byte
 	// GetStartKey gets the start key.
 	GetStartKey() Key
-	// GetExecDetails gets the detail information.
-	GetExecDetails() *execdetails.ExecDetails
 	// MemSize returns how many bytes of memory this result use for tracing memory usage.
 	MemSize() int64
 	// RespTime returns the response time for the request.

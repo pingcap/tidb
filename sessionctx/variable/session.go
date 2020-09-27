@@ -280,6 +280,25 @@ type TableSnapshot struct {
 
 type txnIsolationLevelOneShotState uint
 
+// RewritePhaseInfo records some information about the rewrite phase
+type RewritePhaseInfo struct {
+	// DurationRewrite is the duration of rewriting the SQL.
+	DurationRewrite time.Duration
+
+	// DurationPreprocessSubQuery is the duration of pre-processing sub-queries.
+	DurationPreprocessSubQuery time.Duration
+
+	// PreprocessSubQueries is the number of pre-processed sub-queries.
+	PreprocessSubQueries int
+}
+
+// Reset resets all fields in RewritePhaseInfo.
+func (r *RewritePhaseInfo) Reset() {
+	r.DurationRewrite = 0
+	r.DurationPreprocessSubQuery = 0
+	r.PreprocessSubQueries = 0
+}
+
 const (
 	// oneShotDef means default, that is tx_isolation_one_shot not set.
 	oneShotDef txnIsolationLevelOneShotState = iota
@@ -353,6 +372,10 @@ type SessionVars struct {
 
 	// CurrentDB is the default database of this session.
 	CurrentDB string
+
+	// CurrentDBChanged indicates if the CurrentDB has been updated, and if it is we should print it into
+	// the slow log to make it be compatible with MySQL, https://github.com/pingcap/tidb/issues/17846.
+	CurrentDBChanged bool
 
 	// StrictSQLMode indicates if the session is in strict mode.
 	StrictSQLMode bool
@@ -546,6 +569,9 @@ type SessionVars struct {
 	// DurationCompile is the duration of compiling AST to execution plan of the last query.
 	DurationCompile time.Duration
 
+	// RewritePhaseInfo records all information about the rewriting phase.
+	RewritePhaseInfo
+
 	// PrevStmt is used to store the previous executed statement in the current session.
 	PrevStmt fmt.Stringer
 
@@ -611,8 +637,8 @@ type SessionVars struct {
 	// SelectLimit limits the max counts of select statement's output
 	SelectLimit uint64
 
-	// EnableLogDesensitization indicates that whether desensitization when log query.
-	EnableLogDesensitization bool
+	// EnableAmendPessimisticTxn indicates if schema change amend is enabled for pessimistic transactions.
+	EnableAmendPessimisticTxn bool
 }
 
 // PreparedParams contains the parameters of the current prepared statement when executing it.
@@ -704,7 +730,7 @@ func NewSessionVars() *SessionVars {
 		FoundInPlanCache:            DefTiDBFoundInPlanCache,
 		SelectLimit:                 math.MaxUint64,
 		AllowAutoRandExplicitInsert: DefTiDBAllowAutoRandExplicitInsert,
-		EnableLogDesensitization:    DefTiDBLogDesensitization,
+		EnableAmendPessimisticTxn:   DefTiDBEnableAmendPessimisticTxn,
 	}
 	vars.KVVars = kv.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{
@@ -717,6 +743,7 @@ func NewSessionVars() *SessionVars {
 		HashAggPartialConcurrency:  DefTiDBHashAggPartialConcurrency,
 		HashAggFinalConcurrency:    DefTiDBHashAggFinalConcurrency,
 		WindowConcurrency:          DefTiDBWindowConcurrency,
+		UnionConcurrency:           DefTiDBUnionConcurrency,
 	}
 	vars.MemQuota = MemQuota{
 		MemQuotaQuery: config.GetGlobalConfig().MemQuotaQuery,
@@ -1134,6 +1161,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.HashAggFinalConcurrency = tidbOptPositiveInt32(val, DefTiDBHashAggFinalConcurrency)
 	case TiDBWindowConcurrency:
 		s.WindowConcurrency = tidbOptPositiveInt32(val, DefTiDBWindowConcurrency)
+	case TiDBUnionConcurrency:
+		s.UnionConcurrency = tidbOptPositiveInt32(val, DefTiDBUnionConcurrency)
 	case TiDBDistSQLScanConcurrency:
 		s.DistSQLScanConcurrency = tidbOptPositiveInt32(val, DefDistSQLScanConcurrency)
 	case TiDBIndexSerialScanConcurrency:
@@ -1311,12 +1340,14 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 			return errors.Trace(err)
 		}
 		s.SelectLimit = result
-	case TiDBSlowLogMasking, TiDBLogDesensitization:
-		s.EnableLogDesensitization = TiDBOptOn(val)
 	case TiDBEnableCollectExecutionInfo:
 		config.GetGlobalConfig().EnableCollectExecutionInfo = TiDBOptOn(val)
 	case TiDBAllowAutoRandExplicitInsert:
 		s.AllowAutoRandExplicitInsert = TiDBOptOn(val)
+	case TiDBSlowLogMasking, TiDBRedactLog:
+		config.SetRedactLog(TiDBOptOn(val))
+	case TiDBEnableAmendPessimisticTxn:
+		s.EnableAmendPessimisticTxn = TiDBOptOn(val)
 	}
 	s.systems[name] = val
 	return nil
@@ -1433,6 +1464,9 @@ type Concurrency struct {
 
 	// IndexSerialScanConcurrency is the number of concurrent index serial scan worker.
 	IndexSerialScanConcurrency int
+
+	// UnionConcurrency is the number of concurrent union worker.
+	UnionConcurrency int
 }
 
 // MemQuota defines memory quota values.
@@ -1506,6 +1540,12 @@ const (
 	SlowLogParseTimeStr = "Parse_time"
 	// SlowLogCompileTimeStr is the compile plan time.
 	SlowLogCompileTimeStr = "Compile_time"
+	// SlowLogRewriteTimeStr is the rewrite time.
+	SlowLogRewriteTimeStr = "Rewrite_time"
+	// SlowLogPreprocSubQueriesStr is the number of pre-processed sub-queries.
+	SlowLogPreprocSubQueriesStr = "Preproc_subqueries"
+	// SlowLogPreProcSubQueryTimeStr is the total time of pre-processing sub-queries.
+	SlowLogPreProcSubQueryTimeStr = "Preproc_subqueries_time"
 	// SlowLogDBStr is slow log field name.
 	SlowLogDBStr = "DB"
 	// SlowLogIsInternalStr is slow log field name.
@@ -1598,6 +1638,7 @@ type SlowQueryLogItems struct {
 	PDTotal           time.Duration
 	BackoffTotal      time.Duration
 	WriteSQLRespTotal time.Duration
+	RewriteInfo       RewritePhaseInfo
 }
 
 // SlowLogFormat uses for formatting slow log.
@@ -1638,6 +1679,14 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	writeSlowLogItem(&buf, SlowLogQueryTimeStr, strconv.FormatFloat(logItems.TimeTotal.Seconds(), 'f', -1, 64))
 	writeSlowLogItem(&buf, SlowLogParseTimeStr, strconv.FormatFloat(logItems.TimeParse.Seconds(), 'f', -1, 64))
 	writeSlowLogItem(&buf, SlowLogCompileTimeStr, strconv.FormatFloat(logItems.TimeCompile.Seconds(), 'f', -1, 64))
+
+	buf.WriteString(SlowLogRowPrefixStr + fmt.Sprintf("%v%v%v", SlowLogRewriteTimeStr,
+		SlowLogSpaceMarkStr, strconv.FormatFloat(logItems.RewriteInfo.DurationRewrite.Seconds(), 'f', -1, 64)))
+	if logItems.RewriteInfo.PreprocessSubQueries > 0 {
+		buf.WriteString(fmt.Sprintf(" %v%v%v %v%v%v", SlowLogPreprocSubQueriesStr, SlowLogSpaceMarkStr, logItems.RewriteInfo.PreprocessSubQueries,
+			SlowLogPreProcSubQueryTimeStr, SlowLogSpaceMarkStr, strconv.FormatFloat(logItems.RewriteInfo.DurationPreprocessSubQuery.Seconds(), 'f', -1, 64)))
+	}
+	buf.WriteString("\n")
 
 	if execDetailStr := logItems.ExecDetail.String(); len(execDetailStr) > 0 {
 		buf.WriteString(SlowLogRowPrefixStr + execDetailStr + "\n")
@@ -1747,6 +1796,11 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 
 	if logItems.PrevStmt != "" {
 		writeSlowLogItem(&buf, SlowLogPrevStmt, logItems.PrevStmt)
+	}
+
+	if s.CurrentDBChanged {
+		buf.WriteString(fmt.Sprintf("use %s;\n", s.CurrentDB))
+		s.CurrentDBChanged = false
 	}
 
 	buf.WriteString(logItems.SQL)
