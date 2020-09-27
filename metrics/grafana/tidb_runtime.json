@@ -142,7 +142,7 @@
               "refId": "A"
             },
             {
-              "expr": "go_memstats_next_gc_bytes{instance=~\"$instance\"} / 2",
+              "expr": "go_memstats_next_gc_bytes{instance=~\"$instance\"} / (1 + tidb_server_maxprocs{instance=~\"$instance\"} / 100)",
               "format": "time_series",
               "hide": false,
               "intervalFactor": 1,
@@ -150,7 +150,7 @@
               "refId": "H"
             },
             {
-              "expr": "go_memstats_heap_alloc_bytes{instance=~\"$instance\"} - go_memstats_next_gc_bytes{instance=~\"$instance\"} / 2",
+              "expr": "go_memstats_heap_alloc_bytes{instance=~\"$instance\"} - go_memstats_next_gc_bytes{instance=~\"$instance\"} / (1 + tidb_server_maxprocs{instance=~\"$instance\"} / 100)",
               "format": "time_series",
               "hide": false,
               "intervalFactor": 1,
