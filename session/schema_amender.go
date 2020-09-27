@@ -42,7 +42,7 @@ import (
 
 const amendableType = nonMemAmendType | memBufAmendType
 const nonMemAmendType = (1 << model.ActionAddColumn) | (1 << model.ActionDropIndex)
-const memBufAmendType = uint64(1<<model.ActionAddIndex) | (1 << model.ActionModifyColumn) | (1 << model.ActionDropColumn)
+const memBufAmendType = uint64(1<<model.ActionAddIndex) | (1 << model.ActionModifyColumn) | (1 << model.ActionDropColumn) | (1 << model.ActionDropColumns)
 
 // Amend operation types.
 const (

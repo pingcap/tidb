@@ -14,6 +14,7 @@
 package ddl
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"strconv"
@@ -568,7 +569,7 @@ func runAndWaitReorgJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job, tblI
 		return ver, false, errors.Trace(err)
 	}
 
-	reorgInfo, err := getReorgInfo(d, t, job, tbl)
+	reorgInfo, err := getReorgInfo(d, t, job, tbl, buildIndicesElements(indexInfos))
 	if err != nil || reorgInfo.first {
 		// If we run reorg firstly, we should update the job snapshot version
 		// and then run the reorg next time.
@@ -581,11 +582,46 @@ func runAndWaitReorgJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job, tblI
 			func() {
 				addIndexErr = errCancelledDDLJob.GenWithStack("add table `%v` indices `%v` panic", tblInfo.Name, currentIdx.Name)
 			}, false)
-		for _, idxInfo := range indexInfos {
-			currentIdx = idxInfo
-			idxErr := w.addTableIndex(tbl, idxInfo, reorgInfo)
-			if idxErr != nil {
-				return errors.Trace(idxErr)
+
+		// Get the original start handle and end handle.
+		currentVer, err := getValidCurrentVersion(reorgInfo.d.store)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		originalStartHandle, originalEndHandle, err := getTableRange(reorgInfo.d, tbl.(table.PhysicalTable), currentVer.Ver, reorgInfo.Job.Priority)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		startElementOffset := 0
+		startElementOffsetToResetHandle := -1
+		if bytes.Equal(reorgInfo.currElement.TypeKey, meta.IndexElementKey) {
+			for i, idx := range indexInfos {
+				if reorgInfo.currElement.ID == idx.ID {
+					startElementOffset = i
+					startElementOffsetToResetHandle = i
+					break
+				}
+			}
+		}
+
+		for i := startElementOffset; i < len(indexInfos); i++ {
+			if i == startElementOffsetToResetHandle {
+				reorgInfo.StartHandle, reorgInfo.EndHandle = originalStartHandle, originalEndHandle
+			}
+
+			reorgInfo.currElement = reorgInfo.elements[i]
+			// Write the reorg info to store so the whole reorganize process can recover from panic.
+			err := reorgInfo.UpdateReorgMeta(reorgInfo.StartHandle)
+			logutil.BgLogger().Info("[ddl] drop columns with composite indices", zap.Int64("jobID", reorgInfo.Job.ID),
+				zap.ByteString("elementType", reorgInfo.currElement.TypeKey), zap.Int64("elementID", reorgInfo.currElement.ID),
+				zap.String("startHandle", toString(reorgInfo.StartHandle)), zap.String("endHandle", toString(reorgInfo.EndHandle)))
+			if err != nil {
+				return errors.Trace(err)
+			}
+			err = w.addTableIndex(tbl, indexInfos[i], reorgInfo)
+			if err != nil {
+				return errors.Trace(err)
 			}
 		}
 		return nil
