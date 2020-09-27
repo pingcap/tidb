@@ -217,7 +217,6 @@ func CastValue(ctx sessionctx.Context, val types.Datum, col *model.ColumnInfo, r
 			sc.AppendWarning(types.ErrWrongValue.GenWithStackByArgs(zeroT, tm.String()))
 			return types.NewDatum(zeroV), nil
 		}
-		return casted, nil
 	}
 
 	if col.Charset == charset.CharsetASCII {
