@@ -580,7 +580,11 @@ func runAndWaitReorgJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job, tblI
 		var currentIdx *model.IndexInfo
 		defer util.Recover(metrics.LabelDDL, "onDropColumn",
 			func() {
-				addIndexErr = errCancelledDDLJob.GenWithStack("add table `%v` indices `%v` panic", tblInfo.Name, currentIdx.Name)
+				if currentIdx != nil {
+					addIndexErr = errCancelledDDLJob.GenWithStack("add table `%v` indices `%v` panic", tblInfo.Name, currentIdx.Name)
+				} else {
+					addIndexErr = errCancelledDDLJob.GenWithStack("add table `%v` panic", tblInfo.Name)
+				}
 			}, false)
 
 		// Get the original start handle and end handle.
@@ -606,6 +610,7 @@ func runAndWaitReorgJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job, tblI
 		}
 
 		for i := startElementOffset; i < len(indexInfos); i++ {
+			currentIdx = indexInfos[i]
 			if i == startElementOffsetToResetHandle {
 				reorgInfo.StartHandle, reorgInfo.EndHandle = originalStartHandle, originalEndHandle
 			}
@@ -619,7 +624,7 @@ func runAndWaitReorgJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job, tblI
 			if err != nil {
 				return errors.Trace(err)
 			}
-			err = w.addTableIndex(tbl, indexInfos[i], reorgInfo)
+			err = w.addTableIndex(tbl, currentIdx, reorgInfo)
 			if err != nil {
 				return errors.Trace(err)
 			}
