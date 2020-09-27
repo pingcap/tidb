@@ -1712,6 +1712,7 @@ func ParseDate(sc *stmtctx.StatementContext, str string) (Time, error) {
 	return ParseTime(sc, str, mysql.TypeDate, MinFsp)
 }
 
+// ParseTimeFromYear parse a `YYYY` formed year to corresponded Datetime type.
 func ParseTimeFromYear(sc *stmtctx.StatementContext, num int64) (Time, error) {
 	if num == 0 {
 		return NewTime(ZeroCoreTime, mysql.TypeDate, DefaultFsp), nil
