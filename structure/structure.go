@@ -21,13 +21,13 @@ import (
 
 var (
 	// ErrInvalidHashKeyFlag used by structure
-	ErrInvalidHashKeyFlag = terror.ClassStructure.New(mysql.ErrInvalidHashKeyFlag, mysql.MySQLErrName[mysql.ErrInvalidHashKeyFlag])
+	ErrInvalidHashKeyFlag = terror.ClassStructure.NewStd(mysql.ErrInvalidHashKeyFlag)
 	// ErrInvalidListIndex used by structure
-	ErrInvalidListIndex = terror.ClassStructure.New(mysql.ErrInvalidListIndex, mysql.MySQLErrName[mysql.ErrInvalidListIndex])
+	ErrInvalidListIndex = terror.ClassStructure.NewStd(mysql.ErrInvalidListIndex)
 	// ErrInvalidListMetaData used by structure
-	ErrInvalidListMetaData = terror.ClassStructure.New(mysql.ErrInvalidListMetaData, mysql.MySQLErrName[mysql.ErrInvalidListMetaData])
+	ErrInvalidListMetaData = terror.ClassStructure.NewStd(mysql.ErrInvalidListMetaData)
 	// ErrWriteOnSnapshot used by structure
-	ErrWriteOnSnapshot = terror.ClassStructure.New(mysql.ErrWriteOnSnapshot, mysql.MySQLErrName[mysql.ErrWriteOnSnapshot])
+	ErrWriteOnSnapshot = terror.ClassStructure.NewStd(mysql.ErrWriteOnSnapshot)
 )
 
 // NewStructure creates a TxStructure with Retriever, RetrieverMutator and key prefix.

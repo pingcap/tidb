@@ -67,3 +67,7 @@ require (
 )
 
 go 1.13
+
+replace github.com/pingcap/parser => /Users/sunrunaway/gohack/github.com/pingcap/parser
+
+replace github.com/pingcap/errors => /Users/sunrunaway/gohack/github.com/pingcap/errors

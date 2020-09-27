@@ -142,7 +142,7 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 	case 1:
 		useCursor = true
 	default:
-		return mysql.NewErrf(mysql.ErrUnknown, "unsupported flag %d", flag)
+		return mysql.NewErrf(mysql.ErrUnknown, "unsupported flag %d", nil, flag)
 	}
 
 	// skip iteration-count, always 1

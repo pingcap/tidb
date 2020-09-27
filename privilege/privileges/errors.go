@@ -20,7 +20,7 @@ import (
 
 // error definitions.
 var (
-	errInvalidPrivilegeType = terror.ClassPrivilege.New(mysql.ErrInvalidPrivilegeType, mysql.MySQLErrName[mysql.ErrInvalidPrivilegeType])
-	ErrNonexistingGrant     = terror.ClassPrivilege.New(mysql.ErrNonexistingGrant, mysql.MySQLErrName[mysql.ErrNonexistingGrant])
-	errLoadPrivilege        = terror.ClassPrivilege.New(mysql.ErrLoadPrivilege, mysql.MySQLErrName[mysql.ErrLoadPrivilege])
+	errInvalidPrivilegeType = terror.ClassPrivilege.NewStd(mysql.ErrInvalidPrivilegeType)
+	ErrNonexistingGrant     = terror.ClassPrivilege.NewStd(mysql.ErrNonexistingGrant)
+	errLoadPrivilege        = terror.ClassPrivilege.NewStd(mysql.ErrLoadPrivilege)
 )

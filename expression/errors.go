@@ -14,6 +14,7 @@
 package expression
 
 import (
+	pmysql "github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	mysql "github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/sessionctx"
@@ -23,32 +24,32 @@ import (
 // Error instances.
 var (
 	// All the exported errors are defined here:
-	ErrIncorrectParameterCount     = terror.ClassExpression.New(mysql.ErrWrongParamcountToNativeFct, mysql.MySQLErrName[mysql.ErrWrongParamcountToNativeFct])
-	ErrDivisionByZero              = terror.ClassExpression.New(mysql.ErrDivisionByZero, mysql.MySQLErrName[mysql.ErrDivisionByZero])
-	ErrRegexp                      = terror.ClassExpression.New(mysql.ErrRegexp, mysql.MySQLErrName[mysql.ErrRegexp])
-	ErrOperandColumns              = terror.ClassExpression.New(mysql.ErrOperandColumns, mysql.MySQLErrName[mysql.ErrOperandColumns])
-	ErrCutValueGroupConcat         = terror.ClassExpression.New(mysql.ErrCutValueGroupConcat, mysql.MySQLErrName[mysql.ErrCutValueGroupConcat])
-	ErrFunctionsNoopImpl           = terror.ClassExpression.New(mysql.ErrNotSupportedYet, "function %s has only noop implementation in tidb now, use tidb_enable_noop_functions to enable these functions")
-	ErrInvalidArgumentForLogarithm = terror.ClassExpression.New(mysql.ErrInvalidArgumentForLogarithm, mysql.MySQLErrName[mysql.ErrInvalidArgumentForLogarithm])
-	ErrIncorrectType               = terror.ClassExpression.New(mysql.ErrIncorrectType, mysql.MySQLErrName[mysql.ErrIncorrectType])
+	ErrIncorrectParameterCount     = terror.ClassExpression.NewStd(mysql.ErrWrongParamcountToNativeFct)
+	ErrDivisionByZero              = terror.ClassExpression.NewStd(mysql.ErrDivisionByZero)
+	ErrRegexp                      = terror.ClassExpression.NewStd(mysql.ErrRegexp)
+	ErrOperandColumns              = terror.ClassExpression.NewStd(mysql.ErrOperandColumns)
+	ErrCutValueGroupConcat         = terror.ClassExpression.NewStd(mysql.ErrCutValueGroupConcat)
+	ErrFunctionsNoopImpl           = terror.ClassExpression.NewStdErr(mysql.ErrNotSupportedYet, pmysql.Message("function %s has only noop implementation in tidb now, use tidb_enable_noop_functions to enable these functions", nil), "", "")
+	ErrInvalidArgumentForLogarithm = terror.ClassExpression.NewStd(mysql.ErrInvalidArgumentForLogarithm)
+	ErrIncorrectType               = terror.ClassExpression.NewStd(mysql.ErrIncorrectType)
 
 	// All the un-exported errors are defined here:
-	errFunctionNotExists             = terror.ClassExpression.New(mysql.ErrSpDoesNotExist, mysql.MySQLErrName[mysql.ErrSpDoesNotExist])
-	errZlibZData                     = terror.ClassExpression.New(mysql.ErrZlibZData, mysql.MySQLErrName[mysql.ErrZlibZData])
-	errZlibZBuf                      = terror.ClassExpression.New(mysql.ErrZlibZBuf, mysql.MySQLErrName[mysql.ErrZlibZBuf])
-	errIncorrectArgs                 = terror.ClassExpression.New(mysql.ErrWrongArguments, mysql.MySQLErrName[mysql.ErrWrongArguments])
-	errUnknownCharacterSet           = terror.ClassExpression.New(mysql.ErrUnknownCharacterSet, mysql.MySQLErrName[mysql.ErrUnknownCharacterSet])
-	errDefaultValue                  = terror.ClassExpression.New(mysql.ErrInvalidDefault, "invalid default value")
-	errDeprecatedSyntaxNoReplacement = terror.ClassExpression.New(mysql.ErrWarnDeprecatedSyntaxNoReplacement, mysql.MySQLErrName[mysql.ErrWarnDeprecatedSyntaxNoReplacement])
-	errBadField                      = terror.ClassExpression.New(mysql.ErrBadField, mysql.MySQLErrName[mysql.ErrBadField])
-	errWarnAllowedPacketOverflowed   = terror.ClassExpression.New(mysql.ErrWarnAllowedPacketOverflowed, mysql.MySQLErrName[mysql.ErrWarnAllowedPacketOverflowed])
-	errWarnOptionIgnored             = terror.ClassExpression.New(mysql.WarnOptionIgnored, mysql.MySQLErrName[mysql.WarnOptionIgnored])
-	errTruncatedWrongValue           = terror.ClassExpression.New(mysql.ErrTruncatedWrongValue, mysql.MySQLErrName[mysql.ErrTruncatedWrongValue])
-	errUnknownLocale                 = terror.ClassExpression.New(mysql.ErrUnknownLocale, mysql.MySQLErrName[mysql.ErrUnknownLocale])
-	errNonUniq                       = terror.ClassExpression.New(mysql.ErrNonUniq, mysql.MySQLErrName[mysql.ErrNonUniq])
+	errFunctionNotExists             = terror.ClassExpression.NewStd(mysql.ErrSpDoesNotExist)
+	errZlibZData                     = terror.ClassExpression.NewStd(mysql.ErrZlibZData)
+	errZlibZBuf                      = terror.ClassExpression.NewStd(mysql.ErrZlibZBuf)
+	errIncorrectArgs                 = terror.ClassExpression.NewStd(mysql.ErrWrongArguments)
+	errUnknownCharacterSet           = terror.ClassExpression.NewStd(mysql.ErrUnknownCharacterSet)
+	errDefaultValue                  = terror.ClassExpression.NewStdErr(mysql.ErrInvalidDefault, pmysql.Message("invalid default value", nil), "", "")
+	errDeprecatedSyntaxNoReplacement = terror.ClassExpression.NewStd(mysql.ErrWarnDeprecatedSyntaxNoReplacement)
+	errBadField                      = terror.ClassExpression.NewStd(mysql.ErrBadField)
+	errWarnAllowedPacketOverflowed   = terror.ClassExpression.NewStd(mysql.ErrWarnAllowedPacketOverflowed)
+	errWarnOptionIgnored             = terror.ClassExpression.NewStd(mysql.WarnOptionIgnored)
+	errTruncatedWrongValue           = terror.ClassExpression.NewStd(mysql.ErrTruncatedWrongValue)
+	errUnknownLocale                 = terror.ClassExpression.NewStd(mysql.ErrUnknownLocale)
+	errNonUniq                       = terror.ClassExpression.NewStd(mysql.ErrNonUniq)
 
 	// Sequence usage privilege check.
-	errSequenceAccessDenied = terror.ClassExpression.New(mysql.ErrTableaccessDenied, mysql.MySQLErrName[mysql.ErrTableaccessDenied])
+	errSequenceAccessDenied = terror.ClassExpression.NewStd(mysql.ErrTableaccessDenied)
 )
 
 // handleInvalidTimeError reports error or warning depend on the context.

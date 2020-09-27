@@ -100,7 +100,7 @@ func (a *PanicOnExceed) Action(t *Tracker) {
 func (a *PanicOnExceed) SetFallback(ActionOnExceed) {}
 
 var (
-	errMemExceedThreshold = terror.ClassUtil.New(errno.ErrMemExceedThreshold, errno.MySQLErrName[errno.ErrMemExceedThreshold])
+	errMemExceedThreshold = terror.ClassUtil.NewStd(errno.ErrMemExceedThreshold)
 )
 
 const (

@@ -105,7 +105,7 @@ func checkInsertStmtHintDuplicated(node ast.Node, sctx sessionctx.Context) {
 				}
 				if duplicatedHint != nil {
 					hint := fmt.Sprintf("%s(`%v`)", duplicatedHint.HintName.O, duplicatedHint.HintData)
-					err := terror.ClassUtil.New(errno.ErrWarnConflictingHint, fmt.Sprintf(errno.MySQLErrName[errno.ErrWarnConflictingHint], hint))
+					err := terror.ClassUtil.NewStd(errno.ErrWarnConflictingHint).FastGenByArgs(hint)
 					sctx.GetSessionVars().StmtCtx.AppendWarning(err)
 				}
 			}

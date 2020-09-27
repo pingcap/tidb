@@ -36,9 +36,9 @@ import (
 )
 
 var (
-	errInvalidKey       = terror.ClassXEval.New(errno.ErrInvalidKey, errno.MySQLErrName[errno.ErrInvalidKey])
-	errInvalidRecordKey = terror.ClassXEval.New(errno.ErrInvalidRecordKey, errno.MySQLErrName[errno.ErrInvalidRecordKey])
-	errInvalidIndexKey  = terror.ClassXEval.New(errno.ErrInvalidIndexKey, errno.MySQLErrName[errno.ErrInvalidIndexKey])
+	errInvalidKey       = terror.ClassXEval.NewStd(errno.ErrInvalidKey)
+	errInvalidRecordKey = terror.ClassXEval.NewStd(errno.ErrInvalidRecordKey)
+	errInvalidIndexKey  = terror.ClassXEval.NewStd(errno.ErrInvalidIndexKey)
 )
 
 var (

@@ -34,13 +34,13 @@ var (
 	binCollatorInstance = &binCollator{}
 
 	// ErrUnsupportedCollation is returned when an unsupported collation is specified.
-	ErrUnsupportedCollation = terror.ClassDDL.New(mysql.ErrUnknownCollation, "Unsupported collation when new collation is enabled: '%-.64s'")
+	ErrUnsupportedCollation = terror.ClassDDL.NewStdErr(mysql.ErrUnknownCollation, mysql.Message("Unsupported collation when new collation is enabled: '%-.64s'", nil), "", "")
 	// ErrIllegalMixCollation is returned when illegal mix of collations.
-	ErrIllegalMixCollation = terror.ClassExpression.New(mysql.ErrCantAggregateNcollations, mysql.MySQLErrName[mysql.ErrCantAggregateNcollations])
+	ErrIllegalMixCollation = terror.ClassExpression.NewStd(mysql.ErrCantAggregateNcollations)
 	// ErrIllegalMix2Collation is returned when illegal mix of 2 collations.
-	ErrIllegalMix2Collation = terror.ClassExpression.New(mysql.ErrCantAggregate2collations, mysql.MySQLErrName[mysql.ErrCantAggregate2collations])
+	ErrIllegalMix2Collation = terror.ClassExpression.NewStd(mysql.ErrCantAggregate2collations)
 	// ErrIllegalMix3Collation is returned when illegal mix of 3 collations.
-	ErrIllegalMix3Collation = terror.ClassExpression.New(mysql.ErrCantAggregate3collations, mysql.MySQLErrName[mysql.ErrCantAggregate3collations])
+	ErrIllegalMix3Collation = terror.ClassExpression.NewStd(mysql.ErrCantAggregate3collations)
 )
 
 // DefaultLen is set for datum if the string datum don't know its length.

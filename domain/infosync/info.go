@@ -79,7 +79,7 @@ const (
 )
 
 // ErrPrometheusAddrIsNotSet is the error that Prometheus address is not set in PD and etcd
-var ErrPrometheusAddrIsNotSet = terror.ClassDomain.New(errno.ErrPrometheusAddrIsNotSet, errno.MySQLErrName[errno.ErrPrometheusAddrIsNotSet])
+var ErrPrometheusAddrIsNotSet = terror.ClassDomain.NewStd(errno.ErrPrometheusAddrIsNotSet)
 
 // errPlacementRulesDisabled is exported for internal usage, indicating PD rejected the request due to disabled placement feature.
 var errPlacementRulesDisabled = errors.New("placement rules feature is disabled")
