@@ -871,9 +871,7 @@ func buildPlacementDropRules(partitionIDs []int64) []*placement.Bundle {
 	bundles := make([]*placement.Bundle, 0, len(partitionIDs))
 	for _, partitionID := range partitionIDs {
 		bundles = append(bundles, &placement.Bundle{
-			ID:       placement.GroupID(partitionID),
-			Index:    placement.RuleIndexPartition,
-			Override: true,
+			ID: placement.GroupID(partitionID),
 		})
 	}
 	return bundles

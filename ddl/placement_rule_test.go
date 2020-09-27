@@ -259,26 +259,14 @@ func (s *testPlacementSuite) TestPlacementBuildDrop(c *C) {
 		{
 			input: []int64{2},
 			output: []*placement.Bundle{
-				{
-					ID:       placement.GroupID(2),
-					Index:    placement.RuleIndexPartition,
-					Override: true,
-				},
+				{ID: placement.GroupID(2)},
 			},
 		},
 		{
 			input: []int64{1, 2},
 			output: []*placement.Bundle{
-				{
-					ID:       placement.GroupID(1),
-					Index:    placement.RuleIndexPartition,
-					Override: true,
-				},
-				{
-					ID:       placement.GroupID(2),
-					Index:    placement.RuleIndexPartition,
-					Override: true,
-				},
+				{ID: placement.GroupID(1)},
+				{ID: placement.GroupID(2)},
 			},
 		},
 	}
