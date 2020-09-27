@@ -163,11 +163,16 @@ type stmtSummaryByDigestElement struct {
 	backoffTypes         map[fmt.Stringer]int
 	authUsers            map[string]struct{}
 	// other
-	sumMem          int64
-	maxMem          int64
-	sumDisk         int64
-	maxDisk         int64
-	sumAffectedRows uint64
+	sumMem               int64
+	maxMem               int64
+	sumDisk              int64
+	maxDisk              int64
+	sumAffectedRows      uint64
+	sumKVTotal           time.Duration
+	sumPDTotal           time.Duration
+	sumBackoffTotal      time.Duration
+	sumWriteSQLRespTotal time.Duration
+	prepared             bool
 	// The first time this type of SQL executes.
 	firstSeen time.Time
 	// The last time this type of SQL executes.
@@ -182,30 +187,35 @@ type stmtSummaryByDigestElement struct {
 
 // StmtExecInfo records execution information of each statement.
 type StmtExecInfo struct {
-	SchemaName     string
-	OriginalSQL    string
-	NormalizedSQL  string
-	Digest         string
-	PrevSQL        string
-	PrevSQLDigest  string
-	PlanGenerator  func() string
-	PlanDigest     string
-	PlanDigestGen  func() string
-	User           string
-	TotalLatency   time.Duration
-	ParseLatency   time.Duration
-	CompileLatency time.Duration
-	StmtCtx        *stmtctx.StatementContext
-	CopTasks       *stmtctx.CopTasksDetails
-	ExecDetail     *execdetails.ExecDetails
-	MemMax         int64
-	DiskMax        int64
-	StartTime      time.Time
-	IsInternal     bool
-	Succeed        bool
-	PlanInCache    bool
-	ExecRetryCount uint
-	ExecRetryTime  time.Duration
+	SchemaName        string
+	OriginalSQL       string
+	NormalizedSQL     string
+	Digest            string
+	PrevSQL           string
+	PrevSQLDigest     string
+	PlanGenerator     func() string
+	PlanDigest        string
+	PlanDigestGen     func() string
+	User              string
+	TotalLatency      time.Duration
+	ParseLatency      time.Duration
+	CompileLatency    time.Duration
+	StmtCtx           *stmtctx.StatementContext
+	CopTasks          *stmtctx.CopTasksDetails
+	ExecDetail        *execdetails.ExecDetails
+	MemMax            int64
+	DiskMax           int64
+	StartTime         time.Time
+	IsInternal        bool
+	Succeed           bool
+	PlanInCache       bool
+	ExecRetryCount    uint
+	ExecRetryTime     time.Duration
+	KVTotal           time.Duration
+	PDTotal           time.Duration
+	BackoffTotal      time.Duration
+	WriteSQLRespTotal time.Duration
+	Prepared          bool
 }
 
 // newStmtSummaryByDigestMap creates an empty stmtSummaryByDigestMap.
