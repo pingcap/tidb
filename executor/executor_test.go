@@ -6461,21 +6461,23 @@ func (s *testSerialSuite) TestCoprocessorOOMAction(c *C) {
 	}{
 		{
 			name: "keep Order",
-			sql:  "select * from t6 order by id",
+			sql:  "select id from t6 order by id",
 		},
 		{
 			name: "non keep Order",
-			sql:  "select * from t5",
+			sql:  "select id from t5",
 		},
 	}
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.OOMAction = config.OOMActionCancel
 	})
-	quota := count * 15
+	failpoint.Enable("github.com/pingcap/tidb/store/tikv/testRateLimitActionMockConsume", `return(true)`)
+	defer failpoint.Disable("github.com/pingcap/tidb/store/tikv/testRateLimitActionMockConsume")
 	// assert oom action
 	for _, testcase := range testcases {
 		c.Log(testcase.name)
+		quota := 255
 		se, err := session.CreateSession4Test(s.store)
 		c.Check(err, IsNil)
 		tk.Se = se
@@ -6517,7 +6519,7 @@ func (s *testSerialSuite) TestCoprocessorOOMAction(c *C) {
 		tk.Se = se
 		tk.MustExec("use test")
 		tk.MustExec("set @@tidb_distsql_scan_concurrency = 30")
-		tk.MustExec(fmt.Sprintf("set @@tidb_mem_quota_query=%v;", quota))
+		tk.MustExec("set @@tidb_mem_quota_query=1")
 		err = tk.QueryToErr(testcase.sql)
 		c.Assert(err, NotNil)
 		c.Assert(err.Error(), Matches, "Out Of Memory Quota.*")
