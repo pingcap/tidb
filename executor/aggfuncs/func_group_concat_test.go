@@ -16,6 +16,7 @@ package aggfuncs_test
 import (
 	"bytes"
 	"fmt"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
