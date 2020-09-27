@@ -288,23 +288,36 @@ func generateListPartitionExpr(ctx sessionctx.Context, pi *model.PartitionInfo,
 	columns []*expression.Column, names types.NameSlice) (*PartitionExpr, error) {
 	// The caller should assure partition info is not nil.
 	locateExprs := make([]expression.Expression, 0, len(pi.Definitions))
-	var buf bytes.Buffer
+	var buf, nullCondBuf bytes.Buffer
 	schema := expression.NewSchema(columns...)
 	partStr := pi.Expr
 	p := parser.New()
 	for _, def := range pi.Definitions {
-		fmt.Fprintf(&buf, "((%s) in (%s))", partStr, strings.Join(def.InValues, ","))
-		for _, value := range def.InValues {
-			expr, err := parseSimpleExprWithNames(p, ctx, value, schema, names)
-			if err != nil {
-				return nil, errors.Trace(err)
+		buf.WriteString("((%s) in (")
+		for i, vs := range def.InValues {
+			if i > 0 {
+				buf.WriteByte(',')
 			}
-			v, err := expr.Eval(chunk.Row{})
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			if v.IsNull() {
-				fmt.Fprintf(&buf, " or (%s) is null", partStr)
+			buf.WriteString("('")
+			buf.WriteString(strings.Join(vs, "','"))
+			buf.WriteString("')")
+		}
+		buf.WriteString(")")
+		for _, vs := range def.InValues {
+			nullCondBuf.Reset()
+			for _, value := range vs {
+				expr, err := parseSimpleExprWithNames(p, ctx, value, schema, names)
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
+				v, err := expr.Eval(chunk.Row{})
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
+				if v.IsNull() {
+					hasNull = true
+					break
+				}
 			}
 		}
 

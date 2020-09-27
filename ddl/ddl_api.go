@@ -1853,14 +1853,14 @@ func checkPartitionByRange(ctx sessionctx.Context, tbInfo *model.TableInfo, s *a
 	}
 
 	// Check for range columns partition.
-	if err := checkRangeColumnsPartitionType(tbInfo); err != nil {
+	if err := checkColumnsPartitionType(tbInfo); err != nil {
 		return err
 	}
 
 	if s != nil {
 		for _, def := range s.Partition.Definitions {
 			exprs := def.Clause.(*ast.PartitionDefinitionClauseLessThan).Exprs
-			if err := checkRangeColumnsTypeAndValuesMatch(ctx, tbInfo, exprs); err != nil {
+			if err := checkColumnsTypeAndValuesMatch(ctx, tbInfo, exprs); err != nil {
 				return err
 			}
 		}
@@ -1892,14 +1892,27 @@ func checkPartitionByList(ctx sessionctx.Context, tbInfo *model.TableInfo, s *as
 	if s == nil {
 		return nil
 	}
-
-	if err := checkPartitionFuncValid(ctx, tbInfo, s.Partition.Expr); err != nil {
+	if len(pi.Columns) == 0 {
+		if err := checkPartitionFuncValid(ctx, tbInfo, s.Partition.Expr); err != nil {
+			return err
+		}
+		return checkPartitionFuncType(ctx, s, tbInfo)
+	}
+	if err := checkColumnsPartitionType(tbInfo); err != nil {
 		return err
 	}
-	return checkPartitionFuncType(ctx, s, tbInfo)
+	for _, def := range s.Partition.Definitions {
+		inValues := def.Clause.(*ast.PartitionDefinitionClauseIn).Values
+		for _, vs := range inValues {
+			if err := checkColumnsTypeAndValuesMatch(ctx, tbInfo, vs); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
-func checkRangeColumnsPartitionType(tbInfo *model.TableInfo) error {
+func checkColumnsPartitionType(tbInfo *model.TableInfo) error {
 	for _, col := range tbInfo.Partition.Columns {
 		colInfo := getColumnInfoByName(tbInfo, col.L)
 		if colInfo == nil {
@@ -4800,7 +4813,7 @@ func buildPartitionInfo(ctx sessionctx.Context, meta *model.TableInfo, d *ddl, s
 		// For RANGE partition only VALUES LESS THAN should be possible.
 		clause := def.Clause.(*ast.PartitionDefinitionClauseLessThan)
 		if len(part.Columns) > 0 {
-			if err := checkRangeColumnsTypeAndValuesMatch(ctx, meta, clause.Exprs); err != nil {
+			if err := checkColumnsTypeAndValuesMatch(ctx, meta, clause.Exprs); err != nil {
 				return nil, err
 			}
 		}
@@ -4823,7 +4836,7 @@ func buildPartitionInfo(ctx sessionctx.Context, meta *model.TableInfo, d *ddl, s
 	return part, nil
 }
 
-func checkRangeColumnsTypeAndValuesMatch(ctx sessionctx.Context, meta *model.TableInfo, exprs []ast.ExprNode) error {
+func checkColumnsTypeAndValuesMatch(ctx sessionctx.Context, meta *model.TableInfo, exprs []ast.ExprNode) error {
 	// Validate() has already checked len(colNames) = len(exprs)
 	// create table ... partition by range columns (cols)
 	// partition p0 values less than (expr)

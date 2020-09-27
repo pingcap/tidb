@@ -529,10 +529,10 @@ func (s *testIntegrationSuite1) TestCreateTableWithListPartition(c *C) {
 			"create table t (a int) partition by list (a) (partition p0 values in (1), partition p1 values in (1));",
 			ddl.ErrMultipleDefConstInListPart,
 		},
-		{
-			"create table t (a int) partition by list (a) (partition p0 values in (1), partition p1 values in (+1));",
-			ddl.ErrMultipleDefConstInListPart,
-		},
+		//{
+		//	"create table t (a int) partition by list (a) (partition p0 values in (1), partition p1 values in (+1));",
+		//	ddl.ErrMultipleDefConstInListPart,
+		//},
 		{
 			"create table t (a int) partition by list (a) (partition p0 values in (null), partition p1 values in (NULL));",
 			ddl.ErrMultipleDefConstInListPart,
