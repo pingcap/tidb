@@ -20,14 +20,14 @@ import (
 // SyncSet is a synchronized set
 type SyncSet struct {
 	data map[interface{}]struct{}
-	lock *sync.RWMutex
+	mu   *sync.RWMutex
 }
 
 // NewSyncSet builds a synchronized set.
 func NewSyncSet(vs ...interface{}) SyncSet {
 	set := SyncSet{
 		data: map[interface{}]struct{}{},
-		lock: &sync.RWMutex{},
+		mu:   &sync.RWMutex{},
 	}
 	for _, v := range vs {
 		set.data[v] = struct{}{}
@@ -37,30 +37,44 @@ func NewSyncSet(vs ...interface{}) SyncSet {
 
 // Exist checks whether `val` exists in `s`.
 func (s SyncSet) Exist(val interface{}) bool {
-	s.lock.RLock()
+	s.mu.RLock()
 	_, ok := s.data[val]
-	s.lock.RUnlock()
+	s.mu.RUnlock()
 	return ok
+}
+
+// Insert inserts `val` into `s`.
+func (s SyncSet) Insert(val interface{}) {
+	s.mu.Lock()
+	s.data[val] = struct{}{}
+	s.mu.Unlock()
 }
 
 // InsertIfNotExist inserts `val` into `s` if `val` does not exists in `s`.
 // It returns true if `val` already exists.
 func (s SyncSet) InsertIfNotExist(val interface{}) bool {
-	s.lock.Lock()
+	s.mu.RLock()
 	_, ok := s.data[val]
+	s.mu.RUnlock()
 	if ok {
-		s.lock.Unlock()
+		return true
+	}
+
+	s.mu.Lock()
+	_, ok = s.data[val]
+	if ok {
+		s.mu.Unlock()
 		return true
 	}
 	s.data[val] = struct{}{}
-	s.lock.Unlock()
+	s.mu.Unlock()
 	return false
 }
 
 // Count returns the number in Set s.
 func (s SyncSet) Count() int {
-	s.lock.RLock()
+	s.mu.RLock()
 	count := len(s.data)
-	s.lock.RUnlock()
+	s.mu.RUnlock()
 	return count
 }
