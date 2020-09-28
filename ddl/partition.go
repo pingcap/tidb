@@ -798,9 +798,8 @@ func checkCreatePartitionValue(ctx sessionctx.Context, tblInfo *model.TableInfo)
 
 func checkListPartitionValue(ctx sessionctx.Context, tblInfo *model.TableInfo) error {
 	pi := tblInfo.Partition
-	defs := pi.Definitions
-	if len(defs) == 0 {
-		return nil
+	if len(pi.Definitions) == 0 {
+		return ast.ErrPartitionsMustBeDefined.GenWithStackByArgs("LIST")
 	}
 	if err := formatListPartitionValue(ctx, tblInfo); err != nil {
 		return err
@@ -812,7 +811,7 @@ func checkListPartitionValue(ctx sessionctx.Context, tblInfo *model.TableInfo) e
 		partitionsValuesMap = append(partitionsValuesMap, make(map[string]struct{}))
 	}
 
-	checkMultipleValue := func(vs []string) error {
+	checkUniqueValue := func(vs []string) error {
 		found := 0
 		for i, v := range vs {
 			m := partitionsValuesMap[i]
@@ -829,7 +828,7 @@ func checkListPartitionValue(ctx sessionctx.Context, tblInfo *model.TableInfo) e
 
 	for i, def := range pi.Definitions {
 		for j, vs := range def.InValues {
-			if err := checkMultipleValue(vs); err != nil {
+			if err := checkUniqueValue(vs); err != nil {
 				return err
 			}
 			pi.Definitions[i].InValues[j] = vs
@@ -875,10 +874,9 @@ func getRangeValue(ctx sessionctx.Context, str string, unsignedBigint bool) (int
 	return 0, false, ErrNotAllowedTypeInPartition.GenWithStackByArgs(str)
 }
 
-// getRangeValue gets an integer/null from the string value.
+// getListPartitionValue gets an integer/null from the string value.
 // The returned boolean value indicates whether the input string is a null.
 func getListPartitionValue(ctx sessionctx.Context, str string, unsignedBigint bool) (interface{}, bool, error) {
-	// Unsigned bigint was converted to uint64 handle.
 	if unsignedBigint {
 		if value, err := strconv.ParseUint(str, 10, 64); err == nil {
 			return value, false, nil
@@ -896,8 +894,8 @@ func getListPartitionValue(ctx sessionctx.Context, str string, unsignedBigint bo
 		if value, err := strconv.ParseInt(str, 10, 64); err == nil {
 			return value, false, nil
 		}
-		// The range value maybe not an integer, it could be a constant expression.
-		// For example, the following two cases are the same:
+		// The input value maybe not an integer, it could be a constant expression or null.
+		// For example:
 		// PARTITION p0 VALUES IN (TO_SECONDS('2004-01-01'))
 		// PARTITION p0 VALUES IN (NULL)
 		e, err1 := expression.ParseSimpleExprWithTableInfo(ctx, str, &model.TableInfo{})

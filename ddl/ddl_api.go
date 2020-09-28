@@ -1955,10 +1955,6 @@ func checkPartitionByList(ctx sessionctx.Context, tbInfo *model.TableInfo, s *as
 		return err
 	}
 
-	if len(pi.Definitions) == 0 {
-		return ast.ErrPartitionsMustBeDefined.GenWithStackByArgs("LIST")
-	}
-
 	if err := checkListPartitionValue(ctx, tbInfo); err != nil {
 		return err
 	}
