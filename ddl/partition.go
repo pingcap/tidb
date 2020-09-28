@@ -867,19 +867,14 @@ func getPartitionDef(tblInfo *model.TableInfo, partName string) (index int, def 
 	return index, nil, table.ErrUnknownPartition.GenWithStackByArgs(partName, tblInfo.Name.O)
 }
 
-func buildPlacementDropRules(schemaID, tableID int64, partitionIDs []int64) []*placement.RuleOp {
-	rules := make([]*placement.RuleOp, 0, len(partitionIDs))
+func buildPlacementDropRules(partitionIDs []int64) []*placement.Bundle {
+	bundles := make([]*placement.Bundle, 0, len(partitionIDs))
 	for _, partitionID := range partitionIDs {
-		rules = append(rules, &placement.RuleOp{
-			Action:           placement.RuleOpDel,
-			DeleteByIDPrefix: true,
-			Rule: &placement.Rule{
-				GroupID: placement.RuleDefaultGroupID,
-				ID:      fmt.Sprintf("%d_t%d_p%d", schemaID, tableID, partitionID),
-			},
+		bundles = append(bundles, &placement.Bundle{
+			ID: placement.GroupID(partitionID),
 		})
 	}
-	return rules
+	return bundles
 }
 
 // onDropTablePartition deletes old partition meta.
@@ -907,8 +902,9 @@ func onDropTablePartition(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		physicalTableIDs = removePartitionInfo(tblInfo, partNames)
 	}
 
-	rules := buildPlacementDropRules(job.SchemaID, tblInfo.ID, physicalTableIDs)
-	err = infosync.UpdatePlacementRules(nil, rules)
+	bundles := buildPlacementDropRules(physicalTableIDs)
+
+	err = infosync.PutRuleBundles(nil, bundles)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
@@ -1536,7 +1532,7 @@ func onAlterTablePartition(t *meta.Meta, job *model.Job) (int64, error) {
 		return 0, errors.Trace(table.ErrUnknownPartition.GenWithStackByArgs("drop?", tblInfo.Name.O))
 	}
 
-	err = infosync.PutRuleBundle(nil, bundle)
+	err = infosync.PutRuleBundles(nil, []*placement.Bundle{bundle})
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return 0, errors.Wrapf(err, "failed to notify PD the placement rules")
