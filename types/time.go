@@ -1713,21 +1713,13 @@ func ParseDate(sc *stmtctx.StatementContext, str string) (Time, error) {
 }
 
 // ParseTimeFromYear parse a `YYYY` formed year to corresponded Datetime type.
-func ParseTimeFromYear(sc *stmtctx.StatementContext, num int64) (Time, error) {
-	if num == 0 {
+// year is granted to be in the range [MinYear, MaxYear].
+func ParseTimeFromYear(sc *stmtctx.StatementContext, year int64) (Time, error) {
+	if year == 0 {
 		return NewTime(ZeroCoreTime, mysql.TypeDate, DefaultFsp), nil
 	}
 
-	if num < math.MinInt16 || num > math.MaxInt16 {
-		return ZeroDate, errors.Trace(ErrWrongValue.GenWithStackByArgs(TimeStr, strconv.FormatInt(num, 10)))
-	}
-
-	if int16(num) < MinYear || int16(num) > MaxYear {
-		return NewTime(ZeroCoreTime, mysql.TypeDatetime, DefaultFsp), nil
-	}
-
-	dt := FromDate(int(num), 0, 0, 0, 0, 0, 0)
-
+	dt := FromDate(int(year), 0, 0, 0, 0, 0, 0)
 	return NewTime(dt, mysql.TypeDatetime, DefaultFsp), nil
 }
 
