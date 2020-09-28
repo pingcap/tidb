@@ -1,6 +1,7 @@
 package export
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"regexp"
@@ -9,12 +10,16 @@ import (
 	"time"
 
 	"github.com/coreos/go-semver/semver"
-	"github.com/pingcap/dumpling/v4/log"
+	"github.com/pingcap/br/pkg/storage"
 	filter "github.com/pingcap/tidb-tools/pkg/table-filter"
 	"go.uber.org/zap"
+
+	"github.com/pingcap/dumpling/v4/log"
 )
 
 type Config struct {
+	storage.BackendOptions
+
 	Databases []string
 	Host      string
 	User      string
@@ -62,6 +67,8 @@ type Config struct {
 	SessionParams      map[string]interface{}
 
 	PosAfterConnect bool
+
+	ExternalStorage storage.ExternalStorage `json:"-"`
 }
 
 func DefaultConfig() *Config {
@@ -115,6 +122,14 @@ func (conf *Config) GetDSN(db string) string {
 		dsn += "&tls=dumpling-tls-target"
 	}
 	return dsn
+}
+
+func (config *Config) createExternalStorage(ctx context.Context) (storage.ExternalStorage, error) {
+	b, err := storage.ParseBackend(config.OutputDirPath, &config.BackendOptions)
+	if err != nil {
+		return nil, err
+	}
+	return storage.Create(ctx, b, false)
 }
 
 const (

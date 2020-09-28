@@ -3,9 +3,9 @@ package export
 import (
 	"context"
 	"fmt"
-	"path"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/pingcap/br/pkg/storage"
 	. "github.com/pingcap/check"
 )
 
@@ -30,16 +30,21 @@ func (s *testMetaDataSuite) TestMysqlMetaData(c *C) {
 	mock.ExpectQuery("SHOW SLAVE STATUS").WillReturnRows(
 		sqlmock.NewRows([]string{"exec_master_log_pos", "relay_master_log_file", "master_host", "Executed_Gtid_Set", "Seconds_Behind_Master"}))
 
-	testFilePath := "/test"
-	m := newGlobalMetadata(testFilePath)
+	m := newGlobalMetadata(s.createStorage(c))
 	c.Assert(m.recordGlobalMetaData(conn, ServerTypeMySQL, false), IsNil)
-	c.Assert(m.filePath, Equals, path.Join(testFilePath, metadataPath))
 
 	c.Assert(m.buffer.String(), Equals, "SHOW MASTER STATUS:\n"+
 		"\tLog: ON.000001\n"+
 		"\tPos: 7502\n"+
 		"\tGTID:6ce40be3-e359-11e9-87e0-36933cb0ca5a:1-29\n\n")
 	c.Assert(mock.ExpectationsWereMet(), IsNil)
+}
+
+func (s *testMetaDataSuite) createStorage(c *C) storage.ExternalStorage {
+	backend, err := storage.ParseBackend("file:///"+c.MkDir(), nil)
+	c.Assert(err, IsNil)
+	testLoc, _ := storage.Create(context.Background(), backend, true)
+	return testLoc
 }
 
 func (s *testMetaDataSuite) TestMetaDataAfterConn(c *C) {
@@ -63,11 +68,9 @@ func (s *testMetaDataSuite) TestMetaDataAfterConn(c *C) {
 		sqlmock.NewRows([]string{"exec_master_log_pos", "relay_master_log_file", "master_host", "Executed_Gtid_Set", "Seconds_Behind_Master"}))
 	mock.ExpectQuery("SHOW MASTER STATUS").WillReturnRows(rows2)
 
-	testFilePath := "/test"
-	m := newGlobalMetadata(testFilePath)
+	m := newGlobalMetadata(s.createStorage(c))
 	c.Assert(m.recordGlobalMetaData(conn, ServerTypeMySQL, false), IsNil)
 	c.Assert(m.recordGlobalMetaData(conn, ServerTypeMySQL, true), IsNil)
-	c.Assert(m.filePath, Equals, path.Join(testFilePath, metadataPath))
 
 	c.Assert(m.buffer.String(), Equals, "SHOW MASTER STATUS:\n"+
 		"\tLog: ON.000001\n"+
@@ -98,10 +101,8 @@ func (s *testMetaDataSuite) TestMysqlWithFollowersMetaData(c *C) {
 	mock.ExpectQuery("SELECT @@default_master_connection").WillReturnError(fmt.Errorf("mock error"))
 	mock.ExpectQuery("SHOW SLAVE STATUS").WillReturnRows(followerRows)
 
-	testFilePath := "/test"
-	m := newGlobalMetadata(testFilePath)
+	m := newGlobalMetadata(s.createStorage(c))
 	c.Assert(m.recordGlobalMetaData(conn, ServerTypeMySQL, false), IsNil)
-	c.Assert(m.filePath, Equals, path.Join(testFilePath, metadataPath))
 
 	c.Assert(m.buffer.String(), Equals, "SHOW MASTER STATUS:\n"+
 		"\tLog: ON.000001\n"+
@@ -131,10 +132,8 @@ func (s *testMetaDataSuite) TestMysqlWithNullFollowersMetaData(c *C) {
 	mock.ExpectQuery("SELECT @@default_master_connection").WillReturnError(fmt.Errorf("mock error"))
 	mock.ExpectQuery("SHOW SLAVE STATUS").WillReturnRows(sqlmock.NewRows([]string{"SQL_Remaining_Delay"}).AddRow(nil))
 
-	testFilePath := "/test"
-	m := newGlobalMetadata(testFilePath)
+	m := newGlobalMetadata(s.createStorage(c))
 	c.Assert(m.recordGlobalMetaData(conn, ServerTypeMySQL, false), IsNil)
-	c.Assert(m.filePath, Equals, path.Join(testFilePath, metadataPath))
 
 	c.Assert(m.buffer.String(), Equals, "SHOW MASTER STATUS:\n"+
 		"\tLog: ON.000001\n"+
@@ -160,10 +159,8 @@ func (s *testMetaDataSuite) TestMariaDBMetaData(c *C) {
 		AddRow(gtidSet)
 	mock.ExpectQuery("SELECT @@global.gtid_binlog_pos").WillReturnRows(rows)
 	mock.ExpectQuery("SHOW SLAVE STATUS").WillReturnRows(rows)
-	testFilePath := "/test"
-	m := newGlobalMetadata(testFilePath)
+	m := newGlobalMetadata(s.createStorage(c))
 	c.Assert(m.recordGlobalMetaData(conn, ServerTypeMariaDB, false), IsNil)
-	c.Assert(m.filePath, Equals, path.Join(testFilePath, metadataPath))
 
 	c.Assert(mock.ExpectationsWereMet(), IsNil)
 }
@@ -189,10 +186,8 @@ func (s *testMetaDataSuite) TestMariaDBWithFollowersMetaData(c *C) {
 			AddRow("connection_1"))
 	mock.ExpectQuery("SHOW ALL SLAVES STATUS").WillReturnRows(followerRows)
 
-	testFilePath := "/test"
-	m := newGlobalMetadata(testFilePath)
+	m := newGlobalMetadata(s.createStorage(c))
 	c.Assert(m.recordGlobalMetaData(conn, ServerTypeMySQL, false), IsNil)
-	c.Assert(m.filePath, Equals, path.Join(testFilePath, metadataPath))
 
 	c.Assert(m.buffer.String(), Equals, "SHOW MASTER STATUS:\n"+
 		"\tLog: ON.000001\n"+

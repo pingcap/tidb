@@ -6,15 +6,16 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"path"
 	"strings"
 	"time"
+
+	"github.com/pingcap/br/pkg/storage"
 )
 
 type globalMetadata struct {
 	buffer bytes.Buffer
 
-	filePath string
+	storage storage.ExternalStorage
 }
 
 const (
@@ -28,10 +29,10 @@ const (
 	mariadbShowMasterStatusFieldNum = 4
 )
 
-func newGlobalMetadata(outputDir string) *globalMetadata {
+func newGlobalMetadata(s storage.ExternalStorage) *globalMetadata {
 	return &globalMetadata{
-		filePath: path.Join(outputDir, metadataPath),
-		buffer:   bytes.Buffer{},
+		storage: s,
+		buffer:  bytes.Buffer{},
 	}
 }
 
@@ -189,12 +190,12 @@ func (m *globalMetadata) recordGlobalMetaData(db *sql.Conn, serverType ServerTyp
 	})
 }
 
-func (m *globalMetadata) writeGlobalMetaData() error {
-	fileWriter, tearDown, err := buildFileWriter(m.filePath)
+func (m *globalMetadata) writeGlobalMetaData(ctx context.Context) error {
+	fileWriter, tearDown, err := buildFileWriter(ctx, m.storage, metadataPath)
 	if err != nil {
 		return err
 	}
-	defer tearDown()
+	defer tearDown(ctx)
 
-	return write(fileWriter, m.String())
+	return write(ctx, fileWriter, m.String())
 }

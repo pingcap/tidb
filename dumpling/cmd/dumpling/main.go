@@ -24,12 +24,14 @@ import (
 	"time"
 
 	"github.com/docker/go-units"
-	"github.com/pingcap/dumpling/v4/cli"
-	"github.com/pingcap/dumpling/v4/export"
-	"github.com/pingcap/dumpling/v4/log"
+	"github.com/pingcap/br/pkg/storage"
 	filter "github.com/pingcap/tidb-tools/pkg/table-filter"
 	"github.com/spf13/pflag"
 	"go.uber.org/zap"
+
+	"github.com/pingcap/dumpling/v4/cli"
+	"github.com/pingcap/dumpling/v4/export"
+	"github.com/pingcap/dumpling/v4/log"
 )
 
 var (
@@ -124,6 +126,8 @@ func main() {
 	pflag.StringVar(&outputFilenameFormat, "output-filename-template", "", "The output filename template (without file extension)")
 	pflag.BoolVar(&completeInsert, "complete-insert", false, "Use complete INSERT statements that include column names")
 
+	storage.DefineFlags(pflag.CommandLine)
+
 	printVersion := pflag.BoolP("version", "V", false, "Print Dumpling version")
 
 	pflag.Parse()
@@ -206,6 +210,12 @@ func main() {
 	conf.CsvDelimiter = csvDelimiter
 	conf.OutputFileTemplate = tmpl
 	conf.CompleteInsert = completeInsert
+
+	err = conf.ParseFromFlags(pflag.CommandLine)
+	if err != nil {
+		fmt.Println(err.Error())
+		os.Exit(2)
+	}
 
 	err = export.Dump(context.Background(), conf)
 	if err != nil {

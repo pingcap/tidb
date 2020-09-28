@@ -1,6 +1,7 @@
 package export
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"regexp"
@@ -70,7 +71,7 @@ func ParseOutputFileTemplate(text string) (*template.Template, error) {
 	return template.Must(DefaultOutputFileTemplate.Clone()).Parse(text)
 }
 
-func adjustConfig(conf *Config) error {
+func adjustConfig(ctx context.Context, conf *Config) error {
 	// Init logger
 	if conf.Logger != nil {
 		log.SetAppLogger(conf.Logger)
@@ -110,6 +111,12 @@ func adjustConfig(conf *Config) error {
 	if conf.Sql != "" && conf.Where != "" {
 		return errors.New("can't specify both --sql and --where at the same time. Please try to combine them into --sql")
 	}
+
+	s, err := conf.createExternalStorage(ctx)
+	if err != nil {
+		return err
+	}
+	conf.ExternalStorage = s
 
 	return nil
 }

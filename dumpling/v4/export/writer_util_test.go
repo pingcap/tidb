@@ -1,7 +1,6 @@
 package export
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -10,6 +9,7 @@ import (
 
 	"database/sql/driver"
 
+	"github.com/pingcap/br/pkg/storage"
 	. "github.com/pingcap/check"
 )
 
@@ -35,15 +35,15 @@ func (s *testUtilSuite) TestWriteMeta(c *C) {
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci"
 	specCmts := []string{"/*!40103 SET TIME_ZONE='+00:00' */;"}
 	meta := newMockMetaIR("t1", createTableStmt, specCmts)
-	strCollector := &mockStringCollector{}
+	writer := storage.NewBufferWriter()
 
-	err := WriteMeta(meta, strCollector)
+	err := WriteMeta(context.Background(), meta, writer)
 	c.Assert(err, IsNil)
 	expected := "/*!40103 SET TIME_ZONE='+00:00' */;\n" +
 		"CREATE TABLE `t1` (\n" +
 		"  `a` int(11) DEFAULT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;\n"
-	c.Assert(strCollector.buf, Equals, expected)
+	c.Assert(writer.String(), Equals, expected)
 }
 
 func (s *testUtilSuite) TestWriteInsert(c *C) {
@@ -59,7 +59,7 @@ func (s *testUtilSuite) TestWriteInsert(c *C) {
 		"/*!40014 SET FOREIGN_KEY_CHECKS=0*/;",
 	}
 	tableIR := newMockTableIR("test", "employee", data, specCmts, colTypes)
-	bf := &bytes.Buffer{}
+	bf := storage.NewBufferWriter()
 
 	err := WriteInsert(context.Background(), tableIR, bf, UnspecifiedSize, UnspecifiedSize)
 	c.Assert(err, IsNil)
@@ -89,7 +89,7 @@ func (s *testUtilSuite) TestWriteInsertReturnsError(c *C) {
 	rowErr := errors.New("mock row error")
 	tableIR := newMockTableIR("test", "employee", data, specCmts, colTypes)
 	tableIR.rowErr = rowErr
-	bf := &bytes.Buffer{}
+	bf := storage.NewBufferWriter()
 
 	err := WriteInsert(context.Background(), tableIR, bf, UnspecifiedSize, UnspecifiedSize)
 	c.Assert(err, Equals, rowErr)
@@ -111,7 +111,7 @@ func (s *testUtilSuite) TestWriteInsertInCsv(c *C) {
 	}
 	colTypes := []string{"INT", "SET", "VARCHAR", "VARCHAR", "TEXT"}
 	tableIR := newMockTableIR("test", "employee", data, nil, colTypes)
-	bf := &bytes.Buffer{}
+	bf := storage.NewBufferWriter()
 
 	// test nullValue
 	opt := &csvOption{separator: []byte(","), delimiter: doubleQuotationMark, nullValue: "\\N"}
@@ -176,7 +176,7 @@ func (s *testUtilSuite) TestSQLDataTypes(c *C) {
 		tableData := [][]driver.Value{{origin}}
 		colType := []string{sqlType}
 		tableIR := newMockTableIR("test", "t", tableData, nil, colType)
-		bf := &bytes.Buffer{}
+		bf := storage.NewBufferWriter()
 
 		err := WriteInsert(context.Background(), tableIR, bf, UnspecifiedSize, UnspecifiedSize)
 		c.Assert(err, IsNil)
@@ -187,12 +187,12 @@ func (s *testUtilSuite) TestSQLDataTypes(c *C) {
 }
 
 func (s *testUtilSuite) TestWrite(c *C) {
-	mocksw := &mockStringWriter{}
+	mocksw := &mockPoisonWriter{}
 	src := []string{"test", "loooooooooooooooooooong", "poison"}
 	exp := []string{"test", "loooooooooooooooooooong", "poison_error"}
 
 	for i, s := range src {
-		err := write(mocksw, s)
+		err := write(context.Background(), mocksw, s)
 		if err != nil {
 			c.Assert(err.Error(), Equals, exp[i])
 		} else {
@@ -200,6 +200,6 @@ func (s *testUtilSuite) TestWrite(c *C) {
 			c.Assert(mocksw.buf, Equals, exp[i])
 		}
 	}
-	err := write(mocksw, "test")
+	err := write(context.Background(), mocksw, "test")
 	c.Assert(err, IsNil)
 }
