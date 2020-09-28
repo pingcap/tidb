@@ -1028,7 +1028,11 @@ func (e *LimitExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			if begin == end {
 				break
 			}
-			req.AppendByColIdxs(e.childResult, int(begin), int(end), e.columnIdxsUsedByChild)
+			if e.columnIdxsUsedByChild != nil {
+				req.AppendByColIdxs(e.childResult, int(begin), int(end), e.columnIdxsUsedByChild)
+			} else {
+				req.Append(e.childResult, int(begin), int(end))
+			}
 			return nil
 		}
 		e.cursor += batchSize
@@ -1051,8 +1055,15 @@ func (e *LimitExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 	e.cursor += batchSize
 
-	req.SwapColumns(e.childResult.Prune(e.columnIdxsUsedByChild))
-	e.childResult = newFirstChunk(e.children[0]) //TOOD: improve
+	if e.columnIdxsUsedByChild != nil {
+		for i, childIdx := range e.columnIdxsUsedByChild {
+			if err = req.SwapColumn(i, e.childResult, childIdx); err != nil {
+				return err
+			}
+		}
+	} else {
+		req.SwapColumns(e.childResult)
+	}
 	return nil
 }
 

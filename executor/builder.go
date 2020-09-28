@@ -622,6 +622,9 @@ func (b *executorBuilder) buildLimit(v *plannercore.PhysicalLimit) Executor {
 			e.columnIdxsUsedByChild = append(e.columnIdxsUsedByChild, i)
 		}
 	}
+	if len(e.columnIdxsUsedByChild) == len(childUsedSchema) {
+		e.columnIdxsUsedByChild = nil // improve performance when all columns are used.
+	}
 	return e
 }
 
