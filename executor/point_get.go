@@ -155,12 +155,8 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 	if e.runtimeStats != nil {
 		snapshotStats := &tikv.SnapshotRuntimeStats{}
-<<<<<<< HEAD
 		e.stats = &pointGetRuntimeStats{
 			BasicRuntimeStats:    e.runtimeStats,
-=======
-		e.stats = &runtimeStatsWithSnapshot{
->>>>>>> bada280... *: fix cop task runtime information is wrong in the concurrent executor (#19849)
 			SnapshotRuntimeStats: snapshotStats,
 		}
 		e.snapshot.SetOption(kv.CollectRuntimeStats, snapshotStats)
@@ -419,7 +415,6 @@ func getColInfoByID(tbl *model.TableInfo, colID int64) *model.ColumnInfo {
 	return nil
 }
 
-<<<<<<< HEAD
 type pointGetRuntimeStats struct {
 	*execdetails.BasicRuntimeStats
 	*tikv.SnapshotRuntimeStats
@@ -430,46 +425,14 @@ func (e *pointGetRuntimeStats) String() string {
 	if e.BasicRuntimeStats != nil {
 		basic = e.BasicRuntimeStats.String()
 	}
-=======
-type runtimeStatsWithSnapshot struct {
-	*tikv.SnapshotRuntimeStats
-}
-
-func (e *runtimeStatsWithSnapshot) String() string {
->>>>>>> bada280... *: fix cop task runtime information is wrong in the concurrent executor (#19849)
 	if e.SnapshotRuntimeStats != nil {
-		return e.SnapshotRuntimeStats.String()
+		rpcStatsStr = e.SnapshotRuntimeStats.String()
 	}
-	return ""
-}
-
-// Clone implements the RuntimeStats interface.
-func (e *runtimeStatsWithSnapshot) Clone() execdetails.RuntimeStats {
-	newRs := &runtimeStatsWithSnapshot{}
-	if e.SnapshotRuntimeStats != nil {
-		snapshotStats := e.SnapshotRuntimeStats.Clone()
-		newRs.SnapshotRuntimeStats = snapshotStats.(*tikv.SnapshotRuntimeStats)
+	if rpcStatsStr == "" {
+		return basic
 	}
-	return newRs
-}
-
-// Merge implements the RuntimeStats interface.
-func (e *runtimeStatsWithSnapshot) Merge(other execdetails.RuntimeStats) {
-	tmp, ok := other.(*runtimeStatsWithSnapshot)
-	if !ok {
-		return
+	if basic == "" {
+		return rpcStatsStr
 	}
-	if tmp.SnapshotRuntimeStats != nil {
-		if e.SnapshotRuntimeStats == nil {
-			snapshotStats := tmp.SnapshotRuntimeStats.Clone()
-			e.SnapshotRuntimeStats = snapshotStats.(*tikv.SnapshotRuntimeStats)
-			return
-		}
-		e.SnapshotRuntimeStats.Merge(tmp.SnapshotRuntimeStats)
-	}
-}
-
-// Tp implements the RuntimeStats interface.
-func (e *runtimeStatsWithSnapshot) Tp() int {
-	return execdetails.TpRuntimeStatsWithSnapshot
+	return basic + ", " + rpcStatsStr
 }
