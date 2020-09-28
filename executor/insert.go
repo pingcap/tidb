@@ -97,16 +97,16 @@ func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) error {
 			}
 		}
 		if e.stats != nil {
-			e.stats.checkInsertTime += time.Since(start)
+			e.stats.CheckInsertTime += time.Since(start)
 		}
 	}
 	e.memTracker.Consume(int64(txn.Size() - txnSize))
 	return nil
 }
 
-func prefetchUniqueIndices(ctx context.Context, txn kv.Transaction, rows []toBeCheckedRow) (map[string][]byte, error) {
+func PrefetchUniqueIndices(ctx context.Context, txn kv.Transaction, rows []toBeCheckedRow) (map[string][]byte, error) {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("prefetchUniqueIndices", opentracing.ChildOf(span.Context()))
+		span1 := span.Tracer().StartSpan("PrefetchUniqueIndices", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
@@ -130,9 +130,9 @@ func prefetchUniqueIndices(ctx context.Context, txn kv.Transaction, rows []toBeC
 	return txn.BatchGet(ctx, batchKeys)
 }
 
-func prefetchConflictedOldRows(ctx context.Context, txn kv.Transaction, rows []toBeCheckedRow, values map[string][]byte) error {
+func PrefetchConflictedOldRows(ctx context.Context, txn kv.Transaction, rows []toBeCheckedRow, values map[string][]byte) error {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("prefetchConflictedOldRows", opentracing.ChildOf(span.Context()))
+		span1 := span.Tracer().StartSpan("PrefetchConflictedOldRows", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
@@ -159,11 +159,11 @@ func prefetchDataCache(ctx context.Context, txn kv.Transaction, rows []toBeCheck
 		defer span1.Finish()
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
-	values, err := prefetchUniqueIndices(ctx, txn, rows)
+	values, err := PrefetchUniqueIndices(ctx, txn, rows)
 	if err != nil {
 		return err
 	}
-	return prefetchConflictedOldRows(ctx, txn, rows, values)
+	return PrefetchConflictedOldRows(ctx, txn, rows, values)
 }
 
 // updateDupRow updates a duplicate row to a new row.
@@ -201,14 +201,14 @@ func (e *InsertExec) batchUpdateDupRows(ctx context.Context, newRows [][]types.D
 			defer snapshot.DelOption(kv.CollectRuntimeStats)
 		}
 	}
-	prefetchStart := time.Now()
+	PrefetchStart := time.Now()
 	// Use BatchGet to fill cache.
 	// It's an optimization and could be removed without affecting correctness.
 	if err = prefetchDataCache(ctx, txn, toBeCheckedRows); err != nil {
 		return err
 	}
 	if e.stats != nil {
-		e.stats.prefetch += time.Since(prefetchStart)
+		e.stats.Prefetch += time.Since(PrefetchStart)
 	}
 	for i, r := range toBeCheckedRows {
 		if r.handleKey != nil {
@@ -268,7 +268,7 @@ func (e *InsertExec) batchUpdateDupRows(ctx context.Context, newRows [][]types.D
 		}
 	}
 	if e.stats != nil {
-		e.stats.checkInsertTime += time.Since(start)
+		e.stats.CheckInsertTime += time.Since(start)
 	}
 	return nil
 }
