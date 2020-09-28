@@ -92,14 +92,6 @@ func RegisterSysVar(sv *SysVar) {
 	sysVarsLock.Unlock()
 }
 
-// CheckSysVar is a thread-safe way to check a sysvar exists
-func CheckSysVar(name string) bool {
-	sysVarsLock.RLock()
-	defer sysVarsLock.RUnlock()
-	_, ok := sysVars[name]
-	return ok
-}
-
 // GetSysVar returns sys var info for name as key.
 func GetSysVar(name string) *SysVar {
 	name = strings.ToLower(name)
@@ -111,8 +103,8 @@ func GetSysVar(name string) *SysVar {
 // SetSysVar sets a sysvar. This will not propagate to the cluster, so it should only be used for instance scoped AUTO variables such as system_time_zone.
 func SetSysVar(name string, value string) {
 	name = strings.ToLower(name)
-	sysVarsLock.RLock()
-	defer sysVarsLock.RUnlock()
+	sysVarsLock.Lock()
+	defer sysVarsLock.Unlock()
 	sysVars[name].Value = value
 }
 
