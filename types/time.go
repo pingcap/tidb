@@ -1713,7 +1713,7 @@ func ParseDate(sc *stmtctx.StatementContext, str string) (Time, error) {
 }
 
 // ParseTimeFromYear parse a `YYYY` formed year to corresponded Datetime type.
-// year is granted to be in the range [MinYear, MaxYear].
+// year must be in the range [MinYear, MaxYear].
 func ParseTimeFromYear(sc *stmtctx.StatementContext, year int64) (Time, error) {
 	if year == 0 {
 		return NewTime(ZeroCoreTime, mysql.TypeDate, DefaultFsp), nil
