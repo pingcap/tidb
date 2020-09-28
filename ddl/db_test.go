@@ -5670,7 +5670,7 @@ func (s *testDBSuite3) TestCancelDropColumnWithCompositeIndex(c *C) {
 			if strings.EqualFold(idx.Meta().Name.L, "idx_c23") {
 				idx1 = idx
 			}
-			if strings.EqualFold(idx.Meta().Name.L, "_CIdx$_idx_c23") {
+			if strings.EqualFold(idx.Meta().Name.O, "_CIdx$_idx_c23") {
 				tmpIdx1 = idx
 			}
 		}
@@ -5806,7 +5806,7 @@ func (s *testDBSuite3) TestCancelDropColumnsWithCompositeIndex(c *C) {
 			if strings.EqualFold(idx.Meta().Name.L, "idx_c23") {
 				idx3 = idx
 			}
-			if strings.EqualFold(idx.Meta().Name.L, "_CIdx$_idx_c23") {
+			if strings.EqualFold(idx.Meta().Name.O, "_CIdx$_idx_c23") {
 				tmpIdx3 = idx
 			}
 		}

@@ -1793,6 +1793,13 @@ func indexInfosToIDList(idxInfos []*model.IndexInfo) []int64 {
 	return ids
 }
 
+// Reorg Composite index name design:
+// CIStr {
+//    O: _CIdx$_[origin name]
+//    L: _CIdx$_[origin name lower]_[origin index ID]
+// }
+// This design will generate a different value in CIStr, so no one can generate this name from
+// client.
 const (
 	tempCompositeIndexPrefix = "_CIdx$_"
 )
@@ -1806,7 +1813,7 @@ func getOrCreateTempCompositeIndices(tblInfo *model.TableInfo, colInfos []*model
 	for _, idxInfo := range idxInfos {
 		ctidxName := model.CIStr{
 			O: fmt.Sprintf("%s%s", tempCompositeIndexPrefix, idxInfo.Name.O),
-			L: fmt.Sprintf("%s%s", tempCompositeIndexPrefix, idxInfo.Name.L),
+			L: fmt.Sprintf("%s%s_%d", tempCompositeIndexPrefix, idxInfo.Name.L, idxInfo.ID),
 		}
 		ctidxInfo := tblInfo.FindIndexByName(ctidxName.L)
 		if ctidxInfo != nil {
@@ -1860,9 +1867,10 @@ func inColumnInfos(col *model.IndexColumn, colInfos []*model.ColumnInfo) bool {
 func getTempCompositeIndices(tblInfo *model.TableInfo, idxInfos []*model.IndexInfo) []*model.IndexInfo {
 	ret := make([]*model.IndexInfo, 0)
 	for _, cidxInfo := range idxInfos {
-		ctidxName := fmt.Sprintf("%s%s", tempCompositeIndexPrefix, cidxInfo.Name.L)
+		ctidxOName := fmt.Sprintf("%s%s", tempCompositeIndexPrefix, cidxInfo.Name.O)
+		ctidxLName := fmt.Sprintf("%s%s_%d", tempCompositeIndexPrefix, cidxInfo.Name.L, cidxInfo.ID)
 		for _, idx := range tblInfo.Indices {
-			if idx.Name.L == ctidxName {
+			if idx.Name.L == ctidxLName && idx.Name.O == ctidxOName {
 				ret = append(ret, idx)
 				break
 			}
@@ -1873,16 +1881,14 @@ func getTempCompositeIndices(tblInfo *model.TableInfo, idxInfos []*model.IndexIn
 
 func renameTempCompositeIdxToOrigin(idx *model.IndexInfo, cidxInfos []*model.IndexInfo) model.CIStr {
 	for _, cidxInfo := range cidxInfos {
-		ctidxName := fmt.Sprintf("%s%s", tempCompositeIndexPrefix, cidxInfo.Name.L)
-		if ctidxName == idx.Name.L {
+		ctidxOName := fmt.Sprintf("%s%s", tempCompositeIndexPrefix, cidxInfo.Name.O)
+		ctidxLName := fmt.Sprintf("%s%s_%d", tempCompositeIndexPrefix, cidxInfo.Name.L, cidxInfo.ID)
+		if ctidxLName == idx.Name.L && idx.Name.O == ctidxOName {
 			return cidxInfo.Name
 		}
 	}
 	// We should not hit here
-	return model.CIStr{
-		O: trimTempCompositeIdxPrefix(idx.Name.O),
-		L: trimTempCompositeIdxPrefix(idx.Name.L),
-	}
+	return model.NewCIStr(trimTempCompositeIdxPrefix(idx.Name.O))
 }
 
 func trimTempCompositeIdxPrefix(name string) string {
