@@ -983,7 +983,8 @@ func (s *session) GetGlobalSysVar(name string) (string, error) {
 	sysVar, err := s.getExecRet(s, sql)
 	if err != nil {
 		if executor.ErrResultIsEmpty.Equal(err) {
-			if sv, ok := variable.SysVars[name]; ok {
+			sv := variable.GetSysVar(name)
+			if sv != nil {
 				return sv.Value, nil
 			}
 			return "", variable.ErrUnknownSystemVar.GenWithStackByArgs(name)
@@ -1767,7 +1768,6 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 		err := plugin.Load(context.Background(), plugin.Config{
 			Plugins:        strings.Split(cfg.Plugin.Load, ","),
 			PluginDir:      cfg.Plugin.Dir,
-			GlobalSysVar:   &variable.SysVars,
 			PluginVarNames: &variable.PluginVarNames,
 		})
 		if err != nil {

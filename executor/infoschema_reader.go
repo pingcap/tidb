@@ -1583,7 +1583,7 @@ func (e *memtableRetriever) setDataFromSessionVar(ctx sessionctx.Context) error 
 	var rows [][]types.Datum
 	var err error
 	sessionVars := ctx.GetSessionVars()
-	for _, v := range variable.SysVars {
+	for _, v := range variable.GetSysVars() {
 		var value string
 		value, err = variable.GetSessionSystemVar(sessionVars, v.Name)
 		if err != nil {
