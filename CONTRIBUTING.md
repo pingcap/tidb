@@ -4,14 +4,33 @@ TiDB is a community-driven open source project and we welcome any contributor.  
 
 This document outlines some conventions about development workflow, commit message formatting, contact points and other resources to make it easier to get your contribution accepted. This document is the canonical source of truth for things like supported toolchain versions for building and testing TiDB.
 
+## Hacktoberfest
+
+TiDB is in Hacktoberfest 2020! [Hacktoberfest](https://hacktoberfest.digitalocean.com/) is a month-long celebration & challenge of open source projects organized by DigitalOcean, Intel, and DEV. Whether you are a seasoned contributor or looking for projects to contribute to for the first time, you’re welcome to participate. Open four or more high-quality pull requests between **October 1 and 31** to any public repositories to get a limited edition Hacktoberfest T-shirt!
+
+To participate：
+
+1. Sign up for [Hacktoberfest](https://hacktoberfest.digitalocean.com/login) using your GitHub account.
+2. Pick up an issue from the following issue lists specially tailored for you.
+3. Submit your PRs
+4. Our maintainers review your submitted PRs. Once you successfully merged 4 or more of them, the PRs will be automatically counted, and you will be eligible to claim your SWAG on Hacktoberfest website.
+
+Available issues:
+
+|  Component | Description  | Issue Link   |
+|---|---|---|
+|  TiDB Dashboard | A Web UI for monitoring, diagnosing and managing the TiDB cluster.   | <https://github.com/pingcap-incubator/tidb-dashboard/issues?q=is%3Aopen+is%3Aissue+label%3AHacktoberfest>   |
+|   |   |   |
+|   |   |   |
+
 <!-- TOC -->
 
 - [Contribution Guide](#contribution-guide)
+    - [Hacktoberfest](#hacktoberfest)
     - [Before you get started](#before-you-get-started)
         - [Sign the CLA](#sign-the-cla)
         - [Setting up your development environment](#setting-up-your-development-environment)
     - [Your First Contribution](#your-first-contribution)
-        - [Hacktoberfest](#hacktoberfest)
     - [Before you open your PR](#before-you-open-your-pr)
     - [TiDB Contribution Workflow](#tidb-contribution-workflow)
     - [Get a code review](#get-a-code-review)
@@ -27,7 +46,7 @@ This document outlines some conventions about development workflow, commit messa
 
 Click the **Sign in with Github to agree** button to sign the CLA. See an example [here](https://cla-assistant.io/pingcap/tidb?pullRequest=16303).
 
-What is [CLA](https://www.clahub.com/pages/why_cla)?
+What is [CLA](https://en.wikipedia.org/wiki/Contributor_License_Agreement)?
 
 ### Setting up your development environment
 
@@ -56,14 +75,6 @@ workspace](https://github.com/tikv/tikv/blob/master/CONTRIBUTING.md#building-and
 
 All set to contribute? You can start by finding an existing issue with the
 [help-wanted](https://github.com/pingcap/tidb/issues?q=is%3Aissue+is%3Aopen+label%3Astatus%2Fhelp-wanted) label in the tidb repository. These issues are well suited for new contributors.
-
-### Hacktoberfest
-
-TiDB is in Hacktoberfest 2020! [Hacktoberfest](https://hacktoberfest.digitalocean.com/) is a month-long celebration & challenge of open source projects organized by DigitalOcean, Intel, and DEV. Whether you are a seasoned contributor or looking for projects to contribute to for the first time, you’re welcome to participate. Open four or more high-quality pull requests between **October 1 and 31** to any public repositories to get a limited edition Hacktoberfest T-shirt!
-
-To participate, sign up for Hacktoberfest using your GitHub, and pick up the following issues specially tailored for you:
-
-<-TO BE UPDATED with ISSUE LINKS-->
 
 ## Before you open your PR
 
