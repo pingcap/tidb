@@ -796,11 +796,14 @@ func checkCreatePartitionValue(ctx sessionctx.Context, tblInfo *model.TableInfo)
 	return nil
 }
 
-func checkListPartitionValue(tblInfo *model.TableInfo) error {
+func checkListPartitionValue(ctx sessionctx.Context, tblInfo *model.TableInfo) error {
 	pi := tblInfo.Partition
 	defs := pi.Definitions
 	if len(defs) == 0 {
 		return nil
+	}
+	if err := formatListPartitionValue(ctx, tblInfo); err != nil {
+		return err
 	}
 
 	var partitionsValuesMap []map[string]struct{}
@@ -867,6 +870,43 @@ func getRangeValue(ctx sessionctx.Context, str string, unsignedBigint bool) (int
 		res, isNull, err2 := e.EvalInt(ctx, chunk.Row{})
 		if err2 == nil && !isNull {
 			return res, true, nil
+		}
+	}
+	return 0, false, ErrNotAllowedTypeInPartition.GenWithStackByArgs(str)
+}
+
+// getRangeValue gets an integer/null from the string value.
+// The returned boolean value indicates whether the input string is a null.
+func getListPartitionValue(ctx sessionctx.Context, str string, unsignedBigint bool) (interface{}, bool, error) {
+	// Unsigned bigint was converted to uint64 handle.
+	if unsignedBigint {
+		if value, err := strconv.ParseUint(str, 10, 64); err == nil {
+			return value, false, nil
+		}
+
+		e, err1 := expression.ParseSimpleExprWithTableInfo(ctx, str, &model.TableInfo{})
+		if err1 != nil {
+			return 0, false, err1
+		}
+		res, isNull, err2 := e.EvalInt(ctx, chunk.Row{})
+		if err2 == nil {
+			return uint64(res), isNull, nil
+		}
+	} else {
+		if value, err := strconv.ParseInt(str, 10, 64); err == nil {
+			return value, false, nil
+		}
+		// The range value maybe not an integer, it could be a constant expression.
+		// For example, the following two cases are the same:
+		// PARTITION p0 VALUES IN (TO_SECONDS('2004-01-01'))
+		// PARTITION p0 VALUES IN (NULL)
+		e, err1 := expression.ParseSimpleExprWithTableInfo(ctx, str, &model.TableInfo{})
+		if err1 != nil {
+			return 0, false, err1
+		}
+		res, isNull, err2 := e.EvalInt(ctx, chunk.Row{})
+		if err2 == nil {
+			return res, isNull, nil
 		}
 	}
 	return 0, false, ErrNotAllowedTypeInPartition.GenWithStackByArgs(str)

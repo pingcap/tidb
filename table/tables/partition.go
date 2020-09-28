@@ -389,7 +389,7 @@ func generateListPartitionExpr(ctx sessionctx.Context, pi *model.PartitionInfo,
 				fmt.Fprintf(&buf, " or (%s) ", nullCondBuf.String())
 			}
 		}
-		fmt.Printf("list partition expr: %v  \n\n----\n", buf.String())
+		fmt.Printf("list partition expr: %v -------\n", buf.String())
 		expr, err := parseSimpleExprWithNames(p, ctx, buf.String(), schema, names)
 		if err != nil {
 			// If it got an error here, ddl may hang forever, so this error log is important.

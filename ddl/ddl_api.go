@@ -1959,7 +1959,7 @@ func checkPartitionByList(ctx sessionctx.Context, tbInfo *model.TableInfo, s *as
 		return ast.ErrPartitionsMustBeDefined.GenWithStackByArgs("LIST")
 	}
 
-	if err := checkListPartitionValue(tbInfo); err != nil {
+	if err := checkListPartitionValue(ctx, tbInfo); err != nil {
 		return err
 	}
 
@@ -1976,11 +1976,14 @@ func checkPartitionByList(ctx sessionctx.Context, tbInfo *model.TableInfo, s *as
 	if err := checkColumnsPartitionType(tbInfo); err != nil {
 		return err
 	}
-	for _, def := range s.Partition.Definitions {
-		inValues := def.Clause.(*ast.PartitionDefinitionClauseIn).Values
-		for _, vs := range inValues {
-			if err := checkColumnsTypeAndValuesMatch(ctx, tbInfo, vs); err != nil {
-				return err
+
+	if len(pi.Columns) > 0 {
+		for _, def := range s.Partition.Definitions {
+			inValues := def.Clause.(*ast.PartitionDefinitionClauseIn).Values
+			for _, vs := range inValues {
+				if err := checkColumnsTypeAndValuesMatch(ctx, tbInfo, vs); err != nil {
+					return err
+				}
 			}
 		}
 	}
@@ -5000,7 +5003,6 @@ func checkColumnsTypeAndValuesMatch(ctx sessionctx.Context, meta *model.TableInf
 		if err != nil {
 			return err
 		}
-
 		// Check val.ConvertTo(colType) doesn't work, so we need this case by case check.
 		switch colType.Tp {
 		case mysql.TypeDate, mysql.TypeDatetime:
@@ -5008,6 +5010,46 @@ func checkColumnsTypeAndValuesMatch(ctx sessionctx.Context, meta *model.TableInf
 			case types.KindString, types.KindBytes:
 			default:
 				return ErrWrongTypeColumnValue.GenWithStackByArgs()
+			}
+		}
+	}
+	return nil
+}
+
+func formatListPartitionValue(ctx sessionctx.Context, tblInfo *model.TableInfo) error {
+	defs := tblInfo.Partition.Definitions
+	pi := tblInfo.Partition
+	var colTps []*types.FieldType
+	if len(pi.Columns) == 0 {
+		tp := types.NewFieldType(mysql.TypeLonglong)
+		if isRangePartitionColUnsignedBigint(tblInfo.Columns, tblInfo.Partition) {
+			tp.Flag |= mysql.UnsignedFlag
+		}
+		colTps = []*types.FieldType{tp}
+	} else {
+		colTps = make([]*types.FieldType, 0, len(pi.Columns))
+		for _, colName := range pi.Columns {
+			colInfo := findColumnByName(colName.L, tblInfo)
+			if colInfo == nil {
+				return errors.Trace(ErrFieldNotFoundPart)
+			}
+			colTps = append(colTps, &colInfo.FieldType)
+		}
+	}
+	for i := range defs {
+		for j, vs := range defs[i].InValues {
+			for k, v := range vs {
+				if colTps[k].EvalType() != types.ETInt {
+					continue
+				}
+				isUnsigned := mysql.HasUnsignedFlag(colTps[k].Flag)
+				currentRangeValue, isNull, err := getListPartitionValue(ctx, v, isUnsigned)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				if !isNull {
+					defs[i].InValues[j][0] = fmt.Sprintf("%d", currentRangeValue)
+				}
 			}
 		}
 	}
