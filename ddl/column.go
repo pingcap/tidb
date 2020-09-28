@@ -1160,9 +1160,8 @@ func (w *worker) doModifyColumnTypeWithData(
 func BuildElements(changingCol *model.ColumnInfo, changingIdxs []*model.IndexInfo) []*meta.Element {
 	elements := make([]*meta.Element, 0, len(changingIdxs)+1)
 	elements = append(elements, &meta.Element{ID: changingCol.ID, TypeKey: meta.ColumnElementKey})
-	for _, idx := range changingIdxs {
-		elements = append(elements, &meta.Element{ID: idx.ID, TypeKey: meta.IndexElementKey})
-	}
+	idxElements := buildIndicesElements(changingIdxs)
+	elements = append(elements, idxElements...)
 	return elements
 }
 
@@ -1842,18 +1841,10 @@ func buildCompositeIndexInfo(idxName model.CIStr, idxInfo *model.IndexInfo, colI
 		return nil
 	}
 	// Except Name, Columns, State, just copy other fields from origin index info.
-	nidxInfo := &model.IndexInfo{
-		Name:      idxName,
-		Columns:   idxColumns,
-		State:     state,
-		Table:     idxInfo.Table,
-		Tp:        idxInfo.Tp,
-		Comment:   idxInfo.Comment,
-		Unique:    idxInfo.Unique,
-		Primary:   idxInfo.Primary,
-		Invisible: idxInfo.Invisible,
-		Global:    idxInfo.Global,
-	}
+	nidxInfo := idxInfo.Clone()
+	nidxInfo.Name = idxName
+	nidxInfo.Columns = idxColumns
+	nidxInfo.State = state
 	return nidxInfo
 }
 
