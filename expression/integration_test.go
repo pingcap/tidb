@@ -7079,6 +7079,23 @@ func (s *testIntegrationSuite) TestIssue18515(c *C) {
 	tk.MustExec("select /*+ TIDB_INLJ(t2) */ t1.a, t1.c, t2.a from t t1, t t2 where t1.c=t2.c;")
 }
 
+func (s *testIntegrationSuite) TestIssue20223(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("CREATE TABLE t (" +
+		"id int(10) unsigned NOT NULL AUTO_INCREMENT," +
+		"type tinyint(4) NOT NULL," +
+		"create_time int(11) NOT NULL," +
+		"PRIMARY KEY (id)" +
+		")")
+	tk.MustExec("insert into t values (4, 2, 1598584933)")
+	tk.MustQuery("select from_unixtime(create_time,'%Y-%m-%d') as t_day,count(*) as cnt from t where `type` = 1 " +
+		"group by t_day union all " +
+		"select from_unixtime(create_time,'%Y-%m-%d') as t_day,count(*) as cnt from t where `type` = 2 " +
+		"group by t_day").Check(testkit.Rows("2020-08-28 1"))
+}
+
 func (s *testIntegrationSuite) TestIssue18525(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -7328,6 +7345,21 @@ func (s *testIntegrationSerialSuite) TestIssue18949(c *C) {
 	tk.MustExec(`alter table t change a aa enum('a   ', 'b\t', ' c ');`)
 	result = tk.MustQuery("show create table t").Rows()[0][1]
 	c.Assert(result, Matches, `(?s).*enum\('a','b	',' c'\).*set\('a','b	',' c'\).*`)
+}
+
+func (s *testIntegrationSuite) TestIssue17767(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t0;")
+	tk.MustExec("CREATE TABLE t0(c0 INTEGER AS (NULL) NOT NULL, c1 INT);")
+	tk.MustExec("CREATE INDEX i0 ON t0(c0, c1);")
+	tk.MustExec("INSERT IGNORE INTO t0(c1) VALUES (0);")
+	tk.MustQuery("SELECT * FROM t0").Check(testkit.Rows("0 0"))
+
+	tk.MustExec("begin")
+	tk.MustExec("INSERT IGNORE INTO t0(c1) VALUES (0);")
+	tk.MustQuery("SELECT * FROM t0").Check(testkit.Rows("0 0", "0 0"))
+	tk.MustExec("rollback")
 }
 
 func (s *testIntegrationSuite) TestIssue19596(c *C) {

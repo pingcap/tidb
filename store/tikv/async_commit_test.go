@@ -149,7 +149,7 @@ func (s *testAsyncCommitSuite) lockKeys(c *C, keys, values [][]byte, primaryKey,
 func (s *testAsyncCommitSuite) TestCheckSecondaries(c *C) {
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
-		conf.TiKVClient.EnableAsyncCommit = true
+		conf.TiKVClient.AsyncCommit.Enable = true
 	})
 
 	s.putAlphabets(c)
