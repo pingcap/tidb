@@ -323,8 +323,6 @@ func (crs *CopRuntimeStats) String() string {
 		procTimes[n-1], procTimes[0], procTimes[n*4/5], procTimes[n*19/20], totalIters, totalTasks)
 }
 
-<<<<<<< HEAD
-=======
 const (
 	// TpBasicRuntimeStats is the tp for BasicRuntimeStats.
 	TpBasicRuntimeStats int = iota
@@ -348,7 +346,6 @@ const (
 	TpInsertRuntimeStat
 )
 
->>>>>>> bb354b0... *:Record the time consuming of memory operation of Insert Executor in Runtime Information (#19574)
 // RuntimeStats is used to express the executor runtime information.
 type RuntimeStats interface {
 	GetActRows() int64

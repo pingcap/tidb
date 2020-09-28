@@ -144,12 +144,8 @@ func (s *Scanner) startTS() uint64 {
 }
 
 func (s *Scanner) resolveCurrentLock(bo *Backoffer, current *pb.KvPair) error {
-<<<<<<< HEAD
-	val, err := s.snapshot.get(bo, kv.Key(current.Key))
-=======
 	ctx := context.Background()
 	val, err := s.snapshot.get(ctx, bo, current.Key)
->>>>>>> bb354b0... *:Record the time consuming of memory operation of Insert Executor in Runtime Information (#19574)
 	if err != nil {
 		return errors.Trace(err)
 	}

@@ -6003,8 +6003,6 @@ func (s *testSuite) TestIssue19372(c *C) {
 	tk.MustQuery("select (select t2.c_str from t2 where t2.c_str <= t1.c_str and t2.c_int in (1, 2) order by t2.c_str limit 1) x from t1 order by c_int;").Check(testkit.Rows("a", "a", "a"))
 }
 
-<<<<<<< HEAD
-=======
 func (s *testSerialSuite1) TestCollectCopRuntimeStats(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test;")
@@ -6082,7 +6080,6 @@ func (s *testSuite) TestCollectDMLRuntimeStats(c *C) {
 	tk.MustExec("rollback")
 }
 
->>>>>>> bb354b0... *:Record the time consuming of memory operation of Insert Executor in Runtime Information (#19574)
 func (s *testSuite) TestIssue13758(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")

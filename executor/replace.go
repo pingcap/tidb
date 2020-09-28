@@ -196,8 +196,6 @@ func (e *ReplaceExec) exec(ctx context.Context, newRows [][]types.Datum) error {
 	}
 	txnSize := txn.Size()
 
-<<<<<<< HEAD
-=======
 	if e.collectRuntimeStatsEnabled() {
 		if snapshot := txn.GetSnapshot(); snapshot != nil {
 			snapshot.SetOption(kv.CollectRuntimeStats, e.stats.SnapshotRuntimeStats)
@@ -205,7 +203,6 @@ func (e *ReplaceExec) exec(ctx context.Context, newRows [][]types.Datum) error {
 		}
 	}
 	prefetchStart := time.Now()
->>>>>>> bb354b0... *:Record the time consuming of memory operation of Insert Executor in Runtime Information (#19574)
 	// Use BatchGet to fill cache.
 	// It's an optimization and could be removed without affecting correctness.
 	if err = prefetchDataCache(ctx, txn, toBeCheckedRows); err != nil {
