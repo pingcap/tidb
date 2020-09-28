@@ -3163,7 +3163,7 @@ func (s *testSessionSuite2) TestStmtHints(c *C) {
 
 	tk.MustExec("SELECT /*+ SET_VAR(optimizer_switch = 'mrr_cost_based=yes') */ 1;")
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 1)
-	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings()[0].Err.Error(), Equals, "Variable 'optimizer_switch' can't be set to the value of 'mrr_cost_based=yes'")
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings()[0].Err.Error(), Equals, "[variable:1231]Variable 'optimizer_switch' can't be set to the value of 'mrr_cost_based=yes'")
 }
 
 func (s *testSessionSuite3) TestPessimisticLockOnPartition(c *C) {
