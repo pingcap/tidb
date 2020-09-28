@@ -14,6 +14,7 @@
 package ddl
 
 import (
+	"bytes"
 	"fmt"
 	"math"
 	"math/bits"
@@ -873,7 +874,8 @@ func (w *worker) doModifyColumnTypeWithData(
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		reorgInfo, err := getReorgInfo(d, t, job, tbl)
+
+		reorgInfo, err := getReorgInfo(d, t, job, tbl, BuildElements(changingCol, changingIdxs))
 		if err != nil || reorgInfo.first {
 			// If we run reorg firstly, we should update the job snapshot version
 			// and then run the reorg next time.
@@ -893,6 +895,11 @@ func (w *worker) doModifyColumnTypeWithData(
 				return ver, nil
 			}
 			if kv.ErrKeyExists.Equal(err) || errCancelledDDLJob.Equal(err) || errCantDecodeRecord.Equal(err) || types.ErrOverflow.Equal(err) {
+				if err1 := t.RemoveDDLReorgHandle(job, reorgInfo.elements); err1 != nil {
+					logutil.BgLogger().Warn("[ddl] run modify column job failed, RemoveDDLReorgHandle failed, can't convert job to rollback",
+						zap.String("job", job.String()), zap.Error(err1))
+					return ver, errors.Trace(err)
+				}
 				logutil.BgLogger().Warn("[ddl] run modify column job failed, convert job to rollback", zap.String("job", job.String()), zap.Error(err))
 				// When encounter these error above, we change the job to rolling back job directly.
 				job.State = model.JobStateRollingback
@@ -938,13 +945,22 @@ func (w *worker) doModifyColumnTypeWithData(
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 		// Refactor the job args to add the old index ids into delete range table.
 		job.Args = []interface{}{oldIdxIDs, getPartitionIDs(tblInfo)}
-		// TODO: Change column ID.
-		// asyncNotifyEvent(d, &util.Event{Tp: model.ActionAddColumn, TableInfo: tblInfo, ColumnInfos: []*model.ColumnInfo{changingCol}})
+		asyncNotifyEvent(d, &ddlutil.Event{Tp: model.ActionModifyColumn, TableInfo: tblInfo, ColumnInfos: []*model.ColumnInfo{changingCol}})
 	default:
 		err = ErrInvalidDDLState.GenWithStackByArgs("column", changingCol.State)
 	}
 
 	return ver, errors.Trace(err)
+}
+
+// BuildElements is exported for testing.
+func BuildElements(changingCol *model.ColumnInfo, changingIdxs []*model.IndexInfo) []*meta.Element {
+	elements := make([]*meta.Element, 0, len(changingIdxs)+1)
+	elements = append(elements, &meta.Element{ID: changingCol.ID, TypeKey: meta.ColumnElementKey})
+	for _, idx := range changingIdxs {
+		elements = append(elements, &meta.Element{ID: idx.ID, TypeKey: meta.IndexElementKey})
+	}
+	return elements
 }
 
 func (w *worker) updatePhysicalTableRow(t table.PhysicalTable, oldColInfo, colInfo *model.ColumnInfo, reorgInfo *reorgInfo) error {
@@ -954,15 +970,54 @@ func (w *worker) updatePhysicalTableRow(t table.PhysicalTable, oldColInfo, colIn
 
 // updateColumnAndIndexes handles the modify column reorganization state for a table.
 func (w *worker) updateColumnAndIndexes(t table.Table, oldCol, col *model.ColumnInfo, idxes []*model.IndexInfo, reorgInfo *reorgInfo) error {
-	// TODO: Consider rebuild ReorgInfo key to mDDLJobReorgKey_jobID_elementID(colID/idxID).
 	// TODO: Support partition tables.
-	err := w.updatePhysicalTableRow(t.(table.PhysicalTable), oldCol, col, reorgInfo)
+	if bytes.Equal(reorgInfo.currElement.TypeKey, meta.ColumnElementKey) {
+		err := w.updatePhysicalTableRow(t.(table.PhysicalTable), oldCol, col, reorgInfo)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+
+	// Get the original start handle and end handle.
+	currentVer, err := getValidCurrentVersion(reorgInfo.d.store)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	originalStartHandle, originalEndHandle, err := getTableRange(reorgInfo.d, t.(table.PhysicalTable), currentVer.Ver, reorgInfo.Job.Priority)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	for _, idx := range idxes {
-		err = w.addTableIndex(t, idx, reorgInfo)
+	startElementOffset := 0
+	startElementOffsetToResetHandle := -1
+	// This backfill job starts with backfilling index data, whose index ID is currElement.ID.
+	if bytes.Equal(reorgInfo.currElement.TypeKey, meta.IndexElementKey) {
+		for i, idx := range idxes {
+			if reorgInfo.currElement.ID == idx.ID {
+				startElementOffset = i
+				startElementOffsetToResetHandle = i
+				break
+			}
+		}
+	}
+
+	for i := startElementOffset; i < len(idxes); i++ {
+		// This backfill job has been exited during processing. At that time, the element is reorgInfo.elements[i+1] and handle range is [reorgInfo.StartHandle, reorgInfo.EndHandle].
+		// Then the handle range of the rest elements' is [originalStartHandle, originalEndHandle].
+		if i == startElementOffsetToResetHandle+1 {
+			reorgInfo.StartHandle, reorgInfo.EndHandle = originalStartHandle, originalEndHandle
+		}
+
+		reorgInfo.currElement = reorgInfo.elements[i+1]
+		// Write the reorg info to store so the whole reorganize process can recover from panic.
+		err := reorgInfo.UpdateReorgMeta(reorgInfo.StartHandle)
+		logutil.BgLogger().Info("[ddl] update column and indexes", zap.Int64("jobID", reorgInfo.Job.ID),
+			zap.ByteString("elementType", reorgInfo.currElement.TypeKey), zap.Int64("elementID", reorgInfo.currElement.ID),
+			zap.String("startHandle", toString(reorgInfo.StartHandle)), zap.String("endHandle", toString(reorgInfo.EndHandle)))
+		if err != nil {
+			return errors.Trace(err)
+		}
+		err = w.addTableIndex(t, idxes[i], reorgInfo)
 		if err != nil {
 			return errors.Trace(err)
 		}

@@ -1020,6 +1020,7 @@ const (
 	ErrTableOptionUnionUnsupported        = 8232
 	ErrTableOptionInsertMethodUnsupported = 8233
 	ErrInvalidPlacementSpec               = 8234
+	ErrDDLReorgElementNotExist            = 8235
 
 	// TiKV/PD errors.
 	ErrPDServerTimeout           = 9001
