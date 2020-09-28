@@ -5517,8 +5517,13 @@ func (d *ddl) AlterTablePartition(ctx sessionctx.Context, ident ast.Ident, spec 
 			EndKeyHex:   endKey,
 		})
 	}
-	bundle.Index = placement.RuleIndexPartition
-	bundle.Override = true
+	if len(bundle.Rules) == 0 {
+		bundle.Index = 0
+		bundle.Override = false
+	} else {
+		bundle.Index = placement.RuleIndexPartition
+		bundle.Override = true
+	}
 
 	job := &model.Job{
 		SchemaID:   schema.ID,
