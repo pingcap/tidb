@@ -253,29 +253,21 @@ func (s *testPlacementSuite) TestPlacementBuild(c *C) {
 
 func (s *testPlacementSuite) TestPlacementBuildDrop(c *C) {
 	tests := []struct {
-		input  []int64
-		output []*placement.Bundle
+		input int64
+		output *placement.Bundle
 	}{
 		{
-			input: []int64{2},
-			output: []*placement.Bundle{
-				{ID: placement.GroupID(2)},
-			},
+			input: 2,
+			output: &placement.Bundle{ID: placement.GroupID(2)},
 		},
 		{
-			input: []int64{1, 2},
-			output: []*placement.Bundle{
-				{ID: placement.GroupID(1)},
-				{ID: placement.GroupID(2)},
-			},
+			input: 1,
+			output: &placement.Bundle{ID: placement.GroupID(1)},
 		},
 	}
 	for _, t := range tests {
-		out := buildPlacementDropRules(t.input)
-		c.Assert(len(out), Equals, len(t.output))
-		for i := range t.output {
-			c.Assert(t.output[i], DeepEquals, out[i])
-		}
+		out := buildPlacementDropBundle(t.input)
+		c.Assert(t.output, DeepEquals, out)
 	}
 }
 

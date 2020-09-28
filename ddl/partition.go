@@ -73,7 +73,7 @@ func checkAddPartition(t *meta.Meta, job *model.Job) (*model.TableInfo, *model.P
 func onAddTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	// Handle the rolling back job
 	if job.IsRollingback() {
-		ver, err := onDropTablePartition(t, job)
+		ver, err := onDropTablePartition(d, t, job)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -867,18 +867,14 @@ func getPartitionDef(tblInfo *model.TableInfo, partName string) (index int, def 
 	return index, nil, table.ErrUnknownPartition.GenWithStackByArgs(partName, tblInfo.Name.O)
 }
 
-func buildPlacementDropRules(partitionIDs []int64) []*placement.Bundle {
-	bundles := make([]*placement.Bundle, 0, len(partitionIDs))
-	for _, partitionID := range partitionIDs {
-		bundles = append(bundles, &placement.Bundle{
-			ID: placement.GroupID(partitionID),
-		})
+func buildPlacementDropBundle(partitionID int64) *placement.Bundle {
+	return &placement.Bundle{
+		ID: placement.GroupID(partitionID),
 	}
-	return bundles
 }
 
 // onDropTablePartition deletes old partition meta.
-func onDropTablePartition(t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	var partNames []string
 	if err := job.DecodeArgs(&partNames); err != nil {
 		job.State = model.JobStateCancelled
@@ -902,7 +898,13 @@ func onDropTablePartition(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		physicalTableIDs = removePartitionInfo(tblInfo, partNames)
 	}
 
-	bundles := buildPlacementDropRules(physicalTableIDs)
+	bundles := make([]*placement.Bundle, 0, len(physicalTableIDs))
+	for _, ID := range physicalTableIDs {
+		oldBundle, ok := d.infoHandle.Get().BundleByName(placement.GroupID(ID))
+		if ok && !oldBundle.IsEmpty() {
+			bundles = append(bundles, buildPlacementDropBundle(ID))
+		}
+	}
 
 	err = infosync.PutRuleBundles(nil, bundles)
 	if err != nil {
