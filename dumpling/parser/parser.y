@@ -1027,6 +1027,7 @@ import (
 	RoleSpecList                           "Rolename and auth option list"
 	RowFormat                              "Row format option"
 	RowValue                               "Row value"
+	RowStmt                                "Row constructor"
 	SelectLockOpt                          "FOR UPDATE or LOCK IN SHARE MODE,"
 	SelectStmtCalcFoundRows                "SELECT statement optional SQL_CALC_FOUND_ROWS"
 	SelectStmtSQLBigResult                 "SELECT statement optional SQL_BIG_RESULT"
@@ -1106,6 +1107,7 @@ import (
 	Values                                 "values"
 	ValuesList                             "values list"
 	ValuesOpt                              "values optional"
+	ValuesStmtList                         "VALUES statement field list"
 	VariableAssignment                     "set variable value"
 	VariableAssignmentList                 "set variable value list"
 	ViewAlgorithm                          "view algorithm"
@@ -7226,6 +7228,7 @@ SelectStmtBasic:
 			SelectStmtOpts: $2.(*ast.SelectStmtOpts),
 			Distinct:       $2.(*ast.SelectStmtOpts).Distinct,
 			Fields:         $3.(*ast.FieldList),
+			Kind:           ast.SelectStmtKindSelect,
 		}
 		if st.SelectStmtOpts.TableHints != nil {
 			st.TableHints = st.SelectStmtOpts.TableHints
@@ -7341,6 +7344,47 @@ SelectStmt:
 		}
 		if $5 != nil {
 			st.SelectIntoOpt = $5.(*ast.SelectIntoOption)
+		}
+		$$ = st
+	}
+|	"TABLE" TableName OrderByOptional SelectStmtLimitOpt SelectLockOpt SelectStmtIntoOption
+	{
+		st := &ast.SelectStmt{
+			Kind: ast.SelectStmtKindTable,
+		}
+		ts := &ast.TableSource{Source: $2.(*ast.TableName)}
+		st.From = &ast.TableRefsClause{TableRefs: &ast.Join{Left: ts}}
+		if $3 != nil {
+			st.OrderBy = $3.(*ast.OrderByClause)
+		}
+		if $4 != nil {
+			st.Limit = $4.(*ast.Limit)
+		}
+		if $5 != nil {
+			st.LockInfo = $5.(*ast.SelectLockInfo)
+		}
+		if $6 != nil {
+			st.SelectIntoOpt = $6.(*ast.SelectIntoOption)
+		}
+		$$ = st
+	}
+|	"VALUES" ValuesStmtList OrderByOptional SelectStmtLimitOpt SelectLockOpt SelectStmtIntoOption
+	{
+		st := &ast.SelectStmt{
+			Kind:  ast.SelectStmtKindValues,
+			Lists: $2.([]*ast.RowExpr),
+		}
+		if $3 != nil {
+			st.OrderBy = $3.(*ast.OrderByClause)
+		}
+		if $4 != nil {
+			st.Limit = $4.(*ast.Limit)
+		}
+		if $5 != nil {
+			st.LockInfo = $5.(*ast.SelectLockInfo)
+		}
+		if $6 != nil {
+			st.SelectIntoOpt = $6.(*ast.SelectIntoOption)
 		}
 		$$ = st
 	}
@@ -12014,5 +12058,21 @@ EncryptionOpt:
 			return 1
 		}
 		$$ = $1
+	}
+
+ValuesStmtList:
+	RowStmt
+	{
+		$$ = append([]*ast.RowExpr{}, $1.(*ast.RowExpr))
+	}
+|	ValuesStmtList ',' RowStmt
+	{
+		$$ = append($1.([]*ast.RowExpr), $3.(*ast.RowExpr))
+	}
+
+RowStmt:
+	"ROW" RowValue
+	{
+		$$ = &ast.RowExpr{Values: $2.([]ast.ExprNode)}
 	}
 %%
