@@ -139,14 +139,20 @@ func (e *ShowExec) appendTableForStatsBuckets(dbName, tblName, partitionName str
 	if statsTbl.Pseudo {
 		return nil
 	}
+	colNameToType := make(map[string]byte, len(statsTbl.Columns))
 	for _, col := range statsTbl.Columns {
-		err := e.bucketsToRows(dbName, tblName, partitionName, col.Info.Name.O, 0, col.Histogram)
+		err := e.bucketsToRows(dbName, tblName, partitionName, col.Info.Name.O, 0, col.Histogram, nil)
 		if err != nil {
 			return errors.Trace(err)
 		}
+		colNameToType[col.Info.Name.O] = col.Histogram.Tp.Tp
 	}
 	for _, idx := range statsTbl.Indices {
-		err := e.bucketsToRows(dbName, tblName, partitionName, idx.Info.Name.O, len(idx.Info.Columns), idx.Histogram)
+		idxColumnTypes := make([]byte, 0, len(idx.Info.Columns))
+		for i := 0; i < len(idx.Info.Columns); i++ {
+			idxColumnTypes = append(idxColumnTypes, colNameToType[idx.Info.Columns[i].Name.O])
+		}
+		err := e.bucketsToRows(dbName, tblName, partitionName, idx.Info.Name.O, len(idx.Info.Columns), idx.Histogram, idxColumnTypes)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -156,17 +162,17 @@ func (e *ShowExec) appendTableForStatsBuckets(dbName, tblName, partitionName str
 
 // bucketsToRows converts histogram buckets to rows. If the histogram is built from index, then numOfCols equals to number
 // of index columns, else numOfCols is 0.
-func (e *ShowExec) bucketsToRows(dbName, tblName, partitionName, colName string, numOfCols int, hist statistics.Histogram) error {
+func (e *ShowExec) bucketsToRows(dbName, tblName, partitionName, colName string, numOfCols int, hist statistics.Histogram, idxColumnTypes []byte) error {
 	isIndex := 0
 	if numOfCols > 0 {
 		isIndex = 1
 	}
 	for i := 0; i < hist.Len(); i++ {
-		lowerBoundStr, err := statistics.ValueToString(hist.GetLower(i), numOfCols)
+		lowerBoundStr, err := statistics.ValueToString(e.ctx.GetSessionVars(), hist.GetLower(i), numOfCols, idxColumnTypes)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		upperBoundStr, err := statistics.ValueToString(hist.GetUpper(i), numOfCols)
+		upperBoundStr, err := statistics.ValueToString(e.ctx.GetSessionVars(), hist.GetUpper(i), numOfCols, idxColumnTypes)
 		if err != nil {
 			return errors.Trace(err)
 		}
