@@ -764,28 +764,28 @@ func (s *testStatsSuite) TestIndexUsageInformation(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int, b int)")
-	tk.MustExec("create unique index idx_a on t(a)")
-	tk.MustExec("create unique index idx_b on t(b)")
-	tk.MustQuery("select a from t where a=1")
-	querySQL := "select sum(query_count), sum(rows_selected) from mysql.schema_index_usage group by table_schema, table_name, index_name"
+	tk.MustExec("drop table if exists t_idx")
+	tk.MustExec("create table t_idx(a int, b int)")
+	tk.MustExec("create unique index idx_a on t_idx(a)")
+	tk.MustExec("create unique index idx_b on t_idx(b)")
+	tk.MustQuery("select a from t_idx where a=1")
+	querySQL := `select sum(query_count), sum(rows_selected) from mysql.schema_index_usage where table_name = "t_idx" group by table_schema, table_name, index_name`
 	do := s.do
 	err := do.StatsHandle().DumpIndexUsageToKV()
 	c.Assert(err, IsNil)
 	tk.MustQuery(querySQL).Check(testkit.Rows(
 		"1 0",
 	))
-	tk.MustExec("insert into t values(1, 0)")
-	tk.MustQuery("select a from t where a=1")
-	tk.MustQuery("select a from t where a=1")
+	tk.MustExec("insert into t_idx values(1, 0)")
+	tk.MustQuery("select a from t_idx where a=1")
+	tk.MustQuery("select a from t_idx where a=1")
 	err = do.StatsHandle().DumpIndexUsageToKV()
 	c.Assert(err, IsNil)
 	tk.MustQuery(querySQL).Check(testkit.Rows(
 		"3 2",
 	))
-	tk.MustQuery("select b from t where b=0")
-	tk.MustQuery("select b from t where b=0")
+	tk.MustQuery("select b from t_idx where b=0")
+	tk.MustQuery("select b from t_idx where b=0")
 	err = do.StatsHandle().DumpIndexUsageToKV()
 	c.Assert(err, IsNil)
 	tk.MustQuery(querySQL).Check(testkit.Rows(
