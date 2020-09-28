@@ -657,6 +657,10 @@ func onDropIndex(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	return ver, errors.Trace(err)
 }
 
+func onDropIndexes(t *meta.Meta, job *model.Job) (ver int64, _ error) {
+	return 0, nil
+}
+
 func checkDropIndex(t *meta.Meta, job *model.Job) (*model.TableInfo, *model.IndexInfo, error) {
 	schemaID := job.SchemaID
 	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, schemaID)
