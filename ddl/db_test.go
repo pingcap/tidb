@@ -5866,5 +5866,5 @@ func (s *testSerialDBSuite) TestModifyColumnTypeWhenInterception(c *C) {
 	c.Assert(checkMiddleWarningCount, Equals, true)
 	c.Assert(checkMiddleAddedCount, Equals, true)
 	res := tk.MustQuery("show warnings")
-	c.Assert(len(res.Rows()), Equals, 4096)
+	c.Assert(len(res.Rows()), Equals, count)
 }
