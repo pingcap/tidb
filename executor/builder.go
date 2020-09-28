@@ -2627,7 +2627,7 @@ func buildKVRangeForEachPartition(ctx sessionctx.Context, usedPartitions []table
 	for _, p := range usedPartitions {
 		if isCommonHandle {
 			rangeBuilders[p.GetPhysicalID()] = kvRangeBuilderFromFunc(func(pid int64) ([]kv.KeyRange, error) {
-				return buildKvRangesForIndexJoin(ctx, pid, -1, contentBucket[p.GetPhysicalID()], indexRanges, keyOff2IdxOff, cwc)
+				return buildKvRangesForIndexJoin(ctx, pid, -1, contentBucket[pid], indexRanges, keyOff2IdxOff, cwc)
 			})
 		} else {
 			handles := make([]kv.Handle, 0, len(contentBucket[p.GetPhysicalID()]))
