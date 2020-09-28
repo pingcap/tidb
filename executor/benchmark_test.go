@@ -1711,11 +1711,12 @@ func BenchmarkSortExec(b *testing.B) {
 }
 
 type limitCase struct {
-	rows            int
-	offset          int
-	count           int
-	childUsedSchema []bool
-	ctx             sessionctx.Context
+	rows                  int
+	offset                int
+	count                 int
+	childUsedSchema       []bool
+	usingInlineProjection bool
+	ctx                   sessionctx.Context
 }
 
 func (tc limitCase) columns() []*expression.Column {
@@ -1726,7 +1727,8 @@ func (tc limitCase) columns() []*expression.Column {
 }
 
 func (tc limitCase) String() string {
-	return fmt.Sprintf("(rows:%v, offset:%v, count: %v)", tc.rows, tc.offset, tc.count)
+	return fmt.Sprintf("(rows:%v, offset:%v, count:%v, inline_projection:%v)",
+		tc.rows, tc.offset, tc.count, tc.usingInlineProjection)
 }
 
 func defaultLimitTestCase() *limitCase {
@@ -1734,7 +1736,14 @@ func defaultLimitTestCase() *limitCase {
 	ctx.GetSessionVars().InitChunkSize = variable.DefInitChunkSize
 	ctx.GetSessionVars().MaxChunkSize = variable.DefMaxChunkSize
 	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(-1, -1)
-	tc := &limitCase{rows: 300000, offset: 1000, count: 100000, ctx: ctx}
+	tc := &limitCase{
+		rows:                  30000,
+		offset:                10000,
+		count:                 10000,
+		childUsedSchema:       []bool{false, true},
+		usingInlineProjection: false,
+		ctx:                   ctx,
+	}
 	return tc
 }
 
@@ -1745,18 +1754,38 @@ func benchmarkLimitExec(b *testing.B, cas *limitCase) {
 		ctx:    cas.ctx,
 	}
 	dataSource := buildMockDataSource(opt)
-	exec := &LimitExec{
+	var exec Executor
+	limit := &LimitExec{
 		baseExecutor: newBaseExecutor(cas.ctx, dataSource.schema, 4, dataSource),
 		begin:        uint64(cas.offset),
 		end:          uint64(cas.offset + cas.count),
 	}
-	if len(cas.childUsedSchema) > 0 {
-		exec.columnIdxsUsedByChild = make([]int, 0, len(cas.childUsedSchema))
-		for i, used := range cas.childUsedSchema {
-			if used {
-				exec.columnIdxsUsedByChild = append(exec.columnIdxsUsedByChild, i)
+	if cas.usingInlineProjection {
+		if len(cas.childUsedSchema) > 0 {
+			limit.columnIdxsUsedByChild = make([]int, 0, len(cas.childUsedSchema))
+			for i, used := range cas.childUsedSchema {
+				if used {
+					limit.columnIdxsUsedByChild = append(limit.columnIdxsUsedByChild, i)
+				}
 			}
 		}
+		exec = limit
+	} else {
+		columns := cas.columns()
+		usedCols := make([]*expression.Column, 0, len(columns))
+		exprs := make([]expression.Expression, 0, len(columns))
+		for i, used := range cas.childUsedSchema {
+			if used {
+				usedCols = append(usedCols, columns[i])
+				exprs = append(exprs, columns[i])
+			}
+		}
+		proj := &ProjectionExec{
+			baseExecutor:  newBaseExecutor(cas.ctx, expression.NewSchema(usedCols...), 0, limit),
+			numWorkers:    1,
+			evaluatorSuit: expression.NewEvaluatorSuite(exprs, false),
+		}
+		exec = proj
 	}
 
 	b.ResetTimer()
@@ -1788,18 +1817,11 @@ func benchmarkLimitExec(b *testing.B, cas *limitCase) {
 
 func BenchmarkLimitExec(b *testing.B) {
 	b.ReportAllocs()
-
-	{
-		cas := defaultLimitTestCase()
-		b.Run(fmt.Sprintf("InlineProjection:OFF, %v", cas), func(b *testing.B) {
-			benchmarkLimitExec(b, cas)
-		})
-	}
-
-	{
-		cas := defaultLimitTestCase()
-		cas.childUsedSchema = []bool{false, true}
-		b.Run(fmt.Sprintf("InlineProjection:ON, %v", cas), func(b *testing.B) {
+	cas := defaultLimitTestCase()
+	usingInlineProjection := []bool{false, true}
+	for _, inlineProjection := range usingInlineProjection {
+		cas.usingInlineProjection = inlineProjection
+		b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
 			benchmarkLimitExec(b, cas)
 		})
 	}
