@@ -1153,7 +1153,10 @@ func appendPartitionInfo(partitionInfo *model.PartitionInfo, buf *bytes.Buffer) 
 	if partitionInfo.Type == model.PartitionTypeList {
 		for i, def := range partitionInfo.Definitions {
 			values := bytes.NewBuffer(nil)
-			for _, inValues := range def.InValues {
+			for j, inValues := range def.InValues {
+				if j > 0 {
+					values.WriteString(",")
+				}
 				if len(inValues) > 1 {
 					values.WriteString("(")
 					values.WriteString(strings.Join(inValues, ","))
