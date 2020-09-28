@@ -982,7 +982,7 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 			committed := c.mu.committed
 			undetermined := c.mu.undeterminedErr != nil
 			c.mu.RUnlock()
-			if !committed && !undetermined {
+			if c.prewriteStarted && !committed && !undetermined {
 				c.cleanup(ctx)
 			}
 			c.txn.commitTS = c.commitTS
@@ -998,19 +998,33 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 		}
 	}()
 
+	commitTSMayBeCalculated := false
 	// Check async commit is available or not.
-	needCalcMaxCommitTS := false
 	if c.checkAsyncCommit() {
-		needCalcMaxCommitTS = true
+		commitTSMayBeCalculated = true
 		c.setAsyncCommit(true)
 	}
 	// Check if 1PC is enabled.
 	if c.checkOnePC() {
-		needCalcMaxCommitTS = true
+		commitTSMayBeCalculated = true
 		c.setOnePC(true)
 	}
+	// If we want to use async commit or 1PC and also want external consistency across
+	// all nodes, we have to make sure the commit TS of this transaction is greater
+	// than the snapshot TS of all existent readers. So we get a new timestamp
+	// from PD as our MinCommitTS.
+	if commitTSMayBeCalculated && config.GetGlobalConfig().TiKVClient.ExternalConsistency {
+		minCommitTS, err := c.store.oracle.GetTimestamp(ctx)
+		// If we fail to get a timestamp from PD, we just propagate the failure
+		// instead of falling back to the normal 2PC because a normal 2PC will
+		// also be likely to fail due to the same timestamp issue.
+		if err != nil {
+			return errors.Trace(err)
+		}
+		c.minCommitTS = minCommitTS
+	}
 	// Calculate maxCommitTS if necessary
-	if needCalcMaxCommitTS {
+	if commitTSMayBeCalculated {
 		if err = c.calculateMaxCommitTS(ctx); err != nil {
 			return errors.Trace(err)
 		}
@@ -1022,6 +1036,7 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 	binlogChan := c.prewriteBinlog(ctx)
 	prewriteBo := NewBackofferWithVars(ctx, PrewriteMaxBackoff, c.txn.vars)
 	start := time.Now()
+	c.prewriteStarted = true
 	err = c.prewriteMutations(prewriteBo, c.mutations)
 
 	if err != nil {

@@ -23,6 +23,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
@@ -360,6 +361,23 @@ func (s *testAsyncCommitSuite) TestRepeatableRead(c *C) {
 
 	test(false)
 	test(true)
+}
+
+func (s *testAsyncCommitSuite) TestExternalConsistency(c *C) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TiKVClient.AsyncCommit.Enable = true
+		conf.TiKVClient.AsyncCommit.ExternalConsistency = true
+	})
+
+	t1, err := s.store.Begin()
+	c.Assert(err, IsNil)
+	err = t1.Set([]byte("a"), []byte("a1"))
+	c.Assert(err, IsNil)
+	ctx := context.WithValue(context.Background(), sessionctx.ConnID, uint64(1))
+	err = t1.Commit(ctx)
+	c.Assert(err, NotNil)
+	c.Assert(terror.ErrorEqual(err, terror.ErrResultUndetermined), IsTrue, Commentf("%s", errors.ErrorStack(err)))
 }
 
 type mockResolveClient struct {
