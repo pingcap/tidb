@@ -6990,6 +6990,18 @@ func (s *testIntegrationSerialSuite) TestIssue17891(c *C) {
 	tk.MustExec("create table test(id int, value set ('a','b','c') charset utf8mb4 collate utf8mb4_general_ci default 'a,B ,C');")
 }
 
+func (s *testIntegrationSerialSuite) TestIssue20268(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("CREATE TABLE `t` (   `a` enum('a','b') DEFAULT NULL ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;")
+	tk.MustExec("insert into t values('a');")
+	tk.MustExec("select * from t where a = 'A';")
+}
+
 func (s *testIntegrationSerialSuite) TestIssue17233(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
