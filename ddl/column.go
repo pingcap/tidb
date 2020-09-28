@@ -649,7 +649,7 @@ func needChangeColumnData(oldCol, newCol *model.ColumnInfo) bool {
 	if oldCol.Tp == newCol.Tp && oldCol.Tp == mysql.TypeNewDecimal {
 		// Since type decimal will encode the precision, frac, negative(signed) and wordBuf into storage together, there is no short
 		// cut to eliminate data reorg change for column type change between decimal.
-		return oldCol.Flen != newCol.Flen || oldCol.Decimal != newCol.Decimal || mysql.HasUnsignedFlag(oldCol.Flag) != mysql.HasUnsignedFlag(newCol.Flag)
+		return oldCol.Flen != newCol.Flen || oldCol.Decimal != newCol.Decimal || toUnsigned != originUnsigned
 	}
 	if newCol.Flen > 0 && newCol.Flen < oldCol.Flen || toUnsigned != originUnsigned {
 		return true
