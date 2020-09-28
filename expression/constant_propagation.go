@@ -301,6 +301,9 @@ func (s *propConstSolver) pickNewEQConds(visited []bool) (retMapper map[int]*Con
 			}
 			continue
 		}
+		if col.GetType().Hybrid() {
+			continue
+		}
 		visited[i] = true
 		updated, foreverFalse := s.tryToUpdateEQList(col, con)
 		if foreverFalse {
