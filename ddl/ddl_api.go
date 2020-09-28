@@ -2249,7 +2249,7 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 				err = d.AddColumns(ctx, ident, validSpecs)
 			case ast.AlterTableDropColumn:
 				err = d.DropColumns(ctx, ident, validSpecs)
-			case ast.AlterTableDropIndexes:
+			case ast.AlterTableDropIndex:
 				err = d.DropIndexes(ctx, ident, validSpecs)
 			default:
 				return errRunMultiSchemaChanges
@@ -2293,7 +2293,7 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 			err = d.DropIndex(ctx, ident, model.NewCIStr(spec.Name), spec.IfExists)
 		case ast.AlterTableDropPrimaryKey:
 			err = d.DropIndex(ctx, ident, model.NewCIStr(mysql.PrimaryKeyName), spec.IfExists)
-		
+
 		case ast.AlterTableRenameIndex:
 			err = d.RenameIndex(ctx, ident, spec)
 		case ast.AlterTableDropPartition:
@@ -4910,7 +4910,7 @@ func (d *ddl) DropIndexes(ctx sessionctx.Context, ti ast.Ident, specs []*ast.Alt
 		SchemaID:   schema.ID,
 		TableID:    t.Meta().ID,
 		SchemaName: schema.Name.L,
-		Type:       model.ActionDropIndexes,
+		Type:       model.ActionDropIndex,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       args,
 	}
