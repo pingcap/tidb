@@ -731,7 +731,7 @@ func checkCreatePartitionValue(ctx sessionctx.Context, tblInfo *model.TableInfo)
 			return errors.Trace(ErrPartitionMaxvalue)
 		}
 
-		currentRangeValue, fromExpr, err := getRangeValue(ctx, tblInfo, defs[i].LessThan[0], isUnsignedBigint)
+		currentRangeValue, fromExpr, err := getRangeValue(ctx, defs[i].LessThan[0], isUnsignedBigint)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -761,18 +761,20 @@ func checkCreatePartitionValue(ctx sessionctx.Context, tblInfo *model.TableInfo)
 
 // getRangeValue gets an integer from the range value string.
 // The returned boolean value indicates whether the input string is a constant expression.
-func getRangeValue(ctx sessionctx.Context, tblInfo *model.TableInfo, str string, unsignedBigint bool) (interface{}, bool, error) {
+func getRangeValue(ctx sessionctx.Context, str string, unsignedBigint bool) (interface{}, bool, error) {
 	// Unsigned bigint was converted to uint64 handle.
 	if unsignedBigint {
 		if value, err := strconv.ParseUint(str, 10, 64); err == nil {
 			return value, false, nil
 		}
 
-		if e, err1 := expression.ParseSimpleExprWithTableInfo(ctx, str, tblInfo); err1 == nil {
-			res, isNull, err2 := e.EvalInt(ctx, chunk.Row{})
-			if err2 == nil && !isNull {
-				return uint64(res), true, nil
-			}
+		e, err1 := expression.ParseSimpleExprWithTableInfo(ctx, str, &model.TableInfo{})
+		if err1 != nil {
+			return 0, false, err1
+		}
+		res, isNull, err2 := e.EvalInt(ctx, chunk.Row{})
+		if err2 == nil && !isNull {
+			return uint64(res), true, nil
 		}
 	} else {
 		if value, err := strconv.ParseInt(str, 10, 64); err == nil {
@@ -782,11 +784,13 @@ func getRangeValue(ctx sessionctx.Context, tblInfo *model.TableInfo, str string,
 		// For example, the following two cases are the same:
 		// PARTITION p0 VALUES LESS THAN (TO_SECONDS('2004-01-01'))
 		// PARTITION p0 VALUES LESS THAN (63340531200)
-		if e, err1 := expression.ParseSimpleExprWithTableInfo(ctx, str, tblInfo); err1 == nil {
-			res, isNull, err2 := e.EvalInt(ctx, chunk.Row{})
-			if err2 == nil && !isNull {
-				return res, true, nil
-			}
+		e, err1 := expression.ParseSimpleExprWithTableInfo(ctx, str, &model.TableInfo{})
+		if err1 != nil {
+			return 0, false, err1
+		}
+		res, isNull, err2 := e.EvalInt(ctx, chunk.Row{})
+		if err2 == nil && !isNull {
+			return res, true, nil
 		}
 	}
 	return 0, false, ErrNotAllowedTypeInPartition.GenWithStackByArgs(str)
@@ -1514,8 +1518,8 @@ func truncateTableByReassignPartitionIDs(t *meta.Meta, tblInfo *model.TableInfo)
 
 func onAlterTablePartition(t *meta.Meta, job *model.Job) (int64, error) {
 	var partitionID int64
-	var rules []*placement.RuleOp
-	err := job.DecodeArgs(&partitionID, &rules)
+	bundle := &placement.Bundle{}
+	err := job.DecodeArgs(&partitionID, bundle)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return 0, errors.Trace(err)
@@ -1532,23 +1536,15 @@ func onAlterTablePartition(t *meta.Meta, job *model.Job) (int64, error) {
 		return 0, errors.Trace(table.ErrUnknownPartition.GenWithStackByArgs("drop?", tblInfo.Name.O))
 	}
 
-	for i, rule := range rules {
-		if rule.Action == placement.RuleOpDel {
-			rule.ID = fmt.Sprintf("%d_t%d_p%d_%s", job.SchemaID, tblInfo.ID, partitionID, rule.Role)
-		} else {
-			rule.ID = fmt.Sprintf("%d_t%d_p%d_%s_%d_%d", job.SchemaID, tblInfo.ID, partitionID, rule.Role, job.ID, i)
-		}
-	}
-
-	ver, err := t.GetSchemaVersion()
-	if err != nil {
-		return ver, errors.Trace(err)
-	}
-
-	err = infosync.UpdatePlacementRules(nil, rules)
+	err = infosync.PutRuleBundle(nil, bundle)
 	if err != nil {
 		job.State = model.JobStateCancelled
-		return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
+		return 0, errors.Wrapf(err, "failed to notify PD the placement rules")
+	}
+
+	ver, err := updateSchemaVersion(t, job)
+	if err != nil {
+		return ver, errors.Trace(err)
 	}
 
 	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)

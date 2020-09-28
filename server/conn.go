@@ -50,6 +50,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unsafe"
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
@@ -179,6 +180,41 @@ func (cc *clientConn) String() string {
 	return fmt.Sprintf("id:%d, addr:%s status:%b, collation:%s, user:%s",
 		cc.connectionID, cc.bufReadConn.RemoteAddr(), cc.ctx.Status(), collationStr, cc.user,
 	)
+}
+
+// authSwitchRequest is used when the client asked to speak something
+// other than mysql_native_password. The server is allowed to ask
+// the client to switch, so lets ask for mysql_native_password
+// https://dev.mysql.com/doc/internals/en/connection-phase-packets.html#packet-Protocol::AuthSwitchRequest
+func (cc *clientConn) authSwitchRequest(ctx context.Context) ([]byte, error) {
+	enclen := 1 + len("mysql_native_password") + 1 + len(cc.salt) + 1
+	data := cc.alloc.AllocWithLen(4, enclen)
+	data = append(data, 0xfe) // switch request
+	data = append(data, []byte("mysql_native_password")...)
+	data = append(data, byte(0x00)) // requires null
+	data = append(data, cc.salt...)
+	data = append(data, 0)
+	err := cc.writePacket(data)
+	if err != nil {
+		logutil.Logger(ctx).Debug("write response to client failed", zap.Error(err))
+		return nil, err
+	}
+	err = cc.flush(ctx)
+	if err != nil {
+		logutil.Logger(ctx).Debug("flush response to client failed", zap.Error(err))
+		return nil, err
+	}
+	resp, err := cc.readPacket()
+	if err != nil {
+		err = errors.SuspendStack(err)
+		if errors.Cause(err) == io.EOF {
+			logutil.Logger(ctx).Warn("authSwitchRequest response fail due to connection has be closed by client-side")
+		} else {
+			logutil.Logger(ctx).Warn("authSwitchRequest response fail", zap.Error(err))
+		}
+		return nil, err
+	}
+	return resp, nil
 }
 
 // handshake works like TCP handshake, but in a higher level, it first writes initial packet to client,
@@ -327,6 +363,7 @@ type handshakeResponse41 struct {
 	User       string
 	DBName     string
 	Auth       []byte
+	AuthPlugin string
 	Attrs      map[string]string
 }
 
@@ -448,14 +485,18 @@ func parseHandshakeResponseBody(ctx context.Context, packet *handshakeResponse41
 		if len(data[offset:]) > 0 {
 			idx := bytes.IndexByte(data[offset:], 0)
 			packet.DBName = string(data[offset : offset+idx])
-			offset = offset + idx + 1
+			offset += idx + 1
 		}
 	}
 
 	if packet.Capability&mysql.ClientPluginAuth > 0 {
-		// TODO: Support mysql.ClientPluginAuth, skip it now
 		idx := bytes.IndexByte(data[offset:], 0)
-		offset = offset + idx + 1
+		s := offset
+		f := offset + idx
+		if s < f { // handle unexpected bad packets
+			packet.AuthPlugin = string(data[s:f])
+		}
+		offset += idx + 1
 	}
 
 	if packet.Capability&mysql.ClientConnectAtts > 0 {
@@ -574,6 +615,14 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse(ctx context.Con
 		return err
 	}
 
+	// switching from other methods should work, but not tested
+	if resp.AuthPlugin == "caching_sha2_password" {
+		resp.Auth, err = cc.authSwitchRequest(ctx)
+		if err != nil {
+			logutil.Logger(ctx).Warn("attempt to send auth switch request packet failed", zap.Error(err))
+			return err
+		}
+	}
 	cc.capability = resp.Capability & cc.server.capability
 	cc.user = resp.User
 	cc.dbname = resp.DBName
@@ -880,8 +929,14 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 		if len(sqlType) > 0 {
 			var task *trace.Task
 			ctx, task = trace.NewTask(ctx, sqlType)
-			trace.Log(ctx, "sql", lc.String())
 			defer task.End()
+
+			trace.Log(ctx, "sql", lc.String())
+			ctx = logutil.WithTraceLogger(ctx, cc.connectionID)
+
+			taskID := *(*uint64)(unsafe.Pointer(task))
+			ctx = pprof.WithLabels(ctx, pprof.Labels("trace", strconv.FormatUint(taskID, 10)))
+			pprof.SetGoroutineLabels(ctx)
 		}
 	}
 	token := cc.server.getToken()
@@ -1040,12 +1095,12 @@ func (cc *clientConn) writeError(ctx context.Context, e error) error {
 	)
 	originErr := errors.Cause(e)
 	if te, ok = originErr.(*terror.Error); ok {
-		m = te.ToSQLError()
+		m = terror.ToSQLError(te)
 	} else {
 		e := errors.Cause(originErr)
 		switch y := e.(type) {
 		case *terror.Error:
-			m = y.ToSQLError()
+			m = terror.ToSQLError(y)
 		default:
 			m = mysql.NewErrf(mysql.ErrUnknown, "%s", e.Error())
 		}
@@ -1456,6 +1511,8 @@ func (cc *clientConn) handleStmt(ctx context.Context, stmt ast.StmtNode, warns [
 	reg := trace.StartRegion(ctx, "ExecuteStmt")
 	rs, err := cc.ctx.ExecuteStmt(ctx, stmt)
 	reg.End()
+	// The session tracker detachment from global tracker is solved in the `rs.Close` in most cases.
+	// If the rs is nil, the detachment will be done in the `handleNoDelay`.
 	if rs != nil {
 		defer terror.Call(rs.Close)
 	}
@@ -1879,7 +1936,7 @@ func (cc getLastStmtInConn) String() string {
 		return "ListFields " + string(data)
 	case mysql.ComQuery, mysql.ComStmtPrepare:
 		sql := string(hack.String(data))
-		if cc.ctx.GetSessionVars().EnableLogDesensitization {
+		if config.RedactLogEnabled() {
 			sql, _ = parser.NormalizeDigest(sql)
 		}
 		return queryStrForLog(sql)

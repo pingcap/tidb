@@ -345,7 +345,7 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 			// After rolling back an AddIndex operation, we need to use delete-range to delete the half-done index data.
 			err = w.deleteRange(job)
 		case model.ActionDropSchema, model.ActionDropTable, model.ActionTruncateTable, model.ActionDropIndex, model.ActionDropPrimaryKey,
-			model.ActionDropTablePartition, model.ActionTruncateTablePartition, model.ActionDropColumn, model.ActionDropColumns:
+			model.ActionDropTablePartition, model.ActionTruncateTablePartition, model.ActionDropColumn, model.ActionDropColumns, model.ActionModifyColumn:
 			err = w.deleteRange(job)
 		}
 	}
@@ -865,6 +865,22 @@ func updateSchemaVersion(t *meta.Meta, job *model.Job) (int64, error) {
 			SchemaID:   ptSchemaID,
 			TableID:    ptTableID,
 			OldTableID: ptTableID,
+		}
+		diff.AffectedOpts = affects
+	case model.ActionTruncateTablePartition:
+		var oldIDs []int64
+		err = job.DecodeArgs(&oldIDs)
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		diff.TableID = job.TableID
+		affects := make([]*model.AffectedOption, len(oldIDs))
+		for i := 0; i < len(oldIDs); i++ {
+			affects[i] = &model.AffectedOption{
+				SchemaID:   job.SchemaID,
+				TableID:    oldIDs[i],
+				OldTableID: oldIDs[i],
+			}
 		}
 		diff.AffectedOpts = affects
 	default:
