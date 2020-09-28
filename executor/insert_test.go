@@ -19,15 +19,18 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/errno"
+	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
 )
@@ -939,6 +942,17 @@ func (s *testSuite3) TestDMLCast(c *C) {
 	tk.MustQuery(`select * from t`).Check(testkit.Rows())
 }
 
+func (s *testSuite3) TestInsertFloatOverflow(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec("create table t(col1 FLOAT, col2 FLOAT(10,2), col3 DOUBLE, col4 DOUBLE(10,2), col5 DECIMAL, col6 DECIMAL(10,2));")
+	_, err := tk.Exec("insert into t values (-3.402823466E+68, -34028234.6611, -1.7976931348623157E+308, -17976921.34, -9999999999, -99999999.99);")
+	c.Assert(err.Error(), Equals, "[types:1264]Out of range value for column 'col1' at row 1")
+	_, err = tk.Exec("insert into t values (-34028234.6611, -3.402823466E+68, -1.7976931348623157E+308, -17976921.34, -9999999999, -99999999.99);")
+	c.Assert(err.Error(), Equals, "[types:1264]Out of range value for column 'col2' at row 1")
+}
+
 // There is a potential issue in MySQL: when the value of auto_increment_offset is greater
 // than that of auto_increment_increment, the value of auto_increment_offset is ignored
 // (https://dev.mysql.com/doc/refman/8.0/en/replication-options-master.html#sysvar_auto_increment_increment),
@@ -1317,6 +1331,20 @@ func (s *testSuite10) TestClusterPrimaryKeyForIndexScan(c *C) {
 		cnt++
 	}
 	c.Assert(cnt, Equals, 15)
+}
+
+func (s *testSuite10) TestInsertRuntimeStat(c *C) {
+	stats := &executor.InsertRuntimeStat{
+		BasicRuntimeStats:    &execdetails.BasicRuntimeStats{},
+		SnapshotRuntimeStats: nil,
+		CheckInsertTime:      2 * time.Second,
+		Prefetch:             1 * time.Second,
+	}
+	stats.BasicRuntimeStats.Record(5*time.Second, 1)
+	c.Assert(stats.String(), Equals, "prepare:3s, check_insert:{total_time:2s, mem_insert_time:1s, prefetch:1s}")
+	c.Assert(stats.String(), Equals, stats.Clone().String())
+	stats.Merge(stats.Clone())
+	c.Assert(stats.String(), Equals, "prepare:6s, check_insert:{total_time:4s, mem_insert_time:2s, prefetch:2s}")
 }
 
 func (s *testSerialSuite) TestDuplicateEntryMessage(c *C) {
