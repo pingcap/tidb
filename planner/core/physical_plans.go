@@ -854,7 +854,7 @@ func (p *PhysicalMergeJoin) Clone() (PhysicalPlan, error) {
 type PhysicalLock struct {
 	basePhysicalPlan
 
-	Lock ast.SelectLockType
+	Lock *ast.SelectLockInfo
 
 	TblID2Handle     map[int64][]HandleCols
 	PartitionedTable []table.PartitionedTable

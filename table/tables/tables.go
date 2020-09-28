@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/generatedexpr"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/stringutil"
@@ -580,6 +581,11 @@ func TryGetCommonPkColumns(tbl table.Table) []*table.Column {
 
 // AddRecord implements table.Table AddRecord interface.
 func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts ...table.AddRecordOption) (recordID kv.Handle, err error) {
+	txn, err := sctx.Txn(true)
+	if err != nil {
+		return nil, err
+	}
+
 	var opt table.AddRecordOpt
 	for _, fn := range opts {
 		fn.ApplyOn(&opt)
@@ -595,6 +601,7 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 		hasRecordID = true
 	} else {
 		tblInfo := t.Meta()
+		txn.GetUnionStore().CacheTableInfo(t.physicalTableID, tblInfo)
 		if tblInfo.PKIsHandle {
 			recordID = kv.IntHandle(r[tblInfo.GetPkColInfo().Offset].GetInt64())
 			hasRecordID = true
@@ -636,10 +643,6 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 		}
 	}
 
-	txn, err := sctx.Txn(true)
-	if err != nil {
-		return nil, err
-	}
 	var colIDs, binlogColIDs []int64
 	var row, binlogRow []types.Datum
 	if recordCtx, ok := sctx.Value(addRecordCtxKey).(*CommonAddRecordCtx); ok {
@@ -995,6 +998,9 @@ func (t *TableCommon) RemoveRecord(ctx sessionctx.Context, h kv.Handle, r []type
 			binlogRow = r
 		}
 		err = t.addDeleteBinlog(ctx, binlogRow, colIDs)
+	}
+	if ctx.GetSessionVars().TxnCtx == nil {
+		return nil
 	}
 	colSize := make(map[int64]int64, len(t.Cols()))
 	sc := ctx.GetSessionVars().StmtCtx
@@ -1406,7 +1412,12 @@ func CanSkip(info *model.TableInfo, col *table.Column, value *types.Datum) bool 
 			if info.Columns[idxCol.Offset].ID != col.ID {
 				continue
 			}
-			return idxCol.Length == types.UnspecifiedLength
+			canSkip := idxCol.Length == types.UnspecifiedLength
+			isNewCollation := collate.NewCollationEnabled() &&
+				col.EvalType() == types.ETString &&
+				!mysql.HasBinaryFlag(col.Flag)
+			canSkip = canSkip && !isNewCollation
+			return canSkip
 		}
 	}
 	if col.GetDefaultValue() == nil && value.IsNull() {

@@ -15,11 +15,13 @@ package executor
 
 import (
 	"context"
+	"fmt"
 	"sort"
 	"sync/atomic"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -105,7 +107,6 @@ func (e *BatchPointGetExec) Open(context.Context) error {
 	if e.runtimeStats != nil {
 		snapshotStats := &tikv.SnapshotRuntimeStats{}
 		e.stats = &runtimeStatsWithSnapshot{
-			BasicRuntimeStats:    e.runtimeStats,
 			SnapshotRuntimeStats: snapshotStats,
 		}
 		snapshot.SetOption(kv.CollectRuntimeStats, snapshotStats)
@@ -252,12 +253,36 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 			failpoint.InjectContext(ctx, "batchPointGetRepeatableReadTest-step2", nil)
 		})
 	} else if e.keepOrder {
-		sort.Slice(e.handles, func(i int, j int) bool {
+		less := func(i int, j int) bool {
 			if e.desc {
 				return e.handles[i].Compare(e.handles[j]) > 0
 			}
 			return e.handles[i].Compare(e.handles[j]) < 0
-		})
+
+		}
+		if e.tblInfo.PKIsHandle && mysql.HasUnsignedFlag(e.tblInfo.GetPkColInfo().Flag) {
+			uintComparator := func(i, h kv.Handle) int {
+				if !i.IsInt() || !h.IsInt() {
+					panic(fmt.Sprintf("both handles need be IntHandle, but got %T and %T ", i, h))
+				}
+				ihVal := uint64(i.IntValue())
+				hVal := uint64(h.IntValue())
+				if ihVal > hVal {
+					return 1
+				}
+				if ihVal < hVal {
+					return -1
+				}
+				return 0
+			}
+			less = func(i int, j int) bool {
+				if e.desc {
+					return uintComparator(e.handles[i], e.handles[j]) > 0
+				}
+				return uintComparator(e.handles[i], e.handles[j]) < 0
+			}
+		}
+		sort.Slice(e.handles, less)
 	}
 
 	keys := make([]kv.Key, len(e.handles))

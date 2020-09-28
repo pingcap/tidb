@@ -23,6 +23,8 @@ import (
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/ddl/placement"
+	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/table"
@@ -40,13 +42,16 @@ type Builder struct {
 // Return the detail updated table IDs that are produced from SchemaDiff and an error.
 func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
 	b.is.schemaMetaVersion = diff.Version
-	if diff.Type == model.ActionCreateSchema {
+	switch diff.Type {
+	case model.ActionCreateSchema:
 		return nil, b.applyCreateSchema(m, diff)
-	} else if diff.Type == model.ActionDropSchema {
+	case model.ActionDropSchema:
 		tblIDs := b.applyDropSchema(diff.SchemaID)
 		return tblIDs, nil
-	} else if diff.Type == model.ActionModifySchemaCharsetAndCollate {
+	case model.ActionModifySchemaCharsetAndCollate:
 		return nil, b.applyModifySchemaCharsetAndCollate(m, diff)
+	case model.ActionAlterTableAlterPartition:
+		return nil, b.applyPartitionPlacementUpdate(m, diff)
 	}
 	roDBInfo, ok := b.is.SchemaByID(diff.SchemaID)
 	if !ok {
@@ -114,6 +119,13 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 	}
 	if diff.AffectedOpts != nil {
 		for _, opt := range diff.AffectedOpts {
+			// Reduce the impact on DML when executing partition DDL. eg.
+			// While session 1 performs the DML operation associated with partition 1,
+			// the TRUNCATE operation of session 2 on partition 2 does not cause the operation of session 1 to fail.
+			if diff.Type == model.ActionTruncateTablePartition {
+				tblIDs = append(tblIDs, opt.OldTableID)
+				continue
+			}
 			var err error
 			affectedDiff := &model.SchemaDiff{
 				Version:     diff.Version,
@@ -258,7 +270,9 @@ func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID i
 			fmt.Sprintf("(Table ID %d)", tableID),
 		)
 	}
-	affected = appendAffectedIDs(affected, tblInfo)
+	if tp != model.ActionTruncateTablePartition {
+		affected = appendAffectedIDs(affected, tblInfo)
+	}
 
 	// Failpoint check whether tableInfo should be added to repairInfo.
 	// Typically used in repair table test to load mock `bad` tableInfo into repairInfo.
@@ -364,11 +378,24 @@ func (b *Builder) applyDropTable(dbInfo *model.DBInfo, tableID int64, affected [
 	return affected
 }
 
+func (b *Builder) applyPartitionPlacementUpdate(m *meta.Meta, diff *model.SchemaDiff) error {
+	tID := placement.GroupID(diff.TableID)
+
+	bundle, err := infosync.GetRuleBundle(nil, tID)
+	if err != nil {
+		return err
+	}
+
+	b.is.ruleBundleMap[tID] = bundle
+	return nil
+}
+
 // InitWithOldInfoSchema initializes an empty new InfoSchema by copies all the data from old InfoSchema.
 func (b *Builder) InitWithOldInfoSchema() *Builder {
 	oldIS := b.handle.Get().(*infoSchema)
 	b.is.schemaMetaVersion = oldIS.schemaMetaVersion
 	b.copySchemasMap(oldIS)
+	b.copyBundlesMap(oldIS)
 	copy(b.is.sortedTablesBuckets, oldIS.sortedTablesBuckets)
 	return b
 }
@@ -376,6 +403,12 @@ func (b *Builder) InitWithOldInfoSchema() *Builder {
 func (b *Builder) copySchemasMap(oldIS *infoSchema) {
 	for k, v := range oldIS.schemaMap {
 		b.is.schemaMap[k] = v
+	}
+}
+
+func (b *Builder) copyBundlesMap(oldIS *infoSchema) {
+	for k, v := range oldIS.ruleBundleMap {
+		b.is.ruleBundleMap[k] = v
 	}
 }
 
@@ -395,10 +428,15 @@ func (b *Builder) copySchemaTables(dbName string) *model.DBInfo {
 	return newSchemaTables.dbInfo
 }
 
-// InitWithDBInfos initializes an empty new InfoSchema with a slice of DBInfo and schema version.
-func (b *Builder) InitWithDBInfos(dbInfos []*model.DBInfo, schemaVersion int64) (*Builder, error) {
+// InitWithDBInfos initializes an empty new InfoSchema with a slice of DBInfo, all placement rules, and schema version.
+func (b *Builder) InitWithDBInfos(dbInfos []*model.DBInfo, bundles []*placement.Bundle, schemaVersion int64) (*Builder, error) {
 	info := b.is
 	info.schemaMetaVersion = schemaVersion
+	info.ruleBundleMap = make(map[string]*placement.Bundle, len(bundles))
+	for _, bundle := range bundles {
+		info.ruleBundleMap[bundle.ID] = bundle
+	}
+
 	for _, di := range dbInfos {
 		err := b.createSchemaTablesForDB(di, tables.TableFromMeta)
 		if err != nil {
@@ -429,6 +467,7 @@ func (b *Builder) createSchemaTablesForDB(di *model.DBInfo, tableFromMeta tableF
 		tables: make(map[string]table.Table, len(di.Tables)),
 	}
 	b.is.schemaMap[di.Name.L] = schTbls
+
 	for _, t := range di.Tables {
 		allocs := autoid.NewAllocatorsFromTblInfo(b.handle.store, di.ID, t)
 		var tbl table.Table
@@ -445,7 +484,7 @@ func (b *Builder) createSchemaTablesForDB(di *model.DBInfo, tableFromMeta tableF
 
 type virtualTableDriver struct {
 	*model.DBInfo
-	TableFromMeta func(alloc autoid.Allocators, tblInfo *model.TableInfo) (table.Table, error)
+	TableFromMeta tableFromMetaFunc
 }
 
 var drivers []*virtualTableDriver
@@ -466,6 +505,7 @@ func NewBuilder(handle *Handle) *Builder {
 	b.handle = handle
 	b.is = &infoSchema{
 		schemaMap:           map[string]*schemaTables{},
+		ruleBundleMap:       map[string]*placement.Bundle{},
 		sortedTablesBuckets: make([]sortedTables, bucketCount),
 	}
 	return b
