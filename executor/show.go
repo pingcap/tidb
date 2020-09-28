@@ -1121,59 +1121,18 @@ func appendPartitionInfo(partitionInfo *model.PartitionInfo, buf *bytes.Buffer) 
 		}
 		buf.WriteString(") (\n")
 	} else {
-		if len(partitionInfo.Columns) == 0 {
-			fmt.Fprintf(buf, "\nPARTITION BY %s (%s) (\n", partitionInfo.Type.String(), partitionInfo.Expr)
+		fmt.Fprintf(buf, "\nPARTITION BY %s ( %s ) (\n", partitionInfo.Type.String(), partitionInfo.Expr)
+	}
+	for i, def := range partitionInfo.Definitions {
+		lessThans := strings.Join(def.LessThan, ",")
+		fmt.Fprintf(buf, "  PARTITION `%s` VALUES LESS THAN (%s)", def.Name, lessThans)
+		if i < len(partitionInfo.Definitions)-1 {
+			buf.WriteString(",\n")
 		} else {
-			cols := ""
-			if len(partitionInfo.Columns) == 1 {
-				cols = partitionInfo.Columns[0].O
-			} else {
-				for i, col := range partitionInfo.Columns {
-					if i > 0 {
-						cols += ","
-					}
-					cols += col.O
-				}
-			}
-			fmt.Fprintf(buf, "\nPARTITION BY %s COLUMNS (%s) (\n", partitionInfo.Type.String(), cols)
+			buf.WriteString("\n")
 		}
 	}
-	if partitionInfo.Type == model.PartitionTypeRange {
-		for i, def := range partitionInfo.Definitions {
-			lessThans := strings.Join(def.LessThan, ",")
-			fmt.Fprintf(buf, "  PARTITION `%s` VALUES LESS THAN (%s)", def.Name, lessThans)
-			if i < len(partitionInfo.Definitions)-1 {
-				buf.WriteString(",\n")
-			} else {
-				buf.WriteString("\n")
-			}
-		}
-		buf.WriteString(")")
-	}
-	if partitionInfo.Type == model.PartitionTypeList {
-		for i, def := range partitionInfo.Definitions {
-			values := bytes.NewBuffer(nil)
-			for j, inValues := range def.InValues {
-				if j > 0 {
-					values.WriteString(",")
-				}
-				if len(inValues) > 1 {
-					values.WriteString("(")
-					values.WriteString(strings.Join(inValues, ","))
-					values.WriteString(")")
-				} else {
-					values.WriteString(strings.Join(inValues, ","))
-				}
-			}
-			fmt.Fprintf(buf, "  PARTITION `%s` VALUES IN (%s)", def.Name, values.String())
-			if i < len(partitionInfo.Definitions)-1 {
-				buf.WriteString(",\n")
-			} else {
-				buf.WriteString("\n")
-			}
-		}
-		buf.WriteString(")")
-	}
+	buf.WriteString(")")
 }
 
 // ConstructResultOfShowCreateDatabase constructs the result for show create database.
