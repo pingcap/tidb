@@ -114,12 +114,12 @@ func (s *testPrepareSuite) TestAdjustConfig(c *C) {
 	conf := DefaultConfig()
 	conf.Where = "id < 5"
 	conf.Sql = "select * from t where id > 3"
-	c.Assert(adjustConfig(conf), ErrorMatches, "can't specify both --sql and --where at the same time. Please try to combine them into --sql")
+	c.Assert(adjustConfig(nil, conf), ErrorMatches, "can't specify both --sql and --where at the same time. Please try to combine them into --sql")
 	conf.Where = ""
-	c.Assert(adjustConfig(conf), IsNil)
+	c.Assert(adjustConfig(nil, conf), IsNil)
 	conf.Sql = ""
 	conf.Rows = 5000
 	conf.FileSize = uint64(5000)
-	c.Assert(adjustConfig(conf), IsNil)
+	c.Assert(adjustConfig(nil, conf), IsNil)
 	c.Assert(conf.FileSize, Equals, uint64(UnspecifiedSize))
 }

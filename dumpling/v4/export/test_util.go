@@ -9,11 +9,12 @@ import (
 	"github.com/DATA-DOG/go-sqlmock"
 )
 
-type mockStringWriter struct {
+type mockPoisonWriter struct {
 	buf string
 }
 
-func (m *mockStringWriter) WriteString(s string) (int, error) {
+func (m *mockPoisonWriter) Write(ctx context.Context, p []byte) (int, error) {
+	s := string(p)
 	if s == "poison" {
 		return 0, fmt.Errorf("poison_error")
 	}
@@ -21,13 +22,9 @@ func (m *mockStringWriter) WriteString(s string) (int, error) {
 	return len(s), nil
 }
 
-type mockStringCollector struct {
-	buf string
-}
-
-func (m *mockStringCollector) WriteString(s string) (int, error) {
-	m.buf += s
-	return len(s), nil
+func (m *mockPoisonWriter) Close(ctx context.Context) error {
+	// noop
+	return nil
 }
 
 type mockSQLRowIterator struct {
