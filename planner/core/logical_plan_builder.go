@@ -835,6 +835,25 @@ func (b *PlanBuilder) buildSelection(ctx context.Context, p LogicalPlan, where a
 		if expr == nil {
 			continue
 		}
+		if sf, ok := expr.(*expression.ScalarFunction); ok && sf.FuncName.L == ast.EQ {
+			ds, ok := p.(*DataSource)
+			if !ok {
+				break
+			}
+			tblInfo := ds.tableInfo
+			for _, idx := range tblInfo.Indices {
+				if idx.Unique {
+					for _, idxCol := range idx.Columns {
+						for i, col := range p.Schema().Columns {
+							listColOrigName := strings.Split(col.OrigName, ".")
+							if idxCol.Name.L == listColOrigName[len(listColOrigName)-1:][0] {
+								p.Schema().Columns[i].RetType.Flag = mysql.NotNullFlag
+							}
+						}
+					}
+				}
+			}
+		}
 		cnfItems := expression.SplitCNFItems(expr)
 		for _, item := range cnfItems {
 			if con, ok := item.(*expression.Constant); ok && con.DeferredExpr == nil && con.ParamMarker == nil {
