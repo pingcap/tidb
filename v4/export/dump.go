@@ -17,7 +17,7 @@ import (
 )
 
 func Dump(pCtx context.Context, conf *Config) (err error) {
-	if err = adjustConfig(conf); err != nil {
+	if err = adjustConfig(pCtx, conf); err != nil {
 		return withStack(err)
 	}
 
@@ -114,9 +114,9 @@ func Dump(pCtx context.Context, conf *Config) (err error) {
 		defer newPool.Close()
 	}
 
-	m := newGlobalMetadata(conf.OutputDirPath)
+	m := newGlobalMetadata(conf.ExternalStorage)
 	// write metadata even if dump failed
-	defer m.writeGlobalMetaData()
+	defer m.writeGlobalMetaData(ctx)
 
 	// for consistency lock, we should lock tables at first to get the tables we want to lock & dump
 	// for consistency lock, record meta pos before lock tables because other tables may still be modified while locking tables
