@@ -1792,7 +1792,7 @@ func (s *testPessimisticSuite) TestSelectForUpdateWaitSeconds(c *C) {
 func (s *testPessimisticSuite) TestSelectForUpdateConflictRetry(c *C) {
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
-		conf.TiKVClient.EnableAsyncCommit = true
+		conf.TiKVClient.AsyncCommit.Enable = true
 	})
 
 	tk := testkit.NewTestKitWithInit(c, s.store)
