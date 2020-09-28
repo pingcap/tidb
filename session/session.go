@@ -509,8 +509,10 @@ func (s *session) doCommitWithRetry(ctx context.Context) error {
 	}
 	mapper := s.GetSessionVars().TxnCtx.TableDeltaMap
 	if s.statsCollector != nil && mapper != nil {
-		for id, item := range mapper {
-			s.statsCollector.Update(id, item.Delta, item.Count, &item.ColSize)
+		for _, item := range mapper {
+			if item.TableID > 0 {
+				s.statsCollector.Update(item.TableID, item.Delta, item.Count, &item.ColSize)
+			}
 		}
 	}
 	return nil
@@ -1004,6 +1006,12 @@ func (s *session) SetGlobalSysVar(name, value string) error {
 			return err
 		}
 	}
+	if name == variable.TiDBPartitionPruneMode && value == string(variable.DynamicOnly) {
+		err := s.ensureFullGlobalStats()
+		if err != nil {
+			return err
+		}
+	}
 	var sVal string
 	var err error
 	sVal, err = variable.ValidateSetSystemVar(s.sessionVars, name, value, variable.ScopeGlobal)
@@ -1016,6 +1024,20 @@ func (s *session) SetGlobalSysVar(name, value string) error {
 		mysql.SystemDB, mysql.GlobalVariablesTable, name, sVal)
 	_, _, err = s.ExecRestrictedSQL(sql)
 	return err
+}
+
+func (s *session) ensureFullGlobalStats() error {
+	rows, _, err := s.ExecRestrictedSQL(`select count(1) from information_schema.tables t where t.create_options = 'partitioned'
+		and not exists (select 1 from mysql.stats_meta m where m.table_id = t.tidb_table_id)`)
+	if err != nil {
+		return err
+	}
+	row := rows[0]
+	count := row.GetInt64(0)
+	if count > 0 {
+		return errors.New("need analyze all partition table in 'static-collect-dynamic' mode before switch to 'dynamic-only'")
+	}
+	return nil
 }
 
 func (s *session) ParseSQL(ctx context.Context, sql, charset, collation string) ([]ast.StmtNode, []error, error) {
