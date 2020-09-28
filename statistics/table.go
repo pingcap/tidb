@@ -507,11 +507,13 @@ func (coll *HistColl) getEqualCondSelectivity(sc *stmtctx.StatementContext, idx 
 		return outOfRangeEQSelectivity(ndv, coll.ModifyCount, int64(idx.TotalRowCount())), nil
 	}
 	idxCount := float64(idx.CMSketch.QueryBytes(bytes))
+	var count float64
 	if idxCount < minRowCount {
-		return idxCount / float64(idx.TotalRowCount()), nil
+		count = idxCount
 	} else {
-		return minRowCount / float64(idx.TotalRowCount()), nil
+		count = minRowCount
 	}
+	return count / float64(idx.TotalRowCount()), nil
 }
 
 func (coll *HistColl) getIndexRowCount(sc *stmtctx.StatementContext, idxID int64, indexRanges []*ranger.Range) (float64, error) {
