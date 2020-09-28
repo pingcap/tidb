@@ -253,15 +253,15 @@ func (s *testPlacementSuite) TestPlacementBuild(c *C) {
 
 func (s *testPlacementSuite) TestPlacementBuildDrop(c *C) {
 	tests := []struct {
-		input int64
+		input  int64
 		output *placement.Bundle
 	}{
 		{
-			input: 2,
+			input:  2,
 			output: &placement.Bundle{ID: placement.GroupID(2)},
 		},
 		{
-			input: 1,
+			input:  1,
 			output: &placement.Bundle{ID: placement.GroupID(1)},
 		},
 	}
