@@ -775,6 +775,15 @@ func (ssElement *stmtSummaryByDigestElement) add(sei *StmtExecInfo, intervalSeco
 		ssElement.execRetryCount += sei.ExecRetryCount
 		ssElement.execRetryTime += sei.ExecRetryTime
 	}
+	ssElement.sumKVTotal += sei.KVTotal
+	ssElement.sumPDTotal += sei.PDTotal
+	ssElement.sumBackoffTotal += sei.BackoffTotal
+	ssElement.sumWriteSQLRespTotal += sei.WriteSQLRespTotal
+	if sei.Prepared {
+		ssElement.prepared = true
+	} else {
+		ssElement.prepared = false
+	}
 }
 
 func (ssElement *stmtSummaryByDigestElement) toDatum(ssbd *stmtSummaryByDigest) []types.Datum {
@@ -858,6 +867,11 @@ func (ssElement *stmtSummaryByDigestElement) toDatum(ssbd *stmtSummaryByDigest) 
 		ssElement.maxMem,
 		avgInt(ssElement.sumDisk, ssElement.execCount),
 		ssElement.maxDisk,
+		float64(ssElement.sumKVTotal),
+		float64(ssElement.sumPDTotal),
+		float64(ssElement.sumBackoffTotal),
+		float64(ssElement.sumWriteSQLRespTotal),
+		ssElement.prepared,
 		avgFloat(int64(ssElement.sumAffectedRows), ssElement.execCount),
 		types.NewTime(types.FromGoTime(ssElement.firstSeen), mysql.TypeTimestamp, 0),
 		types.NewTime(types.FromGoTime(ssElement.lastSeen), mysql.TypeTimestamp, 0),
