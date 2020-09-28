@@ -425,6 +425,17 @@ func GetRuleBundle(ctx context.Context, name string) (*placement.Bundle, error) 
 
 // PutRuleBundles is used to post specific rule bundles to PD.
 func PutRuleBundles(ctx context.Context, bundles []*placement.Bundle) error {
+	empty := true
+	for _, bundle := range bundles {
+		if len(bundle.Rules) != 0 || bundle.Index != 0 || bundle.Override != false {
+			empty = false
+			break
+		}
+	}
+	if empty {
+		return nil
+	}
+
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
 		return err
