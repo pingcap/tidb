@@ -312,7 +312,6 @@ const (
 		QUERY_COUNT bigint(64),
 		ROWS_SELECTED bigint(64),
 		LAST_USED_AT timestamp,
-		LAST_UPDATED_AT timestamp,
 		INDEX(TABLE_SCHEMA, TABLE_NAME, INDEX_NAME)
 	);`
 )

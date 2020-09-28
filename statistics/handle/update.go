@@ -312,19 +312,11 @@ func (h *Handle) sweepIdxUsageList() indexUsageMap {
 // For performance considerations, we use `insert` instead of `update`.
 func (h *Handle) DumpIndexUsageToKV() error {
 	mapper := h.sweepIdxUsageList()
-	rows, _, err := h.restrictedExec.ExecRestrictedSQL("SELECT TABLE_SCHEMA, TABLE_NAME, KEY_NAME from information_schema.tidb_indexes")
-	if err != nil {
-		return err
-	}
-	lastUpdatedAt := time.Now().Format("2006-01-02 15:04:05")
-	for _, row := range rows {
-		tableSchema := row.GetString(0)
-		tableName := row.GetString(1)
-		indexName := row.GetString(2)
-		value := mapper.query(tableSchema, tableName, indexName)
+	for id, value := range mapper {
+		idInfo := strings.Split(id, ".")
 		sql := fmt.Sprintf(
-			`insert into mysql.SCHEMA_INDEX_USAGE values ("%s", "%s", "%s", %d, %d, "%s", "%s") `,
-			tableSchema, tableName, indexName, value.QueryCount, value.RowsSelected, value.LastUsedAt, lastUpdatedAt)
+			`insert into mysql.SCHEMA_INDEX_USAGE values ("%s", "%s", "%s", %d, %d, "%s") `,
+			idInfo[0], idInfo[1], idInfo[2], value.QueryCount, value.RowsSelected, value.LastUsedAt)
 		_, _, err := h.restrictedExec.ExecRestrictedSQL(sql)
 		if err != nil {
 			return err

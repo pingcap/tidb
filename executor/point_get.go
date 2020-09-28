@@ -160,7 +160,11 @@ func (e *PointGetExecutor) Close() error {
 		e.snapshot.DelOption(kv.CollectRuntimeStats)
 	}
 	if e.idxInfo != nil && e.tblInfo != nil {
-		e.ctx.StoreIndexUsage(e.dbName, e.tblInfo.Name.O, e.idxInfo.Name.O, 1)
+		actRows := int64(0)
+		if e.runtimeStats != nil {
+			actRows = e.runtimeStats.GetActRows()
+		}
+		e.ctx.StoreIndexUsage(e.dbName, e.tblInfo.Name.L, e.idxInfo.Name.L, actRows)
 	}
 	e.done = false
 	return nil
