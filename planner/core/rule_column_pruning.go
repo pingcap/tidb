@@ -426,7 +426,7 @@ func (p *LogicalWindow) extractUsedCols(parentUsedCols []*expression.Column) []*
 
 // PruneColumns implements LogicalPlan interface.
 func (p *LogicalLimit) PruneColumns(parentUsedCols []*expression.Column) error {
-	if len(parentUsedCols) == 0 { // TODO: why?
+	if len(parentUsedCols) == 0 { // happens when LIMIT appears in UPDATE.
 		return nil
 	}
 

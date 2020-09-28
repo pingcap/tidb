@@ -504,9 +504,9 @@ func (c *Chunk) Append(other *Chunk, begin, end int) {
 // 1. every columns are used if colIdxs is nil.
 // 2. no columns are used if colIdxs is not nil but the size of colIdxs is 0.
 func (c *Chunk) AppendByColIdxs(other *Chunk, begin, end int, colIdxs []int) {
-	fn := func(colID int) {
-		src := other.columns[colID]
-		dst := c.columns[colID]
+	fn := func(dstColID, srcColID int) {
+		src := other.columns[srcColID]
+		dst := c.columns[dstColID]
 		if src.isFixed() {
 			elemLen := len(src.elemBuf)
 			dst.data = append(dst.data, src.data[begin*elemLen:end*elemLen]...)
@@ -518,19 +518,19 @@ func (c *Chunk) AppendByColIdxs(other *Chunk, begin, end int, colIdxs []int) {
 			}
 		}
 		for i := begin; i < end; i++ {
-			c.appendSel(colID)
+			c.appendSel(dstColID)
 			dst.appendNullBitmap(!src.IsNull(i))
 			dst.length++
 		}
 	}
 
 	if colIdxs != nil {
-		for colID := range colIdxs {
-			fn(colID)
+		for dstColID, srcColID := range colIdxs {
+			fn(dstColID, srcColID)
 		}
 	} else {
 		for colID := range other.columns {
-			fn(colID)
+			fn(colID, colID)
 		}
 	}
 
