@@ -579,13 +579,7 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 					col.FieldType.Collate = v.StrValue
 				}
 			case ast.ColumnOptionFulltext:
-<<<<<<< HEAD
 				ctx.GetSessionVars().StmtCtx.AppendWarning(ErrTableCantHandleFt)
-=======
-				ctx.GetSessionVars().StmtCtx.AppendWarning(ErrTableCantHandleFt.GenWithStackByArgs())
-			case ast.ColumnOptionCheck:
-				ctx.GetSessionVars().StmtCtx.AppendWarning(ErrUnsupportedConstraintCheck.GenWithStackByArgs("CONSTRAINT CHECK"))
->>>>>>> 0843f32c0... DDL: check table-level check constraint when create table (#20202)
 			}
 		}
 	}
@@ -1225,7 +1219,6 @@ func buildTableInfo(
 			continue
 		}
 		if constr.Tp == ast.ConstraintCheck {
-			ctx.GetSessionVars().StmtCtx.AppendWarning(ErrUnsupportedConstraintCheck.GenWithStackByArgs("CONSTRAINT CHECK"))
 			continue
 		}
 		// build index info.
