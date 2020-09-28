@@ -73,7 +73,7 @@ func checkAddPartition(t *meta.Meta, job *model.Job) (*model.TableInfo, *model.P
 func onAddTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	// Handle the rolling back job
 	if job.IsRollingback() {
-		ver, err := onDropTablePartition(t, job)
+		ver, err := onDropTablePartition(d, t, job)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -867,23 +867,14 @@ func getPartitionDef(tblInfo *model.TableInfo, partName string) (index int, def 
 	return index, nil, table.ErrUnknownPartition.GenWithStackByArgs(partName, tblInfo.Name.O)
 }
 
-func buildPlacementDropRules(schemaID, tableID int64, partitionIDs []int64) []*placement.RuleOp {
-	rules := make([]*placement.RuleOp, 0, len(partitionIDs))
-	for _, partitionID := range partitionIDs {
-		rules = append(rules, &placement.RuleOp{
-			Action:           placement.RuleOpDel,
-			DeleteByIDPrefix: true,
-			Rule: &placement.Rule{
-				GroupID: placement.RuleDefaultGroupID,
-				ID:      fmt.Sprintf("%d_t%d_p%d", schemaID, tableID, partitionID),
-			},
-		})
+func buildPlacementDropBundle(partitionID int64) *placement.Bundle {
+	return &placement.Bundle{
+		ID: placement.GroupID(partitionID),
 	}
-	return rules
 }
 
 // onDropTablePartition deletes old partition meta.
-func onDropTablePartition(t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	var partNames []string
 	if err := job.DecodeArgs(&partNames); err != nil {
 		job.State = model.JobStateCancelled
@@ -907,11 +898,20 @@ func onDropTablePartition(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		physicalTableIDs = removePartitionInfo(tblInfo, partNames)
 	}
 
-	rules := buildPlacementDropRules(job.SchemaID, tblInfo.ID, physicalTableIDs)
-	err = infosync.UpdatePlacementRules(nil, rules)
-	if err != nil {
-		job.State = model.JobStateCancelled
-		return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
+	if d.infoHandle != nil {
+		bundles := make([]*placement.Bundle, 0, len(physicalTableIDs))
+		for _, ID := range physicalTableIDs {
+			oldBundle, ok := d.infoHandle.Get().BundleByName(placement.GroupID(ID))
+			if ok && !oldBundle.IsEmpty() {
+				bundles = append(bundles, buildPlacementDropBundle(ID))
+			}
+		}
+
+		err = infosync.PutRuleBundles(nil, bundles)
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
+		}
 	}
 
 	ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
@@ -1518,8 +1518,8 @@ func truncateTableByReassignPartitionIDs(t *meta.Meta, tblInfo *model.TableInfo)
 
 func onAlterTablePartition(t *meta.Meta, job *model.Job) (int64, error) {
 	var partitionID int64
-	var rules []*placement.RuleOp
-	err := job.DecodeArgs(&partitionID, &rules)
+	bundle := &placement.Bundle{}
+	err := job.DecodeArgs(&partitionID, bundle)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return 0, errors.Trace(err)
@@ -1536,23 +1536,15 @@ func onAlterTablePartition(t *meta.Meta, job *model.Job) (int64, error) {
 		return 0, errors.Trace(table.ErrUnknownPartition.GenWithStackByArgs("drop?", tblInfo.Name.O))
 	}
 
-	for i, rule := range rules {
-		if rule.Action == placement.RuleOpDel {
-			rule.ID = fmt.Sprintf("%d_t%d_p%d_%s", job.SchemaID, tblInfo.ID, partitionID, rule.Role)
-		} else {
-			rule.ID = fmt.Sprintf("%d_t%d_p%d_%s_%d_%d", job.SchemaID, tblInfo.ID, partitionID, rule.Role, job.ID, i)
-		}
-	}
-
-	ver, err := t.GetSchemaVersion()
-	if err != nil {
-		return ver, errors.Trace(err)
-	}
-
-	err = infosync.UpdatePlacementRules(nil, rules)
+	err = infosync.PutRuleBundles(nil, []*placement.Bundle{bundle})
 	if err != nil {
 		job.State = model.JobStateCancelled
-		return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
+		return 0, errors.Wrapf(err, "failed to notify PD the placement rules")
+	}
+
+	ver, err := updateSchemaVersion(t, job)
+	if err != nil {
+		return ver, errors.Trace(err)
 	}
 
 	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
