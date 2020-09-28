@@ -315,7 +315,7 @@ func (h *Handle) DumpIndexUsageToKV() error {
 	for id, value := range mapper {
 		idInfo := strings.Split(id, ".")
 		sql := fmt.Sprintf(
-			`insert into mysql.SCHEMA_INDEX_USAGE values ("%s", "%s", "%s", %d, %d, "%s") `,
+			`insert into mysql.STATS_INDEX_USAGE values ("%s", "%s", "%s", %d, %d, "%s") `,
 			idInfo[0], idInfo[1], idInfo[2], value.QueryCount, value.RowsSelected, value.LastUsedAt)
 		_, _, err := h.restrictedExec.ExecRestrictedSQL(sql)
 		if err != nil {

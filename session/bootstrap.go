@@ -305,7 +305,7 @@ const (
 	);`
 
 	// CreateSchemaIndexUsageTable stores the index usage information.
-	CreateSchemaIndexUsageTable = `CREATE TABLE IF NOT EXISTS mysql.schema_index_usage (
+	CreateSchemaIndexUsageTable = `CREATE TABLE IF NOT EXISTS mysql.stats_index_usage (
 		TABLE_SCHEMA varchar(64),
 		TABLE_NAME varchar(64),
 		INDEX_NAME varchar(64),
@@ -422,7 +422,7 @@ const (
 	version48 = 48
 	// version49 introduces mysql.stats_extended table.
 	version49 = 49
-	// version50 add mysql.schema_index_usage table.
+	// version50 add mysql.stats_index_usage table.
 	version50 = 50
 	// version51 introduces CreateTablespacePriv to mysql.user.
 	version51 = 51
@@ -1247,7 +1247,7 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreateOptRuleBlacklist)
 	// Create stats_extended table.
 	mustExecute(s, CreateStatsExtended)
-	// Create schema_index_usage.
+	// Create stats_index_usage.
 	mustExecute(s, CreateSchemaIndexUsageTable)
 }
 

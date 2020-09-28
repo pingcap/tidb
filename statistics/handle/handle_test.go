@@ -52,7 +52,7 @@ func cleanEnv(c *C, store kv.Storage, do *domain.Domain) {
 	tk.MustExec("delete from mysql.stats_histograms")
 	tk.MustExec("delete from mysql.stats_buckets")
 	tk.MustExec("delete from mysql.stats_extended")
-	tk.MustExec("delete from mysql.schema_index_usage")
+	tk.MustExec("delete from mysql.stats_index_usage")
 	do.StatsHandle().Clear()
 }
 
@@ -769,7 +769,7 @@ func (s *testStatsSuite) TestIndexUsageInformation(c *C) {
 	tk.MustExec("create unique index idx_a on t_idx(a)")
 	tk.MustExec("create unique index idx_b on t_idx(b)")
 	tk.MustQuery("select a from t_idx where a=1")
-	querySQL := `select sum(query_count), sum(rows_selected) from mysql.schema_index_usage where table_name = "t_idx" group by table_schema, table_name, index_name`
+	querySQL := `select sum(query_count), sum(rows_selected) from mysql.stats_index_usage where table_name = "t_idx" group by table_schema, table_name, index_name`
 	do := s.do
 	err := do.StatsHandle().DumpIndexUsageToKV()
 	c.Assert(err, IsNil)
