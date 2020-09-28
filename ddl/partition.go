@@ -898,18 +898,20 @@ func onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _
 		physicalTableIDs = removePartitionInfo(tblInfo, partNames)
 	}
 
-	bundles := make([]*placement.Bundle, 0, len(physicalTableIDs))
-	for _, ID := range physicalTableIDs {
-		oldBundle, ok := d.infoHandle.Get().BundleByName(placement.GroupID(ID))
-		if ok && !oldBundle.IsEmpty() {
-			bundles = append(bundles, buildPlacementDropBundle(ID))
+	if d.infoHandle != nil {
+		bundles := make([]*placement.Bundle, 0, len(physicalTableIDs))
+		for _, ID := range physicalTableIDs {
+			oldBundle, ok := d.infoHandle.Get().BundleByName(placement.GroupID(ID))
+			if ok && !oldBundle.IsEmpty() {
+				bundles = append(bundles, buildPlacementDropBundle(ID))
+			}
 		}
-	}
 
-	err = infosync.PutRuleBundles(nil, bundles)
-	if err != nil {
-		job.State = model.JobStateCancelled
-		return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
+		err = infosync.PutRuleBundles(nil, bundles)
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
+		}
 	}
 
 	ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
