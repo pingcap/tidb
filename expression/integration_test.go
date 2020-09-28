@@ -6704,6 +6704,18 @@ func (s *testIntegrationSerialSuite) TestNewCollationWithClusterIndex(c *C) {
 	tk.MustQuery("select d from t use index(idx) where name=\"aa\"").Check(testkit.Rows("2.11"))
 }
 
+func (s *testIntegrationSerialSuite) TestNewCollationBinaryFlag(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a varchar(2) binary, index (a));")
+	tk.MustExec("insert into t values ('a ');")
+	tk.MustQuery("select hex(a) from t;").Check(testkit.Rows("6120"))
+	tk.MustQuery("select hex(a) from t use index (a);").Check(testkit.Rows("6120"))
+}
+
 func (s *testIntegrationSuite) TestIssue15743(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
