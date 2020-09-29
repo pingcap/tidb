@@ -1308,3 +1308,38 @@ func (s *testRangerSuite) TestCompIndexMultiColDNF2(c *C) {
 		testKit.MustQuery(tt).Check(testkit.Rows(output[i].Result...))
 	}
 }
+
+func (s *testRangerSuite) TestIndexRangeYearOverflow(c *C) {
+	defer testleak.AfterTest(c)()
+	dom, store, err := newDomainStoreWithBootstrap(c)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	c.Assert(err, IsNil)
+	testKit := testkit.NewTestKit(c, store)
+	testKit.MustExec("use test")
+	testKit.MustExec("DROP TABLE IF EXISTS `table_30_utf8_undef`")
+	testKit.MustExec("CREATE TABLE `table_30_utf8_undef` (\n  `pk` int(11) NOT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin")
+	testKit.MustExec("INSERT INTO `table_30_utf8_undef` VALUES (29)")
+
+	testKit.MustExec("DROP TABLE IF EXISTS `table_40_utf8_4`")
+	testKit.MustExec("CREATE TABLE `table_40_utf8_4`(\n  `pk` int(11) NOT NULL,\n  `col_int_key_unsigned` int(10) unsigned DEFAULT NULL,\n  `col_year_key_signed` year(4) DEFAULT NULL,\n" +
+		"PRIMARY KEY (`pk`),\n  KEY `col_int_key_unsigned` (`col_int_key_unsigned`),\n  KEY `col_year_key_signed` (`col_year_key_signed`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin")
+
+	testKit.MustExec("INSERT INTO `table_40_utf8_4` VALUES (36, 10 ,1)")
+
+	testKit.MustQuery("SELECT sum(tmp.val) AS val FROM (" +
+		"SELECT count(1) AS val FROM table_40_utf8_4 JOIN table_30_utf8_undef\n" +
+		"WHERE table_40_utf8_4.col_year_key_signed!=table_40_utf8_4.col_int_key_unsigned\n" +
+		"AND table_40_utf8_4.col_int_key_unsigned=\"15698\") AS tmp").
+		Check(testkit.Rows("0"))
+
+	testKit.MustExec("DROP TABLE IF EXISTS t")
+	testKit.MustExec("CREATE TABLE t (a year(4), key(a))")
+	testKit.MustExec("INSERT INTO t VALUES (1), (70), (99), (0), ('0')")
+	testKit.MustQuery("SELECT * FROM t WHERE a < 15698").Check(testkit.Rows("0", "1970", "1999", "2000", "2001"))
+	testKit.MustQuery("SELECT * FROM t WHERE a <= 0").Check(testkit.Rows("0"))
+	testKit.MustQuery("SELECT * FROM t WHERE a < 2000").Check(testkit.Rows("0", "1970", "1999"))
+	testKit.MustQuery("SELECT * FROM t WHERE a > -1").Check(testkit.Rows("0", "1970", "1999", "2000", "2001"))
+}
