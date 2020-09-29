@@ -7079,6 +7079,23 @@ func (s *testIntegrationSuite) TestIssue18515(c *C) {
 	tk.MustExec("select /*+ TIDB_INLJ(t2) */ t1.a, t1.c, t2.a from t t1, t t2 where t1.c=t2.c;")
 }
 
+func (s *testIntegrationSuite) TestIssue20223(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("CREATE TABLE t (" +
+		"id int(10) unsigned NOT NULL AUTO_INCREMENT," +
+		"type tinyint(4) NOT NULL," +
+		"create_time int(11) NOT NULL," +
+		"PRIMARY KEY (id)" +
+		")")
+	tk.MustExec("insert into t values (4, 2, 1598584933)")
+	tk.MustQuery("select from_unixtime(create_time,'%Y-%m-%d') as t_day,count(*) as cnt from t where `type` = 1 " +
+		"group by t_day union all " +
+		"select from_unixtime(create_time,'%Y-%m-%d') as t_day,count(*) as cnt from t where `type` = 2 " +
+		"group by t_day").Check(testkit.Rows("2020-08-28 1"))
+}
+
 func (s *testIntegrationSuite) TestIssue18525(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -7439,4 +7456,23 @@ func (s *testIntegrationSuite) TestIssue11645(c *C) {
 	tk.MustQuery(`SELECT DATE_ADD('0001-01-02 00:00:00', INTERVAL -24 HOUR);`).Check(testkit.Rows("0001-01-01 00:00:00"))
 	tk.MustQuery(`SELECT DATE_ADD('0001-01-02 00:00:00', INTERVAL -25 HOUR);`).Check(testkit.Rows("0000-00-00 23:00:00"))
 	tk.MustQuery(`SELECT DATE_ADD('0001-01-02 00:00:00', INTERVAL -8785 HOUR);`).Check(testkit.Rows("0000-00-00 23:00:00"))
+}
+
+func (s *testIntegrationSuite) TestIssue20180(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t(a enum('a', 'b'), b tinyint);")
+	tk.MustExec("create table t1(c varchar(20));")
+	tk.MustExec("insert into t values('b', 0);")
+	tk.MustExec("insert into t1 values('b');")
+	tk.MustQuery("select * from t, t1 where t.a= t1.c;").Check(testkit.Rows("b 0 b"))
+	tk.MustQuery("select * from t, t1 where t.b= t1.c;").Check(testkit.Rows("b 0 b"))
+	tk.MustQuery("select * from t, t1 where t.a = t1.c and t.b= t1.c;").Check(testkit.Rows("b 0 b"))
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a enum('a','b'));")
+	tk.MustExec("insert into t values('b');")
+	tk.MustQuery("select * from t where a > 1  and a = \"b\";").Check(testkit.Rows("b"))
 }

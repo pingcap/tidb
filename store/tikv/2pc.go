@@ -85,6 +85,9 @@ type twoPhaseCommitter struct {
 	txnSize             int
 	hasNoNeedCommitKeys bool
 
+	prewriteOnlyKeys int
+	ignoredKeys      int
+
 	primaryKey  []byte
 	forUpdateTS uint64
 
@@ -369,7 +372,7 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 					// due to `Op_CheckNotExists` doesn't prewrite lock, so mark those keys should not be used in commit-phase.
 					op = pb.Op_CheckNotExists
 					checkCnt++
-					memBuf.UpdateFlags(key, kv.SetNoNeedCommit)
+					memBuf.UpdateFlags(key, kv.SetPrewriteOnly)
 				} else {
 					// normal delete keys in optimistic txn can be delete without not exists checking
 					// delete-your-writes keys in pessimistic txn can ensure must be no exists so can directly delete them
@@ -797,11 +800,19 @@ func sendTxnHeartBeat(bo *Backoffer, store *tikvStore, primary []byte, startTS, 
 
 // checkAsyncCommit checks if async commit protocol is available for current transaction commit, true is returned if possible.
 func (c *twoPhaseCommitter) checkAsyncCommit() bool {
+	asyncCommitCfg := config.GetGlobalConfig().TiKVClient.AsyncCommit
 	// TODO the keys limit need more tests, this value makes the unit test pass by now.
 	// Async commit is not compatible with Binlog because of the non unique timestamp issue.
-	if c.connID > 0 && config.GetGlobalConfig().TiKVClient.EnableAsyncCommit &&
-		uint(len(c.mutations.keys)) <= config.GetGlobalConfig().TiKVClient.AsyncCommitKeysLimit &&
+	if c.connID > 0 && asyncCommitCfg.Enable &&
+		uint(len(c.mutations.keys)) <= asyncCommitCfg.KeysLimit &&
 		!c.shouldWriteBinlog() {
+		totalKeySize := uint64(0)
+		for _, key := range c.mutations.keys {
+			totalKeySize += uint64(len(key))
+			if totalKeySize > asyncCommitCfg.TotalKeySizeLimit {
+				return false
+			}
+		}
 		return true
 	}
 	return false
@@ -1051,7 +1062,7 @@ func (c *twoPhaseCommitter) stripNoNeedCommitKeys() {
 	for oldIdx := range m.keys {
 		key := m.keys[oldIdx]
 		flags, err := c.txn.GetMemBuffer().GetFlags(key)
-		if err == nil && flags.HasNoNeedCommit() {
+		if err == nil && flags.HasPrewriteOnly() {
 			continue
 		}
 		m.keys[newIdx] = key

@@ -766,7 +766,7 @@ func (ds *DataSource) convertToIndexMergeScan(prop *property.PhysicalProperty, c
 		return invalidTask, nil
 	}
 	path := candidate.path
-	var totalCost, totalRowCount float64
+	var totalCost float64
 	scans := make([]PhysicalPlan, 0, len(path.PartialIndexPaths))
 	cop := &copTask{
 		indexPlanFinished: true,
@@ -780,17 +780,19 @@ func (ds *DataSource) convertToIndexMergeScan(prop *property.PhysicalProperty, c
 	}
 	for _, partPath := range path.PartialIndexPaths {
 		var scan PhysicalPlan
-		var partialCost, rowCount float64
+		var partialCost float64
 		if partPath.IsTablePath() {
-			scan, partialCost, rowCount = ds.convertToPartialTableScan(prop, partPath)
+			scan, partialCost = ds.convertToPartialTableScan(prop, partPath)
 		} else {
-			scan, partialCost, rowCount = ds.convertToPartialIndexScan(prop, partPath)
+			scan, partialCost = ds.convertToPartialIndexScan(prop, partPath)
 		}
 		scans = append(scans, scan)
 		totalCost += partialCost
-		totalRowCount += rowCount
 	}
-
+	totalRowCount := path.CountAfterAccess
+	if prop.ExpectedCnt < ds.stats.RowCount {
+		totalRowCount *= prop.ExpectedCnt / ds.stats.RowCount
+	}
 	ts, partialCost, err := ds.buildIndexMergeTableScan(prop, path.TableFilters, totalRowCount)
 	if err != nil {
 		return nil, err
@@ -805,8 +807,7 @@ func (ds *DataSource) convertToIndexMergeScan(prop *property.PhysicalProperty, c
 
 func (ds *DataSource) convertToPartialIndexScan(prop *property.PhysicalProperty, path *util.AccessPath) (
 	indexPlan PhysicalPlan,
-	partialCost float64,
-	rowCount float64) {
+	partialCost float64) {
 	idx := path.Index
 	is, partialCost, rowCount := ds.getOriginalPhysicalIndexScan(prop, path, false, false)
 	rowSize := is.indexScanRowSize(idx, ds, false)
@@ -828,17 +829,16 @@ func (ds *DataSource) convertToPartialIndexScan(prop *property.PhysicalProperty,
 		indexPlan := PhysicalSelection{Conditions: indexConds}.Init(is.ctx, stats, ds.blockOffset)
 		indexPlan.SetChildren(is)
 		partialCost += rowCount * rowSize * sessVars.NetworkFactor
-		return indexPlan, partialCost, rowCount
+		return indexPlan, partialCost
 	}
 	partialCost += rowCount * rowSize * sessVars.NetworkFactor
 	indexPlan = is
-	return indexPlan, partialCost, rowCount
+	return indexPlan, partialCost
 }
 
 func (ds *DataSource) convertToPartialTableScan(prop *property.PhysicalProperty, path *util.AccessPath) (
 	tablePlan PhysicalPlan,
-	partialCost float64,
-	rowCount float64) {
+	partialCost float64) {
 	ts, partialCost, rowCount := ds.getOriginalPhysicalTableScan(prop, path, false)
 	rowSize := ds.TblColHists.GetAvgRowSize(ds.ctx, ds.TblCols, false, false)
 	sessVars := ds.ctx.GetSessionVars()
@@ -852,11 +852,11 @@ func (ds *DataSource) convertToPartialTableScan(prop *property.PhysicalProperty,
 		tablePlan.SetChildren(ts)
 		partialCost += rowCount * sessVars.CopCPUFactor
 		partialCost += selectivity * rowCount * rowSize * sessVars.NetworkFactor
-		return tablePlan, partialCost, rowCount
+		return tablePlan, partialCost
 	}
 	partialCost += rowCount * rowSize * sessVars.NetworkFactor
 	tablePlan = ts
-	return tablePlan, partialCost, rowCount
+	return tablePlan, partialCost
 }
 
 func (ds *DataSource) buildIndexMergeTableScan(prop *property.PhysicalProperty, tableFilters []expression.Expression, totalRowCount float64) (PhysicalPlan, float64, error) {
