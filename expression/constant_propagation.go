@@ -200,12 +200,7 @@ func (s *propConstSolver) propagateColumnEQ() {
 		if fun, ok := s.conditions[i].(*ScalarFunction); ok && fun.FuncName.L == ast.EQ {
 			lCol, lOk := fun.GetArgs()[0].(*Column)
 			rCol, rOk := fun.GetArgs()[1].(*Column)
-<<<<<<< HEAD
-			if lOk && rOk {
-=======
-			// TODO: Enable hybrid types in ConstantPropagate.
-			if lOk && rOk && lCol.GetType().Collate == rCol.GetType().Collate && !lCol.GetType().Hybrid() && !rCol.GetType().Hybrid() {
->>>>>>> 1d34c333f... expression: avoid constant propagate for the hybrid types (#20258)
+			if lOk && rOk && !lCol.GetType().Hybrid() && !rCol.GetType().Hybrid() {
 				lID := s.getColID(lCol)
 				rID := s.getColID(rCol)
 				s.unionSet.Union(lID, rID)
