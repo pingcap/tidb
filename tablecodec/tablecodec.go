@@ -1076,7 +1076,7 @@ func TryGetCommonPkColumnRestoredIds(tbl *model.TableInfo) []int64 {
 }
 
 // GenIndexValueNew create index value for both local and global index.
-func GenIndexValueNew(sc *stmtctx.StatementContext, tblInfo *model.TableInfo, idxInfo *model.IndexInfo, needRestoredData bool, distinct bool, untouched bool, indexedValues []types.Datum, h kv.Handle, partitionID int64, restoredData []types.Datum) ([]byte, error) {
+func GenIndexValueNew(sc *stmtctx.StatementContext, tblInfo *model.TableInfo, idxInfo *model.IndexInfo, IdxValNeedRestoredData bool, distinct bool, untouched bool, indexedValues []types.Datum, h kv.Handle, partitionID int64, handleRestoredData []types.Datum) ([]byte, error) {
 	idxVal := make([]byte, 1)
 	newEncode := false
 	tailLen := 0
@@ -1088,15 +1088,18 @@ func GenIndexValueNew(sc *stmtctx.StatementContext, tblInfo *model.TableInfo, id
 		idxVal = encodePartitionID(idxVal, partitionID)
 		newEncode = true
 	}
-	if collate.NewCollationEnabled() && (needRestoredData || len(restoredData) > 0) {
+	if collate.NewCollationEnabled() && (IdxValNeedRestoredData || len(handleRestoredData) > 0) {
 		idxVal = append(idxVal, RestoredDataV5)
 
 		colIds := make([]int64, 0, len(idxInfo.Columns))
-		allRestoredData := make([]types.Datum, 0, len(restoredData)+len(idxInfo.Columns))
-		for i, col := range idxInfo.Columns {
-			if types.NeedRestoredData(&tblInfo.Columns[col.Offset].FieldType) {
-				colIds = append(colIds, tblInfo.Columns[col.Offset].ID)
-				if collate.IsBinCollation(tblInfo.Columns[col.Offset].Collate) {
+		allRestoredData := make([]types.Datum, 0, len(handleRestoredData)+len(idxInfo.Columns))
+		for i, idxCol := range idxInfo.Columns {
+			col := tblInfo.Columns[idxCol.Offset]
+			// If handle is common handle and the column is the primary key's column,
+			// the restored data will be written later. Skip writing it here to avoid redundancy.
+			if (h.IsInt() || !mysql.HasPriKeyFlag(col.Flag)) && types.NeedRestoredData(&col.FieldType) {
+				colIds = append(colIds, col.ID)
+				if collate.IsBinCollation(col.Collate) {
 					allRestoredData = append(allRestoredData, types.NewUintDatum(uint64(stringutil.GetTailSpaceCount(indexedValues[i].GetString()))))
 				} else {
 					allRestoredData = append(allRestoredData, indexedValues[i])
@@ -1104,10 +1107,10 @@ func GenIndexValueNew(sc *stmtctx.StatementContext, tblInfo *model.TableInfo, id
 			}
 		}
 
-		if len(restoredData) > 0 {
+		if len(handleRestoredData) > 0 {
 			pkColIds := TryGetCommonPkColumnRestoredIds(tblInfo)
 			colIds = append(colIds, pkColIds...)
-			allRestoredData = append(allRestoredData, restoredData...)
+			allRestoredData = append(allRestoredData, handleRestoredData...)
 		}
 
 		rd := rowcodec.Encoder{Enable: true}
