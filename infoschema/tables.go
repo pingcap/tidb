@@ -769,6 +769,7 @@ var slowQueryCols = []columnInfo{
 	{name: variable.SlowLogPDTotal, tp: mysql.TypeDouble, size: 22},
 	{name: variable.SlowLogBackoffTotal, tp: mysql.TypeDouble, size: 22},
 	{name: variable.SlowLogWriteSQLRespTotal, tp: mysql.TypeDouble, size: 22},
+	{name: variable.SlowLogBackoffDetail, tp: mysql.TypeVarchar, size: 4096},
 	{name: variable.SlowLogPrepared, tp: mysql.TypeTiny, size: 1},
 	{name: variable.SlowLogSucc, tp: mysql.TypeTiny, size: 1},
 	{name: variable.SlowLogPlanFromCache, tp: mysql.TypeTiny, size: 1},

@@ -345,6 +345,15 @@ func (e *slowQueryRetriever) parseLog(ctx sessionctx.Context, log []string, offs
 					if !valid {
 						startFlag = false
 					}
+				} else if strings.HasPrefix(line, variable.SlowLogCopBackoffPrefix) {
+					valid, err := st.setFieldValue(tz, line, line, fileLine, e.checker)
+					if err != nil {
+						ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+						continue
+					}
+					if !valid {
+						startFlag = false
+					}
 				} else {
 					fieldValues := strings.Split(line, " ")
 					for i := 0; i < len(fieldValues)-1; i += 2 {
@@ -449,6 +458,7 @@ type slowQueryTuple struct {
 	writeSQLRespTotal      float64
 	plan                   string
 	planDigest             string
+	copBackoff             string
 }
 
 func (st *slowQueryTuple) setFieldValue(tz *time.Location, field, value string, lineNum int, checker *slowLogChecker) (valid bool, err error) {
@@ -612,6 +622,9 @@ func (st *slowQueryTuple) setFieldValue(tz *time.Location, field, value string, 
 	if err != nil {
 		return valid, fmt.Errorf("Parse slow log at line " + strconv.FormatInt(int64(lineNum), 10) + " failed. Field: `" + field + "`, error: " + err.Error())
 	}
+	if strings.HasPrefix(field, variable.SlowLogCopBackoffPrefix) {
+		st.copBackoff += value
+	}
 	return valid, err
 }
 
@@ -672,6 +685,7 @@ func (st *slowQueryTuple) convertToDatumRow() []types.Datum {
 	record = append(record, types.NewFloat64Datum(st.pdTotal))
 	record = append(record, types.NewFloat64Datum(st.backoffTotal))
 	record = append(record, types.NewFloat64Datum(st.writeSQLRespTotal))
+	record = append(record, types.NewStringDatum(st.copBackoff))
 	if st.prepared {
 		record = append(record, types.NewIntDatum(1))
 	} else {
