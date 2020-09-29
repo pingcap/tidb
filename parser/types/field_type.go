@@ -70,11 +70,15 @@ func (ft *FieldType) Equal(other *FieldType) bool {
 	// but need compare unsigned_flag of ft.Flag.
 	// When Tp is float or double with Decimal unspecified, do not check whether Flen is equal,
 	// because Flen for them is useless.
-	partialEqual := ft.Tp == other.Tp &&
-		ft.Decimal == other.Decimal &&
+	// The Decimal field can be ignored if the type is int or string.
+	tpEqual := (ft.Tp == other.Tp) || (ft.Tp == mysql.TypeVarchar && other.Tp == mysql.TypeVarString) || (ft.Tp == mysql.TypeVarString && other.Tp == mysql.TypeVarchar)
+	flenEqual := ft.Flen == other.Flen || (ft.EvalType() == ETReal && ft.Decimal == UnspecifiedLength)
+	ignoreDecimal := ft.EvalType() == ETInt || ft.EvalType() == ETString
+	partialEqual := tpEqual &&
+		(ignoreDecimal || ft.Decimal == other.Decimal) &&
 		ft.Charset == other.Charset &&
 		ft.Collate == other.Collate &&
-		(ft.Flen == other.Flen || (ft.EvalType() == ETReal && ft.Decimal == UnspecifiedLength)) &&
+		flenEqual &&
 		mysql.HasUnsignedFlag(ft.Flag) == mysql.HasUnsignedFlag(other.Flag)
 	if !partialEqual || len(ft.Elems) != len(other.Elems) {
 		return false
