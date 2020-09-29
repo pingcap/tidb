@@ -418,7 +418,7 @@ func (w *worker) doModifyColumn(
 	oldPos, newPos := oldCol.Offset, oldCol.Offset
 	if pos.Tp == ast.ColumnPositionAfter {
 		if oldName.L == pos.RelativeColumn.Name.L {
-			// `alter table tableName modify column b int after b` will return ver,ErrColumnNotExists.
+			// `alter table tableName modify column b int after b` will return ver, ErrColumnNotExists.
 			// Modified the type definition of 'null' to 'not null' before this, so rollback the job when an error occurs.
 			job.State = model.JobStateRollingback
 			return ver, infoschema.ErrColumnNotExists.GenWithStackByArgs(oldName, tblInfo.Name)
