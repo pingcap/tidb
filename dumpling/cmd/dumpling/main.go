@@ -35,38 +35,39 @@ import (
 )
 
 var (
-	databases     []string
-	tablesList    []string
-	host          string
-	user          string
-	port          int
-	password      string
-	threads       int
-	outputDir     string
-	fileSizeStr   string
-	statementSize uint64
-	logLevel      string
-	logFile       string
-	logFormat     string
-	consistency   string
-	snapshot      string
-	noViews       bool
-	statusAddr    string
-	rows          uint64
-	where         string
-	fileType      string
-	noHeader      bool
-	noSchemas     bool
-	noData        bool
-	csvNullValue  string
-	sql           string
-	filters       []string
-	caseSensitive bool
-	caPath        string
-	certPath      string
-	keyPath       string
-	csvSeparator  string
-	csvDelimiter  string
+	databases               []string
+	tablesList              []string
+	host                    string
+	user                    string
+	port                    int
+	password                string
+	allowCleartextPasswords bool
+	threads                 int
+	outputDir               string
+	fileSizeStr             string
+	statementSize           uint64
+	logLevel                string
+	logFile                 string
+	logFormat               string
+	consistency             string
+	snapshot                string
+	noViews                 bool
+	statusAddr              string
+	rows                    uint64
+	where                   string
+	fileType                string
+	noHeader                bool
+	noSchemas               bool
+	noData                  bool
+	csvNullValue            string
+	sql                     string
+	filters                 []string
+	caseSensitive           bool
+	caPath                  string
+	certPath                string
+	keyPath                 string
+	csvSeparator            string
+	csvDelimiter            string
 
 	completeInsert       bool
 	dumpEmptyDatabase    bool
@@ -94,6 +95,7 @@ func main() {
 	pflag.StringVarP(&user, "user", "u", "root", "Username with privileges to run the dump")
 	pflag.IntVarP(&port, "port", "P", 4000, "TCP/IP port to connect to")
 	pflag.StringVarP(&password, "password", "p", "", "User password")
+	pflag.BoolVar(&allowCleartextPasswords, "allow-cleartext-passwords", false, "Allow passwords to be sent in cleartext (warning: don't use without TLS)")
 	pflag.IntVarP(&threads, "threads", "t", 4, "Number of goroutines to use, default 4")
 	pflag.StringVarP(&fileSizeStr, "filesize", "F", "", "The approximate size of output file")
 	pflag.Uint64VarP(&statementSize, "statement-size", "s", export.UnspecifiedSize, "Attempted size of INSERT statement in bytes")
@@ -180,6 +182,7 @@ func main() {
 	conf.User = user
 	conf.Port = port
 	conf.Password = password
+	conf.AllowCleartextPasswords = allowCleartextPasswords
 	conf.Threads = threads
 	conf.FileSize = fileSize
 	conf.StatementSize = statementSize

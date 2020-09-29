@@ -20,12 +20,13 @@ import (
 type Config struct {
 	storage.BackendOptions
 
-	Databases []string
-	Host      string
-	User      string
-	Port      int
-	Password  string `json:"-"`
-	Security  struct {
+	Databases               []string
+	Host                    string
+	User                    string
+	Port                    int
+	Password                string `json:"-"`
+	AllowCleartextPasswords bool
+	Security                struct {
 		CAPath   string
 		CertPath string
 		KeyPath  string
@@ -120,6 +121,9 @@ func (conf *Config) GetDSN(db string) string {
 	dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?charset=utf8mb4", conf.User, conf.Password, conf.Host, conf.Port, db)
 	if len(conf.Security.CAPath) > 0 {
 		dsn += "&tls=dumpling-tls-target"
+	}
+	if conf.AllowCleartextPasswords {
+		dsn += "&allowCleartextPasswords=1"
 	}
 	return dsn
 }
