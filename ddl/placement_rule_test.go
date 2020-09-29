@@ -14,11 +14,14 @@
 package ddl
 
 import (
+	"encoding/hex"
 	"encoding/json"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/ddl/placement"
+	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/util/codec"
 )
 
 var _ = Suite(&testPlacementSuite{})
@@ -276,15 +279,23 @@ func (s *testPlacementSuite) TestPlacementBuildTruncate(c *C) {
 		{
 			input: 1,
 			output: &placement.Bundle{
-				ID:    placement.GroupID(1),
-				Rules: []*placement.Rule{{GroupID: placement.GroupID(1)}},
+				ID: placement.GroupID(1),
+				Rules: []*placement.Rule{{
+					GroupID:     placement.GroupID(1),
+					StartKeyHex: hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(1))),
+					EndKeyHex:   hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(2))),
+				}},
 			},
 		},
 		{
 			input: 2,
 			output: &placement.Bundle{
-				ID:    placement.GroupID(2),
-				Rules: []*placement.Rule{{GroupID: placement.GroupID(2)}},
+				ID: placement.GroupID(2),
+				Rules: []*placement.Rule{{
+					GroupID:     placement.GroupID(2),
+					StartKeyHex: hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(2))),
+					EndKeyHex:   hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(3))),
+				}},
 			},
 		},
 	}
