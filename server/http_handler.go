@@ -23,6 +23,7 @@ import (
 	"math"
 	"net/http"
 	"net/url"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -1084,13 +1085,15 @@ func (h ddlResignOwnerHandler) ServeHTTP(w http.ResponseWriter, req *http.Reques
 }
 
 func (h tableHandler) getPDAddr() ([]string, error) {
-	var pdAddrs []string
 	etcd, ok := h.Store.(tikv.EtcdBackend)
 	if !ok {
 		return nil, errors.New("not implemented")
 	}
-	pdAddrs = etcd.EtcdAddrs()
-	if len(pdAddrs) < 0 {
+	pdAddrs, err := etcd.EtcdAddrs()
+	if err != nil {
+		return nil, err
+	}
+	if len(pdAddrs) == 0 {
 		return nil, errors.New("pd unavailable")
 	}
 	return pdAddrs, nil
@@ -1604,7 +1607,9 @@ func (h *mvccTxnHandler) handleMvccGetByTxn(params map[string]string) (interface
 
 // serverInfo is used to report the servers info when do http request.
 type serverInfo struct {
-	IsOwner bool `json:"is_owner"`
+	IsOwner  bool `json:"is_owner"`
+	MaxProcs int  `json:"max_procs"`
+	GOGC     int  `json:"gogc"`
 	*infosync.ServerInfo
 }
 
@@ -1624,6 +1629,8 @@ func (h serverInfoHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	info.IsOwner = do.DDL().OwnerManager().IsOwner()
+	info.MaxProcs = runtime.GOMAXPROCS(0)
+	info.GOGC = util.GetGOGC()
 	writeData(w, info)
 }
 
