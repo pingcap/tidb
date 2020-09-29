@@ -269,11 +269,6 @@ func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID i
 		)
 	}
 
-	err = b.applyPlacementUpdate(placement.GroupID(tableID))
-	if err != nil {
-		return nil, err
-	}
-
 	pi := tblInfo.GetPartitionInfo()
 	if pi != nil {
 		for _, partition := range pi.Definitions {
