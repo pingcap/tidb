@@ -14,6 +14,8 @@
 package ddl
 
 import (
+	"encoding/json"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
@@ -35,12 +37,13 @@ func (s *testPlacementSuite) compareRuleOp(n, o *placement.RuleOp) bool {
 func (s *testPlacementSuite) TestPlacementBuild(c *C) {
 	tests := []struct {
 		input  []*ast.PlacementSpec
-		output []*placement.RuleOp
+		bundle *placement.Bundle
+		output []*placement.Rule
 		err    string
 	}{
 		{
 			input:  []*ast.PlacementSpec{},
-			output: []*placement.RuleOp{},
+			output: []*placement.Rule{},
 		},
 
 		{
@@ -50,20 +53,16 @@ func (s *testPlacementSuite) TestPlacementBuild(c *C) {
 				Replicas:    3,
 				Constraints: `["+  zone=sh", "-zone = bj"]`,
 			}},
-			output: []*placement.RuleOp{
+			output: []*placement.Rule{
 				{
-					Action: placement.RuleOpAdd,
-					Rule: &placement.Rule{
-						GroupID:  placement.RuleDefaultGroupID,
-						Role:     placement.Voter,
-						Override: true,
-						Count:    3,
-						LabelConstraints: []placement.LabelConstraint{
-							{Key: "zone", Op: "in", Values: []string{"sh"}},
-							{Key: "zone", Op: "notIn", Values: []string{"bj"}},
-						},
+					Role:  placement.Voter,
+					Count: 3,
+					LabelConstraints: []placement.LabelConstraint{
+						{Key: "zone", Op: "in", Values: []string{"sh"}},
+						{Key: "zone", Op: "notIn", Values: []string{"bj"}},
 					},
-				}},
+				},
+			},
 		},
 
 		{
@@ -81,31 +80,21 @@ func (s *testPlacementSuite) TestPlacementBuild(c *C) {
 					Constraints: `["-  zone=sh", "+zone = bj"]`,
 				},
 			},
-			output: []*placement.RuleOp{
+			output: []*placement.Rule{
 				{
-					Action: placement.RuleOpAdd,
-					Rule: &placement.Rule{
-						GroupID:  placement.RuleDefaultGroupID,
-						Role:     placement.Voter,
-						Override: true,
-						Count:    3,
-						LabelConstraints: []placement.LabelConstraint{
-							{Key: "zone", Op: "in", Values: []string{"sh"}},
-							{Key: "zone", Op: "notIn", Values: []string{"bj"}},
-						},
+					Role:  placement.Voter,
+					Count: 3,
+					LabelConstraints: []placement.LabelConstraint{
+						{Key: "zone", Op: "in", Values: []string{"sh"}},
+						{Key: "zone", Op: "notIn", Values: []string{"bj"}},
 					},
 				},
 				{
-					Action: placement.RuleOpAdd,
-					Rule: &placement.Rule{
-						GroupID:  placement.RuleDefaultGroupID,
-						Role:     placement.Follower,
-						Override: true,
-						Count:    2,
-						LabelConstraints: []placement.LabelConstraint{
-							{Key: "zone", Op: "notIn", Values: []string{"sh"}},
-							{Key: "zone", Op: "in", Values: []string{"bj"}},
-						},
+					Role:  placement.Follower,
+					Count: 2,
+					LabelConstraints: []placement.LabelConstraint{
+						{Key: "zone", Op: "notIn", Values: []string{"sh"}},
+						{Key: "zone", Op: "in", Values: []string{"bj"}},
 					},
 				},
 			},
@@ -126,26 +115,13 @@ func (s *testPlacementSuite) TestPlacementBuild(c *C) {
 					Constraints: `["-  zone=sh", "+zone = bj"]`,
 				},
 			},
-			output: []*placement.RuleOp{
+			output: []*placement.Rule{
 				{
-					Action:           placement.RuleOpDel,
-					DeleteByIDPrefix: true,
-					Rule: &placement.Rule{
-						GroupID: placement.RuleDefaultGroupID,
-						Role:    placement.Voter,
-					},
-				},
-				{
-					Action: placement.RuleOpAdd,
-					Rule: &placement.Rule{
-						GroupID:  placement.RuleDefaultGroupID,
-						Role:     placement.Voter,
-						Override: true,
-						Count:    2,
-						LabelConstraints: []placement.LabelConstraint{
-							{Key: "zone", Op: "notIn", Values: []string{"sh"}},
-							{Key: "zone", Op: "in", Values: []string{"bj"}},
-						},
+					Role:  placement.Voter,
+					Count: 2,
+					LabelConstraints: []placement.LabelConstraint{
+						{Key: "zone", Op: "notIn", Values: []string{"sh"}},
+						{Key: "zone", Op: "in", Values: []string{"bj"}},
 					},
 				},
 			},
@@ -166,43 +142,20 @@ func (s *testPlacementSuite) TestPlacementBuild(c *C) {
 					Constraints: `{"-  zone=sh":1, "+zone = bj":1}`,
 				},
 			},
-			output: []*placement.RuleOp{
+			output: []*placement.Rule{
 				{
-					Action:           placement.RuleOpDel,
-					DeleteByIDPrefix: true,
-					Rule: &placement.Rule{
-						GroupID: placement.RuleDefaultGroupID,
-						Role:    placement.Voter,
-					},
+					Role:             placement.Voter,
+					Count:            1,
+					LabelConstraints: []placement.LabelConstraint{{Key: "zone", Op: "notIn", Values: []string{"sh"}}},
 				},
 				{
-					Action: placement.RuleOpAdd,
-					Rule: &placement.Rule{
-						GroupID:          placement.RuleDefaultGroupID,
-						Role:             placement.Voter,
-						Override:         true,
-						Count:            1,
-						LabelConstraints: []placement.LabelConstraint{{Key: "zone", Op: "in", Values: []string{"bj"}}},
-					},
+					Role:             placement.Voter,
+					Count:            1,
+					LabelConstraints: []placement.LabelConstraint{{Key: "zone", Op: "in", Values: []string{"bj"}}},
 				},
 				{
-					Action: placement.RuleOpAdd,
-					Rule: &placement.Rule{
-						GroupID:          placement.RuleDefaultGroupID,
-						Role:             placement.Voter,
-						Override:         true,
-						Count:            1,
-						LabelConstraints: []placement.LabelConstraint{{Key: "zone", Op: "notIn", Values: []string{"sh"}}},
-					},
-				},
-				{
-					Action: placement.RuleOpAdd,
-					Rule: &placement.Rule{
-						GroupID:  placement.RuleDefaultGroupID,
-						Role:     placement.Voter,
-						Override: true,
-						Count:    1,
-					},
+					Role:  placement.Voter,
+					Count: 1,
 				},
 			},
 		},
@@ -220,16 +173,7 @@ func (s *testPlacementSuite) TestPlacementBuild(c *C) {
 					Tp:   ast.PlacementDrop,
 				},
 			},
-			output: []*placement.RuleOp{
-				{
-					Action:           placement.RuleOpDel,
-					DeleteByIDPrefix: true,
-					Rule: &placement.Rule{
-						GroupID: placement.RuleDefaultGroupID,
-						Role:    placement.Voter,
-					},
-				},
-			},
+			output: []*placement.Rule{},
 		},
 
 		{
@@ -243,24 +187,13 @@ func (s *testPlacementSuite) TestPlacementBuild(c *C) {
 					Tp:   ast.PlacementDrop,
 				},
 			},
-			output: []*placement.RuleOp{
-				{
-					Action:           placement.RuleOpDel,
-					DeleteByIDPrefix: true,
-					Rule: &placement.Rule{
-						GroupID: placement.RuleDefaultGroupID,
-						Role:    placement.Voter,
-					},
-				},
-				{
-					Action:           placement.RuleOpDel,
-					DeleteByIDPrefix: true,
-					Rule: &placement.Rule{
-						GroupID: placement.RuleDefaultGroupID,
-						Role:    placement.Learner,
-					},
-				},
-			},
+			bundle: &placement.Bundle{Rules: []*placement.Rule{
+				{Role: placement.Learner},
+				{Role: placement.Voter},
+				{Role: placement.Learner},
+				{Role: placement.Voter},
+			}},
+			output: []*placement.Rule{},
 		},
 
 		{
@@ -276,50 +209,41 @@ func (s *testPlacementSuite) TestPlacementBuild(c *C) {
 					Tp:   ast.PlacementDrop,
 				},
 			},
-			output: []*placement.RuleOp{
+			output: []*placement.Rule{
 				{
-					Action:           placement.RuleOpDel,
-					DeleteByIDPrefix: true,
-					Rule: &placement.Rule{
-						GroupID: placement.RuleDefaultGroupID,
-						Role:    placement.Voter,
-					},
-				},
-				{
-					Action: placement.RuleOpAdd,
-					Rule: &placement.Rule{
-						GroupID:  placement.RuleDefaultGroupID,
-						Role:     placement.Learner,
-						Override: true,
-						Count:    3,
-						LabelConstraints: []placement.LabelConstraint{
-							{Key: "zone", Op: "in", Values: []string{"sh"}},
-							{Key: "zone", Op: "notIn", Values: []string{"bj"}},
-						},
+					Role:  placement.Learner,
+					Count: 3,
+					LabelConstraints: []placement.LabelConstraint{
+						{Key: "zone", Op: "in", Values: []string{"sh"}},
+						{Key: "zone", Op: "notIn", Values: []string{"bj"}},
 					},
 				},
 			},
 		},
 	}
-	for k, t := range tests {
-		out, err := buildPlacementSpecs(t.input)
+	for i, t := range tests {
+		var bundle *placement.Bundle
+		if t.bundle == nil {
+			bundle = &placement.Bundle{Rules: []*placement.Rule{}}
+		} else {
+			bundle = t.bundle
+		}
+		out, err := buildPlacementSpecs(bundle, t.input)
 		if err == nil {
-			for i := range t.output {
+			expected, err := json.Marshal(t.output)
+			c.Assert(err, IsNil)
+			got, err := json.Marshal(out.Rules)
+			c.Assert(err, IsNil)
+			c.Assert(len(t.output), Equals, len(out.Rules))
+			for _, r1 := range t.output {
 				found := false
-				for j := range out {
-					if s.compareRuleOp(out[j], t.output[i]) {
+				for _, r2 := range out.Rules {
+					if ok, _ := DeepEquals.Check([]interface{}{r1, r2}, nil); ok {
 						found = true
 						break
 					}
 				}
-				if !found {
-					c.Logf("test %d, %d-th output", k, i)
-					c.Logf("\texcept %+v\n\tbut got", t.output[i])
-					for j := range out {
-						c.Logf("\t%+v", out[j])
-					}
-					c.Fail()
-				}
+				c.Assert(found, IsTrue, Commentf("%d test\nexpected %s\nbut got %s", i, expected, got))
 			}
 		} else {
 			c.Assert(err.Error(), ErrorMatches, t.err)
@@ -329,50 +253,21 @@ func (s *testPlacementSuite) TestPlacementBuild(c *C) {
 
 func (s *testPlacementSuite) TestPlacementBuildDrop(c *C) {
 	tests := []struct {
-		input  []int64
-		output []*placement.RuleOp
+		input  int64
+		output *placement.Bundle
 	}{
 		{
-			input: []int64{2},
-			output: []*placement.RuleOp{
-				{
-					Action:           placement.RuleOpDel,
-					DeleteByIDPrefix: true,
-					Rule: &placement.Rule{
-						GroupID: placement.RuleDefaultGroupID,
-						ID:      "0_t0_p2",
-					},
-				},
-			},
+			input:  2,
+			output: &placement.Bundle{ID: placement.GroupID(2)},
 		},
 		{
-			input: []int64{1, 2},
-			output: []*placement.RuleOp{
-				{
-					Action:           placement.RuleOpDel,
-					DeleteByIDPrefix: true,
-					Rule: &placement.Rule{
-						GroupID: placement.RuleDefaultGroupID,
-						ID:      "0_t0_p1",
-					},
-				},
-				{
-					Action:           placement.RuleOpDel,
-					DeleteByIDPrefix: true,
-					Rule: &placement.Rule{
-						GroupID: placement.RuleDefaultGroupID,
-						ID:      "0_t0_p2",
-					},
-				},
-			},
+			input:  1,
+			output: &placement.Bundle{ID: placement.GroupID(1)},
 		},
 	}
 	for _, t := range tests {
-		out := buildPlacementDropRules(0, 0, t.input)
-		c.Assert(len(out), Equals, len(t.output))
-		for i := range t.output {
-			c.Assert(s.compareRuleOp(out[i], t.output[i]), IsTrue, Commentf("except: %+v, obtained: %+v", t.output[i], out[i]))
-		}
+		out := buildPlacementDropBundle(t.input)
+		c.Assert(t.output, DeepEquals, out)
 	}
 }
 
@@ -419,7 +314,7 @@ func (s *testPlacementSuite) TestPlacementBuildTruncate(c *C) {
 
 		c.Assert(len(out), Equals, len(t.output))
 		for i := range t.output {
-			c.Assert(s.compareRuleOp(out[i], t.output[i]), IsTrue, Commentf("except: %+v, obtained: %+v", t.output[i], out[i]))
+			c.Assert(s.compareRuleOp(out[i], t.output[i]), IsTrue, Commentf("expect: %+v, obtained: %+v", t.output[i], out[i]))
 		}
 	}
 }

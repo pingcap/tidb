@@ -148,9 +148,7 @@ func (e *IndexNestedLoopHashJoin) Open(ctx context.Context) error {
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 	e.innerPtrBytes = make([][]byte, 0, 8)
 	if e.runtimeStats != nil {
-		e.stats = &indexLookUpJoinRuntimeStats{
-			BasicRuntimeStats: e.runtimeStats,
-		}
+		e.stats = &indexLookUpJoinRuntimeStats{}
 		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
 	}
 	e.startWorkers(ctx)

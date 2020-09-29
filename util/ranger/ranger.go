@@ -191,6 +191,27 @@ func appendPoints2IndexRange(sc *stmtctx.StatementContext, origin *Range, rangeP
 	return newRanges, nil
 }
 
+func appendRanges2PointRanges(pointRanges []*Range, ranges []*Range) []*Range {
+	if len(ranges) == 0 {
+		return pointRanges
+	}
+	newRanges := make([]*Range, 0, len(pointRanges)*len(ranges))
+	for _, pointRange := range pointRanges {
+		for _, r := range ranges {
+			lowVal := append(pointRange.LowVal, r.LowVal...)
+			highVal := append(pointRange.HighVal, r.HighVal...)
+			newRange := &Range{
+				LowVal:      lowVal,
+				LowExclude:  r.LowExclude,
+				HighVal:     highVal,
+				HighExclude: r.HighExclude,
+			}
+			newRanges = append(newRanges, newRange)
+		}
+	}
+	return newRanges
+}
+
 // points2TableRanges build ranges for table scan from range points.
 // It will remove the nil and convert MinNotNull and MaxValue to MinInt64 or MinUint64 and MaxInt64 or MaxUint64.
 func points2TableRanges(sc *stmtctx.StatementContext, rangePoints []point, tp *types.FieldType) ([]*Range, error) {

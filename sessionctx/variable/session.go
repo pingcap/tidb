@@ -51,6 +51,7 @@ import (
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/twmb/murmur3"
+	atomic2 "go.uber.org/atomic"
 )
 
 var preparedStmtCount int64
@@ -696,9 +697,6 @@ type SessionVars struct {
 	// EnableClusteredIndex indicates whether to enable clustered index when creating a new table.
 	EnableClusteredIndex bool
 
-	// EnableLogDesensitization indicates that whether desensitization when log query.
-	EnableLogDesensitization bool
-
 	// PresumeKeyNotExists indicates lazy existence checking is enabled.
 	PresumeKeyNotExists bool
 
@@ -710,6 +708,39 @@ type SessionVars struct {
 
 	// EnableAmendPessimisticTxn indicates if schema change amend is enabled for pessimistic transactions.
 	EnableAmendPessimisticTxn bool
+
+	// LastTxnInfo keeps track the info of last committed transaction.
+	LastTxnInfo kv.TxnInfo
+
+	// PartitionPruneMode indicates how and when to prune partitions.
+	PartitionPruneMode atomic2.String
+}
+
+// UseDynamicPartitionPrune indicates whether use new dynamic partition prune.
+func (s *SessionVars) UseDynamicPartitionPrune() bool {
+	return PartitionPruneMode(s.PartitionPruneMode.Load()) == DynamicOnly
+}
+
+// PartitionPruneMode presents the prune mode used.
+type PartitionPruneMode string
+
+const (
+	// StaticOnly indicates only prune at plan phase.
+	StaticOnly PartitionPruneMode = "static-only"
+	// DynamicOnly indicates only prune at execute phase.
+	DynamicOnly PartitionPruneMode = "dynamic-only"
+	// StaticButPrepareDynamic indicates prune at plan phase but collect stats need for dynamic prune.
+	StaticButPrepareDynamic PartitionPruneMode = "static-collect-dynamic"
+)
+
+// Valid indicate PruneMode is validated.
+func (p PartitionPruneMode) Valid() bool {
+	switch p {
+	case StaticOnly, StaticButPrepareDynamic, DynamicOnly:
+		return true
+	default:
+		return false
+	}
 }
 
 // PreparedParams contains the parameters of the current prepared statement when executing it.
@@ -803,7 +834,6 @@ func NewSessionVars() *SessionVars {
 		AllowAutoRandExplicitInsert: DefTiDBAllowAutoRandExplicitInsert,
 		EnableClusteredIndex:        DefTiDBEnableClusteredIndex,
 		EnableParallelApply:         DefTiDBEnableParallelApply,
-		EnableLogDesensitization:    DefTiDBLogDesensitization,
 		ShardAllocateStep:           DefTiDBShardAllocateStep,
 		EnableChangeColumnType:      DefTiDBChangeColumnType,
 		EnableAmendPessimisticTxn:   DefTiDBEnableAmendPessimisticTxn,
@@ -1260,7 +1290,7 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.BatchCommit = TiDBOptOn(val)
 	case TiDBDMLBatchSize:
 		s.DMLBatchSize = int(tidbOptInt64(val, DefOptCorrelationExpFactor))
-	case TiDBCurrentTS, TiDBConfig:
+	case TiDBCurrentTS, TiDBLastTxnInfo, TiDBConfig:
 		return ErrReadOnly
 	case TiDBMaxChunkSize:
 		s.MaxChunkSize = tidbOptPositiveInt32(val, DefMaxChunkSize)
@@ -1422,10 +1452,12 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.AllowAutoRandExplicitInsert = TiDBOptOn(val)
 	case TiDBEnableClusteredIndex:
 		s.EnableClusteredIndex = TiDBOptOn(val)
+	case TiDBPartitionPruneMode:
+		s.PartitionPruneMode.Store(strings.ToLower(strings.TrimSpace(val)))
 	case TiDBEnableParallelApply:
 		s.EnableParallelApply = TiDBOptOn(val)
-	case TiDBSlowLogMasking, TiDBLogDesensitization:
-		s.EnableLogDesensitization = TiDBOptOn(val)
+	case TiDBSlowLogMasking, TiDBRedactLog:
+		config.SetRedactLog(TiDBOptOn(val))
 	case TiDBShardAllocateStep:
 		s.ShardAllocateStep = tidbOptInt64(val, DefTiDBShardAllocateStep)
 	case TiDBEnableChangeColumnType:
@@ -1679,6 +1711,11 @@ func (c *Concurrency) WindowConcurrency() int {
 // This option is not sync with ExecutorConcurrency since it's used by Analyze table.
 func (c *Concurrency) IndexSerialScanConcurrency() int {
 	return c.indexSerialScanConcurrency
+}
+
+// UnionConcurrency return the num of concurrent union worker.
+func (c *Concurrency) UnionConcurrency() int {
+	return c.ExecutorConcurrency
 }
 
 // MemQuota defines memory quota values.
