@@ -1028,15 +1028,14 @@ func (s *session) SetGlobalSysVar(name, value string) error {
 }
 
 func (s *session) ensureFullGlobalStats() error {
-	rows, _, err := s.ExecRestrictedSQL(`select count(1) from information_schema.tables t where t.create_options = 'partitioned'
+	rows, _, err := s.ExecRestrictedSQL(`select table_name from information_schema.tables t where t.create_options = 'partitioned'
 		and not exists (select 1 from mysql.stats_meta m where m.table_id = t.tidb_table_id)`)
 	if err != nil {
 		return err
 	}
-	row := rows[0]
-	count := row.GetInt64(0)
+	count := len(rows)
 	if count > 0 {
-		return errors.New("need analyze all partition table in 'static-collect-dynamic' mode before switch to 'dynamic-only'")
+		return errors.New(fmt.Sprintf("need analyze all partition table in 'static-collect-dynamic' mode before switch to 'dynamic-only'(e.g. %s)", rows[0].GetString(0)))
 	}
 	return nil
 }

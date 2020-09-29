@@ -51,7 +51,7 @@ var _ = Suite(&testFastAnalyze{})
 
 func (s *testSuite1) TestAnalyzePartition(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	testkit.WithPruneMode(tk, variable.StaticOnly, func() {
+	testkit.WithPruneMode(tk, func(m variable.PartitionPruneMode) {
 		tk.MustExec("use test")
 		tk.MustExec("drop table if exists t")
 		createTable := `CREATE TABLE t (a int, b int, c varchar(10), primary key(a), index idx(b))
@@ -70,13 +70,13 @@ PARTITION BY RANGE ( a ) (
 		is := infoschema.GetInfoSchema(tk.Se.(sessionctx.Context))
 		table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 		c.Assert(err, IsNil)
-		pi := table.Meta().GetPartitionInfo()
-		c.Assert(pi, NotNil)
 		do, err := session.GetDomain(s.store)
 		c.Assert(err, IsNil)
 		handle := do.StatsHandle()
-		for _, def := range pi.Definitions {
-			statsTbl := handle.GetPartitionStats(table.Meta(), def.ID)
+		c.Assert(handle.RefreshVars(), IsNil)
+
+		if m == variable.DynamicOnly {
+			statsTbl := handle.GetTableStats(table.Meta())
 			c.Assert(statsTbl.Pseudo, IsFalse)
 			c.Assert(len(statsTbl.Columns), Equals, 3)
 			c.Assert(len(statsTbl.Indices), Equals, 1)
@@ -85,6 +85,21 @@ PARTITION BY RANGE ( a ) (
 			}
 			for _, idx := range statsTbl.Indices {
 				c.Assert(idx.Len(), Greater, 0)
+			}
+		} else {
+			pi := table.Meta().GetPartitionInfo()
+			c.Assert(pi, NotNil)
+			for _, def := range pi.Definitions {
+				statsTbl := handle.GetPartitionStats(table.Meta(), def.ID)
+				c.Assert(statsTbl.Pseudo, IsFalse)
+				c.Assert(len(statsTbl.Columns), Equals, 3)
+				c.Assert(len(statsTbl.Indices), Equals, 1)
+				for _, col := range statsTbl.Columns {
+					c.Assert(col.Len(), Greater, 0)
+				}
+				for _, idx := range statsTbl.Indices {
+					c.Assert(idx.Len(), Greater, 0)
+				}
 			}
 		}
 
@@ -97,17 +112,24 @@ PARTITION BY RANGE ( a ) (
 		is = infoschema.GetInfoSchema(tk.Se.(sessionctx.Context))
 		table, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 		c.Assert(err, IsNil)
-		pi = table.Meta().GetPartitionInfo()
-		c.Assert(pi, NotNil)
 
-		for i, def := range pi.Definitions {
-			statsTbl := handle.GetPartitionStats(table.Meta(), def.ID)
-			if i == 0 {
-				c.Assert(statsTbl.Pseudo, IsFalse)
-				c.Assert(len(statsTbl.Columns), Equals, 3)
-				c.Assert(len(statsTbl.Indices), Equals, 1)
-			} else {
-				c.Assert(statsTbl.Pseudo, IsTrue)
+		if m == variable.DynamicOnly {
+			statsTbl := handle.GetTableStats(table.Meta())
+			c.Assert(statsTbl.Pseudo, IsTrue)
+			c.Assert(len(statsTbl.Columns), Equals, 3)
+			c.Assert(len(statsTbl.Indices), Equals, 1)
+		} else {
+			pi := table.Meta().GetPartitionInfo()
+			c.Assert(pi, NotNil)
+			for i, def := range pi.Definitions {
+				statsTbl := handle.GetPartitionStats(table.Meta(), def.ID)
+				if i == 0 {
+					c.Assert(statsTbl.Pseudo, IsFalse)
+					c.Assert(len(statsTbl.Columns), Equals, 3)
+					c.Assert(len(statsTbl.Indices), Equals, 1)
+				} else {
+					c.Assert(statsTbl.Pseudo, IsTrue)
+				}
 			}
 		}
 	})

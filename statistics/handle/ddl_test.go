@@ -185,7 +185,7 @@ func (s *testStatsSuite) TestDDLHistogram(c *C) {
 func (s *testStatsSuite) TestDDLPartition(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
-	testkit.WithPruneMode(testKit, variable.StaticOnly, func() {
+	testkit.WithPruneMode(testKit, func(m variable.PartitionPruneMode) {
 		testKit.MustExec("use test")
 		testKit.MustExec("drop table if exists t")
 		createTable := `CREATE TABLE t (a int, b int, primary key(a), index idx(b))
@@ -198,17 +198,25 @@ PARTITION BY RANGE ( a ) (
 		testKit.MustExec(createTable)
 		do := s.do
 		is := do.InfoSchema()
+		h := do.StatsHandle()
+		c.Assert(h.RefreshVars(), IsNil)
+		do.GetGlobalVarsCache().Disable()
 		tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 		c.Assert(err, IsNil)
 		tableInfo := tbl.Meta()
-		h := do.StatsHandle()
 		err = h.HandleDDLEvent(<-h.DDLEventCh())
 		c.Assert(err, IsNil)
 		c.Assert(h.Update(is), IsNil)
-		pi := tableInfo.GetPartitionInfo()
-		for _, def := range pi.Definitions {
-			statsTbl := h.GetPartitionStats(tableInfo, def.ID)
+
+		if m == variable.DynamicOnly {
+			statsTbl := h.GetTableStats(tableInfo)
 			c.Assert(statsTbl.Pseudo, IsFalse)
+		} else {
+			pi := tableInfo.GetPartitionInfo()
+			for _, def := range pi.Definitions {
+				statsTbl := h.GetPartitionStats(tableInfo, def.ID)
+				c.Assert(statsTbl.Pseudo, IsFalse)
+			}
 		}
 
 		testKit.MustExec("insert into t values (1,2),(6,2),(11,2),(16,2)")
@@ -221,9 +229,16 @@ PARTITION BY RANGE ( a ) (
 		tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 		c.Assert(err, IsNil)
 		tableInfo = tbl.Meta()
-		pi = tableInfo.GetPartitionInfo()
-		for _, def := range pi.Definitions {
-			statsTbl := h.GetPartitionStats(tableInfo, def.ID)
+
+		if m != variable.DynamicOnly {
+			pi := tableInfo.GetPartitionInfo()
+			for _, def := range pi.Definitions {
+				statsTbl := h.GetPartitionStats(tableInfo, def.ID)
+				c.Assert(statsTbl.Pseudo, IsFalse)
+				c.Check(statsTbl.Columns[tableInfo.Columns[2].ID].AvgColSize(statsTbl.Count, false), Equals, 3.0)
+			}
+		} else {
+			statsTbl := h.GetTableStats(tableInfo)
 			c.Assert(statsTbl.Pseudo, IsFalse)
 			c.Check(statsTbl.Columns[tableInfo.Columns[2].ID].AvgColSize(statsTbl.Count, false), Equals, 3.0)
 		}
@@ -237,9 +252,15 @@ PARTITION BY RANGE ( a ) (
 		err = h.HandleDDLEvent(<-h.DDLEventCh())
 		c.Assert(err, IsNil)
 		c.Assert(h.Update(is), IsNil)
-		pi = tableInfo.GetPartitionInfo()
-		for _, def := range pi.Definitions {
-			statsTbl := h.GetPartitionStats(tableInfo, def.ID)
+
+		if m != variable.DynamicOnly {
+			pi := tableInfo.GetPartitionInfo()
+			for _, def := range pi.Definitions {
+				statsTbl := h.GetPartitionStats(tableInfo, def.ID)
+				c.Assert(statsTbl.Pseudo, IsFalse)
+			}
+		} else {
+			statsTbl := h.GetTableStats(tableInfo)
 			c.Assert(statsTbl.Pseudo, IsFalse)
 		}
 
@@ -252,9 +273,15 @@ PARTITION BY RANGE ( a ) (
 		err = h.HandleDDLEvent(<-h.DDLEventCh())
 		c.Assert(err, IsNil)
 		c.Assert(h.Update(is), IsNil)
-		pi = tableInfo.GetPartitionInfo()
-		for _, def := range pi.Definitions {
-			statsTbl := h.GetPartitionStats(tableInfo, def.ID)
+
+		if m != variable.DynamicOnly {
+			pi := tableInfo.GetPartitionInfo()
+			for _, def := range pi.Definitions {
+				statsTbl := h.GetPartitionStats(tableInfo, def.ID)
+				c.Assert(statsTbl.Pseudo, IsFalse)
+			}
+		} else {
+			statsTbl := h.GetTableStats(tableInfo)
 			c.Assert(statsTbl.Pseudo, IsFalse)
 		}
 	})
