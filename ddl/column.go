@@ -651,45 +651,21 @@ func needChangeColumnData(oldCol, newCol *model.ColumnInfo) bool {
 		// cut to eliminate data reorg change for column type change between decimal.
 		return oldCol.Flen != newCol.Flen || oldCol.Decimal != newCol.Decimal || toUnsigned != originUnsigned
 	}
-	switch oldCol.Tp {
-	case mysql.TypeEnum:
-		switch newCol.Tp {
-		case mysql.TypeEnum:
-			if len(newCol.Elems) < len(oldCol.Elems) {
-				return true
-			}
-			for index, oldElem := range oldCol.Elems {
-				newElem := newCol.Elems[index]
-				if oldElem != newElem {
-					return true
-				}
-			}
-			return false
-		default:
+	if oldCol.Tp == newCol.Tp && (oldCol.Tp == mysql.TypeEnum || oldCol.Tp == mysql.TypeSet) {
+		if len(newCol.Elems) < len(oldCol.Elems) {
 			return true
 		}
-	case mysql.TypeSet:
-		switch newCol.Tp {
-		case mysql.TypeSet:
-			if len(newCol.Elems) < len(oldCol.Elems) {
+		for index, oldElem := range oldCol.Elems {
+			newElem := newCol.Elems[index]
+			if oldElem != newElem {
 				return true
 			}
-			for _, oldElem := range oldCol.Elems {
-				contain := false
-				for _, newElem := range newCol.Elems {
-					if oldElem == newElem {
-						contain = true
-						break
-					}
-				}
-				if !contain {
-					return true
-				}
-			}
-			return false
-		default:
-			return true
 		}
+		return false
+	}
+	if oldCol.Tp == mysql.TypeEnum || oldCol.Tp == mysql.TypeSet ||
+		newCol.Tp == mysql.TypeEnum || newCol.Tp == mysql.TypeSet {
+		return true
 	}
 	if newCol.Flen > 0 && newCol.Flen < oldCol.Flen || toUnsigned != originUnsigned {
 		return true
@@ -1136,10 +1112,8 @@ func (w *updateColumnWorker) fetchRowColVals(txn kv.Transaction, taskRange reorg
 	taskDone := false
 	var lastAccessedHandle kv.Handle
 	oprStartTime := startTime
-	var rowIdx int
 	err := iterateSnapshotRows(w.sessCtx.GetStore(), w.priority, w.table, txn.StartTS(), taskRange.startHandle, taskRange.endHandle, taskRange.endIncluded,
 		func(handle kv.Handle, recordKey kv.Key, rawRow []byte) (bool, error) {
-			rowIdx++
 			oprEndTime := time.Now()
 			logSlowOperations(oprEndTime.Sub(oprStartTime), "iterateSnapshotRows in updateColumnWorker fetchRowColVals", 0)
 			oprStartTime = oprEndTime
@@ -1155,9 +1129,6 @@ func (w *updateColumnWorker) fetchRowColVals(txn kv.Transaction, taskRange reorg
 			}
 
 			if err1 := w.getRowRecord(handle, recordKey, rawRow); err1 != nil {
-				if types.ErrTruncated.Equal(err1) {
-					err1 = types.ErrTruncated.GenWithStackByArgs(w.oldColInfo.Name, rowIdx)
-				}
 				return false, errors.Trace(err1)
 			}
 			lastAccessedHandle = handle
@@ -1192,6 +1163,9 @@ func (w *updateColumnWorker) getRowRecord(handle kv.Handle, recordKey []byte, ra
 	var recordWarning *terror.Error
 	newColVal, err := table.CastValue(w.sessCtx, w.rowMap[w.oldColInfo.ID], w.newColInfo, false, false)
 	if err != nil {
+		if types.ErrTruncated.Equal(err) {
+			err = types.ErrTruncated.GenWithStack("Data truncated for column '%s', value is '%s'", w.oldColInfo.Name, w.rowMap[w.oldColInfo.ID])
+		}
 		if IsNormalWarning(err) || (!w.sqlMode.HasStrictMode() && IsStrictWarning(err)) {
 			// Keep the warnings.
 			recordWarning = errors.Cause(err).(*terror.Error)
@@ -1240,7 +1214,7 @@ func IsNormalWarning(err error) bool {
 // non-strict SQL Mode.
 func IsStrictWarning(err error) bool {
 	// TODO: there are more errors here can be identified as warnings under non-strict SQL mode.
-	if types.ErrOverflow.Equal(err) {
+	if types.ErrOverflow.Equal(err) || types.ErrTruncated.Equal(err) {
 		return true
 	}
 	return false
