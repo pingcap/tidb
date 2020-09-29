@@ -1333,12 +1333,15 @@ func (d *Datum) convertToMysqlYear(sc *stmtctx.StatementContext, target *FieldTy
 	switch d.k {
 	case KindString, KindBytes:
 		s := d.GetString()
-		y, err = StrToInt(sc, s, false)
+		trimS := strings.TrimSpace(s)
+		y, err = StrToInt(sc, trimS, false)
 		if err != nil {
 			ret.SetInt64(0)
 			return ret, errors.Trace(err)
 		}
-		if len(s) != 4 && len(s) > 0 && s[0:1] == "0" {
+		// condition:
+		// parsed to 0, not a string of length 4, the first valid char is a 0 digit
+		if len(s) != 4 && y == 0 && strings.HasPrefix(trimS, "0") {
 			adjust = true
 		}
 	case KindMysqlTime:
