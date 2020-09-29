@@ -7077,23 +7077,6 @@ func (s *testIntegrationSuite) TestIssue17476(c *C) {
 	tk.MustQuery(`SELECT count(*) FROM (table_float JOIN table_int_float_varchar AS tmp3 ON (tmp3.col_varchar_6 AND NULL) IS NULL);`).Check(testkit.Rows("154"))
 	tk.MustQuery(`SELECT * FROM (table_int_float_varchar AS tmp3) WHERE (col_varchar_6 AND NULL) IS NULL AND col_int_6=0;`).Check(testkit.Rows("13 0 -0.1 <nil>"))
 }
-<<<<<<< HEAD
-=======
-
-func (s *testIntegrationSuite) TestIssue11645(c *C) {
-	defer s.cleanEnv(c)
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustQuery(`SELECT DATE_ADD('1000-01-01 00:00:00', INTERVAL -2 HOUR);`).Check(testkit.Rows("0999-12-31 22:00:00"))
-	tk.MustQuery(`SELECT DATE_ADD('1000-01-01 00:00:00', INTERVAL -200 HOUR);`).Check(testkit.Rows("0999-12-23 16:00:00"))
-	tk.MustQuery(`SELECT DATE_ADD('0001-01-01 00:00:00', INTERVAL -2 HOUR);`).Check(testkit.Rows("0000-00-00 22:00:00"))
-	tk.MustQuery(`SELECT DATE_ADD('0001-01-01 00:00:00', INTERVAL -25 HOUR);`).Check(testkit.Rows("0000-00-00 23:00:00"))
-	tk.MustQuery(`SELECT DATE_ADD('0001-01-01 00:00:00', INTERVAL -8784 HOUR);`).Check(testkit.Rows("0000-00-00 00:00:00"))
-	tk.MustQuery(`SELECT DATE_ADD('0001-01-01 00:00:00', INTERVAL -8785 HOUR);`).Check(testkit.Rows("<nil>"))
-	tk.MustQuery(`SELECT DATE_ADD('0001-01-02 00:00:00', INTERVAL -2 HOUR);`).Check(testkit.Rows("0001-01-01 22:00:00"))
-	tk.MustQuery(`SELECT DATE_ADD('0001-01-02 00:00:00', INTERVAL -24 HOUR);`).Check(testkit.Rows("0001-01-01 00:00:00"))
-	tk.MustQuery(`SELECT DATE_ADD('0001-01-02 00:00:00', INTERVAL -25 HOUR);`).Check(testkit.Rows("0000-00-00 23:00:00"))
-	tk.MustQuery(`SELECT DATE_ADD('0001-01-02 00:00:00', INTERVAL -8785 HOUR);`).Check(testkit.Rows("0000-00-00 23:00:00"))
-}
 
 func (s *testIntegrationSuite) TestIssue20180(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
@@ -7113,4 +7096,3 @@ func (s *testIntegrationSuite) TestIssue20180(c *C) {
 	tk.MustExec("insert into t values('b');")
 	tk.MustQuery("select * from t where a > 1  and a = \"b\";").Check(testkit.Rows("b"))
 }
->>>>>>> 1d34c333f... expression: avoid constant propagate for the hybrid types (#20258)
