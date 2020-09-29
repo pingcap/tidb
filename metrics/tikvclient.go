@@ -264,4 +264,12 @@ var (
 			Name:      "async_commit_txn_counter",
 			Help:      "Counter of async commit transactions.",
 		}, []string{LblType})
+
+	TiKVOnePCTxnCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "tikvclient",
+			Name:      "one_pc_txn_counter",
+			Help:      "Counter of 1PC transactions.",
+		}, []string{LblType})
 )

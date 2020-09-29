@@ -58,6 +58,8 @@ var (
 	tiKVTxnHeartBeatHistogramError                 = metrics.TiKVTxnHeartBeatHistogram.WithLabelValues("err")
 	tikvAsyncCommitTxnCounterOk                    = metrics.TiKVAsyncCommitTxnCounter.WithLabelValues("ok")
 	tikvAsyncCommitTxnCounterError                 = metrics.TiKVAsyncCommitTxnCounter.WithLabelValues("err")
+	tikvOnePCTxnCounterOk                          = metrics.TiKVOnePCTxnCounter.WithLabelValues("ok")
+	tikvOnePCTxnCounterError                       = metrics.TiKVOnePCTxnCounter.WithLabelValues("err")
 )
 
 // Global variable set by config file.
@@ -113,6 +115,8 @@ type twoPhaseCommitter struct {
 
 	useAsyncCommit uint32
 	minCommitTS    uint64
+	useOnePC       uint32
+	onePCCommitTS  uint64
 }
 
 // CommitterMutations contains transaction operations.
@@ -499,6 +503,10 @@ func (c *twoPhaseCommitter) doActionOnMutations(bo *Backoffer, action twoPhaseCo
 		return errors.Trace(err)
 	}
 
+	// This is redundant since `doActionOnGroupMutations` will still split groups into batches and
+	// check the number of batches. However we don't want the check fail after any code changes.
+	c.checkOnePCFallBack(action, len(groups))
+
 	return c.doActionOnGroupMutations(bo, action, groups)
 }
 
@@ -567,6 +575,8 @@ func (c *twoPhaseCommitter) doActionOnGroupMutations(bo *Backoffer, action twoPh
 	actionCommit, actionIsCommit := action.(actionCommit)
 	_, actionIsCleanup := action.(actionCleanup)
 	_, actionIsPessimiticLock := action.(actionPessimisticLock)
+
+	c.checkOnePCFallBack(action, len(batchBuilder.allBatches()))
 
 	var err error
 	failpoint.Inject("skipKeyReturnOK", func(val failpoint.Value) {
@@ -830,6 +840,26 @@ func (c *twoPhaseCommitter) setAsyncCommit(val bool) {
 	}
 }
 
+func (c *twoPhaseCommitter) isOnePC() bool {
+	return atomic.LoadUint32(&c.useOnePC) > 0
+}
+
+func (c *twoPhaseCommitter) setOnePC(val bool) {
+	if val {
+		atomic.StoreUint32(&c.useOnePC, 1)
+	} else {
+		atomic.StoreUint32(&c.useOnePC, 0)
+	}
+}
+
+func (c *twoPhaseCommitter) checkOnePCFallBack(action twoPhaseCommitAction, batchCount int) {
+	if _, ok := action.(actionPrewrite); ok {
+		if batchCount > 1 {
+			c.setOnePC(false)
+		}
+	}
+}
+
 func (c *twoPhaseCommitter) cleanup(ctx context.Context) {
 	c.cleanWg.Add(1)
 	go func() {
@@ -852,7 +882,8 @@ func (c *twoPhaseCommitter) cleanup(ctx context.Context) {
 func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 	var binlogSkipped bool
 	defer func() {
-		if !c.isAsyncCommit() {
+		isOnePC := c.isOnePC()
+		if !c.isAsyncCommit() && !isOnePC {
 			// Always clean up all written keys if the txn does not commit.
 			c.mu.RLock()
 			committed := c.mu.committed
@@ -877,9 +908,18 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 				if c.getUndeterminedErr() == nil {
 					c.cleanup(ctx)
 				}
-				tikvAsyncCommitTxnCounterError.Inc()
+				if isOnePC {
+					tikvOnePCTxnCounterError.Inc()
+				} else {
+					tikvAsyncCommitTxnCounterError.Inc()
+				}
 			} else {
-				tikvAsyncCommitTxnCounterOk.Inc()
+				if isOnePC {
+					tikvOnePCTxnCounterOk.Inc()
+				} else {
+					tikvAsyncCommitTxnCounterOk.Inc()
+				}
+
 			}
 		}
 	}()
@@ -887,6 +927,10 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 	// Check async commit is available or not.
 	if c.checkAsyncCommit() {
 		c.setAsyncCommit(true)
+	}
+	// Check if 1PC is enabled.
+	if config.GetGlobalConfig().TiKVClient.EnableOnePC {
+		c.setOnePC(true)
 	}
 
 	binlogChan := c.prewriteBinlog(ctx)
@@ -938,28 +982,42 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 	c.stripNoNeedCommitKeys()
 
 	var commitTS uint64
-	if c.isAsyncCommit() {
-		if c.minCommitTS == 0 {
-			err = errors.Errorf("conn %d invalid minCommitTS for async commit protocol after prewrite, startTS=%v", c.connID, c.startTS)
+
+	if c.isOnePC() {
+		if c.onePCCommitTS == 0 {
+			err = errors.Errorf("conn %d invalid onePCCommitTS for 1PC protocol after prewrite, startTS=%v", c.connID, c.startTS)
 			return errors.Trace(err)
 		}
-		commitTS = c.minCommitTS
+		commitTS = c.onePCCommitTS
 	} else {
-		start = time.Now()
-		logutil.Event(ctx, "start get commit ts")
-		commitTS, err = c.store.getTimestampWithRetry(NewBackofferWithVars(ctx, tsoMaxBackoff, c.txn.vars))
-		if err != nil {
-			logutil.Logger(ctx).Warn("2PC get commitTS failed",
-				zap.Error(err),
-				zap.Uint64("txnStartTS", c.startTS))
-			return errors.Trace(err)
+		if c.onePCCommitTS != 0 {
+			logutil.Logger(ctx).Fatal("non 1PC transaction committed in 1PC",
+				zap.Uint64("connID", c.connID), zap.Uint64("startTS", c.startTS))
 		}
-		commitDetail.GetCommitTsTime = time.Since(start)
-		logutil.Event(ctx, "finish get commit ts")
-		logutil.SetTag(ctx, "commitTs", commitTS)
+
+		if c.isAsyncCommit() {
+			if c.minCommitTS == 0 {
+				err = errors.Errorf("conn %d invalid minCommitTS for async commit protocol after prewrite, startTS=%v", c.connID, c.startTS)
+				return errors.Trace(err)
+			}
+			commitTS = c.minCommitTS
+		} else {
+			start = time.Now()
+			logutil.Event(ctx, "start get commit ts")
+			commitTS, err = c.store.getTimestampWithRetry(NewBackofferWithVars(ctx, tsoMaxBackoff, c.txn.vars))
+			if err != nil {
+				logutil.Logger(ctx).Warn("2PC get commitTS failed",
+					zap.Error(err),
+					zap.Uint64("txnStartTS", c.startTS))
+				return errors.Trace(err)
+			}
+			commitDetail.GetCommitTsTime = time.Since(start)
+			logutil.Event(ctx, "finish get commit ts")
+			logutil.SetTag(ctx, "commitTs", commitTS)
+		}
 	}
 
-	tryAmend := c.isPessimistic && c.connID > 0 && !c.isAsyncCommit() && c.txn.schemaAmender != nil
+	tryAmend := c.isPessimistic && c.connID > 0 && !c.isAsyncCommit() && !c.isOnePC() && c.txn.schemaAmender != nil
 	if !tryAmend {
 		_, _, err = c.checkSchemaValid(ctx, commitTS, c.txn.txnInfoSchema, false)
 		if err != nil {
@@ -994,6 +1052,11 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 
 	if c.connID > 0 {
 		failpoint.Inject("beforeCommit", func() {})
+	}
+
+	if c.isOnePC() {
+		c.txn.commitTS = c.commitTS
+		return nil
 	}
 
 	if c.isAsyncCommit() {

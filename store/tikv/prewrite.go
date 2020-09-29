@@ -34,6 +34,7 @@ type actionPrewrite struct{}
 
 var _ twoPhaseCommitAction = actionPrewrite{}
 var tiKVTxnRegionsNumHistogramPrewrite = metrics.TiKVTxnRegionsNumHistogram.WithLabelValues(metricsTag("prewrite"))
+var tikvOnePCTxnCounterFallback = metrics.TiKVOnePCTxnCounter.WithLabelValues("fallback")
 
 func (actionPrewrite) String() string {
 	return "prewrite"
@@ -87,10 +88,23 @@ func (c *twoPhaseCommitter) buildPrewriteRequest(batch batchMutations, txnSize u
 		req.MinCommitTs = 0
 	}
 
+	if c.isOnePC() {
+		req.TryOnePc = true
+		// Temporarily set it to max uint64. TODO: Use this field to avoid commit ts exceed the
+		// current DDL lease.
+		req.OnePcMaxCommitTs = math.MaxUint64
+	}
+
 	return tikvrpc.NewRequest(tikvrpc.CmdPrewrite, req, pb.Context{Priority: c.priority, SyncLog: c.syncLog})
 }
 
 func (action actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, batch batchMutations) error {
+	// WARNING: This function only tries to send a single request to a single region, so it don't
+	// need to unset the `useOnePC` flag when it fails. A special case is that when TiKV returns
+	// regionErr, it's uncertain if the request will be splitted into multiple and sent to multiple
+	// regions. It invokes `prewriteMutations` recursively here, and the number of batches will be
+	// checked there.
+
 	txnSize := uint64(c.regionTxnSize[batch.region.id])
 	// When we retry because of a region miss, we don't know the transaction size. We set the transaction size here
 	// to MaxUint64 to avoid unexpected "resolve lock lite".
@@ -105,7 +119,7 @@ func (action actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoff
 
 		// If we fail to receive response for async commit prewrite, it will be undetermined whether this
 		// transaction has been successfully committed.
-		if c.isAsyncCommit() && sender.rpcError != nil {
+		if (c.isAsyncCommit() || c.isOnePC()) && sender.rpcError != nil {
 			c.setUndeterminedErr(errors.Trace(sender.rpcError))
 		}
 
@@ -156,6 +170,21 @@ func (action actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoff
 					c.mu.Unlock()
 				}
 			}
+			if c.isOnePC() {
+				if prewriteResp.OnePcCommitTs == 0 {
+					logutil.Logger(bo.ctx).Warn("1pc failed and fallbacks to normal commit procedure",
+						zap.Uint64("satrTS", c.startTS))
+					tikvOnePCTxnCounterFallback.Inc()
+				} else {
+					c.mu.Lock()
+					if c.onePCCommitTS != 0 {
+						logutil.Logger(bo.ctx).Fatal("one pc happened multiple times",
+							zap.Uint64("startTS", c.startTS))
+					}
+					c.onePCCommitTS = prewriteResp.OnePcCommitTs
+					c.mu.Unlock()
+				}
+			}
 			return nil
 		}
 		var locks []*Lock
@@ -198,5 +227,6 @@ func (c *twoPhaseCommitter) prewriteMutations(bo *Backoffer, mutations Committer
 		bo.ctx = opentracing.ContextWithSpan(bo.ctx, span1)
 	}
 
+	// `doActionOnMutations` will unset `useOnePC` if the mutations is splitted into multiple batches.
 	return c.doActionOnMutations(bo, actionPrewrite{}, mutations)
 }
