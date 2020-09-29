@@ -50,8 +50,6 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 		return tblIDs, nil
 	case model.ActionModifySchemaCharsetAndCollate:
 		return nil, b.applyModifySchemaCharsetAndCollate(m, diff)
-	case model.ActionAlterTableAlterPartition:
-		return nil, b.applyPartitionPlacementUpdate(m, diff)
 	}
 	roDBInfo, ok := b.is.SchemaByID(diff.SchemaID)
 	if !ok {
@@ -270,6 +268,22 @@ func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID i
 			fmt.Sprintf("(Table ID %d)", tableID),
 		)
 	}
+
+	err = b.applyPlacementUpdate(placement.GroupID(tableID))
+	if err != nil {
+		return nil, err
+	}
+
+	pi := tblInfo.GetPartitionInfo()
+	if pi != nil {
+		for _, partition := range pi.Definitions {
+			err = b.applyPlacementUpdate(placement.GroupID(partition.ID))
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
+
 	if tp != model.ActionTruncateTablePartition {
 		affected = appendAffectedIDs(affected, tblInfo)
 	}
@@ -378,15 +392,15 @@ func (b *Builder) applyDropTable(dbInfo *model.DBInfo, tableID int64, affected [
 	return affected
 }
 
-func (b *Builder) applyPartitionPlacementUpdate(m *meta.Meta, diff *model.SchemaDiff) error {
-	tID := placement.GroupID(diff.TableID)
-
-	bundle, err := infosync.GetRuleBundle(nil, tID)
+func (b *Builder) applyPlacementUpdate(id string) error {
+	bundle, err := infosync.GetRuleBundle(nil, id)
 	if err != nil {
 		return err
 	}
 
-	b.is.ruleBundleMap[tID] = bundle
+	if !bundle.IsEmpty() {
+		b.is.ruleBundleMap[id] = bundle
+	}
 	return nil
 }
 

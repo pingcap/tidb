@@ -16,6 +16,7 @@ package ddl
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"fmt"
 	"strconv"
 	"strings"
@@ -43,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
@@ -933,8 +935,12 @@ func onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _
 func buildPlacementTruncateBundle(oldBundle *placement.Bundle, newID int64) *placement.Bundle {
 	newBundle := oldBundle.Clone()
 	newBundle.ID = placement.GroupID(newID)
+	startKey := hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(newID)))
+	endKey := hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(newID+1)))
 	for _, rule := range newBundle.Rules {
 		rule.GroupID = newBundle.ID
+		rule.StartKeyHex = startKey
+		rule.EndKeyHex = endKey
 	}
 	return newBundle
 }
