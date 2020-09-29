@@ -153,6 +153,7 @@ func (c *regionTxnSizeCalculator) Finish(committer *twoPhaseCommitter) {
 type txnDetailsCalculator struct {
 	writeKeys int
 	writeSize int
+	keySize   int
 	putCnt    int
 	delCnt    int
 	lockCnt   int
@@ -162,6 +163,7 @@ type txnDetailsCalculator struct {
 func (c *txnDetailsCalculator) Process(m mutationWithRegion) {
 	c.writeKeys++
 	c.writeSize += len(m.key) + len(m.value)
+	c.keySize += len(m.key)
 	switch m.op {
 	case pb.Op_CheckNotExists:
 		c.checkCnt++
@@ -195,7 +197,10 @@ func (c *txnDetailsCalculator) Finish(committer *twoPhaseCommitter) error {
 			zap.Uint64("txnStartTS", committer.txn.startTS))
 	}
 
+	committer.cntKeys = c.writeKeys
+	committer.sizeKeys = c.keySize
 	committer.txnSize = c.writeSize
+
 	details := committer.getDetail()
 	details.WriteKeys = c.writeKeys
 	details.WriteSize = c.writeSize
@@ -554,7 +559,7 @@ func (c *twoPhaseCommitter) newBatchCollector(bo *Backoffer, src mutationsIter, 
 	return &mutationBatchCollector{
 		src:            mutations,
 		curr:           m,
-		limit:          txnCommitBatchSize,
+		limit:          limit,
 		primaryKey:     c.primaryKey,
 		onlyCollectKey: !isPrewrite,
 	}, nil
