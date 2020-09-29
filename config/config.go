@@ -494,11 +494,8 @@ type TiKVClient struct {
 	// and if no activity is seen even after that the connection is closed.
 	GrpcKeepAliveTimeout uint `toml:"grpc-keepalive-timeout" json:"grpc-keepalive-timeout"`
 	// CommitTimeout is the max time which command 'commit' will wait.
-	CommitTimeout string `toml:"commit-timeout" json:"commit-timeout"`
-	// EnableAsyncCommit enables async commit for all transactions.
-	EnableAsyncCommit    bool `toml:"enable-async-commit" json:"enable-async-commit"`
-	AsyncCommitKeysLimit uint `toml:"async-commit-keys-limit" json:"async-commit-keys-limit"`
-
+	CommitTimeout string      `toml:"commit-timeout" json:"commit-timeout"`
+	AsyncCommit   AsyncCommit `toml:"async-commit" json:"async-commit"`
 	// MaxBatchSize is the max batch size when calling batch commands API.
 	MaxBatchSize uint `toml:"max-batch-size" json:"max-batch-size"`
 	// If TiKV load is greater than this, TiDB will wait for a while to avoid little batch.
@@ -520,6 +517,16 @@ type TiKVClient struct {
 	CoprCache            CoprocessorCache `toml:"copr-cache" json:"copr-cache"`
 	// TTLRefreshedTxnSize controls whether a transaction should update its TTL or not.
 	TTLRefreshedTxnSize int64 `toml:"ttl-refreshed-txn-size" json:"ttl-refreshed-txn-size"`
+}
+
+// AsyncCommit is the config for the async commit feature.
+type AsyncCommit struct {
+	// Whether to enable the async commit feature.
+	Enable bool `toml:"enable" json:"enable"`
+	// Use async commit only if the number of keys does not exceed KeysLimit.
+	KeysLimit uint `toml:"keys-limit" json:"keys-limit"`
+	// Use async commit only if the total size of keys does not exceed TotalKeySizeLimit.
+	TotalKeySizeLimit uint64 `toml:"total-key-size-limit" json:"total-key-size-limit"`
 }
 
 // CoprocessorCache is the config for coprocessor cache.
@@ -687,8 +694,12 @@ var defaultConf = Config{
 		GrpcKeepAliveTime:    10,
 		GrpcKeepAliveTimeout: 3,
 		CommitTimeout:        "41s",
-		EnableAsyncCommit:    false,
-		AsyncCommitKeysLimit: 256,
+		AsyncCommit: AsyncCommit{
+			Enable: false,
+			// FIXME: Find an appropriate default limit.
+			KeysLimit:         256,
+			TotalKeySizeLimit: 4 * 1024, // 4 KiB
+		},
 
 		MaxBatchSize:      128,
 		OverloadThreshold: 200,
