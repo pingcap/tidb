@@ -108,6 +108,11 @@ func (b *Bundle) Clone() *Bundle {
 	return newBundle
 }
 
+// IsEmpty is used to check if a bundle is empty.
+func (b *Bundle) IsEmpty() bool {
+	return len(b.Rules) == 0 && b.Index == 0 && !b.Override
+}
+
 // RuleOpType indicates the operation type.
 type RuleOpType string
 
