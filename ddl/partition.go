@@ -933,6 +933,9 @@ func onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _
 func buildPlacementTruncateBundle(oldBundle *placement.Bundle, newID int64) *placement.Bundle {
 	newBundle := oldBundle.Clone()
 	newBundle.ID = placement.GroupID(newID)
+	for _, rule := range newBundle.Rules {
+		rule.GroupID = newBundle.ID
+	}
 	return newBundle
 }
 

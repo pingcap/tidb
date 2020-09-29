@@ -264,24 +264,35 @@ func (s *testPlacementSuite) TestPlacementBuildDrop(c *C) {
 }
 
 func (s *testPlacementSuite) TestPlacementBuildTruncate(c *C) {
-	bundle := &placement.Bundle{ID: placement.GroupID(-1)}
+	bundle := &placement.Bundle{
+		ID:    placement.GroupID(-1),
+		Rules: []*placement.Rule{{GroupID: placement.GroupID(-1)}},
+	}
 
 	tests := []struct {
 		input  int64
 		output *placement.Bundle
 	}{
 		{
-			input:  1,
-			output: &placement.Bundle{ID: placement.GroupID(1)},
+			input: 1,
+			output: &placement.Bundle{
+				ID:    placement.GroupID(1),
+				Rules: []*placement.Rule{{GroupID: placement.GroupID(1)}},
+			},
 		},
 		{
-			input:  2,
-			output: &placement.Bundle{ID: placement.GroupID(2)},
+			input: 2,
+			output: &placement.Bundle{
+				ID:    placement.GroupID(2),
+				Rules: []*placement.Rule{{GroupID: placement.GroupID(2)}},
+			},
 		},
 	}
 	for _, t := range tests {
 		out := buildPlacementTruncateBundle(bundle, t.input)
 		c.Assert(t.output, DeepEquals, out)
 		c.Assert(bundle.ID, Equals, placement.GroupID(-1))
+		c.Assert(bundle.Rules, HasLen, 1)
+		c.Assert(bundle.Rules[0].GroupID, Equals, placement.GroupID(-1))
 	}
 }
