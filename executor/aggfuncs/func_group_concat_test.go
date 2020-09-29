@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/executor/aggfuncs"
+	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -56,17 +57,35 @@ func (s *testSuite) TestMemGroupConcat(c *C) {
 	test1 := buildAggMemTester(ast.AggFuncGroupConcat, mysql.TypeString, 5,
 		aggfuncs.DefPartialResult4GroupConcatSize, groupConcatUpdateMemDeltaGens, false)
 	test2 := buildAggMemTester(ast.AggFuncGroupConcat, mysql.TypeString, 5,
-		aggfuncs.DefPartialResult4GroupConcatDistinctSize, groupConcatUpdateDistinctMemDeltaGens, true)
+		aggfuncs.DefPartialResult4GroupConcatDistinctSize, groupConcatDistinctUpdateMemDeltaGens, true)
 	test3 := buildAggMemTester(ast.AggFuncGroupConcat, mysql.TypeString, 5,
-		aggfuncs.DefPartialResult4GroupConcatOrderSize, groupConcatUpdateOrderMemDeltaGens, false)
+		aggfuncs.DefPartialResult4GroupConcatOrderSize, groupConcatOrderUpdateMemDeltaGens, false)
 	test3.aggTest.orderBy = true
 	test4 := buildAggMemTester(ast.AggFuncGroupConcat, mysql.TypeString, 5,
-		aggfuncs.DefPartialResult4GroupConcatOrderDistinctSize, groupConcatUpdateOrderDistinctMemDeltaGens, true)
+		aggfuncs.DefPartialResult4GroupConcatOrderDistinctSize, groupConcatDistinctOrderUpdateMemDeltaGens, true)
 	test4.aggTest.orderBy = true
 	tests := []aggMemTest{test1, test2, test3, test4}
 	for _, test := range tests {
 		s.testAggMemFunc(c, test)
 	}
+
+	multiArgsTest1 := buildMultiArgsAggMemTester(ast.AggFuncGroupConcat, []byte{mysql.TypeString, mysql.TypeString}, mysql.TypeString, 5,
+		aggfuncs.DefPartialResult4GroupConcatSize, groupConcatMultiArgsUpdateMemDeltaGens, false)
+
+	multiArgsTest2 := buildMultiArgsAggMemTester(ast.AggFuncGroupConcat, []byte{mysql.TypeString, mysql.TypeString}, mysql.TypeString, 5,
+		aggfuncs.DefPartialResult4GroupConcatDistinctSize, groupConcatDistinctMultiArgsUpdateMemDeltaGens, true)
+
+	multiArgsTest3 := buildMultiArgsAggMemTester(ast.AggFuncGroupConcat, []byte{mysql.TypeString, mysql.TypeString}, mysql.TypeString, 5,
+		aggfuncs.DefPartialResult4GroupConcatOrderSize, groupConcatOrderMultiArgsUpdateMemDeltaGens, false)
+	multiArgsTest3.multiArgsAggTest.orderBy = true
+	multiArgsTest4 := buildMultiArgsAggMemTester(ast.AggFuncGroupConcat, []byte{mysql.TypeString, mysql.TypeString}, mysql.TypeString, 5,
+		aggfuncs.DefPartialResult4GroupConcatOrderDistinctSize, groupConcatDistinctOrderMultiArgsUpdateMemDeltaGens, true)
+	multiArgsTest4.multiArgsAggTest.orderBy = true
+	multiArgsTests := []multiArgsAggMemTest{multiArgsTest1, multiArgsTest2, multiArgsTest3, multiArgsTest4}
+	for _, test := range multiArgsTests {
+		s.testMultiArgsAggMemFunc(c, test)
+	}
+
 }
 
 func groupConcatUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) (memDeltas []int64, err error) {
@@ -84,14 +103,16 @@ func groupConcatUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldTyp
 		}
 		curVal := row.GetString(0)
 		buffer.WriteString(curVal)
-		memDeltas = append(memDeltas, int64(buffer.Cap()-oldMemSize))
+		memDelta := int64(buffer.Cap() - oldMemSize)
+		memDeltas = append(memDeltas, memDelta)
 	}
 	return memDeltas, nil
 }
 
-func groupConcatUpdateOrderMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) (memDeltas []int64, err error) {
+func groupConcatOrderUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) (memDeltas []int64, err error) {
 	memDeltas = make([]int64, 0)
 	buffer := new(bytes.Buffer)
+	dataGen := getDataGenFunc(dataType)
 	for i := 0; i < srcChk.NumRows(); i++ {
 		row := srcChk.GetRow(i)
 		if row.IsNull(0) {
@@ -104,12 +125,15 @@ func groupConcatUpdateOrderMemDeltaGens(srcChk *chunk.Chunk, dataType *types.Fie
 		}
 		curVal := row.GetString(0)
 		buffer.WriteString(curVal)
-		memDeltas = append(memDeltas, int64(buffer.Len()-oldMemSize))
+		dt := dataGen(i)
+		datumMem := aggfuncs.GetDatumMemSize(&dt)
+		memDelta := datumMem + int64(buffer.Len()-oldMemSize)
+		memDeltas = append(memDeltas, memDelta)
 	}
 	return memDeltas, nil
 }
 
-func groupConcatUpdateDistinctMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) (memDeltas []int64, err error) {
+func groupConcatDistinctUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) (memDeltas []int64, err error) {
 	valSet := set.NewStringSet()
 	buffer := new(bytes.Buffer)
 	var encodeBytesBuffer []byte
@@ -133,15 +157,17 @@ func groupConcatUpdateDistinctMemDeltaGens(srcChk *chunk.Chunk, dataType *types.
 		}
 		valSet.Insert(joinedVal)
 		buffer.WriteString(curVal)
-		memDeltas = append(memDeltas, int64(buffer.Cap()-oldMemSize+len(joinedVal)))
+		memDelta := int64(len(joinedVal) + (buffer.Cap() - oldMemSize))
+		memDeltas = append(memDeltas, memDelta)
 	}
 	return memDeltas, nil
 }
 
-func groupConcatUpdateOrderDistinctMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) (memDeltas []int64, err error) {
+func groupConcatDistinctOrderUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) (memDeltas []int64, err error) {
 	valSet := set.NewStringSet()
 	buffer := new(bytes.Buffer)
 	var encodeBytesBuffer []byte
+	dataGen := getDataGenFunc(dataType)
 	for i := 0; i < srcChk.NumRows(); i++ {
 		row := srcChk.GetRow(i)
 		if row.IsNull(0) {
@@ -162,7 +188,136 @@ func groupConcatUpdateOrderDistinctMemDeltaGens(srcChk *chunk.Chunk, dataType *t
 		}
 		valSet.Insert(joinedVal)
 		buffer.WriteString(curVal)
-		memDeltas = append(memDeltas, int64(buffer.Len()-oldMemSize+len(joinedVal)))
+		dt := dataGen(i)
+		datumMem := aggfuncs.GetDatumMemSize(&dt)
+		memDelta := datumMem + int64(len(joinedVal)+(buffer.Len()-oldMemSize))
+		memDeltas = append(memDeltas, memDelta)
+	}
+	return memDeltas, nil
+}
+
+func groupConcatMultiArgsUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType []*types.FieldType, byItems []*util.ByItems) (memDeltas []int64, err error) {
+	memDeltas = make([]int64, 0)
+	buffer := new(bytes.Buffer)
+	for i := 0; i < srcChk.NumRows(); i++ {
+		row := srcChk.GetRow(i)
+		if row.IsNull(0) {
+			memDeltas = append(memDeltas, int64(0))
+			continue
+		}
+		oldMemSize := buffer.Cap()
+		if i != 0 {
+			buffer.WriteString(" ")
+		}
+		for j := 0; j < len(dataType); j++ {
+			curVal := row.GetString(j)
+			buffer.WriteString(curVal)
+		}
+		memDelta := int64(buffer.Cap() - oldMemSize)
+		memDeltas = append(memDeltas, memDelta)
+	}
+	return memDeltas, nil
+}
+
+func groupConcatOrderMultiArgsUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType []*types.FieldType, byItems []*util.ByItems) (memDeltas []int64, err error) {
+	memDeltas = make([]int64, 0)
+	buffer := new(bytes.Buffer)
+	for i := 0; i < srcChk.NumRows(); i++ {
+		row := srcChk.GetRow(i)
+		if row.IsNull(0) {
+			memDeltas = append(memDeltas, int64(0))
+			continue
+		}
+		oldMemSize := buffer.Len()
+		if i != 0 {
+			buffer.WriteString(" ")
+		}
+		for j := 0; j < len(dataType); j++ {
+			curVal := row.GetString(j)
+			buffer.WriteString(curVal)
+		}
+		memDelta := int64(buffer.Len() - oldMemSize)
+		for _, byItem := range byItems {
+			fdt, _ := byItem.Expr.Eval(row)
+			datumMem := aggfuncs.GetDatumMemSize(&fdt)
+			memDelta += datumMem
+		}
+		memDeltas = append(memDeltas, memDelta)
+	}
+	return memDeltas, nil
+}
+
+func groupConcatDistinctMultiArgsUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType []*types.FieldType, byItems []*util.ByItems) (memDeltas []int64, err error) {
+	valSet := set.NewStringSet()
+	buffer := new(bytes.Buffer)
+	valsBuf := new(bytes.Buffer)
+	var encodeBytesBuffer []byte
+	for i := 0; i < srcChk.NumRows(); i++ {
+		row := srcChk.GetRow(i)
+		if row.IsNull(0) {
+			memDeltas = append(memDeltas, int64(0))
+			continue
+		}
+		valsBuf.Reset()
+		encodeBytesBuffer = encodeBytesBuffer[:0]
+		for j := 0; j < len(dataType); j++ {
+			curVal := row.GetString(j)
+			encodeBytesBuffer = codec.EncodeBytes(encodeBytesBuffer, hack.Slice(curVal))
+			valsBuf.WriteString(curVal)
+		}
+		joinedVal := string(encodeBytesBuffer)
+		if valSet.Exist(joinedVal) {
+			memDeltas = append(memDeltas, int64(0))
+			continue
+		}
+		valSet.Insert(joinedVal)
+		oldMemSize := buffer.Cap()
+		if i != 0 {
+			buffer.WriteString(" ")
+		}
+		buffer.WriteString(valsBuf.String())
+		memDelta := int64(len(joinedVal) + (buffer.Cap() - oldMemSize))
+		memDeltas = append(memDeltas, memDelta)
+	}
+	return memDeltas, nil
+}
+
+func groupConcatDistinctOrderMultiArgsUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType []*types.FieldType, byItems []*util.ByItems) (memDeltas []int64, err error) {
+	valSet := set.NewStringSet()
+	buffer := new(bytes.Buffer)
+	valsBuf := new(bytes.Buffer)
+	var encodeBytesBuffer []byte
+	for i := 0; i < srcChk.NumRows(); i++ {
+		row := srcChk.GetRow(i)
+		if row.IsNull(0) {
+			memDeltas = append(memDeltas, int64(0))
+			continue
+		}
+		valsBuf.Reset()
+		encodeBytesBuffer = encodeBytesBuffer[:0]
+		for j := 0; j < len(dataType); j++ {
+			curVal := row.GetString(j)
+			encodeBytesBuffer = codec.EncodeBytes(encodeBytesBuffer, hack.Slice(curVal))
+			valsBuf.WriteString(curVal)
+		}
+		joinedVal := string(encodeBytesBuffer)
+		if valSet.Exist(joinedVal) {
+			memDeltas = append(memDeltas, int64(0))
+			continue
+		}
+		oldMemSize := buffer.Len()
+		if i != 0 {
+			buffer.WriteString(" ")
+		}
+		valSet.Insert(joinedVal)
+		buffer.WriteString(valsBuf.String())
+		memDelta := int64(len(joinedVal) + (buffer.Len() - oldMemSize))
+		for _, byItem := range byItems {
+			fdt, _ := byItem.Expr.Eval(row)
+			datumMem := aggfuncs.GetDatumMemSize(&fdt)
+			memDelta += datumMem
+		}
+		memDeltas = append(memDeltas, memDelta)
 	}
 	return memDeltas, nil
 }

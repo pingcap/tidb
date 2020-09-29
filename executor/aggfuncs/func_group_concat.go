@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/hack"
@@ -412,6 +413,7 @@ func (e *groupConcatOrder) UpdatePartialResult(sctx sessionctx.Context, rowsInGr
 			if err != nil {
 				return memDelta, err
 			}
+			memDelta += GetDatumMemSize(&d)
 			sortRow.byItems = append(sortRow.byItems, d.Clone())
 		}
 		oldMem := p.topN.currSize
@@ -525,6 +527,7 @@ func (e *groupConcatDistinctOrder) UpdatePartialResult(sctx sessionctx.Context, 
 			if err != nil {
 				return memDelta, err
 			}
+			memDelta += GetDatumMemSize(&d)
 			sortRow.byItems = append(sortRow.byItems, d.Clone())
 		}
 		oldMem := p.topN.currSize
@@ -547,4 +550,16 @@ func (e *groupConcatDistinctOrder) MergePartialResult(sctx sessionctx.Context, s
 	// If order by exists, the parallel hash aggregation is forbidden in executorBuilder.buildHashAgg.
 	// So MergePartialResult will not be called.
 	return 0, terror.ClassOptimizer.New(mysql.ErrInternal, mysql.MySQLErrName[mysql.ErrInternal]).GenWithStack("groupConcatDistinctOrder.MergePartialResult should not be called")
+}
+
+func GetDatumMemSize(d *types.Datum) int64 {
+	var datumMemSize int64
+	datumMemSize += int64(unsafe.Sizeof(d.Kind()))
+	datumMemSize += int64(len(d.Collation()))
+	datumValue := d.GetValue()
+	switch datumValue.(type) {
+	case nil, bool, int64, uint64, float64, string, json.BinaryJSON, *types.MyDecimal, []uint8, types.Time, types.Duration:
+		datumMemSize += getValMemDelta(datumValue)
+	}
+	return datumMemSize
 }
