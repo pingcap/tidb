@@ -4384,9 +4384,9 @@ func extractTblInfos(is infoschema.InfoSchema, oldIdent, newIdent ast.Ident, isA
 	oldTableID, ok := tables[oldIdentKey]
 	var oldTbl table.Table
 	var err error
-	if !ok {
+	if (ok && oldTableID == tableNotExist) || !ok {
 		oldTbl, err = is.TableByName(oldIdent.Schema, oldIdent.Name)
-		if err != nil {
+		if (ok && oldTableID == tableNotExist) || err != nil {
 			if isAlterTable {
 				return nil, 0, infoschema.ErrTableNotExists.GenWithStackByArgs(oldIdent.Schema, oldIdent.Name)
 			}
@@ -4396,8 +4396,6 @@ func extractTblInfos(is infoschema.InfoSchema, oldIdent, newIdent ast.Ident, isA
 			return nil, 0, errFileNotFound.GenWithStackByArgs(oldIdent.Schema, oldIdent.Name)
 		}
 		oldTableID = oldTbl.Meta().ID
-	} else if ok && oldTableID == tableNotExist {
-		return nil, 0, infoschema.ErrTableNotExists.GenWithStackByArgs(oldIdent.Schema, oldIdent.Name)
 	}
 	if isAlterTable && newIdent.Schema.L == oldIdent.Schema.L && newIdent.Name.L == oldIdent.Name.L {
 		//oldIdent is equal to newIdent, do nothing
@@ -4413,7 +4411,7 @@ func extractTblInfos(is infoschema.InfoSchema, oldIdent, newIdent ast.Ident, isA
 	}
 
 	newTableID, ok := tables[newIdentKey]
-	if (ok && newTableID > 0) || (!ok && is.TableExists(newIdent.Schema, newIdent.Name)) {
+	if (ok && newTableID != tableNotExist) || (!ok && is.TableExists(newIdent.Schema, newIdent.Name)) {
 		return nil, 0, infoschema.ErrTableExists.GenWithStackByArgs(newIdent)
 	}
 	if err := checkTooLongTable(newIdent.Name); err != nil {
