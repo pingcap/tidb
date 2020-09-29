@@ -47,6 +47,7 @@ type Tracker struct {
 	actionMu struct {
 		sync.Mutex
 		actionOnExceed ActionOnExceed
+		panicActed bool
 	}
 	parMu struct {
 		sync.Mutex
@@ -372,6 +373,13 @@ func (t *Tracker) setParent(parent *Tracker) {
 	t.parMu.Lock()
 	defer t.parMu.Unlock()
 	t.parMu.parent = parent
+}
+
+// ActedPanic indicate whether the SQL trigger PanicOnExceed.
+func (t *Tracker) ActedPanic() bool {
+	t.actionMu.Lock()
+	defer t.actionMu.Unlock()
+	return t.actionMu.panicActed
 }
 
 const (

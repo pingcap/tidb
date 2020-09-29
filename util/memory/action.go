@@ -90,6 +90,7 @@ func (a *PanicOnExceed) Action(t *Tracker) {
 	}
 	a.acted = true
 	a.mutex.Unlock()
+	t.actionMu.panicActed = true
 	if a.logHook != nil {
 		a.logHook(a.ConnID)
 	}

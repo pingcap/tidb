@@ -167,4 +167,6 @@ func RegisterMetrics() {
 	prometheus.MustRegister(TiKVNoAvailableConnectionCounter)
 	prometheus.MustRegister(TiKVAsyncCommitTxnCounter)
 	prometheus.MustRegister(MaxProcs)
+	prometheus.MustRegister(ExceededQuotaQueryCounter)
+	prometheus.MustRegister(QueryMemoryUsage)
 }

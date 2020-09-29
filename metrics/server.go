@@ -178,6 +178,21 @@ var (
 			Name:      "maxprocs",
 			Help:      "The value of GOMAXPROCS.",
 		})
+	ExceededQuotaQueryCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "exceeded_quota_query_counter",
+			Help:      "Counter of the query exceeded memory quota",
+		}, []string{LblType})
+	QueryMemoryUsage = prometheus.NewHistogram(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "query_memory_usage",
+			Help:      "Bucketed histogram of query memory usage",
+			Buckets:   prometheus.ExponentialBuckets(1, 4, 20), // 1 ~ 1099511627776
+		})
 )
 
 // ExecuteErrorToLabel converts an execute error to label.
