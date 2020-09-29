@@ -1926,12 +1926,27 @@ func (s *testIntegrationSuite2) TestTimeBuiltin(c *C) {
 	result.Check(testkit.Rows("2017-01-01 2017-01-01 12:20:59 12:20:59"))
 	result = tk.MustQuery("select str_to_date('aaa01-01-2017', 'aaa%d-%m-%Y'), str_to_date('59:20:12 aaa01-01-2017', '%s:%i:%H aaa%d-%m-%Y'), str_to_date('59:20:12aaa', '%s:%i:%Haaa')")
 	result.Check(testkit.Rows("2017-01-01 2017-01-01 12:20:59 12:20:59"))
+
 	result = tk.MustQuery("select str_to_date('01-01-2017', '%d'), str_to_date('59', '%d-%Y')")
 	// TODO: MySQL returns "<nil> <nil>".
 	result.Check(testkit.Rows("0000-00-01 <nil>"))
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Incorrect datetime value: '0000-00-00 00:00:00'"))
+	result = tk.MustQuery("show warnings")
+	result.Sort().Check(testutil.RowsWithSep("|",
+		"Warning|1292|Incorrect datetime value: '0000-00-00 00:00:00'",
+		"Warning|1292|Truncated incorrect datetime value: '01-01-2017'"))
+
 	result = tk.MustQuery("select str_to_date('2018-6-1', '%Y-%m-%d'), str_to_date('2018-6-1', '%Y-%c-%d'), str_to_date('59:20:1', '%s:%i:%k'), str_to_date('59:20:1', '%s:%i:%l')")
 	result.Check(testkit.Rows("2018-06-01 2018-06-01 01:20:59 01:20:59"))
+
+	result = tk.MustQuery("select str_to_date('2020-07-04 11:22:33 PM c', '%Y-%m-%d %r')")
+	result.Check(testkit.Rows("2020-07-04 23:22:33"))
+	result = tk.MustQuery("show warnings")
+	result.Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect datetime value: '2020-07-04 11:22:33 PM c'"))
+
+	result = tk.MustQuery("select str_to_date('11:22:33 PM', ' %r')")
+	result.Check(testkit.Rows("23:22:33"))
+	result = tk.MustQuery("show warnings")
+	result.Check(testkit.Rows())
 
 	// for maketime
 	tk.MustExec(`drop table if exists t`)
