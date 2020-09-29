@@ -499,11 +499,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, kvRanges []k
 	}
 	tps := e.getRetTpsByHandle()
 	// Since the first read only need handle information. So its returned col is only 1.
-	rpcStart := time.Now()
 	result, err := distsql.SelectWithRuntimeStats(ctx, e.ctx, kvReq, tps, e.feedback, getPhysicalPlanIDs(e.idxPlans), e.id)
-	if e.stats != nil {
-		recordIndexLookUpRuntimeStats(e.stats.indexTask, time.Since(rpcStart))
-	}
 	if err != nil {
 		return err
 	}
@@ -675,10 +671,6 @@ func (e *IndexLookUpExecutor) collectRuntimeStatsEnabled() bool {
 			snapshotStats := &tikv.SnapshotRuntimeStats{}
 			e.stats = &indexLookUpRunTimeStats{
 				SnapshotRuntimeStats: snapshotStats,
-				indexTask: &tikv.RPCRuntimeStats{
-					Count:   0,
-					Consume: 0,
-				},
 				tableTask: &tikv.RPCRuntimeStats{
 					Count:   0,
 					Consume: 0,
@@ -964,7 +956,6 @@ func recordIndexLookUpRuntimeStats(stats *tikv.RPCRuntimeStats, d time.Duration)
 
 type indexLookUpRunTimeStats struct {
 	*tikv.SnapshotRuntimeStats
-	indexTask    *tikv.RPCRuntimeStats
 	tableTask    *tikv.RPCRuntimeStats
 	indexScan    int64
 	tableRowScan int64
@@ -972,8 +963,8 @@ type indexLookUpRunTimeStats struct {
 
 func (e *indexLookUpRunTimeStats) String() string {
 	var buf bytes.Buffer
-	if e.indexScan != 0 && e.indexTask.Count != 0 {
-		buf.WriteString(fmt.Sprintf("index_task:{time:%s, num_rpc:%d}", time.Duration(e.indexScan), e.indexTask.Count))
+	if e.indexScan != 0 {
+		buf.WriteString(fmt.Sprintf("index_task_time:%s", time.Duration(e.indexScan)))
 	}
 	if e.tableRowScan != 0 && e.tableTask.Count != 0 {
 		if buf.Len() > 0 {
@@ -987,7 +978,6 @@ func (e *indexLookUpRunTimeStats) String() string {
 // Clone implements the RuntimeStats interface.
 func (e *indexLookUpRunTimeStats) Clone() execdetails.RuntimeStats {
 	newRs := &indexLookUpRunTimeStats{
-		indexTask:    e.indexTask,
 		tableTask:    e.tableTask,
 		indexScan:    e.indexScan,
 		tableRowScan: e.tableRowScan,
@@ -1013,8 +1003,6 @@ func (e *indexLookUpRunTimeStats) Merge(other execdetails.RuntimeStats) {
 			e.SnapshotRuntimeStats.Merge(tmp.SnapshotRuntimeStats)
 		}
 	}
-	e.indexTask.Consume += tmp.indexTask.Consume
-	e.indexTask.Count += tmp.indexTask.Count
 	e.tableTask.Consume += tmp.tableTask.Consume
 	e.tableTask.Count += tmp.tableTask.Count
 	e.indexScan += tmp.indexScan
