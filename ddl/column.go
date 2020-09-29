@@ -652,16 +652,7 @@ func needChangeColumnData(oldCol, newCol *model.ColumnInfo) bool {
 		return oldCol.Flen != newCol.Flen || oldCol.Decimal != newCol.Decimal || toUnsigned != originUnsigned
 	}
 	if oldCol.Tp == newCol.Tp && (oldCol.Tp == mysql.TypeEnum || oldCol.Tp == mysql.TypeSet) {
-		if len(newCol.Elems) < len(oldCol.Elems) {
-			return true
-		}
-		for index, oldElem := range oldCol.Elems {
-			newElem := newCol.Elems[index]
-			if oldElem != newElem {
-				return true
-			}
-		}
-		return false
+		return isElemsChangedToModifyColumn(oldCol.Elems, newCol.Elems)
 	}
 	if oldCol.Tp == mysql.TypeEnum || oldCol.Tp == mysql.TypeSet ||
 		newCol.Tp == mysql.TypeEnum || newCol.Tp == mysql.TypeSet {
@@ -669,6 +660,19 @@ func needChangeColumnData(oldCol, newCol *model.ColumnInfo) bool {
 	}
 	if newCol.Flen > 0 && newCol.Flen < oldCol.Flen || toUnsigned != originUnsigned {
 		return true
+	}
+	return false
+}
+
+func isElemsChangedToModifyColumn(oldElems, newElems []string) bool {
+	if len(newElems) < len(oldElems) {
+		return true
+	}
+	for index, oldElem := range oldElems {
+		newElem := newElems[index]
+		if oldElem != newElem {
+			return true
+		}
 	}
 	return false
 }
