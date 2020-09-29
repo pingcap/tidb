@@ -16,7 +16,6 @@ package expression
 import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
@@ -154,7 +153,7 @@ func deriveCoercibilityForScarlarFunc(sf *ScalarFunction) Coercibility {
 	if _, ok := sysConstFuncs[sf.FuncName.L]; ok {
 		return CoercibilitySysconst
 	}
-	if !types.IsString(sf.RetType.Tp) && sf.RetType.Tp != mysql.TypeEnum && sf.RetType.Tp != mysql.TypeSet {
+	if sf.RetType.EvalType() != types.ETString {
 		return CoercibilityNumeric
 	}
 
@@ -171,14 +170,14 @@ func deriveCoercibilityForScarlarFunc(sf *ScalarFunction) Coercibility {
 func deriveCoercibilityForConstant(c *Constant) Coercibility {
 	if c.Value.IsNull() {
 		return CoercibilityIgnorable
-	} else if !types.IsString(c.RetType.Tp) && c.RetType.Tp != mysql.TypeEnum && c.RetType.Tp != mysql.TypeSet {
+	} else if c.RetType.EvalType() != types.ETString {
 		return CoercibilityNumeric
 	}
 	return CoercibilityCoercible
 }
 
 func deriveCoercibilityForColumn(c *Column) Coercibility {
-	if !types.IsString(c.RetType.Tp) && c.RetType.Tp != mysql.TypeEnum && c.RetType.Tp != mysql.TypeSet {
+	if c.RetType.EvalType() != types.ETString {
 		return CoercibilityNumeric
 	}
 	return CoercibilityImplicit
