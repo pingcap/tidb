@@ -1034,7 +1034,7 @@ func (s *SessionVars) IsAutocommit() bool {
 	return s.GetStatusFlag(mysql.ServerStatusAutocommit)
 }
 
-// IsIsolation if true it means the transaction is in isolation.
+// IsIsolation if true it means the transaction is at that isolation level.
 func (s *SessionVars) IsIsolation(isolation string) bool {
 	if s.TxnCtx.Isolation != "" {
 		return s.TxnCtx.Isolation == isolation
