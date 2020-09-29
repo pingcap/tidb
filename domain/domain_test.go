@@ -68,8 +68,8 @@ type mockEtcdBackend struct {
 	pdAddrs []string
 }
 
-func (mebd *mockEtcdBackend) EtcdAddrs() []string {
-	return mebd.pdAddrs
+func (mebd *mockEtcdBackend) EtcdAddrs() ([]string, error) {
+	return mebd.pdAddrs, nil
 }
 func (mebd *mockEtcdBackend) TLSConfig() *tls.Config { return nil }
 func (mebd *mockEtcdBackend) StartGCWorker() error {
@@ -89,6 +89,11 @@ func unixSocketAvailable() bool {
 }
 
 func TestInfo(t *testing.T) {
+	err := failpoint.Enable("github.com/pingcap/tidb/domain/FailPlacement", `return(true)`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	if runtime.GOOS == "windows" {
 		t.Skip("integration.NewClusterV3 will create file contains a colon which is not allowed on Windows")
 	}
@@ -107,7 +112,7 @@ func TestInfo(t *testing.T) {
 	mockStore := &mockEtcdBackend{
 		Storage: s,
 		pdAddrs: []string{clus.Members[0].GRPCAddr()}}
-	dom := NewDomain(mockStore, ddlLease, 0, mockFactory)
+	dom := NewDomain(mockStore, ddlLease, 0, 0, mockFactory)
 	defer func() {
 		dom.Close()
 		s.Close()
@@ -214,6 +219,11 @@ func TestInfo(t *testing.T) {
 	if err != nil || len(infos) != 0 {
 		t.Fatalf("err %v, infos %v", err, infos)
 	}
+
+	err = failpoint.Disable("github.com/pingcap/tidb/domain/FailPlacement")
+	if err != nil {
+		t.Fatal(err)
+	}
 }
 
 type mockSessionManager struct {
@@ -246,7 +256,7 @@ func (*testSuite) TestT(c *C) {
 	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
 	ddlLease := 80 * time.Millisecond
-	dom := NewDomain(store, ddlLease, 0, mockFactory)
+	dom := NewDomain(store, ddlLease, 0, 0, mockFactory)
 	err = dom.Init(ddlLease, sysMockFactory)
 	c.Assert(err, IsNil)
 	ctx := mock.NewContext()
