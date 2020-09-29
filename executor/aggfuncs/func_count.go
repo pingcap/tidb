@@ -14,8 +14,15 @@
 package aggfuncs
 
 import (
+	"unsafe"
+
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/chunk"
+)
+
+const (
+	// DefPartialResult4CountSize is the size of partialResult4Count
+	DefPartialResult4CountSize = int64(unsafe.Sizeof(partialResult4Count(0)))
 )
 
 type baseCount struct {
@@ -25,7 +32,7 @@ type baseCount struct {
 type partialResult4Count = int64
 
 func (e *baseCount) AllocPartialResult() (pr PartialResult, memDelta int64) {
-	return PartialResult(new(partialResult4Count)), 0
+	return PartialResult(new(partialResult4Count)), DefPartialResult4CountSize
 }
 
 func (e *baseCount) ResetPartialResult(pr PartialResult) {

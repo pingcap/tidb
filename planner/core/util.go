@@ -40,7 +40,7 @@ func (a *AggregateFuncExtractor) Enter(n ast.Node) (ast.Node, bool) {
 	switch n.(type) {
 	case *ast.AggregateFuncExpr:
 		a.inAggregateFuncExpr = true
-	case *ast.SelectStmt, *ast.UnionStmt:
+	case *ast.SelectStmt, *ast.SetOprStmt:
 		return n, true
 	}
 	return n, false
@@ -66,7 +66,7 @@ type WindowFuncExtractor struct {
 // Enter implements Visitor interface.
 func (a *WindowFuncExtractor) Enter(n ast.Node) (ast.Node, bool) {
 	switch n.(type) {
-	case *ast.SelectStmt, *ast.UnionStmt:
+	case *ast.SelectStmt, *ast.SetOprStmt:
 		return n, true
 	}
 	return n, false
@@ -229,6 +229,11 @@ func BuildPhysicalJoinSchema(joinType JoinType, join PhysicalPlan) *expression.S
 
 // GetStatsInfo gets the statistics info from a physical plan tree.
 func GetStatsInfo(i interface{}) map[string]uint64 {
+	if i == nil {
+		// it's a workaround for https://github.com/pingcap/tidb/issues/17419
+		// To entirely fix this, uncomment the assertion in TestPreparedIssue17419
+		return nil
+	}
 	p := i.(Plan)
 	var physicalPlan PhysicalPlan
 	switch x := p.(type) {

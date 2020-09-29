@@ -59,8 +59,34 @@ const (
 // Table represents statistics for a table.
 type Table struct {
 	HistColl
-	Version uint64
-	Name    string
+	Version       uint64
+	Name          string
+	ExtendedStats *ExtendedStatsColl
+}
+
+// ExtendedStatsKey is the key for cached item of a mysql.stats_extended record.
+type ExtendedStatsKey struct {
+	StatsName string
+	DB        string
+}
+
+// ExtendedStatsItem is the cached item of a mysql.stats_extended record.
+type ExtendedStatsItem struct {
+	ColIDs     []int64
+	Tp         uint8
+	ScalarVals float64
+	StringVals string
+}
+
+// ExtendedStatsColl is a collection of cached items for mysql.stats_extended records.
+type ExtendedStatsColl struct {
+	Stats             map[ExtendedStatsKey]*ExtendedStatsItem
+	LastUpdateVersion uint64
+}
+
+// NewExtendedStatsColl allocate an ExtendedStatsColl struct.
+func NewExtendedStatsColl() *ExtendedStatsColl {
+	return &ExtendedStatsColl{Stats: make(map[ExtendedStatsKey]*ExtendedStatsItem)}
 }
 
 // HistColl is a collection of histogram. It collects enough information for plan to calculate the selectivity.
@@ -79,6 +105,23 @@ type HistColl struct {
 	// The physical id is used when try to load column stats from storage.
 	HavePhysicalID bool
 	Pseudo         bool
+}
+
+// MemoryUsage returns the total memory usage of this Table.
+// it will only calc the size of Columns and Indices stats data of table.
+// We ignore the size of other metadata in Table
+func (t *Table) MemoryUsage() (sum int64) {
+	for _, col := range t.Columns {
+		if col != nil {
+			sum += col.MemoryUsage()
+		}
+	}
+	for _, index := range t.Indices {
+		if index != nil {
+			sum += index.MemoryUsage()
+		}
+	}
+	return
 }
 
 // Copy copies the current table.
@@ -103,6 +146,16 @@ func (t *Table) Copy() *Table {
 		Version:  t.Version,
 		Name:     t.Name,
 	}
+	if t.ExtendedStats != nil {
+		newExtStatsColl := &ExtendedStatsColl{
+			Stats:             make(map[ExtendedStatsKey]*ExtendedStatsItem),
+			LastUpdateVersion: t.ExtendedStats.LastUpdateVersion,
+		}
+		for key, item := range t.ExtendedStats.Stats {
+			newExtStatsColl.Stats[key] = item
+		}
+		nt.ExtendedStats = newExtStatsColl
+	}
 	return nt
 }
 
@@ -126,6 +179,7 @@ func (t *Table) String() string {
 	for _, idx := range idxs {
 		strs = append(strs, idx.String())
 	}
+	// TODO: concat content of ExtendedStatsColl
 	return strings.Join(strs, "\n")
 }
 
@@ -392,6 +446,24 @@ func isSingleColIdxNullRange(idx *Index, ran *ranger.Range) bool {
 	return false
 }
 
+// outOfRangeEQSelectivity estimates selectivities for out-of-range values.
+// It assumes all modifications are insertions and all new-inserted rows are uniformly distributed
+// and has the same distribution with analyzed rows, which means each unique value should have the
+// same number of rows(Tot/NDV) of it.
+func outOfRangeEQSelectivity(ndv, modifyRows, totalRows int64) float64 {
+	if modifyRows == 0 {
+		return 0 // it must be 0 since the histogram contains the whole data
+	}
+	if ndv < outOfRangeBetweenRate {
+		ndv = outOfRangeBetweenRate // avoid inaccurate selectivity caused by small NDV
+	}
+	selectivity := 1 / float64(ndv) // TODO: After extracting TopN from histograms, we can minus the TopN fraction here.
+	if selectivity*float64(totalRows) > float64(modifyRows) {
+		selectivity = float64(modifyRows) / float64(totalRows)
+	}
+	return selectivity
+}
+
 // getEqualCondSelectivity gets the selectivity of the equal conditions.
 func (coll *HistColl) getEqualCondSelectivity(idx *Index, bytes []byte, usedColsLen int) float64 {
 	coverAll := len(idx.Info.Columns) == usedColsLen
@@ -404,8 +476,7 @@ func (coll *HistColl) getEqualCondSelectivity(idx *Index, bytes []byte, usedCols
 		// When the value is out of range, we could not found this value in the CM Sketch,
 		// so we use heuristic methods to estimate the selectivity.
 		if idx.NDV > 0 && coverAll {
-			// for equality queries
-			return float64(coll.ModifyCount) / float64(idx.NDV) / idx.TotalRowCount()
+			return outOfRangeEQSelectivity(idx.NDV, coll.ModifyCount, int64(idx.TotalRowCount()))
 		}
 		// The equal condition only uses prefix columns of the index.
 		colIDs := coll.Idx2ColumnIDs[idx.ID]
@@ -416,10 +487,7 @@ func (coll *HistColl) getEqualCondSelectivity(idx *Index, bytes []byte, usedCols
 			}
 			ndv = mathutil.MaxInt64(ndv, coll.Columns[colID].NDV)
 		}
-		if ndv > 0 {
-			return float64(coll.ModifyCount) / float64(ndv) / idx.TotalRowCount()
-		}
-		return float64(coll.ModifyCount) / outOfRangeBetweenRate / idx.TotalRowCount()
+		return outOfRangeEQSelectivity(ndv, coll.ModifyCount, int64(idx.TotalRowCount()))
 	}
 	return float64(idx.CMSketch.QueryBytes(bytes)) / float64(idx.TotalRowCount())
 }

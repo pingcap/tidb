@@ -19,7 +19,6 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/memory"
-	"github.com/pingcap/tidb/util/stringutil"
 )
 
 // applyCache is used in the apply executor. When we get the same value of the outer row.
@@ -47,7 +46,7 @@ func newApplyCache(ctx sessionctx.Context) (*applyCache, error) {
 	c := applyCache{
 		cache:       cache,
 		memCapacity: ctx.GetSessionVars().NestedLoopJoinCacheCapacity,
-		memTracker:  memory.NewTracker(stringutil.StringerStr("applyCache"), -1),
+		memTracker:  memory.NewTracker(memory.LabelForApplyCache, -1),
 	}
 	return &c, nil
 }

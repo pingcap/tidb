@@ -22,8 +22,8 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -38,8 +38,8 @@ import (
 type DDLForTest interface {
 	// SetHook sets the hook.
 	SetHook(h Callback)
-	// SetInterceptoror sets the interceptor.
-	SetInterceptoror(h Interceptor)
+	// SetInterceptor sets the interceptor.
+	SetInterceptor(h Interceptor)
 }
 
 // SetHook implements DDL.SetHook interface.
@@ -50,8 +50,8 @@ func (d *ddl) SetHook(h Callback) {
 	d.mu.hook = h
 }
 
-// SetInterceptoror implements DDL.SetInterceptoror interface.
-func (d *ddl) SetInterceptoror(i Interceptor) {
+// SetInterceptor implements DDL.SetInterceptor interface.
+func (d *ddl) SetInterceptor(i Interceptor) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
@@ -61,28 +61,6 @@ func (d *ddl) SetInterceptoror(i Interceptor) {
 // generalWorker returns the general worker.
 func (d *ddl) generalWorker() *worker {
 	return d.workers[generalWorker]
-}
-
-// restartWorkers is like the function of d.start. But it won't initialize the "workers" and create a new worker.
-// It only starts the original workers.
-func (d *ddl) restartWorkers(ctx context.Context) {
-	d.ctx, d.cancel = context.WithCancel(ctx)
-
-	d.wg.Add(1)
-	go d.limitDDLJobs()
-	if !RunWorker {
-		return
-	}
-
-	err := d.ownerManager.CampaignOwner()
-	terror.Log(err)
-	for _, worker := range d.workers {
-		worker.wg.Add(1)
-		worker.ctx = d.ctx
-		w := worker
-		go w.start(d.ddlCtx)
-		asyncNotify(worker.ddlJobCh)
-	}
 }
 
 func TestT(t *testing.T) {
@@ -101,6 +79,11 @@ func TestT(t *testing.T) {
 		// Test for add/drop primary key.
 		conf.AlterPrimaryKey = true
 	})
+
+	_, err := infosync.GlobalInfoSyncerInit(context.Background(), "t", nil, true)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	testleak.BeforeTest()
 	TestingT(t)

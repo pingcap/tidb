@@ -48,6 +48,7 @@ type RPCClient struct {
 	usSvr      *us.Server
 	cluster    *Cluster
 	path       string
+	rawHandler *rawHandler
 	persistent bool
 	closed     int32
 
@@ -101,6 +102,12 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 		r := req.Prewrite()
 		c.cluster.handleDelay(r.StartVersion, r.Context.RegionId)
 		resp.Resp, err = c.usSvr.KvPrewrite(ctx, r)
+
+		failpoint.Inject("rpcPrewriteTimeout", func(val failpoint.Value) {
+			if val.(bool) {
+				failpoint.Return(nil, undeterminedErr)
+			}
+		})
 	case tikvrpc.CmdPessimisticLock:
 		r := req.PessimisticLock()
 		c.cluster.handleDelay(r.StartVersion, r.Context.RegionId)
@@ -134,6 +141,8 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 		resp.Resp, err = c.usSvr.KvCleanup(ctx, req.Cleanup())
 	case tikvrpc.CmdCheckTxnStatus:
 		resp.Resp, err = c.usSvr.KvCheckTxnStatus(ctx, req.CheckTxnStatus())
+	case tikvrpc.CmdCheckSecondaryLocks:
+		resp.Resp, err = c.usSvr.KvCheckSecondaryLocks(ctx, req.CheckSecondaryLocks())
 	case tikvrpc.CmdTxnHeartBeat:
 		resp.Resp, err = c.usSvr.KvTxnHeartBeat(ctx, req.TxnHeartBeat())
 	case tikvrpc.CmdBatchGet:
@@ -149,21 +158,21 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 	case tikvrpc.CmdDeleteRange:
 		resp.Resp, err = c.usSvr.KvDeleteRange(ctx, req.DeleteRange())
 	case tikvrpc.CmdRawGet:
-		resp.Resp, err = c.usSvr.RawGet(ctx, req.RawGet())
+		resp.Resp, err = c.rawHandler.RawGet(ctx, req.RawGet())
 	case tikvrpc.CmdRawBatchGet:
-		resp.Resp, err = c.usSvr.RawBatchGet(ctx, req.RawBatchGet())
+		resp.Resp, err = c.rawHandler.RawBatchGet(ctx, req.RawBatchGet())
 	case tikvrpc.CmdRawPut:
-		resp.Resp, err = c.usSvr.RawPut(ctx, req.RawPut())
+		resp.Resp, err = c.rawHandler.RawPut(ctx, req.RawPut())
 	case tikvrpc.CmdRawBatchPut:
-		resp.Resp, err = c.usSvr.RawBatchPut(ctx, req.RawBatchPut())
+		resp.Resp, err = c.rawHandler.RawBatchPut(ctx, req.RawBatchPut())
 	case tikvrpc.CmdRawDelete:
-		resp.Resp, err = c.usSvr.RawDelete(ctx, req.RawDelete())
+		resp.Resp, err = c.rawHandler.RawDelete(ctx, req.RawDelete())
 	case tikvrpc.CmdRawBatchDelete:
-		resp.Resp, err = c.usSvr.RawBatchDelete(ctx, req.RawBatchDelete())
+		resp.Resp, err = c.rawHandler.RawBatchDelete(ctx, req.RawBatchDelete())
 	case tikvrpc.CmdRawDeleteRange:
-		resp.Resp, err = c.usSvr.RawDeleteRange(ctx, req.RawDeleteRange())
+		resp.Resp, err = c.rawHandler.RawDeleteRange(ctx, req.RawDeleteRange())
 	case tikvrpc.CmdRawScan:
-		resp.Resp, err = c.usSvr.RawScan(ctx, req.RawScan())
+		resp.Resp, err = c.rawHandler.RawScan(ctx, req.RawScan())
 	case tikvrpc.CmdCop:
 		resp.Resp, err = c.usSvr.Coprocessor(ctx, req.Cop())
 	case tikvrpc.CmdCopStream:

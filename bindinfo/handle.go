@@ -56,7 +56,7 @@ type BindHandle struct {
 	// bindInfo caches the sql bind info from storage.
 	//
 	// The Mutex protects that there is only one goroutine changes the content
-	// of atmoic.Value.
+	// of atomic.Value.
 	//
 	// NOTE: Concurrent Value Write:
 	//

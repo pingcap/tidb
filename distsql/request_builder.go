@@ -82,6 +82,15 @@ func (builder *RequestBuilder) SetTableHandles(tid int64, handles []kv.Handle) *
 	return builder
 }
 
+// SetPartitionsAndHandles sets "KeyRanges" for "kv.Request" by converting ParitionHandles to KeyRanges.
+// handles in slice must be kv.PartitionHandle.
+func (builder *RequestBuilder) SetPartitionsAndHandles(handles []kv.Handle) *RequestBuilder {
+	builder.Request.KeyRanges = PartitionHandlesToKVRanges(handles)
+	return builder
+}
+
+const estimatedRegionRowCount = 100000
+
 // SetDAGRequest sets the request type to "ReqTypeDAG" and construct request data.
 func (builder *RequestBuilder) SetDAGRequest(dag *tipb.DAGRequest) *RequestBuilder {
 	if builder.err == nil {
@@ -89,11 +98,17 @@ func (builder *RequestBuilder) SetDAGRequest(dag *tipb.DAGRequest) *RequestBuild
 		builder.Request.Cacheable = true
 		builder.Request.Data, builder.err = dag.Marshal()
 	}
-
+	// When the DAG is just simple scan and small limit, set concurrency to 1 would be sufficient.
+	if len(dag.Executors) == 2 && dag.Executors[1].GetLimit() != nil {
+		limit := dag.Executors[1].GetLimit()
+		if limit != nil && limit.Limit < estimatedRegionRowCount {
+			builder.Request.Concurrency = 1
+		}
+	}
 	return builder
 }
 
-// SetAnalyzeRequest sets the request type to "ReqTypeAnalyze" and cosntruct request data.
+// SetAnalyzeRequest sets the request type to "ReqTypeAnalyze" and construct request data.
 func (builder *RequestBuilder) SetAnalyzeRequest(ana *tipb.AnalyzeReq) *RequestBuilder {
 	if builder.err == nil {
 		builder.Request.Tp = kv.ReqTypeAnalyze
@@ -176,7 +191,10 @@ func (builder *RequestBuilder) getKVPriority(sv *variable.SessionVars) int {
 // SetFromSessionVars sets the following fields for "kv.Request" from session variables:
 // "Concurrency", "IsolationLevel", "NotFillCache", "ReplicaRead", "SchemaVar".
 func (builder *RequestBuilder) SetFromSessionVars(sv *variable.SessionVars) *RequestBuilder {
-	builder.Request.Concurrency = sv.DistSQLScanConcurrency()
+	if builder.Request.Concurrency == 0 {
+		// Concurrency may be set to 1 by SetDAGRequest
+		builder.Request.Concurrency = sv.DistSQLScanConcurrency()
+	}
 	builder.Request.IsolationLevel = builder.getIsolationLevel()
 	builder.Request.NotFillCache = sv.StmtCtx.NotFillCache
 	builder.Request.TaskID = sv.StmtCtx.TaskID
@@ -216,7 +234,7 @@ func TableRangesToKVRanges(tid int64, ranges []*ranger.Range, fb *statistics.Que
 			low = kv.Key(low).PrefixNext()
 		}
 		// If this range is split by histogram, then the high val will equal to one bucket's upper bound,
-		// since we need to guarantee each range falls inside the exactly one bucket, `PerfixNext` will make the
+		// since we need to guarantee each range falls inside the exactly one bucket, `PrefixNext` will make the
 		// high value greater than upper bound, so we store the range here.
 		r := &ranger.Range{LowVal: []types.Datum{types.NewBytesDatum(low)},
 			HighVal: []types.Datum{types.NewBytesDatum(high)}}
@@ -265,7 +283,7 @@ func TableHandlesToKVRanges(tid int64, handles []kv.Handle) []kv.KeyRange {
 		if commonHandle, ok := handles[i].(*kv.CommonHandle); ok {
 			ran := kv.KeyRange{
 				StartKey: tablecodec.EncodeRowKey(tid, commonHandle.Encoded()),
-				EndKey:   tablecodec.EncodeRowKey(tid, append(commonHandle.Encoded(), 0)),
+				EndKey:   tablecodec.EncodeRowKey(tid, kv.Key(commonHandle.Encoded()).Next()),
 			}
 			krs = append(krs, ran)
 			i++
@@ -282,6 +300,44 @@ func TableHandlesToKVRanges(tid int64, handles []kv.Handle) []kv.KeyRange {
 		high = kv.Key(high).PrefixNext()
 		startKey := tablecodec.EncodeRowKey(tid, low)
 		endKey := tablecodec.EncodeRowKey(tid, high)
+		krs = append(krs, kv.KeyRange{StartKey: startKey, EndKey: endKey})
+		i = j
+	}
+	return krs
+}
+
+// PartitionHandlesToKVRanges convert ParitionHandles to kv ranges.
+// Handle in slices must be kv.PartitionHandle
+func PartitionHandlesToKVRanges(handles []kv.Handle) []kv.KeyRange {
+	krs := make([]kv.KeyRange, 0, len(handles))
+	i := 0
+	for i < len(handles) {
+		ph := handles[i].(kv.PartitionHandle)
+		h := ph.Handle
+		pid := ph.PartitionID
+		if commonHandle, ok := h.(*kv.CommonHandle); ok {
+			ran := kv.KeyRange{
+				StartKey: tablecodec.EncodeRowKey(pid, commonHandle.Encoded()),
+				EndKey:   tablecodec.EncodeRowKey(pid, append(commonHandle.Encoded(), 0)),
+			}
+			krs = append(krs, ran)
+			i++
+			continue
+		}
+		j := i + 1
+		for ; j < len(handles) && handles[j-1].IntValue() != math.MaxInt64; j++ {
+			if handles[j].IntValue() != handles[j-1].IntValue()+1 {
+				break
+			}
+			if handles[j].(kv.PartitionHandle).PartitionID != pid {
+				break
+			}
+		}
+		low := codec.EncodeInt(nil, handles[i].IntValue())
+		high := codec.EncodeInt(nil, handles[j-1].IntValue())
+		high = kv.Key(high).PrefixNext()
+		startKey := tablecodec.EncodeRowKey(pid, low)
+		endKey := tablecodec.EncodeRowKey(pid, high)
 		krs = append(krs, kv.KeyRange{StartKey: startKey, EndKey: endKey})
 		i = j
 	}
@@ -314,7 +370,7 @@ func IndexRangesToKVRanges(sc *stmtctx.StatementContext, tid, idxID int64, range
 		}
 		ran.LowVal[0].SetBytes(low)
 		// If this range is split by histogram, then the high val will equal to one bucket's upper bound,
-		// since we need to guarantee each range falls inside the exactly one bucket, `PerfixNext` will make the
+		// since we need to guarantee each range falls inside the exactly one bucket, `PrefixNext` will make the
 		// high value greater than upper bound, so we store the high value here.
 		ran.HighVal[0].SetBytes(high)
 		if !ran.HighExclude {
@@ -346,8 +402,8 @@ func CommonHandleRangesToKVRanges(sc *stmtctx.StatementContext, tid int64, range
 			low = kv.Key(low).PrefixNext()
 		}
 		ran.LowVal[0].SetBytes(low)
-		startKey := tablecodec.EncodeCommonHandleSeekKey(tid, low)
-		endKey := tablecodec.EncodeCommonHandleSeekKey(tid, high)
+		startKey := tablecodec.EncodeRowKey(tid, low)
+		endKey := tablecodec.EncodeRowKey(tid, high)
 		krs = append(krs, kv.KeyRange{StartKey: startKey, EndKey: endKey})
 	}
 	return krs, nil
