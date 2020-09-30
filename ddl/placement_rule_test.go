@@ -234,7 +234,17 @@ func (s *testPlacementSuite) TestPlacementBuild(c *C) {
 			c.Assert(err, IsNil)
 			got, err := json.Marshal(out.Rules)
 			c.Assert(err, IsNil)
-			c.Assert(out.Rules, DeepEquals, t.output, Commentf("%d test\nexpected %s\nbut got %s", i, expected, got))
+			c.Assert(len(t.output), Equals, len(out.Rules))
+			for _, r1 := range t.output {
+				found := false
+				for _, r2 := range out.Rules {
+					if ok, _ := DeepEquals.Check([]interface{}{r1, r2}, nil); ok {
+						found = true
+						break
+					}
+				}
+				c.Assert(found, IsTrue, Commentf("%d test\nexpected %s\nbut got %s", i, expected, got))
+			}
 		} else {
 			c.Assert(err.Error(), ErrorMatches, t.err)
 		}
@@ -243,50 +253,21 @@ func (s *testPlacementSuite) TestPlacementBuild(c *C) {
 
 func (s *testPlacementSuite) TestPlacementBuildDrop(c *C) {
 	tests := []struct {
-		input  []int64
-		output []*placement.RuleOp
+		input  int64
+		output *placement.Bundle
 	}{
 		{
-			input: []int64{2},
-			output: []*placement.RuleOp{
-				{
-					Action:           placement.RuleOpDel,
-					DeleteByIDPrefix: true,
-					Rule: &placement.Rule{
-						GroupID: placement.RuleDefaultGroupID,
-						ID:      "0_t0_p2",
-					},
-				},
-			},
+			input:  2,
+			output: &placement.Bundle{ID: placement.GroupID(2)},
 		},
 		{
-			input: []int64{1, 2},
-			output: []*placement.RuleOp{
-				{
-					Action:           placement.RuleOpDel,
-					DeleteByIDPrefix: true,
-					Rule: &placement.Rule{
-						GroupID: placement.RuleDefaultGroupID,
-						ID:      "0_t0_p1",
-					},
-				},
-				{
-					Action:           placement.RuleOpDel,
-					DeleteByIDPrefix: true,
-					Rule: &placement.Rule{
-						GroupID: placement.RuleDefaultGroupID,
-						ID:      "0_t0_p2",
-					},
-				},
-			},
+			input:  1,
+			output: &placement.Bundle{ID: placement.GroupID(1)},
 		},
 	}
 	for _, t := range tests {
-		out := buildPlacementDropRules(0, 0, t.input)
-		c.Assert(len(out), Equals, len(t.output))
-		for i := range t.output {
-			c.Assert(s.compareRuleOp(out[i], t.output[i]), IsTrue, Commentf("expect: %+v, obtained: %+v", t.output[i], out[i]))
-		}
+		out := buildPlacementDropBundle(t.input)
+		c.Assert(t.output, DeepEquals, out)
 	}
 }
 

@@ -14,6 +14,7 @@
 package ddl
 
 import (
+	"bytes"
 	"fmt"
 	"math"
 	"math/bits"
@@ -27,6 +28,7 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
 	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -682,6 +684,11 @@ func onSetDefaultValue(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 func needChangeColumnData(oldCol, newCol *model.ColumnInfo) bool {
 	toUnsigned := mysql.HasUnsignedFlag(newCol.Flag)
 	originUnsigned := mysql.HasUnsignedFlag(oldCol.Flag)
+	if oldCol.Tp == newCol.Tp && oldCol.Tp == mysql.TypeNewDecimal {
+		// Since type decimal will encode the precision, frac, negative(signed) and wordBuf into storage together, there is no short
+		// cut to eliminate data reorg change for column type change between decimal.
+		return oldCol.Flen != newCol.Flen || oldCol.Decimal != newCol.Decimal || toUnsigned != originUnsigned
+	}
 	if newCol.Flen > 0 && newCol.Flen < oldCol.Flen || toUnsigned != originUnsigned {
 		return true
 	}
@@ -913,7 +920,8 @@ func (w *worker) doModifyColumnTypeWithData(
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		reorgInfo, err := getReorgInfo(d, t, job, tbl)
+
+		reorgInfo, err := getReorgInfo(d, t, job, tbl, BuildElements(changingCol, changingIdxs))
 		if err != nil || reorgInfo.first {
 			// If we run reorg firstly, we should update the job snapshot version
 			// and then run the reorg next time.
@@ -933,6 +941,11 @@ func (w *worker) doModifyColumnTypeWithData(
 				return ver, nil
 			}
 			if kv.ErrKeyExists.Equal(err) || errCancelledDDLJob.Equal(err) || errCantDecodeRecord.Equal(err) || types.ErrOverflow.Equal(err) {
+				if err1 := t.RemoveDDLReorgHandle(job, reorgInfo.elements); err1 != nil {
+					logutil.BgLogger().Warn("[ddl] run modify column job failed, RemoveDDLReorgHandle failed, can't convert job to rollback",
+						zap.String("job", job.String()), zap.Error(err1))
+					return ver, errors.Trace(err)
+				}
 				logutil.BgLogger().Warn("[ddl] run modify column job failed, convert job to rollback", zap.String("job", job.String()), zap.Error(err))
 				// When encounter these error above, we change the job to rolling back job directly.
 				job.State = model.JobStateRollingback
@@ -978,13 +991,22 @@ func (w *worker) doModifyColumnTypeWithData(
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 		// Refactor the job args to add the old index ids into delete range table.
 		job.Args = []interface{}{oldIdxIDs, getPartitionIDs(tblInfo)}
-		// TODO: Change column ID.
-		// asyncNotifyEvent(d, &util.Event{Tp: model.ActionAddColumn, TableInfo: tblInfo, ColumnInfos: []*model.ColumnInfo{changingCol}})
+		asyncNotifyEvent(d, &ddlutil.Event{Tp: model.ActionModifyColumn, TableInfo: tblInfo, ColumnInfos: []*model.ColumnInfo{changingCol}})
 	default:
 		err = ErrInvalidDDLState.GenWithStackByArgs("column", changingCol.State)
 	}
 
 	return ver, errors.Trace(err)
+}
+
+// BuildElements is exported for testing.
+func BuildElements(changingCol *model.ColumnInfo, changingIdxs []*model.IndexInfo) []*meta.Element {
+	elements := make([]*meta.Element, 0, len(changingIdxs)+1)
+	elements = append(elements, &meta.Element{ID: changingCol.ID, TypeKey: meta.ColumnElementKey})
+	for _, idx := range changingIdxs {
+		elements = append(elements, &meta.Element{ID: idx.ID, TypeKey: meta.IndexElementKey})
+	}
+	return elements
 }
 
 func (w *worker) updatePhysicalTableRow(t table.PhysicalTable, oldColInfo, colInfo *model.ColumnInfo, reorgInfo *reorgInfo) error {
@@ -994,15 +1016,54 @@ func (w *worker) updatePhysicalTableRow(t table.PhysicalTable, oldColInfo, colIn
 
 // updateColumnAndIndexes handles the modify column reorganization state for a table.
 func (w *worker) updateColumnAndIndexes(t table.Table, oldCol, col *model.ColumnInfo, idxes []*model.IndexInfo, reorgInfo *reorgInfo) error {
-	// TODO: Consider rebuild ReorgInfo key to mDDLJobReorgKey_jobID_elementID(colID/idxID).
 	// TODO: Support partition tables.
-	err := w.updatePhysicalTableRow(t.(table.PhysicalTable), oldCol, col, reorgInfo)
+	if bytes.Equal(reorgInfo.currElement.TypeKey, meta.ColumnElementKey) {
+		err := w.updatePhysicalTableRow(t.(table.PhysicalTable), oldCol, col, reorgInfo)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+
+	// Get the original start handle and end handle.
+	currentVer, err := getValidCurrentVersion(reorgInfo.d.store)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	originalStartHandle, originalEndHandle, err := getTableRange(reorgInfo.d, t.(table.PhysicalTable), currentVer.Ver, reorgInfo.Job.Priority)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	for _, idx := range idxes {
-		err = w.addTableIndex(t, idx, reorgInfo)
+	startElementOffset := 0
+	startElementOffsetToResetHandle := -1
+	// This backfill job starts with backfilling index data, whose index ID is currElement.ID.
+	if bytes.Equal(reorgInfo.currElement.TypeKey, meta.IndexElementKey) {
+		for i, idx := range idxes {
+			if reorgInfo.currElement.ID == idx.ID {
+				startElementOffset = i
+				startElementOffsetToResetHandle = i
+				break
+			}
+		}
+	}
+
+	for i := startElementOffset; i < len(idxes); i++ {
+		// This backfill job has been exited during processing. At that time, the element is reorgInfo.elements[i+1] and handle range is [reorgInfo.StartHandle, reorgInfo.EndHandle].
+		// Then the handle range of the rest elements' is [originalStartHandle, originalEndHandle].
+		if i == startElementOffsetToResetHandle+1 {
+			reorgInfo.StartHandle, reorgInfo.EndHandle = originalStartHandle, originalEndHandle
+		}
+
+		reorgInfo.currElement = reorgInfo.elements[i+1]
+		// Write the reorg info to store so the whole reorganize process can recover from panic.
+		err := reorgInfo.UpdateReorgMeta(reorgInfo.StartHandle)
+		logutil.BgLogger().Info("[ddl] update column and indexes", zap.Int64("jobID", reorgInfo.Job.ID),
+			zap.ByteString("elementType", reorgInfo.currElement.TypeKey), zap.Int64("elementID", reorgInfo.currElement.ID),
+			zap.String("startHandle", toString(reorgInfo.StartHandle)), zap.String("endHandle", toString(reorgInfo.EndHandle)))
+		if err != nil {
+			return errors.Trace(err)
+		}
+		err = w.addTableIndex(t, idxes[i], reorgInfo)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1021,9 +1082,12 @@ type updateColumnWorker struct {
 	rowDecoder *decoder.RowDecoder
 
 	rowMap map[int64]types.Datum
+
+	// For SQL Mode and warnings.
+	sqlMode mysql.SQLMode
 }
 
-func newUpdateColumnWorker(sessCtx sessionctx.Context, worker *worker, id int, t table.PhysicalTable, oldCol, newCol *model.ColumnInfo, decodeColMap map[int64]decoder.Column) *updateColumnWorker {
+func newUpdateColumnWorker(sessCtx sessionctx.Context, worker *worker, id int, t table.PhysicalTable, oldCol, newCol *model.ColumnInfo, decodeColMap map[int64]decoder.Column, sqlMode mysql.SQLMode) *updateColumnWorker {
 	rowDecoder := decoder.NewRowDecoder(t, t.WritableCols(), decodeColMap)
 	return &updateColumnWorker{
 		backfillWorker: newBackfillWorker(sessCtx, worker, id, t),
@@ -1032,6 +1096,7 @@ func newUpdateColumnWorker(sessCtx sessionctx.Context, worker *worker, id int, t
 		metricCounter:  metrics.BackfillTotalCounter.WithLabelValues("update_col_speed"),
 		rowDecoder:     rowDecoder,
 		rowMap:         make(map[int64]types.Datum, len(decodeColMap)),
+		sqlMode:        sqlMode,
 	}
 }
 
@@ -1040,8 +1105,9 @@ func (w *updateColumnWorker) AddMetricInfo(cnt float64) {
 }
 
 type rowRecord struct {
-	key  []byte // It's used to lock a record. Record it to reduce the encoding time.
-	vals []byte // It's the record.
+	key     []byte        // It's used to lock a record. Record it to reduce the encoding time.
+	vals    []byte        // It's the record.
+	warning *terror.Error // It's used to record the cast warning of a record.
 }
 
 // getNextHandle gets next handle of entry that we are going to process.
@@ -1118,11 +1184,25 @@ func (w *updateColumnWorker) getRowRecord(handle kv.Handle, recordKey []byte, ra
 		return nil
 	}
 
+	var recordWarning *terror.Error
 	newColVal, err := table.CastValue(w.sessCtx, w.rowMap[w.oldColInfo.ID], w.newColInfo, false, false)
-	// TODO: Consider sql_mode and the error msg(encounter this error check whether to rollback).
 	if err != nil {
-		return errors.Trace(err)
+		if IsNormalWarning(err) || (!w.sqlMode.HasStrictMode() && IsStrictWarning(err)) {
+			// Keep the warnings.
+			recordWarning = errors.Cause(err).(*terror.Error)
+		} else {
+			return errors.Trace(err)
+		}
 	}
+
+	failpoint.Inject("MockReorgTimeoutInOneRegion", func(val failpoint.Value) {
+		if val.(bool) {
+			if handle.IntValue() == 3000 && atomic.CompareAndSwapInt32(&TestCheckReorgTimeout, 0, 1) {
+				failpoint.Return(errors.Trace(errWaitReorgTimeout))
+			}
+		}
+	})
+
 	w.rowMap[w.newColInfo.ID] = newColVal
 	newColumnIDs := make([]int64, 0, len(w.rowMap))
 	newRow := make([]types.Datum, 0, len(w.rowMap))
@@ -1136,9 +1216,29 @@ func (w *updateColumnWorker) getRowRecord(handle kv.Handle, recordKey []byte, ra
 		return errors.Trace(err)
 	}
 
-	w.rowRecords = append(w.rowRecords, &rowRecord{key: recordKey, vals: newRowVal})
+	w.rowRecords = append(w.rowRecords, &rowRecord{key: recordKey, vals: newRowVal, warning: recordWarning})
 	w.cleanRowMap()
 	return nil
+}
+
+// IsNormalWarning is used to check the normal warnings, for example data-truncated warnings.
+// This kind of warning will be always thrown out regard less of what kind of the sql mode is.
+func IsNormalWarning(err error) bool {
+	// TODO: there are more errors here can be identified as normal warnings.
+	if types.ErrTruncatedWrongVal.Equal(err) {
+		return true
+	}
+	return false
+}
+
+// IsStrictWarning is used to check whether the error can be transferred as a warning under a
+// non-strict SQL Mode.
+func IsStrictWarning(err error) bool {
+	// TODO: there are more errors here can be identified as warnings under non-strict SQL mode.
+	if types.ErrOverflow.Equal(err) {
+		return true
+	}
+	return false
 }
 
 func (w *updateColumnWorker) cleanRowMap() {
@@ -1162,6 +1262,8 @@ func (w *updateColumnWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (t
 		taskCtx.nextHandle = nextHandle
 		taskCtx.done = taskDone
 
+		warningsMap := make(map[errors.ErrorID]*terror.Error, len(rowRecords))
+		warningsCountMap := make(map[errors.ErrorID]int64, len(rowRecords))
 		for _, rowRecord := range rowRecords {
 			taskCtx.scanCount++
 
@@ -1170,7 +1272,18 @@ func (w *updateColumnWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (t
 				return errors.Trace(err)
 			}
 			taskCtx.addedCount++
+			if rowRecord.warning != nil {
+				if _, ok := warningsCountMap[rowRecord.warning.ID()]; ok {
+					warningsCountMap[rowRecord.warning.ID()]++
+				} else {
+					warningsCountMap[rowRecord.warning.ID()] = 1
+					warningsMap[rowRecord.warning.ID()] = rowRecord.warning
+				}
+			}
 		}
+
+		// Collect the warnings.
+		taskCtx.warnings, taskCtx.warningsCount = warningsMap, warningsCountMap
 
 		return nil
 	})
