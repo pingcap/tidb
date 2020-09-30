@@ -54,6 +54,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -284,6 +285,8 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	// Init cache for speed up same query
+	kv.NewCacheDB()
 
 	// Init rand seed for randomBuf()
 	rand.Seed(time.Now().UTC().UnixNano())
