@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/hack"
@@ -300,14 +299,14 @@ func (h *topNRows) Pop() interface{} {
 	return x
 }
 
-func (h *topNRows) tryToAdd(row sortRow) (truncated bool) {
+func (h *topNRows) tryToAdd(row sortRow) (truncated bool, truncatedDatumMemSize int64) {
 	h.currSize += uint64(row.buffer.Len())
 	if len(h.rows) > 0 {
 		h.currSize += h.sepSize
 	}
 	heap.Push(h, row)
 	if h.currSize <= h.limitSize {
-		return false
+		return false, truncatedDatumMemSize
 	}
 
 	for h.currSize > h.limitSize {
@@ -317,10 +316,13 @@ func (h *topNRows) tryToAdd(row sortRow) (truncated bool) {
 			h.rows[0].buffer.Truncate(h.rows[0].buffer.Len() - int(debt))
 		} else {
 			h.currSize -= uint64(h.rows[0].buffer.Len()) + h.sepSize
+			for _, dt := range h.rows[0].byItems {
+				truncatedDatumMemSize += GetDatumMemSize(dt)
+			}
 			heap.Pop(h)
 		}
 	}
-	return true
+	return true, truncatedDatumMemSize
 }
 
 func (h *topNRows) reset() {
@@ -417,9 +419,9 @@ func (e *groupConcatOrder) UpdatePartialResult(sctx sessionctx.Context, rowsInGr
 			sortRow.byItems = append(sortRow.byItems, d.Clone())
 		}
 		oldMem := p.topN.currSize
-		truncated := p.topN.tryToAdd(sortRow)
+		truncated, truncatedDatumMemSize := p.topN.tryToAdd(sortRow)
 		newMem := p.topN.currSize
-		memDelta += int64(newMem - oldMem)
+		memDelta += int64(newMem-oldMem) - truncatedDatumMemSize
 		if p.topN.err != nil {
 			return memDelta, p.topN.err
 		}
@@ -531,9 +533,9 @@ func (e *groupConcatDistinctOrder) UpdatePartialResult(sctx sessionctx.Context, 
 			sortRow.byItems = append(sortRow.byItems, d.Clone())
 		}
 		oldMem := p.topN.currSize
-		truncated := p.topN.tryToAdd(sortRow)
+		truncated, truncatedDatumMemSize := p.topN.tryToAdd(sortRow)
 		newMem := p.topN.currSize
-		memDelta += int64(newMem - oldMem)
+		memDelta += int64(newMem-oldMem) - truncatedDatumMemSize
 		if p.topN.err != nil {
 			return memDelta, p.topN.err
 		}
@@ -552,14 +554,11 @@ func (e *groupConcatDistinctOrder) MergePartialResult(sctx sessionctx.Context, s
 	return 0, terror.ClassOptimizer.New(mysql.ErrInternal, mysql.MySQLErrName[mysql.ErrInternal]).GenWithStack("groupConcatDistinctOrder.MergePartialResult should not be called")
 }
 
+// GetDatumMemSize will be called in func_group_concat_test.go
 func GetDatumMemSize(d *types.Datum) int64 {
 	var datumMemSize int64
-	datumMemSize += int64(unsafe.Sizeof(d.Kind()))
+	datumMemSize += int64(unsafe.Sizeof(*d))
 	datumMemSize += int64(len(d.Collation()))
-	datumValue := d.GetValue()
-	switch datumValue.(type) {
-	case nil, bool, int64, uint64, float64, string, json.BinaryJSON, *types.MyDecimal, []uint8, types.Time, types.Duration:
-		datumMemSize += getValMemDelta(datumValue)
-	}
+	datumMemSize += getValMemDelta(d.GetValue()) - DefInterfaceSize
 	return datumMemSize
 }
