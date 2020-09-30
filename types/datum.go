@@ -1476,6 +1476,11 @@ func (d *Datum) ToDecimal(sc *stmtctx.StatementContext) (*MyDecimal, error) {
 
 // ToInt64 converts to a int64.
 func (d *Datum) ToInt64(sc *stmtctx.StatementContext) (int64, error) {
+	switch d.Kind() {
+	case KindMysqlBit:
+		uintVal, err := d.GetBinaryLiteral().ToInt(sc)
+		return int64(uintVal), err
+	}
 	return d.toSignedInteger(sc, mysql.TypeLonglong)
 }
 
