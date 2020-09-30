@@ -17,6 +17,7 @@ type testDumpSuite struct{}
 type mockWriter struct {
 	databaseMeta map[string]string
 	tableMeta    map[string]string
+	viewMeta     map[string]string
 	tableData    []TableDataIR
 }
 
@@ -24,6 +25,7 @@ func newMockWriter() *mockWriter {
 	return &mockWriter{
 		databaseMeta: map[string]string{},
 		tableMeta:    map[string]string{},
+		viewMeta:     map[string]string{},
 		tableData:    nil,
 	}
 }
@@ -43,6 +45,12 @@ func (m *mockWriter) WriteDatabaseMeta(ctx context.Context, db, createSQL string
 
 func (m *mockWriter) WriteTableMeta(ctx context.Context, db, table, createSQL string) error {
 	m.tableMeta[fmt.Sprintf("%s.%s", db, table)] = createSQL
+	return nil
+}
+
+func (m *mockWriter) WriteViewMeta(ctx context.Context, db, table, createTableSQL, createViewSQL string) error {
+	m.tableMeta[fmt.Sprintf("%s.%s", db, table)] = createTableSQL
+	m.viewMeta[fmt.Sprintf("%s.%s", db, table)] = createViewSQL
 	return nil
 }
 

@@ -203,7 +203,6 @@ func (s *testDumpSuite) TestBuildSelectField(c *C) {
 	c.Assert(selectedField, Equals, "`id`,`name`,`quo``te`")
 	c.Assert(err, IsNil)
 	c.Assert(mock.ExpectationsWereMet(), IsNil)
-
 }
 
 func (s *testDumpSuite) TestParseSnapshotToTSO(c *C) {
@@ -229,6 +228,28 @@ func (s *testDumpSuite) TestParseSnapshotToTSO(c *C) {
 	tso, err = parseSnapshotToTSO(db, "XXYYZZ")
 	c.Assert(err, ErrorMatches, "snapshot XXYYZZ format not supported. please use tso or '2006-01-02 15:04:05' format time")
 	c.Assert(tso, Equals, uint64(0))
+	c.Assert(mock.ExpectationsWereMet(), IsNil)
+}
+
+func (s *testDumpSuite) TestShowCreateView(c *C) {
+	db, mock, err := sqlmock.New()
+	c.Assert(err, IsNil)
+	defer db.Close()
+	conn, err := db.Conn(context.Background())
+	c.Assert(err, IsNil)
+
+	mock.ExpectQuery("SHOW FIELDS FROM `test`.`v`").
+		WillReturnRows(sqlmock.NewRows([]string{"Field", "Type", "Null", "Key", "Default", "Extra"}).
+			AddRow("a", "int(11)", "YES", nil, "NULL", nil))
+
+	mock.ExpectQuery("SHOW CREATE VIEW `test`.`v`").
+		WillReturnRows(sqlmock.NewRows([]string{"View", "Create View", "character_set_client", "collation_connection"}).
+			AddRow("v", "CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`localhost` SQL SECURITY DEFINER VIEW `v` (`a`) AS SELECT `t`.`a` AS `a` FROM `test`.`t`", "utf8", "utf8_general_ci"))
+
+	createTableSQL, createViewSQL, err := ShowCreateView(conn, "test", "v")
+	c.Assert(err, IsNil)
+	c.Assert(createTableSQL, Equals, "CREATE TABLE `v`(\n`a` int\n)ENGINE=MyISAM;\n")
+	c.Assert(createViewSQL, Equals, "DROP TABLE IF EXISTS `v`;\nDROP VIEW IF EXISTS `v`;\nSET @PREV_CHARACTER_SET_CLIENT=@@CHARACTER_SET_CLIENT;\nSET @PREV_CHARACTER_SET_RESULTS=@@CHARACTER_SET_RESULTS;\nSET @PREV_COLLATION_CONNECTION=@@COLLATION_CONNECTION;\nSET character_set_client = utf8;\nSET character_set_results = utf8;\nSET collation_connection = utf8_general_ci;\nCREATE ALGORITHM=UNDEFINED DEFINER=`root`@`localhost` SQL SECURITY DEFINER VIEW `v` (`a`) AS SELECT `t`.`a` AS `a` FROM `test`.`t`;\nSET character_set_client = @PREV_CHARACTER_SET_CLIENT;\nSET character_set_results = @PREV_CHARACTER_SET_RESULTS;\nSET collation_connection = @PREV_COLLATION_CONNECTION;\n")
 	c.Assert(mock.ExpectationsWereMet(), IsNil)
 }
 
