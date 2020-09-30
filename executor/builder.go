@@ -1579,7 +1579,7 @@ func (b *executorBuilder) buildSort(v *plannercore.PhysicalSort) Executor {
 	}
 	childrenUsedColsMark := markChildrenUsedCols(v.Schema(), v.Children()[0].Schema())
 	if childrenUsedColsMark != nil {
-		sortExec.columIdxsUsedByChild = extractChildrenUsedColIdxs(childrenUsedColsMark)[0]
+		sortExec.columnIdxsUsedByChild = extractChildrenUsedColIdxs(childrenUsedColsMark)[0]
 	}
 	executorCounterSortExec.Inc()
 	return &sortExec
@@ -1597,7 +1597,7 @@ func (b *executorBuilder) buildTopN(v *plannercore.PhysicalTopN) Executor {
 	}
 	childrenUsedColsMark := markChildrenUsedCols(v.Schema(), v.Children()[0].Schema())
 	if childrenUsedColsMark != nil {
-		sortExec.columIdxsUsedByChild = extractChildrenUsedColIdxs(childrenUsedColsMark)[0]
+		sortExec.columnIdxsUsedByChild = extractChildrenUsedColIdxs(childrenUsedColsMark)[0]
 	}
 	executorCounterTopNExec.Inc()
 	return &TopNExec{

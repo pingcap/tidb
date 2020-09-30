@@ -1653,7 +1653,7 @@ func benchmarkSortExec(b *testing.B, cas *sortCase) {
 		exec.ByItems = append(exec.ByItems, &util.ByItems{Expr: cas.columns()[idx]})
 	}
 	if cas.childrenUsedSchema != nil {
-		exec.columIdxsUsedByChild = extractChildrenUsedColIdxs(cas.childrenUsedSchema)[0]
+		exec.columnIdxsUsedByChild = extractChildrenUsedColIdxs(cas.childrenUsedSchema)[0]
 	}
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
