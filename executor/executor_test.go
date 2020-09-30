@@ -6527,3 +6527,15 @@ func (s *testSerialSuite) TestCoprocessorOOMAction(c *C) {
 		se.Close()
 	}
 }
+
+func (s *testSuite) TestInlineProjectionForSortAndTopN(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (a int(11) not null,b int(11) not null,c int(11) not null)")
+	for i := 0; i < 3; i++ {
+		tk.MustExec("insert into t1 values(" + strconv.Itoa(i+3) + "," + strconv.Itoa(i+1) + "," + strconv.Itoa(i+2) + ")")
+	}
+	tk.MustQuery("select a from t1 order by a, b").Check(testkit.Rows("3", "4", "5"))
+	tk.MustQuery("select b from t1 order by a, b limit 2").Check(testkit.Rows("1", "2"))
+	tk.MustQuery("select sum(c) from t1 order by a, b").Check(testkit.Rows("9"))
+}
