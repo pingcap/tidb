@@ -303,11 +303,11 @@ func dumpTable(ctx context.Context, conf *Config, db *sql.Conn, dbName string, t
 	if !conf.NoSchemas {
 		if table.Type == TableTypeView {
 			viewName := table.Name
-			createViewSQL, err := ShowCreateView(db, dbName, viewName)
+			createTableSQL, createViewSQL, err := ShowCreateView(db, dbName, viewName)
 			if err != nil {
 				return nil, err
 			}
-			return nil, writer.WriteTableMeta(ctx, dbName, viewName, createViewSQL)
+			return nil, writer.WriteViewMeta(ctx, dbName, viewName, createTableSQL, createViewSQL)
 		}
 		createTableSQL, err := ShowCreateTable(db, dbName, tableName)
 		if err != nil {

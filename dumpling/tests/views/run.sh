@@ -13,7 +13,9 @@ run_sql "insert into t values $(seq -s, 20 | sed 's/,*$//g' | sed 's/[0-9]*/(\0,
 
 run_dumpling --no-views
 file_not_exist "$DUMPLING_OUTPUT_DIR/views.v-schema.sql"
+file_not_exist "$DUMPLING_OUTPUT_DIR/views.v-schema-view.sql"
 
 run_dumpling --no-views=false
 #diff "$DUMPLING_BASE_NAME/data/views-schema-create.sql" "$DUMPLING_OUTPUT_DIR/views-schema-create.sql"
 diff "$DUMPLING_BASE_NAME/data/views.v-schema.sql" "$DUMPLING_OUTPUT_DIR/views.v-schema.sql"
+diff "$DUMPLING_BASE_NAME/data/views.v-schema-view.sql" "$DUMPLING_OUTPUT_DIR/views.v-schema-view.sql"

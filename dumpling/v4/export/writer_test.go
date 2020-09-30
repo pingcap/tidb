@@ -15,15 +15,12 @@ var _ = Suite(&testWriterSuite{})
 type testWriterSuite struct{}
 
 func (s *testDumpSuite) TestWriteDatabaseMeta(c *C) {
-	dir, err := ioutil.TempDir("", "dumpling")
-	c.Assert(err, IsNil)
-	defer os.RemoveAll(dir)
-
+	dir := c.MkDir()
 	ctx := context.Background()
 
 	config := DefaultConfig()
 	config.OutputDirPath = dir
-	err = adjustConfig(ctx, config)
+	err := adjustConfig(ctx, config)
 	c.Assert(err, IsNil)
 
 	writer, err := NewSimpleWriter(config)
@@ -35,19 +32,17 @@ func (s *testDumpSuite) TestWriteDatabaseMeta(c *C) {
 	c.Assert(err, IsNil)
 	bytes, err := ioutil.ReadFile(p)
 	c.Assert(err, IsNil)
-	c.Assert(string(bytes), Equals, "CREATE DATABASE `test`;\n")
+	c.Assert(string(bytes), Equals, "/*!40101 SET NAMES binary*/;\nCREATE DATABASE `test`;\n")
 }
 
 func (s *testDumpSuite) TestWriteTableMeta(c *C) {
-	dir, err := ioutil.TempDir("", "dumpling")
-	c.Assert(err, IsNil)
-	defer os.RemoveAll(dir)
-
+	dir := c.MkDir()
 	ctx := context.Background()
 
 	config := DefaultConfig()
 	config.OutputDirPath = dir
-	err = adjustConfig(ctx, config)
+	err := adjustConfig(ctx, config)
+	c.Assert(err, IsNil)
 
 	writer, err := NewSimpleWriter(config)
 	c.Assert(err, IsNil)
@@ -58,19 +53,50 @@ func (s *testDumpSuite) TestWriteTableMeta(c *C) {
 	c.Assert(err, IsNil)
 	bytes, err := ioutil.ReadFile(p)
 	c.Assert(err, IsNil)
-	c.Assert(string(bytes), Equals, "CREATE TABLE t (a INT);\n")
+	c.Assert(string(bytes), Equals, "/*!40101 SET NAMES binary*/;\nCREATE TABLE t (a INT);\n")
+}
+
+func (s *testDumpSuite) TestWriteViewMeta(c *C) {
+	dir := c.MkDir()
+	ctx := context.Background()
+
+	config := DefaultConfig()
+	config.OutputDirPath = dir
+	err := adjustConfig(ctx, config)
+	c.Assert(err, IsNil)
+
+	writer, err := NewSimpleWriter(config)
+	c.Assert(err, IsNil)
+	specCmt := "/*!40101 SET NAMES binary*/;\n"
+	createTableSQL := "CREATE TABLE `v`(\n`a` int\n)ENGINE=MyISAM;\n"
+	createViewSQL := "DROP TABLE IF EXISTS `v`;\nDROP VIEW IF EXISTS `v`;\nSET @PREV_CHARACTER_SET_CLIENT=@@CHARACTER_SET_CLIENT;\nSET @PREV_CHARACTER_SET_RESULTS=@@CHARACTER_SET_RESULTS;\nSET @PREV_COLLATION_CONNECTION=@@COLLATION_CONNECTION;\nSET character_set_client = utf8;\nSET character_set_results = utf8;\nSET collation_connection = utf8_general_ci;\nCREATE ALGORITHM=UNDEFINED DEFINER=`root`@`localhost` SQL SECURITY DEFINER VIEW `v` (`a`) AS SELECT `t`.`a` AS `a` FROM `test`.`t`;\nSET character_set_client = @PREV_CHARACTER_SET_CLIENT;\nSET character_set_results = @PREV_CHARACTER_SET_RESULTS;\nSET collation_connection = @PREV_COLLATION_CONNECTION;\n"
+	err = writer.WriteViewMeta(ctx, "test", "v", createTableSQL, createViewSQL)
+	c.Assert(err, IsNil)
+
+	p := path.Join(dir, "test.v-schema.sql")
+	_, err = os.Stat(p)
+	c.Assert(err, IsNil)
+	bytes, err := ioutil.ReadFile(p)
+	c.Assert(err, IsNil)
+	c.Assert(string(bytes), Equals, specCmt+createTableSQL)
+
+	p = path.Join(dir, "test.v-schema-view.sql")
+	_, err = os.Stat(p)
+	c.Assert(err, IsNil)
+	bytes, err = ioutil.ReadFile(p)
+	c.Assert(err, IsNil)
+	c.Assert(string(bytes), Equals, specCmt+createViewSQL)
 }
 
 func (s *testDumpSuite) TestWriteTableData(c *C) {
-	dir, err := ioutil.TempDir("", "dumpling")
-	c.Assert(err, IsNil)
-	defer os.RemoveAll(dir)
+	dir := c.MkDir()
 
 	ctx := context.Background()
 
 	config := DefaultConfig()
 	config.OutputDirPath = dir
-	err = adjustConfig(ctx, config)
+	err := adjustConfig(ctx, config)
+	c.Assert(err, IsNil)
 
 	simpleWriter, err := NewSimpleWriter(config)
 	c.Assert(err, IsNil)
@@ -108,16 +134,15 @@ func (s *testDumpSuite) TestWriteTableData(c *C) {
 }
 
 func (s *testDumpSuite) TestWriteTableDataWithFileSize(c *C) {
-	dir, err := ioutil.TempDir("", "dumpling")
-	c.Assert(err, IsNil)
-	defer os.RemoveAll(dir)
+	dir := c.MkDir()
 
 	ctx := context.Background()
 
 	config := DefaultConfig()
 	config.OutputDirPath = dir
 	config.FileSize = 50
-	err = adjustConfig(ctx, config)
+	err := adjustConfig(ctx, config)
+	c.Assert(err, IsNil)
 	specCmts := []string{
 		"/*!40101 SET NAMES binary*/;",
 		"/*!40014 SET FOREIGN_KEY_CHECKS=0*/;",
@@ -165,8 +190,7 @@ func (s *testDumpSuite) TestWriteTableDataWithFileSize(c *C) {
 }
 
 func (s *testDumpSuite) TestWriteTableDataWithStatementSize(c *C) {
-	dir, err := ioutil.TempDir("", "dumpling")
-	c.Assert(err, IsNil)
+	dir := c.MkDir()
 
 	ctx := context.Background()
 
@@ -174,10 +198,11 @@ func (s *testDumpSuite) TestWriteTableDataWithStatementSize(c *C) {
 	config.OutputDirPath = dir
 	config.StatementSize = 50
 	config.StatementSize += uint64(len("INSERT INTO `employee` VALUES\n"))
+	var err error
 	config.OutputFileTemplate, err = ParseOutputFileTemplate("specified-name")
+	c.Assert(err, IsNil)
 	err = adjustConfig(ctx, config)
 	c.Assert(err, IsNil)
-	defer os.RemoveAll(config.OutputDirPath)
 
 	simpleWriter, err := NewSimpleWriter(config)
 	c.Assert(err, IsNil)

@@ -57,17 +57,72 @@ func ShowCreateTable(db *sql.Conn, database, table string) (string, error) {
 	return oneRow[1], nil
 }
 
-func ShowCreateView(db *sql.Conn, database, view string) (string, error) {
+func ShowCreateView(db *sql.Conn, database, view string) (string, string, error) {
+	var fieldNames []string
+	handleFieldRow := func(rows *sql.Rows) error {
+		var oneRow [6]sql.NullString
+		err := rows.Scan(&oneRow[0], &oneRow[1], &oneRow[2], &oneRow[3], &oneRow[4], &oneRow[5])
+		if err != nil {
+			return err
+		}
+		if oneRow[0].Valid {
+			fieldNames = append(fieldNames, fmt.Sprintf("`%s` int", escapeString(oneRow[0].String)))
+		}
+		return nil
+	}
 	var oneRow [4]string
 	handleOneRow := func(rows *sql.Rows) error {
 		return rows.Scan(&oneRow[0], &oneRow[1], &oneRow[2], &oneRow[3])
 	}
-	query := fmt.Sprintf("SHOW CREATE TABLE `%s`.`%s`", escapeString(database), escapeString(view))
-	err := simpleQuery(db, query, handleOneRow)
+	var createTableSQL, createViewSQL strings.Builder
+
+	// Build createTableSQL
+	query := fmt.Sprintf("SHOW FIELDS FROM `%s`.`%s`", escapeString(database), escapeString(view))
+	err := simpleQuery(db, query, handleFieldRow)
 	if err != nil {
-		return "", errors.WithMessage(err, query)
+		return "", "", errors.WithMessage(err, query)
 	}
-	return oneRow[1], nil
+	fmt.Fprintf(&createTableSQL, "CREATE TABLE `%s`(\n", escapeString(view))
+	createTableSQL.WriteString(strings.Join(fieldNames, ",\n"))
+	createTableSQL.WriteString("\n)ENGINE=MyISAM;\n")
+
+	// Build createViewSQL
+	fmt.Fprintf(&createViewSQL, "DROP TABLE IF EXISTS `%s`;\n", escapeString(view))
+	fmt.Fprintf(&createViewSQL, "DROP VIEW IF EXISTS `%s`;\n", escapeString(view))
+	query = fmt.Sprintf("SHOW CREATE VIEW `%s`.`%s`", escapeString(database), escapeString(view))
+	err = simpleQuery(db, query, handleOneRow)
+	if err != nil {
+		return "", "", errors.WithMessage(err, query)
+	}
+	// The result for `show create view` SQL
+	// mysql> show create view v1;
+	// +------+-------------------------------------------------------------------------------------------------------------------------------------+----------------------+----------------------+
+	// | View | Create View                                                                                                                         | character_set_client | collation_connection |
+	// +------+-------------------------------------------------------------------------------------------------------------------------------------+----------------------+----------------------+
+	// | v1   | CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`localhost` SQL SECURITY DEFINER VIEW `v1` (`a`) AS SELECT `t`.`a` AS `a` FROM `test`.`t` | utf8                 | utf8_general_ci      |
+	// +------+-------------------------------------------------------------------------------------------------------------------------------------+----------------------+----------------------+
+	SetCharset(&createViewSQL, oneRow[2], oneRow[3])
+	createViewSQL.WriteString(oneRow[1])
+	createViewSQL.WriteString(";\n")
+	RestoreCharset(&createViewSQL)
+
+	return createTableSQL.String(), createViewSQL.String(), nil
+}
+
+func SetCharset(w *strings.Builder, characterSet, collationConnection string) {
+	w.WriteString("SET @PREV_CHARACTER_SET_CLIENT=@@CHARACTER_SET_CLIENT;\n")
+	w.WriteString("SET @PREV_CHARACTER_SET_RESULTS=@@CHARACTER_SET_RESULTS;\n")
+	w.WriteString("SET @PREV_COLLATION_CONNECTION=@@COLLATION_CONNECTION;\n")
+
+	fmt.Fprintf(w, "SET character_set_client = %s;\n", characterSet)
+	fmt.Fprintf(w, "SET character_set_results = %s;\n", characterSet)
+	fmt.Fprintf(w, "SET collation_connection = %s;\n", collationConnection)
+}
+
+func RestoreCharset(w *strings.Builder) {
+	w.WriteString("SET character_set_client = @PREV_CHARACTER_SET_CLIENT;\n")
+	w.WriteString("SET character_set_results = @PREV_CHARACTER_SET_RESULTS;\n")
+	w.WriteString("SET collation_connection = @PREV_COLLATION_CONNECTION;\n")
 }
 
 func ListAllDatabasesTables(db *sql.Conn, databaseNames []string, tableType TableType) (DatabaseTables, error) {
@@ -515,6 +570,7 @@ func simpleQueryWithArgs(conn *sql.Conn, handleOneRow func(*sql.Rows) error, sql
 	if err != nil {
 		return withStack(errors.WithMessage(err, sql))
 	}
+	defer rows.Close()
 
 	for rows.Next() {
 		if err := handleOneRow(rows); err != nil {
@@ -522,6 +578,7 @@ func simpleQueryWithArgs(conn *sql.Conn, handleOneRow func(*sql.Rows) error, sql
 			return withStack(errors.WithMessage(err, sql))
 		}
 	}
+	rows.Close()
 	return rows.Err()
 }
 

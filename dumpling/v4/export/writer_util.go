@@ -110,7 +110,7 @@ func WriteMeta(ctx context.Context, meta MetaIR, w storage.Writer) error {
 		}
 	}
 
-	if err := write(ctx, w, fmt.Sprintf("%s;\n", meta.MetaSQL())); err != nil {
+	if err := write(ctx, w, meta.MetaSQL()); err != nil {
 		return err
 	}
 

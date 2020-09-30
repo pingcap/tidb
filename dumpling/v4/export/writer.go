@@ -14,6 +14,7 @@ import (
 type Writer interface {
 	WriteDatabaseMeta(ctx context.Context, db, createSQL string) error
 	WriteTableMeta(ctx context.Context, db, table, createSQL string) error
+	WriteViewMeta(ctx context.Context, db, table, createTableSQL, createViewSQL string) error
 	WriteTableData(ctx context.Context, ir TableDataIR) error
 }
 
@@ -40,6 +41,22 @@ func (f SimpleWriter) WriteTableMeta(ctx context.Context, db, table, createSQL s
 		return err
 	}
 	return writeMetaToFile(ctx, db, createSQL, f.cfg.ExternalStorage, fileName+".sql")
+}
+
+func (f SimpleWriter) WriteViewMeta(ctx context.Context, db, view, createTableSQL, createViewSQL string) error {
+	fileNameTable, err := (&outputFileNamer{DB: db, Table: view}).render(f.cfg.OutputFileTemplate, outputFileTemplateTable)
+	if err != nil {
+		return err
+	}
+	fileNameView, err := (&outputFileNamer{DB: db, Table: view}).render(f.cfg.OutputFileTemplate, outputFileTemplateView)
+	if err != nil {
+		return err
+	}
+	err = writeMetaToFile(ctx, db, createTableSQL, f.cfg.ExternalStorage, fileNameTable+".sql")
+	if err != nil {
+		return err
+	}
+	return writeMetaToFile(ctx, db, createViewSQL, f.cfg.ExternalStorage, fileNameView+".sql")
 }
 
 type SQLWriter struct{ SimpleWriter }
@@ -100,6 +117,9 @@ func writeMetaToFile(ctx context.Context, target, metaSQL string, s storage.Exte
 	return WriteMeta(ctx, &metaData{
 		target:  target,
 		metaSQL: metaSQL,
+		specCmts: []string{
+			"/*!40101 SET NAMES binary*/;",
+		},
 	}, fileWriter)
 }
 
