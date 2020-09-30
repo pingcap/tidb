@@ -672,24 +672,33 @@ func onDropIndex(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 }
 
 func onDropIndexes(t *meta.Meta, job *model.Job) (ver int64, _ error) {
-	tblInfo, indexInfo, err := checkDropIndex(t, job)
+	tblInfo, indexesInfo, err := checkDropIndexes(t, job)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
+	if len(indexesInfo) == 0 {
+		job.State = model.JobStateCancelled
+		return ver, nil
+	}
 
 	dependentHiddenCols := make([]*model.ColumnInfo, 0)
-	for _, indexColumn := range indexInfo.Columns {
-		if tblInfo.Columns[indexColumn.Offset].Hidden {
-			dependentHiddenCols = append(dependentHiddenCols, tblInfo.Columns[indexColumn.Offset])
+	for _, indexInfo := range indexesInfo {
+		for _, indexColumn := range indexInfo.Columns {
+			if tblInfo.Columns[indexColumn.Offset].Hidden {
+				dependentHiddenCols = append(dependentHiddenCols, tblInfo.Columns[indexColumn.Offset])
+			}
 		}
 	}
 
+	indexInfo := indexesInfo[0]
 	originalState := indexInfo.State
 	switch indexInfo.State {
 	case model.StatePublic:
 		// public -> write only
 		job.SchemaState = model.StateWriteOnly
-		indexInfo.State = model.StateWriteOnly
+		for _, indexInfo := range indexesInfo {
+			indexInfo.State = model.StateWriteOnly
+		}
 		if len(dependentHiddenCols) > 0 {
 			firstHiddenOffset := dependentHiddenCols[0].Offset
 			for i := 0; i < len(dependentHiddenCols); i++ {
