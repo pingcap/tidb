@@ -584,7 +584,7 @@ func upgradeToVer2(s Session, ver int64) {
 	distSQLVars := []string{variable.TiDBDistSQLScanConcurrency}
 	values := make([]string, 0, len(distSQLVars))
 	for _, v := range distSQLVars {
-		value := fmt.Sprintf(`("%s", "%s")`, v, variable.SysVars[v].Value)
+		value := fmt.Sprintf(`("%s", "%s")`, v, variable.GetSysVar(v).Value)
 		values = append(values, value)
 	}
 	sql := fmt.Sprintf("INSERT HIGH_PRIORITY IGNORE INTO %s.%s VALUES %s;", mysql.SystemDB, mysql.GlobalVariablesTable,
@@ -1262,8 +1262,8 @@ func doDMLWorks(s Session) {
 		("%", "root", "", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y")`)
 
 	// Init global system variables table.
-	values := make([]string, 0, len(variable.SysVars))
-	for k, v := range variable.SysVars {
+	values := make([]string, 0, len(variable.GetSysVars()))
+	for k, v := range variable.GetSysVars() {
 		// Session only variable should not be inserted.
 		if v.Scope != variable.ScopeSession {
 			vVal := v.Value
