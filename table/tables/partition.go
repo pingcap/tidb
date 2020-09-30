@@ -381,7 +381,7 @@ func generateListPartitionExpr(ctx sessionctx.Context, pi *model.PartitionInfo,
 					if len(pi.Columns) > 0 {
 						fmt.Fprintf(&nullCondBuf, "%s = %s", pi.Columns[i], value)
 					} else {
-						fmt.Fprintf(&nullCondBuf, "%s is = %s", pi.Expr, value)
+						fmt.Fprintf(&nullCondBuf, "%s = %s", pi.Expr, value)
 					}
 				}
 			}
