@@ -32,7 +32,7 @@ func (s *testUtilSuite) SetUpSuite(c *C) {
 func (s *testUtilSuite) TestWriteMeta(c *C) {
 	createTableStmt := "CREATE TABLE `t1` (\n" +
 		"  `a` int(11) DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci"
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;\n"
 	specCmts := []string{"/*!40103 SET TIME_ZONE='+00:00' */;"}
 	meta := newMockMetaIR("t1", createTableStmt, specCmts)
 	writer := storage.NewBufferWriter()

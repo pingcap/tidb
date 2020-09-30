@@ -17,6 +17,7 @@ import (
 const (
 	outputFileTemplateSchema = "schema"
 	outputFileTemplateTable  = "table"
+	outputFileTemplateView   = "view"
 	outputFileTemplateData   = "data"
 
 	defaultOutputFileTemplateBase = `
