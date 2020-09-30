@@ -1579,7 +1579,7 @@ func (b *executorBuilder) buildSort(v *plannercore.PhysicalSort) Executor {
 	}
 	childrenUsedColsMark := markChildrenUsedCols(v.Schema(), v.Children()[0].Schema())
 	if childrenUsedColsMark != nil {
-		sortExec.columnIdxsUsedByChild = extractChildrenUsedColIdxs(childrenUsedColsMark)[0]
+		sortExec.columnIdxsUsedByChild = extractChildUsedColIdxs(childrenUsedColsMark[0])
 	}
 	executorCounterSortExec.Inc()
 	return &sortExec
@@ -1597,7 +1597,7 @@ func (b *executorBuilder) buildTopN(v *plannercore.PhysicalTopN) Executor {
 	}
 	childrenUsedColsMark := markChildrenUsedCols(v.Schema(), v.Children()[0].Schema())
 	if childrenUsedColsMark != nil {
-		sortExec.columnIdxsUsedByChild = extractChildrenUsedColIdxs(childrenUsedColsMark)[0]
+		sortExec.columnIdxsUsedByChild = extractChildUsedColIdxs(childrenUsedColsMark[0])
 	}
 	executorCounterTopNExec.Inc()
 	return &TopNExec{
@@ -2189,20 +2189,15 @@ func markChildrenUsedCols(outputSchema *expression.Schema, childSchema ...*expre
 	return
 }
 
-// extractChildrenUsedColIdxs extract column indexes of child executors from children used columns mark
-func extractChildrenUsedColIdxs(childrenUsedColsMark [][]bool) [][]int {
-	childrenUsedColIdxs := make([][]int, len(childrenUsedColsMark))
-	for childIdx, childUsedColsMark := range childrenUsedColsMark {
-		if childrenUsedColIdxs[childIdx] == nil {
-			childrenUsedColIdxs[childIdx] = make([]int, 0, len(childUsedColsMark))
-		}
-		for colIdx, colUsedMark := range childUsedColsMark {
-			if colUsedMark {
-				childrenUsedColIdxs[childIdx] = append(childrenUsedColIdxs[childIdx], colIdx)
-			}
+// extractChildUsedColIdxs extract column indexes of child executors from child used columns mark
+func extractChildUsedColIdxs(childUsedColsMark []bool) []int {
+	childUsedColIdxs := make([]int, 0, len(childUsedColsMark))
+	for colIdx, colUsedMark := range childUsedColsMark {
+		if colUsedMark {
+			childUsedColIdxs = append(childUsedColIdxs, colIdx)
 		}
 	}
-	return childrenUsedColIdxs
+	return childUsedColIdxs
 }
 
 func constructDistExecForTiFlash(sctx sessionctx.Context, p plannercore.PhysicalPlan) ([]*tipb.Executor, bool, error) {
