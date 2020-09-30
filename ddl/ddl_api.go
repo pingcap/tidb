@@ -5516,14 +5516,14 @@ func (d *ddl) AlterTablePartition(ctx sessionctx.Context, ident ast.Ident, spec 
 		return errors.Trace(err)
 	}
 
-	var extraCnt int
+	extraCnt := map[placement.PeerRoleType]int{}
 	startKey := hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(partitionID)))
 	endKey := hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(partitionID+1)))
 	newRules := bundle.Rules[:0]
 	for i, rule := range bundle.Rules {
 		// merge all empty constraints
 		if len(rule.LabelConstraints) == 0 {
-			extraCnt += rule.Count
+			extraCnt[rule.Role] += rule.Count
 			continue
 		}
 		rule.GroupID = bundle.ID
@@ -5532,11 +5532,15 @@ func (d *ddl) AlterTablePartition(ctx sessionctx.Context, ident ast.Ident, spec 
 		rule.EndKeyHex = endKey
 		newRules = append(newRules, rule)
 	}
-	if extraCnt > 0 {
+	for role, cnt := range extraCnt {
+		if cnt <= 0 {
+			continue
+		}
 		bundle.Rules = append(newRules, &placement.Rule{
 			GroupID:     bundle.ID,
 			ID:          "default",
-			Count:       extraCnt,
+			Role:        role,
+			Count:       cnt,
 			StartKeyHex: startKey,
 			EndKeyHex:   endKey,
 		})
