@@ -650,9 +650,9 @@ func (e *ShowExec) fetchShowVariables() (err error) {
 		value         string
 		ok            bool
 		sessionVars   = e.ctx.GetSessionVars()
-		unreachedVars = make([]string, 0, len(variable.SysVars))
+		unreachedVars = make([]string, 0, len(variable.GetSysVars()))
 	)
-	for _, v := range variable.SysVars {
+	for _, v := range variable.GetSysVars() {
 		if !e.GlobalScope {
 			// For a session scope variable,
 			// 1. try to fetch value from SessionVars.Systems;
@@ -682,7 +682,7 @@ func (e *ShowExec) fetchShowVariables() (err error) {
 		for _, varName := range unreachedVars {
 			varValue, ok := systemVars[varName]
 			if !ok {
-				varValue = variable.SysVars[varName].Value
+				varValue = variable.GetSysVar(varName).Value
 			}
 			e.appendRow([]interface{}{varName, varValue})
 		}
