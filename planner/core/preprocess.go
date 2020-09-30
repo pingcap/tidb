@@ -154,15 +154,15 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	case *ast.Join:
 		p.checkNonUniqTableAlias(node)
 	case *ast.CreateBindingStmt:
-		EraseLastSemicolon(node.OriginSel)
-		EraseLastSemicolon(node.HintedSel)
-		p.checkBindGrammar(node.OriginSel, node.HintedSel)
+		EraseLastSemicolon(node.OriginNode)
+		EraseLastSemicolon(node.HintedNode)
+		p.checkBindGrammar(node.OriginNode, node.HintedNode)
 		return in, true
 	case *ast.DropBindingStmt:
-		EraseLastSemicolon(node.OriginSel)
-		if node.HintedSel != nil {
-			EraseLastSemicolon(node.HintedSel)
-			p.checkBindGrammar(node.OriginSel, node.HintedSel)
+		EraseLastSemicolon(node.OriginNode)
+		if node.HintedNode != nil {
+			EraseLastSemicolon(node.HintedNode)
+			p.checkBindGrammar(node.OriginNode, node.HintedNode)
 		}
 		return in, true
 	case *ast.RecoverTableStmt, *ast.FlashBackTableStmt:
@@ -204,10 +204,18 @@ func EraseLastSemicolon(stmt ast.StmtNode) {
 	}
 }
 
-func (p *preprocessor) checkBindGrammar(originSel, hintedSel ast.StmtNode) {
-	originSQL := parser.Normalize(originSel.(*ast.SelectStmt).Text())
-	hintedSQL := parser.Normalize(hintedSel.(*ast.SelectStmt).Text())
-
+func (p *preprocessor) checkBindGrammar(originNode, hintedNode ast.StmtNode) {
+	var originSQL, hintedSQL string
+	switch node := originNode.(type) {
+	case *ast.SelectStmt:
+		originSQL = parser.Normalize(node.Text())
+		hintedSQL = parser.Normalize(hintedNode.(*ast.SelectStmt).Text())
+	case *ast.SetOprStmt:
+		originSQL = parser.Normalize(node.Text())
+		hintedSQL = parser.Normalize(hintedNode.(*ast.SetOprStmt).Text())
+	default:
+		p.err = errors.Errorf("create binding doesn't support this type of query")
+	}
 	if originSQL != hintedSQL {
 		p.err = errors.Errorf("hinted sql and origin sql don't match when hinted sql erase the hint info, after erase hint info, originSQL:%s, hintedSQL:%s", originSQL, hintedSQL)
 	}
@@ -409,16 +417,21 @@ func (p *preprocessor) checkAutoIncrement(stmt *ast.CreateTableStmt) {
 // "To apply ORDER BY or LIMIT to an individual SELECT, place the clause inside the parentheses that enclose the SELECT."
 func (p *preprocessor) checkSetOprSelectList(stmt *ast.SetOprSelectList) {
 	for _, sel := range stmt.Selects[:len(stmt.Selects)-1] {
-		if sel.IsInBraces {
-			continue
-		}
-		if sel.Limit != nil {
-			p.err = ErrWrongUsage.GenWithStackByArgs("UNION", "LIMIT")
-			return
-		}
-		if sel.OrderBy != nil {
-			p.err = ErrWrongUsage.GenWithStackByArgs("UNION", "ORDER BY")
-			return
+		switch s := sel.(type) {
+		case *ast.SelectStmt:
+			if s.IsInBraces {
+				continue
+			}
+			if s.Limit != nil {
+				p.err = ErrWrongUsage.GenWithStackByArgs("UNION", "LIMIT")
+				return
+			}
+			if s.OrderBy != nil {
+				p.err = ErrWrongUsage.GenWithStackByArgs("UNION", "ORDER BY")
+				return
+			}
+		case *ast.SetOprSelectList:
+			p.checkSetOprSelectList(s)
 		}
 	}
 }
@@ -513,14 +526,21 @@ func (p *preprocessor) checkCreateViewGrammar(stmt *ast.CreateViewStmt) {
 	}
 }
 
-func (p *preprocessor) checkCreateViewWithSelect(stmt *ast.SelectStmt) {
-	if stmt.SelectIntoOpt != nil {
-		p.err = ddl.ErrViewSelectClause.GenWithStackByArgs("INFO")
-		return
-	}
-	if stmt.LockInfo != nil && stmt.LockInfo.LockType != ast.SelectLockNone {
-		stmt.LockInfo.LockType = ast.SelectLockNone
-		return
+func (p *preprocessor) checkCreateViewWithSelect(stmt ast.Node) {
+	switch s := stmt.(type) {
+	case *ast.SelectStmt:
+		if s.SelectIntoOpt != nil {
+			p.err = ddl.ErrViewSelectClause.GenWithStackByArgs("INFO")
+			return
+		}
+		if s.LockInfo != nil && s.LockInfo.LockType != ast.SelectLockNone {
+			s.LockInfo.LockType = ast.SelectLockNone
+			return
+		}
+	case *ast.SetOprSelectList:
+		for _, sel := range s.Selects {
+			p.checkCreateViewWithSelect(sel)
+		}
 	}
 }
 

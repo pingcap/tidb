@@ -220,7 +220,7 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 	if tlsConfig != nil {
 		setSSLVariable(s.cfg.Security.SSLCA, s.cfg.Security.SSLKey, s.cfg.Security.SSLCert)
 		atomic.StorePointer(&s.tlsConfig, unsafe.Pointer(tlsConfig))
-		logutil.BgLogger().Info("mysql protocol server secure connection is enabled", zap.Bool("client verification enabled", len(variable.SysVars["ssl_ca"].Value) > 0))
+		logutil.BgLogger().Info("mysql protocol server secure connection is enabled", zap.Bool("client verification enabled", len(variable.GetSysVar("ssl_ca").Value) > 0))
 	} else if cfg.Security.RequireSecureTransport {
 		return nil, errSecureTransportRequired.FastGenByArgs()
 	}
@@ -278,11 +278,11 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 }
 
 func setSSLVariable(ca, key, cert string) {
-	variable.SysVars["have_openssl"].Value = "YES"
-	variable.SysVars["have_ssl"].Value = "YES"
-	variable.SysVars["ssl_cert"].Value = cert
-	variable.SysVars["ssl_key"].Value = key
-	variable.SysVars["ssl_ca"].Value = ca
+	variable.SetSysVar("have_openssl", "YES")
+	variable.SetSysVar("have_ssl", "YES")
+	variable.SetSysVar("ssl_cert", cert)
+	variable.SetSysVar("ssl_key", key)
+	variable.SetSysVar("ssl_ca", ca)
 }
 
 // Run runs the server.
@@ -631,10 +631,10 @@ func setSystemTimeZoneVariable() {
 			logutil.BgLogger().Error(
 				"Error getting SystemTZ, use default value instead",
 				zap.Error(err),
-				zap.String("default system_time_zone", variable.SysVars["system_time_zone"].Value))
+				zap.String("default system_time_zone", variable.GetSysVar("system_time_zone").Value))
 			return
 		}
-		variable.SysVars["system_time_zone"].Value = tz
+		variable.SetSysVar("system_time_zone", tz)
 	})
 }
 
