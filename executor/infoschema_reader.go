@@ -710,6 +710,25 @@ func (e *memtableRetriever) setDataFromPartitions(ctx sessionctx.Context, schema
 					var partitionDesc string
 					if table.Partition.Type == model.PartitionTypeRange {
 						partitionDesc = pi.LessThan[0]
+					} else if table.Partition.Type == model.PartitionTypeList {
+						if len(pi.InValues) > 0 {
+							if len(pi.InValues[0]) == 1 {
+								for i, vs := range pi.InValues {
+									if i > 0 {
+										partitionDesc += ","
+									}
+									partitionDesc += vs[0]
+								}
+							} else if len(pi.InValues[0]) > 1 {
+								for i, vs := range pi.InValues {
+									if i > 0 {
+										partitionDesc += ","
+									}
+									partitionDesc += ("(" + strings.Join(vs, ",") + ")")
+								}
+
+							}
+						}
 					}
 
 					partitionMethod := table.Partition.Type.String()
