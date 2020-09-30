@@ -1168,6 +1168,8 @@ type SelectionExec struct {
 	inputRow    chunk.Row
 	childResult *chunk.Chunk
 
+	columnIdxsUsedByChild []int
+
 	memTracker *memory.Tracker
 }
 
@@ -1217,7 +1219,11 @@ func (e *SelectionExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			if req.IsFull() {
 				return nil
 			}
-			req.AppendRow(e.inputRow)
+			if e.columnIdxsUsedByChild != nil {
+				req.AppendRowByColIdxs(e.inputRow, e.columnIdxsUsedByChild)
+			}else {
+				req.AppendRow(e.inputRow)
+			}
 		}
 		mSize := e.childResult.MemoryUsage()
 		err := Next(ctx, e.children[0], e.childResult)
@@ -1248,7 +1254,11 @@ func (e *SelectionExec) unBatchedNext(ctx context.Context, chk *chunk.Chunk) err
 				return err
 			}
 			if selected {
-				chk.AppendRow(e.inputRow)
+				if e.columnIdxsUsedByChild != nil {
+					chk.AppendRowByColIdxs(e.inputRow, e.columnIdxsUsedByChild)
+				}else {
+					chk.AppendRow(e.inputRow)
+				}
 				e.inputRow = e.inputIter.Next()
 				return nil
 			}

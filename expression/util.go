@@ -151,6 +151,12 @@ func extractColumns(result []*Column, expr Expression, filter func(*Column) bool
 	switch v := expr.(type) {
 	case *Column:
 		if filter == nil || filter(v) {
+			// 如果在 result中已经存在， 不需要添加
+			//for _, col := range result {
+			//	if v == col {
+			//		return result
+			//	}
+			//}
 			result = append(result, v)
 		}
 	case *ScalarFunction:

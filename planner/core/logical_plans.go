@@ -390,10 +390,20 @@ func (la *LogicalAggregation) GetUsedCols() (usedCols []*expression.Column) {
 type LogicalSelection struct {
 	baseLogicalPlan
 
+	schema *expression.Schema
+
 	// Originally the WHERE or ON condition is parsed into a single expression,
 	// but after we converted to CNF(Conjunctive normal form), it can be
 	// split into a list of AND conditions.
 	Conditions []expression.Expression
+}
+
+//  Schema implements Plan Schema interface.
+func (p *LogicalSelection) Schema() *expression.Schema {
+	if p.schema == nil {
+		p.schema = p.children[0].Schema().Clone()
+	}
+	return p.schema
 }
 
 // ExtractCorrelatedCols implements LogicalPlan interface.

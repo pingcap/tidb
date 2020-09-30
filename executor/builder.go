@@ -1310,6 +1310,16 @@ func (b *executorBuilder) buildSelection(v *plannercore.PhysicalSelection) Execu
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID(), childExec),
 		filters:      v.Conditions,
 	}
+	// 标记 child 使用的 col
+	childUsedSchema := markChildrenUsedCols(v.Schema(), v.Children()[0].Schema())[0]
+	for i, used := range childUsedSchema {
+		if used {
+			e.columnIdxsUsedByChild = append(e.columnIdxsUsedByChild, i)
+		}
+	}
+	if len(e.columnIdxsUsedByChild) == len(childUsedSchema) {
+		e.columnIdxsUsedByChild = nil // indicates that all columns are used. LimitExec will improve performance for this condition.
+	}
 	return e
 }
 

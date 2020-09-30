@@ -1061,8 +1061,17 @@ func (p *PhysicalIndexScan) IsPointGetByUniqueKey(sc *stmtctx.StatementContext) 
 // PhysicalSelection represents a filter.
 type PhysicalSelection struct {
 	basePhysicalPlan
+	schema *expression.Schema
 
 	Conditions []expression.Expression
+}
+
+// Schema implements Plan Schema interface.
+func (p *PhysicalSelection) Schema() *expression.Schema {
+	if p.schema == nil {
+		p.schema = p.children[0].Schema()
+	}
+	return p.schema
 }
 
 // Clone implements PhysicalPlan interface.
@@ -1073,6 +1082,9 @@ func (p *PhysicalSelection) Clone() (PhysicalPlan, error) {
 		return nil, err
 	}
 	cloned.basePhysicalPlan = *base
+	if p.schema != nil {
+		cloned.schema = p.schema
+	}
 	cloned.Conditions = cloneExprs(p.Conditions)
 	return cloned, nil
 }
