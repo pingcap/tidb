@@ -106,6 +106,25 @@ func (s *testAsyncCommitFailSuite) TestPointGetWithAsyncCommit(c *C) {
 	s.mustGetFromTxn(c, txn2, []byte("b"), []byte("v2"))
 	err = txn2.Rollback()
 	c.Assert(err, IsNil)
+
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/asyncCommitDoNothing", "return"), IsNil)
+	txn3, err := s.store.Begin()
+	c.Assert(err, IsNil)
+	txn3.Set([]byte("a"), []byte("v3"))
+	err = txn3.Commit(ctx)
+	c.Assert(err, IsNil)
+	go func() {
+		txn4, err := s.store.Begin()
+		c.Assert(err, IsNil)
+		txn4.Set([]byte("a"), []byte("v4"))
+		err = txn4.Commit(ctx)
+		c.Assert(err, IsNil)
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/snapshotPointGetLockedRetry"), IsNil)
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/asyncCommitDoNothing"), IsNil)
+	}()
+
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/snapshotPointGetLockedRetry", "pause"), IsNil)
+	s.mustPointGet(c, []byte("a"), []byte("v3"))
 }
 
 func (s *testAsyncCommitFailSuite) TestSecondaryListInPrimaryLock(c *C) {

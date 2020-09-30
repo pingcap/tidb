@@ -396,6 +396,13 @@ func (s *tikvSnapshot) get(ctx context.Context, bo *Backoffer, k kv.Key) ([]byte
 			NotFillCache: s.notFillCache,
 			TaskId:       s.taskID,
 		})
+
+	// It is an optimization for async commit.
+	// We do not ignore async commit locks when we get using MaxVersion for linearizability.
+	// But if the lock we encounter during a retry is different from the first one, we can
+	// make sure the lock is written later than the get event and thus can be ignored.
+	var firstLockTS uint64
+
 	for {
 		loc, err := s.store.regionCache.LocateKey(bo, k)
 		if err != nil {
@@ -426,6 +433,14 @@ func (s *tikvSnapshot) get(ctx context.Context, bo *Backoffer, k kv.Key) ([]byte
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
+
+			if firstLockTS == 0 {
+				firstLockTS = lock.TxnID
+			} else if s.version == kv.MaxVersion && firstLockTS != lock.TxnID {
+				cli.minCommitTSPushed.Update([]uint64{lock.TxnID})
+				continue
+			}
+
 			msBeforeExpired, err := cli.ResolveLocks(bo, s.version.Ver, []*Lock{lock})
 			if err != nil {
 				return nil, errors.Trace(err)
@@ -436,6 +451,7 @@ func (s *tikvSnapshot) get(ctx context.Context, bo *Backoffer, k kv.Key) ([]byte
 					return nil, errors.Trace(err)
 				}
 			}
+			failpoint.Inject("snapshotPointGetLockedRetry", nil)
 			continue
 		}
 		return val, nil
