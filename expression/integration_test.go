@@ -6736,10 +6736,14 @@ func (s *testIntegrationSerialSuite) TestNewCollationBinaryFlag(c *C) {
 	// case: (nil, nil, utf8, utf8_general_ci)
 	sct = showCreateTable("create table t(a varchar(10) binary charset utf8 collate utf8_general_ci);")
 	c.Assert(strings.Contains(sct, "varchar(10) CHARACTER SET utf8 COLLATE utf8_general_ci"), IsTrue, Commentf(sct))
-	// case: (utf8, utf8_general_ci, utf8mb4, utf8_general_ci, utf8mb4_unicode_ci)
+	// case: (utf8, utf8_general_ci, utf8mb4, utf8mb4_unicode_ci)
 	sct = showCreateTable("create table t(a varchar(10) binary charset utf8mb4 collate utf8mb4_unicode_ci) charset utf8 collate utf8_general_ci;")
 	c.Assert(strings.Contains(sct, "varchar(10) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"), IsTrue, Commentf(sct))
 	c.Assert(strings.Contains(sct, "ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci"), IsTrue, Commentf(sct))
+	// case: (nil, nil, binary, nil)
+	sct = showCreateTable("create table t(a varchar(10) binary charset binary);")
+	c.Assert(strings.Contains(sct, "varbinary(10) DEFAULT NULL"), IsTrue, Commentf(sct))
+	c.Assert(strings.Contains(sct, "ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"), IsTrue, Commentf(sct))
 }
 
 func (s *testIntegrationSuite) TestIssue15743(c *C) {
