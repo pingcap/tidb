@@ -403,6 +403,13 @@
     ]
   },
   {
+    "name": "TestSortByItemsPruning",
+    "cases": [
+      "select * from t where a > 1 order by a asc, a asc limit 10",
+      "select * from t where a > 1 order by a asc, b asc, a asc, c asc limit 10"
+    ]
+  },
+  {
     "name": "TestDeriveNotNullConds",
     "cases": [
       "select * from t t1 inner join t t2 on t1.e = t2.e",
