@@ -361,6 +361,7 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 	if err != nil {
 		return errors.Trace(err)
 	}
+	removeJobFromCancelledList(t, job)
 
 	job.BinlogInfo.FinishedTS = t.StartTS
 	logutil.Logger(w.logCtx).Info("[ddl] finish DDL job", zap.String("job", job.String()))
@@ -485,6 +486,13 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 				// Result in the retry duration is up to 2 * lease.
 				schemaVer = 0
 			}
+			canceled, err := isJobInCanceledList(t, job)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if canceled {
+				return nil
+			}
 			err = w.updateDDLJob(t, job, runJobErr != nil)
 			if err = w.handleUpdateJobError(t, job, err); err != nil {
 				return errors.Trace(err)
@@ -524,6 +532,53 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 			asyncNotify(d.ddlJobDoneCh)
 		}
 	}
+}
+
+func getDDLJobsInQueue(t *meta.Meta, jobListKey meta.JobListKeyType) ([]*model.Job, error) {
+	cnt, err := t.DDLJobQueueLen(jobListKey)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	jobs := make([]*model.Job, cnt)
+	for i := range jobs {
+		jobs[i], err = t.GetDDLJobByIdx(int64(i), jobListKey)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+	return jobs, nil
+}
+
+func isJobInCanceledList(t *meta.Meta, job *model.Job) (bool, error) {
+	canceledJobs, err := getDDLJobsInQueue(t, meta.CancelJobListKey)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	for _, canceledJob := range canceledJobs {
+		if canceledJob.ID == job.ID {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func removeJobFromCancelledList(t *meta.Meta, job *model.Job) error {
+	canceledJobs, err := getDDLJobsInQueue(t, meta.CancelJobListKey)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	found := false
+	pos := 0
+	for i, canceledJob := range canceledJobs {
+		if canceledJob.ID == job.ID {
+			pos = i
+		}
+	}
+	if !found {
+		return nil
+	}
+	canceledJobs = append(canceledJobs[:pos], canceledJobs[pos+1:]...)
+	return nil
 }
 
 func skipWriteBinlog(job *model.Job) bool {

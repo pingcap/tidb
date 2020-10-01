@@ -556,6 +556,7 @@ var (
 	mDDLJobAddIdxList = []byte("DDLJobAddIdxList")
 	mDDLJobHistoryKey = []byte("DDLJobHistory")
 	mDDLJobReorgKey   = []byte("DDLJobReorg")
+	mDDLJobCancelKey  = []byte("DDLJobCancel")
 )
 
 // JobListKeyType is a key type of the DDL job queue.
@@ -566,6 +567,8 @@ var (
 	DefaultJobListKey JobListKeyType = mDDLJobListKey
 	// AddIndexJobListKey only keeps the action of adding index.
 	AddIndexJobListKey JobListKeyType = mDDLJobAddIdxList
+	// CancelJobListKey keeps the action of canceling job.
+	CancelJobListKey JobListKeyType = mDDLJobCancelKey
 )
 
 func (m *Meta) enQueueDDLJob(key []byte, job *model.Job) error {
