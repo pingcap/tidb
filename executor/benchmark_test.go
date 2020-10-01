@@ -1709,3 +1709,131 @@ func BenchmarkSortExec(b *testing.B) {
 		})
 	}
 }
+
+type selectionCase struct {
+	rows                  int
+	filter 				  []expression.Expression
+	count                 int
+	batched               bool
+	childUsedSchema       []bool		// parent需要的column
+	usingInlineProjection bool
+	ctx                   sessionctx.Context
+}
+
+func (tc selectionCase) columns() []*expression.Column {
+	return []*expression.Column{
+		{Index: 0, RetType: types.NewFieldType(mysql.TypeLonglong)},
+		{Index: 1, RetType: types.NewFieldType(mysql.TypeLonglong)},
+	}
+}
+
+func (tc selectionCase) String() string {
+	return fmt.Sprintf("(rows:%v, count:%v, inline_projection:%v, batched:%v)",
+		tc.rows, tc.count, tc.usingInlineProjection, tc.batched)
+}
+
+func defaultSelectionTestCase() *selectionCase {
+	ctx := mock.NewContext()
+	ctx.GetSessionVars().InitChunkSize = variable.DefInitChunkSize
+	ctx.GetSessionVars().MaxChunkSize = variable.DefMaxChunkSize
+	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(-1, -1)
+	f1, _ := expression.NewFunction(ctx, ast.LT, types.NewFieldType(mysql.TypeLonglong),
+		&expression.Column{Index: 0, RetType: types.NewFieldType(mysql.TypeLonglong)},
+		expression.NewZero())
+	tc := &selectionCase{
+		rows: 300000,
+		count: 100000,
+		batched: true,
+		filter: []expression.Expression{f1},
+		childUsedSchema: []bool{false, true},
+		usingInlineProjection: false,
+		ctx: ctx,
+	}
+	return tc
+}
+
+func benchmarkSelectionExec(b *testing.B, cas *selectionCase) {
+	opt := mockDataSourceParameters{
+		schema: expression.NewSchema(cas.columns()...),
+		rows:   cas.rows,
+		ctx:    cas.ctx,
+	}
+	dataSource := buildMockDataSource(opt)
+	var exec Executor
+	selection := &SelectionExec{
+		baseExecutor: newBaseExecutor(cas.ctx, dataSource.schema, 4, dataSource),
+		batched: cas.batched,
+		filters: cas.filter,
+		selected: []bool{true},
+		//ByItems:      make([]*util.ByItems, 0, len(cas.orderByIdx)),
+		//schema:       dataSource.schema,
+	}
+	if cas.usingInlineProjection {
+		if len(cas.childUsedSchema) > 0 {
+			selection.columnIdxsUsedByChild = make([]int, 0, len(cas.childUsedSchema))
+			for i, used := range cas.childUsedSchema {
+				if used {
+					selection.columnIdxsUsedByChild = append(selection.columnIdxsUsedByChild, i)
+				}
+			}
+		}
+		exec = selection
+	} else {
+		columns := cas.columns()
+		usedCols := make([]*expression.Column, 0, len(columns))
+		exprs := make([]expression.Expression, 0, len(columns))
+		for i, used := range cas.childUsedSchema {
+			if used {
+				usedCols = append(usedCols, columns[i])
+				exprs = append(exprs, columns[i])
+			}
+		}
+		proj := &ProjectionExec{
+			baseExecutor:  newBaseExecutor(cas.ctx, expression.NewSchema(usedCols...), 0, selection),
+			numWorkers:    1,
+			evaluatorSuit: expression.NewEvaluatorSuite(exprs, false),
+		}
+		exec = proj
+	}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		b.StopTimer()
+		tmpCtx := context.Background()
+		chk := newFirstChunk(exec)
+		dataSource.prepareChunks()
+
+		b.StartTimer()
+		if err := exec.Open(tmpCtx); err != nil {
+			b.Fatal(err)
+		}
+		for {
+			if err := exec.Next(tmpCtx, chk); err != nil {
+				b.Fatal(err)
+			}
+			if chk.NumRows() == 0 {
+				break
+			}
+		}
+
+		if err := exec.Close(); err != nil {
+			b.Fatal(err)
+		}
+		b.StopTimer()
+	}
+}
+
+func BenchmarkSelectionExec(b *testing.B) {
+	b.ReportAllocs()
+	cas := defaultSelectionTestCase()
+	usingInlineProjection := []bool{false, true}
+	batched := []bool{false, true}
+	for _, inlineProjection := range usingInlineProjection {
+		cas.usingInlineProjection = inlineProjection
+		for _, batched := range batched {
+			cas.batched = batched
+			b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
+				benchmarkSelectionExec(b, cas)
+			})
+		}
+	}
+}
