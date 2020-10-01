@@ -532,6 +532,25 @@ func (p *PhysicalHashJoin) ExplainNormalizedInfo() string {
 	return p.explainInfo(true)
 }
 
+func (p *PhysicalHashJoin) isCartesianJoin(plan PhysicalPlan) bool {
+	if hashJoin, ok := plan.(*PhysicalHashJoin); ok {
+		if len(hashJoin.EqualConditions) != 0 {
+			return false
+		}
+	}
+
+	for _, child := range plan.Children() {
+		if tableReader, ok := child.(*PhysicalTableReader); ok {
+			if sel, ok := tableReader.GetTablePlan().(*PhysicalSelection); ok {
+				if sel.haveEqualCondition() {
+					return false
+				}
+			}
+		}
+	}
+	return true
+}
+
 func (p *PhysicalHashJoin) explainInfo(normalized bool) string {
 	sortedExplainExpressionList := expression.SortedExplainExpressionList
 	if normalized {
@@ -540,7 +559,7 @@ func (p *PhysicalHashJoin) explainInfo(normalized bool) string {
 
 	buffer := new(bytes.Buffer)
 
-	if len(p.EqualConditions) == 0 {
+	if p.isCartesianJoin(p) {
 		buffer.WriteString("CARTESIAN ")
 	}
 

@@ -1086,6 +1086,17 @@ func (p *PhysicalSelection) ExtractCorrelatedCols() []*expression.CorrelatedColu
 	return corCols
 }
 
+func (p *PhysicalSelection) haveEqualCondition() bool {
+	for _, cond := range p.Conditions {
+		if sf, ok := cond.(*expression.ScalarFunction); ok {
+			if sf.FuncName.L == ast.EQ {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // PhysicalMaxOneRow is the physical operator of maxOneRow.
 type PhysicalMaxOneRow struct {
 	basePhysicalPlan

@@ -87,6 +87,27 @@ func (s *testSuite1) TestExplainCartesianJoin(c *C) {
 
 		c.Assert(ok, Equals, ca.isCartesianJoin)
 	}
+
+	tk.MustExec("create table tt (a int, b int)")
+	case2 := []struct {
+		sql             string
+		isCartesianJoin bool
+	}{
+		{"desc select /*+ tidb_hj(t1) */ * from tt t1 inner join tt t2 where t1.a = t2.a and t1.a = 1", false},
+		{"desc select /*+ tidb_hj(t1) */ * from tt t1 inner join tt t2 on t1.a = t2.a and t1.a = 1", false},
+	}
+	for _, ca := range case2 {
+		rows := tk.MustQuery(ca.sql).Rows()
+		ok := false
+		for _, row := range rows {
+			str := fmt.Sprintf("%v", row)
+			if strings.Contains(str, "CARTESIAN") {
+				ok = true
+			}
+		}
+		c.Assert(ok, Equals, ca.isCartesianJoin)
+	}
+
 }
 
 func (s *testSuite1) TestExplainWrite(c *C) {
