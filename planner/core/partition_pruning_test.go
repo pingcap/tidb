@@ -45,7 +45,7 @@ func (s *testPartitionPruningSuite) TestCanBePrune(c *C) {
 		"to_days(d)",
 	)
 	lessThan := lessThanDataInt{data: []int64{733108, 733132}, maxvalue: false}
-	prunner := &rangePruner{lessThan, tc.col, tc.fn, true}
+	prunner := &rangePruner{lessThan, tc.col, tc.fn, monotoneModeNonStrict}
 
 	queryExpr := tc.expr("d < '2000-03-08 00:00:00'")
 	result := partitionRangeForCNFExpr(tc.sctx, queryExpr, prunner, fullRange(len(lessThan.data)))
@@ -71,7 +71,7 @@ func (s *testPartitionPruningSuite) TestCanBePrune(c *C) {
 		"unix_timestamp(report_updated)",
 	)
 	lessThan = lessThanDataInt{data: []int64{1199145600, 1207008000, 1262304000, 0}, maxvalue: true}
-	prunner = &rangePruner{lessThan, tc.col, tc.fn, true}
+	prunner = &rangePruner{lessThan, tc.col, tc.fn, monotoneModeStrict}
 
 	queryExpr = tc.expr("report_updated > '2008-05-01 00:00:00'")
 	result = partitionRangeForCNFExpr(tc.sctx, queryExpr, prunner, fullRange(len(lessThan.data)))
@@ -171,7 +171,7 @@ func (s *testPartitionPruningSuite) TestPartitionRangeForExpr(c *C) {
 		"a",
 	)
 	lessThan := lessThanDataInt{data: []int64{4, 7, 11, 14, 17, 0}, maxvalue: true}
-	prunner := &rangePruner{lessThan, tc.columns[0], nil, false}
+	prunner := &rangePruner{lessThan, tc.columns[0], nil, monotoneModeInvalid}
 	cases := []struct {
 		input  string
 		result partitionRangeOR
