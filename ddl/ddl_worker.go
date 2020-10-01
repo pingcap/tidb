@@ -361,7 +361,10 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	removeJobFromCancelledList(t, job)
+	err = removeJobFromCancelledList(t, job)
+	if err != nil {
+		return errors.Trace(err)
+	}
 
 	job.BinlogInfo.FinishedTS = t.StartTS
 	logutil.Logger(w.logCtx).Info("[ddl] finish DDL job", zap.String("job", job.String()))
