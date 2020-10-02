@@ -208,7 +208,7 @@ func checkModifyGeneratedColumn(tbl table.Table, oldCol, newCol *table.Column, n
 
 	if newCol.IsGenerated() {
 		// rule 3.
-		if err := checkIllegalFn4GeneratedColumn(newCol.Name.L, newCol.GeneratedExpr); err != nil {
+		if err := checkIllegalFn4Generated(newCol.Name.L, typeColumn, newCol.GeneratedExpr); err != nil {
 			return errors.Trace(err)
 		}
 
@@ -259,35 +259,35 @@ func (c *illegalFunctionChecker) Leave(inNode ast.Node) (node ast.Node, ok bool)
 	return inNode, true
 }
 
-func checkIllegalFn4GeneratedColumn(colName string, expr ast.ExprNode) error {
-	if expr == nil {
-		return nil
-	}
-	var c illegalFunctionChecker
-	expr.Accept(&c)
-	if c.hasIllegalFunc {
-		return ErrGeneratedColumnFunctionIsNotAllowed.GenWithStackByArgs(colName)
-	}
-	if c.hasAggFunc {
-		return ErrInvalidGroupFuncUse
-	}
-	return nil
-}
+const (
+	typeColumn = iota
+	typeIndex
+)
 
-func checkIllegalFn4GeneratedIndex(idxName string, expr ast.ExprNode) error {
+func checkIllegalFn4Generated(name string, genType int, expr ast.ExprNode) error {
 	if expr == nil {
 		return nil
 	}
 	var c illegalFunctionChecker
 	expr.Accept(&c)
 	if c.hasIllegalFunc {
-		return ErrGeneratedColumnFunctionIsNotAllowed.GenWithStackByArgs(idxName)
+		switch genType {
+		case typeColumn:
+			return ErrGeneratedColumnFunctionIsNotAllowed.GenWithStackByArgs(name)
+		case typeIndex:
+			return ErrFunctionalIndexFunctionIsNotAllowed.GenWithStackByArgs(name)
+		}
 	}
 	if c.hasAggFunc {
 		return ErrInvalidGroupFuncUse
 	}
 	if c.hasRowVal {
-		return ErrFunctionalIndexRowValueIsNotAllowed.GenWithStackByArgs(idxName)
+		switch genType {
+		case typeColumn:
+			return ErrGeneratedColumnRowValueIsNotAllowed.GenWithStackByArgs(name)
+		case typeIndex:
+			return ErrFunctionalIndexRowValueIsNotAllowed.GenWithStackByArgs(name)
+		}
 	}
 	return nil
 }

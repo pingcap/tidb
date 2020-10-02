@@ -94,8 +94,12 @@ var (
 	errUnsupportedExchangePartition   = terror.ClassDDL.New(mysql.ErrUnsupportedDDLOperation, fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation], "exchange partition"))
 	// ErrGeneratedColumnFunctionIsNotAllowed returns for unsupported functions for generated columns.
 	ErrGeneratedColumnFunctionIsNotAllowed = terror.ClassDDL.New(mysql.ErrGeneratedColumnFunctionIsNotAllowed, mysql.MySQLErrName[mysql.ErrGeneratedColumnFunctionIsNotAllowed])
+	// ErrGeneratedColumnRowValueIsNotAllowed returns for generated columns referring to row values.
+	ErrGeneratedColumnRowValueIsNotAllowed = terror.ClassDDL.New(mysql.ErrGeneratedColumnRowValueIsNotAllowed, mysql.MySQLErrName[mysql.ErrGeneratedColumnRowValueIsNotAllowed])
 	// ErrUnsupportedPartitionByRangeColumns returns for does unsupported partition by range columns.
 	ErrUnsupportedPartitionByRangeColumns = terror.ClassDDL.New(mysql.ErrUnsupportedDDLOperation, fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation], "partition by range columns"))
+	// ErrFunctionalIndexFunctionIsNotAllowed returns for unsupported functions for functional index.
+	ErrFunctionalIndexFunctionIsNotAllowed = terror.ClassDDL.New(mysql.ErrFunctionalIndexFunctionIsNotAllowed, mysql.MySQLErrName[mysql.ErrFunctionalIndexFunctionIsNotAllowed])
 	// ErrFunctionalIndexRowValueIsNotAllowed returns for functional index referring to row values.
 	ErrFunctionalIndexRowValueIsNotAllowed = terror.ClassDDL.New(mysql.ErrFunctionalIndexRowValueIsNotAllowed, mysql.MySQLErrName[mysql.ErrFunctionalIndexRowValueIsNotAllowed])
 	errUnsupportedCreatePartition          = terror.ClassDDL.New(mysql.ErrUnsupportedDDLOperation, fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation], "partition type, treat as normal table"))
