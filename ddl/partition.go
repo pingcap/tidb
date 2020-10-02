@@ -1013,7 +1013,7 @@ func (w *worker) onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (
 		}
 		// If table has global indexes, we need reorg to clean up them.
 		if pt, ok := tbl.(table.PartitionedTable); ok && hasGlobalIndex(tblInfo) {
-			// Build elements for compatible with modify column type. elements will not be used when reorganizing. 
+			// Build elements for compatible with modify column type. elements will not be used when reorganizing.
 			elements := make([]*meta.Element, 0, len(tblInfo.Indices))
 			for _, idxInfo := range tblInfo.Indices {
 				if idxInfo.Global {
