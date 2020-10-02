@@ -6527,3 +6527,15 @@ func (s *testSerialSuite) TestCoprocessorOOMAction(c *C) {
 		se.Close()
 	}
 }
+
+func (s *testSerialSuite) TestIssue19148(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a decimal(16, 2));")
+	tk.MustExec("select * from t where a > any_value(a);")
+	ctx := tk.Se.(sessionctx.Context)
+	is := domain.GetDomain(ctx).InfoSchema()
+	tblInfo, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	c.Assert(int(tblInfo.Meta().Columns[0].Flag), Equals, 0)
+}
