@@ -16,6 +16,7 @@ package ddl
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"fmt"
 	"strconv"
 	"strings"
@@ -45,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	tidbutil "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
@@ -918,6 +920,12 @@ func buildPlacementDropRules(schemaID, tableID int64, partitionIDs []int64) []*p
 	return rules
 }
 
+func buildPlacementDropBundle(partitionID int64) *placement.Bundle {
+	return &placement.Bundle{
+		ID: placement.GroupID(partitionID),
+	}
+}
+
 // onDropTablePartition deletes old partition meta.
 func (w *worker) onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	var partNames []string
@@ -933,11 +941,20 @@ func (w *worker) onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (
 	if job.Type == model.ActionAddTablePartition {
 		// It is rollbacked from adding table partition, just remove addingDefinitions from tableInfo.
 		physicalTableIDs = rollbackAddingPartitionInfo(tblInfo)
-		rules := buildPlacementDropRules(job.SchemaID, tblInfo.ID, physicalTableIDs)
-		err = infosync.UpdatePlacementRules(nil, rules)
-		if err != nil {
-			job.State = model.JobStateCancelled
-			return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
+		if d.infoHandle != nil {
+			bundles := make([]*placement.Bundle, 0, len(physicalTableIDs))
+			for _, ID := range physicalTableIDs {
+				oldBundle, ok := d.infoHandle.Get().BundleByName(placement.GroupID(ID))
+				if ok && !oldBundle.IsEmpty() {
+					bundles = append(bundles, buildPlacementDropBundle(ID))
+				}
+			}
+
+			err = infosync.PutRuleBundles(nil, bundles)
+			if err != nil {
+				job.State = model.JobStateCancelled
+				return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
+			}
 		}
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
 		if err != nil {
@@ -964,11 +981,20 @@ func (w *worker) onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (
 			return ver, errors.Trace(err)
 		}
 		updateDroppingPartitionInfo(tblInfo, partNames)
-		rules := buildPlacementDropRules(job.SchemaID, tblInfo.ID, physicalTableIDs)
-		err = infosync.UpdatePlacementRules(nil, rules)
-		if err != nil {
-			job.State = model.JobStateCancelled
-			return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
+		if d.infoHandle != nil {
+			bundles := make([]*placement.Bundle, 0, len(physicalTableIDs))
+			for _, ID := range physicalTableIDs {
+				oldBundle, ok := d.infoHandle.Get().BundleByName(placement.GroupID(ID))
+				if ok && !oldBundle.IsEmpty() {
+					bundles = append(bundles, buildPlacementDropBundle(ID))
+				}
+			}
+
+			err = infosync.PutRuleBundles(nil, bundles)
+			if err != nil {
+				job.State = model.JobStateCancelled
+				return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
+			}
 		}
 		job.SchemaState = model.StateDeleteOnly
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != job.SchemaState)
@@ -987,7 +1013,14 @@ func (w *worker) onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (
 		}
 		// If table has global indexes, we need reorg to clean up them.
 		if pt, ok := tbl.(table.PartitionedTable); ok && hasGlobalIndex(tblInfo) {
-			reorgInfo, err := getReorgInfoFromPartitions(d, t, job, tbl, physicalTableIDs)
+			// Build elements for compatible with modify column type. elements will not be used when reorganizing. 
+			elements := make([]*meta.Element, 0, len(tblInfo.Indices))
+			for _, idxInfo := range tblInfo.Indices {
+				if idxInfo.Global {
+					elements = append(elements, &meta.Element{ID: idxInfo.ID, TypeKey: meta.IndexElementKey})
+				}
+			}
+			reorgInfo, err := getReorgInfoFromPartitions(d, t, job, tbl, physicalTableIDs, elements)
 
 			if err != nil || reorgInfo.first {
 				// If we run reorg firstly, we should update the job snapshot version
@@ -1027,30 +1060,17 @@ func (w *worker) onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (
 	return ver, errors.Trace(err)
 }
 
-func buildPlacementTruncateRules(rules []*placement.RuleOp, schemaID, tableID, jobID int64, oldIDs []int64, newPartitions []model.PartitionDefinition) []*placement.RuleOp {
-	newRules := make([]*placement.RuleOp, 0, len(oldIDs))
-	for i, oldID := range oldIDs {
-		prefix := fmt.Sprintf("%d_t%d_p%d", schemaID, tableID, oldID)
-		for _, rule := range rules {
-			if strings.HasPrefix(rule.ID, prefix) {
-				// delete the old rule
-				newRules = append(newRules, &placement.RuleOp{
-					Action: placement.RuleOpDel,
-					Rule: &placement.Rule{
-						GroupID: placement.RuleDefaultGroupID,
-						ID:      rule.ID,
-					},
-				})
-
-				// add the new rule
-				rule.Action = placement.RuleOpAdd
-				rule.ID = fmt.Sprintf("%d_t%d_p%d_%s_%d_%d", schemaID, tableID, newPartitions[i].ID, rule.Role, jobID, i)
-				newRules = append(newRules, rule)
-				break
-			}
-		}
+func buildPlacementTruncateBundle(oldBundle *placement.Bundle, newID int64) *placement.Bundle {
+	newBundle := oldBundle.Clone()
+	newBundle.ID = placement.GroupID(newID)
+	startKey := hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(newID)))
+	endKey := hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(newID+1)))
+	for _, rule := range newBundle.Rules {
+		rule.GroupID = newBundle.ID
+		rule.StartKeyHex = startKey
+		rule.EndKeyHex = endKey
 	}
-	return newRules
+	return newBundle
 }
 
 // onTruncateTablePartition truncates old partition meta.
@@ -1106,22 +1126,22 @@ func onTruncateTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, e
 		}
 	}
 
-	var rules []*placement.RuleOp
+	if d.infoHandle != nil {
+		bundles := make([]*placement.Bundle, 0, len(oldIDs))
 
-	// TODO: maybe add a middle state
-	rules, err = infosync.GetPlacementRules(nil)
-	if err != nil {
-		job.State = model.JobStateCancelled
-		return ver, errors.Wrapf(err, "failed to retrieve placement rules from PD")
-	}
+		for i, oldID := range oldIDs {
+			oldBundle, ok := d.infoHandle.Get().BundleByName(placement.GroupID(oldID))
+			if ok && !oldBundle.IsEmpty() {
+				bundles = append(bundles, buildPlacementDropBundle(oldID))
+				bundles = append(bundles, buildPlacementTruncateBundle(oldBundle, newPartitions[i].ID))
+			}
+		}
 
-	// TODO: simplify the definition and logic use new PD group bundle API
-	rules = buildPlacementTruncateRules(rules, job.SchemaID, tblInfo.ID, job.ID, oldIDs, newPartitions)
-
-	err = infosync.UpdatePlacementRules(nil, rules)
-	if err != nil {
-		job.State = model.JobStateCancelled
-		return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
+		err = infosync.PutRuleBundles(nil, bundles)
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
+		}
 	}
 
 	ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
@@ -1615,8 +1635,8 @@ func truncateTableByReassignPartitionIDs(t *meta.Meta, tblInfo *model.TableInfo)
 
 func onAlterTablePartition(t *meta.Meta, job *model.Job) (int64, error) {
 	var partitionID int64
-	var rules []*placement.RuleOp
-	err := job.DecodeArgs(&partitionID, &rules)
+	bundle := &placement.Bundle{}
+	err := job.DecodeArgs(&partitionID, bundle)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return 0, errors.Trace(err)
@@ -1633,23 +1653,15 @@ func onAlterTablePartition(t *meta.Meta, job *model.Job) (int64, error) {
 		return 0, errors.Trace(table.ErrUnknownPartition.GenWithStackByArgs("drop?", tblInfo.Name.O))
 	}
 
-	for i, rule := range rules {
-		if rule.Action == placement.RuleOpDel {
-			rule.ID = fmt.Sprintf("%d_t%d_p%d_%s", job.SchemaID, tblInfo.ID, partitionID, rule.Role)
-		} else {
-			rule.ID = fmt.Sprintf("%d_t%d_p%d_%s_%d_%d", job.SchemaID, tblInfo.ID, partitionID, rule.Role, job.ID, i)
-		}
-	}
-
-	ver, err := t.GetSchemaVersion()
-	if err != nil {
-		return ver, errors.Trace(err)
-	}
-
-	err = infosync.UpdatePlacementRules(nil, rules)
+	err = infosync.PutRuleBundles(nil, []*placement.Bundle{bundle})
 	if err != nil {
 		job.State = model.JobStateCancelled
-		return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
+		return 0, errors.Wrapf(err, "failed to notify PD the placement rules")
+	}
+
+	ver, err := updateSchemaVersion(t, job)
+	if err != nil {
+		return ver, errors.Trace(err)
 	}
 
 	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
