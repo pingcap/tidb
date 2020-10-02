@@ -1272,7 +1272,14 @@ func (do *Domain) IsLostConnectionToPD() bool {
 }
 
 const (
-	serverIDEtcdPath = "/tidb/server_id"
+	serverIDEtcdPath               = "/tidb/server_id"
+	refreshServerIDRetryCnt        = 3
+	acquireServerIDRetryInterval   = 300 * time.Millisecond
+	acquireServerIDTimeout         = 10 * time.Second
+	retrieveServerIDSessionTimeout = 10 * time.Second
+)
+
+var (
 	// serverIDTTL should be LONG ENOUGH to avoid barbarically killing an on-going long-run SQL.
 	serverIDTTL = 12 * time.Hour
 	// serverIDTimeToKeepAlive is the interval that we keep serverID TTL alive periodically.
@@ -1283,12 +1290,49 @@ const (
 	//   we realize the connection to PD is lost utterly, and server ID acquired before should be released.
 	//   Must be SHORTER than `serverIDTTL`.
 	lostConnectionToPDTimeout = 6 * time.Hour
-
-	refreshServerIDRetryCnt        = 3
-	acquireServerIDRetryInterval   = 300 * time.Millisecond
-	acquireServerIDTimeout         = 10 * time.Second
-	retrieveServerIDSessionTimeout = 10 * time.Second
 )
+
+var (
+	ldflagIsGlobalKillTest                        = "0"  // 1:Yes, otherwise:No.
+	ldflagServerIDTTL                             = "10" // in seconds.
+	ldflagServerIDTimeToKeepAlive                 = "1"  // in seconds.
+	ldflagServerIDTimeToCheckPDConnectionRestored = "1"  // in seconds.
+	ldflagLostConnectionToPDTimeout               = "3"  // in seconds.
+)
+
+func initByLDFlagsForGlobalKill() {
+	if ldflagIsGlobalKillTest == "1" {
+		var (
+			i   int
+			err error
+		)
+
+		if i, err = strconv.Atoi(ldflagServerIDTTL); err != nil {
+			panic("invalid ldflagServerIDTTL")
+		}
+		serverIDTTL = time.Duration(i) * time.Second
+
+		if i, err = strconv.Atoi(ldflagServerIDTimeToKeepAlive); err != nil {
+			panic("invalid ldflagServerIDTimeToKeepAlive")
+		}
+		serverIDTimeToKeepAlive = time.Duration(i) * time.Second
+
+		if i, err = strconv.Atoi(ldflagServerIDTimeToCheckPDConnectionRestored); err != nil {
+			panic("invalid ldflagServerIDTimeToCheckPDConnectionRestored")
+		}
+		serverIDTimeToCheckPDConnectionRestored = time.Duration(i) * time.Second
+
+		if i, err = strconv.Atoi(ldflagLostConnectionToPDTimeout); err != nil {
+			panic("invalid ldflagLostConnectionToPDTimeout")
+		}
+		lostConnectionToPDTimeout = time.Duration(i) * time.Second
+
+		logutil.BgLogger().Info("global_kill_test is enabled", zap.Duration("serverIDTTL", serverIDTTL),
+			zap.Duration("serverIDTimeToKeepAlive", serverIDTimeToKeepAlive),
+			zap.Duration("serverIDTimeToCheckPDConnectionRestored", serverIDTimeToCheckPDConnectionRestored),
+			zap.Duration("lostConnectionToPDTimeout", lostConnectionToPDTimeout))
+	}
+}
 
 func (do *Domain) retrieveServerIDSession(ctx context.Context) (*concurrency.Session, error) {
 	if do.serverIDSession != nil {
@@ -1447,6 +1491,10 @@ func (do *Domain) serverIDKeeper() {
 			return
 		}
 	}
+}
+
+func init() {
+	initByLDFlagsForGlobalKill()
 }
 
 var (

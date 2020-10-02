@@ -60,6 +60,12 @@ LDFLAGS += -X "github.com/pingcap/tidb/util/versioninfo.TiDBEdition=$(TIDB_EDITI
 TEST_LDFLAGS =  -X "github.com/pingcap/tidb/config.checkBeforeDropLDFlag=1"
 COVERAGE_SERVER_LDFLAGS =  -X "github.com/pingcap/tidb/tidb-server.isCoverageServer=1"
 
+GLOBAL_KILL_TEST_SERVER_LDFLAGS =  -X "github.com/pingcap/tidb/domain.ldflagIsGlobalKillTest=1"
+GLOBAL_KILL_TEST_SERVER_LDFLAGS += -X "github.com/pingcap/tidb/domain.ldflagServerIDTTL=10"
+GLOBAL_KILL_TEST_SERVER_LDFLAGS += -X "github.com/pingcap/tidb/domain.ldflagServerIDTimeToKeepAlive=1"
+GLOBAL_KILL_TEST_SERVER_LDFLAGS += -X "github.com/pingcap/tidb/domain.ldflagServerIDTimeToCheckPDConnectionRestored=1"
+GLOBAL_KILL_TEST_SERVER_LDFLAGS += -X "github.com/pingcap/tidb/domain.ldflagLostConnectionToPDTimeout=3"
+
 CHECK_LDFLAGS += $(LDFLAGS) ${TEST_LDFLAGS}
 
 TARGET = ""
@@ -69,7 +75,7 @@ VB_FILE =
 VB_FUNC =
 
 
-.PHONY: all clean test gotest server dev benchkv benchraw check checklist parser tidy ddltest
+.PHONY: all clean test gotest server dev benchkv benchraw check checklist parser tidy ddltest server_global_kill_test
 
 default: server buildsucc
 
@@ -242,6 +248,13 @@ ifeq ($(TARGET), "")
 	$(GOBUILDCOVERAGE) $(RACE_FLAG) -ldflags '$(LDFLAGS) $(COVERAGE_SERVER_LDFLAGS) $(CHECK_FLAG)' -o ../bin/tidb-server-coverage
 else
 	$(GOBUILDCOVERAGE) $(RACE_FLAG) -ldflags '$(LDFLAGS) $(COVERAGE_SERVER_LDFLAGS) $(CHECK_FLAG)' -o '$(TARGET)'
+endif
+
+server_global_kill_test:
+ifeq ($(TARGET), "")
+	CGO_ENABLED=1 $(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS) $(GLOBAL_KILL_TEST_SERVER_LDFLAGS) $(CHECK_FLAG)' -o bin/tidb-server-global-kill-test tidb-server/main.go
+else
+	CGO_ENABLED=1 $(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS) $(GLOBAL_KILL_TEST_SERVER_LDFLAGS) $(CHECK_FLAG)' -o '$(TARGET)' tidb-server/main.go
 endif
 
 benchkv:
