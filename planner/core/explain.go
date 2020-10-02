@@ -540,7 +540,7 @@ func (p *PhysicalHashJoin) explainInfo(normalized bool) string {
 
 	buffer := new(bytes.Buffer)
 
-	if len(p.EqualConditions) == 0 {
+	if p.CartesianJoin {
 		buffer.WriteString("CARTESIAN ")
 	}
 

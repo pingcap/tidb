@@ -166,6 +166,7 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 		equalCond, leftPushCond, rightPushCond, otherCond = p.extractOnCondition(tempCond, true, true)
 		p.LeftConditions = nil
 		p.RightConditions = nil
+		p.EqualConditions = equalCond
 		p.OtherConditions = otherCond
 		leftCond = leftPushCond
 		rightCond = rightPushCond

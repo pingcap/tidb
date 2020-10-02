@@ -715,6 +715,7 @@ type PhysicalHashJoin struct {
 
 	// use the outer table to build a hash table when the outer table is smaller.
 	UseOuterToBuild bool
+	CartesianJoin   bool
 }
 
 // Clone implements PhysicalPlan interface.
@@ -770,6 +771,7 @@ func NewPhysicalHashJoin(p *LogicalJoin, innerIdx int, useOuterToBuild bool, new
 		EqualConditions:  p.EqualConditions,
 		Concurrency:      uint(p.ctx.GetSessionVars().HashJoinConcurrency()),
 		UseOuterToBuild:  useOuterToBuild,
+		CartesianJoin:    p.cartesianJoin,
 	}.Init(p.ctx, newStats, p.blockOffset, prop...)
 	return hashJoin
 }
@@ -1085,19 +1087,6 @@ func (p *PhysicalSelection) ExtractCorrelatedCols() []*expression.CorrelatedColu
 	}
 	return corCols
 }
-
-//func (p *PhysicalSelection) haveEqualCondition() bool {
-//	for _, cond := range p.Conditions {
-//		if sf, ok := cond.(*expression.ScalarFunction); ok {
-//			lhs, lOk := sf.GetArgs()[0].(*expression.Column)
-//			rhs, rOk := sf.GetArgs()[1].(*expression.Column)
-//			if sf.FuncName.L == ast.EQ && lOk && rOk {
-//				return true
-//			}
-//		}
-//	}
-//	return false
-//}
 
 // PhysicalMaxOneRow is the physical operator of maxOneRow.
 type PhysicalMaxOneRow struct {
