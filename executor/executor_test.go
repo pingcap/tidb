@@ -6531,6 +6531,7 @@ func (s *testSerialSuite) TestCoprocessorOOMAction(c *C) {
 func (s *testSerialSuite) TestIssue19148(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a decimal(16, 2));")
 	tk.MustExec("select * from t where a > any_value(a);")
 	ctx := tk.Se.(sessionctx.Context)
