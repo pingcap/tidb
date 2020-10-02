@@ -98,7 +98,7 @@ func main() {
 	pflag.BoolVar(&allowCleartextPasswords, "allow-cleartext-passwords", false, "Allow passwords to be sent in cleartext (warning: don't use without TLS)")
 	pflag.IntVarP(&threads, "threads", "t", 4, "Number of goroutines to use, default 4")
 	pflag.StringVarP(&fileSizeStr, "filesize", "F", "", "The approximate size of output file")
-	pflag.Uint64VarP(&statementSize, "statement-size", "s", export.UnspecifiedSize, "Attempted size of INSERT statement in bytes")
+	pflag.Uint64VarP(&statementSize, "statement-size", "s", export.DefaultStatementSize, "Attempted size of INSERT statement in bytes")
 	pflag.StringVarP(&outputDir, "output", "o", defaultOutputDir, "Output directory")
 	pflag.StringVar(&logLevel, "loglevel", "info", "Log level: {debug|info|warn|error|dpanic|panic|fatal}")
 	pflag.StringVarP(&logFile, "logfile", "L", "", "Log file `path`, leave empty to write to console")
