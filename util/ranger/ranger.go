@@ -92,18 +92,11 @@ func convertPoint(sc *stmtctx.StatementContext, point point, tp *types.FieldType
 		return point, nil
 	}
 	casted, err := point.value.ConvertTo(sc, tp)
-	if tp.Tp == mysql.TypeYear {
-		// the year type need adjustment, see https://dev.mysql.com/doc/refman/5.6/en/year.html
-		if err != nil && !terror.ErrorEqual(err, types.ErrOverflow) {
+	if err != nil {
+		// see issue #20101: overflow when converting integer to year
+		if tp.Tp != mysql.TypeYear || !terror.ErrorEqual(err, types.ErrOverflow) {
 			return point, errors.Trace(err)
 		}
-		newValue, err := types.ConvertDatumToYearFloat(sc, point.value)
-		if err != nil {
-			return point, errors.Trace(err)
-		}
-		point.value = newValue
-	} else if err != nil {
-		return point, errors.Trace(err)
 	}
 	valCmpCasted, err := point.value.CompareDatum(sc, &casted)
 	if err != nil {

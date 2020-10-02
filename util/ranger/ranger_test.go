@@ -1309,7 +1309,7 @@ func (s *testRangerSuite) TestCompIndexMultiColDNF2(c *C) {
 	}
 }
 
-func (s *testRangerSuite) TestIndexRangeYearOverflow(c *C) {
+func (s *testRangerSuite) TestIndexRangeForYear(c *C) {
 	defer testleak.AfterTest(c)()
 	dom, store, err := newDomainStoreWithBootstrap(c)
 	defer func() {
@@ -1318,6 +1318,8 @@ func (s *testRangerSuite) TestIndexRangeYearOverflow(c *C) {
 	}()
 	c.Assert(err, IsNil)
 	testKit := testkit.NewTestKit(c, store)
+
+	// for issue #20101: overflow when converting integer to year
 	testKit.MustExec("use test")
 	testKit.MustExec("DROP TABLE IF EXISTS `table_30_utf8_undef`")
 	testKit.MustExec("CREATE TABLE `table_30_utf8_undef` (\n  `pk` int(11) NOT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin")
@@ -1335,6 +1337,7 @@ func (s *testRangerSuite) TestIndexRangeYearOverflow(c *C) {
 		"AND table_40_utf8_4.col_int_key_unsigned=\"15698\") AS tmp").
 		Check(testkit.Rows("0"))
 
+	// test index range
 	testKit.MustExec("DROP TABLE IF EXISTS t")
 	testKit.MustExec("CREATE TABLE t (a year(4), key(a))")
 	testKit.MustExec("INSERT INTO t VALUES (1), (70), (99), (0), ('0')")
@@ -1342,4 +1345,117 @@ func (s *testRangerSuite) TestIndexRangeYearOverflow(c *C) {
 	testKit.MustQuery("SELECT * FROM t WHERE a <= 0").Check(testkit.Rows("0"))
 	testKit.MustQuery("SELECT * FROM t WHERE a < 2000").Check(testkit.Rows("0", "1970", "1999"))
 	testKit.MustQuery("SELECT * FROM t WHERE a > -1").Check(testkit.Rows("0", "1970", "1999", "2000", "2001"))
+
+	tests := []struct {
+		indexPos    int
+		exprStr     string
+		accessConds string
+		filterConds string
+		resultStr   string
+	}{
+		{
+			indexPos:    0,
+			exprStr:     `a not in (0, 1, 2)`,
+			accessConds: "[not(in(test.t.a, 0, 1, 2))]",
+			filterConds: "[]",
+			resultStr:   `[(NULL,0) (0,2001) (2002,+inf]]`,
+		},
+		{
+			indexPos:    0,
+			exprStr:     `a not in (-1, 1, 2)`,
+			accessConds: "[not(in(test.t.a, -1, 1, 2))]",
+			filterConds: "[]",
+			resultStr:   `[(NULL,0) [0,2001) (2002,+inf]]`,
+		},
+		{
+			indexPos:    0,
+			exprStr:     `a not in (1, 2, 70)`,
+			accessConds: "[not(in(test.t.a, 1, 2, 70))]",
+			filterConds: "[]",
+			resultStr:   `[(NULL,1970) (1970,2001) (2002,+inf]]`,
+		},
+		{
+			indexPos:    0,
+			exprStr:     `a not in (99)`,
+			accessConds: "[ne(test.t.a, 99)]",
+			filterConds: "[]",
+			resultStr:   `[[-inf,1999) (1999,+inf]]`,
+		},
+		{
+			indexPos:    0,
+			exprStr:     `a not in (1, 2, 15698)`,
+			accessConds: "[not(in(test.t.a, 1, 2, 15698))]",
+			filterConds: "[]",
+			resultStr:   `[(NULL,2001) (2002,2155] (2155,+inf]]`,
+		},
+		{
+			indexPos:    0,
+			exprStr:     `a >= -1000`,
+			accessConds: "[ge(test.t.a, -1000)]",
+			filterConds: "[]",
+			resultStr:   `[[0,+inf]]`,
+		},
+		{
+			indexPos:    0,
+			exprStr:     `a > -1000`,
+			accessConds: "[gt(test.t.a, -1000)]",
+			filterConds: "[]",
+			resultStr:   `[[0,+inf]]`,
+		},
+		{
+			indexPos:    0,
+			exprStr:     `a != 1`,
+			accessConds: "[ne(test.t.a, 1)]",
+			filterConds: "[]",
+			resultStr:   `[[-inf,2001) (2001,+inf]]`,
+		},
+		{
+			indexPos:    0,
+			exprStr:     `a != 2156`,
+			accessConds: "[ne(test.t.a, 2156)]",
+			filterConds: "[]",
+			resultStr:   `[[-inf,2155] (2155,+inf]]`,
+		},
+		{
+			exprStr:     "a < 99 or a > 01",
+			accessConds: "[or(lt(test.t.a, 99), gt(test.t.a, 1))]",
+			filterConds: "[]",
+			resultStr:   "[[-inf,1999) (2001,+inf]]",
+		},
+		{
+			exprStr:     "a >= 70 and a <= 69",
+			accessConds: "[ge(test.t.a, 70) le(test.t.a, 69)]",
+			filterConds: "[]",
+			resultStr:   "[[1970,2069]]",
+		},
+	}
+
+	ctx := context.Background()
+	for _, tt := range tests {
+		sql := "select * from t where " + tt.exprStr
+		sctx := testKit.Se.(sessionctx.Context)
+		stmts, err := session.Parse(sctx, sql)
+		c.Assert(err, IsNil, Commentf("error %v, for expr %s", err, tt.exprStr))
+		c.Assert(stmts, HasLen, 1)
+		is := domain.GetDomain(sctx).InfoSchema()
+		err = plannercore.Preprocess(sctx, stmts[0], is)
+		c.Assert(err, IsNil, Commentf("error %v, for resolve name, expr %s", err, tt.exprStr))
+		p, _, err := plannercore.BuildLogicalPlan(ctx, sctx, stmts[0], is)
+		c.Assert(err, IsNil, Commentf("error %v, for build plan, expr %s", err, tt.exprStr))
+		selection := p.(plannercore.LogicalPlan).Children()[0].(*plannercore.LogicalSelection)
+		tbl := selection.Children()[0].(*plannercore.DataSource).TableInfo()
+		c.Assert(selection, NotNil, Commentf("expr:%v", tt.exprStr))
+		conds := make([]expression.Expression, len(selection.Conditions))
+		for i, cond := range selection.Conditions {
+			conds[i] = expression.PushDownNot(sctx, cond)
+		}
+		cols, lengths := expression.IndexInfo2PrefixCols(tbl.Columns, selection.Schema().Columns, tbl.Indices[tt.indexPos])
+		c.Assert(cols, NotNil)
+		res, err := ranger.DetachCondAndBuildRangeForIndex(sctx, conds, cols, lengths)
+		c.Assert(err, IsNil)
+		c.Assert(fmt.Sprintf("%s", res.AccessConds), Equals, tt.accessConds, Commentf("wrong access conditions for expr: %s", tt.exprStr))
+		c.Assert(fmt.Sprintf("%s", res.RemainedConds), Equals, tt.filterConds, Commentf("wrong filter conditions for expr: %s", tt.exprStr))
+		got := fmt.Sprintf("%v", res.Ranges)
+		c.Assert(got, Equals, tt.resultStr, Commentf("different for expr %s", tt.exprStr))
+	}
 }

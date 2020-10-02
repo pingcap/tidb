@@ -1365,11 +1365,11 @@ func (d *Datum) convertToMysqlYear(sc *stmtctx.StatementContext, target *FieldTy
 	return ret, err
 }
 
-func ConvertDatumToYearFloat(sc *stmtctx.StatementContext, d Datum) (Datum, error) {
-	return d.convertToMysqlYearFloat(sc, types.NewFieldType(mysql.TypeYear))
+func ConvertDatumToFloatYear(sc *stmtctx.StatementContext, d Datum) (Datum, error) {
+	return d.convertToMysqlFloatYear(sc, types.NewFieldType(mysql.TypeYear))
 }
 
-func (d *Datum) convertToMysqlYearFloat(sc *stmtctx.StatementContext, target *FieldType) (Datum, error) {
+func (d *Datum) convertToMysqlFloatYear(sc *stmtctx.StatementContext, target *FieldType) (Datum, error) {
 	var (
 		ret    Datum
 		y      float64
