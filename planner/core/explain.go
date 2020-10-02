@@ -544,6 +544,13 @@ func (p *PhysicalHashJoin) isCartesianJoin() bool {
 				}
 			}
 		}
+		if indexReader, ok := child.(*PhysicalIndexReader); ok {
+			if sel, ok := indexReader.indexPlan.(*PhysicalSelection); ok {
+				if sel.haveEqualCondition() {
+					return false
+				}
+			}
+		}
 	}
 	return true
 }
