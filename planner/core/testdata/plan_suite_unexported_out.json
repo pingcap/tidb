@@ -749,6 +749,11 @@
         "test.t.a",
         "test.t.b",
         "test.t.c"
+      ],
+      [
+        "pow(cast(test.t.a, double BINARY), 2)",
+        "test.t.b",
+        "test.t.c"
       ]
     ]
   },

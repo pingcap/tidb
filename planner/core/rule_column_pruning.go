@@ -137,13 +137,13 @@ func (la *LogicalAggregation) PruneColumns(parentUsedCols []*expression.Column) 
 
 func pruneByItems(old []*util.ByItems) (new []*util.ByItems, parentUsedCols []*expression.Column) {
 	new = make([]*util.ByItems, 0, len(old))
-	seen := make(map[string]expression.Expression, len(old))
+	seen := make(map[string]struct{}, len(old))
 	for _, byItem := range old {
 		hash := string(byItem.Expr.HashCode(nil))
-		possibleDupe, hashMatch := seen[hash]
-		seen[hash] = byItem.Expr
+		_, hashMatch := seen[hash]
+		seen[hash] = struct{}{}
 		cols := expression.ExtractColumns(byItem.Expr)
-		if hashMatch && possibleDupe.Equal(nil, byItem.Expr) {
+		if hashMatch {
 			// do nothing, should be filtered
 		} else if len(cols) == 0 {
 			if !expression.IsRuntimeConstExpr(byItem.Expr) {
