@@ -561,7 +561,7 @@ func (e *HashJoinExec) getNewJoinResult(workerID uint) (bool, *hashjoinWorkerRes
 
 func (e *HashJoinExec) join2Chunk(workerID uint, probeSideChk *chunk.Chunk, hCtx *hashContext, joinResult *hashjoinWorkerResult,
 	selected []bool) (ok bool, _ *hashjoinWorkerResult) {
-	if e.ctx.GetSessionVars().Killed == 1 {
+	if atomic.LoadUint32(&e.ctx.GetSessionVars().Killed) == 1 {
 		joinResult.err = errors.Errorf("%s", "Query has been killed")
 		return false, joinResult
 	}
@@ -606,7 +606,7 @@ func (e *HashJoinExec) join2Chunk(workerID uint, probeSideChk *chunk.Chunk, hCtx
 
 // join2ChunkForOuterHashJoin joins chunks when using the outer to build a hash table (refer to outer hash join)
 func (e *HashJoinExec) join2ChunkForOuterHashJoin(workerID uint, probeSideChk *chunk.Chunk, hCtx *hashContext, joinResult *hashjoinWorkerResult) (ok bool, _ *hashjoinWorkerResult) {
-	if e.ctx.GetSessionVars().Killed == 1 {
+	if atomic.LoadUint32(&e.ctx.GetSessionVars().Killed) == 1 {
 		joinResult.err = errors.Errorf("%s", "Query has been killed")
 		return false, joinResult
 	}
