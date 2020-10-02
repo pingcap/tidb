@@ -854,6 +854,14 @@ func (b *PlanBuilder) buildSelection(ctx context.Context, p LogicalPlan, where a
 	if len(expressions) == 0 {
 		return p, nil
 	}
+
+	// For implicit join, join conditions can be at where clause
+	if joinPlan, ok := p.(*LogicalJoin); ok {
+		eq, _, _, _ := joinPlan.extractOnCondition(expressions, false, false)
+		joinPlan.EqualConditions = eq
+		joinPlan.cartesianJoin = false
+	}
+
 	selection.Conditions = expressions
 	selection.SetChildren(p)
 	return selection, nil
