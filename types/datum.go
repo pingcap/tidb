@@ -1365,6 +1365,7 @@ func (d *Datum) convertToMysqlYear(sc *stmtctx.StatementContext, target *FieldTy
 	return ret, err
 }
 
+// ConvertDatumToFloatYear converts datum into MySQL year with float type
 func ConvertDatumToFloatYear(sc *stmtctx.StatementContext, d Datum) (Datum, error) {
 	return d.convertToMysqlFloatYear(sc, types.NewFieldType(mysql.TypeYear))
 }
