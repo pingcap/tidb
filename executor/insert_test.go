@@ -271,6 +271,11 @@ func (s *testSuite3) TestInsertWrongValueForField(c *C) {
 	tk.MustExec(`create table t1(a bigint);`)
 	_, err := tk.Exec(`insert into t1 values("asfasdfsajhlkhlksdaf");`)
 	c.Assert(terror.ErrorEqual(err, table.ErrTruncatedWrongValueForField), IsTrue)
+
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t (a year);`)
+	_, err = tk.Exec(`insert into t values(2156);`)
+	c.Assert(err.Error(), Equals, `[types:1264]Out of range value for column 'a' at row 1`)
 }
 
 func (s *testSuite3) TestInsertDateTimeWithTimeZone(c *C) {
