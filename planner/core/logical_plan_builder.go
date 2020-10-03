@@ -857,11 +857,11 @@ func (b *PlanBuilder) buildSelection(ctx context.Context, p LogicalPlan, where a
 
 	// For implicit join, conditions can be at where clause
 	if joinPlan, ok := p.(*LogicalJoin); ok {
-		eq, _, _, _ := joinPlan.extractOnCondition(expressions, false, false)
-		joinPlan.EqualConditions = eq
-		if len(joinPlan.EqualConditions) != 0 {
-			joinPlan.cartesianJoin = false
+		if len(joinPlan.EqualConditions) == 0 {
+			eq, _, _, _ := joinPlan.extractOnCondition(expressions, false, false)
+			joinPlan.EqualConditions = eq
 		}
+		joinPlan.cartesianJoin = len(joinPlan.EqualConditions) == 0
 	}
 
 	selection.Conditions = expressions
@@ -3429,6 +3429,7 @@ func (b *PlanBuilder) buildSemiJoin(outerPlan, innerPlan LogicalPlan, onConditio
 			return nil, errors.New("Join hints are conflict, you can only specify one type of join")
 		}
 	}
+	joinPlan.cartesianJoin = len(joinPlan.EqualConditions) == 0
 	return joinPlan, nil
 }
 

@@ -109,6 +109,28 @@ func (p *LogicalTableDual) PredicatePushDown(predicates []expression.Expression)
 	return predicates, p
 }
 
+// conditions must be with `FunName = ast.EQ`, and both args have type `expression.Column`
+func deduplicateEqualConditions(conditions []*expression.ScalarFunction) (result []*expression.ScalarFunction) {
+	var find bool
+	for _, cond := range conditions {
+		find = false
+		arg0 := cond.GetArgs()[0].(*expression.Column)
+		arg1 := cond.GetArgs()[1].(*expression.Column)
+		for _, item := range result {
+			arg2 := item.GetArgs()[0].(*expression.Column)
+			arg3 := item.GetArgs()[1].(*expression.Column)
+			if arg0.OrigName == arg2.OrigName && arg1.OrigName == arg3.OrigName {
+				find = true
+				break
+			}
+		}
+		if !find {
+			result = append(result, cond)
+		}
+	}
+	return result
+}
+
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
 func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret []expression.Expression, retPlan LogicalPlan) {
 	simplifyOuterJoin(p, predicates)
@@ -166,7 +188,7 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 		equalCond, leftPushCond, rightPushCond, otherCond = p.extractOnCondition(tempCond, true, true)
 		p.LeftConditions = nil
 		p.RightConditions = nil
-		p.EqualConditions = equalCond
+		p.EqualConditions = deduplicateEqualConditions(equalCond)
 		p.OtherConditions = otherCond
 		leftCond = leftPushCond
 		rightCond = rightPushCond
