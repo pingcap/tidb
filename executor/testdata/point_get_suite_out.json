@@ -25,7 +25,7 @@
       {
         "SQL": "select * from t1 join t2 on t1.a = t2.b where t1.a = 1",
         "Plan": [
-          "HashJoin_8 1.00 root  CARTESIAN inner join",
+          "HashJoin_8 1.00 root  inner join",
           "├─Point_Get_12(Build) 1.00 root table:t2, index:b(b) ",
           "└─TableReader_11(Probe) 1.00 root  data:TableRangeScan_10",
           "  └─TableRangeScan_10 1.00 cop[tikv] table:t1 range:[1,1], keep order:false"

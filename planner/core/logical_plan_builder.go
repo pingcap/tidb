@@ -3382,6 +3382,7 @@ func (b *PlanBuilder) buildSemiJoin(outerPlan, innerPlan LogicalPlan, onConditio
 	}
 	joinPlan.SetChildren(outerPlan, innerPlan)
 	joinPlan.AttachOnConds(onCondition)
+	joinPlan.cartesianJoin = len(joinPlan.EqualConditions) == 0
 	joinPlan.names = make([]*types.FieldName, outerPlan.Schema().Len(), outerPlan.Schema().Len()+innerPlan.Schema().Len()+1)
 	copy(joinPlan.names, outerPlan.OutputNames())
 	if asScalar {
@@ -3429,7 +3430,6 @@ func (b *PlanBuilder) buildSemiJoin(outerPlan, innerPlan LogicalPlan, onConditio
 			return nil, errors.New("Join hints are conflict, you can only specify one type of join")
 		}
 	}
-	joinPlan.cartesianJoin = len(joinPlan.EqualConditions) == 0
 	return joinPlan, nil
 }
 

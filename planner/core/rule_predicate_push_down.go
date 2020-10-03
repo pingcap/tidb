@@ -218,6 +218,7 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 	addSelection(p, lCh, leftRet, 0)
 	addSelection(p, rCh, rightRet, 1)
 	p.updateEQCond()
+	p.cartesianJoin = len(p.EqualConditions) == 0
 	p.mergeSchema()
 	buildKeyInfo(p)
 	return ret, p.self
@@ -571,6 +572,7 @@ func (p *LogicalJoin) outerJoinPropConst(predicates []expression.Expression) []e
 	nullSensitive := p.JoinType == AntiLeftOuterSemiJoin || p.JoinType == LeftOuterSemiJoin
 	joinConds, predicates = expression.PropConstOverOuterJoin(p.ctx, joinConds, predicates, outerTable.Schema(), innerTable.Schema(), nullSensitive)
 	p.AttachOnConds(joinConds)
+	p.cartesianJoin = len(p.EqualConditions) == 0
 	return predicates
 }
 

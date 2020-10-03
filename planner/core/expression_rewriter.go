@@ -860,6 +860,7 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, v *ast.Patte
 		copy(join.names, er.p.OutputNames())
 		copy(join.names[er.p.Schema().Len():], agg.OutputNames())
 		join.AttachOnConds(expression.SplitCNFItems(checkCondition))
+		join.cartesianJoin = len(join.EqualConditions) == 0
 		// Set join hint for this join.
 		if er.b.TableHints() != nil {
 			join.setPreferredJoinType(er.b.TableHints())

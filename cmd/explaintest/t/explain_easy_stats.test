@@ -14,7 +14,7 @@ set @@session.tidb_hashagg_partial_concurrency = 1;
 set @@session.tidb_hashagg_final_concurrency = 1;
 
 
-explain select * from t3 where exists (select s.a from t3 s having sum(s.a) = t3.a );
+explain select * from t3 where exists (select s.a from t3 s having sum(s.a) = t3.a);
 explain select * from t1;
 explain select * from t1 order by c2;
 explain select * from t2 order by c2;
