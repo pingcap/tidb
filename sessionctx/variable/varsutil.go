@@ -228,7 +228,7 @@ func ValidateGetSystemVar(name string, isGlobal bool) error {
 		return ErrUnknownSystemVar.GenWithStackByArgs(name)
 	}
 	switch sysVar.Scope {
-	case ScopeGlobal, ScopeNone:
+	case ScopeGlobal:
 		if !isGlobal {
 			return ErrIncorrectScope.GenWithStackByArgs(name, "GLOBAL")
 		}
@@ -448,7 +448,7 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string, scope Sc
 		TiDBCheckMb4ValueInUTF8, TiDBEnableSlowLog, TiDBRecordPlanInSlowLog,
 		TiDBScatterRegion, TiDBGeneralLog, TiDBConstraintCheckInPlace,
 		TiDBEnableVectorizedExpression, TiDBFoundInPlanCache, TiDBEnableCollectExecutionInfo,
-		TiDBAllowAutoRandExplicitInsert, TiDBEnableTelemetry:
+		TiDBAllowAutoRandExplicitInsert, TiDBEnableTelemetry, TiDBEnableAmendPessimisticTxn:
 		fallthrough
 	case GeneralLog, AvoidTemporalUpgrade, BigTables, CheckProxyUsers, LogBin,
 		CoreFile, EndMakersInJSON, SQLLogBin, OfflineMode, PseudoSlaveMode, LowPriorityUpdates,

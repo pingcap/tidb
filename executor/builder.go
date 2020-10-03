@@ -2638,15 +2638,15 @@ type mockPhysicalIndexReader struct {
 }
 
 func (builder *dataReaderBuilder) buildExecutorForIndexJoin(ctx context.Context, lookUpContents []*indexJoinLookUpContent,
-	IndexRanges []*ranger.Range, keyOff2IdxOff []int, cwc *plannercore.ColWithCmpFuncManager) (Executor, error) {
-	return builder.buildExecutorForIndexJoinInternal(ctx, builder.Plan, lookUpContents, IndexRanges, keyOff2IdxOff, cwc)
+	IndexRanges []*ranger.Range, keyOff2IdxOff []int, cwc *plannercore.ColWithCmpFuncManager, canReorderHandles bool) (Executor, error) {
+	return builder.buildExecutorForIndexJoinInternal(ctx, builder.Plan, lookUpContents, IndexRanges, keyOff2IdxOff, cwc, canReorderHandles)
 }
 
 func (builder *dataReaderBuilder) buildExecutorForIndexJoinInternal(ctx context.Context, plan plannercore.Plan, lookUpContents []*indexJoinLookUpContent,
-	IndexRanges []*ranger.Range, keyOff2IdxOff []int, cwc *plannercore.ColWithCmpFuncManager) (Executor, error) {
+	IndexRanges []*ranger.Range, keyOff2IdxOff []int, cwc *plannercore.ColWithCmpFuncManager, canReorderHandles bool) (Executor, error) {
 	switch v := plan.(type) {
 	case *plannercore.PhysicalTableReader:
-		return builder.buildTableReaderForIndexJoin(ctx, v, lookUpContents)
+		return builder.buildTableReaderForIndexJoin(ctx, v, lookUpContents, canReorderHandles)
 	case *plannercore.PhysicalIndexReader:
 		return builder.buildIndexReaderForIndexJoin(ctx, v, lookUpContents, IndexRanges, keyOff2IdxOff, cwc)
 	case *plannercore.PhysicalIndexLookUpReader:
@@ -2664,7 +2664,7 @@ func (builder *dataReaderBuilder) buildExecutorForIndexJoinInternal(ctx context.
 	// Need to support physical selection because after PR 16389, TiDB will push down all the expr supported by TiKV or TiFlash
 	// in predicate push down stage, so if there is an expr which only supported by TiFlash, a physical selection will be added after index read
 	case *plannercore.PhysicalSelection:
-		childExec, err := builder.buildExecutorForIndexJoinInternal(ctx, v.Children()[0], lookUpContents, IndexRanges, keyOff2IdxOff, cwc)
+		childExec, err := builder.buildExecutorForIndexJoinInternal(ctx, v.Children()[0], lookUpContents, IndexRanges, keyOff2IdxOff, cwc, canReorderHandles)
 		if err != nil {
 			return nil, err
 		}
@@ -2683,7 +2683,7 @@ func (builder *dataReaderBuilder) buildExecutorForIndexJoinInternal(ctx context.
 func (builder *dataReaderBuilder) buildUnionScanForIndexJoin(ctx context.Context, v *plannercore.PhysicalUnionScan,
 	values []*indexJoinLookUpContent, indexRanges []*ranger.Range, keyOff2IdxOff []int, cwc *plannercore.ColWithCmpFuncManager) (Executor, error) {
 	childBuilder := &dataReaderBuilder{Plan: v.Children()[0], executorBuilder: builder.executorBuilder}
-	reader, err := childBuilder.buildExecutorForIndexJoin(ctx, values, indexRanges, keyOff2IdxOff, cwc)
+	reader, err := childBuilder.buildExecutorForIndexJoin(ctx, values, indexRanges, keyOff2IdxOff, cwc, true)
 	if err != nil {
 		return nil, err
 	}
@@ -2692,7 +2692,7 @@ func (builder *dataReaderBuilder) buildUnionScanForIndexJoin(ctx context.Context
 	return us, err
 }
 
-func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Context, v *plannercore.PhysicalTableReader, lookUpContents []*indexJoinLookUpContent) (Executor, error) {
+func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Context, v *plannercore.PhysicalTableReader, lookUpContents []*indexJoinLookUpContent, canReorderHandles bool) (Executor, error) {
 	e, err := buildNoRangeTableReader(builder.executorBuilder, v)
 	if err != nil {
 		return nil, err
@@ -2712,16 +2712,18 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Conte
 			handles = append(handles, handle)
 		}
 	}
-	return builder.buildTableReaderFromHandles(ctx, e, handles)
+	return builder.buildTableReaderFromHandles(ctx, e, handles, canReorderHandles)
 }
 
-func (builder *dataReaderBuilder) buildTableReaderFromHandles(ctx context.Context, e *TableReaderExecutor, handles []int64) (Executor, error) {
+func (builder *dataReaderBuilder) buildTableReaderFromHandles(ctx context.Context, e *TableReaderExecutor, handles []int64, canReorderHandles bool) (Executor, error) {
 	startTS, err := builder.getSnapshotTS()
 	if err != nil {
 		return nil, err
 	}
 
-	sort.Sort(sortutil.Int64Slice(handles))
+	if canReorderHandles {
+		sort.Sort(sortutil.Int64Slice(handles))
+	}
 	var b distsql.RequestBuilder
 	kvReq, err := b.SetTableHandles(getPhysicalTableID(e.table), handles).
 		SetDAGRequest(e.dagPB).
@@ -2984,7 +2986,8 @@ func (b *executorBuilder) buildSQLBindExec(v *plannercore.SQLBindPlan) Executor 
 	return e
 }
 
-func newRowDecoder(ctx sessionctx.Context, schema *expression.Schema, tbl *model.TableInfo) *rowcodec.ChunkDecoder {
+// NewRowDecoder creates a chunk decoder for new row format row value decode.
+func NewRowDecoder(ctx sessionctx.Context, schema *expression.Schema, tbl *model.TableInfo) *rowcodec.ChunkDecoder {
 	getColInfoByID := func(tbl *model.TableInfo, colID int64) *model.ColumnInfo {
 		for _, col := range tbl.Columns {
 			if col.ID == colID {
@@ -3040,7 +3043,7 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 		b.err = err
 		return nil
 	}
-	decoder := newRowDecoder(b.ctx, plan.Schema(), plan.TblInfo)
+	decoder := NewRowDecoder(b.ctx, plan.Schema(), plan.TblInfo)
 	e := &BatchPointGetExec{
 		baseExecutor: newBaseExecutor(b.ctx, plan.Schema(), plan.ID()),
 		tblInfo:      plan.TblInfo,

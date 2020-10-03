@@ -171,7 +171,7 @@ func (s *testCommitterSuite) TestPrewriteRollback(c *C) {
 	}
 	committer.commitTS, err = s.store.oracle.GetTimestamp(ctx)
 	c.Assert(err, IsNil)
-	err = committer.commitMutations(NewBackofferWithVars(ctx, CommitMaxBackoff, nil), committerMutations{keys: [][]byte{[]byte("a")}})
+	err = committer.commitMutations(NewBackofferWithVars(ctx, CommitMaxBackoff, nil), CommitterMutations{keys: [][]byte{[]byte("a")}})
 	c.Assert(err, IsNil)
 
 	txn3 := s.begin(c)
@@ -877,7 +877,7 @@ func (s *testCommitterSuite) TestPkNotFound(c *C) {
 	// while the secondary lock operation succeeded
 	bo := NewBackofferWithVars(context.Background(), pessimisticLockMaxBackoff, nil)
 	txn1.committer.ttlManager.close()
-	err = txn1.committer.pessimisticRollbackMutations(bo, committerMutations{keys: [][]byte{k1}})
+	err = txn1.committer.pessimisticRollbackMutations(bo, CommitterMutations{keys: [][]byte{k1}})
 	c.Assert(err, IsNil)
 
 	// Txn2 tries to lock the secondary key k2, dead loop if the left secondary lock by txn1 not resolved
@@ -950,12 +950,12 @@ func (s *testCommitterSuite) TestPessimisticLockPrimary(c *C) {
 	c.Assert(ErrLockWaitTimeout.Equal(waitErr), IsTrue)
 }
 
-func (c *twoPhaseCommitter) mutationsOfKeys(keys [][]byte) committerMutations {
-	var res committerMutations
+func (c *twoPhaseCommitter) mutationsOfKeys(keys [][]byte) CommitterMutations {
+	var res CommitterMutations
 	for i := range c.mutations.keys {
 		for _, key := range keys {
 			if bytes.Equal(c.mutations.keys[i], key) {
-				res.push(c.mutations.ops[i], c.mutations.keys[i], c.mutations.values[i], c.mutations.isPessimisticLock[i])
+				res.Push(c.mutations.ops[i], c.mutations.keys[i], c.mutations.values[i], c.mutations.isPessimisticLock[i])
 				break
 			}
 		}
@@ -1101,7 +1101,7 @@ func (s *testCommitterSuite) TestResolveMixed(c *C) {
 	// stop txn ttl manager and remove primary key, make the other keys left behind
 	bo := NewBackofferWithVars(context.Background(), pessimisticLockMaxBackoff, nil)
 	txn1.committer.ttlManager.close()
-	err = txn1.committer.pessimisticRollbackMutations(bo, committerMutations{keys: [][]byte{pk}})
+	err = txn1.committer.pessimisticRollbackMutations(bo, CommitterMutations{keys: [][]byte{pk}})
 	c.Assert(err, IsNil)
 
 	// try to resolve the left optimistic locks, use clean whole region
