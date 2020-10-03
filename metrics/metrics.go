@@ -164,4 +164,5 @@ func RegisterMetrics() {
 	prometheus.MustRegister(TiKVTTLLifeTimeReachCounter)
 	prometheus.MustRegister(TiKVNoAvailableConnectionCounter)
 	prometheus.MustRegister(MaxProcs)
+	prometheus.MustRegister(GOGC)
 }
