@@ -34,7 +34,7 @@
       {
         "SQL": "explain select * from t1 join t2 on (t1.id = t2.id) where t1.id = 5 and t2.a = 7",
         "Result": [
-          "HashJoin_8 1.00 root  CARTESIAN inner join",
+          "HashJoin_8 1.00 root  inner join",
           "├─IndexLookUp_14(Build) 1.00 root partition:p2 ",
           "│ ├─IndexRangeScan_12(Build) 1.00 cop[tikv] table:t2, index:PRIMARY(id, a) range:[5 7,5 7], keep order:false, stats:pseudo",
           "│ └─TableRowIDScan_13(Probe) 1.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
