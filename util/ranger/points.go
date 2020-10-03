@@ -214,8 +214,8 @@ func (r *builder) buildFormBinOp(expr *expression.ScalarFunction) []point {
 	// 1. for string type since we may eval the constant to another collation instead of its own collation.
 	// 2. for year type since 2-digit year value need adjustment, see https://dev.mysql.com/doc/refman/5.6/en/year.html
 	refineValue := func(col *expression.Column, value *types.Datum) (err error) {
-		if col.GetType().EvalType() == types.ETString && value.Kind() == types.KindString {
-			value.SetString(value.GetString(), col.GetType().Collate)
+		if col.RetType.EvalType() == types.ETString && value.Kind() == types.KindString {
+			value.SetString(value.GetString(), col.RetType.Collate)
 		}
 		if col.GetType().Tp == mysql.TypeYear {
 			*value, err = types.ConvertDatumToFloatYear(r.sc, *value)
