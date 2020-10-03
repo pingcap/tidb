@@ -76,6 +76,7 @@ func RegisterMetrics() {
 	prometheus.MustRegister(DDLWorkerHistogram)
 	prometheus.MustRegister(DeploySyncerHistogram)
 	prometheus.MustRegister(DistSQLPartialCountHistogram)
+	prometheus.MustRegister(DistSQLCoprCacheHistogram)
 	prometheus.MustRegister(DistSQLQueryHistogram)
 	prometheus.MustRegister(DistSQLScanKeysHistogram)
 	prometheus.MustRegister(DistSQLScanKeysPartialHistogram)
@@ -153,6 +154,7 @@ func RegisterMetrics() {
 	prometheus.MustRegister(TiKVStatusCounter)
 	prometheus.MustRegister(TiKVBatchWaitDuration)
 	prometheus.MustRegister(TiKVBatchClientUnavailable)
+	prometheus.MustRegister(TiKVBatchClientWaitEstablish)
 	prometheus.MustRegister(TiKVRangeTaskStats)
 	prometheus.MustRegister(TiKVRangeTaskPushDuration)
 	prometheus.MustRegister(HandleSchemaValidate)
@@ -163,4 +165,5 @@ func RegisterMetrics() {
 	prometheus.MustRegister(TiKVTTLLifeTimeReachCounter)
 	prometheus.MustRegister(TiKVNoAvailableConnectionCounter)
 	prometheus.MustRegister(MaxProcs)
+	prometheus.MustRegister(GOGC)
 }

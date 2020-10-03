@@ -1283,6 +1283,38 @@ func (s *seqTestSuite) TestAutoIncIDInRetry(c *C) {
 	tk.MustQuery(`select * from t`).Check(testkit.Rows("1", "2", "3", "4", "5"))
 }
 
+func (s *seqTestSuite) TestPessimisticConflictRetryAutoID(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (id int not null auto_increment unique key, idx int unique key, c int);")
+	concurrency := 2
+	var wg sync.WaitGroup
+	var err []error
+	wg.Add(concurrency)
+	err = make([]error, concurrency)
+	for i := 0; i < concurrency; i++ {
+		tk := testkit.NewTestKitWithInit(c, s.store)
+		tk.MustExec("set tidb_txn_mode = 'pessimistic'")
+		tk.MustExec("set autocommit = 1")
+		go func(idx int) {
+			for i := 0; i < 10; i++ {
+				sql := fmt.Sprintf("insert into t(idx, c) values (1, %[1]d) on duplicate key update c = %[1]d", i)
+				_, e := tk.Exec(sql)
+				if e != nil {
+					err[idx] = e
+					wg.Done()
+					return
+				}
+			}
+			wg.Done()
+		}(i)
+	}
+	wg.Wait()
+	for _, e := range err {
+		c.Assert(e, IsNil)
+	}
+}
+
 func (s *seqTestSuite) TestAutoRandIDRetry(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 
