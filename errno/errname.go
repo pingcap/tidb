@@ -826,6 +826,7 @@ var MySQLErrName = map[uint16]string{
 	ErrGeneratedColumnNonPrior:                               "Generated column can refer only to generated columns defined prior to it.",
 	ErrDependentByGeneratedColumn:                            "Column '%s' has a generated column dependency.",
 	ErrGeneratedColumnRefAutoInc:                             "Generated column '%s' cannot refer to auto-increment column.",
+	ErrExpressionIndexCanNotRefer:                            "Expression index '%s' cannot refer to an auto-increment column.",
 	ErrWarnConflictingHint:                                   "Hint %s is ignored as conflicting/duplicated.",
 	ErrInvalidFieldSize:                                      "Invalid size for column '%s'.",
 	ErrInvalidArgumentForLogarithm:                           "Invalid argument for logarithm",

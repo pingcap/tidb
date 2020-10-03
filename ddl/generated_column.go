@@ -326,7 +326,7 @@ func checkAutoIncrementRef(name string, dependencies map[string]struct{}, tbInfo
 	exists, autoIncrementColumn := infoschema.HasAutoIncrementColumn(tbInfo)
 	if exists {
 		if _, found := dependencies[autoIncrementColumn]; found {
-			return ErrGeneratedColumnRefAutoInc.GenWithStackByArgs(name)
+			return ErrExpressionIndexCanNotRefer.GenWithStackByArgs(name)
 		}
 	}
 	return nil

@@ -4543,7 +4543,7 @@ func buildHiddenColumnInfo(ctx sessionctx.Context, indexPartSpecifications []*as
 		if err = checkDependedColExist(checkDependencies, existCols); err != nil {
 			return nil, errors.Trace(err)
 		}
-		if err = checkAutoIncrementRef("", colInfo.Dependences, tblInfo); err != nil {
+		if err = checkAutoIncrementRef(indexName.O, colInfo.Dependences, tblInfo); err != nil {
 			return nil, errors.Trace(err)
 		}
 		idxPart.Expr = nil
