@@ -93,8 +93,8 @@ func (s *testSuite1) TestExplainCartesianJoin(c *C) {
 		sql             string
 		isCartesianJoin bool
 	}{
-		{"desc select /*+ tidb_hj(t1) */ * from tt t1 inner join tt t2 where t1.a = t2.a and t1.a = 1", false},
-		{"desc select /*+ tidb_hj(t1) */ * from tt t1 inner join tt t2 on t1.a = t2.a and t1.a = 1", false},
+		{"explain select /*+ tidb_hj(t1) */ * from tt t1 inner join tt t2 where t1.a = t2.a and t1.a = 1", false},
+		{"explain select /*+ tidb_hj(t1) */ * from tt t1 inner join tt t2 on t1.a = t2.a and t1.a = 1", false},
 	}
 	for _, ca := range case2 {
 		rows := tk.MustQuery(ca.sql).Rows()
