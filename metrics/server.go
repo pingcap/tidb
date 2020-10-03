@@ -161,6 +161,14 @@ var (
 			Name:      "maxprocs",
 			Help:      "The value of GOMAXPROCS.",
 		})
+
+	GOGC = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "gogc",
+			Help:      "The value of GOGC",
+		})
 )
 
 // ExecuteErrorToLabel converts an execute error to label.
