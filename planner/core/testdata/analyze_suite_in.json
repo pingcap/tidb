@@ -117,6 +117,12 @@
     ]
   },
   {
+    "name": "TestLowSelIndexGreedySearch",
+    "cases": [
+      "explain select max(e) from t where a='T3382' and b='ECO' and c='TOPIC' and d='23660fa1ace9455cb7f3ee831e14a342'"
+    ]
+  },
+  {
     "name": "TestEmptyTable",
     "cases": [
       "select * from t where t.c1 <= 50",
