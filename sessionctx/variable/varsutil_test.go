@@ -545,6 +545,9 @@ func (s *testVarsutilSuite) TestValidate(c *C) {
 		{TiDBIsolationReadEngines, "tikv", false},
 		{TiDBIsolationReadEngines, "TiKV,tiflash", false},
 		{TiDBIsolationReadEngines, "   tikv,   tiflash  ", false},
+		{TiDBEnableAmendPessimisticTxn, "0", false},
+		{TiDBEnableAmendPessimisticTxn, "1", false},
+		{TiDBEnableAmendPessimisticTxn, "256", true},
 	}
 
 	for _, t := range tests {

@@ -102,6 +102,8 @@ const (
 	HintTimeRange = "time_range"
 	// HintIgnorePlanCache is a hint to enforce ignoring plan cache
 	HintIgnorePlanCache = "ignore_plan_cache"
+	// HintLimitToCop is a hint enforce pushing limit or topn to coprocessor.
+	HintLimitToCop = "limit_to_cop"
 )
 
 const (
@@ -1393,6 +1395,9 @@ func (b *PlanBuilder) buildLimit(src LogicalPlan, limit *ast.Limit) (LogicalPlan
 		Offset: offset,
 		Count:  count,
 	}.Init(b.ctx, b.getSelectOffset())
+	if hint := b.TableHints(); hint != nil {
+		li.limitHints = hint.limitHints
+	}
 	li.SetChildren(src)
 	return li, nil
 }
@@ -1818,12 +1823,12 @@ func (g *gbyResolver) Leave(inNode ast.Node) (ast.Node, bool) {
 		}
 		ret := g.fields[pos-1].Expr
 		ret.Accept(extractor)
-		if len(extractor.AggFuncs) != 0 {
-			g.err = ErrWrongGroupField.GenWithStackByArgs(g.fields[pos-1].Text())
-			return inNode, false
-		}
-		if _, ok := ret.(*ast.WindowFuncExpr); ok {
-			g.err = ErrWrongGroupField.GenWithStackByArgs(g.fields[pos-1].Text())
+		if len(extractor.AggFuncs) != 0 || ast.HasWindowFlag(ret) {
+			fieldName := g.fields[pos-1].AsName.String()
+			if fieldName == "" {
+				fieldName = g.fields[pos-1].Text()
+			}
+			g.err = ErrWrongGroupField.GenWithStackByArgs(fieldName)
 			return inNode, false
 		}
 		return ret, true
@@ -2309,6 +2314,7 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, nodeType u
 		tiflashTables, tikvTables                                                                             []hintTableInfo
 		aggHints                                                                                              aggHintInfo
 		timeRangeHint                                                                                         ast.HintTimeRange
+		limitHints                                                                                            limitHintInfo
 	)
 	for _, hint := range hints {
 		// Set warning for the hint that requires the table name.
@@ -2396,6 +2402,8 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, nodeType u
 			})
 		case HintTimeRange:
 			timeRangeHint = hint.HintData.(ast.HintTimeRange)
+		case HintLimitToCop:
+			limitHints.preferLimitToCop = true
 		default:
 			// ignore hints that not implemented
 		}
@@ -2412,6 +2420,7 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, nodeType u
 		aggHints:                    aggHints,
 		indexMergeHintList:          indexMergeHintList,
 		timeRangeHint:               timeRangeHint,
+		limitHints:                  limitHints,
 	})
 }
 
