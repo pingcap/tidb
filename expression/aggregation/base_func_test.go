@@ -50,3 +50,13 @@ func (s *testBaseFuncSuite) TestMaxMin(c *check.C) {
 	c.Assert(err, check.IsNil)
 	c.Assert(mysql.HasNotNullFlag(desc.RetTp.Flag), check.IsFalse)
 }
+
+func (s *testBaseFuncSuite) TestIssue20192(c *check.C) {
+	col := &expression.Column{
+		RetType: types.NewFieldType(mysql.TypeLonglong),
+	}
+	col.RetType.Flag |= mysql.NotNullFlag
+	desc, err := newBaseFuncDesc(s.ctx, ast.AggFuncFirstRow, []expression.Expression{col})
+	c.Assert(err, check.IsNil)
+	c.Assert(mysql.HasNotNullFlag(desc.RetTp.Flag), check.IsFalse)
+}
