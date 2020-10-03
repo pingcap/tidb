@@ -149,8 +149,9 @@ func (s *baseSingleGroupJoinOrderSolver) newCartesianJoin(lChild, rChild Logical
 		offset = -1
 	}
 	join := LogicalJoin{
-		JoinType:  InnerJoin,
-		reordered: true,
+		JoinType:      InnerJoin,
+		reordered:     true,
+		cartesianJoin: true,
 	}.Init(s.ctx, offset)
 	join.SetSchema(expression.MergeSchema(lChild.Schema(), rChild.Schema()))
 	join.SetChildren(lChild, rChild)
@@ -161,6 +162,7 @@ func (s *baseSingleGroupJoinOrderSolver) newJoinWithEdges(lChild, rChild Logical
 	newJoin := s.newCartesianJoin(lChild, rChild)
 	newJoin.EqualConditions = eqEdges
 	newJoin.OtherConditions = otherConds
+	newJoin.cartesianJoin = len(newJoin.EqualConditions) == 0
 	return newJoin
 }
 

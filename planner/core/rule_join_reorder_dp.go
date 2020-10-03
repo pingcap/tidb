@@ -286,5 +286,6 @@ func (s *joinReorderDPSolver) newJoinWithConds(leftPlan, rightPlan LogicalPlan, 
 	join := s.newCartesianJoin(leftPlan, rightPlan)
 	join.EqualConditions = eqConds
 	join.OtherConditions = otherConds
+	join.cartesianJoin = len(join.EqualConditions) == 0
 	return join
 }
