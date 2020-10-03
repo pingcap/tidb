@@ -1221,7 +1221,7 @@ func (e *SelectionExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			}
 			if e.columnIdxsUsedByChild != nil {
 				req.AppendRowByColIdxs(e.inputRow, e.columnIdxsUsedByChild)
-			}else {
+			} else {
 				req.AppendRow(e.inputRow)
 			}
 		}
@@ -1256,7 +1256,7 @@ func (e *SelectionExec) unBatchedNext(ctx context.Context, chk *chunk.Chunk) err
 			if selected {
 				if e.columnIdxsUsedByChild != nil {
 					chk.AppendRowByColIdxs(e.inputRow, e.columnIdxsUsedByChild)
-				}else {
+				} else {
 					chk.AppendRow(e.inputRow)
 				}
 				e.inputRow = e.inputIter.Next()

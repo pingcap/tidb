@@ -1712,10 +1712,10 @@ func BenchmarkSortExec(b *testing.B) {
 
 type selectionCase struct {
 	rows                  int
-	filter 				  []expression.Expression
+	filter                []expression.Expression
 	count                 int
 	batched               bool
-	childUsedSchema       []bool		// parent需要的column
+	childUsedSchema       []bool // parent需要的column
 	usingInlineProjection bool
 	ctx                   sessionctx.Context
 }
@@ -1741,13 +1741,13 @@ func defaultSelectionTestCase() *selectionCase {
 		&expression.Column{Index: 0, RetType: types.NewFieldType(mysql.TypeLonglong)},
 		expression.NewZero())
 	tc := &selectionCase{
-		rows: 300000,
-		count: 100000,
-		batched: true,
-		filter: []expression.Expression{f1},
-		childUsedSchema: []bool{false, true},
+		rows:                  300000,
+		count:                 100000,
+		batched:               true,
+		filter:                []expression.Expression{f1},
+		childUsedSchema:       []bool{false, true},
 		usingInlineProjection: false,
-		ctx: ctx,
+		ctx:                   ctx,
 	}
 	return tc
 }
@@ -1762,9 +1762,9 @@ func benchmarkSelectionExec(b *testing.B, cas *selectionCase) {
 	var exec Executor
 	selection := &SelectionExec{
 		baseExecutor: newBaseExecutor(cas.ctx, dataSource.schema, 4, dataSource),
-		batched: cas.batched,
-		filters: cas.filter,
-		selected: []bool{true},
+		batched:      cas.batched,
+		filters:      cas.filter,
+		selected:     []bool{true},
 		//ByItems:      make([]*util.ByItems, 0, len(cas.orderByIdx)),
 		//schema:       dataSource.schema,
 	}
