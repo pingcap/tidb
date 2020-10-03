@@ -1564,7 +1564,12 @@ type tiflashInstanceInfo struct {
 func (e *TiFlashSystemTableRetriever) initialize(sctx sessionctx.Context, tiflashInstances set.StringSet) error {
 	store := sctx.GetStore()
 	if etcd, ok := store.(tikv.EtcdBackend); ok {
-		if addrs := etcd.EtcdAddrs(); addrs != nil {
+		var addrs []string
+		var err error
+		if addrs, err = etcd.EtcdAddrs(); err != nil {
+			return err
+		}
+		if addrs != nil {
 			domainFromCtx := domain.GetDomain(sctx)
 			if domainFromCtx != nil {
 				cli := domainFromCtx.GetEtcdClient()
@@ -1600,7 +1605,6 @@ func (e *TiFlashSystemTableRetriever) initialize(sctx sessionctx.Context, tiflas
 				e.initialized = true
 				return nil
 			}
-			return errors.Errorf("Etcd client not found")
 		}
 		return errors.Errorf("Etcd addrs not found")
 	}
