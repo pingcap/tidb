@@ -398,7 +398,7 @@ type LogicalSelection struct {
 	Conditions []expression.Expression
 }
 
-//  Schema implements Plan Schema interface.
+// Schema implements Plan Schema interface.
 func (p *LogicalSelection) Schema() *expression.Schema {
 	if p.schema == nil {
 		p.schema = p.children[0].Schema().Clone()
