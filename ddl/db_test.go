@@ -4604,6 +4604,19 @@ func (s *testDBSuite2) TestDDLWithInvalidTableInfo(c *C) {
 	c.Assert(err.Error(), Equals, "[parser:1064]You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 94 near \"then (b / a) end));\" ")
 }
 
+func (s *testDBSuite7) TestCreateTableIngoreCheckConstraint(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use " + s.schemaName)
+	tk.MustExec("drop table if exists table_constraint_check")
+	tk.MustExec("CREATE TABLE admin_user (enable bool, CHECK (enable IN (0, 1)));")
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1064|You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 63 near \");\"The CHECK clause is parsed but ignored by all storage engines. "))
+	tk.MustQuery("show create table admin_user").Check(testutil.RowsWithSep("|", ""+
+		"admin_user CREATE TABLE `admin_user` (\n"+
+		"  `enable` tinyint(1) DEFAULT NULL\n"+
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+}
+
 func (s *testDBSuite6) TestAlterOrderBy(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use " + s.schemaName)
