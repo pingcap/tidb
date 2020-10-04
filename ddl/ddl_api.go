@@ -2173,9 +2173,41 @@ func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTab
 		}
 	}
 
+<<<<<<< HEAD
 	if len(colName) > mysql.MaxColumnNameLength {
 		return ErrTooLongIdent.GenWithStackByArgs(colName)
 	}
+=======
+	tableCharset, tableCollate, err := ResolveCharsetCollation(
+		ast.CharsetOpt{Chs: t.Meta().Charset, Col: t.Meta().Collate},
+		ast.CharsetOpt{Chs: schema.Charset, Col: schema.Collate},
+	)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	// Ignore table constraints now, they will be checked later.
+	// We use length(t.Cols()) as the default offset firstly, we will change the column's offset later.
+	col, _, err = buildColumnAndConstraint(
+		ctx,
+		len(t.Cols()),
+		specNewColumn,
+		nil,
+		tableCharset,
+		tableCollate,
+	)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	originDefVal, err := generateOriginDefaultValue(col.ToInfo())
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	err = col.SetOriginDefaultValue(originDefVal)
+	return col, err
+}
+>>>>>>> 6342fa6a5... ddl: fix corrupted default value for bit type column (#18036)
 
 	// Ignore table constraints now, maybe return error later.
 	// We use length(t.Cols()) as the default offset firstly, we will change the
@@ -2669,12 +2701,13 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 		// a new version TiDB builds the DDL job that doesn't be set the column's offset and state,
 		// and the old version TiDB is the DDL owner, it doesn't get offset and state from the store. Then it will encounter errors.
 		// So here we set offset and state to support the rolling upgrade.
-		Offset:             col.Offset,
-		State:              col.State,
-		OriginDefaultValue: col.OriginDefaultValue,
-		FieldType:          *specNewColumn.Tp,
-		Name:               newColName,
-		Version:            col.Version,
+		Offset:                col.Offset,
+		State:                 col.State,
+		OriginDefaultValue:    col.OriginDefaultValue,
+		OriginDefaultValueBit: col.OriginDefaultValueBit,
+		FieldType:             *specNewColumn.Tp,
+		Name:                  newColName,
+		Version:               col.Version,
 	})
 
 	// TODO: Remove it when all table versions are greater than or equal to TableInfoVersion1.

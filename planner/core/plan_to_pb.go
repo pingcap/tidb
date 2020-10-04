@@ -139,7 +139,16 @@ func (p *PhysicalIndexScan) ToPB(ctx sessionctx.Context) (*tipb.Executor, error)
 // SetPBColumnsDefaultValue sets the default values of tipb.ColumnInfos.
 func SetPBColumnsDefaultValue(ctx sessionctx.Context, pbColumns []*tipb.ColumnInfo, columns []*model.ColumnInfo) error {
 	for i, c := range columns {
+<<<<<<< HEAD
 		if c.OriginDefaultValue == nil {
+=======
+		// For virtual columns, we set their default values to NULL so that TiKV will return NULL properly,
+		// They real values will be compute later.
+		if c.IsGenerated() && !c.GeneratedStored {
+			pbColumns[i].DefaultVal = []byte{codec.NilFlag}
+		}
+		if c.GetOriginDefaultValue() == nil {
+>>>>>>> 6342fa6a5... ddl: fix corrupted default value for bit type column (#18036)
 			continue
 		}
 

@@ -149,6 +149,7 @@ func (h *Handle) insertColStats2KV(physicalID int64, colInfo *model.ColumnInfo) 
 			return
 		}
 		count := req.GetRow(0).GetInt64(0)
+<<<<<<< HEAD
 		value := types.NewDatum(colInfo.OriginDefaultValue)
 		value, err = value.ConvertTo(h.mu.ctx.GetSessionVars().StmtCtx, &colInfo.FieldType)
 		if err != nil {
@@ -157,6 +158,12 @@ func (h *Handle) insertColStats2KV(physicalID int64, colInfo *model.ColumnInfo) 
 		if value.IsNull() {
 			// If the adding column has default value null, all the existing rows have null value on the newly added column.
 			_, err = exec.Execute(ctx, fmt.Sprintf("insert into mysql.stats_histograms (version, table_id, is_index, hist_id, distinct_count, null_count) values (%d, %d, 0, %d, 0, %d)", startTS, physicalID, colInfo.ID, count))
+=======
+		sqls := make([]string, 0, len(colInfos))
+		for _, colInfo := range colInfos {
+			value := types.NewDatum(colInfo.GetOriginDefaultValue())
+			value, err = value.ConvertTo(h.mu.ctx.GetSessionVars().StmtCtx, &colInfo.FieldType)
+>>>>>>> 6342fa6a5... ddl: fix corrupted default value for bit type column (#18036)
 			if err != nil {
 				return
 			}
