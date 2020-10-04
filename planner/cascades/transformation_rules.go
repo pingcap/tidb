@@ -894,6 +894,7 @@ func (r *PushSelDownJoin) OnTransform(old *memo.ExprIter) (newExprs []*memo.Grou
 		tempCond = append(tempCond, join.OtherConditions...)
 		tempCond = append(tempCond, sel.Conditions...)
 		tempCond = expression.ExtractFiltersFromDNFs(sctx, tempCond)
+		join.SetCartesianJoin(tempCond)
 		tempCond = expression.PropagateConstant(sctx, tempCond)
 		// Return table dual when filter is constant false or null.
 		dual := plannercore.Conds2TableDual(join, tempCond)

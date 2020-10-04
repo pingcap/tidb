@@ -732,6 +732,7 @@ func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (Logica
 		}
 		onCondition := expression.SplitCNFItems(onExpr)
 		joinPlan.AttachOnConds(onCondition)
+		joinPlan.cartesianJoin = len(joinPlan.EqualConditions) == 0
 	} else if joinPlan.JoinType == InnerJoin {
 		// If a inner join without "ON" or "USING" clause, it's a cartesian
 		// product over the join tables.

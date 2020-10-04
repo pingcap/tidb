@@ -6775,7 +6775,7 @@ func (s *testIntegrationSuite) TestIssue16029(c *C) {
 	tk.MustExec("CREATE TABLE t1(c0 INT);")
 	tk.MustExec("INSERT INTO t0 VALUES (NULL), (1);")
 	tk.MustExec("INSERT INTO t1 VALUES (0);")
-	tk.MustQuery("SELECT t0.c0 FROM t0 JOIN t1 ON (t0.c0 REGEXP 1) | t1.c0  WHERE BINARY STRCMP(t1.c0, t0.c0);").Check(testkit.Rows("1"))
+	tk.MustQuery("SELECT t0.c0 FROM t0 JOIN t1 ON (t0.c0 REGEXP 1) | t1.c0 WHERE BINARY STRCMP(t1.c0, t0.c0);").Check(testkit.Rows("1"))
 	tk.MustExec("drop table t0;")
 	tk.MustExec("drop table t1;")
 }

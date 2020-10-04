@@ -157,7 +157,7 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 		tempCond = append(tempCond, p.OtherConditions...)
 		tempCond = append(tempCond, predicates...)
 		tempCond = expression.ExtractFiltersFromDNFs(p.ctx, tempCond)
-		p.setCartesianJoin(tempCond)
+		p.SetCartesianJoin(tempCond)
 		tempCond = expression.PropagateConstant(p.ctx, tempCond)
 		// Return table dual when filter is constant false or null.
 		dual := Conds2TableDual(p, tempCond)
@@ -263,12 +263,12 @@ func (p *LogicalJoin) updateEQCond() {
 	}
 }
 
-func (p *LogicalJoin) setCartesianJoin(expressions []expression.Expression) {
+func (p *LogicalJoin) SetCartesianJoin(expressions []expression.Expression) {
 	for _, expr := range expressions {
 		if sf, ok := expr.(*expression.ScalarFunction); ok {
 			_, ok0 := sf.GetArgs()[0].(*expression.Column)
 			_, ok1 := sf.GetArgs()[1].(*expression.Column)
-			if ok0 && ok1 {
+			if sf.FuncName.L == ast.EQ && ok0 && ok1 {
 				p.cartesianJoin = false
 				return
 			}
