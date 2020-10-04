@@ -157,6 +157,7 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 		tempCond = append(tempCond, p.OtherConditions...)
 		tempCond = append(tempCond, predicates...)
 		tempCond = expression.ExtractFiltersFromDNFs(p.ctx, tempCond)
+		p.setCartesianJoin(tempCond)
 		tempCond = expression.PropagateConstant(p.ctx, tempCond)
 		// Return table dual when filter is constant false or null.
 		dual := Conds2TableDual(p, tempCond)
@@ -196,9 +197,6 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 	addSelection(p, lCh, leftRet, 0)
 	addSelection(p, rCh, rightRet, 1)
 	p.updateEQCond()
-	if p.cartesianJoin {
-		p.cartesianJoin = len(p.EqualConditions) == 0
-	}
 	p.mergeSchema()
 	buildKeyInfo(p)
 	return ret, p.self
@@ -258,6 +256,19 @@ func (p *LogicalJoin) updateEQCond() {
 			}
 			eqCond := expression.NewFunctionInternal(p.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), lKey, rKey)
 			p.EqualConditions = append(p.EqualConditions, eqCond.(*expression.ScalarFunction))
+		}
+	}
+}
+
+func (p *LogicalJoin) setCartesianJoin(expressions []expression.Expression) {
+	for _, expr := range expressions {
+		if sf, ok := expr.(*expression.ScalarFunction); ok {
+			_, ok0 := sf.GetArgs()[0].(*expression.Column)
+			_, ok1 := sf.GetArgs()[1].(*expression.Column)
+			if ok0 && ok1 {
+				p.cartesianJoin = false
+				return
+			}
 		}
 	}
 }
