@@ -216,6 +216,7 @@ func (p *LogicalJoin) columnSubstitute(schema *expression.Schema, exprs []expres
 
 		p.EqualConditions[i] = newCond
 	}
+	p.cartesianJoin = len(p.EqualConditions) == 0
 }
 
 // AttachOnConds extracts on conditions for join and set the `EqualConditions`, `LeftConditions`, `RightConditions` and

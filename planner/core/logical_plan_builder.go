@@ -351,6 +351,42 @@ func (p *LogicalJoin) pushDownConstExpr(expr expression.Expression, leftCond []e
 	return leftCond, rightCond
 }
 
+// EqualCondition might be duplicate if it was pushed down to the LogicalJoin node
+func deduplicateConditions(conditions []expression.Expression) (result []expression.Expression) {
+	var find bool
+	for _, cond := range conditions {
+		sf, ok := cond.(*expression.ScalarFunction)
+		if !ok {
+			result = append(result, cond)
+			continue
+		}
+
+		arg0, ok0 := sf.GetArgs()[0].(*expression.Column)
+		arg1, ok1 := sf.GetArgs()[1].(*expression.Column)
+		if !ok0 || !ok1 {
+			result = append(result, cond)
+			continue
+		}
+
+		for _, item := range result {
+			if sf1, ok := item.(*expression.ScalarFunction); ok {
+				arg2, ok2 := sf1.GetArgs()[0].(*expression.Column)
+				arg3, ok3 := sf1.GetArgs()[1].(*expression.Column)
+				if ok2 && ok3 {
+					if sf.FuncName == sf1.FuncName && arg0.OrigName == arg2.OrigName && arg1.OrigName == arg3.OrigName {
+						find = true
+						break
+					}
+				}
+			}
+		}
+		if !find {
+			result = append(result, cond)
+		}
+	}
+	return result
+}
+
 func (p *LogicalJoin) extractOnCondition(conditions []expression.Expression, deriveLeft bool,
 	deriveRight bool) (eqCond []*expression.ScalarFunction, leftCond []expression.Expression,
 	rightCond []expression.Expression, otherCond []expression.Expression) {
@@ -367,6 +403,7 @@ func (p *LogicalJoin) ExtractOnCondition(
 	deriveLeft bool,
 	deriveRight bool) (eqCond []*expression.ScalarFunction, leftCond []expression.Expression,
 	rightCond []expression.Expression, otherCond []expression.Expression) {
+	conditions = deduplicateConditions(conditions)
 	for _, expr := range conditions {
 		binop, ok := expr.(*expression.ScalarFunction)
 		if ok && len(binop.GetArgs()) == 2 {
@@ -3338,7 +3375,9 @@ func (b *PlanBuilder) buildProjUponView(ctx context.Context, dbName model.CIStr,
 // every row from outerPlan and the whole innerPlan.
 func (b *PlanBuilder) buildApplyWithJoinType(outerPlan, innerPlan LogicalPlan, tp JoinType) LogicalPlan {
 	b.optFlag = b.optFlag | flagPredicatePushDown | flagBuildKeyInfo | flagDecorrelate
-	ap := LogicalApply{LogicalJoin: LogicalJoin{JoinType: tp}}.Init(b.ctx, b.getSelectOffset())
+	ap := LogicalApply{LogicalJoin: LogicalJoin{
+		JoinType:      tp,
+		cartesianJoin: true}}.Init(b.ctx, b.getSelectOffset())
 	ap.SetChildren(outerPlan, innerPlan)
 	ap.names = make([]*types.FieldName, outerPlan.Schema().Len()+innerPlan.Schema().Len())
 	copy(ap.names, outerPlan.OutputNames())
