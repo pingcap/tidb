@@ -56,7 +56,7 @@
       {
         "SQL": "explain select * from t2 join t1 on t1.id = t2.id and t2.a = t1.id and t2.id = 12",
         "Result": [
-          "HashJoin_7 1.00 root  CARTESIAN inner join",
+          "HashJoin_7 1.00 root  inner join",
           "├─TableReader_13(Build) 1.00 root partition:p2 data:TableRangeScan_12",
           "│ └─TableRangeScan_12 1.00 cop[tikv] table:t1 range:[12,12], keep order:false, stats:pseudo",
           "└─IndexLookUp_11(Probe) 1.00 root partition:p4 ",

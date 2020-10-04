@@ -218,7 +218,9 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 	addSelection(p, lCh, leftRet, 0)
 	addSelection(p, rCh, rightRet, 1)
 	p.updateEQCond()
-	p.cartesianJoin = len(p.EqualConditions) == 0
+	if p.cartesianJoin {
+		p.cartesianJoin = len(p.EqualConditions) == 0
+	}
 	p.mergeSchema()
 	buildKeyInfo(p)
 	return ret, p.self

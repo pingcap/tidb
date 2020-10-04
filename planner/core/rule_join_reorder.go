@@ -61,6 +61,7 @@ func (s *joinReOrderSolver) optimize(ctx context.Context, p LogicalPlan) (Logica
 // optimizeRecursive recursively collects join groups and applies join reorder algorithm for each group.
 func (s *joinReOrderSolver) optimizeRecursive(ctx sessionctx.Context, p LogicalPlan) (LogicalPlan, error) {
 	var err error
+	var newPlan LogicalPlan
 	curJoinGroup, eqEdges, otherConds := extractJoinGroup(p)
 	if len(curJoinGroup) > 1 {
 		for i := range curJoinGroup {
@@ -78,18 +79,23 @@ func (s *joinReOrderSolver) optimizeRecursive(ctx sessionctx.Context, p LogicalP
 				baseSingleGroupJoinOrderSolver: baseGroupSolver,
 				eqEdges:                        eqEdges,
 			}
-			p, err = groupSolver.solve(curJoinGroup)
+			newPlan, err = groupSolver.solve(curJoinGroup)
 		} else {
 			dpSolver := &joinReorderDPSolver{
 				baseSingleGroupJoinOrderSolver: baseGroupSolver,
 			}
 			dpSolver.newJoin = dpSolver.newJoinWithEdges
-			p, err = dpSolver.solve(curJoinGroup, expression.ScalarFuncs2Exprs(eqEdges))
+			newPlan, err = dpSolver.solve(curJoinGroup, expression.ScalarFuncs2Exprs(eqEdges))
 		}
 		if err != nil {
 			return nil, err
 		}
-		return p, nil
+		newJoin, ok1 := newPlan.(*LogicalJoin)
+		oldJoin, ok2 := p.(*LogicalJoin)
+		if ok1 && ok2 {
+			newJoin.cartesianJoin = oldJoin.cartesianJoin
+		}
+		return newPlan, nil
 	}
 	newChildren := make([]LogicalPlan, 0, len(p.Children()))
 	for _, child := range p.Children() {
@@ -149,9 +155,8 @@ func (s *baseSingleGroupJoinOrderSolver) newCartesianJoin(lChild, rChild Logical
 		offset = -1
 	}
 	join := LogicalJoin{
-		JoinType:      InnerJoin,
-		reordered:     true,
-		cartesianJoin: true,
+		JoinType:  InnerJoin,
+		reordered: true,
 	}.Init(s.ctx, offset)
 	join.SetSchema(expression.MergeSchema(lChild.Schema(), rChild.Schema()))
 	join.SetChildren(lChild, rChild)
