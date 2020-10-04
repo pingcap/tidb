@@ -143,7 +143,7 @@ func (h *Handle) insertColStats2KV(physicalID int64, colInfos []*model.ColumnInf
 		count := req.GetRow(0).GetInt64(0)
 		sqls := make([]string, 0, len(colInfos))
 		for _, colInfo := range colInfos {
-			value := types.NewDatum(colInfo.OriginDefaultValue)
+			value := types.NewDatum(colInfo.GetOriginDefaultValue())
 			value, err = value.ConvertTo(h.mu.ctx.GetSessionVars().StmtCtx, &colInfo.FieldType)
 			if err != nil {
 				return
