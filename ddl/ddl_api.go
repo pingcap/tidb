@@ -353,6 +353,25 @@ func ResolveCharsetCollation(charsetOpts ...ast.CharsetOpt) (string, string, err
 	return chs, coll, nil
 }
 
+// OverwriteCollationWithBinaryFlag is used to handle the case like
+//   CREATE TABLE t (a VARCHAR(255) BINARY) CHARSET utf8 COLLATE utf8_general_ci;
+// The 'BINARY' sets the column collation to *_bin according to the table charset.
+func OverwriteCollationWithBinaryFlag(colDef *ast.ColumnDef, chs, coll string) (newChs string, newColl string) {
+	ignoreBinFlag := colDef.Tp.Charset != "" && (colDef.Tp.Collate != "" || containsColumnOption(colDef, ast.ColumnOptionCollate))
+	if ignoreBinFlag {
+		return chs, coll
+	}
+	needOverwriteBinColl := types.IsString(colDef.Tp.Tp) && mysql.HasBinaryFlag(colDef.Tp.Flag)
+	if needOverwriteBinColl {
+		newColl, err := charset.GetDefaultCollation(chs)
+		if err != nil {
+			return chs, coll
+		}
+		return chs, newColl
+	}
+	return chs, coll
+}
+
 func typesNeedCharset(tp byte) bool {
 	switch tp {
 	case mysql.TypeString, mysql.TypeVarchar, mysql.TypeVarString,
@@ -412,6 +431,7 @@ func buildColumnAndConstraint(
 		ast.CharsetOpt{Chs: chs, Col: coll},
 		ast.CharsetOpt{Chs: tblCharset, Col: tblCollate},
 	)
+	chs, coll = OverwriteCollationWithBinaryFlag(colDef, chs, coll)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
@@ -504,8 +524,12 @@ func isExplicitTimeStamp() bool {
 
 // processColumnFlags is used by columnDefToCol and processColumnOptions. It is intended to unify behaviors on `create/add` and `modify/change` statements. Check tidb#issue#19342.
 func processColumnFlags(col *table.Column) {
-	if col.FieldType.EvalType().IsStringKind() && col.Charset == charset.CharsetBin {
-		col.Flag |= mysql.BinaryFlag
+	if col.FieldType.EvalType().IsStringKind() {
+		if col.Charset == charset.CharsetBin {
+			col.Flag |= mysql.BinaryFlag
+		} else {
+			col.Flag &= ^mysql.BinaryFlag
+		}
 	}
 	if col.Tp == mysql.TypeBit {
 		// For BIT field, it's charset is binary but does not have binary flag.
@@ -3564,6 +3588,7 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 			ast.CharsetOpt{Chs: t.Meta().Charset, Col: t.Meta().Collate},
 			ast.CharsetOpt{Chs: schema.Charset, Col: schema.Collate},
 		)
+		chs, coll = OverwriteCollationWithBinaryFlag(specNewColumn, chs, coll)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
