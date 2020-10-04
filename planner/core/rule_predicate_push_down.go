@@ -263,6 +263,8 @@ func (p *LogicalJoin) updateEQCond() {
 	}
 }
 
+// SetCartesianJoin will update the `cartesianJoin` field, since
+// LogicalJoin's EqualCondition could be changed due to predicates pushdown.
 func (p *LogicalJoin) SetCartesianJoin(expressions []expression.Expression) {
 	for _, expr := range expressions {
 		if sf, ok := expr.(*expression.ScalarFunction); ok {
