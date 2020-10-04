@@ -351,42 +351,6 @@ func (p *LogicalJoin) pushDownConstExpr(expr expression.Expression, leftCond []e
 	return leftCond, rightCond
 }
 
-// EqualCondition might be duplicate if it was pushed down to the LogicalJoin node
-//func deduplicateConditions(conditions []expression.Expression) (result []expression.Expression) {
-//	var find bool
-//	for _, cond := range conditions {
-//		sf, ok := cond.(*expression.ScalarFunction)
-//		if !ok {
-//			result = append(result, cond)
-//			continue
-//		}
-//
-//		arg0, ok0 := sf.GetArgs()[0].(*expression.Column)
-//		arg1, ok1 := sf.GetArgs()[1].(*expression.Column)
-//		if !ok0 || !ok1 {
-//			result = append(result, cond)
-//			continue
-//		}
-//
-//		for _, item := range result {
-//			if sf1, ok := item.(*expression.ScalarFunction); ok {
-//				arg2, ok2 := sf1.GetArgs()[0].(*expression.Column)
-//				arg3, ok3 := sf1.GetArgs()[1].(*expression.Column)
-//				if ok2 && ok3 {
-//					if sf.FuncName == sf1.FuncName && arg0.OrigName == arg2.OrigName && arg1.OrigName == arg3.OrigName {
-//						find = true
-//						break
-//					}
-//				}
-//			}
-//		}
-//		if !find {
-//			result = append(result, cond)
-//		}
-//	}
-//	return result
-//}
-
 func (p *LogicalJoin) extractOnCondition(conditions []expression.Expression, deriveLeft bool,
 	deriveRight bool) (eqCond []*expression.ScalarFunction, leftCond []expression.Expression,
 	rightCond []expression.Expression, otherCond []expression.Expression) {
@@ -892,15 +856,6 @@ func (b *PlanBuilder) buildSelection(ctx context.Context, p LogicalPlan, where a
 	if len(expressions) == 0 {
 		return p, nil
 	}
-
-	// For implicit join, conditions can be at where clause
-	//if joinPlan, ok := p.(*LogicalJoin); ok {
-	//	if len(joinPlan.EqualConditions) == 0 {
-	//		eq, _, _, _ := joinPlan.extractOnCondition(expressions, false, false)
-	//		joinPlan.EqualConditions = eq
-	//	}
-	//	joinPlan.cartesianJoin = len(joinPlan.EqualConditions) == 0
-	//}
 
 	selection.Conditions = expressions
 	selection.SetChildren(p)
