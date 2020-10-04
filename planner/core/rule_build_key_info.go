@@ -93,6 +93,7 @@ func (p *LogicalSelection) checkMaxOneRowCond(unique expression.Expression, cons
 
 // BuildKeyInfo implements LogicalPlan BuildKeyInfo interface.
 func (p *LogicalSelection) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
+	selfSchema.Keys = childSchema[0].Keys
 	p.baseLogicalPlan.BuildKeyInfo(selfSchema, childSchema)
 	for _, cond := range p.Conditions {
 		if sf, ok := cond.(*expression.ScalarFunction); ok && sf.FuncName.L == ast.EQ {

@@ -401,7 +401,7 @@ type LogicalSelection struct {
 // Schema implements Plan Schema interface.
 func (p *LogicalSelection) Schema() *expression.Schema {
 	if p.schema == nil {
-		p.schema = p.children[0].Schema().Clone()
+		return p.children[0].Schema()
 	}
 	return p.schema
 }
