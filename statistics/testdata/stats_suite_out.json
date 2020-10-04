@@ -87,5 +87,24 @@
         "└─IndexRangeScan_5 7.00 cop[tikv] table:t, index:kid(kid, pid) range:[1,1], keep order:false"
       ]
     ]
+  },
+  {
+    "Name": "TestCollationColumnEstimate",
+    "Cases": [
+      [
+        "test t  a 0 0 2 2 \u0000A\u0000A\u0000A \u0000A\u0000A\u0000A",
+        "test t  a 0 1 4 2 \u0000B\u0000B\u0000B \u0000B\u0000B\u0000B"
+      ],
+      [
+        "TableReader_7 2.00 root  data:Selection_6",
+        "└─Selection_6 2.00 cop[tikv]  eq(test.t.a, \"aÄa\")",
+        "  └─TableFullScan_5 4.00 cop[tikv] table:t keep order:false"
+      ],
+      [
+        "TableReader_7 2.00 root  data:Selection_6",
+        "└─Selection_6 2.00 cop[tikv]  gt(test.t.a, \"aÄa\")",
+        "  └─TableFullScan_5 4.00 cop[tikv] table:t keep order:false"
+      ]
+    ]
   }
 ]

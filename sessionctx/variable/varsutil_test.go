@@ -70,6 +70,7 @@ func (s *testVarsutilSuite) TestNewSessionVars(c *C) {
 	c.Assert(vars.HashAggPartialConcurrency, Equals, DefTiDBHashAggPartialConcurrency)
 	c.Assert(vars.HashAggFinalConcurrency, Equals, DefTiDBHashAggFinalConcurrency)
 	c.Assert(vars.WindowConcurrency, Equals, DefTiDBWindowConcurrency)
+	c.Assert(vars.UnionConcurrency, Equals, DefTiDBUnionConcurrency)
 	c.Assert(vars.DistSQLScanConcurrency, Equals, DefDistSQLScanConcurrency)
 	c.Assert(vars.MaxChunkSize, Equals, DefMaxChunkSize)
 	c.Assert(vars.DMLBatchSize, Equals, DefDMLBatchSize)
@@ -544,6 +545,9 @@ func (s *testVarsutilSuite) TestValidate(c *C) {
 		{TiDBIsolationReadEngines, "tikv", false},
 		{TiDBIsolationReadEngines, "TiKV,tiflash", false},
 		{TiDBIsolationReadEngines, "   tikv,   tiflash  ", false},
+		{TiDBEnableAmendPessimisticTxn, "0", false},
+		{TiDBEnableAmendPessimisticTxn, "1", false},
+		{TiDBEnableAmendPessimisticTxn, "256", true},
 	}
 
 	for _, t := range tests {

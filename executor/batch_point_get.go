@@ -19,6 +19,7 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv"
@@ -104,7 +105,7 @@ func (e *BatchPointGetExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 	for !req.IsFull() && e.index < len(e.values) {
 		handle, val := e.handles[e.index], e.values[e.index]
-		err := decodeRowValToChunk(e.base(), e.tblInfo, handle, val, req, e.rowDecoder)
+		err := DecodeRowValToChunk(e.base().ctx, e.schema, e.tblInfo, handle, val, req, e.rowDecoder)
 		if err != nil {
 			return err
 		}
@@ -231,12 +232,21 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 			failpoint.InjectContext(ctx, "batchPointGetRepeatableReadTest-step2", nil)
 		})
 	} else if e.keepOrder {
-		sort.Slice(e.handles, func(i int, j int) bool {
+		less := func(i int, j int) bool {
 			if e.desc {
 				return e.handles[i] > e.handles[j]
 			}
 			return e.handles[i] < e.handles[j]
-		})
+		}
+		if e.tblInfo.PKIsHandle && mysql.HasUnsignedFlag(e.tblInfo.GetPkColInfo().Flag) {
+			less = func(i int, j int) bool {
+				if e.desc {
+					return uint64(e.handles[i]) > uint64(e.handles[j])
+				}
+				return uint64(e.handles[i]) < uint64(e.handles[j])
+			}
+		}
+		sort.Slice(e.handles, less)
 	}
 
 	keys := make([]kv.Key, len(e.handles))

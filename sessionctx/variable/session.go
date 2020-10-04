@@ -637,8 +637,8 @@ type SessionVars struct {
 	// SelectLimit limits the max counts of select statement's output
 	SelectLimit uint64
 
-	// EnableLogDesensitization indicates that whether desensitization when log query.
-	EnableLogDesensitization bool
+	// EnableAmendPessimisticTxn indicates if schema change amend is enabled for pessimistic transactions.
+	EnableAmendPessimisticTxn bool
 }
 
 // PreparedParams contains the parameters of the current prepared statement when executing it.
@@ -730,7 +730,7 @@ func NewSessionVars() *SessionVars {
 		FoundInPlanCache:            DefTiDBFoundInPlanCache,
 		SelectLimit:                 math.MaxUint64,
 		AllowAutoRandExplicitInsert: DefTiDBAllowAutoRandExplicitInsert,
-		EnableLogDesensitization:    DefTiDBLogDesensitization,
+		EnableAmendPessimisticTxn:   DefTiDBEnableAmendPessimisticTxn,
 	}
 	vars.KVVars = kv.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{
@@ -743,6 +743,7 @@ func NewSessionVars() *SessionVars {
 		HashAggPartialConcurrency:  DefTiDBHashAggPartialConcurrency,
 		HashAggFinalConcurrency:    DefTiDBHashAggFinalConcurrency,
 		WindowConcurrency:          DefTiDBWindowConcurrency,
+		UnionConcurrency:           DefTiDBUnionConcurrency,
 	}
 	vars.MemQuota = MemQuota{
 		MemQuotaQuery: config.GetGlobalConfig().MemQuotaQuery,
@@ -1160,6 +1161,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.HashAggFinalConcurrency = tidbOptPositiveInt32(val, DefTiDBHashAggFinalConcurrency)
 	case TiDBWindowConcurrency:
 		s.WindowConcurrency = tidbOptPositiveInt32(val, DefTiDBWindowConcurrency)
+	case TiDBUnionConcurrency:
+		s.UnionConcurrency = tidbOptPositiveInt32(val, DefTiDBUnionConcurrency)
 	case TiDBDistSQLScanConcurrency:
 		s.DistSQLScanConcurrency = tidbOptPositiveInt32(val, DefDistSQLScanConcurrency)
 	case TiDBIndexSerialScanConcurrency:
@@ -1337,12 +1340,14 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 			return errors.Trace(err)
 		}
 		s.SelectLimit = result
-	case TiDBSlowLogMasking, TiDBLogDesensitization:
-		s.EnableLogDesensitization = TiDBOptOn(val)
 	case TiDBEnableCollectExecutionInfo:
 		config.GetGlobalConfig().EnableCollectExecutionInfo = TiDBOptOn(val)
 	case TiDBAllowAutoRandExplicitInsert:
 		s.AllowAutoRandExplicitInsert = TiDBOptOn(val)
+	case TiDBSlowLogMasking, TiDBRedactLog:
+		config.SetRedactLog(TiDBOptOn(val))
+	case TiDBEnableAmendPessimisticTxn:
+		s.EnableAmendPessimisticTxn = TiDBOptOn(val)
 	}
 	s.systems[name] = val
 	return nil
@@ -1459,6 +1464,9 @@ type Concurrency struct {
 
 	// IndexSerialScanConcurrency is the number of concurrent index serial scan worker.
 	IndexSerialScanConcurrency int
+
+	// UnionConcurrency is the number of concurrent union worker.
+	UnionConcurrency int
 }
 
 // MemQuota defines memory quota values.

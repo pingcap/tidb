@@ -26,5 +26,14 @@
 			"create table t1_tmp (a int)",
 			"alter table t1_tmp add column c int"
 		]
+	},
+	{
+		"name": "TestNormalizedPlanForDiffStore",
+		"cases": [
+			"explain select /*+ read_from_storage(tiflash[t1]) */ * from t1",
+			"explain select /*+ read_from_storage(tikv[t1]) */ * from t1",
+			"explain select /*+ read_from_storage(tiflash[t1]) */ a+b from t1 where a+b < 1",
+			"explain select /*+ read_from_storage(tikv[t1]) */ a+b from t1 where a+b < 1"
+		]
 	}
 ]

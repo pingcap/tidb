@@ -1248,12 +1248,12 @@ func (s *testSuiteP2) TestUnion(c *C) {
 	err := tk.ExecToErr("select 1 from (select a from t limit 1 union all select a from t limit 1) tmp")
 	c.Assert(err, NotNil)
 	terr := errors.Cause(err).(*terror.Error)
-	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrWrongUsage))
+	c.Assert(terr.Code(), Equals, errors.ErrCode(mysql.ErrWrongUsage))
 
 	err = tk.ExecToErr("select 1 from (select a from t order by a union all select a from t limit 1) tmp")
 	c.Assert(err, NotNil)
 	terr = errors.Cause(err).(*terror.Error)
-	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrWrongUsage))
+	c.Assert(terr.Code(), Equals, errors.ErrCode(mysql.ErrWrongUsage))
 
 	_, err = tk.Exec("(select a from t order by a) union all select a from t limit 1 union all select a from t limit 1")
 	c.Assert(terror.ErrorEqual(err, plannercore.ErrWrongUsage), IsTrue, Commentf("err %v", err))
@@ -1340,6 +1340,18 @@ func (s *testSuiteP2) TestUnion(c *C) {
 	tk.MustExec("create table t(a int, b decimal(6, 3))")
 	tk.MustExec("insert into t values(1, 1.000)")
 	tk.MustQuery("select count(distinct a), sum(distinct a), avg(distinct a) from (select a from t union all select b from t) tmp;").Check(testkit.Rows("1 1.000 1.0000000"))
+}
+
+func (s *testSuite2) TestUnionLimit(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists union_limit")
+	tk.MustExec("create table union_limit (id int) partition by hash(id) partitions 30")
+	for i := 0; i < 60; i++ {
+		tk.MustExec(fmt.Sprintf("insert into union_limit values (%d)", i))
+	}
+	// Cover the code for worker count limit in the union executor.
+	tk.MustQuery("select * from union_limit limit 10")
 }
 
 func (s *testSuiteP1) TestNeighbouringProj(c *C) {
@@ -1630,23 +1642,23 @@ func (s *testSuiteP1) TestJSON(c *C) {
 	_, err = tk.Exec(`create table test_bad_json(a json default '{}')`)
 	c.Assert(err, NotNil)
 	terr = errors.Cause(err).(*terror.Error)
-	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrBlobCantHaveDefault))
+	c.Assert(terr.Code(), Equals, errors.ErrCode(mysql.ErrBlobCantHaveDefault))
 
 	_, err = tk.Exec(`create table test_bad_json(a blob default 'hello')`)
 	c.Assert(err, NotNil)
 	terr = errors.Cause(err).(*terror.Error)
-	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrBlobCantHaveDefault))
+	c.Assert(terr.Code(), Equals, errors.ErrCode(mysql.ErrBlobCantHaveDefault))
 
 	_, err = tk.Exec(`create table test_bad_json(a text default 'world')`)
 	c.Assert(err, NotNil)
 	terr = errors.Cause(err).(*terror.Error)
-	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrBlobCantHaveDefault))
+	c.Assert(terr.Code(), Equals, errors.ErrCode(mysql.ErrBlobCantHaveDefault))
 
 	// check json fields cannot be used as key.
 	_, err = tk.Exec(`create table test_bad_json(id int, a json, key (a))`)
 	c.Assert(err, NotNil)
 	terr = errors.Cause(err).(*terror.Error)
-	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrJSONUsedAsKey))
+	c.Assert(terr.Code(), Equals, errors.ErrCode(mysql.ErrJSONUsedAsKey))
 
 	// check CAST AS JSON.
 	result = tk.MustQuery(`select CAST('3' AS JSON), CAST('{}' AS JSON), CAST(null AS JSON)`)
@@ -1744,7 +1756,7 @@ func (s *testSuiteP1) TestGeneratedColumnWrite(c *C) {
 		if tt.err != 0 {
 			c.Assert(err, NotNil, Commentf("sql is `%v`", tt.stmt))
 			terr := errors.Cause(err).(*terror.Error)
-			c.Assert(terr.Code(), Equals, terror.ErrCode(tt.err), Commentf("sql is %v", tt.stmt))
+			c.Assert(terr.Code(), Equals, errors.ErrCode(tt.err), Commentf("sql is %v", tt.stmt))
 		} else {
 			c.Assert(err, IsNil)
 		}
@@ -1915,7 +1927,7 @@ func (s *testSuiteP1) TestGeneratedColumnRead(c *C) {
 		if tt.err != 0 {
 			c.Assert(err, NotNil)
 			terr := errors.Cause(err).(*terror.Error)
-			c.Assert(terr.Code(), Equals, terror.ErrCode(tt.err))
+			c.Assert(terr.Code(), Equals, errors.ErrCode(tt.err))
 		} else {
 			c.Assert(err, IsNil)
 		}
@@ -2536,6 +2548,12 @@ func (s *testSuite) TestSimpleDAG(c *C) {
 	tk.MustExec("create table t (id int, c1 datetime);")
 	tk.MustExec("insert into t values (1, '2015-06-07 12:12:12')")
 	tk.MustQuery("select id from t where c1 = '2015-06-07 12:12:12'").Check(testkit.Rows("1"))
+
+	// Test issue 17816
+	tk.MustExec("drop table if exists t0")
+	tk.MustExec("CREATE TABLE t0(c0 INT)")
+	tk.MustExec("INSERT INTO t0 VALUES (100000)")
+	tk.MustQuery("SELECT * FROM t0 WHERE NOT SPACE(t0.c0)").Check(testkit.Rows("100000"))
 }
 
 func (s *testSuite) TestTimestampTimeZone(c *C) {
@@ -2782,9 +2800,9 @@ func (s *testSuite) TestEmptyEnum(c *C) {
 	tk.MustExec("create table t (e enum('Y', 'N'))")
 	tk.MustExec("set sql_mode='STRICT_TRANS_TABLES'")
 	_, err := tk.Exec("insert into t values (0)")
-	c.Assert(terror.ErrorEqual(err, table.ErrTruncatedWrongValueForField), IsTrue, Commentf("err %v", err))
+	c.Assert(terror.ErrorEqual(err, types.ErrTruncated), IsTrue, Commentf("err %v", err))
 	_, err = tk.Exec("insert into t values ('abc')")
-	c.Assert(terror.ErrorEqual(err, table.ErrTruncatedWrongValueForField), IsTrue, Commentf("err %v", err))
+	c.Assert(terror.ErrorEqual(err, types.ErrTruncated), IsTrue, Commentf("err %v", err))
 
 	tk.MustExec("set sql_mode=''")
 	tk.MustExec("insert into t values (0)")
@@ -3149,6 +3167,12 @@ func (s *testSuite) TestBit(c *C) {
 	tk.MustExec("insert into t values ('12345678')")
 	_, err = tk.Exec("insert into t values ('123456789')")
 	c.Assert(err, NotNil)
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (c1 bit(64))")
+	tk.MustExec("insert into t values (0xffffffffffffffff)")
+	tk.MustExec("insert into t values ('12345678')")
+	tk.MustQuery("select * from t where c1").Check(testkit.Rows("\xff\xff\xff\xff\xff\xff\xff\xff", "12345678"))
 }
 
 func (s *testSuite) TestEnum(c *C) {
@@ -3165,6 +3189,10 @@ func (s *testSuite) TestEnum(c *C) {
 	tk.MustExec("insert into t values ()")
 	tk.MustExec("insert into t values (null), ('1')")
 	tk.MustQuery("select c + 1 from t where c = 1").Check(testkit.Rows("2"))
+
+	tk.MustExec("delete from t")
+	tk.MustExec("insert into t values(1), (2), (3)")
+	tk.MustQuery("select * from t where c").Check(testkit.Rows("a", "b", "c"))
 }
 
 func (s *testSuite) TestSet(c *C) {
@@ -3183,6 +3211,10 @@ func (s *testSuite) TestSet(c *C) {
 	tk.MustExec("insert into t values ()")
 	tk.MustExec("insert into t values (null), ('1')")
 	tk.MustQuery("select c + 1 from t where c = 1").Check(testkit.Rows("2"))
+
+	tk.MustExec("delete from t")
+	tk.MustExec("insert into t values(3)")
+	tk.MustQuery("select * from t where c").Check(testkit.Rows("a,b"))
 }
 
 func (s *testSuite) TestSubqueryInValues(c *C) {
@@ -3277,7 +3309,7 @@ func (s *testSuite) TestContainDotColumn(c *C) {
 	tk.MustExec("drop table if exists t3")
 	_, err := tk.Exec("create table t3(s.a char);")
 	terr := errors.Cause(err).(*terror.Error)
-	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrWrongTableName))
+	c.Assert(terr.Code(), Equals, errors.ErrCode(mysql.ErrWrongTableName))
 }
 
 func (s *testSuite) TestCheckIndex(c *C) {
@@ -4195,7 +4227,7 @@ func (s *testSuiteP2) TestSplitRegion(c *C) {
 	_, err := tk.Exec(`split table t index idx1 by ("abcd");`)
 	c.Assert(err, NotNil)
 	terr := errors.Cause(err).(*terror.Error)
-	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.WarnDataTruncated))
+	c.Assert(terr.Code(), Equals, errors.ErrCode(mysql.WarnDataTruncated))
 
 	// Test for split index region.
 	// Check min value is more than max value.
@@ -5921,6 +5953,20 @@ func (s *testSuite) TestSlowQuerySensitiveQuery(c *C) {
 		))
 }
 
+func (s *testClusterTableSuite) TestSlowQueryWithoutSlowLog(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	originCfg := config.GetGlobalConfig()
+	newCfg := *originCfg
+	newCfg.Log.SlowQueryFile = "tidb-slow-not-exist.log"
+	newCfg.Log.SlowThreshold = math.MaxUint64
+	config.StoreGlobalConfig(&newCfg)
+	defer func() {
+		config.StoreGlobalConfig(originCfg)
+	}()
+	tk.MustQuery("select query from information_schema.slow_query").Check(testkit.Rows())
+	tk.MustQuery("select query from information_schema.slow_query where time > '2020-09-15 12:16:39' and time < now()").Check(testkit.Rows())
+}
+
 func (s *testSplitTable) TestKillTableReader(c *C) {
 	var retry = "github.com/pingcap/tidb/store/tikv/mockRetrySendReqToRegion"
 	defer func() {
@@ -5938,11 +5984,26 @@ func (s *testSplitTable) TestKillTableReader(c *C) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		c.Assert(int(errors.Cause(tk.QueryToErr("select * from t")).(*terror.Error).ToSQLError().Code), Equals, int(executor.ErrQueryInterrupted.Code()))
+		c.Assert(int(terror.ToSQLError(errors.Cause(tk.QueryToErr("select * from t")).(*terror.Error)).Code), Equals, int(executor.ErrQueryInterrupted.Code()))
 	}()
 	time.Sleep(1 * time.Second)
 	atomic.StoreUint32(&tk.Se.GetSessionVars().Killed, 1)
 	wg.Wait()
+}
+
+func (s *testSerialSuite1) TestPrevStmtDesensitization(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	oriCfg := config.GetGlobalConfig()
+	defer config.StoreGlobalConfig(oriCfg)
+	newCfg := *oriCfg
+	newCfg.EnableRedactLog = 1
+	config.StoreGlobalConfig(&newCfg)
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int)")
+	tk.MustExec("begin")
+	tk.MustExec("insert into t values (1),(2)")
+	c.Assert(tk.Se.GetSessionVars().PrevStmt.String(), Equals, "insert into t values ( ? ) , ( ? )")
 }
 
 func (s *testSuite) TestIssue19372(c *C) {

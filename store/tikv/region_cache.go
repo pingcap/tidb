@@ -573,6 +573,16 @@ func (c *RegionCache) OnSendFail(bo *Backoffer, ctx *RPCContext, scheduleReload 
 	tikvRegionCacheCounterWithSendFail.Inc()
 	r := c.getCachedRegionWithRLock(ctx.Region)
 	if r != nil {
+		peersNum := len(r.meta.Peers)
+		if len(ctx.Meta.Peers) != peersNum {
+			logutil.Logger(bo.ctx).Info("retry and refresh current ctx after send request fail and up/down stores length changed",
+				zap.Stringer("current", ctx),
+				zap.Bool("needReload", scheduleReload),
+				zap.Reflect("oldPeers", ctx.Meta.Peers),
+				zap.Reflect("newPeers", r.meta.Peers),
+				zap.Error(err))
+			return
+		}
 		rs := r.getStore()
 		if err != nil {
 			storeIdx, s := rs.accessStore(ctx.AccessMode, ctx.AccessIdx)
@@ -685,11 +695,11 @@ func (c *RegionCache) GroupKeysByRegion(bo *Backoffer, keys [][]byte, filter fun
 
 type groupedMutations struct {
 	region    RegionVerID
-	mutations committerMutations
+	mutations CommitterMutations
 }
 
 // GroupSortedMutationsByRegion separates keys into groups by their belonging Regions.
-func (c *RegionCache) GroupSortedMutationsByRegion(bo *Backoffer, m committerMutations) ([]groupedMutations, error) {
+func (c *RegionCache) GroupSortedMutationsByRegion(bo *Backoffer, m CommitterMutations) ([]groupedMutations, error) {
 	var (
 		groups  []groupedMutations
 		lastLoc *KeyLocation
@@ -750,7 +760,7 @@ func (c *RegionCache) LoadRegionsInKeyRange(bo *Backoffer, startKey, endKey []by
 		}
 		regions = append(regions, batchRegions...)
 		endRegion := batchRegions[len(batchRegions)-1]
-		if endRegion.Contains(endKey) {
+		if endRegion.ContainsByEnd(endKey) {
 			break
 		}
 		startKey = endRegion.EndKey()
@@ -1233,7 +1243,7 @@ func (r *Region) GetMeta() *metapb.Region {
 // GetLeaderPeerID returns leader peer ID.
 func (r *Region) GetLeaderPeerID() uint64 {
 	store := r.getStore()
-	if int(store.workTiKVIdx) >= len(r.meta.Peers) {
+	if int(store.workTiKVIdx) >= store.accessStoreNum(TiKvOnly) {
 		return 0
 	}
 	storeIdx, _ := store.accessStore(TiKvOnly, store.workTiKVIdx)
@@ -1243,7 +1253,7 @@ func (r *Region) GetLeaderPeerID() uint64 {
 // GetLeaderStoreID returns the store ID of the leader region.
 func (r *Region) GetLeaderStoreID() uint64 {
 	store := r.getStore()
-	if int(store.workTiKVIdx) >= len(r.meta.Peers) {
+	if int(store.workTiKVIdx) >= store.accessStoreNum(TiKvOnly) {
 		return 0
 	}
 	storeIdx, _ := store.accessStore(TiKvOnly, store.workTiKVIdx)

@@ -1215,8 +1215,10 @@ func buildTableInfo(
 		}
 
 		if constr.Tp == ast.ConstraintFulltext {
-			sc := ctx.GetSessionVars().StmtCtx
-			sc.AppendWarning(ErrTableCantHandleFt)
+			ctx.GetSessionVars().StmtCtx.AppendWarning(ErrTableCantHandleFt.GenWithStackByArgs())
+			continue
+		}
+		if constr.Tp == ast.ConstraintCheck {
 			continue
 		}
 		// build index info.
@@ -2249,7 +2251,7 @@ func (d *ddl) RebaseAutoID(ctx sessionctx.Context, ident ast.Ident, newBase int6
 	// If the user sends SQL `alter table t1 auto_increment = 100` to TiDB-B,
 	// and TiDB-B finds 100 < 30001 but returns without any handling,
 	// then TiDB-A may still allocate 99 for auto_increment column. This doesn't make sense for the user.
-	newBase = mathutil.MaxInt64(newBase, autoID)
+	newBase = int64(mathutil.MaxUint64(uint64(newBase), uint64(autoID)))
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    t.Meta().ID,
@@ -2713,11 +2715,9 @@ func checkModifyCharsetAndCollation(toCharset, toCollate, origCharset, origColla
 	return nil
 }
 
-// checkModifyTypes checks if the 'origin' type can be modified to 'to' type with out the need to
-// change or check existing data in the table.
-// It returns error if the two types has incompatible Charset and Collation, different sign, different
-// digital/string types, or length of new Flen and Decimal is less than origin.
-func checkModifyTypes(origin *types.FieldType, to *types.FieldType, needRewriteCollationData bool) error {
+// CheckModifyTypeCompatible checks whether changes column type to another is compatible considering
+// field length and precision.
+func CheckModifyTypeCompatible(origin *types.FieldType, to *types.FieldType) error {
 	unsupportedMsg := fmt.Sprintf("type %v not match origin %v", to.CompactStr(), origin.CompactStr())
 	switch origin.Tp {
 	case mysql.TypeVarchar, mysql.TypeString, mysql.TypeVarString,
@@ -2734,19 +2734,25 @@ func checkModifyTypes(origin *types.FieldType, to *types.FieldType, needRewriteC
 		default:
 			return errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
 		}
-	case mysql.TypeEnum:
+	case mysql.TypeEnum, mysql.TypeSet:
+		var typeVar string
+		if origin.Tp == mysql.TypeEnum {
+			typeVar = "enum"
+		} else {
+			typeVar = "set"
+		}
 		if origin.Tp != to.Tp {
-			msg := fmt.Sprintf("cannot modify enum type column's to type %s", to.String())
+			msg := fmt.Sprintf("cannot modify %s type column's to type %s", typeVar, to.String())
 			return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
 		}
 		if len(to.Elems) < len(origin.Elems) {
-			msg := fmt.Sprintf("the number of enum column's elements is less than the original: %d", len(origin.Elems))
+			msg := fmt.Sprintf("the number of %s column's elements is less than the original: %d", typeVar, len(origin.Elems))
 			return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
 		}
 		for index, originElem := range origin.Elems {
 			toElem := to.Elems[index]
 			if originElem != toElem {
-				msg := fmt.Sprintf("cannot modify enum column value %s to %s", originElem, toElem)
+				msg := fmt.Sprintf("cannot modify %s column value %s to %s", typeVar, originElem, toElem)
 				return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
 			}
 		}
@@ -2779,8 +2785,19 @@ func checkModifyTypes(origin *types.FieldType, to *types.FieldType, needRewriteC
 		msg := fmt.Sprintf("can't change unsigned integer to signed or vice versa")
 		return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
 	}
+	return nil
+}
 
-	err := checkModifyCharsetAndCollation(to.Charset, to.Collate, origin.Charset, origin.Collate, needRewriteCollationData)
+// checkModifyTypes checks if the 'origin' type can be modified to 'to' type with out the need to
+// change or check existing data in the table.
+// It returns error if the two types has incompatible Charset and Collation, different sign, different
+// digital/string types, or length of new Flen and Decimal is less than origin.
+func checkModifyTypes(origin *types.FieldType, to *types.FieldType, needRewriteCollationData bool) error {
+	err := CheckModifyTypeCompatible(origin, to)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	err = checkModifyCharsetAndCollation(to.Charset, to.Collate, origin.Charset, origin.Collate, needRewriteCollationData)
 	return errors.Trace(err)
 }
 
@@ -2985,6 +3002,10 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 	}
 
 	if err = processColumnOptions(ctx, newCol, specNewColumn.Options); err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	if err = checkColumnValueConstraint(newCol, newCol.Collate); err != nil {
 		return nil, errors.Trace(err)
 	}
 
@@ -4425,6 +4446,33 @@ func (d *ddl) UnlockTables(ctx sessionctx.Context, unlockTables []model.TableLoc
 	if err == nil {
 		ctx.ReleaseAllTableLocks()
 	}
+	err = d.callHookOnChanged(err)
+	return errors.Trace(err)
+}
+
+// CleanDeadTableLock uses to clean dead table locks.
+func (d *ddl) CleanDeadTableLock(unlockTables []model.TableLockTpInfo, se model.SessionInfo) error {
+	if len(unlockTables) == 0 {
+		return nil
+	}
+	arg := &lockTablesArg{
+		UnlockTables: unlockTables,
+		SessionInfo:  se,
+	}
+	job := &model.Job{
+		SchemaID:   unlockTables[0].SchemaID,
+		TableID:    unlockTables[0].TableID,
+		Type:       model.ActionUnlockTable,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{arg},
+	}
+
+	ctx, err := d.sessPool.get()
+	if err != nil {
+		return err
+	}
+	defer d.sessPool.put(ctx)
+	err = d.doDDLJob(ctx, job)
 	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
 }

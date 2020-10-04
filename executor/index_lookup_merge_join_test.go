@@ -65,6 +65,19 @@ func (s *testSuite9) TestIssue18631(c *C) {
 		"1 1 1 1 1 1 1 1"))
 }
 
+func (s *testSuite9) TestIssue20137(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1 (id bigint(20) unsigned, primary key(id))")
+	tk.MustExec("create table t2 (id bigint(20) unsigned)")
+	tk.MustExec("insert into t1 values (8738875760185212610)")
+	tk.MustExec("insert into t1 values (9814441339970117597)")
+	tk.MustExec("insert into t2 values (8738875760185212610)")
+	tk.MustExec("insert into t2 values (9814441339970117597)")
+	tk.MustQuery("select /*+ INL_MERGE_JOIN(t1, t2) */ * from t2 left join t1 on t1.id = t2.id order by t1.id").Check(
+		testkit.Rows("8738875760185212610 8738875760185212610", "9814441339970117597 9814441339970117597"))
+}
+
 func (s *testSuiteAgg) TestIndexJoinOnSinglePartitionTable(c *C) {
 	// For issue 19145
 	tk := testkit.NewTestKitWithInit(c, s.store)
