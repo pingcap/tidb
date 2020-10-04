@@ -19,14 +19,18 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/errno"
+	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
 )
@@ -313,6 +317,11 @@ func (s *testSuite3) TestInsertWrongValueForField(c *C) {
 	tk.MustExec(`insert into t1 values('我');`)
 	tk.MustExec(`alter table t1 add column b char(10) charset ascii as ((a));`)
 	tk.MustQuery(`select * from t1;`).Check(testkit.Rows(`我 `))
+
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t (a year);`)
+	_, err = tk.Exec(`insert into t values(2156);`)
+	c.Assert(err.Error(), Equals, `[types:1264]Out of range value for column 'a' at row 1`)
 }
 
 func (s *testSuite3) TestInsertDateTimeWithTimeZone(c *C) {
@@ -933,6 +942,17 @@ func (s *testSuite3) TestDMLCast(c *C) {
 	tk.MustQuery(`select * from t`).Check(testkit.Rows())
 }
 
+func (s *testSuite3) TestInsertFloatOverflow(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec("create table t(col1 FLOAT, col2 FLOAT(10,2), col3 DOUBLE, col4 DOUBLE(10,2), col5 DECIMAL, col6 DECIMAL(10,2));")
+	_, err := tk.Exec("insert into t values (-3.402823466E+68, -34028234.6611, -1.7976931348623157E+308, -17976921.34, -9999999999, -99999999.99);")
+	c.Assert(err.Error(), Equals, "[types:1264]Out of range value for column 'col1' at row 1")
+	_, err = tk.Exec("insert into t values (-34028234.6611, -3.402823466E+68, -1.7976931348623157E+308, -17976921.34, -9999999999, -99999999.99);")
+	c.Assert(err.Error(), Equals, "[types:1264]Out of range value for column 'col2' at row 1")
+}
+
 // There is a potential issue in MySQL: when the value of auto_increment_offset is greater
 // than that of auto_increment_increment, the value of auto_increment_offset is ignored
 // (https://dev.mysql.com/doc/refman/8.0/en/replication-options-master.html#sysvar_auto_increment_increment),
@@ -1311,6 +1331,70 @@ func (s *testSuite10) TestClusterPrimaryKeyForIndexScan(c *C) {
 		cnt++
 	}
 	c.Assert(cnt, Equals, 15)
+}
+
+func (s *testSuite10) TestInsertRuntimeStat(c *C) {
+	stats := &executor.InsertRuntimeStat{
+		BasicRuntimeStats:    &execdetails.BasicRuntimeStats{},
+		SnapshotRuntimeStats: nil,
+		CheckInsertTime:      2 * time.Second,
+		Prefetch:             1 * time.Second,
+	}
+	stats.BasicRuntimeStats.Record(5*time.Second, 1)
+	c.Assert(stats.String(), Equals, "prepare:3s, check_insert:{total_time:2s, mem_insert_time:1s, prefetch:1s}")
+	c.Assert(stats.String(), Equals, stats.Clone().String())
+	stats.Merge(stats.Clone())
+	c.Assert(stats.String(), Equals, "prepare:6s, check_insert:{total_time:4s, mem_insert_time:2s, prefetch:2s}")
+}
+
+func (s *testSerialSuite) TestDuplicateEntryMessage(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	for _, enable := range []int{0, 1} {
+		tk.MustExec(fmt.Sprintf("set session tidb_enable_clustered_index=%d;", enable))
+		tk.MustExec("drop table if exists t;")
+		tk.MustExec("create table t(a int, b char(10), unique key(b)) collate utf8mb4_general_ci;")
+		tk.MustExec("insert into t value (34, '12Ak');")
+		tk.MustGetErrMsg("insert into t value (34, '12Ak');", "[kv:1062]Duplicate entry '12Ak' for key 'b'")
+
+		tk.MustExec("begin optimistic;")
+		tk.MustExec("insert into t value (34, '12ak');")
+		tk.MustExec("delete from t where b = '12ak';")
+		tk.MustGetErrMsg("commit;", "previous statement: delete from t where b = '12ak';: [kv:1062]Duplicate entry '12ak' for key 'b'")
+
+		tk.MustExec("drop table if exists t;")
+		tk.MustExec("create table t (a datetime primary key);")
+		tk.MustExec("insert into t values ('2020-01-01');")
+		tk.MustGetErrMsg("insert into t values ('2020-01-01');", "[kv:1062]Duplicate entry '2020-01-01 00:00:00' for key 'PRIMARY'")
+
+		tk.MustExec("begin optimistic;")
+		tk.MustExec("insert into t values ('2020-01-01');")
+		tk.MustExec("delete from t where a = '2020-01-01';")
+		tk.MustGetErrMsg("commit;", "previous statement: delete from t where a = '2020-01-01';: [kv:1062]Duplicate entry '2020-01-01 00:00:00' for key 'PRIMARY'")
+
+		tk.MustExec("drop table if exists t;")
+		tk.MustExec("create table t (a int primary key );")
+		tk.MustExec("insert into t value (1);")
+		tk.MustGetErrMsg("insert into t value (1);", "[kv:1062]Duplicate entry '1' for key 'PRIMARY'")
+
+		tk.MustExec("drop table if exists t;")
+		tk.MustExec("create table t (a datetime unique);")
+		tk.MustExec("insert into t values ('2020-01-01');")
+		tk.MustGetErrMsg("insert into t values ('2020-01-01');", "[kv:1062]Duplicate entry '2020-01-01 00:00:00' for key 'a'")
+
+		tk.MustExec("drop table if exists t;")
+		tk.MustExec("create table t (a datetime, b int, c varchar(10), primary key (a, b, c)) collate utf8mb4_general_ci;")
+		tk.MustExec("insert into t values ('2020-01-01', 1, 'aSDd');")
+		tk.MustGetErrMsg("insert into t values ('2020-01-01', 1, 'ASDD');", "[kv:1062]Duplicate entry '2020-01-01 00:00:00-1-ASDD' for key 'PRIMARY'")
+
+		tk.MustExec("drop table if exists t;")
+		tk.MustExec("create table t (a datetime, b int, c varchar(10), unique key (a, b, c)) collate utf8mb4_general_ci;")
+		tk.MustExec("insert into t values ('2020-01-01', 1, 'aSDd');")
+		tk.MustGetErrMsg("insert into t values ('2020-01-01', 1, 'ASDD');", "[kv:1062]Duplicate entry '2020-01-01 00:00:00-1-ASDD' for key 'a'")
+	}
 }
 
 func combination(items []string) func() []string {

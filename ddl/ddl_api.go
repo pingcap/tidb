@@ -30,11 +30,13 @@ import (
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/format"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
 	field_types "github.com/pingcap/parser/types"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/placement"
@@ -351,6 +353,25 @@ func ResolveCharsetCollation(charsetOpts ...ast.CharsetOpt) (string, string, err
 	return chs, coll, nil
 }
 
+// OverwriteCollationWithBinaryFlag is used to handle the case like
+//   CREATE TABLE t (a VARCHAR(255) BINARY) CHARSET utf8 COLLATE utf8_general_ci;
+// The 'BINARY' sets the column collation to *_bin according to the table charset.
+func OverwriteCollationWithBinaryFlag(colDef *ast.ColumnDef, chs, coll string) (newChs string, newColl string) {
+	ignoreBinFlag := colDef.Tp.Charset != "" && (colDef.Tp.Collate != "" || containsColumnOption(colDef, ast.ColumnOptionCollate))
+	if ignoreBinFlag {
+		return chs, coll
+	}
+	needOverwriteBinColl := types.IsString(colDef.Tp.Tp) && mysql.HasBinaryFlag(colDef.Tp.Flag)
+	if needOverwriteBinColl {
+		newColl, err := charset.GetDefaultCollation(chs)
+		if err != nil {
+			return chs, coll
+		}
+		return chs, newColl
+	}
+	return chs, coll
+}
+
 func typesNeedCharset(tp byte) bool {
 	switch tp {
 	case mysql.TypeString, mysql.TypeVarchar, mysql.TypeVarString,
@@ -410,6 +431,7 @@ func buildColumnAndConstraint(
 		ast.CharsetOpt{Chs: chs, Col: coll},
 		ast.CharsetOpt{Chs: tblCharset, Col: tblCollate},
 	)
+	chs, coll = OverwriteCollationWithBinaryFlag(colDef, chs, coll)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
@@ -502,8 +524,12 @@ func isExplicitTimeStamp() bool {
 
 // processColumnFlags is used by columnDefToCol and processColumnOptions. It is intended to unify behaviors on `create/add` and `modify/change` statements. Check tidb#issue#19342.
 func processColumnFlags(col *table.Column) {
-	if col.FieldType.EvalType().IsStringKind() && col.Charset == charset.CharsetBin {
-		col.Flag |= mysql.BinaryFlag
+	if col.FieldType.EvalType().IsStringKind() {
+		if col.Charset == charset.CharsetBin {
+			col.Flag |= mysql.BinaryFlag
+		} else {
+			col.Flag &= ^mysql.BinaryFlag
+		}
 	}
 	if col.Tp == mysql.TypeBit {
 		// For BIT field, it's charset is binary but does not have binary flag.
@@ -624,9 +650,9 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 					col.FieldType.Collate = v.StrValue
 				}
 			case ast.ColumnOptionFulltext:
-				ctx.GetSessionVars().StmtCtx.AppendWarning(ErrTableCantHandleFt)
+				ctx.GetSessionVars().StmtCtx.AppendWarning(ErrTableCantHandleFt.GenWithStackByArgs())
 			case ast.ColumnOptionCheck:
-				ctx.GetSessionVars().StmtCtx.AppendWarning(ErrUnsupportedConstraintCheck.GenWithStackByArgs("Column check"))
+				ctx.GetSessionVars().StmtCtx.AppendWarning(ErrUnsupportedConstraintCheck.GenWithStackByArgs("CONSTRAINT CHECK"))
 			}
 		}
 	}
@@ -982,7 +1008,7 @@ func checkGeneratedColumn(colDefs []*ast.ColumnDef) error {
 	for i, colDef := range colDefs {
 		for _, option := range colDef.Options {
 			if option.Tp == ast.ColumnOptionGenerated {
-				if err := checkIllegalFn4GeneratedColumn(colDef.Name.Name.L, option.Expr); err != nil {
+				if err := checkIllegalFn4Generated(colDef.Name.Name.L, typeColumn, option.Expr); err != nil {
 					return errors.Trace(err)
 				}
 			}
@@ -1361,8 +1387,11 @@ func buildTableInfo(
 		}
 
 		if constr.Tp == ast.ConstraintFulltext {
-			sc := ctx.GetSessionVars().StmtCtx
-			sc.AppendWarning(ErrTableCantHandleFt)
+			ctx.GetSessionVars().StmtCtx.AppendWarning(ErrTableCantHandleFt.GenWithStackByArgs())
+			continue
+		}
+		if constr.Tp == ast.ConstraintCheck {
+			ctx.GetSessionVars().StmtCtx.AppendWarning(ErrUnsupportedConstraintCheck.GenWithStackByArgs("CONSTRAINT CHECK"))
 			continue
 		}
 		// build index info.
@@ -1893,6 +1922,9 @@ func checkPartitionByHash(ctx sessionctx.Context, tbInfo *model.TableInfo, s *as
 
 // checkPartitionByRange checks validity of a "BY RANGE" partition.
 func checkPartitionByRange(ctx sessionctx.Context, tbInfo *model.TableInfo, s *ast.CreateTableStmt) error {
+	failpoint.Inject("CheckPartitionByRangeErr", func() {
+		panic("Out Of Memory Quota!")
+	})
 	pi := tbInfo.Partition
 	if err := checkPartitionNameUnique(pi); err != nil {
 		return err
@@ -2549,7 +2581,7 @@ func checkAndCreateNewColumn(ctx sessionctx.Context, ti ast.Ident, schema *model
 	// columns occurring later in a table, but we don't handle the col offset.
 	for _, option := range specNewColumn.Options {
 		if option.Tp == ast.ColumnOptionGenerated {
-			if err := checkIllegalFn4GeneratedColumn(specNewColumn.Name.Name.L, option.Expr); err != nil {
+			if err := checkIllegalFn4Generated(specNewColumn.Name.Name.L, typeColumn, option.Expr); err != nil {
 				return nil, errors.Trace(err)
 			}
 
@@ -2755,11 +2787,11 @@ func (d *ddl) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, spec *
 
 	// partInfo contains only the new added partition, we have to combine it with the
 	// old partitions to check all partitions is strictly increasing.
+	clonedMeta := meta.Clone()
 	tmp := *partInfo
 	tmp.Definitions = append(pi.Definitions, tmp.Definitions...)
-	meta.Partition = &tmp
-	err = checkPartitionByRange(ctx, meta, nil)
-	meta.Partition = pi
+	clonedMeta.Partition = &tmp
+	err = checkPartitionByRange(ctx, clonedMeta, nil)
 	if err != nil {
 		if ErrSameNamePartition.Equal(err) && spec.IfNotExists {
 			ctx.GetSessionVars().StmtCtx.AppendNote(err)
@@ -3301,9 +3333,12 @@ func CheckModifyTypeCompatible(origin *types.FieldType, to *types.FieldType) (al
 		if origin.Tp != to.Tp {
 			return "", errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
 		}
-		// The root cause is modifying decimal precision needs to rewrite binary representation of that decimal.
-		if to.Flen != origin.Flen || to.Decimal != origin.Decimal {
-			return "", errUnsupportedModifyColumn.GenWithStackByArgs("can't change decimal column precision")
+		// Floating-point and fixed-point types also can be UNSIGNED. As with integer types, this attribute prevents
+		// negative values from being stored in the column. Unlike the integer types, the upper range of column values
+		// remains the same.
+		if to.Flen != origin.Flen || to.Decimal != origin.Decimal || mysql.HasUnsignedFlag(to.Flag) != mysql.HasUnsignedFlag(origin.Flag) {
+			msg := fmt.Sprintf("decimal change from decimal(%d, %d) to decimal(%d, %d)", origin.Flen, origin.Decimal, to.Flen, to.Decimal)
+			return msg, errUnsupportedModifyColumn.GenWithStackByArgs(msg)
 		}
 	default:
 		if origin.Tp != to.Tp {
@@ -3335,9 +3370,9 @@ func CheckModifyTypeCompatible(origin *types.FieldType, to *types.FieldType) (al
 	return "", nil
 }
 
-// checkModifyTypes checks if the 'origin' type can be modified to 'to' type with out the need to
+// checkModifyTypes checks if the 'origin' type can be modified to 'to' type without the need to
 // change or check existing data in the table.
-// It returns error if the two types has incompatible Charset and Collation, different sign, different
+// It returns error if the two types has incompatible charset and collation, different sign, different
 // digital/string types, or length of new Flen and Decimal is less than origin.
 func checkModifyTypes(ctx sessionctx.Context, origin *types.FieldType, to *types.FieldType, needRewriteCollationData bool) error {
 	changeColumnValueMsg, err := CheckModifyTypeCompatible(origin, to)
@@ -3553,6 +3588,7 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 			ast.CharsetOpt{Chs: t.Meta().Charset, Col: t.Meta().Collate},
 			ast.CharsetOpt{Chs: schema.Charset, Col: schema.Collate},
 		)
+		chs, coll = OverwriteCollationWithBinaryFlag(specNewColumn, chs, coll)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -3638,7 +3674,12 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 		SchemaName: schema.Name.L,
 		Type:       model.ActionModifyColumn,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{&newCol, originalColName, spec.Position, modifyColumnTp, newAutoRandBits},
+		ReorgMeta: &model.DDLReorgMeta{
+			SQLMode:       ctx.GetSessionVars().SQLMode,
+			Warnings:      make(map[errors.ErrorID]*terror.Error),
+			WarningsCount: make(map[errors.ErrorID]int64),
+		},
+		Args: []interface{}{&newCol, originalColName, spec.Position, modifyColumnTp, newAutoRandBits},
 	}
 	return job, nil
 }
@@ -3811,7 +3852,12 @@ func (d *ddl) RenameColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.Al
 		SchemaName: schema.Name.L,
 		Type:       model.ActionModifyColumn,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{&newCol, oldColName, spec.Position, 0},
+		ReorgMeta: &model.DDLReorgMeta{
+			SQLMode:       ctx.GetSessionVars().SQLMode,
+			Warnings:      make(map[errors.ErrorID]*terror.Error),
+			WarningsCount: make(map[errors.ErrorID]int64),
+		},
+		Args: []interface{}{&newCol, oldColName, spec.Position, 0},
 	}
 	err = d.doDDLJob(ctx, job)
 	err = d.callHookOnChanged(err)
@@ -4449,8 +4495,13 @@ func (d *ddl) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexName m
 		SchemaName: schema.Name.L,
 		Type:       model.ActionAddPrimaryKey,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{unique, indexName, indexPartSpecifications, indexOption, sqlMode, nil, global},
-		Priority:   ctx.GetSessionVars().DDLReorgPriority,
+		ReorgMeta: &model.DDLReorgMeta{
+			SQLMode:       ctx.GetSessionVars().SQLMode,
+			Warnings:      make(map[errors.ErrorID]*terror.Error),
+			WarningsCount: make(map[errors.ErrorID]int64),
+		},
+		Args:     []interface{}{unique, indexName, indexPartSpecifications, indexOption, sqlMode, nil, global},
+		Priority: ctx.GetSessionVars().DDLReorgPriority,
 	}
 
 	err = d.doDDLJob(ctx, job)
@@ -4478,7 +4529,7 @@ func buildHiddenColumnInfo(ctx sessionctx.Context, indexPartSpecifications []*as
 			return nil, ErrTooLongIdent.GenWithStackByArgs("hidden column")
 		}
 		// TODO: refine the error message.
-		if err := checkIllegalFn4GeneratedColumn("expression index", idxPart.Expr); err != nil {
+		if err := checkIllegalFn4Generated(indexName.L, typeIndex, idxPart.Expr); err != nil {
 			return nil, errors.Trace(err)
 		}
 
@@ -4613,8 +4664,13 @@ func (d *ddl) CreateIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 		SchemaName: schema.Name.L,
 		Type:       model.ActionAddIndex,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{unique, indexName, indexPartSpecifications, indexOption, hiddenCols, global},
-		Priority:   ctx.GetSessionVars().DDLReorgPriority,
+		ReorgMeta: &model.DDLReorgMeta{
+			SQLMode:       ctx.GetSessionVars().SQLMode,
+			Warnings:      make(map[errors.ErrorID]*terror.Error),
+			WarningsCount: make(map[errors.ErrorID]int64),
+		},
+		Args:     []interface{}{unique, indexName, indexPartSpecifications, indexOption, hiddenCols, global},
+		Priority: ctx.GetSessionVars().DDLReorgPriority,
 	}
 
 	err = d.doDDLJob(ctx, job)
@@ -5321,16 +5377,15 @@ func (d *ddl) AlterIndexVisibility(ctx sessionctx.Context, ident ast.Ident, inde
 	return errors.Trace(err)
 }
 
-func buildPlacementSpecReplicasAndConstraint(rule *placement.RuleOp, replicas uint64, cnstr string) ([]*placement.RuleOp, error) {
+func buildPlacementSpecReplicasAndConstraint(replicas uint64, cnstr string) ([]*placement.Rule, error) {
 	var err error
 	cnstr = strings.TrimSpace(cnstr)
-	rules := make([]*placement.RuleOp, 0, 1)
+	rules := make([]*placement.Rule, 0, 1)
 	if len(cnstr) > 0 && cnstr[0] == '[' {
 		// can not emit REPLICAS with an array label
 		if replicas == 0 {
 			return rules, errors.Errorf("array CONSTRAINTS should be with a positive REPLICAS")
 		}
-		rule.Count = int(replicas)
 
 		constraints := []string{}
 
@@ -5339,12 +5394,15 @@ func buildPlacementSpecReplicasAndConstraint(rule *placement.RuleOp, replicas ui
 			return rules, err
 		}
 
-		rule.LabelConstraints, err = placement.CheckLabelConstraints(constraints)
+		labelConstraints, err := placement.CheckLabelConstraints(constraints)
 		if err != nil {
 			return rules, err
 		}
 
-		rules = append(rules, rule)
+		rules = append(rules, &placement.Rule{
+			Count:            int(replicas),
+			LabelConstraints: labelConstraints,
+		})
 	} else if len(cnstr) > 0 && cnstr[0] == '{' {
 		constraints := map[string]int{}
 		err = json.Unmarshal([]byte(cnstr), &constraints)
@@ -5354,7 +5412,6 @@ func buildPlacementSpecReplicasAndConstraint(rule *placement.RuleOp, replicas ui
 
 		ruleCnt := int(replicas)
 		for labels, cnt := range constraints {
-			newRule := rule.Clone()
 			if cnt <= 0 {
 				err = errors.Errorf("count should be positive, but got %d", cnt)
 				break
@@ -5367,18 +5424,20 @@ func buildPlacementSpecReplicasAndConstraint(rule *placement.RuleOp, replicas ui
 					break
 				}
 			}
-			newRule.Count = cnt
 
-			newRule.LabelConstraints, err = placement.CheckLabelConstraints(strings.Split(strings.TrimSpace(labels), ","))
+			labelConstraints, err := placement.CheckLabelConstraints(strings.Split(strings.TrimSpace(labels), ","))
 			if err != nil {
 				break
 			}
-			rules = append(rules, newRule)
+			rules = append(rules, &placement.Rule{
+				Count:            cnt,
+				LabelConstraints: labelConstraints,
+			})
 		}
-		rule.Count = ruleCnt
-
-		if rule.Count > 0 {
-			rules = append(rules, rule)
+		if ruleCnt > 0 {
+			rules = append(rules, &placement.Rule{
+				Count: ruleCnt,
+			})
 		}
 	} else {
 		err = errors.Errorf("constraint should be a JSON array or object, but got '%s'", cnstr)
@@ -5386,89 +5445,70 @@ func buildPlacementSpecReplicasAndConstraint(rule *placement.RuleOp, replicas ui
 	return rules, err
 }
 
-func buildPlacementSpecs(specs []*ast.PlacementSpec) ([]*placement.RuleOp, error) {
-	rules := make([]*placement.RuleOp, 0, len(specs))
-
+func buildPlacementSpecs(bundle *placement.Bundle, specs []*ast.PlacementSpec) (*placement.Bundle, error) {
 	var err error
-	var sb strings.Builder
-	restoreFlags := format.RestoreStringSingleQuotes | format.RestoreKeyWordLowercase | format.RestoreNameBackQuotes
-	restoreCtx := format.NewRestoreCtx(restoreFlags, &sb)
+	var spec *ast.PlacementSpec
 
-	for _, spec := range specs {
-		rule := &placement.RuleOp{
-			Rule: &placement.Rule{
-				GroupID:  placement.RuleDefaultGroupID,
-				Override: true,
-			},
-		}
+	for _, rspec := range specs {
+		spec = rspec
 
+		var role placement.PeerRoleType
 		switch spec.Role {
 		case ast.PlacementRoleFollower:
-			rule.Role = placement.Follower
+			role = placement.Follower
 		case ast.PlacementRoleLeader:
-			rule.Role = placement.Leader
+			role = placement.Leader
 		case ast.PlacementRoleLearner:
-			rule.Role = placement.Learner
+			role = placement.Learner
 		case ast.PlacementRoleVoter:
-			rule.Role = placement.Voter
+			role = placement.Voter
 		default:
 			err = errors.Errorf("unknown role: %d", spec.Role)
 		}
-
-		if err == nil {
-			switch spec.Tp {
-			case ast.PlacementAdd:
-				rule.Action = placement.RuleOpAdd
-			case ast.PlacementAlter, ast.PlacementDrop:
-				rule.Action = placement.RuleOpAdd
-
-				// alter will overwrite all things
-				// drop all rules that will be overridden
-				newRules := rules[:0]
-
-				for _, r := range rules {
-					if r.Role != rule.Role {
-						newRules = append(newRules, r)
-					}
-				}
-
-				rules = newRules
-
-				// delete previous definitions
-				rules = append(rules, &placement.RuleOp{
-					Action:           placement.RuleOpDel,
-					DeleteByIDPrefix: true,
-					Rule: &placement.Rule{
-						GroupID: placement.RuleDefaultGroupID,
-						// ROLE is useless for PD, prevent two alter statements from coexisting
-						Role: rule.Role,
-					},
-				})
-
-				// alter == drop + add new rules
-				if spec.Tp == ast.PlacementDrop {
-					continue
-				}
-			default:
-				err = errors.Errorf("unknown action type: %d", spec.Tp)
-			}
-		}
-
-		if err == nil {
-			var newRules []*placement.RuleOp
-			newRules, err = buildPlacementSpecReplicasAndConstraint(rule, spec.Replicas, spec.Constraints)
-			rules = append(rules, newRules...)
-		}
-
 		if err != nil {
-			sb.Reset()
-			if e := spec.Restore(restoreCtx); e != nil {
-				return rules, ErrInvalidPlacementSpec.GenWithStackByArgs("", err)
+			break
+		}
+
+		if spec.Tp == ast.PlacementAlter || spec.Tp == ast.PlacementDrop {
+			newRules := bundle.Rules[:0]
+			for _, r := range bundle.Rules {
+				if r.Role != role {
+					newRules = append(newRules, r)
+				}
 			}
-			return rules, ErrInvalidPlacementSpec.GenWithStackByArgs(sb.String(), err)
+			bundle.Rules = newRules
+
+			// alter == drop + add new rules
+			if spec.Tp == ast.PlacementDrop {
+				continue
+			}
+		}
+
+		var newRules []*placement.Rule
+		newRules, err = buildPlacementSpecReplicasAndConstraint(spec.Replicas, spec.Constraints)
+		if err != nil {
+			break
+		}
+		for _, r := range newRules {
+			r.Role = role
+			bundle.Rules = append(bundle.Rules, r)
 		}
 	}
-	return rules, nil
+
+	if err != nil {
+		var sb strings.Builder
+		sb.Reset()
+
+		restoreCtx := format.NewRestoreCtx(format.RestoreStringSingleQuotes|format.RestoreKeyWordLowercase|format.RestoreNameBackQuotes, &sb)
+
+		if e := spec.Restore(restoreCtx); e != nil {
+			return nil, ErrInvalidPlacementSpec.GenWithStackByArgs("", err)
+		}
+
+		return nil, ErrInvalidPlacementSpec.GenWithStackByArgs(sb.String(), err)
+	}
+
+	return bundle, nil
 }
 
 func (d *ddl) AlterTablePartition(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) (err error) {
@@ -5487,17 +5527,55 @@ func (d *ddl) AlterTablePartition(ctx sessionctx.Context, ident ast.Ident, spec 
 		return errors.Trace(err)
 	}
 
-	rules, err := buildPlacementSpecs(spec.PlacementSpecs)
+	pid := placement.GroupID(partitionID)
+
+	oldBundle, ok := d.infoHandle.Get().BundleByName(pid)
+	if !ok {
+		oldBundle = &placement.Bundle{ID: pid}
+	} else {
+		oldBundle = oldBundle.Clone()
+	}
+
+	bundle, err := buildPlacementSpecs(oldBundle, spec.PlacementSpecs)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
+	extraCnt := map[placement.PeerRoleType]int{}
 	startKey := hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(partitionID)))
 	endKey := hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(partitionID+1)))
-	for _, rule := range rules {
-		rule.Index = placement.RuleIndexPartition
+	newRules := bundle.Rules[:0]
+	for i, rule := range bundle.Rules {
+		// merge all empty constraints
+		if len(rule.LabelConstraints) == 0 {
+			extraCnt[rule.Role] += rule.Count
+			continue
+		}
+		rule.GroupID = bundle.ID
+		rule.ID = strconv.Itoa(i)
 		rule.StartKeyHex = startKey
 		rule.EndKeyHex = endKey
+		newRules = append(newRules, rule)
+	}
+	for role, cnt := range extraCnt {
+		if cnt <= 0 {
+			continue
+		}
+		bundle.Rules = append(newRules, &placement.Rule{
+			GroupID:     bundle.ID,
+			ID:          "default",
+			Role:        role,
+			Count:       cnt,
+			StartKeyHex: startKey,
+			EndKeyHex:   endKey,
+		})
+	}
+	if len(bundle.Rules) == 0 {
+		bundle.Index = 0
+		bundle.Override = false
+	} else {
+		bundle.Index = placement.RuleIndexPartition
+		bundle.Override = true
 	}
 
 	job := &model.Job{
@@ -5506,7 +5584,7 @@ func (d *ddl) AlterTablePartition(ctx sessionctx.Context, ident ast.Ident, spec 
 		SchemaName: schema.Name.L,
 		Type:       model.ActionAlterTableAlterPartition,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{partitionID, rules},
+		Args:       []interface{}{partitionID, bundle},
 	}
 
 	err = d.doDDLJob(ctx, job)
