@@ -36,7 +36,7 @@ func (h *Handle) HandleDDLEvent(t *util.Event) error {
 				return err
 			}
 		}
-	case model.ActionAddColumn, model.ActionAddColumns:
+	case model.ActionAddColumn, model.ActionAddColumns, model.ActionModifyColumn:
 		ids := getPhysicalIDs(t.TableInfo)
 		for _, id := range ids {
 			if err := h.insertColStats2KV(id, t.ColumnInfos); err != nil {

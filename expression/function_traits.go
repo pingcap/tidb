@@ -96,6 +96,7 @@ var IllegalFunctions4GeneratedColumns = map[string]struct{}{
 	ast.MasterPosWait:    {},
 	ast.NameConst:        {},
 	ast.ReleaseLock:      {},
+	ast.RowFunc:          {},
 	ast.RowCount:         {},
 	ast.Schema:           {},
 	ast.SessionUser:      {},
