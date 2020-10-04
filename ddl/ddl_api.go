@@ -2426,8 +2426,30 @@ func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTab
 		return errors.Trace(err)
 	}
 
-	col.OriginDefaultValue, err = generateOriginDefaultValue(col.ToInfo())
+	originDefVal, err := generateOriginDefaultValue(col.ToInfo())
 	if err != nil {
+<<<<<<< HEAD
+=======
+		return nil, errors.Trace(err)
+	}
+
+	err = col.SetOriginDefaultValue(originDefVal)
+	return col, err
+}
+
+// AddColumn will add a new column to the table.
+func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTableSpec) error {
+	specNewColumn := spec.NewColumns[0]
+	schema, t, err := d.getSchemaAndTableByIdent(ctx, ti)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if err = checkAddColumnTooManyColumns(len(t.Cols()) + 1); err != nil {
+		return errors.Trace(err)
+	}
+	col, err := checkAndCreateNewColumn(ctx, ti, schema, spec, t, specNewColumn)
+	if err != nil {
+>>>>>>> 6342fa6a5... ddl: fix corrupted default value for bit type column (#18036)
 		return errors.Trace(err)
 	}
 
@@ -2970,12 +2992,13 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 		// a new version TiDB builds the DDL job that doesn't be set the column's offset and state,
 		// and the old version TiDB is the DDL owner, it doesn't get offset and state from the store. Then it will encounter errors.
 		// So here we set offset and state to support the rolling upgrade.
-		Offset:             col.Offset,
-		State:              col.State,
-		OriginDefaultValue: col.OriginDefaultValue,
-		FieldType:          *specNewColumn.Tp,
-		Name:               newColName,
-		Version:            col.Version,
+		Offset:                col.Offset,
+		State:                 col.State,
+		OriginDefaultValue:    col.OriginDefaultValue,
+		OriginDefaultValueBit: col.OriginDefaultValueBit,
+		FieldType:             *specNewColumn.Tp,
+		Name:                  newColName,
+		Version:               col.Version,
 	})
 
 	var chs, coll string
