@@ -303,7 +303,6 @@ func (e *UpdateExec) collectRuntimeStatsEnabled() bool {
 		if e.stats == nil {
 			snapshotStats := &tikv.SnapshotRuntimeStats{}
 			e.stats = &runtimeStatsWithSnapshot{
-				BasicRuntimeStats:    e.runtimeStats,
 				SnapshotRuntimeStats: snapshotStats,
 			}
 			e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)

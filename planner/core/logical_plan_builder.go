@@ -102,6 +102,8 @@ const (
 	HintTimeRange = "time_range"
 	// HintIgnorePlanCache is a hint to enforce ignoring plan cache
 	HintIgnorePlanCache = "ignore_plan_cache"
+	// HintLimitToCop is a hint enforce pushing limit or topn to coprocessor.
+	HintLimitToCop = "limit_to_cop"
 )
 
 const (
@@ -1169,8 +1171,22 @@ func (b *PlanBuilder) buildSetOpr(ctx context.Context, setOpr *ast.SetOprStmt) (
 	afterSetOprs := make([]*ast.SetOprType, 0, len(setOpr.SelectList.Selects))
 	selects := setOpr.SelectList.Selects
 	for i := 0; i < len(selects); i++ {
-		intersects := []*ast.SelectStmt{selects[i]}
-		for i+1 < len(selects) && *selects[i+1].AfterSetOperator == ast.Intersect {
+		intersects := []ast.Node{selects[i]}
+		for i+1 < len(selects) {
+			breakIteration := false
+			switch x := selects[i+1].(type) {
+			case *ast.SelectStmt:
+				if *x.AfterSetOperator != ast.Intersect && *x.AfterSetOperator != ast.IntersectAll {
+					breakIteration = true
+				}
+			case *ast.SetOprSelectList:
+				if *x.AfterSetOperator != ast.Intersect && *x.AfterSetOperator != ast.IntersectAll {
+					breakIteration = true
+				}
+			}
+			if breakIteration {
+				break
+			}
 			intersects = append(intersects, selects[i+1])
 			i++
 		}
@@ -1253,18 +1269,42 @@ func (b *PlanBuilder) buildSemiJoinForSetOperator(
 
 // buildIntersect build the set operator for 'intersect'. It is called before buildExcept and buildUnion because of its
 // higher precedence.
-func (b *PlanBuilder) buildIntersect(ctx context.Context, selects []*ast.SelectStmt) (LogicalPlan, *ast.SetOprType, error) {
-	leftPlan, err := b.buildSelect(ctx, selects[0])
+func (b *PlanBuilder) buildIntersect(ctx context.Context, selects []ast.Node) (LogicalPlan, *ast.SetOprType, error) {
+	var leftPlan LogicalPlan
+	var err error
+	var afterSetOperator *ast.SetOprType
+	switch x := selects[0].(type) {
+	case *ast.SelectStmt:
+		afterSetOperator = x.AfterSetOperator
+		leftPlan, err = b.buildSelect(ctx, x)
+	case *ast.SetOprSelectList:
+		afterSetOperator = x.AfterSetOperator
+		leftPlan, err = b.buildSetOpr(ctx, &ast.SetOprStmt{SelectList: x})
+	}
 	if err != nil {
 		return nil, nil, err
 	}
 	if len(selects) == 1 {
-		return leftPlan, selects[0].AfterSetOperator, nil
+		return leftPlan, afterSetOperator, nil
 	}
 
 	columnNums := leftPlan.Schema().Len()
 	for i := 1; i < len(selects); i++ {
-		rightPlan, err := b.buildSelect(ctx, selects[i])
+		var rightPlan LogicalPlan
+		switch x := selects[i].(type) {
+		case *ast.SelectStmt:
+			if *x.AfterSetOperator == ast.IntersectAll {
+				// TODO: support intersect all
+				return nil, nil, errors.Errorf("TiDB do not support intersect all")
+			}
+			rightPlan, err = b.buildSelect(ctx, x)
+		case *ast.SetOprSelectList:
+			if *x.AfterSetOperator == ast.IntersectAll {
+				// TODO: support intersect all
+				return nil, nil, errors.Errorf("TiDB do not support intersect all")
+			}
+			rightPlan, err = b.buildSetOpr(ctx, &ast.SetOprStmt{SelectList: x})
+		}
 		if err != nil {
 			return nil, nil, err
 		}
@@ -1276,7 +1316,7 @@ func (b *PlanBuilder) buildIntersect(ctx context.Context, selects []*ast.SelectS
 			return nil, nil, err
 		}
 	}
-	return leftPlan, selects[0].AfterSetOperator, nil
+	return leftPlan, afterSetOperator, nil
 }
 
 // buildExcept build the set operators for 'except', and in this function, it calls buildUnion at the same time. Because
@@ -1301,6 +1341,9 @@ func (b *PlanBuilder) buildExcept(ctx context.Context, selects []LogicalPlan, af
 			}
 			unionPlans = []LogicalPlan{leftPlan}
 			tmpAfterSetOpts = []*ast.SetOprType{nil}
+		} else if *afterSetOpts[i] == ast.ExceptAll {
+			// TODO: support except all.
+			return nil, errors.Errorf("TiDB do not support except all")
 		} else {
 			unionPlans = append(unionPlans, rightPlan)
 			tmpAfterSetOpts = append(tmpAfterSetOpts, afterSetOpts[i])
@@ -1496,6 +1539,9 @@ func (b *PlanBuilder) buildLimit(src LogicalPlan, limit *ast.Limit) (LogicalPlan
 		Offset: offset,
 		Count:  count,
 	}.Init(b.ctx, b.getSelectOffset())
+	if hint := b.TableHints(); hint != nil {
+		li.limitHints = hint.limitHints
+	}
 	li.SetChildren(src)
 	return li, nil
 }
@@ -1921,12 +1967,12 @@ func (g *gbyResolver) Leave(inNode ast.Node) (ast.Node, bool) {
 		}
 		ret := g.fields[pos-1].Expr
 		ret.Accept(extractor)
-		if len(extractor.AggFuncs) != 0 {
-			g.err = ErrWrongGroupField.GenWithStackByArgs(g.fields[pos-1].Text())
-			return inNode, false
-		}
-		if _, ok := ret.(*ast.WindowFuncExpr); ok {
-			g.err = ErrWrongGroupField.GenWithStackByArgs(g.fields[pos-1].Text())
+		if len(extractor.AggFuncs) != 0 || ast.HasWindowFlag(ret) {
+			fieldName := g.fields[pos-1].AsName.String()
+			if fieldName == "" {
+				fieldName = g.fields[pos-1].Text()
+			}
+			g.err = ErrWrongGroupField.GenWithStackByArgs(fieldName)
 			return inNode, false
 		}
 		return ret, true
@@ -2412,6 +2458,7 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, nodeType u
 		tiflashTables, tikvTables                                                                             []hintTableInfo
 		aggHints                                                                                              aggHintInfo
 		timeRangeHint                                                                                         ast.HintTimeRange
+		limitHints                                                                                            limitHintInfo
 	)
 	for _, hint := range hints {
 		// Set warning for the hint that requires the table name.
@@ -2499,6 +2546,8 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, nodeType u
 			})
 		case HintTimeRange:
 			timeRangeHint = hint.HintData.(ast.HintTimeRange)
+		case HintLimitToCop:
+			limitHints.preferLimitToCop = true
 		default:
 			// ignore hints that not implemented
 		}
@@ -2515,6 +2564,7 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, nodeType u
 		aggHints:                    aggHints,
 		indexMergeHintList:          indexMergeHintList,
 		timeRangeHint:               timeRangeHint,
+		limitHints:                  limitHints,
 	})
 }
 
@@ -2595,8 +2645,12 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 		// table hints are only visible in the current SELECT statement.
 		b.popTableHints()
 	}()
-
+	enableNoopFuncs := b.ctx.GetSessionVars().EnableNoopFuncs
 	if sel.SelectStmtOpts != nil {
+		if sel.SelectStmtOpts.CalcFoundRows && !enableNoopFuncs {
+			err = expression.ErrFunctionsNoopImpl.GenWithStackByArgs("SQL_CALC_FOUND_ROWS")
+			return nil, err
+		}
 		origin := b.inStraightJoin
 		b.inStraightJoin = sel.SelectStmtOpts.StraightJoin
 		defer func() { b.inStraightJoin = origin }()
@@ -2656,14 +2710,26 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 		return nil, err
 	}
 
+	// b.allNames will be used in evalDefaultExpr(). Default function is special because it needs to find the
+	// corresponding column name, but does not need the value in the column.
+	// For example, select a from t order by default(b), the column b will not be in select fields. Also because
+	// buildSort is after buildProjection, so we need get OutputNames before BuildProjection and store in allNames.
+	// Otherwise, we will get select fields instead of all OutputNames, so that we can't find the column b in the
+	// above example.
+	b.allNames = append(b.allNames, p.OutputNames())
+	defer func() { b.allNames = b.allNames[:len(b.allNames)-1] }()
+
 	if sel.Where != nil {
 		p, err = b.buildSelection(ctx, p, sel.Where, nil)
 		if err != nil {
 			return nil, err
 		}
 	}
-
 	if sel.LockInfo != nil && sel.LockInfo.LockType != ast.SelectLockNone {
+		if sel.LockInfo.LockType == ast.SelectLockInShareMode && !enableNoopFuncs {
+			err = expression.ErrFunctionsNoopImpl.GenWithStackByArgs("LOCK IN SHARE MODE")
+			return nil, err
+		}
 		p = b.buildSelectLock(p, sel.LockInfo)
 	}
 	b.handleHelper.popMap()
@@ -2844,7 +2910,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 
 	if tableInfo.GetPartitionInfo() != nil {
 		// Use the new partition implementation, clean up the code here when it's full implemented.
-		if tryOldPartitionImplementation(b.ctx) {
+		if !b.ctx.GetSessionVars().UseDynamicPartitionPrune() {
 			b.optFlag = b.optFlag | flagPartitionProcessor
 		}
 

@@ -180,6 +180,36 @@ func assertTableEqual(c *C, a *statistics.Table, b *statistics.Table) {
 			c.Assert(a.Columns[i].CMSketch.Equal(b.Columns[i].CMSketch), IsTrue)
 		}
 	}
+	c.Assert(isSameExtendedStats(a.ExtendedStats, b.ExtendedStats), IsTrue)
+}
+
+func isSameExtendedStats(a, b *statistics.ExtendedStatsColl) bool {
+	aEmpty := (a == nil) || len(a.Stats) == 0
+	bEmpty := (b == nil) || len(b.Stats) == 0
+	if (aEmpty && !bEmpty) || (!aEmpty && bEmpty) {
+		return false
+	}
+	if aEmpty && bEmpty {
+		return true
+	}
+	if len(a.Stats) != len(b.Stats) {
+		return false
+	}
+	for aKey, aItem := range a.Stats {
+		bItem, ok := b.Stats[aKey]
+		if !ok {
+			return false
+		}
+		for i, id := range aItem.ColIDs {
+			if id != bItem.ColIDs[i] {
+				return false
+			}
+		}
+		if (aItem.Tp != bItem.Tp) || (aItem.ScalarVals != bItem.ScalarVals) || (aItem.StringVals != bItem.StringVals) {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *testStatsSuite) TestStatsStoreAndLoad(c *C) {
