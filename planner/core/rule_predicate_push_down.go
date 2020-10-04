@@ -266,11 +266,14 @@ func (p *LogicalJoin) updateEQCond() {
 func (p *LogicalJoin) SetCartesianJoin(expressions []expression.Expression) {
 	for _, expr := range expressions {
 		if sf, ok := expr.(*expression.ScalarFunction); ok {
-			_, ok0 := sf.GetArgs()[0].(*expression.Column)
-			_, ok1 := sf.GetArgs()[1].(*expression.Column)
-			if sf.FuncName.L == ast.EQ && ok0 && ok1 {
-				p.cartesianJoin = false
-				return
+			args := sf.GetArgs()
+			if len(args) == 2 {
+				_, ok0 := args[0].(*expression.Column)
+				_, ok1 := args[1].(*expression.Column)
+				if sf.FuncName.L == ast.EQ && ok0 && ok1 {
+					p.cartesianJoin = false
+					return
+				}
 			}
 		}
 	}
