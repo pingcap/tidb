@@ -40,24 +40,27 @@ const (
 	// ScopeSession means the system variable can only be changed in current session.
 	ScopeSession ScopeFlag = 1 << 1
 
+	// TypeUnknown for not yet defined
+	TypeUnknown TypeFlag = 0
 	// TypeBool for boolean
-	TypeBool TypeFlag = 0
+	TypeBool TypeFlag = 1
+
 	// TypeInt for integer
-	TypeInt TypeFlag = 1
+	TypeInt TypeFlag = 2
 	// TypeLong for Long
-	TypeLong TypeFlag = 2
+	TypeLong TypeFlag = 3
 	// TypeLongLong for LongLong
-	TypeLongLong TypeFlag = 3
+	TypeLongLong TypeFlag = 4
 	// TypeStr for String
-	TypeStr TypeFlag = 4
+	TypeStr TypeFlag = 5
 	// TypeEnum for Enum
-	TypeEnum TypeFlag = 5
+	TypeEnum TypeFlag = 6
 	// TypeSet for Set
-	TypeSet TypeFlag = 6
+	TypeSet TypeFlag = 7
 	// TypeDouble for Double
-	TypeDouble TypeFlag = 7
+	TypeDouble TypeFlag = 8
 	// TypeUnsigned for Unsigned integer
-	TypeUnsigned TypeFlag = 8
+	TypeUnsigned TypeFlag = 9
 )
 
 // SysVar is for system variable.
@@ -79,6 +82,9 @@ type SysVar struct {
 
 	// MaxValue will automatically be validated when specified (optional)
 	MaxValue int64
+
+	// AutoConvertNegativeBool applies to boolean types (optional)
+	AutoConvertNegativeBool bool
 }
 
 var sysVars map[string]*SysVar
@@ -136,9 +142,9 @@ func BoolToIntStr(b bool) string {
 
 func boolToOnOff(b bool) string {
 	if b {
-		return "ON"
+		return "on"
 	}
-	return "OFF"
+	return "off"
 }
 
 // BoolToInt32 converts bool to int32
@@ -222,7 +228,7 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal | ScopeSession, Name: "optimizer_trace_offset", Value: "-1"},
 	{Scope: ScopeGlobal, Name: InnodbBufferPoolDumpAtShutdown, Value: "0"},
 	{Scope: ScopeGlobal | ScopeSession, Name: SQLNotes, Value: "1"},
-	{Scope: ScopeGlobal, Name: InnodbCmpPerIndexEnabled, Value: "0", Type: TypeBool},
+	{Scope: ScopeGlobal, Name: InnodbCmpPerIndexEnabled, Value: "0", Type: TypeBool, AutoConvertNegativeBool: true},
 	{Scope: ScopeGlobal, Name: "innodb_ft_server_stopword_table", Value: ""},
 	{Scope: ScopeNone, Name: "performance_schema_max_file_instances", Value: "7693"},
 	{Scope: ScopeNone, Name: "log_output", Value: "FILE"},
@@ -240,7 +246,7 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeNone, Name: "performance_schema_session_connect_attrs_size", Value: "512"},
 	{Scope: ScopeGlobal | ScopeSession, Name: "time_zone", Value: "SYSTEM"},
 	{Scope: ScopeGlobal, Name: "innodb_max_dirty_pages_pct", Value: "75"},
-	{Scope: ScopeGlobal, Name: InnodbFilePerTable, Value: "1", Type: TypeBool},
+	{Scope: ScopeGlobal, Name: InnodbFilePerTable, Value: "1", Type: TypeBool, AutoConvertNegativeBool: true},
 	{Scope: ScopeGlobal, Name: InnodbLogCompressedPages, Value: "1"},
 	{Scope: ScopeNone, Name: "skip_networking", Value: "0"},
 	{Scope: ScopeGlobal, Name: "innodb_monitor_reset", Value: ""},
@@ -252,7 +258,7 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeNone, Name: "ssl_cipher", Value: ""},
 	{Scope: ScopeNone, Name: "tls_version", Value: "TLSv1,TLSv1.1,TLSv1.2"},
 	{Scope: ScopeNone, Name: "system_time_zone", Value: "CST"},
-	{Scope: ScopeGlobal, Name: InnodbPrintAllDeadlocks, Value: "0", Type: TypeBool},
+	{Scope: ScopeGlobal, Name: InnodbPrintAllDeadlocks, Value: "0", Type: TypeBool, AutoConvertNegativeBool: true},
 	{Scope: ScopeNone, Name: "innodb_autoinc_lock_mode", Value: "1"},
 	{Scope: ScopeGlobal, Name: "key_buffer_size", Value: "8388608"},
 	{Scope: ScopeGlobal | ScopeSession, Name: ForeignKeyChecks, Value: "OFF"},
@@ -264,14 +270,14 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal | ScopeSession, Name: "debug", Value: ""},
 	{Scope: ScopeGlobal, Name: "log_warnings", Value: "1"},
 	{Scope: ScopeGlobal, Name: OfflineMode, Value: "0", Type: TypeBool},
-	{Scope: ScopeGlobal | ScopeSession, Name: InnodbStrictMode, Value: "1", Type: TypeBool},
+	{Scope: ScopeGlobal | ScopeSession, Name: InnodbStrictMode, Value: "1", Type: TypeBool, AutoConvertNegativeBool: true},
 	{Scope: ScopeGlobal, Name: "innodb_rollback_segments", Value: "128"},
 	{Scope: ScopeGlobal | ScopeSession, Name: "join_buffer_size", Value: "262144"},
 	{Scope: ScopeNone, Name: "innodb_mirrored_log_groups", Value: "1"},
 	{Scope: ScopeGlobal, Name: "max_binlog_size", Value: "1073741824"},
 	{Scope: ScopeGlobal, Name: "concurrent_insert", Value: "AUTO"},
-	{Scope: ScopeGlobal, Name: InnodbAdaptiveHashIndex, Value: "1", Type: TypeBool},
-	{Scope: ScopeGlobal, Name: InnodbFtEnableStopword, Value: "1", Type: TypeBool},
+	{Scope: ScopeGlobal, Name: InnodbAdaptiveHashIndex, Value: "1", Type: TypeBool, AutoConvertNegativeBool: true},
+	{Scope: ScopeGlobal, Name: InnodbFtEnableStopword, Value: "1", Type: TypeBool, AutoConvertNegativeBool: true},
 	{Scope: ScopeGlobal, Name: "general_log_file", Value: "/usr/local/mysql/data/localhost.log"},
 	{Scope: ScopeGlobal | ScopeSession, Name: InnodbSupportXA, Value: "1"},
 	{Scope: ScopeGlobal, Name: "innodb_compression_level", Value: "6"},
@@ -302,7 +308,7 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal, Name: "default_password_lifetime", Value: ""},
 	{Scope: ScopeNone, Name: "pid_file", Value: "/usr/local/mysql/data/localhost.pid"},
 	{Scope: ScopeNone, Name: "innodb_undo_tablespaces", Value: "0"},
-	{Scope: ScopeGlobal, Name: InnodbStatusOutputLocks, Value: "0", Type: TypeBool},
+	{Scope: ScopeGlobal, Name: InnodbStatusOutputLocks, Value: "0", Type: TypeBool, AutoConvertNegativeBool: true},
 	{Scope: ScopeNone, Name: "performance_schema_accounts_size", Value: "100"},
 	{Scope: ScopeGlobal | ScopeSession, Name: "max_error_count", Value: "64"},
 	{Scope: ScopeGlobal, Name: "max_write_lock_count", Value: "18446744073709551615"},
@@ -347,7 +353,7 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal, Name: "innodb_purge_batch_size", Value: "300"},
 	{Scope: ScopeNone, Name: "have_profiling", Value: "NO"},
 	{Scope: ScopeGlobal | ScopeSession, Name: "character_set_client", Value: mysql.DefaultCharset},
-	{Scope: ScopeGlobal, Name: InnodbBufferPoolDumpNow, Value: "0", Type: TypeBool},
+	{Scope: ScopeGlobal, Name: InnodbBufferPoolDumpNow, Value: "0", Type: TypeBool, AutoConvertNegativeBool: true},
 	{Scope: ScopeGlobal, Name: RelayLogPurge, Value: "1", Type: TypeBool},
 	{Scope: ScopeGlobal, Name: "ndb_distribution", Value: ""},
 	{Scope: ScopeGlobal, Name: "myisam_data_pointer_size", Value: "6"},
@@ -379,7 +385,7 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeNone, Name: "innodb_api_disable_rowlock", Value: "0"},
 	{Scope: ScopeGlobal, Name: "innodb_adaptive_flushing_lwm", Value: "10"},
 	{Scope: ScopeNone, Name: "innodb_log_files_in_group", Value: "2"},
-	{Scope: ScopeGlobal, Name: InnodbBufferPoolLoadNow, Value: "0", Type: TypeBool},
+	{Scope: ScopeGlobal, Name: InnodbBufferPoolLoadNow, Value: "0", Type: TypeBool, AutoConvertNegativeBool: true},
 	{Scope: ScopeNone, Name: "performance_schema_max_rwlock_classes", Value: "40"},
 	{Scope: ScopeNone, Name: "binlog_gtid_simple_recovery", Value: "1"},
 	{Scope: ScopeNone, Name: Port, Value: "4000"},
@@ -427,7 +433,7 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal | ScopeSession, Name: "read_rnd_buffer_size", Value: "262144"},
 	{Scope: ScopeNone, Name: "version_comment", Value: "TiDB Server (Apache License 2.0) " + versioninfo.TiDBEdition + " Edition, MySQL 5.7 compatible"},
 	{Scope: ScopeGlobal | ScopeSession, Name: NetWriteTimeout, Value: "60"},
-	{Scope: ScopeGlobal, Name: InnodbBufferPoolLoadAbort, Value: "0", Type: TypeBool},
+	{Scope: ScopeGlobal, Name: InnodbBufferPoolLoadAbort, Value: "0", Type: TypeBool, AutoConvertNegativeBool: true},
 	{Scope: ScopeGlobal | ScopeSession, Name: TxnIsolation, Value: "REPEATABLE-READ"},
 	{Scope: ScopeGlobal | ScopeSession, Name: TransactionIsolation, Value: "REPEATABLE-READ"},
 	{Scope: ScopeGlobal | ScopeSession, Name: "collation_connection", Value: mysql.DefaultCollationName},
@@ -450,7 +456,7 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal, Name: serverReadOnly, Value: "0", Type: TypeBool},
 	{Scope: ScopeNone, Name: "large_page_size", Value: "0"},
 	{Scope: ScopeNone, Name: "table_open_cache_instances", Value: "1"},
-	{Scope: ScopeGlobal, Name: InnodbStatsPersistent, Value: "1", Type: TypeBool},
+	{Scope: ScopeGlobal, Name: InnodbStatsPersistent, Value: "1", Type: TypeBool, AutoConvertNegativeBool: true},
 	{Scope: ScopeGlobal | ScopeSession, Name: "session_track_state_change", Value: ""},
 	{Scope: ScopeNone, Name: "optimizer_switch", Value: "index_merge=on,index_merge_union=on,index_merge_sort_union=on,index_merge_intersection=on,engine_condition_pushdown=on,index_condition_pushdown=on,mrr=on,mrr_cost_based=on,block_nested_loop=on,batched_key_access=off,materialization=on,semijoin=on,loosescan=on,firstmatch=on,subquery_materialization_cost_based=on,use_index_extensions=on"},
 	{Scope: ScopeGlobal, Name: "delayed_queue_size", Value: "1000"},
@@ -479,7 +485,7 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal, Name: EnforceGtidConsistency, Value: "OFF"},
 	{Scope: ScopeGlobal, Name: SecureAuth, Value: "1"},
 	{Scope: ScopeNone, Name: "max_tmp_tables", Value: "32"},
-	{Scope: ScopeGlobal, Name: InnodbRandomReadAhead, Value: "0", Type: TypeBool},
+	{Scope: ScopeGlobal, Name: InnodbRandomReadAhead, Value: "0", Type: TypeBool, AutoConvertNegativeBool: true},
 	{Scope: ScopeGlobal | ScopeSession, Name: UniqueChecks, Value: "1", Type: TypeBool},
 	{Scope: ScopeGlobal, Name: "internal_tmp_disk_storage_engine", Value: ""},
 	{Scope: ScopeGlobal | ScopeSession, Name: "myisam_repair_threads", Value: "1"},
@@ -550,7 +556,7 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal | ScopeSession, Name: ShowOldTemporals, Value: "0", Type: TypeBool},
 	{Scope: ScopeGlobal, Name: "query_cache_limit", Value: "1048576"},
 	{Scope: ScopeGlobal, Name: "innodb_buffer_pool_size", Value: "134217728"},
-	{Scope: ScopeGlobal, Name: InnodbAdaptiveFlushing, Value: "1", Type: TypeBool},
+	{Scope: ScopeGlobal, Name: InnodbAdaptiveFlushing, Value: "1", Type: TypeBool, AutoConvertNegativeBool: true},
 	{Scope: ScopeNone, Name: "datadir", Value: "/usr/local/mysql/data/"},
 	{Scope: ScopeGlobal | ScopeSession, Name: WaitTimeout, Value: strconv.FormatInt(DefWaitTimeout, 10)},
 	{Scope: ScopeGlobal, Name: "innodb_monitor_enable", Value: ""},
@@ -572,7 +578,7 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeNone, Name: "version_compile_os", Value: "osx10.8"},
 	{Scope: ScopeNone, Name: "relay_log_recovery", Value: "0"},
 	{Scope: ScopeNone, Name: "old", Value: "0"},
-	{Scope: ScopeGlobal | ScopeSession, Name: InnodbTableLocks, Value: "1", Type: TypeBool},
+	{Scope: ScopeGlobal | ScopeSession, Name: InnodbTableLocks, Value: "1", Type: TypeBool, AutoConvertNegativeBool: true},
 	{Scope: ScopeNone, Name: PerformanceSchema, Value: "0", Type: TypeBool},
 	{Scope: ScopeNone, Name: "myisam_recover_options", Value: "OFF"},
 	{Scope: ScopeGlobal | ScopeSession, Name: NetBufferLength, Value: "16384"},
@@ -594,7 +600,7 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal | ScopeSession, Name: "eq_range_index_dive_limit", Value: "10"},
 	{Scope: ScopeNone, Name: "performance_schema_events_stages_history_size", Value: "10"},
 	{Scope: ScopeGlobal | ScopeSession, Name: "character_set_connection", Value: mysql.DefaultCharset},
-	{Scope: ScopeGlobal, Name: MyISAMUseMmap, Value: "0", Type: TypeBool},
+	{Scope: ScopeGlobal, Name: MyISAMUseMmap, Value: "0", Type: TypeBool, AutoConvertNegativeBool: true},
 	{Scope: ScopeGlobal | ScopeSession, Name: "ndb_join_pushdown", Value: ""},
 	{Scope: ScopeGlobal | ScopeSession, Name: CharacterSetServer, Value: mysql.DefaultCharset},
 	{Scope: ScopeGlobal, Name: "validate_password_special_char_count", Value: "1"},
@@ -622,7 +628,7 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal | ScopeSession, Name: EndMakersInJSON, Value: "0", Type: TypeBool},
 	{Scope: ScopeGlobal, Name: AvoidTemporalUpgrade, Value: "0", Type: TypeBool},
 	{Scope: ScopeGlobal, Name: "key_cache_age_threshold", Value: "300"},
-	{Scope: ScopeGlobal, Name: InnodbStatusOutput, Value: "0", Type: TypeBool},
+	{Scope: ScopeGlobal, Name: InnodbStatusOutput, Value: "0", Type: TypeBool, AutoConvertNegativeBool: true},
 	{Scope: ScopeSession, Name: "identity", Value: ""},
 	{Scope: ScopeGlobal | ScopeSession, Name: "min_examined_row_limit", Value: "0"},
 	{Scope: ScopeGlobal, Name: "sync_frm", Value: "ON"},
@@ -957,6 +963,8 @@ const (
 	SQLAutoIsNull = "sql_auto_is_null"
 	// RelayLogPurge is the name for 'relay_log_purge' system variable.
 	RelayLogPurge = "relay_log_purge"
+	// AutomaticSpPrivileges is the name for 'automatic_sp_privileges' system variable.
+	AutomaticSpPrivileges = "automatic_sp_privileges"
 	// SQLQuoteShowCreate is the name for 'sql_quote_show_create' system variable.
 	SQLQuoteShowCreate = "sql_quote_show_create"
 	// SlowQueryLog is the name for 'slow_query_log' system variable.

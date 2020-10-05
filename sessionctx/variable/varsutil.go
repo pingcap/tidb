@@ -325,18 +325,33 @@ func CheckDeprecationSetSystemVar(s *SessionVars, name string) {
 // ValidateUsingType validates using type information.
 func ValidateUsingType(name string, value string) (string, error) {
 	// TODO: Validate other types.
-	if GetSysVar(name).Type == TypeBool {
+	sv := GetSysVar(name)
+	if sv.Type == TypeBool {
 		if strings.EqualFold(value, "ON") {
 			return "1", nil
 		} else if strings.EqualFold(value, "OFF") {
 			return "0", nil
 		}
+
 		val, err := strconv.ParseInt(value, 10, 64)
 		if err == nil {
-			if val == 0 {
-				return "0", nil
-			} else if val == 1 {
-				return "1", nil
+
+			// Confusingly, there are two types of conversion rules for integer values.
+			// The default only allows 0 || 1, but a subset of values convert any
+			// negative integer to 1.
+
+			if !sv.AutoConvertNegativeBool {
+				if val == 0 {
+					return "0", nil
+				} else if val == 1 {
+					return "1", nil
+				}
+			} else {
+				if val == 1 || val < 0 {
+					return "1", nil
+				} else if val == 0 {
+					return "0", nil
+				}
 			}
 		}
 		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
@@ -346,17 +361,18 @@ func ValidateUsingType(name string, value string) (string, error) {
 
 // ValidateSetSystemVar checks if system variable satisfies specific restriction.
 func ValidateSetSystemVar(vars *SessionVars, name string, value string, scope ScopeFlag) (string, error) {
-
+	// The string "DEFAULT" is a special keyword in MySQL, which restores
+	// the compiled sysvar value. In which case we can skip further validation.
+	if strings.EqualFold(value, "DEFAULT") {
+		if sv := GetSysVar(name); sv != nil {
+			return sv.Value, nil
+		}
+		return value, ErrUnknownSystemVar.GenWithStackByArgs(name)
+	}
+	// Attempt to provide validation using just the type information.
 	value, err := ValidateUsingType(name, value)
 	if err != nil {
 		return value, err
-	}
-
-	if strings.EqualFold(value, "DEFAULT") {
-		if val := GetSysVar(name); val != nil {
-			return val.Value, nil
-		}
-		return value, ErrUnknownSystemVar.GenWithStackByArgs(name)
 	}
 	switch name {
 	case ConnectTimeout:
@@ -475,6 +491,13 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string, scope Sc
 	case SecureAuth:
 		if strings.EqualFold(value, "ON") || value == "1" {
 			return "1", nil
+		}
+		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
+	case WindowingUseHighPrecision:
+		if strings.EqualFold(value, "OFF") || value == "0" {
+			return "OFF", nil
+		} else if strings.EqualFold(value, "ON") || value == "1" {
+			return "ON", nil
 		}
 		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
 	case TiDBOptBCJ:
@@ -699,6 +722,14 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string, scope Sc
 		if !PartitionPruneMode(value).Valid() {
 			return value, ErrWrongTypeForVar.GenWithStackByArgs(name)
 		}
+	case TiDBAllowRemoveAutoInc, TiDBUsePlanBaselines, TiDBEvolvePlanBaselines, TiDBEnableParallelApply:
+		switch {
+		case strings.EqualFold(value, "ON") || value == "1":
+			return "on", nil
+		case strings.EqualFold(value, "OFF") || value == "0":
+			return "off", nil
+		}
+		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
 	case TiDBCapturePlanBaseline:
 		switch {
 		case strings.EqualFold(value, "ON") || value == "1":
