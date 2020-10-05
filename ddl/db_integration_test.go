@@ -2435,7 +2435,7 @@ func (s *testIntegrationSuite5) TestDropLastColumn(c *C) {
 	defer tk.MustExec("drop table if exists t_drop_last_column")
 	_, err := tk.Exec("alter table t_drop_last_column drop column x")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "A table must have at least 1 column")
+	c.Assert(err.Error(), Equals, "[ddl:1113]A table must have at least 1 column")
 }
 
 func (s *testIntegrationSuite7) TestAutoIncrementTableOption(c *C) {
