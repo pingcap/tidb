@@ -16,12 +16,11 @@ package globalkilltest
 import (
 	"net"
 
-	log "github.com/sirupsen/logrus"
 	"inet.af/tcpproxy"
 )
 
 // pdProxy used to simulate "lost connection" between TiDB and PD.
-//   Add "close existed connection" to `tcpproxy.Proxy`, which support closing listener only.
+// Add "close existed connection" to `tcpproxy.Proxy`, which support closing listener only.
 type pdProxy struct {
 	tcpproxy.Proxy
 	dialProxies []*pdDialProxy
@@ -51,14 +50,12 @@ type pdDialProxy struct {
 // HandleConn implements the Target interface.
 func (dp *pdDialProxy) HandleConn(src net.Conn) {
 	dp.connections = append(dp.connections, tcpproxy.UnderlyingConn(src))
-	log.Infof("HandleConn conn %v", tcpproxy.UnderlyingConn(src))
 	dp.DialProxy.HandleConn(src)
 }
 
 func (dp *pdDialProxy) closeAllConnections() {
 	for _, conn := range dp.connections {
-		log.Infof("closing conn %v(%T)", conn, conn)
-		conn.Close()
+		conn.Close() // Notice: will close a connection twice. Ignore for test purpose.
 	}
 }
 

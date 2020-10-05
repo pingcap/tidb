@@ -57,6 +57,9 @@ var (
 	tikvStatusPort = flag.String("tikv_status_port", "22180", "tikv status port")
 
 	varPath = flag.String("var_path", "var", "var path")
+
+	lostConnectionToPDTimeout       = flag.Int("lost_connection_to_pd_timeout", 5, "lost connection to PD timeout, should be the same as TiDB ldflag <ldflagLostConnectionToPDTimeout>")
+	timeToCheckPDConnectionRestored = flag.Int("time_to_check_pd_connection_restored", 1, "time to check PD connection restored, should be the same as TiDB ldflag <ldflagServerIDTimeToCheckPDConnectionRestored>")
 )
 
 var _ = Suite(&TestGlobalKillSuite{})
@@ -217,7 +220,7 @@ func (s *TestGlobalKillSuite) getTiDBConnection(port int) (db *sql.DB, err error
 	dsn := fmt.Sprintf("root@(%s)/test", addr)
 	sleepTime := time.Millisecond * 250
 	startTime := time.Now()
-	for i := 0; i < 5; i++ {
+	for i := 0; i < 6; i++ {
 		db, err = sql.Open("mysql", dsn)
 		if err != nil {
 			log.Warnf("open addr %v failed, retry count %d err %v", addr, i, err)
@@ -245,11 +248,6 @@ func (s *TestGlobalKillSuite) getTiDBConnection(port int) (db *sql.DB, err error
 
 const (
 	waitToStartup = 500 * time.Millisecond
-
-	// lostConnectionToPDTimeout is TiDB internal parameter.
-	// Set by ldflag(github.com/pingcap/tidb/domain.ldflagLostConnectionToPDTimeout) for test purpose.
-	// See TiDB Makefile.
-	lostConnectionToPDTimeout = 3 * time.Second
 )
 
 func (s *TestGlobalKillSuite) killByCtrlC(c *C, port int, sleepTime int) time.Duration {
@@ -277,6 +275,36 @@ func (s *TestGlobalKillSuite) killByCtrlC(c *C, port int, sleepTime int) time.Du
 	return <-ch
 }
 
+type sleepResult struct {
+	elapsed time.Duration
+	err     error
+}
+
+func sleepRoutine(ctx context.Context, sleepTime int, conn *sql.Conn, connID uint64, ch chan<- sleepResult) {
+	var err error
+	startTS := time.Now()
+	sql := fmt.Sprintf("select sleep(%d);", sleepTime)
+	if connID > 0 {
+		log.Infof("exec: %s [on 0x%x]", sql, connID)
+	} else {
+		log.Infof("exec: %s", sql)
+	}
+	rows, err := conn.QueryContext(ctx, sql)
+	if err != nil {
+		ch <- sleepResult{err: err}
+		return
+	}
+	defer rows.Close()
+	if rows.Err() != nil {
+		ch <- sleepResult{err: rows.Err()}
+		return
+	}
+
+	elapsed := time.Now().Sub(startTS)
+	log.Infof("sleepRoutine takes %v", elapsed)
+	ch <- sleepResult{elapsed: elapsed}
+}
+
 // NOTICE: db1 & db2 can be the same object, for getting conn1 & conn2 from the same TiDB instance.
 func (s *TestGlobalKillSuite) killByKillStatement(c *C, db1 *sql.DB, db2 *sql.DB, sleepTime int) time.Duration {
 	ctx := context.TODO()
@@ -290,21 +318,8 @@ func (s *TestGlobalKillSuite) killByKillStatement(c *C, db1 *sql.DB, db2 *sql.DB
 	c.Assert(err, IsNil)
 	log.Infof("connID1: 0x%x", connID1)
 
-	ch := make(chan time.Duration)
-	go func() {
-		var err error
-		startTS := time.Now()
-		sql := fmt.Sprintf("select sleep(%d);", sleepTime)
-		log.Infof("exec: %s [on 0x%x]", sql, connID1)
-		rows, err := conn1.QueryContext(ctx, sql)
-		c.Assert(err, IsNil)
-		defer rows.Close()
-		c.Assert(rows.Err(), IsNil)
-
-		elapsed := time.Now().Sub(startTS)
-		log.Infof("conn1 takes %v", elapsed)
-		ch <- elapsed
-	}()
+	ch := make(chan sleepResult)
+	go sleepRoutine(ctx, sleepTime, conn1, connID1, ch)
 
 	time.Sleep(waitToStartup) // wait go-routine to start.
 	conn2, err := db2.Conn(ctx)
@@ -322,7 +337,9 @@ func (s *TestGlobalKillSuite) killByKillStatement(c *C, db1 *sql.DB, db2 *sql.DB
 	defer rows.Close()
 	c.Assert(rows.Err(), IsNil)
 
-	return <-ch
+	r := <-ch
+	c.Assert(r.err, IsNil)
+	return r.elapsed
 }
 
 func (s *TestGlobalKillSuite) TestWithoutPD(c *C) {
@@ -427,24 +444,67 @@ func (s *TestGlobalKillSuite) TestLostConnection(c *C) {
 	err = conn1.PingContext(ctx)
 	c.Assert(err, IsNil)
 
+	// a running sql
+	sqlTime := *lostConnectionToPDTimeout + 10
+	ch := make(chan sleepResult)
+	go sleepRoutine(ctx, sqlTime, conn1, 0, ch)
+	time.Sleep(waitToStartup) // wait go-routine to start.
+
 	// disconnect to PD by close proxy.
+	log.Infof("shutdown PD proxy to simulate lost connection to PD.")
 	pdProxy.Close()
 	pdProxy.closeAllConnections()
 
 	// wait for "lostConnectionToPDTimeout" elapsed.
-	time.Sleep(lostConnectionToPDTimeout + 3*time.Second)
+	// delay additional 3 seconds for TiDB would have a small interval to detect lost connection more than "lostConnectionToPDTimeout".
+	sleepTime := time.Duration(*lostConnectionToPDTimeout+3) * time.Second
+	log.Infof("sleep %v to wait for TiDB had detected lost connection", sleepTime)
+	time.Sleep(sleepTime)
 
-	// check connection.
+	// check running sql
+	// [Test Scenario 4] Existing connections are killed after PD lost connection for long time.
+	r := <-ch
+	log.Infof("sleepRoutine err: %v", r.err)
+	c.Assert(r.err, NotNil)
+	c.Assert(r.err.Error(), Equals, "invalid connection")
+
+	// check new connection.
+	// [Test Scenario 5] New connections are not accepted after PD lost connection for long time.
 	log.Infof("check connection after lost connection to PD.")
 	_, err = s.getTiDBConnection(port1)
+	log.Infof("getTiDBConnection err: %v", err)
 	c.Assert(err, NotNil)
-	// ctx1, cancel := context.WithTimeout(ctx, 1*time.Second)
-	// _, err = db1.QueryContext(ctx1, "select 1;")
-	// c.Assert(err, IsNil)
-	// defer conn1.Close()
-	// var i int
-	// err = conn1.QueryRowContext(ctx1, "select 1;").Scan(&i)
-	// cancel()
-	// c.Assert(err, NotNil)
-	log.Infof("err: %v", err)
+	c.Assert(err.Error(), Equals, "driver: bad connection")
+
+	// restore connection to PD.
+	log.Infof("restart pdProxy")
+	pdProxy1, err := s.startPDProxy()
+	c.Assert(err, IsNil)
+	defer pdProxy1.Close()
+
+	// wait for "timeToCheckPDConnectionRestored" elapsed.
+	// delay additional 3 seconds for TiDB would have a small interval to detect lost connection restored more than "timeToCheckPDConnectionRestored".
+	sleepTime = time.Duration(*timeToCheckPDConnectionRestored+3) * time.Second
+	log.Infof("sleep %v to wait for TiDB had detected lost connection restored", sleepTime)
+	time.Sleep(sleepTime)
+
+	// check restored
+	{
+		// [Test Scenario 6] New connections are accepted after PD lost connection for long time and then recovered.
+		db1, err := s.getTiDBConnection(port1)
+		c.Assert(err, IsNil)
+		defer db1.Close()
+
+		db2, err := s.getTiDBConnection(port2)
+		c.Assert(err, IsNil)
+		defer db2.Close()
+
+		// [Test Scenario 7] Connections can be killed after PD lost connection for long time and then recovered.
+		sleepTime := 2
+		elapsed := s.killByKillStatement(c, db1, db1, sleepTime)
+		c.Assert(elapsed, Less, time.Duration(sleepTime)*time.Second)
+
+		elapsed = s.killByKillStatement(c, db1, db2, sleepTime)
+		c.Assert(elapsed, Less, time.Duration(sleepTime)*time.Second)
+	}
 }

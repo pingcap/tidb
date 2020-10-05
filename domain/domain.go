@@ -1297,7 +1297,7 @@ var (
 	ldflagServerIDTTL                             = "10" // in seconds.
 	ldflagServerIDTimeToKeepAlive                 = "1"  // in seconds.
 	ldflagServerIDTimeToCheckPDConnectionRestored = "1"  // in seconds.
-	ldflagLostConnectionToPDTimeout               = "3"  // in seconds.
+	ldflagLostConnectionToPDTimeout               = "5"  // in seconds.
 )
 
 func initByLDFlagsForGlobalKill() {
