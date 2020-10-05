@@ -4904,6 +4904,15 @@ func isDroppableColumn(tblInfo *model.TableInfo, colName model.CIStr) error {
 		return ErrCantRemoveAllFields.GenWithStack("can't drop only column %s in table %s",
 			colName, tblInfo.Name)
 	}
+	visibleColumCnt := 0
+	for _, column := range tblInfo.Columns {
+		if !column.Hidden {
+			visibleColumCnt++
+		}
+	}
+	if visibleColumCnt == 1 {
+		return ErrTableMustHaveColumns
+	}
 	// We only support dropping column with single-value none Primary Key index covered now.
 	if !isColumnCanDropWithIndex(colName.L, tblInfo.Indices) {
 		return errCantDropColWithIndex.GenWithStack("can't drop column %s with composite index covered or Primary Key covered now", colName)
