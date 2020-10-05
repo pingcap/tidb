@@ -81,11 +81,13 @@ func (p *LogicalProjection) PruneColumns(parentUsedCols []*expression.Column) er
 func (p *LogicalSelection) PruneColumns(parentUsedCols []*expression.Column) error {
 	child := p.children[0]
 	parentUsedCols = expression.ExtractColumnsFromExpressions(parentUsedCols, p.Conditions, nil)
-	p.schema = child.Schema().Clone()
-	used := expression.GetUsedList(parentUsedCols, p.schema)
-	for i := len(used) - 1; i >= 0; i-- {
-		if !used[i] {
-			p.schema.Columns = append(p.schema.Columns[:i], p.schema.Columns[i+1:]...)
+	if parentUsedCols != nil {
+		p.schema = child.Schema()
+		used := expression.GetUsedList(parentUsedCols, p.schema)
+		for i := len(used) - 1; i >= 0; i-- {
+			if !used[i] {
+				p.schema.Columns = append(p.schema.Columns[:i], p.schema.Columns[i+1:]...)
+			}
 		}
 	}
 	return child.PruneColumns(parentUsedCols)
