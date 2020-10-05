@@ -32,14 +32,6 @@
         ]
       },
       {
-        "SQL": "explain select * from t2 where id = a and a = b and b = 2",
-        "Result": [
-          "TableReader_7 8.00 root partition:p4 data:Selection_6",
-          "└─Selection_6 8.00 cop[tikv]  eq(test_partition.t2.a, test_partition.t2.b), eq(test_partition.t2.b, 2), eq(test_partition.t2.id, test_partition.t2.a)",
-          "  └─TableFullScan_5 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
-        ]
-      },
-      {
         "SQL": "explain select * from t1 join t2 on (t1.id = t2.id) where t1.id = 5 and t2.a = 7",
         "Result": [
           "HashJoin_8 1.00 root  CARTESIAN inner join",
@@ -123,6 +115,22 @@
         ]
       },
       {
+        "SQL": "explain select * from t6 where a = 7 or a = 6",
+        "Result": [
+          "TableReader_7 20.00 root partition:p0,p1 data:Selection_6",
+          "└─Selection_6 20.00 cop[tikv]  or(eq(test_partition.t6.a, 7), eq(test_partition.t6.a, 6))",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:t6 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain select * from t6 where a in (6, 7)",
+        "Result": [
+          "TableReader_7 20.00 root partition:p0,p1 data:Selection_6",
+          "└─Selection_6 20.00 cop[tikv]  in(test_partition.t6.a, 6, 7)",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:t6 keep order:false, stats:pseudo"
+        ]
+      },
+      {
         "SQL": "explain select * from t5 where d is null",
         "Result": [
           "TableDual_5 0.00 root  rows:0"
@@ -133,6 +141,38 @@
         "Result": [
           "TableReader_7 0.01 root partition:p0 data:Selection_6",
           "└─Selection_6 0.01 cop[tikv]  eq(test_partition.t7.b, -3), isnull(test_partition.t7.a)",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:t7 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain select * from t7 where (a, b) in ((3, 4), (5, 6))",
+        "Result": [
+          "TableReader_7 0.02 root partition:p1,p7 data:Selection_6",
+          "└─Selection_6 0.02 cop[tikv]  or(and(eq(test_partition.t7.a, 3), eq(test_partition.t7.b, 4)), and(eq(test_partition.t7.a, 5), eq(test_partition.t7.b, 6)))",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:t7 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain select * from t7 where (a = 1 and b = 2) or (a = 3 and b = 4)",
+        "Result": [
+          "TableReader_7 0.02 root partition:p3,p7 data:Selection_6",
+          "└─Selection_6 0.02 cop[tikv]  or(and(eq(test_partition.t7.a, 1), eq(test_partition.t7.b, 2)), and(eq(test_partition.t7.a, 3), eq(test_partition.t7.b, 4)))",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:t7 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain select * from t7 where (a = 1 and b = 2) or (a = 1 and b = 2)",
+        "Result": [
+          "TableReader_7 0.02 root partition:p3 data:Selection_6",
+          "└─Selection_6 0.02 cop[tikv]  or(and(eq(test_partition.t7.a, 1), eq(test_partition.t7.b, 2)), and(eq(test_partition.t7.a, 1), eq(test_partition.t7.b, 2)))",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:t7 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain select * from t7 partition(p0) where (a = 1 and b = 2) or (a = 3 and b = 4)",
+        "Result": [
+          "TableReader_7 0.02 root partition:dual data:Selection_6",
+          "└─Selection_6 0.02 cop[tikv]  or(and(eq(test_partition.t7.a, 1), eq(test_partition.t7.b, 2)), and(eq(test_partition.t7.a, 3), eq(test_partition.t7.b, 4)))",
           "  └─TableFullScan_5 10000.00 cop[tikv] table:t7 keep order:false, stats:pseudo"
         ]
       }

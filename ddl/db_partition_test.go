@@ -27,8 +27,8 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/ddl/testutil"
 	"github.com/pingcap/tidb/domain"
@@ -154,15 +154,15 @@ func (s *testIntegrationSuite3) TestCreateTableWithPartition(c *C) {
 	);`
 	tk.MustGetErrCode(sql7, tmysql.ErrPartitionMaxvalue)
 
-	_, err = tk.Exec(`create table t8 (
+	sql18 := `create table t8 (
 	a int not null,
 	b int not null
 	)
 	partition by range( a ) (
 		partition p1 values less than (19xx91),
 		partition p2 values less than maxvalue
-	);`)
-	c.Assert(ddl.ErrNotAllowedTypeInPartition.Equal(err), IsTrue)
+	);`
+	tk.MustGetErrCode(sql18, mysql.ErrBadField)
 
 	sql9 := `create TABLE t9 (
 	col1 int
@@ -248,6 +248,8 @@ func (s *testIntegrationSuite3) TestCreateTableWithPartition(c *C) {
 	tk.MustGetErrCode(`create table t32 (a int not null) partition by range columns( a );`, tmysql.ErrPartitionsMustBeDefined)
 	tk.MustGetErrCode(`create table t33 (a int, b int) partition by hash(a) partitions 0;`, tmysql.ErrNoParts)
 	tk.MustGetErrCode(`create table t33 (a timestamp, b int) partition by hash(a) partitions 30;`, tmysql.ErrFieldTypeNotAllowedAsPartitionField)
+	tk.MustGetErrCode(`CREATE TABLE t34 (c0 INT) PARTITION BY HASH((CASE WHEN 0 THEN 0 ELSE c0 END )) PARTITIONS 1;`, tmysql.ErrPartitionFunctionIsNotAllowed)
+	tk.MustGetErrCode(`CREATE TABLE t0(c0 INT) PARTITION BY HASH((c0<CURRENT_USER())) PARTITIONS 1;`, tmysql.ErrPartitionFunctionIsNotAllowed)
 	// TODO: fix this one
 	// tk.MustGetErrCode(`create table t33 (a timestamp, b int) partition by hash(unix_timestamp(a)) partitions 30;`, tmysql.ErrPartitionFuncNotAllowed)
 
@@ -1236,9 +1238,6 @@ func (s *testIntegrationSuite4) TestExchangePartitionTableCompatiable(c *C) {
 }
 
 func (s *testIntegrationSuite7) TestExchangePartitionExpressIndex(c *C) {
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.Experimental.AllowsExpressionIndex = true
-	})
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists pt1;")
@@ -1281,7 +1280,7 @@ func (s *testIntegrationSuite4) TestAddPartitionTooManyPartitions(c *C) {
 	for i := 1; i <= count; i++ {
 		sql1 += fmt.Sprintf("partition p%d values less than (%d),", i, i)
 	}
-	sql1 += "partition p1025 values less than (1025) );"
+	sql1 += "partition p8193 values less than (8193) );"
 	tk.MustGetErrCode(sql1, tmysql.ErrTooManyPartitions)
 
 	tk.MustExec("drop table if exists p2;")
@@ -1292,11 +1291,11 @@ func (s *testIntegrationSuite4) TestAddPartitionTooManyPartitions(c *C) {
 	for i := 1; i < count; i++ {
 		sql2 += fmt.Sprintf("partition p%d values less than (%d),", i, i)
 	}
-	sql2 += "partition p1024 values less than (1024) );"
+	sql2 += "partition p8192 values less than (8192) );"
 
 	tk.MustExec(sql2)
 	sql3 := `alter table p2 add partition (
-	partition p1025 values less than (1025)
+	partition p8193 values less than (8193)
 	);`
 	tk.MustGetErrCode(sql3, tmysql.ErrTooManyPartitions)
 }
@@ -2205,6 +2204,22 @@ func (s *testIntegrationSuite3) TestPartitionErrorCode(c *C) {
 	tk.MustGetErrCode("alter table t_part rebuild partition p0,p1;", tmysql.ErrUnsupportedDDLOperation)
 	tk.MustGetErrCode("alter table t_part remove partitioning;", tmysql.ErrUnsupportedDDLOperation)
 	tk.MustGetErrCode("alter table t_part repair partition p1;", tmysql.ErrUnsupportedDDLOperation)
+
+	// Reduce the impact on DML when executing partition DDL
+	tk1 := testkit.NewTestKit(c, s.store)
+	tk1.MustExec("use test")
+	tk1.MustExec("drop table if exists t;")
+	tk1.MustExec(`create table t(id int primary key)
+		partition by hash(id) partitions 4;`)
+	tk1.MustExec("begin")
+	tk1.MustExec("insert into t values(1);")
+
+	tk2 := testkit.NewTestKit(c, s.store)
+	tk2.MustExec("use test")
+	tk2.MustExec("alter table t truncate partition p0;")
+
+	_, err = tk1.Exec("commit")
+	c.Assert(err, IsNil)
 }
 
 func (s *testIntegrationSuite5) TestConstAndTimezoneDepent(c *C) {

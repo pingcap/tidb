@@ -20,6 +20,7 @@ package session
 import (
 	"context"
 	"encoding/hex"
+	"flag"
 	"fmt"
 	"runtime/debug"
 	"strconv"
@@ -78,6 +79,7 @@ const (
 		Reload_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
 		FILE_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Config_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Create_Tablespace_Priv    ENUM('N','Y') NOT NULL DEFAULT 'N',
 		PRIMARY KEY (Host, User));`
 	// CreateGlobalPrivTable is the SQL statement creates Global scope privilege table in system db.
 	CreateGlobalPrivTable = "CREATE TABLE if not exists mysql.global_priv (" +
@@ -423,6 +425,8 @@ const (
 	version49 = 49
 	// version50 add mysql.schema_index_usage table.
 	version50 = 50
+	// version51 introduces CreateTablespacePriv to mysql.user.
+	version51 = 51
 )
 
 var (
@@ -476,6 +480,7 @@ var (
 		upgradeToVer48,
 		upgradeToVer49,
 		upgradeToVer50,
+		upgradeToVer51,
 	}
 )
 
@@ -579,7 +584,7 @@ func upgradeToVer2(s Session, ver int64) {
 	distSQLVars := []string{variable.TiDBDistSQLScanConcurrency}
 	values := make([]string, 0, len(distSQLVars))
 	for _, v := range distSQLVars {
-		value := fmt.Sprintf(`("%s", "%s")`, v, variable.SysVars[v].Value)
+		value := fmt.Sprintf(`("%s", "%s")`, v, variable.GetSysVar(v).Value)
 		values = append(values, value)
 	}
 	sql := fmt.Sprintf("INSERT HIGH_PRIORITY IGNORE INTO %s.%s VALUES %s;", mysql.SystemDB, mysql.GlobalVariablesTable,
@@ -1170,6 +1175,14 @@ func upgradeToVer50(s Session, ver int64) {
 	doReentrantDDL(s, CreateSchemaIndexUsageTable)
 }
 
+func upgradeToVer51(s Session, ver int64) {
+	if ver >= version51 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `Create_tablespace_priv` ENUM('N','Y') DEFAULT 'N'", infoschema.ErrColumnExists)
+	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET Create_tablespace_priv='Y' where Super_priv='Y'")
+}
+
 // updateBootstrapVer updates bootstrap version variable in mysql.TiDB table.
 func updateBootstrapVer(s Session) {
 	// Update bootstrap version.
@@ -1246,11 +1259,11 @@ func doDMLWorks(s Session) {
 
 	// Insert a default user with empty password.
 	mustExecute(s, `INSERT HIGH_PRIORITY INTO mysql.user VALUES
-		("%", "root", "", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y")`)
+		("%", "root", "", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y")`)
 
 	// Init global system variables table.
-	values := make([]string, 0, len(variable.SysVars))
-	for k, v := range variable.SysVars {
+	values := make([]string, 0, len(variable.GetSysVars()))
+	for k, v := range variable.GetSysVars() {
 		// Session only variable should not be inserted.
 		if v.Scope != variable.ScopeSession {
 			vVal := v.Value
@@ -1259,6 +1272,16 @@ func doDMLWorks(s Session) {
 			}
 			if v.Name == variable.TiDBRowFormatVersion {
 				vVal = strconv.Itoa(variable.DefTiDBRowFormatV2)
+			}
+			if v.Name == variable.TiDBEnableClusteredIndex {
+				vVal = "1"
+			}
+			if v.Name == variable.TiDBPartitionPruneMode {
+				vVal = string(variable.StaticOnly)
+				if flag.Lookup("test.v") != nil || flag.Lookup("check.v") != nil || config.CheckTableBeforeDrop {
+					// enable Dynamic Prune by default in test case.
+					vVal = string(variable.DynamicOnly)
+				}
 			}
 			value := fmt.Sprintf(`("%s", "%s")`, strings.ToLower(k), vVal)
 			values = append(values, value)

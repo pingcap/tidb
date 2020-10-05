@@ -33,9 +33,59 @@ type JSONTable struct {
 	TableName    string                 `json:"table_name"`
 	Columns      map[string]*jsonColumn `json:"columns"`
 	Indices      map[string]*jsonColumn `json:"indices"`
+	ExtStats     []*jsonExtendedStats   `json:"ext_stats"`
 	Count        int64                  `json:"count"`
 	ModifyCount  int64                  `json:"modify_count"`
 	Partitions   map[string]*JSONTable  `json:"partitions"`
+}
+
+type jsonExtendedStats struct {
+	StatsName  string  `json:"stats_name"`
+	DB         string  `json:"db"`
+	ColIDs     []int64 `json:"cols"`
+	Tp         uint8   `json:"type"`
+	ScalarVals float64 `json:"scalar_vals"`
+	StringVals string  `json:"string_vals"`
+}
+
+func dumpJSONExtendedStats(statsColl *statistics.ExtendedStatsColl) []*jsonExtendedStats {
+	if statsColl == nil || len(statsColl.Stats) == 0 {
+		return nil
+	}
+	stats := make([]*jsonExtendedStats, 0, len(statsColl.Stats))
+	for key, item := range statsColl.Stats {
+		js := &jsonExtendedStats{
+			StatsName:  key.StatsName,
+			DB:         key.DB,
+			ColIDs:     item.ColIDs,
+			Tp:         item.Tp,
+			ScalarVals: item.ScalarVals,
+			StringVals: item.StringVals,
+		}
+		stats = append(stats, js)
+	}
+	return stats
+}
+
+func extendedStatsFromJSON(statsColl []*jsonExtendedStats) *statistics.ExtendedStatsColl {
+	if len(statsColl) == 0 {
+		return nil
+	}
+	stats := statistics.NewExtendedStatsColl()
+	for _, js := range statsColl {
+		key := statistics.ExtendedStatsKey{
+			StatsName: js.StatsName,
+			DB:        js.DB,
+		}
+		item := &statistics.ExtendedStatsItem{
+			ColIDs:     js.ColIDs,
+			Tp:         js.Tp,
+			ScalarVals: js.ScalarVals,
+			StringVals: js.StringVals,
+		}
+		stats.Stats[key] = item
+	}
+	return stats
 }
 
 type jsonColumn struct {
@@ -115,6 +165,7 @@ func (h *Handle) tableStatsToJSON(dbName string, tableInfo *model.TableInfo, phy
 	for _, idx := range tbl.Indices {
 		jsonTbl.Indices[idx.Info.Name.L] = dumpJSONCol(&idx.Histogram, idx.CMSketch)
 	}
+	jsonTbl.ExtStats = dumpJSONExtendedStats(tbl.ExtendedStats)
 	return jsonTbl, nil
 }
 
@@ -167,8 +218,11 @@ func (h *Handle) loadStatsFromJSON(tableInfo *model.TableInfo, physicalID int64,
 			return errors.Trace(err)
 		}
 	}
-	err = h.SaveMetaToStorage(tbl.PhysicalID, tbl.Count, tbl.ModifyCount)
-	return err
+	err = h.SaveExtendedStatsToStorage(tbl.PhysicalID, tbl.ExtendedStats, true)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return h.SaveMetaToStorage(tbl.PhysicalID, tbl.Count, tbl.ModifyCount)
 }
 
 // TableStatsFromJSON loads statistic from JSONTable and return the Table of statistic.
@@ -224,5 +278,6 @@ func TableStatsFromJSON(tableInfo *model.TableInfo, physicalID int64, jsonTbl *J
 			tbl.Columns[col.ID] = col
 		}
 	}
+	tbl.ExtendedStats = extendedStatsFromJSON(jsonTbl.ExtStats)
 	return tbl, nil
 }

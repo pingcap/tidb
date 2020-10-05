@@ -30,7 +30,6 @@ import (
 	"time"
 
 	"github.com/go-sql-driver/mysql"
-	"github.com/phayes/freeport"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -44,32 +43,8 @@ import (
 )
 
 var (
-	portGenerator       uint32 = 4001
-	statusPortGenerator uint32 = 7090
-	regression                 = true
+	regression = true
 )
-
-func genPorts() (uint, uint) {
-	var (
-		ports []int
-		err   error
-	)
-	if ports, err = freeport.GetFreePorts(2); err != nil {
-		log.Fatal("no more free ports", zap.Error(err))
-	}
-	return uint(ports[0]), uint(ports[1])
-}
-
-func genPort() uint {
-	var (
-		port int
-		err  error
-	)
-	if port, err = freeport.GetFreePort(); err != nil {
-		log.Fatal("no more free ports", zap.Error(err))
-	}
-	return uint(port)
-}
 
 func TestT(t *testing.T) {
 	CustomVerboseFlag = true
@@ -90,10 +65,9 @@ type testServerClient struct {
 
 // newTestServerClient return a testServerClient with unique address
 func newTestServerClient() *testServerClient {
-	port, statusPort := genPorts()
 	return &testServerClient{
-		port:         port,
-		statusPort:   statusPort,
+		port:         0,
+		statusPort:   0,
 		statusScheme: "http",
 	}
 }

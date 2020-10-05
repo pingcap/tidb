@@ -131,8 +131,8 @@ var (
 )
 
 var (
-	// MinDatetime is the minimum for mysql datetime type.
-	MinDatetime = FromDate(1000, 1, 1, 0, 0, 0, 0)
+	// MinDatetime is the minimum for Golang Time type.
+	MinDatetime = FromDate(1, 1, 1, 0, 0, 0, 0)
 	// MaxDatetime is the maximum for mysql datetime type.
 	MaxDatetime = FromDate(9999, 12, 31, 23, 59, 59, 999999)
 
@@ -2636,7 +2636,7 @@ func GetFormatType(format string) (isDuration, isDate bool) {
 		}
 		if len(token) >= 2 && token[0] == '%' {
 			switch token[1] {
-			case 'h', 'H', 'i', 'I', 's', 'S', 'k', 'l', 'f':
+			case 'h', 'H', 'i', 'I', 's', 'S', 'k', 'l', 'f', 'r', 'T':
 				isDuration = true
 			case 'y', 'Y', 'm', 'M', 'c', 'b', 'D', 'd', 'e':
 				isDate = true

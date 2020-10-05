@@ -15,13 +15,16 @@ package handle
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"go.uber.org/zap"
 )
 
 // GCStats will garbage collect the useless stats info. For dropped tables, we will first update their version so that
@@ -34,7 +37,8 @@ func (h *Handle) GCStats(is infoschema.InfoSchema, ddlLease time.Duration) error
 	if h.LastUpdateVersion() < offset {
 		return nil
 	}
-	sql := fmt.Sprintf("select table_id from mysql.stats_meta where version < %d", h.LastUpdateVersion()-offset)
+	gcVer := h.LastUpdateVersion() - offset
+	sql := fmt.Sprintf("select table_id from mysql.stats_meta where version < %d", gcVer)
 	rows, _, err := h.restrictedExec.ExecRestrictedSQL(sql)
 	if err != nil {
 		return errors.Trace(err)
@@ -44,7 +48,7 @@ func (h *Handle) GCStats(is infoschema.InfoSchema, ddlLease time.Duration) error
 			return errors.Trace(err)
 		}
 	}
-	return nil
+	return h.removeDeletedExtendedStats(gcVer)
 }
 
 func (h *Handle) gcTableStats(is infoschema.InfoSchema, physicalID int64) error {
@@ -88,6 +92,41 @@ func (h *Handle) gcTableStats(is infoschema.InfoSchema, physicalID int64) error 
 		if !find {
 			if err := h.deleteHistStatsFromKV(physicalID, histID, int(isIndex)); err != nil {
 				return errors.Trace(err)
+			}
+		}
+	}
+	// Mark records in mysql.stats_extended as `deleted`.
+	sql = fmt.Sprintf("select stats_name, db, column_ids from mysql.stats_extended where table_id = %d and status in (%d, %d)", physicalID, StatsStatusAnalyzed, StatsStatusInited)
+	rows, _, err = h.restrictedExec.ExecRestrictedSQL(sql)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if len(rows) == 0 {
+		return nil
+	}
+	for _, row := range rows {
+		statsName, db, strColIDs := row.GetString(0), row.GetString(1), row.GetString(2)
+		var colIDs []int64
+		err = json.Unmarshal([]byte(strColIDs), &colIDs)
+		if err != nil {
+			logutil.BgLogger().Debug("decode column IDs failed", zap.String("column_ids", strColIDs), zap.Error(err))
+			return errors.Trace(err)
+		}
+		for _, colID := range colIDs {
+			found := false
+			for _, col := range tblInfo.Columns {
+				if colID == col.ID {
+					found = true
+					break
+				}
+			}
+			if !found {
+				err = h.MarkExtendedStatsDeleted(statsName, db, physicalID)
+				if err != nil {
+					logutil.BgLogger().Debug("update stats_extended status failed", zap.String("stats_name", statsName), zap.String("db", db), zap.Error(err))
+					return errors.Trace(err)
+				}
+				break
 			}
 		}
 	}
@@ -141,10 +180,30 @@ func (h *Handle) DeleteTableStatsFromKV(physicalID int64) (err error) {
 		return errors.Trace(err)
 	}
 	startTS := txn.StartTS()
-	sqls := make([]string, 0, 3)
+	sqls := make([]string, 0, 5)
 	// We only update the version so that other tidb will know that this table is deleted.
 	sqls = append(sqls, fmt.Sprintf("update mysql.stats_meta set version = %d where table_id = %d ", startTS, physicalID))
 	sqls = append(sqls, fmt.Sprintf("delete from mysql.stats_histograms where table_id = %d", physicalID))
 	sqls = append(sqls, fmt.Sprintf("delete from mysql.stats_buckets where table_id = %d", physicalID))
+	sqls = append(sqls, fmt.Sprintf("delete from mysql.stats_top_n where table_id = %d", physicalID))
+	sqls = append(sqls, fmt.Sprintf("delete from mysql.stats_feedback where table_id = %d", physicalID))
+	sqls = append(sqls, fmt.Sprintf("update mysql.stats_extended set version = %d, status = %d where table_id = %d and status in (%d, %d)", startTS, StatsStatusDeleted, physicalID, StatsStatusAnalyzed, StatsStatusInited))
 	return execSQLs(context.Background(), exec, sqls)
+}
+
+func (h *Handle) removeDeletedExtendedStats(version uint64) (err error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	exec := h.mu.ctx.(sqlexec.SQLExecutor)
+	ctx := context.Background()
+	_, err = exec.Execute(ctx, "begin pessimistic")
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer func() {
+		err = finishTransaction(ctx, exec, err)
+	}()
+	sql := fmt.Sprintf("delete from mysql.stats_extended where status = %d and version < %d", StatsStatusDeleted, version)
+	_, err = exec.Execute(ctx, sql)
+	return
 }

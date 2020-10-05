@@ -197,10 +197,25 @@ var (
 
 // IsMemOrSysDB uses to check whether dbLowerName is memory database or system database.
 func IsMemOrSysDB(dbLowerName string) bool {
+	return IsMemDB(dbLowerName) || dbLowerName == mysql.SystemDB
+}
+
+// IsMemDB checks whether dbLowerName is memory database.
+func IsMemDB(dbLowerName string) bool {
 	switch dbLowerName {
 	case InformationSchemaName.L,
 		PerformanceSchemaName.L,
-		mysql.SystemDB,
+		MetricSchemaName.L:
+		return true
+	}
+	return false
+}
+
+// IsSystemView is similar to IsMemOrSyDB, but does not include the mysql schema
+func IsSystemView(dbLowerName string) bool {
+	switch dbLowerName {
+	case InformationSchemaName.L,
+		PerformanceSchemaName.L,
 		MetricSchemaName.L:
 		return true
 	}
@@ -425,7 +440,8 @@ type SequenceSchema interface {
 	SequenceByName(schema, sequence model.CIStr) (SequenceTable, error)
 }
 
-// SequenceTable is implemented by tableCommon, and it is specialised in handling sequence operation.
+// SequenceTable is implemented by tableCommon,
+// and it is specialised in handling sequence operation.
 // Otherwise calling table will cause import cycle problem.
 type SequenceTable interface {
 	GetSequenceID() int64

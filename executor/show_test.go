@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	plannercore "github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
@@ -154,6 +155,69 @@ func (s *testSuite5) TestShowGrantsPrivilege(c *C) {
 	c.Assert(se2.Auth(&auth.UserIdentity{Username: "show_grants", Hostname: "127.0.0.1", AuthUsername: "show_grants", AuthHostname: "%"}, nil, nil), IsTrue)
 	tk2.Se = se2
 	tk2.MustQuery("show grants")
+}
+
+func (s *testSuite5) TestShowStatsPrivilege(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create user show_stats")
+	tk1 := testkit.NewTestKit(c, s.store)
+	se, err := session.CreateSession4Test(s.store)
+	c.Assert(err, IsNil)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "show_stats", Hostname: "%"}, nil, nil), IsTrue)
+	tk1.Se = se
+	eqErr := plannercore.ErrDBaccessDenied.GenWithStackByArgs("show_stats", "%", mysql.SystemDB)
+	_, err = tk1.Exec("show stats_meta")
+	c.Assert(err.Error(), Equals, eqErr.Error())
+	_, err = tk1.Exec("SHOW STATS_BUCKETS")
+	c.Assert(err.Error(), Equals, eqErr.Error())
+	_, err = tk1.Exec("SHOW STATS_HEALTHY")
+	c.Assert(err.Error(), Equals, eqErr.Error())
+	_, err = tk1.Exec("SHOW STATS_HISTOGRAMS")
+	c.Assert(err.Error(), Equals, eqErr.Error())
+	tk.MustExec("grant select on mysql.* to show_stats")
+	tk1.MustExec("show stats_meta")
+	tk1.MustExec("SHOW STATS_BUCKETS")
+	tk1.MustExec("SHOW STATS_HEALTHY")
+	tk1.MustExec("SHOW STATS_HISTOGRAMS")
+}
+
+func (s *testSuite5) TestIssue18878(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	se, err := session.CreateSession4Test(s.store)
+	c.Assert(err, IsNil)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "root", Hostname: "127.0.0.1", AuthHostname: "%"}, nil, nil), IsTrue)
+	tk.Se = se
+	tk.MustQuery("select user()").Check(testkit.Rows("root@127.0.0.1"))
+	tk.MustQuery("show grants")
+	tk.MustQuery("select user()").Check(testkit.Rows("root@127.0.0.1"))
+	err = tk.QueryToErr("show grants for root@127.0.0.1")
+	c.Assert(err.Error(), Equals, privileges.ErrNonexistingGrant.FastGenByArgs("root", "127.0.0.1").Error())
+	err = tk.QueryToErr("show grants for root@localhost")
+	c.Assert(err.Error(), Equals, privileges.ErrNonexistingGrant.FastGenByArgs("root", "localhost").Error())
+	err = tk.QueryToErr("show grants for root@1.1.1.1")
+	c.Assert(err.Error(), Equals, privileges.ErrNonexistingGrant.FastGenByArgs("root", "1.1.1.1").Error())
+	tk.MustExec("create user `show_grants`@`127.0.%`")
+	err = tk.QueryToErr("show grants for `show_grants`@`127.0.0.1`")
+	c.Assert(err.Error(), Equals, privileges.ErrNonexistingGrant.FastGenByArgs("show_grants", "127.0.0.1").Error())
+	tk.MustQuery("show grants for `show_grants`@`127.0.%`")
+}
+
+func (s *testSuite5) TestIssue17794(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("CREATE USER 'root'@'8.8.%'")
+	se, err := session.CreateSession4Test(s.store)
+	c.Assert(err, IsNil)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "root", Hostname: "9.9.9.9", AuthHostname: "%"}, nil, nil), IsTrue)
+	tk.Se = se
+
+	tk1 := testkit.NewTestKit(c, s.store)
+	se1, err := session.CreateSession4Test(s.store)
+	c.Assert(err, IsNil)
+	c.Assert(se1.Auth(&auth.UserIdentity{Username: "root", Hostname: "8.8.8.8", AuthHostname: "8.8.%"}, nil, nil), IsTrue)
+	tk1.Se = se1
+
+	tk.MustQuery("show grants").Check(testkit.Rows("GRANT ALL PRIVILEGES ON *.* TO 'root'@'%' WITH GRANT OPTION"))
+	tk1.MustQuery("show grants").Check(testkit.Rows("GRANT USAGE ON *.* TO 'root'@'8.8.%'"))
 }
 
 func (s *testSuite5) TestIssue3641(c *C) {
@@ -290,6 +354,12 @@ func (s *testSuite5) TestShow2(c *C) {
 	tk.MustExec(`create sequence seq`)
 	tk.MustQuery("show tables").Check(testkit.Rows("seq", "t", "v"))
 	tk.MustQuery("show full tables").Check(testkit.Rows("seq SEQUENCE", "t BASE TABLE", "v VIEW"))
+
+	// Bug 19427
+	tk.MustQuery("SHOW FULL TABLES in INFORMATION_SCHEMA like 'VIEWS'").Check(testkit.Rows("VIEWS SYSTEM VIEW"))
+	tk.MustQuery("SHOW FULL TABLES in information_schema like 'VIEWS'").Check(testkit.Rows("VIEWS SYSTEM VIEW"))
+	tk.MustQuery("SHOW FULL TABLES in metrics_schema like 'uptime'").Check(testkit.Rows("uptime SYSTEM VIEW"))
+
 	ctx := tk.Se.(sessionctx.Context)
 	is := domain.GetDomain(ctx).InfoSchema()
 	tblInfo, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))

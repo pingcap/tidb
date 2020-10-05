@@ -15,6 +15,7 @@ package executor
 
 import (
 	"context"
+	"runtime/trace"
 	"sync"
 	"sync/atomic"
 
@@ -166,7 +167,7 @@ func (e *ParallelNestedLoopApplyExec) Close() error {
 	}
 
 	if e.runtimeStats != nil {
-		runtimeStats := newJoinRuntimeStats(e.runtimeStats)
+		runtimeStats := newJoinRuntimeStats()
 		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, runtimeStats)
 		if e.useCache {
 			var hitRatio float64
@@ -191,6 +192,7 @@ func (e *ParallelNestedLoopApplyExec) notifyWorker(ctx context.Context) {
 }
 
 func (e *ParallelNestedLoopApplyExec) outerWorker(ctx context.Context) {
+	defer trace.StartRegion(ctx, "ParallelApplyOuterWorker").End()
 	defer e.handleWorkerPanic(ctx, &e.workerWg)
 	var selected []bool
 	var err error
@@ -223,6 +225,7 @@ func (e *ParallelNestedLoopApplyExec) outerWorker(ctx context.Context) {
 }
 
 func (e *ParallelNestedLoopApplyExec) innerWorker(ctx context.Context, id int) {
+	defer trace.StartRegion(ctx, "ParallelApplyInnerWorker").End()
 	defer e.handleWorkerPanic(ctx, &e.workerWg)
 	for {
 		var chk *chunk.Chunk
