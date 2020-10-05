@@ -1712,10 +1712,9 @@ func BenchmarkSortExec(b *testing.B) {
 
 type selectionCase struct {
 	rows                  int
-	filter                []expression.Expression
 	count                 int
-	batched               bool
-	childUsedSchema       []bool // parent需要的column
+	filter                []expression.Expression
+	childUsedSchema       []bool
 	usingInlineProjection bool
 	ctx                   sessionctx.Context
 }
@@ -1728,8 +1727,8 @@ func (tc selectionCase) columns() []*expression.Column {
 }
 
 func (tc selectionCase) String() string {
-	return fmt.Sprintf("(rows:%v, count:%v, inline_projection:%v, batched:%v)",
-		tc.rows, tc.count, tc.usingInlineProjection, tc.batched)
+	return fmt.Sprintf("(rows:%v, count:%v, inline_projection:%v)",
+		tc.rows, tc.count, tc.usingInlineProjection)
 }
 
 func defaultSelectionTestCase() *selectionCase {
@@ -1743,9 +1742,8 @@ func defaultSelectionTestCase() *selectionCase {
 	tc := &selectionCase{
 		rows:                  300000,
 		count:                 100000,
-		batched:               true,
 		filter:                []expression.Expression{f1},
-		childUsedSchema:       []bool{false, true},
+		childUsedSchema:       []bool{true, false},
 		usingInlineProjection: false,
 		ctx:                   ctx,
 	}
@@ -1762,11 +1760,7 @@ func benchmarkSelectionExec(b *testing.B, cas *selectionCase) {
 	var exec Executor
 	selection := &SelectionExec{
 		baseExecutor: newBaseExecutor(cas.ctx, dataSource.schema, 4, dataSource),
-		batched:      cas.batched,
 		filters:      cas.filter,
-		selected:     []bool{true},
-		//ByItems:      make([]*util.ByItems, 0, len(cas.orderByIdx)),
-		//schema:       dataSource.schema,
 	}
 	if cas.usingInlineProjection {
 		if len(cas.childUsedSchema) > 0 {
@@ -1826,14 +1820,10 @@ func BenchmarkSelectionExec(b *testing.B) {
 	b.ReportAllocs()
 	cas := defaultSelectionTestCase()
 	usingInlineProjection := []bool{false, true}
-	batched := []bool{false, true}
 	for _, inlineProjection := range usingInlineProjection {
 		cas.usingInlineProjection = inlineProjection
-		for _, batched := range batched {
-			cas.batched = batched
-			b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
-				benchmarkSelectionExec(b, cas)
-			})
-		}
+		b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
+			benchmarkSelectionExec(b, cas)
+		})
 	}
 }
