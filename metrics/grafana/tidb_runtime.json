@@ -1098,7 +1098,7 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "histogram_quantile(0.99, sum(rate(tidb_tikvclient_request_seconds_bucket{type!=\"GC\",instance=~\"$instance\"}[30s])) by (le, store))",
+              "expr": "histogram_quantile(0.99, sum(rate(tidb_tikvclient_request_seconds_bucket{store!=\"0\",instance=~\"$instance\"}[30s])) by (le, store))",
               "format": "time_series",
               "intervalFactor": 1,
               "legendFormat": "tidb-to-store{{store}}",
