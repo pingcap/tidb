@@ -14,11 +14,13 @@
 package util
 
 import (
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"fmt"
 	"io/ioutil"
+	"net"
 	"net/http"
 	"os"
 	"runtime"
@@ -143,6 +145,16 @@ func CompatibleParseGCTime(value string) (time.Time, error) {
 	return t, err
 }
 
+// HasCancelled checks whether context has be cancelled.
+func HasCancelled(ctx context.Context) (cancel bool) {
+	select {
+	case <-ctx.Done():
+		cancel = true
+	default:
+	}
+	return
+}
+
 const (
 	// syntaxErrorPrefix is the common prefix for SQL syntax error in TiDB.
 	syntaxErrorPrefix = "You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use"
@@ -185,10 +197,25 @@ var (
 
 // IsMemOrSysDB uses to check whether dbLowerName is memory database or system database.
 func IsMemOrSysDB(dbLowerName string) bool {
+	return IsMemDB(dbLowerName) || dbLowerName == mysql.SystemDB
+}
+
+// IsMemDB checks whether dbLowerName is memory database.
+func IsMemDB(dbLowerName string) bool {
 	switch dbLowerName {
 	case InformationSchemaName.L,
 		PerformanceSchemaName.L,
-		mysql.SystemDB,
+		MetricSchemaName.L:
+		return true
+	}
+	return false
+}
+
+// IsSystemView is similar to IsMemOrSyDB, but does not include the mysql schema
+func IsSystemView(dbLowerName string) bool {
+	switch dbLowerName {
+	case InformationSchemaName.L,
+		PerformanceSchemaName.L,
 		MetricSchemaName.L:
 		return true
 	}
@@ -264,6 +291,42 @@ func MockPkixAttribute(name, value string) pkix.AttributeTypeAndValue {
 		Type:  vs,
 		Value: value,
 	}
+}
+
+// SANType is enum value for GlobalPrivValue.SANs keys.
+type SANType string
+
+const (
+	// URI indicates uri info in SAN.
+	URI = SANType("URI")
+	// DNS indicates dns info in SAN.
+	DNS = SANType("DNS")
+	// IP indicates ip info in SAN.
+	IP = SANType("IP")
+)
+
+var supportSAN = map[SANType]struct{}{
+	URI: {},
+	DNS: {},
+	IP:  {},
+}
+
+// ParseAndCheckSAN parses and check SAN str.
+func ParseAndCheckSAN(san string) (map[SANType][]string, error) {
+	sanMap := make(map[SANType][]string)
+	sans := strings.Split(san, ",")
+	for _, san := range sans {
+		kv := strings.SplitN(san, ":", 2)
+		if len(kv) != 2 {
+			return nil, errors.Errorf("invalid SAN value %s", san)
+		}
+		k, v := SANType(strings.ToUpper(strings.TrimSpace(kv[0]))), strings.TrimSpace(kv[1])
+		if _, s := supportSAN[k]; !s {
+			return nil, errors.Errorf("unsupported SAN key %s, current only support %v", k, supportSAN)
+		}
+		sanMap[k] = append(sanMap[k], v)
+	}
+	return sanMap, nil
 }
 
 // CheckSupportX509NameOneline parses and validate input str is X509_NAME_oneline format
@@ -377,7 +440,8 @@ type SequenceSchema interface {
 	SequenceByName(schema, sequence model.CIStr) (SequenceTable, error)
 }
 
-// SequenceTable is implemented by tableCommon, and it is specialised in handling sequence operation.
+// SequenceTable is implemented by tableCommon,
+// and it is specialised in handling sequence operation.
 // Otherwise calling table will cause import cycle problem.
 type SequenceTable interface {
 	GetSequenceID() int64
@@ -473,4 +537,18 @@ func initInternalClient() {
 	internalHTTPClient = &http.Client{
 		Transport: &http.Transport{TLSClientConfig: tlsCfg},
 	}
+}
+
+// GetLocalIP will return a local IP(non-loopback, non 0.0.0.0), if there is one
+func GetLocalIP() string {
+	addrs, err := net.InterfaceAddrs()
+	if err == nil {
+		for _, address := range addrs {
+			ipnet, ok := address.(*net.IPNet)
+			if ok && ipnet.IP.IsGlobalUnicast() {
+				return ipnet.IP.String()
+			}
+		}
+	}
+	return ""
 }

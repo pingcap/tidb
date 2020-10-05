@@ -20,6 +20,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
@@ -232,4 +233,162 @@ func (s *testUpdateSuite) TestUpdateMultiDatabaseTable(c *C) {
 	tk.MustExec("create table t(a int, b int generated always  as (a+1) virtual)")
 	tk.MustExec("create table test2.t(a int, b int generated always  as (a+1) virtual)")
 	tk.MustExec("update t, test2.t set test.t.a=1")
+}
+
+var _ = SerialSuites(&testSuite11{&baseTestSuite{}})
+
+type testSuite11 struct {
+	*baseTestSuite
+}
+
+func (s *testSuite11) TestUpdateClusterIndex(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`set @@tidb_enable_clustered_index=true`)
+	tk.MustExec(`use test`)
+
+	tk.MustExec(`drop table if exists t`)
+	tk.MustExec(`create table t(id varchar(200) primary key, v int)`)
+	tk.MustExec(`insert into t(id, v) values ('abc', 233)`)
+	tk.MustQuery(`select id, v from t where id = 'abc'`).Check(testkit.Rows("abc 233"))
+	tk.MustExec(`update t set id = 'dfg' where id = 'abc'`)
+	tk.MustQuery(`select * from t`).Check(testkit.Rows("dfg 233"))
+	tk.MustExec(`update t set id = 'aaa', v = 333 where id = 'dfg'`)
+	tk.MustQuery(`select * from t where id = 'aaa'`).Check(testkit.Rows("aaa 333"))
+	tk.MustExec(`update t set v = 222 where id = 'aaa'`)
+	tk.MustQuery(`select * from t where id = 'aaa'`).Check(testkit.Rows("aaa 222"))
+	tk.MustExec(`insert into t(id, v) values ('bbb', 111)`)
+	tk.MustGetErrCode(`update t set id = 'bbb' where id = 'aaa'`, errno.ErrDupEntry)
+
+	tk.MustExec(`drop table if exists ut3pk`)
+	tk.MustExec(`create table ut3pk(id1 varchar(200), id2 varchar(200), v int, id3 int, primary key(id1, id2, id3))`)
+	tk.MustExec(`insert into ut3pk(id1, id2, v, id3) values ('aaa', 'bbb', 233, 111)`)
+	tk.MustQuery(`select id1, id2, id3, v from ut3pk where id1 = 'aaa' and id2 = 'bbb' and id3 = 111`).Check(testkit.Rows("aaa bbb 111 233"))
+	tk.MustExec(`update ut3pk set id1 = 'abc', id2 = 'bbb2', id3 = 222, v = 555 where id1 = 'aaa' and id2 = 'bbb' and id3 = 111`)
+	tk.MustQuery(`select id1, id2, id3, v from ut3pk where id1 = 'abc' and id2 = 'bbb2' and id3 = 222`).Check(testkit.Rows("abc bbb2 222 555"))
+	tk.MustQuery(`select id1, id2, id3, v from ut3pk`).Check(testkit.Rows("abc bbb2 222 555"))
+	tk.MustExec(`update ut3pk set v = 666 where id1 = 'abc' and id2 = 'bbb2' and id3 = 222`)
+	tk.MustQuery(`select id1, id2, id3, v from ut3pk`).Check(testkit.Rows("abc bbb2 222 666"))
+	tk.MustExec(`insert into ut3pk(id1, id2, id3, v) values ('abc', 'bbb3', 222, 777)`)
+	tk.MustGetErrCode(`update ut3pk set id2 = 'bbb3' where id1 = 'abc' and id2 = 'bbb2' and id3 = 222`, errno.ErrDupEntry)
+
+	tk.MustExec(`drop table if exists ut1pku`)
+	tk.MustExec(`create table ut1pku(id varchar(200) primary key, uk int, v int, unique key ukk(uk))`)
+	tk.MustExec(`insert into ut1pku(id, uk, v) values('a', 1, 2), ('b', 2, 3)`)
+	tk.MustQuery(`select * from ut1pku`).Check(testkit.Rows("a 1 2", "b 2 3"))
+	tk.MustExec(`update ut1pku set uk = 3 where id = 'a'`)
+	tk.MustQuery(`select * from ut1pku`).Check(testkit.Rows("a 3 2", "b 2 3"))
+	tk.MustGetErrCode(`update ut1pku set uk = 2 where id = 'a'`, errno.ErrDupEntry)
+	tk.MustQuery(`select * from ut1pku`).Check(testkit.Rows("a 3 2", "b 2 3"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a char(10) primary key, b char(10));")
+	tk.MustExec("insert into t values('a', 'b');")
+	tk.MustExec("update t set a='c' where t.a='a' and b='b';")
+	tk.MustQuery("select * from t").Check(testkit.Rows("c b"))
+
+	tk.MustExec("drop table if exists s")
+	tk.MustExec("create table s (a int, b int, c int, primary key (a, b))")
+	tk.MustExec("insert s values (3, 3, 3), (5, 5, 5)")
+	tk.MustExec("update s set c = 10 where a = 3")
+	tk.MustQuery("select * from s").Check(testkit.Rows("3 3 10", "5 5 5"))
+}
+
+func (s *testSuite11) TestDeleteClusterIndex(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`set @@tidb_enable_clustered_index=true`)
+	tk.MustExec(`use test`)
+
+	tk.MustExec(`drop table if exists t`)
+	tk.MustExec(`create table t(id varchar(200) primary key, v int)`)
+	tk.MustExec(`insert into t(id, v) values ('abc', 233)`)
+	tk.MustExec(`delete from t where id = 'abc'`)
+	tk.MustQuery(`select * from t`).Check(testkit.Rows())
+	tk.MustQuery(`select * from t where id = 'abc'`).Check(testkit.Rows())
+
+	tk.MustExec(`drop table if exists it3pk`)
+	tk.MustExec(`create table it3pk(id1 varchar(200), id2 varchar(200), v int, id3 int, primary key(id1, id2, id3))`)
+	tk.MustExec(`insert into it3pk(id1, id2, v, id3) values ('aaa', 'bbb', 233, 111)`)
+	tk.MustExec(`delete from it3pk where id1 = 'aaa' and id2 = 'bbb' and id3 = 111`)
+	tk.MustQuery(`select * from it3pk`).Check(testkit.Rows())
+	tk.MustQuery(`select * from it3pk where id1 = 'aaa' and id2 = 'bbb' and id3 = 111`).Check(testkit.Rows())
+	tk.MustExec(`insert into it3pk(id1, id2, v, id3) values ('aaa', 'bbb', 433, 111)`)
+	tk.MustQuery(`select * from it3pk where id1 = 'aaa' and id2 = 'bbb' and id3 = 111`).Check(testkit.Rows("aaa bbb 433 111"))
+
+	tk.MustExec(`drop table if exists dt3pku`)
+	tk.MustExec(`create table dt3pku(id varchar(200) primary key, uk int, v int, unique key uuk(uk))`)
+	tk.MustExec(`insert into dt3pku(id, uk, v) values('a', 1, 2)`)
+	tk.MustExec(`delete from dt3pku where id = 'a'`)
+	tk.MustQuery(`select * from dt3pku`).Check(testkit.Rows())
+	tk.MustExec(`insert into dt3pku(id, uk, v) values('a', 1, 2)`)
+
+	tk.MustExec("drop table if exists s1")
+	tk.MustExec("create table s1 (a int, b int, c int, primary key (a, b))")
+	tk.MustExec("insert s1 values (3, 3, 3), (5, 5, 5)")
+	tk.MustExec("delete from s1 where a = 3")
+	tk.MustQuery("select * from s1").Check(testkit.Rows("5 5 5"))
+}
+
+func (s *testSuite11) TestReplaceClusterIndex(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`set @@tidb_enable_clustered_index=true`)
+	tk.MustExec(`use test`)
+
+	tk.MustExec(`drop table if exists rt1pk`)
+	tk.MustExec(`create table rt1pk(id varchar(200) primary key, v int)`)
+	tk.MustExec(`replace into rt1pk(id, v) values('abc', 1)`)
+	tk.MustQuery(`select * from rt1pk`).Check(testkit.Rows("abc 1"))
+	tk.MustExec(`replace into rt1pk(id, v) values('bbb', 233), ('abc', 2)`)
+	tk.MustQuery(`select * from rt1pk`).Check(testkit.Rows("abc 2", "bbb 233"))
+
+	tk.MustExec(`drop table if exists rt3pk`)
+	tk.MustExec(`create table rt3pk(id1 timestamp, id2 time, v int, id3 year, primary key(id1, id2, id3))`)
+	tk.MustExec(`replace into rt3pk(id1, id2,id3, v) values('2018-01-01 11:11:11', '22:22:22', '2019', 1)`)
+	tk.MustQuery(`select * from rt3pk`).Check(testkit.Rows("2018-01-01 11:11:11 22:22:22 1 2019"))
+	tk.MustExec(`replace into rt3pk(id1, id2, id3, v) values('2018-01-01 11:11:11', '22:22:22', '2019', 2)`)
+	tk.MustQuery(`select * from rt3pk`).Check(testkit.Rows("2018-01-01 11:11:11 22:22:22 2 2019"))
+
+	tk.MustExec(`drop table if exists rt1pk1u`)
+	tk.MustExec(`create table rt1pk1u(id varchar(200) primary key, uk int, v int, unique key uuk(uk))`)
+	tk.MustExec(`replace into rt1pk1u(id, uk, v) values("abc", 2, 1)`)
+	tk.MustQuery(`select * from rt1pk1u`).Check(testkit.Rows("abc 2 1"))
+	tk.MustExec(`replace into rt1pk1u(id, uk, v) values("aaa", 2, 11)`)
+	tk.MustQuery(`select * from rt1pk1u`).Check(testkit.Rows("aaa 2 11"))
+}
+
+func (s *testSuite11) TestPessimisticUpdatePKLazyCheck(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	s.testUpdatePKLazyCheck(c, tk, true)
+	s.testUpdatePKLazyCheck(c, tk, false)
+}
+
+func (s *testSuite11) testUpdatePKLazyCheck(c *C, tk *testkit.TestKit, clusteredIndex bool) {
+	tk.MustExec(fmt.Sprintf(`set @@tidb_enable_clustered_index=%v`, clusteredIndex))
+	tk.MustExec(`drop table if exists upk`)
+	tk.MustExec(`create table upk (a int, b int, c int, primary key (a, b))`)
+	tk.MustExec(`insert upk values (1, 1, 1), (2, 2, 2), (3, 3, 3)`)
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("update upk set b = b + 1 where a between 1 and 2")
+	c.Assert(getPresumeExistsCount(c, tk.Se), Equals, 2)
+	_, err := tk.Exec("update upk set a = 3, b = 3 where a between 1 and 2")
+	c.Assert(kv.ErrKeyExists.Equal(err), IsTrue)
+	tk.MustExec("commit")
+}
+
+func getPresumeExistsCount(c *C, se session.Session) int {
+	txn, err := se.Txn(false)
+	c.Assert(err, IsNil)
+	buf := txn.GetMemBuffer()
+	it, err := buf.Iter(nil, nil)
+	c.Assert(err, IsNil)
+	presumeNotExistsCnt := 0
+	for it.Valid() {
+		flags, err1 := buf.GetFlags(it.Key())
+		c.Assert(err1, IsNil)
+		err = it.Next()
+		c.Assert(err, IsNil)
+		if flags.HasPresumeKeyNotExists() {
+			presumeNotExistsCnt++
+		}
+	}
+	return presumeNotExistsCnt
 }

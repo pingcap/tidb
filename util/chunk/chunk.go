@@ -588,7 +588,6 @@ func (c *Chunk) AppendBytes(colIdx int, b []byte) {
 }
 
 // AppendTime appends a Time value to the chunk.
-// TODO: change the time structure so it can be directly written to memory.
 func (c *Chunk) AppendTime(colIdx int, t types.Time) {
 	c.appendSel(colIdx)
 	c.columns[colIdx].AppendTime(t)
@@ -695,4 +694,15 @@ func (c *Chunk) Reconstruct() {
 	}
 	c.numVirtualRows = len(c.sel)
 	c.sel = nil
+}
+
+// ToString returns all the values in a chunk.
+func (c *Chunk) ToString(ft []*types.FieldType) string {
+	var buf []byte
+	for rowIdx := 0; rowIdx < c.NumRows(); rowIdx++ {
+		row := c.GetRow(rowIdx)
+		buf = append(buf, row.ToString(ft)...)
+		buf = append(buf, '\n')
+	}
+	return string(buf)
 }

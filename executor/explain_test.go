@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/tidb/util/testkit"
 )
 
-func (s *testSuite1) TestExplainPriviliges(c *C) {
+func (s *testSuite1) TestExplainPrivileges(c *C) {
 	se, err := session.CreateSession4Test(s.store)
 	c.Assert(err, IsNil)
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil), IsTrue)
@@ -37,7 +37,6 @@ func (s *testSuite1) TestExplainPriviliges(c *C) {
 	tk.MustExec("create table t (id int)")
 	tk.MustExec("create view v as select * from t")
 	tk.MustExec(`create user 'explain'@'%'`)
-	tk.MustExec(`flush privileges`)
 
 	tk1 := testkit.NewTestKit(c, s.store)
 	se, err = session.CreateSession4Test(s.store)
@@ -46,7 +45,6 @@ func (s *testSuite1) TestExplainPriviliges(c *C) {
 	tk1.Se = se
 
 	tk.MustExec(`grant select on explaindatabase.v to 'explain'@'%'`)
-	tk.MustExec(`flush privileges`)
 	tk1.MustQuery("show databases").Check(testkit.Rows("INFORMATION_SCHEMA", "explaindatabase"))
 
 	tk1.MustExec("use explaindatabase")
@@ -55,11 +53,9 @@ func (s *testSuite1) TestExplainPriviliges(c *C) {
 	c.Assert(err.Error(), Equals, plannercore.ErrViewNoExplain.Error())
 
 	tk.MustExec(`grant show view on explaindatabase.v to 'explain'@'%'`)
-	tk.MustExec(`flush privileges`)
 	tk1.MustQuery("explain select * from v")
 
 	tk.MustExec(`revoke select on explaindatabase.v from 'explain'@'%'`)
-	tk.MustExec(`flush privileges`)
 
 	err = tk1.ExecToErr("explain select * from v")
 	c.Assert(err.Error(), Equals, plannercore.ErrTableaccessDenied.GenWithStackByArgs("SELECT", "explain", "%", "v").Error())
@@ -238,5 +234,27 @@ func (s *testSuite2) checkExecutionInfo(c *C, tk *testkit.TestKit, sql string) {
 		}
 
 		c.Assert(strs[executionInfoCol], Not(Equals), "time:0s, loops:0, rows:0")
+	}
+}
+
+func (s *testSuite2) TestExplainAnalyzeActRowsNotEmpty(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int, index (a))")
+	tk.MustExec("insert into t values (1, 1)")
+
+	s.checkActRowsNotEmpty(c, tk, "explain analyze select * from t t1, t t2 where t1.b = t2.a and t1.b = 2333")
+}
+
+func (s *testSuite2) checkActRowsNotEmpty(c *C, tk *testkit.TestKit, sql string) {
+	actRowsCol := 2
+	rows := tk.MustQuery(sql).Rows()
+	for _, row := range rows {
+		strs := make([]string, len(row))
+		for i, c := range row {
+			strs[i] = c.(string)
+		}
+
+		c.Assert(strs[actRowsCol], Not(Equals), "")
 	}
 }

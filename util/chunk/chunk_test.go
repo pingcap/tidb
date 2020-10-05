@@ -36,12 +36,12 @@ import (
 )
 
 func TestT(t *testing.T) {
-	cfg := config.GetGlobalConfig()
-	conf := *cfg
-	conf.TempStoragePath, _ = ioutil.TempDir("", "oom-use-tmp-storage")
-	config.StoreGlobalConfig(&conf)
-	_ = os.RemoveAll(conf.TempStoragePath) // clean the uncleared temp file during the last run.
-	_ = os.MkdirAll(conf.TempStoragePath, 0755)
+	path, _ := ioutil.TempDir("", "oom-use-tmp-storage")
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TempStoragePath = path
+	})
+	_ = os.RemoveAll(path) // clean the uncleared temp file during the last run.
+	_ = os.MkdirAll(path, 0755)
 	check.TestingT(t)
 }
 
@@ -784,6 +784,30 @@ func (s *testChunkSuite) TestMakeRefTo(c *check.C) {
 
 	c.Assert(chk2.columns[0] == chk1.columns[1], check.IsTrue)
 	c.Assert(chk2.columns[1] == chk1.columns[0], check.IsTrue)
+}
+
+func (s *testChunkSuite) TestToString(c *check.C) {
+	fieldTypes := make([]*types.FieldType, 0, 4)
+	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeFloat})
+	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeDouble})
+	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeString})
+	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeDate})
+	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeLonglong})
+
+	chk := NewChunkWithCapacity(fieldTypes, 2)
+	chk.AppendFloat32(0, float32(1))
+	chk.AppendFloat64(1, 1.0)
+	chk.AppendString(2, "1")
+	chk.AppendTime(3, types.ZeroDate)
+	chk.AppendInt64(4, 1)
+
+	chk.AppendFloat32(0, float32(2))
+	chk.AppendFloat64(1, 2.0)
+	chk.AppendString(2, "2")
+	chk.AppendTime(3, types.ZeroDatetime)
+	chk.AppendInt64(4, 2)
+
+	c.Assert(chk.ToString(fieldTypes), check.Equals, "1, 1, 1, 0000-00-00, 1\n2, 2, 2, 0000-00-00 00:00:00, 2\n")
 }
 
 func BenchmarkAppendInt(b *testing.B) {

@@ -194,7 +194,7 @@ type ImplTableScan struct {
 // Match implements ImplementationRule Match interface.
 func (r *ImplTableScan) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
 	ts := expr.ExprNode.(*plannercore.LogicalTableScan)
-	return prop.IsEmpty() || (len(prop.Items) == 1 && ts.Handle != nil && prop.Items[0].Col.Equal(nil, ts.Handle))
+	return prop.IsEmpty() || (len(prop.Items) == 1 && ts.HandleCols != nil && prop.Items[0].Col.Equal(nil, ts.HandleCols.GetCol(0)))
 }
 
 // OnImplement implements ImplementationRule OnImplement interface.

@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/tablecodec"
+	pd "github.com/tikv/pd/client"
 	"go.uber.org/atomic"
 )
 
@@ -213,10 +214,10 @@ func (c *Cluster) RemoveStore(storeID uint64) {
 }
 
 // UpdateStoreAddr updates store address for cluster.
-func (c *Cluster) UpdateStoreAddr(storeID uint64, addr string) {
+func (c *Cluster) UpdateStoreAddr(storeID uint64, addr string, labels ...*metapb.StoreLabel) {
 	c.Lock()
 	defer c.Unlock()
-	c.stores[storeID] = newStore(storeID, addr)
+	c.stores[storeID] = newStore(storeID, addr, labels...)
 }
 
 // GetRegion returns a Region's meta and leader ID.
@@ -236,6 +237,11 @@ func (c *Cluster) GetRegionByKey(key []byte) (*metapb.Region, *metapb.Peer) {
 	c.RLock()
 	defer c.RUnlock()
 
+	return c.getRegionByKeyNoLock(key)
+}
+
+// getRegionByKeyNoLock returns the Region and its leader whose range contains the key without Lock.
+func (c *Cluster) getRegionByKeyNoLock(key []byte) (*metapb.Region, *metapb.Peer) {
 	for _, r := range c.regions {
 		if regionContains(r.Meta.StartKey, r.Meta.EndKey, key) {
 			return proto.Clone(r.Meta).(*metapb.Region), proto.Clone(r.leaderPeer()).(*metapb.Peer)
@@ -249,7 +255,7 @@ func (c *Cluster) GetPrevRegionByKey(key []byte) (*metapb.Region, *metapb.Peer) 
 	c.RLock()
 	defer c.RUnlock()
 
-	currentRegion, _ := c.GetRegionByKey(key)
+	currentRegion, _ := c.getRegionByKeyNoLock(key)
 	if len(currentRegion.StartKey) == 0 {
 		return nil, nil
 	}
@@ -275,7 +281,7 @@ func (c *Cluster) GetRegionByID(regionID uint64) (*metapb.Region, *metapb.Peer) 
 }
 
 // ScanRegions returns at most `limit` regions from given `key` and their leaders.
-func (c *Cluster) ScanRegions(startKey, endKey []byte, limit int) ([]*metapb.Region, []*metapb.Peer) {
+func (c *Cluster) ScanRegions(startKey, endKey []byte, limit int) []*pd.Region {
 	c.RLock()
 	defer c.RUnlock()
 
@@ -307,8 +313,7 @@ func (c *Cluster) ScanRegions(startKey, endKey []byte, limit int) ([]*metapb.Reg
 		regions = regions[:limit]
 	}
 
-	metas := make([]*metapb.Region, 0, len(regions))
-	leaders := make([]*metapb.Peer, 0, len(regions))
+	result := make([]*pd.Region, 0, len(regions))
 	for _, region := range regions {
 		leader := region.leaderPeer()
 		if leader == nil {
@@ -317,11 +322,14 @@ func (c *Cluster) ScanRegions(startKey, endKey []byte, limit int) ([]*metapb.Reg
 			leader = proto.Clone(leader).(*metapb.Peer)
 		}
 
-		metas = append(metas, proto.Clone(region.Meta).(*metapb.Region))
-		leaders = append(leaders, leader)
+		r := &pd.Region{
+			Meta:   proto.Clone(region.Meta).(*metapb.Region),
+			Leader: leader,
+		}
+		result = append(result, r)
 	}
 
-	return metas, leaders
+	return result
 }
 
 // Bootstrap creates the first Region. The Stores should be in the Cluster before
@@ -648,11 +656,12 @@ type Store struct {
 	tokenCount atomic.Int64
 }
 
-func newStore(storeID uint64, addr string) *Store {
+func newStore(storeID uint64, addr string, labels ...*metapb.StoreLabel) *Store {
 	return &Store{
 		meta: &metapb.Store{
 			Id:      storeID,
 			Address: addr,
+			Labels:  labels,
 		},
 	}
 }

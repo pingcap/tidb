@@ -22,10 +22,16 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/testleak"
+	. "github.com/pingcap/tidb/util/testutil"
 )
 
 func TestT(t *testing.T) {
@@ -36,6 +42,7 @@ func TestT(t *testing.T) {
 var _ = Suite(&testSuite{})
 
 type testSuite struct {
+	CommonHandleSuite
 }
 
 func (s *testSuite) TestMeta(c *C) {
@@ -297,6 +304,31 @@ func (s *testSuite) TestSnapshot(c *C) {
 	c.Assert(err.Error(), Equals, "[structure:8220]write on snapshot")
 }
 
+func (s *testSuite) TestElement(c *C) {
+	checkElement := func(key []byte, resErr error) {
+		e := &meta.Element{ID: 123, TypeKey: key}
+		eBytes := e.EncodeElement()
+		resE, err := meta.DecodeElement(eBytes)
+		if resErr == nil {
+			c.Assert(err, Equals, resErr)
+			c.Assert(e, DeepEquals, resE)
+		} else {
+			c.Assert(err.Error(), Equals, resErr.Error())
+		}
+	}
+	key := []byte("_col")
+	checkElement(key, errors.Errorf(`invalid encoded element key prefix "_col\x00"`))
+	checkElement(meta.IndexElementKey, nil)
+	checkElement(meta.ColumnElementKey, nil)
+	key = []byte("inexistent")
+	checkElement(key, errors.Errorf("invalid encoded element key prefix %q", key[:5]))
+
+	_, err := meta.DecodeElement([]byte("_col"))
+	c.Assert(err.Error(), Equals, `invalid encoded element "_col" length 4`)
+	_, err = meta.DecodeElement(meta.ColumnElementKey)
+	c.Assert(err.Error(), Equals, `invalid encoded element "_col_" length 5`)
+}
+
 func (s *testSuite) TestDDL(c *C) {
 	defer testleak.AfterTest(c)()
 	store, err := mockstore.NewMockStore()
@@ -327,37 +359,58 @@ func (s *testSuite) TestDDL(c *C) {
 	err = t.UpdateDDLJob(0, job, true)
 	c.Assert(err, IsNil)
 
-	err = t.UpdateDDLReorgStartHandle(job, 1)
+	element := &meta.Element{ID: 123, TypeKey: meta.IndexElementKey}
+	// There are 3 meta key relate to index reorganization:
+	// start_handle, end_handle and physical_table_id.
+	// Only start_handle is initialized.
+	err = t.UpdateDDLReorgStartHandle(job, element, kv.IntHandle(1))
 	c.Assert(err, IsNil)
 
-	i, j, k, err := t.GetDDLReorgHandle(job)
+	// Since physical_table_id is uninitialized, we simulate older TiDB version that doesn't store them.
+	// In this case GetDDLReorgHandle always return maxInt64 as end_handle.
+	e, i, j, k, err := t.GetDDLReorgHandle(job, false)
 	c.Assert(err, IsNil)
-	c.Assert(i, Equals, int64(1))
-	c.Assert(j, Equals, int64(math.MaxInt64))
+	c.Assert(e, DeepEquals, element)
+	c.Assert(i, HandleEquals, kv.IntHandle(1))
+	c.Assert(j, HandleEquals, kv.IntHandle(math.MaxInt64))
 	c.Assert(k, Equals, int64(0))
 
-	err = t.UpdateDDLReorgHandle(job, 1, 2, 3)
+	startHandle := s.NewHandle().Int(1).Common("abc", 1222, "string")
+	endHandle := s.NewHandle().Int(2).Common("dddd", 1222, "string")
+	element = &meta.Element{ID: 222, TypeKey: meta.ColumnElementKey}
+	err = t.UpdateDDLReorgHandle(job, startHandle, endHandle, 3, element)
+	c.Assert(err, IsNil)
+	element1 := &meta.Element{ID: 223, TypeKey: meta.IndexElementKey}
+	err = t.UpdateDDLReorgHandle(job, startHandle, endHandle, 3, element1)
 	c.Assert(err, IsNil)
 
-	i, j, k, err = t.GetDDLReorgHandle(job)
+	e, i, j, k, err = t.GetDDLReorgHandle(job, s.IsCommonHandle)
 	c.Assert(err, IsNil)
-	c.Assert(i, Equals, int64(1))
-	c.Assert(j, Equals, int64(2))
+	c.Assert(e, DeepEquals, element1)
+	c.Assert(i, HandleEquals, startHandle)
+	c.Assert(j, HandleEquals, endHandle)
 	c.Assert(k, Equals, int64(3))
 
-	err = t.RemoveDDLReorgHandle(job)
+	err = t.RemoveDDLReorgHandle(job, []*meta.Element{element, element1})
 	c.Assert(err, IsNil)
+	e, i, j, k, err = t.GetDDLReorgHandle(job, false)
+	c.Assert(meta.ErrDDLReorgElementNotExist.Equal(err), IsTrue)
+	c.Assert(e, IsNil)
+	c.Assert(i, IsNil)
+	c.Assert(j, IsNil)
+	c.Assert(k, Equals, int64(0))
 
-	i, j, k, err = t.GetDDLReorgHandle(job)
-	c.Assert(err, IsNil)
-	c.Assert(i, Equals, int64(0))
-	// The default value for endHandle is MaxInt64, not 0.
-	c.Assert(j, Equals, int64(math.MaxInt64))
+	// new TiDB binary running on old TiDB DDL reorg data.
+	e, i, j, k, err = t.GetDDLReorgHandle(job, s.IsCommonHandle)
+	c.Assert(meta.ErrDDLReorgElementNotExist.Equal(err), IsTrue)
+	c.Assert(e, IsNil)
+	c.Assert(i, IsNil)
+	c.Assert(j, IsNil)
 	c.Assert(k, Equals, int64(0))
 
 	// Test GetDDLReorgHandle failed.
-	_, _, _, err = t.GetDDLReorgHandle(job)
-	c.Assert(err, IsNil)
+	_, _, _, _, err = t.GetDDLReorgHandle(job, s.IsCommonHandle)
+	c.Assert(meta.ErrDDLReorgElementNotExist.Equal(err), IsTrue)
 
 	v, err = t.DeQueueDDLJob()
 	c.Assert(err, IsNil)
@@ -390,7 +443,7 @@ func (s *testSuite) TestDDL(c *C) {
 		if job.ID == historyJob1.ID {
 			c.Assert(*(job.Args[0].(*string)), Equals, historyJob1.Args[0])
 		} else {
-			c.Assert(job.Args, IsNil)
+			c.Assert(job.Args, HasLen, 0)
 		}
 	}
 
@@ -439,6 +492,8 @@ func (s *testSuite) TestDDL(c *C) {
 
 	err = txn1.Commit(context.Background())
 	c.Assert(err, IsNil)
+
+	s.RerunWithCommonHandleEnabled(c, s.TestDDL)
 }
 
 func (s *testSuite) BenchmarkGenGlobalIDs(c *C) {
@@ -500,4 +555,12 @@ OUTER:
 		break
 	}
 	c.Assert(match, IsTrue)
+}
+
+func mustNewCommonHandle(c *C, values ...interface{}) *kv.CommonHandle {
+	encoded, err := codec.EncodeKey(new(stmtctx.StatementContext), nil, types.MakeDatums(values...)...)
+	c.Assert(err, IsNil)
+	ch, err := kv.NewCommonHandle(encoded)
+	c.Assert(err, IsNil)
+	return ch
 }

@@ -18,8 +18,8 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/pd/v4/client"
 	"github.com/pingcap/tidb/util/codec"
+	pd "github.com/tikv/pd/client"
 )
 
 type codecPDClient struct {
@@ -47,25 +47,25 @@ func (c *codecPDClient) GetRegionByID(ctx context.Context, regionID uint64) (*pd
 	return processRegionResult(region, err)
 }
 
-func (c *codecPDClient) ScanRegions(ctx context.Context, startKey []byte, endKey []byte, limit int) ([]*metapb.Region, []*metapb.Peer, error) {
+func (c *codecPDClient) ScanRegions(ctx context.Context, startKey []byte, endKey []byte, limit int) ([]*pd.Region, error) {
 	startKey = codec.EncodeBytes([]byte(nil), startKey)
 	if len(endKey) > 0 {
 		endKey = codec.EncodeBytes([]byte(nil), endKey)
 	}
 
-	regions, peers, err := c.Client.ScanRegions(ctx, startKey, endKey, limit)
+	regions, err := c.Client.ScanRegions(ctx, startKey, endKey, limit)
 	if err != nil {
-		return nil, nil, errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
 	for _, region := range regions {
 		if region != nil {
-			err = decodeRegionMetaKeyInPlace(region)
+			err = decodeRegionMetaKeyInPlace(region.Meta)
 			if err != nil {
-				return nil, nil, errors.Trace(err)
+				return nil, errors.Trace(err)
 			}
 		}
 	}
-	return regions, peers, nil
+	return regions, nil
 }
 
 func processRegionResult(region *pd.Region, err error) (*pd.Region, error) {

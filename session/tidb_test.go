@@ -196,6 +196,9 @@ func (s *testMainSuite) TestKeysNeedLock(c *C) {
 		{indexKey, deleteVal, false},
 	}
 	for _, tt := range tests {
-		c.Assert(keyNeedToLock(tt.key, tt.val), Equals, tt.need)
+		c.Assert(keyNeedToLock(tt.key, tt.val, 0), Equals, tt.need)
 	}
+	flag := kv.KeyFlags(1)
+	c.Assert(flag.HasPresumeKeyNotExists(), IsTrue)
+	c.Assert(keyNeedToLock(indexKey, deleteVal, flag), IsTrue)
 }

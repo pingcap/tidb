@@ -108,7 +108,7 @@ func GetSessionSystemVar(s *SessionVars, key string) (string, error) {
 // GetSessionOnlySysVars get the default value defined in code for session only variable.
 // The return bool value indicates whether it's a session only variable.
 func GetSessionOnlySysVars(s *SessionVars, key string) (string, bool, error) {
-	sysVar := SysVars[key]
+	sysVar := GetSysVar(key)
 	if sysVar == nil {
 		return "", false, ErrUnknownSystemVar.GenWithStackByArgs(key)
 	}
@@ -116,6 +116,12 @@ func GetSessionOnlySysVars(s *SessionVars, key string) (string, bool, error) {
 	switch sysVar.Name {
 	case TiDBCurrentTS:
 		return fmt.Sprintf("%d", s.TxnCtx.StartTS), true, nil
+	case TiDBLastTxnInfo:
+		info, err := json.Marshal(s.LastTxnInfo)
+		if err != nil {
+			return "", true, err
+		}
+		return string(info), true, nil
 	case TiDBGeneralLog:
 		return fmt.Sprintf("%d", atomic.LoadUint32(&ProcessGeneralLog)), true, nil
 	case TiDBPProfSQLCPU:
@@ -186,7 +192,7 @@ func GetGlobalSystemVar(s *SessionVars, key string) (string, error) {
 // GetScopeNoneSystemVar checks the validation of `key`,
 // and return the default value if its scope is `ScopeNone`.
 func GetScopeNoneSystemVar(key string) (string, bool, error) {
-	sysVar := SysVars[key]
+	sysVar := GetSysVar(key)
 	if sysVar == nil {
 		return "", false, ErrUnknownSystemVar.GenWithStackByArgs(key)
 	}
@@ -201,8 +207,7 @@ const epochShiftBits = 18
 
 // SetSessionSystemVar sets system variable and updates SessionVars states.
 func SetSessionSystemVar(vars *SessionVars, name string, value types.Datum) error {
-	name = strings.ToLower(name)
-	sysVar := SysVars[name]
+	sysVar := GetSysVar(name)
 	if sysVar == nil {
 		return ErrUnknownSystemVar
 	}
@@ -218,17 +223,18 @@ func SetSessionSystemVar(vars *SessionVars, name string, value types.Datum) erro
 	if err != nil {
 		return err
 	}
+	CheckDeprecationSetSystemVar(vars, name)
 	return vars.SetSystemVar(name, sVal)
 }
 
 // ValidateGetSystemVar checks if system variable exists and validates its scope when get system variable.
 func ValidateGetSystemVar(name string, isGlobal bool) error {
-	sysVar, exists := SysVars[name]
-	if !exists {
+	sysVar := GetSysVar(name)
+	if sysVar == nil {
 		return ErrUnknownSystemVar.GenWithStackByArgs(name)
 	}
 	switch sysVar.Scope {
-	case ScopeGlobal, ScopeNone:
+	case ScopeGlobal:
 		if !isGlobal {
 			return ErrIncorrectScope.GenWithStackByArgs(name, "GLOBAL")
 		}
@@ -300,6 +306,21 @@ const (
 	// maxChunkSizeLowerBound indicates lower bound value of tidb_max_chunk_size.
 	maxChunkSizeLowerBound = 32
 )
+
+// CheckDeprecationSetSystemVar checks if the system variable is deprecated.
+func CheckDeprecationSetSystemVar(s *SessionVars, name string) {
+	switch name {
+	case TiDBIndexLookupConcurrency, TiDBIndexLookupJoinConcurrency,
+		TiDBHashJoinConcurrency, TiDBHashAggPartialConcurrency, TiDBHashAggFinalConcurrency,
+		TiDBProjectionConcurrency, TiDBWindowConcurrency:
+		s.StmtCtx.AppendWarning(errWarnDeprecatedSyntax.FastGenByArgs(name, TiDBExecutorConcurrency))
+	case TIDBMemQuotaHashJoin, TIDBMemQuotaMergeJoin,
+		TIDBMemQuotaSort, TIDBMemQuotaTopn,
+		TIDBMemQuotaIndexLookupReader, TIDBMemQuotaIndexLookupJoin,
+		TIDBMemQuotaNestedLoopApply:
+		s.StmtCtx.AppendWarning(errWarnDeprecatedSyntax.FastGenByArgs(name, TIDBMemQuotaQuery))
+	}
+}
 
 // ValidateSetSystemVar checks if system variable satisfies specific restriction.
 func ValidateSetSystemVar(vars *SessionVars, name string, value string, scope ScopeFlag) (string, error) {
@@ -393,6 +414,8 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string, scope Sc
 		return checkUInt64SystemVar(name, value, 0, 31536000, vars)
 	case MaxPreparedStmtCount:
 		return checkInt64SystemVar(name, value, -1, 1048576, vars)
+	case AutoIncrementIncrement, AutoIncrementOffset:
+		return checkUInt64SystemVar(name, value, 1, math.MaxUint16, vars)
 	case TimeZone:
 		if strings.EqualFold(value, "SYSTEM") {
 			return "SYSTEM", nil
@@ -433,15 +456,20 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string, scope Sc
 			return "ON", nil
 		}
 		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
-	case TiDBSkipUTF8Check, TiDBOptAggPushDown, TiDBOptDistinctAggPushDown,
-		TiDBOptInSubqToJoinAndAgg, TiDBEnableFastAnalyze,
+	case TiDBOptBCJ:
+		if (strings.EqualFold(value, "ON") || value == "1") && vars.AllowBatchCop == 0 {
+			return value, ErrWrongValueForVar.GenWithStackByArgs("Can't set Broadcast Join to 1 but tidb_allow_batch_cop is 0, please active batch cop at first.")
+		}
+		return value, nil
+	case TiDBSkipUTF8Check, TiDBSkipASCIICheck, TiDBOptAggPushDown,
+		TiDBOptDistinctAggPushDown, TiDBOptInSubqToJoinAndAgg, TiDBEnableFastAnalyze,
 		TiDBBatchInsert, TiDBDisableTxnAutoRetry, TiDBEnableStreaming, TiDBEnableChunkRPC,
 		TiDBBatchDelete, TiDBBatchCommit, TiDBEnableCascadesPlanner, TiDBEnableWindowFunction, TiDBPProfSQLCPU,
 		TiDBLowResolutionTSO, TiDBEnableIndexMerge, TiDBEnableNoopFuncs,
 		TiDBCheckMb4ValueInUTF8, TiDBEnableSlowLog, TiDBRecordPlanInSlowLog,
-		TiDBScatterRegion, TiDBGeneralLog, TiDBConstraintCheckInPlace,
-		TiDBEnableVectorizedExpression, TiDBFoundInPlanCache, TiDBEnableCollectExecutionInfo,
-		TiDBAllowAutoRandExplicitInsert, TiDBEnableClusteredIndex:
+		TiDBScatterRegion, TiDBGeneralLog, TiDBConstraintCheckInPlace, TiDBEnableVectorizedExpression,
+		TiDBFoundInPlanCache, TiDBEnableCollectExecutionInfo, TiDBAllowAutoRandExplicitInsert,
+		TiDBEnableClusteredIndex, TiDBEnableTelemetry, TiDBEnableChangeColumnType, TiDBEnableAmendPessimisticTxn:
 		fallthrough
 	case GeneralLog, AvoidTemporalUpgrade, BigTables, CheckProxyUsers, LogBin,
 		CoreFile, EndMakersInJSON, SQLLogBin, OfflineMode, PseudoSlaveMode, LowPriorityUpdates,
@@ -504,16 +532,28 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string, scope Sc
 		return checkUInt64SystemVar(name, value, uint64(0), math.MaxInt64, vars)
 	case TiDBExpensiveQueryTimeThreshold:
 		return checkUInt64SystemVar(name, value, MinExpensiveQueryTimeThreshold, math.MaxInt64, vars)
-	case TiDBIndexLookupConcurrency, TiDBIndexLookupJoinConcurrency, TiDBIndexJoinBatchSize,
-		TiDBIndexLookupSize,
+	case TiDBIndexLookupConcurrency,
+		TiDBIndexLookupJoinConcurrency,
 		TiDBHashJoinConcurrency,
 		TiDBHashAggPartialConcurrency,
 		TiDBHashAggFinalConcurrency,
-		TiDBWindowConcurrency,
+		TiDBWindowConcurrency:
+		v, err := strconv.Atoi(value)
+		if err != nil {
+			return value, ErrWrongTypeForVar.GenWithStackByArgs(name)
+		}
+		if v <= 0 && v != ConcurrencyUnset {
+			return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
+		}
+		return value, nil
+	case TiDBExecutorConcurrency,
 		TiDBDistSQLScanConcurrency,
-		TiDBIndexSerialScanConcurrency, TiDBDDLReorgWorkerCount,
+		TiDBIndexSerialScanConcurrency,
+		TiDBIndexJoinBatchSize,
+		TiDBIndexLookupSize,
+		TiDBDDLReorgWorkerCount,
 		TiDBBackoffLockFast, TiDBBackOffWeight,
-		TiDBDMLBatchSize, TiDBOptimizerSelectivityLevel:
+		TiDBOptimizerSelectivityLevel:
 		v, err := strconv.Atoi(value)
 		if err != nil {
 			return value, ErrWrongTypeForVar.GenWithStackByArgs(name)
@@ -522,7 +562,7 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string, scope Sc
 			return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
 		}
 		return value, nil
-	case TiDBOptCorrelationExpFactor:
+	case TiDBOptCorrelationExpFactor, TiDBDMLBatchSize:
 		v, err := strconv.Atoi(value)
 		if err != nil {
 			return value, ErrWrongTypeForVar.GenWithStackByArgs(name)
@@ -545,11 +585,15 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string, scope Sc
 		if err != nil {
 			return value, ErrWrongTypeForVar.GenWithStackByArgs(name)
 		}
+		if v == 0 && vars.AllowBCJ {
+			return value, ErrWrongValueForVar.GenWithStackByArgs("Can't set batch cop 0 but tidb_opt_broadcast_join is 1, please set tidb_opt_broadcast_join 0 at first")
+		}
 		if v < 0 || v > 2 {
 			return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
 		}
 		return value, nil
 	case TiDBOptCPUFactor,
+		TiDBOptTiFlashConcurrencyFactor,
 		TiDBOptCopCPUFactor,
 		TiDBOptNetworkFactor,
 		TiDBOptScanFactor,
@@ -681,7 +725,11 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string, scope Sc
 		if v != DefTiDBRowFormatV1 && v != DefTiDBRowFormatV2 {
 			return value, errors.Errorf("Unsupported row format version %d", v)
 		}
-	case TiDBAllowRemoveAutoInc, TiDBUsePlanBaselines, TiDBEvolvePlanBaselines:
+	case TiDBPartitionPruneMode:
+		if !PartitionPruneMode(value).Valid() {
+			return value, ErrWrongTypeForVar.GenWithStackByArgs(name)
+		}
+	case TiDBAllowRemoveAutoInc, TiDBUsePlanBaselines, TiDBEvolvePlanBaselines, TiDBEnableParallelApply:
 		switch {
 		case strings.EqualFold(value, "ON") || value == "1":
 			return "on", nil
@@ -764,6 +812,8 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string, scope Sc
 		if _, err := collate.GetCollationByName(value); err != nil {
 			return value, errors.Trace(err)
 		}
+	case TiDBShardAllocateStep:
+		return checkInt64SystemVar(name, value, 1, math.MaxInt64, vars)
 	}
 	return value, nil
 }

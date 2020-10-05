@@ -19,8 +19,6 @@ import (
 	"math"
 	"net"
 	"runtime"
-	"sort"
-	"strings"
 	"testing"
 	"time"
 
@@ -30,6 +28,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/errno"
@@ -40,12 +39,10 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
 	dto "github.com/prometheus/client_model/go"
 	"go.etcd.io/etcd/integration"
-	"go.uber.org/zap"
 )
 
 func TestT(t *testing.T) {
@@ -71,8 +68,8 @@ type mockEtcdBackend struct {
 	pdAddrs []string
 }
 
-func (mebd *mockEtcdBackend) EtcdAddrs() []string {
-	return mebd.pdAddrs
+func (mebd *mockEtcdBackend) EtcdAddrs() ([]string, error) {
+	return mebd.pdAddrs, nil
 }
 func (mebd *mockEtcdBackend) TLSConfig() *tls.Config { return nil }
 func (mebd *mockEtcdBackend) StartGCWorker() error {
@@ -91,137 +88,20 @@ func unixSocketAvailable() bool {
 	return false
 }
 
-// For debug only, will be removed later.
-// TODO: remove these tests for investigating the leak problem.
-func interestingGoroutines() (gs []string) {
-	buf := make([]byte, 2<<20)
-	buf = buf[:runtime.Stack(buf, true)]
-	for _, g := range strings.Split(string(buf), "\n\n") {
-		sl := strings.SplitN(g, "\n", 2)
-		if len(sl) != 2 {
-			continue
-		}
-		stack := strings.TrimSpace(sl[1])
-		if stack == "" ||
-			strings.Contains(stack, "created by github.com/pingcap/tidb.init") ||
-			strings.Contains(stack, "testing.RunTests") ||
-			strings.Contains(stack, "check.(*resultTracker).start") ||
-			strings.Contains(stack, "check.(*suiteRunner).runFunc") ||
-			strings.Contains(stack, "check.(*suiteRunner).parallelRun") ||
-			strings.Contains(stack, "localstore.(*dbStore).scheduler") ||
-			strings.Contains(stack, "tikv.(*noGCHandler).Start") ||
-			strings.Contains(stack, "ddl.(*ddl).start") ||
-			strings.Contains(stack, "ddl.(*delRange).startEmulator") ||
-			strings.Contains(stack, "domain.NewDomain") ||
-			strings.Contains(stack, "testing.(*T).Run") ||
-			strings.Contains(stack, "domain.(*Domain).LoadPrivilegeLoop") ||
-			strings.Contains(stack, "domain.(*Domain).UpdateTableStatsLoop") ||
-			strings.Contains(stack, "testing.Main(") ||
-			strings.Contains(stack, "runtime.goexit") ||
-			strings.Contains(stack, "created by runtime.gc") ||
-			strings.Contains(stack, "interestingGoroutines") ||
-			strings.Contains(stack, "runtime.MHeap_Scavenger") ||
-			// these go routines are async terminated, so they may still alive after test end, thus cause
-			// false positive leak failures
-			strings.Contains(stack, "google.golang.org/grpc.(*addrConn).resetTransport") ||
-			strings.Contains(stack, "google.golang.org/grpc.(*ccBalancerWrapper).watcher") ||
-			strings.Contains(stack, "github.com/pingcap/goleveldb/leveldb/util.(*BufferPool).drain") ||
-			strings.Contains(stack, "github.com/pingcap/goleveldb/leveldb.(*DB).compactionError") ||
-			strings.Contains(stack, "github.com/pingcap/goleveldb/leveldb.(*DB).mpoolDrain") {
-			continue
-		}
-		gs = append(gs, stack)
-	}
-	sort.Strings(gs)
-	return
-}
-
-var beforeTestGoroutines = map[string]bool{}
-var testGoroutinesInited bool
-
-// BeforeTest gets the current goroutines.
-// It's used for check.Suite.SetUpSuite() function.
-// Now it's only used in the tidb_test.go.
-func BeforeTest() {
-	for _, g := range interestingGoroutines() {
-		beforeTestGoroutines[g] = true
-	}
-	testGoroutinesInited = true
-}
-
-const defaultCheckCnt = 50
-
-func checkLeakAfterTest(errorFunc func(cnt int, g string)) func() {
-	// After `BeforeTest`, `beforeTestGoroutines` may still be empty, in this case,
-	// we shouldn't init it again.
-	if !testGoroutinesInited && len(beforeTestGoroutines) == 0 {
-		for _, g := range interestingGoroutines() {
-			beforeTestGoroutines[g] = true
-		}
-	}
-
-	for str := range beforeTestGoroutines {
-		logutil.BgLogger().Info("checkLeakAfterTest", zap.String("L163", str))
-	}
-
-	cnt := defaultCheckCnt
-	return func() {
-		defer func() {
-			beforeTestGoroutines = map[string]bool{}
-			testGoroutinesInited = false
-		}()
-
-		var leaked []string
-		for i := 0; i < cnt; i++ {
-			leaked = leaked[:0]
-			for _, g := range interestingGoroutines() {
-				if !beforeTestGoroutines[g] {
-					leaked = append(leaked, g)
-					for str := range beforeTestGoroutines {
-						logutil.BgLogger().Info("checkLeakAfterTest", zap.String("L180", str), zap.Int("i", i))
-					}
-					for _, str := range interestingGoroutines() {
-						logutil.BgLogger().Info("checkLeakAfterTest", zap.String("L183", str), zap.Int("i", i))
-					}
-				}
-			}
-			// Bad stuff found, but goroutines might just still be
-			// shutting down, so give it some time.
-			if len(leaked) != 0 {
-				time.Sleep(50 * time.Millisecond)
-				continue
-			}
-
-			return
-		}
-		for _, g := range leaked {
-			errorFunc(cnt, g)
-		}
-	}
-}
-
-// AfterTestT is used after all the test cases is finished.
-func AfterTestT(t *testing.T) func() {
-	errorFunc := func(cnt int, g string) {
-		t.Errorf("Test %s check-count %d appears to have leaked: %v", t.Name(), cnt, g)
-	}
-	return checkLeakAfterTest(errorFunc)
-}
-
 func TestInfo(t *testing.T) {
+	err := failpoint.Enable("github.com/pingcap/tidb/domain/FailPlacement", `return(true)`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if runtime.GOOS == "windows" {
+		t.Skip("integration.NewClusterV3 will create file contains a colon which is not allowed on Windows")
+	}
 	if !unixSocketAvailable() {
 		return
 	}
-	for i, str := range interestingGoroutines() {
-		t.Logf("TestInfo: BeforeTest %d %s", i, str)
-	}
-	BeforeTest()
-	defer func() {
-		AfterTestT(t)()
-		for i, str := range interestingGoroutines() {
-			t.Logf("TestInfo: AfterTest %d %s", i, str)
-		}
-	}()
+	testleak.BeforeTest()
+	defer testleak.AfterTestT(t)()
 	ddlLease := 80 * time.Millisecond
 	s, err := mockstore.NewMockStore()
 	if err != nil {
@@ -232,7 +112,7 @@ func TestInfo(t *testing.T) {
 	mockStore := &mockEtcdBackend{
 		Storage: s,
 		pdAddrs: []string{clus.Members[0].GRPCAddr()}}
-	dom := NewDomain(mockStore, ddlLease, 0, mockFactory)
+	dom := NewDomain(mockStore, ddlLease, 0, 0, mockFactory)
 	defer func() {
 		dom.Close()
 		s.Close()
@@ -339,6 +219,11 @@ func TestInfo(t *testing.T) {
 	if err != nil || len(infos) != 0 {
 		t.Fatalf("err %v, infos %v", err, infos)
 	}
+
+	err = failpoint.Disable("github.com/pingcap/tidb/domain/FailPlacement")
+	if err != nil {
+		t.Fatal(err)
+	}
 }
 
 type mockSessionManager struct {
@@ -371,7 +256,7 @@ func (*testSuite) TestT(c *C) {
 	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
 	ddlLease := 80 * time.Millisecond
-	dom := NewDomain(store, ddlLease, 0, mockFactory)
+	dom := NewDomain(store, ddlLease, 0, 0, mockFactory)
 	err = dom.Init(ddlLease, sysMockFactory)
 	c.Assert(err, IsNil)
 	ctx := mock.NewContext()
@@ -396,7 +281,7 @@ func (*testSuite) TestT(c *C) {
 	c.Assert(is, NotNil)
 
 	// for updating the self schema version
-	goCtx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	goCtx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	err = dd.SchemaSyncer().OwnerCheckAllVersions(goCtx, is.SchemaMetaVersion())
 	cancel()
 	c.Assert(err, IsNil)
@@ -404,7 +289,7 @@ func (*testSuite) TestT(c *C) {
 	c.Assert(snapIs, NotNil)
 	c.Assert(err, IsNil)
 	// Make sure that the self schema version doesn't be changed.
-	goCtx, cancel = context.WithTimeout(context.Background(), 10*time.Millisecond)
+	goCtx, cancel = context.WithTimeout(context.Background(), 100*time.Millisecond)
 	err = dd.SchemaSyncer().OwnerCheckAllVersions(goCtx, is.SchemaMetaVersion())
 	cancel()
 	c.Assert(err, IsNil)
@@ -444,24 +329,24 @@ func (*testSuite) TestT(c *C) {
 	c.Assert(err, IsNil)
 	ts := ver.Ver
 
-	succ := dom.SchemaValidator.Check(ts, schemaVer, nil)
+	_, succ := dom.SchemaValidator.Check(ts, schemaVer, nil)
 	c.Assert(succ, Equals, ResultSucc)
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/domain/ErrorMockReloadFailed", `return(true)`), IsNil)
 	err = dom.Reload()
 	c.Assert(err, NotNil)
-	succ = dom.SchemaValidator.Check(ts, schemaVer, nil)
+	_, succ = dom.SchemaValidator.Check(ts, schemaVer, nil)
 	c.Assert(succ, Equals, ResultSucc)
 	time.Sleep(ddlLease)
 
 	ver, err = store.CurrentVersion()
 	c.Assert(err, IsNil)
 	ts = ver.Ver
-	succ = dom.SchemaValidator.Check(ts, schemaVer, nil)
+	_, succ = dom.SchemaValidator.Check(ts, schemaVer, nil)
 	c.Assert(succ, Equals, ResultUnknown)
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/domain/ErrorMockReloadFailed"), IsNil)
 	err = dom.Reload()
 	c.Assert(err, IsNil)
-	succ = dom.SchemaValidator.Check(ts, schemaVer, nil)
+	_, succ = dom.SchemaValidator.Check(ts, schemaVer, nil)
 	c.Assert(succ, Equals, ResultSucc)
 
 	// For slow query.
@@ -526,7 +411,7 @@ func (*testSuite) TestT(c *C) {
 		SchemaOutOfDateRetryInterval = originalRetryInterval
 	}()
 	dom.SchemaValidator.Stop()
-	err = schemaChecker.Check(uint64(123456))
+	_, err = schemaChecker.Check(uint64(123456))
 	c.Assert(err.Error(), Equals, ErrInfoSchemaExpired.Error())
 	dom.SchemaValidator.Reset()
 
@@ -588,6 +473,6 @@ func (*testSuite) TestSessionPool(c *C) {
 }
 
 func (*testSuite) TestErrorCode(c *C) {
-	c.Assert(int(ErrInfoSchemaExpired.ToSQLError().Code), Equals, errno.ErrInfoSchemaExpired)
-	c.Assert(int(ErrInfoSchemaChanged.ToSQLError().Code), Equals, errno.ErrInfoSchemaChanged)
+	c.Assert(int(terror.ToSQLError(ErrInfoSchemaExpired).Code), Equals, errno.ErrInfoSchemaExpired)
+	c.Assert(int(terror.ToSQLError(ErrInfoSchemaChanged).Code), Equals, errno.ErrInfoSchemaChanged)
 }

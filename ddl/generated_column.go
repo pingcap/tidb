@@ -165,7 +165,7 @@ func checkModifyGeneratedColumn(tbl table.Table, oldCol, newCol *table.Column, n
 	oldColIsStored := !oldCol.IsGenerated() || oldCol.GeneratedStored
 	newColIsStored := !newCol.IsGenerated() || newCol.GeneratedStored
 	if oldColIsStored != newColIsStored {
-		return errUnsupportedOnGeneratedColumn.GenWithStackByArgs("Changing the STORED status")
+		return ErrUnsupportedOnGeneratedColumn.GenWithStackByArgs("Changing the STORED status")
 	}
 
 	// rule 2.
@@ -208,7 +208,7 @@ func checkModifyGeneratedColumn(tbl table.Table, oldCol, newCol *table.Column, n
 
 	if newCol.IsGenerated() {
 		// rule 3.
-		if err := checkIllegalFn4GeneratedColumn(newCol.Name.L, newCol.GeneratedExpr); err != nil {
+		if err := checkIllegalFn4Generated(newCol.Name.L, typeColumn, newCol.GeneratedExpr); err != nil {
 			return errors.Trace(err)
 		}
 
@@ -228,6 +228,7 @@ func checkModifyGeneratedColumn(tbl table.Table, oldCol, newCol *table.Column, n
 type illegalFunctionChecker struct {
 	hasIllegalFunc bool
 	hasAggFunc     bool
+	hasRowVal      bool // hasRowVal checks whether the functional index refers to a row value
 }
 
 func (c *illegalFunctionChecker) Enter(inNode ast.Node) (outNode ast.Node, skipChildren bool) {
@@ -247,6 +248,9 @@ func (c *illegalFunctionChecker) Enter(inNode ast.Node) (outNode ast.Node, skipC
 		// Aggregate function is not allowed
 		c.hasAggFunc = true
 		return inNode, true
+	case *ast.RowExpr:
+		c.hasRowVal = true
+		return inNode, true
 	}
 	return inNode, false
 }
@@ -255,17 +259,35 @@ func (c *illegalFunctionChecker) Leave(inNode ast.Node) (node ast.Node, ok bool)
 	return inNode, true
 }
 
-func checkIllegalFn4GeneratedColumn(colName string, expr ast.ExprNode) error {
+const (
+	typeColumn = iota
+	typeIndex
+)
+
+func checkIllegalFn4Generated(name string, genType int, expr ast.ExprNode) error {
 	if expr == nil {
 		return nil
 	}
 	var c illegalFunctionChecker
 	expr.Accept(&c)
 	if c.hasIllegalFunc {
-		return ErrGeneratedColumnFunctionIsNotAllowed.GenWithStackByArgs(colName)
+		switch genType {
+		case typeColumn:
+			return ErrGeneratedColumnFunctionIsNotAllowed.GenWithStackByArgs(name)
+		case typeIndex:
+			return ErrFunctionalIndexFunctionIsNotAllowed.GenWithStackByArgs(name)
+		}
 	}
 	if c.hasAggFunc {
 		return ErrInvalidGroupFuncUse
+	}
+	if c.hasRowVal {
+		switch genType {
+		case typeColumn:
+			return ErrGeneratedColumnRowValueIsNotAllowed.GenWithStackByArgs(name)
+		case typeIndex:
+			return ErrFunctionalIndexRowValueIsNotAllowed.GenWithStackByArgs(name)
+		}
 	}
 	return nil
 }
@@ -285,13 +307,13 @@ func checkIndexOrStored(tbl table.Table, oldCol, newCol *table.Column) error {
 	}
 
 	if newCol.GeneratedStored {
-		return errUnsupportedOnGeneratedColumn.GenWithStackByArgs("modifying a stored column")
+		return ErrUnsupportedOnGeneratedColumn.GenWithStackByArgs("modifying a stored column")
 	}
 
 	for _, idx := range tbl.Indices() {
 		for _, col := range idx.Meta().Columns {
 			if col.Name.L == newCol.Name.L {
-				return errUnsupportedOnGeneratedColumn.GenWithStackByArgs("modifying an indexed column")
+				return ErrUnsupportedOnGeneratedColumn.GenWithStackByArgs("modifying an indexed column")
 			}
 		}
 	}
