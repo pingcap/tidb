@@ -56,7 +56,7 @@ Usage: ./run-tests.sh [options]
 
 2. One TiDB with PD, killed by Ctrl+C, and killed by KILL.
 
-3. Multiple TiDB nodes, killed remotely by KILL.
+3. Multiple TiDB nodes, killed {local,remote} by {Ctrl-C,KILL}.
 
 4. TiDB with PD, existing connections are killed after PD lost connection for long time.
 

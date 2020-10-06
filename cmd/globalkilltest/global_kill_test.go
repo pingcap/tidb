@@ -352,6 +352,7 @@ func (s *TestGlobalKillSuite) TestOneTiDB(c *C) {
 
 	// Test mysql client CTRL-C
 	// mysql client "CTRL-C" truncate connection id to 32bits, and is ignored by TiDB.
+	// see TiDB's logging for the truncation warning.
 	elapsed := s.killByCtrlC(c, port, sleepTime)
 	c.Assert(elapsed, GreaterEqual, sleepTime*time.Second)
 
@@ -360,19 +361,23 @@ func (s *TestGlobalKillSuite) TestOneTiDB(c *C) {
 	c.Assert(elapsed, Less, sleepTime*time.Second)
 }
 
-// [Test Scenario 3] Multiple TiDB nodes, killed remotely by KILL.
+// [Test Scenario 3] Multiple TiDB nodes, killed {local,remote} by {Ctrl-C,KILL}.
 func (s *TestGlobalKillSuite) TestMultipleTiDB(c *C) {
 	c.Assert(s.pdErr, IsNil, Commentf(msgErrConnectPD, s.pdErr))
 
-	// tidb1 & conn1
+	// tidb1 & conn1a,conn1b
 	port1 := *tidbStartPort + 1
 	tidb1, err := s.startTiDBWithPD(port1, *tidbStatusPort+1, *pdClientPath)
 	c.Assert(err, IsNil)
 	defer s.stopService("tidb1", tidb1, true)
 
-	db1, err := s.connectTiDB(port1)
+	db1a, err := s.connectTiDB(port1)
 	c.Assert(err, IsNil)
-	defer db1.Close()
+	defer db1a.Close()
+
+	db1b, err := s.connectTiDB(port1)
+	c.Assert(err, IsNil)
+	defer db1b.Close()
 
 	// tidb2 & conn2
 	port2 := *tidbStartPort + 2
@@ -384,10 +389,21 @@ func (s *TestGlobalKillSuite) TestMultipleTiDB(c *C) {
 	c.Assert(err, IsNil)
 	defer db2.Close()
 
-	// kill remotely
 	const sleepTime = 2
+	var elapsed time.Duration
 
-	elapsed := s.killByKillStatement(c, db1, db2, sleepTime)
+	// kill local by CTRL-C
+	// mysql client "CTRL-C" truncate connection id to 32bits, and is ignored by TiDB.
+	// see TiDB's logging for the truncation warning.
+	elapsed = s.killByCtrlC(c, port1, sleepTime)
+	c.Assert(elapsed, GreaterEqual, sleepTime*time.Second)
+
+	// kill local by KILL
+	elapsed = s.killByKillStatement(c, db1a, db1b, sleepTime)
+	c.Assert(elapsed, Less, sleepTime*time.Second)
+
+	// kill remotely
+	elapsed = s.killByKillStatement(c, db1a, db2, sleepTime)
 	c.Assert(elapsed, Less, sleepTime*time.Second)
 }
 
