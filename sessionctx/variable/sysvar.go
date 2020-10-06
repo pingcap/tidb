@@ -677,7 +677,7 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableCascadesPlanner, Value: "0"},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableIndexMerge, Value: "0"},
 	{Scope: ScopeSession, Name: TIDBMemQuotaQuery, Value: strconv.FormatInt(config.GetGlobalConfig().MemQuotaQuery, 10)},
-	{Scope: ScopeSession, Name: TIDBMemQuotaStatistic, Value: strconv.FormatInt(config.GetGlobalConfig().MemQuotaStatistic, 10)},
+	{Scope: ScopeSession, Name: TIDBMemQuotaStatistics, Value: strconv.FormatInt(config.GetGlobalConfig().MemQuotaStatistics, 10)},
 	{Scope: ScopeSession, Name: TIDBMemQuotaHashJoin, Value: strconv.FormatInt(DefTiDBMemQuotaHashJoin, 10)},
 	{Scope: ScopeSession, Name: TIDBMemQuotaMergeJoin, Value: strconv.FormatInt(DefTiDBMemQuotaMergeJoin, 10)},
 	{Scope: ScopeSession, Name: TIDBMemQuotaSort, Value: strconv.FormatInt(DefTiDBMemQuotaSort, 10)},

@@ -56,7 +56,7 @@ func (s *testConfigSuite) TestMergeConfigItems(c *C) {
 	newConf.Performance.PseudoEstimateRatio = 123
 	newConf.OOMAction = "panic"
 	newConf.MemQuotaQuery = 123
-	newConf.MemQuotaStatistic = 123
+	newConf.MemQuotaStatistics = 123
 	newConf.TiKVClient.StoreLimit = 123
 
 	// rejected
