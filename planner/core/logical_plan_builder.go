@@ -113,7 +113,7 @@ const (
 	ErrExprInOrderBy = "ORDER BY"
 )
 
-func (la *LogicalAggregation) collectGroupByColumns() {
+func (la *LogicalAggregate) collectGroupByColumns() {
 	la.groupByCols = la.groupByCols[:0]
 	for _, item := range la.GroupByItems {
 		if col, ok := item.(*expression.Column); ok {
@@ -182,7 +182,7 @@ func (b *PlanBuilder) buildAggregation(ctx context.Context, p LogicalPlan, aggFu
 	b.optFlag |= flagEliminateAgg
 	b.optFlag |= flagEliminateProjection
 
-	plan4Agg := LogicalAggregation{AggFuncs: make([]*aggregation.AggFuncDesc, 0, len(aggFuncList))}.Init(b.ctx, b.getSelectOffset())
+	plan4Agg := LogicalAggregate{AggFuncs: make([]*aggregation.AggFuncDesc, 0, len(aggFuncList))}.Init(b.ctx, b.getSelectOffset())
 	if hint := b.TableHints(); hint != nil {
 		plan4Agg.aggHints = hint.aggHints
 	}
@@ -1073,10 +1073,10 @@ func (b *PlanBuilder) buildProjection(ctx context.Context, p LogicalPlan, fields
 	return proj, oldLen, nil
 }
 
-func (b *PlanBuilder) buildDistinct(child LogicalPlan, length int) (*LogicalAggregation, error) {
+func (b *PlanBuilder) buildDistinct(child LogicalPlan, length int) (*LogicalAggregate, error) {
 	b.optFlag = b.optFlag | flagBuildKeyInfo
 	b.optFlag = b.optFlag | flagPushDownAgg
-	plan4Agg := LogicalAggregation{
+	plan4Agg := LogicalAggregate{
 		AggFuncs:     make([]*aggregation.AggFuncDesc, 0, child.Schema().Len()),
 		GroupByItems: expression.Column2Exprs(child.Schema().Clone().Columns[:length]),
 	}.Init(b.ctx, child.SelectBlockOffset())

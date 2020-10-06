@@ -42,7 +42,7 @@ func buildKeyInfo(lp LogicalPlan) {
 }
 
 // BuildKeyInfo implements LogicalPlan BuildKeyInfo interface.
-func (la *LogicalAggregation) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
+func (la *LogicalAggregate) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
 	if la.IsPartialModeAgg() {
 		return
 	}

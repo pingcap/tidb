@@ -36,7 +36,7 @@ type aggregationEliminateChecker struct {
 // e.g. select min(b) from t group by a. If a is a unique key, then this sql is equal to `select b from t group by a`.
 // For count(expr), sum(expr), avg(expr), count(distinct expr, [expr...]) we may need to rewrite the expr. Details are shown below.
 // If we can eliminate agg successful, we return a projection. Else we return a nil pointer.
-func (a *aggregationEliminateChecker) tryToEliminateAggregation(agg *LogicalAggregation) *LogicalProject {
+func (a *aggregationEliminateChecker) tryToEliminateAggregation(agg *LogicalAggregate) *LogicalProject {
 	for _, af := range agg.AggFuncs {
 		// TODO(issue #9968): Actually, we can rewrite GROUP_CONCAT when all the
 		// arguments it accepts are promised to be NOT-NULL.
@@ -70,7 +70,7 @@ func (a *aggregationEliminateChecker) tryToEliminateAggregation(agg *LogicalAggr
 }
 
 // ConvertAggToProj convert aggregation to projection.
-func ConvertAggToProj(agg *LogicalAggregation, schema *expression.Schema) (bool, *LogicalProject) {
+func ConvertAggToProj(agg *LogicalAggregate, schema *expression.Schema) (bool, *LogicalProject) {
 	proj := LogicalProject{
 		Exprs: make([]expression.Expression, 0, len(agg.AggFuncs)),
 	}.Init(agg.ctx, agg.blockOffset)
@@ -152,7 +152,7 @@ func (a *aggregationEliminator) optimize(ctx context.Context, p LogicalPlan) (Lo
 		newChildren = append(newChildren, newChild)
 	}
 	p.SetChildren(newChildren...)
-	agg, ok := p.(*LogicalAggregation)
+	agg, ok := p.(*LogicalAggregate)
 	if !ok {
 		return p, nil
 	}

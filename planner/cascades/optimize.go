@@ -350,7 +350,7 @@ func (opt *Optimizer) implGroupExpr(cur *memo.GroupExpr, reqPhysProp *property.P
 }
 
 // preparePossibleProperties recursively calls LogicalPlan PreparePossibleProperties
-// interface. It will fulfill the the possible properties fields of LogicalAggregation
+// interface. It will fulfill the the possible properties fields of LogicalAggregate
 // and LogicalJoin.
 func preparePossibleProperties(g *memo.Group, propertyMap map[*memo.Group][][]*expression.Column) [][]*expression.Column {
 	if prop, ok := propertyMap[g]; ok {

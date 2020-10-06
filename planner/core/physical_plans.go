@@ -960,8 +960,8 @@ func (p *PhysicalHashAgg) Clone() (PhysicalPlan, error) {
 	return cloned, nil
 }
 
-// NewPhysicalHashAgg creates a new PhysicalHashAgg from a LogicalAggregation.
-func NewPhysicalHashAgg(la *LogicalAggregation, newStats *property.StatsInfo, prop *property.PhysicalProperty) *PhysicalHashAgg {
+// NewPhysicalHashAgg creates a new PhysicalHashAgg from a LogicalAggregate.
+func NewPhysicalHashAgg(la *LogicalAggregate, newStats *property.StatsInfo, prop *property.PhysicalProperty) *PhysicalHashAgg {
 	agg := basePhysicalAgg{
 		GroupByItems: la.GroupByItems,
 		AggFuncs:     la.AggFuncs,

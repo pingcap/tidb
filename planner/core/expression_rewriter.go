@@ -524,7 +524,7 @@ func (er *expressionRewriter) handleCompareSubquery(ctx context.Context, v *ast.
 // handleOtherComparableSubq handles the queries like < any, < max, etc. For example, if the query is t.id < any (select s.id from s),
 // it will be rewrote to t.id < (select max(s.id) from s).
 func (er *expressionRewriter) handleOtherComparableSubq(lexpr, rexpr expression.Expression, np LogicalPlan, useMin bool, cmpFunc string, all bool) {
-	plan4Agg := LogicalAggregation{}.Init(er.sctx, er.b.getSelectOffset())
+	plan4Agg := LogicalAggregate{}.Init(er.sctx, er.b.getSelectOffset())
 	if hint := er.b.TableHints(); hint != nil {
 		plan4Agg.aggHints = hint.aggHints
 	}
@@ -557,7 +557,7 @@ func (er *expressionRewriter) handleOtherComparableSubq(lexpr, rexpr expression.
 }
 
 // buildQuantifierPlan adds extra condition for any / all subquery.
-func (er *expressionRewriter) buildQuantifierPlan(plan4Agg *LogicalAggregation, cond, lexpr, rexpr expression.Expression, all bool) {
+func (er *expressionRewriter) buildQuantifierPlan(plan4Agg *LogicalAggregate, cond, lexpr, rexpr expression.Expression, all bool) {
 	innerIsNull := expression.NewFunctionInternal(er.sctx, ast.IsNull, types.NewFieldType(mysql.TypeTiny), rexpr)
 	outerIsNull := expression.NewFunctionInternal(er.sctx, ast.IsNull, types.NewFieldType(mysql.TypeTiny), lexpr)
 
@@ -652,7 +652,7 @@ func (er *expressionRewriter) handleNEAny(lexpr, rexpr expression.Expression, np
 		er.err = err
 		return
 	}
-	plan4Agg := LogicalAggregation{
+	plan4Agg := LogicalAggregate{
 		AggFuncs: []*aggregation.AggFuncDesc{maxFunc, countFunc},
 	}.Init(er.sctx, er.b.getSelectOffset())
 	if hint := er.b.TableHints(); hint != nil {
@@ -688,7 +688,7 @@ func (er *expressionRewriter) handleEQAll(lexpr, rexpr expression.Expression, np
 		er.err = err
 		return
 	}
-	plan4Agg := LogicalAggregation{
+	plan4Agg := LogicalAggregate{
 		AggFuncs: []*aggregation.AggFuncDesc{firstRowFunc, countFunc},
 	}.Init(er.sctx, er.b.getSelectOffset())
 	if hint := er.b.TableHints(); hint != nil {
@@ -764,7 +764,7 @@ out:
 		// e.g. exists(select count(*) from t order by a) is equal to exists t.
 		case *LogicalProject, *LogicalSort:
 			p = p.Children()[0]
-		case *LogicalAggregation:
+		case *LogicalAggregate:
 			if len(plan.GroupByItems) == 0 {
 				p = LogicalTableDual{RowCount: 1}.Init(er.sctx, er.b.getSelectOffset())
 				break out

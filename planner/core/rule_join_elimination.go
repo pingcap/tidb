@@ -143,7 +143,7 @@ func (o *outerJoinEliminator) isInnerJoinKeysContainIndex(innerPlan LogicalPlan,
 	return false, nil
 }
 
-// GetDupAgnosticAggCols checks whether a LogicalPlan is LogicalAggregation.
+// GetDupAgnosticAggCols checks whether a LogicalPlan is LogicalAggregate.
 // It extracts all the columns from the duplicate agnostic aggregate functions.
 // The returned column set is nil if not all the aggregate functions are duplicate agnostic.
 // Only the following functions are considered to be duplicate agnostic:
@@ -155,7 +155,7 @@ func GetDupAgnosticAggCols(
 	p LogicalPlan,
 	oldAggCols []*expression.Column, // Reuse the original buffer.
 ) (isAgg bool, newAggCols []*expression.Column) {
-	agg, ok := p.(*LogicalAggregation)
+	agg, ok := p.(*LogicalAggregate)
 	if !ok {
 		return false, nil
 	}
@@ -196,7 +196,7 @@ func (o *outerJoinEliminator) doOptimize(p LogicalPlan, aggCols []*expression.Co
 		for _, expr := range x.Exprs {
 			parentCols = append(parentCols, expression.ExtractColumns(expr)...)
 		}
-	case *LogicalAggregation:
+	case *LogicalAggregate:
 		parentCols = parentCols[:0]
 		for _, groupByItem := range x.GroupByItems {
 			parentCols = append(parentCols, expression.ExtractColumns(groupByItem)...)

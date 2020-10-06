@@ -712,7 +712,7 @@ func (p *LogicalProject) ExtractColGroups(colGroups [][]*expression.Column) [][]
 	return extracted
 }
 
-func (la *LogicalAggregation) getGroupNDVs(colGroups [][]*expression.Column, childProfile *property.StatsInfo, selfSchema *expression.Schema, gbyCols []*expression.Column) []property.GroupNDV {
+func (la *LogicalAggregate) getGroupNDVs(colGroups [][]*expression.Column, childProfile *property.StatsInfo, selfSchema *expression.Schema, gbyCols []*expression.Column) []property.GroupNDV {
 	if len(colGroups) == 0 || len(childProfile.GroupNDVs) == 0 {
 		return nil
 	}
@@ -740,7 +740,7 @@ func (la *LogicalAggregation) getGroupNDVs(colGroups [][]*expression.Column, chi
 }
 
 // DeriveStats implement LogicalPlan DeriveStats interface.
-func (la *LogicalAggregation) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema, colGroups [][]*expression.Column) (*property.StatsInfo, error) {
+func (la *LogicalAggregate) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema, colGroups [][]*expression.Column) (*property.StatsInfo, error) {
 	childProfile := childStats[0]
 	gbyCols := make([]*expression.Column, 0, len(la.GroupByItems))
 	for _, gbyExpr := range la.GroupByItems {
@@ -767,7 +767,7 @@ func (la *LogicalAggregation) DeriveStats(childStats []*property.StatsInfo, self
 }
 
 // ExtractColGroups implements LogicalPlan ExtractColGroups interface.
-func (la *LogicalAggregation) ExtractColGroups(_ [][]*expression.Column) [][]*expression.Column {
+func (la *LogicalAggregate) ExtractColGroups(_ [][]*expression.Column) [][]*expression.Column {
 	// Parent colGroups would be dicarded, because aggregation would make NDV of colGroups
 	// which does not match GroupByItems invalid.
 	// Note that gbyCols may not be the exact GROUP BY columns, e.g, GROUP BY a+b,

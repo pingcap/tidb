@@ -130,7 +130,7 @@ func (s *testCascadesSuite) TestPreparePossibleProperties(c *C) {
 	c.Assert(columnF, NotNil)
 	c.Assert(columnA, NotNil)
 
-	agg, ok := logic.Children()[0].(*plannercore.LogicalAggregation)
+	agg, ok := logic.Children()[0].(*plannercore.LogicalAggregate)
 	c.Assert(ok, IsTrue)
 	group := memo.Convert2Group(agg)
 	err = s.optimizer.onPhaseExploration(s.sctx, group)

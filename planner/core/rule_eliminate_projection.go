@@ -121,7 +121,7 @@ func (pe *projectionEliminator) eliminate(p LogicalPlan, replace map[string]*exp
 	childFlag := canEliminate
 	if _, isUnion := p.(*LogicalUnionAll); isUnion {
 		childFlag = false
-	} else if _, isAgg := p.(*LogicalAggregation); isAgg || isProj {
+	} else if _, isAgg := p.(*LogicalAggregate); isAgg || isProj {
 		childFlag = true
 	} else if _, isWindow := p.(*LogicalWindow); isWindow {
 		childFlag = true
@@ -197,7 +197,7 @@ func (p *LogicalProject) replaceExprColumns(replace map[string]*expression.Colum
 	}
 }
 
-func (la *LogicalAggregation) replaceExprColumns(replace map[string]*expression.Column) {
+func (la *LogicalAggregate) replaceExprColumns(replace map[string]*expression.Column) {
 	for _, agg := range la.AggFuncs {
 		for _, aggExpr := range agg.Args {
 			ResolveExprAndReplace(aggExpr, replace)

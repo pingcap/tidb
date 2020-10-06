@@ -191,7 +191,7 @@ func (p *LogicalJoin) PreparePossibleProperties(schema *expression.Schema, child
 }
 
 // PreparePossibleProperties implements LogicalPlan PreparePossibleProperties interface.
-func (la *LogicalAggregation) PreparePossibleProperties(schema *expression.Schema, childrenProperties ...[][]*expression.Column) [][]*expression.Column {
+func (la *LogicalAggregate) PreparePossibleProperties(schema *expression.Schema, childrenProperties ...[][]*expression.Column) [][]*expression.Column {
 	childProps := childrenProperties[0]
 	// If there's no group-by item, the stream aggregation could have no order property. So we can add an empty property
 	// when its group-by item is empty.

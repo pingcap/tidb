@@ -21,8 +21,8 @@ import (
 	"github.com/pingcap/tidb/util/plancodec"
 )
 
-// Init initializes LogicalAggregation.
-func (la LogicalAggregation) Init(ctx sessionctx.Context, offset int) *LogicalAggregation {
+// Init initializes LogicalAggregate.
+func (la LogicalAggregate) Init(ctx sessionctx.Context, offset int) *LogicalAggregate {
 	la.baseLogicalPlan = newBaseLogicalPlan(ctx, plancodec.TypeAgg, &la, offset)
 	return &la
 }

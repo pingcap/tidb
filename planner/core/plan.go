@@ -180,8 +180,8 @@ type LogicalPlan interface {
 	DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema, colGroups [][]*expression.Column) (*property.StatsInfo, error)
 
 	// ExtractColGroups extracts column groups from child operator whose DNVs are required by the current operator.
-	// For example, if current operator is LogicalAggregation of `Group By a, b`, we indicate the child operators to maintain
-	// and propagate the NDV info of column group (a, b), to improve the row count estimation of current LogicalAggregation.
+	// For example, if current operator is LogicalAggregate of `Group By a, b`, we indicate the child operators to maintain
+	// and propagate the NDV info of column group (a, b), to improve the row count estimation of current LogicalAggregate.
 	// The parameter colGroups are column groups required by upper operators, besides from the column groups derived from
 	// current operator, we should pass down parent colGroups to child operator as many as possible.
 	ExtractColGroups(colGroups [][]*expression.Column) [][]*expression.Column
@@ -389,7 +389,7 @@ func HasMaxOneRow(p LogicalPlan, childMaxOneRow []bool) bool {
 	}
 	switch x := p.(type) {
 	case *LogicalLock, *LogicalLimit, *LogicalSort, *LogicalSelection,
-		*LogicalApply, *LogicalProject, *LogicalWindow, *LogicalAggregation:
+		*LogicalApply, *LogicalProject, *LogicalWindow, *LogicalAggregate:
 		return childMaxOneRow[0]
 	case *LogicalMaxOneRow:
 		return true

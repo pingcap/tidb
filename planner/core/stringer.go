@@ -170,7 +170,7 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 		str = "HashAgg"
 	case *PhysicalStreamAgg:
 		str = "StreamAgg"
-	case *LogicalAggregation:
+	case *LogicalAggregate:
 		str = "Aggr("
 		for i, aggFunc := range x.AggFuncs {
 			str += aggFunc.String()

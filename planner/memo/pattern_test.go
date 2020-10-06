@@ -20,7 +20,7 @@ import (
 
 func (s *testMemoSuite) TestGetOperand(c *C) {
 	c.Assert(GetOperand(&plannercore.LogicalJoin{}), Equals, OperandJoin)
-	c.Assert(GetOperand(&plannercore.LogicalAggregation{}), Equals, OperandAggregation)
+	c.Assert(GetOperand(&plannercore.LogicalAggregate{}), Equals, OperandAggregation)
 	c.Assert(GetOperand(&plannercore.LogicalProject{}), Equals, OperandProjection)
 	c.Assert(GetOperand(&plannercore.LogicalSelection{}), Equals, OperandSelection)
 	c.Assert(GetOperand(&plannercore.LogicalApply{}), Equals, OperandApply)

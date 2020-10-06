@@ -136,7 +136,7 @@ func (gc *gcSubstituter) substitute(ctx context.Context, lp LogicalPlan, exprToC
 			}
 		}
 		// TODO: Uncomment these code after we support virtual generate column push down.
-		//case *LogicalAggregation:
+		//case *LogicalAggregate:
 		//	for _, aggFunc := range x.AggFuncs {
 		//		for i := 0; i < len(aggFunc.Args); i++ {
 		//			tp = aggFunc.Args[i].GetType().EvalType()

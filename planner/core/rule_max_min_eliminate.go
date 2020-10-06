@@ -37,7 +37,7 @@ func (a *maxMinEliminator) optimize(ctx context.Context, p LogicalPlan) (Logical
 }
 
 // composeAggsByInnerJoin composes the scalar aggregations by cartesianJoin.
-func (a *maxMinEliminator) composeAggsByInnerJoin(aggs []*LogicalAggregation) (plan LogicalPlan) {
+func (a *maxMinEliminator) composeAggsByInnerJoin(aggs []*LogicalAggregate) (plan LogicalPlan) {
 	plan = aggs[0]
 	sctx := plan.SCtx()
 	for i := 1; i < len(aggs); i++ {
@@ -130,7 +130,7 @@ func (a *maxMinEliminator) cloneSubPlans(plan LogicalPlan) LogicalPlan {
 // `select max(a) from t` + `select min(a) from t` + `select max(b) from t`.
 // Then we check whether `a` and `b` have indices. If any of the used column has no index, we cannot eliminate
 // this aggregation.
-func (a *maxMinEliminator) splitAggFuncAndCheckIndices(agg *LogicalAggregation) (aggs []*LogicalAggregation, canEliminate bool) {
+func (a *maxMinEliminator) splitAggFuncAndCheckIndices(agg *LogicalAggregate) (aggs []*LogicalAggregate, canEliminate bool) {
 	for _, f := range agg.AggFuncs {
 		// We must make sure the args of max/min is a simple single column.
 		col, ok := f.Args[0].(*expression.Column)
@@ -141,10 +141,10 @@ func (a *maxMinEliminator) splitAggFuncAndCheckIndices(agg *LogicalAggregation) 
 			return nil, false
 		}
 	}
-	aggs = make([]*LogicalAggregation, 0, len(agg.AggFuncs))
+	aggs = make([]*LogicalAggregate, 0, len(agg.AggFuncs))
 	// we can split the aggregation only if all of the aggFuncs pass the check.
 	for i, f := range agg.AggFuncs {
-		newAgg := LogicalAggregation{AggFuncs: []*aggregation.AggFuncDesc{f}}.Init(agg.ctx, agg.blockOffset)
+		newAgg := LogicalAggregate{AggFuncs: []*aggregation.AggFuncDesc{f}}.Init(agg.ctx, agg.blockOffset)
 		newAgg.SetChildren(a.cloneSubPlans(agg.children[0]))
 		newAgg.schema = expression.NewSchema(agg.schema.Columns[i])
 		if err := newAgg.PruneColumns([]*expression.Column{newAgg.schema.Columns[0]}); err != nil {
@@ -156,7 +156,7 @@ func (a *maxMinEliminator) splitAggFuncAndCheckIndices(agg *LogicalAggregation) 
 }
 
 // eliminateSingleMaxMin tries to convert a single max/min to Limit+Sort operators.
-func (a *maxMinEliminator) eliminateSingleMaxMin(agg *LogicalAggregation) *LogicalAggregation {
+func (a *maxMinEliminator) eliminateSingleMaxMin(agg *LogicalAggregate) *LogicalAggregate {
 	f := agg.AggFuncs[0]
 	child := agg.Children()[0]
 	ctx := agg.SCtx()
@@ -200,7 +200,7 @@ func (a *maxMinEliminator) eliminateMaxMin(p LogicalPlan) LogicalPlan {
 		newChildren = append(newChildren, a.eliminateMaxMin(child))
 	}
 	p.SetChildren(newChildren...)
-	if agg, ok := p.(*LogicalAggregation); ok {
+	if agg, ok := p.(*LogicalAggregate); ok {
 		if len(agg.GroupByItems) != 0 {
 			return agg
 		}

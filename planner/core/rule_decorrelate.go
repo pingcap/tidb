@@ -36,7 +36,7 @@ func (la *LogicalApply) canPullUpAgg() bool {
 }
 
 // canPullUp checks if an aggregation can be pulled up. An aggregate function like count(*) cannot be pulled up.
-func (la *LogicalAggregation) canPullUp() bool {
+func (la *LogicalAggregate) canPullUp() bool {
 	if len(la.GroupByItems) > 0 {
 		return false
 	}
@@ -104,7 +104,7 @@ func ExtractCorrelatedCols4PhysicalPlan(p PhysicalPlan) []*expression.Correlated
 // decorrelateSolver tries to convert apply plan to join plan.
 type decorrelateSolver struct{}
 
-func (s *decorrelateSolver) aggDefaultValueMap(agg *LogicalAggregation) map[int]*expression.Constant {
+func (s *decorrelateSolver) aggDefaultValueMap(agg *LogicalAggregate) map[int]*expression.Constant {
 	defaultValueMap := make(map[int]*expression.Constant, len(agg.AggFuncs))
 	for i, f := range agg.AggFuncs {
 		switch f.Name {
@@ -164,7 +164,7 @@ func (s *decorrelateSolver) optimize(ctx context.Context, p LogicalPlan) (Logica
 				return proj, nil
 			}
 			return s.optimize(ctx, p)
-		} else if agg, ok := innerPlan.(*LogicalAggregation); ok {
+		} else if agg, ok := innerPlan.(*LogicalAggregate); ok {
 			if apply.canPullUpAgg() && agg.canPullUp() {
 				innerPlan = agg.children[0]
 				apply.JoinType = LeftOuterJoin

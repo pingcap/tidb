@@ -34,7 +34,7 @@ import (
 
 var (
 	_ LogicalPlan = &LogicalJoin{}
-	_ LogicalPlan = &LogicalAggregation{}
+	_ LogicalPlan = &LogicalAggregate{}
 	_ LogicalPlan = &LogicalProject{}
 	_ LogicalPlan = &LogicalSelection{}
 	_ LogicalPlan = &LogicalApply{}
@@ -301,8 +301,8 @@ func (p *LogicalProject) GetUsedCols() (usedCols []*expression.Column) {
 	return usedCols
 }
 
-// LogicalAggregation represents an aggregate plan.
-type LogicalAggregation struct {
+// LogicalAggregate represents an aggregate plan.
+type LogicalAggregate struct {
 	logicalSchemaProducer
 
 	AggFuncs     []*aggregation.AggFuncDesc
@@ -317,8 +317,8 @@ type LogicalAggregation struct {
 	inputCount         float64 // inputCount is the input count of this plan.
 }
 
-// HasDistinct shows whether LogicalAggregation has functions with distinct.
-func (la *LogicalAggregation) HasDistinct() bool {
+// HasDistinct shows whether LogicalAggregate has functions with distinct.
+func (la *LogicalAggregate) HasDistinct() bool {
 	for _, aggFunc := range la.AggFuncs {
 		if aggFunc.HasDistinct {
 			return true
@@ -327,8 +327,8 @@ func (la *LogicalAggregation) HasDistinct() bool {
 	return false
 }
 
-// CopyAggHints copies the aggHints from another LogicalAggregation.
-func (la *LogicalAggregation) CopyAggHints(agg *LogicalAggregation) {
+// CopyAggHints copies the aggHints from another LogicalAggregate.
+func (la *LogicalAggregate) CopyAggHints(agg *LogicalAggregate) {
 	// TODO: Copy the hint may make the un-applicable hint throw the
 	// same warning message more than once. We'd better add a flag for
 	// `HaveThrownWarningMessage` to avoid this. Besides, finalAgg and
@@ -338,13 +338,13 @@ func (la *LogicalAggregation) CopyAggHints(agg *LogicalAggregation) {
 }
 
 // IsPartialModeAgg returns if all of the AggFuncs are partialMode.
-func (la *LogicalAggregation) IsPartialModeAgg() bool {
+func (la *LogicalAggregate) IsPartialModeAgg() bool {
 	// Since all of the AggFunc share the same AggMode, we only need to check the first one.
 	return la.AggFuncs[0].Mode == aggregation.Partial1Mode
 }
 
 // IsCompleteModeAgg returns if all of the AggFuncs are CompleteMode.
-func (la *LogicalAggregation) IsCompleteModeAgg() bool {
+func (la *LogicalAggregate) IsCompleteModeAgg() bool {
 	// Since all of the AggFunc share the same AggMode, we only need to check the first one.
 	return la.AggFuncs[0].Mode == aggregation.CompleteMode
 }
@@ -352,7 +352,7 @@ func (la *LogicalAggregation) IsCompleteModeAgg() bool {
 // GetGroupByCols returns the groupByCols. If the groupByCols haven't be collected,
 // this method would collect them at first. If the GroupByItems have been changed,
 // we should explicitly collect GroupByColumns before this method.
-func (la *LogicalAggregation) GetGroupByCols() []*expression.Column {
+func (la *LogicalAggregate) GetGroupByCols() []*expression.Column {
 	if la.groupByCols == nil {
 		la.collectGroupByColumns()
 	}
@@ -360,7 +360,7 @@ func (la *LogicalAggregation) GetGroupByCols() []*expression.Column {
 }
 
 // ExtractCorrelatedCols implements LogicalPlan interface.
-func (la *LogicalAggregation) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
+func (la *LogicalAggregate) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 	corCols := make([]*expression.CorrelatedColumn, 0, len(la.GroupByItems)+len(la.AggFuncs))
 	for _, expr := range la.GroupByItems {
 		corCols = append(corCols, expression.ExtractCorColumns(expr)...)
@@ -374,7 +374,7 @@ func (la *LogicalAggregation) ExtractCorrelatedCols() []*expression.CorrelatedCo
 }
 
 // GetUsedCols extracts all of the Columns used by agg including GroupByItems and AggFuncs.
-func (la *LogicalAggregation) GetUsedCols() (usedCols []*expression.Column) {
+func (la *LogicalAggregate) GetUsedCols() (usedCols []*expression.Column) {
 	for _, groupByItem := range la.GroupByItems {
 		usedCols = append(usedCols, expression.ExtractColumns(groupByItem)...)
 	}

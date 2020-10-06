@@ -29,7 +29,7 @@ const (
 	OperandAny Operand = iota
 	// OperandJoin is the operand for LogicalJoin.
 	OperandJoin
-	// OperandAggregation is the operand for LogicalAggregation.
+	// OperandAggregation is the operand for LogicalAggregate.
 	OperandAggregation
 	// OperandProjection is the operand for LogicalProject.
 	OperandProjection
@@ -78,7 +78,7 @@ func GetOperand(p plannercore.LogicalPlan) Operand {
 		return OperandApply
 	case *plannercore.LogicalJoin:
 		return OperandJoin
-	case *plannercore.LogicalAggregation:
+	case *plannercore.LogicalAggregate:
 		return OperandAggregation
 	case *plannercore.LogicalProject:
 		return OperandProjection

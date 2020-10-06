@@ -398,7 +398,7 @@ func (r *PushAggDownGather) Match(expr *memo.ExprIter) bool {
 	if expr.GetExpr().HasAppliedRule(r) {
 		return false
 	}
-	agg := expr.GetExpr().ExprNode.(*plannercore.LogicalAggregation)
+	agg := expr.GetExpr().ExprNode.(*plannercore.LogicalAggregate)
 	for _, aggFunc := range agg.AggFuncs {
 		if aggFunc.Mode != aggregation.CompleteMode {
 			return false
@@ -422,12 +422,12 @@ func (r *PushAggDownGather) Match(expr *memo.ExprIter) bool {
 // OnTransform implements Transformation interface.
 // It will transform `Agg->Gather` to `Agg(Final) -> Gather -> Agg(Partial1)`.
 func (r *PushAggDownGather) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
-	agg := old.GetExpr().ExprNode.(*plannercore.LogicalAggregation)
+	agg := old.GetExpr().ExprNode.(*plannercore.LogicalAggregate)
 	aggSchema := old.GetExpr().Group.Prop.Schema
 	gather := old.Children[0].GetExpr().ExprNode.(*plannercore.TiKVSingleGather)
 	childGroup := old.Children[0].GetExpr().Children[0]
 	// The old Aggregation should stay unchanged for other transformation.
-	// So we build a new LogicalAggregation for the partialAgg.
+	// So we build a new LogicalAggregate for the partialAgg.
 	aggFuncs := make([]*aggregation.AggFuncDesc, len(agg.AggFuncs))
 	for i := range agg.AggFuncs {
 		aggFuncs[i] = agg.AggFuncs[i].Clone()
@@ -445,13 +445,13 @@ func (r *PushAggDownGather) OnTransform(old *memo.ExprIter) (newExprs []*memo.Gr
 	partialPref.AggFuncs =
 		plannercore.RemoveUnnecessaryFirstRow(agg.SCtx(), finalPref.AggFuncs, finalPref.GroupByItems, partialPref.AggFuncs, partialPref.GroupByItems, partialPref.Schema, funcMap)
 
-	partialAgg := plannercore.LogicalAggregation{
+	partialAgg := plannercore.LogicalAggregate{
 		AggFuncs:     partialPref.AggFuncs,
 		GroupByItems: partialPref.GroupByItems,
 	}.Init(agg.SCtx(), agg.SelectBlockOffset())
 	partialAgg.CopyAggHints(agg)
 
-	finalAgg := plannercore.LogicalAggregation{
+	finalAgg := plannercore.LogicalAggregate{
 		AggFuncs:     finalPref.AggFuncs,
 		GroupByItems: finalPref.GroupByItems,
 	}.Init(agg.SCtx(), agg.SelectBlockOffset())
@@ -528,7 +528,7 @@ func NewRulePushSelDownProjection() Transformation {
 // 3. just keep unchanged.
 func (r *PushSelDownProjection) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
 	sel := old.GetExpr().ExprNode.(*plannercore.LogicalSelection)
-	proj := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalProjection)
+	proj := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalProject)
 	projSchema := old.Children[0].Prop.Schema
 	childGroup := old.Children[0].GetExpr().Children[0]
 	for _, expr := range proj.Exprs {
@@ -586,7 +586,7 @@ func NewRulePushSelDownAggregation() Transformation {
 // or just keep the selection unchanged.
 func (r *PushSelDownAggregation) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
 	sel := old.GetExpr().ExprNode.(*plannercore.LogicalSelection)
-	agg := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalAggregation)
+	agg := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalAggregate)
 	aggSchema := old.Children[0].Prop.Schema
 	var pushedExprs []expression.Expression
 	var remainedExprs []expression.Expression
@@ -761,7 +761,7 @@ func NewRulePushLimitDownProjection() Transformation {
 
 // Match implements Transformation interface.
 func (r *PushLimitDownProjection) Match(expr *memo.ExprIter) bool {
-	proj := expr.Children[0].GetExpr().ExprNode.(*plannercore.LogicalProjection)
+	proj := expr.Children[0].GetExpr().ExprNode.(*plannercore.LogicalProject)
 	for _, expr := range proj.Exprs {
 		if expression.HasAssignSetVarFunc(expr) {
 			return false
@@ -774,7 +774,7 @@ func (r *PushLimitDownProjection) Match(expr *memo.ExprIter) bool {
 // This rule tries to pushes the Limit through Projection.
 func (r *PushLimitDownProjection) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
 	limit := old.GetExpr().ExprNode.(*plannercore.LogicalLimit)
-	proj := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalProjection)
+	proj := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalProject)
 	childGroup := old.Children[0].GetExpr().Children[0]
 
 	projExpr := memo.NewGroupExpr(proj)
@@ -1079,9 +1079,9 @@ func NewRuleMergeAdjacentProjection() Transformation {
 // It will transform `proj->proj->x` to `proj->x`
 // or just keep the adjacent projections unchanged.
 func (r *MergeAdjacentProjection) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
-	proj := old.GetExpr().ExprNode.(*plannercore.LogicalProjection)
+	proj := old.GetExpr().ExprNode.(*plannercore.LogicalProject)
 	childGroup := old.Children[0].Group
-	child := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalProjection)
+	child := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalProject)
 	if plannercore.ExprsHasSideEffects(child.Exprs) {
 		return nil, false, false, nil
 	}
@@ -1093,7 +1093,7 @@ func (r *MergeAdjacentProjection) OnTransform(old *memo.ExprIter) (newExprs []*m
 		}
 	}
 
-	newProj := plannercore.LogicalProjection{Exprs: make([]expression.Expression, len(proj.Exprs))}.Init(proj.SCtx(), proj.SelectBlockOffset())
+	newProj := plannercore.LogicalProject{Exprs: make([]expression.Expression, len(proj.Exprs))}.Init(proj.SCtx(), proj.SelectBlockOffset())
 	newProj.SetSchema(old.GetExpr().Group.Prop.Schema)
 	for i, expr := range proj.Exprs {
 		newExpr := expr.Clone()
@@ -1208,7 +1208,7 @@ func NewRulePushTopNDownProjection() Transformation {
 
 // Match implements Transformation interface.
 func (r *PushTopNDownProjection) Match(expr *memo.ExprIter) bool {
-	proj := expr.Children[0].GetExpr().ExprNode.(*plannercore.LogicalProjection)
+	proj := expr.Children[0].GetExpr().ExprNode.(*plannercore.LogicalProject)
 	for _, expr := range proj.Exprs {
 		if expression.HasAssignSetVarFunc(expr) {
 			return false
@@ -1221,7 +1221,7 @@ func (r *PushTopNDownProjection) Match(expr *memo.ExprIter) bool {
 // This rule tries to pushes the TopN through Projection.
 func (r *PushTopNDownProjection) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
 	topN := old.GetExpr().ExprNode.(*plannercore.LogicalTopN)
-	proj := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalProjection)
+	proj := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalProject)
 	childGroup := old.Children[0].GetExpr().Children[0]
 
 	newTopN := plannercore.LogicalTopN{
@@ -1432,7 +1432,7 @@ func NewRuleMergeAggregationProjection() Transformation {
 
 // Match implements Transformation interface.
 func (r *MergeAggregationProjection) Match(old *memo.ExprIter) bool {
-	proj := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalProjection)
+	proj := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalProject)
 	if plannercore.ExprsHasSideEffects(proj.Exprs) {
 		return false
 	}
@@ -1442,8 +1442,8 @@ func (r *MergeAggregationProjection) Match(old *memo.ExprIter) bool {
 // OnTransform implements Transformation interface.
 // It will transform `Aggregation->Projection->X` to `Aggregation->X`.
 func (r *MergeAggregationProjection) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
-	oldAgg := old.GetExpr().ExprNode.(*plannercore.LogicalAggregation)
-	proj := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalProjection)
+	oldAgg := old.GetExpr().ExprNode.(*plannercore.LogicalAggregate)
+	proj := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalProject)
 	projSchema := old.Children[0].GetExpr().Schema()
 
 	groupByItems := make([]expression.Expression, len(oldAgg.GroupByItems))
@@ -1461,7 +1461,7 @@ func (r *MergeAggregationProjection) OnTransform(old *memo.ExprIter) (newExprs [
 		aggFuncs[i].Args = newArgs
 	}
 
-	newAgg := plannercore.LogicalAggregation{
+	newAgg := plannercore.LogicalAggregate{
 		GroupByItems: groupByItems,
 		AggFuncs:     aggFuncs,
 	}.Init(oldAgg.SCtx(), oldAgg.SelectBlockOffset())
@@ -1495,7 +1495,7 @@ func (r *EliminateSingleMaxMin) Match(expr *memo.ExprIter) bool {
 		return false
 	}
 
-	agg := expr.GetExpr().ExprNode.(*plannercore.LogicalAggregation)
+	agg := expr.GetExpr().ExprNode.(*plannercore.LogicalAggregate)
 	// EliminateSingleMaxMin only works on the complete mode.
 	if !agg.IsCompleteModeAgg() {
 		return false
@@ -1520,7 +1520,7 @@ func (r *EliminateSingleMaxMin) Match(expr *memo.ExprIter) bool {
 // OnTransform implements Transformation interface.
 // It will transform `max/min->X` to `max/min->top1->sel->X`.
 func (r *EliminateSingleMaxMin) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
-	agg := old.GetExpr().ExprNode.(*plannercore.LogicalAggregation)
+	agg := old.GetExpr().ExprNode.(*plannercore.LogicalAggregate)
 	childGroup := old.GetExpr().Children[0]
 	ctx := agg.SCtx()
 	f := agg.AggFuncs[0]
@@ -1861,7 +1861,7 @@ func (r *EliminateOuterJoinBelowAggregation) Match(expr *memo.ExprIter) bool {
 // OnTransform implements Transformation interface.
 // This rule tries to eliminate outer join which below aggregation.
 func (r *EliminateOuterJoinBelowAggregation) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
-	agg := old.GetExpr().ExprNode.(*plannercore.LogicalAggregation)
+	agg := old.GetExpr().ExprNode.(*plannercore.LogicalAggregate)
 	joinExpr := old.Children[0].GetExpr()
 	join := joinExpr.ExprNode.(*plannercore.LogicalJoin)
 
@@ -1923,7 +1923,7 @@ func (r *EliminateOuterJoinBelowProjection) Match(expr *memo.ExprIter) bool {
 // OnTransform implements Transformation interface.
 // This rule tries to eliminate outer join which below projection.
 func (r *EliminateOuterJoinBelowProjection) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
-	proj := old.GetExpr().ExprNode.(*plannercore.LogicalProjection)
+	proj := old.GetExpr().ExprNode.(*plannercore.LogicalProject)
 	joinExpr := old.Children[0].GetExpr()
 	join := joinExpr.ExprNode.(*plannercore.LogicalJoin)
 
@@ -1969,14 +1969,14 @@ func NewRuleTransformAggregateCaseToSelection() Transformation {
 
 // Match implements Transformation interface.
 func (r *TransformAggregateCaseToSelection) Match(expr *memo.ExprIter) bool {
-	agg := expr.GetExpr().ExprNode.(*plannercore.LogicalAggregation)
+	agg := expr.GetExpr().ExprNode.(*plannercore.LogicalAggregate)
 	return agg.IsCompleteModeAgg() && len(agg.GroupByItems) == 0 && len(agg.AggFuncs) == 1 && len(agg.AggFuncs[0].Args) == 1 && r.isTwoOrThreeArgCase(agg.AggFuncs[0].Args[0])
 }
 
 // OnTransform implements Transformation interface.
 // This rule tries to convert Agg(case when) to Agg->Selection.
 func (r *TransformAggregateCaseToSelection) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
-	agg := old.GetExpr().ExprNode.(*plannercore.LogicalAggregation)
+	agg := old.GetExpr().ExprNode.(*plannercore.LogicalAggregate)
 
 	ok, newConditions, newAggFuncs := r.transform(agg)
 	if !ok {
@@ -1988,7 +1988,7 @@ func (r *TransformAggregateCaseToSelection) OnTransform(old *memo.ExprIter) (new
 	newSelExpr.SetChildren(old.GetExpr().Children...)
 	newSelGroup := memo.NewGroupWithSchema(newSelExpr, old.GetExpr().Children[0].Prop.Schema)
 
-	newAgg := plannercore.LogicalAggregation{
+	newAgg := plannercore.LogicalAggregate{
 		AggFuncs:     newAggFuncs,
 		GroupByItems: agg.GroupByItems,
 	}.Init(agg.SCtx(), agg.SelectBlockOffset())
@@ -1998,7 +1998,7 @@ func (r *TransformAggregateCaseToSelection) OnTransform(old *memo.ExprIter) (new
 	return []*memo.GroupExpr{newAggExpr}, true, false, nil
 }
 
-func (r *TransformAggregateCaseToSelection) transform(agg *plannercore.LogicalAggregation) (ok bool, newConditions []expression.Expression, newAggFuncs []*aggregation.AggFuncDesc) {
+func (r *TransformAggregateCaseToSelection) transform(agg *plannercore.LogicalAggregate) (ok bool, newConditions []expression.Expression, newAggFuncs []*aggregation.AggFuncDesc) {
 	aggFuncDesc := agg.AggFuncs[0]
 	aggFuncName := aggFuncDesc.Name
 	ctx := agg.SCtx()
@@ -2089,7 +2089,7 @@ func NewRuleTransformAggToProj() Transformation {
 
 // Match implements Transformation interface.
 func (r *TransformAggToProj) Match(expr *memo.ExprIter) bool {
-	agg := expr.GetExpr().ExprNode.(*plannercore.LogicalAggregation)
+	agg := expr.GetExpr().ExprNode.(*plannercore.LogicalAggregate)
 
 	if !agg.IsCompleteModeAgg() {
 		return false
@@ -2118,7 +2118,7 @@ func (r *TransformAggToProj) Match(expr *memo.ExprIter) bool {
 // OnTransform implements Transformation interface.
 // This rule tries to convert agg to proj.
 func (r *TransformAggToProj) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
-	agg := old.GetExpr().ExprNode.(*plannercore.LogicalAggregation)
+	agg := old.GetExpr().ExprNode.(*plannercore.LogicalAggregate)
 	if ok, proj := plannercore.ConvertAggToProj(agg, old.GetExpr().Schema()); ok {
 		newProjExpr := memo.NewGroupExpr(proj)
 		newProjExpr.SetChildren(old.GetExpr().Children...)
@@ -2172,7 +2172,7 @@ func (r *InjectProjectionBelowTopN) OnTransform(old *memo.ExprIter) (newExprs []
 	for i := range oldTopNSchema.Columns {
 		topProjExprs[i] = oldTopNSchema.Columns[i]
 	}
-	topProj := plannercore.LogicalProjection{
+	topProj := plannercore.LogicalProject{
 		Exprs: topProjExprs,
 	}.Init(topN.SCtx(), topN.SelectBlockOffset())
 	topProj.SetSchema(oldTopNSchema)
@@ -2199,7 +2199,7 @@ func (r *InjectProjectionBelowTopN) OnTransform(old *memo.ExprIter) (newExprs []
 		bottomProjSchema = append(bottomProjSchema, newCol)
 		newByItems = append(newByItems, &util.ByItems{Expr: newCol, Desc: item.Desc})
 	}
-	bottomProj := plannercore.LogicalProjection{
+	bottomProj := plannercore.LogicalProject{
 		Exprs: bottomProjExprs,
 	}.Init(topN.SCtx(), topN.SelectBlockOffset())
 	newSchema := expression.NewSchema(bottomProjSchema...)
@@ -2247,14 +2247,14 @@ func NewRuleInjectProjectionBelowAgg() Transformation {
 
 // Match implements Transformation interface.
 func (r *InjectProjectionBelowAgg) Match(expr *memo.ExprIter) bool {
-	agg := expr.GetExpr().ExprNode.(*plannercore.LogicalAggregation)
+	agg := expr.GetExpr().ExprNode.(*plannercore.LogicalAggregate)
 	return agg.IsCompleteModeAgg()
 }
 
 // OnTransform implements Transformation interface.
 // It will convert `Agg -> X` to `Agg -> Proj -> X`.
 func (r *InjectProjectionBelowAgg) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
-	agg := old.GetExpr().ExprNode.(*plannercore.LogicalAggregation)
+	agg := old.GetExpr().ExprNode.(*plannercore.LogicalAggregate)
 
 	hasScalarFunc := false
 	copyFuncs := make([]*aggregation.AggFuncDesc, 0, len(agg.AggFuncs))
@@ -2321,7 +2321,7 @@ func (r *InjectProjectionBelowAgg) OnTransform(old *memo.ExprIter) (newExprs []*
 	}
 
 	// Construct GroupExpr, Group (Agg -> Proj -> Child).
-	proj := plannercore.LogicalProjection{
+	proj := plannercore.LogicalProject{
 		Exprs: projExprs,
 	}.Init(agg.SCtx(), agg.SelectBlockOffset())
 	projSchema := expression.NewSchema(projSchemaCols...)
@@ -2330,7 +2330,7 @@ func (r *InjectProjectionBelowAgg) OnTransform(old *memo.ExprIter) (newExprs []*
 	projExpr.SetChildren(old.GetExpr().Children[0])
 	projGroup := memo.NewGroupWithSchema(projExpr, projSchema)
 
-	newAgg := plannercore.LogicalAggregation{
+	newAgg := plannercore.LogicalAggregate{
 		AggFuncs:     copyFuncs,
 		GroupByItems: newGroupByItems,
 	}.Init(agg.SCtx(), agg.SelectBlockOffset())

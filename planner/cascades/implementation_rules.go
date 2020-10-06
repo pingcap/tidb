@@ -314,7 +314,7 @@ func (r *ImplSort) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalP
 	return []memo.Implementation{impl.NewSortImpl(ps)}, nil
 }
 
-// ImplHashAgg is the implementation rule which implements LogicalAggregation
+// ImplHashAgg is the implementation rule which implements LogicalAggregate
 // to PhysicalHashAgg.
 type ImplHashAgg struct {
 }
@@ -327,7 +327,7 @@ func (r *ImplHashAgg) Match(expr *memo.GroupExpr, prop *property.PhysicalPropert
 
 // OnImplement implements ImplementationRule OnImplement interface.
 func (r *ImplHashAgg) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) ([]memo.Implementation, error) {
-	la := expr.ExprNode.(*plannercore.LogicalAggregation)
+	la := expr.ExprNode.(*plannercore.LogicalAggregate)
 	hashAgg := plannercore.NewPhysicalHashAgg(
 		la,
 		expr.Group.Prop.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt),

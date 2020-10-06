@@ -85,7 +85,7 @@ func (p *LogicalSelection) PruneColumns(parentUsedCols []*expression.Column) err
 }
 
 // PruneColumns implements LogicalPlan interface.
-func (la *LogicalAggregation) PruneColumns(parentUsedCols []*expression.Column) error {
+func (la *LogicalAggregate) PruneColumns(parentUsedCols []*expression.Column) error {
 	child := la.children[0]
 	used := expression.GetUsedList(parentUsedCols, la.Schema())
 

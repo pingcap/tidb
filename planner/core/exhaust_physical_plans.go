@@ -1859,7 +1859,7 @@ func (p *baseLogicalPlan) exhaustPhysicalPlans(_ *property.PhysicalProperty) ([]
 	panic("baseLogicalPlan.exhaustPhysicalPlans() should never be called.")
 }
 
-func (la *LogicalAggregation) canPushToCop() bool {
+func (la *LogicalAggregate) canPushToCop() bool {
 	// At present, only Aggregation, Limit, TopN can be pushed to cop task, and Projection will be supported in the future.
 	// When we push task to coprocessor, finishCopTask will close the cop task and create a root task in the current implementation.
 	// Thus, we can't push two different tasks to coprocessor now, and can only push task to coprocessor when the child is Datasource.
@@ -1869,7 +1869,7 @@ func (la *LogicalAggregation) canPushToCop() bool {
 	return ok
 }
 
-func (la *LogicalAggregation) getEnforcedStreamAggs(prop *property.PhysicalProperty) []PhysicalPlan {
+func (la *LogicalAggregate) getEnforcedStreamAggs(prop *property.PhysicalProperty) []PhysicalPlan {
 	if prop.IsFlashOnlyProp() {
 		return nil
 	}
@@ -1909,7 +1909,7 @@ func (la *LogicalAggregation) getEnforcedStreamAggs(prop *property.PhysicalPrope
 	return enforcedAggs
 }
 
-func (la *LogicalAggregation) distinctArgsMeetsProperty() bool {
+func (la *LogicalAggregate) distinctArgsMeetsProperty() bool {
 	for _, aggFunc := range la.AggFuncs {
 		if aggFunc.HasDistinct {
 			for _, distinctArg := range aggFunc.Args {
@@ -1922,7 +1922,7 @@ func (la *LogicalAggregation) distinctArgsMeetsProperty() bool {
 	return true
 }
 
-func (la *LogicalAggregation) getStreamAggs(prop *property.PhysicalProperty) []PhysicalPlan {
+func (la *LogicalAggregate) getStreamAggs(prop *property.PhysicalProperty) []PhysicalPlan {
 	// TODO: support CopTiFlash task type in stream agg
 	if prop.IsFlashOnlyProp() {
 		return nil
@@ -1990,7 +1990,7 @@ func (la *LogicalAggregation) getStreamAggs(prop *property.PhysicalProperty) []P
 	return streamAggs
 }
 
-func (la *LogicalAggregation) getHashAggs(prop *property.PhysicalProperty) []PhysicalPlan {
+func (la *LogicalAggregate) getHashAggs(prop *property.PhysicalProperty) []PhysicalPlan {
 	if !prop.IsEmpty() {
 		return nil
 	}
@@ -2021,7 +2021,7 @@ func (la *LogicalAggregation) getHashAggs(prop *property.PhysicalProperty) []Phy
 
 // ResetHintIfConflicted resets the aggHints.preferAggType if they are conflicted,
 // and returns the two preferAggType hints.
-func (la *LogicalAggregation) ResetHintIfConflicted() (preferHash bool, preferStream bool) {
+func (la *LogicalAggregate) ResetHintIfConflicted() (preferHash bool, preferStream bool) {
 	preferHash = (la.aggHints.preferAggType & preferHashAgg) > 0
 	preferStream = (la.aggHints.preferAggType & preferStreamAgg) > 0
 	if preferHash && preferStream {
@@ -2034,7 +2034,7 @@ func (la *LogicalAggregation) ResetHintIfConflicted() (preferHash bool, preferSt
 	return
 }
 
-func (la *LogicalAggregation) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]PhysicalPlan, bool) {
+func (la *LogicalAggregate) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]PhysicalPlan, bool) {
 	if la.aggHints.preferAggToCop {
 		if !la.canPushToCop() {
 			errMsg := "Optimizer Hint AGG_TO_COP is inapplicable"

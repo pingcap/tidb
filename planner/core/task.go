@@ -1078,7 +1078,7 @@ type AggInfo struct {
 	Schema       *expression.Schema
 }
 
-// BuildFinalModeAggregation splits either LogicalAggregation or PhysicalAggregation to finalAgg and partial1Agg,
+// BuildFinalModeAggregation splits either LogicalAggregate or PhysicalAggregation to finalAgg and partial1Agg,
 // returns the information of partial and final agg.
 // partialIsCop means whether partial agg is a cop task.
 func BuildFinalModeAggregation(
@@ -1297,7 +1297,7 @@ func genFirstRowAggForGroupBy(ctx sessionctx.Context, groupByItems []expression.
 }
 
 // RemoveUnnecessaryFirstRow removes unnecessary FirstRow of the aggregation. This function can be
-// used for both LogicalAggregation and PhysicalAggregation.
+// used for both LogicalAggregate and PhysicalAggregation.
 // When the select column is same with the group by key, the column can be removed and gets value from the group by key.
 // e.g
 // select a, count(b) from t group by a;
