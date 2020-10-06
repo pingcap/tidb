@@ -47,7 +47,7 @@ var (
 	_ PhysicalPlan = &PhysicalTableScan{}
 	_ PhysicalPlan = &PhysicalTableGather{}
 	_ PhysicalPlan = &PhysicalIndexGather{}
-	_ PhysicalPlan = &PhysicalIndexLookUpReader{}
+	_ PhysicalPlan = &PhysicalIndexLookupGather{}
 	_ PhysicalPlan = &PhysicalIndexMergeReader{}
 	_ PhysicalPlan = &PhysicalHashAgg{}
 	_ PhysicalPlan = &PhysicalStreamAgg{}
@@ -228,7 +228,7 @@ func (p *PhysicalIndexGather) ExtractCorrelatedCols() (corCols []*expression.Cor
 	return corCols
 }
 
-// PushedDownLimit is the limit operator pushed down into PhysicalIndexLookUpReader.
+// PushedDownLimit is the limit operator pushed down into PhysicalIndexLookupGather.
 type PushedDownLimit struct {
 	Offset uint64
 	Count  uint64
@@ -241,8 +241,8 @@ func (p *PushedDownLimit) Clone() *PushedDownLimit {
 	return cloned
 }
 
-// PhysicalIndexLookUpReader is the index look up reader in tidb. It's used in case of double reading.
-type PhysicalIndexLookUpReader struct {
+// PhysicalIndexLookupGather is the index look up reader in tidb. It's used in case of double reading.
+type PhysicalIndexLookupGather struct {
 	physicalSchemaProducer
 
 	// IndexPlans flats the indexPlan to construct executor pb.
@@ -263,8 +263,8 @@ type PhysicalIndexLookUpReader struct {
 }
 
 // Clone implements PhysicalPlan interface.
-func (p *PhysicalIndexLookUpReader) Clone() (PhysicalPlan, error) {
-	cloned := new(PhysicalIndexLookUpReader)
+func (p *PhysicalIndexLookupGather) Clone() (PhysicalPlan, error) {
+	cloned := new(PhysicalIndexLookupGather)
 	base, err := p.physicalSchemaProducer.cloneWithSelf(cloned)
 	if err != nil {
 		return nil, err
@@ -292,7 +292,7 @@ func (p *PhysicalIndexLookUpReader) Clone() (PhysicalPlan, error) {
 }
 
 // ExtractCorrelatedCols implements PhysicalPlan interface.
-func (p *PhysicalIndexLookUpReader) ExtractCorrelatedCols() (corCols []*expression.CorrelatedColumn) {
+func (p *PhysicalIndexLookupGather) ExtractCorrelatedCols() (corCols []*expression.CorrelatedColumn) {
 	for _, child := range p.TablePlans {
 		corCols = append(corCols, ExtractCorrelatedCols4PhysicalPlan(child)...)
 	}
@@ -1191,7 +1191,7 @@ func CollectPlanStatsVersion(plan PhysicalPlan, statsInfos map[string]uint64) ma
 		statsInfos = CollectPlanStatsVersion(copPlan.tablePlan, statsInfos)
 	case *PhysicalIndexGather:
 		statsInfos = CollectPlanStatsVersion(copPlan.indexPlan, statsInfos)
-	case *PhysicalIndexLookUpReader:
+	case *PhysicalIndexLookupGather:
 		// For index loop up, only the indexPlan is necessary,
 		// because they use the same stats and we do not set the stats info for tablePlan.
 		statsInfos = CollectPlanStatsVersion(copPlan.indexPlan, statsInfos)

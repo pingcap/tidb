@@ -318,7 +318,7 @@ func (p *PhysicalIndexGather) ResolveIndices() (err error) {
 }
 
 // ResolveIndices implements Plan interface.
-func (p *PhysicalIndexLookUpReader) ResolveIndices() (err error) {
+func (p *PhysicalIndexLookupGather) ResolveIndices() (err error) {
 	err = resolveIndicesForVirtualColumn(p.tablePlan.Schema().Columns, p.schema)
 	if err != nil {
 		return err

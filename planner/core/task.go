@@ -651,7 +651,7 @@ func (p *PhysicalMergeJoin) attach2Task(tasks ...task) task {
 func buildIndexLookUpTask(ctx sessionctx.Context, t *copTask) *rootTask {
 	newTask := &rootTask{cst: t.cst}
 	sessVars := ctx.GetSessionVars()
-	p := PhysicalIndexLookUpReader{
+	p := PhysicalIndexLookupGather{
 		tablePlan:        t.tablePlan,
 		indexPlan:        t.indexPlan,
 		ExtraHandleCol:   t.extraHandleCol,
@@ -847,13 +847,13 @@ func (p *PhysicalLimit) attach2Task(tasks ...task) task {
 
 func (p *PhysicalLimit) sinkIntoIndexLookUp(t task) bool {
 	root := t.(*rootTask)
-	reader, isDoubleRead := root.p.(*PhysicalIndexLookUpReader)
+	reader, isDoubleRead := root.p.(*PhysicalIndexLookupGather)
 	proj, isProj := root.p.(*PhysicalProjection)
 	if !isDoubleRead && !isProj {
 		return false
 	}
 	if isProj {
-		reader, isDoubleRead = proj.Children()[0].(*PhysicalIndexLookUpReader)
+		reader, isDoubleRead = proj.Children()[0].(*PhysicalIndexLookupGather)
 		if !isDoubleRead {
 			return false
 		}

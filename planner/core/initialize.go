@@ -374,8 +374,8 @@ func (p PhysicalUnionScan) Init(ctx sessionctx.Context, stats *property.StatsInf
 	return &p
 }
 
-// Init initializes PhysicalIndexLookUpReader.
-func (p PhysicalIndexLookUpReader) Init(ctx sessionctx.Context, offset int) *PhysicalIndexLookUpReader {
+// Init initializes PhysicalIndexLookupGather.
+func (p PhysicalIndexLookupGather) Init(ctx sessionctx.Context, offset int) *PhysicalIndexLookupGather {
 	p.basePhysicalPlan = newBasePhysicalPlan(ctx, plancodec.TypeIndexLookUp, &p, offset)
 	p.TablePlans = flattenPushDownPlan(p.tablePlan)
 	p.IndexPlans = flattenPushDownPlan(p.indexPlan)

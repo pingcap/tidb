@@ -79,7 +79,7 @@ type CheckTable struct {
 	DBName             string
 	Table              table.Table
 	IndexInfos         []*model.IndexInfo
-	IndexLookUpReaders []*PhysicalIndexLookUpReader
+	IndexLookUpReaders []*PhysicalIndexLookupGather
 	CheckIndex         bool
 }
 
@@ -450,7 +450,7 @@ func (e *Execute) rebuildRange(p Plan) error {
 		if err != nil {
 			return err
 		}
-	case *PhysicalIndexLookUpReader:
+	case *PhysicalIndexLookupGather:
 		is := x.IndexPlans[0].(*PhysicalIndexScan)
 		is.Ranges, err = e.buildRangeForIndexScan(sctx, is)
 		if err != nil {
@@ -1026,7 +1026,7 @@ func (e *Explain) explainPlanInRowFormat(p Plan, taskType, driverSide, indent st
 		err = e.explainPlanInRowFormat(x.tablePlan, "cop["+storeType+"]", "", childIndent, true)
 	case *PhysicalIndexGather:
 		err = e.explainPlanInRowFormat(x.indexPlan, "cop[tikv]", "", childIndent, true)
-	case *PhysicalIndexLookUpReader:
+	case *PhysicalIndexLookupGather:
 		err = e.explainPlanInRowFormat(x.indexPlan, "cop[tikv]", "(Build)", childIndent, false)
 		err = e.explainPlanInRowFormat(x.tablePlan, "cop[tikv]", "(Probe)", childIndent, true)
 	case *PhysicalIndexMergeReader:
@@ -1177,7 +1177,7 @@ func (e *Explain) prepareTaskDot(p PhysicalPlan, taskTp string, buffer *bytes.Bu
 		case *PhysicalIndexGather:
 			pipelines = append(pipelines, fmt.Sprintf("\"%s\" -> \"%s\"\n", copPlan.ExplainID(), copPlan.indexPlan.ExplainID()))
 			copTasks = append(copTasks, copPlan.indexPlan)
-		case *PhysicalIndexLookUpReader:
+		case *PhysicalIndexLookupGather:
 			pipelines = append(pipelines, fmt.Sprintf("\"%s\" -> \"%s\"\n", copPlan.ExplainID(), copPlan.tablePlan.ExplainID()))
 			pipelines = append(pipelines, fmt.Sprintf("\"%s\" -> \"%s\"\n", copPlan.ExplainID(), copPlan.indexPlan.ExplainID()))
 			copTasks = append(copTasks, copPlan.tablePlan)

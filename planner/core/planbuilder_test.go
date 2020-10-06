@@ -269,7 +269,7 @@ func (s *testPlanBuilderSuite) TestPhysicalPlanClone(c *C) {
 	c.Assert(checkPhysicalPlanClone(indexReader), IsNil)
 
 	// index lookup
-	indexLookup := &PhysicalIndexLookUpReader{
+	indexLookup := &PhysicalIndexLookupGather{
 		IndexPlans:     []PhysicalPlan{indexReader},
 		indexPlan:      indexScan,
 		TablePlans:     []PhysicalPlan{tableReader},

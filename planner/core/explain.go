@@ -350,7 +350,7 @@ func (p *PhysicalIndexGather) accessObject(sctx sessionctx.Context) string {
 }
 
 // ExplainInfo implements Plan interface.
-func (p *PhysicalIndexLookUpReader) ExplainInfo() string {
+func (p *PhysicalIndexLookupGather) ExplainInfo() string {
 	// The children can be inferred by the relation symbol.
 	if p.PushedLimit != nil {
 		return fmt.Sprintf("limit embedded(offset:%v, count:%v)", p.PushedLimit.Offset, p.PushedLimit.Count)
@@ -358,7 +358,7 @@ func (p *PhysicalIndexLookUpReader) ExplainInfo() string {
 	return ""
 }
 
-func (p *PhysicalIndexLookUpReader) accessObject(sctx sessionctx.Context) string {
+func (p *PhysicalIndexLookupGather) accessObject(sctx sessionctx.Context) string {
 	ts := p.TablePlans[0].(*PhysicalTableScan)
 	pi := ts.Table.GetPartitionInfo()
 	if pi == nil || !sctx.GetSessionVars().UseDynamicPartitionPrune() {

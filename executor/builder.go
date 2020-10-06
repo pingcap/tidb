@@ -208,7 +208,7 @@ func (b *executorBuilder) build(p plannercore.Plan) Executor {
 		return b.buildTableReader(v)
 	case *plannercore.PhysicalIndexGather:
 		return b.buildIndexReader(v)
-	case *plannercore.PhysicalIndexLookUpReader:
+	case *plannercore.PhysicalIndexLookupGather:
 		return b.buildIndexLookUpReader(v)
 	case *plannercore.PhysicalWindow:
 		return b.buildWindow(v)
@@ -330,7 +330,7 @@ func (b *executorBuilder) buildShowSlow(v *plannercore.ShowSlow) Executor {
 }
 
 // buildIndexLookUpChecker builds check information to IndexLookUpReader.
-func buildIndexLookUpChecker(b *executorBuilder, p *plannercore.PhysicalIndexLookUpReader,
+func buildIndexLookUpChecker(b *executorBuilder, p *plannercore.PhysicalIndexLookupGather,
 	e *IndexLookUpExecutor) {
 	is := p.IndexPlans[0].(*plannercore.PhysicalIndexScan)
 	fullColLen := len(is.Index.Columns) + len(p.CommonHandleCols)
@@ -2824,7 +2824,7 @@ func buildIndexReq(b *executorBuilder, schemaLen, handleLen int, plans []planner
 	return indexReq, indexStreaming, err
 }
 
-func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIndexLookUpReader) (*IndexLookUpExecutor, error) {
+func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIndexLookupGather) (*IndexLookUpExecutor, error) {
 	is := v.IndexPlans[0].(*plannercore.PhysicalIndexScan)
 	var handleLen int
 	if len(v.CommonHandleCols) != 0 {
@@ -2898,7 +2898,7 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 	return e, nil
 }
 
-func (b *executorBuilder) buildIndexLookUpReader(v *plannercore.PhysicalIndexLookUpReader) Executor {
+func (b *executorBuilder) buildIndexLookUpReader(v *plannercore.PhysicalIndexLookupGather) Executor {
 	if b.ctx.GetSessionVars().IsPessimisticReadConsistency() {
 		if err := b.refreshForUpdateTSForRC(); err != nil {
 			b.err = err
@@ -3081,7 +3081,7 @@ func (builder *dataReaderBuilder) buildExecutorForIndexJoinInternal(ctx context.
 		return builder.buildTableReaderForIndexJoin(ctx, v, lookUpContents, IndexRanges, keyOff2IdxOff, cwc, canReorderHandles)
 	case *plannercore.PhysicalIndexGather:
 		return builder.buildIndexReaderForIndexJoin(ctx, v, lookUpContents, IndexRanges, keyOff2IdxOff, cwc)
-	case *plannercore.PhysicalIndexLookUpReader:
+	case *plannercore.PhysicalIndexLookupGather:
 		return builder.buildIndexLookUpReaderForIndexJoin(ctx, v, lookUpContents, IndexRanges, keyOff2IdxOff, cwc)
 	case *plannercore.PhysicalUnionScan:
 		return builder.buildUnionScanForIndexJoin(ctx, v, lookUpContents, IndexRanges, keyOff2IdxOff, cwc, canReorderHandles)
@@ -3335,7 +3335,7 @@ func (builder *dataReaderBuilder) buildIndexReaderForIndexJoin(ctx context.Conte
 	return ret, err
 }
 
-func (builder *dataReaderBuilder) buildIndexLookUpReaderForIndexJoin(ctx context.Context, v *plannercore.PhysicalIndexLookUpReader,
+func (builder *dataReaderBuilder) buildIndexLookUpReaderForIndexJoin(ctx context.Context, v *plannercore.PhysicalIndexLookupGather,
 	lookUpContents []*indexJoinLookUpContent, indexRanges []*ranger.Range, keyOff2IdxOff []int, cwc *plannercore.ColWithCmpFuncManager) (Executor, error) {
 	e, err := buildNoRangeIndexLookUpReader(builder.executorBuilder, v)
 	if err != nil {
@@ -3386,7 +3386,7 @@ func (builder *dataReaderBuilder) buildIndexLookUpReaderForIndexJoin(ctx context
 
 func (builder *dataReaderBuilder) buildProjectionForIndexJoin(ctx context.Context, v *plannercore.PhysicalProjection,
 	lookUpContents []*indexJoinLookUpContent, indexRanges []*ranger.Range, keyOff2IdxOff []int, cwc *plannercore.ColWithCmpFuncManager) (Executor, error) {
-	physicalIndexLookUp, isDoubleRead := v.Children()[0].(*plannercore.PhysicalIndexLookUpReader)
+	physicalIndexLookUp, isDoubleRead := v.Children()[0].(*plannercore.PhysicalIndexLookupGather)
 	if !isDoubleRead {
 		return nil, errors.Errorf("inner child of Projection should be IndexLookupReader, but got %T", v)
 	}

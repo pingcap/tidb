@@ -1162,7 +1162,7 @@ func FindColumnInfoByID(colInfos []*model.ColumnInfo, id int64) *model.ColumnInf
 	return nil
 }
 
-func (b *PlanBuilder) buildPhysicalIndexLookUpReader(ctx context.Context, dbName model.CIStr, tbl table.Table, idx *model.IndexInfo) (Plan, error) {
+func (b *PlanBuilder) buildPhysicalIndexLookupGather(ctx context.Context, dbName model.CIStr, tbl table.Table, idx *model.IndexInfo) (Plan, error) {
 	tblInfo := tbl.Meta()
 	physicalID, isPartition := getPhysicalID(tbl)
 	fullExprCols, _, err := expression.TableInfo2SchemaAndNames(b.ctx, dbName, tblInfo)
@@ -1317,7 +1317,7 @@ func tryGetPkHandleCol(tblInfo *model.TableInfo, allColSchema *expression.Schema
 	return nil, nil, false
 }
 
-func (b *PlanBuilder) buildPhysicalIndexLookUpReaders(ctx context.Context, dbName model.CIStr, tbl table.Table, indices []table.Index) ([]Plan, []*model.IndexInfo, error) {
+func (b *PlanBuilder) buildPhysicalIndexLookupGathers(ctx context.Context, dbName model.CIStr, tbl table.Table, indices []table.Index) ([]Plan, []*model.IndexInfo, error) {
 	tblInfo := tbl.Meta()
 	// get index information
 	indexInfos := make([]*model.IndexInfo, 0, len(tblInfo.Indices))
@@ -1334,7 +1334,7 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReaders(ctx context.Context, dbNam
 		if pi := tbl.Meta().GetPartitionInfo(); pi != nil {
 			for _, def := range pi.Definitions {
 				t := tbl.(table.PartitionedTable).GetPartition(def.ID)
-				reader, err := b.buildPhysicalIndexLookUpReader(ctx, dbName, t, idxInfo)
+				reader, err := b.buildPhysicalIndexLookupGather(ctx, dbName, t, idxInfo)
 				if err != nil {
 					return nil, nil, err
 				}
@@ -1343,7 +1343,7 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReaders(ctx context.Context, dbNam
 			continue
 		}
 		// For non-partition tables.
-		reader, err := b.buildPhysicalIndexLookUpReader(ctx, dbName, tbl, idxInfo)
+		reader, err := b.buildPhysicalIndexLookupGather(ctx, dbName, tbl, idxInfo)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -1386,16 +1386,16 @@ func (b *PlanBuilder) buildAdminCheckTable(ctx context.Context, as *ast.AdminStm
 			return nil, errors.Errorf("index %s state %s isn't public", as.Index, idx.Meta().State)
 		}
 		p.CheckIndex = true
-		readerPlans, indexInfos, err = b.buildPhysicalIndexLookUpReaders(ctx, tblName.Schema, tbl, []table.Index{idx})
+		readerPlans, indexInfos, err = b.buildPhysicalIndexLookupGathers(ctx, tblName.Schema, tbl, []table.Index{idx})
 	} else {
-		readerPlans, indexInfos, err = b.buildPhysicalIndexLookUpReaders(ctx, tblName.Schema, tbl, tbl.Indices())
+		readerPlans, indexInfos, err = b.buildPhysicalIndexLookupGathers(ctx, tblName.Schema, tbl, tbl.Indices())
 	}
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	readers := make([]*PhysicalIndexLookUpReader, 0, len(readerPlans))
+	readers := make([]*PhysicalIndexLookupGather, 0, len(readerPlans))
 	for _, plan := range readerPlans {
-		readers = append(readers, plan.(*PhysicalIndexLookUpReader))
+		readers = append(readers, plan.(*PhysicalIndexLookupGather))
 	}
 	p.IndexInfos = indexInfos
 	p.IndexLookUpReaders = readers
