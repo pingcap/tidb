@@ -121,7 +121,7 @@ func (p *LogicalTopN) BuildKeyInfo(selfSchema *expression.Schema, childSchema []
 }
 
 // BuildKeyInfo implements LogicalPlan BuildKeyInfo interface.
-func (p *LogicalTableDual) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
+func (p *LogicalDualScan) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
 	p.baseLogicalPlan.BuildKeyInfo(selfSchema, childSchema)
 	if p.RowCount == 1 {
 		p.maxOneRow = true

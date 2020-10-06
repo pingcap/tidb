@@ -219,7 +219,7 @@ func (s *partitionProcessor) processHashPartition(ds *DataSource, pi *model.Part
 	if used != nil {
 		return s.makeUnionAllChildren(ds, pi, convertToRangeOr(used, pi))
 	}
-	tableDual := LogicalTableDual{RowCount: 0}.Init(ds.SCtx(), ds.blockOffset)
+	tableDual := LogicalDualScan{RowCount: 0}.Init(ds.SCtx(), ds.blockOffset)
 	tableDual.schema = ds.Schema()
 	return tableDual, nil
 }
@@ -959,7 +959,7 @@ func (s *partitionProcessor) makeUnionAllChildren(ds *DataSource, pi *model.Part
 
 	if len(children) == 0 {
 		// No result after table pruning.
-		tableDual := LogicalTableDual{RowCount: 0}.Init(ds.SCtx(), ds.blockOffset)
+		tableDual := LogicalDualScan{RowCount: 0}.Init(ds.SCtx(), ds.blockOffset)
 		tableDual.schema = ds.Schema()
 		return tableDual, nil
 	}

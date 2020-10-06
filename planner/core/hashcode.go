@@ -54,7 +54,7 @@ func (p *LogicalProject) HashCode() []byte {
 }
 
 // HashCode implements LogicalPlan interface.
-func (p *LogicalTableDual) HashCode() []byte {
+func (p *LogicalDualScan) HashCode() []byte {
 	// PlanType + SelectOffset + RowCount
 	result := make([]byte, 0, 12)
 	result = encodeIntAsUint32(result, plancodec.TypeStringToPhysicalID(p.tp))

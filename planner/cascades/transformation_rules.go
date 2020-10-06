@@ -1393,7 +1393,7 @@ func (r *MergeAdjacentTopN) OnTransform(old *memo.ExprIter) (newExprs []*memo.Gr
 	childGroups := old.Children[0].GetExpr().Children
 
 	if child.Count <= topN.Offset {
-		tableDual := plannercore.LogicalTableDual{RowCount: 0}.Init(child.SCtx(), child.SelectBlockOffset())
+		tableDual := plannercore.LogicalDualScan{RowCount: 0}.Init(child.SCtx(), child.SelectBlockOffset())
 		tableDual.SetSchema(old.GetExpr().Schema())
 		tableDualExpr := memo.NewGroupExpr(tableDual)
 		return []*memo.GroupExpr{tableDualExpr}, true, true, nil
@@ -1630,7 +1630,7 @@ func (r *MergeAdjacentLimit) OnTransform(old *memo.ExprIter) (newExprs []*memo.G
 	childGroups := old.Children[0].GetExpr().Children
 
 	if child.Count <= limit.Offset {
-		tableDual := plannercore.LogicalTableDual{RowCount: 0}.Init(child.SCtx(), child.SelectBlockOffset())
+		tableDual := plannercore.LogicalDualScan{RowCount: 0}.Init(child.SCtx(), child.SelectBlockOffset())
 		tableDual.SetSchema(old.GetExpr().Schema())
 		tableDualExpr := memo.NewGroupExpr(tableDual)
 		return []*memo.GroupExpr{tableDualExpr}, true, true, nil
@@ -1673,7 +1673,7 @@ func (r *TransformLimitToTableDual) Match(expr *memo.ExprIter) bool {
 // This rule tries to convert limit to tableDual.
 func (r *TransformLimitToTableDual) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
 	limit := old.GetExpr().ExprNode.(*plannercore.LogicalLimit)
-	tableDual := plannercore.LogicalTableDual{RowCount: 0}.Init(limit.SCtx(), limit.SelectBlockOffset())
+	tableDual := plannercore.LogicalDualScan{RowCount: 0}.Init(limit.SCtx(), limit.SelectBlockOffset())
 	tableDual.SetSchema(old.GetExpr().Schema())
 	tableDualExpr := memo.NewGroupExpr(tableDual)
 	return []*memo.GroupExpr{tableDualExpr}, true, true, nil

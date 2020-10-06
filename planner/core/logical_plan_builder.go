@@ -843,7 +843,7 @@ func (b *PlanBuilder) buildSelection(ctx context.Context, p LogicalPlan, where a
 					continue
 				}
 				// If there is condition which is always false, return dual plan directly.
-				dual := LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
+				dual := LogicalDualScan{}.Init(b.ctx, b.getSelectOffset())
 				dual.names = p.OutputNames()
 				dual.SetSchema(p.Schema())
 				return dual, nil
@@ -1530,7 +1530,7 @@ func (b *PlanBuilder) buildLimit(src LogicalPlan, limit *ast.Limit) (LogicalPlan
 		count = math.MaxUint64 - offset
 	}
 	if offset+count == 0 {
-		tableDual := LogicalTableDual{RowCount: 0}.Init(b.ctx, b.getSelectOffset())
+		tableDual := LogicalDualScan{RowCount: 0}.Init(b.ctx, b.getSelectOffset())
 		tableDual.schema = src.Schema()
 		tableDual.names = src.OutputNames()
 		return tableDual, nil
@@ -2829,9 +2829,9 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 	return p, nil
 }
 
-func (b *PlanBuilder) buildTableDual() *LogicalTableDual {
+func (b *PlanBuilder) buildTableDual() *LogicalDualScan {
 	b.handleHelper.pushMap(nil)
-	return LogicalTableDual{RowCount: 1}.Init(b.ctx, b.getSelectOffset())
+	return LogicalDualScan{RowCount: 1}.Init(b.ctx, b.getSelectOffset())
 }
 
 func (ds *DataSource) newExtraHandleSchemaCol() *expression.Column {

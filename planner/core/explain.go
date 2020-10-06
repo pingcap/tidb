@@ -808,7 +808,7 @@ func (p *LogicalApply) ExplainInfo() string {
 }
 
 // ExplainInfo implements Plan interface.
-func (p *LogicalTableDual) ExplainInfo() string {
+func (p *LogicalDualScan) ExplainInfo() string {
 	return fmt.Sprintf("rowcount:%d", p.RowCount)
 }
 

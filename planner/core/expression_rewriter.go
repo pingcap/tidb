@@ -60,7 +60,7 @@ func rewriteAstExpr(sctx sessionctx.Context, expr ast.ExprNode, schema *expressi
 		is = sctx.GetSessionVars().TxnCtx.InfoSchema.(infoschema.InfoSchema)
 	}
 	b := NewPlanBuilder(sctx, is, &hint.BlockHintProcessor{})
-	fakePlan := LogicalTableDual{}.Init(sctx, 0)
+	fakePlan := LogicalDualScan{}.Init(sctx, 0)
 	if schema != nil {
 		fakePlan.schema = schema
 		fakePlan.names = names
@@ -766,7 +766,7 @@ out:
 			p = p.Children()[0]
 		case *LogicalAggregate:
 			if len(plan.GroupByItems) == 0 {
-				p = LogicalTableDual{RowCount: 1}.Init(er.sctx, er.b.getSelectOffset())
+				p = LogicalDualScan{RowCount: 1}.Init(er.sctx, er.b.getSelectOffset())
 				break out
 			}
 			p = p.Children()[0]

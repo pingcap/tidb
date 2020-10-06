@@ -39,7 +39,7 @@ const (
 	OperandApply
 	// OperandMaxOneRow is the operand for LogicalMaxOneRow.
 	OperandMaxOneRow
-	// OperandTableDual is the operand for LogicalTableDual.
+	// OperandTableDual is the operand for LogicalDualScan.
 	OperandTableDual
 	// OperandDataSource is the operand for DataSource.
 	OperandDataSource
@@ -86,7 +86,7 @@ func GetOperand(p plannercore.LogicalPlan) Operand {
 		return OperandSelection
 	case *plannercore.LogicalMaxOneRow:
 		return OperandMaxOneRow
-	case *plannercore.LogicalTableDual:
+	case *plannercore.LogicalDualScan:
 		return OperandTableDual
 	case *plannercore.DataSource:
 		return OperandDataSource

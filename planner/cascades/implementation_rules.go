@@ -89,7 +89,7 @@ var defaultImplementationMap = map[memo.Operand][]ImplementationRule{
 	},
 }
 
-// ImplTableDual implements LogicalTableDual as PhysicalTableDual.
+// ImplTableDual implements LogicalDualScan as PhysicalTableDual.
 type ImplTableDual struct {
 }
 
@@ -104,7 +104,7 @@ func (r *ImplTableDual) Match(expr *memo.GroupExpr, prop *property.PhysicalPrope
 // OnImplement implements ImplementationRule OnImplement interface.
 func (r *ImplTableDual) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) ([]memo.Implementation, error) {
 	logicProp := expr.Group.Prop
-	logicDual := expr.ExprNode.(*plannercore.LogicalTableDual)
+	logicDual := expr.ExprNode.(*plannercore.LogicalDualScan)
 	dual := plannercore.PhysicalTableDual{RowCount: logicDual.RowCount}.Init(logicDual.SCtx(), logicProp.Stats, logicDual.SelectBlockOffset())
 	dual.SetSchema(logicProp.Schema)
 	return []memo.Implementation{impl.NewTableDualImpl(dual)}, nil

@@ -105,7 +105,7 @@ func (ds *DataSource) PredicatePushDown(predicates []expression.Expression) ([]e
 }
 
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
-func (p *LogicalTableDual) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, LogicalPlan) {
+func (p *LogicalDualScan) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, LogicalPlan) {
 	return predicates, p
 }
 
@@ -506,7 +506,7 @@ func deriveNotNullExpr(expr expression.Expression, schema *expression.Schema) ex
 	return nil
 }
 
-// Conds2TableDual builds a LogicalTableDual if cond is constant false or null.
+// Conds2TableDual builds a LogicalDualScan if cond is constant false or null.
 func Conds2TableDual(p LogicalPlan, conds []expression.Expression) LogicalPlan {
 	if len(conds) != 1 {
 		return nil
@@ -520,7 +520,7 @@ func Conds2TableDual(p LogicalPlan, conds []expression.Expression) LogicalPlan {
 		return nil
 	}
 	if isTrue, err := con.Value.ToBool(sc); (err == nil && isTrue == 0) || con.Value.IsNull() {
-		dual := LogicalTableDual{}.Init(p.SCtx(), p.SelectBlockOffset())
+		dual := LogicalDualScan{}.Init(p.SCtx(), p.SelectBlockOffset())
 		dual.SetSchema(p.Schema())
 		return dual
 	}

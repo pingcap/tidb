@@ -39,7 +39,7 @@ var (
 	_ LogicalPlan = &LogicalFilter{}
 	_ LogicalPlan = &LogicalApply{}
 	_ LogicalPlan = &LogicalMaxOneRow{}
-	_ LogicalPlan = &LogicalTableDual{}
+	_ LogicalPlan = &LogicalDualScan{}
 	_ LogicalPlan = &DataSource{}
 	_ LogicalPlan = &TiKVSingleGather{}
 	_ LogicalPlan = &LogicalTableScan{}
@@ -428,8 +428,8 @@ type LogicalMaxOneRow struct {
 	baseLogicalPlan
 }
 
-// LogicalTableDual represents a dual table plan.
-type LogicalTableDual struct {
+// LogicalDualScan represents a dual table plan.
+type LogicalDualScan struct {
 	logicalSchemaProducer
 
 	RowCount int

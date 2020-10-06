@@ -268,7 +268,7 @@ func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column) error {
 }
 
 // PruneColumns implements LogicalPlan interface.
-func (p *LogicalTableDual) PruneColumns(parentUsedCols []*expression.Column) error {
+func (p *LogicalDualScan) PruneColumns(parentUsedCols []*expression.Column) error {
 	used := expression.GetUsedList(parentUsedCols, p.Schema())
 
 	for i := len(used) - 1; i >= 0; i-- {

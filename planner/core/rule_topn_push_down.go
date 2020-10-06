@@ -43,7 +43,7 @@ func (s *baseLogicalPlan) pushDownTopN(topN *LogicalTopN) LogicalPlan {
 // setChild set p as topn's child.
 func (lt *LogicalTopN) setChild(p LogicalPlan) LogicalPlan {
 	// Remove this TopN if its child is a TableDual.
-	dual, isDual := p.(*LogicalTableDual)
+	dual, isDual := p.(*LogicalDualScan)
 	if isDual {
 		numDualRows := uint64(dual.RowCount)
 		if numDualRows < lt.Offset {

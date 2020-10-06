@@ -25,7 +25,7 @@ func (s *testMemoSuite) TestGetOperand(c *C) {
 	c.Assert(GetOperand(&plannercore.LogicalFilter{}), Equals, OperandSelection)
 	c.Assert(GetOperand(&plannercore.LogicalApply{}), Equals, OperandApply)
 	c.Assert(GetOperand(&plannercore.LogicalMaxOneRow{}), Equals, OperandMaxOneRow)
-	c.Assert(GetOperand(&plannercore.LogicalTableDual{}), Equals, OperandTableDual)
+	c.Assert(GetOperand(&plannercore.LogicalDualScan{}), Equals, OperandTableDual)
 	c.Assert(GetOperand(&plannercore.DataSource{}), Equals, OperandDataSource)
 	c.Assert(GetOperand(&plannercore.LogicalUnionScan{}), Equals, OperandUnionScan)
 	c.Assert(GetOperand(&plannercore.LogicalUnionAll{}), Equals, OperandUnionAll)

@@ -167,8 +167,8 @@ func (p PhysicalLimit) Init(ctx sessionctx.Context, stats *property.StatsInfo, o
 	return &p
 }
 
-// Init initializes LogicalTableDual.
-func (p LogicalTableDual) Init(ctx sessionctx.Context, offset int) *LogicalTableDual {
+// Init initializes LogicalDualScan.
+func (p LogicalDualScan) Init(ctx sessionctx.Context, offset int) *LogicalDualScan {
 	p.baseLogicalPlan = newBaseLogicalPlan(ctx, plancodec.TypeDual, &p, offset)
 	return &p
 }
