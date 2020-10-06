@@ -383,8 +383,8 @@ func (p PhysicalIndexLookupGather) Init(ctx sessionctx.Context, offset int) *Phy
 	return &p
 }
 
-// Init initializes PhysicalIndexMergeReader.
-func (p PhysicalIndexMergeReader) Init(ctx sessionctx.Context, offset int) *PhysicalIndexMergeReader {
+// Init initializes PhysicalIndexMerge.
+func (p PhysicalIndexMerge) Init(ctx sessionctx.Context, offset int) *PhysicalIndexMerge {
 	p.basePhysicalPlan = newBasePhysicalPlan(ctx, plancodec.TypeIndexMerge, &p, offset)
 	if p.tablePlan != nil {
 		p.stats = p.tablePlan.statsInfo()

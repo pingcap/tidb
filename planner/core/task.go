@@ -734,7 +734,7 @@ func finishCopTask(ctx sessionctx.Context, task task) task {
 		cst: t.cst,
 	}
 	if t.idxMergePartPlans != nil {
-		p := PhysicalIndexMergeReader{
+		p := PhysicalIndexMerge{
 			partialPlans: t.idxMergePartPlans,
 			tablePlan:    t.tablePlan,
 		}.Init(ctx, t.idxMergePartPlans[0].SelectBlockOffset())

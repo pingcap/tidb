@@ -48,7 +48,7 @@ var (
 	_ PhysicalPlan = &PhysicalTableGather{}
 	_ PhysicalPlan = &PhysicalIndexGather{}
 	_ PhysicalPlan = &PhysicalIndexLookupGather{}
-	_ PhysicalPlan = &PhysicalIndexMergeReader{}
+	_ PhysicalPlan = &PhysicalIndexMerge{}
 	_ PhysicalPlan = &PhysicalHashAgg{}
 	_ PhysicalPlan = &PhysicalStreamAgg{}
 	_ PhysicalPlan = &PhysicalApply{}
@@ -302,8 +302,8 @@ func (p *PhysicalIndexLookupGather) ExtractCorrelatedCols() (corCols []*expressi
 	return corCols
 }
 
-// PhysicalIndexMergeReader is the reader using multiple indexes in tidb.
-type PhysicalIndexMergeReader struct {
+// PhysicalIndexMerge is the reader using multiple indexes in tidb.
+type PhysicalIndexMerge struct {
 	physicalSchemaProducer
 
 	// PartialPlans flats the partialPlans to construct executor pb.
@@ -320,7 +320,7 @@ type PhysicalIndexMergeReader struct {
 }
 
 // ExtractCorrelatedCols implements PhysicalPlan interface.
-func (p *PhysicalIndexMergeReader) ExtractCorrelatedCols() (corCols []*expression.CorrelatedColumn) {
+func (p *PhysicalIndexMerge) ExtractCorrelatedCols() (corCols []*expression.CorrelatedColumn) {
 	for _, child := range p.TablePlans {
 		corCols = append(corCols, ExtractCorrelatedCols4PhysicalPlan(child)...)
 	}

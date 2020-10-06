@@ -378,11 +378,11 @@ func (p *PhysicalIndexLookupGather) accessObject(sctx sessionctx.Context) string
 }
 
 // ExplainInfo implements Plan interface.
-func (p *PhysicalIndexMergeReader) ExplainInfo() string {
+func (p *PhysicalIndexMerge) ExplainInfo() string {
 	return ""
 }
 
-func (p *PhysicalIndexMergeReader) accessObject(sctx sessionctx.Context) string {
+func (p *PhysicalIndexMerge) accessObject(sctx sessionctx.Context) string {
 	ts := p.TablePlans[0].(*PhysicalTableScan)
 	pi := ts.Table.GetPartitionInfo()
 	if pi == nil || !sctx.GetSessionVars().UseDynamicPartitionPrune() {

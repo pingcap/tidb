@@ -134,7 +134,7 @@ func genHintsFromPhysicalPlan(p PhysicalPlan, nodeType utilhint.NodeType) (res [
 			Tables:   []ast.HintTable{{DBName: index.DBName, TableName: getTableName(index.Table.Name, index.TableAsName)}},
 			Indexes:  []model.CIStr{index.Index.Name},
 		})
-	case *PhysicalIndexMergeReader:
+	case *PhysicalIndexMerge:
 		Indexs := make([]model.CIStr, 0, 2)
 		var tableName model.CIStr
 		var tableAsName *model.CIStr
