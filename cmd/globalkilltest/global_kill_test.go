@@ -57,19 +57,24 @@ var (
 	timeToCheckPDConnectionRestored = flag.Int("conn_restored", 1, "time to check PD connection restored, should be the same as TiDB ldflag <ldflagServerIDTimeToCheckPDConnectionRestored>")
 )
 
+const (
+	waitToStartup   = 500 * time.Millisecond
+	msgErrConnectPD = "connect PD err: %v. Establish a cluster with PD & TiKV, and provide PD client path by `--pd=<ip:port>[,<ip:port>]"
+)
+
 var _ = Suite(&TestGlobalKillSuite{})
 
 // TestGlobakKillSuite is used for automated test of "Global Kill" feature.
-// See https://github.com/pingcap/tidb/issues/8854.
+// See https://github.com/pingcap/tidb/blob/master/docs/design/2020-06-01-global-kill.md.
 type TestGlobalKillSuite struct {
 	pdCli *clientv3.Client
-	errPD error
+	pdErr error
 }
 
 func (s *TestGlobalKillSuite) SetUpSuite(c *C) {
 	logutil.InitLogger(&logutil.LogConfig{Config: zaplog.Config{Level: *logLevel}})
 
-	s.pdCli, s.errPD = s.connectPD()
+	s.pdCli, s.pdErr = s.connectPD()
 }
 
 func (s *TestGlobalKillSuite) TearDownSuite(c *C) {
@@ -94,7 +99,11 @@ func (s *TestGlobalKillSuite) connectPD() (cli *clientv3.Client, err error) {
 		return nil, errors.Trace(err)
 	}
 
-	if err = cli.Sync(context.TODO()); err != nil { // use `Sync` to test connection, and get current members.
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second) // use `Sync` to test connection, and get current members.
+	err = cli.Sync(ctx)
+	cancel()
+	if err != nil {
+		cli.Close()
 		return nil, errors.Trace(err)
 	}
 	log.Infof("pd connected")
@@ -160,8 +169,8 @@ func (s *TestGlobalKillSuite) startPDProxy() (proxy *pdProxy, err error) {
 	if len(s.pdCli.Endpoints()) == 0 {
 		return nil, errors.New("PD no available endpoint")
 	}
-	u, err := url.Parse(s.pdCli.Endpoints()[0])
-	if err != nil { // use first endpoint, as proxy can accept ONLY one destination.
+	u, err := url.Parse(s.pdCli.Endpoints()[0]) // use first endpoint, as proxy can accept ONLY one destination.
+	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	dst := u.Host
@@ -178,9 +187,9 @@ func (s *TestGlobalKillSuite) startPDProxy() (proxy *pdProxy, err error) {
 func (s *TestGlobalKillSuite) connectTiDB(port int) (db *sql.DB, err error) {
 	addr := fmt.Sprintf("127.0.0.1:%d", port)
 	dsn := fmt.Sprintf("root@(%s)/test", addr)
-	sleepTime := time.Millisecond * 250
+	sleepTime := 250 * time.Millisecond
 	startTime := time.Now()
-	for i := 0; i < 6; i++ {
+	for i := 0; i < 5; i++ {
 		db, err = sql.Open("mysql", dsn)
 		if err != nil {
 			log.Warnf("open addr %v failed, retry count %d err %v", addr, i, err)
@@ -206,11 +215,6 @@ func (s *TestGlobalKillSuite) connectTiDB(port int) (db *sql.DB, err error) {
 	return db, nil
 }
 
-const (
-	waitToStartup   = 500 * time.Millisecond
-	msgErrConnectPD = "connect PD err: %v. Establish a cluster with PD & TiKV, and provide PD client path by `--pd=<ip:port>[,<ip:port>]"
-)
-
 type sleepResult struct {
 	elapsed time.Duration
 	err     error
@@ -221,7 +225,7 @@ func (s *TestGlobalKillSuite) killByCtrlC(c *C, port int, sleepTime int) time.Du
 		"-h127.0.0.1",
 		fmt.Sprintf("-P%d", port),
 		"-uroot",
-		"-e", fmt.Sprintf("select sleep(%d);", sleepTime))
+		"-e", fmt.Sprintf("SELECT SLEEP(%d);", sleepTime))
 	log.Infof("run mysql cli: %v", cli)
 
 	ch := make(chan sleepResult)
@@ -250,7 +254,7 @@ func (s *TestGlobalKillSuite) killByCtrlC(c *C, port int, sleepTime int) time.Du
 func sleepRoutine(ctx context.Context, sleepTime int, conn *sql.Conn, connID uint64, ch chan<- sleepResult) {
 	var err error
 	startTS := time.Now()
-	sql := fmt.Sprintf("select sleep(%d);", sleepTime)
+	sql := fmt.Sprintf("SELECT SLEEP(%d);", sleepTime)
 	if connID > 0 {
 		log.Infof("exec: %s [on 0x%x]", sql, connID)
 	} else {
@@ -281,7 +285,7 @@ func (s *TestGlobalKillSuite) killByKillStatement(c *C, db1 *sql.DB, db2 *sql.DB
 	defer conn1.Close()
 
 	var connID1 uint64
-	err = conn1.QueryRowContext(ctx, "select connection_id();").Scan(&connID1)
+	err = conn1.QueryRowContext(ctx, "SELECT CONNECTION_ID();").Scan(&connID1)
 	c.Assert(err, IsNil)
 	log.Infof("connID1: 0x%x", connID1)
 
@@ -294,15 +298,13 @@ func (s *TestGlobalKillSuite) killByKillStatement(c *C, db1 *sql.DB, db2 *sql.DB
 	defer conn2.Close()
 
 	var connID2 uint64
-	err = conn2.QueryRowContext(ctx, "select connection_id();").Scan(&connID2)
+	err = conn2.QueryRowContext(ctx, "SELECT CONNECTION_ID();").Scan(&connID2)
 	c.Assert(err, IsNil)
 	log.Infof("connID2: 0x%x", connID2)
 
 	log.Infof("exec: KILL QUERY %v(0x%x) [on 0x%x]", connID1, connID1, connID2)
-	rows, err := conn2.QueryContext(ctx, fmt.Sprintf("KILL QUERY %v", connID1))
+	_, err = conn2.ExecContext(ctx, fmt.Sprintf("KILL QUERY %v", connID1))
 	c.Assert(err, IsNil)
-	defer rows.Close()
-	c.Assert(rows.Err(), IsNil)
 
 	r := <-ch
 	c.Assert(r.err, IsNil)
@@ -335,7 +337,7 @@ func (s *TestGlobalKillSuite) TestWithoutPD(c *C) {
 
 // [Test Scenario 2] One TiDB with PD, killed by Ctrl+C, and killed by KILL.
 func (s *TestGlobalKillSuite) TestOneTiDB(c *C) {
-	c.Assert(s.errPD, IsNil, Commentf(msgErrConnectPD, s.errPD))
+	c.Assert(s.pdErr, IsNil, Commentf(msgErrConnectPD, s.pdErr))
 
 	port := *tidbStartPort + 1
 	tidb, err := s.startTiDBWithPD(port, *tidbStatusPort+1, *pdClientPath)
@@ -360,9 +362,9 @@ func (s *TestGlobalKillSuite) TestOneTiDB(c *C) {
 
 // [Test Scenario 3] Multiple TiDB nodes, killed remotely by KILL.
 func (s *TestGlobalKillSuite) TestMultipleTiDB(c *C) {
+	c.Assert(s.pdErr, IsNil, Commentf(msgErrConnectPD, s.pdErr))
 
-	c.Assert(s.errPD, IsNil, Commentf(msgErrConnectPD, s.errPD))
-
+	// tidb1 & conn1
 	port1 := *tidbStartPort + 1
 	tidb1, err := s.startTiDBWithPD(port1, *tidbStatusPort+1, *pdClientPath)
 	c.Assert(err, IsNil)
@@ -372,6 +374,7 @@ func (s *TestGlobalKillSuite) TestMultipleTiDB(c *C) {
 	c.Assert(err, IsNil)
 	defer db1.Close()
 
+	// tidb2 & conn2
 	port2 := *tidbStartPort + 2
 	tidb2, err := s.startTiDBWithPD(port2, *tidbStatusPort+2, *pdClientPath)
 	c.Assert(err, IsNil)
@@ -381,6 +384,7 @@ func (s *TestGlobalKillSuite) TestMultipleTiDB(c *C) {
 	c.Assert(err, IsNil)
 	defer db2.Close()
 
+	// kill remotely
 	const sleepTime = 2
 
 	elapsed := s.killByKillStatement(c, db1, db2, sleepTime)
@@ -388,12 +392,14 @@ func (s *TestGlobalKillSuite) TestMultipleTiDB(c *C) {
 }
 
 func (s *TestGlobalKillSuite) TestLostConnection(c *C) {
-	c.Assert(s.errPD, IsNil, Commentf(msgErrConnectPD, s.errPD))
+	c.Assert(s.pdErr, IsNil, Commentf(msgErrConnectPD, s.pdErr))
 
+	// PD proxy
 	pdProxy, err := s.startPDProxy()
 	c.Assert(err, IsNil)
 	pdPath := fmt.Sprintf("127.0.0.1:%s", *pdProxyPort)
 
+	// tidb1
 	port1 := *tidbStartPort + 1
 	tidb1, err := s.startTiDBWithPD(port1, *tidbStatusPort+1, pdPath)
 	c.Assert(err, IsNil)
@@ -403,6 +409,7 @@ func (s *TestGlobalKillSuite) TestLostConnection(c *C) {
 	c.Assert(err, IsNil)
 	defer db1.Close()
 
+	// tidb2
 	port2 := *tidbStartPort + 2
 	tidb2, err := s.startTiDBWithPD(port2, *tidbStatusPort+2, pdPath)
 	c.Assert(err, IsNil)
@@ -426,7 +433,7 @@ func (s *TestGlobalKillSuite) TestLostConnection(c *C) {
 	go sleepRoutine(ctx, sqlTime, conn1, 0, ch)
 	time.Sleep(waitToStartup) // wait go-routine to start.
 
-	// disconnect to PD by close proxy.
+	// disconnect to PD by closing PD proxy.
 	log.Infof("shutdown PD proxy to simulate lost connection to PD.")
 	pdProxy.Close()
 	pdProxy.closeAllConnections()
@@ -452,7 +459,7 @@ func (s *TestGlobalKillSuite) TestLostConnection(c *C) {
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "driver: bad connection")
 
-	// restore connection to PD.
+	// start PD proxy to restore connection.
 	log.Infof("restart pdProxy")
 	pdProxy1, err := s.startPDProxy()
 	c.Assert(err, IsNil)

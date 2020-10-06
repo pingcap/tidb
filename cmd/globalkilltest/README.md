@@ -1,45 +1,45 @@
 # GlobalKillTest
 
 GlobalKillTest is a test command tool for TiDB __"Global Kill"__ feature.
-About __"Global Kill"__, see [design doc](https://github.com/pingcap/tidb/blob/master/docs/design/2020-06-01-global-kill.md) for detail.
+
+_(About __"Global Kill"__, see [design doc](https://github.com/pingcap/tidb/blob/master/docs/design/2020-06-01-global-kill.md) for detail.)_
 
 ```
 Usage: ./run-tests.sh [options]
 
     -h: Print this help message.
 
-    -L <info|warn|error>: Log level of testing. Defaults to `info`.
+    -L <info|warn|error>: Log level of testing. Defaults to "info".
 
-    --server_log_level <info|warn|error>: Log level of TiDB server. Defaults to `info`.
+    --server_log_level <info|warn|error>: Log level of TiDB server. Defaults to "info".
     
-    --tmp <temporary path>: Temporary files path. Defaults to `/tmp/tidb_globalkilltest`.
+    --tmp <temporary path>: Temporary files path. Defaults to "/tmp/tidb_globalkilltest".
 
     -s <tidb-server-path>: Use tidb-server in <tidb-server-path> for testing.
-                           Defaults to `bin/globalkilltest_tidb-server`.
+                           Defaults to "bin/globalkilltest_tidb-server".
 
     --tidb_start_port <port>: First TiDB server listening port. port ~ port+2 will be used.
-                              Defaults to `5000`.
+                              Defaults to "5000".
 
     --tidb_status_port <port>: First TiDB server status listening port. port ~ port+2 will be used.
-                               Defaults to `8000`.
+                               Defaults to "8000".
 
-    --pd <pd-client-path>: PD client path, ip-port list seperated by comma.
-                           Defaults to `127.0.0.1:2379`.
+    --pd <pd-client-path>: PD client path, ip:port list seperated by comma.
+                           Defaults to "127.0.0.1:2379".
 
     --pd_proxy_port <port>: PD proxy port. PD proxy is used to simulate lost connection between TiDB and PD.
-                            Defaults to `3379`.
+                            Defaults to "3379".
 
     --conn_lost <timeout in seconds>: Lost connection to PD timeout,
-                                      should be the same as TiDB ldflag
-                                      <ldflagLostConnectionToPDTimeout>.
-                                      See [Makefile](https://github.com/pingyu/tidb/blob/master/Makefile) for detail.
-                                      Defaults to `5`.
+                                      should be the same as TiDB ldflag <ldflagLostConnectionToPDTimeout>.
+                                      See tidb/Makefile for detail.
+                                      Defaults to "5".
 
     --conn_restored <timeout in seconds>: Time to check PD connection restored,
-                                          should be the same as TiDB ldflag
-                                          <ldflagServerIDTimeToCheckPDConnectionRestored.
-                                          See [Makefile](https://github.com/pingyu/tidb/blob/master/Makefile) for detail.
-                                          Defaults to `1`.
+                                          should be the same as TiDB ldflag 
+                                          <ldflagServerIDTimeToCheckPDConnectionRestored>.
+                                          See tidb/Makefile for detail.
+                                          Defaults to "1".
 
 ```
 
@@ -69,18 +69,18 @@ Usage: ./run-tests.sh [options]
 
 ## How it works
 
-* TiDB is built by `make server_globalkilltest`, to hack some timeout variables, as the default value of these variables are too long _(several hours)_ to test. See [Makefile](https://github.com/pingyu/tidb/blob/master/Makefile) for detail.
+* TiDB is built by `make server_globalkilltest`, to hack some timeout variables, as the default value of these variables are too long _(several hours)_ for automated testing. See [Makefile](https://github.com/pingyu/tidb/blob/master/Makefile) for detail.
 
-* Execute `SELECT SLEEP(x)` as payload, and kill the query before `x` expired. If the query had no error and elapsed less than `x`, the test is passed.
+* Execute `SELECT SLEEP(x)` as payload, and kill the query before `x` expired. If the query had no error and elapsed less than `x`, the test is PASSED.
 
-* Run a embedded [tcp proxy](https://github.com/inetaf/tcpproxy) before PD. Stop & restart the proxy to simulate the connection between TiDB and PD lost & restored.
+* Run a embedded [tcp proxy](https://github.com/inetaf/tcpproxy) before PD. Stop & restart the proxy to simulate connection between TiDB and PD lost & restored.
 
 
 ## Usage
 
 ### Regression Execute in Integration Test
 
-In Integration Test after commit and before merge, run this command under TiDB root folder.
+In Integration Test after commit and before merge, run these commands under TiDB root folder.
 
 ```sh
 make server_globalkilltest
@@ -88,7 +88,7 @@ cd cmd/globaltestkill
 ./run-tests.sh --pd=<pd client path>
 ```
 
-Again, establish a cluster with PD & TiKV and provide `pd client path` by `--pd=<pd client path>`.
+Again, before testing, establish a cluster with PD & TiKV and provide `pd client path` by `--pd=<pd client path>`.
 
 ### Manual Test
 
@@ -97,5 +97,5 @@ Run a single test manually (take `TestMultipleTiDB` as example):
 ```sh
 make server_globalkilltest
 cd cmd/globaltestkill
-go test -check.f TestMultipleTiDB
+go test -check.f TestMultipleTiDB -args --pd=127.0.0.1:2379
 ```
