@@ -18,19 +18,19 @@ import (
 	"github.com/pingcap/tidb/planner/memo"
 )
 
-// ProjectionImpl is the implementation of PhysicalProjection.
+// ProjectionImpl is the implementation of PhysicalProject.
 type ProjectionImpl struct {
 	baseImpl
 }
 
 // NewProjectionImpl creates a new projection Implementation.
-func NewProjectionImpl(proj *plannercore.PhysicalProjection) *ProjectionImpl {
+func NewProjectionImpl(proj *plannercore.PhysicalProject) *ProjectionImpl {
 	return &ProjectionImpl{baseImpl{plan: proj}}
 }
 
 // CalcCost implements Implementation CalcCost interface.
 func (impl *ProjectionImpl) CalcCost(outCount float64, children ...memo.Implementation) float64 {
-	proj := impl.plan.(*plannercore.PhysicalProjection)
+	proj := impl.plan.(*plannercore.PhysicalProject)
 	impl.cost = proj.GetCost(children[0].GetPlan().Stats().RowCount) + children[0].GetCost()
 	return impl.cost
 }

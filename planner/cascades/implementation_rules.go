@@ -139,7 +139,7 @@ func (r *ImplMemTableScan) OnImplement(
 	return []memo.Implementation{impl.NewMemTableScanImpl(physical)}, nil
 }
 
-// ImplProjection implements LogicalProject as PhysicalProjection.
+// ImplProjection implements LogicalProject as PhysicalProject.
 type ImplProjection struct {
 }
 
@@ -156,7 +156,7 @@ func (r *ImplProjection) OnImplement(expr *memo.GroupExpr, reqProp *property.Phy
 	if !ok {
 		return nil, nil
 	}
-	proj := plannercore.PhysicalProjection{
+	proj := plannercore.PhysicalProject{
 		Exprs:                logicProj.Exprs,
 		CalculateNoDelay:     logicProj.CalculateNoDelay,
 		AvoidColumnEvaluator: logicProj.AvoidColumnEvaluator,

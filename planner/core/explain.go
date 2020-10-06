@@ -415,12 +415,12 @@ func (p *PhysicalSelection) ExplainNormalizedInfo() string {
 }
 
 // ExplainInfo implements Plan interface.
-func (p *PhysicalProjection) ExplainInfo() string {
+func (p *PhysicalProject) ExplainInfo() string {
 	return expression.ExplainExpressionList(p.Exprs, p.schema)
 }
 
 // ExplainNormalizedInfo implements Plan interface.
-func (p *PhysicalProjection) ExplainNormalizedInfo() string {
+func (p *PhysicalProject) ExplainNormalizedInfo() string {
 	return string(expression.SortedExplainNormalizedExpressionList(p.Exprs))
 }
 

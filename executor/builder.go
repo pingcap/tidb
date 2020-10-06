@@ -192,7 +192,7 @@ func (b *executorBuilder) build(p plannercore.Plan) Executor {
 		return b.buildHashAgg(v)
 	case *plannercore.PhysicalStreamAgg:
 		return b.buildStreamAgg(v)
-	case *plannercore.PhysicalProjection:
+	case *plannercore.PhysicalProject:
 		return b.buildProjection(v)
 	case *plannercore.PhysicalMemTableScan:
 		return b.buildMemTable(v)
@@ -1313,7 +1313,7 @@ func (b *executorBuilder) buildSelection(v *plannercore.PhysicalSelection) Execu
 	return e
 }
 
-func (b *executorBuilder) buildProjection(v *plannercore.PhysicalProjection) Executor {
+func (b *executorBuilder) buildProjection(v *plannercore.PhysicalProject) Executor {
 	childExec := b.build(v.Children()[0])
 	if b.err != nil {
 		return nil
@@ -3091,7 +3091,7 @@ func (builder *dataReaderBuilder) buildExecutorForIndexJoinInternal(ctx context.
 	// 	3. The inner child needs to keep order
 	// In this case, an extra column tidb_rowid will be appended in the output result of IndexLookupReader(see copTask.doubleReadNeedProj).
 	// Then we need a Projection upon IndexLookupReader to prune the redundant column.
-	case *plannercore.PhysicalProjection:
+	case *plannercore.PhysicalProject:
 		return builder.buildProjectionForIndexJoin(ctx, v, lookUpContents, IndexRanges, keyOff2IdxOff, cwc)
 	// Need to support physical selection because after PR 16389, TiDB will push down all the expr supported by TiKV or TiFlash
 	// in predicate push down stage, so if there is an expr which only supported by TiFlash, a physical selection will be added after index read
@@ -3384,7 +3384,7 @@ func (builder *dataReaderBuilder) buildIndexLookUpReaderForIndexJoin(ctx context
 	return ret, err
 }
 
-func (builder *dataReaderBuilder) buildProjectionForIndexJoin(ctx context.Context, v *plannercore.PhysicalProjection,
+func (builder *dataReaderBuilder) buildProjectionForIndexJoin(ctx context.Context, v *plannercore.PhysicalProject,
 	lookUpContents []*indexJoinLookUpContent, indexRanges []*ranger.Range, keyOff2IdxOff []int, cwc *plannercore.ColWithCmpFuncManager) (Executor, error) {
 	physicalIndexLookUp, isDoubleRead := v.Children()[0].(*plannercore.PhysicalIndexLookupGather)
 	if !isDoubleRead {

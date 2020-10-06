@@ -89,8 +89,8 @@ func (p LogicalProject) Init(ctx sessionctx.Context, offset int) *LogicalProject
 	return &p
 }
 
-// Init initializes PhysicalProjection.
-func (p PhysicalProjection) Init(ctx sessionctx.Context, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PhysicalProjection {
+// Init initializes PhysicalProject.
+func (p PhysicalProject) Init(ctx sessionctx.Context, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PhysicalProject {
 	p.basePhysicalPlan = newBasePhysicalPlan(ctx, plancodec.TypeProj, &p, offset)
 	p.childrenReqProps = props
 	p.stats = stats

@@ -690,7 +690,7 @@ func buildIndexLookUpTask(ctx sessionctx.Context, t *copTask) *rootTask {
 	}
 	if t.doubleReadNeedProj {
 		schema := p.IndexPlans[0].(*PhysicalIndexScan).dataSourceSchema
-		proj := PhysicalProjection{Exprs: expression.Column2Exprs(schema.Columns)}.Init(ctx, p.stats, t.tablePlan.SelectBlockOffset(), nil)
+		proj := PhysicalProject{Exprs: expression.Column2Exprs(schema.Columns)}.Init(ctx, p.stats, t.tablePlan.SelectBlockOffset(), nil)
 		proj.SetSchema(schema)
 		proj.SetChildren(p)
 		newTask.p = proj
@@ -848,7 +848,7 @@ func (p *PhysicalLimit) attach2Task(tasks ...task) task {
 func (p *PhysicalLimit) sinkIntoIndexLookUp(t task) bool {
 	root := t.(*rootTask)
 	reader, isDoubleRead := root.p.(*PhysicalIndexLookupGather)
-	proj, isProj := root.p.(*PhysicalProjection)
+	proj, isProj := root.p.(*PhysicalProject)
 	if !isDoubleRead && !isProj {
 		return false
 	}
@@ -995,7 +995,7 @@ func (p *PhysicalTopN) attach2Task(tasks ...task) task {
 }
 
 // GetCost computes the cost of projection operator itself.
-func (p *PhysicalProjection) GetCost(count float64) float64 {
+func (p *PhysicalProject) GetCost(count float64) float64 {
 	sessVars := p.ctx.GetSessionVars()
 	cpuCost := count * sessVars.CPUFactor
 	concurrency := float64(sessVars.ProjectionConcurrency())
@@ -1007,7 +1007,7 @@ func (p *PhysicalProjection) GetCost(count float64) float64 {
 	return cpuCost + concurrencyCost
 }
 
-func (p *PhysicalProjection) attach2Task(tasks ...task) task {
+func (p *PhysicalProject) attach2Task(tasks ...task) task {
 	t := tasks[0].copy()
 	if copTask, ok := t.(*copTask); ok {
 		// TODO: support projection push down.

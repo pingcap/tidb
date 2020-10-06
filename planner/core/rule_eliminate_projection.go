@@ -33,7 +33,7 @@ func canProjectionBeEliminatedLoose(p *LogicalProject) bool {
 
 // canProjectionBeEliminatedStrict checks whether a projection can be
 // eliminated, returns true if the projection just copy its child's output.
-func canProjectionBeEliminatedStrict(p *PhysicalProjection) bool {
+func canProjectionBeEliminatedStrict(p *PhysicalProject) bool {
 	// If this projection is specially added for `DO`, we keep it.
 	if p.CalculateNoDelay {
 		return false
@@ -82,7 +82,7 @@ func doPhysicalProjectionElimination(p PhysicalPlan) PhysicalPlan {
 		p.Children()[i] = doPhysicalProjectionElimination(child)
 	}
 
-	proj, isProj := p.(*PhysicalProjection)
+	proj, isProj := p.(*PhysicalProject)
 	if !isProj || !canProjectionBeEliminatedStrict(proj) {
 		return p
 	}

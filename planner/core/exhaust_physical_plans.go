@@ -1694,7 +1694,7 @@ func (p *LogicalProject) exhaustPhysicalPlans(prop *property.PhysicalProperty) (
 	if !ok {
 		return nil, true
 	}
-	proj := PhysicalProjection{
+	proj := PhysicalProject{
 		Exprs:                p.Exprs,
 		CalculateNoDelay:     p.CalculateNoDelay,
 		AvoidColumnEvaluator: p.AvoidColumnEvaluator,

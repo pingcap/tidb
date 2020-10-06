@@ -19,7 +19,7 @@ import (
 )
 
 // ResolveIndices implements Plan interface.
-func (p *PhysicalProjection) ResolveIndices() (err error) {
+func (p *PhysicalProject) ResolveIndices() (err error) {
 	err = p.physicalSchemaProducer.ResolveIndices()
 	if err != nil {
 		return err
@@ -30,7 +30,7 @@ func (p *PhysicalProjection) ResolveIndices() (err error) {
 			return err
 		}
 	}
-	childProj, isProj := p.children[0].(*PhysicalProjection)
+	childProj, isProj := p.children[0].(*PhysicalProject)
 	if !isProj {
 		return
 	}
@@ -43,7 +43,7 @@ func (p *PhysicalProjection) ResolveIndices() (err error) {
 // This function is introduced because that different childProj.Expr may refer
 // to the same index of childProj.Schema, so we need to keep this relation
 // between the specified expressions in the parent Projection.
-func refine4NeighbourProj(p, childProj *PhysicalProjection) {
+func refine4NeighbourProj(p, childProj *PhysicalProject) {
 	inputIdx2OutputIdxes := make(map[int][]int)
 	for i, expr := range childProj.Exprs {
 		col, isCol := expr.(*expression.Column)

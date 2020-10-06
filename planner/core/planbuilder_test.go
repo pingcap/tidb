@@ -286,7 +286,7 @@ func (s *testPlanBuilderSuite) TestPhysicalPlanClone(c *C) {
 	c.Assert(checkPhysicalPlanClone(sel), IsNil)
 
 	// projection
-	proj := &PhysicalProjection{Exprs: []expression.Expression{col, cst}}
+	proj := &PhysicalProject{Exprs: []expression.Expression{col, cst}}
 	proj = proj.Init(ctx, stats, 0)
 	c.Assert(checkPhysicalPlanClone(proj), IsNil)
 

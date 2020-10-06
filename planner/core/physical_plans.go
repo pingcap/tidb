@@ -34,7 +34,7 @@ import (
 
 var (
 	_ PhysicalPlan = &PhysicalSelection{}
-	_ PhysicalPlan = &PhysicalProjection{}
+	_ PhysicalPlan = &PhysicalProject{}
 	_ PhysicalPlan = &PhysicalTopN{}
 	_ PhysicalPlan = &PhysicalMaxOneRow{}
 	_ PhysicalPlan = &PhysicalTableDual{}
@@ -549,8 +549,8 @@ func (ts *PhysicalTableScan) SetIsChildOfIndexLookUp(isIsChildOfIndexLookUp bool
 	ts.isChildOfIndexLookUp = isIsChildOfIndexLookUp
 }
 
-// PhysicalProjection is the physical operator of projection.
-type PhysicalProjection struct {
+// PhysicalProject is the physical operator of projection.
+type PhysicalProject struct {
 	physicalSchemaProducer
 
 	Exprs                []expression.Expression
@@ -559,8 +559,8 @@ type PhysicalProjection struct {
 }
 
 // Clone implements PhysicalPlan interface.
-func (p *PhysicalProjection) Clone() (PhysicalPlan, error) {
-	cloned := new(PhysicalProjection)
+func (p *PhysicalProject) Clone() (PhysicalPlan, error) {
+	cloned := new(PhysicalProject)
 	*cloned = *p
 	base, err := p.basePhysicalPlan.cloneWithSelf(cloned)
 	if err != nil {
@@ -572,7 +572,7 @@ func (p *PhysicalProjection) Clone() (PhysicalPlan, error) {
 }
 
 // ExtractCorrelatedCols implements PhysicalPlan interface.
-func (p *PhysicalProjection) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
+func (p *PhysicalProject) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 	corCols := make([]*expression.CorrelatedColumn, 0, len(p.Exprs))
 	for _, expr := range p.Exprs {
 		corCols = append(corCols, expression.ExtractCorColumns(expr)...)
