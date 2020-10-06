@@ -1198,9 +1198,9 @@ func (e *SimpleExec) executeAlterInstance(s *ast.AlterInstanceStmt) error {
 		logutil.BgLogger().Info("execute reload tls", zap.Bool("NoRollbackOnError", s.NoRollbackOnError))
 		sm := e.ctx.GetSessionManager()
 		tlsCfg, err := util.LoadTLSCertificates(
-			variable.SysVars["ssl_ca"].Value,
-			variable.SysVars["ssl_key"].Value,
-			variable.SysVars["ssl_cert"].Value,
+			variable.GetSysVar("ssl_ca").Value,
+			variable.GetSysVar("ssl_key").Value,
+			variable.GetSysVar("ssl_cert").Value,
 		)
 		if err != nil {
 			if !s.NoRollbackOnError || config.GetGlobalConfig().Security.RequireSecureTransport {
