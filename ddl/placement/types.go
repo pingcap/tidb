@@ -101,9 +101,11 @@ func (b *Bundle) String() string {
 func (b *Bundle) Clone() *Bundle {
 	newBundle := &Bundle{}
 	*newBundle = *b
-	newBundle.Rules = make([]*Rule, 0, len(b.Rules))
-	for i := range b.Rules {
-		newBundle.Rules = append(newBundle.Rules, b.Rules[i].Clone())
+	if len(b.Rules) > 0 {
+		newBundle.Rules = make([]*Rule, 0, len(b.Rules))
+		for i := range b.Rules {
+			newBundle.Rules = append(newBundle.Rules, b.Rules[i].Clone())
+		}
 	}
 	return newBundle
 }

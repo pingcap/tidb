@@ -109,7 +109,7 @@ func GetSessionSystemVar(s *SessionVars, key string) (string, error) {
 // GetSessionOnlySysVars get the default value defined in code for session only variable.
 // The return bool value indicates whether it's a session only variable.
 func GetSessionOnlySysVars(s *SessionVars, key string) (string, bool, error) {
-	sysVar := SysVars[key]
+	sysVar := GetSysVar(key)
 	if sysVar == nil {
 		return "", false, ErrUnknownSystemVar.GenWithStackByArgs(key)
 	}
@@ -193,7 +193,7 @@ func GetGlobalSystemVar(s *SessionVars, key string) (string, error) {
 // GetScopeNoneSystemVar checks the validation of `key`,
 // and return the default value if its scope is `ScopeNone`.
 func GetScopeNoneSystemVar(key string) (string, bool, error) {
-	sysVar := SysVars[key]
+	sysVar := GetSysVar(key)
 	if sysVar == nil {
 		return "", false, ErrUnknownSystemVar.GenWithStackByArgs(key)
 	}
@@ -208,8 +208,7 @@ const epochShiftBits = 18
 
 // SetSessionSystemVar sets system variable and updates SessionVars states.
 func SetSessionSystemVar(vars *SessionVars, name string, value types.Datum) error {
-	name = strings.ToLower(name)
-	sysVar := SysVars[name]
+	sysVar := GetSysVar(name)
 	if sysVar == nil {
 		return ErrUnknownSystemVar
 	}
@@ -246,8 +245,8 @@ func SetTmpSessionSystemVar(vars *SessionVars, name string, value string) error 
 
 // ValidateGetSystemVar checks if system variable exists and validates its scope when get system variable.
 func ValidateGetSystemVar(name string, isGlobal bool) error {
-	sysVar, exists := SysVars[name]
-	if !exists {
+	sysVar := GetSysVar(name)
+	if sysVar == nil {
 		return ErrUnknownSystemVar.GenWithStackByArgs(name)
 	}
 	switch sysVar.Scope {

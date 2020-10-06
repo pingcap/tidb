@@ -884,6 +884,7 @@ const (
 	ErrSpatialFunctionalIndex                                       = 3760
 	ErrWrongKeyColumnFunctionalIndex                                = 3761
 	ErrFunctionalIndexOnField                                       = 3762
+	ErrGeneratedColumnRowValueIsNotAllowed                          = 3764
 	ErrFKIncompatibleColumns                                        = 3780
 	ErrFunctionalIndexRowValueIsNotAllowed                          = 3800
 	ErrDependentByFunctionalIndex                                   = 3837
