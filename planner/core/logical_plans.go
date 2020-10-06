@@ -435,7 +435,7 @@ type LogicalDualScan struct {
 	RowCount int
 }
 
-// LogicalMemTable represents a memory table or virtual table
+// LogicalMemTableScan represents a memory table or virtual table
 // Some memory tables wants to take the ownership of some predications
 // e.g
 // SELECT * FROM cluster_log WHERE type='tikv' AND address='192.16.5.32'
@@ -444,7 +444,7 @@ type LogicalDualScan struct {
 // send log search request to the target TiKV (192.16.5.32) directly instead of
 // requesting all cluster components log search gRPC interface to retrieve
 // log message and filtering them in TiDB node.
-type LogicalMemTable struct {
+type LogicalMemTableScan struct {
 	logicalSchemaProducer
 
 	Extractor MemTablePredicateExtractor

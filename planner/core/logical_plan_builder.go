@@ -3196,7 +3196,7 @@ func (b *PlanBuilder) buildMemTable(_ context.Context, dbName model.CIStr, table
 	}
 
 	// NOTE: Add a `LogicalUnionScan` if we support update memory table in the future
-	p := LogicalMemTable{
+	p := LogicalMemTableScan{
 		DBName:    dbName,
 		TableInfo: tableInfo,
 	}.Init(b.ctx, b.getSelectOffset())

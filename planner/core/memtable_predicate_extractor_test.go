@@ -57,7 +57,7 @@ func (s *extractorSuite) TearDownSuite(c *C) {
 	s.store.Close()
 }
 
-func (s *extractorSuite) getLogicalMemTable(c *C, se session.Session, parser *parser.Parser, sql string) *plannercore.LogicalMemTable {
+func (s *extractorSuite) getLogicalMemTableScan(c *C, se session.Session, parser *parser.Parser, sql string) *plannercore.LogicalMemTableScan {
 	stmt, err := parser.ParseOneStmt(sql, "", "")
 	c.Assert(err, IsNil)
 
@@ -75,8 +75,8 @@ func (s *extractorSuite) getLogicalMemTable(c *C, se session.Session, parser *pa
 		leafPlan = leafPlan.Children()[0]
 	}
 
-	logicalMemTable := leafPlan.(*plannercore.LogicalMemTable)
-	return logicalMemTable
+	logicalMemTableScan := leafPlan.(*plannercore.LogicalMemTableScan)
+	return logicalMemTableScan
 }
 
 func (s *extractorSuite) TestClusterConfigTableExtractor(c *C) {
@@ -235,10 +235,10 @@ func (s *extractorSuite) TestClusterConfigTableExtractor(c *C) {
 		},
 	}
 	for _, ca := range cases {
-		logicalMemTable := s.getLogicalMemTable(c, se, parser, ca.sql)
-		c.Assert(logicalMemTable.Extractor, NotNil)
+		logicalMemTableScan := s.getLogicalMemTableScan(c, se, parser, ca.sql)
+		c.Assert(logicalMemTableScan.Extractor, NotNil)
 
-		clusterConfigExtractor := logicalMemTable.Extractor.(*plannercore.ClusterTableExtractor)
+		clusterConfigExtractor := logicalMemTableScan.Extractor.(*plannercore.ClusterTableExtractor)
 		c.Assert(clusterConfigExtractor.NodeTypes, DeepEquals, ca.nodeTypes, Commentf("SQL: %v", ca.sql))
 		c.Assert(clusterConfigExtractor.Instances, DeepEquals, ca.instances, Commentf("SQL: %v", ca.sql))
 		c.Assert(clusterConfigExtractor.SkipRequest, DeepEquals, ca.skipRequest, Commentf("SQL: %v", ca.sql))
@@ -530,10 +530,10 @@ func (s *extractorSuite) TestClusterLogTableExtractor(c *C) {
 		},
 	}
 	for _, ca := range cases {
-		logicalMemTable := s.getLogicalMemTable(c, se, parser, ca.sql)
-		c.Assert(logicalMemTable.Extractor, NotNil)
+		logicalMemTableScan := s.getLogicalMemTableScan(c, se, parser, ca.sql)
+		c.Assert(logicalMemTableScan.Extractor, NotNil)
 
-		clusterConfigExtractor := logicalMemTable.Extractor.(*plannercore.ClusterLogTableExtractor)
+		clusterConfigExtractor := logicalMemTableScan.Extractor.(*plannercore.ClusterLogTableExtractor)
 		c.Assert(clusterConfigExtractor.NodeTypes, DeepEquals, ca.nodeTypes, Commentf("SQL: %v", ca.sql))
 		c.Assert(clusterConfigExtractor.Instances, DeepEquals, ca.instances, Commentf("SQL: %v", ca.sql))
 		c.Assert(clusterConfigExtractor.SkipRequest, DeepEquals, ca.skipRequest, Commentf("SQL: %v", ca.sql))
@@ -648,9 +648,9 @@ func (s *extractorSuite) TestMetricTableExtractor(c *C) {
 	}
 	se.GetSessionVars().StmtCtx.TimeZone = time.Local
 	for _, ca := range cases {
-		logicalMemTable := s.getLogicalMemTable(c, se, parser, ca.sql)
-		c.Assert(logicalMemTable.Extractor, NotNil)
-		metricTableExtractor := logicalMemTable.Extractor.(*plannercore.MetricTableExtractor)
+		logicalMemTableScan := s.getLogicalMemTableScan(c, se, parser, ca.sql)
+		c.Assert(logicalMemTableScan.Extractor, NotNil)
+		metricTableExtractor := logicalMemTableScan.Extractor.(*plannercore.MetricTableExtractor)
 		if len(ca.labelConditions) > 0 {
 			c.Assert(metricTableExtractor.LabelConditions, DeepEquals, ca.labelConditions, Commentf("SQL: %v", ca.sql))
 		}
@@ -757,10 +757,10 @@ func (s *extractorSuite) TestMetricsSummaryTableExtractor(c *C) {
 	for _, ca := range cases {
 		sort.Float64s(ca.quantiles)
 
-		logicalMemTable := s.getLogicalMemTable(c, se, parser, ca.sql)
-		c.Assert(logicalMemTable.Extractor, NotNil)
+		logicalMemTableScan := s.getLogicalMemTableScan(c, se, parser, ca.sql)
+		c.Assert(logicalMemTableScan.Extractor, NotNil)
 
-		extractor := logicalMemTable.Extractor.(*plannercore.MetricSummaryTableExtractor)
+		extractor := logicalMemTableScan.Extractor.(*plannercore.MetricSummaryTableExtractor)
 		if len(ca.quantiles) > 0 {
 			c.Assert(extractor.Quantiles, DeepEquals, ca.quantiles, Commentf("SQL: %v", ca.sql))
 		}
@@ -896,10 +896,10 @@ func (s *extractorSuite) TestInspectionResultTableExtractor(c *C) {
 	}
 	parser := parser.New()
 	for _, ca := range cases {
-		logicalMemTable := s.getLogicalMemTable(c, se, parser, ca.sql)
-		c.Assert(logicalMemTable.Extractor, NotNil)
+		logicalMemTableScan := s.getLogicalMemTableScan(c, se, parser, ca.sql)
+		c.Assert(logicalMemTableScan.Extractor, NotNil)
 
-		clusterConfigExtractor := logicalMemTable.Extractor.(*plannercore.InspectionResultTableExtractor)
+		clusterConfigExtractor := logicalMemTableScan.Extractor.(*plannercore.InspectionResultTableExtractor)
 		if len(ca.rules) > 0 {
 			c.Assert(clusterConfigExtractor.Rules, DeepEquals, ca.rules, Commentf("SQL: %v", ca.sql))
 		}
@@ -995,10 +995,10 @@ func (s *extractorSuite) TestInspectionSummaryTableExtractor(c *C) {
 	}
 	parser := parser.New()
 	for _, ca := range cases {
-		logicalMemTable := s.getLogicalMemTable(c, se, parser, ca.sql)
-		c.Assert(logicalMemTable.Extractor, NotNil)
+		logicalMemTableScan := s.getLogicalMemTableScan(c, se, parser, ca.sql)
+		c.Assert(logicalMemTableScan.Extractor, NotNil)
 
-		clusterConfigExtractor := logicalMemTable.Extractor.(*plannercore.InspectionSummaryTableExtractor)
+		clusterConfigExtractor := logicalMemTableScan.Extractor.(*plannercore.InspectionSummaryTableExtractor)
 		if len(ca.rules) > 0 {
 			c.Assert(clusterConfigExtractor.Rules, DeepEquals, ca.rules, Commentf("SQL: %v", ca.sql))
 		}
@@ -1036,10 +1036,10 @@ func (s *extractorSuite) TestInspectionRuleTableExtractor(c *C) {
 	}
 	parser := parser.New()
 	for _, ca := range cases {
-		logicalMemTable := s.getLogicalMemTable(c, se, parser, ca.sql)
-		c.Assert(logicalMemTable.Extractor, NotNil)
+		logicalMemTableScan := s.getLogicalMemTableScan(c, se, parser, ca.sql)
+		c.Assert(logicalMemTableScan.Extractor, NotNil)
 
-		clusterConfigExtractor := logicalMemTable.Extractor.(*plannercore.InspectionRuleTableExtractor)
+		clusterConfigExtractor := logicalMemTableScan.Extractor.(*plannercore.InspectionRuleTableExtractor)
 		if len(ca.tps) > 0 {
 			c.Assert(clusterConfigExtractor.Types, DeepEquals, ca.tps, Commentf("SQL: %v", ca.sql))
 		}

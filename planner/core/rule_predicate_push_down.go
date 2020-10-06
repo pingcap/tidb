@@ -580,7 +580,7 @@ func (p *LogicalWindow) PredicatePushDown(predicates []expression.Expression) ([
 }
 
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
-func (p *LogicalMemTable) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, LogicalPlan) {
+func (p *LogicalMemTableScan) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, LogicalPlan) {
 	if p.Extractor != nil {
 		predicates = p.Extractor.Extract(p.ctx, p.schema, p.names, predicates)
 	}

@@ -296,8 +296,8 @@ func (p PhysicalIndexScan) Init(ctx sessionctx.Context, offset int) *PhysicalInd
 	return &p
 }
 
-// Init initializes LogicalMemTable.
-func (p LogicalMemTable) Init(ctx sessionctx.Context, offset int) *LogicalMemTable {
+// Init initializes LogicalMemTableScan.
+func (p LogicalMemTableScan) Init(ctx sessionctx.Context, offset int) *LogicalMemTableScan {
 	p.baseLogicalPlan = newBaseLogicalPlan(ctx, plancodec.TypeMemTableScan, &p, offset)
 	return &p
 }
