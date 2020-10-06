@@ -69,8 +69,8 @@ func (p LogicalFilter) Init(ctx sessionctx.Context, offset int) *LogicalFilter {
 	return &p
 }
 
-// Init initializes PhysicalSelection.
-func (p PhysicalSelection) Init(ctx sessionctx.Context, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PhysicalSelection {
+// Init initializes PhysicalFilter.
+func (p PhysicalFilter) Init(ctx sessionctx.Context, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PhysicalFilter {
 	p.basePhysicalPlan = newBasePhysicalPlan(ctx, plancodec.TypeSel, &p, offset)
 	p.childrenReqProps = props
 	p.stats = stats

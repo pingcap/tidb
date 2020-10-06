@@ -281,7 +281,7 @@ func (s *testPlanBuilderSuite) TestPhysicalPlanClone(c *C) {
 	c.Assert(checkPhysicalPlanClone(indexLookup), IsNil)
 
 	// selection
-	sel := &PhysicalSelection{Conditions: []expression.Expression{col, cst}}
+	sel := &PhysicalFilter{Conditions: []expression.Expression{col, cst}}
 	sel = sel.Init(ctx, stats, 0)
 	c.Assert(checkPhysicalPlanClone(sel), IsNil)
 

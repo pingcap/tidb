@@ -827,7 +827,7 @@ func (ds *DataSource) convertToPartialIndexScan(prop *property.PhysicalProperty,
 		if ds.statisticTable.Pseudo {
 			stats.StatsVersion = statistics.PseudoVersion
 		}
-		indexPlan := PhysicalSelection{Conditions: indexConds}.Init(is.ctx, stats, ds.blockOffset)
+		indexPlan := PhysicalFilter{Conditions: indexConds}.Init(is.ctx, stats, ds.blockOffset)
 		indexPlan.SetChildren(is)
 		partialCost += rowCount * rowSize * sessVars.NetworkFactor
 		return indexPlan, partialCost
@@ -849,7 +849,7 @@ func (ds *DataSource) convertToPartialTableScan(prop *property.PhysicalProperty,
 			logutil.BgLogger().Debug("calculate selectivity failed, use selection factor", zap.Error(err))
 			selectivity = SelectionFactor
 		}
-		tablePlan = PhysicalSelection{Conditions: ts.filterCondition}.Init(ts.ctx, ts.stats.ScaleByExpectCnt(selectivity*rowCount), ds.blockOffset)
+		tablePlan = PhysicalFilter{Conditions: ts.filterCondition}.Init(ts.ctx, ts.stats.ScaleByExpectCnt(selectivity*rowCount), ds.blockOffset)
 		tablePlan.SetChildren(ts)
 		partialCost += rowCount * sessVars.CopCPUFactor
 		partialCost += selectivity * rowCount * rowSize * sessVars.NetworkFactor
@@ -905,7 +905,7 @@ func (ds *DataSource) buildIndexMergeTableScan(prop *property.PhysicalProperty, 
 			logutil.BgLogger().Debug("calculate selectivity failed, use selection factor", zap.Error(err))
 			selectivity = SelectionFactor
 		}
-		sel := PhysicalSelection{Conditions: tableFilters}.Init(ts.ctx, ts.stats.ScaleByExpectCnt(selectivity*totalRowCount), ts.blockOffset)
+		sel := PhysicalFilter{Conditions: tableFilters}.Init(ts.ctx, ts.stats.ScaleByExpectCnt(selectivity*totalRowCount), ts.blockOffset)
 		sel.SetChildren(ts)
 		return sel, partialCost, nil
 	}
@@ -1132,14 +1132,14 @@ func (is *PhysicalIndexScan) addPushedDownSelection(copTask *copTask, p *DataSou
 		}
 		count := is.stats.RowCount * selectivity
 		stats := p.tableStats.ScaleByExpectCnt(count)
-		indexSel := PhysicalSelection{Conditions: indexConds}.Init(is.ctx, stats, is.blockOffset)
+		indexSel := PhysicalFilter{Conditions: indexConds}.Init(is.ctx, stats, is.blockOffset)
 		indexSel.SetChildren(is)
 		copTask.indexPlan = indexSel
 	}
 	if len(tableConds) > 0 {
 		copTask.finishIndexPlan()
 		copTask.cst += copTask.count() * sessVars.CopCPUFactor
-		tableSel := PhysicalSelection{Conditions: tableConds}.Init(is.ctx, finalStats, is.blockOffset)
+		tableSel := PhysicalFilter{Conditions: tableConds}.Init(is.ctx, finalStats, is.blockOffset)
 		tableSel.SetChildren(copTask.tablePlan)
 		copTask.tablePlan = tableSel
 	}
@@ -1466,7 +1466,7 @@ func (ds *DataSource) convertToPointGet(prop *property.PhysicalProperty, candida
 		if len(candidate.path.TableFilters) > 0 {
 			sessVars := ds.ctx.GetSessionVars()
 			cost += pointGetPlan.stats.RowCount * sessVars.CPUFactor
-			sel := PhysicalSelection{
+			sel := PhysicalFilter{
 				Conditions: candidate.path.TableFilters,
 			}.Init(ds.ctx, ds.stats.ScaleByExpectCnt(prop.ExpectedCnt), ds.blockOffset)
 			sel.SetChildren(pointGetPlan)
@@ -1487,7 +1487,7 @@ func (ds *DataSource) convertToPointGet(prop *property.PhysicalProperty, candida
 		if len(candidate.path.IndexFilters)+len(candidate.path.TableFilters) > 0 {
 			sessVars := ds.ctx.GetSessionVars()
 			cost += pointGetPlan.stats.RowCount * sessVars.CPUFactor
-			sel := PhysicalSelection{
+			sel := PhysicalFilter{
 				Conditions: append(candidate.path.IndexFilters, candidate.path.TableFilters...),
 			}.Init(ds.ctx, ds.stats.ScaleByExpectCnt(prop.ExpectedCnt), ds.blockOffset)
 			sel.SetChildren(pointGetPlan)
@@ -1530,7 +1530,7 @@ func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty, ca
 		if len(candidate.path.TableFilters) > 0 {
 			sessVars := ds.ctx.GetSessionVars()
 			cost += batchPointGetPlan.stats.RowCount * sessVars.CPUFactor
-			sel := PhysicalSelection{
+			sel := PhysicalFilter{
 				Conditions: candidate.path.TableFilters,
 			}.Init(ds.ctx, ds.stats.ScaleByExpectCnt(prop.ExpectedCnt), ds.blockOffset)
 			sel.SetChildren(batchPointGetPlan)
@@ -1556,7 +1556,7 @@ func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty, ca
 		if len(candidate.path.IndexFilters)+len(candidate.path.TableFilters) > 0 {
 			sessVars := ds.ctx.GetSessionVars()
 			cost += batchPointGetPlan.stats.RowCount * sessVars.CPUFactor
-			sel := PhysicalSelection{
+			sel := PhysicalFilter{
 				Conditions: append(candidate.path.IndexFilters, candidate.path.TableFilters...),
 			}.Init(ds.ctx, ds.stats.ScaleByExpectCnt(prop.ExpectedCnt), ds.blockOffset)
 			sel.SetChildren(batchPointGetPlan)
@@ -1578,7 +1578,7 @@ func (ts *PhysicalTableScan) addPushedDownSelection(copTask *copTask, stats *pro
 	sessVars := ts.ctx.GetSessionVars()
 	if len(ts.filterCondition) > 0 {
 		copTask.cst += copTask.count() * sessVars.CopCPUFactor
-		sel := PhysicalSelection{Conditions: ts.filterCondition}.Init(ts.ctx, stats, ts.blockOffset)
+		sel := PhysicalFilter{Conditions: ts.filterCondition}.Init(ts.ctx, stats, ts.blockOffset)
 		sel.SetChildren(ts)
 		copTask.tablePlan = sel
 	}

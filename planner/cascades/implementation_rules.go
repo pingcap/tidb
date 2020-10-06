@@ -258,7 +258,7 @@ func (r *ImplShow) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalP
 }
 
 // ImplSelection is the implementation rule which implements LogicalFilter
-// to PhysicalSelection.
+// to PhysicalFilter.
 type ImplSelection struct {
 }
 
@@ -270,7 +270,7 @@ func (r *ImplSelection) Match(expr *memo.GroupExpr, prop *property.PhysicalPrope
 // OnImplement implements ImplementationRule OnImplement interface.
 func (r *ImplSelection) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) ([]memo.Implementation, error) {
 	logicalSel := expr.ExprNode.(*plannercore.LogicalFilter)
-	physicalSel := plannercore.PhysicalSelection{
+	physicalSel := plannercore.PhysicalFilter{
 		Conditions: logicalSel.Conditions,
 	}.Init(logicalSel.SCtx(), expr.Group.Prop.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt), logicalSel.SelectBlockOffset(), reqProp.Clone())
 	switch expr.Group.EngineType {

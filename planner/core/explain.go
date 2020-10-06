@@ -405,12 +405,12 @@ func (p *PhysicalUnionScan) ExplainInfo() string {
 }
 
 // ExplainInfo implements Plan interface.
-func (p *PhysicalSelection) ExplainInfo() string {
+func (p *PhysicalFilter) ExplainInfo() string {
 	return string(expression.SortedExplainExpressionList(p.Conditions))
 }
 
 // ExplainNormalizedInfo implements Plan interface.
-func (p *PhysicalSelection) ExplainNormalizedInfo() string {
+func (p *PhysicalFilter) ExplainNormalizedInfo() string {
 	return string(expression.SortedExplainNormalizedExpressionList(p.Conditions))
 }
 

@@ -33,7 +33,7 @@ import (
 )
 
 var (
-	_ PhysicalPlan = &PhysicalSelection{}
+	_ PhysicalPlan = &PhysicalFilter{}
 	_ PhysicalPlan = &PhysicalProject{}
 	_ PhysicalPlan = &PhysicalTopN{}
 	_ PhysicalPlan = &PhysicalMaxOneRow{}
@@ -1058,16 +1058,16 @@ func (p *PhysicalIndexScan) IsPointGetByUniqueKey(sc *stmtctx.StatementContext) 
 		p.Ranges[0].IsPoint(sc)
 }
 
-// PhysicalSelection represents a filter.
-type PhysicalSelection struct {
+// PhysicalFilter represents a filter.
+type PhysicalFilter struct {
 	basePhysicalPlan
 
 	Conditions []expression.Expression
 }
 
 // Clone implements PhysicalPlan interface.
-func (p *PhysicalSelection) Clone() (PhysicalPlan, error) {
-	cloned := new(PhysicalSelection)
+func (p *PhysicalFilter) Clone() (PhysicalPlan, error) {
+	cloned := new(PhysicalFilter)
 	base, err := p.basePhysicalPlan.cloneWithSelf(cloned)
 	if err != nil {
 		return nil, err
@@ -1078,7 +1078,7 @@ func (p *PhysicalSelection) Clone() (PhysicalPlan, error) {
 }
 
 // ExtractCorrelatedCols implements PhysicalPlan interface.
-func (p *PhysicalSelection) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
+func (p *PhysicalFilter) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 	corCols := make([]*expression.CorrelatedColumn, 0, len(p.Conditions))
 	for _, cond := range p.Conditions {
 		corCols = append(corCols, expression.ExtractCorColumns(cond)...)

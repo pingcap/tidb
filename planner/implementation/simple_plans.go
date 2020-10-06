@@ -45,7 +45,7 @@ func NewShowImpl(show *plannercore.PhysicalShow) *ShowImpl {
 	return &ShowImpl{baseImpl: baseImpl{plan: show}}
 }
 
-// TiDBSelectionImpl is the implementation of PhysicalSelection in TiDB layer.
+// TiDBSelectionImpl is the implementation of PhysicalFilter in TiDB layer.
 type TiDBSelectionImpl struct {
 	baseImpl
 }
@@ -57,11 +57,11 @@ func (sel *TiDBSelectionImpl) CalcCost(outCount float64, children ...memo.Implem
 }
 
 // NewTiDBSelectionImpl creates a new TiDBSelectionImpl.
-func NewTiDBSelectionImpl(sel *plannercore.PhysicalSelection) *TiDBSelectionImpl {
+func NewTiDBSelectionImpl(sel *plannercore.PhysicalFilter) *TiDBSelectionImpl {
 	return &TiDBSelectionImpl{baseImpl{plan: sel}}
 }
 
-// TiKVSelectionImpl is the implementation of PhysicalSelection in TiKV layer.
+// TiKVSelectionImpl is the implementation of PhysicalFilter in TiKV layer.
 type TiKVSelectionImpl struct {
 	baseImpl
 }
@@ -73,7 +73,7 @@ func (sel *TiKVSelectionImpl) CalcCost(outCount float64, children ...memo.Implem
 }
 
 // NewTiKVSelectionImpl creates a new TiKVSelectionImpl.
-func NewTiKVSelectionImpl(sel *plannercore.PhysicalSelection) *TiKVSelectionImpl {
+func NewTiKVSelectionImpl(sel *plannercore.PhysicalFilter) *TiKVSelectionImpl {
 	return &TiKVSelectionImpl{baseImpl{plan: sel}}
 }
 

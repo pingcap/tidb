@@ -88,7 +88,7 @@ func (p *PhysicalStreamAgg) ToPB(ctx sessionctx.Context, storeType kv.StoreType)
 }
 
 // ToPB implements PhysicalPlan ToPB interface.
-func (p *PhysicalSelection) ToPB(ctx sessionctx.Context, storeType kv.StoreType) (*tipb.Executor, error) {
+func (p *PhysicalFilter) ToPB(ctx sessionctx.Context, storeType kv.StoreType) (*tipb.Executor, error) {
 	sc := ctx.GetSessionVars().StmtCtx
 	client := ctx.GetClient()
 	conditions, err := expression.ExpressionsToPBList(sc, p.Conditions, client)
@@ -311,7 +311,7 @@ func SetPBColumnsDefaultValue(ctx sessionctx.Context, pbColumns []*tipb.ColumnIn
 // TODO: Support more kinds of physical plan.
 func SupportStreaming(p PhysicalPlan) bool {
 	switch p.(type) {
-	case *PhysicalIndexScan, *PhysicalSelection, *PhysicalTableScan:
+	case *PhysicalIndexScan, *PhysicalFilter, *PhysicalTableScan:
 		return true
 	}
 	return false

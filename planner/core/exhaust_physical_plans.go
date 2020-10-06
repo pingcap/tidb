@@ -2069,7 +2069,7 @@ func (la *LogicalAggregate) exhaustPhysicalPlans(prop *property.PhysicalProperty
 
 func (p *LogicalFilter) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]PhysicalPlan, bool) {
 	childProp := prop.Clone()
-	sel := PhysicalSelection{
+	sel := PhysicalFilter{
 		Conditions: p.Conditions,
 	}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), p.blockOffset, childProp)
 	return []PhysicalPlan{sel}, true

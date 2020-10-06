@@ -772,7 +772,7 @@ func finishCopTask(ctx sessionctx.Context, task task) task {
 	}
 
 	if len(t.rootTaskConds) > 0 {
-		sel := PhysicalSelection{Conditions: t.rootTaskConds}.Init(ctx, newTask.p.statsInfo(), newTask.p.SelectBlockOffset())
+		sel := PhysicalFilter{Conditions: t.rootTaskConds}.Init(ctx, newTask.p.statsInfo(), newTask.p.SelectBlockOffset())
 		sel.SetChildren(newTask.p)
 		newTask.p = sel
 	}
@@ -1037,7 +1037,7 @@ func (p *PhysicalUnionAll) attach2Task(tasks ...task) task {
 	return t
 }
 
-func (sel *PhysicalSelection) attach2Task(tasks ...task) task {
+func (sel *PhysicalFilter) attach2Task(tasks ...task) task {
 	sessVars := sel.ctx.GetSessionVars()
 	t := finishCopTask(sel.ctx, tasks[0].copy())
 	t.addCost(t.count() * sessVars.CPUFactor)

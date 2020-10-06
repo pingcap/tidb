@@ -186,7 +186,7 @@ func (b *executorBuilder) build(p plannercore.Plan) Executor {
 		return b.buildIndexLookUpMergeJoin(v)
 	case *plannercore.PhysicalIndexHashJoin:
 		return b.buildIndexNestedLoopHashJoin(v)
-	case *plannercore.PhysicalSelection:
+	case *plannercore.PhysicalFilter:
 		return b.buildSelection(v)
 	case *plannercore.PhysicalHashAgg:
 		return b.buildHashAgg(v)
@@ -1301,7 +1301,7 @@ func (b *executorBuilder) buildStreamAgg(v *plannercore.PhysicalStreamAgg) Execu
 	return e
 }
 
-func (b *executorBuilder) buildSelection(v *plannercore.PhysicalSelection) Executor {
+func (b *executorBuilder) buildSelection(v *plannercore.PhysicalFilter) Executor {
 	childExec := b.build(v.Children()[0])
 	if b.err != nil {
 		return nil
@@ -2210,7 +2210,7 @@ func (b *executorBuilder) constructDAGReq(plans []plannercore.PhysicalPlan, stor
 
 func (b *executorBuilder) corColInDistPlan(plans []plannercore.PhysicalPlan) bool {
 	for _, p := range plans {
-		x, ok := p.(*plannercore.PhysicalSelection)
+		x, ok := p.(*plannercore.PhysicalFilter)
 		if !ok {
 			continue
 		}
@@ -3095,7 +3095,7 @@ func (builder *dataReaderBuilder) buildExecutorForIndexJoinInternal(ctx context.
 		return builder.buildProjectionForIndexJoin(ctx, v, lookUpContents, IndexRanges, keyOff2IdxOff, cwc)
 	// Need to support physical selection because after PR 16389, TiDB will push down all the expr supported by TiKV or TiFlash
 	// in predicate push down stage, so if there is an expr which only supported by TiFlash, a physical selection will be added after index read
-	case *plannercore.PhysicalSelection:
+	case *plannercore.PhysicalFilter:
 		childExec, err := builder.buildExecutorForIndexJoinInternal(ctx, v.Children()[0], lookUpContents, IndexRanges, keyOff2IdxOff, cwc, canReorderHandles)
 		if err != nil {
 			return nil, err

@@ -156,7 +156,7 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 		}
 	case *LogicalFilter:
 		str = fmt.Sprintf("Sel(%s)", x.Conditions)
-	case *PhysicalSelection:
+	case *PhysicalFilter:
 		str = fmt.Sprintf("Sel(%s)", x.Conditions)
 	case *LogicalProject, *PhysicalProject:
 		str = "Projection"

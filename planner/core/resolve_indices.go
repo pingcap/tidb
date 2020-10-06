@@ -370,7 +370,7 @@ func (p *PhysicalIndexMerge) ResolveIndices() (err error) {
 }
 
 // ResolveIndices implements Plan interface.
-func (p *PhysicalSelection) ResolveIndices() (err error) {
+func (p *PhysicalFilter) ResolveIndices() (err error) {
 	err = p.basePhysicalPlan.ResolveIndices()
 	if err != nil {
 		return err
