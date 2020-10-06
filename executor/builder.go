@@ -3063,7 +3063,7 @@ type dataReaderBuilder struct {
 	selectResultHook // for testing
 }
 
-type mockPhysicalIndexReader struct {
+type mockPhysicalIndexGather struct {
 	plannercore.PhysicalPlan
 
 	e Executor
@@ -3106,7 +3106,7 @@ func (builder *dataReaderBuilder) buildExecutorForIndexJoinInternal(ctx context.
 		}
 		err = exec.open(ctx)
 		return exec, err
-	case *mockPhysicalIndexReader:
+	case *mockPhysicalIndexGather:
 		return v.e, nil
 	}
 	return nil, errors.New("Wrong plan type for dataReaderBuilder")
