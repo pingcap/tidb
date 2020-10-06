@@ -370,12 +370,6 @@ func (la *LogicalApply) PruneColumns(parentUsedCols []*expression.Column) error 
 	}
 
 	la.mergeSchema()
-	//used := expression.GetUsedList(parentUsedCols, la.Schema())
-	//for i := len(used) - 1; i >= 0; i-- {
-	//	if !used[i] {
-	//	   la.schema.Columns = append(la.schema.Columns[:i], la.schema.Columns[i+1:]...)
-	//   }
-	//}
 	return nil
 }
 
