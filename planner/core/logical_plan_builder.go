@@ -993,7 +993,7 @@ func (b *PlanBuilder) buildProjectionField(ctx context.Context, p LogicalPlan, f
 func (b *PlanBuilder) buildProjection(ctx context.Context, p LogicalPlan, fields []*ast.SelectField, mapper map[*ast.AggregateFuncExpr]int, windowMapper map[*ast.WindowFuncExpr]int, considerWindow bool, expandGenerateColumn bool) (LogicalPlan, int, error) {
 	b.optFlag |= flagEliminateProjection
 	b.curClause = fieldList
-	proj := LogicalProjection{Exprs: make([]expression.Expression, 0, len(fields))}.Init(b.ctx, b.getSelectOffset())
+	proj := LogicalProject{Exprs: make([]expression.Expression, 0, len(fields))}.Init(b.ctx, b.getSelectOffset())
 	schema := expression.NewSchema(make([]*expression.Column, 0, len(fields))...)
 	oldLen := 0
 	newNames := make([]*types.FieldName, 0, len(fields))
@@ -1158,7 +1158,7 @@ func (b *PlanBuilder) buildProjection4Union(ctx context.Context, u *LogicalUnion
 			}
 		}
 		b.optFlag |= flagEliminateProjection
-		proj := LogicalProjection{Exprs: exprs, AvoidColumnEvaluator: true}.Init(b.ctx, b.getSelectOffset())
+		proj := LogicalProject{Exprs: exprs, AvoidColumnEvaluator: true}.Init(b.ctx, b.getSelectOffset())
 		proj.SetSchema(u.schema.Clone())
 		proj.SetChildren(child)
 		u.children[childID] = proj
@@ -1226,7 +1226,7 @@ func (b *PlanBuilder) buildSetOpr(ctx context.Context, setOpr *ast.SetOprStmt) (
 	// Fix issue #8189 (https://github.com/pingcap/tidb/issues/8189).
 	// If there are extra expressions generated from `ORDER BY` clause, generate a `Projection` to remove them.
 	if oldLen != setOprPlan.Schema().Len() {
-		proj := LogicalProjection{Exprs: expression.Column2Exprs(setOprPlan.Schema().Columns[:oldLen])}.Init(b.ctx, b.getSelectOffset())
+		proj := LogicalProject{Exprs: expression.Column2Exprs(setOprPlan.Schema().Columns[:oldLen])}.Init(b.ctx, b.getSelectOffset())
 		proj.SetChildren(setOprPlan)
 		schema := expression.NewSchema(setOprPlan.Schema().Clone().Columns[:oldLen]...)
 		for _, col := range schema.Columns {
@@ -2815,7 +2815,7 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 
 	sel.Fields.Fields = originalFields
 	if oldLen != p.Schema().Len() {
-		proj := LogicalProjection{Exprs: expression.Column2Exprs(p.Schema().Columns[:oldLen])}.Init(b.ctx, b.getSelectOffset())
+		proj := LogicalProject{Exprs: expression.Column2Exprs(p.Schema().Columns[:oldLen])}.Init(b.ctx, b.getSelectOffset())
 		proj.SetChildren(p)
 		schema := expression.NewSchema(p.Schema().Clone().Columns[:oldLen]...)
 		for _, col := range schema.Columns {
@@ -3317,7 +3317,7 @@ func (b *PlanBuilder) buildProjUponView(ctx context.Context, dbName model.CIStr,
 		})
 		projExprs = append(projExprs, cols[i])
 	}
-	projUponView := LogicalProjection{Exprs: projExprs}.Init(b.ctx, b.getSelectOffset())
+	projUponView := LogicalProject{Exprs: projExprs}.Init(b.ctx, b.getSelectOffset())
 	projUponView.names = projNames
 	projUponView.SetChildren(selectLogicalPlan.(LogicalPlan))
 	projUponView.SetSchema(projSchema)
@@ -3582,7 +3582,7 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 	}
 
 	// Add project to freeze the order of output columns.
-	proj := LogicalProjection{Exprs: expression.Column2Exprs(p.Schema().Columns[:oldSchemaLen])}.Init(b.ctx, b.getSelectOffset())
+	proj := LogicalProject{Exprs: expression.Column2Exprs(p.Schema().Columns[:oldSchemaLen])}.Init(b.ctx, b.getSelectOffset())
 	proj.SetSchema(expression.NewSchema(make([]*expression.Column, oldSchemaLen)...))
 	proj.names = make(types.NameSlice, len(p.OutputNames()))
 	copy(proj.names, p.OutputNames())
@@ -3858,7 +3858,7 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, delete *ast.DeleteStmt) (
 		}
 	}
 
-	proj := LogicalProjection{Exprs: expression.Column2Exprs(p.Schema().Columns[:oldLen])}.Init(b.ctx, b.getSelectOffset())
+	proj := LogicalProject{Exprs: expression.Column2Exprs(p.Schema().Columns[:oldLen])}.Init(b.ctx, b.getSelectOffset())
 	proj.SetChildren(p)
 	proj.SetSchema(oldSchema.Clone())
 	proj.names = p.OutputNames()[:oldLen]
@@ -4052,7 +4052,7 @@ func (b *PlanBuilder) buildProjectionForWindow(ctx context.Context, p LogicalPla
 	}
 
 	projLen := len(p.Schema().Columns) + len(partitionItems) + len(orderItems) + len(args)
-	proj := LogicalProjection{Exprs: make([]expression.Expression, 0, projLen)}.Init(b.ctx, b.getSelectOffset())
+	proj := LogicalProject{Exprs: make([]expression.Expression, 0, projLen)}.Init(b.ctx, b.getSelectOffset())
 	proj.SetSchema(expression.NewSchema(make([]*expression.Column, 0, projLen)...))
 	proj.names = make([]*types.FieldName, p.Schema().Len(), projLen)
 	for _, col := range p.Schema().Columns {
@@ -4130,7 +4130,7 @@ func (b *PlanBuilder) buildArgs4WindowFunc(ctx context.Context, p LogicalPlan, a
 func (b *PlanBuilder) buildByItemsForWindow(
 	ctx context.Context,
 	p LogicalPlan,
-	proj *LogicalProjection,
+	proj *LogicalProject,
 	items []*ast.ByItem,
 	retItems []property.Item,
 	aggMap map[*ast.AggregateFuncExpr]int,

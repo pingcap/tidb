@@ -238,7 +238,7 @@ func (p *LogicalJoin) updateEQCond() {
 			needRProj = needRProj || !rOk
 		}
 
-		var lProj, rProj *LogicalProjection
+		var lProj, rProj *LogicalProject
 		if needLProj {
 			lProj = p.getProj(0)
 		}
@@ -259,7 +259,7 @@ func (p *LogicalJoin) updateEQCond() {
 	}
 }
 
-func (p *LogicalProjection) appendExpr(expr expression.Expression) *expression.Column {
+func (p *LogicalProject) appendExpr(expr expression.Expression) *expression.Column {
 	if col, ok := expr.(*expression.Column); ok {
 		return col
 	}
@@ -275,13 +275,13 @@ func (p *LogicalProjection) appendExpr(expr expression.Expression) *expression.C
 	return col
 }
 
-func (p *LogicalJoin) getProj(idx int) *LogicalProjection {
+func (p *LogicalJoin) getProj(idx int) *LogicalProject {
 	child := p.children[idx]
-	proj, ok := child.(*LogicalProjection)
+	proj, ok := child.(*LogicalProject)
 	if ok {
 		return proj
 	}
-	proj = LogicalProjection{Exprs: make([]expression.Expression, 0, child.Schema().Len())}.Init(p.ctx, child.SelectBlockOffset())
+	proj = LogicalProject{Exprs: make([]expression.Expression, 0, child.Schema().Len())}.Init(p.ctx, child.SelectBlockOffset())
 	for _, col := range child.Schema().Columns {
 		proj.Exprs = append(proj.Exprs, col)
 	}
@@ -356,7 +356,7 @@ func isNullRejected(ctx sessionctx.Context, schema *expression.Schema, expr expr
 }
 
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
-func (p *LogicalProjection) PredicatePushDown(predicates []expression.Expression) (ret []expression.Expression, retPlan LogicalPlan) {
+func (p *LogicalProject) PredicatePushDown(predicates []expression.Expression) (ret []expression.Expression, retPlan LogicalPlan) {
 	canBePushed := make([]expression.Expression, 0, len(predicates))
 	canNotBePushed := make([]expression.Expression, 0, len(predicates))
 	for _, expr := range p.Exprs {

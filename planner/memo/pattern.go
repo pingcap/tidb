@@ -31,7 +31,7 @@ const (
 	OperandJoin
 	// OperandAggregation is the operand for LogicalAggregation.
 	OperandAggregation
-	// OperandProjection is the operand for LogicalProjection.
+	// OperandProjection is the operand for LogicalProject.
 	OperandProjection
 	// OperandSelection is the operand for LogicalSelection.
 	OperandSelection
@@ -80,7 +80,7 @@ func GetOperand(p plannercore.LogicalPlan) Operand {
 		return OperandJoin
 	case *plannercore.LogicalAggregation:
 		return OperandAggregation
-	case *plannercore.LogicalProjection:
+	case *plannercore.LogicalProject:
 		return OperandProjection
 	case *plannercore.LogicalSelection:
 		return OperandSelection

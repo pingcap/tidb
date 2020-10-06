@@ -121,7 +121,7 @@ func (gc *gcSubstituter) substitute(ctx context.Context, lp LogicalPlan, exprToC
 				}
 			}
 		}
-	case *LogicalProjection:
+	case *LogicalProject:
 		for i := range x.Exprs {
 			tp = x.Exprs[i].GetType().EvalType()
 			for candidateExpr, column := range exprToColumn {

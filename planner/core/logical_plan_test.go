@@ -112,7 +112,7 @@ func (s *testPlanSuite) TestJoinPredicatePushDown(c *C) {
 		c.Assert(err, IsNil, comment)
 		p, err = logicalOptimize(context.TODO(), flagPredicatePushDown|flagDecorrelate|flagPrunColumns|flagPrunColumnsAgain, p.(LogicalPlan))
 		c.Assert(err, IsNil, comment)
-		proj, ok := p.(*LogicalProjection)
+		proj, ok := p.(*LogicalProject)
 		c.Assert(ok, IsTrue, comment)
 		join, ok := proj.children[0].(*LogicalJoin)
 		c.Assert(ok, IsTrue, comment)
@@ -151,7 +151,7 @@ func (s *testPlanSuite) TestOuterWherePredicatePushDown(c *C) {
 		c.Assert(err, IsNil, comment)
 		p, err = logicalOptimize(context.TODO(), flagPredicatePushDown|flagDecorrelate|flagPrunColumns|flagPrunColumnsAgain, p.(LogicalPlan))
 		c.Assert(err, IsNil, comment)
-		proj, ok := p.(*LogicalProjection)
+		proj, ok := p.(*LogicalProject)
 		c.Assert(ok, IsTrue, comment)
 		selection, ok := proj.children[0].(*LogicalSelection)
 		c.Assert(ok, IsTrue, comment)
@@ -355,7 +355,7 @@ func (s *testPlanSuite) TestDupRandJoinCondsPushDown(c *C) {
 	c.Assert(err, IsNil, comment)
 	p, err = logicalOptimize(context.TODO(), flagPredicatePushDown, p.(LogicalPlan))
 	c.Assert(err, IsNil, comment)
-	proj, ok := p.(*LogicalProjection)
+	proj, ok := p.(*LogicalProject)
 	c.Assert(ok, IsTrue, comment)
 	join, ok := proj.children[0].(*LogicalJoin)
 	c.Assert(ok, IsTrue, comment)
@@ -1537,7 +1537,7 @@ func (s *testPlanSuite) TestSkylinePruning(c *C) {
 			case *LogicalSort:
 				byItems = v.ByItems
 				lp = lp.Children()[0]
-			case *LogicalProjection:
+			case *LogicalProject:
 				newItems := make([]*util.ByItems, 0, len(byItems))
 				for _, col := range byItems {
 					idx := v.schema.ColumnIndex(col.Expr.(*expression.Column))
@@ -1637,7 +1637,7 @@ func (s *testPlanSuite) TestConflictedJoinTypeHints(c *C) {
 	c.Assert(err, IsNil)
 	p, err = logicalOptimize(ctx, builder.optFlag, p.(LogicalPlan))
 	c.Assert(err, IsNil)
-	proj, ok := p.(*LogicalProjection)
+	proj, ok := p.(*LogicalProject)
 	c.Assert(ok, IsTrue)
 	join, ok := proj.Children()[0].(*LogicalJoin)
 	c.Assert(ok, IsTrue)
@@ -1657,7 +1657,7 @@ func (s *testPlanSuite) TestSimplyOuterJoinWithOnlyOuterExpr(c *C) {
 	c.Assert(err, IsNil)
 	p, err = logicalOptimize(ctx, builder.optFlag, p.(LogicalPlan))
 	c.Assert(err, IsNil)
-	proj, ok := p.(*LogicalProjection)
+	proj, ok := p.(*LogicalProject)
 	c.Assert(ok, IsTrue)
 	join, ok := proj.Children()[0].(*LogicalJoin)
 	c.Assert(ok, IsTrue)

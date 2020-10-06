@@ -21,7 +21,7 @@ import (
 
 // canProjectionBeEliminatedLoose checks whether a projection can be eliminated,
 // returns true if every expression is a single column.
-func canProjectionBeEliminatedLoose(p *LogicalProjection) bool {
+func canProjectionBeEliminatedLoose(p *LogicalProject) bool {
 	for _, expr := range p.Exprs {
 		_, ok := expr.(*expression.Column)
 		if !ok {
@@ -117,7 +117,7 @@ func (pe *projectionEliminator) optimize(ctx context.Context, lp LogicalPlan) (L
 
 // eliminate eliminates the redundant projection in a logical plan.
 func (pe *projectionEliminator) eliminate(p LogicalPlan, replace map[string]*expression.Column, canEliminate bool) LogicalPlan {
-	proj, isProj := p.(*LogicalProjection)
+	proj, isProj := p.(*LogicalProject)
 	childFlag := canEliminate
 	if _, isUnion := p.(*LogicalUnionAll); isUnion {
 		childFlag = false
@@ -142,7 +142,7 @@ func (pe *projectionEliminator) eliminate(p LogicalPlan, replace map[string]*exp
 	}
 	p.replaceExprColumns(replace)
 	if isProj {
-		if child, ok := p.Children()[0].(*LogicalProjection); ok && !ExprsHasSideEffects(child.Exprs) {
+		if child, ok := p.Children()[0].(*LogicalProject); ok && !ExprsHasSideEffects(child.Exprs) {
 			for i := range proj.Exprs {
 				proj.Exprs[i] = expression.FoldConstant(ReplaceColumnOfExpr(proj.Exprs[i], child, child.Schema()))
 			}
@@ -160,8 +160,8 @@ func (pe *projectionEliminator) eliminate(p LogicalPlan, replace map[string]*exp
 	return p.Children()[0]
 }
 
-// ReplaceColumnOfExpr replaces column of expression by another LogicalProjection.
-func ReplaceColumnOfExpr(expr expression.Expression, proj *LogicalProjection, schema *expression.Schema) expression.Expression {
+// ReplaceColumnOfExpr replaces column of expression by another LogicalProject.
+func ReplaceColumnOfExpr(expr expression.Expression, proj *LogicalProject, schema *expression.Schema) expression.Expression {
 	switch v := expr.(type) {
 	case *expression.Column:
 		idx := schema.ColumnIndex(v)
@@ -191,7 +191,7 @@ func (p *LogicalJoin) replaceExprColumns(replace map[string]*expression.Column) 
 	}
 }
 
-func (p *LogicalProjection) replaceExprColumns(replace map[string]*expression.Column) {
+func (p *LogicalProject) replaceExprColumns(replace map[string]*expression.Column) {
 	for _, expr := range p.Exprs {
 		ResolveExprAndReplace(expr, replace)
 	}

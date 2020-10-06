@@ -108,7 +108,7 @@ func (p *LogicalUnionAll) pushDownTopN(topN *LogicalTopN) LogicalPlan {
 	return p
 }
 
-func (p *LogicalProjection) pushDownTopN(topN *LogicalTopN) LogicalPlan {
+func (p *LogicalProject) pushDownTopN(topN *LogicalTopN) LogicalPlan {
 	for _, expr := range p.Exprs {
 		if expression.HasAssignSetVarFunc(expr) {
 			return p.baseLogicalPlan.pushDownTopN(topN)

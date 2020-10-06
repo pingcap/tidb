@@ -1670,7 +1670,7 @@ func (p *LogicalJoin) tryToGetBroadCastJoinByPreferGlobalIdx(prop *property.Phys
 // TryToGetChildProp will check if this sort property can be pushed or not.
 // When a sort column will be replaced by scalar function, we refuse it.
 // When a sort column will be replaced by a constant, we just remove it.
-func (p *LogicalProjection) TryToGetChildProp(prop *property.PhysicalProperty) (*property.PhysicalProperty, bool) {
+func (p *LogicalProject) TryToGetChildProp(prop *property.PhysicalProperty) (*property.PhysicalProperty, bool) {
 	if prop.IsFlashOnlyProp() {
 		return nil, false
 	}
@@ -1689,7 +1689,7 @@ func (p *LogicalProjection) TryToGetChildProp(prop *property.PhysicalProperty) (
 	return newProp, true
 }
 
-func (p *LogicalProjection) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]PhysicalPlan, bool) {
+func (p *LogicalProject) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]PhysicalPlan, bool) {
 	newProp, ok := p.TryToGetChildProp(prop)
 	if !ok {
 		return nil, true

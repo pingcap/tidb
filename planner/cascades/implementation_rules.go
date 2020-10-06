@@ -139,7 +139,7 @@ func (r *ImplMemTableScan) OnImplement(
 	return []memo.Implementation{impl.NewMemTableScanImpl(physical)}, nil
 }
 
-// ImplProjection implements LogicalProjection as PhysicalProjection.
+// ImplProjection implements LogicalProject as PhysicalProjection.
 type ImplProjection struct {
 }
 
@@ -151,7 +151,7 @@ func (r *ImplProjection) Match(expr *memo.GroupExpr, prop *property.PhysicalProp
 // OnImplement implements ImplementationRule OnImplement interface.
 func (r *ImplProjection) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) ([]memo.Implementation, error) {
 	logicProp := expr.Group.Prop
-	logicProj := expr.ExprNode.(*plannercore.LogicalProjection)
+	logicProj := expr.ExprNode.(*plannercore.LogicalProject)
 	childProp, ok := logicProj.TryToGetChildProp(reqProp)
 	if !ok {
 		return nil, nil

@@ -62,7 +62,7 @@ func exprHasSetVarOrSleep(expr expression.Expression) bool {
 
 // PruneColumns implements LogicalPlan interface.
 // If any expression has SetVar function or Sleep function, we do not prune it.
-func (p *LogicalProjection) PruneColumns(parentUsedCols []*expression.Column) error {
+func (p *LogicalProject) PruneColumns(parentUsedCols []*expression.Column) error {
 	child := p.children[0]
 	used := expression.GetUsedList(parentUsedCols, p.schema)
 

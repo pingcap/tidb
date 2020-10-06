@@ -130,7 +130,7 @@ func (p *LogicalTableDual) BuildKeyInfo(selfSchema *expression.Schema, childSche
 
 // A bijection exists between columns of a projection's schema and this projection's Exprs.
 // Sometimes we need a schema made by expr of Exprs to convert a column in child's schema to a column in this projection's Schema.
-func (p *LogicalProjection) buildSchemaByExprs(selfSchema *expression.Schema) *expression.Schema {
+func (p *LogicalProject) buildSchemaByExprs(selfSchema *expression.Schema) *expression.Schema {
 	schema := expression.NewSchema(make([]*expression.Column, 0, selfSchema.Len())...)
 	for _, expr := range p.Exprs {
 		if col, isCol := expr.(*expression.Column); isCol {
@@ -147,7 +147,7 @@ func (p *LogicalProjection) buildSchemaByExprs(selfSchema *expression.Schema) *e
 }
 
 // BuildKeyInfo implements LogicalPlan BuildKeyInfo interface.
-func (p *LogicalProjection) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
+func (p *LogicalProject) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
 	p.logicalSchemaProducer.BuildKeyInfo(selfSchema, childSchema)
 	schema := p.buildSchemaByExprs(selfSchema)
 	for _, key := range childSchema[0].Keys {

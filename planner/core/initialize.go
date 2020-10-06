@@ -83,8 +83,8 @@ func (p LogicalUnionScan) Init(ctx sessionctx.Context, offset int) *LogicalUnion
 	return &p
 }
 
-// Init initializes LogicalProjection.
-func (p LogicalProjection) Init(ctx sessionctx.Context, offset int) *LogicalProjection {
+// Init initializes LogicalProject.
+func (p LogicalProject) Init(ctx sessionctx.Context, offset int) *LogicalProject {
 	p.baseLogicalPlan = newBaseLogicalPlan(ctx, plancodec.TypeProj, &p, offset)
 	return &p
 }

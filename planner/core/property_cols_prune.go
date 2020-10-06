@@ -137,7 +137,7 @@ func (p *baseLogicalPlan) PreparePossibleProperties(schema *expression.Schema, c
 }
 
 // PreparePossibleProperties implements LogicalPlan PreparePossibleProperties interface.
-func (p *LogicalProjection) PreparePossibleProperties(schema *expression.Schema, childrenProperties ...[][]*expression.Column) [][]*expression.Column {
+func (p *LogicalProject) PreparePossibleProperties(schema *expression.Schema, childrenProperties ...[][]*expression.Column) [][]*expression.Column {
 	childProperties := childrenProperties[0]
 	oldCols := make([]*expression.Column, 0, p.schema.Len())
 	newCols := make([]*expression.Column, 0, p.schema.Len())

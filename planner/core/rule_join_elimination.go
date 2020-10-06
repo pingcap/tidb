@@ -191,7 +191,7 @@ func (o *outerJoinEliminator) doOptimize(p LogicalPlan, aggCols []*expression.Co
 	}
 
 	switch x := p.(type) {
-	case *LogicalProjection:
+	case *LogicalProject:
 		parentCols = parentCols[:0]
 		for _, expr := range x.Exprs {
 			parentCols = append(parentCols, expression.ExtractColumns(expr)...)

@@ -625,7 +625,7 @@ func getCardinality(cols []*expression.Column, schema *expression.Schema, profil
 	return cardinality
 }
 
-func (p *LogicalProjection) getGroupNDVs(colGroups [][]*expression.Column, childProfile *property.StatsInfo, selfSchema *expression.Schema) []property.GroupNDV {
+func (p *LogicalProject) getGroupNDVs(colGroups [][]*expression.Column, childProfile *property.StatsInfo, selfSchema *expression.Schema) []property.GroupNDV {
 	if len(colGroups) == 0 || len(childProfile.GroupNDVs) == 0 {
 		return nil
 	}
@@ -664,7 +664,7 @@ func (p *LogicalProjection) getGroupNDVs(colGroups [][]*expression.Column, child
 }
 
 // DeriveStats implement LogicalPlan DeriveStats interface.
-func (p *LogicalProjection) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema, colGroups [][]*expression.Column) (*property.StatsInfo, error) {
+func (p *LogicalProject) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema, colGroups [][]*expression.Column) (*property.StatsInfo, error) {
 	childProfile := childStats[0]
 	if p.stats != nil {
 		// Reload GroupNDVs since colGroups may have changed.
@@ -684,7 +684,7 @@ func (p *LogicalProjection) DeriveStats(childStats []*property.StatsInfo, selfSc
 }
 
 // ExtractColGroups implements LogicalPlan ExtractColGroups interface.
-func (p *LogicalProjection) ExtractColGroups(colGroups [][]*expression.Column) [][]*expression.Column {
+func (p *LogicalProject) ExtractColGroups(colGroups [][]*expression.Column) [][]*expression.Column {
 	if len(colGroups) == 0 {
 		return nil
 	}

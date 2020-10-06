@@ -145,7 +145,7 @@ func (s *decorrelateSolver) optimize(ctx context.Context, p LogicalPlan) (Logica
 				apply.SetChildren(outerPlan, innerPlan)
 				return s.optimize(ctx, p)
 			}
-		} else if proj, ok := innerPlan.(*LogicalProjection); ok {
+		} else if proj, ok := innerPlan.(*LogicalProject); ok {
 			for i, expr := range proj.Exprs {
 				proj.Exprs[i] = expr.Decorrelate(outerPlan.Schema())
 			}
@@ -258,7 +258,7 @@ func (s *decorrelateSolver) optimize(ctx context.Context, p LogicalPlan) (Logica
 						defaultValueMap := s.aggDefaultValueMap(agg)
 						// We should use it directly, rather than building a projection.
 						if len(defaultValueMap) > 0 {
-							proj := LogicalProjection{}.Init(agg.ctx, agg.blockOffset)
+							proj := LogicalProject{}.Init(agg.ctx, agg.blockOffset)
 							proj.SetSchema(apply.schema)
 							proj.Exprs = expression.Column2Exprs(apply.schema.Columns)
 							for i, val := range defaultValueMap {

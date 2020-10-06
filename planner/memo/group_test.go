@@ -91,7 +91,7 @@ func (s *testMemoSuite) TestGroupDeleteAll(c *C) {
 	expr := NewGroupExpr(plannercore.LogicalSelection{}.Init(s.sctx, 0))
 	g := NewGroupWithSchema(expr, s.schema)
 	c.Assert(g.Insert(NewGroupExpr(plannercore.LogicalLimit{}.Init(s.sctx, 0))), IsTrue)
-	c.Assert(g.Insert(NewGroupExpr(plannercore.LogicalProjection{}.Init(s.sctx, 0))), IsTrue)
+	c.Assert(g.Insert(NewGroupExpr(plannercore.LogicalProject{}.Init(s.sctx, 0))), IsTrue)
 	c.Assert(g.Equivalents.Len(), Equals, 3)
 	c.Assert(g.GetFirstElem(OperandProjection), NotNil)
 	c.Assert(g.Exists(expr), IsTrue)
@@ -120,7 +120,7 @@ func (s *testMemoSuite) TestGroupFingerPrint(c *C) {
 	logic1, ok := p1.(plannercore.LogicalPlan)
 	c.Assert(ok, IsTrue)
 	// Plan tree should be: DataSource -> Selection -> Projection
-	proj, ok := logic1.(*plannercore.LogicalProjection)
+	proj, ok := logic1.(*plannercore.LogicalProject)
 	c.Assert(ok, IsTrue)
 	sel, ok := logic1.Children()[0].(*plannercore.LogicalSelection)
 	c.Assert(ok, IsTrue)
@@ -163,11 +163,11 @@ func (s *testMemoSuite) TestGroupFingerPrint(c *C) {
 }
 
 func (s *testMemoSuite) TestGroupGetFirstElem(c *C) {
-	expr0 := NewGroupExpr(plannercore.LogicalProjection{}.Init(s.sctx, 0))
+	expr0 := NewGroupExpr(plannercore.LogicalProject{}.Init(s.sctx, 0))
 	expr1 := NewGroupExpr(plannercore.LogicalLimit{}.Init(s.sctx, 0))
-	expr2 := NewGroupExpr(plannercore.LogicalProjection{}.Init(s.sctx, 0))
+	expr2 := NewGroupExpr(plannercore.LogicalProject{}.Init(s.sctx, 0))
 	expr3 := NewGroupExpr(plannercore.LogicalLimit{}.Init(s.sctx, 0))
-	expr4 := NewGroupExpr(plannercore.LogicalProjection{}.Init(s.sctx, 0))
+	expr4 := NewGroupExpr(plannercore.LogicalProject{}.Init(s.sctx, 0))
 
 	g := NewGroupWithSchema(expr0, s.schema)
 	g.Insert(expr1)

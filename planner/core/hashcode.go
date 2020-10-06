@@ -37,7 +37,7 @@ func (p *baseLogicalPlan) HashCode() []byte {
 }
 
 // HashCode implements LogicalPlan interface.
-func (p *LogicalProjection) HashCode() []byte {
+func (p *LogicalProject) HashCode() []byte {
 	// PlanType + SelectOffset + ExprNum + [Exprs]
 	// Expressions are commonly `Column`s, whose hashcode has the length 9, so
 	// we pre-alloc 10 bytes for each expr's hashcode.

@@ -35,7 +35,7 @@ import (
 var (
 	_ LogicalPlan = &LogicalJoin{}
 	_ LogicalPlan = &LogicalAggregation{}
-	_ LogicalPlan = &LogicalProjection{}
+	_ LogicalPlan = &LogicalProject{}
 	_ LogicalPlan = &LogicalSelection{}
 	_ LogicalPlan = &LogicalApply{}
 	_ LogicalPlan = &LogicalMaxOneRow{}
@@ -260,8 +260,8 @@ func (p *LogicalJoin) ExtractJoinKeys(childIdx int) *expression.Schema {
 	return expression.NewSchema(joinKeys...)
 }
 
-// LogicalProjection represents a select fields plan.
-type LogicalProjection struct {
+// LogicalProject represents a select fields plan.
+type LogicalProject struct {
 	logicalSchemaProducer
 
 	Exprs []expression.Expression
@@ -285,7 +285,7 @@ type LogicalProjection struct {
 }
 
 // ExtractCorrelatedCols implements LogicalPlan interface.
-func (p *LogicalProjection) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
+func (p *LogicalProject) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 	corCols := make([]*expression.CorrelatedColumn, 0, len(p.Exprs))
 	for _, expr := range p.Exprs {
 		corCols = append(corCols, expression.ExtractCorColumns(expr)...)
@@ -294,7 +294,7 @@ func (p *LogicalProjection) ExtractCorrelatedCols() []*expression.CorrelatedColu
 }
 
 // GetUsedCols extracts all of the Columns used by proj.
-func (p *LogicalProjection) GetUsedCols() (usedCols []*expression.Column) {
+func (p *LogicalProject) GetUsedCols() (usedCols []*expression.Column) {
 	for _, expr := range p.Exprs {
 		usedCols = append(usedCols, expression.ExtractColumns(expr)...)
 	}

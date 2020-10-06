@@ -620,7 +620,7 @@ func (er *expressionRewriter) buildQuantifierPlan(plan4Agg *LogicalAggregation, 
 	outerSchemaLen := er.p.Schema().Len()
 	er.p = er.b.buildApplyWithJoinType(er.p, plan4Agg, InnerJoin)
 	joinSchema := er.p.Schema()
-	proj := LogicalProjection{
+	proj := LogicalProject{
 		Exprs: expression.Column2Exprs(joinSchema.Clone().Columns[:outerSchemaLen]),
 	}.Init(er.sctx, er.b.getSelectOffset())
 	proj.names = make([]*types.FieldName, outerSchemaLen, outerSchemaLen+1)
@@ -762,7 +762,7 @@ out:
 		switch plan := p.(type) {
 		// This can be removed when in exists clause,
 		// e.g. exists(select count(*) from t order by a) is equal to exists t.
-		case *LogicalProjection, *LogicalSort:
+		case *LogicalProject, *LogicalSort:
 			p = p.Children()[0]
 		case *LogicalAggregation:
 			if len(plan.GroupByItems) == 0 {

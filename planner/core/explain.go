@@ -793,7 +793,7 @@ func (p *LogicalAggregation) ExplainInfo() string {
 }
 
 // ExplainInfo implements Plan interface.
-func (p *LogicalProjection) ExplainInfo() string {
+func (p *LogicalProject) ExplainInfo() string {
 	return expression.ExplainExpressionList(p.Exprs, p.schema)
 }
 

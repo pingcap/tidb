@@ -661,7 +661,7 @@ func (b *PlanBuilder) buildDo(ctx context.Context, v *ast.DoStmt) (Plan, error) 
 	dual := LogicalTableDual{RowCount: 1}.Init(b.ctx, b.getSelectOffset())
 	dual.SetSchema(expression.NewSchema())
 	p = dual
-	proj := LogicalProjection{Exprs: make([]expression.Expression, 0, len(v.Exprs))}.Init(b.ctx, b.getSelectOffset())
+	proj := LogicalProject{Exprs: make([]expression.Expression, 0, len(v.Exprs))}.Init(b.ctx, b.getSelectOffset())
 	proj.names = make([]*types.FieldName, len(v.Exprs))
 	schema := expression.NewSchema(make([]*expression.Column, 0, len(v.Exprs))...)
 	for _, astExpr := range v.Exprs {
@@ -2032,7 +2032,7 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (Plan, 
 	if np != p {
 		b.optFlag |= flagEliminateProjection
 		fieldsLen := len(p.schema.Columns)
-		proj := LogicalProjection{Exprs: make([]expression.Expression, 0, fieldsLen)}.Init(b.ctx, 0)
+		proj := LogicalProject{Exprs: make([]expression.Expression, 0, fieldsLen)}.Init(b.ctx, 0)
 		schema := expression.NewSchema(make([]*expression.Column, 0, fieldsLen)...)
 		for _, col := range p.schema.Columns {
 			proj.Exprs = append(proj.Exprs, col)
