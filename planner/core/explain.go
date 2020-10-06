@@ -262,16 +262,16 @@ func (p *PhysicalTableScan) isFullScan() bool {
 }
 
 // ExplainInfo implements Plan interface.
-func (p *PhysicalTableReader) ExplainInfo() string {
+func (p *PhysicalTableGather) ExplainInfo() string {
 	return "data:" + p.tablePlan.ExplainID().String()
 }
 
 // ExplainNormalizedInfo implements Plan interface.
-func (p *PhysicalTableReader) ExplainNormalizedInfo() string {
+func (p *PhysicalTableGather) ExplainNormalizedInfo() string {
 	return ""
 }
 
-func (p *PhysicalTableReader) accessObject(sctx sessionctx.Context) string {
+func (p *PhysicalTableGather) accessObject(sctx sessionctx.Context) string {
 	ts := p.TablePlans[0].(*PhysicalTableScan)
 	pi := ts.Table.GetPartitionInfo()
 	if pi == nil || !sctx.GetSessionVars().UseDynamicPartitionPrune() {
@@ -316,7 +316,7 @@ func partitionAccessObject(sctx sessionctx.Context, tbl table.PartitionedTable, 
 }
 
 // OperatorInfo return other operator information to be explained.
-func (p *PhysicalTableReader) OperatorInfo(normalized bool) string {
+func (p *PhysicalTableGather) OperatorInfo(normalized bool) string {
 	return "data:" + p.tablePlan.ExplainID().String()
 }
 

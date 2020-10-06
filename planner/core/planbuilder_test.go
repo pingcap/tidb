@@ -239,7 +239,7 @@ func (s *testPlanBuilderSuite) TestPhysicalPlanClone(c *C) {
 	c.Assert(checkPhysicalPlanClone(tableScan), IsNil)
 
 	// table reader
-	tableReader := &PhysicalTableReader{
+	tableReader := &PhysicalTableGather{
 		tablePlan:  tableScan,
 		TablePlans: []PhysicalPlan{tableScan},
 		StoreType:  kv.TiFlash,

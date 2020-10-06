@@ -166,7 +166,7 @@ func (r *ImplProjection) OnImplement(expr *memo.GroupExpr, reqProp *property.Phy
 }
 
 // ImplTiKVSingleReadGather implements TiKVSingleGather
-// as PhysicalTableReader or PhysicalIndexReader.
+// as PhysicalTableGather or PhysicalIndexReader.
 type ImplTiKVSingleReadGather struct {
 }
 
@@ -183,7 +183,7 @@ func (r *ImplTiKVSingleReadGather) OnImplement(expr *memo.GroupExpr, reqProp *pr
 		reader := sg.GetPhysicalIndexReader(logicProp.Schema, logicProp.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt), reqProp)
 		return []memo.Implementation{impl.NewIndexReaderImpl(reader, sg.Source.TblColHists)}, nil
 	}
-	reader := sg.GetPhysicalTableReader(logicProp.Schema, logicProp.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt), reqProp)
+	reader := sg.GetPhysicalTableGather(logicProp.Schema, logicProp.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt), reqProp)
 	return []memo.Implementation{impl.NewTableReaderImpl(reader, sg.Source.TblColHists)}, nil
 }
 

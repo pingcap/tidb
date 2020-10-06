@@ -416,8 +416,8 @@ func (p PhysicalIndexMergeReader) Init(ctx sessionctx.Context, offset int) *Phys
 	return &p
 }
 
-// Init initializes PhysicalTableReader.
-func (p PhysicalTableReader) Init(ctx sessionctx.Context, offset int) *PhysicalTableReader {
+// Init initializes PhysicalTableGather.
+func (p PhysicalTableGather) Init(ctx sessionctx.Context, offset int) *PhysicalTableGather {
 	p.basePhysicalPlan = newBasePhysicalPlan(ctx, plancodec.TypeTableReader, &p, offset)
 	if p.tablePlan != nil {
 		p.TablePlans = flattenPushDownPlan(p.tablePlan)

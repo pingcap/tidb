@@ -49,7 +49,7 @@ func extractTableAsName(p PhysicalPlan) (*model.CIStr, *model.CIStr) {
 		return nil, nil
 	}
 	switch x := p.(type) {
-	case *PhysicalTableReader:
+	case *PhysicalTableGather:
 		ts := x.TablePlans[0].(*PhysicalTableScan)
 		if ts.TableAsName.L != "" {
 			return &ts.DBName, ts.TableAsName
@@ -103,7 +103,7 @@ func genHintsFromPhysicalPlan(p PhysicalPlan, nodeType utilhint.NodeType) (res [
 		res = append(res, genHintsFromPhysicalPlan(child, nodeType)...)
 	}
 	switch pp := p.(type) {
-	case *PhysicalTableReader:
+	case *PhysicalTableGather:
 		tbl := pp.TablePlans[0].(*PhysicalTableScan)
 		res = append(res, &ast.TableOptimizerHint{
 			QBName:   utilhint.GenerateQBName(nodeType, pp.blockOffset),

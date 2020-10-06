@@ -45,7 +45,7 @@ var (
 	_ PhysicalPlan = &PhysicalLimit{}
 	_ PhysicalPlan = &PhysicalIndexScan{}
 	_ PhysicalPlan = &PhysicalTableScan{}
-	_ PhysicalPlan = &PhysicalTableReader{}
+	_ PhysicalPlan = &PhysicalTableGather{}
 	_ PhysicalPlan = &PhysicalIndexReader{}
 	_ PhysicalPlan = &PhysicalIndexLookUpReader{}
 	_ PhysicalPlan = &PhysicalIndexMergeReader{}
@@ -63,8 +63,8 @@ var (
 	_ PhysicalPlan = &BatchPointGetPlan{}
 )
 
-// PhysicalTableReader is the table reader in tidb.
-type PhysicalTableReader struct {
+// PhysicalTableGather is the table reader in tidb.
+type PhysicalTableGather struct {
 	physicalSchemaProducer
 
 	// TablePlans flats the tablePlan to construct executor pb.
@@ -89,12 +89,12 @@ type PartitionInfo struct {
 }
 
 // GetTablePlan exports the tablePlan.
-func (p *PhysicalTableReader) GetTablePlan() PhysicalPlan {
+func (p *PhysicalTableGather) GetTablePlan() PhysicalPlan {
 	return p.tablePlan
 }
 
 // GetTableScan exports the tableScan that contained in tablePlan.
-func (p *PhysicalTableReader) GetTableScan() *PhysicalTableScan {
+func (p *PhysicalTableGather) GetTableScan() *PhysicalTableScan {
 	curPlan := p.tablePlan
 	for {
 		chCnt := len(curPlan.Children())
@@ -109,9 +109,9 @@ func (p *PhysicalTableReader) GetTableScan() *PhysicalTableScan {
 	}
 }
 
-// GetPhysicalTableReader returns PhysicalTableReader for logical TiKVSingleGather.
-func (sg *TiKVSingleGather) GetPhysicalTableReader(schema *expression.Schema, stats *property.StatsInfo, props ...*property.PhysicalProperty) *PhysicalTableReader {
-	reader := PhysicalTableReader{}.Init(sg.ctx, sg.blockOffset)
+// GetPhysicalTableGather returns PhysicalTableGather for logical TiKVSingleGather.
+func (sg *TiKVSingleGather) GetPhysicalTableGather(schema *expression.Schema, stats *property.StatsInfo, props ...*property.PhysicalProperty) *PhysicalTableGather {
+	reader := PhysicalTableGather{}.Init(sg.ctx, sg.blockOffset)
 	reader.PartitionInfo = PartitionInfo{
 		PruningConds:   sg.Source.allConds,
 		PartitionNames: sg.Source.partitionNames,
@@ -134,8 +134,8 @@ func (sg *TiKVSingleGather) GetPhysicalIndexReader(schema *expression.Schema, st
 }
 
 // Clone implements PhysicalPlan interface.
-func (p *PhysicalTableReader) Clone() (PhysicalPlan, error) {
-	cloned := new(PhysicalTableReader)
+func (p *PhysicalTableGather) Clone() (PhysicalPlan, error) {
+	cloned := new(PhysicalTableGather)
 	base, err := p.physicalSchemaProducer.cloneWithSelf(cloned)
 	if err != nil {
 		return nil, err
@@ -153,13 +153,13 @@ func (p *PhysicalTableReader) Clone() (PhysicalPlan, error) {
 }
 
 // SetChildren overrides PhysicalPlan SetChildren interface.
-func (p *PhysicalTableReader) SetChildren(children ...PhysicalPlan) {
+func (p *PhysicalTableGather) SetChildren(children ...PhysicalPlan) {
 	p.tablePlan = children[0]
 	p.TablePlans = flattenPushDownPlan(p.tablePlan)
 }
 
 // ExtractCorrelatedCols implements PhysicalPlan interface.
-func (p *PhysicalTableReader) ExtractCorrelatedCols() (corCols []*expression.CorrelatedColumn) {
+func (p *PhysicalTableGather) ExtractCorrelatedCols() (corCols []*expression.CorrelatedColumn) {
 	for _, child := range p.TablePlans {
 		corCols = append(corCols, ExtractCorrelatedCols4PhysicalPlan(child)...)
 	}
@@ -1187,7 +1187,7 @@ func CollectPlanStatsVersion(plan PhysicalPlan, statsInfos map[string]uint64) ma
 		statsInfos = CollectPlanStatsVersion(child, statsInfos)
 	}
 	switch copPlan := plan.(type) {
-	case *PhysicalTableReader:
+	case *PhysicalTableGather:
 		statsInfos = CollectPlanStatsVersion(copPlan.tablePlan, statsInfos)
 	case *PhysicalIndexReader:
 		statsInfos = CollectPlanStatsVersion(copPlan.indexPlan, statsInfos)

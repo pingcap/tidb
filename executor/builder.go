@@ -204,7 +204,7 @@ func (b *executorBuilder) build(p plannercore.Plan) Executor {
 		return b.buildMaxOneRow(v)
 	case *plannercore.Analyze:
 		return b.buildAnalyze(v)
-	case *plannercore.PhysicalTableReader:
+	case *plannercore.PhysicalTableGather:
 		return b.buildTableReader(v)
 	case *plannercore.PhysicalIndexReader:
 		return b.buildIndexReader(v)
@@ -2424,7 +2424,7 @@ func containsLimit(execs []*tipb.Executor) bool {
 
 // When allow batch cop is 1, only agg / topN uses batch cop.
 // When allow batch cop is 2, every query uses batch cop.
-func (e *TableReaderExecutor) setBatchCop(v *plannercore.PhysicalTableReader) {
+func (e *TableReaderExecutor) setBatchCop(v *plannercore.PhysicalTableGather) {
 	if e.storeType != kv.TiFlash || e.keepOrder {
 		return
 	}
@@ -2442,7 +2442,7 @@ func (e *TableReaderExecutor) setBatchCop(v *plannercore.PhysicalTableReader) {
 	return
 }
 
-func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableReader) (*TableReaderExecutor, error) {
+func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableGather) (*TableReaderExecutor, error) {
 	tablePlans := v.TablePlans
 	if v.StoreType == kv.TiFlash {
 		tablePlans = []plannercore.PhysicalPlan{v.GetTablePlan()}
@@ -2506,7 +2506,7 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 
 // buildTableReader builds a table reader executor. It first build a no range table reader,
 // and then update it ranges from table scan plan.
-func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) Executor {
+func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableGather) Executor {
 	if b.ctx.GetSessionVars().IsPessimisticReadConsistency() {
 		if err := b.refreshForUpdateTSForRC(); err != nil {
 			b.err = err
@@ -3077,7 +3077,7 @@ func (builder *dataReaderBuilder) buildExecutorForIndexJoin(ctx context.Context,
 func (builder *dataReaderBuilder) buildExecutorForIndexJoinInternal(ctx context.Context, plan plannercore.Plan, lookUpContents []*indexJoinLookUpContent,
 	IndexRanges []*ranger.Range, keyOff2IdxOff []int, cwc *plannercore.ColWithCmpFuncManager, canReorderHandles bool) (Executor, error) {
 	switch v := plan.(type) {
-	case *plannercore.PhysicalTableReader:
+	case *plannercore.PhysicalTableGather:
 		return builder.buildTableReaderForIndexJoin(ctx, v, lookUpContents, IndexRanges, keyOff2IdxOff, cwc, canReorderHandles)
 	case *plannercore.PhysicalIndexReader:
 		return builder.buildIndexReaderForIndexJoin(ctx, v, lookUpContents, IndexRanges, keyOff2IdxOff, cwc)
@@ -3128,7 +3128,7 @@ func (builder *dataReaderBuilder) buildUnionScanForIndexJoin(ctx context.Context
 	return ret, err
 }
 
-func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Context, v *plannercore.PhysicalTableReader,
+func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Context, v *plannercore.PhysicalTableGather,
 	lookUpContents []*indexJoinLookUpContent, indexRanges []*ranger.Range, keyOff2IdxOff []int,
 	cwc *plannercore.ColWithCmpFuncManager, canReorderHandles bool) (Executor, error) {
 	e, err := buildNoRangeTableReader(builder.executorBuilder, v)

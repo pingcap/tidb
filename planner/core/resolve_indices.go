@@ -289,7 +289,7 @@ func resolveIndicesForVirtualColumn(result []*expression.Column, schema *express
 }
 
 // ResolveIndices implements Plan interface.
-func (p *PhysicalTableReader) ResolveIndices() error {
+func (p *PhysicalTableGather) ResolveIndices() error {
 	err := resolveIndicesForVirtualColumn(p.schema.Columns, p.schema)
 	if err != nil {
 		return err

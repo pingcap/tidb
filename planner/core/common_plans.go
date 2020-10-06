@@ -413,7 +413,7 @@ func (e *Execute) rebuildRange(p Plan) error {
 	sc := p.SCtx().GetSessionVars().StmtCtx
 	var err error
 	switch x := p.(type) {
-	case *PhysicalTableReader:
+	case *PhysicalTableGather:
 		ts := x.TablePlans[0].(*PhysicalTableScan)
 		var pkCol *expression.Column
 		if ts.Table.IsCommonHandle {
@@ -1014,7 +1014,7 @@ func (e *Explain) explainPlanInRowFormat(p Plan, taskType, driverSide, indent st
 	}
 
 	switch x := p.(type) {
-	case *PhysicalTableReader:
+	case *PhysicalTableGather:
 		var storeType string
 		switch x.StoreType {
 		case kv.TiKV, kv.TiFlash, kv.TiDB:
@@ -1171,7 +1171,7 @@ func (e *Explain) prepareTaskDot(p PhysicalPlan, taskTp string, buffer *bytes.Bu
 	for planQueue := []PhysicalPlan{p}; len(planQueue) > 0; planQueue = planQueue[1:] {
 		curPlan := planQueue[0]
 		switch copPlan := curPlan.(type) {
-		case *PhysicalTableReader:
+		case *PhysicalTableGather:
 			pipelines = append(pipelines, fmt.Sprintf("\"%s\" -> \"%s\"\n", copPlan.ExplainID(), copPlan.tablePlan.ExplainID()))
 			copTasks = append(copTasks, copPlan.tablePlan)
 		case *PhysicalIndexReader:
@@ -1226,7 +1226,7 @@ func IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx sessionctx.Context, p Plan) (bo
 	case *PhysicalIndexReader:
 		indexScan := v.IndexPlans[0].(*PhysicalIndexScan)
 		return indexScan.IsPointGetByUniqueKey(ctx.GetSessionVars().StmtCtx), nil
-	case *PhysicalTableReader:
+	case *PhysicalTableGather:
 		tableScan := v.TablePlans[0].(*PhysicalTableScan)
 		isPointRange := len(tableScan.Ranges) == 1 && tableScan.Ranges[0].IsPoint(ctx.GetSessionVars().StmtCtx)
 		if !isPointRange {

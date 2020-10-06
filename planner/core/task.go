@@ -761,7 +761,7 @@ func finishCopTask(ctx sessionctx.Context, task task) task {
 			}
 		}
 		ts := tp.(*PhysicalTableScan)
-		p := PhysicalTableReader{
+		p := PhysicalTableGather{
 			tablePlan:      t.tablePlan,
 			StoreType:      ts.StoreType,
 			IsCommonHandle: ts.Table.IsCommonHandle,

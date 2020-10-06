@@ -1329,7 +1329,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderSplitAvg(c *C) {
 }
 
 func testDAGPlanBuilderSplitAvg(c *C, root core.PhysicalPlan) {
-	if p, ok := root.(*core.PhysicalTableReader); ok {
+	if p, ok := root.(*core.PhysicalTableGather); ok {
 		if p.TablePlans != nil {
 			baseAgg := p.TablePlans[len(p.TablePlans)-1]
 			if agg, ok := baseAgg.(*core.PhysicalHashAgg); ok {

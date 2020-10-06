@@ -53,14 +53,14 @@ func (impl *MemTableScanImpl) CalcCost(outCount float64, children ...memo.Implem
 	return 0
 }
 
-// TableReaderImpl implementation of PhysicalTableReader.
+// TableReaderImpl implementation of PhysicalTableGather.
 type TableReaderImpl struct {
 	baseImpl
 	tblColHists *statistics.HistColl
 }
 
 // NewTableReaderImpl creates a new table reader Implementation.
-func NewTableReaderImpl(reader *plannercore.PhysicalTableReader, hists *statistics.HistColl) *TableReaderImpl {
+func NewTableReaderImpl(reader *plannercore.PhysicalTableGather, hists *statistics.HistColl) *TableReaderImpl {
 	base := baseImpl{plan: reader}
 	impl := &TableReaderImpl{
 		baseImpl:    base,
@@ -71,7 +71,7 @@ func NewTableReaderImpl(reader *plannercore.PhysicalTableReader, hists *statisti
 
 // CalcCost calculates the cost of the table reader Implementation.
 func (impl *TableReaderImpl) CalcCost(outCount float64, children ...memo.Implementation) float64 {
-	reader := impl.plan.(*plannercore.PhysicalTableReader)
+	reader := impl.plan.(*plannercore.PhysicalTableGather)
 	width := impl.tblColHists.GetAvgRowSize(impl.plan.SCtx(), reader.Schema().Columns, false, false)
 	sessVars := reader.SCtx().GetSessionVars()
 	networkCost := outCount * sessVars.NetworkFactor * width
@@ -86,7 +86,7 @@ func (impl *TableReaderImpl) CalcCost(outCount float64, children ...memo.Impleme
 
 // GetCostLimit implements Implementation interface.
 func (impl *TableReaderImpl) GetCostLimit(costLimit float64, children ...memo.Implementation) float64 {
-	reader := impl.plan.(*plannercore.PhysicalTableReader)
+	reader := impl.plan.(*plannercore.PhysicalTableGather)
 	sessVars := reader.SCtx().GetSessionVars()
 	copIterWorkers := float64(sessVars.DistSQLScanConcurrency())
 	if math.MaxFloat64/copIterWorkers < costLimit {
