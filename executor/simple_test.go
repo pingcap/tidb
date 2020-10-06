@@ -526,7 +526,7 @@ func (s *testSuite3) TestKillStmt(c *C) {
 	result = tk.MustQuery("show warnings")
 	result.Check(testkit.Rows())
 
-	// TODO: remote kill
+	// remote kill is tested in `cmd/globalkilltest`
 }
 
 func (s *testSuite3) TestFlushPrivileges(c *C) {

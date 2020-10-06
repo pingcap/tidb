@@ -237,7 +237,7 @@ func (s *TestGlobalKillSuite) killByCtrlC(c *C, port int, sleepTime int) time.Du
 			return
 		}
 
-		elapsed := time.Now().Sub(startTS)
+		elapsed := time.Since(startTS)
 		log.Infof("mysql cli takes: %v", elapsed)
 		ch <- sleepResult{elapsed: elapsed}
 	}()
@@ -271,7 +271,7 @@ func sleepRoutine(ctx context.Context, sleepTime int, conn *sql.Conn, connID uin
 		return
 	}
 
-	elapsed := time.Now().Sub(startTS)
+	elapsed := time.Since(startTS)
 	log.Infof("sleepRoutine takes %v", elapsed)
 	ch <- sleepResult{elapsed: elapsed}
 }
