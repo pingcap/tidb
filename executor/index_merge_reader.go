@@ -93,6 +93,10 @@ type IndexMergeReaderExecutor struct {
 	// checkIndexValue is used to check the consistency of the index data.
 	*checkIndexValue
 
+	hasGlobalIndex bool
+	// skipGlobalIndex indicates whether global indexes has been read (when reading first partition).
+	skipGlobalIndex bool
+
 	corColInIdxSide bool
 	partialPlans    [][]plannercore.PhysicalPlan
 	corColInTblSide bool
@@ -102,13 +106,16 @@ type IndexMergeReaderExecutor struct {
 	colLens         [][]int
 
 	handleCols plannercore.HandleCols
+
+	// handleMaps use to temporarily store handles read from global indexes.
+	handleMaps map[int64]*kv.HandleMap
 }
 
 // Open implements the Executor Open interface
 func (e *IndexMergeReaderExecutor) Open(ctx context.Context) error {
 	e.keyRanges = make([][]kv.KeyRange, 0, len(e.partialPlans))
 	for i, plan := range e.partialPlans {
-		_, ok := plan[0].(*plannercore.PhysicalIndexScan)
+		is, ok := plan[0].(*plannercore.PhysicalIndexScan)
 		if !ok {
 			if e.table.Meta().IsCommonHandle {
 				keyRanges, err := distsql.CommonHandleRangesToKVRanges(e.ctx.GetSessionVars().StmtCtx, []int64{getPhysicalTableID(e.table)}, e.ranges[i])
@@ -121,7 +128,14 @@ func (e *IndexMergeReaderExecutor) Open(ctx context.Context) error {
 			}
 			continue
 		}
-		keyRange, err := distsql.IndexRangesToKVRanges(e.ctx.GetSessionVars().StmtCtx, getPhysicalTableID(e.table), e.indexes[i].ID, e.ranges[i], e.feedbacks[i])
+		var pid int64
+		if is.Index.Global {
+			e.hasGlobalIndex = true
+			pid = e.table.Meta().ID
+		} else {
+			pid = getPhysicalTableID(e.table)
+		}
+		keyRange, err := distsql.IndexRangesToKVRanges(e.ctx.GetSessionVars().StmtCtx, pid, e.indexes[i].ID, e.ranges[i], e.feedbacks[i])
 		if err != nil {
 			return err
 		}
@@ -129,6 +143,12 @@ func (e *IndexMergeReaderExecutor) Open(ctx context.Context) error {
 	}
 	e.finished = make(chan struct{})
 	e.resultCh = make(chan *lookupTableTask, atomic.LoadInt32(&LookupTableTaskChannelSize))
+	if e.hasGlobalIndex && !e.skipGlobalIndex {
+		e.handleMaps = make(map[int64]*kv.HandleMap)
+		for _, p := range e.table.Meta().GetPartitionInfo().Definitions {
+			e.handleMaps[p.ID] = kv.NewHandleMap()
+		}
+	}
 	return nil
 }
 
@@ -142,10 +162,14 @@ func (e *IndexMergeReaderExecutor) startWorkers(ctx context.Context) error {
 	var err error
 	var partialWorkerWg sync.WaitGroup
 	for i := 0; i < len(e.keyRanges); i++ {
-		partialWorkerWg.Add(1)
 		if e.indexes[i] != nil {
+			if e.indexes[i].Global && e.skipGlobalIndex {
+				continue
+			}
+			partialWorkerWg.Add(1)
 			err = e.startPartialIndexWorker(ctx, exitCh, fetchCh, i, &partialWorkerWg, e.keyRanges[i])
 		} else {
+			partialWorkerWg.Add(1)
 			err = e.startPartialTableWorker(ctx, exitCh, fetchCh, i, &partialWorkerWg)
 		}
 		if err != nil {
@@ -160,6 +184,7 @@ func (e *IndexMergeReaderExecutor) startWorkers(ctx context.Context) error {
 	}
 	e.startIndexMergeTableScanWorker(ctx, workCh)
 	e.workerStarted = true
+	e.skipGlobalIndex = true
 	return nil
 }
 
@@ -169,7 +194,11 @@ func (e *IndexMergeReaderExecutor) waitPartialWorkersAndCloseFetchChan(partialWo
 }
 
 func (e *IndexMergeReaderExecutor) startIndexMergeProcessWorker(ctx context.Context, workCh chan<- *lookupTableTask, fetch <-chan *lookupTableTask) {
-	idxMergeProcessWorker := &indexMergeProcessWorker{}
+	idxMergeProcessWorker := &indexMergeProcessWorker{
+		handleMaps:         e.handleMaps,
+		physicalTableID:    getPhysicalTableID(e.table),
+		processGlobalIndex: e.hasGlobalIndex && !e.skipGlobalIndex,
+	}
 	e.processWokerWg.Add(1)
 	go func() {
 		defer trace.StartRegion(ctx, "IndexMergeProcessWorker").End()
@@ -203,7 +232,9 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 		return err
 	}
 
-	result, err := distsql.SelectWithRuntimeStats(ctx, e.ctx, kvReq, e.handleCols.GetFieldsTypes(), e.feedbacks[workID], getPhysicalPlanIDs(e.partialPlans[workID]), e.id)
+	global := e.indexes[workID].Global
+	fieldsTypes := e.handleCols.GetFieldsTypesOfPartitionedTableIndex(global)
+	result, err := distsql.SelectWithRuntimeStats(ctx, e.ctx, kvReq, fieldsTypes, e.feedbacks[workID], getPhysicalPlanIDs(e.partialPlans[workID]), e.id)
 	if err != nil {
 		return err
 	}
@@ -214,6 +245,7 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 		batchSize:    e.maxChunkSize,
 		maxBatchSize: e.ctx.GetSessionVars().IndexLookupSize,
 		maxChunkSize: e.maxChunkSize,
+		global:       global,
 	}
 
 	if worker.batchSize > worker.maxBatchSize {
@@ -505,6 +537,9 @@ func (e *IndexMergeReaderExecutor) Close() error {
 }
 
 type indexMergeProcessWorker struct {
+	handleMaps         map[int64]*kv.HandleMap
+	physicalTableID    int64
+	processGlobalIndex bool
 }
 
 func (w *indexMergeProcessWorker) fetchLoop(ctx context.Context, fetchCh <-chan *lookupTableTask,
@@ -514,15 +549,57 @@ func (w *indexMergeProcessWorker) fetchLoop(ctx context.Context, fetchCh <-chan 
 		close(resultCh)
 	}()
 
-	distinctHandles := kv.NewHandleMap()
+	var distinctHandles *kv.HandleMap
+	if w.handleMaps != nil {
+		distinctHandles = w.handleMaps[w.physicalTableID]
+		// Process handles read from global indexes.
+		fhs := make([]kv.Handle, 0, 8)
+		distinctHandles.Range(func(h kv.Handle, val interface{}) bool {
+			fhs = append(fhs, h)
+			return true
+		})
+		if len(fhs) != 0 {
+			task := &lookupTableTask{
+				handles: fhs,
+				doneCh:  make(chan error, 1),
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-finished:
+				return
+			case workCh <- task:
+				resultCh <- task
+			}
+		}
+	} else {
+		distinctHandles = kv.NewHandleMap()
+	}
 
 	for task := range fetchCh {
 		handles := task.handles
+		if len(handles) == 0 {
+			continue
+		}
 		fhs := make([]kv.Handle, 0, 8)
-		for _, h := range handles {
-			if _, ok := distinctHandles.Get(h); !ok {
-				fhs = append(fhs, h)
-				distinctHandles.Set(h, true)
+		_, ok := handles[0].(kv.PartitionHandle)
+		if w.processGlobalIndex && ok {
+			for _, ph := range handles {
+				h := ph.(kv.PartitionHandle).Handle
+				pid := ph.(kv.PartitionHandle).PartitionID
+				if _, ok := w.handleMaps[pid].Get(h); !ok {
+					if pid == w.physicalTableID {
+						fhs = append(fhs, h)
+					}
+					w.handleMaps[pid].Set(h, true)
+				}
+			}
+		} else {
+			for _, h := range handles {
+				if _, ok := distinctHandles.Get(h); !ok {
+					fhs = append(fhs, h)
+					distinctHandles.Set(h, true)
+				}
 			}
 		}
 		if len(fhs) == 0 {
@@ -564,6 +641,7 @@ type partialIndexWorker struct {
 	batchSize    int
 	maxBatchSize int
 	maxChunkSize int
+	global       bool
 }
 
 func (w *partialIndexWorker) fetchHandles(
@@ -574,7 +652,7 @@ func (w *partialIndexWorker) fetchHandles(
 	resultCh chan<- *lookupTableTask,
 	finished <-chan struct{},
 	handleCols plannercore.HandleCols) (count int64, err error) {
-	chk := chunk.NewChunkWithCapacity(handleCols.GetFieldsTypes(), w.maxChunkSize)
+	chk := chunk.NewChunkWithCapacity(handleCols.GetFieldsTypesOfPartitionedTableIndex(w.global), w.maxChunkSize)
 	for {
 		handles, retChunk, err := w.extractTaskHandles(ctx, chk, result, handleCols)
 		if err != nil {
@@ -615,7 +693,9 @@ func (w *partialIndexWorker) extractTaskHandles(ctx context.Context, chk *chunk.
 			return handles, retChk, nil
 		}
 		for i := 0; i < chk.NumRows(); i++ {
-			handle, err := handleCols.BuildHandleFromIndexRow(chk.GetRow(i))
+			var handle kv.Handle
+			var err error
+			handle, err = handleCols.BuildHandleFromPartitionedTableIndexRow(chk.GetRow(i), w.global)
 			if err != nil {
 				return nil, nil, err
 			}

@@ -200,3 +200,49 @@ partition p2 values less than (10))`)
 	tk.MustExec("insert into p values (1,3), (3,4), (5,6), (7,9)")
 	tk.MustQuery("select * from p use index (idx)").Check(testkit.Rows("1 3", "3 4", "5 6", "7 9"))
 }
+
+func (s *globalIndexSuite) TestIndexMergeReaderWithGlobalIndex(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec(`create table t1 (id int primary key, a int, b int, c int, d int)
+	partition by range (id) (
+		partition p0 values less than (3),
+		partition p1 values less than (6),
+		partition p2 values less than (10)
+	)`)
+	tk.MustExec("create index t1a on t1(a)")
+	tk.MustExec("create index t1b on t1(b)")
+	tk.MustExec("insert into t1 values(1,1,1,1,1),(2,2,2,2,2),(3,3,3,3,3),(4,4,4,4,4),(5,5,5,5,5)")
+	tk.MustQuery("select /*+ use_index_merge(t1, primary, t1a) */ * from t1 where id < 2 or a > 4 order by id").Check(testkit.Rows("1 1 1 1 1",
+		"5 5 5 5 5"))
+	tk.MustQuery("select /*+ use_index_merge(t1, primary, t1a) */ a from t1 where id < 2 or a > 4 order by a").Check(testkit.Rows("1",
+		"5"))
+	tk.MustQuery("select /*+ use_index_merge(t1, primary, t1a) */ sum(a) from t1 where id < 2 or a > 4").Check(testkit.Rows("6"))
+	tk.MustQuery("select /*+ use_index_merge(t1, t1a, t1b) */ * from t1 where a < 2 or b > 4 order by a").Check(testkit.Rows("1 1 1 1 1",
+		"5 5 5 5 5"))
+	tk.MustQuery("select /*+ use_index_merge(t1, t1a, t1b) */ a from t1 where a < 2 or b > 4 order by a").Check(testkit.Rows("1",
+		"5"))
+	tk.MustQuery("select /*+ use_index_merge(t1, t1a, t1b) */ sum(a) from t1 where a < 2 or b > 4").Check(testkit.Rows("6"))
+
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec(`create table t1 (id int primary key, a int, b int, c int, d int)
+	partition by range (id) (
+		partition p0 values less than (4),
+		partition p1 values less than (7),
+		partition p2 values less than (10)
+	)`)
+	tk.MustExec("create index t1a on t1(a)")
+	tk.MustExec("create index t1b on t1(b)")
+	tk.MustExec(`create table t2 (id int primary key, a int)
+	partition by range (id) (
+		partition p0 values less than (4),
+		partition p1 values less than (7),
+		partition p2 values less than (10)
+	)`)
+	tk.MustExec("create index t2a on t2(a)")
+	tk.MustExec("insert into t1 values(1,1,1,1,1),(2,2,2,2,2),(3,3,3,3,3),(4,4,4,4,4),(5,5,5,5,5)")
+	tk.MustExec("insert into t2 values(1,1),(5,5)")
+	tk.MustQuery("select /*+ use_index_merge(t1, t1a, t1b) */ sum(t1.a) from t1 join t2 on t1.id = t2.id where t1.a < 2 or t1.b > 4").Check(testkit.Rows("6"))
+	tk.MustQuery("select /*+ use_index_merge(t1, t1a, t1b) */ sum(t1.a) from t1 join t2 on t1.id = t2.id where t1.a < 2 or t1.b > 5").Check(testkit.Rows("1"))
+
+}

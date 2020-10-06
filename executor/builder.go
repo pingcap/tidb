@@ -2809,13 +2809,13 @@ func buildTableReq(b *executorBuilder, schemaLen int, plans []plannercore.Physic
 	return tableReq, tableStreaming, tbl, err
 }
 
-func buildIndexReq(b *executorBuilder, schemaLen, handleLen int, plans []plannercore.PhysicalPlan) (dagReq *tipb.DAGRequest, streaming bool, err error) {
+func buildIndexReq(b *executorBuilder, schemaLen, handleAndPidLen int, plans []plannercore.PhysicalPlan) (dagReq *tipb.DAGRequest, streaming bool, err error) {
 	indexReq, indexStreaming, err := b.constructDAGReq(plans, kv.TiKV)
 	if err != nil {
 		return nil, false, err
 	}
 	indexReq.OutputOffsets = []uint32{}
-	for i := 0; i < handleLen; i++ {
+	for i := 0; i < handleAndPidLen; i++ {
 		indexReq.OutputOffsets = append(indexReq.OutputOffsets, uint32(schemaLen+i))
 	}
 	if len(indexReq.OutputOffsets) == 0 {
@@ -2824,19 +2824,24 @@ func buildIndexReq(b *executorBuilder, schemaLen, handleLen int, plans []planner
 	return indexReq, indexStreaming, err
 }
 
+func getHandleAndPidLen(commonHandleLen int, global bool) int {
+	var ret int
+	if commonHandleLen != 0 {
+		ret = commonHandleLen
+	} else {
+		// int handle
+		ret = 1
+	}
+	if global {
+		ret++
+	}
+	return ret
+}
+
 func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIndexLookUpReader) (*IndexLookUpExecutor, error) {
 	is := v.IndexPlans[0].(*plannercore.PhysicalIndexScan)
-	var handleLen int
-	if len(v.CommonHandleCols) != 0 {
-		handleLen = len(v.CommonHandleCols)
-	} else {
-		handleLen = 1
-	}
-	if is.Index.Global {
-		// Should output pid col.
-		handleLen++
-	}
-	indexReq, indexStreaming, err := buildIndexReq(b, len(is.Index.Columns), handleLen, v.IndexPlans)
+	handleAndPidLen := getHandleAndPidLen(len(v.CommonHandleCols), is.Index.Global)
+	indexReq, indexStreaming, err := buildIndexReq(b, len(is.Index.Columns), handleAndPidLen, v.IndexPlans)
 	if err != nil {
 		return nil, err
 	}
@@ -2961,7 +2966,8 @@ func buildNoRangeIndexMergeReader(b *executorBuilder, v *plannercore.PhysicalInd
 		feedbacks = append(feedbacks, feedback)
 
 		if is, ok := v.PartialPlans[i][0].(*plannercore.PhysicalIndexScan); ok {
-			tempReq, tempStreaming, err = buildIndexReq(b, len(is.Index.Columns), ts.HandleCols.NumCols(), v.PartialPlans[i])
+			handleAndPidLen := getHandleAndPidLen(ts.HandleCols.NumCols(), is.Index.Global)
+			tempReq, tempStreaming, err = buildIndexReq(b, len(is.Index.Columns), handleAndPidLen, v.PartialPlans[i])
 			keepOrders = append(keepOrders, is.KeepOrder)
 			descs = append(descs, is.Desc)
 			indexes = append(indexes, is.Index)

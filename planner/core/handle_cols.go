@@ -35,6 +35,10 @@ type HandleCols interface {
 	BuildHandleByDatums(row []types.Datum) (kv.Handle, error)
 	// BuildHandleFromIndexRow builds a Handle from index row data.
 	BuildHandleFromIndexRow(row chunk.Row) (kv.Handle, error)
+	// BuildHandleFromPartitionedTableIndexRow builds a Handle from index row data of partitioned table.
+	// If global is true, partition ID will be decoded from the last column, and return PartitionHandle,
+	// otherwise return value is the same as BuildHandleFromIndexRow.
+	BuildHandleFromPartitionedTableIndexRow(row chunk.Row, global bool) (kv.Handle, error)
 	// ResolveIndices resolves handle column indices.
 	ResolveIndices(schema *expression.Schema) (HandleCols, error)
 	// IsInt returns if the HandleCols is a single tnt column.
@@ -49,6 +53,9 @@ type HandleCols interface {
 	Compare(a, b []types.Datum) (int, error)
 	// GetFieldTypes return field types of columns
 	GetFieldsTypes() []*types.FieldType
+	// GetFieldsTypesOfPartitionedTableIndex return field types of columns,
+	// if global is true, partition ID column will append to the end.
+	GetFieldsTypesOfPartitionedTableIndex(global bool) []*types.FieldType
 }
 
 // CommonHandleCols implements the kv.HandleCols interface.
@@ -84,6 +91,27 @@ func (cb *CommonHandleCols) BuildHandleFromIndexRow(row chunk.Row) (kv.Handle, e
 		datumBuf = append(datumBuf, row.GetDatum(row.Len()-cb.NumCols()+i, cb.columns[i].RetType))
 	}
 	return cb.buildHandleByDatumsBuffer(datumBuf)
+}
+
+// BuildHandleFromPartitionedTableIndexRow implements the kv.HandleCols interface.
+func (cb *CommonHandleCols) BuildHandleFromPartitionedTableIndexRow(row chunk.Row, global bool) (kv.Handle, error) {
+	handleColsOffset := row.Len() - cb.NumCols()
+	if global {
+		handleColsOffset--
+	}
+	datumBuf := make([]types.Datum, 0, 4)
+	for i := 0; i < cb.NumCols(); i++ {
+		datumBuf = append(datumBuf, row.GetDatum(handleColsOffset+i, cb.columns[i].RetType))
+	}
+	h, err := cb.buildHandleByDatumsBuffer(datumBuf)
+	if err != nil {
+		return h, err
+	}
+	if global {
+		pid := row.GetInt64(row.Len() - 1)
+		h = kv.NewPartitionHandle(pid, h)
+	}
+	return h, nil
 }
 
 // BuildHandleByDatums implements the kv.HandleCols interface.
@@ -167,6 +195,18 @@ func (cb *CommonHandleCols) GetFieldsTypes() []*types.FieldType {
 	return fieldTps
 }
 
+// GetFieldsTypesOfPartitionedTableIndex implements the kv.HandleCols interface.
+func (cb *CommonHandleCols) GetFieldsTypesOfPartitionedTableIndex(global bool) []*types.FieldType {
+	fieldTps := make([]*types.FieldType, 0, len(cb.columns)+1)
+	for _, col := range cb.columns {
+		fieldTps = append(fieldTps, col.RetType)
+	}
+	if global {
+		fieldTps = append(fieldTps, types.NewFieldType(mysql.TypeLonglong))
+	}
+	return fieldTps
+}
+
 // NewCommonHandleCols creates a new CommonHandleCols.
 func NewCommonHandleCols(sc *stmtctx.StatementContext, tblInfo *model.TableInfo, idxInfo *model.IndexInfo,
 	tableColumns []*expression.Column) *CommonHandleCols {
@@ -195,6 +235,21 @@ func (ib *IntHandleCols) BuildHandle(row chunk.Row) (kv.Handle, error) {
 // BuildHandleFromIndexRow implements the kv.HandleCols interface.
 func (ib *IntHandleCols) BuildHandleFromIndexRow(row chunk.Row) (kv.Handle, error) {
 	return kv.IntHandle(row.GetInt64(row.Len() - 1)), nil
+}
+
+// BuildHandleFromPartitionedTableIndexRow implements the kv.HandleCols interface.
+func (ib *IntHandleCols) BuildHandleFromPartitionedTableIndexRow(row chunk.Row, global bool) (kv.Handle, error) {
+	handleColsOffset := row.Len() - 1
+	if global {
+		handleColsOffset--
+	}
+	var h kv.Handle
+	h = kv.IntHandle(row.GetInt64(handleColsOffset))
+	if global {
+		pid := row.GetInt64(row.Len() - 1)
+		h = kv.NewPartitionHandle(pid, h)
+	}
+	return h, nil
 }
 
 // BuildHandleByDatums implements the kv.HandleCols interface.
@@ -250,6 +305,15 @@ func (ib *IntHandleCols) Compare(a, b []types.Datum) (int, error) {
 // GetFieldsTypes implements the kv.HandleCols interface.
 func (ib *IntHandleCols) GetFieldsTypes() []*types.FieldType {
 	return []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}
+}
+
+// GetFieldsTypesOfPartitionedTableIndex implements the kv.HandleCols interface.
+func (ib *IntHandleCols) GetFieldsTypesOfPartitionedTableIndex(global bool) []*types.FieldType {
+	fieldTps := []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}
+	if global {
+		fieldTps = append(fieldTps, types.NewFieldType(mysql.TypeLonglong))
+	}
+	return fieldTps
 }
 
 // NewIntHandleCols creates a new IntHandleCols.
