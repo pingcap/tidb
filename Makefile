@@ -251,9 +251,9 @@ else
 	$(GOBUILDCOVERAGE) $(RACE_FLAG) -ldflags '$(LDFLAGS) $(COVERAGE_SERVER_LDFLAGS) $(CHECK_FLAG)' -o '$(TARGET)'
 endif
 
-server_global_kill_test:
+server_globalkilltest:
 ifeq ($(TARGET), "")
-	CGO_ENABLED=1 $(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS) $(GLOBAL_KILL_TEST_SERVER_LDFLAGS) $(CHECK_FLAG)' -o bin/tidb-server-global-kill-test tidb-server/main.go
+	CGO_ENABLED=1 $(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS) $(GLOBAL_KILL_TEST_SERVER_LDFLAGS) $(CHECK_FLAG)' -o cmd/globalkilltest/bin/globalkilltest_tidb-server tidb-server/main.go
 else
 	CGO_ENABLED=1 $(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS) $(GLOBAL_KILL_TEST_SERVER_LDFLAGS) $(CHECK_FLAG)' -o '$(TARGET)' tidb-server/main.go
 endif
