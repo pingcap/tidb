@@ -7404,19 +7404,6 @@ func (s *testIntegrationSuite) TestIssue17767(c *C) {
 	tk.MustExec("rollback")
 }
 
-func (s *testIntegrationSuite) TestIssue20327(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("create table t(a int, b char(10) as ('a'));")
-	result := tk.MustQuery("show create table t;").Rows()[0][1]
-	c.Assert(result, Matches, `(?s).*GENERATED ALWAYS AS \(_utf8mb4'a'\).*`)
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("create table t(a int, b char(10) as (_utf8'a'));")
-	result = tk.MustQuery("show create table t;").Rows()[0][1]
-	c.Assert(result, Matches, `(?s).*GENERATED ALWAYS AS \(_utf8'a'\).*`)
-}
-
 func (s *testIntegrationSuite) TestIssue19596(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
