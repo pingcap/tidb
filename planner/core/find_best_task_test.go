@@ -45,7 +45,7 @@ func (ds mockDataSource) Init(ctx sessionctx.Context) *mockDataSource {
 func (ds *mockDataSource) findBestTask(prop *property.PhysicalProperty, planCounter *PlanCounterTp) (task, int64, error) {
 	// It can satisfy any of the property!
 	// Just use a TableDual for convenience.
-	p := PhysicalTableDual{}.Init(ds.ctx, &property.StatsInfo{RowCount: 1}, 0)
+	p := PhysicalDualScan{}.Init(ds.ctx, &property.StatsInfo{RowCount: 1}, 0)
 	task := &rootTask{
 		p:   p,
 		cst: 10000,

@@ -173,8 +173,8 @@ func (p LogicalDualScan) Init(ctx sessionctx.Context, offset int) *LogicalDualSc
 	return &p
 }
 
-// Init initializes PhysicalTableDual.
-func (p PhysicalTableDual) Init(ctx sessionctx.Context, stats *property.StatsInfo, offset int) *PhysicalTableDual {
+// Init initializes PhysicalDualScan.
+func (p PhysicalDualScan) Init(ctx sessionctx.Context, stats *property.StatsInfo, offset int) *PhysicalDualScan {
 	p.basePhysicalPlan = newBasePhysicalPlan(ctx, plancodec.TypeDual, &p, offset)
 	p.stats = stats
 	return &p

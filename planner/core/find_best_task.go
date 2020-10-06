@@ -139,7 +139,7 @@ func (p *LogicalDualScan) findBestTask(prop *property.PhysicalProperty, planCoun
 	if (!prop.IsEmpty() && p.RowCount > 1) || planCounter.Empty() {
 		return invalidTask, 0, nil
 	}
-	dual := PhysicalTableDual{
+	dual := PhysicalDualScan{
 		RowCount: p.RowCount,
 	}.Init(p.ctx, p.stats, p.blockOffset)
 	dual.SetSchema(p.schema)
@@ -392,7 +392,7 @@ func (ds *DataSource) tryToGetDualTask() (task, error) {
 				return nil, err
 			}
 			if !result {
-				dual := PhysicalTableDual{}.Init(ds.ctx, ds.stats, ds.blockOffset)
+				dual := PhysicalDualScan{}.Init(ds.ctx, ds.stats, ds.blockOffset)
 				dual.SetSchema(ds.schema)
 				return &rootTask{
 					p: dual,
@@ -664,7 +664,7 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 		}
 		// if we already know the range of the scan is empty, just return a TableDual
 		if len(path.Ranges) == 0 && !ds.ctx.GetSessionVars().StmtCtx.UseCache {
-			dual := PhysicalTableDual{}.Init(ds.ctx, ds.stats, ds.blockOffset)
+			dual := PhysicalDualScan{}.Init(ds.ctx, ds.stats, ds.blockOffset)
 			dual.SetSchema(ds.schema)
 			cntPlan += 1
 			planCounter.Dec(1)

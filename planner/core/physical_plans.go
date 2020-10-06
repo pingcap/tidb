@@ -37,7 +37,7 @@ var (
 	_ PhysicalPlan = &PhysicalProject{}
 	_ PhysicalPlan = &PhysicalTopN{}
 	_ PhysicalPlan = &PhysicalMaxOneRow{}
-	_ PhysicalPlan = &PhysicalTableDual{}
+	_ PhysicalPlan = &PhysicalDualScan{}
 	_ PhysicalPlan = &PhysicalUnionAll{}
 	_ PhysicalPlan = &PhysicalSort{}
 	_ PhysicalPlan = &NominalSort{}
@@ -1091,8 +1091,8 @@ type PhysicalMaxOneRow struct {
 	basePhysicalPlan
 }
 
-// PhysicalTableDual is the physical operator of dual.
-type PhysicalTableDual struct {
+// PhysicalDualScan is the physical operator of dual.
+type PhysicalDualScan struct {
 	physicalSchemaProducer
 
 	RowCount int
@@ -1103,12 +1103,12 @@ type PhysicalTableDual struct {
 }
 
 // OutputNames returns the outputting names of each column.
-func (p *PhysicalTableDual) OutputNames() types.NameSlice {
+func (p *PhysicalDualScan) OutputNames() types.NameSlice {
 	return p.names
 }
 
 // SetOutputNames sets the outputting name by the given slice.
-func (p *PhysicalTableDual) SetOutputNames(names types.NameSlice) {
+func (p *PhysicalDualScan) SetOutputNames(names types.NameSlice) {
 	p.names = names
 }
 

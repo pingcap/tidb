@@ -23,13 +23,13 @@ import (
 	"github.com/pingcap/tidb/statistics"
 )
 
-// TableDualImpl implementation of PhysicalTableDual.
+// TableDualImpl implementation of PhysicalDualScan.
 type TableDualImpl struct {
 	baseImpl
 }
 
 // NewTableDualImpl creates a new table dual Implementation.
-func NewTableDualImpl(dual *plannercore.PhysicalTableDual) *TableDualImpl {
+func NewTableDualImpl(dual *plannercore.PhysicalDualScan) *TableDualImpl {
 	return &TableDualImpl{baseImpl{plan: dual}}
 }
 
@@ -38,7 +38,7 @@ func (impl *TableDualImpl) CalcCost(outCount float64, children ...memo.Implement
 	return 0
 }
 
-// MemTableScanImpl implementation of PhysicalTableDual.
+// MemTableScanImpl implementation of PhysicalDualScan.
 type MemTableScanImpl struct {
 	baseImpl
 }

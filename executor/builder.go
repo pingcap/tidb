@@ -196,7 +196,7 @@ func (b *executorBuilder) build(p plannercore.Plan) Executor {
 		return b.buildProjection(v)
 	case *plannercore.PhysicalMemTableScan:
 		return b.buildMemTable(v)
-	case *plannercore.PhysicalTableDual:
+	case *plannercore.PhysicalDualScan:
 		return b.buildTableDual(v)
 	case *plannercore.PhysicalApply:
 		return b.buildApply(v)
@@ -1334,7 +1334,7 @@ func (b *executorBuilder) buildProjection(v *plannercore.PhysicalProject) Execut
 	return e
 }
 
-func (b *executorBuilder) buildTableDual(v *plannercore.PhysicalTableDual) Executor {
+func (b *executorBuilder) buildTableDual(v *plannercore.PhysicalDualScan) Executor {
 	if v.RowCount != 0 && v.RowCount != 1 {
 		b.err = errors.Errorf("buildTableDual failed, invalid row count for dual table: %v", v.RowCount)
 		return nil

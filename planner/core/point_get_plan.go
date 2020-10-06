@@ -420,7 +420,7 @@ func TryFastPlan(ctx sessionctx.Context, node ast.Node) (p Plan) {
 				return nil
 			}
 			if fp.IsTableDual {
-				tableDual := PhysicalTableDual{}
+				tableDual := PhysicalDualScan{}
 				tableDual.names = fp.outputNames
 				tableDual.SetSchema(fp.Schema())
 				p = tableDual.Init(ctx, &property.StatsInfo{}, 0)
@@ -1079,7 +1079,7 @@ func tryUpdatePointPlan(ctx sessionctx.Context, updateStmt *ast.UpdateStmt) Plan
 	pointGet := tryPointGetPlan(ctx, selStmt)
 	if pointGet != nil {
 		if pointGet.IsTableDual {
-			return PhysicalTableDual{
+			return PhysicalDualScan{
 				names: pointGet.outputNames,
 			}.Init(ctx, &property.StatsInfo{}, 0)
 		}
@@ -1171,7 +1171,7 @@ func tryDeletePointPlan(ctx sessionctx.Context, delStmt *ast.DeleteStmt) Plan {
 	}
 	if pointGet := tryPointGetPlan(ctx, selStmt); pointGet != nil {
 		if pointGet.IsTableDual {
-			return PhysicalTableDual{
+			return PhysicalDualScan{
 				names: pointGet.outputNames,
 			}.Init(ctx, &property.StatsInfo{}, 0)
 		}

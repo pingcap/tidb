@@ -425,7 +425,7 @@ func (p *PhysicalProject) ExplainNormalizedInfo() string {
 }
 
 // ExplainInfo implements Plan interface.
-func (p *PhysicalTableDual) ExplainInfo() string {
+func (p *PhysicalDualScan) ExplainInfo() string {
 	return fmt.Sprintf("rows:%v", p.RowCount)
 }
 
