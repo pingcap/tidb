@@ -20,12 +20,12 @@ import (
 )
 
 func (s *testMemoSuite) TestNewExprIterFromGroupElem(c *C) {
-	g0 := NewGroupWithSchema(NewGroupExpr(plannercore.LogicalSelection{}.Init(s.sctx, 0)), s.schema)
+	g0 := NewGroupWithSchema(NewGroupExpr(plannercore.LogicalFilter{}.Init(s.sctx, 0)), s.schema)
 	g0.Insert(NewGroupExpr(plannercore.LogicalLimit{}.Init(s.sctx, 0)))
 	g0.Insert(NewGroupExpr(plannercore.LogicalProject{}.Init(s.sctx, 0)))
 	g0.Insert(NewGroupExpr(plannercore.LogicalLimit{}.Init(s.sctx, 0)))
 
-	g1 := NewGroupWithSchema(NewGroupExpr(plannercore.LogicalSelection{}.Init(s.sctx, 0)), s.schema)
+	g1 := NewGroupWithSchema(NewGroupExpr(plannercore.LogicalFilter{}.Init(s.sctx, 0)), s.schema)
 	g1.Insert(NewGroupExpr(plannercore.LogicalLimit{}.Init(s.sctx, 0)))
 	g1.Insert(NewGroupExpr(plannercore.LogicalProject{}.Init(s.sctx, 0)))
 	g1.Insert(NewGroupExpr(plannercore.LogicalLimit{}.Init(s.sctx, 0)))
@@ -71,15 +71,15 @@ func (s *testMemoSuite) TestExprIterNext(c *C) {
 		plannercore.LogicalProject{Exprs: []expression.Expression{expression.NewNull()}}.Init(s.sctx, 0)))
 
 	g1 := NewGroupWithSchema(NewGroupExpr(
-		plannercore.LogicalSelection{Conditions: []expression.Expression{expression.NewNull()}}.Init(s.sctx, 0)), s.schema)
+		plannercore.LogicalFilter{Conditions: []expression.Expression{expression.NewNull()}}.Init(s.sctx, 0)), s.schema)
 	g1.Insert(NewGroupExpr(
 		plannercore.LogicalLimit{Count: 3}.Init(s.sctx, 0)))
 	g1.Insert(NewGroupExpr(
-		plannercore.LogicalSelection{Conditions: []expression.Expression{expression.NewOne()}}.Init(s.sctx, 0)))
+		plannercore.LogicalFilter{Conditions: []expression.Expression{expression.NewOne()}}.Init(s.sctx, 0)))
 	g1.Insert(NewGroupExpr(
 		plannercore.LogicalLimit{Count: 4}.Init(s.sctx, 0)))
 	g1.Insert(NewGroupExpr(
-		plannercore.LogicalSelection{Conditions: []expression.Expression{expression.NewZero()}}.Init(s.sctx, 0)))
+		plannercore.LogicalFilter{Conditions: []expression.Expression{expression.NewZero()}}.Init(s.sctx, 0)))
 
 	expr := NewGroupExpr(plannercore.LogicalJoin{}.Init(s.sctx, 0))
 	expr.Children = append(expr.Children, g0)
@@ -124,9 +124,9 @@ func (s *testMemoSuite) TestExprIterReset(c *C) {
 	g0.Insert(NewGroupExpr(
 		plannercore.LogicalProject{Exprs: []expression.Expression{expression.NewNull()}}.Init(s.sctx, 0)))
 
-	sel1 := NewGroupExpr(plannercore.LogicalSelection{Conditions: []expression.Expression{expression.NewNull()}}.Init(s.sctx, 0))
-	sel2 := NewGroupExpr(plannercore.LogicalSelection{Conditions: []expression.Expression{expression.NewOne()}}.Init(s.sctx, 0))
-	sel3 := NewGroupExpr(plannercore.LogicalSelection{Conditions: []expression.Expression{expression.NewZero()}}.Init(s.sctx, 0))
+	sel1 := NewGroupExpr(plannercore.LogicalFilter{Conditions: []expression.Expression{expression.NewNull()}}.Init(s.sctx, 0))
+	sel2 := NewGroupExpr(plannercore.LogicalFilter{Conditions: []expression.Expression{expression.NewOne()}}.Init(s.sctx, 0))
+	sel3 := NewGroupExpr(plannercore.LogicalFilter{Conditions: []expression.Expression{expression.NewZero()}}.Init(s.sctx, 0))
 	g1 := NewGroupWithSchema(sel1, s.schema)
 	g1.Insert(NewGroupExpr(plannercore.LogicalLimit{Count: 3}.Init(s.sctx, 0)))
 	g1.Insert(sel2)
@@ -134,15 +134,15 @@ func (s *testMemoSuite) TestExprIterReset(c *C) {
 	g1.Insert(sel3)
 
 	g2 := NewGroupWithSchema(NewGroupExpr(
-		plannercore.LogicalSelection{Conditions: []expression.Expression{expression.NewNull()}}.Init(s.sctx, 0)), s.schema)
+		plannercore.LogicalFilter{Conditions: []expression.Expression{expression.NewNull()}}.Init(s.sctx, 0)), s.schema)
 	g2.Insert(NewGroupExpr(
 		plannercore.LogicalLimit{Count: 3}.Init(s.sctx, 0)))
 	g2.Insert(NewGroupExpr(
-		plannercore.LogicalSelection{Conditions: []expression.Expression{expression.NewOne()}}.Init(s.sctx, 0)))
+		plannercore.LogicalFilter{Conditions: []expression.Expression{expression.NewOne()}}.Init(s.sctx, 0)))
 	g2.Insert(NewGroupExpr(
 		plannercore.LogicalLimit{Count: 4}.Init(s.sctx, 0)))
 	g2.Insert(NewGroupExpr(
-		plannercore.LogicalSelection{Conditions: []expression.Expression{expression.NewZero()}}.Init(s.sctx, 0)))
+		plannercore.LogicalFilter{Conditions: []expression.Expression{expression.NewZero()}}.Init(s.sctx, 0)))
 
 	// link join with Group 0 and 1
 	expr := NewGroupExpr(plannercore.LogicalJoin{}.Init(s.sctx, 0))
@@ -207,7 +207,7 @@ func countMatchedIter(group *Group, pattern *Pattern) int {
 
 func (s *testMemoSuite) TestExprIterWithEngineType(c *C) {
 	g1 := NewGroupWithSchema(NewGroupExpr(
-		plannercore.LogicalSelection{Conditions: []expression.Expression{expression.NewOne()}}.Init(s.sctx, 0)), s.schema).SetEngineType(EngineTiFlash)
+		plannercore.LogicalFilter{Conditions: []expression.Expression{expression.NewOne()}}.Init(s.sctx, 0)), s.schema).SetEngineType(EngineTiFlash)
 	g1.Insert(NewGroupExpr(
 		plannercore.LogicalLimit{Count: 1}.Init(s.sctx, 0)))
 	g1.Insert(NewGroupExpr(
@@ -216,7 +216,7 @@ func (s *testMemoSuite) TestExprIterWithEngineType(c *C) {
 		plannercore.LogicalLimit{Count: 2}.Init(s.sctx, 0)))
 
 	g2 := NewGroupWithSchema(NewGroupExpr(
-		plannercore.LogicalSelection{Conditions: []expression.Expression{expression.NewOne()}}.Init(s.sctx, 0)), s.schema).SetEngineType(EngineTiKV)
+		plannercore.LogicalFilter{Conditions: []expression.Expression{expression.NewOne()}}.Init(s.sctx, 0)), s.schema).SetEngineType(EngineTiKV)
 	g2.Insert(NewGroupExpr(
 		plannercore.LogicalLimit{Count: 2}.Init(s.sctx, 0)))
 	g2.Insert(NewGroupExpr(

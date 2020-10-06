@@ -88,7 +88,7 @@ func (s *testMemoSuite) TestGroupDelete(c *C) {
 }
 
 func (s *testMemoSuite) TestGroupDeleteAll(c *C) {
-	expr := NewGroupExpr(plannercore.LogicalSelection{}.Init(s.sctx, 0))
+	expr := NewGroupExpr(plannercore.LogicalFilter{}.Init(s.sctx, 0))
 	g := NewGroupWithSchema(expr, s.schema)
 	c.Assert(g.Insert(NewGroupExpr(plannercore.LogicalLimit{}.Init(s.sctx, 0))), IsTrue)
 	c.Assert(g.Insert(NewGroupExpr(plannercore.LogicalProject{}.Init(s.sctx, 0))), IsTrue)
@@ -122,7 +122,7 @@ func (s *testMemoSuite) TestGroupFingerPrint(c *C) {
 	// Plan tree should be: DataSource -> Selection -> Projection
 	proj, ok := logic1.(*plannercore.LogicalProject)
 	c.Assert(ok, IsTrue)
-	sel, ok := logic1.Children()[0].(*plannercore.LogicalSelection)
+	sel, ok := logic1.Children()[0].(*plannercore.LogicalFilter)
 	c.Assert(ok, IsTrue)
 	group1 := Convert2Group(logic1)
 	oldGroupExpr := group1.Equivalents.Front().Value.(*GroupExpr)
@@ -147,9 +147,9 @@ func (s *testMemoSuite) TestGroupFingerPrint(c *C) {
 	group1.Insert(newGroupExpr3)
 	c.Assert(group1.Equivalents.Len(), Equals, 3)
 
-	// Insert two LogicalSelections with same conditions but different order.
+	// Insert two LogicalFilters with same conditions but different order.
 	c.Assert(len(sel.Conditions), Equals, 2)
-	newSelection := plannercore.LogicalSelection{
+	newSelection := plannercore.LogicalFilter{
 		Conditions: make([]expression.Expression, 2)}.Init(sel.SCtx(), sel.SelectBlockOffset())
 	newSelection.Conditions[0], newSelection.Conditions[1] = sel.Conditions[1], sel.Conditions[0]
 	newGroupExpr4 := NewGroupExpr(sel)
@@ -271,7 +271,7 @@ func (s *testMemoSuite) TestBuildKeyInfo(c *C) {
 	c.Assert(len(group2.Prop.Schema.Keys), Equals, 1)
 
 	// case 3: build key info for new Group
-	newSel := plannercore.LogicalSelection{}.Init(s.sctx, 0)
+	newSel := plannercore.LogicalFilter{}.Init(s.sctx, 0)
 	newExpr1 := NewGroupExpr(newSel)
 	newExpr1.SetChildren(group2)
 	newGroup1 := NewGroupWithSchema(newExpr1, group2.Prop.Schema)

@@ -36,7 +36,7 @@ var (
 	_ LogicalPlan = &LogicalJoin{}
 	_ LogicalPlan = &LogicalAggregate{}
 	_ LogicalPlan = &LogicalProject{}
-	_ LogicalPlan = &LogicalSelection{}
+	_ LogicalPlan = &LogicalFilter{}
 	_ LogicalPlan = &LogicalApply{}
 	_ LogicalPlan = &LogicalMaxOneRow{}
 	_ LogicalPlan = &LogicalTableDual{}
@@ -386,8 +386,8 @@ func (la *LogicalAggregate) GetUsedCols() (usedCols []*expression.Column) {
 	return usedCols
 }
 
-// LogicalSelection represents a where or having predicate.
-type LogicalSelection struct {
+// LogicalFilter represents a where or having predicate.
+type LogicalFilter struct {
 	baseLogicalPlan
 
 	// Originally the WHERE or ON condition is parsed into a single expression,
@@ -397,7 +397,7 @@ type LogicalSelection struct {
 }
 
 // ExtractCorrelatedCols implements LogicalPlan interface.
-func (p *LogicalSelection) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
+func (p *LogicalFilter) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 	corCols := make([]*expression.CorrelatedColumn, 0, len(p.Conditions))
 	for _, cond := range p.Conditions {
 		corCols = append(corCols, expression.ExtractCorColumns(cond)...)

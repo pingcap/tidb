@@ -2067,7 +2067,7 @@ func (la *LogicalAggregate) exhaustPhysicalPlans(prop *property.PhysicalProperty
 	return aggs, !(preferStream || preferHash)
 }
 
-func (p *LogicalSelection) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]PhysicalPlan, bool) {
+func (p *LogicalFilter) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]PhysicalPlan, bool) {
 	childProp := prop.Clone()
 	sel := PhysicalSelection{
 		Conditions: p.Conditions,

@@ -209,7 +209,7 @@ func (la *LogicalAggregate) replaceExprColumns(replace map[string]*expression.Co
 	la.collectGroupByColumns()
 }
 
-func (p *LogicalSelection) replaceExprColumns(replace map[string]*expression.Column) {
+func (p *LogicalFilter) replaceExprColumns(replace map[string]*expression.Column) {
 	for _, expr := range p.Conditions {
 		ResolveExprAndReplace(expr, replace)
 	}

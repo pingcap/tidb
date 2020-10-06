@@ -154,7 +154,7 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 				str = fmt.Sprintf("DataScan(%s)", x.tableInfo.Name)
 			}
 		}
-	case *LogicalSelection:
+	case *LogicalFilter:
 		str = fmt.Sprintf("Sel(%s)", x.Conditions)
 	case *PhysicalSelection:
 		str = fmt.Sprintf("Sel(%s)", x.Conditions)

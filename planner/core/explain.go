@@ -798,7 +798,7 @@ func (p *LogicalProject) ExplainInfo() string {
 }
 
 // ExplainInfo implements Plan interface.
-func (p *LogicalSelection) ExplainInfo() string {
+func (p *LogicalFilter) ExplainInfo() string {
 	return string(expression.SortedExplainExpressionList(p.Conditions))
 }
 

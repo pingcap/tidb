@@ -75,7 +75,7 @@ func (la *LogicalAggregate) BuildKeyInfo(selfSchema *expression.Schema, childSch
 
 // If a condition is the form of (uniqueKey = constant) or (uniqueKey = Correlated column), it returns at most one row.
 // This function will check it.
-func (p *LogicalSelection) checkMaxOneRowCond(unique expression.Expression, constOrCorCol expression.Expression, childSchema *expression.Schema) bool {
+func (p *LogicalFilter) checkMaxOneRowCond(unique expression.Expression, constOrCorCol expression.Expression, childSchema *expression.Schema) bool {
 	col, ok := unique.(*expression.Column)
 	if !ok {
 		return false
@@ -92,7 +92,7 @@ func (p *LogicalSelection) checkMaxOneRowCond(unique expression.Expression, cons
 }
 
 // BuildKeyInfo implements LogicalPlan BuildKeyInfo interface.
-func (p *LogicalSelection) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
+func (p *LogicalFilter) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
 	p.baseLogicalPlan.BuildKeyInfo(selfSchema, childSchema)
 	for _, cond := range p.Conditions {
 		if sf, ok := cond.(*expression.ScalarFunction); ok && sf.FuncName.L == ast.EQ {

@@ -33,7 +33,7 @@ const (
 	OperandAggregation
 	// OperandProjection is the operand for LogicalProject.
 	OperandProjection
-	// OperandSelection is the operand for LogicalSelection.
+	// OperandSelection is the operand for LogicalFilter.
 	OperandSelection
 	// OperandApply is the operand for LogicalApply.
 	OperandApply
@@ -82,7 +82,7 @@ func GetOperand(p plannercore.LogicalPlan) Operand {
 		return OperandAggregation
 	case *plannercore.LogicalProject:
 		return OperandProjection
-	case *plannercore.LogicalSelection:
+	case *plannercore.LogicalFilter:
 		return OperandSelection
 	case *plannercore.LogicalMaxOneRow:
 		return OperandMaxOneRow

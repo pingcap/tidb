@@ -55,7 +55,7 @@ func (a *maxMinEliminator) composeAggsByInnerJoin(aggs []*LogicalAggregate) (pla
 // 2. the path can keep order for `col` after pushing down the conditions.
 func (a *maxMinEliminator) checkColCanUseIndex(plan LogicalPlan, col *expression.Column, conditions []expression.Expression) bool {
 	switch p := plan.(type) {
-	case *LogicalSelection:
+	case *LogicalFilter:
 		conditions = append(conditions, p.Conditions...)
 		return a.checkColCanUseIndex(p.children[0], col, conditions)
 	case *DataSource:
@@ -99,10 +99,10 @@ func (a *maxMinEliminator) checkColCanUseIndex(plan LogicalPlan, col *expression
 // because we have restricted the subPlan in `checkColCanUseIndex`.
 func (a *maxMinEliminator) cloneSubPlans(plan LogicalPlan) LogicalPlan {
 	switch p := plan.(type) {
-	case *LogicalSelection:
+	case *LogicalFilter:
 		newConditions := make([]expression.Expression, len(p.Conditions))
 		copy(newConditions, p.Conditions)
-		sel := LogicalSelection{Conditions: newConditions}.Init(p.ctx, p.blockOffset)
+		sel := LogicalFilter{Conditions: newConditions}.Init(p.ctx, p.blockOffset)
 		sel.SetChildren(a.cloneSubPlans(p.children[0]))
 		return sel
 	case *DataSource:
@@ -165,7 +165,7 @@ func (a *maxMinEliminator) eliminateSingleMaxMin(agg *LogicalAggregate) *Logical
 	if len(expression.ExtractColumns(f.Args[0])) > 0 {
 		// If it can be NULL, we need to filter NULL out first.
 		if !mysql.HasNotNullFlag(f.Args[0].GetType().Flag) {
-			sel := LogicalSelection{}.Init(ctx, agg.blockOffset)
+			sel := LogicalFilter{}.Init(ctx, agg.blockOffset)
 			isNullFunc := expression.NewFunctionInternal(ctx, ast.IsNull, types.NewFieldType(mysql.TypeTiny), f.Args[0])
 			notNullFunc := expression.NewFunctionInternal(ctx, ast.UnaryNot, types.NewFieldType(mysql.TypeTiny), isNullFunc)
 			sel.Conditions = []expression.Expression{notNullFunc}

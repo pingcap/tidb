@@ -331,7 +331,7 @@ func (s *testSuite2) TestMergeJoin(c *C) {
 	result.Check(testkit.Rows("1", "2", "3", "4", "5", "6", "7"))
 	result = tk.MustQuery("select /*+ TIDB_SMJ(a, b) */ a.c1 from t a , (select * from t1 limit 3) b where a.c1 = b.c1 order by b.c1;")
 	result.Check(testkit.Rows("1", "2", "3"))
-	// Test LogicalSelection under LogicalJoin.
+	// Test LogicalFilter under LogicalJoin.
 	result = tk.MustQuery("select /*+ TIDB_SMJ(a, b) */ a.c1 from t a , (select * from t1 limit 3) b where a.c1 = b.c1 and b.c1 is not null order by b.c1;")
 	result.Check(testkit.Rows("1", "2", "3"))
 	tk.MustExec("begin;")

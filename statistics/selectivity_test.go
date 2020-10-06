@@ -297,7 +297,7 @@ func (s *testStatsSuite) TestSelectivity(c *C) {
 		p, _, err := plannercore.BuildLogicalPlan(ctx, sctx, stmts[0], is)
 		c.Assert(err, IsNil, Commentf("error %v, for building plan, expr %s", err, tt.exprs))
 
-		sel := p.(plannercore.LogicalPlan).Children()[0].(*plannercore.LogicalSelection)
+		sel := p.(plannercore.LogicalPlan).Children()[0].(*plannercore.LogicalFilter)
 		ds := sel.Children()[0].(*plannercore.DataSource)
 
 		histColl := statsTbl.GenerateHistCollFromColumnInfo(ds.Columns, ds.Schema().Columns)
@@ -561,7 +561,7 @@ func BenchmarkSelectivity(b *testing.B) {
 	b.Run("Selectivity", func(b *testing.B) {
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			_, _, err := statsTbl.Selectivity(sctx, p.(plannercore.LogicalPlan).Children()[0].(*plannercore.LogicalSelection).Conditions, nil)
+			_, _, err := statsTbl.Selectivity(sctx, p.(plannercore.LogicalPlan).Children()[0].(*plannercore.LogicalFilter).Conditions, nil)
 			c.Assert(err, IsNil)
 		}
 		b.ReportAllocs()
@@ -709,7 +709,7 @@ func (s *testStatsSuite) TestDNFCondSelectivity(c *C) {
 		p, _, err := plannercore.BuildLogicalPlan(ctx, sctx, stmts[0], is)
 		c.Assert(err, IsNil, Commentf("error %v, for building plan, sql %s", err, tt))
 
-		sel := p.(plannercore.LogicalPlan).Children()[0].(*plannercore.LogicalSelection)
+		sel := p.(plannercore.LogicalPlan).Children()[0].(*plannercore.LogicalFilter)
 		ds := sel.Children()[0].(*plannercore.DataSource)
 
 		histColl := statsTbl.GenerateHistCollFromColumnInfo(ds.Columns, ds.Schema().Columns)

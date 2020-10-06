@@ -78,7 +78,7 @@ func (p *LogicalProject) PruneColumns(parentUsedCols []*expression.Column) error
 }
 
 // PruneColumns implements LogicalPlan interface.
-func (p *LogicalSelection) PruneColumns(parentUsedCols []*expression.Column) error {
+func (p *LogicalFilter) PruneColumns(parentUsedCols []*expression.Column) error {
 	child := p.children[0]
 	parentUsedCols = expression.ExtractColumnsFromExpressions(parentUsedCols, p.Conditions, nil)
 	return child.PruneColumns(parentUsedCols)

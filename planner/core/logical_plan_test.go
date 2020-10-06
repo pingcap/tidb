@@ -153,7 +153,7 @@ func (s *testPlanSuite) TestOuterWherePredicatePushDown(c *C) {
 		c.Assert(err, IsNil, comment)
 		proj, ok := p.(*LogicalProject)
 		c.Assert(ok, IsTrue, comment)
-		selection, ok := proj.children[0].(*LogicalSelection)
+		selection, ok := proj.children[0].(*LogicalFilter)
 		c.Assert(ok, IsTrue, comment)
 		selCond := fmt.Sprintf("%s", selection.Conditions)
 		s.testData.OnRecord(func() {
@@ -359,7 +359,7 @@ func (s *testPlanSuite) TestDupRandJoinCondsPushDown(c *C) {
 	c.Assert(ok, IsTrue, comment)
 	join, ok := proj.children[0].(*LogicalJoin)
 	c.Assert(ok, IsTrue, comment)
-	leftPlan, ok := join.children[0].(*LogicalSelection)
+	leftPlan, ok := join.children[0].(*LogicalFilter)
 	c.Assert(ok, IsTrue, comment)
 	leftCond := fmt.Sprintf("%s", leftPlan.Conditions)
 	// Condition with mutable function cannot be de-duplicated when push down join conds.

@@ -63,8 +63,8 @@ func (la LogicalApply) Init(ctx sessionctx.Context, offset int) *LogicalApply {
 	return &la
 }
 
-// Init initializes LogicalSelection.
-func (p LogicalSelection) Init(ctx sessionctx.Context, offset int) *LogicalSelection {
+// Init initializes LogicalFilter.
+func (p LogicalFilter) Init(ctx sessionctx.Context, offset int) *LogicalFilter {
 	p.baseLogicalPlan = newBaseLogicalPlan(ctx, plancodec.TypeSel, &p, offset)
 	return &p
 }

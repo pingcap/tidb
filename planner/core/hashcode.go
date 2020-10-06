@@ -64,7 +64,7 @@ func (p *LogicalTableDual) HashCode() []byte {
 }
 
 // HashCode implements LogicalPlan interface.
-func (p *LogicalSelection) HashCode() []byte {
+func (p *LogicalFilter) HashCode() []byte {
 	// PlanType + SelectOffset + ConditionNum + [Conditions]
 	// Conditions are commonly `ScalarFunction`s, whose hashcode usually has a
 	// length larger than 20, so we pre-alloc 25 bytes for each expr's hashcode.

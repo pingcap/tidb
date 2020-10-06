@@ -82,7 +82,7 @@ func (gc *gcSubstituter) substitute(ctx context.Context, lp LogicalPlan, exprToC
 	var expr *expression.Expression
 	var tp types.EvalType
 	switch x := lp.(type) {
-	case *LogicalSelection:
+	case *LogicalFilter:
 		for _, cond := range x.Conditions {
 			sf, ok := cond.(*expression.ScalarFunction)
 			if !ok {
