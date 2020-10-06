@@ -206,7 +206,7 @@ func (b *executorBuilder) build(p plannercore.Plan) Executor {
 		return b.buildAnalyze(v)
 	case *plannercore.PhysicalTableGather:
 		return b.buildTableReader(v)
-	case *plannercore.PhysicalIndexReader:
+	case *plannercore.PhysicalIndexGather:
 		return b.buildIndexReader(v)
 	case *plannercore.PhysicalIndexLookUpReader:
 		return b.buildIndexLookUpReader(v)
@@ -2699,7 +2699,7 @@ func prunePartitionForInnerExecutor(ctx sessionctx.Context, tbl table.Table, sch
 	return usedPartition, true, contentPos, nil
 }
 
-func buildNoRangeIndexReader(b *executorBuilder, v *plannercore.PhysicalIndexReader) (*IndexReaderExecutor, error) {
+func buildNoRangeIndexReader(b *executorBuilder, v *plannercore.PhysicalIndexGather) (*IndexReaderExecutor, error) {
 	dagReq, streaming, err := b.constructDAGReq(v.IndexPlans, kv.TiKV)
 	if err != nil {
 		return nil, err
@@ -2753,7 +2753,7 @@ func buildNoRangeIndexReader(b *executorBuilder, v *plannercore.PhysicalIndexRea
 	return e, nil
 }
 
-func (b *executorBuilder) buildIndexReader(v *plannercore.PhysicalIndexReader) Executor {
+func (b *executorBuilder) buildIndexReader(v *plannercore.PhysicalIndexGather) Executor {
 	if b.ctx.GetSessionVars().IsPessimisticReadConsistency() {
 		if err := b.refreshForUpdateTSForRC(); err != nil {
 			b.err = err
@@ -3079,7 +3079,7 @@ func (builder *dataReaderBuilder) buildExecutorForIndexJoinInternal(ctx context.
 	switch v := plan.(type) {
 	case *plannercore.PhysicalTableGather:
 		return builder.buildTableReaderForIndexJoin(ctx, v, lookUpContents, IndexRanges, keyOff2IdxOff, cwc, canReorderHandles)
-	case *plannercore.PhysicalIndexReader:
+	case *plannercore.PhysicalIndexGather:
 		return builder.buildIndexReaderForIndexJoin(ctx, v, lookUpContents, IndexRanges, keyOff2IdxOff, cwc)
 	case *plannercore.PhysicalIndexLookUpReader:
 		return builder.buildIndexLookUpReaderForIndexJoin(ctx, v, lookUpContents, IndexRanges, keyOff2IdxOff, cwc)
@@ -3286,7 +3286,7 @@ func (builder *dataReaderBuilder) buildTableReaderFromKvRanges(ctx context.Conte
 	return builder.buildTableReaderBase(ctx, e, b)
 }
 
-func (builder *dataReaderBuilder) buildIndexReaderForIndexJoin(ctx context.Context, v *plannercore.PhysicalIndexReader,
+func (builder *dataReaderBuilder) buildIndexReaderForIndexJoin(ctx context.Context, v *plannercore.PhysicalIndexGather,
 	lookUpContents []*indexJoinLookUpContent, indexRanges []*ranger.Range, keyOff2IdxOff []int, cwc *plannercore.ColWithCmpFuncManager) (Executor, error) {
 	e, err := buildNoRangeIndexReader(builder.executorBuilder, v)
 	if err != nil {

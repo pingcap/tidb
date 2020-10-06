@@ -87,7 +87,7 @@ func (pn *planEncoder) encodePlan(p Plan, isRoot bool, store kv.StoreType, depth
 	switch copPlan := selectPlan.(type) {
 	case *PhysicalTableGather:
 		pn.encodePlan(copPlan.tablePlan, false, copPlan.StoreType, depth)
-	case *PhysicalIndexReader:
+	case *PhysicalIndexGather:
 		pn.encodePlan(copPlan.indexPlan, false, store, depth)
 	case *PhysicalIndexLookUpReader:
 		pn.encodePlan(copPlan.indexPlan, false, store, depth)
@@ -154,7 +154,7 @@ func (d *planDigester) normalizePlan(p PhysicalPlan, isRoot bool, store kv.Store
 	switch x := p.(type) {
 	case *PhysicalTableGather:
 		d.normalizePlan(x.tablePlan, false, x.StoreType, depth)
-	case *PhysicalIndexReader:
+	case *PhysicalIndexGather:
 		d.normalizePlan(x.indexPlan, false, store, depth)
 	case *PhysicalIndexLookUpReader:
 		d.normalizePlan(x.indexPlan, false, store, depth)

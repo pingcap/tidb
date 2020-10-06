@@ -46,7 +46,7 @@ var (
 	_ PhysicalPlan = &PhysicalIndexScan{}
 	_ PhysicalPlan = &PhysicalTableScan{}
 	_ PhysicalPlan = &PhysicalTableGather{}
-	_ PhysicalPlan = &PhysicalIndexReader{}
+	_ PhysicalPlan = &PhysicalIndexGather{}
 	_ PhysicalPlan = &PhysicalIndexLookUpReader{}
 	_ PhysicalPlan = &PhysicalIndexMergeReader{}
 	_ PhysicalPlan = &PhysicalHashAgg{}
@@ -124,9 +124,9 @@ func (sg *TiKVSingleGather) GetPhysicalTableGather(schema *expression.Schema, st
 	return reader
 }
 
-// GetPhysicalIndexReader returns PhysicalIndexReader for logical TiKVSingleGather.
-func (sg *TiKVSingleGather) GetPhysicalIndexReader(schema *expression.Schema, stats *property.StatsInfo, props ...*property.PhysicalProperty) *PhysicalIndexReader {
-	reader := PhysicalIndexReader{}.Init(sg.ctx, sg.blockOffset)
+// GetPhysicalIndexGather returns PhysicalIndexGather for logical TiKVSingleGather.
+func (sg *TiKVSingleGather) GetPhysicalIndexGather(schema *expression.Schema, stats *property.StatsInfo, props ...*property.PhysicalProperty) *PhysicalIndexGather {
+	reader := PhysicalIndexGather{}.Init(sg.ctx, sg.blockOffset)
 	reader.stats = stats
 	reader.SetSchema(schema)
 	reader.childrenReqProps = props
@@ -166,8 +166,8 @@ func (p *PhysicalTableGather) ExtractCorrelatedCols() (corCols []*expression.Cor
 	return corCols
 }
 
-// PhysicalIndexReader is the index reader in tidb.
-type PhysicalIndexReader struct {
+// PhysicalIndexGather is the index reader in tidb.
+type PhysicalIndexGather struct {
 	physicalSchemaProducer
 
 	// IndexPlans flats the indexPlan to construct executor pb.
@@ -182,8 +182,8 @@ type PhysicalIndexReader struct {
 }
 
 // Clone implements PhysicalPlan interface.
-func (p *PhysicalIndexReader) Clone() (PhysicalPlan, error) {
-	cloned := new(PhysicalIndexReader)
+func (p *PhysicalIndexGather) Clone() (PhysicalPlan, error) {
+	cloned := new(PhysicalIndexGather)
 	base, err := p.physicalSchemaProducer.cloneWithSelf(cloned)
 	if err != nil {
 		return nil, err
@@ -200,7 +200,7 @@ func (p *PhysicalIndexReader) Clone() (PhysicalPlan, error) {
 }
 
 // SetSchema overrides PhysicalPlan SetSchema interface.
-func (p *PhysicalIndexReader) SetSchema(_ *expression.Schema) {
+func (p *PhysicalIndexGather) SetSchema(_ *expression.Schema) {
 	if p.indexPlan != nil {
 		p.IndexPlans = flattenPushDownPlan(p.indexPlan)
 		switch p.indexPlan.(type) {
@@ -215,13 +215,13 @@ func (p *PhysicalIndexReader) SetSchema(_ *expression.Schema) {
 }
 
 // SetChildren overrides PhysicalPlan SetChildren interface.
-func (p *PhysicalIndexReader) SetChildren(children ...PhysicalPlan) {
+func (p *PhysicalIndexGather) SetChildren(children ...PhysicalPlan) {
 	p.indexPlan = children[0]
 	p.SetSchema(nil)
 }
 
 // ExtractCorrelatedCols implements PhysicalPlan interface.
-func (p *PhysicalIndexReader) ExtractCorrelatedCols() (corCols []*expression.CorrelatedColumn) {
+func (p *PhysicalIndexGather) ExtractCorrelatedCols() (corCols []*expression.CorrelatedColumn) {
 	for _, child := range p.IndexPlans {
 		corCols = append(corCols, ExtractCorrelatedCols4PhysicalPlan(child)...)
 	}
@@ -1189,7 +1189,7 @@ func CollectPlanStatsVersion(plan PhysicalPlan, statsInfos map[string]uint64) ma
 	switch copPlan := plan.(type) {
 	case *PhysicalTableGather:
 		statsInfos = CollectPlanStatsVersion(copPlan.tablePlan, statsInfos)
-	case *PhysicalIndexReader:
+	case *PhysicalIndexGather:
 		statsInfos = CollectPlanStatsVersion(copPlan.indexPlan, statsInfos)
 	case *PhysicalIndexLookUpReader:
 		// For index loop up, only the indexPlan is necessary,

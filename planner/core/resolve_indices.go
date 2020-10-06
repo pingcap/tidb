@@ -298,7 +298,7 @@ func (p *PhysicalTableGather) ResolveIndices() error {
 }
 
 // ResolveIndices implements Plan interface.
-func (p *PhysicalIndexReader) ResolveIndices() (err error) {
+func (p *PhysicalIndexGather) ResolveIndices() (err error) {
 	err = p.physicalSchemaProducer.ResolveIndices()
 	if err != nil {
 		return err

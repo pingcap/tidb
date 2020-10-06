@@ -260,7 +260,7 @@ func (s *testPlanBuilderSuite) TestPhysicalPlanClone(c *C) {
 	c.Assert(checkPhysicalPlanClone(indexScan), IsNil)
 
 	// index reader
-	indexReader := &PhysicalIndexReader{
+	indexReader := &PhysicalIndexGather{
 		indexPlan:     indexScan,
 		IndexPlans:    []PhysicalPlan{indexScan},
 		OutputColumns: []*expression.Column{col, col},

@@ -125,7 +125,7 @@ func (impl *TableScanImpl) CalcCost(outCount float64, children ...memo.Implement
 	return impl.cost
 }
 
-// IndexReaderImpl is the implementation of PhysicalIndexReader.
+// IndexReaderImpl is the implementation of PhysicalIndexGather.
 type IndexReaderImpl struct {
 	baseImpl
 	tblColHists *statistics.HistColl
@@ -133,7 +133,7 @@ type IndexReaderImpl struct {
 
 // GetCostLimit implements Implementation interface.
 func (impl *IndexReaderImpl) GetCostLimit(costLimit float64, children ...memo.Implementation) float64 {
-	reader := impl.plan.(*plannercore.PhysicalIndexReader)
+	reader := impl.plan.(*plannercore.PhysicalIndexGather)
 	sessVars := reader.SCtx().GetSessionVars()
 	copIterWorkers := float64(sessVars.DistSQLScanConcurrency())
 	if math.MaxFloat64/copIterWorkers < costLimit {
@@ -144,7 +144,7 @@ func (impl *IndexReaderImpl) GetCostLimit(costLimit float64, children ...memo.Im
 
 // CalcCost implements Implementation interface.
 func (impl *IndexReaderImpl) CalcCost(outCount float64, children ...memo.Implementation) float64 {
-	reader := impl.plan.(*plannercore.PhysicalIndexReader)
+	reader := impl.plan.(*plannercore.PhysicalIndexGather)
 	sessVars := reader.SCtx().GetSessionVars()
 	networkCost := outCount * sessVars.NetworkFactor * impl.tblColHists.GetAvgRowSize(reader.SCtx(), children[0].GetPlan().Schema().Columns, true, false)
 	copIterWorkers := float64(sessVars.DistSQLScanConcurrency())
@@ -153,7 +153,7 @@ func (impl *IndexReaderImpl) CalcCost(outCount float64, children ...memo.Impleme
 }
 
 // NewIndexReaderImpl creates a new IndexReader Implementation.
-func NewIndexReaderImpl(reader *plannercore.PhysicalIndexReader, tblColHists *statistics.HistColl) *IndexReaderImpl {
+func NewIndexReaderImpl(reader *plannercore.PhysicalIndexGather, tblColHists *statistics.HistColl) *IndexReaderImpl {
 	return &IndexReaderImpl{
 		baseImpl:    baseImpl{plan: reader},
 		tblColHists: tblColHists,

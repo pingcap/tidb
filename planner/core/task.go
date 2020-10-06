@@ -746,7 +746,7 @@ func finishCopTask(ctx sessionctx.Context, task task) task {
 	if t.indexPlan != nil && t.tablePlan != nil {
 		newTask = buildIndexLookUpTask(ctx, t)
 	} else if t.indexPlan != nil {
-		p := PhysicalIndexReader{indexPlan: t.indexPlan}.Init(ctx, t.indexPlan.SelectBlockOffset())
+		p := PhysicalIndexGather{indexPlan: t.indexPlan}.Init(ctx, t.indexPlan.SelectBlockOffset())
 		p.PartitionInfo = t.partitionInfo
 		p.stats = t.indexPlan.statsInfo()
 		newTask.p = p

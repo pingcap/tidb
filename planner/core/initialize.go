@@ -426,8 +426,8 @@ func (p PhysicalTableGather) Init(ctx sessionctx.Context, offset int) *PhysicalT
 	return &p
 }
 
-// Init initializes PhysicalIndexReader.
-func (p PhysicalIndexReader) Init(ctx sessionctx.Context, offset int) *PhysicalIndexReader {
+// Init initializes PhysicalIndexGather.
+func (p PhysicalIndexGather) Init(ctx sessionctx.Context, offset int) *PhysicalIndexGather {
 	p.basePhysicalPlan = newBasePhysicalPlan(ctx, plancodec.TypeIndexReader, &p, offset)
 	p.SetSchema(nil)
 	return &p

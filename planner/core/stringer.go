@@ -181,7 +181,7 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 		str += ")"
 	case *PhysicalTableGather:
 		str = fmt.Sprintf("TableReader(%s)", ToString(x.tablePlan))
-	case *PhysicalIndexReader:
+	case *PhysicalIndexGather:
 		str = fmt.Sprintf("IndexReader(%s)", ToString(x.indexPlan))
 	case *PhysicalIndexLookUpReader:
 		str = fmt.Sprintf("IndexLookUp(%s, %s)", ToString(x.indexPlan), ToString(x.tablePlan))

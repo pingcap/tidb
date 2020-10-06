@@ -55,7 +55,7 @@ func extractTableAsName(p PhysicalPlan) (*model.CIStr, *model.CIStr) {
 			return &ts.DBName, ts.TableAsName
 		}
 		return &ts.DBName, &ts.Table.Name
-	case *PhysicalIndexReader:
+	case *PhysicalIndexGather:
 		is := x.IndexPlans[0].(*PhysicalIndexScan)
 		if is.TableAsName.L != "" {
 			return &is.DBName, is.TableAsName
@@ -126,7 +126,7 @@ func genHintsFromPhysicalPlan(p PhysicalPlan, nodeType utilhint.NodeType) (res [
 			Tables:   []ast.HintTable{{DBName: index.DBName, TableName: getTableName(index.Table.Name, index.TableAsName)}},
 			Indexes:  []model.CIStr{index.Index.Name},
 		})
-	case *PhysicalIndexReader:
+	case *PhysicalIndexGather:
 		index := pp.IndexPlans[0].(*PhysicalIndexScan)
 		res = append(res, &ast.TableOptimizerHint{
 			QBName:   utilhint.GenerateQBName(nodeType, pp.blockOffset),

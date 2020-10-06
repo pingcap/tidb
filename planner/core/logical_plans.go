@@ -533,7 +533,7 @@ type TiKVSingleGather struct {
 	Source *DataSource
 	// IsIndexGather marks if this TiKVSingleGather gathers tuples from an IndexScan.
 	// in implementation phase, we need this flag to determine whether to generate
-	// PhysicalTableGather or PhysicalIndexReader.
+	// PhysicalTableGather or PhysicalIndexGather.
 	IsIndexGather bool
 	Index         *model.IndexInfo
 }

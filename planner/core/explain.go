@@ -321,16 +321,16 @@ func (p *PhysicalTableGather) OperatorInfo(normalized bool) string {
 }
 
 // ExplainInfo implements Plan interface.
-func (p *PhysicalIndexReader) ExplainInfo() string {
+func (p *PhysicalIndexGather) ExplainInfo() string {
 	return "index:" + p.indexPlan.ExplainID().String()
 }
 
 // ExplainNormalizedInfo implements Plan interface.
-func (p *PhysicalIndexReader) ExplainNormalizedInfo() string {
+func (p *PhysicalIndexGather) ExplainNormalizedInfo() string {
 	return p.ExplainInfo()
 }
 
-func (p *PhysicalIndexReader) accessObject(sctx sessionctx.Context) string {
+func (p *PhysicalIndexGather) accessObject(sctx sessionctx.Context) string {
 	ts := p.IndexPlans[0].(*PhysicalIndexScan)
 	pi := ts.Table.GetPartitionInfo()
 	if pi == nil || !sctx.GetSessionVars().UseDynamicPartitionPrune() {

@@ -444,7 +444,7 @@ func (e *Execute) rebuildRange(p Plan) error {
 				ts.Ranges = ranger.FullIntRange(false)
 			}
 		}
-	case *PhysicalIndexReader:
+	case *PhysicalIndexGather:
 		is := x.IndexPlans[0].(*PhysicalIndexScan)
 		is.Ranges, err = e.buildRangeForIndexScan(sctx, is)
 		if err != nil {
@@ -1024,7 +1024,7 @@ func (e *Explain) explainPlanInRowFormat(p Plan, taskType, driverSide, indent st
 		}
 		storeType = x.StoreType.Name()
 		err = e.explainPlanInRowFormat(x.tablePlan, "cop["+storeType+"]", "", childIndent, true)
-	case *PhysicalIndexReader:
+	case *PhysicalIndexGather:
 		err = e.explainPlanInRowFormat(x.indexPlan, "cop[tikv]", "", childIndent, true)
 	case *PhysicalIndexLookUpReader:
 		err = e.explainPlanInRowFormat(x.indexPlan, "cop[tikv]", "(Build)", childIndent, false)
@@ -1174,7 +1174,7 @@ func (e *Explain) prepareTaskDot(p PhysicalPlan, taskTp string, buffer *bytes.Bu
 		case *PhysicalTableGather:
 			pipelines = append(pipelines, fmt.Sprintf("\"%s\" -> \"%s\"\n", copPlan.ExplainID(), copPlan.tablePlan.ExplainID()))
 			copTasks = append(copTasks, copPlan.tablePlan)
-		case *PhysicalIndexReader:
+		case *PhysicalIndexGather:
 			pipelines = append(pipelines, fmt.Sprintf("\"%s\" -> \"%s\"\n", copPlan.ExplainID(), copPlan.indexPlan.ExplainID()))
 			copTasks = append(copTasks, copPlan.indexPlan)
 		case *PhysicalIndexLookUpReader:
@@ -1223,7 +1223,7 @@ func IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx sessionctx.Context, p Plan) (bo
 	}
 
 	switch v := p.(type) {
-	case *PhysicalIndexReader:
+	case *PhysicalIndexGather:
 		indexScan := v.IndexPlans[0].(*PhysicalIndexScan)
 		return indexScan.IsPointGetByUniqueKey(ctx.GetSessionVars().StmtCtx), nil
 	case *PhysicalTableGather:
