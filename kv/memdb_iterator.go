@@ -98,6 +98,12 @@ func (i *memdbIterator) Flags() KeyFlags {
 	return i.curr.getKeyFlags()
 }
 
+func (i *memdbIterator) UpdateFlags(ops ...FlagsOp) {
+	origin := i.curr.getKeyFlags()
+	n := applyFlagsOps(origin, ops...)
+	i.curr.setKeyFlags(n)
+}
+
 func (i *memdbIterator) HasValue() bool {
 	return !i.isFlagsOnly()
 }

@@ -51,6 +51,7 @@ import (
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/twmb/murmur3"
+	atomic2 "go.uber.org/atomic"
 )
 
 var preparedStmtCount int64
@@ -712,12 +713,12 @@ type SessionVars struct {
 	LastTxnInfo kv.TxnInfo
 
 	// PartitionPruneMode indicates how and when to prune partitions.
-	PartitionPruneMode PartitionPruneMode
+	PartitionPruneMode atomic2.String
 }
 
 // UseDynamicPartitionPrune indicates whether use new dynamic partition prune.
 func (s *SessionVars) UseDynamicPartitionPrune() bool {
-	return s.PartitionPruneMode == DynamicOnly
+	return PartitionPruneMode(s.PartitionPruneMode.Load()) == DynamicOnly
 }
 
 // PartitionPruneMode presents the prune mode used.
@@ -1455,7 +1456,7 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	case TiDBEnableClusteredIndex:
 		s.EnableClusteredIndex = TiDBOptOn(val)
 	case TiDBPartitionPruneMode:
-		s.PartitionPruneMode = PartitionPruneMode(strings.ToLower(strings.TrimSpace(val)))
+		s.PartitionPruneMode.Store(strings.ToLower(strings.TrimSpace(val)))
 	case TiDBEnableParallelApply:
 		s.EnableParallelApply = TiDBOptOn(val)
 	case TiDBSlowLogMasking, TiDBRedactLog:

@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/table"
@@ -1102,4 +1103,18 @@ func (h *Handle) SaveExtendedStatsToStorage(tableID int64, extStats *statistics.
 		sqls = append(sqls, fmt.Sprintf("UPDATE mysql.stats_meta SET version = %d WHERE table_id = %d", version, tableID))
 	}
 	return execSQLs(ctx, exec, sqls)
+}
+
+// CurrentPruneMode indicates whether tbl support runtime prune for table and first partition id.
+func (h *Handle) CurrentPruneMode() variable.PartitionPruneMode {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return variable.PartitionPruneMode(h.mu.ctx.GetSessionVars().PartitionPruneMode.Load())
+}
+
+// RefreshVars uses to pull PartitionPruneMethod vars from kv storage.
+func (h *Handle) RefreshVars() error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.mu.ctx.RefreshVars(context.Background())
 }
