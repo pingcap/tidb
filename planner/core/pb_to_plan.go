@@ -94,7 +94,7 @@ func (b *PBPlanBuilder) pbToTableScan(e *tipb.Executor) (PhysicalPlan, error) {
 		return nil, err
 	}
 	schema := b.buildTableScanSchema(tbl.Meta(), columns)
-	p := PhysicalMemTable{
+	p := PhysicalMemTableScan{
 		DBName:  dbInfo.Name,
 		Table:   tbl.Meta(),
 		Columns: columns,
@@ -235,8 +235,8 @@ func (b *PBPlanBuilder) predicatePushDown(p PhysicalPlan, predicates []expressio
 		return predicates, p
 	}
 	switch p.(type) {
-	case *PhysicalMemTable:
-		memTable := p.(*PhysicalMemTable)
+	case *PhysicalMemTableScan:
+		memTable := p.(*PhysicalMemTableScan)
 		if memTable.Extractor == nil {
 			return predicates, p
 		}

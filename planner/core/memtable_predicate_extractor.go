@@ -51,7 +51,7 @@ import (
 type MemTablePredicateExtractor interface {
 	// Extracts predicates which can be pushed down and returns the remained predicates
 	Extract(sessionctx.Context, *expression.Schema, []*types.FieldName, []expression.Expression) (remained []expression.Expression)
-	explainInfo(p *PhysicalMemTable) string
+	explainInfo(p *PhysicalMemTableScan) string
 }
 
 // extractHelper contains some common utililty functions for all extractor.
@@ -533,7 +533,7 @@ func (e *ClusterTableExtractor) Extract(_ sessionctx.Context,
 	return remained
 }
 
-func (e *ClusterTableExtractor) explainInfo(p *PhysicalMemTable) string {
+func (e *ClusterTableExtractor) explainInfo(p *PhysicalMemTableScan) string {
 	if e.SkipRequest {
 		return "skip_request:true"
 	}
@@ -623,7 +623,7 @@ func (e *ClusterLogTableExtractor) Extract(
 	return remained
 }
 
-func (e *ClusterLogTableExtractor) explainInfo(p *PhysicalMemTable) string {
+func (e *ClusterLogTableExtractor) explainInfo(p *PhysicalMemTableScan) string {
 	if e.SkipRequest {
 		return "skip_request: true"
 	}
@@ -731,7 +731,7 @@ func (e *MetricTableExtractor) getTimeRange(start, end int64) (time.Time, time.T
 	return startTime, endTime
 }
 
-func (e *MetricTableExtractor) explainInfo(p *PhysicalMemTable) string {
+func (e *MetricTableExtractor) explainInfo(p *PhysicalMemTableScan) string {
 	if e.SkipRequest {
 		return "skip_request: true"
 	}
@@ -791,7 +791,7 @@ func (e *MetricSummaryTableExtractor) Extract(
 	return remained
 }
 
-func (e *MetricSummaryTableExtractor) explainInfo(p *PhysicalMemTable) string {
+func (e *MetricSummaryTableExtractor) explainInfo(p *PhysicalMemTableScan) string {
 	return ""
 }
 
@@ -824,7 +824,7 @@ func (e *InspectionResultTableExtractor) Extract(
 	return remained
 }
 
-func (e *InspectionResultTableExtractor) explainInfo(p *PhysicalMemTable) string {
+func (e *InspectionResultTableExtractor) explainInfo(p *PhysicalMemTableScan) string {
 	if e.SkipInspection {
 		return "skip_inspection:true"
 	}
@@ -866,7 +866,7 @@ func (e *InspectionSummaryTableExtractor) Extract(
 	return remained
 }
 
-func (e *InspectionSummaryTableExtractor) explainInfo(p *PhysicalMemTable) string {
+func (e *InspectionSummaryTableExtractor) explainInfo(p *PhysicalMemTableScan) string {
 	if e.SkipInspection {
 		return "skip_inspection: true"
 	}
@@ -919,7 +919,7 @@ func (e *InspectionRuleTableExtractor) Extract(
 	return remained
 }
 
-func (e *InspectionRuleTableExtractor) explainInfo(p *PhysicalMemTable) string {
+func (e *InspectionRuleTableExtractor) explainInfo(p *PhysicalMemTableScan) string {
 	if e.SkipRequest {
 		return "skip_request: true"
 	}
@@ -1015,7 +1015,7 @@ func (e *TableStorageStatsExtractor) Extract(
 	return remained
 }
 
-func (e *TableStorageStatsExtractor) explainInfo(p *PhysicalMemTable) string {
+func (e *TableStorageStatsExtractor) explainInfo(p *PhysicalMemTableScan) string {
 	if e.SkipRequest {
 		return "skip_request: true"
 	}
@@ -1033,7 +1033,7 @@ func (e *TableStorageStatsExtractor) explainInfo(p *PhysicalMemTable) string {
 	return r.String()
 }
 
-func (e *SlowQueryExtractor) explainInfo(p *PhysicalMemTable) string {
+func (e *SlowQueryExtractor) explainInfo(p *PhysicalMemTableScan) string {
 	if e.SkipRequest {
 		return "skip_request: true"
 	}
@@ -1088,7 +1088,7 @@ func (e *TiFlashSystemTableExtractor) Extract(_ sessionctx.Context,
 	return remained
 }
 
-func (e *TiFlashSystemTableExtractor) explainInfo(p *PhysicalMemTable) string {
+func (e *TiFlashSystemTableExtractor) explainInfo(p *PhysicalMemTableScan) string {
 	if e.SkipRequest {
 		return "skip_request:true"
 	}

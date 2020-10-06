@@ -194,7 +194,7 @@ func (b *executorBuilder) build(p plannercore.Plan) Executor {
 		return b.buildStreamAgg(v)
 	case *plannercore.PhysicalProjection:
 		return b.buildProjection(v)
-	case *plannercore.PhysicalMemTable:
+	case *plannercore.PhysicalMemTableScan:
 		return b.buildMemTable(v)
 	case *plannercore.PhysicalTableDual:
 		return b.buildTableDual(v)
@@ -1369,7 +1369,7 @@ func (b *executorBuilder) getSnapshotTS() (uint64, error) {
 	return snapshotTS, nil
 }
 
-func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executor {
+func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTableScan) Executor {
 	switch v.DBName.L {
 	case util.MetricSchemaName.L:
 		return &MemTableReaderExec{

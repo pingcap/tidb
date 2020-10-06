@@ -32,7 +32,7 @@ import (
 )
 
 // A plan is dataAccesser means it can access underlying data.
-// Include `PhysicalTableScan`, `PhysicalIndexScan`, `PointGetPlan`, `BatchPointScan` and `PhysicalMemTable`.
+// Include `PhysicalTableScan`, `PhysicalIndexScan`, `PointGetPlan`, `BatchPointScan` and `PhysicalMemTableScan`.
 // ExplainInfo = AccessObject + OperatorInfo
 type dataAccesser interface {
 
@@ -931,7 +931,7 @@ func (p *TiKVSingleGather) ExplainInfo() string {
 const MetricTableTimeFormat = "2006-01-02 15:04:05.999"
 
 // ExplainInfo implements Plan interface.
-func (p *PhysicalMemTable) ExplainInfo() string {
+func (p *PhysicalMemTableScan) ExplainInfo() string {
 	accessObject, operatorInfo := p.AccessObject(), p.OperatorInfo(false)
 	if len(operatorInfo) == 0 {
 		return accessObject
@@ -940,12 +940,12 @@ func (p *PhysicalMemTable) ExplainInfo() string {
 }
 
 // AccessObject implements dataAccesser interface.
-func (p *PhysicalMemTable) AccessObject() string {
+func (p *PhysicalMemTableScan) AccessObject() string {
 	return "table:" + p.Table.Name.O
 }
 
 // OperatorInfo implements dataAccesser interface.
-func (p *PhysicalMemTable) OperatorInfo(_ bool) string {
+func (p *PhysicalMemTableScan) OperatorInfo(_ bool) string {
 	if p.Extractor != nil {
 		return p.Extractor.explainInfo(p)
 	}

@@ -416,8 +416,8 @@ func (p *PhysicalIndexScan) ExtractCorrelatedCols() []*expression.CorrelatedColu
 	return corCols
 }
 
-// PhysicalMemTable reads memory table.
-type PhysicalMemTable struct {
+// PhysicalMemTableScan reads memory table.
+type PhysicalMemTableScan struct {
 	physicalSchemaProducer
 
 	DBName         model.CIStr

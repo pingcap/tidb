@@ -110,7 +110,7 @@ func (r *ImplTableDual) OnImplement(expr *memo.GroupExpr, reqProp *property.Phys
 	return []memo.Implementation{impl.NewTableDualImpl(dual)}, nil
 }
 
-// ImplMemTableScan implements LogicalMemTableScan as PhysicalMemTable.
+// ImplMemTableScan implements LogicalMemTableScan as PhysicalMemTableScan.
 type ImplMemTableScan struct {
 }
 
@@ -129,7 +129,7 @@ func (r *ImplMemTableScan) OnImplement(
 ) ([]memo.Implementation, error) {
 	logic := expr.ExprNode.(*plannercore.LogicalMemTableScan)
 	logicProp := expr.Group.Prop
-	physical := plannercore.PhysicalMemTable{
+	physical := plannercore.PhysicalMemTableScan{
 		DBName:    logic.DBName,
 		Table:     logic.TableInfo,
 		Columns:   logic.TableInfo.Columns,

@@ -371,7 +371,7 @@ func (p *LogicalMemTableScan) findBestTask(prop *property.PhysicalProperty, plan
 	if !prop.IsEmpty() || planCounter.Empty() {
 		return invalidTask, 0, nil
 	}
-	memTable := PhysicalMemTable{
+	memTable := PhysicalMemTableScan{
 		DBName:         p.DBName,
 		Table:          p.TableInfo,
 		Columns:        p.TableInfo.Columns,

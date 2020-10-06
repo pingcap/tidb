@@ -44,7 +44,7 @@ type MemTableScanImpl struct {
 }
 
 // NewMemTableScanImpl creates a new table dual Implementation.
-func NewMemTableScanImpl(dual *plannercore.PhysicalMemTable) *MemTableScanImpl {
+func NewMemTableScanImpl(dual *plannercore.PhysicalMemTableScan) *MemTableScanImpl {
 	return &MemTableScanImpl{baseImpl{plan: dual}}
 }
 

@@ -302,8 +302,8 @@ func (p LogicalMemTableScan) Init(ctx sessionctx.Context, offset int) *LogicalMe
 	return &p
 }
 
-// Init initializes PhysicalMemTable.
-func (p PhysicalMemTable) Init(ctx sessionctx.Context, stats *property.StatsInfo, offset int) *PhysicalMemTable {
+// Init initializes PhysicalMemTableScan.
+func (p PhysicalMemTableScan) Init(ctx sessionctx.Context, stats *property.StatsInfo, offset int) *PhysicalMemTableScan {
 	p.basePhysicalPlan = newBasePhysicalPlan(ctx, plancodec.TypeMemTableScan, &p, offset)
 	p.stats = stats
 	return &p
