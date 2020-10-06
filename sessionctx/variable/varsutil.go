@@ -231,7 +231,7 @@ func SetSessionSystemVar(vars *SessionVars, name string, value types.Datum) erro
 // SetTmpSessionSystemVar sets system variable and updates SessionVars states.
 func SetTmpSessionSystemVar(vars *SessionVars, name string, value string) error {
 	name = strings.ToLower(name)
-	sysVar := SysVars[name]
+	sysVar := GetSysVar(name)
 	if sysVar == nil {
 		return ErrUnknownSystemVar
 	}
