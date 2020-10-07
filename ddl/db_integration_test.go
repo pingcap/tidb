@@ -55,6 +55,7 @@ var _ = Suite(&testIntegrationSuite4{&testIntegrationSuite{}})
 var _ = Suite(&testIntegrationSuite5{&testIntegrationSuite{}})
 var _ = Suite(&testIntegrationSuite6{&testIntegrationSuite{}})
 var _ = SerialSuites(&testIntegrationSuite7{&testIntegrationSuite{}})
+var _ = Suite(&testIntegrationSuite8{&testIntegrationSuite{}})
 
 type testIntegrationSuite struct {
 	lease   time.Duration
@@ -123,6 +124,7 @@ type testIntegrationSuite4 struct{ *testIntegrationSuite }
 type testIntegrationSuite5 struct{ *testIntegrationSuite }
 type testIntegrationSuite6 struct{ *testIntegrationSuite }
 type testIntegrationSuite7 struct{ *testIntegrationSuite }
+type testIntegrationSuite8 struct{ *testIntegrationSuite }
 
 func (s *testIntegrationSuite5) TestNoZeroDateMode(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
@@ -1351,7 +1353,7 @@ func (s *testIntegrationSuite6) TestCreateTableTooLarge(c *C) {
 	atomic.StoreUint32(&ddl.TableColumnCountLimit, originLimit)
 }
 
-func (s *testIntegrationSuite6) TestCreateTableTooManyIndexes(c *C) {
+func (s *testIntegrationSuite8) TestCreateTableTooManyIndexes(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
@@ -1364,7 +1366,6 @@ func (s *testIntegrationSuite6) TestCreateTableTooManyIndexes(c *C) {
 	}
 	for i := 0; i < 100; i++ {
 		sql += ","
-
 		sql += fmt.Sprintf("key k%d(c%d)", i, i)
 	}
 	sql += ");"
@@ -1481,7 +1482,7 @@ func (s *testIntegrationSuite6) TestAddColumnTooMany(c *C) {
 	tk.MustGetErrCode(alterSQL, errno.ErrTooManyFields)
 }
 
-func (s *testIntegrationSuite6) TestCreateIndexTooMany(c *C) {
+func (s *testIntegrationSuite8) TestCreateIndexTooMany(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	count := int(atomic.LoadUint32(&ddl.TableIndexCountLimit) - 1)
@@ -1497,6 +1498,7 @@ func (s *testIntegrationSuite6) TestCreateIndexTooMany(c *C) {
 
 		sql += fmt.Sprintf("key k%d(c%d)", i, i)
 	}
+	sql += ");"
 	tk.MustExec(sql)
 	tk.MustExec("create index idx1 on t_index_too_many (c62)")
 	alterSQL := "create index idx2 on t_index_too_many (c63)"
