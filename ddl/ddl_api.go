@@ -1066,6 +1066,13 @@ func checkTooManyColumns(colDefs []*model.ColumnInfo) error {
 	return nil
 }
 
+func checkTooManyIndexes(idxDefs []*model.IndexInfo) error {
+	if uint32(len(idxDefs)) > atomic.LoadUint32(&TableIndexCountLimit) {
+		return errTooManyKeys.GenWithStackByArgs(TableIndexCountLimit)
+	}
+	return nil
+}
+
 // checkColumnsAttributes checks attributes for multiple columns.
 func checkColumnsAttributes(colDefs []*model.ColumnInfo) error {
 	for _, colDef := range colDefs {
@@ -1465,6 +1472,9 @@ func checkTableInfoValidExtra(tbInfo *model.TableInfo) error {
 		return err
 	}
 	if err := checkTooManyColumns(tbInfo.Columns); err != nil {
+		return errors.Trace(err)
+	}
+	if err := checkTooManyIndexes(tbInfo.Indices); err != nil {
 		return errors.Trace(err)
 	}
 	if err := checkColumnsAttributes(tbInfo.Columns); err != nil {

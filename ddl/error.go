@@ -56,6 +56,7 @@ var (
 	errInvalidDDLJobVersion                   = terror.ClassDDL.New(mysql.ErrInvalidDDLJobVersion, mysql.MySQLErrName[mysql.ErrInvalidDDLJobVersion])
 	errInvalidUseOfNull                       = terror.ClassDDL.New(mysql.ErrInvalidUseOfNull, mysql.MySQLErrName[mysql.ErrInvalidUseOfNull])
 	errTooManyFields                          = terror.ClassDDL.New(mysql.ErrTooManyFields, mysql.MySQLErrName[mysql.ErrTooManyFields])
+	errTooManyKeys                          = terror.ClassDDL.New(mysql.ErrTooManyKeys, mysql.MySQLErrName[mysql.ErrTooManyKeys])
 	errInvalidSplitRegionRanges               = terror.ClassDDL.New(mysql.ErrInvalidSplitRegionRanges, mysql.MySQLErrName[mysql.ErrInvalidSplitRegionRanges])
 	errReorgPanic                             = terror.ClassDDL.New(mysql.ErrReorgPanic, mysql.MySQLErrName[mysql.ErrReorgPanic])
 	errFkColumnCannotDrop                     = terror.ClassDDL.New(mysql.ErrFkColumnCannotDrop, mysql.MySQLErrName[mysql.ErrFkColumnCannotDrop])
