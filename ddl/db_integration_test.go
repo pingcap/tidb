@@ -1351,6 +1351,27 @@ func (s *testIntegrationSuite6) TestCreateTableTooLarge(c *C) {
 	atomic.StoreUint32(&ddl.TableColumnCountLimit, originLimit)
 }
 
+func (s *testIntegrationSuite6) TestCreateTableTooManyIndexes(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	sql := "create table t_too_many_indexes ("
+	for i := 0; i < 100; i++ {
+		if i != 0 {
+			sql += ","
+		}
+		sql += fmt.Sprintf("c%d int", i)
+	}
+	for i := 0; i < 100; i++ {
+		sql += ","
+
+		sql += fmt.Sprintf("key k%d(c%d)", i, i)
+	}
+	sql += ");"
+
+	tk.MustGetErrCode(sql, errno.ErrTooManyKeys)
+}
+
 func (s *testIntegrationSuite3) TestChangeColumnPosition(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -1458,6 +1479,28 @@ func (s *testIntegrationSuite6) TestAddColumnTooMany(c *C) {
 	tk.MustExec("alter table t_column_too_many add column a_512 int")
 	alterSQL := "alter table t_column_too_many add column a_513 int"
 	tk.MustGetErrCode(alterSQL, errno.ErrTooManyFields)
+}
+
+func (s *testIntegrationSuite6) TestCreateIndexTooMany(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	count := int(atomic.LoadUint32(&ddl.TableIndexCountLimit) - 1)
+	sql := "create table t_index_too_many ("
+	for i := 0; i < 100; i++ {
+		if i != 0 {
+			sql += ","
+		}
+		sql += fmt.Sprintf("c%d int", i)
+	}
+	for i := 0; i < count; i++ {
+		sql += ","
+
+		sql += fmt.Sprintf("key k%d(c%d)", i, i)
+	}
+	tk.MustExec(sql)
+	tk.MustExec("create index idx1 on t_index_too_many (c62)")
+	alterSQL := "create index idx2 on t_index_too_many (c63)"
+	tk.MustGetErrCode(alterSQL, errno.ErrTooManyKeys)
 }
 
 func (s *testIntegrationSuite3) TestAlterColumn(c *C) {
