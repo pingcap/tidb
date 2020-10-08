@@ -405,6 +405,7 @@ func (e *IndexLookUpExecutor) Open(ctx context.Context) error {
 		e.feedback.Invalidate()
 		return err
 	}
+	e.initRuntimeStats()
 	err = e.open(ctx)
 	if err != nil {
 		e.feedback.Invalidate()
@@ -444,7 +445,6 @@ func (e *IndexLookUpExecutor) startWorkers(ctx context.Context, initBatchSize in
 	// indexWorker will write to workCh and tableWorker will read from workCh,
 	// so fetching index and getting table data can run concurrently.
 	workCh := make(chan *lookupTableTask, 1)
-	e.collectRuntimeStatsEnabled()
 	if err := e.startIndexWorker(ctx, e.kvRanges, workCh, initBatchSize); err != nil {
 		return err
 	}
@@ -665,12 +665,10 @@ func (e *IndexLookUpExecutor) getResultTask() (*lookupTableTask, error) {
 	return e.resultCurr, nil
 }
 
-func (e *IndexLookUpExecutor) collectRuntimeStatsEnabled() {
+func (e *IndexLookUpExecutor) initRuntimeStats() {
 	if e.runtimeStats != nil {
 		if e.stats == nil {
-			snapshotStats := &tikv.SnapshotRuntimeStats{}
 			e.stats = &indexLookUpRunTimeStats{
-				SnapshotRuntimeStats: snapshotStats,
 				tableTask: &tikv.RPCRuntimeStats{
 					Count:   0,
 					Consume: 0,
@@ -953,7 +951,6 @@ func recordIndexLookUpRuntimeStats(stats *tikv.RPCRuntimeStats, d time.Duration)
 }
 
 type indexLookUpRunTimeStats struct {
-	*tikv.SnapshotRuntimeStats
 	tableTask    *tikv.RPCRuntimeStats
 	indexScan    int64
 	tableRowScan int64
@@ -970,7 +967,7 @@ func (e *indexLookUpRunTimeStats) String() string {
 		if buf.Len() > 0 {
 			buf.WriteByte(',')
 		}
-		buf.WriteString(fmt.Sprintf("table_task:{time:%s, num_rpc:%d, total_time:%s}", time.Duration(tableScan), e.tableTask.Count, time.Duration(e.tableTask.Consume)))
+		buf.WriteString(fmt.Sprintf(" table_task_time:%s", time.Duration(tableScan)))
 	}
 	return buf.String()
 }
@@ -982,10 +979,6 @@ func (e *indexLookUpRunTimeStats) Clone() execdetails.RuntimeStats {
 		indexScan:    e.indexScan,
 		tableRowScan: e.tableRowScan,
 	}
-	if e.SnapshotRuntimeStats != nil {
-		snapshotStats := e.SnapshotRuntimeStats.Clone()
-		newRs.SnapshotRuntimeStats = snapshotStats.(*tikv.SnapshotRuntimeStats)
-	}
 	return newRs
 }
 
@@ -994,14 +987,6 @@ func (e *indexLookUpRunTimeStats) Merge(other execdetails.RuntimeStats) {
 	tmp, ok := other.(*indexLookUpRunTimeStats)
 	if !ok {
 		return
-	}
-	if tmp.SnapshotRuntimeStats != nil {
-		if e.SnapshotRuntimeStats == nil {
-			snapshotStats := tmp.SnapshotRuntimeStats.Clone()
-			e.SnapshotRuntimeStats = snapshotStats.(*tikv.SnapshotRuntimeStats)
-		} else {
-			e.SnapshotRuntimeStats.Merge(tmp.SnapshotRuntimeStats)
-		}
 	}
 	e.tableTask.Consume += tmp.tableTask.Consume
 	e.tableTask.Count += tmp.tableTask.Count
