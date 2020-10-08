@@ -563,8 +563,8 @@ func (s *testChunkSuite) TestChunkMemoryUsage(c *check.C) {
 	//cap(c.nullBitmap) + cap(c.offsets)*4 + cap(c.data) + cap(c.elemBuf)
 	colUsage := make([]int, len(fieldTypes))
 	colUsage[0] = (initCap+7)>>3 + 0 + initCap*4 + 4
-	colUsage[1] = (initCap+7)>>3 + (initCap+1)*4 + initCap*8 + 0
-	colUsage[2] = (initCap+7)>>3 + (initCap+1)*4 + initCap*8 + 0
+	colUsage[1] = (initCap+7)>>3 + (initCap+1)*8 + initCap*8 + 0
+	colUsage[2] = (initCap+7)>>3 + (initCap+1)*8 + initCap*8 + 0
 	colUsage[3] = (initCap+7)>>3 + 0 + initCap*sizeTime + sizeTime
 	colUsage[4] = (initCap+7)>>3 + 0 + initCap*8 + 8
 
@@ -596,7 +596,7 @@ func (s *testChunkSuite) TestChunkMemoryUsage(c *check.C) {
 	chk.AppendDuration(4, durationObj)
 
 	memUsage = chk.MemoryUsage()
-	colUsage[1] = (initCap+7)>>3 + (initCap+1)*4 + cap(chk.columns[1].data) + 0
+	colUsage[1] = (initCap+7)>>3 + (initCap+1)*8 + cap(chk.columns[1].data) + 0
 	expectedUsage = 0
 	for i := range colUsage {
 		expectedUsage += colUsage[i] + int(unsafe.Sizeof(*chk.columns[i]))
