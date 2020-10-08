@@ -284,8 +284,9 @@ type simpleStatsCache struct {
 	cache       *kvcache.SimpleLRUCache
 	memCapacity int64
 	version     uint64
-	memTracker  *memory.Tracker // track memory usage.
+	memTracker  *memory.Tracker
 }
+
 type statsCacheKey int64
 
 func (key statsCacheKey) Hash() []byte {
@@ -353,8 +354,9 @@ func (sc *simpleStatsCache) Lookup(id int64) (*statistics.Table, bool) {
 	return sc.lookupUnsafe(id)
 }
 
-// Insert insert a new table to tables and update the cache.
-// if bytesconsumed is more than capacity, remove oldest cache and add metadata of it
+// Insert inserts a new table to the statsCache.
+// If the memory consumption exceeds the capacity, remove the buckets and
+// CMSketch of the oldest cache and add metadata of it
 func (sc *simpleStatsCache) Insert(table *statistics.Table) {
 	if table == nil {
 		return
@@ -372,9 +374,10 @@ func (sc *simpleStatsCache) Insert(table *statistics.Table) {
 		sc.memTracker.Consume(-evictedValue.(*statistics.Table).MemoryUsage())
 		sc.cache.Put(evictedKey, evictedValue.(*statistics.Table).CopyWithoutBucketsAndCMS())
 	}
+	// erase the old element since the value may be different from the existing one.
 	sc.Erase(table.PhysicalID)
-	sc.memTracker.Consume(mem)
 	sc.cache.Put(key, table)
+	sc.memTracker.Consume(mem)
 	return
 }
 
@@ -384,10 +387,10 @@ func (sc *simpleStatsCache) Erase(deletedID int64) bool {
 	if !hit {
 		return false
 	}
-	sc.memTracker.Consume(-table.MemoryUsage())
 
 	key := statsCacheKey(deletedID)
 	sc.cache.Delete(key)
+	sc.memTracker.Consume(-table.MemoryUsage())
 	return true
 }
 

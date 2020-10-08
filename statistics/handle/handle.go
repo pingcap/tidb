@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/table"
@@ -77,11 +78,10 @@ type Handle struct {
 	lease atomic2.Duration
 }
 
-// Clear the statsCache, only for test.
-// this function is not thread safe. can not used with statscache.Update/statscache.LookUp
-func (h *Handle) Clear() {
+// Clear4Test the statsCache, only for test.
+func (h *Handle) Clear4Test() {
 	h.mu.Lock()
-	h.SetBytesLimit(h.mu.ctx.GetSessionVars().MemQuotaStatistic)
+	h.SetBytesLimit4Test(h.mu.ctx.GetSessionVars().MemQuotaStatistics)
 	h.statsCache.Clear()
 	for len(h.ddlEventCh) > 0 {
 		<-h.ddlEventCh
@@ -112,7 +112,7 @@ func NewHandle(ctx sessionctx.Context, lease time.Duration) *Handle {
 		handle.restrictedExec = exec
 	}
 	var err error
-	handle.statsCache, err = NewStatsCache(ctx.GetSessionVars().MemQuotaStatistic, handle.sType)
+	handle.statsCache, err = NewStatsCache(ctx.GetSessionVars().MemQuotaStatistics, handle.sType)
 	if err != nil {
 		log.Fatal(err.Error())
 	}
@@ -272,11 +272,12 @@ func (h *Handle) GetPartitionStats(tblInfo *model.TableInfo, pid int64) *statist
 // SetSimpleCache change cache type to simplecache.
 func (h *Handle) SetSimpleCache() {
 	h.sType = SimpleStatsCacheType
-	h.statsCache = newSimpleStatsCache(h.mu.ctx.GetSessionVars().MemQuotaStatistic)
+	h.statsCache = newSimpleStatsCache(h.mu.ctx.GetSessionVars().MemQuotaStatistics)
 }
 
-// SetBytesLimit sets the bytes limit for this tracker. "bytesLimit <= 0" means no limit.
-func (h *Handle) SetBytesLimit(bytesLimit int64) {
+// SetBytesLimit4Test sets the bytes limit for this tracker. "bytesLimit <= 0" means no limit.
+// Only used for test.
+func (h *Handle) SetBytesLimit4Test(bytesLimit int64) {
 	h.statsCache.SetBytesLimit(bytesLimit)
 }
 
@@ -1108,4 +1109,18 @@ func (h *Handle) SaveExtendedStatsToStorage(tableID int64, extStats *statistics.
 		sqls = append(sqls, fmt.Sprintf("UPDATE mysql.stats_meta SET version = %d WHERE table_id = %d", version, tableID))
 	}
 	return execSQLs(ctx, exec, sqls)
+}
+
+// CurrentPruneMode indicates whether tbl support runtime prune for table and first partition id.
+func (h *Handle) CurrentPruneMode() variable.PartitionPruneMode {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return variable.PartitionPruneMode(h.mu.ctx.GetSessionVars().PartitionPruneMode.Load())
+}
+
+// RefreshVars uses to pull PartitionPruneMethod vars from kv storage.
+func (h *Handle) RefreshVars() error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.mu.ctx.RefreshVars(context.Background())
 }

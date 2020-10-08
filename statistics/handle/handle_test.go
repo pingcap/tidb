@@ -59,7 +59,7 @@ func cleanEnv(c *C, store kv.Storage, do *domain.Domain) {
 }
 func cleanHandle(c *C, do *domain.Domain) {
 	clearRW.Lock()
-	do.StatsHandle().Clear()
+	do.StatsHandle().Clear4Test()
 	clearRW.Unlock()
 }
 func (s *testStatsSuite) TestStatsCache(c *C) {
@@ -211,6 +211,36 @@ func assertTableEqual(c *C, a *statistics.Table, b *statistics.Table) {
 			c.Assert(a.Columns[i].CMSketch.Equal(b.Columns[i].CMSketch), IsTrue)
 		}
 	}
+	c.Assert(isSameExtendedStats(a.ExtendedStats, b.ExtendedStats), IsTrue)
+}
+
+func isSameExtendedStats(a, b *statistics.ExtendedStatsColl) bool {
+	aEmpty := (a == nil) || len(a.Stats) == 0
+	bEmpty := (b == nil) || len(b.Stats) == 0
+	if (aEmpty && !bEmpty) || (!aEmpty && bEmpty) {
+		return false
+	}
+	if aEmpty && bEmpty {
+		return true
+	}
+	if len(a.Stats) != len(b.Stats) {
+		return false
+	}
+	for aKey, aItem := range a.Stats {
+		bItem, ok := b.Stats[aKey]
+		if !ok {
+			return false
+		}
+		for i, id := range aItem.ColIDs {
+			if id != bItem.ColIDs[i] {
+				return false
+			}
+		}
+		if (aItem.Tp != bItem.Tp) || (aItem.ScalarVals != bItem.ScalarVals) || (aItem.StringVals != bItem.StringVals) {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *testStatsSuite) TestStatsStoreAndLoad(c *C) {
@@ -743,7 +773,7 @@ func (s *testStatsSuite) TestExtendedStatsOps(c *C) {
 	c.Assert(len(statsTbl.ExtendedStats.Stats), Equals, 0)
 
 	tk.MustExec("update mysql.stats_extended set status = 1 where stats_name = 's1' and db = 'test'")
-	do.StatsHandle().Clear()
+	do.StatsHandle().Clear4Test()
 	do.StatsHandle().Update(is)
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
 	c.Assert(statsTbl, NotNil)
@@ -783,7 +813,7 @@ func (s *testStatsSuite) TestAdminReloadStatistics(c *C) {
 	c.Assert(len(statsTbl.ExtendedStats.Stats), Equals, 0)
 
 	tk.MustExec("update mysql.stats_extended set status = 1 where stats_name = 's1' and db = 'test'")
-	do.StatsHandle().Clear()
+	do.StatsHandle().Clear4Test()
 	do.StatsHandle().Update(is)
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
 	c.Assert(statsTbl, NotNil)

@@ -20,7 +20,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
-	"math"
 	"net/url"
 	"os"
 	"os/user"
@@ -52,8 +51,8 @@ const (
 	DefMaxIndexLength = 3072
 	// DefMaxOfMaxIndexLength is the maximum index length(in bytes) for TiDB v3.0.7 and previous version.
 	DefMaxOfMaxIndexLength = 3072 * 4
-	// DefMinQuotaStatistic is the minimum statistic memory quota(in bytes).
-	DefMinQuotaStatistic = 1 << 30
+	// DefMinQuotaStatistics is the minimum statistic memory quota(in bytes).
+	DefMinQuotaStatistics = 1 << 30
 	// DefPort is the default port of TiDB
 	DefPort = 4000
 	// DefStatusPort is the default status port of TiDB
@@ -100,7 +99,7 @@ type Config struct {
 	TempStoragePath             string `toml:"tmp-storage-path" json:"tmp-storage-path"`
 	OOMAction                   string `toml:"oom-action" json:"oom-action"`
 	MemQuotaQuery               int64  `toml:"mem-quota-query" json:"mem-quota-query"`
-	MemQuotaStatistic           int64  `toml:"mem-quota-statistic" json:"mem-quota-statistic"`
+	MemQuotaStatistics          int64  `toml:"mem-quota-statistics" json:"mem-quota-statistics"`
 	NestedLoopJoinCacheCapacity int64  `toml:"nested-loop-join-cache-capacity" json:"nested-loop-join-cache-capacity"`
 	// TempStorageQuota describe the temporary storage Quota during query exector when OOMUseTmpStorage is enabled
 	// If the quota exceed the capacity of the TempStoragePath, the tidb-server would exit with fatal error
@@ -498,10 +497,8 @@ type TiKVClient struct {
 	// and if no activity is seen even after that the connection is closed.
 	GrpcKeepAliveTimeout uint `toml:"grpc-keepalive-timeout" json:"grpc-keepalive-timeout"`
 	// CommitTimeout is the max time which command 'commit' will wait.
-	CommitTimeout string `toml:"commit-timeout" json:"commit-timeout"`
-	// EnableAsyncCommit enables async commit for all transactions.
-	EnableAsyncCommit bool `toml:"enable-async-commit" json:"enable-async-commit"`
-
+	CommitTimeout string      `toml:"commit-timeout" json:"commit-timeout"`
+	AsyncCommit   AsyncCommit `toml:"async-commit" json:"async-commit"`
 	// MaxBatchSize is the max batch size when calling batch commands API.
 	MaxBatchSize uint `toml:"max-batch-size" json:"max-batch-size"`
 	// If TiKV load is greater than this, TiDB will wait for a while to avoid little batch.
@@ -523,6 +520,16 @@ type TiKVClient struct {
 	CoprCache            CoprocessorCache `toml:"copr-cache" json:"copr-cache"`
 	// TTLRefreshedTxnSize controls whether a transaction should update its TTL or not.
 	TTLRefreshedTxnSize int64 `toml:"ttl-refreshed-txn-size" json:"ttl-refreshed-txn-size"`
+}
+
+// AsyncCommit is the config for the async commit feature.
+type AsyncCommit struct {
+	// Whether to enable the async commit feature.
+	Enable bool `toml:"enable" json:"enable"`
+	// Use async commit only if the number of keys does not exceed KeysLimit.
+	KeysLimit uint `toml:"keys-limit" json:"keys-limit"`
+	// Use async commit only if the total size of keys does not exceed TotalKeySizeLimit.
+	TotalKeySizeLimit uint64 `toml:"total-key-size-limit" json:"total-key-size-limit"`
 }
 
 // CoprocessorCache is the config for coprocessor cache.
@@ -588,8 +595,6 @@ type IsolationRead struct {
 // Experimental controls the features that are still experimental: their semantics, interfaces are subject to change.
 // Using these features in the production environment is not recommended.
 type Experimental struct {
-	// Whether enable creating expression index.
-	AllowsExpressionIndex bool `toml:"allow-expression-index" json:"allow-expression-index"`
 }
 
 var defaultConf = Config{
@@ -608,7 +613,7 @@ var defaultConf = Config{
 	TempStoragePath:              tempStorageDirName,
 	OOMAction:                    OOMActionCancel,
 	MemQuotaQuery:                1 << 30,
-	MemQuotaStatistic:            int64(math.MaxInt32),
+	MemQuotaStatistics:           32 << 30,
 	NestedLoopJoinCacheCapacity:  20971520,
 	EnableStreaming:              false,
 	EnableBatchDML:               false,
@@ -693,7 +698,12 @@ var defaultConf = Config{
 		GrpcKeepAliveTime:    10,
 		GrpcKeepAliveTimeout: 3,
 		CommitTimeout:        "41s",
-		EnableAsyncCommit:    false,
+		AsyncCommit: AsyncCommit{
+			Enable: false,
+			// FIXME: Find an appropriate default limit.
+			KeysLimit:         256,
+			TotalKeySizeLimit: 4 * 1024, // 4 KiB
+		},
 
 		MaxBatchSize:      128,
 		OverloadThreshold: 200,
@@ -733,9 +743,7 @@ var defaultConf = Config{
 	IsolationRead: IsolationRead{
 		Engines: []string{"tikv", "tiflash", "tidb"},
 	},
-	Experimental: Experimental{
-		AllowsExpressionIndex: false,
-	},
+	Experimental:               Experimental{},
 	EnableCollectExecutionInfo: true,
 	EnableTelemetry:            true,
 	Labels:                     make(map[string]string),
@@ -878,7 +886,7 @@ func (c *Config) Valid() error {
 	if c.Security.SkipGrantTable && !hasRootPrivilege() {
 		return fmt.Errorf("TiDB run with skip-grant-table need root privilege")
 	}
-	if _, ok := ValidStorage[c.Store]; !ok {
+	if !ValidStorage[c.Store] {
 		nameList := make([]string, 0, len(ValidStorage))
 		for k, v := range ValidStorage {
 			if v {
@@ -935,8 +943,8 @@ func (c *Config) Valid() error {
 	if c.PreparedPlanCache.MemoryGuardRatio < 0 || c.PreparedPlanCache.MemoryGuardRatio > 1 {
 		return fmt.Errorf("memory-guard-ratio in [prepared-plan-cache] must be NOT less than 0 and more than 1")
 	}
-	if c.MemQuotaStatistic < DefMinQuotaStatistic {
-		return fmt.Errorf("memory-quota-statistic in must be greater than %dB", DefMinQuotaStatistic)
+	if c.MemQuotaStatistics < DefMinQuotaStatistics {
+		return fmt.Errorf("memory-quota-statistics should be greater than %dB", DefMinQuotaStatistics)
 	}
 	if len(c.IsolationRead.Engines) < 1 {
 		return fmt.Errorf("the number of [isolation-read]engines for isolation read should be at least 1")

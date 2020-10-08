@@ -51,6 +51,7 @@ import (
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/twmb/murmur3"
+	atomic2 "go.uber.org/atomic"
 )
 
 var preparedStmtCount int64
@@ -712,12 +713,12 @@ type SessionVars struct {
 	LastTxnInfo kv.TxnInfo
 
 	// PartitionPruneMode indicates how and when to prune partitions.
-	PartitionPruneMode PartitionPruneMode
+	PartitionPruneMode atomic2.String
 }
 
 // UseDynamicPartitionPrune indicates whether use new dynamic partition prune.
 func (s *SessionVars) UseDynamicPartitionPrune() bool {
-	return s.PartitionPruneMode == DynamicOnly
+	return PartitionPruneMode(s.PartitionPruneMode.Load()) == DynamicOnly
 }
 
 // PartitionPruneMode presents the prune mode used.
@@ -852,7 +853,7 @@ func NewSessionVars() *SessionVars {
 	}
 	vars.MemQuota = MemQuota{
 		MemQuotaQuery:               config.GetGlobalConfig().MemQuotaQuery,
-		MemQuotaStatistic:           config.GetGlobalConfig().MemQuotaStatistic,
+		MemQuotaStatistics:          config.GetGlobalConfig().MemQuotaStatistics,
 		NestedLoopJoinCacheCapacity: config.GetGlobalConfig().NestedLoopJoinCacheCapacity,
 
 		// The variables below do not take any effect anymore, it's remaining for compatibility.
@@ -1298,8 +1299,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.InitChunkSize = tidbOptPositiveInt32(val, DefInitChunkSize)
 	case TIDBMemQuotaQuery:
 		s.MemQuotaQuery = tidbOptInt64(val, config.GetGlobalConfig().MemQuotaQuery)
-	case TIDBMemQuotaStatistic:
-		s.MemQuotaStatistic = tidbOptInt64(val, config.GetGlobalConfig().MemQuotaStatistic)
+	case TIDBMemQuotaStatistics:
+		s.MemQuotaStatistics = tidbOptInt64(val, config.GetGlobalConfig().MemQuotaStatistics)
 	case TIDBNestedLoopJoinCacheCapacity:
 		s.NestedLoopJoinCacheCapacity = tidbOptInt64(val, config.GetGlobalConfig().NestedLoopJoinCacheCapacity)
 	case TIDBMemQuotaHashJoin:
@@ -1455,7 +1456,7 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	case TiDBEnableClusteredIndex:
 		s.EnableClusteredIndex = TiDBOptOn(val)
 	case TiDBPartitionPruneMode:
-		s.PartitionPruneMode = PartitionPruneMode(strings.ToLower(strings.TrimSpace(val)))
+		s.PartitionPruneMode.Store(strings.ToLower(strings.TrimSpace(val)))
 	case TiDBEnableParallelApply:
 		s.EnableParallelApply = TiDBOptOn(val)
 	case TiDBSlowLogMasking, TiDBRedactLog:
@@ -1724,8 +1725,8 @@ func (c *Concurrency) UnionConcurrency() int {
 type MemQuota struct {
 	// MemQuotaQuery defines the memory quota for a query.
 	MemQuotaQuery int64
-	// MemQuotaStatistic defines the memory quota for the statistic Cache.
-	MemQuotaStatistic int64
+	// MemQuotaStatistics defines the memory quota for the statistic Cache.
+	MemQuotaStatistics int64
 	// NestedLoopJoinCacheCapacity defines the memory capacity for apply cache.
 	NestedLoopJoinCacheCapacity int64
 
