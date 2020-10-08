@@ -107,15 +107,32 @@ If `Materialization` is necessary, these optimizations can be applied:
 3. Add index(es) according to access method [[1]](https://dev.mysql.com/doc/refman/8.0/en/derived-table-optimization.html).
 4. Pushdown predicates, and pushdown disjunction of all predicates if referenced multiple times [[4]](http://www.vldb.org/pvldb/vol8/p1704-elhelw.pdf)[[5]](http://ceur-ws.org/Vol-1864/paper_6.pdf).
 
-* MySQL using these two strategies: 1) Merge the derived table into the outer query block, or 2) Materialize the derived table to an internal temporary table [[1]](https://dev.mysql.com/doc/refman/8.0/en/derived-table-optimization.html). The optimizer avoids unnecessary materialization whenever possible, which enables pushing down conditions from the outer query to derived tables and produces more efficient execution plans [[1]](https://dev.mysql.com/doc/refman/8.0/en/derived-table-optimization.html).
 
-* MariaDB using `Materialization` as basic algorithm. To optimize performance, MariaDB using `Merge` strategy, and utilizes "Condition Pushdown" [[5]](http://ceur-ws.org/Vol-1864/paper_6.pdf).
+#### MySQL
+MySQL using these two strategies: 1) Merge the derived table into the outer query block, or 2) Materialize the derived table to an internal temporary table [[1]](https://dev.mysql.com/doc/refman/8.0/en/derived-table-optimization.html). The optimizer most often merge, except that [[14]](https://dev.mysql.com/worklog/task/?id=883)[[15]](https://github.com/mysql/mysql-server/blob/f8cdce86448a211511e8a039c62580ae16cb96f5/sql/sql_resolver.cc#L3358):
+* Optimizer hints specifies [NO_MERGE](https://dev.mysql.com/doc/refman/8.0/en/optimizer-hints.html#optimizer-hints-table-level), or [optimizer_switch](https://dev.mysql.com/doc/refman/8.0/en/server-system-variables.html#sysvar_optimizer_switch)'s `derived_merge` is __OFF__.
+* CTE is not mergeable because having the following structure [[16]](https://github.com/mysql/mysql-server/blob/f8cdce86448a211511e8a039c62580ae16cb96f5/sql/sql_lex.cc#L3727):
+  *  Union (implementation restriction) _(TODO: why?)_
+  *  Aggregation/Having/Distinct (A general aggregation cannot be merged with a non-aggregated one)
+  *  Limit
+  *  Window _(TODO: why?)_
+* Heuristic does not suggest merge [[16]](https://github.com/mysql/mysql-server/blob/f8cdce86448a211511e8a039c62580ae16cb96f5/sql/sql_lex.cc#L3751):
+  * CTE is not constant (has `SET VAR`).
+  * Contains subqueries in the SELECT list that depend on columns from itself, because MySQL assumes that user wants subquery to be materialized.
 
-* Greenplum also using `Merge` and `Materialization`, and utilize rules and cost-bases algorithm to optimize execution plan. Moreover, Greenplum introduces a producer-consumer model to implement `Materialization` [[4]](http://www.vldb.org/pvldb/vol8/p1704-elhelw.pdf).
+#### MariaDB
+MariaDB using `Materialization` as basic algorithm. Similar to MySQL, to optimize performance, MariaDB will try to use `Merge` strategy, and fall back to materialization due to side-effect [[18]](https://github.com/MariaDB/server/blob/5b8ab1934a10966336e66751bc13fc66923b02f6/sql/table.cc#L9224).
 
-* Postgresql have always used `Materialization` strategy, and introduced `Merge` in a recent commit [[9]](https://git.postgresql.org/gitweb/?p=postgresql.git;a=commitdiff;h=608b167f9f9c4553c35bb1ec0eab9ddae643989b)[[10]](https://info.crunchydata.com/blog/with-queries-present-future-common-table-expressions).
+Besides, MariaDB supports "Condition Pushdown" [[5]](http://ceur-ws.org/Vol-1864/paper_6.pdf)) and "Lateral Derived Optimization" [[18]](https://www.slideshare.net/SergeyPetrunya/mariadb-103-optimizer-where-does-it-stand)[[19]](https://mariadb.com/kb/en/lateral-derived-optimization/)
 
-* CockroachDB uses `Materialization` strategy by default, but chooses `Merge` strategy when 1) see `NO MATERIALIZED` hint, or 2) the CTE has no side-effect and is referenced only once [[11]](https://github.com/cockroachdb/cockroach/blob/master/pkg/sql/opt/norm/with_funcs.go#L18)[[12]](https://github.com/cockroachdb/cockroach/issues/45863).
+#### Greenplum
+Greenplum also using `Merge` and `Materialization`, and utilize rules and cost-bases algorithm to optimize execution plan. Moreover, Greenplum introduces a producer-consumer model to implement `Materialization` [[4]](http://www.vldb.org/pvldb/vol8/p1704-elhelw.pdf).
+
+#### Postgresql
+Postgresql have always used `Materialization` strategy, and introduced `Merge` in a recent commit [[9]](https://git.postgresql.org/gitweb/?p=postgresql.git;a=commitdiff;h=608b167f9f9c4553c35bb1ec0eab9ddae643989b)[[10]](https://info.crunchydata.com/blog/with-queries-present-future-common-table-expressions).
+
+#### CockroachDB
+CockroachDB uses `Materialization` strategy by default, but chooses `Merge` strategy when 1) see `NO MATERIALIZED` hint, or 2) the CTE has no side-effect and is referenced only once [[11]](https://github.com/cockroachdb/cockroach/blob/master/pkg/sql/opt/norm/with_funcs.go#L18)[[12]](https://github.com/cockroachdb/cockroach/issues/45863).
 
 
 
@@ -144,3 +161,9 @@ If `Materialization` is necessary, these optimizations can be applied:
 11. [CockroachDB codes, with_funcs.go:CanInlineWith](https://github.com/cockroachdb/cockroach/blob/master/pkg/sql/opt/norm/with_funcs.go#L18)
 12. [CockroachDB: opt: Support AS MATERIALIZED option in CTEs](https://github.com/cockroachdb/cockroach/issues/45863)
 13. [MySQL 8.0 Reference Manual, 8.2.2.2 Optimizing Subqueries with Materialization](https://dev.mysql.com/doc/refman/8.0/en/subquery-materialization.html)
+14. [MySQL WL#883: Non-recursive WITH clause (Common Table Expression)](https://dev.mysql.com/worklog/task/?id=883)
+15. [MySQL codes, sql_resolver.cc](https://github.com/mysql/mysql-server/blob/f8cdce86448a211511e8a039c62580ae16cb96f5/sql/sql_resolver.cc)
+16. [MySQL codes, sql_lex.cc](https://github.com/mysql/mysql-server/blob/f8cdce86448a211511e8a039c62580ae16cb96f5/sql/sql_lex.cc)
+17. [MariaDB codes, table.cc](https://github.com/MariaDB/server/blob/5b8ab1934a10966336e66751bc13fc66923b02f6/sql/table.cc)
+18. [MariaDB 10.3 Optimizer - where does it stand](https://www.slideshare.net/SergeyPetrunya/mariadb-103-optimizer-where-does-it-stand)
+19. [MariaDB Knowledge Base - Lateral Derived Optimization](https://mariadb.com/kb/en/lateral-derived-optimization/)
