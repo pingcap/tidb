@@ -576,7 +576,7 @@ func (e *IndexLookUpExecutor) startTableWorker(ctx context.Context, workCh <-cha
 
 func (e *IndexLookUpExecutor) buildTableReader(ctx context.Context, handles []kv.Handle) (Executor, error) {
 	tableReaderExec := &TableReaderExecutor{
-		baseExecutor:   newBaseExecutor(e.ctx, e.schema, 0),
+		baseExecutor:   newBaseExecutor(e.ctx, e.schema, e.id),
 		table:          e.table,
 		dagPB:          e.tableRequest,
 		startTS:        e.startTS,
@@ -665,7 +665,7 @@ func (e *IndexLookUpExecutor) getResultTask() (*lookupTableTask, error) {
 	return e.resultCurr, nil
 }
 
-func (e *IndexLookUpExecutor) collectRuntimeStatsEnabled() bool {
+func (e *IndexLookUpExecutor) collectRuntimeStatsEnabled() {
 	if e.runtimeStats != nil {
 		if e.stats == nil {
 			snapshotStats := &tikv.SnapshotRuntimeStats{}
@@ -680,9 +680,7 @@ func (e *IndexLookUpExecutor) collectRuntimeStatsEnabled() bool {
 			}
 			e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
 		}
-		return true
 	}
-	return false
 }
 
 // indexWorker is used by IndexLookUpExecutor to maintain index lookup background goroutines.
