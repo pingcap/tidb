@@ -128,7 +128,7 @@ func renewEmpty(chk *Chunk) *Chunk {
 	return newChk
 }
 
-// MemoryUsage returns the total memory usage of a Chunk in B.
+// MemoryUsage returns the total memory usage of a Chunk.
 // We ignore the size of Column.length and Column.nullCount
 // since they have little effect of the total memory usage.
 func (c *Chunk) MemoryUsage() (sum int64) {
