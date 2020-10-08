@@ -33,7 +33,7 @@ func (s *testStatsSuite) TestStatsCacheMiniMemoryLimit(c *C) {
 
 	//set new BytesLimit
 	BytesLimit := int64(90000)
-	s.do.StatsHandle().SetBytesLimit(BytesLimit)
+	s.do.StatsHandle().SetBytesLimit4Test(BytesLimit)
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t1 (c1 int, c2 int)")
 	testKit.MustExec("insert into t1 values(1, 2)")
@@ -276,7 +276,7 @@ func (s *testStatsSuite) TestManyTableChangeWithQuery(c *C) {
 		for _, v := range statsTblnew.Columns {
 			c.Assert(v.IsInvalid(&stmtctx.StatementContext{}, false), IsFalse)
 		}
-		for _, v := range statsTblNew.Indices {
+		for _, v := range statsTblnew.Indices {
 			c.Assert(v.IsInvalid(&stmtctx.StatementContext{}, false), IsFalse)
 		}
 		c.Assert(BytesLimit >= h.GetMemConsumed(), IsTrue)

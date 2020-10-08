@@ -279,5 +279,6 @@ PARTITION BY RANGE ( a ) (
 		for _, def := range pi.Definitions {
 			statsTbl := h.GetPartitionStats(tableInfo, def.ID)
 			c.Assert(statsTbl.Pseudo, IsFalse)
-		})
+		}
+	})
 }
