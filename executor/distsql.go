@@ -37,7 +37,6 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
-	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
@@ -587,11 +586,7 @@ func (e *IndexLookUpExecutor) buildTableReader(ctx context.Context, handles []kv
 		plans:          e.tblPlans,
 	}
 	tableReaderExec.buildVirtualColumnInfo()
-	rpcStart := time.Now()
 	tableReader, err := e.dataReaderBuilder.buildTableReaderFromHandles(ctx, tableReaderExec, handles, true)
-	if e.stats != nil {
-		recordIndexLookUpRuntimeStats(e.stats.tableTask, time.Since(rpcStart))
-	}
 	if err != nil {
 		logutil.Logger(ctx).Error("build table reader from handles failed", zap.Error(err))
 		return nil, err
@@ -669,10 +664,6 @@ func (e *IndexLookUpExecutor) initRuntimeStats() {
 	if e.runtimeStats != nil {
 		if e.stats == nil {
 			e.stats = &indexLookUpRunTimeStats{
-				tableTask: &tikv.RPCRuntimeStats{
-					Count:   0,
-					Consume: 0,
-				},
 				indexScan:    0,
 				tableRowScan: 0,
 			}
@@ -945,13 +936,7 @@ func (e *IndexLookUpExecutor) getHandle(row chunk.Row, handleIdx []int,
 	return
 }
 
-func recordIndexLookUpRuntimeStats(stats *tikv.RPCRuntimeStats, d time.Duration) {
-	atomic.AddInt64(&stats.Count, int64(1))
-	atomic.AddInt64(&stats.Consume, int64(d))
-}
-
 type indexLookUpRunTimeStats struct {
-	tableTask    *tikv.RPCRuntimeStats
 	indexScan    int64
 	tableRowScan int64
 }
@@ -963,7 +948,7 @@ func (e *indexLookUpRunTimeStats) String() string {
 	if indexScan != 0 {
 		buf.WriteString(fmt.Sprintf("index_task_time:%s", time.Duration(indexScan)))
 	}
-	if tableScan != 0 && e.tableTask.Count != 0 {
+	if tableScan != 0 {
 		if buf.Len() > 0 {
 			buf.WriteByte(',')
 		}
@@ -975,7 +960,6 @@ func (e *indexLookUpRunTimeStats) String() string {
 // Clone implements the RuntimeStats interface.
 func (e *indexLookUpRunTimeStats) Clone() execdetails.RuntimeStats {
 	newRs := &indexLookUpRunTimeStats{
-		tableTask:    e.tableTask,
 		indexScan:    e.indexScan,
 		tableRowScan: e.tableRowScan,
 	}
@@ -988,8 +972,6 @@ func (e *indexLookUpRunTimeStats) Merge(other execdetails.RuntimeStats) {
 	if !ok {
 		return
 	}
-	e.tableTask.Consume += tmp.tableTask.Consume
-	e.tableTask.Count += tmp.tableTask.Count
 	e.indexScan += tmp.indexScan
 	e.tableRowScan += tmp.tableRowScan
 }
