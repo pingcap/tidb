@@ -36,7 +36,7 @@ func (h *Handle) HandleDDLEvent(t *util.Event) error {
 				return err
 			}
 		}
-	case model.ActionAddColumn, model.ActionAddColumns:
+	case model.ActionAddColumn, model.ActionAddColumns, model.ActionModifyColumn:
 		ids := getPhysicalIDs(t.TableInfo)
 		for _, id := range ids {
 			if err := h.insertColStats2KV(id, t.ColumnInfos); err != nil {
@@ -143,7 +143,7 @@ func (h *Handle) insertColStats2KV(physicalID int64, colInfos []*model.ColumnInf
 		count := req.GetRow(0).GetInt64(0)
 		sqls := make([]string, 0, len(colInfos))
 		for _, colInfo := range colInfos {
-			value := types.NewDatum(colInfo.OriginDefaultValue)
+			value := types.NewDatum(colInfo.GetOriginDefaultValue())
 			value, err = value.ConvertTo(h.mu.ctx.GetSessionVars().StmtCtx, &colInfo.FieldType)
 			if err != nil {
 				return

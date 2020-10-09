@@ -137,9 +137,15 @@ func (la *LogicalAggregation) PruneColumns(parentUsedCols []*expression.Column) 
 
 func pruneByItems(old []*util.ByItems) (new []*util.ByItems, parentUsedCols []*expression.Column) {
 	new = make([]*util.ByItems, 0, len(old))
+	seen := make(map[string]struct{}, len(old))
 	for _, byItem := range old {
+		hash := string(byItem.Expr.HashCode(nil))
+		_, hashMatch := seen[hash]
+		seen[hash] = struct{}{}
 		cols := expression.ExtractColumns(byItem.Expr)
-		if len(cols) == 0 {
+		if hashMatch {
+			// do nothing, should be filtered
+		} else if len(cols) == 0 {
 			if !expression.IsRuntimeConstExpr(byItem.Expr) {
 				new = append(new, byItem)
 			}
@@ -360,7 +366,7 @@ func (la *LogicalApply) PruneColumns(parentUsedCols []*expression.Column) error 
 
 // PruneColumns implements LogicalPlan interface.
 func (p *LogicalLock) PruneColumns(parentUsedCols []*expression.Column) error {
-	if p.Lock != ast.SelectLockForUpdate && p.Lock != ast.SelectLockForUpdateNoWait {
+	if !IsSelectForUpdateLockType(p.Lock.LockType) {
 		return p.baseLogicalPlan.PruneColumns(parentUsedCols)
 	}
 
