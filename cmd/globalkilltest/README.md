@@ -45,7 +45,7 @@ Usage: ./run-tests.sh [options]
 
 
 ## Prerequisite
-1. Build TiDB binary by `make server_globalkilltest`. See [Makefile](https://github.com/pingyu/tidb/blob/master/Makefile) for detail.
+1. Build TiDB binary by `make server_globalkilltest`. See [Makefile](https://github.com/pingcap/tidb/blob/master/Makefile) for detail.
 
 2. Establish a cluster with PD & TiKV, and provide PD client path by `--pd=ip:port[,ip:port]`.
 
@@ -69,7 +69,7 @@ Usage: ./run-tests.sh [options]
 
 ## How it works
 
-* TiDB is built by `make server_globalkilltest`, to hack some timeout variables, as the default value of these variables are too long _(several hours)_ for automated testing. See [Makefile](https://github.com/pingyu/tidb/blob/master/Makefile) for detail.
+* TiDB is built by `make server_globalkilltest`, to hack some timeout variables, as the default value of these variables are too long _(several hours)_ for automated testing. See [Makefile](https://github.com/pingcap/tidb/blob/master/Makefile) for detail.
 
 * Execute `SELECT SLEEP(x)` as payload, and kill the query before `x` expired. If the query had no error and elapsed less than `x`, the test is PASSED.
 
