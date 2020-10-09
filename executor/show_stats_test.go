@@ -175,7 +175,7 @@ func (s *testShowStatsSuite) TestShowStatsHasNullValue(c *C) {
 
 func (s *testShowStatsSuite) TestShowPartitionStats(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	testkit.WithPruneMode(tk, variable.StaticOnly, func() {
+	testkit.WithPruneMode(tk, func(m variable.PartitionPruneMode) {
 		tk.MustExec("set @@session.tidb_enable_table_partition=1")
 		tk.MustExec("use test")
 		tk.MustExec("drop table if exists t")
@@ -189,22 +189,46 @@ func (s *testShowStatsSuite) TestShowPartitionStats(c *C) {
 		c.Assert(len(result.Rows()), Equals, 1)
 		c.Assert(result.Rows()[0][0], Equals, "test")
 		c.Assert(result.Rows()[0][1], Equals, "t")
-		c.Assert(result.Rows()[0][2], Equals, "p0")
+		if m == variable.DynamicOnly {
+			c.Assert(result.Rows()[0][2], Equals, "")
+		} else {
+			c.Assert(result.Rows()[0][2], Equals, "p0")
+		}
 
 		result = tk.MustQuery("show stats_histograms").Sort()
 		c.Assert(len(result.Rows()), Equals, 3)
-		c.Assert(result.Rows()[0][2], Equals, "p0")
+		if m == variable.DynamicOnly {
+			c.Assert(result.Rows()[0][2], Equals, "")
+		} else {
+			c.Assert(result.Rows()[0][2], Equals, "p0")
+		}
 		c.Assert(result.Rows()[0][3], Equals, "a")
-		c.Assert(result.Rows()[1][2], Equals, "p0")
+		if m == variable.DynamicOnly {
+			c.Assert(result.Rows()[1][2], Equals, "")
+		} else {
+			c.Assert(result.Rows()[1][2], Equals, "p0")
+		}
 		c.Assert(result.Rows()[1][3], Equals, "b")
-		c.Assert(result.Rows()[2][2], Equals, "p0")
+		if m == variable.DynamicOnly {
+			c.Assert(result.Rows()[2][2], Equals, "")
+		} else {
+			c.Assert(result.Rows()[2][2], Equals, "p0")
+		}
 		c.Assert(result.Rows()[2][3], Equals, "idx")
 
 		result = tk.MustQuery("show stats_buckets").Sort()
-		result.Check(testkit.Rows("test t p0 a 0 0 1 1 1 1", "test t p0 b 0 0 1 1 1 1", "test t p0 idx 1 0 1 1 1 1"))
+		if m == variable.DynamicOnly {
+			result.Check(testkit.Rows("test t  a 0 0 1 1 1 1", "test t  b 0 0 1 1 1 1", "test t  idx 1 0 1 1 1 1"))
+		} else {
+			result.Check(testkit.Rows("test t p0 a 0 0 1 1 1 1", "test t p0 b 0 0 1 1 1 1", "test t p0 idx 1 0 1 1 1 1"))
+		}
 
 		result = tk.MustQuery("show stats_healthy")
-		result.Check(testkit.Rows("test t p0 100"))
+		if m == variable.DynamicOnly {
+			result.Check(testkit.Rows("test t  100"))
+		} else {
+			result.Check(testkit.Rows("test t p0 100"))
+		}
 	})
 }
 

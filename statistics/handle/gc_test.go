@@ -58,7 +58,7 @@ func (s *testStatsSuite) TestGCStats(c *C) {
 func (s *testStatsSuite) TestGCPartition(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
-	testkit.WithPruneMode(testKit, variable.StaticOnly, func() {
+	testkit.WithPruneMode(testKit, func(m variable.PartitionPruneMode) {
 		testKit.MustExec("use test")
 		testKit.MustExec("set @@session.tidb_enable_table_partition=1")
 		testKit.MustExec(`create table t (a bigint(64), b bigint(64), index idx(a, b))
@@ -68,24 +68,60 @@ func (s *testStatsSuite) TestGCPartition(c *C) {
 		testKit.MustExec("insert into t values (1,2),(2,3),(3,4),(4,5),(5,6)")
 		testKit.MustExec("analyze table t")
 
-		testKit.MustQuery("select count(*) from mysql.stats_histograms").Check(testkit.Rows("6"))
-		testKit.MustQuery("select count(*) from mysql.stats_buckets").Check(testkit.Rows("15"))
+		switch m {
+		case variable.StaticOnly:
+			testKit.MustQuery("select count(*) from mysql.stats_histograms").Check(testkit.Rows("6"))
+			testKit.MustQuery("select count(*) from mysql.stats_buckets").Check(testkit.Rows("15"))
+		case variable.StaticButPrepareDynamic:
+			testKit.MustQuery("select count(*) from mysql.stats_histograms").Check(testkit.Rows("9"))
+			testKit.MustQuery("select count(*) from mysql.stats_buckets").Check(testkit.Rows("30"))
+		case variable.DynamicOnly:
+			testKit.MustQuery("select count(*) from mysql.stats_histograms").Check(testkit.Rows("3"))
+			testKit.MustQuery("select count(*) from mysql.stats_buckets").Check(testkit.Rows("15"))
+		}
+
 		h := s.do.StatsHandle()
 		h.SetLastUpdateVersion(math.MaxUint64)
 		ddlLease := time.Duration(0)
 		testKit.MustExec("alter table t drop index idx")
 		c.Assert(h.GCStats(s.do.InfoSchema(), ddlLease), IsNil)
-		testKit.MustQuery("select count(*) from mysql.stats_histograms").Check(testkit.Rows("4"))
-		testKit.MustQuery("select count(*) from mysql.stats_buckets").Check(testkit.Rows("10"))
+		switch m {
+		case variable.StaticOnly:
+			testKit.MustQuery("select count(*) from mysql.stats_histograms").Check(testkit.Rows("4"))
+			testKit.MustQuery("select count(*) from mysql.stats_buckets").Check(testkit.Rows("10"))
+		case variable.StaticButPrepareDynamic:
+			testKit.MustQuery("select count(*) from mysql.stats_histograms").Check(testkit.Rows("6"))
+			testKit.MustQuery("select count(*) from mysql.stats_buckets").Check(testkit.Rows("20"))
+		case variable.DynamicOnly:
+			testKit.MustQuery("select count(*) from mysql.stats_histograms").Check(testkit.Rows("2"))
+			testKit.MustQuery("select count(*) from mysql.stats_buckets").Check(testkit.Rows("10"))
+		}
 
 		testKit.MustExec("alter table t drop column b")
 		c.Assert(h.GCStats(s.do.InfoSchema(), ddlLease), IsNil)
-		testKit.MustQuery("select count(*) from mysql.stats_histograms").Check(testkit.Rows("2"))
-		testKit.MustQuery("select count(*) from mysql.stats_buckets").Check(testkit.Rows("5"))
+		switch m {
+		case variable.StaticOnly:
+			testKit.MustQuery("select count(*) from mysql.stats_histograms").Check(testkit.Rows("2"))
+			testKit.MustQuery("select count(*) from mysql.stats_buckets").Check(testkit.Rows("5"))
+		case variable.StaticButPrepareDynamic:
+			testKit.MustQuery("select count(*) from mysql.stats_histograms").Check(testkit.Rows("3"))
+			testKit.MustQuery("select count(*) from mysql.stats_buckets").Check(testkit.Rows("10"))
+		case variable.DynamicOnly:
+			testKit.MustQuery("select count(*) from mysql.stats_histograms").Check(testkit.Rows("1"))
+			testKit.MustQuery("select count(*) from mysql.stats_buckets").Check(testkit.Rows("5"))
+		}
 
 		testKit.MustExec("drop table t")
 		c.Assert(h.GCStats(s.do.InfoSchema(), ddlLease), IsNil)
-		testKit.MustQuery("select count(*) from mysql.stats_meta").Check(testkit.Rows("2"))
+		switch m {
+		case variable.StaticOnly:
+			testKit.MustQuery("select count(*) from mysql.stats_meta").Check(testkit.Rows("2"))
+		case variable.StaticButPrepareDynamic:
+			testKit.MustQuery("select count(*) from mysql.stats_meta").Check(testkit.Rows("3"))
+		case variable.DynamicOnly:
+			testKit.MustQuery("select count(*) from mysql.stats_meta").Check(testkit.Rows("1"))
+		}
+
 		testKit.MustQuery("select count(*) from mysql.stats_histograms").Check(testkit.Rows("0"))
 		testKit.MustQuery("select count(*) from mysql.stats_buckets").Check(testkit.Rows("0"))
 		c.Assert(h.GCStats(s.do.InfoSchema(), ddlLease), IsNil)

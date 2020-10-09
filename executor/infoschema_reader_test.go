@@ -419,7 +419,7 @@ func (s *testInfoschemaTableSerialSuite) TestPartitionsTable(c *C) {
 
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("USE test;")
-	testkit.WithPruneMode(tk, variable.StaticOnly, func() {
+	testkit.WithPruneMode(tk, func(m variable.PartitionPruneMode) {
 		c.Assert(h.RefreshVars(), IsNil)
 		tk.MustExec("DROP TABLE IF EXISTS `test_partitions`;")
 		tk.MustExec(`CREATE TABLE test_partitions (a int, b int, c varchar(5), primary key(a), index idx(c)) PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (6), PARTITION p1 VALUES LESS THAN (11), PARTITION p2 VALUES LESS THAN (16));`)
@@ -440,11 +440,13 @@ func (s *testInfoschemaTableSerialSuite) TestPartitionsTable(c *C) {
 				"[0 0 0 0"))
 		c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 		c.Assert(h.Update(is), IsNil)
-		tk.MustQuery("select table_rows, avg_row_length, data_length, index_length from information_schema.PARTITIONS where table_name='test_partitions';").Check(
-			testkit.Rows("" +
-				"1 18 18 2]\n" +
-				"[1 18 18 2]\n" +
-				"[1 18 18 2"))
+		if m != variable.DynamicOnly {
+			tk.MustQuery("select table_rows, avg_row_length, data_length, index_length from information_schema.PARTITIONS where table_name='test_partitions';").Check(
+				testkit.Rows("" +
+					"1 18 18 2]\n" +
+					"[1 18 18 2]\n" +
+					"[1 18 18 2"))
+		}
 	})
 
 	// Test for table has no partitions.
