@@ -716,6 +716,14 @@ func onDropIndexes(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 			updateHiddenColumns(tblInfo, indexInfo, model.StateDeleteOnly)
 		}
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != indexInfo.State)
+	case model.StateDeleteOnly:
+		// delete only -> reorganization
+		job.SchemaState = model.StateDeleteReorganization
+		for _, indexInfo := range indexesInfo {
+			indexInfo.State = model.StateDeleteReorganization
+			updateHiddenColumns(tblInfo, indexInfo, model.StateDeleteReorganization)
+		}
+		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != indexInfo.State)
 	default:
 		err = ErrInvalidDDLState.GenWithStackByArgs("index", indexInfo.State)
 	}
