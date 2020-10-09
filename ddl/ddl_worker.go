@@ -869,6 +869,7 @@ func updateSchemaVersion(t *meta.Meta, job *model.Job) (int64, error) {
 		}
 		diff.AffectedOpts = affects
 	case model.ActionTruncateTablePartition:
+		newIDs := job.Args[len(job.Args)-1].([]int64)
 		var oldIDs []int64
 		err = job.DecodeArgs(&oldIDs)
 		if err != nil {
@@ -879,11 +880,29 @@ func updateSchemaVersion(t *meta.Meta, job *model.Job) (int64, error) {
 		for i := 0; i < len(oldIDs); i++ {
 			affects[i] = &model.AffectedOption{
 				SchemaID:   job.SchemaID,
+				TableID:    newIDs[i],
+				OldTableID: oldIDs[i],
+			}
+		}
+		diff.AffectedOpts = affects
+	case model.ActionDropTablePartition:
+		// affects are used to update placement rule cache
+		oldIDs := job.Args[len(job.Args)-1].([]int64)
+		diff.TableID = job.TableID
+		affects := make([]*model.AffectedOption, len(oldIDs))
+		for i := 0; i < len(oldIDs); i++ {
+			affects[i] = &model.AffectedOption{
+				SchemaID:   job.SchemaID,
 				TableID:    oldIDs[i],
 				OldTableID: oldIDs[i],
 			}
 		}
 		diff.AffectedOpts = affects
+	case model.ActionAlterTableAlterPartition:
+		err = job.DecodeArgs(&diff.TableID)
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
 	default:
 		diff.TableID = job.TableID
 	}
