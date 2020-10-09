@@ -70,68 +70,18 @@ As with MySQL, the read_only mode can be enabled at start using a command option
 #### Case 1, clients have transactions committing
 
 
-<table>
-  <tr>
-   <td>server 1
-   </td>
-   <td>server 2
-   </td>
-  </tr>
-  <tr>
-   <td>client 1
-   </td>
-   <td>client 2
-   </td>
-  </tr>
-  <tr>
-   <td>
-   </td>
-   <td>begin tx
-   </td>
-  </tr>
-  <tr>
-   <td>
-   </td>
-   <td>working
-   </td>
-  </tr>
-  <tr>
-   <td>
-   </td>
-   <td>working
-   </td>
-  </tr>
-  <tr>
-   <td>
-   </td>
-   <td>committing
-   </td>
-  </tr>
-  <tr>
-   <td>turn on read_only
-   </td>
-   <td>committing
-   </td>
-  </tr>
-  <tr>
-   <td>block
-   </td>
-   <td>committing
-   </td>
-  </tr>
-  <tr>
-   <td>block
-   </td>
-   <td>committed
-   </td>
-  </tr>
-  <tr>
-   <td>read_only turned on
-   </td>
-   <td>
-   </td>
-  </tr>
-</table>
+|server 1|server 2|
+|--- |--- |
+|client 1|client 2|
+||begin tx|
+||working|
+||working|
+||committing|
+|turn on read_only|committing|
+|block|committing|
+|block|committed|
+|read_only turned on||
+
 
 
 If there are transactions that are committing (i.e. started to commit before enabling attempt), the enabling attempt will be blocked until the commit is finished. This behavior is inline with MySQL’s, according to [MySQL’s documentation](https://dev.mysql.com/doc/refman/5.7/en/server-system-variables.html#sysvar_read_only). If a transaction has not reached commit point, once the enabling attempt is initiated, the transaction will fail at commit point.
@@ -140,42 +90,13 @@ If there are transactions that are committing (i.e. started to commit before ena
 #### Case 2, client who attempts to turn on `read_only` has write lock held
 
 
-<table>
-  <tr>
-   <td colspan="2" >server 1
-   </td>
-  </tr>
-  <tr>
-   <td>client 1, connection 1
-   </td>
-   <td>client 1, connection 2
-   </td>
-  </tr>
-  <tr>
-   <td>lock table write
-   </td>
-   <td>
-   </td>
-  </tr>
-  <tr>
-   <td>
-   </td>
-   <td>turn on read_only
-   </td>
-  </tr>
-  <tr>
-   <td>
-   </td>
-   <td>read_only turned on
-   </td>
-  </tr>
-  <tr>
-   <td>unlock
-   </td>
-   <td>
-   </td>
-  </tr>
-</table>
+|server 1| server 1|
+|--- |--- |
+|client 1, connection 1|client 1, connection 2|
+|lock table write||
+||turn on read_only|
+||read_only turned on|
+|unlock||
 
 
 This case is about the same client having more 2 connections (or sessions), and held a write lock in connection 1, and is attempting to enable read only mode in another connection. Note on [MySQL’s doc](https://dev.mysql.com/doc/refman/5.7/en/server-system-variables.html#sysvar_read_only):
@@ -189,63 +110,17 @@ If the client herself has an ongoing transaction or table locked for writing, th
 
 #### Case 3, other clients have held a write lock
 
+|server 1|server 2|
+|--- |--- |
+|client 1|client 2|
+||lock table for write|
+|turn on read_only||
+|block||
+|block|unlock table|
+|read_only turned on||
+||lock table for write|
+||error, read_only turned on|
 
-<table>
-  <tr>
-   <td>server 1
-   </td>
-   <td>server 2
-   </td>
-  </tr>
-  <tr>
-   <td>client 1
-   </td>
-   <td>client 2
-   </td>
-  </tr>
-  <tr>
-   <td>
-   </td>
-   <td>lock table for write
-   </td>
-  </tr>
-  <tr>
-   <td>turn on read_only
-   </td>
-   <td>
-   </td>
-  </tr>
-  <tr>
-   <td>block
-   </td>
-   <td>
-   </td>
-  </tr>
-  <tr>
-   <td>block
-   </td>
-   <td>unlock table
-   </td>
-  </tr>
-  <tr>
-   <td>read_only turned on
-   </td>
-   <td>
-   </td>
-  </tr>
-  <tr>
-   <td>
-   </td>
-   <td>lock table for write
-   </td>
-  </tr>
-  <tr>
-   <td>
-   </td>
-   <td>error, read_only turned on
-   </td>
-  </tr>
-</table>
 
 
 In this case, 2 users are involved, one has a table locked for write, and the other wants to turn on the read only mode, the attempt will be blocked until the write lock is released.
@@ -253,126 +128,27 @@ In this case, 2 users are involved, one has a table locked for write, and the ot
 
 #### Case 4, attempt blocked due to held write lock on t1, while other client update on t2
 
+MySQL's behavior:
 
-<table>
-  <tr>
-   <td colspan="3" >mysql
-   </td>
-  </tr>
-  <tr>
-   <td>client 1
-   </td>
-   <td>client 2
-   </td>
-   <td>client 3
-   </td>
-  </tr>
-  <tr>
-   <td>
-   </td>
-   <td>lock table t1 write
-   </td>
-   <td>
-   </td>
-  </tr>
-  <tr>
-   <td>turn on read_only
-   </td>
-   <td>
-   </td>
-   <td>
-   </td>
-  </tr>
-  <tr>
-   <td>block
-   </td>
-   <td>
-   </td>
-   <td>insert into t2
-   </td>
-  </tr>
-  <tr>
-   <td>block
-   </td>
-   <td>unlock table
-   </td>
-   <td>block
-   </td>
-  </tr>
-  <tr>
-   <td>read_only turned on
-   </td>
-   <td>
-   </td>
-   <td>insert ok
-   </td>
-  </tr>
-</table>
+|server 1|server 1|server 1|
+|--- |--- |--- |
+|client 1|client 2|client 3|
+||lock table t1 write||
+|turn on read_only|||
+|block||insert into t2|
+|block|unlock table|block|
+|read_only turned on||insert ok|
 
+TiDB's behavior (designed):
 
-
-<table>
-  <tr>
-   <td colspan="3" >tidb (designed)
-   </td>
-  </tr>
-  <tr>
-   <td>server 1
-   </td>
-   <td>server 2
-   </td>
-   <td>server 3
-   </td>
-  </tr>
-  <tr>
-   <td>client 1
-   </td>
-   <td>client 2
-   </td>
-   <td>client 3
-   </td>
-  </tr>
-  <tr>
-   <td>
-   </td>
-   <td>lock table t1 write
-   </td>
-   <td>
-   </td>
-  </tr>
-  <tr>
-   <td>turn on read_only
-   </td>
-   <td>
-   </td>
-   <td>
-   </td>
-  </tr>
-  <tr>
-   <td>block
-   </td>
-   <td>
-   </td>
-   <td>insert into t2
-   </td>
-  </tr>
-  <tr>
-   <td>block
-   </td>
-   <td>unlock table
-   </td>
-   <td>fail immediately
-   </td>
-  </tr>
-  <tr>
-   <td>read_only turned on
-   </td>
-   <td>
-   </td>
-   <td>
-   </td>
-  </tr>
-</table>
+|server 1|server 2|server 3|
+|--- |--- |--- |
+|client 1|client 2|client 3|
+||lock table t1 write||
+|turn on read_only|||
+|block||insert into t2|
+|block|unlock table|fail immediately|
+|read_only turned on|||
 
 
 In this case, MySQL will also block the update, and once the table is unlocked, both update and the enabling attempt will succeed.
