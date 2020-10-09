@@ -188,6 +188,16 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		if node.Kind == ast.BRIEKindRestore {
 			p.flag |= inCreateOrDropTable
 		}
+<<<<<<< HEAD
+=======
+	case *ast.TableSource:
+		isModeOracle := p.ctx.GetSessionVars().SQLMode&mysql.ModeOracle != 0
+		if _, ok := node.Source.(*ast.SelectStmt); ok && !isModeOracle && len(node.AsName.L) == 0 {
+			p.err = ddl.ErrDerivedMustHaveAlias.GenWithStackByArgs()
+		}
+	case *ast.CreateStatisticsStmt, *ast.DropStatisticsStmt:
+		p.checkStatisticsOpGrammar(in)
+>>>>>>> 789581bf2... parser: disallow subquery without table alias (#19102)
 	default:
 		p.flag &= ^parentIsJoin
 	}
@@ -556,13 +566,16 @@ func (p *preprocessor) checkNonUniqTableAlias(stmt *ast.Join) {
 		p.tableAliasInJoin = append(p.tableAliasInJoin, make(map[string]interface{}))
 	}
 	tableAliases := p.tableAliasInJoin[len(p.tableAliasInJoin)-1]
-	if err := isTableAliasDuplicate(stmt.Left, tableAliases); err != nil {
-		p.err = err
-		return
-	}
-	if err := isTableAliasDuplicate(stmt.Right, tableAliases); err != nil {
-		p.err = err
-		return
+	isOracleMode := p.ctx.GetSessionVars().SQLMode&mysql.ModeOracle != 0
+	if !isOracleMode {
+		if err := isTableAliasDuplicate(stmt.Left, tableAliases); err != nil {
+			p.err = err
+			return
+		}
+		if err := isTableAliasDuplicate(stmt.Right, tableAliases); err != nil {
+			p.err = err
+			return
+		}
 	}
 	p.flag |= parentIsJoin
 }
