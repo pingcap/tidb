@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/store/tikv/oracle"
+	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
@@ -581,10 +582,10 @@ func (h *Handle) handleSingleHistogramUpdate(is infoschema.InfoSchema, rows []ch
 		return nil
 	}
 	var tbl *statistics.Table
-	if table.Meta().GetPartitionInfo() != nil {
-		tbl = h.GetPartitionStats(table.Meta(), physicalTableID)
-	} else {
+	if table.Meta().GetPartitionInfo() == nil || h.UseDynamicPrune() {
 		tbl = h.GetTableStats(table.Meta())
+	} else {
+		tbl = h.GetPartitionStats(table.Meta(), physicalTableID)
 	}
 	var cms *statistics.CMSketch
 	var hist *statistics.Histogram
@@ -739,6 +740,9 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) {
 	for _, db := range dbs {
 		tbls := is.SchemaTables(model.NewCIStr(db))
 		for _, tbl := range tbls {
+			if tbl.Type() != table.NormalTable {
+				continue
+			}
 			tblInfo := tbl.Meta()
 			pi := tblInfo.GetPartitionInfo()
 			pruneMode := h.CurrentPruneMode()
@@ -761,7 +765,6 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) {
 					}
 					continue
 				}
-				continue
 			}
 		}
 	}

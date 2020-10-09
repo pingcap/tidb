@@ -114,7 +114,7 @@ func dumpJSONCol(hist *statistics.Histogram, CMSketch *statistics.CMSketch) *jso
 // DumpStatsToJSON dumps statistic to json.
 func (h *Handle) DumpStatsToJSON(dbName string, tableInfo *model.TableInfo, historyStatsExec sqlexec.RestrictedSQLExecutor) (*JSONTable, error) {
 	pi := tableInfo.GetPartitionInfo()
-	if pi == nil {
+	if pi == nil || h.UseDynamicPrune() {
 		return h.tableStatsToJSON(dbName, tableInfo, tableInfo.ID, historyStatsExec)
 	}
 	jsonTbl := &JSONTable{
@@ -177,15 +177,12 @@ func (h *Handle) LoadStatsFromJSON(is infoschema.InfoSchema, jsonTbl *JSONTable)
 	}
 	tableInfo := table.Meta()
 	pi := tableInfo.GetPartitionInfo()
-	if pi == nil {
+	if pi == nil || jsonTbl.Partitions == nil {
 		err := h.loadStatsFromJSON(tableInfo, tableInfo.ID, jsonTbl)
 		if err != nil {
 			return errors.Trace(err)
 		}
 	} else {
-		if jsonTbl.Partitions == nil {
-			return errors.New("No partition statistics")
-		}
 		for _, def := range pi.Definitions {
 			tbl := jsonTbl.Partitions[def.Name.L]
 			if tbl == nil {

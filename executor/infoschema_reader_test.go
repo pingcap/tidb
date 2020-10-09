@@ -368,6 +368,8 @@ func (s *testInfoschemaTableSerialSuite) TestDataForTableStatsField(c *C) {
 	h.Clear()
 	is := do.InfoSchema()
 	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set @@tidb_partition_prune_mode='dynamic-only'")
+	c.Assert(h.RefreshVars(), IsNil)
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -397,13 +399,13 @@ func (s *testInfoschemaTableSerialSuite) TestDataForTableStatsField(c *C) {
 		testkit.Rows("2 18 36 4"))
 
 	// Test partition table.
-	tk.MustExec("drop table if exists t")
-	tk.MustExec(`CREATE TABLE t (a int, b int, c varchar(5), primary key(a), index idx(c)) PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (6), PARTITION p1 VALUES LESS THAN (11), PARTITION p2 VALUES LESS THAN (16))`)
+	tk.MustExec("drop table if exists tx1")
+	tk.MustExec(`CREATE TABLE tx1 (a int, b int, c varchar(5), primary key(a), index idx(c)) PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (6), PARTITION p1 VALUES LESS THAN (11), PARTITION p2 VALUES LESS THAN (16))`)
 	h.HandleDDLEvent(<-h.DDLEventCh())
-	tk.MustExec(`insert into t(a, b, c) values(1, 2, "c"), (7, 3, "d"), (12, 4, "e")`)
+	tk.MustExec(`insert into tx1(a, b, c) values(1, 2, "c"), (7, 3, "d"), (12, 4, "e")`)
 	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 	c.Assert(h.Update(is), IsNil)
-	tk.MustQuery("select table_rows, avg_row_length, data_length, index_length from information_schema.tables where table_name='t'").Check(
+	tk.MustQuery("select table_rows, avg_row_length, data_length, index_length from information_schema.tables where table_name='tx1'").Check(
 		testkit.Rows("3 18 54 6"))
 }
 
@@ -419,48 +421,94 @@ func (s *testInfoschemaTableSerialSuite) TestPartitionsTable(c *C) {
 
 	tk := testkit.NewTestKit(c, s.store)
 
-	tk.MustExec("USE test;")
-	tk.MustExec("DROP TABLE IF EXISTS `test_partitions`;")
-	tk.MustExec(`CREATE TABLE test_partitions (a int, b int, c varchar(5), primary key(a), index idx(c)) PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (6), PARTITION p1 VALUES LESS THAN (11), PARTITION p2 VALUES LESS THAN (16));`)
-	err := h.HandleDDLEvent(<-h.DDLEventCh())
-	c.Assert(err, IsNil)
-	tk.MustExec(`insert into test_partitions(a, b, c) values(1, 2, "c"), (7, 3, "d"), (12, 4, "e");`)
+	{
+		tk.MustExec("USE test;")
+		tk.MustExec(`set @@tidb_partition_prune_mode='` + string(variable.DynamicOnly) + `'`)
+		tk.MustExec("DROP TABLE IF EXISTS `test_partitions`;")
+		tk.MustExec(`CREATE TABLE test_partitions (a int, b int, c varchar(5), primary key(a), index idx(c)) PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (6), PARTITION p1 VALUES LESS THAN (11), PARTITION p2 VALUES LESS THAN (16));`)
+		err := h.HandleDDLEvent(<-h.DDLEventCh())
+		c.Assert(err, IsNil)
+		tk.MustExec(`insert into test_partitions(a, b, c) values(1, 2, "c"), (7, 3, "d"), (12, 4, "e");`)
 
-	tk.MustQuery("select PARTITION_NAME, PARTITION_DESCRIPTION from information_schema.PARTITIONS where table_name='test_partitions';").Check(
-		testkit.Rows("" +
-			"p0 6]\n" +
-			"[p1 11]\n" +
-			"[p2 16"))
+		tk.MustQuery("select PARTITION_NAME, PARTITION_DESCRIPTION from information_schema.PARTITIONS where table_name='test_partitions';").Check(
+			testkit.Rows("" +
+				"p0 6]\n" +
+				"[p1 11]\n" +
+				"[p2 16"))
 
-	tk.MustQuery("select table_rows, avg_row_length, data_length, index_length from information_schema.PARTITIONS where table_name='test_partitions';").Check(
-		testkit.Rows("" +
-			"0 0 0 0]\n" +
-			"[0 0 0 0]\n" +
-			"[0 0 0 0"))
-	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
-	c.Assert(h.Update(is), IsNil)
-	tk.MustQuery("select table_rows, avg_row_length, data_length, index_length from information_schema.PARTITIONS where table_name='test_partitions';").Check(
-		testkit.Rows("" +
-			"1 18 18 2]\n" +
-			"[1 18 18 2]\n" +
-			"[1 18 18 2"))
+		tk.MustQuery("select table_rows, avg_row_length, data_length, index_length from information_schema.PARTITIONS where table_name='test_partitions';").Check(
+			testkit.Rows("" +
+				"0 0 0 0]\n" +
+				"[0 0 0 0]\n" +
+				"[0 0 0 0"))
+		c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+		c.Assert(h.Update(is), IsNil)
+		tk.MustQuery("select table_rows, avg_row_length, data_length, index_length from information_schema.PARTITIONS where table_name='test_partitions';").Check(
+			testkit.Rows("" +
+				"0 0 0 0]\n" +
+				"[0 0 0 0]\n" +
+				"[0 0 0 0"))
 
-	// Test for table has no partitions.
-	tk.MustExec("DROP TABLE IF EXISTS `test_partitions_1`;")
-	tk.MustExec(`CREATE TABLE test_partitions_1 (a int, b int, c varchar(5), primary key(a), index idx(c));`)
-	err = h.HandleDDLEvent(<-h.DDLEventCh())
-	c.Assert(err, IsNil)
-	tk.MustExec(`insert into test_partitions_1(a, b, c) values(1, 2, "c"), (7, 3, "d"), (12, 4, "e");`)
-	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
-	c.Assert(h.Update(is), IsNil)
-	tk.MustQuery("select PARTITION_NAME, TABLE_ROWS, AVG_ROW_LENGTH, DATA_LENGTH, INDEX_LENGTH from information_schema.PARTITIONS where table_name='test_partitions_1';").Check(
-		testkit.Rows("<nil> 3 18 54 6"))
+		// Test for table has no partitions.
+		tk.MustExec("DROP TABLE IF EXISTS `test_partitions_1`;")
+		tk.MustExec(`CREATE TABLE test_partitions_1 (a int, b int, c varchar(5), primary key(a), index idx(c));`)
+		err = h.HandleDDLEvent(<-h.DDLEventCh())
+		c.Assert(err, IsNil)
+		tk.MustExec(`insert into test_partitions_1(a, b, c) values(1, 2, "c"), (7, 3, "d"), (12, 4, "e");`)
+		c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+		c.Assert(h.Update(is), IsNil)
+		tk.MustQuery("select PARTITION_NAME, TABLE_ROWS, AVG_ROW_LENGTH, DATA_LENGTH, INDEX_LENGTH from information_schema.PARTITIONS where table_name='test_partitions_1';").Check(
+			testkit.Rows("<nil> 3 18 54 6"))
 
-	tk.MustExec("DROP TABLE `test_partitions`;")
+		tk.MustExec("DROP TABLE `test_partitions`;")
+	}
 
-	tk.MustExec(`CREATE TABLE test_partitions1 (id int, b int, c varchar(5), primary key(id), index idx(c)) PARTITION BY RANGE COLUMNS(id) (PARTITION p0 VALUES LESS THAN (6), PARTITION p1 VALUES LESS THAN (11), PARTITION p2 VALUES LESS THAN (16));`)
-	tk.MustQuery("select PARTITION_NAME,PARTITION_METHOD,PARTITION_EXPRESSION from information_schema.partitions where table_name = 'test_partitions1';").Check(testkit.Rows("p0 RANGE COLUMNS id", "p1 RANGE COLUMNS id", "p2 RANGE COLUMNS id"))
-	tk.MustExec("DROP TABLE test_partitions1")
+	{
+		tk.MustExec(`set @@tidb_partition_prune_mode='` + string(variable.StaticOnly) + `'`)
+		tk.MustExec("USE test;")
+		tk.MustExec("DROP TABLE IF EXISTS `test_partitions`;")
+		tk.MustExec(`CREATE TABLE test_partitions (a int, b int, c varchar(5), primary key(a), index idx(c)) PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (6), PARTITION p1 VALUES LESS THAN (11), PARTITION p2 VALUES LESS THAN (16));`)
+		err := h.HandleDDLEvent(<-h.DDLEventCh())
+		c.Assert(err, IsNil)
+		tk.MustExec(`insert into test_partitions(a, b, c) values(1, 2, "c"), (7, 3, "d"), (12, 4, "e");`)
+
+		tk.MustQuery("select PARTITION_NAME, PARTITION_DESCRIPTION from information_schema.PARTITIONS where table_name='test_partitions';").Check(
+			testkit.Rows("" +
+				"p0 6]\n" +
+				"[p1 11]\n" +
+				"[p2 16"))
+
+		tk.MustQuery("select table_rows, avg_row_length, data_length, index_length from information_schema.PARTITIONS where table_name='test_partitions';").Check(
+			testkit.Rows("" +
+				"0 0 0 0]\n" +
+				"[0 0 0 0]\n" +
+				"[0 0 0 0"))
+		c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+		c.Assert(h.Update(is), IsNil)
+		//tk.MustQuery("select table_rows, avg_row_length, data_length, index_length from information_schema.PARTITIONS where table_name='test_partitions';").Check(
+		//	testkit.Rows("" +
+		//		"1 18 18 2]\n" +
+		//		"[1 18 18 2]\n" +
+		//		"[1 18 18 2"))
+
+		// Test for table has no partitions.
+		tk.MustExec("DROP TABLE IF EXISTS `test_partitions_2`;")
+		tk.MustExec(`CREATE TABLE test_partitions_2 (a int, b int, c varchar(5), primary key(a), index idx(c));`)
+		err = h.HandleDDLEvent(<-h.DDLEventCh())
+		c.Assert(err, IsNil)
+		tk.MustExec(`insert into test_partitions_2(a, b, c) values(1, 2, "c"), (7, 3, "d"), (12, 4, "e");`)
+		c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+		c.Assert(h.Update(is), IsNil)
+		tk.MustQuery("select PARTITION_NAME, TABLE_ROWS, AVG_ROW_LENGTH, DATA_LENGTH, INDEX_LENGTH from information_schema.PARTITIONS where table_name='test_partitions_2';").Check(
+			testkit.Rows("<nil> 3 18 54 6"))
+		tk.MustExec("DROP TABLE `test_partitions_2`;")
+		tk.MustExec("DROP TABLE `test_partitions`;")
+	}
+
+	tk.MustExec("DROP TABLE IF EXISTS test_partitions3")
+	tk.MustExec(`CREATE TABLE test_partitions3 (id int, b int, c varchar(5), primary key(id), index idx(c)) PARTITION BY RANGE COLUMNS(id) (PARTITION p0 VALUES LESS THAN (6), PARTITION p1 VALUES LESS THAN (11), PARTITION p2 VALUES LESS THAN (16));`)
+	tk.MustQuery("select PARTITION_NAME,PARTITION_METHOD,PARTITION_EXPRESSION from information_schema.partitions where table_name = 'test_partitions3';").Check(testkit.Rows("p0 RANGE COLUMNS id", "p1 RANGE COLUMNS id", "p2 RANGE COLUMNS id"))
+	tk.MustExec("DROP TABLE test_partitions3")
 }
 
 func (s *testInfoschemaTableSuite) TestMetricTables(c *C) {

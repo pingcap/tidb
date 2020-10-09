@@ -1566,9 +1566,10 @@ func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt, opts map[ast.A
 			if pruneMode == variable.DynamicOnly || pruneMode == variable.StaticButPrepareDynamic {
 				info := analyzeInfo{DBName: tbl.Schema.O, TableName: tbl.Name.O, TableID: AnalyzeTableID{PersistID: tbl.TableInfo.ID, CollectIDs: physicalIDs}, Incremental: as.Incremental}
 				p.IdxTasks = append(p.IdxTasks, AnalyzeIndexTask{
-					IndexInfo:   idx,
-					analyzeInfo: info,
-					TblInfo:     tbl.TableInfo,
+					IndexInfo:        idx,
+					analyzeInfo:      info,
+					TblInfo:          tbl.TableInfo,
+					SampleLocalIndex: len(physicalIDs) > 1,
 				})
 			}
 		}

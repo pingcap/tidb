@@ -311,21 +311,26 @@ func (e *AnalyzeIndexExec) open(ranges []*ranger.Range, considerNull bool) error
 	return nil
 }
 
-func (e *AnalyzeIndexExec) buildStatsFromResult(result distsql.SelectResult, needCMS bool) (*statistics.Histogram, *statistics.CMSketch, error) {
+func (e *AnalyzeIndexExec) buildStatsFromResult(result distsql.SelectResult, needCMS bool) (hist *statistics.Histogram, cms *statistics.CMSketch, err error) {
 	failpoint.Inject("buildStatsFromResult", func(val failpoint.Value) {
 		if val.(bool) {
 			failpoint.Return(nil, nil, errors.New("mock buildStatsFromResult error"))
 		}
 	})
-	hist := &statistics.Histogram{}
-	var cms *statistics.CMSketch
+	hist, cms, err = e.fromIndexResp(result, needCMS)
+	return
+}
+
+func (e *AnalyzeIndexExec) fromIndexResp(result distsql.SelectResult, needCMS bool) (hist *statistics.Histogram, cms *statistics.CMSketch, err error) {
+	hist = &statistics.Histogram{}
 	if needCMS {
 		cms = statistics.NewCMSketch(int32(e.opts[ast.AnalyzeOptCMSketchDepth]), int32(e.opts[ast.AnalyzeOptCMSketchWidth]))
 	}
 	for {
-		data, err := result.NextRaw(context.TODO())
+		var data []byte
+		data, err = result.NextRaw(context.TODO())
 		if err != nil {
-			return nil, nil, err
+			return
 		}
 		if data == nil {
 			break
@@ -333,27 +338,27 @@ func (e *AnalyzeIndexExec) buildStatsFromResult(result distsql.SelectResult, nee
 		resp := &tipb.AnalyzeIndexResp{}
 		err = resp.Unmarshal(data)
 		if err != nil {
-			return nil, nil, err
+			return
 		}
 		respHist := statistics.HistogramFromProto(resp.Hist)
 		e.job.Update(int64(respHist.TotalRowCount()))
 		hist, err = statistics.MergeHistograms(e.ctx.GetSessionVars().StmtCtx, hist, respHist, int(e.opts[ast.AnalyzeOptNumBuckets]))
 		if err != nil {
-			return nil, nil, err
+			return
 		}
 		if needCMS {
 			if resp.Cms == nil {
 				logutil.Logger(context.TODO()).Warn("nil CMS in response", zap.String("table", e.idxInfo.Table.O), zap.String("index", e.idxInfo.Name.O))
-			} else if err := cms.MergeCMSketch(statistics.CMSketchFromProto(resp.Cms), 0); err != nil {
-				return nil, nil, err
+			} else if err = cms.MergeCMSketch(statistics.CMSketchFromProto(resp.Cms), 0); err != nil {
+				return
 			}
 		}
 	}
-	err := hist.ExtractTopN(cms, len(e.idxInfo.Columns), uint32(e.opts[ast.AnalyzeOptNumTopN]))
+	err = hist.ExtractTopN(cms, len(e.idxInfo.Columns), uint32(e.opts[ast.AnalyzeOptNumTopN]))
 	if needCMS && cms != nil {
 		cms.CalcDefaultValForAnalyze(uint64(hist.NDV))
 	}
-	return hist, cms, err
+	return
 }
 
 func (e *AnalyzeIndexExec) buildStats(ranges []*ranger.Range, considerNull bool) (hist *statistics.Histogram, cms *statistics.CMSketch, err error) {
@@ -452,9 +457,9 @@ func (e *AnalyzeColumnsExec) buildResp(ranges []*ranger.Range) (distsql.SelectRe
 	var builder distsql.RequestBuilder
 	var reqBuilder *distsql.RequestBuilder
 	if e.handleCols != nil && !e.handleCols.IsInt() {
-		reqBuilder = builder.SetCommonHandleRangesForTables(e.ctx.GetSessionVars().StmtCtx, e.tableID.CollectIDs, ranges)
+		reqBuilder = builder.SetCommonHandleRangesForMultiTbl(e.ctx.GetSessionVars().StmtCtx, e.tableID.CollectIDs, ranges)
 	} else {
-		reqBuilder = builder.SetTableRangesForTables(e.tableID.CollectIDs, ranges, nil)
+		reqBuilder = builder.SetTableRangesForMultiTbl(e.tableID.CollectIDs, ranges, nil)
 	}
 	// Always set KeepOrder of the request to be true, in order to compute
 	// correct `correlation` of columns.

@@ -1624,7 +1624,7 @@ func buildTableInfoWithStmt(ctx sessionctx.Context, s *ast.CreateTableStmt, dbCh
 		return nil, errors.Trace(err)
 	}
 
-	if err = handleTableOptions(s.Options, tbInfo); err != nil {
+	if err = handleTableOptions(ctx, s.Options, tbInfo); err != nil {
 		return nil, errors.Trace(err)
 	}
 	return tbInfo, nil
@@ -2093,7 +2093,7 @@ func (d *ddl) handleAutoIncID(tbInfo *model.TableInfo, schemaID int64, newEnd in
 }
 
 // handleTableOptions updates tableInfo according to table options.
-func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) error {
+func handleTableOptions(ctx sessionctx.Context, options []*ast.TableOption, tbInfo *model.TableInfo) error {
 	for _, op := range options {
 		switch op.Tp {
 		case ast.TableOptionAutoIncrement:

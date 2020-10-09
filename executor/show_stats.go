@@ -31,7 +31,7 @@ func (e *ShowExec) fetchShowStatsMeta() error {
 	for _, db := range dbs {
 		for _, tbl := range db.Tables {
 			pi := tbl.GetPartitionInfo()
-			if pi == nil {
+			if pi == nil || h.UseDynamicPrune() {
 				e.appendTableForStatsMeta(db.Name.O, tbl.Name.O, "", h.GetTableStats(tbl))
 			} else {
 				for _, def := range pi.Definitions {
@@ -64,7 +64,7 @@ func (e *ShowExec) fetchShowStatsHistogram() error {
 	for _, db := range dbs {
 		for _, tbl := range db.Tables {
 			pi := tbl.GetPartitionInfo()
-			if pi == nil {
+			if pi == nil || h.UseDynamicPrune() {
 				e.appendTableForStatsHistograms(db.Name.O, tbl.Name.O, "", h.GetTableStats(tbl))
 			} else {
 				for _, def := range pi.Definitions {
@@ -119,7 +119,7 @@ func (e *ShowExec) fetchShowStatsBuckets() error {
 	for _, db := range dbs {
 		for _, tbl := range db.Tables {
 			pi := tbl.GetPartitionInfo()
-			if pi == nil {
+			if pi == nil || h.UseDynamicPrune() {
 				if err := e.appendTableForStatsBuckets(db.Name.O, tbl.Name.O, "", h.GetTableStats(tbl)); err != nil {
 					return err
 				}
@@ -199,7 +199,7 @@ func (e *ShowExec) fetchShowStatsHealthy() {
 	for _, db := range dbs {
 		for _, tbl := range db.Tables {
 			pi := tbl.GetPartitionInfo()
-			if pi == nil {
+			if pi == nil || h.UseDynamicPrune() {
 				e.appendTableForStatsHealthy(db.Name.O, tbl.Name.O, "", h.GetTableStats(tbl))
 			} else {
 				for _, def := range pi.Definitions {

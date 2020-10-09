@@ -509,8 +509,10 @@ func (s *session) doCommitWithRetry(ctx context.Context) error {
 	}
 	mapper := s.GetSessionVars().TxnCtx.TableDeltaMap
 	if s.statsCollector != nil && mapper != nil {
-		for id, item := range mapper {
-			s.statsCollector.Update(id, item.Delta, item.Count, &item.ColSize)
+		for _, item := range mapper {
+			if item.TableID > 0 {
+				s.statsCollector.Update(item.TableID, item.Delta, item.Count, &item.ColSize)
+			}
 		}
 	}
 	return nil
@@ -2227,6 +2229,16 @@ func (s *session) RefreshTxnCtx(ctx context.Context) error {
 	}
 
 	return s.NewTxn(ctx)
+}
+
+// RefreshVars implements the sessionctx.Context interface.
+func (s *session) RefreshVars(ctx context.Context) error {
+	pruneMode, err := s.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBPartitionPruneMode)
+	if err != nil {
+		return err
+	}
+	s.sessionVars.PartitionPruneMode.Store(pruneMode)
+	return nil
 }
 
 // InitTxnWithStartTS create a transaction with startTS.

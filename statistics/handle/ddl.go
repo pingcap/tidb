@@ -30,14 +30,14 @@ import (
 func (h *Handle) HandleDDLEvent(t *util.Event) error {
 	switch t.Tp {
 	case model.ActionCreateTable, model.ActionTruncateTable:
-		ids := getPhysicalIDs(t.TableInfo)
+		ids := h.getPhysicalIDs(t.TableInfo)
 		for _, id := range ids {
 			if err := h.insertTableStats2KV(t.TableInfo, id); err != nil {
 				return err
 			}
 		}
 	case model.ActionAddColumn, model.ActionAddColumns, model.ActionModifyColumn:
-		ids := getPhysicalIDs(t.TableInfo)
+		ids := h.getPhysicalIDs(t.TableInfo)
 		for _, id := range ids {
 			if err := h.insertColStats2KV(id, t.ColumnInfos); err != nil {
 				return err
@@ -53,9 +53,9 @@ func (h *Handle) HandleDDLEvent(t *util.Event) error {
 	return nil
 }
 
-func getPhysicalIDs(tblInfo *model.TableInfo) []int64 {
+func (h *Handle) getPhysicalIDs(tblInfo *model.TableInfo) []int64 {
 	pi := tblInfo.GetPartitionInfo()
-	if pi == nil {
+	if pi == nil || h.UseDynamicPrune() {
 		return []int64{tblInfo.ID}
 	}
 	ids := make([]int64, 0, len(pi.Definitions))
