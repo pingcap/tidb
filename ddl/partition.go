@@ -16,6 +16,7 @@ package ddl
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"fmt"
 	"strconv"
 	"strings"
@@ -43,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
@@ -1044,30 +1046,17 @@ func onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _
 	return ver, nil
 }
 
-func buildPlacementTruncateRules(rules []*placement.RuleOp, schemaID, tableID, jobID int64, oldIDs []int64, newPartitions []model.PartitionDefinition) []*placement.RuleOp {
-	newRules := make([]*placement.RuleOp, 0, len(oldIDs))
-	for i, oldID := range oldIDs {
-		prefix := fmt.Sprintf("%d_t%d_p%d", schemaID, tableID, oldID)
-		for _, rule := range rules {
-			if strings.HasPrefix(rule.ID, prefix) {
-				// delete the old rule
-				newRules = append(newRules, &placement.RuleOp{
-					Action: placement.RuleOpDel,
-					Rule: &placement.Rule{
-						GroupID: placement.RuleDefaultGroupID,
-						ID:      rule.ID,
-					},
-				})
-
-				// add the new rule
-				rule.Action = placement.RuleOpAdd
-				rule.ID = fmt.Sprintf("%d_t%d_p%d_%s_%d_%d", schemaID, tableID, newPartitions[i].ID, rule.Role, jobID, i)
-				newRules = append(newRules, rule)
-				break
-			}
-		}
+func buildPlacementTruncateBundle(oldBundle *placement.Bundle, newID int64) *placement.Bundle {
+	newBundle := oldBundle.Clone()
+	newBundle.ID = placement.GroupID(newID)
+	startKey := hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(newID)))
+	endKey := hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(newID+1)))
+	for _, rule := range newBundle.Rules {
+		rule.GroupID = newBundle.ID
+		rule.StartKeyHex = startKey
+		rule.EndKeyHex = endKey
 	}
-	return newRules
+	return newBundle
 }
 
 // onTruncateTablePartition truncates old partition meta.
@@ -1123,22 +1112,22 @@ func onTruncateTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, e
 		}
 	}
 
-	var rules []*placement.RuleOp
+	if d.infoHandle != nil {
+		bundles := make([]*placement.Bundle, 0, len(oldIDs))
 
-	// TODO: maybe add a middle state
-	rules, err = infosync.GetPlacementRules(nil)
-	if err != nil {
-		job.State = model.JobStateCancelled
-		return ver, errors.Wrapf(err, "failed to retrieve placement rules from PD")
-	}
+		for i, oldID := range oldIDs {
+			oldBundle, ok := d.infoHandle.Get().BundleByName(placement.GroupID(oldID))
+			if ok && !oldBundle.IsEmpty() {
+				bundles = append(bundles, buildPlacementDropBundle(oldID))
+				bundles = append(bundles, buildPlacementTruncateBundle(oldBundle, newPartitions[i].ID))
+			}
+		}
 
-	// TODO: simplify the definition and logic use new PD group bundle API
-	rules = buildPlacementTruncateRules(rules, job.SchemaID, tblInfo.ID, job.ID, oldIDs, newPartitions)
-
-	err = infosync.UpdatePlacementRules(nil, rules)
-	if err != nil {
-		job.State = model.JobStateCancelled
-		return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
+		err = infosync.PutRuleBundles(nil, bundles)
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
+		}
 	}
 
 	ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
