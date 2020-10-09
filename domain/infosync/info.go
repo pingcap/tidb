@@ -423,6 +423,36 @@ func GetRuleBundle(ctx context.Context, name string) (*placement.Bundle, error) 
 	return bundle, err
 }
 
+// PutRuleBundles is used to post specific rule bundles to PD.
+func PutRuleBundles(ctx context.Context, bundles []*placement.Bundle) error {
+	if len(bundles) == 0 {
+		return nil
+	}
+
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return err
+	}
+
+	if is.etcdCli == nil {
+		return nil
+	}
+
+	addrs := is.etcdCli.Endpoints()
+
+	if len(addrs) == 0 {
+		return errors.Errorf("pd unavailable")
+	}
+
+	b, err := json.Marshal(bundles)
+	if err != nil {
+		return err
+	}
+
+	_, err = doRequest(ctx, addrs, path.Join(pdapi.Config, "placement-rule")+"?partial=true", "POST", bytes.NewReader(b))
+	return err
+}
+
 func (is *InfoSyncer) getAllServerInfo(ctx context.Context) (map[string]*ServerInfo, error) {
 	allInfo := make(map[string]*ServerInfo)
 	if is.etcdCli == nil {

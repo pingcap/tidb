@@ -29,8 +29,11 @@ import (
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 )
 
+type testAsyncCommitCommon struct{}
+
 type testAsyncCommitSuite struct {
 	OneByOneSuite
+	testAsyncCommitCommon
 	cluster cluster.Cluster
 	store   *tikvStore
 	bo      *Backoffer
@@ -50,14 +53,14 @@ func (s *testAsyncCommitSuite) SetUpTest(c *C) {
 	s.bo = NewBackofferWithVars(context.Background(), 5000, nil)
 }
 
-func (s *testAsyncCommitSuite) putAlphabets(c *C) {
+func (s *testAsyncCommitCommon) putAlphabets(c *C, store *tikvStore) {
 	for ch := byte('a'); ch <= byte('z'); ch++ {
-		s.putKV(c, []byte{ch}, []byte{ch})
+		s.putKV(c, store, []byte{ch}, []byte{ch})
 	}
 }
 
-func (s *testAsyncCommitSuite) putKV(c *C, key, value []byte) (uint64, uint64) {
-	txn, err := s.store.Begin()
+func (s *testAsyncCommitCommon) putKV(c *C, store *tikvStore, key, value []byte) (uint64, uint64) {
+	txn, err := store.Begin()
 	c.Assert(err, IsNil)
 	err = txn.Set(key, value)
 	c.Assert(err, IsNil)
@@ -122,10 +125,10 @@ func (s *testAsyncCommitSuite) mustGetLock(c *C, key []byte) *Lock {
 func (s *testAsyncCommitSuite) TestCheckSecondaries(c *C) {
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
-		conf.TiKVClient.EnableAsyncCommit = true
+		conf.TiKVClient.AsyncCommit.Enable = true
 	})
 
-	s.putAlphabets(c)
+	s.putAlphabets(c, s.store)
 
 	loc, err := s.store.GetRegionCache().LocateKey(s.bo, []byte("a"))
 	c.Assert(err, IsNil)
