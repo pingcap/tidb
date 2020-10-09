@@ -474,6 +474,9 @@ func (e *ShowExec) fetchShowColumns(ctx context.Context) error {
 			if idx >= 0 {
 				col.FieldType = *viewSchema.Columns[idx].GetType()
 			}
+			if col.Tp == mysql.TypeVarString {
+				col.Tp = mysql.TypeVarchar
+			}
 		}
 	}
 	for _, col := range cols {

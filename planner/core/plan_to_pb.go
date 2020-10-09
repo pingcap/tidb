@@ -284,7 +284,7 @@ func SetPBColumnsDefaultValue(ctx sessionctx.Context, pbColumns []*tipb.ColumnIn
 		if c.IsGenerated() && !c.GeneratedStored {
 			pbColumns[i].DefaultVal = []byte{codec.NilFlag}
 		}
-		if c.OriginDefaultValue == nil {
+		if c.GetOriginDefaultValue() == nil {
 			continue
 		}
 
