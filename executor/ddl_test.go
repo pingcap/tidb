@@ -1426,3 +1426,16 @@ func (s *testRecoverTable) TestRenameTable(c *C) {
 	tk.MustExec("drop database rename1")
 	tk.MustExec("drop database rename2")
 }
+
+func (s *testSuite6) TestAutoIncrementColumnErrorMessage(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	// Test create an exist database
+	_, err := tk.Exec("CREATE database test")
+	c.Assert(err, NotNil)
+
+	tk.MustExec("CREATE TABLE t1 (t1_id INT NOT NULL AUTO_INCREMENT PRIMARY KEY);")
+
+	_, err = tk.Exec("CREATE INDEX idx1 ON t1 ((t1_id + t1_id));")
+	c.Assert(err.Error(), Equals, ddl.ErrExpressionIndexCanNotRefer.GenWithStackByArgs("idx1").Error())
+}
