@@ -671,26 +671,25 @@ func (s *testIntegrationSerialSuite) TestIsolationReadDoNotFilterSystemDB(c *C) 
 
 func (s *testIntegrationSuite) TestPartitionTableStats(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	{
-		tk.MustExec(`set @@tidb_partition_prune_mode='` + string(variable.StaticOnly) + `'`)
+	var input []string
+	var output [][]struct {
+		SQL    string
+		Result []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for modeIdx, m := range []variable.PartitionPruneMode{variable.StaticOnly, variable.StaticButPrepareDynamic, variable.DynamicOnly} {
+		tk.MustExec(`set @@tidb_partition_prune_mode='` + string(m) + `'`)
 		tk.MustExec("use test")
 		tk.MustExec("drop table if exists t")
 		tk.MustExec("create table t(a int, b int)partition by range columns(a)(partition p0 values less than (10), partition p1 values less than(20), partition p2 values less than(30));")
 		tk.MustExec("insert into t values(21, 1), (22, 2), (23, 3), (24, 4), (15, 5)")
 		tk.MustExec("analyze table t")
-
-		var input []string
-		var output []struct {
-			SQL    string
-			Result []string
-		}
-		s.testData.GetTestCases(c, &input, &output)
 		for i, tt := range input {
 			s.testData.OnRecord(func() {
-				output[i].SQL = tt
-				output[i].Result = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+				output[modeIdx][i].SQL = tt
+				output[modeIdx][i].Result = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
 			})
-			tk.MustQuery(tt).Check(testkit.Rows(output[i].Result...))
+			tk.MustQuery(tt).Check(testkit.Rows(output[modeIdx][i].Result...))
 		}
 	}
 }
@@ -987,6 +986,21 @@ func (s *testIntegrationSuite) TestApproxCountDistinctInPartitionTable(c *C) {
 		"    └─HashAgg_26 8000.00 root  group by:test.t.b, funcs:approx_count_distinct(test.t.a)->Column#5, funcs:firstrow(test.t.b)->Column#6, funcs:firstrow(test.t.b)->test.t.b",
 		"      └─TableReader_30 10000.00 root  data:TableFullScan_29",
 		"        └─TableFullScan_29 10000.00 cop[tikv] table:t, partition:p1 keep order:false, stats:pseudo"))
+	tk.MustExec(`set @@tidb_partition_prune_mode='` + string(variable.StaticButPrepareDynamic) + `'`)
+	tk.MustQuery("explain select approx_count_distinct(a), b from t group by b order by b desc").Check(testkit.Rows("Sort_12 16000.00 root  test.t.b:desc",
+		"└─HashAgg_17 16000.00 root  group by:test.t.b, funcs:approx_count_distinct(Column#5)->Column#4, funcs:firstrow(Column#6)->test.t.b",
+		"  └─PartitionUnion_18 16000.00 root  ",
+		"    ├─HashAgg_19 8000.00 root  group by:test.t.b, funcs:approx_count_distinct(test.t.a)->Column#5, funcs:firstrow(test.t.b)->Column#6, funcs:firstrow(test.t.b)->test.t.b",
+		"    │ └─TableReader_23 10000.00 root  data:TableFullScan_22",
+		"    │   └─TableFullScan_22 10000.00 cop[tikv] table:t, partition:p0 keep order:false, stats:pseudo",
+		"    └─HashAgg_26 8000.00 root  group by:test.t.b, funcs:approx_count_distinct(test.t.a)->Column#5, funcs:firstrow(test.t.b)->Column#6, funcs:firstrow(test.t.b)->test.t.b",
+		"      └─TableReader_30 10000.00 root  data:TableFullScan_29",
+		"        └─TableFullScan_29 10000.00 cop[tikv] table:t, partition:p1 keep order:false, stats:pseudo"))
+	tk.MustExec(`set @@tidb_partition_prune_mode='` + string(variable.DynamicOnly) + `'`)
+	tk.MustQuery("explain select approx_count_distinct(a), b from t group by b order by b desc").Check(testkit.Rows("Sort_5 8000.00 root  test.t.b:desc",
+		"└─HashAgg_8 8000.00 root  group by:test.t.b, funcs:approx_count_distinct(test.t.a)->Column#4, funcs:firstrow(test.t.b)->test.t.b",
+		"  └─TableReader_12 10000.00 root partition:all data:TableFullScan_11",
+		"    └─TableFullScan_11 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"))
 	tk.MustQuery("select approx_count_distinct(a), b from t group by b order by b desc").Check(testkit.Rows("1 2", "3 1"))
 }
 
@@ -1291,23 +1305,24 @@ func (s *testIntegrationSuite) TestOptimizeHintOnPartitionTable(c *C) {
 		}
 	}
 
-	tk.MustExec(`set @@tidb_partition_prune_mode='` + string(variable.StaticOnly) + `'`)
-
-	var input []string
-	var output []struct {
+	var input [][]string
+	var output [][]struct {
 		SQL  string
 		Plan []string
 		Warn []string
 	}
 	s.testData.GetTestCases(c, &input, &output)
-	for i, tt := range input {
-		s.testData.OnRecord(func() {
-			output[i].SQL = tt
-			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain " + tt).Rows())
-			output[i].Warn = s.testData.ConvertRowsToStrings(tk.MustQuery("show warnings").Rows())
-		})
-		tk.MustQuery("explain " + tt).Check(testkit.Rows(output[i].Plan...))
-		tk.MustQuery("show warnings").Check(testkit.Rows(output[i].Warn...))
+	for modeIdx, m := range []variable.PartitionPruneMode{variable.StaticOnly, variable.StaticButPrepareDynamic, variable.DynamicOnly} {
+		tk.MustExec(`set @@tidb_partition_prune_mode='` + string(m) + `'`)
+		for i, tt := range input[modeIdx] {
+			s.testData.OnRecord(func() {
+				output[modeIdx][i].SQL = tt
+				output[modeIdx][i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain " + tt).Rows())
+				output[modeIdx][i].Warn = s.testData.ConvertRowsToStrings(tk.MustQuery("show warnings").Rows())
+			})
+			tk.MustQuery("explain " + tt).Check(testkit.Rows(output[modeIdx][i].Plan...))
+			tk.MustQuery("show warnings").Check(testkit.Rows(output[modeIdx][i].Warn...))
+		}
 	}
 }
 

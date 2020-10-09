@@ -493,33 +493,34 @@ func (s *testPlanSuite) TestIndexJoinUnionScan(c *C) {
 
 	tk.MustExec("use test")
 	var input [][]string
-	var output []struct {
+	var output [][]struct {
 		SQL  []string
 		Plan []string
 	}
 	tk.MustExec("create table t (a int primary key, b int, index idx(a))")
 	tk.MustExec("create table tt (a int primary key) partition by range (a) (partition p0 values less than (100), partition p1 values less than (200))")
 
-	tk.MustExec(`set @@tidb_partition_prune_mode='` + string(variable.StaticOnly) + `'`)
-
 	s.testData.GetTestCases(c, &input, &output)
-	for i, ts := range input {
-		tk.MustExec("begin")
-		for j, tt := range ts {
-			if j != len(ts)-1 {
-				tk.MustExec(tt)
-			}
-			s.testData.OnRecord(func() {
-				output[i].SQL = ts
-				if j == len(ts)-1 {
-					output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+	for modeIdx, m := range []variable.PartitionPruneMode{variable.StaticOnly, variable.StaticButPrepareDynamic, variable.DynamicOnly} {
+		tk.MustExec(`set @@tidb_partition_prune_mode='` + string(m) + `'`)
+		for i, ts := range input {
+			tk.MustExec("begin")
+			for j, tt := range ts {
+				if j != len(ts)-1 {
+					tk.MustExec(tt)
 				}
-			})
-			if j == len(ts)-1 {
-				tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
+				s.testData.OnRecord(func() {
+					output[modeIdx][i].SQL = ts
+					if j == len(ts)-1 {
+						output[modeIdx][i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+					}
+				})
+				if j == len(ts)-1 {
+					tk.MustQuery(tt).Check(testkit.Rows(output[modeIdx][i].Plan...))
+				}
 			}
+			tk.MustExec("rollback")
 		}
-		tk.MustExec("rollback")
 	}
 }
 
@@ -910,7 +911,7 @@ func (s *testPlanSuite) TestPushdownDistinctEnable(c *C) {
 	defer testleak.AfterTest(c)()
 	var (
 		input  []string
-		output []struct {
+		output [][]struct {
 			SQL    string
 			Plan   []string
 			Result []string
@@ -928,7 +929,7 @@ func (s *testPlanSuite) TestPushdownDistinctDisable(c *C) {
 	defer testleak.AfterTest(c)()
 	var (
 		input  []string
-		output []struct {
+		output [][]struct {
 			SQL    string
 			Plan   []string
 			Result []string
@@ -946,7 +947,7 @@ func (s *testPlanSuite) TestPushdownDistinctDisable(c *C) {
 func (s *testPlanSuite) TestPushdownDistinctEnableAggPushDownDisable(c *C) {
 	var (
 		input  []string
-		output []struct {
+		output [][]struct {
 			SQL    string
 			Plan   []string
 			Result []string
@@ -960,7 +961,7 @@ func (s *testPlanSuite) TestPushdownDistinctEnableAggPushDownDisable(c *C) {
 	s.doTestPushdownDistinct(c, vars, input, output)
 }
 
-func (s *testPlanSuite) doTestPushdownDistinct(c *C, vars, input []string, output []struct {
+func (s *testPlanSuite) doTestPushdownDistinct(c *C, vars, input []string, output [][]struct {
 	SQL    string
 	Plan   []string
 	Result []string
@@ -995,20 +996,21 @@ func (s *testPlanSuite) doTestPushdownDistinct(c *C, vars, input []string, outpu
 	tk.MustExec(fmt.Sprintf("set session %s=1", variable.TiDBHashAggPartialConcurrency))
 	tk.MustExec(fmt.Sprintf("set session %s=1", variable.TiDBHashAggFinalConcurrency))
 
-	tk.MustExec(`set @@tidb_partition_prune_mode='` + string(variable.StaticOnly) + `'`)
-
 	for _, v := range vars {
 		tk.MustExec(v)
 	}
 
-	for i, ts := range input {
-		s.testData.OnRecord(func() {
-			output[i].SQL = ts
-			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain " + ts).Rows())
-			output[i].Result = s.testData.ConvertRowsToStrings(tk.MustQuery(ts).Sort().Rows())
-		})
-		tk.MustQuery("explain " + ts).Check(testkit.Rows(output[i].Plan...))
-		tk.MustQuery(ts).Sort().Check(testkit.Rows(output[i].Result...))
+	for modeIdx, m := range []variable.PartitionPruneMode{variable.StaticOnly, variable.StaticButPrepareDynamic, variable.DynamicOnly} {
+		tk.MustExec(`set @@tidb_partition_prune_mode='` + string(m) + `'`)
+		for i, ts := range input {
+			s.testData.OnRecord(func() {
+				output[modeIdx][i].SQL = ts
+				output[modeIdx][i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain " + ts).Rows())
+				output[modeIdx][i].Result = s.testData.ConvertRowsToStrings(tk.MustQuery(ts).Sort().Rows())
+			})
+			tk.MustQuery("explain " + ts).Check(testkit.Rows(output[modeIdx][i].Plan...))
+			tk.MustQuery(ts).Sort().Check(testkit.Rows(output[modeIdx][i].Result...))
+		}
 	}
 }
 
@@ -1564,8 +1566,6 @@ func (s *testPlanSuite) TestNthPlanHintWithExplain(c *C) {
 
 	_, err = se.Execute(ctx, "insert into tt values (1, 1), (2, 2), (3, 4)")
 	c.Assert(err, IsNil)
-
-	tk.MustExec(`set @@tidb_partition_prune_mode='` + string(variable.StaticOnly) + `'`)
 
 	var input []string
 	var output []struct {

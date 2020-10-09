@@ -329,7 +329,7 @@ func (tk *TestKit) GetTableID(tableName string) int64 {
 }
 
 // WithPruneMode run test case under prune mode.
-func WithPruneMode(tk *TestKit, f func(m variable.PartitionPruneMode), modes ...variable.PartitionPruneMode) {
+func WithPruneMode(tk *TestKit, f func(m variable.PartitionPruneMode)) {
 	for _, m := range []variable.PartitionPruneMode{variable.StaticOnly, variable.StaticButPrepareDynamic, variable.DynamicOnly} {
 		tk.MustExec("set @@tidb_partition_prune_mode=`" + string(m) + "`")
 		tk.MustExec("set global tidb_partition_prune_mode=`" + string(m) + "`")
