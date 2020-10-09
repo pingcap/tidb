@@ -7496,6 +7496,7 @@ func (s *testIntegrationSuite) TestIssue20180(c *C) {
 func (s *testIntegrationSuite) TestIssue20369(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t(a int);")
 	tk.MustExec("insert into t values (1);")
 	tk.MustExec("insert into t select values(a) from t;")
