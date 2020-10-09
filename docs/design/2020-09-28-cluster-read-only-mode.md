@@ -1,7 +1,7 @@
 # Proposal: Support Global Read Only Mode
 
 - Author(s):    [ichn-hu](https://github.com/ichn-hu)
-- Last updated:  Sep. 28, 2020
+- Last updated:  Oct. 09, 2020
 - Discussion at:  
 
 ## Abstract
