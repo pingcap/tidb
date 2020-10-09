@@ -3929,7 +3929,7 @@ func buildHiddenColumnInfo(ctx sessionctx.Context, t table.Table, indexPartSpeci
 		if err = checkDependedColExist(checkDependencies, t.Cols()); err != nil {
 			return nil, errors.Trace(err)
 		}
-		if err = checkAutoIncrementRef("", colInfo.Dependences, tblInfo); err != nil {
+		if err = checkExpressionIndexAutoIncrement(indexName.O, colInfo.Dependences, tblInfo); err != nil {
 			return nil, errors.Trace(err)
 		}
 		idxPart.Expr = nil
