@@ -520,7 +520,6 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, kvRanges []k
 	}
 	e.idxWorkerWg.Add(1)
 	go func() {
-		startTime := time.Now()
 		defer trace.StartRegion(ctx, "IndexLookUpIndexWorker").End()
 		ctx1, cancel := context.WithCancel(ctx)
 		_, err := worker.fetchHandles(ctx1, result)
@@ -535,9 +534,6 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, kvRanges []k
 		close(workCh)
 		close(e.resultCh)
 		e.idxWorkerWg.Done()
-		if e.stats != nil {
-			atomic.AddInt64(&e.stats.indexScan, int64(time.Since(startTime)))
-		}
 	}()
 	return nil
 }
@@ -666,6 +662,8 @@ func (e *IndexLookUpExecutor) initRuntimeStats() {
 			e.stats = &indexLookUpRunTimeStats{
 				indexScan:    0,
 				tableRowScan: 0,
+				tableTaskNum: 0,
+				concurrency:  e.ctx.GetSessionVars().IndexLookupConcurrency(),
 			}
 			e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
 		}
@@ -715,6 +713,7 @@ func (w *indexWorker) fetchHandles(ctx context.Context, result distsql.SelectRes
 	retTps := w.idxLookup.getRetTpsByHandle()
 	chk := chunk.NewChunkWithCapacity(retTps, w.idxLookup.maxChunkSize)
 	for {
+		startTime := time.Now()
 		handles, retChunk, scannedKeys, err := w.extractTaskHandles(ctx, chk, result, count)
 		if err != nil {
 			doneCh := make(chan error, 1)
@@ -729,6 +728,9 @@ func (w *indexWorker) fetchHandles(ctx context.Context, result distsql.SelectRes
 			return count, nil
 		}
 		task := w.buildTableTask(handles, retChunk)
+		if w.idxLookup.stats != nil {
+			atomic.AddInt64(&w.idxLookup.stats.indexScan, int64(time.Since(startTime)))
+		}
 		select {
 		case <-ctx.Done():
 			return count, nil
@@ -884,6 +886,7 @@ func (w *tableWorker) pickAndExecTask(ctx context.Context) {
 			return
 		}
 		err := w.executeTask(ctx, task)
+		atomic.AddInt64(&w.idxLookup.stats.tableTaskNum, 1)
 		task.doneCh <- err
 	}
 }
@@ -939,20 +942,24 @@ func (e *IndexLookUpExecutor) getHandle(row chunk.Row, handleIdx []int,
 type indexLookUpRunTimeStats struct {
 	indexScan    int64
 	tableRowScan int64
+	tableTaskNum int64
+	concurrency  int
 }
 
 func (e *indexLookUpRunTimeStats) String() string {
 	var buf bytes.Buffer
 	indexScan := atomic.LoadInt64(&e.indexScan)
 	tableScan := atomic.LoadInt64(&e.tableRowScan)
+	tableTaskNum := atomic.LoadInt64(&e.tableTaskNum)
+	concurrency := e.concurrency
 	if indexScan != 0 {
-		buf.WriteString(fmt.Sprintf("index_task_time:%s", time.Duration(indexScan)))
+		buf.WriteString(fmt.Sprintf("index_task:%s", time.Duration(indexScan)))
 	}
 	if tableScan != 0 {
 		if buf.Len() > 0 {
 			buf.WriteByte(',')
 		}
-		buf.WriteString(fmt.Sprintf(" table_task_time:%s", time.Duration(tableScan)))
+		buf.WriteString(fmt.Sprintf(" table_task:{num:%d, concurrency:%d, time:%s}", tableTaskNum, concurrency, time.Duration(tableScan)))
 	}
 	return buf.String()
 }
@@ -962,6 +969,8 @@ func (e *indexLookUpRunTimeStats) Clone() execdetails.RuntimeStats {
 	newRs := &indexLookUpRunTimeStats{
 		indexScan:    e.indexScan,
 		tableRowScan: e.tableRowScan,
+		tableTaskNum: e.tableTaskNum,
+		concurrency:  e.concurrency,
 	}
 	return newRs
 }
@@ -974,6 +983,8 @@ func (e *indexLookUpRunTimeStats) Merge(other execdetails.RuntimeStats) {
 	}
 	e.indexScan += tmp.indexScan
 	e.tableRowScan += tmp.tableRowScan
+	e.tableTaskNum += tmp.tableTaskNum
+	e.concurrency += tmp.concurrency
 }
 
 // Tp implements the RuntimeStats interface.
