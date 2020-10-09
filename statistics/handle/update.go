@@ -581,10 +581,10 @@ func (h *Handle) handleSingleHistogramUpdate(is infoschema.InfoSchema, rows []ch
 		return nil
 	}
 	var tbl *statistics.Table
-	if table.Meta().GetPartitionInfo() != nil {
-		tbl = h.GetPartitionStats(table.Meta(), physicalTableID)
-	} else {
+	if table.Meta().GetPartitionInfo() == nil || h.CurrentPruneMode() == variable.DynamicOnly {
 		tbl = h.GetTableStats(table.Meta())
+	} else {
+		tbl = h.GetPartitionStats(table.Meta(), physicalTableID)
 	}
 	var cms *statistics.CMSketch
 	var hist *statistics.Histogram
