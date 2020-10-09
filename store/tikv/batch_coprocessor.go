@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"go.uber.org/zap"
@@ -41,7 +42,7 @@ type batchCopTask struct {
 
 type batchCopResponse struct {
 	pbResp *coprocessor.BatchResponse
-	detail *CopRuntimeStats
+	detail *execdetails.ExecDetails
 
 	// batch Cop Response is yet to return startKey. So batchCop cannot retry partially.
 	startKey kv.Key
@@ -62,7 +63,7 @@ func (rs *batchCopResponse) GetStartKey() kv.Key {
 
 // GetExecDetails is unavailable currently, because TiFlash has not collected exec details for batch cop.
 // TODO: Will fix in near future.
-func (rs *batchCopResponse) GetCopRuntimeStats() *CopRuntimeStats {
+func (rs *batchCopResponse) GetExecDetails() *execdetails.ExecDetails {
 	return rs.detail
 }
 
@@ -76,6 +77,9 @@ func (rs *batchCopResponse) MemSize() int64 {
 	rs.respSize += int64(cap(rs.startKey))
 	if rs.detail != nil {
 		rs.respSize += int64(sizeofExecDetails)
+		if rs.detail.CommitDetail != nil {
+			rs.respSize += int64(sizeofCommitDetails)
+		}
 	}
 	if rs.pbResp != nil {
 		// Using a approximate size since it's hard to get a accurate value.
@@ -300,7 +304,7 @@ func (b *batchCopIterator) handleTask(ctx context.Context, bo *Backoffer, task *
 	for idx := 0; idx < len(tasks); idx++ {
 		ret, err := b.handleTaskOnce(ctx, bo, tasks[idx])
 		if err != nil {
-			resp := &batchCopResponse{err: errors.Trace(err), detail: new(CopRuntimeStats)}
+			resp := &batchCopResponse{err: errors.Trace(err), detail: new(execdetails.ExecDetails)}
 			b.sendToRespCh(resp)
 			break
 		}
@@ -411,7 +415,7 @@ func (b *batchCopIterator) handleBatchCopResponse(bo *Backoffer, response *copro
 
 	resp := batchCopResponse{
 		pbResp: response,
-		detail: new(CopRuntimeStats),
+		detail: new(execdetails.ExecDetails),
 	}
 
 	resp.detail.BackoffTime = time.Duration(bo.totalSleep) * time.Millisecond
