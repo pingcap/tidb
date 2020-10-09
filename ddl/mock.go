@@ -165,7 +165,7 @@ func MockTableInfo(ctx sessionctx.Context, stmt *ast.CreateTableStmt, tableID in
 	tbl.ID = tableID
 
 	// The specified charset will be handled in handleTableOptions
-	if err = handleTableOptions(ctx, stmt.Options, tbl); err != nil {
+	if err = handleTableOptions(stmt.Options, tbl); err != nil {
 		return nil, errors.Trace(err)
 	}
 
