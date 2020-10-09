@@ -6704,6 +6704,48 @@ func (s *testIntegrationSerialSuite) TestNewCollationWithClusterIndex(c *C) {
 	tk.MustQuery("select d from t use index(idx) where name=\"aa\"").Check(testkit.Rows("2.11"))
 }
 
+func (s *testIntegrationSerialSuite) TestNewCollationBinaryFlag(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a varchar(2) binary, index (a));")
+	tk.MustExec("insert into t values ('a ');")
+	tk.MustQuery("select hex(a) from t;").Check(testkit.Rows("6120"))
+	tk.MustQuery("select hex(a) from t use index (a);").Check(testkit.Rows("6120"))
+
+	showCreateTable := func(createSQL string) string {
+		tk.MustExec("drop table if exists t;")
+		tk.MustExec(createSQL)
+		s := tk.MustQuery("show create table t;").Rows()[0][1].(string)
+		return s
+	}
+	var sct string
+	// define case = tuple(table_charset, table_collation, column_charset, column_collation)
+	// case: (nil, nil, nil, nil)
+	sct = showCreateTable("create table t(a varchar(10) binary);")
+	c.Assert(strings.Contains(sct, "ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"), IsTrue, Commentf(sct))
+	// case: (nil, utf8_general_ci, nil, nil)
+	sct = showCreateTable("create table t(a varchar(10) binary) collate utf8_general_ci;")
+	c.Assert(strings.Contains(sct, "varchar(10) COLLATE utf8_bin"), IsTrue, Commentf(sct))
+	c.Assert(strings.Contains(sct, "ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci"), IsTrue, Commentf(sct))
+	// case: (nil, nil, nil, utf8_general_ci)
+	sct = showCreateTable("create table t(a varchar(10) binary collate utf8_general_ci);")
+	c.Assert(strings.Contains(sct, "varchar(10) CHARACTER SET utf8 COLLATE utf8_bin"), IsTrue, Commentf(sct))
+	// case: (nil, nil, utf8, utf8_general_ci)
+	sct = showCreateTable("create table t(a varchar(10) binary charset utf8 collate utf8_general_ci);")
+	c.Assert(strings.Contains(sct, "varchar(10) CHARACTER SET utf8 COLLATE utf8_general_ci"), IsTrue, Commentf(sct))
+	// case: (utf8, utf8_general_ci, utf8mb4, utf8mb4_unicode_ci)
+	sct = showCreateTable("create table t(a varchar(10) binary charset utf8mb4 collate utf8mb4_unicode_ci) charset utf8 collate utf8_general_ci;")
+	c.Assert(strings.Contains(sct, "varchar(10) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"), IsTrue, Commentf(sct))
+	c.Assert(strings.Contains(sct, "ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci"), IsTrue, Commentf(sct))
+	// case: (nil, nil, binary, nil)
+	sct = showCreateTable("create table t(a varchar(10) binary charset binary);")
+	c.Assert(strings.Contains(sct, "varbinary(10) DEFAULT NULL"), IsTrue, Commentf(sct))
+	c.Assert(strings.Contains(sct, "ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"), IsTrue, Commentf(sct))
+}
+
 func (s *testIntegrationSuite) TestIssue15743(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -7409,4 +7451,23 @@ func (s *testIntegrationSuite) TestIssue11645(c *C) {
 	tk.MustQuery(`SELECT DATE_ADD('0001-01-02 00:00:00', INTERVAL -24 HOUR);`).Check(testkit.Rows("0001-01-01 00:00:00"))
 	tk.MustQuery(`SELECT DATE_ADD('0001-01-02 00:00:00', INTERVAL -25 HOUR);`).Check(testkit.Rows("0000-00-00 23:00:00"))
 	tk.MustQuery(`SELECT DATE_ADD('0001-01-02 00:00:00', INTERVAL -8785 HOUR);`).Check(testkit.Rows("0000-00-00 23:00:00"))
+}
+
+func (s *testIntegrationSuite) TestIssue20180(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t(a enum('a', 'b'), b tinyint);")
+	tk.MustExec("create table t1(c varchar(20));")
+	tk.MustExec("insert into t values('b', 0);")
+	tk.MustExec("insert into t1 values('b');")
+	tk.MustQuery("select * from t, t1 where t.a= t1.c;").Check(testkit.Rows("b 0 b"))
+	tk.MustQuery("select * from t, t1 where t.b= t1.c;").Check(testkit.Rows("b 0 b"))
+	tk.MustQuery("select * from t, t1 where t.a = t1.c and t.b= t1.c;").Check(testkit.Rows("b 0 b"))
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a enum('a','b'));")
+	tk.MustExec("insert into t values('b');")
+	tk.MustQuery("select * from t where a > 1  and a = \"b\";").Check(testkit.Rows("b"))
 }

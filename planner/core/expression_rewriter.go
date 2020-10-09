@@ -1136,7 +1136,7 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
 			return
 		}
 	}
-	sysVar := variable.SysVars[name]
+	sysVar := variable.GetSysVar(name)
 	if sysVar == nil {
 		er.err = variable.ErrUnknownSystemVar.GenWithStackByArgs(name)
 		return
