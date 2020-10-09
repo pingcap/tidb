@@ -353,6 +353,25 @@ func ResolveCharsetCollation(charsetOpts ...ast.CharsetOpt) (string, string, err
 	return chs, coll, nil
 }
 
+// OverwriteCollationWithBinaryFlag is used to handle the case like
+//   CREATE TABLE t (a VARCHAR(255) BINARY) CHARSET utf8 COLLATE utf8_general_ci;
+// The 'BINARY' sets the column collation to *_bin according to the table charset.
+func OverwriteCollationWithBinaryFlag(colDef *ast.ColumnDef, chs, coll string) (newChs string, newColl string) {
+	ignoreBinFlag := colDef.Tp.Charset != "" && (colDef.Tp.Collate != "" || containsColumnOption(colDef, ast.ColumnOptionCollate))
+	if ignoreBinFlag {
+		return chs, coll
+	}
+	needOverwriteBinColl := types.IsString(colDef.Tp.Tp) && mysql.HasBinaryFlag(colDef.Tp.Flag)
+	if needOverwriteBinColl {
+		newColl, err := charset.GetDefaultCollation(chs)
+		if err != nil {
+			return chs, coll
+		}
+		return chs, newColl
+	}
+	return chs, coll
+}
+
 func typesNeedCharset(tp byte) bool {
 	switch tp {
 	case mysql.TypeString, mysql.TypeVarchar, mysql.TypeVarString,
@@ -412,6 +431,7 @@ func buildColumnAndConstraint(
 		ast.CharsetOpt{Chs: chs, Col: coll},
 		ast.CharsetOpt{Chs: tblCharset, Col: tblCollate},
 	)
+	chs, coll = OverwriteCollationWithBinaryFlag(colDef, chs, coll)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
@@ -504,8 +524,12 @@ func isExplicitTimeStamp() bool {
 
 // processColumnFlags is used by columnDefToCol and processColumnOptions. It is intended to unify behaviors on `create/add` and `modify/change` statements. Check tidb#issue#19342.
 func processColumnFlags(col *table.Column) {
-	if col.FieldType.EvalType().IsStringKind() && col.Charset == charset.CharsetBin {
-		col.Flag |= mysql.BinaryFlag
+	if col.FieldType.EvalType().IsStringKind() {
+		if col.Charset == charset.CharsetBin {
+			col.Flag |= mysql.BinaryFlag
+		} else {
+			col.Flag &= ^mysql.BinaryFlag
+		}
 	}
 	if col.Tp == mysql.TypeBit {
 		// For BIT field, it's charset is binary but does not have binary flag.
@@ -984,7 +1008,7 @@ func checkGeneratedColumn(colDefs []*ast.ColumnDef) error {
 	for i, colDef := range colDefs {
 		for _, option := range colDef.Options {
 			if option.Tp == ast.ColumnOptionGenerated {
-				if err := checkIllegalFn4GeneratedColumn(colDef.Name.Name.L, option.Expr); err != nil {
+				if err := checkIllegalFn4Generated(colDef.Name.Name.L, typeColumn, option.Expr); err != nil {
 					return errors.Trace(err)
 				}
 			}
@@ -2557,7 +2581,7 @@ func checkAndCreateNewColumn(ctx sessionctx.Context, ti ast.Ident, schema *model
 	// columns occurring later in a table, but we don't handle the col offset.
 	for _, option := range specNewColumn.Options {
 		if option.Tp == ast.ColumnOptionGenerated {
-			if err := checkIllegalFn4GeneratedColumn(specNewColumn.Name.Name.L, option.Expr); err != nil {
+			if err := checkIllegalFn4Generated(specNewColumn.Name.Name.L, typeColumn, option.Expr); err != nil {
 				return nil, errors.Trace(err)
 			}
 
@@ -2619,11 +2643,13 @@ func checkAndCreateNewColumn(ctx sessionctx.Context, ti ast.Ident, schema *model
 		return nil, errors.Trace(err)
 	}
 
-	col.OriginDefaultValue, err = generateOriginDefaultValue(col.ToInfo())
+	originDefVal, err := generateOriginDefaultValue(col.ToInfo())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return col, nil
+
+	err = col.SetOriginDefaultValue(originDefVal)
+	return col, err
 }
 
 // AddColumn will add a new column to the table.
@@ -3539,12 +3565,13 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 		// a new version TiDB builds the DDL job that doesn't be set the column's offset and state,
 		// and the old version TiDB is the DDL owner, it doesn't get offset and state from the store. Then it will encounter errors.
 		// So here we set offset and state to support the rolling upgrade.
-		Offset:             col.Offset,
-		State:              col.State,
-		OriginDefaultValue: col.OriginDefaultValue,
-		FieldType:          *specNewColumn.Tp,
-		Name:               newColName,
-		Version:            col.Version,
+		Offset:                col.Offset,
+		State:                 col.State,
+		OriginDefaultValue:    col.OriginDefaultValue,
+		OriginDefaultValueBit: col.OriginDefaultValueBit,
+		FieldType:             *specNewColumn.Tp,
+		Name:                  newColName,
+		Version:               col.Version,
 	})
 
 	var chs, coll string
@@ -3564,6 +3591,7 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 			ast.CharsetOpt{Chs: t.Meta().Charset, Col: t.Meta().Collate},
 			ast.CharsetOpt{Chs: schema.Charset, Col: schema.Collate},
 		)
+		chs, coll = OverwriteCollationWithBinaryFlag(specNewColumn, chs, coll)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -4504,7 +4532,7 @@ func buildHiddenColumnInfo(ctx sessionctx.Context, indexPartSpecifications []*as
 			return nil, ErrTooLongIdent.GenWithStackByArgs("hidden column")
 		}
 		// TODO: refine the error message.
-		if err := checkIllegalFn4GeneratedColumn("expression index", idxPart.Expr); err != nil {
+		if err := checkIllegalFn4Generated(indexName.L, typeIndex, idxPart.Expr); err != nil {
 			return nil, errors.Trace(err)
 		}
 
@@ -4543,7 +4571,7 @@ func buildHiddenColumnInfo(ctx sessionctx.Context, indexPartSpecifications []*as
 		if err = checkDependedColExist(checkDependencies, existCols); err != nil {
 			return nil, errors.Trace(err)
 		}
-		if err = checkAutoIncrementRef("", colInfo.Dependences, tblInfo); err != nil {
+		if err = checkExpressionIndexAutoIncrement(indexName.O, colInfo.Dependences, tblInfo); err != nil {
 			return nil, errors.Trace(err)
 		}
 		idxPart.Expr = nil
@@ -5516,14 +5544,14 @@ func (d *ddl) AlterTablePartition(ctx sessionctx.Context, ident ast.Ident, spec 
 		return errors.Trace(err)
 	}
 
-	var extraCnt int
+	extraCnt := map[placement.PeerRoleType]int{}
 	startKey := hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(partitionID)))
 	endKey := hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(partitionID+1)))
 	newRules := bundle.Rules[:0]
 	for i, rule := range bundle.Rules {
 		// merge all empty constraints
 		if len(rule.LabelConstraints) == 0 {
-			extraCnt += rule.Count
+			extraCnt[rule.Role] += rule.Count
 			continue
 		}
 		rule.GroupID = bundle.ID
@@ -5532,11 +5560,15 @@ func (d *ddl) AlterTablePartition(ctx sessionctx.Context, ident ast.Ident, spec 
 		rule.EndKeyHex = endKey
 		newRules = append(newRules, rule)
 	}
-	if extraCnt > 0 {
+	for role, cnt := range extraCnt {
+		if cnt <= 0 {
+			continue
+		}
 		bundle.Rules = append(newRules, &placement.Rule{
 			GroupID:     bundle.ID,
 			ID:          "default",
-			Count:       extraCnt,
+			Role:        role,
+			Count:       cnt,
 			StartKeyHex: startKey,
 			EndKeyHex:   endKey,
 		})
