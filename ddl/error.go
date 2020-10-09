@@ -64,6 +64,8 @@ var (
 	errOnlyOnRangeListPartition = terror.ClassDDL.New(mysql.ErrOnlyOnRangeListPartition, mysql.MySQLErrName[mysql.ErrOnlyOnRangeListPartition])
 	// errWrongKeyColumn is for table column cannot be indexed.
 	errWrongKeyColumn = terror.ClassDDL.New(mysql.ErrWrongKeyColumn, mysql.MySQLErrName[mysql.ErrWrongKeyColumn])
+	// errWrongKeyColumnFunctionalIndex is for expression cannot be indexed.
+	errWrongKeyColumnFunctionalIndex = terror.ClassDDL.New(mysql.ErrWrongKeyColumnFunctionalIndex, mysql.MySQLErrName[mysql.ErrWrongKeyColumnFunctionalIndex])
 	// errWrongFKOptionForGeneratedColumn is for wrong foreign key reference option on generated columns.
 	errWrongFKOptionForGeneratedColumn = terror.ClassDDL.New(mysql.ErrWrongFKOptionForGeneratedColumn, mysql.MySQLErrName[mysql.ErrWrongFKOptionForGeneratedColumn])
 	// ErrUnsupportedOnGeneratedColumn is for unsupported actions on generated columns.
