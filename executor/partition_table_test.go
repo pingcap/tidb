@@ -248,5 +248,23 @@ func (s *globalIndexSuite) TestIndexMergeReaderWithGlobalIndex(c *C) {
 	tk.MustExec("insert into t2 values(1,1),(5,5)")
 	tk.MustQuery("select /*+ use_index_merge(t1, t1a, t1b) */ sum(t1.a) from t1 join t2 on t1.id = t2.id where t1.a < 2 or t1.b > 4").Check(testkit.Rows("6"))
 	tk.MustQuery("select /*+ use_index_merge(t1, t1a, t1b) */ sum(t1.a) from t1 join t2 on t1.id = t2.id where t1.a < 2 or t1.b > 5").Check(testkit.Rows("1"))
+}
 
+func (s *globalIndexSuite) TestPartitionIndexJoinWithGlobalIndex(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists p, t")
+	tk.MustExec(`create table p (id int, c int) partition by range (c) (
+		partition p0 values less than (4),
+		partition p1 values less than (7),
+		partition p2 values less than (10))`)
+	tk.MustExec(`create unique index i_id on p(id)`)
+	tk.MustExec(`create unique index i_c on p(c)`)
+	tk.MustExec("create table t (id int)")
+	tk.MustExec("insert into p values (3,3), (4,4), (6,6), (9,9)")
+	tk.MustExec("insert into t values (4), (9)")
+
+	// Build indexLookUp in index join
+	tk.MustQuery("select /*+ INL_JOIN(p) */ * from p, t where p.id = t.id").Sort().Check(testkit.Rows("4 4 4", "9 9 9"))
+	// Build index reader in index join
+	tk.MustQuery("select /*+ INL_JOIN(p) */ p.id from p, t where p.id = t.id").Check(testkit.Rows("4", "9"))
 }
