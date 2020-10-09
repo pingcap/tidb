@@ -555,9 +555,7 @@ func (c *twoPhaseCommitter) doActionOnGroupMutations(bo *Backoffer, action twoPh
 
 	var batches []batchMutations
 	var sizeFunc = c.keySize
-
-	switch act := action.(type) {
-	case actionPrewrite:
+	if _, ok := action.(actionPrewrite); ok {
 		// Do not update regionTxnSize on retries. They are not used when building a PrewriteRequest.
 		if len(bo.errors) == 0 {
 			for _, group := range groups {
@@ -566,10 +564,6 @@ func (c *twoPhaseCommitter) doActionOnGroupMutations(bo *Backoffer, action twoPh
 		}
 		sizeFunc = c.keyValueSize
 		atomic.AddInt32(&c.getDetail().PrewriteRegionNum, int32(len(groups)))
-	case actionPessimisticLock:
-		if act.LockCtx.Stats != nil {
-			act.LockCtx.Stats.RegionNum = int32(len(groups))
-		}
 	}
 
 	primaryIdx := -1
