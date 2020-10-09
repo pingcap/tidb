@@ -59,6 +59,8 @@ func (ds *testDumpStatsSuite) startServer(c *C) {
 
 	server, err := NewServer(cfg, tidbdrv)
 	c.Assert(err, IsNil)
+	ds.port = getPortFromTCPAddr(server.listener.Addr())
+	ds.statusPort = getPortFromTCPAddr(server.statusListener.Addr())
 	ds.server = server
 	go server.Run()
 	ds.waitUntilServerOnline()

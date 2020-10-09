@@ -18,6 +18,7 @@ import (
 	"crypto/tls"
 	"fmt"
 	"math/rand"
+	"net/url"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -25,7 +26,6 @@ import (
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	pd "github.com/pingcap/pd/v4/client"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/fastrand"
 	"github.com/pingcap/tidb/util/logutil"
+	pd "github.com/tikv/pd/client"
 	"go.etcd.io/etcd/clientv3"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
@@ -132,7 +133,7 @@ func (d Driver) Open(path string) (kv.Storage, error) {
 
 // EtcdBackend is used for judging a storage is a real TiKV.
 type EtcdBackend interface {
-	EtcdAddrs() []string
+	EtcdAddrs() ([]string, error)
 	TLSConfig() *tls.Config
 	StartGCWorker() error
 }
@@ -234,8 +235,38 @@ func (s *tikvStore) IsLatchEnabled() bool {
 	return s.txnLatches != nil
 }
 
-func (s *tikvStore) EtcdAddrs() []string {
-	return s.etcdAddrs
+func (s *tikvStore) EtcdAddrs() ([]string, error) {
+	if s.etcdAddrs == nil {
+		return nil, nil
+	}
+	ctx := context.Background()
+	bo := NewBackoffer(ctx, GetMemberInfoBackoff)
+	etcdAddrs := make([]string, 0)
+	pdClient := s.pdClient
+	if pdClient == nil {
+		return nil, errors.New("Etcd client not found")
+	}
+	for {
+		members, err := pdClient.GetMemberInfo(ctx)
+		if err != nil {
+			err := bo.Backoff(BoRegionMiss, err)
+			if err != nil {
+				return nil, err
+			}
+			continue
+		}
+		for _, member := range members {
+			if len(member.ClientUrls) > 0 {
+				u, err := url.Parse(member.ClientUrls[0])
+				if err != nil {
+					logutil.BgLogger().Error("fail to parse client url from pd members", zap.String("client_url", member.ClientUrls[0]), zap.Error(err))
+					return nil, err
+				}
+				etcdAddrs = append(etcdAddrs, u.Host)
+			}
+		}
+		return etcdAddrs, nil
+	}
 }
 
 func (s *tikvStore) TLSConfig() *tls.Config {

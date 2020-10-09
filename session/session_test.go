@@ -120,8 +120,12 @@ func clearStorage(store kv.Storage) error {
 }
 
 func clearETCD(ebd tikv.EtcdBackend) error {
+	endpoints, err := ebd.EtcdAddrs()
+	if err != nil {
+		return err
+	}
 	cli, err := clientv3.New(clientv3.Config{
-		Endpoints:        ebd.EtcdAddrs(),
+		Endpoints:        endpoints,
 		AutoSyncInterval: 30 * time.Second,
 		DialTimeout:      5 * time.Second,
 		DialOptions: []grpc.DialOption{
@@ -134,13 +138,15 @@ func clearETCD(ebd tikv.EtcdBackend) error {
 	}
 	defer cli.Close()
 
-	leases, err := cli.Leases(context.Background())
+	resp, err := cli.Get(context.Background(), "/tidb", clientv3.WithPrefix())
 	if err != nil {
 		return errors.Trace(err)
 	}
-	for _, resp := range leases.Leases {
-		if _, err := cli.Revoke(context.Background(), resp.ID); err != nil {
-			return errors.Trace(err)
+	for _, kv := range resp.Kvs {
+		if kv.Lease != 0 {
+			if _, err := cli.Revoke(context.Background(), clientv3.LeaseID(kv.Lease)); err != nil {
+				return errors.Trace(err)
+			}
 		}
 	}
 	_, err = cli.Delete(context.Background(), "/tidb", clientv3.WithPrefix())
@@ -680,10 +686,9 @@ func (s *testSessionSuite) TestGetSysVariables(c *C) {
 	// Test ScopeNone
 	tk.MustExec("select @@performance_schema_max_mutex_classes")
 	tk.MustExec("select @@global.performance_schema_max_mutex_classes")
-	_, err = tk.Exec("select @@session.performance_schema_max_mutex_classes")
-	c.Assert(terror.ErrorEqual(err, variable.ErrIncorrectScope), IsTrue, Commentf("err %v", err))
-	_, err = tk.Exec("select @@local.performance_schema_max_mutex_classes")
-	c.Assert(terror.ErrorEqual(err, variable.ErrIncorrectScope), IsTrue, Commentf("err %v", err))
+	// For issue 19524, test
+	tk.MustExec("select @@session.performance_schema_max_mutex_classes")
+	tk.MustExec("select @@local.performance_schema_max_mutex_classes")
 }
 
 func (s *testSessionSuite) TestRetryResetStmtCtx(c *C) {
@@ -718,7 +723,8 @@ func (s *testSessionSuite) TestRetryCleanTxn(c *C) {
 	history := session.GetHistory(tk.Se)
 	stmtNode, err := parser.New().ParseOneStmt("insert retrytxn values (2, 'a')", "", "")
 	c.Assert(err, IsNil)
-	stmt, _ := session.Compile(context.TODO(), tk.Se, stmtNode)
+	compiler := executor.Compiler{Ctx: tk.Se}
+	stmt, _ := compiler.Compile(context.TODO(), stmtNode)
 	executor.ResetContextOfStmt(tk.Se, stmtNode)
 	history.Add(stmt, tk.Se.GetSessionVars().StmtCtx)
 	_, err = tk.Exec("commit")
@@ -3229,6 +3235,27 @@ func (s *testSessionSuite2) TestPerStmtTaskID(c *C) {
 	tk.MustExec("commit")
 
 	c.Assert(taskID1 != taskID2, IsTrue)
+}
+
+func (s *testSessionSerialSuite) TestDoDDLJobQuit(c *C) {
+	// test https://github.com/pingcap/tidb/issues/18714, imitate DM's use environment
+	// use isolated store, because in below failpoint we will cancel its context
+	store, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.MockTiKV))
+	c.Assert(err, IsNil)
+	defer store.Close()
+	dom, err := session.BootstrapSession(store)
+	c.Assert(err, IsNil)
+	defer dom.Close()
+	se, err := session.CreateSession(store)
+	c.Assert(err, IsNil)
+	defer se.Close()
+
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/storeCloseInLoop", `return`), IsNil)
+	defer failpoint.Disable("github.com/pingcap/tidb/ddl/storeCloseInLoop")
+
+	// this DDL call will enter deadloop before this fix
+	err = dom.DDL().CreateSchema(se, model.NewCIStr("testschema"), nil)
+	c.Assert(err.Error(), Equals, "context canceled")
 }
 
 func (s *testBackupRestoreSuite) TestBackupAndRestore(c *C) {

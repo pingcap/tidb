@@ -108,7 +108,7 @@ func GetSessionSystemVar(s *SessionVars, key string) (string, error) {
 // GetSessionOnlySysVars get the default value defined in code for session only variable.
 // The return bool value indicates whether it's a session only variable.
 func GetSessionOnlySysVars(s *SessionVars, key string) (string, bool, error) {
-	sysVar := SysVars[key]
+	sysVar := GetSysVar(key)
 	if sysVar == nil {
 		return "", false, ErrUnknownSystemVar.GenWithStackByArgs(key)
 	}
@@ -116,6 +116,12 @@ func GetSessionOnlySysVars(s *SessionVars, key string) (string, bool, error) {
 	switch sysVar.Name {
 	case TiDBCurrentTS:
 		return fmt.Sprintf("%d", s.TxnCtx.StartTS), true, nil
+	case TiDBLastTxnInfo:
+		info, err := json.Marshal(s.LastTxnInfo)
+		if err != nil {
+			return "", true, err
+		}
+		return string(info), true, nil
 	case TiDBGeneralLog:
 		return fmt.Sprintf("%d", atomic.LoadUint32(&ProcessGeneralLog)), true, nil
 	case TiDBPProfSQLCPU:
@@ -186,7 +192,7 @@ func GetGlobalSystemVar(s *SessionVars, key string) (string, error) {
 // GetScopeNoneSystemVar checks the validation of `key`,
 // and return the default value if its scope is `ScopeNone`.
 func GetScopeNoneSystemVar(key string) (string, bool, error) {
-	sysVar := SysVars[key]
+	sysVar := GetSysVar(key)
 	if sysVar == nil {
 		return "", false, ErrUnknownSystemVar.GenWithStackByArgs(key)
 	}
@@ -201,8 +207,7 @@ const epochShiftBits = 18
 
 // SetSessionSystemVar sets system variable and updates SessionVars states.
 func SetSessionSystemVar(vars *SessionVars, name string, value types.Datum) error {
-	name = strings.ToLower(name)
-	sysVar := SysVars[name]
+	sysVar := GetSysVar(name)
 	if sysVar == nil {
 		return ErrUnknownSystemVar
 	}
@@ -224,12 +229,12 @@ func SetSessionSystemVar(vars *SessionVars, name string, value types.Datum) erro
 
 // ValidateGetSystemVar checks if system variable exists and validates its scope when get system variable.
 func ValidateGetSystemVar(name string, isGlobal bool) error {
-	sysVar, exists := SysVars[name]
-	if !exists {
+	sysVar := GetSysVar(name)
+	if sysVar == nil {
 		return ErrUnknownSystemVar.GenWithStackByArgs(name)
 	}
 	switch sysVar.Scope {
-	case ScopeGlobal, ScopeNone:
+	case ScopeGlobal:
 		if !isGlobal {
 			return ErrIncorrectScope.GenWithStackByArgs(name, "GLOBAL")
 		}
@@ -462,9 +467,9 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string, scope Sc
 		TiDBBatchDelete, TiDBBatchCommit, TiDBEnableCascadesPlanner, TiDBEnableWindowFunction, TiDBPProfSQLCPU,
 		TiDBLowResolutionTSO, TiDBEnableIndexMerge, TiDBEnableNoopFuncs,
 		TiDBCheckMb4ValueInUTF8, TiDBEnableSlowLog, TiDBRecordPlanInSlowLog,
-		TiDBScatterRegion, TiDBGeneralLog, TiDBConstraintCheckInPlace,
-		TiDBEnableVectorizedExpression, TiDBFoundInPlanCache, TiDBEnableCollectExecutionInfo,
-		TiDBAllowAutoRandExplicitInsert, TiDBEnableClusteredIndex, TiDBEnableTelemetry:
+		TiDBScatterRegion, TiDBGeneralLog, TiDBConstraintCheckInPlace, TiDBEnableVectorizedExpression,
+		TiDBFoundInPlanCache, TiDBEnableCollectExecutionInfo, TiDBAllowAutoRandExplicitInsert,
+		TiDBEnableClusteredIndex, TiDBEnableTelemetry, TiDBEnableChangeColumnType, TiDBEnableAmendPessimisticTxn:
 		fallthrough
 	case GeneralLog, AvoidTemporalUpgrade, BigTables, CheckProxyUsers, LogBin,
 		CoreFile, EndMakersInJSON, SQLLogBin, OfflineMode, PseudoSlaveMode, LowPriorityUpdates,
@@ -720,7 +725,11 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string, scope Sc
 		if v != DefTiDBRowFormatV1 && v != DefTiDBRowFormatV2 {
 			return value, errors.Errorf("Unsupported row format version %d", v)
 		}
-	case TiDBAllowRemoveAutoInc, TiDBUsePlanBaselines, TiDBEvolvePlanBaselines:
+	case TiDBPartitionPruneMode:
+		if !PartitionPruneMode(value).Valid() {
+			return value, ErrWrongTypeForVar.GenWithStackByArgs(name)
+		}
+	case TiDBAllowRemoveAutoInc, TiDBUsePlanBaselines, TiDBEvolvePlanBaselines, TiDBEnableParallelApply:
 		switch {
 		case strings.EqualFold(value, "ON") || value == "1":
 			return "on", nil

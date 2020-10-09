@@ -77,10 +77,15 @@ type PhysicalTableReader struct {
 	IsCommonHandle bool
 
 	// Used by partition table.
-	PartitionTable struct {
-		PruningConds   []expression.Expression
-		PartitionNames []model.CIStr
-	}
+	PartitionInfo PartitionInfo
+}
+
+// PartitionInfo indicates partition helper info in physical plan.
+type PartitionInfo struct {
+	PruningConds   []expression.Expression
+	PartitionNames []model.CIStr
+	Columns        []*expression.Column
+	ColumnNames    types.NameSlice
 }
 
 // GetTablePlan exports the tablePlan.
@@ -107,6 +112,12 @@ func (p *PhysicalTableReader) GetTableScan() *PhysicalTableScan {
 // GetPhysicalTableReader returns PhysicalTableReader for logical TiKVSingleGather.
 func (sg *TiKVSingleGather) GetPhysicalTableReader(schema *expression.Schema, stats *property.StatsInfo, props ...*property.PhysicalProperty) *PhysicalTableReader {
 	reader := PhysicalTableReader{}.Init(sg.ctx, sg.blockOffset)
+	reader.PartitionInfo = PartitionInfo{
+		PruningConds:   sg.Source.allConds,
+		PartitionNames: sg.Source.partitionNames,
+		Columns:        sg.Source.TblCols,
+		ColumnNames:    sg.Source.names,
+	}
 	reader.stats = stats
 	reader.SetSchema(schema)
 	reader.childrenReqProps = props
@@ -167,10 +178,7 @@ type PhysicalIndexReader struct {
 	OutputColumns []*expression.Column
 
 	// Used by partition table.
-	PartitionTable struct {
-		PruningConds   []expression.Expression
-		PartitionNames []model.CIStr
-	}
+	PartitionInfo PartitionInfo
 }
 
 // Clone implements PhysicalPlan interface.
@@ -251,10 +259,7 @@ type PhysicalIndexLookUpReader struct {
 	CommonHandleCols []*expression.Column
 
 	// Used by partition table.
-	PartitionTable struct {
-		PruningConds   []expression.Expression
-		PartitionNames []model.CIStr
-	}
+	PartitionInfo PartitionInfo
 }
 
 // Clone implements PhysicalPlan interface.
@@ -311,10 +316,7 @@ type PhysicalIndexMergeReader struct {
 	tablePlan PhysicalPlan
 
 	// Used by partition table.
-	PartitionTable struct {
-		PruningConds   []expression.Expression
-		PartitionNames []model.CIStr
-	}
+	PartitionInfo PartitionInfo
 }
 
 // ExtractCorrelatedCols implements PhysicalPlan interface.
@@ -511,6 +513,16 @@ func (ts *PhysicalTableScan) IsPartition() (bool, int64) {
 // ExpandVirtualColumn expands the virtual column's dependent columns to ts's schema and column.
 func ExpandVirtualColumn(columns []*model.ColumnInfo, schema *expression.Schema,
 	colsInfo []*model.ColumnInfo) []*model.ColumnInfo {
+	copyColumn := make([]*model.ColumnInfo, len(columns))
+	copy(copyColumn, columns)
+	var extraColumn *expression.Column
+	var extraColumnModel *model.ColumnInfo
+	if schema.Columns[len(schema.Columns)-1].ID == model.ExtraHandleID {
+		extraColumn = schema.Columns[len(schema.Columns)-1]
+		extraColumnModel = copyColumn[len(copyColumn)-1]
+		schema.Columns = schema.Columns[:len(schema.Columns)-1]
+		copyColumn = copyColumn[:len(copyColumn)-1]
+	}
 	schemaColumns := schema.Columns
 	for _, col := range schemaColumns {
 		if col.VirtualExpr == nil {
@@ -521,11 +533,15 @@ func ExpandVirtualColumn(columns []*model.ColumnInfo, schema *expression.Schema,
 		for _, baseCol := range baseCols {
 			if !schema.Contains(baseCol) {
 				schema.Columns = append(schema.Columns, baseCol)
-				columns = append(columns, FindColumnInfoByID(colsInfo, baseCol.ID))
+				copyColumn = append(copyColumn, FindColumnInfoByID(colsInfo, baseCol.ID))
 			}
 		}
 	}
-	return columns
+	if extraColumn != nil {
+		schema.Columns = append(schema.Columns, extraColumn)
+		copyColumn = append(copyColumn, extraColumnModel)
+	}
+	return copyColumn
 }
 
 //SetIsChildOfIndexLookUp is to set the bool if is a child of IndexLookUpReader
@@ -838,7 +854,7 @@ func (p *PhysicalMergeJoin) Clone() (PhysicalPlan, error) {
 type PhysicalLock struct {
 	basePhysicalPlan
 
-	Lock ast.SelectLockType
+	Lock *ast.SelectLockInfo
 
 	TblID2Handle     map[int64][]HandleCols
 	PartitionedTable []table.PartitionedTable
@@ -1018,6 +1034,15 @@ type PhysicalUnionScan struct {
 	Conditions []expression.Expression
 
 	HandleCols HandleCols
+}
+
+// ExtractCorrelatedCols implements PhysicalPlan interface.
+func (p *PhysicalUnionScan) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
+	corCols := make([]*expression.CorrelatedColumn, 0)
+	for _, cond := range p.Conditions {
+		corCols = append(corCols, expression.ExtractCorColumns(cond)...)
+	}
+	return corCols
 }
 
 // IsPartition returns true and partition ID if it works on a partition.

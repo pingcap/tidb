@@ -28,11 +28,11 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	pd "github.com/pingcap/pd/v4/client"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
+	pd "github.com/tikv/pd/client"
 	atomic2 "go.uber.org/atomic"
 	"go.uber.org/zap"
 	"golang.org/x/sync/singleflight"
@@ -554,6 +554,16 @@ func (c *RegionCache) OnSendFail(bo *Backoffer, ctx *RPCContext, scheduleReload 
 	tikvRegionCacheCounterWithSendFail.Inc()
 	r := c.getCachedRegionWithRLock(ctx.Region)
 	if r != nil {
+		peersNum := len(r.meta.Peers)
+		if len(ctx.Meta.Peers) != peersNum {
+			logutil.Logger(bo.ctx).Info("retry and refresh current ctx after send request fail and up/down stores length changed",
+				zap.Stringer("current", ctx),
+				zap.Bool("needReload", scheduleReload),
+				zap.Reflect("oldPeers", ctx.Meta.Peers),
+				zap.Reflect("newPeers", r.meta.Peers),
+				zap.Error(err))
+			return
+		}
 		rs := r.getStore()
 		if err != nil {
 			storeIdx, s := rs.accessStore(ctx.AccessMode, ctx.AccessIdx)
@@ -731,7 +741,7 @@ func (c *RegionCache) LoadRegionsInKeyRange(bo *Backoffer, startKey, endKey []by
 		}
 		regions = append(regions, batchRegions...)
 		endRegion := batchRegions[len(batchRegions)-1]
-		if endRegion.Contains(endKey) {
+		if endRegion.ContainsByEnd(endKey) {
 			break
 		}
 		startKey = endRegion.EndKey()
@@ -820,7 +830,7 @@ func (c *RegionCache) insertRegionToCache(cachedRegion *Region) {
 	if old != nil {
 		// Don't refresh TiFlash work idx for region. Otherwise, it will always goto a invalid store which
 		// is under transferring regions.
-		cachedRegion.getStore().workTiFlashIdx = old.(*btreeItem).cachedRegion.getStore().workTiFlashIdx
+		atomic.StoreInt32(&cachedRegion.getStore().workTiFlashIdx, atomic.LoadInt32(&old.(*btreeItem).cachedRegion.getStore().workTiFlashIdx))
 		delete(c.mu.regions, old.(*btreeItem).cachedRegion.VerID())
 	}
 	c.mu.regions[cachedRegion.VerID()] = cachedRegion
@@ -1211,7 +1221,7 @@ func (r *Region) GetMeta() *metapb.Region {
 // GetLeaderPeerID returns leader peer ID.
 func (r *Region) GetLeaderPeerID() uint64 {
 	store := r.getStore()
-	if int(store.workTiKVIdx) >= len(r.meta.Peers) {
+	if int(store.workTiKVIdx) >= store.accessStoreNum(TiKvOnly) {
 		return 0
 	}
 	storeIdx, _ := store.accessStore(TiKvOnly, store.workTiKVIdx)
@@ -1221,7 +1231,7 @@ func (r *Region) GetLeaderPeerID() uint64 {
 // GetLeaderStoreID returns the store ID of the leader region.
 func (r *Region) GetLeaderStoreID() uint64 {
 	store := r.getStore()
-	if int(store.workTiKVIdx) >= len(r.meta.Peers) {
+	if int(store.workTiKVIdx) >= store.accessStoreNum(TiKvOnly) {
 		return 0
 	}
 	storeIdx, _ := store.accessStore(TiKvOnly, store.workTiKVIdx)
@@ -1337,7 +1347,7 @@ func (r *Region) findElectableStoreID() uint64 {
 		return 0
 	}
 	for _, p := range r.meta.Peers {
-		if !p.IsLearner {
+		if p.Role != metapb.PeerRole_Learner {
 			return p.StoreId
 		}
 	}

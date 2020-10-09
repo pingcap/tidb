@@ -39,47 +39,47 @@ add placement policy
 	constraints='["+zone=sh"]'
 	role=leader
 	replicas=3`)
-	c.Assert(err, ErrorMatches, ".*pd unavailable.*")
+	c.Assert(err, IsNil)
 
 	_, err = tk.Exec(`alter table t1 alter partition p0
 add placement policy
 	constraints='["+   zone   =   sh  ",     "- zone = bj    "]'
 	role=leader
 	replicas=3`)
-	c.Assert(err, ErrorMatches, ".*pd unavailable.*")
+	c.Assert(err, IsNil)
 
 	_, err = tk.Exec(`alter table t1 alter partition p0
 add placement policy
 	constraints='{"+   zone   =   sh  ": 1}'
 	role=leader
 	replicas=3`)
-	c.Assert(err, ErrorMatches, ".*pd unavailable.*")
+	c.Assert(err, IsNil)
 
 	_, err = tk.Exec(`alter table t1 alter partition p0
 add placement policy
 	constraints='{"+   zone   =   sh, -zone =   bj ": 1}'
 	role=leader
 	replicas=3`)
-	c.Assert(err, ErrorMatches, ".*pd unavailable.*")
+	c.Assert(err, IsNil)
 
 	_, err = tk.Exec(`alter table t1 alter partition p0
 add placement policy
 	constraints='{"+   zone   =   sh  ": 1, "- zone = bj": 2}'
 	role=leader
 	replicas=3`)
-	c.Assert(err, ErrorMatches, ".*pd unavailable.*")
+	c.Assert(err, IsNil)
 
 	_, err = tk.Exec(`alter table t1 alter partition p0
 alter placement policy
 	constraints='{"+   zone   =   sh, -zone =   bj ": 1}'
 	role=leader
 	replicas=3`)
-	c.Assert(err, ErrorMatches, ".*pd unavailable.*")
+	c.Assert(err, IsNil)
 
 	_, err = tk.Exec(`alter table t1 alter partition p0
 drop placement policy
 	role=leader`)
-	c.Assert(err, ErrorMatches, ".*pd unavailable.*")
+	c.Assert(err, IsNil)
 
 	// multiple statements
 	_, err = tk.Exec(`alter table t1 alter partition p0
@@ -91,7 +91,7 @@ add placement policy
 	constraints='{"+   zone   =   sh, -zone =   bj ": 1}'
 	role=leader
 	replicas=3`)
-	c.Assert(err, ErrorMatches, ".*pd unavailable.*")
+	c.Assert(err, IsNil)
 
 	_, err = tk.Exec(`alter table t1 alter partition p0
 add placement policy
@@ -102,7 +102,7 @@ add placement policy
 	constraints='{"+zone=sh,+zone=bj":1,"+zone=sh,+zone=bj":1}'
 	role=leader
 	replicas=3`)
-	c.Assert(err, ErrorMatches, ".*pd unavailable.*")
+	c.Assert(err, IsNil)
 
 	_, err = tk.Exec(`alter table t1 alter partition p0
 add placement policy
@@ -113,7 +113,7 @@ alter placement policy
 	constraints='{"+   zone   =   sh, -zone =   bj ": 1}'
 	role=leader
 	replicas=3`)
-	c.Assert(err, ErrorMatches, ".*pd unavailable.*")
+	c.Assert(err, IsNil)
 
 	_, err = tk.Exec(`alter table t1 alter partition p0
 add placement policy
@@ -132,14 +132,14 @@ alter placement policy
 	constraints='{"+zone=sh": 1, "-zon =bj,+zone=sh": 1}'
 	role=leader
 	replicas=3`)
-	c.Assert(err, ErrorMatches, ".*pd unavailable.*")
+	c.Assert(err, IsNil)
 
 	_, err = tk.Exec(`alter table t1 alter partition p0
 drop placement policy
 	role=leader,
 drop placement policy
 	role=leader`)
-	c.Assert(err, ErrorMatches, ".*pd unavailable.*")
+	c.Assert(err, IsNil)
 
 	_, err = tk.Exec(`alter table t1 alter partition p0
 add placement policy
@@ -148,7 +148,7 @@ add placement policy
 	replicas=3,
 drop placement policy
 	role=leader`)
-	c.Assert(err, ErrorMatches, ".*pd unavailable.*")
+	c.Assert(err, IsNil)
 
 	// list/dict detection
 	_, err = tk.Exec(`alter table t1 alter partition p0

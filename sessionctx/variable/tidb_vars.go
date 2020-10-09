@@ -69,6 +69,9 @@ const (
 	// It is read-only.
 	TiDBCurrentTS = "tidb_current_ts"
 
+	// TiDBLastTxnInfo is used to get the last transaction info within the current session.
+	TiDBLastTxnInfo = "tidb_last_txn_info"
+
 	// tidb_config is a read-only variable that shows the config of the current server.
 	TiDBConfig = "tidb_config"
 
@@ -325,6 +328,9 @@ const (
 	// It can be: PRIORITY_LOW, PRIORITY_NORMAL, PRIORITY_HIGH
 	TiDBDDLReorgPriority = "tidb_ddl_reorg_priority"
 
+	// TiDBEnableChangeColumnType is used to control whether to enable the change column type.
+	TiDBEnableChangeColumnType = "tidb_enable_change_column_type"
+
 	// tidb_max_delta_schema_count defines the max length of deltaSchemaInfos.
 	// deltaSchemaInfos is a queue that maintains the history of schema changes.
 	TiDBMaxDeltaSchemaCount = "tidb_max_delta_schema_count"
@@ -424,17 +430,23 @@ const (
 	// TiDBEnableClusteredIndex indicates if clustered index feature is enabled.
 	TiDBEnableClusteredIndex = "tidb_enable_clustered_index"
 
+	// TiDBPartitionPruneMode indicates the partition prune mode used.
+	TiDBPartitionPruneMode = "tidb_partition_prune_mode"
+
 	// TiDBSlowLogMasking indicates that whether masking the query data when log slow query.
-	// Deprecated: use TiDBLogDesensitization instead.
+	// Deprecated: use TiDBRedactLog instead.
 	TiDBSlowLogMasking = "tidb_slow_log_masking"
 
-	// TiDBLogDesensitization indicates that whether desensitization when log query.
-	TiDBLogDesensitization = "tidb_log_desensitization"
+	// TiDBRedactLog indicates that whether redact log.
+	TiDBRedactLog = "tidb_redact_log"
 
 	// TiDBShardAllocateStep indicates the max size of continuous rowid shard in one transaction.
 	TiDBShardAllocateStep = "tidb_shard_allocate_step"
 	// TiDBEnableTelemetry indicates that whether usage data report to PingCAP is enabled.
 	TiDBEnableTelemetry = "tidb_enable_telemetry"
+
+	// TiDBEnableAmendPessimisticTxn indicates if amend pessimistic transactions is enabled.
+	TiDBEnableAmendPessimisticTxn = "tidb_enable_amend_pessimistic_txn"
 )
 
 // Default TiDB system variable values.
@@ -504,6 +516,7 @@ const (
 	DefTiDBDDLReorgBatchSize           = 256
 	DefTiDBDDLErrorCountLimit          = 512
 	DefTiDBMaxDeltaSchemaCount         = 1024
+	DefTiDBChangeColumnType            = false
 	DefTiDBHashAggPartialConcurrency   = ConcurrencyUnset
 	DefTiDBHashAggFinalConcurrency     = ConcurrencyUnset
 	DefTiDBWindowConcurrency           = ConcurrencyUnset
@@ -535,10 +548,10 @@ const (
 	DefTiDBAllowAutoRandExplicitInsert = false
 	DefTiDBEnableClusteredIndex        = false
 	DefTiDBSlowLogMasking              = false
-	DefTiDBLogDesensitization          = false
 	DefTiDBShardAllocateStep           = math.MaxInt64
 	DefTiDBEnableTelemetry             = true
 	DefTiDBEnableParallelApply         = false
+	DefTiDBEnableAmendPessimisticTxn   = true
 )
 
 // Process global variables.

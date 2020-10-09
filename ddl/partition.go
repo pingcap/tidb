@@ -16,6 +16,7 @@ package ddl
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"fmt"
 	"strconv"
 	"strings"
@@ -43,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
@@ -73,7 +75,7 @@ func checkAddPartition(t *meta.Meta, job *model.Job) (*model.TableInfo, *model.P
 func onAddTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	// Handle the rolling back job
 	if job.IsRollingback() {
-		ver, err := onDropTablePartition(t, job)
+		ver, err := onDropTablePartition(d, t, job)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -620,6 +622,8 @@ func checkPartitionExprValid(ctx sessionctx.Context, tblInfo *model.TableInfo, e
 			return errors.Trace(err)
 		}
 		return nil
+	case *ast.ParenthesesExpr:
+		return checkPartitionExprValid(ctx, tblInfo, v.Expr)
 	}
 	return nil
 }
@@ -729,7 +733,7 @@ func checkCreatePartitionValue(ctx sessionctx.Context, tblInfo *model.TableInfo)
 			return errors.Trace(ErrPartitionMaxvalue)
 		}
 
-		currentRangeValue, fromExpr, err := getRangeValue(ctx, tblInfo, defs[i].LessThan[0], isUnsignedBigint)
+		currentRangeValue, fromExpr, err := getRangeValue(ctx, defs[i].LessThan[0], isUnsignedBigint)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -759,18 +763,20 @@ func checkCreatePartitionValue(ctx sessionctx.Context, tblInfo *model.TableInfo)
 
 // getRangeValue gets an integer from the range value string.
 // The returned boolean value indicates whether the input string is a constant expression.
-func getRangeValue(ctx sessionctx.Context, tblInfo *model.TableInfo, str string, unsignedBigint bool) (interface{}, bool, error) {
+func getRangeValue(ctx sessionctx.Context, str string, unsignedBigint bool) (interface{}, bool, error) {
 	// Unsigned bigint was converted to uint64 handle.
 	if unsignedBigint {
 		if value, err := strconv.ParseUint(str, 10, 64); err == nil {
 			return value, false, nil
 		}
 
-		if e, err1 := expression.ParseSimpleExprWithTableInfo(ctx, str, tblInfo); err1 == nil {
-			res, isNull, err2 := e.EvalInt(ctx, chunk.Row{})
-			if err2 == nil && !isNull {
-				return uint64(res), true, nil
-			}
+		e, err1 := expression.ParseSimpleExprWithTableInfo(ctx, str, &model.TableInfo{})
+		if err1 != nil {
+			return 0, false, err1
+		}
+		res, isNull, err2 := e.EvalInt(ctx, chunk.Row{})
+		if err2 == nil && !isNull {
+			return uint64(res), true, nil
 		}
 	} else {
 		if value, err := strconv.ParseInt(str, 10, 64); err == nil {
@@ -780,11 +786,13 @@ func getRangeValue(ctx sessionctx.Context, tblInfo *model.TableInfo, str string,
 		// For example, the following two cases are the same:
 		// PARTITION p0 VALUES LESS THAN (TO_SECONDS('2004-01-01'))
 		// PARTITION p0 VALUES LESS THAN (63340531200)
-		if e, err1 := expression.ParseSimpleExprWithTableInfo(ctx, str, tblInfo); err1 == nil {
-			res, isNull, err2 := e.EvalInt(ctx, chunk.Row{})
-			if err2 == nil && !isNull {
-				return res, true, nil
-			}
+		e, err1 := expression.ParseSimpleExprWithTableInfo(ctx, str, &model.TableInfo{})
+		if err1 != nil {
+			return 0, false, err1
+		}
+		res, isNull, err2 := e.EvalInt(ctx, chunk.Row{})
+		if err2 == nil && !isNull {
+			return res, true, nil
 		}
 	}
 	return 0, false, ErrNotAllowedTypeInPartition.GenWithStackByArgs(str)
@@ -861,8 +869,14 @@ func getPartitionDef(tblInfo *model.TableInfo, partName string) (index int, def 
 	return index, nil, table.ErrUnknownPartition.GenWithStackByArgs(partName, tblInfo.Name.O)
 }
 
+func buildPlacementDropBundle(partitionID int64) *placement.Bundle {
+	return &placement.Bundle{
+		ID: placement.GroupID(partitionID),
+	}
+}
+
 // onDropTablePartition deletes old partition meta.
-func onDropTablePartition(t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	var partNames []string
 	if err := job.DecodeArgs(&partNames); err != nil {
 		job.State = model.JobStateCancelled
@@ -884,12 +898,28 @@ func onDropTablePartition(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 			return ver, errors.Trace(err)
 		}
 		physicalTableIDs = removePartitionInfo(tblInfo, partNames)
-		ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
+	}
+
+	if d.infoHandle != nil {
+		bundles := make([]*placement.Bundle, 0, len(physicalTableIDs))
+		for _, ID := range physicalTableIDs {
+			oldBundle, ok := d.infoHandle.Get().BundleByName(placement.GroupID(ID))
+			if ok && !oldBundle.IsEmpty() {
+				bundles = append(bundles, buildPlacementDropBundle(ID))
+			}
+		}
+
+		err = infosync.PutRuleBundles(nil, bundles)
 		if err != nil {
-			return ver, errors.Trace(err)
+			job.State = model.JobStateCancelled
+			return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
 		}
 	}
 
+	ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
 	// Finish this job.
 	if job.IsRollingback() {
 		job.FinishTableJob(model.JobStateRollbackDone, model.StateNone, ver, tblInfo)
@@ -900,6 +930,19 @@ func onDropTablePartition(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	// A background job will be created to delete old partition data.
 	job.Args = []interface{}{physicalTableIDs}
 	return ver, nil
+}
+
+func buildPlacementTruncateBundle(oldBundle *placement.Bundle, newID int64) *placement.Bundle {
+	newBundle := oldBundle.Clone()
+	newBundle.ID = placement.GroupID(newID)
+	startKey := hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(newID)))
+	endKey := hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(newID+1)))
+	for _, rule := range newBundle.Rules {
+		rule.GroupID = newBundle.ID
+		rule.StartKeyHex = startKey
+		rule.EndKeyHex = endKey
+	}
+	return newBundle
 }
 
 // onTruncateTablePartition truncates old partition meta.
@@ -952,6 +995,24 @@ func onTruncateTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, e
 					break
 				}
 			}
+		}
+	}
+
+	if d.infoHandle != nil {
+		bundles := make([]*placement.Bundle, 0, len(oldIDs))
+
+		for i, oldID := range oldIDs {
+			oldBundle, ok := d.infoHandle.Get().BundleByName(placement.GroupID(oldID))
+			if ok && !oldBundle.IsEmpty() {
+				bundles = append(bundles, buildPlacementDropBundle(oldID))
+				bundles = append(bundles, buildPlacementTruncateBundle(oldBundle, newPartitions[i].ID))
+			}
+		}
+
+		err = infosync.PutRuleBundles(nil, bundles)
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
 		}
 	}
 
@@ -1291,7 +1352,7 @@ func checkPartitioningKeysConstraints(sctx sessionctx.Context, s *ast.CreateTabl
 	return nil
 }
 
-func checkPartitionKeysConstraint(pi *model.PartitionInfo, indexColumns []*model.IndexColumn, tblInfo *model.TableInfo, isPK bool) error {
+func checkPartitionKeysConstraint(pi *model.PartitionInfo, indexColumns []*model.IndexColumn, tblInfo *model.TableInfo) (bool, error) {
 	var (
 		partCols []*model.ColumnInfo
 		err      error
@@ -1302,29 +1363,24 @@ func checkPartitionKeysConstraint(pi *model.PartitionInfo, indexColumns []*model
 		// Parse partitioning key, extract the column names in the partitioning key to slice.
 		partCols, err = extractPartitionColumns(partExpr, tblInfo)
 		if err != nil {
-			return err
+			return false, err
 		}
 	} else {
 		partCols = make([]*model.ColumnInfo, 0, len(pi.Columns))
 		for _, col := range pi.Columns {
 			colInfo := getColumnInfoByName(tblInfo, col.L)
 			if colInfo == nil {
-				return infoschema.ErrColumnNotExists.GenWithStackByArgs(col, tblInfo.Name)
+				return false, infoschema.ErrColumnNotExists.GenWithStackByArgs(col, tblInfo.Name)
 			}
 			partCols = append(partCols, colInfo)
 		}
 	}
 
-	// Every unique key on the table must use every column in the table's partitioning expression.(This
+	// In MySQL, every unique key on the table must use every column in the table's partitioning expression.(This
 	// also includes the table's primary key.)
+	// In TiDB, global index will be built when this constraint is not satisfied and EnableGlobalIndex is set.
 	// See https://dev.mysql.com/doc/refman/5.7/en/partitioning-limitations-partitioning-keys-unique-keys.html
-	if !checkUniqueKeyIncludePartKey(columnInfoSlice(partCols), indexColumns) {
-		if isPK {
-			return ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("PRIMARY")
-		}
-		return ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("UNIQUE INDEX")
-	}
-	return nil
+	return checkUniqueKeyIncludePartKey(columnInfoSlice(partCols), indexColumns), nil
 }
 
 type columnNameExtractor struct {
@@ -1451,8 +1507,8 @@ func truncateTableByReassignPartitionIDs(t *meta.Meta, tblInfo *model.TableInfo)
 
 func onAlterTablePartition(t *meta.Meta, job *model.Job) (int64, error) {
 	var partitionID int64
-	var rules []*placement.RuleOp
-	err := job.DecodeArgs(&partitionID, &rules)
+	bundle := &placement.Bundle{}
+	err := job.DecodeArgs(&partitionID, bundle)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return 0, errors.Trace(err)
@@ -1469,23 +1525,15 @@ func onAlterTablePartition(t *meta.Meta, job *model.Job) (int64, error) {
 		return 0, errors.Trace(table.ErrUnknownPartition.GenWithStackByArgs("drop?", tblInfo.Name.O))
 	}
 
-	for i, rule := range rules {
-		if rule.Action == placement.RuleOpDel {
-			rule.ID = fmt.Sprintf("%d_t%d_p%d_%s", job.SchemaID, tblInfo.ID, partitionID, rule.Role)
-		} else {
-			rule.ID = fmt.Sprintf("%d_t%d_p%d_%s_%d_%d", job.SchemaID, tblInfo.ID, partitionID, rule.Role, job.ID, i)
-		}
-	}
-
-	ver, err := t.GetSchemaVersion()
-	if err != nil {
-		return ver, errors.Trace(err)
-	}
-
-	err = infosync.UpdatePlacementRules(nil, rules)
+	err = infosync.PutRuleBundles(nil, []*placement.Bundle{bundle})
 	if err != nil {
 		job.State = model.JobStateCancelled
-		return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
+		return 0, errors.Wrapf(err, "failed to notify PD the placement rules")
+	}
+
+	ver, err := updateSchemaVersion(t, job)
+	if err != nil {
+		return ver, errors.Trace(err)
 	}
 
 	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)

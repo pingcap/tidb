@@ -20,6 +20,7 @@ package session
 import (
 	"context"
 	"encoding/hex"
+	"flag"
 	"fmt"
 	"runtime/debug"
 	"strconv"
@@ -44,23 +45,23 @@ import (
 
 const (
 	// CreateUserTable is the SQL statement creates User table in system db.
-	CreateUserTable = `CREATE TABLE if not exists mysql.user (
-		Host				CHAR(64),
-		User				CHAR(32),
+	CreateUserTable = `CREATE TABLE IF NOT EXISTS mysql.user (
+		Host					CHAR(64),
+		User					CHAR(32),
 		authentication_string	TEXT,
-		Select_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
-		Insert_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
-		Update_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
-		Delete_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
-		Create_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
-		Drop_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Select_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Insert_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Update_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Delete_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Create_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Drop_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Process_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
-		Grant_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Grant_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
 		References_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
-		Alter_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Alter_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Show_db_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
-		Super_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
-		Create_tmp_table_priv		ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Super_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Create_tmp_table_priv	ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Lock_tables_priv		ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Execute_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Create_view_priv		ENUM('N','Y') NOT NULL DEFAULT 'N',
@@ -78,212 +79,213 @@ const (
 		Reload_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
 		FILE_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Config_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Create_Tablespace_Priv    ENUM('N','Y') NOT NULL DEFAULT 'N',
 		PRIMARY KEY (Host, User));`
 	// CreateGlobalPrivTable is the SQL statement creates Global scope privilege table in system db.
-	CreateGlobalPrivTable = "CREATE TABLE if not exists mysql.global_priv (" +
-		"Host char(60) NOT NULL DEFAULT ''," +
-		"User char(80) NOT NULL DEFAULT ''," +
-		"Priv longtext NOT NULL DEFAULT ''," +
+	CreateGlobalPrivTable = "CREATE TABLE IF NOT EXISTS mysql.global_priv (" +
+		"Host CHAR(60) NOT NULL DEFAULT ''," +
+		"User CHAR(80) NOT NULL DEFAULT ''," +
+		"Priv LONGTEXT NOT NULL DEFAULT ''," +
 		"PRIMARY KEY (Host, User)" +
 		")"
 	// CreateDBPrivTable is the SQL statement creates DB scope privilege table in system db.
-	CreateDBPrivTable = `CREATE TABLE if not exists mysql.db (
-		Host			CHAR(60),
-		DB			CHAR(64),
-		User			CHAR(32),
-		Select_priv		ENUM('N','Y') Not Null DEFAULT 'N',
-		Insert_priv		ENUM('N','Y') Not Null DEFAULT 'N',
-		Update_priv		ENUM('N','Y') Not Null DEFAULT 'N',
-		Delete_priv		ENUM('N','Y') Not Null DEFAULT 'N',
-		Create_priv		ENUM('N','Y') Not Null DEFAULT 'N',
-		Drop_priv		ENUM('N','Y') Not Null DEFAULT 'N',
-		Grant_priv		ENUM('N','Y') Not Null DEFAULT 'N',
-		References_priv 	ENUM('N','Y') Not Null DEFAULT 'N',
-		Index_priv		ENUM('N','Y') Not Null DEFAULT 'N',
-		Alter_priv		ENUM('N','Y') Not Null DEFAULT 'N',
+	CreateDBPrivTable = `CREATE TABLE IF NOT EXISTS mysql.db (
+		Host					CHAR(60),
+		DB						CHAR(64),
+		User					CHAR(32),
+		Select_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Insert_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Update_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Delete_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Create_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Drop_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Grant_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
+		References_priv 		ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Index_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Alter_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Create_tmp_table_priv	ENUM('N','Y') NOT NULL DEFAULT 'N',
-		Lock_tables_priv	ENUM('N','Y') NOT NULL DEFAULT 'N',
-		Create_view_priv	ENUM('N','Y') NOT NULL DEFAULT 'N',
-		Show_view_priv		ENUM('N','Y') NOT NULL DEFAULT 'N',
-		Create_routine_priv	ENUM('N','Y') NOT NULL DEFAULT 'N',
-		Alter_routine_priv	ENUM('N','Y') NOT NULL DEFAULT 'N',
-		Execute_priv		ENUM('N','Y') Not Null DEFAULT 'N',
-		Event_priv		ENUM('N','Y') NOT NULL DEFAULT 'N',
-		Trigger_priv		ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Lock_tables_priv		ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Create_view_priv		ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Show_view_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Create_routine_priv		ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Alter_routine_priv		ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Execute_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Event_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Trigger_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
 		PRIMARY KEY (Host, DB, User));`
 	// CreateTablePrivTable is the SQL statement creates table scope privilege table in system db.
-	CreateTablePrivTable = `CREATE TABLE if not exists mysql.tables_priv (
+	CreateTablePrivTable = `CREATE TABLE IF NOT EXISTS mysql.tables_priv (
 		Host		CHAR(60),
-		DB		CHAR(64),
+		DB			CHAR(64),
 		User		CHAR(32),
 		Table_name	CHAR(64),
 		Grantor		CHAR(77),
-		Timestamp	Timestamp DEFAULT CURRENT_TIMESTAMP,
+		Timestamp	TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 		Table_priv	SET('Select','Insert','Update','Delete','Create','Drop','Grant','Index','Alter','Create View','Show View','Trigger','References'),
 		Column_priv	SET('Select','Insert','Update'),
 		PRIMARY KEY (Host, DB, User, Table_name));`
 	// CreateColumnPrivTable is the SQL statement creates column scope privilege table in system db.
-	CreateColumnPrivTable = `CREATE TABLE if not exists mysql.columns_priv(
+	CreateColumnPrivTable = `CREATE TABLE IF NOT EXISTS mysql.columns_priv(
 		Host		CHAR(60),
-		DB		CHAR(64),
+		DB			CHAR(64),
 		User		CHAR(32),
 		Table_name	CHAR(64),
 		Column_name	CHAR(64),
-		Timestamp	Timestamp DEFAULT CURRENT_TIMESTAMP,
+		Timestamp	TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 		Column_priv	SET('Select','Insert','Update'),
 		PRIMARY KEY (Host, DB, User, Table_name, Column_name));`
 	// CreateGlobalVariablesTable is the SQL statement creates global variable table in system db.
 	// TODO: MySQL puts GLOBAL_VARIABLES table in INFORMATION_SCHEMA db.
 	// INFORMATION_SCHEMA is a virtual db in TiDB. So we put this table in system db.
 	// Maybe we will put it back to INFORMATION_SCHEMA.
-	CreateGlobalVariablesTable = `CREATE TABLE if not exists mysql.GLOBAL_VARIABLES(
-		VARIABLE_NAME  VARCHAR(64) Not Null PRIMARY KEY,
-		VARIABLE_VALUE VARCHAR(1024) DEFAULT Null);`
+	CreateGlobalVariablesTable = `CREATE TABLE IF NOT EXISTS mysql.GLOBAL_VARIABLES(
+		VARIABLE_NAME  VARCHAR(64) NOT NULL PRIMARY KEY,
+		VARIABLE_VALUE VARCHAR(1024) DEFAULT NULL);`
 	// CreateTiDBTable is the SQL statement creates a table in system db.
 	// This table is a key-value struct contains some information used by TiDB.
 	// Currently we only put bootstrapped in it which indicates if the system is already bootstrapped.
-	CreateTiDBTable = `CREATE TABLE if not exists mysql.tidb(
-		VARIABLE_NAME  VARCHAR(64) Not Null PRIMARY KEY,
-		VARIABLE_VALUE VARCHAR(1024) DEFAULT Null,
-		COMMENT VARCHAR(1024));`
+	CreateTiDBTable = `CREATE TABLE IF NOT EXISTS mysql.tidb(
+		VARIABLE_NAME  	VARCHAR(64) NOT NULL PRIMARY KEY,
+		VARIABLE_VALUE 	VARCHAR(1024) DEFAULT NULL,
+		COMMENT 		VARCHAR(1024));`
 
 	// CreateHelpTopic is the SQL statement creates help_topic table in system db.
 	// See: https://dev.mysql.com/doc/refman/5.5/en/system-database.html#system-database-help-tables
-	CreateHelpTopic = `CREATE TABLE if not exists mysql.help_topic (
-  		help_topic_id int(10) unsigned NOT NULL,
-  		name char(64) NOT NULL,
-  		help_category_id smallint(5) unsigned NOT NULL,
-  		description text NOT NULL,
-  		example text NOT NULL,
-  		url text NOT NULL,
+	CreateHelpTopic = `CREATE TABLE IF NOT EXISTS mysql.help_topic (
+  		help_topic_id 		INT(10) UNSIGNED NOT NULL,
+  		name 				CHAR(64) NOT NULL,
+  		help_category_id 	SMALLINT(5) UNSIGNED NOT NULL,
+  		description 		TEXT NOT NULL,
+  		example 			TEXT NOT NULL,
+  		url 				TEXT NOT NULL,
   		PRIMARY KEY (help_topic_id),
   		UNIQUE KEY name (name)
 		) ENGINE=InnoDB DEFAULT CHARSET=utf8 STATS_PERSISTENT=0 COMMENT='help topics';`
 
 	// CreateStatsMetaTable stores the meta of table statistics.
-	CreateStatsMetaTable = `CREATE TABLE if not exists mysql.stats_meta (
-		version bigint(64) unsigned NOT NULL,
-		table_id bigint(64) NOT NULL,
-		modify_count bigint(64) NOT NULL DEFAULT 0,
-		count bigint(64) unsigned NOT NULL DEFAULT 0,
-		index idx_ver(version),
-		unique index tbl(table_id)
+	CreateStatsMetaTable = `CREATE TABLE IF NOT EXISTS mysql.stats_meta (
+		version 		BIGINT(64) UNSIGNED NOT NULL,
+		table_id 		BIGINT(64) NOT NULL,
+		modify_count	BIGINT(64) NOT NULL DEFAULT 0,
+		count 			BIGINT(64) UNSIGNED NOT NULL DEFAULT 0,
+		INDEX idx_ver(version),
+		UNIQUE INDEX tbl(table_id)
 	);`
 
 	// CreateStatsColsTable stores the statistics of table columns.
-	CreateStatsColsTable = `CREATE TABLE if not exists mysql.stats_histograms (
-		table_id bigint(64) NOT NULL,
-		is_index tinyint(2) NOT NULL,
-		hist_id bigint(64) NOT NULL,
-		distinct_count bigint(64) NOT NULL,
-		null_count bigint(64) NOT NULL DEFAULT 0,
-		tot_col_size bigint(64) NOT NULL DEFAULT 0,
-		modify_count bigint(64) NOT NULL DEFAULT 0,
-		version bigint(64) unsigned NOT NULL DEFAULT 0,
-		cm_sketch blob,
-		stats_ver bigint(64) NOT NULL DEFAULT 0,
-		flag bigint(64) NOT NULL DEFAULT 0,
-		correlation double NOT NULL DEFAULT 0,
-		last_analyze_pos blob DEFAULT NULL,
-		unique index tbl(table_id, is_index, hist_id)
+	CreateStatsColsTable = `CREATE TABLE IF NOT EXISTS mysql.stats_histograms (
+		table_id 			BIGINT(64) NOT NULL,
+		is_index 			TINYINT(2) NOT NULL,
+		hist_id 			BIGINT(64) NOT NULL,
+		distinct_count 		BIGINT(64) NOT NULL,
+		null_count 			BIGINT(64) NOT NULL DEFAULT 0,
+		tot_col_size 		BIGINT(64) NOT NULL DEFAULT 0,
+		modify_count 		BIGINT(64) NOT NULL DEFAULT 0,
+		version 			BIGINT(64) UNSIGNED NOT NULL DEFAULT 0,
+		cm_sketch 			BLOB,
+		stats_ver 			BIGINT(64) NOT NULL DEFAULT 0,
+		flag 				BIGINT(64) NOT NULL DEFAULT 0,
+		correlation 		DOUBLE NOT NULL DEFAULT 0,
+		last_analyze_pos 	BLOB DEFAULT NULL,
+		UNIQUE INDEX tbl(table_id, is_index, hist_id)
 	);`
 
 	// CreateStatsBucketsTable stores the histogram info for every table columns.
-	CreateStatsBucketsTable = `CREATE TABLE if not exists mysql.stats_buckets (
-		table_id bigint(64) NOT NULL,
-		is_index tinyint(2) NOT NULL,
-		hist_id bigint(64) NOT NULL,
-		bucket_id bigint(64) NOT NULL,
-		count bigint(64) NOT NULL,
-		repeats bigint(64) NOT NULL,
-		upper_bound blob NOT NULL,
-		lower_bound blob ,
-		unique index tbl(table_id, is_index, hist_id, bucket_id)
+	CreateStatsBucketsTable = `CREATE TABLE IF NOT EXISTS mysql.stats_buckets (
+		table_id 	BIGINT(64) NOT NULL,
+		is_index 	TINYINT(2) NOT NULL,
+		hist_id 	BIGINT(64) NOT NULL,
+		bucket_id 	BIGINT(64) NOT NULL,
+		count 		BIGINT(64) NOT NULL,
+		repeats 	BIGINT(64) NOT NULL,
+		upper_bound BLOB NOT NULL,
+		lower_bound BLOB ,
+		UNIQUE INDEX tbl(table_id, is_index, hist_id, bucket_id)
 	);`
 
 	// CreateGCDeleteRangeTable stores schemas which can be deleted by DeleteRange.
 	CreateGCDeleteRangeTable = `CREATE TABLE IF NOT EXISTS mysql.gc_delete_range (
-		job_id BIGINT NOT NULL COMMENT "the DDL job ID",
-		element_id BIGINT NOT NULL COMMENT "the schema element ID",
-		start_key VARCHAR(255) NOT NULL COMMENT "encoded in hex",
-		end_key VARCHAR(255) NOT NULL COMMENT "encoded in hex",
-		ts BIGINT NOT NULL COMMENT "timestamp in uint64",
+		job_id 		BIGINT NOT NULL COMMENT "the DDL job ID",
+		element_id 	BIGINT NOT NULL COMMENT "the schema element ID",
+		start_key 	VARCHAR(255) NOT NULL COMMENT "encoded in hex",
+		end_key 	VARCHAR(255) NOT NULL COMMENT "encoded in hex",
+		ts 			BIGINT NOT NULL COMMENT "timestamp in uint64",
 		UNIQUE KEY delete_range_index (job_id, element_id)
 	);`
 
 	// CreateGCDeleteRangeDoneTable stores schemas which are already deleted by DeleteRange.
 	CreateGCDeleteRangeDoneTable = `CREATE TABLE IF NOT EXISTS mysql.gc_delete_range_done (
-		job_id BIGINT NOT NULL COMMENT "the DDL job ID",
-		element_id BIGINT NOT NULL COMMENT "the schema element ID",
-		start_key VARCHAR(255) NOT NULL COMMENT "encoded in hex",
-		end_key VARCHAR(255) NOT NULL COMMENT "encoded in hex",
-		ts BIGINT NOT NULL COMMENT "timestamp in uint64",
+		job_id 		BIGINT NOT NULL COMMENT "the DDL job ID",
+		element_id 	BIGINT NOT NULL COMMENT "the schema element ID",
+		start_key 	VARCHAR(255) NOT NULL COMMENT "encoded in hex",
+		end_key 	VARCHAR(255) NOT NULL COMMENT "encoded in hex",
+		ts 			BIGINT NOT NULL COMMENT "timestamp in uint64",
 		UNIQUE KEY delete_range_done_index (job_id, element_id)
 	);`
 
 	// CreateStatsFeedbackTable stores the feedback info which is used to update stats.
 	CreateStatsFeedbackTable = `CREATE TABLE IF NOT EXISTS mysql.stats_feedback (
-		table_id bigint(64) NOT NULL,
-		is_index tinyint(2) NOT NULL,
-		hist_id bigint(64) NOT NULL,
-		feedback blob NOT NULL,
-		index hist(table_id, is_index, hist_id)
+		table_id 	BIGINT(64) NOT NULL,
+		is_index 	TINYINT(2) NOT NULL,
+		hist_id 	BIGINT(64) NOT NULL,
+		feedback 	BLOB NOT NULL,
+		INDEX hist(table_id, is_index, hist_id)
 	);`
 
 	// CreateBindInfoTable stores the sql bind info which is used to update globalBindCache.
 	CreateBindInfoTable = `CREATE TABLE IF NOT EXISTS mysql.bind_info (
-		original_sql text NOT NULL  ,
-      	bind_sql text NOT NULL ,
-      	default_db text  NOT NULL,
-		status text NOT NULL,
-		create_time timestamp(3) NOT NULL,
-		update_time timestamp(3) NOT NULL,
-		charset text NOT NULL,
-		collation text NOT NULL,
-		source varchar(10) NOT NULL default 'unknown',
+		original_sql	TEXT NOT NULL  ,
+      	bind_sql 		TEXT NOT NULL ,
+      	default_db 		TEXT NOT NULL,
+		status 			TEXT NOT NULL,
+		create_time 	TIMESTAMP(3) NOT NULL,
+		update_time 	TIMESTAMP(3) NOT NULL,
+		charset 		TEXT NOT NULL,
+		collation 		TEXT NOT NULL,
+		source 			VARCHAR(10) NOT NULL DEFAULT 'unknown',
 		INDEX sql_index(original_sql(1024),default_db(1024)) COMMENT "accelerate the speed when add global binding query",
 		INDEX time_index(update_time) COMMENT "accelerate the speed when querying with last update time"
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`
 
 	// CreateRoleEdgesTable stores the role and user relationship information.
 	CreateRoleEdgesTable = `CREATE TABLE IF NOT EXISTS mysql.role_edges (
-		FROM_HOST char(60) COLLATE utf8_bin NOT NULL DEFAULT '',
-		FROM_USER char(32) COLLATE utf8_bin NOT NULL DEFAULT '',
-		TO_HOST char(60) COLLATE utf8_bin NOT NULL DEFAULT '',
-		TO_USER char(32) COLLATE utf8_bin NOT NULL DEFAULT '',
-		WITH_ADMIN_OPTION enum('N','Y') CHARACTER SET utf8 COLLATE utf8_general_ci NOT NULL DEFAULT 'N',
+		FROM_HOST 			CHAR(60) COLLATE utf8_bin NOT NULL DEFAULT '',
+		FROM_USER 			CHAR(32) COLLATE utf8_bin NOT NULL DEFAULT '',
+		TO_HOST 			CHAR(60) COLLATE utf8_bin NOT NULL DEFAULT '',
+		TO_USER 			CHAR(32) COLLATE utf8_bin NOT NULL DEFAULT '',
+		WITH_ADMIN_OPTION 	ENUM('N','Y') CHARACTER SET utf8 COLLATE utf8_general_ci NOT NULL DEFAULT 'N',
 		PRIMARY KEY (FROM_HOST,FROM_USER,TO_HOST,TO_USER)
 	);`
 
 	// CreateDefaultRolesTable stores the active roles for a user.
 	CreateDefaultRolesTable = `CREATE TABLE IF NOT EXISTS mysql.default_roles (
-		HOST char(60) COLLATE utf8_bin NOT NULL DEFAULT '',
-		USER char(32) COLLATE utf8_bin NOT NULL DEFAULT '',
-		DEFAULT_ROLE_HOST char(60) COLLATE utf8_bin NOT NULL DEFAULT '%',
-		DEFAULT_ROLE_USER char(32) COLLATE utf8_bin NOT NULL DEFAULT '',
+		HOST 				CHAR(60) COLLATE utf8_bin NOT NULL DEFAULT '',
+		USER 				CHAR(32) COLLATE utf8_bin NOT NULL DEFAULT '',
+		DEFAULT_ROLE_HOST 	CHAR(60) COLLATE utf8_bin NOT NULL DEFAULT '%',
+		DEFAULT_ROLE_USER 	CHAR(32) COLLATE utf8_bin NOT NULL DEFAULT '',
 		PRIMARY KEY (HOST,USER,DEFAULT_ROLE_HOST,DEFAULT_ROLE_USER)
 	)`
 
 	// CreateStatsTopNTable stores topn data of a cmsketch with top n.
-	CreateStatsTopNTable = `CREATE TABLE if not exists mysql.stats_top_n (
-		table_id bigint(64) NOT NULL,
-		is_index tinyint(2) NOT NULL,
-		hist_id bigint(64) NOT NULL,
-		value longblob,
-		count bigint(64) UNSIGNED NOT NULL,
-		index tbl(table_id, is_index, hist_id)
+	CreateStatsTopNTable = `CREATE TABLE IF NOT EXISTS mysql.stats_top_n (
+		table_id 	BIGINT(64) NOT NULL,
+		is_index 	TINYINT(2) NOT NULL,
+		hist_id 	BIGINT(64) NOT NULL,
+		value 		LONGBLOB,
+		count 		BIGINT(64) UNSIGNED NOT NULL,
+		INDEX tbl(table_id, is_index, hist_id)
 	);`
 
 	// CreateExprPushdownBlacklist stores the expressions which are not allowed to be pushed down.
 	CreateExprPushdownBlacklist = `CREATE TABLE IF NOT EXISTS mysql.expr_pushdown_blacklist (
-		name char(100) NOT NULL,
-		store_type char(100) NOT NULL DEFAULT 'tikv,tiflash,tidb',
-		reason varchar(200)
+		name 		CHAR(100) NOT NULL,
+		store_type 	CHAR(100) NOT NULL DEFAULT 'tikv,tiflash,tidb',
+		reason 		VARCHAR(200)
 	);`
 
 	// CreateOptRuleBlacklist stores the list of disabled optimizing operations.
 	CreateOptRuleBlacklist = `CREATE TABLE IF NOT EXISTS mysql.opt_rule_blacklist (
-		name char(100) NOT NULL
+		name 	CHAR(100) NOT NULL
 	);`
 
 	// CreateStatsExtended stores the registered extended statistics.
@@ -300,6 +302,18 @@ const (
 		PRIMARY KEY(stats_name, db),
 		KEY idx_1 (table_id, status, version),
 		KEY idx_2 (status, version)
+	);`
+
+	// CreateSchemaIndexUsageTable stores the index usage information.
+	CreateSchemaIndexUsageTable = `CREATE TABLE IF NOT EXISTS mysql.schema_index_usage (
+		TABLE_SCHEMA varchar(64),
+		TABLE_NAME varchar(64),
+		INDEX_NAME varchar(64),
+		QUERY_COUNT bigint(64),
+		ROWS_SELECTED bigint(64),
+		LAST_USED_AT timestamp,
+		LAST_UPDATED_AT timestamp,
+		PRIMARY KEY(TABLE_SCHEMA, TABLE_NAME, INDEX_NAME)
 	);`
 )
 
@@ -409,6 +423,10 @@ const (
 	version48 = 48
 	// version49 introduces mysql.stats_extended table.
 	version49 = 49
+	// version50 add mysql.schema_index_usage table.
+	version50 = 50
+	// version51 introduces CreateTablespacePriv to mysql.user.
+	version51 = 51
 )
 
 var (
@@ -461,6 +479,8 @@ var (
 		upgradeToVer47,
 		upgradeToVer48,
 		upgradeToVer49,
+		upgradeToVer50,
+		upgradeToVer51,
 	}
 )
 
@@ -564,7 +584,7 @@ func upgradeToVer2(s Session, ver int64) {
 	distSQLVars := []string{variable.TiDBDistSQLScanConcurrency}
 	values := make([]string, 0, len(distSQLVars))
 	for _, v := range distSQLVars {
-		value := fmt.Sprintf(`("%s", "%s")`, v, variable.SysVars[v].Value)
+		value := fmt.Sprintf(`("%s", "%s")`, v, variable.GetSysVar(v).Value)
 		values = append(values, value)
 	}
 	sql := fmt.Sprintf("INSERT HIGH_PRIORITY IGNORE INTO %s.%s VALUES %s;", mysql.SystemDB, mysql.GlobalVariablesTable,
@@ -578,7 +598,7 @@ func upgradeToVer3(s Session, ver int64) {
 		return
 	}
 	// Version 3 fix tx_read_only variable value.
-	sql := fmt.Sprintf("UPDATE HIGH_PRIORITY %s.%s set variable_value = '0' where variable_name = 'tx_read_only';",
+	sql := fmt.Sprintf("UPDATE HIGH_PRIORITY %s.%s SET variable_value = '0' WHERE variable_name = 'tx_read_only';",
 		mysql.SystemDB, mysql.GlobalVariablesTable)
 	mustExecute(s, sql)
 }
@@ -604,7 +624,7 @@ func upgradeToVer6(s Session, ver int64) {
 	if ver >= version6 {
 		return
 	}
-	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `Super_priv` enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Show_db_priv`", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `Super_priv` ENUM('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Show_db_priv`", infoschema.ErrColumnExists)
 	// For reasons of compatibility, set the non-exists privilege column value to 'Y', as TiDB doesn't check them in older versions.
 	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET Super_priv='Y'")
 }
@@ -613,7 +633,7 @@ func upgradeToVer7(s Session, ver int64) {
 	if ver >= version7 {
 		return
 	}
-	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `Process_priv` enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Drop_priv`", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `Process_priv` ENUM('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Drop_priv`", infoschema.ErrColumnExists)
 	// For reasons of compatibility, set the non-exists privilege column value to 'Y', as TiDB doesn't check them in older versions.
 	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET Process_priv='Y'")
 }
@@ -623,7 +643,7 @@ func upgradeToVer8(s Session, ver int64) {
 		return
 	}
 	// This is a dummy upgrade, it checks whether upgradeToVer7 success, if not, do it again.
-	if _, err := s.Execute(context.Background(), "SELECT HIGH_PRIORITY `Process_priv` from mysql.user limit 0"); err == nil {
+	if _, err := s.Execute(context.Background(), "SELECT HIGH_PRIORITY `Process_priv` FROM mysql.user LIMIT 0"); err == nil {
 		return
 	}
 	upgradeToVer7(s, ver)
@@ -633,7 +653,7 @@ func upgradeToVer9(s Session, ver int64) {
 	if ver >= version9 {
 		return
 	}
-	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `Trigger_priv` enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Create_user_priv`", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `Trigger_priv` ENUM('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Create_user_priv`", infoschema.ErrColumnExists)
 	// For reasons of compatibility, set the non-exists privilege column value to 'Y', as TiDB doesn't check them in older versions.
 	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET Trigger_priv='Y'")
 }
@@ -656,7 +676,7 @@ func upgradeToVer10(s Session, ver int64) {
 	}
 	doReentrantDDL(s, "ALTER TABLE mysql.stats_buckets CHANGE COLUMN `value` `upper_bound` BLOB NOT NULL", infoschema.ErrColumnNotExists, infoschema.ErrColumnExists)
 	doReentrantDDL(s, "ALTER TABLE mysql.stats_buckets ADD COLUMN `lower_bound` BLOB", infoschema.ErrColumnExists)
-	doReentrantDDL(s, "ALTER TABLE mysql.stats_histograms ADD COLUMN `null_count` bigint(64) NOT NULL DEFAULT 0", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.stats_histograms ADD COLUMN `null_count` BIGINT(64) NOT NULL DEFAULT 0", infoschema.ErrColumnExists)
 	doReentrantDDL(s, "ALTER TABLE mysql.stats_histograms DROP COLUMN distinct_ratio", ddl.ErrCantDropFieldOrKey)
 	doReentrantDDL(s, "ALTER TABLE mysql.stats_histograms DROP COLUMN use_count_to_estimate", ddl.ErrCantDropFieldOrKey)
 }
@@ -665,7 +685,7 @@ func upgradeToVer11(s Session, ver int64) {
 	if ver >= version11 {
 		return
 	}
-	_, err := s.Execute(context.Background(), "ALTER TABLE mysql.user ADD COLUMN `References_priv` enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Grant_priv`")
+	_, err := s.Execute(context.Background(), "ALTER TABLE mysql.user ADD COLUMN `References_priv` ENUM('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Grant_priv`")
 	if err != nil {
 		if terror.ErrorEqual(err, infoschema.ErrColumnExists) {
 			return
@@ -703,7 +723,7 @@ func upgradeToVer12(s Session, ver int64) {
 			var newPass string
 			newPass, err = oldPasswordUpgrade(pass)
 			terror.MustNil(err)
-			updateSQL := fmt.Sprintf(`UPDATE HIGH_PRIORITY mysql.user set password = "%s" where user="%s" and host="%s"`, newPass, user, host)
+			updateSQL := fmt.Sprintf(`UPDATE HIGH_PRIORITY mysql.user SET password = "%s" WHERE user="%s" AND host="%s"`, newPass, user, host)
 			sqls = append(sqls, updateSQL)
 		}
 		err = r.Next(ctx, req)
@@ -726,13 +746,13 @@ func upgradeToVer13(s Session, ver int64) {
 		return
 	}
 	sqls := []string{
-		"ALTER TABLE mysql.user ADD COLUMN `Create_tmp_table_priv` enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Super_priv`",
-		"ALTER TABLE mysql.user ADD COLUMN `Lock_tables_priv` enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Create_tmp_table_priv`",
-		"ALTER TABLE mysql.user ADD COLUMN `Create_view_priv` enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Execute_priv`",
-		"ALTER TABLE mysql.user ADD COLUMN `Show_view_priv` enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Create_view_priv`",
-		"ALTER TABLE mysql.user ADD COLUMN `Create_routine_priv` enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Show_view_priv`",
-		"ALTER TABLE mysql.user ADD COLUMN `Alter_routine_priv` enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Create_routine_priv`",
-		"ALTER TABLE mysql.user ADD COLUMN `Event_priv` enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Create_user_priv`",
+		"ALTER TABLE mysql.user ADD COLUMN `Create_tmp_table_priv` ENUM('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Super_priv`",
+		"ALTER TABLE mysql.user ADD COLUMN `Lock_tables_priv` ENUM('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Create_tmp_table_priv`",
+		"ALTER TABLE mysql.user ADD COLUMN `Create_view_priv` ENUM('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Execute_priv`",
+		"ALTER TABLE mysql.user ADD COLUMN `Show_view_priv` ENUM('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Create_view_priv`",
+		"ALTER TABLE mysql.user ADD COLUMN `Create_routine_priv` ENUM('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Show_view_priv`",
+		"ALTER TABLE mysql.user ADD COLUMN `Alter_routine_priv` ENUM('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Create_routine_priv`",
+		"ALTER TABLE mysql.user ADD COLUMN `Event_priv` ENUM('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Create_user_priv`",
 	}
 	ctx := context.Background()
 	for _, sql := range sqls {
@@ -753,15 +773,15 @@ func upgradeToVer14(s Session, ver int64) {
 		return
 	}
 	sqls := []string{
-		"ALTER TABLE mysql.db ADD COLUMN `References_priv` enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Grant_priv`",
-		"ALTER TABLE mysql.db ADD COLUMN `Create_tmp_table_priv` enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Alter_priv`",
-		"ALTER TABLE mysql.db ADD COLUMN `Lock_tables_priv` enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Create_tmp_table_priv`",
-		"ALTER TABLE mysql.db ADD COLUMN `Create_view_priv` enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Lock_tables_priv`",
-		"ALTER TABLE mysql.db ADD COLUMN `Show_view_priv` enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Create_view_priv`",
-		"ALTER TABLE mysql.db ADD COLUMN `Create_routine_priv` enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Show_view_priv`",
-		"ALTER TABLE mysql.db ADD COLUMN `Alter_routine_priv` enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Create_routine_priv`",
-		"ALTER TABLE mysql.db ADD COLUMN `Event_priv` enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Execute_priv`",
-		"ALTER TABLE mysql.db ADD COLUMN `Trigger_priv` enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Event_priv`",
+		"ALTER TABLE mysql.db ADD COLUMN `References_priv` ENUM('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Grant_priv`",
+		"ALTER TABLE mysql.db ADD COLUMN `Create_tmp_table_priv` ENUM('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Alter_priv`",
+		"ALTER TABLE mysql.db ADD COLUMN `Lock_tables_priv` ENUM('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Create_tmp_table_priv`",
+		"ALTER TABLE mysql.db ADD COLUMN `Create_view_priv` ENUM('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Lock_tables_priv`",
+		"ALTER TABLE mysql.db ADD COLUMN `Show_view_priv` ENUM('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Create_view_priv`",
+		"ALTER TABLE mysql.db ADD COLUMN `Create_routine_priv` ENUM('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Show_view_priv`",
+		"ALTER TABLE mysql.db ADD COLUMN `Alter_routine_priv` ENUM('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Create_routine_priv`",
+		"ALTER TABLE mysql.db ADD COLUMN `Event_priv` ENUM('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Execute_priv`",
+		"ALTER TABLE mysql.db ADD COLUMN `Trigger_priv` ENUM('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Event_priv`",
 	}
 	ctx := context.Background()
 	for _, sql := range sqls {
@@ -790,7 +810,7 @@ func upgradeToVer16(s Session, ver int64) {
 	if ver >= version16 {
 		return
 	}
-	doReentrantDDL(s, "ALTER TABLE mysql.stats_histograms ADD COLUMN `cm_sketch` blob", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.stats_histograms ADD COLUMN `cm_sketch` BLOB", infoschema.ErrColumnExists)
 }
 
 func upgradeToVer17(s Session, ver int64) {
@@ -804,7 +824,7 @@ func upgradeToVer18(s Session, ver int64) {
 	if ver >= version18 {
 		return
 	}
-	doReentrantDDL(s, "ALTER TABLE mysql.stats_histograms ADD COLUMN `tot_col_size` bigint(64) NOT NULL DEFAULT 0", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.stats_histograms ADD COLUMN `tot_col_size` BIGINT(64) NOT NULL DEFAULT 0", infoschema.ErrColumnExists)
 }
 
 func upgradeToVer19(s Session, ver int64) {
@@ -838,14 +858,14 @@ func upgradeToVer22(s Session, ver int64) {
 	if ver >= version22 {
 		return
 	}
-	doReentrantDDL(s, "ALTER TABLE mysql.stats_histograms ADD COLUMN `stats_ver` bigint(64) NOT NULL DEFAULT 0", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.stats_histograms ADD COLUMN `stats_ver` BIGINT(64) NOT NULL DEFAULT 0", infoschema.ErrColumnExists)
 }
 
 func upgradeToVer23(s Session, ver int64) {
 	if ver >= version23 {
 		return
 	}
-	doReentrantDDL(s, "ALTER TABLE mysql.stats_histograms ADD COLUMN `flag` bigint(64) NOT NULL DEFAULT 0", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.stats_histograms ADD COLUMN `flag` BIGINT(64) NOT NULL DEFAULT 0", infoschema.ErrColumnExists)
 }
 
 // writeSystemTZ writes system timezone info into mysql.tidb
@@ -892,7 +912,7 @@ func upgradeToVer27(s Session, ver int64) {
 	if ver >= version27 {
 		return
 	}
-	doReentrantDDL(s, "ALTER TABLE mysql.stats_histograms ADD COLUMN `correlation` double NOT NULL DEFAULT 0", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.stats_histograms ADD COLUMN `correlation` DOUBLE NOT NULL DEFAULT 0", infoschema.ErrColumnExists)
 }
 
 func upgradeToVer28(s Session, ver int64) {
@@ -907,9 +927,9 @@ func upgradeToVer29(s Session, ver int64) {
 	if ver != version28 {
 		return
 	}
-	doReentrantDDL(s, "ALTER TABLE mysql.bind_info change create_time create_time timestamp(3)")
-	doReentrantDDL(s, "ALTER TABLE mysql.bind_info change update_time update_time timestamp(3)")
-	doReentrantDDL(s, "ALTER TABLE mysql.bind_info add index sql_index (original_sql(1024),default_db(1024))", ddl.ErrDupKeyName)
+	doReentrantDDL(s, "ALTER TABLE mysql.bind_info CHANGE create_time create_time TIMESTAMP(3)")
+	doReentrantDDL(s, "ALTER TABLE mysql.bind_info CHANGE update_time update_time TIMESTAMP(3)")
+	doReentrantDDL(s, "ALTER TABLE mysql.bind_info ADD INDEX sql_index (original_sql(1024),default_db(1024))", ddl.ErrDupKeyName)
 }
 
 func upgradeToVer30(s Session, ver int64) {
@@ -923,7 +943,7 @@ func upgradeToVer31(s Session, ver int64) {
 	if ver >= version31 {
 		return
 	}
-	doReentrantDDL(s, "ALTER TABLE mysql.stats_histograms ADD COLUMN `last_analyze_pos` blob default null", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.stats_histograms ADD COLUMN `last_analyze_pos` BLOB DEFAULT NULL", infoschema.ErrColumnExists)
 }
 
 func upgradeToVer32(s Session, ver int64) {
@@ -962,7 +982,7 @@ func upgradeToVer36(s Session, ver int64) {
 	}
 	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `Shutdown_priv` ENUM('N','Y') DEFAULT 'N'", infoschema.ErrColumnExists)
 	// A root user will have those privileges after upgrading.
-	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET Shutdown_priv='Y' where Super_priv='Y'")
+	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET Shutdown_priv='Y' WHERE Super_priv='Y'")
 	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET Create_tmp_table_priv='Y',Lock_tables_priv='Y',Create_routine_priv='Y',Alter_routine_priv='Y',Event_priv='Y' WHERE Super_priv='Y'")
 }
 
@@ -993,8 +1013,8 @@ func upgradeToVer39(s Session, ver int64) {
 	}
 	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `Reload_priv` ENUM('N','Y') DEFAULT 'N'", infoschema.ErrColumnExists)
 	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `File_priv` ENUM('N','Y') DEFAULT 'N'", infoschema.ErrColumnExists)
-	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET Reload_priv='Y' where Super_priv='Y'")
-	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET File_priv='Y' where Super_priv='Y'")
+	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET Reload_priv='Y' WHERE Super_priv='Y'")
+	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET File_priv='Y' WHERE Super_priv='Y'")
 }
 
 func writeNewCollationParameter(s Session, flag bool) {
@@ -1035,8 +1055,8 @@ func upgradeToVer42(s Session, ver int64) {
 	if ver >= version42 {
 		return
 	}
-	doReentrantDDL(s, "ALTER TABLE mysql.expr_pushdown_blacklist ADD COLUMN `store_type` char(100) NOT NULL DEFAULT 'tikv,tiflash,tidb'", infoschema.ErrColumnExists)
-	doReentrantDDL(s, "ALTER TABLE mysql.expr_pushdown_blacklist ADD COLUMN `reason` varchar(200)", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.expr_pushdown_blacklist ADD COLUMN `store_type` CHAR(100) NOT NULL DEFAULT 'tikv,tiflash,tidb'", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.expr_pushdown_blacklist ADD COLUMN `reason` VARCHAR(200)", infoschema.ErrColumnExists)
 	writeDefaultExprPushDownBlacklist(s)
 }
 
@@ -1071,7 +1091,7 @@ func upgradeToVer45(s Session, ver int64) {
 		return
 	}
 	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `Config_priv` ENUM('N','Y') DEFAULT 'N'", infoschema.ErrColumnExists)
-	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET Config_priv='Y' where Super_priv='Y'")
+	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET Config_priv='Y' WHERE Super_priv='Y'")
 }
 
 // In v3.1.1, we wrongly replace the context of upgradeToVer39 with upgradeToVer44. If we upgrade from v3.1.1 to a newer version,
@@ -1082,8 +1102,8 @@ func upgradeToVer46(s Session, ver int64) {
 	}
 	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `Reload_priv` ENUM('N','Y') DEFAULT 'N'", infoschema.ErrColumnExists)
 	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `File_priv` ENUM('N','Y') DEFAULT 'N'", infoschema.ErrColumnExists)
-	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET Reload_priv='Y' where Super_priv='Y'")
-	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET File_priv='Y' where Super_priv='Y'")
+	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET Reload_priv='Y' WHERE Super_priv='Y'")
+	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET File_priv='Y' WHERE Super_priv='Y'")
 }
 
 func upgradeToVer47(s Session, ver int64) {
@@ -1146,6 +1166,21 @@ func upgradeToVer49(s Session, ver int64) {
 		return
 	}
 	doReentrantDDL(s, CreateStatsExtended)
+}
+
+func upgradeToVer50(s Session, ver int64) {
+	if ver >= version50 {
+		return
+	}
+	doReentrantDDL(s, CreateSchemaIndexUsageTable)
+}
+
+func upgradeToVer51(s Session, ver int64) {
+	if ver >= version51 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `Create_tablespace_priv` ENUM('N','Y') DEFAULT 'N'", infoschema.ErrColumnExists)
+	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET Create_tablespace_priv='Y' where Super_priv='Y'")
 }
 
 // updateBootstrapVer updates bootstrap version variable in mysql.TiDB table.
@@ -1213,6 +1248,8 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreateOptRuleBlacklist)
 	// Create stats_extended table.
 	mustExecute(s, CreateStatsExtended)
+	// Create schema_index_usage.
+	mustExecute(s, CreateSchemaIndexUsageTable)
 }
 
 // doDMLWorks executes DML statements in bootstrap stage.
@@ -1222,11 +1259,11 @@ func doDMLWorks(s Session) {
 
 	// Insert a default user with empty password.
 	mustExecute(s, `INSERT HIGH_PRIORITY INTO mysql.user VALUES
-		("%", "root", "", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y")`)
+		("%", "root", "", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y")`)
 
 	// Init global system variables table.
-	values := make([]string, 0, len(variable.SysVars))
-	for k, v := range variable.SysVars {
+	values := make([]string, 0, len(variable.GetSysVars()))
+	for k, v := range variable.GetSysVars() {
 		// Session only variable should not be inserted.
 		if v.Scope != variable.ScopeSession {
 			vVal := v.Value
@@ -1235,6 +1272,16 @@ func doDMLWorks(s Session) {
 			}
 			if v.Name == variable.TiDBRowFormatVersion {
 				vVal = strconv.Itoa(variable.DefTiDBRowFormatV2)
+			}
+			if v.Name == variable.TiDBEnableClusteredIndex {
+				vVal = "1"
+			}
+			if v.Name == variable.TiDBPartitionPruneMode {
+				vVal = string(variable.StaticOnly)
+				if flag.Lookup("test.v") != nil || flag.Lookup("check.v") != nil || config.CheckTableBeforeDrop {
+					// enable Dynamic Prune by default in test case.
+					vVal = string(variable.DynamicOnly)
+				}
 			}
 			value := fmt.Sprintf(`("%s", "%s")`, strings.ToLower(k), vVal)
 			values = append(values, value)
