@@ -322,10 +322,6 @@ func (s *testStatsSuite) TestUpdatePartition(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 	testkit.WithPruneMode(testKit, func(m variable.PartitionPruneMode) {
-		if m != variable.StaticOnly {
-			testKit.MustExec("drop table if exists t")
-			return
-		}
 		testKit.MustExec("use test")
 		testKit.MustExec("drop table if exists t")
 		createTable := `CREATE TABLE t (a int, b char(5)) PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (6),PARTITION p1 VALUES LESS THAN (11))`
@@ -347,29 +343,53 @@ func (s *testStatsSuite) TestUpdatePartition(c *C) {
 		testKit.MustExec(`insert into t values (1, "a"), (7, "a")`)
 		c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 		c.Assert(h.Update(is), IsNil)
-		for _, def := range pi.Definitions {
-			statsTbl := h.GetPartitionStats(tableInfo, def.ID)
-			c.Assert(statsTbl.ModifyCount, Equals, int64(1))
-			c.Assert(statsTbl.Count, Equals, int64(1))
-			c.Assert(statsTbl.Columns[bColID].TotColSize, Equals, int64(2))
+		if m == variable.StaticOnly || m == variable.StaticButPrepareDynamic {
+			for _, def := range pi.Definitions {
+				statsTbl := h.GetPartitionStats(tableInfo, def.ID)
+				c.Assert(statsTbl.ModifyCount, Equals, int64(1))
+				c.Assert(statsTbl.Count, Equals, int64(1))
+				c.Assert(statsTbl.Columns[bColID].TotColSize, Equals, int64(2))
+			}
+		}
+		if m == variable.DynamicOnly {
+			statsTbl := h.GetTableStats(tableInfo)
+			c.Assert(statsTbl.ModifyCount, Equals, int64(2))
+			c.Assert(statsTbl.Count, Equals, int64(2))
+			c.Assert(statsTbl.Columns[bColID].TotColSize, Equals, int64(4))
 		}
 
 		testKit.MustExec(`update t set a = a + 1, b = "aa"`)
 		c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 		c.Assert(h.Update(is), IsNil)
-		for _, def := range pi.Definitions {
-			statsTbl := h.GetPartitionStats(tableInfo, def.ID)
-			c.Assert(statsTbl.ModifyCount, Equals, int64(2))
-			c.Assert(statsTbl.Count, Equals, int64(1))
-			c.Assert(statsTbl.Columns[bColID].TotColSize, Equals, int64(3))
+		if m == variable.StaticOnly || m == variable.StaticButPrepareDynamic {
+			for _, def := range pi.Definitions {
+				statsTbl := h.GetPartitionStats(tableInfo, def.ID)
+				c.Assert(statsTbl.ModifyCount, Equals, int64(2))
+				c.Assert(statsTbl.Count, Equals, int64(1))
+				c.Assert(statsTbl.Columns[bColID].TotColSize, Equals, int64(3))
+			}
+		}
+		if m == variable.DynamicOnly {
+			statsTbl := h.GetTableStats(tableInfo)
+			c.Assert(statsTbl.ModifyCount, Equals, int64(4))
+			c.Assert(statsTbl.Count, Equals, int64(2))
+			c.Assert(statsTbl.Columns[bColID].TotColSize, Equals, int64(6))
 		}
 
 		testKit.MustExec("delete from t")
 		c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 		c.Assert(h.Update(is), IsNil)
-		for _, def := range pi.Definitions {
-			statsTbl := h.GetPartitionStats(tableInfo, def.ID)
-			c.Assert(statsTbl.ModifyCount, Equals, int64(3))
+		if m == variable.StaticOnly || m == variable.StaticButPrepareDynamic {
+			for _, def := range pi.Definitions {
+				statsTbl := h.GetPartitionStats(tableInfo, def.ID)
+				c.Assert(statsTbl.ModifyCount, Equals, int64(3))
+				c.Assert(statsTbl.Count, Equals, int64(0))
+				c.Assert(statsTbl.Columns[bColID].TotColSize, Equals, int64(0))
+			}
+		}
+		if m == variable.DynamicOnly {
+			statsTbl := h.GetTableStats(tableInfo)
+			c.Assert(statsTbl.ModifyCount, Equals, int64(6))
 			c.Assert(statsTbl.Count, Equals, int64(0))
 			c.Assert(statsTbl.Columns[bColID].TotColSize, Equals, int64(0))
 		}
@@ -652,10 +672,6 @@ func (s *testStatsSuite) TestUpdatePartitionErrorRate(c *C) {
 	testKit.MustExec("use test")
 	s.do.GetGlobalVarsCache().Disable()
 	testkit.WithPruneMode(testKit, func(m variable.PartitionPruneMode) {
-		if m != variable.StaticOnly {
-			testKit.MustExec("drop table if exists t")
-			return
-		}
 		c.Assert(h.RefreshVars(), IsNil)
 		testKit.MustExec("drop table if exists t")
 		testKit.MustExec("create table t (a bigint(64), primary key(a)) partition by range (a) (partition p0 values less than (30))")
@@ -691,7 +707,11 @@ func (s *testStatsSuite) TestUpdatePartitionErrorRate(c *C) {
 		h.UpdateErrorRate(is)
 		c.Assert(h.Update(is), IsNil)
 
-		tbl = h.GetPartitionStats(tblInfo, pid)
+		if m == variable.DynamicOnly {
+			tbl = h.GetTableStats(tblInfo)
+		} else {
+			tbl = h.GetPartitionStats(tblInfo, pid)
+		}
 		// The error rate of this column is not larger than MaxErrorRate now.
 		c.Assert(tbl.Columns[aID].NotAccurate(), IsFalse)
 	})
@@ -879,9 +899,6 @@ func (s *testStatsSuite) TestQueryFeedbackForPartition(c *C) {
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
 	testkit.WithPruneMode(testKit, func(m variable.PartitionPruneMode) {
-		if m != variable.StaticOnly {
-			return
-		}
 		testKit.MustExec(`drop table if exists t`)
 		testKit.MustExec(`create table t (a bigint(64), b bigint(64), primary key(a), index idx(b))
 			    partition by range (a) (
@@ -905,32 +922,55 @@ func (s *testStatsSuite) TestQueryFeedbackForPartition(c *C) {
 		s.do.GetGlobalVarsCache().Disable()
 		h := s.do.StatsHandle()
 		c.Assert(h.RefreshVars(), IsNil)
-		tests := []struct {
+		tests := [][]struct {
 			sql     string
 			hist    string
 			idxCols int
 		}{
 			{
-				// test primary key feedback
-				sql: "select * from t where t.a <= 5",
-				hist: "column:1 ndv:2 totColSize:0\n" +
-					"num: 1 lower_bound: -9223372036854775808 upper_bound: 2 repeats: 0\n" +
-					"num: 1 lower_bound: 2 upper_bound: 5 repeats: 0",
-				idxCols: 0,
+				{
+					// test primary key feedback
+					sql: "select * from t where t.a <= 5",
+					hist: "column:1 ndv:2 totColSize:0\n" +
+						"num: 1 lower_bound: -9223372036854775808 upper_bound: 2 repeats: 0\n" +
+						"num: 1 lower_bound: 2 upper_bound: 5 repeats: 0",
+					idxCols: 0,
+				},
+				{
+					// test index feedback by double read
+					sql: "select * from t use index(idx) where t.b <= 5",
+					hist: "index:1 ndv:1\n" +
+						"num: 2 lower_bound: -inf upper_bound: 6 repeats: 0",
+					idxCols: 1,
+				},
+				{
+					// test index feedback by single read
+					sql: "select b from t use index(idx) where t.b <= 5",
+					hist: "index:1 ndv:1\n" +
+						"num: 2 lower_bound: -inf upper_bound: 6 repeats: 0",
+					idxCols: 1,
+				},
 			},
 			{
-				// test index feedback by double read
-				sql: "select * from t use index(idx) where t.b <= 5",
-				hist: "index:1 ndv:1\n" +
-					"num: 2 lower_bound: -inf upper_bound: 6 repeats: 0",
-				idxCols: 1,
-			},
-			{
-				// test index feedback by single read
-				sql: "select b from t use index(idx) where t.b <= 5",
-				hist: "index:1 ndv:1\n" +
-					"num: 2 lower_bound: -inf upper_bound: 6 repeats: 0",
-				idxCols: 1,
+				{
+					// test primary key feedback
+					sql: "select * from t where t.a <= 5",
+					hist: "column:1 ndv:4 totColSize:0\n" +
+						"num: 1 lower_bound: 2 upper_bound: 2 repeats: 1\n" +
+						"num: 1 lower_bound: 3 upper_bound: 3 repeats: 1\n" +
+						"num: 1 lower_bound: 4 upper_bound: 4 repeats: 1\n" +
+						"num: 1 lower_bound: 5 upper_bound: 5 repeats: 1",
+					idxCols: 0,
+				},
+				{
+					// test index feedback by double read
+					sql: "select * from t use index(idx) where t.b <= 5",
+					hist: "index:1 ndv:4\n" +
+						"num: 1 lower_bound: 1 upper_bound: 4 repeats: 0\n" +
+						"num: 1 lower_bound: 4 upper_bound: 6 repeats: 0\n" +
+						"num: 1 lower_bound: 6 upper_bound: 6 repeats: 1",
+					idxCols: 1,
+				},
 			},
 		}
 		is := s.do.InfoSchema()
@@ -949,18 +989,27 @@ func (s *testStatsSuite) TestQueryFeedbackForPartition(c *C) {
 			}
 		}
 
-		for i, t := range tests {
+		var testIdx int
+		if m == variable.DynamicOnly {
+			testIdx = 1
+		}
+		for i, t := range tests[testIdx] {
 			testKit.MustQuery(t.sql)
 			c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 			c.Assert(h.DumpStatsFeedbackToKV(), IsNil)
 			c.Assert(h.HandleUpdateStats(s.do.InfoSchema()), IsNil)
 			c.Assert(err, IsNil)
 			c.Assert(h.Update(is), IsNil)
-			tbl := h.GetPartitionStats(tblInfo, pid)
-			if t.idxCols == 0 {
-				c.Assert(tbl.Columns[tblInfo.Columns[0].ID].ToString(0), Equals, tests[i].hist)
+			var tbl *statistics.Table
+			if m != variable.DynamicOnly {
+				tbl = h.GetPartitionStats(tblInfo, pid)
 			} else {
-				c.Assert(tbl.Indices[tblInfo.Indices[0].ID].ToString(1), Equals, tests[i].hist)
+				tbl = h.GetTableStats(tblInfo)
+			}
+			if t.idxCols == 0 {
+				c.Assert(tbl.Columns[tblInfo.Columns[0].ID].ToString(0), Equals, tests[testIdx][i].hist)
+			} else {
+				c.Assert(tbl.Indices[tblInfo.Indices[0].ID].ToString(1), Equals, tests[testIdx][i].hist)
 			}
 		}
 		testKit.MustExec("drop table t")
@@ -1017,66 +1066,60 @@ func (s *testStatsSuite) TestUpdateStatsByLocalFeedback(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
-	testkit.WithPruneMode(testKit, func(m variable.PartitionPruneMode) {
-		if m != variable.StaticOnly {
-			testKit.MustExec(`drop table if exists t`)
-			return
-		}
-		testKit.MustExec(`drop table if exists t`)
-		testKit.MustExec("create table t (a bigint(64), b bigint(64), primary key(a), index idx(b))")
-		testKit.MustExec("insert into t values (1,2),(2,2),(4,5)")
-		testKit.MustExec("analyze table t")
-		testKit.MustExec("insert into t values (3,5)")
-		h := s.do.StatsHandle()
-		oriProbability := statistics.FeedbackProbability
-		oriMinLogCount := handle.MinLogScanCount
-		oriErrorRate := handle.MinLogErrorRate
-		oriNumber := statistics.MaxNumberOfRanges
-		defer func() {
-			statistics.FeedbackProbability = oriProbability
-			handle.MinLogScanCount = oriMinLogCount
-			handle.MinLogErrorRate = oriErrorRate
-			statistics.MaxNumberOfRanges = oriNumber
-		}()
-		statistics.FeedbackProbability.Store(1)
-		handle.MinLogScanCount = 0
-		handle.MinLogErrorRate = 0
+	testKit.MustExec(`drop table if exists t`)
+	testKit.MustExec("create table t (a bigint(64), b bigint(64), primary key(a), index idx(b))")
+	testKit.MustExec("insert into t values (1,2),(2,2),(4,5)")
+	testKit.MustExec("analyze table t")
+	testKit.MustExec("insert into t values (3,5)")
+	h := s.do.StatsHandle()
+	oriProbability := statistics.FeedbackProbability
+	oriMinLogCount := handle.MinLogScanCount
+	oriErrorRate := handle.MinLogErrorRate
+	oriNumber := statistics.MaxNumberOfRanges
+	defer func() {
+		statistics.FeedbackProbability = oriProbability
+		handle.MinLogScanCount = oriMinLogCount
+		handle.MinLogErrorRate = oriErrorRate
+		statistics.MaxNumberOfRanges = oriNumber
+	}()
+	statistics.FeedbackProbability.Store(1)
+	handle.MinLogScanCount = 0
+	handle.MinLogErrorRate = 0
 
-		is := s.do.InfoSchema()
-		table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-		c.Assert(err, IsNil)
+	is := s.do.InfoSchema()
+	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
 
-		tblInfo := table.Meta()
-		h.GetTableStats(tblInfo)
+	tblInfo := table.Meta()
+	h.GetTableStats(tblInfo)
 
-		testKit.MustQuery("select * from t use index(idx) where b <= 5")
-		testKit.MustQuery("select * from t where a > 1")
-		testKit.MustQuery("select * from t use index(idx) where b = 5")
+	testKit.MustQuery("select * from t use index(idx) where b <= 5")
+	testKit.MustQuery("select * from t where a > 1")
+	testKit.MustQuery("select * from t use index(idx) where b = 5")
 
-		h.UpdateStatsByLocalFeedback(s.do.InfoSchema())
-		tbl := h.GetTableStats(tblInfo)
+	h.UpdateStatsByLocalFeedback(s.do.InfoSchema())
+	tbl := h.GetTableStats(tblInfo)
 
-		c.Assert(tbl.Columns[tblInfo.Columns[0].ID].ToString(0), Equals, "column:1 ndv:3 totColSize:0\n"+
-			"num: 1 lower_bound: 1 upper_bound: 1 repeats: 1\n"+
-			"num: 2 lower_bound: 2 upper_bound: 4 repeats: 0\n"+
-			"num: 1 lower_bound: 4 upper_bound: 9223372036854775807 repeats: 0")
-		sc := &stmtctx.StatementContext{TimeZone: time.Local}
-		low, err := codec.EncodeKey(sc, nil, types.NewIntDatum(5))
-		c.Assert(err, IsNil)
+	c.Assert(tbl.Columns[tblInfo.Columns[0].ID].ToString(0), Equals, "column:1 ndv:3 totColSize:0\n"+
+		"num: 1 lower_bound: 1 upper_bound: 1 repeats: 1\n"+
+		"num: 2 lower_bound: 2 upper_bound: 4 repeats: 0\n"+
+		"num: 1 lower_bound: 4 upper_bound: 9223372036854775807 repeats: 0")
+	sc := &stmtctx.StatementContext{TimeZone: time.Local}
+	low, err := codec.EncodeKey(sc, nil, types.NewIntDatum(5))
+	c.Assert(err, IsNil)
 
-		c.Assert(tbl.Indices[tblInfo.Indices[0].ID].CMSketch.QueryBytes(low), Equals, uint64(2))
+	c.Assert(tbl.Indices[tblInfo.Indices[0].ID].CMSketch.QueryBytes(low), Equals, uint64(2))
 
-		c.Assert(tbl.Indices[tblInfo.Indices[0].ID].ToString(1), Equals, "index:1 ndv:2\n"+
-			"num: 2 lower_bound: -inf upper_bound: 5 repeats: 0\n"+
-			"num: 1 lower_bound: 5 upper_bound: 5 repeats: 1")
+	c.Assert(tbl.Indices[tblInfo.Indices[0].ID].ToString(1), Equals, "index:1 ndv:2\n"+
+		"num: 2 lower_bound: -inf upper_bound: 5 repeats: 0\n"+
+		"num: 1 lower_bound: 5 upper_bound: 5 repeats: 1")
 
-		// Test that it won't cause panic after update.
-		testKit.MustQuery("select * from t use index(idx) where b > 0")
+	// Test that it won't cause panic after update.
+	testKit.MustQuery("select * from t use index(idx) where b > 0")
 
-		// Test that after drop stats, it won't cause panic.
-		testKit.MustExec("drop stats t")
-		h.UpdateStatsByLocalFeedback(s.do.InfoSchema())
-	})
+	// Test that after drop stats, it won't cause panic.
+	testKit.MustExec("drop stats t")
+	h.UpdateStatsByLocalFeedback(s.do.InfoSchema())
 }
 
 func (s *testStatsSuite) TestUpdatePartitionStatsByLocalFeedback(c *C) {
@@ -1084,7 +1127,7 @@ func (s *testStatsSuite) TestUpdatePartitionStatsByLocalFeedback(c *C) {
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
 	testkit.WithPruneMode(testKit, func(m variable.PartitionPruneMode) {
-		if m != variable.StaticOnly {
+		if m != variable.DynamicOnly {
 			testKit.MustExec("drop table if exists t")
 			return
 		}
@@ -1118,8 +1161,13 @@ func (s *testStatsSuite) TestUpdatePartitionStatsByLocalFeedback(c *C) {
 
 		tblInfo := table.Meta()
 		pid := tblInfo.Partition.Definitions[0].ID
-		tbl := h.GetPartitionStats(tblInfo, pid)
 
+		var tbl *statistics.Table
+		if m != variable.DynamicOnly {
+			tbl = h.GetPartitionStats(tblInfo, pid)
+		} else {
+			tbl = h.GetTableStats(tblInfo)
+		}
 		c.Assert(tbl.Columns[tblInfo.Columns[0].ID].ToString(0), Equals, "column:1 ndv:3 totColSize:0\n"+
 			"num: 1 lower_bound: 1 upper_bound: 1 repeats: 1\n"+
 			"num: 2 lower_bound: 2 upper_bound: 4 repeats: 0\n"+
