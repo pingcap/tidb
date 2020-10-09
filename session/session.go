@@ -2231,16 +2231,6 @@ func (s *session) RefreshTxnCtx(ctx context.Context) error {
 	return s.NewTxn(ctx)
 }
 
-// RefreshVars implements the sessionctx.Context interface.
-func (s *session) RefreshVars(ctx context.Context) error {
-	pruneMode, err := s.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBPartitionPruneMode)
-	if err != nil {
-		return err
-	}
-	s.sessionVars.PartitionPruneMode.Store(pruneMode)
-	return nil
-}
-
 // InitTxnWithStartTS create a transaction with startTS.
 func (s *session) InitTxnWithStartTS(startTS uint64) error {
 	if s.txn.Valid() {

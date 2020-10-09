@@ -457,9 +457,9 @@ func (e *AnalyzeColumnsExec) buildResp(ranges []*ranger.Range) (distsql.SelectRe
 	var builder distsql.RequestBuilder
 	var reqBuilder *distsql.RequestBuilder
 	if e.handleCols != nil && !e.handleCols.IsInt() {
-		reqBuilder = builder.SetCommonHandleRangesForMultiTbl(e.ctx.GetSessionVars().StmtCtx, e.tableID.CollectIDs, ranges)
+		reqBuilder = builder.SetCommonHandleRangesForTables(e.ctx.GetSessionVars().StmtCtx, e.tableID.CollectIDs, ranges)
 	} else {
-		reqBuilder = builder.SetTableRangesForMultiTbl(e.tableID.CollectIDs, ranges, nil)
+		reqBuilder = builder.SetTableRangesForTables(e.tableID.CollectIDs, ranges, nil)
 	}
 	// Always set KeepOrder of the request to be true, in order to compute
 	// correct `correlation` of columns.

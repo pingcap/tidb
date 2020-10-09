@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/ddl/util"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/sqlexec"
 )
@@ -53,14 +54,20 @@ func (h *Handle) HandleDDLEvent(t *util.Event) error {
 	return nil
 }
 
-func (h *Handle) getPhysicalIDs(tblInfo *model.TableInfo) []int64 {
+func (h *Handle) getPhysicalIDs(tblInfo *model.TableInfo) (ids []int64) {
 	pi := tblInfo.GetPartitionInfo()
-	if pi == nil || h.UseDynamicPrune() {
+	if pi == nil {
 		return []int64{tblInfo.ID}
 	}
-	ids := make([]int64, 0, len(pi.Definitions))
-	for _, def := range pi.Definitions {
-		ids = append(ids, def.ID)
+	ids = make([]int64, 0, len(pi.Definitions)+1)
+	pruneMode := h.CurrentPruneMode()
+	if pruneMode == variable.StaticOnly || pruneMode == variable.StaticButPrepareDynamic {
+		for _, def := range pi.Definitions {
+			ids = append(ids, def.ID)
+		}
+	}
+	if pruneMode == variable.DynamicOnly || pruneMode == variable.StaticButPrepareDynamic {
+		ids = append(ids, tblInfo.ID)
 	}
 	return ids
 }
