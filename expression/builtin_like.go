@@ -163,14 +163,21 @@ func (b *builtinRegexpSharedSig) evalInt(row chunk.Row) (int64, bool, error) {
 
 	// If there are double '[' or ']' in the pattern, eg: '[[.~.]]', remove one of them.
 	patBytes := []byte(pat)
-	isChange := false
+	l := make([]int, 0)
+	r := make([]int, 0)
 	for i := 0; i < len(patBytes)-1; i++ {
-		if patBytes[i] == patBytes[i+1] && (patBytes[i] == 91 || patBytes[i] == 93) {
-			patBytes = append(patBytes[:i], patBytes[i+1:]...)
-			isChange = true
+		if patBytes[i] == patBytes[i+1] && patBytes[i] == 91 {
+			l = append(l, i)
+		}
+		if patBytes[i] == patBytes[i+1] && patBytes[i] == 93 {
+			r = append(r, i)
 		}
 	}
-	if isChange {
+	if len(l) > 0 && len(r) > 0 && len(l) == len(r) {
+		for i := 0; i < len(r); i++ {
+			patBytes = append(patBytes[:l[i]], patBytes[l[i]+1:]...)
+			patBytes = append(patBytes[:r[i]], patBytes[r[i]+1:]...)
+		}
 		pat = string(patBytes)
 	}
 

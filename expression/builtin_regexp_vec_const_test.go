@@ -28,7 +28,7 @@ func genVecBuiltinRegexpBenchCaseForConstants() (baseFunc builtinFunc, childrenF
 	const (
 		numArgs = 2
 		batchSz = 1024
-		rePat   = `\A[A-Za-z]{3,5}\d{1,5}[[:alpha:]]*\z`
+		rePat   = `\A[A-Za-z]{3,5}\d{1,5}[:alpha:]*\z`
 	)
 
 	childrenFieldTypes = make([]*types.FieldType, numArgs)
