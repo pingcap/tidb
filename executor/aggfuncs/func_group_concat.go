@@ -299,14 +299,19 @@ func (h *topNRows) Pop() interface{} {
 	return x
 }
 
-func (h *topNRows) tryToAdd(row sortRow) (truncated bool, truncatedDatumMemSize int64) {
+func (h *topNRows) tryToAdd(row sortRow) (truncated bool, sortRowMemSize int64) {
+	oldSize := h.currSize
 	h.currSize += uint64(row.buffer.Len())
 	if len(h.rows) > 0 {
 		h.currSize += h.sepSize
 	}
 	heap.Push(h, row)
+	for _, dt := range row.byItems {
+		sortRowMemSize += GetDatumMemSize(dt)
+	}
 	if h.currSize <= h.limitSize {
-		return false, truncatedDatumMemSize
+		sortRowMemSize += int64(h.currSize - oldSize)
+		return false, sortRowMemSize
 	}
 
 	for h.currSize > h.limitSize {
@@ -317,12 +322,13 @@ func (h *topNRows) tryToAdd(row sortRow) (truncated bool, truncatedDatumMemSize 
 		} else {
 			h.currSize -= uint64(h.rows[0].buffer.Len()) + h.sepSize
 			for _, dt := range h.rows[0].byItems {
-				truncatedDatumMemSize += GetDatumMemSize(dt)
+				sortRowMemSize -= GetDatumMemSize(dt)
 			}
 			heap.Pop(h)
 		}
 	}
-	return true, truncatedDatumMemSize
+	sortRowMemSize += int64(h.currSize - oldSize)
+	return true, sortRowMemSize
 }
 
 func (h *topNRows) reset() {
@@ -415,13 +421,10 @@ func (e *groupConcatOrder) UpdatePartialResult(sctx sessionctx.Context, rowsInGr
 			if err != nil {
 				return memDelta, err
 			}
-			memDelta += GetDatumMemSize(&d)
 			sortRow.byItems = append(sortRow.byItems, d.Clone())
 		}
-		oldMem := p.topN.currSize
-		truncated, truncatedDatumMemSize := p.topN.tryToAdd(sortRow)
-		newMem := p.topN.currSize
-		memDelta += int64(newMem-oldMem) - truncatedDatumMemSize
+		truncated, sortRowMemSize := p.topN.tryToAdd(sortRow)
+		memDelta += sortRowMemSize
 		if p.topN.err != nil {
 			return memDelta, p.topN.err
 		}
@@ -519,7 +522,6 @@ func (e *groupConcatDistinctOrder) UpdatePartialResult(sctx sessionctx.Context, 
 			continue
 		}
 		p.valSet.Insert(joinedVal)
-		memDelta += int64(len(joinedVal))
 		sortRow := sortRow{
 			buffer:  buffer,
 			byItems: make([]*types.Datum, 0, len(e.byItems)),
@@ -529,13 +531,11 @@ func (e *groupConcatDistinctOrder) UpdatePartialResult(sctx sessionctx.Context, 
 			if err != nil {
 				return memDelta, err
 			}
-			memDelta += GetDatumMemSize(&d)
 			sortRow.byItems = append(sortRow.byItems, d.Clone())
 		}
-		oldMem := p.topN.currSize
-		truncated, truncatedDatumMemSize := p.topN.tryToAdd(sortRow)
-		newMem := p.topN.currSize
-		memDelta += int64(newMem-oldMem) - truncatedDatumMemSize
+		truncated, sortRowMemSize := p.topN.tryToAdd(sortRow)
+		memDelta += sortRowMemSize
+		memDelta += int64(len(joinedVal))
 		if p.topN.err != nil {
 			return memDelta, p.topN.err
 		}
@@ -559,6 +559,7 @@ func GetDatumMemSize(d *types.Datum) int64 {
 	var datumMemSize int64
 	datumMemSize += int64(unsafe.Sizeof(*d))
 	datumMemSize += int64(len(d.Collation()))
-	datumMemSize += getValMemDelta(d.GetValue()) - DefInterfaceSize
+	datumMemSize += int64(len(d.GetBytes()))
+	datumMemSize += getValMemDelta(d.GetInterface()) - DefInterfaceSize
 	return datumMemSize
 }
