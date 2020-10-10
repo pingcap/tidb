@@ -45,8 +45,11 @@ import (
 	"go.uber.org/zap"
 )
 
-var tikvTxnRegionsNumHistogramWithCoprocessor = metrics.TiKVTxnRegionsNumHistogram.WithLabelValues("coprocessor")
-var tikvTxnRegionsNumHistogramWithBatchCoprocessor = metrics.TiKVTxnRegionsNumHistogram.WithLabelValues("batch_coprocessor")
+var (
+	tikvTxnRegionsNumHistogramWithCoprocessor      = metrics.TiKVTxnRegionsNumHistogram.WithLabelValues("coprocessor")
+	tikvTxnRegionsNumHistogramWithBatchCoprocessor = metrics.TiKVTxnRegionsNumHistogram.WithLabelValues("batch_coprocessor")
+	coprCacheHistogramEvict                        = metrics.DistSQLCoprCacheHistogram.WithLabelValues("evict")
+)
 
 // CopClient is coprocessor client.
 type CopClient struct {
@@ -570,8 +573,8 @@ func (it *copIterator) open(ctx context.Context) {
 		sendRate: it.sendRate,
 	}
 	taskSender.respChan = it.respChan
-	go taskSender.run()
 	it.actionOnExceed.setEnabled(true)
+	go taskSender.run()
 }
 
 func (sender *copIteratorTaskSender) run() {
@@ -608,7 +611,13 @@ func (it *copIterator) recvFromRespCh(ctx context.Context, respCh <-chan *copRes
 		select {
 		case resp, ok = <-respCh:
 			if it.memTracker != nil && resp != nil {
-				it.memTracker.Consume(-resp.MemSize())
+				consumed := resp.MemSize()
+				failpoint.Inject("testRateLimitActionMockConsume", func(val failpoint.Value) {
+					if val.(bool) {
+						consumed = 100
+					}
+				})
+				it.memTracker.Consume(-consumed)
 			}
 			return
 		case <-it.finishCh:
@@ -642,7 +651,13 @@ func (sender *copIteratorTaskSender) sendToTaskCh(t *copTask) (exit bool) {
 
 func (worker *copIteratorWorker) sendToRespCh(resp *copResponse, respCh chan<- *copResponse, checkOOM bool) (exit bool) {
 	if worker.memTracker != nil && checkOOM {
-		worker.memTracker.Consume(resp.MemSize())
+		consumed := resp.MemSize()
+		failpoint.Inject("testRateLimitActionMockConsume", func(val failpoint.Value) {
+			if val.(bool) {
+				consumed = 100
+			}
+		})
+		worker.memTracker.Consume(consumed)
 	}
 	select {
 	case respCh <- resp:
@@ -660,6 +675,13 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 		ok     bool
 		closed bool
 	)
+	// wait unit at least 2 copResponse received.
+	failpoint.Inject("testRateLimitActionMockConsume", func(val failpoint.Value) {
+		if val.(bool) {
+			for it.memTracker.MaxConsumed() < 200 {
+			}
+		}
+	})
 
 	// If data order matters, response should be returned in the same order as copTask slice.
 	// Otherwise all responses are returned from a single channel.
@@ -757,6 +779,9 @@ func (worker *copIteratorWorker) handleTask(ctx context.Context, task *copTask, 
 		} else {
 			remainTasks = remainTasks[1:]
 		}
+	}
+	if worker.store.coprCache != nil && worker.store.coprCache.cache.Metrics != nil {
+		coprCacheHistogramEvict.Observe(float64(worker.store.coprCache.cache.Metrics.KeysEvicted()))
 	}
 }
 
