@@ -195,7 +195,7 @@ func (h *Handle) Update(is infoschema.InfoSchema) error {
 		tbl, err := h.tableStatsFromStorage(tableInfo, physicalID, false, nil)
 		// Error is not nil may mean that there are some ddl changes on this table, we will not update it.
 		if err != nil {
-			logutil.BgLogger().Error("error occurred when read table stats", zap.String("table", tableInfo.Name.O), zap.Error(err))
+			logutil.BgLogger().Error("[stats] error occurred when read table stats", zap.String("table", tableInfo.Name.O), zap.Error(err))
 			continue
 		}
 		if tbl == nil {
@@ -625,7 +625,7 @@ func (h *Handle) extendedStatsFromStorage(reader *statsReader, table *statistics
 			colIDs := row.GetString(4)
 			err := json.Unmarshal([]byte(colIDs), &item.ColIDs)
 			if err != nil {
-				logutil.BgLogger().Error("decode column IDs failed", zap.String("column_ids", colIDs), zap.Error(err))
+				logutil.BgLogger().Error("[stats] decode column IDs failed", zap.String("column_ids", colIDs), zap.Error(err))
 				return nil, err
 			}
 			table.ExtendedStats.Stats[key] = item
