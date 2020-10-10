@@ -1722,7 +1722,7 @@ func (s *testPessimisticSuite) TestAmendTxnVariable(c *C) {
 	// Set off the global variable.
 	tk2.MustExec("set global tidb_enable_amend_pessimistic_txn = 0;")
 	tk4 := testkit.NewTestKitWithInit(c, s.store)
-	tk4.MustQuery(`show variables like "tidb_enable_amend_pessimistic_txn"`).Check(testkit.Rows("tidb_enable_amend_pessimistic_txn 0"))
+	tk4.MustQuery(`show variables like "tidb_enable_amend_pessimistic_txn"`).Check(testkit.Rows("tidb_enable_amend_pessimistic_txn OFF"))
 	tk4.MustExec("use test_db")
 	tk4.MustExec("begin pessimistic")
 	tk4.MustExec("insert into t1 values(5, 5, 5, 5)")
