@@ -343,7 +343,7 @@ func (b *batchCopIterator) handleTaskOnce(ctx context.Context, bo *Backoffer, ta
 		Regions:   regionInfos,
 	}
 
-	req := tikvrpc.NewRequest(task.cmdType, &copReq, kvrpcpb.Context{
+	req := tikvrpc.NewReplicaReadRequest(task.cmdType, &copReq, b.req.ReplicaRead, &b.replicaReadSeed, kvrpcpb.Context{
 		IsolationLevel: pbIsolationLevel(b.req.IsolationLevel),
 		Priority:       kvPriorityToCommandPri(b.req.Priority),
 		NotFillCache:   b.req.NotFillCache,

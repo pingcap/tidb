@@ -250,12 +250,8 @@ func (s *RegionRequestSender) SendReqCtx(
 		}
 	})
 
-	var replicaRead kv.ReplicaReadType
-	if req.ReplicaRead {
-		replicaRead = kv.ReplicaReadFollower
-	} else {
-		replicaRead = kv.ReplicaReadLeader
-	}
+	var replicaRead kv.ReplicaReadType = req.ReplicaReadType
+
 	tryTimes := 0
 	for {
 		if (tryTimes > 0) && (tryTimes%100000 == 0) {
