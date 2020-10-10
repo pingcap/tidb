@@ -143,9 +143,11 @@ func (s *testSuite) TestMemJsonObjectagg(c *C) {
 			}
 		}
 
-		aggTest := buildMultiArgsAggMemTester(ast.AggFuncJsonObjectAgg, argTypes, mysql.TypeJSON, numRows, aggfuncs.DefPartialResult4JsonObjectAgg, defaultMultiArgsMemDeltaGens, false)
+		aggTest1 := buildMultiArgsAggMemTester(ast.AggFuncJsonObjectAgg, argTypes, mysql.TypeJSON, numRows, aggfuncs.DefPartialResult4JsonObjectAgg, defaultMultiArgsMemDeltaGens, false)
+		tests = append(tests, aggTest1)
+		aggTest2 := buildMultiArgsAggMemTester(ast.AggFuncJsonObjectAgg, argTypes, mysql.TypeJSON, numRows, aggfuncs.DefPartialResult4JsonObjectAgg, defaultMultiArgsMemDeltaGens, true)
+		tests = append(tests, aggTest2)
 
-		tests = append(tests, aggTest)
 	}
 
 	for _, test := range tests {

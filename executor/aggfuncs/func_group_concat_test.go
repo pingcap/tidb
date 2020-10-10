@@ -99,7 +99,7 @@ func groupConcatUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldTyp
 		}
 		oldMemSize := buffer.Cap()
 		if i != 0 {
-			buffer.WriteString(" ")
+			buffer.WriteString(Separator)
 		}
 		curVal := row.GetString(0)
 		buffer.WriteString(curVal)
@@ -121,7 +121,7 @@ func groupConcatOrderUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.Fie
 		}
 		oldMemSize := buffer.Len()
 		if i != 0 {
-			buffer.WriteString(" ")
+			buffer.WriteString(Separator)
 		}
 		curVal := row.GetString(0)
 		buffer.WriteString(curVal)
@@ -153,7 +153,7 @@ func groupConcatDistinctUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.
 		}
 		oldMemSize := buffer.Cap()
 		if i != 0 {
-			buffer.WriteString(" ")
+			buffer.WriteString(Separator)
 		}
 		valSet.Insert(joinedVal)
 		buffer.WriteString(curVal)
@@ -184,7 +184,7 @@ func groupConcatDistinctOrderUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *t
 		}
 		oldMemSize := buffer.Len()
 		if i != 0 {
-			buffer.WriteString(" ")
+			buffer.WriteString(Separator)
 		}
 		valSet.Insert(joinedVal)
 		buffer.WriteString(curVal)
@@ -207,7 +207,7 @@ func groupConcatMultiArgsUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType []*typ
 		}
 		oldMemSize := buffer.Cap()
 		if i != 0 {
-			buffer.WriteString(" ")
+			buffer.WriteString(Separator)
 		}
 		for j := 0; j < len(dataType); j++ {
 			curVal := row.GetString(j)
@@ -230,7 +230,7 @@ func groupConcatOrderMultiArgsUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType [
 		}
 		oldMemSize := buffer.Len()
 		if i != 0 {
-			buffer.WriteString(" ")
+			buffer.WriteString(Separator)
 		}
 		for j := 0; j < len(dataType); j++ {
 			curVal := row.GetString(j)
@@ -273,7 +273,7 @@ func groupConcatDistinctMultiArgsUpdateMemDeltaGens(srcChk *chunk.Chunk, dataTyp
 		valSet.Insert(joinedVal)
 		oldMemSize := buffer.Cap()
 		if i != 0 {
-			buffer.WriteString(" ")
+			buffer.WriteString(Separator)
 		}
 		buffer.WriteString(valsBuf.String())
 		memDelta := int64(len(joinedVal) + (buffer.Cap() - oldMemSize))
@@ -307,7 +307,7 @@ func groupConcatDistinctOrderMultiArgsUpdateMemDeltaGens(srcChk *chunk.Chunk, da
 		}
 		oldMemSize := buffer.Len()
 		if i != 0 {
-			buffer.WriteString(" ")
+			buffer.WriteString(Separator)
 		}
 		valSet.Insert(joinedVal)
 		buffer.WriteString(valsBuf.String())
