@@ -886,7 +886,9 @@ func (w *tableWorker) pickAndExecTask(ctx context.Context) {
 			return
 		}
 		err := w.executeTask(ctx, task)
-		atomic.AddInt64(&w.idxLookup.stats.tableTaskNum, 1)
+		if w.idxLookup.stats != nil {
+			atomic.AddInt64(&w.idxLookup.stats.tableTaskNum, 1)
+		}
 		task.doneCh <- err
 	}
 }
