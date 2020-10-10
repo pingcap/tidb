@@ -815,15 +815,15 @@ func checkDropIndexes(t *meta.Meta, job *model.Job) (*model.TableInfo, []*model.
 		return nil, nil, errors.Trace(err)
 	}
 
-	var indexesName []model.CIStr
-	if err = job.DecodeArgs(&indexesName); err != nil {
+	var indexNames []model.CIStr
+	if err = job.DecodeArgs(&indexNames); err != nil {
 		job.State = model.JobStateCancelled
 		return nil, nil, errors.Trace(err)
 	}
 
-	indexesInfo := make([]*model.IndexInfo, len(indexesName))
+	indexesInfo := make([]*model.IndexInfo, 0, len(indexNames))
 	indexesMap := make(map[string]bool)
-	for _, indexName := range indexesName {
+	for _, indexName := range indexNames {
 		indexInfo := tblInfo.FindIndexByName(indexName.L)
 		if indexInfo == nil {
 			job.State = model.JobStateCancelled

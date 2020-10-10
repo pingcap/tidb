@@ -4853,7 +4853,7 @@ func (d *ddl) DropIndexes(ctx sessionctx.Context, ti ast.Ident, specs []*ast.Alt
 	}
 
 	allIndexIsExists := true
-	args := make([]interface{}, 0, len(specs))
+	indexNames := make([]interface{}, 0, len(specs))
 	for _, spec := range specs {
 		var indexName model.CIStr
 		switch spec.Tp {
@@ -4902,7 +4902,7 @@ func (d *ddl) DropIndexes(ctx sessionctx.Context, ti ast.Ident, specs []*ast.Alt
 			return errors.Trace(err)
 		}
 
-		args = append(args, indexName)
+		indexNames = append(indexNames, indexName)
 
 		if !spec.IfExists {
 			allIndexIsExists = false
@@ -4915,7 +4915,7 @@ func (d *ddl) DropIndexes(ctx sessionctx.Context, ti ast.Ident, specs []*ast.Alt
 		SchemaName: schema.Name.L,
 		Type:       model.ActionDropIndex,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       args,
+		Args:       []interface{}{indexNames},
 	}
 
 	err = d.doDDLJob(ctx, job)
