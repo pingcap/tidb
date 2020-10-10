@@ -498,7 +498,7 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string, scope Sc
 		}
 		return value, nil
 	case TiDBSkipUTF8Check, TiDBSkipASCIICheck, TiDBOptAggPushDown,
-		TiDBOptDistinctAggPushDown, TiDBOptInSubqToJoinAndAgg, TiDBOptAlwaysPreferIndex, TiDBEnableFastAnalyze,
+		TiDBOptDistinctAggPushDown, TiDBOptInSubqToJoinAndAgg, TiDBOptPreferRangeScan, TiDBEnableFastAnalyze,
 		TiDBBatchInsert, TiDBDisableTxnAutoRetry, TiDBEnableStreaming, TiDBEnableChunkRPC,
 		TiDBBatchDelete, TiDBBatchCommit, TiDBEnableCascadesPlanner, TiDBEnableWindowFunction, TiDBPProfSQLCPU,
 		TiDBLowResolutionTSO, TiDBEnableIndexMerge, TiDBEnableNoopFuncs,

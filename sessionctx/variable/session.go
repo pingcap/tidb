@@ -650,8 +650,8 @@ type SessionVars struct {
 	// allowInSubqToJoinAndAgg can be set to false to forbid rewriting the semi join to inner join with agg.
 	allowInSubqToJoinAndAgg bool
 
-	// allowAlwaysPreferIndex allows optimizer to always prefer index scan over table scan.
-	allowAlwaysPreferIndex bool
+	// allowPreferRangeScan allows optimizer to always prefer range scan over table scan.
+	allowPreferRangeScan bool
 
 	// EnableIndexMerge enables the generation of IndexMergePath.
 	enableIndexMerge bool
@@ -803,7 +803,7 @@ func NewSessionVars() *SessionVars {
 		DisableTxnAutoRetry:         DefTiDBDisableTxnAutoRetry,
 		DDLReorgPriority:            kv.PriorityLow,
 		allowInSubqToJoinAndAgg:     DefOptInSubqToJoinAndAgg,
-		allowAlwaysPreferIndex:      DefOptAlwaysPreferIndex,
+		allowPreferRangeScan:        DefOptPreferRangeScan,
 		CorrelationThreshold:        DefOptCorrelationThreshold,
 		CorrelationExpFactor:        DefOptCorrelationExpFactor,
 		CPUFactor:                   DefOptCPUFactor,
@@ -926,14 +926,14 @@ func (s *SessionVars) SetAllowInSubqToJoinAndAgg(val bool) {
 	s.allowInSubqToJoinAndAgg = val
 }
 
-// GetAllowAlwaysPreferIndex get AllowAlwaysPreferIndex from SessionVars.allowAlwaysPreferIndex.
-func (s *SessionVars) GetAllowAlwaysPreferIndex() bool {
-	return s.allowAlwaysPreferIndex
+// GetAllowPreferRangeScan get AllowPreferRangeScan from SessionVars.allowPreferRangeScan.
+func (s *SessionVars) GetAllowPreferRangeScan() bool {
+	return s.allowPreferRangeScan
 }
 
-// SetAllowAlwaysPreferIndex set SessionVars.allowAlwaysPreferIndex.
-func (s *SessionVars) SetAllowAlwaysPreferIndex(val bool) {
-	s.allowAlwaysPreferIndex = val
+// SetAllowPreferRangeScan set SessionVars.allowPreferRangeScan.
+func (s *SessionVars) SetAllowPreferRangeScan(val bool) {
+	s.allowPreferRangeScan = val
 }
 
 // GetEnableCascadesPlanner get EnableCascadesPlanner from sql hints and SessionVars.EnableCascadesPlanner.
@@ -1246,8 +1246,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.AllowWriteRowID = TiDBOptOn(val)
 	case TiDBOptInSubqToJoinAndAgg:
 		s.SetAllowInSubqToJoinAndAgg(TiDBOptOn(val))
-	case TiDBOptAlwaysPreferIndex:
-		s.SetAllowAlwaysPreferIndex(TiDBOptOn(val))
+	case TiDBOptPreferRangeScan:
+		s.SetAllowPreferRangeScan(TiDBOptOn(val))
 	case TiDBOptCorrelationThreshold:
 		s.CorrelationThreshold = tidbOptFloat64(val, DefOptCorrelationThreshold)
 	case TiDBOptCorrelationExpFactor:
