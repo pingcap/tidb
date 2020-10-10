@@ -4053,6 +4053,32 @@ func (s *testSuite3) TestDoSubquery(c *C) {
 	c.Assert(r, IsNil, Commentf("result of Do not empty"))
 }
 
+func (s *testSuite3) TestSubqueryTableAlias(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`drop table if exists t`)
+
+	tk.MustExec("set sql_mode = ''")
+	tk.MustGetErrCode("select a, b from (select 1 a) ``, (select 2 b) ``;", mysql.ErrDerivedMustHaveAlias)
+	tk.MustGetErrCode("select a, b from (select 1 a) `x`, (select 2 b) `x`;", mysql.ErrNonuniqTable)
+	tk.MustGetErrCode("select a, b from (select 1 a), (select 2 b);", mysql.ErrDerivedMustHaveAlias)
+	// ambiguous column name
+	tk.MustGetErrCode("select a from (select 1 a) ``, (select 2 a) ``;", mysql.ErrDerivedMustHaveAlias)
+	tk.MustGetErrCode("select a from (select 1 a) `x`, (select 2 a) `x`;", mysql.ErrNonuniqTable)
+	tk.MustGetErrCode("select x.a from (select 1 a) `x`, (select 2 a) `x`;", mysql.ErrNonuniqTable)
+	tk.MustGetErrCode("select a from (select 1 a), (select 2 a);", mysql.ErrDerivedMustHaveAlias)
+
+	tk.MustExec("set sql_mode = 'oracle';")
+	tk.MustQuery("select a, b from (select 1 a) ``, (select 2 b) ``;").Check(testkit.Rows("1 2"))
+	tk.MustQuery("select a, b from (select 1 a) `x`, (select 2 b) `x`;").Check(testkit.Rows("1 2"))
+	tk.MustQuery("select a, b from (select 1 a), (select 2 b);").Check(testkit.Rows("1 2"))
+	// ambiguous column name
+	tk.MustGetErrCode("select a from (select 1 a) ``, (select 2 a) ``;", mysql.ErrNonUniq)
+	tk.MustGetErrCode("select a from (select 1 a) `x`, (select 2 a) `x`;", mysql.ErrNonUniq)
+	tk.MustGetErrCode("select x.a from (select 1 a) `x`, (select 2 a) `x`;", mysql.ErrNonUniq)
+	tk.MustGetErrCode("select a from (select 1 a), (select 2 a);", mysql.ErrNonUniq)
+}
+
 func (s *testSerialSuite) TestTSOFail(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test`)
@@ -6461,21 +6487,24 @@ func (s *testSerialSuite) TestCoprocessorOOMAction(c *C) {
 	}{
 		{
 			name: "keep Order",
-			sql:  "select * from t6 order by id",
+			sql:  "select id from t6 order by id",
 		},
 		{
 			name: "non keep Order",
-			sql:  "select * from t5",
+			sql:  "select id from t5",
 		},
 	}
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.OOMAction = config.OOMActionCancel
 	})
-	quota := count * 15
+	failpoint.Enable("github.com/pingcap/tidb/store/tikv/testRateLimitActionMockConsume", `return(true)`)
+	defer failpoint.Disable("github.com/pingcap/tidb/store/tikv/testRateLimitActionMockConsume")
 	// assert oom action
 	for _, testcase := range testcases {
 		c.Log(testcase.name)
+		// larger than one copResponse, smaller than 2 copResponse
+		quota := 199
 		se, err := session.CreateSession4Test(s.store)
 		c.Check(err, IsNil)
 		tk.Se = se
@@ -6517,10 +6546,21 @@ func (s *testSerialSuite) TestCoprocessorOOMAction(c *C) {
 		tk.Se = se
 		tk.MustExec("use test")
 		tk.MustExec("set @@tidb_distsql_scan_concurrency = 30")
-		tk.MustExec(fmt.Sprintf("set @@tidb_mem_quota_query=%v;", quota))
+		tk.MustExec("set @@tidb_mem_quota_query=1")
 		err = tk.QueryToErr(testcase.sql)
 		c.Assert(err, NotNil)
 		c.Assert(err.Error(), Matches, "Out Of Memory Quota.*")
 		se.Close()
 	}
+}
+
+func (s *testSuite) TestIssue20237(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t, s")
+	tk.MustExec("create table t(a date, b float)")
+	tk.MustExec("create table s(b float)")
+	tk.MustExec(`insert into t values(NULL,-37), ("2011-11-04",105), ("2013-03-02",-22), ("2006-07-02",-56), (NULL,124), (NULL,111), ("2018-03-03",-5);`)
+	tk.MustExec(`insert into s values(-37),(105),(-22),(-56),(124),(105),(111),(-5);`)
+	tk.MustQuery(`select count(distinct t.a, t.b) from t join s on t.b= s.b;`).Check(testkit.Rows("4"))
 }
