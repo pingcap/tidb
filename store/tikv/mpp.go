@@ -149,7 +149,7 @@ func (m *mppIterator) handleDispatchReq(ctx context.Context, bo *Backoffer, req 
 	}
 
 	// meta for current task.
-	taskMeta := &mpp.TaskMeta{QueryTs: req.StartTs, TaskId: req.ID, Address: originalTask.storeAddr}
+	taskMeta := &mpp.TaskMeta{StartTs: req.StartTs, TaskId: req.ID, Address: originalTask.storeAddr}
 
 	mppReq := &mpp.DispatchTaskRequest{
 		Meta:        taskMeta,
@@ -181,7 +181,7 @@ func (m *mppIterator) handleDispatchReq(ctx context.Context, bo *Backoffer, req 
 	realResp := rpcResp.Resp.(*mpp.DispatchTaskResponse)
 
 	if realResp.Error != nil {
-		m.sendError(errors.New(realResp.Error.Error.Msg))
+		m.sendError(errors.New(realResp.Error.Msg))
 		return
 	}
 
@@ -194,9 +194,9 @@ func (m *mppIterator) handleDispatchReq(ctx context.Context, bo *Backoffer, req 
 
 func (m *mppIterator) establishMPPConns(bo *Backoffer, req *kv.MPPDispatchRequest, taskMeta *mpp.TaskMeta) {
 	connReq := &mpp.EstablishMPPConnectionRequest{
-		ServerMeta: taskMeta,
-		ClientMeta: &mpp.TaskMeta{
-			QueryTs: req.StartTs,
+		SenderMeta: taskMeta,
+		ReceiverMeta: &mpp.TaskMeta{
+			StartTs: req.StartTs,
 			TaskId:  -1,
 		},
 	}
@@ -242,7 +242,7 @@ func (m *mppIterator) establishMPPConns(bo *Backoffer, req *kv.MPPDispatchReques
 				}
 			}
 			m.sendToRespCh(&mppResponse{
-				err: errors.New(resp.Error.Error.Msg),
+				err: errors.New(resp.Error.Msg),
 			})
 			return
 		}
@@ -261,7 +261,7 @@ func (m *mppIterator) Close() error {
 
 func (m *mppIterator) handleMPPStreamResponse(response *mpp.MPPDataPacket, req *kv.MPPDispatchRequest) (err error) {
 	if response.Error != nil {
-		err = errors.Errorf("other error for mpp stream: %s", response.Error.Error.Msg)
+		err = errors.Errorf("other error for mpp stream: %s", response.Error.Msg)
 		logutil.BgLogger().Warn("other error",
 			zap.Uint64("txnStartTS", req.StartTs),
 			zap.String("storeAddr", req.Task.GetAddress()),

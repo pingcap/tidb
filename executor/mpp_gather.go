@@ -15,7 +15,6 @@ package executor
 
 import (
 	"context"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/mpp"
 	"github.com/pingcap/tidb/distsql"
@@ -52,7 +51,7 @@ type mppTask struct {
 // ToPB generates the pb structure.
 func (t *mppTask) ToPB() *mpp.TaskMeta {
 	meta := &mpp.TaskMeta{
-		QueryTs: t.startTs,
+		StartTs: t.startTs,
 		TaskId:  t.id,
 	}
 	if t.id != -1 {
@@ -68,15 +67,15 @@ type planFragment struct {
 
 	/// following field are filled during getPlanFragment.
 	// TODO: Strictly speaking, not all plan fragment contain table scan. we can do this assumption until more plans are supported.
-	tableScan       *plannercore.PhysicalTableScan // result physical table scan
-	exchangeClients []*ExchangeClient              // data receivers
+	tableScan         *plannercore.PhysicalTableScan // result physical table scan
+	exchangeReceivers []*ExchangeReceiver            // data receivers
 
 	// following fields are filled after scheduling.
-	exchangeServer *ExchangeServer // data exporter
+	exchangeSender *ExchangeSender // data exporter
 }
 
-// ExchangeClient establishes connection actively and receives data passively.
-type ExchangeClient struct {
+// ExchangeReceiver accepts connection and receives data passively.
+type ExchangeReceiver struct {
 	plannercore.PhysicalExchangerBase
 
 	tasks   []*mppTask
@@ -85,7 +84,7 @@ type ExchangeClient struct {
 }
 
 // ToPB generates the pb structure.
-func (e *ExchangeClient) ToPB(ctx sessionctx.Context, storeType kv.StoreType) (*tipb.Executor, error) {
+func (e *ExchangeReceiver) ToPB(ctx sessionctx.Context, storeType kv.StoreType) (*tipb.Executor, error) {
 
 	encodedTask := make([][]byte, 0, len(e.tasks))
 
@@ -101,20 +100,20 @@ func (e *ExchangeClient) ToPB(ctx sessionctx.Context, storeType kv.StoreType) (*
 	for _, column := range e.schema.Columns {
 		fieldTypes = append(fieldTypes, expression.ToPBFieldType(column.RetType))
 	}
-	ecExec := &tipb.ExchangeClient{
+	ecExec := &tipb.ExchangeReceiver{
 		EncodedTaskMeta: encodedTask,
 		FieldTypes:      fieldTypes,
 	}
 	executorID := e.ExplainID().String()
 	return &tipb.Executor{
-		Tp:             tipb.ExecType_TypeExchangeClient,
-		ExchangeClient: ecExec,
+		Tp:             tipb.ExecType_TypeExchangeReceiver,
+		ExchangeReceiver: ecExec,
 		ExecutorId:     &executorID,
 	}, nil
 }
 
-// ExchangeServer dispatches data to upstream tasks. That means push mode processing,
-type ExchangeServer struct {
+// ExchangeSender dispatches data to upstream tasks. That means push mode processing,
+type ExchangeSender struct {
 	plannercore.PhysicalExchangerBase
 
 	tasks        []*mppTask
@@ -122,7 +121,7 @@ type ExchangeServer struct {
 }
 
 // ToPB generates the pb structure.
-func (e *ExchangeServer) ToPB(ctx sessionctx.Context, storeType kv.StoreType) (*tipb.Executor, error) {
+func (e *ExchangeSender) ToPB(ctx sessionctx.Context, storeType kv.StoreType) (*tipb.Executor, error) {
 	child, err := e.Children()[0].ToPB(ctx, kv.TiFlash)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -138,16 +137,15 @@ func (e *ExchangeServer) ToPB(ctx sessionctx.Context, storeType kv.StoreType) (*
 		encodedTask = append(encodedTask, encodedStr)
 	}
 
-	ecExec := &tipb.ExchangeServer{
+	ecExec := &tipb.ExchangeSender{
 		Tp:              e.exchangeType,
 		EncodedTaskMeta: encodedTask,
 		Child:           child,
 	}
-	// TODO: Refine the executor ID. We should use integer executor id for best implementation.
 	executorID := e.ExplainID().String()
 	return &tipb.Executor{
-		Tp:             tipb.ExecType_TypeExchangeServer,
-		ExchangeServer: ecExec,
+		Tp:             tipb.ExecType_TypeExchangeSender,
+		ExchangeSender: ecExec,
 		ExecutorId:     &executorID,
 	}, nil
 }
@@ -210,18 +208,18 @@ func (e *MPPGather) getPlanFragments(p plannercore.PhysicalPlan, pf *planFragmen
 	case *plannercore.PhysicalBroadCastJoin:
 		// This is a pipeline breaker. So we replace broadcast side with a exchangerClient
 		bcChild := x.Children()[x.InnerChildIdx]
-		exchangeServer := &ExchangeServer{exchangeType: tipb.ExchangeType_Broadcast}
-		exchangeServer.InitBasePlan(e.ctx, plancodec.TypeExchangeServer)
-		npf := &planFragment{p: bcChild, exchangeServer: exchangeServer}
-		exchangeServer.SetChildren(npf.p)
+		exchangeSender := &ExchangeSender{exchangeType: tipb.ExchangeType_Broadcast}
+		exchangeSender.InitBasePlan(e.ctx, plancodec.TypeExchangeServer)
+		npf := &planFragment{p: bcChild, exchangeSender: exchangeSender}
+		exchangeSender.SetChildren(npf.p)
 
-		exchangeClient := &ExchangeClient{
+		exchangeReceivers := &ExchangeReceiver{
 			childPf: npf,
 			schema:  bcChild.Schema(),
 		}
-		exchangeClient.InitBasePlan(e.ctx, plancodec.TypeExchangeClient)
-		x.Children()[x.InnerChildIdx] = exchangeClient
-		pf.exchangeClients = append(pf.exchangeClients, exchangeClient)
+		exchangeReceivers.InitBasePlan(e.ctx, plancodec.TypeExchangeClient)
+		x.Children()[x.InnerChildIdx] = exchangeReceivers
+		pf.exchangeReceivers = append(pf.exchangeReceivers, exchangeReceivers)
 
 		// For the inner side of join, we use a new plan fragment.
 		e.getPlanFragments(bcChild, npf)
@@ -234,7 +232,7 @@ func (e *MPPGather) getPlanFragments(p plannercore.PhysicalPlan, pf *planFragmen
 }
 
 func (e *MPPGather) appendMPPDispatchReq(pf *planFragment, tasks []*mppTask, isRoot bool) error {
-	dagReq, _, err := constructDAGReq(e.ctx, []plannercore.PhysicalPlan{pf.exchangeServer}, kv.TiFlash)
+	dagReq, _, err := constructDAGReq(e.ctx, []plannercore.PhysicalPlan{pf.exchangeSender}, kv.TiFlash)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -275,8 +273,8 @@ func (e *MPPGather) constructMPPTasks(ctx context.Context, pf *planFragment, isR
 		return nil, errors.Trace(err)
 	}
 
-	for _, client := range pf.exchangeClients {
-		client.childPf.exchangeServer.tasks = tasks
+	for _, client := range pf.exchangeReceivers {
+		client.childPf.exchangeSender.tasks = tasks
 		client.tasks, err = e.constructMPPTasks(ctx, client.childPf, false)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -299,10 +297,10 @@ func (e *MPPGather) Open(ctx context.Context) error {
 	}
 	rootPf := &planFragment{
 		p:              e.originalPlan,
-		exchangeServer: &ExchangeServer{exchangeType: tipb.ExchangeType_PassThrough, tasks: []*mppTask{tidbTask}},
+		exchangeSender: &ExchangeSender{exchangeType: tipb.ExchangeType_PassThrough, tasks: []*mppTask{tidbTask}},
 	}
-	rootPf.exchangeServer.InitBasePlan(e.ctx, plancodec.TypeExchangeServer)
-	rootPf.exchangeServer.SetChildren(rootPf.p)
+	rootPf.exchangeSender.InitBasePlan(e.ctx, plancodec.TypeExchangeServer)
+	rootPf.exchangeSender.SetChildren(rootPf.p)
 
 	e.getPlanFragments(e.originalPlan, rootPf)
 	_, err := e.constructMPPTasks(ctx, rootPf, true)
