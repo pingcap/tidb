@@ -4528,14 +4528,14 @@ func (s *testIntegrationSuite) TestTiDBInternalFunc(c *C) {
 	defer s.cleanEnv(c)
 	var result *testkit.Result
 	result = tk.MustQuery("select tidb_decode_key( '74800000000000002B5F72800000000000A5D3' )")
-	result.Check(testkit.Rows("tableID=43, _tidb_rowid=42451"))
+	result.Check(testkit.Rows(`{"_tidb_rowid":42451,"table_id":"43"}`))
 	result = tk.MustQuery("select tidb_decode_key( '7480000000000000325f7205bff199999999999a013131000000000000f9' )")
-	result.Check(testkit.Rows("tableID=50, clusterHandle={1.1, 11}"))
+	result.Check(testkit.Rows(`{"handle":"{1.1, 11}","table_id":50}`))
 
 	result = tk.MustQuery("select tidb_decode_key( '74800000000000019B5F698000000000000001015257303100000000FB013736383232313130FF3900000000000000F8010000000000000000F7' )")
-	result.Check(testkit.Rows("tableID=411, indexID=1, indexValues=RW01,768221109,"))
+	result.Check(testkit.Rows(`{"index_id":1,"index_vals":"RW01, 768221109, ","table_id":411}`))
 	result = tk.MustQuery("select tidb_decode_key( '7480000000000000695F698000000000000001038000000000004E20' )")
-	result.Check(testkit.Rows("tableID=105, indexID=1, indexValues=20000"))
+	result.Check(testkit.Rows(`{"index_id":1,"index_vals":"20000","table_id":105}`))
 
 	// Test invalid record/index key.
 	result = tk.MustQuery("select tidb_decode_key( '7480000000000000FF2E5F728000000011FFE1A3000000000000' )")
@@ -4543,6 +4543,34 @@ func (s *testIntegrationSuite) TestTiDBInternalFunc(c *C) {
 	warns := tk.Se.GetSessionVars().StmtCtx.GetWarnings()
 	c.Assert(warns, HasLen, 1)
 	c.Assert(warns[0].Err.Error(), Equals, "invalid record/index key: 7480000000000000FF2E5F728000000011FFE1A3000000000000")
+
+	// Test in real table.
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a varchar(255), b int, c datetime, primary key (a, b, c));")
+	dom := domain.GetDomain(tk.Se)
+	is := dom.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	id, idHex := tbl.Meta().ID, fmt.Sprintf("%x", tbl.Meta().ID)
+	// split table t by ('bbbb', 10, '2020-01-01');
+	sql := fmt.Sprintf("select tidb_decode_key( '7480000000000000FF%s5f720162626262FF00000000FB038000FF00000000000A0419FFA542000000000000FE' )", idHex)
+	result = tk.MustQuery(sql)
+	rs := fmt.Sprintf(`{"handle":{"a":"bbbb","b":"10","c":"2020-01-01 00:00:00"},"table_id":%d}`, id)
+	result.Check(testkit.Rows(rs))
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a varchar(255), b int, c datetime, index idx(a, b, c));")
+	dom = domain.GetDomain(tk.Se)
+	is = dom.InfoSchema()
+	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	id, idHex = tbl.Meta().ID, fmt.Sprintf("%x", tbl.Meta().ID)
+	// split table t index idx by ('aaaaa', 100, '2000-01-01');
+	sql = fmt.Sprintf("select tidb_decode_key( '7480000000000000FF%s5F698000000000FF0000010161616161FF61000000FC038000FF0000000000640419FF6442000000000003FF0000000000000000FF0000000000000000F7' )", idHex)
+	result = tk.MustQuery(sql)
+	rs = fmt.Sprintf(`{"index_id":1,"index_vals":{"a":"aaaaa","b":"100","c":"2000-01-01 00:00:00"},"table_id":%d}`, id)
+	result.Check(testkit.Rows(rs))
 }
 
 func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {
