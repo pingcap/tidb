@@ -981,12 +981,12 @@ func (worker *copIteratorWorker) logTimeCopTask(costTime time.Duration, task *co
 				logStr = appendScanDetail(logStr, "data", detail.ScanDetail.Data)
 				logStr = appendScanDetail(logStr, "lock", detail.ScanDetail.Lock)
 				logStr += fmt.Sprintf(" processed versions: %d", detail.ScanDetailV2.ProcessedVersions)
-				logStr += fmt.Sprintf(" total versions: %d",  detail.ScanDetailV2.TotalVersions)
-				logStr += fmt.Sprintf(" delete skipped count: %d",  detail.ScanDetailV2.RocksdbDeleteSkippedCount)
-				logStr += fmt.Sprintf(" key skipped count: %d",  detail.ScanDetailV2.RocksdbKeySkippedCount)
-				logStr += fmt.Sprintf(" cache hit count: %d",  detail.ScanDetailV2.RocksdbBlockCacheHitCount)
-				logStr += fmt.Sprintf(" read count: %d",  detail.ScanDetailV2.RocksdbBlockReadCount)
-				logStr += fmt.Sprintf(" read byte: %d",  detail.ScanDetailV2.RocksdbBlockReadByte)
+				logStr += fmt.Sprintf(" total versions: %d", detail.ScanDetailV2.TotalVersions)
+				logStr += fmt.Sprintf(" delete skipped count: %d", detail.ScanDetailV2.RocksdbDeleteSkippedCount)
+				logStr += fmt.Sprintf(" key skipped count: %d", detail.ScanDetailV2.RocksdbKeySkippedCount)
+				logStr += fmt.Sprintf(" cache hit count: %d", detail.ScanDetailV2.RocksdbBlockCacheHitCount)
+				logStr += fmt.Sprintf(" read count: %d", detail.ScanDetailV2.RocksdbBlockReadCount)
+				logStr += fmt.Sprintf(" read byte: %d", detail.ScanDetailV2.RocksdbBlockReadByte)
 			}
 		}
 		if waitMs > minLogKVWaitTime {
