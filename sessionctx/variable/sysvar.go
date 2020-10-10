@@ -687,7 +687,7 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableCascadesPlanner, Value: "0", Type: TypeBool},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableIndexMerge, Value: "0", Type: TypeBool},
 	{Scope: ScopeSession, Name: TIDBMemQuotaQuery, Value: strconv.FormatInt(config.GetGlobalConfig().MemQuotaQuery, 10), Type: TypeInt, MinValue: -1, MaxValue: math.MaxInt64},
-  {Scope: ScopeSession, Name: TIDBMemQuotaStatistics, Value: strconv.FormatInt(config.GetGlobalConfig().MemQuotaStatistics, 10), Type: TypeInt, MinValue: -1, MaxValue: math.MaxInt64},
+	{Scope: ScopeSession, Name: TIDBMemQuotaStatistics, Value: strconv.FormatInt(config.GetGlobalConfig().MemQuotaStatistics, 10), Type: TypeInt, MinValue: int64(32 << 30), MaxValue: math.MaxInt64},
 	{Scope: ScopeSession, Name: TIDBMemQuotaHashJoin, Value: strconv.FormatInt(DefTiDBMemQuotaHashJoin, 10), Type: TypeInt, MinValue: -1, MaxValue: math.MaxInt64},
 	{Scope: ScopeSession, Name: TIDBMemQuotaMergeJoin, Value: strconv.FormatInt(DefTiDBMemQuotaMergeJoin, 10), Type: TypeInt, MinValue: -1, MaxValue: math.MaxInt64},
 	{Scope: ScopeSession, Name: TIDBMemQuotaSort, Value: strconv.FormatInt(DefTiDBMemQuotaSort, 10), Type: TypeInt, MinValue: -1, MaxValue: math.MaxInt64},
