@@ -3148,6 +3148,10 @@ func (d *ddl) DropColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTa
 		return nil
 	}
 	colName := spec.OldColumnName.Name
+	err = checkDropVisibleColumnCnt(t, 1)
+	if err != nil {
+		return err
+	}
 
 	job := &model.Job{
 		SchemaID:   schema.ID,
@@ -3216,6 +3220,10 @@ func (d *ddl) DropColumns(ctx sessionctx.Context, ti ast.Ident, specs []*ast.Alt
 		return ErrCantRemoveAllFields.GenWithStack("can't drop all columns in table %s",
 			tblInfo.Name)
 	}
+	err = checkDropVisibleColumnCnt(t, len(colNames))
+	if err != nil {
+		return err
+	}
 
 	job := &model.Job{
 		SchemaID:   schema.ID,
@@ -3256,6 +3264,20 @@ func checkIsDroppableColumn(ctx sessionctx.Context, t table.Table, spec *ast.Alt
 		return false, errUnsupportedPKHandle
 	}
 	return true, nil
+}
+
+func checkDropVisibleColumnCnt(t table.Table, columnCnt int) error {
+	tblInfo := t.Meta()
+	visibleColumCnt := 0
+	for _, column := range tblInfo.Columns {
+		if !column.Hidden {
+			visibleColumCnt++
+		}
+	}
+	if visibleColumCnt == columnCnt {
+		return ErrTableMustHaveColumns
+	}
+	return nil
 }
 
 // checkModifyCharsetAndCollation returns error when the charset or collation is not modifiable.
@@ -4903,15 +4925,6 @@ func isDroppableColumn(tblInfo *model.TableInfo, colName model.CIStr) error {
 	if len(tblInfo.Columns) == 1 {
 		return ErrCantRemoveAllFields.GenWithStack("can't drop only column %s in table %s",
 			colName, tblInfo.Name)
-	}
-	visibleColumCnt := 0
-	for _, column := range tblInfo.Columns {
-		if !column.Hidden {
-			visibleColumCnt++
-		}
-	}
-	if visibleColumCnt == 1 {
-		return ErrTableMustHaveColumns
 	}
 	// We only support dropping column with single-value none Primary Key index covered now.
 	if !isColumnCanDropWithIndex(colName.L, tblInfo.Indices) {
