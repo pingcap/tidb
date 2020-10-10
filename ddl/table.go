@@ -647,8 +647,7 @@ func onRenameTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 		return ver, errors.Trace(err)
 	}
 
-	schemaIDs := []int64{oldSchemaID, job.SchemaID}
-	ver, tblInfo, err := checkAndRenameTables(t, job, schemaIDs, &tableName)
+	ver, tblInfo, err := checkAndRenameTables(t, job, oldSchemaID, job.SchemaID, &tableName)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -675,8 +674,7 @@ func onRenameTables(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error
 	var err error
 	for i, oldSchemaID := range oldSchemaIDs {
 		job.TableID = tableIDs[i]
-		schemaIDs := []int64{oldSchemaID, newSchemaIDs[i]}
-		ver, tblInfo, err = checkAndRenameTables(t, job, schemaIDs, tableNames[i])
+		ver, tblInfo, err = checkAndRenameTables(t, job, oldSchemaID, newSchemaIDs[i], tableNames[i])
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -690,8 +688,8 @@ func onRenameTables(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error
 	return ver, nil
 }
 
-func checkAndRenameTables(t *meta.Meta, job *model.Job, schemaIDs []int64, tableName *model.CIStr) (ver int64, tblInfo *model.TableInfo, _ error) {
-	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, schemaIDs[0])
+func checkAndRenameTables(t *meta.Meta, job *model.Job, oldSchemaID int64, newSchemaID int64, tableName *model.CIStr) (ver int64, tblInfo *model.TableInfo, _ error) {
+	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, oldSchemaID)
 	if err != nil {
 		return ver, tblInfo, errors.Trace(err)
 	}
@@ -699,14 +697,14 @@ func checkAndRenameTables(t *meta.Meta, job *model.Job, schemaIDs []int64, table
 	var autoTableID int64
 	var autoRandID int64
 	shouldDelAutoID := false
-	if schemaIDs[1] != schemaIDs[0] {
+	if newSchemaID != oldSchemaID {
 		shouldDelAutoID = true
-		autoTableID, err = t.GetAutoTableID(tblInfo.GetDBID(schemaIDs[0]), tblInfo.ID)
+		autoTableID, err = t.GetAutoTableID(tblInfo.GetDBID(oldSchemaID), tblInfo.ID)
 		if err != nil {
 			job.State = model.JobStateCancelled
 			return ver, tblInfo, errors.Trace(err)
 		}
-		autoRandID, err = t.GetAutoRandomID(tblInfo.GetDBID(schemaIDs[0]), tblInfo.ID)
+		autoRandID, err = t.GetAutoRandomID(tblInfo.GetDBID(oldSchemaID), tblInfo.ID)
 		if err != nil {
 			job.State = model.JobStateCancelled
 			return ver, tblInfo, errors.Trace(err)
@@ -716,7 +714,7 @@ func checkAndRenameTables(t *meta.Meta, job *model.Job, schemaIDs []int64, table
 		tblInfo.OldSchemaID = 0
 	}
 
-	err = t.DropTableOrView(schemaIDs[0], tblInfo.ID, shouldDelAutoID)
+	err = t.DropTableOrView(oldSchemaID, tblInfo.ID, shouldDelAutoID)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, tblInfo, errors.Trace(err)
@@ -730,19 +728,19 @@ func checkAndRenameTables(t *meta.Meta, job *model.Job, schemaIDs []int64, table
 	})
 
 	tblInfo.Name = *tableName
-	err = t.CreateTableOrView(schemaIDs[1], tblInfo)
+	err = t.CreateTableOrView(newSchemaID, tblInfo)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, tblInfo, errors.Trace(err)
 	}
 	// Update the table's auto-increment ID.
-	if schemaIDs[1] != schemaIDs[0] {
-		_, err = t.GenAutoTableID(schemaIDs[1], tblInfo.ID, autoTableID)
+	if newSchemaID != oldSchemaID {
+		_, err = t.GenAutoTableID(newSchemaID, tblInfo.ID, autoTableID)
 		if err != nil {
 			job.State = model.JobStateCancelled
 			return ver, tblInfo, errors.Trace(err)
 		}
-		_, err = t.GenAutoRandomID(schemaIDs[1], tblInfo.ID, autoRandID)
+		_, err = t.GenAutoRandomID(newSchemaID, tblInfo.ID, autoRandID)
 		if err != nil {
 			job.State = model.JobStateCancelled
 			return ver, tblInfo, errors.Trace(err)

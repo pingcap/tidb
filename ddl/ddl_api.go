@@ -4369,32 +4369,28 @@ func (d *ddl) RenameTables(ctx sessionctx.Context, oldIdents, newIdents []ast.Id
 
 func extractTblInfos(is infoschema.InfoSchema, oldIdent, newIdent ast.Ident, isAlterTable bool, tables map[string]int64) ([]*model.DBInfo, int64, error) {
 	oldSchema, ok := is.SchemaByName(oldIdent.Schema)
-	newIdentKey := getIdentKey(newIdent)
 	if !ok {
 		if isAlterTable {
 			return nil, 0, infoschema.ErrTableNotExists.GenWithStackByArgs(oldIdent.Schema, oldIdent.Name)
 		}
-		tableID, ok := tables[newIdentKey]
-		if (ok && tableID != tableNotExist) || is.TableExists(newIdent.Schema, newIdent.Name) {
+		if tableExists(is, newIdent, tables) {
 			return nil, 0, infoschema.ErrTableExists.GenWithStackByArgs(newIdent)
 		}
 		return nil, 0, errFileNotFound.GenWithStackByArgs(oldIdent.Schema, oldIdent.Name)
 	}
 	oldIdentKey := getIdentKey(oldIdent)
 	oldTableID, ok := tables[oldIdentKey]
-	var oldTbl table.Table
-	var err error
-	if (ok && oldTableID == tableNotExist) || !ok {
-		oldTbl, err = is.TableByName(oldIdent.Schema, oldIdent.Name)
-		if (ok && oldTableID == tableNotExist) || err != nil {
-			if isAlterTable {
-				return nil, 0, infoschema.ErrTableNotExists.GenWithStackByArgs(oldIdent.Schema, oldIdent.Name)
-			}
-			if is.TableExists(newIdent.Schema, newIdent.Name) {
-				return nil, 0, infoschema.ErrTableExists.GenWithStackByArgs(newIdent)
-			}
-			return nil, 0, errFileNotFound.GenWithStackByArgs(oldIdent.Schema, oldIdent.Name)
+	if tableNotExists(is, oldIdent, tables) {
+		if isAlterTable {
+			return nil, 0, infoschema.ErrTableNotExists.GenWithStackByArgs(oldIdent.Schema, oldIdent.Name)
 		}
+		if tableExists(is, newIdent, tables) {
+			return nil, 0, infoschema.ErrTableExists.GenWithStackByArgs(newIdent)
+		}
+		return nil, 0, errFileNotFound.GenWithStackByArgs(oldIdent.Schema, oldIdent.Name)
+	}
+	if !ok {
+		oldTbl, _ := is.TableByName(oldIdent.Schema, oldIdent.Name)
 		oldTableID = oldTbl.Meta().ID
 	}
 	if isAlterTable && newIdent.Schema.L == oldIdent.Schema.L && newIdent.Name.L == oldIdent.Name.L {
@@ -4409,17 +4405,35 @@ func extractTblInfos(is infoschema.InfoSchema, oldIdent, newIdent ast.Ident, isA
 			168,
 			fmt.Sprintf("Database `%s` doesn't exist", newIdent.Schema))
 	}
-
-	newTableID, ok := tables[newIdentKey]
-	if (ok && newTableID != tableNotExist) || (!ok && is.TableExists(newIdent.Schema, newIdent.Name)) {
+	if tableExists(is, newIdent, tables) {
 		return nil, 0, infoschema.ErrTableExists.GenWithStackByArgs(newIdent)
 	}
 	if err := checkTooLongTable(newIdent.Name); err != nil {
 		return nil, 0, errors.Trace(err)
 	}
 	tables[oldIdentKey] = tableNotExist
+	newIdentKey := getIdentKey(newIdent)
 	tables[newIdentKey] = oldTableID
 	return []*model.DBInfo{oldSchema, newSchema}, oldTableID, nil
+}
+
+func tableExists(is infoschema.InfoSchema, ident ast.Ident, tables map[string]int64) bool {
+	identKey := getIdentKey(ident)
+	tableID, ok := tables[identKey]
+	if (ok && tableID != tableNotExist) || (!ok && is.TableExists(ident.Schema, ident.Name)) {
+		return true
+	}
+	return false
+}
+
+func tableNotExists(is infoschema.InfoSchema, ident ast.Ident, tables map[string]int64) bool {
+	identKey := getIdentKey(ident)
+	tableID, ok := tables[identKey]
+	_, err := is.TableByName(ident.Schema, ident.Name)
+	if (ok && tableID == tableNotExist) || (!ok && err != nil) {
+		return true
+	}
+	return false
 }
 
 func getIdentKey(ident ast.Ident) string {
