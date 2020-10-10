@@ -4378,9 +4378,7 @@ func extractTblInfos(is infoschema.InfoSchema, oldIdent, newIdent ast.Ident, isA
 		}
 		return nil, 0, errFileNotFound.GenWithStackByArgs(oldIdent.Schema, oldIdent.Name)
 	}
-	oldIdentKey := getIdentKey(oldIdent)
-	oldTableID, ok := tables[oldIdentKey]
-	if tableNotExists(is, oldIdent, tables) {
+	if !tableExists(is, oldIdent, tables) {
 		if isAlterTable {
 			return nil, 0, infoschema.ErrTableNotExists.GenWithStackByArgs(oldIdent.Schema, oldIdent.Name)
 		}
@@ -4388,10 +4386,6 @@ func extractTblInfos(is infoschema.InfoSchema, oldIdent, newIdent ast.Ident, isA
 			return nil, 0, infoschema.ErrTableExists.GenWithStackByArgs(newIdent)
 		}
 		return nil, 0, errFileNotFound.GenWithStackByArgs(oldIdent.Schema, oldIdent.Name)
-	}
-	if !ok {
-		oldTbl, _ := is.TableByName(oldIdent.Schema, oldIdent.Name)
-		oldTableID = oldTbl.Meta().ID
 	}
 	if isAlterTable && newIdent.Schema.L == oldIdent.Schema.L && newIdent.Name.L == oldIdent.Name.L {
 		//oldIdent is equal to newIdent, do nothing
@@ -4411,6 +4405,8 @@ func extractTblInfos(is infoschema.InfoSchema, oldIdent, newIdent ast.Ident, isA
 	if err := checkTooLongTable(newIdent.Name); err != nil {
 		return nil, 0, errors.Trace(err)
 	}
+	oldTableID := getTableID(is, oldIdent, tables)
+	oldIdentKey := getIdentKey(oldIdent)
 	tables[oldIdentKey] = tableNotExist
 	newIdentKey := getIdentKey(newIdent)
 	tables[newIdentKey] = oldTableID
@@ -4426,14 +4422,17 @@ func tableExists(is infoschema.InfoSchema, ident ast.Ident, tables map[string]in
 	return false
 }
 
-func tableNotExists(is infoschema.InfoSchema, ident ast.Ident, tables map[string]int64) bool {
+func getTableID(is infoschema.InfoSchema, ident ast.Ident, tables map[string]int64) int64 {
 	identKey := getIdentKey(ident)
 	tableID, ok := tables[identKey]
-	_, err := is.TableByName(ident.Schema, ident.Name)
-	if (ok && tableID == tableNotExist) || (!ok && err != nil) {
-		return true
+	if !ok {
+		oldTbl, err := is.TableByName(ident.Schema, ident.Name)
+		if err != nil {
+			return tableNotExist
+		}
+		tableID = oldTbl.Meta().ID
 	}
-	return false
+	return tableID
 }
 
 func getIdentKey(ident ast.Ident) string {
