@@ -35,6 +35,7 @@ token-limit = 1000
 mem-quota-query = 1073741824
 
 # The maximum memory limitation for statistics. Default: 32GB
+# mem-quota-statistics should be greater than 32GB
 mem-quota-statistics = 34359738368
 
 # The maximum number available of a NLJ cache for a single SQL statement. Default: 20MB
