@@ -57,7 +57,7 @@ SELECT v FROM (SELECT i AS k, j AS v FROM t1) WHERE k < 100
 
 We will add some rules to rewrite the plan trees, similar to `subquery optimization` [[2]](https://pingcap.com/blog/2016-12-07-Subquery-Optimization-in-TiDB/).
 
-_(`Merge` is also called `Inline` is some other DBMS [[4]](http://www.vldb.org/pvldb/vol8/p1704-elhelw.pdf)[[11]](https://github.com/cockroachdb/cockroach/blob/master/pkg/sql/opt/norm/with_funcs.go#L18))_
+_(`Merge` is also called `Inline` is some other DBMS [[4]](http://www.vldb.org/pvldb/vol8/p1704-elhelw.pdf)[[11]](https://github.com/cockroachdb/cockroach/blob/fef86947262bd1691ec771193535d62b892d007a/pkg/sql/opt/norm/with_funcs.go#L18))_
 
 #### Materialization
 A CTE is first executed and stored result temporarily during the statement execution.
@@ -121,9 +121,9 @@ MySQL using these two strategies: 1) Merge the derived table into the outer quer
   * Contains subqueries in the SELECT list that depend on columns from itself, because MySQL assumes that user wants subquery to be materialized.
 
 #### MariaDB
-MariaDB using `Materialization` as basic algorithm. Similar to MySQL, to optimize performance, MariaDB will try to use `Merge` strategy, and fall back to materialization due to side-effect [[18]](https://github.com/MariaDB/server/blob/5b8ab1934a10966336e66751bc13fc66923b02f6/sql/table.cc#L9224).
+MariaDB using `Materialization` as basic algorithm. Similar to MySQL, to optimize performance, MariaDB will always try to use `Merge` strategy, and fall back to materialization due to side-effect [[18]](https://github.com/MariaDB/server/blob/5b8ab1934a10966336e66751bc13fc66923b02f6/sql/table.cc#L9224).
 
-Besides, MariaDB supports "Condition Pushdown" [[5]](http://ceur-ws.org/Vol-1864/paper_6.pdf)) and "Lateral Derived Optimization" [[18]](https://www.slideshare.net/SergeyPetrunya/mariadb-103-optimizer-where-does-it-stand)[[19]](https://mariadb.com/kb/en/lateral-derived-optimization/)
+Besides, MariaDB supports "Condition Pushdown" [[5]](http://ceur-ws.org/Vol-1864/paper_6.pdf) and "Lateral Derived Optimization" [[18]](https://www.slideshare.net/SergeyPetrunya/mariadb-103-optimizer-where-does-it-stand)[[19]](https://mariadb.com/kb/en/lateral-derived-optimization/)
 
 #### Greenplum
 Greenplum also using `Merge` and `Materialization`, and utilize rules and cost-bases algorithm to optimize execution plan. Moreover, Greenplum introduces a producer-consumer model to implement `Materialization` [[4]](http://www.vldb.org/pvldb/vol8/p1704-elhelw.pdf).
@@ -155,10 +155,9 @@ CockroachDB uses `Materialization` strategy by default, but chooses `Merge` stra
 6. [MySQL 8.0 Reference Manual, 13.2.15 WITH (Common Table Expressions)](https://dev.mysql.com/doc/refman/8.0/en/with.html)
 7. [Common Table Expression - WITH Statement](https://www.researchgate.net/publication/242270488_Common_Table_Expression_-_WITH_Statement)
 8. [Introduction to MySQL 8.0 Recursive Common Table Expression, Part 2](https://www.percona.com/blog/2020/02/13/introduction-to-mysql-8-0-recursive-common-table-expression-part-2/)
-9. [Allow user control of CTE materialization, and change the default behavior.
-](https://git.postgresql.org/gitweb/?p=postgresql.git;a=commitdiff;h=608b167f9f9c4553c35bb1ec0eab9ddae643989b)
+9. [Postgresql: Allow user control of CTE materialization, and change the default behavior](https://git.postgresql.org/gitweb/?p=postgresql.git;a=commitdiff;h=608b167f9f9c4553c35bb1ec0eab9ddae643989b)
 10. [WITH Queries: Present & Future](https://info.crunchydata.com/blog/with-queries-present-future-common-table-expressions)
-11. [CockroachDB codes, with_funcs.go:CanInlineWith](https://github.com/cockroachdb/cockroach/blob/master/pkg/sql/opt/norm/with_funcs.go#L18)
+11. [CockroachDB codes, with_funcs.go:CanInlineWith](https://github.com/cockroachdb/cockroach/blob/fef86947262bd1691ec771193535d62b892d007a/pkg/sql/opt/norm/with_funcs.go#L18)
 12. [CockroachDB: opt: Support AS MATERIALIZED option in CTEs](https://github.com/cockroachdb/cockroach/issues/45863)
 13. [MySQL 8.0 Reference Manual, 8.2.2.2 Optimizing Subqueries with Materialization](https://dev.mysql.com/doc/refman/8.0/en/subquery-materialization.html)
 14. [MySQL WL#883: Non-recursive WITH clause (Common Table Expression)](https://dev.mysql.com/worklog/task/?id=883)
