@@ -487,7 +487,7 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 		indexInfo.ID = allocateIndexID(tblInfo)
 		tblInfo.Indices = append(tblInfo.Indices, indexInfo)
 
-		if err = checkAddIndexTooManyIndexes(len(tblInfo.Indices)); err != nil {
+		if err = checkTooManyIndexes(tblInfo.Indices); err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
@@ -1252,11 +1252,4 @@ func findIndexesByColName(indexes []*model.IndexInfo, colName string) ([]*model.
 		}
 	}
 	return idxInfos, offsets
-}
-
-func checkAddIndexTooManyIndexes(idxNum int) error {
-	if uint32(idxNum) > atomic.LoadUint32(&TableIndexCountLimit) {
-		return errTooManyKeys.GenWithStackByArgs(TableIndexCountLimit)
-	}
-	return nil
 }
