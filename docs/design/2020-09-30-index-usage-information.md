@@ -2,7 +2,7 @@
 
 - Author(s):     [rebelice](https://github.com/rebelice)
 - Last updated:  Sep. 30, 2020
-- Discussion at: 
+- Discussion at: N/A
 
 ## Abstract
 
@@ -11,24 +11,34 @@ This document describes the design of recording index usage information.
 ## Background
 
 There may be unused indexes in the database. In addition, modifying database tables, indexes, and query statements may cause some indexes to not be used in the future. Users may want to clear these long-unused indexes to relieve storage and performance pressure.
-source: [issue/14998](https://github.com/pingcap/tidb/issues/14998) [issue/14607](https://github.com/pingcap/tidb/issues/14607) [issue/17508](https://github.com/pingcap/tidb/issues/17508) [asktug](https://asktug.com/t/topic/34614/12)
+
+Related issues:
+
+- https://github.com/pingcap/tidb/issues/14998
+- https://github.com/pingcap/tidb/issues/14607
+- https://github.com/pingcap/tidb/issues/17508
+- https://asktug.com/t/topic/34614/12
 
 ## Proposal
 
 ### SCHEMA_INDEX_USAGE
 
 Design system tables to record index usage information. The system table is designed as follows:
-1. The system table is located in mysql database and is named SCHEMA_INDEX_USAGE
-2. Columns of SCHEMA_INDEX_USAGE
+
+1. The system table is located in `mysql` database and is named `SCHEMA_INDEX_USAGE`.
+2. Columns of `SCHEMA_INDEX_USAGE`:
+
 | Column name  | Data type | Description |
-|  ---------   | --------  | ----------- |
+|--------------|-----------|-------------|
 | TABLE_SCHEMA | varchar   | Name of the database on which the table or view is defined.|
 | TABLE_NAME   | varchar   | Name of the table or view on which the index is defined.|
 | INDEX_NAME   | varchar   | Name of the index.|
 | QUERY_COUNT  | longlong  | Number of the SQL using this index.|
 | ROWS_SELECTED| longlong  | Number of rows read from the index. We can check the selectivity of the index through `ROWS_READ` / `QUERY_COUNT`.|
 | LAST_USED_AT | timestamp | The last time of the SQL using this index.|
-3. User interface：`select * from mysql.SCHEMA_INDEX_USAGE`
+
+
+3. Typical usage: `select * from mysql.SCHEMA_INDEX_USAGE`.
 
 #### Table creation: 
 
@@ -59,26 +69,26 @@ Statistics update is divided into statistics and persistence of index usage info
 
 ### SCHEMA_UNUSED_INDEXES
 
-Due to MySQL compatibility, add the system table schema_unused_indexes.
-1. Create a view SCHEMA_UNUSED_INDEXES on table SCHEMA_INDEX_USAGE. And the condition is `QUERY_COUNT = 0`
-2. Columns of it
+Due to MySQL compatibility, add the system table `SCHEMA_UNUSED_INDEXES`.
+
+1. Create a view `SCHEMA_UNUSED_INDEXES` on table `SCHEMA_INDEX_USAGE`.
+2. Columns of it:
 
 | Column name   | Data type | Description           |
 | -----------   | --------- | --------------------- |
 | object_schema | varchar   | The schema name.      |
 | object_name   | varchar   | The table name.       |
 | index_name    | varchar   | The unused index name.|
-The data in this view is based on SCHEMA_INDEX_USAGE. 
 
 ### FLUSH SCHEMA_INDEX_USAGE
 
 #### User story
 
-Users may have just completed a deployment which changes query patterns such that they expect there will be unused indexes. They can potentially look at the LAST_USED_AT, but sometimes flushing is more desired.
+Users may have just completed a deployment which changes query patterns such that they expect there will be unused indexes. They can potentially look at the `LAST_USED_AT` column, but sometimes flushing is more desired.
 
-similar usage: FLUSH INDEX_STATISTICS from [https://www.percona.com/doc/percona-server/LATEST/diagnostics/user_stats.html](https://www.percona.com/doc/percona-server/LATEST/diagnostics/user_stats.html)
+Similar usage: `FLUSH INDEX_STATISTICS` from https://www.percona.com/doc/percona-server/LATEST/diagnostics/user_stats.html.
 
-User interface: `flush SCHEMA_INDEX_USAGE`
+SQL Syntax: `FLUSH SCHEMA_INDEX_USAGE`
 Users can use this to initialize SCHEMA_INDEX_USAGE as
 ```
 QUERY_COUNT = 0
@@ -147,4 +157,3 @@ My implementation plan is in [issues/19209](https://github.com/pingcap/tidb/issu
 The test method is similar to general statistics.
 
 ## Open issues (if applicable)
-
