@@ -239,7 +239,7 @@ func (a *ExecStmt) OriginText() string {
 	return a.Text
 }
 
-/// GetHints return the SQL plan hints as a string.
+// GetHints return the SQL plan hints as a string.
 func (a *ExecStmt) GetHints() string {
 	return hint.RestoreOptimizerHints(plannercore.GenHintsFromPhysicalPlan(a.Plan))
 }
