@@ -871,7 +871,7 @@ var MySQLErrName = map[uint16]string{
 	ErrDataTruncatedFunctionalIndex:                          "Data truncated for functional index '%s' at row %d",
 	ErrDataOutOfRangeFunctionalIndex:                         "Value is out of range for functional index '%s' at row %d",
 	ErrFunctionalIndexOnJSONOrGeometryFunction:               "Cannot create a functional index on a function that returns a JSON or GEOMETRY value",
-	ErrFunctionalIndexRefAutoIncrement:                       "Functional index '%s' cannot refer to an auto-increment column",
+	ErrFunctionalIndexRefAutoIncrement:                       "Expression index '%s' cannot refer to an auto-increment column",
 	ErrCannotDropColumnFunctionalIndex:                       "Cannot drop column '%s' because it is used by a functional index. In order to drop the column, you must remove the functional index",
 	ErrFunctionalIndexPrimaryKey:                             "The primary key cannot be a functional index",
 	ErrFunctionalIndexOnLob:                                  "Cannot create a functional index on an expression that returns a BLOB or TEXT. Please consider using CAST",
