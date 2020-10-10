@@ -251,3 +251,19 @@ func (s *testSuite5) TestIndexJoinEnumSetIssue19233(c *C) {
 		}
 	}
 }
+
+func (s *testSuite5) TestIssue19411(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1  (c_int int, primary key (c_int))")
+	tk.MustExec("create table t2  (c_int int, primary key (c_int)) partition by hash (c_int) partitions 4")
+	tk.MustExec("insert into t1 values (1)")
+	tk.MustExec("insert into t2 values (1)")
+	tk.MustExec("begin")
+	tk.MustExec("insert into t1 values (2)")
+	tk.MustExec("insert into t2 values (2)")
+	tk.MustQuery("select /*+ INL_JOIN(t1,t2) */ * from t1 left join t2 on t1.c_int = t2.c_int").Check(testkit.Rows(
+		"1 1",
+		"2 2"))
+	tk.MustExec("commit")
+}

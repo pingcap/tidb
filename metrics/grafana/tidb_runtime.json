@@ -142,7 +142,7 @@
               "refId": "A"
             },
             {
-              "expr": "go_memstats_next_gc_bytes{instance=~\"$instance\"} / 2",
+              "expr": "go_memstats_next_gc_bytes{instance=~\"$instance\"} / (1 + tidb_server_gogc{instance=~\"$instance\"} / 100)",
               "format": "time_series",
               "hide": false,
               "intervalFactor": 1,
@@ -150,7 +150,7 @@
               "refId": "H"
             },
             {
-              "expr": "go_memstats_heap_alloc_bytes{instance=~\"$instance\"} - go_memstats_next_gc_bytes{instance=~\"$instance\"} / 2",
+              "expr": "go_memstats_heap_alloc_bytes{instance=~\"$instance\"} - go_memstats_next_gc_bytes{instance=~\"$instance\"} / (1 + tidb_server_gogc{instance=~\"$instance\"} / 100)",
               "format": "time_series",
               "hide": false,
               "intervalFactor": 1,
@@ -606,7 +606,7 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "idelta((go_memstats_gc_cpu_fraction{instance=~\"$instance\"} * (go_memstats_last_gc_time_seconds{instance=~\"$instance\"} - process_start_time_seconds{instance=~\"$instance\"}) * tidb_server_maxprocs{instance=~\"$instance\"})[30s:]) / idelta(go_gc_duration_seconds_count{instance=~\"$instance\"}[30s])",
+              "expr": "(idelta((go_memstats_gc_cpu_fraction{instance=~\"$instance\"} * (go_memstats_last_gc_time_seconds{instance=~\"$instance\"} - process_start_time_seconds{instance=~\"$instance\"}) * tidb_server_maxprocs{instance=~\"$instance\"})[30s:]) / idelta(go_gc_duration_seconds_count{instance=~\"$instance\"}[30s])) > 0",
               "format": "time_series",
               "hide": false,
               "intervalFactor": 1,
@@ -1012,7 +1012,7 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "idelta(go_gc_duration_seconds_count{instance=~\"$instance\"}[30s])",
+              "expr": "idelta(go_gc_duration_seconds_count{instance=~\"$instance\"}[30s]) > 0",
               "format": "time_series",
               "intervalFactor": 1,
               "legendFormat": "count",
@@ -1098,7 +1098,7 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "histogram_quantile(0.99, sum(rate(tidb_tikvclient_request_seconds_bucket{type!=\"GC\",instance=~\"$instance\"}[30s])) by (le, store))",
+              "expr": "histogram_quantile(0.99, sum(rate(tidb_tikvclient_request_seconds_bucket{store!=\"0\",instance=~\"$instance\"}[30s])) by (le, store))",
               "format": "time_series",
               "intervalFactor": 1,
               "legendFormat": "tidb-to-store{{store}}",

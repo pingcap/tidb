@@ -81,8 +81,12 @@ func GetDDLInfo(txn kv.Transaction) (*DDLInfo, error) {
 	if err != nil {
 		return info, nil
 	}
-	info.ReorgHandle, _, _, err = t.GetDDLReorgHandle(addIdxJob, tbl.IsCommonHandle)
+
+	_, info.ReorgHandle, _, _, err = t.GetDDLReorgHandle(addIdxJob, tbl.IsCommonHandle)
 	if err != nil {
+		if meta.ErrDDLReorgElementNotExist.Equal(err) {
+			return info, nil
+		}
 		return nil, errors.Trace(err)
 	}
 
@@ -111,8 +115,7 @@ func IsJobRollbackable(job *model.Job) bool {
 		}
 	case model.ActionAddTablePartition:
 		return job.SchemaState == model.StateNone || job.SchemaState == model.StateReplicaOnly
-	case model.ActionDropColumn, model.ActionDropColumns, model.ActionModifyColumn,
-		model.ActionDropTablePartition,
+	case model.ActionDropColumn, model.ActionDropColumns, model.ActionDropTablePartition,
 		model.ActionRebaseAutoID, model.ActionShardRowID,
 		model.ActionTruncateTable, model.ActionAddForeignKey,
 		model.ActionDropForeignKey, model.ActionRenameTable,
@@ -360,7 +363,7 @@ func CheckRecordAndIndex(sessCtx sessionctx.Context, txn kv.Transaction, t table
 		for i, val := range vals1 {
 			col := cols[i]
 			if val.IsNull() {
-				if mysql.HasNotNullFlag(col.Flag) && col.ToInfo().OriginDefaultValue == nil {
+				if mysql.HasNotNullFlag(col.Flag) && col.ToInfo().GetOriginDefaultValue() == nil {
 					return false, errors.Errorf("Column %v define as not null, but can't find the value where handle is %v", col.Name, h1)
 				}
 				// NULL value is regarded as its default value.
@@ -397,14 +400,14 @@ func CheckRecordAndIndex(sessCtx sessionctx.Context, txn kv.Transaction, t table
 
 func makeRowDecoder(t table.Table, sctx sessionctx.Context) (*decoder.RowDecoder, error) {
 	dbName := model.NewCIStr(sctx.GetSessionVars().CurrentDB)
-	exprCols, _, err := expression.ColumnInfos2ColumnsAndNames(sctx, dbName, t.Meta().Name, t.Meta().Columns, t.Meta())
+	exprCols, _, err := expression.ColumnInfos2ColumnsAndNames(sctx, dbName, t.Meta().Name, t.Meta().Cols(), t.Meta())
 	if err != nil {
 		return nil, err
 	}
 	mockSchema := expression.NewSchema(exprCols...)
-	decodeColsMap := decoder.BuildFullDecodeColMap(t, mockSchema)
+	decodeColsMap := decoder.BuildFullDecodeColMap(t.Cols(), mockSchema)
 
-	return decoder.NewRowDecoder(t, decodeColsMap), nil
+	return decoder.NewRowDecoder(t, t.Cols(), decodeColsMap), nil
 }
 
 func iterRecords(sessCtx sessionctx.Context, retriever kv.Retriever, t table.Table, startKey kv.Key, cols []*table.Column, fn table.RecordIterFunc) error {

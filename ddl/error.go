@@ -25,7 +25,7 @@ var (
 	errInvalidWorker = terror.ClassDDL.New(mysql.ErrInvalidDDLWorker, mysql.MySQLErrName[mysql.ErrInvalidDDLWorker])
 	// errNotOwner means we are not owner and can't handle DDL jobs.
 	errNotOwner              = terror.ClassDDL.New(mysql.ErrNotOwner, mysql.MySQLErrName[mysql.ErrNotOwner])
-	errCantDecodeIndex       = terror.ClassDDL.New(mysql.ErrCantDecodeIndex, mysql.MySQLErrName[mysql.ErrCantDecodeIndex])
+	errCantDecodeRecord      = terror.ClassDDL.New(mysql.ErrCantDecodeRecord, mysql.MySQLErrName[mysql.ErrCantDecodeRecord])
 	errInvalidDDLJob         = terror.ClassDDL.New(mysql.ErrInvalidDDLJob, mysql.MySQLErrName[mysql.ErrInvalidDDLJob])
 	errCancelledDDLJob       = terror.ClassDDL.New(mysql.ErrCancelledDDLJob, mysql.MySQLErrName[mysql.ErrCancelledDDLJob])
 	errFileNotFound          = terror.ClassDDL.New(mysql.ErrFileNotFound, mysql.MySQLErrName[mysql.ErrFileNotFound])
@@ -64,6 +64,8 @@ var (
 	errOnlyOnRangeListPartition = terror.ClassDDL.New(mysql.ErrOnlyOnRangeListPartition, mysql.MySQLErrName[mysql.ErrOnlyOnRangeListPartition])
 	// errWrongKeyColumn is for table column cannot be indexed.
 	errWrongKeyColumn = terror.ClassDDL.New(mysql.ErrWrongKeyColumn, mysql.MySQLErrName[mysql.ErrWrongKeyColumn])
+	// errWrongKeyColumnFunctionalIndex is for expression cannot be indexed.
+	errWrongKeyColumnFunctionalIndex = terror.ClassDDL.New(mysql.ErrWrongKeyColumnFunctionalIndex, mysql.MySQLErrName[mysql.ErrWrongKeyColumnFunctionalIndex])
 	// errWrongFKOptionForGeneratedColumn is for wrong foreign key reference option on generated columns.
 	errWrongFKOptionForGeneratedColumn = terror.ClassDDL.New(mysql.ErrWrongFKOptionForGeneratedColumn, mysql.MySQLErrName[mysql.ErrWrongFKOptionForGeneratedColumn])
 	// ErrUnsupportedOnGeneratedColumn is for unsupported actions on generated columns.
@@ -81,6 +83,8 @@ var (
 	ErrInvalidDefaultValue = terror.ClassDDL.New(mysql.ErrInvalidDefault, mysql.MySQLErrName[mysql.ErrInvalidDefault])
 	// ErrGeneratedColumnRefAutoInc forbids to refer generated columns to auto-increment columns .
 	ErrGeneratedColumnRefAutoInc = terror.ClassDDL.New(mysql.ErrGeneratedColumnRefAutoInc, mysql.MySQLErrName[mysql.ErrGeneratedColumnRefAutoInc])
+	// ErrExpressionIndexCanNotRefer forbids to refer expression index to auto-increment column.
+	ErrExpressionIndexCanNotRefer = terror.ClassDDL.New(mysql.ErrFunctionalIndexRefAutoIncrement, mysql.MySQLErrName[mysql.ErrFunctionalIndexRefAutoIncrement])
 	// ErrUnsupportedAddPartition returns for does not support add partitions.
 	ErrUnsupportedAddPartition = terror.ClassDDL.New(mysql.ErrUnsupportedDDLOperation, fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation], "add partitions"))
 	// ErrUnsupportedCoalescePartition returns for does not support coalesce partitions.
@@ -94,11 +98,17 @@ var (
 	errUnsupportedExchangePartition   = terror.ClassDDL.New(mysql.ErrUnsupportedDDLOperation, fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation], "exchange partition"))
 	// ErrGeneratedColumnFunctionIsNotAllowed returns for unsupported functions for generated columns.
 	ErrGeneratedColumnFunctionIsNotAllowed = terror.ClassDDL.New(mysql.ErrGeneratedColumnFunctionIsNotAllowed, mysql.MySQLErrName[mysql.ErrGeneratedColumnFunctionIsNotAllowed])
+	// ErrGeneratedColumnRowValueIsNotAllowed returns for generated columns referring to row values.
+	ErrGeneratedColumnRowValueIsNotAllowed = terror.ClassDDL.New(mysql.ErrGeneratedColumnRowValueIsNotAllowed, mysql.MySQLErrName[mysql.ErrGeneratedColumnRowValueIsNotAllowed])
 	// ErrUnsupportedPartitionByRangeColumns returns for does unsupported partition by range columns.
 	ErrUnsupportedPartitionByRangeColumns = terror.ClassDDL.New(mysql.ErrUnsupportedDDLOperation, fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation], "partition by range columns"))
-	errUnsupportedCreatePartition         = terror.ClassDDL.New(mysql.ErrUnsupportedDDLOperation, fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation], "partition type, treat as normal table"))
-	errTablePartitionDisabled             = terror.ClassDDL.New(mysql.ErrUnsupportedDDLOperation, "Partitions are ignored because Table Partition is disabled, please set 'tidb_enable_table_partition' if you need to need to enable it")
-	errUnsupportedIndexType               = terror.ClassDDL.New(mysql.ErrUnsupportedDDLOperation, fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation], "index type"))
+	// ErrFunctionalIndexFunctionIsNotAllowed returns for unsupported functions for functional index.
+	ErrFunctionalIndexFunctionIsNotAllowed = terror.ClassDDL.New(mysql.ErrFunctionalIndexFunctionIsNotAllowed, mysql.MySQLErrName[mysql.ErrFunctionalIndexFunctionIsNotAllowed])
+	// ErrFunctionalIndexRowValueIsNotAllowed returns for functional index referring to row values.
+	ErrFunctionalIndexRowValueIsNotAllowed = terror.ClassDDL.New(mysql.ErrFunctionalIndexRowValueIsNotAllowed, mysql.MySQLErrName[mysql.ErrFunctionalIndexRowValueIsNotAllowed])
+	errUnsupportedCreatePartition          = terror.ClassDDL.New(mysql.ErrUnsupportedDDLOperation, fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation], "partition type, treat as normal table"))
+	errTablePartitionDisabled              = terror.ClassDDL.New(mysql.ErrUnsupportedDDLOperation, "Partitions are ignored because Table Partition is disabled, please set 'tidb_enable_table_partition' if you need to need to enable it")
+	errUnsupportedIndexType                = terror.ClassDDL.New(mysql.ErrUnsupportedDDLOperation, fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation], "index type"))
 
 	// ErrDupKeyName returns for duplicated key name
 	ErrDupKeyName = terror.ClassDDL.New(mysql.ErrDupKeyName, mysql.MySQLErrName[mysql.ErrDupKeyName])
@@ -194,8 +204,10 @@ var (
 	ErrFunctionalIndexOnField = terror.ClassDDL.New(mysql.ErrFunctionalIndexOnField, mysql.MySQLErrName[mysql.ErrFunctionalIndexOnField])
 	// ErrInvalidAutoRandom returns when auto_random is used incorrectly.
 	ErrInvalidAutoRandom = terror.ClassDDL.New(mysql.ErrInvalidAutoRandom, mysql.MySQLErrName[mysql.ErrInvalidAutoRandom])
-	// ErrUnsupportedConstraintCheck returns when use ADD CONSTRAINT CHECK
+	// ErrUnsupportedConstraintCheck returns when use ADD CONSTRAINT CHECK.
 	ErrUnsupportedConstraintCheck = terror.ClassDDL.New(mysql.ErrUnsupportedConstraintCheck, mysql.MySQLErrName[mysql.ErrUnsupportedConstraintCheck])
+	// ErrDerivedMustHaveAlias returns when a sub select statement does not have a table alias.
+	ErrDerivedMustHaveAlias = terror.ClassDDL.New(mysql.ErrDerivedMustHaveAlias, mysql.MySQLErrName[mysql.ErrDerivedMustHaveAlias])
 
 	// ErrSequenceRunOut returns when the sequence has been run out.
 	ErrSequenceRunOut = terror.ClassDDL.New(mysql.ErrSequenceRunOut, mysql.MySQLErrName[mysql.ErrSequenceRunOut])

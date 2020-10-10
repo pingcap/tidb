@@ -16,6 +16,7 @@ package executor
 import (
 	"context"
 	"fmt"
+	"runtime/trace"
 
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -53,6 +54,7 @@ type UpdateExec struct {
 }
 
 func (e *UpdateExec) exec(ctx context.Context, schema *expression.Schema, row, newData []types.Datum) error {
+	defer trace.StartRegion(ctx, "UpdateExec").End()
 	assignFlag, err := plannercore.GetUpdateColumns(e.ctx, e.OrderedList, schema.Len())
 	if err != nil {
 		return err
@@ -301,7 +303,6 @@ func (e *UpdateExec) collectRuntimeStatsEnabled() bool {
 		if e.stats == nil {
 			snapshotStats := &tikv.SnapshotRuntimeStats{}
 			e.stats = &runtimeStatsWithSnapshot{
-				BasicRuntimeStats:    e.runtimeStats,
 				SnapshotRuntimeStats: snapshotStats,
 			}
 			e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)

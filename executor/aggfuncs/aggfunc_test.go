@@ -15,22 +15,34 @@ package aggfuncs_test
 
 import (
 	"fmt"
+	"strconv"
 	"testing"
 	"time"
+	"unsafe"
 
+	"github.com/dgryski/go-farm"
 	. "github.com/pingcap/check"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor/aggfuncs"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/planner/util"
+	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/store/mockstore/cluster"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/pingcap/tidb/util/set"
 )
 
 var _ = Suite(&testSuite{})
@@ -43,13 +55,28 @@ func TestT(t *testing.T) {
 
 type testSuite struct {
 	*parser.Parser
-	ctx sessionctx.Context
+	ctx     sessionctx.Context
+	cluster cluster.Cluster
+	store   kv.Storage
+	domain  *domain.Domain
 }
 
 func (s *testSuite) SetUpSuite(c *C) {
 	s.Parser = parser.New()
 	s.ctx = mock.NewContext()
 	s.ctx.GetSessionVars().StmtCtx.TimeZone = time.Local
+	store, err := mockstore.NewMockStore(
+		mockstore.WithClusterInspector(func(c cluster.Cluster) {
+			mockstore.BootstrapWithSingleStore(c)
+			s.cluster = c
+		}),
+	)
+	c.Assert(err, IsNil)
+	s.store = store
+	d, err := session.BootstrapSession(s.store)
+	c.Assert(err, IsNil)
+	d.SetStatsUpdating(true)
+	s.domain = d
 }
 
 func (s *testSuite) TearDownSuite(c *C) {
@@ -124,6 +151,207 @@ func (p *multiArgsAggTest) messUpChunk(c *chunk.Chunk) {
 			}
 		}
 	}
+}
+
+type updateMemDeltaGens func(*chunk.Chunk, *types.FieldType) (memDeltas []int64, err error)
+
+func defaultUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) (memDeltas []int64, err error) {
+	memDeltas = make([]int64, 0)
+	for i := 0; i < srcChk.NumRows(); i++ {
+		memDeltas = append(memDeltas, int64(0))
+	}
+	return memDeltas, nil
+}
+
+func approxCountDistinctUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) (memDeltas []int64, err error) {
+	memDeltas = make([]int64, 0)
+
+	buf := make([]byte, 8)
+	p := aggfuncs.NewPartialResult4ApproxCountDistinct()
+	for i := 0; i < srcChk.NumRows(); i++ {
+		row := srcChk.GetRow(i)
+		if row.IsNull(0) {
+			memDeltas = append(memDeltas, int64(0))
+			continue
+		}
+		oldMemUsage := p.MemUsage()
+		switch dataType.Tp {
+		case mysql.TypeLonglong:
+			val := row.GetInt64(0)
+			*(*int64)(unsafe.Pointer(&buf[0])) = val
+		case mysql.TypeString:
+			val := row.GetString(0)
+			buf = codec.EncodeCompactBytes(buf, hack.Slice(val))
+		default:
+			return memDeltas, errors.Errorf("unsupported type - %v", dataType.Tp)
+		}
+
+		x := farm.Hash64(buf)
+		p.InsertHash64(x)
+		newMemUsage := p.MemUsage()
+		memDelta := newMemUsage - oldMemUsage
+		memDeltas = append(memDeltas, memDelta)
+	}
+	return memDeltas, nil
+}
+
+func distinctUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) (memDeltas []int64, err error) {
+	valSet := set.NewStringSet()
+	memDeltas = make([]int64, 0)
+	for i := 0; i < srcChk.NumRows(); i++ {
+		row := srcChk.GetRow(i)
+		if row.IsNull(0) {
+			memDeltas = append(memDeltas, int64(0))
+			continue
+		}
+		val := ""
+		memDelta := int64(0)
+		switch dataType.Tp {
+		case mysql.TypeLonglong:
+			val = strconv.FormatInt(row.GetInt64(0), 10)
+			memDelta = aggfuncs.DefInt64Size
+		case mysql.TypeFloat:
+			val = strconv.FormatFloat(float64(row.GetFloat32(0)), 'f', 6, 64)
+			memDelta = aggfuncs.DefFloat64Size
+		case mysql.TypeDouble:
+			val = strconv.FormatFloat(row.GetFloat64(0), 'f', 6, 64)
+			memDelta = aggfuncs.DefFloat64Size
+		case mysql.TypeNewDecimal:
+			decimal := row.GetMyDecimal(0)
+			hash, err := decimal.ToHashKey()
+			if err != nil {
+				memDeltas = append(memDeltas, int64(0))
+				continue
+			}
+			val = string(hack.String(hash))
+			memDelta = int64(len(val))
+		case mysql.TypeString:
+			val = row.GetString(0)
+			memDelta = int64(len(val))
+		case mysql.TypeDate:
+			val = row.GetTime(0).String()
+			// the distinct count aggFunc need 16 bytes to encode the Datetime type.
+			memDelta = 16
+		case mysql.TypeDuration:
+			val = strconv.FormatInt(row.GetInt64(0), 10)
+			memDelta = aggfuncs.DefInt64Size
+		case mysql.TypeJSON:
+			jsonVal := row.GetJSON(0)
+			bytes := make([]byte, 0)
+			bytes = append(bytes, jsonVal.TypeCode)
+			bytes = append(bytes, jsonVal.Value...)
+			val = string(bytes)
+			memDelta = int64(len(val))
+		default:
+			return memDeltas, errors.Errorf("unsupported type - %v", dataType.Tp)
+		}
+		if valSet.Exist(val) {
+			memDeltas = append(memDeltas, int64(0))
+			continue
+		}
+		valSet.Insert(val)
+		memDeltas = append(memDeltas, memDelta)
+	}
+	return memDeltas, nil
+}
+
+func rowMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) (memDeltas []int64, err error) {
+	memDeltas = make([]int64, 0)
+	for i := 0; i < srcChk.NumRows(); i++ {
+		memDelta := aggfuncs.DefRowSize
+		memDeltas = append(memDeltas, memDelta)
+	}
+	return memDeltas, nil
+}
+
+type multiArgsUpdateMemDeltaGens func(*chunk.Chunk, []*types.FieldType) (memDeltas []int64, err error)
+
+func defaultMultiArgsMemDeltaGens(srcChk *chunk.Chunk, dataTypes []*types.FieldType) (memDeltas []int64, err error) {
+	memDeltas = make([]int64, 0)
+	m := make(map[string]bool)
+	for i := 0; i < srcChk.NumRows(); i++ {
+		row := srcChk.GetRow(i)
+		if row.IsNull(0) {
+			memDeltas = append(memDeltas, int64(0))
+			continue
+		}
+		datum := row.GetDatum(0, dataTypes[0])
+		if datum.IsNull() {
+			memDeltas = append(memDeltas, int64(0))
+			continue
+		}
+
+		memDelta := int64(0)
+		key, err := datum.ToString()
+		if err != nil {
+			return memDeltas, errors.Errorf("fail to get key - %s", key)
+		}
+		if _, ok := m[key]; ok {
+			memDeltas = append(memDeltas, int64(0))
+			continue
+		}
+		m[key] = true
+		memDelta += int64(len(key))
+
+		memDelta += aggfuncs.DefInterfaceSize
+		switch dataTypes[1].Tp {
+		case mysql.TypeLonglong:
+			memDelta += aggfuncs.DefUint64Size
+		case mysql.TypeDouble:
+			memDelta += aggfuncs.DefFloat64Size
+		case mysql.TypeString:
+			val := row.GetString(1)
+			memDelta += int64(len(val))
+		case mysql.TypeJSON:
+			val := row.GetJSON(1)
+			// +1 for the memory usage of the TypeCode of json
+			memDelta += int64(len(val.Value) + 1)
+		case mysql.TypeDuration:
+			memDelta += aggfuncs.DefDurationSize
+		case mysql.TypeDate:
+			memDelta += aggfuncs.DefTimeSize
+		case mysql.TypeNewDecimal:
+			memDelta += aggfuncs.DefMyDecimalSize
+		default:
+			return memDeltas, errors.Errorf("unsupported type - %v", dataTypes[1].Tp)
+		}
+		memDeltas = append(memDeltas, memDelta)
+	}
+	return memDeltas, nil
+}
+
+type aggMemTest struct {
+	aggTest            aggTest
+	allocMemDelta      int64
+	updateMemDeltaGens updateMemDeltaGens
+	isDistinct         bool
+}
+
+func buildAggMemTester(funcName string, tp byte, numRows int, allocMemDelta int64, updateMemDeltaGens updateMemDeltaGens, isDistinct bool) aggMemTest {
+	aggTest := buildAggTester(funcName, tp, numRows)
+	pt := aggMemTest{
+		aggTest:            aggTest,
+		allocMemDelta:      allocMemDelta,
+		updateMemDeltaGens: updateMemDeltaGens,
+		isDistinct:         isDistinct,
+	}
+	return pt
+}
+
+type multiArgsAggMemTest struct {
+	multiArgsAggTest            multiArgsAggTest
+	allocMemDelta               int64
+	multiArgsUpdateMemDeltaGens multiArgsUpdateMemDeltaGens
+}
+
+func buildMultiArgsAggMemTester(funcName string, tps []byte, rt byte, numRows int, allocMemDelta int64, updateMemDeltaGens multiArgsUpdateMemDeltaGens, results ...interface{}) multiArgsAggMemTest {
+	multiArgsAggTest := buildMultiArgsAggTester(funcName, tps, rt, numRows, results...)
+	pt := multiArgsAggMemTest{
+		multiArgsAggTest:            multiArgsAggTest,
+		allocMemDelta:               allocMemDelta,
+		multiArgsUpdateMemDeltaGens: updateMemDeltaGens,
+	}
+	return pt
 }
 
 func (s *testSuite) testMergePartialResult(c *C, p aggTest) {
@@ -363,6 +591,9 @@ func (s *testSuite) testAggFunc(c *C, p aggTest) {
 	if p.funcName == ast.AggFuncGroupConcat {
 		args = append(args, &expression.Constant{Value: types.NewStringDatum(" "), RetType: types.NewFieldType(mysql.TypeString)})
 	}
+	if p.funcName == ast.AggFuncApproxPercentile {
+		args = append(args, &expression.Constant{Value: types.NewIntDatum(50), RetType: types.NewFieldType(mysql.TypeLong)})
+	}
 	desc, err := aggregation.NewAggFuncDesc(s.ctx, p.funcName, args, false)
 	c.Assert(err, IsNil)
 	if p.orderBy {
@@ -432,6 +663,36 @@ func (s *testSuite) testAggFunc(c *C, p aggTest) {
 	result, err = dt.CompareDatum(s.ctx.GetSessionVars().StmtCtx, &p.results[0])
 	c.Assert(err, IsNil)
 	c.Assert(result, Equals, 0, Commentf("%v != %v", dt.String(), p.results[0]))
+}
+
+func (s *testSuite) testAggMemFunc(c *C, p aggMemTest) {
+	srcChk := p.aggTest.genSrcChk()
+
+	args := []expression.Expression{&expression.Column{RetType: p.aggTest.dataType, Index: 0}}
+	if p.aggTest.funcName == ast.AggFuncGroupConcat {
+		args = append(args, &expression.Constant{Value: types.NewStringDatum(" "), RetType: types.NewFieldType(mysql.TypeString)})
+	}
+	desc, err := aggregation.NewAggFuncDesc(s.ctx, p.aggTest.funcName, args, p.isDistinct)
+	c.Assert(err, IsNil)
+	if p.aggTest.orderBy {
+		desc.OrderByItems = []*util.ByItems{
+			{Expr: args[0], Desc: true},
+		}
+	}
+	finalFunc := aggfuncs.Build(s.ctx, desc, 0)
+	finalPr, memDelta := finalFunc.AllocPartialResult()
+	c.Assert(memDelta, Equals, p.allocMemDelta)
+
+	updateMemDeltas, err := p.updateMemDeltaGens(srcChk, p.aggTest.dataType)
+	c.Assert(err, IsNil)
+	iter := chunk.NewIterator4Chunk(srcChk)
+	i := 0
+	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
+		memDelta, err := finalFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, finalPr)
+		c.Assert(err, IsNil)
+		c.Assert(memDelta, Equals, updateMemDeltas[i])
+		i++
+	}
 }
 
 func (s *testSuite) testMultiArgsAggFunc(c *C, p multiArgsAggTest) {
@@ -514,6 +775,64 @@ func (s *testSuite) testMultiArgsAggFunc(c *C, p multiArgsAggTest) {
 	result, err = dt.CompareDatum(s.ctx.GetSessionVars().StmtCtx, &p.results[0])
 	c.Assert(err, IsNil)
 	c.Assert(result, Equals, 0)
+}
+
+func (s *testSuite) testMultiArgsAggMemFunc(c *C, p multiArgsAggMemTest) {
+	srcChk := p.multiArgsAggTest.genSrcChk()
+
+	args := make([]expression.Expression, len(p.multiArgsAggTest.dataTypes))
+	for k := 0; k < len(p.multiArgsAggTest.dataTypes); k++ {
+		args[k] = &expression.Column{RetType: p.multiArgsAggTest.dataTypes[k], Index: k}
+	}
+	if p.multiArgsAggTest.funcName == ast.AggFuncGroupConcat {
+		args = append(args, &expression.Constant{Value: types.NewStringDatum(" "), RetType: types.NewFieldType(mysql.TypeString)})
+	}
+
+	desc, err := aggregation.NewAggFuncDesc(s.ctx, p.multiArgsAggTest.funcName, args, false)
+	c.Assert(err, IsNil)
+	if p.multiArgsAggTest.orderBy {
+		desc.OrderByItems = []*util.ByItems{
+			{Expr: args[0], Desc: true},
+		}
+	}
+	finalFunc := aggfuncs.Build(s.ctx, desc, 0)
+	finalPr, memDelta := finalFunc.AllocPartialResult()
+	c.Assert(memDelta, Equals, p.allocMemDelta)
+
+	resultChk := chunk.NewChunkWithCapacity([]*types.FieldType{desc.RetTp}, 1)
+	updateMemDeltas, err := p.multiArgsUpdateMemDeltaGens(srcChk, p.multiArgsAggTest.dataTypes)
+	c.Assert(err, IsNil)
+	iter := chunk.NewIterator4Chunk(srcChk)
+	i := 0
+	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
+		memDelta, _ := finalFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, finalPr)
+		c.Assert(memDelta, Equals, updateMemDeltas[i])
+		i++
+	}
+
+	// test the agg func with distinct
+	desc, err = aggregation.NewAggFuncDesc(s.ctx, p.multiArgsAggTest.funcName, args, true)
+	c.Assert(err, IsNil)
+	if p.multiArgsAggTest.orderBy {
+		desc.OrderByItems = []*util.ByItems{
+			{Expr: args[0], Desc: true},
+		}
+	}
+	finalFunc = aggfuncs.Build(s.ctx, desc, 0)
+	finalPr, memDelta = finalFunc.AllocPartialResult()
+	c.Assert(memDelta, Equals, p.allocMemDelta)
+
+	resultChk.Reset()
+	srcChk = p.multiArgsAggTest.genSrcChk()
+	updateMemDeltas, err = p.multiArgsUpdateMemDeltaGens(srcChk, p.multiArgsAggTest.dataTypes)
+	c.Assert(err, IsNil)
+	iter = chunk.NewIterator4Chunk(srcChk)
+	i = 0
+	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
+		memDelta, _ := finalFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, finalPr)
+		c.Assert(memDelta, Equals, updateMemDeltas[i])
+		i++
+	}
 }
 
 func (s *testSuite) benchmarkAggFunc(b *testing.B, p aggTest) {

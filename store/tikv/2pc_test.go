@@ -47,7 +47,7 @@ var _ = SerialSuites(&testCommitterSuite{})
 func (s *testCommitterSuite) SetUpSuite(c *C) {
 	atomic.StoreUint64(&ManagedLockTTL, 3000) // 3s
 	s.OneByOneSuite.SetUpSuite(c)
-	CommitMaxBackoff = 1000
+	atomic.StoreUint64(&CommitMaxBackoff, 1000)
 }
 
 func (s *testCommitterSuite) SetUpTest(c *C) {
@@ -81,7 +81,7 @@ func (s *testCommitterSuite) SetUpTest(c *C) {
 }
 
 func (s *testCommitterSuite) TearDownSuite(c *C) {
-	CommitMaxBackoff = 20000
+	atomic.StoreUint64(&CommitMaxBackoff, 20000)
 	s.store.Close()
 	s.OneByOneSuite.TearDownSuite(c)
 }
@@ -228,7 +228,7 @@ func (s *testCommitterSuite) TestPrewriteRollback(c *C) {
 	}
 	committer.commitTS, err = s.store.oracle.GetTimestamp(ctx)
 	c.Assert(err, IsNil)
-	err = committer.commitMutations(NewBackofferWithVars(ctx, CommitMaxBackoff, nil), CommitterMutations{keys: [][]byte{[]byte("a")}})
+	err = committer.commitMutations(NewBackofferWithVars(ctx, int(atomic.LoadUint64(&CommitMaxBackoff)), nil), CommitterMutations{keys: [][]byte{[]byte("a")}})
 	c.Assert(err, IsNil)
 
 	txn3 := s.begin(c)
@@ -859,13 +859,9 @@ func (s *testCommitterSuite) TestAcquireFalseTimeoutLock(c *C) {
 
 	// test no wait
 	lockCtx = &kv.LockCtx{ForUpdateTS: txn2.startTS, LockWaitTime: kv.LockNoWait, WaitStartTime: time.Now()}
-	startTime := time.Now()
 	err = txn2.LockKeys(context.Background(), lockCtx, k2)
-	elapsed := time.Since(startTime)
 	// cannot acquire lock immediately thus error
 	c.Assert(err.Error(), Equals, ErrLockAcquireFailAndNoWaitSet.Error())
-	// it should return immediately
-	c.Assert(elapsed, Less, 50*time.Millisecond)
 
 	// test for wait limited time (200ms)
 	lockCtx = &kv.LockCtx{ForUpdateTS: txn2.startTS, LockWaitTime: 200, WaitStartTime: time.Now()}
@@ -1172,7 +1168,7 @@ func (s *testCommitterSuite) TestResolveMixed(c *C) {
 func (s *testCommitterSuite) TestPrewriteSecondaryKeys(c *C) {
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
-		conf.TiKVClient.EnableAsyncCommit = true
+		conf.TiKVClient.AsyncCommit.Enable = true
 	})
 
 	// Prepare two regions first: (, 100) and [100, )
@@ -1211,7 +1207,7 @@ func (s *testCommitterSuite) TestPrewriteSecondaryKeys(c *C) {
 func (s *testCommitterSuite) TestAsyncCommit(c *C) {
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
-		conf.TiKVClient.EnableAsyncCommit = true
+		conf.TiKVClient.AsyncCommit.Enable = true
 	})
 
 	ctx := context.Background()
@@ -1238,6 +1234,39 @@ func (s *testCommitterSuite) TestAsyncCommit(c *C) {
 		string(pk): string(pkVal),
 		string(k1): string(k1Val),
 	})
+}
+
+func (s *testCommitterSuite) TestAsyncCommitCheck(c *C) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TiKVClient.AsyncCommit.Enable = true
+		conf.TiKVClient.AsyncCommit.KeysLimit = 16
+		conf.TiKVClient.AsyncCommit.TotalKeySizeLimit = 64
+	})
+
+	txn := s.begin(c)
+	buf := []byte{0, 0, 0, 0}
+	// Set 16 keys, each key is 4 bytes long. So the total size of keys is 64 bytes.
+	for i := 0; i < 16; i++ {
+		buf[0] = byte(i)
+		err := txn.Set(buf, []byte("v"))
+		c.Assert(err, IsNil)
+	}
+
+	committer, err := newTwoPhaseCommitterWithInit(txn, 1)
+	c.Assert(err, IsNil)
+	c.Assert(committer.checkAsyncCommit(), IsTrue)
+
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TiKVClient.AsyncCommit.KeysLimit = 15
+	})
+	c.Assert(committer.checkAsyncCommit(), IsFalse)
+
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TiKVClient.AsyncCommit.KeysLimit = 20
+		conf.TiKVClient.AsyncCommit.TotalKeySizeLimit = 63
+	})
+	c.Assert(committer.checkAsyncCommit(), IsFalse)
 }
 
 type mockClient struct {

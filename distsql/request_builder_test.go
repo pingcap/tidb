@@ -682,3 +682,33 @@ func (s *testSuite) TestIndexRangesToKVRangesWithFbs(c *C) {
 		c.Assert(actual[i], DeepEquals, expect[i])
 	}
 }
+
+func (s *testSuite) TestScanLimitConcurrency(c *C) {
+	vars := variable.NewSessionVars()
+	for _, tt := range []struct {
+		tp          tipb.ExecType
+		limit       uint64
+		concurrency int
+	}{
+		{tipb.ExecType_TypeTableScan, 1, 1},
+		{tipb.ExecType_TypeIndexScan, 1, 1},
+		{tipb.ExecType_TypeTableScan, 1000000, vars.Concurrency.DistSQLScanConcurrency()},
+		{tipb.ExecType_TypeIndexScan, 1000000, vars.Concurrency.DistSQLScanConcurrency()},
+	} {
+		firstExec := &tipb.Executor{Tp: tt.tp}
+		switch tt.tp {
+		case tipb.ExecType_TypeTableScan:
+			firstExec.TblScan = &tipb.TableScan{}
+		case tipb.ExecType_TypeIndexScan:
+			firstExec.IdxScan = &tipb.IndexScan{}
+		}
+		limitExec := &tipb.Executor{Tp: tipb.ExecType_TypeLimit, Limit: &tipb.Limit{Limit: tt.limit}}
+		dag := &tipb.DAGRequest{Executors: []*tipb.Executor{firstExec, limitExec}}
+		actual, err := (&RequestBuilder{}).
+			SetDAGRequest(dag).
+			SetFromSessionVars(vars).
+			Build()
+		c.Assert(err, IsNil)
+		c.Assert(actual.Concurrency, Equals, tt.concurrency)
+	}
+}

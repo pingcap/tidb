@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"context"
 	"reflect"
+	"sync"
 	"sync/atomic"
 	"unsafe"
 )
@@ -26,7 +27,8 @@ const (
 	flagKeyLocked
 	flagKeyLockedValExist
 	flagNeedCheckExists
-	flagNoNeedCommit
+	flagPrewriteOnly
+	flagIgnoredIn2PC
 
 	persistentFlags = flagKeyLocked | flagKeyLockedValExist
 	// bit 1 => red, bit 0 => black
@@ -57,9 +59,14 @@ func (f KeyFlags) HasNeedCheckExists() bool {
 	return f&flagNeedCheckExists != 0
 }
 
-// HasNoNeedCommit returns whether the key should be used in 2pc commit phase.
-func (f KeyFlags) HasNoNeedCommit() bool {
-	return f&flagNoNeedCommit != 0
+// HasPrewriteOnly returns whether the key should be used in 2pc commit phase.
+func (f KeyFlags) HasPrewriteOnly() bool {
+	return f&flagPrewriteOnly != 0
+}
+
+// HasIgnoredIn2PC returns whether the key will be ignored in 2pc.
+func (f KeyFlags) HasIgnoredIn2PC() bool {
+	return f&flagIgnoredIn2PC != 0
 }
 
 // FlagsOp describes KeyFlags modify operation.
@@ -81,8 +88,10 @@ const (
 	SetKeyLockedValueNotExists
 	// DelNeedCheckExists marks the key no need to be checked in Transaction.LockKeys.
 	DelNeedCheckExists
-	// SetNoNeedCommit marks the key shouldn't be used in 2pc commit phase.
-	SetNoNeedCommit
+	// SetPrewriteOnly marks the key shouldn't be used in 2pc commit phase.
+	SetPrewriteOnly
+	// SetIgnoredIn2PC marks the key will be ignored in 2pc.
+	SetIgnoredIn2PC
 )
 
 func applyFlagsOps(origin KeyFlags, ops ...FlagsOp) KeyFlags {
@@ -102,14 +111,19 @@ func applyFlagsOps(origin KeyFlags, ops ...FlagsOp) KeyFlags {
 			origin &= ^flagNeedCheckExists
 		case SetKeyLockedValueNotExists:
 			origin &= ^flagKeyLockedValExist
-		case SetNoNeedCommit:
-			origin |= flagNoNeedCommit
+		case SetPrewriteOnly:
+			origin |= flagPrewriteOnly
+		case SetIgnoredIn2PC:
+			origin |= flagIgnoredIn2PC
 		}
 	}
 	return origin
 }
 
 var tombstone = []byte{}
+
+// IsTombstone returns whether the value is a tombstone.
+func IsTombstone(val []byte) bool { return len(val) == 0 }
 
 // memdb is rollbackable Red-Black Tree optimized for TiDB's transaction states buffer use scenario.
 // You can think memdb is a combination of two separate tree map, one for key => value and another for key => keyFlags.
@@ -120,6 +134,9 @@ var tombstone = []byte{}
 // When discarding a newly added KV in `Cleanup`, the non-persistent flags will be cleared.
 // If there are persistent flags associated with key, we will keep this key in node without value.
 type memdb struct {
+	// This RWMutex only used to ensure memdbSnapGetter.Get will not race with
+	// concurrent memdb.Set, memdb.SetWithFlags, memdb.Delete and memdb.UpdateFlags.
+	sync.RWMutex
 	root      memdbArenaAddr
 	allocator nodeAllocator
 	vlog      memdbVlog
@@ -145,6 +162,9 @@ func newMemDB() *memdb {
 }
 
 func (db *memdb) Staging() StagingHandle {
+	db.Lock()
+	defer db.Unlock()
+
 	db.stages = append(db.stages, db.vlog.checkpoint())
 	return StagingHandle(len(db.stages))
 }
@@ -155,6 +175,9 @@ func (db *memdb) Release(h StagingHandle) {
 		// Use panic to make debug easier.
 		panic("cannot release staging buffer")
 	}
+
+	db.Lock()
+	defer db.Unlock()
 	if int(h) == 1 {
 		tail := db.vlog.checkpoint()
 		if !db.stages[0].isSamePosition(&tail) {
@@ -174,10 +197,15 @@ func (db *memdb) Cleanup(h StagingHandle) {
 		panic("cannot cleanup staging buffer")
 	}
 
+	db.Lock()
+	defer db.Unlock()
 	cp := &db.stages[int(h)-1]
 	if !db.vlogInvalid {
-		db.vlog.revertToCheckpoint(db, cp)
-		db.vlog.truncate(cp)
+		curr := db.vlog.checkpoint()
+		if !curr.isSamePosition(cp) {
+			db.vlog.revertToCheckpoint(db, cp)
+			db.vlog.truncate(cp)
+		}
 	}
 	db.stages = db.stages[:int(h)-1]
 }
@@ -220,6 +248,24 @@ func (db *memdb) Get(_ context.Context, key Key) ([]byte, error) {
 		return nil, ErrNotExist
 	}
 	return db.vlog.getValue(x.vptr), nil
+}
+
+func (db *memdb) SelectValueHistory(key Key, predicate func(value []byte) bool) ([]byte, error) {
+	x := db.traverse(key, false)
+	if x.isNull() {
+		return nil, ErrNotExist
+	}
+	if x.vptr.isNull() {
+		// A flag only key, act as value not exists
+		return nil, ErrNotExist
+	}
+	result := db.vlog.selectValueHistory(x.vptr, func(addr memdbArenaAddr) bool {
+		return predicate(db.vlog.getValue(addr))
+	})
+	if result.isNull() {
+		return nil, nil
+	}
+	return db.vlog.getValue(result), nil
 }
 
 func (db *memdb) GetFlags(key Key) (KeyFlags, error) {
@@ -276,6 +322,10 @@ func (db *memdb) set(key Key, value []byte, ops ...FlagsOp) error {
 			return ErrEntryTooLarge.GenWithStackByArgs(db.entrySizeLimit, size)
 		}
 	}
+
+	db.Lock()
+	defer db.Unlock()
+
 	if len(db.stages) == 0 {
 		db.dirty = true
 	}

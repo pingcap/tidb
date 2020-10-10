@@ -21,7 +21,7 @@ import (
 )
 
 // ExplainAggFunc generates explain information for a aggregation function.
-func ExplainAggFunc(agg *AggFuncDesc) string {
+func ExplainAggFunc(agg *AggFuncDesc, normalized bool) string {
 	var buffer bytes.Buffer
 	fmt.Fprintf(&buffer, "%s(", agg.Name)
 	if agg.HasDistinct {
@@ -33,9 +33,17 @@ func ExplainAggFunc(agg *AggFuncDesc) string {
 				buffer.WriteString(" order by ")
 				for i, item := range agg.OrderByItems {
 					if item.Desc {
-						fmt.Fprintf(&buffer, "%s desc", item.Expr.ExplainInfo())
+						if normalized {
+							fmt.Fprintf(&buffer, "%s desc", item.Expr.ExplainNormalizedInfo())
+						} else {
+							fmt.Fprintf(&buffer, "%s desc", item.Expr.ExplainInfo())
+						}
 					} else {
-						fmt.Fprintf(&buffer, "%s", item.Expr.ExplainInfo())
+						if normalized {
+							fmt.Fprintf(&buffer, "%s", item.Expr.ExplainNormalizedInfo())
+						} else {
+							fmt.Fprintf(&buffer, "%s", item.Expr.ExplainInfo())
+						}
 					}
 
 					if i+1 < len(agg.OrderByItems) {
@@ -47,7 +55,11 @@ func ExplainAggFunc(agg *AggFuncDesc) string {
 		} else if i != 0 {
 			buffer.WriteString(", ")
 		}
-		buffer.WriteString(arg.ExplainInfo())
+		if normalized {
+			buffer.WriteString(arg.ExplainNormalizedInfo())
+		} else {
+			buffer.WriteString(arg.ExplainInfo())
+		}
 	}
 	buffer.WriteString(")")
 	return buffer.String()
