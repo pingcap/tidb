@@ -427,6 +427,11 @@ func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, rpcCtx *RPCContext,
 		}
 
 		s.rpcError = err
+		failpoint.Inject("noRetryOnRpcError", func(val failpoint.Value) {
+			if val.(bool) {
+				failpoint.Return(nil, false, err)
+			}
+		})
 		if e := s.onSendFail(bo, rpcCtx, err); e != nil {
 			return nil, false, errors.Trace(e)
 		}
