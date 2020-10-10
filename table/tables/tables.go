@@ -581,6 +581,11 @@ func TryGetCommonPkColumns(tbl table.Table) []*table.Column {
 
 // AddRecord implements table.Table AddRecord interface.
 func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts ...table.AddRecordOption) (recordID kv.Handle, err error) {
+	txn, err := sctx.Txn(true)
+	if err != nil {
+		return nil, err
+	}
+
 	var opt table.AddRecordOpt
 	for _, fn := range opts {
 		fn.ApplyOn(&opt)
@@ -596,6 +601,7 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 		hasRecordID = true
 	} else {
 		tblInfo := t.Meta()
+		txn.GetUnionStore().CacheTableInfo(t.physicalTableID, tblInfo)
 		if tblInfo.PKIsHandle {
 			recordID = kv.IntHandle(r[tblInfo.GetPkColInfo().Offset].GetInt64())
 			hasRecordID = true
@@ -637,10 +643,6 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 		}
 	}
 
-	txn, err := sctx.Txn(true)
-	if err != nil {
-		return nil, err
-	}
 	var colIDs, binlogColIDs []int64
 	var row, binlogRow []types.Datum
 	if recordCtx, ok := sctx.Value(addRecordCtxKey).(*CommonAddRecordCtx); ok {
@@ -1251,7 +1253,7 @@ func tryDecodeColumnFromCommonHandle(col *table.Column, handle kv.Handle, pkIds 
 // The defaultVals is used to avoid calculating the default value multiple times.
 func GetColDefaultValue(ctx sessionctx.Context, col *table.Column, defaultVals []types.Datum) (
 	colVal types.Datum, err error) {
-	if col.OriginDefaultValue == nil && mysql.HasNotNullFlag(col.Flag) {
+	if col.GetOriginDefaultValue() == nil && mysql.HasNotNullFlag(col.Flag) {
 		return colVal, errors.New("Miss column")
 	}
 	if col.State != model.StatePublic {
