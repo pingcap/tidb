@@ -760,12 +760,15 @@ func (b *builtinTiDBDecodeKeySig) evalString(row chunk.Row) (string, bool, error
 	return decode(b.ctx, s), false, nil
 }
 
+// TiDBDecodeKeyFunctionKeyType is used to identify the decoder function in context.
 type TiDBDecodeKeyFunctionKeyType int
 
+// String() implements Stringer.
 func (k TiDBDecodeKeyFunctionKeyType) String() string {
 	return "tidb_decode_key"
 }
 
+// TiDBDecodeKeyFunctionKey is used to identify the decoder function in context.
 const TiDBDecodeKeyFunctionKey TiDBDecodeKeyFunctionKeyType = 0
 
 type tidbDecodePlanFunctionClass struct {
