@@ -55,7 +55,7 @@ var _ = Suite(&testIntegrationSuite4{&testIntegrationSuite{}})
 var _ = Suite(&testIntegrationSuite5{&testIntegrationSuite{}})
 var _ = Suite(&testIntegrationSuite6{&testIntegrationSuite{}})
 var _ = SerialSuites(&testIntegrationSuite7{&testIntegrationSuite{}})
-var _ = Suite(&testIntegrationSuite8{&testIntegrationSuite{}})
+var _ = SerialSuites(&testIntegrationSuite8{&testIntegrationSuite{}})
 
 type testIntegrationSuite struct {
 	lease   time.Duration
