@@ -61,13 +61,13 @@ func TestString(t *testing.T) {
 			PrewriteRegionNum: 1,
 			TxnRetry:          1,
 		},
-		ProcessedVersions: 1,
-		TotalVersions: 1,
+		ProcessedVersions:         1,
+		TotalVersions:             1,
 		RocksdbDeleteSkippedCount: 1,
-		RocksdbKeySkippedCount: 1,
+		RocksdbKeySkippedCount:    1,
 		RocksdbBlockCacheHitCount: 1,
-		RocksdbBlockReadCount: 1,
-		RocksdbBlockReadBytes: 100,
+		RocksdbBlockReadCount:     1,
+		RocksdbBlockReadBytes:     100,
 	}
 	expected := "Cop_time: 1.003 Process_time: 2.005 Wait_time: 1 Backoff_time: 1 Request_count: 1 Total_keys: 100 Process_keys: 10 Prewrite_time: 1 Commit_time: 1 " +
 		"Get_commit_ts_time: 1 Commit_backoff_time: 1 Backoff_types: [backoff1 backoff2] Resolve_lock_time: 1 Local_latch_wait_time: 1 Write_keys: 1 Write_size: 1 Prewrite_region: 1 Txn_retry: 1 " +
