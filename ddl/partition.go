@@ -39,7 +39,6 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
@@ -277,7 +276,7 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.CreateTableStmt) (*m
 		return nil, nil
 	}
 
-	if !variable.TiDBOptOn(ctx.GetSessionVars().EnableTablePartition) {
+	if strings.EqualFold(ctx.GetSessionVars().EnableTablePartition, "OFF") {
 		ctx.GetSessionVars().StmtCtx.AppendWarning(errTablePartitionDisabled)
 		return nil, nil
 	}
