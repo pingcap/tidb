@@ -73,14 +73,14 @@ func (e *ExplainExec) Next(ctx context.Context, req *chunk.Chunk) error {
 }
 
 func (e *ExplainExec) generateExplainInfo(ctx context.Context) (rows [][]string, err error) {
-	closed := false
-	defer func() {
-		if !closed && e.analyzeExec != nil {
-			err = e.analyzeExec.Close()
-			closed = true
-		}
-	}()
 	if e.analyzeExec != nil && !e.executed {
+		closed := false
+		defer func() {
+			if !closed && e.analyzeExec != nil {
+				err = e.analyzeExec.Close()
+				closed = true
+			}
+		}()
 		e.executed = true
 		chk := newFirstChunk(e.analyzeExec)
 		var nextErr, closeErr error

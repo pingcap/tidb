@@ -100,7 +100,9 @@ func (s *testSuite1) TestExplainWrite(c *C) {
 	tk.MustExec("explain insert into t select 1")
 	tk.MustQuery("select * from t").Check(testkit.Rows("2"))
 	tk.MustExec("explain analyze insert into t select 1")
-	tk.MustQuery("select * from t order by a").Check(testkit.Rows("1", "2"))
+	tk.MustExec("explain analyze update t set a=a+1")
+	tk.MustExec("explain analyze replace into t values (4)")
+	tk.MustQuery("select * from t order by a").Check(testkit.Rows("2", "3", "4"))
 }
 
 func (s *testSuite1) TestExplainAnalyzeMemory(c *C) {
