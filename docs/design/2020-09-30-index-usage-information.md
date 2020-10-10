@@ -34,7 +34,7 @@ Design system tables to record index usage information. The system table is desi
 | TABLE_NAME   | varchar   | Name of the table or view on which the index is defined.|
 | INDEX_NAME   | varchar   | Name of the index.|
 | QUERY_COUNT  | longlong  | Number of the SQL using this index.|
-| ROWS_SELECTED| longlong  | Number of rows read from the index. We can check the selectivity of the index through `ROWS_READ` / `QUERY_COUNT`.|
+| ROWS_SELECTED| longlong  | Number of rows read from the index. We can check the average fetched rows count of each query of the index through `ROWS_READ` / `QUERY_COUNT`.|
 | LAST_USED_AT | timestamp | The last time of the SQL using this index.|
 
 
@@ -80,6 +80,16 @@ Due to MySQL compatibility, add the system table `SCHEMA_UNUSED_INDEXES`.
 | object_name   | varchar   | The table name.       |
 | index_name    | varchar   | The unused index name.|
 
+#### View creation:
+
+```sql
+create view information_schema.schema_unused_indexes 
+as select i.table_schema as table_schema, i.table_name as table_name, i.index_name as index_name 
+from mysql.tidb_indexes as i left join mysql.schema_index_usage as u 
+on i.table_schema=u.table_schema and i.table_name=u.table_name and i.index_name=u.index_name
+where u.query_count=0 or u.query_count is null;
+```
+
 ### FLUSH SCHEMA_INDEX_USAGE
 
 #### User story
@@ -90,11 +100,8 @@ Similar usage: `FLUSH INDEX_STATISTICS` from https://www.percona.com/doc/percona
 
 SQL Syntax: `FLUSH SCHEMA_INDEX_USAGE`
 Users can use this to initialize SCHEMA_INDEX_USAGE as
-```
-QUERY_COUNT = 0
-ROWS_READ = 0
-LAST_USED_AT = NULL
-LAST_UPDATED_AT = now
+```sql
+delete from mysql.schema_index_usage;
 ```
 And it needs a [RELOAD privilege](https://dev.mysql.com/doc/refman/5.7/en/privileges-provided.html#priv_reload) check.
 
