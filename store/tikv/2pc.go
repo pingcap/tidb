@@ -1496,8 +1496,8 @@ func (c *twoPhaseCommitter) getUndeterminedErr() error {
 }
 
 // checkSchemaVersionForAsyncCommit is used to check schema version change for async commit transactions
-// only.For async commit protocol, we need to make sure the check result is the same during common execution
-// path and the recovery path.As the schema lease checker has a limited size of cached schema diff version, it's
+// only. For async commit protocol, we need to make sure the check result is the same during common execution
+// path and the recovery path. As the schema lease checker has a limited size of cached schema diff version, it's
 // possible the schema cache is changed and the schema lease checker can't decide if the related table has
 // schema version change. So we just check the version from meta snapshot, it's much stricter.
 func checkSchemaVersionForAsyncCommit(ctx context.Context, startTS uint64, commitTS uint64, store Storage) (bool, error) {

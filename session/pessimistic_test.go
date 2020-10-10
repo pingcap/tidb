@@ -1828,7 +1828,7 @@ func (s *testPessimisticSuite) TestSelectForUpdateConflictRetry(c *C) {
 func (s *testPessimisticSuite) TestAsyncCommitWithSchemaChange(c *C) {
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
-		conf.TiKVClient.EnableAsyncCommit = true
+		conf.TiKVClient.AsyncCommit.Enable = true
 	})
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/beforeSchemaCheck", "return"), IsNil)
 	defer func() {
