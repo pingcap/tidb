@@ -910,6 +910,7 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 		atomic.StoreUint32(&cc.ctx.GetSessionVars().Killed, 0)
 	}()
 	span := opentracing.StartSpan("server.dispatch")
+	ctx = opentracing.ContextWithSpan(ctx, span)
 
 	t := time.Now()
 	cc.lastPacket = data
