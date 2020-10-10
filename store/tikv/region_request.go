@@ -250,8 +250,6 @@ func (s *RegionRequestSender) SendReqCtx(
 		}
 	})
 
-	var replicaRead kv.ReplicaReadType = req.ReplicaReadType
-
 	tryTimes := 0
 	for {
 		if (tryTimes > 0) && (tryTimes%100000 == 0) {
@@ -263,7 +261,7 @@ func (s *RegionRequestSender) SendReqCtx(
 			if req.ReplicaReadSeed != nil {
 				seed = *req.ReplicaReadSeed
 			}
-			rpcCtx, err = s.regionCache.GetTiKVRPCContext(bo, regionID, replicaRead, seed)
+			rpcCtx, err = s.regionCache.GetTiKVRPCContext(bo, regionID, req.ReplicaReadType, seed)
 		case kv.TiFlash:
 			rpcCtx, err = s.regionCache.GetTiFlashRPCContext(bo, regionID)
 		case kv.TiDB:
