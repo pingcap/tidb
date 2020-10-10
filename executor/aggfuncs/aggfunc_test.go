@@ -46,7 +46,7 @@ import (
 )
 
 const (
-	Separator = " "
+	separator = " "
 )
 
 var _ = Suite(&testSuite{})
@@ -366,7 +366,7 @@ func (s *testSuite) testMergePartialResult(c *C, p aggTest) {
 
 	args := []expression.Expression{&expression.Column{RetType: p.dataType, Index: 0}}
 	if p.funcName == ast.AggFuncGroupConcat {
-		args = append(args, &expression.Constant{Value: types.NewStringDatum(Separator), RetType: types.NewFieldType(mysql.TypeString)})
+		args = append(args, &expression.Constant{Value: types.NewStringDatum(separator), RetType: types.NewFieldType(mysql.TypeString)})
 	}
 	desc, err := aggregation.NewAggFuncDesc(s.ctx, p.funcName, args, false)
 	c.Assert(err, IsNil)
@@ -595,7 +595,7 @@ func (s *testSuite) testAggFunc(c *C, p aggTest) {
 
 	args := []expression.Expression{&expression.Column{RetType: p.dataType, Index: 0}}
 	if p.funcName == ast.AggFuncGroupConcat {
-		args = append(args, &expression.Constant{Value: types.NewStringDatum(Separator), RetType: types.NewFieldType(mysql.TypeString)})
+		args = append(args, &expression.Constant{Value: types.NewStringDatum(separator), RetType: types.NewFieldType(mysql.TypeString)})
 	}
 	desc, err := aggregation.NewAggFuncDesc(s.ctx, p.funcName, args, false)
 	c.Assert(err, IsNil)
@@ -673,7 +673,7 @@ func (s *testSuite) testAggMemFunc(c *C, p aggMemTest) {
 
 	args := []expression.Expression{&expression.Column{RetType: p.aggTest.dataType, Index: 0}}
 	if p.aggTest.funcName == ast.AggFuncGroupConcat {
-		args = append(args, &expression.Constant{Value: types.NewStringDatum(Separator), RetType: types.NewFieldType(mysql.TypeString)})
+		args = append(args, &expression.Constant{Value: types.NewStringDatum(separator), RetType: types.NewFieldType(mysql.TypeString)})
 	}
 	desc, err := aggregation.NewAggFuncDesc(s.ctx, p.aggTest.funcName, args, p.isDistinct)
 	c.Assert(err, IsNil)
@@ -706,7 +706,7 @@ func (s *testSuite) testMultiArgsAggFunc(c *C, p multiArgsAggTest) {
 		args[k] = &expression.Column{RetType: p.dataTypes[k], Index: k}
 	}
 	if p.funcName == ast.AggFuncGroupConcat {
-		args = append(args, &expression.Constant{Value: types.NewStringDatum(Separator), RetType: types.NewFieldType(mysql.TypeString)})
+		args = append(args, &expression.Constant{Value: types.NewStringDatum(separator), RetType: types.NewFieldType(mysql.TypeString)})
 	}
 
 	desc, err := aggregation.NewAggFuncDesc(s.ctx, p.funcName, args, false)
@@ -788,7 +788,7 @@ func (s *testSuite) testMultiArgsAggMemFunc(c *C, p multiArgsAggMemTest) {
 		args[k] = &expression.Column{RetType: p.multiArgsAggTest.dataTypes[k], Index: k}
 	}
 	if p.multiArgsAggTest.funcName == ast.AggFuncGroupConcat {
-		args = append(args, &expression.Constant{Value: types.NewStringDatum(Separator), RetType: types.NewFieldType(mysql.TypeString)})
+		args = append(args, &expression.Constant{Value: types.NewStringDatum(separator), RetType: types.NewFieldType(mysql.TypeString)})
 	}
 
 	desc, err := aggregation.NewAggFuncDesc(s.ctx, p.multiArgsAggTest.funcName, args, p.isDistinct)
@@ -823,7 +823,7 @@ func (s *testSuite) benchmarkAggFunc(b *testing.B, p aggTest) {
 
 	args := []expression.Expression{&expression.Column{RetType: p.dataType, Index: 0}}
 	if p.funcName == ast.AggFuncGroupConcat {
-		args = append(args, &expression.Constant{Value: types.NewStringDatum(Separator), RetType: types.NewFieldType(mysql.TypeString)})
+		args = append(args, &expression.Constant{Value: types.NewStringDatum(separator), RetType: types.NewFieldType(mysql.TypeString)})
 	}
 	desc, err := aggregation.NewAggFuncDesc(s.ctx, p.funcName, args, false)
 	if err != nil {
@@ -876,7 +876,7 @@ func (s *testSuite) benchmarkMultiArgsAggFunc(b *testing.B, p multiArgsAggTest) 
 		args[k] = &expression.Column{RetType: p.dataTypes[k], Index: k}
 	}
 	if p.funcName == ast.AggFuncGroupConcat {
-		args = append(args, &expression.Constant{Value: types.NewStringDatum(Separator), RetType: types.NewFieldType(mysql.TypeString)})
+		args = append(args, &expression.Constant{Value: types.NewStringDatum(separator), RetType: types.NewFieldType(mysql.TypeString)})
 	}
 
 	desc, err := aggregation.NewAggFuncDesc(s.ctx, p.funcName, args, false)
