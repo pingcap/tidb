@@ -369,7 +369,7 @@ type IndexLookUpExecutor struct {
 	// PushedLimit is used to skip the preceding and tailing handles when Limit is sunk into IndexLookUpReader.
 	PushedLimit *plannercore.PushedDownLimit
 
-	stats *indexLookUpRunTimeStats
+	stats *IndexLookUpRunTimeStats
 }
 
 type getHandleType int8
@@ -498,7 +498,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, kvRanges []k
 	}
 	tps := e.getRetTpsByHandle()
 	// Since the first read only need handle information. So its returned col is only 1.
-	result, err := distsql.SelectWithRuntimeStats(ctx, e.ctx, kvReq, tps, e.feedback, getPhysicalPlanIDs(e.idxPlans), e.id)
+	result, err := distsql.SelectWithRuntimeStats(ctx, e.ctx, kvReq, tps, e.feedback, getPhysicalPlanIDs(e.idxPlans), e.idxPlans[0].ID())
 	if err != nil {
 		return err
 	}
@@ -561,7 +561,7 @@ func (e *IndexLookUpExecutor) startTableWorker(ctx context.Context, workCh <-cha
 			startTime := time.Now()
 			worker.pickAndExecTask(ctx1)
 			if e.stats != nil {
-				atomic.AddInt64(&e.stats.tableRowScan, int64(time.Since(startTime)))
+				atomic.AddInt64(&e.stats.TableRowScan, int64(time.Since(startTime)))
 			}
 			cancel()
 			e.tblWorkerWg.Done()
@@ -570,8 +570,9 @@ func (e *IndexLookUpExecutor) startTableWorker(ctx context.Context, workCh <-cha
 }
 
 func (e *IndexLookUpExecutor) buildTableReader(ctx context.Context, handles []kv.Handle) (Executor, error) {
+	id := e.tblPlans[0].ID()
 	tableReaderExec := &TableReaderExecutor{
-		baseExecutor:   newBaseExecutor(e.ctx, e.schema, e.id),
+		baseExecutor:   newBaseExecutor(e.ctx, e.schema, id),
 		table:          e.table,
 		dagPB:          e.tableRequest,
 		startTS:        e.startTS,
@@ -659,11 +660,11 @@ func (e *IndexLookUpExecutor) getResultTask() (*lookupTableTask, error) {
 func (e *IndexLookUpExecutor) initRuntimeStats() {
 	if e.runtimeStats != nil {
 		if e.stats == nil {
-			e.stats = &indexLookUpRunTimeStats{
-				indexScan:    0,
-				tableRowScan: 0,
-				tableTaskNum: 0,
-				concurrency:  e.ctx.GetSessionVars().IndexLookupConcurrency(),
+			e.stats = &IndexLookUpRunTimeStats{
+				IndexScan:    0,
+				TableRowScan: 0,
+				TableTaskNum: 0,
+				Concurrency:  e.ctx.GetSessionVars().IndexLookupConcurrency(),
 			}
 			e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
 		}
@@ -729,7 +730,7 @@ func (w *indexWorker) fetchHandles(ctx context.Context, result distsql.SelectRes
 		}
 		task := w.buildTableTask(handles, retChunk)
 		if w.idxLookup.stats != nil {
-			atomic.AddInt64(&w.idxLookup.stats.indexScan, int64(time.Since(startTime)))
+			atomic.AddInt64(&w.idxLookup.stats.IndexScan, int64(time.Since(startTime)))
 		}
 		select {
 		case <-ctx.Done():
@@ -887,7 +888,7 @@ func (w *tableWorker) pickAndExecTask(ctx context.Context) {
 		}
 		err := w.executeTask(ctx, task)
 		if w.idxLookup.stats != nil {
-			atomic.AddInt64(&w.idxLookup.stats.tableTaskNum, 1)
+			atomic.AddInt64(&w.idxLookup.stats.TableTaskNum, 1)
 		}
 		task.doneCh <- err
 	}
@@ -941,19 +942,20 @@ func (e *IndexLookUpExecutor) getHandle(row chunk.Row, handleIdx []int,
 	return
 }
 
-type indexLookUpRunTimeStats struct {
-	indexScan    int64
-	tableRowScan int64
-	tableTaskNum int64
-	concurrency  int
+// IndexLookUpRunTimeStats record the indexlookup runtime stat
+type IndexLookUpRunTimeStats struct {
+	IndexScan    int64
+	TableRowScan int64
+	TableTaskNum int64
+	Concurrency  int
 }
 
-func (e *indexLookUpRunTimeStats) String() string {
+func (e *IndexLookUpRunTimeStats) String() string {
 	var buf bytes.Buffer
-	indexScan := atomic.LoadInt64(&e.indexScan)
-	tableScan := atomic.LoadInt64(&e.tableRowScan)
-	tableTaskNum := atomic.LoadInt64(&e.tableTaskNum)
-	concurrency := e.concurrency
+	indexScan := atomic.LoadInt64(&e.IndexScan)
+	tableScan := atomic.LoadInt64(&e.TableRowScan)
+	tableTaskNum := atomic.LoadInt64(&e.TableTaskNum)
+	concurrency := e.Concurrency
 	if indexScan != 0 {
 		buf.WriteString(fmt.Sprintf("index_task:%s", time.Duration(indexScan)))
 	}
@@ -967,30 +969,30 @@ func (e *indexLookUpRunTimeStats) String() string {
 }
 
 // Clone implements the RuntimeStats interface.
-func (e *indexLookUpRunTimeStats) Clone() execdetails.RuntimeStats {
-	newRs := &indexLookUpRunTimeStats{
-		indexScan:    e.indexScan,
-		tableRowScan: e.tableRowScan,
-		tableTaskNum: e.tableTaskNum,
-		concurrency:  e.concurrency,
+func (e *IndexLookUpRunTimeStats) Clone() execdetails.RuntimeStats {
+	newRs := &IndexLookUpRunTimeStats{
+		IndexScan:    e.IndexScan,
+		TableRowScan: e.TableRowScan,
+		TableTaskNum: e.TableTaskNum,
+		Concurrency:  e.Concurrency,
 	}
 	return newRs
 }
 
 // Merge implements the RuntimeStats interface.
-func (e *indexLookUpRunTimeStats) Merge(other execdetails.RuntimeStats) {
-	tmp, ok := other.(*indexLookUpRunTimeStats)
+func (e *IndexLookUpRunTimeStats) Merge(other execdetails.RuntimeStats) {
+	tmp, ok := other.(*IndexLookUpRunTimeStats)
 	if !ok {
 		return
 	}
-	e.indexScan += tmp.indexScan
-	e.tableRowScan += tmp.tableRowScan
-	e.tableTaskNum += tmp.tableTaskNum
-	e.concurrency += tmp.concurrency
+	e.IndexScan += tmp.IndexScan
+	e.TableRowScan += tmp.TableRowScan
+	e.TableTaskNum += tmp.TableTaskNum
+	e.Concurrency += tmp.Concurrency
 }
 
 // Tp implements the RuntimeStats interface.
-func (e *indexLookUpRunTimeStats) Tp() int {
+func (e *IndexLookUpRunTimeStats) Tp() int {
 	return execdetails.TpIndexLookUpRunTimeStats
 }
 
