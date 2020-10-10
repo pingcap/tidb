@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -281,12 +282,16 @@ func ResetAnalyzeFlag(flag int64) int64 {
 
 // ValueToString converts a possible encoded value to a formatted string. If the value is encoded, then
 // idxCols equals to number of origin values, else idxCols is 0.
-func ValueToString(value *types.Datum, idxCols int) (string, error) {
+func ValueToString(vars *variable.SessionVars, value *types.Datum, idxCols int, idxColumnTypes []byte) (string, error) {
 	if idxCols == 0 {
 		return value.ToString()
 	}
+	var loc *time.Location
+	if vars != nil {
+		loc = vars.Location()
+	}
 	// Ignore the error and treat remaining part that cannot decode successfully as bytes.
-	decodedVals, remained, err := codec.DecodeRange(value.GetBytes(), idxCols)
+	decodedVals, remained, err := codec.DecodeRange(value.GetBytes(), idxCols, idxColumnTypes, loc)
 	// Ignore err explicit to pass errcheck.
 	_ = err
 	if len(remained) > 0 {
@@ -298,9 +303,9 @@ func ValueToString(value *types.Datum, idxCols int) (string, error) {
 
 // BucketToString change the given bucket to string format.
 func (hg *Histogram) BucketToString(bktID, idxCols int) string {
-	upperVal, err := ValueToString(hg.GetUpper(bktID), idxCols)
+	upperVal, err := ValueToString(nil, hg.GetUpper(bktID), idxCols, nil)
 	terror.Log(errors.Trace(err))
-	lowerVal, err := ValueToString(hg.GetLower(bktID), idxCols)
+	lowerVal, err := ValueToString(nil, hg.GetLower(bktID), idxCols, nil)
 	terror.Log(errors.Trace(err))
 	return fmt.Sprintf("num: %d lower_bound: %s upper_bound: %s repeats: %d", hg.bucketCount(bktID), lowerVal, upperVal, hg.Buckets[bktID].Repeat)
 }
@@ -787,7 +792,7 @@ func (c *Column) equalRowCount(sc *stmtctx.StatementContext, val types.Datum, mo
 		return 0.0, nil
 	}
 	if c.NDV > 0 && c.outOfRange(val) {
-		return float64(modifyCount) / float64(c.NDV), nil
+		return outOfRangeEQSelectivity(c.NDV, modifyCount, int64(c.TotalRowCount())) * c.TotalRowCount(), nil
 	}
 	if c.CMSketch != nil {
 		count, err := c.CMSketch.queryValue(sc, val)
@@ -852,7 +857,7 @@ func (c *Column) GetColumnRowCount(sc *stmtctx.StatementContext, ranges []*range
 		// The interval case.
 		cnt := c.BetweenRowCount(lowVal, highVal)
 		if (c.outOfRange(lowVal) && !lowVal.IsNull()) || c.outOfRange(highVal) {
-			cnt += float64(modifyCount) / outOfRangeBetweenRate
+			cnt += outOfRangeEQSelectivity(outOfRangeBetweenRate, modifyCount, int64(c.TotalRowCount())) * c.TotalRowCount()
 		}
 		// `betweenRowCount` returns count for [l, h) range, we adjust cnt for boudaries here.
 		// Note that, `cnt` does not include null values, we need specially handle cases
@@ -924,7 +929,7 @@ func (idx *Index) equalRowCount(sc *stmtctx.StatementContext, b []byte, modifyCo
 	}
 	val := types.NewBytesDatum(b)
 	if idx.NDV > 0 && idx.outOfRange(val) {
-		return float64(modifyCount) / (float64(idx.NDV)), nil
+		return outOfRangeEQSelectivity(idx.NDV, modifyCount, int64(idx.TotalRowCount())) * idx.TotalRowCount(), nil
 	}
 	if idx.CMSketch != nil {
 		return float64(idx.CMSketch.QueryBytes(b)), nil
@@ -976,7 +981,7 @@ func (idx *Index) GetRowCount(sc *stmtctx.StatementContext, indexRanges []*range
 		totalCount += idx.BetweenRowCount(l, r)
 		lowIsNull := bytes.Equal(lb, nullKeyBytes)
 		if (idx.outOfRange(l) && !(isSingleCol && lowIsNull)) || idx.outOfRange(r) {
-			totalCount += float64(modifyCount) / outOfRangeBetweenRate
+			totalCount += outOfRangeEQSelectivity(outOfRangeBetweenRate, modifyCount, int64(idx.TotalRowCount())) * idx.TotalRowCount()
 		}
 		if isSingleCol && lowIsNull {
 			totalCount += float64(idx.NullCount)

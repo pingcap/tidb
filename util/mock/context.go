@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tipb/go-binlog"
 )
 
@@ -164,6 +163,11 @@ func (c *Context) RefreshTxnCtx(ctx context.Context) error {
 	return errors.Trace(c.NewTxn(ctx))
 }
 
+// RefreshVars implements the sessionctx.Context interface.
+func (c *Context) RefreshVars(ctx context.Context) error {
+	return nil
+}
+
 // InitTxnWithStartTS implements the sessionctx.Context interface with startTS.
 func (c *Context) InitTxnWithStartTS(startTS uint64) error {
 	if c.txn.Valid() {
@@ -274,8 +278,8 @@ func NewContext() *Context {
 	sctx.sessionVars.InitChunkSize = 2
 	sctx.sessionVars.MaxChunkSize = 32
 	sctx.sessionVars.StmtCtx.TimeZone = time.UTC
-	sctx.sessionVars.StmtCtx.MemTracker = memory.NewTracker(stringutil.StringerStr("mock.NewContext"), -1)
-	sctx.sessionVars.StmtCtx.DiskTracker = disk.NewTracker(stringutil.StringerStr("mock.NewContext"), -1)
+	sctx.sessionVars.StmtCtx.MemTracker = memory.NewTracker(-1, -1)
+	sctx.sessionVars.StmtCtx.DiskTracker = disk.NewTracker(-1, -1)
 	sctx.sessionVars.GlobalVarsAccessor = variable.NewMockGlobalAccessor()
 	if err := sctx.GetSessionVars().SetSystemVar(variable.MaxAllowedPacket, "67108864"); err != nil {
 		panic(err)

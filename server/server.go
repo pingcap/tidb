@@ -31,6 +31,7 @@ package server
 import (
 	"context"
 	"crypto/tls"
+	"flag"
 	"fmt"
 	"io"
 	"math/rand"
@@ -66,10 +67,11 @@ import (
 )
 
 var (
-	baseConnID uint32
-	serverPID  int
-	osUser     string
-	osVersion  string
+	baseConnID  uint32
+	serverPID   int
+	osUser      string
+	osVersion   string
+	runInGoTest bool
 )
 
 func init() {
@@ -84,6 +86,7 @@ func init() {
 	if err != nil {
 		osVersion = ""
 	}
+	runInGoTest = flag.Lookup("test.v") != nil || flag.Lookup("check.v") != nil
 }
 
 var (
@@ -217,7 +220,7 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 	if tlsConfig != nil {
 		setSSLVariable(s.cfg.Security.SSLCA, s.cfg.Security.SSLKey, s.cfg.Security.SSLCert)
 		atomic.StorePointer(&s.tlsConfig, unsafe.Pointer(tlsConfig))
-		logutil.BgLogger().Info("mysql protocol server secure connection is enabled", zap.Bool("client verification enabled", len(variable.SysVars["ssl_ca"].Value) > 0))
+		logutil.BgLogger().Info("mysql protocol server secure connection is enabled", zap.Bool("client verification enabled", len(variable.GetSysVar("ssl_ca").Value) > 0))
 	} else if cfg.Security.RequireSecureTransport {
 		return nil, errSecureTransportRequired.FastGenByArgs()
 	}
@@ -229,7 +232,7 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 		s.capability |= mysql.ClientSSL
 	}
 
-	if s.cfg.Host != "" && s.cfg.Port != 0 {
+	if s.cfg.Host != "" && (s.cfg.Port != 0 || runInGoTest) {
 		addr := fmt.Sprintf("%s:%d", s.cfg.Host, s.cfg.Port)
 		if s.listener, err = net.Listen("tcp", addr); err == nil {
 			logutil.BgLogger().Info("server is running MySQL protocol", zap.String("addr", addr))
@@ -238,6 +241,9 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 					logutil.BgLogger().Info("server redirecting", zap.String("from", s.cfg.Socket), zap.String("to", addr))
 					go s.forwardUnixSocketToTCP()
 				}
+			}
+			if runInGoTest && s.cfg.Port == 0 {
+				s.cfg.Port = uint(s.listener.Addr().(*net.TCPAddr).Port)
 			}
 		}
 	} else if cfg.Socket != "" {
@@ -272,11 +278,11 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 }
 
 func setSSLVariable(ca, key, cert string) {
-	variable.SysVars["have_openssl"].Value = "YES"
-	variable.SysVars["have_ssl"].Value = "YES"
-	variable.SysVars["ssl_cert"].Value = cert
-	variable.SysVars["ssl_key"].Value = key
-	variable.SysVars["ssl_ca"].Value = ca
+	variable.SetSysVar("have_openssl", "YES")
+	variable.SetSysVar("have_ssl", "YES")
+	variable.SetSysVar("ssl_cert", cert)
+	variable.SetSysVar("ssl_key", key)
+	variable.SetSysVar("ssl_ca", ca)
 }
 
 // Run runs the server.
@@ -385,10 +391,10 @@ func (s *Server) onConn(conn *clientConn) {
 		return
 	}
 
-	logutil.Logger(ctx).Info("new connection", zap.String("remoteAddr", conn.bufReadConn.RemoteAddr().String()))
+	logutil.Logger(ctx).Debug("new connection", zap.String("remoteAddr", conn.bufReadConn.RemoteAddr().String()))
 
 	defer func() {
-		logutil.Logger(ctx).Info("connection closed")
+		logutil.Logger(ctx).Debug("connection closed")
 	}()
 	s.rwlock.Lock()
 	s.clients[conn.connectionID] = conn
@@ -399,9 +405,6 @@ func (s *Server) onConn(conn *clientConn) {
 	sessionVars := conn.ctx.GetSessionVars()
 	if plugin.IsEnable(plugin.Audit) {
 		sessionVars.ConnectionInfo = conn.connectInfo()
-	}
-	type vars struct {
-		killed *uint32
 	}
 	err := plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
 		authPlugin := plugin.DeclareAuditManifest(p.Manifest)
@@ -628,10 +631,10 @@ func setSystemTimeZoneVariable() {
 			logutil.BgLogger().Error(
 				"Error getting SystemTZ, use default value instead",
 				zap.Error(err),
-				zap.String("default system_time_zone", variable.SysVars["system_time_zone"].Value))
+				zap.String("default system_time_zone", variable.GetSysVar("system_time_zone").Value))
 			return
 		}
-		variable.SysVars["system_time_zone"].Value = tz
+		variable.SetSysVar("system_time_zone", tz)
 	})
 }
 

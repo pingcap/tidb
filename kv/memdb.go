@@ -17,16 +17,20 @@ import (
 	"bytes"
 	"context"
 	"reflect"
+	"sync"
 	"sync/atomic"
 	"unsafe"
 )
 
 const (
 	flagPresumeKNE KeyFlags = 1 << iota
-	flagPessimisticLock
-	flagNoNeedCommit
+	flagKeyLocked
+	flagKeyLockedValExist
+	flagNeedCheckExists
+	flagPrewriteOnly
+	flagIgnoredIn2PC
 
-	persistentFlags = flagPessimisticLock
+	persistentFlags = flagKeyLocked | flagKeyLockedValExist
 	// bit 1 => red, bit 0 => black
 	nodeColorBit  uint8 = 0x80
 	nodeFlagsMask       = ^nodeColorBit
@@ -35,50 +39,82 @@ const (
 // KeyFlags are metadata associated with key
 type KeyFlags uint8
 
-// HasPresumeKeyNotExists retruns whether the associated key use lazy check.
+// HasPresumeKeyNotExists returns whether the associated key use lazy check.
 func (f KeyFlags) HasPresumeKeyNotExists() bool {
 	return f&flagPresumeKNE != 0
 }
 
-// HasPessimisticLock retruns whether the associated key has acquired pessimistic lock.
-func (f KeyFlags) HasPessimisticLock() bool {
-	return f&flagPessimisticLock != 0
+// HasLocked returns whether the associated key has acquired pessimistic lock.
+func (f KeyFlags) HasLocked() bool {
+	return f&flagKeyLocked != 0
 }
 
-// HasNoNeedCommit returns whether the key should be used in 2pc commit phase.
-func (f KeyFlags) HasNoNeedCommit() bool {
-	return f&flagNoNeedCommit != 0
+// HasLockedValueExists returns whether the value exists when key locked.
+func (f KeyFlags) HasLockedValueExists() bool {
+	return f&flagKeyLockedValExist != 0
+}
+
+// HasNeedCheckExists returns whether the key need to check existence when it has been locked.
+func (f KeyFlags) HasNeedCheckExists() bool {
+	return f&flagNeedCheckExists != 0
+}
+
+// HasPrewriteOnly returns whether the key should be used in 2pc commit phase.
+func (f KeyFlags) HasPrewriteOnly() bool {
+	return f&flagPrewriteOnly != 0
+}
+
+// HasIgnoredIn2PC returns whether the key will be ignored in 2pc.
+func (f KeyFlags) HasIgnoredIn2PC() bool {
+	return f&flagIgnoredIn2PC != 0
 }
 
 // FlagsOp describes KeyFlags modify operation.
-type FlagsOp uint8
+type FlagsOp uint16
 
 const (
 	// SetPresumeKeyNotExists marks the existence of the associated key is checked lazily.
+	// Implies KeyFlags.HasNeedCheckExists() == true.
 	SetPresumeKeyNotExists FlagsOp = 1 << iota
 	// DelPresumeKeyNotExists reverts SetPresumeKeyNotExists.
 	DelPresumeKeyNotExists
-	// SetPessimisticLock marks the associated key has acquired pessimistic lock.
-	SetPessimisticLock
-	// DelPessimisticLock reverts SetPessimisticLock.
-	DelPessimisticLock
-	// SetNoNeedCommit marks the key shouldn't be used in 2pc commit phase.
-	SetNoNeedCommit
+	// SetKeyLocked marks the associated key has acquired lock.
+	SetKeyLocked
+	// DelKeyLocked reverts SetKeyLocked.
+	DelKeyLocked
+	// SetKeyLockedValueExists marks the value exists when key has been locked in Transaction.LockKeys.
+	SetKeyLockedValueExists
+	// SetKeyLockedValueNotExists marks the value doesn't exists when key has been locked in Transaction.LockKeys.
+	SetKeyLockedValueNotExists
+	// DelNeedCheckExists marks the key no need to be checked in Transaction.LockKeys.
+	DelNeedCheckExists
+	// SetPrewriteOnly marks the key shouldn't be used in 2pc commit phase.
+	SetPrewriteOnly
+	// SetIgnoredIn2PC marks the key will be ignored in 2pc.
+	SetIgnoredIn2PC
 )
 
 func applyFlagsOps(origin KeyFlags, ops ...FlagsOp) KeyFlags {
 	for _, op := range ops {
 		switch op {
 		case SetPresumeKeyNotExists:
-			origin |= flagPresumeKNE
+			origin |= flagPresumeKNE | flagNeedCheckExists
 		case DelPresumeKeyNotExists:
-			origin &= ^flagPresumeKNE
-		case SetPessimisticLock:
-			origin |= flagPessimisticLock
-		case DelPessimisticLock:
-			origin &= ^flagPessimisticLock
-		case SetNoNeedCommit:
-			origin |= flagNoNeedCommit
+			origin &= ^(flagPresumeKNE | flagNeedCheckExists)
+		case SetKeyLocked:
+			origin |= flagKeyLocked
+		case DelKeyLocked:
+			origin &= ^flagKeyLocked
+		case SetKeyLockedValueExists:
+			origin |= flagKeyLockedValExist
+		case DelNeedCheckExists:
+			origin &= ^flagNeedCheckExists
+		case SetKeyLockedValueNotExists:
+			origin &= ^flagKeyLockedValExist
+		case SetPrewriteOnly:
+			origin |= flagPrewriteOnly
+		case SetIgnoredIn2PC:
+			origin |= flagIgnoredIn2PC
 		}
 	}
 	return origin
@@ -86,15 +122,21 @@ func applyFlagsOps(origin KeyFlags, ops ...FlagsOp) KeyFlags {
 
 var tombstone = []byte{}
 
+// IsTombstone returns whether the value is a tombstone.
+func IsTombstone(val []byte) bool { return len(val) == 0 }
+
 // memdb is rollbackable Red-Black Tree optimized for TiDB's transaction states buffer use scenario.
 // You can think memdb is a combination of two separate tree map, one for key => value and another for key => keyFlags.
 //
 // The value map is rollbackable, that means you can use the `Staging`, `Release` and `Cleanup` API to safely modify KVs.
 //
 // The flags map is not rollbackable. There are two types of flag, persistent and non-persistent.
-// When discading a newly added KV in `Cleanup`, the non-persistent flags will be cleared.
+// When discarding a newly added KV in `Cleanup`, the non-persistent flags will be cleared.
 // If there are persistent flags associated with key, we will keep this key in node without value.
 type memdb struct {
+	// This RWMutex only used to ensure memdbSnapGetter.Get will not race with
+	// concurrent memdb.Set, memdb.SetWithFlags, memdb.Delete and memdb.UpdateFlags.
+	sync.RWMutex
 	root      memdbArenaAddr
 	allocator nodeAllocator
 	vlog      memdbVlog
@@ -120,16 +162,22 @@ func newMemDB() *memdb {
 }
 
 func (db *memdb) Staging() StagingHandle {
+	db.Lock()
+	defer db.Unlock()
+
 	db.stages = append(db.stages, db.vlog.checkpoint())
 	return StagingHandle(len(db.stages))
 }
 
 func (db *memdb) Release(h StagingHandle) {
 	if int(h) != len(db.stages) {
-		// This should never happens in production environmen.
+		// This should never happens in production environment.
 		// Use panic to make debug easier.
 		panic("cannot release staging buffer")
 	}
+
+	db.Lock()
+	defer db.Unlock()
 	if int(h) == 1 {
 		tail := db.vlog.checkpoint()
 		if !db.stages[0].isSamePosition(&tail) {
@@ -144,15 +192,20 @@ func (db *memdb) Cleanup(h StagingHandle) {
 		return
 	}
 	if int(h) < len(db.stages) {
-		// This should never happens in production environmen.
+		// This should never happens in production environment.
 		// Use panic to make debug easier.
 		panic("cannot cleanup staging buffer")
 	}
 
+	db.Lock()
+	defer db.Unlock()
 	cp := &db.stages[int(h)-1]
 	if !db.vlogInvalid {
-		db.vlog.revertToCheckpoint(db, cp)
-		db.vlog.truncate(cp)
+		curr := db.vlog.checkpoint()
+		if !curr.isSamePosition(cp) {
+			db.vlog.revertToCheckpoint(db, cp)
+			db.vlog.truncate(cp)
+		}
 	}
 	db.stages = db.stages[:int(h)-1]
 }
@@ -186,7 +239,7 @@ func (db *memdb) Get(_ context.Context, key Key) ([]byte, error) {
 		panic("vlog is resetted")
 	}
 
-	x := db.tranverse(key, false)
+	x := db.traverse(key, false)
 	if x.isNull() {
 		return nil, ErrNotExist
 	}
@@ -197,8 +250,26 @@ func (db *memdb) Get(_ context.Context, key Key) ([]byte, error) {
 	return db.vlog.getValue(x.vptr), nil
 }
 
+func (db *memdb) SelectValueHistory(key Key, predicate func(value []byte) bool) ([]byte, error) {
+	x := db.traverse(key, false)
+	if x.isNull() {
+		return nil, ErrNotExist
+	}
+	if x.vptr.isNull() {
+		// A flag only key, act as value not exists
+		return nil, ErrNotExist
+	}
+	result := db.vlog.selectValueHistory(x.vptr, func(addr memdbArenaAddr) bool {
+		return predicate(db.vlog.getValue(addr))
+	})
+	if result.isNull() {
+		return nil, nil
+	}
+	return db.vlog.getValue(result), nil
+}
+
 func (db *memdb) GetFlags(key Key) (KeyFlags, error) {
-	x := db.tranverse(key, false)
+	x := db.traverse(key, false)
 	if x.isNull() {
 		return 0, ErrNotExist
 	}
@@ -251,17 +322,20 @@ func (db *memdb) set(key Key, value []byte, ops ...FlagsOp) error {
 			return ErrEntryTooLarge.GenWithStackByArgs(db.entrySizeLimit, size)
 		}
 	}
+
+	db.Lock()
+	defer db.Unlock()
+
 	if len(db.stages) == 0 {
 		db.dirty = true
 	}
-	x := db.tranverse(key, true)
-	if x.vptr.isNull() && value != nil {
-		db.size += len(key)
-		db.count++
-	}
+	x := db.traverse(key, true)
 
 	if len(ops) != 0 {
 		flags := applyFlagsOps(x.getKeyFlags(), ops...)
+		if flags&persistentFlags != 0 {
+			db.dirty = true
+		}
 		x.setKeyFlags(flags)
 	}
 
@@ -299,9 +373,9 @@ func (db *memdb) setValue(x memdbNodeAddr, value []byte) {
 	db.size = db.size - len(oldVal) + len(value)
 }
 
-// tranverse search for and if not found and insert is true, will add a new node in.
+// traverse search for and if not found and insert is true, will add a new node in.
 // Returns a pointer to the new node, or the node found.
-func (db *memdb) tranverse(key Key, insert bool) memdbNodeAddr {
+func (db *memdb) traverse(key Key, insert bool) memdbNodeAddr {
 	x := db.getRoot()
 	y := memdbNodeAddr{nil, nullAddr}
 	found := false
@@ -437,7 +511,8 @@ func (db *memdb) leftRotate(x memdbNodeAddr) {
 
 	// If B is not null, set it's parent to be X
 	if !y.left.isNull() {
-		y.getLeft(db).up = x.addr
+		left := y.getLeft(db)
+		left.up = x.addr
 	}
 
 	// Set Y's parent to be what X's parent was
@@ -470,7 +545,8 @@ func (db *memdb) rightRotate(y memdbNodeAddr) {
 
 	// If B is not null, set it's parent to be Y
 	if !x.right.isNull() {
-		x.getRight(db).up = y.addr
+		right := x.getRight(db)
+		right.up = y.addr
 	}
 
 	// Set X's parent to be what Y's parent was
@@ -497,6 +573,9 @@ func (db *memdb) rightRotate(y memdbNodeAddr) {
 
 func (db *memdb) deleteNode(z memdbNodeAddr) {
 	var x, y memdbNodeAddr
+
+	db.count--
+	db.size -= int(z.klen)
 
 	if z.left.isNull() || z.right.isNull() {
 		y = z
@@ -551,10 +630,12 @@ func (db *memdb) replaceNode(old memdbNodeAddr, new memdbNodeAddr) {
 	}
 	new.up = old.up
 
-	old.getLeft(db).up = new.addr
+	left := old.getLeft(db)
+	left.up = new.addr
 	new.left = old.left
 
-	old.getRight(db).up = new.addr
+	right := old.getRight(db)
+	right.up = new.addr
 	new.right = old.right
 
 	if old.isBlack() {
@@ -693,6 +774,8 @@ func (db *memdb) getRoot() memdbNodeAddr {
 }
 
 func (db *memdb) allocNode(key Key) memdbNodeAddr {
+	db.size += len(key)
+	db.count++
 	x, xn := db.allocator.allocNode(key)
 	return memdbNodeAddr{xn, x}
 }

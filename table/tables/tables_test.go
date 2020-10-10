@@ -587,7 +587,7 @@ func (ts *testSuite) TestAddRecordWithCtx(c *C) {
 	defer ts.se.Execute(context.Background(), "DROP TABLE test.tRecord")
 
 	c.Assert(ts.se.NewTxn(context.Background()), IsNil)
-	txn, err := ts.se.Txn(true)
+	_, err = ts.se.Txn(true)
 	c.Assert(err, IsNil)
 	recordCtx := tables.NewCommonAddRecordCtx(len(tb.Cols()))
 	tables.SetAddRecordCtx(ts.se, recordCtx)
@@ -612,7 +612,7 @@ func (ts *testSuite) TestAddRecordWithCtx(c *C) {
 	c.Assert(i, Equals, len(records))
 
 	ts.se.StmtCommit()
-	txn, err = ts.se.Txn(true)
+	txn, err := ts.se.Txn(true)
 	c.Assert(err, IsNil)
 	c.Assert(txn.Commit(context.Background()), IsNil)
 }

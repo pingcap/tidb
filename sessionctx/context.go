@@ -60,6 +60,10 @@ type Context interface {
 	// now just for load data and batch insert.
 	RefreshTxnCtx(context.Context) error
 
+	// RefreshVars refreshes modified global variable to current session.
+	// only used to daemon session like `statsHandle` to detect global variable change.
+	RefreshVars(context.Context) error
+
 	// InitTxnWithStartTS initializes a transaction with startTS.
 	// It should be called right before we builds an executor.
 	InitTxnWithStartTS(startTS uint64) error
@@ -82,8 +86,6 @@ type Context interface {
 	StmtRollback()
 	// StmtGetMutation gets the binlog mutation for current statement.
 	StmtGetMutation(int64) *binlog.TableMutation
-	// StmtAddDirtyTableOP adds the dirty table operation for current statement.
-	StmtAddDirtyTableOP(op int, physicalID int64, handle kv.Handle)
 	// DDLOwnerChecker returns owner.DDLOwnerChecker.
 	DDLOwnerChecker() owner.DDLOwnerChecker
 	// AddTableLock adds table lock to the session lock map.

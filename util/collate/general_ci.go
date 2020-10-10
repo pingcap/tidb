@@ -108,7 +108,7 @@ func doMatchGeneralCI(str string, patWeights []uint16, patTypes []byte) bool {
 					continue
 				}
 			case stringutil.PatOne:
-				if rIdx < len(str) {
+				if rIdx < lenRunes {
 					pIdx++
 					rIdx++
 					continue
@@ -124,7 +124,7 @@ func doMatchGeneralCI(str string, patWeights []uint16, patTypes []byte) bool {
 			}
 		}
 		// Mismatch. Maybe restart.
-		if 0 < nextRIdx && nextRIdx <= len(str) {
+		if 0 < nextRIdx && nextRIdx <= lenRunes {
 			pIdx = nextPIdx
 			rIdx = nextRIdx
 			continue

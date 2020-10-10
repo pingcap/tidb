@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -32,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
@@ -53,6 +55,7 @@ var (
 type tikvSnapshot struct {
 	store           *tikvStore
 	version         kv.Version
+	isolationLevel  kv.IsoLevel
 	priority        pb.CommandPri
 	notFillCache    bool
 	syncLog         bool
@@ -74,12 +77,18 @@ type tikvSnapshot struct {
 		sync.RWMutex
 		hitCnt int64
 		cached map[string][]byte
+		stats  *SnapshotRuntimeStats
 	}
-	stats *SnapshotRuntimeStats
+	sampleStep uint32
 }
 
 // newTiKVSnapshot creates a snapshot of an TiKV store.
 func newTiKVSnapshot(store *tikvStore, ver kv.Version, replicaReadSeed uint32) *tikvSnapshot {
+	// Sanity check for snapshot version.
+	if ver.Ver >= math.MaxInt64 && ver.Ver != math.MaxUint64 {
+		err := errors.Errorf("try to get snapshot with a large ts %d", ver.Ver)
+		panic(err)
+	}
 	return &tikvSnapshot{
 		store:           store,
 		version:         ver,
@@ -93,6 +102,11 @@ func newTiKVSnapshot(store *tikvStore, ver kv.Version, replicaReadSeed uint32) *
 }
 
 func (s *tikvSnapshot) setSnapshotTS(ts uint64) {
+	// Sanity check for snapshot version.
+	if ts >= math.MaxInt64 && ts != math.MaxUint64 {
+		err := errors.Errorf("try to get snapshot with a large ts %d", ts)
+		panic(err)
+	}
 	// Invalidate cache if the snapshotTS change!
 	s.version.Ver = ts
 	s.mu.Lock()
@@ -238,10 +252,10 @@ func (s *tikvSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, coll
 		minCommitTSPushed: &s.minCommitTSPushed,
 		Client:            s.store.client,
 	}
-	if s.stats != nil {
-		cli.stats = make(map[tikvrpc.CmdType]*RegionRequestRuntimeStats)
+	if s.mu.stats != nil {
+		cli.Stats = make(map[tikvrpc.CmdType]*RPCRuntimeStats)
 		defer func() {
-			s.mergeRegionRequestStats(cli.stats)
+			s.mergeRegionRequestStats(cli.Stats)
 		}()
 	}
 
@@ -314,11 +328,6 @@ func (s *tikvSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, coll
 
 // Get gets the value for key k from snapshot.
 func (s *tikvSnapshot) Get(ctx context.Context, k kv.Key) ([]byte, error) {
-	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("tikvSnapshot.get", opentracing.ChildOf(span.Context()))
-		defer span1.Finish()
-		ctx = opentracing.ContextWithSpan(ctx, span1)
-	}
 
 	defer func(start time.Time) {
 		tikvTxnCmdHistogramWithGet.Observe(time.Since(start).Seconds())
@@ -326,7 +335,7 @@ func (s *tikvSnapshot) Get(ctx context.Context, k kv.Key) ([]byte, error) {
 
 	ctx = context.WithValue(ctx, txnStartKey, s.version.Ver)
 	bo := NewBackofferWithVars(ctx, getMaxBackoff, s.vars)
-	val, err := s.get(bo, k)
+	val, err := s.get(ctx, bo, k)
 	s.recordBackoffInfo(bo)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -342,7 +351,7 @@ func (s *tikvSnapshot) Get(ctx context.Context, k kv.Key) ([]byte, error) {
 	return val, nil
 }
 
-func (s *tikvSnapshot) get(bo *Backoffer, k kv.Key) ([]byte, error) {
+func (s *tikvSnapshot) get(ctx context.Context, bo *Backoffer, k kv.Key) ([]byte, error) {
 	// Check the cached values first.
 	s.mu.RLock()
 	if s.mu.cached != nil {
@@ -353,7 +362,11 @@ func (s *tikvSnapshot) get(bo *Backoffer, k kv.Key) ([]byte, error) {
 		}
 	}
 	s.mu.RUnlock()
-
+	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+		span1 := span.Tracer().StartSpan("tikvSnapshot.get", opentracing.ChildOf(span.Context()))
+		defer span1.Finish()
+		opentracing.ContextWithSpan(ctx, span1)
+	}
 	failpoint.Inject("snapshot-get-cache-fail", func(_ failpoint.Value) {
 		if bo.ctx.Value("TestSnapshotCache") != nil {
 			panic("cache miss")
@@ -367,10 +380,10 @@ func (s *tikvSnapshot) get(bo *Backoffer, k kv.Key) ([]byte, error) {
 		Client:            s.store.client,
 		resolveLite:       true,
 	}
-	if s.stats != nil {
-		cli.stats = make(map[tikvrpc.CmdType]*RegionRequestRuntimeStats)
+	if s.mu.stats != nil {
+		cli.Stats = make(map[tikvrpc.CmdType]*RPCRuntimeStats)
 		defer func() {
-			s.mergeRegionRequestStats(cli.stats)
+			s.mergeRegionRequestStats(cli.Stats)
 		}()
 	}
 
@@ -445,14 +458,28 @@ func (s *tikvSnapshot) IterReverse(k kv.Key) (kv.Iterator, error) {
 // value of this option. Only ReplicaRead is supported for snapshot
 func (s *tikvSnapshot) SetOption(opt kv.Option, val interface{}) {
 	switch opt {
-	case kv.ReplicaRead:
-		s.replicaRead = val.(kv.ReplicaReadType)
+	case kv.IsolationLevel:
+		s.isolationLevel = val.(kv.IsoLevel)
 	case kv.Priority:
 		s.priority = kvPriorityToCommandPri(val.(int))
+	case kv.NotFillCache:
+		s.notFillCache = val.(bool)
+	case kv.SyncLog:
+		s.syncLog = val.(bool)
+	case kv.KeyOnly:
+		s.keyOnly = val.(bool)
+	case kv.SnapshotTS:
+		s.setSnapshotTS(val.(uint64))
+	case kv.ReplicaRead:
+		s.replicaRead = val.(kv.ReplicaReadType)
 	case kv.TaskID:
 		s.taskID = val.(uint64)
 	case kv.CollectRuntimeStats:
-		s.stats = val.(*SnapshotRuntimeStats)
+		s.mu.Lock()
+		s.mu.stats = val.(*SnapshotRuntimeStats)
+		s.mu.Unlock()
+	case kv.SampleStep:
+		s.sampleStep = val.(uint32)
 	}
 }
 
@@ -462,7 +489,9 @@ func (s *tikvSnapshot) DelOption(opt kv.Option) {
 	case kv.ReplicaRead:
 		s.replicaRead = kv.ReplicaReadLeader
 	case kv.CollectRuntimeStats:
-		s.stats = nil
+		s.mu.Lock()
+		s.mu.stats = nil
+		s.mu.Unlock()
 	}
 }
 
@@ -473,6 +502,17 @@ func SnapCacheHitCount(snap kv.Snapshot) int {
 		return 0
 	}
 	return int(atomic.LoadInt64(&tikvSnap.mu.hitCnt))
+}
+
+// SnapCacheSize gets the snapshot cache size.
+func SnapCacheSize(snap kv.Snapshot) int {
+	tikvSnap, ok := snap.(*tikvSnapshot)
+	if !ok {
+		return 0
+	}
+	tikvSnap.mu.RLock()
+	defer tikvSnap.mu.RLock()
+	return len(tikvSnap.mu.cached)
 }
 
 func extractLockFromKeyErr(keyErr *pb.KeyError) (*Lock, error) {
@@ -579,58 +619,113 @@ func prettyWriteKey(buf *bytes.Buffer, key []byte) {
 }
 
 func (s *tikvSnapshot) recordBackoffInfo(bo *Backoffer) {
-	if s.stats == nil || bo.totalSleep == 0 {
+	if s.mu.stats == nil || bo.totalSleep == 0 {
 		return
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.stats.backoffSleepMS == nil {
-		s.stats.backoffSleepMS = bo.backoffSleepMS
-		s.stats.backoffTimes = bo.backoffTimes
+	if s.mu.stats == nil {
+		return
+	}
+	if s.mu.stats.backoffSleepMS == nil {
+		s.mu.stats.backoffSleepMS = bo.backoffSleepMS
+		s.mu.stats.backoffTimes = bo.backoffTimes
 		return
 	}
 	for k, v := range bo.backoffSleepMS {
-		s.stats.backoffSleepMS[k] += v
+		s.mu.stats.backoffSleepMS[k] += v
 	}
 	for k, v := range bo.backoffTimes {
-		s.stats.backoffTimes[k] += v
+		s.mu.stats.backoffTimes[k] += v
 	}
 }
 
-func (s *tikvSnapshot) mergeRegionRequestStats(stats map[tikvrpc.CmdType]*RegionRequestRuntimeStats) {
+func (s *tikvSnapshot) mergeRegionRequestStats(stats map[tikvrpc.CmdType]*RPCRuntimeStats) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.stats.rpcStats == nil {
-		s.stats.rpcStats = stats
+	if s.mu.stats == nil {
+		return
+	}
+	if s.mu.stats.rpcStats.Stats == nil {
+		s.mu.stats.rpcStats.Stats = stats
 		return
 	}
 	for k, v := range stats {
-		stat, ok := s.stats.rpcStats[k]
+		stat, ok := s.mu.stats.rpcStats.Stats[k]
 		if !ok {
-			s.stats.rpcStats[k] = v
+			s.mu.stats.rpcStats.Stats[k] = v
 			continue
 		}
-		stat.count += v.count
-		stat.consume += v.consume
+		stat.Count += v.Count
+		stat.Consume += v.Consume
 	}
 }
 
 // SnapshotRuntimeStats records the runtime stats of snapshot.
 type SnapshotRuntimeStats struct {
-	rpcStats       map[tikvrpc.CmdType]*RegionRequestRuntimeStats
+	rpcStats       RegionRequestRuntimeStats
 	backoffSleepMS map[backoffType]int
 	backoffTimes   map[backoffType]int
+}
+
+// Tp implements the RuntimeStats interface.
+func (rs *SnapshotRuntimeStats) Tp() int {
+	return execdetails.TpSnapshotRuntimeStats
+}
+
+// Clone implements the RuntimeStats interface.
+func (rs *SnapshotRuntimeStats) Clone() execdetails.RuntimeStats {
+	newRs := SnapshotRuntimeStats{rpcStats: NewRegionRequestRuntimeStats()}
+	if rs.rpcStats.Stats != nil {
+		for k, v := range rs.rpcStats.Stats {
+			newRs.rpcStats.Stats[k] = v
+		}
+	}
+	if len(rs.backoffSleepMS) > 0 {
+		newRs.backoffSleepMS = make(map[backoffType]int)
+		newRs.backoffTimes = make(map[backoffType]int)
+		for k, v := range rs.backoffSleepMS {
+			newRs.backoffSleepMS[k] += v
+		}
+		for k, v := range rs.backoffTimes {
+			newRs.backoffTimes[k] += v
+		}
+	}
+	return &newRs
+}
+
+// Merge implements the RuntimeStats interface.
+func (rs *SnapshotRuntimeStats) Merge(other execdetails.RuntimeStats) {
+	tmp, ok := other.(*SnapshotRuntimeStats)
+	if !ok {
+		return
+	}
+	if tmp.rpcStats.Stats != nil {
+		if rs.rpcStats.Stats == nil {
+			rs.rpcStats.Stats = make(map[tikvrpc.CmdType]*RPCRuntimeStats, len(tmp.rpcStats.Stats))
+		}
+		rs.rpcStats.Merge(tmp.rpcStats)
+	}
+	if len(tmp.backoffSleepMS) > 0 {
+		if rs.backoffSleepMS == nil {
+			rs.backoffSleepMS = make(map[backoffType]int)
+		}
+		if rs.backoffTimes == nil {
+			rs.backoffTimes = make(map[backoffType]int)
+		}
+		for k, v := range tmp.backoffSleepMS {
+			rs.backoffSleepMS[k] += v
+		}
+		for k, v := range tmp.backoffTimes {
+			rs.backoffTimes[k] += v
+		}
+	}
 }
 
 // String implements fmt.Stringer interface.
 func (rs *SnapshotRuntimeStats) String() string {
 	var buf bytes.Buffer
-	for k, v := range rs.rpcStats {
-		if buf.Len() > 0 {
-			buf.WriteByte(',')
-		}
-		buf.WriteString(fmt.Sprintf("%s:{num_rpc:%d, total_time:%s}", k.String(), v.count, time.Duration(v.consume)))
-	}
+	buf.WriteString(rs.rpcStats.String())
 	for k, v := range rs.backoffTimes {
 		if buf.Len() > 0 {
 			buf.WriteByte(',')

@@ -9,7 +9,7 @@ advertise-address = ""
 # TiDB server port.
 port = 4000
 
-# Registered store name, [tikv, unistore]
+# Registered store name, [tikv, mocktikv, unistore]
 store = "unistore"
 
 # TiDB storage path.
@@ -119,6 +119,10 @@ skip-register-to-dashboard = false
 # See PingCAP privacy policy for details: https://pingcap.com/en/privacy-policy/
 enable-telemetry = true
 
+# deprecate-integer-display-length is used to be compatible with MySQL 8.0 in which the integer declared with display length will be returned with
+# a warning like `Integer display width is deprecated and will be removed in a future release`.
+deprecate-integer-display-length = false
+
 [log]
 # Log level: debug, info, warn, error, fatal.
 level = "info"
@@ -183,6 +187,11 @@ cluster-ssl-cert = ""
 
 # Path of file that contains X509 key in PEM format for connection with cluster components.
 cluster-ssl-key = ""
+
+# Configurations of the encryption method to use for encrypting the spilled data files.
+# Possible values are "plaintext", "aes128-ctr", if not set, it will be "plaintext" by default.
+# "plaintext" means encryption is disabled.
+spilled-file-encryption-method = "plaintext"
 
 [status]
 # If enable status report HTTP service.
@@ -263,7 +272,7 @@ txn-entry-size-limit = 6291456
 committer-concurrency = 16
 
 # max lifetime of transaction ttl manager.
-max-txn-ttl = 600000
+max-txn-ttl = 3600000
 
 # the interval duration between two memory profile into global tracker
 mem-profile-interval = "1m"
@@ -347,9 +356,6 @@ grpc-keepalive-timeout = 3
 # Max time for commit command, must be twice bigger than raft election timeout.
 commit-timeout = "41s"
 
-# Enable async commit for all transactions.
-enable-async-commit = false
-
 # Max batch size in gRPC.
 max-batch-size = 128
 # Overload threshold of TiKV.
@@ -377,6 +383,16 @@ store-liveness-timeout = "5s"
 # ttl-refreshed-txn-size decides whether a transaction should update its lock TTL.
 # If the size(in byte) of a transaction is large than `ttl-refreshed-txn-size`, it update the lock TTL during the 2PC.
 ttl-refreshed-txn-size = 33554432
+
+[tikv-client.async-commit]
+# Whether to enable the async commit feature. This feature reduces the latency of the two-phase commit.
+enable = false
+# The maximum allowed keys in an async commit transaction. Transactions with more keys than the limit
+# will be committed with normal 2PC way.
+keys-limit = 256
+# The maximum length total of keys in bytes. Transactions will be committed with the normal 2PC way
+# if the limit is exceeded.
+total-key-size-limit = 4096
 
 [tikv-client.copr-cache]
 # Whether to enable the copr cache. The copr cache saves the result from TiKV Coprocessor in the memory and
@@ -411,9 +427,6 @@ binlog-socket = ""
 strategy = "range"
 
 [pessimistic-txn]
-# enable pessimistic transaction.
-enable = true
-
 # max retry count for a statement in a pessimistic transaction.
 max-retry-count = 256
 
@@ -439,8 +452,6 @@ history-size = 24
 # experimental section controls the features that are still experimental: their semantics,
 # interfaces are subject to change, using these features in the production environment is not recommended.
 [experimental]
-# enable creating expression index.
-allow-expression-index = false
 
 # server level isolation read by engines and labels
 [isolation-read]

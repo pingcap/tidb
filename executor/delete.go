@@ -81,9 +81,10 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 		}
 	}
 
-	// If tidb_batch_delete is ON and not in a transaction, we could use BatchDelete mode.
-	batchDelete := e.ctx.GetSessionVars().BatchDelete && !e.ctx.GetSessionVars().InTxn() && config.GetGlobalConfig().EnableBatchDML
 	batchDMLSize := e.ctx.GetSessionVars().DMLBatchSize
+	// If tidb_batch_delete is ON and not in a transaction, we could use BatchDelete mode.
+	batchDelete := e.ctx.GetSessionVars().BatchDelete && !e.ctx.GetSessionVars().InTxn() &&
+		config.GetGlobalConfig().EnableBatchDML && batchDMLSize > 0
 	fields := retTypes(e.children[0])
 	chk := newFirstChunk(e.children[0])
 	memUsageOfChk := int64(0)

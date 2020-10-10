@@ -272,7 +272,29 @@ func (l *memdbVlog) getValue(addr memdbArenaAddr) []byte {
 		return tombstone
 	}
 	valueOff := lenOff - valueLen
-	return block[valueOff:lenOff]
+	return block[valueOff:lenOff:lenOff]
+}
+
+func (l *memdbVlog) getSnapshotValue(addr memdbArenaAddr, snap *memdbCheckpoint) ([]byte, bool) {
+	result := l.selectValueHistory(addr, func(addr memdbArenaAddr) bool {
+		return !l.canModify(snap, addr)
+	})
+	if result.isNull() {
+		return nil, false
+	}
+	return l.getValue(addr), true
+}
+
+func (l *memdbVlog) selectValueHistory(addr memdbArenaAddr, predicate func(memdbArenaAddr) bool) memdbArenaAddr {
+	for !addr.isNull() {
+		if predicate(addr) {
+			return addr
+		}
+		var hdr memdbVlogHdr
+		hdr.load(l.blocks[addr.idx].buf[addr.off-memdbVlogHdrSize:])
+		addr = hdr.oldValue
+	}
+	return nullAddr
 }
 
 func (l *memdbVlog) revertToCheckpoint(db *memdb, cp *memdbCheckpoint) {
@@ -288,8 +310,6 @@ func (l *memdbVlog) revertToCheckpoint(db *memdb, cp *memdbCheckpoint) {
 		db.size -= int(hdr.valueLen)
 		// oldValue.isNull() == true means this is a newly added value.
 		if hdr.oldValue.isNull() {
-			db.count--
-			db.size -= int(node.klen)
 			// If there are no flags associated with this key, we need to delete this node.
 			keptFlags := node.getKeyFlags() & persistentFlags
 			if keptFlags == 0 {

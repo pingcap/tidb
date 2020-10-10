@@ -169,7 +169,7 @@ func colChangeAmendable(colAtStart *model.ColumnInfo, colAtCommit *model.ColumnI
 		if colAtStart.Charset != colAtCommit.Charset || colAtStart.Collate != colAtCommit.Collate {
 			return errors.Trace(errors.Errorf("charset or collate is not matched for column=%v", colAtCommit.Name.String()))
 		}
-		err := ddl.CheckModifyTypeCompatible(&colAtStart.FieldType, &colAtCommit.FieldType)
+		_, err := ddl.CheckModifyTypeCompatible(&colAtStart.FieldType, &colAtCommit.FieldType)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -475,9 +475,7 @@ func (s *SchemaAmender) getAmendableKeys(commitMutations tikv.CommitterMutations
 			addKeys = append(addKeys, byteKey)
 		} else if pb.Op_Del == keyOp {
 			removeKeys = append(removeKeys, byteKey)
-		} else {
-			// Do nothing.
-		}
+		} // else Do nothing.
 	}
 	return addKeys, removeKeys
 }

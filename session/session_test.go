@@ -120,8 +120,12 @@ func clearStorage(store kv.Storage) error {
 }
 
 func clearETCD(ebd tikv.EtcdBackend) error {
+	endpoints, err := ebd.EtcdAddrs()
+	if err != nil {
+		return err
+	}
 	cli, err := clientv3.New(clientv3.Config{
-		Endpoints:        ebd.EtcdAddrs(),
+		Endpoints:        endpoints,
 		AutoSyncInterval: 30 * time.Second,
 		DialTimeout:      5 * time.Second,
 		DialOptions: []grpc.DialOption{
@@ -134,13 +138,15 @@ func clearETCD(ebd tikv.EtcdBackend) error {
 	}
 	defer cli.Close()
 
-	leases, err := cli.Leases(context.Background())
+	resp, err := cli.Get(context.Background(), "/tidb", clientv3.WithPrefix())
 	if err != nil {
 		return errors.Trace(err)
 	}
-	for _, resp := range leases.Leases {
-		if _, err := cli.Revoke(context.Background(), resp.ID); err != nil {
-			return errors.Trace(err)
+	for _, kv := range resp.Kvs {
+		if kv.Lease != 0 {
+			if _, err := cli.Revoke(context.Background(), clientv3.LeaseID(kv.Lease)); err != nil {
+				return errors.Trace(err)
+			}
 		}
 	}
 	_, err = cli.Delete(context.Background(), "/tidb", clientv3.WithPrefix())
@@ -542,9 +548,9 @@ func testTxnLazyInitialize(s *testSessionSuite, c *C, isPessimistic bool) {
 	}
 
 	tk.MustExec("set @@autocommit = 0")
-	txn, err := tk.Se.Txn(true)
+	_, err := tk.Se.Txn(true)
 	c.Assert(kv.ErrInvalidTxn.Equal(err), IsTrue)
-	txn, err = tk.Se.Txn(false)
+	txn, err := tk.Se.Txn(false)
 	c.Assert(err, IsNil)
 	c.Assert(txn.Valid(), IsFalse)
 	tk.MustQuery("select @@tidb_current_ts").Check(testkit.Rows("0"))
@@ -680,10 +686,9 @@ func (s *testSessionSuite) TestGetSysVariables(c *C) {
 	// Test ScopeNone
 	tk.MustExec("select @@performance_schema_max_mutex_classes")
 	tk.MustExec("select @@global.performance_schema_max_mutex_classes")
-	_, err = tk.Exec("select @@session.performance_schema_max_mutex_classes")
-	c.Assert(terror.ErrorEqual(err, variable.ErrIncorrectScope), IsTrue, Commentf("err %v", err))
-	_, err = tk.Exec("select @@local.performance_schema_max_mutex_classes")
-	c.Assert(terror.ErrorEqual(err, variable.ErrIncorrectScope), IsTrue, Commentf("err %v", err))
+	// For issue 19524, test
+	tk.MustExec("select @@session.performance_schema_max_mutex_classes")
+	tk.MustExec("select @@local.performance_schema_max_mutex_classes")
 }
 
 func (s *testSessionSuite) TestRetryResetStmtCtx(c *C) {
@@ -718,7 +723,8 @@ func (s *testSessionSuite) TestRetryCleanTxn(c *C) {
 	history := session.GetHistory(tk.Se)
 	stmtNode, err := parser.New().ParseOneStmt("insert retrytxn values (2, 'a')", "", "")
 	c.Assert(err, IsNil)
-	stmt, _ := session.Compile(context.TODO(), tk.Se, stmtNode)
+	compiler := executor.Compiler{Ctx: tk.Se}
+	stmt, _ := compiler.Compile(context.TODO(), stmtNode)
 	executor.ResetContextOfStmt(tk.Se, stmtNode)
 	history.Add(stmt, tk.Se.GetSessionVars().StmtCtx)
 	_, err = tk.Exec("commit")
@@ -3231,6 +3237,27 @@ func (s *testSessionSuite2) TestPerStmtTaskID(c *C) {
 	c.Assert(taskID1 != taskID2, IsTrue)
 }
 
+func (s *testSessionSerialSuite) TestDoDDLJobQuit(c *C) {
+	// test https://github.com/pingcap/tidb/issues/18714, imitate DM's use environment
+	// use isolated store, because in below failpoint we will cancel its context
+	store, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.MockTiKV))
+	c.Assert(err, IsNil)
+	defer store.Close()
+	dom, err := session.BootstrapSession(store)
+	c.Assert(err, IsNil)
+	defer dom.Close()
+	se, err := session.CreateSession(store)
+	c.Assert(err, IsNil)
+	defer se.Close()
+
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/storeCloseInLoop", `return`), IsNil)
+	defer failpoint.Disable("github.com/pingcap/tidb/ddl/storeCloseInLoop")
+
+	// this DDL call will enter deadloop before this fix
+	err = dom.DDL().CreateSchema(se, model.NewCIStr("testschema"), nil)
+	c.Assert(err.Error(), Equals, "context canceled")
+}
+
 func (s *testBackupRestoreSuite) TestBackupAndRestore(c *C) {
 	// only run BR SQL integration test with tikv store.
 	if *withTiKV {
@@ -3245,21 +3272,26 @@ func (s *testBackupRestoreSuite) TestBackupAndRestore(c *C) {
 		tk.MustExec("insert into t1 values (1)")
 		tk.MustExec("insert into t1 values (2)")
 		tk.MustExec("insert into t1 values (3)")
-
 		tk.MustQuery("select count(*) from t1").Check(testkit.Rows("3"))
+
+		tk.MustExec("create database if not exists br02")
+		tk.MustExec("use br02")
+		tk.MustExec("create table t1(v int)")
 
 		tmpDir := path.Join(os.TempDir(), "bk1")
 		os.RemoveAll(tmpDir)
 		// backup database to tmp dir
-		tk.MustQuery("backup database br to 'local://" + tmpDir + "'")
+		tk.MustQuery("backup database * to 'local://" + tmpDir + "'")
 
 		// remove database for recovery
 		tk.MustExec("drop database br")
+		tk.MustExec("drop database br02")
 
 		// restore database with backup data
-		tk.MustQuery("restore database br from 'local://" + tmpDir + "'")
+		tk.MustQuery("restore database * from 'local://" + tmpDir + "'")
 		tk.MustExec("use br")
 		tk.MustQuery("select count(*) from t1").Check(testkit.Rows("3"))
 		tk.MustExec("drop database br")
+		tk.MustExec("drop database br02")
 	}
 }

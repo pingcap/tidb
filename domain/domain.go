@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/infoschema"
@@ -77,6 +78,7 @@ type Domain struct {
 	wg                   sync.WaitGroup
 	statsUpdating        sync2.AtomicInt32
 	cancel               context.CancelFunc
+	indexUsageSyncLease  time.Duration
 }
 
 // loadInfoSchema loads infoschema at startTS into handle, usedSchemaVersion is the currently used
@@ -139,7 +141,18 @@ func (do *Domain) loadInfoSchema(handle *infoschema.Handle, usedSchemaVersion in
 		return 0, nil, fullLoad, err
 	}
 
-	newISBuilder, err := infoschema.NewBuilder(handle).InitWithDBInfos(schemas, neededSchemaVersion)
+	bundles, err := infosync.GetAllRuleBundles(nil)
+	failpoint.Inject("FailPlacement", func(val failpoint.Value) {
+		if val.(bool) {
+			bundles = []*placement.Bundle{}
+			err = nil
+		}
+	})
+	if err != nil {
+		return 0, nil, fullLoad, err
+	}
+
+	newISBuilder, err := infoschema.NewBuilder(handle).InitWithDBInfos(schemas, bundles, neededSchemaVersion)
 	if err != nil {
 		return 0, nil, fullLoad, err
 	}
@@ -170,7 +183,10 @@ func (do *Domain) fetchAllSchemasWithTables(m *meta.Meta) ([]*model.DBInfo, erro
 	return allSchemas, nil
 }
 
-const fetchSchemaConcurrency = 8
+// fetchSchemaConcurrency controls the goroutines to load schemas, but more goroutines
+// increase the memory usage when calling json.Unmarshal(), which would cause OOM,
+// so we decrease the concurrency.
+const fetchSchemaConcurrency = 1
 
 func (do *Domain) splitForConcurrentFetch(schemas []*model.DBInfo) [][]*model.DBInfo {
 	groupSize := (len(schemas) + fetchSchemaConcurrency - 1) / fetchSchemaConcurrency
@@ -462,9 +478,10 @@ func (do *Domain) infoSyncerKeeper() {
 		case <-do.info.Done():
 			logutil.BgLogger().Info("server info syncer need to restart")
 			if err := do.info.Restart(context.Background()); err != nil {
-				logutil.BgLogger().Error("server restart failed", zap.Error(err))
+				logutil.BgLogger().Error("server info syncer restart failed", zap.Error(err))
+			} else {
+				logutil.BgLogger().Info("server info syncer restarted")
 			}
-			logutil.BgLogger().Info("server info syncer restarted")
 		case <-do.exit:
 			return
 		}
@@ -490,9 +507,10 @@ func (do *Domain) topologySyncerKeeper() {
 		case <-do.info.TopologyDone():
 			logutil.BgLogger().Info("server topology syncer need to restart")
 			if err := do.info.RestartTopology(context.Background()); err != nil {
-				logutil.BgLogger().Error("server restart failed", zap.Error(err))
+				logutil.BgLogger().Error("server topology syncer restart failed", zap.Error(err))
+			} else {
+				logutil.BgLogger().Info("server topology syncer restarted")
 			}
-			logutil.BgLogger().Info("server topology syncer restarted")
 		case <-do.exit:
 			return
 		}
@@ -653,15 +671,16 @@ func (c *ddlCallback) OnChanged(err error) error {
 const resourceIdleTimeout = 3 * time.Minute // resources in the ResourcePool will be recycled after idleTimeout
 
 // NewDomain creates a new domain. Should not create multiple domains for the same store.
-func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duration, factory pools.Factory) *Domain {
+func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duration, idxUsageSyncLease time.Duration, factory pools.Factory) *Domain {
 	capacity := 200 // capacity of the sysSessionPool size
 	do := &Domain{
-		store:          store,
-		exit:           make(chan struct{}),
-		sysSessionPool: newSessionPool(capacity, factory),
-		statsLease:     statsLease,
-		infoHandle:     infoschema.NewHandle(store),
-		slowQuery:      newTopNSlowQueries(30, time.Hour*24*7, 500),
+		store:               store,
+		exit:                make(chan struct{}),
+		sysSessionPool:      newSessionPool(capacity, factory),
+		statsLease:          statsLease,
+		infoHandle:          infoschema.NewHandle(store),
+		slowQuery:           newTopNSlowQueries(30, time.Hour*24*7, 500),
+		indexUsageSyncLease: idxUsageSyncLease,
 	}
 
 	do.SchemaValidator = NewSchemaValidator(ddlLease, do)
@@ -672,7 +691,12 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.Resource, error)) error {
 	perfschema.Init()
 	if ebd, ok := do.store.(tikv.EtcdBackend); ok {
-		if addrs := ebd.EtcdAddrs(); addrs != nil {
+		var addrs []string
+		var err error
+		if addrs, err = ebd.EtcdAddrs(); err != nil {
+			return err
+		}
+		if addrs != nil {
 			cfg := config.GetGlobalConfig()
 			// silence etcd warn log, when domain closed, it won't randomly print warn log
 			// see details at the issue https://github.com/pingcap/tidb/issues/15479
