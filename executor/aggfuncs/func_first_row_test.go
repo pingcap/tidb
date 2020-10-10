@@ -19,8 +19,11 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
+
+	"github.com/pingcap/tidb/executor/aggfuncs"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
+	"github.com/pingcap/tidb/util/chunk"
 )
 
 func (s *testSuite) TestMergePartialResult4FirstRow(c *C) {
@@ -46,4 +49,57 @@ func (s *testSuite) TestMergePartialResult4FirstRow(c *C) {
 	for _, test := range tests {
 		s.testMergePartialResult(c, test)
 	}
+}
+
+func (s *testSuite) TestMemFirstRow(c *C) {
+	tests := []aggMemTest{
+		buildAggMemTester(ast.AggFuncFirstRow, mysql.TypeLonglong, 5,
+			aggfuncs.DefPartialResult4FirstRowIntSize, defaultUpdateMemDeltaGens, false),
+		buildAggMemTester(ast.AggFuncFirstRow, mysql.TypeFloat, 5,
+			aggfuncs.DefPartialResult4FirstRowFloat32Size, defaultUpdateMemDeltaGens, false),
+		buildAggMemTester(ast.AggFuncFirstRow, mysql.TypeDouble, 5,
+			aggfuncs.DefPartialResult4FirstRowFloat64Size, defaultUpdateMemDeltaGens, false),
+		buildAggMemTester(ast.AggFuncFirstRow, mysql.TypeNewDecimal, 5,
+			aggfuncs.DefPartialResult4FirstRowDecimalSize, defaultUpdateMemDeltaGens, false),
+		buildAggMemTester(ast.AggFuncFirstRow, mysql.TypeString, 5,
+			aggfuncs.DefPartialResult4FirstRowStringSize, firstRowUpdateMemDeltaGens, false),
+		buildAggMemTester(ast.AggFuncFirstRow, mysql.TypeDate, 5,
+			aggfuncs.DefPartialResult4FirstRowTimeSize, defaultUpdateMemDeltaGens, false),
+		buildAggMemTester(ast.AggFuncFirstRow, mysql.TypeDuration, 5,
+			aggfuncs.DefPartialResult4FirstRowDurationSize, defaultUpdateMemDeltaGens, false),
+		buildAggMemTester(ast.AggFuncFirstRow, mysql.TypeJSON, 5,
+			aggfuncs.DefPartialResult4FirstRowJSONSize, firstRowUpdateMemDeltaGens, false),
+		buildAggMemTester(ast.AggFuncFirstRow, mysql.TypeEnum, 5,
+			aggfuncs.DefPartialResult4FirstRowEnumSize, firstRowUpdateMemDeltaGens, false),
+		buildAggMemTester(ast.AggFuncFirstRow, mysql.TypeSet, 5,
+			aggfuncs.DefPartialResult4FirstRowSetSize, firstRowUpdateMemDeltaGens, false),
+	}
+	for _, test := range tests {
+		s.testAggMemFunc(c, test)
+	}
+}
+
+func firstRowUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) (memDeltas []int64, err error) {
+	for i := 0; i < srcChk.NumRows(); i++ {
+		row := srcChk.GetRow(i)
+		if i > 0 {
+			memDeltas = append(memDeltas, int64(0))
+			continue
+		}
+		switch dataType.Tp {
+		case mysql.TypeString:
+			val := row.GetString(0)
+			memDeltas = append(memDeltas, int64(len(val)))
+		case mysql.TypeJSON:
+			jsonVal := row.GetJSON(0)
+			memDeltas = append(memDeltas, int64(len(string(jsonVal.Value))))
+		case mysql.TypeEnum:
+			enum := row.GetEnum(0)
+			memDeltas = append(memDeltas, int64(len(enum.Name)))
+		case mysql.TypeSet:
+			typeSet := row.GetSet(0)
+			memDeltas = append(memDeltas, int64(len(typeSet.Name)))
+		}
+	}
+	return memDeltas, nil
 }
