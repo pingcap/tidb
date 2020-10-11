@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/opcode"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
@@ -52,6 +53,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	utilhint "github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/plancodec"
+	"github.com/pingcap/tidb/util/set"
 )
 
 const (
@@ -2902,9 +2904,6 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	}
 
 	if tableInfo.IsView() {
-		if b.capFlag&collectUnderlyingViewName != 0 {
-			b.underlyingViewNames.Insert(dbName.L + "." + tn.Name.L)
-		}
 		return b.BuildDataSourceFromView(ctx, dbName, tableInfo)
 	}
 
@@ -3237,6 +3236,20 @@ func (b *PlanBuilder) buildMemTable(_ context.Context, dbName model.CIStr, table
 
 // BuildDataSourceFromView is used to build LogicalPlan from view
 func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName model.CIStr, tableInfo *model.TableInfo) (LogicalPlan, error) {
+	viewFullName := dbName.L + "." + tableInfo.Name.L
+	if b.buildingViewStack == nil {
+		b.buildingViewStack = set.NewStringSet()
+	}
+	// If this view has already been on the building stack, it means
+	// this view contains a recursive definition.
+	if b.buildingViewStack.Exist(viewFullName) {
+		return nil, ErrViewRecursive.GenWithStackByArgs(dbName.O, tableInfo.Name.O)
+	}
+	b.buildingViewStack.Insert(viewFullName)
+	defer func() {
+		delete(b.buildingViewStack, viewFullName)
+	}()
+
 	charset, collation := b.ctx.GetSessionVars().GetCharsetInfo()
 	viewParser := parser.New()
 	viewParser.EnableWindowFunc(b.ctx.GetSessionVars().EnableWindowFunction)
@@ -3248,7 +3261,9 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName model.
 	b.visitInfo = make([]visitInfo, 0)
 	selectLogicalPlan, err := b.Build(ctx, selectNode)
 	if err != nil {
-		err = ErrViewInvalid.GenWithStackByArgs(dbName.O, tableInfo.Name.O)
+		if terror.ErrorNotEqual(err, ErrViewRecursive) {
+			err = ErrViewInvalid.GenWithStackByArgs(dbName.O, tableInfo.Name.O)
+		}
 		return nil, err
 	}
 
