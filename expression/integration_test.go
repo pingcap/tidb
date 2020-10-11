@@ -7843,8 +7843,7 @@ func (s *testIntegrationSuite) TestIssue19892(c *C) {
 			tk.MustExec("TRUNCATE TABLE dd")
 			tk.MustExec("INSERT INTO dd(a) values('2000-01-02')")
 			tk.MustExec("UPDATE dd SET a = '2000-00-02'")
-			// FIXME: has two warning rows?
-			// tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Incorrect date value: '2000-00-02'"))
+			tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Incorrect date value: '2000-00-02'"))
 			tk.MustQuery("SELECT a FROM dd").Check(testkit.Rows("0000-00-00"))
 		}
 
