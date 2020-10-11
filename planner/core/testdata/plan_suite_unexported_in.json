@@ -362,7 +362,9 @@
       "select f, g, sum(a) from t",
       "select * from t t1 join t t2 on t1.a = t2.e",
       "select f from t having sum(a) > 0",
-      "select * from t t1 left join t t2 on t1.a = t2.a"
+      "select * from t t1 left join t t2 on t1.a = t2.a",
+      "select a from t where b > 0",
+      "select a from t where b > 0 limit 5"
     ]
   },
   {

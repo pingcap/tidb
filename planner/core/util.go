@@ -91,7 +91,9 @@ type logicalSchemaProducer struct {
 // Schema implements the Plan.Schema interface.
 func (s *logicalSchemaProducer) Schema() *expression.Schema {
 	if s.schema == nil {
-		if len(s.Children()) > 0 {
+		if len(s.Children()) == 1 {
+			// default implementation for plans has only one child: proprgate child schema.
+			// multi-children plans are likely to have particular implementation.
 			s.schema = s.Children()[0].Schema().Clone()
 		} else {
 			s.schema = expression.NewSchema()
@@ -101,7 +103,9 @@ func (s *logicalSchemaProducer) Schema() *expression.Schema {
 }
 
 func (s *logicalSchemaProducer) OutputNames() types.NameSlice {
-	if s.names == nil && len(s.Children()) > 0 {
+	if s.names == nil && len(s.Children()) == 1 {
+		// default implementation for plans has only one child: proprgate child `OutputNames`.
+		// multi-children plans are likely to have particular implementation.
 		s.names = s.Children()[0].OutputNames()
 	}
 	return s.names
@@ -151,7 +155,9 @@ func (s *physicalSchemaProducer) cloneWithSelf(newSelf PhysicalPlan) (*physicalS
 // Schema implements the Plan.Schema interface.
 func (s *physicalSchemaProducer) Schema() *expression.Schema {
 	if s.schema == nil {
-		if len(s.Children()) > 0 {
+		if len(s.Children()) == 1 {
+			// default implementation for plans has only one child: proprgate child schema.
+			// multi-children plans are likely to have particular implementation.
 			s.schema = s.Children()[0].Schema().Clone()
 		} else {
 			s.schema = expression.NewSchema()
