@@ -68,3 +68,5 @@ require (
 )
 
 go 1.13
+
+replace github.com/pingcap/parser => github.com/cncal/parser v0.0.0-20201011071852-bddb0c51e0e1
