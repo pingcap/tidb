@@ -2107,10 +2107,10 @@ func (p *LogicalLimit) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]
 	for _, tp := range allTaskTypes {
 		resultProp := &property.PhysicalProperty{TaskTp: tp, ExpectedCnt: float64(p.Count + p.Offset)}
 		limit := PhysicalLimit{
-			schema: p.Schema(),
 			Offset: p.Offset,
 			Count:  p.Count,
 		}.Init(p.ctx, p.stats, p.blockOffset, resultProp)
+		limit.SetSchema(p.Schema())
 		ret = append(ret, limit)
 	}
 	return ret, true

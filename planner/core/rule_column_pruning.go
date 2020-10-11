@@ -436,15 +436,7 @@ func (p *LogicalLimit) PruneColumns(parentUsedCols []*expression.Column) error {
 		return nil
 	}
 
-	p.schema = p.children[0].Schema().Clone()
-
-	used := expression.GetUsedList(parentUsedCols, p.schema)
-	for i := len(used) - 1; i >= 0; i-- {
-		if !used[i] {
-			p.schema.Columns = append(p.schema.Columns[:i], p.schema.Columns[i+1:]...)
-		}
-	}
-
+	p.inlineProjection(parentUsedCols)
 	return p.children[0].PruneColumns(parentUsedCols)
 }
 
