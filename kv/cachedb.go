@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/pingcap/tablecodec"
+	"github.com/pingcap/tidb/tablecodec"
 )
 
 var mm MemManager
@@ -53,7 +53,7 @@ func (c *cachedb) Get(ctx context.Context, key Key) ([]byte, error) {
 func (c *cachedb) Release(key Key) {
 	tableID, _, _, err := tablecodec.DecodeIndexKey(key)
 	if err != nil {
-		return 
+		return
 	}
 	if table, ok := c.memTables[tableID]; ok {
 		table.Reset()
