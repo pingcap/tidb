@@ -1000,12 +1000,11 @@ func (c *formatBytesFunctionClass) getFunction(ctx sessionctx.Context, args []Ex
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETReal)
-	bf.tp.Charset, bf.tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
 	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETReal)
 	if err != nil {
 		return nil, err
 	}
+	bf.tp.Charset, bf.tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
 	sig := &builtinFormatBytesSig{bf}
 	return sig, nil
 }
@@ -1038,12 +1037,11 @@ func (c *formatNanoTimeFunctionClass) getFunction(ctx sessionctx.Context, args [
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETReal)
-	bf.tp.Charset, bf.tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
 	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETReal)
 	if err != nil {
 		return nil, err
 	}
+	bf.tp.Charset, bf.tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
 	sig := &builtinFormatNanoTimeSig{bf}
 	return sig, nil
 }
