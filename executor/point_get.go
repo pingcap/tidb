@@ -343,12 +343,34 @@ func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) ([]byte, error) 
 		// fallthrough to snapshot get.
 	}
 
-	val, err = kv.Cache().Get(ctx, key)
+	cacheDB := kv.Cache()
+
+	tableID, _, _, err := tablecodec.DecodeKeyHead(key)
+	if err != nil {
+		return e.snapshot.Get(ctx, key)
+	}
+
+	isLock, err := cacheDB.IsLock(tableID)
+	if err != nil {
+		return e.snapshot.Get(ctx, key)
+	}
+
+	if !isLock {
+		return e.snapshot.Get(ctx, key)
+	}
+
+	val, err = cacheDB.Get(ctx, tableID, key)
 	// key does not exist then get from snapshot and set to cache
 	if err != nil {
 		val, err = e.snapshot.Get(ctx, key)
-		kv.Cache().Set(key, val)
-		return val, err
+		if err != nil {
+			return nil, err
+		}
+
+		err := cacheDB.Set(tableID, key, val)
+		if err != nil {
+			return nil, err
+		}
 	}
 	return val, nil
 }
