@@ -507,7 +507,7 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 			return ver, err
 		}
 		job.SchemaState = model.StateDeleteOnly
-		metrics.AddIndexProgress.Set(0)
+		metrics.GetBackfillProgressByLabel(metrics.LblAddIndex).Set(0)
 	case model.StateDeleteOnly:
 		// delete only -> write only
 		indexInfo.State = model.StateWriteOnly

@@ -200,15 +200,17 @@ func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, tblInfo *model.
 		// Update a job's warnings.
 		w.mergeWarningsIntoJob(job)
 
-		if err == nil {
-			metrics.AddIndexProgress.Set(100)
-		}
 		w.reorgCtx.clean()
 		if err != nil {
 			return errors.Trace(err)
 		}
 
-		metrics.AddIndexProgress.Set(100)
+		switch reorgInfo.Type {
+		case model.ActionAddIndex, model.ActionAddPrimaryKey:
+			metrics.GetBackfillProgressByLabel(metrics.LblAddIndex).Set(100)
+		case model.ActionModifyColumn:
+			metrics.GetBackfillProgressByLabel(metrics.LblModifyColumn).Set(100)
+		}
 		if err1 := t.RemoveDDLReorgHandle(job, reorgInfo.elements); err1 != nil {
 			logutil.BgLogger().Warn("[ddl] run reorg job done, removeDDLReorgHandle failed", zap.Error(err1))
 			return errors.Trace(err1)
@@ -224,7 +226,7 @@ func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, tblInfo *model.
 		rowCount, doneHandle := w.reorgCtx.getRowCountAndHandle()
 		// Update a job's RowCount.
 		job.SetRowCount(rowCount)
-		updateAddIndexProgress(w, tblInfo, rowCount)
+		updateBackfillProgress(w, reorgInfo, tblInfo, rowCount)
 
 		// Update a job's warnings.
 		w.mergeWarningsIntoJob(job)
@@ -249,7 +251,8 @@ func (w *worker) mergeWarningsIntoJob(job *model.Job) {
 	w.reorgCtx.mu.Unlock()
 }
 
-func updateAddIndexProgress(w *worker, tblInfo *model.TableInfo, addedRowCount int64) {
+func updateBackfillProgress(w *worker, reorgInfo *reorgInfo, tblInfo *model.TableInfo,
+	addedRowCount int64) {
 	if tblInfo == nil || addedRowCount == 0 {
 		return
 	}
@@ -263,7 +266,12 @@ func updateAddIndexProgress(w *worker, tblInfo *model.TableInfo, addedRowCount i
 	if progress > 1 {
 		progress = 1
 	}
-	metrics.AddIndexProgress.Set(progress * 100)
+	switch reorgInfo.Type {
+	case model.ActionAddIndex, model.ActionAddPrimaryKey:
+		metrics.GetBackfillProgressByLabel(metrics.LblAddIndex).Set(progress * 100)
+	case model.ActionModifyColumn:
+		metrics.GetBackfillProgressByLabel(metrics.LblModifyColumn).Set(progress * 100)
+	}
 }
 
 func getTableTotalCount(w *worker, tblInfo *model.TableInfo) int64 {
