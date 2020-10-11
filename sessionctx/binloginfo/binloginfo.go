@@ -298,7 +298,7 @@ func SetDDLBinlog(client *pumpcli.PumpsClient, txn kv.Transaction, jobID int64, 
 	txn.SetOption(kv.BinlogInfo, info)
 }
 
-const specialPrefix = `/*!90000 `
+const specialPrefix = `/*T! `
 
 // AddSpecialComment uses to add comment for table option in DDL query.
 // Export for testing.
@@ -314,6 +314,7 @@ func AddSpecialComment(ddlQuery string) string {
 }
 
 // addSpecialCommentByRegexps uses to add special comment for the worlds in the ddlQuery with match the regexps.
+// addSpecialCommentByRegexps will merge multi pattern regs to one special comment.
 func addSpecialCommentByRegexps(ddlQuery string, prefix string, regs ...*regexp.Regexp) string {
 	upperQuery := strings.ToUpper(ddlQuery)
 	var specialComments []string

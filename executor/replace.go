@@ -16,11 +16,12 @@ package executor
 import (
 	"context"
 	"fmt"
+	"runtime/trace"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -58,15 +59,15 @@ func (e *ReplaceExec) Open(ctx context.Context) error {
 
 // removeRow removes the duplicate row and cleanup its keys in the key-value map,
 // but if the to-be-removed row equals to the to-be-added row, no remove or add things to do.
-func (e *ReplaceExec) removeRow(ctx context.Context, txn kv.Transaction, handle int64, r toBeCheckedRow) (bool, error) {
+func (e *ReplaceExec) removeRow(ctx context.Context, txn kv.Transaction, handle kv.Handle, r toBeCheckedRow) (bool, error) {
 	newRow := r.row
 	oldRow, err := getOldRow(ctx, e.ctx, txn, r.t, handle, e.GenExprs)
 	if err != nil {
 		logutil.BgLogger().Error("get old row failed when replace",
-			zap.Int64("handle", handle),
+			zap.String("handle", handle.String()),
 			zap.String("toBeInsertedRow", types.DatumsToStrNoErr(r.row)))
 		if kv.IsErrNotFound(err) {
-			err = errors.NotFoundf("can not be duplicated row, due to old row not found. handle %d", handle)
+			err = errors.NotFoundf("can not be duplicated row, due to old row not found. handle %s", handle)
 		}
 		return false, err
 	}
@@ -96,12 +97,12 @@ func (e *ReplaceExec) replaceRow(ctx context.Context, r toBeCheckedRow) error {
 	}
 
 	if r.handleKey != nil {
-		handle, err := tablecodec.DecodeRowKey(r.handleKey.newKV.key)
+		handle, err := tablecodec.DecodeRowKey(r.handleKey.newKey)
 		if err != nil {
 			return err
 		}
 
-		if _, err := txn.Get(ctx, r.handleKey.newKV.key); err == nil {
+		if _, err := txn.Get(ctx, r.handleKey.newKey); err == nil {
 			rowUnchanged, err := e.removeRow(ctx, txn, handle, r)
 			if err != nil {
 				return err
@@ -132,7 +133,7 @@ func (e *ReplaceExec) replaceRow(ctx context.Context, r toBeCheckedRow) error {
 	}
 
 	// No duplicated rows now, insert the row.
-	_, err = e.addRecord(ctx, r.row)
+	err = e.addRecord(ctx, r.row)
 	if err != nil {
 		return err
 	}
@@ -147,15 +148,14 @@ func (e *ReplaceExec) replaceRow(ctx context.Context, r toBeCheckedRow) error {
 //     3. error: the error.
 func (e *ReplaceExec) removeIndexRow(ctx context.Context, txn kv.Transaction, r toBeCheckedRow) (bool, bool, error) {
 	for _, uk := range r.uniqueKeys {
-		val, err := txn.Get(ctx, uk.newKV.key)
+		val, err := txn.Get(ctx, uk.newKey)
 		if err != nil {
 			if kv.IsErrNotFound(err) {
 				continue
 			}
 			return false, false, err
 		}
-
-		handle, err := tables.DecodeHandle(val)
+		handle, err := tablecodec.DecodeHandleInUniqueIndexValue(val, uk.commonHandle)
 		if err != nil {
 			return false, true, err
 		}
@@ -182,6 +182,7 @@ func (e *ReplaceExec) exec(ctx context.Context, newRows [][]types.Datum) error {
 	 * See http://dev.mysql.com/doc/refman/5.7/en/mysql-affected-rows.html
 	 */
 
+	defer trace.StartRegion(ctx, "ReplaceExec").End()
 	// Get keys need to be checked.
 	toBeCheckedRows, err := getKeysNeedCheck(ctx, e.ctx, e.Table, newRows)
 	if err != nil {
@@ -192,13 +193,23 @@ func (e *ReplaceExec) exec(ctx context.Context, newRows [][]types.Datum) error {
 	if err != nil {
 		return err
 	}
+	txnSize := txn.Size()
 
+	if e.collectRuntimeStatsEnabled() {
+		if snapshot := txn.GetSnapshot(); snapshot != nil {
+			snapshot.SetOption(kv.CollectRuntimeStats, e.stats.SnapshotRuntimeStats)
+			defer snapshot.DelOption(kv.CollectRuntimeStats)
+		}
+	}
+	prefetchStart := time.Now()
 	// Use BatchGet to fill cache.
 	// It's an optimization and could be removed without affecting correctness.
 	if err = prefetchDataCache(ctx, txn, toBeCheckedRows); err != nil {
 		return err
 	}
-
+	if e.stats != nil {
+		e.stats.Prefetch = time.Since(prefetchStart)
+	}
 	e.ctx.GetSessionVars().StmtCtx.AddRecordRows(uint64(len(newRows)))
 	for _, r := range toBeCheckedRows {
 		err = e.replaceRow(ctx, r)
@@ -206,7 +217,7 @@ func (e *ReplaceExec) exec(ctx context.Context, newRows [][]types.Datum) error {
 			return err
 		}
 	}
-	e.memTracker.Consume(int64(txn.Size()))
+	e.memTracker.Consume(int64(txn.Size() - txnSize))
 	return nil
 }
 

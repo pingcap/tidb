@@ -18,12 +18,13 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/store/mockstore/cluster"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 )
 
 type testSplitSuite struct {
 	OneByOneSuite
-	cluster *mocktikv.Cluster
+	cluster cluster.Cluster
 	store   *tikvStore
 	bo      *Backoffer
 }
@@ -31,15 +32,23 @@ type testSplitSuite struct {
 var _ = Suite(&testSplitSuite{})
 
 func (s *testSplitSuite) SetUpTest(c *C) {
-	s.cluster = mocktikv.NewCluster()
-	mocktikv.BootstrapWithSingleStore(s.cluster)
-	client, pdClient, err := mocktikv.NewTiKVAndPDClient(s.cluster, nil, "")
+	client, cluster, pdClient, err := mocktikv.NewTiKVAndPDClient("")
+	c.Assert(err, IsNil)
+	mocktikv.BootstrapWithSingleStore(cluster)
+	s.cluster = cluster
+	store, err := NewTestTiKVStore(client, pdClient, nil, nil, 0)
 	c.Assert(err, IsNil)
 
-	store, err := NewTestTiKVStore(client, pdClient, nil, nil, 0)
-	c.Check(err, IsNil)
+	// TODO: make this possible
+	// store, err := mockstore.NewMockStore(
+	// 	mockstore.WithClusterInspector(func(c cluster.Cluster) {
+	// 		mockstore.BootstrapWithSingleStore(c)
+	// 		s.cluster = c
+	// 	}),
+	// )
+	// c.Assert(err, IsNil)
 	s.store = store.(*tikvStore)
-	s.bo = NewBackoffer(context.Background(), 5000)
+	s.bo = NewBackofferWithVars(context.Background(), 5000, nil)
 }
 
 func (s *testSplitSuite) begin(c *C) *tikvTxn {

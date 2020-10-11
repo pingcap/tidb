@@ -15,6 +15,7 @@ package expression
 
 import (
 	"math"
+	"math/rand"
 	"testing"
 
 	. "github.com/pingcap/check"
@@ -69,6 +70,22 @@ type dateTimeUnitStrGener struct {
 
 func newDateTimeUnitStrGener() *dateTimeUnitStrGener {
 	return &dateTimeUnitStrGener{newDefaultRandGen()}
+}
+
+// tzStrGener is used to generate strings which are timezones
+type tzStrGener struct{}
+
+func (g *tzStrGener) gen() interface{} {
+	tzs := []string{
+		"",
+		"GMT",
+		"MET",
+		"+00:00",
+		"+10:00",
+	}
+
+	n := rand.Int() % len(tzs)
+	return tzs[n]
 }
 
 func (g *dateTimeUnitStrGener) gen() interface{} {
@@ -422,6 +439,10 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 			constants: []*Constant{{Value: types.NewStringDatum("HOUR_MINUTE"), RetType: types.NewFieldType(mysql.TypeString)}},
 		},
 	},
+	ast.ConvertTz: {
+		{retEvalType: types.ETDatetime, childrenTypes: []types.EvalType{types.ETDatetime, types.ETString, types.ETString},
+			geners: []dataGenerator{nil, newNullWrappedGener(0.2, &tzStrGener{}), newNullWrappedGener(0.2, &tzStrGener{})}},
+	},
 }
 
 func (s *testVectorizeSuite2) TestVectorizedBuiltinTimeEvalOneVec(c *C) {
@@ -443,6 +464,7 @@ func BenchmarkVectorizedBuiltinTimeFunc(b *testing.B) {
 func (s *testEvaluatorSuite) TestVecMonth(c *C) {
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().SQLMode |= mysql.ModeNoZeroDate
+	ctx.GetSessionVars().StmtCtx.TruncateAsWarning = true
 	input := chunk.New([]*types.FieldType{types.NewFieldType(mysql.TypeDatetime)}, 3, 3)
 	input.Reset()
 	input.AppendTime(0, types.ZeroDate)
@@ -455,5 +477,6 @@ func (s *testEvaluatorSuite) TestVecMonth(c *C) {
 	c.Assert(len(ctx.GetSessionVars().StmtCtx.GetWarnings()), Equals, 2)
 
 	ctx.GetSessionVars().StmtCtx.InInsertStmt = true
+	ctx.GetSessionVars().StmtCtx.TruncateAsWarning = false
 	c.Assert(f.vecEvalInt(input, result), NotNil)
 }

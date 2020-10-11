@@ -25,6 +25,7 @@ var UnCacheableFunctions = map[string]struct{}{
 	ast.User:         {},
 	ast.ConnectionID: {},
 	ast.LastInsertId: {},
+	ast.RowCount:     {},
 	ast.Version:      {},
 	ast.Like:         {},
 }
@@ -53,6 +54,15 @@ var unFoldableFunctions = map[string]struct{}{
 // are in child scope of an outer function, and the outer function is recursively folding its children.
 var DisableFoldFunctions = map[string]struct{}{
 	ast.Benchmark: {},
+}
+
+// TryFoldFunctions stores functions which try to fold constant in child scope functions if without errors/warnings,
+// otherwise, the child functions do not fold constant.
+// Note: the function itself should fold constant.
+var TryFoldFunctions = map[string]struct{}{
+	ast.If:     {},
+	ast.Ifnull: {},
+	ast.Case:   {},
 }
 
 // IllegalFunctions4GeneratedColumns stores functions that is illegal for generated columns.
@@ -86,6 +96,7 @@ var IllegalFunctions4GeneratedColumns = map[string]struct{}{
 	ast.MasterPosWait:    {},
 	ast.NameConst:        {},
 	ast.ReleaseLock:      {},
+	ast.RowFunc:          {},
 	ast.RowCount:         {},
 	ast.Schema:           {},
 	ast.SessionUser:      {},
@@ -102,21 +113,20 @@ var IllegalFunctions4GeneratedColumns = map[string]struct{}{
 	ast.ReleaseAllLocks:  {},
 }
 
-// DeferredFunctions stores non-deterministic functions, which can be deferred only when the plan cache is enabled.
+// DeferredFunctions stores functions which are foldable but should be deferred as well when plan cache is enabled.
+// Note that, these functions must be foldable at first place, i.e, they are not in `unFoldableFunctions`.
 var DeferredFunctions = map[string]struct{}{
 	ast.Now:              {},
+	ast.RandomBytes:      {},
 	ast.CurrentTimestamp: {},
 	ast.UTCTime:          {},
 	ast.Curtime:          {},
 	ast.CurrentTime:      {},
 	ast.UTCTimestamp:     {},
 	ast.UnixTimestamp:    {},
-	ast.Sysdate:          {},
 	ast.Curdate:          {},
 	ast.CurrentDate:      {},
 	ast.UTCDate:          {},
-	ast.Rand:             {},
-	ast.UUID:             {},
 }
 
 // inequalFunctions stores functions which cannot be propagated from column equal condition.

@@ -57,7 +57,7 @@ type testKVSuite struct {
 
 func (s *testKVSuite) SetUpSuite(c *C) {
 	testleak.BeforeTest()
-	store, err := mockstore.NewMockTikvStore()
+	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
 	s.s = store
 }
@@ -297,7 +297,7 @@ func (s *testKVSuite) TestDelete2(c *C) {
 	it, err := txn.Iter([]byte("DATA_test_tbl_department_record__0000000001_0003"), nil)
 	c.Assert(err, IsNil)
 	for it.Valid() {
-		err = txn.Delete([]byte(it.Key()))
+		err = txn.Delete(it.Key())
 		c.Assert(err, IsNil)
 		err = it.Next()
 		c.Assert(err, IsNil)
@@ -530,7 +530,7 @@ func (s *testKVSuite) TestConditionUpdate(c *C) {
 
 func (s *testKVSuite) TestDBClose(c *C) {
 	c.Skip("don't know why it fails.")
-	store, err := mockstore.NewMockTikvStore()
+	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
 
 	txn, err := store.Begin()

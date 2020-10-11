@@ -105,7 +105,19 @@ func (t *mockTxn) GetSnapshot() Snapshot {
 	return nil
 }
 
-func (t *mockTxn) SetCap(cap int) {
+func (t *mockTxn) GetUnionStore() UnionStore {
+	return nil
+}
+
+func (t *mockTxn) NewStagingBuffer() MemBuffer {
+	return nil
+}
+
+func (t *mockTxn) Flush() (int, error) {
+	return 0, nil
+}
+
+func (t *mockTxn) Discard() {
 
 }
 
@@ -115,6 +127,10 @@ func (t *mockTxn) Reset() {
 
 func (t *mockTxn) SetVars(vars *Variables) {
 
+}
+
+func (t *mockTxn) GetVars() *Variables {
+	return nil
 }
 
 // newMockTxn new a mockTxn.
@@ -144,7 +160,7 @@ func (s *mockStorage) BeginWithStartTS(startTS uint64) (Transaction, error) {
 
 func (s *mockStorage) GetSnapshot(ver Version) (Snapshot, error) {
 	return &mockSnapshot{
-		store: NewMemDbBuffer(DefaultTxnMembufCap),
+		store: newMemDB(),
 	}, nil
 }
 

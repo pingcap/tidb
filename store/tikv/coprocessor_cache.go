@@ -56,7 +56,7 @@ func (v *coprCacheValue) Len() int {
 }
 
 func newCoprCache(config *config.CoprocessorCache) (*coprCache, error) {
-	if config == nil || !config.Enabled {
+	if config == nil || !config.Enable {
 		return nil, nil
 	}
 	capacityInBytes := int64(config.CapacityMB * 1024.0 * 1024.0)

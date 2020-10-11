@@ -22,7 +22,6 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
-	"fmt"
 	"io/ioutil"
 	"math/big"
 	"net/http"
@@ -76,13 +75,13 @@ func (ts *tidbTestSuite) SetUpSuite(c *C) {
 
 func (ts *tidbTestSuiteBase) SetUpSuite(c *C) {
 	var err error
-	ts.store, err = mockstore.NewMockTikvStore()
+	ts.store, err = mockstore.NewMockStore()
 	session.DisableStats4Test()
 	c.Assert(err, IsNil)
 	ts.domain, err = session.BootstrapSession(ts.store)
 	c.Assert(err, IsNil)
 	ts.tidbdrv = NewTiDBDriver(ts.store)
-	cfg := config.NewConfig()
+	cfg := newTestConfig()
 	cfg.Port = ts.port
 	cfg.Status.ReportStatus = true
 	cfg.Status.StatusPort = ts.statusPort
@@ -90,6 +89,8 @@ func (ts *tidbTestSuiteBase) SetUpSuite(c *C) {
 
 	server, err := NewServer(cfg, ts.tidbdrv)
 	c.Assert(err, IsNil)
+	ts.port = getPortFromTCPAddr(server.listener.Addr())
+	ts.statusPort = getPortFromTCPAddr(server.statusListener.Addr())
 	ts.server = server
 	go ts.server.Run()
 	ts.waitUntilServerOnline()
@@ -183,22 +184,20 @@ func (ts *tidbTestSuite) TestStatusAPI(c *C) {
 
 func (ts *tidbTestSuite) TestStatusPort(c *C) {
 	var err error
-	ts.store, err = mockstore.NewMockTikvStore()
+	ts.store, err = mockstore.NewMockStore()
 	session.DisableStats4Test()
 	c.Assert(err, IsNil)
 	ts.domain, err = session.BootstrapSession(ts.store)
 	c.Assert(err, IsNil)
 	ts.tidbdrv = NewTiDBDriver(ts.store)
-	cfg := config.NewConfig()
-	cfg.Port = genPort()
+	cfg := newTestConfig()
+	cfg.Port = 0
 	cfg.Status.ReportStatus = true
 	cfg.Status.StatusPort = ts.statusPort
 	cfg.Performance.TCPKeepAlive = true
 
 	server, err := NewServer(cfg, ts.tidbdrv)
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals,
-		fmt.Sprintf("listen tcp 0.0.0.0:%d: bind: address already in use", ts.statusPort))
 	c.Assert(server, IsNil)
 }
 
@@ -217,7 +216,7 @@ func (ts *tidbTestSuite) TestStatusAPIWithTLS(c *C) {
 
 	cli := newTestServerClient()
 	cli.statusScheme = "https"
-	cfg := config.NewConfig()
+	cfg := newTestConfig()
 	cfg.Port = cli.port
 	cfg.Status.StatusPort = cli.statusPort
 	cfg.Security.ClusterSSLCA = "/tmp/ca-cert-2.pem"
@@ -225,6 +224,8 @@ func (ts *tidbTestSuite) TestStatusAPIWithTLS(c *C) {
 	cfg.Security.ClusterSSLKey = "/tmp/server-key-2.pem"
 	server, err := NewServer(cfg, ts.tidbdrv)
 	c.Assert(err, IsNil)
+	cli.port = getPortFromTCPAddr(server.listener.Addr())
+	cli.statusPort = getPortFromTCPAddr(server.statusListener.Addr())
 	go server.Run()
 	time.Sleep(time.Millisecond * 100)
 
@@ -263,7 +264,7 @@ func (ts *tidbTestSuite) TestStatusAPIWithTLSCNCheck(c *C) {
 
 	cli := newTestServerClient()
 	cli.statusScheme = "https"
-	cfg := config.NewConfig()
+	cfg := newTestConfig()
 	cfg.Port = cli.port
 	cfg.Status.StatusPort = cli.statusPort
 	cfg.Security.ClusterSSLCA = caPath
@@ -272,6 +273,8 @@ func (ts *tidbTestSuite) TestStatusAPIWithTLSCNCheck(c *C) {
 	cfg.Security.ClusterVerifyCN = []string{"tidb-client-2"}
 	server, err := NewServer(cfg, ts.tidbdrv)
 	c.Assert(err, IsNil)
+	cli.port = getPortFromTCPAddr(server.listener.Addr())
+	cli.statusPort = getPortFromTCPAddr(server.statusListener.Addr())
 	go server.Run()
 	time.Sleep(time.Millisecond * 100)
 
@@ -313,7 +316,7 @@ func (ts *tidbTestSuite) TestMultiStatements(c *C) {
 
 func (ts *tidbTestSuite) TestSocketForwarding(c *C) {
 	cli := newTestServerClient()
-	cfg := config.NewConfig()
+	cfg := newTestConfig()
 	cfg.Socket = "/tmp/tidbtest.sock"
 	cfg.Port = cli.port
 	os.Remove(cfg.Socket)
@@ -321,6 +324,7 @@ func (ts *tidbTestSuite) TestSocketForwarding(c *C) {
 
 	server, err := NewServer(cfg, ts.tidbdrv)
 	c.Assert(err, IsNil)
+	cli.port = getPortFromTCPAddr(server.listener.Addr())
 	go server.Run()
 	time.Sleep(time.Millisecond * 100)
 	defer server.Close()
@@ -335,7 +339,7 @@ func (ts *tidbTestSuite) TestSocketForwarding(c *C) {
 }
 
 func (ts *tidbTestSuite) TestSocket(c *C) {
-	cfg := config.NewConfig()
+	cfg := newTestConfig()
 	cfg.Socket = "/tmp/tidbtest.sock"
 	cfg.Port = 0
 	os.Remove(cfg.Socket)
@@ -374,6 +378,7 @@ func generateCert(sn int, commonName string, parentCert *x509.Certificate, paren
 	template := x509.Certificate{
 		SerialNumber:          big.NewInt(int64(sn)),
 		Subject:               pkix.Name{CommonName: commonName, Names: []pkix.AttributeTypeAndValue{util.MockPkixAttribute(util.CommonName, commonName)}},
+		DNSNames:              []string{commonName},
 		NotBefore:             notBefore,
 		NotAfter:              notAfter,
 		KeyUsage:              x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature,
@@ -453,8 +458,8 @@ func registerTLSConfig(configName string, caCertPath string, clientCertPath stri
 
 func (ts *tidbTestSuite) TestSystemTimeZone(c *C) {
 	tk := testkit.NewTestKit(c, ts.store)
-	cfg := config.NewConfig()
-	cfg.Port = genPort()
+	cfg := newTestConfig()
+	cfg.Port, cfg.Status.StatusPort = 0, 0
 	cfg.Status.ReportStatus = false
 	server, err := NewServer(cfg, ts.tidbdrv)
 	c.Assert(err, IsNil)
@@ -489,11 +494,12 @@ func (ts *tidbTestSerialSuite) TestTLS(c *C) {
 		config.TLSConfig = "skip-verify"
 	}
 	cli := newTestServerClient()
-	cfg := config.NewConfig()
+	cfg := newTestConfig()
 	cfg.Port = cli.port
 	cfg.Status.ReportStatus = false
 	server, err := NewServer(cfg, ts.tidbdrv)
 	c.Assert(err, IsNil)
+	cli.port = getPortFromTCPAddr(server.listener.Addr())
 	go server.Run()
 	time.Sleep(time.Millisecond * 100)
 	err = cli.runTestTLSConnection(c, connOverrider) // We should get ErrNoTLS.
@@ -506,7 +512,7 @@ func (ts *tidbTestSerialSuite) TestTLS(c *C) {
 		config.TLSConfig = "skip-verify"
 	}
 	cli = newTestServerClient()
-	cfg = config.NewConfig()
+	cfg = newTestConfig()
 	cfg.Port = cli.port
 	cfg.Status.ReportStatus = false
 	cfg.Security = config.Security{
@@ -515,6 +521,7 @@ func (ts *tidbTestSerialSuite) TestTLS(c *C) {
 	}
 	server, err = NewServer(cfg, ts.tidbdrv)
 	c.Assert(err, IsNil)
+	cli.port = getPortFromTCPAddr(server.listener.Addr())
 	go server.Run()
 	time.Sleep(time.Millisecond * 100)
 	err = cli.runTestTLSConnection(c, connOverrider) // We should establish connection successfully.
@@ -531,7 +538,7 @@ func (ts *tidbTestSerialSuite) TestTLS(c *C) {
 
 	// Start the server with TLS & CA, if the client presents its certificate, the certificate will be verified.
 	cli = newTestServerClient()
-	cfg = config.NewConfig()
+	cfg = newTestConfig()
 	cfg.Port = cli.port
 	cfg.Status.ReportStatus = false
 	cfg.Security = config.Security{
@@ -541,6 +548,7 @@ func (ts *tidbTestSerialSuite) TestTLS(c *C) {
 	}
 	server, err = NewServer(cfg, ts.tidbdrv)
 	c.Assert(err, IsNil)
+	cli.port = getPortFromTCPAddr(server.listener.Addr())
 	go server.Run()
 	time.Sleep(time.Millisecond * 100)
 	// The client does not provide a certificate, the connection should succeed.
@@ -589,7 +597,7 @@ func (ts *tidbTestSerialSuite) TestReloadTLS(c *C) {
 
 	// try old cert used in startup configuration.
 	cli := newTestServerClient()
-	cfg := config.NewConfig()
+	cfg := newTestConfig()
 	cfg.Port = cli.port
 	cfg.Status.ReportStatus = false
 	cfg.Security = config.Security{
@@ -599,6 +607,7 @@ func (ts *tidbTestSerialSuite) TestReloadTLS(c *C) {
 	}
 	server, err := NewServer(cfg, ts.tidbdrv)
 	c.Assert(err, IsNil)
+	cli.port = getPortFromTCPAddr(server.listener.Addr())
 	go server.Run()
 	time.Sleep(time.Millisecond * 100)
 	// The client provides a valid certificate.
@@ -681,7 +690,7 @@ func (ts *tidbTestSerialSuite) TestErrorNoRollback(c *C) {
 	}()
 
 	cli := newTestServerClient()
-	cfg := config.NewConfig()
+	cfg := newTestConfig()
 	cfg.Port = cli.port
 	cfg.Status.ReportStatus = false
 
@@ -702,6 +711,7 @@ func (ts *tidbTestSerialSuite) TestErrorNoRollback(c *C) {
 	}
 	server, err := NewServer(cfg, ts.tidbdrv)
 	c.Assert(err, IsNil)
+	cli.port = getPortFromTCPAddr(server.listener.Addr())
 	go server.Run()
 	time.Sleep(time.Millisecond * 100)
 	connOverrider := func(config *mysql.Config) {
@@ -729,7 +739,7 @@ func (ts *tidbTestSuite) TestCreateTableFlen(c *C) {
 	// issue #4540
 	qctx, err := ts.tidbdrv.OpenCtx(uint64(0), 0, uint8(tmysql.DefaultCollationID), "test", nil)
 	c.Assert(err, IsNil)
-	_, err = qctx.Execute(context.Background(), "use test;")
+	_, err = Execute(context.Background(), qctx, "use test;")
 	c.Assert(err, IsNil)
 
 	ctx := context.Background()
@@ -762,44 +772,55 @@ func (ts *tidbTestSuite) TestCreateTableFlen(c *C) {
 		"`z` decimal(20, 4)," +
 		"PRIMARY KEY (`a`)" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin"
-	_, err = qctx.Execute(ctx, testSQL)
+	_, err = Execute(ctx, qctx, testSQL)
 	c.Assert(err, IsNil)
-	rs, err := qctx.Execute(ctx, "show create table t1")
+	rs, err := Execute(ctx, qctx, "show create table t1")
 	c.Assert(err, IsNil)
-	req := rs[0].NewChunk()
-	err = rs[0].Next(ctx, req)
+	req := rs.NewChunk()
+	err = rs.Next(ctx, req)
 	c.Assert(err, IsNil)
-	cols := rs[0].Columns()
+	cols := rs.Columns()
 	c.Assert(err, IsNil)
 	c.Assert(len(cols), Equals, 2)
 	c.Assert(int(cols[0].ColumnLength), Equals, 5*tmysql.MaxBytesOfCharacter)
 	c.Assert(int(cols[1].ColumnLength), Equals, len(req.GetRow(0).GetString(1))*tmysql.MaxBytesOfCharacter)
 
 	// for issue#5246
-	rs, err = qctx.Execute(ctx, "select y, z from t1")
+	rs, err = Execute(ctx, qctx, "select y, z from t1")
 	c.Assert(err, IsNil)
-	cols = rs[0].Columns()
+	cols = rs.Columns()
 	c.Assert(len(cols), Equals, 2)
 	c.Assert(int(cols[0].ColumnLength), Equals, 21)
 	c.Assert(int(cols[1].ColumnLength), Equals, 22)
 }
 
+func Execute(ctx context.Context, qc *TiDBContext, sql string) (ResultSet, error) {
+	stmts, err := qc.Parse(ctx, sql)
+	if err != nil {
+		return nil, err
+	}
+	if len(stmts) != 1 {
+		panic("wrong input for Execute: " + sql)
+	}
+	return qc.ExecuteStmt(ctx, stmts[0])
+}
+
 func (ts *tidbTestSuite) TestShowTablesFlen(c *C) {
 	qctx, err := ts.tidbdrv.OpenCtx(uint64(0), 0, uint8(tmysql.DefaultCollationID), "test", nil)
 	c.Assert(err, IsNil)
-	_, err = qctx.Execute(context.Background(), "use test;")
+	ctx := context.Background()
+	_, err = Execute(ctx, qctx, "use test;")
 	c.Assert(err, IsNil)
 
-	ctx := context.Background()
 	testSQL := "create table abcdefghijklmnopqrstuvwxyz (i int)"
-	_, err = qctx.Execute(ctx, testSQL)
+	_, err = Execute(ctx, qctx, testSQL)
 	c.Assert(err, IsNil)
-	rs, err := qctx.Execute(ctx, "show tables")
+	rs, err := Execute(ctx, qctx, "show tables")
 	c.Assert(err, IsNil)
-	req := rs[0].NewChunk()
-	err = rs[0].Next(ctx, req)
+	req := rs.NewChunk()
+	err = rs.Next(ctx, req)
 	c.Assert(err, IsNil)
-	cols := rs[0].Columns()
+	cols := rs.Columns()
 	c.Assert(err, IsNil)
 	c.Assert(len(cols), Equals, 1)
 	c.Assert(int(cols[0].ColumnLength), Equals, 26*tmysql.MaxBytesOfCharacter)
@@ -815,7 +836,7 @@ func checkColNames(c *C, columns []*ColumnInfo, names ...string) {
 func (ts *tidbTestSuite) TestFieldList(c *C) {
 	qctx, err := ts.tidbdrv.OpenCtx(uint64(0), 0, uint8(tmysql.DefaultCollationID), "test", nil)
 	c.Assert(err, IsNil)
-	_, err = qctx.Execute(context.Background(), "use test;")
+	_, err = Execute(context.Background(), qctx, "use test;")
 	c.Assert(err, IsNil)
 
 	ctx := context.Background()
@@ -840,7 +861,7 @@ func (ts *tidbTestSuite) TestFieldList(c *C) {
 		c_json JSON,
 		c_year year
 	)`
-	_, err = qctx.Execute(ctx, testSQL)
+	_, err = Execute(ctx, qctx, testSQL)
 	c.Assert(err, IsNil)
 	colInfos, err := qctx.FieldList("t")
 	c.Assert(err, IsNil)
@@ -878,15 +899,15 @@ func (ts *tidbTestSuite) TestFieldList(c *C) {
 	tooLongColumnAsName := "COALESCE(0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0)"
 	columnAsName := tooLongColumnAsName[:tmysql.MaxAliasIdentifierLen]
 
-	rs, err := qctx.Execute(ctx, "select "+tooLongColumnAsName)
+	rs, err := Execute(ctx, qctx, "select "+tooLongColumnAsName)
 	c.Assert(err, IsNil)
-	cols := rs[0].Columns()
+	cols := rs.Columns()
 	c.Assert(cols[0].OrgName, Equals, tooLongColumnAsName)
 	c.Assert(cols[0].Name, Equals, columnAsName)
 
-	rs, err = qctx.Execute(ctx, "select c_bit as '"+tooLongColumnAsName+"' from t")
+	rs, err = Execute(ctx, qctx, "select c_bit as '"+tooLongColumnAsName+"' from t")
 	c.Assert(err, IsNil)
-	cols = rs[0].Columns()
+	cols = rs.Columns()
 	c.Assert(cols[0].OrgName, Equals, "c_bit")
 	c.Assert(cols[0].Name, Equals, columnAsName)
 }
@@ -902,9 +923,9 @@ func (ts *tidbTestSuite) TestNullFlag(c *C) {
 	c.Assert(err, IsNil)
 
 	ctx := context.Background()
-	rs, err := qctx.Execute(ctx, "select 1")
+	rs, err := Execute(ctx, qctx, "select 1")
 	c.Assert(err, IsNil)
-	cols := rs[0].Columns()
+	cols := rs.Columns()
 	c.Assert(len(cols), Equals, 1)
 	expectFlag := uint16(tmysql.NotNullFlag | tmysql.BinaryFlag)
 	c.Assert(dumpFlag(cols[0].Type, cols[0].Flag), Equals, expectFlag)

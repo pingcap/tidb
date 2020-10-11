@@ -34,7 +34,6 @@ func sign(i int) int {
 // compilePatternGeneralCI handles escapes and wild cards, generate pattern weights and types.
 // This function is modified from stringutil.CompilePattern.
 func compilePatternGeneralCI(pattern string, escape byte) (patWeights []uint16, patTypes []byte) {
-	var lastAny bool
 	runes := []rune(pattern)
 	escapeRune := rune(escape)
 	lenRunes := len(runes)
@@ -46,7 +45,6 @@ func compilePatternGeneralCI(pattern string, escape byte) (patWeights []uint16, 
 		var r = runes[i]
 		switch r {
 		case escapeRune:
-			lastAny = false
 			tp = stringutil.PatMatch
 			if i < lenRunes-1 {
 				i++
@@ -65,18 +63,21 @@ func compilePatternGeneralCI(pattern string, escape byte) (patWeights []uint16, 
 				}
 			}
 		case '_':
-			if lastAny {
-				continue
+			// %_ => _%
+			if patLen > 0 && patTypes[patLen-1] == stringutil.PatAny {
+				tp = stringutil.PatAny
+				r = '%'
+				patWeights[patLen-1], patTypes[patLen-1] = '_', stringutil.PatOne
+			} else {
+				tp = stringutil.PatOne
 			}
-			tp = stringutil.PatOne
 		case '%':
-			if lastAny {
+			// %% => %
+			if patLen > 0 && patTypes[patLen-1] == stringutil.PatAny {
 				continue
 			}
-			lastAny = true
 			tp = stringutil.PatAny
 		default:
-			lastAny = false
 			tp = stringutil.PatMatch
 		}
 		patWeights[patLen] = convertRune(r)
@@ -107,7 +108,7 @@ func doMatchGeneralCI(str string, patWeights []uint16, patTypes []byte) bool {
 					continue
 				}
 			case stringutil.PatOne:
-				if rIdx < len(str) {
+				if rIdx < lenRunes {
 					pIdx++
 					rIdx++
 					continue
@@ -123,7 +124,7 @@ func doMatchGeneralCI(str string, patWeights []uint16, patTypes []byte) bool {
 			}
 		}
 		// Mismatch. Maybe restart.
-		if 0 < nextRIdx && nextRIdx <= len(str) {
+		if 0 < nextRIdx && nextRIdx <= lenRunes {
 			pIdx = nextPIdx
 			rIdx = nextRIdx
 			continue

@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
@@ -65,7 +66,7 @@ func (s *testSuite3) TestCopClientSend(c *C) {
 	tblID := tbl.Meta().ID
 
 	// Split the table.
-	s.cluster.SplitTable(s.mvccStore, tblID, 100)
+	s.cluster.SplitTable(tblID, 100)
 
 	ctx := context.Background()
 	// Send coprocessor request when the table split.
@@ -78,8 +79,8 @@ func (s *testSuite3) TestCopClientSend(c *C) {
 	rs.Close()
 
 	// Split one region.
-	key := tablecodec.EncodeRowKeyWithHandle(tblID, 500)
-	region, _ := s.cluster.GetRegionByKey([]byte(key))
+	key := tablecodec.EncodeRowKeyWithHandle(tblID, kv.IntHandle(500))
+	region, _ := s.cluster.GetRegionByKey(key)
 	peerID := s.cluster.AllocID()
 	s.cluster.Split(region.GetId(), s.cluster.AllocID(), key, []uint64{peerID}, peerID)
 
@@ -104,25 +105,27 @@ func (s *testSuite3) TestCopClientSend(c *C) {
 }
 
 func (s *testSuite3) TestGetLackHandles(c *C) {
-	expectedHandles := []int64{1, 2, 3, 4, 5, 6, 7, 8, 9, 10}
-	handlesMap := make(map[int64]struct{})
+	expectedHandles := []kv.Handle{kv.IntHandle(1), kv.IntHandle(2), kv.IntHandle(3), kv.IntHandle(4),
+		kv.IntHandle(5), kv.IntHandle(6), kv.IntHandle(7), kv.IntHandle(8), kv.IntHandle(9), kv.IntHandle(10)}
+	handlesMap := kv.NewHandleMap()
 	for _, h := range expectedHandles {
-		handlesMap[h] = struct{}{}
+		handlesMap.Set(h, true)
 	}
 
 	// expected handles 1, 2, 3, 4, 5, 6, 7, 8, 9, 10
 	// obtained handles 1, 2, 3, 4, 5, 6, 7, 8, 9, 10
 	diffHandles := executor.GetLackHandles(expectedHandles, handlesMap)
 	c.Assert(diffHandles, HasLen, 0)
-	c.Assert(handlesMap, HasLen, 0)
+	c.Assert(handlesMap.Len(), Equals, 0)
 
 	// expected handles 1, 2, 3, 4, 5, 6, 7, 8, 9, 10
 	// obtained handles 2, 3, 4, 6, 7, 8, 9
-	retHandles := []int64{2, 3, 4, 6, 7, 8, 9}
-	handlesMap = make(map[int64]struct{})
-	handlesMap[1] = struct{}{}
-	handlesMap[5] = struct{}{}
-	handlesMap[10] = struct{}{}
+	retHandles := []kv.Handle{kv.IntHandle(2), kv.IntHandle(3), kv.IntHandle(4), kv.IntHandle(6),
+		kv.IntHandle(7), kv.IntHandle(8), kv.IntHandle(9)}
+	handlesMap = kv.NewHandleMap()
+	handlesMap.Set(kv.IntHandle(1), true)
+	handlesMap.Set(kv.IntHandle(5), true)
+	handlesMap.Set(kv.IntHandle(10), true)
 	diffHandles = executor.GetLackHandles(expectedHandles, handlesMap)
 	c.Assert(retHandles, DeepEquals, diffHandles)
 }
@@ -214,7 +217,7 @@ func (s *testSuite3) TestInconsistentIndex(c *C) {
 	for i := 0; i < 10; i++ {
 		txn, err := s.store.Begin()
 		c.Assert(err, IsNil)
-		_, err = idxOp.Create(ctx, txn, types.MakeDatums(i+10), int64(100+i))
+		_, err = idxOp.Create(ctx, txn.GetUnionStore(), types.MakeDatums(i+10), kv.IntHandle(100+i))
 		c.Assert(err, IsNil)
 		err = txn.Commit(context.Background())
 		c.Assert(err, IsNil)
@@ -231,7 +234,7 @@ func (s *testSuite3) TestInconsistentIndex(c *C) {
 	for i := 0; i < 10; i++ {
 		txn, err := s.store.Begin()
 		c.Assert(err, IsNil)
-		err = idxOp.Delete(ctx.GetSessionVars().StmtCtx, txn, types.MakeDatums(i+10), int64(100+i))
+		err = idxOp.Delete(ctx.GetSessionVars().StmtCtx, txn, types.MakeDatums(i+10), kv.IntHandle(100+i))
 		c.Assert(err, IsNil)
 		err = txn.Commit(context.Background())
 		c.Assert(err, IsNil)

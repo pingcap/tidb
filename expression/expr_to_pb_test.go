@@ -114,7 +114,8 @@ func (s *testEvaluatorSuite) TestConstant2Pb(c *C) {
 	c.Assert(len(pushed), Equals, len(constExprs)-3)
 	c.Assert(len(remained), Equals, 3)
 
-	pbExprs := ExpressionsToPBList(sc, constExprs, client)
+	pbExprs, err := ExpressionsToPBList(sc, constExprs, client)
+	c.Assert(err, IsNil)
 	jsons := []string{
 		"{\"tp\":0,\"sig\":0}",
 		"{\"tp\":1,\"val\":\"gAAAAAAAAGQ=\",\"sig\":0}",
@@ -146,15 +147,14 @@ func (s *testEvaluatorSuite) TestColumn2Pb(c *C) {
 	colExprs = append(colExprs, dg.genColumn(mysql.TypeEnum, 3))
 	colExprs = append(colExprs, dg.genColumn(mysql.TypeGeometry, 4))
 	colExprs = append(colExprs, dg.genColumn(mysql.TypeUnspecified, 5))
-	colExprs = append(colExprs, dg.genColumn(mysql.TypeDecimal, 6))
 
 	pushed, remained := PushDownExprs(sc, colExprs, client, kv.UnSpecified)
 	c.Assert(len(pushed), Equals, 0)
 	c.Assert(len(remained), Equals, len(colExprs))
 
-	pbExprs := ExpressionsToPBList(sc, colExprs, client)
-	for _, pbExpr := range pbExprs {
-		c.Assert(pbExpr, IsNil)
+	for _, col := range colExprs { // cannot be pushed down
+		_, err := ExpressionsToPBList(sc, []Expression{col}, client)
+		c.Assert(err, NotNil)
 	}
 
 	colExprs = colExprs[:0]
@@ -184,7 +184,8 @@ func (s *testEvaluatorSuite) TestColumn2Pb(c *C) {
 	c.Assert(len(pushed), Equals, len(colExprs))
 	c.Assert(len(remained), Equals, 0)
 
-	pbExprs = ExpressionsToPBList(sc, colExprs, client)
+	pbExprs, err := ExpressionsToPBList(sc, colExprs, client)
+	c.Assert(err, IsNil)
 	jsons := []string{
 		"{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":1,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"\"}}",
 		"{\"tp\":201,\"val\":\"gAAAAAAAAAI=\",\"sig\":0,\"field_type\":{\"tp\":2,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"\"}}",
@@ -243,7 +244,8 @@ func (s *testEvaluatorSuite) TestCompareFunc2Pb(c *C) {
 	c.Assert(len(pushed), Equals, len(compareExprs))
 	c.Assert(len(remained), Equals, 0)
 
-	pbExprs := ExpressionsToPBList(sc, compareExprs, client)
+	pbExprs, err := ExpressionsToPBList(sc, compareExprs, client)
+	c.Assert(err, IsNil)
 	c.Assert(len(pbExprs), Equals, len(compareExprs))
 	jsons := []string{
 		"{\"tp\":10000,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":8,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"\"}},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\",\"sig\":0,\"field_type\":{\"tp\":8,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"\"}}],\"sig\":100,\"field_type\":{\"tp\":8,\"flag\":128,\"flen\":1,\"decimal\":0,\"collate\":63,\"charset\":\"binary\"}}",
@@ -286,7 +288,8 @@ func (s *testEvaluatorSuite) TestLikeFunc2Pb(c *C) {
 	c.Assert(err, IsNil)
 	likeFuncs = append(likeFuncs, fc)
 
-	pbExprs := ExpressionsToPBList(sc, likeFuncs, client)
+	pbExprs, err := ExpressionsToPBList(sc, likeFuncs, client)
+	c.Assert(err, IsNil)
 	results := []string{
 		`{"tp":10000,"children":[{"tp":5,"val":"c3RyaW5n","sig":0,"field_type":{"tp":254,"flag":1,"flen":-1,"decimal":-1,"collate":83,"charset":"utf8"}},{"tp":5,"val":"cGF0dGVybg==","sig":0,"field_type":{"tp":254,"flag":1,"flen":-1,"decimal":-1,"collate":83,"charset":"utf8"}},{"tp":10000,"val":"CAA=","children":[{"tp":5,"val":"XA==","sig":0,"field_type":{"tp":254,"flag":1,"flen":-1,"decimal":-1,"collate":83,"charset":"utf8"}}],"sig":30,"field_type":{"tp":8,"flag":128,"flen":-1,"decimal":0,"collate":63,"charset":"binary"}}],"sig":4310,"field_type":{"tp":8,"flag":128,"flen":1,"decimal":0,"collate":63,"charset":"binary"}}`,
 		`{"tp":10000,"children":[{"tp":5,"val":"c3RyaW5n","sig":0,"field_type":{"tp":254,"flag":1,"flen":-1,"decimal":-1,"collate":83,"charset":"utf8"}},{"tp":5,"val":"JWFiYyU=","sig":0,"field_type":{"tp":254,"flag":1,"flen":-1,"decimal":-1,"collate":83,"charset":"utf8"}},{"tp":10000,"val":"CAA=","children":[{"tp":5,"val":"XA==","sig":0,"field_type":{"tp":254,"flag":1,"flen":-1,"decimal":-1,"collate":83,"charset":"utf8"}}],"sig":30,"field_type":{"tp":8,"flag":128,"flen":-1,"decimal":0,"collate":63,"charset":"binary"}}],"sig":4310,"field_type":{"tp":8,"flag":128,"flen":1,"decimal":0,"collate":63,"charset":"binary"}}`,
@@ -304,7 +307,7 @@ func (s *testEvaluatorSuite) TestArithmeticalFunc2Pb(c *C) {
 	client := new(mock.Client)
 	dg := new(dataGen4Expr2PbTest)
 
-	funcNames := []string{ast.Plus, ast.Minus, ast.Mul, ast.Div, ast.Mod, ast.IntDiv}
+	funcNames := []string{ast.Plus, ast.Minus, ast.Mul, ast.Div}
 	for _, funcName := range funcNames {
 		fc, err := NewFunction(
 			mock.NewContext(),
@@ -322,17 +325,26 @@ func (s *testEvaluatorSuite) TestArithmeticalFunc2Pb(c *C) {
 	jsons[ast.Mul] = "{\"tp\":10000,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":5,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"\"}},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\",\"sig\":0,\"field_type\":{\"tp\":5,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"\"}}],\"sig\":208,\"field_type\":{\"tp\":5,\"flag\":128,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"binary\"}}"
 	jsons[ast.Div] = "{\"tp\":10000,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":5,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"\"}},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\",\"sig\":0,\"field_type\":{\"tp\":5,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"\"}}],\"sig\":211,\"field_type\":{\"tp\":5,\"flag\":128,\"flen\":23,\"decimal\":-1,\"collate\":63,\"charset\":\"binary\"}}"
 
-	pbExprs := ExpressionsToPBList(sc, arithmeticalFuncs, client)
+	pbExprs, err := ExpressionsToPBList(sc, arithmeticalFuncs, client)
+	c.Assert(err, IsNil)
 	for i, pbExpr := range pbExprs {
-		switch funcNames[i] {
-		case ast.Mod, ast.IntDiv:
-			c.Assert(pbExpr, IsNil, Commentf("%v\n", funcNames[i]))
-		default:
-			c.Assert(pbExpr, NotNil)
-			js, err := json.Marshal(pbExpr)
-			c.Assert(err, IsNil)
-			c.Assert(string(js), Equals, jsons[funcNames[i]], Commentf("%v\n", funcNames[i]))
-		}
+		c.Assert(pbExpr, NotNil)
+		js, err := json.Marshal(pbExpr)
+		c.Assert(err, IsNil)
+		c.Assert(string(js), Equals, jsons[funcNames[i]], Commentf("%v\n", funcNames[i]))
+	}
+
+	funcNames = []string{ast.Mod, ast.IntDiv} // cannot be pushed down
+	for _, funcName := range funcNames {
+		fc, err := NewFunction(
+			mock.NewContext(),
+			funcName,
+			types.NewFieldType(mysql.TypeUnspecified),
+			dg.genColumn(mysql.TypeDouble, 1),
+			dg.genColumn(mysql.TypeDouble, 2))
+		c.Assert(err, IsNil)
+		_, err = ExpressionsToPBList(sc, []Expression{fc}, client)
+		c.Assert(err, NotNil)
 	}
 }
 
@@ -348,7 +360,8 @@ func (s *testEvaluatorSuite) TestDateFunc2Pb(c *C) {
 		dg.genColumn(mysql.TypeString, 2))
 	c.Assert(err, IsNil)
 	funcs := []Expression{fc}
-	pbExprs := ExpressionsToPBList(sc, funcs, client)
+	pbExprs, err := ExpressionsToPBList(sc, funcs, client)
+	c.Assert(err, IsNil)
 	c.Assert(pbExprs[0], NotNil)
 	js, err := json.Marshal(pbExprs[0])
 	c.Assert(err, IsNil)
@@ -377,7 +390,8 @@ func (s *testEvaluatorSuite) TestLogicalFunc2Pb(c *C) {
 		logicalFuncs = append(logicalFuncs, fc)
 	}
 
-	pbExprs := ExpressionsToPBList(sc, logicalFuncs, client)
+	pbExprs, err := ExpressionsToPBList(sc, logicalFuncs, client)
+	c.Assert(err, IsNil)
 	jsons := []string{
 		"{\"tp\":10000,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":1,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"\"}},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\",\"sig\":0,\"field_type\":{\"tp\":1,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"\"}}],\"sig\":3101,\"field_type\":{\"tp\":8,\"flag\":128,\"flen\":1,\"decimal\":0,\"collate\":63,\"charset\":\"binary\"}}",
 		"{\"tp\":10000,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":1,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"\"}},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\",\"sig\":0,\"field_type\":{\"tp\":1,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"\"}}],\"sig\":3102,\"field_type\":{\"tp\":8,\"flag\":128,\"flen\":1,\"decimal\":0,\"collate\":63,\"charset\":\"binary\"}}",
@@ -413,7 +427,8 @@ func (s *testEvaluatorSuite) TestBitwiseFunc2Pb(c *C) {
 		bitwiseFuncs = append(bitwiseFuncs, fc)
 	}
 
-	pbExprs := ExpressionsToPBList(sc, bitwiseFuncs, client)
+	pbExprs, err := ExpressionsToPBList(sc, bitwiseFuncs, client)
+	c.Assert(err, IsNil)
 	jsons := []string{
 		"{\"tp\":10000,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":3,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"\"}},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\",\"sig\":0,\"field_type\":{\"tp\":3,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"\"}}],\"sig\":3118,\"field_type\":{\"tp\":8,\"flag\":160,\"flen\":20,\"decimal\":0,\"collate\":63,\"charset\":\"binary\"}}",
 		"{\"tp\":10000,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":3,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"\"}},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\",\"sig\":0,\"field_type\":{\"tp\":3,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"\"}}],\"sig\":3119,\"field_type\":{\"tp\":8,\"flag\":160,\"flen\":20,\"decimal\":0,\"collate\":63,\"charset\":\"binary\"}}",
@@ -458,16 +473,16 @@ func (s *testEvaluatorSerialSuites) TestPushDownSwitcher(c *C) {
 		sig    tipb.ScalarFuncSig
 		enable bool
 	}{
-		{ast.And, tipb.ScalarFuncSig_BitAndSig, true},
-		{ast.Or, tipb.ScalarFuncSig_BitOrSig, false},
-		{ast.UnaryNot, tipb.ScalarFuncSig_UnaryNotInt, true},
+		// Note that so far ScalarFuncSigs here are not be pushed down when the failpoint PushDownTestSwitcher
+		// is disable, which is the prerequisite to pass this test.
+		// Need to be replaced with other non pushed down ScalarFuncSigs if they are pushed down one day.
+		{ast.Sin, tipb.ScalarFuncSig_Sin, true},
+		{ast.Cos, tipb.ScalarFuncSig_Cos, false},
+		{ast.Tan, tipb.ScalarFuncSig_Tan, true},
 	}
 	var enabled []string
-	for i, funcName := range cases {
+	for _, funcName := range cases {
 		args := []Expression{dg.genColumn(mysql.TypeLong, 1)}
-		if i+1 < len(cases) {
-			args = append(args, dg.genColumn(mysql.TypeLong, 2))
-		}
 		fc, err := NewFunction(
 			mock.NewContext(),
 			funcName.name,
@@ -484,7 +499,8 @@ func (s *testEvaluatorSerialSuites) TestPushDownSwitcher(c *C) {
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/expression/PushDownTestSwitcher", `return("all")`), IsNil)
 	defer func() { c.Assert(failpoint.Disable("github.com/pingcap/tidb/expression/PushDownTestSwitcher"), IsNil) }()
 
-	pbExprs := ExpressionsToPBList(sc, funcs, client)
+	pbExprs, err := ExpressionsToPBList(sc, funcs, client)
+	c.Assert(err, IsNil)
 	c.Assert(len(pbExprs), Equals, len(cases))
 	for i, pbExpr := range pbExprs {
 		c.Assert(pbExpr.Sig, Equals, cases[i].sig, Commentf("function: %s, sig: %v", cases[i].name, cases[i].sig))
@@ -492,18 +508,17 @@ func (s *testEvaluatorSerialSuites) TestPushDownSwitcher(c *C) {
 
 	// All disabled
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/expression/PushDownTestSwitcher", `return("")`), IsNil)
-	pbExprs = ExpressionsToPBList(sc, funcs, client)
-	c.Assert(len(pbExprs), Equals, len(cases))
-	for i, pbExpr := range pbExprs {
+	pc := PbConverter{client: client, sc: sc}
+	for i := range funcs {
+		pbExpr := pc.ExprToPB(funcs[i])
 		c.Assert(pbExpr, IsNil, Commentf("function: %s, sig: %v", cases[i].name, cases[i].sig))
 	}
 
 	// Partial enabled
 	fpexpr := fmt.Sprintf(`return("%s")`, strings.Join(enabled, ","))
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/expression/PushDownTestSwitcher", fpexpr), IsNil)
-	pbExprs = ExpressionsToPBList(sc, funcs, client)
-	c.Assert(len(pbExprs), Equals, len(cases))
-	for i, pbExpr := range pbExprs {
+	for i := range funcs {
+		pbExpr := pc.ExprToPB(funcs[i])
 		if !cases[i].enable {
 			c.Assert(pbExpr, IsNil, Commentf("function: %s, sig: %v", cases[i].name, cases[i].sig))
 			continue
@@ -539,9 +554,10 @@ func (s *testEvaluatorSuite) TestControlFunc2Pb(c *C) {
 		controlFuncs = append(controlFuncs, fc)
 	}
 
-	pbExprs := ExpressionsToPBList(sc, controlFuncs, client)
+	pbExprs, err := ExpressionsToPBList(sc, controlFuncs, client)
+	c.Assert(err, IsNil)
 	jsons := []string{
-		"{\"tp\":10000,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":3,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"\"}},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\",\"sig\":0,\"field_type\":{\"tp\":3,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"\"}},{\"tp\":201,\"val\":\"gAAAAAAAAAM=\",\"sig\":0,\"field_type\":{\"tp\":3,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"\"}}],\"sig\":4208,\"field_type\":{\"tp\":3,\"flag\":128,\"flen\":0,\"decimal\":0,\"collate\":63,\"charset\":\"\"}}",
+		"{\"tp\":10000,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":3,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"\"}},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\",\"sig\":0,\"field_type\":{\"tp\":3,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"\"}},{\"tp\":201,\"val\":\"gAAAAAAAAAM=\",\"sig\":0,\"field_type\":{\"tp\":3,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"\"}}],\"sig\":4208,\"field_type\":{\"tp\":3,\"flag\":128,\"flen\":-1,\"decimal\":0,\"collate\":63,\"charset\":\"\"}}",
 		"{\"tp\":10000,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":3,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"\"}},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\",\"sig\":0,\"field_type\":{\"tp\":3,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"\"}},{\"tp\":201,\"val\":\"gAAAAAAAAAM=\",\"sig\":0,\"field_type\":{\"tp\":3,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"\"}}],\"sig\":4107,\"field_type\":{\"tp\":3,\"flag\":128,\"flen\":-1,\"decimal\":0,\"collate\":63,\"charset\":\"binary\"}}",
 		"{\"tp\":10000,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":3,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"\"}},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\",\"sig\":0,\"field_type\":{\"tp\":3,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"\"}}],\"sig\":4101,\"field_type\":{\"tp\":3,\"flag\":128,\"flen\":-1,\"decimal\":0,\"collate\":63,\"charset\":\"binary\"}}",
 		"null",
@@ -571,7 +587,8 @@ func (s *testEvaluatorSuite) TestOtherFunc2Pb(c *C) {
 		otherFuncs = append(otherFuncs, fc)
 	}
 
-	pbExprs := ExpressionsToPBList(sc, otherFuncs, client)
+	pbExprs, err := ExpressionsToPBList(sc, otherFuncs, client)
+	c.Assert(err, IsNil)
 	jsons := map[string]string{
 		ast.Coalesce: "{\"tp\":10000,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":3,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"\"}}],\"sig\":4201,\"field_type\":{\"tp\":3,\"flag\":128,\"flen\":0,\"decimal\":-1,\"collate\":63,\"charset\":\"\"}}",
 		ast.IsNull:   "{\"tp\":10000,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":3,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"\"}}],\"sig\":3116,\"field_type\":{\"tp\":8,\"flag\":128,\"flen\":1,\"decimal\":0,\"collate\":63,\"charset\":\"binary\"}}",
@@ -581,6 +598,41 @@ func (s *testEvaluatorSuite) TestOtherFunc2Pb(c *C) {
 		c.Assert(err, IsNil)
 		c.Assert(string(js), Equals, jsons[funcNames[i]])
 	}
+}
+
+func (s *testEvaluatorSuite) TestExprPushDownToFlash(c *C) {
+	sc := new(stmtctx.StatementContext)
+	client := new(mock.Client)
+	dg := new(dataGen4Expr2PbTest)
+	exprs := make([]Expression, 0)
+
+	jsonColumn := dg.genColumn(mysql.TypeJSON, 1)
+	intColumn := dg.genColumn(mysql.TypeLonglong, 2)
+	function, err := NewFunction(mock.NewContext(), ast.JSONLength, types.NewFieldType(mysql.TypeLonglong), jsonColumn)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+
+	function, err = NewFunction(mock.NewContext(), ast.If, types.NewFieldType(mysql.TypeLonglong), intColumn, intColumn, intColumn)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+
+	function, err = NewFunction(mock.NewContext(), ast.BitNeg, types.NewFieldType(mysql.TypeLonglong), intColumn)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+
+	function, err = NewFunction(mock.NewContext(), ast.Xor, types.NewFieldType(mysql.TypeLonglong), intColumn, intColumn)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+
+	canPush := CanExprsPushDown(sc, exprs, client, kv.TiFlash)
+	c.Assert(canPush, Equals, true)
+
+	function, err = NewFunction(mock.NewContext(), ast.JSONDepth, types.NewFieldType(mysql.TypeLonglong), jsonColumn)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+	pushed, remained := PushDownExprs(sc, exprs, client, kv.TiFlash)
+	c.Assert(len(pushed), Equals, len(exprs)-1)
+	c.Assert(len(remained), Equals, 1)
 }
 
 func (s *testEvaluatorSuite) TestExprOnlyPushDownToFlash(c *C) {
@@ -736,15 +788,18 @@ func (s *testEvaluatorSerialSuites) TestNewCollationsEnabled(c *C) {
 	colExprs = append(colExprs, columnCollation(dg.genColumn(mysql.TypeVarString, 3), "utf8mb4_general_ci"))
 	colExprs = append(colExprs, columnCollation(dg.genColumn(mysql.TypeString, 4), "utf8mb4_0900_ai_ci"))
 	colExprs = append(colExprs, columnCollation(dg.genColumn(mysql.TypeVarchar, 5), "utf8_bin"))
+	colExprs = append(colExprs, columnCollation(dg.genColumn(mysql.TypeVarchar, 6), "utf8_unicode_ci"))
 	pushed, _ := PushDownExprs(sc, colExprs, client, kv.UnSpecified)
 	c.Assert(len(pushed), Equals, len(colExprs))
-	pbExprs := ExpressionsToPBList(sc, colExprs, client)
+	pbExprs, err := ExpressionsToPBList(sc, colExprs, client)
+	c.Assert(err, IsNil)
 	jsons := []string{
 		"{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":15,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-46,\"charset\":\"\"}}",
 		"{\"tp\":201,\"val\":\"gAAAAAAAAAI=\",\"sig\":0,\"field_type\":{\"tp\":15,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-46,\"charset\":\"\"}}",
 		"{\"tp\":201,\"val\":\"gAAAAAAAAAM=\",\"sig\":0,\"field_type\":{\"tp\":253,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-45,\"charset\":\"\"}}",
 		"{\"tp\":201,\"val\":\"gAAAAAAAAAQ=\",\"sig\":0,\"field_type\":{\"tp\":254,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-255,\"charset\":\"\"}}",
 		"{\"tp\":201,\"val\":\"gAAAAAAAAAU=\",\"sig\":0,\"field_type\":{\"tp\":15,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-83,\"charset\":\"\"}}",
+		"{\"tp\":201,\"val\":\"gAAAAAAAAAY=\",\"sig\":0,\"field_type\":{\"tp\":15,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-192,\"charset\":\"\"}}",
 	}
 	for i, pbExpr := range pbExprs {
 		c.Assert(pbExprs, NotNil)
@@ -772,11 +827,12 @@ func (s *testEvalSerialSuite) TestPushCollationDown(c *C) {
 
 	tps := []*types.FieldType{types.NewFieldType(mysql.TypeVarchar), types.NewFieldType(mysql.TypeVarchar)}
 	for _, coll := range []string{charset.CollationBin, charset.CollationLatin1, charset.CollationUTF8, charset.CollationUTF8MB4} {
-		fc.SetCharsetAndCollation("binary", coll, types.UnspecifiedLength) // only collation matters
-		pbExpr := ExpressionsToPBList(sc, []Expression{fc}, client)
+		fc.SetCharsetAndCollation("binary", coll) // only collation matters
+		pbExpr, err := ExpressionsToPBList(sc, []Expression{fc}, client)
+		c.Assert(err, IsNil)
 		expr, err := PBToExpr(pbExpr[0], tps, sc)
 		c.Assert(err, IsNil)
-		_, eColl, _ := expr.CharsetAndCollation(nil)
+		_, eColl := expr.CharsetAndCollation(nil)
 		c.Assert(eColl, Equals, coll)
 	}
 }

@@ -19,12 +19,13 @@ import (
 	"fmt"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/store/mockstore/mocktikv"
+	"github.com/pingcap/tidb/store/mockstore/cluster"
+	"github.com/pingcap/tidb/store/mockstore/unistore"
 )
 
 type testRawKVSuite struct {
 	OneByOneSuite
-	cluster *mocktikv.Cluster
+	cluster cluster.Cluster
 	client  *RawKVClient
 	bo      *Backoffer
 }
@@ -32,17 +33,17 @@ type testRawKVSuite struct {
 var _ = Suite(&testRawKVSuite{})
 
 func (s *testRawKVSuite) SetUpTest(c *C) {
-	s.cluster = mocktikv.NewCluster()
-	mocktikv.BootstrapWithSingleStore(s.cluster)
-	pdClient := mocktikv.NewPDClient(s.cluster)
-	mvccStore := mocktikv.MustNewMVCCStore()
+	client, pdClient, cluster, err := unistore.New("")
+	c.Assert(err, IsNil)
+	unistore.BootstrapWithSingleStore(cluster)
+	s.cluster = cluster
 	s.client = &RawKVClient{
 		clusterID:   0,
 		regionCache: NewRegionCache(pdClient),
 		pdClient:    pdClient,
-		rpcClient:   mocktikv.NewRPCClient(s.cluster, mvccStore),
+		rpcClient:   client,
 	}
-	s.bo = NewBackoffer(context.Background(), 5000)
+	s.bo = NewBackofferWithVars(context.Background(), 5000, nil)
 }
 
 func (s *testRawKVSuite) TearDownTest(c *C) {
@@ -257,30 +258,30 @@ func (s *testRawKVSuite) TestReverseScan(c *C) {
 	s.mustPut(c, []byte("k5"), []byte("v5"))
 	s.mustPut(c, []byte("k7"), []byte("v7"))
 
-	check := func() {
-		s.mustReverseScan(c, []byte(""), 10)
-		s.mustReverseScan(c, []byte("z"), 1, "k7", "v7")
-		s.mustReverseScan(c, []byte("z"), 2, "k7", "v7", "k5", "v5")
-		s.mustReverseScan(c, []byte("z"), 10, "k7", "v7", "k5", "v5", "k3", "v3", "k1", "v1")
-		s.mustReverseScan(c, []byte("k2"), 10, "k1", "v1")
-		s.mustReverseScan(c, []byte("k6"), 2, "k5", "v5", "k3", "v3")
-		s.mustReverseScan(c, []byte("k5"), 1, "k3", "v3")
-		s.mustReverseScan(c, append([]byte("k5"), 0), 1, "k5", "v5")
-		s.mustReverseScan(c, []byte("k6"), 3, "k5", "v5", "k3", "v3", "k1", "v1")
-
-		s.mustReverseScanRange(c, []byte("z"), []byte("k3"), 10, "k7", "v7", "k5", "v5", "k3", "v3")
-		s.mustReverseScanRange(c, []byte("k7"), append([]byte("k3"), 0), 10, "k5", "v5")
-	}
-
-	check()
+	s.checkReverseScan(c)
 
 	err := s.split(c, "k", "k2")
 	c.Assert(err, IsNil)
-	check()
+	s.checkReverseScan(c)
 
 	err = s.split(c, "k2", "k5")
 	c.Assert(err, IsNil)
-	check()
+	s.checkReverseScan(c)
+}
+
+func (s *testRawKVSuite) checkReverseScan(c *C) {
+	s.mustReverseScan(c, []byte(""), 10)
+	s.mustReverseScan(c, []byte("z"), 1, "k7", "v7")
+	s.mustReverseScan(c, []byte("z"), 2, "k7", "v7", "k5", "v5")
+	s.mustReverseScan(c, []byte("z"), 10, "k7", "v7", "k5", "v5", "k3", "v3", "k1", "v1")
+	s.mustReverseScan(c, []byte("k2"), 10, "k1", "v1")
+	s.mustReverseScan(c, []byte("k6"), 2, "k5", "v5", "k3", "v3")
+	s.mustReverseScan(c, []byte("k5"), 1, "k3", "v3")
+	s.mustReverseScan(c, append([]byte("k5"), 0), 1, "k5", "v5")
+	s.mustReverseScan(c, []byte("k6"), 3, "k5", "v5", "k3", "v3", "k1", "v1")
+
+	s.mustReverseScanRange(c, []byte("z"), []byte("k3"), 10, "k7", "v7", "k5", "v5", "k3", "v3")
+	s.mustReverseScanRange(c, []byte("k7"), append([]byte("k3"), 0), 10, "k5", "v5")
 }
 
 func (s *testRawKVSuite) TestDeleteRange(c *C) {

@@ -14,20 +14,26 @@
 package infosync
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"io/ioutil"
 	"net/http"
 	"os"
+	"path"
 	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
@@ -39,7 +45,7 @@ import (
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/pdapi"
-	"github.com/pingcap/tidb/util/printer"
+	"github.com/pingcap/tidb/util/versioninfo"
 	"go.etcd.io/etcd/clientv3"
 	"go.etcd.io/etcd/clientv3/concurrency"
 	"go.uber.org/zap"
@@ -75,6 +81,9 @@ const (
 // ErrPrometheusAddrIsNotSet is the error that Prometheus address is not set in PD and etcd
 var ErrPrometheusAddrIsNotSet = terror.ClassDomain.New(errno.ErrPrometheusAddrIsNotSet, errno.MySQLErrName[errno.ErrPrometheusAddrIsNotSet])
 
+// errPlacementRulesDisabled is exported for internal usage, indicating PD rejected the request due to disabled placement feature.
+var errPlacementRulesDisabled = errors.New("placement rules feature is disabled")
+
 // InfoSyncer stores server info to etcd when the tidb-server starts and delete when tidb-server shuts down.
 type InfoSyncer struct {
 	etcdCli         *clientv3.Client
@@ -93,13 +102,14 @@ type InfoSyncer struct {
 // It will not be updated when tidb-server running. So please only put static information in ServerInfo struct.
 type ServerInfo struct {
 	ServerVersionInfo
-	ID             string `json:"ddl_id"`
-	IP             string `json:"ip"`
-	Port           uint   `json:"listening_port"`
-	StatusPort     uint   `json:"status_port"`
-	Lease          string `json:"lease"`
-	BinlogStatus   string `json:"binlog_status"`
-	StartTimestamp int64  `json:"start_timestamp"`
+	ID             string            `json:"ddl_id"`
+	IP             string            `json:"ip"`
+	Port           uint              `json:"listening_port"`
+	StatusPort     uint              `json:"status_port"`
+	Lease          string            `json:"lease"`
+	BinlogStatus   string            `json:"binlog_status"`
+	StartTimestamp int64             `json:"start_timestamp"`
+	Labels         map[string]string `json:"labels"`
 }
 
 // ServerVersionInfo is the server version and git_hash.
@@ -126,14 +136,14 @@ func setGlobalInfoSyncer(is *InfoSyncer) {
 }
 
 // GlobalInfoSyncerInit return a new InfoSyncer. It is exported for testing.
-func GlobalInfoSyncerInit(ctx context.Context, id string, etcdCli *clientv3.Client) (*InfoSyncer, error) {
+func GlobalInfoSyncerInit(ctx context.Context, id string, etcdCli *clientv3.Client, skipRegisterToDashBoard bool) (*InfoSyncer, error) {
 	is := &InfoSyncer{
 		etcdCli:        etcdCli,
 		info:           getServerInfo(id),
 		serverInfoPath: fmt.Sprintf("%s/%s", ServerInformationPath, id),
 		minStartTSPath: fmt.Sprintf("%s/%s", ServerMinStartTSPath, id),
 	}
-	err := is.init(ctx)
+	err := is.init(ctx, skipRegisterToDashBoard)
 	if err != nil {
 		return nil, err
 	}
@@ -142,10 +152,13 @@ func GlobalInfoSyncerInit(ctx context.Context, id string, etcdCli *clientv3.Clie
 }
 
 // Init creates a new etcd session and stores server info to etcd.
-func (is *InfoSyncer) init(ctx context.Context) error {
+func (is *InfoSyncer) init(ctx context.Context, skipRegisterToDashboard bool) error {
 	err := is.newSessionAndStoreServerInfo(ctx, owner.NewSessionDefaultRetryCnt)
 	if err != nil {
 		return err
+	}
+	if skipRegisterToDashboard {
+		return nil
 	}
 	return is.newTopologySessionAndStoreServerInfo(ctx, owner.NewSessionDefaultRetryCnt)
 }
@@ -259,6 +272,187 @@ func GetTiFlashTableSyncProgress(ctx context.Context) (map[int64]float64, error)
 	return progressMap, nil
 }
 
+func doRequest(ctx context.Context, addrs []string, route, method string, body io.Reader) ([]byte, error) {
+	var err error
+	var req *http.Request
+	var res *http.Response
+	for _, addr := range addrs {
+		var url string
+		if strings.HasPrefix(addr, "http") {
+			url = fmt.Sprintf("%s%s", addr, route)
+		} else {
+			url = fmt.Sprintf("%s://%s%s", util2.InternalHTTPSchema(), addr, route)
+		}
+
+		if ctx != nil {
+			req, err = http.NewRequestWithContext(ctx, method, url, body)
+		} else {
+			req, err = http.NewRequest(method, url, body)
+		}
+		if err != nil {
+			return nil, err
+		}
+		if body != nil {
+			req.Header.Set("Content-Type", "application/json")
+		}
+
+		res, err = util2.InternalHTTPClient().Do(req)
+		if err == nil {
+			bodyBytes, err := ioutil.ReadAll(res.Body)
+			if err != nil {
+				return nil, err
+			}
+			if res.StatusCode != http.StatusOK {
+				err = errors.Errorf("%s", bodyBytes)
+				// ignore if placement rules feature is not enabled
+				if strings.HasPrefix(err.Error(), `"placement rules feature is disabled"`) {
+					err = nil
+					bodyBytes = nil
+				}
+			}
+			terror.Log(res.Body.Close())
+			return bodyBytes, err
+		}
+	}
+	return nil, err
+}
+
+// GetPlacementRules is used to retrieve placement rules from PD.
+func GetPlacementRules(ctx context.Context) ([]*placement.RuleOp, error) {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return nil, err
+	}
+
+	if is.etcdCli == nil {
+		return nil, nil
+	}
+
+	addrs := is.etcdCli.Endpoints()
+
+	if len(addrs) == 0 {
+		return nil, errors.Errorf("pd unavailable")
+	}
+
+	rules := []*placement.RuleOp{}
+	res, err := doRequest(ctx, addrs, path.Join(pdapi.Config, "rules"), http.MethodGet, nil)
+	if err == nil && res != nil {
+		err = json.Unmarshal(res, &rules)
+	}
+	return rules, err
+}
+
+// UpdatePlacementRules is used to notify PD changes of placement rules.
+func UpdatePlacementRules(ctx context.Context, rules []*placement.RuleOp) error {
+	if len(rules) == 0 {
+		return nil
+	}
+
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return err
+	}
+
+	if is.etcdCli == nil {
+		return nil
+	}
+
+	addrs := is.etcdCli.Endpoints()
+
+	if len(addrs) == 0 {
+		return errors.Errorf("pd unavailable")
+	}
+
+	b, err := json.Marshal(rules)
+	if err != nil {
+		return err
+	}
+
+	_, err = doRequest(ctx, addrs, path.Join(pdapi.Config, "rules/batch"), http.MethodPost, bytes.NewReader(b))
+	return err
+}
+
+// GetAllRuleBundles is used to get all rule bundles from PD. It is used to load full rules from PD while fullload infoschema.
+func GetAllRuleBundles(ctx context.Context) ([]*placement.Bundle, error) {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return nil, err
+	}
+
+	bundles := []*placement.Bundle{}
+	if is.etcdCli == nil {
+		return bundles, nil
+	}
+
+	addrs := is.etcdCli.Endpoints()
+
+	if len(addrs) == 0 {
+		return nil, errors.Errorf("pd unavailable")
+	}
+
+	res, err := doRequest(ctx, addrs, path.Join(pdapi.Config, "placement-rule"), "GET", nil)
+	if err == nil && res != nil {
+		err = json.Unmarshal(res, &bundles)
+	}
+	return bundles, err
+}
+
+// GetRuleBundle is used to get one specific rule bundle from PD.
+func GetRuleBundle(ctx context.Context, name string) (*placement.Bundle, error) {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return nil, err
+	}
+
+	bundle := &placement.Bundle{ID: name}
+
+	if is.etcdCli == nil {
+		return bundle, nil
+	}
+
+	addrs := is.etcdCli.Endpoints()
+
+	if len(addrs) == 0 {
+		return nil, errors.Errorf("pd unavailable")
+	}
+
+	res, err := doRequest(ctx, addrs, path.Join(pdapi.Config, "placement-rule", name), "GET", nil)
+	if err == nil && res != nil {
+		err = json.Unmarshal(res, bundle)
+	}
+	return bundle, err
+}
+
+// PutRuleBundles is used to post specific rule bundles to PD.
+func PutRuleBundles(ctx context.Context, bundles []*placement.Bundle) error {
+	if len(bundles) == 0 {
+		return nil
+	}
+
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return err
+	}
+
+	if is.etcdCli == nil {
+		return nil
+	}
+
+	addrs := is.etcdCli.Endpoints()
+
+	if len(addrs) == 0 {
+		return errors.Errorf("pd unavailable")
+	}
+
+	b, err := json.Marshal(bundles)
+	if err != nil {
+		return err
+	}
+
+	_, err = doRequest(ctx, addrs, path.Join(pdapi.Config, "placement-rule")+"?partial=true", "POST", bytes.NewReader(b))
+	return err
+}
+
 func (is *InfoSyncer) getAllServerInfo(ctx context.Context) (map[string]*ServerInfo, error) {
 	allInfo := make(map[string]*ServerInfo)
 	if is.etcdCli == nil {
@@ -299,8 +493,10 @@ func (is *InfoSyncer) RemoveServerInfo() {
 
 type topologyInfo struct {
 	ServerVersionInfo
-	StatusPort uint   `json:"status_port"`
-	BinaryPath string `json:"binary_path"`
+	StatusPort     uint              `json:"status_port"`
+	DeployPath     string            `json:"deploy_path"`
+	StartTimestamp int64             `json:"start_timestamp"`
+	Labels         map[string]string `json:"labels"`
 }
 
 func (is *InfoSyncer) getTopologyInfo() topologyInfo {
@@ -308,13 +504,16 @@ func (is *InfoSyncer) getTopologyInfo() topologyInfo {
 	if err != nil {
 		s = ""
 	}
+	dir := path.Dir(s)
 	return topologyInfo{
 		ServerVersionInfo: ServerVersionInfo{
 			Version: mysql.TiDBReleaseVersion,
 			GitHash: is.info.ServerVersionInfo.GitHash,
 		},
-		StatusPort: is.info.StatusPort,
-		BinaryPath: s,
+		StatusPort:     is.info.StatusPort,
+		DeployPath:     dir,
+		StartTimestamp: is.info.StartTimestamp,
+		Labels:         is.info.Labels,
 	}
 }
 
@@ -603,8 +802,19 @@ func getServerInfo(id string) *ServerInfo {
 		Lease:          cfg.Lease,
 		BinlogStatus:   binloginfo.GetStatus().String(),
 		StartTimestamp: time.Now().Unix(),
+		Labels:         cfg.Labels,
 	}
 	info.Version = mysql.ServerVersion
-	info.GitHash = printer.TiDBGitHash
+	info.GitHash = versioninfo.TiDBGitHash
+
+	failpoint.Inject("mockServerInfo", func(val failpoint.Value) {
+		if val.(bool) {
+			info.StartTimestamp = 1282967700000
+			info.Labels = map[string]string{
+				"foo": "bar",
+			}
+		}
+	})
+
 	return info
 }

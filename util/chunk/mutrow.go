@@ -38,6 +38,18 @@ func (mr MutRow) Len() int {
 	return len(mr.c.columns)
 }
 
+// Clone deep clone a MutRow.
+func (mr MutRow) Clone() MutRow {
+	newChk := mr.c
+	if mr.c != nil {
+		newChk = mr.c.CopyConstruct()
+	}
+	return MutRow{
+		c:   newChk,
+		idx: mr.idx,
+	}
+}
+
 // MutRowFromValues creates a MutRow from a interface slice.
 func MutRowFromValues(vals ...interface{}) MutRow {
 	c := &Chunk{columns: make([]*Column, 0, len(vals))}
@@ -109,7 +121,7 @@ func zeroValForType(tp *types.FieldType) interface{} {
 func makeMutRowColumn(in interface{}) *Column {
 	switch x := in.(type) {
 	case nil:
-		col := makeMutRowUint64Column(uint64(0))
+		col := makeMutRowBytesColumn(nil)
 		col.nullBitmap[0] = 0
 		return col
 	case int:

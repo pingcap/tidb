@@ -33,7 +33,7 @@ type testDDLTableSplitSuite struct{}
 var _ = Suite(&testDDLTableSplitSuite{})
 
 func (s *testDDLTableSplitSuite) TestTableSplit(c *C) {
-	store, err := mockstore.NewMockTikvStore()
+	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
 	defer store.Close()
 	session.SetSchemaLease(100 * time.Millisecond)

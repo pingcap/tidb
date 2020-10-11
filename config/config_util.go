@@ -14,6 +14,7 @@
 package config
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
@@ -22,6 +23,7 @@ import (
 	"reflect"
 	"time"
 
+	"github.com/BurntSushi/toml"
 	"github.com/pingcap/errors"
 )
 
@@ -111,4 +113,44 @@ func atomicWriteConfig(c *Config, confPath string) (err error) {
 		return errors.Trace(err)
 	}
 	return errors.Trace(os.Rename(tmpConfPath, confPath))
+}
+
+// ConfReloadFunc is used to reload the config to make it work.
+type ConfReloadFunc func(oldConf, newConf *Config)
+
+func encodeConfig(conf *Config) (string, error) {
+	confBuf := bytes.NewBuffer(nil)
+	te := toml.NewEncoder(confBuf)
+	if err := te.Encode(conf); err != nil {
+		return "", errors.New("encode config error=" + err.Error())
+	}
+	return confBuf.String(), nil
+}
+
+func decodeConfig(content string) (*Config, error) {
+	c := new(Config)
+	_, err := toml.Decode(content, c)
+	return c, err
+}
+
+// FlattenConfigItems flatten this config, see more cases in the test.
+func FlattenConfigItems(nestedConfig map[string]interface{}) map[string]interface{} {
+	flatMap := make(map[string]interface{})
+	flatten(flatMap, nestedConfig, "")
+	return flatMap
+}
+
+func flatten(flatMap map[string]interface{}, nested interface{}, prefix string) {
+	switch nested.(type) {
+	case map[string]interface{}:
+		for k, v := range nested.(map[string]interface{}) {
+			path := k
+			if prefix != "" {
+				path = prefix + "." + k
+			}
+			flatten(flatMap, v, path)
+		}
+	default: // don't flatten arrays
+		flatMap[prefix] = nested
+	}
 }

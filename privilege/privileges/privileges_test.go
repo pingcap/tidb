@@ -20,6 +20,8 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"fmt"
+	"net/url"
+	"os"
 	"strings"
 	"testing"
 
@@ -383,6 +385,19 @@ func (s *testPrivilegeSuite) TestShowGrants(c *C) {
 	c.Assert(gs, HasLen, 3)
 }
 
+func (s *testPrivilegeSuite) TestShowColumnGrants(c *C) {
+	se := newSession(c, s.store, s.dbName)
+	mustExec(c, se, `USE test`)
+	mustExec(c, se, `CREATE USER 'column'@'%'`)
+	mustExec(c, se, `CREATE TABLE column_table (a int, b int, c int)`)
+	mustExec(c, se, `GRANT Select(a),Update(a,b),Insert(c) ON test.column_table TO  'column'@'%'`)
+
+	pc := privilege.GetPrivilegeManager(se)
+	gs, err := pc.ShowGrants(se, &auth.UserIdentity{Username: "column", Hostname: "%"}, nil)
+	c.Assert(err, IsNil)
+	c.Assert(strings.Join(gs, " "), Equals, "GRANT USAGE ON *.* TO 'column'@'%' GRANT Select(a), Insert(c), Update(a, b) ON test.column_table TO 'column'@'%'")
+}
+
 func (s *testPrivilegeSuite) TestDropTablePriv(c *C) {
 	se := newSession(c, s.store, s.dbName)
 	ctx, _ := se.(sessionctx.Context)
@@ -488,6 +503,8 @@ func (s *testPrivilegeSuite) TestCheckCertBasedAuth(c *C) {
 	mustExec(c, se, `CREATE USER 'r13_broken_user'@'localhost'require issuer '/C=US/ST=California/L=San Francisco/O=PingCAP/OU=TiDB/CN=TiDB admin'
 		subject '/C=ZH/ST=Beijing/L=Haidian/O=PingCAP.Inc/OU=TiDB/CN=tester1'`)
 	mustExec(c, se, "UPDATE mysql.global_priv set priv = 'abc' where `user` = 'r13_broken_user' and `host` = 'localhost'")
+	mustExec(c, se, `CREATE USER 'r14_san_only_pass'@'localhost' require san 'URI:spiffe://mesh.pingcap.com/ns/timesh/sa/me1'`)
+	mustExec(c, se, `CREATE USER 'r15_san_only_fail'@'localhost' require san 'URI:spiffe://mesh.pingcap.com/ns/timesh/sa/me2'`)
 	mustExec(c, se, "flush privileges")
 
 	defer func() {
@@ -505,6 +522,8 @@ func (s *testPrivilegeSuite) TestCheckCertBasedAuth(c *C) {
 		mustExec(c, se, "drop user 'r11_cipher_only'@'localhost'")
 		mustExec(c, se, "drop user 'r12_old_tidb_user'@'localhost'")
 		mustExec(c, se, "drop user 'r13_broken_user'@'localhost'")
+		mustExec(c, se, "drop user 'r14_san_only_pass'@'localhost'")
+		mustExec(c, se, "drop user 'r15_san_only_fail'@'localhost'")
 	}()
 
 	// test without ssl or ca
@@ -552,12 +571,17 @@ func (s *testPrivilegeSuite) TestCheckCertBasedAuth(c *C) {
 				util.MockPkixAttribute(util.CommonName, "tester1"),
 			},
 		},
-		tls.TLS_AES_128_GCM_SHA256)
+		tls.TLS_AES_128_GCM_SHA256, func(c *x509.Certificate) {
+			var url url.URL
+			url.UnmarshalBinary([]byte("spiffe://mesh.pingcap.com/ns/timesh/sa/me1"))
+			c.URIs = append(c.URIs, &url)
+		})
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "r1", Hostname: "localhost"}, nil, nil), IsTrue)
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "r2", Hostname: "localhost"}, nil, nil), IsTrue)
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "r3", Hostname: "localhost"}, nil, nil), IsTrue)
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "r4", Hostname: "localhost"}, nil, nil), IsTrue)
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "r5", Hostname: "localhost"}, nil, nil), IsTrue)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "r14_san_only_pass", Hostname: "localhost"}, nil, nil), IsTrue)
 
 	// test require but give nothing
 	se.GetSessionVars().TLSConnectionState = nil
@@ -672,15 +696,22 @@ func (s *testPrivilegeSuite) TestCheckCertBasedAuth(c *C) {
 		tls.TLS_AES_128_GCM_SHA256)
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "r10_issuer_disorder", Hostname: "localhost"}, nil, nil), IsFalse)
 
+	// test mismatch san
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "r15_san_only_fail", Hostname: "localhost"}, nil, nil), IsFalse)
+
 	// test old data and broken data
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "r12_old_tidb_user", Hostname: "localhost"}, nil, nil), IsTrue)
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "r13_broken_user", Hostname: "localhost"}, nil, nil), IsFalse)
 
 }
 
-func connectionState(issuer, subject pkix.Name, cipher uint16) *tls.ConnectionState {
+func connectionState(issuer, subject pkix.Name, cipher uint16, opt ...func(c *x509.Certificate)) *tls.ConnectionState {
+	cert := &x509.Certificate{Issuer: issuer, Subject: subject}
+	for _, o := range opt {
+		o(cert)
+	}
 	return &tls.ConnectionState{
-		VerifiedChains: [][]*x509.Certificate{{{Issuer: issuer, Subject: subject}}},
+		VerifiedChains: [][]*x509.Certificate{{cert}},
 		CipherSuite:    cipher,
 	}
 }
@@ -826,6 +857,24 @@ func (s *testPrivilegeSuite) TestCreateDropUser(c *C) {
 	mustExec(c, se, `DROP USER tcd3`)
 }
 
+func (s *testPrivilegeSuite) TestConfigPrivilege(c *C) {
+	se := newSession(c, s.store, s.dbName)
+	mustExec(c, se, `DROP USER IF EXISTS tcd1`)
+	mustExec(c, se, `CREATE USER tcd1`)
+	mustExec(c, se, `GRANT ALL ON *.* to tcd1`)
+	mustExec(c, se, `DROP USER IF EXISTS tcd2`)
+	mustExec(c, se, `CREATE USER tcd2`)
+	mustExec(c, se, `GRANT ALL ON *.* to tcd2`)
+	mustExec(c, se, `REVOKE CONFIG ON *.* FROM tcd2`)
+
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "tcd1", Hostname: "localhost", AuthHostname: "tcd1", AuthUsername: "%"}, nil, nil), IsTrue)
+	mustExec(c, se, `SET CONFIG TIKV testkey="testval"`)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "tcd2", Hostname: "localhost", AuthHostname: "tcd2", AuthUsername: "%"}, nil, nil), IsTrue)
+	_, err := se.Execute(context.Background(), `SET CONFIG TIKV testkey="testval"`)
+	c.Assert(err, ErrorMatches, ".*you need \\(at least one of\\) the CONFIG privilege\\(s\\) for this operation")
+	mustExec(c, se, `DROP USER tcd1, tcd2`)
+}
+
 func (s *testPrivilegeSuite) TestShowCreateTable(c *C) {
 	se := newSession(c, s.store, s.dbName)
 	mustExec(c, se, `CREATE USER tsct1, tsct2`)
@@ -861,7 +910,7 @@ func (s *testPrivilegeSuite) TestAnalyzeTable(c *C) {
 	c.Assert(err.Error(), Equals, "[planner:1142]INSERT command denied to user 'anobody'@'%' for table 't1'")
 
 	_, err = se.Execute(context.Background(), "select * from t1")
-	c.Assert(err.Error(), Equals, "[planner:1142]SELECT command denied to user 'anobody'@'localhost' for table 't1'")
+	c.Assert(err.Error(), Equals, "[planner:1142]SELECT command denied to user 'anobody'@'%' for table 't1'")
 
 	// try again after SELECT privilege granted
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "asuper", Hostname: "localhost", AuthUsername: "asuper", AuthHostname: "%"}, nil, nil), IsTrue)
@@ -897,10 +946,13 @@ func (s *testPrivilegeSuite) TestSystemSchema(c *C) {
 	mustExec(c, se, `select * from performance_schema.events_statements_summary_by_digest`)
 	_, err = se.Execute(context.Background(), "drop table performance_schema.events_statements_summary_by_digest")
 	c.Assert(strings.Contains(err.Error(), "denied to user"), IsTrue)
-	_, err = se.Execute(context.Background(), "update performance_schema.events_statements_summary_by_digest set table_names = 'tst'")
+	_, err = se.Execute(context.Background(), "update performance_schema.events_statements_summary_by_digest set schema_name = 'tst'")
 	c.Assert(strings.Contains(err.Error(), "privilege check fail"), IsTrue)
 	_, err = se.Execute(context.Background(), "delete from performance_schema.events_statements_summary_by_digest")
 	c.Assert(strings.Contains(err.Error(), "privilege check fail"), IsTrue)
+	_, err = se.Execute(context.Background(), "create table performance_schema.t(a int)")
+	c.Assert(err, NotNil)
+	c.Assert(strings.Contains(err.Error(), "CREATE command denied"), IsTrue, Commentf(err.Error()))
 
 	// Test metric_schema.
 	mustExec(c, se, `select * from metrics_schema.tidb_query_duration`)
@@ -910,6 +962,9 @@ func (s *testPrivilegeSuite) TestSystemSchema(c *C) {
 	c.Assert(strings.Contains(err.Error(), "privilege check fail"), IsTrue)
 	_, err = se.Execute(context.Background(), "delete from metrics_schema.tidb_query_duration")
 	c.Assert(strings.Contains(err.Error(), "privilege check fail"), IsTrue)
+	_, err = se.Execute(context.Background(), "create table metric_schema.t(a int)")
+	c.Assert(err, NotNil)
+	c.Assert(strings.Contains(err.Error(), "CREATE command denied"), IsTrue, Commentf(err.Error()))
 }
 
 func (s *testPrivilegeSuite) TestAdminCommand(c *C) {
@@ -927,6 +982,44 @@ func (s *testPrivilegeSuite) TestAdminCommand(c *C) {
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil), IsTrue)
 	_, err = se.Execute(context.Background(), "ADMIN SHOW DDL JOBS")
 	c.Assert(err, IsNil)
+}
+
+func (s *testPrivilegeSuite) TestLoadDataPrivilege(c *C) {
+	// Create file.
+	path := "/tmp/load_data_priv.csv"
+	fp, err := os.Create(path)
+	c.Assert(err, IsNil)
+	c.Assert(fp, NotNil)
+	defer func() {
+		err = fp.Close()
+		c.Assert(err, IsNil)
+		err = os.Remove(path)
+		c.Assert(err, IsNil)
+	}()
+	fp.WriteString("1\n")
+
+	se := newSession(c, s.store, s.dbName)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil), IsTrue)
+	mustExec(c, se, `CREATE USER 'test_load'@'localhost';`)
+	mustExec(c, se, `CREATE TABLE t_load(a int)`)
+	mustExec(c, se, `GRANT SELECT on *.* to 'test_load'@'localhost'`)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "test_load", Hostname: "localhost"}, nil, nil), IsTrue)
+	_, err = se.Execute(context.Background(), "LOAD DATA LOCAL INFILE '/tmp/load_data_priv.csv' INTO TABLE t_load")
+	c.Assert(strings.Contains(err.Error(), "INSERT command denied to user 'test_load'@'localhost' for table 't_load'"), IsTrue)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil), IsTrue)
+	mustExec(c, se, `GRANT INSERT on *.* to 'test_load'@'localhost'`)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "test_load", Hostname: "localhost"}, nil, nil), IsTrue)
+	_, err = se.Execute(context.Background(), "LOAD DATA LOCAL INFILE '/tmp/load_data_priv.csv' INTO TABLE t_load")
+	c.Assert(err, IsNil)
+}
+
+func (s *testPrivilegeSuite) TestSelectIntoNoPremissions(c *C) {
+	se := newSession(c, s.store, s.dbName)
+	mustExec(c, se, `CREATE USER 'nofile'@'localhost';`)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "nofile", Hostname: "localhost"}, nil, nil), IsTrue)
+	_, err := se.Execute(context.Background(), `select 1 into outfile '/tmp/doesntmatter-no-permissions'`)
+	message := "Access denied; you need (at least one of) the FILE privilege(s) for this operation"
+	c.Assert(strings.Contains(err.Error(), message), IsTrue)
 }
 
 func (s *testPrivilegeSuite) TestGetEncodedPassword(c *C) {
@@ -1002,13 +1095,23 @@ func (s *testPrivilegeSuite) TestUserTableConsistency(c *C) {
 	tk.MustQuery(buf.String()).Check(testkit.Rows(res.String()))
 }
 
+func (s *testPrivilegeSuite) TestFieldList(c *C) { // Issue #14237 List fields RPC
+	se := newSession(c, s.store, s.dbName)
+	mustExec(c, se, `CREATE USER 'tableaccess'@'localhost'`)
+	mustExec(c, se, `CREATE TABLE fieldlistt1 (a int)`)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "tableaccess", Hostname: "localhost"}, nil, nil), IsTrue)
+	_, err := se.FieldList("fieldlistt1")
+	message := "SELECT command denied to user 'tableaccess'@'localhost' for table 'fieldlistt1'"
+	c.Assert(strings.Contains(err.Error(), message), IsTrue)
+}
+
 func mustExec(c *C, se session.Session, sql string) {
 	_, err := se.Execute(context.Background(), sql)
 	c.Assert(err, IsNil)
 }
 
 func newStore(c *C, dbPath string) (*domain.Domain, kv.Storage) {
-	store, err := mockstore.NewMockTikvStore()
+	store, err := mockstore.NewMockStore()
 	session.SetSchemaLease(0)
 	session.DisableStats4Test()
 	c.Assert(err, IsNil)

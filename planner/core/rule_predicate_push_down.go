@@ -270,6 +270,7 @@ func (p *LogicalProjection) appendExpr(expr expression.Expression) *expression.C
 		UniqueID: p.ctx.GetSessionVars().AllocPlanColumnID(),
 		RetType:  expr.GetType(),
 	}
+	col.SetCoercibility(expr.Coercibility())
 	p.schema.Append(col)
 	return col
 }
@@ -316,6 +317,10 @@ func simplifyOuterJoin(p *LogicalJoin, predicates []expression.Expression) {
 	// then simplify embedding outer join.
 	canBeSimplified := false
 	for _, expr := range predicates {
+		// avoid the case where the expr only refers to the schema of outerTable
+		if expression.ExprFromSchema(expr, outerTable.Schema()) {
+			continue
+		}
 		isOk := isNullRejected(p.ctx, innerTable.Schema(), expr)
 		if isOk {
 			canBeSimplified = true
@@ -333,7 +338,7 @@ func simplifyOuterJoin(p *LogicalJoin, predicates []expression.Expression) {
 // If it is a conjunction containing a null-rejected condition as a conjunct.
 // If it is a disjunction of null-rejected conditions.
 func isNullRejected(ctx sessionctx.Context, schema *expression.Schema, expr expression.Expression) bool {
-	expr = expression.PushDownNot(nil, expr)
+	expr = expression.PushDownNot(ctx, expr)
 	sc := ctx.GetSessionVars().StmtCtx
 	sc.InNullRejectCheck = true
 	result := expression.EvaluateExprWithNull(ctx, schema, expr)

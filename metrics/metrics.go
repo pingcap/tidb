@@ -43,7 +43,7 @@ const (
 	opSucc   = "ok"
 	opFailed = "err"
 
-	LableScope   = "scope"
+	LabelScope   = "scope"
 	ScopeGlobal  = "global"
 	ScopeSession = "session"
 )
@@ -68,15 +68,17 @@ func RegisterMetrics() {
 	prometheus.MustRegister(BindMemoryUsage)
 	prometheus.MustRegister(CampaignOwnerCounter)
 	prometheus.MustRegister(ConnGauge)
+	prometheus.MustRegister(DisconnectionCounter)
 	prometheus.MustRegister(PreparedStmtGauge)
 	prometheus.MustRegister(CriticalErrorCounter)
 	prometheus.MustRegister(DDLCounter)
-	prometheus.MustRegister(AddIndexTotalCounter)
+	prometheus.MustRegister(BackfillTotalCounter)
 	prometheus.MustRegister(AddIndexProgress)
 	prometheus.MustRegister(DDLWorkerHistogram)
 	prometheus.MustRegister(DeploySyncerHistogram)
 	prometheus.MustRegister(DistSQLPartialCountHistogram)
-	prometheus.MustRegister(DistSQLQueryHistgram)
+	prometheus.MustRegister(DistSQLCoprCacheHistogram)
+	prometheus.MustRegister(DistSQLQueryHistogram)
 	prometheus.MustRegister(DistSQLScanKeysHistogram)
 	prometheus.MustRegister(DistSQLScanKeysPartialHistogram)
 	prometheus.MustRegister(DumpFeedbackCounter)
@@ -98,6 +100,7 @@ func RegisterMetrics() {
 	prometheus.MustRegister(PanicCounter)
 	prometheus.MustRegister(PlanCacheCounter)
 	prometheus.MustRegister(PseudoEstimation)
+	prometheus.MustRegister(PacketIOHistogram)
 	prometheus.MustRegister(QueryDurationHistogram)
 	prometheus.MustRegister(QueryTotalCounter)
 	prometheus.MustRegister(SchemaLeaseErrorCounter)
@@ -149,8 +152,11 @@ func RegisterMetrics() {
 	prometheus.MustRegister(TotalCopProcHistogram)
 	prometheus.MustRegister(TotalCopWaitHistogram)
 	prometheus.MustRegister(TiKVPendingBatchRequests)
+	prometheus.MustRegister(TiKVStatusDuration)
+	prometheus.MustRegister(TiKVStatusCounter)
 	prometheus.MustRegister(TiKVBatchWaitDuration)
 	prometheus.MustRegister(TiKVBatchClientUnavailable)
+	prometheus.MustRegister(TiKVBatchClientWaitEstablish)
 	prometheus.MustRegister(TiKVRangeTaskStats)
 	prometheus.MustRegister(TiKVRangeTaskPushDuration)
 	prometheus.MustRegister(HandleSchemaValidate)
@@ -159,4 +165,8 @@ func RegisterMetrics() {
 	prometheus.MustRegister(TiKVPessimisticLockKeysDuration)
 	prometheus.MustRegister(GRPCConnTransientFailureCounter)
 	prometheus.MustRegister(TiKVTTLLifeTimeReachCounter)
+	prometheus.MustRegister(TiKVNoAvailableConnectionCounter)
+	prometheus.MustRegister(TiKVAsyncCommitTxnCounter)
+	prometheus.MustRegister(MaxProcs)
+	prometheus.MustRegister(GOGC)
 }

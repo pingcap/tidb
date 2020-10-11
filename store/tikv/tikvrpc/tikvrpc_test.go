@@ -14,10 +14,15 @@
 package tikvrpc
 
 import (
-	"github.com/pingcap/kvproto/pkg/tikvpb"
+	"testing"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/kvproto/pkg/tikvpb"
 )
+
+func TestT(t *testing.T) {
+	TestingT(t)
+}
 
 type testBatchCommand struct{}
 

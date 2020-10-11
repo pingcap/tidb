@@ -23,7 +23,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
@@ -36,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
@@ -68,14 +66,16 @@ func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
 
 	ddlLease := time.Duration(atomic.LoadInt64(&schemaLease))
 	statisticLease := time.Duration(atomic.LoadInt64(&statsLease))
+	idxUsageSyncLease := time.Duration(atomic.LoadInt64(&indexUsageSyncLease))
 	err = util.RunWithRetry(util.DefaultMaxRetries, util.RetryInterval, func() (retry bool, err1 error) {
 		logutil.BgLogger().Info("new domain",
 			zap.String("store", store.UUID()),
 			zap.Stringer("ddl lease", ddlLease),
-			zap.Stringer("stats lease", statisticLease))
+			zap.Stringer("stats lease", statisticLease),
+			zap.Stringer("index usage sync lease", idxUsageSyncLease))
 		factory := createSessionFunc(store)
 		sysFactory := createSessionWithDomainFunc(store)
-		d = domain.NewDomain(store, ddlLease, statisticLease, factory)
+		d = domain.NewDomain(store, ddlLease, statisticLease, idxUsageSyncLease, factory)
 		err1 = d.Init(ddlLease, sysFactory)
 		if err1 != nil {
 			// If we don't clean it, there are some dirty data when retrying the function of Init.
@@ -117,6 +117,9 @@ var (
 
 	// statsLease is the time for reload stats table.
 	statsLease = int64(3 * time.Second)
+
+	// indexUsageSyncLease is the time for index usage synchronization.
+	indexUsageSyncLease = int64(60 * time.Second)
 )
 
 // ResetStoreForWithTiKVTest is only used in the test code.
@@ -152,6 +155,11 @@ func SetStatsLease(lease time.Duration) {
 	atomic.StoreInt64(&statsLease, int64(lease))
 }
 
+// SetIndexUsageSyncLease changes the default index usage sync lease time for loading info.
+func SetIndexUsageSyncLease(lease time.Duration) {
+	atomic.StoreInt64(&indexUsageSyncLease, int64(lease))
+}
+
 // DisableStats4Test disables the stats for tests.
 func DisableStats4Test() {
 	SetStatsLease(-1)
@@ -177,24 +185,36 @@ func Parse(ctx sessionctx.Context, src string) ([]ast.StmtNode, error) {
 	return stmts, nil
 }
 
-// Compile is safe for concurrent use by multiple goroutines.
-func Compile(ctx context.Context, sctx sessionctx.Context, stmtNode ast.StmtNode) (sqlexec.Statement, error) {
-	compiler := executor.Compiler{Ctx: sctx}
-	stmt, err := compiler.Compile(ctx, stmtNode)
-	return stmt, err
-}
-
 func recordAbortTxnDuration(sessVars *variable.SessionVars) {
 	duration := time.Since(sessVars.TxnCtx.CreateTime).Seconds()
-	if sessVars.InRestrictedSQL {
-		transactionDurationInternalAbort.Observe(duration)
+	if sessVars.TxnCtx.IsPessimistic {
+		transactionDurationPessimisticAbort.Observe(duration)
 	} else {
-		transactionDurationGeneralAbort.Observe(duration)
+		transactionDurationOptimisticAbort.Observe(duration)
 	}
 }
 
-func finishStmt(ctx context.Context, sctx sessionctx.Context, se *session, sessVars *variable.SessionVars,
-	meetsErr error, sql sqlexec.Statement) error {
+func finishStmt(ctx context.Context, se *session, meetsErr error, sql sqlexec.Statement) error {
+	err := autoCommitAfterStmt(ctx, se, meetsErr, sql)
+	if se.txn.pending() {
+		// After run statement finish, txn state is still pending means the
+		// statement never need a Txn(), such as:
+		//
+		// set @@tidb_general_log = 1
+		// set @@autocommit = 0
+		// select 1
+		//
+		// Reset txn state to invalid to dispose the pending start ts.
+		se.txn.changeToInvalid()
+	}
+	if err != nil {
+		return err
+	}
+	return checkStmtLimit(ctx, se)
+}
+
+func autoCommitAfterStmt(ctx context.Context, se *session, meetsErr error, sql sqlexec.Statement) error {
+	sessVars := se.sessionVars
 	if meetsErr != nil {
 		if !sessVars.InTxn() {
 			logutil.BgLogger().Info("rollbackTxn for ddl/autocommit failed")
@@ -217,21 +237,20 @@ func finishStmt(ctx context.Context, sctx sessionctx.Context, se *session, sessV
 		}
 		return nil
 	}
-
-	return checkStmtLimit(ctx, sctx, se)
+	return nil
 }
 
-func checkStmtLimit(ctx context.Context, sctx sessionctx.Context, se *session) error {
+func checkStmtLimit(ctx context.Context, se *session) error {
 	// If the user insert, insert, insert ... but never commit, TiDB would OOM.
 	// So we limit the statement count in a transaction here.
 	var err error
 	sessVars := se.GetSessionVars()
-	history := GetHistory(sctx)
+	history := GetHistory(se)
 	if history.Count() > int(config.GetGlobalConfig().Performance.StmtCountLimit) {
 		if !sessVars.BatchCommit {
 			se.RollbackTxn(ctx)
 			return errors.Errorf("statement count %d exceeds the transaction limitation, autocommit = %t",
-				history.Count(), sctx.GetSessionVars().IsAutocommit())
+				history.Count(), sessVars.IsAutocommit())
 		}
 		err = se.NewTxn(ctx)
 		// The transaction does not committed yet, we need to keep it in transaction.
@@ -241,74 +260,6 @@ func checkStmtLimit(ctx context.Context, sctx sessionctx.Context, se *session) e
 		sessVars.SetStatusFlag(mysql.ServerStatusInTrans, true)
 	}
 	return err
-}
-
-// runStmt executes the sqlexec.Statement and commit or rollback the current transaction.
-func runStmt(ctx context.Context, sctx sessionctx.Context, s sqlexec.Statement) (rs sqlexec.RecordSet, err error) {
-	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("session.runStmt", opentracing.ChildOf(span.Context()))
-		span1.LogKV("sql", s.OriginText())
-		defer span1.Finish()
-		ctx = opentracing.ContextWithSpan(ctx, span1)
-	}
-	sctx.SetValue(sessionctx.QueryString, s.OriginText())
-	if _, ok := s.(*executor.ExecStmt).StmtNode.(ast.DDLNode); ok {
-		sctx.SetValue(sessionctx.LastExecuteDDL, true)
-	} else {
-		sctx.ClearValue(sessionctx.LastExecuteDDL)
-	}
-
-	se := sctx.(*session)
-	sessVars := se.GetSessionVars()
-	// Save origTxnCtx here to avoid it reset in the transaction retry.
-	origTxnCtx := sessVars.TxnCtx
-	defer func() {
-		// If it is not a select statement, we record its slow log here,
-		// then it could include the transaction commit time.
-		if rs == nil {
-			// `LowSlowQuery` and `SummaryStmt` must be called before recording `PrevStmt`.
-			s.(*executor.ExecStmt).LogSlowQuery(origTxnCtx.StartTS, err == nil, false)
-			s.(*executor.ExecStmt).SummaryStmt()
-			pps := types.CloneRow(sessVars.PreparedParams)
-			sessVars.PrevStmt = executor.FormatSQL(s.OriginText(), pps)
-		}
-	}()
-
-	err = se.checkTxnAborted(s)
-	if err != nil {
-		return nil, err
-	}
-	rs, err = s.Exec(ctx)
-	sessVars.TxnCtx.StatementCount++
-	if !s.IsReadOnly(sessVars) {
-		// All the history should be added here.
-		if err == nil && sessVars.TxnCtx.CouldRetry {
-			GetHistory(sctx).Add(s, sessVars.StmtCtx)
-		}
-
-		// Handle the stmt commit/rollback.
-		if se.txn.Valid() {
-			if err != nil {
-				sctx.StmtRollback()
-			} else {
-				err = sctx.StmtCommit(sctx.GetSessionVars().StmtCtx.MemTracker)
-			}
-		}
-	}
-	err = finishStmt(ctx, sctx, se, sessVars, err, s)
-
-	if se.txn.pending() {
-		// After run statement finish, txn state is still pending means the
-		// statement never need a Txn(), such as:
-		//
-		// set @@tidb_general_log = 1
-		// set @@autocommit = 0
-		// select 1
-		//
-		// Reset txn state to invalid to dispose the pending start ts.
-		se.txn.changeToInvalid()
-	}
-	return rs, err
 }
 
 // GetHistory get all stmtHistory in current txn. Exported only for test.

@@ -16,6 +16,7 @@ package tikv
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -23,6 +24,7 @@ import (
 	"github.com/pingcap/failpoint"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
@@ -217,7 +219,7 @@ func (s *testSnapshotSuite) TestSkipLargeTxnLock(c *C) {
 	c.Assert(txn.Set(x, []byte("x")), IsNil)
 	c.Assert(txn.Set(y, []byte("y")), IsNil)
 	ctx := context.Background()
-	bo := NewBackoffer(ctx, PrewriteMaxBackoff)
+	bo := NewBackofferWithVars(ctx, PrewriteMaxBackoff, nil)
 	committer, err := newTwoPhaseCommitterWithInit(txn, 0)
 	c.Assert(err, IsNil)
 	committer.lockTTL = 3000
@@ -225,7 +227,7 @@ func (s *testSnapshotSuite) TestSkipLargeTxnLock(c *C) {
 
 	txn1 := s.beginTxn(c)
 	// txn1 is not blocked by txn in the large txn protocol.
-	_, err = txn1.Get(ctx, kv.Key(x))
+	_, err = txn1.Get(ctx, x)
 	c.Assert(kv.IsErrNotFound(errors.Trace(err)), IsTrue)
 
 	res, err := txn1.BatchGet(ctx, []kv.Key{x, y, kv.Key("z")})
@@ -239,4 +241,80 @@ func (s *testSnapshotSuite) TestSkipLargeTxnLock(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(status.IsCommitted(), IsTrue)
 	c.Assert(status.CommitTS(), Greater, txn1.StartTS())
+}
+
+func (s *testSnapshotSuite) TestPointGetSkipTxnLock(c *C) {
+	x := kv.Key("x_key_TestPointGetSkipTxnLock")
+	y := kv.Key("y_key_TestPointGetSkipTxnLock")
+	txn := s.beginTxn(c)
+	c.Assert(txn.Set(x, []byte("x")), IsNil)
+	c.Assert(txn.Set(y, []byte("y")), IsNil)
+	ctx := context.Background()
+	bo := NewBackofferWithVars(ctx, PrewriteMaxBackoff, nil)
+	committer, err := newTwoPhaseCommitterWithInit(txn, 0)
+	c.Assert(err, IsNil)
+	committer.lockTTL = 3000
+	c.Assert(committer.prewriteMutations(bo, committer.mutations), IsNil)
+
+	snapshot := newTiKVSnapshot(s.store, kv.MaxVersion, 0)
+	start := time.Now()
+	c.Assert(committer.primary(), BytesEquals, []byte(x))
+	// Point get secondary key. Shouldn't be blocked by the lock and read old data.
+	_, err = snapshot.Get(ctx, y)
+	c.Assert(kv.IsErrNotFound(errors.Trace(err)), IsTrue)
+	c.Assert(time.Since(start), Less, 500*time.Millisecond)
+
+	// Commit the primary key
+	committer.commitTS = txn.StartTS() + 1
+	committer.commitMutations(bo, committer.mutationsOfKeys([][]byte{committer.primary()}))
+
+	snapshot = newTiKVSnapshot(s.store, kv.MaxVersion, 0)
+	start = time.Now()
+	// Point get secondary key. Should read committed data.
+	value, err := snapshot.Get(ctx, y)
+	c.Assert(err, IsNil)
+	c.Assert(value, BytesEquals, []byte("y"))
+	c.Assert(time.Since(start), Less, 500*time.Millisecond)
+}
+
+func (s *testSnapshotSuite) TestSnapshotThreadSafe(c *C) {
+	txn := s.beginTxn(c)
+	key := kv.Key("key_test_snapshot_threadsafe")
+	c.Assert(txn.Set(key, []byte("x")), IsNil)
+	ctx := context.Background()
+	err := txn.Commit(context.Background())
+	c.Assert(err, IsNil)
+
+	snapshot := newTiKVSnapshot(s.store, kv.MaxVersion, 0)
+	var wg sync.WaitGroup
+	wg.Add(5)
+	for i := 0; i < 5; i++ {
+		go func() {
+			for i := 0; i < 30; i++ {
+				_, err := snapshot.Get(ctx, key)
+				c.Assert(err, IsNil)
+				_, err = snapshot.BatchGet(ctx, []kv.Key{key, kv.Key("key_not_exist")})
+				c.Assert(err, IsNil)
+			}
+			wg.Done()
+		}()
+	}
+	wg.Wait()
+}
+
+func (s *testSnapshotSuite) TestSnapshotRuntimeStats(c *C) {
+	reqStats := NewRegionRequestRuntimeStats()
+	recordRegionRequestRuntimeStats(reqStats.Stats, tikvrpc.CmdGet, time.Second)
+	recordRegionRequestRuntimeStats(reqStats.Stats, tikvrpc.CmdGet, time.Millisecond)
+	snapshot := newTiKVSnapshot(s.store, kv.Version{Ver: 0}, 0)
+	snapshot.SetOption(kv.CollectRuntimeStats, &SnapshotRuntimeStats{})
+	snapshot.mergeRegionRequestStats(reqStats.Stats)
+	snapshot.mergeRegionRequestStats(reqStats.Stats)
+	bo := NewBackofferWithVars(context.Background(), 2000, nil)
+	err := bo.BackoffWithMaxSleep(boTxnLockFast, 30, errors.New("test"))
+	c.Assert(err, IsNil)
+	snapshot.recordBackoffInfo(bo)
+	snapshot.recordBackoffInfo(bo)
+	expect := "Get:{num_rpc:4, total_time:2.002s},txnLockFast_backoff:{num:2, total_time:60 ms}"
+	c.Assert(snapshot.mu.stats.String(), Equals, expect)
 }

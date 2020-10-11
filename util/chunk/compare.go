@@ -14,6 +14,7 @@
 package chunk
 
 import (
+	"bytes"
 	"sort"
 
 	"github.com/pingcap/parser/mysql"
@@ -191,8 +192,10 @@ func Compare(row Row, colIdx int, ad *types.Datum) int {
 		return types.CompareFloat64(float64(row.GetFloat32(colIdx)), float64(ad.GetFloat32()))
 	case types.KindFloat64:
 		return types.CompareFloat64(row.GetFloat64(colIdx), ad.GetFloat64())
-	case types.KindString, types.KindBytes, types.KindBinaryLiteral, types.KindMysqlBit:
+	case types.KindString:
 		return types.CompareString(row.GetString(colIdx), ad.GetString(), ad.Collation())
+	case types.KindBytes, types.KindBinaryLiteral, types.KindMysqlBit:
+		return bytes.Compare(row.GetBytes(colIdx), ad.GetBytes())
 	case types.KindMysqlDecimal:
 		l, r := row.GetMyDecimal(colIdx), ad.GetMysqlDecimal()
 		return l.Compare(r)

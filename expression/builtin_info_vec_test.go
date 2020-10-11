@@ -21,6 +21,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 )
@@ -35,7 +36,7 @@ func (g *tidbKeyGener) gen() interface{} {
 	if rand.Intn(2) == 1 {
 		// Generate a record key
 		handle := g.inner.gen().(int64)
-		result = tablecodec.EncodeRowKeyWithHandle(tableID, handle)
+		result = tablecodec.EncodeRowKeyWithHandle(tableID, kv.IntHandle(handle))
 	} else {
 		// Generate an index key
 		idx := g.inner.gen().(int64)

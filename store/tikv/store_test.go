@@ -24,10 +24,10 @@ import (
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/pdpb"
-	"github.com/pingcap/pd/v4/client"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockoracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	pd "github.com/tikv/pd/client"
 )
 
 var errStopped = errors.New("stopped")
@@ -36,7 +36,7 @@ type testStoreSuite struct {
 	testStoreSuiteBase
 }
 
-type testStoreFailedSuite struct {
+type testStoreSerialSuite struct {
 	testStoreSuiteBase
 }
 
@@ -46,7 +46,7 @@ type testStoreSuiteBase struct {
 }
 
 var _ = Suite(&testStoreSuite{})
-var _ = SerialSuites(&testStoreFailedSuite{})
+var _ = SerialSuites(&testStoreSerialSuite{})
 
 func (s *testStoreSuiteBase) SetUpTest(c *C) {
 	s.store = NewTestStore(c).(*tikvStore)
@@ -61,9 +61,9 @@ func (s *testStoreSuite) TestOracle(c *C) {
 	s.store.oracle = o
 
 	ctx := context.Background()
-	t1, err := s.store.getTimestampWithRetry(NewBackoffer(ctx, 100))
+	t1, err := s.store.getTimestampWithRetry(NewBackofferWithVars(ctx, 100, nil))
 	c.Assert(err, IsNil)
-	t2, err := s.store.getTimestampWithRetry(NewBackoffer(ctx, 100))
+	t2, err := s.store.getTimestampWithRetry(NewBackofferWithVars(ctx, 100, nil))
 	c.Assert(err, IsNil)
 	c.Assert(t1, Less, t2)
 
@@ -89,7 +89,7 @@ func (s *testStoreSuite) TestOracle(c *C) {
 
 	go func() {
 		defer wg.Done()
-		t3, err := s.store.getTimestampWithRetry(NewBackoffer(ctx, tsoMaxBackoff))
+		t3, err := s.store.getTimestampWithRetry(NewBackofferWithVars(ctx, tsoMaxBackoff, nil))
 		c.Assert(err, IsNil)
 		c.Assert(t2, Less, t3)
 		expired := s.store.oracle.IsExpired(t2, 50)
@@ -105,10 +105,6 @@ type mockPDClient struct {
 	stop   bool
 }
 
-func (c *mockPDClient) ConfigClient() pd.ConfigClient {
-	return nil
-}
-
 func (c *mockPDClient) enable() {
 	c.Lock()
 	defer c.Unlock()
@@ -119,6 +115,10 @@ func (c *mockPDClient) disable() {
 	c.Lock()
 	defer c.Unlock()
 	c.stop = true
+}
+
+func (c *mockPDClient) GetMemberInfo(ctx context.Context) ([]*pdpb.Member, error) {
+	return nil, nil
 }
 
 func (c *mockPDClient) GetClusterID(context.Context) uint64 {
@@ -139,42 +139,42 @@ func (c *mockPDClient) GetTSAsync(ctx context.Context) pd.TSFuture {
 	return nil
 }
 
-func (c *mockPDClient) GetRegion(ctx context.Context, key []byte) (*metapb.Region, *metapb.Peer, error) {
+func (c *mockPDClient) GetRegion(ctx context.Context, key []byte) (*pd.Region, error) {
 	c.RLock()
 	defer c.RUnlock()
 
 	if c.stop {
-		return nil, nil, errors.Trace(errStopped)
+		return nil, errors.Trace(errStopped)
 	}
 	return c.client.GetRegion(ctx, key)
 }
 
-func (c *mockPDClient) GetPrevRegion(ctx context.Context, key []byte) (*metapb.Region, *metapb.Peer, error) {
+func (c *mockPDClient) GetPrevRegion(ctx context.Context, key []byte) (*pd.Region, error) {
 	c.RLock()
 	defer c.RUnlock()
 
 	if c.stop {
-		return nil, nil, errors.Trace(errStopped)
+		return nil, errors.Trace(errStopped)
 	}
 	return c.client.GetPrevRegion(ctx, key)
 }
 
-func (c *mockPDClient) GetRegionByID(ctx context.Context, regionID uint64) (*metapb.Region, *metapb.Peer, error) {
+func (c *mockPDClient) GetRegionByID(ctx context.Context, regionID uint64) (*pd.Region, error) {
 	c.RLock()
 	defer c.RUnlock()
 
 	if c.stop {
-		return nil, nil, errors.Trace(errStopped)
+		return nil, errors.Trace(errStopped)
 	}
 	return c.client.GetRegionByID(ctx, regionID)
 }
 
-func (c *mockPDClient) ScanRegions(ctx context.Context, startKey []byte, endKey []byte, limit int) ([]*metapb.Region, []*metapb.Peer, error) {
+func (c *mockPDClient) ScanRegions(ctx context.Context, startKey []byte, endKey []byte, limit int) ([]*pd.Region, error) {
 	c.RLock()
 	defer c.RUnlock()
 
 	if c.stop {
-		return nil, nil, errors.Trace(errStopped)
+		return nil, errors.Trace(errStopped)
 	}
 	return c.client.ScanRegions(ctx, startKey, endKey, limit)
 }
@@ -203,6 +203,10 @@ func (c *mockPDClient) UpdateGCSafePoint(ctx context.Context, safePoint uint64) 
 	panic("unimplemented")
 }
 
+func (c *mockPDClient) UpdateServiceGCSafePoint(ctx context.Context, serviceID string, ttl int64, safePoint uint64) (uint64, error) {
+	panic("unimplemented")
+}
+
 func (c *mockPDClient) Close() {}
 
 func (c *mockPDClient) ScatterRegion(ctx context.Context, regionID uint64) error {
@@ -215,6 +219,10 @@ func (c *mockPDClient) GetOperator(ctx context.Context, regionID uint64) (*pdpb.
 
 func (c *mockPDClient) GetLeaderAddr() string { return "mockpd" }
 
+func (c *mockPDClient) ScatterRegionWithOption(ctx context.Context, regionID uint64, opts ...pd.ScatterRegionOption) error {
+	return nil
+}
+
 type checkRequestClient struct {
 	Client
 	priority pb.CommandPri
@@ -224,8 +232,10 @@ func (c *checkRequestClient) SendRequest(ctx context.Context, addr string, req *
 	resp, err := c.Client.SendRequest(ctx, addr, req, timeout)
 	if c.priority != req.Priority {
 		if resp.Resp != nil {
-			(resp.Resp.(*pb.GetResponse)).Error = &pb.KeyError{
-				Abort: "request check error",
+			if getResp, ok := resp.Resp.(*pb.GetResponse); ok {
+				getResp.Error = &pb.KeyError{
+					Abort: "request check error",
+				}
 			}
 		}
 	}
@@ -274,7 +284,7 @@ func (s *testStoreSuite) TestRequestPriority(c *C) {
 	iter.Close()
 }
 
-func (s *testStoreSuite) TestOracleChangeByFailpoint(c *C) {
+func (s *testStoreSerialSuite) TestOracleChangeByFailpoint(c *C) {
 	defer func() {
 		failpoint.Disable("github.com/pingcap/tidb/store/tikv/oracle/changeTSFromPD")
 	}()
@@ -283,10 +293,10 @@ func (s *testStoreSuite) TestOracleChangeByFailpoint(c *C) {
 	o := &mockoracle.MockOracle{}
 	s.store.oracle = o
 	ctx := context.Background()
-	t1, err := s.store.getTimestampWithRetry(NewBackoffer(ctx, 100))
+	t1, err := s.store.getTimestampWithRetry(NewBackofferWithVars(ctx, 100, nil))
 	c.Assert(err, IsNil)
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/oracle/changeTSFromPD"), IsNil)
-	t2, err := s.store.getTimestampWithRetry(NewBackoffer(ctx, 100))
+	t2, err := s.store.getTimestampWithRetry(NewBackofferWithVars(ctx, 100, nil))
 	c.Assert(err, IsNil)
 	c.Assert(t1, Greater, t2)
 }

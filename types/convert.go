@@ -275,9 +275,9 @@ func ConvertDecimalToUint(sc *stmtctx.StatementContext, d *MyDecimal, upperBound
 }
 
 // StrToInt converts a string to an integer at the best-effort.
-func StrToInt(sc *stmtctx.StatementContext, str string) (int64, error) {
+func StrToInt(sc *stmtctx.StatementContext, str string, isFuncCast bool) (int64, error) {
 	str = strings.TrimSpace(str)
-	validPrefix, err := getValidIntPrefix(sc, str)
+	validPrefix, err := getValidIntPrefix(sc, str, isFuncCast)
 	iVal, err1 := strconv.ParseInt(validPrefix, 10, 64)
 	if err1 != nil {
 		return iVal, ErrOverflow.GenWithStackByArgs("BIGINT", validPrefix)
@@ -286,9 +286,9 @@ func StrToInt(sc *stmtctx.StatementContext, str string) (int64, error) {
 }
 
 // StrToUint converts a string to an unsigned integer at the best-effortt.
-func StrToUint(sc *stmtctx.StatementContext, str string) (uint64, error) {
+func StrToUint(sc *stmtctx.StatementContext, str string, isFuncCast bool) (uint64, error) {
 	str = strings.TrimSpace(str)
-	validPrefix, err := getValidIntPrefix(sc, str)
+	validPrefix, err := getValidIntPrefix(sc, str, isFuncCast)
 	if validPrefix[0] == '+' {
 		validPrefix = validPrefix[1:]
 	}
@@ -363,9 +363,9 @@ func NumberToDuration(number int64, fsp int8) (Duration, error) {
 }
 
 // getValidIntPrefix gets prefix of the string which can be successfully parsed as int.
-func getValidIntPrefix(sc *stmtctx.StatementContext, str string) (string, error) {
-	if !sc.InSelectStmt {
-		floatPrefix, err := getValidFloatPrefix(sc, str)
+func getValidIntPrefix(sc *stmtctx.StatementContext, str string, isFuncCast bool) (string, error) {
+	if !isFuncCast {
+		floatPrefix, err := getValidFloatPrefix(sc, str, isFuncCast)
 		if err != nil {
 			return floatPrefix, errors.Trace(err)
 		}
@@ -522,9 +522,9 @@ func floatStrToIntStr(sc *stmtctx.StatementContext, validFloat string, oriStr st
 }
 
 // StrToFloat converts a string to a float64 at the best-effort.
-func StrToFloat(sc *stmtctx.StatementContext, str string) (float64, error) {
+func StrToFloat(sc *stmtctx.StatementContext, str string, isFuncCast bool) (float64, error) {
 	str = strings.TrimSpace(str)
-	validStr, err := getValidFloatPrefix(sc, str)
+	validStr, err := getValidFloatPrefix(sc, str, isFuncCast)
 	f, err1 := strconv.ParseFloat(validStr, 64)
 	if err1 != nil {
 		if err2, ok := err1.(*strconv.NumError); ok {
@@ -571,10 +571,10 @@ func ConvertJSONToInt(sc *stmtctx.StatementContext, j json.BinaryJSON, unsigned 
 	case json.TypeCodeString:
 		str := string(hack.String(j.GetString()))
 		if !unsigned {
-			r, e := StrToInt(sc, str)
+			r, e := StrToInt(sc, str, false)
 			return r, sc.HandleOverflow(e, e)
 		}
-		u, err := StrToUint(sc, str)
+		u, err := StrToUint(sc, str, false)
 		return int64(u), sc.HandleOverflow(err, err)
 	}
 	return 0, errors.New("Unknown type code in JSON")
@@ -600,7 +600,7 @@ func ConvertJSONToFloat(sc *stmtctx.StatementContext, j json.BinaryJSON) (float6
 		return j.GetFloat64(), nil
 	case json.TypeCodeString:
 		str := string(hack.String(j.GetString()))
-		return StrToFloat(sc, str)
+		return StrToFloat(sc, str, false)
 	}
 	return 0, errors.New("Unknown type code in JSON")
 }
@@ -616,13 +616,13 @@ func ConvertJSONToDecimal(sc *stmtctx.StatementContext, j json.BinaryJSON) (*MyD
 		err = res.FromFloat64(f64)
 		return res, errors.Trace(err)
 	}
-	err := sc.HandleTruncate(res.FromString([]byte(j.GetString())))
+	err := sc.HandleTruncate(res.FromString(j.GetString()))
 	return res, errors.Trace(err)
 }
 
 // getValidFloatPrefix gets prefix of string which can be successfully parsed as float.
-func getValidFloatPrefix(sc *stmtctx.StatementContext, s string) (valid string, err error) {
-	if (sc.InDeleteStmt || sc.InSelectStmt) && s == "" {
+func getValidFloatPrefix(sc *stmtctx.StatementContext, s string, isFuncCast bool) (valid string, err error) {
+	if isFuncCast && s == "" {
 		return "0", nil
 	}
 

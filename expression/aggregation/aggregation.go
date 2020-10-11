@@ -15,6 +15,7 @@ package aggregation
 
 import (
 	"bytes"
+	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
@@ -171,7 +172,7 @@ func NeedCount(name string) bool {
 func NeedValue(name string) bool {
 	switch name {
 	case ast.AggFuncSum, ast.AggFuncAvg, ast.AggFuncFirstRow, ast.AggFuncMax, ast.AggFuncMin,
-		ast.AggFuncGroupConcat, ast.AggFuncBitOr, ast.AggFuncBitAnd, ast.AggFuncBitXor:
+		ast.AggFuncGroupConcat, ast.AggFuncBitOr, ast.AggFuncBitAnd, ast.AggFuncBitXor, ast.AggFuncApproxPercentile:
 		return true
 	default:
 		return false
@@ -190,18 +191,27 @@ func IsAllFirstRow(aggFuncs []*AggFuncDesc) bool {
 
 // CheckAggPushDown checks whether an agg function can be pushed to storage.
 func CheckAggPushDown(aggFunc *AggFuncDesc, storeType kv.StoreType) bool {
+	if len(aggFunc.OrderByItems) > 0 {
+		return false
+	}
+	if aggFunc.Name == ast.AggFuncApproxPercentile {
+		return false
+	}
+	ret := true
 	switch storeType {
 	case kv.TiFlash:
-		return CheckAggPushFlash(aggFunc)
-	default:
-		return true
+		ret = CheckAggPushFlash(aggFunc)
 	}
+	if ret {
+		ret = expression.IsPushDownEnabled(strings.ToLower(aggFunc.Name), storeType)
+	}
+	return ret
 }
 
 // CheckAggPushFlash checks whether an agg function can be pushed to flash storage.
 func CheckAggPushFlash(aggFunc *AggFuncDesc) bool {
 	switch aggFunc.Name {
-	case ast.AggFuncSum, ast.AggFuncCount, ast.AggFuncMin, ast.AggFuncMax, ast.AggFuncAvg, ast.AggFuncFirstRow:
+	case ast.AggFuncSum, ast.AggFuncCount, ast.AggFuncMin, ast.AggFuncMax, ast.AggFuncAvg, ast.AggFuncFirstRow, ast.AggFuncApproxCountDistinct:
 		return true
 	}
 	return false

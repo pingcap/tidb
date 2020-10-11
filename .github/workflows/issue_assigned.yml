@@ -1,0 +1,20 @@
+name: Auto Assign Project Local
+
+on:
+  issues:
+    types: [assigned]
+env:
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+jobs:
+  assign_to_project_column:
+    runs-on: ubuntu-latest
+    name: Assign to Project Column
+    steps:
+    - name: Run issues assignment to Robust test
+      uses: srggrs/assign-one-project-github-action@1.2.0
+      if: |
+        contains(github.event.issue.labels.*.name, 'component/test')
+      with:
+        project: 'https://github.com/pingcap/tidb/projects/32'
+        column_name: 'Task Assigned'

@@ -25,7 +25,7 @@ var (
 			Subsystem: "owner",
 			Name:      "new_session_duration_seconds",
 			Help:      "Bucketed histogram of processing time (s) of new session.",
-			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 22), // 500us ~ 2097s
+			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 22), // 0.5ms ~ 1048s
 		}, []string{LblType, LblResult})
 
 	WatcherClosed     = "watcher_closed"

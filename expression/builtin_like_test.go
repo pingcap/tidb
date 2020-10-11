@@ -35,14 +35,23 @@ func (s *testEvaluatorSuite) TestLike(c *C) {
 		{"aA", "Aa", 0},
 		{"aAb", `Aa%`, 0},
 		{"aAb", "aA_", 1},
+		{"baab", "b_%b", 1},
+		{"baab", "b%_b", 1},
+		{"bab", "b_%b", 1},
+		{"bab", "b%_b", 1},
+		{"bb", "b_%b", 0},
+		{"bb", "b%_b", 0},
+		{"baabccc", "b_%b%", 1},
 	}
+
 	for _, tt := range tests {
+		commentf := Commentf(`for input = "%s", pattern = "%s"`, tt.input, tt.pattern)
 		fc := funcs[ast.Like]
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(tt.input, tt.pattern, 0)))
-		c.Assert(err, IsNil)
-		r, err := evalBuiltinFunc(f, chunk.Row{})
-		c.Assert(err, IsNil)
-		c.Assert(r, testutil.DatumEquals, types.NewDatum(tt.match))
+		c.Assert(err, IsNil, commentf)
+		r, err := evalBuiltinFuncConcurrent(f, chunk.Row{})
+		c.Assert(err, IsNil, commentf)
+		c.Assert(r, testutil.DatumEquals, types.NewDatum(tt.match), commentf)
 	}
 }
 
@@ -50,29 +59,60 @@ func (s *testEvaluatorSerialSuites) TestCILike(c *C) {
 	collate.SetNewCollationEnabledForTest(true)
 	defer collate.SetNewCollationEnabledForTest(false)
 	tests := []struct {
-		input   string
-		pattern string
-		match   int
+		input        string
+		pattern      string
+		generalMatch int
+		unicodeMatch int
 	}{
-		{"a", "", 0},
-		{"a", "a", 1},
-		{"a", "á", 1},
-		{"a", "b", 0},
-		{"aA", "Aa", 1},
-		{"áAb", `Aa%`, 1},
-		{"áAb", `%ab%`, 1},
-		{"áAb", `%ab`, 1},
-		{"ÀAb", "aA_", 1},
+		{"a", "", 0, 0},
+		{"a", "a", 1, 1},
+		{"a", "á", 1, 1},
+		{"a", "b", 0, 0},
+		{"aA", "Aa", 1, 1},
+		{"áAb", `Aa%`, 1, 1},
+		{"áAb", `%ab%`, 1, 1},
+		{"áAb", `%ab`, 1, 1},
+		{"ÀAb", "aA_", 1, 1},
+		{"áééá", "a_%a", 1, 1},
+		{"áééá", "a%_a", 1, 1},
+		{"áéá", "a_%a", 1, 1},
+		{"áéá", "a%_a", 1, 1},
+		{"áá", "a_%a", 0, 0},
+		{"áá", "a%_a", 0, 0},
+		{"áééáííí", "a_%a%", 1, 1},
+
+		// performs matching on a per-character basis
+		// https://dev.mysql.com/doc/refman/5.7/en/string-comparison-functions.html#operator_like
+		{"ß", "s%", 1, 0},
+		{"ß", "%s", 1, 0},
+		{"ß", "ss", 0, 0},
+		{"ß", "s", 1, 0},
+		{"ss", "%ß%", 1, 0},
+		{"ß", "_", 1, 1},
+		{"ß", "__", 0, 0},
 	}
 	for _, tt := range tests {
+		commentf := Commentf(`for input = "%s", pattern = "%s"`, tt.input, tt.pattern)
 		fc := funcs[ast.Like]
 		inputs := s.datumsToConstants(types.MakeDatums(tt.input, tt.pattern, 0))
 		f, err := fc.getFunction(s.ctx, inputs)
-		c.Assert(err, IsNil)
+		c.Assert(err, IsNil, commentf)
 		f.setCollator(collate.GetCollator("utf8mb4_general_ci"))
 		r, err := evalBuiltinFunc(f, chunk.Row{})
-		c.Assert(err, IsNil)
-		c.Assert(r, testutil.DatumEquals, types.NewDatum(tt.match))
+		c.Assert(err, IsNil, commentf)
+		c.Assert(r, testutil.DatumEquals, types.NewDatum(tt.generalMatch), commentf)
+	}
+
+	for _, tt := range tests {
+		commentf := Commentf(`for input = "%s", pattern = "%s"`, tt.input, tt.pattern)
+		fc := funcs[ast.Like]
+		inputs := s.datumsToConstants(types.MakeDatums(tt.input, tt.pattern, 0))
+		f, err := fc.getFunction(s.ctx, inputs)
+		c.Assert(err, IsNil, commentf)
+		f.setCollator(collate.GetCollator("utf8mb4_unicode_ci"))
+		r, err := evalBuiltinFunc(f, chunk.Row{})
+		c.Assert(err, IsNil, commentf)
+		c.Assert(r, testutil.DatumEquals, types.NewDatum(tt.unicodeMatch), commentf)
 	}
 }
 

@@ -1,0 +1,132 @@
+[
+  {
+    "Name": "TestGroupNDVs",
+    "Cases": [
+      {
+        "SQL": "select count(1) from t1 group by a, b",
+        "AggInput": "[{[1 2] 4}]",
+        "JoinInput": ""
+      },
+      {
+        "SQL": "select * from t1, t2 where t1.a = t2.a and t1.b = t2.b",
+        "AggInput": "",
+        "JoinInput": "[{[5 6] 4}];[{[8 9] 9}]"
+      },
+      {
+        "SQL": "select count(1) from t1 where a > 0 group by a, b",
+        "AggInput": "[{[11 12] 4}]",
+        "JoinInput": ""
+      },
+      {
+        "SQL": "select count(1) from t1 where b > 0 group by a, b",
+        "AggInput": "[{[15 16] 4}]",
+        "JoinInput": ""
+      },
+      {
+        "SQL": "select count(1) from t1 where cos(a) > 0 group by a, b",
+        "AggInput": "[]",
+        "JoinInput": ""
+      },
+      {
+        "SQL": "select count(c3) from (select a as c1, b as c2, a+1 as c3 from t1) as tmp group by c2, c1",
+        "AggInput": "[{[23 24] 4}]",
+        "JoinInput": ""
+      },
+      {
+        "SQL": "select count(c3) from (select a+b as c1, b as c2, a+1 as c3 from t1) as tmp group by c2, c1",
+        "AggInput": "[]",
+        "JoinInput": ""
+      },
+      {
+        "SQL": "select count(tmp.cmp) from (select t1.a as a, t1.b as b, (t1.b > (select t2.b from t2 where t2.a = t1.a)) as cmp from t1) tmp group by tmp.a, tmp.b",
+        "AggInput": "[{[37 38] 4}]",
+        "JoinInput": ""
+      },
+      {
+        "SQL": "select count(1) from (select t1.a as a, t1.b as b from t1 where t1.b > (select t2.b from t2 where t2.a = t1.a)) tmp group by tmp.a, tmp.b",
+        "AggInput": "[]",
+        "JoinInput": ""
+      },
+      {
+        "SQL": "select count(tmp.cmp) from (select t1.a as a, t1.b as b, (t1.b in (select t2.b from t2 where t2.a = t1.a limit 3)) as cmp from t1) tmp group by tmp.a, tmp.b",
+        "AggInput": "[{[53 54] 4}]",
+        "JoinInput": ""
+      },
+      {
+        "SQL": "select count(tmp.cmp) from (select t1.a as a, t1.b as b, (t1.b not in (select t2.b from t2 where t2.a = t1.a limit 3)) as cmp from t1) tmp group by tmp.a, tmp.b",
+        "AggInput": "[{[61 62] 4}]",
+        "JoinInput": ""
+      },
+      {
+        "SQL": "select count(1) from (select t1.a as a, t1.b as b from t1 where t1.b in (select t2.b from t2 where t2.a = t1.a limit 3)) tmp group by tmp.a, tmp.b",
+        "AggInput": "[]",
+        "JoinInput": ""
+      },
+      {
+        "SQL": "select count(1) from (select t1.a as a, t1.b as b from t1 where t1.b not in (select t2.b from t2 where t2.a = t1.a limit 3)) tmp group by tmp.a, tmp.b",
+        "AggInput": "[]",
+        "JoinInput": ""
+      },
+      {
+        "SQL": "select count(1) from t1, t2 where t1.a = t2.a group by t1.a, t1.b",
+        "AggInput": "[]",
+        "JoinInput": "[];[]"
+      },
+      {
+        "SQL": "select count(1) from t1 left join t2 on t1.a = t2.a group by t1.a, t1.b",
+        "AggInput": "[{[90 91] 4}]",
+        "JoinInput": "[{[90 91] 4}];[]"
+      },
+      {
+        "SQL": "select count(1) from t1 left join t2 on t1.a = t2.a group by t2.a, t2.b",
+        "AggInput": "[]",
+        "JoinInput": "[];[]"
+      },
+      {
+        "SQL": "select count(1) from t1 right join t2 on t1.a = t2.a group by t1.a, t1.b",
+        "AggInput": "[]",
+        "JoinInput": "[];[]"
+      },
+      {
+        "SQL": "select count(1) from t1 right join t2 on t1.a = t2.a group by t2.a, t2.b",
+        "AggInput": "[{[114 115] 9}]",
+        "JoinInput": "[];[{[114 115] 9}]"
+      },
+      {
+        "SQL": "select count(tmp.cmp) from (select t1.a as a, t1.b as b, (t1.b in (select t2.b from t2 where t2.a > t1.a)) as cmp from t1) tmp group by tmp.a, tmp.b",
+        "AggInput": "[{[118 119] 4}]",
+        "JoinInput": "[{[118 119] 4}];[]"
+      },
+      {
+        "SQL": "select count(tmp.cmp) from (select t1.a as a, t1.b as b, (t1.b not in (select t2.b from t2 where t2.a > t1.a)) as cmp from t1) tmp group by tmp.a, tmp.b",
+        "AggInput": "[{[126 127] 4}]",
+        "JoinInput": "[{[126 127] 4}];[]"
+      },
+      {
+        "SQL": "select count(1) from (select t1.a as a, t1.b as b from t1 where t1.b in (select t2.b from t2 where t2.a > t1.a)) tmp group by tmp.a, tmp.b",
+        "AggInput": "[]",
+        "JoinInput": "[];[]"
+      },
+      {
+        "SQL": "select count(1) from (select t1.a as a, t1.b as b from t1 where t1.b not in (select t2.b from t2 where t2.a > t1.a)) tmp group by tmp.a, tmp.b",
+        "AggInput": "[]",
+        "JoinInput": "[];[]"
+      },
+      {
+        "SQL": "select * from t1 left join (select t2.a as a, t2.b as b, count(1) as cnt from t2 group by t2.a, t2.b) as tmp on t1.a = tmp.a and t1.b = tmp.b",
+        "AggInput": "[{[151 152] 9}]",
+        "JoinInput": "[{[148 149] 4}];[{[151 152] 9}]"
+      },
+      {
+        "SQL": "select count(1) from (select t1.a as a, t1.b as b from t1 limit 3) tmp group by tmp.a, tmp.b",
+        "AggInput": "[]",
+        "JoinInput": ""
+      },
+      {
+        "SQL": "select count(tmp.a_sum) from (select t1.a as a, t1.b as b, sum(a) over() as a_sum from t1) tmp group by tmp.a, tmp.b",
+        "AggInput": "[{[159 160] 4}]",
+        "JoinInput": ""
+      }
+    ]
+  }
+]

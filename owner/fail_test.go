@@ -55,11 +55,11 @@ func (s *testSuite) TearDownSuite(c *C) {
 var (
 	endpoints   = []string{"unix://new_session:12379"}
 	dialTimeout = 5 * time.Second
-	retryCnt    = int(math.MaxInt32)
+	retryCnt    = math.MaxInt32
 )
 
 func (s *testSuite) TestFailNewSession(c *C) {
-	ln, err := net.Listen("unix", "new_session:12379")
+	ln, err := net.Listen("unix", "new_session:0")
 	c.Assert(err, IsNil)
 	srv := grpc.NewServer(grpc.ConnectionTimeout(time.Minute))
 	var stop sync.WaitGroup

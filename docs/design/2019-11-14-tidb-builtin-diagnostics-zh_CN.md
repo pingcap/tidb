@@ -289,7 +289,7 @@ message ServerInfoResponse {
 
 - 终端用户：用户直接通过 SQL 查询获取集群信息排查问题
 - 运维系统：TiDB 的使用环境比较多样，客户可以通过 SQL 获取集群信息将 TiDB 集成到自己的运维系统中
-- 生态工具：外部工具通过 SQL 拿到集群信息实现功能定制，比如 `[sqltop](https://github.com/ngaut/sqltop)` 可以直接通过集群 `events_statements_summary_by_digest` 获取整个集群的 SQL 采样信息
+- 生态工具：外部工具通过 SQL 拿到集群信息实现功能定制，比如 `[sqltop](https://github.com/ngaut/sqltop)` 可以直接通过集群 `statements_summary` 获取整个集群的 SQL 采样信息
 
 #### 集群拓扑系统表
 
@@ -488,7 +488,7 @@ mysql> select address, type, value from pd_client_cmd_ops where start_time='2019
 
 #### 内存表全局化
 
-目前 `slow_query`/`events_statements_summary_by_digest`/`processlist` 只包含单节点数据，本提案通过添加以下三张集群级别系统表使任何一个 TiDB 实例可以查看整个集群的信息：
+目前 `slow_query`/`statements_summary`/`processlist` 只包含单节点数据，本提案通过添加以下三张集群级别系统表使任何一个 TiDB 实例可以查看整个集群的信息：
 
 | 表名 | 描述 |
 |------|-----|

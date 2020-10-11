@@ -60,7 +60,9 @@
       "select /*+ NO_INDEX_MERGE(), USE_INDEX_MERGE(t, primary, f_g, c_d_e) */ * from t where a < 1 or f > 2",
       "select /*+ USE_INDEX_MERGE(t1, c_d_e, f_g) */ * from t where c < 1 or f > 2",
       "select /*+ NO_INDEX_MERGE(), USE_INDEX_MERGE(t, primary, f_g, c_d_e) */ * from t where a < 1 or f > 2",
-      "select /*+ USE_INDEX_MERGE(t) USE_INDEX_MERGE(t) */ * from t where c < 1 or f > 2"
+      "select /*+ USE_INDEX_MERGE(t) USE_INDEX_MERGE(t) */ * from t where c < 1 or f > 2",
+      "select /*+ USE_INDEX_MERGE(db2.t) */ * from t where c < 1 or f > 2",
+      "select /*+ USE_INDEX_MERGE(db2.t, c_d_e, f_g) */ * from t where c < 1 or f > 2"
     ]
   },
   {
@@ -535,6 +537,15 @@
     ]
   },
   {
+    "name": "TestLimitToCopHint",
+    "cases": [
+      "select /*+ LIMIT_TO_COP() */ * from tn where a = 1 and b > 10 and b < 20 and c > 50 order by d limit 1",
+      "select * from tn where a = 1 and b > 10 and b < 20 and c > 50 order by d limit 1",
+      "select /*+ LIMIT_TO_COP() */ a from tn where mod(a, 2) order by a limit 1",
+      "select /*+ LIMIT_TO_COP() */ a from tn where a > 10 limit 1"
+    ]
+  },
+  {
     "name": "TestPushdownDistinctEnable",
     "cases": [
       "select /*+ HASH_AGG() */ avg(distinct a) from t;", // InjectProjBelowAgg
@@ -544,7 +555,10 @@
       "select /*+ STREAM_AGG() */ count(distinct c) from t;", // can not push down because c is not in group by
       "select /*+ HASH_AGG() */ count(distinct c) from t;", // can push down
       "select count(distinct c) from t group by c;",
-      "select count(distinct c) from t;" // should not use streamAgg because c is not in group by
+      "select count(distinct c) from t;", // should not use streamAgg because c is not in group by
+
+      "select /*+ HASH_AGG(), AGG_TO_COP() */ sum(distinct b) from pt;",
+      "select /*+ HASH_AGG(), AGG_TO_COP() */ count(distinct a) from (select * from ta union all select * from tb) t;"
     ]
   },
   {
@@ -557,7 +571,26 @@
       "select /*+ STREAM_AGG(), AGG_TO_COP() */ count(distinct c) from t group by c;",
       "select /*+ STREAM_AGG(), AGG_TO_COP() */ count(distinct c) from t;",
       "select /*+ HASH_AGG(), AGG_TO_COP() */ count(distinct c) from t;",
-      "select /*+ AGG_TO_COP() */ count(distinct c) from t group by c;"
+      "select /*+ AGG_TO_COP() */ count(distinct c) from t group by c;",
+
+      "select /*+ HASH_AGG(), AGG_TO_COP() */ sum(distinct b) from pt;",
+      "select /*+ HASH_AGG(), AGG_TO_COP() */ count(distinct a) from (select * from ta union all select * from tb) t;"
+    ]
+  },
+  {
+    "name": "TestPushdownDistinctEnableAggPushDownDisable",
+    "cases": [
+      "select /*+ HASH_AGG(), AGG_TO_COP() */ sum(distinct b) from pt;",
+      "select /*+ HASH_AGG(), AGG_TO_COP() */ count(distinct a) from (select * from ta union all select * from tb) t;"
+    ]
+  },
+  {
+    "name": "TestGroupConcatOrderby",
+    "cases": [
+      "select /*+ agg_to_cop */ group_concat(name ORDER BY name desc SEPARATOR '++'), group_concat(id ORDER BY name desc, id asc SEPARATOR '--') from test;",
+      "select /*+ agg_to_cop */ group_concat(name ORDER BY name desc SEPARATOR '++'), group_concat(id ORDER BY name desc, id asc SEPARATOR '--') from ptest;",
+      "select /*+ agg_to_cop */ group_concat(distinct name order by name desc) from test;",
+      "select /*+ agg_to_cop */ group_concat(distinct name order by name desc) from ptest;"
     ]
   },
   {
@@ -599,13 +632,24 @@
       "select 1 from (select /*+ HASH_JOIN(t1) */ t1.a not in (select t2.a from t2) from t1) x;",
       "select /*+ INL_JOIN(t1) */ t1.b, t2.b from t1 inner join t2 on t1.a = t2.a;",
       "select /*+ INL_HASH_JOIN(t1) */ t1.b, t2.b from t1 inner join t2 on t1.a = t2.a;",
-      "select /*+ INL_MERGE_JOIN(t1) */ t1.b, t2.b from t1 inner join t2 on t1.a = t2.a;"
+      "select /*+ INL_MERGE_JOIN(t1) */ t1.b, t2.b from t1 inner join t2 on t1.a = t2.a;",
+      "select /*+ MERGE_JOIN(t1) */ t1.b, t2.b from t1 inner join t2 on t1.a = t2.a;"
     ]
   },
   {
     "name": "TestHintFromDiffDatabase",
     "cases": [
       "select /*+ inl_hash_join(test.t1) */ * from test.t2 join test.t1 on test.t2.a = test.t1.a"
+    ]
+  },
+  {
+    "name": "TestNthPlanHintWithExplain",
+    "cases": [
+      "select /*+nth_plan(1)*/ * from test.tt where a=1 and b=1",
+      "select /*+nth_plan(2)*/ * from test.tt where a=1 and b=1;",
+      "select /*+nth_plan(3)*/ * from test.tt where a=1 and b=1;",
+      "select /*+nth_plan(2)*/ * from test.tt where a=1 and b=1;",
+      "select * from test.tt where a=1 and b=1"
     ]
   }
 ]

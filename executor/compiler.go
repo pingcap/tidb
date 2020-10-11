@@ -57,6 +57,7 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (*ExecStm
 	if err := plannercore.Preprocess(c.Ctx, stmtNode, infoSchema); err != nil {
 		return nil, err
 	}
+	stmtNode = plannercore.TryAddExtraLimit(c.Ctx, stmtNode)
 
 	finalPlan, names, err := planner.Optimize(ctx, c.Ctx, stmtNode, infoSchema)
 	if err != nil {
@@ -69,6 +70,7 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (*ExecStm
 		lowerPriority = needLowerPriority(finalPlan)
 	}
 	return &ExecStmt{
+		GoCtx:         ctx,
 		InfoSchema:    infoSchema,
 		Plan:          finalPlan,
 		LowerPriority: lowerPriority,
@@ -216,16 +218,16 @@ func getStmtDbLabel(stmtNode ast.StmtNode) map[string]struct{} {
 			}
 		}
 	case *ast.CreateBindingStmt:
-		if x.OriginSel != nil {
-			originSelect := x.OriginSel.(*ast.SelectStmt)
+		if x.OriginNode != nil {
+			originSelect := x.OriginNode.(*ast.SelectStmt)
 			dbLabels := getDbFromResultNode(originSelect.From.TableRefs)
 			for _, db := range dbLabels {
 				dbLabelSet[db] = struct{}{}
 			}
 		}
 
-		if len(dbLabelSet) == 0 && x.HintedSel != nil {
-			hintedSelect := x.HintedSel.(*ast.SelectStmt)
+		if len(dbLabelSet) == 0 && x.HintedNode != nil {
+			hintedSelect := x.HintedNode.(*ast.SelectStmt)
 			dbLabels := getDbFromResultNode(hintedSelect.From.TableRefs)
 			for _, db := range dbLabels {
 				dbLabelSet[db] = struct{}{}

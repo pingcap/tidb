@@ -321,7 +321,7 @@ func (s *testEvaluatorSuite) TestMD5Hash(c *C) {
 			}
 		}
 	}
-	_, err := funcs[ast.MD5].getFunction(s.ctx, []Expression{Zero})
+	_, err := funcs[ast.MD5].getFunction(s.ctx, []Expression{NewZero()})
 	c.Assert(err, IsNil)
 
 }
@@ -491,6 +491,6 @@ func (s *testEvaluatorSuite) TestPassword(c *C) {
 		}
 	}
 
-	_, err := funcs[ast.PasswordFunc].getFunction(s.ctx, []Expression{Zero})
+	_, err := funcs[ast.PasswordFunc].getFunction(s.ctx, []Expression{NewZero()})
 	c.Assert(err, IsNil)
 }
