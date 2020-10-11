@@ -942,7 +942,7 @@ func (c *formatBytesFunctionClass) getFunction(ctx sessionctx.Context, args []Ex
 		return nil, err
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETReal)
-	bf.tp.Charset = mysql.DefaultCharset
+	bf.tp.Charset, bf.tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
 	sig := &builtinFormatBytesSig{bf}
 	return sig, nil
 }
@@ -976,7 +976,7 @@ func (c *formatNanoTimeFunctionClass) getFunction(ctx sessionctx.Context, args [
 		return nil, err
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETReal)
-	bf.tp.Charset = mysql.DefaultCharset
+	bf.tp.Charset, bf.tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
 	sig := &builtinFormatNanoTimeSig{bf}
 	return sig, nil
 }
