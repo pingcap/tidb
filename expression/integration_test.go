@@ -5676,8 +5676,8 @@ func (s *testIntegrationSuite) TestIssue14146(c *C) {
 
 func (s *testIntegrationSuite) TestIssue15346(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk.MustQuery("select collation(format_bytes(1024)) != 'binary';").Check(testkit.Rows("0"))
-	tk.MustQuery("select collation(format_nano_time(234)) != 'binary';").Check(testkit.Rows("0"))
+	tk.MustQuery("select collation(format_bytes(1024)) != 'binary';").Check(testkit.Rows("1"))
+	tk.MustQuery("select collation(format_nano_time(234)) != 'binary';").Check(testkit.Rows("1"))
 }
 
 func (s *testIntegrationSerialSuite) TestCacheRegexpr(c *C) {
