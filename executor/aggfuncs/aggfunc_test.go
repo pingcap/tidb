@@ -46,6 +46,7 @@ import (
 )
 
 const (
+	// separator argument for group_concat() test cases
 	separator = " "
 )
 
