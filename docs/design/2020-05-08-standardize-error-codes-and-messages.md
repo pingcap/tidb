@@ -1,7 +1,7 @@
 # Proposal: Standardize error codes and messages
 
 - Author(s):     Joshua
-- Last updated:  July 22
+- Last updated:  September 29
 - Discussion at: https://docs.google.com/document/d/1beoa5xyuToboSx6e6J02tjLLX5SWzmqvqHuAPEk-I58/edit?usp=sharing
 
 ## Abstract
