@@ -128,12 +128,12 @@ func renewEmpty(chk *Chunk) *Chunk {
 	return newChk
 }
 
-// MemoryUsage returns the total memory usage of a Chunk in B.
+// MemoryUsage returns the total memory usage of a Chunk in bytes.
 // We ignore the size of Column.length and Column.nullCount
 // since they have little effect of the total memory usage.
 func (c *Chunk) MemoryUsage() (sum int64) {
 	for _, col := range c.columns {
-		curColMemUsage := int64(unsafe.Sizeof(*col)) + int64(cap(col.nullBitmap)) + int64(cap(col.offsets)*4) + int64(cap(col.data)) + int64(cap(col.elemBuf))
+		curColMemUsage := int64(unsafe.Sizeof(*col)) + int64(cap(col.nullBitmap)) + int64(cap(col.offsets)*8) + int64(cap(col.data)) + int64(cap(col.elemBuf))
 		sum += curColMemUsage
 	}
 	return

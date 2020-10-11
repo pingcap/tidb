@@ -432,7 +432,7 @@ func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints stmtctx.StmtHin
 				warns = append(warns, warn)
 				continue
 			}
-			if !sysVar.SetVarHintApply {
+			if !sysVar.IsHintUpdatable {
 				warn := terror.ClassUtil.New(errno.ErrNotHintUpdatableVariable, fmt.Sprintf(errno.MySQLErrName[errno.ErrNotHintUpdatableVariable], setVarHint.VarName, hint.HintName.O))
 				warns = append(warns, warn)
 				continue
