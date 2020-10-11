@@ -99,7 +99,7 @@ func checkPKOnGeneratedColumn(tblInfo *model.TableInfo, indexPartSpecifications 
 		}
 		// Virtual columns cannot be used in primary key.
 		if lastCol.IsGenerated() && !lastCol.GeneratedStored {
-			return nil, ErrUnsupportedOnGeneratedColumn.GenWithStackByArgs("Defining a virtual generated column as primary key")
+			return nil, ErrUnsupportedOnGeneratedColumn.GenWithStackByArgs("Primary Key Constraint")
 		}
 	}
 
