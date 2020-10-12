@@ -4476,6 +4476,10 @@ func (s *testSuiteP2) TestStrToDateBuiltin(c *C) {
 	tk.MustQuery(`SELECT STR_TO_DATE('2020-07-04 12:22:33 AM', '%Y-%m-%d %r')`).Check(testkit.Rows("2020-07-04 00:22:33"))
 	tk.MustQuery(`SELECT STR_TO_DATE('2020-07-04 12:22:33', '%Y-%m-%d %T')`).Check(testkit.Rows("2020-07-04 12:22:33"))
 	tk.MustQuery(`SELECT STR_TO_DATE('2020-07-04 00:22:33', '%Y-%m-%d %T')`).Check(testkit.Rows("2020-07-04 00:22:33"))
+}
+
+func (s *testSuiteP2) TestStrToDateBuiltinWithWarnings(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`SELECT STR_TO_DATE('0000-1-01', '%Y-%m-%d');`)
 	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1411|Incorrect datetime value: '0000-1-01' for function str_to_date"))
 }
