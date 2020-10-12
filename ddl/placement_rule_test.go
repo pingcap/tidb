@@ -14,24 +14,19 @@
 package ddl
 
 import (
+	"encoding/hex"
 	"encoding/json"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/ddl/placement"
+	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/util/codec"
 )
 
 var _ = Suite(&testPlacementSuite{})
 
 type testPlacementSuite struct {
-}
-
-func (s *testPlacementSuite) compareRuleOp(n, o *placement.RuleOp) bool {
-	ok1, _ := DeepEquals.Check([]interface{}{n.Action, o.Action}, nil)
-	ok2, _ := DeepEquals.Check([]interface{}{n.DeleteByIDPrefix, o.DeleteByIDPrefix}, nil)
-	ok3, _ := DeepEquals.Check([]interface{}{n.Rule, o.Rule}, nil)
-	return ok1 && ok2 && ok3
 }
 
 func (s *testPlacementSuite) TestPlacementBuild(c *C) {
@@ -234,7 +229,17 @@ func (s *testPlacementSuite) TestPlacementBuild(c *C) {
 			c.Assert(err, IsNil)
 			got, err := json.Marshal(out.Rules)
 			c.Assert(err, IsNil)
-			c.Assert(out.Rules, DeepEquals, t.output, Commentf("%d test\nexpected %s\nbut got %s", i, expected, got))
+			c.Assert(len(t.output), Equals, len(out.Rules))
+			for _, r1 := range t.output {
+				found := false
+				for _, r2 := range out.Rules {
+					if ok, _ := DeepEquals.Check([]interface{}{r1, r2}, nil); ok {
+						found = true
+						break
+					}
+				}
+				c.Assert(found, IsTrue, Commentf("%d test\nexpected %s\nbut got %s", i, expected, got))
+			}
 		} else {
 			c.Assert(err.Error(), ErrorMatches, t.err)
 		}
@@ -243,97 +248,62 @@ func (s *testPlacementSuite) TestPlacementBuild(c *C) {
 
 func (s *testPlacementSuite) TestPlacementBuildDrop(c *C) {
 	tests := []struct {
-		input  []int64
-		output []*placement.RuleOp
+		input  int64
+		output *placement.Bundle
 	}{
 		{
-			input: []int64{2},
-			output: []*placement.RuleOp{
-				{
-					Action:           placement.RuleOpDel,
-					DeleteByIDPrefix: true,
-					Rule: &placement.Rule{
-						GroupID: placement.RuleDefaultGroupID,
-						ID:      "0_t0_p2",
-					},
-				},
-			},
+			input:  2,
+			output: &placement.Bundle{ID: placement.GroupID(2)},
 		},
 		{
-			input: []int64{1, 2},
-			output: []*placement.RuleOp{
-				{
-					Action:           placement.RuleOpDel,
-					DeleteByIDPrefix: true,
-					Rule: &placement.Rule{
-						GroupID: placement.RuleDefaultGroupID,
-						ID:      "0_t0_p1",
-					},
-				},
-				{
-					Action:           placement.RuleOpDel,
-					DeleteByIDPrefix: true,
-					Rule: &placement.Rule{
-						GroupID: placement.RuleDefaultGroupID,
-						ID:      "0_t0_p2",
-					},
-				},
-			},
+			input:  1,
+			output: &placement.Bundle{ID: placement.GroupID(1)},
 		},
 	}
 	for _, t := range tests {
-		out := buildPlacementDropRules(0, 0, t.input)
-		c.Assert(len(out), Equals, len(t.output))
-		for i := range t.output {
-			c.Assert(s.compareRuleOp(out[i], t.output[i]), IsTrue, Commentf("expect: %+v, obtained: %+v", t.output[i], out[i]))
-		}
+		out := buildPlacementDropBundle(t.input)
+		c.Assert(t.output, DeepEquals, out)
 	}
 }
 
 func (s *testPlacementSuite) TestPlacementBuildTruncate(c *C) {
-	rules := []*placement.RuleOp{
-		{Rule: &placement.Rule{ID: "0_t0_p1"}},
-		{Rule: &placement.Rule{ID: "0_t0_p94"}},
-		{Rule: &placement.Rule{ID: "0_t0_p48"}},
+	bundle := &placement.Bundle{
+		ID:    placement.GroupID(-1),
+		Rules: []*placement.Rule{{GroupID: placement.GroupID(-1)}},
 	}
 
 	tests := []struct {
-		input  []int64
-		output []*placement.RuleOp
+		input  int64
+		output *placement.Bundle
 	}{
 		{
-			input: []int64{1},
-			output: []*placement.RuleOp{
-				{Action: placement.RuleOpDel, Rule: &placement.Rule{GroupID: placement.RuleDefaultGroupID, ID: "0_t0_p1"}},
-				{Action: placement.RuleOpAdd, Rule: &placement.Rule{ID: "0_t0_p2__0_0"}},
+			input: 1,
+			output: &placement.Bundle{
+				ID: placement.GroupID(1),
+				Rules: []*placement.Rule{{
+					GroupID:     placement.GroupID(1),
+					StartKeyHex: hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(1))),
+					EndKeyHex:   hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(2))),
+				}},
 			},
 		},
 		{
-			input: []int64{94, 48},
-			output: []*placement.RuleOp{
-				{Action: placement.RuleOpDel, Rule: &placement.Rule{GroupID: placement.RuleDefaultGroupID, ID: "0_t0_p94"}},
-				{Action: placement.RuleOpAdd, Rule: &placement.Rule{ID: "0_t0_p95__0_0"}},
-				{Action: placement.RuleOpDel, Rule: &placement.Rule{GroupID: placement.RuleDefaultGroupID, ID: "0_t0_p48"}},
-				{Action: placement.RuleOpAdd, Rule: &placement.Rule{ID: "0_t0_p49__0_1"}},
+			input: 2,
+			output: &placement.Bundle{
+				ID: placement.GroupID(2),
+				Rules: []*placement.Rule{{
+					GroupID:     placement.GroupID(2),
+					StartKeyHex: hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(2))),
+					EndKeyHex:   hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(3))),
+				}},
 			},
 		},
 	}
 	for _, t := range tests {
-		copyRules := make([]*placement.RuleOp, len(rules))
-		for _, rule := range rules {
-			copyRules = append(copyRules, rule.Clone())
-		}
-
-		newPartitions := make([]model.PartitionDefinition, 0, len(t.input))
-		for _, j := range t.input {
-			newPartitions = append(newPartitions, model.PartitionDefinition{ID: j + 1})
-		}
-
-		out := buildPlacementTruncateRules(rules, 0, 0, 0, t.input, newPartitions)
-
-		c.Assert(len(out), Equals, len(t.output))
-		for i := range t.output {
-			c.Assert(s.compareRuleOp(out[i], t.output[i]), IsTrue, Commentf("expect: %+v, obtained: %+v", t.output[i], out[i]))
-		}
+		out := buildPlacementTruncateBundle(bundle, t.input)
+		c.Assert(t.output, DeepEquals, out)
+		c.Assert(bundle.ID, Equals, placement.GroupID(-1))
+		c.Assert(bundle.Rules, HasLen, 1)
+		c.Assert(bundle.Rules[0].GroupID, Equals, placement.GroupID(-1))
 	}
 }
