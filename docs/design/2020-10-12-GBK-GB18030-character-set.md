@@ -18,9 +18,9 @@ To support two new character sets, GBK and GB18030, we need to make these things
 1. Users can sent queries encoded by GBK or GB 18030, TiDB can process them correctly.
 2. Users can designate GBK or GB 18030 as the character for a column, a table, etc. To be compatible with MySQL, when comparing two string using the default collation of GBK or GB 18030, pinyin order is expected.
 
-The general idea is that we handle character set conversion in connection level, and store the UTF-8 encoded data. The details are as follow:
+The general idea is that we handle character set conversion in connection level, and store the UTF-8 encoded data. The details are as follows:
 
-1. Before parsing an SQL, check that if the `character_set_client` is UTF-8. If not, convert the SQL to UTF-8.
+1. Before parsing an SQL, check if the `character_set_client` is UTF-8. If not, convert the SQL to UTF-8.
 
 2. We always use UTF-8 as intermediate encoding in TiDB and TiKV. In MySQL, however, uses `character_set_connection`. We need to handle some corner cases. For example:
 
@@ -49,15 +49,15 @@ The general idea is that we handle character set conversion in connection level,
    ```
 
 3. When writing result to client, convert the result to `character_set_result` if it's not UTF-8.
-4. If a column's character set is GBK or GB18030, to be able to write to MySQL, we need to check if the inserted value can be represented as GBK or GB18030. There should be a swith to control whether to check it.
-5. Always store UTF-8 encoded data reglass of the column's chara set. This is not the way MySQL does, the pro and con will be explained in `rationale` section.
+4. If a column's character set is GBK or GB18030, to be able to write to MySQL, we need to check if the inserted value can be represented as GBK or GB18030. There should be a switch to control whether to check it.
+5. Always store UTF-8 encoded data regress of the column's chara set. This is not the way MySQL does, the pro and con will be explained in `rationale` section.
 6. Support corresponding collation `gbk_bin` and `gb18030_bin`. Their "sort keys" are the GBK or GB18030 encoded value, and don't need restored data since the original data can be restored from the "sort keys".
 
 
 
 ## Rationale
 
-This section will explain why we choose some different approachs compare to MySQL.
+This section will explain why we choose some different approaches compare to MySQL.
 
 1. MySQL converts statements sent by the client from `character_set_client` to `character_set_connection`. Unlike MySQL, TiDB converts statements sent by the client from `character_set_client` to UTF-8.
 
@@ -69,7 +69,7 @@ This section will explain why we choose some different approachs compare to MySQ
 
    **Con**:
 
-   Need to handle some coner cases to be compatable with MySQL.
+   Need to handle some corner cases to be compatible with MySQL.
 
 2. MySQL stores the column's character set encoded data. Unlike MySQL, TiDB stores UTF-8 encoded data.
 
@@ -85,9 +85,9 @@ This section will explain why we choose some different approachs compare to MySQ
 
    (2) To use Pinyin order, the `new_collations_enabled_on_first_bootstrap  ` must be true.
 
-   (3) Other conponets, such as TiCDC, lightning, may need to deal with encode or decode too.
+   (3) Other components, such as TiCDC, lightning, may need to deal with encode or decode too.
 
 ## Compatibility
 
-1. Some results may be different with older version if involve character set. After implement this feature, the results are correct and be compatable with MySQL.
-2. Other conponents, such as TiCDC, lightning, need to consider this feature.
+1. Some results may be different with older version if involve character set. After implementing this feature, the results are correct and be compatible with MySQL.
+2. Other components, such as TiCDC, lightning, need to consider this feature.
