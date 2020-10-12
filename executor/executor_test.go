@@ -6394,7 +6394,7 @@ func (s *testSerialSuite1) TestIndexlookupRuntimeStats(c *C) {
 	rows := tk.MustQuery(sql).Rows()
 	c.Assert(len(rows), Equals, 3)
 	explain := fmt.Sprintf("%v", rows[0])
-	c.Assert(explain, Matches, ".*time:.*loops:.*index_task:.*table_task:{num.*concurrency.*time.*}, cop_task.*")
+	c.Assert(explain, Matches, ".*time:.*loops:.*index_task:.*table_task:{num.*concurrency.*time.*}.*")
 }
 
 func (s *testSuite) TestCollectDMLRuntimeStats(c *C) {
