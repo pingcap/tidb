@@ -333,6 +333,6 @@ func (s *testBootstrapSuite) TestStmtSummary(c *C) {
 	req := r.NewChunk()
 	c.Assert(r.Next(ctx, req), IsNil)
 	row := req.GetRow(0)
-	c.Assert(row.GetBytes(0), BytesEquals, []byte("1"))
+	c.Assert(row.GetBytes(0), BytesEquals, []byte("ON"))
 	c.Assert(r.Close(), IsNil)
 }

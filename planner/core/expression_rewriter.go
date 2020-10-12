@@ -1151,7 +1151,7 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
 		er.err = err
 		return
 	}
-	nativeVal, nativeType := variable.GetNativeValType(name, val)
+	nativeVal, nativeType := sysVar.GetNativeValType(val)
 	e := expression.DatumToConstant(nativeVal, nativeType)
 	e.GetType().Charset, _ = er.sctx.GetSessionVars().GetSystemVar(variable.CharacterSetConnection)
 	e.GetType().Collate, _ = er.sctx.GetSessionVars().GetSystemVar(variable.CollationConnection)

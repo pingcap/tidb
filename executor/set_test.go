@@ -260,8 +260,12 @@ func (s *testSuite5) TestSetVar(c *C) {
 	tk.MustExec("set @@sql_log_bin = on")
 	tk.MustQuery(`select @@session.sql_log_bin;`).Check(testkit.Rows("1"))
 
-	tk.MustQuery(`select @@global.log_bin;`).Check(testkit.Rows(variable.BoolToIntStr(config.GetGlobalConfig().Binlog.Enable)))
-	tk.MustQuery(`select @@log_bin;`).Check(testkit.Rows(variable.BoolToIntStr(config.GetGlobalConfig().Binlog.Enable)))
+	binlogValue := "0"
+	if config.GetGlobalConfig().Binlog.Enable {
+		binlogValue = "1"
+	}
+	tk.MustQuery(`select @@global.log_bin;`).Check(testkit.Rows(binlogValue))
+	tk.MustQuery(`select @@log_bin;`).Check(testkit.Rows(binlogValue))
 
 	tk.MustExec("set @@tidb_general_log = 1")
 	tk.MustExec("set @@tidb_general_log = 0")

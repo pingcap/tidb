@@ -270,7 +270,7 @@ func (e *Execute) checkPreparedPriv(ctx context.Context, sctx sessionctx.Context
 
 func (e *Execute) setFoundInPlanCache(sctx sessionctx.Context, opt bool) error {
 	vars := sctx.GetSessionVars()
-	err := vars.SetSystemVar(variable.TiDBFoundInPlanCache, variable.BoolToIntStr(opt))
+	err := vars.SetSystemVar(variable.TiDBFoundInPlanCache, variable.BoolToOnOff(opt))
 	return err
 }
 
