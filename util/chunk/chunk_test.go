@@ -210,46 +210,6 @@ func (s *testChunkSuite) TestAppend(c *check.C) {
 	}
 }
 
-func (s *testChunkSuite) TestAppendByColIdxs(c *check.C) {
-	srcFieldTypes := make([]*types.FieldType, 0, 3)
-	srcFieldTypes = append(srcFieldTypes, &types.FieldType{Tp: mysql.TypeFloat})
-	srcFieldTypes = append(srcFieldTypes, &types.FieldType{Tp: mysql.TypeVarchar})
-	srcFieldTypes = append(srcFieldTypes, &types.FieldType{Tp: mysql.TypeJSON})
-
-	dstFieldTypes := make([]*types.FieldType, 0, 1)
-	dstFieldTypes = append(dstFieldTypes, &types.FieldType{Tp: mysql.TypeVarchar})
-
-	jsonObj, err := json.ParseBinaryFromString("{\"k1\":\"v1\"}")
-	c.Assert(err, check.IsNil)
-
-	src := NewChunkWithCapacity(srcFieldTypes, 32)
-	dst := NewChunkWithCapacity(dstFieldTypes, 32)
-
-	src.AppendFloat32(0, 12.8)
-	src.AppendString(1, "abc")
-	src.AppendJSON(2, jsonObj)
-	src.AppendNull(0)
-	src.AppendNull(1)
-	src.AppendNull(2)
-
-	colIdx := []int{1}
-	dst.AppendByColIdxs(src, 0, 2, colIdx)
-	dst.AppendByColIdxs(src, 0, 2, colIdx)
-	dst.AppendByColIdxs(src, 0, 2, colIdx)
-	dst.AppendByColIdxs(src, 0, 2, colIdx)
-	dst.Append(dst, 2, 6)
-	dst.Append(dst, 6, 6)
-
-	c.Assert(len(dst.columns), check.Equals, 1)
-
-	c.Assert(dst.columns[0].length, check.Equals, 12)
-	c.Assert(dst.columns[0].nullCount(), check.Equals, 6)
-	c.Assert(string(dst.columns[0].nullBitmap), check.Equals, string([]byte{0x55, 0x05}))
-	c.Assert(fmt.Sprintf("%v", dst.columns[0].offsets), check.Equals, fmt.Sprintf("%v", []int64{0, 3, 3, 6, 6, 9, 9, 12, 12, 15, 15, 18, 18}))
-	c.Assert(string(dst.columns[0].data), check.Equals, "abcabcabcabcabcabc")
-	c.Assert(len(dst.columns[0].elemBuf), check.Equals, 0)
-}
-
 func (s *testChunkSuite) TestTruncateTo(c *check.C) {
 	fieldTypes := make([]*types.FieldType, 0, 3)
 	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeFloat})

@@ -497,41 +497,22 @@ func (c *Chunk) insert(rowIdx int, row Row) {
 
 // Append appends rows in [begin, end) in another Chunk to a Chunk.
 func (c *Chunk) Append(other *Chunk, begin, end int) {
-	c.AppendByColIdxs(other, begin, end, nil)
-}
-
-// appendColumn appends rows [begin:end) by column from `other[otherIdx]` to `c[colIdx]`.
-func (c *Chunk) appendColumn(colIdx int, other *Chunk, begin, end, otherIdx int) {
-	src := other.columns[otherIdx]
-	dst := c.columns[colIdx]
-	if src.isFixed() {
-		elemLen := len(src.elemBuf)
-		dst.data = append(dst.data, src.data[begin*elemLen:end*elemLen]...)
-	} else {
-		beginOffset, endOffset := src.offsets[begin], src.offsets[end]
-		dst.data = append(dst.data, src.data[beginOffset:endOffset]...)
+	for colID, src := range other.columns {
+		dst := c.columns[colID]
+		if src.isFixed() {
+			elemLen := len(src.elemBuf)
+			dst.data = append(dst.data, src.data[begin*elemLen:end*elemLen]...)
+		} else {
+			beginOffset, endOffset := src.offsets[begin], src.offsets[end]
+			dst.data = append(dst.data, src.data[beginOffset:endOffset]...)
+			for i := begin; i < end; i++ {
+				dst.offsets = append(dst.offsets, dst.offsets[len(dst.offsets)-1]+src.offsets[i+1]-src.offsets[i])
+			}
+		}
 		for i := begin; i < end; i++ {
-			dst.offsets = append(dst.offsets, dst.offsets[len(dst.offsets)-1]+src.offsets[i+1]-src.offsets[i])
-		}
-	}
-	for i := begin; i < end; i++ {
-		c.appendSel(colIdx)
-		dst.appendNullBitmap(!src.IsNull(i))
-		dst.length++
-	}
-}
-
-// AppendByColIdxs appends rows in [begin, end) by its colIdx in another Chunk to a Chunk.
-// 1. every columns are used if colIdxs is nil.
-// 2. no columns are used if colIdxs is not nil but the size of colIdxs is 0.
-func (c *Chunk) AppendByColIdxs(other *Chunk, begin, end int, colIdxs []int) {
-	if colIdxs != nil {
-		for colIdx, otherColIdx := range colIdxs {
-			c.appendColumn(colIdx, other, begin, end, otherColIdx)
-		}
-	} else {
-		for colIdx := range other.columns {
-			c.appendColumn(colIdx, other, begin, end, colIdx)
+			c.appendSel(colID)
+			dst.appendNullBitmap(!src.IsNull(i))
+			dst.length++
 		}
 	}
 	c.numVirtualRows += end - begin
