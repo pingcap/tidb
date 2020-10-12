@@ -32,8 +32,7 @@ import (
 
 var (
 	// preparedPlanCacheEnabledValue stores the global config "prepared-plan-cache-enabled".
-	// If the value of "prepared-plan-cache-enabled" is true, preparedPlanCacheEnabledValue's value is 1.
-	// Otherwise, preparedPlanCacheEnabledValue's value is 0.
+	// The value is true unless "prepared-plan-cache-enabled" is FALSE in configuration.
 	preparedPlanCacheEnabledValue int32
 	// PreparedPlanCacheCapacity stores the global config "prepared-plan-cache-capacity".
 	PreparedPlanCacheCapacity uint = 100
