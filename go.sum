@@ -58,6 +58,8 @@ github.com/blacktear23/go-proxyprotocol v0.0.0-20180807104634-af7a81e8dd0d h1:rQ
 github.com/blacktear23/go-proxyprotocol v0.0.0-20180807104634-af7a81e8dd0d/go.mod h1:VKt7CNAQxpFpSDz3sXyj9hY/GbVsQCr0sB3w59nE7lU=
 github.com/blacktear23/parser v0.0.0-20200925025033-d91e59eb6de2 h1:MkiiClyxKIq+yxwliZlWKrFyBny4zedVPQU20aXaOfQ=
 github.com/blacktear23/parser v0.0.0-20200925025033-d91e59eb6de2/go.mod h1:RlLfMRJwFBSiXd2lUaWdV5pSXtrpyvZM8k5bbZWsheU=
+github.com/blacktear23/parser v0.0.0-20201012083737-c439fb0b0d05 h1:qqkBWAzccLPxEww4tMPcBLTVvr5lhMndn5w+90VkK1g=
+github.com/blacktear23/parser v0.0.0-20201012083737-c439fb0b0d05/go.mod h1:RlLfMRJwFBSiXd2lUaWdV5pSXtrpyvZM8k5bbZWsheU=
 github.com/cakturk/go-netstat v0.0.0-20200220111822-e5b49efee7a5 h1:BjkPE3785EwPhhyuFkbINB+2a1xATwk8SNDWnJiD41g=
 github.com/cakturk/go-netstat v0.0.0-20200220111822-e5b49efee7a5/go.mod h1:jtAfVaU/2cu1+wdSRPWE2c1N2qeAA3K4RH9pYgqwets=
 github.com/cenkalti/backoff/v4 v4.0.2/go.mod h1:eEew/i+1Q6OrCDZh3WiXYv3+nJwBASZ8Bog/87DQnVg=
