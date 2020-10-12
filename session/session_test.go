@@ -3152,11 +3152,6 @@ func (s *testSessionSuite2) TestStmtHints(c *C) {
 	tk.MustExec("SELECT /*+ SET_VAR(optimizer_switch = 'mrr_cost_based=off') SET_VAR(max_heap_table_size = 1G) */ 1;")
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 0)
 
-	tk.Se.GetSessionVars().SetSystemVar("max_heap_table_size", "16777216")
-	tk.MustQuery("SELECT /*+ SET_VAR(max_heap_table_size = 1G) SET_VAR(max_heap_table_size = 3G) */ @@max_heap_table_size;").Check(testkit.Rows("1073741824"))
-	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 1)
-	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings()[0].Err.Error(), Equals, "[util:3126]Hint SET_VAR(max_heap_table_size=3221225472) is ignored as conflicting/duplicated.")
-
 	tk.MustExec("SELECT /*+ SET_VAR(max_size = 1G) */ 1;")
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 1)
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings()[0].Err.Error(), Equals, "[util:3128]Unresolved name 'max_size' for SET_VAR hint")

@@ -869,7 +869,7 @@ var MySQLErrName = map[uint16]string{
 	ErrRoleNotGranted:                                        "%s is is not granted to %s",
 	ErrMaxExecTimeExceeded:                                   "Query execution was interrupted, max_execution_time exceeded.",
 	ErrLockAcquireFailAndNoWaitSet:                           "Statement aborted because lock(s) could not be acquired immediately and NOWAIT is set.",
-	ErrNotHintUpdatableVariable:                              "Variable '%s' cannot be set using %s hint.",
+	ErrNotHintUpdatable:                                      "Variable '%s' cannot be set using %s hint.",
 	ErrDataTruncatedFunctionalIndex:                          "Data truncated for functional index '%s' at row %d",
 	ErrDataOutOfRangeFunctionalIndex:                         "Value is out of range for functional index '%s' at row %d",
 	ErrFunctionalIndexOnJSONOrGeometryFunction:               "Cannot create a functional index on a function that returns a JSON or GEOMETRY value",

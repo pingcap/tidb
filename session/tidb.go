@@ -210,9 +210,6 @@ func finishStmt(ctx context.Context, se *session, meetsErr error, sql sqlexec.St
 	if err != nil {
 		return err
 	}
-
-	se.sessionVars.ClearTmpSystemVars()
-
 	return checkStmtLimit(ctx, se)
 }
 

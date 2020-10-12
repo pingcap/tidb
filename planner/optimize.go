@@ -428,28 +428,17 @@ func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints stmtctx.StmtHin
 			// Not all session variables are permitted for use with SET_VAR
 			sysVar := variable.GetSysVar(setVarHint.VarName)
 			if sysVar == nil {
-				warn := terror.ClassUtil.New(errno.ErrUnresolvedHintName, fmt.Sprintf(errno.MySQLErrName[errno.ErrUnresolvedHintName], setVarHint.VarName, hint.HintName.O))
-				warns = append(warns, warn)
+				warns = append(warns, plannercore.ErrUnresolvedHintName.GenWithStackByArgs(setVarHint.VarName, hint.HintName.O))
 				continue
 			}
 			if !sysVar.IsHintUpdatable {
-				warn := terror.ClassUtil.New(errno.ErrNotHintUpdatableVariable, fmt.Sprintf(errno.MySQLErrName[errno.ErrNotHintUpdatableVariable], setVarHint.VarName, hint.HintName.O))
-				warns = append(warns, warn)
+				warns = append(warns, plannercore.ErrNotHintUpdatable.GenWithStackByArgs(setVarHint.VarName))
 				continue
 			}
-
-			switch setVarHint.VarName {
-			case variable.BulkInsertBufferSize, variable.JoinBufferSize, variable.MaxHeapTableSize,
-				variable.MaxJoinSize, variable.RangeAllocBlockSize, variable.ReadBufferSize,
-				variable.ReadRndBufferSize, variable.SortBufferSize, variable.TmpTableSize:
-				setVarHint.Value = variable.ParseSize(setVarHint.Value)
-			}
-
 			// If several hints with the same variable name appear in the same statement, the first one is applied and the others are ignored with a warning
 			if _, ok := setVars[setVarHint.VarName]; ok {
 				msg := fmt.Sprintf("%s(%s=%s)", hint.HintName.O, setVarHint.VarName, setVarHint.Value)
-				warn := terror.ClassUtil.New(errno.ErrWarnConflictingHint, fmt.Sprintf(errno.MySQLErrName[errno.ErrWarnConflictingHint], msg))
-				warns = append(warns, warn)
+				warns = append(warns, terror.ClassUtil.New(errno.ErrWarnConflictingHint, fmt.Sprintf(errno.MySQLErrName[errno.ErrWarnConflictingHint], msg)))
 				continue
 			}
 			setVars[setVarHint.VarName] = setVarHint.Value

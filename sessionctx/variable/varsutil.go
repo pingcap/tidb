@@ -17,7 +17,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
-	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -432,12 +431,6 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string, scope Sc
 		}
 	}
 	switch name {
-	case DefaultTmpStorageEngine:
-		// TiDB storage engine will always be 'InnoDB'
-		if strings.EqualFold(value, "InnoDB") {
-			return "InnoDB", nil
-		}
-		return value, ErrUnknownStorageEngine.GenWithStackByArgs(value)
 	case DelayKeyWrite:
 		if strings.EqualFold(value, "ON") || value == "1" {
 			return "ON", nil
@@ -507,106 +500,18 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string, scope Sc
 			return "1", nil
 		}
 		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
-	case OptimizerSwitch:
-		flags := strings.Split(value, ",")
-		flagMap := make(map[string]string)
-		for _, flag := range flags {
-			fields := strings.Split(flag, "=")
-			if len(fields) != 2 {
-				return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
-			}
-			if !strings.EqualFold(fields[1], "ON") && !strings.EqualFold(fields[1], "OFF") {
-				return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
-			}
-			flagMap[fields[0]] = strings.ToLower(fields[1])
+	case WindowingUseHighPrecision:
+		if strings.EqualFold(value, "OFF") || value == "0" {
+			return "OFF", nil
+		} else if strings.EqualFold(value, "ON") || value == "1" {
+			return "ON", nil
 		}
-
-		origValue, err := GetGlobalSystemVar(vars, name)
-		if err != nil {
-			return value, err
-		}
-		origFlags := strings.Split(origValue, ",")
-		for i, origFlag := range origFlags {
-			fields := strings.Split(origFlag, "=")
-			if len(fields) != 2 {
-				return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
-			}
-			if val, ok := flagMap[fields[0]]; ok {
-				origFlags[i] = fields[0] + "=" + val
-				delete(flagMap, fields[0])
-			}
-		}
-		if len(flagMap) > 0 {
-			return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
-		}
-		return strings.Join(origFlags, ","), nil
+		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
 	case TiDBOptBCJ:
 		if (strings.EqualFold(value, "ON") || value == "1") && vars.AllowBatchCop == 0 {
 			return value, ErrWrongValueForVar.GenWithStackByArgs("Can't set Broadcast Join to 1 but tidb_allow_batch_cop is 0, please active batch cop at first.")
 		}
 		return value, nil
-	case BulkInsertBufferSize:
-		// https://dev.mysql.com/doc/refman/8.0/en/server-system-variables.html#sysvar_bulk_insert_buffer_size
-		// Minimum Value 0
-		// Maximum Value (64-bit platforms) 18446744073709551615
-		// Maximum Value (32-bit platforms) 4294967295
-		maxLen := uint64(math.MaxUint64)
-		if mathutil.IntBits == 32 {
-			maxLen = uint64(math.MaxUint32)
-		}
-		return checkUInt64SystemVar(name, value, 0, maxLen, vars)
-	case MaxSeeksForKey:
-		// https://dev.mysql.com/doc/refman/8.0/en/server-system-variables.html#sysvar_max_seeks_for_key
-		// Minimum Value 1
-		// Maximum Value (64-bit platforms) 18446744073709551615
-		// Maximum Value (32-bit platforms) 4294967295
-		maxLen := uint64(math.MaxUint64)
-		if mathutil.IntBits == 32 {
-			maxLen = uint64(math.MaxUint32)
-		}
-		return checkUInt64SystemVar(name, value, 1, maxLen, vars)
-	case MaxHeapTableSize:
-		// https://dev.mysql.com/doc/refman/8.0/en/server-system-variables.html#sysvar_max_heap_table_size
-		// Minimum Value 16384
-		// Maximum Value (64-bit platforms) 18446744073709551615
-		// Maximum Value (32-bit platforms) 4294967295
-		maxLen := uint64(math.MaxUint64)
-		if mathutil.IntBits == 32 {
-			maxLen = uint64(math.MaxUint32)
-		}
-		return checkUInt64SystemVar(name, value, 16384, maxLen, vars)
-	case JoinBufferSize:
-		// https://dev.mysql.com/doc/refman/8.0/en/server-system-variables.html#sysvar_join_buffer_size
-		// Minimum Value 128
-		// Maximum Value (64-bit platforms) 18446744073709551615
-		// Maximum Value (32-bit platforms) 4294967295
-		// Maximum Value (Windows) 4294967295
-		maxLen := uint64(math.MaxUint64)
-		if mathutil.IntBits == 32 || runtime.GOOS == "windows" {
-			maxLen = uint64(math.MaxUint32)
-		}
-		return checkUInt64SystemVar(name, value, 128, maxLen, vars)
-	case SortBufferSize:
-		// https://dev.mysql.com/doc/refman/8.0/en/server-system-variables.html#sysvar_sort_buffer_size
-		// Minimum Value 32768
-		// Maximum Value (64-bit platforms) 18446744073709551615
-		// Maximum Value (32-bit platforms) 4294967295
-		// Maximum Value (Windows) 4294967295
-		maxLen := uint64(math.MaxUint64)
-		if mathutil.IntBits == 32 || runtime.GOOS == "windows" {
-			maxLen = uint64(math.MaxUint32)
-		}
-		return checkUInt64SystemVar(name, value, 32768, maxLen, vars)
-	case RangeAllocBlockSize:
-		// https://dev.mysql.com/doc/refman/8.0/en/server-system-variables.html#sysvar_range_alloc_block_size
-		// Minimum Value 4096
-		// Maximum Value (64-bit platforms) 18446744073709551615
-		// Maximum Value (32-bit platforms) 4294967295
-		maxLen := uint64(math.MaxUint64)
-		if mathutil.IntBits == 32 {
-			maxLen = uint64(math.MaxUint32)
-		}
-		return checkUInt64SystemVar(name, value, 4096, maxLen, vars)
 	case TiDBEnableTablePartition:
 		switch {
 		case strings.EqualFold(value, "ON") || value == "1":
@@ -885,31 +790,6 @@ func tidbOptFloat64(opt string, defaultVal float64) float64 {
 		return defaultVal
 	}
 	return val
-}
-
-// ParseSize parse value to real size number
-func ParseSize(value string) string {
-	if len(value) == 0 {
-		return value
-	}
-	pow := uint64(1)
-	unit := value[len(value)-1]
-	if unit == 'K' {
-		pow = 1024
-	} else if unit == 'M' {
-		pow = 1024 * 1024
-	} else if unit == 'G' {
-		pow = 1024 * 1024 * 1024
-	}
-	if pow == 1 {
-		return value
-	}
-	val, err := strconv.ParseUint(value[0:len(value)-1], 10, 64)
-	if err != nil {
-		return value
-	}
-	value = strconv.FormatUint(val*pow, 10)
-	return value
 }
 
 func parseTimeZone(s string) (*time.Location, error) {
