@@ -22,6 +22,7 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -40,13 +41,32 @@ type nextPartition interface {
 	nextPartition(context.Context, table.PhysicalTable) (Executor, error)
 }
 
+type innerPartitionInfo struct {
+	isFullPartition bool
+	nextRange       map[int64][]*ranger.Range
+}
+
+type innerNextPartition interface {
+	nextPartition
+	GetInnerPartitionInfo() *innerPartitionInfo
+}
+
 type nextPartitionForTableReader struct {
-	exec *TableReaderExecutor
+	*innerPartitionInfo
+	rangeBuilders map[int64]kvRangeBuilder
+	exec          *TableReaderExecutor
+}
+
+func (n nextPartitionForTableReader) GetInnerPartitionInfo() *innerPartitionInfo {
+	return n.innerPartitionInfo
 }
 
 func (n nextPartitionForTableReader) nextPartition(ctx context.Context, tbl table.PhysicalTable) (Executor, error) {
 	n.exec.table = tbl
 	n.exec.kvRanges = n.exec.kvRanges[:0]
+	if n.innerPartitionInfo != nil && !n.isFullPartition {
+		n.exec.kvRangeBuilder = n.rangeBuilders[tbl.GetPhysicalID()]
+	}
 	if err := updateDAGRequestTableID(ctx, n.exec.dagPB, tbl.Meta().ID, tbl.GetPhysicalID()); err != nil {
 		return nil, err
 	}
@@ -54,22 +74,38 @@ func (n nextPartitionForTableReader) nextPartition(ctx context.Context, tbl tabl
 }
 
 type nextPartitionForIndexLookUp struct {
+	*innerPartitionInfo
 	exec *IndexLookUpExecutor
+}
+
+func (n nextPartitionForIndexLookUp) GetInnerPartitionInfo() *innerPartitionInfo {
+	return n.innerPartitionInfo
 }
 
 func (n nextPartitionForIndexLookUp) nextPartition(ctx context.Context, tbl table.PhysicalTable) (Executor, error) {
 	n.exec.table = tbl
+	if n.innerPartitionInfo != nil && !n.isFullPartition {
+		n.exec.ranges = n.nextRange[tbl.GetPhysicalID()]
+	}
 	return n.exec, nil
 }
 
 type nextPartitionForIndexReader struct {
+	*innerPartitionInfo
 	exec *IndexReaderExecutor
+}
+
+func (n nextPartitionForIndexReader) GetInnerPartitionInfo() *innerPartitionInfo {
+	return n.innerPartitionInfo
 }
 
 func (n nextPartitionForIndexReader) nextPartition(ctx context.Context, tbl table.PhysicalTable) (Executor, error) {
 	exec := n.exec
 	exec.table = tbl
 	exec.physicalTableID = tbl.GetPhysicalID()
+	if n.innerPartitionInfo != nil && !n.isFullPartition {
+		exec.ranges = n.nextRange[tbl.GetPhysicalID()]
+	}
 	return exec, nil
 }
 
