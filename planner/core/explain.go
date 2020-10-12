@@ -910,7 +910,11 @@ func (p *LogicalIndexScan) ExplainInfo() string {
 	if len(index.Columns) > 0 {
 		buffer.WriteString(", index:")
 		for i, idxCol := range index.Columns {
-			buffer.WriteString(idxCol.Name.O)
+			if tblCol := p.Columns[idxCol.Offset]; tblCol.Hidden {
+				buffer.WriteString(tblCol.GeneratedExprString)
+			} else {
+				buffer.WriteString(idxCol.Name.O)
+			}
 			if i+1 < len(index.Columns) {
 				buffer.WriteString(", ")
 			}
