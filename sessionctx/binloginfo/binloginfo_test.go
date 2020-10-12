@@ -78,7 +78,7 @@ func (p *mockBinlogPump) PullBinlogs(req *binlog.PullBinlogReq, srv binlog.Pump_
 	return nil
 }
 
-var _ = Suite(&testBinlogSuite{})
+var _ = SerialSuites(&testBinlogSuite{})
 
 type testBinlogSuite struct {
 	store    kv.Storage

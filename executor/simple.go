@@ -564,15 +564,12 @@ func (e *SimpleExec) executeBegin(ctx context.Context, s *ast.BeginStmt) error {
 	// reverts to its previous state.
 	e.ctx.GetSessionVars().SetStatusFlag(mysql.ServerStatusInTrans, true)
 	// Call ctx.Txn(true) to active pending txn.
-	pTxnConf := config.GetGlobalConfig().PessimisticTxn
-	if pTxnConf.Enable {
-		txnMode := s.Mode
-		if txnMode == "" {
-			txnMode = e.ctx.GetSessionVars().TxnMode
-		}
-		if txnMode == ast.Pessimistic {
-			e.ctx.GetSessionVars().TxnCtx.IsPessimistic = true
-		}
+	txnMode := s.Mode
+	if txnMode == "" {
+		txnMode = e.ctx.GetSessionVars().TxnMode
+	}
+	if txnMode == ast.Pessimistic {
+		e.ctx.GetSessionVars().TxnCtx.IsPessimistic = true
 	}
 	txn, err := e.ctx.Txn(true)
 	if err != nil {
@@ -1131,9 +1128,9 @@ func (e *SimpleExec) executeAlterInstance(s *ast.AlterInstanceStmt) error {
 		logutil.BgLogger().Info("execute reload tls", zap.Bool("NoRollbackOnError", s.NoRollbackOnError))
 		sm := e.ctx.GetSessionManager()
 		tlsCfg, err := util.LoadTLSCertificates(
-			variable.SysVars["ssl_ca"].Value,
-			variable.SysVars["ssl_key"].Value,
-			variable.SysVars["ssl_cert"].Value,
+			variable.GetSysVar("ssl_ca").Value,
+			variable.GetSysVar("ssl_key").Value,
+			variable.GetSysVar("ssl_cert").Value,
 		)
 		if err != nil {
 			if !s.NoRollbackOnError || config.GetGlobalConfig().Security.RequireSecureTransport {

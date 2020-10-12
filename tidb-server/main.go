@@ -419,7 +419,7 @@ func overrideConfig(cfg *config.Config) {
 	if actualFlags[nmAdvertiseAddress] {
 		cfg.AdvertiseAddress = *advertiseAddress
 	}
-	if len(cfg.AdvertiseAddress) == 0 {
+	if len(cfg.AdvertiseAddress) == 0 && cfg.Host == "0.0.0.0" {
 		cfg.AdvertiseAddress = util.GetLocalIP()
 	}
 	if len(cfg.AdvertiseAddress) == 0 {
@@ -531,6 +531,8 @@ func setGlobalVars() {
 	session.SetSchemaLease(ddlLeaseDuration)
 	statsLeaseDuration := parseDuration(cfg.Performance.StatsLease)
 	session.SetStatsLease(statsLeaseDuration)
+	indexUsageSyncLeaseDuration := parseDuration(cfg.Performance.IndexUsageSyncLease)
+	session.SetIndexUsageSyncLease(indexUsageSyncLeaseDuration)
 	bindinfo.Lease = parseDuration(cfg.Performance.BindInfoLease)
 	domain.RunAutoAnalyze = cfg.Performance.RunAutoAnalyze
 	statistics.FeedbackProbability.Store(cfg.Performance.FeedbackProbability)
@@ -550,18 +552,17 @@ func setGlobalVars() {
 
 	priority := mysql.Str2Priority(cfg.Performance.ForcePriority)
 	variable.ForcePriority = int32(priority)
-	variable.SysVars[variable.TiDBForcePriority].Value = mysql.Priority2Str[priority]
-	variable.SysVars[variable.TiDBOptDistinctAggPushDown].Value = variable.BoolToIntStr(cfg.Performance.DistinctAggPushDown)
 
-	variable.SysVars[variable.TIDBMemQuotaQuery].Value = strconv.FormatInt(cfg.MemQuotaQuery, 10)
-	variable.SysVars["lower_case_table_names"].Value = strconv.Itoa(cfg.LowerCaseTableNames)
-	variable.SysVars[variable.LogBin].Value = variable.BoolToIntStr(config.GetGlobalConfig().Binlog.Enable)
-
-	variable.SysVars[variable.Port].Value = fmt.Sprintf("%d", cfg.Port)
-	variable.SysVars[variable.Socket].Value = cfg.Socket
-	variable.SysVars[variable.DataDir].Value = cfg.Path
-	variable.SysVars[variable.TiDBSlowQueryFile].Value = cfg.Log.SlowQueryFile
-	variable.SysVars[variable.TiDBIsolationReadEngines].Value = strings.Join(cfg.IsolationRead.Engines, ", ")
+	variable.SetSysVar(variable.TiDBForcePriority, mysql.Priority2Str[priority])
+	variable.SetSysVar(variable.TiDBOptDistinctAggPushDown, variable.BoolToIntStr(cfg.Performance.DistinctAggPushDown))
+	variable.SetSysVar(variable.TIDBMemQuotaQuery, strconv.FormatInt(cfg.MemQuotaQuery, 10))
+	variable.SetSysVar("lower_case_table_names", strconv.Itoa(cfg.LowerCaseTableNames))
+	variable.SetSysVar(variable.LogBin, variable.BoolToIntStr(config.GetGlobalConfig().Binlog.Enable))
+	variable.SetSysVar(variable.Port, fmt.Sprintf("%d", cfg.Port))
+	variable.SetSysVar(variable.Socket, cfg.Socket)
+	variable.SetSysVar(variable.DataDir, cfg.Path)
+	variable.SetSysVar(variable.TiDBSlowQueryFile, cfg.Log.SlowQueryFile)
+	variable.SetSysVar(variable.TiDBIsolationReadEngines, strings.Join(cfg.IsolationRead.Engines, ", "))
 
 	// For CI environment we default enable prepare-plan-cache.
 	plannercore.SetPreparedPlanCache(config.CheckTableBeforeDrop || cfg.PreparedPlanCache.Enabled)
@@ -579,7 +580,7 @@ func setGlobalVars() {
 		}
 	}
 
-	tikv.CommitMaxBackoff = int(parseDuration(cfg.TiKVClient.CommitTimeout).Seconds() * 1000)
+	atomic.StoreUint64(&tikv.CommitMaxBackoff, uint64(parseDuration(cfg.TiKVClient.CommitTimeout).Seconds()*1000))
 	tikv.RegionCacheTTLSec = int64(cfg.TiKVClient.RegionCacheTTL)
 	domainutil.RepairInfo.SetRepairMode(cfg.RepairMode)
 	domainutil.RepairInfo.SetRepairTableList(cfg.RepairTableList)

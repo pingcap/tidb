@@ -22,6 +22,8 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/executor/aggfuncs"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/types"
 )
 
 func genApproxDistinctMergePartialResult(begin, end uint64) string {
@@ -104,6 +106,20 @@ func (s *testSuite) TestCount(c *C) {
 func (s *testSuite) TestMemCount(c *C) {
 	tests := []aggMemTest{
 		buildAggMemTester(ast.AggFuncCount, mysql.TypeLonglong, 5,
+			aggfuncs.DefPartialResult4CountSize, defaultUpdateMemDeltaGens, false),
+		buildAggMemTester(ast.AggFuncCount, mysql.TypeFloat, 5,
+			aggfuncs.DefPartialResult4CountSize, defaultUpdateMemDeltaGens, false),
+		buildAggMemTester(ast.AggFuncCount, mysql.TypeDouble, 5,
+			aggfuncs.DefPartialResult4CountSize, defaultUpdateMemDeltaGens, false),
+		buildAggMemTester(ast.AggFuncCount, mysql.TypeNewDecimal, 5,
+			aggfuncs.DefPartialResult4CountSize, defaultUpdateMemDeltaGens, false),
+		buildAggMemTester(ast.AggFuncCount, mysql.TypeString, 5,
+			aggfuncs.DefPartialResult4CountSize, defaultUpdateMemDeltaGens, false),
+		buildAggMemTester(ast.AggFuncCount, mysql.TypeDate, 5,
+			aggfuncs.DefPartialResult4CountSize, defaultUpdateMemDeltaGens, false),
+		buildAggMemTester(ast.AggFuncCount, mysql.TypeDuration, 5,
+			aggfuncs.DefPartialResult4CountSize, defaultUpdateMemDeltaGens, false),
+		buildAggMemTester(ast.AggFuncCount, mysql.TypeLonglong, 5,
 			aggfuncs.DefPartialResult4CountDistinctIntSize, distinctUpdateMemDeltaGens, true),
 		buildAggMemTester(ast.AggFuncCount, mysql.TypeFloat, 5,
 			aggfuncs.DefPartialResult4CountDistinctRealSize, distinctUpdateMemDeltaGens, true),
@@ -126,6 +142,20 @@ func (s *testSuite) TestMemCount(c *C) {
 	}
 	for _, test := range tests {
 		s.testAggMemFunc(c, test)
+	}
+}
+
+func (s *testSuite) TestWriteTime(c *C) {
+	t, err := types.ParseDate(&(stmtctx.StatementContext{}), "2020-11-11")
+	c.Assert(err, IsNil)
+
+	buf := make([]byte, 16)
+	for i := range buf {
+		buf[i] = uint8(255)
+	}
+	aggfuncs.WriteTime(buf, t)
+	for i := range buf {
+		c.Assert(buf[i] == uint8(255), IsFalse)
 	}
 }
 
