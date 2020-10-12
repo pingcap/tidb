@@ -247,18 +247,9 @@ func (m indexUsageMap) merge(destMap indexUsageMap) {
 	}
 }
 
-func (m indexUsageMap) query(tableSchema string, tableName string, indexName string) IndexUsageInformation {
-	id := fmt.Sprintf("%s.%s.%s", tableSchema, tableName, indexName)
-	res := m[id]
-	if res.LastUsedAt == "" {
-		res.LastUsedAt = "0000-00-00 00:00:00"
-	}
-	return res
-}
-
 // Update updates the mapper in SessionIndexUsageCollector.
 func (s *SessionIndexUsageCollector) Update(tableSchema string, tableName string, indexName string, value *IndexUsageInformation) {
-	value.LastUsedAt = time.Now().Format("2006-01-02 15:04:05")
+	value.LastUsedAt = time.Now().Format(types.TimeFSPFormat)
 	s.Lock()
 	defer s.Unlock()
 	s.mapper.update(tableSchema, tableName, indexName, value)
