@@ -715,7 +715,7 @@ type PhysicalHashJoin struct {
 
 	// use the outer table to build a hash table when the outer table is smaller.
 	UseOuterToBuild bool
-	cartesianJoin   bool
+	isCartesianJoin bool
 }
 
 // Clone implements PhysicalPlan interface.
@@ -771,7 +771,7 @@ func NewPhysicalHashJoin(p *LogicalJoin, innerIdx int, useOuterToBuild bool, new
 		EqualConditions:  p.EqualConditions,
 		Concurrency:      uint(p.ctx.GetSessionVars().HashJoinConcurrency()),
 		UseOuterToBuild:  useOuterToBuild,
-		cartesianJoin:    p.cartesianJoin,
+		isCartesianJoin:  p.cartesianJoin,
 	}.Init(p.ctx, newStats, p.blockOffset, prop...)
 	return hashJoin
 }
