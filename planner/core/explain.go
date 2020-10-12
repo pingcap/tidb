@@ -89,9 +89,8 @@ func (p *PhysicalIndexScan) AccessObject() string {
 	if len(p.Index.Columns) > 0 {
 		buffer.WriteString(", index:" + p.Index.Name.O + "(")
 		for i, idxCol := range p.Index.Columns {
-			tableColumns := p.Table.Columns[idxCol.Offset]
-			if tableColumns.Hidden {
-				buffer.WriteString(tableColumns.GeneratedExprString)
+			if tblCol := p.Table.Columns[idxCol.Offset]; tblCol.Hidden {
+				buffer.WriteString(tblCol.GeneratedExprString)
 			} else {
 				buffer.WriteString(idxCol.Name.O)
 			}

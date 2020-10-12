@@ -128,9 +128,8 @@ func (p *PointGetPlan) AccessObject() string {
 			buffer.WriteString(", index:" + p.IndexInfo.Name.O + "(")
 		}
 		for i, idxCol := range p.IndexInfo.Columns {
-			tableColumns := p.TblInfo.Columns[idxCol.Offset]
-			if tableColumns.Hidden {
-				buffer.WriteString(tableColumns.GeneratedExprString)
+			if tblCol := p.TblInfo.Columns[idxCol.Offset]; tblCol.Hidden {
+				buffer.WriteString(tblCol.GeneratedExprString)
 			} else {
 				buffer.WriteString(idxCol.Name.O)
 			}
@@ -299,9 +298,8 @@ func (p *BatchPointGetPlan) AccessObject() string {
 			buffer.WriteString(", index:" + p.IndexInfo.Name.O + "(")
 		}
 		for i, idxCol := range p.IndexInfo.Columns {
-			tableColumns := p.TblInfo.Columns[idxCol.Offset]
-			if tableColumns.Hidden {
-				buffer.WriteString(tableColumns.GeneratedExprString)
+			if tblCol := p.TblInfo.Columns[idxCol.Offset]; tblCol.Hidden {
+				buffer.WriteString(tblCol.GeneratedExprString)
 			} else {
 				buffer.WriteString(idxCol.Name.O)
 			}
