@@ -32,6 +32,11 @@ var (
 	sf          singleflight.Group
 )
 
+const (
+	lockFile  = "_dir.lock"
+	recordDir = "record"
+)
+
 // CheckAndInitTempDir check whether the temp directory is existed.
 // If not, initializes the temp directory.
 func CheckAndInitTempDir() (err error) {
@@ -64,7 +69,6 @@ func InitializeTempDir() error {
 			return err
 		}
 	}
-	lockFile := "_dir.lock"
 	tempDirLock, err = fslock.Lock(filepath.Join(tempDir, lockFile))
 	if err != nil {
 		switch err {
@@ -97,7 +101,7 @@ func InitializeTempDir() error {
 			for _, subDir := range subDirs {
 				// Do not remove the lock file.
 				switch subDir.Name() {
-				case lockFile, "record":
+				case lockFile, recordDir:
 					continue
 				}
 				err := os.RemoveAll(filepath.Join(tempDir, subDir.Name()))
