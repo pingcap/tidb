@@ -573,6 +573,16 @@ func (c *RegionCache) OnSendFail(bo *Backoffer, ctx *RPCContext, scheduleReload 
 	tikvRegionCacheCounterWithSendFail.Inc()
 	r := c.getCachedRegionWithRLock(ctx.Region)
 	if r != nil {
+		peersNum := len(r.meta.Peers)
+		if len(ctx.Meta.Peers) != peersNum {
+			logutil.Logger(bo.ctx).Info("retry and refresh current ctx after send request fail and up/down stores length changed",
+				zap.Stringer("current", ctx),
+				zap.Bool("needReload", scheduleReload),
+				zap.Reflect("oldPeers", ctx.Meta.Peers),
+				zap.Reflect("newPeers", r.meta.Peers),
+				zap.Error(err))
+			return
+		}
 		rs := r.getStore()
 		if err != nil {
 			storeIdx, s := rs.accessStore(ctx.AccessMode, ctx.AccessIdx)
@@ -1233,7 +1243,7 @@ func (r *Region) GetMeta() *metapb.Region {
 // GetLeaderPeerID returns leader peer ID.
 func (r *Region) GetLeaderPeerID() uint64 {
 	store := r.getStore()
-	if int(store.workTiKVIdx) >= len(r.meta.Peers) {
+	if int(store.workTiKVIdx) >= store.accessStoreNum(TiKvOnly) {
 		return 0
 	}
 	storeIdx, _ := store.accessStore(TiKvOnly, store.workTiKVIdx)
@@ -1243,7 +1253,7 @@ func (r *Region) GetLeaderPeerID() uint64 {
 // GetLeaderStoreID returns the store ID of the leader region.
 func (r *Region) GetLeaderStoreID() uint64 {
 	store := r.getStore()
-	if int(store.workTiKVIdx) >= len(r.meta.Peers) {
+	if int(store.workTiKVIdx) >= store.accessStoreNum(TiKvOnly) {
 		return 0
 	}
 	storeIdx, _ := store.accessStore(TiKvOnly, store.workTiKVIdx)
