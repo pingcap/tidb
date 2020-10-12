@@ -307,8 +307,6 @@ type LogicalAggregation struct {
 
 	AggFuncs     []*aggregation.AggFuncDesc
 	GroupByItems []expression.Expression
-	// groupByCols stores the columns that are group-by items.
-	groupByCols []*expression.Column
 
 	// aggHints stores aggregation hint information.
 	aggHints aggHintInfo
@@ -349,14 +347,16 @@ func (la *LogicalAggregation) IsCompleteModeAgg() bool {
 	return la.AggFuncs[0].Mode == aggregation.CompleteMode
 }
 
-// GetGroupByCols returns the groupByCols. If the groupByCols haven't be collected,
-// this method would collect them at first. If the GroupByItems have been changed,
-// we should explicitly collect GroupByColumns before this method.
+// GetGroupByCols returns the columns that are group-by items.
+// For example, `group by a, b, c+d` will return [a, b].
 func (la *LogicalAggregation) GetGroupByCols() []*expression.Column {
-	if la.groupByCols == nil {
-		la.collectGroupByColumns()
+	groupByCols := make([]*expression.Column, 0, len(la.GroupByItems))
+	for _, item := range la.GroupByItems {
+		if col, ok := item.(*expression.Column); ok {
+			groupByCols = append(groupByCols, col)
+		}
 	}
-	return la.groupByCols
+	return groupByCols
 }
 
 // ExtractCorrelatedCols implements LogicalPlan interface.

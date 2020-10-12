@@ -47,8 +47,9 @@ func (la *LogicalAggregation) BuildKeyInfo(selfSchema *expression.Schema, childS
 		return
 	}
 	la.logicalSchemaProducer.BuildKeyInfo(selfSchema, childSchema)
-	if len(la.groupByCols) == len(la.GroupByItems) && len(la.GroupByItems) > 0 {
-		indices := selfSchema.ColumnsIndices(la.groupByCols)
+	groupByCols := la.GetGroupByCols()
+	if len(groupByCols) == len(la.GroupByItems) && len(la.GroupByItems) > 0 {
+		indices := selfSchema.ColumnsIndices(groupByCols)
 		if indices != nil {
 			newKey := make([]*expression.Column, 0, len(indices))
 			for _, i := range indices {
