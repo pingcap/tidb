@@ -1849,7 +1849,7 @@ const (
 	// SlowLogPlanDigest is used to record the query plan digest.
 	SlowLogPlanDigest = "Plan_digest"
 	// SlowLogHints is used to record the query plan hints.
-	SlowLogHints = "Plan_hints"
+	SlowLogHints = "Hints"
 	// SlowLogPlanPrefix is the prefix of the plan value.
 	SlowLogPlanPrefix = ast.TiDBDecodePlan + "('"
 	// SlowLogPlanSuffix is the suffix of the plan value.

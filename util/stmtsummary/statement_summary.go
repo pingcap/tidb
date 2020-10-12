@@ -192,7 +192,7 @@ type StmtExecInfo struct {
 	PlanGenerator  func() string
 	PlanDigest     string
 	PlanDigestGen  func() string
-	Hints          string
+	HintsGen       func() string
 	User           string
 	TotalLatency   time.Duration
 	ParseLatency   time.Duration
@@ -581,7 +581,7 @@ func newStmtSummaryByDigestElement(sei *StmtExecInfo, beginTime int64, intervalS
 	ssElement := &stmtSummaryByDigestElement{
 		beginTime: beginTime,
 		sampleSQL: formatSQL(sei.OriginalSQL),
-		hints:     sei.Hints,
+		hints:     sei.HintsGen(),
 		// PrevSQL is already truncated to cfg.Log.QueryLogMaxLen.
 		prevSQL: sei.PrevSQL,
 		// samplePlan needs to be decoded so it can't be truncated.

@@ -23,8 +23,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/pingcap/tidb/util/hint"
-
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
@@ -47,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/execdetails"
+	"github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/plancodec"
@@ -239,13 +238,6 @@ func (a *ExecStmt) PointGet(ctx context.Context, is infoschema.InfoSchema) (*rec
 // OriginText returns original statement as a string.
 func (a *ExecStmt) OriginText() string {
 	return a.Text
-}
-
-// GetHints return the SQL plan hints as a string.
-func (a *ExecStmt) GetHints() string {
-	hints := plannercore.GenHintsFromPhysicalPlan(a.Plan)
-	hints = append(hints, hint.ExtractTableHintsFromStmtNode(a.StmtNode, a.Ctx)...)
-	return hint.RestoreOptimizerHints(hints)
 }
 
 // IsPrepared returns true if stmt is a prepare statement.
@@ -910,7 +902,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		Succ:              succ,
 		Plan:              getPlanTree(a.Plan),
 		PlanDigest:        planDigest,
-		Hints:             a.GetHints(),
+		Hints:             getHints(a.Plan, a.StmtNode, a.Ctx),
 		Prepared:          a.isPreparedStmt,
 		HasMoreResults:    hasMoreResults,
 		PlanFromCache:     sessVars.FoundInPlanCache,
@@ -983,6 +975,13 @@ func getPlanDigest(sctx sessionctx.Context, p plannercore.Plan) (normalized, pla
 	return
 }
 
+// getHints return the SQL plan hints as a string.
+func getHints(plan plannercore.Plan, stmtNode ast.StmtNode, ctx sessionctx.Context) string {
+	hints := plannercore.GenHintsFromPhysicalPlan(plan)
+	hints = append(hints, hint.ExtractTableHintsFromStmtNode(stmtNode, ctx)...)
+	return hint.RestoreOptimizerHints(hints)
+}
+
 // SummaryStmt collects statements for information_schema.statements_summary
 func (a *ExecStmt) SummaryStmt(succ bool) {
 	sessVars := a.Ctx.GetSessionVars()
@@ -1033,12 +1032,15 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 		_, planDigest = getPlanDigest(a.Ctx, a.Plan)
 	}
 
+	hintsGen := func() string {
+		return getHints(a.Plan, a.StmtNode, a.Ctx)
+	}
+
 	execDetail := stmtCtx.GetExecDetails()
 	copTaskInfo := stmtCtx.CopTasksDetails()
 	memMax := stmtCtx.MemTracker.MaxConsumed()
 	diskMax := stmtCtx.DiskTracker.MaxConsumed()
 	sql := a.GetTextToLog()
-	hints := a.GetHints()
 	stmtExecInfo := &stmtsummary.StmtExecInfo{
 		SchemaName:     strings.ToLower(sessVars.CurrentDB),
 		OriginalSQL:    sql,
@@ -1049,7 +1051,7 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 		PlanGenerator:  planGenerator,
 		PlanDigest:     planDigest,
 		PlanDigestGen:  planDigestGen,
-		Hints:          hints,
+		HintsGen:       hintsGen,
 		User:           userString,
 		TotalLatency:   costTime,
 		ParseLatency:   sessVars.DurationParse,
