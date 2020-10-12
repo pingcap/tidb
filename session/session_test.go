@@ -3147,14 +3147,14 @@ func (s *testSessionSuite2) TestStmtHints(c *C) {
 
 	tk.MustExec("SELECT /*+ SET_VAR(collation_server = 'utf8') */ 1;")
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 1)
-	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings()[0].Err.Error(), Equals, "[util:3637]Variable 'collation_server' cannot be set using SET_VAR hint.")
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings()[0].Err.Error(), Equals, "[planner:3637]Variable 'collation_server' cannot be set using SET_VAR hint.")
 
 	tk.MustExec("SELECT /*+ SET_VAR(optimizer_switch = 'mrr_cost_based=off') SET_VAR(max_heap_table_size = 1G) */ 1;")
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 0)
 
 	tk.MustExec("SELECT /*+ SET_VAR(max_size = 1G) */ 1;")
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 1)
-	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings()[0].Err.Error(), Equals, "[util:3128]Unresolved name 'max_size' for SET_VAR hint")
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings()[0].Err.Error(), Equals, "[planner:3128]Unresolved name 'max_size' for SET_VAR hint")
 
 	tk.MustExec("SELECT /*+ SET_VAR(optimizer_switch = 'mrr_cost_based=yes') */ 1;")
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 1)
