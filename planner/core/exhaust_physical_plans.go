@@ -1902,7 +1902,7 @@ func (la *LogicalAggregation) getEnforcedStreamAggs(prop *property.PhysicalPrope
 	childProp := &property.PhysicalProperty{
 		ExpectedCnt: math.Max(prop.ExpectedCnt*la.inputCount/la.stats.RowCount, prop.ExpectedCnt),
 		Enforced:    true,
-		Items:       property.ItemsFromCols(la.groupByCols, desc),
+		Items:       property.ItemsFromCols(la.GetGroupByCols(), desc),
 	}
 	if !prop.IsPrefix(childProp) {
 		return enforcedAggs
@@ -1961,7 +1961,8 @@ func (la *LogicalAggregation) getStreamAggs(prop *property.PhysicalProperty) []P
 		}
 	}
 	// group by a + b is not interested in any order.
-	if len(la.groupByCols) != len(la.GroupByItems) {
+	groupByCols := la.GetGroupByCols()
+	if len(groupByCols) != len(la.GroupByItems) {
 		return nil
 	}
 
@@ -1972,7 +1973,7 @@ func (la *LogicalAggregation) getStreamAggs(prop *property.PhysicalProperty) []P
 	}
 
 	for _, possibleChildProperty := range la.possibleProperties {
-		childProp.Items = property.ItemsFromCols(possibleChildProperty[:len(la.groupByCols)], desc)
+		childProp.Items = property.ItemsFromCols(possibleChildProperty[:len(groupByCols)], desc)
 		if !prop.IsPrefix(childProp) {
 			continue
 		}
