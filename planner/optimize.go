@@ -428,7 +428,7 @@ func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints stmtctx.StmtHin
 			// Not all session variables are permitted for use with SET_VAR
 			sysVar := variable.GetSysVar(setVarHint.VarName)
 			if sysVar == nil {
-				warns = append(warns, plannercore.ErrUnresolvedHintName.GenWithStackByArgs(setVarHint.VarName, hint.HintName.O))
+				warns = append(warns, plannercore.ErrUnresolvedHintName.GenWithStackByArgs(setVarHint.VarName, hint.HintName.String()))
 				continue
 			}
 			if !sysVar.IsHintUpdatable {
@@ -437,7 +437,7 @@ func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints stmtctx.StmtHin
 			}
 			// If several hints with the same variable name appear in the same statement, the first one is applied and the others are ignored with a warning
 			if _, ok := setVars[setVarHint.VarName]; ok {
-				msg := fmt.Sprintf("%s(%s=%s)", hint.HintName.O, setVarHint.VarName, setVarHint.Value)
+				msg := fmt.Sprintf("%s(%s=%s)", hint.HintName.String(), setVarHint.VarName, setVarHint.Value)
 				warns = append(warns, terror.ClassUtil.New(errno.ErrWarnConflictingHint, fmt.Sprintf(errno.MySQLErrName[errno.ErrWarnConflictingHint], msg)))
 				continue
 			}
