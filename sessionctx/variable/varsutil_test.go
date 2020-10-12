@@ -449,6 +449,19 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, "0")
 	c.Assert(v.systems[TiDBFoundInPlanCache], Equals, "1")
+<<<<<<< HEAD
+=======
+
+	err = SetSessionSystemVar(v, TiDBEnableChangeColumnType, types.NewStringDatum("on"))
+	c.Assert(err, IsNil)
+	val, err = GetSessionSystemVar(v, TiDBEnableChangeColumnType)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "1")
+	c.Assert(v.systems[TiDBEnableChangeColumnType], Equals, "1")
+
+	err = SetSessionSystemVar(v, "UnknownVariable", types.NewStringDatum("on"))
+	c.Assert(err, ErrorMatches, ".*]Unknown system variable 'UnknownVariable'")
+>>>>>>> f11c95c61... execute: fill arguments when returning `ErrUnknownSystemVar` in `SetSessionSystemVar` (#20102)
 }
 
 func (s *testVarsutilSuite) TestSetOverflowBehave(c *C) {
