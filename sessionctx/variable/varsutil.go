@@ -209,7 +209,7 @@ const epochShiftBits = 18
 func SetSessionSystemVar(vars *SessionVars, name string, value types.Datum) error {
 	sysVar := GetSysVar(name)
 	if sysVar == nil {
-		return ErrUnknownSystemVar
+		return ErrUnknownSystemVar.GenWithStackByArgs(name)
 	}
 	sVal := ""
 	var err error
