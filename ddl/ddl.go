@@ -59,9 +59,8 @@ const (
 	batchAddingJobs = 10
 
 	// PartitionCountLimit is limit of the number of partitions in a table.
-	// Mysql maximum number of partitions is 8192, our maximum number of partitions is 1024.
 	// Reference linking https://dev.mysql.com/doc/refman/5.7/en/partitioning-limitations.html.
-	PartitionCountLimit = 1024
+	PartitionCountLimit = 8192
 )
 
 // OnExist specifies what to do when a new object has a name collision.
@@ -524,6 +523,18 @@ func (d *ddl) doDDLJob(ctx sessionctx.Context, job *model.Job) error {
 
 		// If a job is a history job, the state must be JobStateSynced or JobStateRollbackDone or JobStateCancelled.
 		if historyJob.IsSynced() {
+			// Judge whether there are some warnings when executing DDL under the certain SQL mode.
+			if historyJob.ReorgMeta != nil && len(historyJob.ReorgMeta.Warnings) != 0 {
+				if len(historyJob.ReorgMeta.Warnings) != len(historyJob.ReorgMeta.WarningsCount) {
+					logutil.BgLogger().Info("[ddl] DDL warnings doesn't match the warnings count", zap.Int64("jobID", jobID))
+				} else {
+					for key, warning := range historyJob.ReorgMeta.Warnings {
+						for j := int64(0); j < historyJob.ReorgMeta.WarningsCount[key]; j++ {
+							ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
+						}
+					}
+				}
+			}
 			logutil.BgLogger().Info("[ddl] DDL job is finished", zap.Int64("jobID", jobID))
 			return nil
 		}
@@ -573,6 +584,9 @@ func (d *ddl) startCleanDeadTableLock() {
 		select {
 		case <-ticker.C:
 			if !d.ownerManager.IsOwner() {
+				continue
+			}
+			if d.infoHandle == nil || !d.infoHandle.IsValid() {
 				continue
 			}
 			deadLockTables, err := d.tableLockCkr.GetDeadLockedTables(d.ctx, d.infoHandle.Get().AllSchemas())

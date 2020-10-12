@@ -174,7 +174,7 @@ func (s *testColumnTypeChangeSuite) TestColumnTypeChangeStateBetweenInteger(c *C
 				checkErr = errors.New("len(cols) is not right")
 			} else if getModifyColumn(c, internalTK.Se.(sessionctx.Context), "test", "t", "c2", true).Flag&parser_mysql.PreventNullInsertFlag == uint(0) {
 				checkErr = errors.New("old col's flag is not right")
-			} else if getModifyColumn(c, internalTK.Se.(sessionctx.Context), "test", "t", "_Col$_c2", true) == nil {
+			} else if getModifyColumn(c, internalTK.Se.(sessionctx.Context), "test", "t", "_Col$_c2_0", true) == nil {
 				checkErr = errors.New("changingCol is nil")
 			}
 		}

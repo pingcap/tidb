@@ -45,6 +45,7 @@ import (
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	util2 "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/logutil"
 	utilparser "github.com/pingcap/tidb/util/parser"
@@ -370,6 +371,7 @@ const (
 	groupByClause
 	showStatement
 	globalOrderByClause
+	expressionClause
 )
 
 var clauseMsg = map[clauseCode]string{
@@ -382,6 +384,7 @@ var clauseMsg = map[clauseCode]string{
 	groupByClause:       "group statement",
 	showStatement:       "show statement",
 	globalOrderByClause: "global ORDER clause",
+	expressionClause:    "expression",
 }
 
 type capFlagType = uint64
@@ -445,6 +448,10 @@ type PlanBuilder struct {
 	partitionedTable []table.PartitionedTable
 	// CreateView needs this information to check whether exists nested view.
 	underlyingViewNames set.StringSet
+
+	// evalDefaultExpr needs this information to find the corresponding column.
+	// It stores the OutputNames before buildProjection.
+	allNames [][]*types.FieldName
 }
 
 type handleColHelper struct {
@@ -717,12 +724,12 @@ func (b *PlanBuilder) buildSet(ctx context.Context, v *ast.SetStmt) (Plan, error
 func (b *PlanBuilder) buildDropBindPlan(v *ast.DropBindingStmt) (Plan, error) {
 	p := &SQLBindPlan{
 		SQLBindOp:    OpSQLBindDrop,
-		NormdOrigSQL: parser.Normalize(v.OriginSel.Text()),
+		NormdOrigSQL: parser.Normalize(v.OriginNode.Text()),
 		IsGlobal:     v.GlobalScope,
-		Db:           utilparser.GetDefaultDB(v.OriginSel, b.ctx.GetSessionVars().CurrentDB),
+		Db:           utilparser.GetDefaultDB(v.OriginNode, b.ctx.GetSessionVars().CurrentDB),
 	}
-	if v.HintedSel != nil {
-		p.BindSQL = v.HintedSel.Text()
+	if v.HintedNode != nil {
+		p.BindSQL = v.HintedNode.Text()
 	}
 	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", nil)
 	return p, nil
@@ -732,11 +739,11 @@ func (b *PlanBuilder) buildCreateBindPlan(v *ast.CreateBindingStmt) (Plan, error
 	charSet, collation := b.ctx.GetSessionVars().GetCharsetInfo()
 	p := &SQLBindPlan{
 		SQLBindOp:    OpSQLBindCreate,
-		NormdOrigSQL: parser.Normalize(v.OriginSel.Text()),
-		BindSQL:      v.HintedSel.Text(),
+		NormdOrigSQL: parser.Normalize(v.OriginNode.Text()),
+		BindSQL:      v.HintedNode.Text(),
 		IsGlobal:     v.GlobalScope,
-		BindStmt:     v.HintedSel,
-		Db:           utilparser.GetDefaultDB(v.OriginSel, b.ctx.GetSessionVars().CurrentDB),
+		BindStmt:     v.HintedNode,
+		Db:           utilparser.GetDefaultDB(v.OriginNode, b.ctx.GetSessionVars().CurrentDB),
 		Charset:      charSet,
 		Collation:    collation,
 	}
@@ -1526,6 +1533,11 @@ func getPhysicalIDsAndPartitionNames(tblInfo *model.TableInfo, partitionNames []
 
 func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt, opts map[ast.AnalyzeOptionType]uint64) (Plan, error) {
 	p := &Analyze{Opts: opts}
+	pruneMode := variable.PartitionPruneMode(b.ctx.GetSessionVars().PartitionPruneMode.Load())
+	if len(as.PartitionNames) > 0 && pruneMode == variable.DynamicOnly {
+		logutil.BgLogger().Info("analyze partition didn't affect in dynamic-prune-mode", zap.String("partitions", as.PartitionNames[0].L))
+		return p, nil
+	}
 	for _, tbl := range as.TableNames {
 		if tbl.TableInfo.IsView() {
 			return nil, errors.Errorf("analyze view %s is not supported now.", tbl.Name.O)
@@ -1539,8 +1551,20 @@ func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt, opts map[ast.A
 			return nil, err
 		}
 		for _, idx := range idxInfo {
-			for i, id := range physicalIDs {
-				info := analyzeInfo{DBName: tbl.Schema.O, TableName: tbl.Name.O, PartitionName: names[i], TableID: AnalyzeTableID{PersistID: id, CollectIDs: []int64{id}}, Incremental: as.Incremental}
+			if pruneMode == variable.StaticOnly || (pruneMode == variable.StaticButPrepareDynamic && !b.ctx.GetSessionVars().InRestrictedSQL) {
+				// static mode or static-but-prepare-dynamic mode not belong auto analyze need analyze each partition
+				// for static-but-prepare-dynamic mode with auto analyze, echo partition will be check before analyze partition.
+				for i, id := range physicalIDs {
+					info := analyzeInfo{DBName: tbl.Schema.O, TableName: tbl.Name.O, PartitionName: names[i], TableID: AnalyzeTableID{PersistID: id, CollectIDs: []int64{id}}, Incremental: as.Incremental}
+					p.IdxTasks = append(p.IdxTasks, AnalyzeIndexTask{
+						IndexInfo:   idx,
+						analyzeInfo: info,
+						TblInfo:     tbl.TableInfo,
+					})
+				}
+			}
+			if pruneMode == variable.DynamicOnly || pruneMode == variable.StaticButPrepareDynamic {
+				info := analyzeInfo{DBName: tbl.Schema.O, TableName: tbl.Name.O, TableID: AnalyzeTableID{PersistID: tbl.TableInfo.ID, CollectIDs: physicalIDs}, Incremental: as.Incremental}
 				p.IdxTasks = append(p.IdxTasks, AnalyzeIndexTask{
 					IndexInfo:   idx,
 					analyzeInfo: info,
@@ -1550,8 +1574,19 @@ func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt, opts map[ast.A
 		}
 		handleCols := BuildHandleColsForAnalyze(b.ctx, tbl.TableInfo)
 		if len(colInfo) > 0 || handleCols != nil {
-			for i, id := range physicalIDs {
-				info := analyzeInfo{DBName: tbl.Schema.O, TableName: tbl.Name.O, PartitionName: names[i], TableID: AnalyzeTableID{PersistID: id, CollectIDs: []int64{id}}, Incremental: as.Incremental}
+			if pruneMode == variable.StaticOnly || pruneMode == variable.StaticButPrepareDynamic {
+				for i, id := range physicalIDs {
+					info := analyzeInfo{DBName: tbl.Schema.O, TableName: tbl.Name.O, PartitionName: names[i], TableID: AnalyzeTableID{PersistID: id, CollectIDs: []int64{id}}, Incremental: as.Incremental}
+					p.ColTasks = append(p.ColTasks, AnalyzeColumnsTask{
+						HandleCols:  handleCols,
+						ColsInfo:    colInfo,
+						analyzeInfo: info,
+						TblInfo:     tbl.TableInfo,
+					})
+				}
+			}
+			if pruneMode == variable.DynamicOnly || pruneMode == variable.StaticButPrepareDynamic {
+				info := analyzeInfo{DBName: tbl.Schema.O, TableName: tbl.Name.O, TableID: AnalyzeTableID{PersistID: tbl.TableInfo.ID, CollectIDs: physicalIDs}, Incremental: as.Incremental}
 				p.ColTasks = append(p.ColTasks, AnalyzeColumnsTask{
 					HandleCols:  handleCols,
 					ColsInfo:    colInfo,
@@ -1567,6 +1602,11 @@ func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt, opts map[ast.A
 func (b *PlanBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt, opts map[ast.AnalyzeOptionType]uint64) (Plan, error) {
 	p := &Analyze{Opts: opts}
 	tblInfo := as.TableNames[0].TableInfo
+	pruneMode := variable.PartitionPruneMode(b.ctx.GetSessionVars().PartitionPruneMode.Load())
+	if len(as.PartitionNames) > 0 && pruneMode == variable.DynamicOnly {
+		logutil.BgLogger().Info("analyze partition didn't affect in dynamic-prune-mode", zap.String("table", tblInfo.Name.L), zap.String("partitions", as.PartitionNames[0].L))
+		return p, nil
+	}
 	physicalIDs, names, err := getPhysicalIDsAndPartitionNames(tblInfo, as.PartitionNames)
 	if err != nil {
 		return nil, err
@@ -1575,8 +1615,14 @@ func (b *PlanBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt, opts map[ast.A
 		if isPrimaryIndex(idxName) {
 			handleCols := BuildHandleColsForAnalyze(b.ctx, tblInfo)
 			if handleCols != nil {
-				for i, id := range physicalIDs {
-					info := analyzeInfo{DBName: as.TableNames[0].Schema.O, TableName: as.TableNames[0].Name.O, PartitionName: names[i], TableID: AnalyzeTableID{PersistID: id, CollectIDs: []int64{id}}, Incremental: as.Incremental}
+				if pruneMode == variable.StaticOnly || pruneMode == variable.StaticButPrepareDynamic {
+					for i, id := range physicalIDs {
+						info := analyzeInfo{DBName: as.TableNames[0].Schema.O, TableName: as.TableNames[0].Name.O, PartitionName: names[i], TableID: AnalyzeTableID{PersistID: id, CollectIDs: []int64{id}}, Incremental: as.Incremental}
+						p.ColTasks = append(p.ColTasks, AnalyzeColumnsTask{HandleCols: handleCols, analyzeInfo: info, TblInfo: tblInfo})
+					}
+				}
+				if pruneMode == variable.DynamicOnly || pruneMode == variable.StaticButPrepareDynamic {
+					info := analyzeInfo{DBName: as.TableNames[0].Schema.O, TableName: as.TableNames[0].Name.O, TableID: AnalyzeTableID{PersistID: tblInfo.ID, CollectIDs: physicalIDs}, Incremental: as.Incremental}
 					p.ColTasks = append(p.ColTasks, AnalyzeColumnsTask{HandleCols: handleCols, analyzeInfo: info, TblInfo: tblInfo})
 				}
 				continue
@@ -1586,8 +1632,14 @@ func (b *PlanBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt, opts map[ast.A
 		if idx == nil || idx.State != model.StatePublic {
 			return nil, ErrAnalyzeMissIndex.GenWithStackByArgs(idxName.O, tblInfo.Name.O)
 		}
-		for i, id := range physicalIDs {
-			info := analyzeInfo{DBName: as.TableNames[0].Schema.O, TableName: as.TableNames[0].Name.O, PartitionName: names[i], TableID: AnalyzeTableID{PersistID: id, CollectIDs: []int64{id}}, Incremental: as.Incremental}
+		if pruneMode == variable.StaticOnly || pruneMode == variable.StaticButPrepareDynamic {
+			for i, id := range physicalIDs {
+				info := analyzeInfo{DBName: as.TableNames[0].Schema.O, TableName: as.TableNames[0].Name.O, PartitionName: names[i], TableID: AnalyzeTableID{PersistID: id, CollectIDs: []int64{id}}, Incremental: as.Incremental}
+				p.IdxTasks = append(p.IdxTasks, AnalyzeIndexTask{IndexInfo: idx, analyzeInfo: info, TblInfo: tblInfo})
+			}
+		}
+		if pruneMode == variable.DynamicOnly || pruneMode == variable.StaticButPrepareDynamic {
+			info := analyzeInfo{DBName: as.TableNames[0].Schema.O, TableName: as.TableNames[0].Name.O, TableID: AnalyzeTableID{PersistID: tblInfo.ID, CollectIDs: physicalIDs}, Incremental: as.Incremental}
 			p.IdxTasks = append(p.IdxTasks, AnalyzeIndexTask{IndexInfo: idx, analyzeInfo: info, TblInfo: tblInfo})
 		}
 	}
@@ -1597,22 +1649,39 @@ func (b *PlanBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt, opts map[ast.A
 func (b *PlanBuilder) buildAnalyzeAllIndex(as *ast.AnalyzeTableStmt, opts map[ast.AnalyzeOptionType]uint64) (Plan, error) {
 	p := &Analyze{Opts: opts}
 	tblInfo := as.TableNames[0].TableInfo
+	pruneMode := variable.PartitionPruneMode(b.ctx.GetSessionVars().PartitionPruneMode.Load())
+	if len(as.PartitionNames) > 0 && pruneMode == variable.DynamicOnly {
+		logutil.BgLogger().Info("analyze partition didn't affect in dynamic-prune-mode", zap.String("table", tblInfo.Name.L), zap.String("partitions", as.PartitionNames[0].L))
+		return p, nil
+	}
 	physicalIDs, names, err := getPhysicalIDsAndPartitionNames(tblInfo, as.PartitionNames)
 	if err != nil {
 		return nil, err
 	}
 	for _, idx := range tblInfo.Indices {
 		if idx.State == model.StatePublic {
-			for i, id := range physicalIDs {
-				info := analyzeInfo{DBName: as.TableNames[0].Schema.O, TableName: as.TableNames[0].Name.O, PartitionName: names[i], TableID: AnalyzeTableID{PersistID: id, CollectIDs: []int64{id}}, Incremental: as.Incremental}
+			if pruneMode == variable.StaticOnly || pruneMode == variable.StaticButPrepareDynamic {
+				for i, id := range physicalIDs {
+					info := analyzeInfo{DBName: as.TableNames[0].Schema.O, TableName: as.TableNames[0].Name.O, PartitionName: names[i], TableID: AnalyzeTableID{PersistID: id, CollectIDs: []int64{id}}, Incremental: as.Incremental}
+					p.IdxTasks = append(p.IdxTasks, AnalyzeIndexTask{IndexInfo: idx, analyzeInfo: info, TblInfo: tblInfo})
+				}
+			}
+			if pruneMode == variable.DynamicOnly || pruneMode == variable.StaticButPrepareDynamic {
+				info := analyzeInfo{DBName: as.TableNames[0].Schema.O, TableName: as.TableNames[0].Name.O, TableID: AnalyzeTableID{PersistID: tblInfo.ID, CollectIDs: physicalIDs}, Incremental: as.Incremental}
 				p.IdxTasks = append(p.IdxTasks, AnalyzeIndexTask{IndexInfo: idx, analyzeInfo: info, TblInfo: tblInfo})
 			}
 		}
 	}
 	handleCols := BuildHandleColsForAnalyze(b.ctx, tblInfo)
 	if handleCols != nil {
-		for i, id := range physicalIDs {
-			info := analyzeInfo{DBName: as.TableNames[0].Schema.O, TableName: as.TableNames[0].Name.O, PartitionName: names[i], TableID: AnalyzeTableID{PersistID: id, CollectIDs: []int64{id}}, Incremental: as.Incremental}
+		if pruneMode == variable.StaticOnly || pruneMode == variable.StaticButPrepareDynamic {
+			for i, id := range physicalIDs {
+				info := analyzeInfo{DBName: as.TableNames[0].Schema.O, TableName: as.TableNames[0].Name.O, PartitionName: names[i], TableID: AnalyzeTableID{PersistID: id, CollectIDs: []int64{id}}, Incremental: as.Incremental}
+				p.ColTasks = append(p.ColTasks, AnalyzeColumnsTask{HandleCols: handleCols, analyzeInfo: info, TblInfo: tblInfo})
+			}
+		}
+		if pruneMode == variable.DynamicOnly || pruneMode == variable.StaticButPrepareDynamic {
+			info := analyzeInfo{DBName: as.TableNames[0].Schema.O, TableName: as.TableNames[0].Name.O, TableID: AnalyzeTableID{PersistID: tblInfo.ID, CollectIDs: physicalIDs}, Incremental: as.Incremental}
 			p.ColTasks = append(p.ColTasks, AnalyzeColumnsTask{HandleCols: handleCols, analyzeInfo: info, TblInfo: tblInfo})
 		}
 	}
@@ -3133,13 +3202,14 @@ func (b *PlanBuilder) buildTrace(trace *ast.TraceStmt) (Plan, error) {
 	return p, nil
 }
 
-func (b *PlanBuilder) buildExplainPlan(targetPlan Plan, format string, rows [][]string, analyze bool, execStmt ast.StmtNode) (Plan, error) {
+func (b *PlanBuilder) buildExplainPlan(targetPlan Plan, format string, explainRows [][]string, analyze bool, execStmt ast.StmtNode, runtimeStats *execdetails.RuntimeStatsColl) (Plan, error) {
 	p := &Explain{
-		TargetPlan: targetPlan,
-		Format:     format,
-		Analyze:    analyze,
-		ExecStmt:   execStmt,
-		Rows:       rows,
+		TargetPlan:       targetPlan,
+		Format:           format,
+		Analyze:          analyze,
+		ExecStmt:         execStmt,
+		ExplainRows:      explainRows,
+		RuntimeStatsColl: runtimeStats,
 	}
 	p.ctx = b.ctx
 	return p, p.prepareSchema()
@@ -3164,11 +3234,11 @@ func (b *PlanBuilder) buildExplainFor(explainFor *ast.ExplainForStmt) (Plan, err
 	if !ok || targetPlan == nil {
 		return &Explain{Format: explainFor.Format}, nil
 	}
-	var rows [][]string
+	var explainRows [][]string
 	if explainFor.Format == ast.ExplainFormatROW {
-		rows = processInfo.PlanExplainRows
+		explainRows = processInfo.PlanExplainRows
 	}
-	return b.buildExplainPlan(targetPlan, explainFor.Format, rows, false, nil)
+	return b.buildExplainPlan(targetPlan, explainFor.Format, explainRows, false, nil, processInfo.RuntimeStatsColl)
 }
 
 func (b *PlanBuilder) buildExplain(ctx context.Context, explain *ast.ExplainStmt) (Plan, error) {
@@ -3180,7 +3250,7 @@ func (b *PlanBuilder) buildExplain(ctx context.Context, explain *ast.ExplainStmt
 		return nil, err
 	}
 
-	return b.buildExplainPlan(targetPlan, explain.Format, nil, explain.Analyze, explain.Stmt)
+	return b.buildExplainPlan(targetPlan, explain.Format, nil, explain.Analyze, explain.Stmt, nil)
 }
 
 func (b *PlanBuilder) buildSelectInto(ctx context.Context, sel *ast.SelectStmt) (Plan, error) {

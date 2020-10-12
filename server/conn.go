@@ -50,6 +50,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unsafe"
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
@@ -909,6 +910,7 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 		atomic.StoreUint32(&cc.ctx.GetSessionVars().Killed, 0)
 	}()
 	span := opentracing.StartSpan("server.dispatch")
+	ctx = opentracing.ContextWithSpan(ctx, span)
 
 	t := time.Now()
 	cc.lastPacket = data
@@ -928,8 +930,14 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 		if len(sqlType) > 0 {
 			var task *trace.Task
 			ctx, task = trace.NewTask(ctx, sqlType)
-			trace.Log(ctx, "sql", lc.String())
 			defer task.End()
+
+			trace.Log(ctx, "sql", lc.String())
+			ctx = logutil.WithTraceLogger(ctx, cc.connectionID)
+
+			taskID := *(*uint64)(unsafe.Pointer(task))
+			ctx = pprof.WithLabels(ctx, pprof.Labels("trace", strconv.FormatUint(taskID, 10)))
+			pprof.SetGoroutineLabels(ctx)
 		}
 	}
 	token := cc.server.getToken()
@@ -1380,6 +1388,17 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 
 	var pointPlans []plannercore.Plan
 	if len(stmts) > 1 {
+
+		// The client gets to choose if it allows multi-statements, and
+		// probably defaults OFF. This helps prevent against SQL injection attacks
+		// by early terminating the first statement, and then running an entirely
+		// new statement.
+
+		capabilities := cc.ctx.GetSessionVars().ClientCapability
+		if capabilities&mysql.ClientMultiStatements < 1 {
+			return errMultiStatementDisabled
+		}
+
 		// Only pre-build point plans for multi-statement query
 		pointPlans, err = cc.prefetchPointPlanKeys(ctx, stmts)
 		if err != nil {
