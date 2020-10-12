@@ -401,8 +401,8 @@ github.com/ngaut/unistore v0.0.0-20200803051709-607d96233b1d/go.mod h1:2QAH8tXCj
 github.com/ngaut/unistore v0.0.0-20200806113332-5b9f73333a19/go.mod h1:RtZJKyiaHRiII+b9/g/4339rSikSvfrUJmIbrUkYVi4=
 github.com/ngaut/unistore v0.0.0-20200820080223-c734bcc4ea53/go.mod h1:85S5ZgzoHtTMyaEYhaWnxv9OWMBfyhTNuWypXCfVn/0=
 github.com/ngaut/unistore v0.0.0-20200828072424-1c0ede06a3fc/go.mod h1:iSlx5Ub/926GvQn6+d2B2C16wJJwgQIsi6k/bEU0vl4=
-github.com/ngaut/unistore v0.0.0-20200918091209-68a2db6bb775 h1:9z7ZQ//+b6DjI79ak0sNf7RMgmjYh/BTB+NkipfdLiM=
-github.com/ngaut/unistore v0.0.0-20200918091209-68a2db6bb775/go.mod h1:ZR3NH+HzqfiYetwdoAivApnIy8iefPZHTMLfrFNm8g4=
+github.com/ngaut/unistore v0.0.0-20200929093420-76a7b18be28e h1:1a8YbLM1sBmwEjzEVT/JD12Vjf6BNnBBEUV3nAcZYKU=
+github.com/ngaut/unistore v0.0.0-20200929093420-76a7b18be28e/go.mod h1:ZR3NH+HzqfiYetwdoAivApnIy8iefPZHTMLfrFNm8g4=
 github.com/nicksnyder/go-i18n v1.10.0/go.mod h1:HrK7VCrbOvQoUAQ7Vpy7i87N7JZZZ7R2xBGjv0j365Q=
 github.com/oklog/ulid v1.3.1/go.mod h1:CirwcVhetQ6Lv90oh/F+FBtV6XMibvdAFo93nm5qn4U=
 github.com/olekukonko/tablewriter v0.0.0-20170122224234-a0225b3f23b5/go.mod h1:vsDQFd/mU46D+Z4whnwzcISnGGzXWMclvtLoiIKAKIo=
