@@ -1225,6 +1225,7 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 				se.StmtCommit()
 			}
 		}
+		err = finishStmt(ctx, se, err, s)
 	}
 	if rs != nil {
 		return &execStmtResult{
@@ -1233,8 +1234,6 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 			se:        se,
 		}, err
 	}
-
-	err = finishStmt(ctx, se, err, s)
 
 	// If it is not a select statement, we record its slow log here,
 	// then it could include the transaction commit time.
