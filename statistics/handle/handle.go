@@ -845,15 +845,13 @@ func (h *Handle) getStatsReader(history sqlexec.RestrictedSQLExecutor) (reader *
 	h.mu.Lock()
 	defer func() {
 		if r := recover(); r != nil {
-			err = fmt.Errorf("%v", r)
+			err = fmt.Errorf("getStatsReader panic %v", r)
 		}
 		if err != nil {
 			h.mu.Unlock()
 		}
 	}()
-	failpoint.Inject("mockGetStatsReaderPanic", func() {
-		panic("panic getStatsReader")
-	})
+	failpoint.Inject("mockGetStatsReaderPanic", nil)
 	_, err = h.mu.ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), "begin")
 	if err != nil {
 		return nil, err
