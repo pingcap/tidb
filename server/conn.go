@@ -1344,118 +1344,10 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 		metrics.ExecuteErrorCounter.WithLabelValues(metrics.ExecuteErrorToLabel(err)).Inc()
 		return err
 	}
-<<<<<<< HEAD
 	status := atomic.LoadInt32(&cc.status)
 	if rss != nil && (status == connStatusShutdown || status == connStatusWaitShutdown) {
 		for _, rs := range rss {
 			terror.Call(rs.Close)
-=======
-
-	if len(stmts) == 0 {
-		return cc.writeOK(ctx)
-	}
-
-	warns := sc.GetWarnings()
-	parserWarns := warns[len(prevWarns):]
-
-	var pointPlans []plannercore.Plan
-	if len(stmts) > 1 {
-
-		// The client gets to choose if it allows multi-statements, and
-		// probably defaults OFF. This helps prevent against SQL injection attacks
-		// by early terminating the first statement, and then running an entirely
-		// new statement.
-
-		capabilities := cc.ctx.GetSessionVars().ClientCapability
-		if capabilities&mysql.ClientMultiStatements < 1 {
-			return errMultiStatementDisabled
-		}
-
-		// Only pre-build point plans for multi-statement query
-		pointPlans, err = cc.prefetchPointPlanKeys(ctx, stmts)
-		if err != nil {
-			return err
-		}
-	}
-	if len(pointPlans) > 0 {
-		defer cc.ctx.ClearValue(plannercore.PointPlanKey)
-	}
-	for i, stmt := range stmts {
-		if len(pointPlans) > 0 {
-			// Save the point plan in Session so we don't need to build the point plan again.
-			cc.ctx.SetValue(plannercore.PointPlanKey, plannercore.PointPlanVal{Plan: pointPlans[i]})
-		}
-		err = cc.handleStmt(ctx, stmt, parserWarns, i == len(stmts)-1)
-		if err != nil {
-			break
-		}
-	}
-	if err != nil {
-		metrics.ExecuteErrorCounter.WithLabelValues(metrics.ExecuteErrorToLabel(err)).Inc()
-	}
-	return err
-}
-
-// prefetchPointPlanKeys extracts the point keys in multi-statement query,
-// use BatchGet to get the keys, so the values will be cached in the snapshot cache, save RPC call cost.
-// For pessimistic transaction, the keys will be batch locked.
-func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.StmtNode) ([]plannercore.Plan, error) {
-	txn, err := cc.ctx.Txn(false)
-	if err != nil {
-		return nil, err
-	}
-	if !txn.Valid() {
-		// Only prefetch in-transaction query for simplicity.
-		// Later we can support out-transaction multi-statement query.
-		return nil, nil
-	}
-	vars := cc.ctx.GetSessionVars()
-	if vars.TxnCtx.IsPessimistic {
-		if vars.IsReadConsistencyTxn() {
-			// TODO: to support READ-COMMITTED, we need to avoid getting new TS for each statement in the query.
-			return nil, nil
-		}
-		if vars.TxnCtx.GetForUpdateTS() != vars.TxnCtx.StartTS {
-			// Do not handle the case that ForUpdateTS is changed for simplicity.
-			return nil, nil
-		}
-	}
-	pointPlans := make([]plannercore.Plan, len(stmts))
-	var idxKeys []kv.Key
-	var rowKeys []kv.Key
-	is := domain.GetDomain(cc.ctx).InfoSchema()
-	sc := vars.StmtCtx
-	for i, stmt := range stmts {
-		// TODO: the preprocess is run twice, we should find some way to avoid do it again.
-		if err = plannercore.Preprocess(cc.ctx, stmt, is); err != nil {
-			return nil, err
-		}
-		p := plannercore.TryFastPlan(cc.ctx.Session, stmt)
-		pointPlans[i] = p
-		if p == nil {
-			continue
-		}
-		// Only support Update for now.
-		// TODO: support other point plans.
-		switch x := p.(type) {
-		case *plannercore.Update:
-			updateStmt := stmt.(*ast.UpdateStmt)
-			if pp, ok := x.SelectPlan.(*plannercore.PointGetPlan); ok {
-				if pp.PartitionInfo != nil {
-					continue
-				}
-				if pp.IndexInfo != nil {
-					executor.ResetUpdateStmtCtx(sc, updateStmt, vars)
-					idxKey, err1 := executor.EncodeUniqueIndexKey(cc.ctx, pp.TblInfo, pp.IndexInfo, pp.IndexValues, pp.TblInfo.ID)
-					if err1 != nil {
-						return nil, err1
-					}
-					idxKeys = append(idxKeys, idxKey)
-				} else {
-					rowKeys = append(rowKeys, tablecodec.EncodeRowKeyWithHandle(pp.TblInfo.ID, pp.Handle))
-				}
-			}
->>>>>>> b892fd839... server: support for client multi-statement option (#19459)
 		}
 		return executor.ErrQueryInterrupted
 	}
@@ -1463,6 +1355,16 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 		if len(rss) == 1 {
 			err = cc.writeResultset(ctx, rss[0], false, 0, 0)
 		} else {
+			// The client gets to choose if it allows multi-statements, and
+			// probably defaults OFF. This helps prevent against SQL injection attacks
+			// by early terminating the first statement, and then running an entirely
+			// new statement.
+
+			capabilities := cc.ctx.GetSessionVars().ClientCapability
+			if capabilities&mysql.ClientMultiStatements < 1 {
+				return errMultiStatementDisabled
+			}
+
 			err = cc.writeMultiResultset(ctx, rss, false)
 		}
 	} else {
