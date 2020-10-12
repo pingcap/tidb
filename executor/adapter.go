@@ -17,6 +17,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"runtime/trace"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -386,19 +387,22 @@ func (a *ExecStmt) handleNoDelay(ctx context.Context, e Executor, isPessimistic 
 	}()
 
 	toCheck := e
+	isExplainAnalyze := false
 	if explain, ok := e.(*ExplainExec); ok {
-		if explain.analyzeExec != nil {
-			toCheck = explain.analyzeExec
+		if analyze := explain.getAnalyzeExecToExecutedNoDelay(); analyze != nil {
+			toCheck = analyze
+			isExplainAnalyze = true
 		}
 	}
 
 	// If the executor doesn't return any result to the client, we execute it without delay.
 	if toCheck.Schema().Len() == 0 {
+		handled = !isExplainAnalyze
 		if isPessimistic {
-			return true, nil, a.handlePessimisticDML(ctx, e)
+			return handled, nil, a.handlePessimisticDML(ctx, toCheck)
 		}
-		r, err := a.handleNoDelayExecutor(ctx, e)
-		return true, r, err
+		r, err := a.handleNoDelayExecutor(ctx, toCheck)
+		return handled, r, err
 	} else if proj, ok := toCheck.(*ProjectionExec); ok && proj.calculateNoDelay {
 		// Currently this is only for the "DO" statement. Take "DO 1, @a=2;" as an example:
 		// the Projection has two expressions and two columns in the schema, but we should
@@ -657,6 +661,7 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, err error) (E
 	// Rollback the statement change before retry it.
 	a.Ctx.StmtRollback()
 	a.Ctx.GetSessionVars().StmtCtx.ResetForRetry()
+	a.Ctx.GetSessionVars().RetryInfo.ResetOffset()
 
 	if err = e.Open(ctx); err != nil {
 		return nil, err
@@ -808,7 +813,7 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, succ bool, hasMoreResults boo
 	a.LogSlowQuery(txnTS, succ, hasMoreResults)
 	a.SummaryStmt(succ)
 	prevStmt := a.GetTextToLog()
-	if sessVars.EnableLogDesensitization {
+	if config.RedactLogEnabled() {
 		sessVars.PrevStmt = FormatSQL(prevStmt, nil)
 	} else {
 		pps := types.CloneRow(sessVars.PreparedParams)
@@ -852,7 +857,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	}
 	var sql stringutil.StringerFunc
 	normalizedSQL, digest := sessVars.StmtCtx.SQLDigest()
-	if sessVars.EnableLogDesensitization {
+	if config.RedactLogEnabled() {
 		sql = FormatSQL(normalizedSQL, nil)
 	} else if sensitiveStmt, ok := a.StmtNode.(ast.SensitiveStmtNode); ok {
 		sql = FormatSQL(sensitiveStmt.SecureText(), nil)
@@ -911,6 +916,9 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	}
 	if _, ok := a.StmtNode.(*ast.CommitStmt); ok {
 		slowItems.PrevStmt = sessVars.PrevStmt.String()
+	}
+	if trace.IsEnabled() {
+		trace.Log(a.GoCtx, "details", sessVars.SlowLogFormat(slowItems))
 	}
 	if costTime < threshold {
 		logutil.SlowQueryLogger.Debug(sessVars.SlowLogFormat(slowItems))
@@ -1054,9 +1062,8 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 // GetTextToLog return the query text to log.
 func (a *ExecStmt) GetTextToLog() string {
 	var sql string
-	sessVars := a.Ctx.GetSessionVars()
-	if sessVars.EnableLogDesensitization {
-		sql, _ = sessVars.StmtCtx.SQLDigest()
+	if config.RedactLogEnabled() {
+		sql, _ = a.Ctx.GetSessionVars().StmtCtx.SQLDigest()
 	} else if sensitiveStmt, ok := a.StmtNode.(ast.SensitiveStmtNode); ok {
 		sql = sensitiveStmt.SecureText()
 	} else {

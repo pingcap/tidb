@@ -269,9 +269,9 @@ func (e *AnalyzeIndexExec) fetchAnalyzeResult(ranges []*ranger.Range, isNullRang
 	var builder distsql.RequestBuilder
 	var kvReqBuilder *distsql.RequestBuilder
 	if e.isCommonHandle && e.idxInfo.Primary {
-		kvReqBuilder = builder.SetCommonHandleRanges(e.ctx.GetSessionVars().StmtCtx, e.tableID.CollectIDs[0], ranges)
+		kvReqBuilder = builder.SetCommonHandleRangesForTables(e.ctx.GetSessionVars().StmtCtx, e.tableID.CollectIDs, ranges)
 	} else {
-		kvReqBuilder = builder.SetIndexRanges(e.ctx.GetSessionVars().StmtCtx, e.tableID.CollectIDs[0], e.idxInfo.ID, ranges)
+		kvReqBuilder = builder.SetIndexRangesForTables(e.ctx.GetSessionVars().StmtCtx, e.tableID.CollectIDs, e.idxInfo.ID, ranges)
 	}
 	kvReq, err := kvReqBuilder.
 		SetAnalyzeRequest(e.analyzePB).
@@ -283,7 +283,7 @@ func (e *AnalyzeIndexExec) fetchAnalyzeResult(ranges []*ranger.Range, isNullRang
 		return err
 	}
 	ctx := context.TODO()
-	result, err := distsql.Analyze(ctx, e.ctx.GetClient(), kvReq, e.ctx.GetSessionVars().KVVars, e.ctx.GetSessionVars().InRestrictedSQL)
+	result, err := distsql.Analyze(ctx, e.ctx.GetClient(), kvReq, e.ctx.GetSessionVars().KVVars, e.ctx.GetSessionVars().InRestrictedSQL, e.ctx.GetSessionVars().StmtCtx.MemTracker)
 	if err != nil {
 		return err
 	}
@@ -452,9 +452,9 @@ func (e *AnalyzeColumnsExec) buildResp(ranges []*ranger.Range) (distsql.SelectRe
 	var builder distsql.RequestBuilder
 	var reqBuilder *distsql.RequestBuilder
 	if e.handleCols != nil && !e.handleCols.IsInt() {
-		reqBuilder = builder.SetCommonHandleRanges(e.ctx.GetSessionVars().StmtCtx, e.tableID.CollectIDs[0], ranges)
+		reqBuilder = builder.SetCommonHandleRangesForTables(e.ctx.GetSessionVars().StmtCtx, e.tableID.CollectIDs, ranges)
 	} else {
-		reqBuilder = builder.SetTableRanges(e.tableID.CollectIDs[0], ranges, nil)
+		reqBuilder = builder.SetTableRangesForTables(e.tableID.CollectIDs, ranges, nil)
 	}
 	// Always set KeepOrder of the request to be true, in order to compute
 	// correct `correlation` of columns.
@@ -468,7 +468,7 @@ func (e *AnalyzeColumnsExec) buildResp(ranges []*ranger.Range) (distsql.SelectRe
 		return nil, err
 	}
 	ctx := context.TODO()
-	result, err := distsql.Analyze(ctx, e.ctx.GetClient(), kvReq, e.ctx.GetSessionVars().KVVars, e.ctx.GetSessionVars().InRestrictedSQL)
+	result, err := distsql.Analyze(ctx, e.ctx.GetClient(), kvReq, e.ctx.GetSessionVars().KVVars, e.ctx.GetSessionVars().InRestrictedSQL, e.ctx.GetSessionVars().StmtCtx.MemTracker)
 	if err != nil {
 		return nil, err
 	}
@@ -680,7 +680,7 @@ func (e *AnalyzeFastExec) calculateEstimateSampleStep() (err error) {
 			}
 		}()
 		var partition string
-		if e.tblInfo.ID != e.tableID.PersistID {
+		if e.tableID.StoreAsCollectID() && e.tblInfo.ID != e.tableID.PersistID {
 			for _, definition := range e.tblInfo.Partition.Definitions {
 				if definition.ID == e.tableID.PersistID {
 					partition = fmt.Sprintf(" partition(%s)", definition.Name.L)
@@ -694,7 +694,7 @@ func (e *AnalyzeFastExec) calculateEstimateSampleStep() (err error) {
 		}
 		var recordSets []sqlexec.RecordSet
 		recordSets, err = e.ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), sql)
-		if err != nil || len(recordSets) == 0 {
+		if err != nil {
 			return
 		}
 		if len(recordSets) == 0 {
@@ -746,36 +746,38 @@ func (e *AnalyzeFastExec) buildSampTask() (err error) {
 	bo := tikv.NewBackofferWithVars(context.Background(), 500, nil)
 	store, _ := e.ctx.GetStore().(tikv.Storage)
 	e.cache = store.GetRegionCache()
-	startKey, endKey := tablecodec.GetTableHandleKeyRange(e.tableID.CollectIDs[0])
-	targetKey := startKey
 	accessRegionsCounter := 0
-	for {
-		// Search for the region which contains the targetKey.
-		loc, err := e.cache.LocateKey(bo, targetKey)
-		if err != nil {
-			return err
-		}
-		if bytes.Compare(endKey, loc.StartKey) < 0 {
-			break
-		}
-		accessRegionsCounter++
+	for _, pid := range e.tableID.CollectIDs {
+		startKey, endKey := tablecodec.GetTableHandleKeyRange(pid)
+		targetKey := startKey
+		for {
+			// Search for the region which contains the targetKey.
+			loc, err := e.cache.LocateKey(bo, targetKey)
+			if err != nil {
+				return err
+			}
+			if bytes.Compare(endKey, loc.StartKey) < 0 {
+				break
+			}
+			accessRegionsCounter++
 
-		// Set the next search key.
-		targetKey = loc.EndKey
+			// Set the next search key.
+			targetKey = loc.EndKey
 
-		// If the KV pairs in the region all belonging to the table, add it to the sample task.
-		if bytes.Compare(startKey, loc.StartKey) <= 0 && len(loc.EndKey) != 0 && bytes.Compare(loc.EndKey, endKey) <= 0 {
-			e.sampTasks = append(e.sampTasks, loc)
-			continue
-		}
+			// If the KV pairs in the region all belonging to the table, add it to the sample task.
+			if bytes.Compare(startKey, loc.StartKey) <= 0 && len(loc.EndKey) != 0 && bytes.Compare(loc.EndKey, endKey) <= 0 {
+				e.sampTasks = append(e.sampTasks, loc)
+				continue
+			}
 
-		e.scanTasks = append(e.scanTasks, loc)
-		if bytes.Compare(loc.StartKey, startKey) < 0 {
-			loc.StartKey = startKey
-		}
-		if bytes.Compare(endKey, loc.EndKey) < 0 || len(loc.EndKey) == 0 {
-			loc.EndKey = endKey
-			break
+			e.scanTasks = append(e.scanTasks, loc)
+			if bytes.Compare(loc.StartKey, startKey) < 0 {
+				loc.StartKey = startKey
+			}
+			if bytes.Compare(endKey, loc.EndKey) < 0 || len(loc.EndKey) == 0 {
+				loc.EndKey = endKey
+				break
+			}
 		}
 	}
 	fastAnalyzeHistogramAccessRegions.Observe(float64(accessRegionsCounter))
@@ -1140,15 +1142,15 @@ func (e *AnalyzeFastExec) buildStats() (hists []*statistics.Histogram, cms []*st
 // AnalyzeTestFastExec is for fast sample in unit test.
 type AnalyzeTestFastExec struct {
 	AnalyzeFastExec
-	Ctx             sessionctx.Context
-	PhysicalTableID int64
-	HandleCols      core.HandleCols
-	ColsInfo        []*model.ColumnInfo
-	IdxsInfo        []*model.IndexInfo
-	Concurrency     int
-	Collectors      []*statistics.SampleCollector
-	TblInfo         *model.TableInfo
-	Opts            map[ast.AnalyzeOptionType]uint64
+	Ctx         sessionctx.Context
+	TableID     core.AnalyzeTableID
+	HandleCols  core.HandleCols
+	ColsInfo    []*model.ColumnInfo
+	IdxsInfo    []*model.IndexInfo
+	Concurrency int
+	Collectors  []*statistics.SampleCollector
+	TblInfo     *model.TableInfo
+	Opts        map[ast.AnalyzeOptionType]uint64
 }
 
 // TestFastSample only test the fast sample in unit test.
@@ -1158,7 +1160,7 @@ func (e *AnalyzeTestFastExec) TestFastSample() error {
 	e.colsInfo = e.ColsInfo
 	e.idxsInfo = e.IdxsInfo
 	e.concurrency = e.Concurrency
-	e.tableID = core.AnalyzeTableID{PersistID: e.PhysicalTableID, CollectIDs: []int64{e.PhysicalTableID}}
+	e.tableID = e.TableID
 	e.wg = &sync.WaitGroup{}
 	e.job = &statistics.AnalyzeJob{}
 	e.tblInfo = e.TblInfo
@@ -1176,7 +1178,7 @@ type analyzeIndexIncrementalExec struct {
 
 func analyzeIndexIncremental(idxExec *analyzeIndexIncrementalExec) analyzeResult {
 	startPos := idxExec.oldHist.GetUpper(idxExec.oldHist.Len() - 1)
-	values, _, err := codec.DecodeRange(startPos.GetBytes(), len(idxExec.idxInfo.Columns))
+	values, _, err := codec.DecodeRange(startPos.GetBytes(), len(idxExec.idxInfo.Columns), nil, nil)
 	if err != nil {
 		return analyzeResult{Err: err, job: idxExec.job}
 	}

@@ -43,6 +43,9 @@ import (
 
 var (
 	errQueryInterrupted = terror.ClassExecutor.NewStd(errno.ErrQueryInterrupted)
+
+	coprCacheHistogramHit  = metrics.DistSQLCoprCacheHistogram.WithLabelValues("hit")
+	coprCacheHistogramMiss = metrics.DistSQLCoprCacheHistogram.WithLabelValues("miss")
 )
 
 var (
@@ -154,6 +157,10 @@ func (r *selectResult) fetchResp(ctx context.Context) error {
 		if len(r.selectResp.Chunks) != 0 {
 			break
 		}
+	}
+	if r.stats != nil {
+		coprCacheHistogramHit.Observe(float64(r.stats.CoprCacheHitNum))
+		coprCacheHistogramMiss.Observe(float64(len(r.stats.copRespTime) - int(r.stats.CoprCacheHitNum)))
 	}
 	return nil
 }
@@ -325,6 +332,7 @@ type selectResultRuntimeStats struct {
 	totalProcessTime time.Duration
 	totalWaitTime    time.Duration
 	rpcStat          tikv.RegionRequestRuntimeStats
+	CoprCacheHitNum  int64
 }
 
 func (s *selectResultRuntimeStats) mergeCopRuntimeStats(copStats *tikv.CopRuntimeStats, respTime time.Duration) {
@@ -337,6 +345,9 @@ func (s *selectResultRuntimeStats) mergeCopRuntimeStats(copStats *tikv.CopRuntim
 	s.totalProcessTime += copStats.ProcessTime
 	s.totalWaitTime += copStats.WaitTime
 	s.rpcStat.Merge(copStats.RegionRequestRuntimeStats)
+	if copStats.CoprCacheHit {
+		s.CoprCacheHitNum++
+	}
 }
 
 func (s *selectResultRuntimeStats) Clone() execdetails.RuntimeStats {
@@ -373,6 +384,7 @@ func (s *selectResultRuntimeStats) Merge(rs execdetails.RuntimeStats) {
 	s.totalProcessTime += other.totalProcessTime
 	s.totalWaitTime += other.totalWaitTime
 	s.rpcStat.Merge(other.rpcStat)
+	s.CoprCacheHitNum += other.CoprCacheHitNum
 }
 
 func (s *selectResultRuntimeStats) String() string {
@@ -422,6 +434,8 @@ func (s *selectResultRuntimeStats) String() string {
 			buf.WriteString(", rpc_time: ")
 			buf.WriteString(time.Duration(copRPC.Consume).String())
 		}
+		buf.WriteString(fmt.Sprintf(", copr_cache_hit_ratio: %v",
+			strconv.FormatFloat(float64(s.CoprCacheHitNum)/float64(len(s.copRespTime)), 'f', 2, 64)))
 		buf.WriteString("}")
 	}
 

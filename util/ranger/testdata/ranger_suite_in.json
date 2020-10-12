@@ -31,5 +31,32 @@
       "select * from t where a = 1 and b is null and b is null and c > 1;",
       "select * from t where a = 1 and b is null and b = 1 and c > 1;"
     ]
+  },
+  {
+    "name": "TestCompIndexMultiColDNF1",
+    "cases": [
+      "select * from t where (a,b) in ((1,1),(2,2)) and c = 3;",
+      "select * from t where ((a = 1 and b = 1) or (a = 2 and b = 2)) and c = 3;",
+      "select * from t use index(primary) where ((a = 1) or (a = 2 and b = 2)) and c = 3;",
+      "select * from t where ((a = 1 and b = 1) or (a = 2 and b = 2)) and c = 3 and (a = 1 or a = 2);",
+      "select * from t where (a,b) in ((1,1),(2,2)) and c > 2;",
+      "select * from t where ((a = 1 and b = 1) or (a = 2 and b = 2)) and c > 2;"
+    ]
+  },
+  {
+    "name": "TestCompIndexMultiColDNF2",
+    "cases": [
+      // TODO: row count of BatchPointGet should be 1.00 instead of 2.00 actually, but getEqualCondSelectivity specially
+      // handles unique index, i.e, row count 1.00 is returned with CMSketch not checked at all. We should optimize this.
+      "select * from t where a = 1 and (b,c) in ((1,1),(2,3));",
+      "select * from t where a = 1 and ((b = 1 and c = 1) or (b = 2 and c = 3));",
+      "select * from t where a = 1 and ((b = 1) or (b = 2 and c = 3));",
+      "select * from t where (a,b) in ((1,1),(2,2)) and c = 3;",
+      "select * from t where ((a = 1 and b = 1) or (a = 2 and b = 2)) and c = 3;",
+      "select * from t use index(primary) where ((a = 1) or (a = 2 and b = 2)) and c = 3;",
+      "select * from t where (a,b) in ((1,1),(2,2)) and c > 2 and (a,b,c) in ((1,1,1),(2,2,3));",
+      "select * from t where (a,b) in ((1,1),(2,2)) and c > 2;",
+      "select * from t where ((a = 1 and b = 1) or (a = 2 and b = 2)) and c > 2;"
+    ]
   }
 ]
