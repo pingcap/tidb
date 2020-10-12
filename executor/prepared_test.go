@@ -158,7 +158,7 @@ func (s *testSuite12) TestPreparedStmtWithHint(c *C) {
 		se: se,
 	}
 	se.SetSessionManager(sm)
-	go dom.ExpensiveQueryHandle().SetSessionManager(sm).Run()
+	go dom.ExpensiveQueryHandle().SetSessionManager(sm).Run(se)
 	tk.MustExec("prepare stmt from \"select /*+ max_execution_time(100) */ sleep(10)\"")
 	tk.MustQuery("execute stmt").Check(testkit.Rows("1"))
 	c.Check(sm.killed, Equals, true)
