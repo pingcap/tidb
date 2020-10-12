@@ -305,7 +305,7 @@ func (h *Handle) DumpIndexUsageToKV() error {
 	for id, value := range mapper {
 		idInfo := strings.Split(id, ".")
 		if len(idInfo) != 3 {
-			return errors.New("Illegal key for index usage informaiton.")
+			return errors.New("illegal key for index usage informaiton")
 		}
 		sql := fmt.Sprintf(
 			`insert into mysql.SCHEMA_INDEX_USAGE values ("%s", "%s", "%s", %d, %d, "%s") on duplicate key update query_count=query_count+%d, rows_selected=rows_selected+%d, last_used_at=greatest(last_used_at, "%s")`,
