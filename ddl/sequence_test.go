@@ -74,6 +74,7 @@ func (s *testSequenceSuite) TestCreateSequence(c *C) {
 	c.Assert(sequenceTable.Meta().Sequence.Cycle, Equals, false)
 
 	// Test create privilege.
+	tk.MustExec("drop user if exists myuser@localhost")
 	tk.MustExec("create user myuser@localhost")
 
 	tk1 := testkit.NewTestKit(c, s.store)
@@ -1046,4 +1047,30 @@ func (s *testSequenceSuite) TestAlterSequence(c *C) {
 	tk.MustQuery("select nextval(seq)").Check(testkit.Rows("3005"))
 	tk.MustQuery("select nextval(seq)").Check(testkit.Rows("3009"))
 	tk.MustExec("drop sequence if exists seq")
+}
+
+func (s *testSequenceSuite) TestAlterSequencePrivilege(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop sequence if exists my_seq")
+	tk.MustExec("create sequence my_seq")
+
+	// Test create privilege.
+	tk.MustExec("drop user if exists myuser@localhost")
+	tk.MustExec("create user myuser@localhost")
+
+	tk1 := testkit.NewTestKit(c, s.store)
+	se, err := session.CreateSession4Test(s.store)
+	c.Assert(err, IsNil)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "myuser", Hostname: "localhost"}, nil, nil), IsTrue)
+	tk1.Se = se
+
+	// grant the myuser the access to database test.
+	tk.MustExec("grant select on test.* to 'myuser'@'localhost'")
+
+	tk1.MustExec("use test")
+	_, err = tk1.Exec("alter sequence my_seq increment = 2")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[planner:1142]ALTER command denied to user 'myuser'@'localhost' for table 'my_seq'")
+	tk.MustExec("drop sequence if exists my_seq")
 }
