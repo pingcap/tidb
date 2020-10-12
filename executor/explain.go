@@ -72,7 +72,7 @@ func (e *ExplainExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	return nil
 }
 
-func (e *ExplainExec) ExecuteAnalyzeExec(ctx context.Context) (err error) {
+func (e *ExplainExec) executeAnalyzeExec(ctx context.Context) (err error) {
 	if e.analyzeExec != nil && !e.executed {
 		defer func() {
 			err1 := e.analyzeExec.Close()
@@ -97,7 +97,7 @@ func (e *ExplainExec) ExecuteAnalyzeExec(ctx context.Context) (err error) {
 }
 
 func (e *ExplainExec) generateExplainInfo(ctx context.Context) (rows [][]string, err error) {
-	if err = e.ExecuteAnalyzeExec(ctx); err != nil {
+	if err = e.executeAnalyzeExec(ctx); err != nil {
 		return nil, err
 	}
 	if err = e.explain.RenderResult(); err != nil {
