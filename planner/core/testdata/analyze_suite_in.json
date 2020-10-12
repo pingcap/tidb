@@ -193,5 +193,14 @@
       // Should choose `primary` index instead of index `b`.
       "explain select c, b from t where a = 7639902 order by b asc limit 6"
     ]
+  },
+  {
+    "name": "TestLimitIndexEstimation",
+    "cases": [
+      // Should choose idx_a instead of idx_b, because idx_b would scan 990001 rows.
+      "explain select * from t where a <= 10000 order by b limit 1",
+      // Should choose idx_b instead of idx_a, because idx_b would scan only 1 row.
+      "explain select * from t where a >= 999900 order by b limit 1"
+    ]
   }
 ]
