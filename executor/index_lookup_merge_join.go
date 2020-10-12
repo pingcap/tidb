@@ -95,7 +95,7 @@ type innerMergeCtx struct {
 
 type lookUpMergeJoinTask struct {
 	outerResult   *chunk.List
-	outerMatch	  [][]bool
+	outerMatch    [][]bool
 	outerOrderIdx []chunk.RowPtr
 
 	innerResult *chunk.Chunk
