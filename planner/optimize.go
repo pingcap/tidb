@@ -432,7 +432,7 @@ func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints stmtctx.StmtHin
 				continue
 			}
 			if !sysVar.IsHintUpdatable {
-				warns = append(warns, plannercore.ErrNotHintUpdatable.GenWithStackByArgs(setVarHint.VarName, hint.HintName.String()))
+				warns = append(warns, plannercore.ErrNotHintUpdatable.GenWithStackByArgs(setVarHint.VarName))
 				continue
 			}
 			// If several hints with the same variable name appear in the same statement, the first one is applied and the others are ignored with a warning
