@@ -307,6 +307,10 @@ func (e *slowQueryRetriever) parseSlowLog(ctx context.Context, sctx sessionctx.C
 			}
 			<-ch
 		}()
+		// Read the next file, offset = 0
+		if e.fileIdx >= len(e.files) {
+			break
+		}
 		offset.offset = e.fileLine
 		offset.length = 0
 		select {
