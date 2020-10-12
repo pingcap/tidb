@@ -14,6 +14,8 @@
 package chunk
 
 import (
+	"strconv"
+
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
@@ -212,4 +214,47 @@ func (r Row) CopyConstruct() Row {
 	newChk := renewWithCapacity(r.c, 1, 1)
 	newChk.AppendRow(r)
 	return newChk.GetRow(0)
+}
+
+// ToString returns all the values in a row.
+func (r Row) ToString(ft []*types.FieldType) string {
+	var buf []byte
+	for colIdx := 0; colIdx < r.Chunk().NumCols(); colIdx++ {
+		if r.IsNull(colIdx) {
+			buf = append(buf, "nil, "...)
+			continue
+		}
+		switch ft[colIdx].EvalType() {
+		case types.ETInt:
+			buf = strconv.AppendInt(buf, r.GetInt64(colIdx), 10)
+		case types.ETString:
+			switch ft[colIdx].Tp {
+			case mysql.TypeEnum:
+				buf = append(buf, r.GetEnum(colIdx).String()...)
+			case mysql.TypeSet:
+				buf = append(buf, r.GetSet(colIdx).String()...)
+			default:
+				buf = append(buf, r.GetString(colIdx)...)
+			}
+		case types.ETDatetime, types.ETTimestamp:
+			buf = append(buf, r.GetTime(colIdx).String()...)
+		case types.ETDecimal:
+			buf = append(buf, r.GetMyDecimal(colIdx).ToString()...)
+		case types.ETDuration:
+			buf = append(buf, r.GetDuration(colIdx, ft[colIdx].Decimal).String()...)
+		case types.ETJson:
+			buf = append(buf, r.GetJSON(colIdx).String()...)
+		case types.ETReal:
+			switch ft[colIdx].Tp {
+			case mysql.TypeFloat:
+				buf = strconv.AppendFloat(buf, float64(r.GetFloat32(colIdx)), 'f', -1, 32)
+			case mysql.TypeDouble:
+				buf = strconv.AppendFloat(buf, r.GetFloat64(colIdx), 'f', -1, 64)
+			}
+		}
+		if colIdx != r.Chunk().NumCols()-1 {
+			buf = append(buf, ", "...)
+		}
+	}
+	return string(buf)
 }

@@ -5,7 +5,7 @@
 # The PR is https://github.com/kubernetes/kubernetes/pull/47673
 
 # How to use this hook?
-# ln -s hooks/pre-commit .git/hooks/
+# ln -s ../../hooks/pre-commit .git/hooks/pre-commit
 # In case hook is not executable
 # chmod +x .git/hooks/pre-commit
 
