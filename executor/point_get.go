@@ -343,23 +343,17 @@ func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) ([]byte, error) 
 		// fallthrough to snapshot get.
 	}
 
+	isLocked := e.tblInfo.IsLocked()
+	if !isLocked {
+		return e.snapshot.Get(ctx, key)
+	}
+
+	if e.tblInfo.Lock.Tp != model.TableLockRead {
+		return e.snapshot.Get(ctx, key)
+	}
+
 	cacheDB := kv.Cache()
-
-	tableID, _, _, err := tablecodec.DecodeKeyHead(key)
-	if err != nil {
-		return e.snapshot.Get(ctx, key)
-	}
-
-	isLock, err := cacheDB.IsLock(tableID)
-	if err != nil {
-		return e.snapshot.Get(ctx, key)
-	}
-
-	if !isLock {
-		return e.snapshot.Get(ctx, key)
-	}
-
-	val, err = cacheDB.Get(ctx, tableID, key)
+	val, err = cacheDB.Get(ctx, e.tblInfo.ID, key)
 	// key does not exist then get from snapshot and set to cache
 	if err != nil {
 		val, err = e.snapshot.Get(ctx, key)
@@ -367,7 +361,7 @@ func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) ([]byte, error) 
 			return nil, err
 		}
 
-		err := cacheDB.Set(tableID, key, val)
+		err := cacheDB.Set(e.tblInfo.ID, key, val)
 		if err != nil {
 			return nil, err
 		}

@@ -125,6 +125,7 @@ func (d Driver) Open(path string) (kv.Storage, error) {
 	if txnLocalLatches.Enabled {
 		s.EnableTxnLocalLatches(txnLocalLatches.Capacity)
 	}
+	kv.NewCacheDB()
 	s.etcdAddrs = etcdAddrs
 	s.tlsConfig = tlsConfig
 
