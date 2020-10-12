@@ -170,6 +170,7 @@ type MemBufferIterator interface {
 	HasValue() bool
 	Flags() KeyFlags
 	UpdateFlags(...FlagsOp)
+	Handle() MemKeyHandle
 }
 
 // MemBuffer is an in-memory kv collection, can be used to buffer write operations.
@@ -194,6 +195,9 @@ type MemBuffer interface {
 	SetWithFlags(Key, []byte, ...FlagsOp) error
 	// UpdateFlags update the flags associated with key.
 	UpdateFlags(Key, ...FlagsOp)
+
+	GetKeyByHandle(MemKeyHandle) []byte
+	GetValueByHandle(MemKeyHandle) ([]byte, bool)
 
 	// Reset reset the MemBuffer to initial states.
 	Reset()
