@@ -3155,6 +3155,9 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Conte
 					locateKey[content.keyCols[i]] = date
 				}
 				p, err := pt.GetPartitionByRow(e.ctx, locateKey)
+				if err != nil {
+					return nil, err
+				}
 				pid := p.GetPhysicalID()
 				tmp, err := buildKvRangesForIndexJoin(e.ctx, pid, -1, []*indexJoinLookUpContent{content}, indexRanges, keyOff2IdxOff, cwc)
 				if err != nil {
@@ -3194,6 +3197,9 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Conte
 	pe, err := tbl.(interface {
 		PartitionExpr() (*tables.PartitionExpr, error)
 	}).PartitionExpr()
+	if err != nil {
+		return nil, err
+	}
 	var kvRanges []kv.KeyRange
 	if keyColumnsIncludeAllPartitionColumns(lookUpContents[0].keyCols, pe) {
 		locateKey := make([]types.Datum, e.Schema().Len())

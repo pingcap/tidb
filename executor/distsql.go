@@ -296,6 +296,9 @@ func (e *IndexReaderExecutor) Open(ctx context.Context) error {
 	} else {
 		kvRanges, err = e.buildKeyRanges(sc, e.physicalTableID)
 	}
+	if err != nil {
+		return err
+	}
 
 	return e.open(ctx, kvRanges)
 }
