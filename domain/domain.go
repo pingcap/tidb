@@ -1151,8 +1151,7 @@ func (do *Domain) loadStatsWorker() {
 
 func (do *Domain) syncIndexUsageWorker() {
 	defer util.Recover(metrics.LabelDomain, "syncIndexUsageWorker", nil, false)
-	lease := do.indexUsageSyncLease
-	idxUsageSyncTicker := time.NewTicker(lease)
+	idxUsageSyncTicker := time.NewTicker(do.indexUsageSyncLease)
 	handle := do.StatsHandle()
 	defer func() {
 		idxUsageSyncTicker.Stop()
@@ -1166,7 +1165,9 @@ func (do *Domain) syncIndexUsageWorker() {
 			// TODO: need flush index usage
 			return
 		case <-idxUsageSyncTicker.C:
-			err := handle.DumpIndexUsageToKV()
+			if err := handle.DumpIndexUsageToKV(); err != nil {
+				logutil.BgLogger().Debug("dump index usage failed", zap.Error(err))
+			}
 			if err != nil {
 				logutil.BgLogger().Debug("dump index usage failed", zap.Error(err))
 			}
