@@ -833,7 +833,7 @@ func (sr *statsReader) isHistory() bool {
 	return sr.history != nil
 }
 
-func (h *Handle) getStatsReader(history sqlexec.RestrictedSQLExecutor) (*statsReader, error) {
+func (h *Handle) getStatsReader(history sqlexec.RestrictedSQLExecutor) (reader *statsReader, err error) {
 	failpoint.Inject("mockGetStatsReaderFail", func(val failpoint.Value) {
 		if val.(bool) {
 			failpoint.Return(nil, errors.New("gofail genStatsReader error"))
@@ -843,9 +843,19 @@ func (h *Handle) getStatsReader(history sqlexec.RestrictedSQLExecutor) (*statsRe
 		return &statsReader{history: history}, nil
 	}
 	h.mu.Lock()
-	_, err := h.mu.ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), "begin")
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("%v", r)
+		}
+		if err != nil {
+			h.mu.Unlock()
+		}
+	}()
+	failpoint.Inject("mockGetStatsReaderPanic", func() {
+		panic("panic getStatsReader")
+	})
+	_, err = h.mu.ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), "begin")
 	if err != nil {
-		h.mu.Unlock()
 		return nil, err
 	}
 	return &statsReader{ctx: h.mu.ctx}, nil
