@@ -998,6 +998,8 @@ type LimitExec struct {
 
 	// columnIdxsUsedByChild keep column indexes of child executor used for inline projection
 	columnIdxsUsedByChild []int
+
+	useAppendByColIdxs bool
 }
 
 // Next implements the Executor Next interface.
@@ -1029,7 +1031,11 @@ func (e *LimitExec) Next(ctx context.Context, req *chunk.Chunk) error {
 				break
 			}
 			if e.columnIdxsUsedByChild != nil {
-				req.AppendByColIdxs(e.childResult, int(begin), int(end), e.columnIdxsUsedByChild)
+				if e.useAppendByColIdxs {
+					req.AppendByColIdxs(e.childResult, int(begin), int(end), e.columnIdxsUsedByChild)
+				} else {
+					req.Append(e.childResult.Prune(e.columnIdxsUsedByChild), int(begin), int(end))
+				}
 			} else {
 				req.Append(e.childResult, int(begin), int(end))
 			}

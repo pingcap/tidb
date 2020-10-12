@@ -1716,6 +1716,7 @@ type limitCase struct {
 	count                 int
 	childUsedSchema       []bool
 	usingInlineProjection bool
+	usingAppendByColIdxs  bool
 	ctx                   sessionctx.Context
 }
 
@@ -1727,8 +1728,8 @@ func (tc limitCase) columns() []*expression.Column {
 }
 
 func (tc limitCase) String() string {
-	return fmt.Sprintf("(rows:%v, offset:%v, count:%v, inline_projection:%v)",
-		tc.rows, tc.offset, tc.count, tc.usingInlineProjection)
+	return fmt.Sprintf("(rows:%v, offset:%v, count:%v, inline_projection:%v, append_by_col_idxs:%v)",
+		tc.rows, tc.offset, tc.count, tc.usingInlineProjection, tc.usingAppendByColIdxs)
 }
 
 func defaultLimitTestCase() *limitCase {
@@ -1742,6 +1743,7 @@ func defaultLimitTestCase() *limitCase {
 		count:                 10000,
 		childUsedSchema:       []bool{false, true},
 		usingInlineProjection: false,
+		usingAppendByColIdxs:  false,
 		ctx:                   ctx,
 	}
 	return tc
@@ -1756,9 +1758,10 @@ func benchmarkLimitExec(b *testing.B, cas *limitCase) {
 	dataSource := buildMockDataSource(opt)
 	var exec Executor
 	limit := &LimitExec{
-		baseExecutor: newBaseExecutor(cas.ctx, dataSource.schema, 4, dataSource),
-		begin:        uint64(cas.offset),
-		end:          uint64(cas.offset + cas.count),
+		baseExecutor:       newBaseExecutor(cas.ctx, dataSource.schema, 4, dataSource),
+		begin:              uint64(cas.offset),
+		end:                uint64(cas.offset + cas.count),
+		useAppendByColIdxs: cas.usingAppendByColIdxs,
 	}
 	if cas.usingInlineProjection {
 		if len(cas.childUsedSchema) > 0 {
@@ -1819,10 +1822,20 @@ func BenchmarkLimitExec(b *testing.B) {
 	b.ReportAllocs()
 	cas := defaultLimitTestCase()
 	usingInlineProjection := []bool{false, true}
+	usingAppendByColIdxs := []bool{false, true}
 	for _, inlineProjection := range usingInlineProjection {
 		cas.usingInlineProjection = inlineProjection
-		b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
-			benchmarkLimitExec(b, cas)
-		})
+		if cas.usingInlineProjection {
+			for _, appendByColIdxs := range usingAppendByColIdxs {
+				cas.usingAppendByColIdxs = appendByColIdxs
+				b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
+					benchmarkLimitExec(b, cas)
+				})
+			}
+		} else {
+			b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
+				benchmarkLimitExec(b, cas)
+			})
+		}
 	}
 }
