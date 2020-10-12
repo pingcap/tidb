@@ -226,7 +226,7 @@ type SessionIndexUsageCollector struct {
 	deleted bool
 }
 
-func (m indexUsageMap) updateByID(id string, value *IndexUsageInformation) {
+func (m indexUsageMap) updateByKey(id string, value *IndexUsageInformation) {
 	item := m[id]
 	item.QueryCount += value.QueryCount
 	item.RowsSelected += value.RowsSelected
@@ -238,12 +238,12 @@ func (m indexUsageMap) updateByID(id string, value *IndexUsageInformation) {
 
 func (m indexUsageMap) update(tableSchema string, tableName string, indexName string, value *IndexUsageInformation) {
 	id := fmt.Sprintf("%s.%s.%s", tableSchema, tableName, indexName)
-	m.updateByID(id, value)
+	m.updateByKey(id, value)
 }
 
 func (m indexUsageMap) merge(destMap indexUsageMap) {
 	for id, item := range destMap {
-		m.updateByID(id, &item)
+		m.updateByKey(id, &item)
 	}
 }
 
@@ -300,11 +300,13 @@ func (h *Handle) sweepIdxUsageList() indexUsageMap {
 }
 
 // DumpIndexUsageToKV will dump in-memory index usage information to KV.
-// For performance considerations, we use `insert` instead of `update`.
 func (h *Handle) DumpIndexUsageToKV() error {
 	mapper := h.sweepIdxUsageList()
 	for id, value := range mapper {
 		idInfo := strings.Split(id, ".")
+		if len(idInfo) != 3 {
+			return errors.New("Illegal key for index usage informaiton.")
+		}
 		sql := fmt.Sprintf(
 			`insert into mysql.SCHEMA_INDEX_USAGE values ("%s", "%s", "%s", %d, %d, "%s") on duplicate key update query_count=query_count+%d, rows_selected=rows_selected+%d, last_used_at=greatest(last_used_at, "%s")`,
 			idInfo[0], idInfo[1], idInfo[2], value.QueryCount, value.RowsSelected, value.LastUsedAt, value.QueryCount, value.RowsSelected, value.LastUsedAt)

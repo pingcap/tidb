@@ -79,7 +79,6 @@ type Domain struct {
 	statsUpdating        sync2.AtomicInt32
 	cancel               context.CancelFunc
 	indexUsageSyncLease  time.Duration
-	indexUsageSyncing    sync2.AtomicInt32
 }
 
 // loadInfoSchema loads infoschema at startTS into handle, usedSchemaVersion is the currently used
@@ -1052,14 +1051,6 @@ func (do *Domain) SetStatsUpdating(val bool) {
 	}
 }
 
-// SetIndexUsageSyncing sets the value of index usage syncing.
-func (do *Domain) SetIndexUsageSyncing(val bool) {
-	if val {
-		do.indexUsageSyncing.Set(1)
-	} else {
-		do.indexUsageSyncing.Set(0)
-	}
-}
 
 // RunAutoAnalyze indicates if this TiDB server starts auto analyze worker and can run auto analyze job.
 var RunAutoAnalyze = true
@@ -1079,7 +1070,6 @@ func (do *Domain) UpdateTableStatsLoop(ctx sessionctx.Context) error {
 	}
 	if do.indexUsageSyncLease > 0 {
 		do.wg.Add(1)
-		do.SetIndexUsageSyncing(true)
 		go do.syncIndexUsageWorker()
 	}
 	if do.statsLease <= 0 {
@@ -1155,7 +1145,6 @@ func (do *Domain) syncIndexUsageWorker() {
 	handle := do.StatsHandle()
 	defer func() {
 		idxUsageSyncTicker.Stop()
-		do.SetIndexUsageSyncing(false)
 		do.wg.Done()
 		logutil.BgLogger().Info("syncIndexUsageWorker exited.")
 	}()
@@ -1166,9 +1155,6 @@ func (do *Domain) syncIndexUsageWorker() {
 			return
 		case <-idxUsageSyncTicker.C:
 			if err := handle.DumpIndexUsageToKV(); err != nil {
-				logutil.BgLogger().Debug("dump index usage failed", zap.Error(err))
-			}
-			if err != nil {
 				logutil.BgLogger().Debug("dump index usage failed", zap.Error(err))
 			}
 		}
