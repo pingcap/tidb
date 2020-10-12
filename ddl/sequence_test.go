@@ -989,3 +989,61 @@ func (s *testSequenceSuite) TestSequenceCacheShouldNotBeNegative(c *C) {
 
 	tk.MustExec("create sequence seq cache 1")
 }
+
+func (s *testSequenceSuite) TestAlterSequence(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop sequence if exists seq")
+	tk.MustExec("create sequence seq")
+	tk.MustExec("alter sequence seq increment by 2 start with 2")
+	tk.MustQuery("show create sequence seq").Check(testkit.Rows("seq CREATE SEQUENCE `seq` " +
+		"start with 2 minvalue 1 maxvalue 9223372036854775806 increment by 2 cache 1000 nocycle ENGINE=InnoDB"))
+
+	tk.MustExec("drop sequence if exists seq")
+	tk.MustExec("create sequence seq")
+	tk.MustQuery("select nextval(seq)").Check(testkit.Rows("1"))
+	tk.MustQuery("select nextval(seq)").Check(testkit.Rows("2"))
+	tk.MustQuery("select nextval(seq)").Check(testkit.Rows("3"))
+	// Alter sequence will invalidate the sequence cache in memory.
+	tk.MustExec("alter sequence seq increment by 2")
+	tk.MustQuery("show create sequence seq").Check(testkit.Rows("seq CREATE SEQUENCE `seq` " +
+		"start with 1 minvalue 1 maxvalue 9223372036854775806 increment by 2 cache 1000 nocycle ENGINE=InnoDB"))
+	tk.MustQuery("select nextval(seq)").Check(testkit.Rows("1001"))
+	tk.MustQuery("select nextval(seq)").Check(testkit.Rows("1003"))
+	tk.MustQuery("select nextval(seq)").Check(testkit.Rows("1005"))
+
+	// Restart with value will reset the sequence value in kv.
+	tk.MustExec("alter sequence seq restart with 9")
+	// Like setval does, the sequence current value change won't affect the increment frequency.
+	// By now the step frequency is: 1, 3, 5, 7, 9, 11, 13, 15...
+	// After restart with 9, the current value rebased to 8, the next valid value will be 9, coincidentally equal to what we restarted.
+	tk.MustQuery("select nextval(seq)").Check(testkit.Rows("9"))
+	tk.MustQuery("select nextval(seq)").Check(testkit.Rows("11"))
+	tk.MustQuery("select nextval(seq)").Check(testkit.Rows("13"))
+
+	tk.MustExec("alter sequence seq restart with 10")
+	// After restart with 10, the current value rebased to 9, the next valid value will be 11, rather than what we restart.
+	tk.MustQuery("select nextval(seq)").Check(testkit.Rows("11"))
+	tk.MustQuery("select nextval(seq)").Check(testkit.Rows("13"))
+	tk.MustQuery("select nextval(seq)").Check(testkit.Rows("15"))
+
+	// Restart will reset the sequence value to start value by default.
+	tk.MustExec("alter sequence seq restart")
+	// After restart, the base will be pointed to 0, plus the increment 2, the first value will be 2 here.
+	tk.MustQuery("select nextval(seq)").Check(testkit.Rows("1"))
+	tk.MustQuery("select nextval(seq)").Check(testkit.Rows("3"))
+	tk.MustQuery("select nextval(seq)").Check(testkit.Rows("5"))
+
+	tk.MustExec("drop sequence if exists seq")
+	tk.MustExec("create sequence seq increment by 3")
+	tk.MustQuery("select nextval(seq)").Check(testkit.Rows("1"))
+	tk.MustQuery("select nextval(seq)").Check(testkit.Rows("4"))
+	tk.MustQuery("select nextval(seq)").Check(testkit.Rows("7"))
+
+	tk.MustExec("alter sequence seq increment by 4")
+	tk.MustQuery("select nextval(seq)").Check(testkit.Rows("3001"))
+	tk.MustQuery("select nextval(seq)").Check(testkit.Rows("3005"))
+	tk.MustQuery("select nextval(seq)").Check(testkit.Rows("3009"))
+	tk.MustExec("drop sequence if exists seq")
+}
