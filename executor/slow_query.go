@@ -287,15 +287,12 @@ func (e *slowQueryRetriever) parseSlowLog(ctx context.Context, sctx sessionctx.C
 	for {
 		startTime := time.Now()
 		log, err := e.getBatchLog(reader, &offset, logNum)
-		if err != nil {
+		if err != nil || len(log) == 0 {
 			e.parsedSlowLogCh <- parsedSlowLog{nil, err}
 			break
 		}
 		if e.stats != nil {
 			e.stats.readFile += time.Since(startTime)
-		}
-		if len(log) == 0 {
-			break
 		}
 		start := offset
 		wg.Add(1)
