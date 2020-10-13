@@ -987,13 +987,13 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 	tk.MustQuery("select * from t where a=2")
 	tk.MustQuery(`select stmt_type, schema_name, table_names, index_names, exec_count, sum_cop_task_num, avg_total_keys,
 		max_total_keys, avg_processed_keys, max_processed_keys, avg_write_keys, max_write_keys, avg_prewrite_regions,
-		max_prewrite_regions, avg_affected_rows, query_sample_text, plan
+		max_prewrite_regions, avg_affected_rows, query_sample_text, plan, hints
 		from information_schema.statements_summary
 		where digest_text like 'select * from t%'`,
 	).Check(testkit.Rows("Select test test.t t:k 1 2 0 0 0 0 0 0 0 0 0 select * from t where a=2 \tid            \ttask     \testRows\toperator info\n" +
 		"\tIndexLookUp_10\troot     \t100    \t\n" +
 		"\t├─IndexScan_8 \tcop[tikv]\t100    \ttable:t, index:k(a), range:[2,2], keep order:false, stats:pseudo\n" +
-		"\t└─TableScan_9 \tcop[tikv]\t100    \ttable:t, keep order:false, stats:pseudo"))
+		"\t└─TableScan_9 \tcop[tikv]\t100    \ttable:t, keep order:false, stats:pseudo use_index(@`sel_1` `test`.`t` `k`)"))
 
 	// select ... order by
 	tk.MustQuery(`select stmt_type, schema_name, table_names, index_names, exec_count, sum_cop_task_num, avg_total_keys,

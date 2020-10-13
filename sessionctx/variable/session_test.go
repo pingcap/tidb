@@ -208,6 +208,9 @@ func (*testSessionSuite) TestSlowLogFormat(c *C) {
 # Write_sql_response_total: 1
 # Succ: true`
 	sql := "select * from t;"
+	hints := "use_index(@`sel_1` `mysql`.`t`)"
+	resultFields += "\n# Hints: " + hints
+
 	_, digest := parser.NormalizeDigest(sql)
 	logItems := &variable.SlowQueryLogItems{
 		TxnTS:             txnTS,
@@ -239,6 +242,7 @@ func (*testSessionSuite) TestSlowLogFormat(c *C) {
 		},
 		ExecRetryCount: 3,
 		ExecRetryTime:  5*time.Second + time.Millisecond*100,
+		Hints:          hints,
 	}
 	logString := seVar.SlowLogFormat(logItems)
 	c.Assert(logString, Equals, resultFields+"\n"+sql)
