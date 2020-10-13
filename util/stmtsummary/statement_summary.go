@@ -211,7 +211,7 @@ type StmtExecInfo struct {
 	PlanInCache    bool
 	ExecRetryCount uint
 	ExecRetryTime  time.Duration
-	*execdetails.StmtExecDetails
+	execdetails.StmtExecDetails
 	Prepared bool
 }
 
