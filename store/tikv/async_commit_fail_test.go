@@ -26,28 +26,17 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/store/mockstore/cluster"
-	"github.com/pingcap/tidb/store/mockstore/unistore"
 )
 
 type testAsyncCommitFailSuite struct {
 	OneByOneSuite
 	testAsyncCommitCommon
-	cluster cluster.Cluster
-	store   *tikvStore
 }
 
 var _ = SerialSuites(&testAsyncCommitFailSuite{})
 
 func (s *testAsyncCommitFailSuite) SetUpTest(c *C) {
-	client, pdClient, cluster, err := unistore.New("")
-	c.Assert(err, IsNil)
-	unistore.BootstrapWithSingleStore(cluster)
-	s.cluster = cluster
-	store, err := NewTestTiKVStore(client, pdClient, nil, nil, 0)
-	c.Assert(err, IsNil)
-
-	s.store = store.(*tikvStore)
+	s.testAsyncCommitCommon.setUpTest(c)
 }
 
 // TestFailCommitPrimaryRpcErrors tests rpc errors are handled properly when
@@ -85,13 +74,47 @@ func (s *testAsyncCommitFailSuite) TestFailAsyncCommitPrewriteRpcErrors(c *C) {
 	c.Assert(bytes.Equal(res, []byte("a1")), IsTrue)
 }
 
+func (s *testAsyncCommitFailSuite) TestPointGetWithAsyncCommit(c *C) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TiKVClient.AsyncCommit.Enable = true
+	})
+
+	s.putAlphabets(c)
+
+	txn, err := s.store.Begin()
+	c.Assert(err, IsNil)
+	txn.Set([]byte("a"), []byte("v1"))
+	txn.Set([]byte("b"), []byte("v2"))
+	s.mustPointGet(c, []byte("a"), []byte("a"))
+	s.mustPointGet(c, []byte("b"), []byte("b"))
+
+	// PointGet cannot ignore async commit transactions' locks.
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/asyncCommitDoNothing", "return"), IsNil)
+	ctx := context.WithValue(context.Background(), sessionctx.ConnID, uint64(1))
+	err = txn.Commit(ctx)
+	c.Assert(err, IsNil)
+	c.Assert(txn.(*tikvTxn).committer.isAsyncCommit(), IsTrue)
+	s.mustPointGet(c, []byte("a"), []byte("v1"))
+	s.mustPointGet(c, []byte("b"), []byte("v2"))
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/asyncCommitDoNothing"), IsNil)
+
+	// PointGet will not push the `max_ts` to its ts which is MaxUint64.
+	txn2, err := s.store.Begin()
+	c.Assert(err, IsNil)
+	s.mustGetFromTxn(c, txn2, []byte("a"), []byte("v1"))
+	s.mustGetFromTxn(c, txn2, []byte("b"), []byte("v2"))
+	err = txn2.Rollback()
+	c.Assert(err, IsNil)
+}
+
 func (s *testAsyncCommitFailSuite) TestSecondaryListInPrimaryLock(c *C) {
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.TiKVClient.AsyncCommit.Enable = true
 	})
 
-	s.putAlphabets(c, s.store)
+	s.putAlphabets(c)
 
 	// Split into several regions.
 	for _, splitKey := range []string{"h", "o", "u"} {
