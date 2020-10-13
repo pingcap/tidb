@@ -3432,6 +3432,15 @@ func (b *builtinAddDateStringIntSig) evalTime(row chunk.Row) (types.Time, bool, 
 		return types.ZeroTime, true, err
 	}
 
+	var t types.Time
+	dateStr, isNull, err := b.args[0].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return types.ZeroTime, isNull, err
+	}
+	if b.ctx.GetSessionVars().SQLMode.HasNoZeroDateMode() && (t.Year() == 0 || t.Month() == 0 || t.Day() == 0) {
+		return types.ZeroTime, true, handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, dateStr))
+	}
+
 	result, isNull, err := b.add(b.ctx, date, interval, unit)
 	return result, isNull || err != nil, err
 }
