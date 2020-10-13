@@ -507,8 +507,8 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, kvRanges []k
 		if e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl != nil {
 			if idxID != e.id {
 				basicStats := &execdetails.BasicRuntimeStats{}
-				basicStats.Record(time.Since(start), 0)
-				e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.idxPlans[0].ID(), basicStats)
+				basicStats.Record(time.Since(start), 1)
+				e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(idxID, basicStats)
 			}
 		}
 	}()
