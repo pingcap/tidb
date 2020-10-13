@@ -341,11 +341,7 @@ func (tk *TestKit) AssertErrorAndRetry(errCode, maxRetries int, sql string, args
 		tk.c.Assert(i < maxRetries, check.IsTrue, check.Commentf("sql: %s, args: %v, retries: %d", sql, args, maxRetries))
 		res, err := tk.Exec(sql, args...)
 		if err != nil {
-			originErr := errors.Cause(err)
-			tErr, ok := originErr.(*terror.Error)
-			tk.c.Assert(ok, check.IsTrue, check.Commentf("expect type 'terror.Error', but obtain '%T'", originErr))
-			sqlErr := terror.ToSQLError(tErr)
-			tk.c.Assert(int(sqlErr.Code), check.Equals, errCode, check.Commentf("Assertion failed, origin err:\n  %v", sqlErr))
+			tk.MustGetErrCode(err.Error(), errCode)
 		} else {
 			if res != nil {
 				tk.c.Assert(res.Close(), check.IsNil)
