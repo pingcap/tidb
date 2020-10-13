@@ -232,11 +232,10 @@ func alterSequenceOptions(sequenceOptions []*ast.SequenceOption, ident ast.Ident
 func onAlterSequence(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	schemaID := job.SchemaID
 	var (
-		tableName    model.CIStr
 		sequenceOpts []*ast.SequenceOption
 		ident        ast.Ident
 	)
-	if err := job.DecodeArgs(&tableName, &ident, &sequenceOpts); err != nil {
+	if err := job.DecodeArgs(&ident, &sequenceOpts); err != nil {
 		// Invalid arguments, cancel this job.
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)

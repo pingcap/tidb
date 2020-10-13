@@ -5354,7 +5354,7 @@ func (d *ddl) AlterSequence(ctx sessionctx.Context, stmt *ast.AlterSequenceStmt)
 		SchemaName: db.Name.L,
 		Type:       model.ActionAlterSequence,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{tbl.Meta().Name, ident, stmt.SeqOptions},
+		Args:       []interface{}{ident, stmt.SeqOptions},
 	}
 
 	err = d.doDDLJob(ctx, job)
