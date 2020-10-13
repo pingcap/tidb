@@ -323,24 +323,26 @@ func insertJobIntoDeleteRangeTable(ctx sessionctx.Context, job *model.Job) error
 		}
 	case model.ActionDropIndex, model.ActionDropPrimaryKey:
 		tableID := job.TableID
-		var indexName interface{}
-		var indexID int64
+		var indexNames []interface{}
+		var indexIDs []int64
 		var partitionIDs []int64
-		if err := job.DecodeArgs(&indexName, &indexID, &partitionIDs); err != nil {
+		if err := job.DecodeArgs(&indexNames, &indexIDs, &partitionIDs); err != nil {
 			return errors.Trace(err)
 		}
-		if len(partitionIDs) > 0 {
-			for _, pid := range partitionIDs {
-				startKey := tablecodec.EncodeTableIndexPrefix(pid, indexID)
-				endKey := tablecodec.EncodeTableIndexPrefix(pid, indexID+1)
-				if err := doInsert(s, job.ID, indexID, startKey, endKey, now); err != nil {
-					return errors.Trace(err)
+		for _, indexID := range indexIDs {
+			if len(partitionIDs) > 0 {
+				for _, pid := range partitionIDs {
+					startKey := tablecodec.EncodeTableIndexPrefix(pid, indexID)
+					endKey := tablecodec.EncodeTableIndexPrefix(pid, indexID+1)
+					if err := doInsert(s, job.ID, indexID, startKey, endKey, now); err != nil {
+						return errors.Trace(err)
+					}
 				}
+			} else {
+				startKey := tablecodec.EncodeTableIndexPrefix(tableID, indexID)
+				endKey := tablecodec.EncodeTableIndexPrefix(tableID, indexID+1)
+				return doInsert(s, job.ID, indexID, startKey, endKey, now)
 			}
-		} else {
-			startKey := tablecodec.EncodeTableIndexPrefix(tableID, indexID)
-			endKey := tablecodec.EncodeTableIndexPrefix(tableID, indexID+1)
-			return doInsert(s, job.ID, indexID, startKey, endKey, now)
 		}
 	case model.ActionDropColumn:
 		var colName model.CIStr

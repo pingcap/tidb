@@ -260,12 +260,13 @@ func rollingbackDropColumns(t *meta.Meta, job *model.Job) (ver int64, err error)
 	return ver, nil
 }
 
-func rollingbackDropIndex(t *meta.Meta, job *model.Job) (ver int64, err error) {
-	tblInfo, indexInfo, err := checkDropIndex(t, job)
+func rollingbackDropIndexes(t *meta.Meta, job *model.Job) (ver int64, err error) {
+	tblInfo, indexesInfo, err := checkDropIndexes(t, job)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
 
+	indexInfo := indexesInfo[0]
 	originalState := indexInfo.State
 	switch indexInfo.State {
 	case model.StateWriteOnly, model.StateDeleteOnly, model.StateDeleteReorganization, model.StateNone:
@@ -275,13 +276,19 @@ func rollingbackDropIndex(t *meta.Meta, job *model.Job) (ver int64, err error) {
 		return ver, nil
 	case model.StatePublic:
 		job.State = model.JobStateRollbackDone
-		indexInfo.State = model.StatePublic
+		for _, indexInfo := range indexesInfo {
+			indexInfo.State = model.StatePublic
+		}
 	default:
 		return ver, ErrInvalidDDLState.GenWithStackByArgs("index", indexInfo.State)
 	}
 
 	job.SchemaState = indexInfo.State
-	job.Args = []interface{}{indexInfo.Name}
+	var indexNames []model.CIStr
+	for _, indexInfo := range indexesInfo {
+		indexNames = append(indexNames, indexInfo.Name)
+	}
+	job.Args = []interface{}{indexNames}
 	ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != indexInfo.State)
 	if err != nil {
 		return ver, errors.Trace(err)
@@ -423,7 +430,7 @@ func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) 
 	case model.ActionDropColumns:
 		ver, err = rollingbackDropColumns(t, job)
 	case model.ActionDropIndex, model.ActionDropPrimaryKey:
-		ver, err = rollingbackDropIndex(t, job)
+		ver, err = rollingbackDropIndexes(t, job)
 	case model.ActionDropTable, model.ActionDropView, model.ActionDropSequence:
 		err = rollingbackDropTableOrView(t, job)
 	case model.ActionDropTablePartition:

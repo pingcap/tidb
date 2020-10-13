@@ -728,9 +728,11 @@ func onDropIndexes(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		}
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != indexInfo.State)
 	case model.StateDeleteReorganization:
+		indexesIDs := make([]int64, len(indexesInfo))
 		indexesLName := make(map[string]bool)
 		for _, indexInfo := range indexesInfo {
 			indexesLName[indexInfo.Name.L] = true
+			indexesIDs = append(indexesIDs, indexInfo.ID)
 		}
 		newIndices := make([]*model.IndexInfo, 0, len(tblInfo.Indices))
 		for _, idx := range tblInfo.Indices {
@@ -754,12 +756,12 @@ func onDropIndexes(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		// Finish this job.
 		if job.IsRollingback() {
 			job.FinishTableJob(model.JobStateRollbackDone, model.StateNone, ver, tblInfo)
-			job.Args[0] = indexInfo.ID
+			job.Args[0] = indexesIDs
 			// the partition ids were append by convertAddIdxJob2RollbackJob, it is weird, but for the compatibility,
 			// we should keep appending the partitions in the convertAddIdxJob2RollbackJob.
 		} else {
 			job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
-			job.Args = append(job.Args, indexInfo.ID, getPartitionIDs(tblInfo))
+			job.Args = append(job.Args, indexesIDs, getPartitionIDs(tblInfo))
 		}
 	default:
 		err = ErrInvalidDDLState.GenWithStackByArgs("index", indexInfo.State)
