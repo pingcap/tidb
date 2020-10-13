@@ -3057,13 +3057,10 @@ func (b *PlanBuilder) buildMemTable(_ context.Context, dbName model.CIStr, table
 			p.QueryTimeRange = b.timeRangeForSummaryTable()
 		case infoschema.TableSlowQuery:
 			p.Extractor = &SlowQueryExtractor{}
-<<<<<<< HEAD
 		case infoschema.TableTiFlashTables, infoschema.TableTiFlashSegments:
 			p.Extractor = &TiFlashSystemTableExtractor{}
-=======
 		case infoschema.TableStorageStats:
 			p.Extractor = &TableStorageStatsExtractor{}
->>>>>>> cfbd75465... planner,executor,infoschema: add system table `table_storage_stats` (#15056)
 		}
 	}
 	return p, nil
