@@ -22,7 +22,9 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
+
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/executor"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/util"
@@ -2320,4 +2322,17 @@ func (s *testSuiteJoinSerial) TestExplainAnalyzeJoin(c *C) {
 	c.Assert(len(rows), Equals, 7)
 	c.Assert(rows[0][0], Matches, "HashJoin.*")
 	c.Assert(rows[0][5], Matches, "time:.*, loops:.*, build_hash_table:{total:.*, fetch:.*, build:.*}, probe:{concurrency:5, total:.*, max:.*, probe:.*, fetch:.*}")
+}
+
+func (s *testSuiteJoin3) TestIssue20270(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	failpoint.Enable("github.com/pingcap/tidb/executor/killedInJoin2Chunk", "return(true)")
+	failpoint.Enable("github.com/pingcap/tidb/executor/killedInJoin2ChunkForOuterHashJoin", "return(true)")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(c1 int, c2 int)")
+	tk.MustExec("create table t1(c1 int, c2 int)")
+	tk.MustExec("insert into t values(1,1),(2,2)")
+	tk.MustExec("insert into t1 values(2,3),(4,4)")
+	err := tk.QueryToErr("select /*+ INL_HASH_JOIN(t, t1) */ * from t left outer join t1 on t.c1 = t1.c1 where t.c1 = 1 or t1.c2 > 20")
+	c.Assert(err, Equals, executor.ErrQueryInterrupted)
 }
