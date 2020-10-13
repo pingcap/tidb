@@ -205,7 +205,6 @@ func (s *decorrelateSolver) optimize(ctx context.Context, p LogicalPlan) (Logica
 				agg.SetChildren(np)
 				// TODO: Add a Projection if any argument of aggregate funcs or group by items are scalar functions.
 				// agg.buildProjectionIfNecessary()
-				agg.collectGroupByColumns()
 				return agg, nil
 			}
 			// We can pull up the equal conditions below the aggregation as the join key of the apply, if only
@@ -228,7 +227,7 @@ func (s *decorrelateSolver) optimize(ctx context.Context, p LogicalPlan) (Logica
 					sel.Conditions = remainedExpr
 					apply.CorCols = extractCorColumnsBySchema4LogicalPlan(apply.children[1], apply.children[0].Schema())
 					// There's no other correlated column.
-					groupByCols := expression.NewSchema(agg.groupByCols...)
+					groupByCols := expression.NewSchema(agg.GetGroupByCols()...)
 					if len(apply.CorCols) == 0 {
 						join := &apply.LogicalJoin
 						join.EqualConditions = append(join.EqualConditions, eqCondWithCorCol...)
@@ -250,7 +249,6 @@ func (s *decorrelateSolver) optimize(ctx context.Context, p LogicalPlan) (Logica
 								groupByCols.Append(clonedCol)
 							}
 						}
-						agg.collectGroupByColumns()
 						// The selection may be useless, check and remove it.
 						if len(sel.Conditions) == 0 {
 							agg.SetChildren(sel.children[0])
