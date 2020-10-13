@@ -183,7 +183,11 @@ func (h *Handle) Update(is infoschema.InfoSchema) error {
 		tbl, err := h.tableStatsFromStorage(tableInfo, physicalID, false, nil)
 		// Error is not nil may mean that there are some ddl changes on this table, we will not update it.
 		if err != nil {
+<<<<<<< HEAD
 			logutil.Logger(context.Background()).Debug("error occurred when read table stats", zap.String("table", tableInfo.Name.O), zap.Error(err))
+=======
+			logutil.BgLogger().Error("[stats] error occurred when read table stats", zap.String("table", tableInfo.Name.O), zap.Error(err))
+>>>>>>> 35cba465e... statistics: fix an unsafe lock operation and adjust some logging levels (#20381)
 			continue
 		}
 		if tbl == nil {
@@ -342,6 +346,7 @@ func (h *Handle) FlushStats() {
 	for len(h.ddlEventCh) > 0 {
 		e := <-h.ddlEventCh
 		if err := h.HandleDDLEvent(e); err != nil {
+<<<<<<< HEAD
 			logutil.Logger(context.Background()).Debug("[stats] handle ddl event fail", zap.Error(err))
 		}
 	}
@@ -350,6 +355,16 @@ func (h *Handle) FlushStats() {
 	}
 	if err := h.DumpStatsFeedbackToKV(); err != nil {
 		logutil.Logger(context.Background()).Debug("[stats] dump stats feedback fail", zap.Error(err))
+=======
+			logutil.BgLogger().Error("[stats] handle ddl event fail", zap.Error(err))
+		}
+	}
+	if err := h.DumpStatsDeltaToKV(DumpAll); err != nil {
+		logutil.BgLogger().Error("[stats] dump stats delta fail", zap.Error(err))
+	}
+	if err := h.DumpStatsFeedbackToKV(); err != nil {
+		logutil.BgLogger().Error("[stats] dump stats feedback fail", zap.Error(err))
+>>>>>>> 35cba465e... statistics: fix an unsafe lock operation and adjust some logging levels (#20381)
 	}
 }
 
@@ -540,6 +555,49 @@ func (h *Handle) tableStatsFromStorage(tableInfo *model.TableInfo, physicalID in
 			return nil, err
 		}
 	}
+<<<<<<< HEAD
+=======
+	return h.extendedStatsFromStorage(reader, table, physicalID, loadAll)
+}
+
+func (h *Handle) extendedStatsFromStorage(reader *statsReader, table *statistics.Table, physicalID int64, loadAll bool) (*statistics.Table, error) {
+	lastVersion := uint64(0)
+	if table.ExtendedStats != nil && !loadAll {
+		lastVersion = table.ExtendedStats.LastUpdateVersion
+	} else {
+		table.ExtendedStats = statistics.NewExtendedStatsColl()
+	}
+	sql := fmt.Sprintf("select stats_name, db, status, type, column_ids, scalar_stats, blob_stats, version from mysql.stats_extended where table_id = %d and status in (%d, %d) and version > %d", physicalID, StatsStatusAnalyzed, StatsStatusDeleted, lastVersion)
+	rows, _, err := reader.read(sql)
+	if err != nil || len(rows) == 0 {
+		return table, nil
+	}
+	for _, row := range rows {
+		lastVersion = mathutil.MaxUint64(lastVersion, row.GetUint64(7))
+		key := statistics.ExtendedStatsKey{
+			StatsName: row.GetString(0),
+			DB:        row.GetString(1),
+		}
+		status := uint8(row.GetInt64(2))
+		if status == StatsStatusDeleted {
+			delete(table.ExtendedStats.Stats, key)
+		} else {
+			item := &statistics.ExtendedStatsItem{
+				Tp:         uint8(row.GetInt64(3)),
+				ScalarVals: row.GetFloat64(5),
+				StringVals: row.GetString(6),
+			}
+			colIDs := row.GetString(4)
+			err := json.Unmarshal([]byte(colIDs), &item.ColIDs)
+			if err != nil {
+				logutil.BgLogger().Error("[stats] decode column IDs failed", zap.String("column_ids", colIDs), zap.Error(err))
+				return nil, err
+			}
+			table.ExtendedStats.Stats[key] = item
+		}
+	}
+	table.ExtendedStats.LastUpdateVersion = lastVersion
+>>>>>>> 35cba465e... statistics: fix an unsafe lock operation and adjust some logging levels (#20381)
 	return table, nil
 }
 
@@ -769,7 +827,7 @@ func (sr *statsReader) isHistory() bool {
 	return sr.history != nil
 }
 
-func (h *Handle) getStatsReader(history sqlexec.RestrictedSQLExecutor) (*statsReader, error) {
+func (h *Handle) getStatsReader(history sqlexec.RestrictedSQLExecutor) (reader *statsReader, err error) {
 	failpoint.Inject("mockGetStatsReaderFail", func(val failpoint.Value) {
 		if val.(bool) {
 			failpoint.Return(nil, errors.New("gofail genStatsReader error"))
@@ -779,7 +837,16 @@ func (h *Handle) getStatsReader(history sqlexec.RestrictedSQLExecutor) (*statsRe
 		return &statsReader{history: history}, nil
 	}
 	h.mu.Lock()
-	_, err := h.mu.ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), "begin")
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("getStatsReader panic %v", r)
+		}
+		if err != nil {
+			h.mu.Unlock()
+		}
+	}()
+	failpoint.Inject("mockGetStatsReaderPanic", nil)
+	_, err = h.mu.ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), "begin")
 	if err != nil {
 		return nil, err
 	}
