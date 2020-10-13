@@ -2328,6 +2328,7 @@ func (s *testSuiteJoinSerial) TestIssue20270(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	failpoint.Enable("github.com/pingcap/tidb/executor/killedInJoin2Chunk", "return(true)")
 	tk.MustExec("drop table if exists t;")
+	tk.MustExec("drop table if exists t1;")
 	tk.MustExec("create table t(c1 int, c2 int)")
 	tk.MustExec("create table t1(c1 int, c2 int)")
 	tk.MustExec("insert into t values(1,1),(2,2)")
