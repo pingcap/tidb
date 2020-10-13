@@ -2669,7 +2669,7 @@ func prunePartitionForInnerExecutor(ctx sessionctx.Context, tbl table.Table, sch
 	}
 	for _, offset := range pe.ColumnOffset {
 		if _, ok := offsetMap[offset]; !ok {
-			logutil.BgLogger().Warn("can not runtime prune in index join")
+			logutil.BgLogger().Warn("can not runtime prune in index join", zap.Reflect("offset-map", offsetMap), zap.Reflect("colOffset", pe.ColumnOffset), zap.Stack("stack"))
 			return condPruneResult, false, nil, nil
 		}
 	}
