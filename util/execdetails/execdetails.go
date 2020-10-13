@@ -434,6 +434,8 @@ const (
 	TpInsertRuntimeStat
 	// TpIndexLookUpRunTimeStats is the tp for TpIndexLookUpRunTimeStats
 	TpIndexLookUpRunTimeStats
+	// TpSlowQueryRuntimeStat is the tp for TpSlowQueryRuntimeStat
+	TpSlowQueryRuntimeStat
 )
 
 // RuntimeStats is used to express the executor runtime information.
