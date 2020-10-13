@@ -318,13 +318,15 @@ const (
 
 	// CreateAnalyzeStatusTable stores all analyze jobs' information
 	CreateAnalyzeStatusTable = `CREATE TABLE IF NOT EXISTS mysql.analyze_status (
+		UUID varchar(64),
 		TABLE_SCHEMA varchar(64),
 		TABLE_NAME varchar(64),
 		PARTITION_NAME varchar(64),
 		JOB_INFO varchar(128),
 		PROCESSED_ROWS int,
 		START_TIME datetime,
-		STATE varchar(64)
+		STATE varchar(64),
+		PRIMARY KEY(UUID)
 	);`
 )
 
