@@ -651,5 +651,11 @@
       "select /*+nth_plan(2)*/ * from test.tt where a=1 and b=1;",
       "select * from test.tt where a=1 and b=1"
     ]
+  },
+  {
+    "name": "TestEliminateMaxOneRow",
+    "cases": [
+      "select a from t2 where t2.a < (select t1.a from t1 where t1.a = t2.a);"
+    ]
   }
 ]

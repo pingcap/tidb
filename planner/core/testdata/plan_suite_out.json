@@ -2164,5 +2164,22 @@
         ]
       }
     ]
+  },
+  {
+    "Name": "TestEliminateMaxOneRow",
+    "Cases": [
+      {
+        "SQL": "select a from t2 where t2.a < (select t1.a from t1 where t1.a = t2.a);",
+        "Plan": [
+          "HashJoin_22 9990.00 root  inner join, equal:[eq(test.t2.a, test.t1.a)], other cond:lt(test.t2.a, test.t1.a)",
+          "├─TableReader_25(Build) 7992.00 root  data:Selection_24",
+          "│ └─Selection_24 7992.00 cop[tikv]  lt(test.t2.a, test.t2.a), not(isnull(test.t2.a))",
+          "│   └─TableFullScan_23 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─IndexReader_31(Probe) 8000.00 root  index:Selection_30",
+          "  └─Selection_30 8000.00 cop[tikv]  lt(test.t1.a, test.t1.a)",
+          "    └─IndexFullScan_29 10000.00 cop[tikv] table:t1, index:idx_a(a) keep order:false, stats:pseudo"
+        ]
+      }
+    ]
   }
 ]

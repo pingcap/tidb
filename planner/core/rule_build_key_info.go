@@ -221,7 +221,7 @@ func checkIndexCanBeKey(idx *model.IndexInfo, columns []*model.ColumnInfo, schem
 		find := false
 		for i, col := range columns {
 			if idxCol.Name.L == col.Name.L {
-				if !mysql.HasNotNullFlag(col.Flag) {
+				if !mysql.HasNotNullFlag(schema.Columns[i].RetType.Flag) {
 					break
 				}
 				newKey = append(newKey, schema.Columns[i])
