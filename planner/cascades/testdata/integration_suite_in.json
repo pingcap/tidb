@@ -148,7 +148,9 @@
     "name": "TestInlineProjection",
     "cases": [
       "select /*+ HASH_JOIN(t1) */ t1.b, t2.b from t1, t2 where t1.a = t2.a;", // TODO: need column pruning again.
+      "select /*+ HASH_JOIN(t1) */ t1.b, t2.b from t1, t2 where t1.a = t2.a and t1.a = 10",
       "select /*+ HASH_JOIN(t1) */ t1.b, t2.b from t1 inner join t2 on t1.a = t2.a;",
+      "select /*+ HASH_JOIN(t1) */ t1.b, t2.b from t1 inner join t2 on t1.a = t2.b and t1.a = 10",
       "select /*+ HASH_JOIN(t1) */ t1.b, t2.b from t1 left outer join t2 on t1.a = t2.a;",
       "select /*+ HASH_JOIN(t1) */ t1.b, t2.b from t1 right outer join t2 on t1.a = t2.a;",
       "select 1 from (select /*+ HASH_JOIN(t1) */ t1.a in (select t2.a from t2) from t1) x;", // TODO: should use hash join

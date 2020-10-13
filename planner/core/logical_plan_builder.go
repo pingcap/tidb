@@ -855,7 +855,6 @@ func (b *PlanBuilder) buildSelection(ctx context.Context, p LogicalPlan, where a
 	if len(expressions) == 0 {
 		return p, nil
 	}
-
 	selection.Conditions = expressions
 	selection.SetChildren(p)
 	return selection, nil
