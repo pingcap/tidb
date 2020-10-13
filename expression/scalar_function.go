@@ -28,12 +28,13 @@ import (
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/hack"
 )
 
 // error definitions.
 var (
-	ErrNoDB = terror.ClassOptimizer.NewStd(mysql.ErrNoDB)
+	ErrNoDB = dbterror.ClassOptimizer.NewStd(mysql.ErrNoDB)
 )
 
 // ScalarFunction is the function that returns a value.

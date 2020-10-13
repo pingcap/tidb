@@ -17,8 +17,8 @@ import (
 	"encoding/binary"
 	"unicode/utf8"
 
-	"github.com/pingcap/parser/terror"
 	mysql "github.com/pingcap/tidb/errno"
+	"github.com/pingcap/tidb/util/dbterror"
 )
 
 // TypeCode indicates JSON type.
@@ -206,21 +206,21 @@ const (
 
 var (
 	// ErrInvalidJSONText means invalid JSON text.
-	ErrInvalidJSONText = terror.ClassJSON.NewStd(mysql.ErrInvalidJSONText)
+	ErrInvalidJSONText = dbterror.ClassJSON.NewStd(mysql.ErrInvalidJSONText)
 	// ErrInvalidJSONPath means invalid JSON path.
-	ErrInvalidJSONPath = terror.ClassJSON.NewStd(mysql.ErrInvalidJSONPath)
+	ErrInvalidJSONPath = dbterror.ClassJSON.NewStd(mysql.ErrInvalidJSONPath)
 	// ErrInvalidJSONData means invalid JSON data.
-	ErrInvalidJSONData = terror.ClassJSON.NewStd(mysql.ErrInvalidJSONData)
+	ErrInvalidJSONData = dbterror.ClassJSON.NewStd(mysql.ErrInvalidJSONData)
 	// ErrInvalidJSONPathWildcard means invalid JSON path that contain wildcard characters.
-	ErrInvalidJSONPathWildcard = terror.ClassJSON.NewStd(mysql.ErrInvalidJSONPathWildcard)
+	ErrInvalidJSONPathWildcard = dbterror.ClassJSON.NewStd(mysql.ErrInvalidJSONPathWildcard)
 	// ErrInvalidJSONContainsPathType means invalid JSON contains path type.
-	ErrInvalidJSONContainsPathType = terror.ClassJSON.NewStd(mysql.ErrInvalidJSONContainsPathType)
+	ErrInvalidJSONContainsPathType = dbterror.ClassJSON.NewStd(mysql.ErrInvalidJSONContainsPathType)
 	// ErrJSONDocumentNULLKey means that json's key is null
-	ErrJSONDocumentNULLKey = terror.ClassJSON.NewStd(mysql.ErrJSONDocumentNULLKey)
+	ErrJSONDocumentNULLKey = dbterror.ClassJSON.NewStd(mysql.ErrJSONDocumentNULLKey)
 	// ErrInvalidJSONPathArrayCell means invalid JSON path for an array cell.
-	ErrInvalidJSONPathArrayCell = terror.ClassJSON.NewStd(mysql.ErrInvalidJSONPathArrayCell)
+	ErrInvalidJSONPathArrayCell = dbterror.ClassJSON.NewStd(mysql.ErrInvalidJSONPathArrayCell)
 	// ErrUnsupportedSecondArgumentType means unsupported second argument type in json_objectagg
-	ErrUnsupportedSecondArgumentType = terror.ClassJSON.NewStd(mysql.ErrUnsupportedSecondArgumentType)
+	ErrUnsupportedSecondArgumentType = dbterror.ClassJSON.NewStd(mysql.ErrUnsupportedSecondArgumentType)
 )
 
 // json_contains_path function type choices

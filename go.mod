@@ -46,6 +46,7 @@ require (
 	github.com/shirou/gopsutil v2.19.10+incompatible
 	github.com/sirupsen/logrus v1.6.0
 	github.com/soheilhy/cmux v0.1.4
+	github.com/stretchr/testify v1.5.1
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
 	github.com/tikv/pd v1.1.0-beta.0.20200907085700-5b04bec39b99
 	github.com/twmb/murmur3 v1.1.3

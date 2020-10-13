@@ -23,9 +23,9 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/format"
 	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
@@ -105,7 +105,7 @@ func checkInsertStmtHintDuplicated(node ast.Node, sctx sessionctx.Context) {
 				}
 				if duplicatedHint != nil {
 					hint := fmt.Sprintf("%s(`%v`)", duplicatedHint.HintName.O, duplicatedHint.HintData)
-					err := terror.ClassUtil.NewStd(errno.ErrWarnConflictingHint).FastGenByArgs(hint)
+					err := dbterror.ClassUtil.NewStd(errno.ErrWarnConflictingHint).FastGenByArgs(hint)
 					sctx.GetSessionVars().StmtCtx.AppendWarning(err)
 				}
 			}

@@ -27,11 +27,11 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/structure"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
@@ -72,15 +72,15 @@ var (
 
 var (
 	// ErrDBExists is the error for db exists.
-	ErrDBExists = terror.ClassMeta.NewStd(mysql.ErrDBCreateExists)
+	ErrDBExists = dbterror.ClassMeta.NewStd(mysql.ErrDBCreateExists)
 	// ErrDBNotExists is the error for db not exists.
-	ErrDBNotExists = terror.ClassMeta.NewStd(mysql.ErrBadDB)
+	ErrDBNotExists = dbterror.ClassMeta.NewStd(mysql.ErrBadDB)
 	// ErrTableExists is the error for table exists.
-	ErrTableExists = terror.ClassMeta.NewStd(mysql.ErrTableExists)
+	ErrTableExists = dbterror.ClassMeta.NewStd(mysql.ErrTableExists)
 	// ErrTableNotExists is the error for table not exists.
-	ErrTableNotExists = terror.ClassMeta.NewStd(mysql.ErrNoSuchTable)
+	ErrTableNotExists = dbterror.ClassMeta.NewStd(mysql.ErrNoSuchTable)
 	// ErrDDLReorgElementNotExist is the error for reorg element not exists.
-	ErrDDLReorgElementNotExist = terror.ClassMeta.NewStd(errno.ErrDDLReorgElementNotExist)
+	ErrDDLReorgElementNotExist = dbterror.ClassMeta.NewStd(errno.ErrDDLReorgElementNotExist)
 )
 
 // Meta is for handling meta information in a transaction.

@@ -15,41 +15,41 @@ package expression
 
 import (
 	pmysql "github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	mysql "github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/dbterror"
 )
 
 // Error instances.
 var (
 	// All the exported errors are defined here:
-	ErrIncorrectParameterCount     = terror.ClassExpression.NewStd(mysql.ErrWrongParamcountToNativeFct)
-	ErrDivisionByZero              = terror.ClassExpression.NewStd(mysql.ErrDivisionByZero)
-	ErrRegexp                      = terror.ClassExpression.NewStd(mysql.ErrRegexp)
-	ErrOperandColumns              = terror.ClassExpression.NewStd(mysql.ErrOperandColumns)
-	ErrCutValueGroupConcat         = terror.ClassExpression.NewStd(mysql.ErrCutValueGroupConcat)
-	ErrFunctionsNoopImpl           = terror.ClassExpression.NewStdErr(mysql.ErrNotSupportedYet, pmysql.Message("function %s has only noop implementation in tidb now, use tidb_enable_noop_functions to enable these functions", nil), "", "")
-	ErrInvalidArgumentForLogarithm = terror.ClassExpression.NewStd(mysql.ErrInvalidArgumentForLogarithm)
-	ErrIncorrectType               = terror.ClassExpression.NewStd(mysql.ErrIncorrectType)
+	ErrIncorrectParameterCount     = dbterror.ClassExpression.NewStd(mysql.ErrWrongParamcountToNativeFct)
+	ErrDivisionByZero              = dbterror.ClassExpression.NewStd(mysql.ErrDivisionByZero)
+	ErrRegexp                      = dbterror.ClassExpression.NewStd(mysql.ErrRegexp)
+	ErrOperandColumns              = dbterror.ClassExpression.NewStd(mysql.ErrOperandColumns)
+	ErrCutValueGroupConcat         = dbterror.ClassExpression.NewStd(mysql.ErrCutValueGroupConcat)
+	ErrFunctionsNoopImpl           = dbterror.ClassExpression.NewStdErr(mysql.ErrNotSupportedYet, pmysql.Message("function %s has only noop implementation in tidb now, use tidb_enable_noop_functions to enable these functions", nil), "", "")
+	ErrInvalidArgumentForLogarithm = dbterror.ClassExpression.NewStd(mysql.ErrInvalidArgumentForLogarithm)
+	ErrIncorrectType               = dbterror.ClassExpression.NewStd(mysql.ErrIncorrectType)
 
 	// All the un-exported errors are defined here:
-	errFunctionNotExists             = terror.ClassExpression.NewStd(mysql.ErrSpDoesNotExist)
-	errZlibZData                     = terror.ClassExpression.NewStd(mysql.ErrZlibZData)
-	errZlibZBuf                      = terror.ClassExpression.NewStd(mysql.ErrZlibZBuf)
-	errIncorrectArgs                 = terror.ClassExpression.NewStd(mysql.ErrWrongArguments)
-	errUnknownCharacterSet           = terror.ClassExpression.NewStd(mysql.ErrUnknownCharacterSet)
-	errDefaultValue                  = terror.ClassExpression.NewStdErr(mysql.ErrInvalidDefault, pmysql.Message("invalid default value", nil), "", "")
-	errDeprecatedSyntaxNoReplacement = terror.ClassExpression.NewStd(mysql.ErrWarnDeprecatedSyntaxNoReplacement)
-	errBadField                      = terror.ClassExpression.NewStd(mysql.ErrBadField)
-	errWarnAllowedPacketOverflowed   = terror.ClassExpression.NewStd(mysql.ErrWarnAllowedPacketOverflowed)
-	errWarnOptionIgnored             = terror.ClassExpression.NewStd(mysql.WarnOptionIgnored)
-	errTruncatedWrongValue           = terror.ClassExpression.NewStd(mysql.ErrTruncatedWrongValue)
-	errUnknownLocale                 = terror.ClassExpression.NewStd(mysql.ErrUnknownLocale)
-	errNonUniq                       = terror.ClassExpression.NewStd(mysql.ErrNonUniq)
+	errFunctionNotExists             = dbterror.ClassExpression.NewStd(mysql.ErrSpDoesNotExist)
+	errZlibZData                     = dbterror.ClassExpression.NewStd(mysql.ErrZlibZData)
+	errZlibZBuf                      = dbterror.ClassExpression.NewStd(mysql.ErrZlibZBuf)
+	errIncorrectArgs                 = dbterror.ClassExpression.NewStd(mysql.ErrWrongArguments)
+	errUnknownCharacterSet           = dbterror.ClassExpression.NewStd(mysql.ErrUnknownCharacterSet)
+	errDefaultValue                  = dbterror.ClassExpression.NewStdErr(mysql.ErrInvalidDefault, pmysql.Message("invalid default value", nil), "", "")
+	errDeprecatedSyntaxNoReplacement = dbterror.ClassExpression.NewStd(mysql.ErrWarnDeprecatedSyntaxNoReplacement)
+	errBadField                      = dbterror.ClassExpression.NewStd(mysql.ErrBadField)
+	errWarnAllowedPacketOverflowed   = dbterror.ClassExpression.NewStd(mysql.ErrWarnAllowedPacketOverflowed)
+	errWarnOptionIgnored             = dbterror.ClassExpression.NewStd(mysql.WarnOptionIgnored)
+	errTruncatedWrongValue           = dbterror.ClassExpression.NewStd(mysql.ErrTruncatedWrongValue)
+	errUnknownLocale                 = dbterror.ClassExpression.NewStd(mysql.ErrUnknownLocale)
+	errNonUniq                       = dbterror.ClassExpression.NewStd(mysql.ErrNonUniq)
 
 	// Sequence usage privilege check.
-	errSequenceAccessDenied = terror.ClassExpression.NewStd(mysql.ErrTableaccessDenied)
+	errSequenceAccessDenied = dbterror.ClassExpression.NewStd(mysql.ErrTableaccessDenied)
 )
 
 // handleInvalidTimeError reports error or warning depend on the context.

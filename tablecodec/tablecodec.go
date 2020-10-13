@@ -32,13 +32,14 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/rowcodec"
 )
 
 var (
-	errInvalidKey       = terror.ClassXEval.NewStd(errno.ErrInvalidKey)
-	errInvalidRecordKey = terror.ClassXEval.NewStd(errno.ErrInvalidRecordKey)
-	errInvalidIndexKey  = terror.ClassXEval.NewStd(errno.ErrInvalidIndexKey)
+	errInvalidKey       = dbterror.ClassXEval.NewStd(errno.ErrInvalidKey)
+	errInvalidRecordKey = dbterror.ClassXEval.NewStd(errno.ErrInvalidRecordKey)
+	errInvalidIndexKey  = dbterror.ClassXEval.NewStd(errno.ErrInvalidIndexKey)
 )
 
 var (

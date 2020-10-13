@@ -58,6 +58,7 @@ import (
 	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/fastrand"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sys/linux"
@@ -90,13 +91,13 @@ func init() {
 }
 
 var (
-	errUnknownFieldType        = terror.ClassServer.NewStd(errno.ErrUnknownFieldType)
-	errInvalidSequence         = terror.ClassServer.NewStd(errno.ErrInvalidSequence)
-	errInvalidType             = terror.ClassServer.NewStd(errno.ErrInvalidType)
-	errNotAllowedCommand       = terror.ClassServer.NewStd(errno.ErrNotAllowedCommand)
-	errAccessDenied            = terror.ClassServer.NewStd(errno.ErrAccessDenied)
-	errConCount                = terror.ClassServer.NewStd(errno.ErrConCount)
-	errSecureTransportRequired = terror.ClassServer.NewStd(errno.ErrSecureTransportRequired)
+	errUnknownFieldType        = dbterror.ClassServer.NewStd(errno.ErrUnknownFieldType)
+	errInvalidSequence         = dbterror.ClassServer.NewStd(errno.ErrInvalidSequence)
+	errInvalidType             = dbterror.ClassServer.NewStd(errno.ErrInvalidType)
+	errNotAllowedCommand       = dbterror.ClassServer.NewStd(errno.ErrNotAllowedCommand)
+	errAccessDenied            = dbterror.ClassServer.NewStd(errno.ErrAccessDenied)
+	errConCount                = dbterror.ClassServer.NewStd(errno.ErrConCount)
+	errSecureTransportRequired = dbterror.ClassServer.NewStd(errno.ErrSecureTransportRequired)
 )
 
 // DefaultCapability is the capability of the server when it is created using the default configuration.

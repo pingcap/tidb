@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
@@ -40,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -1189,7 +1189,7 @@ func asyncDelayShutdown(p *os.Process, delay time.Duration) {
 func (e *SimpleExec) executeCreateStatistics(s *ast.CreateStatisticsStmt) (err error) {
 	// Not support Cardinality and Dependency statistics type for now.
 	if s.StatsType == ast.StatsTypeCardinality || s.StatsType == ast.StatsTypeDependency {
-		return terror.ClassOptimizer.NewStd(mysql.ErrInternal)
+		return dbterror.ClassOptimizer.NewStd(mysql.ErrInternal)
 	}
 	if _, ok := e.is.SchemaByName(s.Table.Schema); !ok {
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(s.Table.Schema)
@@ -1204,7 +1204,7 @@ func (e *SimpleExec) executeCreateStatistics(s *ast.CreateStatisticsStmt) (err e
 	for _, colName := range s.Columns {
 		col := table.FindCol(t.VisibleCols(), colName.Name.L)
 		if col == nil {
-			return terror.ClassDDL.NewStd(mysql.ErrKeyColumnDoesNotExits)
+			return dbterror.ClassDDL.NewStd(mysql.ErrKeyColumnDoesNotExits)
 		}
 		if s.StatsType == ast.StatsTypeCorrelation && tblInfo.PKIsHandle && mysql.HasPriKeyFlag(col.Flag) {
 			warn := errors.New("No need to create correlation statistics on the integer primary key column")
@@ -1214,10 +1214,10 @@ func (e *SimpleExec) executeCreateStatistics(s *ast.CreateStatisticsStmt) (err e
 		colIDs = append(colIDs, col.ID)
 	}
 	if len(colIDs) != 2 && (s.StatsType == ast.StatsTypeCorrelation || s.StatsType == ast.StatsTypeDependency) {
-		return terror.ClassOptimizer.NewStd(mysql.ErrInternal)
+		return dbterror.ClassOptimizer.NewStd(mysql.ErrInternal)
 	}
 	if len(colIDs) < 1 && s.StatsType == ast.StatsTypeCardinality {
-		return terror.ClassOptimizer.NewStd(mysql.ErrInternal)
+		return dbterror.ClassOptimizer.NewStd(mysql.ErrInternal)
 	}
 	// TODO: check whether covering index exists for cardinality / dependency types.
 
@@ -1238,7 +1238,7 @@ func (e *SimpleExec) executeDropStatistics(s *ast.DropStatisticsStmt) error {
 
 func (e *SimpleExec) executeAdminReloadStatistics(s *ast.AdminStmt) error {
 	if s.Tp != ast.AdminReloadStatistics {
-		return terror.ClassOptimizer.NewStd(mysql.ErrInternal)
+		return dbterror.ClassOptimizer.NewStd(mysql.ErrInternal)
 	}
 	return domain.GetDomain(e.ctx).StatsHandle().ReloadExtendedStatistics()
 }

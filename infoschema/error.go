@@ -14,59 +14,59 @@
 package infoschema
 
 import (
-	"github.com/pingcap/parser/terror"
 	mysql "github.com/pingcap/tidb/errno"
+	"github.com/pingcap/tidb/util/dbterror"
 )
 
 var (
 	// ErrDatabaseExists returns for database already exists.
-	ErrDatabaseExists = terror.ClassSchema.NewStd(mysql.ErrDBCreateExists)
+	ErrDatabaseExists = dbterror.ClassSchema.NewStd(mysql.ErrDBCreateExists)
 	// ErrDatabaseDropExists returns for dropping a non-existent database.
-	ErrDatabaseDropExists = terror.ClassSchema.NewStd(mysql.ErrDBDropExists)
+	ErrDatabaseDropExists = dbterror.ClassSchema.NewStd(mysql.ErrDBDropExists)
 	// ErrAccessDenied return when the user doesn't have the permission to access the table.
-	ErrAccessDenied = terror.ClassSchema.NewStd(mysql.ErrAccessDenied)
+	ErrAccessDenied = dbterror.ClassSchema.NewStd(mysql.ErrAccessDenied)
 	// ErrDatabaseNotExists returns for database not exists.
-	ErrDatabaseNotExists = terror.ClassSchema.NewStd(mysql.ErrBadDB)
+	ErrDatabaseNotExists = dbterror.ClassSchema.NewStd(mysql.ErrBadDB)
 	// ErrTableExists returns for table already exists.
-	ErrTableExists = terror.ClassSchema.NewStd(mysql.ErrTableExists)
+	ErrTableExists = dbterror.ClassSchema.NewStd(mysql.ErrTableExists)
 	// ErrTableDropExists returns for dropping a non-existent table.
-	ErrTableDropExists = terror.ClassSchema.NewStd(mysql.ErrBadTable)
+	ErrTableDropExists = dbterror.ClassSchema.NewStd(mysql.ErrBadTable)
 	// ErrSequenceDropExists returns for dropping a non-exist sequence.
-	ErrSequenceDropExists = terror.ClassSchema.NewStd(mysql.ErrUnknownSequence)
+	ErrSequenceDropExists = dbterror.ClassSchema.NewStd(mysql.ErrUnknownSequence)
 	// ErrColumnNotExists returns for column not exists.
-	ErrColumnNotExists = terror.ClassSchema.NewStd(mysql.ErrBadField)
+	ErrColumnNotExists = dbterror.ClassSchema.NewStd(mysql.ErrBadField)
 	// ErrColumnExists returns for column already exists.
-	ErrColumnExists = terror.ClassSchema.NewStd(mysql.ErrDupFieldName)
+	ErrColumnExists = dbterror.ClassSchema.NewStd(mysql.ErrDupFieldName)
 	// ErrKeyNameDuplicate returns for index duplicate when rename index.
-	ErrKeyNameDuplicate = terror.ClassSchema.NewStd(mysql.ErrDupKeyName)
+	ErrKeyNameDuplicate = dbterror.ClassSchema.NewStd(mysql.ErrDupKeyName)
 	// ErrNonuniqTable returns when none unique tables errors.
-	ErrNonuniqTable = terror.ClassSchema.NewStd(mysql.ErrNonuniqTable)
+	ErrNonuniqTable = dbterror.ClassSchema.NewStd(mysql.ErrNonuniqTable)
 	// ErrMultiplePriKey returns for multiple primary keys.
-	ErrMultiplePriKey = terror.ClassSchema.NewStd(mysql.ErrMultiplePriKey)
+	ErrMultiplePriKey = dbterror.ClassSchema.NewStd(mysql.ErrMultiplePriKey)
 	// ErrTooManyKeyParts returns for too many key parts.
-	ErrTooManyKeyParts = terror.ClassSchema.NewStd(mysql.ErrTooManyKeyParts)
+	ErrTooManyKeyParts = dbterror.ClassSchema.NewStd(mysql.ErrTooManyKeyParts)
 	// ErrForeignKeyNotExists returns for foreign key not exists.
-	ErrForeignKeyNotExists = terror.ClassSchema.NewStd(mysql.ErrCantDropFieldOrKey)
+	ErrForeignKeyNotExists = dbterror.ClassSchema.NewStd(mysql.ErrCantDropFieldOrKey)
 	// ErrTableNotLockedForWrite returns for write tables when only hold the table read lock.
-	ErrTableNotLockedForWrite = terror.ClassSchema.NewStd(mysql.ErrTableNotLockedForWrite)
+	ErrTableNotLockedForWrite = dbterror.ClassSchema.NewStd(mysql.ErrTableNotLockedForWrite)
 	// ErrTableNotLocked returns when session has explicitly lock tables, then visit unlocked table will return this error.
-	ErrTableNotLocked = terror.ClassSchema.NewStd(mysql.ErrTableNotLocked)
+	ErrTableNotLocked = dbterror.ClassSchema.NewStd(mysql.ErrTableNotLocked)
 	// ErrTableNotExists returns for table not exists.
-	ErrTableNotExists = terror.ClassSchema.NewStd(mysql.ErrNoSuchTable)
+	ErrTableNotExists = dbterror.ClassSchema.NewStd(mysql.ErrNoSuchTable)
 	// ErrKeyNotExists returns for index not exists.
-	ErrKeyNotExists = terror.ClassSchema.NewStd(mysql.ErrKeyDoesNotExist)
+	ErrKeyNotExists = dbterror.ClassSchema.NewStd(mysql.ErrKeyDoesNotExist)
 	// ErrCannotAddForeign returns for foreign key exists.
-	ErrCannotAddForeign = terror.ClassSchema.NewStd(mysql.ErrCannotAddForeign)
+	ErrCannotAddForeign = dbterror.ClassSchema.NewStd(mysql.ErrCannotAddForeign)
 	// ErrForeignKeyNotMatch returns for foreign key not match.
-	ErrForeignKeyNotMatch = terror.ClassSchema.NewStd(mysql.ErrWrongFkDef)
+	ErrForeignKeyNotMatch = dbterror.ClassSchema.NewStd(mysql.ErrWrongFkDef)
 	// ErrIndexExists returns for index already exists.
-	ErrIndexExists = terror.ClassSchema.NewStd(mysql.ErrDupIndex)
+	ErrIndexExists = dbterror.ClassSchema.NewStd(mysql.ErrDupIndex)
 	// ErrUserDropExists returns for dropping a non-existent user.
-	ErrUserDropExists = terror.ClassSchema.NewStd(mysql.ErrBadUser)
+	ErrUserDropExists = dbterror.ClassSchema.NewStd(mysql.ErrBadUser)
 	// ErrUserAlreadyExists return for creating a existent user.
-	ErrUserAlreadyExists = terror.ClassSchema.NewStd(mysql.ErrUserAlreadyExists)
+	ErrUserAlreadyExists = dbterror.ClassSchema.NewStd(mysql.ErrUserAlreadyExists)
 	// ErrTableLocked returns when the table was locked by other session.
-	ErrTableLocked = terror.ClassSchema.NewStd(mysql.ErrTableLocked)
+	ErrTableLocked = dbterror.ClassSchema.NewStd(mysql.ErrTableLocked)
 	// ErrWrongObject returns when the table/view/sequence is not the expected object.
-	ErrWrongObject = terror.ClassSchema.NewStd(mysql.ErrWrongObject)
+	ErrWrongObject = dbterror.ClassSchema.NewStd(mysql.ErrWrongObject)
 )

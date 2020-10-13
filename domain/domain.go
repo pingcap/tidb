@@ -47,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/telemetry"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/domainutil"
 	"github.com/pingcap/tidb/util/expensivequery"
 	"github.com/pingcap/tidb/util/logutil"
@@ -1248,8 +1249,8 @@ func (do *Domain) NotifyUpdatePrivilege(ctx sessionctx.Context) {
 
 var (
 	// ErrInfoSchemaExpired returns the error that information schema is out of date.
-	ErrInfoSchemaExpired = terror.ClassDomain.NewStd(errno.ErrInfoSchemaExpired)
+	ErrInfoSchemaExpired = dbterror.ClassDomain.NewStd(errno.ErrInfoSchemaExpired)
 	// ErrInfoSchemaChanged returns the error that information schema is changed.
-	ErrInfoSchemaChanged = terror.ClassDomain.NewStdErr(errno.ErrInfoSchemaChanged,
+	ErrInfoSchemaChanged = dbterror.ClassDomain.NewStdErr(errno.ErrInfoSchemaChanged,
 		mysql.Message(errno.MySQLErrName[errno.ErrInfoSchemaChanged].Raw+". "+kv.TxnRetryableMark, nil), "", "")
 )

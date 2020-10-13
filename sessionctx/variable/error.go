@@ -14,24 +14,24 @@
 package variable
 
 import (
-	"github.com/pingcap/parser/terror"
 	mysql "github.com/pingcap/tidb/errno"
+	"github.com/pingcap/tidb/util/dbterror"
 )
 
 // Error instances.
 var (
-	errCantGetValidID              = terror.ClassVariable.NewStd(mysql.ErrCantGetValidID)
-	errWarnDeprecatedSyntax        = terror.ClassVariable.NewStd(mysql.ErrWarnDeprecatedSyntax)
-	ErrCantSetToNull               = terror.ClassVariable.NewStd(mysql.ErrCantSetToNull)
-	ErrSnapshotTooOld              = terror.ClassVariable.NewStd(mysql.ErrSnapshotTooOld)
-	ErrUnsupportedValueForVar      = terror.ClassVariable.NewStd(mysql.ErrUnsupportedValueForVar)
-	ErrUnknownSystemVar            = terror.ClassVariable.NewStd(mysql.ErrUnknownSystemVariable)
-	ErrIncorrectScope              = terror.ClassVariable.NewStd(mysql.ErrIncorrectGlobalLocalVar)
-	ErrUnknownTimeZone             = terror.ClassVariable.NewStd(mysql.ErrUnknownTimeZone)
-	ErrReadOnly                    = terror.ClassVariable.NewStd(mysql.ErrVariableIsReadonly)
-	ErrWrongValueForVar            = terror.ClassVariable.NewStd(mysql.ErrWrongValueForVar)
-	ErrWrongTypeForVar             = terror.ClassVariable.NewStd(mysql.ErrWrongTypeForVar)
-	ErrTruncatedWrongValue         = terror.ClassVariable.NewStd(mysql.ErrTruncatedWrongValue)
-	ErrMaxPreparedStmtCountReached = terror.ClassVariable.NewStd(mysql.ErrMaxPreparedStmtCountReached)
-	ErrUnsupportedIsolationLevel   = terror.ClassVariable.NewStd(mysql.ErrUnsupportedIsolationLevel)
+	errCantGetValidID              = dbterror.ClassVariable.NewStd(mysql.ErrCantGetValidID)
+	errWarnDeprecatedSyntax        = dbterror.ClassVariable.NewStd(mysql.ErrWarnDeprecatedSyntax)
+	ErrCantSetToNull               = dbterror.ClassVariable.NewStd(mysql.ErrCantSetToNull)
+	ErrSnapshotTooOld              = dbterror.ClassVariable.NewStd(mysql.ErrSnapshotTooOld)
+	ErrUnsupportedValueForVar      = dbterror.ClassVariable.NewStd(mysql.ErrUnsupportedValueForVar)
+	ErrUnknownSystemVar            = dbterror.ClassVariable.NewStd(mysql.ErrUnknownSystemVariable)
+	ErrIncorrectScope              = dbterror.ClassVariable.NewStd(mysql.ErrIncorrectGlobalLocalVar)
+	ErrUnknownTimeZone             = dbterror.ClassVariable.NewStd(mysql.ErrUnknownTimeZone)
+	ErrReadOnly                    = dbterror.ClassVariable.NewStd(mysql.ErrVariableIsReadonly)
+	ErrWrongValueForVar            = dbterror.ClassVariable.NewStd(mysql.ErrWrongValueForVar)
+	ErrWrongTypeForVar             = dbterror.ClassVariable.NewStd(mysql.ErrWrongTypeForVar)
+	ErrTruncatedWrongValue         = dbterror.ClassVariable.NewStd(mysql.ErrTruncatedWrongValue)
+	ErrMaxPreparedStmtCountReached = dbterror.ClassVariable.NewStd(mysql.ErrMaxPreparedStmtCountReached)
+	ErrUnsupportedIsolationLevel   = dbterror.ClassVariable.NewStd(mysql.ErrUnsupportedIsolationLevel)
 )

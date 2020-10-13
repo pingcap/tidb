@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	tidbutil "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/admin"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
@@ -735,7 +736,7 @@ func toTError(err error) *terror.Error {
 	}
 
 	// TODO: Add the error code.
-	return terror.ClassDDL.Synthesize(terror.CodeUnknown, err.Error())
+	return dbterror.ClassDDL.Synthesize(terror.CodeUnknown, err.Error())
 }
 
 // waitSchemaChanged waits for the completion of updating all servers' schema. In order to make sure that happens,

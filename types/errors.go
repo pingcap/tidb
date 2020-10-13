@@ -14,9 +14,9 @@
 package types
 
 import (
-	"github.com/pingcap/parser/terror"
 	parser_types "github.com/pingcap/parser/types"
 	mysql "github.com/pingcap/tidb/errno"
+	"github.com/pingcap/tidb/util/dbterror"
 )
 
 // const strings for ErrWrongValue
@@ -29,50 +29,50 @@ var (
 	// ErrInvalidDefault is returned when meet a invalid default value.
 	ErrInvalidDefault = parser_types.ErrInvalidDefault
 	// ErrDataTooLong is returned when converts a string value that is longer than field type length.
-	ErrDataTooLong = terror.ClassTypes.NewStd(mysql.ErrDataTooLong)
+	ErrDataTooLong = dbterror.ClassTypes.NewStd(mysql.ErrDataTooLong)
 	// ErrIllegalValueForType is returned when value of type is illegal.
-	ErrIllegalValueForType = terror.ClassTypes.NewStd(mysql.ErrIllegalValueForType)
+	ErrIllegalValueForType = dbterror.ClassTypes.NewStd(mysql.ErrIllegalValueForType)
 	// ErrTruncated is returned when data has been truncated during conversion.
-	ErrTruncated = terror.ClassTypes.NewStd(mysql.WarnDataTruncated)
+	ErrTruncated = dbterror.ClassTypes.NewStd(mysql.WarnDataTruncated)
 	// ErrOverflow is returned when data is out of range for a field type.
-	ErrOverflow = terror.ClassTypes.NewStd(mysql.ErrDataOutOfRange)
+	ErrOverflow = dbterror.ClassTypes.NewStd(mysql.ErrDataOutOfRange)
 	// ErrDivByZero is return when do division by 0.
-	ErrDivByZero = terror.ClassTypes.NewStd(mysql.ErrDivisionByZero)
+	ErrDivByZero = dbterror.ClassTypes.NewStd(mysql.ErrDivisionByZero)
 	// ErrTooBigDisplayWidth is return when display width out of range for column.
-	ErrTooBigDisplayWidth = terror.ClassTypes.NewStd(mysql.ErrTooBigDisplaywidth)
+	ErrTooBigDisplayWidth = dbterror.ClassTypes.NewStd(mysql.ErrTooBigDisplaywidth)
 	// ErrTooBigFieldLength is return when column length too big for column.
-	ErrTooBigFieldLength = terror.ClassTypes.NewStd(mysql.ErrTooBigFieldlength)
+	ErrTooBigFieldLength = dbterror.ClassTypes.NewStd(mysql.ErrTooBigFieldlength)
 	// ErrTooBigSet is returned when too many strings for column.
-	ErrTooBigSet = terror.ClassTypes.NewStd(mysql.ErrTooBigSet)
+	ErrTooBigSet = dbterror.ClassTypes.NewStd(mysql.ErrTooBigSet)
 	// ErrTooBigScale is returned when type DECIMAL/NUMERIC scale is bigger than mysql.MaxDecimalScale.
-	ErrTooBigScale = terror.ClassTypes.NewStd(mysql.ErrTooBigScale)
+	ErrTooBigScale = dbterror.ClassTypes.NewStd(mysql.ErrTooBigScale)
 	// ErrTooBigPrecision is returned when type DECIMAL/NUMERIC precision is bigger than mysql.MaxDecimalWidth
-	ErrTooBigPrecision = terror.ClassTypes.NewStd(mysql.ErrTooBigPrecision)
+	ErrTooBigPrecision = dbterror.ClassTypes.NewStd(mysql.ErrTooBigPrecision)
 	// ErrBadNumber is return when parsing an invalid binary decimal number.
-	ErrBadNumber = terror.ClassTypes.NewStd(mysql.ErrBadNumber)
+	ErrBadNumber = dbterror.ClassTypes.NewStd(mysql.ErrBadNumber)
 	// ErrInvalidFieldSize is returned when the precision of a column is out of range.
-	ErrInvalidFieldSize = terror.ClassTypes.NewStd(mysql.ErrInvalidFieldSize)
+	ErrInvalidFieldSize = dbterror.ClassTypes.NewStd(mysql.ErrInvalidFieldSize)
 	// ErrMBiggerThanD is returned when precision less than the scale.
-	ErrMBiggerThanD = terror.ClassTypes.NewStd(mysql.ErrMBiggerThanD)
+	ErrMBiggerThanD = dbterror.ClassTypes.NewStd(mysql.ErrMBiggerThanD)
 	// ErrWarnDataOutOfRange is returned when the value in a numeric column that is outside the permissible range of the column data type.
 	// See https://dev.mysql.com/doc/refman/5.5/en/out-of-range-and-overflow.html for details
-	ErrWarnDataOutOfRange = terror.ClassTypes.NewStd(mysql.ErrWarnDataOutOfRange)
+	ErrWarnDataOutOfRange = dbterror.ClassTypes.NewStd(mysql.ErrWarnDataOutOfRange)
 	// ErrDuplicatedValueInType is returned when enum column has duplicated value.
-	ErrDuplicatedValueInType = terror.ClassTypes.NewStd(mysql.ErrDuplicatedValueInType)
+	ErrDuplicatedValueInType = dbterror.ClassTypes.NewStd(mysql.ErrDuplicatedValueInType)
 	// ErrDatetimeFunctionOverflow is returned when the calculation in datetime function cause overflow.
-	ErrDatetimeFunctionOverflow = terror.ClassTypes.NewStd(mysql.ErrDatetimeFunctionOverflow)
+	ErrDatetimeFunctionOverflow = dbterror.ClassTypes.NewStd(mysql.ErrDatetimeFunctionOverflow)
 	// ErrCastAsSignedOverflow is returned when positive out-of-range integer, and convert to it's negative complement.
-	ErrCastAsSignedOverflow = terror.ClassTypes.NewStd(mysql.ErrCastAsSignedOverflow)
+	ErrCastAsSignedOverflow = dbterror.ClassTypes.NewStd(mysql.ErrCastAsSignedOverflow)
 	// ErrCastNegIntAsUnsigned is returned when a negative integer be casted to an unsigned int.
-	ErrCastNegIntAsUnsigned = terror.ClassTypes.NewStd(mysql.ErrCastNegIntAsUnsigned)
+	ErrCastNegIntAsUnsigned = dbterror.ClassTypes.NewStd(mysql.ErrCastNegIntAsUnsigned)
 	// ErrInvalidYearFormat is returned when the input is not a valid year format.
-	ErrInvalidYearFormat = terror.ClassTypes.NewStd(mysql.ErrInvalidYearFormat)
+	ErrInvalidYearFormat = dbterror.ClassTypes.NewStd(mysql.ErrInvalidYearFormat)
 	// ErrInvalidYear is returned when the input value is not a valid year.
-	ErrInvalidYear = terror.ClassTypes.NewStd(mysql.ErrInvalidYear)
+	ErrInvalidYear = dbterror.ClassTypes.NewStd(mysql.ErrInvalidYear)
 	// ErrTruncatedWrongVal is returned when data has been truncated during conversion.
-	ErrTruncatedWrongVal = terror.ClassTypes.NewStd(mysql.ErrTruncatedWrongValue)
+	ErrTruncatedWrongVal = dbterror.ClassTypes.NewStd(mysql.ErrTruncatedWrongValue)
 	// ErrInvalidWeekModeFormat is returned when the week mode is wrong.
-	ErrInvalidWeekModeFormat = terror.ClassTypes.NewStd(mysql.ErrInvalidWeekModeFormat)
+	ErrInvalidWeekModeFormat = dbterror.ClassTypes.NewStd(mysql.ErrInvalidWeekModeFormat)
 	// ErrWrongValue is returned when the input value is in wrong format.
-	ErrWrongValue = terror.ClassTypes.NewStdErr(mysql.ErrTruncatedWrongValue, mysql.MySQLErrName[mysql.ErrWrongValue], "", "")
+	ErrWrongValue = dbterror.ClassTypes.NewStdErr(mysql.ErrTruncatedWrongValue, mysql.MySQLErrName[mysql.ErrWrongValue], "", "")
 )

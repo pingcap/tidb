@@ -738,6 +738,14 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string, scope Sc
 			return "off", nil
 		}
 		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
+	case TiDBRedactLog:
+		switch {
+		case strings.EqualFold(value, "ON") || value == "1":
+			return "on", nil
+		case strings.EqualFold(value, "OFF") || value == "0":
+			return "off", nil
+		}
+		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
 	case TiDBCapturePlanBaseline:
 		switch {
 		case strings.EqualFold(value, "ON") || value == "1":
