@@ -15,11 +15,11 @@ package executor_test
 
 import (
 	"fmt"
-	"github.com/pingcap/tidb/planner/core"
-	"github.com/pingcap/tidb/util/collate"
 	"strings"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
