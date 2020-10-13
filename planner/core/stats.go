@@ -468,7 +468,7 @@ func (ds *DataSource) accessPathsForConds(conditions []expression.Expression, us
 				logutil.BgLogger().Debug("can not derive statistics of a path", zap.Error(err))
 				continue
 			}
-			if len(path.TableFilters) > 0 || len(path.AccessConds) == 0 {
+			if len(path.AccessConds) == 0 {
 				// If AccessConds is empty or tableFilter is not empty, we ignore the access path.
 				// Now these conditions are too strict.
 				// For example, a sql `select * from t where a > 1 or (b < 2 and c > 3)` and table `t` with indexes
@@ -497,7 +497,7 @@ func (ds *DataSource) accessPathsForConds(conditions []expression.Expression, us
 				continue
 			}
 			noIntervalRanges := ds.deriveIndexPathStats(path, conditions, true)
-			if len(path.TableFilters) > 0 || len(path.AccessConds) == 0 {
+			if len(path.AccessConds) == 0 {
 				// If AccessConds is empty or tableFilter is not empty, we ignore the access path.
 				// Now these conditions are too strict.
 				// For example, a sql `select * from t where a > 1 or (b < 2 and c > 3)` and table `t` with indexes
@@ -549,6 +549,12 @@ func (ds *DataSource) buildIndexMergeOrPath(partialPaths []*util.AccessPath, cur
 	indexMergePath := &util.AccessPath{PartialIndexPaths: partialPaths}
 	indexMergePath.TableFilters = append(indexMergePath.TableFilters, ds.pushedDownConds[:current]...)
 	indexMergePath.TableFilters = append(indexMergePath.TableFilters, ds.pushedDownConds[current+1:]...)
+	for _, path := range partialPaths {
+		if len(path.TableFilters) > 0 {
+			indexMergePath.TableFilters =  append(indexMergePath.TableFilters, ds.pushedDownConds[current])
+			break
+		}
+	}
 	return indexMergePath
 }
 
