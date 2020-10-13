@@ -138,7 +138,9 @@ func (p *LogicalProjection) buildSchemaByExprs(selfSchema *expression.Schema) *e
 
 // BuildKeyInfo implements LogicalPlan BuildKeyInfo interface.
 func (p *LogicalProjection) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
-	p.logicalSchemaProducer.BuildKeyInfo(selfSchema, childSchema)
+	// `LogicalProjection` use schema from `Exprs` to build key info. See `buildSchemaByExprs`.
+	// So call `baseLogicalPlan.BuildKeyInfo` here to avoid duplicated building key info.
+	p.baseLogicalPlan.BuildKeyInfo(selfSchema, childSchema)
 	selfSchema.Keys = nil
 	schema := p.buildSchemaByExprs(selfSchema)
 	for _, key := range childSchema[0].Keys {
