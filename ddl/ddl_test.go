@@ -237,7 +237,7 @@ func buildDropIdxJob(dbInfo *model.DBInfo, tblInfo *model.TableInfo, indexName s
 		TableID:    tblInfo.ID,
 		Type:       tp,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{model.NewCIStr(indexName)},
+		Args:       []interface{}{[]model.CIStr{model.NewCIStr(indexName)}},
 	}
 }
 
