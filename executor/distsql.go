@@ -498,6 +498,12 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, kvRanges []k
 	}
 	tps := e.getRetTpsByHandle()
 	// Since the first read only need handle information. So its returned col is only 1.
+	if e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl != nil {
+		if e.idxPlans[0].ID() > 0 {
+			runtimeStats := &execdetails.BasicRuntimeStats{}
+			e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.idxPlans[0].ID(), runtimeStats)
+		}
+	}
 	result, err := distsql.SelectWithRuntimeStats(ctx, e.ctx, kvReq, tps, e.feedback, getPhysicalPlanIDs(e.idxPlans), e.idxPlans[0].ID())
 	if err != nil {
 		return err
