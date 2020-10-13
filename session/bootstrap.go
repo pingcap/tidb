@@ -315,6 +315,17 @@ const (
 		LAST_UPDATED_AT timestamp,
 		PRIMARY KEY(TABLE_SCHEMA, TABLE_NAME, INDEX_NAME)
 	);`
+
+	// CreateAnalyzeStatusTable stores all analyze jobs' information
+	CreateAnalyzeStatusTable = `CREATE TABLE IF NOT EXISTS mysql.analyze_status (
+		TABLE_SCHEMA varchar(64),
+		TABLE_NAME varchar(64),
+		PARTITION_NAME varchar(64),
+		JOB_INFO varchar(128),
+		PROCESSED_ROWS int,
+		START_TIME datetime,
+		STATE varchar(64)
+	);`
 )
 
 // bootstrap initiates system DB for a store.
@@ -427,6 +438,8 @@ const (
 	version50 = 50
 	// version51 introduces CreateTablespacePriv to mysql.user.
 	version51 = 51
+	// version52 introduce the mysql.analyze_status table.
+	version52 = 52
 )
 
 var (
@@ -481,6 +494,7 @@ var (
 		upgradeToVer49,
 		upgradeToVer50,
 		upgradeToVer51,
+		upgradeToVer52,
 	}
 )
 
@@ -1183,6 +1197,13 @@ func upgradeToVer51(s Session, ver int64) {
 	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET Create_tablespace_priv='Y' where Super_priv='Y'")
 }
 
+func upgradeToVer52(s Session, ver int64) {
+	if ver >= version52 {
+		return
+	}
+	doReentrantDDL(s, CreateAnalyzeStatusTable)
+}
+
 // updateBootstrapVer updates bootstrap version variable in mysql.TiDB table.
 func updateBootstrapVer(s Session) {
 	// Update bootstrap version.
@@ -1250,6 +1271,8 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreateStatsExtended)
 	// Create schema_index_usage.
 	mustExecute(s, CreateSchemaIndexUsageTable)
+	// Create analyze_status
+	mustExecute(s, CreateAnalyzeStatusTable)
 }
 
 // doDMLWorks executes DML statements in bootstrap stage.
