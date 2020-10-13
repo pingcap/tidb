@@ -480,7 +480,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, kvRanges []k
 		collExec := true
 		e.dagPB.CollectExecutionSummaries = &collExec
 	}
-
+	start := time.Now()
 	tracker := memory.NewTracker(memory.LabelForIndexWorker, -1)
 	tracker.AttachTo(e.memTracker)
 	var builder distsql.RequestBuilder
@@ -497,14 +497,23 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, kvRanges []k
 		return err
 	}
 	tps := e.getRetTpsByHandle()
-	// Since the first read only need handle information. So its returned col is only 1.
-	if e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl != nil {
-		if e.idxPlans[0].ID() > 0 {
-			runtimeStats := &execdetails.BasicRuntimeStats{}
-			e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.idxPlans[0].ID(), runtimeStats)
-		}
+	var idxID int
+	if len(e.idxPlans) > 0 {
+		idxID = e.idxPlans[0].ID()
+	} else {
+		idxID = e.id
 	}
-	result, err := distsql.SelectWithRuntimeStats(ctx, e.ctx, kvReq, tps, e.feedback, getPhysicalPlanIDs(e.idxPlans), e.idxPlans[0].ID())
+	defer func() {
+		if e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl != nil {
+			if idxID != e.id {
+				basicStats := &execdetails.BasicRuntimeStats{}
+				basicStats.Record(time.Since(start), 0)
+				e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.idxPlans[0].ID(), basicStats)
+			}
+		}
+	}()
+	// Since the first read only need handle information. So its returned col is only 1.
+	result, err := distsql.SelectWithRuntimeStats(ctx, e.ctx, kvReq, tps, e.feedback, getPhysicalPlanIDs(e.idxPlans), idxID)
 	if err != nil {
 		return err
 	}
@@ -576,9 +585,14 @@ func (e *IndexLookUpExecutor) startTableWorker(ctx context.Context, workCh <-cha
 }
 
 func (e *IndexLookUpExecutor) buildTableReader(ctx context.Context, handles []kv.Handle) (Executor, error) {
-	id := e.tblPlans[0].ID()
+	var tblID int
+	if len(e.tblPlans) > 0 {
+		tblID = e.tblPlans[0].ID()
+	} else {
+		tblID = e.id
+	}
 	tableReaderExec := &TableReaderExecutor{
-		baseExecutor:   newBaseExecutor(e.ctx, e.schema, id),
+		baseExecutor:   newBaseExecutor(e.ctx, e.schema, tblID),
 		table:          e.table,
 		dagPB:          e.tableRequest,
 		startTS:        e.startTS,
