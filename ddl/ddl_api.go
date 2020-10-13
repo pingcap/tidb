@@ -4874,7 +4874,7 @@ func (d *ddl) DropIndex(ctx sessionctx.Context, ti ast.Ident, indexName model.CI
 		jobTp = model.ActionDropPrimaryKey
 	}
 
-	indexNames := make([]interface{}, 1, 1)
+	indexNames := make([]interface{}, 1)
 	indexNames[0] = indexName
 
 	job := &model.Job{
