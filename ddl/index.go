@@ -728,7 +728,7 @@ func onDropIndexes(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		}
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != indexInfo.State)
 	case model.StateDeleteReorganization:
-		indexesIDs := make([]int64, len(indexesInfo))
+		indexesIDs := make([]int64, 0, len(indexesInfo))
 		indexesLName := make(map[string]bool)
 		for _, indexInfo := range indexesInfo {
 			indexesLName[indexInfo.Name.L] = true
