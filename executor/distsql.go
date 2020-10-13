@@ -391,7 +391,7 @@ func (e *IndexLookUpExecutor) Open(ctx context.Context) error {
 	sc := e.ctx.GetSessionVars().StmtCtx
 	physicalID := getPhysicalTableID(e.table)
 	if e.index.ID == -1 {
-		e.kvRanges, err = distsql.CommonHandleRangesToKVRanges(sc, physicalID, e.ranges)
+		e.kvRanges, err = distsql.CommonHandleRangesToKVRanges(sc, []int64{physicalID}, e.ranges)
 	} else {
 		e.kvRanges, err = distsql.IndexRangesToKVRanges(sc, physicalID, e.index.ID, e.ranges, e.feedback)
 	}

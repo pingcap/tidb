@@ -671,26 +671,27 @@ func (s *testIntegrationSerialSuite) TestIsolationReadDoNotFilterSystemDB(c *C) 
 
 func (s *testIntegrationSuite) TestPartitionTableStats(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
+	{
+		tk.MustExec(`set @@tidb_partition_prune_mode='` + string(variable.StaticOnly) + `'`)
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("create table t(a int, b int)partition by range columns(a)(partition p0 values less than (10), partition p1 values less than(20), partition p2 values less than(30));")
+		tk.MustExec("insert into t values(21, 1), (22, 2), (23, 3), (24, 4), (15, 5)")
+		tk.MustExec("analyze table t")
 
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int, b int)partition by range columns(a)(partition p0 values less than (10), partition p1 values less than(20), partition p2 values less than(30));")
-	tk.MustExec("insert into t values(21, 1), (22, 2), (23, 3), (24, 4), (15, 5)")
-	tk.MustExec("analyze table t")
-	tk.MustExec(`set @@tidb_partition_prune_mode='` + string(variable.StaticOnly) + `'`)
-
-	var input []string
-	var output []struct {
-		SQL    string
-		Result []string
-	}
-	s.testData.GetTestCases(c, &input, &output)
-	for i, tt := range input {
-		s.testData.OnRecord(func() {
-			output[i].SQL = tt
-			output[i].Result = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
-		})
-		tk.MustQuery(tt).Check(testkit.Rows(output[i].Result...))
+		var input []string
+		var output []struct {
+			SQL    string
+			Result []string
+		}
+		s.testData.GetTestCases(c, &input, &output)
+		for i, tt := range input {
+			s.testData.OnRecord(func() {
+				output[i].SQL = tt
+				output[i].Result = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+			})
+			tk.MustQuery(tt).Check(testkit.Rows(output[i].Result...))
+		}
 	}
 }
 
@@ -1521,6 +1522,28 @@ func (s *testIntegrationSerialSuite) TestExplainAnalyzePointGet(c *C) {
 	}
 	checkExplain("Get")
 	res = tk.MustQuery("explain analyze select * from t where a in (1,2,3);")
+	checkExplain("BatchGet")
+}
+
+func (s *testIntegrationSerialSuite) TestExplainAnalyzeDML(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec(" create table t (a int, b int, unique index (a));")
+	tk.MustExec("insert into t values (1,1)")
+
+	res := tk.MustQuery("explain analyze select * from t where a=1;")
+	checkExplain := func(rpc string) {
+		resBuff := bytes.NewBufferString("")
+		for _, row := range res.Rows() {
+			fmt.Fprintf(resBuff, "%s\n", row)
+		}
+		explain := resBuff.String()
+		c.Assert(strings.Contains(explain, rpc+":{num_rpc:"), IsTrue, Commentf("%s", explain))
+		c.Assert(strings.Contains(explain, "total_time:"), IsTrue, Commentf("%s", explain))
+	}
+	checkExplain("Get")
+	res = tk.MustQuery("explain analyze insert ignore into t values (1,1),(2,2),(3,3),(4,4);")
 	checkExplain("BatchGet")
 }
 
