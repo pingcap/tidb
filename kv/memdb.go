@@ -127,9 +127,10 @@ func IsTombstone(val []byte) bool { return len(val) == 0 }
 
 // MemKeyHandle represents a pointer for key in MemBuffer.
 type MemKeyHandle struct {
-	Passthrough uint16
-	idx         uint16
-	off         uint32
+	// Opaque user data
+	UserData uint16
+	idx      uint16
+	off      uint32
 }
 
 func (h MemKeyHandle) toAddr() memdbArenaAddr {

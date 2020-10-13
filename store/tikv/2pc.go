@@ -150,11 +150,11 @@ func (m *memBufferMutations) GetValue(i int) []byte {
 }
 
 func (m *memBufferMutations) GetOp(i int) pb.Op {
-	return pb.Op(m.handles[i].Passthrough >> 1)
+	return pb.Op(m.handles[i].UserData >> 1)
 }
 
 func (m *memBufferMutations) IsPessimisticLock(i int) bool {
-	return m.handles[i].Passthrough&1 != 0
+	return m.handles[i].UserData&1 != 0
 }
 
 func (m *memBufferMutations) Slice(from, to int) CommitterMutations {
@@ -169,7 +169,7 @@ func (m *memBufferMutations) Push(op pb.Op, isPessimisticLock bool, handle kv.Me
 	if isPessimisticLock {
 		aux |= 1
 	}
-	handle.Passthrough = aux
+	handle.UserData = aux
 	m.handles = append(m.handles, handle)
 }
 
@@ -192,7 +192,7 @@ type PlainMutations struct {
 	isPessimisticLock []bool
 }
 
-// NewPlainMutations creates a CommitterMutations object with sizeHint reserved.
+// NewPlainMutations creates a PlainMutations object with sizeHint reserved.
 func NewPlainMutations(sizeHint int) PlainMutations {
 	return PlainMutations{
 		ops:               make([]pb.Op, 0, sizeHint),
