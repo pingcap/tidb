@@ -142,4 +142,5 @@ const (
 	LblAddress     = "address"
 	LblBatchGet    = "batch_get"
 	LblGet         = "get"
+	LblLockKeys    = "lock_keys"
 )
