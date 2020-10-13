@@ -226,8 +226,6 @@ type memdbVlog struct {
 	memdbArena
 }
 
-const memdbVlogHdrSize = 8 + 8 + 4
-
 type memdbVlogHdr struct {
 	nodeAddr memdbArenaAddr
 	oldValue memdbArenaAddr
@@ -236,28 +234,50 @@ type memdbVlogHdr struct {
 
 func (hdr *memdbVlogHdr) store(dst []byte) {
 	cursor := 0
-	endian.PutUint32(dst[cursor:], hdr.valueLen)
-	cursor += 4
-	hdr.oldValue.store(dst[cursor:])
-	cursor += 8
 	hdr.nodeAddr.store(dst[cursor:])
+	cursor += 8
+
+	vLen := hdr.valueLen << 1
+	if !hdr.oldValue.isNull() {
+		hdr.oldValue.store(dst[cursor:])
+		cursor += 8
+		vLen |= 1
+	}
+
+	endian.PutUint32(dst[cursor:], vLen)
 }
 
 func (hdr *memdbVlogHdr) load(src []byte) {
-	cursor := 0
-	hdr.valueLen = endian.Uint32(src[cursor:])
-	cursor += 4
-	hdr.oldValue.load(src[cursor:])
-	cursor += 8
+	cursor := len(src) - 4
+	vLen := endian.Uint32(src[cursor:])
+	hdr.valueLen = vLen >> 1
+
+	if vLen&1 != 0 {
+		cursor -= 8
+		hdr.oldValue.load(src[cursor:])
+	} else {
+		hdr.oldValue = nullAddr
+	}
+
+	cursor -= 8
 	hdr.nodeAddr.load(src[cursor:])
 }
 
+func (hdr *memdbVlogHdr) size() int {
+	sz := 8 + 4
+	if !hdr.oldValue.isNull() {
+		sz += 8
+	}
+	return sz
+}
+
 func (l *memdbVlog) appendValue(nodeAddr memdbArenaAddr, oldValue memdbArenaAddr, value []byte) memdbArenaAddr {
-	size := memdbVlogHdrSize + len(value)
+	hdr := memdbVlogHdr{nodeAddr, oldValue, uint32(len(value))}
+
+	size := hdr.size() + len(value)
 	addr, mem := l.alloc(size, false)
 
 	copy(mem, value)
-	hdr := memdbVlogHdr{nodeAddr, oldValue, uint32(len(value))}
 	hdr.store(mem[len(value):])
 
 	addr.off += uint32(size)
@@ -265,14 +285,20 @@ func (l *memdbVlog) appendValue(nodeAddr memdbArenaAddr, oldValue memdbArenaAddr
 }
 
 func (l *memdbVlog) getValue(addr memdbArenaAddr) []byte {
-	lenOff := addr.off - memdbVlogHdrSize
+	_, v := l.getHdrAndValue(addr)
+	return v
+}
+
+func (l *memdbVlog) getHdrAndValue(addr memdbArenaAddr) (memdbVlogHdr, []byte) {
 	block := l.blocks[addr.idx].buf
-	valueLen := endian.Uint32(block[lenOff:])
-	if valueLen == 0 {
-		return tombstone
+	var hdr memdbVlogHdr
+	hdr.load(block[:addr.off])
+	if hdr.valueLen == 0 {
+		return hdr, tombstone
 	}
-	valueOff := lenOff - valueLen
-	return block[valueOff:lenOff:lenOff]
+	hdrOff := addr.off - uint32(hdr.size())
+	valueOff := hdrOff - hdr.valueLen
+	return hdr, block[valueOff:hdrOff:hdrOff]
 }
 
 func (l *memdbVlog) getSnapshotValue(addr memdbArenaAddr, snap *memdbCheckpoint) ([]byte, bool) {
@@ -290,8 +316,7 @@ func (l *memdbVlog) selectValueHistory(addr memdbArenaAddr, predicate func(memdb
 		if predicate(addr) {
 			return addr
 		}
-		var hdr memdbVlogHdr
-		hdr.load(l.blocks[addr.idx].buf[addr.off-memdbVlogHdrSize:])
+		hdr, _ := l.getHdrAndValue(addr)
 		addr = hdr.oldValue
 	}
 	return nullAddr
@@ -300,10 +325,8 @@ func (l *memdbVlog) selectValueHistory(addr memdbArenaAddr, predicate func(memdb
 func (l *memdbVlog) revertToCheckpoint(db *memdb, cp *memdbCheckpoint) {
 	cursor := l.checkpoint()
 	for !cp.isSamePosition(&cursor) {
-		hdrOff := cursor.offsetInBlock - memdbVlogHdrSize
-		block := l.blocks[cursor.blocks-1].buf
-		var hdr memdbVlogHdr
-		hdr.load(block[hdrOff:])
+		cursorAddr := memdbArenaAddr{idx: uint32(cursor.blocks - 1), off: uint32(cursor.offsetInBlock)}
+		hdr, _ := l.getHdrAndValue(cursorAddr)
 		node := db.getNode(hdr.nodeAddr)
 
 		node.vptr = hdr.oldValue
@@ -330,15 +353,11 @@ func (l *memdbVlog) inspectKVInLog(db *memdb, head, tail *memdbCheckpoint, f fun
 	cursor := *tail
 	for !head.isSamePosition(&cursor) {
 		cursorAddr := memdbArenaAddr{idx: uint32(cursor.blocks - 1), off: uint32(cursor.offsetInBlock)}
-		hdrOff := cursorAddr.off - memdbVlogHdrSize
-		block := l.blocks[cursorAddr.idx].buf
-		var hdr memdbVlogHdr
-		hdr.load(block[hdrOff:])
+		hdr, value := l.getHdrAndValue(cursorAddr)
 		node := db.allocator.getNode(hdr.nodeAddr)
 
 		// Skip older versions.
 		if node.vptr == cursorAddr {
-			value := block[hdrOff-hdr.valueLen : hdrOff]
 			f(node.getKey(), node.getKeyFlags(), value)
 		}
 
@@ -347,7 +366,7 @@ func (l *memdbVlog) inspectKVInLog(db *memdb, head, tail *memdbCheckpoint, f fun
 }
 
 func (l *memdbVlog) moveBackCursor(cursor *memdbCheckpoint, hdr *memdbVlogHdr) {
-	cursor.offsetInBlock -= (memdbVlogHdrSize + int(hdr.valueLen))
+	cursor.offsetInBlock -= hdr.size() + int(hdr.valueLen)
 	if cursor.offsetInBlock == 0 {
 		cursor.blocks--
 		if cursor.blocks > 0 {
