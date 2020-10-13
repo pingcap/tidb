@@ -346,7 +346,7 @@ func (e *slowQueryRetriever) parseLog(ctx sessionctx.Context, log []string, offs
 						startFlag = false
 					}
 				} else if strings.HasPrefix(line, variable.SlowLogCopBackoffPrefix) {
-					valid, err := st.setFieldValue(tz, line, line, fileLine, e.checker)
+					valid, err := st.setFieldValue(tz, variable.SlowLogBackoffDetail, line, fileLine, e.checker)
 					if err != nil {
 						ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 						continue
@@ -618,15 +618,14 @@ func (st *slowQueryTuple) setFieldValue(tz *time.Location, field, value string, 
 		st.preprocSubqueries, err = strconv.ParseUint(value, 10, 64)
 	case variable.SlowLogPreProcSubQueryTimeStr:
 		st.preprocSubQueryTime, err = strconv.ParseFloat(value, 64)
-	}
-	if err != nil {
-		return valid, fmt.Errorf("Parse slow log at line " + strconv.FormatInt(int64(lineNum), 10) + " failed. Field: `" + field + "`, error: " + err.Error())
-	}
-	if strings.HasPrefix(field, variable.SlowLogCopBackoffPrefix) {
+	case variable.SlowLogBackoffDetail:
 		if len(st.backoffDetail) > 0 {
 			st.backoffDetail += " "
 		}
 		st.backoffDetail += value
+	}
+	if err != nil {
+		return valid, fmt.Errorf("Parse slow log at line " + strconv.FormatInt(int64(lineNum), 10) + " failed. Field: `" + field + "`, error: " + err.Error())
 	}
 	return valid, err
 }

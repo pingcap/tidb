@@ -187,35 +187,32 @@ type stmtSummaryByDigestElement struct {
 
 // StmtExecInfo records execution information of each statement.
 type StmtExecInfo struct {
-	SchemaName        string
-	OriginalSQL       string
-	NormalizedSQL     string
-	Digest            string
-	PrevSQL           string
-	PrevSQLDigest     string
-	PlanGenerator     func() string
-	PlanDigest        string
-	PlanDigestGen     func() string
-	User              string
-	TotalLatency      time.Duration
-	ParseLatency      time.Duration
-	CompileLatency    time.Duration
-	StmtCtx           *stmtctx.StatementContext
-	CopTasks          *stmtctx.CopTasksDetails
-	ExecDetail        *execdetails.ExecDetails
-	MemMax            int64
-	DiskMax           int64
-	StartTime         time.Time
-	IsInternal        bool
-	Succeed           bool
-	PlanInCache       bool
-	ExecRetryCount    uint
-	ExecRetryTime     time.Duration
-	KVTotal           time.Duration
-	PDTotal           time.Duration
-	BackoffTotal      time.Duration
-	WriteSQLRespTotal time.Duration
-	Prepared          bool
+	SchemaName     string
+	OriginalSQL    string
+	NormalizedSQL  string
+	Digest         string
+	PrevSQL        string
+	PrevSQLDigest  string
+	PlanGenerator  func() string
+	PlanDigest     string
+	PlanDigestGen  func() string
+	User           string
+	TotalLatency   time.Duration
+	ParseLatency   time.Duration
+	CompileLatency time.Duration
+	StmtCtx        *stmtctx.StatementContext
+	CopTasks       *stmtctx.CopTasksDetails
+	ExecDetail     *execdetails.ExecDetails
+	MemMax         int64
+	DiskMax        int64
+	StartTime      time.Time
+	IsInternal     bool
+	Succeed        bool
+	PlanInCache    bool
+	ExecRetryCount uint
+	ExecRetryTime  time.Duration
+	*execdetails.StmtExecDetails
+	Prepared bool
 }
 
 // newStmtSummaryByDigestMap creates an empty stmtSummaryByDigestMap.
@@ -775,15 +772,10 @@ func (ssElement *stmtSummaryByDigestElement) add(sei *StmtExecInfo, intervalSeco
 		ssElement.execRetryCount += sei.ExecRetryCount
 		ssElement.execRetryTime += sei.ExecRetryTime
 	}
-	ssElement.sumKVTotal += sei.KVTotal
-	ssElement.sumPDTotal += sei.PDTotal
-	ssElement.sumBackoffTotal += sei.BackoffTotal
-	ssElement.sumWriteSQLRespTotal += sei.WriteSQLRespTotal
-	if sei.Prepared {
-		ssElement.prepared = true
-	} else {
-		ssElement.prepared = false
-	}
+	ssElement.sumKVTotal += time.Duration(atomic.LoadInt64(&sei.StmtExecDetails.WaitKVRespDuration))
+	ssElement.sumPDTotal += time.Duration(atomic.LoadInt64(&sei.StmtExecDetails.WaitPDRespDuration))
+	ssElement.sumBackoffTotal += time.Duration(atomic.LoadInt64(&sei.StmtExecDetails.BackoffDuration))
+	ssElement.sumWriteSQLRespTotal += sei.StmtExecDetails.WriteSQLRespDuration
 }
 
 func (ssElement *stmtSummaryByDigestElement) toDatum(ssbd *stmtSummaryByDigest) []types.Datum {
@@ -867,10 +859,10 @@ func (ssElement *stmtSummaryByDigestElement) toDatum(ssbd *stmtSummaryByDigest) 
 		ssElement.maxMem,
 		avgInt(ssElement.sumDisk, ssElement.execCount),
 		ssElement.maxDisk,
-		float64(ssElement.sumKVTotal),
-		float64(ssElement.sumPDTotal),
-		float64(ssElement.sumBackoffTotal),
-		float64(ssElement.sumWriteSQLRespTotal),
+		avgInt(int64(ssElement.sumKVTotal), ssElement.commitCount),
+		avgInt(int64(ssElement.sumPDTotal), ssElement.commitCount),
+		avgInt(int64(ssElement.sumBackoffTotal), ssElement.commitCount),
+		avgInt(int64(ssElement.sumWriteSQLRespTotal), ssElement.commitCount),
 		ssElement.prepared,
 		avgFloat(int64(ssElement.sumAffectedRows), ssElement.execCount),
 		types.NewTime(types.FromGoTime(ssElement.firstSeen), mysql.TypeTimestamp, 0),
