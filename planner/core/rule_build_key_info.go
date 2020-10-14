@@ -15,6 +15,7 @@ package core
 
 import (
 	"context"
+	"strings"
 
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
@@ -99,6 +100,27 @@ func (p *LogicalSelection) BuildKeyInfo(selfSchema *expression.Schema, childSche
 			if p.checkMaxOneRowCond(sf.GetArgs()[0], sf.GetArgs()[1], childSchema[0]) || p.checkMaxOneRowCond(sf.GetArgs()[1], sf.GetArgs()[0], childSchema[0]) {
 				p.maxOneRow = true
 				break
+			}
+			// MaxOneRow can be eliminated if there is a unique index in the equivalence condition.
+			for _, child := range p.children {
+				ds, ok := child.(*DataSource)
+				if !ok {
+					continue
+				}
+				tblInfo := ds.tableInfo
+				for _, idx := range tblInfo.Indices {
+					if idx.Unique {
+						for _, idxCol := range idx.Columns {
+							for _, col := range selfSchema.Columns {
+								listColOrigName := strings.Split(col.OrigName, ".")
+								if idxCol.Name.L == listColOrigName[len(listColOrigName)-1:][0] {
+									p.maxOneRow = true
+									break
+								}
+							}
+						}
+					}
+				}
 			}
 		}
 	}
@@ -221,7 +243,7 @@ func checkIndexCanBeKey(idx *model.IndexInfo, columns []*model.ColumnInfo, schem
 		find := false
 		for i, col := range columns {
 			if idxCol.Name.L == col.Name.L {
-				if !mysql.HasNotNullFlag(schema.Columns[i].RetType.Flag) {
+				if !mysql.HasNotNullFlag(col.Flag) {
 					break
 				}
 				newKey = append(newKey, schema.Columns[i])
