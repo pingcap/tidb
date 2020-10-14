@@ -200,10 +200,11 @@ func (la *LogicalAggregation) PreparePossibleProperties(schema *expression.Schem
 		return nil
 	}
 	resultProperties := make([][]*expression.Column, 0, len(childProps))
+	groupByCols := la.GetGroupByCols()
 	for _, possibleChildProperty := range childProps {
-		sortColOffsets := getMaxSortPrefix(possibleChildProperty, la.groupByCols)
-		if len(sortColOffsets) == len(la.groupByCols) {
-			resultProperties = append(resultProperties, possibleChildProperty[:len(la.groupByCols)])
+		sortColOffsets := getMaxSortPrefix(possibleChildProperty, groupByCols)
+		if len(sortColOffsets) == len(groupByCols) {
+			resultProperties = append(resultProperties, possibleChildProperty[:len(groupByCols)])
 		}
 	}
 	la.possibleProperties = resultProperties
