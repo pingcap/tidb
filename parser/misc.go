@@ -557,6 +557,7 @@ var tokenMap = map[string]int{
 	"REQUIRE":                  require,
 	"RESET":                    reset,
 	"RESPECT":                  respect,
+	"RESTART":                  restart,
 	"RESTORE":                  restore,
 	"RESTORES":                 restores,
 	"RESTRICT":                 restrict,
