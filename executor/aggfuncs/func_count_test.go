@@ -103,6 +103,20 @@ func (s *testSuite) TestCount(c *C) {
 	}
 }
 
+func (s *testSuite) TestWriteTime(c *C) {
+	t, err := types.ParseDate(&(stmtctx.StatementContext{}), "2020-11-11")
+	c.Assert(err, IsNil)
+
+	buf := make([]byte, 16)
+	for i := range buf {
+		buf[i] = uint8(255)
+	}
+	aggfuncs.WriteTime(buf, t)
+	for i := range buf {
+		c.Assert(buf[i] == uint8(255), IsFalse)
+	}
+}
+
 func BenchmarkCount(b *testing.B) {
 	s := testSuite{}
 	s.SetUpSuite(nil)
