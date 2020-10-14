@@ -69,3 +69,5 @@ require (
 )
 
 go 1.13
+
+replace github.com/pingcap/parser => github.com/tangenta/parser 46ae697
