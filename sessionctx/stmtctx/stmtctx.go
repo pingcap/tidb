@@ -499,9 +499,21 @@ func (sc *StatementContext) MergeExecDetails(details *execdetails.ExecDetails, c
 		sc.mu.execDetails.RequestCount++
 		sc.mu.execDetails.TotalKeys += details.TotalKeys
 		sc.mu.execDetails.ProcessedKeys += details.ProcessedKeys
+		sc.MergeCopDetails(details.CopDetail)
 		sc.mu.allExecDetails = append(sc.mu.allExecDetails, details)
 	}
 	sc.mu.execDetails.CommitDetail = commitDetails
+	sc.mu.Unlock()
+}
+
+// MergeCopDetails merges cop details into self.
+func (sc *StatementContext) MergeCopDetails(copDetails *execdetails.CopDetails) {
+	sc.mu.Lock()
+	if sc.mu.execDetails.CopDetail == nil {
+		sc.mu.execDetails.CopDetail = copDetails
+	} else {
+		sc.mu.execDetails.CopDetail.Merge(copDetails)
+	}
 	sc.mu.Unlock()
 }
 

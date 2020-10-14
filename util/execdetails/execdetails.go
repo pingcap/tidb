@@ -180,6 +180,17 @@ type CopDetails struct {
 	RocksdbBlockReadByte      uint64
 }
 
+// Merge merges lock keys execution details into self.
+func (cd *CopDetails) Merge(copDetails *CopDetails) {
+	cd.TotalVersions = copDetails.TotalVersions
+	cd.ProcessedVersions = copDetails.ProcessedVersions
+	cd.RocksdbDeleteSkippedCount += copDetails.RocksdbDeleteSkippedCount
+	cd.RocksdbKeySkippedCount += copDetails.RocksdbKeySkippedCount
+	cd.RocksdbBlockCacheHitCount += copDetails.RocksdbBlockCacheHitCount
+	cd.RocksdbBlockReadCount += copDetails.RocksdbBlockReadCount
+	cd.RocksdbBlockReadByte += copDetails.RocksdbBlockReadByte
+}
+
 const (
 	// CopTimeStr represents the sum of cop-task time spend in TiDB distSQL.
 	CopTimeStr = "Cop_time"
