@@ -15,7 +15,6 @@ package statistics
 
 import (
 	"bytes"
-	"github.com/pingcap/failpoint"
 	"math"
 	"reflect"
 	"sort"
@@ -23,6 +22,7 @@ import (
 	"github.com/cznic/mathutil"
 	"github.com/cznic/sortutil"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
