@@ -554,8 +554,7 @@ func (e *groupConcatDistinctOrder) MergePartialResult(sctx sessionctx.Context, s
 	return 0, terror.ClassOptimizer.New(mysql.ErrInternal, mysql.MySQLErrName[mysql.ErrInternal]).GenWithStack("groupConcatDistinctOrder.MergePartialResult should not be called")
 }
 
-// GetDatumMemSize calculates the memory size of each types.Datum in sortRow.byItems,
-// and it will also be called in func_group_concat_test.go file.
+// GetDatumMemSize calculates the memory size of each types.Datum in sortRow.byItems.
 // types.Datum memory size = variable type's memory size + variable value's memory size.
 func GetDatumMemSize(d *types.Datum) int64 {
 	var datumMemSize int64
