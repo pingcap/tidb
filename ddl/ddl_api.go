@@ -2278,6 +2278,8 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 				err = d.AddColumns(ctx, ident, validSpecs)
 			case ast.AlterTableDropColumn:
 				err = d.DropColumns(ctx, ident, validSpecs)
+			case ast.AlterTableDropIndex:
+				err = d.DropIndexes(ctx, ident, validSpecs)
 			default:
 				return errRunMultiSchemaChanges
 			}
