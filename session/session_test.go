@@ -3238,6 +3238,7 @@ func (s *testSessionSuite2) TestPerStmtTaskID(c *C) {
 }
 
 func (s *testSessionSuite3) TestSetVarHint(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
 
 	tk.Se.GetSessionVars().SetSystemVar("sql_mode", mysql.DefaultSQLMode)
 	tk.MustQuery("SELECT /*+ SET_VAR(sql_mode=ALLOW_INVALID_DATES) */ @@sql_mode;").Check(testkit.Rows("ALLOW_INVALID_DATES"))
