@@ -6577,3 +6577,30 @@ func (s *testSerialSuite) TestIssue19148(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(int(tblInfo.Meta().Columns[0].Flag), Equals, 0)
 }
+
+func (s *testSerialSuite) TestIssue19137(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1 (c_str varchar(40))")
+	tk.MustExec("create table t2 (c_str varchar(40))")
+	tk.MustExec("insert into t1 values ('Alice')")
+	tk.MustExec("insert into t2 values ('Bob')")
+	tk.MustQuery("select t1.c_str, t2.c_str from t1, t2 where t1.c_str <= t2.c_str").Check(testkit.Rows("Alice Bob"))
+	tk.MustExec("update t1, t2 set t1.c_str = t2.c_str, t2.c_str = t1.c_str where t1.c_str <= t2.c_str")
+	tk.MustQuery("select t1.c_str, t2.c_str from t1, t2 where t1.c_str <= t2.c_str").Check(testkit.Rows())
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int)")
+	tk.MustExec("insert into t values(1, 2)")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 2"))
+	tk.MustExec("update t set a=b, b=a")
+	tk.MustQuery("select * from t").Check(testkit.Rows("2 1"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int)")
+	tk.MustExec("insert into t values (1,3)")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 3"))
+	tk.MustExec("update t set a=b, b=a")
+	tk.MustQuery("select * from t").Check(testkit.Rows("3 1"))
+}
