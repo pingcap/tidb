@@ -1198,6 +1198,31 @@ func (s *testIntegrationSuite) TestTableDualWithRequiredProperty(c *C) {
 	tk.MustExec("select /*+ MERGE_JOIN(t1, t2) */ * from t1 partition (p0), t2  where t1.a > 100 and t1.a = t2.a")
 }
 
+func (s *testIntegrationSuite) TestIndexJoinInnerIndexNDV(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(a int not null, b int not null, c int not null)")
+	tk.MustExec("create table t2(a int not null, b int not null, c int not null, index idx1(a,b), index idx2(c))")
+	tk.MustExec("insert into t1 values(1,1,1),(1,1,1),(1,1,1)")
+	tk.MustExec("insert into t2 values(1,1,1),(1,1,2),(1,1,3)")
+	tk.MustExec("analyze table t1, t2")
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+		})
+		tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
+	}
+}
+
 func (s *testIntegrationSerialSuite) TestIssue16837(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
