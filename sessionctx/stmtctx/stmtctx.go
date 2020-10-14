@@ -508,13 +508,11 @@ func (sc *StatementContext) MergeExecDetails(details *execdetails.ExecDetails, c
 
 // MergeCopDetails merges cop details into self.
 func (sc *StatementContext) MergeCopDetails(copDetails *execdetails.CopDetails) {
-	sc.mu.Lock()
 	if sc.mu.execDetails.CopDetail == nil {
 		sc.mu.execDetails.CopDetail = copDetails
 	} else {
 		sc.mu.execDetails.CopDetail.Merge(copDetails)
 	}
-	sc.mu.Unlock()
 }
 
 // MergeLockKeysExecDetails merges lock keys execution details into self.
