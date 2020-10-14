@@ -49,8 +49,6 @@ type ExecDetails struct {
 	BackoffSleep     map[string]time.Duration
 	BackoffTimes     map[string]int
 	RequestCount     int
-	TotalKeys        int64
-	ProcessedKeys    int64
 	CommitDetail     *CommitDetails
 	LockKeysDetail   *LockKeysDetails
 	CopDetail        *CopDetails
@@ -171,8 +169,8 @@ func (ld *LockKeysDetails) Clone() *LockKeysDetails {
 
 // CopDetails contains coprocessor detail information.
 type CopDetails struct {
-	ProcessedVersions         uint64
-	TotalVersions             uint64
+	TotalKeys                 int64
+	ProcessedKeys             int64
 	RocksdbDeleteSkippedCount uint64
 	RocksdbKeySkippedCount    uint64
 	RocksdbBlockCacheHitCount uint64
@@ -182,8 +180,8 @@ type CopDetails struct {
 
 // Merge merges lock keys execution details into self.
 func (cd *CopDetails) Merge(copDetails *CopDetails) {
-	cd.TotalVersions += copDetails.TotalVersions
-	cd.ProcessedVersions += copDetails.ProcessedVersions
+	cd.TotalKeys += copDetails.TotalKeys
+	cd.ProcessedKeys += copDetails.ProcessedKeys
 	cd.RocksdbDeleteSkippedCount += copDetails.RocksdbDeleteSkippedCount
 	cd.RocksdbKeySkippedCount += copDetails.RocksdbKeySkippedCount
 	cd.RocksdbBlockCacheHitCount += copDetails.RocksdbBlockCacheHitCount
@@ -232,10 +230,6 @@ const (
 	PrewriteRegionStr = "Prewrite_region"
 	// TxnRetryStr means the count of transaction retry.
 	TxnRetryStr = "Txn_retry"
-	// ProcessedVersionsStr means the processed versions.
-	ProcessedVersionsStr = "Processed_versions"
-	// TotalVersionsStr means the total versions.
-	TotalVersionsStr = "Total_versions"
 	// RocksdbDeleteSkippedCountStr means the count of rocksdb delete skipped count.
 	RocksdbDeleteSkippedCountStr = "Rocksdb_delete_skipped_count"
 	// RocksdbKeySkippedCountStr means the count of rocksdb key skipped count.
@@ -268,12 +262,6 @@ func (d ExecDetails) String() string {
 	}
 	if d.RequestCount > 0 {
 		parts = append(parts, RequestCountStr+": "+strconv.FormatInt(int64(d.RequestCount), 10))
-	}
-	if d.TotalKeys > 0 {
-		parts = append(parts, TotalKeysStr+": "+strconv.FormatInt(d.TotalKeys, 10))
-	}
-	if d.ProcessedKeys > 0 {
-		parts = append(parts, ProcessKeysStr+": "+strconv.FormatInt(d.ProcessedKeys, 10))
 	}
 	commitDetails := d.CommitDetail
 	if commitDetails != nil {
@@ -321,11 +309,11 @@ func (d ExecDetails) String() string {
 	}
 	copDetails := d.CopDetail
 	if copDetails != nil {
-		if copDetails.ProcessedVersions > 0 {
-			parts = append(parts, ProcessedVersionsStr+": "+strconv.FormatUint(copDetails.ProcessedVersions, 10))
+		if copDetails.ProcessedKeys > 0 {
+			parts = append(parts, ProcessKeysStr+": "+strconv.FormatInt(copDetails.ProcessedKeys, 10))
 		}
-		if copDetails.TotalVersions > 0 {
-			parts = append(parts, TotalVersionsStr+": "+strconv.FormatUint(copDetails.TotalVersions, 10))
+		if copDetails.TotalKeys > 0 {
+			parts = append(parts, TotalKeysStr+": "+strconv.FormatInt(copDetails.TotalKeys, 10))
 		}
 		if copDetails.RocksdbDeleteSkippedCount > 0 {
 			parts = append(parts, RocksdbDeleteSkippedCountStr+": "+strconv.FormatUint(copDetails.RocksdbDeleteSkippedCount, 10))
@@ -364,11 +352,11 @@ func (d ExecDetails) ToZapFields() (fields []zap.Field) {
 	if d.RequestCount > 0 {
 		fields = append(fields, zap.String(strings.ToLower(RequestCountStr), strconv.FormatInt(int64(d.RequestCount), 10)))
 	}
-	if d.TotalKeys > 0 {
-		fields = append(fields, zap.String(strings.ToLower(TotalKeysStr), strconv.FormatInt(d.TotalKeys, 10)))
+	if d.CopDetail != nil && d.CopDetail.TotalKeys > 0 {
+		fields = append(fields, zap.String(strings.ToLower(TotalKeysStr), strconv.FormatInt(d.CopDetail.TotalKeys, 10)))
 	}
-	if d.ProcessedKeys > 0 {
-		fields = append(fields, zap.String(strings.ToLower(ProcessKeysStr), strconv.FormatInt(d.ProcessedKeys, 10)))
+	if d.CopDetail != nil && d.CopDetail.ProcessedKeys > 0 {
+		fields = append(fields, zap.String(strings.ToLower(ProcessKeysStr), strconv.FormatInt(d.CopDetail.ProcessedKeys, 10)))
 	}
 	commitDetails := d.CommitDetail
 	if commitDetails != nil {

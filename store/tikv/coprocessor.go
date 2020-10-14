@@ -1117,16 +1117,10 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *RPCCon
 			resp.detail.WaitTime = time.Duration(handleTime.WaitMs) * time.Millisecond
 			resp.detail.ProcessTime = time.Duration(handleTime.ProcessMs) * time.Millisecond
 		}
-		if scanDetail := pbDetails.ScanDetail; scanDetail != nil {
-			if scanDetail.Write != nil {
-				resp.detail.TotalKeys += scanDetail.Write.Total
-				resp.detail.ProcessedKeys += scanDetail.Write.Processed
-			}
-		}
 		if scanDetailV2 := pbDetails.ScanDetailV2; scanDetailV2 != nil {
 			copDetail := &execdetails.CopDetails{
-				ProcessedVersions:         scanDetailV2.ProcessedVersions,
-				TotalVersions:             scanDetailV2.TotalVersions,
+				ProcessedKeys:             int64(scanDetailV2.ProcessedVersions),
+				TotalKeys:                 int64(scanDetailV2.TotalVersions),
 				RocksdbDeleteSkippedCount: scanDetailV2.RocksdbDeleteSkippedCount,
 				RocksdbKeySkippedCount:    scanDetailV2.RocksdbKeySkippedCount,
 				RocksdbBlockCacheHitCount: scanDetailV2.RocksdbBlockCacheHitCount,

@@ -337,7 +337,6 @@ type selectResultRuntimeStats struct {
 
 func (s *selectResultRuntimeStats) mergeCopRuntimeStats(copStats *tikv.CopRuntimeStats, respTime time.Duration) {
 	s.copRespTime = append(s.copRespTime, respTime)
-	s.procKeys = append(s.procKeys, copStats.ProcessedKeys)
 
 	for k, v := range copStats.BackoffSleep {
 		s.backoffSleep[k] += v

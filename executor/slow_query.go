@@ -422,62 +422,67 @@ func (e *slowQueryRetriever) parseLog(ctx sessionctx.Context, log []string, offs
 }
 
 type slowQueryTuple struct {
-	time                   types.Time
-	txnStartTs             uint64
-	user                   string
-	host                   string
-	connID                 uint64
-	execRetryCount         uint64
-	execRetryTime          float64
-	queryTime              float64
-	parseTime              float64
-	compileTime            float64
-	rewriteTime            float64
-	preprocSubqueries      uint64
-	preprocSubQueryTime    float64
-	optimizeTime           float64
-	waitTSTime             float64
-	preWriteTime           float64
-	waitPrewriteBinlogTime float64
-	commitTime             float64
-	getCommitTSTime        float64
-	commitBackoffTime      float64
-	backoffTypes           string
-	resolveLockTime        float64
-	localLatchWaitTime     float64
-	writeKeys              uint64
-	writeSize              uint64
-	prewriteRegion         uint64
-	txnRetry               uint64
-	copTime                float64
-	processTime            float64
-	waitTime               float64
-	backOffTime            float64
-	lockKeysTime           float64
-	requestCount           uint64
-	totalKeys              uint64
-	processKeys            uint64
-	db                     string
-	indexIDs               string
-	digest                 string
-	statsInfo              string
-	avgProcessTime         float64
-	p90ProcessTime         float64
-	maxProcessTime         float64
-	maxProcessAddress      string
-	avgWaitTime            float64
-	p90WaitTime            float64
-	maxWaitTime            float64
-	maxWaitAddress         string
-	memMax                 int64
-	diskMax                int64
-	prevStmt               string
-	sql                    string
-	isInternal             bool
-	succ                   bool
-	planFromCache          bool
-	plan                   string
-	planDigest             string
+	time                      types.Time
+	txnStartTs                uint64
+	user                      string
+	host                      string
+	connID                    uint64
+	execRetryCount            uint64
+	execRetryTime             float64
+	queryTime                 float64
+	parseTime                 float64
+	compileTime               float64
+	rewriteTime               float64
+	preprocSubqueries         uint64
+	preprocSubQueryTime       float64
+	optimizeTime              float64
+	waitTSTime                float64
+	preWriteTime              float64
+	waitPrewriteBinlogTime    float64
+	commitTime                float64
+	getCommitTSTime           float64
+	commitBackoffTime         float64
+	backoffTypes              string
+	resolveLockTime           float64
+	localLatchWaitTime        float64
+	writeKeys                 uint64
+	writeSize                 uint64
+	prewriteRegion            uint64
+	txnRetry                  uint64
+	copTime                   float64
+	processTime               float64
+	waitTime                  float64
+	backOffTime               float64
+	lockKeysTime              float64
+	requestCount              uint64
+	totalKeys                 uint64
+	processKeys               uint64
+	db                        string
+	indexIDs                  string
+	digest                    string
+	statsInfo                 string
+	avgProcessTime            float64
+	p90ProcessTime            float64
+	maxProcessTime            float64
+	maxProcessAddress         string
+	avgWaitTime               float64
+	p90WaitTime               float64
+	maxWaitTime               float64
+	maxWaitAddress            string
+	memMax                    int64
+	diskMax                   int64
+	prevStmt                  string
+	sql                       string
+	isInternal                bool
+	succ                      bool
+	planFromCache             bool
+	plan                      string
+	planDigest                string
+	rocksdbDeleteSkippedCount uint64
+	rocksdbKeySkippedCount    uint64
+	rocksdbBlockCacheCount    uint64
+	rocksdbBlockReadCount     uint64
+	rocksdbBlockReadByte      uint64
 }
 
 func (st *slowQueryTuple) setFieldValue(tz *time.Location, field, value string, lineNum int, checker *slowLogChecker) (valid bool, err error) {
@@ -581,6 +586,16 @@ func (st *slowQueryTuple) setFieldValue(tz *time.Location, field, value string, 
 		st.totalKeys, err = strconv.ParseUint(value, 10, 64)
 	case execdetails.ProcessKeysStr:
 		st.processKeys, err = strconv.ParseUint(value, 10, 64)
+	case execdetails.RocksdbDeleteSkippedCountStr:
+		st.rocksdbDeleteSkippedCount, err = strconv.ParseUint(value, 10, 64)
+	case execdetails.RocksdbKeySkippedCountStr:
+		st.rocksdbKeySkippedCount, err = strconv.ParseUint(value, 10, 64)
+	case execdetails.RocksdbBlockCacheHitCountStr:
+		st.rocksdbBlockCacheCount, err = strconv.ParseUint(value, 10, 64)
+	case execdetails.RocksdbBlockReadCountStr:
+		st.rocksdbBlockReadCount, err = strconv.ParseUint(value, 10, 64)
+	case execdetails.RocksdbBlockReadByteStr:
+		st.rocksdbBlockReadByte, err = strconv.ParseUint(value, 10, 64)
 	case variable.SlowLogDBStr:
 		st.db = value
 	case variable.SlowLogIndexNamesStr:
@@ -672,6 +687,11 @@ func (st *slowQueryTuple) convertToDatumRow() []types.Datum {
 	record = append(record, types.NewUintDatum(st.requestCount))
 	record = append(record, types.NewUintDatum(st.totalKeys))
 	record = append(record, types.NewUintDatum(st.processKeys))
+	record = append(record, types.NewUintDatum(st.rocksdbDeleteSkippedCount))
+	record = append(record, types.NewUintDatum(st.rocksdbKeySkippedCount))
+	record = append(record, types.NewUintDatum(st.rocksdbBlockCacheCount))
+	record = append(record, types.NewUintDatum(st.rocksdbBlockReadCount))
+	record = append(record, types.NewUintDatum(st.rocksdbBlockReadByte))
 	record = append(record, types.NewStringDatum(st.db))
 	record = append(record, types.NewStringDatum(st.indexIDs))
 	record = append(record, types.NewDatum(st.isInternal))
