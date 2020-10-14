@@ -354,7 +354,6 @@ const (
 
 func appendFormatFloat(in []byte, fVal float64, prec, bitSize int) []byte {
 	absVal := math.Abs(fVal)
-	fmt.Printf("fVal:%+v prec:%+v\n", fVal, prec)
 	var out []byte
 	if prec == types.UnspecifiedLength && (absVal >= expFormatBig || (absVal != 0 && absVal < expFormatSmall)) {
 		if bitSize == 32 {
