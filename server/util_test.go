@@ -360,7 +360,7 @@ func (s *testUtilSuite) TestAppendFormatFloat(c *C) {
 			64,
 		},
 		{
-			-3.402823466E+38,
+			-3.402823466e+38,
 			"-3.40282e38",
 			-1,
 			32,
