@@ -17,6 +17,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"runtime/trace"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -555,8 +556,13 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) error {
 		}
 		seVars := sctx.GetSessionVars()
 		lockCtx := newLockCtx(seVars, seVars.LockWaitTimeout)
+		var lockKeyStats *execdetails.LockKeysDetails
+		ctx = context.WithValue(ctx, execdetails.LockKeysDetailCtxKey, &lockKeyStats)
 		startLocking := time.Now()
 		err = txn.LockKeys(ctx, lockCtx, keys...)
+		if lockKeyStats != nil {
+			seVars.StmtCtx.MergeLockKeysExecDetails(lockKeyStats)
+		}
 		if err == nil {
 			return nil
 		}
@@ -646,6 +652,7 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, err error) (E
 	// Rollback the statement change before retry it.
 	a.Ctx.StmtRollback()
 	a.Ctx.GetSessionVars().StmtCtx.ResetForRetry()
+	a.Ctx.GetSessionVars().RetryInfo.ResetOffset()
 
 	if err = e.Open(ctx); err != nil {
 		return nil, err
@@ -793,10 +800,21 @@ func (a *ExecStmt) CloseRecordSet(txnStartTS uint64, lastErr error) {
 // 3. record execute duration metric.
 // 4. update the `PrevStmt` in session variable.
 func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, succ bool, hasMoreResults bool) {
+	sessVars := a.Ctx.GetSessionVars()
+	execDetail := sessVars.StmtCtx.GetExecDetails()
+	// Attach commit/lockKeys runtime stats to executor runtime stats.
+	if (execDetail.CommitDetail != nil || execDetail.LockKeysDetail != nil) && sessVars.StmtCtx.RuntimeStatsColl != nil {
+		stats := sessVars.StmtCtx.RuntimeStatsColl.GetRootStats(a.Plan.ID())
+		statsWithCommit := &execdetails.RuntimeStatsWithCommit{
+			RuntimeStats: stats,
+			Commit:       execDetail.CommitDetail,
+			LockKeys:     execDetail.LockKeysDetail,
+		}
+		sessVars.StmtCtx.RuntimeStatsColl.RegisterStats(a.Plan.ID(), statsWithCommit)
+	}
 	// `LowSlowQuery` and `SummaryStmt` must be called before recording `PrevStmt`.
 	a.LogSlowQuery(txnTS, succ, hasMoreResults)
 	a.SummaryStmt(succ)
-	sessVars := a.Ctx.GetSessionVars()
 	prevStmt := a.GetTextToLog()
 	if config.RedactLogEnabled() {
 		sessVars.PrevStmt = FormatSQL(prevStmt, nil)
@@ -880,6 +898,9 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	}
 	if _, ok := a.StmtNode.(*ast.CommitStmt); ok {
 		slowItems.PrevStmt = sessVars.PrevStmt.String()
+	}
+	if trace.IsEnabled() {
+		trace.Log(a.GoCtx, "details", sessVars.SlowLogFormat(slowItems))
 	}
 	if costTime < threshold {
 		logutil.SlowQueryLogger.Debug(sessVars.SlowLogFormat(slowItems))

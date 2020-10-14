@@ -67,8 +67,8 @@ type mockEtcdBackend struct {
 	pdAddrs []string
 }
 
-func (mebd *mockEtcdBackend) EtcdAddrs() []string {
-	return mebd.pdAddrs
+func (mebd *mockEtcdBackend) EtcdAddrs() ([]string, error) {
+	return mebd.pdAddrs, nil
 }
 func (mebd *mockEtcdBackend) TLSConfig() *tls.Config { return nil }
 func (mebd *mockEtcdBackend) StartGCWorker() error {

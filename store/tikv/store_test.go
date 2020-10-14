@@ -117,6 +117,10 @@ func (c *mockPDClient) disable() {
 	c.stop = true
 }
 
+func (c *mockPDClient) GetAllMembers(ctx context.Context) ([]*pdpb.Member, error) {
+	return nil, nil
+}
+
 func (c *mockPDClient) GetClusterID(context.Context) uint64 {
 	return 1
 }
