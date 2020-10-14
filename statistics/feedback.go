@@ -864,10 +864,6 @@ func decodeFeedbackForIndex(q *QueryFeedback, pb *queryFeedback, c *CMSketch) {
 		// decode the index point feedback, just set value count in CM Sketch
 		start := len(pb.IndexRanges) / 2
 		if len(pb.HashValues) > 0 {
-			// It needs raw values to update the top n, so just skip it here.
-			if len(c.topN) > 0 {
-				return
-			}
 			for i := 0; i < len(pb.HashValues); i += 2 {
 				c.setValue(pb.HashValues[i], pb.HashValues[i+1], uint64(pb.Counts[start+i/2]))
 			}

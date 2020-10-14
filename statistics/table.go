@@ -489,7 +489,7 @@ func (coll *HistColl) getEqualCondSelectivity(idx *Index, bytes []byte, usedCols
 		}
 		return outOfRangeEQSelectivity(ndv, coll.ModifyCount, int64(idx.TotalRowCount()))
 	}
-	return float64(idx.CMSketch.QueryBytes(bytes)) / float64(idx.TotalRowCount())
+	return float64(idx.QueryBytes(bytes)) / float64(idx.TotalRowCount())
 }
 
 func (coll *HistColl) getIndexRowCount(sc *stmtctx.StatementContext, idxID int64, indexRanges []*ranger.Range) (float64, error) {

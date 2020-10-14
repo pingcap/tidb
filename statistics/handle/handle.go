@@ -359,7 +359,7 @@ func (h *Handle) LoadNeededHistograms() (err error) {
 		if err != nil {
 			return errors.Trace(err)
 		}
-		cms, err := h.cmSketchFromStorage(reader, col.TableID, 0, col.ColumnID)
+		cms, topN, err := h.cmSketchAndTopNFromStorage(reader, col.TableID, 0, col.ColumnID)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -368,6 +368,7 @@ func (h *Handle) LoadNeededHistograms() (err error) {
 			Histogram:  *hg,
 			Info:       c.Info,
 			CMSketch:   cms,
+			TopN:       topN,
 			Count:      int64(hg.TotalRowCount()),
 			IsHandle:   c.IsHandle,
 		}
@@ -404,18 +405,18 @@ func (h *Handle) FlushStats() {
 	}
 }
 
-func (h *Handle) cmSketchFromStorage(reader *statsReader, tblID int64, isIndex, histID int64) (_ *statistics.CMSketch, err error) {
+func (h *Handle) cmSketchAndTopNFromStorage(reader *statsReader, tblID int64, isIndex, histID int64) (_ *statistics.CMSketch, _ *statistics.TopN, err error) {
 	selSQL := fmt.Sprintf("select cm_sketch from mysql.stats_histograms where table_id = %d and is_index = %d and hist_id = %d", tblID, isIndex, histID)
 	rows, _, err := reader.read(selSQL)
 	if err != nil || len(rows) == 0 {
-		return nil, err
+		return nil, nil, err
 	}
 	selSQL = fmt.Sprintf("select HIGH_PRIORITY value, count from mysql.stats_top_n where table_id = %d and is_index = %d and hist_id = %d", tblID, isIndex, histID)
 	topNRows, _, err := reader.read(selSQL)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return statistics.DecodeCMSketch(rows[0].GetBytes(0), topNRows)
+	return statistics.DecodeCMSketchAndTopN(rows[0].GetBytes(0), topNRows)
 }
 
 func (h *Handle) indexStatsFromStorage(reader *statsReader, row chunk.Row, table *statistics.Table, tableInfo *model.TableInfo) error {
@@ -441,11 +442,11 @@ func (h *Handle) indexStatsFromStorage(reader *statsReader, row chunk.Row, table
 			if err != nil {
 				return errors.Trace(err)
 			}
-			cms, err := h.cmSketchFromStorage(reader, table.PhysicalID, 1, idxInfo.ID)
+			cms, topN, err := h.cmSketchAndTopNFromStorage(reader, table.PhysicalID, 1, idxInfo.ID)
 			if err != nil {
 				return errors.Trace(err)
 			}
-			idx = &statistics.Index{Histogram: *hg, CMSketch: cms, Info: idxInfo, ErrorRate: errorRate, StatsVer: row.GetInt64(7), Flag: flag}
+			idx = &statistics.Index{Histogram: *hg, CMSketch: cms, TopN: topN, Info: idxInfo, ErrorRate: errorRate, StatsVer: row.GetInt64(7), Flag: flag}
 			lastAnalyzePos.Copy(&idx.LastAnalyzePos)
 		}
 		break
@@ -511,7 +512,7 @@ func (h *Handle) columnStatsFromStorage(reader *statsReader, row chunk.Row, tabl
 			if err != nil {
 				return errors.Trace(err)
 			}
-			cms, err := h.cmSketchFromStorage(reader, table.PhysicalID, 0, colInfo.ID)
+			cms, topN, err := h.cmSketchAndTopNFromStorage(reader, table.PhysicalID, 0, colInfo.ID)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -520,6 +521,7 @@ func (h *Handle) columnStatsFromStorage(reader *statsReader, row chunk.Row, tabl
 				Histogram:  *hg,
 				Info:       colInfo,
 				CMSketch:   cms,
+				TopN:       topN,
 				Count:      int64(hg.TotalRowCount()),
 				ErrorRate:  errorRate,
 				IsHandle:   tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.Flag),
@@ -636,7 +638,7 @@ func (h *Handle) extendedStatsFromStorage(reader *statsReader, table *statistics
 }
 
 // SaveStatsToStorage saves the stats to storage.
-func (h *Handle) SaveStatsToStorage(tableID int64, count int64, isIndex int, hg *statistics.Histogram, cms *statistics.CMSketch, isAnalyzed int64) (err error) {
+func (h *Handle) SaveStatsToStorage(tableID int64, count int64, isIndex int, hg *statistics.Histogram, cms *statistics.CMSketch, topN *statistics.TopN, isAnalyzed int64) (err error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	ctx := context.TODO()
@@ -667,7 +669,7 @@ func (h *Handle) SaveStatsToStorage(tableID int64, count int64, isIndex int, hg 
 	}
 	// Delete outdated data
 	sqls = append(sqls, fmt.Sprintf("delete from mysql.stats_top_n where table_id = %d and is_index = %d and hist_id = %d", tableID, isIndex, hg.ID))
-	for _, meta := range cms.TopN() {
+	for _, meta := range topN.TopN() {
 		sqls = append(sqls, fmt.Sprintf("insert into mysql.stats_top_n (table_id, is_index, hist_id, value, count) values (%d, %d, %d, X'%X', %d)", tableID, isIndex, hg.ID, meta.Data, meta.Count))
 	}
 	flag := 0

@@ -743,6 +743,7 @@ func (e *ErrorRate) Merge(rate *ErrorRate) {
 type Column struct {
 	Histogram
 	*CMSketch
+	*TopN
 	PhysicalID int64
 	Count      int64
 	Info       *model.ColumnInfo
@@ -795,7 +796,7 @@ func (c *Column) equalRowCount(sc *stmtctx.StatementContext, val types.Datum, mo
 		return outOfRangeEQSelectivity(c.NDV, modifyCount, int64(c.TotalRowCount())) * c.TotalRowCount(), nil
 	}
 	if c.CMSketch != nil {
-		count, err := c.CMSketch.queryValue(sc, val)
+		count, err := queryValue(sc, c.CMSketch, c.TopN, val)
 		return float64(count), errors.Trace(err)
 	}
 	return c.Histogram.equalRowCount(val), nil
@@ -893,6 +894,7 @@ func (c *Column) GetColumnRowCount(sc *stmtctx.StatementContext, ranges []*range
 type Index struct {
 	Histogram
 	*CMSketch
+	TopN *TopN
 	ErrorRate
 	StatsVer       int64 // StatsVer is the version of the current stats, used to maintain compatibility
 	Info           *model.IndexInfo
@@ -932,9 +934,18 @@ func (idx *Index) equalRowCount(sc *stmtctx.StatementContext, b []byte, modifyCo
 		return outOfRangeEQSelectivity(idx.NDV, modifyCount, int64(idx.TotalRowCount())) * idx.TotalRowCount(), nil
 	}
 	if idx.CMSketch != nil {
-		return float64(idx.CMSketch.QueryBytes(b)), nil
+		return float64(idx.QueryBytes(b)), nil
 	}
 	return idx.Histogram.equalRowCount(val), nil
+}
+
+// QueryBytes ....
+func (idx *Index) QueryBytes(d []byte) uint64 {
+	h1, h2 := murmur3.Sum128(d)
+	if count, ok := idx.TopN.QueryTopN(h1, h2, d); ok {
+		return count
+	}
+	return idx.queryHashValue(h1, h2)
 }
 
 // GetRowCount returns the row count of the given ranges.
@@ -1207,7 +1218,7 @@ func getIndexPrefixLens(data []byte, numCols int) (prefixLens []int, err error) 
 }
 
 // ExtractTopN extracts topn from histogram.
-func (hg *Histogram) ExtractTopN(cms *CMSketch, numCols int, numTopN uint32) error {
+func (hg *Histogram) ExtractTopN(cms *CMSketch, topN *TopN, numCols int, numTopN uint32) error {
 	if hg.Len() == 0 || cms == nil || numTopN == 0 {
 		return nil
 	}
@@ -1240,12 +1251,12 @@ func (hg *Histogram) ExtractTopN(cms *CMSketch, numCols int, numTopN uint32) err
 	if len(dataCnts) > int(numTopN) {
 		dataCnts = dataCnts[:numTopN]
 	}
-	cms.topN = make(map[uint64][]*TopNMeta, len(dataCnts))
+	topN.topN = make(map[uint64][]*TopNMeta, len(dataCnts))
 	for _, dataCnt := range dataCnts {
 		h1, h2 := murmur3.Sum128(dataCnt.data)
 		realCnt := cms.queryHashValue(h1, h2)
 		cms.subValue(h1, h2, realCnt)
-		cms.topN[h1] = append(cms.topN[h1], &TopNMeta{h2, dataCnt.data, realCnt})
+		topN.topN[h1] = append(topN.topN[h1], &TopNMeta{h2, dataCnt.data, realCnt})
 	}
 	return nil
 }

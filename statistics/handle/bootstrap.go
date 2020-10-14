@@ -103,7 +103,7 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache *stat
 			if idxInfo == nil {
 				continue
 			}
-			cms, err := statistics.DecodeCMSketch(row.GetBytes(6), nil)
+			cms, topN, err := statistics.DecodeCMSketchAndTopN(row.GetBytes(6), nil)
 			if err != nil {
 				cms = nil
 				terror.Log(errors.Trace(err))
@@ -112,6 +112,7 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache *stat
 			index := &statistics.Index{
 				Histogram: *hist,
 				CMSketch:  cms,
+				TopN:      topN,
 				Info:      idxInfo,
 				StatsVer:  row.GetInt64(8),
 				Flag:      row.GetInt64(10),
@@ -179,9 +180,12 @@ func (h *Handle) initStatsTopN4Chunk(cache *statsCache, iter *chunk.Iterator4Chu
 		if !ok || idx.CMSketch == nil {
 			continue
 		}
+		if idx.TopN == nil {
+			idx.TopN = statistics.NewTopN(32)
+		}
 		data := make([]byte, len(row.GetBytes(2)))
 		copy(data, row.GetBytes(2))
-		idx.CMSketch.AppendTopN(data, row.GetUint64(3))
+		idx.TopN.AppendTopN(data, row.GetUint64(3))
 	}
 }
 
