@@ -78,10 +78,10 @@ func (*testSuite) TestT(c *C) {
 	c.Assert(globalAutoID, Equals, int64(1))
 	iter, err := alloc.Alloc(1, 1, 1, 1)
 	c.Assert(err, IsNil)
-	c.Assert(iter.First(), Equals, int64(1))
+	c.Assert(iter.Current(), Equals, int64(1))
 	iter, err = alloc.Alloc(1, 1, 1, 1)
 	c.Assert(err, IsNil)
-	c.Assert(iter.First(), Equals, int64(2))
+	c.Assert(iter.Current(), Equals, int64(2))
 	_, err = alloc.Alloc(0, 1, 1, 1)
 	c.Assert(err, NotNil)
 	globalAutoID, err = alloc.NextGlobalAutoID(1)
@@ -93,28 +93,28 @@ func (*testSuite) TestT(c *C) {
 	c.Assert(err, IsNil)
 	iter, err = alloc.Alloc(1, 1, 1, 1)
 	c.Assert(err, IsNil)
-	c.Assert(iter.First(), Equals, int64(3))
+	c.Assert(iter.Current(), Equals, int64(3))
 	err = alloc.Rebase(1, int64(3), true)
 	c.Assert(err, IsNil)
 	iter, err = alloc.Alloc(1, 1, 1, 1)
 	c.Assert(err, IsNil)
-	c.Assert(iter.First(), Equals, int64(4))
+	c.Assert(iter.Current(), Equals, int64(4))
 	err = alloc.Rebase(1, int64(10), true)
 	c.Assert(err, IsNil)
 	iter, err = alloc.Alloc(1, 1, 1, 1)
 	c.Assert(err, IsNil)
-	c.Assert(iter.First(), Equals, int64(11))
+	c.Assert(iter.Current(), Equals, int64(11))
 	err = alloc.Rebase(1, int64(3010), true)
 	c.Assert(err, IsNil)
 	iter, err = alloc.Alloc(1, 1, 1, 1)
 	c.Assert(err, IsNil)
-	c.Assert(iter.First(), Equals, int64(3011))
+	c.Assert(iter.Current(), Equals, int64(3011))
 
 	alloc = autoid.NewAllocator(store, 1, false, autoid.RowIDAllocType)
 	c.Assert(alloc, NotNil)
 	iter, err = alloc.Alloc(1, 1, 1, 1)
 	c.Assert(err, IsNil)
-	c.Assert(iter.First(), Equals, autoid.GetStep()+1)
+	c.Assert(iter.Current(), Equals, autoid.GetStep()+1)
 
 	alloc = autoid.NewAllocator(store, 1, false, autoid.RowIDAllocType)
 	c.Assert(alloc, NotNil)
@@ -122,7 +122,7 @@ func (*testSuite) TestT(c *C) {
 	c.Assert(err, IsNil)
 	iter, err = alloc.Alloc(2, 1, 1, 1)
 	c.Assert(err, IsNil)
-	c.Assert(iter.First(), Equals, int64(2))
+	c.Assert(iter.Current(), Equals, int64(2))
 
 	alloc = autoid.NewAllocator(store, 1, false, autoid.RowIDAllocType)
 	c.Assert(alloc, NotNil)
@@ -134,12 +134,12 @@ func (*testSuite) TestT(c *C) {
 	c.Assert(err, IsNil)
 	iter, err = alloc.Alloc(3, 1, 1, 1)
 	c.Assert(err, IsNil)
-	c.Assert(iter.First(), Equals, int64(3211))
+	c.Assert(iter.Current(), Equals, int64(3211))
 	err = alloc.Rebase(3, int64(6543), false)
 	c.Assert(err, IsNil)
 	iter, err = alloc.Alloc(3, 1, 1, 1)
 	c.Assert(err, IsNil)
-	c.Assert(iter.First(), Equals, int64(6544))
+	c.Assert(iter.Current(), Equals, int64(6544))
 
 	// Test the MaxInt64 is the upper bound of `alloc` function but not `rebase`.
 	err = alloc.Rebase(3, int64(math.MaxInt64-1), true)
@@ -158,12 +158,12 @@ func (*testSuite) TestT(c *C) {
 	iter, err = alloc.Alloc(4, 1, 1, 1)
 	c.Assert(err, IsNil)
 	c.Assert(iter.Count() == 1, IsTrue)
-	c.Assert(iter.First(), Equals, int64(1))
+	c.Assert(iter.Current(), Equals, int64(1))
 
 	iter, err = alloc.Alloc(4, 2, 1, 1)
 	c.Assert(err, IsNil)
 	c.Assert(iter.Count() == 2, IsTrue)
-	c.Assert(iter.First(), Equals, int64(2))
+	c.Assert(iter.Current(), Equals, int64(2))
 	c.Assert(iter.Last(), Equals, int64(3))
 
 	iter, err = alloc.Alloc(4, 100, 1, 1)
@@ -184,9 +184,9 @@ func (*testSuite) TestT(c *C) {
 	iter, err = alloc.Alloc(4, 3, 1, 1)
 	c.Assert(err, IsNil)
 	c.Assert(iter.Count() == 3, IsTrue)
-	c.Assert(iter.First(), Equals, int64(1001))
-	c.Assert(iter.Skip().First(), Equals, int64(1002))
-	c.Assert(iter.Skip().First(), Equals, int64(1003))
+	c.Assert(iter.Current(), Equals, int64(1001))
+	c.Assert(iter.Skip().Current(), Equals, int64(1002))
+	c.Assert(iter.Skip().Current(), Equals, int64(1003))
 
 	lastRemainOne := alloc.End()
 	err = alloc.Rebase(4, alloc.End()-2, false)
@@ -194,7 +194,7 @@ func (*testSuite) TestT(c *C) {
 	iter, err = alloc.Alloc(4, 5, 1, 1)
 	c.Assert(err, IsNil)
 	c.Assert(iter.Count() == 5, IsTrue)
-	c.Assert(iter.First(), Greater, lastRemainOne)
+	c.Assert(iter.Current(), Greater, lastRemainOne)
 
 	// Test for increment & offset for signed.
 	alloc = autoid.NewAllocator(store, 1, false, autoid.RowIDAllocType)
@@ -206,26 +206,26 @@ func (*testSuite) TestT(c *C) {
 	c.Assert(globalAutoID, Equals, int64(1))
 	iter, err = alloc.Alloc(5, 1, increment, offset)
 	c.Assert(err, IsNil)
-	c.Assert(iter.First(), Equals, int64(100))
+	c.Assert(iter.Current(), Equals, int64(100))
 
 	iter, err = alloc.Alloc(5, 2, increment, offset)
 	c.Assert(err, IsNil)
 	c.Assert(iter.Count() == 2, IsTrue)
-	c.Assert(iter.First(), Equals, int64(102))
-	c.Assert(iter.Skip().First(), Equals, int64(104))
+	c.Assert(iter.Current(), Equals, int64(102))
+	c.Assert(iter.Skip().Current(), Equals, int64(104))
 
 	increment = int64(5)
 	iter, err = alloc.Alloc(5, 3, increment, offset)
 	c.Assert(err, IsNil)
 	c.Assert(iter.Count() == 3, IsTrue)
-	c.Assert(iter.First(), Equals, int64(105))
+	c.Assert(iter.Current(), Equals, int64(105))
 	c.Assert(iter.Last(), Equals, int64(115))
 
 	increment = int64(15)
 	iter, err = alloc.Alloc(5, 2, increment, offset)
 	c.Assert(err, IsNil)
 	c.Assert(iter.Count() == 2, IsTrue)
-	c.Assert(iter.First(), Equals, int64(130))
+	c.Assert(iter.Current(), Equals, int64(130))
 	c.Assert(iter.Last(), Equals, int64(145))
 
 	offset = int64(200)
@@ -233,7 +233,7 @@ func (*testSuite) TestT(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(iter.Count() == 2, IsTrue)
 	// offset-1 > base will cause alloc rebase to offset-1.
-	c.Assert(iter.First(), Equals, int64(200))
+	c.Assert(iter.Current(), Equals, int64(200))
 	c.Assert(iter.Last(), Equals, int64(215))
 }
 
@@ -273,10 +273,10 @@ func (*testSuite) TestUnsignedAutoid(c *C) {
 	c.Assert(globalAutoID, Equals, int64(1))
 	iter, err := alloc.Alloc(1, 1, 1, 1)
 	c.Assert(err, IsNil)
-	c.Assert(iter.First(), Equals, int64(1))
+	c.Assert(iter.Current(), Equals, int64(1))
 	iter, err = alloc.Alloc(1, 1, 1, 1)
 	c.Assert(err, IsNil)
-	c.Assert(iter.First(), Equals, int64(2))
+	c.Assert(iter.Current(), Equals, int64(2))
 	_, err = alloc.Alloc(0, 1, 1, 1)
 	c.Assert(err, NotNil)
 	globalAutoID, err = alloc.NextGlobalAutoID(1)
@@ -288,28 +288,28 @@ func (*testSuite) TestUnsignedAutoid(c *C) {
 	c.Assert(err, IsNil)
 	iter, err = alloc.Alloc(1, 1, 1, 1)
 	c.Assert(err, IsNil)
-	c.Assert(iter.First(), Equals, int64(3))
+	c.Assert(iter.Current(), Equals, int64(3))
 	err = alloc.Rebase(1, int64(3), true)
 	c.Assert(err, IsNil)
 	iter, err = alloc.Alloc(1, 1, 1, 1)
 	c.Assert(err, IsNil)
-	c.Assert(iter.First(), Equals, int64(4))
+	c.Assert(iter.Current(), Equals, int64(4))
 	err = alloc.Rebase(1, int64(10), true)
 	c.Assert(err, IsNil)
 	iter, err = alloc.Alloc(1, 1, 1, 1)
 	c.Assert(err, IsNil)
-	c.Assert(iter.First(), Equals, int64(11))
+	c.Assert(iter.Current(), Equals, int64(11))
 	err = alloc.Rebase(1, int64(3010), true)
 	c.Assert(err, IsNil)
 	iter, err = alloc.Alloc(1, 1, 1, 1)
 	c.Assert(err, IsNil)
-	c.Assert(iter.First(), Equals, int64(3011))
+	c.Assert(iter.Current(), Equals, int64(3011))
 
 	alloc = autoid.NewAllocator(store, 1, true, autoid.RowIDAllocType)
 	c.Assert(alloc, NotNil)
 	iter, err = alloc.Alloc(1, 1, 1, 1)
 	c.Assert(err, IsNil)
-	c.Assert(iter.First(), Equals, autoid.GetStep()+1)
+	c.Assert(iter.Current(), Equals, autoid.GetStep()+1)
 
 	alloc = autoid.NewAllocator(store, 1, true, autoid.RowIDAllocType)
 	c.Assert(alloc, NotNil)
@@ -317,7 +317,7 @@ func (*testSuite) TestUnsignedAutoid(c *C) {
 	c.Assert(err, IsNil)
 	iter, err = alloc.Alloc(2, 1, 1, 1)
 	c.Assert(err, IsNil)
-	c.Assert(iter.First(), Equals, int64(2))
+	c.Assert(iter.Current(), Equals, int64(2))
 
 	alloc = autoid.NewAllocator(store, 1, true, autoid.RowIDAllocType)
 	c.Assert(alloc, NotNil)
@@ -329,12 +329,12 @@ func (*testSuite) TestUnsignedAutoid(c *C) {
 	c.Assert(err, IsNil)
 	iter, err = alloc.Alloc(3, 1, 1, 1)
 	c.Assert(err, IsNil)
-	c.Assert(iter.First(), Equals, int64(3211))
+	c.Assert(iter.Current(), Equals, int64(3211))
 	err = alloc.Rebase(3, int64(6543), false)
 	c.Assert(err, IsNil)
 	iter, err = alloc.Alloc(3, 1, 1, 1)
 	c.Assert(err, IsNil)
-	c.Assert(iter.First(), Equals, int64(6544))
+	c.Assert(iter.Current(), Equals, int64(6544))
 
 	// Test the MaxUint64 is the upper bound of `alloc` func but not `rebase`.
 	var n uint64 = math.MaxUint64
@@ -357,7 +357,7 @@ func (*testSuite) TestUnsignedAutoid(c *C) {
 	iter, err = alloc.Alloc(4, 2, 1, 1)
 	c.Assert(err, IsNil)
 	c.Assert(iter.Count() == 2, IsTrue)
-	c.Assert(iter.First(), Equals, int64(1))
+	c.Assert(iter.Current(), Equals, int64(1))
 	c.Assert(iter.Last(), Equals, int64(2))
 
 	err = alloc.Rebase(4, int64(500), true)
@@ -365,7 +365,7 @@ func (*testSuite) TestUnsignedAutoid(c *C) {
 	iter, err = alloc.Alloc(4, 2, 1, 1)
 	c.Assert(err, IsNil)
 	c.Assert(iter.Count() == 2, IsTrue)
-	c.Assert(iter.First(), Equals, int64(501))
+	c.Assert(iter.Current(), Equals, int64(501))
 	c.Assert(iter.Last(), Equals, int64(502))
 
 	lastRemainOne := alloc.End()
@@ -374,7 +374,7 @@ func (*testSuite) TestUnsignedAutoid(c *C) {
 	iter, err = alloc.Alloc(4, 5, 1, 1)
 	c.Assert(err, IsNil)
 	c.Assert(iter.Count() == 5, IsTrue)
-	c.Assert(iter.First(), Greater, lastRemainOne)
+	c.Assert(iter.Current(), Greater, lastRemainOne)
 
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/meta/autoid/skipIncrementOffsetValidation", `return(true)`), IsNil)
 	defer func() {
@@ -389,7 +389,7 @@ func (*testSuite) TestUnsignedAutoid(c *C) {
 
 	iter, err = alloc.Alloc(5, 2, increment, offset)
 	c.Assert(err, IsNil)
-	c.Assert(uint64(iter.First()), Equals, n)
+	c.Assert(uint64(iter.Current()), Equals, n)
 	c.Assert(uint64(iter.Last()), Equals, n+2)
 }
 
@@ -430,7 +430,7 @@ func (*testSuite) TestConcurrentAlloc(c *C) {
 				errCh <- err1
 				break
 			}
-			id := iter.First()
+			id := iter.Current()
 
 			mu.Lock()
 			if _, ok := m[id]; ok {
@@ -864,11 +864,11 @@ func (*testSuite) TestAllocComputationIssue(c *C) {
 	iter, err := unsignedAlloc.Alloc(1, 2, 3, 1)
 	c.Assert(err, IsNil)
 	c.Assert(iter.Count(), Equals, uint64(2))
-	c.Assert(iter.First(), Equals, int64(13))
+	c.Assert(iter.Current(), Equals, int64(13))
 	c.Assert(iter.Last(), Equals, int64(16))
 	iter, err = signedAlloc.Alloc(2, 2, 3, 1)
 	c.Assert(err, IsNil)
 	c.Assert(iter.Count(), Equals, uint64(2))
-	c.Assert(iter.First(), Equals, int64(10))
+	c.Assert(iter.Current(), Equals, int64(10))
 	c.Assert(iter.Last(), Equals, int64(13))
 }

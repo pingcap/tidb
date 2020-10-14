@@ -231,7 +231,7 @@ func AllocAutoIncrementValue(ctx context.Context, t Table, sctx sessionctx.Conte
 	if err != nil {
 		return 0, err
 	}
-	return idIter.First(), err
+	return idIter.Current(), err
 }
 
 // AllocBatchAutoIncrementValue allocates batch auto_increment value for rows, returning firstID, increment and err.

@@ -124,7 +124,7 @@ type Allocator interface {
 	GetType() AllocatorType
 }
 
-// IDIterator represent a list of values allocated by Alloc.alloc().
+// IDIterator represents a list of values allocated by Alloc.alloc().
 type IDIterator struct {
 	restCount uint64
 	current   int64
@@ -142,8 +142,8 @@ func (iter *IDIterator) Next() (bool, int64) {
 	return true, ret
 }
 
-// First returns the first allocated value. Note: if there is no values, 0 is returned.
-func (iter *IDIterator) First() int64 {
+// Current returns the current allocated value. Note: if there is no values, 0 is returned.
+func (iter *IDIterator) Current() int64 {
 	return iter.current
 }
 
@@ -296,11 +296,11 @@ func (alloc *allocator) Rebase(tableID, requiredBase int64, allocIDs bool) error
 
 func (alloc *allocator) rebase(tableID, requiredBase int64, allocIDs bool) error {
 	// Satisfied by alloc.base, nothing to do.
-	if alloc.cmp(requiredBase, alloc.base).is(lessEq) {
+	if alloc.cmp(requiredBase, alloc.base) <= 0 {
 		return nil
 	}
 	// Satisfied by alloc.end, need to update alloc.base.
-	if alloc.cmp(requiredBase, alloc.end).is(lessEq) {
+	if alloc.cmp(requiredBase, alloc.end) <= 0 {
 		alloc.base = requiredBase
 		return nil
 	}
@@ -317,7 +317,7 @@ func (alloc *allocator) rebase(tableID, requiredBase int64, allocIDs bool) error
 			newBase = alloc.max(currentEnd, requiredBase)
 			newEnd, _ = alloc.plus(newBase, alloc.step)
 		} else {
-			if alloc.cmp(currentEnd, requiredBase).is(greaterEq) {
+			if alloc.cmp(currentEnd, requiredBase) >= 0 {
 				newBase = currentEnd
 				newEnd = currentEnd
 				// Required base satisfied, we don't need to update KV.
@@ -340,38 +340,24 @@ func (alloc *allocator) rebase(tableID, requiredBase int64, allocIDs bool) error
 	return nil
 }
 
-type compareResult int8
-
-const (
-	eq        compareResult = 0b010
-	lessEq    compareResult = 0b110
-	less      compareResult = 0b100
-	greater   compareResult = 0b001
-	greaterEq compareResult = 0b011
-)
-
-func (c compareResult) is(result compareResult) bool {
-	return (c & result) == c
-}
-
-func (alloc *allocator) cmp(a int64, b int64) compareResult {
+func (alloc *allocator) cmp(a int64, b int64) int {
 	if a == b {
-		return eq
+		return 0
 	}
 	if alloc.isUnsigned {
 		if uint64(a) < uint64(b) {
-			return less
+			return -1
 		}
-		return greater
+		return 1
 	}
 	if a < b {
-		return less
+		return -1
 	}
-	return greater
+	return 1
 }
 
 func (alloc *allocator) max(a, b int64) int64 {
-	if alloc.cmp(a, b).is(less) {
+	if alloc.cmp(a, b) < 0 {
 		return b
 	}
 	return a
@@ -518,7 +504,7 @@ func (alloc *allocator) Alloc(tableID int64, n uint64, increment, offset int64) 
 
 func (alloc *allocator) alloc(tableID int64, n uint64, increment, offset int64) (IDIterator, error) {
 	// Check offset rebase if necessary.
-	if alloc.cmp(offset-1, alloc.base).is(greater) {
+	if alloc.cmp(offset-1, alloc.base) > 0 {
 		if err := alloc.rebase(tableID, offset-1, true); err != nil {
 			return IDIterator{}, err
 		}
@@ -529,7 +515,7 @@ func (alloc *allocator) alloc(tableID int64, n uint64, increment, offset int64) 
 		return IDIterator{}, ErrAutoincReadFailed
 	}
 	// The local rest is not enough for alloc, skip it.
-	if alloc.cmp(expectedEnd, alloc.end).is(greater) {
+	if alloc.cmp(expectedEnd, alloc.end) > 0 {
 		var newBase, newEnd int64
 		startTime := time.Now()
 		alloc.adjustStepByTime(startTime)
@@ -634,7 +620,7 @@ func (alloc *allocator) calcActualStepAndAdjust(base, batchSize int64) (actualSt
 		// base < batchSize < alloc.step
 		actualStep = batchSize
 	}
-	if alloc.cmp(actualStep, batchSize).is(less) {
+	if alloc.cmp(actualStep, batchSize) < 0 {
 		actualStep = batchSize
 	}
 	if !alloc.customStep {
@@ -751,7 +737,7 @@ func (alloc *allocator) seekToFirstAutoID(base, increment, offset int64) (firstI
 		}
 		uBase, uInc, uOff := uint64(base), uint64(increment), uint64(offset)
 		nr := (uBase + uInc - uOff) / uInc
-		nr = nr*uInc + uOff
+		nr = nr * uInc + uOff
 		return int64(nr), uBase >= nr
 	}
 	if increment == 1 && offset == 1 {
@@ -759,7 +745,7 @@ func (alloc *allocator) seekToFirstAutoID(base, increment, offset int64) (firstI
 		return firstID, base >= firstID
 	}
 	nr := (base + increment - offset) / increment
-	nr = nr*increment + offset
+	nr = nr * increment + offset
 	return nr, base >= nr
 }
 

@@ -1295,7 +1295,7 @@ func allocHandleIDs(ctx sessionctx.Context, t table.Table, n uint64) (int64, int
 	if err != nil {
 		return 0, 0, err
 	}
-	base, maxID := idIter.First()-1, idIter.Last()
+	base, maxID := idIter.Current()-1, idIter.Last()
 	if meta.ShardRowIDBits > 0 {
 		// Use max record ShardRowIDBits to check overflow.
 		if OverflowShardBits(maxID, meta.MaxShardRowIDBits, autoid.RowIDBitLength, true) {
