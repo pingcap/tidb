@@ -886,20 +886,7 @@ func (r *PushSelDownJoin) OnTransform(old *memo.ExprIter) (newExprs []*memo.Grou
 	var leftPushCond, rightPushCond, otherCond, leftCond, rightCond, remainCond []expression.Expression
 	switch join.JoinType {
 	case plannercore.SemiJoin, plannercore.InnerJoin:
-		tempCond := make([]expression.Expression, 0,
-			len(join.LeftConditions)+len(join.RightConditions)+len(join.EqualConditions)+len(join.OtherConditions)+len(sel.Conditions))
-		// only use left / right / equal / sel conditions to checking whether it's cartesian join.
-		// other conditions work after cartesian join.
-		tempCond = append(tempCond, join.LeftConditions...)
-		tempCond = append(tempCond, join.RightConditions...)
-		tempCond = append(tempCond, expression.ScalarFuncs2Exprs(join.EqualConditions)...)
-		tempCond = append(tempCond, sel.Conditions...)
-		tempCond = expression.ExtractFiltersFromDNFs(sctx, tempCond)
-		join.SetCartesianJoin(tempCond)
-
-		tempCond = append(tempCond, join.OtherConditions...)
-		tempCond = expression.ExtractFiltersFromDNFs(sctx, tempCond)
-		tempCond = expression.PropagateConstant(sctx, tempCond)
+		tempCond := join.ResolveConditions(sel.Conditions)
 		// Return table dual when filter is constant false or null.
 		dual := plannercore.Conds2TableDual(join, tempCond)
 		if dual != nil {

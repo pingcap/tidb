@@ -150,17 +150,7 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 		ret = append(expression.ScalarFuncs2Exprs(equalCond), otherCond...)
 		ret = append(ret, leftPushCond...)
 	case SemiJoin, InnerJoin:
-		tempCond := make([]expression.Expression, 0, len(p.LeftConditions)+len(p.RightConditions)+len(p.EqualConditions)+len(p.OtherConditions)+len(predicates))
-		tempCond = append(tempCond, p.LeftConditions...)
-		tempCond = append(tempCond, p.RightConditions...)
-		tempCond = append(tempCond, expression.ScalarFuncs2Exprs(p.EqualConditions)...)
-		tempCond = append(tempCond, predicates...)
-		tempCond = expression.ExtractFiltersFromDNFs(p.ctx, tempCond)
-		p.SetCartesianJoin(tempCond)
-
-		tempCond = append(tempCond, p.OtherConditions...)
-		tempCond = expression.ExtractFiltersFromDNFs(p.ctx, tempCond)
-		tempCond = expression.PropagateConstant(p.ctx, tempCond)
+		tempCond := p.ResolveConditions(predicates)
 		// Return table dual when filter is constant false or null.
 		dual := Conds2TableDual(p, tempCond)
 		if dual != nil {
@@ -265,9 +255,9 @@ func (p *LogicalJoin) updateEQCond() {
 	}
 }
 
-// SetCartesianJoin will update the `cartesianJoin` field, since
+// setCartesianJoin will update the `cartesianJoin` field, since
 // LogicalJoin's EqualCondition could be changed due to predicates pushdown.
-func (p *LogicalJoin) SetCartesianJoin(expressions []expression.Expression) {
+func (p *LogicalJoin) setCartesianJoin(expressions []expression.Expression) {
 	for _, expr := range expressions {
 		if sf, ok := expr.(*expression.ScalarFunction); ok {
 			args := sf.GetArgs()
@@ -281,6 +271,27 @@ func (p *LogicalJoin) SetCartesianJoin(expressions []expression.Expression) {
 			}
 		}
 	}
+}
+
+// ResolveConditions resolves all conditions in a `LogicalJoin`
+// also check whether it's cartesian only using left / right / equal conditions and predicates
+// even though OtherConditions all belongs to a join, but it works after cartesian join.
+func (p *LogicalJoin) ResolveConditions(predicates []expression.Expression) []expression.Expression {
+	resolved := make([]expression.Expression, 0,
+		len(p.LeftConditions)+len(p.RightConditions)+len(p.EqualConditions)+len(p.OtherConditions)+len(predicates))
+
+	resolved = append(resolved, p.LeftConditions...)
+	resolved = append(resolved, p.RightConditions...)
+	resolved = append(resolved, expression.ScalarFuncs2Exprs(p.EqualConditions)...)
+	resolved = append(resolved, predicates...)
+	resolved = expression.ExtractFiltersFromDNFs(p.ctx, resolved)
+	p.setCartesianJoin(resolved)
+
+	resolved = append(resolved, p.OtherConditions...)
+	resolved = expression.ExtractFiltersFromDNFs(p.ctx, resolved)
+	resolved = expression.PropagateConstant(p.ctx, resolved)
+
+	return resolved
 }
 
 func (p *LogicalProjection) appendExpr(expr expression.Expression) *expression.Column {
