@@ -593,6 +593,15 @@ func UpdateForUpdateTS(seCtx sessionctx.Context, newForUpdateTS uint64) error {
 	if !txn.Valid() {
 		return errors.Trace(kv.ErrInvalidTxn)
 	}
+
+	// The Oracle serializable isolation is actually SI in pessimistic mode.
+	// Do not update ForUpdateTS when the user is using the Serializable isolation level.
+	// It can be used temporarily on the few occasions when an Oracle-like isolation level is needed.
+	// Support for this does not mean that TiDB supports serializable isolation of MySQL.
+	// tidb_skip_isolation_level_check should still be disabled by default.
+	if seCtx.GetSessionVars().IsIsolation(ast.Serializable) {
+		return nil
+	}
 	if newForUpdateTS == 0 {
 		version, err := seCtx.GetStore().CurrentVersion()
 		if err != nil {
@@ -607,7 +616,11 @@ func UpdateForUpdateTS(seCtx sessionctx.Context, newForUpdateTS uint64) error {
 
 // handlePessimisticLockError updates TS and rebuild executor if the err is write conflict.
 func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, err error) (Executor, error) {
-	txnCtx := a.Ctx.GetSessionVars().TxnCtx
+	sessVars := a.Ctx.GetSessionVars()
+	if err != nil && sessVars.IsIsolation(ast.Serializable) {
+		return nil, err
+	}
+	txnCtx := sessVars.TxnCtx
 	var newForUpdateTS uint64
 	if deadlock, ok := errors.Cause(err).(*tikv.ErrDeadlock); ok {
 		if !deadlock.IsRetryable {
