@@ -297,6 +297,15 @@ func (s *testIntegrationSuite) TestConvertToBit(c *C) {
 	tk.MustExec(`insert t1 value ('09-01-01')`)
 	tk.MustExec(`insert t select a from t1`)
 	tk.MustQuery("select a+0 from t").Check(testkit.Rows("20090101000000"))
+
+	// For issue 20118
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a tinyint, b bit(63));")
+	tk.MustExec("insert ignore  into t values(599999999, -1);")
+	tk.MustQuery("show warnings;").Check(testkit.Rows(
+		"Warning 1690 constant 599999999 overflows tinyint",
+		"Warning 1406 Data Too Long, field len 63"))
+	tk.MustQuery("select * from t;").Check(testkit.Rows("127 \u007f\xff\xff\xff\xff\xff\xff\xff"))
 }
 
 func (s *testIntegrationSuite2) TestMathBuiltin(c *C) {

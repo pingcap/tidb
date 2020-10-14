@@ -556,8 +556,13 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) error {
 		}
 		seVars := sctx.GetSessionVars()
 		lockCtx := newLockCtx(seVars, seVars.LockWaitTimeout)
+		var lockKeyStats *execdetails.LockKeysDetails
+		ctx = context.WithValue(ctx, execdetails.LockKeysDetailCtxKey, &lockKeyStats)
 		startLocking := time.Now()
 		err = txn.LockKeys(ctx, lockCtx, keys...)
+		if lockKeyStats != nil {
+			seVars.StmtCtx.MergeLockKeysExecDetails(lockKeyStats)
+		}
 		if err == nil {
 			return nil
 		}
@@ -795,10 +800,21 @@ func (a *ExecStmt) CloseRecordSet(txnStartTS uint64, lastErr error) {
 // 3. record execute duration metric.
 // 4. update the `PrevStmt` in session variable.
 func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, succ bool, hasMoreResults bool) {
+	sessVars := a.Ctx.GetSessionVars()
+	execDetail := sessVars.StmtCtx.GetExecDetails()
+	// Attach commit/lockKeys runtime stats to executor runtime stats.
+	if (execDetail.CommitDetail != nil || execDetail.LockKeysDetail != nil) && sessVars.StmtCtx.RuntimeStatsColl != nil {
+		stats := sessVars.StmtCtx.RuntimeStatsColl.GetRootStats(a.Plan.ID())
+		statsWithCommit := &execdetails.RuntimeStatsWithCommit{
+			RuntimeStats: stats,
+			Commit:       execDetail.CommitDetail,
+			LockKeys:     execDetail.LockKeysDetail,
+		}
+		sessVars.StmtCtx.RuntimeStatsColl.RegisterStats(a.Plan.ID(), statsWithCommit)
+	}
 	// `LowSlowQuery` and `SummaryStmt` must be called before recording `PrevStmt`.
 	a.LogSlowQuery(txnTS, succ, hasMoreResults)
 	a.SummaryStmt(succ)
-	sessVars := a.Ctx.GetSessionVars()
 	prevStmt := a.GetTextToLog()
 	if config.RedactLogEnabled() {
 		sessVars.PrevStmt = FormatSQL(prevStmt, nil)
@@ -850,16 +866,6 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		stmtDetail = *(stmtDetailRaw.(*execdetails.StmtExecDetails))
 	}
 	execDetail := sessVars.StmtCtx.GetExecDetails()
-
-	// Attach commit runtime stats to executor runtime stats.
-	if execDetail.CommitDetail != nil && sessVars.StmtCtx.RuntimeStatsColl != nil {
-		stats := sessVars.StmtCtx.RuntimeStatsColl.GetRootStats(a.Plan.ID())
-		statsWithCommit := &execdetails.RuntimeStatsWithCommit{
-			RuntimeStats: stats,
-			Commit:       execDetail.CommitDetail,
-		}
-		sessVars.StmtCtx.RuntimeStatsColl.RegisterStats(a.Plan.ID(), statsWithCommit)
-	}
 	copTaskInfo := sessVars.StmtCtx.CopTasksDetails()
 	statsInfos := plannercore.GetStatsInfo(a.Plan)
 	memMax := sessVars.StmtCtx.MemTracker.MaxConsumed()
