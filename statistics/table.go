@@ -519,7 +519,7 @@ func (coll *HistColl) getEqualCondSelectivity(sc *stmtctx.StatementContext, idx 
 
 	idxCount := float64(idx.CMSketch.QueryBytes(bytes))
 	var count float64
-	if idxCount < minRowCount {
+	if minRowCount < idxCount {
 		count = crossValidationCount
 	} else {
 		count = idxCount
