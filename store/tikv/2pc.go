@@ -555,7 +555,9 @@ func (c *twoPhaseCommitter) doActionOnGroupMutations(bo *Backoffer, action twoPh
 
 	var batches []batchMutations
 	var sizeFunc = c.keySize
-	if _, ok := action.(actionPrewrite); ok {
+
+	switch act := action.(type) {
+	case actionPrewrite:
 		// Do not update regionTxnSize on retries. They are not used when building a PrewriteRequest.
 		if len(bo.errors) == 0 {
 			for _, group := range groups {
@@ -564,6 +566,10 @@ func (c *twoPhaseCommitter) doActionOnGroupMutations(bo *Backoffer, action twoPh
 		}
 		sizeFunc = c.keyValueSize
 		atomic.AddInt32(&c.getDetail().PrewriteRegionNum, int32(len(groups)))
+	case actionPessimisticLock:
+		if act.LockCtx.Stats != nil {
+			act.LockCtx.Stats.RegionNum = int32(len(groups))
+		}
 	}
 
 	primaryIdx := -1
@@ -934,7 +940,12 @@ func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *
 			time.Sleep(300 * time.Millisecond)
 			return kv.ErrWriteConflict
 		})
+		startTime := time.Now()
 		resp, err := c.store.SendReq(bo, req, batch.region, readTimeoutShort)
+		if action.LockCtx.Stats != nil {
+			atomic.AddInt64(&action.LockCtx.Stats.LockRPCTime, int64(time.Since(startTime)))
+			atomic.AddInt64(&action.LockCtx.Stats.LockRPCCount, 1)
+		}
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -989,7 +1000,11 @@ func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *
 		}
 		// Because we already waited on tikv, no need to Backoff here.
 		// tikv default will wait 3s(also the maximum wait value) when lock error occurs
+		startTime = time.Now()
 		msBeforeTxnExpired, _, err := c.store.lockResolver.ResolveLocks(bo, 0, locks)
+		if action.LockCtx.Stats != nil {
+			atomic.AddInt64(&action.LockCtx.Stats.ResolveLockTime, int64(time.Since(startTime)))
+		}
 		if err != nil {
 			return errors.Trace(err)
 		}
