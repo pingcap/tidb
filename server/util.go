@@ -347,15 +347,16 @@ func lengthEncodedIntSize(n uint64) int {
 }
 
 const (
-	expFormatBig   = 1e15
-	expFormatSmall = 1e-15
+	expFormatBig     = 1e15
+	expFormatSmall   = 1e-15
+	defaultMySQLPrec = 5
 )
 
 func appendFormatFloat(in []byte, fVal float64, prec, bitSize int) []byte {
 	absVal := math.Abs(fVal)
 	var out []byte
 	if prec == types.UnspecifiedLength && (absVal >= expFormatBig || (absVal != 0 && absVal < expFormatSmall)) {
-		out = strconv.AppendFloat(in, fVal, 'e', prec, bitSize)
+		out = strconv.AppendFloat(in, fVal, 'e', defaultMySQLPrec, bitSize)
 		valStr := out[len(in):]
 		// remove the '+' from the string for compatibility.
 		plusPos := bytes.IndexByte(valStr, '+')
@@ -363,6 +364,20 @@ func appendFormatFloat(in []byte, fVal float64, prec, bitSize int) []byte {
 			plusPosInOut := len(in) + plusPos
 			out = append(out[:plusPosInOut], out[plusPosInOut+1:]...)
 		}
+		// remove '0'
+		ePos := bytes.IndexByte(valStr, 'e')
+		pointPos := bytes.IndexByte(valStr, '.')
+		ePosInOut := len(in) + ePos
+		pointPosInOut := len(in) + pointPos
+		validPos := ePosInOut
+		for i := ePosInOut - 1; i >= pointPosInOut; i-- {
+			if out[i] == '0' || out[i] == '.' {
+				validPos = i
+			} else {
+				break
+			}
+		}
+		out = append(out[:validPos], out[ePosInOut:]...)
 	} else {
 		out = strconv.AppendFloat(in, fVal, 'f', prec, bitSize)
 	}
