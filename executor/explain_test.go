@@ -75,18 +75,26 @@ func (s *testSuite1) TestExplainCartesianJoin(c *C) {
 		{"explain select * from t t1 where exists (select 1 from t t2 where t2.v in (t1.v+1, t1.v+2))", true},
 		{"explain select * from t t1, t t2 where t1.v = t2.v", false},
 	}
-	for _, ca := range cases {
-		rows := tk.MustQuery(ca.sql).Rows()
-		ok := false
-		for _, row := range rows {
-			str := fmt.Sprintf("%v", row)
-			if strings.Contains(str, "CARTESIAN") {
-				ok = true
-			}
-		}
 
-		c.Assert(ok, Equals, ca.isCartesianJoin)
+	runner := func(setReorder bool) {
+		if setReorder {
+			tk.MustExec("set session tidb_opt_join_reorder_threshold = 2;")
+		}
+		for _, ca := range cases {
+			rows := tk.MustQuery(ca.sql).Rows()
+			ok := false
+			for _, row := range rows {
+				str := fmt.Sprintf("%v", row)
+				if strings.Contains(str, "CARTESIAN") {
+					ok = true
+				}
+			}
+			c.Assert(ok, Equals, ca.isCartesianJoin)
+		}
 	}
+
+	runner(false)
+	runner(true)
 
 	tk.MustExec("create table tt (a int, b int)")
 	case2 := []struct {

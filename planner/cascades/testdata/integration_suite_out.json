@@ -1219,6 +1219,22 @@
         ]
       },
       {
+        "SQL": "select /*+ HASH_JOIN(t1) */ t1.b, t2.b from t1, t2 where t1.a = t2.a and t1.a = 1;",
+        "Plan": [
+          "Projection_14 64000000.00 root  test.t1.b, test.t2.b",
+          "└─HashJoin_15 64000000.00 root  inner join",
+          "  ├─TableReader_17(Build) 8000.00 root  data:Selection_18",
+          "  │ └─Selection_18 8000.00 cop[tikv]  eq(test.t1.a, 1)",
+          "  │   └─TableFullScan_19 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "  └─TableReader_20(Probe) 8000.00 root  data:Selection_21",
+          "    └─Selection_21 8000.00 cop[tikv]  eq(1, test.t2.a)",
+          "      └─TableFullScan_22 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+      ],
+      "Result": [
+        "1 1"
+      ]
+      },
+      {
         "SQL": "select /*+ HASH_JOIN(t1) */ t1.b, t2.b from t1 inner join t2 on t1.a = t2.a;",
         "Plan": [
           "HashJoin_9 12500.00 root  inner join, equal:[eq(test.t1.a, test.t2.a)]",
@@ -1226,6 +1242,19 @@
           "│ └─TableFullScan_12 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
           "└─TableReader_13(Probe) 10000.00 root  data:TableFullScan_14",
           "  └─TableFullScan_14 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1"
+        ]
+      },
+      {
+        "SQL": "select /*+ HASH_JOIN(t1) */ t1.b, t2.b from t1 inner join t2 on t1.a = t2.b and t1.a = 1;",
+        "Plan": [
+          "HashJoin_11 12500.00 root  inner join, equal:[eq(test.t1.a, test.t2.b)], left cond:[eq(test.t1.a, 1)]",
+          "├─TableReader_13(Build) 10000.00 root  data:TableFullScan_14",
+          "│ └─TableFullScan_14 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "└─IndexReader_17(Probe) 10000.00 root  index:IndexFullScan_18",
+          "  └─IndexFullScan_18 10000.00 cop[tikv] table:t2, index:idx_b(b) keep order:false, stats:pseudo"
         ],
         "Result": [
           "1 1"
