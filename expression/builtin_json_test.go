@@ -248,6 +248,44 @@ func (s *testEvaluatorSuite) TestJSONMergePreserve(c *C) {
 	}
 }
 
+func (s *testEvaluatorSuite) TestJSONMergePatch(c *C) {
+	fc := funcs[ast.JSONMergePatch]
+	tbl := []struct {
+		Input    []interface{}
+		Expected interface{}
+	}{
+		{[]interface{}{nil, nil}, nil},
+		{[]interface{}{`{}`, `[]`}, `[]`},
+		{[]interface{}{`{}`, `[]`, `3`, `"4"`}, `"4"`},
+		{[]interface{}{`[1, 2]`, `[true, false]`}, `[true, false]`},
+		{[]interface{}{`{"name": "x"}`, `{"id": 47}`}, `{"id": 47, "name": "x"}`},
+		{[]interface{}{`1`, `true`}, `true`},
+		{[]interface{}{`[1, 2]`, `{"id": 47}`}, `{"id": 47}`},
+		{[]interface{}{`{ "a": 1, "b":2 }`, `{ "a": 3, "c":4 }`}, `{"a": 3, "b": 2, "c": 4}`},
+		{[]interface{}{`{ "a": 1, "b":2 }`, `{ "a": 3, "c":4 }`, `{ "a": 5, "d":6 }`}, `{"a": 5, "b": 2, "c": 4, "d": 6}`},
+		{[]interface{}{`{"a":1, "b":2}`, `{"b":null}`}, `{"a": 1}`},
+		{[]interface{}{`{"a":{"x":1}}`, `{"a":{"y":2}}`}, `{"a": {"x": 1, "y": 2}} `},
+	}
+	for _, t := range tbl {
+		args := types.MakeDatums(t.Input...)
+		f, err := fc.getFunction(s.ctx, s.datumsToConstants(args))
+		c.Assert(err, IsNil)
+		d, err := evalBuiltinFunc(f, chunk.Row{})
+		c.Assert(err, IsNil)
+
+		switch x := t.Expected.(type) {
+		case string:
+			j1, err := json.ParseBinaryFromString(x)
+			c.Assert(err, IsNil)
+			j2 := d.GetMysqlJSON()
+			cmp := json.CompareBinary(j1, j2)
+			c.Assert(cmp, Equals, 0, Commentf("got %v expect %v", j1.String(), j2.String()))
+		case nil:
+			c.Assert(d.IsNull(), IsTrue)
+		}
+	}
+}
+
 func (s *testEvaluatorSuite) TestJSONArray(c *C) {
 	fc := funcs[ast.JSONArray]
 	tbl := []struct {

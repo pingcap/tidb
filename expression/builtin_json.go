@@ -1043,8 +1043,45 @@ type jsonMergePatchFunctionClass struct {
 	baseFunctionClass
 }
 
+type builtinJSONMergePatchSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinJSONMergePatchSig) Clone() builtinFunc {
+	newSig := &builtinJSONMergePatchSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
 func (c *jsonMergePatchFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
-	return nil, errFunctionNotExists.GenWithStackByArgs("FUNCTION", "JSON_MERGE_PATCH")
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	argTps := make([]types.EvalType, 0, len(args))
+	for range args {
+		argTps = append(argTps, types.ETJson)
+	}
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETJson, argTps...)
+	if err != nil {
+		return nil, err
+	}
+	sig := &builtinJSONMergePatchSig{bf}
+	sig.setPbCode(tipb.ScalarFuncSig_JsonMergePatchSig)
+	return sig, nil
+}
+
+func (b *builtinJSONMergePatchSig) evalJSON(row chunk.Row) (res json.BinaryJSON, isNull bool, err error) {
+	values := make([]json.BinaryJSON, 0, len(b.args))
+	for _, arg := range b.args {
+		var value json.BinaryJSON
+		value, isNull, err = arg.EvalJSON(b.ctx, row)
+		if isNull || err != nil {
+			return res, isNull, err
+		}
+		values = append(values, value)
+	}
+	res = json.MergePatchBinary(values)
+	return res, false, nil
 }
 
 type jsonMergePreserveFunctionClass struct {

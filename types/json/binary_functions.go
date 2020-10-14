@@ -763,6 +763,59 @@ func MergeBinary(bjs []BinaryJSON) BinaryJSON {
 	return mergeBinaryArray(results)
 }
 
+// MergePatchBinary behaves the same as that of MergeBinaryPreserve, with the following two exceptions:
+// 1) MergePatchBinary removes any member in the first object with a matching key in the second object, provided that the value associated with the key in the second object is not JSON null.
+// 2) If the second object has a member with a key matching a member in the first object, MergePatchBinary replaces the value in the first object with the value in the second object, whereas MergeBinaryPreserve appends the second value to the first value.
+func MergePatchBinary(bjs []BinaryJSON) BinaryJSON {
+	var result = bjs[0]
+	for i := 1; i < len(bjs); i++ {
+		result = mergePatchBinaryObject(&result, &(bjs[i]))
+	}
+	return result
+}
+
+func mergePatchBinaryObject(oldObj *BinaryJSON, newObj *BinaryJSON) BinaryJSON {
+	if newObj.TypeCode != TypeCodeObject {
+		return *newObj
+	}
+
+	keyValMap := make(map[string]BinaryJSON)
+	if oldObj.TypeCode == TypeCodeObject {
+		oldElemCount := oldObj.GetElemCount()
+		for i := 0; i < oldElemCount; i++ {
+			key := oldObj.objectGetKey(i)
+			val := oldObj.objectGetVal(i)
+			keyValMap[string(key)] = val
+		}
+	}
+	newElemCount := newObj.GetElemCount()
+	for i := 0; i < newElemCount; i++ {
+		key := newObj.objectGetKey(i)
+		val := newObj.objectGetVal(i)
+		if old, ok := keyValMap[string(key)]; ok {
+			if val.Type() == "NULL" {
+				delete(keyValMap, string(key))
+			} else {
+				keyValMap[string(key)] = mergePatchBinaryObject(&old, &val)
+			}
+		} else {
+			keyValMap[string(key)] = val
+		}
+	}
+	keys := make([][]byte, 0, len(keyValMap))
+	for k := range keyValMap {
+		keys = append(keys, []byte(k))
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		return bytes.Compare(keys[i], keys[j]) < 0
+	})
+	values := make([]BinaryJSON, len(keys))
+	for i, key := range keys {
+		values[i] = keyValMap[string(key)]
+	}
+	return buildBinaryObject(keys, values)
+}
+
 func getAdjacentObjects(bjs []BinaryJSON) (objects, remain []BinaryJSON) {
 	for i := 0; i < len(bjs); i++ {
 		if bjs[i].TypeCode != TypeCodeObject {
