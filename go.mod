@@ -23,7 +23,7 @@ require (
 	github.com/klauspost/cpuid v1.2.1
 	github.com/ngaut/pools v0.0.0-20180318154953-b7bc8c42aac7
 	github.com/ngaut/sync2 v0.0.0-20141008032647-7a24ed77b2ef
-	github.com/ngaut/unistore v0.0.0-20200918091209-68a2db6bb775
+	github.com/ngaut/unistore v0.0.0-20200929093420-76a7b18be28e
 	github.com/opentracing/basictracer-go v1.0.0
 	github.com/opentracing/opentracing-go v1.1.0
 	github.com/phayes/freeport v0.0.0-20180830031419-95f893ade6f2
@@ -63,6 +63,7 @@ require (
 	golang.org/x/tools v0.0.0-20200820010801-b793a1359eac
 	google.golang.org/grpc v1.26.0
 	gopkg.in/natefinch/lumberjack.v2 v2.0.0
+	honnef.co/go/tools v0.0.1-2020.1.6 // indirect
 	sourcegraph.com/sourcegraph/appdash v0.0.0-20180531100431-4c381bd170b4
 	sourcegraph.com/sourcegraph/appdash-data v0.0.0-20151005221446-73f23eafcf67
 )
