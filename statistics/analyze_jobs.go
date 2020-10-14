@@ -92,7 +92,7 @@ func GetAllAnalyzeJobs() []*AnalyzeJob {
 }
 
 // GetChangedAnalyzeJobs returns all changed analyze jobs after last access.
-func GetChangedAnalyzeJobs() []AnalyzeJob {
+func GetChangedAnalyzeJobs() []*AnalyzeJob {
 	// TODO: complete this function
 	return nil
 }

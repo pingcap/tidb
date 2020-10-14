@@ -21,7 +21,7 @@ import (
 	"github.com/pingcap/tidb/types"
 )
 
-func equalJobStatus(j1, j2 statistics.AnalyzeJob) bool {
+func equalJobStatus(j1, j2 *statistics.AnalyzeJob) bool {
 	return j1.UUID == j2.UUID && j1.DBName == j2.DBName && j1.TableName == j2.TableName &&
 		j1.PartitionName == j2.PartitionName && j1.JobInfo == j2.JobInfo &&
 		j1.RowCount == j2.RowCount && j1.State == j2.State &&
@@ -34,7 +34,7 @@ func (s *testStatsSuite) TestAnalyzeJobsStatus(c *C) {
 	h := s.do.StatsHandle()
 	st1 := time.Unix(time.Now().Unix(), 0)
 	st2 := st1.Add(-time.Second * 10)
-	oriJobs := []statistics.AnalyzeJob{
+	oriJobs := []*statistics.AnalyzeJob{
 		{
 			UUID:          "1",
 			DBName:        "db",
@@ -66,7 +66,7 @@ func (s *testStatsSuite) TestAnalyzeJobsStatus(c *C) {
 
 	// update the first job
 	oriJobs[0].JobInfo = "123123"
-	c.Assert(h.UpdateAnalyzeJobsStatus([]statistics.AnalyzeJob{oriJobs[0]}, 100), IsNil)
+	c.Assert(h.UpdateAnalyzeJobsStatus([]*statistics.AnalyzeJob{oriJobs[0]}, 100), IsNil)
 	jobs, err = h.GetAnalyzeJobsStatus()
 	c.Assert(err, IsNil)
 	c.Assert(len(jobs), Equals, 2)

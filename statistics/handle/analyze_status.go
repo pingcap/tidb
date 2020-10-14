@@ -27,7 +27,7 @@ import (
 )
 
 // UpdateAnalyzeJobsStatus updates analyze jobs status into mysql.analyze_jobs_status
-func (h *Handle) UpdateAnalyzeJobsStatus(changedJobs []statistics.AnalyzeJob, staleIntervalInSeconds int) (err error) {
+func (h *Handle) UpdateAnalyzeJobsStatus(changedJobs []*statistics.AnalyzeJob, staleIntervalInSeconds int) (err error) {
 	ctx := context.Background()
 	exec := h.mu.ctx.(sqlexec.SQLExecutor)
 
@@ -58,7 +58,7 @@ func (h *Handle) UpdateAnalyzeJobsStatus(changedJobs []statistics.AnalyzeJob, st
 }
 
 // GetAnalyzeJobsStatus returns all analyze jobs.
-func (h *Handle) GetAnalyzeJobsStatus() ([]statistics.AnalyzeJob, error) {
+func (h *Handle) GetAnalyzeJobsStatus() ([]*statistics.AnalyzeJob, error) {
 	ctx := context.Background()
 	exec := h.mu.ctx.(sqlexec.SQLExecutor)
 
@@ -70,7 +70,7 @@ func (h *Handle) GetAnalyzeJobsStatus() ([]statistics.AnalyzeJob, error) {
 	res := rc[0]
 	defer terror.Call(res.Close)
 
-	jobs := make([]statistics.AnalyzeJob, 0, 64)
+	jobs := make([]*statistics.AnalyzeJob, 0, 64)
 	for {
 		chk := res.NewChunk()
 		iter := chunk.NewIterator4Chunk(chk)
@@ -86,7 +86,7 @@ func (h *Handle) GetAnalyzeJobsStatus() ([]statistics.AnalyzeJob, error) {
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			jobs = append(jobs, statistics.AnalyzeJob{
+			jobs = append(jobs, &statistics.AnalyzeJob{
 				UUID:          row.GetString(0),
 				DBName:        row.GetString(1),
 				TableName:     row.GetString(2),
