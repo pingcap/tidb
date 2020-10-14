@@ -108,9 +108,9 @@ HashJoin_19	9990.00	root		inner join, equal:[eq(test.t1.c1, test.t2.c2)]
   └─TableFullScan_31	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain select (select count(1) k from t1 s where s.c1 = t1.c1 having k != 0) from t1;
 id	estRows	task	access object	operator info
-Projection_12	10000.00	root		ifnull(Column#7, 0)->Column#7
-└─MergeJoin_13	10000.00	root		left outer join, left key:test.t1.c1, right key:test.t1.c1
-  ├─Projection_18(Build)	8000.00	root		1->Column#7, test.t1.c1
+Projection_12	12500.00	root		ifnull(Column#7, 0)->Column#7
+└─MergeJoin_13	12500.00	root		left outer join, left key:test.t1.c1, right key:test.t1.c1
+  ├─Projection_18(Build)	10000.00	root		1->Column#7, test.t1.c1
   │ └─TableReader_20	10000.00	root		data:TableFullScan_19
   │   └─TableFullScan_19	10000.00	cop[tikv]	table:s	keep order:true, stats:pseudo
   └─TableReader_17(Probe)	10000.00	root		data:TableFullScan_16
@@ -481,8 +481,9 @@ IndexReader_9	10000.00	root		index:IndexFullScan_8
 └─IndexFullScan_8	10000.00	cop[tikv]	table:t1, index:PRIMARY(a, b)	keep order:false, stats:pseudo
 explain select distinct t1.a, t1.b from t1 left outer join t2 on t1.a = t2.a;
 id	estRows	task	access object	operator info
-IndexReader_11	10000.00	root		index:IndexFullScan_10
-└─IndexFullScan_10	10000.00	cop[tikv]	table:t1, index:PRIMARY(a, b)	keep order:false, stats:pseudo
+Projection_7	10000.00	root		cast(test.t1.a, int(11))->test.t1.a, cast(test.t1.b, int(11))->test.t1.b
+└─IndexReader_11	10000.00	root		index:IndexFullScan_10
+  └─IndexFullScan_10	10000.00	cop[tikv]	table:t1, index:PRIMARY(a, b)	keep order:false, stats:pseudo
 CREATE TABLE `test01` (
 `id` bigint(20) NOT NULL AUTO_INCREMENT,
 `stat_date` int(11) NOT NULL DEFAULT '0',
