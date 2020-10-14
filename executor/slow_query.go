@@ -379,6 +379,15 @@ func (e *slowQueryRetriever) parseLog(ctx sessionctx.Context, log []string, offs
 					if !valid {
 						startFlag = false
 					}
+				} else if strings.HasPrefix(line, variable.SlowLogCopBackoffPrefix) {
+					valid, err := st.setFieldValue(tz, variable.SlowLogBackoffDetail, line, fileLine, e.checker)
+					if err != nil {
+						ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+						continue
+					}
+					if !valid {
+						startFlag = false
+					}
 				} else {
 					fieldValues := strings.Split(line, " ")
 					for i := 0; i < len(fieldValues)-1; i += 2 {
@@ -476,8 +485,14 @@ type slowQueryTuple struct {
 	isInternal             bool
 	succ                   bool
 	planFromCache          bool
+	prepared               bool
+	kvTotal                float64
+	pdTotal                float64
+	backoffTotal           float64
+	writeSQLRespTotal      float64
 	plan                   string
 	planDigest             string
+	backoffDetail          string
 }
 
 func (st *slowQueryTuple) setFieldValue(tz *time.Location, field, value string, lineNum int, checker *slowLogChecker) (valid bool, err error) {
@@ -621,12 +636,27 @@ func (st *slowQueryTuple) setFieldValue(tz *time.Location, field, value string, 
 		st.sql = value
 	case variable.SlowLogDiskMax:
 		st.diskMax, err = strconv.ParseInt(value, 10, 64)
+	case variable.SlowLogKVTotal:
+		st.kvTotal, err = strconv.ParseFloat(value, 64)
+	case variable.SlowLogPDTotal:
+		st.pdTotal, err = strconv.ParseFloat(value, 64)
+	case variable.SlowLogBackoffTotal:
+		st.backoffTotal, err = strconv.ParseFloat(value, 64)
+	case variable.SlowLogWriteSQLRespTotal:
+		st.writeSQLRespTotal, err = strconv.ParseFloat(value, 64)
+	case variable.SlowLogPrepared:
+		st.prepared, err = strconv.ParseBool(value)
 	case variable.SlowLogRewriteTimeStr:
 		st.rewriteTime, err = strconv.ParseFloat(value, 64)
 	case variable.SlowLogPreprocSubQueriesStr:
 		st.preprocSubqueries, err = strconv.ParseUint(value, 10, 64)
 	case variable.SlowLogPreProcSubQueryTimeStr:
 		st.preprocSubQueryTime, err = strconv.ParseFloat(value, 64)
+	case variable.SlowLogBackoffDetail:
+		if len(st.backoffDetail) > 0 {
+			st.backoffDetail += " "
+		}
+		st.backoffDetail += value
 	}
 	if err != nil {
 		return valid, fmt.Errorf("Parse slow log at line " + strconv.FormatInt(int64(lineNum), 10) + " failed. Field: `" + field + "`, error: " + err.Error())
@@ -687,6 +717,16 @@ func (st *slowQueryTuple) convertToDatumRow() []types.Datum {
 	record = append(record, types.NewStringDatum(st.maxWaitAddress))
 	record = append(record, types.NewIntDatum(st.memMax))
 	record = append(record, types.NewIntDatum(st.diskMax))
+	record = append(record, types.NewFloat64Datum(st.kvTotal))
+	record = append(record, types.NewFloat64Datum(st.pdTotal))
+	record = append(record, types.NewFloat64Datum(st.backoffTotal))
+	record = append(record, types.NewFloat64Datum(st.writeSQLRespTotal))
+	record = append(record, types.NewStringDatum(st.backoffDetail))
+	if st.prepared {
+		record = append(record, types.NewIntDatum(1))
+	} else {
+		record = append(record, types.NewIntDatum(0))
+	}
 	if st.succ {
 		record = append(record, types.NewIntDatum(1))
 	} else {
