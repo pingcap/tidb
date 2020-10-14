@@ -217,7 +217,7 @@ func (s *RegionRequestSender) SendReqCtx(
 	err error,
 ) {
 	if span := opentracing.SpanFromContext(bo.ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("regionReqauest.SendReqCtx", opentracing.ChildOf(span.Context()))
+		span1 := span.Tracer().StartSpan("regionRequest.SendReqCtx", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
 		bo = bo.Clone()
 		bo.ctx = opentracing.ContextWithSpan(bo.ctx, span1)
@@ -427,6 +427,11 @@ func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, rpcCtx *RPCContext,
 		}
 
 		s.rpcError = err
+		failpoint.Inject("noRetryOnRpcError", func(val failpoint.Value) {
+			if val.(bool) {
+				failpoint.Return(nil, false, err)
+			}
+		})
 		if e := s.onSendFail(bo, rpcCtx, err); e != nil {
 			return nil, false, errors.Trace(e)
 		}

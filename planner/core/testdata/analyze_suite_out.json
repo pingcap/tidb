@@ -291,6 +291,22 @@
     ]
   },
   {
+    "Name": "TestLowSelIndexGreedySearch",
+    "Cases": [
+      {
+        "SQL": "explain select max(e) from t where a='T3382' and b='ECO' and c='TOPIC' and d='23660fa1ace9455cb7f3ee831e14a342'",
+        "Plan": [
+          "StreamAgg_14 1.00 root  funcs:max(test.t.e)->Column#7",
+          "└─TopN_17 0.00 root  test.t.e:desc, offset:0, count:1",
+          "  └─IndexLookUp_49 0.00 root  ",
+          "    ├─IndexRangeScan_46(Build) 0.00 cop[tikv] table:t, index:idx2(a, c) range:[\"T3382\" \"TOPIC\",\"T3382\" \"TOPIC\"], keep order:false",
+          "    └─Selection_48(Probe) 0.00 cop[tikv]  eq(test.t.b, \"ECO\"), eq(test.t.d, \"23660fa1ace9455cb7f3ee831e14a342\"), not(isnull(test.t.e))",
+          "      └─TableRowIDScan_47 0.00 cop[tikv] table:t keep order:false"
+        ]
+      }
+    ]
+  },
+  {
     "Name": "TestEmptyTable",
     "Cases": [
       "TableReader(Table(t)->Sel([le(test.t.c1, 50)]))",
@@ -338,7 +354,7 @@
       "Analyze{Index(a),Index(b)}",
       "TableReader(Table(t4)->Sel([le(test.t4.a, 2)]))",
       "IndexReader(Index(t4.b)[[-inf,2)])",
-      "IndexLookUp(Index(t4.a)[[1,1]], Table(t4)->Sel([le(test.t4.b, 2)]))"
+      "TableReader(Table(t4)->Sel([eq(test.t4.a, 1) le(test.t4.b, 2)]))"
     ]
   },
   {
@@ -359,6 +375,32 @@
           "  └─IndexReader_16 6.00 root  index:TopN_15",
           "    └─TopN_15 6.00 cop[tikv]  test.t.b, offset:0, count:6",
           "      └─IndexRangeScan_14 6.68 cop[tikv] table:t, index:PRIMARY(a, c, b) range:[7639902,7639902], keep order:false"
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestLimitIndexEstimation",
+    "Cases": [
+      {
+        "SQL": "explain select * from t where a <= 10000 order by b limit 1",
+        "Plan": [
+          "TopN_9 1.00 root  test.t.b, offset:0, count:1",
+          "└─IndexLookUp_21 1.00 root  ",
+          "  ├─IndexRangeScan_18(Build) 10000.00 cop[tikv] table:t, index:idx_a(a) range:[-inf,10000], keep order:false",
+          "  └─TopN_20(Probe) 1.00 cop[tikv]  test.t.b, offset:0, count:1",
+          "    └─TableRowIDScan_19 10000.00 cop[tikv] table:t keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain select * from t where a >= 999900 order by b limit 1",
+        "Plan": [
+          "Limit_12 1.00 root  offset:0, count:1",
+          "└─Projection_32 1.00 root  test.t.a, test.t.b",
+          "  └─IndexLookUp_31 1.00 root  ",
+          "    ├─IndexFullScan_28(Build) 1.00 cop[tikv] table:t, index:idx_b(b) keep order:true",
+          "    └─Selection_30(Probe) 1.00 cop[tikv]  ge(test.t.a, 999900)",
+          "      └─TableRowIDScan_29 1.00 cop[tikv] table:t keep order:false"
         ]
       }
     ]

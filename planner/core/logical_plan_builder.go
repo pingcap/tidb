@@ -113,15 +113,6 @@ const (
 	ErrExprInOrderBy = "ORDER BY"
 )
 
-func (la *LogicalAggregation) collectGroupByColumns() {
-	la.groupByCols = la.groupByCols[:0]
-	for _, item := range la.GroupByItems {
-		if col, ok := item.(*expression.Column); ok {
-			la.groupByCols = append(la.groupByCols, col)
-		}
-	}
-}
-
 // aggOrderByResolver is currently resolving expressions of order by clause
 // in aggregate function GROUP_CONCAT.
 type aggOrderByResolver struct {
@@ -260,7 +251,6 @@ func (b *PlanBuilder) buildAggregation(ctx context.Context, p LogicalPlan, aggFu
 	plan4Agg.SetChildren(p)
 	plan4Agg.GroupByItems = gbyItems
 	plan4Agg.SetSchema(schema4Agg)
-	plan4Agg.collectGroupByColumns()
 	return plan4Agg, aggIndexMap, nil
 }
 
@@ -1083,7 +1073,6 @@ func (b *PlanBuilder) buildDistinct(child LogicalPlan, length int) (*LogicalAggr
 	if hint := b.TableHints(); hint != nil {
 		plan4Agg.aggHints = hint.aggHints
 	}
-	plan4Agg.collectGroupByColumns()
 	for _, col := range child.Schema().Columns {
 		aggDesc, err := aggregation.NewAggFuncDesc(b.ctx, ast.AggFuncFirstRow, []expression.Expression{col}, false)
 		if err != nil {
@@ -1967,12 +1956,12 @@ func (g *gbyResolver) Leave(inNode ast.Node) (ast.Node, bool) {
 		}
 		ret := g.fields[pos-1].Expr
 		ret.Accept(extractor)
-		if len(extractor.AggFuncs) != 0 {
-			g.err = ErrWrongGroupField.GenWithStackByArgs(g.fields[pos-1].Text())
-			return inNode, false
-		}
-		if _, ok := ret.(*ast.WindowFuncExpr); ok {
-			g.err = ErrWrongGroupField.GenWithStackByArgs(g.fields[pos-1].Text())
+		if len(extractor.AggFuncs) != 0 || ast.HasWindowFlag(ret) {
+			fieldName := g.fields[pos-1].AsName.String()
+			if fieldName == "" {
+				fieldName = g.fields[pos-1].Text()
+			}
+			g.err = ErrWrongGroupField.GenWithStackByArgs(fieldName)
 			return inNode, false
 		}
 		return ret, true

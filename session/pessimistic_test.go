@@ -1792,7 +1792,7 @@ func (s *testPessimisticSuite) TestSelectForUpdateWaitSeconds(c *C) {
 func (s *testPessimisticSuite) TestSelectForUpdateConflictRetry(c *C) {
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
-		conf.TiKVClient.EnableAsyncCommit = true
+		conf.TiKVClient.AsyncCommit.Enable = true
 	})
 
 	tk := testkit.NewTestKitWithInit(c, s.store)
@@ -1823,4 +1823,34 @@ func (s *testPessimisticSuite) TestSelectForUpdateConflictRetry(c *C) {
 	// it must get a new ts on pessimistic write conflict so the latest timestamp
 	// should increase
 	c.Assert(tk3LastTs, Greater, tk2LastTS)
+}
+
+func (s *testPessimisticSuite) TestAsyncCommitWithSchemaChange(c *C) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TiKVClient.AsyncCommit.Enable = true
+	})
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/beforeSchemaCheck", "return"), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/beforeSchemaCheck"), IsNil)
+	}()
+
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists tk")
+	tk.MustExec("create table tk (c1 int primary key, c2 int)")
+	tk.MustExec("insert into tk values(1,1),(2,2)")
+	tk2 := testkit.NewTestKitWithInit(c, s.store)
+	tk3 := testkit.NewTestKitWithInit(c, s.store)
+
+	// The txn tk writes something but with failpoint the primary key is not committed.
+	tk.MustExec("begin optimistic")
+	// Change the schema version.
+	tk2.MustExec("alter table tk add column c3 int after c2")
+	tk.MustExec("insert into tk values(3, 3)")
+	tk.MustExec("commit")
+
+	// Trigger the recovery process, the left locks should not be committed.
+	tk3.MustExec("begin")
+	tk3.MustQuery("select * from tk").Check(testkit.Rows("1 1 <nil>", "2 2 <nil>"))
+	tk3.MustExec("rollback")
 }

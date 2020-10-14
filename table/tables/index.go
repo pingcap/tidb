@@ -178,7 +178,7 @@ func (c *index) GenIndexKey(sc *stmtctx.StatementContext, indexedValues []types.
 //
 func (c *index) Create(sctx sessionctx.Context, us kv.UnionStore, indexedValues []types.Datum, h kv.Handle, opts ...table.CreateIdxOptFunc) (kv.Handle, error) {
 	if c.Meta().Unique {
-		us.CacheIndexName(c.phyTblID, c.Meta().ID, c.Meta().Name.String())
+		us.CacheTableInfo(c.phyTblID, c.tblInfo)
 	}
 	var opt table.CreateIdxOpt
 	for _, fn := range opts {
