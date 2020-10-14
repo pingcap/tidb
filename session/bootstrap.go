@@ -316,8 +316,8 @@ const (
 		PRIMARY KEY(TABLE_SCHEMA, TABLE_NAME, INDEX_NAME)
 	);`
 
-	// CreateAnalyzeStatusTable stores all analyze jobs' information
-	CreateAnalyzeStatusTable = `CREATE TABLE IF NOT EXISTS mysql.analyze_status (
+	// CreateAnalyzeJobsStatusTable stores all analyze jobs' information
+	CreateAnalyzeJobsStatusTable = `CREATE TABLE IF NOT EXISTS mysql.analyze_jobs_status (
 		UUID varchar(64),
 		TABLE_SCHEMA varchar(64),
 		TABLE_NAME varchar(64),
@@ -326,6 +326,7 @@ const (
 		PROCESSED_ROWS int,
 		START_TIME datetime,
 		STATE varchar(64),
+		UPDATED_AT datetime,
 		PRIMARY KEY(UUID)
 	);`
 )
@@ -1203,7 +1204,7 @@ func upgradeToVer52(s Session, ver int64) {
 	if ver >= version52 {
 		return
 	}
-	doReentrantDDL(s, CreateAnalyzeStatusTable)
+	doReentrantDDL(s, CreateAnalyzeJobsStatusTable)
 }
 
 // updateBootstrapVer updates bootstrap version variable in mysql.TiDB table.
@@ -1274,7 +1275,7 @@ func doDDLWorks(s Session) {
 	// Create schema_index_usage.
 	mustExecute(s, CreateSchemaIndexUsageTable)
 	// Create analyze_status
-	mustExecute(s, CreateAnalyzeStatusTable)
+	mustExecute(s, CreateAnalyzeJobsStatusTable)
 }
 
 // doDMLWorks executes DML statements in bootstrap stage.

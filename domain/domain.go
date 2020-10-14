@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/telemetry"
@@ -1141,10 +1142,12 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 	gcStatsTicker := time.NewTicker(100 * lease)
 	dumpFeedbackTicker := time.NewTicker(200 * lease)
 	loadFeedbackTicker := time.NewTicker(5 * lease)
+	updateAnalyzeJobStatusTicker := time.NewTicker(time.Second * 30)
 	statsHandle := do.StatsHandle()
 	defer func() {
 		loadFeedbackTicker.Stop()
 		dumpFeedbackTicker.Stop()
+		updateAnalyzeJobStatusTicker.Stop()
 		gcStatsTicker.Stop()
 		deltaUpdateTicker.Stop()
 		do.SetStatsUpdating(false)
@@ -1182,6 +1185,11 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 			err := statsHandle.DumpStatsFeedbackToKV()
 			if err != nil {
 				logutil.BgLogger().Debug("dump stats feedback failed", zap.Error(err))
+			}
+		case <-updateAnalyzeJobStatusTicker.C:
+			err := statsHandle.UpdateAnalyzeJobsStatus(statistics.GetChangedAnalyzeJobs(), int((time.Hour*24*15)/time.Second)) // 15 days
+			if err != nil {
+				logutil.BgLogger().Error("update analyze jobs status error", zap.Error(err))
 			}
 		case <-gcStatsTicker.C:
 			if !owner.IsOwner() {

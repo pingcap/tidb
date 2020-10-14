@@ -30,6 +30,7 @@ var analyzeStatus = analyzeJobs{jobs: make(map[*AnalyzeJob]struct{}), history: m
 // AnalyzeJob is used to represent the status of one analyze job.
 type AnalyzeJob struct {
 	sync.Mutex
+	UUID          string // used to identify jobs
 	DBName        string
 	TableName     string
 	PartitionName string
@@ -88,6 +89,12 @@ func GetAllAnalyzeJobs() []*AnalyzeJob {
 	analyzeStatus.Unlock()
 	sort.Slice(jobs, func(i int, j int) bool { return jobs[i].getUpdateTime().Before(jobs[j].getUpdateTime()) })
 	return jobs
+}
+
+// GetChangedAnalyzeJobs returns all changed analyze jobs after last access.
+func GetChangedAnalyzeJobs() []AnalyzeJob {
+	// TODO: complete this function
+	return nil
 }
 
 // Start marks status of the analyze job as running and update the start time.
