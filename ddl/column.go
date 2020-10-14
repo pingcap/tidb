@@ -981,7 +981,7 @@ func (w *worker) doModifyColumnTypeWithData(
 
 // needRollbackData indicates whether it needs to rollback data when specific error occurs.
 func needRollbackData(err error) bool {
-	return kv.ErrKeyExists.Equal(err) || errCancelledDDLJob.Equal(err) || errCantDecodeRecord.Equal(err) || types.ErrOverflow.Equal(err) ||
+	return kv.ErrKeyExists.Equal(err) || errCancelledDDLJob.Equal(err) || errCantDecodeRecord.Equal(err) ||
 		types.ErrOverflow.Equal(err) || types.ErrDataTooLong.Equal(err) || types.ErrTruncated.Equal(err)
 }
 
