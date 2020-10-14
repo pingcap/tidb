@@ -598,6 +598,7 @@ func newStmtSummaryByDigestElement(sei *StmtExecInfo, beginTime int64, intervalS
 		authUsers:     make(map[string]struct{}),
 		planInCache:   false,
 		planCacheHits: 0,
+		prepared:      sei.Prepared,
 	}
 	ssElement.add(sei, intervalSeconds)
 	return ssElement
