@@ -6685,6 +6685,18 @@ func (s *testIntegrationSuite) TestIssue17727(c *C) {
 	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
 }
 
+func (s *testIntegrationSerialSuite) TestIssue20268(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("CREATE TABLE `t` (   `a` enum('a','b') DEFAULT NULL ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;")
+	tk.MustExec("insert into t values('a');")
+	tk.MustExec("select * from t where a = 'A';")
+}
+
 func (s *testIntegrationSuite) TestIssue18515(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
