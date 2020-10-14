@@ -819,11 +819,17 @@ func checkColumn(colDef *ast.ColumnDef) error {
 			return err
 		}
 	case mysql.TypeFloat, mysql.TypeDouble:
-		if tp.Decimal > mysql.MaxFloatingTypeScale {
-			return types.ErrTooBigScale.GenWithStackByArgs(tp.Decimal, colDef.Name.Name.O, mysql.MaxFloatingTypeScale)
-		}
-		if tp.Flen > mysql.MaxFloatingTypeWidth {
-			return types.ErrTooBigPrecision.GenWithStackByArgs(tp.Flen, colDef.Name.Name.O, mysql.MaxFloatingTypeWidth)
+		if tp.Decimal == -1 {
+			if tp.Flen > mysql.MaxDoublePrecisionLength {
+				return types.ErrWrongFieldSpec.GenWithStackByArgs(colDef.Name.Name.O)
+			}
+		} else {
+			if tp.Decimal > mysql.MaxFloatingTypeScale {
+				return types.ErrTooBigScale.GenWithStackByArgs(tp.Decimal, colDef.Name.Name.O, mysql.MaxFloatingTypeScale)
+			}
+			if tp.Flen > mysql.MaxFloatingTypeWidth {
+				return types.ErrTooBigDisplaywidth.GenWithStackByArgs(colDef.Name.Name.O, mysql.MaxFloatingTypeWidth)
+			}
 		}
 	case mysql.TypeSet:
 		if len(tp.Elems) > mysql.MaxTypeSetMembers {
