@@ -694,6 +694,8 @@ type Update struct {
 
 	AllAssignmentsAreConstant bool
 
+	VirtualAssignmentsOffset int
+
 	SelectPlan PhysicalPlan
 
 	TblColPosInfos TblColPosInfoSlice

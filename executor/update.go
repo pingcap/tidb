@@ -47,6 +47,7 @@ type UpdateExec struct {
 	tblColPosInfos            plannercore.TblColPosInfoSlice
 	evalBuffer                chunk.MutRow
 	allAssignmentsAreConstant bool
+	virtualAssignmentsOffset  int
 	drained                   bool
 	memTracker                *memory.Tracker
 
@@ -241,14 +242,21 @@ func (e *UpdateExec) fastComposeNewRow(rowIdx int, oldRow []types.Datum, cols []
 }
 
 func (e *UpdateExec) composeNewRow(rowIdx int, oldRow []types.Datum, cols []*table.Column) ([]types.Datum, error) {
+	oldRowBuffer := chunk.MutRowFromDatums(oldRow)
 	newRowData := types.CloneRow(oldRow)
 	e.evalBuffer.SetDatums(newRowData...)
-	for _, assign := range e.OrderedList {
+	for i, assign := range e.OrderedList {
 		handleIdx, handleFound := e.tblColPosInfos.FindHandle(assign.Col.Index)
 		if handleFound && e.canNotUpdate(oldRow[handleIdx]) {
 			continue
 		}
-		val, err := assign.Expr.Eval(e.evalBuffer.ToRow())
+		var val types.Datum
+		var err error
+		if i < e.virtualAssignmentsOffset {
+			val, err = assign.Expr.Eval(oldRowBuffer.ToRow())
+		} else {
+			val, err = assign.Expr.Eval(e.evalBuffer.ToRow())
+		}
 		if err = e.handleErr(assign.ColName, rowIdx, err); err != nil {
 			return nil, err
 		}

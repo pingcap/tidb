@@ -1805,6 +1805,7 @@ func (b *executorBuilder) buildUpdate(v *plannercore.Update) Executor {
 		baseExecutor:              base,
 		OrderedList:               v.OrderedList,
 		allAssignmentsAreConstant: v.AllAssignmentsAreConstant,
+		virtualAssignmentsOffset:  v.VirtualAssignmentsOffset,
 		tblID2table:               tblID2table,
 		tblColPosInfos:            v.TblColPosInfos,
 	}
