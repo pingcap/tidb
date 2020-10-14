@@ -322,25 +322,25 @@ func (d ExecDetails) String() string {
 	copDetails := d.CopDetail
 	if copDetails != nil {
 		if copDetails.ProcessedVersions > 0 {
-			parts = append(parts, ProcessedVersionsStr+": "+strconv.FormatInt(int64(copDetails.ProcessedVersions), 10))
+			parts = append(parts, ProcessedVersionsStr+": "+strconv.FormatUint(copDetails.ProcessedVersions, 10))
 		}
 		if copDetails.TotalVersions > 0 {
-			parts = append(parts, TotalVersionsStr+": "+strconv.FormatInt(int64(copDetails.TotalVersions), 10))
+			parts = append(parts, TotalVersionsStr+": "+strconv.FormatUint(copDetails.TotalVersions, 10))
 		}
 		if copDetails.RocksdbDeleteSkippedCount > 0 {
-			parts = append(parts, RocksdbDeleteSkippedCountStr+": "+strconv.FormatInt(int64(copDetails.RocksdbDeleteSkippedCount), 10))
+			parts = append(parts, RocksdbDeleteSkippedCountStr+": "+strconv.FormatUint(copDetails.RocksdbDeleteSkippedCount, 10))
 		}
 		if copDetails.RocksdbKeySkippedCount > 0 {
-			parts = append(parts, RocksdbKeySkippedCountStr+": "+strconv.FormatInt(int64(copDetails.RocksdbKeySkippedCount), 10))
+			parts = append(parts, RocksdbKeySkippedCountStr+": "+strconv.FormatUint(copDetails.RocksdbKeySkippedCount, 10))
 		}
 		if copDetails.RocksdbBlockCacheHitCount > 0 {
-			parts = append(parts, RocksdbBlockCacheHitCountStr+": "+strconv.FormatInt(int64(copDetails.RocksdbBlockCacheHitCount), 10))
+			parts = append(parts, RocksdbBlockCacheHitCountStr+": "+strconv.FormatUint(copDetails.RocksdbBlockCacheHitCount, 10))
 		}
 		if copDetails.RocksdbBlockReadCount > 0 {
-			parts = append(parts, RocksdbBlockReadCountStr+": "+strconv.FormatInt(int64(copDetails.RocksdbBlockReadCount), 10))
+			parts = append(parts, RocksdbBlockReadCountStr+": "+strconv.FormatUint(copDetails.RocksdbBlockReadCount, 10))
 		}
 		if copDetails.RocksdbBlockReadByte > 0 {
-			parts = append(parts, RocksdbBlockReadByteStr+": "+strconv.FormatInt(int64(copDetails.RocksdbBlockReadByte), 10))
+			parts = append(parts, RocksdbBlockReadByteStr+": "+strconv.FormatUint(copDetails.RocksdbBlockReadByte, 10))
 		}
 	}
 	return strings.Join(parts, " ")
