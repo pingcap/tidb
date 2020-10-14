@@ -15,6 +15,7 @@ package statistics
 
 import (
 	"bytes"
+	"github.com/pingcap/failpoint"
 	"math"
 	"reflect"
 	"sort"
@@ -287,6 +288,9 @@ func (c *CMSketch) queryValue(sc *stmtctx.StatementContext, val types.Datum) (ui
 
 // QueryBytes is used to query the count of specified bytes.
 func (c *CMSketch) QueryBytes(d []byte) uint64 {
+	failpoint.Inject("mockQueryBytesMaxUint64", func(val failpoint.Value) {
+		failpoint.Return(uint64(val.(int)))
+	})
 	h1, h2 := murmur3.Sum128(d)
 	if count, ok := c.QueryTopN(h1, h2, d); ok {
 		return count

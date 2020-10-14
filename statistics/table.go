@@ -499,9 +499,9 @@ func (coll *HistColl) getEqualCondSelectivity(sc *stmtctx.StatementContext, idx 
 		}
 		if col, ok := coll.Columns[colID]; ok {
 			rang := ranger.Range{
-				LowVal: []types.Datum{idxPointRange.LowVal[i]},
-				LowExclude: idxPointRange.LowExclude,
-				HighVal: []types.Datum{idxPointRange.HighVal[i]},
+				LowVal:      []types.Datum{idxPointRange.LowVal[i]},
+				LowExclude:  idxPointRange.LowExclude,
+				HighVal:     []types.Datum{idxPointRange.HighVal[i]},
 				HighExclude: idxPointRange.HighExclude,
 			}
 

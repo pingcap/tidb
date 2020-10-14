@@ -16,6 +16,7 @@ package statistics_test
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/failpoint"
 	"math"
 	"os"
 	"runtime/pprof"
@@ -726,4 +727,30 @@ func (s *testStatsSuite) TestDNFCondSelectivity(c *C) {
 
 	// Test issue 19981
 	testKit.MustExec("select * from t where _tidb_rowid is null or _tidb_rowid > 7")
+}
+
+func (s *testStatsSuite) TestMultiColumnIndexEstimate(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, key(a,b))")
+	tk.MustExec("insert into t values(1, 1), (1, 2), (1, 3), (2, 2)")
+	tk.MustExec("analyze table t")
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/statistics/table/mockQueryBytesMaxUint64", `return(100000)`), IsNil)
+	// tk.MustExec("explain select * from t where a = 1 and b = 2")
+	var (
+		input  []string
+		output [][]string
+	)
+	s.testData.GetTestCases(c, &input, &output)
+	for i := 0; i < len(input); i++ {
+		s.testData.OnRecord(func() {
+			output[i] = s.testData.ConvertRowsToStrings(tk.MustQuery(input[i]).Rows())
+		})
+		tk.MustQuery(input[i]).Check(testkit.Rows(output[i]...))
+	}
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/statistics/table/mockQueryBytesMaxUint64"), IsNil)
 }

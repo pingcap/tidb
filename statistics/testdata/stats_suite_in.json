@@ -61,5 +61,11 @@
       "select * from t where a > 8 or d < 4 or c > 7 or b < 5",
       "select * from t where a < 8 and (b > 10 or c < 3 or b > 4) and a > 2"
     ]
+  },
+  {
+    "name": "TestMultiColumnIndexEstimate",
+    "cases": [
+      "explain select * from t where a = 1 and b = 2"
+    ]
   }
 ]
