@@ -1031,7 +1031,7 @@ func (s *testSequenceSuite) TestAlterSequence(c *C) {
 
 	// Restart will reset the sequence value to start value by default.
 	tk.MustExec("alter sequence seq restart")
-	// After restart, the base will be pointed to 0, plus the increment 2, the first value will be 2 here.
+	// After restart, the base will be pointed to 0, the first value will be 1 here, then plus the increment 2, the second value will be 3.
 	tk.MustQuery("select nextval(seq)").Check(testkit.Rows("1"))
 	tk.MustQuery("select nextval(seq)").Check(testkit.Rows("3"))
 	tk.MustQuery("select nextval(seq)").Check(testkit.Rows("5"))
