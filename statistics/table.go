@@ -465,24 +465,7 @@ func outOfRangeEQSelectivity(ndv, modifyRows, totalRows int64) float64 {
 }
 
 // getEqualCondSelectivity gets the selectivity of the equal conditions.
-func (coll *HistColl) getEqualCondSelectivity(sc *stmtctx.StatementContext, idx *Index, bytes []byte, usedColsLen int, colRanges []*ranger.Range) (float64, error) {
-	minRowCount := math.MaxFloat64
-	cols := coll.Idx2ColumnIDs[idx.ID]
-	for i, colID := range cols {
-		if i >= usedColsLen {
-			break
-		}
-		if col, ok := coll.Columns[colID]; ok {
-			rowCount, err := col.GetColumnRowCount(sc, colRanges, coll.ModifyCount, col.IsHandle)
-			if err != nil {
-				return 0, err
-			}
-			if rowCount > 0 && rowCount < minRowCount {
-				minRowCount = rowCount
-			}
-		}
-	}
-
+func (coll *HistColl) getEqualCondSelectivity(sc *stmtctx.StatementContext, idx *Index, bytes []byte, usedColsLen int, idxPointRange *ranger.Range) (float64, error) {
 	coverAll := len(idx.Info.Columns) == usedColsLen
 	// In this case, the row count is at most 1.
 	if idx.Info.Unique && coverAll {
@@ -506,12 +489,40 @@ func (coll *HistColl) getEqualCondSelectivity(sc *stmtctx.StatementContext, idx 
 		}
 		return outOfRangeEQSelectivity(ndv, coll.ModifyCount, int64(idx.TotalRowCount())), nil
 	}
+
+	minRowCount := math.MaxFloat64
+	cols := coll.Idx2ColumnIDs[idx.ID]
+	crossValidationCount := 1.0
+	for i, colID := range cols {
+		if i >= usedColsLen {
+			break
+		}
+		if col, ok := coll.Columns[colID]; ok {
+			rang := ranger.Range{
+				LowVal: []types.Datum{idxPointRange.LowVal[i]},
+				LowExclude: idxPointRange.LowExclude,
+				HighVal: []types.Datum{idxPointRange.HighVal[i]},
+				HighExclude: idxPointRange.HighExclude,
+			}
+
+			rowCount, err := col.GetColumnRowCount(sc, []*ranger.Range{&rang}, coll.ModifyCount, col.IsHandle)
+			if err != nil {
+				return 0, err
+			}
+			crossValidationCount = crossValidationCount * rowCount
+
+			if rowCount < minRowCount {
+				minRowCount = rowCount
+			}
+		}
+	}
+
 	idxCount := float64(idx.CMSketch.QueryBytes(bytes))
 	var count float64
 	if idxCount < minRowCount {
-		count = idxCount
+		count = crossValidationCount
 	} else {
-		count = minRowCount
+		count = idxCount
 	}
 	return count / float64(idx.TotalRowCount()), nil
 }
@@ -547,7 +558,7 @@ func (coll *HistColl) getIndexRowCount(sc *stmtctx.StatementContext, idxID int64
 			if err != nil {
 				return 0, errors.Trace(err)
 			}
-			selectivity, err = coll.getEqualCondSelectivity(sc, idx, bytes, rangePosition, []*ranger.Range{ran})
+			selectivity, err = coll.getEqualCondSelectivity(sc, idx, bytes, rangePosition, ran)
 			if err != nil {
 				return 0, errors.Trace(err)
 			}
@@ -563,7 +574,7 @@ func (coll *HistColl) getIndexRowCount(sc *stmtctx.StatementContext, idxID int64
 				if err != nil {
 					return 0, err
 				}
-				res, err := coll.getEqualCondSelectivity(sc, idx, bytes, rangePosition, []*ranger.Range{ran})
+				res, err := coll.getEqualCondSelectivity(sc, idx, bytes, rangePosition, ran)
 				if err != nil {
 					return 0, errors.Trace(err)
 				}
