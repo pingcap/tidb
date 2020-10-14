@@ -175,6 +175,7 @@ func (action actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoff
 					logutil.Logger(bo.ctx).Warn("1pc failed and fallbacks to normal commit procedure",
 						zap.Uint64("satrTS", c.startTS))
 					tikvOnePCTxnCounterFallback.Inc()
+					c.setOnePC(false)
 				} else {
 					c.mu.Lock()
 					if c.onePCCommitTS != 0 {
