@@ -43,6 +43,7 @@ import (
 	"google.golang.org/grpc/backoff"
 	"google.golang.org/grpc/connectivity"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/encoding/gzip"
 	"google.golang.org/grpc/keepalive"
 )
 
@@ -135,6 +136,11 @@ func (a *connArray) Init(addr string, security config.Security, idleNotify *uint
 	keepAliveTimeout := cfg.TiKVClient.GrpcKeepAliveTimeout
 	for i := range a.v {
 		ctx, cancel := context.WithTimeout(context.Background(), a.dialTimeout)
+		var callOptions []grpc.CallOption
+		callOptions = append(callOptions, grpc.MaxCallRecvMsgSize(MaxRecvMsgSize))
+		if cfg.TiKVClient.GrpcCompressionType == gzip.Name {
+			callOptions = append(callOptions, grpc.UseCompressor(gzip.Name))
+		}
 		conn, err := grpc.DialContext(
 			ctx,
 			addr,
@@ -143,7 +149,7 @@ func (a *connArray) Init(addr string, security config.Security, idleNotify *uint
 			grpc.WithInitialConnWindowSize(grpcInitialConnWindowSize),
 			grpc.WithUnaryInterceptor(unaryInterceptor),
 			grpc.WithStreamInterceptor(streamInterceptor),
-			grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(MaxRecvMsgSize)),
+			grpc.WithDefaultCallOptions(callOptions...),
 			grpc.WithConnectParams(grpc.ConnectParams{
 				Backoff: backoff.Config{
 					BaseDelay:  100 * time.Millisecond, // Default was 1s.
