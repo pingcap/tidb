@@ -526,7 +526,7 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeSession, Name: "insert_id", Value: ""},
 	{Scope: ScopeGlobal | ScopeSession, Name: "default_tmp_storage_engine", Value: "InnoDB", IsHintUpdatable: true},
 	{Scope: ScopeGlobal | ScopeSession, Name: "optimizer_search_depth", Value: "62", IsHintUpdatable: true},
-	{Scope: ScopeGlobal, Name: "max_points_in_geometry", Value: "65536", IsHintUpdatable: true},
+	{Scope: ScopeGlobal | ScopeSession, Name: "max_points_in_geometry", Value: "65536", IsHintUpdatable: true},
 	{Scope: ScopeGlobal, Name: "innodb_stats_sample_pages", Value: "8"},
 	{Scope: ScopeGlobal | ScopeSession, Name: "profiling_history_size", Value: "15"},
 	{Scope: ScopeGlobal | ScopeSession, Name: "character_set_database", Value: mysql.DefaultCharset},
