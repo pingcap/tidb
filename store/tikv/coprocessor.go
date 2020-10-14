@@ -1122,13 +1122,16 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *RPCCon
 			}
 		}
 		if scanDetailV2 := pbDetails.ScanDetailV2; scanDetailV2 != nil {
-			resp.detail.ProcessedVersions = scanDetailV2.ProcessedVersions
-			resp.detail.TotalVersions = scanDetailV2.TotalVersions
-			resp.detail.RocksdbDeleteSkippedCount = scanDetailV2.RocksdbDeleteSkippedCount
-			resp.detail.RocksdbKeySkippedCount = scanDetailV2.RocksdbKeySkippedCount
-			resp.detail.RocksdbBlockCacheHitCount = scanDetailV2.RocksdbBlockCacheHitCount
-			resp.detail.RocksdbBlockReadCount = scanDetailV2.RocksdbBlockReadCount
-			resp.detail.RocksdbBlockReadBytes = scanDetailV2.RocksdbBlockReadByte
+			copDetail := &execdetails.CopDetails{
+				ProcessedVersions:         scanDetailV2.ProcessedVersions,
+				TotalVersions:             scanDetailV2.TotalVersions,
+				RocksdbDeleteSkippedCount: scanDetailV2.RocksdbDeleteSkippedCount,
+				RocksdbKeySkippedCount:    scanDetailV2.RocksdbKeySkippedCount,
+				RocksdbBlockCacheHitCount: scanDetailV2.RocksdbBlockCacheHitCount,
+				RocksdbBlockReadCount:     scanDetailV2.RocksdbBlockReadCount,
+				RocksdbBlockReadByte:      scanDetailV2.RocksdbBlockReadByte,
+			}
+			resp.detail.CopDetail = copDetail
 		}
 	}
 	if resp.pbResp.IsCacheHit {
