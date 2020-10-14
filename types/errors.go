@@ -75,4 +75,8 @@ var (
 	ErrInvalidWeekModeFormat = terror.ClassTypes.New(mysql.ErrInvalidWeekModeFormat, mysql.MySQLErrName[mysql.ErrInvalidWeekModeFormat])
 	// ErrWrongValue is returned when the input value is in wrong format.
 	ErrWrongValue = terror.ClassTypes.New(mysql.ErrTruncatedWrongValue, mysql.MySQLErrName[mysql.ErrWrongValue])
+	// ErrTooBigDisplaywidth is returned when the column display width out of range.
+	ErrTooBigDisplaywidth = terror.ClassTypes.New(mysql.ErrTooBigDisplaywidth, mysql.MySQLErrName[mysql.ErrTooBigDisplaywidth])
+	// ErrWrongFieldSpec is returned when the column specifier incorrect.
+	ErrWrongFieldSpec = terror.ClassTypes.New(mysql.ErrWrongFieldSpec, mysql.MySQLErrName[mysql.ErrWrongFieldSpec])
 )
