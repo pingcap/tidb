@@ -67,7 +67,7 @@ func (s testMockSuite) TestInterface(c *C) {
 	c.Assert(transaction.Len(), Equals, 0)
 	c.Assert(transaction.Size(), Equals, 0)
 	c.Assert(transaction.GetMemBuffer(), IsNil)
-	transaction.Discard()
+	transaction.Reset()
 	err = transaction.Rollback()
 	c.Check(err, IsNil)
 	c.Assert(transaction.Valid(), Equals, false)

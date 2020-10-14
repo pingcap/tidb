@@ -58,8 +58,9 @@ func (la *LogicalAggregation) BuildKeyInfo(selfSchema *expression.Schema, childS
 		}
 		selfSchema.Keys = append(selfSchema.Keys, newKey)
 	}
-	if len(la.groupByCols) == len(la.GroupByItems) && len(la.GroupByItems) > 0 {
-		indices := selfSchema.ColumnsIndices(la.groupByCols)
+	groupByCols := la.GetGroupByCols()
+	if len(groupByCols) == len(la.GroupByItems) && len(la.GroupByItems) > 0 {
+		indices := selfSchema.ColumnsIndices(groupByCols)
 		if indices != nil {
 			newKey := make([]*expression.Column, 0, len(indices))
 			for _, i := range indices {
@@ -244,7 +245,7 @@ func checkIndexCanBeKey(idx *model.IndexInfo, columns []*model.ColumnInfo, schem
 func (ds *DataSource) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
 	selfSchema.Keys = nil
 	for _, path := range ds.possibleAccessPaths {
-		if path.IsTablePath() {
+		if path.IsIntHandlePath {
 			continue
 		}
 		if newKey := checkIndexCanBeKey(path.Index, ds.Columns, selfSchema); newKey != nil {

@@ -21,7 +21,9 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/planner/util"
+	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
 )
 
@@ -82,6 +84,7 @@ func (s *testUnitTestSuit) TestIndexJoinAnalyzeLookUpFilters(c *C) {
 		DBName:  model.NewCIStr("test"),
 	})
 	dataSourceNode.schema = dsSchema
+	dataSourceNode.stats = &property.StatsInfo{StatsVersion: statistics.PseudoVersion}
 	outerChildSchema := expression.NewSchema()
 	var outerChildNames types.NameSlice
 	outerChildSchema.Append(&expression.Column{
@@ -244,7 +247,7 @@ func (s *testUnitTestSuit) TestIndexJoinAnalyzeLookUpFilters(c *C) {
 		others, err := s.rewriteSimpleExpr(tt.otherConds, joinNode.schema, joinColNames)
 		c.Assert(err, IsNil)
 		joinNode.OtherConditions = others
-		helper := &indexJoinBuildHelper{join: joinNode, lastColManager: nil}
+		helper := &indexJoinBuildHelper{join: joinNode, lastColManager: nil, innerPlan: dataSourceNode}
 		_, err = helper.analyzeLookUpFilters(path, dataSourceNode, tt.innerKeys)
 		c.Assert(err, IsNil)
 		c.Assert(fmt.Sprintf("%v", helper.chosenAccess), Equals, tt.accesses)

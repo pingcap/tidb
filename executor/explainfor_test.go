@@ -14,15 +14,19 @@
 package executor_test
 
 import (
+	"bytes"
 	"crypto/tls"
 	"fmt"
 	"math"
+	"strconv"
+	"sync"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/israce"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/testkit"
 )
@@ -58,7 +62,7 @@ func (msm *mockSessionManager1) Kill(cid uint64, query bool) {
 func (msm *mockSessionManager1) UpdateTLSConfig(cfg *tls.Config) {
 }
 
-func (s *testSuite) TestExplainFor(c *C) {
+func (s *testSerialSuite) TestExplainFor(c *C) {
 	tkRoot := testkit.NewTestKitWithInit(c, s.store)
 	tkUser := testkit.NewTestKitWithInit(c, s.store)
 	tkRoot.MustExec("create table t1(c1 int, c2 int)")
@@ -67,6 +71,7 @@ func (s *testSuite) TestExplainFor(c *C) {
 	tkRoot.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost", CurrentUser: true, AuthUsername: "root", AuthHostname: "%"}, nil, []byte("012345678901234567890"))
 	tkUser.Se.Auth(&auth.UserIdentity{Username: "tu", Hostname: "localhost", CurrentUser: true, AuthUsername: "tu", AuthHostname: "%"}, nil, []byte("012345678901234567890"))
 
+	tkRoot.MustExec("set @@tidb_enable_collect_execution_info=0;")
 	tkRoot.MustQuery("select * from t1;")
 	tkRootProcess := tkRoot.Se.ShowProcess()
 	ps := []*util.ProcessInfo{tkRootProcess}
@@ -76,6 +81,30 @@ func (s *testSuite) TestExplainFor(c *C) {
 		"TableReader_5 10000.00 root  data:TableFullScan_4",
 		"└─TableFullScan_4 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
 	))
+	tkRoot.MustExec("set @@tidb_enable_collect_execution_info=1;")
+	tkRoot.MustQuery("select * from t1;")
+	tkRootProcess = tkRoot.Se.ShowProcess()
+	ps = []*util.ProcessInfo{tkRootProcess}
+	tkRoot.Se.SetSessionManager(&mockSessionManager1{PS: ps})
+	tkUser.Se.SetSessionManager(&mockSessionManager1{PS: ps})
+	rows := tkRoot.MustQuery(fmt.Sprintf("explain for connection %d", tkRootProcess.ID)).Rows()
+	c.Assert(len(rows), Equals, 2)
+	c.Assert(len(rows[0]), Equals, 9)
+	buf := bytes.NewBuffer(nil)
+	for i, row := range rows {
+		if i > 0 {
+			buf.WriteString("\n")
+		}
+		for j, v := range row {
+			if j > 0 {
+				buf.WriteString(" ")
+			}
+			buf.WriteString(fmt.Sprintf("%v", v))
+		}
+	}
+	c.Assert(buf.String(), Matches, ""+
+		"TableReader_5 10000.00 0 root  time:.*, loops:1, cop_task:.*num: 1, max:.*, proc_keys: 0, rpc_num: 1, rpc_time: .* data:TableFullScan_4 N/A N/A\n"+
+		"└─TableFullScan_4 10000.00 0 cop.* table:t1 time:.*, loops:0 keep order:false, stats:pseudo N/A N/A")
 	err := tkUser.ExecToErr(fmt.Sprintf("explain for connection %d", tkRootProcess.ID))
 	c.Check(core.ErrAccessDenied.Equal(err), IsTrue)
 	err = tkUser.ExecToErr("explain for connection 42")
@@ -87,9 +116,10 @@ func (s *testSuite) TestExplainFor(c *C) {
 	tkRoot.MustExec(fmt.Sprintf("explain for connection %d", tkRootProcess.ID))
 }
 
-func (s *testSuite) TestIssue11124(c *C) {
+func (s *testSerialSuite) TestIssue11124(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk2 := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
 	tk.MustExec("drop table if exists kankan1")
 	tk.MustExec("drop table if exists kankan2")
 	tk.MustExec("create table kankan1(id int, name text);")
@@ -140,6 +170,18 @@ func (s *testSuite) TestExplainClusterTable(c *C) {
 		`MemTableScan_5 10000.00 root table:CLUSTER_CONFIG node_types:["tidb"], instances:["192.168.1.7:2379"]`))
 }
 
+func (s *testSuite) TestInspectionResultTable(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustQuery("desc select * from information_schema.inspection_result where rule = 'ddl' and rule = 'config'").Check(testkit.Rows(
+		`MemTableScan_5 10000.00 root table:INSPECTION_RESULT skip_inspection:true`))
+	tk.MustQuery("desc select * from information_schema.inspection_result where rule in ('ddl', 'config')").Check(testkit.Rows(
+		`MemTableScan_5 10000.00 root table:INSPECTION_RESULT rules:["config","ddl"], items:[]`))
+	tk.MustQuery("desc select * from information_schema.inspection_result where item in ('ddl.lease', 'raftstore.threadpool')").Check(testkit.Rows(
+		`MemTableScan_5 10000.00 root table:INSPECTION_RESULT rules:[], items:["ddl.lease","raftstore.threadpool"]`))
+	tk.MustQuery("desc select * from information_schema.inspection_result where item in ('ddl.lease', 'raftstore.threadpool') and rule in ('ddl', 'config')").Check(testkit.Rows(
+		`MemTableScan_5 10000.00 root table:INSPECTION_RESULT rules:["config","ddl"], items:["ddl.lease","raftstore.threadpool"]`))
+}
+
 func (s *testSuite) TestInspectionRuleTable(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustQuery(fmt.Sprintf("desc select * from information_schema.inspection_rules where type='inspection'")).Check(testkit.Rows(
@@ -155,13 +197,83 @@ type testPrepareSerialSuite struct {
 }
 
 func (s *testPrepareSerialSuite) TestExplainForConnPlanCache(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+	if israce.RaceEnabled {
+		c.Skip("skip race test")
+	}
 	orgEnable := core.PreparedPlanCacheEnabled()
 	defer func() {
 		core.SetPreparedPlanCache(orgEnable)
 	}()
 	core.SetPreparedPlanCache(true)
+
 	var err error
+	tk1 := testkit.NewTestKit(c, s.store)
+	tk1.Se, err = session.CreateSession4TestWithOpt(s.store, &session.Opt{
+		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
+	})
+	c.Assert(err, IsNil)
+	tk2 := testkit.NewTestKitWithInit(c, s.store)
+
+	tk1.MustExec("use test")
+	tk1.MustExec("set @@tidb_enable_collect_execution_info=0;")
+	tk1.MustExec("drop table if exists t")
+	tk1.MustExec("create table t(a int)")
+	tk1.MustExec("prepare stmt from 'select * from t where a = ?'")
+	tk1.MustExec("set @p0='1'")
+
+	executeQuery := "execute stmt using @p0"
+	explainQuery := "explain for connection " + strconv.FormatUint(tk1.Se.ShowProcess().ID, 10)
+	explainResult := testkit.Rows(
+		"TableReader_7 8000.00 root  data:Selection_6",
+		"└─Selection_6 8000.00 cop[tikv]  eq(cast(test.t.a), 1)",
+		"  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+	)
+
+	// Now the ProcessInfo held by mockSessionManager1 will not be updated in real time.
+	// So it needs to be reset every time before tk2 query.
+	// TODO: replace mockSessionManager1 with another mockSessionManager.
+
+	// single test
+	tk1.MustExec(executeQuery)
+	tk2.Se.SetSessionManager(&mockSessionManager1{
+		PS: []*util.ProcessInfo{tk1.Se.ShowProcess()},
+	})
+	tk2.MustQuery(explainQuery).Check(explainResult)
+
+	// multiple test, '1000' is both effective and efficient.
+	repeats := 1000
+	var wg sync.WaitGroup
+	wg.Add(2)
+
+	go func() {
+		for i := 0; i < repeats; i++ {
+			tk1.MustExec(executeQuery)
+		}
+		wg.Done()
+	}()
+
+	go func() {
+		for i := 0; i < repeats; i++ {
+			tk2.Se.SetSessionManager(&mockSessionManager1{
+				PS: []*util.ProcessInfo{tk1.Se.ShowProcess()},
+			})
+			tk2.MustQuery(explainQuery).Check(explainResult)
+		}
+		wg.Done()
+	}()
+
+	wg.Wait()
+}
+
+func (s *testPrepareSerialSuite) TestSavedPlanPanicPlanCache(c *C) {
+	orgEnable := core.PreparedPlanCacheEnabled()
+	defer func() {
+		core.SetPreparedPlanCache(orgEnable)
+	}()
+	core.SetPreparedPlanCache(true)
+
+	var err error
+	tk := testkit.NewTestKit(c, s.store)
 	tk.Se, err = session.CreateSession4TestWithOpt(s.store, &session.Opt{
 		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
 	})
@@ -169,21 +281,20 @@ func (s *testPrepareSerialSuite) TestExplainForConnPlanCache(c *C) {
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int)")
-	rows := tk.MustQuery("select connection_id()").Rows()
-	c.Assert(len(rows), Equals, 1)
-	connID := rows[0][0].(string)
-	tk.MustExec("prepare stmt from 'select * from t where a = ?'")
-	tk.MustExec("set @p0='1'")
-	tk.MustExec("execute stmt using @p0")
-	tkProcess := tk.Se.ShowProcess()
-	ps := []*util.ProcessInfo{tkProcess}
-	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
-	tk.MustQuery(fmt.Sprintf("explain for connection %s", connID)).Check(testkit.Rows(
-		"TableReader_7 8000.00 root  data:Selection_6",
-		"└─Selection_6 8000.00 cop[tikv]  eq(cast(test.t.a), 1)",
-		"  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+	tk.MustExec("create table t(a int, b int, c int generated always as (a+b) stored)")
+	tk.MustExec("insert into t(a,b) values(1,1)")
+	tk.MustExec("begin")
+	tk.MustExec("update t set b = 2 where a = 1")
+	tk.MustExec("prepare stmt from 'select b from t where a > ?'")
+	tk.MustExec("set @p = 0")
+	tk.MustQuery("execute stmt using @p").Check(testkit.Rows(
+		"2",
 	))
+	tk.MustExec("set @p = 1")
+	tk.MustQuery("execute stmt using @p").Check(testkit.Rows())
+	err = tk.ExecToErr("insert into t(a,b,c) values(3,3,3)")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[planner:3105]The value specified for generated column 'c' in table 't' is not allowed.")
 }
 
 func (s *testPrepareSerialSuite) TestExplainDotForExplainPlan(c *C) {
@@ -202,6 +313,25 @@ func (s *testPrepareSerialSuite) TestExplainDotForExplainPlan(c *C) {
 	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
 
 	tk.MustQuery(fmt.Sprintf("explain format=\"dot\" for connection %s", connID)).Check(nil)
+}
+
+func (s *testPrepareSerialSuite) TestExplainDotForQuery(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk2 := testkit.NewTestKit(c, s.store)
+
+	rows := tk.MustQuery("select connection_id()").Rows()
+	c.Assert(len(rows), Equals, 1)
+	connID := rows[0][0].(string)
+	tk.MustQuery("select 1")
+	tkProcess := tk.Se.ShowProcess()
+	ps := []*util.ProcessInfo{tkProcess}
+	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
+
+	expected := tk2.MustQuery("explain format=\"dot\" select 1").Rows()
+	got := tk.MustQuery(fmt.Sprintf("explain format=\"dot\" for connection %s", connID)).Rows()
+	for i := range got {
+		c.Assert(got[i], DeepEquals, expected[i])
+	}
 }
 
 func (s *testSuite) TestExplainTableStorage(c *C) {
@@ -265,4 +395,27 @@ func (s *testSuite) TestInspectionSummaryTable(c *C) {
 		`Selection_5 8000.00 root  in(Column#3, "metric_name1", "metric_name3"), in(Column#3, "metric_name1", "metric_name4"), in(Column#3, "metric_name5", "metric_name1"), in(Column#3, "metric_name5", "metric_name4")`,
 		`└─MemTableScan_6 10000.00 root table:INSPECTION_SUMMARY skip_inspection: true`,
 	))
+}
+
+func (s *testSuite) TestExplainTiFlashSystemTables(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tiflashInstance := "192.168.1.7:3930"
+	database := "test"
+	table := "t"
+	tk.MustQuery(fmt.Sprintf("desc select * from information_schema.TIFLASH_TABLES where TIFLASH_INSTANCE = '%s'", tiflashInstance)).Check(testkit.Rows(
+		fmt.Sprintf("MemTableScan_5 10000.00 root table:TIFLASH_TABLES tiflash_instances:[\"%s\"]", tiflashInstance)))
+	tk.MustQuery(fmt.Sprintf("desc select * from information_schema.TIFLASH_SEGMENTS where TIFLASH_INSTANCE = '%s'", tiflashInstance)).Check(testkit.Rows(
+		fmt.Sprintf("MemTableScan_5 10000.00 root table:TIFLASH_SEGMENTS tiflash_instances:[\"%s\"]", tiflashInstance)))
+	tk.MustQuery(fmt.Sprintf("desc select * from information_schema.TIFLASH_TABLES where TIDB_DATABASE = '%s'", database)).Check(testkit.Rows(
+		fmt.Sprintf("MemTableScan_5 10000.00 root table:TIFLASH_TABLES tidb_databases:[\"%s\"]", database)))
+	tk.MustQuery(fmt.Sprintf("desc select * from information_schema.TIFLASH_SEGMENTS where TIDB_DATABASE = '%s'", database)).Check(testkit.Rows(
+		fmt.Sprintf("MemTableScan_5 10000.00 root table:TIFLASH_SEGMENTS tidb_databases:[\"%s\"]", database)))
+	tk.MustQuery(fmt.Sprintf("desc select * from information_schema.TIFLASH_TABLES where TIDB_TABLE = '%s'", table)).Check(testkit.Rows(
+		fmt.Sprintf("MemTableScan_5 10000.00 root table:TIFLASH_TABLES tidb_tables:[\"%s\"]", table)))
+	tk.MustQuery(fmt.Sprintf("desc select * from information_schema.TIFLASH_SEGMENTS where TIDB_TABLE = '%s'", table)).Check(testkit.Rows(
+		fmt.Sprintf("MemTableScan_5 10000.00 root table:TIFLASH_SEGMENTS tidb_tables:[\"%s\"]", table)))
+	tk.MustQuery(fmt.Sprintf("desc select * from information_schema.TIFLASH_TABLES where TIFLASH_INSTANCE = '%s' and TIDB_DATABASE = '%s' and TIDB_TABLE = '%s'", tiflashInstance, database, table)).Check(testkit.Rows(
+		fmt.Sprintf("MemTableScan_5 10000.00 root table:TIFLASH_TABLES tiflash_instances:[\"%s\"], tidb_databases:[\"%s\"], tidb_tables:[\"%s\"]", tiflashInstance, database, table)))
+	tk.MustQuery(fmt.Sprintf("desc select * from information_schema.TIFLASH_SEGMENTS where TIFLASH_INSTANCE = '%s' and TIDB_DATABASE = '%s' and TIDB_TABLE = '%s'", tiflashInstance, database, table)).Check(testkit.Rows(
+		fmt.Sprintf("MemTableScan_5 10000.00 root table:TIFLASH_SEGMENTS tiflash_instances:[\"%s\"], tidb_databases:[\"%s\"], tidb_tables:[\"%s\"]", tiflashInstance, database, table)))
 }

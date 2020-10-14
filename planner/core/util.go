@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/set"
 )
 
@@ -39,7 +40,7 @@ func (a *AggregateFuncExtractor) Enter(n ast.Node) (ast.Node, bool) {
 	switch n.(type) {
 	case *ast.AggregateFuncExpr:
 		a.inAggregateFuncExpr = true
-	case *ast.SelectStmt, *ast.UnionStmt:
+	case *ast.SelectStmt, *ast.SetOprStmt:
 		return n, true
 	}
 	return n, false
@@ -65,7 +66,7 @@ type WindowFuncExtractor struct {
 // Enter implements Visitor interface.
 func (a *WindowFuncExtractor) Enter(n ast.Node) (ast.Node, bool) {
 	switch n.(type) {
-	case *ast.SelectStmt, *ast.UnionStmt:
+	case *ast.SelectStmt, *ast.SetOprStmt:
 		return n, true
 	}
 	return n, false
@@ -127,6 +128,17 @@ func (s *logicalSchemaProducer) inlineProjection(parentUsedCols []*expression.Co
 type physicalSchemaProducer struct {
 	schema *expression.Schema
 	basePhysicalPlan
+}
+
+func (s *physicalSchemaProducer) cloneWithSelf(newSelf PhysicalPlan) (*physicalSchemaProducer, error) {
+	base, err := s.basePhysicalPlan.cloneWithSelf(newSelf)
+	if err != nil {
+		return nil, err
+	}
+	return &physicalSchemaProducer{
+		basePhysicalPlan: *base,
+		schema:           s.schema.Clone(),
+	}, nil
 }
 
 // Schema implements the Plan.Schema interface.
@@ -217,6 +229,11 @@ func BuildPhysicalJoinSchema(joinType JoinType, join PhysicalPlan) *expression.S
 
 // GetStatsInfo gets the statistics info from a physical plan tree.
 func GetStatsInfo(i interface{}) map[string]uint64 {
+	if i == nil {
+		// it's a workaround for https://github.com/pingcap/tidb/issues/17419
+		// To entirely fix this, uncomment the assertion in TestPreparedIssue17419
+		return nil
+	}
 	p := i.(Plan)
 	var physicalPlan PhysicalPlan
 	switch x := p.(type) {
@@ -265,4 +282,48 @@ func tableHasDirtyContent(ctx sessionctx.Context, tableInfo *model.TableInfo) bo
 		}
 	}
 	return false
+}
+
+func cloneExprs(exprs []expression.Expression) []expression.Expression {
+	cloned := make([]expression.Expression, 0, len(exprs))
+	for _, e := range exprs {
+		cloned = append(cloned, e.Clone())
+	}
+	return cloned
+}
+
+func cloneCols(cols []*expression.Column) []*expression.Column {
+	cloned := make([]*expression.Column, 0, len(cols))
+	for _, c := range cols {
+		cloned = append(cloned, c.Clone().(*expression.Column))
+	}
+	return cloned
+}
+
+func cloneColInfos(cols []*model.ColumnInfo) []*model.ColumnInfo {
+	cloned := make([]*model.ColumnInfo, 0, len(cols))
+	for _, c := range cols {
+		cloned = append(cloned, c.Clone())
+	}
+	return cloned
+}
+
+func cloneRanges(ranges []*ranger.Range) []*ranger.Range {
+	cloned := make([]*ranger.Range, 0, len(ranges))
+	for _, r := range ranges {
+		cloned = append(cloned, r.Clone())
+	}
+	return cloned
+}
+
+func clonePhysicalPlan(plans []PhysicalPlan) ([]PhysicalPlan, error) {
+	cloned := make([]PhysicalPlan, 0, len(plans))
+	for _, p := range plans {
+		c, err := p.Clone()
+		if err != nil {
+			return nil, err
+		}
+		cloned = append(cloned, c)
+	}
+	return cloned, nil
 }

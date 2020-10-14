@@ -142,7 +142,7 @@ func (e *inspectionResultRetriever) retrieve(ctx context.Context, sctx sessionct
 		e.instanceToStatusAddress = make(map[string]string)
 		e.statusToInstanceAddress = make(map[string]string)
 		sql := "select instance,status_address from information_schema.cluster_info;"
-		rows, _, err := sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
+		rows, _, err := sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQLWithContext(ctx, sql)
 		if err != nil {
 			sctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("get cluster info failed: %v", err))
 		}
@@ -213,7 +213,7 @@ func (c configInspection) inspect(ctx context.Context, sctx sessionctx.Context, 
 	return results
 }
 
-func (configInspection) inspectDiffConfig(_ context.Context, sctx sessionctx.Context, filter inspectionFilter) []inspectionResult {
+func (configInspection) inspectDiffConfig(ctx context.Context, sctx sessionctx.Context, filter inspectionFilter) []inspectionResult {
 	// check the configuration consistent
 	ignoreConfigKey := []string{
 		// TiDB
@@ -249,16 +249,38 @@ func (configInspection) inspectDiffConfig(_ context.Context, sctx sessionctx.Con
 	}
 	sql := fmt.Sprintf("select type, `key`, count(distinct value) as c from information_schema.cluster_config where `key` not in ('%s') group by type, `key` having c > 1",
 		strings.Join(ignoreConfigKey, "','"))
-	rows, _, err := sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
+	rows, _, err := sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQLWithContext(ctx, sql)
 	if err != nil {
 		sctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("check configuration consistency failed: %v", err))
+	}
+
+	generateDetail := func(tp, item string) string {
+		query := fmt.Sprintf("select value, instance from information_schema.cluster_config where type='%s' and `key`='%s';", tp, item)
+		rows, _, err := sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQLWithContext(ctx, query)
+		if err != nil {
+			sctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("check configuration consistency failed: %v", err))
+			return fmt.Sprintf("the cluster has different config value of %[2]s, execute the sql to see more detail: select * from information_schema.cluster_config where type='%[1]s' and `key`='%[2]s'",
+				tp, item)
+		}
+		m := make(map[string][]string)
+		for _, row := range rows {
+			value := row.GetString(0)
+			instance := row.GetString(1)
+			m[value] = append(m[value], instance)
+		}
+		groups := make([]string, 0, len(m))
+		for k, v := range m {
+			sort.Strings(v)
+			groups = append(groups, fmt.Sprintf("%s config value is %s", strings.Join(v, ","), k))
+		}
+		sort.Strings(groups)
+		return strings.Join(groups, "\n")
 	}
 
 	var results []inspectionResult
 	for _, row := range rows {
 		if filter.enable(row.GetString(1)) {
-			detail := fmt.Sprintf("the cluster has different config value of %[2]s, execute the sql to see more detail: select * from information_schema.cluster_config where type='%[1]s' and `key`='%[2]s'",
-				row.GetString(0), row.GetString(1))
+			detail := generateDetail(row.GetString(0), row.GetString(1))
 			results = append(results, inspectionResult{
 				tp:       row.GetString(0),
 				instance: "",
@@ -302,7 +324,7 @@ func (c configInspection) inspectCheckConfig(ctx context.Context, sctx sessionct
 		}
 		sql := fmt.Sprintf("select instance from information_schema.cluster_config where type = '%s' and `key` = '%s' and value = '%s'",
 			cas.tp, cas.key, cas.value)
-		rows, _, err := sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
+		rows, _, err := sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQLWithContext(ctx, sql)
 		if err != nil {
 			sctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("check configuration in reason failed: %v", err))
 		}
@@ -415,10 +437,10 @@ func (configInspection) convertReadableSizeToByteSize(sizeStr string) (uint64, e
 	return uint64(size) * rate, nil
 }
 
-func (versionInspection) inspect(_ context.Context, sctx sessionctx.Context, filter inspectionFilter) []inspectionResult {
+func (versionInspection) inspect(ctx context.Context, sctx sessionctx.Context, filter inspectionFilter) []inspectionResult {
 	// check the configuration consistent
 	sql := "select type, count(distinct git_hash) as c from information_schema.cluster_info group by type having c > 1;"
-	rows, _, err := sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
+	rows, _, err := sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQLWithContext(ctx, sql)
 	if err != nil {
 		sctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("check version consistency failed: %v", err))
 	}

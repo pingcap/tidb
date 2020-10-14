@@ -18,6 +18,7 @@ import (
 	"crypto/tls"
 	"math"
 	"net"
+	"runtime"
 	"testing"
 	"time"
 
@@ -27,6 +28,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/errno"
@@ -66,8 +68,8 @@ type mockEtcdBackend struct {
 	pdAddrs []string
 }
 
-func (mebd *mockEtcdBackend) EtcdAddrs() []string {
-	return mebd.pdAddrs
+func (mebd *mockEtcdBackend) EtcdAddrs() ([]string, error) {
+	return mebd.pdAddrs, nil
 }
 func (mebd *mockEtcdBackend) TLSConfig() *tls.Config { return nil }
 func (mebd *mockEtcdBackend) StartGCWorker() error {
@@ -87,6 +89,14 @@ func unixSocketAvailable() bool {
 }
 
 func TestInfo(t *testing.T) {
+	err := failpoint.Enable("github.com/pingcap/tidb/domain/FailPlacement", `return(true)`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if runtime.GOOS == "windows" {
+		t.Skip("integration.NewClusterV3 will create file contains a colon which is not allowed on Windows")
+	}
 	if !unixSocketAvailable() {
 		return
 	}
@@ -102,7 +112,7 @@ func TestInfo(t *testing.T) {
 	mockStore := &mockEtcdBackend{
 		Storage: s,
 		pdAddrs: []string{clus.Members[0].GRPCAddr()}}
-	dom := NewDomain(mockStore, ddlLease, 0, mockFactory)
+	dom := NewDomain(mockStore, ddlLease, 0, 0, mockFactory)
 	defer func() {
 		dom.Close()
 		s.Close()
@@ -209,6 +219,11 @@ func TestInfo(t *testing.T) {
 	if err != nil || len(infos) != 0 {
 		t.Fatalf("err %v, infos %v", err, infos)
 	}
+
+	err = failpoint.Disable("github.com/pingcap/tidb/domain/FailPlacement")
+	if err != nil {
+		t.Fatal(err)
+	}
 }
 
 type mockSessionManager struct {
@@ -241,7 +256,7 @@ func (*testSuite) TestT(c *C) {
 	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
 	ddlLease := 80 * time.Millisecond
-	dom := NewDomain(store, ddlLease, 0, mockFactory)
+	dom := NewDomain(store, ddlLease, 0, 0, mockFactory)
 	err = dom.Init(ddlLease, sysMockFactory)
 	c.Assert(err, IsNil)
 	ctx := mock.NewContext()
@@ -266,7 +281,7 @@ func (*testSuite) TestT(c *C) {
 	c.Assert(is, NotNil)
 
 	// for updating the self schema version
-	goCtx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	goCtx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	err = dd.SchemaSyncer().OwnerCheckAllVersions(goCtx, is.SchemaMetaVersion())
 	cancel()
 	c.Assert(err, IsNil)
@@ -274,7 +289,7 @@ func (*testSuite) TestT(c *C) {
 	c.Assert(snapIs, NotNil)
 	c.Assert(err, IsNil)
 	// Make sure that the self schema version doesn't be changed.
-	goCtx, cancel = context.WithTimeout(context.Background(), 10*time.Millisecond)
+	goCtx, cancel = context.WithTimeout(context.Background(), 100*time.Millisecond)
 	err = dd.SchemaSyncer().OwnerCheckAllVersions(goCtx, is.SchemaMetaVersion())
 	cancel()
 	c.Assert(err, IsNil)
@@ -314,24 +329,24 @@ func (*testSuite) TestT(c *C) {
 	c.Assert(err, IsNil)
 	ts := ver.Ver
 
-	succ := dom.SchemaValidator.Check(ts, schemaVer, nil)
+	_, succ := dom.SchemaValidator.Check(ts, schemaVer, nil)
 	c.Assert(succ, Equals, ResultSucc)
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/domain/ErrorMockReloadFailed", `return(true)`), IsNil)
 	err = dom.Reload()
 	c.Assert(err, NotNil)
-	succ = dom.SchemaValidator.Check(ts, schemaVer, nil)
+	_, succ = dom.SchemaValidator.Check(ts, schemaVer, nil)
 	c.Assert(succ, Equals, ResultSucc)
 	time.Sleep(ddlLease)
 
 	ver, err = store.CurrentVersion()
 	c.Assert(err, IsNil)
 	ts = ver.Ver
-	succ = dom.SchemaValidator.Check(ts, schemaVer, nil)
+	_, succ = dom.SchemaValidator.Check(ts, schemaVer, nil)
 	c.Assert(succ, Equals, ResultUnknown)
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/domain/ErrorMockReloadFailed"), IsNil)
 	err = dom.Reload()
 	c.Assert(err, IsNil)
-	succ = dom.SchemaValidator.Check(ts, schemaVer, nil)
+	_, succ = dom.SchemaValidator.Check(ts, schemaVer, nil)
 	c.Assert(succ, Equals, ResultSucc)
 
 	// For slow query.
@@ -396,7 +411,7 @@ func (*testSuite) TestT(c *C) {
 		SchemaOutOfDateRetryInterval = originalRetryInterval
 	}()
 	dom.SchemaValidator.Stop()
-	err = schemaChecker.Check(uint64(123456))
+	_, err = schemaChecker.Check(uint64(123456))
 	c.Assert(err.Error(), Equals, ErrInfoSchemaExpired.Error())
 	dom.SchemaValidator.Reset()
 
@@ -458,6 +473,6 @@ func (*testSuite) TestSessionPool(c *C) {
 }
 
 func (*testSuite) TestErrorCode(c *C) {
-	c.Assert(int(ErrInfoSchemaExpired.ToSQLError().Code), Equals, errno.ErrInfoSchemaExpired)
-	c.Assert(int(ErrInfoSchemaChanged.ToSQLError().Code), Equals, errno.ErrInfoSchemaChanged)
+	c.Assert(int(terror.ToSQLError(ErrInfoSchemaExpired).Code), Equals, errno.ErrInfoSchemaExpired)
+	c.Assert(int(terror.ToSQLError(ErrInfoSchemaChanged).Code), Equals, errno.ErrInfoSchemaChanged)
 }

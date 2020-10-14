@@ -22,7 +22,6 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
@@ -30,8 +29,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
-	"github.com/pingcap/tidb/util/logutil"
-	"go.uber.org/zap"
 	"golang.org/x/text/transform"
 )
 
@@ -2241,9 +2238,6 @@ func (b *builtinCharSig) vecEvalString(input *chunk.Chunk, result *chunk.Column)
 		return err
 	}
 	defer b.bufAllocator.put(bufstr)
-	if err := b.args[l-1].VecEvalString(b.ctx, input, bufstr); err != nil {
-		return err
-	}
 	bigints := make([]int64, 0, l-1)
 	result.ReserveString(n)
 	bufint := make([]([]int64), l-1)
@@ -2259,25 +2253,7 @@ func (b *builtinCharSig) vecEvalString(input *chunk.Chunk, result *chunk.Column)
 			bigints = append(bigints, bufint[j][i])
 		}
 		tempString := string(b.convertToBytes(bigints))
-		charsetLable := strings.ToLower(bufstr.GetString(i))
-		if bufstr.IsNull(i) || charsetLable == "ascii" || strings.HasPrefix(charsetLable, "utf8") {
-			result.AppendString(tempString)
-		} else {
-			encoding, charsetName := charset.Lookup(charsetLable)
-			if encoding == nil {
-				return errors.Errorf("unknown encoding: %s", bufstr.GetString(i))
-			}
-			oldStr := tempString
-			tempString, _, err := transform.String(encoding.NewDecoder(), tempString)
-			if err != nil {
-				logutil.BgLogger().Warn("change charset of string",
-					zap.String("string", oldStr),
-					zap.String("charset", charsetName),
-					zap.Error(err))
-				return err
-			}
-			result.AppendString(tempString)
-		}
+		result.AppendString(tempString)
 	}
 	return nil
 }

@@ -270,6 +270,7 @@ func (p *LogicalProjection) appendExpr(expr expression.Expression) *expression.C
 		UniqueID: p.ctx.GetSessionVars().AllocPlanColumnID(),
 		RetType:  expr.GetType(),
 	}
+	col.SetCoercibility(expr.Coercibility())
 	p.schema.Append(col)
 	return col
 }
@@ -394,7 +395,7 @@ func (la *LogicalAggregation) PredicatePushDown(predicates []expression.Expressi
 	for _, fun := range la.AggFuncs {
 		exprsOriginal = append(exprsOriginal, fun.Args[0])
 	}
-	groupByColumns := expression.NewSchema(la.groupByCols...)
+	groupByColumns := expression.NewSchema(la.GetGroupByCols()...)
 	for _, cond := range predicates {
 		switch cond.(type) {
 		case *expression.Constant:
