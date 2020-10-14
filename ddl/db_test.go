@@ -3929,6 +3929,11 @@ func (s *testSerialDBSuite) TestModifyColumnBetweenStringTypes(c *C) {
 	tk.MustQuery("select * from tt where a = 1").Check(testkit.Rows("10000"))
 	tk.MustQuery("select * from tt where a = 2").Check(testkit.Rows("111"))
 
+	// no-strict mode
+	tk.MustExec(`set @@sql_mode="";`)
+	tk.MustExec("alter table tt change a a enum('111', '2222');")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1265|Data truncated for column 'a', value is 'KindMysqlEnum 10000'"))
+
 	tk.MustExec("drop table tt;")
 }
 

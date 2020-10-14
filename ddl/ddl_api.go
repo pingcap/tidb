@@ -3294,8 +3294,8 @@ func CheckModifyTypeCompatible(origin *types.FieldType, to *types.FieldType) (al
 	unsupportedMsg := fmt.Sprintf("type %v not match origin %v", to.CompactStr(), origin.CompactStr())
 	var canChange bool
 	switch origin.Tp {
-	case mysql.TypeVarchar, mysql.TypeString, mysql.TypeVarString,
-		mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
+	case mysql.TypeVarchar, mysql.TypeString, mysql.TypeVarString, mysql.TypeBlob,
+		mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeEnum, mysql.TypeSet:
 		switch to.Tp {
 		case mysql.TypeVarchar, mysql.TypeString, mysql.TypeVarString,
 			mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob,
@@ -3311,15 +3311,6 @@ func CheckModifyTypeCompatible(origin *types.FieldType, to *types.FieldType) (al
 		default:
 			return "", errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
 		}
-	case mysql.TypeEnum:
-		switch to.Tp {
-		case mysql.TypeVarchar, mysql.TypeString, mysql.TypeVarString,
-			mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob,
-			mysql.TypeSet, mysql.TypeEnum:
-			canChange = true
-		default:
-			return "", errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
-		}
 	case mysql.TypeNewDecimal:
 		if origin.Tp != to.Tp {
 			return "", errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
@@ -3330,15 +3321,6 @@ func CheckModifyTypeCompatible(origin *types.FieldType, to *types.FieldType) (al
 		if to.Flen != origin.Flen || to.Decimal != origin.Decimal || mysql.HasUnsignedFlag(to.Flag) != mysql.HasUnsignedFlag(origin.Flag) {
 			msg := fmt.Sprintf("decimal change from decimal(%d, %d) to decimal(%d, %d)", origin.Flen, origin.Decimal, to.Flen, to.Decimal)
 			return msg, errUnsupportedModifyColumn.GenWithStackByArgs(msg)
-		}
-	case mysql.TypeSet:
-		switch to.Tp {
-		case mysql.TypeVarchar, mysql.TypeString, mysql.TypeVarString,
-			mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob,
-			mysql.TypeSet, mysql.TypeEnum:
-			canChange = true
-		default:
-			return "", errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
 		}
 	default:
 		if origin.Tp != to.Tp {

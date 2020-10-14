@@ -920,7 +920,7 @@ func (w *worker) doModifyColumnTypeWithData(
 				// If timeout, we should return, check for the owner and re-wait job done.
 				return ver, nil
 			}
-			if isErrorToRollback(err) {
+			if needRollbackData(err) {
 				if err1 := t.RemoveDDLReorgHandle(job, reorgInfo.elements); err1 != nil {
 					logutil.BgLogger().Warn("[ddl] run modify column job failed, RemoveDDLReorgHandle failed, can't convert job to rollback",
 						zap.String("job", job.String()), zap.Error(err1))
@@ -979,8 +979,8 @@ func (w *worker) doModifyColumnTypeWithData(
 	return ver, errors.Trace(err)
 }
 
-// isErrorToRollback some error need roll back data
-func isErrorToRollback(err error) bool {
+// needRollbackData indicates whether it needs to rollback data when specific error occurs.
+func needRollbackData(err error) bool {
 	return kv.ErrKeyExists.Equal(err) || errCancelledDDLJob.Equal(err) || errCantDecodeRecord.Equal(err) || types.ErrOverflow.Equal(err) ||
 		types.ErrOverflow.Equal(err) || types.ErrDataTooLong.Equal(err) || types.ErrTruncated.Equal(err)
 }
@@ -1173,9 +1173,7 @@ func (w *updateColumnWorker) getRowRecord(handle kv.Handle, recordKey []byte, ra
 	var recordWarning *terror.Error
 	newColVal, err := table.CastValue(w.sessCtx, w.rowMap[w.oldColInfo.ID], w.newColInfo, false, false)
 	if err != nil {
-		if types.ErrTruncated.Equal(err) {
-			err = types.ErrTruncated.GenWithStack("Data truncated for column '%s', value is '%s'", w.oldColInfo.Name, w.rowMap[w.oldColInfo.ID])
-		}
+		err = w.reformatErrors(err)
 		if IsNormalWarning(err) || (!w.sqlMode.HasStrictMode() && IsStrictWarning(err)) {
 			// Keep the warnings.
 			recordWarning = errors.Cause(err).(*terror.Error)
@@ -1208,6 +1206,15 @@ func (w *updateColumnWorker) getRowRecord(handle kv.Handle, recordKey []byte, ra
 	w.rowRecords = append(w.rowRecords, &rowRecord{key: recordKey, vals: newRowVal, warning: recordWarning})
 	w.cleanRowMap()
 	return nil
+}
+
+// reformatErrors casted error because `convertTo` function couldn't package column name and datum value for some errors.
+func (w *updateColumnWorker) reformatErrors(err error) error {
+	// Since row count is not precious in concurrent reorganization, here we substitute row count with datum value.
+	if types.ErrTruncated.Equal(err) {
+		err = types.ErrTruncated.GenWithStack("Data truncated for column '%s', value is '%s'", w.oldColInfo.Name, w.rowMap[w.oldColInfo.ID])
+	}
+	return err
 }
 
 // IsNormalWarning is used to check the normal warnings, for example data-truncated warnings.
