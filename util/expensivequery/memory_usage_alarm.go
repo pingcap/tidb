@@ -39,10 +39,10 @@ import (
 )
 
 type memoryUsageAlarm struct {
-	err                          error
-	isServerMemoryQuotaSetByUser bool
-	serverMemoryQuota            uint64
-	lastCheckTime                time.Time
+	err                    error
+	isServerMemoryQuotaSet bool
+	serverMemoryQuota      uint64
+	lastCheckTime          time.Time
 
 	tmpDir              string
 	lastLogFileName     []string
@@ -57,7 +57,7 @@ func initMemoryUsageAlarmRecord() (record *memoryUsageAlarm) {
 	}
 	if quota := config.GetGlobalConfig().Performance.ServerMemoryQuota; quota != 0 {
 		record.serverMemoryQuota = quota
-		record.isServerMemoryQuotaSetByUser = true
+		record.isServerMemoryQuotaSet = true
 	} else {
 		// TODO: Get the memory info in container directly.
 		record.serverMemoryQuota, record.err = memory.MemTotal()
@@ -65,7 +65,7 @@ func initMemoryUsageAlarmRecord() (record *memoryUsageAlarm) {
 			logutil.BgLogger().Error("get system total memory fail", zap.Error(record.err))
 			return
 		}
-		record.isServerMemoryQuotaSetByUser = false
+		record.isServerMemoryQuotaSet = false
 	}
 	record.lastCheckTime = time.Time{}
 	record.tmpDir = filepath.Join(config.GetGlobalConfig().TempStoragePath, "record")
@@ -91,12 +91,12 @@ func initMemoryUsageAlarmRecord() (record *memoryUsageAlarm) {
 	return record
 }
 
-// If Performance.ServerMemoryQuota is set, use ServerMemoryQuota * 80% to check oom risk.
-// If Performance.ServerMemoryQuota is not set, use system total memory usage * 80% to check oom risk.
+// If Performance.ServerMemoryQuota is set, use `ServerMemoryQuota * MemoryUsageAlarmRatio` to check oom risk.
+// If Performance.ServerMemoryQuota is not set, use `system total memory size * MemoryUsageAlarmRatio` to check oom risk.
 func (record *memoryUsageAlarm) alarm4ExcessiveMemUsage(sm util.SessionManager, ctx sessionctx.Context) {
 	var memoryUsage uint64
 	instanceStats := &runtime.MemStats{}
-	if record.isServerMemoryQuotaSetByUser {
+	if record.isServerMemoryQuotaSet {
 		runtime.ReadMemStats(instanceStats)
 		memoryUsage = instanceStats.HeapAlloc
 	} else {
@@ -120,14 +120,11 @@ func (record *memoryUsageAlarm) alarm4ExcessiveMemUsage(sm util.SessionManager, 
 }
 
 func (record *memoryUsageAlarm) doRecord(memUsage uint64, sm util.SessionManager, ctx sessionctx.Context) {
-	memType := "os memory"
-	if record.isServerMemoryQuotaSetByUser {
-		memType = "instance memory"
-	}
 	logutil.BgLogger().Warn("the TiDB instance now takes a lot of memory, has the risk of OOM",
-		zap.Any("memType", memType),
-		zap.Any("memUsage", memUsage),
-		zap.Any("memQuota", record.serverMemoryQuota),
+		zap.Bool("is server-momory-quota set", record.isServerMemoryQuotaSet),
+		zap.Any("memory size", record.serverMemoryQuota),
+		zap.Any("memory usage", memUsage),
+		zap.Any("memory-usage-alarm-ratio", config.GetGlobalConfig().Performance.MemoryUsageAlarmRatio),
 	)
 
 	if record.err = disk.CheckAndInitTempDir(); record.err != nil {
