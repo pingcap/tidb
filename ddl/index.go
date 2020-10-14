@@ -674,6 +674,154 @@ func onDropIndex(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	return ver, errors.Trace(err)
 }
 
+func onDropIndexes(t *meta.Meta, job *model.Job) (ver int64, _ error) {
+	tblInfo, indexesInfo, err := checkDropIndexes(t, job)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	if len(indexesInfo) == 0 {
+		job.State = model.JobStateCancelled
+		return ver, nil
+	}
+
+	dependentHiddenCols := make([]*model.ColumnInfo, 0)
+	for _, indexInfo := range indexesInfo {
+		for _, indexColumn := range indexInfo.Columns {
+			if tblInfo.Columns[indexColumn.Offset].Hidden {
+				dependentHiddenCols = append(dependentHiddenCols, tblInfo.Columns[indexColumn.Offset])
+			}
+		}
+	}
+
+	indexInfo := indexesInfo[0]
+	originalState := indexInfo.State
+	switch indexInfo.State {
+	case model.StatePublic:
+		// public -> write only
+		job.SchemaState = model.StateWriteOnly
+		for _, indexInfo := range indexesInfo {
+			indexInfo.State = model.StateWriteOnly
+		}
+		if len(dependentHiddenCols) > 0 {
+			firstHiddenOffset := dependentHiddenCols[0].Offset
+			for i := 0; i < len(dependentHiddenCols); i++ {
+				tblInfo.Columns[firstHiddenOffset].State = model.StateWriteOnly
+				// Set this column's offset to the last and reset all following columns' offsets.
+				adjustColumnInfoInDropColumn(tblInfo, firstHiddenOffset)
+			}
+		}
+		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != indexInfo.State)
+	case model.StateWriteOnly:
+		// write only -> delete only
+		job.SchemaState = model.StateDeleteOnly
+		for _, indexInfo := range indexesInfo {
+			indexInfo.State = model.StateDeleteOnly
+			updateHiddenColumns(tblInfo, indexInfo, model.StateDeleteOnly)
+		}
+		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != indexInfo.State)
+	case model.StateDeleteOnly:
+		// delete only -> reorganization
+		job.SchemaState = model.StateDeleteReorganization
+		for _, indexInfo := range indexesInfo {
+			indexInfo.State = model.StateDeleteReorganization
+			updateHiddenColumns(tblInfo, indexInfo, model.StateDeleteReorganization)
+		}
+		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != indexInfo.State)
+	case model.StateDeleteReorganization:
+		indexesIDs := make([]int64, 0, len(indexesInfo))
+		indexesLName := make(map[string]bool, len(indexesInfo))
+		for _, indexInfo := range indexesInfo {
+			indexesLName[indexInfo.Name.L] = true
+			indexesIDs = append(indexesIDs, indexInfo.ID)
+		}
+		newIndices := make([]*model.IndexInfo, 0, len(tblInfo.Indices))
+		for _, idx := range tblInfo.Indices {
+			if _, ok := indexesLName[idx.Name.L]; !ok {
+				newIndices = append(newIndices, idx)
+			}
+		}
+		tblInfo.Indices = newIndices
+		// Set column index flag.
+		for _, indexInfo := range indexesInfo {
+			dropIndexColumnFlag(tblInfo, indexInfo)
+		}
+
+		tblInfo.Columns = tblInfo.Columns[:len(tblInfo.Columns)-len(dependentHiddenCols)]
+
+		ver, err = updateVersionAndTableInfoWithCheck(t, job, tblInfo, originalState != model.StateNone)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+
+		// Finish this job.
+		if job.IsRollingback() {
+			job.FinishTableJob(model.JobStateRollbackDone, model.StateNone, ver, tblInfo)
+			job.Args[0] = indexesIDs
+			// the partition ids were append by convertAddIdxJob2RollbackJob, it is weird, but for the compatibility,
+			// we should keep appending the partitions in the convertAddIdxJob2RollbackJob.
+		} else {
+			job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
+			job.Args = append(job.Args, indexesIDs, getPartitionIDs(tblInfo))
+		}
+	default:
+		err = ErrInvalidDDLState.GenWithStackByArgs("index", indexInfo.State)
+	}
+	return ver, errors.Trace(err)
+}
+
+func checkDropIndexes(t *meta.Meta, job *model.Job) (*model.TableInfo, []*model.IndexInfo, error) {
+	schemaID := job.SchemaID
+	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, schemaID)
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
+
+	var indexNames []model.CIStr
+	if err = job.DecodeArgs(&indexNames); err != nil {
+		job.State = model.JobStateCancelled
+		return nil, nil, errors.Trace(err)
+	}
+
+	indexesInfo := make([]*model.IndexInfo, 0, len(indexNames))
+	indexesMap := make(map[string]bool)
+	for _, indexName := range indexNames {
+		indexInfo := tblInfo.FindIndexByName(indexName.L)
+		if indexInfo == nil {
+			job.State = model.JobStateCancelled
+			return nil, nil, ErrCantDropFieldOrKey.GenWithStack("index %s doesn't exist", indexName)
+		}
+
+		// Double check for drop index on auto_increment column.
+		err = checkDropIndexOnAutoIncrementColumn(tblInfo, indexInfo)
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return nil, nil, autoid.ErrWrongAutoKey
+		}
+
+		indexesInfo = append(indexesInfo, indexInfo)
+		indexesMap[indexName.L] = true
+	}
+
+	// Check that drop primary index will not cause invisible implicit primary index.
+	newIndices := make([]*model.IndexInfo, 0, len(tblInfo.Indices))
+
+	for _, idx := range tblInfo.Indices {
+		if _, ok := indexesMap[idx.Name.L]; !ok {
+			newIndices = append(newIndices, idx)
+		}
+	}
+
+	newTbl := tblInfo.Clone()
+	newTbl.Indices = newIndices
+	err = checkInvisibleIndexOnPK(newTbl)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return nil, nil, errors.Trace(err)
+	}
+
+	return tblInfo, indexesInfo, nil
+}
+
 func checkDropIndex(t *meta.Meta, job *model.Job) (*model.TableInfo, *model.IndexInfo, error) {
 	schemaID := job.SchemaID
 	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, schemaID)
