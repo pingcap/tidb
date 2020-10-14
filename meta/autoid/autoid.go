@@ -737,7 +737,7 @@ func (alloc *allocator) seekToFirstAutoID(base, increment, offset int64) (firstI
 		}
 		uBase, uInc, uOff := uint64(base), uint64(increment), uint64(offset)
 		nr := (uBase + uInc - uOff) / uInc
-		nr = nr * uInc + uOff
+		nr = nr*uInc + uOff
 		return int64(nr), uBase >= nr
 	}
 	if increment == 1 && offset == 1 {
@@ -745,7 +745,7 @@ func (alloc *allocator) seekToFirstAutoID(base, increment, offset int64) (firstI
 		return firstID, base >= firstID
 	}
 	nr := (base + increment - offset) / increment
-	nr = nr * increment + offset
+	nr = nr*increment + offset
 	return nr, base >= nr
 }
 
