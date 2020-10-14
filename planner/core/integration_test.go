@@ -1240,6 +1240,27 @@ func (s *testIntegrationSerialSuite) TestIssue16837(c *C) {
 	tk.MustQuery("select /*+ use_index_merge(t,c,idx_ab) */ * from t where a = 1 or (e = 1 and c = 1)").Check(testkit.Rows())
 }
 
+func (s *testIntegrationSerialSuite) TestIndexMerge(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int, unique key(a), unique key(b))")
+	tk.MustQuery("desc select /*+ use_index_merge(t) */ * from t where a =1 or (b=1 and b+2>1)").Check(testkit.Rows(
+		"Projection_4 1.80 root  test.t.a, test.t.b",
+		"└─IndexMerge_9 1.80 root  ",
+		"  ├─IndexRangeScan_5(Build) 1.00 cop[tikv] table:t, index:a(a) range:[1,1], keep order:false, stats:pseudo",
+		"  ├─Selection_7(Build) 0.80 cop[tikv]  gt(plus(test.t.b, 2), 1)",
+		"  │ └─IndexRangeScan_6 1.00 cop[tikv] table:t, index:b(b) range:[1,1], keep order:false, stats:pseudo",
+		"  └─TableRowIDScan_8(Probe) 1.80 cop[tikv] table:t keep order:false, stats:pseudo"))
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+
+	tk.MustQuery("desc select /*+ use_index_merge(t) */ * from t where a =1 or (b=1 and mod(b, 3)=1)").Check(testkit.Rows(
+		"Selection_5 8000.00 root  or(eq(test.t.a, 1), and(eq(test.t.b, 1), 1))",
+		"└─TableReader_7 10000.00 root  data:TableFullScan_6",
+		"  └─TableFullScan_6 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 IndexMerge is inapplicable or disabled"))
+}
+
 func (s *testIntegrationSerialSuite) TestIssue16407(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
