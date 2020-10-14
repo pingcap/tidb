@@ -501,6 +501,7 @@ import (
 	replicas              "REPLICAS"
 	replication           "REPLICATION"
 	respect               "RESPECT"
+	restart               "RESTART"
 	restore               "RESTORE"
 	restores              "RESTORES"
 	reverse               "REVERSE"
@@ -788,6 +789,7 @@ import (
 	AlterTableStmt       "Alter table statement"
 	AlterUserStmt        "Alter user statement"
 	AlterInstanceStmt    "Alter instance statement"
+	AlterSequenceStmt    "Alter sequence statement"
 	AnalyzeTableStmt     "Analyze table statement"
 	BeginTransactionStmt "BEGIN TRANSACTION statement"
 	BinlogStmt           "Binlog base64 statement"
@@ -864,6 +866,8 @@ import (
 	AlterTableSpec                         "Alter table specification"
 	AlterTableSpecList                     "Alter table specification list"
 	AlterTableSpecListOpt                  "Alter table specification list optional"
+	AlterSequenceOption                    "Alter sequence option"
+	AlterSequenceOptionList                "Alter sequence option list"
 	AnalyzeOption                          "Analyze option"
 	AnalyzeOptionList                      "Analyze option list"
 	AnalyzeOptionListOpt                   "Optional analyze option list"
@@ -5155,6 +5159,7 @@ UnReservedKeyword:
 |	"REBUILD"
 |	"REDUNDANT"
 |	"REORGANIZE"
+|	"RESTART"
 |	"ROLE"
 |	"ROLLBACK"
 |	"SESSION"
@@ -9621,6 +9626,7 @@ Statement:
 |	AlterTableStmt
 |	AlterUserStmt
 |	AlterInstanceStmt
+|	AlterSequenceStmt
 |	AnalyzeTableStmt
 |	BeginTransactionStmt
 |	BinlogStmt
@@ -11967,6 +11973,55 @@ DropSequenceStmt:
 			IfExists:  $3.(bool),
 			Sequences: $4.([]*ast.TableName),
 		}
+	}
+
+/********************************************************************************************
+ *
+ *  Alter Sequence Statement
+ *
+ *  Example:
+ *	ALTER SEQUENCE [IF EXISTS] sequence_name
+ *	[ INCREMENT [ BY | = ] increment ]
+ *	[ MINVALUE [=] minvalue | NO MINVALUE | NOMINVALUE ]
+ *	[ MAXVALUE [=] maxvalue | NO MAXVALUE | NOMAXVALUE ]
+ *	[ START [ WITH | = ] start ]
+ *	[ CACHE [=] cache | NOCACHE | NO CACHE]
+ *	[ CYCLE | NOCYCLE | NO CYCLE]
+ *	[ RESTART [WITH | = ] restart ]
+ ********************************************************************************************/
+AlterSequenceStmt:
+	"ALTER" "SEQUENCE" IfExists TableName AlterSequenceOptionList
+	{
+		$$ = &ast.AlterSequenceStmt{
+			IfExists:   $3.(bool),
+			Name:       $4.(*ast.TableName),
+			SeqOptions: $5.([]*ast.SequenceOption),
+		}
+	}
+
+AlterSequenceOptionList:
+	AlterSequenceOption
+	{
+		$$ = []*ast.SequenceOption{$1.(*ast.SequenceOption)}
+	}
+|	AlterSequenceOptionList AlterSequenceOption
+	{
+		$$ = append($1.([]*ast.SequenceOption), $2.(*ast.SequenceOption))
+	}
+
+AlterSequenceOption:
+	SequenceOption
+|	"RESTART"
+	{
+		$$ = &ast.SequenceOption{Tp: ast.SequenceRestart}
+	}
+|	"RESTART" EqOpt SignedNum
+	{
+		$$ = &ast.SequenceOption{Tp: ast.SequenceRestartWith, IntValue: $3.(int64)}
+	}
+|	"RESTART" "WITH" SignedNum
+	{
+		$$ = &ast.SequenceOption{Tp: ast.SequenceRestartWith, IntValue: $3.(int64)}
 	}
 
 /********************************************************************
