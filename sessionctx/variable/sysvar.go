@@ -766,7 +766,7 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeSession, Name: TiDBEnableCollectExecutionInfo, Value: BoolToIntStr(DefTiDBEnableCollectExecutionInfo), Type: TypeBool},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBAllowAutoRandExplicitInsert, Value: boolToOnOff(DefTiDBAllowAutoRandExplicitInsert), Type: TypeBool},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableClusteredIndex, Value: BoolToIntStr(DefTiDBEnableClusteredIndex), Type: TypeBool},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBPartitionPruneMode, Value: string(StaticOnly)},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBPartitionPruneMode, Value: string(StaticOnly), Type: TypeStr},
 	{Scope: ScopeGlobal, Name: TiDBSlowLogMasking, Value: BoolToIntStr(DefTiDBSlowLogMasking)},
 	{Scope: ScopeGlobal, Name: TiDBRedactLog, Value: strconv.Itoa(config.DefTiDBRedactLog)},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBShardAllocateStep, Value: strconv.Itoa(DefTiDBShardAllocateStep), Type: TypeInt, MinValue: 1, MaxValue: uint64(math.MaxInt64), AutoConvertOutOfRange: true},
