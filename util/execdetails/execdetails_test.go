@@ -61,17 +61,19 @@ func TestString(t *testing.T) {
 			PrewriteRegionNum: 1,
 			TxnRetry:          1,
 		},
-		ProcessedVersions:         1,
-		TotalVersions:             1,
-		RocksdbDeleteSkippedCount: 1,
-		RocksdbKeySkippedCount:    1,
-		RocksdbBlockCacheHitCount: 1,
-		RocksdbBlockReadCount:     1,
-		RocksdbBlockReadBytes:     100,
+		CopDetail: &CopDetails{
+			ProcessedVersions:         1,
+			TotalVersions:             1,
+			RocksdbDeleteSkippedCount: 1,
+			RocksdbKeySkippedCount:    1,
+			RocksdbBlockCacheHitCount: 1,
+			RocksdbBlockReadCount:     1,
+			RocksdbBlockReadByte:      100,
+		},
 	}
 	expected := "Cop_time: 1.003 Process_time: 2.005 Wait_time: 1 Backoff_time: 1 Request_count: 1 Total_keys: 100 Process_keys: 10 Prewrite_time: 1 Commit_time: 1 " +
 		"Get_commit_ts_time: 1 Commit_backoff_time: 1 Backoff_types: [backoff1 backoff2] Resolve_lock_time: 1 Local_latch_wait_time: 1 Write_keys: 1 Write_size: 1 Prewrite_region: 1 Txn_retry: 1 " +
-		"Processed_versions: 1 total_versions: 1 rocksdb_delete_skipped_count: 1 rocksdb_key_skipped_count: 1 rocksdb_block_cache_hit_count: 1 rocksdb_block_read_count: 1 rocksdb_block_read_byte: 100"
+		"Processed_versions: 1 Total_versions: 1 Rocksdb_delete_skipped_count: 1 Rocksdb_key_skipped_count: 1 Rocksdb_block_cache_hit_count: 1 Rocksdb_block_read_count: 1 Rocksdb_block_read_byte: 100"
 	if str := detail.String(); str != expected {
 		t.Errorf("got:\n%s\nexpected:\n%s", str, expected)
 	}

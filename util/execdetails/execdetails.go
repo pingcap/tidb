@@ -40,26 +40,20 @@ var (
 
 // ExecDetails contains execution detail information.
 type ExecDetails struct {
-	CalleeAddress             string
-	CopTime                   time.Duration
-	ProcessTime               time.Duration
-	WaitTime                  time.Duration
-	BackoffTime               time.Duration
-	LockKeysDuration          time.Duration
-	BackoffSleep              map[string]time.Duration
-	BackoffTimes              map[string]int
-	RequestCount              int
-	TotalKeys                 int64
-	ProcessedKeys             int64
-	CommitDetail              *CommitDetails
-	LockKeysDetail            *LockKeysDetails
-	ProcessedVersions         uint64
-	TotalVersions             uint64
-	RocksdbDeleteSkippedCount uint64
-	RocksdbKeySkippedCount    uint64
-	RocksdbBlockCacheHitCount uint64
-	RocksdbBlockReadCount     uint64
-	RocksdbBlockReadBytes     uint64
+	CalleeAddress    string
+	CopTime          time.Duration
+	ProcessTime      time.Duration
+	WaitTime         time.Duration
+	BackoffTime      time.Duration
+	LockKeysDuration time.Duration
+	BackoffSleep     map[string]time.Duration
+	BackoffTimes     map[string]int
+	RequestCount     int
+	TotalKeys        int64
+	ProcessedKeys    int64
+	CommitDetail     *CommitDetails
+	LockKeysDetail   *LockKeysDetails
+	CopDetail        *CopDetails
 }
 
 type stmtExecDetailKeyType struct{}
@@ -175,6 +169,17 @@ func (ld *LockKeysDetails) Clone() *LockKeysDetails {
 	return lock
 }
 
+// CopDetails contains coprocessor detail information.
+type CopDetails struct {
+	ProcessedVersions         uint64
+	TotalVersions             uint64
+	RocksdbDeleteSkippedCount uint64
+	RocksdbKeySkippedCount    uint64
+	RocksdbBlockCacheHitCount uint64
+	RocksdbBlockReadCount     uint64
+	RocksdbBlockReadByte      uint64
+}
+
 const (
 	// CopTimeStr represents the sum of cop-task time spend in TiDB distSQL.
 	CopTimeStr = "Cop_time"
@@ -219,17 +224,17 @@ const (
 	// ProcessedVersionsStr means the processed versions.
 	ProcessedVersionsStr = "Processed_versions"
 	// TotalVersionsStr means the total versions.
-	TotalVersionsStr = "total_versions"
+	TotalVersionsStr = "Total_versions"
 	// RocksdbDeleteSkippedCountStr means the count of rocksdb delete skipped count.
-	RocksdbDeleteSkippedCountStr = "rocksdb_delete_skipped_count"
+	RocksdbDeleteSkippedCountStr = "Rocksdb_delete_skipped_count"
 	// RocksdbKeySkippedCountStr means the count of rocksdb key skipped count.
-	RocksdbKeySkippedCountStr = "rocksdb_key_skipped_count"
+	RocksdbKeySkippedCountStr = "Rocksdb_key_skipped_count"
 	// RocksdbBlockCacheHitCountStr means the count of rocksdb block cache hit.
-	RocksdbBlockCacheHitCountStr = "rocksdb_block_cache_hit_count"
+	RocksdbBlockCacheHitCountStr = "Rocksdb_block_cache_hit_count"
 	// RocksdbBlockReadCountStr means the count of rocksdb block read.
-	RocksdbBlockReadCountStr = "rocksdb_block_read_count"
+	RocksdbBlockReadCountStr = "Rocksdb_block_read_count"
 	// RocksdbBlockReadByteStr means the bytes of rocksdb block read.
-	RocksdbBlockReadByteStr = "rocksdb_block_read_byte"
+	RocksdbBlockReadByteStr = "Rocksdb_block_read_byte"
 )
 
 // String implements the fmt.Stringer interface.
@@ -303,26 +308,29 @@ func (d ExecDetails) String() string {
 			parts = append(parts, TxnRetryStr+": "+strconv.FormatInt(int64(commitDetails.TxnRetry), 10))
 		}
 	}
-	if d.ProcessedVersions > 0 {
-		parts = append(parts, ProcessedVersionsStr+": "+strconv.FormatInt(int64(d.ProcessedVersions), 10))
-	}
-	if d.TotalVersions > 0 {
-		parts = append(parts, TotalVersionsStr+": "+strconv.FormatInt(int64(d.TotalVersions), 10))
-	}
-	if d.RocksdbDeleteSkippedCount > 0 {
-		parts = append(parts, RocksdbDeleteSkippedCountStr+": "+strconv.FormatInt(int64(d.RocksdbDeleteSkippedCount), 10))
-	}
-	if d.RocksdbKeySkippedCount > 0 {
-		parts = append(parts, RocksdbKeySkippedCountStr+": "+strconv.FormatInt(int64(d.RocksdbKeySkippedCount), 10))
-	}
-	if d.RocksdbBlockCacheHitCount > 0 {
-		parts = append(parts, RocksdbBlockCacheHitCountStr+": "+strconv.FormatInt(int64(d.RocksdbBlockCacheHitCount), 10))
-	}
-	if d.RocksdbBlockReadCount > 0 {
-		parts = append(parts, RocksdbBlockReadCountStr+": "+strconv.FormatInt(int64(d.RocksdbBlockReadCount), 10))
-	}
-	if d.RocksdbBlockReadBytes > 0 {
-		parts = append(parts, RocksdbBlockReadByteStr+": "+strconv.FormatInt(int64(d.RocksdbBlockReadBytes), 10))
+	copDetails := d.CopDetail
+	if copDetails != nil {
+		if copDetails.ProcessedVersions > 0 {
+			parts = append(parts, ProcessedVersionsStr+": "+strconv.FormatInt(int64(copDetails.ProcessedVersions), 10))
+		}
+		if copDetails.TotalVersions > 0 {
+			parts = append(parts, TotalVersionsStr+": "+strconv.FormatInt(int64(copDetails.TotalVersions), 10))
+		}
+		if copDetails.RocksdbDeleteSkippedCount > 0 {
+			parts = append(parts, RocksdbDeleteSkippedCountStr+": "+strconv.FormatInt(int64(copDetails.RocksdbDeleteSkippedCount), 10))
+		}
+		if copDetails.RocksdbKeySkippedCount > 0 {
+			parts = append(parts, RocksdbKeySkippedCountStr+": "+strconv.FormatInt(int64(copDetails.RocksdbKeySkippedCount), 10))
+		}
+		if copDetails.RocksdbBlockCacheHitCount > 0 {
+			parts = append(parts, RocksdbBlockCacheHitCountStr+": "+strconv.FormatInt(int64(copDetails.RocksdbBlockCacheHitCount), 10))
+		}
+		if copDetails.RocksdbBlockReadCount > 0 {
+			parts = append(parts, RocksdbBlockReadCountStr+": "+strconv.FormatInt(int64(copDetails.RocksdbBlockReadCount), 10))
+		}
+		if copDetails.RocksdbBlockReadByte > 0 {
+			parts = append(parts, RocksdbBlockReadByteStr+": "+strconv.FormatInt(int64(copDetails.RocksdbBlockReadByte), 10))
+		}
 	}
 	return strings.Join(parts, " ")
 }
