@@ -53,7 +53,7 @@ Query OK, 1 row affected
 tidb> insert into t values ('a');
 Query OK, 1 row affected // Should report error "Duplicate entry 'a'"
 ```
-In the case above, the user creates a column with a case-insensitive collation `utf8mb4_general_ci`. Since the 'real' collation of TiDB is always `utf8mb4_bin`, inserting data into the primary key with "A" and "a" does not lead to an error.
+In the case above, the user creates a column with a case-insensitive collation `utf8mb4_general_ci`. Since the 'real' collation of TiDB is always `utf8mb4_bin`/`binary`, inserting data into the primary key with "A" and "a" does not lead to an error.
 
 What's more, the collation `utf8mb4_bin` in MySQL is defined with attribute `PAD SPACE`, that is, trailing spaces are ignored when comparison. Currently `utf8mb4_bin` in TiDB is actually with attribute `NO PAD`:
 
@@ -274,7 +274,7 @@ A collation, logically, should not be a property of a character set. Since all c
 
 Further, a collation should not need to be a property of a column, it could rather be a property of an index, so that multiple collations can be defined for individual database objects. This would permit efficient querying of data by many different means.
 
-## Open issues
+## Related issues
 
 - https://github.com/pingcap/tidb/issues/222
 - https://github.com/pingcap/tidb/issues/1161
