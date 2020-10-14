@@ -38,6 +38,7 @@ import (
 	tracing "github.com/uber/jaeger-client-go/config"
 
 	"go.uber.org/zap"
+	"google.golang.org/grpc/encoding/gzip"
 )
 
 // Config number limitations
@@ -493,6 +494,8 @@ type TiKVClient struct {
 	// After having pinged for keepalive check, the client waits for a duration of Timeout in seconds
 	// and if no activity is seen even after that the connection is closed.
 	GrpcKeepAliveTimeout uint `toml:"grpc-keepalive-timeout" json:"grpc-keepalive-timeout"`
+	// GrpcCompressionType is the compression type for gRPC channel: none or gzip.
+	GrpcCompressionType string `toml:"grpc-compression-type" json:"grpc-compression-type"`
 	// CommitTimeout is the max time which command 'commit' will wait.
 	CommitTimeout string      `toml:"commit-timeout" json:"commit-timeout"`
 	AsyncCommit   AsyncCommit `toml:"async-commit" json:"async-commit"`
@@ -693,6 +696,7 @@ var defaultConf = Config{
 		GrpcConnectionCount:  4,
 		GrpcKeepAliveTime:    10,
 		GrpcKeepAliveTimeout: 3,
+		GrpcCompressionType:  "none",
 		CommitTimeout:        "41s",
 		AsyncCommit: AsyncCommit{
 			Enable: false,
@@ -917,6 +921,9 @@ func (c *Config) Valid() error {
 	// For tikvclient.
 	if c.TiKVClient.GrpcConnectionCount == 0 {
 		return fmt.Errorf("grpc-connection-count should be greater than 0")
+	}
+	if c.TiKVClient.GrpcCompressionType != "none" && c.TiKVClient.GrpcCompressionType != gzip.Name {
+		return fmt.Errorf("grpc-compression-type should be none or %s, but got %s", gzip.Name, c.TiKVClient.GrpcCompressionType)
 	}
 
 	if c.Performance.TxnTotalSizeLimit > 10<<30 {
