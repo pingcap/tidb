@@ -294,6 +294,8 @@ func (ts *HTTPHandlerTestSuite) TestRangesAPI(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(data.TableName, Equals, "t")
 	c.Assert(len(data.Indices), Equals, 1)
+	_, ok := data.Indices["PRIMARY"]
+	c.Assert(ok, IsTrue)
 }
 
 func (ts *HTTPHandlerTestSuite) regionContainsTable(c *C, regionID uint64, tableID int64) bool {
