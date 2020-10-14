@@ -3261,7 +3261,7 @@ func (s *testSessionSuite3) TestSetVarHint(c *C) {
 	tk.MustQuery("SELECT @@max_execution_time;").Check(testkit.Rows("0"))
 
 	tk.Se.GetSessionVars().SetSystemVar("time_zone", "SYSTEM")
-	tk.MustQuery("SELECT /*+ SET_VAR(time_zone=+12:00) */ @@time_zone;").Check(testkit.Rows("+12:00"))
+	tk.MustQuery("SELECT /*+ SET_VAR(time_zone='+12:00') */ @@time_zone;").Check(testkit.Rows("+12:00"))
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 0)
 	tk.MustQuery("SELECT @@time_zone;").Check(testkit.Rows("SYSTEM"))
 
