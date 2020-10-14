@@ -742,7 +742,7 @@ func getDefaultValue(ctx sessionctx.Context, col *table.Column, c *ast.ColumnOpt
 		if tp == mysql.TypeBit ||
 			tp == mysql.TypeString || tp == mysql.TypeVarchar || tp == mysql.TypeVarString ||
 			tp == mysql.TypeBlob || tp == mysql.TypeLongBlob || tp == mysql.TypeMediumBlob || tp == mysql.TypeTinyBlob ||
-			tp == mysql.TypeJSON {
+			tp == mysql.TypeJSON || tp == mysql.TypeEnum {
 			// For BinaryLiteral / string fields, when getting default value we cast the value into BinaryLiteral{}, thus we return
 			// its raw string content here.
 			return v.GetBinaryLiteral().ToString(), false, nil
