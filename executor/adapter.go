@@ -387,19 +387,22 @@ func (a *ExecStmt) handleNoDelay(ctx context.Context, e Executor, isPessimistic 
 	}()
 
 	toCheck := e
+	isExplainAnalyze := false
 	if explain, ok := e.(*ExplainExec); ok {
-		if explain.analyzeExec != nil {
-			toCheck = explain.analyzeExec
+		if analyze := explain.getAnalyzeExecToExecutedNoDelay(); analyze != nil {
+			toCheck = analyze
+			isExplainAnalyze = true
 		}
 	}
 
 	// If the executor doesn't return any result to the client, we execute it without delay.
 	if toCheck.Schema().Len() == 0 {
+		handled = !isExplainAnalyze
 		if isPessimistic {
-			return true, nil, a.handlePessimisticDML(ctx, e)
+			return handled, nil, a.handlePessimisticDML(ctx, toCheck)
 		}
-		r, err := a.handleNoDelayExecutor(ctx, e)
-		return true, r, err
+		r, err := a.handleNoDelayExecutor(ctx, toCheck)
+		return handled, r, err
 	} else if proj, ok := toCheck.(*ProjectionExec); ok && proj.calculateNoDelay {
 		// Currently this is only for the "DO" statement. Take "DO 1, @a=2;" as an example:
 		// the Projection has two expressions and two columns in the schema, but we should
@@ -589,6 +592,15 @@ func UpdateForUpdateTS(seCtx sessionctx.Context, newForUpdateTS uint64) error {
 	if !txn.Valid() {
 		return errors.Trace(kv.ErrInvalidTxn)
 	}
+
+	// The Oracle serializable isolation is actually SI in pessimistic mode.
+	// Do not update ForUpdateTS when the user is using the Serializable isolation level.
+	// It can be used temporarily on the few occasions when an Oracle-like isolation level is needed.
+	// Support for this does not mean that TiDB supports serializable isolation of MySQL.
+	// tidb_skip_isolation_level_check should still be disabled by default.
+	if seCtx.GetSessionVars().IsIsolation(ast.Serializable) {
+		return nil
+	}
 	if newForUpdateTS == 0 {
 		version, err := seCtx.GetStore().CurrentVersion()
 		if err != nil {
@@ -603,7 +615,11 @@ func UpdateForUpdateTS(seCtx sessionctx.Context, newForUpdateTS uint64) error {
 
 // handlePessimisticLockError updates TS and rebuild executor if the err is write conflict.
 func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, err error) (Executor, error) {
-	txnCtx := a.Ctx.GetSessionVars().TxnCtx
+	sessVars := a.Ctx.GetSessionVars()
+	if err != nil && sessVars.IsIsolation(ast.Serializable) {
+		return nil, err
+	}
+	txnCtx := sessVars.TxnCtx
 	var newForUpdateTS uint64
 	if deadlock, ok := errors.Cause(err).(*tikv.ErrDeadlock); ok {
 		if !deadlock.IsRetryable {
