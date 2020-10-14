@@ -182,8 +182,8 @@ type CopDetails struct {
 
 // Merge merges lock keys execution details into self.
 func (cd *CopDetails) Merge(copDetails *CopDetails) {
-	cd.TotalVersions = copDetails.TotalVersions
-	cd.ProcessedVersions = copDetails.ProcessedVersions
+	cd.TotalVersions += copDetails.TotalVersions
+	cd.ProcessedVersions += copDetails.ProcessedVersions
 	cd.RocksdbDeleteSkippedCount += copDetails.RocksdbDeleteSkippedCount
 	cd.RocksdbKeySkippedCount += copDetails.RocksdbKeySkippedCount
 	cd.RocksdbBlockCacheHitCount += copDetails.RocksdbBlockCacheHitCount
