@@ -500,6 +500,39 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string, scope Sc
 			return "1", nil
 		}
 		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
+	case OptimizerSwitch:
+		flags := strings.Split(value, ",")
+		flagMap := make(map[string]string)
+		for _, flag := range flags {
+			fields := strings.Split(flag, "=")
+			if len(fields) != 2 {
+				return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
+			}
+			if !strings.EqualFold(fields[1], "ON") && !strings.EqualFold(fields[1], "OFF") {
+				return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
+			}
+			flagMap[fields[0]] = strings.ToLower(fields[1])
+		}
+
+		origValue, err := GetGlobalSystemVar(vars, name)
+		if err != nil {
+			return value, err
+		}
+		origFlags := strings.Split(origValue, ",")
+		for i, origFlag := range origFlags {
+			fields := strings.Split(origFlag, "=")
+			if len(fields) != 2 {
+				return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
+			}
+			if val, ok := flagMap[fields[0]]; ok {
+				origFlags[i] = fields[0] + "=" + val
+				delete(flagMap, fields[0])
+			}
+		}
+		if len(flagMap) > 0 {
+			return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
+		}
+		return strings.Join(origFlags, ","), nil
 	case WindowingUseHighPrecision:
 		if strings.EqualFold(value, "OFF") || value == "0" {
 			return "OFF", nil
