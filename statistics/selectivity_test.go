@@ -16,7 +16,6 @@ package statistics_test
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/failpoint"
 	"math"
 	"os"
 	"runtime/pprof"
@@ -26,6 +25,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
