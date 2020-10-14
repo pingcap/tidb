@@ -1247,19 +1247,19 @@
           "1 1"
         ]
       },
-      {
-        "SQL": "select /*+ HASH_JOIN(t1) */ t1.b, t2.b from t1 inner join t2 on t1.a = t2.b and t1.a = 1;",
-        "Plan": [
-          "HashJoin_11 12500.00 root  inner join, equal:[eq(test.t1.a, test.t2.b)], left cond:[eq(test.t1.a, 1)]",
-          "├─TableReader_13(Build) 10000.00 root  data:TableFullScan_14",
-          "│ └─TableFullScan_14 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-          "└─IndexReader_17(Probe) 10000.00 root  index:IndexFullScan_18",
-          "  └─IndexFullScan_18 10000.00 cop[tikv] table:t2, index:idx_b(b) keep order:false, stats:pseudo"
-        ],
-        "Result": [
-          "1 1"
-        ]
-      },
+//      {
+//        "SQL": "select /*+ HASH_JOIN(t1) */ t1.b, t2.b from t1 inner join t2 on t1.a = t2.b and t1.a = 1;",
+//        "Plan": [
+//          "HashJoin_11 12500.00 root  inner join, equal:[eq(test.t1.a, test.t2.b)], left cond:[eq(test.t1.a, 1)]",
+//          "├─TableReader_13(Build) 10000.00 root  data:TableFullScan_14",
+//          "│ └─TableFullScan_14 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+//          "└─IndexReader_17(Probe) 10000.00 root  index:IndexFullScan_18",
+//          "  └─IndexFullScan_18 10000.00 cop[tikv] table:t2, index:idx_b(b) keep order:false, stats:pseudo"
+//        ],
+//        "Result": [
+//          "1 1"
+//        ]
+//      },
       {
         "SQL": "select /*+ HASH_JOIN(t1) */ t1.b, t2.b from t1 left outer join t2 on t1.a = t2.a;",
         "Plan": [
