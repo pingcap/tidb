@@ -38,6 +38,7 @@ import (
 	tracing "github.com/uber/jaeger-client-go/config"
 
 	"go.uber.org/zap"
+	"google.golang.org/grpc/encoding/gzip"
 )
 
 // Config number limitations
@@ -493,12 +494,11 @@ type TiKVClient struct {
 	// After having pinged for keepalive check, the client waits for a duration of Timeout in seconds
 	// and if no activity is seen even after that the connection is closed.
 	GrpcKeepAliveTimeout uint `toml:"grpc-keepalive-timeout" json:"grpc-keepalive-timeout"`
+	// GrpcCompressionType is the compression type for gRPC channel: none or gzip.
+	GrpcCompressionType string `toml:"grpc-compression-type" json:"grpc-compression-type"`
 	// CommitTimeout is the max time which command 'commit' will wait.
-	CommitTimeout string `toml:"commit-timeout" json:"commit-timeout"`
-	// EnableAsyncCommit enables async commit for all transactions.
-	EnableAsyncCommit    bool `toml:"enable-async-commit" json:"enable-async-commit"`
-	AsyncCommitKeysLimit uint `toml:"async-commit-keys-limit" json:"async-commit-keys-limit"`
-
+	CommitTimeout string      `toml:"commit-timeout" json:"commit-timeout"`
+	AsyncCommit   AsyncCommit `toml:"async-commit" json:"async-commit"`
 	// MaxBatchSize is the max batch size when calling batch commands API.
 	MaxBatchSize uint `toml:"max-batch-size" json:"max-batch-size"`
 	// If TiKV load is greater than this, TiDB will wait for a while to avoid little batch.
@@ -520,6 +520,16 @@ type TiKVClient struct {
 	CoprCache            CoprocessorCache `toml:"copr-cache" json:"copr-cache"`
 	// TTLRefreshedTxnSize controls whether a transaction should update its TTL or not.
 	TTLRefreshedTxnSize int64 `toml:"ttl-refreshed-txn-size" json:"ttl-refreshed-txn-size"`
+}
+
+// AsyncCommit is the config for the async commit feature.
+type AsyncCommit struct {
+	// Whether to enable the async commit feature.
+	Enable bool `toml:"enable" json:"enable"`
+	// Use async commit only if the number of keys does not exceed KeysLimit.
+	KeysLimit uint `toml:"keys-limit" json:"keys-limit"`
+	// Use async commit only if the total size of keys does not exceed TotalKeySizeLimit.
+	TotalKeySizeLimit uint64 `toml:"total-key-size-limit" json:"total-key-size-limit"`
 }
 
 // CoprocessorCache is the config for coprocessor cache.
@@ -686,9 +696,14 @@ var defaultConf = Config{
 		GrpcConnectionCount:  4,
 		GrpcKeepAliveTime:    10,
 		GrpcKeepAliveTimeout: 3,
+		GrpcCompressionType:  "none",
 		CommitTimeout:        "41s",
-		EnableAsyncCommit:    false,
-		AsyncCommitKeysLimit: 256,
+		AsyncCommit: AsyncCommit{
+			Enable: false,
+			// FIXME: Find an appropriate default limit.
+			KeysLimit:         256,
+			TotalKeySizeLimit: 4 * 1024, // 4 KiB
+		},
 
 		MaxBatchSize:      128,
 		OverloadThreshold: 200,
@@ -871,7 +886,7 @@ func (c *Config) Valid() error {
 	if c.Security.SkipGrantTable && !hasRootPrivilege() {
 		return fmt.Errorf("TiDB run with skip-grant-table need root privilege")
 	}
-	if _, ok := ValidStorage[c.Store]; !ok {
+	if !ValidStorage[c.Store] {
 		nameList := make([]string, 0, len(ValidStorage))
 		for k, v := range ValidStorage {
 			if v {
@@ -906,6 +921,9 @@ func (c *Config) Valid() error {
 	// For tikvclient.
 	if c.TiKVClient.GrpcConnectionCount == 0 {
 		return fmt.Errorf("grpc-connection-count should be greater than 0")
+	}
+	if c.TiKVClient.GrpcCompressionType != "none" && c.TiKVClient.GrpcCompressionType != gzip.Name {
+		return fmt.Errorf("grpc-compression-type should be none or %s, but got %s", gzip.Name, c.TiKVClient.GrpcCompressionType)
 	}
 
 	if c.Performance.TxnTotalSizeLimit > 10<<30 {

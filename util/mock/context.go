@@ -163,6 +163,11 @@ func (c *Context) RefreshTxnCtx(ctx context.Context) error {
 	return errors.Trace(c.NewTxn(ctx))
 }
 
+// RefreshVars implements the sessionctx.Context interface.
+func (c *Context) RefreshVars(ctx context.Context) error {
+	return nil
+}
+
 // InitTxnWithStartTS implements the sessionctx.Context interface with startTS.
 func (c *Context) InitTxnWithStartTS(startTS uint64) error {
 	if c.txn.Valid() {

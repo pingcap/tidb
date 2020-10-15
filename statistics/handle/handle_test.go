@@ -354,7 +354,8 @@ func (s *testStatsSuite) TestVersion(c *C) {
 	tbl1, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
 	c.Assert(err, IsNil)
 	tableInfo1 := tbl1.Meta()
-	h := handle.NewHandle(testKit.Se, time.Millisecond)
+	h, err := handle.NewHandle(testKit.Se, time.Millisecond)
+	c.Assert(err, IsNil)
 	unit := oracle.ComposeTS(1, 0)
 	testKit.MustExec("update mysql.stats_meta set version = ? where table_id = ?", 2*unit, tableInfo1.ID)
 
@@ -550,6 +551,13 @@ func (s *testStatsSuite) TestLoadStats(c *C) {
 	err = h.LoadNeededHistograms()
 	c.Assert(err, NotNil)
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/statistics/handle/mockGetStatsReaderFail"), IsNil)
+
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/statistics/handle/mockGetStatsReaderPanic", "panic"), IsNil)
+	err = h.LoadNeededHistograms()
+	c.Assert(err, ErrorMatches, ".*getStatsReader panic.*")
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/statistics/handle/mockGetStatsReaderPanic"), IsNil)
+	err = h.LoadNeededHistograms()
+	c.Assert(err, IsNil)
 }
 
 func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {

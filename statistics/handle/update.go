@@ -581,10 +581,10 @@ func (h *Handle) handleSingleHistogramUpdate(is infoschema.InfoSchema, rows []ch
 		return nil
 	}
 	var tbl *statistics.Table
-	if table.Meta().GetPartitionInfo() != nil {
-		tbl = h.GetPartitionStats(table.Meta(), physicalTableID)
-	} else {
+	if table.Meta().GetPartitionInfo() == nil || h.CurrentPruneMode() == variable.DynamicOnly {
 		tbl = h.GetTableStats(table.Meta())
+	} else {
+		tbl = h.GetPartitionStats(table.Meta(), physicalTableID)
 	}
 	var cms *statistics.CMSketch
 	var hist *statistics.Histogram
@@ -736,12 +736,13 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) {
 		logutil.BgLogger().Error("[stats] parse auto analyze period failed", zap.Error(err))
 		return
 	}
+	pruneMode := h.CurrentPruneMode()
 	for _, db := range dbs {
 		tbls := is.SchemaTables(model.NewCIStr(db))
 		for _, tbl := range tbls {
 			tblInfo := tbl.Meta()
 			pi := tblInfo.GetPartitionInfo()
-			if pi == nil {
+			if pi == nil || pruneMode == variable.DynamicOnly || pruneMode == variable.StaticButPrepareDynamic {
 				statsTbl := h.GetTableStats(tblInfo)
 				sql := "analyze table `" + db + "`.`" + tblInfo.Name.O + "`"
 				analyzed := h.autoAnalyzeTable(tblInfo, statsTbl, start, end, autoAnalyzeRatio, sql)
@@ -750,12 +751,15 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) {
 				}
 				continue
 			}
-			for _, def := range pi.Definitions {
-				sql := "analyze table `" + db + "`.`" + tblInfo.Name.O + "`" + " partition `" + def.Name.O + "`"
-				statsTbl := h.GetPartitionStats(tblInfo, def.ID)
-				analyzed := h.autoAnalyzeTable(tblInfo, statsTbl, start, end, autoAnalyzeRatio, sql)
-				if analyzed {
-					return
+			if pruneMode == variable.StaticOnly || pruneMode == variable.StaticButPrepareDynamic {
+				for _, def := range pi.Definitions {
+					sql := "analyze table `" + db + "`.`" + tblInfo.Name.O + "`" + " partition `" + def.Name.O + "`"
+					statsTbl := h.GetPartitionStats(tblInfo, def.ID)
+					analyzed := h.autoAnalyzeTable(tblInfo, statsTbl, start, end, autoAnalyzeRatio, sql)
+					if analyzed {
+						return
+					}
+					continue
 				}
 				continue
 			}
