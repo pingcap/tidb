@@ -73,6 +73,7 @@ var (
 	_ builtinFunc = &builtinIsIPv4MappedSig{}
 	_ builtinFunc = &builtinIsIPv6Sig{}
 	_ builtinFunc = &builtinUUIDSig{}
+	_ builtinFunc = &builtinUUIDShortSig{}
 
 	_ builtinFunc = &builtinNameConstIntSig{}
 	_ builtinFunc = &builtinNameConstRealSig{}
@@ -1042,5 +1043,39 @@ type uuidShortFunctionClass struct {
 }
 
 func (c *uuidShortFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
-	return nil, errFunctionNotExists.GenWithStackByArgs("FUNCTION", "UUID_SHORT")
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt)
+	if err != nil {
+		return nil, err
+	}
+	bf.tp.Charset, bf.tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
+	bf.tp.Flen = 36
+	sig := &builtinUUIDShortSig{bf}
+	return sig, nil
+}
+
+type builtinUUIDShortSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinUUIDShortSig) Clone() builtinFunc {
+	newSig := &builtinUUIDShortSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+var increment int64
+
+// evalInt evals a builtinUUIDShortSig.
+// See https://dev.mysql.com/doc/refman/8.0/en/miscellaneous-functions.html#function_uuid-short
+func (b *builtinUUIDShortSig) evalInt(_ chunk.Row) (d int64, isNull bool, err error) {
+	var ip int64
+	var m1 int64 = 255
+	var m2 int64 = 56
+	var m3 int64 = 24
+	increment++
+	uuidShort := ((ip & m1) << m2) + (time.Now().Unix() << m3) + increment
+	return uuidShort, false, nil
 }
