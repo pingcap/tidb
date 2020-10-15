@@ -163,7 +163,7 @@ func (m *mppIterator) handleDispatchReq(ctx context.Context, bo *Backoffer, req 
 	wrappedReq.StoreTp = kv.TiFlash
 
 	// TODO: Handle dispatch task response correctly, including retry logic and cancel logic.
-	rpcResp, _, _, err := sender.sendStreamReqToAddr(bo, originalTask.copTasks, wrappedReq, readTimeoutShort)
+	rpcResp, _, _, err := sender.sendStreamReqToAddr(bo, originalTask.copTasks, wrappedReq, ReadTimeoutMedium)
 
 	if err != nil {
 		m.sendError(err)
