@@ -218,15 +218,15 @@ func (s *testValidatorSuite) TestValidator(c *C) {
 
 		{"CREATE TABLE t (a float(255, 30))", true, nil},
 		{"CREATE TABLE t (a double(255, 30))", true, nil},
-		{"CREATE TABLE t (a float(256, 30))", false, types.ErrTooBigPrecision},
-		{"CREATE TABLE t (a float(255, 31))", false, types.ErrTooBigDisplaywidth},
-		{"CREATE TABLE t (a double(256, 30))", false, types.ErrTooBigPrecision},
-		{"CREATE TABLE t (a double(255, 31))", false, types.ErrTooBigDisplaywidth},
+		{"CREATE TABLE t (a float(256, 30))", false, types.ErrTooBigDisplaywidth},
+		{"CREATE TABLE t (a float(255, 31))", false, types.ErrTooBigScale},
+		{"CREATE TABLE t (a double(256, 30))", false, types.ErrTooBigDisplaywidth},
+		{"CREATE TABLE t (a double(255, 31))", false, types.ErrTooBigScale},
 
 		// issue 20447
 		{"CREATE TABLE t (a float(53))", true, nil},
-		{"CREATE TABLE t (a double(53))", true, nil},
 		{"CREATE TABLE t (a float(54))", false, types.ErrWrongFieldSpec},
+		{"CREATE TABLE t (a double(53))", false, types.ErrWrongFieldSpec},
 		{"CREATE TABLE t (a double(54))", false, types.ErrWrongFieldSpec},
 
 		// FIXME: temporary 'not implemented yet' test for 'CREATE TABLE ... SELECT' (issue 4754)

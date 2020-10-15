@@ -820,6 +820,9 @@ func checkColumn(colDef *ast.ColumnDef) error {
 		}
 	case mysql.TypeFloat, mysql.TypeDouble:
 		if tp.Decimal == -1 {
+			if tp.Tp == mysql.TypeDouble {
+				return types.ErrSyntax.GenWithStackByArgs()
+			}
 			if tp.Flen > mysql.MaxDoublePrecisionLength {
 				return types.ErrWrongFieldSpec.GenWithStackByArgs(colDef.Name.Name.O)
 			}
