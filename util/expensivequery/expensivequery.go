@@ -54,6 +54,7 @@ func (eqh *Handle) Run() {
 	ticker := time.NewTicker(tickInterval)
 	defer ticker.Stop()
 	sm := eqh.sm.Load().(util.SessionManager)
+	record := initMemoryUsageAlarmRecord()
 	for {
 		select {
 		case <-ticker.C:
@@ -73,6 +74,9 @@ func (eqh *Handle) Run() {
 				}
 			}
 			threshold = atomic.LoadUint64(&variable.ExpensiveQueryTimeThreshold)
+			if record.err == nil {
+				record.alarm4ExcessiveMemUsage(sm)
+			}
 		case <-eqh.exitCh:
 			return
 		}
