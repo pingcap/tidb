@@ -757,7 +757,7 @@ func (s *testSuite5) TestShowCreateTable(c *C) {
 	tk.MustQuery("show create table default_num").Check(testutil.RowsWithSep("|",
 		""+
 			"default_num CREATE TABLE `default_num` (\n"+
-			"  `a` int(11) DEFAULT 11\n"+
+			"  `a` int(11) DEFAULT '11'\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
 	))
 	tk.MustExec(`drop table if exists default_varchar`)
