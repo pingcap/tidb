@@ -520,7 +520,6 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, kvRanges []k
 	}
 	e.idxWorkerWg.Add(1)
 	go func() {
-		//start := time.Now()
 		defer trace.StartRegion(ctx, "IndexLookUpIndexWorker").End()
 		ctx1, cancel := context.WithCancel(ctx)
 		_, err := worker.fetchHandles(ctx1, result)
@@ -573,7 +572,7 @@ func (e *IndexLookUpExecutor) startTableWorker(ctx context.Context, workCh <-cha
 func (e *IndexLookUpExecutor) buildTableReader(ctx context.Context, handles []kv.Handle) (Executor, error) {
 	var tblID int
 	if len(e.tblPlans) > 0 {
-		tblID = e.tblPlans[0].ID()
+		tblID = e.tblPlans[len(e.tblPlans)-1].ID()
 	} else {
 		tblID = e.id
 	}
@@ -679,7 +678,7 @@ func (e *IndexLookUpExecutor) initRuntimeStats() {
 
 func (e *IndexLookUpExecutor) getIndexID() int {
 	if len(e.idxPlans) > 0 {
-		return e.idxPlans[0].ID()
+		return e.idxPlans[len(e.idxPlans)-1].ID()
 	}
 	return e.id
 }
