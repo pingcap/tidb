@@ -430,6 +430,10 @@ const (
 	TpJoinRuntimeStats
 	// TpSelectResultRuntimeStats is the tp for SelectResultRuntimeStats.
 	TpSelectResultRuntimeStats
+	// TpInsertRuntimeStat is the tp for InsertRuntimeStat
+	TpInsertRuntimeStat
+	// TpSlowQueryRuntimeStat is the tp for TpSlowQueryRuntimeStat
+	TpSlowQueryRuntimeStat
 )
 
 // RuntimeStats is used to express the executor runtime information.
@@ -546,6 +550,11 @@ func (e *BasicRuntimeStats) SetRowNum(rowNum int64) {
 // String implements the RuntimeStats interface.
 func (e *BasicRuntimeStats) String() string {
 	return fmt.Sprintf("time:%v, loops:%d", time.Duration(e.consume), e.loop)
+}
+
+// GetTime get the int64 total time
+func (e *BasicRuntimeStats) GetTime() int64 {
+	return e.consume
 }
 
 // RuntimeStatsColl collects executors's execution info.

@@ -436,6 +436,7 @@ func (s *testFailDBSuite) TestPartitionAddIndexGC(c *C) {
 func (s *testFailDBSuite) TestModifyColumn(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
 
 	enableChangeColumnType := tk.Se.GetSessionVars().EnableChangeColumnType
 	tk.Se.GetSessionVars().EnableChangeColumnType = true
@@ -533,4 +534,21 @@ func (s *testFailDBSuite) TestModifyColumn(c *C) {
 	tk.MustExec("alter table t5 modify a int not null;")
 
 	tk.MustExec("drop table t, t1, t2, t3, t4, t5")
+}
+
+func (s *testFailDBSuite) TestPartitionAddPanic(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test;`)
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t (a int) partition by range(a) (partition p0 values less than (10));`)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/CheckPartitionByRangeErr", `return(true)`), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/CheckPartitionByRangeErr"), IsNil)
+	}()
+
+	_, err := tk.Exec(`alter table t add partition (partition p1 values less than (20));`)
+	c.Assert(err, NotNil)
+	result := tk.MustQuery("show create table t").Rows()[0][1]
+	c.Assert(result, Matches, `(?s).*PARTITION .p0. VALUES LESS THAN \(10\).*`)
+	c.Assert(result, Not(Matches), `(?s).*PARTITION .p0. VALUES LESS THAN \(20\).*`)
 }

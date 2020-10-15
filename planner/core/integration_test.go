@@ -671,26 +671,27 @@ func (s *testIntegrationSerialSuite) TestIsolationReadDoNotFilterSystemDB(c *C) 
 
 func (s *testIntegrationSuite) TestPartitionTableStats(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
+	{
+		tk.MustExec(`set @@tidb_partition_prune_mode='` + string(variable.StaticOnly) + `'`)
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("create table t(a int, b int)partition by range columns(a)(partition p0 values less than (10), partition p1 values less than(20), partition p2 values less than(30));")
+		tk.MustExec("insert into t values(21, 1), (22, 2), (23, 3), (24, 4), (15, 5)")
+		tk.MustExec("analyze table t")
 
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int, b int)partition by range columns(a)(partition p0 values less than (10), partition p1 values less than(20), partition p2 values less than(30));")
-	tk.MustExec("insert into t values(21, 1), (22, 2), (23, 3), (24, 4), (15, 5)")
-	tk.MustExec("analyze table t")
-	tk.MustExec(`set @@tidb_partition_prune_mode='` + string(variable.StaticOnly) + `'`)
-
-	var input []string
-	var output []struct {
-		SQL    string
-		Result []string
-	}
-	s.testData.GetTestCases(c, &input, &output)
-	for i, tt := range input {
-		s.testData.OnRecord(func() {
-			output[i].SQL = tt
-			output[i].Result = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
-		})
-		tk.MustQuery(tt).Check(testkit.Rows(output[i].Result...))
+		var input []string
+		var output []struct {
+			SQL    string
+			Result []string
+		}
+		s.testData.GetTestCases(c, &input, &output)
+		for i, tt := range input {
+			s.testData.OnRecord(func() {
+				output[i].SQL = tt
+				output[i].Result = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+			})
+			tk.MustQuery(tt).Check(testkit.Rows(output[i].Result...))
+		}
 	}
 }
 
@@ -989,6 +990,32 @@ func (s *testIntegrationSuite) TestApproxCountDistinctInPartitionTable(c *C) {
 	tk.MustQuery("select approx_count_distinct(a), b from t group by b order by b desc").Check(testkit.Rows("1 2", "3 1"))
 }
 
+func (s *testIntegrationSuite) TestApproxPercentile(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int)")
+	tk.MustExec("insert into t values(1, 1), (2, 1), (3, 2), (4, 2), (5, 2)")
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+		Res  []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain " + tt).Rows())
+			output[i].Res = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+		})
+		tk.MustQuery("explain " + tt).Check(testkit.Rows(output[i].Plan...))
+		tk.MustQuery(tt).Check(testkit.Rows(output[i].Res...))
+	}
+}
+
 func (s *testIntegrationSuite) TestIssue17813(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
@@ -1169,6 +1196,31 @@ func (s *testIntegrationSuite) TestTableDualWithRequiredProperty(c *C) {
 		"(partition p0 values less than(10), partition p1 values less than MAXVALUE)")
 	tk.MustExec("create table t2 (a int, b int)")
 	tk.MustExec("select /*+ MERGE_JOIN(t1, t2) */ * from t1 partition (p0), t2  where t1.a > 100 and t1.a = t2.a")
+}
+
+func (s *testIntegrationSuite) TestIndexJoinInnerIndexNDV(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(a int not null, b int not null, c int not null)")
+	tk.MustExec("create table t2(a int not null, b int not null, c int not null, index idx1(a,b), index idx2(c))")
+	tk.MustExec("insert into t1 values(1,1,1),(1,1,1),(1,1,1)")
+	tk.MustExec("insert into t2 values(1,1,1),(1,1,2),(1,1,3)")
+	tk.MustExec("analyze table t1, t2")
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+		})
+		tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
+	}
 }
 
 func (s *testIntegrationSerialSuite) TestIssue16837(c *C) {
@@ -1495,6 +1547,28 @@ func (s *testIntegrationSerialSuite) TestExplainAnalyzePointGet(c *C) {
 	}
 	checkExplain("Get")
 	res = tk.MustQuery("explain analyze select * from t where a in (1,2,3);")
+	checkExplain("BatchGet")
+}
+
+func (s *testIntegrationSerialSuite) TestExplainAnalyzeDML(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec(" create table t (a int, b int, unique index (a));")
+	tk.MustExec("insert into t values (1,1)")
+
+	res := tk.MustQuery("explain analyze select * from t where a=1;")
+	checkExplain := func(rpc string) {
+		resBuff := bytes.NewBufferString("")
+		for _, row := range res.Rows() {
+			fmt.Fprintf(resBuff, "%s\n", row)
+		}
+		explain := resBuff.String()
+		c.Assert(strings.Contains(explain, rpc+":{num_rpc:"), IsTrue, Commentf("%s", explain))
+		c.Assert(strings.Contains(explain, "total_time:"), IsTrue, Commentf("%s", explain))
+	}
+	checkExplain("Get")
+	res = tk.MustQuery("explain analyze insert ignore into t values (1,1),(2,2),(3,3),(4,4);")
 	checkExplain("BatchGet")
 }
 

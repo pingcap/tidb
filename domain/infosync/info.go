@@ -278,10 +278,10 @@ func doRequest(ctx context.Context, addrs []string, route, method string, body i
 	var res *http.Response
 	for _, addr := range addrs {
 		var url string
-		if strings.HasPrefix(addr, "http://") {
+		if strings.HasPrefix(addr, "http") {
 			url = fmt.Sprintf("%s%s", addr, route)
 		} else {
-			url = fmt.Sprintf("http://%s%s", addr, route)
+			url = fmt.Sprintf("%s://%s%s", util2.InternalHTTPSchema(), addr, route)
 		}
 
 		if ctx != nil {
@@ -296,7 +296,7 @@ func doRequest(ctx context.Context, addrs []string, route, method string, body i
 			req.Header.Set("Content-Type", "application/json")
 		}
 
-		res, err = http.DefaultClient.Do(req)
+		res, err = util2.InternalHTTPClient().Do(req)
 		if err == nil {
 			bodyBytes, err := ioutil.ReadAll(res.Body)
 			if err != nil {
@@ -421,6 +421,36 @@ func GetRuleBundle(ctx context.Context, name string) (*placement.Bundle, error) 
 		err = json.Unmarshal(res, bundle)
 	}
 	return bundle, err
+}
+
+// PutRuleBundles is used to post specific rule bundles to PD.
+func PutRuleBundles(ctx context.Context, bundles []*placement.Bundle) error {
+	if len(bundles) == 0 {
+		return nil
+	}
+
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return err
+	}
+
+	if is.etcdCli == nil {
+		return nil
+	}
+
+	addrs := is.etcdCli.Endpoints()
+
+	if len(addrs) == 0 {
+		return errors.Errorf("pd unavailable")
+	}
+
+	b, err := json.Marshal(bundles)
+	if err != nil {
+		return err
+	}
+
+	_, err = doRequest(ctx, addrs, path.Join(pdapi.Config, "placement-rule")+"?partial=true", "POST", bytes.NewReader(b))
+	return err
 }
 
 func (is *InfoSyncer) getAllServerInfo(ctx context.Context) (map[string]*ServerInfo, error) {
