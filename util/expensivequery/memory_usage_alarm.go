@@ -209,7 +209,7 @@ func (record *memoryUsageAlarm) recordSQLAndSummaryTable(sm util.SessionManager,
 	})
 
 	// Record statements_summary table
-	sql := "select * from information_schema.statements_summary"
+	sql := "select * from information_schema.statements_summary order by AVG_MEM desc"
 	rows, types, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
 	if err != nil {
 		record.err = err
