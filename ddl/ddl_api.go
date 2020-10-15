@@ -1502,6 +1502,8 @@ func checkTableInfoValidWithStmt(ctx sessionctx.Context, tbInfo *model.TableInfo
 				err = checkPartitionByRange(ctx, tbInfo, s)
 			case model.PartitionTypeHash:
 				err = checkPartitionByHash(ctx, tbInfo, s)
+			case model.PartitionTypeList:
+				err = checkPartitionByList(ctx, tbInfo, s)
 			}
 			if err != nil {
 				return errors.Trace(err)
@@ -1955,14 +1957,14 @@ func checkPartitionByRange(ctx sessionctx.Context, tbInfo *model.TableInfo, s *a
 	}
 
 	// Check for range columns partition.
-	if err := checkRangeColumnsPartitionType(tbInfo); err != nil {
+	if err := checkColumnsPartitionType(tbInfo); err != nil {
 		return err
 	}
 
 	if s != nil {
 		for _, def := range s.Partition.Definitions {
 			exprs := def.Clause.(*ast.PartitionDefinitionClauseLessThan).Exprs
-			if err := checkRangeColumnsTypeAndValuesMatch(ctx, tbInfo, exprs); err != nil {
+			if err := checkColumnsTypeAndValuesMatch(ctx, tbInfo, exprs); err != nil {
 				return err
 			}
 		}
@@ -1971,7 +1973,49 @@ func checkPartitionByRange(ctx sessionctx.Context, tbInfo *model.TableInfo, s *a
 	return checkRangeColumnsPartitionValue(ctx, tbInfo)
 }
 
-func checkRangeColumnsPartitionType(tbInfo *model.TableInfo) error {
+// checkPartitionByList checks validity of a "BY LIST" partition.
+func checkPartitionByList(ctx sessionctx.Context, tbInfo *model.TableInfo, s *ast.CreateTableStmt) error {
+	pi := tbInfo.Partition
+	if err := checkPartitionNameUnique(pi); err != nil {
+		return err
+	}
+
+	if err := checkAddPartitionTooManyPartitions(uint64(len(pi.Definitions))); err != nil {
+		return err
+	}
+
+	if err := checkListPartitionValue(ctx, tbInfo); err != nil {
+		return err
+	}
+
+	// s maybe nil when add partition.
+	if s == nil {
+		return nil
+	}
+	if len(pi.Columns) == 0 {
+		if err := checkPartitionFuncValid(ctx, tbInfo, s.Partition.Expr); err != nil {
+			return err
+		}
+		return checkPartitionFuncType(ctx, s, tbInfo)
+	}
+	if err := checkColumnsPartitionType(tbInfo); err != nil {
+		return err
+	}
+
+	if len(pi.Columns) > 0 {
+		for _, def := range s.Partition.Definitions {
+			inValues := def.Clause.(*ast.PartitionDefinitionClauseIn).Values
+			for _, vs := range inValues {
+				if err := checkColumnsTypeAndValuesMatch(ctx, tbInfo, vs); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func checkColumnsPartitionType(tbInfo *model.TableInfo) error {
 	for _, col := range tbInfo.Partition.Columns {
 		colInfo := getColumnInfoByName(tbInfo, col.L)
 		if colInfo == nil {
@@ -4966,7 +5010,7 @@ func buildPartitionInfo(ctx sessionctx.Context, meta *model.TableInfo, d *ddl, s
 		// For RANGE partition only VALUES LESS THAN should be possible.
 		clause := def.Clause.(*ast.PartitionDefinitionClauseLessThan)
 		if len(part.Columns) > 0 {
-			if err := checkRangeColumnsTypeAndValuesMatch(ctx, meta, clause.Exprs); err != nil {
+			if err := checkColumnsTypeAndValuesMatch(ctx, meta, clause.Exprs); err != nil {
 				return nil, err
 			}
 		}
@@ -4989,7 +5033,7 @@ func buildPartitionInfo(ctx sessionctx.Context, meta *model.TableInfo, d *ddl, s
 	return part, nil
 }
 
-func checkRangeColumnsTypeAndValuesMatch(ctx sessionctx.Context, meta *model.TableInfo, exprs []ast.ExprNode) error {
+func checkColumnsTypeAndValuesMatch(ctx sessionctx.Context, meta *model.TableInfo, exprs []ast.ExprNode) error {
 	// Validate() has already checked len(colNames) = len(exprs)
 	// create table ... partition by range columns (cols)
 	// partition p0 values less than (expr)
@@ -5011,7 +5055,6 @@ func checkRangeColumnsTypeAndValuesMatch(ctx sessionctx.Context, meta *model.Tab
 		if err != nil {
 			return err
 		}
-
 		// Check val.ConvertTo(colType) doesn't work, so we need this case by case check.
 		switch colType.Tp {
 		case mysql.TypeDate, mysql.TypeDatetime:
@@ -5019,6 +5062,46 @@ func checkRangeColumnsTypeAndValuesMatch(ctx sessionctx.Context, meta *model.Tab
 			case types.KindString, types.KindBytes:
 			default:
 				return ErrWrongTypeColumnValue.GenWithStackByArgs()
+			}
+		}
+	}
+	return nil
+}
+
+func formatListPartitionValue(ctx sessionctx.Context, tblInfo *model.TableInfo) error {
+	defs := tblInfo.Partition.Definitions
+	pi := tblInfo.Partition
+	var colTps []*types.FieldType
+	if len(pi.Columns) == 0 {
+		tp := types.NewFieldType(mysql.TypeLonglong)
+		if isRangePartitionColUnsignedBigint(tblInfo.Columns, tblInfo.Partition) {
+			tp.Flag |= mysql.UnsignedFlag
+		}
+		colTps = []*types.FieldType{tp}
+	} else {
+		colTps = make([]*types.FieldType, 0, len(pi.Columns))
+		for _, colName := range pi.Columns {
+			colInfo := findColumnByName(colName.L, tblInfo)
+			if colInfo == nil {
+				return errors.Trace(ErrFieldNotFoundPart)
+			}
+			colTps = append(colTps, &colInfo.FieldType)
+		}
+	}
+	for i := range defs {
+		for j, vs := range defs[i].InValues {
+			for k, v := range vs {
+				if colTps[k].EvalType() != types.ETInt {
+					continue
+				}
+				isUnsigned := mysql.HasUnsignedFlag(colTps[k].Flag)
+				currentRangeValue, isNull, err := getListPartitionValue(ctx, v, isUnsigned)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				if !isNull {
+					defs[i].InValues[j][k] = fmt.Sprintf("%d", currentRangeValue)
+				}
 			}
 		}
 	}
@@ -5317,6 +5400,49 @@ func (d *ddl) CreateSequence(ctx sessionctx.Context, stmt *ast.CreateSequenceStm
 	}
 
 	return d.CreateTableWithInfo(ctx, ident.Schema, tbInfo, onExist, false /*tryRetainID*/)
+}
+
+func (d *ddl) AlterSequence(ctx sessionctx.Context, stmt *ast.AlterSequenceStmt) error {
+	ident := ast.Ident{Name: stmt.Name.Name, Schema: stmt.Name.Schema}
+	is := d.GetInfoSchemaWithInterceptor(ctx)
+	// Check schema existence.
+	db, ok := is.SchemaByName(ident.Schema)
+	if !ok {
+		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(ident.Schema)
+	}
+	// Check table existence.
+	tbl, err := is.TableByName(ident.Schema, ident.Name)
+	if err != nil {
+		if stmt.IfExists {
+			ctx.GetSessionVars().StmtCtx.AppendNote(err)
+			return nil
+		}
+		return err
+	}
+	if !tbl.Meta().IsSequence() {
+		return ErrWrongObject.GenWithStackByArgs(ident.Schema, ident.Name, "SEQUENCE")
+	}
+
+	// Validate the new sequence option value in old sequenceInfo.
+	oldSequenceInfo := tbl.Meta().Sequence
+	copySequenceInfo := *oldSequenceInfo
+	_, _, err = alterSequenceOptions(stmt.SeqOptions, ident, &copySequenceInfo)
+	if err != nil {
+		return err
+	}
+
+	job := &model.Job{
+		SchemaID:   db.ID,
+		TableID:    tbl.Meta().ID,
+		SchemaName: db.Name.L,
+		Type:       model.ActionAlterSequence,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{ident, stmt.SeqOptions},
+	}
+
+	err = d.doDDLJob(ctx, job)
+	err = d.callHookOnChanged(err)
+	return errors.Trace(err)
 }
 
 func (d *ddl) DropSequence(ctx sessionctx.Context, ti ast.Ident, ifExists bool) (err error) {

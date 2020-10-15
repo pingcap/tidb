@@ -1033,8 +1033,13 @@ func (do *Domain) StatsHandle() *handle.Handle {
 }
 
 // CreateStatsHandle is used only for test.
-func (do *Domain) CreateStatsHandle(ctx sessionctx.Context) {
-	atomic.StorePointer(&do.statsHandle, unsafe.Pointer(handle.NewHandle(ctx, do.statsLease)))
+func (do *Domain) CreateStatsHandle(ctx sessionctx.Context) error {
+	h, err := handle.NewHandle(ctx, do.statsLease)
+	if err != nil {
+		return err
+	}
+	atomic.StorePointer(&do.statsHandle, unsafe.Pointer(h))
+	return nil
 }
 
 // StatsUpdating checks if the stats worker is updating.
@@ -1059,7 +1064,10 @@ var RunAutoAnalyze = true
 // It should be called only once in BootstrapSession.
 func (do *Domain) UpdateTableStatsLoop(ctx sessionctx.Context) error {
 	ctx.GetSessionVars().InRestrictedSQL = true
-	statsHandle := handle.NewHandle(ctx, do.statsLease)
+	statsHandle, err := handle.NewHandle(ctx, do.statsLease)
+	if err != nil {
+		return err
+	}
 	atomic.StorePointer(&do.statsHandle, unsafe.Pointer(statsHandle))
 	do.ddl.RegisterEventCh(statsHandle.DDLEventCh())
 	// Negative stats lease indicates that it is in test, it does not need update.
@@ -1124,6 +1132,10 @@ func (do *Domain) loadStatsWorker() {
 	for {
 		select {
 		case <-loadTicker.C:
+			err = statsHandle.RefreshVars()
+			if err != nil {
+				logutil.BgLogger().Debug("refresh variables failed", zap.Error(err))
+			}
 			err = statsHandle.Update(do.InfoSchema())
 			if err != nil {
 				logutil.BgLogger().Debug("update stats info failed", zap.Error(err))
