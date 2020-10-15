@@ -553,6 +553,7 @@ const (
 	DefTiDBEnableTelemetry             = true
 	DefTiDBEnableParallelApply         = false
 	DefTiDBEnableAmendPessimisticTxn   = true
+	DefTiDBPartitionPruneMode          = "static-only"
 )
 
 // Process global variables.
