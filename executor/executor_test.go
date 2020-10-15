@@ -6040,6 +6040,7 @@ func (s *testSuite) TestCollectDMLRuntimeStats(c *C) {
 	}
 	for _, sql := range testSQLs {
 		tk.MustExec(sql)
+		c.Assert(getRootStats(), Matches, "time.*loops.*Get.*num_rpc.*total_time.*")
 	}
 
 	// Test for lock keys stats.
