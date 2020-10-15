@@ -2191,8 +2191,8 @@
           "  └─Selection_16(Probe) 0.80 root  not(isnull(test.t1.a))",
           "    └─MaxOneRow_17 1.00 root  ",
           "      └─IndexLookUp_24 0.00 root  ",
-          "        ├─IndexRangeScan_21(Build) 1.00 cop[tikv] table:t1, index:idx_b(b) range:[NULL,NULL], keep order:false, stats:pseudo",
-          "        └─Selection_23(Probe) 0.00 cop[tikv]  eq(test.t1.a, test.t2.a)",
+          "        ├─IndexRangeScan_21(Build) 1.00 cop[tikv] table:t1, index:idx_a(a) range:[NULL,NULL], keep order:false, stats:pseudo",
+          "        └─Selection_23(Probe) 0.00 cop[tikv]  eq(test.t1.b, test.t2.b)",
           "          └─TableRowIDScan_22 1.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ]
       }
