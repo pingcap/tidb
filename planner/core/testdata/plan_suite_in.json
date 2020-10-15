@@ -657,5 +657,11 @@
     "cases": [
       "select a from t2 where t2.a < (select t1.a from t1 where t1.a = t2.a);"
     ]
+  },
+  {
+    "name": "TestNotEliminateMaxOneRow",
+    "cases": [
+      "select a from t2 where t2.a < (select t1.a from t1 where t1.a = t2.a and t1.b is null);"
+    ]
   }
 ]

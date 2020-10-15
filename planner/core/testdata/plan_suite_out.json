@@ -2181,5 +2181,26 @@
         ]
       }
     ]
+  },
+  {
+    "Name": "TestNotEliminateMaxOneRow",
+    "Cases": [
+      {
+        "SQL": "select a from t2 where t2.a < (select t1.a from t1 where t1.a = t2.a and t1.b is null);",
+        "Plan": [
+          "Projection_10 9990.00 root  test.t2.a",
+          "└─Apply_12 9990.00 root  CARTESIAN inner join, other cond:lt(test.t2.a, test.t1.a)",
+          "  ├─TableReader_15(Build) 9990.00 root  data:Selection_14",
+          "  │ └─Selection_14 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "  │   └─TableFullScan_13 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "  └─Selection_16(Probe) 0.80 root  not(isnull(test.t1.a))",
+          "    └─MaxOneRow_17 1.00 root  ",
+          "      └─IndexLookUp_24 0.00 root  ",
+          "        ├─IndexRangeScan_21(Build) 1.00 cop[tikv] table:t1, index:idx_b(b) range:[NULL,NULL], keep order:false, stats:pseudo",
+          "        └─Selection_23(Probe) 0.00 cop[tikv]  eq(test.t1.a, test.t2.a)",
+          "          └─TableRowIDScan_22 1.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ]
+      }
+    ]
   }
 ]
