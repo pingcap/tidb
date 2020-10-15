@@ -955,8 +955,7 @@ func (e *AnalyzeFastExec) handleScanTasks(bo *tikv.Backoffer) (keysSize int, err
 
 func (e *AnalyzeFastExec) handleSampTasks(workID int, step uint32, err *error) {
 	defer e.wg.Done()
-	var snapshot kv.Snapshot
-	snapshot = e.ctx.GetStore().(tikv.Storage).GetSnapshot(kv.MaxVersion)
+	snapshot := e.ctx.GetStore().(tikv.Storage).GetSnapshot(kv.MaxVersion)
 	snapshot.SetOption(kv.NotFillCache, true)
 	snapshot.SetOption(kv.IsolationLevel, kv.RC)
 	snapshot.SetOption(kv.Priority, kv.PriorityLow)
