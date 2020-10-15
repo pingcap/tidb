@@ -480,7 +480,6 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, kvRanges []k
 		collExec := true
 		e.dagPB.CollectExecutionSummaries = &collExec
 	}
-	start := time.Now()
 	tracker := memory.NewTracker(memory.LabelForIndexWorker, -1)
 	tracker.AttachTo(e.memTracker)
 	var builder distsql.RequestBuilder
@@ -497,21 +496,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, kvRanges []k
 		return err
 	}
 	tps := e.getRetTpsByHandle()
-	var idxID int
-	if len(e.idxPlans) > 0 {
-		idxID = e.idxPlans[0].ID()
-	} else {
-		idxID = e.id
-	}
-	defer func() {
-		if e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl != nil {
-			if idxID != e.id {
-				basicStats := &execdetails.BasicRuntimeStats{}
-				basicStats.Record(time.Since(start), 1)
-				e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(idxID, basicStats)
-			}
-		}
-	}()
+	idxID := e.getIndexID()
 	// Since the first read only need handle information. So its returned col is only 1.
 	result, err := distsql.SelectWithRuntimeStats(ctx, e.ctx, kvReq, tps, e.feedback, getPhysicalPlanIDs(e.idxPlans), idxID)
 	if err != nil {
@@ -535,6 +520,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, kvRanges []k
 	}
 	e.idxWorkerWg.Add(1)
 	go func() {
+		//start := time.Now()
 		defer trace.StartRegion(ctx, "IndexLookUpIndexWorker").End()
 		ctx1, cancel := context.WithCancel(ctx)
 		_, err := worker.fetchHandles(ctx1, result)
@@ -691,6 +677,13 @@ func (e *IndexLookUpExecutor) initRuntimeStats() {
 	}
 }
 
+func (e *IndexLookUpExecutor) getIndexID() int {
+	if len(e.idxPlans) > 0 {
+		return e.idxPlans[0].ID()
+	}
+	return e.id
+}
+
 // indexWorker is used by IndexLookUpExecutor to maintain index lookup background goroutines.
 type indexWorker struct {
 	idxLookup *IndexLookUpExecutor
@@ -733,6 +726,14 @@ func (w *indexWorker) fetchHandles(ctx context.Context, result distsql.SelectRes
 	}()
 	retTps := w.idxLookup.getRetTpsByHandle()
 	chk := chunk.NewChunkWithCapacity(retTps, w.idxLookup.maxChunkSize)
+	idxID := w.idxLookup.getIndexID()
+	var basicStats *execdetails.BasicRuntimeStats
+	if w.idxLookup.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl != nil {
+		if idxID != w.idxLookup.id {
+			basicStats = &execdetails.BasicRuntimeStats{}
+			w.idxLookup.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(idxID, basicStats)
+		}
+	}
 	for {
 		startTime := time.Now()
 		handles, retChunk, scannedKeys, err := w.extractTaskHandles(ctx, chk, result, count)
@@ -759,6 +760,9 @@ func (w *indexWorker) fetchHandles(ctx context.Context, result distsql.SelectRes
 			return count, nil
 		case w.workCh <- task:
 			w.resultCh <- task
+		}
+		if basicStats != nil {
+			basicStats.Record(time.Since(startTime), chk.NumRows())
 		}
 	}
 }
