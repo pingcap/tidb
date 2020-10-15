@@ -140,6 +140,10 @@ func (b *PlanBuilder) getExpressionRewriter(ctx context.Context, p LogicalPlan) 
 			rewriter.schema = p.Schema()
 			rewriter.names = p.OutputNames()
 		}
+		if join, isJoin := p.(*LogicalJoin); isJoin {
+			rewriter.redundantNames = join.redundantNames
+			rewriter.redundantSchema = join.redundantSchema
+		}
 	}()
 
 	if len(b.rewriterPool) < b.rewriterCounter {
@@ -211,6 +215,11 @@ type expressionRewriter struct {
 	b          *PlanBuilder
 	sctx       sessionctx.Context
 	ctx        context.Context
+
+	// redundantSchema contains columns which are eliminated in join.
+	// For select * from a join b using (c); a.c will in output schema, and b.c will in redundantSchema.
+	redundantSchema *expression.Schema
+	redundantNames  types.NameSlice
 
 	// asScalar indicates the return value must be a scalar value.
 	// NOTE: This value can be changed during expression rewritten.
@@ -1634,14 +1643,14 @@ func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 			return
 		}
 	}
-	if join, ok := er.p.(*LogicalJoin); ok && join.redundantSchema != nil {
-		idx, err := expression.FindFieldName(join.redundantNames, v)
+	if er.redundantSchema != nil {
+		idx, err := expression.FindFieldName(er.redundantNames, v)
 		if err != nil {
 			er.err = err
 			return
 		}
 		if idx >= 0 {
-			er.ctxStackAppend(join.redundantSchema.Columns[idx], join.redundantNames[idx])
+			er.ctxStackAppend(er.redundantSchema.Columns[idx], er.redundantNames[idx])
 			return
 		}
 	}

@@ -944,7 +944,13 @@ func (b *PlanBuilder) buildProjectionField(ctx context.Context, p LogicalPlan, f
 		// The column maybe the one from join's redundant part.
 		// TODO: Fully support USING/NATURAL JOIN, refactor here.
 		if idx == -1 {
-			if join, ok := p.(*LogicalJoin); ok {
+			lp := p
+			_, isJoin := lp.(*LogicalJoin)
+			for !isJoin && len(lp.Children()) > 0 {
+				lp = p.Children()[0]
+				_, isJoin = lp.(*LogicalJoin)
+			}
+			if join, ok := lp.(*LogicalJoin); ok {
 				idx = join.redundantSchema.ColumnIndex(col)
 				name = join.redundantNames[idx]
 			}
@@ -1635,14 +1641,29 @@ func (a *havingWindowAndOrderbyExprResolver) resolveFromPlan(v *ast.ColumnNameEx
 	if err != nil {
 		return -1, err
 	}
+	var col *expression.Column
+	var name *types.FieldName
 	if idx < 0 {
-		return -1, nil
+		if join, ok := p.(*LogicalJoin); ok {
+			idx, err := expression.FindFieldName(join.redundantNames, v.Name)
+			if err != nil || idx < 0 {
+				return -1, err
+			}
+			col = join.redundantSchema.Columns[idx]
+			name = join.redundantNames[idx]
+		} else {
+			return -1, nil
+		}
 	}
-	col := p.Schema().Columns[idx]
+	if col == nil {
+		col = p.Schema().Columns[idx]
+	}
 	if col.IsHidden {
 		return -1, ErrUnknownColumn.GenWithStackByArgs(v.Name, clauseMsg[a.curClause])
 	}
-	name := p.OutputNames()[idx]
+	if name == nil {
+		name = p.OutputNames()[idx]
+	}
 	newColName := &ast.ColumnName{
 		Schema: name.DBName,
 		Table:  name.TblName,

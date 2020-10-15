@@ -596,6 +596,22 @@ func (s *testSuiteJoin1) TestNaturalJoin(c *C) {
 	tk.MustQuery("select * from t1 natural join t2").Check(testkit.Rows("1 2 3"))
 	tk.MustQuery("select * from t1 natural left join t2 order by a").Check(testkit.Rows("1 2 3", "10 20 <nil>"))
 	tk.MustQuery("select * from t1 natural right join t2 order by a").Check(testkit.Rows("1 3 2", "100 200 <nil>"))
+
+	// For issue 20441
+	tk.MustExec(`DROP TABLE if exists t1, t2, t3`)
+	tk.MustExec(`create table t1 (i int)`)
+	tk.MustExec(`create table t2 (i int)`)
+	tk.MustExec(`create table t3 (i int)`)
+	tk.MustExec(`select * from t1,t2 natural left join t3 order by t1.i,t2.i,t3.i`)
+	tk.MustExec(`select t1.i,t2.i,t3.i from t2 natural left join t3,t1 order by t1.i,t2.i,t3.i`)
+	tk.MustExec(`select * from t1,t2 natural right join t3 order by t1.i,t2.i,t3.i`)
+	tk.MustExec(`select t1.i,t2.i,t3.i from t2 natural right join t3,t1 order by t1.i,t2.i,t3.i`)
+
+	// For issue 15844
+	tk.MustExec(`DROP TABLE if exists t0, t1`)
+	tk.MustExec(`CREATE TABLE t0(c0 INT)`)
+	tk.MustExec(`CREATE TABLE t1(c0 INT)`)
+	tk.MustExec(`SELECT t0.c0 FROM t0 NATURAL RIGHT JOIN t1 WHERE t1.c0`)
 }
 
 func (s *testSuiteJoin3) TestMultiJoin(c *C) {
