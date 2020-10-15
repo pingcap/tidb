@@ -933,7 +933,7 @@ func (c *Config) Valid() error {
 	}
 
 	if c.Performance.MemoryUsageAlarmRatio > 1 || c.Performance.MemoryUsageAlarmRatio < 0 {
-		return fmt.Errorf("memory-usage-alarm-ratio in [Performance] must be greater than 0 and less than 1")
+		return fmt.Errorf("memory-usage-alarm-ratio in [Performance] must be greater than or equal to 0 and less than or equal to 1")
 	}
 
 	if c.StmtSummary.MaxStmtCount <= 0 {
