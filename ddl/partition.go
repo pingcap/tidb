@@ -828,12 +828,11 @@ func checkListPartitionValue(ctx sessionctx.Context, tblInfo *model.TableInfo) e
 		return nil
 	}
 
-	for i, def := range pi.Definitions {
-		for j, vs := range def.InValues {
+	for _, def := range pi.Definitions {
+		for _, vs := range def.InValues {
 			if err := checkUniqueValue(vs); err != nil {
 				return err
 			}
-			pi.Definitions[i].InValues[j] = vs
 		}
 	}
 	return nil
@@ -879,6 +878,11 @@ func getRangeValue(ctx sessionctx.Context, str string, unsignedBigint bool) (int
 // getListPartitionValue gets an integer/null from the string value.
 // The returned boolean value indicates whether the input string is a null.
 func getListPartitionValue(ctx sessionctx.Context, str string, unsignedBigint bool) (interface{}, bool, error) {
+	// The input value maybe an integer or constant expression or null.
+	// For example:
+	// PARTITION p0 VALUES IN (1)
+	// PARTITION p0 VALUES IN (TO_SECONDS('2004-01-01'))
+	// PARTITION p0 VALUES IN (NULL)
 	if unsignedBigint {
 		if value, err := strconv.ParseUint(str, 10, 64); err == nil {
 			return value, false, nil
@@ -896,10 +900,6 @@ func getListPartitionValue(ctx sessionctx.Context, str string, unsignedBigint bo
 		if value, err := strconv.ParseInt(str, 10, 64); err == nil {
 			return value, false, nil
 		}
-		// The input value maybe not an integer, it could be a constant expression or null.
-		// For example:
-		// PARTITION p0 VALUES IN (TO_SECONDS('2004-01-01'))
-		// PARTITION p0 VALUES IN (NULL)
 		e, err1 := expression.ParseSimpleExprWithTableInfo(ctx, str, &model.TableInfo{})
 		if err1 != nil {
 			return 0, false, err1

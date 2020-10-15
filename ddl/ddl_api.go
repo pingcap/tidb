@@ -5100,7 +5100,7 @@ func formatListPartitionValue(ctx sessionctx.Context, tblInfo *model.TableInfo) 
 					return errors.Trace(err)
 				}
 				if !isNull {
-					defs[i].InValues[j][0] = fmt.Sprintf("%d", currentRangeValue)
+					defs[i].InValues[j][k] = fmt.Sprintf("%d", currentRangeValue)
 				}
 			}
 		}
