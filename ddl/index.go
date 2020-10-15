@@ -385,7 +385,7 @@ func updateHiddenColumns(tblInfo *model.TableInfo, idxInfo *model.IndexInfo, sta
 func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK bool) (ver int64, err error) {
 	// Handle the rolling back job.
 	if job.IsRollingback() {
-		ver, err = onDropIndex(t, job)
+		ver, err = onDropIndexes(t, job)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -778,8 +778,12 @@ func checkDropIndexes(t *meta.Meta, job *model.Job) (*model.TableInfo, []*model.
 
 	var indexNames []model.CIStr
 	if err = job.DecodeArgs(&indexNames); err != nil {
-		job.State = model.JobStateCancelled
-		return nil, nil, errors.Trace(err)
+		var indexName model.CIStr
+		if err = job.DecodeArgs(&indexName); err != nil {
+			job.State = model.JobStateCancelled
+			return nil, nil, errors.Trace(err)
+		}
+		indexNames = append(indexNames, indexName)
 	}
 
 	indexesInfo := make([]*model.IndexInfo, 0, len(indexNames))
