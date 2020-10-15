@@ -598,13 +598,24 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *property.PhysicalProperty, ou
 	}
 	if isUnionScan {
 		// The child of union scan may be union all for partition table.
-		ds, isDataSource = us.Children()[0].(*DataSource)
+		proj, isProj := us.Children()[0].(*LogicalProjection)
+		if isProj {
+			ds, isDataSource = proj.children[0].(*DataSource)
+		} else {
+			ds, isDataSource = us.Children()[0].(*DataSource)
+		}
 		if !isDataSource {
 			return nil
 		}
 		// If one of the union scan children is a TiFlash table, then we can't choose index join.
 		for _, child := range us.Children() {
-			if ds, ok := child.(*DataSource); ok && ds.preferStoreType&preferTiFlash != 0 {
+			proj, isProj := child.(*LogicalProjection)
+			if isProj {
+				ds, isDataSource = proj.children[0].(*DataSource)
+			} else {
+				ds, isDataSource = child.(*DataSource)
+			}
+			if isDataSource && ds.preferStoreType&preferTiFlash != 0 {
 				return nil
 			}
 		}
