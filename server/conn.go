@@ -173,6 +173,12 @@ type clientConn struct {
 	status       int32             // dispatching/reading/shutdown/waitshutdown
 	lastCode     uint16            // last error code
 	collation    uint8             // collation used by client, may be different from the collation used by database.
+
+	// mu is used for cancelling the execution of current transaction.
+	mu struct {
+		sync.RWMutex
+		cancelFunc context.CancelFunc
+	}
 }
 
 func (cc *clientConn) String() string {
@@ -912,6 +918,12 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 	span := opentracing.StartSpan("server.dispatch")
 	ctx = opentracing.ContextWithSpan(ctx, span)
 
+	var cancelFunc context.CancelFunc
+	ctx, cancelFunc = context.WithCancel(ctx)
+	cc.mu.Lock()
+	cc.mu.cancelFunc = cancelFunc
+	cc.mu.Unlock()
+
 	t := time.Now()
 	cc.lastPacket = data
 	cmd := data[0]
@@ -1439,7 +1451,7 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 	}
 	vars := cc.ctx.GetSessionVars()
 	if vars.TxnCtx.IsPessimistic {
-		if vars.IsReadConsistencyTxn() {
+		if vars.IsIsolation(ast.ReadCommitted) {
 			// TODO: to support READ-COMMITTED, we need to avoid getting new TS for each statement in the query.
 			return nil, nil
 		}
