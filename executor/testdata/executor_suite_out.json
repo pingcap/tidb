@@ -120,12 +120,13 @@
           "HashJoin_12 5120.00 root  semi join, equal:[nulleq(test.t1.a, test.t1.a)]",
           "├─TableReader_27(Build) 10000.00 root  data:TableFullScan_26",
           "│ └─TableFullScan_26 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-          "└─HashJoin_14(Probe) 6400.00 root  semi join, equal:[nulleq(test.t1.a, test.t2.a)]",
-          "  ├─TableReader_24(Build) 10000.00 root  data:TableFullScan_23",
-          "  │ └─TableFullScan_23 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
-          "  └─HashAgg_17(Probe) 8000.00 root  group by:test.t1.a, funcs:firstrow(test.t1.a)->test.t1.a",
-          "    └─TableReader_22 10000.00 root  data:TableFullScan_21",
-          "      └─TableFullScan_21 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+          "└─Projection_13(Probe) 6400.00 root  cast(test.t1.a, int(11))->test.t1.a",
+          "  └─HashJoin_14 6400.00 root  semi join, equal:[nulleq(test.t1.a, test.t2.a)]",
+          "    ├─TableReader_24(Build) 10000.00 root  data:TableFullScan_23",
+          "    │ └─TableFullScan_23 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "    └─HashAgg_17(Probe) 8000.00 root  group by:test.t1.a, funcs:firstrow(test.t1.a)->test.t1.a",
+          "      └─TableReader_22 10000.00 root  data:TableFullScan_21",
+          "        └─TableFullScan_21 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "Res": [
           "1",
@@ -247,12 +248,13 @@
           "│   │ └─TableFullScan_36 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
           "│   └─TableReader_40 10000.00 root  data:TableFullScan_39",
           "│     └─TableFullScan_39 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
-          "└─HashJoin_20(Probe) 6400.00 root  semi join, equal:[nulleq(test.t1.a, test.t1.a)]",
-          "  ├─TableReader_30(Build) 10000.00 root  data:TableFullScan_29",
-          "  │ └─TableFullScan_29 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-          "  └─HashAgg_23(Probe) 8000.00 root  group by:test.t1.a, funcs:firstrow(test.t1.a)->test.t1.a",
-          "    └─TableReader_28 10000.00 root  data:TableFullScan_27",
-          "      └─TableFullScan_27 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+          "└─Projection_19(Probe) 6400.00 root  cast(test.t1.a, int(11))->test.t1.a",
+          "  └─HashJoin_20 6400.00 root  semi join, equal:[nulleq(test.t1.a, test.t1.a)]",
+          "    ├─TableReader_30(Build) 10000.00 root  data:TableFullScan_29",
+          "    │ └─TableFullScan_29 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "    └─HashAgg_23(Probe) 8000.00 root  group by:test.t1.a, funcs:firstrow(test.t1.a)->test.t1.a",
+          "      └─TableReader_28 10000.00 root  data:TableFullScan_27",
+          "        └─TableFullScan_27 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "Res": null
       }
@@ -390,12 +392,13 @@
           "HashJoin_12 5120.00 root  semi join, equal:[nulleq(test.t1.a, test.t1.a) nulleq(test.t1.b, test.t1.b)]",
           "├─TableReader_27(Build) 10000.00 root  data:TableFullScan_26",
           "│ └─TableFullScan_26 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-          "└─HashJoin_14(Probe) 6400.00 root  semi join, equal:[nulleq(test.t1.a, test.t2.a)], other cond:nulleq(cast(test.t1.b), cast(test.t2.b))",
-          "  ├─TableReader_24(Build) 10000.00 root  data:TableFullScan_23",
-          "  │ └─TableFullScan_23 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
-          "  └─HashAgg_17(Probe) 8000.00 root  group by:test.t1.a, test.t1.b, funcs:firstrow(test.t1.a)->test.t1.a, funcs:firstrow(test.t1.b)->test.t1.b",
-          "    └─TableReader_22 10000.00 root  data:TableFullScan_21",
-          "      └─TableFullScan_21 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+          "└─Projection_13(Probe) 6400.00 root  cast(test.t1.a, int(11))->test.t1.a, cast(test.t1.b, int(11))->test.t1.b",
+          "  └─HashJoin_14 6400.00 root  semi join, equal:[nulleq(test.t1.a, test.t2.a)], other cond:nulleq(cast(test.t1.b), cast(test.t2.b))",
+          "    ├─TableReader_24(Build) 10000.00 root  data:TableFullScan_23",
+          "    │ └─TableFullScan_23 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "    └─HashAgg_17(Probe) 8000.00 root  group by:test.t1.a, test.t1.b, funcs:firstrow(test.t1.a)->test.t1.a, funcs:firstrow(test.t1.b)->test.t1.b",
+          "      └─TableReader_22 10000.00 root  data:TableFullScan_21",
+          "        └─TableFullScan_21 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "Res": [
           "1 1",
