@@ -50,6 +50,14 @@ const (
 	TaskID
 	// InfoSchema is schema version used by txn startTS.
 	InfoSchema
+	// CollectRuntimeStats is used to enable collect runtime stats.
+	CollectRuntimeStats
+	// SchemaAmender is used to amend mutations for pessimistic transactions
+	SchemaAmender
+	// SampleStep skips 'SampleStep - 1' number of keys after each returned key.
+	SampleStep
+	// CommitHook is a callback function called right after the transaction gets committed
+	CommitHook
 )
 
 // Priority value for transaction priority.
@@ -156,40 +164,61 @@ type RetrieverMutator interface {
 	Mutator
 }
 
-// StagingBuffer is a staging buffer in MemBuffer.
-type StagingBuffer interface {
-	Retriever
-
-	// Size returns sum of keys and values length.
-	Size() int
-	// Len returns the number of entries in the DB.
-	Len() int
+// MemBufferIterator is an Iterator with KeyFlags related functions.
+type MemBufferIterator interface {
+	Iterator
+	HasValue() bool
+	Flags() KeyFlags
+	UpdateFlags(...FlagsOp)
 }
 
 // MemBuffer is an in-memory kv collection, can be used to buffer write operations.
 type MemBuffer interface {
 	RetrieverMutator
 
+	// RLock locks the MemBuffer for shared read.
+	// In the most case, MemBuffer will only used by single goroutine,
+	// but it will be read by multiple goroutine when combined with executor.UnionScanExec.
+	// To avoid race introduced by executor.UnionScanExec, MemBuffer expose read lock for it.
+	RLock()
+	// RUnlock unlocks the MemBuffer.
+	RUnlock()
+
 	// GetFlags returns the latest flags associated with key.
 	GetFlags(Key) (KeyFlags, error)
+	// IterWithFlags returns a MemBufferIterator.
+	IterWithFlags(k Key, upperBound Key) MemBufferIterator
+	// IterReverseWithFlags returns a reversed MemBufferIterator.
+	IterReverseWithFlags(k Key) MemBufferIterator
 	// SetWithFlags put key-value into the last active staging buffer with the given KeyFlags.
-	SetWithFlags(Key, KeyFlags, []byte) error
-	// SetFlags update the flags associated with key.
-	SetFlags(Key, KeyFlags)
+	SetWithFlags(Key, []byte, ...FlagsOp) error
+	// UpdateFlags update the flags associated with key.
+	UpdateFlags(Key, ...FlagsOp)
+
 	// Reset reset the MemBuffer to initial states.
 	Reset()
+	// DiscardValues releases the memory used by all values.
+	// NOTE: any operation need value will panic after this function.
+	DiscardValues()
 
 	// Staging create a new staging buffer inside the MemBuffer.
 	// Subsequent writes will be temporarily stored in this new staging buffer.
 	// When you think all modifications looks good, you can call `Release` to public all of them to the upper level buffer.
 	Staging() StagingHandle
 	// Release publish all modifications in the latest staging buffer to upper level.
-	Release(StagingHandle) (int, error)
+	Release(StagingHandle)
 	// Cleanup cleanup the resources referenced by the StagingHandle.
 	// If the changes are not published by `Release`, they will be discarded.
 	Cleanup(StagingHandle)
-	// GetStagingBuffer returns the specified staging buffer
-	GetStagingBuffer(StagingHandle) StagingBuffer
+	// InspectStage used to inspect the value updates in the given stage.
+	InspectStage(StagingHandle, func(Key, KeyFlags, []byte))
+
+	// SelectValueHistory select the latest value which makes `predicate` returns true from the modification history.
+	SelectValueHistory(key Key, predicate func(value []byte) bool) ([]byte, error)
+	// SnapshotGetter returns a Getter for a snapshot of MemBuffer.
+	SnapshotGetter() Getter
+	// SnapshotIter returns a Iterator for a snapshot of MemBuffer.
+	SnapshotIter(k, upperbound Key) Iterator
 
 	// Size returns sum of keys and values length.
 	Size() int
@@ -253,12 +282,13 @@ type LockCtx struct {
 	LockWaitTime          int64
 	WaitStartTime         time.Time
 	PessimisticLockWaited *int32
-	LockKeysDuration      *time.Duration
+	LockKeysDuration      *int64
 	LockKeysCount         *int32
 	ReturnValues          bool
 	Values                map[string]ReturnedValue
 	ValuesLock            sync.Mutex
 	LockExpired           *uint32
+	Stats                 *execdetails.LockKeysDetails
 }
 
 // ReturnedValue pairs the Value and AlreadyLocked flag for PessimisticLock return values result.
@@ -270,7 +300,7 @@ type ReturnedValue struct {
 // Client is used to send request to KV layer.
 type Client interface {
 	// Send sends request to KV layer, returns a Response.
-	Send(ctx context.Context, req *Request, vars *Variables) Response
+	Send(ctx context.Context, req *Request, vars *Variables, sessionMemTracker *memory.Tracker) Response
 
 	// IsRequestTypeSupported checks if reqType and subType is supported.
 	IsRequestTypeSupported(reqType, subType int64) bool
@@ -369,8 +399,6 @@ type ResultSubset interface {
 	GetData() []byte
 	// GetStartKey gets the start key.
 	GetStartKey() Key
-	// GetExecDetails gets the detail information.
-	GetExecDetails() *execdetails.ExecDetails
 	// MemSize returns how many bytes of memory this result use for tracing memory usage.
 	MemSize() int64
 	// RespTime returns the response time for the request.
@@ -455,7 +483,7 @@ type Iterator interface {
 
 // SplittableStore is the kv store which supports split regions.
 type SplittableStore interface {
-	SplitRegions(ctx context.Context, splitKey [][]byte, scatter bool) (regionID []uint64, err error)
+	SplitRegions(ctx context.Context, splitKey [][]byte, scatter bool, tableID *int64) (regionID []uint64, err error)
 	WaitScatterRegionFinish(ctx context.Context, regionID uint64, backOff int) error
 	CheckRegionInScattering(regionID uint64) (bool, error)
 }

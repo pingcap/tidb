@@ -15,17 +15,21 @@ package executor
 
 import (
 	"context"
+	"fmt"
 	"sort"
 	"sync/atomic"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/math"
 	"github.com/pingcap/tidb/util/rowcodec"
@@ -61,6 +65,9 @@ type BatchPointGetExec struct {
 
 	// virtualColumnRetFieldTypes records the RetFieldTypes of virtual columns.
 	virtualColumnRetFieldTypes []*types.FieldType
+
+	snapshot kv.Snapshot
+	stats    *runtimeStatsWithSnapshot
 }
 
 // buildVirtualColumnInfo saves virtual column indices and sort them in definition order
@@ -97,6 +104,14 @@ func (e *BatchPointGetExec) Open(context.Context) error {
 			return err
 		}
 	}
+	if e.runtimeStats != nil {
+		snapshotStats := &tikv.SnapshotRuntimeStats{}
+		e.stats = &runtimeStatsWithSnapshot{
+			SnapshotRuntimeStats: snapshotStats,
+		}
+		snapshot.SetOption(kv.CollectRuntimeStats, snapshotStats)
+		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
+	}
 	if e.ctx.GetSessionVars().GetReplicaRead().IsFollowerRead() {
 		snapshot.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
 	}
@@ -105,12 +120,18 @@ func (e *BatchPointGetExec) Open(context.Context) error {
 	if txn.Valid() {
 		batchGetter = kv.NewBufferBatchGetter(txn.GetMemBuffer(), &PessimisticLockCacheGetter{txnCtx: txnCtx}, snapshot)
 	}
+	e.snapshot = snapshot
 	e.batchGetter = batchGetter
 	return nil
 }
 
 // Close implements the Executor interface.
 func (e *BatchPointGetExec) Close() error {
+	if e.runtimeStats != nil && e.snapshot != nil {
+		e.snapshot.DelOption(kv.CollectRuntimeStats)
+	}
+	e.inited = 0
+	e.index = 0
 	return nil
 }
 
@@ -128,7 +149,7 @@ func (e *BatchPointGetExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 	for !req.IsFull() && e.index < len(e.values) {
 		handle, val := e.handles[e.index], e.values[e.index]
-		err := decodeRowValToChunk(e.base(), e.tblInfo, handle, val, req, e.rowDecoder)
+		err := DecodeRowValToChunk(e.base().ctx, e.schema, e.tblInfo, handle, val, req, e.rowDecoder)
 		if err != nil {
 			return err
 		}
@@ -142,6 +163,15 @@ func (e *BatchPointGetExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	return nil
 }
 
+func datumsContainNull(vals []types.Datum) bool {
+	for _, val := range vals {
+		if val.IsNull() {
+			return true
+		}
+	}
+	return false
+}
+
 func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 	var handleVals map[string][]byte
 	var indexKeys []kv.Key
@@ -152,7 +182,12 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 		dedup := make(map[hack.MutableString]struct{})
 		keys := make([]kv.Key, 0, len(e.idxVals))
 		for _, idxVals := range e.idxVals {
-			physID := getPhysID(e.tblInfo, kv.IntHandle(idxVals[e.partPos].GetInt64()))
+			// For all x, 'x IN (null)' evaluate to null, so the query get no result.
+			if datumsContainNull(idxVals) {
+				continue
+			}
+
+			physID := getPhysID(e.tblInfo, idxVals[e.partPos].GetInt64())
 			idxKey, err1 := EncodeUniqueIndexKey(e.ctx, e.tblInfo, e.idxInfo, idxVals, physID)
 			if err1 != nil && !kv.ErrNotExist.Equal(err1) {
 				return err1
@@ -173,6 +208,11 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 			})
 		}
 		indexKeys = keys
+
+		// SELECT * FROM t WHERE x IN (null), in this case there is no key.
+		if len(keys) == 0 {
+			return nil
+		}
 
 		// Fetch all handles.
 		handleVals, err = batchGetter.BatchGet(ctx, keys)
@@ -213,12 +253,36 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 			failpoint.InjectContext(ctx, "batchPointGetRepeatableReadTest-step2", nil)
 		})
 	} else if e.keepOrder {
-		sort.Slice(e.handles, func(i int, j int) bool {
+		less := func(i int, j int) bool {
 			if e.desc {
 				return e.handles[i].Compare(e.handles[j]) > 0
 			}
 			return e.handles[i].Compare(e.handles[j]) < 0
-		})
+
+		}
+		if e.tblInfo.PKIsHandle && mysql.HasUnsignedFlag(e.tblInfo.GetPkColInfo().Flag) {
+			uintComparator := func(i, h kv.Handle) int {
+				if !i.IsInt() || !h.IsInt() {
+					panic(fmt.Sprintf("both handles need be IntHandle, but got %T and %T ", i, h))
+				}
+				ihVal := uint64(i.IntValue())
+				hVal := uint64(h.IntValue())
+				if ihVal > hVal {
+					return 1
+				}
+				if ihVal < hVal {
+					return -1
+				}
+				return 0
+			}
+			less = func(i int, j int) bool {
+				if e.desc {
+					return uintComparator(e.handles[i], e.handles[j]) > 0
+				}
+				return uintComparator(e.handles[i], e.handles[j]) < 0
+			}
+		}
+		sort.Slice(e.handles, less)
 	}
 
 	keys := make([]kv.Key, len(e.handles))
@@ -227,7 +291,15 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 		if len(e.physIDs) > 0 {
 			tID = e.physIDs[i]
 		} else {
-			tID = getPhysID(e.tblInfo, handle)
+			if handle.IsInt() {
+				tID = getPhysID(e.tblInfo, handle.IntValue())
+			} else {
+				_, d, err1 := codec.DecodeOne(handle.EncodedCol(e.partPos))
+				if err1 != nil {
+					return err1
+				}
+				tID = getPhysID(e.tblInfo, d.GetInt64())
+			}
 		}
 		key := tablecodec.EncodeRowKeyWithHandle(tID, handle)
 		keys[i] = key
@@ -327,11 +399,11 @@ func (getter *PessimisticLockCacheGetter) Get(_ context.Context, key kv.Key) ([]
 	return nil, kv.ErrNotExist
 }
 
-func getPhysID(tblInfo *model.TableInfo, val kv.Handle) int64 {
+func getPhysID(tblInfo *model.TableInfo, intVal int64) int64 {
 	pi := tblInfo.Partition
 	if pi == nil {
 		return tblInfo.ID
 	}
-	partIdx := math.Abs(val.IntValue() % int64(pi.Num)) // TODO: fix me for table, partition on cluster index.
+	partIdx := math.Abs(intVal % int64(pi.Num))
 	return pi.Definitions[partIdx].ID
 }

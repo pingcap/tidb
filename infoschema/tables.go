@@ -234,7 +234,7 @@ type columnInfo struct {
 func buildColumnInfo(col columnInfo) *model.ColumnInfo {
 	mCharset := charset.CharsetBin
 	mCollation := charset.CharsetBin
-	if col.tp == mysql.TypeVarchar || col.tp == mysql.TypeBlob {
+	if col.tp == mysql.TypeVarchar || col.tp == mysql.TypeBlob || col.tp == mysql.TypeLongBlob {
 		mCharset = charset.CharsetUTF8MB4
 		mCollation = charset.CollationUTF8MB4
 	}
@@ -304,6 +304,7 @@ var tablesCols = []columnInfo{
 	{name: "TABLE_COMMENT", tp: mysql.TypeVarchar, size: 2048},
 	{name: "TIDB_TABLE_ID", tp: mysql.TypeLonglong, size: 21},
 	{name: "TIDB_ROW_ID_SHARDING_INFO", tp: mysql.TypeVarchar, size: 255},
+	{name: "TIDB_PK_TYPE", tp: mysql.TypeVarchar, size: 64},
 }
 
 // See: http://dev.mysql.com/doc/refman/5.7/en/columns-table.html
@@ -693,7 +694,8 @@ var tableProcesslistCols = []columnInfo{
 	{name: "COMMAND", tp: mysql.TypeVarchar, size: 16, flag: mysql.NotNullFlag, deflt: ""},
 	{name: "TIME", tp: mysql.TypeLong, size: 7, flag: mysql.NotNullFlag, deflt: 0},
 	{name: "STATE", tp: mysql.TypeVarchar, size: 7},
-	{name: "INFO", tp: mysql.TypeString, size: 512},
+	{name: "INFO", tp: mysql.TypeLongBlob, size: types.UnspecifiedLength},
+	{name: "DIGEST", tp: mysql.TypeVarchar, size: 64, deflt: ""},
 	{name: "MEM", tp: mysql.TypeLonglong, size: 21, flag: mysql.UnsignedFlag},
 	{name: "TxnStart", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag, deflt: ""},
 }
@@ -709,6 +711,7 @@ var tableTiDBIndexesCols = []columnInfo{
 	{name: "INDEX_COMMENT", tp: mysql.TypeVarchar, size: 2048},
 	{name: "Expression", tp: mysql.TypeVarchar, size: 64},
 	{name: "INDEX_ID", tp: mysql.TypeLonglong, size: 21},
+	{name: "IS_VISIBLE", tp: mysql.TypeVarchar, size: 64},
 }
 
 var slowQueryCols = []columnInfo{
@@ -717,6 +720,8 @@ var slowQueryCols = []columnInfo{
 	{name: variable.SlowLogUserStr, tp: mysql.TypeVarchar, size: 64},
 	{name: variable.SlowLogHostStr, tp: mysql.TypeVarchar, size: 64},
 	{name: variable.SlowLogConnIDStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.UnsignedFlag},
+	{name: variable.SlowLogExecRetryCount, tp: mysql.TypeLonglong, size: 20, flag: mysql.UnsignedFlag},
+	{name: variable.SlowLogExecRetryTime, tp: mysql.TypeDouble, size: 22},
 	{name: variable.SlowLogQueryTimeStr, tp: mysql.TypeDouble, size: 22},
 	{name: variable.SlowLogParseTimeStr, tp: mysql.TypeDouble, size: 22},
 	{name: variable.SlowLogCompileTimeStr, tp: mysql.TypeDouble, size: 22},
@@ -760,6 +765,12 @@ var slowQueryCols = []columnInfo{
 	{name: variable.SlowLogCopWaitAddr, tp: mysql.TypeVarchar, size: 64},
 	{name: variable.SlowLogMemMax, tp: mysql.TypeLonglong, size: 20},
 	{name: variable.SlowLogDiskMax, tp: mysql.TypeLonglong, size: 20},
+	{name: variable.SlowLogKVTotal, tp: mysql.TypeDouble, size: 22},
+	{name: variable.SlowLogPDTotal, tp: mysql.TypeDouble, size: 22},
+	{name: variable.SlowLogBackoffTotal, tp: mysql.TypeDouble, size: 22},
+	{name: variable.SlowLogWriteSQLRespTotal, tp: mysql.TypeDouble, size: 22},
+	{name: variable.SlowLogBackoffDetail, tp: mysql.TypeVarchar, size: 4096},
+	{name: variable.SlowLogPrepared, tp: mysql.TypeTiny, size: 1},
 	{name: variable.SlowLogSucc, tp: mysql.TypeTiny, size: 1},
 	{name: variable.SlowLogPlanFromCache, tp: mysql.TypeTiny, size: 1},
 	{name: variable.SlowLogPlan, tp: mysql.TypeLongBlob, size: types.UnspecifiedLength},
@@ -856,6 +867,7 @@ var tableTiDBServersInfoCols = []columnInfo{
 	{name: "VERSION", tp: mysql.TypeVarchar, size: 64},
 	{name: "GIT_HASH", tp: mysql.TypeVarchar, size: 64},
 	{name: "BINLOG_STATUS", tp: mysql.TypeVarchar, size: 64},
+	{name: "LABELS", tp: mysql.TypeVarchar, size: 128},
 }
 
 var tableClusterConfigCols = []columnInfo{
@@ -870,7 +882,7 @@ var tableClusterLogCols = []columnInfo{
 	{name: "TYPE", tp: mysql.TypeVarchar, size: 64},
 	{name: "INSTANCE", tp: mysql.TypeVarchar, size: 64},
 	{name: "LEVEL", tp: mysql.TypeVarchar, size: 8},
-	{name: "MESSAGE", tp: mysql.TypeVarString, size: 1024},
+	{name: "MESSAGE", tp: mysql.TypeLongBlob, size: types.UnspecifiedLength},
 }
 
 var tableClusterLoadCols = []columnInfo{
@@ -1106,12 +1118,19 @@ var tableStatementsSummaryCols = []columnInfo{
 	{name: "MAX_PREWRITE_REGIONS", tp: mysql.TypeLong, size: 11, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Max number of involved regions in prewrite phase"},
 	{name: "AVG_TXN_RETRY", tp: mysql.TypeDouble, size: 22, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Average number of transaction retries"},
 	{name: "MAX_TXN_RETRY", tp: mysql.TypeLong, size: 11, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Max number of transaction retries"},
+	{name: "SUM_EXEC_RETRY", tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Sum number of execution retries in pessimistic transactions"},
+	{name: "SUM_EXEC_RETRY_TIME", tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Sum time of execution retries in pessimistic transactions"},
 	{name: "SUM_BACKOFF_TIMES", tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Sum of retries"},
 	{name: "BACKOFF_TYPES", tp: mysql.TypeVarchar, size: 1024, comment: "Types of errors and the number of retries for each type"},
 	{name: "AVG_MEM", tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Average memory(byte) used"},
 	{name: "MAX_MEM", tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Max memory(byte) used"},
 	{name: "AVG_DISK", tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Average disk space(byte) used"},
 	{name: "MAX_DISK", tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Max disk space(byte) used"},
+	{name: "AVG_KV_TIME", tp: mysql.TypeLonglong, size: 22, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Average time of TiKV used"},
+	{name: "AVG_PD_TIME", tp: mysql.TypeLonglong, size: 22, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Average time of PD used"},
+	{name: "AVG_BACKOFF_TOTAL_TIME", tp: mysql.TypeLonglong, size: 22, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Average time of Backoff used"},
+	{name: "AVG_WRITE_SQL_RESP_TIME", tp: mysql.TypeLonglong, size: 22, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Average time of write sql resp used"},
+	{name: "PREPARED", tp: mysql.TypeTiny, size: 1, flag: mysql.NotNullFlag, comment: "Whether prepared"},
 	{name: "AVG_AFFECTED_ROWS", tp: mysql.TypeDouble, size: 22, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Average number of rows affected"},
 	{name: "FIRST_SEEN", tp: mysql.TypeTimestamp, size: 26, flag: mysql.NotNullFlag, comment: "The time these statements are seen for the first time"},
 	{name: "LAST_SEEN", tp: mysql.TypeTimestamp, size: 26, flag: mysql.NotNullFlag, comment: "The time these statements are seen for the last time"},
@@ -1348,9 +1367,11 @@ func GetPDServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 		return nil, errors.Errorf("%T not an etcd backend", store)
 	}
 	var servers []ServerInfo
-	for _, addr := range etcd.EtcdAddrs() {
-		addr = strings.TrimSpace(addr)
-
+	members, err := etcd.EtcdAddrs()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	for _, addr := range members {
 		// Get PD version
 		url := fmt.Sprintf("%s://%s%s", util.InternalHTTPSchema(), addr, pdapi.ClusterVersion)
 		req, err := http.NewRequest(http.MethodGet, url, nil)
@@ -1402,12 +1423,14 @@ func GetPDServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 	return servers, nil
 }
 
+const tiflashLabel = "tiflash"
+
 // GetStoreServerInfo returns all store nodes(TiKV or TiFlash) cluster information
 func GetStoreServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 	isTiFlashStore := func(store *metapb.Store) bool {
 		isTiFlash := false
 		for _, label := range store.Labels {
-			if label.GetKey() == "engine" && label.GetValue() == "tiflash" {
+			if label.GetKey() == "engine" && label.GetValue() == tiflashLabel {
 				isTiFlash = true
 			}
 		}
@@ -1441,7 +1464,7 @@ func GetStoreServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 		}
 		var tp string
 		if isTiFlashStore(store) {
-			tp = "tiflash"
+			tp = tiflashLabel
 		} else {
 			tp = tikv.GetStoreTypeByMeta(store).Name()
 		}
@@ -1455,6 +1478,26 @@ func GetStoreServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 		})
 	}
 	return servers, nil
+}
+
+// GetTiFlashStoreCount returns the count of tiflash server.
+func GetTiFlashStoreCount(ctx sessionctx.Context) (cnt uint64, err error) {
+	failpoint.Inject("mockTiFlashStoreCount", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(uint64(10), nil)
+		}
+	})
+
+	stores, err := GetStoreServerInfo(ctx)
+	if err != nil {
+		return cnt, err
+	}
+	for _, store := range stores {
+		if store.ServerType == tiflashLabel {
+			cnt++
+		}
+	}
+	return cnt, nil
 }
 
 var tableNameToColumns = map[string][]columnInfo{

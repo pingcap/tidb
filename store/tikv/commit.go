@@ -91,6 +91,14 @@ func (actionCommit) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, batch
 				zap.Uint64("txnStartTS", c.startTS),
 				zap.Stringer("info", logutil.Hex(rejected)))
 
+			// Do not retry for a txn which has a too large MinCommitTs
+			// 3600000 << 18 = 943718400000
+			if rejected.MinCommitTs-rejected.AttemptedCommitTs > 943718400000 {
+				err := errors.Errorf("2PC MinCommitTS is too large, we got MinCommitTS: %d, and AttemptedCommitTS: %d",
+					rejected.MinCommitTs, rejected.AttemptedCommitTs)
+				return errors.Trace(err)
+			}
+
 			// Update commit ts and retry.
 			commitTS, err := c.store.getTimestampWithRetry(bo)
 			if err != nil {
@@ -141,7 +149,7 @@ func (actionCommit) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, batch
 	return nil
 }
 
-func (c *twoPhaseCommitter) commitMutations(bo *Backoffer, mutations committerMutations) error {
+func (c *twoPhaseCommitter) commitMutations(bo *Backoffer, mutations CommitterMutations) error {
 	if span := opentracing.SpanFromContext(bo.ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("twoPhaseCommitter.commitMutations", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()

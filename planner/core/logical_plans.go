@@ -106,6 +106,7 @@ const (
 	preferRightAsINLMJInner
 	preferHashJoin
 	preferMergeJoin
+	preferBCJoin
 	preferHashAgg
 	preferStreamAgg
 )
@@ -157,11 +158,15 @@ func (p *LogicalJoin) Shallow() *LogicalJoin {
 	return join.Init(p.ctx, p.blockOffset)
 }
 
-// GetJoinKeys extracts join keys(columns) from EqualConditions.
-func (p *LogicalJoin) GetJoinKeys() (leftKeys, rightKeys []*expression.Column) {
+// GetJoinKeys extracts join keys(columns) from EqualConditions. It returns left join keys, right
+// join keys and an `isNullEQ` array which means the `joinKey[i]` is a `NullEQ` function. The `hasNullEQ`
+// means whether there is a `NullEQ` of a join key.
+func (p *LogicalJoin) GetJoinKeys() (leftKeys, rightKeys []*expression.Column, isNullEQ []bool, hasNullEQ bool) {
 	for _, expr := range p.EqualConditions {
 		leftKeys = append(leftKeys, expr.GetArgs()[0].(*expression.Column))
 		rightKeys = append(rightKeys, expr.GetArgs()[1].(*expression.Column))
+		isNullEQ = append(isNullEQ, expr.FuncName.L == ast.NullEQ)
+		hasNullEQ = hasNullEQ || expr.FuncName.L == ast.NullEQ
 	}
 	return
 }
@@ -302,8 +307,6 @@ type LogicalAggregation struct {
 
 	AggFuncs     []*aggregation.AggFuncDesc
 	GroupByItems []expression.Expression
-	// groupByCols stores the columns that are group-by items.
-	groupByCols []*expression.Column
 
 	// aggHints stores aggregation hint information.
 	aggHints aggHintInfo
@@ -344,14 +347,16 @@ func (la *LogicalAggregation) IsCompleteModeAgg() bool {
 	return la.AggFuncs[0].Mode == aggregation.CompleteMode
 }
 
-// GetGroupByCols returns the groupByCols. If the groupByCols haven't be collected,
-// this method would collect them at first. If the GroupByItems have been changed,
-// we should explicitly collect GroupByColumns before this method.
+// GetGroupByCols returns the columns that are group-by items.
+// For example, `group by a, b, c+d` will return [a, b].
 func (la *LogicalAggregation) GetGroupByCols() []*expression.Column {
-	if la.groupByCols == nil {
-		la.collectGroupByColumns()
+	groupByCols := make([]*expression.Column, 0, len(la.GroupByItems))
+	for _, item := range la.GroupByItems {
+		if col, ok := item.(*expression.Column); ok {
+			groupByCols = append(groupByCols, col)
+		}
 	}
-	return la.groupByCols
+	return groupByCols
 }
 
 // ExtractCorrelatedCols implements LogicalPlan interface.
@@ -629,7 +634,7 @@ func (ds *DataSource) Convert2Gathers() (gathers []LogicalPlan) {
 	tg := ds.buildTableGather()
 	gathers = append(gathers, tg)
 	for _, path := range ds.possibleAccessPaths {
-		if !path.IsTablePath() {
+		if !path.IsIntHandlePath {
 			path.FullIdxCols, path.FullIdxColLens = expression.IndexInfo2Cols(ds.Columns, ds.schema.Columns, path.Index)
 			path.IdxCols, path.IdxColLens = expression.IndexInfo2PrefixCols(ds.Columns, ds.schema.Columns, path.Index)
 			// If index columns can cover all of the needed columns, we can use a IndexGather + IndexScan.
@@ -980,9 +985,10 @@ func (ls *LogicalSort) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 type LogicalTopN struct {
 	baseLogicalPlan
 
-	ByItems []*util.ByItems
-	Offset  uint64
-	Count   uint64
+	ByItems    []*util.ByItems
+	Offset     uint64
+	Count      uint64
+	limitHints limitHintInfo
 }
 
 // ExtractCorrelatedCols implements LogicalPlan interface.
@@ -1003,15 +1009,16 @@ func (lt *LogicalTopN) isLimit() bool {
 type LogicalLimit struct {
 	baseLogicalPlan
 
-	Offset uint64
-	Count  uint64
+	Offset     uint64
+	Count      uint64
+	limitHints limitHintInfo
 }
 
 // LogicalLock represents a select lock plan.
 type LogicalLock struct {
 	baseLogicalPlan
 
-	Lock             ast.SelectLockType
+	Lock             *ast.SelectLockInfo
 	tblID2Handle     map[int64][]HandleCols
 	partitionedTable []table.PartitionedTable
 }

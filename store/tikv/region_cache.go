@@ -28,11 +28,11 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	pd "github.com/pingcap/pd/v4/client"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
+	pd "github.com/tikv/pd/client"
 	atomic2 "go.uber.org/atomic"
 	"go.uber.org/zap"
 	"golang.org/x/sync/singleflight"
@@ -459,7 +459,8 @@ func (c *RegionCache) GetTiFlashRPCContext(bo *Backoffer, id RegionVerID) (*RPCC
 			logutil.BgLogger().Info("invalidate current region, because others failed on same store",
 				zap.Uint64("region", id.GetID()),
 				zap.String("store", store.addr))
-			return nil, nil
+			// TiFlash will always try to find out a valid peer, avoiding to retry too many times.
+			continue
 		}
 		return &RPCContext{
 			Region:     id,
@@ -553,6 +554,16 @@ func (c *RegionCache) OnSendFail(bo *Backoffer, ctx *RPCContext, scheduleReload 
 	tikvRegionCacheCounterWithSendFail.Inc()
 	r := c.getCachedRegionWithRLock(ctx.Region)
 	if r != nil {
+		peersNum := len(r.meta.Peers)
+		if len(ctx.Meta.Peers) != peersNum {
+			logutil.Logger(bo.ctx).Info("retry and refresh current ctx after send request fail and up/down stores length changed",
+				zap.Stringer("current", ctx),
+				zap.Bool("needReload", scheduleReload),
+				zap.Reflect("oldPeers", ctx.Meta.Peers),
+				zap.Reflect("newPeers", r.meta.Peers),
+				zap.Error(err))
+			return
+		}
 		rs := r.getStore()
 		if err != nil {
 			storeIdx, s := rs.accessStore(ctx.AccessMode, ctx.AccessIdx)
@@ -665,11 +676,11 @@ func (c *RegionCache) GroupKeysByRegion(bo *Backoffer, keys [][]byte, filter fun
 
 type groupedMutations struct {
 	region    RegionVerID
-	mutations committerMutations
+	mutations CommitterMutations
 }
 
 // GroupSortedMutationsByRegion separates keys into groups by their belonging Regions.
-func (c *RegionCache) GroupSortedMutationsByRegion(bo *Backoffer, m committerMutations) ([]groupedMutations, error) {
+func (c *RegionCache) GroupSortedMutationsByRegion(bo *Backoffer, m CommitterMutations) ([]groupedMutations, error) {
 	var (
 		groups  []groupedMutations
 		lastLoc *KeyLocation
@@ -730,7 +741,7 @@ func (c *RegionCache) LoadRegionsInKeyRange(bo *Backoffer, startKey, endKey []by
 		}
 		regions = append(regions, batchRegions...)
 		endRegion := batchRegions[len(batchRegions)-1]
-		if endRegion.Contains(endKey) {
+		if endRegion.ContainsByEnd(endKey) {
 			break
 		}
 		startKey = endRegion.EndKey()
@@ -819,7 +830,7 @@ func (c *RegionCache) insertRegionToCache(cachedRegion *Region) {
 	if old != nil {
 		// Don't refresh TiFlash work idx for region. Otherwise, it will always goto a invalid store which
 		// is under transferring regions.
-		cachedRegion.getStore().workTiFlashIdx = old.(*btreeItem).cachedRegion.getStore().workTiFlashIdx
+		atomic.StoreInt32(&cachedRegion.getStore().workTiFlashIdx, atomic.LoadInt32(&old.(*btreeItem).cachedRegion.getStore().workTiFlashIdx))
 		delete(c.mu.regions, old.(*btreeItem).cachedRegion.VerID())
 	}
 	c.mu.regions[cachedRegion.VerID()] = cachedRegion
@@ -1017,7 +1028,7 @@ func (c *RegionCache) scanRegions(bo *Backoffer, startKey, endKey []byte, limit 
 				return nil, errors.Trace(err)
 			}
 		}
-		metas, leaders, err := c.pdClient.ScanRegions(bo.ctx, startKey, endKey, limit)
+		regionsInfo, err := c.pdClient.ScanRegions(bo.ctx, startKey, endKey, limit)
 		if err != nil {
 			tikvRegionCacheCounterWithScanRegionsError.Inc()
 			backoffErr = errors.Errorf(
@@ -1030,20 +1041,17 @@ func (c *RegionCache) scanRegions(bo *Backoffer, startKey, endKey []byte, limit 
 
 		tikvRegionCacheCounterWithScanRegionsOK.Inc()
 
-		if len(metas) == 0 {
+		if len(regionsInfo) == 0 {
 			return nil, errors.New("PD returned no region")
 		}
-		if len(metas) != len(leaders) {
-			return nil, errors.New("PD returned mismatching region metas and leaders")
-		}
-		regions := make([]*Region, 0, len(metas))
-		for i, meta := range metas {
-			region := &Region{meta: meta}
+		regions := make([]*Region, 0, len(regionsInfo))
+		for _, r := range regionsInfo {
+			region := &Region{meta: r.Meta}
 			err := region.init(c)
 			if err != nil {
 				return nil, err
 			}
-			leader := leaders[i]
+			leader := r.Leader
 			// Leader id = 0 indicates no leader.
 			if leader.GetId() != 0 {
 				c.switchWorkLeaderToPeer(region, leader.GetStoreId())
@@ -1053,7 +1061,7 @@ func (c *RegionCache) scanRegions(bo *Backoffer, startKey, endKey []byte, limit 
 		if len(regions) == 0 {
 			return nil, errors.New("receive Regions with no peer")
 		}
-		if len(regions) < len(metas) {
+		if len(regions) < len(regionsInfo) {
 			logutil.Logger(context.Background()).Debug(
 				"regionCache: scanRegion finished but some regions has no leader.")
 		}
@@ -1213,7 +1221,7 @@ func (r *Region) GetMeta() *metapb.Region {
 // GetLeaderPeerID returns leader peer ID.
 func (r *Region) GetLeaderPeerID() uint64 {
 	store := r.getStore()
-	if int(store.workTiKVIdx) >= len(r.meta.Peers) {
+	if int(store.workTiKVIdx) >= store.accessStoreNum(TiKvOnly) {
 		return 0
 	}
 	storeIdx, _ := store.accessStore(TiKvOnly, store.workTiKVIdx)
@@ -1223,7 +1231,7 @@ func (r *Region) GetLeaderPeerID() uint64 {
 // GetLeaderStoreID returns the store ID of the leader region.
 func (r *Region) GetLeaderStoreID() uint64 {
 	store := r.getStore()
-	if int(store.workTiKVIdx) >= len(r.meta.Peers) {
+	if int(store.workTiKVIdx) >= store.accessStoreNum(TiKvOnly) {
 		return 0
 	}
 	storeIdx, _ := store.accessStore(TiKvOnly, store.workTiKVIdx)
@@ -1339,7 +1347,7 @@ func (r *Region) findElectableStoreID() uint64 {
 		return 0
 	}
 	for _, p := range r.meta.Peers {
-		if !p.IsLearner {
+		if p.Role != metapb.PeerRole_Learner {
 			return p.StoreId
 		}
 	}

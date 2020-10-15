@@ -20,7 +20,7 @@ import (
 	usconf "github.com/ngaut/unistore/config"
 	ussvr "github.com/ngaut/unistore/server"
 	"github.com/pingcap/errors"
-	pd "github.com/pingcap/pd/v4/client"
+	pd "github.com/tikv/pd/client"
 )
 
 // New creates a embed unistore client, pd client and cluster handler.
@@ -63,6 +63,7 @@ func New(path string) (*RPCClient, pd.Client, *Cluster, error) {
 		cluster:    cluster,
 		path:       path,
 		persistent: persistent,
+		rawHandler: newRawHandler(),
 	}
 	pdClient := newPDClient(pd)
 

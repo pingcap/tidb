@@ -14,7 +14,6 @@
 package tikv
 
 import (
-	"bytes"
 	"math"
 	"sync/atomic"
 	"time"
@@ -101,7 +100,15 @@ func (action actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoff
 
 	req := c.buildPrewriteRequest(batch, txnSize)
 	for {
-		resp, err := c.store.SendReq(bo, req, batch.region, readTimeoutShort)
+		sender := NewRegionRequestSender(c.store.regionCache, c.store.client)
+		resp, err := sender.SendReq(bo, req, batch.region, readTimeoutShort)
+
+		// If we fail to receive response for async commit prewrite, it will be undetermined whether this
+		// transaction has been successfully committed.
+		if c.isAsyncCommit() && sender.rpcError != nil {
+			c.setUndeterminedErr(errors.Trace(sender.rpcError))
+		}
+
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -123,7 +130,7 @@ func (action actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoff
 		prewriteResp := resp.Resp.(*pb.PrewriteResponse)
 		keyErrs := prewriteResp.GetErrors()
 		if len(keyErrs) == 0 {
-			if bytes.Equal(c.primary(), batch.mutations.keys[0]) {
+			if batch.isPrimary {
 				// After writing the primary key, if the size of the transaction is large than 32M,
 				// start the ttlManager. The ttlManager will be closed in tikvTxn.Commit().
 				if int64(c.txnSize) > config.GetGlobalConfig().TiKVClient.TTLRefreshedTxnSize {
@@ -184,7 +191,7 @@ func (action actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoff
 	}
 }
 
-func (c *twoPhaseCommitter) prewriteMutations(bo *Backoffer, mutations committerMutations) error {
+func (c *twoPhaseCommitter) prewriteMutations(bo *Backoffer, mutations CommitterMutations) error {
 	if span := opentracing.SpanFromContext(bo.ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("twoPhaseCommitter.prewriteMutations", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()

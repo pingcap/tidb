@@ -46,6 +46,7 @@ const (
 	// tidb_opt_agg_push_down is used to enable/disable the optimizer rule of aggregation push down.
 	TiDBOptAggPushDown = "tidb_opt_agg_push_down"
 
+	TiDBOptBCJ = "tidb_opt_broadcast_join"
 	// tidb_opt_distinct_agg_push_down is used to decide whether agg with distinct should be pushed to tikv/tiflash.
 	TiDBOptDistinctAggPushDown = "tidb_opt_distinct_agg_push_down"
 
@@ -67,6 +68,9 @@ const (
 	// TiDBCurrentTS is used to get the current transaction timestamp.
 	// It is read-only.
 	TiDBCurrentTS = "tidb_current_ts"
+
+	// TiDBLastTxnInfo is used to get the last transaction info within the current session.
+	TiDBLastTxnInfo = "tidb_last_txn_info"
 
 	// tidb_config is a read-only variable that shows the config of the current server.
 	TiDBConfig = "tidb_config"
@@ -204,6 +208,8 @@ const (
 	TiDBOptCPUFactor = "tidb_opt_cpu_factor"
 	// tidb_opt_copcpu_factor is the CPU cost of processing one expression for one row in coprocessor.
 	TiDBOptCopCPUFactor = "tidb_opt_copcpu_factor"
+	// tidb_opt_tiflash_concurrency_factor is concurrency number of tiflash computation.
+	TiDBOptTiFlashConcurrencyFactor = "tidb_opt_tiflash_concurrency_factor"
 	// tidb_opt_network_factor is the network cost of transferring 1 byte data.
 	TiDBOptNetworkFactor = "tidb_opt_network_factor"
 	// tidb_opt_scan_factor is the IO cost of scanning 1 byte data on TiKV.
@@ -297,6 +303,9 @@ const (
 	// tidb_window_concurrency is deprecated, use tidb_executor_concurrency instead.
 	TiDBWindowConcurrency = "tidb_window_concurrency"
 
+	// tidb_enable_parallel_apply is used for parallel apply.
+	TiDBEnableParallelApply = "tidb_enable_parallel_apply"
+
 	// tidb_backoff_lock_fast is used for tikv backoff base time in milliseconds.
 	TiDBBackoffLockFast = "tidb_backoff_lock_fast"
 
@@ -318,6 +327,9 @@ const (
 	// tidb_ddl_reorg_priority defines the operations priority of adding indices.
 	// It can be: PRIORITY_LOW, PRIORITY_NORMAL, PRIORITY_HIGH
 	TiDBDDLReorgPriority = "tidb_ddl_reorg_priority"
+
+	// TiDBEnableChangeColumnType is used to control whether to enable the change column type.
+	TiDBEnableChangeColumnType = "tidb_enable_change_column_type"
 
 	// tidb_max_delta_schema_count defines the max length of deltaSchemaInfos.
 	// deltaSchemaInfos is a queue that maintains the history of schema changes.
@@ -418,17 +430,23 @@ const (
 	// TiDBEnableClusteredIndex indicates if clustered index feature is enabled.
 	TiDBEnableClusteredIndex = "tidb_enable_clustered_index"
 
+	// TiDBPartitionPruneMode indicates the partition prune mode used.
+	TiDBPartitionPruneMode = "tidb_partition_prune_mode"
+
 	// TiDBSlowLogMasking indicates that whether masking the query data when log slow query.
-	// Deprecated: use TiDBLogDesensitization instead.
+	// Deprecated: use TiDBRedactLog instead.
 	TiDBSlowLogMasking = "tidb_slow_log_masking"
 
-	// TiDBLogDesensitization indicates that whether desensitization when log query.
-	TiDBLogDesensitization = "tidb_log_desensitization"
+	// TiDBRedactLog indicates that whether redact log.
+	TiDBRedactLog = "tidb_redact_log"
 
 	// TiDBShardAllocateStep indicates the max size of continuous rowid shard in one transaction.
 	TiDBShardAllocateStep = "tidb_shard_allocate_step"
 	// TiDBEnableTelemetry indicates that whether usage data report to PingCAP is enabled.
 	TiDBEnableTelemetry = "tidb_enable_telemetry"
+
+	// TiDBEnableAmendPessimisticTxn indicates if amend pessimistic transactions is enabled.
+	TiDBEnableAmendPessimisticTxn = "tidb_enable_amend_pessimistic_txn"
 )
 
 // Default TiDB system variable values.
@@ -450,11 +468,13 @@ const (
 	DefSkipUTF8Check                   = false
 	DefSkipASCIICheck                  = false
 	DefOptAggPushDown                  = false
+	DefOptBCJ                          = false
 	DefOptWriteRowID                   = false
 	DefOptCorrelationThreshold         = 0.9
 	DefOptCorrelationExpFactor         = 1
 	DefOptCPUFactor                    = 3.0
 	DefOptCopCPUFactor                 = 3.0
+	DefOptTiFlashConcurrencyFactor     = 24.0
 	DefOptNetworkFactor                = 1.0
 	DefOptScanFactor                   = 1.5
 	DefOptDescScanFactor               = 3.0
@@ -469,7 +489,7 @@ const (
 	DefCurretTS                        = 0
 	DefInitChunkSize                   = 32
 	DefMaxChunkSize                    = 1024
-	DefDMLBatchSize                    = 20000
+	DefDMLBatchSize                    = 0
 	DefMaxPreparedStmtCount            = -1
 	DefWaitTimeout                     = 0
 	DefTiDBMemQuotaHashJoin            = 32 << 30 // 32GB.
@@ -496,6 +516,7 @@ const (
 	DefTiDBDDLReorgBatchSize           = 256
 	DefTiDBDDLErrorCountLimit          = 512
 	DefTiDBMaxDeltaSchemaCount         = 1024
+	DefTiDBChangeColumnType            = false
 	DefTiDBHashAggPartialConcurrency   = ConcurrencyUnset
 	DefTiDBHashAggFinalConcurrency     = ConcurrencyUnset
 	DefTiDBWindowConcurrency           = ConcurrencyUnset
@@ -527,9 +548,11 @@ const (
 	DefTiDBAllowAutoRandExplicitInsert = false
 	DefTiDBEnableClusteredIndex        = false
 	DefTiDBSlowLogMasking              = false
-	DefTiDBLogDesensitization          = false
 	DefTiDBShardAllocateStep           = math.MaxInt64
 	DefTiDBEnableTelemetry             = true
+	DefTiDBEnableParallelApply         = false
+	DefTiDBEnableAmendPessimisticTxn   = true
+	DefTiDBPartitionPruneMode          = "static-only"
 )
 
 // Process global variables.
