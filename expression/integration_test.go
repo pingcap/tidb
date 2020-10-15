@@ -16,6 +16,7 @@ package expression_test
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"fmt"
 	"math"
 	"sort"
@@ -38,7 +39,9 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/mock"
@@ -4528,14 +4531,14 @@ func (s *testIntegrationSuite) TestTiDBInternalFunc(c *C) {
 	defer s.cleanEnv(c)
 	var result *testkit.Result
 	result = tk.MustQuery("select tidb_decode_key( '74800000000000002B5F72800000000000A5D3' )")
-	result.Check(testkit.Rows("tableID=43, _tidb_rowid=42451"))
+	result.Check(testkit.Rows(`{"_tidb_rowid":42451,"table_id":"43"}`))
 	result = tk.MustQuery("select tidb_decode_key( '7480000000000000325f7205bff199999999999a013131000000000000f9' )")
-	result.Check(testkit.Rows("tableID=50, clusterHandle={1.1, 11}"))
+	result.Check(testkit.Rows(`{"handle":"{1.1, 11}","table_id":50}`))
 
 	result = tk.MustQuery("select tidb_decode_key( '74800000000000019B5F698000000000000001015257303100000000FB013736383232313130FF3900000000000000F8010000000000000000F7' )")
-	result.Check(testkit.Rows("tableID=411, indexID=1, indexValues=RW01,768221109,"))
+	result.Check(testkit.Rows(`{"index_id":1,"index_vals":"RW01, 768221109, ","table_id":411}`))
 	result = tk.MustQuery("select tidb_decode_key( '7480000000000000695F698000000000000001038000000000004E20' )")
-	result.Check(testkit.Rows("tableID=105, indexID=1, indexValues=20000"))
+	result.Check(testkit.Rows(`{"index_id":1,"index_vals":"20000","table_id":105}`))
 
 	// Test invalid record/index key.
 	result = tk.MustQuery("select tidb_decode_key( '7480000000000000FF2E5F728000000011FFE1A3000000000000' )")
@@ -4543,6 +4546,55 @@ func (s *testIntegrationSuite) TestTiDBInternalFunc(c *C) {
 	warns := tk.Se.GetSessionVars().StmtCtx.GetWarnings()
 	c.Assert(warns, HasLen, 1)
 	c.Assert(warns[0].Err.Error(), Equals, "invalid record/index key: 7480000000000000FF2E5F728000000011FFE1A3000000000000")
+
+	// Test in real tables.
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a varchar(255), b int, c datetime, primary key (a, b, c));")
+	dom := domain.GetDomain(tk.Se)
+	is := dom.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	getTime := func(year, month, day int, timeType byte) types.Time {
+		ret := types.NewTime(types.FromDate(year, month, day, 0, 0, 0, 0), timeType, types.DefaultFsp)
+		return ret
+	}
+	buildCommonKeyFromData := func(tableID int64, data []types.Datum) string {
+		k, err := codec.EncodeKey(tk.Se.GetSessionVars().StmtCtx, nil, data...)
+		c.Assert(err, IsNil)
+		h, err := kv.NewCommonHandle(k)
+		c.Assert(err, IsNil)
+		k = tablecodec.EncodeRowKeyWithHandle(tableID, h)
+		hexKey := hex.EncodeToString(codec.EncodeBytes(nil, k))
+		return hexKey
+	}
+	// split table t by ('bbbb', 10, '2020-01-01');
+	data := []types.Datum{types.NewStringDatum("bbbb"), types.NewIntDatum(10), types.NewTimeDatum(getTime(2020, 1, 1, mysql.TypeDatetime))}
+	sql := fmt.Sprintf("select tidb_decode_key( '%s' )", buildCommonKeyFromData(tbl.Meta().ID, data))
+	result = tk.MustQuery(sql)
+	rs := fmt.Sprintf(`{"handle":{"a":"bbbb","b":"10","c":"2020-01-01 00:00:00"},"table_id":%d}`, tbl.Meta().ID)
+	result.Check(testkit.Rows(rs))
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a varchar(255), b int, c datetime, index idx(a, b, c));")
+	dom = domain.GetDomain(tk.Se)
+	is = dom.InfoSchema()
+	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	buildIndexKeyFromData := func(tableID, indexID int64, data []types.Datum) string {
+		k, err := codec.EncodeKey(tk.Se.GetSessionVars().StmtCtx, nil, data...)
+		c.Assert(err, IsNil)
+		k = tablecodec.EncodeIndexSeekKey(tableID, indexID, k)
+		hexKey := hex.EncodeToString(codec.EncodeBytes(nil, k))
+		return hexKey
+	}
+	// split table t index idx by ('aaaaa', 100, '2000-01-01');
+	data = []types.Datum{types.NewStringDatum("aaaaa"), types.NewIntDatum(100), types.NewTimeDatum(getTime(2000, 1, 1, mysql.TypeDatetime))}
+	hexKey := buildIndexKeyFromData(tbl.Meta().ID, tbl.Indices()[0].Meta().ID, data)
+	sql = fmt.Sprintf("select tidb_decode_key( '%s' )", hexKey)
+	result = tk.MustQuery(sql)
+	rs = fmt.Sprintf(`{"index_id":1,"index_vals":{"a":"aaaaa","b":"100","c":"2000-01-01 00:00:00"},"table_id":%d}`, tbl.Meta().ID)
+	result.Check(testkit.Rows(rs))
 }
 
 func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {
