@@ -297,6 +297,15 @@ func (s *testIntegrationSuite) TestConvertToBit(c *C) {
 	tk.MustExec(`insert t1 value ('09-01-01')`)
 	tk.MustExec(`insert t select a from t1`)
 	tk.MustQuery("select a+0 from t").Check(testkit.Rows("20090101000000"))
+
+	// For issue 20118
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a tinyint, b bit(63));")
+	tk.MustExec("insert ignore  into t values(599999999, -1);")
+	tk.MustQuery("show warnings;").Check(testkit.Rows(
+		"Warning 1690 constant 599999999 overflows tinyint",
+		"Warning 1406 Data Too Long, field len 63"))
+	tk.MustQuery("select * from t;").Check(testkit.Rows("127 \u007f\xff\xff\xff\xff\xff\xff\xff"))
 }
 
 func (s *testIntegrationSuite2) TestMathBuiltin(c *C) {
@@ -6674,6 +6683,18 @@ func (s *testIntegrationSuite) TestIssue17727(c *C) {
 	tk.MustExec("set @a = '2020-06-12 13:47:58';")
 	tk.MustQuery("execute stmt using @a;").Check(testkit.Rows("1591940878"))
 	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+}
+
+func (s *testIntegrationSerialSuite) TestIssue20268(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("CREATE TABLE `t` (   `a` enum('a','b') DEFAULT NULL ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;")
+	tk.MustExec("insert into t values('a');")
+	tk.MustExec("select * from t where a = 'A';")
 }
 
 func (s *testIntegrationSuite) TestIssue18515(c *C) {
