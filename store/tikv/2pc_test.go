@@ -1228,8 +1228,6 @@ func (s *testCommitterSuite) TestAsyncCommit(c *C) {
 	err = committer.execute(ctx)
 	c.Assert(err, IsNil)
 
-	// TODO remove sleep when recovery logic is done
-	time.Sleep(1 * time.Second)
 	s.checkValues(c, map[string]string{
 		string(pk): string(pkVal),
 		string(k1): string(k1Val),

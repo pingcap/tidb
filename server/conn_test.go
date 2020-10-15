@@ -680,6 +680,11 @@ func (ts *ConnTestSuite) TestPrefetchPointKeys(c *C) {
 	tk.MustExec("insert prefetch values (1, 1, 1), (2, 2, 2), (3, 3, 3)")
 	tk.MustExec("begin optimistic")
 	tk.MustExec("update prefetch set c = c + 1 where a = 2 and b = 2")
+
+	// enable multi-statement
+	capabilities := cc.ctx.GetSessionVars().ClientCapability
+	capabilities ^= mysql.ClientMultiStatements
+	cc.ctx.SetClientCapability(capabilities)
 	query := "update prefetch set c = c + 1 where a = 1 and b = 1;" +
 		"update prefetch set c = c + 1 where a = 2 and b = 2;" +
 		"update prefetch set c = c + 1 where a = 3 and b = 3;"

@@ -154,10 +154,8 @@ testSuite:
 	@echo "testSuite"
 	./tools/check/check_testSuite.sh
 
-clean:
+clean: failpoint-disable
 	$(GO) clean -i ./...
-	rm -rf *.out
-	rm -rf parser
 
 # Split tests for CI to run `make test` in parallel.
 test: test_part_1 test_part_2
