@@ -3295,12 +3295,13 @@ func CheckModifyTypeCompatible(origin *types.FieldType, to *types.FieldType) (al
 	var canChange bool
 	switch origin.Tp {
 	case mysql.TypeVarchar, mysql.TypeString, mysql.TypeVarString, mysql.TypeBlob,
-		mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeSet:
+		mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
 		switch to.Tp {
 		case mysql.TypeVarchar, mysql.TypeString, mysql.TypeVarString,
-			mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob,
-			mysql.TypeEnum, mysql.TypeSet:
+			mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
 			canChange = true
+		case mysql.TypeEnum, mysql.TypeSet:
+			return unsupportedMsg, errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
 		default:
 			return "", errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
 		}
@@ -3310,6 +3311,34 @@ func CheckModifyTypeCompatible(origin *types.FieldType, to *types.FieldType) (al
 			canChange = true
 		default:
 			return "", errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
+		}
+	case mysql.TypeEnum, mysql.TypeSet:
+		var typeVar string
+		if origin.Tp == mysql.TypeEnum {
+			typeVar = "enum"
+		} else {
+			typeVar = "set"
+		}
+		switch to.Tp {
+		case mysql.TypeEnum, mysql.TypeSet:
+			if len(to.Elems) < len(origin.Elems) {
+				msg := fmt.Sprintf("the number of %s column's elements is less than the original: %d", typeVar, len(origin.Elems))
+				return msg, errUnsupportedModifyColumn.GenWithStackByArgs(msg)
+			}
+			for index, originElem := range origin.Elems {
+				toElem := to.Elems[index]
+				if originElem != toElem {
+					msg := fmt.Sprintf("cannot modify %s column value %s to %s", typeVar, originElem, toElem)
+					return msg, errUnsupportedModifyColumn.GenWithStackByArgs(msg)
+				}
+			}
+		case mysql.TypeVarchar, mysql.TypeString, mysql.TypeVarString,
+			mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
+			msg := fmt.Sprintf("cannot modify %s type column's to type %s", typeVar, to.String())
+			return msg, errUnsupportedModifyColumn.GenWithStackByArgs(msg)
+		default:
+			msg := fmt.Sprintf("cannot modify %s type column's to type %s", typeVar, to.String())
+			return "", errUnsupportedModifyColumn.GenWithStackByArgs(msg)
 		}
 	case mysql.TypeNewDecimal:
 		if origin.Tp != to.Tp {
@@ -3321,27 +3350,6 @@ func CheckModifyTypeCompatible(origin *types.FieldType, to *types.FieldType) (al
 		if to.Flen != origin.Flen || to.Decimal != origin.Decimal || mysql.HasUnsignedFlag(to.Flag) != mysql.HasUnsignedFlag(origin.Flag) {
 			msg := fmt.Sprintf("decimal change from decimal(%d, %d) to decimal(%d, %d)", origin.Flen, origin.Decimal, to.Flen, to.Decimal)
 			return msg, errUnsupportedModifyColumn.GenWithStackByArgs(msg)
-		}
-	case mysql.TypeEnum:
-		switch to.Tp {
-		case mysql.TypeEnum:
-			if len(to.Elems) < len(origin.Elems) {
-				msg := fmt.Sprintf("the number of enum column's elements is less than the original: %d", len(origin.Elems))
-				return msg, errUnsupportedModifyColumn.GenWithStackByArgs(msg)
-			}
-			for index, originElem := range origin.Elems {
-				toElem := to.Elems[index]
-				if originElem != toElem {
-					msg := fmt.Sprintf("cannot modify enum column value %s to %s", originElem, toElem)
-					return msg, errUnsupportedModifyColumn.GenWithStackByArgs(msg)
-				}
-			}
-		case mysql.TypeVarchar, mysql.TypeString, mysql.TypeVarString,
-			mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob,
-			mysql.TypeSet:
-			canChange = true
-		default:
-			return "", errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
 		}
 	default:
 		if origin.Tp != to.Tp {
