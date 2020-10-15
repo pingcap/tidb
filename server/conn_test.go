@@ -584,7 +584,7 @@ func (ts *ConnTestSuite) TestConnExecutionTimeout(c *C) {
 		},
 	}
 	handle := ts.dom.ExpensiveQueryHandle().SetSessionManager(srv)
-	go handle.Run(se)
+	go handle.Run()
 
 	_, err = se.Execute(context.Background(), "use test;")
 	c.Assert(err, IsNil)

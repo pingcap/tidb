@@ -14,7 +14,6 @@
 package expensivequery
 
 import (
-	"bytes"
 	"fmt"
 	"io/ioutil"
 	"os"
@@ -26,14 +25,11 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
-	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -93,7 +89,7 @@ func initMemoryUsageAlarmRecord() (record *memoryUsageAlarm) {
 
 // If Performance.ServerMemoryQuota is set, use `ServerMemoryQuota * MemoryUsageAlarmRatio` to check oom risk.
 // If Performance.ServerMemoryQuota is not set, use `system total memory size * MemoryUsageAlarmRatio` to check oom risk.
-func (record *memoryUsageAlarm) alarm4ExcessiveMemUsage(sm util.SessionManager, ctx sessionctx.Context) {
+func (record *memoryUsageAlarm) alarm4ExcessiveMemUsage(sm util.SessionManager) {
 	var memoryUsage uint64
 	instanceStats := &runtime.MemStats{}
 	if record.isServerMemoryQuotaSet {
@@ -114,12 +110,12 @@ func (record *memoryUsageAlarm) alarm4ExcessiveMemUsage(sm util.SessionManager, 
 		interval := time.Since(record.lastCheckTime)
 		record.lastCheckTime = time.Now()
 		if interval > 10*time.Second {
-			record.doRecord(memoryUsage, sm, ctx)
+			record.doRecord(memoryUsage, sm)
 		}
 	}
 }
 
-func (record *memoryUsageAlarm) doRecord(memUsage uint64, sm util.SessionManager, ctx sessionctx.Context) {
+func (record *memoryUsageAlarm) doRecord(memUsage uint64, sm util.SessionManager) {
 	logutil.BgLogger().Warn("the TiDB instance now takes a lot of memory, has the risk of OOM",
 		zap.Bool("is server-momory-quota set", record.isServerMemoryQuotaSet),
 		zap.Any("memory size", record.serverMemoryQuota),
@@ -130,7 +126,7 @@ func (record *memoryUsageAlarm) doRecord(memUsage uint64, sm util.SessionManager
 	if record.err = disk.CheckAndInitTempDir(); record.err != nil {
 		return
 	}
-	record.recordSQLAndSummaryTable(sm, ctx)
+	record.recordSQLAndSummaryTable(sm)
 	record.recordProfile()
 
 	tryRemove := func(filename *[]string) {
@@ -150,7 +146,7 @@ func (record *memoryUsageAlarm) doRecord(memUsage uint64, sm util.SessionManager
 	}
 }
 
-func (record *memoryUsageAlarm) recordSQLAndSummaryTable(sm util.SessionManager, ctx sessionctx.Context) {
+func (record *memoryUsageAlarm) recordSQLAndSummaryTable(sm util.SessionManager) {
 	processInfo := sm.ShowProcessList()
 	pinfo := make([]*util.ProcessInfo, 0, len(processInfo))
 	for _, info := range processInfo {
@@ -208,35 +204,7 @@ func (record *memoryUsageAlarm) recordSQLAndSummaryTable(sm util.SessionManager,
 		return pinfo[i].Time.Before(pinfo[j].Time)
 	})
 
-	// Record statements_summary table
-	sql := "select * from information_schema.statements_summary order by AVG_MEM desc"
-	rows, types, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
-	if err != nil {
-		record.err = err
-		return
-	}
-
-	b := bytes.Buffer{}
-	for _, row := range rows {
-		for j := 0; j < row.Len(); j++ {
-			switch types[j].Column.Tp {
-			case mysql.TypeTimestamp:
-				b.WriteString(fmt.Sprintf("%v : %v\n", types[j].Column.Name.String(), row.GetTime(j).String()))
-			case mysql.TypeString, mysql.TypeVarchar, mysql.TypeBlob:
-				b.WriteString(fmt.Sprintf("%v : %v\n", types[j].Column.Name.String(), row.GetString(j)))
-			case mysql.TypeLonglong, mysql.TypeLong, mysql.TypeTiny:
-				b.WriteString(fmt.Sprintf("%v : %v\n", types[j].Column.Name.String(), row.GetInt64(j)))
-			case mysql.TypeDouble:
-				b.WriteString(fmt.Sprintf("%v : %v\n", types[j].Column.Name.String(), row.GetFloat64(j)))
-			}
-		}
-	}
-	_, err = f.WriteString(b.String())
-	if err != nil {
-		record.err = err
-	}
-
-	logutil.BgLogger().Info("record SQLs with the most memory usage or time usage and statements_summary table successfully", zap.Any("SQLs file path", fileName))
+	logutil.BgLogger().Info("record SQLs with the most memory usage or time usage", zap.Any("SQLs file path", fileName))
 }
 
 func (record *memoryUsageAlarm) recordProfile() {
