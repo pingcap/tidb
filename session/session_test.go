@@ -3351,7 +3351,7 @@ func (s *testSessionSuite3) TestSetVarHint(c *C) {
 	tk.MustQuery("SELECT @@read_buffer_size;").Check(testkit.Rows("131072"))
 
 	tk.Se.GetSessionVars().SetSystemVar("default_tmp_storage_engine", "InnoDB")
-	tk.MustQuery("SELECT /*+ SET_VAR(default_tmp_storage_engine='CSV') */ @@default_tmp_storage_engine;").Check(testkit.Rows("1"))
+	tk.MustQuery("SELECT /*+ SET_VAR(default_tmp_storage_engine='CSV') */ @@default_tmp_storage_engine;").Check(testkit.Rows("CSV"))
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 0)
 	tk.MustQuery("SELECT @@default_tmp_storage_engine;").Check(testkit.Rows("InnoDB"))
 
