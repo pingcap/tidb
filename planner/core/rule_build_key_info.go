@@ -94,7 +94,8 @@ func (p *LogicalSelection) checkMaxOneRowCond(unique expression.Expression, cons
 	return okCorCol
 }
 
-// isUnique Because equivalence conditions can filter out null values,so a unique index without a NotNullFlag can return at most one row.
+// isUnique checks the unique index whose NotNullFlag is false since equivalence conditions can filter out null values,
+// so a unique index without a NotNullFlag can return at most one row.
 func isUnique(p *LogicalSelection, col *expression.Column) bool {
 	for _, child := range p.children {
 		ds, ok := child.(*DataSource)
