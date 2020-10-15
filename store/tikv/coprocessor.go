@@ -1128,8 +1128,13 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *RPCCon
 				RocksdbBlockReadByte:      scanDetailV2.RocksdbBlockReadByte,
 			}
 			resp.detail.CopDetail = copDetail
-		} else {
-			resp.detail.CopDetail = &execdetails.CopDetails{}
+		} else if scanDetail := pbDetails.ScanDetail; scanDetail != nil {
+			if scanDetail.Write != nil {
+				resp.detail.CopDetail = &execdetails.CopDetails{
+					ProcessedKeys: scanDetail.Write.Processed,
+					TotalKeys:     scanDetail.Write.Total,
+				}
+			}
 		}
 	}
 	if resp.pbResp.IsCacheHit {
