@@ -361,6 +361,9 @@ grpc-keepalive-time = 10
 # and if no activity is seen even after that the connection is closed.
 grpc-keepalive-timeout = 3
 
+# The compression type for gRPC channel: none or gzip.
+grpc-compression-type = "none"
+
 # Max time for commit command, must be twice bigger than raft election timeout.
 commit-timeout = "41s"
 
