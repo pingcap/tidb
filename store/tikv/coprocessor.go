@@ -1128,6 +1128,8 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *RPCCon
 				RocksdbBlockReadByte:      scanDetailV2.RocksdbBlockReadByte,
 			}
 			resp.detail.CopDetail = copDetail
+		} else {
+			resp.detail.CopDetail = &execdetails.CopDetails{}
 		}
 	}
 	if resp.pbResp.IsCacheHit {

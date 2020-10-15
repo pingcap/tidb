@@ -718,7 +718,7 @@ func (ssElement *stmtSummaryByDigestElement) add(sei *StmtExecInfo, intervalSeco
 			ssElement.maxRocksdbBlockReadCount = sei.ExecDetail.CopDetail.RocksdbBlockReadCount
 		}
 		ssElement.sumRocksdbBlockReadByte += sei.ExecDetail.CopDetail.RocksdbBlockReadByte
-		if sei.ExecDetail.CopDetail.RocksdbBlockReadByte > ssElement.maxRocksdbBlockReadByte{
+		if sei.ExecDetail.CopDetail.RocksdbBlockReadByte > ssElement.maxRocksdbBlockReadByte {
 			ssElement.maxRocksdbBlockReadByte = sei.ExecDetail.CopDetail.RocksdbBlockReadByte
 		}
 	}
