@@ -221,7 +221,7 @@ func needDumpStatsDelta(h *Handle, id int64, item variable.TableDelta, currentTi
 	if item.InitTime.IsZero() {
 		item.InitTime = currentTime
 	}
-	tbl, ok := h.statsCache.Load().(statsCache).tables[id]
+	tbl, ok := h.statsCache.Lookup(id)
 	if !ok {
 		// No need to dump if the stats is invalid.
 		return false
@@ -383,7 +383,7 @@ func (h *Handle) DumpStatsFeedbackToKV() error {
 			if fb.Tp == statistics.PkType {
 				err = h.DumpFeedbackToKV(fb)
 			} else {
-				t, ok := h.statsCache.Load().(statsCache).tables[fb.PhysicalID]
+				t, ok := h.statsCache.Lookup(fb.PhysicalID)
 				if ok {
 					err = h.DumpFeedbackForIndex(fb, t)
 				}
@@ -464,8 +464,7 @@ func (h *Handle) UpdateStatsByLocalFeedback(is infoschema.InfoSchema) {
 				newCol.Flag = statistics.ResetAnalyzeFlag(newCol.Flag)
 				newTblStats.Columns[fb.Hist.ID] = &newCol
 			}
-			oldCache := h.statsCache.Load().(statsCache)
-			h.updateStatsCache(oldCache.update([]*statistics.Table{newTblStats}, nil, oldCache.version))
+			h.statsCache.Update([]*statistics.Table{newTblStats}, nil, h.statsCache.GetVersion())
 		}
 	}
 }
@@ -497,8 +496,7 @@ func (h *Handle) UpdateErrorRate(is infoschema.InfoSchema) {
 		delete(h.mu.rateMap, id)
 	}
 	h.mu.Unlock()
-	oldCache := h.statsCache.Load().(statsCache)
-	h.updateStatsCache(oldCache.update(tbls, nil, oldCache.version))
+	h.statsCache.Update(tbls, nil, h.statsCache.GetVersion())
 }
 
 // HandleUpdateStats update the stats using feedback.
@@ -899,7 +897,7 @@ func logForIndex(prefix string, t *statistics.Table, idx *statistics.Index, rang
 }
 
 func (h *Handle) logDetailedInfo(q *statistics.QueryFeedback) {
-	t, ok := h.statsCache.Load().(statsCache).tables[q.PhysicalID]
+	t, ok := h.statsCache.Lookup(q.PhysicalID)
 	if !ok {
 		return
 	}
@@ -940,7 +938,7 @@ func logForPK(prefix string, c *statistics.Column, ranges []*ranger.Range, actua
 
 // RecalculateExpectCount recalculates the expect row count if the origin row count is estimated by pseudo.
 func (h *Handle) RecalculateExpectCount(q *statistics.QueryFeedback) error {
-	t, ok := h.statsCache.Load().(statsCache).tables[q.PhysicalID]
+	t, ok := h.statsCache.Lookup(q.PhysicalID)
 	if !ok {
 		return nil
 	}

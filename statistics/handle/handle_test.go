@@ -52,7 +52,7 @@ func cleanEnv(c *C, store kv.Storage, do *domain.Domain) {
 	tk.MustExec("delete from mysql.stats_histograms")
 	tk.MustExec("delete from mysql.stats_buckets")
 	tk.MustExec("delete from mysql.stats_extended")
-	do.StatsHandle().Clear()
+	do.StatsHandle().Clear4Test()
 }
 
 func (s *testStatsSuite) TestStatsCache(c *C) {
@@ -85,7 +85,7 @@ func (s *testStatsSuite) TestStatsCache(c *C) {
 	// If the new schema drop a column, the table stats can still work.
 	testKit.MustExec("alter table t drop column c2")
 	is = do.InfoSchema()
-	do.StatsHandle().Clear()
+	do.StatsHandle().Clear4Test()
 	do.StatsHandle().Update(is)
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
 	c.Assert(statsTbl.Pseudo, IsFalse)
@@ -94,7 +94,7 @@ func (s *testStatsSuite) TestStatsCache(c *C) {
 	testKit.MustExec("alter table t add column c10 int")
 	is = do.InfoSchema()
 
-	do.StatsHandle().Clear()
+	do.StatsHandle().Clear4Test()
 	do.StatsHandle().Update(is)
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
 	c.Assert(statsTbl.Pseudo, IsFalse)
@@ -117,7 +117,7 @@ func (s *testStatsSuite) TestStatsCacheMemTracker(c *C) {
 
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
 	c.Assert(statsTbl.MemoryUsage() > 0, IsTrue)
-	c.Assert(do.StatsHandle().GetAllTableStatsMemUsage(), Equals, do.StatsHandle().GetMemConsumed())
+	c.Assert(do.StatsHandle().GetAllTableStatsMemUsage4Test(), Equals, do.StatsHandle().GetMemConsumed())
 
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
 
@@ -139,23 +139,24 @@ func (s *testStatsSuite) TestStatsCacheMemTracker(c *C) {
 	// If the new schema drop a column, the table stats can still work.
 	testKit.MustExec("alter table t drop column c2")
 	is = do.InfoSchema()
-	do.StatsHandle().Clear()
+	do.StatsHandle().Clear4Test()
 	do.StatsHandle().Update(is)
 
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
-	c.Assert(statsTbl.MemoryUsage() > 0, IsTrue)
-	c.Assert(do.StatsHandle().GetAllTableStatsMemUsage(), Equals, do.StatsHandle().GetMemConsumed())
+	c.Assert(statsTbl.MemoryUsage() >= 0, IsTrue)
+
+	c.Assert(do.StatsHandle().GetAllTableStatsMemUsage4Test(), Equals, do.StatsHandle().GetMemConsumed())
 	c.Assert(statsTbl.Pseudo, IsFalse)
 
 	// If the new schema add a column, the table stats can still work.
 	testKit.MustExec("alter table t add column c10 int")
 	is = do.InfoSchema()
 
-	do.StatsHandle().Clear()
+	do.StatsHandle().Clear4Test()
 	do.StatsHandle().Update(is)
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
 	c.Assert(statsTbl.Pseudo, IsFalse)
-	c.Assert(do.StatsHandle().GetAllTableStatsMemUsage(), Equals, do.StatsHandle().GetMemConsumed())
+	c.Assert(do.StatsHandle().GetAllTableStatsMemUsage4Test(), Equals, do.StatsHandle().GetMemConsumed())
 }
 
 func assertTableEqual(c *C, a *statistics.Table, b *statistics.Table) {
@@ -231,7 +232,7 @@ func (s *testStatsSuite) TestStatsStoreAndLoad(c *C) {
 	testKit.MustExec("analyze table t")
 	statsTbl1 := do.StatsHandle().GetTableStats(tableInfo)
 
-	do.StatsHandle().Clear()
+	do.StatsHandle().Clear4Test()
 	do.StatsHandle().Update(is)
 	statsTbl2 := do.StatsHandle().GetTableStats(tableInfo)
 	c.Assert(statsTbl2.Pseudo, IsFalse)
@@ -276,7 +277,7 @@ func (s *testStatsSuite) TestColumnIDs(c *C) {
 	// Drop a column and the offset changed,
 	testKit.MustExec("alter table t drop column c1")
 	is = do.InfoSchema()
-	do.StatsHandle().Clear()
+	do.StatsHandle().Clear4Test()
 	do.StatsHandle().Update(is)
 	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
@@ -494,14 +495,14 @@ func (s *testStatsSuite) TestInitStats(c *C) {
 	// `Lease` is not 0, so here we just change it.
 	h.SetLease(time.Millisecond)
 
-	h.Clear()
+	h.Clear4Test()
 	c.Assert(h.InitStats(is), IsNil)
 	table0 := h.GetTableStats(tbl.Meta())
 	cols := table0.Columns
 	c.Assert(cols[1].LastAnalyzePos.GetBytes()[0], Equals, uint8(0x36))
 	c.Assert(cols[2].LastAnalyzePos.GetBytes()[0], Equals, uint8(0x37))
 	c.Assert(cols[3].LastAnalyzePos.GetBytes()[0], Equals, uint8(0x38))
-	h.Clear()
+	h.Clear4Test()
 	c.Assert(h.Update(is), IsNil)
 	table1 := h.GetTableStats(tbl.Meta())
 	assertTableEqual(c, table0, table1)
@@ -686,7 +687,7 @@ func (s *testStatsSuite) TestExtendedStatsOps(c *C) {
 	c.Assert(len(statsTbl.ExtendedStats.Stats), Equals, 0)
 
 	tk.MustExec("update mysql.stats_extended set status = 1 where stats_name = 's1' and db = 'test'")
-	do.StatsHandle().Clear()
+	do.StatsHandle().Clear4Test()
 	do.StatsHandle().Update(is)
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
 	c.Assert(statsTbl, NotNil)
@@ -726,7 +727,7 @@ func (s *testStatsSuite) TestAdminReloadStatistics(c *C) {
 	c.Assert(len(statsTbl.ExtendedStats.Stats), Equals, 0)
 
 	tk.MustExec("update mysql.stats_extended set status = 1 where stats_name = 's1' and db = 'test'")
-	do.StatsHandle().Clear()
+	do.StatsHandle().Clear4Test()
 	do.StatsHandle().Update(is)
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
 	c.Assert(statsTbl, NotNil)
