@@ -367,9 +367,8 @@ func generateListPartitionExprStr(ctx sessionctx.Context, pi *model.PartitionInf
 	schema *expression.Schema, names types.NameSlice, def *model.PartitionDefinition, p *parser.Parser) (string, error) {
 	if len(pi.Columns) < 2 {
 		return generateListColumnsPartitionExprStr(ctx, pi, schema, names, def, p)
-	} else {
-		return generateMultiListColumnsPartitionExprStr(ctx, pi, schema, names, def, p)
 	}
+	return generateMultiListColumnsPartitionExprStr(ctx, pi, schema, names, def, p)
 }
 
 func generateListColumnsPartitionExprStr(ctx sessionctx.Context, pi *model.PartitionInfo,
