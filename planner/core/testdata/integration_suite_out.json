@@ -404,11 +404,12 @@
       {
         "SQL": "desc select /*+ INL_HASH_JOIN(t2) */ distinct t2.a from t t1 join t t2 on t1.a = t2.a",
         "Plan": [
-          "IndexHashJoin_15 12500.00 root  inner join, inner:TableReader_10, outer key:test.t.a, inner key:test.t.a",
-          "├─TableReader_19(Build) 10000.00 root  data:TableFullScan_18",
-          "│ └─TableFullScan_18 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-          "└─TableReader_10(Probe) 1.00 root  data:TableRangeScan_9",
-          "  └─TableRangeScan_9 1.00 cop[tikv] table:t2 range: decided by [test.t.a], keep order:false, stats:pseudo"
+          "Projection_7 12500.00 root  cast(test.t.a, int(11))->test.t.a",
+          "└─IndexHashJoin_15 12500.00 root  inner join, inner:TableReader_10, outer key:test.t.a, inner key:test.t.a",
+          "  ├─TableReader_19(Build) 10000.00 root  data:TableFullScan_18",
+          "  │ └─TableFullScan_18 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "  └─TableReader_10(Probe) 1.00 root  data:TableRangeScan_9",
+          "    └─TableRangeScan_9 1.00 cop[tikv] table:t2 range: decided by [test.t.a], keep order:false, stats:pseudo"
         ],
         "Warnings": []
       },

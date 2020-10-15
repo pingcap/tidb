@@ -136,9 +136,9 @@
         "Plan": [
           " HashAgg         root group by:?, ?, funcs:firstrow(?)->?, funcs:firstrow(?)->?",
           " └─Union         root ",
-          "   ├─Projection  root ?, test.t1.a",
+          "   ├─Projection  root ?, cast(test.t1.a)",
           "   │ └─Point_Get root table:t1, handle:?",
-          "   └─Projection  root ?, test.t1.a",
+          "   └─Projection  root ?, cast(test.t1.a)",
           "     └─Point_Get root table:t1, handle:?"
         ]
       },

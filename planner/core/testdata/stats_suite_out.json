@@ -114,8 +114,8 @@
       },
       {
         "SQL": "select * from t1 left join (select t2.a as a, t2.b as b, count(1) as cnt from t2 group by t2.a, t2.b) as tmp on t1.a = tmp.a and t1.b = tmp.b",
-        "AggInput": "[{[151 152] 9}]",
-        "JoinInput": "[{[148 149] 4}];[{[151 152] 9}]"
+        "AggInput": "[{[151 152] 7.2}]",
+        "JoinInput": "[{[148 149] 4}];[{[151 152] 7.2}]"
       },
       {
         "SQL": "select count(1) from (select t1.a as a, t1.b as b from t1 limit 3) tmp group by tmp.a, tmp.b",
