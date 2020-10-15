@@ -626,6 +626,17 @@ func (s *testSuite5) TestShowCreateTable(c *C) {
 	))
 	tk.MustExec("drop table t")
 
+	// for issue #20446
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1(c int unsigned default 0);")
+	tk.MustQuery("show create table `t1`").Check(testutil.RowsWithSep("|",
+		""+
+			"t1 CREATE TABLE `t1` (\n"+
+			"  `c` int(10) unsigned DEFAULT '0'\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+	))
+	tk.MustExec("drop table t1")
+
 	tk.MustExec("CREATE TABLE `log` (" +
 		"`LOG_ID` bigint(20) UNSIGNED NOT NULL AUTO_INCREMENT," +
 		"`ROUND_ID` bigint(20) UNSIGNED NOT NULL," +
