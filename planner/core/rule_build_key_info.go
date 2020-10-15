@@ -82,7 +82,9 @@ func (p *LogicalSelection) checkMaxOneRowCond(unique expression.Expression, cons
 		return false
 	}
 	if !childSchema.IsUniqueKey(col) {
-		return false
+		if !isUnique(p, col) {
+			return false
+		}
 	}
 	_, okCon := constOrCorCol.(*expression.Constant)
 	if okCon {
@@ -90,6 +92,23 @@ func (p *LogicalSelection) checkMaxOneRowCond(unique expression.Expression, cons
 	}
 	_, okCorCol := constOrCorCol.(*expression.CorrelatedColumn)
 	return okCorCol
+}
+
+func isUnique(p *LogicalSelection, col *expression.Column) bool {
+	for _, child := range p.children {
+		ds, ok := child.(*DataSource)
+		if !ok {
+			continue
+		}
+		tblInfo := ds.tableInfo
+		for _, idx := range tblInfo.Indices {
+			listColOrigName := strings.Split(col.OrigName, ".")
+			if idx.Unique && len(idx.Columns) == 1 && idx.Columns[0].Name.L == listColOrigName[len(listColOrigName)-1:][0] {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // BuildKeyInfo implements LogicalPlan BuildKeyInfo interface.
@@ -100,27 +119,6 @@ func (p *LogicalSelection) BuildKeyInfo(selfSchema *expression.Schema, childSche
 			if p.checkMaxOneRowCond(sf.GetArgs()[0], sf.GetArgs()[1], childSchema[0]) || p.checkMaxOneRowCond(sf.GetArgs()[1], sf.GetArgs()[0], childSchema[0]) {
 				p.maxOneRow = true
 				break
-			}
-			// MaxOneRow can be eliminated if there is a unique index in the equivalence condition.
-			for _, child := range p.children {
-				ds, ok := child.(*DataSource)
-				if !ok {
-					continue
-				}
-				tblInfo := ds.tableInfo
-				for _, idx := range tblInfo.Indices {
-					if idx.Unique {
-						for _, idxCol := range idx.Columns {
-							for _, col := range selfSchema.Columns {
-								listColOrigName := strings.Split(col.OrigName, ".")
-								if idxCol.Name.L == listColOrigName[len(listColOrigName)-1:][0] {
-									p.maxOneRow = true
-									break
-								}
-							}
-						}
-					}
-				}
 			}
 		}
 	}
