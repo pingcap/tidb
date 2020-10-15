@@ -226,8 +226,6 @@ func (s *testValidatorSuite) TestValidator(c *C) {
 		// issue 20447
 		{"CREATE TABLE t (a float(53))", true, nil},
 		{"CREATE TABLE t (a float(54))", false, types.ErrWrongFieldSpec},
-		{"CREATE TABLE t (a double(53))", false, types.ErrSyntax},
-		{"CREATE TABLE t (a double(54))", false, types.ErrSyntax},
 
 		// FIXME: temporary 'not implemented yet' test for 'CREATE TABLE ... SELECT' (issue 4754)
 		{"CREATE TABLE t SELECT * FROM u", false, errors.New("'CREATE TABLE ... SELECT' is not implemented yet")},
