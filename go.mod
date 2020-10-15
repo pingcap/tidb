@@ -69,3 +69,5 @@ require (
 )
 
 go 1.13
+
+replace github.com/pingcap/parser => github.com/nullnotnil/parser v0.0.0-20201014165131-d71b24c71c7f

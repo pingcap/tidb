@@ -16,6 +16,7 @@ package core
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
@@ -908,6 +909,8 @@ func (e *Explain) prepareSchema() error {
 		fieldNames = []string{"id", "estRows", "actRows", "task", "access object", "execution info", "operator info", "memory", "disk"}
 	case format == ast.ExplainFormatDOT:
 		fieldNames = []string{"dot contents"}
+	case format == ast.ExplainFormatJSON:
+		fieldNames = []string{"EXPLAIN"}
 	case format == ast.ExplainFormatHint:
 		fieldNames = []string{"hint"}
 	default:
@@ -944,6 +947,10 @@ func (e *Explain) RenderResult() error {
 	case ast.ExplainFormatDOT:
 		if physicalPlan, ok := e.TargetPlan.(PhysicalPlan); ok {
 			e.prepareDotInfo(physicalPlan)
+		}
+	case ast.ExplainFormatJSON:
+		if physicalPlan, ok := e.TargetPlan.(PhysicalPlan); ok {
+			e.prepareJSONInfo(physicalPlan)
 		}
 	case ast.ExplainFormatHint:
 		hints := GenHintsFromPhysicalPlan(e.TargetPlan)
@@ -1115,7 +1122,7 @@ func (e *Explain) prepareOperatorInfo(p Plan, taskType, driverSide, indent strin
 	e.Rows = append(e.Rows, row)
 }
 
-func (e *Explain) getOperatorInfo(p Plan, id string) (string, string, string) {
+func (e *Explain) getOperatorInfo(p Plan, id string) (estRows string, accessObject string, operatorInfo string) {
 	// For `explain for connection` statement, `e.ExplainRows` will be set.
 	for _, row := range e.ExplainRows {
 		if len(row) < 5 {
@@ -1125,11 +1132,10 @@ func (e *Explain) getOperatorInfo(p Plan, id string) (string, string, string) {
 			return row[1], row[3], row[4]
 		}
 	}
-	estRows := "N/A"
+	estRows = "N/A"
 	if si := p.statsInfo(); si != nil {
 		estRows = strconv.FormatFloat(si.RowCount, 'f', 2, 64)
 	}
-	var accessObject, operatorInfo string
 	if plan, ok := p.(dataAccesser); ok {
 		accessObject = plan.AccessObject()
 		operatorInfo = plan.OperatorInfo(false)
@@ -1142,6 +1148,17 @@ func (e *Explain) getOperatorInfo(p Plan, id string) (string, string, string) {
 	return estRows, accessObject, operatorInfo
 }
 
+func (e *Explain) prepareJSONInfo(p PhysicalPlan) {
+	currentNode := &jsonOperatorRow{}
+	if err := e.explainPlanInJSONFormat(currentNode, p, "root", "", false); err != nil {
+		return
+	}
+	if json, err := json.MarshalIndent(currentNode, "", "  "); err == nil {
+		str := fmt.Sprintf("%s", json)
+		e.Rows = append(e.Rows, []string{str})
+	}
+}
+
 func (e *Explain) prepareDotInfo(p PhysicalPlan) {
 	buffer := bytes.NewBufferString("")
 	fmt.Fprintf(buffer, "\ndigraph %s {\n", p.ExplainID())
@@ -1149,6 +1166,136 @@ func (e *Explain) prepareDotInfo(p PhysicalPlan) {
 	buffer.WriteString("}\n")
 
 	e.Rows = append(e.Rows, []string{buffer.String()})
+}
+
+type jsonOperatorRow struct {
+	ID           string             `json:"id"`
+	EstRows      float64            `json:"estRows"`
+	Task         string             `json:"task"`
+	AccessObject string             `json:"accessObject"`
+	OperatorInfo string             `json:"operatorInfo"`
+	Children     []*jsonOperatorRow `json:"children"`
+}
+
+// prepareJSONOperatorInfo fills a jsonOperatorRow struct for the Plan p.
+func (e *Explain) prepareJSONOperatorInfo(currentNode *jsonOperatorRow, p Plan, taskType string, driverSide string) {
+	if p.ExplainID().String() == "_0" {
+		return
+	}
+	currentNode.ID = p.ExplainID().String() + driverSide
+	var (
+		tmpEstRows string
+		err        error
+	)
+	tmpEstRows, currentNode.AccessObject, currentNode.OperatorInfo = e.getOperatorInfo(p, currentNode.ID)
+	if currentNode.EstRows, err = strconv.ParseFloat(tmpEstRows, 64); err != nil {
+		currentNode.EstRows = 0
+	}
+}
+
+// explainPlanInJSONFormat recursively traverses the Plan p and fills currentNode to represent the plan.
+// it is based on the implementation of explainPlanInRowFormat
+func (e *Explain) explainPlanInJSONFormat(currentNode *jsonOperatorRow, p Plan, taskType, driverSide string, createAsChild bool) (err error) {
+
+	if createAsChild {
+		// create a new child, add it to the currentNode, repoint the currentNode to the child.
+		child := &jsonOperatorRow{}
+		currentNode.Children = append(currentNode.Children, child)
+		currentNode = child
+	}
+
+	e.prepareJSONOperatorInfo(currentNode, p, taskType, driverSide)
+
+	if physPlan, ok := p.(PhysicalPlan); ok {
+		// indicate driven side and driving side of 'join' and 'apply'
+		// See issue https://github.com/pingcap/tidb/issues/14602.
+		driverSideInfo := make([]string, len(physPlan.Children()))
+		buildSide := -1
+
+		switch plan := physPlan.(type) {
+		case *PhysicalApply:
+			buildSide = plan.InnerChildIdx ^ 1
+		case *PhysicalHashJoin:
+			if plan.UseOuterToBuild {
+				buildSide = plan.InnerChildIdx ^ 1
+			} else {
+				buildSide = plan.InnerChildIdx
+			}
+		case *PhysicalMergeJoin:
+			if plan.JoinType == RightOuterJoin {
+				buildSide = 0
+			} else {
+				buildSide = 1
+			}
+		case *PhysicalIndexJoin:
+			buildSide = plan.InnerChildIdx ^ 1
+		case *PhysicalIndexMergeJoin:
+			buildSide = plan.InnerChildIdx ^ 1
+		case *PhysicalIndexHashJoin:
+			buildSide = plan.InnerChildIdx ^ 1
+		case *PhysicalBroadCastJoin:
+			buildSide = plan.InnerChildIdx
+		}
+
+		if buildSide != -1 {
+			driverSideInfo[0], driverSideInfo[1] = "(Build)", "(Probe)"
+		} else {
+			buildSide = 0
+		}
+
+		// Always put the Build above the Probe.
+		for i := range physPlan.Children() {
+			pchild := &physPlan.Children()[i^buildSide]
+			if e.explainedPlans[(*pchild).ID()] {
+				continue
+			}
+
+			err = e.explainPlanInJSONFormat(currentNode, *pchild, taskType, driverSideInfo[i], true)
+			if err != nil {
+				return
+			}
+		}
+	}
+
+	switch x := p.(type) {
+	case *PhysicalTableReader:
+		var storeType string
+		switch x.StoreType {
+		case kv.TiKV, kv.TiFlash, kv.TiDB:
+			// expected do nothing
+		default:
+			return errors.Errorf("the store type %v is unknown", x.StoreType)
+		}
+		storeType = x.StoreType.Name()
+		err = e.explainPlanInJSONFormat(currentNode, x.tablePlan, "cop["+storeType+"]", "", true)
+	case *PhysicalIndexReader:
+		err = e.explainPlanInJSONFormat(currentNode, x.indexPlan, "cop[tikv]", "", true)
+	case *PhysicalIndexLookUpReader:
+		err = e.explainPlanInJSONFormat(currentNode, x.indexPlan, "cop[tikv]", "(Build)", true)
+		err = e.explainPlanInJSONFormat(currentNode, x.tablePlan, "cop[tikv]", "(Probe)", true)
+	case *PhysicalIndexMergeReader:
+		for _, pchild := range x.partialPlans {
+			err = e.explainPlanInJSONFormat(currentNode, pchild, "cop[tikv]", "(Build)", true)
+		}
+		err = e.explainPlanInJSONFormat(currentNode, x.tablePlan, "cop[tikv]", "(Probe)", true)
+	case *Insert:
+		if x.SelectPlan != nil {
+			err = e.explainPlanInJSONFormat(currentNode, x.SelectPlan, "root", "", true)
+		}
+	case *Update:
+		if x.SelectPlan != nil {
+			err = e.explainPlanInJSONFormat(currentNode, x.SelectPlan, "root", "", true)
+		}
+	case *Delete:
+		if x.SelectPlan != nil {
+			err = e.explainPlanInJSONFormat(currentNode, x.SelectPlan, "root", "", true)
+		}
+	case *Execute:
+		if x.Plan != nil {
+			err = e.explainPlanInJSONFormat(currentNode, x.Plan, "root", "", true)
+		}
+	}
+	return
 }
 
 func (e *Explain) prepareTaskDot(p PhysicalPlan, taskTp string, buffer *bytes.Buffer) {
