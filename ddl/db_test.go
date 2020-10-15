@@ -2323,7 +2323,7 @@ func (s *testDBSuite4) TestChangeColumn(c *C) {
 	sql = "alter table t4 change c2 a bigint not null;"
 	tk.MustGetErrCode(sql, mysql.WarnDataTruncated)
 	sql = "alter table t3 modify en enum('a', 'z', 'b', 'c') not null default 'a'"
-	tk.MustExec(sql)
+	tk.MustGetErrCode(sql, errno.ErrUnsupportedDDLOperation)
 	// Rename to an existing column.
 	s.mustExec(tk, c, "alter table t3 add column a bigint")
 	sql = "alter table t3 change aa a bigint"
