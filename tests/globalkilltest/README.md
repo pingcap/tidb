@@ -84,7 +84,7 @@ In Integration Test after commit and before merge, run these commands under TiDB
 
 ```sh
 make server_globalkilltest
-cd cmd/globaltestkill
+cd tests/globalkilltest
 ./run-tests.sh --pd=<pd client path>
 ```
 
@@ -96,6 +96,6 @@ Run a single test manually (take `TestMultipleTiDB` as example):
 
 ```sh
 make server_globalkilltest
-cd cmd/globaltestkill
+cd tests/globalkilltest
 go test -check.f TestMultipleTiDB -args --pd=127.0.0.1:2379
 ```

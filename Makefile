@@ -43,7 +43,7 @@ endif
 ARCH      := "`uname -s`"
 LINUX     := "Linux"
 MAC       := "Darwin"
-PACKAGE_LIST  := go list ./...| grep -vE "cmd"
+PACKAGE_LIST  := go list ./...| grep -vE "cmd|github.com\/pingcap\/tidb\/tests"
 PACKAGES  ?= $$($(PACKAGE_LIST))
 PACKAGE_DIRECTORIES := $(PACKAGE_LIST) | sed 's|github.com/pingcap/$(PROJECT)/||'
 FILES     := $$(find $$($(PACKAGE_DIRECTORIES)) -name "*.go")

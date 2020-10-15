@@ -77,8 +77,8 @@ require (
 	google.golang.org/api v0.15.1 // indirect
 	google.golang.org/grpc v1.26.0
 	gopkg.in/natefinch/lumberjack.v2 v2.0.0
-	inet.af/tcpproxy v0.0.0-20200125044825-b6bb9b5b8252
 	honnef.co/go/tools v0.0.1-2020.1.6 // indirect
+	inet.af/tcpproxy v0.0.0-20200125044825-b6bb9b5b8252
 	sourcegraph.com/sourcegraph/appdash v0.0.0-20180531100431-4c381bd170b4
 	sourcegraph.com/sourcegraph/appdash-data v0.0.0-20151005221446-73f23eafcf67
 )

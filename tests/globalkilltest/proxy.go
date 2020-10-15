@@ -16,6 +16,7 @@ package globalkilltest
 import (
 	"net"
 
+	log "github.com/sirupsen/logrus"
 	"inet.af/tcpproxy"
 )
 
@@ -55,7 +56,9 @@ func (dp *pdDialProxy) HandleConn(src net.Conn) {
 
 func (dp *pdDialProxy) closeAllConnections() {
 	for _, conn := range dp.connections {
-		conn.Close() // Notice: will close a connection twice. Ignore for test purpose.
+		if err := conn.Close(); err != nil { // Notice: will close a connection twice. Ignore for test purpose.
+			log.Errorf("closeAllConnections err: %v", err)
+		}
 	}
 }
 
