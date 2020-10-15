@@ -952,10 +952,7 @@ func (s *partitionProcessor) makeUnionAllChildren(ds *DataSource, pi *model.Part
 			if err != nil {
 				return nil, err
 			}
-			proj := LogicalProjection{Exprs: expression.Column2Exprs(newDataSource.Schema().Columns)}.Init(newDataSource.ctx, newDataSource.SelectBlockOffset())
-			proj.SetSchema(newDataSource.Schema().Clone())
-			proj.SetChildren(&newDataSource)
-			children = append(children, proj)
+			children = append(children, &newDataSource)
 		}
 	}
 	s.checkHintsApplicable(ds, partitionNameSet)
@@ -968,7 +965,7 @@ func (s *partitionProcessor) makeUnionAllChildren(ds *DataSource, pi *model.Part
 	}
 	if len(children) == 1 {
 		// No need for the union all.
-		return children[0].Children()[0], nil
+		return children[0], nil
 	}
 	unionAll := LogicalPartitionUnionAll{}.Init(ds.SCtx(), ds.blockOffset)
 	unionAll.SetChildren(children...)
