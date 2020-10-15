@@ -35,10 +35,11 @@ func checkApplyPlan(c *C, tk *testkit.TestKit, sql string, parallel int) {
 					str += fmt.Sprintf("%v", parallel)
 				}
 				c.Assert(strings.Contains(line, str), IsTrue)
-				first = false
 			}
+			first = false
 		}
 	}
+	c.Assert(first, IsFalse)
 	return
 }
 
@@ -128,9 +129,9 @@ func (s *testSuite) TestApplyColumnType(c *C) {
 	tk.MustExec("create table t2(a datetime, b int)")
 	tk.MustExec(`insert into t1 values("2020-01-01 00:00:00", 1), ("2020-01-01 00:00:00", 2), ("2020-06-06 00:00:00", 3), ("2020-06-06 00:00:00", 4), ("2020-09-08 00:00:00", 4)`)
 	tk.MustExec(`insert into t2 values("2020-01-01 00:00:00", 1), ("2020-01-01 00:00:01", 2), ("2020-08-20 00:00:00", 4)`)
-	sql = "select * from t1 where t1.b in (select t2.b from t2 where t2.a > t1.a)"
+	sql = "select b from t1 where t1.b >= (select max(t2.b) from t2 where t2.a > t1.a)"
 	checkApplyPlan(c, tk, sql, 1)
-	tk.MustQuery(sql).Sort().Check(testkit.Rows("2020-01-01 00:00:00 2", "2020-06-06 00:00:00 4"))
+	tk.MustQuery(sql).Sort().Check(testkit.Rows("4"))
 
 	// timestamp
 	tk.MustExec("drop table t1, t2")
@@ -138,9 +139,9 @@ func (s *testSuite) TestApplyColumnType(c *C) {
 	tk.MustExec("create table t2(a timestamp, b int)")
 	tk.MustExec(`insert into t1 values("2020-01-01 00:00:00", 1), ("2020-01-01 00:00:00", 2), ("2020-06-06 00:00:00", 3), ("2020-06-06 00:00:00", 4), ("2020-09-08 00:00:00", 4)`)
 	tk.MustExec(`insert into t2 values("2020-01-01 00:00:00", 1), ("2020-01-01 00:00:01", 2), ("2020-08-20 00:00:00", 4)`)
-	sql = "select * from t1 where t1.b in (select t2.b from t2 where t2.a > t1.a)"
+	sql = "select b from t1 where t1.b >= (select max(t2.b) from t2 where t2.a > t1.a)"
 	checkApplyPlan(c, tk, sql, 1)
-	tk.MustQuery(sql).Sort().Check(testkit.Rows("2020-01-01 00:00:00 2", "2020-06-06 00:00:00 4"))
+	tk.MustQuery(sql).Sort().Check(testkit.Rows("4"))
 }
 
 func (s *testSuite) TestApplyMultiColumnType(c *C) {
@@ -424,7 +425,6 @@ func (s *testSuite) TestApplyWithOtherFeatures(c *C) {
 	tk.MustExec("insert into t values (1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4)")
 	tk.MustExec("insert into t2 values (1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4)")
 	sql = "select * from t where (select min(t2.b) from t2 where t2.a > t.a) > 0"
-	checkApplyPlan(c, tk, sql, 1)
 	tk.MustQuery(sql).Sort().Check(testkit.Rows("1 1 1", "2 2 2", "3 3 3"))
 	tk.MustExec("set @@tidb_enable_clustered_index = 0")
 
@@ -497,7 +497,6 @@ func (s *testSuite) TestApplyConcurrency(c *C) {
 	tk.MustExec("set tidb_enable_parallel_apply=true")
 
 	// tidb_executor_concurrency
-	tk.MustExec("set tidb_enable_parallel_apply=on")
 	tk.MustExec("drop table if exists t1, t2")
 	tk.MustExec("create table t1(a int, b int)")
 	tk.MustExec("create table t2(a int, b int)")
@@ -511,7 +510,8 @@ func (s *testSuite) TestApplyConcurrency(c *C) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int)")
 	vals := ""
-	for i := 1; i <= 1000; i++ {
+	n := 100
+	for i := 1; i <= n; i++ {
 		if i > 1 {
 			vals += ","
 		}
@@ -521,7 +521,7 @@ func (s *testSuite) TestApplyConcurrency(c *C) {
 	sql = "select sum(a) from t where t.a >= (select max(a) from t t1 where t1.a <= t.a)"
 	for cc := 1; cc <= 10; cc += 3 {
 		tk.MustExec(fmt.Sprintf("set tidb_executor_concurrency = %v", cc))
-		tk.MustQuery(sql).Check(testkit.Rows(fmt.Sprintf("%v", (1000*(1000+1))/2)))
+		tk.MustQuery(sql).Check(testkit.Rows(fmt.Sprintf("%v", (n*(n+1))/2)))
 	}
 }
 
