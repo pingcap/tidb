@@ -14,8 +14,6 @@
 package handle_test
 
 import (
-	"time"
-
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -30,8 +28,6 @@ func (s *testStatsSuite) TestDDLAfterLoad(c *C) {
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t (c1 int, c2 int)")
 	testKit.MustExec("analyze table t")
-	time.Sleep(10 * time.Millisecond)
-
 	do := s.do
 	is := do.InfoSchema()
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
@@ -76,8 +72,6 @@ func (s *testStatsSuite) TestDDLTable(c *C) {
 	err = h.HandleDDLEvent(<-h.DDLEventCh())
 	c.Assert(err, IsNil)
 	c.Assert(h.Update(is), IsNil)
-	time.Sleep(10 * time.Millisecond)
-
 	statsTbl := h.GetTableStats(tableInfo)
 	c.Assert(statsTbl.Pseudo, IsFalse)
 
@@ -89,7 +83,6 @@ func (s *testStatsSuite) TestDDLTable(c *C) {
 	err = h.HandleDDLEvent(<-h.DDLEventCh())
 	c.Assert(err, IsNil)
 	c.Assert(h.Update(is), IsNil)
-	time.Sleep(10 * time.Millisecond)
 	statsTbl = h.GetTableStats(tableInfo)
 	c.Assert(statsTbl.Pseudo, IsFalse)
 
@@ -101,7 +94,6 @@ func (s *testStatsSuite) TestDDLTable(c *C) {
 	err = h.HandleDDLEvent(<-h.DDLEventCh())
 	c.Assert(err, IsNil)
 	c.Assert(h.Update(is), IsNil)
-	time.Sleep(10 * time.Millisecond)
 	statsTbl = h.GetTableStats(tableInfo)
 	c.Assert(statsTbl.Pseudo, IsFalse)
 }
@@ -218,11 +210,8 @@ PARTITION BY RANGE ( a ) (
 		tableInfo := tbl.Meta()
 		h := do.StatsHandle()
 		err = h.HandleDDLEvent(<-h.DDLEventCh())
-		time.Sleep(10 * time.Millisecond)
-
 		c.Assert(err, IsNil)
 		c.Assert(h.Update(is), IsNil)
-		time.Sleep(10 * time.Millisecond)
 
 		pi := tableInfo.GetPartitionInfo()
 		for _, def := range pi.Definitions {
@@ -256,8 +245,6 @@ PARTITION BY RANGE ( a ) (
 		err = h.HandleDDLEvent(<-h.DDLEventCh())
 		c.Assert(err, IsNil)
 		c.Assert(h.Update(is), IsNil)
-		time.Sleep(10 * time.Millisecond)
-
 		pi = tableInfo.GetPartitionInfo()
 		for _, def := range pi.Definitions {
 			statsTbl := h.GetPartitionStats(tableInfo, def.ID)
@@ -273,8 +260,6 @@ PARTITION BY RANGE ( a ) (
 		err = h.HandleDDLEvent(<-h.DDLEventCh())
 		c.Assert(err, IsNil)
 		c.Assert(h.Update(is), IsNil)
-		time.Sleep(10 * time.Millisecond)
-
 		pi = tableInfo.GetPartitionInfo()
 		for _, def := range pi.Definitions {
 			statsTbl := h.GetPartitionStats(tableInfo, def.ID)

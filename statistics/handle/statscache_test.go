@@ -66,7 +66,7 @@ func (s *testStatsSuite) TestStatsCacheMiniMemoryLimit(c *C) {
 
 	c.Assert(statsTbl2.Pseudo, IsTrue)
 	testKit.MustExec("analyze table t2")
-	//wait for buf
+	// wait 10 ms  for cache to evict old cache
 	time.Sleep(10 * time.Millisecond)
 	tbl2, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
 	c.Assert(err, IsNil)

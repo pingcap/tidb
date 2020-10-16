@@ -38,7 +38,9 @@ import (
 var defaultCMSAndHistSize = int64(statistics.AnalyzeOptionDefault[ast.AnalyzeOptCMSketchWidth]*statistics.AnalyzeOptionDefault[ast.AnalyzeOptCMSketchDepth]*binary.MaxVarintLen32) +
 	int64(statistics.AnalyzeOptionDefault[ast.AnalyzeOptNumBuckets]*2*binary.MaxVarintLen64)
 
-func (h *Handle) initStatsMeta4Chunk(is infoschema.InfoSchema, tables map[int64]*statistics.Table, iter *chunk.Iterator4Chunk) {
+func (h *Handle) initStatsMeta4Chunk(is infoschema.InfoSchema,
+	tables map[int64]*statistics.Table,
+	iter *chunk.Iterator4Chunk) {
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		physicalID := row.GetInt64(1)
 		table, ok := h.getTableByPhysicalID(is, physicalID)
@@ -91,7 +93,9 @@ func (h *Handle) initStatsMeta(is infoschema.InfoSchema) (map[int64]*statistics.
 	return tables, nil
 }
 
-func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, tables map[int64]*statistics.Table, iter *chunk.Iterator4Chunk) {
+func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema,
+	tables map[int64]*statistics.Table,
+	iter *chunk.Iterator4Chunk) {
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		table, ok := tables[row.GetInt64(0)]
 		if !ok {

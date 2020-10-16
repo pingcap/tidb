@@ -71,7 +71,6 @@ func (s *testStatsSuite) TestStatsCache(c *C) {
 	testKit.MustExec("create table t (c1 int, c2 int)")
 	testKit.MustExec("insert into t values(1, 2)")
 	time.Sleep(10 * time.Millisecond)
-
 	do := s.do
 	is := do.InfoSchema()
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
