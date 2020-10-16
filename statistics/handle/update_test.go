@@ -361,57 +361,55 @@ func (s *testStatsSuite) TestUpdatePartition(c *C) {
 	clearRW.RLock()
 	defer clearRW.RUnlock()
 	testKit := testkit.NewTestKit(c, s.store)
+	testKit.MustQuery("select @@tidb_partition_prune_mode").Check(testkit.Rows(string(s.do.StatsHandle().CurrentPruneMode())))
 	testKit.MustExec("use test")
-	testKit.MustExec("drop table if exists t")
-	createTable := `CREATE TABLE t (a int, b char(5)) PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (6),PARTITION p1 VALUES LESS THAN (11))`
-	testKit.MustExec(createTable)
-	do := s.do
-	is := do.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	c.Assert(err, IsNil)
-	tableInfo := tbl.Meta()
-	h := do.StatsHandle()
-	err = h.HandleDDLEvent(<-h.DDLEventCh())
-	c.Assert(err, IsNil)
-	pi := tableInfo.GetPartitionInfo()
-	c.Assert(len(pi.Definitions), Equals, 2)
-	bColID := tableInfo.Columns[1].ID
+	testkit.WithPruneMode(testKit, variable.StaticOnly, func() {
+		s.do.StatsHandle().RefreshVars()
+		testKit.MustExec("drop table if exists t")
+		createTable := `CREATE TABLE t (a int, b char(5)) PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (6),PARTITION p1 VALUES LESS THAN (11))`
+		testKit.MustExec(createTable)
+		do := s.do
+		is := do.InfoSchema()
+		tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+		c.Assert(err, IsNil)
+		tableInfo := tbl.Meta()
+		h := do.StatsHandle()
+		err = h.HandleDDLEvent(<-h.DDLEventCh())
+		c.Assert(err, IsNil)
+		pi := tableInfo.GetPartitionInfo()
+		c.Assert(len(pi.Definitions), Equals, 2)
+		bColID := tableInfo.Columns[1].ID
 
-	testKit.MustExec(`insert into t values (1, "a"), (7, "a")`)
-	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
-	c.Assert(h.Update(is), IsNil)
-	time.Sleep(10 * time.Millisecond)
+		testKit.MustExec(`insert into t values (1, "a"), (7, "a")`)
+		c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+		c.Assert(h.Update(is), IsNil)
+		for _, def := range pi.Definitions {
+			statsTbl := h.GetPartitionStats(tableInfo, def.ID)
+			c.Assert(statsTbl.ModifyCount, Equals, int64(1))
+			c.Assert(statsTbl.Count, Equals, int64(1))
+			c.Assert(statsTbl.Columns[bColID].TotColSize, Equals, int64(2))
+		}
 
-	for _, def := range pi.Definitions {
-		statsTbl := h.GetPartitionStats(tableInfo, def.ID)
-		c.Assert(statsTbl.ModifyCount, Equals, int64(1))
-		c.Assert(statsTbl.Count, Equals, int64(1))
-		c.Assert(statsTbl.Columns[bColID].TotColSize, Equals, int64(2))
-	}
+		testKit.MustExec(`update t set a = a + 1, b = "aa"`)
+		c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+		c.Assert(h.Update(is), IsNil)
+		for _, def := range pi.Definitions {
+			statsTbl := h.GetPartitionStats(tableInfo, def.ID)
+			c.Assert(statsTbl.ModifyCount, Equals, int64(2))
+			c.Assert(statsTbl.Count, Equals, int64(1))
+			c.Assert(statsTbl.Columns[bColID].TotColSize, Equals, int64(3))
+		}
 
-	testKit.MustExec(`update t set a = a + 1, b = "aa"`)
-	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
-	c.Assert(h.Update(is), IsNil)
-	time.Sleep(10 * time.Millisecond)
-
-	for _, def := range pi.Definitions {
-		statsTbl := h.GetPartitionStats(tableInfo, def.ID)
-		c.Assert(statsTbl.ModifyCount, Equals, int64(2))
-		c.Assert(statsTbl.Count, Equals, int64(1))
-		c.Assert(statsTbl.Columns[bColID].TotColSize, Equals, int64(3))
-	}
-
-	testKit.MustExec("delete from t")
-	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
-	c.Assert(h.Update(is), IsNil)
-	time.Sleep(10 * time.Millisecond)
-
-	for _, def := range pi.Definitions {
-		statsTbl := h.GetPartitionStats(tableInfo, def.ID)
-		c.Assert(statsTbl.ModifyCount, Equals, int64(3))
-		c.Assert(statsTbl.Count, Equals, int64(0))
-		c.Assert(statsTbl.Columns[bColID].TotColSize, Equals, int64(0))
-	}
+		testKit.MustExec("delete from t")
+		c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+		c.Assert(h.Update(is), IsNil)
+		for _, def := range pi.Definitions {
+			statsTbl := h.GetPartitionStats(tableInfo, def.ID)
+			c.Assert(statsTbl.ModifyCount, Equals, int64(3))
+			c.Assert(statsTbl.Count, Equals, int64(0))
+			c.Assert(statsTbl.Columns[bColID].TotColSize, Equals, int64(0))
+		}
+	})
 }
 
 func (s *testStatsSuite) TestAutoUpdate(c *C) {

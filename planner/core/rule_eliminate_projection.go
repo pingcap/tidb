@@ -206,7 +206,6 @@ func (la *LogicalAggregation) replaceExprColumns(replace map[string]*expression.
 	for _, gbyItem := range la.GroupByItems {
 		ResolveExprAndReplace(gbyItem, replace)
 	}
-	la.collectGroupByColumns()
 }
 
 func (p *LogicalSelection) replaceExprColumns(replace map[string]*expression.Column) {

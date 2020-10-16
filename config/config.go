@@ -38,6 +38,7 @@ import (
 	tracing "github.com/uber/jaeger-client-go/config"
 
 	"go.uber.org/zap"
+	"google.golang.org/grpc/encoding/gzip"
 )
 
 // Config number limitations
@@ -52,7 +53,7 @@ const (
 	// DefMaxOfMaxIndexLength is the maximum index length(in bytes) for TiDB v3.0.7 and previous version.
 	DefMaxOfMaxIndexLength = 3072 * 4
 	// DefMinQuotaStatistics is the minimum statistic memory quota(in bytes).
-	DefMinQuotaStatistics = 1 << 30
+	DefMinQuotaStatistics = 32 << 30
 	// DefPort is the default port of TiDB
 	DefPort = 4000
 	// DefStatusPort is the default status port of TiDB
@@ -407,25 +408,26 @@ type Status struct {
 type Performance struct {
 	MaxProcs uint `toml:"max-procs" json:"max-procs"`
 	// Deprecated: use ServerMemoryQuota instead
-	MaxMemory            uint64  `toml:"max-memory" json:"max-memory"`
-	ServerMemoryQuota    uint64  `toml:"server-memory-quota" json:"server-memory-quota"`
-	StatsLease           string  `toml:"stats-lease" json:"stats-lease"`
-	StmtCountLimit       uint    `toml:"stmt-count-limit" json:"stmt-count-limit"`
-	FeedbackProbability  float64 `toml:"feedback-probability" json:"feedback-probability"`
-	QueryFeedbackLimit   uint    `toml:"query-feedback-limit" json:"query-feedback-limit"`
-	PseudoEstimateRatio  float64 `toml:"pseudo-estimate-ratio" json:"pseudo-estimate-ratio"`
-	ForcePriority        string  `toml:"force-priority" json:"force-priority"`
-	BindInfoLease        string  `toml:"bind-info-lease" json:"bind-info-lease"`
-	TxnEntrySizeLimit    uint64  `toml:"txn-entry-size-limit" json:"txn-entry-size-limit"`
-	TxnTotalSizeLimit    uint64  `toml:"txn-total-size-limit" json:"txn-total-size-limit"`
-	TCPKeepAlive         bool    `toml:"tcp-keep-alive" json:"tcp-keep-alive"`
-	CrossJoin            bool    `toml:"cross-join" json:"cross-join"`
-	RunAutoAnalyze       bool    `toml:"run-auto-analyze" json:"run-auto-analyze"`
-	DistinctAggPushDown  bool    `toml:"distinct-agg-push-down" json:"agg-push-down-join"`
-	CommitterConcurrency int     `toml:"committer-concurrency" json:"committer-concurrency"`
-	MaxTxnTTL            uint64  `toml:"max-txn-ttl" json:"max-txn-ttl"`
-	MemProfileInterval   string  `toml:"mem-profile-interval" json:"mem-profile-interval"`
-	IndexUsageSyncLease  string  `toml:"index-usage-sync-lease" json:"index-usage-sync-lease"`
+	MaxMemory             uint64  `toml:"max-memory" json:"max-memory"`
+	ServerMemoryQuota     uint64  `toml:"server-memory-quota" json:"server-memory-quota"`
+	MemoryUsageAlarmRatio float64 `toml:"memory-usage-alarm-ratio" json:"memory-usage-alarm-ratio"`
+	StatsLease            string  `toml:"stats-lease" json:"stats-lease"`
+	StmtCountLimit        uint    `toml:"stmt-count-limit" json:"stmt-count-limit"`
+	FeedbackProbability   float64 `toml:"feedback-probability" json:"feedback-probability"`
+	QueryFeedbackLimit    uint    `toml:"query-feedback-limit" json:"query-feedback-limit"`
+	PseudoEstimateRatio   float64 `toml:"pseudo-estimate-ratio" json:"pseudo-estimate-ratio"`
+	ForcePriority         string  `toml:"force-priority" json:"force-priority"`
+	BindInfoLease         string  `toml:"bind-info-lease" json:"bind-info-lease"`
+	TxnEntrySizeLimit     uint64  `toml:"txn-entry-size-limit" json:"txn-entry-size-limit"`
+	TxnTotalSizeLimit     uint64  `toml:"txn-total-size-limit" json:"txn-total-size-limit"`
+	TCPKeepAlive          bool    `toml:"tcp-keep-alive" json:"tcp-keep-alive"`
+	CrossJoin             bool    `toml:"cross-join" json:"cross-join"`
+	RunAutoAnalyze        bool    `toml:"run-auto-analyze" json:"run-auto-analyze"`
+	DistinctAggPushDown   bool    `toml:"distinct-agg-push-down" json:"agg-push-down-join"`
+	CommitterConcurrency  int     `toml:"committer-concurrency" json:"committer-concurrency"`
+	MaxTxnTTL             uint64  `toml:"max-txn-ttl" json:"max-txn-ttl"`
+	MemProfileInterval    string  `toml:"mem-profile-interval" json:"mem-profile-interval"`
+	IndexUsageSyncLease   string  `toml:"index-usage-sync-lease" json:"index-usage-sync-lease"`
 }
 
 // PlanCache is the PlanCache section of the config.
@@ -496,6 +498,8 @@ type TiKVClient struct {
 	// After having pinged for keepalive check, the client waits for a duration of Timeout in seconds
 	// and if no activity is seen even after that the connection is closed.
 	GrpcKeepAliveTimeout uint `toml:"grpc-keepalive-timeout" json:"grpc-keepalive-timeout"`
+	// GrpcCompressionType is the compression type for gRPC channel: none or gzip.
+	GrpcCompressionType string `toml:"grpc-compression-type" json:"grpc-compression-type"`
 	// CommitTimeout is the max time which command 'commit' will wait.
 	CommitTimeout string      `toml:"commit-timeout" json:"commit-timeout"`
 	AsyncCommit   AsyncCommit `toml:"async-commit" json:"async-commit"`
@@ -656,25 +660,26 @@ var defaultConf = Config{
 		RecordQPSbyDB:   false,
 	},
 	Performance: Performance{
-		MaxMemory:            0,
-		ServerMemoryQuota:    0,
-		TCPKeepAlive:         true,
-		CrossJoin:            true,
-		StatsLease:           "3s",
-		RunAutoAnalyze:       true,
-		StmtCountLimit:       5000,
-		FeedbackProbability:  0.05,
-		QueryFeedbackLimit:   512,
-		PseudoEstimateRatio:  0.8,
-		ForcePriority:        "NO_PRIORITY",
-		BindInfoLease:        "3s",
-		TxnEntrySizeLimit:    DefTxnEntrySizeLimit,
-		TxnTotalSizeLimit:    DefTxnTotalSizeLimit,
-		DistinctAggPushDown:  false,
-		CommitterConcurrency: 16,
-		MaxTxnTTL:            60 * 60 * 1000, // 1hour
-		MemProfileInterval:   "1m",
-		IndexUsageSyncLease:  "60s",
+		MaxMemory:             0,
+		ServerMemoryQuota:     0,
+		MemoryUsageAlarmRatio: 0.8,
+		TCPKeepAlive:          true,
+		CrossJoin:             true,
+		StatsLease:            "3s",
+		RunAutoAnalyze:        true,
+		StmtCountLimit:        5000,
+		FeedbackProbability:   0.05,
+		QueryFeedbackLimit:    512,
+		PseudoEstimateRatio:   0.8,
+		ForcePriority:         "NO_PRIORITY",
+		BindInfoLease:         "3s",
+		TxnEntrySizeLimit:     DefTxnEntrySizeLimit,
+		TxnTotalSizeLimit:     DefTxnTotalSizeLimit,
+		DistinctAggPushDown:   false,
+		CommitterConcurrency:  16,
+		MaxTxnTTL:             60 * 60 * 1000, // 1hour
+		MemProfileInterval:    "1m",
+		IndexUsageSyncLease:   "60s",
 	},
 	ProxyProtocol: ProxyProtocol{
 		Networks:      "",
@@ -697,6 +702,7 @@ var defaultConf = Config{
 		GrpcConnectionCount:  4,
 		GrpcKeepAliveTime:    10,
 		GrpcKeepAliveTimeout: 3,
+		GrpcCompressionType:  "none",
 		CommitTimeout:        "41s",
 		AsyncCommit: AsyncCommit{
 			Enable: false,
@@ -922,9 +928,16 @@ func (c *Config) Valid() error {
 	if c.TiKVClient.GrpcConnectionCount == 0 {
 		return fmt.Errorf("grpc-connection-count should be greater than 0")
 	}
+	if c.TiKVClient.GrpcCompressionType != "none" && c.TiKVClient.GrpcCompressionType != gzip.Name {
+		return fmt.Errorf("grpc-compression-type should be none or %s, but got %s", gzip.Name, c.TiKVClient.GrpcCompressionType)
+	}
 
 	if c.Performance.TxnTotalSizeLimit > 10<<30 {
 		return fmt.Errorf("txn-total-size-limit should be less than %d", 10<<30)
+	}
+
+	if c.Performance.MemoryUsageAlarmRatio > 1 || c.Performance.MemoryUsageAlarmRatio < 0 {
+		return fmt.Errorf("memory-usage-alarm-ratio in [Performance] must be greater than or equal to 0 and less than or equal to 1")
 	}
 
 	if c.StmtSummary.MaxStmtCount <= 0 {

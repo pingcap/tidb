@@ -2982,6 +2982,13 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (Plan, err
 					v.Table.Name.L, "", authErr)
 			}
 		}
+	case *ast.AlterSequenceStmt:
+		if b.ctx.GetSessionVars().User != nil {
+			authErr = ErrTableaccessDenied.GenWithStackByArgs("ALTER", b.ctx.GetSessionVars().User.AuthUsername,
+				b.ctx.GetSessionVars().User.AuthHostname, v.Name.Name.L)
+		}
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.AlterPriv, v.Name.Schema.L,
+			v.Name.Name.L, "", authErr)
 	case *ast.CreateDatabaseStmt:
 		if b.ctx.GetSessionVars().User != nil {
 			authErr = ErrDBaccessDenied.GenWithStackByArgs(b.ctx.GetSessionVars().User.AuthUsername,

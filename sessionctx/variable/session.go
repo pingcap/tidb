@@ -215,7 +215,7 @@ func (tc *TransactionContext) CollectUnchangedRowKeys(buf []kv.Key) []kv.Key {
 }
 
 // UpdateDeltaForTable updates the delta info for some table.
-func (tc *TransactionContext) UpdateDeltaForTable(physicalTableID int64, delta int64, count int64, colSize map[int64]int64) {
+func (tc *TransactionContext) UpdateDeltaForTable(logicalTableID, physicalTableID int64, delta int64, count int64, colSize map[int64]int64, saveAsLogicalTblID bool) {
 	if tc.TableDeltaMap == nil {
 		tc.TableDeltaMap = make(map[int64]TableDelta)
 	}
@@ -225,6 +225,10 @@ func (tc *TransactionContext) UpdateDeltaForTable(physicalTableID int64, delta i
 	}
 	item.Delta += delta
 	item.Count += count
+	item.TableID = physicalTableID
+	if saveAsLogicalTblID {
+		item.TableID = logicalTableID
+	}
 	for key, val := range colSize {
 		item.ColSize[key] += val
 	}
@@ -837,6 +841,7 @@ func NewSessionVars() *SessionVars {
 		ShardAllocateStep:           DefTiDBShardAllocateStep,
 		EnableChangeColumnType:      DefTiDBChangeColumnType,
 		EnableAmendPessimisticTxn:   DefTiDBEnableAmendPessimisticTxn,
+		PartitionPruneMode:          *atomic2.NewString(DefTiDBPartitionPruneMode),
 	}
 	vars.KVVars = kv.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{
@@ -1036,10 +1041,10 @@ func (s *SessionVars) IsAutocommit() bool {
 	return s.GetStatusFlag(mysql.ServerStatusAutocommit)
 }
 
-// IsReadConsistencyTxn if true it means the transaction is an read consistency (read committed) transaction.
-func (s *SessionVars) IsReadConsistencyTxn() bool {
+// IsIsolation if true it means the transaction is at that isolation level.
+func (s *SessionVars) IsIsolation(isolation string) bool {
 	if s.TxnCtx.Isolation != "" {
-		return s.TxnCtx.Isolation == ast.ReadCommitted
+		return s.TxnCtx.Isolation == isolation
 	}
 	if s.txnIsolationLevelOneShot.state == oneShotUse {
 		s.TxnCtx.Isolation = s.txnIsolationLevelOneShot.value
@@ -1047,7 +1052,7 @@ func (s *SessionVars) IsReadConsistencyTxn() bool {
 	if s.TxnCtx.Isolation == "" {
 		s.TxnCtx.Isolation, _ = s.GetSystemVar(TxnIsolation)
 	}
-	return s.TxnCtx.Isolation == ast.ReadCommitted
+	return s.TxnCtx.Isolation == isolation
 }
 
 // SetTxnIsolationLevelOneShotStateForNextTxn sets the txnIsolationLevelOneShot.state for next transaction.
@@ -1065,7 +1070,7 @@ func (s *SessionVars) SetTxnIsolationLevelOneShotStateForNextTxn() {
 
 // IsPessimisticReadConsistency if true it means the statement is in an read consistency pessimistic transaction.
 func (s *SessionVars) IsPessimisticReadConsistency() bool {
-	return s.TxnCtx.IsPessimistic && s.IsReadConsistencyTxn()
+	return s.TxnCtx.IsPessimistic && s.IsIsolation(ast.ReadCommitted)
 }
 
 // GetNextPreparedStmtID generates and returns the next session scope prepared statement id.
@@ -1558,6 +1563,7 @@ type TableDelta struct {
 	Count    int64
 	ColSize  map[int64]int64
 	InitTime time.Time // InitTime is the time that this delta is generated.
+	TableID  int64
 }
 
 // ConcurrencyUnset means the value the of the concurrency related variable is unset.
@@ -1870,6 +1876,8 @@ const (
 	SlowLogExecRetryCount = "Exec_retry_count"
 	// SlowLogExecRetryTime is the execution retry time.
 	SlowLogExecRetryTime = "Exec_retry_time"
+	// SlowLogBackoffDetail is the detail of backoff.
+	SlowLogBackoffDetail = "Backoff_Detail"
 )
 
 // SlowQueryLogItems is a collection of items that should be included in the
