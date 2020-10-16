@@ -303,23 +303,25 @@ func insertJobIntoDeleteRangeTable(ctx sessionctx.Context, job *model.Job) error
 	// ActionAddIndex, ActionAddPrimaryKey needs do it, because it needs to be rolled back when it's canceled.
 	case model.ActionAddIndex, model.ActionAddPrimaryKey:
 		tableID := job.TableID
-		var indexID int64
+		var indexIDs []int64
 		var partitionIDs []int64
-		if err := job.DecodeArgs(&indexID, &partitionIDs); err != nil {
+		if err := job.DecodeArgs(&indexIDs, &partitionIDs); err != nil {
 			return errors.Trace(err)
 		}
-		if len(partitionIDs) > 0 {
-			for _, pid := range partitionIDs {
-				startKey := tablecodec.EncodeTableIndexPrefix(pid, indexID)
-				endKey := tablecodec.EncodeTableIndexPrefix(pid, indexID+1)
-				if err := doInsert(s, job.ID, indexID, startKey, endKey, now); err != nil {
-					return errors.Trace(err)
+		for _, indexID := range indexIDs {
+			if len(partitionIDs) > 0 {
+				for _, pid := range partitionIDs {
+					startKey := tablecodec.EncodeTableIndexPrefix(pid, indexID)
+					endKey := tablecodec.EncodeTableIndexPrefix(pid, indexID+1)
+					if err := doInsert(s, job.ID, indexID, startKey, endKey, now); err != nil {
+						return errors.Trace(err)
+					}
 				}
+			} else {
+				startKey := tablecodec.EncodeTableIndexPrefix(tableID, indexID)
+				endKey := tablecodec.EncodeTableIndexPrefix(tableID, indexID+1)
+				return doInsert(s, job.ID, indexID, startKey, endKey, now)
 			}
-		} else {
-			startKey := tablecodec.EncodeTableIndexPrefix(tableID, indexID)
-			endKey := tablecodec.EncodeTableIndexPrefix(tableID, indexID+1)
-			return doInsert(s, job.ID, indexID, startKey, endKey, now)
 		}
 	case model.ActionDropIndex, model.ActionDropPrimaryKey:
 		tableID := job.TableID
