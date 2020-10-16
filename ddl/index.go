@@ -751,50 +751,6 @@ func checkDropIndexes(t *meta.Meta, job *model.Job) (*model.TableInfo, []*model.
 	return tblInfo, indexesInfo, nil
 }
 
-func checkDropIndex(t *meta.Meta, job *model.Job) (*model.TableInfo, *model.IndexInfo, error) {
-	schemaID := job.SchemaID
-	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, schemaID)
-	if err != nil {
-		return nil, nil, errors.Trace(err)
-	}
-
-	var indexName model.CIStr
-	if err = job.DecodeArgs(&indexName); err != nil {
-		job.State = model.JobStateCancelled
-		return nil, nil, errors.Trace(err)
-	}
-
-	indexInfo := tblInfo.FindIndexByName(indexName.L)
-	if indexInfo == nil {
-		job.State = model.JobStateCancelled
-		return nil, nil, ErrCantDropFieldOrKey.GenWithStack("index %s doesn't exist", indexName)
-	}
-
-	// Double check for drop index on auto_increment column.
-	err = checkDropIndexOnAutoIncrementColumn(tblInfo, indexInfo)
-	if err != nil {
-		job.State = model.JobStateCancelled
-		return nil, nil, autoid.ErrWrongAutoKey
-	}
-
-	// Check that drop primary index will not cause invisible implicit primary index.
-	newIndices := make([]*model.IndexInfo, 0, len(tblInfo.Indices))
-	for _, idx := range tblInfo.Indices {
-		if idx.Name.L != indexInfo.Name.L {
-			newIndices = append(newIndices, idx)
-		}
-	}
-	newTbl := tblInfo.Clone()
-	newTbl.Indices = newIndices
-	err = checkInvisibleIndexOnPK(newTbl)
-	if err != nil {
-		job.State = model.JobStateCancelled
-		return nil, nil, errors.Trace(err)
-	}
-
-	return tblInfo, indexInfo, nil
-}
-
 func checkDropIndexOnAutoIncrementColumn(tblInfo *model.TableInfo, indexInfo *model.IndexInfo) error {
 	cols := tblInfo.Columns
 	for _, idxCol := range indexInfo.Columns {
