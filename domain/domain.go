@@ -86,10 +86,7 @@ type Domain struct {
 // It returns the latest schema version, the changed table IDs, whether it's a full load and an error.
 func (do *Domain) loadInfoSchema(handle *infoschema.Handle, usedSchemaVersion int64,
 	startTS uint64) (neededSchemaVersion int64, change *tikv.RelatedSchemaChange, fullLoad bool, err error) {
-	snapshot, err := do.store.GetSnapshot(kv.NewVersion(startTS))
-	if err != nil {
-		return 0, nil, fullLoad, err
-	}
+	snapshot := do.store.GetSnapshot(kv.NewVersion(startTS))
 	m := meta.NewSnapshotMeta(snapshot)
 	neededSchemaVersion, err = m.GetSchemaVersion()
 	if err != nil {
@@ -320,10 +317,7 @@ func (do *Domain) GetSnapshotInfoSchema(snapshotTS uint64) (infoschema.InfoSchem
 
 // GetSnapshotMeta gets a new snapshot meta at startTS.
 func (do *Domain) GetSnapshotMeta(startTS uint64) (*meta.Meta, error) {
-	snapshot, err := do.store.GetSnapshot(kv.NewVersion(startTS))
-	if err != nil {
-		return nil, err
-	}
+	snapshot := do.store.GetSnapshot(kv.NewVersion(startTS))
 	return meta.NewSnapshotMeta(snapshot), nil
 }
 
@@ -1033,8 +1027,13 @@ func (do *Domain) StatsHandle() *handle.Handle {
 }
 
 // CreateStatsHandle is used only for test.
-func (do *Domain) CreateStatsHandle(ctx sessionctx.Context) {
-	atomic.StorePointer(&do.statsHandle, unsafe.Pointer(handle.NewHandle(ctx, do.statsLease)))
+func (do *Domain) CreateStatsHandle(ctx sessionctx.Context) error {
+	h, err := handle.NewHandle(ctx, do.statsLease)
+	if err != nil {
+		return err
+	}
+	atomic.StorePointer(&do.statsHandle, unsafe.Pointer(h))
+	return nil
 }
 
 // StatsUpdating checks if the stats worker is updating.
@@ -1059,13 +1058,20 @@ var RunAutoAnalyze = true
 // It should be called only once in BootstrapSession.
 func (do *Domain) UpdateTableStatsLoop(ctx sessionctx.Context) error {
 	ctx.GetSessionVars().InRestrictedSQL = true
-	statsHandle := handle.NewHandle(ctx, do.statsLease)
+	statsHandle, err := handle.NewHandle(ctx, do.statsLease)
+	if err != nil {
+		return err
+	}
 	atomic.StorePointer(&do.statsHandle, unsafe.Pointer(statsHandle))
 	do.ddl.RegisterEventCh(statsHandle.DDLEventCh())
 	// Negative stats lease indicates that it is in test, it does not need update.
 	if do.statsLease >= 0 {
 		do.wg.Add(1)
 		go do.loadStatsWorker()
+	}
+	if do.indexUsageSyncLease > 0 {
+		do.wg.Add(1)
+		go do.syncIndexUsageWorker()
 	}
 	if do.statsLease <= 0 {
 		return nil
@@ -1120,6 +1126,10 @@ func (do *Domain) loadStatsWorker() {
 	for {
 		select {
 		case <-loadTicker.C:
+			err = statsHandle.RefreshVars()
+			if err != nil {
+				logutil.BgLogger().Debug("refresh variables failed", zap.Error(err))
+			}
 			err = statsHandle.Update(do.InfoSchema())
 			if err != nil {
 				logutil.BgLogger().Debug("update stats info failed", zap.Error(err))
@@ -1130,6 +1140,28 @@ func (do *Domain) loadStatsWorker() {
 			}
 		case <-do.exit:
 			return
+		}
+	}
+}
+
+func (do *Domain) syncIndexUsageWorker() {
+	defer util.Recover(metrics.LabelDomain, "syncIndexUsageWorker", nil, false)
+	idxUsageSyncTicker := time.NewTicker(do.indexUsageSyncLease)
+	handle := do.StatsHandle()
+	defer func() {
+		idxUsageSyncTicker.Stop()
+		do.wg.Done()
+		logutil.BgLogger().Info("syncIndexUsageWorker exited.")
+	}()
+	for {
+		select {
+		case <-do.exit:
+			// TODO: need flush index usage
+			return
+		case <-idxUsageSyncTicker.C:
+			if err := handle.DumpIndexUsageToKV(); err != nil {
+				logutil.BgLogger().Debug("dump index usage failed", zap.Error(err))
+			}
 		}
 	}
 }
