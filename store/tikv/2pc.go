@@ -532,7 +532,7 @@ func preSplitAndScatterIn2PC(ctx context.Context, store *tikvStore, group groupe
 		return false
 	}
 
-	regionIDs, err := store.SplitRegions(ctx, splitKeys, true)
+	regionIDs, err := store.SplitRegions(ctx, splitKeys, true, nil)
 	if err != nil {
 		logutil.BgLogger().Warn("2PC split regions failed", zap.Uint64("regionID", group.region.id),
 			zap.Int("keys count", keysLength), zap.Int("values count", valsLength), zap.Error(err))
