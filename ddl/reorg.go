@@ -613,18 +613,6 @@ func getReorgInfoFromPartitions(d *ddlCtx, t *meta.Meta, job *model.Job, tbl tab
 		info    reorgInfo
 	)
 	if job.SnapshotVer == 0 {
-		// For the case of the old TiDB version(do not exist the element information) is upgraded to the new TiDB version.
-		// Third step, we need to remove the element information to make sure we can save the reorganized information to storage.
-		failpoint.Inject("MockGetIndexRecordErr", func(val failpoint.Value) {
-			if val.(string) == "addIdxNotOwnerErr" && atomic.CompareAndSwapUint32(&mockNotOwnerErrOnce, 3, 4) {
-				if err := t.RemoveReorgElement(job); err != nil {
-					failpoint.Return(nil, errors.Trace(err))
-				}
-				info.first = true
-				failpoint.Return(&info, nil)
-			}
-		})
-
 		info.first = true
 		// get the current version for reorganization if we don't have
 		ver, err := getValidCurrentVersion(d.store)
@@ -649,16 +637,6 @@ func getReorgInfoFromPartitions(d *ddlCtx, t *meta.Meta, job *model.Job, tbl tab
 		job.SnapshotVer = ver.Ver
 		element = elements[0]
 	} else {
-		failpoint.Inject("MockGetIndexRecordErr", func(val failpoint.Value) {
-			// For the case of the old TiDB version(do not exist the element information) is upgraded to the new TiDB version.
-			// Second step, we need to remove the element information to make sure we can get the error of "ErrDDLReorgElementNotExist".
-			// However, since "txn.Reset()" will be called later, the reorganized information cannot be saved to storage.
-			if val.(string) == "addIdxNotOwnerErr" && atomic.CompareAndSwapUint32(&mockNotOwnerErrOnce, 2, 3) {
-				if err := t.RemoveReorgElement(job); err != nil {
-					failpoint.Return(nil, errors.Trace(err))
-				}
-			}
-		})
 		var err error
 		element, start, end, pid, err = t.GetDDLReorgHandle(job, tbl.Meta().IsCommonHandle)
 		if err != nil {

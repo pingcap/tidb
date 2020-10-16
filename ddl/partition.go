@@ -905,25 +905,25 @@ func getTableInfoWithDroppingPartitions(t *model.TableInfo) *model.TableInfo {
 	return nt
 }
 
-func buildPlacementDropRules(schemaID, tableID int64, partitionIDs []int64) []*placement.RuleOp {
-	rules := make([]*placement.RuleOp, 0, len(partitionIDs))
-	for _, partitionID := range partitionIDs {
-		rules = append(rules, &placement.RuleOp{
-			Action:           placement.RuleOpDel,
-			DeleteByIDPrefix: true,
-			Rule: &placement.Rule{
-				GroupID: placement.RuleDefaultGroupID,
-				ID:      fmt.Sprintf("%d_t%d_p%d", schemaID, tableID, partitionID),
-			},
-		})
-	}
-	return rules
-}
-
 func buildPlacementDropBundle(partitionID int64) *placement.Bundle {
 	return &placement.Bundle{
 		ID: placement.GroupID(partitionID),
 	}
+}
+
+func putRuleBundles(d *ddlCtx, physicalTableIDs []int64) error {
+	if d.infoHandle != nil {
+		bundles := make([]*placement.Bundle, 0, len(physicalTableIDs))
+		for _, ID := range physicalTableIDs {
+			oldBundle, ok := d.infoHandle.Get().BundleByName(placement.GroupID(ID))
+			if ok && !oldBundle.IsEmpty() {
+				bundles = append(bundles, buildPlacementDropBundle(ID))
+			}
+		}
+		err := infosync.PutRuleBundles(nil, bundles)
+		return err
+	}
+	return nil
 }
 
 // onDropTablePartition deletes old partition meta.
@@ -941,20 +941,10 @@ func (w *worker) onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (
 	if job.Type == model.ActionAddTablePartition {
 		// It is rollbacked from adding table partition, just remove addingDefinitions from tableInfo.
 		physicalTableIDs = rollbackAddingPartitionInfo(tblInfo)
-		if d.infoHandle != nil {
-			bundles := make([]*placement.Bundle, 0, len(physicalTableIDs))
-			for _, ID := range physicalTableIDs {
-				oldBundle, ok := d.infoHandle.Get().BundleByName(placement.GroupID(ID))
-				if ok && !oldBundle.IsEmpty() {
-					bundles = append(bundles, buildPlacementDropBundle(ID))
-				}
-			}
-
-			err = infosync.PutRuleBundles(nil, bundles)
-			if err != nil {
-				job.State = model.JobStateCancelled
-				return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
-			}
+		err = putRuleBundles(d, physicalTableIDs)
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
 		}
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
 		if err != nil {
@@ -980,22 +970,12 @@ func (w *worker) onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
-		updateDroppingPartitionInfo(tblInfo, partNames)
-		if d.infoHandle != nil {
-			bundles := make([]*placement.Bundle, 0, len(physicalTableIDs))
-			for _, ID := range physicalTableIDs {
-				oldBundle, ok := d.infoHandle.Get().BundleByName(placement.GroupID(ID))
-				if ok && !oldBundle.IsEmpty() {
-					bundles = append(bundles, buildPlacementDropBundle(ID))
-				}
-			}
-
-			err = infosync.PutRuleBundles(nil, bundles)
-			if err != nil {
-				job.State = model.JobStateCancelled
-				return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
-			}
+		err = putRuleBundles(d, physicalTableIDs)
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
 		}
+		updateDroppingPartitionInfo(tblInfo, partNames)
 		job.SchemaState = model.StateDeleteOnly
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != job.SchemaState)
 	case model.StateDeleteOnly:
