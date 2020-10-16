@@ -99,6 +99,21 @@ func (s *testAsyncCommitCommon) mustPointGet(c *C, key, expectedValue []byte) {
 	c.Assert(value, BytesEquals, expectedValue)
 }
 
+func (s *testAsyncCommitCommon) mustGetFromSnapshot(c *C, version uint64, key, expectedValue []byte) {
+	snap, err := s.store.GetSnapshot(kv.Version{Ver: version})
+	c.Assert(err, IsNil)
+	value, err := snap.Get(context.Background(), key)
+	c.Assert(err, IsNil)
+	c.Assert(value, BytesEquals, expectedValue)
+}
+
+func (s *testAsyncCommitCommon) mustGetNoneFromSnapshot(c *C, version uint64, key []byte) {
+	snap, err := s.store.GetSnapshot(kv.Version{Ver: version})
+	c.Assert(err, IsNil)
+	_, err = snap.Get(context.Background(), key)
+	c.Assert(errors.Cause(err), Equals, kv.ErrNotExist)
+}
+
 type testAsyncCommitSuite struct {
 	OneByOneSuite
 	testAsyncCommitCommon
@@ -337,6 +352,142 @@ func (s *testAsyncCommitSuite) TestRepeatableRead(c *C) {
 
 	test(false)
 	test(true)
+}
+
+func (s *testAsyncCommitSuite) Test1PC(c *C) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TiKVClient.EnableOnePC = true
+	})
+
+	ctx := context.WithValue(context.Background(), sessionctx.ConnID, uint64(1))
+
+	k1 := []byte("k1")
+	v1 := []byte("v1")
+
+	begin := func() *tikvTxn {
+		txn, err := s.store.Begin()
+		c.Assert(err, IsNil)
+		return txn.(*tikvTxn)
+	}
+
+	txn := begin()
+	err := txn.Set(k1, v1)
+	c.Assert(err, IsNil)
+	err = txn.Commit(ctx)
+	c.Assert(err, IsNil)
+	c.Assert(txn.committer.isOnePC(), IsTrue)
+	c.Assert(txn.committer.onePCCommitTS, Equals, txn.committer.commitTS)
+	c.Assert(txn.committer.onePCCommitTS, Greater, txn.startTS)
+
+	// 1PC doesn't work if connID == 0
+	k2 := []byte("k2")
+	v2 := []byte("v2")
+
+	txn = begin()
+	err = txn.Set(k2, v2)
+	c.Assert(err, IsNil)
+	err = txn.Commit(context.Background())
+	c.Assert(err, IsNil)
+	c.Assert(txn.committer.isOnePC(), IsFalse)
+	c.Assert(txn.committer.onePCCommitTS, Equals, uint64(0))
+	c.Assert(txn.committer.commitTS, Greater, txn.startTS)
+
+	// 1PC doesn't work if config not set
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TiKVClient.EnableOnePC = false
+	})
+	k3 := []byte("k3")
+	v3 := []byte("v3")
+
+	txn = begin()
+	err = txn.Set(k3, v3)
+	c.Assert(err, IsNil)
+	err = txn.Commit(ctx)
+	c.Assert(err, IsNil)
+	c.Assert(txn.committer.isOnePC(), IsFalse)
+	c.Assert(txn.committer.onePCCommitTS, Equals, uint64(0))
+	c.Assert(txn.committer.commitTS, Greater, txn.startTS)
+
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TiKVClient.EnableOnePC = true
+	})
+
+	// Test multiple keys
+	k4 := []byte("k4")
+	v4 := []byte("v4")
+	k5 := []byte("k5")
+	v5 := []byte("v5")
+	k6 := []byte("k6")
+	v6 := []byte("v6")
+
+	txn = begin()
+	err = txn.Set(k4, v4)
+	c.Assert(err, IsNil)
+	err = txn.Set(k5, v5)
+	c.Assert(err, IsNil)
+	err = txn.Set(k6, v6)
+	c.Assert(err, IsNil)
+	err = txn.Commit(ctx)
+	c.Assert(err, IsNil)
+	c.Assert(txn.committer.isOnePC(), IsTrue)
+	c.Assert(txn.committer.onePCCommitTS, Equals, txn.committer.commitTS)
+	c.Assert(txn.committer.onePCCommitTS, Greater, txn.startTS)
+	// Check keys are committed with the same version
+	s.mustGetFromSnapshot(c, txn.commitTS, k4, v4)
+	s.mustGetFromSnapshot(c, txn.commitTS, k5, v5)
+	s.mustGetFromSnapshot(c, txn.commitTS, k6, v6)
+	s.mustGetNoneFromSnapshot(c, txn.commitTS-1, k4)
+	s.mustGetNoneFromSnapshot(c, txn.commitTS-1, k5)
+	s.mustGetNoneFromSnapshot(c, txn.commitTS-1, k6)
+
+	// Overwriting in MVCC
+	v6New := []byte("v6new")
+	txn = begin()
+	err = txn.Set(k6, v6New)
+	c.Assert(err, IsNil)
+	err = txn.Commit(ctx)
+	c.Assert(err, IsNil)
+	c.Assert(txn.committer.isOnePC(), IsTrue)
+	c.Assert(txn.committer.onePCCommitTS, Equals, txn.committer.commitTS)
+	c.Assert(txn.committer.onePCCommitTS, Greater, txn.startTS)
+	s.mustGetFromSnapshot(c, txn.commitTS, k6, v6New)
+	s.mustGetFromSnapshot(c, txn.commitTS-1, k6, v6)
+
+	// 1PC doesn't work if it affects multiple regions.
+	loc, err := s.store.regionCache.LocateKey(s.bo, k4)
+	c.Assert(err, IsNil)
+	newRegionID := s.cluster.AllocID()
+	newPeerID := s.cluster.AllocID()
+	s.cluster.Split(loc.Region.id, newRegionID, k4, []uint64{newPeerID}, newPeerID)
+
+	k35 := []byte("k35")
+	v35 := []byte("v35")
+	k45 := []byte("k45")
+	v45 := []byte("v45")
+	txn = begin()
+	err = txn.Set(k35, v35)
+	c.Assert(err, IsNil)
+	err = txn.Set(k45, v45)
+	c.Assert(err, IsNil)
+	err = txn.Commit(ctx)
+	c.Assert(err, IsNil)
+	c.Assert(txn.committer.isOnePC(), IsFalse)
+	c.Assert(txn.committer.onePCCommitTS, Equals, uint64(0))
+	c.Assert(txn.committer.commitTS, Greater, txn.startTS)
+
+	// Check all keys
+	keys := [][]byte{k1, k2, k3, k35, k4, k45, k5, k6}
+	values := [][]byte{v1, v2, v3, v35, v4, v45, v5, v6New}
+	ver, err := s.store.CurrentVersion()
+	c.Assert(err, IsNil)
+	snap, err := s.store.GetSnapshot(ver)
+	c.Assert(err, IsNil)
+	for i, k := range keys {
+		v, err := snap.Get(ctx, k)
+		c.Assert(err, IsNil)
+		c.Assert(v, BytesEquals, values[i])
+	}
 }
 
 type mockResolveClient struct {
