@@ -605,7 +605,7 @@ func onDropIndex(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		return ver, errors.Trace(err)
 	}
 
-	return doDropIndices(t, job, tblInfo, []*model.IndexInfo{indexInfo})
+	return doDropIndexes(t, job, tblInfo, []*model.IndexInfo{indexInfo})
 }
 
 func checkDropIndex(t *meta.Meta, job *model.Job) (*model.TableInfo, *model.IndexInfo, error) {
@@ -1169,7 +1169,7 @@ func indexColumnSliceEqual(a, b []*model.IndexColumn) bool {
 	return true
 }
 
-func doDropIndices(t *meta.Meta, job *model.Job, tblInfo *model.TableInfo, indexInfos []*model.IndexInfo) (ver int64, err error) {
+func doDropIndexes(t *meta.Meta, job *model.Job, tblInfo *model.TableInfo, indexInfos []*model.IndexInfo) (ver int64, err error) {
 	dependentHiddenCols := make([]*model.ColumnInfo, 0)
 	for _, indexInfo := range indexInfos {
 		for _, indexColumn := range indexInfo.Columns {
@@ -1184,7 +1184,7 @@ func doDropIndices(t *meta.Meta, job *model.Job, tblInfo *model.TableInfo, index
 	case model.StatePublic:
 		// public -> write only
 		job.SchemaState = model.StateWriteOnly
-		setIndicesState(indexInfos, model.StateWriteOnly)
+		setIndexesState(indexInfos, model.StateWriteOnly)
 		if len(dependentHiddenCols) > 0 {
 			firstHiddenOffset := dependentHiddenCols[0].Offset
 			for i := 0; i < len(dependentHiddenCols); i++ {
@@ -1197,7 +1197,7 @@ func doDropIndices(t *meta.Meta, job *model.Job, tblInfo *model.TableInfo, index
 	case model.StateWriteOnly:
 		// write only -> delete only
 		job.SchemaState = model.StateDeleteOnly
-		setIndicesState(indexInfos, model.StateDeleteOnly)
+		setIndexesState(indexInfos, model.StateDeleteOnly)
 		for _, indexInfo := range indexInfos {
 			updateHiddenColumns(tblInfo, indexInfo, model.StateDeleteOnly)
 		}
@@ -1205,20 +1205,20 @@ func doDropIndices(t *meta.Meta, job *model.Job, tblInfo *model.TableInfo, index
 	case model.StateDeleteOnly:
 		// delete only -> reorganization
 		job.SchemaState = model.StateDeleteReorganization
-		setIndicesState(indexInfos, model.StateDeleteReorganization)
+		setIndexesState(indexInfos, model.StateDeleteReorganization)
 		for _, indexInfo := range indexInfos {
 			updateHiddenColumns(tblInfo, indexInfo, model.StateDeleteReorganization)
 		}
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != indexInfos[0].State)
 	case model.StateDeleteReorganization:
 		// reorganization -> absent
-		newIndices := make([]*model.IndexInfo, 0, len(tblInfo.Indices))
+		newIndexes := make([]*model.IndexInfo, 0, len(tblInfo.Indices))
 		for _, idx := range tblInfo.Indices {
 			if !indexInfoContains(idx.ID, indexInfos) {
-				newIndices = append(newIndices, idx)
+				newIndexes = append(newIndexes, idx)
 			}
 		}
-		tblInfo.Indices = newIndices
+		tblInfo.Indices = newIndexes
 		// Set column index flag.
 		for _, indexInfo := range indexInfos {
 			dropIndexColumnFlag(tblInfo, indexInfo)

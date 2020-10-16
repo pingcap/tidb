@@ -80,7 +80,7 @@ func convertAddIdxJob2RollbackJob(t *meta.Meta, job *model.Job, tblInfo *model.T
 func convertDropColumnWithCompositeIdxJob2RollbackJob(t *meta.Meta, job *model.Job, tblInfo *model.TableInfo, indexInfo *model.IndexInfo, indexInfos []*model.IndexInfo, err error) (int64, error) {
 	job.State = model.JobStateRollingback
 	originalState := indexInfos[0].State
-	setIndicesState(indexInfos, model.StateDeleteOnly)
+	setIndexesState(indexInfos, model.StateDeleteOnly)
 	job.SchemaState = model.StateDeleteOnly
 	ver, err1 := updateVersionAndTableInfo(t, job, tblInfo, originalState != indexInfos[0].State)
 	if err1 != nil {
@@ -221,7 +221,7 @@ func rollingbackDropColumn(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) (
 	}
 
 	if job.State != model.JobStateNone && len(cidxInfos) > 0 && colInfo.State == model.StatePublic {
-		ctidxInfos := getTempCompositeIndices(tblInfo, cidxInfos)
+		ctidxInfos := getTempCompositeIndexes(tblInfo, cidxInfos)
 		if len(ctidxInfos) > 0 {
 			switch ctidxInfos[0].State {
 			case model.StateWriteReorganization:
@@ -271,7 +271,7 @@ func rollingbackDropColumns(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) 
 	}
 
 	if job.State != model.JobStateNone && len(cidxInfos) > 0 && colInfos[0].State == model.StatePublic {
-		ctidxInfos := getTempCompositeIndices(tblInfo, cidxInfos)
+		ctidxInfos := getTempCompositeIndexes(tblInfo, cidxInfos)
 		if len(ctidxInfos) > 0 {
 			switch ctidxInfos[0].State {
 			case model.StateWriteReorganization:

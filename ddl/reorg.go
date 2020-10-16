@@ -627,7 +627,7 @@ func runAndWaitReorgJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job, tblI
 		return ver, false, errors.Trace(err)
 	}
 
-	reorgInfo, err := getReorgInfo(d, t, job, tbl, buildIndicesElements(indexInfos))
+	reorgInfo, err := getReorgInfo(d, t, job, tbl, buildIndexesElements(indexInfos))
 	if err != nil || reorgInfo.first {
 		// If we run reorg firstly, we should update the job snapshot version
 		// and then run the reorg next time.
