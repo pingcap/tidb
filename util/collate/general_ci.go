@@ -22,15 +22,6 @@ import (
 type generalCICollator struct {
 }
 
-func sign(i int) int {
-	if i < 0 {
-		return -1
-	} else if i > 0 {
-		return 1
-	}
-	return 0
-}
-
 // compilePatternGeneralCI handles escapes and wild cards, generate pattern weights and types.
 // This function is modified from stringutil.CompilePattern.
 func compilePatternGeneralCI(pattern string, escape byte) (patWeights []uint16, patTypes []byte) {

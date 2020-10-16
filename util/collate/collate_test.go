@@ -199,6 +199,7 @@ func (s *testCollateSuite) TestGetCollator(c *C) {
 	c.Assert(GetCollator("utf8_general_ci"), FitsTypeOf, &generalCICollator{})
 	c.Assert(GetCollator("utf8mb4_unicode_ci"), FitsTypeOf, &unicodeCICollator{})
 	c.Assert(GetCollator("utf8_unicode_ci"), FitsTypeOf, &unicodeCICollator{})
+	c.Assert(GetCollator("utf8mb4_general_zh_ci"), FitsTypeOf, &generalZhCICollator{})
 	c.Assert(GetCollator("default_test"), FitsTypeOf, &binPaddingCollator{})
 	c.Assert(GetCollatorByID(63), FitsTypeOf, &binCollator{})
 	c.Assert(GetCollatorByID(46), FitsTypeOf, &binPaddingCollator{})
@@ -207,6 +208,7 @@ func (s *testCollateSuite) TestGetCollator(c *C) {
 	c.Assert(GetCollatorByID(33), FitsTypeOf, &generalCICollator{})
 	c.Assert(GetCollatorByID(224), FitsTypeOf, &unicodeCICollator{})
 	c.Assert(GetCollatorByID(192), FitsTypeOf, &unicodeCICollator{})
+	c.Assert(GetCollatorByID(2048), FitsTypeOf, &generalZhCICollator{})
 	c.Assert(GetCollatorByID(9999), FitsTypeOf, &binPaddingCollator{})
 
 	SetNewCollationEnabledForTest(false)
@@ -217,6 +219,7 @@ func (s *testCollateSuite) TestGetCollator(c *C) {
 	c.Assert(GetCollator("utf8_general_ci"), FitsTypeOf, &binCollator{})
 	c.Assert(GetCollator("utf8mb4_unicode_ci"), FitsTypeOf, &binCollator{})
 	c.Assert(GetCollator("utf8_unicode_ci"), FitsTypeOf, &binCollator{})
+	c.Assert(GetCollator("utf8mb4_general_zh_ci"), FitsTypeOf, &binCollator{})
 	c.Assert(GetCollator("default_test"), FitsTypeOf, &binCollator{})
 	c.Assert(GetCollatorByID(63), FitsTypeOf, &binCollator{})
 	c.Assert(GetCollatorByID(46), FitsTypeOf, &binCollator{})
@@ -225,5 +228,6 @@ func (s *testCollateSuite) TestGetCollator(c *C) {
 	c.Assert(GetCollatorByID(33), FitsTypeOf, &binCollator{})
 	c.Assert(GetCollatorByID(224), FitsTypeOf, &binCollator{})
 	c.Assert(GetCollatorByID(192), FitsTypeOf, &binCollator{})
+	c.Assert(GetCollatorByID(2048), FitsTypeOf, &binCollator{})
 	c.Assert(GetCollatorByID(9999), FitsTypeOf, &binCollator{})
 }

@@ -174,17 +174,16 @@ func FieldTypeFromPB(ft *tipb.FieldType) *types.FieldType {
 }
 
 func collationToProto(c string) int32 {
-	if v, ok := mysql.CollationNames[c]; ok {
-		return collate.RewriteNewCollationIDIfNeeded(int32(v))
+	v := int32(collate.CollationName2ID(c))
+	if v == mysql.DefaultCollationID && c != mysql.DefaultCollationName {
+		logutil.BgLogger().Warn(
+			"Unable to get collation ID by name, use ID of the default collation instead",
+			zap.String("name", c),
+			zap.Int32("default collation ID", v),
+			zap.String("default collation", mysql.DefaultCollationName),
+		)
 	}
-	v := collate.RewriteNewCollationIDIfNeeded(int32(mysql.DefaultCollationID))
-	logutil.BgLogger().Warn(
-		"Unable to get collation ID by name, use ID of the default collation instead",
-		zap.String("name", c),
-		zap.Int32("default collation ID", v),
-		zap.String("default collation", mysql.DefaultCollationName),
-	)
-	return v
+	return collate.RewriteNewCollationIDIfNeeded(v)
 }
 
 func protoToCollation(c int32) string {

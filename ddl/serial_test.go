@@ -1272,6 +1272,7 @@ func (s *testSerialSuite) TestModifyingColumn4NewCollations(c *C) {
 	tk.MustExec("alter table t convert to charset utf8 collate utf8_general_ci")
 	tk.MustExec("alter table t modify b varchar(10) collate utf8_unicode_ci")
 	tk.MustExec("alter table t modify b varchar(10) collate utf8_bin")
+	tk.MustExec("alter table t modify b varchar(10) collate utf8mb4_general_zh_ci")
 
 	tk.MustExec("alter table t add index b_idx(b)")
 	tk.MustExec("alter table t add index c_idx(c)")

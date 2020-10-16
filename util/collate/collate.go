@@ -175,6 +175,15 @@ func CollationID2Name(id int32) string {
 	return name
 }
 
+// CollationName2ID return the collation id by the given name.
+// If the name is not found in the map, the default collation id is returned
+func CollationName2ID(name string) int {
+	if coll, err := charset.GetCollationByName(name); err == nil {
+		return coll.ID
+	}
+	return mysql.DefaultCollationID
+}
+
 // GetCollationByName wraps charset.GetCollationByName, it checks the collation.
 func GetCollationByName(name string) (coll *charset.Collation, err error) {
 	if coll, err = charset.GetCollationByName(name); err != nil {
@@ -220,10 +229,20 @@ func truncateTailingSpace(str string) string {
 	return str
 }
 
+func sign(i int) int {
+	if i < 0 {
+		return -1
+	} else if i > 0 {
+		return 1
+	}
+	return 0
+}
+
 // IsCICollation returns if the collation is case-sensitive
 func IsCICollation(collate string) bool {
 	return collate == "utf8_general_ci" || collate == "utf8mb4_general_ci" ||
-		collate == "utf8_unicode_ci" || collate == "utf8mb4_unicode_ci"
+		collate == "utf8_unicode_ci" || collate == "utf8mb4_unicode_ci" ||
+		collate == "utf8mb4_general_zh_ci"
 }
 
 func init() {
@@ -231,21 +250,23 @@ func init() {
 	newCollatorIDMap = make(map[int]Collator)
 
 	newCollatorMap["binary"] = &binCollator{}
-	newCollatorIDMap[int(mysql.CollationNames["binary"])] = &binCollator{}
+	newCollatorIDMap[CollationName2ID("binary")] = &binCollator{}
 	newCollatorMap["ascii_bin"] = &binPaddingCollator{}
-	newCollatorIDMap[int(mysql.CollationNames["ascii_bin"])] = &binPaddingCollator{}
+	newCollatorIDMap[CollationName2ID("ascii_bin")] = &binPaddingCollator{}
 	newCollatorMap["latin1_bin"] = &binPaddingCollator{}
-	newCollatorIDMap[int(mysql.CollationNames["latin1_bin"])] = &binPaddingCollator{}
+	newCollatorIDMap[CollationName2ID("latin1_bin")] = &binPaddingCollator{}
 	newCollatorMap["utf8mb4_bin"] = &binPaddingCollator{}
-	newCollatorIDMap[int(mysql.CollationNames["utf8mb4_bin"])] = &binPaddingCollator{}
+	newCollatorIDMap[CollationName2ID("utf8mb4_bin")] = &binPaddingCollator{}
 	newCollatorMap["utf8_bin"] = &binPaddingCollator{}
-	newCollatorIDMap[int(mysql.CollationNames["utf8_bin"])] = &binPaddingCollator{}
+	newCollatorIDMap[CollationName2ID("utf8_bin")] = &binPaddingCollator{}
 	newCollatorMap["utf8mb4_general_ci"] = &generalCICollator{}
-	newCollatorIDMap[int(mysql.CollationNames["utf8mb4_general_ci"])] = &generalCICollator{}
+	newCollatorIDMap[CollationName2ID("utf8mb4_general_ci")] = &generalCICollator{}
 	newCollatorMap["utf8_general_ci"] = &generalCICollator{}
-	newCollatorIDMap[int(mysql.CollationNames["utf8_general_ci"])] = &generalCICollator{}
+	newCollatorIDMap[CollationName2ID("utf8_general_ci")] = &generalCICollator{}
 	newCollatorMap["utf8mb4_unicode_ci"] = &unicodeCICollator{}
-	newCollatorIDMap[int(mysql.CollationNames["utf8mb4_unicode_ci"])] = &unicodeCICollator{}
+	newCollatorIDMap[CollationName2ID("utf8mb4_unicode_ci")] = &unicodeCICollator{}
 	newCollatorMap["utf8_unicode_ci"] = &unicodeCICollator{}
-	newCollatorIDMap[int(mysql.CollationNames["utf8_unicode_ci"])] = &unicodeCICollator{}
+	newCollatorIDMap[CollationName2ID("utf8_unicode_ci")] = &unicodeCICollator{}
+	newCollatorMap["utf8mb4_general_zh_ci"] = &generalZhCICollator{}
+	newCollatorIDMap[CollationName2ID("utf8mb4_general_zh_ci")] = &generalZhCICollator{}
 }

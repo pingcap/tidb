@@ -1236,6 +1236,7 @@ func (s *seqTestSuite) TestShowForNewCollations(c *C) {
 		"utf8mb4_bin utf8mb4 46 Yes Yes 1",
 		"utf8mb4_general_ci utf8mb4 45  Yes 1",
 		"utf8mb4_unicode_ci utf8mb4 224  Yes 1",
+		"utf8mb4_general_zh_ci utf8mb4 2048  Yes 1",
 	)
 	tk.MustQuery("show collation").Check(expectRows)
 	tk.MustQuery("select * from information_schema.COLLATIONS").Check(expectRows)
