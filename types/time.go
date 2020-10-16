@@ -1344,14 +1344,6 @@ func parseDateTimeFromNum(sc *stmtctx.StatementContext, num int64) (Time, error)
 		return getTime(sc, num, t.Type)
 	}
 
-<<<<<<< HEAD
-	// Check YYYYMMDD.
-	if num < 10000101 {
-		return t, errors.Trace(ErrInvalidTimeFormat.GenWithStackByArgs(num))
-	}
-
-=======
->>>>>>> 8ed9a6ff6... expression: fix TIMESTAMP func get wrong result with decimal (#15185) (#20088)
 	// Adjust hour/min/second.
 	if num <= 99991231 {
 		num = num * 1000000
