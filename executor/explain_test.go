@@ -74,6 +74,7 @@ func (s *testSuite1) TestExplainCartesianJoin(c *C) {
 		{"explain select * from t t1 where exists (select 1 from t t2 where t2.v > t1.v)", true},
 		{"explain select * from t t1 where exists (select 1 from t t2 where t2.v in (t1.v+1, t1.v+2))", true},
 		{"explain select * from t t1, t t2 where t1.v = t2.v", false},
+		{"explain select * from t t1, t t2 where t1.v = 1 and t2.v = t1.v", false},
 	}
 
 	runner := func(setReorder bool) {
@@ -115,7 +116,6 @@ func (s *testSuite1) TestExplainCartesianJoin(c *C) {
 		}
 		c.Assert(ok, Equals, ca.isCartesianJoin)
 	}
-
 }
 
 func (s *testSuite1) TestExplainWrite(c *C) {
