@@ -244,7 +244,7 @@ func (s *testUpdateSuite) TestUpdateMultiAliasesTable(c *C) {
 	tk.MustExec("update t t1, t t2 set t2.y=1, t1.x=2")
 	tk.MustQuery("select * from t").Check(testkit.Rows("2 1"))
 
-	tk.MustExec("udpate t t1, t t2 set t1.x=t2.y, t2.y=t1.x")
+	tk.MustExec("update t t1, t t2 set t1.x=t2.y, t2.y=t1.x")
 	tk.MustQuery("select * from t").Check(testkit.Rows("1 2"))
 }
 

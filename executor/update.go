@@ -30,7 +30,7 @@ import (
 	"github.com/pingcap/tidb/util/memory"
 )
 
-type rowKey struct {
+type tableKey struct {
 	tbl int64
 	col int
 }
@@ -41,9 +41,12 @@ type UpdateExec struct {
 
 	OrderedList []*expression.Assignment
 
-	// updatedRowKeys is a map for unique (Table, handle) pair.
+	// updatedRowKeys is a map for unique (<Table, Alias(Column Index)>, handle) pair.
 	// The value is true if the row is changed, or false otherwise
-	updatedRowKeys map[rowKey]*kv.HandleMap
+	updatedRowKeys map[tableKey]*kv.HandleMap
+	// updatedRowData is a map for unique (Table, handle) pair.
+	// The value is cached table row
+	updatedRowData map[int64]*kv.HandleMap
 	tblID2table    map[int64]table.Table
 
 	matched uint64 // a counter of matched rows during update
@@ -65,12 +68,18 @@ func (e *UpdateExec) exec(ctx context.Context, schema *expression.Schema, row, n
 		return err
 	}
 	if e.updatedRowKeys == nil {
-		e.updatedRowKeys = make(map[rowKey]*kv.HandleMap)
+		e.updatedRowKeys = make(map[tableKey]*kv.HandleMap)
+	}
+	if e.updatedRowData == nil {
+		e.updatedRowData = make(map[int64]*kv.HandleMap)
 	}
 	for _, content := range e.tblColPosInfos {
 		tbl := e.tblID2table[content.TblID]
-		if e.updatedRowKeys[rowKey{content.TblID, content.Start}] == nil {
-			e.updatedRowKeys[rowKey{content.TblID, content.Start}] = kv.NewHandleMap()
+		if e.updatedRowKeys[tableKey{content.TblID, content.Start}] == nil {
+			e.updatedRowKeys[tableKey{content.TblID, content.Start}] = kv.NewHandleMap()
+		}
+		if e.updatedRowData[content.TblID] == nil {
+			e.updatedRowData[content.TblID] = kv.NewHandleMap()
 		}
 		var handle kv.Handle
 		handle, err = content.HandleCols.BuildHandleByDatums(row)
@@ -93,18 +102,8 @@ func (e *UpdateExec) exec(ctx context.Context, schema *expression.Schema, row, n
 			continue
 		}
 
-		interimData, err := tbl.RowWithCols(e.ctx, handle, tbl.WritableCols())
-		if err == nil {
-			for i := 0; i < len(flags) && i < len(interimData); i++ {
-				if !flags[i] {
-					interimData[i].Copy(&oldData[i])
-					interimData[i].Copy(&newTableData[i])
-				}
-			}
-		}
-
 		var changed bool
-		v, ok := e.updatedRowKeys[rowKey{content.TblID, content.Start}].Get(handle)
+		v, ok := e.updatedRowKeys[tableKey{content.TblID, content.Start}].Get(handle)
 		if !ok {
 			// Row is matched for the first time, increment `matched` counter
 			e.matched++
@@ -116,10 +115,26 @@ func (e *UpdateExec) exec(ctx context.Context, schema *expression.Schema, row, n
 			continue
 		}
 
+		var updatedData []types.Datum
+		v, ok = e.updatedRowData[content.TblID].Get(handle)
+		if !ok {
+			updatedData = make([]types.Datum, len(oldData))
+			copy(updatedData, oldData)
+		} else {
+			updatedData = v.([]types.Datum)
+			for i, flag := range flags {
+				if !flag {
+					updatedData[i].Copy(&newTableData[i])
+				}
+			}
+		}
+
 		// Update row
-		changed, err1 := updateRecord(ctx, e.ctx, handle, oldData, newTableData, flags, tbl, false, e.memTracker)
+		changed, err1 := updateRecord(ctx, e.ctx, handle, updatedData, newTableData, flags, tbl, false, e.memTracker)
 		if err1 == nil {
-			e.updatedRowKeys[rowKey{content.TblID, content.Start}].Set(handle, changed)
+			e.updatedRowKeys[tableKey{content.TblID, content.Start}].Set(handle, changed)
+			copy(updatedData, newTableData)
+			e.updatedRowData[content.TblID].Set(handle, updatedData)
 			continue
 		}
 
