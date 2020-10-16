@@ -1,7 +1,7 @@
 # Proposal: support `pinyin` order for `utf8mb4` charset
 
 - Author(s):     [xiongjiwei](https://github.com/xiongjiwei)
-- Last updated:  2020-09-20
+- Last updated:  2020-10-16
 - Discussion at: https://github.com/pingcap/tidb/issues/19747
 
 ## Abstract
@@ -54,11 +54,13 @@ select convert(a using gbk) collate gbk_chinese_ci like 'regex';
 
 ### Advantages
 
-It's a lot of work if implements `utf8mb4_zh_0900_as_cs`. The implementation of MySQL looks complicated with weight reorders, magic numbers, and some sort of trick. Before `utf8mb4_zh_0900_as_cs` collation, user archive 'pinyin' order by order by `convert(... using gbk)`, it is much easier if implements `utf8mb4_general_zh_ci` exactly the same with `gbk_chinese_ci`.
+It's a lot of work if implements `utf8mb4_zh_0900_as_cs`. The implementation of MySQL looks complicated with weight reorders, magic numbers, and some sort of trick. Before `utf8mb4_zh_0900_as_cs` collation, user archive `pinyin` order by order by `convert(... using gbk)`, it is much easier if implements `utf8mb4_general_zh_ci` exactly the same with `gbk_chinese_ci`.
 
 ### Disadvantages
 
 It is not compatible with MySQL.
+
+Do not support all chinese character
 
 ## Rationale
 
