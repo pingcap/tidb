@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/store/tikv/oracle"
@@ -959,29 +960,45 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 		logutil.SetTag(ctx, "commitTs", commitTS)
 	}
 
-	tryAmend := c.isPessimistic && c.connID > 0 && !c.isAsyncCommit() && c.txn.schemaAmender != nil
-	if !tryAmend {
-		_, _, err = c.checkSchemaValid(ctx, commitTS, c.txn.txnInfoSchema, false)
+	if c.connID > 0 {
+		failpoint.Inject("beforeSchemaCheck", func() {
+			failpoint.Return()
+		})
+	}
+
+	if c.isAsyncCommit() {
+		schemaVerIsTheSame, err := checkSchemaVersionForAsyncCommit(ctx, c.startTS, commitTS, c.store)
 		if err != nil {
 			return errors.Trace(err)
+		}
+		if !schemaVerIsTheSame {
+			return errors.Trace(errors.Errorf("Schema changed for async commit startTS=%v commitTS=%v", c.startTS, commitTS))
 		}
 	} else {
-		relatedSchemaChange, memAmended, err := c.checkSchemaValid(ctx, commitTS, c.txn.txnInfoSchema, true)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if memAmended {
-			// Get new commitTS and check schema valid again.
-			newCommitTS, err := c.getCommitTS(ctx, commitDetail)
+		tryAmend := c.isPessimistic && c.connID > 0 && c.txn.schemaAmender != nil
+		if !tryAmend {
+			_, _, err = c.checkSchemaValid(ctx, commitTS, c.txn.txnInfoSchema, false)
 			if err != nil {
 				return errors.Trace(err)
 			}
-			// If schema check failed between commitTS and newCommitTs, report schema change error.
-			_, _, err = c.checkSchemaValid(ctx, newCommitTS, relatedSchemaChange.LatestInfoSchema, false)
+		} else {
+			relatedSchemaChange, memAmended, err := c.checkSchemaValid(ctx, commitTS, c.txn.txnInfoSchema, true)
 			if err != nil {
 				return errors.Trace(err)
 			}
-			commitTS = newCommitTS
+			if memAmended {
+				// Get new commitTS and check schema valid again.
+				newCommitTS, err := c.getCommitTS(ctx, commitDetail)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				// If schema check failed between commitTS and newCommitTs, report schema change error.
+				_, _, err = c.checkSchemaValid(ctx, newCommitTS, relatedSchemaChange.LatestInfoSchema, false)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				commitTS = newCommitTS
+			}
 		}
 	}
 	c.commitTS = commitTS
@@ -999,8 +1016,9 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 	if c.isAsyncCommit() {
 		// For async commit protocol, the commit is considered success here.
 		c.txn.commitTS = c.commitTS
-		logutil.Logger(ctx).Info("2PC will use async commit protocol to commit this txn", zap.Uint64("startTS", c.startTS),
-			zap.Uint64("commitTS", c.commitTS))
+		logutil.Logger(ctx).Info("2PC will use async commit protocol to commit this txn",
+			zap.Uint64("startTS", c.startTS), zap.Uint64("commitTS", c.commitTS),
+			zap.Uint64("connID", c.connID))
 		go func() {
 			failpoint.Inject("asyncCommitDoNothing", func() {
 				failpoint.Return()
@@ -1475,4 +1493,32 @@ func (c *twoPhaseCommitter) getUndeterminedErr() error {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.mu.undeterminedErr
+}
+
+// checkSchemaVersionForAsyncCommit is used to check schema version change for async commit transactions
+// only. For async commit protocol, we need to make sure the check result is the same during common execution
+// path and the recovery path. As the schema lease checker has a limited size of cached schema diff version, it's
+// possible the schema cache is changed and the schema lease checker can't decide if the related table has
+// schema version change. So we just check the version from meta snapshot, it's much stricter.
+func checkSchemaVersionForAsyncCommit(ctx context.Context, startTS uint64, commitTS uint64, store Storage) (bool, error) {
+	if commitTS > 0 {
+		snapshotAtStart := store.GetSnapshot(kv.NewVersion(startTS))
+		snapShotAtCommit := store.GetSnapshot(kv.NewVersion(commitTS))
+		schemaVerAtStart, err := meta.NewSnapshotMeta(snapshotAtStart).GetSchemaVersion()
+		if err != nil {
+			return false, errors.Trace(err)
+		}
+		schemaVerAtCommit, err := meta.NewSnapshotMeta(snapShotAtCommit).GetSchemaVersion()
+		if err != nil {
+			return false, errors.Trace(err)
+		}
+		if schemaVerAtStart != schemaVerAtCommit {
+			logutil.Logger(ctx).Info("async commit txn need to rollback since schema version has changed",
+				zap.Uint64("startTS", startTS), zap.Uint64("commitTS", commitTS),
+				zap.Int64("schema version at start", schemaVerAtStart),
+				zap.Int64("schema version at commit", schemaVerAtCommit))
+			return false, nil
+		}
+	}
+	return true, nil
 }

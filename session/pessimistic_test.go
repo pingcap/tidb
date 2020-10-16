@@ -815,6 +815,145 @@ func (s *testPessimisticSuite) TestBatchPointGetWriteConflict(c *C) {
 	tk1.MustExec("commit")
 }
 
+func (s *testPessimisticSuite) TestPessimisticSerializable(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("use test")
+	tk1 := testkit.NewTestKitWithInit(c, s.store)
+	tk1.MustExec("use test")
+
+	tk.MustExec("set tidb_txn_mode = 'pessimistic'")
+	tk1.MustExec("set tidb_txn_mode = 'pessimistic'")
+
+	tk.MustExec("drop table if exists test;")
+	tk.MustExec("create table test (id int not null primary key, value int);")
+	tk.MustExec("insert into test (id, value) values (1, 10);")
+	tk.MustExec("insert into test (id, value) values (2, 20);")
+
+	tk.MustExec("set tidb_skip_isolation_level_check = 1")
+	tk1.MustExec("set tidb_skip_isolation_level_check = 1")
+	tk.MustExec("set tx_isolation = 'SERIALIZABLE'")
+	tk1.MustExec("set tx_isolation = 'SERIALIZABLE'")
+
+	// Predicate-Many-Preceders (PMP)
+	tk.MustExec("begin")
+	tk1.MustExec("begin")
+	tk.MustQuery("select * from test where value = 30;").Check(testkit.Rows())
+	tk1.MustExec("insert into test (id, value) values(3, 30);")
+	tk1.MustExec("commit")
+	tk.MustQuery("select * from test where mod(value, 3) = 0;").Check(testkit.Rows())
+	tk.MustExec("commit")
+
+	tk.MustExec("truncate table test;")
+	tk.MustExec("insert into test (id, value) values (1, 10);")
+	tk.MustExec("insert into test (id, value) values (2, 20);")
+
+	tk.MustExec("begin;")
+	tk1.MustExec("begin;")
+	tk.MustExec("update test set value = value + 10;")
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		tk1.ExecToErr("delete from test where value = 20;")
+		wg.Done()
+	}()
+	tk.MustExec("commit;")
+	wg.Wait()
+	tk1.MustExec("rollback;")
+
+	// Lost Update (P4)
+	tk.MustExec("truncate table test;")
+	tk.MustExec("insert into test (id, value) values (1, 10);")
+	tk.MustExec("insert into test (id, value) values (2, 20);")
+
+	tk.MustExec("begin;")
+	tk1.MustExec("begin;")
+	tk.MustQuery("select * from test where id = 1;").Check(testkit.Rows("1 10"))
+	tk1.MustQuery("select * from test where id = 1;").Check(testkit.Rows("1 10"))
+	tk.MustExec("update test set value = 11 where id = 1;")
+
+	wg.Add(1)
+	go func() {
+		tk1.ExecToErr("update test set value = 11 where id = 1;")
+		wg.Done()
+	}()
+	tk.MustExec("commit;")
+	wg.Wait()
+	tk1.MustExec("rollback;")
+
+	// Read Skew (G-single)
+	tk.MustExec("truncate table test;")
+	tk.MustExec("insert into test (id, value) values (1, 10);")
+	tk.MustExec("insert into test (id, value) values (2, 20);")
+
+	tk.MustExec("begin;")
+	tk1.MustExec("begin;")
+	tk.MustQuery("select * from test where id = 1;").Check(testkit.Rows("1 10"))
+	tk1.MustQuery("select * from test where id = 1;").Check(testkit.Rows("1 10"))
+	tk1.MustQuery("select * from test where id = 2;").Check(testkit.Rows("2 20"))
+	tk1.MustExec("update test set value = 12 where id = 1;")
+	tk1.MustExec("update test set value = 18 where id = 1;")
+	tk1.MustExec("commit;")
+	tk.MustQuery("select * from test where id = 2;").Check(testkit.Rows("2 20"))
+	tk.MustExec("commit;")
+
+	tk.MustExec("truncate table test;")
+	tk.MustExec("insert into test (id, value) values (1, 10);")
+	tk.MustExec("insert into test (id, value) values (2, 20);")
+
+	tk.MustExec("begin;")
+	tk1.MustExec("begin;")
+	tk.MustQuery("select * from test where mod(value, 5) = 0;").Check(testkit.Rows("1 10", "2 20"))
+	tk1.MustExec("update test set value = 12 where value = 10;")
+	tk1.MustExec("commit;")
+	tk.MustQuery("select * from test where mod(value, 3) = 0;").Check(testkit.Rows())
+	tk.MustExec("commit;")
+
+	tk.MustExec("truncate table test;")
+	tk.MustExec("insert into test (id, value) values (1, 10);")
+	tk.MustExec("insert into test (id, value) values (2, 20);")
+
+	tk.MustExec("begin;")
+	tk1.MustExec("begin;")
+	tk.MustQuery("select * from test where id = 1;").Check(testkit.Rows("1 10"))
+	tk1.MustQuery("select * from test;").Check(testkit.Rows("1 10", "2 20"))
+	tk1.MustExec("update test set value = 12 where id = 1;")
+	tk1.MustExec("update test set value = 18 where id = 1;")
+	tk1.MustExec("commit;")
+	tk.ExecToErr("delete from test where value = 20;")
+	tk.MustExec("rollback;")
+
+	// Write Skew (G2-item)
+	tk.MustExec("truncate table test;")
+	tk.MustExec("insert into test (id, value) values (1, 10);")
+	tk.MustExec("insert into test (id, value) values (2, 20);")
+
+	tk.MustExec("begin;")
+	tk1.MustExec("begin;")
+	tk.MustQuery("select * from test where id in (1,2);").Check(testkit.Rows("1 10", "2 20"))
+	tk1.MustQuery("select * from test where id in (1,2);").Check(testkit.Rows("1 10", "2 20"))
+	tk1.MustExec("update test set value = 11 where id = 1;")
+	tk1.MustExec("update test set value = 21 where id = 2;")
+	tk.MustExec("commit;")
+	tk1.MustExec("commit;")
+	tk.MustQuery("select * from test;").Check(testkit.Rows("1 11", "2 21"))
+
+	// Anti-Dependency Cycles (G2)
+	tk.MustExec("truncate table test;")
+	tk.MustExec("insert into test (id, value) values (1, 10);")
+	tk.MustExec("insert into test (id, value) values (2, 20);")
+
+	tk.MustExec("begin;")
+	tk1.MustExec("begin;")
+	tk.MustQuery("select * from test where mod(value, 3) = 0;").Check(testkit.Rows())
+	tk1.MustQuery("select * from test where mod(value, 5) = 0;").Check(testkit.Rows("1 10", "2 20"))
+	tk.MustExec("insert into test (id, value) values(3, 30);")
+	tk1.MustExec("insert into test (id, value) values(4, 60);")
+	tk.MustExec("commit;")
+	tk1.MustExec("commit;")
+	tk.MustQuery("select * from test where mod(value, 3) = 0;").Check(testkit.Rows("3 30", "4 60"))
+}
+
 func (s *testPessimisticSuite) TestPessimisticReadCommitted(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("use test")
@@ -1823,4 +1962,34 @@ func (s *testPessimisticSuite) TestSelectForUpdateConflictRetry(c *C) {
 	// it must get a new ts on pessimistic write conflict so the latest timestamp
 	// should increase
 	c.Assert(tk3LastTs, Greater, tk2LastTS)
+}
+
+func (s *testPessimisticSuite) TestAsyncCommitWithSchemaChange(c *C) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TiKVClient.AsyncCommit.Enable = true
+	})
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/beforeSchemaCheck", "return"), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/beforeSchemaCheck"), IsNil)
+	}()
+
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists tk")
+	tk.MustExec("create table tk (c1 int primary key, c2 int)")
+	tk.MustExec("insert into tk values(1,1),(2,2)")
+	tk2 := testkit.NewTestKitWithInit(c, s.store)
+	tk3 := testkit.NewTestKitWithInit(c, s.store)
+
+	// The txn tk writes something but with failpoint the primary key is not committed.
+	tk.MustExec("begin optimistic")
+	// Change the schema version.
+	tk2.MustExec("alter table tk add column c3 int after c2")
+	tk.MustExec("insert into tk values(3, 3)")
+	tk.MustExec("commit")
+
+	// Trigger the recovery process, the left locks should not be committed.
+	tk3.MustExec("begin")
+	tk3.MustQuery("select * from tk").Check(testkit.Rows("1 1 <nil>", "2 2 <nil>"))
+	tk3.MustExec("rollback")
 }
