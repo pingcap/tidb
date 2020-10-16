@@ -371,28 +371,8 @@ type Status struct {
 
 // Performance is the performance section of the config.
 type Performance struct {
-<<<<<<< HEAD
-	MaxProcs             uint    `toml:"max-procs" json:"max-procs"`
-	MaxMemory            uint64  `toml:"max-memory" json:"max-memory"`
-	StatsLease           string  `toml:"stats-lease" json:"stats-lease"`
-	StmtCountLimit       uint    `toml:"stmt-count-limit" json:"stmt-count-limit"`
-	FeedbackProbability  float64 `toml:"feedback-probability" json:"feedback-probability"`
-	QueryFeedbackLimit   uint    `toml:"query-feedback-limit" json:"query-feedback-limit"`
-	PseudoEstimateRatio  float64 `toml:"pseudo-estimate-ratio" json:"pseudo-estimate-ratio"`
-	ForcePriority        string  `toml:"force-priority" json:"force-priority"`
-	BindInfoLease        string  `toml:"bind-info-lease" json:"bind-info-lease"`
-	TxnTotalSizeLimit    uint64  `toml:"txn-total-size-limit" json:"txn-total-size-limit"`
-	TCPKeepAlive         bool    `toml:"tcp-keep-alive" json:"tcp-keep-alive"`
-	CrossJoin            bool    `toml:"cross-join" json:"cross-join"`
-	RunAutoAnalyze       bool    `toml:"run-auto-analyze" json:"run-auto-analyze"`
-	DistinctAggPushDown  bool    `toml:"distinct-agg-push-down" json:"agg-push-down-join"`
-	CommitterConcurrency int     `toml:"committer-concurrency" json:"committer-concurrency"`
-	MaxTxnTTL            uint64  `toml:"max-txn-ttl" json:"max-txn-ttl"`
-=======
-	MaxProcs uint `toml:"max-procs" json:"max-procs"`
-	// Deprecated: use ServerMemoryQuota instead
+	MaxProcs              uint    `toml:"max-procs" json:"max-procs"`
 	MaxMemory             uint64  `toml:"max-memory" json:"max-memory"`
-	ServerMemoryQuota     uint64  `toml:"server-memory-quota" json:"server-memory-quota"`
 	MemoryUsageAlarmRatio float64 `toml:"memory-usage-alarm-ratio" json:"memory-usage-alarm-ratio"`
 	StatsLease            string  `toml:"stats-lease" json:"stats-lease"`
 	StmtCountLimit        uint    `toml:"stmt-count-limit" json:"stmt-count-limit"`
@@ -401,7 +381,6 @@ type Performance struct {
 	PseudoEstimateRatio   float64 `toml:"pseudo-estimate-ratio" json:"pseudo-estimate-ratio"`
 	ForcePriority         string  `toml:"force-priority" json:"force-priority"`
 	BindInfoLease         string  `toml:"bind-info-lease" json:"bind-info-lease"`
-	TxnEntrySizeLimit     uint64  `toml:"txn-entry-size-limit" json:"txn-entry-size-limit"`
 	TxnTotalSizeLimit     uint64  `toml:"txn-total-size-limit" json:"txn-total-size-limit"`
 	TCPKeepAlive          bool    `toml:"tcp-keep-alive" json:"tcp-keep-alive"`
 	CrossJoin             bool    `toml:"cross-join" json:"cross-join"`
@@ -409,9 +388,6 @@ type Performance struct {
 	DistinctAggPushDown   bool    `toml:"distinct-agg-push-down" json:"agg-push-down-join"`
 	CommitterConcurrency  int     `toml:"committer-concurrency" json:"committer-concurrency"`
 	MaxTxnTTL             uint64  `toml:"max-txn-ttl" json:"max-txn-ttl"`
-	MemProfileInterval    string  `toml:"mem-profile-interval" json:"mem-profile-interval"`
-	IndexUsageSyncLease   string  `toml:"index-usage-sync-lease" json:"index-usage-sync-lease"`
->>>>>>> 9958875f4... util: record sqls and heap profile when memory usage is higher than 80% system memory. (#18858)
 }
 
 // PlanCache is the PlanCache section of the config.
@@ -633,44 +609,22 @@ var defaultConf = Config{
 		RecordQPSbyDB:   false,
 	},
 	Performance: Performance{
-<<<<<<< HEAD
-		MaxMemory:            0,
-		TCPKeepAlive:         true,
-		CrossJoin:            true,
-		StatsLease:           "3s",
-		RunAutoAnalyze:       true,
-		StmtCountLimit:       5000,
-		FeedbackProbability:  0.0,
-		QueryFeedbackLimit:   512,
-		PseudoEstimateRatio:  0.8,
-		ForcePriority:        "NO_PRIORITY",
-		BindInfoLease:        "3s",
-		TxnTotalSizeLimit:    DefTxnTotalSizeLimit,
-		DistinctAggPushDown:  false,
-		CommitterConcurrency: 16,
-		MaxTxnTTL:            10 * 60 * 1000, // 10min
-=======
 		MaxMemory:             0,
-		ServerMemoryQuota:     0,
 		MemoryUsageAlarmRatio: 0.8,
 		TCPKeepAlive:          true,
 		CrossJoin:             true,
 		StatsLease:            "3s",
 		RunAutoAnalyze:        true,
 		StmtCountLimit:        5000,
-		FeedbackProbability:   0.05,
+		FeedbackProbability:   0.0,
 		QueryFeedbackLimit:    512,
 		PseudoEstimateRatio:   0.8,
 		ForcePriority:         "NO_PRIORITY",
 		BindInfoLease:         "3s",
-		TxnEntrySizeLimit:     DefTxnEntrySizeLimit,
 		TxnTotalSizeLimit:     DefTxnTotalSizeLimit,
 		DistinctAggPushDown:   false,
 		CommitterConcurrency:  16,
-		MaxTxnTTL:             60 * 60 * 1000, // 1hour
-		MemProfileInterval:    "1m",
-		IndexUsageSyncLease:   "60s",
->>>>>>> 9958875f4... util: record sqls and heap profile when memory usage is higher than 80% system memory. (#18858)
+		MaxTxnTTL:             10 * 60 * 1000, // 10min
 	},
 	ProxyProtocol: ProxyProtocol{
 		Networks:      "",
