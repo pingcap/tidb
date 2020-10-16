@@ -331,3 +331,14 @@ func checkAutoIncrementRef(name string, dependencies map[string]struct{}, tbInfo
 	}
 	return nil
 }
+
+// checkExpressionIndexAutoIncrement checks if an generated column depends on an auto-increment column and raises an error if so.
+func checkExpressionIndexAutoIncrement(name string, dependencies map[string]struct{}, tbInfo *model.TableInfo) error {
+	exists, autoIncrementColumn := infoschema.HasAutoIncrementColumn(tbInfo)
+	if exists {
+		if _, found := dependencies[autoIncrementColumn]; found {
+			return ErrExpressionIndexCanNotRefer.GenWithStackByArgs(name)
+		}
+	}
+	return nil
+}
