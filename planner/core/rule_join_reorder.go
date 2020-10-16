@@ -87,13 +87,13 @@ func (s *joinReOrderSolver) optimizeRecursive(ctx sessionctx.Context, p LogicalP
 			dpSolver.newJoin = dpSolver.newJoinWithEdges
 			np, err = dpSolver.solve(curJoinGroup, expression.ScalarFuncs2Exprs(eqEdges))
 		}
+		if err != nil {
+			return nil, err
+		}
 		newJoin, ok1 := np.(*LogicalJoin)
 		oldJoin, ok2 := p.(*LogicalJoin)
 		if ok1 && ok2 {
 			newJoin.cartesianJoin = oldJoin.cartesianJoin
-		}
-		if err != nil {
-			return nil, err
 		}
 		return np, nil
 	}
