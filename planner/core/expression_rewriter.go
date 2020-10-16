@@ -1828,6 +1828,9 @@ func decodeRecordKey(key []byte, tableID int64, tbl table.Table, loc *time.Locat
 			handleColIDs = append(handleColIDs, tblInfo.Columns[col.Offset].ID)
 		}
 
+		if len(handleColIDs) != handle.NumCols() {
+			return "", errors.Trace(errors.Errorf("primary key length not match handle columns number in key"))
+		}
 		datumMap, err := tablecodec.DecodeHandleToDatumMap(handle, handleColIDs, cols, loc, nil)
 		if err != nil {
 			return "", errors.Trace(err)
@@ -1836,7 +1839,7 @@ func decodeRecordKey(key []byte, tableID int64, tbl table.Table, loc *time.Locat
 		ret["table_id"] = tableID
 		handleRet := make(map[string]interface{})
 		for colID, dt := range datumMap {
-			dtStr, err := dt.ToString()
+			dtStr, err := datumToJsonObject(&dt)
 			if err != nil {
 				return "", errors.Trace(err)
 			}
@@ -1915,7 +1918,7 @@ func decodeIndexKey(key []byte, tableID int64, tbl table.Table, loc *time.Locati
 		ret["index_id"] = indexID
 		idxValMap := make(map[string]interface{}, len(targetIndex.Columns))
 		for i := 0; i < len(targetIndex.Columns); i++ {
-			dtStr, err := ds[i].ToString()
+			dtStr, err := datumToJsonObject(&ds[i])
 			if err != nil {
 				return "", errors.Trace(err)
 			}
@@ -1941,4 +1944,11 @@ func decodeIndexKey(key []byte, tableID int64, tbl table.Table, loc *time.Locati
 		return "", errors.Trace(err)
 	}
 	return string(retStr), nil
+}
+
+func datumToJsonObject(d *types.Datum) (interface{}, error) {
+	if d.IsNull() {
+		return nil, nil
+	}
+	return d.ToString()
 }

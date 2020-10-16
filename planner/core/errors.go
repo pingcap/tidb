@@ -82,4 +82,5 @@ var (
 	ErrAmbiguous                       = terror.ClassOptimizer.New(mysql.ErrNonUniq, mysql.MySQLErrName[mysql.ErrNonUniq])
 	// Since we cannot know if user logged in with a password, use message of ErrAccessDeniedNoPassword instead
 	ErrAccessDenied = terror.ClassOptimizer.New(mysql.ErrAccessDenied, mysql.MySQLErrName[mysql.ErrAccessDeniedNoPassword])
+	ErrBadNull      = terror.ClassOptimizer.New(mysql.ErrBadNull, mysql.MySQLErrName[mysql.ErrBadNull])
 )
