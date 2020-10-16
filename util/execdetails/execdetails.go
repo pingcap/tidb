@@ -457,8 +457,11 @@ func (crs *CopRuntimeStats) String() string {
 
 	n := len(procTimes)
 	sort.Slice(procTimes, func(i, j int) bool { return procTimes[i] < procTimes[j] })
-	return fmt.Sprintf("proc max:%v, min:%v, p80:%v, p95:%v, iters:%v, tasks:%v",
-		procTimes[n-1], procTimes[0], procTimes[n*4/5], procTimes[n*19/20], totalIters, totalTasks)
+	return fmt.Sprintf("proc max:%v, min:%v, p80:%v, p95:%v, iters:%v, tasks:%v total keys: %v processed keys: %v" +
+		"rocksdb delete skipped count:%v rocksdb key skipped count: %v rocksdb block cache hit count: %v rocksdb block read count: %v rocksdb block read byte: %v",
+		procTimes[n-1], procTimes[0], procTimes[n*4/5], procTimes[n*19/20], totalIters, totalTasks, crs.copDetails.TotalKeys, crs.copDetails.ProcessedKeys,
+		crs.copDetails.RocksdbDeleteSkippedCount, crs.copDetails.RocksdbKeySkippedCount, crs.copDetails.RocksdbBlockCacheHitCount,
+		crs.copDetails.RocksdbBlockReadCount, crs.copDetails.RocksdbBlockReadByte)
 }
 
 const (
@@ -698,7 +701,7 @@ func (e *RuntimeStatsColl) RecordOneCopTask(planID int, address string, summary 
 // RecordCopDetail records a specific cop tasks's cop detail.
 func (e *RuntimeStatsColl) RecordCopDetail(planID int, detail *CopDetails) {
 	copStats := e.GetCopStats(planID)
-	copStats.copDetails = detail
+	copStats.copDetails.Merge(detail)
 }
 
 // ExistsRootStats checks if the planID exists in the rootStats collection.
