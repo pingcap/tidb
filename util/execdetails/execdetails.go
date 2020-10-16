@@ -695,6 +695,7 @@ func (e *RuntimeStatsColl) RecordOneCopTask(planID int, address string, summary 
 	copStats.RecordOneCopTask(address, summary)
 }
 
+// RecordCopDetail records a specific cop tasks's cop detail.
 func (e *RuntimeStatsColl) RecordCopDetail(planID int, detail *CopDetails) {
 	copStats := e.GetCopStats(planID)
 	copStats.copDetails = detail
