@@ -86,10 +86,7 @@ type Domain struct {
 // It returns the latest schema version, the changed table IDs, whether it's a full load and an error.
 func (do *Domain) loadInfoSchema(handle *infoschema.Handle, usedSchemaVersion int64,
 	startTS uint64) (neededSchemaVersion int64, change *tikv.RelatedSchemaChange, fullLoad bool, err error) {
-	snapshot, err := do.store.GetSnapshot(kv.NewVersion(startTS))
-	if err != nil {
-		return 0, nil, fullLoad, err
-	}
+	snapshot := do.store.GetSnapshot(kv.NewVersion(startTS))
 	m := meta.NewSnapshotMeta(snapshot)
 	neededSchemaVersion, err = m.GetSchemaVersion()
 	if err != nil {
@@ -320,10 +317,7 @@ func (do *Domain) GetSnapshotInfoSchema(snapshotTS uint64) (infoschema.InfoSchem
 
 // GetSnapshotMeta gets a new snapshot meta at startTS.
 func (do *Domain) GetSnapshotMeta(startTS uint64) (*meta.Meta, error) {
-	snapshot, err := do.store.GetSnapshot(kv.NewVersion(startTS))
-	if err != nil {
-		return nil, err
-	}
+	snapshot := do.store.GetSnapshot(kv.NewVersion(startTS))
 	return meta.NewSnapshotMeta(snapshot), nil
 }
 
