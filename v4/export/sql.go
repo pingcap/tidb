@@ -519,7 +519,7 @@ func createConnWithConsistency(ctx context.Context, db *sql.DB) (*sql.Conn, erro
 }
 
 func buildSelectField(db *sql.Conn, dbName, tableName string, completeInsert bool) (string, error) {
-	query := `SELECT COLUMN_NAME,EXTRA FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=? AND TABLE_NAME=?;`
+	query := `SELECT COLUMN_NAME,EXTRA FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=? AND TABLE_NAME=? ORDER BY ORDINAL_POSITION;`
 	rows, err := db.QueryContext(context.Background(), query, dbName, tableName)
 	if err != nil {
 		return "", withStack(errors.WithMessage(err, query))
