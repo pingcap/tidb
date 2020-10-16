@@ -149,6 +149,7 @@ type testSerialSuite struct{ *baseTestSuite }
 type testCoprCache struct {
 	store kv.Storage
 	dom   *domain.Domain
+	cls   cluster.Cluster
 }
 
 type baseTestSuite struct {
@@ -6486,12 +6487,11 @@ func (s *testCoprCache) SetUpSuite(c *C) {
 		cli.Client = c
 		return cli
 	}
-	var cls cluster.Cluster
 	var err error
 	s.store, err = mockstore.NewMockStore(
 		mockstore.WithClusterInspector(func(c cluster.Cluster) {
 			mockstore.BootstrapWithSingleStore(c)
-			cls = c
+			s.cls = c
 		}),
 		mockstore.WithClientHijacker(hijackClient),
 	)
@@ -6518,7 +6518,7 @@ func (s *testCoprCache) TestIntegrationCopCache(c *C) {
 	c.Assert(err, IsNil)
 	tid := tblInfo.Meta().ID
 	tk.MustExec(`insert into t values(1),(2),(3),(4),(5),(6),(7),(8),(9),(10),(11),(12)`)
-	cls.SplitTable(tid, 6)
+	s.cls.SplitTable(tid, 6)
 
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/cophandler/mockCopCacheInUnistore", `return(123)`), IsNil)
 	defer func() {
