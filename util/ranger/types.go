@@ -113,6 +113,15 @@ func (ran *Range) IsFullRange() bool {
 	for i := range ran.LowVal {
 		lowValRawString := formatDatum(ran.LowVal[i], true)
 		highValRawString := formatDatum(ran.HighVal[i], false)
+		if ran.LowVal[i].Kind() == types.KindUint64 {
+			if (ran.LowVal[i].GetUint64() != 0 && "NULL" != lowValRawString) ||
+				("+inf" != highValRawString && "NULL" != highValRawString) ||
+				("NULL" == lowValRawString && "NULL" == highValRawString) {
+				return false
+			}
+			return true
+		}
+
 		if ("-inf" != lowValRawString && "NULL" != lowValRawString) ||
 			("+inf" != highValRawString && "NULL" != highValRawString) ||
 			("NULL" == lowValRawString && "NULL" == highValRawString) {
@@ -198,9 +207,6 @@ func formatDatum(d types.Datum, isLeftSide bool) string {
 			}
 		}
 	case types.KindUint64:
-		if d.GetUint64() == 0 && isLeftSide {
-			return "-inf"
-		}
 		if d.GetUint64() == math.MaxUint64 && !isLeftSide {
 			return "+inf"
 		}

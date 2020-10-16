@@ -714,21 +714,21 @@ func (s *testRangerSuite) TestIndexRangeForUnsignedInt(c *C) {
 			exprStr:     `a >= -2147483648`,
 			accessConds: "[ge(test.t.a, -2147483648)]",
 			filterConds: "[]",
-			resultStr:   `[[-inf,+inf]]`,
+			resultStr:   `[[0,+inf]]`,
 		},
 		{
 			indexPos:    0,
 			exprStr:     `a > -2147483648`,
 			accessConds: "[gt(test.t.a, -2147483648)]",
 			filterConds: "[]",
-			resultStr:   `[[-inf,+inf]]`,
+			resultStr:   `[[0,+inf]]`,
 		},
 		{
 			indexPos:    0,
 			exprStr:     `a != -2147483648`,
 			accessConds: "[ne(test.t.a, -2147483648)]",
 			filterConds: "[]",
-			resultStr:   `[[-inf,+inf]]`,
+			resultStr:   `[[0,+inf]]`,
 		},
 		{
 			exprStr:     "a < -1 or a < 1",
@@ -1053,7 +1053,7 @@ func (s *testRangerSuite) TestColumnRange(c *C) {
 			exprStr:     `e > -2147483648`,
 			accessConds: "[gt(test.t.e, -2147483648)]",
 			filterConds: "[]",
-			resultStr:   "[[-inf,+inf]]",
+			resultStr:   "[[0,+inf]]",
 			length:      types.UnspecifiedLength,
 		},
 		{
