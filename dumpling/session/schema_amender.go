@@ -506,11 +506,7 @@ func (s *SchemaAmender) prepareKvMap(ctx context.Context, commitMutations tikv.C
 	}
 	// BatchGet the old key values, the Op_Del and Op_Put types keys in storage using forUpdateTS, the Op_put type is for
 	// row update using the same row key, it may not exist.
-	snapshot, err := s.sess.GetStore().GetSnapshot(kv.Version{Ver: s.sess.sessionVars.TxnCtx.GetForUpdateTS()})
-	if err != nil {
-		logutil.Logger(ctx).Warn("amend failed to get snapshot using forUpdateTS", zap.Error(err))
-		return nil, errors.Trace(err)
-	}
+	snapshot := s.sess.GetStore().GetSnapshot(kv.Version{Ver: s.sess.sessionVars.TxnCtx.GetForUpdateTS()})
 	oldValKvMap, err := snapshot.BatchGet(ctx, removeKeys)
 	if err != nil {
 		logutil.Logger(ctx).Warn("amend failed to batch get kv old keys", zap.Error(err))
