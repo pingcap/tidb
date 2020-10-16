@@ -1156,7 +1156,7 @@ func (s *testColumnSuite) TestModifyColumn(c *C) {
 		{"varchar(10)", "text", nil},
 		{"varbinary(10)", "blob", nil},
 		{"text", "blob", errUnsupportedModifyCharset.GenWithStackByArgs("charset from utf8mb4 to binary")},
-		{"varchar(10)", "varchar(8)", errUnsupportedModifyColumn.GenWithStackByArgs("length 8 is less than origin 10")},
+		{"varchar(10)", "varchar(8)", errUnsupportedModifyColumn.GenWithStackByArgs("length 8 is less than origin 10, and tidb_enable_change_column_type is false")},
 		{"varchar(10)", "varchar(11)", nil},
 		{"varchar(10) character set utf8 collate utf8_bin", "varchar(10) character set utf8", nil},
 		{"decimal(2,1)", "decimal(3,2)", errUnsupportedModifyColumn.GenWithStackByArgs("decimal change from decimal(2, 1) to decimal(3, 2), and tidb_enable_change_column_type is false")},
