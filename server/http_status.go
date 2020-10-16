@@ -21,6 +21,7 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"fmt"
+	"io/ioutil"
 	"net"
 	"net/http"
 	"net/http/pprof"
@@ -182,6 +183,30 @@ func (s *Server) startHTTPServer() {
 	serverMux.HandleFunc("/debug/pprof/profile", pprof.Profile)
 	serverMux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
 	serverMux.HandleFunc("/debug/pprof/trace", pprof.Trace)
+	serverMux.HandleFunc("/debug/gogc", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			_, err := w.Write([]byte(strconv.Itoa(util.GetGOGC())))
+			terror.Log(err)
+		case http.MethodPost:
+			body, err := ioutil.ReadAll(r.Body)
+			if err != nil {
+				terror.Log(err)
+				return
+			}
+
+			val, err := strconv.Atoi(string(body))
+			if err != nil {
+				w.WriteHeader(http.StatusBadRequest)
+				if _, err := w.Write([]byte(err.Error())); err != nil {
+					terror.Log(err)
+				}
+				return
+			}
+
+			util.SetGOGC(val)
+		}
+	})
 
 	serverMux.HandleFunc("/debug/zip", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="tidb_debug"`+time.Now().Format("20060102150405")+".zip"))

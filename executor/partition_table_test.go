@@ -14,8 +14,6 @@
 package executor_test
 
 import (
-	"context"
-
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/testkit"
@@ -86,22 +84,6 @@ func (s *partitionTableSuite) TestPartitionUnionScanIndexJoin(c *C) {
 	tk.MustQuery("select /*+ INL_JOIN(t1,t2) */  * from t1 join t2 on t1.c_int = t2.c_int and t1.c_str = t2.c_str where t1.c_int in (10, 11)").Check(testkit.Rows("10 interesting neumann 10 interesting neumann"))
 	tk.MustQuery("select /*+ INL_HASH_JOIN(t1,t2) */  * from t1 join t2 on t1.c_int = t2.c_int and t1.c_str = t2.c_str where t1.c_int in (10, 11)").Check(testkit.Rows("10 interesting neumann 10 interesting neumann"))
 	tk.MustExec("commit")
-}
-
-func (s *partitionTableSuite) TestDAGTableID(c *C) {
-	// This test checks the table ID in the DAG is changed to partition ID in the nextPartition function.
-	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("create table employees (id int,store_id int not null)partition by hash(store_id) partitions 4;")
-	sql := "select * from test.employees"
-	rs, err := tk.Exec(sql)
-	c.Assert(err, IsNil)
-
-	m := make(map[int64]struct{})
-	ctx := context.WithValue(context.Background(), "nextPartitionUpdateDAGReq", m)
-	tk.ResultSetToResultWithCtx(ctx, rs, Commentf("sql:%s, args:%v", sql))
-	// Check table ID is changed to partition ID for each partition.
-	c.Assert(m, HasLen, 4)
 }
 
 func (s *partitionTableSuite) TestPartitionReaderUnderApply(c *C) {
@@ -175,4 +157,28 @@ PRIMARY KEY (pk1,pk2)) partition by hash(pk2) partitions 4;`)
 	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic-only'")
 	tk.MustQuery("select /*+ INL_JOIN(dt, rr) */ * from coverage_dt dt join coverage_rr rr on (dt.pk1 = rr.pk1 and dt.pk2 = rr.pk2);").Sort().Check(testkit.Rows("ios 3 ios 3 2", "linux 5 linux 5 1"))
 	tk.MustQuery("select /*+ INL_MERGE_JOIN(dt, rr) */ * from coverage_dt dt join coverage_rr rr on (dt.pk1 = rr.pk1 and dt.pk2 = rr.pk2);").Sort().Check(testkit.Rows("ios 3 ios 3 2", "linux 5 linux 5 1"))
+}
+
+func (s *globalIndexSuite) TestGlobalIndexScan(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists p")
+	tk.MustExec(`create table p (id int, c int) partition by range (c) (
+partition p0 values less than (4),
+partition p1 values less than (7),
+partition p2 values less than (10))`)
+	tk.MustExec("alter table p add unique idx(id)")
+	tk.MustExec("insert into p values (1,3), (3,4), (5,6), (7,9)")
+	tk.MustQuery("select id from p use index (idx)").Check(testkit.Rows("1", "3", "5", "7"))
+}
+
+func (s *globalIndexSuite) TestGlobalIndexDoubleRead(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists p")
+	tk.MustExec(`create table p (id int, c int) partition by range (c) (
+partition p0 values less than (4),
+partition p1 values less than (7),
+partition p2 values less than (10))`)
+	tk.MustExec("alter table p add unique idx(id)")
+	tk.MustExec("insert into p values (1,3), (3,4), (5,6), (7,9)")
+	tk.MustQuery("select * from p use index (idx)").Check(testkit.Rows("1 3", "3 4", "5 6", "7 9"))
 }
