@@ -1502,18 +1502,8 @@ func (c *twoPhaseCommitter) getUndeterminedErr() error {
 // schema version change. So we just check the version from meta snapshot, it's much stricter.
 func checkSchemaVersionForAsyncCommit(ctx context.Context, startTS uint64, commitTS uint64, store Storage) (bool, error) {
 	if commitTS > 0 {
-		snapshotAtStart, err := store.GetSnapshot(kv.NewVersion(startTS))
-		if err != nil {
-			logutil.Logger(ctx).Error("get snapshot failed for resolve async startTS",
-				zap.Uint64("startTS", startTS), zap.Uint64("commitTS", commitTS))
-			return false, errors.Trace(err)
-		}
-		snapShotAtCommit, err := store.GetSnapshot(kv.NewVersion(commitTS))
-		if err != nil {
-			logutil.Logger(ctx).Error("get snapshot failed for resolve async commitTS",
-				zap.Uint64("startTS", startTS), zap.Uint64("commitTS", commitTS))
-			return false, errors.Trace(err)
-		}
+		snapshotAtStart := store.GetSnapshot(kv.NewVersion(startTS))
+		snapShotAtCommit := store.GetSnapshot(kv.NewVersion(commitTS))
 		schemaVerAtStart, err := meta.NewSnapshotMeta(snapshotAtStart).GetSchemaVersion()
 		if err != nil {
 			return false, errors.Trace(err)
