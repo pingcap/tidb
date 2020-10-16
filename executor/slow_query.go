@@ -48,7 +48,7 @@ import (
 	"go.uber.org/zap"
 )
 
-// ParseSlowLogBatchSize is the batch size of slow-log for worker to parse. it exports for test.
+// ParseSlowLogBatchSize is the batch size of slow-log lines for worker to parse. it exports for testing.
 var ParseSlowLogBatchSize = 64
 
 //slowQueryRetriever is used to read slow log data.
