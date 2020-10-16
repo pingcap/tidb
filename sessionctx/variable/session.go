@@ -1462,6 +1462,7 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	case TiDBEnableParallelApply:
 		s.EnableParallelApply = TiDBOptOn(val)
 	case TiDBSlowLogMasking:
+		// TiDBSlowLogMasking is deprecated and a alias of TiDBRedactLog.
 		return s.SetSystemVar(TiDBRedactLog, val)
 	case TiDBRedactLog:
 		s.EnableRedactLog = TiDBOptOn(val)

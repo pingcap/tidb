@@ -2156,18 +2156,11 @@ func (s *session) loadCommonGlobalVariablesIfNeeded() error {
 	for _, row := range rows {
 		varName := row.GetString(0)
 		varVal := row.GetDatum(1, &fields[1].Column.FieldType)
-		// if varName == variable.TiDBRedactLog {
-		// 	_, ok := vars.GetSystemVar(varName)
-		// 	log.Println("loadCommonGlobalVariablesIfNeeded", varName, varVal, ok)
-		// }
 		if _, ok := vars.GetSystemVar(varName); !ok {
 			err = variable.SetSessionSystemVar(s.sessionVars, varName, varVal)
 			if err != nil {
 				return err
 			}
-			// if varName == variable.TiDBRedactLog {
-			// 	log.Println("loadCommonGlobalVariablesIfNeeded", err)
-			// }
 		}
 	}
 
