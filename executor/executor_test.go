@@ -6496,7 +6496,7 @@ func (s *testCoprCache) SetUpSuite(c *C) {
 		mockstore.WithClientHijacker(hijackClient),
 	)
 	c.Assert(err, IsNil)
-	s.dom, err = session.BootstrapSession(store)
+	s.dom, err = session.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
 }
 
