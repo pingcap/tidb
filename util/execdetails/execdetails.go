@@ -411,7 +411,8 @@ type CopRuntimeStats struct {
 	// have many region leaders, several coprocessor tasks can be sent to the
 	// same tikv-server instance. We have to use a list to maintain all tasks
 	// executed on each instance.
-	stats map[string][]*BasicRuntimeStats
+	stats      map[string][]*BasicRuntimeStats
+	copDetails *CopDetails
 }
 
 // RecordOneCopTask records a specific cop tasks's execution detail.
@@ -692,6 +693,11 @@ func (e *RuntimeStatsColl) RecordOneCopTask(planID int, address string, summary 
 	}
 	copStats := e.GetCopStats(planID)
 	copStats.RecordOneCopTask(address, summary)
+}
+
+func (e *RuntimeStatsColl) RecordCopDetail(planID int, detail *CopDetails) {
+	copStats := e.GetCopStats(planID)
+	copStats.copDetails = detail
 }
 
 // ExistsRootStats checks if the planID exists in the rootStats collection.
