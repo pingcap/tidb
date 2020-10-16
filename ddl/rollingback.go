@@ -260,36 +260,6 @@ func rollingbackDropColumns(t *meta.Meta, job *model.Job) (ver int64, err error)
 	return ver, nil
 }
 
-func rollingbackDropIndex(t *meta.Meta, job *model.Job) (ver int64, err error) {
-	tblInfo, indexInfo, err := checkDropIndex(t, job)
-	if err != nil {
-		return ver, errors.Trace(err)
-	}
-
-	originalState := indexInfo.State
-	switch indexInfo.State {
-	case model.StateWriteOnly, model.StateDeleteOnly, model.StateDeleteReorganization, model.StateNone:
-		// We can not rollback now, so just continue to drop index.
-		// Normally won't fetch here, because there is check when cancel ddl jobs. see function: isJobRollbackable.
-		job.State = model.JobStateRunning
-		return ver, nil
-	case model.StatePublic:
-		job.State = model.JobStateRollbackDone
-		indexInfo.State = model.StatePublic
-	default:
-		return ver, ErrInvalidDDLState.GenWithStackByArgs("index", indexInfo.State)
-	}
-
-	job.SchemaState = indexInfo.State
-	job.Args = []interface{}{indexInfo.Name}
-	ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != indexInfo.State)
-	if err != nil {
-		return ver, errors.Trace(err)
-	}
-	job.FinishTableJob(model.JobStateRollbackDone, model.StatePublic, ver, tblInfo)
-	return ver, errCancelledDDLJob
-}
-
 func rollingbackDropIndexes(t *meta.Meta, job *model.Job) (ver int64, err error) {
 	tblInfo, indexesInfo, err := checkDropIndexes(t, job)
 	if err != nil {
