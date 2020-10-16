@@ -27,10 +27,6 @@ github.com/Jeffail/gabs/v2 v2.5.1 h1:ANfZYjpMlfTTKebycu4X1AgkVWumFVDYQl7JwOr4mDk
 github.com/Jeffail/gabs/v2 v2.5.1/go.mod h1:xCn81vdHKxFUuWWAaD5jCTQDNPBMh5pPs9IJ+NcziBI=
 github.com/KyleBanks/depth v1.2.1 h1:5h8fQADFrWtarTdtDudMmGsC7GPbOAu6RVB3ffsVFHc=
 github.com/KyleBanks/depth v1.2.1/go.mod h1:jzSb9d0L43HxTQfT+oSA1EEp2q+ne2uh6XgeJcm8brE=
-github.com/MyonKeminta/unistore v0.0.0-20201014082008-60679ec09f3f h1:JW4vshDaM/he2lS8ov5/71S/JG34M8Irwz6b5/i2hBw=
-github.com/MyonKeminta/unistore v0.0.0-20201014082008-60679ec09f3f/go.mod h1:qXaSM5N7Tosb0A6G7KqUyL/L+VovbWlvgdLsWz0AZJE=
-github.com/MyonKeminta/unistore v0.0.0-20201015110438-80ee9e54cbe1 h1:F7dE5LiY1dWnqGDAPa/H9xlMvzXb0V8tSxl/eX6BsuY=
-github.com/MyonKeminta/unistore v0.0.0-20201015110438-80ee9e54cbe1/go.mod h1:qXaSM5N7Tosb0A6G7KqUyL/L+VovbWlvgdLsWz0AZJE=
 github.com/MyonKeminta/unistore v0.0.0-20201015114234-b1704cf7d3ec h1:KdqM0Vvzmk8NOwTeomO3KJnVQUBR0wnOgTO+i9OzFOk=
 github.com/MyonKeminta/unistore v0.0.0-20201015114234-b1704cf7d3ec/go.mod h1:qXaSM5N7Tosb0A6G7KqUyL/L+VovbWlvgdLsWz0AZJE=
 github.com/OneOfOne/xxhash v1.2.2 h1:KMrpdQIwFcEqXDklaen+P1axHaj9BSKzvpUUfnHldSE=
