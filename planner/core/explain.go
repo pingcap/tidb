@@ -90,9 +90,7 @@ func (p *PhysicalIndexScan) AccessObject() string {
 		buffer.WriteString(", index:" + p.Index.Name.O + "(")
 		for i, idxCol := range p.Index.Columns {
 			if tblCol := p.Table.Columns[idxCol.Offset]; tblCol.Hidden {
-				exprStr := strings.Replace(tblCol.GeneratedExprString, "`", "", -1)
-				exprStr = strings.Replace(exprStr, " ", "", -1)
-				buffer.WriteString(exprStr)
+				buffer.WriteString(tblCol.GeneratedExprString)
 			} else {
 				buffer.WriteString(idxCol.Name.O)
 			}
@@ -913,9 +911,7 @@ func (p *LogicalIndexScan) ExplainInfo() string {
 		buffer.WriteString(", index:")
 		for i, idxCol := range index.Columns {
 			if tblCol := p.Source.tableInfo.Columns[idxCol.Offset]; tblCol.Hidden {
-				exprStr := strings.Replace(tblCol.GeneratedExprString, "`", "", -1)
-				exprStr = strings.Replace(exprStr, " ", "", -1)
-				buffer.WriteString(exprStr)
+				buffer.WriteString(tblCol.GeneratedExprString)
 			} else {
 				buffer.WriteString(idxCol.Name.O)
 			}

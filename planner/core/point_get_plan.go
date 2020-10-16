@@ -17,7 +17,6 @@ import (
 	"bytes"
 	"fmt"
 	math2 "math"
-	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
@@ -130,9 +129,7 @@ func (p *PointGetPlan) AccessObject() string {
 		}
 		for i, idxCol := range p.IndexInfo.Columns {
 			if tblCol := p.TblInfo.Columns[idxCol.Offset]; tblCol.Hidden {
-				exprStr := strings.Replace(tblCol.GeneratedExprString, "`", "", -1)
-				exprStr = strings.Replace(exprStr, " ", "", -1)
-				buffer.WriteString(exprStr)
+				buffer.WriteString(tblCol.GeneratedExprString)
 			} else {
 				buffer.WriteString(idxCol.Name.O)
 			}
@@ -302,9 +299,7 @@ func (p *BatchPointGetPlan) AccessObject() string {
 		}
 		for i, idxCol := range p.IndexInfo.Columns {
 			if tblCol := p.TblInfo.Columns[idxCol.Offset]; tblCol.Hidden {
-				exprStr := strings.Replace(tblCol.GeneratedExprString, "`", "", -1)
-				exprStr = strings.Replace(exprStr, " ", "", -1)
-				buffer.WriteString(exprStr)
+				buffer.WriteString(tblCol.GeneratedExprString)
 			} else {
 				buffer.WriteString(idxCol.Name.O)
 			}
