@@ -2301,6 +2301,20 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 		keyOff2IdxOff: v.KeyOff2IdxOff,
 		lastColHelper: v.CompareFilters,
 	}
+	if e.ctx.GetSessionVars().UseDynamicPartitionPrune() {
+		tbl, partInfo, err := extractPartitionTable(b.is, innerPlan)
+		if err != nil {
+			b.err = err
+			return e
+		}
+		if tbl.Meta().GetPartitionInfo() != nil {
+			e.innerCtx.readerBuilder.partitions, err = partitionPruning(b.ctx, tbl.(table.PartitionedTable), partInfo.PruningConds, partInfo.PartitionNames, partInfo.Columns, partInfo.ColumnNames)
+			if err != nil {
+				b.err = err
+				return nil
+			}
+		}
+	}
 	childrenUsedSchema := markChildrenUsedCols(v.Schema(), v.Children()[0].Schema(), v.Children()[1].Schema())
 	e.joiner = newJoiner(b.ctx, v.JoinType, v.InnerChildIdx == 0, defaultValues, v.OtherConditions, leftTypes, rightTypes, childrenUsedSchema)
 	outerKeyCols := make([]int, len(v.OuterJoinKeys))
@@ -2316,6 +2330,39 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 	e.joinResult = newFirstChunk(e)
 	executorCounterIndexLookUpJoin.Inc()
 	return e
+}
+
+func extractPartitionTable(is infoschema.InfoSchema, plan plannercore.Plan) (tbl table.Table, partInfo *plannercore.PartitionInfo, err error) {
+	switch v := plan.(type) {
+	case *plannercore.PhysicalTableReader:
+		tbl, _ = is.TableByID(v.GetTableScan().Table.ID)
+		partInfo = &v.PartitionInfo
+		return
+	case *plannercore.PhysicalIndexReader:
+		idx := v.IndexPlans[0].(*plannercore.PhysicalIndexScan)
+		tbl, _ = is.TableByID(idx.Table.ID)
+		partInfo = &v.PartitionInfo
+		return
+	case *plannercore.PhysicalIndexLookUpReader:
+		ts := v.TablePlans[0].(*plannercore.PhysicalTableScan)
+		tbl, _ = is.TableByID(ts.Table.ID)
+		partInfo = &v.PartitionInfo
+		return
+	case *plannercore.PhysicalUnionScan:
+		tbl, partInfo, err = extractPartitionTable(is, v.Children()[0])
+		return
+	case *plannercore.PhysicalProjection:
+		indexLookUp, _ := v.Children()[0].(*plannercore.PhysicalIndexLookUpReader)
+		ts := indexLookUp.TablePlans[0].(*plannercore.PhysicalTableScan)
+		tbl, _ = is.TableByID(ts.Table.ID)
+		partInfo = &indexLookUp.PartitionInfo
+		return
+	case *plannercore.PhysicalSelection:
+		tbl, partInfo, err = extractPartitionTable(is, v.Children()[0])
+		return
+	}
+	err = errors.New("Wrong plan type for dataReaderBuilder")
+	return
 }
 
 func (b *executorBuilder) buildIndexLookUpMergeJoin(v *plannercore.PhysicalIndexMergeJoin) Executor {
@@ -3056,6 +3103,8 @@ type dataReaderBuilder struct {
 	plannercore.Plan
 	*executorBuilder
 
+	partitions []table.PhysicalTable
+
 	selectResultHook // for testing
 }
 
@@ -3140,10 +3189,8 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Conte
 			}
 			return builder.buildTableReaderFromKvRanges(ctx, e, kvRanges)
 		}
-
-		tbl, _ := builder.is.TableByID(tbInfo.ID)
-		pt := tbl.(table.PartitionedTable)
-		pe, err := tbl.(interface {
+		pt := e.table.(table.PartitionedTable)
+		pe, err := e.table.(interface {
 			PartitionExpr() (*tables.PartitionExpr, error)
 		}).PartitionExpr()
 		if err != nil {
@@ -3170,11 +3217,7 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Conte
 				kvRanges = append(kvRanges, tmp...)
 			}
 		} else {
-			partitionInfo := &v.PartitionInfo
-			partitions, err := partitionPruning(e.ctx, pt, partitionInfo.PruningConds, partitionInfo.PartitionNames, partitionInfo.Columns, partitionInfo.ColumnNames)
-			if err != nil {
-				return nil, err
-			}
+			partitions := builder.partitions
 			kvRanges = make([]kv.KeyRange, 0, len(partitions)*len(lookUpContents))
 			for _, p := range partitions {
 				pid := p.GetPhysicalID()
@@ -3222,11 +3265,7 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Conte
 			kvRanges = append(kvRanges, tmp...)
 		}
 	} else {
-		partitionInfo := &v.PartitionInfo
-		partitions, err := partitionPruning(e.ctx, pt, partitionInfo.PruningConds, partitionInfo.PartitionNames, partitionInfo.Columns, partitionInfo.ColumnNames)
-		if err != nil {
-			return nil, err
-		}
+		partitions := builder.partitions
 		for _, p := range partitions {
 			pid := p.GetPhysicalID()
 			tmp := distsql.TableHandlesToKVRanges(pid, handles)
