@@ -650,8 +650,8 @@ type SessionVars struct {
 	// allowInSubqToJoinAndAgg can be set to false to forbid rewriting the semi join to inner join with agg.
 	allowInSubqToJoinAndAgg bool
 
-	// allowPreferRangeScan allows optimizer to always prefer range scan over table scan.
-	allowPreferRangeScan bool
+	// preferRangeScan allows optimizer to always prefer range scan over table scan.
+	preferRangeScan bool
 
 	// EnableIndexMerge enables the generation of IndexMergePath.
 	enableIndexMerge bool
@@ -803,7 +803,7 @@ func NewSessionVars() *SessionVars {
 		DisableTxnAutoRetry:         DefTiDBDisableTxnAutoRetry,
 		DDLReorgPriority:            kv.PriorityLow,
 		allowInSubqToJoinAndAgg:     DefOptInSubqToJoinAndAgg,
-		allowPreferRangeScan:        DefOptPreferRangeScan,
+		preferRangeScan:             DefOptPreferRangeScan,
 		CorrelationThreshold:        DefOptCorrelationThreshold,
 		CorrelationExpFactor:        DefOptCorrelationExpFactor,
 		CPUFactor:                   DefOptCPUFactor,
@@ -926,14 +926,14 @@ func (s *SessionVars) SetAllowInSubqToJoinAndAgg(val bool) {
 	s.allowInSubqToJoinAndAgg = val
 }
 
-// GetAllowPreferRangeScan get AllowPreferRangeScan from SessionVars.allowPreferRangeScan.
+// GetAllowPreferRangeScan get preferRangeScan from SessionVars.preferRangeScan.
 func (s *SessionVars) GetAllowPreferRangeScan() bool {
-	return s.allowPreferRangeScan
+	return s.preferRangeScan
 }
 
-// SetAllowPreferRangeScan set SessionVars.allowPreferRangeScan.
+// SetAllowPreferRangeScan set SessionVars.preferRangeScan.
 func (s *SessionVars) SetAllowPreferRangeScan(val bool) {
-	s.allowPreferRangeScan = val
+	s.preferRangeScan = val
 }
 
 // GetEnableCascadesPlanner get EnableCascadesPlanner from sql hints and SessionVars.EnableCascadesPlanner.

@@ -198,6 +198,9 @@ func formatDatum(d types.Datum, isLeftSide bool) string {
 			}
 		}
 	case types.KindUint64:
+		if d.GetUint64() == 0 && isLeftSide {
+			return "-inf"
+		}
 		if d.GetUint64() == math.MaxUint64 && !isLeftSide {
 			return "+inf"
 		}
