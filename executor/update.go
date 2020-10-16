@@ -30,6 +30,11 @@ import (
 	"github.com/pingcap/tidb/util/memory"
 )
 
+type rowKey struct {
+	tbl int64
+	col int
+}
+
 // UpdateExec represents a new update executor.
 type UpdateExec struct {
 	baseExecutor
@@ -38,7 +43,7 @@ type UpdateExec struct {
 
 	// updatedRowKeys is a map for unique (Table, handle) pair.
 	// The value is true if the row is changed, or false otherwise
-	updatedRowKeys map[int64]*kv.HandleMap
+	updatedRowKeys map[rowKey]*kv.HandleMap
 	tblID2table    map[int64]table.Table
 
 	matched uint64 // a counter of matched rows during update
@@ -60,12 +65,12 @@ func (e *UpdateExec) exec(ctx context.Context, schema *expression.Schema, row, n
 		return err
 	}
 	if e.updatedRowKeys == nil {
-		e.updatedRowKeys = make(map[int64]*kv.HandleMap)
+		e.updatedRowKeys = make(map[rowKey]*kv.HandleMap)
 	}
 	for _, content := range e.tblColPosInfos {
 		tbl := e.tblID2table[content.TblID]
-		if e.updatedRowKeys[content.TblID] == nil {
-			e.updatedRowKeys[content.TblID] = kv.NewHandleMap()
+		if e.updatedRowKeys[rowKey{content.TblID, content.Start}] == nil {
+			e.updatedRowKeys[rowKey{content.TblID, content.Start}] = kv.NewHandleMap()
 		}
 		var handle kv.Handle
 		handle, err = content.HandleCols.BuildHandleByDatums(row)
@@ -87,8 +92,19 @@ func (e *UpdateExec) exec(ctx context.Context, schema *expression.Schema, row, n
 			// If there's nothing to update, we can just skip current row
 			continue
 		}
+
+		interimData, err := tbl.RowWithCols(e.ctx, handle, tbl.WritableCols())
+		if err == nil {
+			for i := 0; i < len(flags) && i < len(interimData); i++ {
+				if !flags[i] {
+					interimData[i].Copy(&oldData[i])
+					interimData[i].Copy(&newTableData[i])
+				}
+			}
+		}
+
 		var changed bool
-		v, ok := e.updatedRowKeys[content.TblID].Get(handle)
+		v, ok := e.updatedRowKeys[rowKey{content.TblID, content.Start}].Get(handle)
 		if !ok {
 			// Row is matched for the first time, increment `matched` counter
 			e.matched++
@@ -103,7 +119,7 @@ func (e *UpdateExec) exec(ctx context.Context, schema *expression.Schema, row, n
 		// Update row
 		changed, err1 := updateRecord(ctx, e.ctx, handle, oldData, newTableData, flags, tbl, false, e.memTracker)
 		if err1 == nil {
-			e.updatedRowKeys[content.TblID].Set(handle, changed)
+			e.updatedRowKeys[rowKey{content.TblID, content.Start}].Set(handle, changed)
 			continue
 		}
 

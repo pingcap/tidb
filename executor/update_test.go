@@ -235,6 +235,19 @@ func (s *testUpdateSuite) TestUpdateMultiDatabaseTable(c *C) {
 	tk.MustExec("update t, test2.t set test.t.a=1")
 }
 
+func (s *testUpdateSuite) TestUpdateMultiAliasesTable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(x int, y int)")
+	tk.MustExec("insert into t values()")
+	tk.MustExec("update t t1, t t2 set t2.y=1, t1.x=2")
+	tk.MustQuery("select * from t").Check(testkit.Rows("2 1"))
+
+	tk.MustExec("udpate t t1, t t2 set t1.x=t2.y, t2.y=t1.x")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 2"))
+}
+
 var _ = SerialSuites(&testSuite11{&baseTestSuite{}})
 
 type testSuite11 struct {
