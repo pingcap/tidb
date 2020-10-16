@@ -14,21 +14,30 @@
 package dbterror
 
 import (
+	"strings"
 	"testing"
 
+	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/errno"
-	"github.com/stretchr/testify/assert"
 )
 
-func TestErrorRedact(t *testing.T) {
+func TestT(t *testing.T) {
+	TestingT(t)
+}
+
+var _ = Suite(&testkSuite{})
+
+type testkSuite struct{}
+
+func (s *testkSuite) TestErrorRedact(c *C) {
 	original := errors.RedactLogEnabled
 	errors.RedactLogEnabled = true
 	defer func() { errors.RedactLogEnabled = original }()
 
-	c := ErrClass{}
-	err := c.NewStd(errno.ErrDupEntry).GenWithStackByArgs("sensitive", "data")
-	assert.Contains(t, err.Error(), "?")
-	assert.NotContains(t, err.Error(), "sensitive")
-	assert.NotContains(t, err.Error(), "data")
+	class := ErrClass{}
+	err := class.NewStd(errno.ErrDupEntry).GenWithStackByArgs("sensitive", "data")
+	c.Assert(strings.Contains(err.Error(), "?"), IsTrue)
+	c.Assert(strings.Contains(err.Error(), "sensitive"), IsFalse)
+	c.Assert(strings.Contains(err.Error(), "data"), IsFalse)
 }
