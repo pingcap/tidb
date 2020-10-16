@@ -326,9 +326,9 @@ func (s *tikvStore) BeginWithStartTS(startTS uint64) (kv.Transaction, error) {
 	return txn, nil
 }
 
-func (s *tikvStore) GetSnapshot(ver kv.Version) (kv.Snapshot, error) {
+func (s *tikvStore) GetSnapshot(ver kv.Version) kv.Snapshot {
 	snapshot := newTiKVSnapshot(s, ver, s.nextReplicaReadSeed())
-	return snapshot, nil
+	return snapshot
 }
 
 func (s *tikvStore) Close() error {
