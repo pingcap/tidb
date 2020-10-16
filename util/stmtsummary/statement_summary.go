@@ -125,16 +125,26 @@ type stmtSummaryByDigestElement struct {
 	maxCopWaitTime       time.Duration
 	maxCopWaitAddress    string
 	// TiKV
-	sumProcessTime   time.Duration
-	maxProcessTime   time.Duration
-	sumWaitTime      time.Duration
-	maxWaitTime      time.Duration
-	sumBackoffTime   time.Duration
-	maxBackoffTime   time.Duration
-	sumTotalKeys     int64
-	maxTotalKeys     int64
-	sumProcessedKeys int64
-	maxProcessedKeys int64
+	sumProcessTime               time.Duration
+	maxProcessTime               time.Duration
+	sumWaitTime                  time.Duration
+	maxWaitTime                  time.Duration
+	sumBackoffTime               time.Duration
+	maxBackoffTime               time.Duration
+	sumTotalKeys                 int64
+	maxTotalKeys                 int64
+	sumProcessedKeys             int64
+	maxProcessedKeys             int64
+	sumRocksdbDeleteSkippedCount uint64
+	maxRocksdbDeleteSkippedCount uint64
+	sumRocksdbKeySkippedCount    uint64
+	maxRocksdbKeySkippedCount    uint64
+	sumRocksdbBlockCacheHitCount uint64
+	maxRocksdbBlockCacheHitCount uint64
+	sumRocksdbBlockReadCount     uint64
+	maxRocksdbBlockReadCount     uint64
+	sumRocksdbBlockReadByte      uint64
+	maxRocksdbBlockReadByte      uint64
 	// txn
 	commitCount          int64
 	sumGetCommitTsTime   time.Duration
@@ -681,13 +691,36 @@ func (ssElement *stmtSummaryByDigestElement) add(sei *StmtExecInfo, intervalSeco
 	if sei.ExecDetail.BackoffTime > ssElement.maxBackoffTime {
 		ssElement.maxBackoffTime = sei.ExecDetail.BackoffTime
 	}
-	ssElement.sumTotalKeys += sei.ExecDetail.TotalKeys
-	if sei.ExecDetail.TotalKeys > ssElement.maxTotalKeys {
-		ssElement.maxTotalKeys = sei.ExecDetail.TotalKeys
-	}
-	ssElement.sumProcessedKeys += sei.ExecDetail.ProcessedKeys
-	if sei.ExecDetail.ProcessedKeys > ssElement.maxProcessedKeys {
-		ssElement.maxProcessedKeys = sei.ExecDetail.ProcessedKeys
+
+	if sei.ExecDetail.CopDetail != nil {
+		ssElement.sumTotalKeys += sei.ExecDetail.CopDetail.TotalKeys
+		if sei.ExecDetail.CopDetail.TotalKeys > ssElement.maxTotalKeys {
+			ssElement.maxTotalKeys = sei.ExecDetail.CopDetail.TotalKeys
+		}
+		ssElement.sumProcessedKeys += sei.ExecDetail.CopDetail.ProcessedKeys
+		if sei.ExecDetail.CopDetail.ProcessedKeys > ssElement.maxProcessedKeys {
+			ssElement.maxProcessedKeys = sei.ExecDetail.CopDetail.ProcessedKeys
+		}
+		ssElement.sumRocksdbDeleteSkippedCount += sei.ExecDetail.CopDetail.RocksdbDeleteSkippedCount
+		if sei.ExecDetail.CopDetail.RocksdbDeleteSkippedCount > ssElement.maxRocksdbDeleteSkippedCount {
+			ssElement.maxRocksdbDeleteSkippedCount = sei.ExecDetail.CopDetail.RocksdbDeleteSkippedCount
+		}
+		ssElement.sumRocksdbKeySkippedCount += sei.ExecDetail.CopDetail.RocksdbKeySkippedCount
+		if sei.ExecDetail.CopDetail.RocksdbKeySkippedCount > ssElement.maxRocksdbKeySkippedCount {
+			ssElement.maxRocksdbKeySkippedCount = sei.ExecDetail.CopDetail.RocksdbKeySkippedCount
+		}
+		ssElement.sumRocksdbBlockCacheHitCount += sei.ExecDetail.CopDetail.RocksdbBlockCacheHitCount
+		if sei.ExecDetail.CopDetail.RocksdbBlockCacheHitCount > ssElement.maxRocksdbBlockCacheHitCount {
+			ssElement.maxRocksdbBlockCacheHitCount = sei.ExecDetail.CopDetail.RocksdbBlockCacheHitCount
+		}
+		ssElement.sumRocksdbBlockReadCount += sei.ExecDetail.CopDetail.RocksdbBlockReadCount
+		if sei.ExecDetail.CopDetail.RocksdbBlockReadCount > ssElement.maxRocksdbBlockReadCount {
+			ssElement.maxRocksdbBlockReadCount = sei.ExecDetail.CopDetail.RocksdbBlockReadCount
+		}
+		ssElement.sumRocksdbBlockReadByte += sei.ExecDetail.CopDetail.RocksdbBlockReadByte
+		if sei.ExecDetail.CopDetail.RocksdbBlockReadByte > ssElement.maxRocksdbBlockReadByte {
+			ssElement.maxRocksdbBlockReadByte = sei.ExecDetail.CopDetail.RocksdbBlockReadByte
+		}
 	}
 
 	// txn
@@ -832,6 +865,16 @@ func (ssElement *stmtSummaryByDigestElement) toDatum(ssbd *stmtSummaryByDigest) 
 		ssElement.maxTotalKeys,
 		avgInt(ssElement.sumProcessedKeys, ssElement.execCount),
 		ssElement.maxProcessedKeys,
+		avgInt(int64(ssElement.sumRocksdbDeleteSkippedCount), ssElement.execCount),
+		ssElement.maxRocksdbDeleteSkippedCount,
+		avgInt(int64(ssElement.sumRocksdbKeySkippedCount), ssElement.execCount),
+		ssElement.maxRocksdbKeySkippedCount,
+		avgInt(int64(ssElement.sumRocksdbBlockCacheHitCount), ssElement.execCount),
+		ssElement.maxRocksdbBlockCacheHitCount,
+		avgInt(int64(ssElement.sumRocksdbBlockReadCount), ssElement.execCount),
+		ssElement.maxRocksdbBlockReadCount,
+		avgInt(int64(ssElement.sumRocksdbBlockReadByte), ssElement.execCount),
+		ssElement.maxRocksdbBlockReadByte,
 		avgInt(int64(ssElement.sumPrewriteTime), ssElement.commitCount),
 		int64(ssElement.maxPrewriteTime),
 		avgInt(int64(ssElement.sumCommitTime), ssElement.commitCount),

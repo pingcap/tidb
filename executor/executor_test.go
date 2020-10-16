@@ -132,6 +132,7 @@ var _ = Suite(&partitionTableSuite{&baseTestSuite{}})
 var _ = SerialSuites(&tiflashTestSuite{})
 var _ = SerialSuites(&globalIndexSuite{&baseTestSuite{}})
 var _ = SerialSuites(&testSerialSuite{&baseTestSuite{}})
+var _ = SerialSuites(&testCoprCache{})
 
 type testSuite struct{ *baseTestSuite }
 type testSuiteP1 struct{ *baseTestSuite }
@@ -145,6 +146,11 @@ type testSlowQuery struct{ *baseTestSuite }
 type partitionTableSuite struct{ *baseTestSuite }
 type globalIndexSuite struct{ *baseTestSuite }
 type testSerialSuite struct{ *baseTestSuite }
+type testCoprCache struct {
+	store kv.Storage
+	dom   *domain.Domain
+	cls   cluster.Cluster
+}
 
 type baseTestSuite struct {
 	cluster cluster.Cluster
@@ -4111,7 +4117,7 @@ func (s *testSuite3) TestSelectHashPartitionTable(c *C) {
 func (s *testSuiteP1) TestSelectPartition(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test`)
-	tk.MustExec(`drop table if exists th, tr`)
+	tk.MustExec(`drop table if exists th, tr, tl`)
 	tk.MustExec("set @@session.tidb_enable_table_partition = '1';")
 	tk.MustExec(`create table th (a int, b int) partition by hash(a) partitions 3;`)
 	tk.MustExec(`create table tr (a int, b int)
@@ -4119,24 +4125,35 @@ func (s *testSuiteP1) TestSelectPartition(c *C) {
 							partition r0 values less than (4),
 							partition r1 values less than (7),
 							partition r3 values less than maxvalue)`)
-	defer tk.MustExec(`drop table if exists th, tr`)
+	tk.MustExec(`create table tl (a int, b int, unique index idx(a)) partition by list  (a) (
+					    partition p0 values in (3,5,6,9,17),
+					    partition p1 values in (1,2,10,11,19,20),
+					    partition p2 values in (4,12,13,14,18),
+					    partition p3 values in (7,8,15,16,null));`)
+	defer tk.MustExec(`drop table if exists th, tr, tl`)
 	tk.MustExec(`insert into th values (0,0),(1,1),(2,2),(3,3),(4,4),(5,5),(6,6),(7,7),(8,8);`)
 	tk.MustExec("insert into th values (-1,-1),(-2,-2),(-3,-3),(-4,-4),(-5,-5),(-6,-6),(-7,-7),(-8,-8);")
 	tk.MustExec(`insert into tr values (-3,-3),(3,3),(4,4),(7,7),(8,8);`)
+	tk.MustExec(`insert into tl values (3,3),(1,1),(4,4),(7,7),(8,8),(null,null);`)
 	// select 1 partition.
 	tk.MustQuery("select b from th partition (p0) order by a").Check(testkit.Rows("-6", "-3", "0", "3", "6"))
 	tk.MustQuery("select b from tr partition (r0) order by a").Check(testkit.Rows("-3", "3"))
+	tk.MustQuery("select b from tl partition (p0) order by a").Check(testkit.Rows("3"))
 	tk.MustQuery("select b from th partition (p0,P0) order by a").Check(testkit.Rows("-6", "-3", "0", "3", "6"))
 	tk.MustQuery("select b from tr partition (r0,R0,r0) order by a").Check(testkit.Rows("-3", "3"))
+	tk.MustQuery("select b from tl partition (p0,P0,p0) order by a").Check(testkit.Rows("3"))
 	// select multi partition.
 	tk.MustQuery("select b from th partition (P2,p0) order by a").Check(testkit.Rows("-8", "-6", "-5", "-3", "-2", "0", "2", "3", "5", "6", "8"))
 	tk.MustQuery("select b from tr partition (r1,R3) order by a").Check(testkit.Rows("4", "7", "8"))
+	tk.MustQuery("select b from tl partition (p0,P3) order by a").Check(testkit.Rows("<nil>", "3", "7", "8"))
 
 	// test select unknown partition error
 	err := tk.ExecToErr("select b from th partition (p0,p4)")
 	c.Assert(err.Error(), Equals, "[table:1735]Unknown partition 'p4' in table 'th'")
 	err = tk.ExecToErr("select b from tr partition (r1,r4)")
 	c.Assert(err.Error(), Equals, "[table:1735]Unknown partition 'r4' in table 'tr'")
+	err = tk.ExecToErr("select b from tl partition (p0,p4)")
+	c.Assert(err.Error(), Equals, "[table:1735]Unknown partition 'p4' in table 'tl'")
 
 	// test select partition table in transaction.
 	tk.MustExec("begin")
@@ -6459,6 +6476,64 @@ func (s *testSuite) TestIssue13758(c *C) {
 		"4",
 		"<nil>",
 	))
+}
+
+func (s *testCoprCache) SetUpSuite(c *C) {
+	originConfig := config.GetGlobalConfig()
+	config.StoreGlobalConfig(config.NewConfig())
+	defer config.StoreGlobalConfig(originConfig)
+	cli := &regionProperityClient{}
+	hijackClient := func(c tikv.Client) tikv.Client {
+		cli.Client = c
+		return cli
+	}
+	var err error
+	s.store, err = mockstore.NewMockStore(
+		mockstore.WithClusterInspector(func(c cluster.Cluster) {
+			mockstore.BootstrapWithSingleStore(c)
+			s.cls = c
+		}),
+		mockstore.WithClientHijacker(hijackClient),
+	)
+	c.Assert(err, IsNil)
+	s.dom, err = session.BootstrapSession(s.store)
+	c.Assert(err, IsNil)
+}
+
+func (s *testCoprCache) TearDownSuite(c *C) {
+	s.dom.Close()
+	s.store.Close()
+}
+
+func (s *testCoprCache) TestIntegrationCopCache(c *C) {
+	originConfig := config.GetGlobalConfig()
+	config.StoreGlobalConfig(config.NewConfig())
+	defer config.StoreGlobalConfig(originConfig)
+
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int primary key)")
+	tblInfo, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tid := tblInfo.Meta().ID
+	tk.MustExec(`insert into t values(1),(2),(3),(4),(5),(6),(7),(8),(9),(10),(11),(12)`)
+	s.cls.SplitTable(tid, 6)
+
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/cophandler/mockCopCacheInUnistore", `return(123)`), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/cophandler/mockCopCacheInUnistore"), IsNil)
+	}()
+
+	rows := tk.MustQuery("explain analyze select * from t where t.a < 10").Rows()
+	c.Assert(rows[0][2], Equals, "9")
+	c.Assert(strings.Contains(rows[0][5].(string), "cop_task: {num: 5"), Equals, true)
+	c.Assert(strings.Contains(rows[0][5].(string), "copr_cache_hit_ratio: 0.00"), Equals, true)
+
+	rows = tk.MustQuery("explain analyze select * from t").Rows()
+	c.Assert(rows[0][2], Equals, "12")
+	c.Assert(strings.Contains(rows[0][5].(string), "cop_task: {num: 6"), Equals, true)
+	c.Assert(strings.Contains(rows[0][5].(string), "copr_cache_hit_ratio: 0.67"), Equals, true)
 }
 
 func (s *testSerialSuite) TestCoprocessorOOMAction(c *C) {
