@@ -132,6 +132,7 @@ var _ = Suite(&partitionTableSuite{&baseTestSuite{}})
 var _ = SerialSuites(&tiflashTestSuite{})
 var _ = SerialSuites(&globalIndexSuite{&baseTestSuite{}})
 var _ = SerialSuites(&testSerialSuite{&baseTestSuite{}})
+var _ = SerialSuites(&testCoprCache{})
 
 type testSuite struct{ *baseTestSuite }
 type testSuiteP1 struct{ *baseTestSuite }
@@ -145,6 +146,10 @@ type testSlowQuery struct{ *baseTestSuite }
 type partitionTableSuite struct{ *baseTestSuite }
 type globalIndexSuite struct{ *baseTestSuite }
 type testSerialSuite struct{ *baseTestSuite }
+type testCoprCache struct {
+	store kv.Storage
+	dom   *domain.Domain
+}
 
 type baseTestSuite struct {
 	cluster cluster.Cluster
@@ -6472,19 +6477,18 @@ func (s *testSuite) TestIssue13758(c *C) {
 	))
 }
 
-func (s *testFastAnalyze) TestIntegrationCopCache(c *C) {
+func (s *testCoprCache) SetUpSuite(c *C) {
 	originConfig := config.GetGlobalConfig()
 	config.StoreGlobalConfig(config.NewConfig())
 	defer config.StoreGlobalConfig(originConfig)
-
 	cli := &regionProperityClient{}
 	hijackClient := func(c tikv.Client) tikv.Client {
 		cli.Client = c
 		return cli
 	}
-
 	var cls cluster.Cluster
-	store, err := mockstore.NewMockStore(
+	var err error
+	s.store, err = mockstore.NewMockStore(
 		mockstore.WithClusterInspector(func(c cluster.Cluster) {
 			mockstore.BootstrapWithSingleStore(c)
 			cls = c
@@ -6492,17 +6496,25 @@ func (s *testFastAnalyze) TestIntegrationCopCache(c *C) {
 		mockstore.WithClientHijacker(hijackClient),
 	)
 	c.Assert(err, IsNil)
-	defer store.Close()
-
-	dom, err := session.BootstrapSession(store)
+	s.dom, err = session.BootstrapSession(store)
 	c.Assert(err, IsNil)
-	defer dom.Close()
+}
 
-	tk := testkit.NewTestKit(c, store)
+func (s *testCoprCache) TearDownSuite(c *C) {
+	s.dom.Close()
+	s.store.Close()
+}
+
+func (s *testCoprCache) TestIntegrationCopCache(c *C) {
+	originConfig := config.GetGlobalConfig()
+	config.StoreGlobalConfig(config.NewConfig())
+	defer config.StoreGlobalConfig(originConfig)
+
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int primary key)")
-	tblInfo, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tblInfo, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	tid := tblInfo.Meta().ID
 	tk.MustExec(`insert into t values(1),(2),(3),(4),(5),(6),(7),(8),(9),(10),(11),(12)`)
