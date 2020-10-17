@@ -911,7 +911,7 @@ func buildPlacementDropBundle(partitionID int64) *placement.Bundle {
 	}
 }
 
-func putRuleBundles(d *ddlCtx, physicalTableIDs []int64) error {
+func dropRuleBundles(d *ddlCtx, physicalTableIDs []int64) error {
 	if d.infoHandle != nil {
 		bundles := make([]*placement.Bundle, 0, len(physicalTableIDs))
 		for _, ID := range physicalTableIDs {
@@ -941,7 +941,7 @@ func (w *worker) onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (
 	if job.Type == model.ActionAddTablePartition {
 		// It is rollbacked from adding table partition, just remove addingDefinitions from tableInfo.
 		physicalTableIDs = rollbackAddingPartitionInfo(tblInfo)
-		err = putRuleBundles(d, physicalTableIDs)
+		err = dropRuleBundles(d, physicalTableIDs)
 		if err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
@@ -970,7 +970,7 @@ func (w *worker) onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
-		err = putRuleBundles(d, physicalTableIDs)
+		err = dropRuleBundles(d, physicalTableIDs)
 		if err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
