@@ -27,7 +27,6 @@ import (
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
@@ -258,6 +257,23 @@ func convertTimeToMysqlTime(t time.Time, fsp int8, roundMode types.RoundMode) (t
 	}
 
 	return types.NewTime(types.FromGoTime(tr), mysql.TypeDatetime, fsp), nil
+}
+
+func convertStringToTime(ctx sessionctx.Context, date, format string, tp uint8, fsp int8) (tm types.Time, isNull bool, err error) {
+	sc := ctx.GetSessionVars().StmtCtx
+	mode := ctx.GetSessionVars().SQLMode
+
+	succ := tm.StrToDate(sc, date, format)
+	if !succ || (mode.HasNoZeroDateMode() && (tm.Year() == 0 || tm.InvalidZero())) {
+		tm = types.ZeroTime
+		isNull = true
+		err = handleInvalidTimeError(ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, tm.String()))
+	} else {
+		tm.SetType(tp)
+		tm.SetFsp(fsp)
+	}
+
+	return
 }
 
 type dateFunctionClass struct {
@@ -1930,18 +1946,7 @@ func (b *builtinStrToDateDateSig) evalTime(row chunk.Row) (types.Time, bool, err
 	if isNull || err != nil {
 		return types.ZeroTime, isNull, err
 	}
-	var t types.Time
-	sc := b.ctx.GetSessionVars().StmtCtx
-	succ := t.StrToDate(sc, date, format)
-	if !succ {
-		return types.ZeroTime, true, handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, t.String()))
-	}
-	if b.ctx.GetSessionVars().SQLMode.HasNoZeroDateMode() && (t.Year() == 0 || t.Month() == 0 || t.Day() == 0) {
-		return types.ZeroTime, true, handleInvalidTimeError(b.ctx, types.ErrWrongValueForType.GenWithStackByArgs(types.DateTimeStr, date, ast.StrToDate))
-	}
-	t.SetType(mysql.TypeDate)
-	t.SetFsp(types.MinFsp)
-	return t, false, nil
+	return convertStringToTime(b.ctx, date, format, mysql.TypeDate, types.MinFsp)
 }
 
 type builtinStrToDateDatetimeSig struct {
@@ -1963,18 +1968,7 @@ func (b *builtinStrToDateDatetimeSig) evalTime(row chunk.Row) (types.Time, bool,
 	if isNull || err != nil {
 		return types.ZeroTime, isNull, err
 	}
-	var t types.Time
-	sc := b.ctx.GetSessionVars().StmtCtx
-	succ := t.StrToDate(sc, date, format)
-	if !succ {
-		return types.ZeroTime, true, handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, t.String()))
-	}
-	if b.ctx.GetSessionVars().SQLMode.HasNoZeroDateMode() && (t.Year() == 0 || t.Month() == 0 || t.Day() == 0) {
-		return types.ZeroTime, true, handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, t.String()))
-	}
-	t.SetType(mysql.TypeDatetime)
-	t.SetFsp(int8(b.tp.Decimal))
-	return t, false, nil
+	return convertStringToTime(b.ctx, date, format, mysql.TypeDatetime, int8(b.tp.Decimal))
 }
 
 type builtinStrToDateDurationSig struct {
@@ -1988,8 +1982,6 @@ func (b *builtinStrToDateDurationSig) Clone() builtinFunc {
 }
 
 // evalDuration
-// TODO: If the NO_ZERO_DATE or NO_ZERO_IN_DATE SQL mode is enabled, zero dates or part of dates are disallowed.
-// In that case, STR_TO_DATE() returns NULL and generates a warning.
 func (b *builtinStrToDateDurationSig) evalDuration(row chunk.Row) (types.Duration, bool, error) {
 	date, isNull, err := b.args[0].EvalString(b.ctx, row)
 	if isNull || err != nil {
@@ -1999,13 +1991,10 @@ func (b *builtinStrToDateDurationSig) evalDuration(row chunk.Row) (types.Duratio
 	if isNull || err != nil {
 		return types.Duration{}, isNull, err
 	}
-	var t types.Time
-	sc := b.ctx.GetSessionVars().StmtCtx
-	succ := t.StrToDate(sc, date, format)
-	if !succ {
-		return types.Duration{}, true, handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, t.String()))
+	t, isNull, err := convertStringToTime(b.ctx, date, format, mysql.TypeDate, int8(b.tp.Decimal))
+	if isNull || err != nil {
+		return types.Duration{}, isNull, err
 	}
-	t.SetFsp(int8(b.tp.Decimal))
 	dur, err := t.ConvertToDuration()
 	return dur, err != nil, err
 }

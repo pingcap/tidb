@@ -740,29 +740,18 @@ func (b *builtinStrToDateDateSig) vecEvalTime(input *chunk.Chunk, result *chunk.
 	result.ResizeTime(n, false)
 	result.MergeNulls(bufStrings, bufFormats)
 	times := result.Times()
-	sc := b.ctx.GetSessionVars().StmtCtx
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
 		}
-		var t types.Time
-		succ := t.StrToDate(sc, bufStrings.GetString(i), bufFormats.GetString(i))
-		if !succ {
-			if err := handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, t.String())); err != nil {
-				return err
-			}
+		t, isNull, err := convertStringToTime(b.ctx, bufStrings.GetString(i), bufFormats.GetString(i), mysql.TypeDate, types.MinFsp)
+		if err != nil {
+			return err
+		}
+		if isNull {
 			result.SetNull(i, true)
 			continue
 		}
-		if b.ctx.GetSessionVars().SQLMode.HasNoZeroDateMode() && (t.Year() == 0 || t.Month() == 0 || t.Day() == 0) {
-			if err := handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, t.String())); err != nil {
-				return err
-			}
-			result.SetNull(i, true)
-			continue
-		}
-		t.SetType(mysql.TypeDate)
-		t.SetFsp(types.MinFsp)
 		times[i] = t
 	}
 	return nil
@@ -1055,29 +1044,18 @@ func (b *builtinStrToDateDurationSig) vecEvalDuration(input *chunk.Chunk, result
 	result.ResizeGoDuration(n, false)
 	result.MergeNulls(bufStrings, bufFormats)
 	d64s := result.GoDurations()
-	sc := b.ctx.GetSessionVars().StmtCtx
-	hasNoZeroDateMode := b.ctx.GetSessionVars().SQLMode.HasNoZeroDateMode()
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
 		}
-		var t types.Time
-		succ := t.StrToDate(sc, bufStrings.GetString(i), bufFormats.GetString(i))
-		if !succ {
-			if err := handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, t.String())); err != nil {
-				return err
-			}
+		t, isNull, err := convertStringToTime(b.ctx, bufStrings.GetString(i), bufFormats.GetString(i), mysql.TypeDate, int8(b.tp.Decimal))
+		if err != nil {
+			return err
+		}
+		if isNull {
 			result.SetNull(i, true)
 			continue
 		}
-		if hasNoZeroDateMode && (t.Year() == 0 || t.Month() == 0 || t.Day() == 0) {
-			if err := handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, t.String())); err != nil {
-				return err
-			}
-			result.SetNull(i, true)
-			continue
-		}
-		t.SetFsp(int8(b.tp.Decimal))
 		dur, err := t.ConvertToDuration()
 		if err != nil {
 			return err
@@ -1422,32 +1400,19 @@ func (b *builtinStrToDateDatetimeSig) vecEvalTime(input *chunk.Chunk, result *ch
 	result.ResizeTime(n, false)
 	result.MergeNulls(dateBuf, formatBuf)
 	times := result.Times()
-	sc := b.ctx.GetSessionVars().StmtCtx
-	hasNoZeroDateMode := b.ctx.GetSessionVars().SQLMode.HasNoZeroDateMode()
-	fsp := int8(b.tp.Decimal)
 
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
 		}
-		var t types.Time
-		succ := t.StrToDate(sc, dateBuf.GetString(i), formatBuf.GetString(i))
-		if !succ {
-			if err = handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, t.String())); err != nil {
-				return err
-			}
+		t, isNull, err := convertStringToTime(b.ctx, dateBuf.GetString(i), formatBuf.GetString(i), mysql.TypeDatetime, int8(b.tp.Decimal))
+		if err != nil {
+			return err
+		}
+		if isNull {
 			result.SetNull(i, true)
 			continue
 		}
-		if hasNoZeroDateMode && (t.Year() == 0 || t.Month() == 0 || t.Day() == 0) {
-			if err = handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, t.String())); err != nil {
-				return err
-			}
-			result.SetNull(i, true)
-			continue
-		}
-		t.SetType(mysql.TypeDatetime)
-		t.SetFsp(fsp)
 		times[i] = t
 	}
 	return nil
