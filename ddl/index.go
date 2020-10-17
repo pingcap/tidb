@@ -703,6 +703,7 @@ func checkDropIndexes(t *meta.Meta, job *model.Job) (*model.TableInfo, []*model.
 
 	var indexNames []model.CIStr
 	if err = job.DecodeArgs(&indexNames); err != nil {
+		// Compatible with the previous function: DropIndex
 		var indexName model.CIStr
 		if err = job.DecodeArgs(&indexName); err != nil {
 			job.State = model.JobStateCancelled

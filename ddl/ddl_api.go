@@ -4904,7 +4904,7 @@ func (d *ddl) DropIndexes(ctx sessionctx.Context, ti ast.Ident, specs []*ast.Alt
 	}
 
 	allIndexIsExists := true
-	indexNames := make([]interface{}, 0, len(specs))
+	indexNames := make([]model.CIStr, 0, len(specs))
 	for _, spec := range specs {
 		var indexName model.CIStr
 		switch spec.Tp {
