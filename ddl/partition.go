@@ -1222,7 +1222,7 @@ func onTruncateTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, e
 	}
 
 	// used by ApplyDiff in updateSchemaVersion
-	job.Args = append(job.Args, newIDs)
+	job.CtxVars = []interface{}{oldIDs, newIDs}
 	ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
 	if err != nil {
 		return ver, errors.Trace(err)
@@ -1405,6 +1405,7 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 		}
 	}
 
+	job.CtxVars = []interface{}{defID, ptSchemaID, ptID}
 	ver, err = updateSchemaVersion(t, job)
 	if err != nil {
 		return ver, errors.Trace(err)
@@ -1738,6 +1739,8 @@ func onAlterTablePartition(t *meta.Meta, job *model.Job) (int64, error) {
 		return 0, errors.Wrapf(err, "failed to notify PD the placement rules")
 	}
 
+	// used by ApplyDiff in updateSchemaVersion
+	job.CtxVars = []interface{}{partitionID}
 	ver, err := updateSchemaVersion(t, job)
 	if err != nil {
 		return ver, errors.Trace(err)
