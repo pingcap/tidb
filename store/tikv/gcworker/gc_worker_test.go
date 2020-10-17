@@ -120,17 +120,15 @@ func (s *testGCWorkerSuite) mustPut(c *C, key, value string) {
 }
 
 func (s *testGCWorkerSuite) mustGet(c *C, key string, ts uint64) string {
-	snap, err := s.store.GetSnapshot(kv.Version{Ver: ts})
-	c.Assert(err, IsNil)
+	snap := s.store.GetSnapshot(kv.Version{Ver: ts})
 	value, err := snap.Get(context.TODO(), []byte(key))
 	c.Assert(err, IsNil)
 	return string(value)
 }
 
 func (s *testGCWorkerSuite) mustGetNone(c *C, key string, ts uint64) {
-	snap, err := s.store.GetSnapshot(kv.Version{Ver: ts})
-	c.Assert(err, IsNil)
-	_, err = snap.Get(context.TODO(), []byte(key))
+	snap := s.store.GetSnapshot(kv.Version{Ver: ts})
+	_, err := snap.Get(context.TODO(), []byte(key))
 	if err != nil {
 		// Unistore's gc is based on compaction filter.
 		// So skip the error check if err == nil.

@@ -678,7 +678,8 @@ var defaultConf = Config{
 		CommitterConcurrency:  16,
 		MaxTxnTTL:             60 * 60 * 1000, // 1hour
 		MemProfileInterval:    "1m",
-		IndexUsageSyncLease:   "60s",
+		// TODO: set indexUsageSyncLease to 60s.
+		IndexUsageSyncLease: "0s",
 	},
 	ProxyProtocol: ProxyProtocol{
 		Networks:      "",
