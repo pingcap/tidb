@@ -45,7 +45,7 @@ Usage: ./run-tests.sh [options]
 
 
 ## Prerequisite
-1. Build TiDB binary by `make server_globalkilltest`. See [Makefile](https://github.com/pingcap/tidb/blob/master/Makefile) for detail.
+1. Build TiDB binary for test. See [Makefile](https://github.com/pingcap/tidb/blob/master/tests/globalkilltest/Makefile) for detail.
 
 2. Establish a cluster with PD & TiKV, and provide PD client path by `--pd=ip:port[,ip:port]`.
 
@@ -69,7 +69,7 @@ Usage: ./run-tests.sh [options]
 
 ## How it works
 
-* TiDB is built by `make server_globalkilltest`, to hack some timeout variables, as the default value of these variables are too long _(several hours)_ for automated testing. See [Makefile](https://github.com/pingcap/tidb/blob/master/Makefile) for detail.
+* TiDB is built by [Makefile](https://github.com/pingcap/tidb/blob/master/tests/globalkilltest/Makefile), to hack some timeout variables, as the default value of these variables are too long _(several hours)_ for automated testing.
 
 * Execute `SELECT SLEEP(x)` as payload, and kill the query before `x` expired. If the query had no error and elapsed less than `x`, the test is PASSED.
 
@@ -80,11 +80,11 @@ Usage: ./run-tests.sh [options]
 
 ### Regression Execute in Integration Test
 
-In Integration Test after commit and before merge, run these commands under TiDB root folder.
+In Integration Test after commit and before merge, run these commands under TiDB `tests/globalkilltest` folder.
 
 ```sh
-make server_globalkilltest
 cd tests/globalkilltest
+make
 ./run-tests.sh --pd=<pd client path>
 ```
 
@@ -95,7 +95,7 @@ Again, before testing, establish a cluster with PD & TiKV and provide `pd client
 Run a single test manually (take `TestMultipleTiDB` as example):
 
 ```sh
-make server_globalkilltest
 cd tests/globalkilltest
-go test -check.f TestMultipleTiDB -args --pd=127.0.0.1:2379
+make
+go test -check.f TestMultipleTiDB -args --pd=<pd client path>
 ```
