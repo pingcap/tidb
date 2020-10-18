@@ -3424,6 +3424,7 @@ func CheckModifyTypeCompatible(origin *types.FieldType, to *types.FieldType) (al
 			switch to.Tp {
 			case mysql.TypeDuration:
 				return "", errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
+			case mysql.TypeYear:
 			default:
 				return "", ErrTruncatedWrongValue.GenWithStack("banned conversion that must fail")
 			}
