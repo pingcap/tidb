@@ -1942,11 +1942,7 @@ func (s *testIntegrationSuite2) TestTimeBuiltin(c *C) {
 	result = tk.MustQuery("select str_to_date('01-01-2017', '%d'), str_to_date('59', '%d-%Y')")
 	// TODO: MySQL returns "<nil> <nil>".
 	result.Check(testkit.Rows("0000-00-01 <nil>"))
-	result = tk.MustQuery("show warnings")
-	result.Sort().Check(testutil.RowsWithSep("|",
-		"Warning|1292|Incorrect datetime value: '0000-00-00 00:00:00'",
-		"Warning|1292|Truncated incorrect datetime value: '01-01-2017'"))
-
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Incorrect datetime value: '59'"))
 	result = tk.MustQuery("select str_to_date('2018-6-1', '%Y-%m-%d'), str_to_date('2018-6-1', '%Y-%c-%d'), str_to_date('59:20:1', '%s:%i:%k'), str_to_date('59:20:1', '%s:%i:%l')")
 	result.Check(testkit.Rows("2018-06-01 2018-06-01 01:20:59 01:20:59"))
 
@@ -4994,8 +4990,8 @@ monthname(str_to_date(1, '%m')), monthname(str_to_date(0, '%m'));`).Check(testki
 		tk.MustQuery(nullCase.sql).Check(testkit.Rows("<nil>"))
 	}
 
-	// remove NO_ZERO_DATE mode
-	tk.MustExec("set sql_mode='ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION'")
+	// remove NO_ZERO_DATE, NO_ZERO_IN_DATE mode
+	tk.MustExec("set sql_mode='ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION'")
 
 	for _, nullCase := range nullCases {
 		tk.MustQuery(nullCase.sql).Check(testkit.Rows(nullCase.ret))

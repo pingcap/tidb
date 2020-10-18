@@ -264,10 +264,10 @@ func convertStringToTime(ctx sessionctx.Context, date, format string, tp uint8, 
 	mode := ctx.GetSessionVars().SQLMode
 
 	succ := tm.StrToDate(sc, date, format)
-	if !succ || (tm.IsZero() && mode.HasNoZeroDateMode()) || (tm.InvalidZero() && mode.HasNoZeroInDateMode()) {
+	if !succ || (mode.HasNoZeroDateMode() && tm.IsZero()) || (mode.HasNoZeroInDateMode() && (tm.Year() == 0 || tm.InvalidZero())) {
 		tm = types.ZeroTime
 		isNull = true
-		err = handleInvalidTimeError(ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, tm.String()))
+		err = handleInvalidTimeError(ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, date))
 	} else {
 		tm.SetType(tp)
 		tm.SetFsp(fsp)
