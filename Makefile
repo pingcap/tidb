@@ -26,7 +26,7 @@ path_to_add := $(addsuffix /bin,$(subst :,/bin:,$(GOPATH))):$(PWD)/tools/bin
 export PATH := $(path_to_add):$(PATH)
 
 GO              := GO111MODULE=on go
-GOBUILD         := $(GO) build $(BUILD_FLAG) -tags codes -gcflags "-N -l"
+GOBUILD         := $(GO) build $(BUILD_FLAG) -tags codes
 GOBUILDCOVERAGE := GOPATH=$(GOPATH) cd tidb-server; $(GO) test -coverpkg="../..." -c .
 GOTEST          := $(GO) test -p $(P)
 OVERALLS        := GO111MODULE=on overalls
@@ -147,8 +147,10 @@ testSuite:
 	@echo "testSuite"
 	./tools/check/check_testSuite.sh
 
-clean: failpoint-disable
+clean:
 	$(GO) clean -i ./...
+	rm -rf *.out
+	rm -rf parser
 
 # Split tests for CI to run `make test` in parallel.
 test: test_part_1 test_part_2
@@ -158,7 +160,7 @@ test_part_1: checklist explaintest
 
 test_part_2: checkdep gotest gogenerate
 
-explaintest: server_check
+explaintest: server
 	@cd cmd/explaintest && ./run-tests.sh -s ../../bin/tidb-server
 
 ddltest:
