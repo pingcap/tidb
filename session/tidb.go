@@ -119,7 +119,9 @@ var (
 	statsLease = int64(3 * time.Second)
 
 	// indexUsageSyncLease is the time for index usage synchronization.
-	indexUsageSyncLease = int64(60 * time.Second)
+	// Because we have not completed GC and other functions, we set it to 0.
+	// TODO: Set indexUsageSyncLease to 60s.
+	indexUsageSyncLease = int64(0 * time.Second)
 )
 
 // ResetStoreForWithTiKVTest is only used in the test code.
