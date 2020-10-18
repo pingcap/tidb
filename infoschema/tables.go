@@ -750,6 +750,11 @@ var slowQueryCols = []columnInfo{
 	{name: execdetails.RequestCountStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.UnsignedFlag},
 	{name: execdetails.TotalKeysStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.UnsignedFlag},
 	{name: execdetails.ProcessKeysStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.UnsignedFlag},
+	{name: execdetails.RocksdbDeleteSkippedCountStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.UnsignedFlag},
+	{name: execdetails.RocksdbKeySkippedCountStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.UnsignedFlag},
+	{name: execdetails.RocksdbBlockCacheHitCountStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.UnsignedFlag},
+	{name: execdetails.RocksdbBlockReadCountStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.UnsignedFlag},
+	{name: execdetails.RocksdbBlockReadByteStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.UnsignedFlag},
 	{name: variable.SlowLogDBStr, tp: mysql.TypeVarchar, size: 64},
 	{name: variable.SlowLogIndexNamesStr, tp: mysql.TypeVarchar, size: 100},
 	{name: variable.SlowLogIsInternalStr, tp: mysql.TypeTiny, size: 1},
@@ -765,6 +770,12 @@ var slowQueryCols = []columnInfo{
 	{name: variable.SlowLogCopWaitAddr, tp: mysql.TypeVarchar, size: 64},
 	{name: variable.SlowLogMemMax, tp: mysql.TypeLonglong, size: 20},
 	{name: variable.SlowLogDiskMax, tp: mysql.TypeLonglong, size: 20},
+	{name: variable.SlowLogKVTotal, tp: mysql.TypeDouble, size: 22},
+	{name: variable.SlowLogPDTotal, tp: mysql.TypeDouble, size: 22},
+	{name: variable.SlowLogBackoffTotal, tp: mysql.TypeDouble, size: 22},
+	{name: variable.SlowLogWriteSQLRespTotal, tp: mysql.TypeDouble, size: 22},
+	{name: variable.SlowLogBackoffDetail, tp: mysql.TypeVarchar, size: 4096},
+	{name: variable.SlowLogPrepared, tp: mysql.TypeTiny, size: 1},
 	{name: variable.SlowLogSucc, tp: mysql.TypeTiny, size: 1},
 	{name: variable.SlowLogPlanFromCache, tp: mysql.TypeTiny, size: 1},
 	{name: variable.SlowLogPlan, tp: mysql.TypeLongBlob, size: types.UnspecifiedLength},
@@ -1092,6 +1103,16 @@ var tableStatementsSummaryCols = []columnInfo{
 	{name: "MAX_TOTAL_KEYS", tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Max number of scanned keys"},
 	{name: "AVG_PROCESSED_KEYS", tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Average number of processed keys"},
 	{name: "MAX_PROCESSED_KEYS", tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Max number of processed keys"},
+	{name: "AVG_ROCKSDB_DELETE_SKIPPED_COUNT", tp: mysql.TypeDouble, size: 22, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Average number of rocksdb delete skipped count"},
+	{name: "MAX_ROCKSDB_DELETE_SKIPPED_COUNT", tp: mysql.TypeLong, size: 11, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Max number of rocksdb delete skipped count"},
+	{name: "AVG_ROCKSDB_KEY_SKIPPED_COUNT", tp: mysql.TypeDouble, size: 22, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Average number of rocksdb key skipped count"},
+	{name: "MAX_ROCKSDB_KEY_SKIPPED_COUNT", tp: mysql.TypeLong, size: 11, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Max number of rocksdb key skipped count"},
+	{name: "AVG_ROCKSDB_BLOCK_CACHE_HIT_COUNT", tp: mysql.TypeDouble, size: 22, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Average number of rocksdb block cache hit count"},
+	{name: "MAX_ROCKSDB_BLOCK_CACHE_HIT_COUNT", tp: mysql.TypeLong, size: 11, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Max number of rocksdb block cache hit count"},
+	{name: "AVG_ROCKSDB_BLOCK_READ_COUNT", tp: mysql.TypeDouble, size: 22, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Average number of rocksdb block read count"},
+	{name: "MAX_ROCKSDB_BLOCK_READ_COUNT", tp: mysql.TypeLong, size: 11, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Max number of rocksdb block read count"},
+	{name: "AVG_ROCKSDB_BLOCK_READ_BYTE", tp: mysql.TypeDouble, size: 22, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Average number of rocksdb block read byte"},
+	{name: "MAX_ROCKSDB_BLOCK_READ_BYTE", tp: mysql.TypeLong, size: 11, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Max number of rocksdb block read byte"},
 	{name: "AVG_PREWRITE_TIME", tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Average time of prewrite phase"},
 	{name: "MAX_PREWRITE_TIME", tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Max time of prewrite phase"},
 	{name: "AVG_COMMIT_TIME", tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Average time of commit phase"},
@@ -1120,6 +1141,11 @@ var tableStatementsSummaryCols = []columnInfo{
 	{name: "MAX_MEM", tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Max memory(byte) used"},
 	{name: "AVG_DISK", tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Average disk space(byte) used"},
 	{name: "MAX_DISK", tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Max disk space(byte) used"},
+	{name: "AVG_KV_TIME", tp: mysql.TypeLonglong, size: 22, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Average time of TiKV used"},
+	{name: "AVG_PD_TIME", tp: mysql.TypeLonglong, size: 22, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Average time of PD used"},
+	{name: "AVG_BACKOFF_TOTAL_TIME", tp: mysql.TypeLonglong, size: 22, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Average time of Backoff used"},
+	{name: "AVG_WRITE_SQL_RESP_TIME", tp: mysql.TypeLonglong, size: 22, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Average time of write sql resp used"},
+	{name: "PREPARED", tp: mysql.TypeTiny, size: 1, flag: mysql.NotNullFlag, comment: "Whether prepared"},
 	{name: "AVG_AFFECTED_ROWS", tp: mysql.TypeDouble, size: 22, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Average number of rows affected"},
 	{name: "FIRST_SEEN", tp: mysql.TypeTimestamp, size: 26, flag: mysql.NotNullFlag, comment: "The time these statements are seen for the first time"},
 	{name: "LAST_SEEN", tp: mysql.TypeTimestamp, size: 26, flag: mysql.NotNullFlag, comment: "The time these statements are seen for the last time"},
@@ -1356,9 +1382,11 @@ func GetPDServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 		return nil, errors.Errorf("%T not an etcd backend", store)
 	}
 	var servers []ServerInfo
-	for _, addr := range etcd.EtcdAddrs() {
-		addr = strings.TrimSpace(addr)
-
+	members, err := etcd.EtcdAddrs()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	for _, addr := range members {
 		// Get PD version
 		url := fmt.Sprintf("%s://%s%s", util.InternalHTTPSchema(), addr, pdapi.ClusterVersion)
 		req, err := http.NewRequest(http.MethodGet, url, nil)

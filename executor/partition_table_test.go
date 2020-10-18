@@ -14,9 +14,8 @@
 package executor_test
 
 import (
-	"context"
-
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
@@ -87,22 +86,6 @@ func (s *partitionTableSuite) TestPartitionUnionScanIndexJoin(c *C) {
 	tk.MustExec("commit")
 }
 
-func (s *partitionTableSuite) TestDAGTableID(c *C) {
-	// This test checks the table ID in the DAG is changed to partition ID in the nextPartition function.
-	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("create table employees (id int,store_id int not null)partition by hash(store_id) partitions 4;")
-	sql := "select * from test.employees"
-	rs, err := tk.Exec(sql)
-	c.Assert(err, IsNil)
-
-	m := make(map[int64]struct{})
-	ctx := context.WithValue(context.Background(), "nextPartitionUpdateDAGReq", m)
-	tk.ResultSetToResultWithCtx(ctx, rs, Commentf("sql:%s, args:%v", sql))
-	// Check table ID is changed to partition ID for each partition.
-	c.Assert(m, HasLen, 4)
-}
-
 func (s *partitionTableSuite) TestPartitionReaderUnderApply(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("use test")
@@ -151,11 +134,51 @@ func (s *partitionTableSuite) TestPartitionReaderUnderApply(c *C) {
 		"5 naughty swartz 9.524000"))
 
 	// For issue 19450 release-4.0
-	tk.MustExec("set @try_old_partition_implementation = 1")
+	tk.MustExec(`set @@tidb_partition_prune_mode='` + string(variable.StaticOnly) + `'`)
 	tk.MustQuery("select * from t1 where c_decimal in (select c_decimal from t2 where t1.c_int = t2.c_int or t1.c_int = t2.c_int and t1.c_str > t2.c_str)").Check(testkit.Rows(
 		"1 romantic robinson 4.436000",
 		"2 stoic chaplygin 9.826000",
 		"3 vibrant shamir 6.300000",
 		"4 hungry wilson 4.900000",
 		"5 naughty swartz 9.524000"))
+}
+
+func (s *partitionTableSuite) TestImproveCoverage(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table coverage_rr (
+pk1 varchar(35) NOT NULL,
+pk2 int NOT NULL,
+c int,
+PRIMARY KEY (pk1,pk2)) partition by hash(pk2) partitions 4;`)
+	tk.MustExec("create table coverage_dt (pk1 varchar(35), pk2 int)")
+	tk.MustExec("insert into coverage_rr values ('ios', 3, 2),('android', 4, 7),('linux',5,1)")
+	tk.MustExec("insert into coverage_dt values ('apple',3),('ios',3),('linux',5)")
+	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic-only'")
+	tk.MustQuery("select /*+ INL_JOIN(dt, rr) */ * from coverage_dt dt join coverage_rr rr on (dt.pk1 = rr.pk1 and dt.pk2 = rr.pk2);").Sort().Check(testkit.Rows("ios 3 ios 3 2", "linux 5 linux 5 1"))
+	tk.MustQuery("select /*+ INL_MERGE_JOIN(dt, rr) */ * from coverage_dt dt join coverage_rr rr on (dt.pk1 = rr.pk1 and dt.pk2 = rr.pk2);").Sort().Check(testkit.Rows("ios 3 ios 3 2", "linux 5 linux 5 1"))
+}
+
+func (s *globalIndexSuite) TestGlobalIndexScan(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists p")
+	tk.MustExec(`create table p (id int, c int) partition by range (c) (
+partition p0 values less than (4),
+partition p1 values less than (7),
+partition p2 values less than (10))`)
+	tk.MustExec("alter table p add unique idx(id)")
+	tk.MustExec("insert into p values (1,3), (3,4), (5,6), (7,9)")
+	tk.MustQuery("select id from p use index (idx)").Check(testkit.Rows("1", "3", "5", "7"))
+}
+
+func (s *globalIndexSuite) TestGlobalIndexDoubleRead(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists p")
+	tk.MustExec(`create table p (id int, c int) partition by range (c) (
+partition p0 values less than (4),
+partition p1 values less than (7),
+partition p2 values less than (10))`)
+	tk.MustExec("alter table p add unique idx(id)")
+	tk.MustExec("insert into p values (1,3), (3,4), (5,6), (7,9)")
+	tk.MustQuery("select * from p use index (idx)").Check(testkit.Rows("1 3", "3 4", "5 6", "7 9"))
 }

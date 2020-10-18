@@ -302,6 +302,11 @@ func (t *Tracker) toString(indent string, buffer *bytes.Buffer) {
 
 // BytesToString converts the memory consumption to a readable string.
 func (t *Tracker) BytesToString(numBytes int64) string {
+	return BytesToString(numBytes)
+}
+
+// BytesToString converts the memory consumption to a readable string.
+func BytesToString(numBytes int64) string {
 	GB := float64(numBytes) / float64(1<<30)
 	if GB > 1 {
 		return fmt.Sprintf("%v GB", GB)
@@ -360,11 +365,6 @@ func (t *Tracker) DetachFromGlobalTracker() {
 func (t *Tracker) ReplaceBytesUsed(bytes int64) {
 	t.Consume(-t.BytesConsumed())
 	t.Consume(bytes)
-}
-
-// SetMaxConsumed should only be used in unit test.
-func (t *Tracker) SetMaxConsumed(value int64) {
-	atomic.StoreInt64(&t.maxConsumed, value)
 }
 
 func (t *Tracker) getParent() *Tracker {
