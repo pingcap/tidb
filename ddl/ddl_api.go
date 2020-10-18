@@ -4840,7 +4840,6 @@ func (d *ddl) DropIndex(ctx sessionctx.Context, ti ast.Ident, indexName model.CI
 	if isPK {
 		if !config.GetGlobalConfig().AlterPrimaryKey {
 			return ErrUnsupportedModifyPrimaryKey.GenWithStack("Unsupported drop primary key when alter-primary-key is false")
-
 		}
 		// If the table's PKIsHandle is true, we can't find the index from the table. So we check the value of PKIsHandle.
 		if indexInfo == nil && !t.Meta().PKIsHandle {
@@ -4903,7 +4902,7 @@ func (d *ddl) DropIndexes(ctx sessionctx.Context, ti ast.Ident, specs []*ast.Alt
 		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ti.Schema, ti.Name))
 	}
 
-	allIndexIsExists := true
+	existsSpec := make(map[string]bool, len(specs))
 	indexNames := make([]model.CIStr, 0, len(specs))
 	for _, spec := range specs {
 		var indexName model.CIStr
@@ -4953,11 +4952,20 @@ func (d *ddl) DropIndexes(ctx sessionctx.Context, ti ast.Ident, specs []*ast.Alt
 			return errors.Trace(err)
 		}
 
-		indexNames = append(indexNames, indexName)
-
-		if !spec.IfExists {
-			allIndexIsExists = false
+		if _, ok := existsSpec[indexName.L]; ok {
+			return ErrCantDropFieldOrKey.GenWithStack("Can't DROP '%s'; check that column/key exists", indexName)
 		}
+		if spec.IfExists {
+			existsSpec[indexName.L] = true
+		} else {
+			existsSpec[indexName.L] = false
+		}
+		indexNames = append(indexNames, indexName)
+	}
+
+	ifExists := make([]bool, 0, len(indexNames))
+	for _, v := range existsSpec {
+		ifExists = append(ifExists, v)
 	}
 
 	job := &model.Job{
@@ -4966,14 +4974,12 @@ func (d *ddl) DropIndexes(ctx sessionctx.Context, ti ast.Ident, specs []*ast.Alt
 		SchemaName: schema.Name.L,
 		Type:       model.ActionDropIndex,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{indexNames},
+		Args:       []interface{}{indexNames, ifExists},
 	}
 
 	err = d.doDDLJob(ctx, job)
-	// index not exists, but if_exists flags is true, so we ignore this error.
-	if ErrCantDropFieldOrKey.Equal(err) && allIndexIsExists {
-		ctx.GetSessionVars().StmtCtx.AppendNote(err)
-		return nil
+	if err != nil {
+		return errors.Trace(err)
 	}
 	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
