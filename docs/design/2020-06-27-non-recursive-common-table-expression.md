@@ -2,12 +2,14 @@
 # Proposal: Non-Recursive Common Table Expression
 
 - Author(s):     [Pingyu](https://github.com/pingyu) (Ping Yu)
-- Last updated:  2020-10-01
+- Last updated:  2020-10-18
 - Discussion at: https://github.com/pingcap/tidb/issues/17472
+
 
 ## Abstract
 
 This proposal proposes to support the __Non-recursive Common Table Expression (CTE)__.
+
 
 ## Background
 
@@ -33,51 +35,71 @@ Related issues:
 * [pingcap/parser#289](https://github.com/pingcap/parser/issues/289) request to support common table expression to be compatible with MySQL 8.0
 * [#18752](https://github.com/pingcap/tidb/issues/18752) request CTE to deal with graph data
 
+
 ## Proposal
 
-We design two strategies for CTE: __Merge__ & __Materialization__:
+### Parsing Phase
+In AST, CTE definitions are represented as trees, stored as metadata in query scope. While CTE references are represented as virtual tables.
 
-#### Merge
+![Graph 1](imgs/cte01.png)
+
+### Optimization Phase
+First of all, we build physical plan from AST.
+
+![Graph 2](imgs/cte02.png)
+
+Then, we design two strategies for CTE: __Merge__ & __Materialization__:
+
+#### A. Merge
+_(`Merge` is also called `Inline` is some other DBMS [[4]](http://www.vldb.org/pvldb/vol8/p1704-elhelw.pdf)[[11]](https://github.com/cockroachdb/cockroach/blob/fef86947262bd1691ec771193535d62b892d007a/pkg/sql/opt/norm/with_funcs.go#L18))_
+
 The CTE is expanded on where it's referenced:
 
 ```sql
-WITH cte(k, v) AS (SELECT i, j FROM t1)
-SELECT v FROM cte WHERE k > 10
-UNION DISTINCT
-SELECT v FROM cte WHERE k < 100
+WITH
+  cte1 AS (SELECT a, b FROM table1),
+  cte2 AS (SELECT c, d FROM table2)
+SELECT b, d FROM cte1 JOIN cte2
+WHERE cte1.a = cte2.c;
 ```
 
 After "merged":
 
 ```sql
-SELECT v FROM (SELECT i AS k, j AS v FROM t1) WHERE k > 10
-UNION DISTINCT
-SELECT v FROM (SELECT i AS k, j AS v FROM t1) WHERE k < 100
+SELECT b, d FROM (SELECT a, b FROM table1) s_cte1
+JOIN (SELECT c, d FROM table2) s_cte2
+WHERE s_cte1.a = s_cte2.c;
 ```
 
-We will add some rules to rewrite the plan trees, similar to `subquery optimization` [[2]](https://pingcap.com/blog/2016-12-07-Subquery-Optimization-in-TiDB/).
+![Graph 3](imgs/cte03.png)
 
-_(`Merge` is also called `Inline` is some other DBMS [[4]](http://www.vldb.org/pvldb/vol8/p1704-elhelw.pdf)[[11]](https://github.com/cockroachdb/cockroach/blob/fef86947262bd1691ec771193535d62b892d007a/pkg/sql/opt/norm/with_funcs.go#L18))_
+We will add a `rule_merge_cte` as the first rule of logical optimizer. `rule_merge_cte` replaces `LogicalCTE` nodes by logical plan tree of corresponding CTE, similar to `subquery optimization` [[2]](https://pingcap.com/blog/2016-12-07-Subquery-Optimization-in-TiDB/).
 
-#### Materialization
-A CTE is first executed and stored result temporarily during the statement execution.
+After the replacement, following procedure are just the same as other statements.
 
-Then, on each point the CTE is referenced, the tuples of CTE is read from the temporary storage.
+#### B. Materialization
+A CTE is first executed and stored result temporarily during the statement execution. Then, on each point the CTE is referenced, the tuples of CTE is read from the temporary storage.
 
-To improve performance, the temporary result is stored in memory first, then spill to disk if out of memory quota, similar to disk-based executors [[3]](https://github.com/pingcap/tidb/issues/11607).
+To improve performance, the temporary result is stored in memory first, then spill to disk if out of memory quota, similar to disk-based executors [[3]](https://github.com/pingcap/tidb/issues/11607). _(So `Materialization` is independent to temporary table now. But implementation of temporary table can be reused by CTE, view, and subquery. When we have a good implementation of temporary table, `Materialization` of CTE can migrate to it)_
 
-Besides, [[4]](http://www.vldb.org/pvldb/vol8/p1704-elhelw.pdf) introduces a `Producer-Consumer` model. We can utilize this model to make writing and reading of CTE parallel.
+Moreover, we introduces a `Producer-Consumer` model. We utilize this model to implement multiple references of a CTE, and enable producing and consuming CTE tuples in a parallel manner [[4]](http://www.vldb.org/pvldb/vol8/p1704-elhelw.pdf).
 
-![cte01](imgs/cte01.png)
+Finally, other optimization should be inspected later to further improve performance, e.g., pushing down disjunction of all predicates [[4]](http://www.vldb.org/pvldb/vol8/p1704-elhelw.pdf).
 
-#### Optimization
-For `Merge` strategy, most existed rules for subquery can be reused.
+![Graph 4](imgs/cte04.png)
 
-For `Materialization` strategy, disjunction of all predicates on top can be push down to CTE [[4]](http://www.vldb.org/pvldb/vol8/p1704-elhelw.pdf).
+#### C. Choose Better Strategy
+We choose `Merge` or `Materialization` by heuristic rules. As the `Merge` must be done in logical optimization phase, it is infeasible to make the choice by cost.
 
-Finally, the costs should be estimated, to select the better strategy for each CTE.
+A CTE is not mergeable when:
+* It is not constant (having user-defined variable assignment).
+* It is referenced by many (e.g. more than 5) times.
+* Optimizer hints say that it should not be merge. See __"Optimizer Hints"__
 
-#### Optimizer Hints
+If a CTE is mergeable, we will merge it. Otherwise, we will materialize it.
+
+
+### Optimizer Hints
 To be compatible to MySQL [[1]](https://dev.mysql.com/doc/refman/8.0/en/derived-table-optimization.html), we propose these hints:
 * __MERGE__: indicates the CTE should be merged.
 * __NO_MERGE__: indicates the CTE should be materialized.
@@ -94,7 +116,6 @@ WHERE cte1.a = cte2.c;
 _(cte1 should be merged and cte2 should be materialized)_
 
 
-
 ## Rationale
 
 Mainstream database systems utilize `Merge` and `Materialization` to implement CTE.
@@ -107,7 +128,6 @@ If `Materialization` is necessary, these optimizations can be applied:
 3. Add index(es) according to access method [[1]](https://dev.mysql.com/doc/refman/8.0/en/derived-table-optimization.html).
 4. Pushdown predicates, and pushdown disjunction of all predicates if referenced multiple times [[4]](http://www.vldb.org/pvldb/vol8/p1704-elhelw.pdf)[[5]](http://ceur-ws.org/Vol-1864/paper_6.pdf).
 
-
 #### MySQL
 MySQL using these two strategies: 1) Merge the derived table into the outer query block, or 2) Materialize the derived table to an internal temporary table [[1]](https://dev.mysql.com/doc/refman/8.0/en/derived-table-optimization.html). The optimizer most often merge, except that [[14]](https://dev.mysql.com/worklog/task/?id=883)[[15]](https://github.com/mysql/mysql-server/blob/f8cdce86448a211511e8a039c62580ae16cb96f5/sql/sql_resolver.cc#L3358):
 * Optimizer hints specifies [NO_MERGE](https://dev.mysql.com/doc/refman/8.0/en/optimizer-hints.html#optimizer-hints-table-level), or [optimizer_switch](https://dev.mysql.com/doc/refman/8.0/en/server-system-variables.html#sysvar_optimizer_switch)'s `derived_merge` is __OFF__.
@@ -117,7 +137,7 @@ MySQL using these two strategies: 1) Merge the derived table into the outer quer
   *  Limit
   *  Window _(TODO: why?)_
 * Heuristic does not suggest merge [[16]](https://github.com/mysql/mysql-server/blob/f8cdce86448a211511e8a039c62580ae16cb96f5/sql/sql_lex.cc#L3751):
-  * CTE is not constant (has `SET VAR`).
+  * CTE is not constant (having user-defined variable assignment).
   * Contains subqueries in the SELECT list that depend on columns from itself, because MySQL assumes that user wants subquery to be materialized.
 
 #### MariaDB
@@ -135,7 +155,6 @@ Postgresql have always used `Materialization` strategy, and introduced `Merge` i
 CockroachDB uses `Materialization` strategy by default, but chooses `Merge` strategy when 1) see `NO MATERIALIZED` hint, or 2) the CTE has no side-effect and is referenced only once [[11]](https://github.com/cockroachdb/cockroach/blob/master/pkg/sql/opt/norm/with_funcs.go#L18)[[12]](https://github.com/cockroachdb/cockroach/issues/45863).
 
 
-
 ## Implementation
 
 1. Stage 1: `Merge` should be not difficult. A rewrite rule is enough, similar to rewriting subquery [[2]](https://pingcap.com/blog/2016-12-07-Subquery-Optimization-in-TiDB/).
@@ -145,6 +164,7 @@ CockroachDB uses `Materialization` strategy by default, but chooses `Merge` stra
 
 ## Open issues
 [TiDB#17472: support common table expression](https://github.com/pingcap/tidb/issues/17472)
+
 
 ## References
 1. [MySQL 8.0 Reference Manual, 8.2.2.4 Optimizing Derived Tables, View References, and Common Table Expressions with Merging or Materialization](https://dev.mysql.com/doc/refman/8.0/en/derived-table-optimization.html)
