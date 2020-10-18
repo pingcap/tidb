@@ -7302,3 +7302,17 @@ func (s *testIntegrationSuite) TestIssue17476(c *C) {
 	tk.MustQuery(`SELECT count(*) FROM (table_float JOIN table_int_float_varchar AS tmp3 ON (tmp3.col_varchar_6 AND NULL) IS NULL);`).Check(testkit.Rows("154"))
 	tk.MustQuery(`SELECT * FROM (table_int_float_varchar AS tmp3) WHERE (col_varchar_6 AND NULL) IS NULL AND col_int_6=0;`).Check(testkit.Rows("13 0 -0.1 <nil>"))
 }
+
+func (s *testIntegrationSuite) TestIssue11193(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustGetErrCode("select CONVERT( 2, DECIMAL(62,60) )", mysql.ErrTooBigScale)
+	tk.MustGetErrMsg("select CONVERT( 2, DECIMAL(62,60) )", "Too big scale 60 specified for column '2'. Maximum is 30")
+	tk.MustGetErrCode("select CONVERT( 2, DECIMAL(66,29) )", mysql.ErrTooBigPrecision)
+	tk.MustGetErrMsg("select CONVERT( 2, DECIMAL(66,29) )", "Too-big precision 66 specified for '2'. Maximum is 65")
+
+	tk.MustExec("select CONVERT( 2, DECIMAL(62,20) )")
+	tk.MustQuery("select CONVERT( 2, DECIMAL(62,20) )").Check(testkit.Rows("2.00000000000000000000"))
+
+	tk.MustExec("select CONVERT( 2, DECIMAL(30,29) )")
+	tk.MustQuery("select CONVERT( 2, DECIMAL(30,29) )").Check(testkit.Rows("2.00000000000000000000000000000"))
+}

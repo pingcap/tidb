@@ -419,7 +419,6 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 		_, isNull, err := sig.evalDecimal(t.row.ToRow())
 		c.Assert(isNull, Equals, false)
 		c.Assert(err, NotNil)
-		//c.Assert(res.ToString(), DeepEquals, t.after.ToString())
 	}
 
 	durationColumn.RetType.Decimal = 1
