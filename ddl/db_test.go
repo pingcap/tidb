@@ -2621,6 +2621,14 @@ func (s *testSerialDBSuite) TestCreateTable(c *C) {
 	tk.MustGetErrCode(failSQL, errno.ErrTableOptionInsertMethodUnsupported)
 	tk.MustExec("drop table x;")
 	tk.MustExec("drop table y;")
+
+	// For issue #18149
+	tk.MustExec("use test")
+	failSQL = "CREATE TABLE t(a INT, KEY ``(a));"
+	tk.MustGetErrCode(failSQL, errno.ErrWrongNameForIndex)
+	_, err = tk.Exec("CREATE TABLE t(a INT, KEY ``(a));")
+	c.Assert(err.Error(), Equals, "[ddl:1280]Incorrect index name ''")
+
 }
 
 func (s *testSerialDBSuite) TestRepairTable(c *C) {

@@ -255,6 +255,12 @@ func (s *testValidatorSuite) TestValidator(c *C) {
 		{"CREATE TABLE origin (a int primary key auto_increment, b int);", false, nil},
 		{"CREATE TABLE origin (a int unique auto_increment, b int);", false, nil},
 		{"CREATE TABLE origin (a int key auto_increment, b int);", false, nil},
+
+		// issue 18149
+		{"CREATE TABLE t (a int, index ``(a));", true, errors.New("[ddl:1280]Incorrect index name ''")},
+		{"CREATE TABLE t (a int, key ``(a));", true, errors.New("[ddl:1280]Incorrect index name ''")},
+		{"CREATE TABLE t (a int, index(a));", false, nil},
+		{"CREATE TABLE t (a int,key(a));", false, nil},
 	}
 
 	_, err := s.se.Execute(context.Background(), "use test")
