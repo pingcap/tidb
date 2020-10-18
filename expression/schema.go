@@ -31,8 +31,9 @@ func (ki KeyInfo) Clone() KeyInfo {
 
 // Schema stands for the row schema and unique key information get from input.
 type Schema struct {
-	Columns []*Column
-	Keys    []KeyInfo
+	Columns    []*Column
+	Keys       []KeyInfo
+	UniqueKeys []KeyInfo
 }
 
 // String implements fmt.Stringer interface.
@@ -97,6 +98,16 @@ func (s *Schema) RetrieveColumn(col *Column) *Column {
 // IsUniqueKey checks if this column is a unique key.
 func (s *Schema) IsUniqueKey(col *Column) bool {
 	for _, key := range s.Keys {
+		if len(key) == 1 && key[0].Equal(nil, col) {
+			return true
+		}
+	}
+	return false
+}
+
+// IsUnique checks if this column is a unique key which may contain duplicate nulls .
+func (s *Schema) IsUnique(col *Column) bool {
+	for _, key := range s.UniqueKeys {
 		if len(key) == 1 && key[0].Equal(nil, col) {
 			return true
 		}

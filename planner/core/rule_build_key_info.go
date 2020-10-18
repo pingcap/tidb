@@ -15,7 +15,6 @@ package core
 
 import (
 	"context"
-	"strings"
 
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
@@ -76,15 +75,19 @@ func (la *LogicalAggregation) BuildKeyInfo(selfSchema *expression.Schema, childS
 
 // If a condition is the form of (uniqueKey = constant) or (uniqueKey = Correlated column), it returns at most one row.
 // This function will check it.
-func (p *LogicalSelection) checkMaxOneRowCond(unique expression.Expression, constOrCorCol expression.Expression, childSchema *expression.Schema) bool {
+func (p *LogicalSelection) checkMaxOneRowCond(unique expression.Expression, constOrCorCol expression.Expression, childSchema *expression.Schema, isNullRejected bool) bool {
 	col, ok := unique.(*expression.Column)
 	if !ok {
 		return false
 	}
-	if !childSchema.IsUniqueKey(col) {
-		if !isUnique(p, col) {
-			return false
+	if isNullRejected {
+		if !childSchema.IsUniqueKey(col) {
+			if !childSchema.IsUnique(col) {
+				return false
+			}
 		}
+	} else if !childSchema.IsUniqueKey(col) {
+		return false
 	}
 	_, okCon := constOrCorCol.(*expression.Constant)
 	if okCon {
@@ -94,31 +97,13 @@ func (p *LogicalSelection) checkMaxOneRowCond(unique expression.Expression, cons
 	return okCorCol
 }
 
-// isUnique checks the unique index whose NotNullFlag is false since equivalence conditions can filter out null values,
-// so a unique index without a NotNullFlag can return at most one row.
-func isUnique(p *LogicalSelection, col *expression.Column) bool {
-	for _, child := range p.children {
-		ds, ok := child.(*DataSource)
-		if !ok {
-			continue
-		}
-		tblInfo := ds.tableInfo
-		for _, idx := range tblInfo.Indices {
-			listColOrigName := strings.Split(col.OrigName, ".")
-			if idx.Unique && len(idx.Columns) == 1 && idx.Columns[0].Name.L == listColOrigName[len(listColOrigName)-1:][0] {
-				return true
-			}
-		}
-	}
-	return false
-}
-
 // BuildKeyInfo implements LogicalPlan BuildKeyInfo interface.
 func (p *LogicalSelection) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
 	p.baseLogicalPlan.BuildKeyInfo(selfSchema, childSchema)
 	for _, cond := range p.Conditions {
 		if sf, ok := cond.(*expression.ScalarFunction); ok && sf.FuncName.L == ast.EQ {
-			if p.checkMaxOneRowCond(sf.GetArgs()[0], sf.GetArgs()[1], childSchema[0]) || p.checkMaxOneRowCond(sf.GetArgs()[1], sf.GetArgs()[0], childSchema[0]) {
+			isOk := isNullRejected(p.ctx, selfSchema, sf)
+			if p.checkMaxOneRowCond(sf.GetArgs()[0], sf.GetArgs()[1], childSchema[0], isOk) || p.checkMaxOneRowCond(sf.GetArgs()[1], sf.GetArgs()[0], childSchema[0], isOk) {
 				p.maxOneRow = true
 				break
 			}
@@ -231,11 +216,12 @@ func (p *LogicalJoin) BuildKeyInfo(selfSchema *expression.Schema, childSchema []
 }
 
 // checkIndexCanBeKey checks whether an Index can be a Key in schema.
-func checkIndexCanBeKey(idx *model.IndexInfo, columns []*model.ColumnInfo, schema *expression.Schema) expression.KeyInfo {
+func checkIndexCanBeKey(idx *model.IndexInfo, columns []*model.ColumnInfo, schema *expression.Schema) (uniqueKey, newKey expression.KeyInfo) {
 	if !idx.Unique {
-		return nil
+		return nil, nil
 	}
-	newKey := make([]*expression.Column, 0, len(idx.Columns))
+	newKey = make([]*expression.Column, 0, len(idx.Columns))
+	uniqueKey = make([]*expression.Column, 0, len(idx.Columns))
 	ok := true
 	for _, idxCol := range idx.Columns {
 		// The columns of this index should all occur in column schema.
@@ -244,6 +230,8 @@ func checkIndexCanBeKey(idx *model.IndexInfo, columns []*model.ColumnInfo, schem
 		for i, col := range columns {
 			if idxCol.Name.L == col.Name.L {
 				if !mysql.HasNotNullFlag(col.Flag) {
+					uniqueKey = append(uniqueKey, schema.Columns[i])
+					find = true
 					break
 				}
 				newKey = append(newKey, schema.Columns[i])
@@ -257,9 +245,9 @@ func checkIndexCanBeKey(idx *model.IndexInfo, columns []*model.ColumnInfo, schem
 		}
 	}
 	if ok {
-		return newKey
+		return uniqueKey, newKey
 	}
-	return nil
+	return nil, nil
 }
 
 // BuildKeyInfo implements LogicalPlan BuildKeyInfo interface.
@@ -269,8 +257,9 @@ func (ds *DataSource) BuildKeyInfo(selfSchema *expression.Schema, childSchema []
 		if path.IsIntHandlePath {
 			continue
 		}
-		if newKey := checkIndexCanBeKey(path.Index, ds.Columns, selfSchema); newKey != nil {
+		if uniqueKey, newKey := checkIndexCanBeKey(path.Index, ds.Columns, selfSchema); uniqueKey != nil || newKey != nil {
 			selfSchema.Keys = append(selfSchema.Keys, newKey)
+			selfSchema.UniqueKeys = append(selfSchema.UniqueKeys, uniqueKey)
 		}
 	}
 	if ds.tableInfo.PKIsHandle {
@@ -295,7 +284,7 @@ func (is *LogicalIndexScan) BuildKeyInfo(selfSchema *expression.Schema, childSch
 		if path.IsTablePath() {
 			continue
 		}
-		if newKey := checkIndexCanBeKey(path.Index, is.Columns, selfSchema); newKey != nil {
+		if _, newKey := checkIndexCanBeKey(path.Index, is.Columns, selfSchema); newKey != nil {
 			selfSchema.Keys = append(selfSchema.Keys, newKey)
 		}
 	}
