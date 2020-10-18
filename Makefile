@@ -147,10 +147,8 @@ testSuite:
 	@echo "testSuite"
 	./tools/check/check_testSuite.sh
 
-clean:
+clean: failpoint-disable
 	$(GO) clean -i ./...
-	rm -rf *.out
-	rm -rf parser
 
 # Split tests for CI to run `make test` in parallel.
 test: test_part_1 test_part_2
@@ -160,7 +158,7 @@ test_part_1: checklist explaintest
 
 test_part_2: checkdep gotest gogenerate
 
-explaintest: server
+explaintest: server_check
 	@cd cmd/explaintest && ./run-tests.sh -s ../../bin/tidb-server
 
 ddltest:
