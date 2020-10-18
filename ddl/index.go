@@ -702,7 +702,8 @@ func checkDropIndexes(t *meta.Meta, job *model.Job) (*model.TableInfo, []*model.
 	}
 
 	var indexNames []model.CIStr
-	if err = job.DecodeArgs(&indexNames); err != nil {
+	var ifExists []bool
+	if err = job.DecodeArgs(&indexNames, &ifExists); err != nil {
 		// Compatible with the previous function: DropIndex
 		var indexName model.CIStr
 		if err = job.DecodeArgs(&indexName); err != nil {
@@ -710,13 +711,14 @@ func checkDropIndexes(t *meta.Meta, job *model.Job) (*model.TableInfo, []*model.
 			return nil, nil, errors.Trace(err)
 		}
 		indexNames = append(indexNames, indexName)
+		ifExists = append(ifExists, false)
 	}
 
 	indexesInfo := make([]*model.IndexInfo, 0, len(indexNames))
 	indexesMap := make(map[string]bool)
-	for _, indexName := range indexNames {
+	for i, indexName := range indexNames {
 		indexInfo := tblInfo.FindIndexByName(indexName.L)
-		if indexInfo == nil {
+		if indexInfo == nil && !ifExists[i] {
 			job.State = model.JobStateCancelled
 			return nil, nil, ErrCantDropFieldOrKey.GenWithStack("index %s doesn't exist", indexName)
 		}
