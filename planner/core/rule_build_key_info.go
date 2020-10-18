@@ -257,8 +257,10 @@ func (ds *DataSource) BuildKeyInfo(selfSchema *expression.Schema, childSchema []
 		if path.IsIntHandlePath {
 			continue
 		}
-		if uniqueKey, newKey := checkIndexCanBeKey(path.Index, ds.Columns, selfSchema); uniqueKey != nil || newKey != nil {
+		if _, newKey := checkIndexCanBeKey(path.Index, ds.Columns, selfSchema); newKey != nil {
 			selfSchema.Keys = append(selfSchema.Keys, newKey)
+		}
+		if uniqueKey, _ := checkIndexCanBeKey(path.Index, ds.Columns, selfSchema); uniqueKey != nil {
 			selfSchema.UniqueKeys = append(selfSchema.UniqueKeys, uniqueKey)
 		}
 	}
