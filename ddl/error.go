@@ -250,4 +250,7 @@ var (
 
 	// ErrMultipleDefConstInListPart returns multiple definition of same constant in list partitioning.
 	ErrMultipleDefConstInListPart = terror.ClassDDL.New(mysql.ErrMultipleDefConstInListPart, mysql.MySQLErrName[mysql.ErrMultipleDefConstInListPart])
+
+	// ErrTruncatedWrongValue is returned when data has been truncated during conversion.
+	ErrTruncatedWrongValue = terror.ClassDDL.New(mysql.ErrTruncatedWrongValue, mysql.MySQLErrName[mysql.ErrTruncatedWrongValue])
 )
