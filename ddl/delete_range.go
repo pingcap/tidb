@@ -326,9 +326,10 @@ func insertJobIntoDeleteRangeTable(ctx sessionctx.Context, job *model.Job) error
 	case model.ActionDropIndex, model.ActionDropPrimaryKey:
 		tableID := job.TableID
 		var indexNames []model.CIStr
+		var ifExists []bool
 		var indexIDs []int64
 		var partitionIDs []int64
-		if err := job.DecodeArgs(&indexNames, &indexIDs, &partitionIDs); err != nil {
+		if err := job.DecodeArgs(&indexNames, &ifExists, &indexIDs, &partitionIDs); err != nil {
 			// Compatible with the previous function: DropIndex
 			var indexName model.CIStr
 			if err := job.DecodeArgs(&indexName, &indexIDs, &partitionIDs); err != nil {
