@@ -2169,10 +2169,18 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) err
 			// We don't handle charset and collate here since they're handled in `getCharsetAndCollateInTableOption`.
 		}
 	}
-	if tbInfo.PreSplitRegions > tbInfo.ShardRowIDBits {
-		tbInfo.PreSplitRegions = tbInfo.ShardRowIDBits
+	shardingBits := shardingBits(tbInfo)
+	if tbInfo.PreSplitRegions > shardingBits {
+		tbInfo.PreSplitRegions = shardingBits
 	}
 	return nil
+}
+
+func shardingBits(tblInfo *model.TableInfo) uint64 {
+	if tblInfo.ShardRowIDBits > 0 {
+		return tblInfo.ShardRowIDBits
+	}
+	return tblInfo.AutoRandomBits
 }
 
 // isIgnorableSpec checks if the spec type is ignorable.
