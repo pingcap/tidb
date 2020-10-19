@@ -2719,6 +2719,10 @@ func (du *baseDateArithmitical) getDateFromString(ctx sessionctx.Context, args [
 
 	sc := ctx.GetSessionVars().StmtCtx
 	date, err := types.ParseTime(sc, dateStr, dateTp, types.MaxFsp)
+
+	if ctx.GetSessionVars().SQLMode.HasNoZeroDateMode() && (date.Year() == 0 || date.Month() == 0 || date.Day() == 0) {
+		return types.ZeroTime, true, handleInvalidTimeError(ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, dateStr))
+	}
 	return date, err != nil, handleInvalidTimeError(ctx, err)
 }
 
@@ -3430,14 +3434,6 @@ func (b *builtinAddDateStringIntSig) evalTime(row chunk.Row) (types.Time, bool, 
 	interval, isNull, err := b.getIntervalFromInt(b.ctx, b.args, row, unit)
 	if isNull || err != nil {
 		return types.ZeroTime, true, err
-	}
-
-	dateStr, isNull, err := b.args[0].EvalString(b.ctx, row)
-	if isNull || err != nil {
-		return types.ZeroTime, isNull, err
-	}
-	if b.ctx.GetSessionVars().SQLMode.HasNoZeroDateMode() && (date.Year() == 0 || date.Month() == 0 || date.Day() == 0) {
-		return types.ZeroTime, true, handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, dateStr))
 	}
 
 	result, isNull, err := b.add(b.ctx, date, interval, unit)
