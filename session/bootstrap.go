@@ -312,7 +312,6 @@ const (
 		QUERY_COUNT bigint(64),
 		ROWS_SELECTED bigint(64),
 		LAST_USED_AT timestamp,
-		LAST_UPDATED_AT timestamp,
 		PRIMARY KEY(TABLE_SCHEMA, TABLE_NAME, INDEX_NAME)
 	);`
 )
@@ -1274,7 +1273,7 @@ func doDMLWorks(s Session) {
 				vVal = strconv.Itoa(variable.DefTiDBRowFormatV2)
 			}
 			if v.Name == variable.TiDBEnableClusteredIndex {
-				vVal = "1"
+				vVal = variable.BoolOn
 			}
 			if v.Name == variable.TiDBPartitionPruneMode {
 				vVal = string(variable.StaticOnly)
