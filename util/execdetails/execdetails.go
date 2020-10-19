@@ -451,17 +451,23 @@ func (crs *CopRuntimeStats) String() string {
 		}
 	}
 
+	var result string
 	if totalTasks == 1 {
-		return fmt.Sprintf("time:%v, loops:%d", procTimes[0], totalIters)
+		result += fmt.Sprintf("time:%v, loops:%d", procTimes[0], totalIters)
+	} else {
+		n := len(procTimes)
+		sort.Slice(procTimes, func(i, j int) bool { return procTimes[i] < procTimes[j] })
+		result += fmt.Sprintf("proc max:%v, min:%v, p80:%v, p95:%v, iters:%v, tasks:%v",
+			procTimes[n-1], procTimes[0], procTimes[n*4/5], procTimes[n*19/20], totalIters, totalTasks)
 	}
-
-	n := len(procTimes)
-	sort.Slice(procTimes, func(i, j int) bool { return procTimes[i] < procTimes[j] })
-	return fmt.Sprintf("proc max:%v, min:%v, p80:%v, p95:%v, iters:%v, tasks:%v total keys: %v processed keys: %v"+
-		"rocksdb delete skipped count:%v rocksdb key skipped count: %v rocksdb block cache hit count: %v rocksdb block read count: %v rocksdb block read byte: %v",
-		procTimes[n-1], procTimes[0], procTimes[n*4/5], procTimes[n*19/20], totalIters, totalTasks, crs.copDetails.TotalKeys, crs.copDetails.ProcessedKeys,
-		crs.copDetails.RocksdbDeleteSkippedCount, crs.copDetails.RocksdbKeySkippedCount, crs.copDetails.RocksdbBlockCacheHitCount,
-		crs.copDetails.RocksdbBlockReadCount, crs.copDetails.RocksdbBlockReadByte)
+	if crs.copDetails != nil {
+		result += fmt.Sprintf(", total keys: %v, processed keys: %v, rocksdb delete skipped count:%v, " +
+			"rocksdb key skipped count: %v, rocksdb block cache hit count: %v, rocksdb block read count: %v, rocksdb block read byte: %v",
+			crs.copDetails.TotalKeys, crs.copDetails.ProcessedKeys,
+			crs.copDetails.RocksdbDeleteSkippedCount, crs.copDetails.RocksdbKeySkippedCount, crs.copDetails.RocksdbBlockCacheHitCount,
+			crs.copDetails.RocksdbBlockReadCount, crs.copDetails.RocksdbBlockReadByte)
+	}
+	return result
 }
 
 const (
@@ -671,10 +677,7 @@ func (e *RuntimeStatsColl) GetCopStats(planID int) *CopRuntimeStats {
 	defer e.mu.Unlock()
 	copStats, ok := e.copStats[planID]
 	if !ok {
-		copStats = &CopRuntimeStats{
-			stats:      make(map[string][]*BasicRuntimeStats),
-			copDetails: &CopDetails{},
-		}
+		copStats = &CopRuntimeStats{stats: make(map[string][]*BasicRuntimeStats)}
 		e.copStats[planID] = copStats
 	}
 	return copStats
@@ -704,6 +707,9 @@ func (e *RuntimeStatsColl) RecordOneCopTask(planID int, address string, summary 
 // RecordCopDetail records a specific cop tasks's cop detail.
 func (e *RuntimeStatsColl) RecordCopDetail(planID int, detail *CopDetails) {
 	copStats := e.GetCopStats(planID)
+	if copStats.copDetails == nil {
+		copStats.copDetails = &CopDetails{}
+	}
 	copStats.copDetails.Merge(detail)
 }
 
