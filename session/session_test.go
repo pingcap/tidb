@@ -3395,7 +3395,7 @@ func (s *testSessionSuite3) TestSetVarHint(c *C) {
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 0)
 	tk.MustQuery("SELECT @@windowing_use_high_precision;").Check(testkit.Rows("1"))
 
-	tk.MustExec("SELECT /*+ SET_VAR(optimizer_switch = 'mrr_cost_based=off') SET_VAR(max_heap_table_size = 1G) */ 1;")
+	tk.MustExec("SELECT /*+ SET_VAR(sql_safe_updates = 1) SET_VAR(max_heap_table_size = 1G) */ 1;")
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 0)
 
 	tk.MustExec("SELECT /*+ SET_VAR(collation_server = 'utf8') */ 1;")
