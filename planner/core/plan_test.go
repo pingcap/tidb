@@ -15,10 +15,10 @@ package core_test
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
-	"encoding/json"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/model"
@@ -459,8 +459,8 @@ func (s *testPlanNormalize) TestJSONExplain(c *C) {
 
 	var js core.JSONOperatorRow
 	result := tk.MustQuery("EXPLAIN FORMAT=JSON SELECT t1.* FROM t1 INNER JOIN t2 ON t1.id=t2.t1_id")
-    res := result.Rows()[0][0].(string)
-    c.Assert(len(result.Rows()), Equals, 1) // always 1 row
+	res := result.Rows()[0][0].(string)
+	c.Assert(len(result.Rows()), Equals, 1)           // always 1 row
 	c.Assert(json.Unmarshal([]byte(res), &js), IsNil) // valid JSON and JSONOperatorRow
-	c.Assert(len(js.Children), GreaterEqual, 2) // A join requires at least 2 children.
+	c.Assert(len(js.Children), GreaterEqual, 2)       // A join requires at least 2 children.
 }

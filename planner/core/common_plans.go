@@ -1172,6 +1172,7 @@ func (e *Explain) prepareDotInfo(p PhysicalPlan) {
 	e.Rows = append(e.Rows, []string{buffer.String()})
 }
 
+// JSONOperatorRow is the struct for a JSON formatted explain result.
 type JSONOperatorRow struct {
 	ID           string             `json:"id"`
 	EstRows      float64            `json:"estRows"`
