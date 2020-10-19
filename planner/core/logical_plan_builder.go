@@ -3059,6 +3059,8 @@ func (b *PlanBuilder) buildMemTable(_ context.Context, dbName model.CIStr, table
 			p.Extractor = &SlowQueryExtractor{}
 		case infoschema.TableTiFlashTables, infoschema.TableTiFlashSegments:
 			p.Extractor = &TiFlashSystemTableExtractor{}
+		case infoschema.TableStorageStats:
+			p.Extractor = &TableStorageStatsExtractor{}
 		}
 	}
 	return p, nil

@@ -95,6 +95,7 @@ type innerMergeCtx struct {
 
 type lookUpMergeJoinTask struct {
 	outerResult   *chunk.List
+	outerMatch    [][]bool
 	outerOrderIdx []chunk.RowPtr
 
 	innerResult *chunk.Chunk
@@ -432,25 +433,23 @@ func (imw *innerMergeWorker) run(ctx context.Context, wg *sync.WaitGroup, cancel
 
 func (imw *innerMergeWorker) handleTask(ctx context.Context, task *lookUpMergeJoinTask) (err error) {
 	numOuterChks := task.outerResult.NumChunks()
-	var outerMatch [][]bool
 	if imw.outerMergeCtx.filter != nil {
-		outerMatch = make([][]bool, numOuterChks)
+		task.outerMatch = make([][]bool, numOuterChks)
 		for i := 0; i < numOuterChks; i++ {
 			chk := task.outerResult.GetChunk(i)
-			outerMatch[i] = make([]bool, chk.NumRows())
-			outerMatch[i], err = expression.VectorizedFilter(imw.ctx, imw.outerMergeCtx.filter, chunk.NewIterator4Chunk(chk), outerMatch[i])
+			task.outerMatch[i] = make([]bool, chk.NumRows())
+			task.outerMatch[i], err = expression.VectorizedFilter(imw.ctx, imw.outerMergeCtx.filter, chunk.NewIterator4Chunk(chk), task.outerMatch[i])
 			if err != nil {
 				return err
 			}
 		}
 	}
+	task.memTracker.Consume(int64(cap(task.outerMatch)))
 	task.outerOrderIdx = make([]chunk.RowPtr, 0, task.outerResult.Len())
 	for i := 0; i < numOuterChks; i++ {
 		numRow := task.outerResult.GetChunk(i).NumRows()
 		for j := 0; j < numRow; j++ {
-			if len(outerMatch) == 0 || outerMatch[i][j] {
-				task.outerOrderIdx = append(task.outerOrderIdx, chunk.RowPtr{ChkIdx: uint32(i), RowIdx: uint32(j)})
-			}
+			task.outerOrderIdx = append(task.outerOrderIdx, chunk.RowPtr{ChkIdx: uint32(i), RowIdx: uint32(j)})
 		}
 	}
 	task.memTracker.Consume(int64(cap(task.outerOrderIdx)))
@@ -653,8 +652,11 @@ func (imw *innerMergeWorker) constructDatumLookupKeys(task *lookUpMergeJoinTask)
 	return dLookUpKeys, nil
 }
 
-func (imw *innerMergeWorker) constructDatumLookupKey(task *lookUpMergeJoinTask, rowIdx chunk.RowPtr) (*indexJoinLookUpContent, error) {
-	outerRow := task.outerResult.GetRow(rowIdx)
+func (imw *innerMergeWorker) constructDatumLookupKey(task *lookUpMergeJoinTask, idx chunk.RowPtr) (*indexJoinLookUpContent, error) {
+	if task.outerMatch != nil && !task.outerMatch[idx.ChkIdx][idx.RowIdx] {
+		return nil, nil
+	}
+	outerRow := task.outerResult.GetRow(idx)
 	sc := imw.ctx.GetSessionVars().StmtCtx
 	keyLen := len(imw.keyCols)
 	dLookupKey := make([]types.Datum, 0, keyLen)
@@ -688,7 +690,7 @@ func (imw *innerMergeWorker) constructDatumLookupKey(task *lookUpMergeJoinTask, 
 		}
 		dLookupKey = append(dLookupKey, innerValue)
 	}
-	return &indexJoinLookUpContent{keys: dLookupKey, row: task.outerResult.GetRow(rowIdx)}, nil
+	return &indexJoinLookUpContent{keys: dLookupKey, row: task.outerResult.GetRow(idx)}, nil
 }
 
 func (imw *innerMergeWorker) dedupDatumLookUpKeys(lookUpContents []*indexJoinLookUpContent) []*indexJoinLookUpContent {

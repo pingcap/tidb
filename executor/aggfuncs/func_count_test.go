@@ -22,6 +22,8 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/executor/aggfuncs"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/types"
 )
 
 func genApproxDistinctMergePartialResult(begin, end uint64) string {
@@ -98,6 +100,20 @@ func (s *testSuite) TestCount(c *C) {
 
 	for _, test := range tests4 {
 		s.testMultiArgsAggFunc(c, test)
+	}
+}
+
+func (s *testSuite) TestWriteTime(c *C) {
+	t, err := types.ParseDate(&(stmtctx.StatementContext{}), "2020-11-11")
+	c.Assert(err, IsNil)
+
+	buf := make([]byte, 16)
+	for i := range buf {
+		buf[i] = uint8(255)
+	}
+	aggfuncs.WriteTime(buf, t)
+	for i := range buf {
+		c.Assert(buf[i] == uint8(255), IsFalse)
 	}
 }
 
