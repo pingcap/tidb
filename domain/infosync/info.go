@@ -424,8 +424,12 @@ func GetRuleBundle(ctx context.Context, name string) (*placement.Bundle, error) 
 	return bundle, err
 }
 
-// PutRuleBundle is used to post one specific rule bundle to PD.
-func PutRuleBundle(ctx context.Context, bundle *placement.Bundle) error {
+// PutRuleBundles is used to post specific rule bundles to PD.
+func PutRuleBundles(ctx context.Context, bundles []*placement.Bundle) error {
+	if len(bundles) == 0 {
+		return nil
+	}
+
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
 		return err
@@ -441,12 +445,12 @@ func PutRuleBundle(ctx context.Context, bundle *placement.Bundle) error {
 		return errors.Errorf("pd unavailable")
 	}
 
-	b, err := json.Marshal(bundle)
+	b, err := json.Marshal(bundles)
 	if err != nil {
 		return err
 	}
 
-	_, err = doRequest(ctx, addrs, path.Join(pdapi.Config, "placement-rule", bundle.ID), "POST", bytes.NewReader(b))
+	_, err = doRequest(ctx, addrs, path.Join(pdapi.Config, "placement-rule")+"?partial=true", "POST", bytes.NewReader(b))
 	return err
 }
 

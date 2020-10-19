@@ -185,6 +185,9 @@ type session struct {
 
 	// client shared coprocessor client per session
 	client kv.Client
+
+	// indexUsageCollector collects index usage information.
+	idxUsageCollector *handle.SessionIndexUsageCollector
 }
 
 // AddTableLock adds table lock to the session lock map.
@@ -357,6 +360,14 @@ func (s *session) StoreQueryFeedback(feedback interface{}) {
 	}
 }
 
+// StoreIndexUsage stores index usage information in idxUsageCollector.
+func (s *session) StoreIndexUsage(dbName string, tblName string, idxName string, rowsSelected int64) {
+	if s.idxUsageCollector == nil {
+		return
+	}
+	s.idxUsageCollector.Update(dbName, tblName, idxName, &handle.IndexUsageInformation{QueryCount: 1, RowsSelected: rowsSelected})
+}
+
 // FieldList returns fields list of a table.
 func (s *session) FieldList(tableName string) ([]*ast.ResultField, error) {
 	is := infoschema.GetInfoSchema(s)
@@ -509,8 +520,10 @@ func (s *session) doCommitWithRetry(ctx context.Context) error {
 	}
 	mapper := s.GetSessionVars().TxnCtx.TableDeltaMap
 	if s.statsCollector != nil && mapper != nil {
-		for id, item := range mapper {
-			s.statsCollector.Update(id, item.Delta, item.Count, &item.ColSize)
+		for _, item := range mapper {
+			if item.TableID > 0 {
+				s.statsCollector.Update(item.TableID, item.Delta, item.Count, &item.ColSize)
+			}
 		}
 	}
 	return nil
@@ -777,13 +790,17 @@ func (s *session) ExecRestrictedSQLWithContext(ctx context.Context, sql string) 
 		se.sessionVars.OptimizerUseInvisibleIndexes = true
 		defer func() { se.sessionVars.OptimizerUseInvisibleIndexes = false }()
 	}
+	prePruneMode := se.sessionVars.PartitionPruneMode.Load()
 	defer func() {
 		if se != nil && se.GetSessionVars().StmtCtx.WarningCount() > 0 {
 			warnings := se.GetSessionVars().StmtCtx.GetWarnings()
 			s.GetSessionVars().StmtCtx.AppendWarnings(warnings)
 		}
+		se.sessionVars.PartitionPruneMode.Store(prePruneMode)
 		s.sysSessionPool().Put(tmp)
 	}()
+	// for analyze stmt we need let worker session follow user session that executing stmt.
+	se.sessionVars.PartitionPruneMode.Store(s.sessionVars.PartitionPruneMode.Load())
 	metrics.SessionRestrictedSQLCounter.Inc()
 
 	return execRestrictedSQL(ctx, se, sql)
@@ -986,7 +1003,8 @@ func (s *session) GetGlobalSysVar(name string) (string, error) {
 	sysVar, err := s.getExecRet(s, sql)
 	if err != nil {
 		if executor.ErrResultIsEmpty.Equal(err) {
-			if sv, ok := variable.SysVars[name]; ok {
+			sv := variable.GetSysVar(name)
+			if sv != nil {
 				return sv.Value, nil
 			}
 			return "", variable.ErrUnknownSystemVar.GenWithStackByArgs(name)
@@ -1007,6 +1025,12 @@ func (s *session) SetGlobalSysVar(name, value string) error {
 			return err
 		}
 	}
+	if name == variable.TiDBPartitionPruneMode && value == string(variable.DynamicOnly) {
+		err := s.ensureFullGlobalStats()
+		if err != nil {
+			return err
+		}
+	}
 	var sVal string
 	var err error
 	sVal, err = variable.ValidateSetSystemVar(s.sessionVars, name, value, variable.ScopeGlobal)
@@ -1019,6 +1043,20 @@ func (s *session) SetGlobalSysVar(name, value string) error {
 		mysql.SystemDB, mysql.GlobalVariablesTable, name, sVal)
 	_, _, err = s.ExecRestrictedSQL(sql)
 	return err
+}
+
+func (s *session) ensureFullGlobalStats() error {
+	rows, _, err := s.ExecRestrictedSQL(`select count(1) from information_schema.tables t where t.create_options = 'partitioned'
+		and not exists (select 1 from mysql.stats_meta m where m.table_id = t.tidb_table_id)`)
+	if err != nil {
+		return err
+	}
+	row := rows[0]
+	count := row.GetInt64(0)
+	if count > 0 {
+		return errors.New("need analyze all partition table in 'static-collect-dynamic' mode before switch to 'dynamic-only'")
+	}
+	return nil
 }
 
 func (s *session) ParseSQL(ctx context.Context, sql, charset, collation string) ([]ast.StmtNode, []error, error) {
@@ -1049,6 +1087,7 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 		Command:          command,
 		Plan:             s.currentPlan,
 		PlanExplainRows:  plannercore.GetExplainRowsForPlan(s.currentPlan),
+		RuntimeStatsColl: s.sessionVars.StmtCtx.RuntimeStatsColl,
 		Time:             t,
 		State:            s.Status(),
 		Info:             sql,
@@ -1226,6 +1265,7 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 				se.StmtCommit()
 			}
 		}
+		err = finishStmt(ctx, se, err, s)
 	}
 	if rs != nil {
 		return &execStmtResult{
@@ -1234,8 +1274,6 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 			se:        se,
 		}, err
 	}
-
-	err = finishStmt(ctx, se, err, s)
 
 	// If it is not a select statement, we record its slow log here,
 	// then it could include the transaction commit time.
@@ -1579,6 +1617,9 @@ func (s *session) Close() {
 	if s.statsCollector != nil {
 		s.statsCollector.Delete()
 	}
+	if s.idxUsageCollector != nil {
+		s.idxUsageCollector.Delete()
+	}
 	bindValue := s.Value(bindinfo.SessionBindInfoKeyType)
 	if bindValue != nil {
 		bindValue.(*bindinfo.SessionHandle).Close()
@@ -1670,6 +1711,16 @@ func getHostByIP(ip string) []string {
 	return addrs
 }
 
+// RefreshVars implements the sessionctx.Context interface.
+func (s *session) RefreshVars(ctx context.Context) error {
+	pruneMode, err := s.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBPartitionPruneMode)
+	if err != nil {
+		return err
+	}
+	s.sessionVars.PartitionPruneMode.Store(pruneMode)
+	return nil
+}
+
 // CreateSession4Test creates a new session environment for test.
 func CreateSession4Test(store kv.Storage) (Session, error) {
 	return CreateSession4TestWithOpt(store, nil)
@@ -1720,6 +1771,7 @@ func CreateSessionWithOpt(store kv.Storage, opt *Opt) (Session, error) {
 	// which periodically updates stats using the collected data.
 	if do.StatsHandle() != nil && do.StatsUpdating() {
 		s.statsCollector = do.StatsHandle().NewSessionStatsCollector()
+		s.idxUsageCollector = do.StatsHandle().NewSessionIndexUsageCollector()
 	}
 
 	return s, nil
@@ -1774,7 +1826,6 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 		err := plugin.Load(context.Background(), plugin.Config{
 			Plugins:        strings.Split(cfg.Plugin.Load, ","),
 			PluginDir:      cfg.Plugin.Dir,
-			GlobalSysVar:   &variable.SysVars,
 			PluginVarNames: &variable.PluginVarNames,
 		})
 		if err != nil {
@@ -2294,7 +2345,7 @@ func logQuery(query string, vars *variable.SessionVars) {
 			zap.Int64("schemaVersion", vars.TxnCtx.SchemaVersion),
 			zap.Uint64("txnStartTS", vars.TxnCtx.StartTS),
 			zap.Uint64("forUpdateTS", vars.TxnCtx.GetForUpdateTS()),
-			zap.Bool("isReadConsistency", vars.IsReadConsistencyTxn()),
+			zap.Bool("isReadConsistency", vars.IsIsolation(ast.ReadCommitted)),
 			zap.String("current_db", vars.CurrentDB),
 			zap.String("txn_mode", vars.GetReadableTxnMode()),
 			zap.String("sql", query))

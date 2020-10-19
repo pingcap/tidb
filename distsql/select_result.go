@@ -47,6 +47,11 @@ var (
 )
 
 var (
+	coprCacheHistogramHit  = metrics.DistSQLCoprCacheHistogram.WithLabelValues("hit")
+	coprCacheHistogramMiss = metrics.DistSQLCoprCacheHistogram.WithLabelValues("miss")
+)
+
+var (
 	_ SelectResult = (*selectResult)(nil)
 	_ SelectResult = (*streamResult)(nil)
 )
@@ -140,7 +145,10 @@ func (r *selectResult) fetchResp(ctx context.Context) error {
 		for _, warning := range r.selectResp.Warnings {
 			sc.AppendWarning(dbterror.ClassTiKV.Synthesize(terror.ErrCode(warning.Code), warning.Msg))
 		}
-		r.feedback.Update(resultSubset.GetStartKey(), r.selectResp.OutputCounts)
+		if r.feedback != nil {
+			r.feedback.Update(resultSubset.GetStartKey(), r.selectResp.OutputCounts)
+		}
+
 		r.partialCount++
 
 		hasStats, ok := resultSubset.(CopRuntimeStats)
@@ -155,6 +163,10 @@ func (r *selectResult) fetchResp(ctx context.Context) error {
 		if len(r.selectResp.Chunks) != 0 {
 			break
 		}
+	}
+	if r.stats != nil {
+		coprCacheHistogramHit.Observe(float64(r.stats.CoprCacheHitNum))
+		coprCacheHistogramMiss.Observe(float64(len(r.stats.copRespTime) - int(r.stats.CoprCacheHitNum)))
 	}
 	return nil
 }
@@ -331,7 +343,11 @@ type selectResultRuntimeStats struct {
 
 func (s *selectResultRuntimeStats) mergeCopRuntimeStats(copStats *tikv.CopRuntimeStats, respTime time.Duration) {
 	s.copRespTime = append(s.copRespTime, respTime)
-	s.procKeys = append(s.procKeys, copStats.ProcessedKeys)
+	if copStats.CopDetail != nil {
+		s.procKeys = append(s.procKeys, copStats.CopDetail.ProcessedKeys)
+	} else {
+		s.procKeys = append(s.procKeys, 0)
+	}
 
 	for k, v := range copStats.BackoffSleep {
 		s.backoffSleep[k] += v

@@ -381,6 +381,22 @@ func (m *Meta) CreateSequenceAndSetSeqValue(dbID int64, tableInfo *model.TableIn
 	return errors.Trace(err)
 }
 
+// RestartSequenceValue resets the the sequence value.
+func (m *Meta) RestartSequenceValue(dbID int64, tableInfo *model.TableInfo, seqValue int64) error {
+	// Check if db exists.
+	dbKey := m.dbKey(dbID)
+	if err := m.checkDBExists(dbKey); err != nil {
+		return errors.Trace(err)
+	}
+
+	// Check if table exists.
+	tableKey := m.tableKey(tableInfo.ID)
+	if err := m.checkTableExists(dbKey, tableKey); err != nil {
+		return errors.Trace(err)
+	}
+	return errors.Trace(m.txn.HSet(m.dbKey(dbID), m.sequenceKey(tableInfo.ID), []byte(strconv.FormatInt(seqValue, 10))))
+}
+
 // DropDatabase drops whole database.
 func (m *Meta) DropDatabase(dbID int64) error {
 	// Check if db exists.

@@ -857,6 +857,11 @@ func GenTableIndexPrefix(tableID int64) kv.Key {
 	return appendTableIndexPrefix(buf, tableID)
 }
 
+// IsRecordKey is used to check whether the key is an record key.
+func IsRecordKey(k []byte) bool {
+	return len(k) > 11 && k[0] == 't' && k[10] == 'r'
+}
+
 // IsIndexKey is used to check whether the key is an index key.
 func IsIndexKey(k []byte) bool {
 	return len(k) > 11 && k[0] == 't' && k[10] == 'i'

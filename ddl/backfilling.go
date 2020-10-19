@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/terror"
 	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
@@ -71,10 +72,12 @@ type backfillResult struct {
 // backfillTaskContext is the context of the batch adding indices or updating column values.
 // After finishing the batch adding indices or updating column values, result in backfillTaskContext will be merged into backfillResult.
 type backfillTaskContext struct {
-	nextHandle kv.Handle
-	done       bool
-	addedCount int
-	scanCount  int
+	nextHandle    kv.Handle
+	done          bool
+	addedCount    int
+	scanCount     int
+	warnings      map[errors.ErrorID]*terror.Error
+	warningsCount map[errors.ErrorID]int64
 }
 
 type backfillWorker struct {
@@ -150,10 +153,26 @@ func mergeBackfillCtxToResult(taskCtx *backfillTaskContext, result *backfillResu
 	result.scanCount += taskCtx.scanCount
 }
 
+func mergeWarningsAndWarningsCount(partWarnings, totalWarnings map[errors.ErrorID]*terror.Error, partWarningsCount, totalWarningsCount map[errors.ErrorID]int64) (map[errors.ErrorID]*terror.Error, map[errors.ErrorID]int64) {
+	for _, warn := range partWarnings {
+		if _, ok := totalWarningsCount[warn.ID()]; ok {
+			totalWarningsCount[warn.ID()] += partWarningsCount[warn.ID()]
+		} else {
+			totalWarningsCount[warn.ID()] = partWarningsCount[warn.ID()]
+			totalWarnings[warn.ID()] = warn
+		}
+	}
+	return totalWarnings, totalWarningsCount
+}
+
 // handleBackfillTask backfills range [task.startHandle, task.endHandle) handle's index to table.
 func (w *backfillWorker) handleBackfillTask(d *ddlCtx, task *reorgBackfillTask, bf backfiller) *backfillResult {
 	handleRange := *task
-	result := &backfillResult{addedCount: 0, nextHandle: handleRange.startHandle, err: nil}
+	result := &backfillResult{
+		err:        nil,
+		addedCount: 0,
+		nextHandle: handleRange.startHandle,
+	}
 	lastLogCount := 0
 	lastLogTime := time.Now()
 	startTime := lastLogTime
@@ -177,7 +196,17 @@ func (w *backfillWorker) handleBackfillTask(d *ddlCtx, task *reorgBackfillTask, 
 
 		bf.AddMetricInfo(float64(taskCtx.addedCount))
 		mergeBackfillCtxToResult(&taskCtx, result)
+
+		// Although `handleRange` is for data in one region, but back fill worker still split it into many
+		// small reorg batch size slices and reorg them in many different kv txn.
+		// If a task failed, it may contained some committed small kv txn which has already finished the
+		// small range reorganization.
+		// In the next round of reorganization, the target handle range may overlap with last committed
+		// small ranges. This will cause the `redo` action in reorganization.
+		// So for added count and warnings collection, it is recommended to collect the statistics in every
+		// successfully committed small ranges rather than fetching it in the total result.
 		w.ddlWorker.reorgCtx.increaseRowCount(int64(taskCtx.addedCount))
+		w.ddlWorker.reorgCtx.mergeWarnings(taskCtx.warnings, taskCtx.warningsCount)
 
 		if num := result.scanCount - lastLogCount; num >= 30000 {
 			lastLogCount = result.scanCount
@@ -386,6 +415,8 @@ var (
 	TestCheckWorkerNumCh = make(chan struct{})
 	// TestCheckWorkerNumber use for test adjust backfill worker.
 	TestCheckWorkerNumber = int32(16)
+	// TestCheckReorgTimeout is used to mock timeout when reorg data.
+	TestCheckReorgTimeout = int32(0)
 )
 
 func loadDDLReorgVars(w *worker) error {
@@ -482,12 +513,12 @@ func (w *worker) writePhysicalTableRecord(t table.PhysicalTable, bfWorkerType ba
 			sessCtx.GetSessionVars().StmtCtx.IsDDLJobInQueue = true
 
 			if bfWorkerType == typeAddIndexWorker {
-				idxWorker := newAddIndexWorker(sessCtx, w, i, t, indexInfo, decodeColMap)
+				idxWorker := newAddIndexWorker(sessCtx, w, i, t, indexInfo, decodeColMap, reorgInfo.ReorgMeta.SQLMode)
 				idxWorker.priority = job.Priority
 				backfillWorkers = append(backfillWorkers, idxWorker.backfillWorker)
 				go idxWorker.backfillWorker.run(reorgInfo.d, idxWorker)
 			} else {
-				updateWorker := newUpdateColumnWorker(sessCtx, w, i, t, oldColInfo, colInfo, decodeColMap)
+				updateWorker := newUpdateColumnWorker(sessCtx, w, i, t, oldColInfo, colInfo, decodeColMap, reorgInfo.ReorgMeta.SQLMode)
 				updateWorker.priority = job.Priority
 				backfillWorkers = append(backfillWorkers, updateWorker.backfillWorker)
 				go updateWorker.backfillWorker.run(reorgInfo.d, updateWorker)
@@ -561,11 +592,8 @@ func iterateSnapshotRows(store kv.Storage, priority int, t table.Table, version 
 	}
 
 	ver := kv.Version{Ver: version}
-	snap, err := store.GetSnapshot(ver)
+	snap := store.GetSnapshot(ver)
 	snap.SetOption(kv.Priority, priority)
-	if err != nil {
-		return errors.Trace(err)
-	}
 
 	it, err := snap.Iter(firstKey, upperBound)
 	if err != nil {
