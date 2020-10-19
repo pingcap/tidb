@@ -4731,7 +4731,7 @@ func (s *testIntegrationSuite) TestForeignKeyVar(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
 	tk.MustExec("SET FOREIGN_KEY_CHECKS=1")
-	tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 8047 variable 'foreign_key_checks' does not yet support value: 1"))
+	tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 8047 variable 'foreign_key_checks' does not yet support value: ON"))
 }
 
 func (s *testIntegrationSuite) TestUserVarMockWindFunc(c *C) {
@@ -7464,6 +7464,8 @@ func (s *testIntegrationSuite) TestIssue19504(c *C) {
 	tk.MustExec("create table t2 (c_int int, primary key (c_int));")
 	tk.MustExec("insert into t2 values (1);")
 	tk.MustQuery("select (select count(c_int) from t2 where c_int = t1.c_int) c1, (select count(1) from t2 where c_int = t1.c_int) c2 from t1;").
+		Check(testkit.Rows("1 1", "0 0", "0 0"))
+	tk.MustQuery("select (select count(c_int*c_int) from t2 where c_int = t1.c_int) c1, (select count(1) from t2 where c_int = t1.c_int) c2 from t1;").
 		Check(testkit.Rows("1 1", "0 0", "0 0"))
 }
 
