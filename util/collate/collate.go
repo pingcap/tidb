@@ -163,8 +163,8 @@ func GetCollatorByID(id int) Collator {
 // CollationID2Name return the collation name by the given id.
 // If the id is not found in the map, the default collation is returned.
 func CollationID2Name(id int32) string {
-	name, ok := mysql.Collations[uint8(id)]
-	if !ok {
+	collation, err := charset.GetCollationByID(int(id))
+	if err != nil {
 		// TODO(bb7133): fix repeating logs when the following code is uncommented.
 		//logutil.BgLogger().Warn(
 		//	"Unable to get collation name from ID, use default collation instead.",
@@ -172,7 +172,7 @@ func CollationID2Name(id int32) string {
 		//	zap.Stack("stack"))
 		return mysql.DefaultCollationName
 	}
-	return name
+	return collation.Name
 }
 
 // CollationName2ID return the collation id by the given name.
