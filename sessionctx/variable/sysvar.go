@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/versioninfo"
 )
@@ -41,54 +42,51 @@ const (
 	// ScopeSession means the system variable can only be changed in current session.
 	ScopeSession ScopeFlag = 1 << 1
 
-	// TypeUnknown for not yet defined
-	TypeUnknown TypeFlag = 0
+	// TypeStr is the default
+	TypeStr TypeFlag = 0
 	// TypeBool for boolean
 	TypeBool TypeFlag = 1
 	// TypeInt for integer
 	TypeInt TypeFlag = 2
-	// TypeLong for Long
-	TypeLong TypeFlag = 3
-	// TypeLongLong for LongLong
-	TypeLongLong TypeFlag = 4
-	// TypeStr for String
-	TypeStr TypeFlag = 5
 	// TypeEnum for Enum
-	TypeEnum TypeFlag = 6
-	// TypeSet for Set
-	TypeSet TypeFlag = 7
-	// TypeDouble for Double
-	TypeDouble TypeFlag = 8
+	TypeEnum TypeFlag = 3
+	// TypeFloat for Double
+	TypeFloat TypeFlag = 4
 	// TypeUnsigned for Unsigned integer
-	TypeUnsigned TypeFlag = 9
+	TypeUnsigned TypeFlag = 5
+
+	// BoolOff is the canonical string representation of a boolean false.
+	BoolOff = "OFF"
+	// BoolOn is the canonical string representation of a boolean true.
+	BoolOn = "ON"
 )
 
 // SysVar is for system variable.
 type SysVar struct {
 	// Scope is for whether can be changed or not
 	Scope ScopeFlag
-
 	// Name is the variable name.
 	Name string
-
 	// Value is the variable value.
 	Value string
-
 	// Type is the MySQL type (optional)
 	Type TypeFlag
-
 	// MinValue will automatically be validated when specified (optional)
 	MinValue int64
-
 	// MaxValue will automatically be validated when specified (optional)
 	MaxValue uint64
-
 	// AutoConvertNegativeBool applies to boolean types (optional)
 	AutoConvertNegativeBool bool
-
 	// AutoConvertOutOfRange applies to int and unsigned types.
 	AutoConvertOutOfRange bool
-
+	// ReadOnly applies to all types
+	ReadOnly bool
+	// PossibleValues applies to ENUM type
+	PossibleValues []string
+	// AllowEmpty is a special TiDB behavior which means "read value from config" (do not use)
+	AllowEmpty bool
+	// AllowEmptyAll is a special behavior that only applies to TiDBCapturePlanBaseline (do not use)
+	AllowEmptyAll bool
 	// IsHintUpdatable indicate whether it's updatable via SET_VAR() hint (optional)
 	IsHintUpdatable bool
 }
@@ -110,6 +108,20 @@ func GetSysVar(name string) *SysVar {
 	sysVarsLock.RLock()
 	defer sysVarsLock.RUnlock()
 	return sysVars[name]
+}
+
+// GetNativeValType attempts to convert the val to the approx MySQL non-string type
+func GetNativeValType(name, val string) (types.Datum, byte) {
+	switch sysVars[name].Type {
+	case TypeBool:
+		optVal := int64(0) // off
+		if TiDBOptOn(val) {
+			optVal = 1
+		}
+		return types.NewIntDatum(optVal), mysql.TypeLong
+
+	}
+	return types.NewStringDatum(val), mysql.TypeVarString
 }
 
 // SetSysVar sets a sysvar. This will not propagate to the cluster, so it should only be used for instance scoped AUTO variables such as system_time_zone.
@@ -146,11 +158,19 @@ func BoolToIntStr(b bool) string {
 	return "0"
 }
 
-func boolToOnOff(b bool) string {
+// BoolToOnOff returns the string representation of a bool, i.e. "ON/OFF"
+func BoolToOnOff(b bool) string {
 	if b {
-		return "on"
+		return BoolOn
 	}
-	return "off"
+	return BoolOff
+}
+
+func int32ToBoolStr(i int32) string {
+	if i == 1 {
+		return BoolOn
+	}
+	return BoolOff
 }
 
 // BoolToInt32 converts bool to int32
@@ -163,21 +183,21 @@ func BoolToInt32(b bool) int32 {
 
 // we only support MySQL now
 var defaultSysVars = []*SysVar{
-	{Scope: ScopeGlobal, Name: "gtid_mode", Value: "OFF", Type: TypeBool},
+	{Scope: ScopeGlobal, Name: "gtid_mode", Value: BoolOff, Type: TypeBool},
 	{Scope: ScopeGlobal, Name: FlushTime, Value: "0", Type: TypeUnsigned, MinValue: 0, MaxValue: secondsPerYear, AutoConvertOutOfRange: true},
 	{Scope: ScopeNone, Name: "performance_schema_max_mutex_classes", Value: "200"},
-	{Scope: ScopeGlobal | ScopeSession, Name: LowPriorityUpdates, Value: "0", Type: TypeBool},
-	{Scope: ScopeGlobal | ScopeSession, Name: SessionTrackGtids, Value: "OFF"},
+	{Scope: ScopeGlobal | ScopeSession, Name: LowPriorityUpdates, Value: BoolOff, Type: TypeBool},
+	{Scope: ScopeGlobal | ScopeSession, Name: SessionTrackGtids, Value: BoolOff, Type: TypeEnum, PossibleValues: []string{BoolOff, "OWN_GTID", "ALL_GTIDS"}},
 	{Scope: ScopeGlobal | ScopeSession, Name: "ndbinfo_max_rows", Value: ""},
 	{Scope: ScopeGlobal | ScopeSession, Name: "ndb_index_stat_option", Value: ""},
 	{Scope: ScopeGlobal | ScopeSession, Name: OldPasswords, Value: "0", Type: TypeUnsigned, MinValue: 0, MaxValue: 2, AutoConvertOutOfRange: true},
 	{Scope: ScopeNone, Name: "innodb_version", Value: "5.6.25"},
 	{Scope: ScopeGlobal, Name: MaxConnections, Value: "151", Type: TypeUnsigned, MinValue: 1, MaxValue: 100000, AutoConvertOutOfRange: true},
-	{Scope: ScopeGlobal | ScopeSession, Name: BigTables, Value: "0", Type: TypeBool},
+	{Scope: ScopeGlobal | ScopeSession, Name: BigTables, Value: BoolOff, Type: TypeBool},
 	{Scope: ScopeNone, Name: "skip_external_locking", Value: "1"},
 	{Scope: ScopeNone, Name: "innodb_sync_array_size", Value: "1"},
 	{Scope: ScopeSession, Name: "rand_seed2", Value: ""},
-	{Scope: ScopeGlobal, Name: ValidatePasswordCheckUserName, Value: "0", Type: TypeBool},
+	{Scope: ScopeGlobal, Name: ValidatePasswordCheckUserName, Value: BoolOff, Type: TypeBool},
 	{Scope: ScopeGlobal, Name: ValidatePasswordNumberCount, Value: "1", Type: TypeUnsigned, MinValue: 0, MaxValue: math.MaxUint64, AutoConvertOutOfRange: true},
 	{Scope: ScopeSession, Name: "gtid_next", Value: ""},
 	{Scope: ScopeGlobal | ScopeSession, Name: SQLSelectLimit, Value: "18446744073709551615", Type: TypeUnsigned, MinValue: 0, MaxValue: math.MaxUint64, AutoConvertOutOfRange: true},
@@ -198,7 +218,7 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeNone, Name: "lc_messages_dir", Value: "/usr/local/mysql-5.6.25-osx10.8-x86_64/share/"},
 	{Scope: ScopeGlobal, Name: "ft_boolean_syntax", Value: "+ -><()~*:\"\"&|"},
 	{Scope: ScopeGlobal, Name: TableDefinitionCache, Value: "-1", Type: TypeUnsigned, MinValue: 400, MaxValue: 524288, AutoConvertOutOfRange: true},
-	{Scope: ScopeNone, Name: SkipNameResolve, Value: "0", Type: TypeBool},
+	{Scope: ScopeNone, Name: SkipNameResolve, Value: BoolOff, Type: TypeBool},
 	{Scope: ScopeNone, Name: "performance_schema_max_file_handles", Value: "32768"},
 	{Scope: ScopeSession, Name: "transaction_allow_batching", Value: ""},
 	{Scope: ScopeGlobal | ScopeSession, Name: SQLModeVar, Value: mysql.DefaultSQLMode, IsHintUpdatable: true},
@@ -208,7 +228,7 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal | ScopeSession, Name: TmpTableSize, Value: "16777216", Type: TypeUnsigned, MinValue: 1024, MaxValue: math.MaxUint64, AutoConvertOutOfRange: true, IsHintUpdatable: true},
 	{Scope: ScopeGlobal, Name: "innodb_max_purge_lag", Value: "0"},
 	{Scope: ScopeGlobal | ScopeSession, Name: "preload_buffer_size", Value: "32768"},
-	{Scope: ScopeGlobal, Name: CheckProxyUsers, Value: "0", Type: TypeBool},
+	{Scope: ScopeGlobal, Name: CheckProxyUsers, Value: BoolOff, Type: TypeBool},
 	{Scope: ScopeNone, Name: "have_query_cache", Value: "YES"},
 	{Scope: ScopeGlobal, Name: "innodb_flush_log_at_timeout", Value: "1"},
 	{Scope: ScopeGlobal, Name: "innodb_max_undo_log_size", Value: ""},
@@ -225,16 +245,16 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeNone, Name: "innodb_ft_sort_pll_degree", Value: "2"},
 	{Scope: ScopeNone, Name: "thread_stack", Value: "262144"},
 	{Scope: ScopeGlobal, Name: "relay_log_info_repository", Value: "FILE"},
-	{Scope: ScopeGlobal | ScopeSession, Name: SQLLogBin, Value: "1", Type: TypeBool},
+	{Scope: ScopeGlobal | ScopeSession, Name: SQLLogBin, Value: BoolOn, Type: TypeBool},
 	{Scope: ScopeGlobal, Name: SuperReadOnly, Value: "0", Type: TypeBool},
 	{Scope: ScopeGlobal | ScopeSession, Name: "max_delayed_threads", Value: "20"},
 	{Scope: ScopeNone, Name: "protocol_version", Value: "10"},
-	{Scope: ScopeGlobal | ScopeSession, Name: "new", Value: "OFF"},
+	{Scope: ScopeGlobal | ScopeSession, Name: "new", Value: BoolOff},
 	{Scope: ScopeGlobal | ScopeSession, Name: "myisam_sort_buffer_size", Value: "8388608"},
 	{Scope: ScopeGlobal | ScopeSession, Name: "optimizer_trace_offset", Value: "-1"},
 	{Scope: ScopeGlobal, Name: InnodbBufferPoolDumpAtShutdown, Value: "0"},
 	{Scope: ScopeGlobal | ScopeSession, Name: SQLNotes, Value: "1"},
-	{Scope: ScopeGlobal, Name: InnodbCmpPerIndexEnabled, Value: "0", Type: TypeBool, AutoConvertNegativeBool: true},
+	{Scope: ScopeGlobal, Name: InnodbCmpPerIndexEnabled, Value: BoolOff, Type: TypeBool, AutoConvertNegativeBool: true},
 	{Scope: ScopeGlobal, Name: "innodb_ft_server_stopword_table", Value: ""},
 	{Scope: ScopeNone, Name: "performance_schema_max_file_instances", Value: "7693"},
 	{Scope: ScopeNone, Name: "log_output", Value: "FILE"},
@@ -244,15 +264,15 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal, Name: "innodb_log_write_ahead_size", Value: ""},
 	{Scope: ScopeNone, Name: "innodb_log_group_home_dir", Value: "./"},
 	{Scope: ScopeNone, Name: "performance_schema_events_statements_history_size", Value: "10"},
-	{Scope: ScopeGlobal, Name: GeneralLog, Value: "0", Type: TypeBool},
+	{Scope: ScopeGlobal, Name: GeneralLog, Value: BoolOff, Type: TypeBool},
 	{Scope: ScopeGlobal, Name: "validate_password_dictionary_file", Value: ""},
-	{Scope: ScopeGlobal, Name: BinlogOrderCommits, Value: "1", Type: TypeBool},
+	{Scope: ScopeGlobal, Name: BinlogOrderCommits, Value: BoolOn, Type: TypeBool},
 	{Scope: ScopeGlobal, Name: "key_cache_division_limit", Value: "100"},
 	{Scope: ScopeGlobal | ScopeSession, Name: "max_insert_delayed_threads", Value: "20"},
 	{Scope: ScopeNone, Name: "performance_schema_session_connect_attrs_size", Value: "512"},
 	{Scope: ScopeGlobal | ScopeSession, Name: "time_zone", Value: "SYSTEM", IsHintUpdatable: true},
 	{Scope: ScopeGlobal, Name: "innodb_max_dirty_pages_pct", Value: "75"},
-	{Scope: ScopeGlobal, Name: InnodbFilePerTable, Value: "1", Type: TypeBool, AutoConvertNegativeBool: true},
+	{Scope: ScopeGlobal, Name: InnodbFilePerTable, Value: BoolOn, Type: TypeBool, AutoConvertNegativeBool: true},
 	{Scope: ScopeGlobal, Name: InnodbLogCompressedPages, Value: "1"},
 	{Scope: ScopeNone, Name: "skip_networking", Value: "0"},
 	{Scope: ScopeGlobal, Name: "innodb_monitor_reset", Value: ""},
@@ -264,12 +284,12 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeNone, Name: "ssl_cipher", Value: ""},
 	{Scope: ScopeNone, Name: "tls_version", Value: "TLSv1,TLSv1.1,TLSv1.2"},
 	{Scope: ScopeNone, Name: "system_time_zone", Value: "CST"},
-	{Scope: ScopeGlobal, Name: InnodbPrintAllDeadlocks, Value: "0", Type: TypeBool, AutoConvertNegativeBool: true},
+	{Scope: ScopeGlobal, Name: InnodbPrintAllDeadlocks, Value: BoolOff, Type: TypeBool, AutoConvertNegativeBool: true},
 	{Scope: ScopeNone, Name: "innodb_autoinc_lock_mode", Value: "1"},
 	{Scope: ScopeGlobal, Name: "key_buffer_size", Value: "8388608"},
-	{Scope: ScopeGlobal | ScopeSession, Name: ForeignKeyChecks, Value: "OFF"},
+	{Scope: ScopeGlobal | ScopeSession, Name: ForeignKeyChecks, Value: BoolOff, Type: TypeBool},
 	{Scope: ScopeGlobal, Name: "host_cache_size", Value: "279"},
-	{Scope: ScopeGlobal, Name: DelayKeyWrite, Value: "ON"},
+	{Scope: ScopeGlobal, Name: DelayKeyWrite, Value: BoolOn, Type: TypeEnum, PossibleValues: []string{BoolOff, BoolOn, "ALL"}},
 	{Scope: ScopeNone, Name: "metadata_locks_cache_size", Value: "1024"},
 	{Scope: ScopeNone, Name: "innodb_force_recovery", Value: "0"},
 	{Scope: ScopeGlobal, Name: "innodb_file_format_max", Value: "Antelope"},
@@ -282,8 +302,8 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeNone, Name: "innodb_mirrored_log_groups", Value: "1"},
 	{Scope: ScopeGlobal, Name: "max_binlog_size", Value: "1073741824"},
 	{Scope: ScopeGlobal, Name: "concurrent_insert", Value: "AUTO"},
-	{Scope: ScopeGlobal, Name: InnodbAdaptiveHashIndex, Value: "1", Type: TypeBool, AutoConvertNegativeBool: true},
-	{Scope: ScopeGlobal, Name: InnodbFtEnableStopword, Value: "1", Type: TypeBool, AutoConvertNegativeBool: true},
+	{Scope: ScopeGlobal, Name: InnodbAdaptiveHashIndex, Value: BoolOn, Type: TypeBool, AutoConvertNegativeBool: true},
+	{Scope: ScopeGlobal, Name: InnodbFtEnableStopword, Value: BoolOn, Type: TypeBool, AutoConvertNegativeBool: true},
 	{Scope: ScopeGlobal, Name: "general_log_file", Value: "/usr/local/mysql/data/localhost.log"},
 	{Scope: ScopeGlobal | ScopeSession, Name: InnodbSupportXA, Value: "1"},
 	{Scope: ScopeGlobal, Name: "innodb_compression_level", Value: "6"},
@@ -296,7 +316,7 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal | ScopeSession, Name: InteractiveTimeout, Value: "28800", Type: TypeUnsigned, MinValue: 1, MaxValue: secondsPerYear, AutoConvertOutOfRange: true},
 	{Scope: ScopeGlobal, Name: InnodbOptimizeFullTextOnly, Value: "0"},
 	{Scope: ScopeNone, Name: "character_sets_dir", Value: "/usr/local/mysql-5.6.25-osx10.8-x86_64/share/charsets/"},
-	{Scope: ScopeGlobal | ScopeSession, Name: QueryCacheType, Value: "OFF"},
+	{Scope: ScopeGlobal | ScopeSession, Name: QueryCacheType, Value: BoolOff, Type: TypeEnum, PossibleValues: []string{BoolOff, BoolOn, "DEMAND"}},
 	{Scope: ScopeNone, Name: "innodb_rollback_on_timeout", Value: "0"},
 	{Scope: ScopeGlobal | ScopeSession, Name: "query_alloc_block_size", Value: "8192"},
 	{Scope: ScopeGlobal | ScopeSession, Name: InitConnect, Value: ""},
@@ -310,11 +330,11 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeNone, Name: "disconnect_on_expired_password", Value: "1"},
 	{Scope: ScopeNone, Name: "performance_schema_max_file_classes", Value: "50"},
 	{Scope: ScopeGlobal, Name: "expire_logs_days", Value: "0"},
-	{Scope: ScopeGlobal | ScopeSession, Name: BinlogRowQueryLogEvents, Value: "0", Type: TypeBool},
+	{Scope: ScopeGlobal | ScopeSession, Name: BinlogRowQueryLogEvents, Value: BoolOff, Type: TypeBool},
 	{Scope: ScopeGlobal, Name: "default_password_lifetime", Value: ""},
 	{Scope: ScopeNone, Name: "pid_file", Value: "/usr/local/mysql/data/localhost.pid"},
 	{Scope: ScopeNone, Name: "innodb_undo_tablespaces", Value: "0"},
-	{Scope: ScopeGlobal, Name: InnodbStatusOutputLocks, Value: "0", Type: TypeBool, AutoConvertNegativeBool: true},
+	{Scope: ScopeGlobal, Name: InnodbStatusOutputLocks, Value: BoolOff, Type: TypeBool, AutoConvertNegativeBool: true},
 	{Scope: ScopeNone, Name: "performance_schema_accounts_size", Value: "100"},
 	{Scope: ScopeGlobal | ScopeSession, Name: "max_error_count", Value: "64", IsHintUpdatable: true},
 	{Scope: ScopeGlobal, Name: "max_write_lock_count", Value: "18446744073709551615"},
@@ -325,16 +345,16 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeNone, Name: "innodb_open_files", Value: "2000"},
 	{Scope: ScopeGlobal, Name: "innodb_spin_wait_delay", Value: "6"},
 	{Scope: ScopeGlobal, Name: "thread_cache_size", Value: "9"},
-	{Scope: ScopeGlobal, Name: LogSlowAdminStatements, Value: "0", Type: TypeBool},
-	{Scope: ScopeNone, Name: "innodb_checksums", Value: "ON"},
+	{Scope: ScopeGlobal, Name: LogSlowAdminStatements, Value: BoolOff, Type: TypeBool},
+	{Scope: ScopeNone, Name: "innodb_checksums", Type: TypeBool, Value: BoolOn},
 	{Scope: ScopeNone, Name: "hostname", Value: ServerHostname},
 	{Scope: ScopeGlobal | ScopeSession, Name: "auto_increment_offset", Value: "1"},
 	{Scope: ScopeNone, Name: "ft_stopword_file", Value: "(built-in)"},
 	{Scope: ScopeGlobal, Name: "innodb_max_dirty_pages_pct_lwm", Value: "0"},
-	{Scope: ScopeGlobal, Name: LogQueriesNotUsingIndexes, Value: "0", Type: TypeBool},
+	{Scope: ScopeGlobal, Name: LogQueriesNotUsingIndexes, Value: BoolOff, Type: TypeBool},
 	{Scope: ScopeSession, Name: "timestamp", Value: ""},
-	{Scope: ScopeGlobal | ScopeSession, Name: QueryCacheWlockInvalidate, Value: "0", Type: TypeBool},
-	{Scope: ScopeGlobal | ScopeSession, Name: "sql_buffer_result", Value: "OFF", IsHintUpdatable: true},
+	{Scope: ScopeGlobal | ScopeSession, Name: QueryCacheWlockInvalidate, Value: BoolOff, Type: TypeBool},
+	{Scope: ScopeGlobal | ScopeSession, Name: "sql_buffer_result", Value: BoolOff, IsHintUpdatable: true},
 	{Scope: ScopeGlobal | ScopeSession, Name: "character_set_filesystem", Value: "binary"},
 	{Scope: ScopeGlobal | ScopeSession, Name: "collation_database", Value: mysql.DefaultCollationName},
 	{Scope: ScopeGlobal | ScopeSession, Name: AutoIncrementIncrement, Value: strconv.FormatInt(DefAutoIncrementIncrement, 10), Type: TypeUnsigned, MinValue: 1, MaxValue: math.MaxUint16, AutoConvertOutOfRange: true},
@@ -343,7 +363,7 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal | ScopeSession, Name: "div_precision_increment", Value: "4", IsHintUpdatable: true},
 	{Scope: ScopeGlobal, Name: "innodb_lru_scan_depth", Value: "1024"},
 	{Scope: ScopeGlobal, Name: "innodb_purge_rseg_truncate_frequency", Value: ""},
-	{Scope: ScopeGlobal | ScopeSession, Name: SQLAutoIsNull, Value: "0", Type: TypeBool, IsHintUpdatable: true},
+	{Scope: ScopeGlobal | ScopeSession, Name: SQLAutoIsNull, Value: BoolOff, Type: TypeBool, IsHintUpdatable: true},
 	{Scope: ScopeNone, Name: "innodb_api_enable_binlog", Value: "0"},
 	{Scope: ScopeGlobal | ScopeSession, Name: "innodb_ft_user_stopword_table", Value: ""},
 	{Scope: ScopeNone, Name: "server_id_bits", Value: "32"},
@@ -359,14 +379,14 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal, Name: "innodb_purge_batch_size", Value: "300"},
 	{Scope: ScopeNone, Name: "have_profiling", Value: "NO"},
 	{Scope: ScopeGlobal | ScopeSession, Name: "character_set_client", Value: mysql.DefaultCharset},
-	{Scope: ScopeGlobal, Name: InnodbBufferPoolDumpNow, Value: "0", Type: TypeBool, AutoConvertNegativeBool: true},
-	{Scope: ScopeGlobal, Name: RelayLogPurge, Value: "1", Type: TypeBool},
+	{Scope: ScopeGlobal, Name: InnodbBufferPoolDumpNow, Value: BoolOff, Type: TypeBool, AutoConvertNegativeBool: true},
+	{Scope: ScopeGlobal, Name: RelayLogPurge, Value: BoolOn, Type: TypeBool},
 	{Scope: ScopeGlobal, Name: "ndb_distribution", Value: ""},
 	{Scope: ScopeGlobal, Name: "myisam_data_pointer_size", Value: "6"},
 	{Scope: ScopeGlobal, Name: "ndb_optimization_delay", Value: ""},
 	{Scope: ScopeGlobal, Name: "innodb_ft_num_word_optimize", Value: "2000"},
 	{Scope: ScopeGlobal | ScopeSession, Name: "max_join_size", Value: "18446744073709551615", IsHintUpdatable: true},
-	{Scope: ScopeNone, Name: CoreFile, Value: "0", Type: TypeBool},
+	{Scope: ScopeNone, Name: CoreFile, Value: BoolOff, Type: TypeBool},
 	{Scope: ScopeGlobal | ScopeSession, Name: "max_seeks_for_key", Value: "18446744073709551615", IsHintUpdatable: true},
 	{Scope: ScopeNone, Name: "innodb_log_buffer_size", Value: "8388608"},
 	{Scope: ScopeGlobal, Name: "delayed_insert_timeout", Value: "300"},
@@ -391,16 +411,16 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeNone, Name: "innodb_api_disable_rowlock", Value: "0"},
 	{Scope: ScopeGlobal, Name: "innodb_adaptive_flushing_lwm", Value: "10"},
 	{Scope: ScopeNone, Name: "innodb_log_files_in_group", Value: "2"},
-	{Scope: ScopeGlobal, Name: InnodbBufferPoolLoadNow, Value: "0", Type: TypeBool, AutoConvertNegativeBool: true},
+	{Scope: ScopeGlobal, Name: InnodbBufferPoolLoadNow, Value: BoolOff, Type: TypeBool, AutoConvertNegativeBool: true},
 	{Scope: ScopeNone, Name: "performance_schema_max_rwlock_classes", Value: "40"},
 	{Scope: ScopeNone, Name: "binlog_gtid_simple_recovery", Value: "1"},
 	{Scope: ScopeNone, Name: Port, Value: "4000"},
 	{Scope: ScopeNone, Name: "performance_schema_digests_size", Value: "10000"},
-	{Scope: ScopeGlobal | ScopeSession, Name: Profiling, Value: "0", Type: TypeBool},
+	{Scope: ScopeGlobal | ScopeSession, Name: Profiling, Value: BoolOff, Type: TypeBool},
 	{Scope: ScopeNone, Name: "lower_case_table_names", Value: "2"},
 	{Scope: ScopeSession, Name: "rand_seed1", Value: ""},
 	{Scope: ScopeGlobal, Name: "sha256_password_proxy_users", Value: ""},
-	{Scope: ScopeGlobal | ScopeSession, Name: SQLQuoteShowCreate, Value: "1", Type: TypeBool},
+	{Scope: ScopeGlobal | ScopeSession, Name: SQLQuoteShowCreate, Value: BoolOn, Type: TypeBool},
 	{Scope: ScopeGlobal | ScopeSession, Name: "binlogging_impossible_mode", Value: "IGNORE_ERROR"},
 	{Scope: ScopeGlobal | ScopeSession, Name: QueryCacheSize, Value: "1048576"},
 	{Scope: ScopeGlobal, Name: "innodb_stats_transient_sample_pages", Value: "8"},
@@ -411,7 +431,7 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeNone, Name: "skip_show_database", Value: "0"},
 	{Scope: ScopeGlobal, Name: "log_timestamps", Value: ""},
 	{Scope: ScopeNone, Name: "version_compile_machine", Value: "x86_64"},
-	{Scope: ScopeGlobal, Name: "event_scheduler", Value: "OFF"},
+	{Scope: ScopeGlobal, Name: "event_scheduler", Value: BoolOff},
 	{Scope: ScopeGlobal | ScopeSession, Name: "ndb_deferred_constraints", Value: ""},
 	{Scope: ScopeGlobal, Name: "log_syslog_include_pid", Value: ""},
 	{Scope: ScopeSession, Name: "last_insert_id", Value: ""},
@@ -426,9 +446,9 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal, Name: InnodbStatsAutoRecalc, Value: "1"},
 	{Scope: ScopeGlobal | ScopeSession, Name: "lc_messages", Value: "en_US"},
 	{Scope: ScopeGlobal | ScopeSession, Name: "bulk_insert_buffer_size", Value: "8388608", IsHintUpdatable: true},
-	{Scope: ScopeGlobal | ScopeSession, Name: BinlogDirectNonTransactionalUpdates, Value: "0", Type: TypeBool},
+	{Scope: ScopeGlobal | ScopeSession, Name: BinlogDirectNonTransactionalUpdates, Value: BoolOff, Type: TypeBool},
 	{Scope: ScopeGlobal, Name: "innodb_change_buffering", Value: "all"},
-	{Scope: ScopeGlobal | ScopeSession, Name: SQLBigSelects, Value: "1", Type: TypeBool, IsHintUpdatable: true},
+	{Scope: ScopeGlobal | ScopeSession, Name: SQLBigSelects, Value: BoolOn, Type: TypeBool, IsHintUpdatable: true},
 	{Scope: ScopeGlobal | ScopeSession, Name: CharacterSetResults, Value: mysql.DefaultCharset},
 	{Scope: ScopeGlobal, Name: "innodb_max_purge_lag_delay", Value: "0"},
 	{Scope: ScopeGlobal | ScopeSession, Name: "session_track_schema", Value: ""},
@@ -439,7 +459,7 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal | ScopeSession, Name: "read_rnd_buffer_size", Value: "262144", IsHintUpdatable: true},
 	{Scope: ScopeNone, Name: "version_comment", Value: "TiDB Server (Apache License 2.0) " + versioninfo.TiDBEdition + " Edition, MySQL 5.7 compatible"},
 	{Scope: ScopeGlobal | ScopeSession, Name: NetWriteTimeout, Value: "60"},
-	{Scope: ScopeGlobal, Name: InnodbBufferPoolLoadAbort, Value: "0", Type: TypeBool, AutoConvertNegativeBool: true},
+	{Scope: ScopeGlobal, Name: InnodbBufferPoolLoadAbort, Value: BoolOff, Type: TypeBool, AutoConvertNegativeBool: true},
 	{Scope: ScopeGlobal | ScopeSession, Name: TxnIsolation, Value: "REPEATABLE-READ"},
 	{Scope: ScopeGlobal | ScopeSession, Name: TransactionIsolation, Value: "REPEATABLE-READ"},
 	{Scope: ScopeGlobal | ScopeSession, Name: "collation_connection", Value: mysql.DefaultCollationName},
@@ -448,21 +468,21 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal, Name: "sync_relay_log", Value: "10000"},
 	{Scope: ScopeGlobal, Name: "innodb_ft_result_cache_limit", Value: "2000000000"},
 	{Scope: ScopeNone, Name: "innodb_sort_buffer_size", Value: "1048576"},
-	{Scope: ScopeGlobal, Name: "innodb_ft_enable_diag_print", Value: "OFF"},
+	{Scope: ScopeGlobal, Name: "innodb_ft_enable_diag_print", Type: TypeBool, Value: BoolOff},
 	{Scope: ScopeNone, Name: "thread_handling", Value: "one-thread-per-connection"},
 	{Scope: ScopeGlobal, Name: "stored_program_cache", Value: "256"},
 	{Scope: ScopeNone, Name: "performance_schema_max_mutex_instances", Value: "15906"},
 	{Scope: ScopeGlobal, Name: "innodb_adaptive_max_sleep_delay", Value: "150000"},
-	{Scope: ScopeNone, Name: "large_pages", Value: "OFF"},
+	{Scope: ScopeNone, Name: "large_pages", Value: BoolOff},
 	{Scope: ScopeGlobal | ScopeSession, Name: "session_track_system_variables", Value: ""},
 	{Scope: ScopeGlobal, Name: "innodb_change_buffer_max_size", Value: "25"},
-	{Scope: ScopeGlobal, Name: LogBinTrustFunctionCreators, Value: "0", Type: TypeBool},
+	{Scope: ScopeGlobal, Name: LogBinTrustFunctionCreators, Value: BoolOff, Type: TypeBool},
 	{Scope: ScopeNone, Name: "innodb_write_io_threads", Value: "4"},
 	{Scope: ScopeGlobal, Name: "mysql_native_password_proxy_users", Value: ""},
-	{Scope: ScopeGlobal, Name: serverReadOnly, Value: "0", Type: TypeBool},
+	{Scope: ScopeGlobal, Name: serverReadOnly, Value: BoolOff, Type: TypeBool},
 	{Scope: ScopeNone, Name: "large_page_size", Value: "0"},
 	{Scope: ScopeNone, Name: "table_open_cache_instances", Value: "1"},
-	{Scope: ScopeGlobal, Name: InnodbStatsPersistent, Value: "1", Type: TypeBool, AutoConvertNegativeBool: true},
+	{Scope: ScopeGlobal, Name: InnodbStatsPersistent, Value: BoolOn, Type: TypeBool, AutoConvertNegativeBool: true},
 	{Scope: ScopeGlobal | ScopeSession, Name: "session_track_state_change", Value: ""},
 	{Scope: ScopeNone, Name: OptimizerSwitch, Value: "index_merge=on,index_merge_union=on,index_merge_sort_union=on,index_merge_intersection=on,engine_condition_pushdown=on,index_condition_pushdown=on,mrr=on,mrr_cost_based=on,block_nested_loop=on,batched_key_access=off,materialization=on,semijoin=on,loosescan=on,firstmatch=on,subquery_materialization_cost_based=on,use_index_extensions=on", IsHintUpdatable: true},
 	{Scope: ScopeGlobal, Name: "delayed_queue_size", Value: "1000"},
@@ -471,14 +491,14 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal, Name: "log_syslog", Value: ""},
 	{Scope: ScopeNone, Name: "version", Value: mysql.ServerVersion},
 	{Scope: ScopeGlobal | ScopeSession, Name: "transaction_alloc_block_size", Value: "8192"},
-	{Scope: ScopeGlobal, Name: "innodb_large_prefix", Value: "OFF"},
+	{Scope: ScopeGlobal, Name: "innodb_large_prefix", Type: TypeBool, Value: BoolOff},
 	{Scope: ScopeNone, Name: "performance_schema_max_cond_classes", Value: "80"},
 	{Scope: ScopeGlobal, Name: "innodb_io_capacity", Value: "200"},
 	{Scope: ScopeGlobal, Name: "max_binlog_cache_size", Value: "18446744073709547520"},
 	{Scope: ScopeGlobal | ScopeSession, Name: "ndb_index_stat_enable", Value: ""},
 	{Scope: ScopeGlobal, Name: "executed_gtids_compression_period", Value: ""},
 	{Scope: ScopeNone, Name: "time_format", Value: "%H:%i:%s"},
-	{Scope: ScopeGlobal | ScopeSession, Name: OldAlterTable, Value: "0", Type: TypeBool},
+	{Scope: ScopeGlobal | ScopeSession, Name: OldAlterTable, Value: BoolOff, Type: TypeBool},
 	{Scope: ScopeGlobal | ScopeSession, Name: "long_query_time", Value: "10.000000"},
 	{Scope: ScopeNone, Name: "innodb_use_native_aio", Value: "0"},
 	{Scope: ScopeGlobal, Name: "log_throttle_queries_not_using_indexes", Value: "0"},
@@ -488,11 +508,11 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal, Name: "innodb_compression_pad_pct_max", Value: "50"},
 	{Scope: ScopeGlobal, Name: InnodbCommitConcurrency, Value: "0", Type: TypeUnsigned, MinValue: 0, MaxValue: 1000, AutoConvertOutOfRange: true},
 	{Scope: ScopeNone, Name: "ft_min_word_len", Value: "4"},
-	{Scope: ScopeGlobal, Name: EnforceGtidConsistency, Value: "OFF"},
-	{Scope: ScopeGlobal, Name: SecureAuth, Value: "1"},
+	{Scope: ScopeGlobal, Name: EnforceGtidConsistency, Value: BoolOff, Type: TypeEnum, PossibleValues: []string{BoolOff, BoolOn, "WARN"}},
+	{Scope: ScopeGlobal, Name: SecureAuth, Value: BoolOn, Type: TypeBool},
 	{Scope: ScopeNone, Name: "max_tmp_tables", Value: "32"},
-	{Scope: ScopeGlobal, Name: InnodbRandomReadAhead, Value: "0", Type: TypeBool, AutoConvertNegativeBool: true},
-	{Scope: ScopeGlobal | ScopeSession, Name: UniqueChecks, Value: "1", Type: TypeBool, IsHintUpdatable: true},
+	{Scope: ScopeGlobal, Name: InnodbRandomReadAhead, Value: BoolOff, Type: TypeBool, AutoConvertNegativeBool: true},
+	{Scope: ScopeGlobal | ScopeSession, Name: UniqueChecks, Value: BoolOn, Type: TypeBool, IsHintUpdatable: true},
 	{Scope: ScopeGlobal, Name: "internal_tmp_disk_storage_engine", Value: ""},
 	{Scope: ScopeGlobal | ScopeSession, Name: "myisam_repair_threads", Value: "1"},
 	{Scope: ScopeGlobal, Name: "ndb_eventbuffer_max_alloc", Value: ""},
@@ -510,8 +530,8 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal, Name: "innodb_thread_sleep_delay", Value: "10000"},
 	{Scope: ScopeNone, Name: "license", Value: "Apache License 2.0"},
 	{Scope: ScopeGlobal, Name: "innodb_ft_aux_table", Value: ""},
-	{Scope: ScopeGlobal | ScopeSession, Name: SQLWarnings, Value: "0", Type: TypeBool},
-	{Scope: ScopeGlobal | ScopeSession, Name: KeepFilesOnCreate, Value: "0", Type: TypeBool},
+	{Scope: ScopeGlobal | ScopeSession, Name: SQLWarnings, Value: BoolOff, Type: TypeBool},
+	{Scope: ScopeGlobal | ScopeSession, Name: KeepFilesOnCreate, Value: BoolOff, Type: TypeBool},
 	{Scope: ScopeNone, Name: "innodb_data_file_path", Value: "ibdata1:12M:autoextend"},
 	{Scope: ScopeNone, Name: "performance_schema_setup_actors_size", Value: "100"},
 	{Scope: ScopeNone, Name: "innodb_additional_mem_pool_size", Value: "8388608"},
@@ -522,7 +542,7 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeNone, Name: "performance_schema_max_rwlock_instances", Value: "9102"},
 	{Scope: ScopeGlobal, Name: "table_open_cache", Value: "2000"},
 	{Scope: ScopeNone, Name: "performance_schema_events_stages_history_long_size", Value: "10000"},
-	{Scope: ScopeGlobal | ScopeSession, Name: AutoCommit, Value: "1", Type: TypeBool},
+	{Scope: ScopeGlobal | ScopeSession, Name: AutoCommit, Value: BoolOn, Type: TypeBool},
 	{Scope: ScopeSession, Name: "insert_id", Value: ""},
 	{Scope: ScopeGlobal | ScopeSession, Name: "default_tmp_storage_engine", Value: "InnoDB", IsHintUpdatable: true},
 	{Scope: ScopeGlobal | ScopeSession, Name: "optimizer_search_depth", Value: "62", IsHintUpdatable: true},
@@ -536,7 +556,7 @@ var defaultSysVars = []*SysVar{
 	// In MySQL, the default value of `explicit_defaults_for_timestamp` is `0`.
 	// But In TiDB, it's set to `1` to be consistent with TiDB timestamp behavior.
 	// See: https://github.com/pingcap/tidb/pull/6068 for details
-	{Scope: ScopeNone, Name: "explicit_defaults_for_timestamp", Value: "1"},
+	{Scope: ScopeNone, Name: "explicit_defaults_for_timestamp", Value: BoolOn, Type: TypeBool},
 	{Scope: ScopeNone, Name: "performance_schema_events_waits_history_size", Value: "10"},
 	{Scope: ScopeGlobal, Name: "log_syslog_tag", Value: ""},
 	{Scope: ScopeGlobal | ScopeSession, Name: TxReadOnly, Value: "0"},
@@ -559,10 +579,10 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal | ScopeSession, Name: "completion_type", Value: "NO_CHAIN"},
 	{Scope: ScopeGlobal, Name: "binlog_checksum", Value: "CRC32"},
 	{Scope: ScopeNone, Name: "report_port", Value: "3306"},
-	{Scope: ScopeGlobal | ScopeSession, Name: ShowOldTemporals, Value: "0", Type: TypeBool},
+	{Scope: ScopeGlobal | ScopeSession, Name: ShowOldTemporals, Value: BoolOff, Type: TypeBool},
 	{Scope: ScopeGlobal, Name: "query_cache_limit", Value: "1048576"},
 	{Scope: ScopeGlobal, Name: "innodb_buffer_pool_size", Value: "134217728"},
-	{Scope: ScopeGlobal, Name: InnodbAdaptiveFlushing, Value: "1", Type: TypeBool, AutoConvertNegativeBool: true},
+	{Scope: ScopeGlobal, Name: InnodbAdaptiveFlushing, Value: BoolOn, Type: TypeBool, AutoConvertNegativeBool: true},
 	{Scope: ScopeNone, Name: "datadir", Value: "/usr/local/mysql/data/"},
 	{Scope: ScopeGlobal | ScopeSession, Name: WaitTimeout, Value: strconv.FormatInt(DefWaitTimeout, 10), Type: TypeUnsigned, MinValue: 0, MaxValue: 31536000, AutoConvertOutOfRange: true},
 	{Scope: ScopeGlobal, Name: "innodb_monitor_enable", Value: ""},
@@ -579,14 +599,14 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal, Name: "innodb_old_blocks_time", Value: "1000"},
 	{Scope: ScopeGlobal, Name: "innodb_stats_method", Value: "nulls_equal"},
 	{Scope: ScopeGlobal | ScopeSession, Name: InnodbLockWaitTimeout, Value: strconv.FormatInt(DefInnodbLockWaitTimeout, 10), Type: TypeUnsigned, MinValue: 1, MaxValue: 1073741824, AutoConvertOutOfRange: true},
-	{Scope: ScopeGlobal, Name: LocalInFile, Value: "1", Type: TypeBool},
+	{Scope: ScopeGlobal, Name: LocalInFile, Value: BoolOn, Type: TypeBool},
 	{Scope: ScopeGlobal | ScopeSession, Name: "myisam_stats_method", Value: "nulls_unequal"},
 	{Scope: ScopeNone, Name: "version_compile_os", Value: "osx10.8"},
 	{Scope: ScopeNone, Name: "relay_log_recovery", Value: "0"},
 	{Scope: ScopeNone, Name: "old", Value: "0"},
-	{Scope: ScopeGlobal | ScopeSession, Name: InnodbTableLocks, Value: "1", Type: TypeBool, AutoConvertNegativeBool: true},
-	{Scope: ScopeNone, Name: PerformanceSchema, Value: "0", Type: TypeBool},
-	{Scope: ScopeNone, Name: "myisam_recover_options", Value: "OFF"},
+	{Scope: ScopeGlobal | ScopeSession, Name: InnodbTableLocks, Value: BoolOn, Type: TypeBool, AutoConvertNegativeBool: true},
+	{Scope: ScopeNone, Name: PerformanceSchema, Value: BoolOff, Type: TypeBool},
+	{Scope: ScopeNone, Name: "myisam_recover_options", Value: BoolOff},
 	{Scope: ScopeGlobal | ScopeSession, Name: NetBufferLength, Value: "16384"},
 	{Scope: ScopeGlobal | ScopeSession, Name: "binlog_row_image", Value: "FULL"},
 	{Scope: ScopeNone, Name: "innodb_locks_unsafe_for_binlog", Value: "0"},
@@ -602,11 +622,11 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal, Name: "innodb_undo_logs", Value: "128"},
 	{Scope: ScopeNone, Name: "performance_schema_max_cond_instances", Value: "3504"},
 	{Scope: ScopeGlobal, Name: "delayed_insert_limit", Value: "100"},
-	{Scope: ScopeGlobal, Name: Flush, Value: "0", Type: TypeBool},
+	{Scope: ScopeGlobal, Name: Flush, Value: BoolOff, Type: TypeBool},
 	{Scope: ScopeGlobal | ScopeSession, Name: "eq_range_index_dive_limit", Value: "200", IsHintUpdatable: true},
 	{Scope: ScopeNone, Name: "performance_schema_events_stages_history_size", Value: "10"},
 	{Scope: ScopeGlobal | ScopeSession, Name: "character_set_connection", Value: mysql.DefaultCharset},
-	{Scope: ScopeGlobal, Name: MyISAMUseMmap, Value: "0", Type: TypeBool, AutoConvertNegativeBool: true},
+	{Scope: ScopeGlobal, Name: MyISAMUseMmap, Value: BoolOff, Type: TypeBool, AutoConvertNegativeBool: true},
 	{Scope: ScopeGlobal | ScopeSession, Name: "ndb_join_pushdown", Value: ""},
 	{Scope: ScopeGlobal | ScopeSession, Name: CharacterSetServer, Value: mysql.DefaultCharset},
 	{Scope: ScopeGlobal, Name: "validate_password_special_char_count", Value: "1"},
@@ -625,70 +645,72 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeNone, Name: "innodb_undo_directory", Value: "."},
 	{Scope: ScopeNone, Name: "bind_address", Value: "*"},
 	{Scope: ScopeGlobal, Name: "innodb_sync_spin_loops", Value: "30"},
-	{Scope: ScopeGlobal | ScopeSession, Name: SQLSafeUpdates, Value: "0", Type: TypeBool, IsHintUpdatable: true},
+	{Scope: ScopeGlobal | ScopeSession, Name: SQLSafeUpdates, Value: BoolOff, Type: TypeBool, IsHintUpdatable: true},
 	{Scope: ScopeNone, Name: "tmpdir", Value: "/var/tmp/"},
 	{Scope: ScopeGlobal, Name: "innodb_thread_concurrency", Value: "0"},
 	{Scope: ScopeGlobal, Name: "innodb_buffer_pool_dump_pct", Value: ""},
 	{Scope: ScopeGlobal | ScopeSession, Name: "lc_time_names", Value: "en_US"},
 	{Scope: ScopeGlobal | ScopeSession, Name: "max_statement_time", Value: ""},
-	{Scope: ScopeGlobal | ScopeSession, Name: EndMakersInJSON, Value: "0", Type: TypeBool, IsHintUpdatable: true},
-	{Scope: ScopeGlobal, Name: AvoidTemporalUpgrade, Value: "0", Type: TypeBool},
+	{Scope: ScopeGlobal | ScopeSession, Name: EndMakersInJSON, Value: BoolOff, Type: TypeBool, IsHintUpdatable: true},
+	{Scope: ScopeGlobal, Name: AvoidTemporalUpgrade, Value: BoolOff, Type: TypeBool},
 	{Scope: ScopeGlobal, Name: "key_cache_age_threshold", Value: "300"},
-	{Scope: ScopeGlobal, Name: InnodbStatusOutput, Value: "0", Type: TypeBool, AutoConvertNegativeBool: true},
+	{Scope: ScopeGlobal, Name: InnodbStatusOutput, Value: BoolOff, Type: TypeBool, AutoConvertNegativeBool: true},
 	{Scope: ScopeSession, Name: "identity", Value: ""},
 	{Scope: ScopeGlobal | ScopeSession, Name: "min_examined_row_limit", Value: "0"},
-	{Scope: ScopeGlobal, Name: "sync_frm", Value: "ON"},
+	{Scope: ScopeGlobal, Name: "sync_frm", Type: TypeBool, Value: BoolOn},
 	{Scope: ScopeGlobal, Name: "innodb_online_alter_log_max_size", Value: "134217728"},
-	{Scope: ScopeSession, Name: WarningCount, Value: "0"},
-	{Scope: ScopeSession, Name: ErrorCount, Value: "0"},
+	{Scope: ScopeSession, Name: WarningCount, Value: "0", ReadOnly: true},
+	{Scope: ScopeSession, Name: ErrorCount, Value: "0", ReadOnly: true},
 	{Scope: ScopeGlobal | ScopeSession, Name: "information_schema_stats_expiry", Value: "86400"},
 	{Scope: ScopeGlobal, Name: ThreadPoolSize, Value: "16", Type: TypeUnsigned, MinValue: 1, MaxValue: 64, AutoConvertOutOfRange: true},
-	{Scope: ScopeGlobal | ScopeSession, Name: WindowingUseHighPrecision, Value: "ON", Type: TypeBool, IsHintUpdatable: true},
+	{Scope: ScopeGlobal | ScopeSession, Name: WindowingUseHighPrecision, Value: BoolOn, Type: TypeBool, IsHintUpdatable: true},
 	/* TiDB specific variables */
 	{Scope: ScopeSession, Name: TiDBSnapshot, Value: ""},
-	{Scope: ScopeSession, Name: TiDBOptAggPushDown, Value: BoolToIntStr(DefOptAggPushDown), Type: TypeBool},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptBCJ, Value: BoolToIntStr(DefOptBCJ)},
-	{Scope: ScopeSession, Name: TiDBOptDistinctAggPushDown, Value: BoolToIntStr(config.GetGlobalConfig().Performance.DistinctAggPushDown), Type: TypeBool},
-	{Scope: ScopeSession, Name: TiDBOptWriteRowID, Value: BoolToIntStr(DefOptWriteRowID)},
+	{Scope: ScopeSession, Name: TiDBOptAggPushDown, Value: BoolToOnOff(DefOptAggPushDown), Type: TypeBool},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptBCJ, Value: BoolToOnOff(DefOptBCJ)},
+	{Scope: ScopeSession, Name: TiDBOptDistinctAggPushDown, Value: BoolToOnOff(config.GetGlobalConfig().Performance.DistinctAggPushDown), Type: TypeBool},
+	{Scope: ScopeSession, Name: TiDBOptWriteRowID, Value: BoolToOnOff(DefOptWriteRowID)},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBBuildStatsConcurrency, Value: strconv.Itoa(DefBuildStatsConcurrency)},
-	{Scope: ScopeGlobal, Name: TiDBAutoAnalyzeRatio, Value: strconv.FormatFloat(DefAutoAnalyzeRatio, 'f', -1, 64)},
+	{Scope: ScopeGlobal, Name: TiDBAutoAnalyzeRatio, Value: strconv.FormatFloat(DefAutoAnalyzeRatio, 'f', -1, 64), Type: TypeFloat, MinValue: 0, MaxValue: math.MaxUint64},
 	{Scope: ScopeGlobal, Name: TiDBAutoAnalyzeStartTime, Value: DefAutoAnalyzeStartTime},
 	{Scope: ScopeGlobal, Name: TiDBAutoAnalyzeEndTime, Value: DefAutoAnalyzeEndTime},
 	{Scope: ScopeSession, Name: TiDBChecksumTableConcurrency, Value: strconv.Itoa(DefChecksumTableConcurrency)},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBExecutorConcurrency, Value: strconv.Itoa(DefExecutorConcurrency), Type: TypeUnsigned, MinValue: 1, MaxValue: math.MaxUint64},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBDistSQLScanConcurrency, Value: strconv.Itoa(DefDistSQLScanConcurrency), Type: TypeUnsigned, MinValue: 1, MaxValue: math.MaxUint64},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptInSubqToJoinAndAgg, Value: BoolToIntStr(DefOptInSubqToJoinAndAgg), Type: TypeBool},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptCorrelationThreshold, Value: strconv.FormatFloat(DefOptCorrelationThreshold, 'f', -1, 64)},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptInSubqToJoinAndAgg, Value: BoolToOnOff(DefOptInSubqToJoinAndAgg), Type: TypeBool},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptCorrelationThreshold, Value: strconv.FormatFloat(DefOptCorrelationThreshold, 'f', -1, 64), Type: TypeFloat, MinValue: 0, MaxValue: 1},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptCorrelationExpFactor, Value: strconv.Itoa(DefOptCorrelationExpFactor), Type: TypeUnsigned, MinValue: 0, MaxValue: math.MaxUint64},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptCPUFactor, Value: strconv.FormatFloat(DefOptCPUFactor, 'f', -1, 64)},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptTiFlashConcurrencyFactor, Value: strconv.FormatFloat(DefOptTiFlashConcurrencyFactor, 'f', -1, 64)},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptCopCPUFactor, Value: strconv.FormatFloat(DefOptCopCPUFactor, 'f', -1, 64)},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptNetworkFactor, Value: strconv.FormatFloat(DefOptNetworkFactor, 'f', -1, 64)},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptScanFactor, Value: strconv.FormatFloat(DefOptScanFactor, 'f', -1, 64)},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptDescScanFactor, Value: strconv.FormatFloat(DefOptDescScanFactor, 'f', -1, 64)},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptSeekFactor, Value: strconv.FormatFloat(DefOptSeekFactor, 'f', -1, 64)},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptMemoryFactor, Value: strconv.FormatFloat(DefOptMemoryFactor, 'f', -1, 64)},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptDiskFactor, Value: strconv.FormatFloat(DefOptDiskFactor, 'f', -1, 64)},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptConcurrencyFactor, Value: strconv.FormatFloat(DefOptConcurrencyFactor, 'f', -1, 64)},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptCPUFactor, Value: strconv.FormatFloat(DefOptCPUFactor, 'f', -1, 64), Type: TypeFloat, MinValue: 0, MaxValue: math.MaxUint64},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptTiFlashConcurrencyFactor, Value: strconv.FormatFloat(DefOptTiFlashConcurrencyFactor, 'f', -1, 64), Type: TypeFloat, MinValue: 0, MaxValue: math.MaxUint64},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptCopCPUFactor, Value: strconv.FormatFloat(DefOptCopCPUFactor, 'f', -1, 64), Type: TypeFloat, MinValue: 0, MaxValue: math.MaxUint64},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptNetworkFactor, Value: strconv.FormatFloat(DefOptNetworkFactor, 'f', -1, 64), Type: TypeFloat, MinValue: 0, MaxValue: math.MaxUint64},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptScanFactor, Value: strconv.FormatFloat(DefOptScanFactor, 'f', -1, 64), Type: TypeFloat, MinValue: 0, MaxValue: math.MaxUint64},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptDescScanFactor, Value: strconv.FormatFloat(DefOptDescScanFactor, 'f', -1, 64), Type: TypeFloat, MinValue: 0, MaxValue: math.MaxUint64},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptSeekFactor, Value: strconv.FormatFloat(DefOptSeekFactor, 'f', -1, 64), Type: TypeFloat, MinValue: 0, MaxValue: math.MaxUint64},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptMemoryFactor, Value: strconv.FormatFloat(DefOptMemoryFactor, 'f', -1, 64), Type: TypeFloat, MinValue: 0, MaxValue: math.MaxUint64},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptDiskFactor, Value: strconv.FormatFloat(DefOptDiskFactor, 'f', -1, 64), Type: TypeFloat, MinValue: 0, MaxValue: math.MaxUint64},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptConcurrencyFactor, Value: strconv.FormatFloat(DefOptConcurrencyFactor, 'f', -1, 64), Type: TypeFloat, MinValue: 0, MaxValue: math.MaxUint64},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBIndexJoinBatchSize, Value: strconv.Itoa(DefIndexJoinBatchSize), Type: TypeUnsigned, MinValue: 1, MaxValue: math.MaxUint64},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBIndexLookupSize, Value: strconv.Itoa(DefIndexLookupSize), Type: TypeUnsigned, MinValue: 1, MaxValue: math.MaxUint64},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBIndexLookupConcurrency, Value: strconv.Itoa(DefIndexLookupConcurrency)},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBIndexLookupJoinConcurrency, Value: strconv.Itoa(DefIndexLookupJoinConcurrency)},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBIndexSerialScanConcurrency, Value: strconv.Itoa(DefIndexSerialScanConcurrency), Type: TypeUnsigned, MinValue: 1, MaxValue: math.MaxUint64},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBSkipUTF8Check, Value: BoolToIntStr(DefSkipUTF8Check), Type: TypeBool},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBSkipASCIICheck, Value: BoolToIntStr(DefSkipASCIICheck), Type: TypeBool},
-	{Scope: ScopeSession, Name: TiDBBatchInsert, Value: BoolToIntStr(DefBatchInsert), Type: TypeBool},
-	{Scope: ScopeSession, Name: TiDBBatchDelete, Value: BoolToIntStr(DefBatchDelete), Type: TypeBool},
-	{Scope: ScopeSession, Name: TiDBBatchCommit, Value: BoolToIntStr(DefBatchCommit), Type: TypeBool},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBSkipUTF8Check, Value: BoolToOnOff(DefSkipUTF8Check), Type: TypeBool},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBSkipASCIICheck, Value: BoolToOnOff(DefSkipASCIICheck), Type: TypeBool},
+	{Scope: ScopeSession, Name: TiDBBatchInsert, Value: BoolToOnOff(DefBatchInsert), Type: TypeBool},
+	{Scope: ScopeSession, Name: TiDBBatchDelete, Value: BoolToOnOff(DefBatchDelete), Type: TypeBool},
+	{Scope: ScopeSession, Name: TiDBBatchCommit, Value: BoolToOnOff(DefBatchCommit), Type: TypeBool},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBDMLBatchSize, Value: strconv.Itoa(DefDMLBatchSize), Type: TypeUnsigned, MinValue: 0, MaxValue: math.MaxUint64},
 	{Scope: ScopeSession, Name: TiDBCurrentTS, Value: strconv.Itoa(DefCurretTS)},
 	{Scope: ScopeSession, Name: TiDBLastTxnInfo, Value: strconv.Itoa(DefCurretTS)},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBMaxChunkSize, Value: strconv.Itoa(DefMaxChunkSize)},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBMaxChunkSize, Value: strconv.Itoa(DefMaxChunkSize), Type: TypeUnsigned, MinValue: maxChunkSizeLowerBound, MaxValue: math.MaxUint64},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBAllowBatchCop, Value: strconv.Itoa(DefTiDBAllowBatchCop)},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBInitChunkSize, Value: strconv.Itoa(DefInitChunkSize)},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableCascadesPlanner, Value: "0", Type: TypeBool},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableIndexMerge, Value: "0", Type: TypeBool},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBInitChunkSize, Value: strconv.Itoa(DefInitChunkSize), Type: TypeUnsigned, MinValue: 1, MaxValue: initChunkSizeUpperBound},
+
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableCascadesPlanner, Value: BoolOff, Type: TypeBool},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableIndexMerge, Value: BoolOff, Type: TypeBool},
 	{Scope: ScopeSession, Name: TIDBMemQuotaQuery, Value: strconv.FormatInt(config.GetGlobalConfig().MemQuotaQuery, 10), Type: TypeInt, MinValue: -1, MaxValue: math.MaxInt64},
+	{Scope: ScopeGlobal, Name: TIDBMemQuotaStatistics, Value: strconv.FormatInt(config.GetGlobalConfig().MemQuotaStatistics, 10), Type: TypeInt, MinValue: int64(32 << 30), MaxValue: math.MaxInt64},
 	{Scope: ScopeSession, Name: TIDBMemQuotaHashJoin, Value: strconv.FormatInt(DefTiDBMemQuotaHashJoin, 10), Type: TypeInt, MinValue: -1, MaxValue: math.MaxInt64},
 	{Scope: ScopeSession, Name: TIDBMemQuotaMergeJoin, Value: strconv.FormatInt(DefTiDBMemQuotaMergeJoin, 10), Type: TypeInt, MinValue: -1, MaxValue: math.MaxInt64},
 	{Scope: ScopeSession, Name: TIDBMemQuotaSort, Value: strconv.FormatInt(DefTiDBMemQuotaSort, 10), Type: TypeInt, MinValue: -1, MaxValue: math.MaxInt64},
@@ -696,31 +718,32 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeSession, Name: TIDBMemQuotaIndexLookupReader, Value: strconv.FormatInt(DefTiDBMemQuotaIndexLookupReader, 10), Type: TypeInt, MinValue: -1, MaxValue: math.MaxInt64},
 	{Scope: ScopeSession, Name: TIDBMemQuotaIndexLookupJoin, Value: strconv.FormatInt(DefTiDBMemQuotaIndexLookupJoin, 10), Type: TypeInt, MinValue: -1, MaxValue: math.MaxInt64},
 	{Scope: ScopeSession, Name: TIDBMemQuotaNestedLoopApply, Value: strconv.FormatInt(DefTiDBMemQuotaNestedLoopApply, 10), Type: TypeInt, MinValue: -1, MaxValue: math.MaxInt64},
-	{Scope: ScopeSession, Name: TiDBEnableStreaming, Value: "0", Type: TypeBool},
-	{Scope: ScopeSession, Name: TiDBEnableChunkRPC, Value: "1", Type: TypeBool},
+	{Scope: ScopeSession, Name: TiDBEnableStreaming, Value: BoolOff, Type: TypeBool},
+	{Scope: ScopeSession, Name: TiDBEnableChunkRPC, Value: BoolOn, Type: TypeBool},
+
 	{Scope: ScopeSession, Name: TxnIsolationOneShot, Value: ""},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableTablePartition, Value: "on"},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableTablePartition, Value: BoolOn, Type: TypeEnum, PossibleValues: []string{BoolOff, BoolOn, "AUTO"}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBHashJoinConcurrency, Value: strconv.Itoa(DefTiDBHashJoinConcurrency)},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBProjectionConcurrency, Value: strconv.Itoa(DefTiDBProjectionConcurrency), Type: TypeInt, MinValue: -1, MaxValue: math.MaxInt64},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBHashAggPartialConcurrency, Value: strconv.Itoa(DefTiDBHashAggPartialConcurrency)},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBHashAggFinalConcurrency, Value: strconv.Itoa(DefTiDBHashAggFinalConcurrency)},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBWindowConcurrency, Value: strconv.Itoa(DefTiDBWindowConcurrency)},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableParallelApply, Value: BoolToIntStr(DefTiDBEnableParallelApply), Type: TypeBool},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableParallelApply, Value: BoolToOnOff(DefTiDBEnableParallelApply), Type: TypeBool},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBBackoffLockFast, Value: strconv.Itoa(kv.DefBackoffLockFast), Type: TypeUnsigned, MinValue: 1, MaxValue: math.MaxUint64},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBBackOffWeight, Value: strconv.Itoa(kv.DefBackOffWeight), Type: TypeUnsigned, MinValue: 1, MaxValue: math.MaxUint64},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBRetryLimit, Value: strconv.Itoa(DefTiDBRetryLimit), Type: TypeInt, MinValue: -1, MaxValue: math.MaxInt64},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBDisableTxnAutoRetry, Value: BoolToIntStr(DefTiDBDisableTxnAutoRetry), Type: TypeBool},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBConstraintCheckInPlace, Value: BoolToIntStr(DefTiDBConstraintCheckInPlace), Type: TypeBool},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBDisableTxnAutoRetry, Value: BoolToOnOff(DefTiDBDisableTxnAutoRetry), Type: TypeBool},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBConstraintCheckInPlace, Value: BoolToOnOff(DefTiDBConstraintCheckInPlace), Type: TypeBool},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBTxnMode, Value: DefTiDBTxnMode},
-	{Scope: ScopeGlobal, Name: TiDBRowFormatVersion, Value: strconv.Itoa(DefTiDBRowFormatV1)},
+	{Scope: ScopeGlobal, Name: TiDBRowFormatVersion, Value: strconv.Itoa(DefTiDBRowFormatV1), Type: TypeUnsigned, MinValue: 1, MaxValue: 2},
 	{Scope: ScopeSession, Name: TiDBOptimizerSelectivityLevel, Value: strconv.Itoa(DefTiDBOptimizerSelectivityLevel), Type: TypeUnsigned, MinValue: 1, MaxValue: math.MaxUint64},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableWindowFunction, Value: BoolToIntStr(DefEnableWindowFunction), Type: TypeBool},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableVectorizedExpression, Value: BoolToIntStr(DefEnableVectorizedExpression), Type: TypeBool},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableFastAnalyze, Value: BoolToIntStr(DefTiDBUseFastAnalyze), Type: TypeBool},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBSkipIsolationLevelCheck, Value: BoolToIntStr(DefTiDBSkipIsolationLevelCheck), Type: TypeBool},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableWindowFunction, Value: BoolToOnOff(DefEnableWindowFunction), Type: TypeBool},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableVectorizedExpression, Value: BoolToOnOff(DefEnableVectorizedExpression), Type: TypeBool},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableFastAnalyze, Value: BoolToOnOff(DefTiDBUseFastAnalyze), Type: TypeBool},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBSkipIsolationLevelCheck, Value: BoolToOnOff(DefTiDBSkipIsolationLevelCheck), Type: TypeBool},
 	/* The following variable is defined as session scope but is actually server scope. */
-	{Scope: ScopeSession, Name: TiDBGeneralLog, Value: strconv.Itoa(DefTiDBGeneralLog), Type: TypeBool},
-	{Scope: ScopeSession, Name: TiDBPProfSQLCPU, Value: strconv.Itoa(DefTiDBPProfSQLCPU), Type: TypeBool},
+	{Scope: ScopeSession, Name: TiDBGeneralLog, Value: int32ToBoolStr(DefTiDBGeneralLog), Type: TypeBool},
+	{Scope: ScopeSession, Name: TiDBPProfSQLCPU, Value: strconv.Itoa(DefTiDBPProfSQLCPU), Type: TypeInt, MinValue: 0, MaxValue: 1},
 	{Scope: ScopeSession, Name: TiDBDDLSlowOprThreshold, Value: strconv.Itoa(DefTiDBDDLSlowOprThreshold)},
 	{Scope: ScopeSession, Name: TiDBConfig, Value: ""},
 	{Scope: ScopeGlobal, Name: TiDBDDLReorgWorkerCount, Value: strconv.Itoa(DefTiDBDDLReorgWorkerCount), Type: TypeUnsigned, MinValue: 1, MaxValue: math.MaxUint64},
@@ -728,87 +751,87 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal, Name: TiDBDDLErrorCountLimit, Value: strconv.Itoa(DefTiDBDDLErrorCountLimit), Type: TypeUnsigned, MinValue: 0, MaxValue: uint64(math.MaxInt64), AutoConvertOutOfRange: true},
 	{Scope: ScopeSession, Name: TiDBDDLReorgPriority, Value: "PRIORITY_LOW"},
 	{Scope: ScopeGlobal, Name: TiDBMaxDeltaSchemaCount, Value: strconv.Itoa(DefTiDBMaxDeltaSchemaCount), Type: TypeUnsigned, MinValue: 100, MaxValue: 16384, AutoConvertOutOfRange: true},
-	{Scope: ScopeGlobal, Name: TiDBEnableChangeColumnType, Value: BoolToIntStr(DefTiDBChangeColumnType), Type: TypeBool},
+	{Scope: ScopeGlobal, Name: TiDBEnableChangeColumnType, Value: BoolToOnOff(DefTiDBChangeColumnType), Type: TypeBool},
 	{Scope: ScopeSession, Name: TiDBForcePriority, Value: mysql.Priority2Str[DefTiDBForcePriority]},
-	{Scope: ScopeSession, Name: TiDBEnableRadixJoin, Value: BoolToIntStr(DefTiDBUseRadixJoin), Type: TypeBool},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptJoinReorderThreshold, Value: strconv.Itoa(DefTiDBOptJoinReorderThreshold)},
+	{Scope: ScopeSession, Name: TiDBEnableRadixJoin, Value: BoolToOnOff(DefTiDBUseRadixJoin), Type: TypeBool},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptJoinReorderThreshold, Value: strconv.Itoa(DefTiDBOptJoinReorderThreshold), Type: TypeUnsigned, MinValue: 0, MaxValue: 63},
 	{Scope: ScopeSession, Name: TiDBSlowQueryFile, Value: ""},
-	{Scope: ScopeGlobal, Name: TiDBScatterRegion, Value: BoolToIntStr(DefTiDBScatterRegion), Type: TypeBool},
-	{Scope: ScopeSession, Name: TiDBWaitSplitRegionFinish, Value: BoolToIntStr(DefTiDBWaitSplitRegionFinish), Type: TypeBool},
-	{Scope: ScopeSession, Name: TiDBWaitSplitRegionTimeout, Value: strconv.Itoa(DefWaitSplitRegionTimeout)},
-	{Scope: ScopeSession, Name: TiDBLowResolutionTSO, Value: "0", Type: TypeBool},
+	{Scope: ScopeGlobal, Name: TiDBScatterRegion, Value: BoolToOnOff(DefTiDBScatterRegion), Type: TypeBool},
+	{Scope: ScopeSession, Name: TiDBWaitSplitRegionFinish, Value: BoolToOnOff(DefTiDBWaitSplitRegionFinish), Type: TypeBool},
+	{Scope: ScopeSession, Name: TiDBWaitSplitRegionTimeout, Value: strconv.Itoa(DefWaitSplitRegionTimeout), Type: TypeUnsigned, MinValue: 1, MaxValue: math.MaxInt64},
+	{Scope: ScopeSession, Name: TiDBLowResolutionTSO, Value: BoolOff, Type: TypeBool},
 	{Scope: ScopeSession, Name: TiDBExpensiveQueryTimeThreshold, Value: strconv.Itoa(DefTiDBExpensiveQueryTimeThreshold), Type: TypeUnsigned, MinValue: int64(MinExpensiveQueryTimeThreshold), MaxValue: uint64(math.MaxInt64), AutoConvertOutOfRange: true},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableNoopFuncs, Value: BoolToIntStr(DefTiDBEnableNoopFuncs), Type: TypeBool},
-	{Scope: ScopeSession, Name: TiDBReplicaRead, Value: "leader"},
-	{Scope: ScopeSession, Name: TiDBAllowRemoveAutoInc, Value: BoolToIntStr(DefTiDBAllowRemoveAutoInc), Type: TypeBool},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableStmtSummary, Value: BoolToIntStr(config.GetGlobalConfig().StmtSummary.Enable)},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBStmtSummaryInternalQuery, Value: BoolToIntStr(config.GetGlobalConfig().StmtSummary.EnableInternalQuery)},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBStmtSummaryRefreshInterval, Value: strconv.Itoa(config.GetGlobalConfig().StmtSummary.RefreshInterval)},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBStmtSummaryHistorySize, Value: strconv.Itoa(config.GetGlobalConfig().StmtSummary.HistorySize)},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBStmtSummaryMaxStmtCount, Value: strconv.FormatUint(uint64(config.GetGlobalConfig().StmtSummary.MaxStmtCount), 10)},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBStmtSummaryMaxSQLLength, Value: strconv.FormatUint(uint64(config.GetGlobalConfig().StmtSummary.MaxSQLLength), 10)},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBCapturePlanBaseline, Value: "off"},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBUsePlanBaselines, Value: boolToOnOff(DefTiDBUsePlanBaselines), Type: TypeBool},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEvolvePlanBaselines, Value: boolToOnOff(DefTiDBEvolvePlanBaselines), Type: TypeBool},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableNoopFuncs, Value: BoolToOnOff(DefTiDBEnableNoopFuncs), Type: TypeBool},
+	{Scope: ScopeSession, Name: TiDBReplicaRead, Value: "leader", Type: TypeEnum, PossibleValues: []string{"leader", "follower", "leader-and-follower"}},
+	{Scope: ScopeSession, Name: TiDBAllowRemoveAutoInc, Value: BoolToOnOff(DefTiDBAllowRemoveAutoInc), Type: TypeBool},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableStmtSummary, Value: BoolToOnOff(config.GetGlobalConfig().StmtSummary.Enable), Type: TypeBool, AllowEmpty: true},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBStmtSummaryInternalQuery, Value: BoolToOnOff(config.GetGlobalConfig().StmtSummary.EnableInternalQuery), Type: TypeBool, AllowEmpty: true},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBStmtSummaryRefreshInterval, Value: strconv.Itoa(config.GetGlobalConfig().StmtSummary.RefreshInterval), Type: TypeInt, MinValue: 1, MaxValue: uint64(math.MaxInt32), AllowEmpty: true},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBStmtSummaryHistorySize, Value: strconv.Itoa(config.GetGlobalConfig().StmtSummary.HistorySize), Type: TypeInt, MinValue: 0, MaxValue: uint64(math.MaxUint8), AllowEmpty: true},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBStmtSummaryMaxStmtCount, Value: strconv.FormatUint(uint64(config.GetGlobalConfig().StmtSummary.MaxStmtCount), 10), Type: TypeInt, MinValue: 1, MaxValue: uint64(math.MaxInt16), AllowEmpty: true},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBStmtSummaryMaxSQLLength, Value: strconv.FormatUint(uint64(config.GetGlobalConfig().StmtSummary.MaxSQLLength), 10), Type: TypeInt, MinValue: 0, MaxValue: uint64(math.MaxInt32), AllowEmpty: true},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBCapturePlanBaseline, Value: BoolOff, Type: TypeBool, AllowEmptyAll: true},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBUsePlanBaselines, Value: BoolToOnOff(DefTiDBUsePlanBaselines), Type: TypeBool},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEvolvePlanBaselines, Value: BoolToOnOff(DefTiDBEvolvePlanBaselines), Type: TypeBool},
 	{Scope: ScopeGlobal, Name: TiDBEvolvePlanTaskMaxTime, Value: strconv.Itoa(DefTiDBEvolvePlanTaskMaxTime), Type: TypeInt, MinValue: -1, MaxValue: math.MaxInt64},
 	{Scope: ScopeGlobal, Name: TiDBEvolvePlanTaskStartTime, Value: DefTiDBEvolvePlanTaskStartTime},
 	{Scope: ScopeGlobal, Name: TiDBEvolvePlanTaskEndTime, Value: DefTiDBEvolvePlanTaskEndTime},
 	{Scope: ScopeSession, Name: TiDBIsolationReadEngines, Value: strings.Join(config.GetGlobalConfig().IsolationRead.Engines, ", ")},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBStoreLimit, Value: strconv.FormatInt(atomic.LoadInt64(&config.GetGlobalConfig().TiKVClient.StoreLimit), 10), Type: TypeInt, MinValue: 0, MaxValue: uint64(math.MaxInt64), AutoConvertOutOfRange: true},
-	{Scope: ScopeSession, Name: TiDBMetricSchemaStep, Value: strconv.Itoa(DefTiDBMetricSchemaStep)},
-	{Scope: ScopeSession, Name: TiDBMetricSchemaRangeDuration, Value: strconv.Itoa(DefTiDBMetricSchemaRangeDuration)},
+	{Scope: ScopeSession, Name: TiDBMetricSchemaStep, Value: strconv.Itoa(DefTiDBMetricSchemaStep), Type: TypeUnsigned, MinValue: 10, MaxValue: 60 * 60 * 60},
+	{Scope: ScopeSession, Name: TiDBMetricSchemaRangeDuration, Value: strconv.Itoa(DefTiDBMetricSchemaRangeDuration), Type: TypeUnsigned, MinValue: 10, MaxValue: 60 * 60 * 60},
 	{Scope: ScopeSession, Name: TiDBSlowLogThreshold, Value: strconv.Itoa(logutil.DefaultSlowThreshold), Type: TypeInt, MinValue: -1, MaxValue: math.MaxInt64},
-	{Scope: ScopeSession, Name: TiDBRecordPlanInSlowLog, Value: strconv.Itoa(logutil.DefaultRecordPlanInSlowLog), Type: TypeBool},
-	{Scope: ScopeSession, Name: TiDBEnableSlowLog, Value: BoolToIntStr(logutil.DefaultTiDBEnableSlowLog), Type: TypeBool},
+	{Scope: ScopeSession, Name: TiDBRecordPlanInSlowLog, Value: int32ToBoolStr(logutil.DefaultRecordPlanInSlowLog), Type: TypeBool},
+	{Scope: ScopeSession, Name: TiDBEnableSlowLog, Value: BoolToOnOff(logutil.DefaultTiDBEnableSlowLog), Type: TypeBool},
 	{Scope: ScopeSession, Name: TiDBQueryLogMaxLen, Value: strconv.Itoa(logutil.DefaultQueryLogMaxLen), Type: TypeInt, MinValue: -1, MaxValue: math.MaxInt64},
-	{Scope: ScopeSession, Name: TiDBCheckMb4ValueInUTF8, Value: BoolToIntStr(config.GetGlobalConfig().CheckMb4ValueInUTF8), Type: TypeBool},
-	{Scope: ScopeSession, Name: TiDBFoundInPlanCache, Value: BoolToIntStr(DefTiDBFoundInPlanCache), Type: TypeBool},
-	{Scope: ScopeSession, Name: TiDBEnableCollectExecutionInfo, Value: BoolToIntStr(DefTiDBEnableCollectExecutionInfo), Type: TypeBool},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBAllowAutoRandExplicitInsert, Value: boolToOnOff(DefTiDBAllowAutoRandExplicitInsert), Type: TypeBool},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableClusteredIndex, Value: BoolToIntStr(DefTiDBEnableClusteredIndex), Type: TypeBool},
+	{Scope: ScopeSession, Name: TiDBCheckMb4ValueInUTF8, Value: BoolToOnOff(config.GetGlobalConfig().CheckMb4ValueInUTF8), Type: TypeBool},
+	{Scope: ScopeSession, Name: TiDBFoundInPlanCache, Value: BoolToOnOff(DefTiDBFoundInPlanCache), Type: TypeBool},
+	{Scope: ScopeSession, Name: TiDBEnableCollectExecutionInfo, Value: BoolToOnOff(DefTiDBEnableCollectExecutionInfo), Type: TypeBool},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBAllowAutoRandExplicitInsert, Value: BoolToOnOff(DefTiDBAllowAutoRandExplicitInsert), Type: TypeBool},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableClusteredIndex, Value: BoolToOnOff(DefTiDBEnableClusteredIndex), Type: TypeBool},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBPartitionPruneMode, Value: string(StaticOnly), Type: TypeStr},
-	{Scope: ScopeGlobal, Name: TiDBSlowLogMasking, Value: BoolToIntStr(DefTiDBSlowLogMasking)},
-	{Scope: ScopeGlobal, Name: TiDBRedactLog, Value: strconv.Itoa(config.DefTiDBRedactLog)},
+	{Scope: ScopeGlobal, Name: TiDBSlowLogMasking, Value: BoolToOnOff(DefTiDBSlowLogMasking), Type: TypeBool},
+	{Scope: ScopeGlobal, Name: TiDBRedactLog, Value: int32ToBoolStr(config.DefTiDBRedactLog), Type: TypeBool},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBShardAllocateStep, Value: strconv.Itoa(DefTiDBShardAllocateStep), Type: TypeInt, MinValue: 1, MaxValue: uint64(math.MaxInt64), AutoConvertOutOfRange: true},
-	{Scope: ScopeGlobal, Name: TiDBEnableTelemetry, Value: BoolToIntStr(DefTiDBEnableTelemetry), Type: TypeBool},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableAmendPessimisticTxn, Value: boolToOnOff(DefTiDBEnableAmendPessimisticTxn), Type: TypeBool},
+	{Scope: ScopeGlobal, Name: TiDBEnableTelemetry, Value: BoolToOnOff(DefTiDBEnableTelemetry), Type: TypeBool},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableAmendPessimisticTxn, Value: BoolToOnOff(DefTiDBEnableAmendPessimisticTxn), Type: TypeBool},
 
 	// for compatibility purpose, we should leave them alone.
 	// TODO: Follow the Terminology Updates of MySQL after their changes arrived.
 	// https://mysqlhighavailability.com/mysql-terminology-updates/
-	{Scope: ScopeSession, Name: PseudoSlaveMode, Value: "", Type: TypeBool},
+	{Scope: ScopeSession, Name: PseudoSlaveMode, Value: "", Type: TypeInt},
 	{Scope: ScopeGlobal, Name: "slave_pending_jobs_size_max", Value: "16777216"},
 	{Scope: ScopeGlobal, Name: "slave_transaction_retries", Value: "10"},
 	{Scope: ScopeGlobal, Name: "slave_checkpoint_period", Value: "300"},
-	{Scope: ScopeGlobal, Name: MasterVerifyChecksum, Value: "0", Type: TypeBool},
+	{Scope: ScopeGlobal, Name: MasterVerifyChecksum, Value: BoolOff, Type: TypeBool},
 	{Scope: ScopeGlobal, Name: "rpl_semi_sync_master_trace_level", Value: ""},
 	{Scope: ScopeGlobal, Name: "master_info_repository", Value: "FILE"},
 	{Scope: ScopeGlobal, Name: "rpl_stop_slave_timeout", Value: "31536000"},
 	{Scope: ScopeGlobal, Name: "slave_net_timeout", Value: "3600"},
 	{Scope: ScopeGlobal, Name: "sync_master_info", Value: "10000"},
 	{Scope: ScopeGlobal, Name: "init_slave", Value: ""},
-	{Scope: ScopeGlobal, Name: SlaveCompressedProtocol, Value: "0"},
+	{Scope: ScopeGlobal, Name: SlaveCompressedProtocol, Value: BoolOff, Type: TypeBool},
 	{Scope: ScopeGlobal, Name: "rpl_semi_sync_slave_trace_level", Value: ""},
-	{Scope: ScopeGlobal, Name: LogSlowSlaveStatements, Value: "0", Type: TypeBool},
+	{Scope: ScopeGlobal, Name: LogSlowSlaveStatements, Value: BoolOff, Type: TypeBool},
 	{Scope: ScopeGlobal, Name: "slave_checkpoint_group", Value: "512"},
 	{Scope: ScopeNone, Name: "slave_load_tmpdir", Value: "/var/tmp/"},
 	{Scope: ScopeGlobal, Name: "slave_parallel_type", Value: ""},
 	{Scope: ScopeGlobal, Name: "slave_parallel_workers", Value: "0"},
-	{Scope: ScopeGlobal, Name: "rpl_semi_sync_master_timeout", Value: ""},
-	{Scope: ScopeNone, Name: "slave_skip_errors", Value: "OFF"},
+	{Scope: ScopeGlobal, Name: "rpl_semi_sync_master_timeout", Value: "10000", Type: TypeInt},
+	{Scope: ScopeNone, Name: "slave_skip_errors", Value: BoolOff},
 	{Scope: ScopeGlobal, Name: "sql_slave_skip_counter", Value: "0"},
-	{Scope: ScopeGlobal, Name: "rpl_semi_sync_slave_enabled", Value: ""},
-	{Scope: ScopeGlobal, Name: "rpl_semi_sync_master_enabled", Value: ""},
-	{Scope: ScopeGlobal, Name: "slave_preserve_commit_order", Value: ""},
+	{Scope: ScopeGlobal, Name: "rpl_semi_sync_slave_enabled", Value: BoolOff, Type: TypeBool},
+	{Scope: ScopeGlobal, Name: "rpl_semi_sync_master_enabled", Value: BoolOff, Type: TypeBool},
+	{Scope: ScopeGlobal, Name: "slave_preserve_commit_order", Value: BoolOff, Type: TypeBool},
 	{Scope: ScopeGlobal, Name: "slave_exec_mode", Value: "STRICT"},
-	{Scope: ScopeNone, Name: "log_slave_updates", Value: "0"},
-	{Scope: ScopeGlobal, Name: "rpl_semi_sync_master_wait_point", Value: ""},
-	{Scope: ScopeGlobal, Name: "slave_sql_verify_checksum", Value: "1"},
+	{Scope: ScopeNone, Name: "log_slave_updates", Value: BoolOff, Type: TypeBool},
+	{Scope: ScopeGlobal, Name: "rpl_semi_sync_master_wait_point", Value: "AFTER_SYNC", Type: TypeEnum, PossibleValues: []string{"AFTER_SYNC", "AFTER_COMMIT"}},
+	{Scope: ScopeGlobal, Name: "slave_sql_verify_checksum", Value: BoolOn, Type: TypeBool},
 	{Scope: ScopeGlobal, Name: "slave_max_allowed_packet", Value: "1073741824"},
-	{Scope: ScopeGlobal, Name: "rpl_semi_sync_master_wait_for_slave_count", Value: ""},
-	{Scope: ScopeGlobal, Name: "rpl_semi_sync_master_wait_no_slave", Value: ""},
+	{Scope: ScopeGlobal, Name: "rpl_semi_sync_master_wait_for_slave_count", Value: "1", Type: TypeInt, MinValue: 1, MaxValue: 65535},
+	{Scope: ScopeGlobal, Name: "rpl_semi_sync_master_wait_no_slave", Value: BoolOn, Type: TypeBool},
 	{Scope: ScopeGlobal, Name: "slave_rows_search_algorithms", Value: "TABLE_SCAN,INDEX_SCAN"},
-	{Scope: ScopeGlobal, Name: SlaveAllowBatching, Value: "0", Type: TypeBool},
+	{Scope: ScopeGlobal, Name: SlaveAllowBatching, Value: BoolOff, Type: TypeBool},
 }
 
 // SynonymsSysVariables is synonyms of system variables.

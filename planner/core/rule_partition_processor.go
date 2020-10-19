@@ -224,6 +224,15 @@ func (s *partitionProcessor) processHashPartition(ds *DataSource, pi *model.Part
 	return tableDual, nil
 }
 
+func (s *partitionProcessor) pruneListPartition(tbl table.Table, partitionNames []model.CIStr) []int {
+	if len(partitionNames) > 0 {
+		pi := tbl.Meta().Partition
+		or := partitionRangeOR{partitionRange{0, len(pi.Definitions)}}
+		return s.convertToIntSlice(or, pi, partitionNames)
+	}
+	return []int{FullRange}
+}
+
 func (s *partitionProcessor) prune(ds *DataSource) (LogicalPlan, error) {
 	pi := ds.tableInfo.GetPartitionInfo()
 	if pi == nil {
