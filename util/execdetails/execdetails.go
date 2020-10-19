@@ -671,7 +671,10 @@ func (e *RuntimeStatsColl) GetCopStats(planID int) *CopRuntimeStats {
 	defer e.mu.Unlock()
 	copStats, ok := e.copStats[planID]
 	if !ok {
-		copStats = &CopRuntimeStats{stats: make(map[string][]*BasicRuntimeStats)}
+		copStats = &CopRuntimeStats{
+			stats:      make(map[string][]*BasicRuntimeStats),
+			copDetails: &CopDetails{},
+		}
 		e.copStats[planID] = copStats
 	}
 	return copStats
