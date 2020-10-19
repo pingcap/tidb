@@ -1149,13 +1149,17 @@ func (e *Explain) getOperatorInfo(p Plan, id string) (estRows string, accessObje
 }
 
 func (e *Explain) prepareJSONInfo(p PhysicalPlan) {
-	currentNode := &jsonOperatorRow{}
+	currentNode := &JSONOperatorRow{}
 	if err := e.explainPlanInJSONFormat(currentNode, p, "root", "", false); err != nil {
 		return
 	}
-	if json, err := json.MarshalIndent(currentNode, "", "  "); err == nil {
-		str := fmt.Sprintf("%s", json)
-		e.Rows = append(e.Rows, []string{str})
+	// json.MarshalIndent will escape HTML chars. A custom encoder disables it.
+	buffer := &bytes.Buffer{}
+	encoder := json.NewEncoder(buffer)
+	encoder.SetEscapeHTML(false)
+	encoder.SetIndent("", "  ")
+	if err := encoder.Encode(currentNode); err == nil {
+		e.Rows = append(e.Rows, []string{buffer.String()})
 	}
 }
 
@@ -1168,17 +1172,17 @@ func (e *Explain) prepareDotInfo(p PhysicalPlan) {
 	e.Rows = append(e.Rows, []string{buffer.String()})
 }
 
-type jsonOperatorRow struct {
+type JSONOperatorRow struct {
 	ID           string             `json:"id"`
 	EstRows      float64            `json:"estRows"`
 	Task         string             `json:"task"`
 	AccessObject string             `json:"accessObject"`
 	OperatorInfo string             `json:"operatorInfo"`
-	Children     []*jsonOperatorRow `json:"children"`
+	Children     []*JSONOperatorRow `json:"children"`
 }
 
-// prepareJSONOperatorInfo fills a jsonOperatorRow struct for the Plan p.
-func (e *Explain) prepareJSONOperatorInfo(currentNode *jsonOperatorRow, p Plan, taskType string, driverSide string) {
+// prepareJSONOperatorInfo fills a JSONOperatorRow struct for the Plan p.
+func (e *Explain) prepareJSONOperatorInfo(currentNode *JSONOperatorRow, p Plan, taskType string, driverSide string) {
 	if p.ExplainID().String() == "_0" {
 		return
 	}
@@ -1195,11 +1199,11 @@ func (e *Explain) prepareJSONOperatorInfo(currentNode *jsonOperatorRow, p Plan, 
 
 // explainPlanInJSONFormat recursively traverses the Plan p and fills currentNode to represent the plan.
 // it is based on the implementation of explainPlanInRowFormat
-func (e *Explain) explainPlanInJSONFormat(currentNode *jsonOperatorRow, p Plan, taskType, driverSide string, createAsChild bool) (err error) {
+func (e *Explain) explainPlanInJSONFormat(currentNode *JSONOperatorRow, p Plan, taskType, driverSide string, createAsChild bool) (err error) {
 
 	if createAsChild {
 		// create a new child, add it to the currentNode, repoint the currentNode to the child.
-		child := &jsonOperatorRow{}
+		child := &JSONOperatorRow{}
 		currentNode.Children = append(currentNode.Children, child)
 		currentNode = child
 	}

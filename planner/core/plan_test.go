@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"encoding/json"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/model"
@@ -447,4 +448,19 @@ func (s *testPlanNormalize) TestDecodePlanPerformance(c *C) {
 	_, err := plancodec.DecodePlan(encodedPlanStr)
 	c.Assert(err, IsNil)
 	c.Assert(time.Since(start).Seconds(), Less, 3.0)
+}
+
+func (s *testPlanNormalize) TestJSONExplain(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("DROP TABLE IF EXISTS t1, t2")
+	tk.MustExec("CREATE TABLE t1 (id INT NOT NULL PRIMARY KEY, b INT)")
+	tk.MustExec("CREATE TABLE t2 (id INT NOT NULL PRIMARY KEY, t1_id INT)")
+
+	var js core.JSONOperatorRow
+	result := tk.MustQuery("EXPLAIN FORMAT=JSON SELECT t1.* FROM t1 INNER JOIN t2 ON t1.id=t2.t1_id")
+    res := result.Rows()[0][0].(string)
+    c.Assert(len(result.Rows()), Equals, 1) // always 1 row
+	c.Assert(json.Unmarshal([]byte(res), &js), IsNil) // valid JSON and JSONOperatorRow
+	c.Assert(len(js.Children), GreaterEqual, 2) // A join requires at least 2 children.
 }
