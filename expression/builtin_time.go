@@ -3001,6 +3001,8 @@ func (du *baseDateArithmitical) vecGetDateFromString(b *baseBuiltinFunc, input *
 				return err
 			}
 			result.SetNull(i, true)
+		} else if b.ctx.GetSessionVars().SQLMode.HasNoZeroDateMode() && (date.Year() == 0 || date.Month() == 0 || date.Day() == 0) {
+			return handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, dateStr))
 		} else {
 			dates[i] = date
 		}
