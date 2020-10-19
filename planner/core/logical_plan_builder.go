@@ -781,12 +781,12 @@ func (b *PlanBuilder) coalesceCommonColumns(p *LogicalJoin, leftPlan, rightPlan 
 		}
 	}
 
-	schemaCols := make([]*expression.Column, len(lColumns)+len(rColumns)-commonLen)
+	schemaCols := make([]*expression.Column, len(lColumns)+len(rColumns))
 	copy(schemaCols[:len(lColumns)], lColumns)
-	copy(schemaCols[len(lColumns):], rColumns[commonLen:])
+	copy(schemaCols[len(lColumns):], rColumns)
 	names := make(types.NameSlice, len(schemaCols))
 	copy(names, lNames)
-	copy(names[len(lNames):], rNames[commonLen:])
+	copy(names[len(lNames):], rNames)
 
 	conds := make([]expression.Expression, 0, commonLen)
 	for i := 0; i < commonLen; i++ {
@@ -2400,6 +2400,8 @@ func (b *PlanBuilder) unfoldWildStar(p LogicalPlan, selectFields []*ast.SelectFi
 		}
 		dbName := field.WildCard.Schema
 		tblName := field.WildCard.Table
+
+		existColName := make(map[string]bool)
 		findTblNameInSchema := false
 		for i, name := range p.OutputNames() {
 			col := p.Schema().Columns[i]
@@ -2409,6 +2411,12 @@ func (b *PlanBuilder) unfoldWildStar(p LogicalPlan, selectFields []*ast.SelectFi
 			if (dbName.L == "" || dbName.L == name.DBName.L) &&
 				(tblName.L == "" || tblName.L == name.TblName.L) &&
 				col.ID != model.ExtraHandleID {
+				if (dbName.L == "" && tblName.L == "") {
+					if _, ok := existColName[name.ColName.L]; ok {
+						continue
+					}
+					existColName[name.ColName.L] = true
+				}
 				findTblNameInSchema = true
 				colName := &ast.ColumnNameExpr{
 					Name: &ast.ColumnName{
