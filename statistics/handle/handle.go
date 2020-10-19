@@ -106,9 +106,8 @@ func NewHandle(ctx sessionctx.Context, lease time.Duration) (*Handle, error) {
 		listHead:         &SessionStatsCollector{mapper: make(tableDeltaMap), rateMap: make(errorRateDeltaMap)},
 		globalMap:        make(tableDeltaMap),
 		feedback:         statistics.NewQueryFeedbackMap(),
-    sType:            RistrettoStatsCacheType,
+		sType:            RistrettoStatsCacheType,
 		idxUsageListHead: &SessionIndexUsageCollector{mapper: make(indexUsageMap)},
-
 	}
 	handle.lease.Store(lease)
 	// It is safe to use it concurrently because the exec won't touch the ctx.
