@@ -1405,7 +1405,6 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 		}
 	}
 
-	job.CtxVars = []interface{}{defID, ptSchemaID, ptID}
 	ver, err = updateSchemaVersion(t, job)
 	if err != nil {
 		return ver, errors.Trace(err)

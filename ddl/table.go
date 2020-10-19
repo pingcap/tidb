@@ -135,7 +135,6 @@ func onCreateView(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) 
 			return ver, errors.Trace(err)
 		}
 	}
-	job.CtxVars = []interface{}{tbInfo, orReplace, oldTbInfoID}
 	ver, err = updateSchemaVersion(t, job)
 	if err != nil {
 		return ver, errors.Trace(err)
@@ -494,7 +493,6 @@ func onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ erro
 		}
 	})
 
-	job.CtxVars = []interface{}{newTableID}
 	ver, err = updateSchemaVersion(t, job)
 	if err != nil {
 		return ver, errors.Trace(err)
@@ -706,7 +704,6 @@ func onRenameTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 		}
 	}
 
-	job.CtxVars = []interface{}{oldSchemaID}
 	ver, err = updateSchemaVersion(t, job)
 	if err != nil {
 		return ver, errors.Trace(err)

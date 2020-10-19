@@ -827,12 +827,18 @@ func updateSchemaVersion(t *meta.Meta, job *model.Job) (int64, error) {
 	switch job.Type {
 	case model.ActionTruncateTable:
 		// Truncate table has two table ID, should be handled differently.
-		diff.TableID = job.CtxVars[0].(int64)
+		err = job.DecodeArgs(&diff.TableID)
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
 		diff.OldTableID = job.TableID
 	case model.ActionCreateView:
-		tbInfo := job.CtxVars[0].(*model.TableInfo)
-		orReplace := job.CtxVars[1].(bool)
-		oldTbInfoID := job.CtxVars[2].(int64)
+		tbInfo := &model.TableInfo{}
+		var orReplace bool
+		var oldTbInfoID int64
+		if err := job.DecodeArgs(tbInfo, &orReplace, &oldTbInfoID); err != nil {
+			return 0, errors.Trace(err)
+		}
 		// When the statement is "create or replace view " and we need to drop the old view,
 		// it has two table IDs and should be handled differently.
 		if oldTbInfoID > 0 && orReplace {
@@ -840,16 +846,20 @@ func updateSchemaVersion(t *meta.Meta, job *model.Job) (int64, error) {
 		}
 		diff.TableID = tbInfo.ID
 	case model.ActionRenameTable:
-		diff.OldSchemaID = job.CtxVars[0].(int64)
 		err = job.DecodeArgs(&diff.OldSchemaID)
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
 		diff.TableID = job.TableID
 	case model.ActionExchangeTablePartition:
-		diff.TableID = job.CtxVars[0].(int64)
-		ptSchemaID := job.CtxVars[1].(int64)
-		ptTableID := job.CtxVars[2].(int64)
+		var (
+			ptSchemaID int64
+			ptTableID  int64
+		)
+		err = job.DecodeArgs(&diff.TableID, &ptSchemaID, &ptTableID)
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
 		diff.OldTableID = job.TableID
 		affects := make([]*model.AffectedOption, 1)
 		affects[0] = &model.AffectedOption{
