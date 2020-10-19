@@ -96,6 +96,7 @@ const (
 	// The following session variables controls the memory quota during query execution.
 	// "tidb_mem_quota_query":				control the memory quota of a query.
 	TIDBMemQuotaQuery               = "tidb_mem_quota_query" // Bytes.
+	TIDBMemQuotaStatistics          = "tidb_mem_quota_statistics"
 	TIDBNestedLoopJoinCacheCapacity = "tidb_nested_loop_join_cache_capacity"
 	// TODO: remove them below sometime, it should have only one Quota(TIDBMemQuotaQuery).
 	TIDBMemQuotaHashJoin          = "tidb_mem_quota_hashjoin"          // Bytes.
@@ -552,6 +553,7 @@ const (
 	DefTiDBEnableTelemetry             = true
 	DefTiDBEnableParallelApply         = false
 	DefTiDBEnableAmendPessimisticTxn   = true
+	DefTiDBPartitionPruneMode          = "static-only"
 )
 
 // Process global variables.
@@ -573,6 +575,6 @@ var (
 	MaxOfMaxAllowedPacket          uint64 = 1073741824
 	ExpensiveQueryTimeThreshold    uint64 = DefTiDBExpensiveQueryTimeThreshold
 	MinExpensiveQueryTimeThreshold uint64 = 10 //10s
-	CapturePlanBaseline                   = serverGlobalVariable{globalVal: "0"}
+	CapturePlanBaseline                   = serverGlobalVariable{globalVal: BoolOff}
 	DefExecutorConcurrency                = 5
 )

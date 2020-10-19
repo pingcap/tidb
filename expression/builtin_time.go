@@ -1684,7 +1684,6 @@ func (c *fromUnixTimeFunctionClass) getFunction(ctx sessionctx.Context, args []E
 	}
 
 	if len(args) > 1 {
-		bf.tp.Flen = args[1].GetType().Flen
 		sig = &builtinFromUnixTime2ArgSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_FromUnixTime2Arg)
 		return sig, nil
@@ -4852,7 +4851,7 @@ func (c *timestampFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 	}
 	isFloat := false
 	switch args[0].GetType().Tp {
-	case mysql.TypeFloat, mysql.TypeDouble, mysql.TypeNewDecimal:
+	case mysql.TypeFloat, mysql.TypeDouble, mysql.TypeNewDecimal, mysql.TypeLonglong:
 		isFloat = true
 	}
 	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETDatetime, evalTps...)

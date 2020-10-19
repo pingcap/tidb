@@ -226,8 +226,9 @@ func (c *anyValueFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	if err != nil {
 		return nil, err
 	}
-	args[0].GetType().Flag |= bf.tp.Flag
-	*bf.tp = *args[0].GetType()
+	ft := args[0].GetType().Clone()
+	ft.Flag |= bf.tp.Flag
+	*bf.tp = *ft
 	var sig builtinFunc
 	switch argTp {
 	case types.ETDecimal:
@@ -1108,12 +1109,7 @@ func (b *builtinUUIDToBinSig) evalString(row chunk.Row) (string, bool, error) {
 		}
 	}
 	if flag != 0 {
-		swapBin := make([]byte, len(bin))
-		copy(swapBin[0:2], bin[6:8])
-		copy(swapBin[2:4], bin[4:6])
-		copy(swapBin[4:8], bin[0:4])
-		copy(swapBin[8:], bin[8:])
-		return string(swapBin), false, nil
+		return swapBinaryUUID(bin), false, nil
 	}
 	return string(bin), false, nil
 }
@@ -1166,7 +1162,7 @@ func (b *builtinBinToUUIDSig) evalString(row chunk.Row) (string, bool, error) {
 		return "", false, errWrongValueForType.GenWithStackByArgs("string", val, "bin_to_uuid")
 	}
 
-	res := u.String()
+	str := u.String()
 	flag := int64(0)
 	if len(b.args) == 2 {
 		flag, isNull, err = b.args[1].EvalInt(b.ctx, row)
@@ -1175,15 +1171,28 @@ func (b *builtinBinToUUIDSig) evalString(row chunk.Row) (string, bool, error) {
 		}
 	}
 	if flag != 0 {
-		swapRes := make([]byte, len(res))
-		copy(swapRes[0:4], res[9:13])
-		copy(swapRes[4:8], res[14:18])
-		copy(swapRes[8:9], res[8:9])
-		copy(swapRes[9:13], res[4:8])
-		copy(swapRes[13:14], res[13:14])
-		copy(swapRes[14:18], res[0:4])
-		copy(swapRes[18:], res[18:])
-		return string(swapRes), false, nil
+		return swapStringUUID(str), false, nil
 	}
-	return res, false, nil
+	return str, false, nil
+}
+
+func swapBinaryUUID(bin []byte) string {
+	buf := make([]byte, len(bin))
+	copy(buf[0:2], bin[6:8])
+	copy(buf[2:4], bin[4:6])
+	copy(buf[4:8], bin[0:4])
+	copy(buf[8:], bin[8:])
+	return string(buf)
+}
+
+func swapStringUUID(str string) string {
+	buf := make([]byte, len(str))
+	copy(buf[0:4], str[9:13])
+	copy(buf[4:8], str[14:18])
+	copy(buf[8:9], str[8:9])
+	copy(buf[9:13], str[4:8])
+	copy(buf[13:14], str[13:14])
+	copy(buf[14:18], str[0:4])
+	copy(buf[18:], str[18:])
+	return string(buf)
 }

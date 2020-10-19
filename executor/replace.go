@@ -208,7 +208,7 @@ func (e *ReplaceExec) exec(ctx context.Context, newRows [][]types.Datum) error {
 		return err
 	}
 	if e.stats != nil {
-		e.stats.prefetch = time.Since(prefetchStart)
+		e.stats.Prefetch = time.Since(prefetchStart)
 	}
 	e.ctx.GetSessionVars().StmtCtx.AddRecordRows(uint64(len(newRows)))
 	for _, r := range toBeCheckedRows {

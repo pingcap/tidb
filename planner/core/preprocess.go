@@ -188,6 +188,11 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		if node.Kind == ast.BRIEKindRestore {
 			p.flag |= inCreateOrDropTable
 		}
+	case *ast.TableSource:
+		isModeOracle := p.ctx.GetSessionVars().SQLMode&mysql.ModeOracle != 0
+		if _, ok := node.Source.(*ast.SelectStmt); ok && !isModeOracle && len(node.AsName.L) == 0 {
+			p.err = ddl.ErrDerivedMustHaveAlias.GenWithStackByArgs()
+		}
 	case *ast.CreateStatisticsStmt, *ast.DropStatisticsStmt:
 		p.checkStatisticsOpGrammar(in)
 	default:
@@ -204,10 +209,18 @@ func EraseLastSemicolon(stmt ast.StmtNode) {
 	}
 }
 
-func (p *preprocessor) checkBindGrammar(originSel, hintedSel ast.StmtNode) {
-	originSQL := parser.Normalize(originSel.(*ast.SelectStmt).Text())
-	hintedSQL := parser.Normalize(hintedSel.(*ast.SelectStmt).Text())
-
+func (p *preprocessor) checkBindGrammar(originNode, hintedNode ast.StmtNode) {
+	var originSQL, hintedSQL string
+	switch node := originNode.(type) {
+	case *ast.SelectStmt:
+		originSQL = parser.Normalize(node.Text())
+		hintedSQL = parser.Normalize(hintedNode.(*ast.SelectStmt).Text())
+	case *ast.SetOprStmt:
+		originSQL = parser.Normalize(node.Text())
+		hintedSQL = parser.Normalize(hintedNode.(*ast.SetOprStmt).Text())
+	default:
+		p.err = errors.Errorf("create binding doesn't support this type of query")
+	}
 	if originSQL != hintedSQL {
 		p.err = errors.Errorf("hinted sql and origin sql don't match when hinted sql erase the hint info, after erase hint info, originSQL:%s, hintedSQL:%s", originSQL, hintedSQL)
 	}
@@ -572,13 +585,16 @@ func (p *preprocessor) checkNonUniqTableAlias(stmt *ast.Join) {
 		p.tableAliasInJoin = append(p.tableAliasInJoin, make(map[string]interface{}))
 	}
 	tableAliases := p.tableAliasInJoin[len(p.tableAliasInJoin)-1]
-	if err := isTableAliasDuplicate(stmt.Left, tableAliases); err != nil {
-		p.err = err
-		return
-	}
-	if err := isTableAliasDuplicate(stmt.Right, tableAliases); err != nil {
-		p.err = err
-		return
+	isOracleMode := p.ctx.GetSessionVars().SQLMode&mysql.ModeOracle != 0
+	if !isOracleMode {
+		if err := isTableAliasDuplicate(stmt.Left, tableAliases); err != nil {
+			p.err = err
+			return
+		}
+		if err := isTableAliasDuplicate(stmt.Right, tableAliases); err != nil {
+			p.err = err
+			return
+		}
 	}
 	p.flag |= parentIsJoin
 }

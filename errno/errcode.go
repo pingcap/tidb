@@ -882,6 +882,7 @@ const (
 	ErrSpatialFunctionalIndex                                       = 3760
 	ErrWrongKeyColumnFunctionalIndex                                = 3761
 	ErrFunctionalIndexOnField                                       = 3762
+	ErrGeneratedColumnRowValueIsNotAllowed                          = 3764
 	ErrFKIncompatibleColumns                                        = 3780
 	ErrFunctionalIndexRowValueIsNotAllowed                          = 3800
 	ErrDependentByFunctionalIndex                                   = 3837
@@ -1018,6 +1019,7 @@ const (
 	ErrTableOptionUnionUnsupported        = 8232
 	ErrTableOptionInsertMethodUnsupported = 8233
 	ErrInvalidPlacementSpec               = 8234
+	ErrDDLReorgElementNotExist            = 8235
 
 	// TiKV/PD errors.
 	ErrPDServerTimeout           = 9001

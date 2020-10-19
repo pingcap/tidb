@@ -45,8 +45,11 @@ import (
 	"go.uber.org/zap"
 )
 
-var tikvTxnRegionsNumHistogramWithCoprocessor = metrics.TiKVTxnRegionsNumHistogram.WithLabelValues("coprocessor")
-var tikvTxnRegionsNumHistogramWithBatchCoprocessor = metrics.TiKVTxnRegionsNumHistogram.WithLabelValues("batch_coprocessor")
+var (
+	tikvTxnRegionsNumHistogramWithCoprocessor      = metrics.TiKVTxnRegionsNumHistogram.WithLabelValues("coprocessor")
+	tikvTxnRegionsNumHistogramWithBatchCoprocessor = metrics.TiKVTxnRegionsNumHistogram.WithLabelValues("batch_coprocessor")
+	coprCacheHistogramEvict                        = metrics.DistSQLCoprCacheHistogram.WithLabelValues("evict")
+)
 
 // CopClient is coprocessor client.
 type CopClient struct {
@@ -570,8 +573,8 @@ func (it *copIterator) open(ctx context.Context) {
 		sendRate: it.sendRate,
 	}
 	taskSender.respChan = it.respChan
-	go taskSender.run()
 	it.actionOnExceed.setEnabled(true)
+	go taskSender.run()
 }
 
 func (sender *copIteratorTaskSender) run() {
@@ -608,7 +611,13 @@ func (it *copIterator) recvFromRespCh(ctx context.Context, respCh <-chan *copRes
 		select {
 		case resp, ok = <-respCh:
 			if it.memTracker != nil && resp != nil {
-				it.memTracker.Consume(-resp.MemSize())
+				consumed := resp.MemSize()
+				failpoint.Inject("testRateLimitActionMockConsume", func(val failpoint.Value) {
+					if val.(bool) {
+						consumed = 100
+					}
+				})
+				it.memTracker.Consume(-consumed)
 			}
 			return
 		case <-it.finishCh:
@@ -642,7 +651,13 @@ func (sender *copIteratorTaskSender) sendToTaskCh(t *copTask) (exit bool) {
 
 func (worker *copIteratorWorker) sendToRespCh(resp *copResponse, respCh chan<- *copResponse, checkOOM bool) (exit bool) {
 	if worker.memTracker != nil && checkOOM {
-		worker.memTracker.Consume(resp.MemSize())
+		consumed := resp.MemSize()
+		failpoint.Inject("testRateLimitActionMockConsume", func(val failpoint.Value) {
+			if val.(bool) {
+				consumed = 100
+			}
+		})
+		worker.memTracker.Consume(consumed)
 	}
 	select {
 	case respCh <- resp:
@@ -660,6 +675,13 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 		ok     bool
 		closed bool
 	)
+	// wait unit at least 2 copResponse received.
+	failpoint.Inject("testRateLimitActionMockConsume", func(val failpoint.Value) {
+		if val.(bool) {
+			for it.memTracker.MaxConsumed() < 200 {
+			}
+		}
+	})
 
 	// If data order matters, response should be returned in the same order as copTask slice.
 	// Otherwise all responses are returned from a single channel.
@@ -757,6 +779,9 @@ func (worker *copIteratorWorker) handleTask(ctx context.Context, task *copTask, 
 		} else {
 			remainTasks = remainTasks[1:]
 		}
+	}
+	if worker.store.coprCache != nil && worker.store.coprCache.cache.Metrics != nil {
+		coprCacheHistogramEvict.Observe(float64(worker.store.coprCache.cache.Metrics.KeysEvicted()))
 	}
 }
 
@@ -956,6 +981,15 @@ func (worker *copIteratorWorker) logTimeCopTask(costTime time.Duration, task *co
 				logStr = appendScanDetail(logStr, "data", detail.ScanDetail.Data)
 				logStr = appendScanDetail(logStr, "lock", detail.ScanDetail.Lock)
 			}
+			if detail.ScanDetailV2 != nil {
+				logStr += fmt.Sprintf(" processed versions: %d", detail.ScanDetailV2.ProcessedVersions)
+				logStr += fmt.Sprintf(" total versions: %d", detail.ScanDetailV2.TotalVersions)
+				logStr += fmt.Sprintf(" delete skipped count: %d", detail.ScanDetailV2.RocksdbDeleteSkippedCount)
+				logStr += fmt.Sprintf(" key skipped count: %d", detail.ScanDetailV2.RocksdbKeySkippedCount)
+				logStr += fmt.Sprintf(" cache hit count: %d", detail.ScanDetailV2.RocksdbBlockCacheHitCount)
+				logStr += fmt.Sprintf(" read count: %d", detail.ScanDetailV2.RocksdbBlockReadCount)
+				logStr += fmt.Sprintf(" read byte: %d", detail.ScanDetailV2.RocksdbBlockReadByte)
+			}
 		}
 		if waitMs > minLogKVWaitTime {
 			logStr += fmt.Sprintf(" kv_wait_ms:%d", waitMs)
@@ -1083,10 +1117,23 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *RPCCon
 			resp.detail.WaitTime = time.Duration(handleTime.WaitMs) * time.Millisecond
 			resp.detail.ProcessTime = time.Duration(handleTime.ProcessMs) * time.Millisecond
 		}
-		if scanDetail := pbDetails.ScanDetail; scanDetail != nil {
+		if scanDetailV2 := pbDetails.ScanDetailV2; scanDetailV2 != nil {
+			copDetail := &execdetails.CopDetails{
+				ProcessedKeys:             int64(scanDetailV2.ProcessedVersions),
+				TotalKeys:                 int64(scanDetailV2.TotalVersions),
+				RocksdbDeleteSkippedCount: scanDetailV2.RocksdbDeleteSkippedCount,
+				RocksdbKeySkippedCount:    scanDetailV2.RocksdbKeySkippedCount,
+				RocksdbBlockCacheHitCount: scanDetailV2.RocksdbBlockCacheHitCount,
+				RocksdbBlockReadCount:     scanDetailV2.RocksdbBlockReadCount,
+				RocksdbBlockReadByte:      scanDetailV2.RocksdbBlockReadByte,
+			}
+			resp.detail.CopDetail = copDetail
+		} else if scanDetail := pbDetails.ScanDetail; scanDetail != nil {
 			if scanDetail.Write != nil {
-				resp.detail.TotalKeys += scanDetail.Write.Total
-				resp.detail.ProcessedKeys += scanDetail.Write.Processed
+				resp.detail.CopDetail = &execdetails.CopDetails{
+					ProcessedKeys: scanDetail.Write.Processed,
+					TotalKeys:     scanDetail.Write.Total,
+				}
 			}
 		}
 	}

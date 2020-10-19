@@ -668,14 +668,10 @@ func (b *builtinUUIDToBinSig) vecEvalString(input *chunk.Chunk, result *chunk.Co
 			continue
 		}
 		if i64s[i] != 0 {
-			swapBin := make([]byte, len(bin))
-			copy(swapBin[0:2], bin[6:8])
-			copy(swapBin[2:4], bin[4:6])
-			copy(swapBin[4:8], bin[0:4])
-			copy(swapBin[8:], bin[8:])
-			bin = swapBin
+			result.AppendString(swapBinaryUUID(bin))
+		} else {
+			result.AppendString(string(bin))
 		}
-		result.AppendString(string(bin))
 	}
 	return nil
 }
@@ -722,23 +718,16 @@ func (b *builtinBinToUUIDSig) vecEvalString(input *chunk.Chunk, result *chunk.Co
 		if err != nil {
 			return errWrongValueForType.GenWithStackByArgs("string", val, "bin_to_uuid")
 		}
-		res := u.String()
+		str := u.String()
 		if len(b.args) == 2 && flagBuf.IsNull(i) {
-			result.AppendString(res)
+			result.AppendString(str)
 			continue
 		}
 		if i64s[i] != 0 {
-			swapRes := make([]byte, len(res))
-			copy(swapRes[0:4], res[9:13])
-			copy(swapRes[4:8], res[14:18])
-			copy(swapRes[8:9], res[8:9])
-			copy(swapRes[9:13], res[4:8])
-			copy(swapRes[13:14], res[13:14])
-			copy(swapRes[14:18], res[0:4])
-			copy(swapRes[18:], res[18:])
-			res = string(swapRes)
+			result.AppendString(swapStringUUID(str))
+		} else {
+			result.AppendString(str)
 		}
-		result.AppendString(res)
 	}
 	return nil
 }
