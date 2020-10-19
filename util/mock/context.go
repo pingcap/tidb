@@ -163,6 +163,11 @@ func (c *Context) RefreshTxnCtx(ctx context.Context) error {
 	return errors.Trace(c.NewTxn(ctx))
 }
 
+// RefreshVars implements the sessionctx.Context interface.
+func (c *Context) RefreshVars(ctx context.Context) error {
+	return nil
+}
+
 // InitTxnWithStartTS implements the sessionctx.Context interface with startTS.
 func (c *Context) InitTxnWithStartTS(startTS uint64) error {
 	if c.txn.Valid() {
@@ -205,6 +210,9 @@ func (c *Context) GoCtx() context.Context {
 
 // StoreQueryFeedback stores the query feedback.
 func (c *Context) StoreQueryFeedback(_ interface{}) {}
+
+// StoreIndexUsage strores the index usage information.
+func (c *Context) StoreIndexUsage(_ string, _ string, _ string, _ int64) {}
 
 // StmtCommit implements the sessionctx.Context interface.
 func (c *Context) StmtCommit() {}

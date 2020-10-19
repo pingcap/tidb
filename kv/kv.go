@@ -169,6 +169,8 @@ type MemBufferIterator interface {
 	Iterator
 	HasValue() bool
 	Flags() KeyFlags
+	UpdateFlags(...FlagsOp)
+	Handle() MemKeyHandle
 }
 
 // MemBuffer is an in-memory kv collection, can be used to buffer write operations.
@@ -194,6 +196,9 @@ type MemBuffer interface {
 	// UpdateFlags update the flags associated with key.
 	UpdateFlags(Key, ...FlagsOp)
 
+	GetKeyByHandle(MemKeyHandle) []byte
+	GetValueByHandle(MemKeyHandle) ([]byte, bool)
+
 	// Reset reset the MemBuffer to initial states.
 	Reset()
 	// DiscardValues releases the memory used by all values.
@@ -212,6 +217,8 @@ type MemBuffer interface {
 	// InspectStage used to inspect the value updates in the given stage.
 	InspectStage(StagingHandle, func(Key, KeyFlags, []byte))
 
+	// SelectValueHistory select the latest value which makes `predicate` returns true from the modification history.
+	SelectValueHistory(key Key, predicate func(value []byte) bool) ([]byte, error)
 	// SnapshotGetter returns a Getter for a snapshot of MemBuffer.
 	SnapshotGetter() Getter
 	// SnapshotIter returns a Iterator for a snapshot of MemBuffer.
@@ -445,7 +452,7 @@ type Storage interface {
 	BeginWithStartTS(startTS uint64) (Transaction, error)
 	// GetSnapshot gets a snapshot that is able to read any data which data is <= ver.
 	// if ver is MaxVersion or > current max committed version, we will use current version for this snapshot.
-	GetSnapshot(ver Version) (Snapshot, error)
+	GetSnapshot(ver Version) Snapshot
 	// GetClient gets a client instance.
 	GetClient() Client
 	// Close store

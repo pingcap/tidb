@@ -614,6 +614,17 @@ func (b *executorBuilder) buildLimit(v *plannercore.PhysicalLimit) Executor {
 		begin:        v.Offset,
 		end:          v.Offset + v.Count,
 	}
+
+	childUsedSchema := markChildrenUsedCols(v.Schema(), v.Children()[0].Schema())[0]
+	e.columnIdxsUsedByChild = make([]int, 0, len(childUsedSchema))
+	for i, used := range childUsedSchema {
+		if used {
+			e.columnIdxsUsedByChild = append(e.columnIdxsUsedByChild, i)
+		}
+	}
+	if len(e.columnIdxsUsedByChild) == len(childUsedSchema) {
+		e.columnIdxsUsedByChild = nil // indicates that all columns are used. LimitExec will improve performance for this condition.
+	}
 	return e
 }
 
@@ -2141,7 +2152,11 @@ func (b *executorBuilder) buildAnalyze(v *plannercore.Analyze) Executor {
 			if enableFastAnalyze {
 				b.buildAnalyzeFastIndex(e, task, v.Opts)
 			} else {
-				e.tasks = append(e.tasks, b.buildAnalyzeIndexPushdown(task, v.Opts, autoAnalyze))
+				if task.TableID.StoreAsCollectID() && len(task.TableID.CollectIDs) > 1 && !task.IndexInfo.Global && !task.IndexInfo.Unique {
+					b.buildAnalyzeFastIndex(e, task, v.Opts)
+				} else {
+					e.tasks = append(e.tasks, b.buildAnalyzeIndexPushdown(task, v.Opts, autoAnalyze))
+				}
 			}
 		}
 		if b.err != nil {
@@ -2478,7 +2493,7 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 	if containsLimit(dagReq.Executors) {
 		e.feedback = statistics.NewQueryFeedback(0, nil, 0, ts.Desc)
 	} else {
-		e.feedback = statistics.NewQueryFeedback(getPhysicalTableID(tbl), ts.Hist, int64(ts.StatsCount()), ts.Desc)
+		e.feedback = statistics.NewQueryFeedback(getFeedbackStatsTableID(e.ctx, tbl), ts.Hist, int64(ts.StatsCount()), ts.Desc)
 	}
 	collect := statistics.CollectFeedback(b.ctx.GetSessionVars().StmtCtx, e.feedback, len(ts.Ranges))
 	if !collect {
@@ -2524,18 +2539,19 @@ func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) E
 		return ret
 	}
 
-	if pi := ts.Table.GetPartitionInfo(); pi == nil {
+	pi := ts.Table.GetPartitionInfo()
+	if pi == nil {
 		return ret
 	}
 
+	tmp, _ := b.is.TableByID(ts.Table.ID)
+	tbl := tmp.(table.PartitionedTable)
+	partitions, err := partitionPruning(b.ctx, tbl, v.PartitionInfo.PruningConds, v.PartitionInfo.PartitionNames, v.PartitionInfo.Columns, v.PartitionInfo.ColumnNames)
+	if err != nil {
+		b.err = err
+		return nil
+	}
 	if v.StoreType == kv.TiFlash {
-		tmp, _ := b.is.TableByID(ts.Table.ID)
-		tbl := tmp.(table.PartitionedTable)
-		partitions, err := partitionPruning(b.ctx, tbl, v.PartitionInfo.PruningConds, v.PartitionInfo.PartitionNames, v.PartitionInfo.Columns, v.PartitionInfo.ColumnNames)
-		if err != nil {
-			b.err = err
-			return nil
-		}
 		partsExecutor := make([]Executor, 0, len(partitions))
 		for _, part := range partitions {
 			exec, err := buildNoRangeTableReader(b, v)
@@ -2563,13 +2579,16 @@ func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) E
 		}
 	}
 
-	nextPartition := nextPartitionForTableReader{ret}
-	exec, err := buildPartitionTable(b, ts.Table, &v.PartitionInfo, ret, nextPartition)
-	if err != nil {
-		b.err = err
-		return nil
+	if len(partitions) == 0 {
+		return &TableDualExec{baseExecutor: *ret.base()}
 	}
-	return exec
+	ret.kvRangeBuilder = kvRangeBuilderFromRangeAndPartition{
+		sctx:       b.ctx,
+		partitions: partitions,
+		ranges:     ts.Ranges,
+	}
+
+	return ret
 }
 
 func buildPartitionTable(b *executorBuilder, tblInfo *model.TableInfo, partitionInfo *plannercore.PartitionInfo, e Executor, n nextPartition) (Executor, error) {
@@ -2588,6 +2607,95 @@ func buildPartitionTable(b *executorBuilder, tblInfo *model.TableInfo, partition
 		partitions:    partitions,
 		nextPartition: n,
 	}, nil
+}
+
+func buildIndexRangeForEachPartition(ctx sessionctx.Context, usedPartitions []table.PhysicalTable, contentPos []int64,
+	lookUpContent []*indexJoinLookUpContent, indexRanges []*ranger.Range, keyOff2IdxOff []int, cwc *plannercore.ColWithCmpFuncManager) (map[int64][]*ranger.Range, error) {
+	contentBucket := make(map[int64][]*indexJoinLookUpContent)
+	for _, p := range usedPartitions {
+		contentBucket[p.GetPhysicalID()] = make([]*indexJoinLookUpContent, 0, 8)
+	}
+	for i, pos := range contentPos {
+		if _, ok := contentBucket[pos]; ok {
+			contentBucket[pos] = append(contentBucket[pos], lookUpContent[i])
+		}
+	}
+	nextRange := make(map[int64][]*ranger.Range)
+	for _, p := range usedPartitions {
+		ranges, err := buildRangesForIndexJoin(ctx, contentBucket[p.GetPhysicalID()], indexRanges, keyOff2IdxOff, cwc)
+		if err != nil {
+			return nil, err
+		}
+		nextRange[p.GetPhysicalID()] = ranges
+	}
+	return nextRange, nil
+}
+
+func keyColumnsIncludeAllPartitionColumns(keyColumns []int, pe *tables.PartitionExpr) bool {
+	tmp := make(map[int]struct{}, len(keyColumns))
+	for _, offset := range keyColumns {
+		tmp[offset] = struct{}{}
+	}
+	for _, offset := range pe.ColumnOffset {
+		if _, ok := tmp[offset]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
+func prunePartitionForInnerExecutor(ctx sessionctx.Context, tbl table.Table, schema *expression.Schema, partitionInfo *plannercore.PartitionInfo,
+	lookUpContent []*indexJoinLookUpContent) (usedPartition []table.PhysicalTable, canPrune bool, contentPos []int64, err error) {
+	partitionTbl := tbl.(table.PartitionedTable)
+	locateKey := make([]types.Datum, schema.Len())
+	// TODO: condition based pruning can be do in advance.
+	condPruneResult, err := partitionPruning(ctx, partitionTbl, partitionInfo.PruningConds, partitionInfo.PartitionNames, partitionInfo.Columns, partitionInfo.ColumnNames)
+	if err != nil {
+		return nil, false, nil, err
+	}
+
+	// check whether can runtime prune.
+	type partitionExpr interface {
+		PartitionExpr() (*tables.PartitionExpr, error)
+	}
+	pe, err := tbl.(partitionExpr).PartitionExpr()
+	if err != nil {
+		return nil, false, nil, err
+	}
+	offsetMap := make(map[int]bool)
+	for _, offset := range lookUpContent[0].keyCols {
+		offsetMap[offset] = true
+	}
+	for _, offset := range pe.ColumnOffset {
+		if _, ok := offsetMap[offset]; !ok {
+			logutil.BgLogger().Warn("can not runtime prune in index join")
+			return condPruneResult, false, nil, nil
+		}
+	}
+
+	partitions := make(map[int64]table.PhysicalTable)
+	contentPos = make([]int64, len(lookUpContent))
+	for idx, content := range lookUpContent {
+		for i, date := range content.keys {
+			locateKey[content.keyCols[i]] = date
+		}
+		p, err := partitionTbl.GetPartitionByRow(ctx, locateKey)
+		if err != nil {
+			return nil, false, nil, err
+		}
+		if _, ok := partitions[p.GetPhysicalID()]; !ok {
+			partitions[p.GetPhysicalID()] = p
+		}
+		contentPos[idx] = p.GetPhysicalID()
+	}
+
+	usedPartition = make([]table.PhysicalTable, 0, len(partitions))
+	for _, p := range condPruneResult {
+		if _, ok := partitions[p.GetPhysicalID()]; ok {
+			usedPartition = append(usedPartition, p)
+		}
+	}
+	return usedPartition, true, contentPos, nil
 }
 
 func buildNoRangeIndexReader(b *executorBuilder, v *plannercore.PhysicalIndexReader) (*IndexReaderExecutor, error) {
@@ -2629,7 +2737,11 @@ func buildNoRangeIndexReader(b *executorBuilder, v *plannercore.PhysicalIndexRea
 	if containsLimit(dagReq.Executors) {
 		e.feedback = statistics.NewQueryFeedback(0, nil, 0, is.Desc)
 	} else {
-		e.feedback = statistics.NewQueryFeedback(e.physicalTableID, is.Hist, int64(is.StatsCount()), is.Desc)
+		tblID := e.physicalTableID
+		if b.ctx.GetSessionVars().UseDynamicPartitionPrune() {
+			tblID = e.table.Meta().ID
+		}
+		e.feedback = statistics.NewQueryFeedback(tblID, is.Hist, int64(is.StatsCount()), is.Desc)
 	}
 	collect := statistics.CollectFeedback(b.ctx.GetSessionVars().StmtCtx, e.feedback, len(is.Ranges))
 	if !collect {
@@ -2666,7 +2778,8 @@ func (b *executorBuilder) buildIndexReader(v *plannercore.PhysicalIndexReader) E
 		return ret
 	}
 
-	if pi := is.Table.GetPartitionInfo(); pi == nil {
+	pi := is.Table.GetPartitionInfo()
+	if pi == nil {
 		return ret
 	}
 
@@ -2674,12 +2787,15 @@ func (b *executorBuilder) buildIndexReader(v *plannercore.PhysicalIndexReader) E
 		return ret
 	}
 
-	nextPartition := nextPartitionForIndexReader{exec: ret}
-	exec, err := buildPartitionTable(b, is.Table, &v.PartitionInfo, ret, nextPartition)
+	tmp, _ := b.is.TableByID(is.Table.ID)
+	tbl := tmp.(table.PartitionedTable)
+	partitions, err := partitionPruning(b.ctx, tbl, v.PartitionInfo.PruningConds, v.PartitionInfo.PartitionNames, v.PartitionInfo.Columns, v.PartitionInfo.ColumnNames)
 	if err != nil {
 		b.err = err
+		return nil
 	}
-	return exec
+	ret.partitions = partitions
+	return ret
 }
 
 func buildTableReq(b *executorBuilder, schemaLen int, plans []plannercore.PhysicalPlan) (dagReq *tipb.DAGRequest, streaming bool, val table.Table, err error) {
@@ -2766,7 +2882,7 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 	if containsLimit(indexReq.Executors) {
 		e.feedback = statistics.NewQueryFeedback(0, nil, 0, is.Desc)
 	} else {
-		e.feedback = statistics.NewQueryFeedback(getPhysicalTableID(tbl), is.Hist, int64(is.StatsCount()), is.Desc)
+		e.feedback = statistics.NewQueryFeedback(getFeedbackStatsTableID(e.ctx, tbl), is.Hist, int64(is.StatsCount()), is.Desc)
 	}
 	// Do not collect the feedback for table request.
 	collectTable := false
@@ -3028,20 +3144,112 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Conte
 	}
 	tbInfo := e.table.Meta()
 	if v.IsCommonHandle {
-		kvRanges, err := buildKvRangesForIndexJoin(e.ctx, getPhysicalTableID(e.table), -1, lookUpContents, indexRanges, keyOff2IdxOff, cwc)
+		if tbInfo.GetPartitionInfo() == nil || !builder.ctx.GetSessionVars().UseDynamicPartitionPrune() {
+			kvRanges, err := buildKvRangesForIndexJoin(e.ctx, getPhysicalTableID(e.table), -1, lookUpContents, indexRanges, keyOff2IdxOff, cwc)
+			if err != nil {
+				return nil, err
+			}
+			return builder.buildTableReaderFromKvRanges(ctx, e, kvRanges)
+		}
+
+		tbl, _ := builder.is.TableByID(tbInfo.ID)
+		pt := tbl.(table.PartitionedTable)
+		pe, err := tbl.(interface {
+			PartitionExpr() (*tables.PartitionExpr, error)
+		}).PartitionExpr()
 		if err != nil {
 			return nil, err
 		}
-		if tbInfo.GetPartitionInfo() == nil {
-			return builder.buildTableReaderFromKvRanges(ctx, e, kvRanges)
+		var kvRanges []kv.KeyRange
+		if keyColumnsIncludeAllPartitionColumns(lookUpContents[0].keyCols, pe) {
+			// In this case we can use dynamic partition pruning.
+			locateKey := make([]types.Datum, e.Schema().Len())
+			kvRanges = make([]kv.KeyRange, 0, len(lookUpContents))
+			for _, content := range lookUpContents {
+				for i, date := range content.keys {
+					locateKey[content.keyCols[i]] = date
+				}
+				p, err := pt.GetPartitionByRow(e.ctx, locateKey)
+				if err != nil {
+					return nil, err
+				}
+				pid := p.GetPhysicalID()
+				tmp, err := buildKvRangesForIndexJoin(e.ctx, pid, -1, []*indexJoinLookUpContent{content}, indexRanges, keyOff2IdxOff, cwc)
+				if err != nil {
+					return nil, err
+				}
+				kvRanges = append(kvRanges, tmp...)
+			}
+		} else {
+			partitionInfo := &v.PartitionInfo
+			partitions, err := partitionPruning(e.ctx, pt, partitionInfo.PruningConds, partitionInfo.PartitionNames, partitionInfo.Columns, partitionInfo.ColumnNames)
+			if err != nil {
+				return nil, err
+			}
+			kvRanges = make([]kv.KeyRange, 0, len(partitions)*len(lookUpContents))
+			for _, p := range partitions {
+				pid := p.GetPhysicalID()
+				tmp, err := buildKvRangesForIndexJoin(e.ctx, pid, -1, lookUpContents, indexRanges, keyOff2IdxOff, cwc)
+				if err != nil {
+					return nil, err
+				}
+				kvRanges = append(tmp, kvRanges...)
+			}
 		}
-		e.kvRangeBuilder = kvRangeBuilderFromFunc(func(pid int64) ([]kv.KeyRange, error) {
-			return buildKvRangesForIndexJoin(e.ctx, pid, -1, lookUpContents, indexRanges, keyOff2IdxOff, cwc)
-		})
-		nextPartition := nextPartitionForTableReader{e}
-		return buildPartitionTable(builder.executorBuilder, tbInfo, &v.PartitionInfo, e, nextPartition)
+		return builder.buildTableReaderFromKvRanges(ctx, e, kvRanges)
 	}
+
+	handles, lookUpContents := dedupHandles(lookUpContents)
+	if tbInfo.GetPartitionInfo() == nil {
+		return builder.buildTableReaderFromHandles(ctx, e, handles, canReorderHandles)
+	}
+	if !builder.ctx.GetSessionVars().UseDynamicPartitionPrune() {
+		return builder.buildTableReaderFromHandles(ctx, e, handles, canReorderHandles)
+	}
+
+	tbl, _ := builder.is.TableByID(tbInfo.ID)
+	pt := tbl.(table.PartitionedTable)
+	pe, err := tbl.(interface {
+		PartitionExpr() (*tables.PartitionExpr, error)
+	}).PartitionExpr()
+	if err != nil {
+		return nil, err
+	}
+	var kvRanges []kv.KeyRange
+	if keyColumnsIncludeAllPartitionColumns(lookUpContents[0].keyCols, pe) {
+		locateKey := make([]types.Datum, e.Schema().Len())
+		kvRanges = make([]kv.KeyRange, 0, len(lookUpContents))
+		for _, content := range lookUpContents {
+			for i, date := range content.keys {
+				locateKey[content.keyCols[i]] = date
+			}
+			p, err := pt.GetPartitionByRow(e.ctx, locateKey)
+			if err != nil {
+				return nil, err
+			}
+			pid := p.GetPhysicalID()
+			handle := kv.IntHandle(content.keys[0].GetInt64())
+			tmp := distsql.TableHandlesToKVRanges(pid, []kv.Handle{handle})
+			kvRanges = append(kvRanges, tmp...)
+		}
+	} else {
+		partitionInfo := &v.PartitionInfo
+		partitions, err := partitionPruning(e.ctx, pt, partitionInfo.PruningConds, partitionInfo.PartitionNames, partitionInfo.Columns, partitionInfo.ColumnNames)
+		if err != nil {
+			return nil, err
+		}
+		for _, p := range partitions {
+			pid := p.GetPhysicalID()
+			tmp := distsql.TableHandlesToKVRanges(pid, handles)
+			kvRanges = append(kvRanges, tmp...)
+		}
+	}
+	return builder.buildTableReaderFromKvRanges(ctx, e, kvRanges)
+}
+
+func dedupHandles(lookUpContents []*indexJoinLookUpContent) ([]kv.Handle, []*indexJoinLookUpContent) {
 	handles := make([]kv.Handle, 0, len(lookUpContents))
+	validLookUpContents := make([]*indexJoinLookUpContent, 0, len(lookUpContents))
 	for _, content := range lookUpContents {
 		isValidHandle := true
 		handle := kv.IntHandle(content.keys[0].GetInt64())
@@ -3053,19 +3261,10 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Conte
 		}
 		if isValidHandle {
 			handles = append(handles, handle)
+			validLookUpContents = append(validLookUpContents, content)
 		}
 	}
-
-	if tbInfo.GetPartitionInfo() == nil {
-		return builder.buildTableReaderFromHandles(ctx, e, handles, canReorderHandles)
-	}
-	if !builder.ctx.GetSessionVars().UseDynamicPartitionPrune() {
-		return builder.buildTableReaderFromHandles(ctx, e, handles, canReorderHandles)
-	}
-
-	e.kvRangeBuilder = kvRangeBuilderFromHandles(handles)
-	nextPartition := nextPartitionForTableReader{e}
-	return buildPartitionTable(builder.executorBuilder, tbInfo, &v.PartitionInfo, e, nextPartition)
+	return handles, validLookUpContents
 }
 
 type kvRangeBuilderFromFunc func(pid int64) ([]kv.KeyRange, error)
@@ -3074,14 +3273,29 @@ func (h kvRangeBuilderFromFunc) buildKeyRange(pid int64) ([]kv.KeyRange, error) 
 	return h(pid)
 }
 
-type kvRangeBuilderFromHandles []kv.Handle
+type kvRangeBuilderFromRangeAndPartition struct {
+	sctx       sessionctx.Context
+	partitions []table.PhysicalTable
+	ranges     []*ranger.Range
+}
 
-func (h kvRangeBuilderFromHandles) buildKeyRange(pid int64) ([]kv.KeyRange, error) {
-	handles := []kv.Handle(h)
-	sort.Slice(handles, func(i, j int) bool {
-		return handles[i].Compare(handles[j]) < 0
-	})
-	return distsql.TableHandlesToKVRanges(pid, handles), nil
+func (h kvRangeBuilderFromRangeAndPartition) buildKeyRange(int64) ([]kv.KeyRange, error) {
+	var ret []kv.KeyRange
+	for _, p := range h.partitions {
+		pid := p.GetPhysicalID()
+		meta := p.Meta()
+		if meta != nil && meta.IsCommonHandle {
+			kvRange, err := distsql.CommonHandleRangesToKVRanges(h.sctx.GetSessionVars().StmtCtx, []int64{pid}, h.ranges)
+			if err != nil {
+				return nil, err
+			}
+			ret = append(ret, kvRange...)
+		} else {
+			kvRange := distsql.TableRangesToKVRanges(pid, h.ranges, nil)
+			ret = append(ret, kvRange...)
+		}
+	}
+	return ret, nil
 }
 
 func (builder *dataReaderBuilder) buildTableReaderBase(ctx context.Context, e *TableReaderExecutor, reqBuilderWithRange distsql.RequestBuilder) (*TableReaderExecutor, error) {
@@ -3148,15 +3362,35 @@ func (builder *dataReaderBuilder) buildIndexReaderForIndexJoin(ctx context.Conte
 		return e, err
 	}
 
-	e.ranges, err = buildRangesForIndexJoin(e.ctx, lookUpContents, indexRanges, keyOff2IdxOff, cwc)
+	nextPartition := nextPartitionForIndexReader{exec: e, innerPartitionInfo: &innerPartitionInfo{isFullPartition: true}}
+	tbl, _ := builder.executorBuilder.is.TableByID(tbInfo.ID)
+	usedPartition, canPrune, contentPos, err := prunePartitionForInnerExecutor(builder.executorBuilder.ctx, tbl, e.Schema(), &v.PartitionInfo, lookUpContents)
 	if err != nil {
 		return nil, err
 	}
-	nextPartition := nextPartitionForIndexReader{exec: e}
-	ret, err := buildPartitionTable(builder.executorBuilder, tbInfo, &v.PartitionInfo, e, nextPartition)
-	if err != nil {
-		return nil, err
+	if len(usedPartition) != 0 {
+		if canPrune {
+			rangeMap, err := buildIndexRangeForEachPartition(e.ctx, usedPartition, contentPos, lookUpContents, indexRanges, keyOff2IdxOff, cwc)
+			if err != nil {
+				return nil, err
+			}
+			nextPartition.isFullPartition = false
+			nextPartition.nextRange = rangeMap
+		} else {
+			e.ranges, err = buildRangesForIndexJoin(e.ctx, lookUpContents, indexRanges, keyOff2IdxOff, cwc)
+			if err != nil {
+				return nil, err
+			}
+		}
+		partitionExec := &PartitionTableExecutor{
+			baseExecutor:  *e.base(),
+			partitions:    usedPartition,
+			nextPartition: nextPartition,
+		}
+		err = partitionExec.Open(ctx)
+		return partitionExec, err
 	}
+	ret := &TableDualExec{baseExecutor: *e.base()}
 	err = ret.Open(ctx)
 	return ret, err
 }
@@ -3177,16 +3411,35 @@ func (builder *dataReaderBuilder) buildIndexLookUpReaderForIndexJoin(ctx context
 		err = e.open(ctx)
 		return e, err
 	}
-
-	e.ranges, err = buildRangesForIndexJoin(e.ctx, lookUpContents, indexRanges, keyOff2IdxOff, cwc)
+	nextPartition := nextPartitionForIndexLookUp{exec: e, innerPartitionInfo: &innerPartitionInfo{isFullPartition: true}}
+	tbl, _ := builder.executorBuilder.is.TableByID(tbInfo.ID)
+	usedPartition, canPrune, contentPos, err := prunePartitionForInnerExecutor(builder.executorBuilder.ctx, tbl, e.Schema(), &v.PartitionInfo, lookUpContents)
 	if err != nil {
 		return nil, err
 	}
-	nextPartition := nextPartitionForIndexLookUp{exec: e}
-	ret, err := buildPartitionTable(builder.executorBuilder, tbInfo, &v.PartitionInfo, e, nextPartition)
-	if err != nil {
-		return nil, err
+	if len(usedPartition) != 0 {
+		if canPrune {
+			rangeMap, err := buildIndexRangeForEachPartition(e.ctx, usedPartition, contentPos, lookUpContents, indexRanges, keyOff2IdxOff, cwc)
+			if err != nil {
+				return nil, err
+			}
+			nextPartition.isFullPartition = false
+			nextPartition.nextRange = rangeMap
+		} else {
+			e.ranges, err = buildRangesForIndexJoin(e.ctx, lookUpContents, indexRanges, keyOff2IdxOff, cwc)
+			if err != nil {
+				return nil, err
+			}
+		}
+		partitionExec := &PartitionTableExecutor{
+			baseExecutor:  *e.base(),
+			partitions:    usedPartition,
+			nextPartition: nextPartition,
+		}
+		err = partitionExec.Open(ctx)
+		return partitionExec, err
 	}
+	ret := &TableDualExec{baseExecutor: *e.base()}
 	err = ret.Open(ctx)
 	return ret, err
 }
@@ -3281,7 +3534,7 @@ func buildKvRangesForIndexJoin(ctx sessionctx.Context, tableID, indexID int64, l
 			var tmpKvRanges []kv.KeyRange
 			var err error
 			if indexID == -1 {
-				tmpKvRanges, err = distsql.CommonHandleRangesToKVRanges(sc, tableID, ranges)
+				tmpKvRanges, err = distsql.CommonHandleRangesToKVRanges(sc, []int64{tableID}, ranges)
 			} else {
 				tmpKvRanges, err = distsql.IndexRangesToKVRanges(sc, tableID, indexID, ranges, nil)
 			}
@@ -3319,7 +3572,7 @@ func buildKvRangesForIndexJoin(ctx sessionctx.Context, tableID, indexID int64, l
 	}
 	// Index id is -1 means it's a common handle.
 	if indexID == -1 {
-		return distsql.CommonHandleRangesToKVRanges(ctx.GetSessionVars().StmtCtx, tableID, tmpDatumRanges)
+		return distsql.CommonHandleRangesToKVRanges(ctx.GetSessionVars().StmtCtx, []int64{tableID}, tmpDatumRanges)
 	}
 	return distsql.IndexRangesToKVRanges(ctx.GetSessionVars().StmtCtx, tableID, indexID, tmpDatumRanges, nil)
 }
@@ -3581,6 +3834,13 @@ func isCommonHandleRead(tbl *model.TableInfo, idx *model.IndexInfo) bool {
 
 func getPhysicalTableID(t table.Table) int64 {
 	if p, ok := t.(table.PhysicalTable); ok {
+		return p.GetPhysicalID()
+	}
+	return t.Meta().ID
+}
+
+func getFeedbackStatsTableID(ctx sessionctx.Context, t table.Table) int64 {
+	if p, ok := t.(table.PhysicalTable); ok && !ctx.GetSessionVars().UseDynamicPartitionPrune() {
 		return p.GetPhysicalID()
 	}
 	return t.Meta().ID
