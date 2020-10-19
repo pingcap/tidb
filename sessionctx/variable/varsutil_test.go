@@ -84,6 +84,7 @@ func (s *testVarsutilSuite) TestNewSessionVars(c *C) {
 	c.Assert(vars.MaxChunkSize, Equals, DefMaxChunkSize)
 	c.Assert(vars.DMLBatchSize, Equals, DefDMLBatchSize)
 	c.Assert(vars.MemQuotaQuery, Equals, config.GetGlobalConfig().MemQuotaQuery)
+	c.Assert(vars.MemQuotaStatistics, Equals, config.GetGlobalConfig().MemQuotaStatistics)
 	c.Assert(vars.MemQuotaHashJoin, Equals, int64(DefTiDBMemQuotaHashJoin))
 	c.Assert(vars.MemQuotaMergeJoin, Equals, int64(DefTiDBMemQuotaMergeJoin))
 	c.Assert(vars.MemQuotaSort, Equals, int64(DefTiDBMemQuotaSort))
@@ -466,6 +467,9 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, "ON")
 	c.Assert(v.systems[TiDBEnableChangeColumnType], Equals, "ON")
+
+	err = SetSessionSystemVar(v, "UnknownVariable", types.NewStringDatum("on"))
+	c.Assert(err, ErrorMatches, ".*]Unknown system variable 'UnknownVariable'")
 }
 
 func (s *testVarsutilSuite) TestSetOverflowBehave(c *C) {
