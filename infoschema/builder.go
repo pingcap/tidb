@@ -148,22 +148,18 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 func filterAllocators(diff *model.SchemaDiff, oldAllocs autoid.Allocators) autoid.Allocators {
 	var newAllocs autoid.Allocators
 	switch diff.Type {
-	case model.ActionRebaseAutoID, model.ActionModifyTableAutoIdCache:
+	case model.ActionRebaseAutoID, model.ActionModifyTableAutoIdCache, model.ActionModifyColumn:
 		// Only drop auto-increment allocator.
-		for _, alloc := range oldAllocs {
-			if alloc.GetType() == autoid.RowIDAllocType || alloc.GetType() == autoid.AutoIncrementType {
-				continue
-			}
-			newAllocs = append(newAllocs, alloc)
-		}
+		newAllocs = oldAllocs.Filter(func(a autoid.Allocator) bool {
+			tp := a.GetType()
+			return tp != autoid.RowIDAllocType && tp != autoid.AutoIncrementType
+		})
 	case model.ActionRebaseAutoRandomBase:
 		// Only drop auto-random allocator.
-		for _, alloc := range oldAllocs {
-			if alloc.GetType() == autoid.AutoRandomType {
-				continue
-			}
-			newAllocs = append(newAllocs, alloc)
-		}
+		newAllocs = oldAllocs.Filter(func(a autoid.Allocator) bool {
+			tp := a.GetType()
+			return tp != autoid.AutoRandomType
+		})
 	default:
 		// Keep all allocators.
 		newAllocs = oldAllocs
@@ -308,6 +304,18 @@ func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID i
 		case model.ActionRebaseAutoRandomBase:
 			newAlloc := autoid.NewAllocator(b.handle.store, dbInfo.ID, tblInfo.IsAutoRandomBitColUnsigned(), autoid.AutoRandomType)
 			allocs = append(allocs, newAlloc)
+		case model.ActionModifyColumn:
+			hasAutoIncCol, _ := HasAutoIncrementColumn(tblInfo)
+			foundAutoIncIDAlloc := allocs.Get(autoid.RowIDAllocType) != nil || allocs.Get(autoid.AutoIncrementType) != nil
+			foundAutoRandAlloc := allocs.Get(autoid.AutoRandomType) != nil
+			// Change column attribute from auto_increment to auto_random.
+			if !hasAutoIncCol && foundAutoIncIDAlloc && !foundAutoRandAlloc && tblInfo.PKIsHandle && tblInfo.AutoRandomBits > 0 {
+				allocs = allocs.Filter(func(a autoid.Allocator) bool {
+					return a.GetType() != autoid.RowIDAllocType && a.GetType() != autoid.AutoIncrementType
+				})
+				newAlloc := autoid.NewAllocator(b.handle.store, dbInfo.ID, tblInfo.IsAutoRandomBitColUnsigned(), autoid.AutoRandomType)
+				allocs = append(allocs, newAlloc)
+			}
 		}
 	}
 	tbl, err := tables.TableFromMeta(allocs, tblInfo)

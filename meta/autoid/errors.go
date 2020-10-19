@@ -57,4 +57,6 @@ const (
 	AutoRandomRebaseOverflow = "alter auto_random_base to %d overflows the incremental bits, max allowed base is %d"
 	// AutoRandomAlterAddColumn is reported when adding an auto_random column.
 	AutoRandomAlterAddColumn = "unsupported add column '%s' constraint AUTO_RANDOM when altering '%s.%s'"
+	// AutoRandomAlterChangeFromAutoInc is report when the column is changing from a non-auto_increment or a non-primary key.
+	AutoRandomAlterChangeFromAutoInc = "auto_random can only be converted from auto_increment primary key"
 )

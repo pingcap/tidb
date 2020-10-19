@@ -3778,9 +3778,8 @@ func checkColumnWithIndexConstraint(tbInfo *model.TableInfo, originalCol, newCol
 }
 
 func checkAutoRandom(tableInfo *model.TableInfo, originCol *table.Column, specNewColumn *ast.ColumnDef) (uint64, error) {
-	// Disallow add/drop actions on auto_random.
 	var oldRandBits uint64
-	if tableInfo.PKIsHandle && (tableInfo.GetPkName().L == originCol.Name.L) {
+	if tableInfo.PKIsHandle && originCol.IsPKHandleColumn(tableInfo) {
 		oldRandBits = tableInfo.AutoRandomBits
 	}
 	newRandBits, err := extractAutoRandomBitsFromColDef(specNewColumn)
@@ -3790,25 +3789,34 @@ func checkAutoRandom(tableInfo *model.TableInfo, originCol *table.Column, specNe
 	switch {
 	case oldRandBits == newRandBits:
 		break
-	case oldRandBits == 0 || newRandBits == 0:
+	case newRandBits == 0:
 		return 0, ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomAlterErrMsg)
 	case autoid.MaxAutoRandomBits < newRandBits:
 		errMsg := fmt.Sprintf(autoid.AutoRandomOverflowErrMsg,
 			autoid.MaxAutoRandomBits, newRandBits, specNewColumn.Name.Name.O)
 		return 0, ErrInvalidAutoRandom.GenWithStackByArgs(errMsg)
+	case oldRandBits == 0:
+		isAutoIncPrimaryKey := mysql.HasAutoIncrementFlag(originCol.Flag) && originCol.IsPKHandleColumn(tableInfo)
+		if !isAutoIncPrimaryKey {
+			return 0, ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomAlterChangeFromAutoInc)
+		}
 	case oldRandBits < newRandBits:
 		break // Increasing auto_random shard bits is allowed.
 	case oldRandBits > newRandBits:
 		return 0, ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomDecreaseBitErrMsg)
 	}
 
-	if oldRandBits != 0 {
+	modifyingAutoRandCol := oldRandBits > 0 || newRandBits > 0
+	if modifyingAutoRandCol {
 		// Disallow changing the column field type.
 		if originCol.Tp != specNewColumn.Tp.Tp {
 			return 0, ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomModifyColTypeErrMsg)
 		}
-		// Disallow changing auto_increment on auto_random column.
-		if containsColumnOption(specNewColumn, ast.ColumnOptionAutoIncrement) != mysql.HasAutoIncrementFlag(originCol.Flag) {
+		if originCol.Tp != mysql.TypeLonglong {
+			return 0, ErrInvalidAutoRandom.GenWithStackByArgs(fmt.Sprintf(autoid.AutoRandomOnNonBigIntColumn, types.TypeStr(originCol.Tp)))
+		}
+		// Disallow changing from auto_random to auto_increment column.
+		if containsColumnOption(specNewColumn, ast.ColumnOptionAutoIncrement) && !mysql.HasAutoIncrementFlag(originCol.Flag) {
 			return 0, ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomIncompatibleWithAutoIncErrMsg)
 		}
 		// Disallow specifying a default value on auto_random column.

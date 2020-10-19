@@ -147,6 +147,17 @@ func (all Allocators) Get(allocType AllocatorType) Allocator {
 	return nil
 }
 
+// Filter filters all the allocators that match pred.
+func (all Allocators) Filter(pred func(Allocator) bool) Allocators {
+	var ret Allocators
+	for _, a := range all {
+		if pred(a) {
+			ret = append(ret, a)
+		}
+	}
+	return ret
+}
+
 type allocator struct {
 	mu    sync.Mutex
 	base  int64

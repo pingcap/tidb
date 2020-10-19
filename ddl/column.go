@@ -715,6 +715,28 @@ func getModifyColumnInfo(t *meta.Meta, job *model.Job) (*model.DBInfo, *model.Ta
 	return dbInfo, tblInfo, oldCol, jobParam, errors.Trace(err)
 }
 
+func migrateAutoIDToAutoRandID(d *ddlCtx, t *meta.Meta, dbInfo *model.DBInfo, tblInfo *model.TableInfo) error {
+	tbl, err := getTable(d.store, dbInfo.ID, tblInfo)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if alloc := tbl.Allocators(nil).Get(autoid.AutoRandomType); alloc != nil {
+		newBase, err := t.GetAutoTableID(dbInfo.ID, tblInfo.ID)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		newEnd := newBase - 1
+		err = alloc.Rebase(tblInfo.ID, newEnd, false)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if err := t.CleanAutoID(dbInfo.ID, tblInfo.ID); err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return nil
+}
+
 func (w *worker) onModifyColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	dbInfo, tblInfo, oldCol, jobParam, err := getModifyColumnInfo(t, job)
 	if err != nil {
@@ -748,13 +770,13 @@ func (w *worker) onModifyColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 	})
 
 	if jobParam.updatedAutoRandomBits > 0 {
-		if err := checkAndApplyNewAutoRandomBits(job, t, tblInfo, jobParam.newCol, jobParam.oldColName, jobParam.updatedAutoRandomBits); err != nil {
+		if err := checkAndApplyNewAutoRandomBits(job, t, tblInfo, jobParam.newCol, oldCol, jobParam.updatedAutoRandomBits); err != nil {
 			return ver, errors.Trace(err)
 		}
 	}
 
 	if !needChangeColumnData(oldCol, jobParam.newCol) {
-		return w.doModifyColumn(t, job, dbInfo, tblInfo, jobParam.newCol, oldCol, jobParam.pos)
+		return w.doModifyColumn(d, t, job, dbInfo, tblInfo, jobParam.newCol, oldCol, jobParam.pos, jobParam.updatedAutoRandomBits)
 	}
 
 	if jobParam.changingCol == nil {
@@ -1297,8 +1319,8 @@ func updateChangingInfo(changingCol *model.ColumnInfo, changingIdxs []*model.Ind
 
 // doModifyColumn updates the column information and reorders all columns. It does not support modifying column data.
 func (w *worker) doModifyColumn(
-	t *meta.Meta, job *model.Job, dbInfo *model.DBInfo, tblInfo *model.TableInfo,
-	newCol, oldCol *model.ColumnInfo, pos *ast.ColumnPosition) (ver int64, _ error) {
+	d *ddlCtx, t *meta.Meta, job *model.Job, dbInfo *model.DBInfo, tblInfo *model.TableInfo,
+	newCol, oldCol *model.ColumnInfo, pos *ast.ColumnPosition, updateAutoRandID uint64) (ver int64, _ error) {
 	// Column from null to not null.
 	if !mysql.HasNotNullFlag(oldCol.Flag) && mysql.HasNotNullFlag(newCol.Flag) {
 		noPreventNullFlag := !mysql.HasPreventNullInsertFlag(oldCol.Flag)
@@ -1318,6 +1340,13 @@ func (w *worker) doModifyColumn(
 
 	if err := adjustColumnInfoInModifyColumn(job, tblInfo, newCol, oldCol, pos, ""); err != nil {
 		return ver, errors.Trace(err)
+	}
+	convertedFromAutoInc := updateAutoRandID > 0 && mysql.HasAutoIncrementFlag(oldCol.Flag)
+	if convertedFromAutoInc {
+		err := migrateAutoIDToAutoRandID(d, t, dbInfo, tblInfo)
+		if err != nil {
+			job.State = model.JobStateCancelled
+		}
 	}
 
 	ver, err := updateVersionAndTableInfoWithCheck(t, job, tblInfo, true)
@@ -1413,7 +1442,7 @@ func adjustColumnInfoInModifyColumn(
 }
 
 func checkAndApplyNewAutoRandomBits(job *model.Job, t *meta.Meta, tblInfo *model.TableInfo,
-	newCol *model.ColumnInfo, oldName *model.CIStr, newAutoRandBits uint64) error {
+	newCol *model.ColumnInfo, oldCol *model.ColumnInfo, newAutoRandBits uint64) error {
 	schemaID := job.SchemaID
 	newLayout := autoid.NewAutoRandomIDLayout(&newCol.FieldType, newAutoRandBits)
 
@@ -1426,16 +1455,24 @@ func checkAndApplyNewAutoRandomBits(job *model.Job, t *meta.Meta, tblInfo *model
 	if err != nil {
 		return err
 	}
+	convertedFromAutoInc := mysql.HasAutoIncrementFlag(oldCol.Flag)
+	if convertedFromAutoInc {
+		currentIncBitsVal, err = t.GetAutoTableID(schemaID, tblInfo.ID)
+		if err != nil {
+			return err
+		}
+	}
 	// Find the max number of available shard bits by
 	// counting leading zeros in current inc part of auto_random ID.
 	availableBits := bits.LeadingZeros64(uint64(currentIncBitsVal))
 	isOccupyingIncBits := newLayout.TypeBitsLength-newLayout.IncrementalBits > uint64(availableBits)
 	if isOccupyingIncBits {
 		availableBits := mathutil.Min(autoid.MaxAutoRandomBits, availableBits)
-		errMsg := fmt.Sprintf(autoid.AutoRandomOverflowErrMsg, availableBits, newAutoRandBits, oldName.O)
+		errMsg := fmt.Sprintf(autoid.AutoRandomOverflowErrMsg, availableBits, newAutoRandBits, oldCol.Name.O)
 		job.State = model.JobStateCancelled
 		return ErrInvalidAutoRandom.GenWithStackByArgs(errMsg)
 	}
+
 	tblInfo.AutoRandomBits = newAutoRandBits
 	return nil
 }
