@@ -3391,9 +3391,9 @@ func (s *testSessionSuite3) TestSetVarHint(c *C) {
 	tk.MustQuery("SELECT @@end_markers_in_json;").Check(testkit.Rows("0"))
 
 	tk.Se.GetSessionVars().SetSystemVar("windowing_use_high_precision", "ON")
-	tk.MustQuery("SELECT /*+ SET_VAR(windowing_use_high_precision=OFF) */ @@windowing_use_high_precision;").Check(testkit.Rows("OFF"))
+	tk.MustQuery("SELECT /*+ SET_VAR(windowing_use_high_precision=OFF) */ @@windowing_use_high_precision;").Check(testkit.Rows("0"))
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 0)
-	tk.MustQuery("SELECT @@windowing_use_high_precision;").Check(testkit.Rows("ON"))
+	tk.MustQuery("SELECT @@windowing_use_high_precision;").Check(testkit.Rows("1"))
 
 	tk.MustExec("SELECT /*+ SET_VAR(optimizer_switch = 'mrr_cost_based=off') SET_VAR(max_heap_table_size = 1G) */ 1;")
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 0)
