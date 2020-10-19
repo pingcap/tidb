@@ -321,11 +321,6 @@ type slowQueryTuple struct {
 	user                   string
 	host                   string
 	connID                 uint64
-<<<<<<< HEAD
-=======
-	execRetryCount         uint64
-	execRetryTime          float64
->>>>>>> 5d3cdf5d1... *: add execution retry time in slow log and slow_query and statement_summary (#19625)
 	queryTime              float64
 	parseTime              float64
 	compileTime            float64
@@ -422,13 +417,6 @@ func (st *slowQueryTuple) setFieldValue(tz *time.Location, field, value string, 
 		}
 	case variable.SlowLogConnIDStr:
 		st.connID, err = strconv.ParseUint(value, 10, 64)
-<<<<<<< HEAD
-=======
-	case variable.SlowLogExecRetryCount:
-		st.execRetryCount, err = strconv.ParseUint(value, 10, 64)
-	case variable.SlowLogExecRetryTime:
-		st.execRetryTime, err = strconv.ParseFloat(value, 64)
->>>>>>> 5d3cdf5d1... *: add execution retry time in slow log and slow_query and statement_summary (#19625)
 	case variable.SlowLogQueryTimeStr:
 		st.queryTime, err = strconv.ParseFloat(value, 64)
 	case variable.SlowLogParseTimeStr:
@@ -535,11 +523,6 @@ func (st *slowQueryTuple) convertToDatumRow() []types.Datum {
 	record = append(record, types.NewStringDatum(st.user))
 	record = append(record, types.NewStringDatum(st.host))
 	record = append(record, types.NewUintDatum(st.connID))
-<<<<<<< HEAD
-=======
-	record = append(record, types.NewUintDatum(st.execRetryCount))
-	record = append(record, types.NewFloat64Datum(st.execRetryTime))
->>>>>>> 5d3cdf5d1... *: add execution retry time in slow log and slow_query and statement_summary (#19625)
 	record = append(record, types.NewFloat64Datum(st.queryTime))
 	record = append(record, types.NewFloat64Datum(st.parseTime))
 	record = append(record, types.NewFloat64Datum(st.compileTime))

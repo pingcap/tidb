@@ -157,8 +157,6 @@ type stmtSummaryByDigestElement struct {
 	maxPrewriteRegionNum int32
 	sumTxnRetry          int64
 	maxTxnRetry          int
-	sumExecRetryCount    int64
-	sumExecRetryTime     time.Duration
 	sumBackoffTimes      int64
 	backoffTypes         map[fmt.Stringer]int
 	authUsers            map[string]struct{}
@@ -175,9 +173,6 @@ type stmtSummaryByDigestElement struct {
 	// plan cache
 	planInCache   bool
 	planCacheHits int64
-	// pessimistic execution retry information.
-	execRetryCount uint
-	execRetryTime  time.Duration
 }
 
 // StmtExecInfo records execution information of each statement.
@@ -204,8 +199,6 @@ type StmtExecInfo struct {
 	IsInternal     bool
 	Succeed        bool
 	PlanInCache    bool
-	ExecRetryCount uint
-	ExecRetryTime  time.Duration
 }
 
 // newStmtSummaryByDigestMap creates an empty stmtSummaryByDigestMap.
@@ -761,10 +754,6 @@ func (ssElement *stmtSummaryByDigestElement) add(sei *StmtExecInfo, intervalSeco
 	if ssElement.lastSeen.Before(sei.StartTime) {
 		ssElement.lastSeen = sei.StartTime
 	}
-	if sei.ExecRetryCount > 0 {
-		ssElement.execRetryCount += sei.ExecRetryCount
-		ssElement.execRetryTime += sei.ExecRetryTime
-	}
 }
 
 func (ssElement *stmtSummaryByDigestElement) toDatum(ssbd *stmtSummaryByDigest) []types.Datum {
@@ -840,8 +829,6 @@ func (ssElement *stmtSummaryByDigestElement) toDatum(ssbd *stmtSummaryByDigest) 
 		int(ssElement.maxPrewriteRegionNum),
 		avgFloat(ssElement.sumTxnRetry, ssElement.commitCount),
 		ssElement.maxTxnRetry,
-		int(ssElement.execRetryCount),
-		int64(ssElement.execRetryTime),
 		ssElement.sumBackoffTimes,
 		formatBackoffTypes(ssElement.backoffTypes),
 		avgInt(ssElement.sumMem, ssElement.execCount),
