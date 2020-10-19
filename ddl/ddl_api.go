@@ -1563,10 +1563,10 @@ func buildTableInfoWithLike(ident ast.Ident, referTblInfo *model.TableInfo) (*mo
 		tblInfo.TiFlashReplica = &replica
 	}
 	if referTblInfo.Partition != nil {
-		pi := *referTblInfo.Partition
+		pi := referTblInfo.Partition.Clone()
 		pi.Definitions = make([]model.PartitionDefinition, len(referTblInfo.Partition.Definitions))
 		copy(pi.Definitions, referTblInfo.Partition.Definitions)
-		tblInfo.Partition = &pi
+		tblInfo.Partition = pi
 	}
 	return &tblInfo, nil
 }
@@ -2844,9 +2844,9 @@ func (d *ddl) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, spec *
 	// partInfo contains only the new added partition, we have to combine it with the
 	// old partitions to check all partitions is strictly increasing.
 	clonedMeta := meta.Clone()
-	tmp := *partInfo
+	tmp := partInfo.Clone()
 	tmp.Definitions = append(pi.Definitions, tmp.Definitions...)
-	clonedMeta.Partition = &tmp
+	clonedMeta.Partition = tmp
 	switch pi.Type {
 	case model.PartitionTypeRange:
 		err = checkPartitionByRange(ctx, clonedMeta, nil)

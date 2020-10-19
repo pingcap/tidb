@@ -108,6 +108,20 @@ func ParseSimpleExprsWithNames(ctx sessionctx.Context, exprStr string, schema *S
 	return exprs, nil
 }
 
+// RewriteExprsWithNames rewrite AST to Expression.
+// The expression string must only reference the column in the given NameSlice.
+func RewriteExprsWithNames(ctx sessionctx.Context, fields []ast.ExprNode, schema *Schema, names types.NameSlice) ([]Expression, error) {
+	exprs := make([]Expression, 0, len(fields))
+	for _, field := range fields {
+		expr, err := RewriteSimpleExprWithNames(ctx, field, schema, names)
+		if err != nil {
+			return nil, err
+		}
+		exprs = append(exprs, expr)
+	}
+	return exprs, nil
+}
+
 // RewriteSimpleExprWithNames rewrites simple ast.ExprNode to expression.Expression.
 func RewriteSimpleExprWithNames(ctx sessionctx.Context, expr ast.ExprNode, schema *Schema, names []*types.FieldName) (Expression, error) {
 	e, err := RewriteAstExpr(ctx, expr, schema, names)

@@ -1007,13 +1007,13 @@ func hasGlobalIndex(tblInfo *model.TableInfo) bool {
 func getTableInfoWithDroppingPartitions(t *model.TableInfo) *model.TableInfo {
 	p := t.Partition
 	nt := t.Clone()
-	np := *p
+	np := p.Clone()
 	npd := make([]model.PartitionDefinition, 0, len(p.Definitions)+len(p.DroppingDefinitions))
 	npd = append(npd, p.Definitions...)
 	npd = append(npd, p.DroppingDefinitions...)
 	np.Definitions = npd
 	np.DroppingDefinitions = nil
-	nt.Partition = &np
+	nt.Partition = np
 	return nt
 }
 
