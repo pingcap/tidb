@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/math"
 	"github.com/pingcap/tidb/util/plancodec"
@@ -106,13 +107,11 @@ type partitionTable interface {
 }
 
 func generateHashPartitionExpr(ctx sessionctx.Context, pi *model.PartitionInfo, columns []*expression.Column, names types.NameSlice) (expression.Expression, error) {
-	schema := expression.NewSchema(columns...)
-	exprs, err := expression.ParseSimpleExprsWithNames(ctx, pi.Expr, schema, names)
+	byExprs, err := expression.PartitionByExpr(ctx, pi, columns, names)
 	if err != nil {
-		return nil, err
+		return nil, util.SyntaxWarn(err)
 	}
-	exprs[0].HashCode(ctx.GetSessionVars().StmtCtx)
-	return exprs[0], nil
+	return byExprs[0], nil
 }
 
 func (s *partitionProcessor) findUsedPartitions(ctx sessionctx.Context, tbl table.Table, partitionNames []model.CIStr,
@@ -128,7 +127,15 @@ func (s *partitionProcessor) findUsedPartitions(ctx sessionctx.Context, tbl tabl
 		partIdx[i].Index = i
 		colLen = append(colLen, types.UnspecifiedLength)
 	}
-	datchedResult, err := ranger.DetachCondAndBuildRangeForPartition(ctx, conds, partIdx, colLen)
+	// reset unique id as colID, cooperate with `expression.PartitionByExpr`
+	// to let detach range can works on reused expression
+	idAsUniqIDConds := make([]expression.Expression, 0, len(conds))
+	for _, cond := range conds {
+		colIDCond := cond.Clone()
+		expression.ResetTableColIDToUniqueID(colIDCond)
+		idAsUniqIDConds = append(idAsUniqIDConds, colIDCond)
+	}
+	datchedResult, err := ranger.DetachCondAndBuildRangeForPartition(ctx, idAsUniqIDConds, partIdx, colLen)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -427,7 +434,11 @@ func (s *partitionProcessor) pruneRangePartition(ctx sessionctx.Context, pi *mod
 	}
 
 	// Partition by range.
-	col, fn, mono, err := makePartitionByFnCol(ctx, columns, names, pi.Expr)
+	byExprs, err := expression.PartitionByExpr(ctx, pi, columns, names)
+	if err != nil {
+		return nil, util.SyntaxWarn(err)
+	}
+	col, fn, mono, err := makePartitionByFnCol(byExprs)
 	if err != nil {
 		return nil, err
 	}
@@ -459,14 +470,9 @@ func (s *partitionProcessor) processRangePartition(ds *DataSource, pi *model.Par
 }
 
 // makePartitionByFnCol extracts the column and function information in 'partition by ... fn(col)'.
-func makePartitionByFnCol(sctx sessionctx.Context, columns []*expression.Column, names types.NameSlice, partitionExpr string) (*expression.Column, *expression.ScalarFunction, monotoneMode, error) {
+func makePartitionByFnCol(byExprs []expression.Expression) (*expression.Column, *expression.ScalarFunction, monotoneMode, error) {
 	monotonous := monotoneModeInvalid
-	schema := expression.NewSchema(columns...)
-	tmp, err := expression.ParseSimpleExprsWithNames(sctx, partitionExpr, schema, names)
-	if err != nil {
-		return nil, nil, monotonous, err
-	}
-	partExpr := tmp[0]
+	partExpr := byExprs[0]
 	var col *expression.Column
 	var fn *expression.ScalarFunction
 	switch raw := partExpr.(type) {
@@ -717,21 +723,21 @@ func (p *rangePruner) extractDataForPrune(sctx sessionctx.Context, expr expressi
 
 // replaceColumnWithConst change fn(col) to fn(const)
 func replaceColumnWithConst(partFn *expression.ScalarFunction, con *expression.Constant) *expression.ScalarFunction {
-	args := partFn.GetArgs()
+	clonePartFn := partFn.Clone().(*expression.ScalarFunction)
+	args := clonePartFn.GetArgs()
 	// The partition function may be floor(unix_timestamp(ts)) instead of a simple fn(col).
 	if partFn.FuncName.L == ast.Floor {
 		ut := args[0].(*expression.ScalarFunction)
 		if ut.FuncName.L == ast.UnixTimestamp {
 			args = ut.GetArgs()
 			args[0] = con
-			return partFn
+			return clonePartFn
 		}
 	}
 
 	// No 'copy on write' for the expression here, this is a dangerous operation.
 	args[0] = con
-	return partFn
-
+	return clonePartFn
 }
 
 // opposite turns > to <, >= to <= and so on.

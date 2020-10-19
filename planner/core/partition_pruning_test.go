@@ -145,8 +145,18 @@ func prepareTestCtx(c *C, createTable string, partitionExpr string) *testCtx {
 	columns, names, err := expression.ColumnInfos2ColumnsAndNames(sctx, model.NewCIStr("t"), tblInfo.Name, tblInfo.Cols(), tblInfo)
 	c.Assert(err, IsNil)
 	schema := expression.NewSchema(columns...)
-
-	col, fn, _, err := makePartitionByFnCol(sctx, columns, names, partitionExpr)
+	stmts, warns, err := parser.New().Parse("select "+partitionExpr, "", "")
+	c.Assert(err, IsNil)
+	for _, warn := range warns {
+		sctx.GetSessionVars().StmtCtx.AppendWarning(warn)
+	}
+	var exprs []ast.ExprNode
+	for _, field := range stmts[0].(*ast.SelectStmt).Fields.Fields {
+		exprs = append(exprs, field.Expr)
+	}
+	byExprs, err := expression.RewriteExprsWithNames(sctx, exprs, expression.NewSchema(columns...), names)
+	c.Assert(err, IsNil)
+	col, fn, _, err := makePartitionByFnCol(byExprs)
 	c.Assert(err, IsNil)
 	return &testCtx{
 		c:       c,

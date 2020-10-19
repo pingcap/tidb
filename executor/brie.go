@@ -424,9 +424,9 @@ func (gs *tidbGlueSession) CreateTable(ctx context.Context, dbName model.CIStr, 
 	// Clone() does not clone partitions yet :(
 	table = table.Clone()
 	if table.Partition != nil {
-		newPartition := *table.Partition
+		newPartition := table.Partition.Clone()
 		newPartition.Definitions = append([]model.PartitionDefinition{}, table.Partition.Definitions...)
-		table.Partition = &newPartition
+		table.Partition = newPartition
 	}
 
 	return d.CreateTableWithInfo(gs.se, dbName, table, ddl.OnExistIgnore, true)

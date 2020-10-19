@@ -14,11 +14,14 @@
 package expression
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser"
+	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
@@ -617,4 +620,74 @@ func SortColumns(cols []*Column) []*Column {
 		return sorted[i].UniqueID < sorted[j].UniqueID
 	})
 	return sorted
+}
+
+// PartitionByExpr create or reuse the AST of partition definition's by(??)-expr.
+func PartitionByExpr(ctx sessionctx.Context, partInfo *model.PartitionInfo, columns []*Column, names types.NameSlice) (exprs []Expression, err error) {
+	if ctx.GetSessionVars().UseDynamicPartitionPrune() {
+		var firstTimeParse bool
+		partInfo.ByExprCache.Do(func() {
+			// copy and reset unique id as col id
+			// cooperate with `partitionProcessor.findUsedPartitions`
+			// to let detach range can works on reused expression
+			idAsUniqIDCols := make([]*Column, 0, len(columns))
+			for _, column := range columns {
+				nCol := column
+				nCol.UniqueID = nCol.ID
+				idAsUniqIDCols = append(idAsUniqIDCols, nCol)
+			}
+			exprs, err = generatePartitionByExpr(ctx, partInfo, idAsUniqIDCols, names, false)
+			if err != nil {
+				return
+			}
+			partInfo.ByExprCache.Items = exprs
+			firstTimeParse = true
+		})
+		if err != nil {
+			return
+		}
+		if partInfo.ByExprCache.Items == nil {
+			exprs = nil
+			return
+		}
+		if !firstTimeParse {
+			// waste a plan id to keep explain result stable.
+			ctx.GetSessionVars().PlanID++
+		}
+		exprs = partInfo.ByExprCache.Items.([]Expression)
+		return
+	}
+	exprs, err = generatePartitionByExpr(ctx, partInfo, columns, names, true)
+	return
+}
+
+func generatePartitionByExpr(ctx sessionctx.Context, partInfo *model.PartitionInfo, columns []*Column,
+	names types.NameSlice, reuseParser bool) (exprs []Expression, err error) {
+	var (
+		colExprs []ast.ExprNode
+		stmts    []ast.StmtNode
+	)
+	exprStr := "select " + partInfo.Expr
+	if p, ok := ctx.(interface {
+		ParseSQL(context.Context, string, string, string) ([]ast.StmtNode, []error, error)
+	}); ok && reuseParser {
+		stmts, _, err = p.ParseSQL(context.Background(), exprStr, "", "")
+	} else {
+		stmts, _, err = parser.New().Parse(exprStr, "", "")
+	}
+	if err != nil {
+		return
+	}
+	colExprs = make([]ast.ExprNode, 0, len(stmts[0].(*ast.SelectStmt).Fields.Fields))
+	for _, field := range stmts[0].(*ast.SelectStmt).Fields.Fields {
+		colExprs = append(colExprs, field.Expr)
+	}
+	exprs, err = RewriteExprsWithNames(ctx, colExprs, NewSchema(columns...), names)
+	if err != nil {
+		return
+	}
+	for _, expr := range exprs {
+		expr.HashCode(ctx.GetSessionVars().StmtCtx)
+	}
+	return
 }

@@ -161,6 +161,18 @@ func extractColumns(result []*Column, expr Expression, filter func(*Column) bool
 	return result
 }
 
+// ResetTableColIDToUniqueID reset plan unique id as table column id.
+func ResetTableColIDToUniqueID(expr Expression) {
+	switch v := expr.(type) {
+	case *Column:
+		v.UniqueID = v.ID
+	case *ScalarFunction:
+		for _, arg := range v.GetArgs() {
+			ResetTableColIDToUniqueID(arg)
+		}
+	}
+}
+
 // ExtractColumnSet extracts the different values of `UniqueId` for columns in expressions.
 func ExtractColumnSet(exprs []Expression) *intsets.Sparse {
 	set := &intsets.Sparse{}
