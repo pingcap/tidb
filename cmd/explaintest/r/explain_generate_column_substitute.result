@@ -339,14 +339,14 @@ IndexReader_7	10000.00	root		index:IndexFullScan_6
 └─IndexFullScan_6	10000.00	cop[tikv]	table:t0, index:c1(c1)	keep order:false, stats:pseudo
  -- IndexRead
 drop table if exists t0;
-create table t0(c0 double(24), c1 double as (c0) unique);
+create table t0(c0 double, c1 double as (c0) unique);
 explain select c0 from t0;
 id	estRows	task	access object	operator info
 IndexReader_7	10000.00	root		index:IndexFullScan_6
 └─IndexFullScan_6	10000.00	cop[tikv]	table:t0, index:c1(c1)	keep order:false, stats:pseudo
  -- IndexRead
 drop table if exists t0;
-create table t0(c0 double(25), c1 double as (c0) unique);
+create table t0(c0 double, c1 double as (c0) unique);
 explain select c0 from t0;
 id	estRows	task	access object	operator info
 IndexReader_7	10000.00	root		index:IndexFullScan_6
@@ -367,14 +367,14 @@ TableReader_5	10000.00	root		data:TableFullScan_4
 └─TableFullScan_4	10000.00	cop[tikv]	table:t0	keep order:false, stats:pseudo
  -- TableRead
 drop table if exists t0;
-create table t0(c0 double(24), c1 float as (c0) unique);
+create table t0(c0 double, c1 float as (c0) unique);
 explain select c0 from t0;
 id	estRows	task	access object	operator info
 TableReader_5	10000.00	root		data:TableFullScan_4
 └─TableFullScan_4	10000.00	cop[tikv]	table:t0	keep order:false, stats:pseudo
  -- TableRead
 drop table if exists t0;
-create table t0(c0 double(25), c1 float as (c0) unique);
+create table t0(c0 double, c1 float as (c0) unique);
 explain select c0 from t0;
 id	estRows	task	access object	operator info
 TableReader_5	10000.00	root		data:TableFullScan_4
