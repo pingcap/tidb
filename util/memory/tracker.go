@@ -16,9 +16,10 @@ package memory
 import (
 	"bytes"
 	"fmt"
-	"github.com/pingcap/tidb/metrics"
 	"sync"
 	"sync/atomic"
+
+	"github.com/pingcap/tidb/metrics"
 )
 
 // Tracker is used to track the memory usage during query execution.
