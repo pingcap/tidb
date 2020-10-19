@@ -194,6 +194,38 @@ func (s *testPrepareSerialSuite) TestExplainForConnPlanCache(c *C) {
 	wg.Wait()
 }
 
+func (s *testPrepareSerialSuite) TestSavedPlanPanicPlanCache(c *C) {
+	orgEnable := core.PreparedPlanCacheEnabled()
+	defer func() {
+		core.SetPreparedPlanCache(orgEnable)
+	}()
+	core.SetPreparedPlanCache(true)
+
+	var err error
+	tk := testkit.NewTestKit(c, s.store)
+	tk.Se, err = session.CreateSession4TestWithOpt(s.store, &session.Opt{
+		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
+	})
+	c.Assert(err, IsNil)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, c int generated always as (a+b) stored)")
+	tk.MustExec("insert into t(a,b) values(1,1)")
+	tk.MustExec("begin")
+	tk.MustExec("update t set b = 2 where a = 1")
+	tk.MustExec("prepare stmt from 'select b from t where a > ?'")
+	tk.MustExec("set @p = 0")
+	tk.MustQuery("execute stmt using @p").Check(testkit.Rows(
+		"2",
+	))
+	tk.MustExec("set @p = 1")
+	tk.MustQuery("execute stmt using @p").Check(testkit.Rows())
+	err = tk.ExecToErr("insert into t(a,b,c) values(3,3,3)")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[planner:3105]The value specified for generated column 'c' in table 't' is not allowed.")
+}
+
 func (s *testPrepareSerialSuite) TestExplainDotForExplainPlan(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
@@ -233,4 +265,14 @@ func (s *testSuite) TestExplainTiFlashSystemTables(c *C) {
 		fmt.Sprintf("MemTableScan_5 10000.00 root table:TIFLASH_TABLES tiflash_instances:[\"%s\"], tidb_databases:[\"%s\"], tidb_tables:[\"%s\"]", tiflashInstance, database, table)))
 	tk.MustQuery(fmt.Sprintf("desc select * from information_schema.TIFLASH_SEGMENTS where TIFLASH_INSTANCE = '%s' and TIDB_DATABASE = '%s' and TIDB_TABLE = '%s'", tiflashInstance, database, table)).Check(testkit.Rows(
 		fmt.Sprintf("MemTableScan_5 10000.00 root table:TIFLASH_SEGMENTS tiflash_instances:[\"%s\"], tidb_databases:[\"%s\"], tidb_tables:[\"%s\"]", tiflashInstance, database, table)))
+}
+
+func (s *testSuite) TestExplainTableStorage(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustQuery(fmt.Sprintf("desc select * from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'information_schema'")).Check(testkit.Rows(
+		fmt.Sprintf("MemTableScan_5 10000.00 root table:TABLE_STORAGE_STATS schema:[\"information_schema\"]")))
+	tk.MustQuery(fmt.Sprintf("desc select * from information_schema.TABLE_STORAGE_STATS where TABLE_NAME = 'schemata'")).Check(testkit.Rows(
+		fmt.Sprintf("MemTableScan_5 10000.00 root table:TABLE_STORAGE_STATS table:[\"schemata\"]")))
+	tk.MustQuery(fmt.Sprintf("desc select * from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'information_schema' and TABLE_NAME = 'schemata'")).Check(testkit.Rows(
+		fmt.Sprintf("MemTableScan_5 10000.00 root table:TABLE_STORAGE_STATS schema:[\"information_schema\"], table:[\"schemata\"]")))
 }
