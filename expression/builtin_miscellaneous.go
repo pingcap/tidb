@@ -1104,6 +1104,9 @@ func (b *builtinUUIDToBinSig) evalString(row chunk.Row) (string, bool, error) {
 	flag := int64(0)
 	if len(b.args) == 2 {
 		flag, isNull, err = b.args[1].EvalInt(b.ctx, row)
+		if isNull {
+			flag = 0
+		}
 		if err != nil {
 			return "", false, err
 		}
@@ -1166,6 +1169,9 @@ func (b *builtinBinToUUIDSig) evalString(row chunk.Row) (string, bool, error) {
 	flag := int64(0)
 	if len(b.args) == 2 {
 		flag, isNull, err = b.args[1].EvalInt(b.ctx, row)
+		if isNull {
+			flag = 0
+		}
 		if err != nil {
 			return "", false, err
 		}
