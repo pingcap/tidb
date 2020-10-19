@@ -561,64 +561,6 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string, scope Sc
 		if !PartitionPruneMode(value).Valid() {
 			return value, ErrWrongTypeForVar.GenWithStackByArgs(name)
 		}
-	case TiDBAllowRemoveAutoInc, TiDBUsePlanBaselines, TiDBEvolvePlanBaselines, TiDBEnableParallelApply:
-		switch {
-		case strings.EqualFold(value, "ON") || value == "1":
-			return "on", nil
-		case strings.EqualFold(value, "OFF") || value == "0":
-			return "off", nil
-		}
-		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
-	case TiDBRedactLog:
-		switch {
-		case strings.EqualFold(value, "ON") || value == "1":
-			return "on", nil
-		case strings.EqualFold(value, "OFF") || value == "0":
-			return "off", nil
-		}
-		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
-	case TiDBCapturePlanBaseline:
-		switch {
-		case strings.EqualFold(value, "ON") || value == "1":
-			return "on", nil
-		case strings.EqualFold(value, "OFF") || value == "0":
-			return "off", nil
-		case value == "":
-			return "", nil
-		}
-		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
-	case TiDBEnableStmtSummary, TiDBStmtSummaryInternalQuery:
-		switch {
-		case strings.EqualFold(value, "ON") || value == "1":
-			return "1", nil
-		case strings.EqualFold(value, "OFF") || value == "0":
-			return "0", nil
-		case value == "":
-			if scope == ScopeSession {
-				return "", nil
-			}
-		}
-		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
-	case TiDBStmtSummaryRefreshInterval:
-		if value == "" && scope == ScopeSession {
-			return "", nil
-		}
-		return checkInt64SystemVarWithError(name, value, 1, math.MaxInt32)
-	case TiDBStmtSummaryHistorySize:
-		if value == "" && scope == ScopeSession {
-			return "", nil
-		}
-		return checkInt64SystemVarWithError(name, value, 0, math.MaxUint8)
-	case TiDBStmtSummaryMaxStmtCount:
-		if value == "" && scope == ScopeSession {
-			return "", nil
-		}
-		return checkInt64SystemVarWithError(name, value, 1, math.MaxInt16)
-	case TiDBStmtSummaryMaxSQLLength:
-		if value == "" && scope == ScopeSession {
-			return "", nil
-		}
-		return checkInt64SystemVarWithError(name, value, 0, math.MaxInt32)
 	case TiDBIsolationReadEngines:
 		engines := strings.Split(value, ",")
 		var formatVal string
