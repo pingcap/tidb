@@ -504,8 +504,9 @@ func (a *batchConn) batchSendLoop(cfg config.TiKVClient) {
 
 		entries, requests = removeCanceledRequests(entries, requests)
 		if len(entries) == 0 {
-			continue
+			continue // All requests are canceled.
 		}
+
 		a.getClientAndSend(entries, requests, requestIDs)
 		metrics.TiKVBatchSendLatency.Observe(float64(time.Since(start)))
 	}
