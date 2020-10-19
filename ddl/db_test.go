@@ -79,6 +79,7 @@ var _ = Suite(&testDBSuite7{&testDBSuite{}})
 var _ = SerialSuites(&testSerialDBSuite{&testDBSuite{}})
 
 const defaultBatchSize = 1024
+const defaultReorgBatchSize = 256
 
 type testDBSuite struct {
 	cluster    cluster.Cluster
@@ -1729,6 +1730,32 @@ func checkDelRangeDone(c *C, ctx sessionctx.Context, idx table.Index) {
 		}
 	}
 	c.Assert(handles, HasLen, 0, Commentf("take time %v", time.Since(startTime)))
+}
+
+func checkGlobalIndexCleanUpDone(c *C, ctx sessionctx.Context, tblInfo *model.TableInfo, idxInfo *model.IndexInfo, pid int64) int {
+	c.Assert(ctx.NewTxn(context.Background()), IsNil)
+	txn, err := ctx.Txn(true)
+	c.Assert(err, IsNil)
+	defer txn.Rollback()
+
+	cnt := 0
+	prefix := tablecodec.EncodeTableIndexPrefix(tblInfo.ID, idxInfo.ID)
+	it, err := txn.Iter(prefix, nil)
+	c.Assert(err, IsNil)
+	for it.Valid() {
+		if !it.Key().HasPrefix(prefix) {
+			break
+		}
+		segs := tablecodec.SplitIndexValue(it.Value())
+		c.Assert(segs.PartitionID, NotNil)
+		_, pi, err := codec.DecodeInt(segs.PartitionID)
+		c.Assert(err, IsNil)
+		c.Assert(pi, Not(Equals), pid)
+		cnt++
+		err = it.Next()
+		c.Assert(err, IsNil)
+	}
+	return cnt
 }
 
 func (s *testDBSuite5) TestAlterPrimaryKey(c *C) {
@@ -3855,6 +3882,7 @@ func (s *testSerialDBSuite) TestModifyColumnNullToNotNullWithChangingVal2(c *C) 
 		failpoint.Disable("github.com/pingcap/tidb/ddl/mockInsertValueAfterCheckNull")
 	}()
 
+	tk.MustExec("drop table if exists tt;")
 	tk.MustExec(`create table tt (a bigint, b int, unique index idx(a));`)
 	tk.MustExec("insert into tt values (1,1),(2,2),(3,3);")
 	_, err := tk.Exec("alter table tt modify a int not null;")
@@ -3874,6 +3902,65 @@ func (s *testSerialDBSuite) TestModifyColumnNullToNotNullWithChangingVal(c *C) {
 	testModifyColumnNullToNotNull(c, s.testDBSuite, true, sql1, sql2)
 	c2 := getModifyColumn(c, s.s.(sessionctx.Context), s.schemaName, "t1", "c2", false)
 	c.Assert(c2.FieldType.Tp, Equals, mysql.TypeTiny)
+}
+
+func (s *testSerialDBSuite) TestModifyColumnBetweenStringTypes(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.Se.GetSessionVars().EnableChangeColumnType = true
+
+	//varchar to varchar
+	tk.MustExec("drop table if exists tt;")
+	tk.MustExec("create table tt (a varchar(10));")
+	tk.MustExec("insert into tt values ('111'),('10000');")
+	tk.MustExec("alter table tt change a a varchar(5);")
+	c2 := getModifyColumn(c, s.s.(sessionctx.Context), "test", "tt", "a", false)
+	c.Assert(c2.FieldType.Flen, Equals, 5)
+	tk.MustQuery("select * from tt").Check(testkit.Rows("111", "10000"))
+	tk.MustGetErrMsg("alter table tt change a a varchar(4);", "[types:1406]Data Too Long, field len 4, data len 5")
+	tk.MustExec("alter table tt change a a varchar(100);")
+
+	// varchar to char
+	tk.MustExec("alter table tt change a a char(10);")
+	c2 = getModifyColumn(c, s.s.(sessionctx.Context), "test", "tt", "a", false)
+	c.Assert(c2.FieldType.Tp, Equals, mysql.TypeString)
+	c.Assert(c2.FieldType.Flen, Equals, 10)
+	tk.MustQuery("select * from tt").Check(testkit.Rows("111", "10000"))
+	tk.MustGetErrMsg("alter table tt change a a char(4);", "[types:1406]Data Too Long, field len 4, data len 5")
+
+	// char to text
+	tk.MustExec("alter table tt change a a text;")
+	c2 = getModifyColumn(c, s.s.(sessionctx.Context), "test", "tt", "a", false)
+	c.Assert(c2.FieldType.Tp, Equals, mysql.TypeBlob)
+
+	// text to set
+	tk.MustGetErrMsg("alter table tt change a a set('111', '2222');", "[types:1265]Data truncated for column 'a', value is 'KindBytes 10000'")
+	tk.MustExec("alter table tt change a a set('111', '10000');")
+	c2 = getModifyColumn(c, s.s.(sessionctx.Context), "test", "tt", "a", false)
+	c.Assert(c2.FieldType.Tp, Equals, mysql.TypeSet)
+	tk.MustQuery("select * from tt").Check(testkit.Rows("111", "10000"))
+
+	// set to set
+	tk.MustExec("alter table tt change a a set('10000', '111');")
+	c2 = getModifyColumn(c, s.s.(sessionctx.Context), "test", "tt", "a", false)
+	c.Assert(c2.FieldType.Tp, Equals, mysql.TypeSet)
+	tk.MustQuery("select * from tt").Check(testkit.Rows("111", "10000"))
+
+	// set to enum
+	tk.MustGetErrMsg("alter table tt change a a enum('111', '2222');", "[types:1265]Data truncated for column 'a', value is 'KindMysqlSet 10000'")
+	tk.MustExec("alter table tt change a a enum('111', '10000');")
+	c2 = getModifyColumn(c, s.s.(sessionctx.Context), "test", "tt", "a", false)
+	c.Assert(c2.FieldType.Tp, Equals, mysql.TypeEnum)
+	tk.MustQuery("select * from tt").Check(testkit.Rows("111", "10000"))
+	tk.MustExec("alter table tt change a a enum('10000', '111');")
+	tk.MustQuery("select * from tt where a = 1").Check(testkit.Rows("10000"))
+	tk.MustQuery("select * from tt where a = 2").Check(testkit.Rows("111"))
+
+	// no-strict mode
+	tk.MustExec(`set @@sql_mode="";`)
+	tk.MustExec("alter table tt change a a enum('111', '2222');")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1265|Data truncated for column 'a', value is 'KindMysqlEnum 10000'"))
+
+	tk.MustExec("drop table tt;")
 }
 
 func getModifyColumn(c *C, ctx sessionctx.Context, db, tbl, colName string, allColumn bool) *table.Column {
@@ -5766,4 +5853,104 @@ func (s *testSerialDBSuite) TestColumnTypeChangeGenUniqueChangingName(c *C) {
 	c.Assert(t.Meta().Columns[3].Offset, Equals, 3)
 
 	tk.MustExec("drop table if exists t")
+}
+
+func (s *testSerialDBSuite) TestModifyColumnTypeWithWarnings(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	// Enable column change variable.
+	tk.Se.GetSessionVars().EnableChangeColumnType = true
+
+	// Test normal warnings.
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a decimal(5,2))")
+	tk.MustExec("insert into t values(111.22),(111.22),(111.22),(111.22),(333.4)")
+	// 111.22 will be truncated the fraction .22 as .2 with truncated warning for each row.
+	tk.MustExec("alter table t modify column a decimal(4,1)")
+	// there should 4 rows of warnings corresponding to the origin rows.
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1292 Truncated incorrect DECIMAL value: '111.22'",
+		"Warning 1292 Truncated incorrect DECIMAL value: '111.22'",
+		"Warning 1292 Truncated incorrect DECIMAL value: '111.22'",
+		"Warning 1292 Truncated incorrect DECIMAL value: '111.22'"))
+
+	// Test the strict warnings is treated as errors under the strict mode.
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a decimal(5,2))")
+	tk.MustExec("insert into t values(111.22),(111.22),(111.22),(33.4)")
+	// Since modify column a from decimal(5,2) to decimal(3,1), the first three rows with 111.22 will overflows the target types.
+	_, err := tk.Exec("alter table t modify column a decimal(3,1)")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[types:1690]DECIMAL value is out of range in '(3, 1)'")
+
+	// Test the strict warnings is treated as warnings under the non-strict mode.
+	tk.MustExec("set @@sql_mode=\"\"")
+	tk.MustExec("alter table t modify column a decimal(3,1)")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1690 DECIMAL value is out of range in '(3, 1)'",
+		"Warning 1690 DECIMAL value is out of range in '(3, 1)'",
+		"Warning 1690 DECIMAL value is out of range in '(3, 1)'"))
+}
+
+// TestModifyColumnTypeWhenInterception is to test modifying column type with warnings intercepted by
+// reorg timeout, not owner error and so on.
+func (s *testSerialDBSuite) TestModifyColumnTypeWhenInterception(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	// Enable column change variable.
+	tk.Se.GetSessionVars().EnableChangeColumnType = true
+
+	// Test normal warnings.
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int primary key, b decimal(4,2))")
+
+	count := defaultBatchSize * 4
+	// Add some rows.
+	dml := fmt.Sprintf("insert into t values")
+	for i := 1; i <= count; i++ {
+		dml += fmt.Sprintf("(%d, %f)", i, 11.22)
+		if i != count {
+			dml += ","
+		}
+	}
+	tk.MustExec(dml)
+	// Make the regions scale like: [1, 1024), [1024, 2048), [2048, 3072), [3072, 4096]
+	tk.MustQuery("split table t between(0) and (4096) regions 4")
+
+	d := s.dom.DDL()
+	hook := &ddl.TestDDLCallback{}
+	var checkMiddleWarningCount bool
+	var checkMiddleAddedCount bool
+	// Since the `DefTiDBDDLReorgWorkerCount` is 4, every worker will be assigned with one region
+	// for the first time. Here we mock the insert failure/reorg timeout in region [2048, 3072)
+	// which will lead next handle be set to 2048 and partial warnings be stored into ddl job.
+	// Since the existence of reorg batch size, only the last reorg batch [2816, 3072) of kv
+	// range [2048, 3072) fail to commit, the rest of them all committed successfully. So the
+	// addedCount and warnings count in the job are all equal to `4096 - reorg batch size`.
+	// In the next round of this ddl job, the last reorg batch will be finished.
+	var middleWarningsCount = int64(defaultBatchSize*4 - defaultReorgBatchSize)
+	hook.OnJobUpdatedExported = func(job *model.Job) {
+		if job.SchemaState == model.StateWriteReorganization || job.SnapshotVer != 0 {
+			if len(job.ReorgMeta.WarningsCount) == len(job.ReorgMeta.Warnings) {
+				for _, v := range job.ReorgMeta.WarningsCount {
+					if v == middleWarningsCount {
+						checkMiddleWarningCount = true
+					}
+				}
+			}
+			if job.RowCount == middleWarningsCount {
+				checkMiddleAddedCount = true
+			}
+		}
+	}
+	originHook := d.GetHook()
+	d.(ddl.DDLForTest).SetHook(hook)
+	defer d.(ddl.DDLForTest).SetHook(originHook)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/MockReorgTimeoutInOneRegion", `return(true)`), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/MockReorgTimeoutInOneRegion"), IsNil)
+	}()
+	tk.MustExec("alter table t modify column b decimal(3,1)")
+	c.Assert(checkMiddleWarningCount, Equals, true)
+	c.Assert(checkMiddleAddedCount, Equals, true)
+	res := tk.MustQuery("show warnings")
+	c.Assert(len(res.Rows()), Equals, count)
 }
