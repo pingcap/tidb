@@ -74,6 +74,9 @@ type Handle struct {
 	feedback *statistics.QueryFeedbackMap
 
 	lease atomic2.Duration
+
+	// idxUsageListHead contains all the index usage collectors required by session.
+	idxUsageListHead *SessionIndexUsageCollector
 }
 
 // Clear4Test the statsCache, only for test.
@@ -98,10 +101,11 @@ func (h *Handle) Clear4Test() {
 // NewHandle creates a Handle for update stats.
 func NewHandle(ctx sessionctx.Context, lease time.Duration) (*Handle, error) {
 	handle := &Handle{
-		ddlEventCh: make(chan *util.Event, 100),
-		listHead:   &SessionStatsCollector{mapper: make(tableDeltaMap), rateMap: make(errorRateDeltaMap)},
-		globalMap:  make(tableDeltaMap),
-		feedback:   statistics.NewQueryFeedbackMap(),
+		ddlEventCh:       make(chan *util.Event, 100),
+		listHead:         &SessionStatsCollector{mapper: make(tableDeltaMap), rateMap: make(errorRateDeltaMap)},
+		globalMap:        make(tableDeltaMap),
+		feedback:         statistics.NewQueryFeedbackMap(),
+		idxUsageListHead: &SessionIndexUsageCollector{mapper: make(indexUsageMap)},
 	}
 	handle.lease.Store(lease)
 	// It is safe to use it concurrently because the exec won't touch the ctx.
