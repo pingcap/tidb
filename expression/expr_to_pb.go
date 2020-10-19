@@ -14,6 +14,8 @@
 package expression
 
 import (
+	"strings"
+
 	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -28,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
-	"strings"
 )
 
 // ExpressionsToPBList converts expressions to tipb.Expr list for new plan.
