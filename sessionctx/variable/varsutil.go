@@ -227,8 +227,8 @@ func SetSessionSystemVar(vars *SessionVars, name string, value types.Datum) erro
 	return vars.SetSystemVar(name, sVal)
 }
 
-// SetTmpSessionSystemVar sets system variable and updates SessionVars states.
-func SetTmpSessionSystemVar(vars *SessionVars, name string, value string) error {
+// SetSessionSQLLevelVar sets system variable and updates SessionVars states.
+func SetSessionSQLLevelVar(vars *SessionVars, name string, value string) error {
 	name = strings.ToLower(name)
 	sysVar := GetSysVar(name)
 	if sysVar == nil {
@@ -504,44 +504,6 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string, scope Sc
 			return BoolOn, nil
 		}
 		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
-	case WindowingUseHighPrecision:
-		if TiDBOptOn(value) {
-			return BoolOn, nil
-		}
-		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
-	case OptimizerSwitch:
-		flags := strings.Split(value, ",")
-		flagMap := make(map[string]string)
-		for _, flag := range flags {
-			fields := strings.Split(flag, "=")
-			if len(fields) != 2 {
-				return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
-			}
-			if !strings.EqualFold(fields[1], "ON") && !strings.EqualFold(fields[1], "OFF") {
-				return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
-			}
-			flagMap[fields[0]] = strings.ToLower(fields[1])
-		}
-
-		origValue, err := GetGlobalSystemVar(vars, name)
-		if err != nil {
-			return value, err
-		}
-		origFlags := strings.Split(origValue, ",")
-		for i, origFlag := range origFlags {
-			fields := strings.Split(origFlag, "=")
-			if len(fields) != 2 {
-				return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
-			}
-			if val, ok := flagMap[fields[0]]; ok {
-				origFlags[i] = fields[0] + "=" + val
-				delete(flagMap, fields[0])
-			}
-		}
-		if len(flagMap) > 0 {
-			return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
-		}
-		return strings.Join(origFlags, ","), nil
 	case TiDBOptBCJ:
 		if TiDBOptOn(value) && vars.AllowBatchCop == 0 {
 			return value, ErrWrongValueForVar.GenWithStackByArgs("Can't set Broadcast Join to 1 but tidb_allow_batch_cop is 0, please active batch cop at first.")

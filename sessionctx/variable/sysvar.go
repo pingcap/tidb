@@ -484,7 +484,7 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeNone, Name: "table_open_cache_instances", Value: "1"},
 	{Scope: ScopeGlobal, Name: InnodbStatsPersistent, Value: BoolOn, Type: TypeBool, AutoConvertNegativeBool: true},
 	{Scope: ScopeGlobal | ScopeSession, Name: "session_track_state_change", Value: ""},
-	{Scope: ScopeNone, Name: OptimizerSwitch, Value: "index_merge=on,index_merge_union=on,index_merge_sort_union=on,index_merge_intersection=on,engine_condition_pushdown=on,index_condition_pushdown=on,mrr=on,mrr_cost_based=on,block_nested_loop=on,batched_key_access=off,materialization=on,semijoin=on,loosescan=on,firstmatch=on,subquery_materialization_cost_based=on,use_index_extensions=on", IsHintUpdatable: true},
+	{Scope: ScopeNone, Name: "optimizer_switch", Value: "index_merge=on,index_merge_union=on,index_merge_sort_union=on,index_merge_intersection=on,engine_condition_pushdown=on,index_condition_pushdown=on,mrr=on,mrr_cost_based=on,block_nested_loop=on,batched_key_access=off,materialization=on,semijoin=on,loosescan=on,firstmatch=on,subquery_materialization_cost_based=on,use_index_extensions=on"},
 	{Scope: ScopeGlobal, Name: "delayed_queue_size", Value: "1000"},
 	{Scope: ScopeNone, Name: "innodb_read_only", Value: "0"},
 	{Scope: ScopeNone, Name: "datetime_format", Value: "%Y-%m-%d %H:%i:%s"},
@@ -1099,8 +1099,6 @@ const (
 	ThreadPoolSize = "thread_pool_size"
 	// WindowingUseHighPrecision is the name of 'windowing_use_high_precision' system variable.
 	WindowingUseHighPrecision = "windowing_use_high_precision"
-	// OptimizerSwitch is the name of 'optimizer_switch' system variable.
-	OptimizerSwitch = "optimizer_switch"
 )
 
 // GlobalVarAccessor is the interface for accessing global scope system and status variables.
