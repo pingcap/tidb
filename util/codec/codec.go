@@ -202,17 +202,13 @@ func encodeHashChunkRow(sc *stmtctx.StatementContext, b []byte, row chunk.Row, a
 		}
 		switch allTypes[i].Tp {
 		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeYear:
-			if !mysql.HasUnsignedFlag(allTypes[i].Flag) {
+			if !mysql.HasUnsignedFlag(allTypes[i].Flag) && row.GetInt64(i) < 0 {
 				b = encodeSignedInt(b, row.GetInt64(i), comparable)
 				break
 			}
 			// encode unsigned integers.
 			integer := row.GetInt64(i)
-			if integer < 0 {
-				b = encodeUnsignedInt(b, uint64(integer), comparable)
-			} else {
-				b = encodeSignedInt(b, integer, comparable)
-			}
+			b = encodeUnsignedInt(b, uint64(integer), comparable)
 		case mysql.TypeFloat:
 			b = append(b, floatFlag)
 			b = EncodeFloat(b, float64(row.GetFloat32(i)))
