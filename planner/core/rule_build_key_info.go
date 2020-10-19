@@ -220,8 +220,6 @@ func checkIndexCanBeKey(idx *model.IndexInfo, columns []*model.ColumnInfo, schem
 	if !idx.Unique {
 		return nil, nil
 	}
-	newKey = make([]*expression.Column, 0, len(idx.Columns))
-	uniqueKey = make([]*expression.Column, 0, len(idx.Columns))
 	ok := true
 	for _, idxCol := range idx.Columns {
 		// The columns of this index should all occur in column schema.
@@ -230,8 +228,6 @@ func checkIndexCanBeKey(idx *model.IndexInfo, columns []*model.ColumnInfo, schem
 		for i, col := range columns {
 			if idxCol.Name.L == col.Name.L {
 				if !mysql.HasNotNullFlag(col.Flag) {
-					uniqueKey = append(uniqueKey, schema.Columns[i])
-					find = true
 					break
 				}
 				newKey = append(newKey, schema.Columns[i])
@@ -245,9 +241,20 @@ func checkIndexCanBeKey(idx *model.IndexInfo, columns []*model.ColumnInfo, schem
 		}
 	}
 	if ok {
-		return uniqueKey, newKey
+		return nil, newKey
 	}
-	return nil, nil
+
+	// the unique index whose NotNullFlag is false since equivalence conditions can filter out null values,
+	// so a unique index without a NotNullFlag can return at most one row.
+	for _, idxCol := range idx.Columns {
+		for i, col := range columns {
+			if idxCol.Name.L == col.Name.L {
+				uniqueKey = append(uniqueKey, schema.Columns[i])
+			}
+		}
+	}
+
+	return uniqueKey, nil
 }
 
 // BuildKeyInfo implements LogicalPlan BuildKeyInfo interface.
