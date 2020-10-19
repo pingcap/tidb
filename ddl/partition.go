@@ -278,7 +278,7 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.CreateTableStmt) (*m
 		return nil, nil
 	}
 
-	if ctx.GetSessionVars().EnableTablePartition == "off" {
+	if strings.EqualFold(ctx.GetSessionVars().EnableTablePartition, "OFF") {
 		ctx.GetSessionVars().StmtCtx.AppendWarning(errTablePartitionDisabled)
 		return nil, nil
 	}
