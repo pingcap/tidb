@@ -561,17 +561,6 @@ func (e *HashJoinExec) getNewJoinResult(workerID uint) (bool, *hashjoinWorkerRes
 
 func (e *HashJoinExec) join2Chunk(workerID uint, probeSideChk *chunk.Chunk, hCtx *hashContext, joinResult *hashjoinWorkerResult,
 	selected []bool) (ok bool, _ *hashjoinWorkerResult) {
-	killed := atomic.LoadUint32(&e.ctx.GetSessionVars().Killed) == 1
-	failpoint.Inject("killedInJoin2Chunk", func(val failpoint.Value) {
-		if val.(bool) {
-			killed = true
-		}
-	})
-	if killed {
-		joinResult.err = ErrQueryInterrupted
-		return false, joinResult
-	}
-
 	var err error
 	selected, err = expression.VectorizedFilter(e.ctx, e.outerFilter, chunk.NewIterator4Chunk(probeSideChk), selected)
 	if err != nil {
@@ -590,6 +579,16 @@ func (e *HashJoinExec) join2Chunk(workerID uint, probeSideChk *chunk.Chunk, hCtx
 	}
 
 	for i := range selected {
+		killed := atomic.LoadUint32(&e.ctx.GetSessionVars().Killed) == 1
+		failpoint.Inject("killedInJoin2Chunk", func(val failpoint.Value) {
+			if val.(bool) {
+				killed = true
+			}
+		})
+		if killed {
+			joinResult.err = ErrQueryInterrupted
+			return false, joinResult
+		}
 		if !selected[i] || hCtx.hasNull[i] { // process unmatched probe side rows
 			e.joiners[workerID].onMissMatch(false, probeSideChk.GetRow(i), joinResult.chk)
 		} else { // process matched probe side rows
@@ -612,17 +611,6 @@ func (e *HashJoinExec) join2Chunk(workerID uint, probeSideChk *chunk.Chunk, hCtx
 
 // join2ChunkForOuterHashJoin joins chunks when using the outer to build a hash table (refer to outer hash join)
 func (e *HashJoinExec) join2ChunkForOuterHashJoin(workerID uint, probeSideChk *chunk.Chunk, hCtx *hashContext, joinResult *hashjoinWorkerResult) (ok bool, _ *hashjoinWorkerResult) {
-	killed := atomic.LoadUint32(&e.ctx.GetSessionVars().Killed) == 1
-	failpoint.Inject("killedInJoin2ChunkForOuterHashJoin", func(val failpoint.Value) {
-		if val.(bool) {
-			killed = true
-		}
-	})
-	if killed {
-		joinResult.err = ErrQueryInterrupted
-		return false, joinResult
-	}
-
 	hCtx.initHash(probeSideChk.NumRows())
 	for _, i := range hCtx.keyColIdx {
 		err := codec.HashChunkColumns(e.rowContainer.sc, hCtx.hashVals, probeSideChk, hCtx.allTypes[i], i, hCtx.buf, hCtx.hasNull)
@@ -632,6 +620,16 @@ func (e *HashJoinExec) join2ChunkForOuterHashJoin(workerID uint, probeSideChk *c
 		}
 	}
 	for i := 0; i < probeSideChk.NumRows(); i++ {
+		killed := atomic.LoadUint32(&e.ctx.GetSessionVars().Killed) == 1
+		failpoint.Inject("killedInJoin2ChunkForOuterHashJoin", func(val failpoint.Value) {
+			if val.(bool) {
+				killed = true
+			}
+		})
+		if killed {
+			joinResult.err = ErrQueryInterrupted
+			return false, joinResult
+		}
 		probeKey, probeRow := hCtx.hashVals[i].Sum64(), probeSideChk.GetRow(i)
 		ok, joinResult = e.joinMatchedProbeSideRow2ChunkForOuterHashJoin(workerID, probeKey, probeRow, hCtx, joinResult)
 		if !ok {
