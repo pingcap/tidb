@@ -17,6 +17,3 @@ func (g generalZhCICollator) Key(str string) []byte {
 func (g generalZhCICollator) Pattern() WildcardPattern {
 	panic("implement me")
 }
-
-
-
