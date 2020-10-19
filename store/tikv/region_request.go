@@ -387,14 +387,6 @@ func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, rpcCtx *RPCContext,
 		defer s.releaseStoreToken(rpcCtx.Store)
 	}
 
-<<<<<<< HEAD
-	if s.Stats != nil {
-		defer func(start time.Time) {
-			recordRegionRequestRuntimeStats(s.Stats, req.Type, time.Since(start))
-		}(time.Now())
-	}
-=======
->>>>>>> f0db8c68e... store/tikv: fix rpc runtime stats collect (#20014)
 	ctx := bo.ctx
 	if rawHook := ctx.Value(RPCCancellerCtxKey{}); rawHook != nil {
 		var cancel context.CancelFunc
