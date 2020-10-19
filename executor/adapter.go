@@ -25,7 +25,7 @@ import (
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
-	log "github.com/pingcap/log"
+	"github.com/pingcap/log"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
