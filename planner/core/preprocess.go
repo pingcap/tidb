@@ -819,6 +819,8 @@ func checkColumn(colDef *ast.ColumnDef) error {
 			return err
 		}
 	case mysql.TypeFloat, mysql.TypeDouble:
+		// For FLOAT, the SQL standard permits an optional specification of the precision.
+		// https://dev.mysql.com/doc/refman/8.0/en/floating-point-types.html
 		if tp.Decimal == -1 {
 			if tp.Flen > mysql.MaxDoublePrecisionLength {
 				return types.ErrWrongFieldSpec.GenWithStackByArgs(colDef.Name.Name.O)
