@@ -84,4 +84,4 @@ require (
 
 go 1.13
 
-replace github.com/pingcap/parser => github.com/SunRunAway/parser v0.0.0-20201016105512-630560cdba1c
+replace github.com/pingcap/parser => github.com/SunRunAway/parser v0.0.0-20201019072751-081116e8549d
