@@ -1640,11 +1640,8 @@ type SlowQueryLogItems struct {
 	PDTotal           time.Duration
 	BackoffTotal      time.Duration
 	WriteSQLRespTotal time.Duration
-<<<<<<< HEAD
 	RewriteInfo       RewritePhaseInfo
-=======
 	ExecRetryCount    uint
->>>>>>> 253d43fb5... *: add execution retry count in slow log and slow_query (#19487)
 }
 
 // SlowLogFormat uses for formatting slow log.
