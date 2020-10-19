@@ -496,7 +496,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, kvRanges []k
 		return err
 	}
 	tps := e.getRetTpsByHandle()
-	idxID := e.getIndexID()
+	idxID := e.getIndexPlanRootID()
 	// Since the first read only need handle information. So its returned col is only 1.
 	result, err := distsql.SelectWithRuntimeStats(ctx, e.ctx, kvReq, tps, e.feedback, getPhysicalPlanIDs(e.idxPlans), idxID)
 	if err != nil {
@@ -570,14 +570,8 @@ func (e *IndexLookUpExecutor) startTableWorker(ctx context.Context, workCh <-cha
 }
 
 func (e *IndexLookUpExecutor) buildTableReader(ctx context.Context, handles []kv.Handle) (Executor, error) {
-	var tblID int
-	if len(e.tblPlans) > 0 {
-		tblID = e.tblPlans[len(e.tblPlans)-1].ID()
-	} else {
-		tblID = e.id
-	}
 	tableReaderExec := &TableReaderExecutor{
-		baseExecutor:   newBaseExecutor(e.ctx, e.schema, tblID),
+		baseExecutor:   newBaseExecutor(e.ctx, e.schema, e.getTableRootPlanID()),
 		table:          e.table,
 		dagPB:          e.tableRequest,
 		startTS:        e.startTS,
@@ -676,9 +670,16 @@ func (e *IndexLookUpExecutor) initRuntimeStats() {
 	}
 }
 
-func (e *IndexLookUpExecutor) getIndexID() int {
+func (e *IndexLookUpExecutor) getIndexPlanRootID() int {
 	if len(e.idxPlans) > 0 {
 		return e.idxPlans[len(e.idxPlans)-1].ID()
+	}
+	return e.id
+}
+
+func (e *IndexLookUpExecutor) getTableRootPlanID() int {
+	if len(e.tblPlans) > 0 {
+		return e.tblPlans[len(e.tblPlans)-1].ID()
 	}
 	return e.id
 }
@@ -725,7 +726,7 @@ func (w *indexWorker) fetchHandles(ctx context.Context, result distsql.SelectRes
 	}()
 	retTps := w.idxLookup.getRetTpsByHandle()
 	chk := chunk.NewChunkWithCapacity(retTps, w.idxLookup.maxChunkSize)
-	idxID := w.idxLookup.getIndexID()
+	idxID := w.idxLookup.getIndexPlanRootID()
 	var basicStats *execdetails.BasicRuntimeStats
 	if w.idxLookup.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl != nil {
 		if idxID != w.idxLookup.id {
