@@ -461,8 +461,8 @@ func (crs *CopRuntimeStats) String() string {
 			procTimes[n-1], procTimes[0], procTimes[n*4/5], procTimes[n*19/20], totalIters, totalTasks)
 	}
 	if crs.copDetails != nil {
-		result += fmt.Sprintf(", total keys:%v, processed keys:%v, rocksdb:{delete skipped count:%v, "+
-			"key skipped count:%v, block cache hit count:%v, block read count:%v, block read byte:%v}",
+		result += fmt.Sprintf(", total_keys:%v, processed_keys:%v, rocksdb:{delete_skipped_count:%v, "+
+			"key_skipped_count:%v, block_cache_hit_count:%v, block_read_count:%v, block_read_byte:%v}",
 			crs.copDetails.TotalKeys, crs.copDetails.ProcessedKeys,
 			crs.copDetails.RocksdbDeleteSkippedCount, crs.copDetails.RocksdbKeySkippedCount, crs.copDetails.RocksdbBlockCacheHitCount,
 			crs.copDetails.RocksdbBlockReadCount, crs.copDetails.RocksdbBlockReadByte)

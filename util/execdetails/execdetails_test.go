@@ -115,7 +115,7 @@ func TestCopRuntimeStats(t *testing.T) {
 	}
 	cop := stats.GetCopStats(tableScanID)
 	if cop.String() != "proc max:2ns, min:1ns, p80:2ns, p95:2ns, iters:3, tasks:2"+
-		", total keys:10, processed keys:10, rocksdb:{delete skipped count:10, key skipped count:1, block cache hit count:10, block read count:10, block read byte:100}" {
+		", total_keys:10, processed_keys:10, rocksdb:{delete_skipped_count:10, key_skipped_count:1, block_cache_hit_count:10, block_read_count:10, block_read_byte:100}" {
 		t.Fatal("table_scan")
 	}
 	copStats := cop.stats["8.8.8.8"]
@@ -164,7 +164,7 @@ func TestCopRuntimeStatsForTiFlash(t *testing.T) {
 	}
 	cop := stats.GetCopStats(tableScanID)
 	if cop.String() != "proc max:2ns, min:1ns, p80:2ns, p95:2ns, iters:3, tasks:2"+
-		", total keys:10, processed keys:10, rocksdb:{delete skipped count:10, key skipped count:1, block cache hit count:10, block read count:10, block read byte:100}" {
+		", total_keys:10, processed_keys:10, rocksdb:{delete_skipped_count:10, key_skipped_count:1, block_cache_hit_count:10, block_read_count:10, block_read_byte:100}" {
 		t.Fatal("table_scan")
 	}
 	copStats := cop.stats["8.8.8.8"]
