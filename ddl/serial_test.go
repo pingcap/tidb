@@ -1271,7 +1271,6 @@ func (s *testSerialSuite) TestModifyingColumn4NewCollations(c *C) {
 	tk.MustExec("alter table t convert to charset utf8 collate utf8_unicode_ci")
 	tk.MustExec("alter table t convert to charset utf8 collate utf8_general_ci")
 	tk.MustExec("alter table t modify b varchar(10) collate utf8_unicode_ci")
-	tk.MustExec("alter table t modify b varchar(10) collate utf8mb4_general_zh_ci")
 	tk.MustExec("alter table t modify b varchar(10) collate utf8_bin")
 
 	tk.MustExec("alter table t add index b_idx(b)")
@@ -1286,6 +1285,7 @@ func (s *testSerialSuite) TestModifyingColumn4NewCollations(c *C) {
 	tk.MustExec("alter table t collate utf8mb4_general_ci")
 	tk.MustExec("alter table t charset utf8mb4 collate utf8mb4_bin")
 	tk.MustExec("alter table t charset utf8mb4 collate utf8mb4_unicode_ci")
+	tk.MustExec("alter table t charset utf8mb4 collate utf8mb4_general_zh_ci")
 	// Change the default collation of database is allowed.
 	tk.MustExec("alter database dct charset utf8mb4 collate utf8mb4_general_ci")
 }
