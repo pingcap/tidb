@@ -185,6 +185,9 @@ type session struct {
 
 	// client shared coprocessor client per session
 	client kv.Client
+
+	// indexUsageCollector collects index usage information.
+	idxUsageCollector *handle.SessionIndexUsageCollector
 }
 
 // AddTableLock adds table lock to the session lock map.
@@ -355,6 +358,14 @@ func (s *session) StoreQueryFeedback(feedback interface{}) {
 		}
 		metrics.StoreQueryFeedbackCounter.WithLabelValues(metrics.LblOK).Inc()
 	}
+}
+
+// StoreIndexUsage stores index usage information in idxUsageCollector.
+func (s *session) StoreIndexUsage(dbName string, tblName string, idxName string, rowsSelected int64) {
+	if s.idxUsageCollector == nil {
+		return
+	}
+	s.idxUsageCollector.Update(dbName, tblName, idxName, &handle.IndexUsageInformation{QueryCount: 1, RowsSelected: rowsSelected})
 }
 
 // FieldList returns fields list of a table.
@@ -1600,6 +1611,9 @@ func (s *session) Close() {
 	if s.statsCollector != nil {
 		s.statsCollector.Delete()
 	}
+	if s.idxUsageCollector != nil {
+		s.idxUsageCollector.Delete()
+	}
 	bindValue := s.Value(bindinfo.SessionBindInfoKeyType)
 	if bindValue != nil {
 		bindValue.(*bindinfo.SessionHandle).Close()
@@ -1751,6 +1765,7 @@ func CreateSessionWithOpt(store kv.Storage, opt *Opt) (Session, error) {
 	// which periodically updates stats using the collected data.
 	if do.StatsHandle() != nil && do.StatsUpdating() {
 		s.statsCollector = do.StatsHandle().NewSessionStatsCollector()
+		s.idxUsageCollector = do.StatsHandle().NewSessionIndexUsageCollector()
 	}
 
 	return s, nil
