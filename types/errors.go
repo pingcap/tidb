@@ -79,4 +79,6 @@ var (
 	ErrTooBigDisplaywidth = terror.ClassTypes.New(mysql.ErrTooBigDisplaywidth, mysql.MySQLErrName[mysql.ErrTooBigDisplaywidth])
 	// ErrWrongFieldSpec is returned when the column specifier incorrect.
 	ErrWrongFieldSpec = terror.ClassTypes.New(mysql.ErrWrongFieldSpec, mysql.MySQLErrName[mysql.ErrWrongFieldSpec])
+	// ErrSyntax is returned when the syntax is not allowed.
+	ErrSyntax = terror.ClassTypes.New(mysql.ErrParse, mysql.MySQLErrName[mysql.ErrSyntax])
 )

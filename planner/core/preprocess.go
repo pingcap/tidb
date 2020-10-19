@@ -822,8 +822,14 @@ func checkColumn(colDef *ast.ColumnDef) error {
 		// For FLOAT, the SQL standard permits an optional specification of the precision.
 		// https://dev.mysql.com/doc/refman/8.0/en/floating-point-types.html
 		if tp.Decimal == -1 {
-			if tp.Flen > mysql.MaxDoublePrecisionLength {
-				return types.ErrWrongFieldSpec.GenWithStackByArgs(colDef.Name.Name.O)
+			if tp.Tp == mysql.TypeDouble {
+				if tp.Flen != -1 {
+					return types.ErrSyntax.GenWithStackByArgs()
+				}
+			} else {
+				if tp.Flen > mysql.MaxDoublePrecisionLength {
+					return types.ErrWrongFieldSpec.GenWithStackByArgs(colDef.Name.Name.O)
+				}
 			}
 		} else {
 			if tp.Decimal > mysql.MaxFloatingTypeScale {
