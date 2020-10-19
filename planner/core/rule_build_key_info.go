@@ -75,19 +75,15 @@ func (la *LogicalAggregation) BuildKeyInfo(selfSchema *expression.Schema, childS
 
 // If a condition is the form of (uniqueKey = constant) or (uniqueKey = Correlated column), it returns at most one row.
 // This function will check it.
-func (p *LogicalSelection) checkMaxOneRowCond(unique expression.Expression, constOrCorCol expression.Expression, childSchema *expression.Schema, isNullRejected bool) bool {
+func (p *LogicalSelection) checkMaxOneRowCond(unique expression.Expression, constOrCorCol expression.Expression, childSchema *expression.Schema) bool {
 	col, ok := unique.(*expression.Column)
 	if !ok {
 		return false
 	}
-	if isNullRejected {
-		if !childSchema.IsUniqueKey(col) {
-			if !childSchema.IsUnique(col) {
-				return false
-			}
+	if !childSchema.IsUniqueKey(col) {
+		if !childSchema.IsUnique(col) {
+			return false
 		}
-	} else if !childSchema.IsUniqueKey(col) {
-		return false
 	}
 	_, okCon := constOrCorCol.(*expression.Constant)
 	if okCon {
@@ -102,8 +98,7 @@ func (p *LogicalSelection) BuildKeyInfo(selfSchema *expression.Schema, childSche
 	p.baseLogicalPlan.BuildKeyInfo(selfSchema, childSchema)
 	for _, cond := range p.Conditions {
 		if sf, ok := cond.(*expression.ScalarFunction); ok && sf.FuncName.L == ast.EQ {
-			isOk := isNullRejected(p.ctx, selfSchema, sf)
-			if p.checkMaxOneRowCond(sf.GetArgs()[0], sf.GetArgs()[1], childSchema[0], isOk) || p.checkMaxOneRowCond(sf.GetArgs()[1], sf.GetArgs()[0], childSchema[0], isOk) {
+			if p.checkMaxOneRowCond(sf.GetArgs()[0], sf.GetArgs()[1], childSchema[0]) || p.checkMaxOneRowCond(sf.GetArgs()[1], sf.GetArgs()[0], childSchema[0]) {
 				p.maxOneRow = true
 				break
 			}
@@ -228,6 +223,7 @@ func checkIndexCanBeKey(idx *model.IndexInfo, columns []*model.ColumnInfo, schem
 		for i, col := range columns {
 			if idxCol.Name.L == col.Name.L {
 				if !mysql.HasNotNullFlag(col.Flag) {
+					uniqueKey = append(uniqueKey, schema.Columns[i])
 					break
 				}
 				newKey = append(newKey, schema.Columns[i])
@@ -244,16 +240,6 @@ func checkIndexCanBeKey(idx *model.IndexInfo, columns []*model.ColumnInfo, schem
 		return nil, newKey
 	}
 
-	// the unique index whose NotNullFlag is false since equivalence conditions can filter out null values,
-	// so a unique index without a NotNullFlag can return at most one row.
-	for _, idxCol := range idx.Columns {
-		for i, col := range columns {
-			if idxCol.Name.L == col.Name.L {
-				uniqueKey = append(uniqueKey, schema.Columns[i])
-			}
-		}
-	}
-
 	return uniqueKey, nil
 }
 
@@ -264,10 +250,9 @@ func (ds *DataSource) BuildKeyInfo(selfSchema *expression.Schema, childSchema []
 		if path.IsIntHandlePath {
 			continue
 		}
-		if _, newKey := checkIndexCanBeKey(path.Index, ds.Columns, selfSchema); newKey != nil {
+		if uniqueKey, newKey := checkIndexCanBeKey(path.Index, ds.Columns, selfSchema); newKey != nil {
 			selfSchema.Keys = append(selfSchema.Keys, newKey)
-		}
-		if uniqueKey, _ := checkIndexCanBeKey(path.Index, ds.Columns, selfSchema); uniqueKey != nil {
+		} else if uniqueKey != nil {
 			selfSchema.UniqueKeys = append(selfSchema.UniqueKeys, uniqueKey)
 		}
 	}
@@ -293,8 +278,10 @@ func (is *LogicalIndexScan) BuildKeyInfo(selfSchema *expression.Schema, childSch
 		if path.IsTablePath() {
 			continue
 		}
-		if _, newKey := checkIndexCanBeKey(path.Index, is.Columns, selfSchema); newKey != nil {
+		if uniqueKey, newKey := checkIndexCanBeKey(path.Index, is.Columns, selfSchema); newKey != nil {
 			selfSchema.Keys = append(selfSchema.Keys, newKey)
+		} else if uniqueKey != nil {
+			selfSchema.UniqueKeys = append(selfSchema.UniqueKeys, uniqueKey)
 		}
 	}
 	handle := is.getPKIsHandleCol(selfSchema)
