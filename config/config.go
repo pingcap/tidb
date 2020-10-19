@@ -371,10 +371,8 @@ type Status struct {
 
 // Performance is the performance section of the config.
 type Performance struct {
-	MaxProcs uint `toml:"max-procs" json:"max-procs"`
-	// Deprecated: use ServerMemoryQuota instead
+	MaxProcs              uint    `toml:"max-procs" json:"max-procs"`
 	MaxMemory             uint64  `toml:"max-memory" json:"max-memory"`
-	ServerMemoryQuota     uint64  `toml:"server-memory-quota" json:"server-memory-quota"`
 	MemoryUsageAlarmRatio float64 `toml:"memory-usage-alarm-ratio" json:"memory-usage-alarm-ratio"`
 	StatsLease            string  `toml:"stats-lease" json:"stats-lease"`
 	StmtCountLimit        uint    `toml:"stmt-count-limit" json:"stmt-count-limit"`
@@ -612,7 +610,6 @@ var defaultConf = Config{
 	},
 	Performance: Performance{
 		MaxMemory:             0,
-		ServerMemoryQuota:     0,
 		MemoryUsageAlarmRatio: 0.8,
 		TCPKeepAlive:          true,
 		CrossJoin:             true,

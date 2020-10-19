@@ -360,8 +360,8 @@ func reloadConfig(nc, c *config.Config) {
 	// like config.GetGlobalConfig().OOMAction.
 	// These config items will become available naturally after the global config pointer
 	// is updated in function ReloadGlobalConfig.
-	if nc.Performance.ServerMemoryQuota != c.Performance.ServerMemoryQuota {
-		plannercore.PreparedPlanCacheMaxMemory.Store(nc.Performance.ServerMemoryQuota)
+	if nc.Performance.MaxMemory != c.Performance.MaxMemory {
+		plannercore.PreparedPlanCacheMaxMemory.Store(nc.Performance.MaxMemory)
 	}
 	if nc.Performance.CrossJoin != c.Performance.CrossJoin {
 		plannercore.AllowCartesianProduct.Store(nc.Performance.CrossJoin)
@@ -552,7 +552,7 @@ func setGlobalVars() {
 		if plannercore.PreparedPlanCacheMemoryGuardRatio < 0.0 || plannercore.PreparedPlanCacheMemoryGuardRatio > 1.0 {
 			plannercore.PreparedPlanCacheMemoryGuardRatio = 0.1
 		}
-		plannercore.PreparedPlanCacheMaxMemory.Store(cfg.Performance.ServerMemoryQuota)
+		plannercore.PreparedPlanCacheMaxMemory.Store(cfg.Performance.MaxMemory)
 		total, err := memory.MemTotal()
 		terror.MustNil(err)
 		if plannercore.PreparedPlanCacheMaxMemory.Load() > total || plannercore.PreparedPlanCacheMaxMemory.Load() <= 0 {

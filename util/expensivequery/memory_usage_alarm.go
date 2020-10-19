@@ -51,7 +51,7 @@ func initMemoryUsageAlarmRecord() (record *memoryUsageAlarm) {
 		record.err = errors.New("close memory usage alarm recorder")
 		return
 	}
-	if quota := config.GetGlobalConfig().Performance.ServerMemoryQuota; quota != 0 {
+	if quota := config.GetGlobalConfig().Performance.MaxMemory; quota != 0 {
 		record.serverMemoryQuota = quota
 		record.isServerMemoryQuotaSet = true
 	} else {
