@@ -3292,7 +3292,6 @@ func (s *testDBSuite6) TestRenameMultiTables(c *C) {
 	oldTblID2 := oldTblInfo2.Meta().ID
 	tk.MustExec("create database test1")
 	tk.MustExec("use test1")
-	//tk.MustExec("rename table test.t1 to test1.t1, test.t2 to test1.t2")
 	tk.MustExec("rename table test.t1 to test1.t1, test.t2 to test1.t2")
 	is = domain.GetDomain(ctx).InfoSchema()
 	newTblInfo1, err := is.TableByName(model.NewCIStr("test1"), model.NewCIStr("t1"))

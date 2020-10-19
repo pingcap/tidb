@@ -127,6 +127,10 @@ func (s *testFailDBSuite) TestHalfwayCancelOperations(c *C) {
 	tk.MustExec("insert into tx values(1)")
 	_, err = tk.Exec("rename table tx to ty")
 	c.Assert(err, NotNil)
+	tk.MustExec("create table ty(a int)")
+	tk.MustExec("insert into ty values(1)")
+	_, err = tk.Exec("rename table tx to ty, ty to tz")
+	c.Assert(err, NotNil)
 	// Make sure that the table's data has not been deleted.
 	tk.MustQuery("select * from tx").Check(testkit.Rows("1"))
 	// Execute ddl statement reload schema.
