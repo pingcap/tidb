@@ -16,6 +16,7 @@ package memory
 import (
 	"bytes"
 	"fmt"
+	"github.com/pingcap/tidb/metrics"
 	"sync"
 	"sync/atomic"
 )
@@ -47,7 +48,7 @@ type Tracker struct {
 	actionMu struct {
 		sync.Mutex
 		actionOnExceed ActionOnExceed
-		panicActed bool
+		panicActed     bool
 	}
 	parMu struct {
 		sync.Mutex
@@ -375,11 +376,18 @@ func (t *Tracker) setParent(parent *Tracker) {
 	t.parMu.parent = parent
 }
 
-// ActedPanic indicate whether the SQL trigger PanicOnExceed.
-func (t *Tracker) ActedPanic() bool {
+// UpdateMetrics update the metrics for the session Tracker.
+func (t *Tracker) UpdateMetrics() {
+	queryMemoryUsage.Observe(float64(t.MaxConsumed()))
 	t.actionMu.Lock()
 	defer t.actionMu.Unlock()
-	return t.actionMu.panicActed
+	if t.MaxConsumed() >= t.GetBytesLimit() && t.GetBytesLimit() > 0 {
+		if t.actionMu.panicActed {
+			exceededQuotaAndPanic.Inc()
+		} else {
+			exceededQuotaAndSuccess.Inc()
+		}
+	}
 }
 
 const (
@@ -419,4 +427,10 @@ const (
 	LabelForApplyCache int = -17
 	// LabelForSimpleTask represents the label of the simple task
 	LabelForSimpleTask int = -18
+)
+
+var (
+	queryMemoryUsage        = metrics.QueryMemoryUsage
+	exceededQuotaAndPanic   = metrics.ExceededQuotaQueryCounter.WithLabelValues("Panic")
+	exceededQuotaAndSuccess = metrics.ExceededQuotaQueryCounter.WithLabelValues("Success")
 )

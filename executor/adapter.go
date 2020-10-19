@@ -379,14 +379,7 @@ func (a *ExecStmt) handleNoDelay(ctx context.Context, e Executor, isPessimistic 
 		if sc != nil && rs == nil {
 			if sc.MemTracker != nil {
 				sc.MemTracker.DetachFromGlobalTracker()
-				metrics.QueryMemoryUsage.Observe(float64(sc.MemTracker.MaxConsumed()))
-				if sc.MemTracker.MaxConsumed() >= sc.MemTracker.GetBytesLimit() && sc.MemTracker.GetBytesLimit() > 0 {
-					if sc.MemTracker.ActedPanic() {
-						metrics.ExceededQuotaQueryCounter.WithLabelValues("Panic").Inc()
-					} else  {
-						metrics.ExceededQuotaQueryCounter.WithLabelValues("Success").Inc()
-					}
-				}
+				sc.MemTracker.UpdateMetrics()
 			}
 			if sc.DiskTracker != nil {
 				sc.DiskTracker.DetachFromGlobalTracker()
@@ -844,14 +837,7 @@ func (a *ExecStmt) CloseRecordSet(txnStartTS uint64, lastErr error) {
 		}
 		if stmtCtx.MemTracker != nil {
 			stmtCtx.MemTracker.DetachFromGlobalTracker()
-			metrics.QueryMemoryUsage.Observe(float64(stmtCtx.MemTracker.MaxConsumed()))
-			if stmtCtx.MemTracker.MaxConsumed() >= stmtCtx.MemTracker.GetBytesLimit() && stmtCtx.MemTracker.GetBytesLimit() > 0 {
-				if stmtCtx.MemTracker.ActedPanic() {
-					metrics.ExceededQuotaQueryCounter.WithLabelValues("Panic").Inc()
-				} else  {
-					metrics.ExceededQuotaQueryCounter.WithLabelValues("Success").Inc()
-				}
-			}
+			stmtCtx.MemTracker.UpdateMetrics()
 		}
 	}
 }
