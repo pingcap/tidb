@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
+	"strings"
 )
 
 // ExpressionsToPBList converts expressions to tipb.Expr list for new plan.
@@ -175,7 +176,7 @@ func FieldTypeFromPB(ft *tipb.FieldType) *types.FieldType {
 
 func collationToProto(c string) int32 {
 	v := int32(collate.CollationName2ID(c))
-	if v == mysql.DefaultCollationID && c != mysql.DefaultCollationName {
+	if v == mysql.DefaultCollationID && strings.ToLower(c) != mysql.DefaultCollationName {
 		logutil.BgLogger().Warn(
 			"Unable to get collation ID by name, use ID of the default collation instead",
 			zap.String("name", c),
@@ -187,17 +188,16 @@ func collationToProto(c string) int32 {
 }
 
 func protoToCollation(c int32) string {
-	v, ok := mysql.Collations[uint8(collate.RestoreCollationIDIfNeeded(c))]
-	if ok {
-		return v
+	v := collate.CollationID2Name(collate.RestoreCollationIDIfNeeded(c))
+	if v == mysql.DefaultCollationName && c != mysql.DefaultCollationID {
+		logutil.BgLogger().Warn(
+			"Unable to get collation name from ID, use name of the default collation instead",
+			zap.Int32("id", c),
+			zap.Int("default collation ID", mysql.DefaultCollationID),
+			zap.String("default collation", mysql.DefaultCollationName),
+		)
 	}
-	logutil.BgLogger().Warn(
-		"Unable to get collation name from ID, use name of the default collation instead",
-		zap.Int32("id", c),
-		zap.Int("default collation ID", mysql.DefaultCollationID),
-		zap.String("default collation", mysql.DefaultCollationName),
-	)
-	return mysql.DefaultCollationName
+	return v
 }
 
 func (pc PbConverter) columnToPBExpr(column *Column) *tipb.Expr {
