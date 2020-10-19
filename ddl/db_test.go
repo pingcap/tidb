@@ -1732,6 +1732,32 @@ func checkDelRangeDone(c *C, ctx sessionctx.Context, idx table.Index) {
 	c.Assert(handles, HasLen, 0, Commentf("take time %v", time.Since(startTime)))
 }
 
+func checkGlobalIndexCleanUpDone(c *C, ctx sessionctx.Context, tblInfo *model.TableInfo, idxInfo *model.IndexInfo, pid int64) int {
+	c.Assert(ctx.NewTxn(context.Background()), IsNil)
+	txn, err := ctx.Txn(true)
+	c.Assert(err, IsNil)
+	defer txn.Rollback()
+
+	cnt := 0
+	prefix := tablecodec.EncodeTableIndexPrefix(tblInfo.ID, idxInfo.ID)
+	it, err := txn.Iter(prefix, nil)
+	c.Assert(err, IsNil)
+	for it.Valid() {
+		if !it.Key().HasPrefix(prefix) {
+			break
+		}
+		segs := tablecodec.SplitIndexValue(it.Value())
+		c.Assert(segs.PartitionID, NotNil)
+		_, pi, err := codec.DecodeInt(segs.PartitionID)
+		c.Assert(err, IsNil)
+		c.Assert(pi, Not(Equals), pid)
+		cnt++
+		err = it.Next()
+		c.Assert(err, IsNil)
+	}
+	return cnt
+}
+
 func (s *testDBSuite5) TestAlterPrimaryKey(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("create table test_add_pk(a int, b int unsigned , c varchar(255) default 'abc', d int as (a+b), e int as (a+1) stored, index idx(b))")
@@ -3856,6 +3882,7 @@ func (s *testSerialDBSuite) TestModifyColumnNullToNotNullWithChangingVal2(c *C) 
 		failpoint.Disable("github.com/pingcap/tidb/ddl/mockInsertValueAfterCheckNull")
 	}()
 
+	tk.MustExec("drop table if exists tt;")
 	tk.MustExec(`create table tt (a bigint, b int, unique index idx(a));`)
 	tk.MustExec("insert into tt values (1,1),(2,2),(3,3);")
 	_, err := tk.Exec("alter table tt modify a int not null;")
@@ -3875,6 +3902,65 @@ func (s *testSerialDBSuite) TestModifyColumnNullToNotNullWithChangingVal(c *C) {
 	testModifyColumnNullToNotNull(c, s.testDBSuite, true, sql1, sql2)
 	c2 := getModifyColumn(c, s.s.(sessionctx.Context), s.schemaName, "t1", "c2", false)
 	c.Assert(c2.FieldType.Tp, Equals, mysql.TypeTiny)
+}
+
+func (s *testSerialDBSuite) TestModifyColumnBetweenStringTypes(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.Se.GetSessionVars().EnableChangeColumnType = true
+
+	//varchar to varchar
+	tk.MustExec("drop table if exists tt;")
+	tk.MustExec("create table tt (a varchar(10));")
+	tk.MustExec("insert into tt values ('111'),('10000');")
+	tk.MustExec("alter table tt change a a varchar(5);")
+	c2 := getModifyColumn(c, s.s.(sessionctx.Context), "test", "tt", "a", false)
+	c.Assert(c2.FieldType.Flen, Equals, 5)
+	tk.MustQuery("select * from tt").Check(testkit.Rows("111", "10000"))
+	tk.MustGetErrMsg("alter table tt change a a varchar(4);", "[types:1406]Data Too Long, field len 4, data len 5")
+	tk.MustExec("alter table tt change a a varchar(100);")
+
+	// varchar to char
+	tk.MustExec("alter table tt change a a char(10);")
+	c2 = getModifyColumn(c, s.s.(sessionctx.Context), "test", "tt", "a", false)
+	c.Assert(c2.FieldType.Tp, Equals, mysql.TypeString)
+	c.Assert(c2.FieldType.Flen, Equals, 10)
+	tk.MustQuery("select * from tt").Check(testkit.Rows("111", "10000"))
+	tk.MustGetErrMsg("alter table tt change a a char(4);", "[types:1406]Data Too Long, field len 4, data len 5")
+
+	// char to text
+	tk.MustExec("alter table tt change a a text;")
+	c2 = getModifyColumn(c, s.s.(sessionctx.Context), "test", "tt", "a", false)
+	c.Assert(c2.FieldType.Tp, Equals, mysql.TypeBlob)
+
+	// text to set
+	tk.MustGetErrMsg("alter table tt change a a set('111', '2222');", "[types:1265]Data truncated for column 'a', value is 'KindBytes 10000'")
+	tk.MustExec("alter table tt change a a set('111', '10000');")
+	c2 = getModifyColumn(c, s.s.(sessionctx.Context), "test", "tt", "a", false)
+	c.Assert(c2.FieldType.Tp, Equals, mysql.TypeSet)
+	tk.MustQuery("select * from tt").Check(testkit.Rows("111", "10000"))
+
+	// set to set
+	tk.MustExec("alter table tt change a a set('10000', '111');")
+	c2 = getModifyColumn(c, s.s.(sessionctx.Context), "test", "tt", "a", false)
+	c.Assert(c2.FieldType.Tp, Equals, mysql.TypeSet)
+	tk.MustQuery("select * from tt").Check(testkit.Rows("111", "10000"))
+
+	// set to enum
+	tk.MustGetErrMsg("alter table tt change a a enum('111', '2222');", "[types:1265]Data truncated for column 'a', value is 'KindMysqlSet 10000'")
+	tk.MustExec("alter table tt change a a enum('111', '10000');")
+	c2 = getModifyColumn(c, s.s.(sessionctx.Context), "test", "tt", "a", false)
+	c.Assert(c2.FieldType.Tp, Equals, mysql.TypeEnum)
+	tk.MustQuery("select * from tt").Check(testkit.Rows("111", "10000"))
+	tk.MustExec("alter table tt change a a enum('10000', '111');")
+	tk.MustQuery("select * from tt where a = 1").Check(testkit.Rows("10000"))
+	tk.MustQuery("select * from tt where a = 2").Check(testkit.Rows("111"))
+
+	// no-strict mode
+	tk.MustExec(`set @@sql_mode="";`)
+	tk.MustExec("alter table tt change a a enum('111', '2222');")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1265|Data truncated for column 'a', value is 'KindMysqlEnum 10000'"))
+
+	tk.MustExec("drop table tt;")
 }
 
 func getModifyColumn(c *C, ctx sessionctx.Context, db, tbl, colName string, allColumn bool) *table.Column {
