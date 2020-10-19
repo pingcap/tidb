@@ -490,6 +490,48 @@ func (s *testAsyncCommitSuite) Test1PC(c *C) {
 	}
 }
 
+func (s *testAsyncCommitSuite) Test1PCIsolation(c *C) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TiKVClient.EnableOnePC = true
+	})
+
+	ctx := context.WithValue(context.Background(), sessionctx.ConnID, uint64(1))
+
+	k := []byte("k")
+	v1 := []byte("v1")
+
+	begin := func() *tikvTxn {
+		txn, err := s.store.Begin()
+		c.Assert(err, IsNil)
+		return txn.(*tikvTxn)
+	}
+
+	txn := begin()
+	txn.Set(k, v1)
+	err := txn.Commit(ctx)
+	c.Assert(err, IsNil)
+
+	v2 := []byte("v2")
+	txn = begin()
+	txn.Set(k, v2)
+
+	time.Sleep(time.Millisecond * 300)
+
+	txn2 := begin()
+	s.mustGetFromTxn(c, txn2, k, v1)
+
+	err = txn.Commit(ctx)
+	c.Assert(txn.committer.isOnePC(), IsTrue)
+	c.Assert(err, IsNil)
+
+	s.mustGetFromTxn(c, txn2, k, v1)
+	c.Assert(txn2.Rollback(), IsNil)
+
+	s.mustGetFromSnapshot(c, txn.commitTS, k, v2)
+	s.mustGetFromSnapshot(c, txn.commitTS-1, k, v1)
+}
+
 type mockResolveClient struct {
 	inner              Client
 	onResolveLock      func(*kvrpcpb.ResolveLockRequest) (*tikvrpc.Response, error)
