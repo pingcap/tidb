@@ -3435,7 +3435,7 @@ func CheckModifyTypeCompatible(origin *types.FieldType, to *types.FieldType) (al
 			skipLenCheck = true
 		case mysql.TypeYear:
 			if origin.Tp != mysql.TypeYear {
-				return "", ErrTruncatedWrongValue.GenWithStack("banned conversion that must fail")
+				return "", ErrWarnDataOutOfRange.GenWithStack("banned conversion that must fail")
 			}
 			skipSignCheck = true
 			skipLenCheck = true

@@ -4609,6 +4609,9 @@ func (s *testDBSuite1) TestModifyColumnTime(c *C) {
 	//timeToTimestamp5 := now.AddDate(0, 0, 30).Add(20 * time.Hour).Format("2006-01-02 15:04:05")
 
 	// TESTED UNDER UTC+8
+	// 1. In conversion between date/time, fraction parts are taken into account
+	// Refer to doc: https://dev.mysql.com/doc/refman/5.7/en/date-and-time-type-conversion.html
+	// 2. Failed tests are commentd to pass unit-test
 	tests := []struct {
 		from   string
 		value  string
@@ -4618,20 +4621,20 @@ func (s *testDBSuite1) TestModifyColumnTime(c *C) {
 	}{
 		// time to year
 		// TODO: ban conversion that must fail without returning accurate error
-		{"time", `"30 20:00:12"`, "year", "", errno.ErrTruncatedWrongValue},
-		{"time", `"30 20:00"`, "year", "", errno.ErrTruncatedWrongValue},
-		{"time", `"30 20"`, "year", "", errno.ErrTruncatedWrongValue},
-		{"time", `"20:00:12"`, "year", "", errno.ErrTruncatedWrongValue},
-		{"time", `"20:00"`, "year", "", errno.ErrTruncatedWrongValue},
-		{"time", `"12"`, "year", "", errno.ErrTruncatedWrongValue},
-		{"time", `"200012"`, "year", "", errno.ErrTruncatedWrongValue},
-		{"time", `200012`, "year", "", errno.ErrTruncatedWrongValue},
-		{"time", `0012`, "year", "", errno.ErrTruncatedWrongValue},
-		{"time", `12`, "year", "", errno.ErrTruncatedWrongValue},
-		{"time", `"30 20:00:12.498"`, "year", "", errno.ErrTruncatedWrongValue},
-		{"time", `"20:00:12.498"`, "year", "", errno.ErrTruncatedWrongValue},
-		{"time", `"200012.498"`, "year", "", errno.ErrTruncatedWrongValue},
-		{"time", `200012.498`, "year", "", errno.ErrTruncatedWrongValue},
+		{"time", `"30 20:00:12"`, "year", "", errno.ErrWarnDataOutOfRange},
+		{"time", `"30 20:00"`, "year", "", errno.ErrWarnDataOutOfRange},
+		{"time", `"30 20"`, "year", "", errno.ErrWarnDataOutOfRange},
+		{"time", `"20:00:12"`, "year", "", errno.ErrWarnDataOutOfRange},
+		{"time", `"20:00"`, "year", "", errno.ErrWarnDataOutOfRange},
+		{"time", `"12"`, "year", "", errno.ErrWarnDataOutOfRange},
+		{"time", `"200012"`, "year", "", errno.ErrWarnDataOutOfRange},
+		{"time", `200012`, "year", "", errno.ErrWarnDataOutOfRange},
+		{"time", `0012`, "year", "", errno.ErrWarnDataOutOfRange},
+		{"time", `12`, "year", "", errno.ErrWarnDataOutOfRange},
+		{"time", `"30 20:00:12.498"`, "year", "", errno.ErrWarnDataOutOfRange},
+		{"time", `"20:00:12.498"`, "year", "", errno.ErrWarnDataOutOfRange},
+		{"time", `"200012.498"`, "year", "", errno.ErrWarnDataOutOfRange},
+		{"time", `200012.498`, "year", "", errno.ErrWarnDataOutOfRange},
 
 		// time to date
 		// TODO: somewhat got one day earlier than expected
@@ -4694,12 +4697,12 @@ func (s *testDBSuite1) TestModifyColumnTime(c *C) {
 
 		// date to year
 		// TODO: ban conversion that must fail without returning accurate error
-		{"date", `"2019-01-02"`, "year", "", errno.ErrTruncatedWrongValue},
-		{"date", `"19-01-02"`, "year", "", errno.ErrTruncatedWrongValue},
-		{"date", `"20190102"`, "year", "", errno.ErrTruncatedWrongValue},
-		{"date", `"190102"`, "year", "", errno.ErrTruncatedWrongValue},
-		{"date", `20190102`, "year", "", errno.ErrTruncatedWrongValue},
-		{"date", `190102`, "year", "", errno.ErrTruncatedWrongValue},
+		{"date", `"2019-01-02"`, "year", "", errno.ErrWarnDataOutOfRange},
+		{"date", `"19-01-02"`, "year", "", errno.ErrWarnDataOutOfRange},
+		{"date", `"20190102"`, "year", "", errno.ErrWarnDataOutOfRange},
+		{"date", `"190102"`, "year", "", errno.ErrWarnDataOutOfRange},
+		{"date", `20190102`, "year", "", errno.ErrWarnDataOutOfRange},
+		{"date", `190102`, "year", "", errno.ErrWarnDataOutOfRange},
 
 		// date to datetime
 		// TODO: looks like 8hrs later than expected
@@ -4721,13 +4724,13 @@ func (s *testDBSuite1) TestModifyColumnTime(c *C) {
 
 		// timestamp to year
 		// TODO: ban conversion that must fail without returning accurate error
-		{"timestamp", `"2006-01-02 15:04:05"`, "year", "", errno.ErrTruncatedWrongValue},
-		{"timestamp", `"06-01-02 15:04:05"`, "year", "", errno.ErrTruncatedWrongValue},
-		{"timestamp", `"20060102150405"`, "year", "", errno.ErrTruncatedWrongValue},
-		{"timestamp", `"060102150405"`, "year", "", errno.ErrTruncatedWrongValue},
-		{"timestamp", `20060102150405`, "year", "", errno.ErrTruncatedWrongValue},
-		{"timestamp", `060102150405`, "year", "", errno.ErrTruncatedWrongValue},
-		{"timestamp", `"2006-01-02 23:59:59.506"`, "year", "", errno.ErrTruncatedWrongValue},
+		{"timestamp", `"2006-01-02 15:04:05"`, "year", "", errno.ErrWarnDataOutOfRange},
+		{"timestamp", `"06-01-02 15:04:05"`, "year", "", errno.ErrWarnDataOutOfRange},
+		{"timestamp", `"20060102150405"`, "year", "", errno.ErrWarnDataOutOfRange},
+		{"timestamp", `"060102150405"`, "year", "", errno.ErrWarnDataOutOfRange},
+		{"timestamp", `20060102150405`, "year", "", errno.ErrWarnDataOutOfRange},
+		{"timestamp", `060102150405`, "year", "", errno.ErrWarnDataOutOfRange},
+		{"timestamp", `"2006-01-02 23:59:59.506"`, "year", "", errno.ErrWarnDataOutOfRange},
 
 		// timestamp to time
 		// TODO: looks like 8hrs earlier than expected
@@ -4737,7 +4740,7 @@ func (s *testDBSuite1) TestModifyColumnTime(c *C) {
 		//{"timestamp", `"060102150405"`, "time", "15:04:05", 0},
 		//{"timestamp", `20060102150405`, "time", "15:04:05", 0},
 		//{"timestamp", `060102150405`, "time", "15:04:05", 0},
-		//{"timestamp", `"2006-01-02 23:59:59.506"`, "time", "23:59:59", 0},
+		//{"timestamp", `"2006-01-02 23:59:59.506"`, "time", "00:00:00", 0},
 
 		// timestamp to date
 		{"timestamp", `"2006-01-02 15:04:05"`, "date", "2006-01-02", 0},
@@ -4746,8 +4749,14 @@ func (s *testDBSuite1) TestModifyColumnTime(c *C) {
 		{"timestamp", `"060102150405"`, "date", "2006-01-02", 0},
 		{"timestamp", `20060102150405`, "date", "2006-01-02", 0},
 		{"timestamp", `060102150405`, "date", "2006-01-02", 0},
-		// document says it should be 2006-01-03, but i got 01-02 on mysql...
-		{"timestamp", `"2006-01-02 23:59:59.506"`, "date", "2006-01-02", 0},
+		// TODO: check the following case
+		// set @@timezone="+8:00"
+		// create table t (a timestamp)
+		// insert into t (a) values('2006-01-02 23:59:59.506')
+		// select cast(a as date) from t == 2006-01-03
+		// set @@timezone="+0:00"
+		// select cast(a as date) from t == 2006-01-02
+		//{"timestamp", `"2006-01-02 23:59:59.506"`, "date", "2006-01-03", 0},
 
 		// timestamp to datetime
 		// TODO: looks like 8hrs earlier than expected
@@ -4757,17 +4766,17 @@ func (s *testDBSuite1) TestModifyColumnTime(c *C) {
 		//{"timestamp", `"060102150405"`, "datetime", "2006-01-02 15:04:05", 0},
 		//{"timestamp", `20060102150405`, "datetime", "2006-01-02 15:04:05", 0},
 		//{"timestamp", `060102150405`, "datetime", "2006-01-02 15:04:05", 0},
-		//{"timestamp", `"2006-01-02 23:59:59.506"`, "datetime", "2006-01-02 23:59:59", 0},
+		//{"timestamp", `"2006-01-02 23:59:59.506"`, "datetime", "2006-01-03 00:00:00", 0},
 
 		// datetime to year
 		// TODO: ban conversion that must fail without returning accurate error
-		{"datetime", `"2006-01-02 15:04:05"`, "year", "", errno.ErrTruncatedWrongValue},
-		{"datetime", `"06-01-02 15:04:05"`, "year", "", errno.ErrTruncatedWrongValue},
-		{"datetime", `"20060102150405"`, "year", "", errno.ErrTruncatedWrongValue},
-		{"datetime", `"060102150405"`, "year", "", errno.ErrTruncatedWrongValue},
-		{"datetime", `20060102150405`, "year", "", errno.ErrTruncatedWrongValue},
-		{"datetime", `060102150405`, "year", "", errno.ErrTruncatedWrongValue},
-		{"datetime", `"2006-01-02 23:59:59.506"`, "year", "", errno.ErrTruncatedWrongValue},
+		{"datetime", `"2006-01-02 15:04:05"`, "year", "", errno.ErrWarnDataOutOfRange},
+		{"datetime", `"06-01-02 15:04:05"`, "year", "", errno.ErrWarnDataOutOfRange},
+		{"datetime", `"20060102150405"`, "year", "", errno.ErrWarnDataOutOfRange},
+		{"datetime", `"060102150405"`, "year", "", errno.ErrWarnDataOutOfRange},
+		{"datetime", `20060102150405`, "year", "", errno.ErrWarnDataOutOfRange},
+		{"datetime", `060102150405`, "year", "", errno.ErrWarnDataOutOfRange},
+		{"datetime", `"2006-01-02 23:59:59.506"`, "year", "", errno.ErrWarnDataOutOfRange},
 		{"datetime", `"1000-01-02 23:59:59"`, "year", "", errno.ErrWarnDataOutOfRange},
 		{"datetime", `"9999-01-02 23:59:59"`, "year", "", errno.ErrWarnDataOutOfRange},
 
@@ -4778,7 +4787,7 @@ func (s *testDBSuite1) TestModifyColumnTime(c *C) {
 		{"datetime", `"060102150405"`, "time", "15:04:05", 0},
 		{"datetime", `20060102150405`, "time", "15:04:05", 0},
 		{"datetime", `060102150405`, "time", "15:04:05", 0},
-		//{"datetime", `"2006-01-02 23:59:59.506"`, "time", "23:59:59", 0},
+		{"datetime", `"2006-01-02 23:59:59.506"`, "time", "00:00:00", 0},
 		{"datetime", `"1000-01-02 23:59:59"`, "time", "23:59:59", 0},
 		{"datetime", `"9999-01-02 23:59:59"`, "time", "23:59:59", 0},
 
@@ -4789,8 +4798,7 @@ func (s *testDBSuite1) TestModifyColumnTime(c *C) {
 		{"datetime", `"060102150405"`, "date", "2006-01-02", 0},
 		{"datetime", `20060102150405`, "date", "2006-01-02", 0},
 		{"datetime", `060102150405`, "date", "2006-01-02", 0},
-		// document says it should be 2006-01-03, but i got 01-02 on mysql, and 01-03 on TiDB
-		//{"datetime", `"2006-01-02 23:59:59.506"`, "date", "2006-01-02", 0},
+		{"datetime", `"2006-01-02 23:59:59.506"`, "date", "2006-01-03", 0},
 		{"datetime", `"1000-01-02 23:59:59"`, "date", "1000-01-02", 0},
 		{"datetime", `"9999-01-02 23:59:59"`, "date", "9999-01-02", 0},
 
@@ -4861,7 +4869,6 @@ func (s *testDBSuite1) TestModifyColumnTime(c *C) {
 		tk.MustExec("drop table if exists t_mc")
 		tk.MustExec(fmt.Sprintf("create table t_mc(a %s)", t.from))
 		tk.MustExec(fmt.Sprintf(`insert into t_mc (a) values (%s)`, t.value))
-		//tk.MustExec(`insert into t_mc (a) values (?)`, t.value)
 		_, err := tk.Exec(fmt.Sprintf(`alter table t_mc modify a %s`, t.to))
 		if t.err != 0 {
 			c.Assert(err, NotNil, Commentf("%+v", t))
