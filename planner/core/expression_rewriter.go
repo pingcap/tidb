@@ -1839,7 +1839,7 @@ func decodeRecordKey(key []byte, tableID int64, tbl table.Table, loc *time.Locat
 		ret["table_id"] = tableID
 		handleRet := make(map[string]interface{})
 		for colID, dt := range datumMap {
-			dtStr, err := datumToJsonObject(&dt)
+			dtStr, err := datumToJSONObject(&dt)
 			if err != nil {
 				return "", errors.Trace(err)
 			}
@@ -1918,7 +1918,7 @@ func decodeIndexKey(key []byte, tableID int64, tbl table.Table, loc *time.Locati
 		ret["index_id"] = indexID
 		idxValMap := make(map[string]interface{}, len(targetIndex.Columns))
 		for i := 0; i < len(targetIndex.Columns); i++ {
-			dtStr, err := datumToJsonObject(&ds[i])
+			dtStr, err := datumToJSONObject(&ds[i])
 			if err != nil {
 				return "", errors.Trace(err)
 			}
@@ -1946,7 +1946,7 @@ func decodeIndexKey(key []byte, tableID int64, tbl table.Table, loc *time.Locati
 	return string(retStr), nil
 }
 
-func datumToJsonObject(d *types.Datum) (interface{}, error) {
+func datumToJSONObject(d *types.Datum) (interface{}, error) {
 	if d.IsNull() {
 		return nil, nil
 	}
