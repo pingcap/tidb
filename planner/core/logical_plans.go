@@ -216,6 +216,11 @@ func (p *LogicalJoin) columnSubstitute(schema *expression.Schema, exprs []expres
 
 		p.EqualConditions[i] = newCond
 	}
+	// one side of Equal condition might be a scalar function, then it was picked to other condition.
+	// eg. select * from t1 where t1.a in (select t1.b + t2.b from t2). `t1.a = (t1.b + t2.b)` will be set as one of OtherCondition.
+	if !p.cartesianJoin {
+		p.cartesianJoin = len(p.EqualConditions) == 0
+	}
 }
 
 // AttachOnConds extracts on conditions for join and set the `EqualConditions`, `LeftConditions`, `RightConditions` and

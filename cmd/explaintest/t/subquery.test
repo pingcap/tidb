@@ -5,6 +5,11 @@ create table t2(a bigint, b bigint);
 set session tidb_hashagg_partial_concurrency = 1;
 set session tidb_hashagg_final_concurrency = 1;
 explain select * from t1 where t1.a in (select t1.b + t2.b from t2);
+explain select * from t1 where t1.a in (select t1.b + t2.b from t2 where t1.b = t2.a);
+explain select * from t1 where t1.a in (select t1.b + t2.b from t2) and t1.a = 1;
+explain select * from t1 where t1.a in (select t1.b + t2.b from t2 where t1.b = t2.a) and t1.a = 1;
+explain select * from t1 where t1.a in (select t1.b + t2.b from t2) and t1.b = 1;
+explain select * from t1 where t1.a in (select t1.b + t2.b from t2 where t1.b = t2.a) and t1.b = 1;
 
 drop table if exists t;
 create table t(a int primary key, b int, c int, d int, index idx(b,c,d));

@@ -6,11 +6,57 @@ set session tidb_hashagg_partial_concurrency = 1;
 set session tidb_hashagg_final_concurrency = 1;
 explain select * from t1 where t1.a in (select t1.b + t2.b from t2);
 id	estRows	task	access object	operator info
-HashJoin_8	8000.00	root		semi join, other cond:eq(test.t1.a, plus(test.t1.b, test.t2.b))
+HashJoin_8	8000.00	root		CARTESIAN semi join, other cond:eq(test.t1.a, plus(test.t1.b, test.t2.b))
 ├─TableReader_12(Build)	10000.00	root		data:TableFullScan_11
 │ └─TableFullScan_11	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
 └─TableReader_10(Probe)	10000.00	root		data:TableFullScan_9
   └─TableFullScan_9	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain select * from t1 where t1.a in (select t1.b + t2.b from t2 where t1.b = t2.a);
+id	estRows	task	access object	operator info
+HashJoin_10	7992.00	root		semi join, equal:[eq(test.t1.b, test.t2.a) eq(test.t1.a, Column#9)], other cond:eq(test.t1.a, plus(test.t1.b, test.t2.b))
+├─Projection_14(Build)	9990.00	root		test.t2.a, test.t2.b, plus(test.t2.a, test.t2.b)->Column#9
+│ └─TableReader_17	9990.00	root		data:Selection_16
+│   └─Selection_16	9990.00	cop[tikv]		not(isnull(test.t2.a))
+│     └─TableFullScan_15	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+└─TableReader_13(Probe)	9990.00	root		data:Selection_12
+  └─Selection_12	9990.00	cop[tikv]		not(isnull(test.t1.b))
+    └─TableFullScan_11	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain select * from t1 where t1.a in (select t1.b + t2.b from t2) and t1.a = 1;
+id	estRows	task	access object	operator info
+HashJoin_8	8.00	root		CARTESIAN semi join, other cond:eq(1, plus(test.t1.b, test.t2.b))
+├─TableReader_13(Build)	10000.00	root		data:TableFullScan_12
+│ └─TableFullScan_12	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+└─TableReader_11(Probe)	10.00	root		data:Selection_10
+  └─Selection_10	10.00	cop[tikv]		eq(test.t1.a, 1)
+    └─TableFullScan_9	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain select * from t1 where t1.a in (select t1.b + t2.b from t2 where t1.b = t2.a) and t1.a = 1;
+id	estRows	task	access object	operator info
+HashJoin_9	7.99	root		semi join, equal:[eq(test.t1.b, test.t2.a)], other cond:eq(1, plus(test.t1.b, test.t2.b))
+├─TableReader_15(Build)	7992.00	root		data:Selection_14
+│ └─Selection_14	7992.00	cop[tikv]		eq(1, plus(test.t2.a, test.t2.b)), not(isnull(test.t2.a))
+│   └─TableFullScan_13	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+└─TableReader_12(Probe)	9.99	root		data:Selection_11
+  └─Selection_11	9.99	cop[tikv]		eq(test.t1.a, 1), not(isnull(test.t1.b))
+    └─TableFullScan_10	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain select * from t1 where t1.a in (select t1.b + t2.b from t2) and t1.b = 1;
+id	estRows	task	access object	operator info
+HashJoin_9	8.00	root		semi join, equal:[eq(test.t1.a, Column#9)]
+├─Projection_13(Build)	10000.00	root		plus(1, test.t2.b)->Column#9
+│ └─TableReader_15	10000.00	root		data:TableFullScan_14
+│   └─TableFullScan_14	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+└─TableReader_12(Probe)	10.00	root		data:Selection_11
+  └─Selection_11	10.00	cop[tikv]		eq(test.t1.b, 1)
+    └─TableFullScan_10	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain select * from t1 where t1.a in (select t1.b + t2.b from t2 where t1.b = t2.a) and t1.b = 1;
+id	estRows	task	access object	operator info
+HashJoin_10	8.00	root		semi join, equal:[eq(test.t1.a, Column#9)]
+├─Projection_14(Build)	10.00	root		plus(1, test.t2.b)->Column#9
+│ └─TableReader_17	10.00	root		data:Selection_16
+│   └─Selection_16	10.00	cop[tikv]		eq(1, test.t2.a)
+│     └─TableFullScan_15	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+└─TableReader_13(Probe)	10.00	root		data:Selection_12
+  └─Selection_12	10.00	cop[tikv]		eq(test.t1.b, 1)
+    └─TableFullScan_11	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 drop table if exists t;
 create table t(a int primary key, b int, c int, d int, index idx(b,c,d));
 insert into t values(1,1,1,1),(2,2,2,2),(3,2,2,2),(4,2,2,2),(5,2,2,2);
