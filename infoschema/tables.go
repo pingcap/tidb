@@ -718,6 +718,7 @@ var slowQueryCols = []columnInfo{
 	{name: variable.SlowLogUserStr, tp: mysql.TypeVarchar, size: 64},
 	{name: variable.SlowLogHostStr, tp: mysql.TypeVarchar, size: 64},
 	{name: variable.SlowLogConnIDStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.UnsignedFlag},
+	{name: variable.SlowLogExecRetryCount, tp: mysql.TypeLonglong, size: 20, flag: mysql.UnsignedFlag},
 	{name: variable.SlowLogQueryTimeStr, tp: mysql.TypeDouble, size: 22},
 	{name: variable.SlowLogParseTimeStr, tp: mysql.TypeDouble, size: 22},
 	{name: variable.SlowLogCompileTimeStr, tp: mysql.TypeDouble, size: 22},
