@@ -762,7 +762,7 @@ func (s *testTimeSuite) TestParseTimeFromFloatString(c *C) {
 	}
 
 	for _, test := range table {
-		t, err := types.ParseTimeFromFloatString(sc, test.Input, mysql.TypeDatetime, test.Fsp)
+		t, err := types.ParseTimeFromFloatString(sc, test.Input, mysql.TypeDatetime, (int)(test.Fsp))
 		if test.ExpectError {
 			c.Assert(err, NotNil)
 		} else {
