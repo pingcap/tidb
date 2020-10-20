@@ -122,14 +122,14 @@ In this case, 2 users are involved, one has a table locked for write, and the ot
 
 MySQL's behavior:
 
-| server 1 | server 1                     | server 1     |                |
-| ---      | ---                          | ---          |                |
-| client 1 | client 2                     | client 3     |                |
-|          | lock table t1 write          |              |                |
-|          | lock tablturn on read_only   |              |                |
-|          | lock tablblock               |              | insert into t2 |
-|          | lock tablblock               | unlock table | block          |
-|          | lock tablread_only turned on |              | insert ok      |
+| server 1            | server 1            | server 1       |
+| ---                 | ---                 | ---            |
+| client 1            | client 2            | client 3       |
+|                     | lock table t1 write |                |
+| turn on read_only   |                     |                |
+| block               |                     | insert into t2 |
+| block               | unlock table        | block          |
+| read_only turned on |                     | insert ok      |
 
 TiDB's behavior (designed):
 
