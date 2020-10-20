@@ -1829,7 +1829,6 @@ func BenchmarkLimitExec(b *testing.B) {
 
 type selectionCase struct {
 	rows                  int
-	count                 int
 	filter                []expression.Expression
 	childUsedSchema       []bool
 	usingInlineProjection bool
@@ -1858,7 +1857,6 @@ func defaultSelectionTestCase() *selectionCase {
 		expression.NewZero())
 	tc := &selectionCase{
 		rows:                  300000,
-		count:                 100000,
 		filter:                []expression.Expression{f1},
 		childUsedSchema:       []bool{true, false},
 		usingInlineProjection: false,
