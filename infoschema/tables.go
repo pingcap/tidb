@@ -1297,6 +1297,7 @@ func (s *ServerInfo) isLoopBackAddr(addr string) bool {
 		strings.Contains(addr, "127.0.0.1")
 }
 
+// ResolveLoopBackAddr exports for testing.
 func (s *ServerInfo) ResolveLoopBackAddr() {
 	if s.isLoopBackAddr(s.Address) && !s.isLoopBackAddr(s.StatusAddr) {
 		addr, err1 := net.ResolveTCPAddr("", s.Address)
