@@ -523,6 +523,17 @@ func (ts *testDDLSuite) TestAlterTableSpecRestore(c *C) {
 	RunNodeRestoreTest(c, testCases, "ALTER TABLE t %s", extractNodeFunc)
 }
 
+func (ts *testDDLSuite) TestAlterTableOptionRestore(c *C) {
+	testCases := []NodeRestoreTestCase{
+		{"ALTER TABLE t ROW_FORMAT = COMPRESSED KEY_BLOCK_SIZE = 8", "ALTER TABLE `t` ROW_FORMAT = COMPRESSED KEY_BLOCK_SIZE = 8"},
+		{"ALTER TABLE t ROW_FORMAT = COMPRESSED, KEY_BLOCK_SIZE = 8", "ALTER TABLE `t` ROW_FORMAT = COMPRESSED, KEY_BLOCK_SIZE = 8"},
+	}
+	extractNodeFunc := func(node Node) Node {
+		return node
+	}
+	RunNodeRestoreTest(c, testCases, "%s", extractNodeFunc)
+}
+
 func (ts *testDDLSuite) TestAdminRepairTableRestore(c *C) {
 	testCases := []NodeRestoreTestCase{
 		{"ADMIN REPAIR TABLE t CREATE TABLE t (a int)", "ADMIN REPAIR TABLE `t` CREATE TABLE `t` (`a` INT)"},
