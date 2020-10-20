@@ -69,59 +69,51 @@ As with MySQL, the read_only mode can be enabled at start using a command option
 
 #### Case 1, clients have transactions committing
 
-
-|server 1|server 2|
-|--- |--- |
-|client 1|client 2|
-||begin tx|
-||working|
-||working|
-||committing|
-|turn on read_only|committing|
-|block|committing|
-|block|committed|
-|read_only turned on||
-
-
+| server 1            | server 2   |
+| ---                 | ---        |
+| client 1            | client 2   |
+|                     | begin tx   |
+|                     | working    |
+|                     | working    |
+|                     | committing |
+| turn on read_only   | committing |
+| block               | committing |
+| block               | committed  |
+| read_only turned on |            |
 
 If there are transactions that are committing (i.e. started to commit before enabling attempt), the enabling attempt will be blocked until the commit is finished. This behavior is inline with MySQL’s, according to [MySQL’s documentation](https://dev.mysql.com/doc/refman/5.7/en/server-system-variables.html#sysvar_read_only). If a transaction has not reached commit point, once the enabling attempt is initiated, the transaction will fail at commit point.
 
 
-#### Case 2, client who attempts to turn on `read_only` has write lock held
+#### Case 2, user who attempts to turn on `read_only` has write lock held
 
 
-|server 1| server 1|
-|--- |--- |
-|client 1, connection 1|client 1, connection 2|
-|lock table write||
-||turn on read_only|
-||read_only turned on|
-|unlock||
+| server 1                              | server 1                              |
+| ---                                   | ---                                   |
+| user 1 (with SuperPriv), connection 1 | user 1 (with SuperPriv), connection 2 |
+| lock table write                      |                                       |
+|                                       | turn on read_only                     |
+|                                       | read_only turned on                   |
+| unlock                                |                                       |
 
 
-This case is about the same client having more 2 connections (or sessions), and held a write lock in connection 1, and is attempting to enable read only mode in another connection. Note on [MySQL’s doc](https://dev.mysql.com/doc/refman/5.7/en/server-system-variables.html#sysvar_read_only):
-
-
+This case is about the same user having more 2 connections (or sessions), and held a write lock in connection 1, and is attempting to enable read only mode in another connection. Note on [MySQL’s doc](https://dev.mysql.com/doc/refman/5.7/en/server-system-variables.html#sysvar_read_only):
 
 *   The attempt fails and an error occurs if you have any explicit locks (acquired with [LOCK TABLES](https://dev.mysql.com/doc/refman/5.7/en/lock-tables.html)) or have a pending transaction.
 
-If the client herself has an ongoing transaction or table locked for writing, the attempt should fail. However, the client should already have been a SUPER user (otherwise she can’t turn on read only), therefore updating is not affected by turning on `read_only`, **so it is not blocked nor will fail anyway**. This behavior is verified on MySQL 8.0.
+If the user herself has an ongoing transaction or table locked for writing, the attempt should fail. However, the client should already have been a SUPER user (otherwise she can’t turn on read only), therefore updating is not affected by turning on `read_only`, **so it is not blocked nor will fail anyway**. This behavior is verified on MySQL 8.0.
 
+#### Case 3, other users have held a write lock
 
-#### Case 3, other clients have held a write lock
-
-|server 1|server 2|
-|--- |--- |
-|client 1|client 2|
-||lock table for write|
-|turn on read_only||
-|block||
-|block|unlock table|
-|read_only turned on||
-||lock table for write|
-||error, read_only turned on|
-
-
+| server 1            | server 2                   |
+| ---                 | ---                        |
+| client 1            | client 2                   |
+|                     | lock table for write       |
+| turn on read_only   |                            |
+| block               |                            |
+| block               | unlock table               |
+| read_only turned on |                            |
+|                     | lock table for write       |
+|                     | error, read_only turned on |
 
 In this case, 2 users are involved, one has a table locked for write, and the other wants to turn on the read only mode, the attempt will be blocked until the write lock is released.
 
@@ -130,26 +122,25 @@ In this case, 2 users are involved, one has a table locked for write, and the ot
 
 MySQL's behavior:
 
-|server 1|server 1|server 1|
-|--- |--- |--- |
-|client 1|client 2|client 3|
-||lock table t1 write||
-|turn on read_only|||
-|block||insert into t2|
-|block|unlock table|block|
-|read_only turned on||insert ok|
+| server 1 | server 1                     | server 1     |                |
+| ---      | ---                          | ---          |                |
+| client 1 | client 2                     | client 3     |                |
+|          | lock table t1 write          |              |                |
+|          | lock tablturn on read_only   |              |                |
+|          | lock tablblock               |              | insert into t2 |
+|          | lock tablblock               | unlock table | block          |
+|          | lock tablread_only turned on |              | insert ok      |
 
 TiDB's behavior (designed):
 
-|server 1|server 2|server 3|
-|--- |--- |--- |
-|client 1|client 2|client 3|
-||lock table t1 write||
-|turn on read_only|||
-|block||insert into t2|
-|block|unlock table|fail immediately|
-|read_only turned on|||
-
+| server 1            | server 2            | server 3         |
+| ---                 | ---                 | ---              |
+| client 1            | client 2            | client 3         |
+|                     | lock table t1 write |                  |
+| turn on read_only   |                     |                  |
+| block               |                     | insert into t2   |
+| block               | unlock table        | fail immediately |
+| read_only turned on |                     |                  |
 
 In this case, MySQL will also block the update, and once the table is unlocked, both update and the enabling attempt will succeed.
 
