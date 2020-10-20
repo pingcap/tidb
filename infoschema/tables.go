@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
+	"net"
 	"net/http"
 	"sort"
 	"strconv"
@@ -1291,6 +1292,29 @@ type ServerInfo struct {
 	StartTimestamp int64
 }
 
+func (s *ServerInfo) isLoopBackAddr(addr string) bool {
+	return strings.Contains(addr, "0.0.0.0") ||
+		strings.Contains(addr, "127.0.0.1")
+}
+
+func (s *ServerInfo) ResolveLoopBackAddr() {
+	if s.isLoopBackAddr(s.Address) && !s.isLoopBackAddr(s.StatusAddr) {
+		addr, err1 := net.ResolveTCPAddr("", s.Address)
+		statusAddr, err2 := net.ResolveTCPAddr("", s.StatusAddr)
+		if err1 == nil && err2 == nil {
+			addr.IP = statusAddr.IP
+			s.Address = addr.String()
+		}
+	} else if !s.isLoopBackAddr(s.Address) && s.isLoopBackAddr(s.StatusAddr) {
+		addr, err1 := net.ResolveTCPAddr("", s.Address)
+		statusAddr, err2 := net.ResolveTCPAddr("", s.StatusAddr)
+		if err1 == nil && err2 == nil {
+			statusAddr.IP = addr.IP
+			s.StatusAddr = statusAddr.String()
+		}
+	}
+}
+
 // GetClusterServerInfo returns all components information of cluster
 func GetClusterServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 	failpoint.Inject("mockClusterInfo", func(val failpoint.Value) {
@@ -1318,6 +1342,9 @@ func GetClusterServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 		nodes, err := r(ctx)
 		if err != nil {
 			return nil, err
+		}
+		for i := range nodes {
+			nodes[i].ResolveLoopBackAddr()
 		}
 		servers = append(servers, nodes...)
 	}
