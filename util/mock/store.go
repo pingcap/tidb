@@ -38,7 +38,7 @@ func (s *Store) Begin() (kv.Transaction, error) { return nil, nil }
 func (s *Store) BeginWithStartTS(startTS uint64) (kv.Transaction, error) { return s.Begin() }
 
 // GetSnapshot implements kv.Storage interface.
-func (s *Store) GetSnapshot(ver kv.Version) (kv.Snapshot, error) { return nil, nil }
+func (s *Store) GetSnapshot(ver kv.Version) kv.Snapshot { return nil }
 
 // Close implements kv.Storage interface.
 func (s *Store) Close() error { return nil }

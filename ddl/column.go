@@ -652,10 +652,29 @@ func needChangeColumnData(oldCol, newCol *model.ColumnInfo) bool {
 		// cut to eliminate data reorg change for column type change between decimal.
 		return oldCol.Flen != newCol.Flen || oldCol.Decimal != newCol.Decimal || toUnsigned != originUnsigned
 	}
+	if oldCol.Tp == newCol.Tp && (oldCol.Tp == mysql.TypeEnum || oldCol.Tp == mysql.TypeSet) {
+		return isElemsChangedToModifyColumn(oldCol.Elems, newCol.Elems)
+	}
+	if oldCol.Tp == mysql.TypeEnum || oldCol.Tp == mysql.TypeSet ||
+		newCol.Tp == mysql.TypeEnum || newCol.Tp == mysql.TypeSet {
+		return true
+	}
 	if newCol.Flen > 0 && newCol.Flen < oldCol.Flen || toUnsigned != originUnsigned {
 		return true
 	}
+	return false
+}
 
+func isElemsChangedToModifyColumn(oldElems, newElems []string) bool {
+	if len(newElems) < len(oldElems) {
+		return true
+	}
+	for index, oldElem := range oldElems {
+		newElem := newElems[index]
+		if oldElem != newElem {
+			return true
+		}
+	}
 	return false
 }
 
@@ -901,7 +920,7 @@ func (w *worker) doModifyColumnTypeWithData(
 				// If timeout, we should return, check for the owner and re-wait job done.
 				return ver, nil
 			}
-			if kv.ErrKeyExists.Equal(err) || errCancelledDDLJob.Equal(err) || errCantDecodeRecord.Equal(err) || types.ErrOverflow.Equal(err) {
+			if needRollbackData(err) {
 				if err1 := t.RemoveDDLReorgHandle(job, reorgInfo.elements); err1 != nil {
 					logutil.BgLogger().Warn("[ddl] run modify column job failed, RemoveDDLReorgHandle failed, can't convert job to rollback",
 						zap.String("job", job.String()), zap.Error(err1))
@@ -958,6 +977,12 @@ func (w *worker) doModifyColumnTypeWithData(
 	}
 
 	return ver, errors.Trace(err)
+}
+
+// needRollbackData indicates whether it needs to rollback data when specific error occurs.
+func needRollbackData(err error) bool {
+	return kv.ErrKeyExists.Equal(err) || errCancelledDDLJob.Equal(err) || errCantDecodeRecord.Equal(err) ||
+		types.ErrOverflow.Equal(err) || types.ErrDataTooLong.Equal(err) || types.ErrTruncated.Equal(err)
 }
 
 // BuildElements is exported for testing.
@@ -1148,6 +1173,7 @@ func (w *updateColumnWorker) getRowRecord(handle kv.Handle, recordKey []byte, ra
 	var recordWarning *terror.Error
 	newColVal, err := table.CastValue(w.sessCtx, w.rowMap[w.oldColInfo.ID], w.newColInfo, false, false)
 	if err != nil {
+		err = w.reformatErrors(err)
 		if IsNormalWarning(err) || (!w.sqlMode.HasStrictMode() && IsStrictWarning(err)) {
 			// Keep the warnings.
 			recordWarning = errors.Cause(err).(*terror.Error)
@@ -1182,6 +1208,15 @@ func (w *updateColumnWorker) getRowRecord(handle kv.Handle, recordKey []byte, ra
 	return nil
 }
 
+// reformatErrors casted error because `convertTo` function couldn't package column name and datum value for some errors.
+func (w *updateColumnWorker) reformatErrors(err error) error {
+	// Since row count is not precious in concurrent reorganization, here we substitute row count with datum value.
+	if types.ErrTruncated.Equal(err) {
+		err = types.ErrTruncated.GenWithStack("Data truncated for column '%s', value is '%s'", w.oldColInfo.Name, w.rowMap[w.oldColInfo.ID])
+	}
+	return err
+}
+
 // IsNormalWarning is used to check the normal warnings, for example data-truncated warnings.
 // This kind of warning will be always thrown out regard less of what kind of the sql mode is.
 func IsNormalWarning(err error) bool {
@@ -1196,7 +1231,7 @@ func IsNormalWarning(err error) bool {
 // non-strict SQL Mode.
 func IsStrictWarning(err error) bool {
 	// TODO: there are more errors here can be identified as warnings under non-strict SQL mode.
-	if types.ErrOverflow.Equal(err) {
+	if types.ErrOverflow.Equal(err) || types.ErrTruncated.Equal(err) {
 		return true
 	}
 	return false

@@ -132,6 +132,7 @@ var _ = Suite(&partitionTableSuite{&baseTestSuite{}})
 var _ = SerialSuites(&tiflashTestSuite{})
 var _ = SerialSuites(&globalIndexSuite{&baseTestSuite{}})
 var _ = SerialSuites(&testSerialSuite{&baseTestSuite{}})
+var _ = SerialSuites(&testCoprCache{})
 
 type testSuite struct{ *baseTestSuite }
 type testSuiteP1 struct{ *baseTestSuite }
@@ -145,6 +146,11 @@ type testSlowQuery struct{ *baseTestSuite }
 type partitionTableSuite struct{ *baseTestSuite }
 type globalIndexSuite struct{ *baseTestSuite }
 type testSerialSuite struct{ *baseTestSuite }
+type testCoprCache struct {
+	store kv.Storage
+	dom   *domain.Domain
+	cls   cluster.Cluster
+}
 
 type baseTestSuite struct {
 	cluster cluster.Cluster
@@ -3685,43 +3691,85 @@ func (s *testSuite) TestLimit(c *C) {
 	tk.MustExec(`use test;`)
 	tk.MustExec(`drop table if exists t;`)
 	tk.MustExec(`create table t(a bigint, b bigint);`)
-	tk.MustExec(`insert into t values(1, 1), (2, 2), (3, 3), (4, 4), (5, 5), (6, 6);`)
+	tk.MustExec(`insert into t values(1, 1), (2, 2), (3, 30), (4, 40), (5, 5), (6, 6);`)
 	tk.MustQuery(`select * from t order by a limit 1, 1;`).Check(testkit.Rows(
 		"2 2",
 	))
 	tk.MustQuery(`select * from t order by a limit 1, 2;`).Check(testkit.Rows(
 		"2 2",
-		"3 3",
+		"3 30",
 	))
 	tk.MustQuery(`select * from t order by a limit 1, 3;`).Check(testkit.Rows(
 		"2 2",
-		"3 3",
-		"4 4",
+		"3 30",
+		"4 40",
 	))
 	tk.MustQuery(`select * from t order by a limit 1, 4;`).Check(testkit.Rows(
 		"2 2",
-		"3 3",
-		"4 4",
+		"3 30",
+		"4 40",
 		"5 5",
 	))
+
+	// test inline projection
+	tk.MustQuery(`select a from t where a > 0 limit 1, 1;`).Check(testkit.Rows(
+		"2",
+	))
+	tk.MustQuery(`select a from t where a > 0 limit 1, 2;`).Check(testkit.Rows(
+		"2",
+		"3",
+	))
+	tk.MustQuery(`select b from t where a > 0 limit 1, 3;`).Check(testkit.Rows(
+		"2",
+		"30",
+		"40",
+	))
+	tk.MustQuery(`select b from t where a > 0 limit 1, 4;`).Check(testkit.Rows(
+		"2",
+		"30",
+		"40",
+		"5",
+	))
+
+	// test @@tidb_init_chunk_size=2
 	tk.MustExec(`set @@tidb_init_chunk_size=2;`)
-	tk.MustQuery(`select * from t order by a limit 2, 1;`).Check(testkit.Rows(
-		"3 3",
+	tk.MustQuery(`select * from t where a > 0 limit 2, 1;`).Check(testkit.Rows(
+		"3 30",
 	))
-	tk.MustQuery(`select * from t order by a limit 2, 2;`).Check(testkit.Rows(
-		"3 3",
-		"4 4",
+	tk.MustQuery(`select * from t where a > 0 limit 2, 2;`).Check(testkit.Rows(
+		"3 30",
+		"4 40",
 	))
-	tk.MustQuery(`select * from t order by a limit 2, 3;`).Check(testkit.Rows(
-		"3 3",
-		"4 4",
+	tk.MustQuery(`select * from t where a > 0 limit 2, 3;`).Check(testkit.Rows(
+		"3 30",
+		"4 40",
 		"5 5",
 	))
-	tk.MustQuery(`select * from t order by a limit 2, 4;`).Check(testkit.Rows(
-		"3 3",
-		"4 4",
+	tk.MustQuery(`select * from t where a > 0 limit 2, 4;`).Check(testkit.Rows(
+		"3 30",
+		"4 40",
 		"5 5",
 		"6 6",
+	))
+
+	// test inline projection
+	tk.MustQuery(`select a from t order by a limit 2, 1;`).Check(testkit.Rows(
+		"3",
+	))
+	tk.MustQuery(`select b from t order by a limit 2, 2;`).Check(testkit.Rows(
+		"30",
+		"40",
+	))
+	tk.MustQuery(`select a from t order by a limit 2, 3;`).Check(testkit.Rows(
+		"3",
+		"4",
+		"5",
+	))
+	tk.MustQuery(`select b from t order by a limit 2, 4;`).Check(testkit.Rows(
+		"30",
+		"40",
+		"5",
+		"6",
 	))
 }
 
@@ -6470,6 +6518,64 @@ func (s *testSuite) TestIssue13758(c *C) {
 		"4",
 		"<nil>",
 	))
+}
+
+func (s *testCoprCache) SetUpSuite(c *C) {
+	originConfig := config.GetGlobalConfig()
+	config.StoreGlobalConfig(config.NewConfig())
+	defer config.StoreGlobalConfig(originConfig)
+	cli := &regionProperityClient{}
+	hijackClient := func(c tikv.Client) tikv.Client {
+		cli.Client = c
+		return cli
+	}
+	var err error
+	s.store, err = mockstore.NewMockStore(
+		mockstore.WithClusterInspector(func(c cluster.Cluster) {
+			mockstore.BootstrapWithSingleStore(c)
+			s.cls = c
+		}),
+		mockstore.WithClientHijacker(hijackClient),
+	)
+	c.Assert(err, IsNil)
+	s.dom, err = session.BootstrapSession(s.store)
+	c.Assert(err, IsNil)
+}
+
+func (s *testCoprCache) TearDownSuite(c *C) {
+	s.dom.Close()
+	s.store.Close()
+}
+
+func (s *testCoprCache) TestIntegrationCopCache(c *C) {
+	originConfig := config.GetGlobalConfig()
+	config.StoreGlobalConfig(config.NewConfig())
+	defer config.StoreGlobalConfig(originConfig)
+
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int primary key)")
+	tblInfo, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tid := tblInfo.Meta().ID
+	tk.MustExec(`insert into t values(1),(2),(3),(4),(5),(6),(7),(8),(9),(10),(11),(12)`)
+	s.cls.SplitTable(tid, 6)
+
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/cophandler/mockCopCacheInUnistore", `return(123)`), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/cophandler/mockCopCacheInUnistore"), IsNil)
+	}()
+
+	rows := tk.MustQuery("explain analyze select * from t where t.a < 10").Rows()
+	c.Assert(rows[0][2], Equals, "9")
+	c.Assert(strings.Contains(rows[0][5].(string), "cop_task: {num: 5"), Equals, true)
+	c.Assert(strings.Contains(rows[0][5].(string), "copr_cache_hit_ratio: 0.00"), Equals, true)
+
+	rows = tk.MustQuery("explain analyze select * from t").Rows()
+	c.Assert(rows[0][2], Equals, "12")
+	c.Assert(strings.Contains(rows[0][5].(string), "cop_task: {num: 6"), Equals, true)
+	c.Assert(strings.Contains(rows[0][5].(string), "copr_cache_hit_ratio: 0.67"), Equals, true)
 }
 
 func (s *testSerialSuite) TestCoprocessorOOMAction(c *C) {
