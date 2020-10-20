@@ -75,6 +75,28 @@ func (s *RegionRequestSender) SendReq(bo *Backoffer, req *tikvrpc.Request, regio
 	return resp, err
 }
 
+func (s *RegionRequestSender) getRPCContext(
+	bo *Backoffer,
+	req *tikvrpc.Request,
+	regionID RegionVerID,
+	sType kv.StoreType,
+) (*RPCContext, error) {
+	switch sType {
+	case kv.TiKV:
+		var seed uint32
+		if req.ReplicaReadSeed != nil {
+			seed = *req.ReplicaReadSeed
+		}
+		return s.regionCache.GetTiKVRPCContext(bo, regionID, req.ReplicaReadType, seed)
+	case kv.TiFlash:
+		return s.regionCache.GetTiFlashRPCContext(bo, regionID)
+	case kv.TiDB:
+		return &RPCContext{Addr: s.storeAddr}, nil
+	default:
+		return nil, errors.Errorf("unsupported storage type: %v", sType)
+	}
+}
+
 // SendReqCtx sends a request to tikv server and return response and RPCCtx of this RPC.
 func (s *RegionRequestSender) SendReqCtx(bo *Backoffer, req *tikvrpc.Request, regionID RegionVerID, timeout time.Duration) (*tikvrpc.Response, *RPCContext, error) {
 	failpoint.Inject("tikvStoreSendReqResult", func(val failpoint.Value) {
@@ -102,13 +124,27 @@ func (s *RegionRequestSender) SendReqCtx(bo *Backoffer, req *tikvrpc.Request, re
 		}
 	})
 
+<<<<<<< HEAD
 	for {
 		ctx, err := s.regionCache.GetRPCContext(bo, regionID)
 
+=======
+	tryTimes := 0
+	for {
+		if (tryTimes > 0) && (tryTimes%100000 == 0) {
+			logutil.Logger(bo.ctx).Warn("retry get ", zap.Uint64("region = ", regionID.GetID()), zap.Int("times = ", tryTimes))
+		}
+
+		rpcCtx, err = s.getRPCContext(bo, req, regionID, sType)
+>>>>>>> fe8437330... session: make tidb_replica_read work correctly (#20386)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
+<<<<<<< HEAD
 		var resp *tikvrpc.Response
+=======
+
+>>>>>>> fe8437330... session: make tidb_replica_read work correctly (#20386)
 		failpoint.Inject("invalidCacheAndRetry", func() {
 			// cooperate with github.com/pingcap/tidb/store/tikv/gcworker/setGcResolveMaxBackoff
 			if c := bo.ctx.Value("injectedBackoff"); c != nil {

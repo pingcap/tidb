@@ -33,7 +33,7 @@ import (
 	"google.golang.org/grpc"
 )
 
-type testRegionRequestSuite struct {
+type testRegionRequestToSingleStoreSuite struct {
 	cluster             *mocktikv.Cluster
 	store               uint64
 	peer                uint64
@@ -44,7 +44,7 @@ type testRegionRequestSuite struct {
 	mvccStore           mocktikv.MVCCStore
 }
 
-type testStoreLimitSuite struct {
+type testRegionRequestToThreeStoresSuite struct {
 	cluster             *mocktikv.Cluster
 	storeIDs            []uint64
 	peerIDs             []uint64
@@ -56,11 +56,16 @@ type testStoreLimitSuite struct {
 	mvccStore           mocktikv.MVCCStore
 }
 
-var _ = Suite(&testRegionRequestSuite{})
-var _ = Suite(&testStoreLimitSuite{})
+var _ = Suite(&testRegionRequestToSingleStoreSuite{})
+var _ = Suite(&testRegionRequestToThreeStoresSuite{})
 
+<<<<<<< HEAD
 func (s *testRegionRequestSuite) SetUpTest(c *C) {
 	s.cluster = mocktikv.NewCluster()
+=======
+func (s *testRegionRequestToSingleStoreSuite) SetUpTest(c *C) {
+	s.cluster = mocktikv.NewCluster(mocktikv.MustNewMVCCStore())
+>>>>>>> fe8437330... session: make tidb_replica_read work correctly (#20386)
 	s.store, s.peer, s.region = mocktikv.BootstrapWithSingleStore(s.cluster)
 	pdCli := &codecPDClient{mocktikv.NewPDClient(s.cluster)}
 	s.cache = NewRegionCache(pdCli)
@@ -70,8 +75,13 @@ func (s *testRegionRequestSuite) SetUpTest(c *C) {
 	s.regionRequestSender = NewRegionRequestSender(s.cache, client)
 }
 
+<<<<<<< HEAD
 func (s *testStoreLimitSuite) SetUpTest(c *C) {
 	s.cluster = mocktikv.NewCluster()
+=======
+func (s *testRegionRequestToThreeStoresSuite) SetUpTest(c *C) {
+	s.cluster = mocktikv.NewCluster(mocktikv.MustNewMVCCStore())
+>>>>>>> fe8437330... session: make tidb_replica_read work correctly (#20386)
 	s.storeIDs, s.peerIDs, s.regionID, s.leaderPeer = mocktikv.BootstrapWithMultiStores(s.cluster, 3)
 	pdCli := &codecPDClient{mocktikv.NewPDClient(s.cluster)}
 	s.cache = NewRegionCache(pdCli)
@@ -81,11 +91,11 @@ func (s *testStoreLimitSuite) SetUpTest(c *C) {
 	s.regionRequestSender = NewRegionRequestSender(s.cache, client)
 }
 
-func (s *testRegionRequestSuite) TearDownTest(c *C) {
+func (s *testRegionRequestToSingleStoreSuite) TearDownTest(c *C) {
 	s.cache.Close()
 }
 
-func (s *testStoreLimitSuite) TearDownTest(c *C) {
+func (s *testRegionRequestToThreeStoresSuite) TearDownTest(c *C) {
 	s.cache.Close()
 }
 
@@ -101,8 +111,42 @@ func (f *fnClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.Re
 	return f.fn(ctx, addr, req, timeout)
 }
 
+<<<<<<< HEAD
 func (s *testRegionRequestSuite) TestOnRegionError(c *C) {
 	req := &tikvrpc.Request{Type: tikvrpc.CmdRawPut, RawPut: &kvrpcpb.RawPutRequest{
+=======
+func (s *testRegionRequestToThreeStoresSuite) TestGetRPCContext(c *C) {
+	// Load the bootstrapped region into the cache.
+	_, err := s.cache.BatchLoadRegionsFromKey(s.bo, []byte{}, 1)
+	c.Assert(err, IsNil)
+
+	var seed uint32 = 0
+	var regionID = RegionVerID{s.regionID, 0, 0}
+
+	req := tikvrpc.NewReplicaReadRequest(tikvrpc.CmdGet, &kvrpcpb.GetRequest{}, kv.ReplicaReadLeader, &seed)
+	rpcCtx, err := s.regionRequestSender.getRPCContext(s.bo, req, regionID, kv.TiKV)
+	c.Assert(err, IsNil)
+	c.Assert(rpcCtx.Peer.Id, Equals, s.leaderPeer)
+
+	req.ReplicaReadType = kv.ReplicaReadFollower
+	rpcCtx, err = s.regionRequestSender.getRPCContext(s.bo, req, regionID, kv.TiKV)
+	c.Assert(err, IsNil)
+	c.Assert(rpcCtx.Peer.Id, Not(Equals), s.leaderPeer)
+
+	req.ReplicaReadType = kv.ReplicaReadMixed
+	rpcCtx, err = s.regionRequestSender.getRPCContext(s.bo, req, regionID, kv.TiKV)
+	c.Assert(err, IsNil)
+	c.Assert(rpcCtx.Peer.Id, Equals, s.leaderPeer)
+
+	seed = 1
+	rpcCtx, err = s.regionRequestSender.getRPCContext(s.bo, req, regionID, kv.TiKV)
+	c.Assert(err, IsNil)
+	c.Assert(rpcCtx.Peer.Id, Not(Equals), s.leaderPeer)
+}
+
+func (s *testRegionRequestToSingleStoreSuite) TestOnRegionError(c *C) {
+	req := tikvrpc.NewRequest(tikvrpc.CmdRawPut, &kvrpcpb.RawPutRequest{
+>>>>>>> fe8437330... session: make tidb_replica_read work correctly (#20386)
 		Key:   []byte("key"),
 		Value: []byte("value"),
 	}}
@@ -130,8 +174,13 @@ func (s *testRegionRequestSuite) TestOnRegionError(c *C) {
 
 }
 
+<<<<<<< HEAD
 func (s *testStoreLimitSuite) TestStoreTokenLimit(c *C) {
 	req := &tikvrpc.Request{Type: tikvrpc.CmdPrewrite, Prewrite: &kvrpcpb.PrewriteRequest{}, Context: kvrpcpb.Context{}}
+=======
+func (s *testRegionRequestToThreeStoresSuite) TestStoreTokenLimit(c *C) {
+	req := tikvrpc.NewRequest(tikvrpc.CmdPrewrite, &kvrpcpb.PrewriteRequest{}, kvrpcpb.Context{})
+>>>>>>> fe8437330... session: make tidb_replica_read work correctly (#20386)
 	region, err := s.cache.LocateRegionByID(s.bo, s.regionID)
 	c.Assert(err, IsNil)
 	c.Assert(region, NotNil)
@@ -146,6 +195,7 @@ func (s *testStoreLimitSuite) TestStoreTokenLimit(c *C) {
 	storeutil.StoreLimit.Store(oldStoreLimit)
 }
 
+<<<<<<< HEAD
 func (s *testRegionRequestSuite) TestOnSendFailedWithStoreRestart(c *C) {
 	req := &tikvrpc.Request{
 		Type: tikvrpc.CmdRawPut,
@@ -154,6 +204,13 @@ func (s *testRegionRequestSuite) TestOnSendFailedWithStoreRestart(c *C) {
 			Value: []byte("value"),
 		},
 	}
+=======
+func (s *testRegionRequestToSingleStoreSuite) TestOnSendFailedWithStoreRestart(c *C) {
+	req := tikvrpc.NewRequest(tikvrpc.CmdRawPut, &kvrpcpb.RawPutRequest{
+		Key:   []byte("key"),
+		Value: []byte("value"),
+	})
+>>>>>>> fe8437330... session: make tidb_replica_read work correctly (#20386)
 	region, err := s.cache.LocateRegionByID(s.bo, s.region)
 	c.Assert(err, IsNil)
 	c.Assert(region, NotNil)
@@ -179,6 +236,7 @@ func (s *testRegionRequestSuite) TestOnSendFailedWithStoreRestart(c *C) {
 	c.Assert(resp.RawPut, NotNil)
 }
 
+<<<<<<< HEAD
 func (s *testRegionRequestSuite) TestOnSendFailedWithCloseKnownStoreThenUseNewOne(c *C) {
 	req := &tikvrpc.Request{
 		Type: tikvrpc.CmdRawPut,
@@ -187,6 +245,13 @@ func (s *testRegionRequestSuite) TestOnSendFailedWithCloseKnownStoreThenUseNewOn
 			Value: []byte("value"),
 		},
 	}
+=======
+func (s *testRegionRequestToSingleStoreSuite) TestOnSendFailedWithCloseKnownStoreThenUseNewOne(c *C) {
+	req := tikvrpc.NewRequest(tikvrpc.CmdRawPut, &kvrpcpb.RawPutRequest{
+		Key:   []byte("key"),
+		Value: []byte("value"),
+	})
+>>>>>>> fe8437330... session: make tidb_replica_read work correctly (#20386)
 
 	// add new store2 and make store2 as leader.
 	store2 := s.cluster.AllocID()
@@ -216,6 +281,7 @@ func (s *testRegionRequestSuite) TestOnSendFailedWithCloseKnownStoreThenUseNewOn
 	c.Assert(resp.RawPut, NotNil)
 }
 
+<<<<<<< HEAD
 func (s *testRegionRequestSuite) TestSendReqCtx(c *C) {
 	req := &tikvrpc.Request{
 		Type: tikvrpc.CmdRawPut,
@@ -224,6 +290,13 @@ func (s *testRegionRequestSuite) TestSendReqCtx(c *C) {
 			Value: []byte("value"),
 		},
 	}
+=======
+func (s *testRegionRequestToSingleStoreSuite) TestSendReqCtx(c *C) {
+	req := tikvrpc.NewRequest(tikvrpc.CmdRawPut, &kvrpcpb.RawPutRequest{
+		Key:   []byte("key"),
+		Value: []byte("value"),
+	})
+>>>>>>> fe8437330... session: make tidb_replica_read work correctly (#20386)
 	region, err := s.cache.LocateRegionByID(s.bo, s.region)
 	c.Assert(err, IsNil)
 	c.Assert(region, NotNil)
@@ -233,6 +306,7 @@ func (s *testRegionRequestSuite) TestSendReqCtx(c *C) {
 	c.Assert(ctx, NotNil)
 }
 
+<<<<<<< HEAD
 func (s *testRegionRequestSuite) TestOnSendFailedWithCancelled(c *C) {
 	req := &tikvrpc.Request{
 		Type: tikvrpc.CmdRawPut,
@@ -241,6 +315,13 @@ func (s *testRegionRequestSuite) TestOnSendFailedWithCancelled(c *C) {
 			Value: []byte("value"),
 		},
 	}
+=======
+func (s *testRegionRequestToSingleStoreSuite) TestOnSendFailedWithCancelled(c *C) {
+	req := tikvrpc.NewRequest(tikvrpc.CmdRawPut, &kvrpcpb.RawPutRequest{
+		Key:   []byte("key"),
+		Value: []byte("value"),
+	})
+>>>>>>> fe8437330... session: make tidb_replica_read work correctly (#20386)
 	region, err := s.cache.LocateRegionByID(s.bo, s.region)
 	c.Assert(err, IsNil)
 	c.Assert(region, NotNil)
@@ -266,6 +347,7 @@ func (s *testRegionRequestSuite) TestOnSendFailedWithCancelled(c *C) {
 	c.Assert(resp.RawPut, NotNil)
 }
 
+<<<<<<< HEAD
 func (s *testRegionRequestSuite) TestNoReloadRegionWhenCtxCanceled(c *C) {
 	req := &tikvrpc.Request{
 		Type: tikvrpc.CmdRawPut,
@@ -274,6 +356,13 @@ func (s *testRegionRequestSuite) TestNoReloadRegionWhenCtxCanceled(c *C) {
 			Value: []byte("value"),
 		},
 	}
+=======
+func (s *testRegionRequestToSingleStoreSuite) TestNoReloadRegionWhenCtxCanceled(c *C) {
+	req := tikvrpc.NewRequest(tikvrpc.CmdRawPut, &kvrpcpb.RawPutRequest{
+		Key:   []byte("key"),
+		Value: []byte("value"),
+	})
+>>>>>>> fe8437330... session: make tidb_replica_read work correctly (#20386)
 	region, err := s.cache.LocateRegionByID(s.bo, s.region)
 	c.Assert(err, IsNil)
 	c.Assert(region, NotNil)
@@ -410,7 +499,7 @@ func (s *mockTikvGrpcServer) KvTxnHeartBeat(ctx context.Context, in *kvrpcpb.Txn
 	return nil, errors.New("unreachable")
 }
 
-func (s *testRegionRequestSuite) TestNoReloadRegionForGrpcWhenCtxCanceled(c *C) {
+func (s *testRegionRequestToSingleStoreSuite) TestNoReloadRegionForGrpcWhenCtxCanceled(c *C) {
 	// prepare a mock tikv grpc server
 	addr := "localhost:56341"
 	lis, err := net.Listen("tcp", addr)
@@ -454,3 +543,38 @@ func (s *testRegionRequestSuite) TestNoReloadRegionForGrpcWhenCtxCanceled(c *C) 
 	server.Stop()
 	wg.Wait()
 }
+<<<<<<< HEAD
+=======
+
+func (s *testRegionRequestToSingleStoreSuite) TestOnMaxTimestampNotSyncedError(c *C) {
+	req := tikvrpc.NewRequest(tikvrpc.CmdPrewrite, &kvrpcpb.PrewriteRequest{})
+	region, err := s.cache.LocateRegionByID(s.bo, s.region)
+	c.Assert(err, IsNil)
+	c.Assert(region, NotNil)
+
+	// test retry for max timestamp not synced
+	func() {
+		oc := s.regionRequestSender.client
+		defer func() {
+			s.regionRequestSender.client = oc
+		}()
+		count := 0
+		s.regionRequestSender.client = &fnClient{func(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (response *tikvrpc.Response, err error) {
+			count += 1
+			var resp *tikvrpc.Response
+			if count < 3 {
+				resp = &tikvrpc.Response{Resp: &kvrpcpb.PrewriteResponse{
+					RegionError: &errorpb.Error{MaxTimestampNotSynced: &errorpb.MaxTimestampNotSynced{}},
+				}}
+			} else {
+				resp = &tikvrpc.Response{Resp: &kvrpcpb.PrewriteResponse{}}
+			}
+			return resp, nil
+		}}
+		bo := NewBackofferWithVars(context.Background(), 5, nil)
+		resp, err := s.regionRequestSender.SendReq(bo, req, region.Region, time.Second)
+		c.Assert(err, IsNil)
+		c.Assert(resp, NotNil)
+	}()
+}
+>>>>>>> fe8437330... session: make tidb_replica_read work correctly (#20386)
