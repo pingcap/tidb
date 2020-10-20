@@ -41,7 +41,7 @@ ERROR 1227 (42000):Enabling failed; the enabling attempt is interrupted by anoth
         *   if there are no warnings or errors, the cluster is then read only. \
 
 *   `read_only` once enabled, all users without SuperPriv will not be able to execute SQL queries that might update the data to the whole cluster (currently not support table level `read_only`, if you want such behavior, use table lock instead).
-*   Only users with `SuperPriv` could enable this option, otherwise the following error will be returned. This behavior is implied by the fact that setting global variables requires SUPER privilege level. \
+*   Only users with `SuperPriv` could enable or disable this option, otherwise the following error will be returned. This behavior is implied by the fact that setting global variables requires SUPER privilege level. \
 ERROR 1227 (42000): Access denied; you need (at least one of) the SUPER or SYSTEM_VARIABLES_ADMIN privilege(s) for this operation
 *   When enabled, writes (updates) from client will not be allowed, and an error will be returned \
 ERROR 1290 (HY000): The MySQL server is running with the --read-only option so it cannot execute this statement
@@ -231,4 +231,3 @@ The polling process might exhaust the TiDB server, but it could be controlled by
 Alternative designs are considered in the above sections.
 
 But a fundamentally different approach can be, making the read only mode an instance level feature, and leaves cluster level read only management to deployment tools like TiUP, which applies `set instance read_only=1` on all instances. This approach can be much simpler in practice, but creates external dependency on this cluster level feature.
-
