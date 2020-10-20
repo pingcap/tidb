@@ -1843,8 +1843,8 @@ func (tc selectionCase) columns() []*expression.Column {
 }
 
 func (tc selectionCase) String() string {
-	return fmt.Sprintf("(rows:%v, count:%v, inline_projection:%v)",
-		tc.rows, tc.count, tc.usingInlineProjection)
+	return fmt.Sprintf("(rows:%v, inline_projection:%v)",
+		tc.rows, tc.usingInlineProjection)
 }
 
 func defaultSelectionTestCase() *selectionCase {
