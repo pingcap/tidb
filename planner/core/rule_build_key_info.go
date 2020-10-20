@@ -47,19 +47,9 @@ func (la *LogicalAggregation) BuildKeyInfo(selfSchema *expression.Schema, childS
 		return
 	}
 	la.logicalSchemaProducer.BuildKeyInfo(selfSchema, childSchema)
-	for _, key := range childSchema[0].Keys {
-		indices := selfSchema.ColumnsIndices(key)
-		if indices == nil {
-			continue
-		}
-		newKey := make([]*expression.Column, 0, len(key))
-		for _, i := range indices {
-			newKey = append(newKey, selfSchema.Columns[i])
-		}
-		selfSchema.Keys = append(selfSchema.Keys, newKey)
-	}
-	if len(la.groupByCols) == len(la.GroupByItems) && len(la.GroupByItems) > 0 {
-		indices := selfSchema.ColumnsIndices(la.groupByCols)
+	groupByCols := la.GetGroupByCols()
+	if len(groupByCols) == len(la.GroupByItems) && len(la.GroupByItems) > 0 {
+		indices := selfSchema.ColumnsIndices(groupByCols)
 		if indices != nil {
 			newKey := make([]*expression.Column, 0, len(indices))
 			for _, i := range indices {
@@ -107,7 +97,7 @@ func (p *LogicalSelection) BuildKeyInfo(selfSchema *expression.Schema, childSche
 
 // BuildKeyInfo implements LogicalPlan BuildKeyInfo interface.
 func (p *LogicalLimit) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
-	p.baseLogicalPlan.BuildKeyInfo(selfSchema, childSchema)
+	p.logicalSchemaProducer.BuildKeyInfo(selfSchema, childSchema)
 	if p.Count == 1 {
 		p.maxOneRow = true
 	}
@@ -149,7 +139,10 @@ func (p *LogicalProjection) buildSchemaByExprs(selfSchema *expression.Schema) *e
 
 // BuildKeyInfo implements LogicalPlan BuildKeyInfo interface.
 func (p *LogicalProjection) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
-	p.logicalSchemaProducer.BuildKeyInfo(selfSchema, childSchema)
+	// `LogicalProjection` use schema from `Exprs` to build key info. See `buildSchemaByExprs`.
+	// So call `baseLogicalPlan.BuildKeyInfo` here to avoid duplicated building key info.
+	p.baseLogicalPlan.BuildKeyInfo(selfSchema, childSchema)
+	selfSchema.Keys = nil
 	schema := p.buildSchemaByExprs(selfSchema)
 	for _, key := range childSchema[0].Keys {
 		indices := schema.ColumnsIndices(key)
