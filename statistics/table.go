@@ -464,6 +464,44 @@ func outOfRangeEQSelectivity(ndv, modifyRows, totalRows int64) float64 {
 	return selectivity
 }
 
+//
+func (coll *HistColl) crossValidate(sc *stmtctx.StatementContext, idx *Index, usedColsLen int, idxPointRange *ranger.Range) (float64, float64, error) {
+	minRowCount := math.MaxFloat64
+	cols := coll.Idx2ColumnIDs[idx.ID]
+	crossValidationCount := 1.0
+	totalRowCount := float64(idx.TotalRowCount())
+	for i, colID := range cols {
+		if i >= usedColsLen {
+			break
+		}
+		if col, ok := coll.Columns[colID]; ok {
+			lowExclude := idxPointRange.LowExclude
+			highExclue := idxPointRange.HighExclude
+			if lowExclude != highExclue && i < usedColsLen {
+				lowExclude = false
+				highExclue = false
+			}
+			rang := ranger.Range{
+				LowVal:      []types.Datum{idxPointRange.LowVal[i]},
+				LowExclude:  lowExclude,
+				HighVal:     []types.Datum{idxPointRange.HighVal[i]},
+				HighExclude: highExclue,
+			}
+
+			rowCount, err := col.GetColumnRowCount(sc, []*ranger.Range{&rang}, coll.ModifyCount, col.IsHandle)
+			if err != nil {
+				return 0, 0, err
+			}
+			crossValidationCount = crossValidationCount * (rowCount / totalRowCount)
+
+			if rowCount < minRowCount {
+				minRowCount = rowCount
+			}
+		}
+	}
+	return minRowCount, crossValidationCount, nil
+}
+
 // getEqualCondSelectivity gets the selectivity of the equal conditions.
 func (coll *HistColl) getEqualCondSelectivity(sc *stmtctx.StatementContext, idx *Index, bytes []byte, usedColsLen int, idxPointRange *ranger.Range) (float64, error) {
 	coverAll := len(idx.Info.Columns) == usedColsLen
@@ -490,45 +528,16 @@ func (coll *HistColl) getEqualCondSelectivity(sc *stmtctx.StatementContext, idx 
 		return outOfRangeEQSelectivity(ndv, coll.ModifyCount, int64(idx.TotalRowCount())), nil
 	}
 
-	minRowCount := math.MaxFloat64
-	cols := coll.Idx2ColumnIDs[idx.ID]
-	crossValidationCount := 1.0
-	totalRowCount := float64(idx.TotalRowCount())
-	for i, colID := range cols {
-		if i >= usedColsLen {
-			break
-		}
-		if col, ok := coll.Columns[colID]; ok {
-			lowExclude := idxPointRange.LowExclude
-			highExclue := idxPointRange.HighExclude
-			if lowExclude != highExclue && i < usedColsLen {
-				lowExclude = false
-				highExclue = false
-			}
-			rang := ranger.Range{
-				LowVal:      []types.Datum{idxPointRange.LowVal[i]},
-				LowExclude:  lowExclude,
-				HighVal:     []types.Datum{idxPointRange.HighVal[i]},
-				HighExclude: highExclue,
-			}
-
-			rowCount, err := col.GetColumnRowCount(sc, []*ranger.Range{&rang}, coll.ModifyCount, col.IsHandle)
-			if err != nil {
-				return 0, err
-			}
-			crossValidationCount = crossValidationCount * (rowCount / totalRowCount)
-
-			if rowCount < minRowCount {
-				minRowCount = rowCount
-			}
-		}
+	minRowCount, crossValidationCount, err := coll.crossValidate(sc, idx, usedColsLen, idxPointRange)
+	if err != nil {
+		return 0, nil
 	}
 
 	idxCount := float64(idx.CMSketch.QueryBytes(bytes))
 	if minRowCount < idxCount {
 		return crossValidationCount, nil
 	}
-	return idxCount / totalRowCount, nil
+	return idxCount / float64(idx.TotalRowCount()), nil
 }
 
 func (coll *HistColl) getIndexRowCount(sc *stmtctx.StatementContext, idxID int64, indexRanges []*ranger.Range) (float64, error) {

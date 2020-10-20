@@ -732,8 +732,6 @@ func (s *testStatsSuite) TestDNFCondSelectivity(c *C) {
 func (s *testStatsSuite) TestMultiColumnIndexEstimate(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	tk := testkit.NewTestKit(c, s.store)
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, key(a,b))")
