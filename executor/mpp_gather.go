@@ -106,9 +106,9 @@ func (e *ExchangeReceiver) ToPB(ctx sessionctx.Context, storeType kv.StoreType) 
 	}
 	executorID := e.ExplainID().String()
 	return &tipb.Executor{
-		Tp:             tipb.ExecType_TypeExchangeReceiver,
+		Tp:               tipb.ExecType_TypeExchangeReceiver,
 		ExchangeReceiver: ecExec,
-		ExecutorId:     &executorID,
+		ExecutorId:       &executorID,
 	}, nil
 }
 
@@ -166,7 +166,7 @@ type MPPGather struct {
 
 func (e *MPPGather) constructMPPTasksImpl(ctx context.Context, p *planFragment) ([]*mppTask, error) {
 	if p.tableScan.Table.GetPartitionInfo() == nil {
-		return e.scheduleSinglePhysicalTable(ctx, p.tableScan.Table.ID, p.tableScan.Ranges)
+		return e.constructSinglePhysicalTable(ctx, p.tableScan.Table.ID, p.tableScan.Ranges)
 	}
 	tmp, _ := e.is.TableByID(p.tableScan.Table.ID)
 	tbl := tmp.(table.PartitionedTable)
@@ -176,7 +176,7 @@ func (e *MPPGather) constructMPPTasksImpl(ctx context.Context, p *planFragment) 
 	}
 	allTasks := make([]*mppTask, 0)
 	for _, part := range partitions {
-		partTasks, err := e.scheduleSinglePhysicalTable(ctx, part.GetPhysicalID(), p.tableScan.Ranges)
+		partTasks, err := e.constructSinglePhysicalTable(ctx, part.GetPhysicalID(), p.tableScan.Ranges)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -185,10 +185,10 @@ func (e *MPPGather) constructMPPTasksImpl(ctx context.Context, p *planFragment) 
 	return allTasks, nil
 }
 
-func (e *MPPGather) scheduleSinglePhysicalTable(ctx context.Context, tableID int64, ranges []*ranger.Range) ([]*mppTask, error) {
+func (e *MPPGather) constructSinglePhysicalTable(ctx context.Context, tableID int64, ranges []*ranger.Range) ([]*mppTask, error) {
 	kvRanges := distsql.TableRangesToKVRanges(tableID, ranges, nil)
-	req := &kv.MPPScheduleRequest{KeyRanges: kvRanges}
-	stores, err := e.ctx.GetMPPClient().ScheduleMPPTasks(ctx, req)
+	req := &kv.MPPBuildTasksRequest{KeyRanges: kvRanges}
+	stores, err := e.ctx.GetMPPClient().ConstructMPPTasks(ctx, req)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -209,7 +209,7 @@ func (e *MPPGather) getPlanFragments(p plannercore.PhysicalPlan, pf *planFragmen
 		// This is a pipeline breaker. So we replace broadcast side with a exchangerClient
 		bcChild := x.Children()[x.InnerChildIdx]
 		exchangeSender := &ExchangeSender{exchangeType: tipb.ExchangeType_Broadcast}
-		exchangeSender.InitBasePlan(e.ctx, plancodec.TypeExchangeServer)
+		exchangeSender.InitBasePlan(e.ctx, plancodec.TypeExchangeSender)
 		npf := &planFragment{p: bcChild, exchangeSender: exchangeSender}
 		exchangeSender.SetChildren(npf.p)
 
@@ -217,7 +217,7 @@ func (e *MPPGather) getPlanFragments(p plannercore.PhysicalPlan, pf *planFragmen
 			childPf: npf,
 			schema:  bcChild.Schema(),
 		}
-		exchangeReceivers.InitBasePlan(e.ctx, plancodec.TypeExchangeClient)
+		exchangeReceivers.InitBasePlan(e.ctx, plancodec.TypeExchangeReceiver)
 		x.Children()[x.InnerChildIdx] = exchangeReceivers
 		pf.exchangeReceivers = append(pf.exchangeReceivers, exchangeReceivers)
 
@@ -299,7 +299,7 @@ func (e *MPPGather) Open(ctx context.Context) error {
 		p:              e.originalPlan,
 		exchangeSender: &ExchangeSender{exchangeType: tipb.ExchangeType_PassThrough, tasks: []*mppTask{tidbTask}},
 	}
-	rootPf.exchangeSender.InitBasePlan(e.ctx, plancodec.TypeExchangeServer)
+	rootPf.exchangeSender.InitBasePlan(e.ctx, plancodec.TypeExchangeSender)
 	rootPf.exchangeSender.SetChildren(rootPf.p)
 
 	e.getPlanFragments(e.originalPlan, rootPf)

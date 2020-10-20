@@ -299,9 +299,9 @@ type ReturnedValue struct {
 
 // MPPClient accepts and processes mpp requests.
 type MPPClient interface {
-	// ScheduleMPPTasks schedules task for a plan fragment.
+	// ConstructMPPTasks schedules task for a plan fragment.
 	// TODO:: This interface will be refined after we support more executors.
-	ScheduleMPPTasks(context.Context, *MPPScheduleRequest) ([]MPPTask, error)
+	ConstructMPPTasks(context.Context, *MPPBuildTasksRequest) ([]MPPTask, error)
 
 	// DispatchMPPTasks dispatches ALL mpp requests at once, and returns an iterator that transfers the data.
 	DispatchMPPTasks(context.Context, []*MPPDispatchRequest) Response
@@ -408,9 +408,9 @@ type MPPTask interface {
 	GetAddress() string
 }
 
-// MPPScheduleRequest request the stores allocation for a mpp plan fragment.
+// MPPBuildTasksRequest request the stores allocation for a mpp plan fragment.
 // However, the request doesn't contain the particular plan, because only key ranges take effect on the location assignment.
-type MPPScheduleRequest struct {
+type MPPBuildTasksRequest struct {
 	KeyRanges []KeyRange
 	StartTS   uint64
 }

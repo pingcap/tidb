@@ -41,8 +41,8 @@ func (c *batchCopTask) GetAddress() string {
 	return c.storeAddr
 }
 
-// ScheduleMPPTasks receives ScheduleRequset, which are actually collects of kv ranges. We allocates MPPTask for them and returns.
-func (c *MPPClient) ScheduleMPPTasks(ctx context.Context, req *kv.MPPScheduleRequest) ([]kv.MPPTask, error) {
+// ConstructMPPTasks receives ScheduleRequest, which are actually collects of kv ranges. We allocates MPPTask for them and returns.
+func (c *MPPClient) ConstructMPPTasks(ctx context.Context, req *kv.MPPBuildTasksRequest) ([]kv.MPPTask, error) {
 	ctx = context.WithValue(ctx, txnStartKey, req.StartTS)
 	bo := NewBackofferWithVars(ctx, copBuildTaskMaxBackoff, nil)
 	tasks, err := buildBatchCopTasks(bo, c.store.regionCache, &copRanges{mid: req.KeyRanges}, kv.TiFlash)
@@ -155,9 +155,9 @@ func (m *mppIterator) handleDispatchReq(ctx context.Context, bo *Backoffer, req 
 		Meta:        taskMeta,
 		EncodedPlan: req.Data,
 		// TODO: This is only an experience value. It's better to be configurable.
-		Timeout:     60,
-		SchemaVer:   req.SchemaVar,
-		Regions:     regionInfos,
+		Timeout:   60,
+		SchemaVer: req.SchemaVar,
+		Regions:   regionInfos,
 	}
 
 	wrappedReq := tikvrpc.NewRequest(tikvrpc.CmdMPPTask, mppReq, kvrpcpb.Context{})
