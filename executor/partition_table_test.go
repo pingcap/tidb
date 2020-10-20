@@ -69,6 +69,18 @@ partition p2 values less than (10))`)
 	tk.MustQuery("select /*+ INL_JOIN(p) */ * from p, t where p.id = t.id").Sort().Check(testkit.Rows("4 4 4", "9 9 9"))
 	// Build index reader in index join
 	tk.MustQuery("select /*+ INL_JOIN(p) */ p.id from p, t where p.id = t.id").Check(testkit.Rows("4", "9"))
+
+	tk.MustExec("drop table if exists t1, t2, t3")
+	tk.MustExec(`create table t1(k1 int, k2 int, v int, key(k1, k2)) partition by hash(k2) partitions 4`)
+	tk.MustExec(`create table t2(k1 int, k2 int, v int)`)
+	tk.MustExec(`create table t3(k1 int, k2 int, v int, key(k1, k2)) partition by hash(k2) partitions 4`)
+	tk.MustExec(`insert into t1(k1, k2, v) values(1, 1, 11), (2, 2, 22), (3, 3, 33)`)
+	tk.MustExec(`insert into t2(k1, k2, v) values(2, 2, 222), (3, 3, 333), (4, 4, 444)`)
+	tk.MustExec(`insert into t3(k1, k2, v) values(1, 1, 11), (2, 2, 22), (3, 3, 33)`)
+	tk.MustQuery(`select /*+ TIDB_INLJ(t2,t3) */ count(t3.v) from t3, t2 where t3.k1 = t2.k1 and t3.k2 = 2`).Check(testkit.Rows("1")) // inner as tableReader
+	tk.MustQuery(`select /*+ TIDB_INLJ(t2,t1) */ count(t1.v) from t1, t2 where t1.k1 = t2.k1 and t1.k2 = 2`).Check(testkit.Rows("1")) // inner as indexLookupReader
+	tk.MustQuery(`select /*+ TIDB_INLJ(t2,t1) */ count(1) from t1, t2 where t1.k1 = t2.k1 and t1.k2 = 2`).Check(testkit.Rows("1"))    // inner as indexReader
+	tk.MustQuery(`select /*+ INL_MERGE_JOIN(t1, t3) */ t1.k1, t3.k1 from t3, t1 where t1.k1 = t3.k1 and t1.k2 =2 and t3.k2 = 2`).Check(testkit.Rows("2 2"))
 }
 
 func (s *partitionTableSuite) TestPartitionUnionScanIndexJoin(c *C) {
