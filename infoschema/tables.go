@@ -1292,21 +1292,21 @@ type ServerInfo struct {
 	StartTimestamp int64
 }
 
-func (s *ServerInfo) isLoopBackAddr(addr string) bool {
+func (s *ServerInfo) isLoopBackOrUnspecifiedAddr(addr string) bool {
 	return strings.Contains(addr, "0.0.0.0") ||
 		strings.Contains(addr, "127.0.0.1")
 }
 
 // ResolveLoopBackAddr exports for testing.
 func (s *ServerInfo) ResolveLoopBackAddr() {
-	if s.isLoopBackAddr(s.Address) && !s.isLoopBackAddr(s.StatusAddr) {
+	if s.isLoopBackOrUnspecifiedAddr(s.Address) && !s.isLoopBackOrUnspecifiedAddr(s.StatusAddr) {
 		addr, err1 := net.ResolveTCPAddr("", s.Address)
 		statusAddr, err2 := net.ResolveTCPAddr("", s.StatusAddr)
 		if err1 == nil && err2 == nil {
 			addr.IP = statusAddr.IP
 			s.Address = addr.String()
 		}
-	} else if !s.isLoopBackAddr(s.Address) && s.isLoopBackAddr(s.StatusAddr) {
+	} else if !s.isLoopBackOrUnspecifiedAddr(s.Address) && s.isLoopBackOrUnspecifiedAddr(s.StatusAddr) {
 		addr, err1 := net.ResolveTCPAddr("", s.Address)
 		statusAddr, err2 := net.ResolveTCPAddr("", s.StatusAddr)
 		if err1 == nil && err2 == nil {
