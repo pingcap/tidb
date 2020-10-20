@@ -493,23 +493,30 @@ func (coll *HistColl) getEqualCondSelectivity(sc *stmtctx.StatementContext, idx 
 	minRowCount := math.MaxFloat64
 	cols := coll.Idx2ColumnIDs[idx.ID]
 	crossValidationCount := 1.0
+	totalRowCount := float64(idx.TotalRowCount())
 	for i, colID := range cols {
 		if i >= usedColsLen {
 			break
 		}
 		if col, ok := coll.Columns[colID]; ok {
+			lowExclude := idxPointRange.LowExclude
+			highExclue := idxPointRange.HighExclude
+			if lowExclude != highExclue && i < usedColsLen {
+				lowExclude = false
+				highExclue = false
+			}
 			rang := ranger.Range{
 				LowVal:      []types.Datum{idxPointRange.LowVal[i]},
-				LowExclude:  idxPointRange.LowExclude,
+				LowExclude:  lowExclude,
 				HighVal:     []types.Datum{idxPointRange.HighVal[i]},
-				HighExclude: idxPointRange.HighExclude,
+				HighExclude: highExclue,
 			}
 
 			rowCount, err := col.GetColumnRowCount(sc, []*ranger.Range{&rang}, coll.ModifyCount, col.IsHandle)
 			if err != nil {
 				return 0, err
 			}
-			crossValidationCount = crossValidationCount * rowCount
+			crossValidationCount = crossValidationCount * (rowCount / totalRowCount)
 
 			if rowCount < minRowCount {
 				minRowCount = rowCount
@@ -518,13 +525,10 @@ func (coll *HistColl) getEqualCondSelectivity(sc *stmtctx.StatementContext, idx 
 	}
 
 	idxCount := float64(idx.CMSketch.QueryBytes(bytes))
-	var count float64
 	if minRowCount < idxCount {
-		count = crossValidationCount
-	} else {
-		count = idxCount
+		return crossValidationCount, nil
 	}
-	return count / float64(idx.TotalRowCount()), nil
+	return idxCount / totalRowCount, nil
 }
 
 func (coll *HistColl) getIndexRowCount(sc *stmtctx.StatementContext, idxID int64, indexRanges []*ranger.Range) (float64, error) {

@@ -127,14 +127,5 @@
         "Selectivity": 0.3125
       }
     ]
-  },
-  {
-    "Name": "TestMultiColumnIndexEstimate",
-    "Cases": [
-      [
-        "IndexReader_6 1.00 root  index:IndexRangeScan_5",
-        "└─IndexRangeScan_5 1.00 cop[tikv] table:t, index:a(a, b) range:[1 2,1 2], keep order:false"
-      ]
-    ]
   }
 ]

@@ -740,17 +740,8 @@ func (s *testStatsSuite) TestMultiColumnIndexEstimate(c *C) {
 	tk.MustExec("insert into t values(1, 1), (1, 2), (1, 3), (2, 2)")
 	tk.MustExec("analyze table t")
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/statistics/table/mockQueryBytesMaxUint64", `return(100000)`), IsNil)
-	// tk.MustExec("explain select * from t where a = 1 and b = 2")
-	var (
-		input  []string
-		output [][]string
-	)
-	s.testData.GetTestCases(c, &input, &output)
-	for i := 0; i < len(input); i++ {
-		s.testData.OnRecord(func() {
-			output[i] = s.testData.ConvertRowsToStrings(tk.MustQuery(input[i]).Rows())
-		})
-		tk.MustQuery(input[i]).Check(testkit.Rows(output[i]...))
-	}
+	tk.MustQuery("explain select * from t where a = 1 and b = 2").Check(testkit.Rows(
+		"IndexReader_6 1.00 root  index:IndexRangeScan_5",
+		"└─IndexRangeScan_5 1.00 cop[tikv] table:t, index:a(a, b) range:[1 2,1 2], keep order:false"))
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/statistics/table/mockQueryBytesMaxUint64"), IsNil)
 }
