@@ -1323,7 +1323,7 @@ func decodeIndexKvGeneral(key, value []byte, colsLen int, hdStatus HandleStatus,
 			return nil, err
 		}
 	}
-	handleBytes, err := reEncodeHandleConsiderNewCollation(handle, columns[colsLen:], segs.restoredValues, hdStatus == HandleIsUnsigned)
+	handleBytes, err := reEncodeHandleConsiderNewCollation(handle, columns[colsLen:], segs.RestoredValues, hdStatus == HandleIsUnsigned)
 	if err != nil {
 		return nil, err
 	}

@@ -906,7 +906,7 @@ func (w *baseIndexWorker) getIndexRecord(idxInfo *model.IndexInfo, handle kv.Han
 		}
 		idxVal[j] = idxColumnVal
 	}
-	if t, ok := w.tbl.(*tables.TableCommon); ok {
+	if t, ok := w.table.(*tables.TableCommon); ok {
 		rsData = t.TryGetHandleRestoredDataWrapper(nil, w.rowMap)
 	}
 	// If there are generated column, rowDecoder will use column value that not in idxInfo.Columns to calculate
