@@ -47,23 +47,27 @@ func Dump(pCtx context.Context, conf *Config) (err error) {
 
 	var doPdGC bool
 	var pdClient pd.Client
-	if conf.ServerInfo.ServerType == ServerTypeTiDB && conf.ServerInfo.ServerVersion.Compare(*gcSafePointVersion) >= 0 {
-		pdAddrs, err := GetPdAddrs(pool)
-		if err != nil {
-			return err
-		}
-		if len(pdAddrs) > 0 {
-			doPdGC, err = checkSameCluster(ctx, pool, pdAddrs)
+	if conf.ServerInfo.ServerType == ServerTypeTiDB {
+		if conf.ServerInfo.ServerVersion.Compare(*gcSafePointVersion) >= 0 {
+			pdAddrs, err := GetPdAddrs(pool)
 			if err != nil {
-				log.Warn("meet error while check whether fetched pd addr and TiDB belongs to one cluster", zap.Error(err), zap.Strings("pdAddrs", pdAddrs))
-			} else if doPdGC {
-				pdClient, err = pd.NewClientWithContext(ctx, pdAddrs, pd.SecurityOption{})
+				return err
+			}
+			if len(pdAddrs) > 0 {
+				doPdGC, err = checkSameCluster(ctx, pool, pdAddrs)
 				if err != nil {
-					log.Warn("create pd client to control GC failed", zap.Error(err), zap.Strings("pdAddrs", pdAddrs))
-					doPdGC = false
+					log.Warn("meet error while check whether fetched pd addr and TiDB belongs to one cluster", zap.Error(err), zap.Strings("pdAddrs", pdAddrs))
+				} else if doPdGC {
+					pdClient, err = pd.NewClientWithContext(ctx, pdAddrs, pd.SecurityOption{})
+					if err != nil {
+						log.Warn("create pd client to control GC failed", zap.Error(err), zap.Strings("pdAddrs", pdAddrs))
+						doPdGC = false
+					}
 				}
 			}
 		}
+	} else {
+		delete(conf.SessionParams, TiDBMemQuotaQueryName)
 	}
 
 	if conf.Snapshot == "" && (doPdGC || conf.Consistency == "snapshot") {

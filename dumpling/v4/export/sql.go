@@ -482,6 +482,8 @@ func resetDBWithSessionParams(db *sql.DB, dsn string, params map[string]interfac
 
 	for k, v := range support {
 		var s string
+		// Wrap string with quote to handle string with space. For example, '2020-10-20 13:41:40'
+		// For --params argument, quote doesn't matter because it doesn't affect the actual value
 		if str, ok := v.(string); ok {
 			s = wrapStringWith(str, "'")
 		} else {
