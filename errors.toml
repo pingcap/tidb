@@ -363,7 +363,7 @@ Unknown SEQUENCE: '%-.300s'
 
 ["ddl:8200"]
 error = '''
-Unsupported add partitions
+Unsupported partition by range columns
 '''
 
 ["ddl:8210"]
