@@ -764,7 +764,7 @@ func decodeRestoredValuesV5(columns []rowcodec.ColInfo, keyVal [][]byte, restore
 	colIDs := make(map[int64]int, len(columns))
 	result := make([][]byte, len(columns))
 	// restoredData2All is the slice from the offset in restoredColumns to the offset in columns.
-	restoredData2All := make([]int, 0, len(columns))
+	restoredData2All := make([]int, len(columns))
 	restoredColumns := make([]rowcodec.ColInfo, 0, len(columns))
 	j := 0
 
