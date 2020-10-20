@@ -20,6 +20,7 @@ package tables
 import (
 	"context"
 	"encoding/binary"
+	"github.com/pingcap/tidb/util/collate"
 	"math"
 	"strconv"
 	"strings"
@@ -1174,25 +1175,7 @@ func CanSkip(info *model.TableInfo, col *table.Column, value types.Datum) bool {
 	if col.IsPKHandleColumn(info) {
 		return true
 	}
-<<<<<<< HEAD
-	if col.GetDefaultValue() == nil && value.IsNull() {
-=======
-	if col.IsCommonHandleColumn(info) {
-		pkIdx := FindPrimaryIndex(info)
-		for _, idxCol := range pkIdx.Columns {
-			if info.Columns[idxCol.Offset].ID != col.ID {
-				continue
-			}
-			canSkip := idxCol.Length == types.UnspecifiedLength
-			isNewCollation := collate.NewCollationEnabled() &&
-				col.EvalType() == types.ETString &&
-				!mysql.HasBinaryFlag(col.Flag)
-			canSkip = canSkip && !isNewCollation
-			return canSkip
-		}
-	}
 	if col.GetDefaultValue() == nil && value.IsNull() && col.GetOriginDefaultValue() == nil {
->>>>>>> 08069206e... table: should not skip when default value is not null (#20491)
 		return true
 	}
 	if col.IsGenerated() && !col.GeneratedStored {
