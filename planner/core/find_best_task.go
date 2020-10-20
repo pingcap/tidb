@@ -1174,9 +1174,9 @@ func (ds *DataSource) splitIndexFilterConditions(conditions []expression.Express
 	return indexConditions, tableConditions
 }
 
-// getMostCorrColFromExprs checks if column in the condition is correlated enough with handle. If the condition
+// getMostCorrCol4Handle checks if column in the condition is correlated enough with handle. If the condition
 // contains multiple columns, return nil and get the max correlation, which would be used in the heuristic estimation.
-func getMostCorrColFromExprs(exprs []expression.Expression, histColl *statistics.Table, threshold float64) (*expression.Column, float64) {
+func getMostCorrCol4Handle(exprs []expression.Expression, histColl *statistics.Table, threshold float64) (*expression.Column, float64) {
 	var cols []*expression.Column
 	cols = expression.ExtractColumnsFromExpressions(cols, exprs, nil)
 	if len(cols) == 0 {
@@ -1194,13 +1194,13 @@ func getMostCorrColFromExprs(exprs []expression.Expression, histColl *statistics
 		if !ok {
 			continue
 		}
-		curCorr := math.Abs(hist.Correlation)
-		if corrCol == nil || corr < curCorr {
+		curCorr := hist.Correlation
+		if corrCol == nil || math.Abs(corr) < math.Abs(curCorr) {
 			corrCol = col
 			corr = curCorr
 		}
 	}
-	if len(colSet) == 1 && corr >= threshold {
+	if len(colSet) == 1 && math.Abs(corr) >= threshold {
 		return corrCol, corr
 	}
 	return nil, corr
@@ -1214,7 +1214,7 @@ func getColumnRangeCounts(sc *stmtctx.StatementContext, colID int64, ranges []*r
 	for i, ran := range ranges {
 		if idxID >= 0 {
 			idxHist := histColl.Indices[idxID]
-			if idxHist == nil || idxHist.IsInvalid(false) {
+			if idxHist == nil || idxHist.IsInvalid(sc, false) {
 				return nil, false
 			}
 			count, err = histColl.GetRowCountByIndexRanges(sc, idxID, []*ranger.Range{ran})
@@ -1265,28 +1265,31 @@ func convertRangeFromExpectedCnt(ranges []*ranger.Range, rangeCounts []float64, 
 	return convertedRanges, count, false
 }
 
-// crossEstimateRowCount estimates row count of table scan using histogram of another column which is in TableFilters
+// crossEstimateTableRowCount estimates row count of table scan using histogram of another column which is in TableFilters
 // and has high order correlation with handle column. For example, if the query is like:
 // `select * from tbl where a = 1 order by pk limit 1`
 // if order of column `a` is strictly correlated with column `pk`, the row count of table scan should be:
 // `1 + row_count(a < 1 or a is null)`
-func (ds *DataSource) crossEstimateRowCount(path *util.AccessPath, expectedCnt float64, desc bool) (float64, bool, float64) {
+func (ds *DataSource) crossEstimateTableRowCount(path *util.AccessPath, expectedCnt float64, desc bool) (float64, bool, float64) {
 	if ds.statisticTable.Pseudo || len(path.TableFilters) == 0 {
 		return 0, false, 0
 	}
-	col, corr := getMostCorrColFromExprs(path.TableFilters, ds.statisticTable, ds.ctx.GetSessionVars().CorrelationThreshold)
-	// If table scan is not full range scan, we cannot use histogram of other columns for estimation, because
+	col, corr := getMostCorrCol4Handle(path.TableFilters, ds.statisticTable, ds.ctx.GetSessionVars().CorrelationThreshold)
+	return ds.crossEstimateRowCount(path, path.TableFilters, col, corr, expectedCnt, desc)
+}
+
+// crossEstimateRowCount is the common logic of crossEstimateTableRowCount and crossEstimateIndexRowCount.
+func (ds *DataSource) crossEstimateRowCount(path *util.AccessPath, conds []expression.Expression, col *expression.Column, corr, expectedCnt float64, desc bool) (float64, bool, float64) {
+	// If the scan is not full range scan, we cannot use histogram of other columns for estimation, because
 	// the histogram reflects value distribution in the whole table level.
 	if col == nil || len(path.AccessConds) > 0 {
 		return 0, false, corr
 	}
-	colInfoID := col.ID
-	colID := col.UniqueID
-	colHist := ds.statisticTable.Columns[colInfoID]
-	if colHist.Correlation < 0 {
+	colInfoID, colID := col.ID, col.UniqueID
+	if corr < 0 {
 		desc = !desc
 	}
-	accessConds, remained := ranger.DetachCondsForColumn(ds.ctx, path.TableFilters, col)
+	accessConds, remained := ranger.DetachCondsForColumn(ds.ctx, conds, col)
 	if len(accessConds) == 0 {
 		return 0, false, corr
 	}
@@ -1322,6 +1325,62 @@ func (ds *DataSource) crossEstimateRowCount(path *util.AccessPath, expectedCnt f
 	}
 	scanCount = math.Min(scanCount, path.CountAfterAccess)
 	return scanCount, true, 0
+}
+
+// crossEstimateIndexRowCount estimates row count of index scan using histogram of another column which is in TableFilters/IndexFilters
+// and has high order correlation with the first index column. For example, if the query is like:
+// `select * from tbl where a = 1 order by b limit 1`
+// if order of column `a` is strictly correlated with column `b`, the row count of IndexScan(b) should be:
+// `1 + row_count(a < 1 or a is null)`
+func (ds *DataSource) crossEstimateIndexRowCount(path *util.AccessPath, expectedCnt float64, desc bool) (float64, bool, float64) {
+	filtersLen := len(path.TableFilters) + len(path.IndexFilters)
+	if ds.statisticTable.Pseudo || filtersLen == 0 {
+		return 0, false, 0
+	}
+	col, corr := getMostCorrCol4Index(path, ds.statisticTable, ds.ctx.GetSessionVars().CorrelationThreshold)
+	filters := make([]expression.Expression, 0, filtersLen)
+	filters = append(filters, path.TableFilters...)
+	filters = append(filters, path.IndexFilters...)
+	return ds.crossEstimateRowCount(path, filters, col, corr, expectedCnt, desc)
+}
+
+// getMostCorrCol4Index checks if column in the condition is correlated enough with the first index column. If the condition
+// contains multiple columns, return nil and get the max correlation, which would be used in the heuristic estimation.
+func getMostCorrCol4Index(path *util.AccessPath, histColl *statistics.Table, threshold float64) (*expression.Column, float64) {
+	if histColl.ExtendedStats == nil || len(histColl.ExtendedStats.Stats) == 0 {
+		return nil, 0
+	}
+	var cols []*expression.Column
+	cols = expression.ExtractColumnsFromExpressions(cols, path.TableFilters, nil)
+	cols = expression.ExtractColumnsFromExpressions(cols, path.IndexFilters, nil)
+	if len(cols) == 0 {
+		return nil, 0
+	}
+	colSet := set.NewInt64Set()
+	var corr float64
+	var corrCol *expression.Column
+	for _, col := range cols {
+		if colSet.Exist(col.UniqueID) {
+			continue
+		}
+		colSet.Insert(col.UniqueID)
+		curCorr := float64(0)
+		for _, item := range histColl.ExtendedStats.Stats {
+			if (col.ID == item.ColIDs[0] && path.FullIdxCols[0].ID == item.ColIDs[1]) ||
+				(col.ID == item.ColIDs[1] && path.FullIdxCols[0].ID == item.ColIDs[0]) {
+				curCorr = item.ScalarVals
+				break
+			}
+		}
+		if corrCol == nil || math.Abs(corr) < math.Abs(curCorr) {
+			corrCol = col
+			corr = curCorr
+		}
+	}
+	if len(colSet) == 1 && math.Abs(corr) >= threshold {
+		return corrCol, corr
+	}
+	return nil, corr
 }
 
 // GetPhysicalScan returns PhysicalTableScan for the LogicalTableScan.
@@ -1600,7 +1659,7 @@ func (ds *DataSource) getOriginalPhysicalTableScan(prop *property.PhysicalProper
 	}
 	rowCount := path.CountAfterAccess
 	if prop.ExpectedCnt < ds.stats.RowCount {
-		count, ok, corr := ds.crossEstimateRowCount(path, prop.ExpectedCnt, isMatchProp && prop.Items[0].Desc)
+		count, ok, corr := ds.crossEstimateTableRowCount(path, prop.ExpectedCnt, isMatchProp && prop.Items[0].Desc)
 		if ok {
 			// TODO: actually, before using this count as the estimated row count of table scan, we need additionally
 			// check if count < row_count(first_region | last_region), and use the larger one since we build one copTask
@@ -1610,8 +1669,8 @@ func (ds *DataSource) getOriginalPhysicalTableScan(prop *property.PhysicalProper
 			// Considering that when this scenario happens, the execution time is close between IndexScan and TableScan,
 			// we do not add this check temporarily.
 			rowCount = count
-		} else if corr < 1 {
-			correlationFactor := math.Pow(1-corr, float64(ds.ctx.GetSessionVars().CorrelationExpFactor))
+		} else if abs := math.Abs(corr); abs < 1 {
+			correlationFactor := math.Pow(1-abs, float64(ds.ctx.GetSessionVars().CorrelationExpFactor))
 			selectivity := ds.stats.RowCount / rowCount
 			rowCount = math.Min(prop.ExpectedCnt/selectivity/correlationFactor, rowCount)
 		}
@@ -1673,12 +1732,15 @@ func (ds *DataSource) getOriginalPhysicalIndexScan(prop *property.PhysicalProper
 	}
 	rowCount := path.CountAfterAccess
 	is.initSchema(append(path.FullIdxCols, ds.commonHandleCols...), !isSingleScan)
-	// Only use expectedCnt when it's smaller than the count we calculated.
-	// e.g. IndexScan(count1)->After Filter(count2). The `ds.stats.RowCount` is count2. count1 is the one we need to calculate
-	// If expectedCnt and count2 are both zero and we go into the below `if` block, the count1 will be set to zero though it's shouldn't be.
 	if (isMatchProp || prop.IsEmpty()) && prop.ExpectedCnt < ds.stats.RowCount {
-		selectivity := ds.stats.RowCount / path.CountAfterAccess
-		rowCount = math.Min(prop.ExpectedCnt/selectivity, rowCount)
+		count, ok, corr := ds.crossEstimateIndexRowCount(path, prop.ExpectedCnt, isMatchProp && prop.Items[0].Desc)
+		if ok {
+			rowCount = count
+		} else if abs := math.Abs(corr); abs < 1 {
+			correlationFactor := math.Pow(1-abs, float64(ds.ctx.GetSessionVars().CorrelationExpFactor))
+			selectivity := ds.stats.RowCount / rowCount
+			rowCount = math.Min(prop.ExpectedCnt/selectivity/correlationFactor, rowCount)
+		}
 	}
 	is.stats = ds.tableStats.ScaleByExpectCnt(rowCount)
 	rowSize := is.indexScanRowSize(idx, ds, true)
