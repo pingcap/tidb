@@ -178,7 +178,7 @@ To allow the `read_only` global variable turn from `enabling` to `on` even there
 
 If the TiDB cluster is scaling out while the `read_only` mode is enabled, the newly added TiDB server will get the `read_only = on` or `read_only = enabling` value from the global variable system table at start, and it will report this in the SROS system table immediately. Also, the newly added TiDB server will register its joining to PD (once [this PR](https://github.com/pingcap/tidb/pull/17649) gets merged), which could be used to track their report status.
 
-If the TiDB cluster is scaling in or there is server shutdown, or even network split , these servers might never acknowledge their status. In case the poller waits forever, the poller will return with warnings containing the TiDB servers in the cluster that have not yet reported read only to the user.
+If the TiDB cluster is scaling in or there is server shutdown, or even network split , these servers might never acknowledge their status. In case the poller waits forever, the poller will return with warnings containing the TiDB servers in the cluster that have not yet reported read only to the user after waiting 10 seconds.
 
 
 #### How to identify committing transactions & held locks
