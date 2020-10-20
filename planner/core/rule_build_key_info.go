@@ -80,10 +80,8 @@ func (p *LogicalSelection) checkMaxOneRowCond(unique expression.Expression, cons
 	if !ok {
 		return false
 	}
-	if !childSchema.IsUniqueKey(col) {
-		if !childSchema.IsUnique(col) {
-			return false
-		}
+	if !childSchema.IsUniqueKey(col) && !childSchema.IsUnique(col) {
+		return false
 	}
 	_, okCon := constOrCorCol.(*expression.Constant)
 	if okCon {
@@ -222,8 +220,8 @@ func checkIndexCanBeKey(idx *model.IndexInfo, columns []*model.ColumnInfo, schem
 		find := false
 		for i, col := range columns {
 			if idxCol.Name.L == col.Name.L {
+				uniqueKey = append(uniqueKey, schema.Columns[i])
 				if !mysql.HasNotNullFlag(col.Flag) {
-					uniqueKey = append(uniqueKey, schema.Columns[i])
 					break
 				}
 				newKey = append(newKey, schema.Columns[i])
@@ -237,7 +235,7 @@ func checkIndexCanBeKey(idx *model.IndexInfo, columns []*model.ColumnInfo, schem
 		}
 	}
 	if ok {
-		return nil, newKey
+		return uniqueKey, newKey
 	}
 
 	return uniqueKey, nil
@@ -252,6 +250,7 @@ func (ds *DataSource) BuildKeyInfo(selfSchema *expression.Schema, childSchema []
 		}
 		if uniqueKey, newKey := checkIndexCanBeKey(path.Index, ds.Columns, selfSchema); newKey != nil {
 			selfSchema.Keys = append(selfSchema.Keys, newKey)
+			selfSchema.UniqueKeys = append(selfSchema.UniqueKeys, uniqueKey)
 		} else if uniqueKey != nil {
 			selfSchema.UniqueKeys = append(selfSchema.UniqueKeys, uniqueKey)
 		}
@@ -280,6 +279,7 @@ func (is *LogicalIndexScan) BuildKeyInfo(selfSchema *expression.Schema, childSch
 		}
 		if uniqueKey, newKey := checkIndexCanBeKey(path.Index, is.Columns, selfSchema); newKey != nil {
 			selfSchema.Keys = append(selfSchema.Keys, newKey)
+			selfSchema.UniqueKeys = append(selfSchema.UniqueKeys, uniqueKey)
 		} else if uniqueKey != nil {
 			selfSchema.UniqueKeys = append(selfSchema.UniqueKeys, uniqueKey)
 		}
