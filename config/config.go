@@ -790,6 +790,7 @@ var deprecatedConfig = map[string]struct{}{
 	"performance.max-memory":         {},
 	"max-txn-time-use":               {},
 	"experimental.allow-auto-random": {},
+	"enable-redact-log":              {}, // use variable tidb_redact_log instead
 }
 
 func isAllDeprecatedConfigItems(items []string) bool {
