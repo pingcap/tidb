@@ -2094,9 +2094,9 @@ func (la *LogicalAggregation) exhaustPhysicalPlans(prop *property.PhysicalProper
 func (p *LogicalSelection) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]PhysicalPlan, bool) {
 	childProp := prop.Clone()
 	sel := PhysicalSelection{
-		schema:     p.Schema(),
 		Conditions: p.Conditions,
 	}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), p.blockOffset, childProp)
+	sel.SetSchema(p.Schema())
 	return []PhysicalPlan{sel}, true
 }
 

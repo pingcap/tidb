@@ -1322,6 +1322,7 @@ func (b *executorBuilder) buildSelection(v *plannercore.PhysicalSelection) Execu
 		filters:      v.Conditions,
 	}
 	childUsedSchema := markChildrenUsedCols(v.Schema(), v.Children()[0].Schema())[0]
+	e.columnIdxsUsedByChild = make([]int, 0, len(childUsedSchema))
 	for i, used := range childUsedSchema {
 		if used {
 			e.columnIdxsUsedByChild = append(e.columnIdxsUsedByChild, i)
