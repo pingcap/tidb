@@ -722,18 +722,19 @@ func parseDatetime(sc *stmtctx.StatementContext, str string, fsp int, isFloat bo
 		l := len(seps[0])
 		// Values specified as numbers
 		if isFloat {
-			numOfTime, err := StrToInt(sc, seps[0], false)
+			numOfTime, err := StrToInt(sc, seps[0])
 			if err != nil {
-				return ZeroDatetime, errors.Trace(ErrWrongValue.GenWithStackByArgs(DateTimeStr, str))
+				return ZeroDatetime, errors.Trace(ErrInvalidTimeFormat.GenWithStackByArgs(str))
 			}
 
 			dateTime, err := ParseDatetimeFromNum(sc, numOfTime)
 			if err != nil {
-				return ZeroDatetime, errors.Trace(ErrWrongValue.GenWithStackByArgs(DateTimeStr, str))
+				return ZeroDatetime, errors.Trace(ErrInvalidTimeFormat.GenWithStackByArgs(str))
 			}
 
 			year, month, day, hour, minute, second =
-				dateTime.Year(), dateTime.Month(), dateTime.Day(), dateTime.Hour(), dateTime.Minute(), dateTime.Second()
+				dateTime.Time.Year(), dateTime.Time.Month(), dateTime.Time.Day(),
+				dateTime.Time.Hour(), dateTime.Time.Minute(), dateTime.Time.Second()
 			if l >= 9 && l <= 14 {
 				hhmmss = true
 			}
