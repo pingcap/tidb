@@ -49,10 +49,9 @@ type ExecDetails struct {
 	BackoffSleep     map[string]time.Duration
 	BackoffTimes     map[string]int
 	RequestCount     int
-	TotalKeys        int64
-	ProcessedKeys    int64
 	CommitDetail     *CommitDetails
 	LockKeysDetail   *LockKeysDetails
+	CopDetail        *CopDetails
 }
 
 type stmtExecDetailKeyType struct{}
@@ -168,6 +167,28 @@ func (ld *LockKeysDetails) Clone() *LockKeysDetails {
 	return lock
 }
 
+// CopDetails contains coprocessor detail information.
+type CopDetails struct {
+	TotalKeys                 int64
+	ProcessedKeys             int64
+	RocksdbDeleteSkippedCount uint64
+	RocksdbKeySkippedCount    uint64
+	RocksdbBlockCacheHitCount uint64
+	RocksdbBlockReadCount     uint64
+	RocksdbBlockReadByte      uint64
+}
+
+// Merge merges lock keys execution details into self.
+func (cd *CopDetails) Merge(copDetails *CopDetails) {
+	cd.TotalKeys += copDetails.TotalKeys
+	cd.ProcessedKeys += copDetails.ProcessedKeys
+	cd.RocksdbDeleteSkippedCount += copDetails.RocksdbDeleteSkippedCount
+	cd.RocksdbKeySkippedCount += copDetails.RocksdbKeySkippedCount
+	cd.RocksdbBlockCacheHitCount += copDetails.RocksdbBlockCacheHitCount
+	cd.RocksdbBlockReadCount += copDetails.RocksdbBlockReadCount
+	cd.RocksdbBlockReadByte += copDetails.RocksdbBlockReadByte
+}
+
 const (
 	// CopTimeStr represents the sum of cop-task time spend in TiDB distSQL.
 	CopTimeStr = "Cop_time"
@@ -209,6 +230,16 @@ const (
 	PrewriteRegionStr = "Prewrite_region"
 	// TxnRetryStr means the count of transaction retry.
 	TxnRetryStr = "Txn_retry"
+	// RocksdbDeleteSkippedCountStr means the count of rocksdb delete skipped count.
+	RocksdbDeleteSkippedCountStr = "Rocksdb_delete_skipped_count"
+	// RocksdbKeySkippedCountStr means the count of rocksdb key skipped count.
+	RocksdbKeySkippedCountStr = "Rocksdb_key_skipped_count"
+	// RocksdbBlockCacheHitCountStr means the count of rocksdb block cache hit.
+	RocksdbBlockCacheHitCountStr = "Rocksdb_block_cache_hit_count"
+	// RocksdbBlockReadCountStr means the count of rocksdb block read.
+	RocksdbBlockReadCountStr = "Rocksdb_block_read_count"
+	// RocksdbBlockReadByteStr means the bytes of rocksdb block read.
+	RocksdbBlockReadByteStr = "Rocksdb_block_read_byte"
 )
 
 // String implements the fmt.Stringer interface.
@@ -231,12 +262,6 @@ func (d ExecDetails) String() string {
 	}
 	if d.RequestCount > 0 {
 		parts = append(parts, RequestCountStr+": "+strconv.FormatInt(int64(d.RequestCount), 10))
-	}
-	if d.TotalKeys > 0 {
-		parts = append(parts, TotalKeysStr+": "+strconv.FormatInt(d.TotalKeys, 10))
-	}
-	if d.ProcessedKeys > 0 {
-		parts = append(parts, ProcessKeysStr+": "+strconv.FormatInt(d.ProcessedKeys, 10))
 	}
 	commitDetails := d.CommitDetail
 	if commitDetails != nil {
@@ -282,6 +307,30 @@ func (d ExecDetails) String() string {
 			parts = append(parts, TxnRetryStr+": "+strconv.FormatInt(int64(commitDetails.TxnRetry), 10))
 		}
 	}
+	copDetails := d.CopDetail
+	if copDetails != nil {
+		if copDetails.ProcessedKeys > 0 {
+			parts = append(parts, ProcessKeysStr+": "+strconv.FormatInt(copDetails.ProcessedKeys, 10))
+		}
+		if copDetails.TotalKeys > 0 {
+			parts = append(parts, TotalKeysStr+": "+strconv.FormatInt(copDetails.TotalKeys, 10))
+		}
+		if copDetails.RocksdbDeleteSkippedCount > 0 {
+			parts = append(parts, RocksdbDeleteSkippedCountStr+": "+strconv.FormatUint(copDetails.RocksdbDeleteSkippedCount, 10))
+		}
+		if copDetails.RocksdbKeySkippedCount > 0 {
+			parts = append(parts, RocksdbKeySkippedCountStr+": "+strconv.FormatUint(copDetails.RocksdbKeySkippedCount, 10))
+		}
+		if copDetails.RocksdbBlockCacheHitCount > 0 {
+			parts = append(parts, RocksdbBlockCacheHitCountStr+": "+strconv.FormatUint(copDetails.RocksdbBlockCacheHitCount, 10))
+		}
+		if copDetails.RocksdbBlockReadCount > 0 {
+			parts = append(parts, RocksdbBlockReadCountStr+": "+strconv.FormatUint(copDetails.RocksdbBlockReadCount, 10))
+		}
+		if copDetails.RocksdbBlockReadByte > 0 {
+			parts = append(parts, RocksdbBlockReadByteStr+": "+strconv.FormatUint(copDetails.RocksdbBlockReadByte, 10))
+		}
+	}
 	return strings.Join(parts, " ")
 }
 
@@ -303,11 +352,11 @@ func (d ExecDetails) ToZapFields() (fields []zap.Field) {
 	if d.RequestCount > 0 {
 		fields = append(fields, zap.String(strings.ToLower(RequestCountStr), strconv.FormatInt(int64(d.RequestCount), 10)))
 	}
-	if d.TotalKeys > 0 {
-		fields = append(fields, zap.String(strings.ToLower(TotalKeysStr), strconv.FormatInt(d.TotalKeys, 10)))
+	if d.CopDetail != nil && d.CopDetail.TotalKeys > 0 {
+		fields = append(fields, zap.String(strings.ToLower(TotalKeysStr), strconv.FormatInt(d.CopDetail.TotalKeys, 10)))
 	}
-	if d.ProcessedKeys > 0 {
-		fields = append(fields, zap.String(strings.ToLower(ProcessKeysStr), strconv.FormatInt(d.ProcessedKeys, 10)))
+	if d.CopDetail != nil && d.CopDetail.ProcessedKeys > 0 {
+		fields = append(fields, zap.String(strings.ToLower(ProcessKeysStr), strconv.FormatInt(d.CopDetail.ProcessedKeys, 10)))
 	}
 	commitDetails := d.CommitDetail
 	if commitDetails != nil {
