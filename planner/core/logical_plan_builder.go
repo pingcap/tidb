@@ -2411,7 +2411,7 @@ func (b *PlanBuilder) unfoldWildStar(p LogicalPlan, selectFields []*ast.SelectFi
 			if (dbName.L == "" || dbName.L == name.DBName.L) &&
 				(tblName.L == "" || tblName.L == name.TblName.L) &&
 				col.ID != model.ExtraHandleID {
-				if (dbName.L == "" && tblName.L == "") {
+				if dbName.L == "" && tblName.L == "" {
 					if _, ok := existColName[name.ColName.L]; ok {
 						continue
 					}
