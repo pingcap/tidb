@@ -4637,6 +4637,11 @@ func (s *testSplitTable) TestClusterIndexSplitTableIntegration(c *C) {
 	tk.MustExec("drop table t;")
 	tk.MustExec("create table t (a int, b int, c int, d int, primary key(d, a, c));")
 	tk.MustQuery("split table t by (0, 0, 0), (1, 2, 3), (65535, 65535, 65535);").Check(testkit.Rows("3 1"))
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a varchar(255), b decimal, c int, primary key (a, b));")
+	errMsg = "[types:1265]Incorrect value: '' for column 'b'"
+	tk.MustGetErrMsg("split table t by ('aaa', '')", errMsg)
 }
 
 func (s *testSplitTable) TestClusterIndexShowTableRegion(c *C) {
