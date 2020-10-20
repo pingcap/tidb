@@ -789,15 +789,115 @@ func isValidSeparator(c byte, prevParts int) bool {
 	return prevParts == 2 && (c == ' ' || c == 'T')
 }
 
-// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-literals.html.
-// The only delimiter recognized between a date and time part and a fractional seconds part is the decimal point.
-func splitDateTime(format string) (seps []string, fracStr string) {
-	index := GetFracIndex(format)
-	if index > 0 {
-		fracStr = format[index+1:]
-		format = format[:index]
-	}
+var validIdxCombinations = map[int]struct {
+	h int
+	m int
+}{
+	100: {0, 0}, // 23:59:59Z
+	430: {2, 0}, // 23:59:59Z+08
+	650: {4, 2}, // 23:59:59Z+0800
+	763: {5, 2}, // 23:59:59Z+08:00
+	63:  {5, 2}, // 23:59:59+08:00
+}
 
+// GetTimezone parses the trailing timezone information of a given time string literal. If idx = -1 is returned, it
+// means timezone information not found, otherwise it indicates the index of the starting index of the timezone
+// information. If the timezone contains sign, hour part and/or minute part, it will be returned as is, otherwise an
+// empty string will be returned.
+//
+// Supported syntax:
+//   MySQL compatible: ((?P<tz_sign>[-+])(?P<tz_hour>[0-9]{2}):(?P<tz_minute>[0-9]{2}))){0,1}$, see
+//     https://dev.mysql.com/doc/refman/8.0/en/time-zone-support.html and https://dev.mysql.com/doc/refman/8.0/en/datetime.html
+//     the first link specified that timezone information should be in "[H]H:MM, prefixed with a + or -" while the
+//     second link specified that for string literal, "hour values less than than 10, a leading zero is required.".
+//   ISO-8601: [Zz](((?P<tz_sign>[-+])(?P<tz_hour>[0-9]{2})(:(?P<tz_minute>[0-9]{2}){0,1}){0,1})|((?P<tz_minute>[0-9]{2}){0,1}){0,1})){0,1}$
+//     see https://www.cl.cam.ac.uk/~mgk25/iso-time.html
+//
+// However, due to the restraint of current parsing logic, we can't differentiate time like "2020-10-19 10-09:00", which
+// will be wrongly interpreted as "2020-10-19 10:00:00-09:00" instead of "2020-10-19 10:09:00".
+// TODO: handle the special case
+func GetTimezone(lit string) (idx int, tzSign, tzHour, tzMinute string) {
+	idx, zidx, sidx, scidx, hidx, midx := -1, -1, -1, -1, -1, -1
+	z, s, sc := 0, 0, 0
+	l := len(lit)
+	for i := l - 1; 0 <= i; i-- {
+		if lit[i] == 'z' || lit[i] == 'Z' {
+			zidx = i
+			break
+		}
+		if sidx == -1 && (lit[i] == '-' || lit[i] == '+') {
+			sidx = i
+		}
+		if scidx == -1 && lit[i] == ':' {
+			scidx = i
+		}
+	}
+	// zidx can be -1 (23:59:59+08:00), l-1 (23:59:59Z)5, l-4 (23:59:9Z+08), l-6 (23:59:59Z+0800), l-7 (23:59:59Z+08:00)
+	// sidx can be -1, l-3, l-5, l-6
+	// scidx can be -1, l-3
+	// hidx can be -1, l-2, l-4, l-5
+	// midx can be -1, l-2
+	// we could enumerate all valid combinations of these values and look it up in a table, see validIdxCombinations
+	if zidx != -1 {
+		z = l - zidx
+	}
+	if sidx != -1 {
+		s = l - sidx
+	}
+	if scidx != -1 {
+		sc = l - scidx
+	}
+	k := z*100 + s*10 + sc
+	if v, ok := validIdxCombinations[k]; ok {
+		hidx, midx = l-v.h, l-v.m
+		valid := func(v string) bool {
+			return '0' <= v[0] && v[0] <= '9' && '0' <= v[1] && v[1] <= '9'
+		}
+		if sidx != -1 {
+			tzSign = lit[sidx : sidx+1]
+			idx = sidx
+		}
+		if zidx != -1 {
+			idx = zidx
+		}
+		if v.h != 0 {
+			tzHour = lit[hidx : hidx+2]
+			if !valid(tzHour) {
+				goto BAD
+			}
+		}
+		if v.m != 0 {
+			tzMinute = lit[midx : midx+2]
+			if !valid(tzMinute) {
+				goto BAD
+			}
+		}
+		return
+	}
+BAD:
+	return -1, "", "", ""
+}
+
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-literals.html.
+// splitDateTime splits the string literal into 3 parts, date & time, FSP and time zone.
+// For FSP, The only delimiter recognized between a date & time part and a fractional seconds part is the decimal point,
+// therefore we could look from backwards at the literal to find the index of the decimal point.
+// For time zone, the possible delimiter could be +/- (w.r.t. MySQL 8.0, see
+// https://dev.mysql.com/doc/refman/8.0/en/datetime.html) and Z/z (w.r.t. ISO 8601, see section Time zone in
+// https://www.cl.cam.ac.uk/~mgk25/iso-time.html). We also look from backwards for the delimiter, see GetTimezone.
+func splitDateTime(format string) (seps []string, fracStr, tzSign, tzHour, tzMinute string) {
+	tzIndex, tzSign, tzHour, tzMinute := GetTimezone(format)
+	if tzIndex > 0 {
+		format = format[:tzIndex]
+		if len(tzSign) == 0 {
+			tzSign, tzHour, tzMinute = "+", "00", "00"
+		}
+	}
+	fracIndex := GetFracIndex(format)
+	if fracIndex > 0 {
+		fracStr = format[fracIndex+1:]
+		format = format[:fracIndex]
+	}
 	seps = ParseDateFormat(format)
 	return
 }
@@ -805,13 +905,29 @@ func splitDateTime(format string) (seps []string, fracStr string) {
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-literals.html.
 func parseDatetime(sc *stmtctx.StatementContext, str string, fsp int8, isFloat bool) (Time, error) {
 	var (
-		year, month, day, hour, minute, second int
-		fracStr                                string
-		hhmmss                                 bool
-		err                                    error
+		year, month, day, hour, minute, second, deltaHour, deltaMinute int
+		fracStr                                                        string
+		tzSign, tzHour, tzMinute                                       string
+		hhmmss                                                         bool
+		err                                                            error
 	)
 
-	seps, fracStr := splitDateTime(str)
+	seps, fracStr, tzSign, tzHour, tzMinute := splitDateTime(str)
+
+	// we can use tzSign to determine whether str contains timezone information
+	if len(tzSign) != 0 {
+		if len(tzHour) != 0 {
+			deltaHour = int((tzHour[1]-'0')*10 + (tzHour[0] - '0'))
+		}
+		if len(tzMinute) != 0 {
+			deltaMinute = int((tzMinute[1]-'0')*10 + (tzMinute[0] - '0'))
+		}
+		// allowed delta range is [-14:00, 14:00], and we will intentionally reject -00:00
+		if deltaHour > 14 || deltaMinute > 59 || (deltaHour == 14 && deltaMinute != 0) || (tzSign == "-" && deltaHour == 0 && deltaMinute == 0) {
+			return ZeroDatetime, errors.Trace(ErrWrongValue.GenWithStackByArgs(DateTimeStr, str))
+		}
+	}
+
 	var truncatedOrIncorrect bool
 	switch len(seps) {
 	case 1:

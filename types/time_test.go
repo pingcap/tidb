@@ -1868,6 +1868,30 @@ func (s *testTimeSuite) TestFromGoTime(c *C) {
 
 }
 
+func (s *testTimeSuite) TestGetTimezone(c *C) {
+	cases := []struct {
+		input    string
+		idx      int
+		tzSign   string
+		tzHour   string
+		tzMinute string
+	}{
+		{"2020-10-10T10:10:10", -1, "", "", ""},
+		{"2020-10-10T10:10:10Z", 19, "", "", ""},
+		{"2020-10-10T10:10:10Z+08", 19, "+", "08", ""},
+		{"2020-10-10T10:10:10Z-08", 19, "-", "08", ""},
+		{"2020-10-10T10:10:10Z-0700", 19, "-", "07", "00"},
+		{"2020-10-10T10:10:10Z+08:20", 19, "+", "08", "20"},
+		{"2020-10-10T10:10:10+08:10", 19, "+", "08", "10"},
+		{"2020-10-10T10:10:10-08", -1, "", "", ""},
+		{"2020-10-10T10:10:10+8:00", -1, "", "", ""},
+	}
+	for ith, ca := range cases {
+		idx, tzSign, tzHour, tzMinute := types.GetTimezone(ca.input)
+		c.Assert([4]interface{}{idx, tzSign, tzHour, tzMinute}, Equals, [4]interface{}{ca.idx, ca.tzSign, ca.tzHour, ca.tzMinute}, Commentf("idx %d", ith))
+	}
+}
+
 func BenchmarkFormat(b *testing.B) {
 	t1 := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, 0)
 	for i := 0; i < b.N; i++ {
@@ -1936,6 +1960,7 @@ func BenchmarkParseDateFormat(b *testing.B) {
 	benchmarkDateFormat(b, "datetime internal", "20111213141516")
 	benchmarkDateFormat(b, "datetime basic frac", "2011-12-13 14:15:16.123456")
 	benchmarkDateFormat(b, "datetime repeated delimiters", "2011---12---13 14::15::16..123456")
+	benchmarkDateFormat(b, "datetime with timezone", "2020-10-10T10:10:10Z+08:00")
 }
 
 func BenchmarkParseDatetime(b *testing.B) {
