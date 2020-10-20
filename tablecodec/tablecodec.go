@@ -763,12 +763,12 @@ func decodeRestoredValues(columns []rowcodec.ColInfo, restoredVal []byte) ([][]b
 func decodeRestoredValuesV5(columns []rowcodec.ColInfo, keyVal [][]byte, restoredVal []byte) ([][]byte, error) {
 	colIDs := make(map[int64]int, len(columns))
 	result := make([][]byte, len(columns))
-	// restoredData2All is the map from the offset in restoredColumns to the offset in columns.
-	restoredData2All := make(map[int]int)
+	// restoredData2All is the slice from the offset in restoredColumns to the offset in columns.
+	restoredData2All := make([]int, 0, len(columns))
 	restoredColumns := make([]rowcodec.ColInfo, 0, len(columns))
 	j := 0
 
-	// Collate some information, restoredColumns means the columns whose value need to restore from the index value.
+	// Collect some information, restoredColumns means the columns whose value need to restore from the index value.
 	for i, col := range columns {
 		if types.NeedRestoredData(col.Ft) {
 			colIDs[col.ID] = j
@@ -809,6 +809,11 @@ func decodeRestoredValuesV5(columns []rowcodec.ColInfo, keyVal [][]byte, restore
 			paddingCount, err := DecodeColumnValue(restoredValues[offset], types.NewFieldType(mysql.TypeLonglong), nil)
 			if err != nil {
 				return nil, errors.Trace(err)
+			}
+			// Skip if padding count is 0.
+			if paddingCount.GetInt64() == 0 {
+				result[allOffset] = rv
+				continue
 			}
 			noPaddingStr.SetString(noPaddingStr.GetString()+strings.Repeat(" ", int(paddingCount.GetInt64())), noPaddingStr.Collation())
 			result[allOffset] = result[allOffset][:0]
@@ -1102,7 +1107,10 @@ func GenIndexValueNew(sc *stmtctx.StatementContext, tblInfo *model.TableInfo, id
 			col := tblInfo.Columns[idxCol.Offset]
 			// If handle is common handle and the column is the primary key's column,
 			// the restored data will be written later. Skip writing it here to avoid redundancy.
-			if (h.IsInt() || !mysql.HasPriKeyFlag(col.Flag)) && types.NeedRestoredData(&col.FieldType) {
+			if !h.IsInt() && mysql.HasPriKeyFlag(col.Flag) {
+				continue
+			}
+			if types.NeedRestoredData(&col.FieldType) {
 				colIds = append(colIds, col.ID)
 				if collate.IsBinCollation(col.Collate) {
 					allRestoredData = append(allRestoredData, types.NewUintDatum(uint64(stringutil.GetTailSpaceCount(indexedValues[i].GetString()))))
@@ -1248,10 +1256,10 @@ func encodePartitionID(idxVal []byte, partitionID int64) []byte {
 
 // IndexValueSegments use to store result of SplitIndexValue.
 type IndexValueSegments struct {
-	CommonHandle   []byte
-	PartitionID    []byte
-	RestoredValues []byte
-	IntHandle      []byte
+	CommonHandle    []byte
+	PartitionID     []byte
+	RestoredValues  []byte
+	IntHandle       []byte
 	RestoredValueV5 bool
 }
 
