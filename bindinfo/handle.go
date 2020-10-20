@@ -881,7 +881,12 @@ func (h *BindHandle) HandleEvolvePlanTask(sctx sessionctx.Context, adminEvolve b
 	}
 	if verifyPlanTime == -1 || (float64(verifyPlanTime)*acceptFactor > float64(currentPlanTime)) {
 		binding.Status = Rejected
-		logutil.BgLogger().Warn("new plan rejected", zap.Duration("currentPlanTime", currentPlanTime), zap.Duration("verifyPlanTime", verifyPlanTime))
+		digestText, _ := parser.NormalizeDigest(binding.BindSQL) // for log desensitization
+		logutil.BgLogger().Warn("new plan rejected",
+			zap.Duration("currentPlanTime", currentPlanTime),
+			zap.Duration("verifyPlanTime", verifyPlanTime),
+			zap.String("digestText", digestText),
+		)
 	} else {
 		binding.Status = Using
 	}
