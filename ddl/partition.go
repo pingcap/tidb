@@ -1134,7 +1134,7 @@ func (w *worker) onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (
 		}
 		tblInfo.Partition.DroppingDefinitions = nil
 		// used by ApplyDiff in updateSchemaVersion
-		job.Args = append(job.Args, physicalTableIDs)
+		job.CtxVars = []interface{}{physicalTableIDs}
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
 		if err != nil {
 			return ver, errors.Trace(err)
