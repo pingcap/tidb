@@ -289,3 +289,158 @@ func init() {
 	mockTerrorMap[model.StateWriteOnly.String()] = dbterror.ClassDDL.New(1, "MockRollingBackInCallBack-"+model.StateWriteOnly.String())
 	mockTerrorMap[model.StateWriteReorganization.String()] = dbterror.ClassDDL.New(1, "MockRollingBackInCallBack-"+model.StateWriteReorganization.String())
 }
+
+func (s *testColumnTypeChangeSuite) TestColumnTypeChangeFromIntegerToOthers(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	// Enable column change variable.
+	tk.Se.GetSessionVars().EnableChangeColumnType = true
+	defer func() {
+		tk.Se.GetSessionVars().EnableChangeColumnType = false
+	}()
+
+	prepare := func(tk *testkit.TestKit) {
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("create table t(a tinyint, b smallint, c mediumint, d int, e bigint, f bigint)")
+		tk.MustExec("insert into t values(1, 11, 111, 1111, 11111, 111111)")
+	}
+	prepareForEnumSet := func(tk *testkit.TestKit) {
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("create table t(a tinyint, b smallint, c mediumint, d int, e bigint)")
+		tk.MustExec("insert into t values(1, 1, 1, 11111, 11111)")
+	}
+
+	// integer to string
+	prepare(tk)
+	tk.MustExec("alter table t modify a varchar(10)")
+	modifiedColumn := getModifyColumn(c, tk.Se.(sessionctx.Context), "test", "t", "a", false)
+	c.Assert(modifiedColumn, NotNil)
+	c.Assert(modifiedColumn.Tp, Equals, parser_mysql.TypeVarchar)
+	tk.MustQuery("select a from t").Check(testkit.Rows("1"))
+
+	tk.MustExec("alter table t modify b char(10)")
+	modifiedColumn = getModifyColumn(c, tk.Se.(sessionctx.Context), "test", "t", "b", false)
+	c.Assert(modifiedColumn, NotNil)
+	c.Assert(modifiedColumn.Tp, Equals, parser_mysql.TypeString)
+	tk.MustQuery("select b from t").Check(testkit.Rows("11"))
+
+	tk.MustExec("alter table t modify c binary(10)")
+	modifiedColumn = getModifyColumn(c, tk.Se.(sessionctx.Context), "test", "t", "c", false)
+	c.Assert(modifiedColumn, NotNil)
+	c.Assert(modifiedColumn.Tp, Equals, parser_mysql.TypeString)
+	tk.MustQuery("select c from t").Check(testkit.Rows("111\x00\x00\x00\x00\x00\x00\x00"))
+
+	tk.MustExec("alter table t modify d varbinary(10)")
+	modifiedColumn = getModifyColumn(c, tk.Se.(sessionctx.Context), "test", "t", "d", false)
+	c.Assert(modifiedColumn, NotNil)
+	c.Assert(modifiedColumn.Tp, Equals, parser_mysql.TypeVarchar)
+	tk.MustQuery("select d from t").Check(testkit.Rows("1111"))
+
+	tk.MustExec("alter table t modify e blob(10)")
+	modifiedColumn = getModifyColumn(c, tk.Se.(sessionctx.Context), "test", "t", "e", false)
+	c.Assert(modifiedColumn, NotNil)
+	c.Assert(modifiedColumn.Tp, Equals, parser_mysql.TypeBlob)
+	tk.MustQuery("select e from t").Check(testkit.Rows("11111"))
+
+	tk.MustExec("alter table t modify f text(10)")
+	modifiedColumn = getModifyColumn(c, tk.Se.(sessionctx.Context), "test", "t", "f", false)
+	c.Assert(modifiedColumn, NotNil)
+	c.Assert(modifiedColumn.Tp, Equals, parser_mysql.TypeBlob)
+	tk.MustQuery("select f from t").Check(testkit.Rows("111111"))
+
+	// integer to decimal
+	prepare(tk)
+	tk.MustExec("alter table t modify a decimal(2,1)")
+	modifiedColumn = getModifyColumn(c, tk.Se.(sessionctx.Context), "test", "t", "a", false)
+	c.Assert(modifiedColumn, NotNil)
+	c.Assert(modifiedColumn.Tp, Equals, parser_mysql.TypeNewDecimal)
+	tk.MustQuery("select a from t").Check(testkit.Rows("1.0"))
+
+	// integer to year
+	// For year(2), MySQL converts values in the ranges '0' to '69' and '70' to '99' to YEAR values in the ranges 2000 to 2069 and 1970 to 1999.
+	tk.MustExec("alter table t modify b year")
+	modifiedColumn = getModifyColumn(c, tk.Se.(sessionctx.Context), "test", "t", "b", false)
+	c.Assert(modifiedColumn, NotNil)
+	c.Assert(modifiedColumn.Tp, Equals, parser_mysql.TypeYear)
+	tk.MustQuery("select b from t").Check(testkit.Rows("2011"))
+
+	// integer to time
+	tk.MustExec("alter table t modify c time")
+	modifiedColumn = getModifyColumn(c, tk.Se.(sessionctx.Context), "test", "t", "c", false)
+	c.Assert(modifiedColumn, NotNil)
+	c.Assert(modifiedColumn.Tp, Equals, parser_mysql.TypeDuration) // mysql.TypeTime has rename to TypeDuration.
+	tk.MustQuery("select c from t").Check(testkit.Rows("00:01:11"))
+
+	// integer to date (mysql will throw `Incorrect date value: '1111' for column 'd' at row 1` error)
+	tk.MustExec("alter table t modify d date")
+	modifiedColumn = getModifyColumn(c, tk.Se.(sessionctx.Context), "test", "t", "d", false)
+	c.Assert(modifiedColumn, NotNil)
+	c.Assert(modifiedColumn.Tp, Equals, parser_mysql.TypeDate)
+	tk.MustQuery("select d from t").Check(testkit.Rows("2000-11-11")) // the given number will be left-forward used.
+
+	// integer to timestamp (according to what timezone you have set)
+	tk.MustExec("alter table t modify e timestamp")
+	tk.MustExec("set @@session.time_zone=UTC")
+	modifiedColumn = getModifyColumn(c, tk.Se.(sessionctx.Context), "test", "t", "e", false)
+	c.Assert(modifiedColumn, NotNil)
+	c.Assert(modifiedColumn.Tp, Equals, parser_mysql.TypeTimestamp)
+	tk.MustQuery("select e from t").Check(testkit.Rows("2001-11-11 00:00:00")) // the given number will be left-forward used.
+
+	// integer to datetime
+	tk.MustExec("alter table t modify f datetime")
+	modifiedColumn = getModifyColumn(c, tk.Se.(sessionctx.Context), "test", "t", "f", false)
+	c.Assert(modifiedColumn, NotNil)
+	c.Assert(modifiedColumn.Tp, Equals, parser_mysql.TypeDatetime)
+	tk.MustQuery("select f from t").Check(testkit.Rows("2011-11-11 00:00:00")) // the given number will be left-forward used.
+
+	// integer to floating-point values
+	prepare(tk)
+	tk.MustExec("alter table t modify a float")
+	modifiedColumn = getModifyColumn(c, tk.Se.(sessionctx.Context), "test", "t", "a", false)
+	c.Assert(modifiedColumn, NotNil)
+	c.Assert(modifiedColumn.Tp, Equals, parser_mysql.TypeFloat)
+	tk.MustQuery("select a from t").Check(testkit.Rows("1"))
+
+	tk.MustExec("alter table t modify b double")
+	modifiedColumn = getModifyColumn(c, tk.Se.(sessionctx.Context), "test", "t", "b", false)
+	c.Assert(modifiedColumn, NotNil)
+	c.Assert(modifiedColumn.Tp, Equals, parser_mysql.TypeDouble)
+	tk.MustQuery("select b from t").Check(testkit.Rows("11"))
+
+	// integer to bit
+	tk.MustExec("alter table t modify c bit(10)")
+	modifiedColumn = getModifyColumn(c, tk.Se.(sessionctx.Context), "test", "t", "c", false)
+	c.Assert(modifiedColumn, NotNil)
+	c.Assert(modifiedColumn.Tp, Equals, parser_mysql.TypeBit)
+	// 111 will be stored ad 0x00,0110,1111 = 0x6F, which will be shown as ASCII('o')=111 as well.
+	tk.MustQuery("select c from t").Check(testkit.Rows("\x00o"))
+
+	// integer to json
+	tk.MustExec("alter table t modify d json")
+	modifiedColumn = getModifyColumn(c, tk.Se.(sessionctx.Context), "test", "t", "d", false)
+	c.Assert(modifiedColumn, NotNil)
+	c.Assert(modifiedColumn.Tp, Equals, parser_mysql.TypeJSON)
+	tk.MustQuery("select d from t").Check(testkit.Rows("1111"))
+
+	// integer to enum
+	prepareForEnumSet(tk)
+	// TiDB take integer as the enum element offset to cast.
+	tk.MustExec("alter table t modify a enum(\"a\", \"b\")")
+	modifiedColumn = getModifyColumn(c, tk.Se.(sessionctx.Context), "test", "t", "a", false)
+	c.Assert(modifiedColumn, NotNil)
+	c.Assert(modifiedColumn.Tp, Equals, parser_mysql.TypeEnum)
+	tk.MustQuery("select a from t").Check(testkit.Rows("a"))
+
+	// TiDB take integer as the set element offset to cast.
+	tk.MustExec("alter table t modify b set(\"a\", \"b\")")
+	modifiedColumn = getModifyColumn(c, tk.Se.(sessionctx.Context), "test", "t", "b", false)
+	c.Assert(modifiedColumn, NotNil)
+	c.Assert(modifiedColumn.Tp, Equals, parser_mysql.TypeSet)
+	tk.MustQuery("select b from t").Check(testkit.Rows("a"))
+
+	// TiDB can't take integer as the enum element string to cast, while the MySQL can.
+	tk.MustGetErrCode("alter table t modify d enum(\"11111\", \"22222\")", mysql.WarnDataTruncated)
+
+	// TiDB can't take integer as the set element string to cast, while the MySQL can.
+	tk.MustGetErrCode("alter table t modify e set(\"11111\", \"22222\")", mysql.WarnDataTruncated)
+}
