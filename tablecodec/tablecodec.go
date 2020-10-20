@@ -776,7 +776,7 @@ func decodeRestoredValuesV5(columns []rowcodec.ColInfo, keyVal [][]byte, restore
 			j++
 			copyColInfo := rowcodec.ColInfo{
 				ID: col.ID,
-				Ft: columns[i].Ft.Clone(),
+				Ft: columns[i].Ft,
 			}
 			if collate.IsBinCollation(col.Ft.Collate) {
 				// Change the fieldType from string to uint since we store the number of the truncated spaces.
