@@ -2134,6 +2134,7 @@ func (p *LogicalLimit) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]
 			Offset: p.Offset,
 			Count:  p.Count,
 		}.Init(p.ctx, p.stats, p.blockOffset, resultProp)
+		limit.SetSchema(p.Schema())
 		ret = append(ret, limit)
 	}
 	return ret, true
