@@ -544,6 +544,11 @@ const (
 )
 
 func (s *testGCWorkerSuite) testDeleteRangesFailureImpl(c *C, failType int) {
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/gcworker/mockHistoryJobForGC", "return(1)"), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/gcworker/mockHistoryJobForGC"), IsNil)
+	}()
+
 	// Put some delete range tasks.
 	se := createSession(s.gcWorker.store)
 	defer se.Close()

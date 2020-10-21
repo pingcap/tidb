@@ -47,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	tidbutil "github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/logutil"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
@@ -1788,11 +1789,14 @@ func (w *GCWorker) saveValueToSysTable(key, value string) error {
 	return errors.Trace(err)
 }
 
+// GC placement rules when the partitions are removed by the GC worker.
+// Placement rules cannot be removed immediately after drop table / truncate table,
+// because the tables can be flashed back or recovered.
 func (w *GCWorker) doGCPlacementRules(dr util.DelRangeTask) (pid int64, err error) {
 	// Get the job from the job history
 	var historyJob *model.Job
 	failpoint.Inject("mockHistoryJobForGC", func(v failpoint.Value) {
-		args, err1 := json.Marshal([]interface{}{kv.Key{}, []int64{v.(int64)}})
+		args, err1 := json.Marshal([]interface{}{kv.Key{}, []int64{int64(v.(int))}})
 		if err1 != nil {
 			return
 		}
@@ -1811,6 +1815,9 @@ func (w *GCWorker) doGCPlacementRules(dr util.DelRangeTask) (pid int64, err erro
 		})
 		if err != nil {
 			return
+		}
+		if historyJob == nil {
+			return 0, admin.ErrDDLJobNotFound.GenWithStackByArgs(dr.JobID)
 		}
 	}
 
