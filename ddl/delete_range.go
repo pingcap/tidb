@@ -324,7 +324,6 @@ func insertJobIntoDeleteRangeTable(ctx sessionctx.Context, job *model.Job) error
 			}
 		}
 	case model.ActionDropIndex, model.ActionDropPrimaryKey:
-		tableID := job.TableID
 		var indexNames []model.CIStr
 		var ifExists []bool
 		var indexIDs []int64
@@ -338,19 +337,15 @@ func insertJobIntoDeleteRangeTable(ctx sessionctx.Context, job *model.Job) error
 			indexNames = append(indexNames, indexName)
 		}
 
-		for _, indexID := range indexIDs {
+		if len(indexIDs) > 0 {
 			if len(partitionIDs) > 0 {
 				for _, pid := range partitionIDs {
-					startKey := tablecodec.EncodeTableIndexPrefix(pid, indexID)
-					endKey := tablecodec.EncodeTableIndexPrefix(pid, indexID+1)
-					if err := doInsert(s, job.ID, indexID, startKey, endKey, now); err != nil {
+					if err := doBatchDeleteIndiceRange(s, job.ID, pid, indexIDs, now); err != nil {
 						return errors.Trace(err)
 					}
 				}
 			} else {
-				startKey := tablecodec.EncodeTableIndexPrefix(tableID, indexID)
-				endKey := tablecodec.EncodeTableIndexPrefix(tableID, indexID+1)
-				return doInsert(s, job.ID, indexID, startKey, endKey, now)
+				return doBatchDeleteIndiceRange(s, job.ID, job.TableID, indexIDs, now)
 			}
 		}
 	case model.ActionDropColumn:
