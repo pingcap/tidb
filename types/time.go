@@ -815,10 +815,6 @@ var validIdxCombinations = map[int]struct {
 //     second link specified that for string literal, "hour values less than than 10, a leading zero is required.".
 //   ISO-8601: Z|((((?P<tz_sign>[-+])(?P<tz_hour>[0-9]{2})(:(?P<tz_minute>[0-9]{2}){0,1}){0,1})|((?P<tz_minute>[0-9]{2}){0,1}){0,1}))$
 //     see https://www.cl.cam.ac.uk/~mgk25/iso-time.html
-//
-// However, due to the restraint of current parsing logic, we can't differentiate time like "2020-10-19 10-09:00", which
-// will be wrongly interpreted as "2020-10-19 10:00:00-09:00" instead of "2020-10-19 10:09:00".
-// TODO: handle the special case
 func GetTimezone(lit string) (idx int, tzSign, tzHour, tzSep, tzMinute string) {
 	idx, zidx, sidx, spidx, hidx, midx := -1, -1, -1, -1, -1, -1
 	z, s, sc := 0, 0, 0
@@ -951,12 +947,14 @@ func GetTimezone2(lit string) (idx int, tzSign, tzHour, tzMinute string) {
 func splitDateTime(format string) (seps []string, fracStr string, hasTZ bool, tzSign, tzHour, tzSep, tzMinute string) {
 	tzIndex, tzSign, tzHour, tzSep, tzMinute := GetTimezone(format)
 	if tzIndex > 0 {
-		format = format[:tzIndex]
 		hasTZ = true
+		for ; tzIndex >= 0 && isPunctuation(format[tzIndex]); tzIndex-- {}
+		format = format[:tzIndex]
 	}
 	fracIndex := GetFracIndex(format)
 	if fracIndex > 0 {
 		fracStr = format[fracIndex+1:]
+		for ; fracIndex >= 0 && isPunctuation(format[fracIndex]); tzIndex-- {}
 		format = format[:fracIndex]
 	}
 	seps = ParseDateFormat(format)
@@ -976,33 +974,23 @@ func parseDatetime(sc *stmtctx.StatementContext, str string, tp byte, fsp int8, 
 	seps, fracStr, hasTZ, tzSign, tzHour, tzSep, tzMinute := splitDateTime(str)
 
 	var truncatedOrIncorrect bool
-	// if we have timezone parsed, there are two cases
-	// 1. Z, then it must be time zone information, and we should not tamper with it
-	// 2. -HH, it might be from
-	//   1. no fracStr
-	//     1. YYYY-MM-DD
-	//     2. YYYY
-	//   2. YYYY.MM-DD
-	// 2. no fracStr, -HH, -HH:MM, could be misleading
-	// '2020-10.10+11:12' is 2020-10-10T11:12:00+0000
-	// '2020-10.10+1112' is invalid
 	/*
-	if we have timezone parsed, there are the following cases that are valid (but some of them are wrongly parsed)
+	if we have timezone parsed, there are the following cases to be considered, however some of them are wrongly parsed, and we should consider absorb them back to seps.
 
 	1. Z, then it must be time zone information, and we should not tamper with it
 	2. -HH, it might be from
 	    1. no fracStr
 	        1. YYYY-MM-DD
-	        2. YYYY-MM-DD HH
+	        2. YYYY-MM-DD-HH
 	        3. YYYY-MM-DD HH-MM
 	        4. YYYY-MM-DD HH:MM-SS
-	        5. YYYY-MM-DD HH:MM:SS-HH (correct)
+	        5. YYYY-MM-DD HH:MM:SS-HH (correct, no need absorb)
 	    2. with fracStr
 	        1. YYYY.MM-DD
 	        2. YYYY-MM.DD-HH
 	        3. YYYY-MM-DD.HH-MM
 	        4. YYYY-MM-DD HH.MM-SS
-	        5. YYYY-MM-DD HH:MM.SS-HH (correct)
+	        5. YYYY-MM-DD HH:MM.SS-HH (correct, no need absorb)
 	3. -HH:MM, similarly it might be from
 	    1. no fracStr
 	        1. YYYY-MM:DD
@@ -1010,22 +998,48 @@ func parseDatetime(sc *stmtctx.StatementContext, str string, tp byte, fsp int8, 
 	        3. YYYY-MM-DD-HH:MM
 	        4. YYYY-MM-DD HH-MM:SS
 	        5. YYYY-MM-DD HH:MM-SS:HH (invalid)
-	        6. YYYY-MM-DD HH:MM:SS-HH:MM (correct)
+	        6. YYYY-MM-DD HH:MM:SS-HH:MM (correct, no need absorb)
 	    2. with fracStr
 	        1. YYYY.MM-DD:HH
 	        2. YYYY-MM.DD-HH:MM
 	        3. YYYY-MM-DD.HH-MM:SS
 	        4. YYYY-MM-DD HH.MM-SS:HH (invalid)
-	        5. YYYY-MM-DD HH:MM.SS-HH:MM (correct)
+	        5. YYYY-MM-DD HH:MM.SS-HH:MM (correct, no need absorb)
 	4. -HHMM, there should only be one case, that is both the date and time part have existed, only then could we have fracStr or time zone
-	    1. YYYY-MM-DD HH:MM:SS.FSP-HHMM
+	    1. YYYY-MM-DD HH:MM:SS.FSP-HHMM (correct, no need absorb)
 
-	to summarize
+	to summarize, FSP and timezone is only valid if we have date and time presented, otherwise we should consider absorbing
+	FSP or timezone into seps. additionally, if we want to absorb timezone, we either absorb them all, or not, meaning
+	we won't only absorb tzHour but not tzMinute.
+
+	additional case to consider is that when the time literal is presented in float string (e.g. `YYYYMMDD.HHMMSS`), in
+	this case, FSP should not be absorbed and only `+HH:MM` would be allowed (i.e. Z, +HHMM, +HH that comes from ISO8601
+	should be banned), because it only conforms to MySQL's timezone parsing logic, but it is not valid in ISO8601.
+	However, I think it is generally acceptable to allow a wider spectrum of timezone format in string literal.
 	 */
-	switch len(seps) {
-	case 1:
-		if len(seps[0]) == 4 || len(seps[0]) == 2 {
 
+	// hasFullTimePart tests if we already have hhmmss
+	hasFullTimePart := func (seps []string) bool {
+		return len(seps) >= 6 || (len(seps) == 1 && len(seps[0]) >= 11)
+	}
+	if len(fracStr) != 0 && !isFloat {
+		if !hasFullTimePart(seps) {
+			seps = append(seps, fracStr)
+			fracStr = ""
+		}
+	}
+	if hasTZ && tzSign != "" {
+		// if tzSign is empty, we can be sure that the string literal contains timezone (such as 2010-10-10T10:10:10Z),
+		// therefore we could safely skip this branch.
+		if !hasFullTimePart(seps) && !(tzMinute != "" && tzSep == "") {
+			// we can't absorb timezone if there is no separate between tzHour and tzMinute
+			if len(tzHour) != 0 {
+				seps = append(seps, tzHour)
+			}
+			if len(tzMinute) != 0 {
+				seps = append(seps, tzHour)
+			}
+			hasTZ = false
 		}
 	}
 	switch len(seps) {
@@ -1152,7 +1166,8 @@ func parseDatetime(sc *stmtctx.StatementContext, str string, tp byte, fsp int8, 
 	var microsecond int
 	var overflow bool
 	if hhmmss {
-		// If input string is "20170118.999", without hhmmss, fsp is meanless.
+		// If input string is "20170118.999", without hhmmss, fsp is meaningless.
+		// TODO: this case is not only meaningless, but erroneous, please confirm.
 		microsecond, overflow, err = ParseFrac(fracStr, fsp)
 		if err != nil {
 			return ZeroDatetime, errors.Trace(err)
@@ -1172,6 +1187,10 @@ func parseDatetime(sc *stmtctx.StatementContext, str string, tp byte, fsp int8, 
 		tmp = FromGoTime(t1.Add(gotime.Second))
 	}
 	if hasTZ {
+		// without hhmmss, timezone is also meaningless
+		if !hhmmss {
+			return ZeroDatetime, errors.Trace(ErrWrongValue.GenWithStack(DateTimeStr, str))
+		}
 		if len(tzHour) != 0 {
 			deltaHour = int((tzHour[0]-'0')*10 + (tzHour[1] - '0'))
 		}
