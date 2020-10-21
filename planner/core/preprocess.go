@@ -836,7 +836,7 @@ func checkColumn(colDef *ast.ColumnDef) error {
 				return types.ErrTooBigScale.GenWithStackByArgs(tp.Decimal, colDef.Name.Name.O, mysql.MaxFloatingTypeScale)
 			}
 			if tp.Flen > mysql.MaxFloatingTypeWidth {
-				return types.ErrTooBigDisplaywidth.GenWithStackByArgs(colDef.Name.Name.O, mysql.MaxFloatingTypeWidth)
+				return types.ErrTooBigDisplayWidth.GenWithStackByArgs(colDef.Name.Name.O, mysql.MaxFloatingTypeWidth)
 			}
 		}
 	case mysql.TypeSet:
