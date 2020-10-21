@@ -149,6 +149,7 @@ func (s *testSuite9) TestIssue20400(c *C) {
 
 func (s *testSuite9) TestIssue20549(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists t1, t2")
 	tk.MustExec("CREATE TABLE `t1` (`id` bigint(20) NOT NULL AUTO_INCREMENT, `t2id` bigint(20) DEFAULT NULL, PRIMARY KEY (`id`), KEY `t2id` (`t2id`));")
 	tk.MustExec("INSERT INTO `t1` VALUES (1,NULL);")
 	tk.MustExec("CREATE TABLE `t2` (`id` bigint(20) NOT NULL AUTO_INCREMENT, PRIMARY KEY (`id`));")
