@@ -37,8 +37,8 @@ github.com/PuerkitoBio/urlesc v0.0.0-20170810143723-de5bf2ad4578 h1:d+Bc7a5rLufV
 github.com/PuerkitoBio/urlesc v0.0.0-20170810143723-de5bf2ad4578/go.mod h1:uGdkoq3SwY9Y+13GIhn11/XLaGBb4BfwItxLd5jeuXE=
 github.com/StackExchange/wmi v0.0.0-20190523213315-cbe66965904d h1:G0m3OIz70MZUWq3EgK3CesDbo8upS2Vm9/P3FtgI+Jk=
 github.com/StackExchange/wmi v0.0.0-20190523213315-cbe66965904d/go.mod h1:3eOhrUMpNV+6aFIbp5/iudMxNCF27Vw2OZgy4xEx0Fg=
-github.com/SunRunAway/parser v0.0.0-20201019072751-081116e8549d h1:Ba+aIBhsuz3sNM9SzpFJa8oCw1zEtWYNGRoMxKdEHeY=
-github.com/SunRunAway/parser v0.0.0-20201019072751-081116e8549d/go.mod h1:tC+oZGomUCR276MPK6KgAxm+uttkCz6qBe+wl//06yE=
+github.com/SunRunAway/parser v0.0.0-20201021060040-df32e165b597 h1:emngim/fza/rkZpMp5L1MJDZIQ5VkvvYCTDkkqWOFhs=
+github.com/SunRunAway/parser v0.0.0-20201021060040-df32e165b597/go.mod h1:74+OEdwM4B/jMpBRl92ch6CSmSYkQtv2TNxIjFdT/GE=
 github.com/VividCortex/ewma v1.1.1 h1:MnEK4VOv6n0RSY4vtRe3h11qjxL3+t0B8yOL8iMXdcM=
 github.com/VividCortex/ewma v1.1.1/go.mod h1:2Tkkvm3sRDVXaiyucHiACn4cqf7DpdyLvmxzcbUokwA=
 github.com/VividCortex/mysqlerr v0.0.0-20200629151747-c28746d985dd/go.mod h1:f3HiCrHjHBdcm6E83vGaXh1KomZMA2P6aeo3hKx/wg0=
@@ -432,8 +432,8 @@ github.com/pingcap/errors v0.11.0/go.mod h1:Oi8TUi2kEtXXLMJk9l1cGmz20kV3TaQ0usTw
 github.com/pingcap/errors v0.11.4/go.mod h1:Oi8TUi2kEtXXLMJk9l1cGmz20kV3TaQ0usTwv5KuLY8=
 github.com/pingcap/errors v0.11.5-0.20190809092503-95897b64e011/go.mod h1:Oi8TUi2kEtXXLMJk9l1cGmz20kV3TaQ0usTwv5KuLY8=
 github.com/pingcap/errors v0.11.5-0.20200902104258-eba4f1d8f6de/go.mod h1:g4vx//d6VakjJ0mk7iLBlKA8LFavV/sAVINT/1PFxeQ=
-github.com/pingcap/errors v0.11.5-0.20201015111140-bbdd097cc9e8 h1:06XCZKn9bRbpxkcOM6ZLbmW3Unu1N5BIxYyJZQTes5s=
-github.com/pingcap/errors v0.11.5-0.20201015111140-bbdd097cc9e8/go.mod h1:g4vx//d6VakjJ0mk7iLBlKA8LFavV/sAVINT/1PFxeQ=
+github.com/pingcap/errors v0.11.5-0.20201021055732-210aacd3fd99 h1:PVuEvTi/LlviMG7X3av44NRwcdPf0tiqL/YdVOIKCpA=
+github.com/pingcap/errors v0.11.5-0.20201021055732-210aacd3fd99/go.mod h1:G7x87le1poQzLB/TqvTJI2ILrSgobnq4Ut7luOwvfvI=
 github.com/pingcap/failpoint v0.0.0-20191029060244-12f4ac2fd11d/go.mod h1:DNS3Qg7bEDhU6EXNHF+XSv/PGznQaMJ5FWvctpm6pQI=
 github.com/pingcap/failpoint v0.0.0-20200702092429-9f69995143ce h1:Y1kCxlCtlPTMtVcOkjUcuQKh+YrluSo7+7YMCQSzy30=
 github.com/pingcap/failpoint v0.0.0-20200702092429-9f69995143ce/go.mod h1:w4PEZ5y16LeofeeGwdgZB4ddv9bLyDuIX+ljstgKZyk=
