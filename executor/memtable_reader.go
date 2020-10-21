@@ -40,7 +40,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/pdapi"
 	"github.com/pingcap/tidb/util/set"
 	"go.uber.org/zap"
@@ -54,12 +53,9 @@ type dummyCloser struct{}
 
 func (dummyCloser) close() error { return nil }
 
-func (dummyCloser) getRuntimeStats() execdetails.RuntimeStats { return nil }
-
 type memTableRetriever interface {
 	retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error)
 	close() error
-	getRuntimeStats() execdetails.RuntimeStats
 }
 
 // MemTableReaderExec executes memTable information retrieving from the MemTable components
@@ -131,9 +127,6 @@ func (e *MemTableReaderExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 // Close implements the Executor Close interface.
 func (e *MemTableReaderExec) Close() error {
-	if stats := e.retriever.getRuntimeStats(); stats != nil && e.runtimeStats != nil {
-		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, stats)
-	}
 	return e.retriever.close()
 }
 
@@ -666,9 +659,5 @@ func (e *clusterLogRetriever) close() error {
 	if e.cancel != nil {
 		e.cancel()
 	}
-	return nil
-}
-
-func (e *clusterLogRetriever) getRuntimeStats() execdetails.RuntimeStats {
 	return nil
 }

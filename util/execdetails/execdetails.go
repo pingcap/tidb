@@ -360,34 +360,6 @@ func (crs *CopRuntimeStats) String() string {
 		procTimes[n-1], procTimes[0], procTimes[n*4/5], procTimes[n*19/20], totalIters, totalTasks)
 }
 
-<<<<<<< HEAD
-=======
-const (
-	// TpBasicRuntimeStats is the tp for BasicRuntimeStats.
-	TpBasicRuntimeStats int = iota
-	// TpRuntimeStatsWithCommit is the tp for RuntimeStatsWithCommit.
-	TpRuntimeStatsWithCommit
-	// TpRuntimeStatsWithConcurrencyInfo is the tp for RuntimeStatsWithConcurrencyInfo.
-	TpRuntimeStatsWithConcurrencyInfo
-	// TpSnapshotRuntimeStats is the tp for SnapshotRuntimeStats.
-	TpSnapshotRuntimeStats
-	// TpHashJoinRuntimeStats is the tp for HashJoinRuntimeStats.
-	TpHashJoinRuntimeStats
-	// TpIndexLookUpJoinRuntimeStats is the tp for IndexLookUpJoinRuntimeStats.
-	TpIndexLookUpJoinRuntimeStats
-	// TpRuntimeStatsWithSnapshot is the tp for RuntimeStatsWithSnapshot.
-	TpRuntimeStatsWithSnapshot
-	// TpJoinRuntimeStats is the tp for JoinRuntimeStats.
-	TpJoinRuntimeStats
-	// TpSelectResultRuntimeStats is the tp for SelectResultRuntimeStats.
-	TpSelectResultRuntimeStats
-	// TpInsertRuntimeStat is the tp for InsertRuntimeStat
-	TpInsertRuntimeStat
-	// TpSlowQueryRuntimeStat is the tp for TpSlowQueryRuntimeStat
-	TpSlowQueryRuntimeStat
-)
-
->>>>>>> 0ed9f4d05... executor: tiny optimize slow_query performance and add related runtime stats (#20200)
 // RuntimeStats is used to express the executor runtime information.
 type RuntimeStats interface {
 	GetActRows() int64
