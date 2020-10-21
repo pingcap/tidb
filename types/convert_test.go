@@ -687,10 +687,26 @@ func (s *testTypeConvertSuite) TestConvert(c *C) {
 	signedAccept(c, mysql.TypeYear, 1901, "1901")
 	signedAccept(c, mysql.TypeYear, 1900.567, "1901")
 	signedDeny(c, mysql.TypeYear, 1900.456, "0")
+	signedAccept(c, mysql.TypeYear, 0, "0")
+	signedAccept(c, mysql.TypeYear, "0", "2000")
+	signedAccept(c, mysql.TypeYear, "00", "2000")
+	signedAccept(c, mysql.TypeYear, " 0", "2000")
+	signedAccept(c, mysql.TypeYear, " 00", "2000")
+	signedAccept(c, mysql.TypeYear, " 000", "0")
+	signedAccept(c, mysql.TypeYear, " 0000 ", "2000")
+	signedAccept(c, mysql.TypeYear, " 0ab", "0")
+	signedAccept(c, mysql.TypeYear, "00bc", "0")
+	signedAccept(c, mysql.TypeYear, "000a", "0")
+	signedAccept(c, mysql.TypeYear, " 000a ", "2000")
 	signedAccept(c, mysql.TypeYear, 1, "2001")
+	signedAccept(c, mysql.TypeYear, "1", "2001")
+	signedAccept(c, mysql.TypeYear, "01", "2001")
 	signedAccept(c, mysql.TypeYear, 69, "2069")
+	signedAccept(c, mysql.TypeYear, "69", "2069")
 	signedAccept(c, mysql.TypeYear, 70, "1970")
+	signedAccept(c, mysql.TypeYear, "70", "1970")
 	signedAccept(c, mysql.TypeYear, 99, "1999")
+	signedAccept(c, mysql.TypeYear, "99", "1999")
 	signedDeny(c, mysql.TypeYear, 100, "0")
 	signedDeny(c, mysql.TypeYear, "99999999999999999999999999999999999", "0")
 
@@ -851,6 +867,7 @@ func (s *testTypeConvertSuite) TestGetValidFloat(c *C) {
 		{"123.e", "123."},
 		{"0-123", "0"},
 		{"9-3", "9"},
+		{"1001001\\u0000\\u0000\\u0000", "1001001"},
 	}
 	sc := new(stmtctx.StatementContext)
 	for _, tt := range tests {
