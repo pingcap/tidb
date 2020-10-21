@@ -3332,7 +3332,7 @@ func (builder *dataReaderBuilder) buildTableReaderFromHandles(ctx context.Contex
 		})
 	}
 	var b distsql.RequestBuilder
-	if len(handles) >0 {
+	if len(handles) > 0 {
 		if _, ok := handles[0].(kv.PartitionHandle); ok {
 			b.SetPartitionsAndHandles(handles)
 		} else {
