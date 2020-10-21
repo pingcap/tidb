@@ -16,6 +16,7 @@ package timeutil
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"syscall"
@@ -59,7 +60,7 @@ func InferOneStepLinkForPath(path string) (string, error) {
 	if err != nil {
 		return path, err
 	}
-	if fileInfo.Mode() & os.ModeSymlink != 0 {
+	if fileInfo.Mode()&os.ModeSymlink != 0 {
 		path, err = os.Readlink(path)
 		if err != nil {
 			return path, err
@@ -78,8 +79,15 @@ func InferSystemTZ() string {
 	tz, ok := syscall.Getenv("TZ")
 	switch {
 	case !ok:
-		path, err1 := InferOneStepLinkForPath("/etc/localtime")
+		path, err1 := filepath.EvalSymlinks("/etc/localtime")
 		if err1 == nil {
+			if strings.Index(path, "posixrules") != -1 {
+				path, err1 = InferOneStepLinkForPath("/etc/localtime")
+				if err1 != nil {
+					logutil.BgLogger().Error("locate timezone files failed", zap.Error(err1))
+					return ""
+				}
+			}
 			name, err2 := inferTZNameFromFileName(path)
 			if err2 == nil {
 				return name
