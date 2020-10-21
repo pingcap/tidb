@@ -92,8 +92,8 @@ func initMemoryUsageAlarmRecord() (record *memoryUsageAlarm) {
 func (record *memoryUsageAlarm) alarm4ExcessiveMemUsage(sm util.SessionManager) {
 	var memoryUsage uint64
 	instanceStats := &runtime.MemStats{}
+	runtime.ReadMemStats(instanceStats)
 	if record.isServerMemoryQuotaSet {
-		runtime.ReadMemStats(instanceStats)
 		memoryUsage = instanceStats.HeapAlloc
 	} else {
 		memoryUsage, record.err = memory.MemUsed()
@@ -110,19 +110,30 @@ func (record *memoryUsageAlarm) alarm4ExcessiveMemUsage(sm util.SessionManager) 
 		interval := time.Since(record.lastCheckTime)
 		record.lastCheckTime = time.Now()
 		if interval > 10*time.Second {
-			record.doRecord(memoryUsage, sm)
+			record.doRecord(memoryUsage, instanceStats.HeapAlloc, sm)
 		}
 	}
 }
 
-func (record *memoryUsageAlarm) doRecord(memUsage uint64, sm util.SessionManager) {
-	logutil.BgLogger().Warn("the TiDB instance now takes a lot of memory, has the risk of OOM. TiDB will record running SQLs and heap profile in the tmp path",
-		zap.Bool("is server-momory-quota set", record.isServerMemoryQuotaSet),
-		zap.Any("memory size", record.serverMemoryQuota),
-		zap.Any("memory usage", memUsage),
-		zap.Any("memory-usage-alarm-ratio", config.GetGlobalConfig().Performance.MemoryUsageAlarmRatio),
-		zap.Any("record-path", record.tmpDir),
-	)
+func (record *memoryUsageAlarm) doRecord(memUsage uint64, instanceMemoryUsage uint64, sm util.SessionManager) {
+	if record.isServerMemoryQuotaSet {
+		logutil.BgLogger().Warn("system now takes a lot of memory, the Tidb instance has the risk of OOM. TiDB will record running SQLs and heap profile in the record path",
+			zap.Bool("is server-memory-quota set", record.isServerMemoryQuotaSet),
+			zap.Any("server-memory-quota", record.serverMemoryQuota),
+			zap.Any("tidb instance memory usage", memUsage),
+			zap.Any("memory-usage-alarm-ratio", config.GetGlobalConfig().Performance.MemoryUsageAlarmRatio),
+			zap.Any("record path", record.tmpDir),
+		)
+	} else {
+		logutil.BgLogger().Warn("system now takes a lot of memory, the Tidb instance has the risk of OOM. TiDB will record running SQLs and heap profile in the record path",
+			zap.Bool("is server-memory-quota set", record.isServerMemoryQuotaSet),
+			zap.Any("system memory total", record.serverMemoryQuota),
+			zap.Any("system memory usage", memUsage),
+			zap.Any("tidb instance memory usage", instanceMemoryUsage),
+			zap.Any("memory-usage-alarm-ratio", config.GetGlobalConfig().Performance.MemoryUsageAlarmRatio),
+			zap.Any("record path", record.tmpDir),
+		)
+	}
 
 	if record.err = disk.CheckAndInitTempDir(); record.err != nil {
 		return
