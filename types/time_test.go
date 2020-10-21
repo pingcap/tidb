@@ -14,6 +14,7 @@
 package types_test
 
 import (
+	"fmt"
 	"math"
 	"testing"
 	"time"
@@ -1876,21 +1877,86 @@ func (s *testTimeSuite) TestGetTimezone(c *C) {
 		tzHour   string
 		tzMinute string
 	}{
-		{"2020-10-10T10:10:10", -1, "", "", ""},
 		{"2020-10-10T10:10:10Z", 19, "", "", ""},
-		{"2020-10-10T10:10:10Z+08", 19, "+", "08", ""},
-		{"2020-10-10T10:10:10Z-08", 19, "-", "08", ""},
-		{"2020-10-10T10:10:10Z-0700", 19, "-", "07", "00"},
-		{"2020-10-10T10:10:10Z+08:20", 19, "+", "08", "20"},
+		{"2020-10-10T10:10:10", -1, "", "", ""},
+		{"2020-10-10T10:10:10-08", 19, "-", "08", ""},
+		{"2020-10-10T10:10:10-0700", 19, "-", "07", "00"},
+		{"2020-10-10T10:10:10+08:20", 19, "+", "08", "20"},
 		{"2020-10-10T10:10:10+08:10", 19, "+", "08", "10"},
-		{"2020-10-10T10:10:10-08", -1, "", "", ""},
 		{"2020-10-10T10:10:10+8:00", -1, "", "", ""},
+		{"2020-10-10T10:10:10+082:10", -1, "", "", ""},
+		{"2020-10-10T10:10:10+08:101", -1, "", "", ""},
+		{"2020-10-10T10:10:10+T8:11", -1, "", "", ""},
 		{"2020-09-06T05:49:13.293Z", 23, "", "", ""},
 		{"2020-09-06T05:49:13.293", -1, "", "", ""},
 	}
 	for ith, ca := range cases {
 		idx, tzSign, tzHour, tzMinute := types.GetTimezone(ca.input)
 		c.Assert([4]interface{}{idx, tzSign, tzHour, tzMinute}, Equals, [4]interface{}{ca.idx, ca.tzSign, ca.tzHour, ca.tzMinute}, Commentf("idx %d", ith))
+	}
+}
+
+func (s *testTimeSuite) TestParseWithTimezone(c *C) {
+	getTZ := func(tzSign string, tzHour, tzMinue int) *time.Location {
+		offset := tzHour*60*60+tzMinue*60
+		if tzSign == "-" {
+			offset = -offset
+		}
+		return time.FixedZone(fmt.Sprintf("UTC%s%02d:%02d", tzSign, tzHour, tzMinue), offset)
+	}
+	// lit is the string literal to be parsed, which contains timezone, and gt is the ground truth time
+	// in go's time.Time, while sysTZ is the system timezone where the string literal gets parsed.
+	// we first parse the string literal, and convert it into UTC and then compare it with the ground truth time in UTC.
+	// note that sysTZ won't affect the physical time the string literal represents.
+	cases := []struct {
+		lit string
+		fsp int8
+		gt time.Time
+		sysTZ *time.Location
+	}{
+		{
+			"2006-01-02T15:04:05Z",
+			0,
+			time.Date(2006, 1, 2, 15, 4, 5, 0, getTZ("+", 0, 0)),
+			getTZ("+", 0, 0),
+		},
+		{
+			"2006-01-02T15:04:05Z",
+			0,
+			time.Date(2006, 1, 2, 15, 4, 5, 0, getTZ("+", 0, 0)),
+			getTZ("+", 10, 0),
+		},
+		{
+			"2020-10-21T16:05:10.50Z",
+			2,
+			time.Date(2020, 10, 21, 16, 5, 10, 500*1000*1000, getTZ("+", 0, 0)),
+			getTZ("-", 10, 0),
+		},
+		{
+			"2006-01-02T15:04:05+09:00",
+			0,
+			time.Date(2006, 1, 2, 15, 4, 5, 0, getTZ("+", 9, 0)),
+			getTZ("+", 8, 0),
+		},
+		{
+			"2006-01-02T15:04:05-02:00",
+			0,
+			time.Date(2006, 1, 2, 15, 4, 5, 0, getTZ("-", 2, 0)),
+			getTZ("+", 3, 0),
+		},
+		{
+			"2006-01-02T15:04:05-14:00",
+			0,
+			time.Date(2006, 1, 2, 15, 4, 5, 0, getTZ("-", 14, 0)),
+			getTZ("+", 14, 0),
+		},
+	}
+	for ith, ca := range cases {
+		t, err := types.ParseTime(&stmtctx.StatementContext{TimeZone: ca.sysTZ}, ca.lit, mysql.TypeTimestamp, ca.fsp)
+		c.Check(err, IsNil, Commentf("tidb time parse failed on %d", ith))
+		t1, err := t.GoTime(ca.sysTZ)
+		c.Check(err, IsNil, Commentf("tidb time convert failed on %d", ith))
+		c.Check(t1.In(time.UTC), Equals, ca.gt.In(time.UTC), Commentf("parsed time mismatch on %dth case", ith))
 	}
 }
 

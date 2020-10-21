@@ -794,10 +794,13 @@ var validIdxCombinations = map[int]struct {
 	m int
 }{
 	100: {0, 0}, // 23:59:59Z
-	430: {2, 0}, // 23:59:59Z+08
-	650: {4, 2}, // 23:59:59Z+0800
-	763: {5, 2}, // 23:59:59Z+08:00
-	63:  {5, 2}, // 23:59:59+08:00
+	30: {2, 0}, // 23:59:59+08
+	50: {4, 2}, // 23:59:59+0800
+	63: {5, 2}, // 23:59:59+08:00
+	// postgres supports the following additional syntax that deviates from ISO8601, although we won't support it
+	// currently, it will be fairly easy to add in the current parsing framework
+	// 23:59:59Z+08
+	// 23:59:59Z+08:00
 }
 
 // GetTimezone parses the trailing timezone information of a given time string literal. If idx = -1 is returned, it
@@ -806,11 +809,11 @@ var validIdxCombinations = map[int]struct {
 // empty string will be returned.
 //
 // Supported syntax:
-//   MySQL compatible: ((?P<tz_sign>[-+])(?P<tz_hour>[0-9]{2}):(?P<tz_minute>[0-9]{2}))){0,1}$, see
+//   MySQL compatible: ((?P<tz_sign>[-+])(?P<tz_hour>[0-9]{2}):(?P<tz_minute>[0-9]{2})){0,1}$, see
 //     https://dev.mysql.com/doc/refman/8.0/en/time-zone-support.html and https://dev.mysql.com/doc/refman/8.0/en/datetime.html
 //     the first link specified that timezone information should be in "[H]H:MM, prefixed with a + or -" while the
 //     second link specified that for string literal, "hour values less than than 10, a leading zero is required.".
-//   ISO-8601: [Zz](((?P<tz_sign>[-+])(?P<tz_hour>[0-9]{2})(:(?P<tz_minute>[0-9]{2}){0,1}){0,1})|((?P<tz_minute>[0-9]{2}){0,1}){0,1})){0,1}$
+//   ISO-8601: Z|((((?P<tz_sign>[-+])(?P<tz_hour>[0-9]{2})(:(?P<tz_minute>[0-9]{2}){0,1}){0,1})|((?P<tz_minute>[0-9]{2}){0,1}){0,1}))$
 //     see https://www.cl.cam.ac.uk/~mgk25/iso-time.html
 //
 // However, due to the restraint of current parsing logic, we can't differentiate time like "2020-10-19 10-09:00", which
@@ -821,7 +824,7 @@ func GetTimezone(lit string) (idx int, tzSign, tzHour, tzMinute string) {
 	z, s, sc := 0, 0, 0
 	l := len(lit)
 	for i := l - 1; 0 <= i; i-- {
-		if lit[i] == 'z' || lit[i] == 'Z' {
+		if lit[i] == 'Z' {
 			zidx = i
 			break
 		}
@@ -832,7 +835,7 @@ func GetTimezone(lit string) (idx int, tzSign, tzHour, tzMinute string) {
 			scidx = i
 		}
 	}
-	// zidx can be -1 (23:59:59+08:00), l-1 (23:59:59Z)5, l-4 (23:59:9Z+08), l-6 (23:59:59Z+0800), l-7 (23:59:59Z+08:00)
+	// zidx can be -1 (23:59:59+08:00), l-1 (23:59:59Z)
 	// sidx can be -1, l-3, l-5, l-6
 	// scidx can be -1, l-3
 	// hidx can be -1, l-2, l-4, l-5
@@ -846,6 +849,15 @@ func GetTimezone(lit string) (idx int, tzSign, tzHour, tzMinute string) {
 	}
 	if scidx != -1 {
 		sc = l - scidx
+	}
+	if z != 1 {
+		z = 0
+	}
+	if s != 3 && s != 5 && s != 6 {
+		s = 0
+	}
+	if sc != 3 {
+		sc = 0
 	}
 	k := z*100 + s*10 + sc
 	if v, ok := validIdxCombinations[k]; ok {
@@ -878,6 +890,54 @@ BAD:
 	return -1, "", "", ""
 }
 
+func GetTimezone2(lit string) (idx int, tzSign, tzHour, tzMinute string) {
+	// cases that we support
+	// 23:59:59Z
+	// 23:59:59+08
+	// 23:59:59+0800
+	// 23:59:59+08:00
+	l := len(lit)
+	valid := func(v string) bool {
+		return '0' <= v[0] && v[0] <= '9' && '0' <= v[1] && v[1] <= '9'
+	}
+	idx = -1
+	if l > 0 {
+		if lit[l-1] == 'Z' {
+			return l-1, "", "", ""
+		}
+	}
+	if l > 3 {
+		idx = l-3
+		tzSign = lit[idx:idx+1]
+		tzHour = lit[idx+1:idx+3]
+		if (tzSign == "+" || tzSign == "-") && valid(tzHour) {
+			return
+		}
+		idx, tzSign, tzHour = -1, "", ""
+	}
+	if l > 5 {
+		idx = l-5
+		tzSign = lit[idx:idx+1]
+		tzHour = lit[idx+1:idx+3]
+		tzMinute = lit[idx+3:idx+5]
+		if (tzSign == "+" || tzSign == "-") && valid(tzHour) && valid(tzMinute) {
+			return
+		}
+		idx, tzSign, tzHour, tzMinute = -1, "", "", ""
+	}
+	if l > 6 {
+		idx = l-6
+		tzSign = lit[idx:idx+1]
+		tzHour = lit[idx+1:idx+3]
+		tzMinute = lit[idx+4:idx+6]
+		if (tzSign == "+" || tzSign == "-") && valid(tzHour) && valid(tzMinute) {
+			return
+		}
+		idx, tzSign, tzHour, tzMinute = -1, "", "", ""
+	}
+	return
+}
+
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-literals.html.
 // splitDateTime splits the string literal into 3 parts, date & time, FSP and time zone.
 // For FSP, The only delimiter recognized between a date & time part and a fractional seconds part is the decimal point,
@@ -889,9 +949,6 @@ func splitDateTime(format string) (seps []string, fracStr, tzSign, tzHour, tzMin
 	tzIndex, tzSign, tzHour, tzMinute := GetTimezone(format)
 	if tzIndex > 0 {
 		format = format[:tzIndex]
-		if len(tzSign) == 0 {
-			tzSign, tzHour, tzMinute = "+", "00", "00"
-		}
 	}
 	fracIndex := GetFracIndex(format)
 	if fracIndex > 0 {
