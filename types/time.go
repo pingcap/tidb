@@ -903,7 +903,7 @@ func splitDateTime(format string) (seps []string, fracStr, tzSign, tzHour, tzMin
 }
 
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-literals.html.
-func parseDatetime(sc *stmtctx.StatementContext, str string, fsp int8, isFloat bool) (Time, error) {
+func parseDatetime(sc *stmtctx.StatementContext, str string, tp byte, fsp int8, isFloat bool) (Time, error) {
 	var (
 		year, month, day, hour, minute, second, deltaHour, deltaMinute int
 		fracStr                                                        string
@@ -917,10 +917,10 @@ func parseDatetime(sc *stmtctx.StatementContext, str string, fsp int8, isFloat b
 	// we can use tzSign to determine whether str contains timezone information
 	if len(tzSign) != 0 {
 		if len(tzHour) != 0 {
-			deltaHour = int((tzHour[1]-'0')*10 + (tzHour[0] - '0'))
+			deltaHour = int((tzHour[0]-'0')*10 + (tzHour[1] - '0'))
 		}
 		if len(tzMinute) != 0 {
-			deltaMinute = int((tzMinute[1]-'0')*10 + (tzMinute[0] - '0'))
+			deltaMinute = int((tzMinute[0]-'0')*10 + (tzMinute[1] - '0'))
 		}
 		// allowed delta range is [-14:00, 14:00], and we will intentionally reject -00:00
 		if deltaHour > 14 || deltaMinute > 59 || (deltaHour == 14 && deltaMinute != 0) || (tzSign == "-" && deltaHour == 0 && deltaMinute == 0) {
@@ -1080,6 +1080,22 @@ func parseDatetime(sc *stmtctx.StatementContext, str string, fsp int8, isFloat b
 			return ZeroDatetime, errors.Trace(err)
 		}
 		tmp = FromGoTime(t1.Add(gotime.Second))
+	}
+	if len(tzSign) != 0 {
+		// by default, if the temporal string literal does not contain timezone information, it will be in the timezone
+		// specified by the time_zone system variable. However, if the timezone is specified in the string literal, we
+		// will use the specified timezone to interpret the string literal and convert it into the system timezone.
+		offset := deltaHour*60*60 + deltaMinute*60
+		if tzSign == "-" {
+			offset = -offset
+		}
+		loc := gotime.FixedZone(fmt.Sprintf("UTC%s%s:%s", tzSign, tzHour, tzMinute), offset)
+		t1, err := tmp.GoTime(loc)
+		if err != nil {
+			return ZeroDatetime, errors.Trace(err)
+		}
+		t1 = t1.In(sc.TimeZone)
+		tmp = FromGoTime(t1)
 	}
 
 	nt := NewTime(tmp, mysql.TypeDatetime, fsp)
@@ -1817,7 +1833,7 @@ func parseTime(sc *stmtctx.StatementContext, str string, tp byte, fsp int8, isFl
 		return NewTime(ZeroCoreTime, tp, DefaultFsp), errors.Trace(err)
 	}
 
-	t, err := parseDatetime(sc, str, fsp, isFloat)
+	t, err := parseDatetime(sc, str, tp, fsp, isFloat)
 	if err != nil {
 		return NewTime(ZeroCoreTime, tp, DefaultFsp), errors.Trace(err)
 	}

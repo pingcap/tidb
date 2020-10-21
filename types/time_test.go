@@ -1885,6 +1885,8 @@ func (s *testTimeSuite) TestGetTimezone(c *C) {
 		{"2020-10-10T10:10:10+08:10", 19, "+", "08", "10"},
 		{"2020-10-10T10:10:10-08", -1, "", "", ""},
 		{"2020-10-10T10:10:10+8:00", -1, "", "", ""},
+		{"2020-09-06T05:49:13.293Z", 23, "", "", ""},
+		{"2020-09-06T05:49:13.293", -1, "", "", ""},
 	}
 	for ith, ca := range cases {
 		idx, tzSign, tzHour, tzMinute := types.GetTimezone(ca.input)
@@ -1960,15 +1962,18 @@ func BenchmarkParseDateFormat(b *testing.B) {
 	benchmarkDateFormat(b, "datetime internal", "20111213141516")
 	benchmarkDateFormat(b, "datetime basic frac", "2011-12-13 14:15:16.123456")
 	benchmarkDateFormat(b, "datetime repeated delimiters", "2011---12---13 14::15::16..123456")
-	benchmarkDateFormat(b, "datetime with timezone", "2020-10-10T10:10:10Z+08:00")
 }
 
-func BenchmarkParseDatetime(b *testing.B) {
-	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
-	str := "2011-10-10 11:11:11.123456"
+func benchmarkDatetimeFormat(b *testing.B, name string, sc *stmtctx.StatementContext, str string) {
+	b.Run(name, func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			types.ParseDatetime(sc, str)
+		}
+	})
+}
 
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		types.ParseDatetime(sc, str)
-	}
+func BenchmarkParseDatetimeFormat(b *testing.B) {
+	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
+	benchmarkDatetimeFormat(b, "datetime without timezone", sc, "2020-10-10T10:10:10")
+	benchmarkDatetimeFormat(b, "datetime with timezone", sc, "2020-10-10T10:10:10Z+08:00")
 }
