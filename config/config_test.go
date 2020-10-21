@@ -188,6 +188,7 @@ server-version = "test_version"
 repair-mode = true
 max-server-connections = 200
 mem-quota-query = 10000
+mem-quota-statistics = 10000
 nested-loop-join-cache-capacity = 100
 max-index-length = 3080
 skip-register-to-dashboard = true
@@ -196,11 +197,14 @@ deprecate-integer-display-length = true
 txn-total-size-limit=2000
 [tikv-client]
 commit-timeout="41s"
-enable-async-commit=true
 max-batch-size=128
 region-cache-ttl=6000
 store-limit=0
 ttl-refreshed-txn-size=8192
+[tikv-client.async-commit]
+enable=true
+keys-limit=123
+total-key-size-limit=1024
 [stmt-summary]
 enable=false
 enable-internal-query=true
@@ -234,7 +238,9 @@ spilled-file-encryption-method = "plaintext"
 	c.Assert(conf.AlterPrimaryKey, Equals, true)
 
 	c.Assert(conf.TiKVClient.CommitTimeout, Equals, "41s")
-	c.Assert(conf.TiKVClient.EnableAsyncCommit, Equals, true)
+	c.Assert(conf.TiKVClient.AsyncCommit.Enable, Equals, true)
+	c.Assert(conf.TiKVClient.AsyncCommit.KeysLimit, Equals, uint(123))
+	c.Assert(conf.TiKVClient.AsyncCommit.TotalKeySizeLimit, Equals, uint64(1024))
 	c.Assert(conf.TiKVClient.MaxBatchSize, Equals, uint(128))
 	c.Assert(conf.TiKVClient.RegionCacheTTL, Equals, uint(6000))
 	c.Assert(conf.TiKVClient.StoreLimit, Equals, int64(0))
@@ -253,6 +259,7 @@ spilled-file-encryption-method = "plaintext"
 	c.Assert(conf.RepairMode, Equals, true)
 	c.Assert(conf.MaxServerConnections, Equals, uint32(200))
 	c.Assert(conf.MemQuotaQuery, Equals, int64(10000))
+	c.Assert(conf.MemQuotaStatistics, Equals, int64(10000))
 	c.Assert(conf.NestedLoopJoinCacheCapacity, Equals, int64(100))
 	c.Assert(conf.IsolationRead.Engines, DeepEquals, []string{"tiflash"})
 	c.Assert(conf.MaxIndexLength, Equals, 3080)

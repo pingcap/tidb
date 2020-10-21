@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	tidbutil "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/admin"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
@@ -622,7 +623,7 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 	case model.ActionDropTable, model.ActionDropView, model.ActionDropSequence:
 		ver, err = onDropTableOrView(t, job)
 	case model.ActionDropTablePartition:
-		ver, err = onDropTablePartition(t, job)
+		ver, err = w.onDropTablePartition(d, t, job)
 	case model.ActionTruncateTablePartition:
 		ver, err = onTruncateTablePartition(d, t, job)
 	case model.ActionExchangeTablePartition:
@@ -666,7 +667,7 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 	case model.ActionModifyTableAutoIdCache:
 		ver, err = onModifyTableAutoIDCache(t, job)
 	case model.ActionAddTablePartition:
-		ver, err = onAddTablePartition(d, t, job)
+		ver, err = w.onAddTablePartition(d, t, job)
 	case model.ActionModifyTableCharsetAndCollate:
 		ver, err = onModifyTableCharsetAndCollate(t, job)
 	case model.ActionRecoverTable:
@@ -685,6 +686,8 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 		ver, err = onAlterIndexVisibility(t, job)
 	case model.ActionAlterTableAlterPartition:
 		ver, err = onAlterTablePartition(t, job)
+	case model.ActionAlterSequence:
+		ver, err = onAlterSequence(t, job)
 	default:
 		// Invalid job, cancel it.
 		job.State = model.JobStateCancelled
@@ -735,7 +738,7 @@ func toTError(err error) *terror.Error {
 	}
 
 	// TODO: Add the error code.
-	return terror.ClassDDL.Synthesize(terror.CodeUnknown, err.Error())
+	return dbterror.ClassDDL.Synthesize(terror.CodeUnknown, err.Error())
 }
 
 // waitSchemaChanged waits for the completion of updating all servers' schema. In order to make sure that happens,
@@ -863,6 +866,22 @@ func updateSchemaVersion(t *meta.Meta, job *model.Job) (int64, error) {
 			SchemaID:   ptSchemaID,
 			TableID:    ptTableID,
 			OldTableID: ptTableID,
+		}
+		diff.AffectedOpts = affects
+	case model.ActionTruncateTablePartition:
+		var oldIDs []int64
+		err = job.DecodeArgs(&oldIDs)
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		diff.TableID = job.TableID
+		affects := make([]*model.AffectedOption, len(oldIDs))
+		for i := 0; i < len(oldIDs); i++ {
+			affects[i] = &model.AffectedOption{
+				SchemaID:   job.SchemaID,
+				TableID:    oldIDs[i],
+				OldTableID: oldIDs[i],
+			}
 		}
 		diff.AffectedOpts = affects
 	default:

@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
@@ -211,6 +212,8 @@ type IndexReaderExecutor struct {
 	index           *model.IndexInfo
 	physicalTableID int64
 	ranges          []*ranger.Range
+	partitions      []table.PhysicalTable
+
 	// kvRanges are only used for union scan.
 	kvRanges []kv.KeyRange
 	dagPB    *tipb.DAGRequest
@@ -257,6 +260,20 @@ func (e *IndexReaderExecutor) Next(ctx context.Context, req *chunk.Chunk) error 
 	return err
 }
 
+func (e *IndexReaderExecutor) buildKeyRanges(sc *stmtctx.StatementContext, physicalID int64) ([]kv.KeyRange, error) {
+	if e.index.ID == -1 {
+		return distsql.CommonHandleRangesToKVRanges(sc, []int64{physicalID}, e.ranges)
+	}
+	return distsql.IndexRangesToKVRanges(sc, physicalID, e.index.ID, e.ranges, e.feedback)
+}
+
+func (e *IndexReaderExecutor) buildPartitionTableKeyRanges(sc *stmtctx.StatementContext, physicalIDs []int64) ([]kv.KeyRange, error) {
+	if e.index.ID == -1 {
+		return distsql.CommonHandleRangesToKVRanges(sc, physicalIDs, e.ranges)
+	}
+	return distsql.IndexRangesToKVRangesForTables(sc, physicalIDs, e.index.ID, e.ranges, e.feedback)
+}
+
 // Open implements the Executor Open interface.
 func (e *IndexReaderExecutor) Open(ctx context.Context) error {
 	var err error
@@ -266,11 +283,23 @@ func (e *IndexReaderExecutor) Open(ctx context.Context) error {
 			return err
 		}
 	}
-	kvRanges, err := distsql.IndexRangesToKVRanges(e.ctx.GetSessionVars().StmtCtx, e.physicalTableID, e.index.ID, e.ranges, e.feedback)
+
+	sc := e.ctx.GetSessionVars().StmtCtx
+	var kvRanges []kv.KeyRange
+	if len(e.partitions) > 0 {
+		physicalIDs := make([]int64, 0, len(e.partitions))
+		for _, p := range e.partitions {
+			pid := p.GetPhysicalID()
+			physicalIDs = append(physicalIDs, pid)
+		}
+		kvRanges, err = e.buildPartitionTableKeyRanges(sc, physicalIDs)
+	} else {
+		kvRanges, err = e.buildKeyRanges(sc, e.physicalTableID)
+	}
 	if err != nil {
-		e.feedback.Invalidate()
 		return err
 	}
+
 	return e.open(ctx, kvRanges)
 }
 
@@ -391,7 +420,7 @@ func (e *IndexLookUpExecutor) Open(ctx context.Context) error {
 	sc := e.ctx.GetSessionVars().StmtCtx
 	physicalID := getPhysicalTableID(e.table)
 	if e.index.ID == -1 {
-		e.kvRanges, err = distsql.CommonHandleRangesToKVRanges(sc, physicalID, e.ranges)
+		e.kvRanges, err = distsql.CommonHandleRangesToKVRanges(sc, []int64{physicalID}, e.ranges)
 	} else {
 		e.kvRanges, err = distsql.IndexRangesToKVRanges(sc, physicalID, e.index.ID, e.ranges, e.feedback)
 	}
@@ -458,6 +487,9 @@ func (e *IndexLookUpExecutor) getRetTpsByHandle() []*types.FieldType {
 		}
 	} else {
 		tps = []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}
+	}
+	if e.index.Global {
+		tps = append(tps, types.NewFieldType(mysql.TypeLonglong))
 	}
 	if e.checkIndexValue != nil {
 		tps = e.idxColTps
@@ -569,7 +601,7 @@ func (e *IndexLookUpExecutor) buildTableReader(ctx context.Context, handles []kv
 		plans:          e.tblPlans,
 	}
 	tableReaderExec.buildVirtualColumnInfo()
-	tableReader, err := e.dataReaderBuilder.buildTableReaderFromHandles(ctx, tableReaderExec, handles)
+	tableReader, err := e.dataReaderBuilder.buildTableReaderFromHandles(ctx, tableReaderExec, handles, true)
 	if err != nil {
 		logutil.Logger(ctx).Error("build table reader from handles failed", zap.Error(err))
 		return nil, err
@@ -714,11 +746,15 @@ func (w *indexWorker) fetchHandles(ctx context.Context, result distsql.SelectRes
 func (w *indexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, idxResult distsql.SelectResult, count uint64) (
 	handles []kv.Handle, retChk *chunk.Chunk, scannedKeys uint64, err error) {
 	var handleOffset []int
+	numColsWithoutPid := chk.NumCols()
+	if w.idxLookup.index.Global {
+		numColsWithoutPid = numColsWithoutPid - 1
+	}
 	for i := range w.idxLookup.handleCols {
-		handleOffset = append(handleOffset, chk.NumCols()-len(w.idxLookup.handleCols)+i)
+		handleOffset = append(handleOffset, numColsWithoutPid-len(w.idxLookup.handleCols)+i)
 	}
 	if len(handleOffset) == 0 {
-		handleOffset = []int{chk.NumCols() - 1}
+		handleOffset = []int{numColsWithoutPid - 1}
 	}
 	handles = make([]kv.Handle, 0, w.batchSize)
 	// PushedLimit would always be nil for CheckIndex or CheckTable, we add this check just for insurance.
@@ -894,6 +930,11 @@ func (e *IndexLookUpExecutor) getHandle(row chunk.Row, handleIdx []int,
 		} else {
 			handle = kv.IntHandle(row.GetInt64(handleIdx[0]))
 		}
+	}
+	if e.index.Global {
+		pidOffset := row.Len() - 1
+		pid := row.GetInt64(pidOffset)
+		handle = kv.NewPartitionHandle(pid, handle)
 	}
 	return
 }
