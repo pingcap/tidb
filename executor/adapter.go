@@ -179,6 +179,7 @@ type ExecStmt struct {
 	isPreparedStmt    bool
 	isSelectForUpdate bool
 	retryCount        uint
+	retryStartTime    time.Time
 
 	// OutputNames will be set if using cached plan
 	OutputNames []*types.FieldName
@@ -641,6 +642,7 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, err error) (E
 		return nil, errors.New("pessimistic lock retry limit reached")
 	}
 	a.retryCount++
+	a.retryStartTime = time.Now()
 	err = UpdateForUpdateTS(a.Ctx, newForUpdateTS)
 	if err != nil {
 		return nil, err
@@ -895,6 +897,9 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		RewriteInfo:       sessVars.RewritePhaseInfo,
 		ExecRetryCount:    a.retryCount,
 	}
+	if a.retryCount > 0 {
+		slowItems.ExecRetryTime = costTime - sessVars.DurationParse - sessVars.DurationCompile - time.Since(a.retryStartTime)
+	}
 	if _, ok := a.StmtNode.(*ast.CommitStmt); ok {
 		slowItems.PrevStmt = sessVars.PrevStmt.String()
 	}
@@ -973,7 +978,7 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	}
 	stmtCtx := sessVars.StmtCtx
 	normalizedSQL, digest := stmtCtx.SQLDigest()
-	costTime := time.Since(sessVars.StartTime)
+	costTime := time.Since(sessVars.StartTime) + sessVars.DurationParse
 
 	var prevSQL, prevSQLDigest string
 	if _, ok := a.StmtNode.(*ast.CommitStmt); ok {
@@ -1009,7 +1014,7 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	memMax := stmtCtx.MemTracker.MaxConsumed()
 	diskMax := stmtCtx.DiskTracker.MaxConsumed()
 	sql := a.GetTextToLog()
-	stmtsummary.StmtSummaryByDigestMap.AddStatement(&stmtsummary.StmtExecInfo{
+	stmtExecInfo := &stmtsummary.StmtExecInfo{
 		SchemaName:     strings.ToLower(sessVars.CurrentDB),
 		OriginalSQL:    sql,
 		NormalizedSQL:  normalizedSQL,
@@ -1032,7 +1037,12 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 		IsInternal:     sessVars.InRestrictedSQL,
 		Succeed:        succ,
 		PlanInCache:    sessVars.FoundInPlanCache,
-	})
+		ExecRetryCount: a.retryCount,
+	}
+	if a.retryCount > 0 {
+		stmtExecInfo.ExecRetryTime = costTime - sessVars.DurationParse - sessVars.DurationCompile - time.Since(a.retryStartTime)
+	}
+	stmtsummary.StmtSummaryByDigestMap.AddStatement(stmtExecInfo)
 }
 
 // GetTextToLog return the query text to log.
