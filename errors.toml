@@ -141,6 +141,11 @@ error = '''
 COLLATION '%s' is not valid for CHARACTER SET '%s'
 '''
 
+["ddl:1264"]
+error = '''
+Out of range value for column '%s' at row %d
+'''
+
 ["ddl:1265"]
 error = '''
 Data truncated for column '%s' at row %d
@@ -154,6 +159,11 @@ Unsupported collation when new collation is enabled: '%-.64s'
 ["ddl:1280"]
 error = '''
 Incorrect index name '%-.100s'
+'''
+
+["ddl:1292"]
+error = '''
+Truncated incorrect %-.64s value: '%-.128s'
 '''
 
 ["ddl:1294"]
