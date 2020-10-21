@@ -568,9 +568,9 @@ type IndexRegions struct {
 // RegionDetail is the response data for get region by ID
 // it includes indices and records detail in current region.
 type RegionDetail struct {
-	RangeDetail
-	RegionID uint64              `json:"region_id"`
-	Frames   []*helper.FrameItem `json:"frames"`
+	RangeDetail `json:",inline"`
+	RegionID    uint64              `json:"region_id"`
+	Frames      []*helper.FrameItem `json:"frames"`
 }
 
 // addTableInRange insert a table into RegionDetail
