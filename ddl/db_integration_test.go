@@ -2200,6 +2200,8 @@ func (s *testIntegrationSuite7) TestCreateExpressionIndexError(c *C) {
 	tk.MustExec("drop table if exists t;")
 	tk.MustGetErrCode("create table t (j json, key k (((j,j))))", errno.ErrFunctionalIndexRowValueIsNotAllowed)
 	tk.MustExec("create table t (j json, key k ((j+1),(j+1)))")
+
+	tk.MustGetErrCode("create table t1 (col1 int, index ((concat(''))));", errno.ErrWrongKeyColumnFunctionalIndex)
 }
 
 func (s *testIntegrationSuite7) TestAddExpressionIndexOnPartition(c *C) {
@@ -2450,4 +2452,17 @@ func (s *testIntegrationSuite7) TestAutoIncrementTableOption(c *C) {
 	tk.MustExec("alter table t auto_increment = 12345678901234567890;")
 	tk.MustExec("insert into t values ();")
 	tk.MustQuery("select * from t;").Check(testkit.Rows("12345678901234567890"))
+}
+
+func (s *testIntegrationSuite3) TestIssue20490(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("create table issue20490 (a int);")
+	tk.MustExec("insert into issue20490(a) values(1);")
+	tk.MustExec("alter table issue20490 add b int not null default 1;")
+	tk.MustExec("insert into issue20490(a) values(2);")
+	tk.MustExec("alter table issue20490 modify b int null;")
+	tk.MustExec("insert into issue20490(a) values(3);")
+
+	tk.MustQuery("select b from issue20490 order by a;").Check(testkit.Rows("1", "1", "<nil>"))
 }
