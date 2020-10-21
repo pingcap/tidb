@@ -64,8 +64,6 @@ const (
 	DefStatusHost = "0.0.0.0"
 	// DefStoreLivenessTimeout is the default value for store liveness timeout.
 	DefStoreLivenessTimeout = "5s"
-	// DefTiDBRedactLog is the default value for redact log.
-	DefTiDBRedactLog = 0
 )
 
 // Valid config maps
@@ -164,8 +162,6 @@ type Config struct {
 	EnableGlobalIndex bool `toml:"enable-global-index" json:"enable-global-index"`
 	// DeprecateIntegerDisplayWidth indicates whether deprecating the max display length for integer.
 	DeprecateIntegerDisplayWidth bool `toml:"deprecate-integer-display-length" json:"deprecate-integer-display-length"`
-	// EnableRedactLog indicates that whether redact log, 0 is disable. 1 is enable.
-	EnableRedactLog int32 `toml:"enable-redact-log" json:"enable-redact-log"`
 }
 
 // UpdateTempStoragePath is to update the `TempStoragePath` if port/statusPort was changed
@@ -759,7 +755,6 @@ var defaultConf = Config{
 		SpilledFileEncryptionMethod: SpilledFileEncryptionMethodPlaintext,
 	},
 	DeprecateIntegerDisplayWidth: false,
-	EnableRedactLog:              DefTiDBRedactLog,
 }
 
 var (
@@ -795,6 +790,7 @@ var deprecatedConfig = map[string]struct{}{
 	"performance.max-memory":         {},
 	"max-txn-time-use":               {},
 	"experimental.allow-auto-random": {},
+	"enable-redact-log":              {}, // use variable tidb_redact_log instead
 }
 
 func isAllDeprecatedConfigItems(items []string) bool {
@@ -1011,23 +1007,6 @@ func TableLockEnabled() bool {
 // TableLockDelayClean uses to get the time of delay clean table lock.
 var TableLockDelayClean = func() uint64 {
 	return GetGlobalConfig().DelayCleanTableLock
-}
-
-// RedactLogEnabled uses to check whether enabled the log redact.
-func RedactLogEnabled() bool {
-	return atomic.LoadInt32(&GetGlobalConfig().EnableRedactLog) == 1
-}
-
-// SetRedactLog uses to set log redact status.
-func SetRedactLog(enable bool) {
-	value := int32(0)
-	if enable {
-		value = 1
-	}
-	g := GetGlobalConfig()
-	newConf := *g
-	newConf.EnableRedactLog = value
-	StoreGlobalConfig(&newConf)
 }
 
 // ToLogConfig converts *Log to *logutil.LogConfig.
