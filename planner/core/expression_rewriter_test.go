@@ -224,6 +224,15 @@ func (s *testExpressionRewriterSuite) TestCompareSubquery(c *C) {
 		"<nil> 2",
 	))
 	tk.MustQuery("select * from t t1 where b = all (select a from t t2)").Check(testkit.Rows())
+
+	// for issue 20059
+	tk.MustExec("DROP TABLE IF EXISTS `t`")
+	tk.MustExec("CREATE TABLE `t` (  `a` int(11) DEFAULT NULL) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;")
+	tk.MustExec("INSERT INTO `t` VALUES (1);")
+	tk.MustExec("DROP TABLE IF EXISTS `table_40_utf8_4`;")
+	tk.MustExec("CREATE TABLE `table_40_utf8_4` (`col_tinyint_key_unsigned` tinyint(4) DEFAULT NULL,  `col_bit64_key_signed` bit(64) DEFAULT NULL) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin;")
+	tk.MustExec("INSERT INTO `table_40_utf8_4` VALUES (31, -18);")
+	tk.MustQuery("select count(1) from table_40_utf8_4 where ( select count(1) from t where table_40_utf8_4.col_bit64_key_signed!=table_40_utf8_4.col_tinyint_key_unsigned)").Check(testkit.Rows("1"))
 }
 
 func (s *testExpressionRewriterSuite) TestCheckFullGroupBy(c *C) {
