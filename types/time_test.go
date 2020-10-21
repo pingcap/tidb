@@ -1953,10 +1953,10 @@ func (s *testTimeSuite) TestParseWithTimezone(c *C) {
 	}
 	for ith, ca := range cases {
 		t, err := types.ParseTime(&stmtctx.StatementContext{TimeZone: ca.sysTZ}, ca.lit, mysql.TypeTimestamp, ca.fsp)
-		c.Check(err, IsNil, Commentf("tidb time parse failed on %d", ith))
+		c.Assert(err, IsNil, Commentf("tidb time parse failed on %d", ith))
 		t1, err := t.GoTime(ca.sysTZ)
-		c.Check(err, IsNil, Commentf("tidb time convert failed on %d", ith))
-		c.Check(t1.In(time.UTC), Equals, ca.gt.In(time.UTC), Commentf("parsed time mismatch on %dth case", ith))
+		c.Assert(err, IsNil, Commentf("tidb time convert failed on %d", ith))
+		c.Assert(t1.In(time.UTC), Equals, ca.gt.In(time.UTC), Commentf("parsed time mismatch on %dth case", ith))
 	}
 }
 
