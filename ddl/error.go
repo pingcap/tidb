@@ -247,4 +247,14 @@ var (
 
 	// ErrInvalidPlacementSpec is returned when add/alter an invalid placement rule
 	ErrInvalidPlacementSpec = terror.ClassDDL.New(mysql.ErrInvalidPlacementSpec, mysql.MySQLErrName[mysql.ErrInvalidPlacementSpec])
+
+	// ErrMultipleDefConstInListPart returns multiple definition of same constant in list partitioning.
+	ErrMultipleDefConstInListPart = terror.ClassDDL.New(mysql.ErrMultipleDefConstInListPart, mysql.MySQLErrName[mysql.ErrMultipleDefConstInListPart])
+
+	// ErrTruncatedWrongValue is returned when data has been truncated during conversion.
+	ErrTruncatedWrongValue = terror.ClassDDL.New(mysql.ErrTruncatedWrongValue, mysql.MySQLErrName[mysql.ErrTruncatedWrongValue])
+
+	// ErrWarnDataOutOfRange is returned when the value in a numeric column that is outside the permissible range of the column data type.
+	// See https://dev.mysql.com/doc/refman/5.5/en/out-of-range-and-overflow.html for details
+	ErrWarnDataOutOfRange = terror.ClassDDL.New(mysql.ErrWarnDataOutOfRange, mysql.MySQLErrName[mysql.ErrWarnDataOutOfRange])
 )
