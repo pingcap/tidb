@@ -1353,8 +1353,10 @@ func (s *testTableSuite) TestServerInfoResolveLoopBackAddr(c *C) {
 	nodes := []infoschema.ServerInfo{
 		{Address: "127.0.0.1:4000", StatusAddr: "192.168.130.22:10080"},
 		{Address: "0.0.0.0:4000", StatusAddr: "192.168.130.22:10080"},
+		{Address: "localhost:4000", StatusAddr: "192.168.130.22:10080"},
 		{Address: "192.168.130.22:4000", StatusAddr: "0.0.0.0:10080"},
 		{Address: "192.168.130.22:4000", StatusAddr: "127.0.0.1:10080"},
+		{Address: "192.168.130.22:4000", StatusAddr: "localhost:10080"},
 	}
 	for i := range nodes {
 		nodes[i].ResolveLoopBackAddr()

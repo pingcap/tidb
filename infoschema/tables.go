@@ -1293,11 +1293,12 @@ type ServerInfo struct {
 }
 
 func (s *ServerInfo) isLoopBackOrUnspecifiedAddr(addr string) bool {
-	if idx := strings.LastIndex(addr, ":"); idx > 0 {
-		ip := net.ParseIP(addr[:idx])
-		return ip != nil && (ip.IsUnspecified() || ip.IsLoopback())
+	tcpAddr, err := net.ResolveTCPAddr("", addr)
+	if err != nil {
+		return false
 	}
-	return false
+	ip := net.ParseIP(tcpAddr.IP.String())
+	return ip != nil && (ip.IsUnspecified() || ip.IsLoopback())
 }
 
 // ResolveLoopBackAddr exports for testing.
