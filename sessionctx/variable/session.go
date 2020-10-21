@@ -637,6 +637,24 @@ type SessionVars struct {
 	// SelectLimit limits the max counts of select statement's output
 	SelectLimit uint64
 
+<<<<<<< HEAD
+=======
+	// EnableClusteredIndex indicates whether to enable clustered index when creating a new table.
+	EnableClusteredIndex bool
+
+	// PresumeKeyNotExists indicates lazy existence checking is enabled.
+	PresumeKeyNotExists bool
+
+	// EnableParallelApply indicates that thether to use parallel apply.
+	EnableParallelApply bool
+
+	// EnableRedactLog indicates that whether redact log.
+	EnableRedactLog bool
+
+	// ShardAllocateStep indicates the max size of continuous rowid shard in one transaction.
+	ShardAllocateStep int64
+
+>>>>>>> 2f067c054... *: redact arguments for Error (#20436)
 	// EnableAmendPessimisticTxn indicates if schema change amend is enabled for pessimistic transactions.
 	EnableAmendPessimisticTxn bool
 
@@ -984,6 +1002,9 @@ func (s *SessionVars) GetSystemVar(name string) (string, bool) {
 		return strconv.Itoa(s.SysWarningCount), true
 	} else if name == ErrorCount {
 		return strconv.Itoa(int(s.SysErrorCount)), true
+	}
+	if name == TiDBSlowLogMasking {
+		name = TiDBRedactLog
 	}
 	val, ok := s.systems[name]
 	return val, ok
@@ -1347,8 +1368,27 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		config.GetGlobalConfig().EnableCollectExecutionInfo = TiDBOptOn(val)
 	case TiDBAllowAutoRandExplicitInsert:
 		s.AllowAutoRandExplicitInsert = TiDBOptOn(val)
+<<<<<<< HEAD
 	case TiDBSlowLogMasking, TiDBRedactLog:
 		config.SetRedactLog(TiDBOptOn(val))
+=======
+	case TiDBEnableClusteredIndex:
+		s.EnableClusteredIndex = TiDBOptOn(val)
+	case TiDBPartitionPruneMode:
+		s.PartitionPruneMode.Store(strings.ToLower(strings.TrimSpace(val)))
+	case TiDBEnableParallelApply:
+		s.EnableParallelApply = TiDBOptOn(val)
+	case TiDBSlowLogMasking:
+		// TiDBSlowLogMasking is deprecated and a alias of TiDBRedactLog.
+		return s.SetSystemVar(TiDBRedactLog, val)
+	case TiDBRedactLog:
+		s.EnableRedactLog = TiDBOptOn(val)
+		errors.RedactLogEnabled.Store(s.EnableRedactLog)
+	case TiDBShardAllocateStep:
+		s.ShardAllocateStep = tidbOptInt64(val, DefTiDBShardAllocateStep)
+	case TiDBEnableChangeColumnType:
+		s.EnableChangeColumnType = TiDBOptOn(val)
+>>>>>>> 2f067c054... *: redact arguments for Error (#20436)
 	case TiDBEnableAmendPessimisticTxn:
 		s.EnableAmendPessimisticTxn = TiDBOptOn(val)
 	}

@@ -424,10 +424,27 @@ func (s *testSuite5) TestSetVar(c *C) {
 	tk.MustQuery(`select @@global.tidb_slow_log_masking;`).Check(testkit.Rows("1"))
 	tk.MustExec("set global tidb_slow_log_masking = 0")
 	tk.MustQuery(`select @@global.tidb_slow_log_masking;`).Check(testkit.Rows("0"))
+<<<<<<< HEAD
 	_, err = tk.Exec("set session tidb_slow_log_masking = 0")
 	c.Assert(err, NotNil)
 	_, err = tk.Exec(`select @@session.tidb_slow_log_masking;`)
 	c.Assert(err, NotNil)
+=======
+	tk.MustExec("set session tidb_slow_log_masking = 0")
+	tk.MustQuery(`select @@session.tidb_slow_log_masking;`).Check(testkit.Rows("0"))
+	tk.MustExec("set session tidb_slow_log_masking = 1")
+	tk.MustQuery(`select @@session.tidb_slow_log_masking;`).Check(testkit.Rows("1"))
+
+	tk.MustQuery("select @@tidb_dml_batch_size;").Check(testkit.Rows("0"))
+	tk.MustExec("set @@session.tidb_dml_batch_size = 120")
+	tk.MustQuery("select @@tidb_dml_batch_size;").Check(testkit.Rows("120"))
+	c.Assert(tk.ExecToErr("set @@session.tidb_dml_batch_size = -120"), NotNil)
+	c.Assert(tk.ExecToErr("set @@global.tidb_dml_batch_size = 200"), IsNil)  // now permitted due to TiDB #19809
+	tk.MustQuery("select @@tidb_dml_batch_size;").Check(testkit.Rows("120")) // global only applies to new sessions
+
+	_, err = tk.Exec("set tidb_enable_parallel_apply=-1")
+	c.Assert(terror.ErrorEqual(err, variable.ErrWrongValueForVar), IsTrue)
+>>>>>>> 2f067c054... *: redact arguments for Error (#20436)
 }
 
 func (s *testSuite5) TestTruncateIncorrectIntSessionVar(c *C) {

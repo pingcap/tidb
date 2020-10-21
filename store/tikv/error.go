@@ -17,8 +17,8 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/pdpb"
-	"github.com/pingcap/parser/terror"
 	mysql "github.com/pingcap/tidb/errno"
+	"github.com/pingcap/tidb/util/dbterror"
 )
 
 var (
@@ -33,6 +33,7 @@ const mismatchClusterID = "mismatch cluster id"
 
 // MySQL error instances.
 var (
+<<<<<<< HEAD
 	ErrTiKVServerTimeout           = terror.ClassTiKV.New(mysql.ErrTiKVServerTimeout, mysql.MySQLErrName[mysql.ErrTiKVServerTimeout])
 	ErrResolveLockTimeout          = terror.ClassTiKV.New(mysql.ErrResolveLockTimeout, mysql.MySQLErrName[mysql.ErrResolveLockTimeout])
 	ErrPDServerTimeout             = terror.ClassTiKV.New(mysql.ErrPDServerTimeout, mysql.MySQLErrName[mysql.ErrPDServerTimeout])
@@ -46,13 +47,29 @@ var (
 	ErrTokenLimit                  = terror.ClassTiKV.New(mysql.ErrTiKVStoreLimit, mysql.MySQLErrName[mysql.ErrTiKVStoreLimit])
 	ErrLockExpire                  = terror.ClassTiKV.New(mysql.ErrLockExpire, mysql.MySQLErrName[mysql.ErrLockExpire])
 	ErrUnknown                     = terror.ClassTiKV.New(mysql.ErrUnknown, mysql.MySQLErrName[mysql.ErrUnknown])
+=======
+	ErrTiKVServerTimeout           = dbterror.ClassTiKV.NewStd(mysql.ErrTiKVServerTimeout)
+	ErrResolveLockTimeout          = dbterror.ClassTiKV.NewStd(mysql.ErrResolveLockTimeout)
+	ErrPDServerTimeout             = dbterror.ClassTiKV.NewStd(mysql.ErrPDServerTimeout)
+	ErrRegionUnavailable           = dbterror.ClassTiKV.NewStd(mysql.ErrRegionUnavailable)
+	ErrTiKVServerBusy              = dbterror.ClassTiKV.NewStd(mysql.ErrTiKVServerBusy)
+	ErrTiKVStaleCommand            = dbterror.ClassTiKV.NewStd(mysql.ErrTiKVStaleCommand)
+	ErrTiKVMaxTimestampNotSynced   = dbterror.ClassTiKV.NewStd(mysql.ErrTiKVMaxTimestampNotSynced)
+	ErrGCTooEarly                  = dbterror.ClassTiKV.NewStd(mysql.ErrGCTooEarly)
+	ErrQueryInterrupted            = dbterror.ClassTiKV.NewStd(mysql.ErrQueryInterrupted)
+	ErrLockAcquireFailAndNoWaitSet = dbterror.ClassTiKV.NewStd(mysql.ErrLockAcquireFailAndNoWaitSet)
+	ErrLockWaitTimeout             = dbterror.ClassTiKV.NewStd(mysql.ErrLockWaitTimeout)
+	ErrTokenLimit                  = dbterror.ClassTiKV.NewStd(mysql.ErrTiKVStoreLimit)
+	ErrLockExpire                  = dbterror.ClassTiKV.NewStd(mysql.ErrLockExpire)
+	ErrUnknown                     = dbterror.ClassTiKV.NewStd(mysql.ErrUnknown)
+>>>>>>> 2f067c054... *: redact arguments for Error (#20436)
 )
 
 // Registers error returned from TiKV.
 var (
-	_ = terror.ClassTiKV.NewStd(mysql.ErrDataOutOfRange)
-	_ = terror.ClassTiKV.NewStd(mysql.ErrTruncatedWrongValue)
-	_ = terror.ClassTiKV.NewStd(mysql.ErrDivisionByZero)
+	_ = dbterror.ClassTiKV.NewStd(mysql.ErrDataOutOfRange)
+	_ = dbterror.ClassTiKV.NewStd(mysql.ErrTruncatedWrongValue)
+	_ = dbterror.ClassTiKV.NewStd(mysql.ErrDivisionByZero)
 )
 
 // ErrDeadlock wraps *kvrpcpb.Deadlock to implement the error interface.

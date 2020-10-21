@@ -403,7 +403,23 @@ const (
 	// TiDBMetricSchemaRangeDuration indicates the range duration when query metric schema.
 	TiDBMetricSchemaRangeDuration = "tidb_metric_query_range_duration"
 
+<<<<<<< HEAD
 	// TiDBSlowLogMasking indicates that whether masking the query data when log slow query.
+=======
+	// TiDBEnableCollectExecutionInfo indicates that whether execution info is collected.
+	TiDBEnableCollectExecutionInfo = "tidb_enable_collect_execution_info"
+
+	// DefExecutorConcurrency is used for controlling the concurrency of all types of executors.
+	TiDBExecutorConcurrency = "tidb_executor_concurrency"
+
+	// TiDBEnableClusteredIndex indicates if clustered index feature is enabled.
+	TiDBEnableClusteredIndex = "tidb_enable_clustered_index"
+
+	// TiDBPartitionPruneMode indicates the partition prune mode used.
+	TiDBPartitionPruneMode = "tidb_partition_prune_mode"
+
+	// TiDBSlowLogMasking is deprecated and a alias of TiDBRedactLog.
+>>>>>>> 2f067c054... *: redact arguments for Error (#20436)
 	// Deprecated: use TiDBRedactLog instead.
 	TiDBSlowLogMasking = "tidb_slow_log_masking"
 
@@ -517,6 +533,12 @@ const (
 	DefTiDBSlowLogMasking              = false
 	DefTiDBEnableCollectExecutionInfo  = true
 	DefTiDBAllowAutoRandExplicitInsert = false
+<<<<<<< HEAD
+=======
+	DefTiDBEnableClusteredIndex        = false
+	DefTiDBRedactLog                   = false
+	DefTiDBShardAllocateStep           = math.MaxInt64
+>>>>>>> 2f067c054... *: redact arguments for Error (#20436)
 	DefTiDBEnableTelemetry             = true
 	DefTiDBEnableAmendPessimisticTxn   = false
 )

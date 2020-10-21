@@ -58,8 +58,6 @@ const (
 	DefStatusHost = "0.0.0.0"
 	// DefStoreLivenessTimeout is the default value for store liveness timeout.
 	DefStoreLivenessTimeout = "5s"
-	// DefTiDBRedactLog is the default value for redact log.
-	DefTiDBRedactLog = 0
 )
 
 // Valid config maps
@@ -146,8 +144,21 @@ type Config struct {
 	SkipRegisterToDashboard bool `toml:"skip-register-to-dashboard" json:"skip-register-to-dashboard"`
 	// EnableTelemetry enables the usage data report to PingCAP.
 	EnableTelemetry bool `toml:"enable-telemetry" json:"enable-telemetry"`
+<<<<<<< HEAD
 	// EnableRedactLog indicates that whether redact log, 0 is disable. 1 is enable.
 	EnableRedactLog int32 `toml:"enable-redact-log" json:"enable-redact-log"`
+=======
+	// Labels indicates the labels set for the tidb server. The labels describe some specific properties for the tidb
+	// server like `zone`/`rack`/`host`. Currently, labels won't affect the tidb server except for some special
+	// label keys. Now we only have `group` as a special label key.
+	// Note that: 'group' is a special label key which should be automatically set by tidb-operator. We don't suggest
+	// users to set 'group' in labels.
+	Labels map[string]string `toml:"labels" json:"labels"`
+	// EnableGlobalIndex enables creating global index.
+	EnableGlobalIndex bool `toml:"enable-global-index" json:"enable-global-index"`
+	// DeprecateIntegerDisplayWidth indicates whether deprecating the max display length for integer.
+	DeprecateIntegerDisplayWidth bool `toml:"deprecate-integer-display-length" json:"deprecate-integer-display-length"`
+>>>>>>> 2f067c054... *: redact arguments for Error (#20436)
 }
 
 // UpdateTempStoragePath is to update the `TempStoragePath` if port/statusPort was changed
@@ -697,7 +708,16 @@ var defaultConf = Config{
 	},
 	EnableCollectExecutionInfo: true,
 	EnableTelemetry:            true,
+<<<<<<< HEAD
 	EnableRedactLog:            DefTiDBRedactLog,
+=======
+	Labels:                     make(map[string]string),
+	EnableGlobalIndex:          false,
+	Security: Security{
+		SpilledFileEncryptionMethod: SpilledFileEncryptionMethodPlaintext,
+	},
+	DeprecateIntegerDisplayWidth: false,
+>>>>>>> 2f067c054... *: redact arguments for Error (#20436)
 }
 
 var (
@@ -731,6 +751,7 @@ var deprecatedConfig = map[string]struct{}{
 	"txn-local-latches.capacity":     {},
 	"max-txn-time-use":               {},
 	"experimental.allow-auto-random": {},
+	"enable-redact-log":              {}, // use variable tidb_redact_log instead
 }
 
 func isAllDeprecatedConfigItems(items []string) bool {
@@ -932,23 +953,6 @@ func TableLockEnabled() bool {
 // TableLockDelayClean uses to get the time of delay clean table lock.
 var TableLockDelayClean = func() uint64 {
 	return GetGlobalConfig().DelayCleanTableLock
-}
-
-// RedactLogEnabled uses to check whether enabled the log redact.
-func RedactLogEnabled() bool {
-	return atomic.LoadInt32(&GetGlobalConfig().EnableRedactLog) == 1
-}
-
-// SetRedactLog uses to set log redact status.
-func SetRedactLog(enable bool) {
-	value := int32(0)
-	if enable {
-		value = 1
-	}
-	g := GetGlobalConfig()
-	newConf := *g
-	newConf.EnableRedactLog = value
-	StoreGlobalConfig(&newConf)
 }
 
 // ToLogConfig converts *Log to *logutil.LogConfig.

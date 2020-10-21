@@ -28,20 +28,29 @@ require (
 	github.com/opentracing/opentracing-go v1.1.0
 	github.com/pingcap/br v0.0.0-20200921112226-ee2e962f5e4b
 	github.com/pingcap/check v0.0.0-20200212061837-5e12011dc712
-	github.com/pingcap/errors v0.11.5-0.20200917111840-a15ef68f753d
+	github.com/pingcap/errors v0.11.5-0.20201021055732-210aacd3fd99
 	github.com/pingcap/failpoint v0.0.0-20200702092429-9f69995143ce
 	github.com/pingcap/fn v0.0.0-20200306044125-d5540d389059
 	github.com/pingcap/goleveldb v0.0.0-20191226122134-f82aafb29989
 	github.com/pingcap/kvproto v0.0.0-20200907074027-32a3a0accf7d
 	github.com/pingcap/log v0.0.0-20200828042413-fce0951f1463
+<<<<<<< HEAD
 	github.com/pingcap/parser v0.0.0-20201104074312-b05b93d3a011
+=======
+	github.com/pingcap/parser v0.0.0-20201021061956-783a03250c77
+>>>>>>> 2f067c054... *: redact arguments for Error (#20436)
 	github.com/pingcap/sysutil v0.0.0-20200715082929-4c47bcac246a
 	github.com/pingcap/tidb-tools v4.0.6-0.20200828085514-03575b185007+incompatible
 	github.com/pingcap/tipb v0.0.0-20200618092958-4fad48b4c8c3
 	github.com/prometheus/client_golang v1.5.1
 	github.com/prometheus/client_model v0.2.0
 	github.com/prometheus/common v0.9.1
+<<<<<<< HEAD
 	github.com/shirou/gopsutil v2.20.3+incompatible
+=======
+	github.com/remyoudompheng/bigfft v0.0.0-20200410134404-eec4a21b6bb0 // indirect
+	github.com/shirou/gopsutil v2.19.10+incompatible
+>>>>>>> 2f067c054... *: redact arguments for Error (#20436)
 	github.com/sirupsen/logrus v1.6.0
 	github.com/soheilhy/cmux v0.1.4
 	github.com/spaolacci/murmur3 v1.1.0

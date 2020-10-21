@@ -3228,6 +3228,58 @@ func (s *testSessionSuite2) TestPerStmtTaskID(c *C) {
 	c.Assert(taskID1 != taskID2, IsTrue)
 }
 
+<<<<<<< HEAD
+=======
+func (s *testSessionSuite2) TestDeprecateSlowLogMasking(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+
+	tk.MustExec("set @@global.tidb_redact_log=0")
+	tk.MustQuery("select @@global.tidb_redact_log").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@global.tidb_slow_log_masking").Check(testkit.Rows("0"))
+
+	tk.MustExec("set @@global.tidb_redact_log=1")
+	tk.MustQuery("select @@global.tidb_redact_log").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@global.tidb_slow_log_masking").Check(testkit.Rows("1"))
+
+	tk.MustExec("set @@global.tidb_slow_log_masking=0")
+	tk.MustQuery("select @@global.tidb_redact_log").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@global.tidb_slow_log_masking").Check(testkit.Rows("0"))
+
+	tk.MustExec("set @@session.tidb_redact_log=0")
+	tk.MustQuery("select @@session.tidb_redact_log").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@session.tidb_slow_log_masking").Check(testkit.Rows("0"))
+
+	tk.MustExec("set @@session.tidb_redact_log=1")
+	tk.MustQuery("select @@session.tidb_redact_log").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@session.tidb_slow_log_masking").Check(testkit.Rows("1"))
+
+	tk.MustExec("set @@session.tidb_slow_log_masking=0")
+	tk.MustQuery("select @@session.tidb_redact_log").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@session.tidb_slow_log_masking").Check(testkit.Rows("0"))
+}
+
+func (s *testSessionSerialSuite) TestDoDDLJobQuit(c *C) {
+	// test https://github.com/pingcap/tidb/issues/18714, imitate DM's use environment
+	// use isolated store, because in below failpoint we will cancel its context
+	store, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.MockTiKV))
+	c.Assert(err, IsNil)
+	defer store.Close()
+	dom, err := session.BootstrapSession(store)
+	c.Assert(err, IsNil)
+	defer dom.Close()
+	se, err := session.CreateSession(store)
+	c.Assert(err, IsNil)
+	defer se.Close()
+
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/storeCloseInLoop", `return`), IsNil)
+	defer failpoint.Disable("github.com/pingcap/tidb/ddl/storeCloseInLoop")
+
+	// this DDL call will enter deadloop before this fix
+	err = dom.DDL().CreateSchema(se, model.NewCIStr("testschema"), nil)
+	c.Assert(err.Error(), Equals, "context canceled")
+}
+
+>>>>>>> 2f067c054... *: redact arguments for Error (#20436)
 func (s *testBackupRestoreSuite) TestBackupAndRestore(c *C) {
 	// only run BR SQL integration test with tikv store.
 	if *withTiKV {

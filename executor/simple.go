@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -1180,3 +1181,63 @@ func asyncDelayShutdown(p *os.Process, delay time.Duration) {
 		panic(err)
 	}
 }
+<<<<<<< HEAD
+=======
+
+func (e *SimpleExec) executeCreateStatistics(s *ast.CreateStatisticsStmt) (err error) {
+	// Not support Cardinality and Dependency statistics type for now.
+	if s.StatsType == ast.StatsTypeCardinality || s.StatsType == ast.StatsTypeDependency {
+		return dbterror.ClassOptimizer.NewStd(mysql.ErrInternal).GenWithStack("Cardinality and Dependency statistics types are not supported")
+	}
+	if _, ok := e.is.SchemaByName(s.Table.Schema); !ok {
+		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(s.Table.Schema)
+	}
+	t, err := e.is.TableByName(s.Table.Schema, s.Table.Name)
+	if err != nil {
+		return infoschema.ErrTableNotExists.GenWithStackByArgs(s.Table.Schema, s.Table.Name)
+	}
+	tblInfo := t.Meta()
+	colIDs := make([]int64, 0, 2)
+	// Check whether columns exist.
+	for _, colName := range s.Columns {
+		col := table.FindCol(t.VisibleCols(), colName.Name.L)
+		if col == nil {
+			return dbterror.ClassDDL.NewStd(mysql.ErrKeyColumnDoesNotExits).GenWithStack("column does not exist: %s", colName.Name.L)
+		}
+		if s.StatsType == ast.StatsTypeCorrelation && tblInfo.PKIsHandle && mysql.HasPriKeyFlag(col.Flag) {
+			warn := errors.New("No need to create correlation statistics on the integer primary key column")
+			e.ctx.GetSessionVars().StmtCtx.AppendWarning(warn)
+			return nil
+		}
+		colIDs = append(colIDs, col.ID)
+	}
+	if len(colIDs) != 2 && (s.StatsType == ast.StatsTypeCorrelation || s.StatsType == ast.StatsTypeDependency) {
+		return dbterror.ClassOptimizer.NewStd(mysql.ErrInternal).GenWithStack("Only support Correlation and Dependency statistics types on 2 columns")
+	}
+	if len(colIDs) < 1 && s.StatsType == ast.StatsTypeCardinality {
+		return dbterror.ClassOptimizer.NewStd(mysql.ErrInternal).GenWithStack("Only support Cardinality statistics type on at least 2 columns")
+	}
+	// TODO: check whether covering index exists for cardinality / dependency types.
+
+	// Call utilities of statistics.Handle to modify system tables instead of doing DML directly,
+	// because locking in Handle can guarantee the correctness of `version` in system tables.
+	return domain.GetDomain(e.ctx).StatsHandle().InsertExtendedStats(s.StatsName, s.Table.Schema.L, colIDs, int(s.StatsType), tblInfo.ID, s.IfNotExists)
+}
+
+func (e *SimpleExec) executeDropStatistics(s *ast.DropStatisticsStmt) error {
+	db := e.ctx.GetSessionVars().CurrentDB
+	if db == "" {
+		return core.ErrNoDB
+	}
+	// Call utilities of statistics.Handle to modify system tables instead of doing DML directly,
+	// because locking in Handle can guarantee the correctness of `version` in system tables.
+	return domain.GetDomain(e.ctx).StatsHandle().MarkExtendedStatsDeleted(s.StatsName, db, -1)
+}
+
+func (e *SimpleExec) executeAdminReloadStatistics(s *ast.AdminStmt) error {
+	if s.Tp != ast.AdminReloadStatistics {
+		return dbterror.ClassOptimizer.NewStd(mysql.ErrInternal).GenWithStack("This AdminStmt is not ADMIN RELOAD STATISTICS")
+	}
+	return domain.GetDomain(e.ctx).StatsHandle().ReloadExtendedStatistics()
+}
+>>>>>>> 2f067c054... *: redact arguments for Error (#20436)
