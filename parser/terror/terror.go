@@ -146,6 +146,8 @@ func (ec ErrClass) initError(code ErrCode) string {
 // Attention:
 // this method is not goroutine-safe and
 // usually be used in global variable initializer
+//
+// Deprecated: use NewStd or NewStdErr instead.
 func (ec ErrClass) New(code ErrCode, message string) *Error {
 	rfcCode := ec.initError(code)
 	err := errors.Normalize(message, errors.MySQLErrorCode(int(code)), errors.RFCCodeText(rfcCode))
@@ -155,9 +157,9 @@ func (ec ErrClass) New(code ErrCode, message string) *Error {
 
 // NewStdErr defines an *Error with an error code, an error
 // message and workaround to create standard error.
-func (ec ErrClass) NewStdErr(code ErrCode, message string, desc string, workaround string) *Error {
+func (ec ErrClass) NewStdErr(code ErrCode, message *mysql.ErrMessage, desc string, workaround string) *Error {
 	rfcCode := ec.initError(code)
-	err := errors.Normalize(message, errors.MySQLErrorCode(int(code)), errors.RFCCodeText(rfcCode), errors.Description(desc), errors.Workaround(workaround))
+	err := errors.Normalize(message.Raw, errors.RedactArgs(message.RedactArgPos), errors.MySQLErrorCode(int(code)), errors.RFCCodeText(rfcCode), errors.Description(desc), errors.Workaround(workaround))
 	errCodeMap[code] = err
 	return err
 }
@@ -167,7 +169,7 @@ func (ec ErrClass) NewStdErr(code ErrCode, message string, desc string, workarou
 // this method is not goroutine-safe and
 // usually be used in global variable initializer
 func (ec ErrClass) NewStd(code ErrCode) *Error {
-	return ec.New(code, mysql.MySQLErrName[uint16(code)])
+	return ec.NewStdErr(code, mysql.MySQLErrName[uint16(code)], "", "")
 }
 
 // Synthesize synthesizes an *Error in the air
@@ -181,7 +183,7 @@ func (ec ErrClass) Synthesize(code ErrCode, message string) *Error {
 // ToSQLError convert Error to mysql.SQLError.
 func ToSQLError(e *Error) *mysql.SQLError {
 	code := getMySQLErrorCode(e)
-	return mysql.NewErrf(code, "%s", e.GetMsg())
+	return mysql.NewErrf(code, "%s", nil, e.GetMsg())
 }
 
 var defaultMySQLErrorCode uint16
@@ -213,8 +215,8 @@ func getMySQLErrorCode(e *Error) uint16 {
 var (
 	// ErrClassToMySQLCodes is the map of ErrClass to code-set.
 	ErrClassToMySQLCodes  = make(map[ErrClass]map[ErrCode]struct{})
-	ErrCritical           = ClassGlobal.New(CodeExecResultIsEmpty, "critical error %v")
-	ErrResultUndetermined = ClassGlobal.New(CodeResultUndetermined, "execution result undetermined")
+	ErrCritical           = ClassGlobal.NewStdErr(CodeExecResultIsEmpty, mysql.Message("critical error %v", nil), "", "")
+	ErrResultUndetermined = ClassGlobal.NewStdErr(CodeResultUndetermined, mysql.Message("execution result undetermined", nil), "", "")
 )
 
 func init() {

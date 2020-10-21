@@ -22,8 +22,8 @@ import (
 )
 
 var (
-	ErrUnknownCollation         = terror.ClassDDL.New(mysql.ErrUnknownCollation, mysql.MySQLErrName[mysql.ErrUnknownCollation])
-	ErrCollationCharsetMismatch = terror.ClassDDL.New(mysql.ErrCollationCharsetMismatch, mysql.MySQLErrName[mysql.ErrCollationCharsetMismatch])
+	ErrUnknownCollation         = terror.ClassDDL.NewStd(mysql.ErrUnknownCollation)
+	ErrCollationCharsetMismatch = terror.ClassDDL.NewStd(mysql.ErrCollationCharsetMismatch)
 )
 
 // Charset is a charset.

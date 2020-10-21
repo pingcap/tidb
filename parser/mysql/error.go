@@ -14,8 +14,9 @@
 package mysql
 
 import (
-	"errors"
 	"fmt"
+
+	"github.com/pingcap/errors"
 )
 
 // Portable analogs of some common call errors.
@@ -46,8 +47,9 @@ func NewErr(errCode uint16, args ...interface{}) *SQLError {
 		e.State = DefaultMySQLState
 	}
 
-	if format, ok := MySQLErrName[errCode]; ok {
-		e.Message = fmt.Sprintf(format, args...)
+	if sqlErr, ok := MySQLErrName[errCode]; ok {
+		errors.RedactErrorArg(args, sqlErr.RedactArgPos)
+		e.Message = fmt.Sprintf(sqlErr.Raw, args...)
 	} else {
 		e.Message = fmt.Sprint(args...)
 	}
@@ -56,7 +58,7 @@ func NewErr(errCode uint16, args ...interface{}) *SQLError {
 }
 
 // NewErrf creates a SQL error, with an error code and a format specifier.
-func NewErrf(errCode uint16, format string, args ...interface{}) *SQLError {
+func NewErrf(errCode uint16, format string, redactArgPos []int, args ...interface{}) *SQLError {
 	e := &SQLError{Code: errCode}
 
 	if s, ok := MySQLState[errCode]; ok {
@@ -65,6 +67,7 @@ func NewErrf(errCode uint16, format string, args ...interface{}) *SQLError {
 		e.State = DefaultMySQLState
 	}
 
+	errors.RedactErrorArg(args, redactArgPos)
 	e.Message = fmt.Sprintf(format, args...)
 
 	return e
