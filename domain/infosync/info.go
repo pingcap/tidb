@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	util2 "github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/pdapi"
@@ -75,7 +76,7 @@ const (
 )
 
 // ErrPrometheusAddrIsNotSet is the error that Prometheus address is not set in PD and etcd
-var ErrPrometheusAddrIsNotSet = terror.ClassDomain.New(errno.ErrPrometheusAddrIsNotSet, errno.MySQLErrName[errno.ErrPrometheusAddrIsNotSet])
+var ErrPrometheusAddrIsNotSet = dbterror.ClassDomain.NewStd(errno.ErrPrometheusAddrIsNotSet)
 
 // InfoSyncer stores server info to etcd when the tidb-server starts and delete when tidb-server shuts down.
 type InfoSyncer struct {

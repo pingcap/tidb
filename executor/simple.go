@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"

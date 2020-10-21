@@ -724,10 +724,10 @@ var defaultSysVars = []*SysVar{
 	{ScopeSession, TiDBQueryLogMaxLen, strconv.Itoa(logutil.DefaultQueryLogMaxLen)},
 	{ScopeSession, TiDBCheckMb4ValueInUTF8, BoolToIntStr(config.GetGlobalConfig().CheckMb4ValueInUTF8)},
 	{ScopeSession, TiDBFoundInPlanCache, BoolToIntStr(DefTiDBFoundInPlanCache)},
-	{ScopeGlobal, TiDBSlowLogMasking, BoolToIntStr(DefTiDBSlowLogMasking)},
 	{ScopeSession, TiDBEnableCollectExecutionInfo, BoolToIntStr(DefTiDBEnableCollectExecutionInfo)},
 	{ScopeGlobal | ScopeSession, TiDBAllowAutoRandExplicitInsert, boolToOnOff(DefTiDBAllowAutoRandExplicitInsert)},
-	{ScopeGlobal, TiDBRedactLog, strconv.Itoa(config.DefTiDBRedactLog)},
+	{ScopeGlobal| ScopeSession, TiDBSlowLogMasking, BoolToIntStr(DefTiDBRedactLog)},
+	{ScopeGlobal| ScopeSession, TiDBRedactLog, BoolToIntStr(DefTiDBRedactLog)},
 	{ScopeGlobal, TiDBEnableTelemetry, BoolToIntStr(DefTiDBEnableTelemetry)},
 	{ScopeGlobal | ScopeSession, TiDBEnableAmendPessimisticTxn, boolToOnOff(DefTiDBEnableAmendPessimisticTxn)},
 }
