@@ -1792,8 +1792,8 @@ func (w *GCWorker) doGCPlacementRules(dr util.DelRangeTask) (pid int64, err erro
 	// Get the job from the job history
 	var historyJob *model.Job
 	failpoint.Inject("mockHistoryJobForGC", func(v failpoint.Value) {
-		args, err := json.Marshal([]interface{}{kv.Key{}, []int64{v.(int64)}})
-		if err != nil {
+		args, err1 := json.Marshal([]interface{}{kv.Key{}, []int64{v.(int64)}})
+		if err1 != nil {
 			return
 		}
 		historyJob = &model.Job{
