@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
@@ -171,6 +172,8 @@ type HashAggExec struct {
 	executed         bool
 
 	memTracker *memory.Tracker // track memory usage.
+
+	stats *HashAggRuntimeStats
 }
 
 // HashAggInput indicates the input of hash agg exec.
@@ -234,7 +237,6 @@ func (e *HashAggExec) Close() error {
 	for range e.finalOutputCh {
 	}
 	e.executed = false
-
 	if e.runtimeStats != nil {
 		var partialConcurrency, finalConcurrency int
 		if e.isUnparallelExec {
@@ -255,6 +257,7 @@ func (e *HashAggExec) Close() error {
 
 // Open implements the Executor Open interface.
 func (e *HashAggExec) Open(ctx context.Context) error {
+	e.initRuntimeStats()
 	if err := e.baseExecutor.Open(ctx); err != nil {
 		return err
 	}
@@ -663,17 +666,29 @@ func (e *HashAggExec) prepare4ParallelExec(ctx context.Context) {
 
 	partialWorkerWaitGroup := &sync.WaitGroup{}
 	partialWorkerWaitGroup.Add(len(e.partialWorkers))
+	partialStart := time.Now()
 	for i := range e.partialWorkers {
 		go e.partialWorkers[i].run(e.ctx, partialWorkerWaitGroup, len(e.finalWorkers))
 	}
-	go e.waitPartialWorkerAndCloseOutputChs(partialWorkerWaitGroup)
+	go func(){
+		e.waitPartialWorkerAndCloseOutputChs(partialWorkerWaitGroup)
+		if e.stats!= nil{
+			e.stats.PartialTask = time.Since(partialStart)
+		}
+	}()
 
 	finalWorkerWaitGroup := &sync.WaitGroup{}
 	finalWorkerWaitGroup.Add(len(e.finalWorkers))
+	finalStart := time.Now()
 	for i := range e.finalWorkers {
 		go e.finalWorkers[i].run(e.ctx, finalWorkerWaitGroup)
 	}
-	go e.waitFinalWorkerAndCloseFinalOutput(finalWorkerWaitGroup)
+	go func(){
+		e.waitFinalWorkerAndCloseFinalOutput(finalWorkerWaitGroup)
+		if e.stats!= nil{
+			e.stats.FinalTask = time.Since(finalStart)
+		}
+	}()
 }
 
 // HashAggExec employs one input reader, M partial workers and N final workers to execute parallelly.
@@ -814,6 +829,66 @@ func (e *HashAggExec) getPartialResults(groupKey string) []aggfuncs.PartialResul
 		e.partialResultMap[groupKey] = partialResults
 	}
 	return partialResults
+}
+
+func (e *HashAggExec) initRuntimeStats() {
+	if e.runtimeStats != nil {
+		if e.stats == nil {
+			e.stats = &HashAggRuntimeStats{
+				InputTime:      0,
+				PartialTask:    0,
+				FinalTask:      0,
+			}
+			e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
+		}
+	}
+}
+
+// HashAggRuntimeStats record the HashAggExec runtime stat
+type HashAggRuntimeStats struct {
+	InputTime      time.Duration
+	PartialTask    time.Duration
+	FinalTask      time.Duration
+}
+
+func (e *HashAggRuntimeStats) String() string {
+	var result string
+	if e.InputTime != 0 {
+		result += fmt.Sprintf("input_time:%s", e.InputTime)
+	}
+	if e.PartialTask != 0 {
+		result += fmt.Sprintf(", partial_task:%s", e.PartialTask)
+	}
+	if e.FinalTask != 0 {
+		result += fmt.Sprintf(", final_task:%s", e.FinalTask)
+	}
+	return result
+}
+
+// Clone implements the RuntimeStats interface.
+func (e *HashAggRuntimeStats) Clone() execdetails.RuntimeStats {
+	newRs := &HashAggRuntimeStats{
+		InputTime:      e.InputTime,
+		PartialTask:    e.PartialTask,
+		FinalTask:      e.FinalTask,
+	}
+	return newRs
+}
+
+// Merge implements the RuntimeStats interface.
+func (e *HashAggRuntimeStats) Merge(other execdetails.RuntimeStats) {
+	tmp, ok := other.(*HashAggRuntimeStats)
+	if !ok {
+		return
+	}
+	e.InputTime += tmp.InputTime
+	e.PartialTask += tmp.PartialTask
+	e.FinalTask += tmp.FinalTask
+}
+
+// Tp implements the RuntimeStats interface.
+func (e *HashAggRuntimeStats) Tp() int {
+	return execdetails.TpHashAggRuntimeStat
 }
 
 // StreamAggExec deals with all the aggregate functions.

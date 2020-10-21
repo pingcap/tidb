@@ -483,6 +483,8 @@ const (
 	TpInsertRuntimeStat
 	// TpSlowQueryRuntimeStat is the tp for TpSlowQueryRuntimeStat
 	TpSlowQueryRuntimeStat
+	// TpHashAggRuntimeStat is the tp for HashAggRuntimeStat
+	TpHashAggRuntimeStat
 )
 
 // RuntimeStats is used to express the executor runtime information.
