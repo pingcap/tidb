@@ -464,8 +464,8 @@ func outOfRangeEQSelectivity(ndv, modifyRows, totalRows int64) float64 {
 	return selectivity
 }
 
-//
-func (coll *HistColl) crossValidate(sc *stmtctx.StatementContext, idx *Index, usedColsLen int, idxPointRange *ranger.Range) (float64, float64, error) {
+// crossValidationSelectivity gets the selectivity of multi-column equal conditions by cross validation.
+func (coll *HistColl) crossValidationSelectivity(sc *stmtctx.StatementContext, idx *Index, usedColsLen int, idxPointRange *ranger.Range) (float64, float64, error) {
 	minRowCount := math.MaxFloat64
 	cols := coll.Idx2ColumnIDs[idx.ID]
 	crossValidationCount := 1.0
@@ -528,7 +528,7 @@ func (coll *HistColl) getEqualCondSelectivity(sc *stmtctx.StatementContext, idx 
 		return outOfRangeEQSelectivity(ndv, coll.ModifyCount, int64(idx.TotalRowCount())), nil
 	}
 
-	minRowCount, crossValidationCount, err := coll.crossValidate(sc, idx, usedColsLen, idxPointRange)
+	minRowCount, crossValidationCount, err := coll.crossValidationSelectivity(sc, idx, usedColsLen, idxPointRange)
 	if err != nil {
 		return 0, nil
 	}

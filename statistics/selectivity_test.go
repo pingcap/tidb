@@ -729,7 +729,7 @@ func (s *testStatsSuite) TestDNFCondSelectivity(c *C) {
 	testKit.MustExec("select * from t where _tidb_rowid is null or _tidb_rowid > 7")
 }
 
-func (s *testStatsSuite) TestMultiColumnIndexEstimate(c *C) {
+func (s *testStatsSuite) TestIndexEstimationCrossValidate(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
