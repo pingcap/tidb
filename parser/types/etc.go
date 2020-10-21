@@ -105,4 +105,4 @@ const (
 )
 
 // ErrInvalidDefault is returned when meet a invalid default value.
-var ErrInvalidDefault = terror.ClassTypes.New(mysql.ErrInvalidDefault, mysql.MySQLErrName[mysql.ErrInvalidDefault])
+var ErrInvalidDefault = terror.ClassTypes.NewStd(mysql.ErrInvalidDefault)
