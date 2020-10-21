@@ -18,13 +18,16 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
 )
@@ -1149,7 +1152,7 @@ func (s *testSuite9) TestIssue16366(c *C) {
 	c.Assert(strings.Contains(err.Error(), "Duplicate entry '0' for key 'PRIMARY'"), IsTrue, Commentf("%v", err))
 }
 
-func (s *testSuite10) TestInsertRuntimeStat(c *C) {
+func (s *testSuite9) TestInsertRuntimeStat(c *C) {
 	stats := &executor.InsertRuntimeStat{
 		BasicRuntimeStats:    &execdetails.BasicRuntimeStats{},
 		SnapshotRuntimeStats: nil,
