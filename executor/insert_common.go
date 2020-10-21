@@ -80,7 +80,6 @@ type InsertValues struct {
 	memTracker     *memory.Tracker
 
 	stats *InsertRuntimeStat
-
 }
 
 type defaultVal struct {
