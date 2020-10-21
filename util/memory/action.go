@@ -17,8 +17,8 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/errno"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
@@ -100,7 +100,7 @@ func (a *PanicOnExceed) Action(t *Tracker) {
 func (a *PanicOnExceed) SetFallback(ActionOnExceed) {}
 
 var (
-	errMemExceedThreshold = terror.ClassUtil.New(errno.ErrMemExceedThreshold, errno.MySQLErrName[errno.ErrMemExceedThreshold])
+	errMemExceedThreshold = dbterror.ClassUtil.NewStd(errno.ErrMemExceedThreshold)
 )
 
 const (

@@ -592,6 +592,15 @@ func UpdateForUpdateTS(seCtx sessionctx.Context, newForUpdateTS uint64) error {
 	if !txn.Valid() {
 		return errors.Trace(kv.ErrInvalidTxn)
 	}
+
+	// The Oracle serializable isolation is actually SI in pessimistic mode.
+	// Do not update ForUpdateTS when the user is using the Serializable isolation level.
+	// It can be used temporarily on the few occasions when an Oracle-like isolation level is needed.
+	// Support for this does not mean that TiDB supports serializable isolation of MySQL.
+	// tidb_skip_isolation_level_check should still be disabled by default.
+	if seCtx.GetSessionVars().IsIsolation(ast.Serializable) {
+		return nil
+	}
 	if newForUpdateTS == 0 {
 		version, err := seCtx.GetStore().CurrentVersion()
 		if err != nil {
@@ -606,7 +615,11 @@ func UpdateForUpdateTS(seCtx sessionctx.Context, newForUpdateTS uint64) error {
 
 // handlePessimisticLockError updates TS and rebuild executor if the err is write conflict.
 func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, err error) (Executor, error) {
-	txnCtx := a.Ctx.GetSessionVars().TxnCtx
+	sessVars := a.Ctx.GetSessionVars()
+	if err != nil && sessVars.IsIsolation(ast.Serializable) {
+		return nil, err
+	}
+	txnCtx := sessVars.TxnCtx
 	var newForUpdateTS uint64
 	if deadlock, ok := errors.Cause(err).(*tikv.ErrDeadlock); ok {
 		if !deadlock.IsRetryable {
@@ -813,7 +826,7 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, succ bool, hasMoreResults boo
 	a.LogSlowQuery(txnTS, succ, hasMoreResults)
 	a.SummaryStmt(succ)
 	prevStmt := a.GetTextToLog()
-	if config.RedactLogEnabled() {
+	if sessVars.EnableRedactLog {
 		sessVars.PrevStmt = FormatSQL(prevStmt, nil)
 	} else {
 		pps := types.CloneRow(sessVars.PreparedParams)
@@ -857,7 +870,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	}
 	var sql stringutil.StringerFunc
 	normalizedSQL, digest := sessVars.StmtCtx.SQLDigest()
-	if config.RedactLogEnabled() {
+	if sessVars.EnableRedactLog {
 		sql = FormatSQL(normalizedSQL, nil)
 	} else if sensitiveStmt, ok := a.StmtNode.(ast.SensitiveStmtNode); ok {
 		sql = FormatSQL(sensitiveStmt.SecureText(), nil)
@@ -1028,30 +1041,37 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	memMax := stmtCtx.MemTracker.MaxConsumed()
 	diskMax := stmtCtx.DiskTracker.MaxConsumed()
 	sql := a.GetTextToLog()
+	var stmtDetail execdetails.StmtExecDetails
+	stmtDetailRaw := a.GoCtx.Value(execdetails.StmtExecDetailKey)
+	if stmtDetailRaw != nil {
+		stmtDetail = *(stmtDetailRaw.(*execdetails.StmtExecDetails))
+	}
 	stmtExecInfo := &stmtsummary.StmtExecInfo{
-		SchemaName:     strings.ToLower(sessVars.CurrentDB),
-		OriginalSQL:    sql,
-		NormalizedSQL:  normalizedSQL,
-		Digest:         digest,
-		PrevSQL:        prevSQL,
-		PrevSQLDigest:  prevSQLDigest,
-		PlanGenerator:  planGenerator,
-		PlanDigest:     planDigest,
-		PlanDigestGen:  planDigestGen,
-		User:           userString,
-		TotalLatency:   costTime,
-		ParseLatency:   sessVars.DurationParse,
-		CompileLatency: sessVars.DurationCompile,
-		StmtCtx:        stmtCtx,
-		CopTasks:       copTaskInfo,
-		ExecDetail:     &execDetail,
-		MemMax:         memMax,
-		DiskMax:        diskMax,
-		StartTime:      sessVars.StartTime,
-		IsInternal:     sessVars.InRestrictedSQL,
-		Succeed:        succ,
-		PlanInCache:    sessVars.FoundInPlanCache,
-		ExecRetryCount: a.retryCount,
+		SchemaName:      strings.ToLower(sessVars.CurrentDB),
+		OriginalSQL:     sql,
+		NormalizedSQL:   normalizedSQL,
+		Digest:          digest,
+		PrevSQL:         prevSQL,
+		PrevSQLDigest:   prevSQLDigest,
+		PlanGenerator:   planGenerator,
+		PlanDigest:      planDigest,
+		PlanDigestGen:   planDigestGen,
+		User:            userString,
+		TotalLatency:    costTime,
+		ParseLatency:    sessVars.DurationParse,
+		CompileLatency:  sessVars.DurationCompile,
+		StmtCtx:         stmtCtx,
+		CopTasks:        copTaskInfo,
+		ExecDetail:      &execDetail,
+		MemMax:          memMax,
+		DiskMax:         diskMax,
+		StartTime:       sessVars.StartTime,
+		IsInternal:      sessVars.InRestrictedSQL,
+		Succeed:         succ,
+		PlanInCache:     sessVars.FoundInPlanCache,
+		ExecRetryCount:  a.retryCount,
+		StmtExecDetails: stmtDetail,
+		Prepared:        a.isPreparedStmt,
 	}
 	if a.retryCount > 0 {
 		stmtExecInfo.ExecRetryTime = costTime - sessVars.DurationParse - sessVars.DurationCompile - time.Since(a.retryStartTime)
@@ -1062,7 +1082,7 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 // GetTextToLog return the query text to log.
 func (a *ExecStmt) GetTextToLog() string {
 	var sql string
-	if config.RedactLogEnabled() {
+	if a.Ctx.GetSessionVars().EnableRedactLog {
 		sql, _ = a.Ctx.GetSessionVars().StmtCtx.SQLDigest()
 	} else if sensitiveStmt, ok := a.StmtNode.(ast.SensitiveStmtNode); ok {
 		sql = sensitiveStmt.SecureText()
