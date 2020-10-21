@@ -243,18 +243,14 @@ func (s *tikvStore) preSplitRegion(ctx context.Context, group groupedMutations) 
 
 	preSplitSizeThresholdVal := atomic.LoadUint32(&preSplitSizeThreshold)
 	regionSize := 0
-	keysLength := group.mutations.len()
-	valsLength := len(group.mutations.values)
+	keysLength := group.mutations.Len()
 	// The value length maybe zero for pessimistic lock keys
 	for i := 0; i < keysLength; i++ {
-		regionSize = regionSize + len(group.mutations.keys[i])
-		if i < valsLength {
-			regionSize = regionSize + len(group.mutations.values[i])
-		}
+		regionSize = regionSize + len(group.mutations.GetKey(i)) + len(group.mutations.GetValue(i))
 		// The second condition is used for testing.
 		if regionSize >= int(preSplitSizeThresholdVal) {
 			regionSize = 0
-			splitKeys = append(splitKeys, group.mutations.keys[i])
+			splitKeys = append(splitKeys, group.mutations.GetKey(i))
 		}
 	}
 	if len(splitKeys) == 0 {
@@ -264,7 +260,7 @@ func (s *tikvStore) preSplitRegion(ctx context.Context, group groupedMutations) 
 	regionIDs, err := s.SplitRegions(ctx, splitKeys, true, nil)
 	if err != nil {
 		logutil.BgLogger().Warn("2PC split regions failed", zap.Uint64("regionID", group.region.id),
-			zap.Int("keys count", keysLength), zap.Int("values count", valsLength), zap.Error(err))
+			zap.Int("keys count", keysLength), zap.Error(err))
 		return false
 	}
 
