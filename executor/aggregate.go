@@ -17,7 +17,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"sort"
 	"sync"
 	"time"
 
@@ -879,16 +878,16 @@ type HashAggRuntimeStats struct {
 func (e *HashAggRuntimeStats) String() string {
 	var result string
 	if e.PartialTask != 0 {
-		result += fmt.Sprintf("partial_task:%s", e.PartialTask)
+		result += fmt.Sprintf("partial_task:{total_time:%s", e.PartialTask)
 	}
 	partialTime := make([]time.Duration, 0, e.PartialNum)
 	for i := range e.PartialTime{
 		partialTime = append(partialTime, i)
 	}
-	sort.Slice(partialTime, func(i, j int) bool { return partialTime[i] < partialTime[j] })
+	//sort.Slice(partialTime, func(i, j int) bool { return partialTime[i] < partialTime[j] })
 	n := len(partialTime)
 	if n != 0 {
-		result += fmt.Sprintf(", partial_max:%v, p95:%v", partialTime[n-1], partialTime[n*19/20])
+		result += fmt.Sprintf(", partial_max:%v, p95:%v}", partialTime[n-1], partialTime[n*19/20])
 	}
 
 	finalTime := make([]time.Duration, 0, e.FinalNum)
@@ -896,12 +895,12 @@ func (e *HashAggRuntimeStats) String() string {
 		finalTime = append(finalTime, i)
 	}
 	if e.FinalTask != 0 {
-		result += fmt.Sprintf(", final_task:%s", e.FinalTask)
+		result += fmt.Sprintf(", final_task:{total_time:%s", e.FinalTask)
 	}
-	sort.Slice(finalTime, func(i, j int) bool{return finalTime[i] < finalTime[j] })
+	//sort.Slice(finalTime, func(i, j int) bool{return finalTime[i] < finalTime[j] })
 	m := len(finalTime)
 	if m!=0{
-		result += fmt.Sprintf(", final_max:%v, p95:%v", finalTime[m-1], finalTime[m*19/20])
+		result += fmt.Sprintf(", final_max:%v, p95:%v}", finalTime[m-1], finalTime[m*19/20])
 	}
 	return result
 }
