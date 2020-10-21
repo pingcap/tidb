@@ -614,6 +614,17 @@ func (b *executorBuilder) buildLimit(v *plannercore.PhysicalLimit) Executor {
 		begin:        v.Offset,
 		end:          v.Offset + v.Count,
 	}
+
+	childUsedSchema := markChildrenUsedCols(v.Schema(), v.Children()[0].Schema())[0]
+	e.columnIdxsUsedByChild = make([]int, 0, len(childUsedSchema))
+	for i, used := range childUsedSchema {
+		if used {
+			e.columnIdxsUsedByChild = append(e.columnIdxsUsedByChild, i)
+		}
+	}
+	if len(e.columnIdxsUsedByChild) == len(childUsedSchema) {
+		e.columnIdxsUsedByChild = nil // indicates that all columns are used. LimitExec will improve performance for this condition.
+	}
 	return e
 }
 
@@ -969,13 +980,6 @@ func (b *executorBuilder) buildUnionScanFromReader(reader Executor, v *plannerco
 	switch x := reader.(type) {
 	case *TableReaderExecutor:
 		us.desc = x.desc
-		// Union scan can only be in a write transaction, so DirtyDB should has non-nil value now, thus
-		// GetDirtyDB() is safe here. If this table has been modified in the transaction, non-nil DirtyTable
-		// can be found in DirtyDB now, so GetDirtyTable is safe; if this table has not been modified in the
-		// transaction, empty DirtyTable would be inserted into DirtyDB, it does not matter when multiple
-		// goroutines write empty DirtyTable to DirtyDB for this table concurrently. Although the DirtyDB looks
-		// safe for data race in all the cases, the map of golang will throw panic when it's accessed in parallel.
-		// So we lock it when getting dirty table.
 		us.conditions, us.conditionsWithVirCol = plannercore.SplitSelCondsWithVirtualColumn(v.Conditions)
 		us.columns = x.columns
 		us.table = x.table
