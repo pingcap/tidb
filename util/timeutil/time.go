@@ -15,7 +15,7 @@ package timeutil
 
 import (
 	"fmt"
-	"path/filepath"
+	"os"
 	"strings"
 	"sync"
 	"syscall"
@@ -52,6 +52,22 @@ type locCache struct {
 	locMap map[string]*time.Location
 }
 
+// InferOneStepLinkForPath only read one step link for the path, not like filepath.EvalSymlinks, which gets the
+// recursive final linked file of the path.
+func InferOneStepLinkForPath(path string) (string, error) {
+	fileInfo, err := os.Lstat(path)
+	if err != nil {
+		return path, err
+	}
+	if fileInfo.Mode() & os.ModeSymlink != 0 {
+		path, err = os.Readlink(path)
+		if err != nil {
+			return path, err
+		}
+	}
+	return path, nil
+}
+
 // InferSystemTZ reads system timezone from `TZ`, the path of the soft link of `/etc/localtime`. If both of them are failed, system timezone will be set to `UTC`.
 // It is exported because we need to use it during bootstrap stage. And it should be only used at that stage.
 func InferSystemTZ() string {
@@ -62,7 +78,7 @@ func InferSystemTZ() string {
 	tz, ok := syscall.Getenv("TZ")
 	switch {
 	case !ok:
-		path, err1 := filepath.EvalSymlinks("/etc/localtime")
+		path, err1 := InferOneStepLinkForPath("/etc/localtime")
 		if err1 == nil {
 			name, err2 := inferTZNameFromFileName(path)
 			if err2 == nil {
