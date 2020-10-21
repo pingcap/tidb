@@ -1480,6 +1480,84 @@ LOOP:
 	tk.MustExec("drop table test_drop_index")
 }
 
+func (s *testDBSuite2) TestDropIndexes(c *C) {
+	idxNames := []string{"c2_index", "c3_index"}
+	createSQL := "create table test_drop_indexes (c1 int, c2 int, c3 int, unique key(c1), key c2_index(c2), key c3_index(c3))"
+	dropIdxSQL := "alter table test_drop_indexes drop index c2_index, drop index c3_index;"
+	testDropIndexes(c, s.store, s.lease, createSQL, dropIdxSQL, idxNames)
+}
+
+func testDropIndexes(c *C, store kv.Storage, lease time.Duration, createSQL, dropIdxSQL string, idxNames []string) {
+	tk := testkit.NewTestKit(c, store)
+	tk.MustExec("use test_db")
+	tk.MustExec("drop table if exists test_drop_indexes")
+	tk.MustExec(createSQL)
+	done := make(chan error, 1)
+	tk.MustExec("delete from test_drop_indexes")
+
+	num := 100
+	//  add some rows
+	for i := 0; i < num; i++ {
+		tk.MustExec("insert into test_drop_indexes values (?, ?, ?)", i, i, i)
+	}
+	ctx := tk.Se.(sessionctx.Context)
+	t := testGetTableByName(c, ctx, "test_db", "test_drop_indexes")
+	var idxs []table.Index
+	for _, tidx := range t.Indices() {
+		for _, idxName := range idxNames {
+			if tidx.Meta().Name.L == idxName {
+				idxs = append(idxs, tidx)
+				break
+			}
+		}
+	}
+	c.Assert(idxs, NotNil)
+
+	testddlutil.SessionExecInGoroutine(c, store, dropIdxSQL, done)
+
+	ticker := time.NewTicker(lease / 2)
+	defer ticker.Stop()
+LOOP:
+	for {
+		select {
+		case err := <-done:
+			if err == nil {
+				break LOOP
+			}
+			c.Assert(err, IsNil, Commentf("err:%v", errors.ErrorStack(err)))
+		case <-ticker.C:
+			step := 5
+			// delete some rows, and add some data
+			for i := num; i < num+step; i++ {
+				n := rand.Intn(num)
+				tk.MustExec("update test_drop_indexes set c2 = 1 where c1 = ?", n)
+				tk.MustExec("insert into test_drop_indexes values (?, ?, ?)", i, i, i)
+			}
+			num += step
+		}
+	}
+
+	// Check in index, it must be no index in KV.
+	// Make sure there is no index with name c2_index、c3_index.
+	t = testGetTableByName(c, ctx, "test_db", "test_drop_indexes")
+	var nidxs []table.Index
+	for _, tidx := range t.Indices() {
+		for _, ids := range idxs {
+			if tidx.Meta().Name.L == ids.Meta().Name.L {
+				nidxs = append(nidxs, tidx)
+			}
+		}
+	}
+	c.Assert(nidxs, IsNil)
+
+	for _, idx := range idxs {
+		idx := tables.NewIndex(t.Meta().ID, t.Meta(), idx.Meta())
+		checkDelRangeDone(c, ctx, idx)
+	}
+
+	tk.MustExec("drop table test_drop_indexes")
+}
+
 // TestCancelDropColumn tests cancel ddl job which type is drop column.
 func (s *testDBSuite3) TestCancelDropColumn(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
