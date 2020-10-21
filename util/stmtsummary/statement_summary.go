@@ -190,6 +190,7 @@ type stmtSummaryByDigestElement struct {
 	// plan cache
 	planInCache   bool
 	planCacheHits int64
+	planInSPM     bool
 	// pessimistic execution retry information.
 	execRetryCount uint
 	execRetryTime  time.Duration
@@ -219,6 +220,7 @@ type StmtExecInfo struct {
 	IsInternal     bool
 	Succeed        bool
 	PlanInCache    bool
+	PlanInSPM      bool
 	ExecRetryCount uint
 	ExecRetryTime  time.Duration
 	execdetails.StmtExecDetails
@@ -608,6 +610,7 @@ func newStmtSummaryByDigestElement(sei *StmtExecInfo, beginTime int64, intervalS
 		authUsers:     make(map[string]struct{}),
 		planInCache:   false,
 		planCacheHits: 0,
+		planInSPM:     false,
 		prepared:      sei.Prepared,
 	}
 	ssElement.add(sei, intervalSeconds)
@@ -786,6 +789,13 @@ func (ssElement *stmtSummaryByDigestElement) add(sei *StmtExecInfo, intervalSeco
 		ssElement.planInCache = false
 	}
 
+	// SPM
+	if sei.PlanInSPM {
+		ssElement.planInSPM = true
+	} else {
+		ssElement.planInSPM = false
+	}
+
 	// other
 	ssElement.sumAffectedRows += sei.StmtCtx.AffectedRows()
 	ssElement.sumMem += sei.MemMax
@@ -913,6 +923,7 @@ func (ssElement *stmtSummaryByDigestElement) toDatum(ssbd *stmtSummaryByDigest) 
 		types.NewTime(types.FromGoTime(ssElement.lastSeen), mysql.TypeTimestamp, 0),
 		ssElement.planInCache,
 		ssElement.planCacheHits,
+		ssElement.planInSPM,
 		ssElement.sampleSQL,
 		ssElement.prevSQL,
 		ssbd.planDigest,
