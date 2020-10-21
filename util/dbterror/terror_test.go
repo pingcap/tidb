@@ -31,9 +31,9 @@ var _ = Suite(&testkSuite{})
 type testkSuite struct{}
 
 func (s *testkSuite) TestErrorRedact(c *C) {
-	original := errors.RedactLogEnabled
-	errors.RedactLogEnabled = true
-	defer func() { errors.RedactLogEnabled = original }()
+	original := errors.RedactLogEnabled.Load()
+	errors.RedactLogEnabled.Store(true)
+	defer func() { errors.RedactLogEnabled.Store(original) }()
 
 	class := ErrClass{}
 	err := class.NewStd(errno.ErrDupEntry).GenWithStackByArgs("sensitive", "data")

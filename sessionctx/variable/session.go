@@ -1475,7 +1475,7 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		return s.SetSystemVar(TiDBRedactLog, val)
 	case TiDBRedactLog:
 		s.EnableRedactLog = TiDBOptOn(val)
-		errors.RedactLogEnabled = s.EnableRedactLog
+		errors.RedactLogEnabled.Store(s.EnableRedactLog)
 	case TiDBShardAllocateStep:
 		s.ShardAllocateStep = tidbOptInt64(val, DefTiDBShardAllocateStep)
 	case TiDBEnableChangeColumnType:
