@@ -116,17 +116,18 @@ func (record *memoryUsageAlarm) alarm4ExcessiveMemUsage(sm util.SessionManager) 
 }
 
 func (record *memoryUsageAlarm) doRecord(memUsage uint64, sm util.SessionManager) {
-	logutil.BgLogger().Warn("the TiDB instance now takes a lot of memory, has the risk of OOM",
+	logutil.BgLogger().Warn("the TiDB instance now takes a lot of memory, has the risk of OOM. TiDB will record running SQLs and heap profile in the tmp path",
 		zap.Bool("is server-momory-quota set", record.isServerMemoryQuotaSet),
 		zap.Any("memory size", record.serverMemoryQuota),
 		zap.Any("memory usage", memUsage),
 		zap.Any("memory-usage-alarm-ratio", config.GetGlobalConfig().Performance.MemoryUsageAlarmRatio),
+		zap.Any("record-path", record.tmpDir),
 	)
 
 	if record.err = disk.CheckAndInitTempDir(); record.err != nil {
 		return
 	}
-	record.recordSQLAndSummaryTable(sm)
+	record.recordSQL(sm)
 	record.recordProfile()
 
 	tryRemove := func(filename *[]string) {
@@ -146,7 +147,7 @@ func (record *memoryUsageAlarm) doRecord(memUsage uint64, sm util.SessionManager
 	}
 }
 
-func (record *memoryUsageAlarm) recordSQLAndSummaryTable(sm util.SessionManager) {
+func (record *memoryUsageAlarm) recordSQL(sm util.SessionManager) {
 	processInfo := sm.ShowProcessList()
 	pinfo := make([]*util.ProcessInfo, 0, len(processInfo))
 	for _, info := range processInfo {
@@ -203,8 +204,6 @@ func (record *memoryUsageAlarm) recordSQLAndSummaryTable(sm util.SessionManager)
 	printTop10(func(i, j int) bool {
 		return pinfo[i].Time.Before(pinfo[j].Time)
 	})
-
-	logutil.BgLogger().Info("record SQLs with the most memory usage or time usage", zap.Any("SQLs file path", fileName))
 }
 
 func (record *memoryUsageAlarm) recordProfile() {
@@ -235,6 +234,5 @@ func (record *memoryUsageAlarm) recordProfile() {
 			logutil.BgLogger().Error(fmt.Sprintf("write %v profile file fail", item.name), zap.Error(err))
 			return
 		}
-		logutil.BgLogger().Info(fmt.Sprintf("record %v profile successfully", item.name), zap.Any("Profile file path", fileName))
 	}
 }
