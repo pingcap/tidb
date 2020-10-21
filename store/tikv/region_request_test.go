@@ -534,7 +534,7 @@ func (s *testRegionRequestToSingleStoreSuite) TestOnMaxTimestampNotSyncedError(c
 		}()
 		count := 0
 		s.regionRequestSender.client = &fnClient{func(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (response *tikvrpc.Response, err error) {
-			count += 1
+			count++
 			var resp *tikvrpc.Response
 			if count < 3 {
 				resp = &tikvrpc.Response{Resp: &kvrpcpb.PrewriteResponse{

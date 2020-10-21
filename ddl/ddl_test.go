@@ -78,6 +78,8 @@ func TestT(t *testing.T) {
 		conf.Log.SlowThreshold = 10000
 		// Test for add/drop primary key.
 		conf.AlterPrimaryKey = true
+		conf.TiKVClient.AsyncCommit.SafeWindow = 0
+		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
 	})
 
 	_, err := infosync.GlobalInfoSyncerInit(context.Background(), "t", nil, true)

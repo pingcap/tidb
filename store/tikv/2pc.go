@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/store/tikv/oracle"
@@ -112,8 +111,10 @@ type twoPhaseCommitter struct {
 		noFallBack           bool
 	}
 
-	useAsyncCommit uint32
-	minCommitTS    uint64
+	useAsyncCommit  uint32
+	minCommitTS     uint64
+	maxCommitTS     uint64
+	prewriteStarted bool
 }
 
 type memBufferMutations struct {
@@ -575,7 +576,7 @@ func (c *twoPhaseCommitter) doActionOnMutations(bo *Backoffer, action twoPhaseCo
 
 // groupMutations groups mutations by region, then checks for any large groups and in that case pre-splits the region.
 func (c *twoPhaseCommitter) groupMutations(bo *Backoffer, mutations CommitterMutations) ([]groupedMutations, error) {
-	groups, err := c.store.regionCache.GroupSortedMutationsByRegion(bo, mutations)
+	groups, err := c.store.regionCache.groupSortedMutationsByRegion(bo, mutations)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -597,7 +598,7 @@ func (c *twoPhaseCommitter) groupMutations(bo *Backoffer, mutations CommitterMut
 	}
 	// Reload region cache again.
 	if didPreSplit {
-		groups, err = c.store.regionCache.GroupSortedMutationsByRegion(bo, mutations)
+		groups, err = c.store.regionCache.groupSortedMutationsByRegion(bo, mutations)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -945,7 +946,7 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 		} else {
 			// The error means the async commit should not succeed.
 			if err != nil {
-				if c.getUndeterminedErr() == nil {
+				if c.prewriteStarted && c.getUndeterminedErr() == nil {
 					c.cleanup(ctx)
 				}
 				tikvAsyncCommitTxnCounterError.Inc()
@@ -957,8 +958,14 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 
 	// Check async commit is available or not.
 	if c.checkAsyncCommit() {
+		if err = c.calculateMaxCommitTS(ctx); err != nil {
+			return errors.Trace(err)
+		}
+
 		c.setAsyncCommit(true)
 	}
+
+	c.prewriteStarted = true
 
 	binlogChan := c.prewriteBinlog(ctx)
 	prewriteBo := NewBackofferWithVars(ctx, PrewriteMaxBackoff, c.txn.vars)
@@ -1036,15 +1043,7 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 		})
 	}
 
-	if c.isAsyncCommit() {
-		schemaVerIsTheSame, err := checkSchemaVersionForAsyncCommit(ctx, c.startTS, commitTS, c.store)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if !schemaVerIsTheSame {
-			return errors.Trace(errors.Errorf("Schema changed for async commit startTS=%v commitTS=%v", c.startTS, commitTS))
-		}
-	} else {
+	if !c.isAsyncCommit() {
 		tryAmend := c.isPessimistic && c.connID > 0 && c.txn.schemaAmender != nil
 		if !tryAmend {
 			_, _, err = c.checkSchemaValid(ctx, commitTS, c.txn.txnInfoSchema, false)
@@ -1183,16 +1182,27 @@ func (c *twoPhaseCommitter) tryAmendTxn(ctx context.Context, startInfoSchema Sch
 	if err != nil {
 		return false, err
 	}
-	// Prewrite new mutations.
+	// Add new mutations to the mutation list or prewrite them if prewrite already starts.
 	if addMutations != nil && addMutations.Len() > 0 {
-		prewriteBo := NewBackofferWithVars(ctx, PrewriteMaxBackoff, c.txn.vars)
-		err = c.prewriteMutations(prewriteBo, addMutations)
-		if err != nil {
-			logutil.Logger(ctx).Warn("amend prewrite has failed", zap.Error(err), zap.Uint64("txnStartTS", c.startTS))
-			return false, err
+		if c.prewriteStarted {
+			prewriteBo := NewBackofferWithVars(ctx, PrewriteMaxBackoff, c.txn.vars)
+			err = c.prewriteMutations(prewriteBo, addMutations)
+			if err != nil {
+				logutil.Logger(ctx).Warn("amend prewrite has failed", zap.Error(err), zap.Uint64("txnStartTS", c.startTS))
+				return false, err
+			}
+			logutil.Logger(ctx).Info("amend prewrite finished", zap.Uint64("txnStartTS", c.startTS))
+			return true, nil
 		}
-		logutil.Logger(ctx).Info("amend prewrite finished", zap.Uint64("txnStartTS", c.startTS))
-		return true, nil
+		memBuf := c.txn.GetMemBuffer()
+		for i := 0; i < addMutations.Len(); i++ {
+			key := addMutations.GetKey(i)
+			if err := memBuf.Set(key, addMutations.GetValue(i)); err != nil {
+				return false, err
+			}
+			handle := c.txn.GetMemBuffer().IterWithFlags(key, nil).Handle()
+			c.mutations.Push(addMutations.GetOp(i), addMutations.IsPessimisticLock(i), handle)
+		}
 	}
 	return false, nil
 }
@@ -1244,7 +1254,7 @@ func (c *twoPhaseCommitter) checkSchemaValid(ctx context.Context, checkTS uint64
 					zap.Uint64("startTS", c.startTS), zap.Error(amendErr))
 				return nil, false, err
 			}
-			logutil.Logger(ctx).Info("amend txn successfully for pessimistic commit",
+			logutil.Logger(ctx).Info("amend txn successfully",
 				zap.Uint64("connID", c.connID), zap.Uint64("txn startTS", c.startTS), zap.Bool("memAmended", memAmended),
 				zap.Uint64("checkTS", checkTS), zap.Int64("startInfoSchemaVer", startInfoSchema.SchemaMetaVersion()),
 				zap.Int64s("table ids", relatedChanges.PhyTblIDS), zap.Uint64s("action types", relatedChanges.ActionTypes))
@@ -1253,6 +1263,29 @@ func (c *twoPhaseCommitter) checkSchemaValid(ctx context.Context, checkTS uint64
 		return nil, false, errors.Trace(err)
 	}
 	return nil, false, nil
+}
+
+func (c *twoPhaseCommitter) calculateMaxCommitTS(ctx context.Context) error {
+	// Amend txn with current time first, then we can make sure we have another SafeWindow time to commit
+	currentTS := oracle.EncodeTSO(int64(time.Since(c.txn.startTime)/time.Millisecond)) + c.startTS
+	_, _, err := c.checkSchemaValid(ctx, currentTS, c.txn.txnInfoSchema, true)
+	if err != nil {
+		logutil.Logger(ctx).Error("Schema changed for async commit txn",
+			zap.Error(err),
+			zap.Uint64("startTS", c.startTS))
+		return errors.Trace(err)
+	}
+
+	safeWindow := config.GetGlobalConfig().TiKVClient.AsyncCommit.SafeWindow
+	maxCommitTS := oracle.EncodeTSO(int64(safeWindow/time.Millisecond)) + currentTS
+	logutil.BgLogger().Error("calculate MaxCommitTS",
+		zap.Time("startTime", c.txn.startTime),
+		zap.Duration("safeWindow", safeWindow),
+		zap.Uint64("startTS", c.startTS),
+		zap.Uint64("maxCommitTS", maxCommitTS))
+
+	c.maxCommitTS = maxCommitTS
+	return nil
 }
 
 func (c *twoPhaseCommitter) prewriteBinlog(ctx context.Context) chan *binloginfo.WriteResult {
@@ -1550,32 +1583,4 @@ func (c *twoPhaseCommitter) getUndeterminedErr() error {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.mu.undeterminedErr
-}
-
-// checkSchemaVersionForAsyncCommit is used to check schema version change for async commit transactions
-// only. For async commit protocol, we need to make sure the check result is the same during common execution
-// path and the recovery path. As the schema lease checker has a limited size of cached schema diff version, it's
-// possible the schema cache is changed and the schema lease checker can't decide if the related table has
-// schema version change. So we just check the version from meta snapshot, it's much stricter.
-func checkSchemaVersionForAsyncCommit(ctx context.Context, startTS uint64, commitTS uint64, store Storage) (bool, error) {
-	if commitTS > 0 {
-		snapshotAtStart := store.GetSnapshot(kv.NewVersion(startTS))
-		snapShotAtCommit := store.GetSnapshot(kv.NewVersion(commitTS))
-		schemaVerAtStart, err := meta.NewSnapshotMeta(snapshotAtStart).GetSchemaVersion()
-		if err != nil {
-			return false, errors.Trace(err)
-		}
-		schemaVerAtCommit, err := meta.NewSnapshotMeta(snapShotAtCommit).GetSchemaVersion()
-		if err != nil {
-			return false, errors.Trace(err)
-		}
-		if schemaVerAtStart != schemaVerAtCommit {
-			logutil.Logger(ctx).Info("async commit txn need to rollback since schema version has changed",
-				zap.Uint64("startTS", startTS), zap.Uint64("commitTS", commitTS),
-				zap.Int64("schema version at start", schemaVerAtStart),
-				zap.Int64("schema version at commit", schemaVerAtCommit))
-			return false, nil
-		}
-	}
-	return true, nil
 }
