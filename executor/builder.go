@@ -2578,7 +2578,6 @@ func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) E
 	ret.kvRangeBuilder = kvRangeBuilderFromRangeAndPartition{
 		sctx:       b.ctx,
 		partitions: partitions,
-		ranges:     ts.Ranges,
 	}
 
 	return ret
@@ -3260,33 +3259,30 @@ func dedupHandles(lookUpContents []*indexJoinLookUpContent) ([]kv.Handle, []*ind
 	return handles, validLookUpContents
 }
 
-type kvRangeBuilderFromFunc func(pid int64) ([]kv.KeyRange, error)
-
-func (h kvRangeBuilderFromFunc) buildKeyRange(pid int64) ([]kv.KeyRange, error) {
-	return h(pid)
-}
-
 type kvRangeBuilderFromRangeAndPartition struct {
 	sctx       sessionctx.Context
 	partitions []table.PhysicalTable
-	ranges     []*ranger.Range
 }
 
-func (h kvRangeBuilderFromRangeAndPartition) buildKeyRange(int64) ([]kv.KeyRange, error) {
+func (h kvRangeBuilderFromRangeAndPartition) buildKeyRange(ranges []*ranger.Range, feedback *statistics.QueryFeedback) ([]kv.KeyRange, error) {
 	var ret []kv.KeyRange
+	if len(h.partitions) == 0 {
+		return ret, nil
+	}
+	pids := make([]int64, 0, len(h.partitions))
 	for _, p := range h.partitions {
-		pid := p.GetPhysicalID()
-		meta := p.Meta()
-		if meta != nil && meta.IsCommonHandle {
-			kvRange, err := distsql.CommonHandleRangesToKVRanges(h.sctx.GetSessionVars().StmtCtx, []int64{pid}, h.ranges)
-			if err != nil {
-				return nil, err
-			}
-			ret = append(ret, kvRange...)
-		} else {
-			kvRange := distsql.TableRangesToKVRanges(pid, h.ranges, nil)
-			ret = append(ret, kvRange...)
+		pids = append(pids, p.GetPhysicalID())
+	}
+	meta := h.partitions[0].Meta()
+	if meta != nil && meta.IsCommonHandle {
+		kvRange, err := distsql.CommonHandleRangesToKVRanges(h.sctx.GetSessionVars().StmtCtx, pids, ranges)
+		if err != nil {
+			return nil, err
 		}
+		ret = append(ret, kvRange...)
+	} else {
+		kvRange := distsql.TablesRangesToKVRanges(pids, ranges, feedback)
+		ret = append(ret, kvRange...)
 	}
 	return ret, nil
 }

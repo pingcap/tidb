@@ -49,14 +49,15 @@ type Feedback struct {
 // QueryFeedback is used to represent the query feedback info. It contains the query's scan ranges and number of rows
 // in each range.
 type QueryFeedback struct {
-	PhysicalID int64
-	Hist       *Histogram
-	Tp         int
-	Feedback   []Feedback
-	Expected   int64 // Expected is the Expected scan count of corresponding query.
-	actual     int64 // actual is the actual scan count of corresponding query.
-	Valid      bool  // Valid represents the whether this query feedback is still Valid.
-	desc       bool  // desc represents the corresponding query is desc scan.
+	PhysicalID  int64
+	Hist        *Histogram
+	Tp          int
+	Feedback    []Feedback
+	Expected    int64 // Expected is the Expected scan count of corresponding query.
+	actual      int64 // actual is the actual scan count of corresponding query.
+	Valid       bool  // Valid represents the whether this query feedback is still Valid.
+	desc        bool  // desc represents the corresponding query is desc scan.
+	rangeRepeat int
 }
 
 // NewQueryFeedback returns a new query feedback.
@@ -233,11 +234,12 @@ func (q *QueryFeedback) DecodeIntValues() *QueryFeedback {
 }
 
 // StoreRanges stores the ranges for update.
-func (q *QueryFeedback) StoreRanges(ranges []*ranger.Range) {
+func (q *QueryFeedback) StoreRanges(ranges []*ranger.Range, repeatCnt int) {
 	q.Feedback = make([]Feedback, 0, len(ranges))
 	for _, ran := range ranges {
 		q.Feedback = append(q.Feedback, Feedback{&ran.LowVal[0], &ran.HighVal[0], 0, 0})
 	}
+	q.rangeRepeat = repeatCnt
 }
 
 // Invalidate is used to invalidate the query feedback.
@@ -295,12 +297,17 @@ func (q *QueryFeedback) Update(startKey kv.Key, counts []int64) {
 		}
 	}
 	// Update the feedback count info.
+	if len(counts)%q.rangeRepeat != 0 {
+		q.Invalidate()
+		return
+	}
+	bucketCnt := len(counts) / q.rangeRepeat
 	for i, count := range counts {
-		if i+idx >= len(q.Feedback) {
+		if i%bucketCnt+idx >= len(q.Feedback) {
 			q.Invalidate()
 			break
 		}
-		q.Feedback[i+idx].Count += count
+		q.Feedback[i%bucketCnt+idx].Count += count
 	}
 }
 

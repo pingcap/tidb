@@ -855,6 +855,79 @@ func (s *testStatsSuite) TestQueryFeedback(c *C) {
 	c.Assert(h.HandleUpdateStats(s.do.InfoSchema()), IsNil)
 }
 
+func (s *testStatsSuite) TestCompareFeedbackForNonPartitionAndPartition(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	testKit := testkit.NewTestKit(c, s.store)
+	testKit.MustExec("use test")
+	m := variable.DynamicOnly
+	testKit.MustExec("set @@tidb_partition_prune_mode=`" + string(m) + "`")
+	testKit.MustExec("set global tidb_partition_prune_mode=`" + string(m) + "`")
+	s.do.GetGlobalVarsCache().Disable()
+	h := s.do.StatsHandle()
+	c.Assert(h.RefreshVars(), IsNil)
+	testKit.MustExec(`drop table if exists t1, t2`)
+	testKit.MustExec(`create table t1 (a bigint(64), b bigint(64), primary key(a), index idx(b))`)
+	testKit.MustExec(`create table t2 (a bigint(64), b bigint(64), primary key(a), index idx(b))
+			    partition by range (a) (
+			    partition p0 values less than (3),
+			    partition p1 values less than (6))`)
+	testKit.MustExec("insert into t1 values (1,2),(2,2),(3,4),(4,1),(5,6)")
+	testKit.MustExec("insert into t2 values (1,2),(2,2),(3,4),(4,1),(5,6)")
+	testKit.MustExec("analyze table t1, t2")
+
+	oriProbability := statistics.FeedbackProbability
+	oriMinLogCount := handle.MinLogScanCount
+	oriErrorRate := handle.MinLogErrorRate
+	defer func() {
+		statistics.FeedbackProbability = oriProbability
+		handle.MinLogScanCount = oriMinLogCount
+		handle.MinLogErrorRate = oriErrorRate
+	}()
+	statistics.FeedbackProbability.Store(1)
+	handle.MinLogScanCount = 0
+	handle.MinLogErrorRate = 0
+
+	tests := []struct {
+		sql     string
+		idxCols int
+	}{
+		{
+			sql:     "select * from %s where a <= 5",
+			idxCols: 0,
+		},
+		//{
+		//	sql: "select * from %s use index(idx) where b <= 5",
+		//	idxCols: 1,
+		//},
+		//{
+		//	sql: "select b from %s use index(idx) where b <= 5",
+		//	idxCols: 1,
+		//},
+	}
+
+	is := s.do.InfoSchema()
+	nonPart, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	c.Assert(err, IsNil)
+	hasPart, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
+	c.Assert(err, IsNil)
+
+	for _, t := range tests {
+		testKit.MustQuery(fmt.Sprintf(t.sql, "t1"))
+		testKit.MustQuery(fmt.Sprintf(t.sql, "t2"))
+		c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+		c.Assert(h.DumpStatsFeedbackToKV(), IsNil)
+		c.Assert(h.HandleUpdateStats(s.do.InfoSchema()), IsNil)
+		c.Assert(h.Update(is), IsNil)
+		nonPartTbl, partTbl := h.GetTableStats(nonPart.Meta()), h.GetTableStats(hasPart.Meta())
+		if t.idxCols == 0 {
+			c.Assert(partTbl.Columns[hasPart.Meta().Columns[0].ID].ToString(0), Equals, nonPartTbl.Columns[nonPart.Meta().Columns[0].ID].ToString(0))
+		} else {
+			c.Assert(partTbl.Indices[hasPart.Meta().Indices[0].ID].ToString(1), Equals, nonPartTbl.Indices[nonPart.Meta().Indices[0].ID].ToString(1))
+		}
+	}
+	testKit.MustExec("drop table t1, t2")
+}
+
 func (s *testStatsSuite) TestQueryFeedbackForPartition(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
