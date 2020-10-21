@@ -218,7 +218,6 @@ func checkIndexCanBeKey(idx *model.IndexInfo, columns []*model.ColumnInfo, schem
 	for _, idxCol := range idx.Columns {
 		// The columns of this index should all occur in column schema.
 		// Since null value could be duplicate in unique key. So we check NotNull flag of every column.
-		findNewKey := false
 		findUniqueKey := false
 		for i, col := range columns {
 			if idxCol.Name.L == col.Name.L {
@@ -230,7 +229,6 @@ func checkIndexCanBeKey(idx *model.IndexInfo, columns []*model.ColumnInfo, schem
 						break
 					}
 					newKey = append(newKey, schema.Columns[i])
-					findNewKey = true
 					break
 				}
 			}
