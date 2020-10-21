@@ -656,6 +656,11 @@ error = '''
 JSON_OBJECTAGG: unsupported second argument type %v
 '''
 
+["kv:1062"]
+error = '''
+Duplicate entry '%-.64s' for key '%-.192s'
+'''
+
 ["kv:8004"]
 error = '''
 Transaction is too large, size: %d
