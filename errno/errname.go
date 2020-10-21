@@ -16,6 +16,9 @@ package errno
 import "github.com/pingcap/parser/mysql"
 
 // MySQLErrName maps error code to MySQL error messages.
+// Note: all ErrMessage to be added should be considered about the log redaction
+// by setting the suitable configuration in the second argument of mysql.Message.
+// See https://github.com/pingcap/tidb/blob/master/errno/logredaction.md
 var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrHashchk:                                  mysql.Message("hashchk", nil),
 	ErrNisamchk:                                 mysql.Message("isamchk", nil),
