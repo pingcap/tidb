@@ -251,4 +251,11 @@ var (
 
 	// ErrMultipleDefConstInListPart returns multiple definition of same constant in list partitioning.
 	ErrMultipleDefConstInListPart = dbterror.ClassDDL.NewStd(mysql.ErrMultipleDefConstInListPart)
+
+	// ErrTruncatedWrongValue is returned when data has been truncated during conversion.
+	ErrTruncatedWrongValue = dbterror.ClassDDL.NewStd(mysql.ErrTruncatedWrongValue)
+
+	// ErrWarnDataOutOfRange is returned when the value in a numeric column that is outside the permissible range of the column data type.
+	// See https://dev.mysql.com/doc/refman/5.5/en/out-of-range-and-overflow.html for details
+	ErrWarnDataOutOfRange = dbterror.ClassDDL.NewStd(mysql.ErrWarnDataOutOfRange)
 )
