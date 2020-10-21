@@ -80,6 +80,7 @@ type InsertValues struct {
 	memTracker     *memory.Tracker
 
 	stats *InsertRuntimeStat
+
 }
 
 type defaultVal struct {
@@ -974,6 +975,7 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 	if err != nil {
 		return err
 	}
+
 	if e.collectRuntimeStatsEnabled() {
 		if snapshot := txn.GetSnapshot(); snapshot != nil {
 			snapshot.SetOption(kv.CollectRuntimeStats, e.stats.SnapshotRuntimeStats)
@@ -981,6 +983,7 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 		}
 	}
 	PrefetchStart := time.Now()
+
 	// Fill cache using BatchGet, the following Get requests don't need to visit TiKV.
 	if _, err = prefetchUniqueIndices(ctx, txn, toBeCheckedRows); err != nil {
 		return err

@@ -532,7 +532,7 @@ func preSplitAndScatterIn2PC(ctx context.Context, store *tikvStore, group groupe
 		return false
 	}
 
-	regionIDs, err := store.SplitRegions(ctx, splitKeys, true)
+	regionIDs, err := store.SplitRegions(ctx, splitKeys, true, nil)
 	if err != nil {
 		logutil.BgLogger().Warn("2PC split regions failed", zap.Uint64("regionID", group.region.id),
 			zap.Int("keys count", keysLength), zap.Int("values count", valsLength), zap.Error(err))
@@ -555,7 +555,9 @@ func (c *twoPhaseCommitter) doActionOnGroupMutations(bo *Backoffer, action twoPh
 
 	var batches []batchMutations
 	var sizeFunc = c.keySize
-	if _, ok := action.(actionPrewrite); ok {
+
+	switch act := action.(type) {
+	case actionPrewrite:
 		// Do not update regionTxnSize on retries. They are not used when building a PrewriteRequest.
 		if len(bo.errors) == 0 {
 			for _, group := range groups {
@@ -564,6 +566,10 @@ func (c *twoPhaseCommitter) doActionOnGroupMutations(bo *Backoffer, action twoPh
 		}
 		sizeFunc = c.keyValueSize
 		atomic.AddInt32(&c.getDetail().PrewriteRegionNum, int32(len(groups)))
+	case actionPessimisticLock:
+		if act.LockCtx.Stats != nil {
+			act.LockCtx.Stats.RegionNum = int32(len(groups))
+		}
 	}
 
 	primaryIdx := -1
@@ -934,7 +940,12 @@ func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *
 			time.Sleep(300 * time.Millisecond)
 			return kv.ErrWriteConflict
 		})
+		startTime := time.Now()
 		resp, err := c.store.SendReq(bo, req, batch.region, readTimeoutShort)
+		if action.LockCtx.Stats != nil {
+			atomic.AddInt64(&action.LockCtx.Stats.LockRPCTime, int64(time.Since(startTime)))
+			atomic.AddInt64(&action.LockCtx.Stats.LockRPCCount, 1)
+		}
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -989,7 +1000,11 @@ func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *
 		}
 		// Because we already waited on tikv, no need to Backoff here.
 		// tikv default will wait 3s(also the maximum wait value) when lock error occurs
+		startTime = time.Now()
 		msBeforeTxnExpired, _, err := c.store.lockResolver.ResolveLocks(bo, 0, locks)
+		if action.LockCtx.Stats != nil {
+			atomic.AddInt64(&action.LockCtx.Stats.ResolveLockTime, int64(time.Since(startTime)))
+		}
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1145,6 +1160,14 @@ func (actionCommit) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, batch
 			logutil.Logger(bo.ctx).Info("2PC commitTS rejected by TiKV, retry with a newer commitTS",
 				zap.Uint64("txnStartTS", c.startTS),
 				zap.Stringer("info", logutil.Hex(rejected)))
+
+			// Do not retry for a txn which has a too large MinCommitTs
+			// 3600000 << 18 = 943718400000
+			if rejected.MinCommitTs-rejected.AttemptedCommitTs > 943718400000 {
+				err := errors.Errorf("2PC MinCommitTS is too large, we got MinCommitTS: %d, and AttemptedCommitTS: %d",
+					rejected.MinCommitTs, rejected.AttemptedCommitTs)
+				return errors.Trace(err)
+			}
 
 			// Update commit ts and retry.
 			commitTS, err := c.store.getTimestampWithRetry(bo)
