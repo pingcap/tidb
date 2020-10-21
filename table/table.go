@@ -57,13 +57,6 @@ func (tp Type) IsClusterTable() bool {
 	return tp == ClusterTable
 }
 
-const (
-	// DirtyTableAddRow is the constant for dirty table operation type.
-	DirtyTableAddRow = iota
-	// DirtyTableDeleteRow is the constant for dirty table operation type.
-	DirtyTableDeleteRow
-)
-
 var (
 	// ErrColumnCantNull is used for inserting null to a not null column.
 	ErrColumnCantNull = terror.ClassTable.New(mysql.ErrBadNull, mysql.MySQLErrName[mysql.ErrBadNull])
