@@ -1074,7 +1074,7 @@ func (e *InsertRuntimeStat) String() string {
 	if e.CheckInsertTime == 0 {
 		// For replace statement.
 		if e.Prefetch > 0 && e.SnapshotRuntimeStats != nil {
-			return fmt.Sprintf("Prefetch: %v, rpc:{%v}", e.Prefetch, e.SnapshotRuntimeStats.String())
+			return fmt.Sprintf("prefetch: %v, rpc:{%v}", e.Prefetch, e.SnapshotRuntimeStats.String())
 		}
 		return ""
 	}
