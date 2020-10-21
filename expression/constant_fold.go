@@ -26,10 +26,12 @@ var specialFoldHandler = map[string]func(*ScalarFunction) (Expression, bool){}
 
 func init() {
 	specialFoldHandler = map[string]func(*ScalarFunction) (Expression, bool){
-		ast.If:     ifFoldHandler,
-		ast.Ifnull: ifNullFoldHandler,
-		ast.Case:   caseWhenHandler,
-		ast.IsNull: isNullHandler,
+		ast.If:       ifFoldHandler,
+		ast.Ifnull:   ifNullFoldHandler,
+		ast.Case:     caseWhenHandler,
+		ast.IsNull:   isNullHandler,
+		ast.LogicAnd: andHandler,
+		ast.LogicOr:  orHandler,
 	}
 }
 
@@ -61,6 +63,46 @@ func isNullHandler(expr *ScalarFunction) (Expression, bool) {
 	if mysql.HasNotNullFlag(arg0.GetType().Flag) {
 		return NewZero(), false
 	}
+	return expr, false
+}
+
+func andHandler(expr *ScalarFunction) (Expression, bool) {
+	args := expr.GetArgs()
+	foldedArg0, _ := foldConstant(args[0])
+	if constArg, isConst := foldedArg0.(*Constant); isConst {
+		arg0, isNull0, err := constArg.EvalInt(expr.Function.getCtx(), chunk.Row{})
+		if err != nil {
+			// Failed to fold this expr to a constant, print the DEBUG log and
+			// return the original expression to let the error to be evaluated
+			// again, in that time, the error is returned to the client.
+			logutil.BgLogger().Debug("fold expression to constant", zap.String("expression", expr.ExplainInfo()), zap.Error(err))
+			return expr, false
+		}
+		if !isNull0 && arg0 != 0 {
+			return foldConstant(args[1])
+		}
+	}
+	// if the condition is not const, which branch is unknown to run, so directly return.
+	return expr, false
+}
+
+func orHandler(expr *ScalarFunction) (Expression, bool) {
+	args := expr.GetArgs()
+	foldedArg0, _ := foldConstant(args[0])
+	if constArg, isConst := foldedArg0.(*Constant); isConst {
+		arg0, isNull0, err := constArg.EvalInt(expr.Function.getCtx(), chunk.Row{})
+		if err != nil {
+			// Failed to fold this expr to a constant, print the DEBUG log and
+			// return the original expression to let the error to be evaluated
+			// again, in that time, the error is returned to the client.
+			logutil.BgLogger().Debug("fold expression to constant", zap.String("expression", expr.ExplainInfo()), zap.Error(err))
+			return expr, false
+		}
+		if !isNull0 && arg0 == 0 {
+			return foldConstant(args[1])
+		}
+	}
+	// if the condition is not const, which branch is unknown to run, so directly return.
 	return expr, false
 }
 

@@ -33,3 +33,22 @@ func (s *testIntegrationSuite) TestFoldIfNull(c *C) {
 	tk.MustQuery(`select ifnull("aaaa", a) from t;`).Check(testkit.Rows("aaaa"))
 	tk.MustQuery(`show warnings;`).Check(testkit.Rows())
 }
+
+func (s *testIntegrationSuite) TestFoldAnd(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`Drop table if exists t1, t2;`)
+	tk.MustExec(`CREATE TABLE t1 (a int PRIMARY KEY, b int);`)
+	tk.MustExec(`CREATE TABLE t2 (a int PRIMARY KEY, b int);`)
+	tk.MustExec(`INSERT INTO t1 VALUES (1,1), (2,1), (3,1), (4,2);`)
+	tk.MustExec(`INSERT INTO t2 VALUES (1,2), (2,2);`)
+	tk.MustQuery(`SELECT * FROM t1 LEFT JOIN t2 ON t1.a=t2.a WHERE not((t1.a=30 and t2.b=1));`).Check(testkit.Rows(
+		"1 1 1 2",
+		"2 1 2 2",
+		"3 1 <nil> <nil>",
+		"4 2 <nil> <nil>"))
+	tk.MustQuery(`SELECT * FROM t1 LEFT JOIN t2 ON t1.a=t2.a WHERE not(0+(t1.a=30 and t2.b=1));`).Check(testkit.Rows(
+		"1 1 1 2",
+		"2 1 2 2",
+		"3 1 <nil> <nil>",
+		"4 2 <nil> <nil>"))
+}
