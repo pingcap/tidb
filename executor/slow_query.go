@@ -42,6 +42,9 @@ import (
 	"go.uber.org/zap"
 )
 
+// ParseSlowLogBatchSize is the batch size of slow-log lines for a worker to parse, exported for testing.
+var ParseSlowLogBatchSize = 64
+
 //slowQueryRetriever is used to read slow log data.
 type slowQueryRetriever struct {
 	table       *model.TableInfo
@@ -122,6 +125,7 @@ type parsedSlowLog struct {
 }
 
 func (e *slowQueryRetriever) parseDataForSlowLog(ctx context.Context, sctx sessionctx.Context) {
+<<<<<<< HEAD
 	if len(e.files) == 0 {
 		close(e.parsedSlowLogCh)
 		return
@@ -137,6 +141,15 @@ func (e *slowQueryRetriever) parseDataForSlowLog(ctx context.Context, sctx sessi
 		}
 	}
 	close(e.parsedSlowLogCh)
+=======
+	file := e.getNextFile()
+	if file == nil {
+		close(e.parsedSlowLogCh)
+		return
+	}
+	reader := bufio.NewReader(file)
+	e.parseSlowLog(ctx, sctx, reader, ParseSlowLogBatchSize)
+>>>>>>> 00458d011... executor: fix the issue of query slow_query return 0 rows (#20497)
 }
 
 func (e *slowQueryRetriever) dataForSlowLog(ctx context.Context) ([][]types.Datum, bool, error) {
@@ -205,10 +218,95 @@ func (e *slowQueryRetriever) parseSlowLog(ctx sessionctx.Context, reader *bufio.
 				if e.fileIdx >= len(e.files) {
 					return rows, nil
 				}
+<<<<<<< HEAD
 				reader.Reset(e.files[e.fileIdx].file)
 				continue
 			}
 			return rows, err
+=======
+				return log, err
+			}
+			line = string(hack.String(lineByte))
+			log = append(log, line)
+			if strings.HasSuffix(line, variable.SlowLogSQLSuffixStr) {
+				if strings.HasPrefix(line, "use") {
+					continue
+				}
+				break
+			}
+		}
+	}
+	return log, err
+}
+
+func (e *slowQueryRetriever) parseSlowLog(ctx context.Context, sctx sessionctx.Context, reader *bufio.Reader, logNum int) {
+	defer close(e.parsedSlowLogCh)
+	var wg sync.WaitGroup
+	offset := offset{offset: 0, length: 0}
+	// To limit the num of go routine
+	concurrent := sctx.GetSessionVars().Concurrency.DistSQLScanConcurrency()
+	ch := make(chan int, concurrent)
+	if e.stats != nil {
+		e.stats.concurrent = concurrent
+	}
+	defer close(ch)
+	for {
+		startTime := time.Now()
+		log, err := e.getBatchLog(reader, &offset, logNum)
+		if err != nil {
+			e.parsedSlowLogCh <- parsedSlowLog{nil, err}
+			break
+		}
+		if len(log) == 0 {
+			break
+		}
+		if e.stats != nil {
+			e.stats.readFile += time.Since(startTime)
+		}
+		start := offset
+		wg.Add(1)
+		ch <- 1
+		go func() {
+			defer wg.Done()
+			result, err := e.parseLog(sctx, log, start)
+			e.parsedSlowLogCh <- parsedSlowLog{result, err}
+			<-ch
+		}()
+		offset.offset = e.fileLine
+		offset.length = 0
+		select {
+		case <-ctx.Done():
+			break
+		default:
+		}
+	}
+	wg.Wait()
+}
+
+func getLineIndex(offset offset, index int) int {
+	var fileLine int
+	if offset.length <= index {
+		fileLine = index - offset.length + 1
+	} else {
+		fileLine = offset.offset + index + 1
+	}
+	return fileLine
+}
+
+func (e *slowQueryRetriever) parseLog(ctx sessionctx.Context, log []string, offset offset) (data [][]types.Datum, err error) {
+	start := time.Now()
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("%s", r)
+		}
+		if e.stats != nil {
+			atomic.AddInt64(&e.stats.parseLog, int64(time.Since(start)))
+		}
+	}()
+	failpoint.Inject("errorMockParseSlowLogPanic", func(val failpoint.Value) {
+		if val.(bool) {
+			panic("panic test")
+>>>>>>> 00458d011... executor: fix the issue of query slow_query return 0 rows (#20497)
 		}
 		line := string(hack.String(lineByte))
 		// Check slow log entry start flag.
