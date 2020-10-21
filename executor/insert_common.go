@@ -1062,6 +1062,7 @@ func (e *InsertValues) addRecordWithAutoIDHint(ctx context.Context, row []types.
 	return h, nil
 }
 
+// InsertRuntimeStat record the runtime infomation
 type InsertRuntimeStat struct {
 	*execdetails.BasicRuntimeStats
 	*tikv.SnapshotRuntimeStats
