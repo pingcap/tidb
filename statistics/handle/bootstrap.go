@@ -198,12 +198,13 @@ func (h *Handle) initCMSketch4Indices4Chunk(is infoschema.InfoSchema, tables map
 			if idx == nil {
 				continue
 			}
-			cms, err := statistics.DecodeCMSketch(row.GetBytes(3), nil)
+			cms, topN, err := statistics.DecodeCMSketchAndTopN(row.GetBytes(3), nil)
 			if err != nil {
 				cms = nil
 				terror.Log(errors.Trace(err))
 			}
 			idx.CMSketch = cms
+			idx.TopN = topN
 		}
 	}
 }

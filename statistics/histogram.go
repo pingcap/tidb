@@ -897,7 +897,7 @@ func (c *Column) GetColumnRowCount(sc *stmtctx.StatementContext, ranges []*range
 type Index struct {
 	Histogram
 	*CMSketch
-	TopN *TopN
+	*TopN
 	ErrorRate
 	StatsVer       int64 // StatsVer is the version of the current stats, used to maintain compatibility
 	Info           *model.IndexInfo
@@ -956,7 +956,7 @@ func (idx *Index) equalRowCount(sc *stmtctx.StatementContext, b []byte, modifyCo
 	return idx.Histogram.equalRowCount(val), nil
 }
 
-// QueryBytes ....
+// QueryBytes is used to query the count of specified bytes.
 func (idx *Index) QueryBytes(d []byte) uint64 {
 	h1, h2 := murmur3.Sum128(d)
 	if count, ok := idx.TopN.QueryTopN(h1, h2, d); ok {

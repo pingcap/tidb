@@ -555,7 +555,7 @@ func (h *Handle) UpdateStatsByLocalFeedback(is infoschema.InfoSchema) {
 				}
 				newIdx := *idx
 				eqFB, ranFB := statistics.SplitFeedbackByQueryType(fb.Feedback)
-				newIdx.CMSketch = statistics.UpdateCMSketch(idx.CMSketch, eqFB)
+				newIdx.CMSketch, newIdx.TopN = statistics.UpdateCMSketch(idx.CMSketch, idx.TopN, eqFB)
 				newIdx.Histogram = *statistics.UpdateHistogram(&idx.Histogram, &statistics.QueryFeedback{Feedback: ranFB})
 				newIdx.Histogram.PreCalculateScalar()
 				newIdx.Flag = statistics.ResetAnalyzeFlag(newIdx.Flag)
@@ -718,7 +718,7 @@ func (h *Handle) handleSingleHistogramUpdate(is infoschema.InfoSchema, rows []ch
 	}
 	q := &statistics.QueryFeedback{}
 	for _, row := range rows {
-		err1 := statistics.DecodeFeedback(row.GetBytes(3), q, cms, hist.Tp)
+		err1 := statistics.DecodeFeedback(row.GetBytes(3), q, cms, topN, hist.Tp)
 		if err1 != nil {
 			logutil.BgLogger().Debug("decode feedback failed", zap.Error(err))
 		}

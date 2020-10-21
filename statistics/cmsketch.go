@@ -233,18 +233,13 @@ func (c *CMSketch) considerDefVal(cnt uint64) bool {
 	return (cnt == 0 || (cnt > c.defaultValue && cnt < 2*(c.count/uint64(c.width)))) && c.defaultValue > 0
 }
 
-// updateValueBytes updates value of d to count.
-func (c *CMSketch) updateValueBytes(d []byte, count uint64) {
+func updateValueBytes(c *CMSketch, t *TopN, d []byte, count uint64) {
 	h1, h2 := murmur3.Sum128(d)
-	c.setValue(h1, h2, count)
-}
-
-func (c *TopN) updateValueBytes(d []byte, count uint64) {
-	h1, h2 := murmur3.Sum128(d)
-	if oriCount, ok := c.QueryTopN(h1, h2, d); ok {
+	if oriCount, ok := t.QueryTopN(h1, h2, d); ok {
 		deltaCount := count - oriCount
-		c.updateTopNWithDelta(h1, h2, d, deltaCount)
+		t.updateTopNWithDelta(h1, h2, d, deltaCount)
 	}
+	c.setValue(h1, h2, count)
 }
 
 // setValue sets the count for value that hashed into (h1, h2), and update defaultValue if necessary.
@@ -332,7 +327,7 @@ func (c *CMSketch) queryHashValue(h1, h2 uint64) uint64 {
 
 // MergeTopN ...
 func MergeTopN(dst, src *TopN, c *CMSketch, numTop uint32, usingMax bool) {
-	if dst == nil || src == nil {
+	if dst.TotalCount() == 0 || src.TotalCount() == 0 {
 		return
 	}
 	lTopN, rTopN := dst.topN, src.topN
@@ -557,8 +552,11 @@ func (c *TopN) TopNMap() map[uint64][]*TopNMeta {
 	return c.topN
 }
 
-// AppendTopN ...
+// AppendTopN appends a topn into the cm sketch.
 func (c *TopN) AppendTopN(data []byte, count uint64) {
+	if c.topN == nil {
+		c.topN = make(map[uint64][]*TopNMeta)
+	}
 	h1, h2 := murmur3.Sum128(data)
 	c.topN[h1] = append(c.topN[h1], &TopNMeta{h2, data, count})
 }

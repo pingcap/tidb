@@ -365,13 +365,14 @@ func (h *Handle) LoadNeededHistograms() (err error) {
 		if err != nil {
 			return errors.Trace(err)
 		}
-		cms, err := h.cmSketchFromStorage(reader, pidx.TableID, 1, pidx.IndexID)
+		cms, topN, err := h.cmSketchAndTopNFromStorage(reader, pidx.TableID, 1, pidx.IndexID)
 		if err != nil {
 			return errors.Trace(err)
 		}
 		tbl.Indices[idx.ID] = &statistics.Index{
 			Histogram:  *hg,
 			CMSketch:   cms,
+			TopN:       topN,
 			PhysicalID: pidx.TableID,
 			Info:       idx.Info,
 			StatsVer:   idx.StatsVer,

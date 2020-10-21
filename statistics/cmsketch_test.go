@@ -94,7 +94,6 @@ func averageAbsoluteError(cms *CMSketch, topN *TopN, mp map[int64]uint32) (uint6
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
-
 		var diff uint64
 		if uint64(count) > estimate {
 			diff = uint64(count) - estimate

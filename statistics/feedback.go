@@ -741,15 +741,16 @@ func UpdateHistogram(h *Histogram, feedback *QueryFeedback) *Histogram {
 }
 
 // UpdateCMSketch updates the CMSketch by feedback.
-func UpdateCMSketch(c *CMSketch, eqFeedbacks []Feedback) *CMSketch {
+func UpdateCMSketch(c *CMSketch, t *TopN, eqFeedbacks []Feedback) (*CMSketch, *TopN) {
 	if c == nil || len(eqFeedbacks) == 0 {
-		return c
+		return c, t
 	}
 	newCMSketch := c.Copy()
+	newTopN := t.Copy()
 	for _, fb := range eqFeedbacks {
-		newCMSketch.updateValueBytes(fb.Lower.GetBytes(), uint64(fb.Count))
+		updateValueBytes(newCMSketch, newTopN, fb.Lower.GetBytes(), uint64(fb.Count))
 	}
-	return newCMSketch
+	return newCMSketch, newTopN
 }
 
 func buildNewHistogram(h *Histogram, buckets []bucket) *Histogram {
@@ -853,7 +854,7 @@ func EncodeFeedback(q *QueryFeedback) ([]byte, error) {
 	return buf.Bytes(), errors.Trace(err)
 }
 
-func decodeFeedbackForIndex(q *QueryFeedback, pb *queryFeedback, c *CMSketch) {
+func decodeFeedbackForIndex(q *QueryFeedback, pb *queryFeedback, c *CMSketch, t *TopN) {
 	q.Tp = IndexType
 	// decode the index range feedback
 	for i := 0; i < len(pb.IndexRanges); i += 2 {
@@ -870,7 +871,7 @@ func decodeFeedbackForIndex(q *QueryFeedback, pb *queryFeedback, c *CMSketch) {
 			return
 		}
 		for i := 0; i < len(pb.IndexPoints); i++ {
-			c.updateValueBytes(pb.IndexPoints[i], uint64(pb.Counts[start+i]))
+			updateValueBytes(c, t, pb.IndexPoints[i], uint64(pb.Counts[start+i]))
 		}
 	}
 }
@@ -932,7 +933,7 @@ func decodeFeedbackForColumn(q *QueryFeedback, pb *queryFeedback, ft *types.Fiel
 }
 
 // DecodeFeedback decodes a byte slice to feedback.
-func DecodeFeedback(val []byte, q *QueryFeedback, c *CMSketch, ft *types.FieldType) error {
+func DecodeFeedback(val []byte, q *QueryFeedback, c *CMSketch, t *TopN, ft *types.FieldType) error {
 	buf := bytes.NewBuffer(val)
 	dec := gob.NewDecoder(buf)
 	pb := &queryFeedback{}
@@ -941,7 +942,7 @@ func DecodeFeedback(val []byte, q *QueryFeedback, c *CMSketch, ft *types.FieldTy
 		return errors.Trace(err)
 	}
 	if len(pb.IndexRanges) > 0 || len(pb.HashValues) > 0 || len(pb.IndexPoints) > 0 {
-		decodeFeedbackForIndex(q, pb, c)
+		decodeFeedbackForIndex(q, pb, c, t)
 	} else if len(pb.IntRanges) > 0 {
 		decodeFeedbackForPK(q, pb, mysql.HasUnsignedFlag(ft.Flag))
 	} else {
