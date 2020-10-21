@@ -172,10 +172,6 @@ func (action actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoff
 			// Extract lock from key error
 			lock, err1 := extractLockFromKeyErr(keyErr)
 			if err1 != nil {
-				logutil.BgLogger().Error("unexpected error during prewrite",
-					zap.Uint64("conn", c.connID),
-					zap.Uint64("startTS", c.startTS),
-					zap.Error(err1))
 				return errors.Trace(err1)
 			}
 			logutil.BgLogger().Info("prewrite encounters lock",

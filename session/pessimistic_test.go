@@ -1932,7 +1932,7 @@ func (s *testPessimisticSuite) TestSelectForUpdateConflictRetry(c *C) {
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.TiKVClient.AsyncCommit.Enable = true
-		conf.TiKVClient.AsyncCommit.SafeWindow = 3000 * time.Millisecond
+		conf.TiKVClient.AsyncCommit.SafeWindow = 500 * time.Millisecond
 		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
 	})
 
@@ -1967,10 +1967,15 @@ func (s *testPessimisticSuite) TestSelectForUpdateConflictRetry(c *C) {
 }
 
 func (s *testPessimisticSuite) TestAsyncCommitWithSchemaChange(c *C) {
+	// TODO: implement commit_ts calculation in unistore
+	if !*withTiKV {
+		return
+	}
+
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.TiKVClient.AsyncCommit.Enable = true
-		conf.TiKVClient.AsyncCommit.SafeWindow = 3000 * time.Millisecond
+		conf.TiKVClient.AsyncCommit.SafeWindow = 500 * time.Millisecond
 		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
 	})
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/beforeSchemaCheck", "return"), IsNil)
@@ -2000,4 +2005,20 @@ func (s *testPessimisticSuite) TestAsyncCommitWithSchemaChange(c *C) {
 	// Add index for c3 after commit
 	tk2.MustExec("alter table tk add index k3(c3)")
 	tk3.MustQuery("select * from tk where c3 = 3").Check(testkit.Rows("3 3 3"))
+
+	tk.MustExec("drop table if exists tk")
+	tk.MustExec("create table tk (c1 int primary key, c2 int)")
+	tk.MustExec("begin optimistic")
+	tk.MustExec("insert into tk values(1, 1)")
+	go func() {
+		time.Sleep(200 * time.Millisecond)
+		tk2.MustExec("alter table tk add index k2(c2)")
+	}()
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/beforePrewrite", "1*sleep(1000)"), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/beforePrewrite"), IsNil)
+	}()
+	// should fail if prewrite takes too long
+	err := tk.ExecToErr("commit")
+	c.Assert(err, ErrorMatches, ".*commit TS \\d+ is too large")
 }

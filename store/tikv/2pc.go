@@ -961,12 +961,12 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 		if err = c.calculateMaxCommitTS(ctx); err != nil {
 			return errors.Trace(err)
 		}
-
 		c.setAsyncCommit(true)
 	}
 
-	c.prewriteStarted = true
+	failpoint.Inject("beforePrewrite", nil)
 
+	c.prewriteStarted = true
 	binlogChan := c.prewriteBinlog(ctx)
 	prewriteBo := NewBackofferWithVars(ctx, PrewriteMaxBackoff, c.txn.vars)
 	start := time.Now()
@@ -1278,7 +1278,7 @@ func (c *twoPhaseCommitter) calculateMaxCommitTS(ctx context.Context) error {
 
 	safeWindow := config.GetGlobalConfig().TiKVClient.AsyncCommit.SafeWindow
 	maxCommitTS := oracle.EncodeTSO(int64(safeWindow/time.Millisecond)) + currentTS
-	logutil.BgLogger().Error("calculate MaxCommitTS",
+	logutil.BgLogger().Debug("calculate MaxCommitTS",
 		zap.Time("startTime", c.txn.startTime),
 		zap.Duration("safeWindow", safeWindow),
 		zap.Uint64("startTS", c.startTS),
