@@ -17,7 +17,9 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/cznic/mathutil"
@@ -64,6 +66,7 @@ func newBaseHashAggWorker(ctx sessionctx.Context, finishCh <-chan struct{}, aggF
 type HashAggPartialWorker struct {
 	baseHashAggWorker
 
+	hashAgg			  *HashAggExec
 	inputCh           chan *chunk.Chunk
 	outputChs         []chan *HashAggIntermData
 	globalOutputCh    chan *AfFinalResult
@@ -82,6 +85,7 @@ type HashAggPartialWorker struct {
 type HashAggFinalWorker struct {
 	baseHashAggWorker
 
+	hashAgg				*HashAggExec
 	rowBuffer           []types.Datum
 	mutableRow          chunk.MutRow
 	partialResultMap    aggPartialResultMapper
@@ -237,20 +241,9 @@ func (e *HashAggExec) Close() error {
 	for range e.finalOutputCh {
 	}
 	e.executed = false
-	if e.runtimeStats != nil {
-		var partialConcurrency, finalConcurrency int
-		if e.isUnparallelExec {
-			partialConcurrency = 0
-			finalConcurrency = 0
-		} else {
-			partialConcurrency = cap(e.partialWorkers)
-			finalConcurrency = cap(e.finalWorkers)
-		}
-		partialConcurrencyInfo := execdetails.NewConcurrencyInfo("PartialConcurrency", partialConcurrency)
-		finalConcurrencyInfo := execdetails.NewConcurrencyInfo("FinalConcurrency", finalConcurrency)
-		runtimeStats := &execdetails.RuntimeStatsWithConcurrencyInfo{}
-		runtimeStats.SetConcurrencyInfo(partialConcurrencyInfo, finalConcurrencyInfo)
-		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, runtimeStats)
+	if e.stats != nil{
+		close(e.stats.PartialTime)
+		close(e.stats.FinalTime)
 	}
 	return e.baseExecutor.Close()
 }
@@ -306,6 +299,7 @@ func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) {
 	for i := 0; i < partialConcurrency; i++ {
 		w := HashAggPartialWorker{
 			baseHashAggWorker: newBaseHashAggWorker(e.ctx, e.finishCh, e.PartialAggFuncs, e.maxChunkSize),
+			hashAgg: 		   e,
 			inputCh:           e.partialInputChs[i],
 			outputChs:         e.partialOutputChs,
 			giveBackCh:        e.inputCh,
@@ -334,6 +328,7 @@ func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) {
 	for i := 0; i < finalConcurrency; i++ {
 		e.finalWorkers[i] = HashAggFinalWorker{
 			baseHashAggWorker:   newBaseHashAggWorker(e.ctx, e.finishCh, e.FinalAggFuncs, e.maxChunkSize),
+			hashAgg: 			 e,
 			partialResultMap:    make(aggPartialResultMapper),
 			groupSet:            set.NewStringSet(),
 			inputCh:             e.partialOutputChs[i],
@@ -383,6 +378,9 @@ func (w *HashAggPartialWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitG
 		waitGroup.Done()
 	}()
 	for {
+		if w.hashAgg.stats!= nil{
+			atomic.AddInt64(&w.hashAgg.stats.PartialTaskNum,1)
+		}
 		if !w.getChildInput() {
 			return
 		}
@@ -515,6 +513,9 @@ func (w *HashAggFinalWorker) consumeIntermData(sctx sessionctx.Context) (err err
 		sc               = sctx.GetSessionVars().StmtCtx
 	)
 	for {
+		if w.hashAgg.stats != nil{
+			atomic.AddInt64(&w.hashAgg.stats.FinalTaskNum, 1)
+		}
 		if input, ok = w.getPartialInput(); !ok {
 			return nil
 		}
@@ -656,13 +657,11 @@ func (e *HashAggExec) waitPartialWorkerAndCloseOutputChs(waitGroup *sync.WaitGro
 	for _, ch := range e.partialOutputChs {
 		close(ch)
 	}
-	close(e.stats.PartialTime)
 }
 
 func (e *HashAggExec) waitFinalWorkerAndCloseFinalOutput(waitGroup *sync.WaitGroup) {
 	waitGroup.Wait()
 	close(e.finalOutputCh)
-	close(e.stats.FinalTime)
 }
 
 func (e *HashAggExec) prepare4ParallelExec(ctx context.Context) {
@@ -853,6 +852,8 @@ func (e *HashAggExec) initRuntimeStats() {
 			e.stats = &HashAggRuntimeStats{
 				PartialNum: e.ctx.GetSessionVars().HashAggPartialConcurrency(),
 				FinalNum: e.ctx.GetSessionVars().HashAggFinalConcurrency(),
+				PartialTaskNum: 0,
+				FinalTaskNum: 0,
 				PartialTask:    0,
 				FinalTask:      0,
 				PartialTime:  make(chan time.Duration, e.ctx.GetSessionVars().HashAggPartialConcurrency()),
@@ -868,6 +869,9 @@ type HashAggRuntimeStats struct {
 	PartialNum int
 	FinalNum int
 
+	PartialTaskNum int64
+	FinalTaskNum int64
+
 	PartialTask time.Duration
 	FinalTask   time.Duration
 
@@ -878,26 +882,25 @@ type HashAggRuntimeStats struct {
 func (e *HashAggRuntimeStats) String() string {
 	var result string
 	if e.PartialTask != 0 {
-		result += fmt.Sprintf("partial_task:{total_time:%s", e.PartialTask)
+		result += fmt.Sprintf("partial_worker:{used_time:%s, PartialConcurrency:%d, task_num:%d", e.PartialTask, e.PartialNum, e.PartialTaskNum)
 	}
 	partialTime := make([]time.Duration, 0, e.PartialNum)
 	for i := range e.PartialTime{
 		partialTime = append(partialTime, i)
 	}
-	//sort.Slice(partialTime, func(i, j int) bool { return partialTime[i] < partialTime[j] })
+	sort.Slice(partialTime, func(i, j int) bool { return partialTime[i] < partialTime[j] })
 	n := len(partialTime)
 	if n != 0 {
 		result += fmt.Sprintf(", partial_max:%v, p95:%v}", partialTime[n-1], partialTime[n*19/20])
 	}
-
 	finalTime := make([]time.Duration, 0, e.FinalNum)
 	for i := range e.FinalTime{
 		finalTime = append(finalTime, i)
 	}
 	if e.FinalTask != 0 {
-		result += fmt.Sprintf(", final_task:{total_time:%s", e.FinalTask)
+		result += fmt.Sprintf(", final_worker:{total_time:%s, FinalConcurrency:%d, task_num:%d", e.FinalTask, e.FinalNum, e.FinalTaskNum)
 	}
-	//sort.Slice(finalTime, func(i, j int) bool{return finalTime[i] < finalTime[j] })
+	sort.Slice(finalTime, func(i, j int) bool{return finalTime[i] < finalTime[j] })
 	m := len(finalTime)
 	if m!=0{
 		result += fmt.Sprintf(", final_max:%v, p95:%v}", finalTime[m-1], finalTime[m*19/20])
@@ -908,8 +911,14 @@ func (e *HashAggRuntimeStats) String() string {
 // Clone implements the RuntimeStats interface.
 func (e *HashAggRuntimeStats) Clone() execdetails.RuntimeStats {
 	newRs := &HashAggRuntimeStats{
+		PartialTaskNum: e.PartialTaskNum,
+		FinalTaskNum: e.FinalTaskNum,
 		PartialTask:    e.PartialTask,
 		FinalTask:      e.FinalTask,
+		PartialNum: e.PartialNum,
+		FinalNum: e.FinalNum,
+		PartialTime: e.PartialTime,
+		FinalTime: e.FinalTime,
 	}
 	return newRs
 }
@@ -922,6 +931,14 @@ func (e *HashAggRuntimeStats) Merge(other execdetails.RuntimeStats) {
 	}
 	e.PartialTask += tmp.PartialTask
 	e.FinalTask += tmp.FinalTask
+	e.PartialTaskNum += tmp.PartialTaskNum
+	e.FinalTaskNum += tmp.FinalTaskNum
+	for i := range tmp.PartialTime{
+		e.PartialTime <- i
+	}
+	for j := range tmp.FinalTime{
+		e.FinalTime <- j
+	}
 }
 
 // Tp implements the RuntimeStats interface.
