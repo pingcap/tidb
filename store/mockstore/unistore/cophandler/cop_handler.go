@@ -22,6 +22,7 @@ import (
 	"github.com/ngaut/unistore/lockstore"
 	"github.com/ngaut/unistore/tikv/dbreader"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/parser/model"
@@ -64,9 +65,28 @@ type dagContext struct {
 }
 
 // handleCopDAGRequest handles coprocessor DAG request.
-func handleCopDAGRequest(dbReader *dbreader.DBReader, lockStore *lockstore.MemStore, req *coprocessor.Request) *coprocessor.Response {
+func handleCopDAGRequest(dbReader *dbreader.DBReader, lockStore *lockstore.MemStore, req *coprocessor.Request) (resp *coprocessor.Response) {
 	startTime := time.Now()
-	resp := &coprocessor.Response{}
+	resp = &coprocessor.Response{}
+	failpoint.Inject("mockCopCacheInUnistore", func(cacheVersion failpoint.Value) {
+		if req.IsCacheEnabled {
+			if uint64(cacheVersion.(int)) == req.CacheIfMatchVersion {
+				failpoint.Return(&coprocessor.Response{IsCacheHit: true, CacheLastVersion: uint64(cacheVersion.(int))})
+			} else {
+				defer func() {
+					resp.CanBeCached = true
+					resp.CacheLastVersion = uint64(cacheVersion.(int))
+					if resp.ExecDetails == nil {
+						resp.ExecDetails = &kvrpcpb.ExecDetails{HandleTime: &kvrpcpb.HandleTime{ProcessMs: 500}}
+					} else if resp.ExecDetails.HandleTime == nil {
+						resp.ExecDetails.HandleTime = &kvrpcpb.HandleTime{ProcessMs: 500}
+					} else {
+						resp.ExecDetails.HandleTime.ProcessMs = 500
+					}
+				}()
+			}
+		}
+	})
 	dagCtx, dagReq, err := buildDAG(dbReader, lockStore, req)
 	if err != nil {
 		resp.OtherError = err.Error()
@@ -74,10 +94,10 @@ func handleCopDAGRequest(dbReader *dbreader.DBReader, lockStore *lockstore.MemSt
 	}
 	closureExec, err := buildClosureExecutor(dagCtx, dagReq)
 	if err != nil {
-		return buildResp(nil, nil, err, dagCtx.sc.GetWarnings(), time.Since(startTime))
+		return buildResp(nil, nil, dagReq, err, dagCtx.sc.GetWarnings(), time.Since(startTime))
 	}
 	chunks, err := closureExec.execute()
-	return buildResp(chunks, closureExec.counts, err, dagCtx.sc.GetWarnings(), time.Since(startTime))
+	return buildResp(chunks, closureExec.counts, dagReq, err, dagCtx.sc.GetWarnings(), time.Since(startTime))
 }
 
 func buildDAG(reader *dbreader.DBReader, lockStore *lockstore.MemStore, req *coprocessor.Request) (*dagContext, *tipb.DAGRequest, error) {
@@ -268,12 +288,20 @@ func (e *ErrLocked) Error() string {
 	return fmt.Sprintf("key is locked, key: %q, Type: %v, primary: %q, startTS: %v", e.Key, e.LockType, e.Primary, e.StartTS)
 }
 
-func buildResp(chunks []tipb.Chunk, counts []int64, err error, warnings []stmtctx.SQLWarn, dur time.Duration) *coprocessor.Response {
+func buildResp(chunks []tipb.Chunk, counts []int64, dagReq *tipb.DAGRequest, err error, warnings []stmtctx.SQLWarn, dur time.Duration) *coprocessor.Response {
 	resp := &coprocessor.Response{}
 	selResp := &tipb.SelectResponse{
 		Error:        toPBError(err),
 		Chunks:       chunks,
 		OutputCounts: counts,
+	}
+	if dagReq.CollectExecutionSummaries != nil && *dagReq.CollectExecutionSummaries {
+		execSummary := make([]*tipb.ExecutorExecutionSummary, len(dagReq.Executors))
+		for i := range execSummary {
+			// TODO: Add real executor execution summary information.
+			execSummary[i] = &tipb.ExecutorExecutionSummary{}
+		}
+		selResp.ExecutionSummaries = execSummary
 	}
 	if len(warnings) > 0 {
 		selResp.Warnings = make([]*tipb.Error, 0, len(warnings))
@@ -309,7 +337,7 @@ func toPBError(err error) *tipb.Error {
 	e := errors.Cause(err)
 	switch y := e.(type) {
 	case *terror.Error:
-		tmp := y.ToSQLError()
+		tmp := terror.ToSQLError(y)
 		perr.Code = int32(tmp.Code)
 		perr.Msg = tmp.Message
 	case *mysql.SQLError:

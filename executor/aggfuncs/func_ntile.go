@@ -14,8 +14,15 @@
 package aggfuncs
 
 import (
+	"unsafe"
+
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/chunk"
+)
+
+const (
+	// DefPartialResult4Ntile is the size of partialResult4Ntile
+	DefPartialResult4Ntile = int64(unsafe.Sizeof(partialResult4Ntile{}))
 )
 
 // ntile divides the partition into n ranked groups and returns the group number a row belongs to.
@@ -34,8 +41,8 @@ type partialResult4Ntile struct {
 	numRows     uint64
 }
 
-func (n *ntile) AllocPartialResult() PartialResult {
-	return PartialResult(&partialResult4Ntile{curGroupIdx: 1})
+func (n *ntile) AllocPartialResult() (pr PartialResult, memDelta int64) {
+	return PartialResult(&partialResult4Ntile{curGroupIdx: 1}), DefPartialResult4Ntile
 }
 
 func (n *ntile) ResetPartialResult(pr PartialResult) {
@@ -45,7 +52,7 @@ func (n *ntile) ResetPartialResult(pr PartialResult) {
 	p.numRows = 0
 }
 
-func (n *ntile) UpdatePartialResult(_ sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) error {
+func (n *ntile) UpdatePartialResult(_ sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
 	p := (*partialResult4Ntile)(pr)
 	p.numRows += uint64(len(rowsInGroup))
 	// Update the quotient and remainder.
@@ -53,7 +60,7 @@ func (n *ntile) UpdatePartialResult(_ sessionctx.Context, rowsInGroup []chunk.Ro
 		p.quotient = p.numRows / n.n
 		p.remainder = p.numRows % n.n
 	}
-	return nil
+	return 0, nil
 }
 
 func (n *ntile) AppendFinalResult2Chunk(_ sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {

@@ -20,6 +20,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unsafe"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
@@ -27,14 +28,16 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
-	"github.com/spaolacci/murmur3"
+	"github.com/twmb/murmur3"
 	"go.uber.org/zap"
 )
 
@@ -109,6 +112,21 @@ func (hg *Histogram) GetLower(idx int) *types.Datum {
 func (hg *Histogram) GetUpper(idx int) *types.Datum {
 	d := hg.Bounds.GetRow(2*idx+1).GetDatum(0, hg.Tp)
 	return &d
+}
+
+// MemoryUsage returns the total memory usage of this Histogram.
+// everytime changed the Histogram of the table, it will cost O(n)
+// complexity so calculate the memoryUsage might cost little time.
+// We ignore the size of other metadata in Histogram.
+func (hg *Histogram) MemoryUsage() (sum int64) {
+	if hg == nil {
+		return
+	}
+	//let the initial sum = 0
+	sum = hg.Bounds.MemoryUsage() - chunk.NewChunkWithCapacity([]*types.FieldType{hg.Tp}, 0).MemoryUsage()
+	sum = sum + int64(cap(hg.Buckets)*int(unsafe.Sizeof(Bucket{}))) + int64(cap(hg.scalars)*int(unsafe.Sizeof(scalar{})))
+
+	return
 }
 
 // AvgColSize is the average column size of the histogram. These sizes are derived from function `encode`
@@ -267,12 +285,16 @@ func ResetAnalyzeFlag(flag int64) int64 {
 
 // ValueToString converts a possible encoded value to a formatted string. If the value is encoded, then
 // idxCols equals to number of origin values, else idxCols is 0.
-func ValueToString(value *types.Datum, idxCols int) (string, error) {
+func ValueToString(vars *variable.SessionVars, value *types.Datum, idxCols int, idxColumnTypes []byte) (string, error) {
 	if idxCols == 0 {
 		return value.ToString()
 	}
+	var loc *time.Location
+	if vars != nil {
+		loc = vars.Location()
+	}
 	// Ignore the error and treat remaining part that cannot decode successfully as bytes.
-	decodedVals, remained, err := codec.DecodeRange(value.GetBytes(), idxCols)
+	decodedVals, remained, err := codec.DecodeRange(value.GetBytes(), idxCols, idxColumnTypes, loc)
 	// Ignore err explicit to pass errcheck.
 	_ = err
 	if len(remained) > 0 {
@@ -284,9 +306,9 @@ func ValueToString(value *types.Datum, idxCols int) (string, error) {
 
 // BucketToString change the given bucket to string format.
 func (hg *Histogram) BucketToString(bktID, idxCols int) string {
-	upperVal, err := ValueToString(hg.GetUpper(bktID), idxCols)
+	upperVal, err := ValueToString(nil, hg.GetUpper(bktID), idxCols, nil)
 	terror.Log(errors.Trace(err))
-	lowerVal, err := ValueToString(hg.GetLower(bktID), idxCols)
+	lowerVal, err := ValueToString(nil, hg.GetLower(bktID), idxCols, nil)
 	terror.Log(errors.Trace(err))
 	return fmt.Sprintf("num: %d lower_bound: %s upper_bound: %s repeats: %d", hg.bucketCount(bktID), lowerVal, upperVal, hg.Buckets[bktID].Repeat)
 }
@@ -737,6 +759,16 @@ func (c *Column) String() string {
 	return c.Histogram.ToString(0)
 }
 
+// MemoryUsage returns the total memory usage of Histogram and CMSketch in Column.
+// We ignore the size of other metadata in Column
+func (c *Column) MemoryUsage() (sum int64) {
+	sum = c.Histogram.MemoryUsage()
+	if c.CMSketch != nil {
+		sum += c.CMSketch.MemoryUsage()
+	}
+	return
+}
+
 // HistogramNeededColumns stores the columns whose Histograms need to be loaded from physical kv layer.
 // Currently, we only load index/pk's Histogram from kv automatically. Columns' are loaded by needs.
 var HistogramNeededColumns = neededColumnMap{cols: map[tableColumnID]struct{}{}}
@@ -763,7 +795,7 @@ func (c *Column) equalRowCount(sc *stmtctx.StatementContext, val types.Datum, mo
 		return 0.0, nil
 	}
 	if c.NDV > 0 && c.outOfRange(val) {
-		return float64(modifyCount) / float64(c.NDV), nil
+		return outOfRangeEQSelectivity(c.NDV, modifyCount, int64(c.TotalRowCount())) * c.TotalRowCount(), nil
 	}
 	if c.CMSketch != nil {
 		count, err := c.CMSketch.queryValue(sc, val)
@@ -776,7 +808,23 @@ func (c *Column) equalRowCount(sc *stmtctx.StatementContext, val types.Datum, mo
 func (c *Column) GetColumnRowCount(sc *stmtctx.StatementContext, ranges []*ranger.Range, modifyCount int64, pkIsHandle bool) (float64, error) {
 	var rowCount float64
 	for _, rg := range ranges {
-		cmp, err := rg.LowVal[0].CompareDatum(sc, &rg.HighVal[0])
+		highVal := *rg.HighVal[0].Clone()
+		lowVal := *rg.LowVal[0].Clone()
+		if highVal.Kind() == types.KindString {
+			highVal.SetBytesAsString(collate.GetCollator(
+				highVal.Collation()).Key(highVal.GetString()),
+				highVal.Collation(),
+				uint32(highVal.Length()),
+			)
+		}
+		if lowVal.Kind() == types.KindString {
+			lowVal.SetBytesAsString(collate.GetCollator(
+				lowVal.Collation()).Key(lowVal.GetString()),
+				lowVal.Collation(),
+				uint32(lowVal.Length()),
+			)
+		}
+		cmp, err := lowVal.CompareDatum(sc, &highVal)
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
@@ -789,7 +837,7 @@ func (c *Column) GetColumnRowCount(sc *stmtctx.StatementContext, ranges []*range
 					continue
 				}
 				var cnt float64
-				cnt, err = c.equalRowCount(sc, rg.LowVal[0], modifyCount)
+				cnt, err = c.equalRowCount(sc, lowVal, modifyCount)
 				if err != nil {
 					return 0, errors.Trace(err)
 				}
@@ -797,7 +845,7 @@ func (c *Column) GetColumnRowCount(sc *stmtctx.StatementContext, ranges []*range
 			}
 			continue
 		}
-		rangeVals := enumRangeValues(rg.LowVal[0], rg.HighVal[0], rg.LowExclude, rg.HighExclude)
+		rangeVals := enumRangeValues(lowVal, highVal, rg.LowExclude, rg.HighExclude)
 		// The small range case.
 		if rangeVals != nil {
 			for _, val := range rangeVals {
@@ -810,25 +858,25 @@ func (c *Column) GetColumnRowCount(sc *stmtctx.StatementContext, ranges []*range
 			continue
 		}
 		// The interval case.
-		cnt := c.BetweenRowCount(rg.LowVal[0], rg.HighVal[0])
-		if (c.outOfRange(rg.LowVal[0]) && !rg.LowVal[0].IsNull()) || c.outOfRange(rg.HighVal[0]) {
-			cnt += float64(modifyCount) / outOfRangeBetweenRate
+		cnt := c.BetweenRowCount(lowVal, highVal)
+		if (c.outOfRange(lowVal) && !lowVal.IsNull()) || c.outOfRange(highVal) {
+			cnt += outOfRangeEQSelectivity(outOfRangeBetweenRate, modifyCount, int64(c.TotalRowCount())) * c.TotalRowCount()
 		}
 		// `betweenRowCount` returns count for [l, h) range, we adjust cnt for boudaries here.
 		// Note that, `cnt` does not include null values, we need specially handle cases
 		// where null is the lower bound.
-		if rg.LowExclude && !rg.LowVal[0].IsNull() {
-			lowCnt, err := c.equalRowCount(sc, rg.LowVal[0], modifyCount)
+		if rg.LowExclude && !lowVal.IsNull() {
+			lowCnt, err := c.equalRowCount(sc, lowVal, modifyCount)
 			if err != nil {
 				return 0, errors.Trace(err)
 			}
 			cnt -= lowCnt
 		}
-		if !rg.LowExclude && rg.LowVal[0].IsNull() {
+		if !rg.LowExclude && lowVal.IsNull() {
 			cnt += float64(c.NullCount)
 		}
 		if !rg.HighExclude {
-			highCnt, err := c.equalRowCount(sc, rg.HighVal[0], modifyCount)
+			highCnt, err := c.equalRowCount(sc, highVal, modifyCount)
 			if err != nil {
 				return 0, errors.Trace(err)
 			}
@@ -852,6 +900,7 @@ type Index struct {
 	StatsVer       int64 // StatsVer is the version of the current stats, used to maintain compatibility
 	Info           *model.IndexInfo
 	Flag           int64
+	PhysicalID     int64 // PhysicalID for lazy load
 	LastAnalyzePos types.Datum
 }
 
@@ -859,9 +908,32 @@ func (idx *Index) String() string {
 	return idx.Histogram.ToString(len(idx.Info.Columns))
 }
 
-// IsInvalid checks if this index is invalid.
-func (idx *Index) IsInvalid(collPseudo bool) bool {
-	return (collPseudo && idx.NotAccurate()) || idx.TotalRowCount() == 0
+// HistogramNeededIndices stores the Index whose Histograms need to be loaded from physical kv layer.
+// Currently, we only load index/pk's Histogram from kv automatically. Columns' are loaded by needs.
+var HistogramNeededIndices = neededIndexMap{idxs: map[tableIndexID]struct{}{}}
+
+// IsInvalid checks if this Index is invalid.
+// If this Index has histogram but not loaded yet, then we mark it
+// as need Index.
+func (idx *Index) IsInvalid(sc *stmtctx.StatementContext, collPseudo bool) bool {
+	if collPseudo && idx.NotAccurate() {
+		return true
+	}
+	if idx.NDV > 0 && idx.Len() == 0 && sc != nil {
+		sc.SetHistogramsNotLoad()
+		HistogramNeededIndices.insert(tableIndexID{TableID: idx.PhysicalID, IndexID: idx.Info.ID})
+	}
+	return idx.TotalRowCount() == 0 || (idx.NDV > 0 && idx.Len() == 0)
+}
+
+// MemoryUsage returns the total memory usage of a Histogram and CMSketch in Index.
+// We ignore the size of other metadata in Index.
+func (idx *Index) MemoryUsage() (sum int64) {
+	sum = idx.Histogram.MemoryUsage()
+	if idx.CMSketch != nil {
+		sum += idx.CMSketch.MemoryUsage()
+	}
+	return
 }
 
 var nullKeyBytes, _ = codec.EncodeKey(nil, nil, types.NewDatum(nil))
@@ -874,7 +946,7 @@ func (idx *Index) equalRowCount(sc *stmtctx.StatementContext, b []byte, modifyCo
 	}
 	val := types.NewBytesDatum(b)
 	if idx.NDV > 0 && idx.outOfRange(val) {
-		return float64(modifyCount) / (float64(idx.NDV)), nil
+		return outOfRangeEQSelectivity(idx.NDV, modifyCount, int64(idx.TotalRowCount())) * idx.TotalRowCount(), nil
 	}
 	if idx.CMSketch != nil {
 		return float64(idx.CMSketch.QueryBytes(b)), nil
@@ -926,7 +998,7 @@ func (idx *Index) GetRowCount(sc *stmtctx.StatementContext, indexRanges []*range
 		totalCount += idx.BetweenRowCount(l, r)
 		lowIsNull := bytes.Equal(lb, nullKeyBytes)
 		if (idx.outOfRange(l) && !(isSingleCol && lowIsNull)) || idx.outOfRange(r) {
-			totalCount += float64(modifyCount) / outOfRangeBetweenRate
+			totalCount += outOfRangeEQSelectivity(outOfRangeBetweenRate, modifyCount, int64(idx.TotalRowCount())) * idx.TotalRowCount()
 		}
 		if isSingleCol && lowIsNull {
 			totalCount += float64(idx.NullCount)

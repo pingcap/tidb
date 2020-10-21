@@ -15,6 +15,7 @@ package ddl
 
 import (
 	"context"
+	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
@@ -85,6 +86,7 @@ func (s *testIndexChangeSuite) TestIndexChange(c *C) {
 	tc := &TestDDLCallback{}
 	// set up hook
 	prevState := model.StateNone
+	addIndexDone := false
 	var (
 		deleteOnlyTable table.Table
 		writeOnlyTable  table.Table
@@ -124,10 +126,22 @@ func (s *testIndexChangeSuite) TestIndexChange(c *C) {
 			if err != nil {
 				checkErr = errors.Trace(err)
 			}
+			if job.State == model.JobStateSynced {
+				addIndexDone = true
+			}
 		}
 	}
 	d.SetHook(tc)
 	testCreateIndex(c, ctx, d, s.dbInfo, originTable.Meta(), false, "c2", "c2")
+	// We need to make sure onJobUpdated is called in the first hook.
+	// After testCreateIndex(), onJobUpdated() may not be called when job.state is Sync.
+	// If we skip this check, prevState may wrongly set to StatePublic.
+	for i := 0; i <= 10; i++ {
+		if addIndexDone {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
 	c.Check(errors.ErrorStack(checkErr), Equals, "")
 	txn, err = ctx.Txn(true)
 	c.Assert(err, IsNil)
@@ -180,7 +194,7 @@ func checkIndexExists(ctx sessionctx.Context, tbl table.Table, indexValue interf
 	if err != nil {
 		return errors.Trace(err)
 	}
-	doesExist, _, err := idx.Exist(ctx.GetSessionVars().StmtCtx, txn, types.MakeDatums(indexValue), kv.IntHandle(handle))
+	doesExist, _, err := idx.Exist(ctx.GetSessionVars().StmtCtx, txn.GetUnionStore(), types.MakeDatums(indexValue), kv.IntHandle(handle))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -315,7 +329,7 @@ func (s *testIndexChangeSuite) checkAddPublic(d *ddl, ctx sessionctx.Context, wr
 
 	var rows [][]types.Datum
 	publicTbl.IterRecords(ctx, publicTbl.FirstKey(), publicTbl.Cols(),
-		func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
+		func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
 			rows = append(rows, data)
 			return true, nil
 		})

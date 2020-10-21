@@ -137,9 +137,15 @@ func (la *LogicalAggregation) PruneColumns(parentUsedCols []*expression.Column) 
 
 func pruneByItems(old []*util.ByItems) (new []*util.ByItems, parentUsedCols []*expression.Column) {
 	new = make([]*util.ByItems, 0, len(old))
+	seen := make(map[string]struct{}, len(old))
 	for _, byItem := range old {
+		hash := string(byItem.Expr.HashCode(nil))
+		_, hashMatch := seen[hash]
+		seen[hash] = struct{}{}
 		cols := expression.ExtractColumns(byItem.Expr)
-		if len(cols) == 0 {
+		if hashMatch {
+			// do nothing, should be filtered
+		} else if len(cols) == 0 {
 			if !expression.IsRuntimeConstExpr(byItem.Expr) {
 				new = append(new, byItem)
 			}
@@ -210,7 +216,9 @@ func (p *LogicalUnionAll) PruneColumns(parentUsedCols []*expression.Column) erro
 
 // PruneColumns implements LogicalPlan interface.
 func (p *LogicalUnionScan) PruneColumns(parentUsedCols []*expression.Column) error {
-	parentUsedCols = append(parentUsedCols, p.handleCol)
+	for i := 0; i < p.handleCols.NumCols(); i++ {
+		parentUsedCols = append(parentUsedCols, p.handleCols.GetCol(i))
+	}
 	return p.children[0].PruneColumns(parentUsedCols)
 }
 
@@ -221,17 +229,13 @@ func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column) error {
 	exprCols := expression.ExtractColumnsFromExpressions(nil, ds.allConds, nil)
 	exprUsed := expression.GetUsedList(exprCols, ds.schema)
 
-	var (
-		handleCol     *expression.Column
-		handleColInfo *model.ColumnInfo
-	)
-	if ds.handleCol != nil {
-		handleCol = ds.handleCol
-		handleColInfo = ds.Columns[ds.schema.ColumnIndex(handleCol)]
-	}
 	originSchemaColumns := ds.schema.Columns
 	originColumns := ds.Columns
 	for i := len(used) - 1; i >= 0; i-- {
+		if ds.tableInfo.IsCommonHandle && mysql.HasPriKeyFlag(ds.schema.Columns[i].RetType.Flag) {
+			// Do not prune common handle column.
+			continue
+		}
 		if !used[i] && !exprUsed[i] {
 			ds.schema.Columns = append(ds.schema.Columns[:i], ds.schema.Columns[i+1:]...)
 			ds.Columns = append(ds.Columns[:i], ds.Columns[i+1:]...)
@@ -240,19 +244,25 @@ func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column) error {
 	// For SQL like `select 1 from t`, tikv's response will be empty if no column is in schema.
 	// So we'll force to push one if schema doesn't have any column.
 	if ds.schema.Len() == 0 {
+		var handleCol *expression.Column
+		var handleColInfo *model.ColumnInfo
 		if ds.table.Type().IsClusterTable() && len(originColumns) > 0 {
 			// use the first line.
 			handleCol = originSchemaColumns[0]
 			handleColInfo = originColumns[0]
-		} else if handleCol == nil {
-			handleCol = ds.newExtraHandleSchemaCol()
+		} else {
+			if ds.handleCols != nil {
+				handleCol = ds.handleCols.GetCol(0)
+			} else {
+				handleCol = ds.newExtraHandleSchemaCol()
+			}
 			handleColInfo = model.NewExtraHandleColInfo()
 		}
 		ds.Columns = append(ds.Columns, handleColInfo)
 		ds.schema.Append(handleCol)
 	}
-	if ds.handleCol != nil && ds.schema.ColumnIndex(ds.handleCol) == -1 {
-		ds.handleCol = nil
+	if ds.handleCols != nil && ds.handleCols.IsInt() && ds.schema.ColumnIndex(ds.handleCols.GetCol(0)) == -1 {
+		ds.handleCols = nil
 	}
 	return nil
 }
@@ -356,7 +366,7 @@ func (la *LogicalApply) PruneColumns(parentUsedCols []*expression.Column) error 
 
 // PruneColumns implements LogicalPlan interface.
 func (p *LogicalLock) PruneColumns(parentUsedCols []*expression.Column) error {
-	if p.Lock != ast.SelectLockForUpdate && p.Lock != ast.SelectLockForUpdateNoWait {
+	if !IsSelectForUpdateLockType(p.Lock.LockType) {
 		return p.baseLogicalPlan.PruneColumns(parentUsedCols)
 	}
 
@@ -367,7 +377,11 @@ func (p *LogicalLock) PruneColumns(parentUsedCols []*expression.Column) error {
 	}
 
 	for _, cols := range p.tblID2Handle {
-		parentUsedCols = append(parentUsedCols, cols...)
+		for _, col := range cols {
+			for i := 0; i < col.NumCols(); i++ {
+				parentUsedCols = append(parentUsedCols, col.GetCol(i))
+			}
+		}
 	}
 	return p.children[0].PruneColumns(parentUsedCols)
 }
@@ -414,6 +428,16 @@ func (p *LogicalWindow) extractUsedCols(parentUsedCols []*expression.Column) []*
 		parentUsedCols = append(parentUsedCols, by.Col)
 	}
 	return parentUsedCols
+}
+
+// PruneColumns implements LogicalPlan interface.
+func (p *LogicalLimit) PruneColumns(parentUsedCols []*expression.Column) error {
+	if len(parentUsedCols) == 0 { // happens when LIMIT appears in UPDATE.
+		return nil
+	}
+
+	p.inlineProjection(parentUsedCols)
+	return p.children[0].PruneColumns(parentUsedCols)
 }
 
 func (*columnPruner) name() string {

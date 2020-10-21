@@ -466,7 +466,7 @@ func (s *testPlanSuite) TestPlanBuilder(c *C) {
 		stmt, err := s.ParseOneStmt(ca, "", "")
 		c.Assert(err, IsNil, comment)
 
-		s.ctx.GetSessionVars().HashJoinConcurrency = 1
+		s.ctx.GetSessionVars().SetHashJoinConcurrency(1)
 		Preprocess(s.ctx, stmt, s.is)
 		p, _, err := BuildLogicalPlan(ctx, s.ctx, stmt, s.is)
 		c.Assert(err, IsNil)
@@ -553,6 +553,31 @@ func (s *testPlanSuite) TestColumnPruning(c *C) {
 	}
 }
 
+func (s *testPlanSuite) TestSortByItemsPruning(c *C) {
+	defer testleak.AfterTest(c)()
+	var (
+		input  []string
+		output [][]string
+	)
+	s.testData.GetTestCases(c, &input, &output)
+	s.testData.OnRecord(func() {
+		output = make([][]string, len(input))
+	})
+
+	ctx := context.Background()
+	for i, tt := range input {
+		comment := Commentf("for %s", tt)
+		stmt, err := s.ParseOneStmt(tt, "", "")
+		c.Assert(err, IsNil, comment)
+
+		p, _, err := BuildLogicalPlan(ctx, s.ctx, stmt, s.is)
+		c.Assert(err, IsNil)
+		lp, err := logicalOptimize(ctx, flagEliminateProjection|flagPredicatePushDown|flagPrunColumns|flagPrunColumnsAgain, p.(LogicalPlan))
+		c.Assert(err, IsNil)
+		s.checkOrderByItems(lp, c, &output[i], comment)
+	}
+}
+
 func (s *testPlanSuite) TestProjectionEliminator(c *C) {
 	defer testleak.AfterTest(c)()
 	tests := []struct {
@@ -587,26 +612,13 @@ func (s *testPlanSuite) TestAllocID(c *C) {
 }
 
 func (s *testPlanSuite) checkDataSourceCols(p LogicalPlan, c *C, ans map[int][]string, comment CommentInterface) {
-	switch p.(type) {
-	case *DataSource:
+	switch v := p.(type) {
+	case *DataSource, *LogicalUnionAll, *LogicalLimit:
 		s.testData.OnRecord(func() {
 			ans[p.ID()] = make([]string, p.Schema().Len())
 		})
 		colList, ok := ans[p.ID()]
-		c.Assert(ok, IsTrue, Commentf("For %v DataSource ID %d Not found", comment, p.ID()))
-		c.Assert(len(p.Schema().Columns), Equals, len(colList), comment)
-		for i, col := range p.Schema().Columns {
-			s.testData.OnRecord(func() {
-				colList[i] = col.String()
-			})
-			c.Assert(col.String(), Equals, colList[i], comment)
-		}
-	case *LogicalUnionAll:
-		s.testData.OnRecord(func() {
-			ans[p.ID()] = make([]string, p.Schema().Len())
-		})
-		colList, ok := ans[p.ID()]
-		c.Assert(ok, IsTrue, Commentf("For %v UnionAll ID %d Not found", comment, p.ID()))
+		c.Assert(ok, IsTrue, Commentf("For %v %T ID %d Not found", comment, v, p.ID()))
 		c.Assert(len(p.Schema().Columns), Equals, len(colList), comment)
 		for i, col := range p.Schema().Columns {
 			s.testData.OnRecord(func() {
@@ -617,6 +629,27 @@ func (s *testPlanSuite) checkDataSourceCols(p LogicalPlan, c *C, ans map[int][]s
 	}
 	for _, child := range p.Children() {
 		s.checkDataSourceCols(child, c, ans, comment)
+	}
+}
+
+func (s *testPlanSuite) checkOrderByItems(p LogicalPlan, c *C, colList *[]string, comment CommentInterface) {
+	switch p := p.(type) {
+	case *LogicalSort:
+		s.testData.OnRecord(func() {
+			*colList = make([]string, len(p.ByItems))
+		})
+		for i, col := range p.ByItems {
+			s.testData.OnRecord(func() {
+				(*colList)[i] = col.String()
+			})
+			s := col.String()
+			c.Assert(s, Equals, (*colList)[i], comment)
+		}
+	}
+	children := p.Children()
+	c.Assert(len(children), LessEqual, 1, Commentf("For %v Expected <= 1 Child", comment))
+	for _, child := range children {
+		s.checkOrderByItems(child, c, colList, comment)
 	}
 }
 
@@ -768,6 +801,22 @@ func (s *testPlanSuite) TestValidate(c *C) {
 		},
 		{
 			sql: "select concat(c_str, d_str) from t group by `concat(c_str,d_str)`",
+			err: ErrUnknownColumn,
+		},
+		{
+			sql: "select a from t b having b.a",
+			err: nil,
+		},
+		{
+			sql: "select b.a from t b having b.a",
+			err: nil,
+		},
+		{
+			sql: "select b.a from t b having a",
+			err: nil,
+		},
+		{
+			sql: "select a+1 from t having t.a",
 			err: ErrUnknownColumn,
 		},
 	}
@@ -1070,7 +1119,7 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 		c.Assert(err, IsNil, comment)
 		Preprocess(s.ctx, stmt, s.is)
 		builder := NewPlanBuilder(MockContext(), s.is, &hint.BlockHintProcessor{})
-		builder.ctx.GetSessionVars().HashJoinConcurrency = 1
+		builder.ctx.GetSessionVars().SetHashJoinConcurrency(1)
 		_, err = builder.Build(context.TODO(), stmt)
 		c.Assert(err, IsNil, comment)
 
@@ -1222,8 +1271,10 @@ func (s *testPlanSuite) TestNameResolver(c *C) {
 		{"delete a from (select * from t ) as a, t", "[planner:1288]The target table a of the DELETE is not updatable"},
 		{"delete b from (select * from t ) as a, t", "[planner:1109]Unknown table 'b' in MULTI DELETE"},
 		{"select '' as fakeCol from t group by values(fakeCol)", "[planner:1054]Unknown column '' in 'VALUES() function'"},
-		{"update t, (select * from ht) as b set b.a = t.a", "[planner:1288]The target table b of the UPDATE is not updatable"},
+		{"update t, (select * from t) as b set b.a = t.a", "[planner:1288]The target table b of the UPDATE is not updatable"},
 		{"select row_number() over () from t group by 1", "[planner:1056]Can't group on 'row_number() over ()'"},
+		{"select row_number() over () as x from t group by 1", "[planner:1056]Can't group on 'x'"},
+		{"select sum(a) as x from t group by 1", "[planner:1056]Can't group on 'x'"},
 	}
 
 	ctx := context.Background()
@@ -1231,7 +1282,7 @@ func (s *testPlanSuite) TestNameResolver(c *C) {
 		comment := Commentf("for %s", t.sql)
 		stmt, err := s.ParseOneStmt(t.sql, "", "")
 		c.Assert(err, IsNil, comment)
-		s.ctx.GetSessionVars().HashJoinConcurrency = 1
+		s.ctx.GetSessionVars().SetHashJoinConcurrency(1)
 
 		_, _, err = BuildLogicalPlan(ctx, s.ctx, stmt, s.is)
 		if t.err == "" {
@@ -1379,7 +1430,7 @@ func (s *testPlanSuite) optimize(ctx context.Context, sql string) (PhysicalPlan,
 	if err != nil {
 		return nil, nil, err
 	}
-	p, _, err = physicalOptimize(p.(LogicalPlan))
+	p, _, err = physicalOptimize(p.(LogicalPlan), &PlanCounterDisabled)
 	return p.(PhysicalPlan), stmt, err
 }
 
@@ -1462,7 +1513,7 @@ func (s *testPlanSuite) TestSkylinePruning(c *C) {
 		p, err = logicalOptimize(ctx, builder.optFlag, p.(LogicalPlan))
 		c.Assert(err, IsNil, comment)
 		lp := p.(LogicalPlan)
-		_, err = lp.recursiveDeriveStats()
+		_, err = lp.recursiveDeriveStats(nil)
 		c.Assert(err, IsNil, comment)
 		var ds *DataSource
 		var byItems []*util.ByItems

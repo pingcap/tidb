@@ -131,8 +131,8 @@ var (
 )
 
 var (
-	// MinDatetime is the minimum for mysql datetime type.
-	MinDatetime = FromDate(1000, 1, 1, 0, 0, 0, 0)
+	// MinDatetime is the minimum for Golang Time type.
+	MinDatetime = FromDate(1, 1, 1, 0, 0, 0, 0)
 	// MaxDatetime is the maximum for mysql datetime type.
 	MaxDatetime = FromDate(9999, 12, 31, 23, 59, 59, 999999)
 
@@ -816,6 +816,28 @@ func parseDatetime(sc *stmtctx.StatementContext, str string, fsp int8, isFloat b
 	switch len(seps) {
 	case 1:
 		l := len(seps[0])
+		// Values specified as numbers
+		if isFloat {
+			numOfTime, err := StrToInt(sc, seps[0], false)
+			if err != nil {
+				return ZeroDatetime, errors.Trace(ErrWrongValue.GenWithStackByArgs(DateTimeStr, str))
+			}
+
+			dateTime, err := ParseDatetimeFromNum(sc, numOfTime)
+			if err != nil {
+				return ZeroDatetime, errors.Trace(ErrWrongValue.GenWithStackByArgs(DateTimeStr, str))
+			}
+
+			year, month, day, hour, minute, second =
+				dateTime.Year(), dateTime.Month(), dateTime.Day(), dateTime.Hour(), dateTime.Minute(), dateTime.Second()
+			if l >= 9 && l <= 14 {
+				hhmmss = true
+			}
+
+			break
+		}
+
+		// Values specified as strings
 		switch l {
 		case 14: // No delimiter.
 			// YYYYMMDDHHMMSS
@@ -1611,11 +1633,6 @@ func parseDateTimeFromNum(sc *stmtctx.StatementContext, num int64) (Time, error)
 	if num <= 991231 {
 		num = (num + 19000000) * 1000000
 		return getTime(sc, num, t.Type())
-	}
-
-	// Check YYYYMMDD.
-	if num < 10000101 {
-		return t, errors.Trace(ErrWrongValue.GenWithStackByArgs(TimeStr, strconv.FormatInt(num, 10)))
 	}
 
 	// Adjust hour/min/second.
@@ -2498,6 +2515,10 @@ func mysqlTimeFix(t *CoreTime, ctx map[string]int) error {
 		if valueAMorPm == constForPM {
 			t.setHour(t.getHour() + 12)
 		}
+	} else {
+		if _, ok := ctx["%h"]; ok && t.Hour() == 12 {
+			t.setHour(0)
+		}
 	}
 	return nil
 }
@@ -2632,7 +2653,7 @@ func GetFormatType(format string) (isDuration, isDate bool) {
 		}
 		if len(token) >= 2 && token[0] == '%' {
 			switch token[1] {
-			case 'h', 'H', 'i', 'I', 's', 'S', 'k', 'l', 'f':
+			case 'h', 'H', 'i', 'I', 's', 'S', 'k', 'l', 'f', 'r', 'T':
 				isDuration = true
 			case 'y', 'Y', 'm', 'M', 'c', 'b', 'D', 'd', 'e':
 				isDate = true
@@ -2702,6 +2723,10 @@ func time12Hour(t *CoreTime, input string, ctx map[string]int) (string, bool) {
 	hour, succ := parseDigits(input, 2)
 	if !succ || hour > 12 || hour == 0 || input[2] != ':' {
 		return input, false
+	}
+	// 12:34:56 AM -> 00:34:56
+	if hour == 12 {
+		hour = 0
 	}
 
 	minute, succ := parseDigits(input[3:], 2)
@@ -2826,6 +2851,7 @@ func hour12Numeric(t *CoreTime, input string, ctx map[string]int) (string, bool)
 		return input, false
 	}
 	t.setHour(uint8(v))
+	ctx["%h"] = v
 	return input[length:], true
 }
 

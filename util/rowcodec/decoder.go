@@ -58,16 +58,15 @@ type DatumMapDecoder struct {
 }
 
 // NewDatumMapDecoder creates a DatumMapDecoder.
-func NewDatumMapDecoder(columns []ColInfo, handleColIDs []int64, loc *time.Location) *DatumMapDecoder {
+func NewDatumMapDecoder(columns []ColInfo, loc *time.Location) *DatumMapDecoder {
 	return &DatumMapDecoder{decoder{
-		columns:      columns,
-		handleColIDs: handleColIDs,
-		loc:          loc,
+		columns: columns,
+		loc:     loc,
 	}}
 }
 
 // DecodeToDatumMap decodes byte slices to datum map.
-func (decoder *DatumMapDecoder) DecodeToDatumMap(rowData []byte, handle kv.Handle, row map[int64]types.Datum) (map[int64]types.Datum, error) {
+func (decoder *DatumMapDecoder) DecodeToDatumMap(rowData []byte, row map[int64]types.Datum) (map[int64]types.Datum, error) {
 	if row == nil {
 		row = make(map[int64]types.Datum, len(decoder.columns))
 	}
@@ -77,9 +76,6 @@ func (decoder *DatumMapDecoder) DecodeToDatumMap(rowData []byte, handle kv.Handl
 	}
 	for i := range decoder.columns {
 		col := &decoder.columns[i]
-		if decoder.tryDecodeHandleColumn(col, handle, row) {
-			continue
-		}
 		idx, isNil, notFound := decoder.row.findColID(col.ID)
 		if !notFound && !isNil {
 			colData := decoder.getData(idx)
@@ -99,22 +95,6 @@ func (decoder *DatumMapDecoder) DecodeToDatumMap(rowData []byte, handle kv.Handl
 		}
 	}
 	return row, nil
-}
-
-func (decoder *DatumMapDecoder) tryDecodeHandleColumn(col *ColInfo, handle kv.Handle, row map[int64]types.Datum) bool {
-	if handle == nil {
-		return false
-	}
-	if col.ID == decoder.handleColIDs[0] {
-		if mysql.HasUnsignedFlag(col.Ft.Flag) {
-			row[col.ID] = types.NewUintDatum(uint64(handle.IntValue()))
-		} else {
-			row[col.ID] = types.NewIntDatum(handle.IntValue())
-		}
-		return true
-	}
-	// TODO: support common handle.
-	return false
 }
 
 func (decoder *DatumMapDecoder) decodeColDatum(col *ColInfo, colData []byte) (types.Datum, error) {
@@ -226,9 +206,6 @@ func (decoder *ChunkDecoder) DecodeToChunk(rowData []byte, handle kv.Handle, chk
 
 	for colIdx := range decoder.columns {
 		col := &decoder.columns[colIdx]
-		if decoder.tryAppendHandleColumn(colIdx, col, handle, chk) {
-			continue
-		}
 		// fill the virtual column value after row calculation
 		if col.VirtualGenCol {
 			chk.AppendNull(colIdx)
@@ -242,6 +219,10 @@ func (decoder *ChunkDecoder) DecodeToChunk(rowData []byte, handle kv.Handle, chk
 			if err != nil {
 				return err
 			}
+			continue
+		}
+
+		if decoder.tryAppendHandleColumn(colIdx, col, handle, chk) {
 			continue
 		}
 

@@ -140,4 +140,7 @@ const (
 	LblOptimistic  = "optimistic"
 	LblStore       = "store"
 	LblAddress     = "address"
+	LblBatchGet    = "batch_get"
+	LblGet         = "get"
+	LblLockKeys    = "lock_keys"
 )

@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
@@ -34,9 +35,13 @@ var (
 	binCollatorInstance = &binCollator{}
 
 	// ErrUnsupportedCollation is returned when an unsupported collation is specified.
-	ErrUnsupportedCollation = terror.ClassDDL.New(mysql.ErrUnknownCollation, "Unsupported collation when new collation is enabled: '%-.64s'")
+	ErrUnsupportedCollation = dbterror.ClassDDL.NewStdErr(mysql.ErrUnknownCollation, mysql.Message("Unsupported collation when new collation is enabled: '%-.64s'", nil), "", "")
 	// ErrIllegalMixCollation is returned when illegal mix of collations.
-	ErrIllegalMixCollation = terror.ClassExpression.New(mysql.ErrCantAggregate2collations, mysql.MySQLErrName[mysql.ErrCantAggregate2collations])
+	ErrIllegalMixCollation = dbterror.ClassExpression.NewStd(mysql.ErrCantAggregateNcollations)
+	// ErrIllegalMix2Collation is returned when illegal mix of 2 collations.
+	ErrIllegalMix2Collation = dbterror.ClassExpression.NewStd(mysql.ErrCantAggregate2collations)
+	// ErrIllegalMix3Collation is returned when illegal mix of 3 collations.
+	ErrIllegalMix3Collation = dbterror.ClassExpression.NewStd(mysql.ErrCantAggregate3collations)
 )
 
 // DefaultLen is set for datum if the string datum don't know its length.
@@ -88,6 +93,8 @@ func CompatibleCollate(collate1, collate2 string) bool {
 	if (collate1 == "utf8mb4_general_ci" || collate1 == "utf8_general_ci") && (collate2 == "utf8mb4_general_ci" || collate2 == "utf8_general_ci") {
 		return true
 	} else if (collate1 == "utf8mb4_bin" || collate1 == "utf8_bin") && (collate2 == "utf8mb4_bin" || collate2 == "utf8_bin") {
+		return true
+	} else if (collate1 == "utf8mb4_unicode_ci" || collate1 == "utf8_unicode_ci") && (collate2 == "utf8mb4_unicode_ci" || collate2 == "utf8_unicode_ci") {
 		return true
 	} else {
 		return collate1 == collate2
@@ -216,7 +223,8 @@ func truncateTailingSpace(str string) string {
 
 // IsCICollation returns if the collation is case-sensitive
 func IsCICollation(collate string) bool {
-	return collate == "utf8_general_ci" || collate == "utf8mb4_general_ci"
+	return collate == "utf8_general_ci" || collate == "utf8mb4_general_ci" ||
+		collate == "utf8_unicode_ci" || collate == "utf8mb4_unicode_ci"
 }
 
 func init() {
@@ -237,4 +245,8 @@ func init() {
 	newCollatorIDMap[int(mysql.CollationNames["utf8mb4_general_ci"])] = &generalCICollator{}
 	newCollatorMap["utf8_general_ci"] = &generalCICollator{}
 	newCollatorIDMap[int(mysql.CollationNames["utf8_general_ci"])] = &generalCICollator{}
+	newCollatorMap["utf8mb4_unicode_ci"] = &unicodeCICollator{}
+	newCollatorIDMap[int(mysql.CollationNames["utf8mb4_unicode_ci"])] = &unicodeCICollator{}
+	newCollatorMap["utf8_unicode_ci"] = &unicodeCICollator{}
+	newCollatorIDMap[int(mysql.CollationNames["utf8_unicode_ci"])] = &unicodeCICollator{}
 }

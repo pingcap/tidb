@@ -1064,14 +1064,14 @@ func chunkForTest(c *C, sc *stmtctx.StatementContext, datums []types.Datum, tps 
 }
 
 func (s *testCodecSuite) TestDecodeRange(c *C) {
-	_, _, err := DecodeRange(nil, 0)
+	_, _, err := DecodeRange(nil, 0, nil, nil)
 	c.Assert(err, NotNil)
 
 	datums := types.MakeDatums(1, "abc", 1.1, []byte("def"))
 	rowData, err := EncodeValue(nil, nil, datums...)
 	c.Assert(err, IsNil)
 
-	datums1, _, err := DecodeRange(rowData, len(datums))
+	datums1, _, err := DecodeRange(rowData, len(datums), nil, nil)
 	c.Assert(err, IsNil)
 	for i, datum := range datums1 {
 		cmp, err := datum.CompareDatum(nil, &datums[i])
@@ -1081,7 +1081,7 @@ func (s *testCodecSuite) TestDecodeRange(c *C) {
 
 	for _, b := range []byte{NilFlag, bytesFlag, maxFlag, maxFlag + 1} {
 		newData := append(rowData, b)
-		_, _, err := DecodeRange(newData, len(datums)+1)
+		_, _, err := DecodeRange(newData, len(datums)+1, nil, nil)
 		c.Assert(err, IsNil)
 	}
 }
@@ -1235,7 +1235,7 @@ func (s *testCodecSuite) TestHashChunkColumns(c *C) {
 	// Test hash value of the first 12 `Null` columns
 	for i := 0; i < 12; i++ {
 		c.Assert(chk.GetRow(0).IsNull(i), Equals, true)
-		err1 := HashChunkSelected(sc, vecHash, chk, tps[i], i, buf, hasNull, sel)
+		err1 := HashChunkSelected(sc, vecHash, chk, tps[i], i, buf, hasNull, sel, false)
 		err2 := HashChunkRow(sc, rowHash[0], chk.GetRow(0), tps, colIdx[i:i+1], buf)
 		err3 := HashChunkRow(sc, rowHash[1], chk.GetRow(1), tps, colIdx[i:i+1], buf)
 		err4 := HashChunkRow(sc, rowHash[2], chk.GetRow(2), tps, colIdx[i:i+1], buf)
@@ -1260,7 +1260,7 @@ func (s *testCodecSuite) TestHashChunkColumns(c *C) {
 		rowHash = []hash.Hash64{fnv.New64(), fnv.New64(), fnv.New64()}
 
 		c.Assert(chk.GetRow(0).IsNull(i), Equals, false)
-		err1 := HashChunkSelected(sc, vecHash, chk, tps[i], i, buf, hasNull, sel)
+		err1 := HashChunkSelected(sc, vecHash, chk, tps[i], i, buf, hasNull, sel, false)
 		err2 := HashChunkRow(sc, rowHash[0], chk.GetRow(0), tps, colIdx[i:i+1], buf)
 		err3 := HashChunkRow(sc, rowHash[1], chk.GetRow(1), tps, colIdx[i:i+1], buf)
 		err4 := HashChunkRow(sc, rowHash[2], chk.GetRow(2), tps, colIdx[i:i+1], buf)
