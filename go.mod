@@ -1,6 +1,6 @@
 module github.com/pingcap/tidb
 
-replace github.com/pingcap/parser => github.com/TszKitLo40/parser v0.0.0-20201015085052-17cecad1d50b
+replace github.com/pingcap/parser => github.com/TszKitLo40/parser v0.0.0-20201021071953-d956ea462ea5
 
 require (
 	github.com/BurntSushi/toml v0.3.1
