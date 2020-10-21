@@ -53,7 +53,7 @@ func (sr selectResultHook) SelectResult(ctx context.Context, sctx sessionctx.Con
 }
 
 type kvRangeBuilder interface {
-	buildKeyRange(pid int64) ([]kv.KeyRange, error)
+	buildKeyRange(ranges []*ranger.Range, feedback *statistics.QueryFeedback) ([]kv.KeyRange, error)
 }
 
 // TableReaderExecutor sends DAG request and reads table data from kv layer.
@@ -214,7 +214,7 @@ func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Ra
 	var builder distsql.RequestBuilder
 	var reqBuilder *distsql.RequestBuilder
 	if e.kvRangeBuilder != nil {
-		kvRange, err := e.kvRangeBuilder.buildKeyRange(getPhysicalTableID(e.table))
+		kvRange, err := e.kvRangeBuilder.buildKeyRange(e.ranges, e.feedback)
 		if err != nil {
 			return nil, err
 		}
