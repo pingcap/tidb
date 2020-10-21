@@ -1469,3 +1469,15 @@ func (s *testGCWorkerSuite) TestPhyscailScanLockDeadlock(c *C) {
 		c.Fatal("physicalScanAndResolveLocks blocks")
 	}
 }
+
+func (s *testGCWorkerSuite) TestGCPlacementRules(c *C) {
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/gcworker/mockHistoryJobForGC", "return(1)"), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/gcworker/mockHistoryJobForGC"), IsNil)
+	}()
+
+	dr := util.DelRangeTask{JobID: 1, ElementID: 1}
+	pid, err := s.gcWorker.doGCPlacementRules(dr)
+	c.Assert(pid, Equals, 1)
+	c.Assert(err, IsNil)
+}

@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"container/heap"
 	"context"
+	"encoding/json"
 	"fmt"
 	"math"
 	"os"
@@ -46,7 +47,6 @@ import (
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	tidbutil "github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/logutil"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
@@ -1791,14 +1791,27 @@ func (w *GCWorker) saveValueToSysTable(key, value string) error {
 func (w *GCWorker) doGCPlacementRules(dr util.DelRangeTask) (pid int64, err error) {
 	// Get the job from the job history
 	var historyJob *model.Job
-	err = kv.RunInNewTxn(w.store, false, func(txn kv.Transaction) error {
-		var err1 error
-		t := meta.NewMeta(txn)
-		historyJob, err1 = t.GetHistoryDDLJob(dr.JobID)
-		return err1
+	failpoint.Inject("mockHistoryJobForGC", func(v failpoint.Value) {
+		args, err := json.Marshal([]interface{}{kv.Key{}, []int64{v.(int64)}})
+		if err != nil {
+			return
+		}
+		historyJob = &model.Job{
+			ID:      dr.JobID,
+			Type:    model.ActionDropTable,
+			RawArgs: args,
+		}
 	})
 	if historyJob == nil {
-		return 0, admin.ErrDDLJobNotFound.GenWithStackByArgs(dr.JobID)
+		err = kv.RunInNewTxn(w.store, false, func(txn kv.Transaction) error {
+			var err1 error
+			t := meta.NewMeta(txn)
+			historyJob, err1 = t.GetHistoryDDLJob(dr.JobID)
+			return err1
+		})
+		if err != nil {
+			return
+		}
 	}
 
 	// Get the partition ID from the job and DelRangeTask.
