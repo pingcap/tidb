@@ -193,19 +193,17 @@ func WriteInsert(pCtx context.Context, tblIR TableDataIR, w storage.Writer, file
 				bf.WriteString(";\n")
 			}
 			if bf.Len() >= lengthLimit {
-				wp.input <- bf
-				bf = pool.Get().(*bytes.Buffer)
-				if bfCap := bf.Cap(); bfCap < lengthLimit {
-					bf.Grow(lengthLimit - bfCap)
+				select {
+				case <-pCtx.Done():
+					return pCtx.Err()
+				case err := <-wp.errCh:
+					return err
+				case wp.input <- bf:
+					bf = pool.Get().(*bytes.Buffer)
+					if bfCap := bf.Cap(); bfCap < lengthLimit {
+						bf.Grow(lengthLimit - bfCap)
+					}
 				}
-			}
-
-			select {
-			case <-pCtx.Done():
-				return pCtx.Err()
-			case err := <-wp.errCh:
-				return err
-			default:
 			}
 
 			if shouldSwitch {
@@ -288,21 +286,20 @@ func WriteInsertInCsv(pCtx context.Context, tblIR TableDataIR, w storage.Writer,
 
 		bf.WriteByte('\n')
 		if bf.Len() >= lengthLimit {
-			wp.input <- bf
-			bf = pool.Get().(*bytes.Buffer)
-			if bfCap := bf.Cap(); bfCap < lengthLimit {
-				bf.Grow(lengthLimit - bfCap)
+			select {
+			case <-pCtx.Done():
+				return pCtx.Err()
+			case err := <-wp.errCh:
+				return err
+			case wp.input <- bf:
+				bf = pool.Get().(*bytes.Buffer)
+				if bfCap := bf.Cap(); bfCap < lengthLimit {
+					bf.Grow(lengthLimit - bfCap)
+				}
 			}
 		}
 
 		fileRowIter.Next()
-		select {
-		case <-pCtx.Done():
-			return pCtx.Err()
-		case err := <-wp.errCh:
-			return err
-		default:
-		}
 		if wp.ShouldSwitchFile() {
 			break
 		}
