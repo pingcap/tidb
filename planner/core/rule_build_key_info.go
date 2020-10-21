@@ -235,14 +235,14 @@ func checkIndexCanBeKey(idx *model.IndexInfo, columns []*model.ColumnInfo, schem
 				}
 			}
 		}
-		if !findNewKey && !findUniqueKey {
+		if !findUniqueKey {
 			newKeyOK = false
 			uniqueKeyOK = false
 			break
 		}
 	}
 	if newKeyOK {
-		return uniqueKey, newKey
+		return nil, newKey
 	} else if uniqueKeyOK {
 		return uniqueKey, nil
 	}
