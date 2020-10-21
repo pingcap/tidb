@@ -75,8 +75,6 @@ var (
 	ErrInvalidWeekModeFormat = dbterror.ClassTypes.NewStd(mysql.ErrInvalidWeekModeFormat)
 	// ErrWrongValue is returned when the input value is in wrong format.
 	ErrWrongValue = dbterror.ClassTypes.NewStdErr(mysql.ErrTruncatedWrongValue, mysql.MySQLErrName[mysql.ErrWrongValue], "", "")
-	// ErrTooBigDisplaywidth is returned when the column display width out of range.
-	ErrTooBigDisplaywidth = dbterror.ClassTypes.NewStd(mysql.ErrTooBigDisplaywidth)
 	// ErrWrongFieldSpec is returned when the column specifier incorrect.
 	ErrWrongFieldSpec = dbterror.ClassTypes.NewStd(mysql.ErrWrongFieldSpec)
 	// ErrSyntax is returned when the syntax is not allowed.
