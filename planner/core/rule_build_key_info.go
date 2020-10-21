@@ -213,32 +213,41 @@ func checkIndexCanBeKey(idx *model.IndexInfo, columns []*model.ColumnInfo, schem
 	if !idx.Unique {
 		return nil, nil
 	}
-	ok := true
+	newKeyOK := true
+	uniqueKeyOK := true
 	for _, idxCol := range idx.Columns {
 		// The columns of this index should all occur in column schema.
 		// Since null value could be duplicate in unique key. So we check NotNull flag of every column.
-		find := false
+		findNewKey := false
+		findUniqueKey := false
 		for i, col := range columns {
 			if idxCol.Name.L == col.Name.L {
 				uniqueKey = append(uniqueKey, schema.Columns[i])
-				if !mysql.HasNotNullFlag(col.Flag) {
+				findUniqueKey = true
+				if newKeyOK {
+					if !mysql.HasNotNullFlag(col.Flag) {
+						newKeyOK = false
+						break
+					}
+					newKey = append(newKey, schema.Columns[i])
+					findNewKey = true
 					break
 				}
-				newKey = append(newKey, schema.Columns[i])
-				find = true
-				break
 			}
 		}
-		if !find {
-			ok = false
+		if !findNewKey && !findUniqueKey {
+			newKeyOK = false
+			uniqueKeyOK = false
 			break
 		}
 	}
-	if ok {
+	if newKeyOK {
 		return uniqueKey, newKey
+	} else if uniqueKeyOK {
+		return uniqueKey, nil
 	}
 
-	return uniqueKey, nil
+	return nil, nil
 }
 
 // BuildKeyInfo implements LogicalPlan BuildKeyInfo interface.

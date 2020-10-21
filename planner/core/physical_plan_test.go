@@ -465,8 +465,10 @@ func (s *testPlanSuite) TestEliminateMaxOneRow(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1;")
 	tk.MustExec("drop table if exists t2;")
+	tk.MustExec("drop table if exists t3;")
 	tk.MustExec("create table t1(a int(11) DEFAULT NULL, b int(11) DEFAULT NULL, UNIQUE KEY idx_a (a))")
 	tk.MustExec("create table t2(a int(11) DEFAULT NULL, b int(11) DEFAULT NULL)")
+	tk.MustExec("create table t3(a int(11) DEFAULT NULL, b int(11) DEFAULT NULL, c int(11) DEFAULT NULL, UNIQUE KEY idx_abc (a, b, c))")
 
 	for i, ts := range input {
 		s.testData.OnRecord(func() {
