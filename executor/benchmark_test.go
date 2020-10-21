@@ -1852,9 +1852,13 @@ func defaultSelectionTestCase() *selectionCase {
 	ctx.GetSessionVars().InitChunkSize = variable.DefInitChunkSize
 	ctx.GetSessionVars().MaxChunkSize = variable.DefMaxChunkSize
 	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(-1, -1)
-	f1, _ := expression.NewFunction(ctx, ast.LT, types.NewFieldType(mysql.TypeLonglong),
+	mod, _ := expression.NewFunction(ctx, ast.Mod, types.NewFieldType(mysql.TypeLonglong),
 		&expression.Column{Index: 0, RetType: types.NewFieldType(mysql.TypeLonglong)},
-		expression.NewZero())
+		&expression.Constant{Value: types.NewDatum(2), RetType: types.NewFieldType(mysql.TypeLonglong)})
+	f1, _ := expression.NewFunction(ctx, ast.EQ, types.NewFieldType(mysql.TypeLonglong),
+		mod,
+		expression.NewZero(),
+	)
 	tc := &selectionCase{
 		rows:                  300000,
 		filter:                []expression.Expression{f1},

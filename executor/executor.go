@@ -1238,11 +1238,7 @@ func (e *SelectionExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			if req.IsFull() {
 				return nil
 			}
-			if e.columnIdxsUsedByChild != nil {
-				req.AppendRowByColIdxs(e.inputRow, e.columnIdxsUsedByChild)
-			} else {
-				req.AppendRow(e.inputRow)
-			}
+			req.AppendRowByColIdxs(e.inputRow, e.columnIdxsUsedByChild)
 		}
 		mSize := e.childResult.MemoryUsage()
 		err := Next(ctx, e.children[0], e.childResult)
@@ -1273,11 +1269,7 @@ func (e *SelectionExec) unBatchedNext(ctx context.Context, chk *chunk.Chunk) err
 				return err
 			}
 			if selected {
-				if e.columnIdxsUsedByChild != nil {
-					chk.AppendRowByColIdxs(e.inputRow, e.columnIdxsUsedByChild)
-				} else {
-					chk.AppendRow(e.inputRow)
-				}
+				chk.AppendRowByColIdxs(e.inputRow, e.columnIdxsUsedByChild)
 				e.inputRow = e.inputIter.Next()
 				return nil
 			}

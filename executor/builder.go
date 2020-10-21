@@ -1329,7 +1329,7 @@ func (b *executorBuilder) buildSelection(v *plannercore.PhysicalSelection) Execu
 		}
 	}
 	if len(e.columnIdxsUsedByChild) == len(childUsedSchema) {
-		e.columnIdxsUsedByChild = nil // indicates that all columns are used. LimitExec will improve performance for this condition.
+		e.columnIdxsUsedByChild = nil // indicates that all columns are used. SelectionExec will improve performance for this condition.
 	}
 	return e
 }
