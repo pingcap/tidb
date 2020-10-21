@@ -256,7 +256,7 @@ func (e *slowQueryRetriever) parseSlowLog(ctx context.Context, sctx sessionctx.C
 	var wg sync.WaitGroup
 	offset := offset{offset: 0, length: 0}
 	// To limit the num of go routine
-	ch := make(chan int, sctx.GetSessionVars().Concurrency.DistSQLScanConcurrency())
+	ch := make(chan int, sctx.GetSessionVars().Concurrency.DistSQLScanConcurrency)
 	defer close(ch)
 	for {
 		log, err := e.getBatchLog(reader, &offset, logNum)
