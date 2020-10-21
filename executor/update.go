@@ -53,9 +53,11 @@ type UpdateExec struct {
 	// tblColPosInfos stores relationship between column ordinal to its table handle.
 	// the columns ordinals is present in ordinal range format, @see plannercore.TblColPosInfos
 	tblColPosInfos            plannercore.TblColPosInfoSlice
+	oldRowBuffer              chunk.MutRow
 	evalBuffer                chunk.MutRow
 	allAssignmentsAreConstant bool
 	virtualAssignmentsOffset  int
+	hasMultiAliasesTable      bool
 	drained                   bool
 	memTracker                *memory.Tracker
 
@@ -71,16 +73,13 @@ func (e *UpdateExec) exec(ctx context.Context, schema *expression.Schema, row, n
 	if e.updatedRowKeys == nil {
 		e.updatedRowKeys = make(map[tableKey]*kv.HandleMap)
 	}
-	if e.updatedRowData == nil {
+	if e.hasMultiAliasesTable && e.updatedRowData == nil {
 		e.updatedRowData = make(map[int64]*kv.HandleMap)
 	}
 	for _, content := range e.tblColPosInfos {
 		tbl := e.tblID2table[content.TblID]
 		if e.updatedRowKeys[tableKey{content.TblID, content.Start}] == nil {
 			e.updatedRowKeys[tableKey{content.TblID, content.Start}] = kv.NewHandleMap()
-		}
-		if e.updatedRowData[content.TblID] == nil {
-			e.updatedRowData[content.TblID] = kv.NewHandleMap()
 		}
 		var handle kv.Handle
 		handle, err = content.HandleCols.BuildHandleByDatums(row)
@@ -116,26 +115,33 @@ func (e *UpdateExec) exec(ctx context.Context, schema *expression.Schema, row, n
 			continue
 		}
 
-		var updatedData []types.Datum
-		v, ok = e.updatedRowData[content.TblID].Get(handle)
-		if !ok {
-			updatedData = make([]types.Datum, len(oldData))
-			copy(updatedData, oldData)
-		} else {
-			updatedData = v.([]types.Datum)
-			for i, flag := range flags {
-				if !flag {
-					updatedData[i].Copy(&newTableData[i])
+		if e.hasMultiAliasesTable {
+			if e.updatedRowData[content.TblID] == nil {
+				e.updatedRowData[content.TblID] = kv.NewHandleMap()
+			}
+
+			var updatedData []types.Datum
+			v, ok = e.updatedRowData[content.TblID].Get(handle)
+			if !ok {
+				updatedData = append([]types.Datum{}, newTableData...)
+			} else {
+				updatedData = v.([]types.Datum)
+				for i, flag := range flags {
+					if flag {
+						newTableData[i].Copy(&updatedData[i])
+					} else {
+						updatedData[i].Copy(&oldData[i])
+						updatedData[i].Copy(&newTableData[i])
+					}
 				}
 			}
+			e.updatedRowData[content.TblID].Set(handle, updatedData)
 		}
 
 		// Update row
-		changed, err1 := updateRecord(ctx, e.ctx, handle, updatedData, newTableData, flags, tbl, false, e.memTracker)
+		changed, err1 := updateRecord(ctx, e.ctx, handle, oldData, newTableData, flags, tbl, false, e.memTracker)
 		if err1 == nil {
 			e.updatedRowKeys[tableKey{content.TblID, content.Start}].Set(handle, changed)
-			copy(updatedData, newTableData)
-			e.updatedRowData[content.TblID].Set(handle, updatedData)
 			continue
 		}
 
@@ -185,6 +191,7 @@ func (e *UpdateExec) updateRows(ctx context.Context) (int, error) {
 	globalRowIdx := 0
 	chk := newFirstChunk(e.children[0])
 	if !e.allAssignmentsAreConstant {
+		e.oldRowBuffer = chunk.MutRowFromTypes(fields)
 		e.evalBuffer = chunk.MutRowFromTypes(fields)
 	}
 	composeFunc := e.fastComposeNewRow
@@ -273,8 +280,8 @@ func (e *UpdateExec) fastComposeNewRow(rowIdx int, oldRow []types.Datum, cols []
 }
 
 func (e *UpdateExec) composeNewRow(rowIdx int, oldRow []types.Datum, cols []*table.Column) ([]types.Datum, error) {
-	oldRowBuffer := chunk.MutRowFromDatums(oldRow)
 	newRowData := types.CloneRow(oldRow)
+	e.oldRowBuffer.SetDatums(oldRow...)
 	e.evalBuffer.SetDatums(newRowData...)
 	for i, assign := range e.OrderedList {
 		handleIdx, handleFound := e.tblColPosInfos.FindHandle(assign.Col.Index)
@@ -284,7 +291,7 @@ func (e *UpdateExec) composeNewRow(rowIdx int, oldRow []types.Datum, cols []*tab
 		var val types.Datum
 		var err error
 		if i < e.virtualAssignmentsOffset {
-			val, err = assign.Expr.Eval(oldRowBuffer.ToRow())
+			val, err = assign.Expr.Eval(e.oldRowBuffer.ToRow())
 		} else {
 			val, err = assign.Expr.Eval(e.evalBuffer.ToRow())
 		}

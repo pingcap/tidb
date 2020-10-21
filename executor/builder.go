@@ -1787,8 +1787,12 @@ func (b *executorBuilder) buildSplitRegion(v *plannercore.SplitRegion) Executor 
 
 func (b *executorBuilder) buildUpdate(v *plannercore.Update) Executor {
 	tblID2table := make(map[int64]table.Table, len(v.TblColPosInfos))
+	hasMultiAliasesTable := false
 	for _, info := range v.TblColPosInfos {
 		tbl, _ := b.is.TableByID(info.TblID)
+		if _, ok := tblID2table[info.TblID]; ok {
+			hasMultiAliasesTable = true
+		}
 		tblID2table[info.TblID] = tbl
 		if len(v.PartitionedTable) > 0 {
 			// The v.PartitionedTable collects the partitioned table.
@@ -1817,6 +1821,7 @@ func (b *executorBuilder) buildUpdate(v *plannercore.Update) Executor {
 		OrderedList:               v.OrderedList,
 		allAssignmentsAreConstant: v.AllAssignmentsAreConstant,
 		virtualAssignmentsOffset:  v.VirtualAssignmentsOffset,
+		hasMultiAliasesTable:      hasMultiAliasesTable,
 		tblID2table:               tblID2table,
 		tblColPosInfos:            v.TblColPosInfos,
 	}

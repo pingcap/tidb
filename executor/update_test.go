@@ -260,6 +260,15 @@ func (s *testUpdateSuite) TestUpdateSwapColumnValues(c *C) {
 	tk.MustQuery("select * from t").Check(testkit.Rows("1 3"))
 	tk.MustExec("update t set a=b, b=a")
 	tk.MustQuery("select * from t").Check(testkit.Rows("3 1"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int, c int as (-a) virtual, d int as (-b) stored)")
+	tk.MustExec("insert into t(a, b) values (10, 11), (20, 22)")
+	tk.MustQuery("select * from t").Check(testkit.Rows("10 11 -10 -11", "20 22 -20 -22"))
+	tk.MustExec("update t set a=b, b=a")
+	tk.MustQuery("select * from t").Check(testkit.Rows("11 10 -11 -10", "22 20 -22 -20"))
+	tk.MustExec("update t set b=30, a=b")
+	tk.MustQuery("select * from t").Check(testkit.Rows("10 30 -10 -30", "20 30 -20 -30"))
 }
 
 func (s *testUpdateSuite) TestUpdateMultiAliasesTable(c *C) {
@@ -273,6 +282,15 @@ func (s *testUpdateSuite) TestUpdateMultiAliasesTable(c *C) {
 
 	tk.MustExec("update t t1, t t2 set t1.x=t2.y, t2.y=t1.x")
 	tk.MustQuery("select * from t").Check(testkit.Rows("1 2"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(x int, y int, z int as (x+10) stored, w int as (y-10) virtual)")
+	tk.MustExec("insert into t(x, y) values(1, 2), (3, 4)")
+	tk.MustExec("update t t1, t t2 set t2.y=1, t1.x=2 where t1.x=1")
+	tk.MustQuery("select * from t").Check(testkit.Rows("2 1 12 -9", "3 1 13 -9"))
+
+	tk.MustExec("update t t1, t t2 set t1.x=5, t2.y=t1.x where t1.x=3")
+	tk.MustQuery("select * from t").Check(testkit.Rows("5 1 15 -9", "5 3 15 -7"))
 }
 
 var _ = SerialSuites(&testSuite11{&baseTestSuite{}})
