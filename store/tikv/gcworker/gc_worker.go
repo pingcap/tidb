@@ -31,10 +31,13 @@ import (
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/session"
@@ -43,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	tidbutil "github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/logutil"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
@@ -654,6 +658,17 @@ func (w *GCWorker) deleteRanges(ctx context.Context, safePoint uint64, concurren
 				zap.Stringer("endKey", endKey),
 				zap.Error(err))
 			metrics.GCUnsafeDestroyRangeFailuresCounterVec.WithLabelValues("save").Inc()
+		}
+
+		pid, err := w.doGCPlacementRules(r)
+		if err != nil {
+			logutil.Logger(ctx).Error("[gc worker] gc placement rules failed on range",
+				zap.String("uuid", w.uuid),
+				zap.Int64("jobID", r.JobID),
+				zap.Int64("elementID", r.ElementID),
+				zap.Int64("pid", pid),
+				zap.Error(err))
+			continue
 		}
 	}
 	logutil.Logger(ctx).Info("[gc worker] finish delete ranges",
@@ -1771,6 +1786,42 @@ func (w *GCWorker) saveValueToSysTable(key, value string) error {
 		zap.String("value", value),
 		zap.Error(err))
 	return errors.Trace(err)
+}
+
+func (w *GCWorker) doGCPlacementRules(dr util.DelRangeTask) (pid int64, err error) {
+	// Get the job from the job history
+	var historyJob *model.Job
+	err = kv.RunInNewTxn(w.store, false, func(txn kv.Transaction) error {
+		var err1 error
+		t := meta.NewMeta(txn)
+		historyJob, err1 = t.GetHistoryDDLJob(dr.JobID)
+		return err1
+	})
+	if historyJob == nil {
+		return 0, admin.ErrDDLJobNotFound.GenWithStackByArgs(dr.JobID)
+	}
+
+	// Get the partition ID from the job and DelRangeTask.
+	switch historyJob.Type {
+	case model.ActionDropTable, model.ActionTruncateTable:
+		var physicalTableIDs []int64
+		var startKey kv.Key
+		if err = historyJob.DecodeArgs(&startKey, &physicalTableIDs); err != nil {
+			return
+		}
+		// If it's a partitioned table, then the element ID is the partition ID.
+		if len(physicalTableIDs) > 0 {
+			pid = dr.ElementID
+		}
+	}
+	// Not drop table / truncate table or not a partitioned table, no need to GC placement rules.
+	if pid == 0 {
+		return
+	}
+	// Notify PD to drop the placement rules, even if there may be no placement rules.
+	bundles := []*placement.Bundle{placement.BuildPlacementDropBundle(pid)}
+	err = infosync.PutRuleBundles(nil, bundles)
+	return
 }
 
 // RunGCJob sends GC command to KV. It is exported for kv api, do not use it with GCWorker at the same time.
