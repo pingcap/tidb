@@ -1384,66 +1384,6 @@ func (s *testIntegrationSuite) TestIssue19926(c *C) {
 	tk.MustExec("create definer='root'@'localhost' view v as\nselect \nconcat(`ta`.`status`,`tb`.`status`) AS `status`, \n`ta`.`id` AS `id`  from (`ta` join `tb`) \nwhere (`ta`.`id` = `tb`.`id`);")
 	tk.MustQuery("SELECT tc.status,v.id FROM tc, v WHERE tc.id = v.id AND v.status = '11';").Check(testkit.Rows("1 1"))
 }
-<<<<<<< HEAD
-=======
-
-func (s *testIntegrationSuite) TestDeleteUsingJoin(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1, t2")
-	tk.MustExec("create table t1(a int primary key, b int)")
-	tk.MustExec("create table t2(a int primary key, b int)")
-	tk.MustExec("insert into t1 values(1,1),(2,2)")
-	tk.MustExec("insert into t2 values(2,2)")
-	tk.MustExec("delete t1.* from t1 join t2 using (a)")
-	tk.MustQuery("select * from t1").Check(testkit.Rows("1 1"))
-	tk.MustQuery("select * from t2").Check(testkit.Rows("2 2"))
-}
-
-func (s *testIntegrationSerialSuite) Test19942(c *C) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
-
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("SET @@tidb_enable_clustered_index=1;")
-	tk.MustExec("CREATE TABLE test.`t` (" +
-		"  `a` int(11) NOT NULL," +
-		"  `b` varchar(10) COLLATE utf8_general_ci NOT NULL," +
-		"  `c` varchar(50) COLLATE utf8_general_ci NOT NULL," +
-		"  `d` char(10) NOT NULL," +
-		"  PRIMARY KEY (`c`)," +
-		"  UNIQUE KEY `a_uniq` (`a`)," +
-		"  UNIQUE KEY `b_uniq` (`b`)," +
-		"  UNIQUE KEY `d_uniq` (`d`)," +
-		"  KEY `a_idx` (`a`)," +
-		"  KEY `b_idx` (`b`)," +
-		"  KEY `d_idx` (`d`)" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci;")
-	tk.MustExec("INSERT INTO test.t (a, b, c, d) VALUES (1, '1', '0', '1');")
-	tk.MustExec("INSERT INTO test.t (a, b, c, d) VALUES (2, ' 2', ' 0', ' 2');")
-	tk.MustExec("INSERT INTO test.t (a, b, c, d) VALUES (3, '  3 ', '  3 ', '  3 ');")
-	tk.MustExec("INSERT INTO test.t (a, b, c, d) VALUES (4, 'a', 'a   ', 'a');")
-	tk.MustExec("INSERT INTO test.t (a, b, c, d) VALUES (5, ' A  ', ' A   ', ' A  ');")
-	tk.MustExec("INSERT INTO test.t (a, b, c, d) VALUES (6, ' E', 'é        ', ' E');")
-
-	mkr := func() [][]interface{} {
-		return testutil.RowsWithSep("|",
-			"3|  3 |  3 |  3",
-			"2| 2  0| 2",
-			"5| A  | A   | A",
-			"1|1|0|1",
-			"4|a|a   |a",
-			"6| E|é        | E")
-	}
-	tk.MustQuery("SELECT * FROM `test`.`t` FORCE INDEX(`a_uniq`);").Check(mkr())
-	tk.MustQuery("SELECT * FROM `test`.`t` FORCE INDEX(`b_uniq`);").Check(mkr())
-	tk.MustQuery("SELECT * FROM `test`.`t` FORCE INDEX(`d_uniq`);").Check(mkr())
-	tk.MustQuery("SELECT * FROM `test`.`t` FORCE INDEX(`a_idx`);").Check(mkr())
-	tk.MustQuery("SELECT * FROM `test`.`t` FORCE INDEX(`b_idx`);").Check(mkr())
-	tk.MustQuery("SELECT * FROM `test`.`t` FORCE INDEX(`d_idx`);").Check(mkr())
-	tk.MustExec("admin check table t")
-}
 
 func (s *testIntegrationSuite) TestPartitionUnionWithPPruningColumn(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
@@ -1501,4 +1441,3 @@ func (s *testIntegrationSuite) TestPartitionUnionWithPPruningColumn(c *C) {
 			"3290 LE1327_r5"))
 
 }
->>>>>>> c2d94ad54... planner: copy the field Column in dataSource when create partition union. (#20559)
