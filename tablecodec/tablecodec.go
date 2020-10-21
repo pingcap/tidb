@@ -776,7 +776,7 @@ func decodeRestoredValuesV5(columns []rowcodec.ColInfo, keyVal [][]byte, restore
 			j++
 			copyColInfo := rowcodec.ColInfo{
 				ID: col.ID,
-				Ft: columns[i].Ft,
+				Ft: columns[i].Ft.Clone(),
 			}
 			if collate.IsBinCollation(col.Ft.Collate) {
 				// Change the fieldType from string to uint since we store the number of the truncated spaces.
@@ -812,7 +812,7 @@ func decodeRestoredValuesV5(columns []rowcodec.ColInfo, keyVal [][]byte, restore
 			}
 			// Skip if padding count is 0.
 			if paddingCount.GetInt64() == 0 {
-				result[allOffset] = rv
+				result[allOffset] = keyVal[allOffset]
 				continue
 			}
 			noPaddingStr.SetString(noPaddingStr.GetString()+strings.Repeat(" ", int(paddingCount.GetInt64())), noPaddingStr.Collation())

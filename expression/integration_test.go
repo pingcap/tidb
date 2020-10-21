@@ -7583,20 +7583,20 @@ func (s *testIntegrationSerialSuite) TestClusteredIndexAndNewCollationIndexEncod
 	tk.MustExec("alter table t add index h(h)")
 	tk.MustExec("alter table t add unique index uh(h)")
 
-	tk.MustQuery("select * from t use index(h)").Check(testutil.RowsWithSep("1,啊,啊,啊  ,啊  ,🐸,🐸"))
-	tk.MustQuery("select * from t use index(uh)").Check(testutil.RowsWithSep("1,啊,啊,啊  ,啊  ,🐸,🐸"))
+	tk.MustQuery("select * from t use index(h)").Check(testutil.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,🐸,🐸"))
+	tk.MustQuery("select * from t use index(uh)").Check(testutil.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,🐸,🐸"))
 
 	// Double read.
-	tk.MustQuery("select * from t use index(a)").Check(testutil.RowsWithSep("1,啊,啊,啊  ,啊  ,🐸,🐸"))
-	tk.MustQuery("select * from t use index(ua)").Check(testutil.RowsWithSep("1,啊,啊,啊  ,啊  ,🐸,🐸"))
-	tk.MustQuery("select * from t use index(b)").Check(testutil.RowsWithSep("1,啊,啊,啊  ,啊  ,🐸,🐸"))
-	tk.MustQuery("select * from t use index(ub)").Check(testutil.RowsWithSep("1,啊,啊,啊  ,啊  ,🐸,🐸"))
-	tk.MustQuery("select * from t use index(c)").Check(testutil.RowsWithSep("1,啊,啊,啊  ,啊  ,🐸,🐸"))
-	tk.MustQuery("select * from t use index(uc)").Check(testutil.RowsWithSep("1,啊,啊,啊  ,啊  ,🐸,🐸"))
-	tk.MustQuery("select * from t use index(d)").Check(testutil.RowsWithSep("1,啊,啊,啊  ,啊  ,🐸,🐸"))
-	tk.MustQuery("select * from t use index(ud)").Check(testutil.RowsWithSep("1,啊,啊,啊  ,啊  ,🐸,🐸"))
-	tk.MustQuery("select * from t use index(e)").Check(testutil.RowsWithSep("1,啊,啊,啊  ,啊  ,🐸,🐸"))
-	tk.MustQuery("select * from t use index(ue)").Check(testutil.RowsWithSep("1,啊,啊,啊  ,啊  ,🐸,🐸"))
+	tk.MustQuery("select * from t use index(a)").Check(testutil.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,🐸,🐸"))
+	tk.MustQuery("select * from t use index(ua)").Check(testutil.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,🐸,🐸"))
+	tk.MustQuery("select * from t use index(b)").Check(testutil.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,🐸,🐸"))
+	tk.MustQuery("select * from t use index(ub)").Check(testutil.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,🐸,🐸"))
+	tk.MustQuery("select * from t use index(c)").Check(testutil.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,🐸,🐸"))
+	tk.MustQuery("select * from t use index(uc)").Check(testutil.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,🐸,🐸"))
+	tk.MustQuery("select * from t use index(d)").Check(testutil.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,🐸,🐸"))
+	tk.MustQuery("select * from t use index(ud)").Check(testutil.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,🐸,🐸"))
+	tk.MustQuery("select * from t use index(e)").Check(testutil.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,🐸,🐸"))
+	tk.MustQuery("select * from t use index(ue)").Check(testutil.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,🐸,🐸"))
 }
 
 func (s *testIntegrationSuite) TestIssue11645(c *C) {
