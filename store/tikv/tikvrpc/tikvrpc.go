@@ -49,6 +49,7 @@ const (
 	CmdPessimisticRollback
 	CmdTxnHeartBeat
 	CmdCheckTxnStatus
+	CmdCheckSecondaryLocks
 
 	CmdRawGet CmdType = 256 + iota
 	CmdRawBatchGet
@@ -147,6 +148,8 @@ func (t CmdType) String() string {
 		return "SplitRegion"
 	case CmdCheckTxnStatus:
 		return "CheckTxnStatus"
+	case CmdCheckSecondaryLocks:
+		return "CheckSecondaryLocks"
 	case CmdDebugGetRegionProperties:
 		return "DebugGetRegionProperties"
 	case CmdTxnHeartBeat:
@@ -160,7 +163,8 @@ type Request struct {
 	Type CmdType
 	Req  interface{}
 	kvrpcpb.Context
-	ReplicaReadSeed *uint32 // pointer to follower read seed in snapshot/coprocessor
+	ReplicaReadType kv.ReplicaReadType // dirrerent from `kvrpcpb.Context.ReplicaRead`
+	ReplicaReadSeed *uint32            // pointer to follower read seed in snapshot/coprocessor
 	StoreTp         kv.StoreType
 }
 
@@ -183,6 +187,7 @@ func NewRequest(typ CmdType, pointer interface{}, ctxs ...kvrpcpb.Context) *Requ
 func NewReplicaReadRequest(typ CmdType, pointer interface{}, replicaReadType kv.ReplicaReadType, replicaReadSeed *uint32, ctxs ...kvrpcpb.Context) *Request {
 	req := NewRequest(typ, pointer, ctxs...)
 	req.ReplicaRead = replicaReadType.IsFollowerRead()
+	req.ReplicaReadType = replicaReadType
 	req.ReplicaReadSeed = replicaReadSeed
 	return req
 }
@@ -357,6 +362,11 @@ func (req *Request) CheckTxnStatus() *kvrpcpb.CheckTxnStatusRequest {
 	return req.Req.(*kvrpcpb.CheckTxnStatusRequest)
 }
 
+// CheckSecondaryLocks returns CheckSecondaryLocksRequest in request.
+func (req *Request) CheckSecondaryLocks() *kvrpcpb.CheckSecondaryLocksRequest {
+	return req.Req.(*kvrpcpb.CheckSecondaryLocksRequest)
+}
+
 // TxnHeartBeat returns TxnHeartBeatRequest in request.
 func (req *Request) TxnHeartBeat() *kvrpcpb.TxnHeartBeatRequest {
 	return req.Req.(*kvrpcpb.TxnHeartBeatRequest)
@@ -413,6 +423,8 @@ func (req *Request) ToBatchCommandsRequest() *tikvpb.BatchCommandsRequest_Reques
 		return &tikvpb.BatchCommandsRequest_Request{Cmd: &tikvpb.BatchCommandsRequest_Request_Empty{Empty: req.Empty()}}
 	case CmdCheckTxnStatus:
 		return &tikvpb.BatchCommandsRequest_Request{Cmd: &tikvpb.BatchCommandsRequest_Request_CheckTxnStatus{CheckTxnStatus: req.CheckTxnStatus()}}
+	case CmdCheckSecondaryLocks:
+		return &tikvpb.BatchCommandsRequest_Request{Cmd: &tikvpb.BatchCommandsRequest_Request_CheckSecondaryLocks{CheckSecondaryLocks: req.CheckSecondaryLocks()}}
 	case CmdTxnHeartBeat:
 		return &tikvpb.BatchCommandsRequest_Request{Cmd: &tikvpb.BatchCommandsRequest_Request_TxnHeartBeat{TxnHeartBeat: req.TxnHeartBeat()}}
 	}
@@ -489,6 +501,8 @@ func FromBatchCommandsResponse(res *tikvpb.BatchCommandsResponse_Response) (*Res
 		return &Response{Resp: res.TxnHeartBeat}, nil
 	case *tikvpb.BatchCommandsResponse_Response_CheckTxnStatus:
 		return &Response{Resp: res.CheckTxnStatus}, nil
+	case *tikvpb.BatchCommandsResponse_Response_CheckSecondaryLocks:
+		return &Response{Resp: res.CheckSecondaryLocks}, nil
 	}
 	panic("unreachable")
 }
@@ -591,6 +605,8 @@ func SetContext(req *Request, region *metapb.Region, peer *metapb.Peer) error {
 		req.TxnHeartBeat().Context = ctx
 	case CmdCheckTxnStatus:
 		req.CheckTxnStatus().Context = ctx
+	case CmdCheckSecondaryLocks:
+		req.CheckSecondaryLocks().Context = ctx
 	default:
 		return fmt.Errorf("invalid request type %v", req.Type)
 	}
@@ -722,6 +738,10 @@ func GenRegionErrorResp(req *Request, e *errorpb.Error) (*Response, error) {
 		p = &kvrpcpb.CheckTxnStatusResponse{
 			RegionError: e,
 		}
+	case CmdCheckSecondaryLocks:
+		p = &kvrpcpb.CheckSecondaryLocksResponse{
+			RegionError: e,
+		}
 	default:
 		return nil, fmt.Errorf("invalid request type %v", req.Type)
 	}
@@ -831,6 +851,8 @@ func CallRPC(ctx context.Context, client tikvpb.TikvClient, req *Request) (*Resp
 		resp.Resp, err = &tikvpb.BatchCommandsEmptyResponse{}, nil
 	case CmdCheckTxnStatus:
 		resp.Resp, err = client.KvCheckTxnStatus(ctx, req.CheckTxnStatus())
+	case CmdCheckSecondaryLocks:
+		resp.Resp, err = client.KvCheckSecondaryLocks(ctx, req.CheckSecondaryLocks())
 	case CmdTxnHeartBeat:
 		resp.Resp, err = client.KvTxnHeartBeat(ctx, req.TxnHeartBeat())
 	default:

@@ -307,8 +307,6 @@ type LogicalAggregation struct {
 
 	AggFuncs     []*aggregation.AggFuncDesc
 	GroupByItems []expression.Expression
-	// groupByCols stores the columns that are group-by items.
-	groupByCols []*expression.Column
 
 	// aggHints stores aggregation hint information.
 	aggHints aggHintInfo
@@ -349,14 +347,16 @@ func (la *LogicalAggregation) IsCompleteModeAgg() bool {
 	return la.AggFuncs[0].Mode == aggregation.CompleteMode
 }
 
-// GetGroupByCols returns the groupByCols. If the groupByCols haven't be collected,
-// this method would collect them at first. If the GroupByItems have been changed,
-// we should explicitly collect GroupByColumns before this method.
+// GetGroupByCols returns the columns that are group-by items.
+// For example, `group by a, b, c+d` will return [a, b].
 func (la *LogicalAggregation) GetGroupByCols() []*expression.Column {
-	if la.groupByCols == nil {
-		la.collectGroupByColumns()
+	groupByCols := make([]*expression.Column, 0, len(la.GroupByItems))
+	for _, item := range la.GroupByItems {
+		if col, ok := item.(*expression.Column); ok {
+			groupByCols = append(groupByCols, col)
+		}
 	}
-	return la.groupByCols
+	return groupByCols
 }
 
 // ExtractCorrelatedCols implements LogicalPlan interface.
@@ -985,9 +985,10 @@ func (ls *LogicalSort) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 type LogicalTopN struct {
 	baseLogicalPlan
 
-	ByItems []*util.ByItems
-	Offset  uint64
-	Count   uint64
+	ByItems    []*util.ByItems
+	Offset     uint64
+	Count      uint64
+	limitHints limitHintInfo
 }
 
 // ExtractCorrelatedCols implements LogicalPlan interface.
@@ -1006,17 +1007,18 @@ func (lt *LogicalTopN) isLimit() bool {
 
 // LogicalLimit represents offset and limit plan.
 type LogicalLimit struct {
-	baseLogicalPlan
+	logicalSchemaProducer
 
-	Offset uint64
-	Count  uint64
+	Offset     uint64
+	Count      uint64
+	limitHints limitHintInfo
 }
 
 // LogicalLock represents a select lock plan.
 type LogicalLock struct {
 	baseLogicalPlan
 
-	Lock             ast.SelectLockType
+	Lock             *ast.SelectLockInfo
 	tblID2Handle     map[int64][]HandleCols
 	partitionedTable []table.PartitionedTable
 }

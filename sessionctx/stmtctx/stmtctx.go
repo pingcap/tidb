@@ -497,11 +497,30 @@ func (sc *StatementContext) MergeExecDetails(details *execdetails.ExecDetails, c
 		sc.mu.execDetails.WaitTime += details.WaitTime
 		sc.mu.execDetails.BackoffTime += details.BackoffTime
 		sc.mu.execDetails.RequestCount++
-		sc.mu.execDetails.TotalKeys += details.TotalKeys
-		sc.mu.execDetails.ProcessedKeys += details.ProcessedKeys
+		sc.MergeCopDetails(details.CopDetail)
 		sc.mu.allExecDetails = append(sc.mu.allExecDetails, details)
 	}
 	sc.mu.execDetails.CommitDetail = commitDetails
+	sc.mu.Unlock()
+}
+
+// MergeCopDetails merges cop details into self.
+func (sc *StatementContext) MergeCopDetails(copDetails *execdetails.CopDetails) {
+	if sc.mu.execDetails.CopDetail == nil {
+		sc.mu.execDetails.CopDetail = copDetails
+	} else {
+		sc.mu.execDetails.CopDetail.Merge(copDetails)
+	}
+}
+
+// MergeLockKeysExecDetails merges lock keys execution details into self.
+func (sc *StatementContext) MergeLockKeysExecDetails(lockKeys *execdetails.LockKeysDetails) {
+	sc.mu.Lock()
+	if sc.mu.execDetails.LockKeysDetail == nil {
+		sc.mu.execDetails.LockKeysDetail = lockKeys
+	} else {
+		sc.mu.execDetails.LockKeysDetail.Merge(lockKeys)
+	}
 	sc.mu.Unlock()
 }
 
@@ -521,7 +540,7 @@ func (sc *StatementContext) GetExecDetails() execdetails.ExecDetails {
 func (sc *StatementContext) ShouldClipToZero() bool {
 	// TODO: Currently altering column of integer to unsigned integer is not supported.
 	// If it is supported one day, that case should be added here.
-	return sc.InInsertStmt || sc.InLoadDataStmt
+	return sc.InInsertStmt || sc.InLoadDataStmt || sc.InUpdateStmt
 }
 
 // ShouldIgnoreOverflowError indicates whether we should ignore the error when type conversion overflows,

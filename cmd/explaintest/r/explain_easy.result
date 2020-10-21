@@ -53,7 +53,7 @@ HashJoin_23	4166.67	root		left outer join, equal:[eq(test.t1.c2, test.t2.c1)]
     └─TableFullScan_34	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
 explain update t1 set t1.c2 = 2 where t1.c1 = 1;
 id	estRows	task	access object	operator info
-Update_2	N/A	root		N/A
+Update_3	N/A	root		N/A
 └─Point_Get_1	1.00	root	table:t1	handle:1
 explain delete from t1 where t1.c2 = 1;
 id	estRows	task	access object	operator info
@@ -186,11 +186,11 @@ HashAgg_18	24000.00	root		group by:Column#10, funcs:firstrow(Column#11)->Column#
     └─IndexReader_73	10000.00	root		index:IndexFullScan_72
       └─IndexFullScan_72	10000.00	cop[tikv]	table:t2, index:c1(c1)	keep order:true, stats:pseudo
 select * from information_schema.tidb_indexes where table_name='t4';
-TABLE_SCHEMA	TABLE_NAME	NON_UNIQUE	KEY_NAME	SEQ_IN_INDEX	COLUMN_NAME	SUB_PART	INDEX_COMMENT	Expression	INDEX_ID
-test	t4	0	PRIMARY	1	a	NULL		NULL	0
-test	t4	1	idx	1	a	NULL		NULL	1
-test	t4	1	idx	2	b	NULL		NULL	1
-test	t4	1	expr_idx	1	NULL	NULL		(`a` + `b` + 1)	2
+TABLE_SCHEMA	TABLE_NAME	NON_UNIQUE	KEY_NAME	SEQ_IN_INDEX	COLUMN_NAME	SUB_PART	INDEX_COMMENT	Expression	INDEX_ID	IS_VISIBLE
+test	t4	0	PRIMARY	1	a	NULL		NULL	0	YES
+test	t4	1	idx	1	a	NULL		NULL	1	YES
+test	t4	1	idx	2	b	NULL		NULL	1	YES
+test	t4	1	expr_idx	1	NULL	NULL		(`a` + `b` + 1)	2	YES
 explain select count(1) from (select count(1) from (select * from t1 where c3 = 100) k) k2;
 id	estRows	task	access object	operator info
 StreamAgg_13	1.00	root		funcs:count(1)->Column#5
@@ -556,28 +556,29 @@ Projection_4	10.00	root		plus(1, test.t.nb)->Column#5
 explain select * from t ta left outer join t tb on ta.nb = tb.nb and ta.a > 1 where ifnull(ta.nb, 1) or ta.nb is null;
 id	estRows	task	access object	operator info
 HashJoin_7	8320.83	root		left outer join, equal:[eq(test.t.nb, test.t.nb)], left cond:[gt(test.t.a, 1)]
-├─TableReader_13(Build)	10000.00	root		data:TableFullScan_12
-│ └─TableFullScan_12	10000.00	cop[tikv]	table:tb	keep order:false, stats:pseudo
+├─TableReader_14(Build)	6656.67	root		data:Selection_13
+│ └─Selection_13	6656.67	cop[tikv]		or(test.t.nb, 0)
+│   └─TableFullScan_12	10000.00	cop[tikv]	table:tb	keep order:false, stats:pseudo
 └─TableReader_11(Probe)	6656.67	root		data:Selection_10
-  └─Selection_10	6656.67	cop[tikv]		or(test.t.nb, isnull(test.t.nb))
+  └─Selection_10	6656.67	cop[tikv]		or(test.t.nb, 0)
     └─TableFullScan_9	10000.00	cop[tikv]	table:ta	keep order:false, stats:pseudo
 explain select * from t ta right outer join t tb on ta.nb = tb.nb and ta.a > 1 where ifnull(tb.nb, 1) or tb.nb is null;
 id	estRows	task	access object	operator info
 HashJoin_7	6656.67	root		right outer join, equal:[eq(test.t.nb, test.t.nb)]
-├─TableReader_11(Build)	3333.33	root		data:Selection_10
-│ └─Selection_10	3333.33	cop[tikv]		gt(test.t.a, 1)
+├─TableReader_11(Build)	2218.89	root		data:Selection_10
+│ └─Selection_10	2218.89	cop[tikv]		gt(test.t.a, 1), or(test.t.nb, 0)
 │   └─TableFullScan_9	10000.00	cop[tikv]	table:ta	keep order:false, stats:pseudo
 └─TableReader_14(Probe)	6656.67	root		data:Selection_13
-  └─Selection_13	6656.67	cop[tikv]		or(test.t.nb, isnull(test.t.nb))
+  └─Selection_13	6656.67	cop[tikv]		or(test.t.nb, 0)
     └─TableFullScan_12	10000.00	cop[tikv]	table:tb	keep order:false, stats:pseudo
 explain select * from t ta inner join t tb on ta.nb = tb.nb and ta.a > 1 where ifnull(tb.nb, 1) or tb.nb is null;
 id	estRows	task	access object	operator info
-HashJoin_9	4166.67	root		inner join, equal:[eq(test.t.nb, test.t.nb)]
-├─TableReader_12(Build)	3333.33	root		data:Selection_11
-│ └─Selection_11	3333.33	cop[tikv]		gt(test.t.a, 1)
+HashJoin_9	2773.61	root		inner join, equal:[eq(test.t.nb, test.t.nb)]
+├─TableReader_12(Build)	2218.89	root		data:Selection_11
+│ └─Selection_11	2218.89	cop[tikv]		gt(test.t.a, 1), or(test.t.nb, 0)
 │   └─TableFullScan_10	10000.00	cop[tikv]	table:ta	keep order:false, stats:pseudo
 └─TableReader_15(Probe)	6656.67	root		data:Selection_14
-  └─Selection_14	6656.67	cop[tikv]		or(test.t.nb, isnull(test.t.nb))
+  └─Selection_14	6656.67	cop[tikv]		or(test.t.nb, 0)
     └─TableFullScan_13	10000.00	cop[tikv]	table:tb	keep order:false, stats:pseudo
 explain select ifnull(t.nc, 1) in (select count(*) from t s , t t1 where s.a = t.a and s.a = t1.a) from t;
 id	estRows	task	access object	operator info
@@ -605,12 +606,12 @@ Selection_7	10000.00	root		or(ifnull(test.t.a, 1), isnull(test.t.a))
     └─TableFullScan_10	10000.00	cop[tikv]	table:ta	keep order:false, stats:pseudo
 explain select * from t ta right outer join t tb on ta.nb = tb.nb and ta.a > 1 where ifnull(tb.a, 1) or tb.a is null;
 id	estRows	task	access object	operator info
-HashJoin_7	8000.00	root		right outer join, equal:[eq(test.t.nb, test.t.nb)]
+HashJoin_7	8002.00	root		right outer join, equal:[eq(test.t.nb, test.t.nb)]
 ├─TableReader_11(Build)	3333.33	root		data:Selection_10
 │ └─Selection_10	3333.33	cop[tikv]		gt(test.t.a, 1)
 │   └─TableFullScan_9	10000.00	cop[tikv]	table:ta	keep order:false, stats:pseudo
-└─TableReader_14(Probe)	8000.00	root		data:Selection_13
-  └─Selection_13	8000.00	cop[tikv]		or(ifnull(test.t.a, 1), isnull(test.t.a))
+└─TableReader_14(Probe)	8002.00	root		data:Selection_13
+  └─Selection_13	8002.00	cop[tikv]		or(ifnull(test.t.a, 1), isnull(test.t.a))
     └─TableFullScan_12	10000.00	cop[tikv]	table:tb	keep order:false, stats:pseudo
 explain select ifnull(t.a, 1) in (select count(*) from t s , t t1 where s.a = t.a and s.a = t1.a) from t;
 id	estRows	task	access object	operator info
@@ -687,7 +688,7 @@ begin;
 insert into t values (1, 1);
 explain update t set j = -j where i = 1 and j = 1;
 id	estRows	task	access object	operator info
-Update_2	N/A	root		N/A
+Update_3	N/A	root		N/A
 └─Point_Get_1	1.00	root	table:t, index:i(i, j)	
 rollback;
 drop table if exists t;
@@ -771,4 +772,17 @@ label = "cop"
 "TableReader_7" -> "Selection_6"
 }
 
+drop table if exists t;
+create table t(a binary(16) not null, b varchar(2) default null, c varchar(100) default 'aaaa', key (a,b));
+explain select * from t where a=x'FA34E1093CB428485734E3917F000000' and b='xb';
+id	estRows	task	access object	operator info
+IndexLookUp_10	0.10	root		
+├─IndexRangeScan_8(Build)	0.10	cop[tikv]	table:t, index:a(a, b)	range:["[250 52 225 9 60 180 40 72 87 52 227 145 127 0 0 0]" "xb","[250 52 225 9 60 180 40 72 87 52 227 145 127 0 0 0]" "xb"], keep order:false, stats:pseudo
+└─TableRowIDScan_9(Probe)	0.10	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain update t set c = 'ssss' where a=x'FA34E1093CB428485734E3917F000000' and b='xb';
+id	estRows	task	access object	operator info
+Update_4	N/A	root		N/A
+└─IndexLookUp_11	0.10	root		
+  ├─IndexRangeScan_9(Build)	0.10	cop[tikv]	table:t, index:a(a, b)	range:["[250 52 225 9 60 180 40 72 87 52 227 145 127 0 0 0]" "xb","[250 52 225 9 60 180 40 72 87 52 227 145 127 0 0 0]" "xb"], keep order:false, stats:pseudo
+  └─TableRowIDScan_10(Probe)	0.10	cop[tikv]	table:t	keep order:false, stats:pseudo
 drop table if exists t;

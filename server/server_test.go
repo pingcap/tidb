@@ -30,7 +30,6 @@ import (
 	"time"
 
 	"github.com/go-sql-driver/mysql"
-	"github.com/phayes/freeport"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -44,32 +43,8 @@ import (
 )
 
 var (
-	portGenerator       uint32 = 4001
-	statusPortGenerator uint32 = 7090
-	regression                 = true
+	regression = true
 )
-
-func genPorts() (uint, uint) {
-	var (
-		ports []int
-		err   error
-	)
-	if ports, err = freeport.GetFreePorts(2); err != nil {
-		log.Fatal("no more free ports", zap.Error(err))
-	}
-	return uint(ports[0]), uint(ports[1])
-}
-
-func genPort() uint {
-	var (
-		port int
-		err  error
-	)
-	if port, err = freeport.GetFreePort(); err != nil {
-		log.Fatal("no more free ports", zap.Error(err))
-	}
-	return uint(port)
-}
 
 func TestT(t *testing.T) {
 	CustomVerboseFlag = true
@@ -90,10 +65,9 @@ type testServerClient struct {
 
 // newTestServerClient return a testServerClient with unique address
 func newTestServerClient() *testServerClient {
-	port, statusPort := genPorts()
 	return &testServerClient{
-		port:         port,
-		statusPort:   statusPort,
+		port:         0,
+		statusPort:   0,
 		statusScheme: "http",
 	}
 }
@@ -1238,8 +1212,22 @@ func (cli *testServerClient) runTestStatusAPI(c *C) {
 	c.Assert(data.GitHash, Equals, versioninfo.TiDBGitHash)
 }
 
+// The golang sql driver (and most drivers) should have multi-statement
+// disabled by default for security reasons. Lets ensure that the behavior
+// is correct.
+
+func (cli *testServerClient) runFailedTestMultiStatements(c *C) {
+	cli.runTestsOnNewDB(c, nil, "FailedMultiStatements", func(dbt *DBTest) {
+		_, err := dbt.db.Exec("SELECT 1; SELECT 1; SELECT 2; SELECT 3;")
+		c.Assert(err.Error(), Equals, "Error 1105: client has multi-statement capability disabled")
+	})
+}
+
 func (cli *testServerClient) runTestMultiStatements(c *C) {
-	cli.runTestsOnNewDB(c, nil, "MultiStatements", func(dbt *DBTest) {
+
+	cli.runTestsOnNewDB(c, func(config *mysql.Config) {
+		config.Params = map[string]string{"multiStatements": "true"}
+	}, "MultiStatements", func(dbt *DBTest) {
 		// Create Table
 		dbt.mustExec("CREATE TABLE `test` (`id` int(11) NOT NULL, `value` int(11) NOT NULL) ")
 

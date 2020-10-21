@@ -48,6 +48,15 @@ func (builder *RequestBuilder) SetMemTracker(tracker *memory.Tracker) *RequestBu
 	return builder
 }
 
+// SetTableRangesForTables sets "KeyRanges" for "kv.Request" by converting multiples "tableRanges"
+// to "KeyRanges" firstly.
+func (builder *RequestBuilder) SetTableRangesForTables(tids []int64, tableRanges []*ranger.Range, fb *statistics.QueryFeedback) *RequestBuilder {
+	if builder.err == nil {
+		builder.Request.KeyRanges = TablesRangesToKVRanges(tids, tableRanges, fb)
+	}
+	return builder
+}
+
 // SetTableRanges sets "KeyRanges" for "kv.Request" by converting "tableRanges"
 // to "KeyRanges" firstly.
 func (builder *RequestBuilder) SetTableRanges(tid int64, tableRanges []*ranger.Range, fb *statistics.QueryFeedback) *RequestBuilder {
@@ -66,9 +75,27 @@ func (builder *RequestBuilder) SetIndexRanges(sc *stmtctx.StatementContext, tid,
 	return builder
 }
 
+// SetIndexRangesForTables sets "KeyRanges" for "kv.Request" by converting multiple indexes range
+// "ranges" to "KeyRanges" firstly.
+func (builder *RequestBuilder) SetIndexRangesForTables(sc *stmtctx.StatementContext, tids []int64, idxID int64, ranges []*ranger.Range) *RequestBuilder {
+	if builder.err == nil {
+		builder.Request.KeyRanges, builder.err = IndexRangesToKVRangesForTables(sc, tids, idxID, ranges, nil)
+	}
+	return builder
+}
+
 // SetCommonHandleRanges sets "KeyRanges" for "kv.Request" by converting common handle range
 // "ranges" to "KeyRanges" firstly.
 func (builder *RequestBuilder) SetCommonHandleRanges(sc *stmtctx.StatementContext, tid int64, ranges []*ranger.Range) *RequestBuilder {
+	if builder.err == nil {
+		builder.Request.KeyRanges, builder.err = CommonHandleRangesToKVRanges(sc, []int64{tid}, ranges)
+	}
+	return builder
+}
+
+// SetCommonHandleRangesForTables sets "KeyRanges" for "kv.Request" by converting common handle range
+// "ranges" to "KeyRanges" firstly for multiple tables.
+func (builder *RequestBuilder) SetCommonHandleRangesForTables(sc *stmtctx.StatementContext, tid []int64, ranges []*ranger.Range) *RequestBuilder {
 	if builder.err == nil {
 		builder.Request.KeyRanges, builder.err = CommonHandleRangesToKVRanges(sc, tid, ranges)
 	}
@@ -82,6 +109,15 @@ func (builder *RequestBuilder) SetTableHandles(tid int64, handles []kv.Handle) *
 	return builder
 }
 
+// SetPartitionsAndHandles sets "KeyRanges" for "kv.Request" by converting ParitionHandles to KeyRanges.
+// handles in slice must be kv.PartitionHandle.
+func (builder *RequestBuilder) SetPartitionsAndHandles(handles []kv.Handle) *RequestBuilder {
+	builder.Request.KeyRanges = PartitionHandlesToKVRanges(handles)
+	return builder
+}
+
+const estimatedRegionRowCount = 100000
+
 // SetDAGRequest sets the request type to "ReqTypeDAG" and construct request data.
 func (builder *RequestBuilder) SetDAGRequest(dag *tipb.DAGRequest) *RequestBuilder {
 	if builder.err == nil {
@@ -89,7 +125,13 @@ func (builder *RequestBuilder) SetDAGRequest(dag *tipb.DAGRequest) *RequestBuild
 		builder.Request.Cacheable = true
 		builder.Request.Data, builder.err = dag.Marshal()
 	}
-
+	// When the DAG is just simple scan and small limit, set concurrency to 1 would be sufficient.
+	if len(dag.Executors) == 2 && dag.Executors[1].GetLimit() != nil {
+		limit := dag.Executors[1].GetLimit()
+		if limit != nil && limit.Limit < estimatedRegionRowCount {
+			builder.Request.Concurrency = 1
+		}
+	}
 	return builder
 }
 
@@ -176,7 +218,10 @@ func (builder *RequestBuilder) getKVPriority(sv *variable.SessionVars) int {
 // SetFromSessionVars sets the following fields for "kv.Request" from session variables:
 // "Concurrency", "IsolationLevel", "NotFillCache", "ReplicaRead", "SchemaVar".
 func (builder *RequestBuilder) SetFromSessionVars(sv *variable.SessionVars) *RequestBuilder {
-	builder.Request.Concurrency = sv.DistSQLScanConcurrency()
+	if builder.Request.Concurrency == 0 {
+		// Concurrency may be set to 1 by SetDAGRequest
+		builder.Request.Concurrency = sv.DistSQLScanConcurrency()
+	}
 	builder.Request.IsolationLevel = builder.getIsolationLevel()
 	builder.Request.NotFillCache = sv.StmtCtx.NotFillCache
 	builder.Request.TaskID = sv.StmtCtx.TaskID
@@ -204,8 +249,13 @@ func (builder *RequestBuilder) SetConcurrency(concurrency int) *RequestBuilder {
 
 // TableRangesToKVRanges converts table ranges to "KeyRange".
 func TableRangesToKVRanges(tid int64, ranges []*ranger.Range, fb *statistics.QueryFeedback) []kv.KeyRange {
+	return TablesRangesToKVRanges([]int64{tid}, ranges, fb)
+}
+
+// TablesRangesToKVRanges converts table ranges to "KeyRange".
+func TablesRangesToKVRanges(tids []int64, ranges []*ranger.Range, fb *statistics.QueryFeedback) []kv.KeyRange {
 	if fb == nil || fb.Hist == nil {
-		return tableRangesToKVRangesWithoutSplit(tid, ranges)
+		return tableRangesToKVRangesWithoutSplit(tids, ranges)
 	}
 	krs := make([]kv.KeyRange, 0, len(ranges))
 	feedbackRanges := make([]*ranger.Range, 0, len(ranges))
@@ -225,21 +275,25 @@ func TableRangesToKVRanges(tid int64, ranges []*ranger.Range, fb *statistics.Que
 		if !ran.HighExclude {
 			high = kv.Key(high).PrefixNext()
 		}
-		startKey := tablecodec.EncodeRowKey(tid, low)
-		endKey := tablecodec.EncodeRowKey(tid, high)
-		krs = append(krs, kv.KeyRange{StartKey: startKey, EndKey: endKey})
+		for _, tid := range tids {
+			startKey := tablecodec.EncodeRowKey(tid, low)
+			endKey := tablecodec.EncodeRowKey(tid, high)
+			krs = append(krs, kv.KeyRange{StartKey: startKey, EndKey: endKey})
+		}
 	}
 	fb.StoreRanges(feedbackRanges)
 	return krs
 }
 
-func tableRangesToKVRangesWithoutSplit(tid int64, ranges []*ranger.Range) []kv.KeyRange {
-	krs := make([]kv.KeyRange, 0, len(ranges))
+func tableRangesToKVRangesWithoutSplit(tids []int64, ranges []*ranger.Range) []kv.KeyRange {
+	krs := make([]kv.KeyRange, 0, len(ranges)*len(tids))
 	for _, ran := range ranges {
 		low, high := encodeHandleKey(ran)
-		startKey := tablecodec.EncodeRowKey(tid, low)
-		endKey := tablecodec.EncodeRowKey(tid, high)
-		krs = append(krs, kv.KeyRange{StartKey: startKey, EndKey: endKey})
+		for _, tid := range tids {
+			startKey := tablecodec.EncodeRowKey(tid, low)
+			endKey := tablecodec.EncodeRowKey(tid, high)
+			krs = append(krs, kv.KeyRange{StartKey: startKey, EndKey: endKey})
+		}
 	}
 	return krs
 }
@@ -265,7 +319,7 @@ func TableHandlesToKVRanges(tid int64, handles []kv.Handle) []kv.KeyRange {
 		if commonHandle, ok := handles[i].(*kv.CommonHandle); ok {
 			ran := kv.KeyRange{
 				StartKey: tablecodec.EncodeRowKey(tid, commonHandle.Encoded()),
-				EndKey:   tablecodec.EncodeRowKey(tid, append(commonHandle.Encoded(), 0)),
+				EndKey:   tablecodec.EncodeRowKey(tid, kv.Key(commonHandle.Encoded()).Next()),
 			}
 			krs = append(krs, ran)
 			i++
@@ -288,10 +342,53 @@ func TableHandlesToKVRanges(tid int64, handles []kv.Handle) []kv.KeyRange {
 	return krs
 }
 
+// PartitionHandlesToKVRanges convert ParitionHandles to kv ranges.
+// Handle in slices must be kv.PartitionHandle
+func PartitionHandlesToKVRanges(handles []kv.Handle) []kv.KeyRange {
+	krs := make([]kv.KeyRange, 0, len(handles))
+	i := 0
+	for i < len(handles) {
+		ph := handles[i].(kv.PartitionHandle)
+		h := ph.Handle
+		pid := ph.PartitionID
+		if commonHandle, ok := h.(*kv.CommonHandle); ok {
+			ran := kv.KeyRange{
+				StartKey: tablecodec.EncodeRowKey(pid, commonHandle.Encoded()),
+				EndKey:   tablecodec.EncodeRowKey(pid, append(commonHandle.Encoded(), 0)),
+			}
+			krs = append(krs, ran)
+			i++
+			continue
+		}
+		j := i + 1
+		for ; j < len(handles) && handles[j-1].IntValue() != math.MaxInt64; j++ {
+			if handles[j].IntValue() != handles[j-1].IntValue()+1 {
+				break
+			}
+			if handles[j].(kv.PartitionHandle).PartitionID != pid {
+				break
+			}
+		}
+		low := codec.EncodeInt(nil, handles[i].IntValue())
+		high := codec.EncodeInt(nil, handles[j-1].IntValue())
+		high = kv.Key(high).PrefixNext()
+		startKey := tablecodec.EncodeRowKey(pid, low)
+		endKey := tablecodec.EncodeRowKey(pid, high)
+		krs = append(krs, kv.KeyRange{StartKey: startKey, EndKey: endKey})
+		i = j
+	}
+	return krs
+}
+
 // IndexRangesToKVRanges converts index ranges to "KeyRange".
 func IndexRangesToKVRanges(sc *stmtctx.StatementContext, tid, idxID int64, ranges []*ranger.Range, fb *statistics.QueryFeedback) ([]kv.KeyRange, error) {
+	return IndexRangesToKVRangesForTables(sc, []int64{tid}, idxID, ranges, fb)
+}
+
+// IndexRangesToKVRangesForTables converts indexes ranges to "KeyRange".
+func IndexRangesToKVRangesForTables(sc *stmtctx.StatementContext, tids []int64, idxID int64, ranges []*ranger.Range, fb *statistics.QueryFeedback) ([]kv.KeyRange, error) {
 	if fb == nil || fb.Hist == nil {
-		return indexRangesToKVWithoutSplit(sc, tid, idxID, ranges)
+		return indexRangesToKVWithoutSplit(sc, tids, idxID, ranges)
 	}
 	feedbackRanges := make([]*ranger.Range, 0, len(ranges))
 	for _, ran := range ranges {
@@ -320,16 +417,18 @@ func IndexRangesToKVRanges(sc *stmtctx.StatementContext, tid, idxID int64, range
 		if !ran.HighExclude {
 			high = kv.Key(high).PrefixNext()
 		}
-		startKey := tablecodec.EncodeIndexSeekKey(tid, idxID, low)
-		endKey := tablecodec.EncodeIndexSeekKey(tid, idxID, high)
-		krs = append(krs, kv.KeyRange{StartKey: startKey, EndKey: endKey})
+		for _, tid := range tids {
+			startKey := tablecodec.EncodeIndexSeekKey(tid, idxID, low)
+			endKey := tablecodec.EncodeIndexSeekKey(tid, idxID, high)
+			krs = append(krs, kv.KeyRange{StartKey: startKey, EndKey: endKey})
+		}
 	}
 	fb.StoreRanges(feedbackRanges)
 	return krs, nil
 }
 
 // CommonHandleRangesToKVRanges converts common handle ranges to "KeyRange".
-func CommonHandleRangesToKVRanges(sc *stmtctx.StatementContext, tid int64, ranges []*ranger.Range) ([]kv.KeyRange, error) {
+func CommonHandleRangesToKVRanges(sc *stmtctx.StatementContext, tids []int64, ranges []*ranger.Range) ([]kv.KeyRange, error) {
 	rans := make([]*ranger.Range, 0, len(ranges))
 	for _, ran := range ranges {
 		low, high, err := encodeIndexKey(sc, ran)
@@ -346,23 +445,27 @@ func CommonHandleRangesToKVRanges(sc *stmtctx.StatementContext, tid int64, range
 			low = kv.Key(low).PrefixNext()
 		}
 		ran.LowVal[0].SetBytes(low)
-		startKey := tablecodec.EncodeCommonHandleSeekKey(tid, low)
-		endKey := tablecodec.EncodeCommonHandleSeekKey(tid, high)
-		krs = append(krs, kv.KeyRange{StartKey: startKey, EndKey: endKey})
+		for _, tid := range tids {
+			startKey := tablecodec.EncodeRowKey(tid, low)
+			endKey := tablecodec.EncodeRowKey(tid, high)
+			krs = append(krs, kv.KeyRange{StartKey: startKey, EndKey: endKey})
+		}
 	}
 	return krs, nil
 }
 
-func indexRangesToKVWithoutSplit(sc *stmtctx.StatementContext, tid, idxID int64, ranges []*ranger.Range) ([]kv.KeyRange, error) {
+func indexRangesToKVWithoutSplit(sc *stmtctx.StatementContext, tids []int64, idxID int64, ranges []*ranger.Range) ([]kv.KeyRange, error) {
 	krs := make([]kv.KeyRange, 0, len(ranges))
 	for _, ran := range ranges {
 		low, high, err := encodeIndexKey(sc, ran)
 		if err != nil {
 			return nil, err
 		}
-		startKey := tablecodec.EncodeIndexSeekKey(tid, idxID, low)
-		endKey := tablecodec.EncodeIndexSeekKey(tid, idxID, high)
-		krs = append(krs, kv.KeyRange{StartKey: startKey, EndKey: endKey})
+		for _, tid := range tids {
+			startKey := tablecodec.EncodeIndexSeekKey(tid, idxID, low)
+			endKey := tablecodec.EncodeIndexSeekKey(tid, idxID, high)
+			krs = append(krs, kv.KeyRange{StartKey: startKey, EndKey: endKey})
+		}
 	}
 	return krs, nil
 }

@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb-tools/tidb-binlog/node"
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
@@ -54,6 +55,7 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/format"
@@ -384,6 +386,8 @@ func (e *ShowExec) fetchShowTables() error {
 			tableTypes[v.Meta().Name.O] = "VIEW"
 		} else if v.Meta().IsSequence() {
 			tableTypes[v.Meta().Name.O] = "SEQUENCE"
+		} else if util.IsSystemView(e.DBName.L) {
+			tableTypes[v.Meta().Name.O] = "SYSTEM VIEW"
 		} else {
 			tableTypes[v.Meta().Name.O] = "BASE TABLE"
 		}
@@ -469,6 +473,9 @@ func (e *ShowExec) fetchShowColumns(ctx context.Context) error {
 			idx := expression.FindFieldNameIdxByColName(viewOutputNames, col.Name.L)
 			if idx >= 0 {
 				col.FieldType = *viewSchema.Columns[idx].GetType()
+			}
+			if col.Tp == mysql.TypeVarString {
+				col.Tp = mysql.TypeVarchar
 			}
 		}
 	}
@@ -646,9 +653,9 @@ func (e *ShowExec) fetchShowVariables() (err error) {
 		value         string
 		ok            bool
 		sessionVars   = e.ctx.GetSessionVars()
-		unreachedVars = make([]string, 0, len(variable.SysVars))
+		unreachedVars = make([]string, 0, len(variable.GetSysVars()))
 	)
-	for _, v := range variable.SysVars {
+	for _, v := range variable.GetSysVars() {
 		if !e.GlobalScope {
 			// For a session scope variable,
 			// 1. try to fetch value from SessionVars.Systems;
@@ -678,7 +685,7 @@ func (e *ShowExec) fetchShowVariables() (err error) {
 		for _, varName := range unreachedVars {
 			varValue, ok := systemVars[varName]
 			if !ok {
-				varValue = variable.SysVars[varName].Value
+				varValue = variable.GetSysVar(varName).Value
 			}
 			e.appendRow([]interface{}{varName, varValue})
 		}
@@ -823,7 +830,7 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 				buf.WriteString(table.OptionalFsp(&col.FieldType))
 			}
 		}
-		if tableInfo.PKIsHandle && tableInfo.ContainsAutoRandomBits() && tableInfo.GetPkName().L == col.Name.L {
+		if ddl.IsAutoRandomColumnID(tableInfo, col.ID) {
 			buf.WriteString(fmt.Sprintf(" /*T![auto_rand] AUTO_RANDOM(%d) */", tableInfo.AutoRandomBits))
 		}
 		if len(col.Comment) > 0 {
@@ -1362,7 +1369,7 @@ func (e *ShowExec) fetchShowWarnings(errOnly bool) error {
 		warn := errors.Cause(w.Err)
 		switch x := warn.(type) {
 		case *terror.Error:
-			sqlErr := x.ToSQLError()
+			sqlErr := terror.ToSQLError(x)
 			e.appendRow([]interface{}{w.Level, int64(sqlErr.Code), sqlErr.Message})
 		default:
 			e.appendRow([]interface{}{w.Level, int64(mysql.ErrUnknown), warn.Error()})

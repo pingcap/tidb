@@ -24,9 +24,9 @@ import (
 	"github.com/golang/protobuf/proto"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	pd "github.com/pingcap/pd/v4/client"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/tablecodec"
+	pd "github.com/tikv/pd/client"
 	"go.uber.org/atomic"
 )
 
@@ -237,6 +237,11 @@ func (c *Cluster) GetRegionByKey(key []byte) (*metapb.Region, *metapb.Peer) {
 	c.RLock()
 	defer c.RUnlock()
 
+	return c.getRegionByKeyNoLock(key)
+}
+
+// getRegionByKeyNoLock returns the Region and its leader whose range contains the key without Lock.
+func (c *Cluster) getRegionByKeyNoLock(key []byte) (*metapb.Region, *metapb.Peer) {
 	for _, r := range c.regions {
 		if regionContains(r.Meta.StartKey, r.Meta.EndKey, key) {
 			return proto.Clone(r.Meta).(*metapb.Region), proto.Clone(r.leaderPeer()).(*metapb.Peer)
@@ -250,7 +255,7 @@ func (c *Cluster) GetPrevRegionByKey(key []byte) (*metapb.Region, *metapb.Peer) 
 	c.RLock()
 	defer c.RUnlock()
 
-	currentRegion, _ := c.GetRegionByKey(key)
+	currentRegion, _ := c.getRegionByKeyNoLock(key)
 	if len(currentRegion.StartKey) == 0 {
 		return nil, nil
 	}

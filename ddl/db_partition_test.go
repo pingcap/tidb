@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
@@ -154,15 +155,15 @@ func (s *testIntegrationSuite3) TestCreateTableWithPartition(c *C) {
 	);`
 	tk.MustGetErrCode(sql7, tmysql.ErrPartitionMaxvalue)
 
-	_, err = tk.Exec(`create table t8 (
+	sql18 := `create table t8 (
 	a int not null,
 	b int not null
 	)
 	partition by range( a ) (
 		partition p1 values less than (19xx91),
 		partition p2 values less than maxvalue
-	);`)
-	c.Assert(ddl.ErrNotAllowedTypeInPartition.Equal(err), IsTrue)
+	);`
+	tk.MustGetErrCode(sql18, mysql.ErrBadField)
 
 	sql9 := `create TABLE t9 (
 	col1 int
@@ -248,6 +249,8 @@ func (s *testIntegrationSuite3) TestCreateTableWithPartition(c *C) {
 	tk.MustGetErrCode(`create table t32 (a int not null) partition by range columns( a );`, tmysql.ErrPartitionsMustBeDefined)
 	tk.MustGetErrCode(`create table t33 (a int, b int) partition by hash(a) partitions 0;`, tmysql.ErrNoParts)
 	tk.MustGetErrCode(`create table t33 (a timestamp, b int) partition by hash(a) partitions 30;`, tmysql.ErrFieldTypeNotAllowedAsPartitionField)
+	tk.MustGetErrCode(`CREATE TABLE t34 (c0 INT) PARTITION BY HASH((CASE WHEN 0 THEN 0 ELSE c0 END )) PARTITIONS 1;`, tmysql.ErrPartitionFunctionIsNotAllowed)
+	tk.MustGetErrCode(`CREATE TABLE t0(c0 INT) PARTITION BY HASH((c0<CURRENT_USER())) PARTITIONS 1;`, tmysql.ErrPartitionFunctionIsNotAllowed)
 	// TODO: fix this one
 	// tk.MustGetErrCode(`create table t33 (a timestamp, b int) partition by hash(unix_timestamp(a)) partitions 30;`, tmysql.ErrPartitionFuncNotAllowed)
 
@@ -489,6 +492,220 @@ create table log_message_1 (
 	tk.MustExec("create table t2 (a int, b char(3)) partition by range columns (b) (" +
 		"partition p0 values less than ( 'a')," +
 		"partition p1 values less than (maxvalue))")
+}
+
+func (s *testIntegrationSuite1) TestCreateTableWithListPartition(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("set @@session.tidb_enable_table_partition = 1")
+	tk.MustExec("drop table if exists t")
+	type errorCase struct {
+		sql string
+		err *terror.Error
+	}
+	cases := []errorCase{
+		{
+			"create table t (id int) partition by list (id);",
+			ast.ErrPartitionsMustBeDefined,
+		},
+		{
+			"create table t (a int) partition by list (b) (partition p0 values in (1));",
+			ddl.ErrBadField,
+		},
+		{
+			"create table t (id timestamp) partition by list (id) (partition p0 values in ('2019-01-09 11:23:34'));",
+			ddl.ErrNotAllowedTypeInPartition,
+		},
+		{
+			"create table t (id decimal) partition by list (id) (partition p0 values in ('2019-01-09 11:23:34'));",
+			ddl.ErrNotAllowedTypeInPartition,
+		},
+		{
+			"create table t (a int) partition by list (a) (partition p0 values in (1), partition p0 values in (2));",
+			ddl.ErrSameNamePartition,
+		},
+		{
+			"create table t (a int) partition by list (a) (partition p0 values in (1), partition P0 values in (2));",
+			ddl.ErrSameNamePartition,
+		},
+		{
+			"create table t (a int) partition by list (a) (partition p0 values in (1), partition p1 values in (1));",
+			ddl.ErrMultipleDefConstInListPart,
+		},
+		{
+			"create table t (a int) partition by list (a) (partition p0 values in (1), partition p1 values in (+1));",
+			ddl.ErrMultipleDefConstInListPart,
+		},
+		{
+			"create table t (a int) partition by list (a) (partition p0 values in (null), partition p1 values in (NULL));",
+			ddl.ErrMultipleDefConstInListPart,
+		},
+		{
+			`create table t1 (id int key, name varchar(10), unique index idx(name)) partition by list  (id) (
+				    partition p0 values in (3,5,6,9,17),
+				    partition p1 values in (1,2,10,11,19,20),
+				    partition p2 values in (4,12,13,14,18),
+				    partition p3 values in (7,8,15,16)
+				);`,
+			ddl.ErrUniqueKeyNeedAllFieldsInPf,
+		},
+	}
+	for i, t := range cases {
+		_, err := tk.Exec(t.sql)
+		c.Assert(t.err.Equal(err), IsTrue, Commentf(
+			"case %d fail, sql = `%s`\nexpected error = `%v`\n  actual error = `%v`",
+			i, t.sql, t.err, err,
+		))
+	}
+
+	validCases := []string{
+		"create table t (a int) partition by list (a) (partition p0 values in (1));",
+		"create table t (a int) partition by list (a) (partition p0 values in (1), partition p1 values in (2));",
+		`create table t (id int, name varchar(10), age int) partition by list (id) (
+			partition p0 values in (3,5,6,9,17),
+			partition p1 values in (1,2,10,11,19,20),
+			partition p2 values in (4,12,13,-14,18),
+			partition p3 values in (7,8,15,+16)
+		);`,
+		"create table t (a bigint) partition by list (a) (partition p0 values in (to_seconds('2020-09-28 17:03:38'),to_seconds('2020-09-28 17:03:39')));",
+		"create table t (a datetime) partition by list (to_seconds(a)) (partition p0 values in (to_seconds('2020-09-28 17:03:38'),to_seconds('2020-09-28 17:03:39')));",
+	}
+
+	for _, sql := range validCases {
+		tk.MustExec("drop table if exists t")
+		tk.MustExec(sql)
+		tbl := testGetTableByName(c, s.ctx, "test", "t")
+		tblInfo := tbl.Meta()
+		c.Assert(tblInfo.Partition, NotNil)
+		c.Assert(tblInfo.Partition.Enable, Equals, true)
+		c.Assert(tblInfo.Partition.Type == model.PartitionTypeList, IsTrue)
+	}
+}
+
+func (s *testIntegrationSuite1) TestCreateTableWithListColumnsPartition(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("set @@session.tidb_enable_table_partition = 1")
+	tk.MustExec("drop table if exists t")
+	type errorCase struct {
+		sql string
+		err *terror.Error
+	}
+	cases := []errorCase{
+		{
+			"create table t (id int) partition by list columns (id);",
+			ast.ErrPartitionsMustBeDefined,
+		},
+		{
+			"create table t (a int) partition by list columns (b) (partition p0 values in (1));",
+			ddl.ErrFieldNotFoundPart,
+		},
+		{
+			"create table t (id timestamp) partition by list columns (id) (partition p0 values in ('2019-01-09 11:23:34'));",
+			ddl.ErrNotAllowedTypeInPartition,
+		},
+		{
+			"create table t (id decimal) partition by list columns (id) (partition p0 values in ('2019-01-09 11:23:34'));",
+			ddl.ErrNotAllowedTypeInPartition,
+		},
+		{
+			"create table t (a int) partition by list columns (a) (partition p0 values in (1), partition p0 values in (2));",
+			ddl.ErrSameNamePartition,
+		},
+		{
+			"create table t (a int) partition by list columns (a) (partition p0 values in (1), partition P0 values in (2));",
+			ddl.ErrSameNamePartition,
+		},
+		{
+			"create table t (a int) partition by list columns (a) (partition p0 values in (1), partition p1 values in (1));",
+			ddl.ErrMultipleDefConstInListPart,
+		},
+		{
+			"create table t (a int) partition by list columns (a) (partition p0 values in (1), partition p1 values in (+1));",
+			ddl.ErrMultipleDefConstInListPart,
+		},
+		{
+			"create table t (a tinyint) partition by list columns (a) (partition p0 values in (1), partition p1 values in (+1));",
+			ddl.ErrMultipleDefConstInListPart,
+		},
+		{
+			"create table t (a mediumint) partition by list columns (a) (partition p0 values in (1), partition p1 values in (+1));",
+			ddl.ErrMultipleDefConstInListPart,
+		},
+		{
+			"create table t (a bigint) partition by list columns (a) (partition p0 values in (1), partition p1 values in (+1));",
+			ddl.ErrMultipleDefConstInListPart,
+		},
+		{
+			"create table t (a bigint) partition by list columns (a) (partition p0 values in (1,+1))",
+			ddl.ErrMultipleDefConstInListPart,
+		},
+		{
+			"create table t (a int) partition by list columns (a) (partition p0 values in (null), partition p1 values in (NULL));",
+			ddl.ErrMultipleDefConstInListPart,
+		},
+		{
+			"create table t (a bigint, b int) partition by list columns (a,b) (partition p0 values in ((1,2),(1,2)))",
+			ddl.ErrMultipleDefConstInListPart,
+		},
+		{
+			"create table t (a bigint, b int) partition by list columns (a,b) (partition p0 values in ((1,1),(2,2)), partition p1 values in ((+1,1)));",
+			ddl.ErrMultipleDefConstInListPart,
+		},
+		{
+			`create table t1 (id int key, name varchar(10), unique index idx(name)) partition by list columns (id) (
+				    partition p0 values in (3,5,6,9,17),
+				    partition p1 values in (1,2,10,11,19,20),
+				    partition p2 values in (4,12,13,14,18),
+				    partition p3 values in (7,8,15,16)
+				);`,
+			ddl.ErrUniqueKeyNeedAllFieldsInPf,
+		},
+		{
+			"create table t (a int, b varchar(10)) partition by list columns (a,b) (partition p0 values in (1));",
+			ast.ErrPartitionColumnList,
+		},
+		{
+			"create table t (a int, b varchar(10)) partition by list columns (a,b) (partition p0 values in (('ab','ab')));",
+			ddl.ErrNotAllowedTypeInPartition,
+		},
+		{
+			"create table t (a int, b datetime) partition by list columns (a,b) (partition p0 values in ((1)));",
+			ast.ErrPartitionColumnList,
+		},
+	}
+	for i, t := range cases {
+		_, err := tk.Exec(t.sql)
+		c.Assert(t.err.Equal(err), IsTrue, Commentf(
+			"case %d fail, sql = `%s`\nexpected error = `%v`\n  actual error = `%v`",
+			i, t.sql, t.err, err,
+		))
+	}
+
+	validCases := []string{
+		"create table t (a int) partition by list columns (a) (partition p0 values in (1));",
+		"create table t (a int) partition by list columns (a) (partition p0 values in (1), partition p1 values in (2));",
+		`create table t (id int, name varchar(10), age int) partition by list columns (id) (
+			partition p0 values in (3,5,6,9,17),
+			partition p1 values in (1,2,10,11,19,20),
+			partition p2 values in (4,12,13,-14,18),
+			partition p3 values in (7,8,15,+16)
+		);`,
+		"create table t (a datetime) partition by list columns (a) (partition p0 values in ('2020-09-28 17:03:38','2020-09-28 17:03:39'));",
+		"create table t (a date) partition by list columns (a) (partition p0 values in ('2020-09-28','2020-09-29'));",
+		"create table t (a bigint, b date) partition by list columns (a,b) (partition p0 values in ((1,'2020-09-28'),(1,'2020-09-29')));",
+		"create table t (a bigint)   partition by list columns (a) (partition p0 values in (to_seconds('2020-09-28 17:03:38'),to_seconds('2020-09-28 17:03:39')));",
+	}
+
+	for _, sql := range validCases {
+		tk.MustExec("drop table if exists t")
+		tk.MustExec(sql)
+		tbl := testGetTableByName(c, s.ctx, "test", "t")
+		tblInfo := tbl.Meta()
+		c.Assert(tblInfo.Partition, NotNil)
+		c.Assert(tblInfo.Partition.Enable, Equals, true)
+		c.Assert(tblInfo.Partition.Type == model.PartitionTypeList, IsTrue)
+	}
 }
 
 func (s *testIntegrationSuite3) TestCreateTableWithKeyPartition(c *C) {
@@ -814,6 +1031,44 @@ func (s *testIntegrationSuite5) TestMultiPartitionDropAndTruncate(c *C) {
 	tk.MustExec("alter table employees truncate partition p3, p4")
 	result = tk.MustQuery("select * from employees;")
 	result.Check(testkit.Rows(`2010`))
+}
+
+func (s *testIntegrationSuite7) TestDropPartitionWithGlobalIndex(c *C) {
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.EnableGlobalIndex = true
+	})
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists test_global")
+	tk.MustExec(`create table test_global ( a int, b int, c int)
+	partition by range( a ) (
+		partition p1 values less than (10),
+		partition p2 values less than (20)
+	);`)
+	t := testGetTableByName(c, s.ctx, "test", "test_global")
+	pid := t.Meta().Partition.Definitions[1].ID
+
+	tk.MustExec("Alter Table test_global Add Unique Index idx_b (b);")
+	tk.MustExec("Alter Table test_global Add Unique Index idx_c (c);")
+	tk.MustExec(`INSERT INTO test_global VALUES (1, 1, 1), (2, 2, 2), (11, 3, 3), (12, 4, 4)`)
+
+	tk.MustExec("alter table test_global drop partition p2;")
+	result := tk.MustQuery("select * from test_global;")
+	result.Sort().Check(testkit.Rows(`1 1 1`, `2 2 2`))
+
+	t = testGetTableByName(c, s.ctx, "test", "test_global")
+	idxInfo := t.Meta().FindIndexByName("idx_b")
+	c.Assert(idxInfo, NotNil)
+	cnt := checkGlobalIndexCleanUpDone(c, s.ctx, t.Meta(), idxInfo, pid)
+	c.Assert(cnt, Equals, 2)
+
+	idxInfo = t.Meta().FindIndexByName("idx_c")
+	c.Assert(idxInfo, NotNil)
+	cnt = checkGlobalIndexCleanUpDone(c, s.ctx, t.Meta(), idxInfo, pid)
+	c.Assert(cnt, Equals, 2)
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.EnableGlobalIndex = false
+	})
 }
 
 func (s *testIntegrationSuite7) TestAlterTableExchangePartition(c *C) {
@@ -1236,9 +1491,6 @@ func (s *testIntegrationSuite4) TestExchangePartitionTableCompatiable(c *C) {
 }
 
 func (s *testIntegrationSuite7) TestExchangePartitionExpressIndex(c *C) {
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.Experimental.AllowsExpressionIndex = true
-	})
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists pt1;")
@@ -1281,7 +1533,7 @@ func (s *testIntegrationSuite4) TestAddPartitionTooManyPartitions(c *C) {
 	for i := 1; i <= count; i++ {
 		sql1 += fmt.Sprintf("partition p%d values less than (%d),", i, i)
 	}
-	sql1 += "partition p1025 values less than (1025) );"
+	sql1 += "partition p8193 values less than (8193) );"
 	tk.MustGetErrCode(sql1, tmysql.ErrTooManyPartitions)
 
 	tk.MustExec("drop table if exists p2;")
@@ -1292,11 +1544,11 @@ func (s *testIntegrationSuite4) TestAddPartitionTooManyPartitions(c *C) {
 	for i := 1; i < count; i++ {
 		sql2 += fmt.Sprintf("partition p%d values less than (%d),", i, i)
 	}
-	sql2 += "partition p1024 values less than (1024) );"
+	sql2 += "partition p8192 values less than (8192) );"
 
 	tk.MustExec(sql2)
 	sql3 := `alter table p2 add partition (
-	partition p1025 values less than (1025)
+	partition p8193 values less than (8193)
 	);`
 	tk.MustGetErrCode(sql3, tmysql.ErrTooManyPartitions)
 }
@@ -2205,6 +2457,22 @@ func (s *testIntegrationSuite3) TestPartitionErrorCode(c *C) {
 	tk.MustGetErrCode("alter table t_part rebuild partition p0,p1;", tmysql.ErrUnsupportedDDLOperation)
 	tk.MustGetErrCode("alter table t_part remove partitioning;", tmysql.ErrUnsupportedDDLOperation)
 	tk.MustGetErrCode("alter table t_part repair partition p1;", tmysql.ErrUnsupportedDDLOperation)
+
+	// Reduce the impact on DML when executing partition DDL
+	tk1 := testkit.NewTestKit(c, s.store)
+	tk1.MustExec("use test")
+	tk1.MustExec("drop table if exists t;")
+	tk1.MustExec(`create table t(id int primary key)
+		partition by hash(id) partitions 4;`)
+	tk1.MustExec("begin")
+	tk1.MustExec("insert into t values(1);")
+
+	tk2 := testkit.NewTestKit(c, s.store)
+	tk2.MustExec("use test")
+	tk2.MustExec("alter table t truncate partition p0;")
+
+	_, err = tk1.Exec("commit")
+	c.Assert(err, IsNil)
 }
 
 func (s *testIntegrationSuite5) TestConstAndTimezoneDepent(c *C) {

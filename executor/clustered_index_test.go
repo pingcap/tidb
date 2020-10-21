@@ -166,9 +166,41 @@ func (s *testClusteredSuite) TestClusteredPrefixingPrimaryKey(c *C) {
 	tk.MustGetErrCode("insert into t values ('aac', 1, 'aac');", errno.ErrDupEntry)
 	tk.MustGetErrCode("insert into t values ('bb', 1, 'bb');", errno.ErrDupEntry)
 	tk.MustGetErrCode("insert into t values ('bbc', 1, 'bbc');", errno.ErrDupEntry)
+	tk.MustGetErrCode("update t set name = 'aa', c = 'aa' where c = 'ccc'", errno.ErrDupEntry)
+	tk.MustExec("update t set name = 'ccc' where name = 'aa'")
+	tk.MustQuery("select group_concat(name order by name separator '.') from t use index(idx);").
+		Check(testkit.Rows("aaa.bbb.bbb.ccc"))
+	tk.MustExec("admin check table t;")
 
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t(name varchar(255), b int, primary key(name(2)), index idx(b));")
 	tk.MustExec("insert into t values ('aaa', 1), ('bbb', 1);")
-	tk.MustQuery("select group_concat(name separator '.') from t use index(idx);").Check(testkit.Rows("aaa.bbb"))
+	tk.MustQuery("select group_concat(name order by name separator '.') from t use index(idx);").
+		Check(testkit.Rows("aaa.bbb"))
+
+	tk.MustGetErrCode("update t set name = 'aaaaa' where name = 'bbb'", errno.ErrDupEntry)
+	tk.MustExec("update ignore t set name = 'aaaaa' where name = 'bbb'")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1062 Duplicate entry 'aa' for key 'PRIMARY'"))
+	tk.MustExec("admin check table t;")
+}
+
+func (s *testClusteredSuite) TestClusteredWithOldRowFormat(c *C) {
+	tk := s.newTK(c)
+	tk.Se.GetSessionVars().RowEncoder.Enable = false
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(id varchar(255) primary key, a int, b int, unique index idx(b));")
+	tk.MustExec("insert into t values ('b568004d-afad-11ea-8e4d-d651e3a981b7', 1, -1);")
+	tk.MustQuery("select * from t use index(primary);").Check(testkit.Rows("b568004d-afad-11ea-8e4d-d651e3a981b7 1 -1"))
+}
+
+func (s *testClusteredSuite) TestIssue20002(c *C) {
+	tk := s.newTK(c)
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t ( c_int int, c_str varchar(40), c_datetime datetime, primary key(c_str), unique key(c_datetime));")
+	tk.MustExec("insert into t values (1, 'laughing hertz', '2020-04-27 20:29:30'), (2, 'sharp yalow', '2020-04-01 05:53:36'), (3, 'pedantic hoover', '2020-03-10 11:49:00');")
+	tk.MustExec("begin;")
+	tk.MustExec("update t set c_str = 'amazing herschel' where c_int = 3;")
+	tk.MustExec("select c_int, c_str, c_datetime from t where c_datetime between '2020-01-09 22:00:28' and '2020-04-08 15:12:37';")
+	tk.MustExec("commit;")
+	tk.MustExec("admin check index t `c_datetime`;")
 }

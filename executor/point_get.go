@@ -48,7 +48,7 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) Executor {
 		return nil
 	}
 	e := &PointGetExecutor{
-		baseExecutor: newBaseExecutor(b.ctx, p.Schema(), p.ExplainID()),
+		baseExecutor: newBaseExecutor(b.ctx, p.Schema(), p.ID()),
 	}
 	e.base().initCap = 1
 	e.base().maxChunkSize = 1
@@ -63,6 +63,7 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) Executor {
 type PointGetExecutor struct {
 	baseExecutor
 
+	dbName       string
 	tblInfo      *model.TableInfo
 	handle       kv.Handle
 	idxInfo      *model.IndexInfo
@@ -86,12 +87,13 @@ type PointGetExecutor struct {
 	// virtualColumnRetFieldTypes records the RetFieldTypes of virtual columns.
 	virtualColumnRetFieldTypes []*types.FieldType
 
-	stats *pointGetRuntimeStats
+	stats *runtimeStatsWithSnapshot
 }
 
 // Init set fields needed for PointGetExecutor reuse, this does NOT change baseExecutor field
 func (e *PointGetExecutor) Init(p *plannercore.PointGetPlan, startTs uint64) {
 	decoder := NewRowDecoder(e.ctx, p.Schema(), p.TblInfo)
+	e.dbName = p.DBName()
 	e.tblInfo = p.TblInfo
 	e.handle = p.Handle
 	e.idxInfo = p.IndexInfo
@@ -132,19 +134,15 @@ func (e *PointGetExecutor) Open(context.Context) error {
 	if e.txn.Valid() && txnCtx.StartTS == txnCtx.GetForUpdateTS() {
 		e.snapshot = e.txn.GetSnapshot()
 	} else {
-		e.snapshot, err = e.ctx.GetStore().GetSnapshot(kv.Version{Ver: snapshotTS})
-		if err != nil {
-			return err
-		}
+		e.snapshot = e.ctx.GetStore().GetSnapshot(kv.Version{Ver: snapshotTS})
 	}
 	if e.runtimeStats != nil {
 		snapshotStats := &tikv.SnapshotRuntimeStats{}
-		e.stats = &pointGetRuntimeStats{
-			BasicRuntimeStats:    e.runtimeStats,
+		e.stats = &runtimeStatsWithSnapshot{
 			SnapshotRuntimeStats: snapshotStats,
 		}
 		e.snapshot.SetOption(kv.CollectRuntimeStats, snapshotStats)
-		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id.String(), e.stats)
+		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
 	}
 	if e.ctx.GetSessionVars().GetReplicaRead().IsFollowerRead() {
 		e.snapshot.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
@@ -157,6 +155,13 @@ func (e *PointGetExecutor) Open(context.Context) error {
 func (e *PointGetExecutor) Close() error {
 	if e.runtimeStats != nil && e.snapshot != nil {
 		e.snapshot.DelOption(kv.CollectRuntimeStats)
+	}
+	if e.idxInfo != nil && e.tblInfo != nil {
+		actRows := int64(0)
+		if e.runtimeStats != nil {
+			actRows = e.runtimeStats.GetActRows()
+		}
+		e.ctx.StoreIndexUsage(e.dbName, e.tblInfo.Name.L, e.idxInfo.Name.L, actRows)
 	}
 	e.done = false
 	return nil
@@ -465,24 +470,44 @@ func getColInfoByID(tbl *model.TableInfo, colID int64) *model.ColumnInfo {
 	return nil
 }
 
-type pointGetRuntimeStats struct {
-	*execdetails.BasicRuntimeStats
+type runtimeStatsWithSnapshot struct {
 	*tikv.SnapshotRuntimeStats
 }
 
-func (e *pointGetRuntimeStats) String() string {
-	var basic, rpcStatsStr string
-	if e.BasicRuntimeStats != nil {
-		basic = e.BasicRuntimeStats.String()
-	}
+func (e *runtimeStatsWithSnapshot) String() string {
 	if e.SnapshotRuntimeStats != nil {
-		rpcStatsStr = e.SnapshotRuntimeStats.String()
+		return e.SnapshotRuntimeStats.String()
 	}
-	if rpcStatsStr == "" {
-		return basic
+	return ""
+}
+
+// Clone implements the RuntimeStats interface.
+func (e *runtimeStatsWithSnapshot) Clone() execdetails.RuntimeStats {
+	newRs := &runtimeStatsWithSnapshot{}
+	if e.SnapshotRuntimeStats != nil {
+		snapshotStats := e.SnapshotRuntimeStats.Clone()
+		newRs.SnapshotRuntimeStats = snapshotStats.(*tikv.SnapshotRuntimeStats)
 	}
-	if basic == "" {
-		return rpcStatsStr
+	return newRs
+}
+
+// Merge implements the RuntimeStats interface.
+func (e *runtimeStatsWithSnapshot) Merge(other execdetails.RuntimeStats) {
+	tmp, ok := other.(*runtimeStatsWithSnapshot)
+	if !ok {
+		return
 	}
-	return basic + ", " + rpcStatsStr
+	if tmp.SnapshotRuntimeStats != nil {
+		if e.SnapshotRuntimeStats == nil {
+			snapshotStats := tmp.SnapshotRuntimeStats.Clone()
+			e.SnapshotRuntimeStats = snapshotStats.(*tikv.SnapshotRuntimeStats)
+			return
+		}
+		e.SnapshotRuntimeStats.Merge(tmp.SnapshotRuntimeStats)
+	}
+}
+
+// Tp implements the RuntimeStats interface.
+func (e *runtimeStatsWithSnapshot) Tp() int {
+	return execdetails.TpRuntimeStatsWithSnapshot
 }

@@ -40,61 +40,64 @@ type planEncoder struct {
 func EncodePlan(p Plan) string {
 	pn := encoderPool.Get().(*planEncoder)
 	defer encoderPool.Put(pn)
-	selectPlan := getSelectPlan(p)
-	if selectPlan == nil {
+	if p == nil || p.SCtx() == nil {
 		return ""
 	}
-	failpoint.Inject("mockPlanRowCount", func(val failpoint.Value) {
-		selectPlan.statsInfo().RowCount = float64(val.(int))
-	})
-	return pn.encodePlanTree(selectPlan)
+	selectPlan := getSelectPlan(p)
+	if selectPlan != nil {
+		failpoint.Inject("mockPlanRowCount", func(val failpoint.Value) {
+			selectPlan.statsInfo().RowCount = float64(val.(int))
+		})
+	}
+	return pn.encodePlanTree(p)
 }
 
-func (pn *planEncoder) encodePlanTree(p PhysicalPlan) string {
+func (pn *planEncoder) encodePlanTree(p Plan) string {
 	pn.encodedPlans = make(map[int]bool)
 	pn.buf.Reset()
-	pn.encodePlan(p, true, 0)
+	pn.encodePlan(p, true, kv.TiKV, 0)
 	return plancodec.Compress(pn.buf.Bytes())
 }
 
-func (pn *planEncoder) encodePlan(p PhysicalPlan, isRoot bool, depth int) {
-	var storeType kv.StoreType = kv.UnSpecified
-	if !isRoot {
-		switch copPlan := p.(type) {
-		case *PhysicalTableReader:
-			storeType = copPlan.StoreType
-		case *PhysicalTableScan:
-			storeType = copPlan.StoreType
-		default:
-			storeType = kv.TiKV
-		}
+func (pn *planEncoder) encodePlan(p Plan, isRoot bool, store kv.StoreType, depth int) {
+	taskTypeInfo := plancodec.EncodeTaskType(isRoot, store)
+	actRows, analyzeInfo, memoryInfo, diskInfo := getRuntimeInfo(p.SCtx(), p, nil)
+	rowCount := 0.0
+	if statsInfo := p.statsInfo(); statsInfo != nil {
+		rowCount = p.statsInfo().RowCount
 	}
-	taskTypeInfo := plancodec.EncodeTaskType(isRoot, storeType)
-	actRows, analyzeInfo, memoryInfo, diskInfo := getRuntimeInfo(p.SCtx(), p)
-	plancodec.EncodePlanNode(depth, p.ID(), p.TP(), p.statsInfo().RowCount, taskTypeInfo, p.ExplainInfo(), actRows, analyzeInfo, memoryInfo, diskInfo, &pn.buf)
+	plancodec.EncodePlanNode(depth, p.ID(), p.TP(), rowCount, taskTypeInfo, p.ExplainInfo(), actRows, analyzeInfo, memoryInfo, diskInfo, &pn.buf)
 	pn.encodedPlans[p.ID()] = true
-
 	depth++
-	for _, child := range p.Children() {
+
+	selectPlan := getSelectPlan(p)
+	if selectPlan == nil {
+		return
+	}
+	if !pn.encodedPlans[selectPlan.ID()] {
+		pn.encodePlan(selectPlan, isRoot, store, depth)
+		return
+	}
+	for _, child := range selectPlan.Children() {
 		if pn.encodedPlans[child.ID()] {
 			continue
 		}
-		pn.encodePlan(child.(PhysicalPlan), isRoot, depth)
+		pn.encodePlan(child.(PhysicalPlan), isRoot, store, depth)
 	}
-	switch copPlan := p.(type) {
+	switch copPlan := selectPlan.(type) {
 	case *PhysicalTableReader:
-		pn.encodePlan(copPlan.tablePlan, false, depth)
+		pn.encodePlan(copPlan.tablePlan, false, copPlan.StoreType, depth)
 	case *PhysicalIndexReader:
-		pn.encodePlan(copPlan.indexPlan, false, depth)
+		pn.encodePlan(copPlan.indexPlan, false, store, depth)
 	case *PhysicalIndexLookUpReader:
-		pn.encodePlan(copPlan.indexPlan, false, depth)
-		pn.encodePlan(copPlan.tablePlan, false, depth)
+		pn.encodePlan(copPlan.indexPlan, false, store, depth)
+		pn.encodePlan(copPlan.tablePlan, false, store, depth)
 	case *PhysicalIndexMergeReader:
 		for _, p := range copPlan.partialPlans {
-			pn.encodePlan(p, false, depth)
+			pn.encodePlan(p, false, store, depth)
 		}
 		if copPlan.tablePlan != nil {
-			pn.encodePlan(copPlan.tablePlan, false, depth)
+			pn.encodePlan(copPlan.tablePlan, false, store, depth)
 		}
 	}
 }
@@ -133,11 +136,12 @@ func NormalizePlan(p Plan) (normalized, digest string) {
 func (d *planDigester) normalizePlanTree(p PhysicalPlan) {
 	d.encodedPlans = make(map[int]bool)
 	d.buf.Reset()
-	d.normalizePlan(p, true, 0)
+	d.normalizePlan(p, true, kv.TiKV, 0)
 }
 
-func (d *planDigester) normalizePlan(p PhysicalPlan, isRoot bool, depth int) {
-	plancodec.NormalizePlanNode(depth, p.ID(), p.TP(), isRoot, p.ExplainNormalizedInfo(), &d.buf)
+func (d *planDigester) normalizePlan(p PhysicalPlan, isRoot bool, store kv.StoreType, depth int) {
+	taskTypeInfo := plancodec.EncodeTaskTypeForNormalize(isRoot, store)
+	plancodec.NormalizePlanNode(depth, p.TP(), taskTypeInfo, p.ExplainNormalizedInfo(), &d.buf)
 	d.encodedPlans[p.ID()] = true
 
 	depth++
@@ -145,22 +149,22 @@ func (d *planDigester) normalizePlan(p PhysicalPlan, isRoot bool, depth int) {
 		if d.encodedPlans[child.ID()] {
 			continue
 		}
-		d.normalizePlan(child.(PhysicalPlan), isRoot, depth)
+		d.normalizePlan(child.(PhysicalPlan), isRoot, store, depth)
 	}
 	switch x := p.(type) {
 	case *PhysicalTableReader:
-		d.normalizePlan(x.tablePlan, false, depth)
+		d.normalizePlan(x.tablePlan, false, x.StoreType, depth)
 	case *PhysicalIndexReader:
-		d.normalizePlan(x.indexPlan, false, depth)
+		d.normalizePlan(x.indexPlan, false, store, depth)
 	case *PhysicalIndexLookUpReader:
-		d.normalizePlan(x.indexPlan, false, depth)
-		d.normalizePlan(x.tablePlan, false, depth)
+		d.normalizePlan(x.indexPlan, false, store, depth)
+		d.normalizePlan(x.tablePlan, false, store, depth)
 	case *PhysicalIndexMergeReader:
 		for _, p := range x.partialPlans {
-			d.normalizePlan(p, false, depth)
+			d.normalizePlan(p, false, store, depth)
 		}
 		if x.tablePlan != nil {
-			d.normalizePlan(x.tablePlan, false, depth)
+			d.normalizePlan(x.tablePlan, false, store, depth)
 		}
 	}
 }

@@ -18,7 +18,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/util/memory"
-	"github.com/pingcap/tidb/util/stringutil"
 )
 
 // Key is the interface that every key in LRU Cache should implement.
@@ -47,7 +46,7 @@ const (
 )
 
 func init() {
-	GlobalLRUMemUsageTracker = memory.NewTracker(stringutil.StringerStr("GlobalSimpleLRUCache"), -1)
+	GlobalLRUMemUsageTracker = memory.NewTracker(memory.LabelForGlobalSimpleLRUCache, -1)
 }
 
 // SimpleLRUCache is a simple least recently used cache, not thread-safe, use it carefully.
@@ -75,6 +74,17 @@ func NewSimpleLRUCache(capacity uint, guard float64, quota uint64) *SimpleLRUCac
 		elements: make(map[string]*list.Element),
 		cache:    list.New(),
 	}
+}
+
+// GetAll try to get all value.
+func (l *SimpleLRUCache) GetAll() []interface{} {
+	values := make([]interface{}, 0)
+	for _, v := range l.elements {
+		if nv, ok := v.Value.(*cacheEntry); ok {
+			values = append(values, nv.value)
+		}
+	}
+	return values
 }
 
 // Get tries to find the corresponding value according to the given key.
