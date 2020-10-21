@@ -1483,6 +1483,6 @@ func (s *testGCWorkerSuite) TestGCPlacementRules(c *C) {
 
 	dr := util.DelRangeTask{JobID: 1, ElementID: 1}
 	pid, err := s.gcWorker.doGCPlacementRules(dr)
-	c.Assert(pid, Equals, 1)
+	c.Assert(pid, Equals, int64(1))
 	c.Assert(err, IsNil)
 }
