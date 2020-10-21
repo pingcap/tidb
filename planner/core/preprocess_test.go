@@ -218,9 +218,9 @@ func (s *testValidatorSuite) TestValidator(c *C) {
 
 		{"CREATE TABLE t (a float(255, 30))", true, nil},
 		{"CREATE TABLE t (a double(255, 30))", true, nil},
-		{"CREATE TABLE t (a float(256, 30))", false, types.ErrTooBigDisplaywidth},
+		{"CREATE TABLE t (a float(256, 30))", false, types.ErrTooBigDisplayWidth},
 		{"CREATE TABLE t (a float(255, 31))", false, types.ErrTooBigScale},
-		{"CREATE TABLE t (a double(256, 30))", false, types.ErrTooBigDisplaywidth},
+		{"CREATE TABLE t (a double(256, 30))", false, types.ErrTooBigDisplayWidth},
 		{"CREATE TABLE t (a double(255, 31))", false, types.ErrTooBigScale},
 
 		// issue 20447
