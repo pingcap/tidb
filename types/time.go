@@ -889,54 +889,6 @@ BAD:
 	return -1, "", "", "", ""
 }
 
-func GetTimezone2(lit string) (idx int, tzSign, tzHour, tzMinute string) {
-	// cases that we support
-	// 23:59:59Z
-	// 23:59:59+08
-	// 23:59:59+0800
-	// 23:59:59+08:00
-	l := len(lit)
-	valid := func(v string) bool {
-		return '0' <= v[0] && v[0] <= '9' && '0' <= v[1] && v[1] <= '9'
-	}
-	idx = -1
-	if l > 0 {
-		if lit[l-1] == 'Z' {
-			return l-1, "", "", ""
-		}
-	}
-	if l > 3 {
-		idx = l-3
-		tzSign = lit[idx:idx+1]
-		tzHour = lit[idx+1:idx+3]
-		if (tzSign == "+" || tzSign == "-") && valid(tzHour) {
-			return
-		}
-		idx, tzSign, tzHour = -1, "", ""
-	}
-	if l > 5 {
-		idx = l-5
-		tzSign = lit[idx:idx+1]
-		tzHour = lit[idx+1:idx+3]
-		tzMinute = lit[idx+3:idx+5]
-		if (tzSign == "+" || tzSign == "-") && valid(tzHour) && valid(tzMinute) {
-			return
-		}
-		idx, tzSign, tzHour, tzMinute = -1, "", "", ""
-	}
-	if l > 6 {
-		idx = l-6
-		tzSign = lit[idx:idx+1]
-		tzHour = lit[idx+1:idx+3]
-		tzMinute = lit[idx+4:idx+6]
-		if (tzSign == "+" || tzSign == "-") && valid(tzHour) && valid(tzMinute) {
-			return
-		}
-		idx, tzSign, tzHour, tzMinute = -1, "", "", ""
-	}
-	return
-}
-
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-literals.html.
 // splitDateTime splits the string literal into 3 parts, date & time, FSP and time zone.
 // For FSP, The only delimiter recognized between a date & time part and a fractional seconds part is the decimal point,
