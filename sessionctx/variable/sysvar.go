@@ -387,14 +387,6 @@ func int32ToBoolStr(i int32) string {
 	return BoolOff
 }
 
-// BoolToInt32 converts bool to int32
-func BoolToInt32(b bool) int32 {
-	if b {
-		return 1
-	}
-	return 0
-}
-
 // we only support MySQL now
 var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal, Name: "gtid_mode", Value: BoolOff, Type: TypeBool},
@@ -1109,8 +1101,8 @@ var defaultSysVars = []*SysVar{
 		}
 		return normalizedValue, nil
 	}},
-	{Scope: ScopeGlobal, Name: TiDBSlowLogMasking, Value: BoolToOnOff(DefTiDBSlowLogMasking), Type: TypeBool},
-	{Scope: ScopeGlobal, Name: TiDBRedactLog, Value: int32ToBoolStr(config.DefTiDBRedactLog), Type: TypeBool},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBSlowLogMasking, Value: BoolToOnOff(DefTiDBRedactLog), Type: TypeBool},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBRedactLog, Value: BoolToOnOff(DefTiDBRedactLog), Type: TypeBool},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBShardAllocateStep, Value: strconv.Itoa(DefTiDBShardAllocateStep), Type: TypeInt, MinValue: 1, MaxValue: uint64(math.MaxInt64), AutoConvertOutOfRange: true},
 	{Scope: ScopeGlobal, Name: TiDBEnableTelemetry, Value: BoolToOnOff(DefTiDBEnableTelemetry), Type: TypeBool},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableAmendPessimisticTxn, Value: BoolToOnOff(DefTiDBEnableAmendPessimisticTxn), Type: TypeBool},

@@ -3237,6 +3237,34 @@ func (s *testSessionSuite2) TestPerStmtTaskID(c *C) {
 	c.Assert(taskID1 != taskID2, IsTrue)
 }
 
+func (s *testSessionSuite2) TestDeprecateSlowLogMasking(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+
+	tk.MustExec("set @@global.tidb_redact_log=0")
+	tk.MustQuery("select @@global.tidb_redact_log").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@global.tidb_slow_log_masking").Check(testkit.Rows("0"))
+
+	tk.MustExec("set @@global.tidb_redact_log=1")
+	tk.MustQuery("select @@global.tidb_redact_log").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@global.tidb_slow_log_masking").Check(testkit.Rows("1"))
+
+	tk.MustExec("set @@global.tidb_slow_log_masking=0")
+	tk.MustQuery("select @@global.tidb_redact_log").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@global.tidb_slow_log_masking").Check(testkit.Rows("0"))
+
+	tk.MustExec("set @@session.tidb_redact_log=0")
+	tk.MustQuery("select @@session.tidb_redact_log").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@session.tidb_slow_log_masking").Check(testkit.Rows("0"))
+
+	tk.MustExec("set @@session.tidb_redact_log=1")
+	tk.MustQuery("select @@session.tidb_redact_log").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@session.tidb_slow_log_masking").Check(testkit.Rows("1"))
+
+	tk.MustExec("set @@session.tidb_slow_log_masking=0")
+	tk.MustQuery("select @@session.tidb_redact_log").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@session.tidb_slow_log_masking").Check(testkit.Rows("0"))
+}
+
 func (s *testSessionSerialSuite) TestDoDDLJobQuit(c *C) {
 	// test https://github.com/pingcap/tidb/issues/18714, imitate DM's use environment
 	// use isolated store, because in below failpoint we will cancel its context
