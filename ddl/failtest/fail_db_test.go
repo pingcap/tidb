@@ -131,6 +131,8 @@ func (s *testFailDBSuite) TestHalfwayCancelOperations(c *C) {
 	tk.MustExec("insert into ty values(2)")
 	_, err = tk.Exec("rename table ty to tz, tx to ty")
 	c.Assert(err, NotNil)
+	_, err = tk.Exec("select * from tz")
+	c.Assert(err, NotNil)
 	_, err = tk.Exec("rename table tx to ty, ty to tz")
 	c.Assert(err, NotNil)
 	tk.MustQuery("select * from ty").Check(testkit.Rows("2"))
