@@ -2426,10 +2426,11 @@ func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTab
 		return errors.Trace(err)
 	}
 
-	col.OriginDefaultValue, err = generateOriginDefaultValue(col.ToInfo())
+	originDefVal, err := generateOriginDefaultValue(col.ToInfo())
 	if err != nil {
 		return errors.Trace(err)
 	}
+	err = col.SetOriginDefaultValue(originDefVal)
 
 	job := &model.Job{
 		SchemaID:   schema.ID,
