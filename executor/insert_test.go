@@ -23,6 +23,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/terror"
+
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -337,6 +338,43 @@ func (s *testSuite3) TestInsertDateTimeWithTimeZone(c *C) {
 	tk.MustQuery(`select * from t;`).Check(testkit.Rows(
 		`1 1970-01-01 09:20:34`,
 	))
+
+	// test for ambiguous cases
+	cases := []struct {
+		lit    string
+		expect string
+	}{
+		{"2020-10-22", "2020-10-22 00:00:00"},
+		{"2020-10-22-16", "2020-10-22 16:00:00"},
+		{"2020-10-22 16-31", "2020-10-22 16:31:00"},
+		{"2020-10-22 16:31-15", "2020-10-22 16:31:15"},
+		{"2020-10-22T16:31:15-10", "2020-10-23 10:31:15"},
+
+		{"2020.10-22", "2020-10-22 00:00:00"},
+		{"2020-10.22-16", "2020-10-22 16:00:00"},
+		{"2020-10-22.16-31", "2020-10-22 16:31:00"},
+		{"2020-10-22 16.31-15", "2020-10-22 16:31:15"},
+		{"2020-10-22T16.31.15+14", "2020-10-22 10:31:15"},
+
+		{"2020-10:22", "2020-10-22 00:00:00"},
+		{"2020-10-22:16", "2020-10-22 16:00:00"},
+		{"2020-10-22-16:31", "2020-10-22 16:31:00"},
+		{"2020-10-22 16-31:15", "2020-10-22 16:31:15"},
+		{"2020-10-22T16.31.15+09:30", "2020-10-22 15:01:15"},
+
+		{"2020.10-22:16", "2020-10-22 16:00:00"},
+		{"2020-10.22-16:31", "2020-10-22 16:31:00"},
+		{"2020-10-22.16-31:15", "2020-10-22 16:31:15"},
+		{"2020-10-22T16:31.15+09:30", "2020-10-22 15:01:15"},
+	}
+	tk.MustExec(`drop table if exists t`)
+	tk.MustExec(`create table t (dt datetime)`)
+	tk.MustExec(`set @@time_zone='+08:00'`)
+	for _, ca := range cases {
+		tk.MustExec(`delete from t`)
+		tk.MustExec(fmt.Sprintf("insert into t values ('%s')", ca.lit))
+		tk.MustQuery(`select * from t`).Check(testkit.Rows(ca.expect))
+	}
 }
 
 func (s *testSuite3) TestInsertZeroYear(c *C) {

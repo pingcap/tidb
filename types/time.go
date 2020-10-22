@@ -817,7 +817,10 @@ var validIdxCombinations = map[int]struct {
 //     see https://www.cl.cam.ac.uk/~mgk25/iso-time.html
 func GetTimezone(lit string) (idx int, tzSign, tzHour, tzSep, tzMinute string) {
 	idx, zidx, sidx, spidx := -1, -1, -1, -1
-	z, s, sc := 0, 0, 0
+	// idx is for the position of the starting of the timezone information
+	// zidx is for the z symbol
+	// sidx is for the sign
+	// spidx is for the separator
 	l := len(lit)
 	for i := l - 1; 0 <= i; i-- {
 		if lit[i] == 'Z' {
@@ -831,31 +834,20 @@ func GetTimezone(lit string) (idx int, tzSign, tzHour, tzSep, tzMinute string) {
 			spidx = i
 		}
 	}
+	// we could enumerate all valid combinations of these values and look it up in a table, see validIdxCombinations
 	// zidx can be -1 (23:59:59+08:00), l-1 (23:59:59Z)
 	// sidx can be -1, l-3, l-5, l-6
-	// scidx can be -1, l-3
-	// hidx can be -1, l-2, l-4, l-5
-	// midx can be -1, l-2
-	// we could enumerate all valid combinations of these values and look it up in a table, see validIdxCombinations
-	if zidx != -1 {
-		z = l - zidx
+	// spidx can be -1, l-3
+	k := 0
+	if l-zidx == 1 {
+		k += 100
 	}
-	if sidx != -1 {
-		s = l - sidx
+	if t := l - sidx; t == 3 || t == 5 || t == 6 {
+		k += t * 10
 	}
-	if spidx != -1 {
-		sc = l - spidx
+	if l-spidx == 3 {
+		k += 3
 	}
-	if z != 1 {
-		z = 0
-	}
-	if s != 3 && s != 5 && s != 6 {
-		s = 0
-	}
-	if sc != 3 {
-		sc = 0
-	}
-	k := z*100 + s*10 + sc
 	if v, ok := validIdxCombinations[k]; ok {
 		hidx, midx := l-v.h, l-v.m
 		valid := func(v string) bool {
@@ -868,7 +860,7 @@ func GetTimezone(lit string) (idx int, tzSign, tzHour, tzSep, tzMinute string) {
 		if zidx != -1 {
 			idx = zidx
 		}
-		if sc != 0 {
+		if (l - spidx) == 3 {
 			tzSep = lit[spidx : spidx+1]
 		}
 		if v.h != 0 {
@@ -901,6 +893,7 @@ func splitDateTime(format string) (seps []string, fracStr string, hasTZ bool, tz
 	if tzIndex > 0 {
 		hasTZ = true
 		for ; tzIndex > 0 && isPunctuation(format[tzIndex-1]); tzIndex-- {
+			// in case of multiple separators, e.g. 2020-10--10
 		}
 		format = format[:tzIndex]
 	}
@@ -908,6 +901,7 @@ func splitDateTime(format string) (seps []string, fracStr string, hasTZ bool, tz
 	if fracIndex > 0 {
 		fracStr = format[fracIndex+1:]
 		for ; fracIndex > 0 && isPunctuation(format[fracIndex-1]); fracIndex-- {
+			// in case of multiple separators, e.g. 2020-10..10
 		}
 		format = format[:fracIndex]
 	}
@@ -916,7 +910,7 @@ func splitDateTime(format string) (seps []string, fracStr string, hasTZ bool, tz
 }
 
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-literals.html.
-func parseDatetime(sc *stmtctx.StatementContext, str string, tp byte, fsp int8, isFloat bool) (Time, error) {
+func parseDatetime(sc *stmtctx.StatementContext, str string, fsp int8, isFloat bool) (Time, error) {
 	var (
 		year, month, day, hour, minute, second, deltaHour, deltaMinute int
 		fracStr                                                        string
@@ -1910,7 +1904,7 @@ func parseTime(sc *stmtctx.StatementContext, str string, tp byte, fsp int8, isFl
 		return NewTime(ZeroCoreTime, tp, DefaultFsp), errors.Trace(err)
 	}
 
-	t, err := parseDatetime(sc, str, tp, fsp, isFloat)
+	t, err := parseDatetime(sc, str, fsp, isFloat)
 	if err != nil {
 		return NewTime(ZeroCoreTime, tp, DefaultFsp), errors.Trace(err)
 	}
