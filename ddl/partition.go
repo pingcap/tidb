@@ -16,7 +16,6 @@ package ddl
 import (
 	"bytes"
 	"context"
-	"encoding/hex"
 	"fmt"
 	"strconv"
 	"strings"
@@ -46,7 +45,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	tidbutil "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
@@ -1019,19 +1017,13 @@ func getTableInfoWithDroppingPartitions(t *model.TableInfo) *model.TableInfo {
 	return nt
 }
 
-func buildPlacementDropBundle(partitionID int64) *placement.Bundle {
-	return &placement.Bundle{
-		ID: placement.GroupID(partitionID),
-	}
-}
-
 func dropRuleBundles(d *ddlCtx, physicalTableIDs []int64) error {
 	if d.infoHandle != nil {
 		bundles := make([]*placement.Bundle, 0, len(physicalTableIDs))
 		for _, ID := range physicalTableIDs {
 			oldBundle, ok := d.infoHandle.Get().BundleByName(placement.GroupID(ID))
 			if ok && !oldBundle.IsEmpty() {
-				bundles = append(bundles, buildPlacementDropBundle(ID))
+				bundles = append(bundles, placement.BuildPlacementDropBundle(ID))
 			}
 		}
 		err := infosync.PutRuleBundles(nil, bundles)
@@ -1154,19 +1146,6 @@ func (w *worker) onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (
 	return ver, errors.Trace(err)
 }
 
-func buildPlacementTruncateBundle(oldBundle *placement.Bundle, newID int64) *placement.Bundle {
-	newBundle := oldBundle.Clone()
-	newBundle.ID = placement.GroupID(newID)
-	startKey := hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(newID)))
-	endKey := hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(newID+1)))
-	for _, rule := range newBundle.Rules {
-		rule.GroupID = newBundle.ID
-		rule.StartKeyHex = startKey
-		rule.EndKeyHex = endKey
-	}
-	return newBundle
-}
-
 // onTruncateTablePartition truncates old partition meta.
 func onTruncateTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, error) {
 	var ver int64
@@ -1226,8 +1205,8 @@ func onTruncateTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, e
 		for i, oldID := range oldIDs {
 			oldBundle, ok := d.infoHandle.Get().BundleByName(placement.GroupID(oldID))
 			if ok && !oldBundle.IsEmpty() {
-				bundles = append(bundles, buildPlacementDropBundle(oldID))
-				bundles = append(bundles, buildPlacementTruncateBundle(oldBundle, newPartitions[i].ID))
+				bundles = append(bundles, placement.BuildPlacementDropBundle(oldID))
+				bundles = append(bundles, placement.BuildPlacementTruncateBundle(oldBundle, newPartitions[i].ID))
 			}
 		}
 
