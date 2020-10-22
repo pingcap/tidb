@@ -1,7 +1,7 @@
 # Proposal: support `pinyin` order for `utf8mb4` charset
 
 - Author(s):     [xiongjiwei](https://github.com/xiongjiwei)
-- Last updated:  2020-10-16
+- Last updated:  2020-10-22
 - Discussion at: https://github.com/pingcap/tidb/issues/19747
 
 ## Abstract
@@ -32,35 +32,15 @@ select * from t order by a;
 
 ## Proposal
 
-`pinyin` order for Chinese character supported by this proposal will add a new collation named `utf8mb4_general_zh_ci` which are exactly same with `gbk_chinese_ci`. Collation `utf8mb4_general_zh_ci` is for charset `utf8mb4`.
-
-Following SQL statements should have same result.
-```sql
-# order
-select * from t order by a collate utf8mb4_general_zh_ci;
-select * from t order by convert(a using gbk);
-select * from t order by convert(a using gbk) collate gbk_chinese_ci;
-
-# sort key
-select weight_string(a collate utf8mb4_general_zh_ci);
-select weight_string(convert(a using gbk));
-select weight_string(convert(a using gbk) collate gbk_chinese_ci);
-
-# like
-select a collate utf8mb4_general_zh_ci like 'regex';
-select convert(a using gbk) like 'regex';
-select convert(a using gbk) collate gbk_chinese_ci like 'regex';
-```
+`pinyin` order for Chinese character supported by this proposal will add a new collation named `utf8mb4_zh_pinyin_cs` which is support all unicode and sort Chinese character correctly according to the PINYIN collation in zh.xml file of [CLDR24](http://unicode.org/Public/cldr/24/core.zip), and only support those Chinese character with `pinyin` in zh.xml currently, we support neither those CJK characters whose category defined in Unicode are Symbol with the same shape as Chinese characters nor the PINYIN characters. Name `utf8mb4_zh_pinyin_cs` which `utf8mb4` means it is for character `utf8mb4`, `zh` means it is for Chinese language, `pinyin` means it has `pinyin` order, `cs` means it is case sensitive.
 
 ### Advantages
 
-It's a lot of work if implements `utf8mb4_zh_0900_as_cs`. The implementation of MySQL looks complicated with weight reorders, magic numbers, and some sort of trick. Before `utf8mb4_zh_0900_as_cs` collation, user archive `pinyin` order by order by `convert(... using gbk)`, it is much easier if implements `utf8mb4_general_zh_ci` exactly the same with `gbk_chinese_ci`.
+It's a lot of work if implements `utf8mb4_zh_0900_as_cs`. The implementation of MySQL looks complicated with weight reorders, magic numbers, and some sort of trick. Implement `utf8mb4_zh_pinyin_cs` will be much easier and it support all Chinese character. For sort Chinese character in  `pinyin` order, it is good enought.
 
 ### Disadvantages
 
-It is not compatible with MySQL.
-
-Do not support all chinese character
+It is not compatible with MySQL. MySQL does not has a collation named `utf8mb4_zh_pinyin_cs`.
 
 ## Rationale
 
@@ -68,40 +48,19 @@ Do not support all chinese character
 
 #### Compare and Key
 
-Since `utf8mb4_general_zh_ci` has same behavior with `convert(... using gbk) collate gbk_chinese_ci`, `utf8mb4_general_zh_ci` should looks like convert `utf8mb4` to `gbk` first and then use collation `gbk_chinese_ci`. In real implementation, we create a map to maps all `utf8mb4` characters which can be convert to `gbk` to weight string of collation `gbk_chinese_ci` of these characters. For characters which cannot convert to `gbk` should regarded as equal to character `?`.
-
-#### LIKE
-
-Since `convert(a using gbk) = '?'` is `true` if a is a character which cannot convert to `gbk`, There has 
-```sql
-# MySQL
-select convert('𠀅' using gbk) like '?', convert('𠀅' using gbk) regexp '\\?';
-+---------------------------------+-------------------------------------+
-| convert('?' using gbk) like '?' | convert('?' using gbk) regexp '\\?' |
-+---------------------------------+-------------------------------------+
-|                               1 |                                   1 |
-+---------------------------------+-------------------------------------+
-1 row in set (0.00 sec)
-
-# TiDB
-select '𠀅' collate utf8mb4_general_zh_ci like '?', '𠀅' utf8mb4_general_zh_ci regexp '\\?';
-+---------------------------------+-------------------------------------+
-| convert('?' using gbk) like '?' | convert('?' using gbk) regexp '\\?' |
-+---------------------------------+-------------------------------------+
-|                               1 |                                   1 |
-+---------------------------------+-------------------------------------+
-1 row in set (0.00 sec)
-```
+- For any Chinese character, which has non-zero seq NO. defined in zh.xml according to its gb18030 code, the final weight shall be 0xFFA00000+(seq No.)
+- For any non-Chinese gb18030 character 2 bytes C, the final weight shall be C itself.
+- For any non-Chinese gb18030 character 4 bytes C, the final weight shall be 0xFF000000+diff(C)(we get diff by Algorithm).
 
 ### Parser
 
-choose collation ID `2048` for `utf8mb4_general_zh_ci` and add it into parser
+choose collation ID `2048` for `utf8mb4_zh_pinyin_cs` and add it into parser
 
 > MySQL supports two-byte collation IDs. The range of IDs from 1024 to 2047 is reserved for user-defined collations. [see also](https://dev.mysql.com/doc/refman/8.0/en/adding-collation-choosing-id.html)
 
 ### Compatibility with current collations
 
-`utf8mb4_general_zh_ci` has same priority with `utf8mb4_unicode_ci` and `utf8mb4_general_ci` which means these three collations incompatible with each other.
+`utf8mb4_zh_pinyin_cs` has same priority with `utf8mb4_unicode_ci` and `utf8mb4_general_ci` which means these three collations incompatible with each other.
 
 ### Alternative
 MySQL has a lot of language specific collation, for `pinyin` order, MySQL use collation `utf8mb4_zh_0900_as_cs`.
@@ -110,7 +69,7 @@ MySQL has a lot of language specific collation, for `pinyin` order, MySQL use co
 
 ### Compatibility issues with MySQL
 
-There is no `utf8mb4_general_zh_ci` collation in MySQL. We can comment `utf8mb4_general_zh_ci` when users need to replicate their data from TiDB to MySQL.
+There is no `utf8mb4_zh_pinyin_cs` collation in MySQL. We can comment `utf8mb4_zh_pinyin_cs` when users need to replicate their data from TiDB to MySQL.
 
 ## Open issues (if applicable)
 
