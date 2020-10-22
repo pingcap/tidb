@@ -290,7 +290,7 @@ func (s *testUpdateSuite) TestUpdateMultiAliasesTable(c *C) {
 	tk.MustQuery("select * from t").Check(testkit.Rows("2 1 12 -9", "3 1 13 -9"))
 
 	tk.MustExec("update t t1, t t2 set t1.x=5, t2.y=t1.x where t1.x=3")
-	tk.MustQuery("select * from t").Check(testkit.Rows("5 1 15 -9", "5 3 15 -7"))
+	tk.MustQuery("select * from t").Check(testkit.Rows("2 3 12 -7", "5 3 15 -7"))
 }
 
 var _ = SerialSuites(&testSuite11{&baseTestSuite{}})
