@@ -858,6 +858,10 @@ func (s *session) ExecRestrictedSQLWithSnapshot(sql string) ([]chunk.Row, []*ast
 		se.sessionVars.OptimizerUseInvisibleIndexes = true
 		defer func() { se.sessionVars.OptimizerUseInvisibleIndexes = false }()
 	}
+	if s.sessionVars.UseDynamicPartitionPrune() {
+		se.sessionVars.PartitionPruneMode.Store(string(variable.DynamicOnly))
+		defer func() { se.sessionVars.PartitionPruneMode.Store(string(variable.StaticOnly)) }()
+	}
 	return execRestrictedSQL(ctx, se, sql)
 }
 

@@ -445,25 +445,3 @@ func NewPartitionHandle(pid int64, h Handle) PartitionHandle {
 		PartitionID: pid,
 	}
 }
-
-// Equal implements the Handle interface.
-func (ph PartitionHandle) Equal(h Handle) bool {
-	if ph2, ok := h.(PartitionHandle); ok {
-		return ph.PartitionID == ph2.PartitionID && ph.Handle.Equal(ph2.Handle)
-	}
-	return false
-}
-
-// Compare implements the Handle interface.
-func (ph PartitionHandle) Compare(h Handle) int {
-	if ph2, ok := h.(PartitionHandle); ok {
-		if ph.PartitionID < ph2.PartitionID {
-			return -1
-		}
-		if ph.PartitionID > ph2.PartitionID {
-			return 1
-		}
-		return ph.Handle.Compare(ph2.Handle)
-	}
-	panic("PartitonHandle compares to non-parition Handle")
-}

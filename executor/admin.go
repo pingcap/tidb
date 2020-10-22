@@ -523,6 +523,11 @@ type CleanupIndexExec struct {
 	table      table.Table
 	physicalID int64
 
+	// There are 3 len of column used.
+	// len(columns) include index cols, handle cols and pid col.
+	// handleIdxColLen is len(index.Columns) + handle cols len
+	// len(e.index.Columns) include only index val col.
+	handleIdxColLen  int
 	columns          []*model.ColumnInfo
 	idxColFieldTypes []*types.FieldType
 	idxChunk         *chunk.Chunk
@@ -544,12 +549,30 @@ func (e *CleanupIndexExec) getIdxColTypes() []*types.FieldType {
 	for _, col := range e.columns {
 		e.idxColFieldTypes = append(e.idxColFieldTypes, &col.FieldType)
 	}
+	e.handleIdxColLen = len(e.columns)
+	if e.index.Meta().Global {
+		e.handleIdxColLen--
+	}
 	return e.idxColFieldTypes
 }
 
 func (e *CleanupIndexExec) batchGetRecord(txn kv.Transaction) (map[string][]byte, error) {
-	e.idxValues.Range(func(h kv.Handle, _ interface{}) bool {
-		e.batchKeys = append(e.batchKeys, e.table.RecordKey(h))
+	var getKey func(kv.Handle, interface{}) kv.Key
+	if e.index.Meta().Global {
+		getKey = func(h kv.Handle, val interface{}) kv.Key {
+			idxVals := val.([][]types.Datum)
+			// partition ID store in last column of first row.
+			pid := idxVals[0][len(e.index.Meta().Columns)].GetInt64()
+			key := tablecodec.EncodeRecordKey(tablecodec.GenTableRecordPrefix(pid), h)
+			return key
+		}
+	} else {
+		getKey = func(h kv.Handle, _ interface{}) kv.Key {
+			return e.table.RecordKey(h)
+		}
+	}
+	e.idxValues.Range(func(h kv.Handle, val interface{}) bool {
+		e.batchKeys = append(e.batchKeys, getKey(h, val))
 		return true
 	})
 	values, err := txn.BatchGet(context.Background(), e.batchKeys)
@@ -566,11 +589,12 @@ func (e *CleanupIndexExec) deleteDanglingIdx(txn kv.Transaction, values map[stri
 			if err != nil {
 				return err
 			}
-			handleIdxValsGroup, ok := e.idxValues.Get(handle)
+			fullIdxValsGroup, ok := e.idxValues.Get(handle)
 			if !ok {
 				return errors.Trace(errors.Errorf("batch keys are inconsistent with handles"))
 			}
-			for _, handleIdxVals := range handleIdxValsGroup.([][]types.Datum) {
+			for _, fullIdxVals := range fullIdxValsGroup.([][]types.Datum) {
+				handleIdxVals := fullIdxVals[:e.handleIdxColLen] // Exclude pid column.
 				if err := e.index.Delete(e.ctx.GetSessionVars().StmtCtx, txn, handleIdxVals, handle); err != nil {
 					return err
 				}
@@ -587,8 +611,8 @@ func (e *CleanupIndexExec) deleteDanglingIdx(txn kv.Transaction, values map[stri
 
 func extractIdxVals(row chunk.Row, idxVals []types.Datum,
 	fieldTypes []*types.FieldType, idxValLen int) []types.Datum {
-	if cap(idxVals) < idxValLen {
-		idxVals = make([]types.Datum, idxValLen)
+	if cap(idxVals) < idxValLen+1 {
+		idxVals = make([]types.Datum, idxValLen, idxValLen+1)
 	} else {
 		idxVals = idxVals[:idxValLen]
 	}
@@ -617,9 +641,10 @@ func (e *CleanupIndexExec) fetchIndex(ctx context.Context, txn kv.Transaction) e
 		if e.idxChunk.NumRows() == 0 {
 			return nil
 		}
+		global := e.index.Meta().Global
 		iter := chunk.NewIterator4Chunk(e.idxChunk)
 		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-			handle, err := e.handleCols.BuildHandle(row)
+			handle, err := e.handleCols.BuildHandleFromPartitionedTableIndexRow(row, global)
 			if err != nil {
 				return err
 			}
@@ -630,7 +655,13 @@ func (e *CleanupIndexExec) fetchIndex(ctx context.Context, txn kv.Transaction) e
 				updatedIdxVals := append(existingIdxVals.([][]types.Datum), idxVals)
 				e.idxValues.Set(handle, updatedIdxVals)
 			} else {
-				e.idxValues.Set(handle, [][]types.Datum{idxVals})
+				newIdxVals := idxVals[:]
+				// If index is global, we store pid at end of first row of idx vals.
+				if global {
+					pid := handle.(kv.PartitionHandle).PartitionID
+					newIdxVals = append(newIdxVals, types.NewIntDatum(pid))
+				}
+				e.idxValues.Set(handle, [][]types.Datum{newIdxVals})
 			}
 			idxKey, _, err := e.index.GenIndexKey(sc, idxVals, handle, nil)
 			if err != nil {
@@ -659,7 +690,7 @@ func (e *CleanupIndexExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 
 	var err error
-	if tbl, ok := e.table.(table.PartitionedTable); ok {
+	if tbl, ok := e.table.(table.PartitionedTable); ok && !e.index.Meta().Global {
 		pi := e.table.Meta().GetPartitionInfo()
 		for _, p := range pi.Definitions {
 			e.table = tbl.GetPartition(p.ID)

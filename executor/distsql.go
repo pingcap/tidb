@@ -488,11 +488,11 @@ func (e *IndexLookUpExecutor) getRetTpsByHandle() []*types.FieldType {
 	} else {
 		tps = []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}
 	}
-	if e.index.Global {
-		tps = append(tps, types.NewFieldType(mysql.TypeLonglong))
-	}
 	if e.checkIndexValue != nil {
 		tps = e.idxColTps
+	}
+	if e.index.Global {
+		tps = append(tps, types.NewFieldType(mysql.TypeLonglong))
 	}
 	return tps
 }
@@ -798,7 +798,7 @@ func (w *indexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, 
 		}
 		if w.checkIndexValue != nil {
 			if retChk == nil {
-				retChk = chunk.NewChunkWithCapacity(w.idxColTps, w.batchSize)
+				retChk = chunk.NewChunkWithCapacity(w.idxLookup.getRetTpsByHandle(), w.batchSize)
 			}
 			retChk.Append(chk, 0, chk.NumRows())
 		}

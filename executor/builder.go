@@ -337,6 +337,9 @@ func buildIndexLookUpChecker(b *executorBuilder, p *plannercore.PhysicalIndexLoo
 	if !e.isCommonHandle() {
 		fullColLen += 1
 	}
+	if e.index.Global {
+		fullColLen += 1
+	}
 	e.dagPB.OutputOffsets = make([]uint32, fullColLen)
 	for i := 0; i < fullColLen; i++ {
 		e.dagPB.OutputOffsets[i] = uint32(i)
@@ -404,7 +407,7 @@ func buildIdxColsConcatHandleCols(tblInfo *model.TableInfo, indexInfo *model.Ind
 		pkCols = pkIdx.Columns
 		handleLen = len(pkIdx.Columns)
 	}
-	columns := make([]*model.ColumnInfo, 0, len(indexInfo.Columns)+handleLen)
+	columns := make([]*model.ColumnInfo, 0, len(indexInfo.Columns)+handleLen+1)
 	for _, idxCol := range indexInfo.Columns {
 		columns = append(columns, tblInfo.Columns[idxCol.Offset])
 	}
@@ -422,6 +425,21 @@ func buildIdxColsConcatHandleCols(tblInfo *model.TableInfo, indexInfo *model.Ind
 	}
 	handleColsInfo.FieldType = *types.NewFieldType(mysql.TypeLonglong)
 	columns = append(columns, handleColsInfo)
+	return columns
+}
+
+func buildIdxColsConcatHandleColsWithPid(tblInfo *model.TableInfo, indexInfo *model.IndexInfo) []*model.ColumnInfo {
+	columns := buildIdxColsConcatHandleCols(tblInfo, indexInfo)
+	if indexInfo.Global {
+		pidOffset := len(columns)
+		pidColsInfo := &model.ColumnInfo{
+			ID:     model.ExtraPidColID,
+			Name:   model.ExtraPartitionIdName,
+			Offset: pidOffset,
+		}
+		pidColsInfo.FieldType = *types.NewFieldType(mysql.TypeLonglong)
+		columns = append(columns, pidColsInfo)
+	}
 	return columns
 }
 
@@ -493,14 +511,13 @@ func (b *executorBuilder) buildCleanupIndex(v *plannercore.CleanupIndex) Executo
 			break
 		}
 	}
-
 	if index == nil {
 		b.err = errors.Errorf("index `%v` is not found in table `%v`.", v.IndexName, v.Table.Name.O)
 		return nil
 	}
 	e := &CleanupIndexExec{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
-		columns:      buildIdxColsConcatHandleCols(tblInfo, index.Meta()),
+		columns:      buildIdxColsConcatHandleColsWithPid(tblInfo, index.Meta()),
 		index:        index,
 		table:        t,
 		physicalID:   t.Meta().ID,
