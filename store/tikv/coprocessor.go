@@ -524,13 +524,6 @@ func (worker *copIteratorWorker) run(ctx context.Context) {
 			worker.sendRate.putToken()
 		})
 		worker.actionOnExceed.waitIfNeeded()
-		failpoint.Inject("testRateLimitActionTokenDestroyed", func(val failpoint.Value) {
-			if val.(bool) {
-				if worker.actionOnExceed.isTokenFailDestroying() {
-					panic("triggerCount + remainingTokenNum not equal to totalTokenNum")
-				}
-			}
-		})
 		if worker.vars != nil && worker.vars.Killed != nil && atomic.LoadUint32(worker.vars.Killed) == 1 {
 			return
 		}
@@ -1302,8 +1295,8 @@ type rateLimitAction struct {
 		isTokenDestroyed bool
 		// once should be initialized only if the `initOnce` is false
 		once sync.Once
-		// initOnce indicate whether the once have been initialized
-		initOnce bool
+		// needInitOnce indicate whether the once needed to be initialized
+		needInitOnce bool
 		// triggerCount indicates the count of rateLimitAction being triggered, only used for unit test
 		triggerCount uint
 	}
@@ -1318,7 +1311,7 @@ func newRateLimitAction(totalTokenNumber uint, cond *sync.Cond) *rateLimitAction
 			remainingTokenNum uint
 			isTokenDestroyed  bool
 			once              sync.Once
-			initOnce          bool
+			needInitOnce      bool
 			triggerCount      uint
 		}{
 			Cond:              cond,
@@ -1355,6 +1348,13 @@ func (e *rateLimitAction) Action(t *memory.Tracker) {
 			}
 			return
 		}
+		failpoint.Inject("testRateLimitActionTokenDestroyed", func(val failpoint.Value) {
+			if val.(bool) {
+				if e.cond.triggerCount+e.cond.remainingTokenNum != e.totalTokenNum {
+					panic("triggerCount + remainingTokenNum not equal to totalTokenNum")
+				}
+			}
+		})
 		logutil.BgLogger().Info("memory exceeds quota, one token needs to be destroyed.",
 			zap.Int64("consumed", t.BytesConsumed()),
 			zap.Int64("quota", t.GetBytesLimit()),
@@ -1362,7 +1362,7 @@ func (e *rateLimitAction) Action(t *memory.Tracker) {
 			zap.Uint("remaining token count", e.cond.remainingTokenNum))
 		e.cond.isTokenDestroyed = false
 		e.cond.exceeded = true
-		e.cond.initOnce = false
+		e.cond.needInitOnce = true
 		e.cond.triggerCount++
 	})
 }
@@ -1419,17 +1419,10 @@ func (e *rateLimitAction) waitIfNeeded() {
 		e.cond.Wait()
 	}
 	// As one Token is destroyed and the exceeded data is consumed now, the once can be initialized again if it haven't.
-	if !e.cond.initOnce {
+	if e.cond.needInitOnce {
 		e.cond.once = sync.Once{}
-		e.cond.initOnce = true
+		e.cond.needInitOnce = false
 	}
-}
-
-// isTokenFailDestroying return whether exists any token fail to be destroyed.
-func (e *rateLimitAction) isTokenFailDestroying() bool {
-	e.conditionLock()
-	defer e.conditionUnlock()
-	return e.cond.triggerCount+e.cond.remainingTokenNum != e.totalTokenNum
 }
 
 func (e *rateLimitAction) conditionLock() {
@@ -1446,6 +1439,7 @@ func (e *rateLimitAction) close() {
 	defer e.conditionUnlock()
 	e.cond.exceeded = false
 	e.cond.isTokenDestroyed = false
+	e.cond.needInitOnce = false
 	// broadcast the signal in order not to leak worker goroutine if it is being suspended
 	e.cond.Broadcast()
 }
