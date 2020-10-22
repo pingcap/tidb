@@ -1400,7 +1400,7 @@ func (t *TableCommon) canSkip(col *table.Column, value *types.Datum) bool {
 
 // CanSkip is for these cases, we can skip the columns in encoded row:
 // 1. the column is included in primary key;
-// 2. the column's default value is null, and the value equals to that;
+// 2. the column's default value is null, and the value equals to that but has no origin default;
 // 3. the column is virtual generated.
 func CanSkip(info *model.TableInfo, col *table.Column, value *types.Datum) bool {
 	if col.IsPKHandleColumn(info) {
@@ -1420,7 +1420,7 @@ func CanSkip(info *model.TableInfo, col *table.Column, value *types.Datum) bool 
 			return canSkip
 		}
 	}
-	if col.GetDefaultValue() == nil && value.IsNull() {
+	if col.GetDefaultValue() == nil && value.IsNull() && col.GetOriginDefaultValue() == nil {
 		return true
 	}
 	if col.IsGenerated() && !col.GeneratedStored {
