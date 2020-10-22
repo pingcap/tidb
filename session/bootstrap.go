@@ -1273,7 +1273,7 @@ func doDMLWorks(s Session) {
 				vVal = strconv.Itoa(variable.DefTiDBRowFormatV2)
 			}
 			if v.Name == variable.TiDBEnableClusteredIndex {
-				vVal = "1"
+				vVal = variable.BoolOn
 			}
 			if v.Name == variable.TiDBPartitionPruneMode {
 				vVal = string(variable.StaticOnly)
