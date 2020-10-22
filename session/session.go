@@ -1109,10 +1109,10 @@ func (s *session) Execute(ctx context.Context, sql string) (recordSets []sqlexec
 
 func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec.RecordSet, err error) {
 	s.PrepareTxnCtx(ctx)
-	err = s.loadCommonGlobalVariablesIfNeeded()
-	if err != nil {
-		return nil, err
-	}
+	//err = s.loadCommonGlobalVariablesIfNeeded()
+	//if err != nil {
+	//	return nil, err
+	//}
 
 	charsetInfo, collation := s.sessionVars.GetCharsetInfo()
 
