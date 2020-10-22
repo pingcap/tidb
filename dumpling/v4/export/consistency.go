@@ -102,7 +102,6 @@ func (c *ConsistencyLockDumpingTables) TearDown(ctx context.Context) error {
 	return UnlockTables(ctx, c.conn)
 }
 
-const showMasterStatusFieldNum = 5
 const snapshotFieldIndex = 1
 
 func resolveAutoConsistency(conf *Config) {

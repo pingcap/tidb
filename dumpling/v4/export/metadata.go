@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/pingcap/br/pkg/storage"
+	"github.com/pingcap/dumpling/v4/log"
+	"go.uber.org/zap"
 )
 
 type globalMetadata struct {
@@ -57,6 +59,7 @@ func (m *globalMetadata) recordGlobalMetaData(db *sql.Conn, serverType ServerTyp
 	m.buffer.WriteString("\n")
 	switch serverType {
 	// For MySQL:
+	// mysql 5.6+
 	// mysql> SHOW MASTER STATUS;
 	// +-----------+----------+--------------+------------------+-------------------------------------------+
 	// | File      | Position | Binlog_Do_DB | Binlog_Ignore_DB | Executed_Gtid_Set                         |
@@ -64,6 +67,7 @@ func (m *globalMetadata) recordGlobalMetaData(db *sql.Conn, serverType ServerTyp
 	// | ON.000001 |     7502 |              |                  | 6ce40be3-e359-11e9-87e0-36933cb0ca5a:1-29 |
 	// +-----------+----------+--------------+------------------+-------------------------------------------+
 	// 1 row in set (0.00 sec)
+	// mysql 5.5- doesn't have column Executed_Gtid_Set
 	//
 	// For TiDB:
 	// mysql> SHOW MASTER STATUS;
@@ -74,18 +78,16 @@ func (m *globalMetadata) recordGlobalMetaData(db *sql.Conn, serverType ServerTyp
 	// +-------------+--------------------+--------------+------------------+-------------------+
 	// 1 row in set (0.00 sec)
 	case ServerTypeMySQL, ServerTypeTiDB:
-		str, err := ShowMasterStatus(db, showMasterStatusFieldNum)
+		str, err := ShowMasterStatus(db)
 		if err != nil {
 			return err
 		}
-		if logFile := str[fileFieldIndex]; logFile != "" {
-			m.buffer.WriteString("\tLog: " + logFile + "\n")
-		}
-		if pos := str[posFieldIndex]; pos != "" {
-			m.buffer.WriteString("\tPos: " + pos + "\n")
-		}
-		if gtidSet := str[gtidSetFieldIndex]; gtidSet != "" {
-			m.buffer.WriteString("\tGTID:" + gtidSet + "\n")
+		logFile := getValidStr(str, fileFieldIndex)
+		pos := getValidStr(str, posFieldIndex)
+		gtidSet := getValidStr(str, gtidSetFieldIndex)
+
+		if logFile != "" {
+			fmt.Fprintf(&m.buffer, "\tLog: %s\n\tPos: %s\n\tGTID:%s\n", logFile, pos, gtidSet)
 		}
 	// For MariaDB:
 	// SHOW MASTER STATUS;
@@ -102,23 +104,20 @@ func (m *globalMetadata) recordGlobalMetaData(db *sql.Conn, serverType ServerTyp
 	// +--------------------------+
 	// 1 row in set (0.00 sec)
 	case ServerTypeMariaDB:
-		str, err := ShowMasterStatus(db, mariadbShowMasterStatusFieldNum)
+		str, err := ShowMasterStatus(db)
 		if err != nil {
 			return err
 		}
-		if logFile := str[fileFieldIndex]; logFile != "" {
-			m.buffer.WriteString("\tLog: " + logFile + "\n")
-		}
-		if pos := str[posFieldIndex]; pos != "" {
-			m.buffer.WriteString("\tPos: " + pos + "\n")
-		}
+		logFile := getValidStr(str, fileFieldIndex)
+		pos := getValidStr(str, posFieldIndex)
 		var gtidSet string
 		err = db.QueryRowContext(context.Background(), "SELECT @@global.gtid_binlog_pos").Scan(&gtidSet)
 		if err != nil {
-			return err
+			log.Error("fail to get gtid for mariaDB", zap.Error(err))
 		}
-		if gtidSet != "" {
-			m.buffer.WriteString("\tGTID:" + gtidSet + "\n")
+
+		if logFile != "" {
+			fmt.Fprintf(&m.buffer, "\tLog: %s\n\tPos: %s\n\tGTID:%s\n", logFile, pos, gtidSet)
 		}
 	default:
 		return errors.New("unsupported serverType" + serverType.String() + "for recordGlobalMetaData")
@@ -198,4 +197,11 @@ func (m *globalMetadata) writeGlobalMetaData(ctx context.Context) error {
 	defer tearDown(ctx)
 
 	return write(ctx, fileWriter, m.String())
+}
+
+func getValidStr(str []string, idx int) string {
+	if idx < len(str) {
+		return str[idx]
+	}
+	return ""
 }

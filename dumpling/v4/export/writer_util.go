@@ -8,9 +8,8 @@ import (
 	"strings"
 	"sync"
 
-	"go.uber.org/zap"
-
 	"github.com/pingcap/br/pkg/storage"
+	"go.uber.org/zap"
 
 	"github.com/pingcap/dumpling/v4/log"
 )
