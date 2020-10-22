@@ -207,3 +207,29 @@ func (s *testMetaDataSuite) TestMariaDBWithFollowersMetaData(c *C) {
 		"\tGTID:6ce40be3-e359-11e9-87e0-36933cb0ca5a:1-29\n\n")
 	c.Assert(mock.ExpectationsWereMet(), IsNil)
 }
+
+func (s *testMetaDataSuite) TestEarlierMysqlMetaData(c *C) {
+	db, mock, err := sqlmock.New()
+	c.Assert(err, IsNil)
+	defer db.Close()
+	conn, err := db.Conn(context.Background())
+	c.Assert(err, IsNil)
+
+	logFile := "mysql-bin.000001"
+	pos := "4879"
+	rows := sqlmock.NewRows([]string{"File", "Position", "Binlog_Do_DB", "Binlog_Ignore_DB"}).
+		AddRow(logFile, pos, "", "")
+	mock.ExpectQuery("SHOW MASTER STATUS").WillReturnRows(rows)
+	mock.ExpectQuery("SELECT @@default_master_connection").WillReturnError(fmt.Errorf("mock error"))
+	mock.ExpectQuery("SHOW SLAVE STATUS").WillReturnRows(
+		sqlmock.NewRows([]string{"exec_master_log_pos", "relay_master_log_file", "master_host", "Executed_Gtid_Set", "Seconds_Behind_Master"}))
+
+	m := newGlobalMetadata(s.createStorage(c))
+	c.Assert(m.recordGlobalMetaData(conn, ServerTypeMySQL, false), IsNil)
+
+	c.Assert(m.buffer.String(), Equals, "SHOW MASTER STATUS:\n"+
+		"\tLog: mysql-bin.000001\n"+
+		"\tPos: 4879\n"+
+		"\tGTID:\n\n")
+	c.Assert(mock.ExpectationsWereMet(), IsNil)
+}
