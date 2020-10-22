@@ -589,12 +589,14 @@ func (e *CleanupIndexExec) deleteDanglingIdx(txn kv.Transaction, values map[stri
 			if err != nil {
 				return err
 			}
-			fullIdxValsGroup, ok := e.idxValues.Get(handle)
+			handleIdxValsGroup, ok := e.idxValues.Get(handle)
 			if !ok {
 				return errors.Trace(errors.Errorf("batch keys are inconsistent with handles"))
 			}
-			for _, fullIdxVals := range fullIdxValsGroup.([][]types.Datum) {
-				handleIdxVals := fullIdxVals[:e.handleIdxColLen] // Exclude pid column.
+			for i, handleIdxVals := range handleIdxValsGroup.([][]types.Datum) {
+				if e.index.Meta().Global && i == 0 {
+					handleIdxVals = handleIdxVals[:len(e.index.Meta().Columns)]
+				}
 				if err := e.index.Delete(e.ctx.GetSessionVars().StmtCtx, txn, handleIdxVals, handle); err != nil {
 					return err
 				}
@@ -643,6 +645,7 @@ func (e *CleanupIndexExec) fetchIndex(ctx context.Context, txn kv.Transaction) e
 		}
 		global := e.index.Meta().Global
 		iter := chunk.NewIterator4Chunk(e.idxChunk)
+		logutil.BgLogger().Info("dddddd", zap.Any("chk", e.idxChunk.ToString(e.idxColFieldTypes)))
 		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 			handle, err := e.handleCols.BuildHandleFromPartitionedTableIndexRow(row, global)
 			if err != nil {
