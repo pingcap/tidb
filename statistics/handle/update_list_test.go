@@ -24,7 +24,6 @@ type testUpdateListSuite struct {
 }
 
 func (s *testUpdateListSuite) TestInsertAndDelete(c *C) {
-
 	h := Handle{
 		listHead: &SessionStatsCollector{mapper: make(tableDeltaMap)},
 		feedback: statistics.NewQueryFeedbackMap(),

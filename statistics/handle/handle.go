@@ -60,7 +60,6 @@ type Handle struct {
 	// It can be read by multiple readers at the same time without acquiring lock, but it can be
 	// written only after acquiring the lock.
 	statsCache StatsCache
-	sType      statsCacheType
 
 	restrictedExec sqlexec.RestrictedSQLExecutor
 
@@ -106,7 +105,6 @@ func NewHandle(ctx sessionctx.Context, lease time.Duration) (*Handle, error) {
 		listHead:         &SessionStatsCollector{mapper: make(tableDeltaMap), rateMap: make(errorRateDeltaMap)},
 		globalMap:        make(tableDeltaMap),
 		feedback:         statistics.NewQueryFeedbackMap(),
-		sType:            RistrettoStatsCacheType,
 		idxUsageListHead: &SessionIndexUsageCollector{mapper: make(indexUsageMap)},
 	}
 	handle.lease.Store(lease)
@@ -115,7 +113,7 @@ func NewHandle(ctx sessionctx.Context, lease time.Duration) (*Handle, error) {
 		handle.restrictedExec = exec
 	}
 	var err error
-	handle.statsCache, err = NewStatsCache(ctx.GetSessionVars().MemQuotaStatistics, handle.sType)
+	handle.statsCache, err = NewStatsCache(ctx.GetSessionVars().MemQuotaStatistics, DefStatsCacheType)
 	if err != nil {
 		return nil, err
 	}
@@ -276,9 +274,8 @@ func (h *Handle) GetPartitionStats(tblInfo *model.TableInfo, pid int64) *statist
 	return tbl
 }
 
-// SetSimpleCache change cache type to simplecache.
-func (h *Handle) SetSimpleCache() {
-	h.sType = SimpleStatsCacheType
+// SetSimpleCache4Test change cache type to simplecache.
+func (h *Handle) SetSimpleCache4Test() {
 	h.statsCache = newSimpleStatsCache(h.mu.ctx.GetSessionVars().MemQuotaStatistics)
 }
 

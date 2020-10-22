@@ -31,12 +31,14 @@ type StatsCache interface {
 	Update(tables []*statistics.Table, deletedIDs []int64, newVersion uint64)
 	GetVersion() uint64
 	InitStatsCache(tables map[int64]*statistics.Table, version uint64)
-	GetBytesLimit() int64
-	SetBytesLimit(bytesLimit int64)
-	BytesConsumed() int64
+
+	// interface below are used only for test
 	GetAll() []*statistics.Table
 	Clear()
 	Close()
+	GetBytesLimit() int64
+	SetBytesLimit(bytesLimit int64)
+	BytesConsumed() int64
 }
 
 const byteShards = 8
@@ -44,11 +46,14 @@ const numShards = 1 << byteShards
 
 // statsCache caches Regions loaded from PD.
 type ristrettoStatsCache struct {
-	mu           sync.Mutex
-	cache        *cache.Cache
-	memCapacity  int64
-	version      uint64
-	memTracker   *memory.Tracker // track memory usage.
+	mu         sync.Mutex
+	cache      *cache.Cache
+	version    uint64
+	memTracker *memory.Tracker // track memory usage.
+	tablesMap
+}
+
+type tablesMap struct {
 	tablesShards [numShards]tableShard
 }
 
@@ -59,16 +64,16 @@ type tableShard struct {
 }
 
 // Set set key with value
-func (sc *ristrettoStatsCache) Set(key int64, value *statistics.Table) {
-	shard := &sc.tablesShards[key&(numShards-1)]
+func (ts *tablesMap) Set(key int64, value *statistics.Table) {
+	shard := &ts.tablesShards[key&(numShards-1)]
 	shard.Lock()
 	defer shard.Unlock()
 	shard.data[key>>byteShards] = value
 }
 
 // Get get key with value table
-func (sc *ristrettoStatsCache) Get(key int64) (*statistics.Table, bool) {
-	shard := &sc.tablesShards[key&(numShards-1)]
+func (ts *tablesMap) Get(key int64) (*statistics.Table, bool) {
+	shard := &ts.tablesShards[key&(numShards-1)]
 	shard.RLock()
 	defer shard.RUnlock()
 	data, ok := shard.data[key>>byteShards]
@@ -76,8 +81,8 @@ func (sc *ristrettoStatsCache) Get(key int64) (*statistics.Table, bool) {
 }
 
 // Del delete key
-func (sc *ristrettoStatsCache) Del(key int64) {
-	shard := &sc.tablesShards[key&(numShards-1)]
+func (ts *tablesMap) Del(key int64) {
+	shard := &ts.tablesShards[key&(numShards-1)]
 	shard.Lock()
 	defer shard.Unlock()
 	delete(shard.data, key>>byteShards)
@@ -92,12 +97,15 @@ const (
 	SimpleStatsCacheType
 )
 
+// DefStatsCacheType defines statistic cache type
+var DefStatsCacheType = RistrettoStatsCacheType
+
 // NewStatsCache returns a new statsCahce with capacity memoryLimit(initial 1G)
 func NewStatsCache(memoryLimit int64, tp statsCacheType) (StatsCache, error) {
-	if tp == RistrettoStatsCacheType {
+	switch tp {
+	case RistrettoStatsCacheType:
 		return newRistrettoStatsCache(memoryLimit)
-	}
-	if tp == SimpleStatsCacheType {
+	case SimpleStatsCacheType:
 		return newSimpleStatsCache(memoryLimit), nil
 	}
 	return nil, errors.New("wrong statsCache type")
@@ -108,8 +116,7 @@ func newRistrettoStatsCache(memoryLimit int64) (*ristrettoStatsCache, error) {
 	// since newRistrettoStatsCache controls the memory usage by itself, set the capacity of
 	// the underlying LRUCache to max to close its memory control
 	sc := &ristrettoStatsCache{
-		memCapacity: memoryLimit,
-		memTracker:  memory.NewTracker(memory.LabelForStatsCache, -1),
+		memTracker: memory.NewTracker(memory.LabelForStatsCache, -1),
 	}
 	for i := range sc.tablesShards {
 		sc.tablesShards[i].data = make(map[int64]*statistics.Table)
@@ -157,11 +164,6 @@ func (sc *ristrettoStatsCache) GetBytesLimit() int64 {
 	return sc.memTracker.GetBytesLimit()
 }
 
-// GetMutex return the Muetex
-func (sc *ristrettoStatsCache) GetMutex() *sync.Mutex {
-	return &sc.mu
-}
-
 // SetBytesLimit set new byteslimit
 func (sc *ristrettoStatsCache) SetBytesLimit(bytesLimit int64) {
 	sc.cache.SetNewMaxCost(bytesLimit)
@@ -169,6 +171,7 @@ func (sc *ristrettoStatsCache) SetBytesLimit(bytesLimit int64) {
 
 // Close close the cache.
 func (sc *ristrettoStatsCache) Close() {
+	sc.cache.Clear()
 	sc.cache.Close()
 }
 
@@ -204,7 +207,7 @@ func (sc *ristrettoStatsCache) GetAll() []*statistics.Table {
 func (sc *ristrettoStatsCache) lookupUnsafe(id int64) (*statistics.Table, bool) {
 	key := uint64(id)
 	value, hit := sc.cache.Get(key)
-	if !hit || value == nil || value.(*statistics.Table).PhysicalID != id {
+	if !hit || value == nil {
 		if table, ok := sc.Get(id); ok {
 			return table, true
 		}
@@ -308,11 +311,6 @@ func newSimpleStatsCache(memoryLimit int64) *simpleStatsCache {
 	return &c
 }
 
-// GetMutex return the Muetex point
-func (sc *simpleStatsCache) GetMutex() *sync.Mutex {
-	return &sc.mu
-}
-
 // SetBytesLimit sets the bytes limit for this tracker.
 func (sc *simpleStatsCache) SetBytesLimit(BytesLimit int64) {
 	sc.memTracker.SetBytesLimit(BytesLimit)
@@ -337,6 +335,7 @@ func (sc *simpleStatsCache) lookupUnsafe(id int64) (*statistics.Table, bool) {
 }
 
 func (sc *simpleStatsCache) Close() {
+	sc.Clear()
 }
 
 // Clear clears the cache

@@ -241,7 +241,7 @@ func BenchmarkSelectivityWithCacheNolimitSimple(b *testing.B) {
 	origLease := h.Lease()
 	defer func() { h.SetLease(origLease) }()
 	s.prepareSelectivity(testKit, c)
-	h.SetSimpleCache()
+	h.SetSimpleCache4Test()
 
 	file, err := os.Create("cpu.profile")
 	c.Assert(err, IsNil)
@@ -307,7 +307,7 @@ func BenchmarkSelectivityWithSimpleCache(b *testing.B) {
 	h := s.do.StatsHandle()
 	limit := int64(51000 * 8 * 10)
 	h.SetBytesLimit4Test(limit)
-	h.SetSimpleCache()
+	h.SetSimpleCache4Test()
 
 	origLease := h.Lease()
 	defer func() { h.SetLease(origLease) }()
