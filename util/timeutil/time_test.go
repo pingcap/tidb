@@ -80,7 +80,7 @@ func (s *testTimeSuite) TestInferOneStepLinkForPath(c *C) {
 	c.Assert(err, IsNil)
 	err = os.Symlink("/tmp/testlink2", "/tmp/testlink3")
 	c.Assert(err, IsNil)
-	link2, err = InferOneStepLinkForPath("/tmp/testlink3")
+	link2, err = inferOneStepLinkForPath("/tmp/testlink3")
 	c.Assert(err, IsNil)
 	c.Assert(link2, Equals, "/tmp/testlink2")
 	link3, err = filepath.EvalSymlinks("/tmp/testlink3")

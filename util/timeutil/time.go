@@ -53,9 +53,9 @@ type locCache struct {
 	locMap map[string]*time.Location
 }
 
-// InferOneStepLinkForPath only read one step link for the path, not like filepath.EvalSymlinks, which gets the
+// inferOneStepLinkForPath only read one step link for the path, not like filepath.EvalSymlinks, which gets the
 // recursive final linked file of the path.
-func InferOneStepLinkForPath(path string) (string, error) {
+func inferOneStepLinkForPath(path string) (string, error) {
 	fileInfo, err := os.Lstat(path)
 	if err != nil {
 		return path, err
@@ -82,7 +82,7 @@ func InferSystemTZ() string {
 		path, err1 := filepath.EvalSymlinks("/etc/localtime")
 		if err1 == nil {
 			if strings.Index(path, "posixrules") != -1 {
-				path, err1 = InferOneStepLinkForPath("/etc/localtime")
+				path, err1 = inferOneStepLinkForPath("/etc/localtime")
 				if err1 != nil {
 					logutil.BgLogger().Error("locate timezone files failed", zap.Error(err1))
 					return ""
