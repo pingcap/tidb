@@ -10,6 +10,7 @@ explain select * from t1 where t1.a in (select t1.b + t2.b from t2) and t1.a = 1
 explain select * from t1 where t1.a in (select t1.b + t2.b from t2 where t1.b = t2.a) and t1.a = 1;
 explain select * from t1 where t1.a in (select t1.b + t2.b from t2) and t1.b = 1;
 explain select * from t1 where t1.a in (select t1.b + t2.b from t2 where t1.b = t2.a) and t1.b = 1;
+explain select * from t1 where t1.a in (select sum(b) from t2);
 
 drop table if exists t;
 create table t(a int primary key, b int, c int, d int, index idx(b,c,d));

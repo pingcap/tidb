@@ -57,6 +57,17 @@ HashJoin_10	8.00	root		semi join, equal:[eq(test.t1.a, Column#9)]
 └─TableReader_13(Probe)	10.00	root		data:Selection_12
   └─Selection_12	10.00	cop[tikv]		eq(test.t1.b, 1)
     └─TableFullScan_11	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain select * from t1 where t1.a in (select sum(b) from t2);
+id	estRows	task	access object	operator info
+HashJoin_13	1.25	root		inner join, equal:[eq(Column#7, Column#8)]
+├─HashAgg_16(Build)	1.00	root		group by:Column#7, funcs:firstrow(Column#7)->Column#7
+│ └─StreamAgg_28	1.00	root		funcs:sum(Column#11)->Column#7
+│   └─TableReader_29	1.00	root		data:StreamAgg_20
+│     └─StreamAgg_20	1.00	cop[tikv]		funcs:sum(subquery.t2.b)->Column#11
+│       └─TableFullScan_27	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+└─Projection_32(Probe)	10000.00	root		test.t1.a, test.t1.b, cast(test.t1.a, decimal(20,0) BINARY)->Column#8
+  └─TableReader_34	10000.00	root		data:TableFullScan_33
+    └─TableFullScan_33	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 drop table if exists t;
 create table t(a int primary key, b int, c int, d int, index idx(b,c,d));
 insert into t values(1,1,1,1),(2,2,2,2),(3,2,2,2),(4,2,2,2),(5,2,2,2);
