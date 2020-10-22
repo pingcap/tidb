@@ -66,6 +66,7 @@ const (
 	// Valid formats for explain statement.
 	ExplainFormatROW     = "row"
 	ExplainFormatDOT     = "dot"
+	ExplainFormatJSON    = "json"
 	ExplainFormatHint    = "hint"
 	ExplainFormatVerbose = "verbose"
 	PumpType             = "PUMP"
@@ -83,6 +84,7 @@ var (
 	ExplainFormats = []string{
 		ExplainFormatROW,
 		ExplainFormatDOT,
+		ExplainFormatJSON,
 		ExplainFormatHint,
 		ExplainFormatVerbose,
 	}
