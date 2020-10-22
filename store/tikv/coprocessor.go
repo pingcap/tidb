@@ -523,7 +523,17 @@ func (worker *copIteratorWorker) run(ctx context.Context) {
 		worker.actionOnExceed.destroyTokenIfNeeded(func() {
 			worker.sendRate.putToken()
 		})
+		failpoint.Inject("testRateLimitActionMockOtherExecutorConsume", func(val failpoint.Value) {
+			if val.(bool) {
+				worker.memTracker.Consume(1000)
+			}
+		})
 		worker.actionOnExceed.waitIfNeeded()
+		failpoint.Inject("testRateLimitActionMockOtherExecutorConsume", func(val failpoint.Value) {
+			if val.(bool) {
+				worker.memTracker.Consume(-1000)
+			}
+		})
 		if worker.vars != nil && worker.vars.Killed != nil && atomic.LoadUint32(worker.vars.Killed) == 1 {
 			return
 		}
@@ -1343,6 +1353,7 @@ func (e *rateLimitAction) Action(t *memory.Tracker) {
 	}
 	e.conditionLock()
 	defer e.conditionUnlock()
+	// If there is not cached response, delegate it to the fallback action.
 	if e.cond.remainingResponseCount < 1 {
 		logutil.BgLogger().Info("memory exceed quota, rateLimitAction delegate to fallback action",
 			zap.Uint("remaining response count", e.cond.remainingResponseCount),
