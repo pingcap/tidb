@@ -66,7 +66,7 @@ func (s *testSuite1) TestIgnorePlanCache(c *C) {
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.UseCache, IsFalse)
 }
 
-func (s *testSuite1) TestPrepareStmtAfterIsolationReadChange(c *C) {
+func (s *testSuite9) TestPrepareStmtAfterIsolationReadChange(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost", CurrentUser: true, AuthUsername: "root", AuthHostname: "%"}, nil, []byte("012345678901234567890"))
 
