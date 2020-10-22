@@ -859,12 +859,8 @@ func (s *testStatsSuite) TestCompareFeedbackForNonPartitionAndPartition(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
-	m := variable.DynamicOnly
-	testKit.MustExec("set @@tidb_partition_prune_mode=`" + string(m) + "`")
-	testKit.MustExec("set global tidb_partition_prune_mode=`" + string(m) + "`")
-	s.do.GetGlobalVarsCache().Disable()
+	testKit.MustExec("set @@tidb_partition_prune_mode=`" + string(variable.DynamicOnly) + "`")
 	h := s.do.StatsHandle()
-	c.Assert(h.RefreshVars(), IsNil)
 	testKit.MustExec(`drop table if exists t1, t2`)
 	testKit.MustExec(`create table t1 (a bigint(64), b bigint(64), primary key(a), index idx(b))`)
 	testKit.MustExec(`create table t2 (a bigint(64), b bigint(64), primary key(a), index idx(b))
@@ -895,14 +891,14 @@ func (s *testStatsSuite) TestCompareFeedbackForNonPartitionAndPartition(c *C) {
 			sql:     "select * from %s where a <= 5",
 			idxCols: 0,
 		},
-		//{
-		//	sql: "select * from %s use index(idx) where b <= 5",
-		//	idxCols: 1,
-		//},
-		//{
-		//	sql: "select b from %s use index(idx) where b <= 5",
-		//	idxCols: 1,
-		//},
+		{
+			sql:     "select * from %s use index(idx) where b <= 5",
+			idxCols: 1,
+		},
+		{
+			sql:     "select b from %s use index(idx) where b <= 5",
+			idxCols: 1,
+		},
 	}
 
 	is := s.do.InfoSchema()

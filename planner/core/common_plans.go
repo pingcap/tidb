@@ -721,7 +721,7 @@ type AnalyzeTableID struct {
 }
 
 // StoreAsCollectID indicates whether collect table id is same as persist table id.
-// for new partition implementation is TRUE but FALSE for old partition implementation
+// for new partition implementation is FALSE but TRUE for old partition implementation
 func (h *AnalyzeTableID) StoreAsCollectID() bool {
 	return h.PersistID == h.CollectIDs[0]
 }
