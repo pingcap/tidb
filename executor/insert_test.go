@@ -378,12 +378,12 @@ func (s *testSuite3) TestInsertDateTimeWithTimeZone(c *C) {
 
 	// test for time zone change
 	tzcCases := []struct {
-		tz1 string
-		lit string
-		tz2 string
+		tz1  string
+		lit  string
+		tz2  string
 		exp1 string
 		exp2 string
-	} {
+	}{
 		{"+08:00", "2020-10-22T16:53:40Z", "+00:00", "2020-10-23 00:53:40", "2020-10-22 16:53:40"},
 		{"-08:00", "2020-10-22T16:53:40Z", "+08:00", "2020-10-22 08:53:40", "2020-10-23 00:53:40"},
 		{"-03:00", "2020-10-22T16:53:40+03:00", "+08:00", "2020-10-22 10:53:40", "2020-10-22 21:53:40"},
