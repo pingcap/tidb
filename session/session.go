@@ -1024,7 +1024,6 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 		Command:          command,
 		Plan:             s.currentPlan,
 		PlanExplainRows:  plannercore.GetExplainRowsForPlan(s.currentPlan),
-		RuntimeStatsColl: s.sessionVars.StmtCtx.RuntimeStatsColl,
 		Time:             t,
 		State:            s.Status(),
 		Info:             sql,
