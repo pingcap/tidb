@@ -375,6 +375,29 @@ func (s *testSuite3) TestInsertDateTimeWithTimeZone(c *C) {
 		tk.MustExec(fmt.Sprintf("insert into t values ('%s')", ca.lit))
 		tk.MustQuery(`select * from t`).Check(testkit.Rows(ca.expect))
 	}
+
+	// test for time zone change
+	tzcCases := []struct {
+		tz1 string
+		lit string
+		tz2 string
+		exp1 string
+		exp2 string
+	} {
+		{"+08:00", "2020-10-22T16:53:40Z", "+00:00", "2020-10-23 00:53:40", "2020-10-22 16:53:40"},
+		{"-08:00", "2020-10-22T16:53:40Z", "+08:00", "2020-10-22 08:53:40", "2020-10-23 00:53:40"},
+		{"-03:00", "2020-10-22T16:53:40+03:00", "+08:00", "2020-10-22 10:53:40", "2020-10-22 21:53:40"},
+		{"+08:00", "2020-10-22T16:53:40+08:00", "+08:00", "2020-10-22 16:53:40", "2020-10-22 16:53:40"},
+	}
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (dt datetime, ts timestamp)")
+	for _, ca := range tzcCases {
+		tk.MustExec("delete from t")
+		tk.MustExec(fmt.Sprintf("set @@time_zone='%s'", ca.tz1))
+		tk.MustExec(fmt.Sprintf("insert into t values ('%s', '%s')", ca.lit, ca.lit))
+		tk.MustExec(fmt.Sprintf("set @@time_zone='%s'", ca.tz2))
+		tk.MustQuery("select * from t").Check(testkit.Rows(ca.exp1 + " " + ca.exp2))
+	}
 }
 
 func (s *testSuite3) TestInsertZeroYear(c *C) {
