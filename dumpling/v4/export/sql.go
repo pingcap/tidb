@@ -386,13 +386,19 @@ func UseDatabase(db *sql.DB, databaseName string) error {
 	return withStack(err)
 }
 
-func ShowMasterStatus(db *sql.Conn, fieldNum int) ([]string, error) {
-	oneRow := make([]string, fieldNum)
-	addr := make([]interface{}, fieldNum)
-	for i := range oneRow {
-		addr[i] = &oneRow[i]
-	}
+func ShowMasterStatus(db *sql.Conn) ([]string, error) {
+	var oneRow []string
 	handleOneRow := func(rows *sql.Rows) error {
+		cols, err := rows.Columns()
+		if err != nil {
+			return err
+		}
+		fieldNum := len(cols)
+		oneRow = make([]string, fieldNum)
+		addr := make([]interface{}, fieldNum)
+		for i := range oneRow {
+			addr[i] = &oneRow[i]
+		}
 		return rows.Scan(addr...)
 	}
 	const showMasterStatusQuery = "SHOW MASTER STATUS"
@@ -464,7 +470,7 @@ func CheckTiDBWithTiKV(db *sql.DB) (bool, error) {
 }
 
 func getSnapshot(db *sql.Conn) (string, error) {
-	str, err := ShowMasterStatus(db, showMasterStatusFieldNum)
+	str, err := ShowMasterStatus(db)
 	if err != nil {
 		return "", err
 	}
