@@ -138,8 +138,8 @@ func (td *tableData) Rows() SQLRowIter {
 }
 
 func (td *tableData) SelectedField() string {
-	if td.selectedField == "*" {
-		return ""
+	if td.selectedField == "*" || td.selectedField == "" {
+		return td.selectedField
 	}
 	return fmt.Sprintf("(%s)", td.selectedField)
 }
