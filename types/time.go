@@ -948,13 +948,13 @@ func splitDateTime(format string) (seps []string, fracStr string, hasTZ bool, tz
 	tzIndex, tzSign, tzHour, tzSep, tzMinute := GetTimezone(format)
 	if tzIndex > 0 {
 		hasTZ = true
-		for ; tzIndex >= 0 && isPunctuation(format[tzIndex]); tzIndex-- {}
+		for ; tzIndex > 0 && isPunctuation(format[tzIndex-1]); tzIndex-- {}
 		format = format[:tzIndex]
 	}
 	fracIndex := GetFracIndex(format)
 	if fracIndex > 0 {
 		fracStr = format[fracIndex+1:]
-		for ; fracIndex >= 0 && isPunctuation(format[fracIndex]); tzIndex-- {}
+		for ; fracIndex > 0 && isPunctuation(format[fracIndex-1]); fracIndex-- {}
 		format = format[:fracIndex]
 	}
 	seps = ParseDateFormat(format)
@@ -1018,12 +1018,16 @@ func parseDatetime(sc *stmtctx.StatementContext, str string, tp byte, fsp int8, 
 	However, I think it is generally acceptable to allow a wider spectrum of timezone format in string literal.
 	 */
 
-	// hasFullTimePart tests if we already have hhmmss
-	hasFullTimePart := func (seps []string) bool {
-		return len(seps) >= 6 || (len(seps) == 1 && len(seps[0]) >= 11)
+	// noAbsorb tests if can absorb FSP or TZ
+	noAbsorb := func (seps []string) bool {
+		// if we have more than 5 parts (i.e. 6), the tailing part can't be absorbed
+		// or if we only have 1 part, but its length is longer than 4, then it is at least YYMMD, in this case, FSP can
+		// not be absorbed, and it will be handled later, and the leading sign prevents TZ from being absorbed, because
+		// if date part has no separators, we can't use -/+ as separators between date & time.
+		return len(seps) > 5 || (len(seps) == 1 && len(seps[0]) > 4)
 	}
 	if len(fracStr) != 0 && !isFloat {
-		if !hasFullTimePart(seps) {
+		if !noAbsorb(seps) {
 			seps = append(seps, fracStr)
 			fracStr = ""
 		}
@@ -1031,13 +1035,13 @@ func parseDatetime(sc *stmtctx.StatementContext, str string, tp byte, fsp int8, 
 	if hasTZ && tzSign != "" {
 		// if tzSign is empty, we can be sure that the string literal contains timezone (such as 2010-10-10T10:10:10Z),
 		// therefore we could safely skip this branch.
-		if !hasFullTimePart(seps) && !(tzMinute != "" && tzSep == "") {
+		if !noAbsorb(seps) && !(tzMinute != "" && tzSep == "") {
 			// we can't absorb timezone if there is no separate between tzHour and tzMinute
 			if len(tzHour) != 0 {
 				seps = append(seps, tzHour)
 			}
 			if len(tzMinute) != 0 {
-				seps = append(seps, tzHour)
+				seps = append(seps, tzMinute)
 			}
 			hasTZ = false
 		}
