@@ -347,7 +347,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 	isPessimistic := sctx.GetSessionVars().TxnCtx.IsPessimistic
 
 	// Special handle for "select for update statement" in pessimistic transaction.
-	if isPessimistic && a.isSelectForUpdate {
+	if isPessimistic && a.isSelectForUpdate && e.Schema().Len() > 0 {
 		return a.handlePessimisticSelectForUpdate(ctx, e)
 	}
 
