@@ -794,9 +794,9 @@ var validIdxCombinations = map[int]struct {
 	m int
 }{
 	100: {0, 0}, // 23:59:59Z
-	30: {2, 0}, // 23:59:59+08
-	50: {4, 2}, // 23:59:59+0800
-	63: {5, 2}, // 23:59:59+08:00
+	30:  {2, 0}, // 23:59:59+08
+	50:  {4, 2}, // 23:59:59+0800
+	63:  {5, 2}, // 23:59:59+08:00
 	// postgres supports the following additional syntax that deviates from ISO8601, although we won't support it
 	// currently, it will be fairly easy to add in the current parsing framework
 	// 23:59:59Z+08
@@ -869,7 +869,7 @@ func GetTimezone(lit string) (idx int, tzSign, tzHour, tzSep, tzMinute string) {
 			idx = zidx
 		}
 		if sc != 0 {
-			tzSep = lit[spidx:spidx+1]
+			tzSep = lit[spidx : spidx+1]
 		}
 		if v.h != 0 {
 			tzHour = lit[hidx : hidx+2]
@@ -900,13 +900,15 @@ func splitDateTime(format string) (seps []string, fracStr string, hasTZ bool, tz
 	tzIndex, tzSign, tzHour, tzSep, tzMinute := GetTimezone(format)
 	if tzIndex > 0 {
 		hasTZ = true
-		for ; tzIndex > 0 && isPunctuation(format[tzIndex-1]); tzIndex-- {}
+		for ; tzIndex > 0 && isPunctuation(format[tzIndex-1]); tzIndex-- {
+		}
 		format = format[:tzIndex]
 	}
 	fracIndex := GetFracIndex(format)
 	if fracIndex > 0 {
 		fracStr = format[fracIndex+1:]
-		for ; fracIndex > 0 && isPunctuation(format[fracIndex-1]); fracIndex-- {}
+		for ; fracIndex > 0 && isPunctuation(format[fracIndex-1]); fracIndex-- {
+		}
 		format = format[:fracIndex]
 	}
 	seps = ParseDateFormat(format)
@@ -918,8 +920,8 @@ func parseDatetime(sc *stmtctx.StatementContext, str string, tp byte, fsp int8, 
 	var (
 		year, month, day, hour, minute, second, deltaHour, deltaMinute int
 		fracStr                                                        string
-		tzSign, tzHour, tzSep, tzMinute                                       string
-		hasTZ, hhmmss                                                         bool
+		tzSign, tzHour, tzSep, tzMinute                                string
+		hasTZ, hhmmss                                                  bool
 		err                                                            error
 	)
 
@@ -927,51 +929,51 @@ func parseDatetime(sc *stmtctx.StatementContext, str string, tp byte, fsp int8, 
 
 	var truncatedOrIncorrect bool
 	/*
-	if we have timezone parsed, there are the following cases to be considered, however some of them are wrongly parsed, and we should consider absorb them back to seps.
+		if we have timezone parsed, there are the following cases to be considered, however some of them are wrongly parsed, and we should consider absorb them back to seps.
 
-	1. Z, then it must be time zone information, and we should not tamper with it
-	2. -HH, it might be from
-	    1. no fracStr
-	        1. YYYY-MM-DD
-	        2. YYYY-MM-DD-HH
-	        3. YYYY-MM-DD HH-MM
-	        4. YYYY-MM-DD HH:MM-SS
-	        5. YYYY-MM-DD HH:MM:SS-HH (correct, no need absorb)
-	    2. with fracStr
-	        1. YYYY.MM-DD
-	        2. YYYY-MM.DD-HH
-	        3. YYYY-MM-DD.HH-MM
-	        4. YYYY-MM-DD HH.MM-SS
-	        5. YYYY-MM-DD HH:MM.SS-HH (correct, no need absorb)
-	3. -HH:MM, similarly it might be from
-	    1. no fracStr
-	        1. YYYY-MM:DD
-	        2. YYYY-MM-DD:HH
-	        3. YYYY-MM-DD-HH:MM
-	        4. YYYY-MM-DD HH-MM:SS
-	        5. YYYY-MM-DD HH:MM-SS:HH (invalid)
-	        6. YYYY-MM-DD HH:MM:SS-HH:MM (correct, no need absorb)
-	    2. with fracStr
-	        1. YYYY.MM-DD:HH
-	        2. YYYY-MM.DD-HH:MM
-	        3. YYYY-MM-DD.HH-MM:SS
-	        4. YYYY-MM-DD HH.MM-SS:HH (invalid)
-	        5. YYYY-MM-DD HH:MM.SS-HH:MM (correct, no need absorb)
-	4. -HHMM, there should only be one case, that is both the date and time part have existed, only then could we have fracStr or time zone
-	    1. YYYY-MM-DD HH:MM:SS.FSP-HHMM (correct, no need absorb)
+		1. Z, then it must be time zone information, and we should not tamper with it
+		2. -HH, it might be from
+		    1. no fracStr
+		        1. YYYY-MM-DD
+		        2. YYYY-MM-DD-HH
+		        3. YYYY-MM-DD HH-MM
+		        4. YYYY-MM-DD HH:MM-SS
+		        5. YYYY-MM-DD HH:MM:SS-HH (correct, no need absorb)
+		    2. with fracStr
+		        1. YYYY.MM-DD
+		        2. YYYY-MM.DD-HH
+		        3. YYYY-MM-DD.HH-MM
+		        4. YYYY-MM-DD HH.MM-SS
+		        5. YYYY-MM-DD HH:MM.SS-HH (correct, no need absorb)
+		3. -HH:MM, similarly it might be from
+		    1. no fracStr
+		        1. YYYY-MM:DD
+		        2. YYYY-MM-DD:HH
+		        3. YYYY-MM-DD-HH:MM
+		        4. YYYY-MM-DD HH-MM:SS
+		        5. YYYY-MM-DD HH:MM-SS:HH (invalid)
+		        6. YYYY-MM-DD HH:MM:SS-HH:MM (correct, no need absorb)
+		    2. with fracStr
+		        1. YYYY.MM-DD:HH
+		        2. YYYY-MM.DD-HH:MM
+		        3. YYYY-MM-DD.HH-MM:SS
+		        4. YYYY-MM-DD HH.MM-SS:HH (invalid)
+		        5. YYYY-MM-DD HH:MM.SS-HH:MM (correct, no need absorb)
+		4. -HHMM, there should only be one case, that is both the date and time part have existed, only then could we have fracStr or time zone
+		    1. YYYY-MM-DD HH:MM:SS.FSP-HHMM (correct, no need absorb)
 
-	to summarize, FSP and timezone is only valid if we have date and time presented, otherwise we should consider absorbing
-	FSP or timezone into seps. additionally, if we want to absorb timezone, we either absorb them all, or not, meaning
-	we won't only absorb tzHour but not tzMinute.
+		to summarize, FSP and timezone is only valid if we have date and time presented, otherwise we should consider absorbing
+		FSP or timezone into seps. additionally, if we want to absorb timezone, we either absorb them all, or not, meaning
+		we won't only absorb tzHour but not tzMinute.
 
-	additional case to consider is that when the time literal is presented in float string (e.g. `YYYYMMDD.HHMMSS`), in
-	this case, FSP should not be absorbed and only `+HH:MM` would be allowed (i.e. Z, +HHMM, +HH that comes from ISO8601
-	should be banned), because it only conforms to MySQL's timezone parsing logic, but it is not valid in ISO8601.
-	However, I think it is generally acceptable to allow a wider spectrum of timezone format in string literal.
-	 */
+		additional case to consider is that when the time literal is presented in float string (e.g. `YYYYMMDD.HHMMSS`), in
+		this case, FSP should not be absorbed and only `+HH:MM` would be allowed (i.e. Z, +HHMM, +HH that comes from ISO8601
+		should be banned), because it only conforms to MySQL's timezone parsing logic, but it is not valid in ISO8601.
+		However, I think it is generally acceptable to allow a wider spectrum of timezone format in string literal.
+	*/
 
 	// noAbsorb tests if can absorb FSP or TZ
-	noAbsorb := func (seps []string) bool {
+	noAbsorb := func(seps []string) bool {
 		// if we have more than 5 parts (i.e. 6), the tailing part can't be absorbed
 		// or if we only have 1 part, but its length is longer than 4, then it is at least YYMMD, in this case, FSP can
 		// not be absorbed, and it will be handled later, and the leading sign prevents TZ from being absorbed, because

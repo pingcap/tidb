@@ -1888,7 +1888,7 @@ func (s *testTimeSuite) TestGetTimezone(c *C) {
 		idx      int
 		tzSign   string
 		tzHour   string
-		tzSep string
+		tzSep    string
 		tzMinute string
 	}{
 		{"2020-10-10T10:10:10Z", 19, "", "", "", ""},
@@ -1912,7 +1912,7 @@ func (s *testTimeSuite) TestGetTimezone(c *C) {
 
 func (s *testTimeSuite) TestParseWithTimezone(c *C) {
 	getTZ := func(tzSign string, tzHour, tzMinue int) *time.Location {
-		offset := tzHour*60*60+tzMinue*60
+		offset := tzHour*60*60 + tzMinue*60
 		if tzSign == "-" {
 			offset = -offset
 		}
@@ -1923,11 +1923,11 @@ func (s *testTimeSuite) TestParseWithTimezone(c *C) {
 	// we first parse the string literal, and convert it into UTC and then compare it with the ground truth time in UTC.
 	// note that sysTZ won't affect the physical time the string literal represents.
 	cases := []struct {
-		lit string
-		fsp int8
+		lit          string
+		fsp          int8
 		parseChecker Checker
-		gt time.Time
-		sysTZ *time.Location
+		gt           time.Time
+		sysTZ        *time.Location
 	}{
 		{
 			"2006-01-02T15:04:05Z",
