@@ -491,7 +491,7 @@ func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 				p.err = err
 				return
 			}
-			err = checkEmptyIndexInfo(constraint.Name,constraint.IfEmptyIndex)
+			err = checkEmptyIndexInfo(constraint.Name,constraint.IsEmptyIndex)
 			if err != nil {
 				p.err = err
 				return
@@ -773,8 +773,8 @@ func checkIndexInfo(indexName string, IndexPartSpecifications []*ast.IndexPartSp
 }
 
 // checkEmptyIndexInfo checks  empty index name
-func checkEmptyIndexInfo(name string, ifEmptyIndex bool) error {
-	if name == "" && ifEmptyIndex == true {
+func checkEmptyIndexInfo(name string, isEmptyIndex bool) error {
+	if isEmptyIndex && name == "" {
 		return ddl.ErrWrongNameForIndex.GenWithStackByArgs(name)
 	}
 	return nil

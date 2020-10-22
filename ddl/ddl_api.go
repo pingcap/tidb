@@ -1129,8 +1129,8 @@ func checkDuplicateConstraint(namesMap map[string]bool, name string, foreign boo
 	namesMap[nameLower] = true
 	return nil
 }
-func checkEmptyIndexInfo(name string, ifEmptyIndex bool) error {
-	if name == "" && ifEmptyIndex == true {
+func checkEmptyIndexInfo(name string, isEmptyIndex bool) error {
+	if isEmptyIndex && name == "" {
 		return ErrWrongNameForIndex.GenWithStackByArgs(name)
 	}
 	return nil
@@ -1187,7 +1187,7 @@ func checkConstraintNames(constraints []*ast.Constraint) error {
 
 	// Set empty constraint names.
 	for _, constr := range constraints {
-		err := checkEmptyIndexInfo(constr.Name, constr.IfEmptyIndex)
+		err := checkEmptyIndexInfo(constr.Name, constr.IsEmptyIndex)
 		if err != nil {
 			return errors.Trace(err)
 		}
