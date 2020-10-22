@@ -189,16 +189,17 @@ func collationToProto(c string) int32 {
 }
 
 func protoToCollation(c int32) string {
-	v := collate.CollationID2Name(collate.RestoreCollationIDIfNeeded(c))
-	if v == mysql.DefaultCollationName && c != mysql.DefaultCollationID {
-		logutil.BgLogger().Warn(
-			"Unable to get collation name from ID, use name of the default collation instead",
-			zap.Int32("id", c),
-			zap.Int("default collation ID", mysql.DefaultCollationID),
-			zap.String("default collation", mysql.DefaultCollationName),
-		)
+	if coll, err := charset.GetCollationByID(int(collate.RestoreCollationIDIfNeeded(c))); err == nil {
+		return coll.Name
 	}
-	return v
+	logutil.BgLogger().Warn(
+		"Unable to get collation name from ID, use name of the default collation instead",
+		zap.Int32("id", c),
+		zap.Int("default collation ID", mysql.DefaultCollationID),
+		zap.String("default collation", mysql.DefaultCollationName),
+	)
+
+	return mysql.DefaultCollationName
 }
 
 func (pc PbConverter) columnToPBExpr(column *Column) *tipb.Expr {
