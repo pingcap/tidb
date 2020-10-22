@@ -950,7 +950,10 @@ func (e *Explain) RenderResult() error {
 		}
 	case ast.ExplainFormatJSON:
 		if physicalPlan, ok := e.TargetPlan.(PhysicalPlan); ok {
-			e.prepareJSONInfo(physicalPlan)
+			err := e.prepareJSONInfo(physicalPlan)
+			if err != nil {
+				return err
+			}
 		}
 	case ast.ExplainFormatHint:
 		hints := GenHintsFromPhysicalPlan(e.TargetPlan)
@@ -1148,19 +1151,21 @@ func (e *Explain) getOperatorInfo(p Plan, id string) (estRows string, accessObje
 	return estRows, accessObject, operatorInfo
 }
 
-func (e *Explain) prepareJSONInfo(p PhysicalPlan) {
+func (e *Explain) prepareJSONInfo(p PhysicalPlan) error {
 	currentNode := &JSONOperatorRow{}
 	if err := e.explainPlanInJSONFormat(currentNode, p, "root", "", false); err != nil {
-		return
+		return err
 	}
 	// json.MarshalIndent will escape HTML chars. A custom encoder disables it.
 	buffer := &bytes.Buffer{}
 	encoder := json.NewEncoder(buffer)
 	encoder.SetEscapeHTML(false)
 	encoder.SetIndent("", "  ")
-	if err := encoder.Encode(currentNode); err == nil {
-		e.Rows = append(e.Rows, []string{buffer.String()})
+	if err := encoder.Encode(currentNode); err != nil {
+		return err
 	}
+	e.Rows = append(e.Rows, []string{buffer.String()})
+	return nil
 }
 
 func (e *Explain) prepareDotInfo(p PhysicalPlan) {
@@ -1188,6 +1193,7 @@ func (e *Explain) prepareJSONOperatorInfo(currentNode *JSONOperatorRow, p Plan, 
 		return
 	}
 	currentNode.ID = p.ExplainID().String() + driverSide
+	currentNode.Task = taskType
 	var (
 		tmpEstRows string
 		err        error
