@@ -693,7 +693,7 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 			return nil, nil
 		}
 		// The respCh has been drained out
-		it.actionOnExceed.broadcastIfNeeded(len(it.respChan) < 1)
+		it.actionOnExceed.resetExceededIfNeeded(len(it.respChan) < 1)
 	} else {
 		for {
 			if it.curr >= len(it.tasks) {
@@ -718,7 +718,7 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 			// The tasks whose id is less than maxID are assumed that being sending to their task channel.
 			// So the response channel would be thought as drained out if the current taskID is greater or equal than
 			// the maxID as all the workers are being suspended at that time.
-			it.actionOnExceed.broadcastIfNeeded(finishedTaskID >= maxID)
+			it.actionOnExceed.resetExceededIfNeeded(finishedTaskID >= maxID)
 		}
 	}
 
@@ -1293,7 +1293,10 @@ type rateLimitAction struct {
 		remainingTokenNum uint
 		// isTokenDestroyed indicates whether there is one token has been isTokenDestroyed after Action been triggered
 		isTokenDestroyed bool
-		once             sync.Once
+		// once should be initialized only if the `initOnce` is false
+		once sync.Once
+		// initOnce indicate whether the once have been initialized
+		initOnce bool
 	}
 }
 
@@ -1306,6 +1309,7 @@ func newRateLimitAction(totalTokenNumber uint, cond *sync.Cond) *rateLimitAction
 			remainingTokenNum uint
 			isTokenDestroyed  bool
 			once              sync.Once
+			initOnce          bool
 		}{
 			Cond:              cond,
 			exceeded:          false,
@@ -1341,13 +1345,14 @@ func (e *rateLimitAction) Action(t *memory.Tracker) {
 			}
 			return
 		}
-		logutil.BgLogger().Info("memory exceeds quota, destroy one token now.",
+		logutil.BgLogger().Info("memory exceeds quota, one token needs to be destroyed.",
 			zap.Int64("consumed", t.BytesConsumed()),
 			zap.Int64("quota", t.GetBytesLimit()),
 			zap.Uint("total token count", e.totalTokenNum),
 			zap.Uint("remaining token count", e.cond.remainingTokenNum))
 		e.cond.isTokenDestroyed = false
 		e.cond.exceeded = true
+		e.cond.initOnce = false
 	})
 }
 
@@ -1361,22 +1366,22 @@ func (e *rateLimitAction) SetFallback(a memory.ActionOnExceed) {
 	e.fallbackAction = a
 }
 
-// broadcastIfNeeded will check whether the copWorkers is under suspended status.
-// If they are, `broadcastIfNeeded` would try to recover them if there are no more
+// resetExceededIfNeeded will check whether the copWorkers is under suspended status.
+// If they are, `resetExceededIfNeeded` would try to recover them if there are no more
 // copResponse remained in the channel.
-func (e *rateLimitAction) broadcastIfNeeded(needed bool) {
+func (e *rateLimitAction) resetExceededIfNeeded(needed bool) {
 	e.conditionLock()
 	defer e.conditionUnlock()
 	if e.cond.exceeded && needed {
 		e.cond.exceeded = false
 		e.cond.Broadcast()
-		e.cond.once = sync.Once{}
 	}
 }
 
 // destroyTokenIfNeeded will check the `exceed` flag after copWorker finished one task.
 // If the exceed flag is true and there is no token been destroyed before, one token will be destroyed,
-// or the token would be return back.
+// or the token would be return back. When the token is destroyed, the condition will broadcast and try
+// to recover the suspended workers.
 func (e *rateLimitAction) destroyTokenIfNeeded(returnToken func()) {
 	e.conditionLock()
 	defer e.conditionUnlock()
@@ -1385,16 +1390,27 @@ func (e *rateLimitAction) destroyTokenIfNeeded(returnToken func()) {
 	if e.cond.exceeded && !e.cond.isTokenDestroyed {
 		e.cond.remainingTokenNum = e.cond.remainingTokenNum - 1
 		e.cond.isTokenDestroyed = true
+		e.cond.Broadcast()
+		logutil.BgLogger().Info("destroy one token now",
+			zap.Uint("total token count", e.totalTokenNum),
+			zap.Uint("remaining token count", e.cond.remainingTokenNum))
 	} else {
 		returnToken()
 	}
 }
 
+// waitIfNeeded will check the exceeded and isTokenDestroyed and decided whether the workers should be suspended.
 func (e *rateLimitAction) waitIfNeeded() {
 	e.conditionLock()
 	defer e.conditionUnlock()
-	for e.cond.exceeded {
+	// Only if the un-exceeded and isTokenDestroyed are both satisfied, the worker should be permitted to continue.
+	for e.cond.exceeded && !e.cond.isTokenDestroyed {
 		e.cond.Wait()
+	}
+	// As one Token is destroyed and the exceeded data is consumed now, the once can be initialized again if it haven't.
+	if !e.cond.initOnce {
+		e.cond.once = sync.Once{}
+		e.cond.initOnce = true
 	}
 }
 
