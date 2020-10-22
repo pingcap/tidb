@@ -671,11 +671,22 @@ func needChangeColumnData(oldCol, newCol *model.ColumnInfo) bool {
 	if mysql.IsIntegerType(oldCol.Tp) && !mysql.IsIntegerType(newCol.Tp) {
 		return true
 	}
-
+	if isStringType(oldCol.Tp) && !isStringType(newCol.Tp) {
+		return true
+	}
 	if newCol.Flen > 0 && newCol.Flen < oldCol.Flen || toUnsigned != originUnsigned {
 		return true
 	}
 
+	return false
+}
+
+func isStringType(tp byte) bool {
+	switch tp {
+	case mysql.TypeVarchar, mysql.TypeString, mysql.TypeVarString, mysql.TypeBlob,
+		mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
+		return true
+	}
 	return false
 }
 

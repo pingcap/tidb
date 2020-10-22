@@ -444,3 +444,226 @@ func (s *testColumnTypeChangeSuite) TestColumnTypeChangeFromIntegerToOthers(c *C
 	// TiDB can't take integer as the set element string to cast, while the MySQL can.
 	tk.MustGetErrCode("alter table t modify e set(\"11111\", \"22222\")", mysql.WarnDataTruncated)
 }
+
+func (s *testColumnTypeChangeSuite) TestColumnTypeChangeFromStringToOthers(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	// Enable column change variable.
+	tk.Se.GetSessionVars().EnableChangeColumnType = true
+	defer func() {
+		tk.Se.GetSessionVars().EnableChangeColumnType = false
+	}()
+
+	prepare := func(tk *testkit.TestKit) {
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("create table t(a char(10), b varchar(10), c varbinary(10), d blob(10), e text(10), f text(10))")
+		tk.MustExec("insert into t values(\"1\", \"1\", \"1\", \"1\", \"1\", \"1\")")
+	}
+	prepareSpecialString := func(tk *testkit.TestKit) {
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("create table t(a char(10), b varchar(10), c varbinary(10), d blob(10), e text(10), f text(10))")
+		tk.MustExec("insert into t values(\"1a\", \"a1a\", \"a1\", \"a\", \"1111111111\",  \"1111111111\")")
+	}
+	prepareSpecialTimeString := func(tk *testkit.TestKit) {
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("create table t(a char(50), b varchar(50), c varbinary(50), d blob(50), e text(50))")
+		tk.MustExec("insert into t values(\"2020-10-21 06:08:28\", \"2020-10-21 06:08:28\", \"0x323032302D31302D32312030363A30383A3238\", \"0x323032302D31302D32312030363A30383A3238\", \"2020-10-21 06:08:28\")")
+	}
+
+	// string to integer
+	prepare(tk)
+	tk.MustExec("alter table t modify a tinyint")
+	modifiedColumn := getModifyColumn(c, tk.Se.(sessionctx.Context), "test", "t", "a", false)
+	c.Assert(modifiedColumn, NotNil)
+	c.Assert(modifiedColumn.Tp, Equals, parser_mysql.TypeTiny)
+	tk.MustQuery("select a from t").Check(testkit.Rows("1"))
+
+	tk.MustExec("alter table t modify b smallint")
+	modifiedColumn = getModifyColumn(c, tk.Se.(sessionctx.Context), "test", "t", "b", false)
+	c.Assert(modifiedColumn, NotNil)
+	c.Assert(modifiedColumn.Tp, Equals, parser_mysql.TypeShort)
+	tk.MustQuery("select b from t").Check(testkit.Rows("1"))
+
+	tk.MustExec("alter table t modify c mediumint")
+	modifiedColumn = getModifyColumn(c, tk.Se.(sessionctx.Context), "test", "t", "c", false)
+	c.Assert(modifiedColumn, NotNil)
+	c.Assert(modifiedColumn.Tp, Equals, parser_mysql.TypeInt24)
+	tk.MustQuery("select c from t").Check(testkit.Rows("1"))
+
+	tk.MustExec("alter table t modify d int")
+	modifiedColumn = getModifyColumn(c, tk.Se.(sessionctx.Context), "test", "t", "d", false)
+	c.Assert(modifiedColumn, NotNil)
+	c.Assert(modifiedColumn.Tp, Equals, parser_mysql.TypeLong)
+	tk.MustQuery("select d from t").Check(testkit.Rows("1"))
+
+	tk.MustExec("alter table t modify e bigint")
+	modifiedColumn = getModifyColumn(c, tk.Se.(sessionctx.Context), "test", "t", "e", false)
+	c.Assert(modifiedColumn, NotNil)
+	c.Assert(modifiedColumn.Tp, Equals, parser_mysql.TypeLonglong)
+	tk.MustQuery("select e from t").Check(testkit.Rows("1"))
+
+	prepareSpecialString(tk)
+	// special string to integer
+	// MySQL fails to alter table with error `Data truncated for column 'a' at row 1`.
+	// TiDB succeed to alter table with warning.
+	tk.MustExec("alter table t modify a tinyint")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1292 Truncated incorrect FLOAT value: '1a'"))
+	tk.MustQuery("select a from t").Check(testkit.Rows("1")) // TiDB will truncate the valid prefix to integer.
+
+	// MySQL fails to alter table with error `Incorrect integer value: 'a1a' for column 'b' at row 1`.
+	// TiDB succeed to alter table with warning.
+	tk.MustExec("alter table t modify b smallint")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1292 Truncated incorrect FLOAT value: 'a1a'"))
+	tk.MustQuery("select b from t").Check(testkit.Rows("0"))
+
+	// MySQL fails to alter table with error `Incorrect integer value: 'a1' for column 'c' at row 1`.
+	// TiDB succeed to alter table with warning.
+	tk.MustExec("alter table t modify c mediumint")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1292 Truncated incorrect FLOAT value: 'a1'"))
+	tk.MustQuery("select c from t").Check(testkit.Rows("0"))
+
+	// MySQL fails to alter table with error `Incorrect integer value: 'a' for column 'd' at row 1`.
+	// TiDB succeed to alter table (zero value) with warning.
+	tk.MustExec("alter table t modify d int")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1292 Truncated incorrect FLOAT value: 'a'"))
+	tk.MustQuery("select d from t").Check(testkit.Rows("0"))
+
+	// cast a long valid string to integer will cause overflow.
+	tk.MustGetErrCode("alter table t modify e smallint", parser_mysql.ErrDataOutOfRange)
+
+	tk.MustExec("alter table t modify f bigint")
+	tk.MustQuery("select f from t").Check(testkit.Rows("1111111111"))
+
+	// string to decimal
+	prepare(tk)
+	tk.MustExec("alter table t modify a decimal(2,1)")
+	modifiedColumn = getModifyColumn(c, tk.Se.(sessionctx.Context), "test", "t", "a", false)
+	c.Assert(modifiedColumn, NotNil)
+	c.Assert(modifiedColumn.Tp, Equals, parser_mysql.TypeNewDecimal)
+	tk.MustQuery("select a from t").Check(testkit.Rows("1.0"))
+
+	// string to year
+	// MySQL converts values in the ranges '0' to '69' and '70' to '99' to YEAR values in the ranges 2000 to 2069 and 1970 to 1999.
+	tk.MustExec("alter table t modify b year")
+	modifiedColumn = getModifyColumn(c, tk.Se.(sessionctx.Context), "test", "t", "b", false)
+	c.Assert(modifiedColumn, NotNil)
+	c.Assert(modifiedColumn.Tp, Equals, parser_mysql.TypeYear)
+	tk.MustQuery("select b from t").Check(testkit.Rows("2001"))
+
+	// string to time
+	tk.MustExec("alter table t modify c time")
+	modifiedColumn = getModifyColumn(c, tk.Se.(sessionctx.Context), "test", "t", "c", false)
+	c.Assert(modifiedColumn, NotNil)
+	c.Assert(modifiedColumn.Tp, Equals, parser_mysql.TypeDuration)
+	tk.MustQuery("select c from t").Check(testkit.Rows("00:00:01"))
+
+	// string to date
+	// MySQL fails to alter table with `Incorrect date value: '1' for column 'd' at row 1`, while TiDB does.
+	tk.MustExec("alter table t modify d date")
+	modifiedColumn = getModifyColumn(c, tk.Se.(sessionctx.Context), "test", "t", "d", false)
+	c.Assert(modifiedColumn, NotNil)
+	c.Assert(modifiedColumn.Tp, Equals, parser_mysql.TypeDate)
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1292 Incorrect time value: '1'"))
+	tk.MustQuery("select d from t").Check(testkit.Rows("0000-00-00"))
+
+	tk.MustExec("alter table t modify e timestamp")
+	// MySQL fails to alter table with `Incorrect datetime value: '1' for column 'e' at row 1`, while TiDB does with warnings.
+	modifiedColumn = getModifyColumn(c, tk.Se.(sessionctx.Context), "test", "t", "e", false)
+	c.Assert(modifiedColumn, NotNil)
+	c.Assert(modifiedColumn.Tp, Equals, parser_mysql.TypeTimestamp)
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1292 Incorrect time value: '1'"))
+	tk.MustQuery("select e from t").Check(testkit.Rows("0000-00-00 00:00:00"))
+
+	tk.MustExec("alter table t modify f datetime")
+	// MySQL fails to alter table with `Incorrect datetime value: '1' for column 'e' at row 1`, while TiDB does with warnings.
+	modifiedColumn = getModifyColumn(c, tk.Se.(sessionctx.Context), "test", "t", "f", false)
+	c.Assert(modifiedColumn, NotNil)
+	c.Assert(modifiedColumn.Tp, Equals, parser_mysql.TypeDatetime)
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1292 Incorrect time value: '1'"))
+	tk.MustQuery("select f from t").Check(testkit.Rows("0000-00-00 00:00:00"))
+
+	prepareSpecialTimeString(tk)
+	// MySQL fails to alter table with `Data truncated for column 'a' at row 1`, while TiDB does with warnings.
+	tk.MustExec("alter table t modify a year")
+	tk.MustQuery("select a from t").Check(testkit.Rows("0"))
+
+	// MySQL succeeds with warnings `Incorrect time value: '2020-10-21 06:08:28' for column 'b' at row 1`, while TiDB doesn't have warning.
+	tk.MustExec("alter table t modify b time")
+	tk.MustQuery("select b from t").Check(testkit.Rows("06:08:28"))
+
+	// TiDB and MySQL both couldn't identify the binary string "0x323032302D31302D32312030363A30383A3238" as date type,
+	// TiDB will fill zero date with warning, while MySQL will fail.
+	tk.MustExec("alter table t modify c date")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1292 Incorrect datetime value: '0x323032302D31302D32312030363A30383A3238'"))
+	tk.MustQuery("select c from t").Check(testkit.Rows("0000-00-00"))
+
+	// TiDB and MySQL both couldn't identify the binary string "0x323032302D31302D32312030363A30383A3238" as timestamp type,
+	// TiDB will fill zero date with warning, while MySQL will fail.
+	tk.MustExec("alter table t modify d timestamp")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1292 Incorrect datetime value: '0x323032302D31302D32312030363A30383A3238'"))
+	tk.MustQuery("select d from t").Check(testkit.Rows("0000-00-00 00:00:00"))
+
+	tk.MustExec("alter table t modify e datetime")
+	tk.MustQuery("select e from t").Check(testkit.Rows("2020-10-21 06:08:28"))
+
+	// string to float-point
+	prepare(tk)
+	tk.MustExec("alter table t modify a float")
+	modifiedColumn = getModifyColumn(c, tk.Se.(sessionctx.Context), "test", "t", "a", false)
+	c.Assert(modifiedColumn, NotNil)
+	c.Assert(modifiedColumn.Tp, Equals, parser_mysql.TypeFloat)
+	tk.MustQuery("select a from t").Check(testkit.Rows("1"))
+
+	tk.MustExec("alter table t modify b double")
+	modifiedColumn = getModifyColumn(c, tk.Se.(sessionctx.Context), "test", "t", "b", false)
+	c.Assert(modifiedColumn, NotNil)
+	c.Assert(modifiedColumn.Tp, Equals, parser_mysql.TypeDouble)
+	tk.MustQuery("select b from t").Check(testkit.Rows("1"))
+
+	// string to json
+	// MySQL fails to alter with error `Cannot create a JSON value from a string with CHARACTER SET 'binary'.`
+	// TiDB succeeds to identify binary string `0x31` as a ascii number.
+	tk.MustExec("alter table t modify c json")
+	modifiedColumn = getModifyColumn(c, tk.Se.(sessionctx.Context), "test", "t", "c", false)
+	c.Assert(modifiedColumn, NotNil)
+	c.Assert(modifiedColumn.Tp, Equals, parser_mysql.TypeJSON)
+	tk.MustQuery("select c from t").Check(testkit.Rows("1"))
+
+	// MySQL and TiDB both can cast normal string `1` to json type.
+	tk.MustExec("alter table t modify f json")
+	modifiedColumn = getModifyColumn(c, tk.Se.(sessionctx.Context), "test", "t", "f", false)
+	c.Assert(modifiedColumn, NotNil)
+	c.Assert(modifiedColumn.Tp, Equals, parser_mysql.TypeJSON)
+	tk.MustQuery("select f from t").Check(testkit.Rows("1"))
+
+	// string to enum
+	// MySQL and TiDB both can cast binary string `0x31` as a offset number of enum type.
+	tk.MustExec("alter table t modify d enum(\"a\", \"b\")")
+	modifiedColumn = getModifyColumn(c, tk.Se.(sessionctx.Context), "test", "t", "d", false)
+	c.Assert(modifiedColumn, NotNil)
+	c.Assert(modifiedColumn.Tp, Equals, parser_mysql.TypeEnum)
+	tk.MustQuery("select d from t").Check(testkit.Rows("a"))
+
+	// MySQL and TiDB both can cast normal string `1` as element string of enum type.
+	tk.MustExec("alter table t modify e enum(\"2\", \"1\")")
+	modifiedColumn = getModifyColumn(c, tk.Se.(sessionctx.Context), "test", "t", "e", false)
+	c.Assert(modifiedColumn, NotNil)
+	c.Assert(modifiedColumn.Tp, Equals, parser_mysql.TypeEnum)
+	tk.MustQuery("select e from t").Check(testkit.Rows("1"))
+
+	prepare(tk)
+	// string to set
+	// MySQL and TiDB both can cast binary string `0x31` as a offset number of enum type.
+	tk.MustExec("alter table t modify d set(\"a\", \"b\")")
+	modifiedColumn = getModifyColumn(c, tk.Se.(sessionctx.Context), "test", "t", "d", false)
+	c.Assert(modifiedColumn, NotNil)
+	c.Assert(modifiedColumn.Tp, Equals, parser_mysql.TypeSet)
+	tk.MustQuery("select d from t").Check(testkit.Rows("a"))
+
+	// MySQL and TiDB both can cast normal string `1` as element string of enum type.
+	tk.MustExec("alter table t modify e set(\"2\", \"1\")")
+	modifiedColumn = getModifyColumn(c, tk.Se.(sessionctx.Context), "test", "t", "e", false)
+	c.Assert(modifiedColumn, NotNil)
+	c.Assert(modifiedColumn.Tp, Equals, parser_mysql.TypeSet)
+	tk.MustQuery("select e from t").Check(testkit.Rows("1"))
+}

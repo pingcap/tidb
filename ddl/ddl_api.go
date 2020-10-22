@@ -3346,6 +3346,7 @@ func checkModifyCharsetAndCollation(toCharset, toCollate, origCharset, origColla
 // field length and precision.
 func CheckModifyTypeCompatible(origin *types.FieldType, to *types.FieldType) (allowedChangeColumnValueMsg string, err error) {
 	unsupportedMsg := fmt.Sprintf("type %v not match origin %v", to.CompactStr(), origin.CompactStr())
+	// TODO: refine the check parameters here.
 	var skipSignCheck bool
 	var skipLenCheck bool
 	switch origin.Tp {
@@ -3354,12 +3355,12 @@ func CheckModifyTypeCompatible(origin *types.FieldType, to *types.FieldType) (al
 		switch to.Tp {
 		case mysql.TypeVarchar, mysql.TypeString, mysql.TypeVarString,
 			mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
+			// Changing string to string, whether reorg is necessary is depend on the flen/decimal/signed.
 			skipSignCheck = true
 			skipLenCheck = true
-		case mysql.TypeEnum, mysql.TypeSet:
-			return unsupportedMsg, errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
 		default:
-			return "", errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
+			// Changing string to others, reorg is absolutely necessary.
+			return unsupportedMsg, errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
 		}
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
 		switch to.Tp {
