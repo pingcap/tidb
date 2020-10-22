@@ -76,5 +76,5 @@ var (
 	// ErrWrongValue is returned when the input value is in wrong format.
 	ErrWrongValue = dbterror.ClassTypes.NewStdErr(mysql.ErrTruncatedWrongValue, mysql.MySQLErrName[mysql.ErrWrongValue], "", "")
 	// ErrWrongValueForType is returned when the input value is in wrong format for function.
-	ErrWrongValueForType = dbterror.ClassTypes.New(mysql.ErrWrongValueForType, mysql.MySQLErrName[mysql.ErrWrongValueForType])
+	ErrWrongValueForType = dbterror.ClassTypes.NewStdErr(mysql.ErrWrongValueForType, mysql.MySQLErrName[mysql.ErrWrongValueForType], "", "")
 )
