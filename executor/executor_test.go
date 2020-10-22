@@ -6017,6 +6017,20 @@ func (s *testSuite) TestIssue19372(c *C) {
 	tk.MustQuery("select (select t2.c_str from t2 where t2.c_str <= t1.c_str and t2.c_int in (1, 2) order by t2.c_str limit 1) x from t1 order by c_int;").Check(testkit.Rows("a", "a", "a"))
 }
 
+func (s *testSerialSuite1) TestCollectCopRuntimeStats(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (a int, b int)")
+	tk.MustExec("set tidb_enable_collect_execution_info=1;")
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/tikvStoreRespResult", `return(true)`), IsNil)
+	rows := tk.MustQuery("explain analyze select * from t1").Rows()
+	c.Assert(len(rows), Equals, 2)
+	explain := fmt.Sprintf("%v", rows[0])
+	c.Assert(explain, Matches, ".*rpc_num: 2, .*regionMiss:.*")
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/tikvStoreRespResult"), IsNil)
+}
+
 func (s *testSuite) TestCollectDMLRuntimeStats(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -6052,6 +6066,31 @@ func (s *testSuite) TestCollectDMLRuntimeStats(c *C) {
 	tk.MustExec("begin pessimistic")
 	tk.MustQuery("select * from t1 for update").Check(testkit.Rows("5 6", "7 7"))
 	c.Assert(getRootStats(), Matches, "time.*lock_keys.*time.* region.* keys.* lock_rpc:.* rpc_count.*")
+	tk.MustExec("rollback")
+
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("insert ignore into t1 values (9,9)")
+	c.Assert(getRootStats(), Matches, "time:.*, loops:.*, prepare:.*, check_insert:{total_time:.*, mem_insert_time:.*, prefetch:.*, rpc:{BatchGet:{num_rpc:.*, total_time:.*}}}.*")
+	tk.MustExec("rollback")
+
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("insert into t1 values (10,10) on duplicate key update a=a+1")
+	c.Assert(getRootStats(), Matches, "time:.*, loops:.*, prepare:.*, check_insert:{total_time:.*, mem_insert_time:.*, prefetch:.*, rpc:{BatchGet:{num_rpc:.*, total_time:.*}.*")
+	tk.MustExec("rollback")
+
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("insert into t1 values (1,2)")
+	c.Assert(getRootStats(), Matches, "time:.*, loops:.*, prepare:.*, insert:.*")
+	tk.MustExec("rollback")
+
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("insert ignore into t1 values(11,11) on duplicate key update `a`=`a`+1")
+	c.Assert(getRootStats(), Matches, "time:.*, loops:.*, prepare:.*, check_insert:{total_time:.*, mem_insert_time:.*, prefetch:.*, rpc:.*}")
+	tk.MustExec("rollback")
+
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("replace into t1 values (1,4)")
+	c.Assert(getRootStats(), Matches, "time:.*, loops:.*, prefetch:.*, rpc:.*")
 	tk.MustExec("rollback")
 }
 
