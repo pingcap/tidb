@@ -2426,30 +2426,8 @@ func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTab
 		return errors.Trace(err)
 	}
 
-	originDefVal, err := generateOriginDefaultValue(col.ToInfo())
+	col.OriginDefaultValue, err = generateOriginDefaultValue(col.ToInfo())
 	if err != nil {
-<<<<<<< HEAD
-=======
-		return nil, errors.Trace(err)
-	}
-
-	err = col.SetOriginDefaultValue(originDefVal)
-	return col, err
-}
-
-// AddColumn will add a new column to the table.
-func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTableSpec) error {
-	specNewColumn := spec.NewColumns[0]
-	schema, t, err := d.getSchemaAndTableByIdent(ctx, ti)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	if err = checkAddColumnTooManyColumns(len(t.Cols()) + 1); err != nil {
-		return errors.Trace(err)
-	}
-	col, err := checkAndCreateNewColumn(ctx, ti, schema, spec, t, specNewColumn)
-	if err != nil {
->>>>>>> 6342fa6a5... ddl: fix corrupted default value for bit type column (#18036)
 		return errors.Trace(err)
 	}
 

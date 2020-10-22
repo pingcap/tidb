@@ -141,8 +141,7 @@ func (h *Handle) insertColStats2KV(physicalID int64, colInfo *model.ColumnInfo) 
 			return
 		}
 		count := req.GetRow(0).GetInt64(0)
-<<<<<<< HEAD
-		value := types.NewDatum(colInfo.OriginDefaultValue)
+		value := types.NewDatum(colInfo.GetOriginDefaultValue())
 		value, err = value.ConvertTo(h.mu.ctx.GetSessionVars().StmtCtx, &colInfo.FieldType)
 		if err != nil {
 			return
@@ -155,12 +154,6 @@ func (h *Handle) insertColStats2KV(physicalID int64, colInfo *model.ColumnInfo) 
 			// If this stats exists, we insert histogram meta first, the distinct_count will always be one.
 			sqls = append(sqls, fmt.Sprintf("insert into mysql.stats_histograms (version, table_id, is_index, hist_id, distinct_count, tot_col_size) values (%d, %d, 0, %d, 1, %d)", startTS, physicalID, colInfo.ID, int64(len(value.GetBytes()))*count))
 			value, err = value.ConvertTo(h.mu.ctx.GetSessionVars().StmtCtx, types.NewFieldType(mysql.TypeBlob))
-=======
-		sqls := make([]string, 0, len(colInfos))
-		for _, colInfo := range colInfos {
-			value := types.NewDatum(colInfo.GetOriginDefaultValue())
-			value, err = value.ConvertTo(h.mu.ctx.GetSessionVars().StmtCtx, &colInfo.FieldType)
->>>>>>> 6342fa6a5... ddl: fix corrupted default value for bit type column (#18036)
 			if err != nil {
 				return
 			}
