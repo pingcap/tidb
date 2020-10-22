@@ -177,6 +177,16 @@ func GetCollationByName(name string) (*Collation, error) {
 	return collation, nil
 }
 
+// GetCollationByID returns collations by given id.
+func GetCollationByID(id int) (*Collation, error) {
+	collation, ok := collationsIDMap[id]
+	if !ok {
+		return nil, errors.Errorf("Unknown collation id %d", id)
+	}
+
+	return collation, nil
+}
+
 const (
 	// CharsetBin is used for marking binary charset.
 	CharsetBin = "binary"
@@ -421,6 +431,7 @@ var collations = []*Collation{
 	{246, "utf8mb4", "utf8mb4_unicode_520_ci", false},
 	{247, "utf8mb4", "utf8mb4_vietnamese_ci", false},
 	{255, "utf8mb4", "utf8mb4_0900_ai_ci", false},
+	{2048, "utf8mb4", "utf8mb4_zh_pinyin_tidb_as_cs", false},
 }
 
 // init method always puts to the end of file.
@@ -438,6 +449,7 @@ func init() {
 
 	for _, c := range collations {
 		collationsIDMap[c.ID] = c
+		collationsNameMap[c.Name] = c
 
 		if _, ok := supportedCollationNames[c.Name]; ok {
 			supportedCollations = append(supportedCollations, c)
@@ -446,9 +458,5 @@ func init() {
 		if charset, ok := charsets[c.CharsetName]; ok {
 			charset.Collations[c.Name] = c
 		}
-	}
-
-	for id, name := range mysql.Collations {
-		collationsNameMap[name] = collationsIDMap[int(id)]
 	}
 }
