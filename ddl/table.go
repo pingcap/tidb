@@ -721,9 +721,11 @@ func checkAndRenameTables(t *meta.Meta, job *model.Job, oldSchemaID int64, newSc
 	}
 
 	failpoint.Inject("renameTableErr", func(val failpoint.Value) {
-		if val.(bool) {
-			job.State = model.JobStateCancelled
-			failpoint.Return(ver, tblInfo, errors.New("occur an error after renaming table"))
+		if valStr, ok := val.(string); ok {
+			if tableName.L == valStr {
+				job.State = model.JobStateCancelled
+				failpoint.Return(ver, tblInfo, errors.New("occur an error after renaming table"))
+			}
 		}
 	})
 
