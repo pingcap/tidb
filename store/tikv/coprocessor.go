@@ -524,6 +524,13 @@ func (worker *copIteratorWorker) run(ctx context.Context) {
 			worker.sendRate.putToken()
 		})
 		worker.actionOnExceed.waitIfNeeded()
+		failpoint.Inject("testRateLimitActionTokenDestroyed", func(val failpoint.Value) {
+			if val.(bool) {
+				if worker.actionOnExceed.isTokenFailDestroying() {
+					panic("triggerCount + remainingTokenNum not equal to totalTokenNum")
+				}
+			}
+		})
 		if worker.vars != nil && worker.vars.Killed != nil && atomic.LoadUint32(worker.vars.Killed) == 1 {
 			return
 		}
@@ -1297,6 +1304,8 @@ type rateLimitAction struct {
 		once sync.Once
 		// initOnce indicate whether the once have been initialized
 		initOnce bool
+		// triggerCount indicates the count of rateLimitAction being triggered, only used for unit test
+		triggerCount uint
 	}
 }
 
@@ -1310,6 +1319,7 @@ func newRateLimitAction(totalTokenNumber uint, cond *sync.Cond) *rateLimitAction
 			isTokenDestroyed  bool
 			once              sync.Once
 			initOnce          bool
+			triggerCount      uint
 		}{
 			Cond:              cond,
 			exceeded:          false,
@@ -1353,6 +1363,7 @@ func (e *rateLimitAction) Action(t *memory.Tracker) {
 		e.cond.isTokenDestroyed = false
 		e.cond.exceeded = true
 		e.cond.initOnce = false
+		e.cond.triggerCount++
 	})
 }
 
@@ -1412,6 +1423,13 @@ func (e *rateLimitAction) waitIfNeeded() {
 		e.cond.once = sync.Once{}
 		e.cond.initOnce = true
 	}
+}
+
+// isTokenFailDestroying return whether exists any token fail to be destroyed.
+func (e *rateLimitAction) isTokenFailDestroying() bool {
+	e.conditionLock()
+	defer e.conditionUnlock()
+	return e.cond.triggerCount+e.cond.remainingTokenNum != e.totalTokenNum
 }
 
 func (e *rateLimitAction) conditionLock() {
