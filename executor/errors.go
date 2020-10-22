@@ -20,13 +20,14 @@ import (
 
 // Error instances.
 var (
-	ErrGetStartTS      = dbterror.ClassExecutor.NewStd(mysql.ErrGetStartTS)
-	ErrUnknownPlan     = dbterror.ClassExecutor.NewStd(mysql.ErrUnknownPlan)
-	ErrPrepareMulti    = dbterror.ClassExecutor.NewStd(mysql.ErrPrepareMulti)
-	ErrPrepareDDL      = dbterror.ClassExecutor.NewStd(mysql.ErrPrepareDDL)
-	ErrResultIsEmpty   = dbterror.ClassExecutor.NewStd(mysql.ErrResultIsEmpty)
-	ErrBuildExecutor   = dbterror.ClassExecutor.NewStd(mysql.ErrBuildExecutor)
-	ErrBatchInsertFail = dbterror.ClassExecutor.NewStd(mysql.ErrBatchInsertFail)
+	ErrGetStartTS             = dbterror.ClassExecutor.NewStd(mysql.ErrGetStartTS)
+	ErrUnknownPlan            = dbterror.ClassExecutor.NewStd(mysql.ErrUnknownPlan)
+	ErrPrepareMulti           = dbterror.ClassExecutor.NewStd(mysql.ErrPrepareMulti)
+	ErrPrepareDDL             = dbterror.ClassExecutor.NewStd(mysql.ErrPrepareDDL)
+	ErrResultIsEmpty          = dbterror.ClassExecutor.NewStd(mysql.ErrResultIsEmpty)
+	ErrBuildExecutor          = dbterror.ClassExecutor.NewStd(mysql.ErrBuildExecutor)
+	ErrBatchInsertFail        = dbterror.ClassExecutor.NewStd(mysql.ErrBatchInsertFail)
+	ErrMultiUpdateKeyConflict = dbterror.ClassExecutor.NewStd(mysql.ErrMultiUpdateKeyConflict)
 
 	ErrCantCreateUserWithGrant     = dbterror.ClassExecutor.NewStd(mysql.ErrCantCreateUserWithGrant)
 	ErrPasswordNoMatch             = dbterror.ClassExecutor.NewStd(mysql.ErrPasswordNoMatch)
