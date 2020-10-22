@@ -398,6 +398,12 @@ func (s *testSuite3) TestInsertDateTimeWithTimeZone(c *C) {
 		tk.MustExec(fmt.Sprintf("set @@time_zone='%s'", ca.tz2))
 		tk.MustQuery("select * from t").Check(testkit.Rows(ca.exp1 + " " + ca.exp2))
 	}
+
+	// test for datetime in compare
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (ts timestamp)")
+	tk.MustExec("insert into t values ('2020-10-22T12:00:00Z'), ('2020-10-22T13:00:00Z'), ('2020-10-22T14:00:00Z')")
+	tk.MustQuery(fmt.Sprintf("select count(*) from t where ts > '2020-10-22T12:00:00Z'")).Check(testkit.Rows("2"))
 }
 
 func (s *testSuite3) TestInsertZeroYear(c *C) {
