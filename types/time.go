@@ -816,7 +816,7 @@ var validIdxCombinations = map[int]struct {
 //   ISO-8601: Z|((((?P<tz_sign>[-+])(?P<tz_hour>[0-9]{2})(:(?P<tz_minute>[0-9]{2}){0,1}){0,1})|((?P<tz_minute>[0-9]{2}){0,1}){0,1}))$
 //     see https://www.cl.cam.ac.uk/~mgk25/iso-time.html
 func GetTimezone(lit string) (idx int, tzSign, tzHour, tzSep, tzMinute string) {
-	idx, zidx, sidx, spidx, hidx, midx := -1, -1, -1, -1, -1, -1
+	idx, zidx, sidx, spidx := -1, -1, -1, -1
 	z, s, sc := 0, 0, 0
 	l := len(lit)
 	for i := l - 1; 0 <= i; i-- {
@@ -857,7 +857,7 @@ func GetTimezone(lit string) (idx int, tzSign, tzHour, tzSep, tzMinute string) {
 	}
 	k := z*100 + s*10 + sc
 	if v, ok := validIdxCombinations[k]; ok {
-		hidx, midx = l-v.h, l-v.m
+		hidx, midx := l-v.h, l-v.m
 		valid := func(v string) bool {
 			return '0' <= v[0] && v[0] <= '9' && '0' <= v[1] && v[1] <= '9'
 		}
