@@ -617,6 +617,7 @@ func (it *copIterator) recvFromRespCh(ctx context.Context, respCh <-chan *copRes
 						consumed = 100
 					}
 				})
+				it.actionOnExceed.consumeOneResponse()
 				it.memTracker.Consume(-consumed)
 			}
 			return
@@ -658,6 +659,7 @@ func (worker *copIteratorWorker) sendToRespCh(resp *copResponse, respCh chan<- *
 			}
 		})
 		worker.memTracker.Consume(consumed)
+		worker.actionOnExceed.addOneResponse()
 	}
 	select {
 	case respCh <- resp:
@@ -1299,6 +1301,8 @@ type rateLimitAction struct {
 		needInitOnce bool
 		// triggerCount indicates the count of rateLimitAction being triggered, only used for unit test
 		triggerCount uint
+		// remainingResponseCount indicates the counts for copResponse which is cached in channel
+		remainingResponseCount uint
 	}
 }
 
@@ -1307,12 +1311,13 @@ func newRateLimitAction(totalTokenNumber uint, cond *sync.Cond) *rateLimitAction
 		totalTokenNum: totalTokenNumber,
 		cond: struct {
 			*sync.Cond
-			exceeded          bool
-			remainingTokenNum uint
-			isTokenDestroyed  bool
-			once              sync.Once
-			needInitOnce      bool
-			triggerCount      uint
+			exceeded               bool
+			remainingTokenNum      uint
+			isTokenDestroyed       bool
+			once                   sync.Once
+			needInitOnce           bool
+			triggerCount           uint
+			remainingResponseCount uint
 		}{
 			Cond:              cond,
 			exceeded:          false,
@@ -1338,6 +1343,15 @@ func (e *rateLimitAction) Action(t *memory.Tracker) {
 	}
 	e.conditionLock()
 	defer e.conditionUnlock()
+	if e.cond.remainingResponseCount < 1 {
+		logutil.BgLogger().Info("memory exceed quota, rateLimitAction delegate to fallback action",
+			zap.Uint("remaining response count", e.cond.remainingResponseCount),
+			zap.Uint("total token count", e.totalTokenNum))
+		if e.fallbackAction != nil {
+			e.fallbackAction.Action(t)
+		}
+		return
+	}
 	e.cond.once.Do(func() {
 		if e.cond.remainingTokenNum < 2 {
 			e.setEnabled(false)
@@ -1423,6 +1437,20 @@ func (e *rateLimitAction) waitIfNeeded() {
 		e.cond.once = sync.Once{}
 		e.cond.needInitOnce = false
 	}
+}
+
+// addOneResponse indicates adding one response into the cache
+func (e *rateLimitAction) addOneResponse() {
+	e.conditionLock()
+	defer e.conditionUnlock()
+	e.cond.remainingResponseCount++
+}
+
+// consumeOneResponse indicates consuming one response from the cache
+func (e *rateLimitAction) consumeOneResponse() {
+	e.conditionLock()
+	defer e.conditionUnlock()
+	e.cond.remainingResponseCount--
 }
 
 func (e *rateLimitAction) conditionLock() {
