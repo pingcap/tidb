@@ -430,6 +430,8 @@ const (
 	TpJoinRuntimeStats
 	// TpSelectResultRuntimeStats is the tp for SelectResultRuntimeStats.
 	TpSelectResultRuntimeStats
+	// TpSlowQueryRuntimeStat is the tp for TpSlowQueryRuntimeStat
+	TpSlowQueryRuntimeStat
 	// TpInsertRuntimeStat is the tp for InsertRuntimeStat
 	TpInsertRuntimeStat
 )
