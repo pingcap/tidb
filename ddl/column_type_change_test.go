@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
@@ -283,8 +284,8 @@ var mockTerrorMap = make(map[string]*terror.Error)
 
 func init() {
 	// Since terror new action will cause data race with other test suite (getTerrorCode) in parallel, we init it all here.
-	mockTerrorMap[model.StateNone.String()] = terror.ClassDDL.New(1, "MockRollingBackInCallBack-"+model.StateNone.String())
-	mockTerrorMap[model.StateDeleteOnly.String()] = terror.ClassDDL.New(1, "MockRollingBackInCallBack-"+model.StateDeleteOnly.String())
-	mockTerrorMap[model.StateWriteOnly.String()] = terror.ClassDDL.New(1, "MockRollingBackInCallBack-"+model.StateWriteOnly.String())
-	mockTerrorMap[model.StateWriteReorganization.String()] = terror.ClassDDL.New(1, "MockRollingBackInCallBack-"+model.StateWriteReorganization.String())
+	mockTerrorMap[model.StateNone.String()] = dbterror.ClassDDL.New(1, "MockRollingBackInCallBack-"+model.StateNone.String())
+	mockTerrorMap[model.StateDeleteOnly.String()] = dbterror.ClassDDL.New(1, "MockRollingBackInCallBack-"+model.StateDeleteOnly.String())
+	mockTerrorMap[model.StateWriteOnly.String()] = dbterror.ClassDDL.New(1, "MockRollingBackInCallBack-"+model.StateWriteOnly.String())
+	mockTerrorMap[model.StateWriteReorganization.String()] = dbterror.ClassDDL.New(1, "MockRollingBackInCallBack-"+model.StateWriteReorganization.String())
 }
