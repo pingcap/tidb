@@ -256,12 +256,16 @@ func (c *index) Create(sctx sessionctx.Context, us kv.UnionStore, indexedValues 
 }
 
 // Delete removes the entry for handle h and indexdValues from KV index.
-func (c *index) Delete(sc *stmtctx.StatementContext, m kv.Mutator, indexedValues []types.Datum, h kv.Handle) error {
-	key, _, err := c.GenIndexKey(sc, indexedValues, h, nil)
+func (c *index) Delete(sc *stmtctx.StatementContext, us kv.UnionStore, indexedValues []types.Datum, h kv.Handle) error {
+	key, distinct, err := c.GenIndexKey(sc, indexedValues, h, nil)
 	if err != nil {
 		return err
 	}
-	err = m.Delete(key)
+	if distinct {
+		err = us.GetMemBuffer().DeleteWithFlags(key, kv.SetNeedLocked, kv.SetKeyLockedValueExists)
+	} else {
+		err = us.GetMemBuffer().Delete(key)
+	}
 	return err
 }
 

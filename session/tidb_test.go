@@ -188,12 +188,12 @@ func (s *testMainSuite) TestKeysNeedLock(c *C) {
 		need bool
 	}{
 		{rowKey, rowVal, true},
-		{rowKey, deleteVal, true},
+		{rowKey, deleteVal, false},
 		{indexKey, nonUniqueVal, false},
 		{indexKey, nonUniqueUntouched, false},
 		{indexKey, uniqueValue, true},
 		{indexKey, uniqueUntouched, false},
-		{indexKey, deleteVal, true},
+		{indexKey, deleteVal, false},
 	}
 	for _, tt := range tests {
 		c.Assert(keyNeedToLock(tt.key, tt.val, 0), Equals, tt.need)
