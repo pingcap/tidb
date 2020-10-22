@@ -668,8 +668,8 @@ func (worker *copIteratorWorker) sendToRespCh(resp *copResponse, respCh chan<- *
 				consumed = 100
 			}
 		})
-		worker.memTracker.Consume(consumed)
 		worker.actionOnExceed.addOneResponse()
+		worker.memTracker.Consume(consumed)
 	}
 	select {
 	case respCh <- resp:
