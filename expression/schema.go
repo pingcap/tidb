@@ -31,8 +31,10 @@ func (ki KeyInfo) Clone() KeyInfo {
 
 // Schema stands for the row schema and unique key information get from input.
 type Schema struct {
-	Columns    []*Column
-	Keys       []KeyInfo
+	Columns []*Column
+	Keys    []KeyInfo
+	// UniqueKeys stores those unique indexes that allow null values, but Keys does not allow null values.
+	// since equivalence conditions can filter out null values, in this case a unique index with null values can be a Key.
 	UniqueKeys []KeyInfo
 }
 
