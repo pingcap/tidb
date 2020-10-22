@@ -1,19 +1,19 @@
 package collate
 
-type generalZhCICollator struct {
+type zhPinyinTiDBASCS struct {
 }
 
 // Collator interface, no implements now.
-func (g generalZhCICollator) Compare(a, b string) int {
+func (g zhPinyinTiDBASCS) Compare(a, b string) int {
 	panic("implement me")
 }
 
 // Collator interface, no implements now.
-func (g generalZhCICollator) Key(str string) []byte {
+func (g zhPinyinTiDBASCS) Key(str string) []byte {
 	panic("implement me")
 }
 
 // Collator interface, no implements now.
-func (g generalZhCICollator) Pattern() WildcardPattern {
+func (g zhPinyinTiDBASCS) Pattern() WildcardPattern {
 	panic("implement me")
 }

@@ -789,7 +789,7 @@ func (s *testEvaluatorSerialSuites) TestNewCollationsEnabled(c *C) {
 	colExprs = append(colExprs, columnCollation(dg.genColumn(mysql.TypeString, 4), "utf8mb4_0900_ai_ci"))
 	colExprs = append(colExprs, columnCollation(dg.genColumn(mysql.TypeVarchar, 5), "utf8_bin"))
 	colExprs = append(colExprs, columnCollation(dg.genColumn(mysql.TypeVarchar, 6), "utf8_unicode_ci"))
-	colExprs = append(colExprs, columnCollation(dg.genColumn(mysql.TypeVarchar, 7), "utf8mb4_general_zh_ci"))
+	colExprs = append(colExprs, columnCollation(dg.genColumn(mysql.TypeVarchar, 7), "utf8mb4_zh_pinyin_tidb_as_cs"))
 	pushed, _ := PushDownExprs(sc, colExprs, client, kv.UnSpecified)
 	c.Assert(len(pushed), Equals, len(colExprs))
 	pbExprs, err := ExpressionsToPBList(sc, colExprs, client)

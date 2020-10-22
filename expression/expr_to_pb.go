@@ -14,11 +14,10 @@
 package expression
 
 import (
-	"strings"
-
 	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -176,16 +175,17 @@ func FieldTypeFromPB(ft *tipb.FieldType) *types.FieldType {
 }
 
 func collationToProto(c string) int32 {
-	v := int32(collate.CollationName2ID(c))
-	if v == mysql.DefaultCollationID && strings.ToLower(c) != mysql.DefaultCollationName {
-		logutil.BgLogger().Warn(
-			"Unable to get collation ID by name, use ID of the default collation instead",
-			zap.String("name", c),
-			zap.Int32("default collation ID", v),
-			zap.String("default collation", mysql.DefaultCollationName),
-		)
+	if coll, err := charset.GetCollationByName(c); err == nil {
+		return collate.RewriteNewCollationIDIfNeeded(int32(coll.ID))
 	}
-	return collate.RewriteNewCollationIDIfNeeded(v)
+	v := collate.RewriteNewCollationIDIfNeeded(int32(mysql.DefaultCollationID))
+	logutil.BgLogger().Warn(
+		"Unable to get collation ID by name, use ID of the default collation instead",
+		zap.String("name", c),
+		zap.Int32("default collation ID", v),
+		zap.String("default collation", mysql.DefaultCollationName),
+	)
+	return v
 }
 
 func protoToCollation(c int32) string {

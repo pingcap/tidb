@@ -242,8 +242,7 @@ func sign(i int) int {
 // IsCICollation returns if the collation is case-sensitive
 func IsCICollation(collate string) bool {
 	return collate == "utf8_general_ci" || collate == "utf8mb4_general_ci" ||
-		collate == "utf8_unicode_ci" || collate == "utf8mb4_unicode_ci" ||
-		collate == "utf8mb4_general_zh_ci"
+		collate == "utf8_unicode_ci" || collate == "utf8mb4_unicode_ci"
 }
 
 func init() {
@@ -268,6 +267,6 @@ func init() {
 	newCollatorIDMap[CollationName2ID("utf8mb4_unicode_ci")] = &unicodeCICollator{}
 	newCollatorMap["utf8_unicode_ci"] = &unicodeCICollator{}
 	newCollatorIDMap[CollationName2ID("utf8_unicode_ci")] = &unicodeCICollator{}
-	newCollatorMap["utf8mb4_general_zh_ci"] = &generalZhCICollator{}
-	newCollatorIDMap[CollationName2ID("utf8mb4_general_zh_ci")] = &generalZhCICollator{}
+	newCollatorMap["utf8mb4_zh_pinyin_tidb_as_cs"] = &zhPinyinTiDBASCS{}
+	newCollatorIDMap[CollationName2ID("utf8mb4_zh_pinyin_tidb_as_cs")] = &zhPinyinTiDBASCS{}
 }
