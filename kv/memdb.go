@@ -50,7 +50,7 @@ func (f KeyFlags) HasLocked() bool {
 	return f&flagKeyLocked != 0
 }
 
-// NeedLocked return whether the key needed to be locked
+// HasNeedLocked return whether the key needed to be locked
 func (f KeyFlags) HasNeedLocked() bool {
 	return f&flagNeedLocked != 0
 }
