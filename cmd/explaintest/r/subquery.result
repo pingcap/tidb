@@ -63,7 +63,7 @@ HashJoin_13	1.25	root		inner join, equal:[eq(Column#7, Column#8)]
 ├─HashAgg_16(Build)	1.00	root		group by:Column#7, funcs:firstrow(Column#7)->Column#7
 │ └─StreamAgg_28	1.00	root		funcs:sum(Column#11)->Column#7
 │   └─TableReader_29	1.00	root		data:StreamAgg_20
-│     └─StreamAgg_20	1.00	cop[tikv]		funcs:sum(subquery.t2.b)->Column#11
+│     └─StreamAgg_20	1.00	cop[tikv]		funcs:sum(test.t2.b)->Column#11
 │       └─TableFullScan_27	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
 └─Projection_32(Probe)	10000.00	root		test.t1.a, test.t1.b, cast(test.t1.a, decimal(20,0) BINARY)->Column#8
   └─TableReader_34	10000.00	root		data:TableFullScan_33
