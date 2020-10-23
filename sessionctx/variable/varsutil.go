@@ -108,7 +108,7 @@ func GetSessionSystemVar(s *SessionVars, key string) (string, error) {
 // GetSessionOnlySysVars get the default value defined in code for session only variable.
 // The return bool value indicates whether it's a session only variable.
 func GetSessionOnlySysVars(s *SessionVars, key string) (string, bool, error) {
-	sysVar := SysVars[key]
+	sysVar := GetSysVar(key)
 	if sysVar == nil {
 		return "", false, ErrUnknownSystemVar.GenWithStackByArgs(key)
 	}
@@ -116,6 +116,12 @@ func GetSessionOnlySysVars(s *SessionVars, key string) (string, bool, error) {
 	switch sysVar.Name {
 	case TiDBCurrentTS:
 		return fmt.Sprintf("%d", s.TxnCtx.StartTS), true, nil
+	case TiDBLastTxnInfo:
+		info, err := json.Marshal(s.LastTxnInfo)
+		if err != nil {
+			return "", true, err
+		}
+		return string(info), true, nil
 	case TiDBGeneralLog:
 		return fmt.Sprintf("%d", atomic.LoadUint32(&ProcessGeneralLog)), true, nil
 	case TiDBPProfSQLCPU:
@@ -186,7 +192,7 @@ func GetGlobalSystemVar(s *SessionVars, key string) (string, error) {
 // GetScopeNoneSystemVar checks the validation of `key`,
 // and return the default value if its scope is `ScopeNone`.
 func GetScopeNoneSystemVar(key string) (string, bool, error) {
-	sysVar := SysVars[key]
+	sysVar := GetSysVar(key)
 	if sysVar == nil {
 		return "", false, ErrUnknownSystemVar.GenWithStackByArgs(key)
 	}
@@ -201,10 +207,9 @@ const epochShiftBits = 18
 
 // SetSessionSystemVar sets system variable and updates SessionVars states.
 func SetSessionSystemVar(vars *SessionVars, name string, value types.Datum) error {
-	name = strings.ToLower(name)
-	sysVar := SysVars[name]
+	sysVar := GetSysVar(name)
 	if sysVar == nil {
-		return ErrUnknownSystemVar
+		return ErrUnknownSystemVar.GenWithStackByArgs(name)
 	}
 	sVal := ""
 	var err error
@@ -224,12 +229,12 @@ func SetSessionSystemVar(vars *SessionVars, name string, value types.Datum) erro
 
 // ValidateGetSystemVar checks if system variable exists and validates its scope when get system variable.
 func ValidateGetSystemVar(name string, isGlobal bool) error {
-	sysVar, exists := SysVars[name]
-	if !exists {
+	sysVar := GetSysVar(name)
+	if sysVar == nil {
 		return ErrUnknownSystemVar.GenWithStackByArgs(name)
 	}
 	switch sysVar.Scope {
-	case ScopeGlobal, ScopeNone:
+	case ScopeGlobal:
 		if !isGlobal {
 			return ErrIncorrectScope.GenWithStackByArgs(name, "GLOBAL")
 		}
@@ -242,6 +247,13 @@ func ValidateGetSystemVar(name string, isGlobal bool) error {
 }
 
 func checkUInt64SystemVar(name, value string, min, max uint64, vars *SessionVars) (string, error) {
+	// There are two types of validation behaviors for integer values. The default
+	// is to return an error saying the value is out of range. For MySQL compatibility, some
+	// values prefer convert the value to the min/max and return a warning.
+	sv := GetSysVar(name)
+	if sv != nil && !sv.AutoConvertOutOfRange {
+		return checkUint64SystemVarWithError(name, value, min, max)
+	}
 	if len(value) == 0 {
 		return value, ErrWrongTypeForVar.GenWithStackByArgs(name)
 	}
@@ -269,6 +281,13 @@ func checkUInt64SystemVar(name, value string, min, max uint64, vars *SessionVars
 }
 
 func checkInt64SystemVar(name, value string, min, max int64, vars *SessionVars) (string, error) {
+	// There are two types of validation behaviors for integer values. The default
+	// is to return an error saying the value is out of range. For MySQL compatibility, some
+	// values prefer convert the value to the min/max and return a warning.
+	sv := GetSysVar(name)
+	if sv != nil && !sv.AutoConvertOutOfRange {
+		return checkInt64SystemVarWithError(name, value, min, max)
+	}
 	val, err := strconv.ParseInt(value, 10, 64)
 	if err != nil {
 		return value, ErrWrongTypeForVar.GenWithStackByArgs(name)
@@ -284,7 +303,85 @@ func checkInt64SystemVar(name, value string, min, max int64, vars *SessionVars) 
 	return value, nil
 }
 
+func checkEnumSystemVar(name, value string, vars *SessionVars) (string, error) {
+	sv := GetSysVar(name)
+	// The value could be either a string or the ordinal position in the PossibleValues.
+	// This allows for the behavior 0 = OFF, 1 = ON, 2 = DEMAND etc.
+	var iStr string
+	for i, v := range sv.PossibleValues {
+		iStr = fmt.Sprintf("%d", i)
+		if strings.EqualFold(value, v) || strings.EqualFold(value, iStr) {
+			return v, nil
+		}
+	}
+	return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
+}
+
+func checkFloatSystemVar(name, value string, min, max float64, vars *SessionVars) (string, error) {
+	if len(value) == 0 {
+		return value, ErrWrongTypeForVar.GenWithStackByArgs(name)
+	}
+	val, err := strconv.ParseFloat(value, 64)
+	if err != nil {
+		return value, ErrWrongTypeForVar.GenWithStackByArgs(name)
+	}
+	if val < min || val > max {
+		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
+	}
+	return value, nil
+}
+
+func checkBoolSystemVar(name, value string, vars *SessionVars) (string, error) {
+	if strings.EqualFold(value, "ON") {
+		return BoolOn, nil
+	} else if strings.EqualFold(value, "OFF") {
+		return BoolOff, nil
+	}
+	val, err := strconv.ParseInt(value, 10, 64)
+	if err == nil {
+		// Confusingly, there are two types of conversion rules for integer values.
+		// The default only allows 0 || 1, but a subset of values convert any
+		// negative integer to 1.
+		sv := GetSysVar(name)
+		if !sv.AutoConvertNegativeBool {
+			if val == 0 {
+				return BoolOff, nil
+			} else if val == 1 {
+				return BoolOn, nil
+			}
+		} else {
+			if val == 1 || val < 0 {
+				return BoolOn, nil
+			} else if val == 0 {
+				return BoolOff, nil
+			}
+		}
+	}
+	return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
+}
+
+func checkUint64SystemVarWithError(name, value string, min, max uint64) (string, error) {
+	if len(value) == 0 {
+		return value, ErrWrongTypeForVar.GenWithStackByArgs(name)
+	}
+	if value[0] == '-' {
+		// // in strict it expects the error WrongValue, but in non-strict it returns WrongType
+		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
+	}
+	val, err := strconv.ParseUint(value, 10, 64)
+	if err != nil {
+		return value, ErrWrongTypeForVar.GenWithStackByArgs(name)
+	}
+	if val < min || val > max {
+		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
+	}
+	return value, nil
+}
+
 func checkInt64SystemVarWithError(name, value string, min, max int64) (string, error) {
+	if len(value) == 0 {
+		return value, ErrWrongTypeForVar.GenWithStackByArgs(name)
+	}
 	val, err := strconv.ParseInt(value, 10, 64)
 	if err != nil {
 		return value, ErrWrongTypeForVar.GenWithStackByArgs(name)
@@ -319,36 +416,56 @@ func CheckDeprecationSetSystemVar(s *SessionVars, name string) {
 
 // ValidateSetSystemVar checks if system variable satisfies specific restriction.
 func ValidateSetSystemVar(vars *SessionVars, name string, value string, scope ScopeFlag) (string, error) {
+	sv := GetSysVar(name)
+	// Some sysvars are read-only. Attempting to set should always fail.
+	if sv.ReadOnly || sv.Scope == ScopeNone {
+		return value, ErrReadOnly.GenWithStackByArgs(name)
+	}
+	// The string "DEFAULT" is a special keyword in MySQL, which restores
+	// the compiled sysvar value. In which case we can skip further validation.
 	if strings.EqualFold(value, "DEFAULT") {
-		if val := GetSysVar(name); val != nil {
-			return val.Value, nil
+		if sv != nil {
+			return sv.Value, nil
 		}
 		return value, ErrUnknownSystemVar.GenWithStackByArgs(name)
 	}
-	switch name {
-	case ConnectTimeout:
-		return checkUInt64SystemVar(name, value, 2, secondsPerYear, vars)
-	case DefaultWeekFormat:
-		return checkUInt64SystemVar(name, value, 0, 7, vars)
-	case DelayKeyWrite:
-		if strings.EqualFold(value, "ON") || value == "1" {
-			return "ON", nil
-		} else if strings.EqualFold(value, "OFF") || value == "0" {
-			return "OFF", nil
-		} else if strings.EqualFold(value, "ALL") || value == "2" {
-			return "ALL", nil
+	// Some sysvars in TiDB have a special behavior where the empty string means
+	// "use the config file value". This needs to be cleaned up once the behavior
+	// for instance variables is determined.
+	if value == "" && ((sv.AllowEmpty && scope == ScopeSession) || sv.AllowEmptyAll) {
+		return value, nil
+	}
+	// Attempt to provide validation using the SysVar struct.
+	// Eventually the struct should handle all validation
+	var err error
+	if sv != nil {
+		switch sv.Type {
+		case TypeUnsigned:
+			value, err = checkUInt64SystemVar(name, value, uint64(sv.MinValue), sv.MaxValue, vars)
+		case TypeInt:
+			value, err = checkInt64SystemVar(name, value, sv.MinValue, int64(sv.MaxValue), vars)
+		case TypeBool:
+			value, err = checkBoolSystemVar(name, value, vars)
+		case TypeFloat:
+			value, err = checkFloatSystemVar(name, value, float64(sv.MinValue), float64(sv.MaxValue), vars)
+		case TypeEnum:
+			value, err = checkEnumSystemVar(name, value, vars)
 		}
-		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
-	case FlushTime:
-		return checkUInt64SystemVar(name, value, 0, secondsPerYear, vars)
+		// If there is no error, follow through and handle legacy cases of validation that are not handled by the type.
+		// TODO: Move each of these validations into the SysVar as an anonymous function.
+		if err != nil {
+			return value, err
+		}
+	}
+	switch name {
 	case ForeignKeyChecks:
-		if strings.EqualFold(value, "ON") || value == "1" {
+		if TiDBOptOn(value) {
 			// TiDB does not yet support foreign keys.
 			// For now, resist the change and show a warning.
 			vars.StmtCtx.AppendWarning(ErrUnsupportedValueForVar.GenWithStackByArgs(name, value))
-			return "OFF", nil
-		} else if strings.EqualFold(value, "OFF") || value == "0" {
-			return "OFF", nil
+			return BoolOff, nil
+		} else if !TiDBOptOn(value) {
+			return BoolOff, nil
 		}
 		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
 	case GroupConcatMaxLen:
@@ -361,172 +478,22 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string, scope Sc
 			maxLen = uint64(math.MaxUint32)
 		}
 		return checkUInt64SystemVar(name, value, 4, maxLen, vars)
-	case InteractiveTimeout:
-		return checkUInt64SystemVar(name, value, 1, secondsPerYear, vars)
-	case InnodbCommitConcurrency:
-		return checkUInt64SystemVar(name, value, 0, 1000, vars)
-	case InnodbFastShutdown:
-		return checkUInt64SystemVar(name, value, 0, 2, vars)
-	case InnodbLockWaitTimeout:
-		return checkUInt64SystemVar(name, value, 1, 1073741824, vars)
-	// See "https://dev.mysql.com/doc/refman/5.7/en/server-system-variables.html#sysvar_max_allowed_packet"
-	case MaxAllowedPacket:
-		return checkUInt64SystemVar(name, value, 1024, MaxOfMaxAllowedPacket, vars)
-	case MaxConnections:
-		return checkUInt64SystemVar(name, value, 1, 100000, vars)
-	case MaxConnectErrors:
-		return checkUInt64SystemVar(name, value, 1, math.MaxUint64, vars)
-	case MaxSortLength:
-		return checkUInt64SystemVar(name, value, 4, 8388608, vars)
-	case MaxSpRecursionDepth:
-		return checkUInt64SystemVar(name, value, 0, 255, vars)
-	case MaxUserConnections:
-		return checkUInt64SystemVar(name, value, 0, 4294967295, vars)
-	case OldPasswords:
-		return checkUInt64SystemVar(name, value, 0, 2, vars)
-	case TiDBMaxDeltaSchemaCount:
-		return checkInt64SystemVar(name, value, 100, 16384, vars)
-	case SessionTrackGtids:
-		if strings.EqualFold(value, "OFF") || value == "0" {
-			return "OFF", nil
-		} else if strings.EqualFold(value, "OWN_GTID") || value == "1" {
-			return "OWN_GTID", nil
-		} else if strings.EqualFold(value, "ALL_GTIDS") || value == "2" {
-			return "ALL_GTIDS", nil
-		}
-		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
-	case SQLSelectLimit:
-		return checkUInt64SystemVar(name, value, 0, math.MaxUint64, vars)
-	case TiDBStoreLimit:
-		return checkInt64SystemVar(name, value, 0, math.MaxInt64, vars)
-	case SyncBinlog:
-		return checkUInt64SystemVar(name, value, 0, 4294967295, vars)
-	case TableDefinitionCache:
-		return checkUInt64SystemVar(name, value, 400, 524288, vars)
-	case TmpTableSize:
-		return checkUInt64SystemVar(name, value, 1024, math.MaxUint64, vars)
-	case WaitTimeout:
-		return checkUInt64SystemVar(name, value, 0, 31536000, vars)
-	case MaxPreparedStmtCount:
-		return checkInt64SystemVar(name, value, -1, 1048576, vars)
-	case AutoIncrementIncrement, AutoIncrementOffset:
-		return checkUInt64SystemVar(name, value, 1, math.MaxUint16, vars)
 	case TimeZone:
 		if strings.EqualFold(value, "SYSTEM") {
 			return "SYSTEM", nil
 		}
 		_, err := parseTimeZone(value)
 		return value, err
-	case ValidatePasswordLength, ValidatePasswordNumberCount:
-		return checkUInt64SystemVar(name, value, 0, math.MaxUint64, vars)
-	case WarningCount, ErrorCount:
-		return value, ErrReadOnly.GenWithStackByArgs(name)
-	case EnforceGtidConsistency:
-		if strings.EqualFold(value, "OFF") || value == "0" {
-			return "OFF", nil
-		} else if strings.EqualFold(value, "ON") || value == "1" {
-			return "ON", nil
-		} else if strings.EqualFold(value, "WARN") || value == "2" {
-			return "WARN", nil
-		}
-		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
-	case QueryCacheType:
-		if strings.EqualFold(value, "OFF") || value == "0" {
-			return "OFF", nil
-		} else if strings.EqualFold(value, "ON") || value == "1" {
-			return "ON", nil
-		} else if strings.EqualFold(value, "DEMAND") || value == "2" {
-			return "DEMAND", nil
-		}
-		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
 	case SecureAuth:
-		if strings.EqualFold(value, "ON") || value == "1" {
-			return "1", nil
-		}
-		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
-	case WindowingUseHighPrecision:
-		if strings.EqualFold(value, "OFF") || value == "0" {
-			return "OFF", nil
-		} else if strings.EqualFold(value, "ON") || value == "1" {
-			return "ON", nil
+		if TiDBOptOn(value) {
+			return BoolOn, nil
 		}
 		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
 	case TiDBOptBCJ:
-		if (strings.EqualFold(value, "ON") || value == "1") && vars.AllowBatchCop == 0 {
+		if TiDBOptOn(value) && vars.AllowBatchCop == 0 {
 			return value, ErrWrongValueForVar.GenWithStackByArgs("Can't set Broadcast Join to 1 but tidb_allow_batch_cop is 0, please active batch cop at first.")
 		}
 		return value, nil
-	case TiDBSkipUTF8Check, TiDBSkipASCIICheck, TiDBOptAggPushDown,
-		TiDBOptDistinctAggPushDown, TiDBOptInSubqToJoinAndAgg, TiDBEnableFastAnalyze,
-		TiDBBatchInsert, TiDBDisableTxnAutoRetry, TiDBEnableStreaming, TiDBEnableChunkRPC,
-		TiDBBatchDelete, TiDBBatchCommit, TiDBEnableCascadesPlanner, TiDBEnableWindowFunction, TiDBPProfSQLCPU,
-		TiDBLowResolutionTSO, TiDBEnableIndexMerge, TiDBEnableNoopFuncs,
-		TiDBCheckMb4ValueInUTF8, TiDBEnableSlowLog, TiDBRecordPlanInSlowLog,
-		TiDBScatterRegion, TiDBGeneralLog, TiDBConstraintCheckInPlace, TiDBEnableVectorizedExpression,
-		TiDBFoundInPlanCache, TiDBEnableCollectExecutionInfo, TiDBAllowAutoRandExplicitInsert,
-		TiDBEnableClusteredIndex, TiDBEnableTelemetry, TiDBEnableChangeColumnType, TiDBEnableAmendPessimisticTxn:
-		fallthrough
-	case GeneralLog, AvoidTemporalUpgrade, BigTables, CheckProxyUsers, LogBin,
-		CoreFile, EndMakersInJSON, SQLLogBin, OfflineMode, PseudoSlaveMode, LowPriorityUpdates,
-		SkipNameResolve, SQLSafeUpdates, serverReadOnly, SlaveAllowBatching,
-		Flush, PerformanceSchema, LocalInFile, ShowOldTemporals, KeepFilesOnCreate, AutoCommit,
-		SQLWarnings, UniqueChecks, OldAlterTable, LogBinTrustFunctionCreators, SQLBigSelects,
-		BinlogDirectNonTransactionalUpdates, SQLQuoteShowCreate, AutomaticSpPrivileges,
-		RelayLogPurge, SQLAutoIsNull, QueryCacheWlockInvalidate, ValidatePasswordCheckUserName,
-		SuperReadOnly, BinlogOrderCommits, MasterVerifyChecksum, BinlogRowQueryLogEvents, LogSlowSlaveStatements,
-		LogSlowAdminStatements, LogQueriesNotUsingIndexes, Profiling:
-		if strings.EqualFold(value, "ON") {
-			return "1", nil
-		} else if strings.EqualFold(value, "OFF") {
-			return "0", nil
-		}
-		val, err := strconv.ParseInt(value, 10, 64)
-		if err == nil {
-			if val == 0 {
-				return "0", nil
-			} else if val == 1 {
-				return "1", nil
-			}
-		}
-		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
-	case MyISAMUseMmap, InnodbTableLocks, InnodbStatusOutput, InnodbAdaptiveFlushing, InnodbRandomReadAhead,
-		InnodbStatsPersistent, InnodbBufferPoolLoadAbort, InnodbBufferPoolLoadNow, InnodbBufferPoolDumpNow,
-		InnodbCmpPerIndexEnabled, InnodbFilePerTable, InnodbPrintAllDeadlocks,
-		InnodbStrictMode, InnodbAdaptiveHashIndex, InnodbFtEnableStopword, InnodbStatusOutputLocks:
-		if strings.EqualFold(value, "ON") {
-			return "1", nil
-		} else if strings.EqualFold(value, "OFF") {
-			return "0", nil
-		}
-		val, err := strconv.ParseInt(value, 10, 64)
-		if err == nil {
-			if val == 1 || val < 0 {
-				return "1", nil
-			} else if val == 0 {
-				return "0", nil
-			}
-		}
-		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
-	case MaxExecutionTime:
-		return checkUInt64SystemVar(name, value, 0, math.MaxUint64, vars)
-	case ThreadPoolSize:
-		return checkUInt64SystemVar(name, value, 1, 64, vars)
-	case TiDBEnableTablePartition:
-		switch {
-		case strings.EqualFold(value, "ON") || value == "1":
-			return "on", nil
-		case strings.EqualFold(value, "OFF") || value == "0":
-			return "off", nil
-		case strings.EqualFold(value, "AUTO"):
-			return "auto", nil
-		}
-		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
-	case TiDBDDLReorgBatchSize:
-		return checkUInt64SystemVar(name, value, uint64(MinDDLReorgBatchSize), uint64(MaxDDLReorgBatchSize), vars)
-	case TiDBDDLErrorCountLimit:
-		return checkUInt64SystemVar(name, value, uint64(0), math.MaxInt64, vars)
-	case TiDBExpensiveQueryTimeThreshold:
-		return checkUInt64SystemVar(name, value, MinExpensiveQueryTimeThreshold, math.MaxInt64, vars)
 	case TiDBIndexLookupConcurrency,
 		TiDBIndexLookupJoinConcurrency,
 		TiDBHashJoinConcurrency,
@@ -538,40 +505,6 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string, scope Sc
 			return value, ErrWrongTypeForVar.GenWithStackByArgs(name)
 		}
 		if v <= 0 && v != ConcurrencyUnset {
-			return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
-		}
-		return value, nil
-	case TiDBExecutorConcurrency,
-		TiDBDistSQLScanConcurrency,
-		TiDBIndexSerialScanConcurrency,
-		TiDBIndexJoinBatchSize,
-		TiDBIndexLookupSize,
-		TiDBDDLReorgWorkerCount,
-		TiDBBackoffLockFast, TiDBBackOffWeight,
-		TiDBOptimizerSelectivityLevel:
-		v, err := strconv.Atoi(value)
-		if err != nil {
-			return value, ErrWrongTypeForVar.GenWithStackByArgs(name)
-		}
-		if v <= 0 {
-			return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
-		}
-		return value, nil
-	case TiDBOptCorrelationExpFactor, TiDBDMLBatchSize:
-		v, err := strconv.Atoi(value)
-		if err != nil {
-			return value, ErrWrongTypeForVar.GenWithStackByArgs(name)
-		}
-		if v < 0 {
-			return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
-		}
-		return value, nil
-	case TiDBOptCorrelationThreshold:
-		v, err := strconv.ParseFloat(value, 64)
-		if err != nil {
-			return value, ErrWrongTypeForVar.GenWithStackByArgs(name)
-		}
-		if v < 0 || v > 1 {
 			return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
 		}
 		return value, nil
@@ -587,54 +520,12 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string, scope Sc
 			return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
 		}
 		return value, nil
-	case TiDBOptCPUFactor,
-		TiDBOptTiFlashConcurrencyFactor,
-		TiDBOptCopCPUFactor,
-		TiDBOptNetworkFactor,
-		TiDBOptScanFactor,
-		TiDBOptDescScanFactor,
-		TiDBOptSeekFactor,
-		TiDBOptMemoryFactor,
-		TiDBOptDiskFactor,
-		TiDBOptConcurrencyFactor:
-		v, err := strconv.ParseFloat(value, 64)
-		if err != nil {
-			return value, ErrWrongTypeForVar.GenWithStackByArgs(name)
-		}
-		if v < 0 {
-			return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
-		}
-		return value, nil
-	case TiDBProjectionConcurrency,
-		TIDBMemQuotaQuery,
-		TIDBMemQuotaHashJoin,
-		TIDBMemQuotaMergeJoin,
-		TIDBMemQuotaSort,
-		TIDBMemQuotaTopn,
-		TIDBMemQuotaIndexLookupReader,
-		TIDBMemQuotaIndexLookupJoin,
-		TIDBMemQuotaNestedLoopApply,
-		TiDBRetryLimit,
-		TiDBSlowLogThreshold,
-		TiDBQueryLogMaxLen,
-		TiDBEvolvePlanTaskMaxTime:
-		_, err := strconv.ParseInt(value, 10, 64)
-		if err != nil {
-			return value, ErrWrongValueForVar.GenWithStackByArgs(name)
-		}
-		return value, nil
 	case TiDBAutoAnalyzeStartTime, TiDBAutoAnalyzeEndTime, TiDBEvolvePlanTaskStartTime, TiDBEvolvePlanTaskEndTime:
 		v, err := setDayTime(vars, value)
 		if err != nil {
 			return "", err
 		}
 		return v, nil
-	case TiDBAutoAnalyzeRatio:
-		v, err := strconv.ParseFloat(value, 64)
-		if err != nil || v < 0 {
-			return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
-		}
-		return value, nil
 	case TxnIsolation, TransactionIsolation:
 		upVal := strings.ToUpper(value)
 		_, exists := TxIsolationNames[upVal]
@@ -660,116 +551,16 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string, scope Sc
 			}
 		}
 		return upVal, nil
-	case TiDBInitChunkSize:
-		v, err := strconv.Atoi(value)
-		if err != nil {
-			return value, ErrWrongTypeForVar.GenWithStackByArgs(name)
-		}
-		if v <= 0 {
-			return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
-		}
-		if v > initChunkSizeUpperBound {
-			return value, errors.Errorf("tidb_init_chunk_size(%d) cannot be bigger than %d", v, initChunkSizeUpperBound)
-		}
-		return value, nil
-	case TiDBMaxChunkSize:
-		v, err := strconv.Atoi(value)
-		if err != nil {
-			return value, ErrWrongTypeForVar.GenWithStackByArgs(name)
-		}
-		if v < maxChunkSizeLowerBound {
-			return value, errors.Errorf("tidb_max_chunk_size(%d) cannot be smaller than %d", v, maxChunkSizeLowerBound)
-		}
-		return value, nil
-	case TiDBOptJoinReorderThreshold:
-		v, err := strconv.Atoi(value)
-		if err != nil {
-			return value, ErrWrongTypeForVar.GenWithStackByArgs(name)
-		}
-		if v < 0 || v >= 64 {
-			return value, errors.Errorf("tidb_join_order_algo_threshold(%d) cannot be smaller than 0 or larger than 63", v)
-		}
-	case TiDBWaitSplitRegionTimeout:
-		v, err := strconv.Atoi(value)
-		if err != nil {
-			return value, ErrWrongTypeForVar.GenWithStackByArgs(name)
-		}
-		if v <= 0 {
-			return value, errors.Errorf("tidb_wait_split_region_timeout(%d) cannot be smaller than 1", v)
-		}
-	case TiDBReplicaRead:
-		if strings.EqualFold(value, "follower") {
-			return "follower", nil
-		} else if strings.EqualFold(value, "leader-and-follower") {
-			return "leader-and-follower", nil
-		} else if strings.EqualFold(value, "leader") || len(value) == 0 {
-			return "leader", nil
-		}
-		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
 	case TiDBTxnMode:
 		switch strings.ToUpper(value) {
 		case ast.Pessimistic, ast.Optimistic, "":
 		default:
 			return value, ErrWrongValueForVar.GenWithStackByArgs(TiDBTxnMode, value)
 		}
-	case TiDBRowFormatVersion:
-		v, err := strconv.Atoi(value)
-		if err != nil {
+	case TiDBPartitionPruneMode:
+		if !PartitionPruneMode(value).Valid() {
 			return value, ErrWrongTypeForVar.GenWithStackByArgs(name)
 		}
-		if v != DefTiDBRowFormatV1 && v != DefTiDBRowFormatV2 {
-			return value, errors.Errorf("Unsupported row format version %d", v)
-		}
-	case TiDBAllowRemoveAutoInc, TiDBUsePlanBaselines, TiDBEvolvePlanBaselines, TiDBEnableParallelApply:
-		switch {
-		case strings.EqualFold(value, "ON") || value == "1":
-			return "on", nil
-		case strings.EqualFold(value, "OFF") || value == "0":
-			return "off", nil
-		}
-		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
-	case TiDBCapturePlanBaseline:
-		switch {
-		case strings.EqualFold(value, "ON") || value == "1":
-			return "on", nil
-		case strings.EqualFold(value, "OFF") || value == "0":
-			return "off", nil
-		case value == "":
-			return "", nil
-		}
-		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
-	case TiDBEnableStmtSummary, TiDBStmtSummaryInternalQuery:
-		switch {
-		case strings.EqualFold(value, "ON") || value == "1":
-			return "1", nil
-		case strings.EqualFold(value, "OFF") || value == "0":
-			return "0", nil
-		case value == "":
-			if scope == ScopeSession {
-				return "", nil
-			}
-		}
-		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
-	case TiDBStmtSummaryRefreshInterval:
-		if value == "" && scope == ScopeSession {
-			return "", nil
-		}
-		return checkInt64SystemVarWithError(name, value, 1, math.MaxInt32)
-	case TiDBStmtSummaryHistorySize:
-		if value == "" && scope == ScopeSession {
-			return "", nil
-		}
-		return checkInt64SystemVarWithError(name, value, 0, math.MaxUint8)
-	case TiDBStmtSummaryMaxStmtCount:
-		if value == "" && scope == ScopeSession {
-			return "", nil
-		}
-		return checkInt64SystemVarWithError(name, value, 1, math.MaxInt16)
-	case TiDBStmtSummaryMaxSQLLength:
-		if value == "" && scope == ScopeSession {
-			return "", nil
-		}
-		return checkInt64SystemVarWithError(name, value, 0, math.MaxInt32)
 	case TiDBIsolationReadEngines:
 		engines := strings.Split(value, ",")
 		var formatVal string
@@ -790,21 +581,10 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string, scope Sc
 			}
 		}
 		return formatVal, nil
-	case TiDBMetricSchemaStep, TiDBMetricSchemaRangeDuration:
-		v, err := strconv.ParseInt(value, 10, 64)
-		if err != nil {
-			return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
-		}
-		if v < 10 || v > 60*60*60 {
-			return value, errors.Errorf("%v(%d) cannot be smaller than %v or larger than %v", name, v, 10, 60*60*60)
-		}
-		return value, nil
 	case CollationConnection, CollationDatabase, CollationServer:
 		if _, err := collate.GetCollationByName(value); err != nil {
 			return value, errors.Trace(err)
 		}
-	case TiDBShardAllocateStep:
-		return checkInt64SystemVar(name, value, 1, math.MaxInt64, vars)
 	}
 	return value, nil
 }

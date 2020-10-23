@@ -44,7 +44,7 @@ ARCH      := "`uname -s`"
 LINUX     := "Linux"
 MAC       := "Darwin"
 PACKAGE_LIST  := go list ./...| grep -vE "cmd"
-PACKAGES  := $$($(PACKAGE_LIST))
+PACKAGES  ?= $$($(PACKAGE_LIST))
 PACKAGE_DIRECTORIES := $(PACKAGE_LIST) | sed 's|github.com/pingcap/$(PROJECT)/||'
 FILES     := $$(find $$($(PACKAGE_DIRECTORIES)) -name "*.go")
 
@@ -88,7 +88,7 @@ dev: checklist check test
 # Install the check tools.
 check-setup:tools/bin/revive tools/bin/goword tools/bin/gometalinter tools/bin/gosec
 
-check: fmt errcheck unconvert lint tidy testSuite check-static vet staticcheck
+check: fmt errcheck unconvert lint tidy testSuite check-static vet staticcheck errdoc
 
 # These need to be fixed before they can be ran regularly
 check-fail: goword check-slow
@@ -127,6 +127,10 @@ gogenerate:
 	@echo "go generate ./..."
 	./tools/check/check-gogenerate.sh
 
+errdoc:tools/bin/errdoc-gen
+	@echo "generator errors.toml"
+	./tools/check/check-errdoc.sh
+
 lint:tools/bin/revive
 	@echo "linting"
 	@tools/bin/revive -formatter friendly -config tools/check/revive.toml $(FILES)
@@ -147,10 +151,8 @@ testSuite:
 	@echo "testSuite"
 	./tools/check/check_testSuite.sh
 
-clean:
+clean: failpoint-disable
 	$(GO) clean -i ./...
-	rm -rf *.out
-	rm -rf parser
 
 # Split tests for CI to run `make test` in parallel.
 test: test_part_1 test_part_2
@@ -160,7 +162,7 @@ test_part_1: checklist explaintest
 
 test_part_2: checkdep gotest gogenerate
 
-explaintest: server
+explaintest: server_check
 	@cd cmd/explaintest && ./run-tests.sh -s ../../bin/tidb-server
 
 ddltest:
@@ -187,7 +189,7 @@ ifeq ("$(TRAVIS_COVERAGE)", "1")
 else
 	@echo "Running in native mode."
 	@export log_level=fatal; export TZ='Asia/Shanghai'; \
-	$(GOTEST) -ldflags '$(TEST_LDFLAGS)' -cover $(PACKAGES) -check.p true -check.timeout 4s || { $(FAILPOINT_DISABLE); exit 1; }
+	$(GOTEST) -ldflags '$(TEST_LDFLAGS)' $(EXTRA_TEST_ARGS) -cover $(PACKAGES) -check.p true -check.timeout 4s || { $(FAILPOINT_DISABLE); exit 1; }
 endif
 	@$(FAILPOINT_DISABLE)
 
@@ -300,6 +302,9 @@ tools/bin/unconvert: tools/check/go.mod
 
 tools/bin/failpoint-ctl: go.mod
 	$(GO) build -o $@ github.com/pingcap/failpoint/failpoint-ctl
+
+tools/bin/errdoc-gen: go.mod
+	$(GO) build -o $@ github.com/pingcap/tiup/components/errdoc/errdoc-gen
 
 tools/bin/golangci-lint:
 	curl -sfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh| sh -s -- -b ./tools/bin v1.29.0

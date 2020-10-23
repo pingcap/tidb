@@ -51,6 +51,7 @@ import (
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/twmb/murmur3"
+	atomic2 "go.uber.org/atomic"
 )
 
 var preparedStmtCount int64
@@ -134,7 +135,6 @@ type stmtFuture struct {
 type TransactionContext struct {
 	forUpdateTS   uint64
 	stmtFuture    oracle.Future
-	DirtyDB       interface{}
 	Binlog        interface{}
 	InfoSchema    interface{}
 	History       interface{}
@@ -215,7 +215,7 @@ func (tc *TransactionContext) CollectUnchangedRowKeys(buf []kv.Key) []kv.Key {
 }
 
 // UpdateDeltaForTable updates the delta info for some table.
-func (tc *TransactionContext) UpdateDeltaForTable(physicalTableID int64, delta int64, count int64, colSize map[int64]int64) {
+func (tc *TransactionContext) UpdateDeltaForTable(logicalTableID, physicalTableID int64, delta int64, count int64, colSize map[int64]int64, saveAsLogicalTblID bool) {
 	if tc.TableDeltaMap == nil {
 		tc.TableDeltaMap = make(map[int64]TableDelta)
 	}
@@ -225,6 +225,10 @@ func (tc *TransactionContext) UpdateDeltaForTable(physicalTableID int64, delta i
 	}
 	item.Delta += delta
 	item.Count += count
+	item.TableID = physicalTableID
+	if saveAsLogicalTblID {
+		item.TableID = logicalTableID
+	}
 	for key, val := range colSize {
 		item.ColSize[key] += val
 	}
@@ -254,7 +258,6 @@ func (tc *TransactionContext) SetPessimisticLockCache(key kv.Key, val []byte) {
 // Cleanup clears up transaction info that no longer use.
 func (tc *TransactionContext) Cleanup() {
 	// tc.InfoSchema = nil; we cannot do it now, because some operation like handleFieldList depend on this.
-	tc.DirtyDB = nil
 	tc.Binlog = nil
 	tc.History = nil
 	tc.TableDeltaMap = nil
@@ -698,20 +701,53 @@ type SessionVars struct {
 	// EnableClusteredIndex indicates whether to enable clustered index when creating a new table.
 	EnableClusteredIndex bool
 
-	// EnableLogDesensitization indicates that whether desensitization when log query.
-	EnableLogDesensitization bool
-
 	// PresumeKeyNotExists indicates lazy existence checking is enabled.
 	PresumeKeyNotExists bool
 
 	// EnableParallelApply indicates that thether to use parallel apply.
 	EnableParallelApply bool
 
+	// EnableRedactLog indicates that whether redact log.
+	EnableRedactLog bool
+
 	// ShardAllocateStep indicates the max size of continuous rowid shard in one transaction.
 	ShardAllocateStep int64
 
 	// EnableAmendPessimisticTxn indicates if schema change amend is enabled for pessimistic transactions.
 	EnableAmendPessimisticTxn bool
+
+	// LastTxnInfo keeps track the info of last committed transaction.
+	LastTxnInfo kv.TxnInfo
+
+	// PartitionPruneMode indicates how and when to prune partitions.
+	PartitionPruneMode atomic2.String
+}
+
+// UseDynamicPartitionPrune indicates whether use new dynamic partition prune.
+func (s *SessionVars) UseDynamicPartitionPrune() bool {
+	return PartitionPruneMode(s.PartitionPruneMode.Load()) == DynamicOnly
+}
+
+// PartitionPruneMode presents the prune mode used.
+type PartitionPruneMode string
+
+const (
+	// StaticOnly indicates only prune at plan phase.
+	StaticOnly PartitionPruneMode = "static-only"
+	// DynamicOnly indicates only prune at execute phase.
+	DynamicOnly PartitionPruneMode = "dynamic-only"
+	// StaticButPrepareDynamic indicates prune at plan phase but collect stats need for dynamic prune.
+	StaticButPrepareDynamic PartitionPruneMode = "static-collect-dynamic"
+)
+
+// Valid indicate PruneMode is validated.
+func (p PartitionPruneMode) Valid() bool {
+	switch p {
+	case StaticOnly, StaticButPrepareDynamic, DynamicOnly:
+		return true
+	default:
+		return false
+	}
 }
 
 // PreparedParams contains the parameters of the current prepared statement when executing it.
@@ -805,10 +841,10 @@ func NewSessionVars() *SessionVars {
 		AllowAutoRandExplicitInsert: DefTiDBAllowAutoRandExplicitInsert,
 		EnableClusteredIndex:        DefTiDBEnableClusteredIndex,
 		EnableParallelApply:         DefTiDBEnableParallelApply,
-		EnableLogDesensitization:    DefTiDBLogDesensitization,
 		ShardAllocateStep:           DefTiDBShardAllocateStep,
 		EnableChangeColumnType:      DefTiDBChangeColumnType,
 		EnableAmendPessimisticTxn:   DefTiDBEnableAmendPessimisticTxn,
+		PartitionPruneMode:          *atomic2.NewString(DefTiDBPartitionPruneMode),
 	}
 	vars.KVVars = kv.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{
@@ -825,6 +861,7 @@ func NewSessionVars() *SessionVars {
 	}
 	vars.MemQuota = MemQuota{
 		MemQuotaQuery:               config.GetGlobalConfig().MemQuotaQuery,
+		MemQuotaStatistics:          config.GetGlobalConfig().MemQuotaStatistics,
 		NestedLoopJoinCacheCapacity: config.GetGlobalConfig().NestedLoopJoinCacheCapacity,
 
 		// The variables below do not take any effect anymore, it's remaining for compatibility.
@@ -1007,10 +1044,10 @@ func (s *SessionVars) IsAutocommit() bool {
 	return s.GetStatusFlag(mysql.ServerStatusAutocommit)
 }
 
-// IsReadConsistencyTxn if true it means the transaction is an read consistency (read committed) transaction.
-func (s *SessionVars) IsReadConsistencyTxn() bool {
+// IsIsolation if true it means the transaction is at that isolation level.
+func (s *SessionVars) IsIsolation(isolation string) bool {
 	if s.TxnCtx.Isolation != "" {
-		return s.TxnCtx.Isolation == ast.ReadCommitted
+		return s.TxnCtx.Isolation == isolation
 	}
 	if s.txnIsolationLevelOneShot.state == oneShotUse {
 		s.TxnCtx.Isolation = s.txnIsolationLevelOneShot.value
@@ -1018,7 +1055,7 @@ func (s *SessionVars) IsReadConsistencyTxn() bool {
 	if s.TxnCtx.Isolation == "" {
 		s.TxnCtx.Isolation, _ = s.GetSystemVar(TxnIsolation)
 	}
-	return s.TxnCtx.Isolation == ast.ReadCommitted
+	return s.TxnCtx.Isolation == isolation
 }
 
 // SetTxnIsolationLevelOneShotStateForNextTxn sets the txnIsolationLevelOneShot.state for next transaction.
@@ -1036,7 +1073,7 @@ func (s *SessionVars) SetTxnIsolationLevelOneShotStateForNextTxn() {
 
 // IsPessimisticReadConsistency if true it means the statement is in an read consistency pessimistic transaction.
 func (s *SessionVars) IsPessimisticReadConsistency() bool {
-	return s.TxnCtx.IsPessimistic && s.IsReadConsistencyTxn()
+	return s.TxnCtx.IsPessimistic && s.IsIsolation(ast.ReadCommitted)
 }
 
 // GetNextPreparedStmtID generates and returns the next session scope prepared statement id.
@@ -1060,6 +1097,9 @@ func (s *SessionVars) GetSystemVar(name string) (string, bool) {
 		return strconv.Itoa(s.SysWarningCount), true
 	} else if name == ErrorCount {
 		return strconv.Itoa(int(s.SysErrorCount)), true
+	}
+	if name == TiDBSlowLogMasking {
+		name = TiDBRedactLog
 	}
 	val, ok := s.systems[name]
 	return val, ok
@@ -1262,7 +1302,7 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.BatchCommit = TiDBOptOn(val)
 	case TiDBDMLBatchSize:
 		s.DMLBatchSize = int(tidbOptInt64(val, DefOptCorrelationExpFactor))
-	case TiDBCurrentTS, TiDBConfig:
+	case TiDBCurrentTS, TiDBLastTxnInfo, TiDBConfig:
 		return ErrReadOnly
 	case TiDBMaxChunkSize:
 		s.MaxChunkSize = tidbOptPositiveInt32(val, DefMaxChunkSize)
@@ -1270,6 +1310,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.InitChunkSize = tidbOptPositiveInt32(val, DefInitChunkSize)
 	case TIDBMemQuotaQuery:
 		s.MemQuotaQuery = tidbOptInt64(val, config.GetGlobalConfig().MemQuotaQuery)
+	case TIDBMemQuotaStatistics:
+		s.MemQuotaStatistics = tidbOptInt64(val, config.GetGlobalConfig().MemQuotaStatistics)
 	case TIDBNestedLoopJoinCacheCapacity:
 		s.NestedLoopJoinCacheCapacity = tidbOptInt64(val, config.GetGlobalConfig().NestedLoopJoinCacheCapacity)
 	case TIDBMemQuotaHashJoin:
@@ -1424,10 +1466,16 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.AllowAutoRandExplicitInsert = TiDBOptOn(val)
 	case TiDBEnableClusteredIndex:
 		s.EnableClusteredIndex = TiDBOptOn(val)
+	case TiDBPartitionPruneMode:
+		s.PartitionPruneMode.Store(strings.ToLower(strings.TrimSpace(val)))
 	case TiDBEnableParallelApply:
 		s.EnableParallelApply = TiDBOptOn(val)
-	case TiDBSlowLogMasking, TiDBLogDesensitization:
-		s.EnableLogDesensitization = TiDBOptOn(val)
+	case TiDBSlowLogMasking:
+		// TiDBSlowLogMasking is deprecated and a alias of TiDBRedactLog.
+		return s.SetSystemVar(TiDBRedactLog, val)
+	case TiDBRedactLog:
+		s.EnableRedactLog = TiDBOptOn(val)
+		errors.RedactLogEnabled.Store(s.EnableRedactLog)
 	case TiDBShardAllocateStep:
 		s.ShardAllocateStep = tidbOptInt64(val, DefTiDBShardAllocateStep)
 	case TiDBEnableChangeColumnType:
@@ -1525,6 +1573,7 @@ type TableDelta struct {
 	Count    int64
 	ColSize  map[int64]int64
 	InitTime time.Time // InitTime is the time that this delta is generated.
+	TableID  int64
 }
 
 // ConcurrencyUnset means the value the of the concurrency related variable is unset.
@@ -1683,11 +1732,17 @@ func (c *Concurrency) IndexSerialScanConcurrency() int {
 	return c.indexSerialScanConcurrency
 }
 
+// UnionConcurrency return the num of concurrent union worker.
+func (c *Concurrency) UnionConcurrency() int {
+	return c.ExecutorConcurrency
+}
+
 // MemQuota defines memory quota values.
 type MemQuota struct {
 	// MemQuotaQuery defines the memory quota for a query.
 	MemQuotaQuery int64
-
+	// MemQuotaStatistics defines the memory quota for the statistic Cache.
+	MemQuotaStatistics int64
 	// NestedLoopJoinCacheCapacity defines the memory capacity for apply cache.
 	NestedLoopJoinCacheCapacity int64
 
@@ -1829,6 +1884,10 @@ const (
 	SlowLogWriteSQLRespTotal = "Write_sql_response_total"
 	// SlowLogExecRetryCount is the execution retry count.
 	SlowLogExecRetryCount = "Exec_retry_count"
+	// SlowLogExecRetryTime is the execution retry time.
+	SlowLogExecRetryTime = "Exec_retry_time"
+	// SlowLogBackoffDetail is the detail of backoff.
+	SlowLogBackoffDetail = "Backoff_Detail"
 )
 
 // SlowQueryLogItems is a collection of items that should be included in the
@@ -1861,6 +1920,7 @@ type SlowQueryLogItems struct {
 	BackoffTotal      time.Duration
 	WriteSQLRespTotal time.Duration
 	ExecRetryCount    uint
+	ExecRetryTime     time.Duration
 }
 
 // SlowLogFormat uses for formatting slow log.
@@ -1899,7 +1959,15 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 		writeSlowLogItem(&buf, SlowLogConnIDStr, strconv.FormatUint(s.ConnectionID, 10))
 	}
 	if logItems.ExecRetryCount > 0 {
-		writeSlowLogItem(&buf, SlowLogExecRetryCount, strconv.Itoa(int(logItems.ExecRetryCount)))
+		buf.WriteString(SlowLogRowPrefixStr)
+		buf.WriteString(SlowLogExecRetryTime)
+		buf.WriteString(SlowLogSpaceMarkStr)
+		buf.WriteString(strconv.FormatFloat(logItems.ExecRetryTime.Seconds(), 'f', -1, 64))
+		buf.WriteString(" ")
+		buf.WriteString(SlowLogExecRetryCount)
+		buf.WriteString(SlowLogSpaceMarkStr)
+		buf.WriteString(strconv.Itoa(int(logItems.ExecRetryCount)))
+		buf.WriteString("\n")
 	}
 	writeSlowLogItem(&buf, SlowLogQueryTimeStr, strconv.FormatFloat(logItems.TimeTotal.Seconds(), 'f', -1, 64))
 	writeSlowLogItem(&buf, SlowLogParseTimeStr, strconv.FormatFloat(logItems.TimeParse.Seconds(), 'f', -1, 64))

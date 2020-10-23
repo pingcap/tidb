@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	util2 "github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/pdapi"
@@ -79,7 +80,10 @@ const (
 )
 
 // ErrPrometheusAddrIsNotSet is the error that Prometheus address is not set in PD and etcd
-var ErrPrometheusAddrIsNotSet = terror.ClassDomain.New(errno.ErrPrometheusAddrIsNotSet, errno.MySQLErrName[errno.ErrPrometheusAddrIsNotSet])
+var ErrPrometheusAddrIsNotSet = dbterror.ClassDomain.NewStd(errno.ErrPrometheusAddrIsNotSet)
+
+// errPlacementRulesDisabled is exported for internal usage, indicating PD rejected the request due to disabled placement feature.
+var errPlacementRulesDisabled = errors.New("placement rules feature is disabled")
 
 // InfoSyncer stores server info to etcd when the tidb-server starts and delete when tidb-server shuts down.
 type InfoSyncer struct {
@@ -269,15 +273,16 @@ func GetTiFlashTableSyncProgress(ctx context.Context) (map[int64]float64, error)
 	return progressMap, nil
 }
 
-func doRequest(ctx context.Context, addrs []string, route, method string, body io.Reader) error {
+func doRequest(ctx context.Context, addrs []string, route, method string, body io.Reader) ([]byte, error) {
 	var err error
 	var req *http.Request
+	var res *http.Response
 	for _, addr := range addrs {
 		var url string
-		if strings.HasPrefix(addr, "http://") {
+		if strings.HasPrefix(addr, "http") {
 			url = fmt.Sprintf("%s%s", addr, route)
 		} else {
-			url = fmt.Sprintf("http://%s%s", addr, route)
+			url = fmt.Sprintf("%s://%s%s", util2.InternalHTTPSchema(), addr, route)
 		}
 
 		if ctx != nil {
@@ -286,23 +291,56 @@ func doRequest(ctx context.Context, addrs []string, route, method string, body i
 			req, err = http.NewRequest(method, url, body)
 		}
 		if err != nil {
-			return err
+			return nil, err
 		}
 		if body != nil {
 			req.Header.Set("Content-Type", "application/json")
 		}
 
-		res, err := http.DefaultClient.Do(req)
+		res, err = util2.InternalHTTPClient().Do(req)
 		if err == nil {
-			defer terror.Call(res.Body.Close)
-			if res.StatusCode != http.StatusOK {
-				bodyBytes, err := ioutil.ReadAll(res.Body)
-				return errors.Wrapf(err, "%s", bodyBytes)
+			bodyBytes, err := ioutil.ReadAll(res.Body)
+			if err != nil {
+				return nil, err
 			}
-			return nil
+			if res.StatusCode != http.StatusOK {
+				err = errors.Errorf("%s", bodyBytes)
+				// ignore if placement rules feature is not enabled
+				if strings.HasPrefix(err.Error(), `"placement rules feature is disabled"`) {
+					err = nil
+					bodyBytes = nil
+				}
+			}
+			terror.Log(res.Body.Close())
+			return bodyBytes, err
 		}
 	}
-	return err
+	return nil, err
+}
+
+// GetPlacementRules is used to retrieve placement rules from PD.
+func GetPlacementRules(ctx context.Context) ([]*placement.RuleOp, error) {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return nil, err
+	}
+
+	if is.etcdCli == nil {
+		return nil, nil
+	}
+
+	addrs := is.etcdCli.Endpoints()
+
+	if len(addrs) == 0 {
+		return nil, errors.Errorf("pd unavailable")
+	}
+
+	rules := []*placement.RuleOp{}
+	res, err := doRequest(ctx, addrs, path.Join(pdapi.Config, "rules"), http.MethodGet, nil)
+	if err == nil && res != nil {
+		err = json.Unmarshal(res, &rules)
+	}
+	return rules, err
 }
 
 // UpdatePlacementRules is used to notify PD changes of placement rules.
@@ -331,12 +369,89 @@ func UpdatePlacementRules(ctx context.Context, rules []*placement.RuleOp) error 
 		return err
 	}
 
-	err = doRequest(ctx, addrs, path.Join(pdapi.Config, "rules/batch"), http.MethodPost, bytes.NewReader(b))
+	_, err = doRequest(ctx, addrs, path.Join(pdapi.Config, "rules/batch"), http.MethodPost, bytes.NewReader(b))
+	return err
+}
+
+// GetAllRuleBundles is used to get all rule bundles from PD. It is used to load full rules from PD while fullload infoschema.
+func GetAllRuleBundles(ctx context.Context) ([]*placement.Bundle, error) {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return nil, err
+	}
+
+	bundles := []*placement.Bundle{}
+	if is.etcdCli == nil {
+		return bundles, nil
+	}
+
+	addrs := is.etcdCli.Endpoints()
+
+	if len(addrs) == 0 {
+		return nil, errors.Errorf("pd unavailable")
+	}
+
+	res, err := doRequest(ctx, addrs, path.Join(pdapi.Config, "placement-rule"), "GET", nil)
+	if err == nil && res != nil {
+		err = json.Unmarshal(res, &bundles)
+	}
+	return bundles, err
+}
+
+// GetRuleBundle is used to get one specific rule bundle from PD.
+func GetRuleBundle(ctx context.Context, name string) (*placement.Bundle, error) {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return nil, err
+	}
+
+	bundle := &placement.Bundle{ID: name}
+
+	if is.etcdCli == nil {
+		return bundle, nil
+	}
+
+	addrs := is.etcdCli.Endpoints()
+
+	if len(addrs) == 0 {
+		return nil, errors.Errorf("pd unavailable")
+	}
+
+	res, err := doRequest(ctx, addrs, path.Join(pdapi.Config, "placement-rule", name), "GET", nil)
+	if err == nil && res != nil {
+		err = json.Unmarshal(res, bundle)
+	}
+	return bundle, err
+}
+
+// PutRuleBundles is used to post specific rule bundles to PD.
+func PutRuleBundles(ctx context.Context, bundles []*placement.Bundle) error {
+	if len(bundles) == 0 {
+		return nil
+	}
+
+	is, err := getGlobalInfoSyncer()
 	if err != nil {
 		return err
 	}
 
-	return nil
+	if is.etcdCli == nil {
+		return nil
+	}
+
+	addrs := is.etcdCli.Endpoints()
+
+	if len(addrs) == 0 {
+		return errors.Errorf("pd unavailable")
+	}
+
+	b, err := json.Marshal(bundles)
+	if err != nil {
+		return err
+	}
+
+	_, err = doRequest(ctx, addrs, path.Join(pdapi.Config, "placement-rule")+"?partial=true", "POST", bytes.NewReader(b))
+	return err
 }
 
 func (is *InfoSyncer) getAllServerInfo(ctx context.Context) (map[string]*ServerInfo, error) {

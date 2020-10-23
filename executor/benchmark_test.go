@@ -449,6 +449,8 @@ func buildWindowExecutor(ctx sessionctx.Context, windowFunc string, funcs int, f
 			args = append(args, src.Schema().Columns[0])
 		case ast.AggFuncBitXor:
 			args = append(args, src.Schema().Columns[0])
+		case ast.AggFuncMax, ast.AggFuncMin:
+			args = append(args, src.Schema().Columns[0])
 		default:
 			args = append(args, partitionBy[0])
 		}
@@ -672,6 +674,23 @@ func BenchmarkWindowFunctionsWithFrame(b *testing.B) {
 	}
 }
 
+func BenchmarkWindowFunctionsAggWindowProcessorAboutFrame(b *testing.B) {
+	b.ReportAllocs()
+	windowFunc := ast.AggFuncMax
+	frame := &core.WindowFrame{Type: ast.Rows, Start: &core.FrameBound{UnBounded: true}, End: &core.FrameBound{UnBounded: true}}
+	cas := defaultWindowTestCase()
+	cas.rows = 10000
+	cas.ndv = 10
+	cas.concurrency = 1
+	cas.dataSourceSorted = false
+	cas.windowFunc = windowFunc
+	cas.numFunc = 1
+	cas.frame = frame
+	b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
+		benchmarkWindowExecWithCase(b, cas)
+	})
+}
+
 func baseBenchmarkWindowFunctionsWithSlidingWindow(b *testing.B, frameType ast.FrameType) {
 	b.ReportAllocs()
 	windowFuncs := []struct {
@@ -684,6 +703,10 @@ func baseBenchmarkWindowFunctionsWithSlidingWindow(b *testing.B, frameType ast.F
 		{ast.AggFuncAvg, mysql.TypeFloat},
 		{ast.AggFuncAvg, mysql.TypeNewDecimal},
 		{ast.AggFuncBitXor, mysql.TypeLong},
+		{ast.AggFuncMax, mysql.TypeLong},
+		{ast.AggFuncMax, mysql.TypeFloat},
+		{ast.AggFuncMin, mysql.TypeLong},
+		{ast.AggFuncMin, mysql.TypeFloat},
 	}
 	row := 100000
 	ndv := 100
@@ -1683,6 +1706,123 @@ func BenchmarkSortExec(b *testing.B) {
 		cas.orderByIdx = []int{1}
 		b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
 			benchmarkSortExec(b, cas)
+		})
+	}
+}
+
+type limitCase struct {
+	rows                  int
+	offset                int
+	count                 int
+	childUsedSchema       []bool
+	usingInlineProjection bool
+	ctx                   sessionctx.Context
+}
+
+func (tc limitCase) columns() []*expression.Column {
+	return []*expression.Column{
+		{Index: 0, RetType: types.NewFieldType(mysql.TypeLonglong)},
+		{Index: 1, RetType: types.NewFieldType(mysql.TypeLonglong)},
+	}
+}
+
+func (tc limitCase) String() string {
+	return fmt.Sprintf("(rows:%v, offset:%v, count:%v, inline_projection:%v)",
+		tc.rows, tc.offset, tc.count, tc.usingInlineProjection)
+}
+
+func defaultLimitTestCase() *limitCase {
+	ctx := mock.NewContext()
+	ctx.GetSessionVars().InitChunkSize = variable.DefInitChunkSize
+	ctx.GetSessionVars().MaxChunkSize = variable.DefMaxChunkSize
+	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(-1, -1)
+	tc := &limitCase{
+		rows:                  30000,
+		offset:                10000,
+		count:                 10000,
+		childUsedSchema:       []bool{false, true},
+		usingInlineProjection: false,
+		ctx:                   ctx,
+	}
+	return tc
+}
+
+func benchmarkLimitExec(b *testing.B, cas *limitCase) {
+	opt := mockDataSourceParameters{
+		schema: expression.NewSchema(cas.columns()...),
+		rows:   cas.rows,
+		ctx:    cas.ctx,
+	}
+	dataSource := buildMockDataSource(opt)
+	var exec Executor
+	limit := &LimitExec{
+		baseExecutor: newBaseExecutor(cas.ctx, dataSource.schema, 4, dataSource),
+		begin:        uint64(cas.offset),
+		end:          uint64(cas.offset + cas.count),
+	}
+	if cas.usingInlineProjection {
+		if len(cas.childUsedSchema) > 0 {
+			limit.columnIdxsUsedByChild = make([]int, 0, len(cas.childUsedSchema))
+			for i, used := range cas.childUsedSchema {
+				if used {
+					limit.columnIdxsUsedByChild = append(limit.columnIdxsUsedByChild, i)
+				}
+			}
+		}
+		exec = limit
+	} else {
+		columns := cas.columns()
+		usedCols := make([]*expression.Column, 0, len(columns))
+		exprs := make([]expression.Expression, 0, len(columns))
+		for i, used := range cas.childUsedSchema {
+			if used {
+				usedCols = append(usedCols, columns[i])
+				exprs = append(exprs, columns[i])
+			}
+		}
+		proj := &ProjectionExec{
+			baseExecutor:  newBaseExecutor(cas.ctx, expression.NewSchema(usedCols...), 0, limit),
+			numWorkers:    1,
+			evaluatorSuit: expression.NewEvaluatorSuite(exprs, false),
+		}
+		exec = proj
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		b.StopTimer()
+		tmpCtx := context.Background()
+		chk := newFirstChunk(exec)
+		dataSource.prepareChunks()
+
+		b.StartTimer()
+		if err := exec.Open(tmpCtx); err != nil {
+			b.Fatal(err)
+		}
+		for {
+			if err := exec.Next(tmpCtx, chk); err != nil {
+				b.Fatal(err)
+			}
+			if chk.NumRows() == 0 {
+				break
+			}
+		}
+
+		if err := exec.Close(); err != nil {
+			b.Fatal(err)
+		}
+		b.StopTimer()
+	}
+}
+
+func BenchmarkLimitExec(b *testing.B) {
+	b.ReportAllocs()
+	cas := defaultLimitTestCase()
+	usingInlineProjection := []bool{false, true}
+	for _, inlineProjection := range usingInlineProjection {
+		cas.usingInlineProjection = inlineProjection
+		b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
+			benchmarkLimitExec(b, cas)
 		})
 	}
 }

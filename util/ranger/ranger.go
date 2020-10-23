@@ -191,6 +191,27 @@ func appendPoints2IndexRange(sc *stmtctx.StatementContext, origin *Range, rangeP
 	return newRanges, nil
 }
 
+func appendRanges2PointRanges(pointRanges []*Range, ranges []*Range) []*Range {
+	if len(ranges) == 0 {
+		return pointRanges
+	}
+	newRanges := make([]*Range, 0, len(pointRanges)*len(ranges))
+	for _, pointRange := range pointRanges {
+		for _, r := range ranges {
+			lowVal := append(pointRange.LowVal, r.LowVal...)
+			highVal := append(pointRange.HighVal, r.HighVal...)
+			newRange := &Range{
+				LowVal:      lowVal,
+				LowExclude:  r.LowExclude,
+				HighVal:     highVal,
+				HighExclude: r.HighExclude,
+			}
+			newRanges = append(newRanges, newRange)
+		}
+	}
+	return newRanges
+}
+
 // points2TableRanges build ranges for table scan from range points.
 // It will remove the nil and convert MinNotNull and MaxValue to MinInt64 or MinUint64 and MaxInt64 or MaxUint64.
 func points2TableRanges(sc *stmtctx.StatementContext, rangePoints []point, tp *types.FieldType) ([]*Range, error) {
@@ -528,4 +549,18 @@ func points2EqOrInCond(ctx sessionctx.Context, points []point, expr expression.E
 		funcName = ast.In
 	}
 	return expression.NewFunctionInternal(ctx, funcName, sf.GetType(), args...)
+}
+
+// DetachCondAndBuildRangeForPartition will detach the index filters from table filters.
+// The returned values are encapsulated into a struct DetachRangeResult, see its comments for explanation.
+func DetachCondAndBuildRangeForPartition(sctx sessionctx.Context, conditions []expression.Expression, cols []*expression.Column,
+	lengths []int) (*DetachRangeResult, error) {
+	d := &rangeDetacher{
+		sctx:             sctx,
+		allConds:         conditions,
+		cols:             cols,
+		lengths:          lengths,
+		mergeConsecutive: false,
+	}
+	return d.detachCondAndBuildRangeForCols()
 }

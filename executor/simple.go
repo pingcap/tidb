@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
@@ -40,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -564,15 +564,12 @@ func (e *SimpleExec) executeBegin(ctx context.Context, s *ast.BeginStmt) error {
 	// reverts to its previous state.
 	e.ctx.GetSessionVars().SetStatusFlag(mysql.ServerStatusInTrans, true)
 	// Call ctx.Txn(true) to active pending txn.
-	pTxnConf := config.GetGlobalConfig().PessimisticTxn
-	if pTxnConf.Enable {
-		txnMode := s.Mode
-		if txnMode == "" {
-			txnMode = e.ctx.GetSessionVars().TxnMode
-		}
-		if txnMode == ast.Pessimistic {
-			e.ctx.GetSessionVars().TxnCtx.IsPessimistic = true
-		}
+	txnMode := s.Mode
+	if txnMode == "" {
+		txnMode = e.ctx.GetSessionVars().TxnMode
+	}
+	if txnMode == ast.Pessimistic {
+		e.ctx.GetSessionVars().TxnCtx.IsPessimistic = true
 	}
 	txn, err := e.ctx.Txn(true)
 	if err != nil {
@@ -1131,9 +1128,9 @@ func (e *SimpleExec) executeAlterInstance(s *ast.AlterInstanceStmt) error {
 		logutil.BgLogger().Info("execute reload tls", zap.Bool("NoRollbackOnError", s.NoRollbackOnError))
 		sm := e.ctx.GetSessionManager()
 		tlsCfg, err := util.LoadTLSCertificates(
-			variable.SysVars["ssl_ca"].Value,
-			variable.SysVars["ssl_key"].Value,
-			variable.SysVars["ssl_cert"].Value,
+			variable.GetSysVar("ssl_ca").Value,
+			variable.GetSysVar("ssl_key").Value,
+			variable.GetSysVar("ssl_cert").Value,
 		)
 		if err != nil {
 			if !s.NoRollbackOnError || config.GetGlobalConfig().Security.RequireSecureTransport {
@@ -1192,7 +1189,7 @@ func asyncDelayShutdown(p *os.Process, delay time.Duration) {
 func (e *SimpleExec) executeCreateStatistics(s *ast.CreateStatisticsStmt) (err error) {
 	// Not support Cardinality and Dependency statistics type for now.
 	if s.StatsType == ast.StatsTypeCardinality || s.StatsType == ast.StatsTypeDependency {
-		return terror.ClassOptimizer.New(mysql.ErrInternal, mysql.MySQLErrName[mysql.ErrInternal]).GenWithStack("Cardinality and Dependency statistics types are not supported")
+		return dbterror.ClassOptimizer.NewStd(mysql.ErrInternal).GenWithStack("Cardinality and Dependency statistics types are not supported")
 	}
 	if _, ok := e.is.SchemaByName(s.Table.Schema); !ok {
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(s.Table.Schema)
@@ -1207,7 +1204,7 @@ func (e *SimpleExec) executeCreateStatistics(s *ast.CreateStatisticsStmt) (err e
 	for _, colName := range s.Columns {
 		col := table.FindCol(t.VisibleCols(), colName.Name.L)
 		if col == nil {
-			return terror.ClassDDL.New(mysql.ErrKeyColumnDoesNotExits, mysql.MySQLErrName[mysql.ErrKeyColumnDoesNotExits]).GenWithStack("column does not exist: %s", colName.Name.L)
+			return dbterror.ClassDDL.NewStd(mysql.ErrKeyColumnDoesNotExits).GenWithStack("column does not exist: %s", colName.Name.L)
 		}
 		if s.StatsType == ast.StatsTypeCorrelation && tblInfo.PKIsHandle && mysql.HasPriKeyFlag(col.Flag) {
 			warn := errors.New("No need to create correlation statistics on the integer primary key column")
@@ -1217,10 +1214,10 @@ func (e *SimpleExec) executeCreateStatistics(s *ast.CreateStatisticsStmt) (err e
 		colIDs = append(colIDs, col.ID)
 	}
 	if len(colIDs) != 2 && (s.StatsType == ast.StatsTypeCorrelation || s.StatsType == ast.StatsTypeDependency) {
-		return terror.ClassOptimizer.New(mysql.ErrInternal, mysql.MySQLErrName[mysql.ErrInternal]).GenWithStack("Only support Correlation and Dependency statistics types on 2 columns")
+		return dbterror.ClassOptimizer.NewStd(mysql.ErrInternal).GenWithStack("Only support Correlation and Dependency statistics types on 2 columns")
 	}
 	if len(colIDs) < 1 && s.StatsType == ast.StatsTypeCardinality {
-		return terror.ClassOptimizer.New(mysql.ErrInternal, mysql.MySQLErrName[mysql.ErrInternal]).GenWithStack("Only support Cardinality statistics type on at least 2 columns")
+		return dbterror.ClassOptimizer.NewStd(mysql.ErrInternal).GenWithStack("Only support Cardinality statistics type on at least 2 columns")
 	}
 	// TODO: check whether covering index exists for cardinality / dependency types.
 
@@ -1241,7 +1238,7 @@ func (e *SimpleExec) executeDropStatistics(s *ast.DropStatisticsStmt) error {
 
 func (e *SimpleExec) executeAdminReloadStatistics(s *ast.AdminStmt) error {
 	if s.Tp != ast.AdminReloadStatistics {
-		return terror.ClassOptimizer.New(mysql.ErrInternal, mysql.MySQLErrName[mysql.ErrInternal]).GenWithStack("This AdminStmt is not ADMIN RELOAD STATISTICS")
+		return dbterror.ClassOptimizer.NewStd(mysql.ErrInternal).GenWithStack("This AdminStmt is not ADMIN RELOAD STATISTICS")
 	}
 	return domain.GetDomain(e.ctx).StatsHandle().ReloadExtendedStatistics()
 }

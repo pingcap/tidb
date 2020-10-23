@@ -168,8 +168,11 @@ func (e *closureExecutor) initIdxScanCtx(idxScan *tipb.IndexScan) {
 	e.idxScanCtx.pkStatus = pkColNotExists
 
 	e.idxScanCtx.primaryColumnIds = idxScan.PrimaryColumnIds
-
 	lastColumn := e.columnInfos[len(e.columnInfos)-1]
+	if lastColumn.GetColumnId() == model.ExtraPidColID {
+		lastColumn = e.columnInfos[len(e.columnInfos)-2]
+		e.idxScanCtx.columnLen--
+	}
 
 	if len(e.idxScanCtx.primaryColumnIds) == 0 {
 		if lastColumn.GetPkHandle() {
@@ -575,7 +578,7 @@ func (e *closureExecutor) copyError(err error) error {
 	x := errors.Cause(err)
 	switch y := x.(type) {
 	case *terror.Error:
-		ret = y.ToSQLError()
+		ret = terror.ToSQLError(y)
 	default:
 		ret = errors.New(err.Error())
 	}

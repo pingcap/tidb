@@ -172,7 +172,7 @@ func NeedCount(name string) bool {
 func NeedValue(name string) bool {
 	switch name {
 	case ast.AggFuncSum, ast.AggFuncAvg, ast.AggFuncFirstRow, ast.AggFuncMax, ast.AggFuncMin,
-		ast.AggFuncGroupConcat, ast.AggFuncBitOr, ast.AggFuncBitAnd, ast.AggFuncBitXor:
+		ast.AggFuncGroupConcat, ast.AggFuncBitOr, ast.AggFuncBitAnd, ast.AggFuncBitXor, ast.AggFuncApproxPercentile:
 		return true
 	default:
 		return false
@@ -192,6 +192,9 @@ func IsAllFirstRow(aggFuncs []*AggFuncDesc) bool {
 // CheckAggPushDown checks whether an agg function can be pushed to storage.
 func CheckAggPushDown(aggFunc *AggFuncDesc, storeType kv.StoreType) bool {
 	if len(aggFunc.OrderByItems) > 0 {
+		return false
+	}
+	if aggFunc.Name == ast.AggFuncApproxPercentile {
 		return false
 	}
 	ret := true

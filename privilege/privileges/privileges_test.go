@@ -950,6 +950,9 @@ func (s *testPrivilegeSuite) TestSystemSchema(c *C) {
 	c.Assert(strings.Contains(err.Error(), "privilege check fail"), IsTrue)
 	_, err = se.Execute(context.Background(), "delete from performance_schema.events_statements_summary_by_digest")
 	c.Assert(strings.Contains(err.Error(), "privilege check fail"), IsTrue)
+	_, err = se.Execute(context.Background(), "create table performance_schema.t(a int)")
+	c.Assert(err, NotNil)
+	c.Assert(strings.Contains(err.Error(), "CREATE command denied"), IsTrue, Commentf(err.Error()))
 
 	// Test metric_schema.
 	mustExec(c, se, `select * from metrics_schema.tidb_query_duration`)
@@ -959,6 +962,9 @@ func (s *testPrivilegeSuite) TestSystemSchema(c *C) {
 	c.Assert(strings.Contains(err.Error(), "privilege check fail"), IsTrue)
 	_, err = se.Execute(context.Background(), "delete from metrics_schema.tidb_query_duration")
 	c.Assert(strings.Contains(err.Error(), "privilege check fail"), IsTrue)
+	_, err = se.Execute(context.Background(), "create table metric_schema.t(a int)")
+	c.Assert(err, NotNil)
+	c.Assert(strings.Contains(err.Error(), "CREATE command denied"), IsTrue, Commentf(err.Error()))
 }
 
 func (s *testPrivilegeSuite) TestAdminCommand(c *C) {
@@ -1005,6 +1011,15 @@ func (s *testPrivilegeSuite) TestLoadDataPrivilege(c *C) {
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "test_load", Hostname: "localhost"}, nil, nil), IsTrue)
 	_, err = se.Execute(context.Background(), "LOAD DATA LOCAL INFILE '/tmp/load_data_priv.csv' INTO TABLE t_load")
 	c.Assert(err, IsNil)
+}
+
+func (s *testPrivilegeSuite) TestSelectIntoNoPremissions(c *C) {
+	se := newSession(c, s.store, s.dbName)
+	mustExec(c, se, `CREATE USER 'nofile'@'localhost';`)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "nofile", Hostname: "localhost"}, nil, nil), IsTrue)
+	_, err := se.Execute(context.Background(), `select 1 into outfile '/tmp/doesntmatter-no-permissions'`)
+	message := "Access denied; you need (at least one of) the FILE privilege(s) for this operation"
+	c.Assert(strings.Contains(err.Error(), message), IsTrue)
 }
 
 func (s *testPrivilegeSuite) TestGetEncodedPassword(c *C) {
@@ -1078,6 +1093,16 @@ func (s *testPrivilegeSuite) TestUserTableConsistency(c *C) {
 	}
 	buf.WriteString(" from mysql.user where user = 'superadmin'")
 	tk.MustQuery(buf.String()).Check(testkit.Rows(res.String()))
+}
+
+func (s *testPrivilegeSuite) TestFieldList(c *C) { // Issue #14237 List fields RPC
+	se := newSession(c, s.store, s.dbName)
+	mustExec(c, se, `CREATE USER 'tableaccess'@'localhost'`)
+	mustExec(c, se, `CREATE TABLE fieldlistt1 (a int)`)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "tableaccess", Hostname: "localhost"}, nil, nil), IsTrue)
+	_, err := se.FieldList("fieldlistt1")
+	message := "SELECT command denied to user 'tableaccess'@'localhost' for table 'fieldlistt1'"
+	c.Assert(strings.Contains(err.Error(), message), IsTrue)
 }
 
 func mustExec(c *C, se session.Session, sql string) {
