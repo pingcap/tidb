@@ -16,6 +16,7 @@ package tikv
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"math"
 	"runtime/trace"
@@ -42,6 +43,7 @@ import (
 	"google.golang.org/grpc/backoff"
 	"google.golang.org/grpc/connectivity"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/encoding/gzip"
 	"google.golang.org/grpc/keepalive"
 )
 
@@ -128,12 +130,18 @@ func (a *connArray) Init(addr string, security config.Security, idleNotify *uint
 	allowBatch := (cfg.TiKVClient.MaxBatchSize > 0) && enableBatch
 	if allowBatch {
 		a.batchConn = newBatchConn(uint(len(a.v)), cfg.TiKVClient.MaxBatchSize, idleNotify)
-		a.pendingRequests = metrics.TiKVPendingBatchRequests.WithLabelValues(a.target)
+		a.pendingRequests = metrics.TiKVBatchPendingRequests.WithLabelValues(a.target)
+		a.batchSize = metrics.TiKVBatchRequests.WithLabelValues(a.target)
 	}
 	keepAlive := cfg.TiKVClient.GrpcKeepAliveTime
 	keepAliveTimeout := cfg.TiKVClient.GrpcKeepAliveTimeout
 	for i := range a.v {
 		ctx, cancel := context.WithTimeout(context.Background(), a.dialTimeout)
+		var callOptions []grpc.CallOption
+		callOptions = append(callOptions, grpc.MaxCallRecvMsgSize(MaxRecvMsgSize))
+		if cfg.TiKVClient.GrpcCompressionType == gzip.Name {
+			callOptions = append(callOptions, grpc.UseCompressor(gzip.Name))
+		}
 		conn, err := grpc.DialContext(
 			ctx,
 			addr,
@@ -142,7 +150,7 @@ func (a *connArray) Init(addr string, security config.Security, idleNotify *uint
 			grpc.WithInitialConnWindowSize(grpcInitialConnWindowSize),
 			grpc.WithUnaryInterceptor(unaryInterceptor),
 			grpc.WithStreamInterceptor(streamInterceptor),
-			grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(MaxRecvMsgSize)),
+			grpc.WithDefaultCallOptions(callOptions...),
 			grpc.WithConnectParams(grpc.ConnectParams{
 				Backoff: backoff.Config{
 					BaseDelay:  100 * time.Millisecond, // Default was 1s.
@@ -319,7 +327,7 @@ func (c *rpcClient) updateTiKVSendReqHistogram(req *tikvrpc.Request, start time.
 // SendRequest sends a Request to server and receives Response.
 func (c *rpcClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("rpcClient.SendRequest", opentracing.ChildOf(span.Context()))
+		span1 := span.Tracer().StartSpan(fmt.Sprintf("rpcClient.SendRequest, region ID: %d, type: %s", req.RegionId, req.Type), opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
