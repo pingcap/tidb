@@ -1000,7 +1000,12 @@ func (b *PlanBuilder) buildPrepare(x *ast.PrepareStmt) Plan {
 	}
 	if x.SQLVar != nil {
 		if v, ok := b.ctx.GetSessionVars().Users[strings.ToLower(x.SQLVar.Name)]; ok {
-			p.SQLText = v.GetString()
+			var err error
+			p.SQLText, err = v.ToString()
+			if err != nil {
+				b.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+				p.SQLText = "NULL"
+			}
 		} else {
 			p.SQLText = "NULL"
 		}
