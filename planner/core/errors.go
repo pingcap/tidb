@@ -44,6 +44,7 @@ var (
 	ErrWrongGroupField                 = dbterror.ClassOptimizer.NewStd(mysql.ErrWrongGroupField)
 	ErrDupFieldName                    = dbterror.ClassOptimizer.NewStd(mysql.ErrDupFieldName)
 	ErrNonUpdatableTable               = dbterror.ClassOptimizer.NewStd(mysql.ErrNonUpdatableTable)
+	ErrMultiUpdateKeyConflict          = dbterror.ClassOptimizer.NewStd(mysql.ErrMultiUpdateKeyConflict)
 	ErrInternal                        = dbterror.ClassOptimizer.NewStd(mysql.ErrInternal)
 	ErrNonUniqTable                    = dbterror.ClassOptimizer.NewStd(mysql.ErrNonuniqTable)
 	ErrWindowInvalidWindowFuncUse      = dbterror.ClassOptimizer.NewStd(mysql.ErrWindowInvalidWindowFuncUse)
