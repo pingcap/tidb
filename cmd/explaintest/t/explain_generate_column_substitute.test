@@ -133,12 +133,28 @@ desc update t set a=2, b = 3 where b+a = 3;
 desc delete from t where a+1 = 3;
 desc delete from t where b+a = 0;
 
+<<<<<<< HEAD
 # test different column type
 drop table if exists t;
 create table t(c0 char as (c1), c1 int);
 insert into t(c1) values (0), (1);
 desc select * from t;
 select * from t;
+=======
+# test expression index substitution use point get
+alter table t drop index expr_idx_c;
+alter table t drop index expr_idx_e;
+truncate table t;
+alter table t add UNIQUE expr_idx_c((a+1));
+alter table t add UNIQUE expr_idx_e((b+a));
+insert into t values (2, 2.1, default, default);
+desc select * from t where a+1 = 3;
+
+# test flen for float and double
+drop table if exists t0;
+create table t0(c0 float(24), c1 double as (c0) unique);
+explain select c0 from t0; -- TableRead
+>>>>>>> 09d272c28... planner: refine the explain message of expression (#16276) (#20410)
 
 drop table if exists t;
 create table t(c0 int as (c1) unique, c1 int);
