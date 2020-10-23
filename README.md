@@ -62,7 +62,7 @@ The [community repository](https://github.com/pingcap/community) hosts all infor
 [<img src="docs/contribution-map.png" alt="contribution-map" width="180">](https://github.com/pingcap/tidb-map/blob/master/maps/contribution-map.md#tidb-is-an-open-source-distributed-htap-database-compatible-with-the-mysql-protocol)
 
 Contributions are welcomed and greatly appreciated. See
-[CONTRIBUTING.md](https://github.com/pingcap/community/blob/master/CONTRIBUTING.md)
+[How to contribute](https://github.com/pingcap/community/blob/master/contributors/README.md)
 for details on submitting patches and the contribution workflow. For more contributing information, click on the contributor icon above.
 
 ## Adopters
