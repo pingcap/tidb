@@ -241,10 +241,6 @@ func (e *HashAggExec) Close() error {
 	for range e.finalOutputCh {
 	}
 	e.executed = false
-	if e.stats != nil {
-		close(e.stats.PartialTime)
-		close(e.stats.FinalTime)
-	}
 	return e.baseExecutor.Close()
 }
 
@@ -651,6 +647,7 @@ func (e *HashAggExec) fetchChildData(ctx context.Context) {
 func (e *HashAggExec) waitPartialWorkerAndCloseOutputChs(waitGroup *sync.WaitGroup) {
 	waitGroup.Wait()
 	close(e.inputCh)
+	close(e.stats.PartialTime)
 	for input := range e.inputCh {
 		e.memTracker.Consume(-input.chk.MemoryUsage())
 	}
@@ -661,6 +658,7 @@ func (e *HashAggExec) waitPartialWorkerAndCloseOutputChs(waitGroup *sync.WaitGro
 
 func (e *HashAggExec) waitFinalWorkerAndCloseFinalOutput(waitGroup *sync.WaitGroup) {
 	waitGroup.Wait()
+	close(e.stats.FinalTime)
 	close(e.finalOutputCh)
 }
 
