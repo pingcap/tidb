@@ -16,6 +16,7 @@ package placement
 import (
 	"encoding/hex"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -76,7 +77,38 @@ func CheckLabelConstraints(labels []string) ([]LabelConstraint, error) {
 
 // GroupID accepts a tableID or whatever integer, and encode the integer into a valid GroupID for PD.
 func GroupID(id int64) string {
-	return fmt.Sprintf("TIDB_DDL_%d", id)
+	return fmt.Sprintf("%s%d", BundleIDPrefix, id)
+}
+
+// ObjectIDFromGroupID extracts the db/table/partition ID from the group ID
+func ObjectIDFromGroupID(groupID string) (int64, error) {
+	// If the rule doesn't come from TiDB, skip it.
+	if !strings.HasPrefix(groupID, BundleIDPrefix) {
+		return 0, nil
+	}
+	id, err := strconv.ParseInt(groupID[len(BundleIDPrefix):], 10, 64)
+	if err != nil {
+		return 0, errors.Errorf("Rule %s doesn't include an id", groupID)
+	}
+	return id, nil
+}
+
+// RestoreLabelConstraintList converts the label constraints to a readable string.
+func RestoreLabelConstraintList(constraints []LabelConstraint) (string, error) {
+	var sb strings.Builder
+	for i, constraint := range constraints {
+		sb.WriteByte('"')
+		conStr, err := constraint.Restore()
+		if err != nil {
+			return "", nil
+		}
+		sb.WriteString(conStr)
+		sb.WriteByte('"')
+		if i < len(constraints)-1 {
+			sb.WriteByte(',')
+		}
+	}
+	return sb.String(), nil
 }
 
 // BuildPlacementDropBundle builds the bundle to drop placement rules.

@@ -53,9 +53,11 @@ type InfoSchema interface {
 	TableIsView(schema, table model.CIStr) bool
 	// TableIsSequence indicates whether the schema.table is a sequence.
 	TableIsSequence(schema, table model.CIStr) bool
-	FindTableByPartitionID(partitionID int64) (table.Table, *model.DBInfo)
+	FindTableByPartitionID(partitionID int64) (table.Table, *model.DBInfo, *model.PartitionDefinition)
 	// BundleByName is used to get a rule bundle.
 	BundleByName(name string) (*placement.Bundle, bool)
+	// RuleBundles returns all placement rule bundles.
+	RuleBundles() map[string]*placement.Bundle
 }
 
 type sortedTables []table.Table
@@ -271,7 +273,7 @@ func (is *infoSchema) SchemaTables(schema model.CIStr) (tables []table.Table) {
 
 // FindTableByPartitionID finds the partition-table info by the partitionID.
 // FindTableByPartitionID will traverse all the tables to find the partitionID partition in which partition-table.
-func (is *infoSchema) FindTableByPartitionID(partitionID int64) (table.Table, *model.DBInfo) {
+func (is *infoSchema) FindTableByPartitionID(partitionID int64) (table.Table, *model.DBInfo, *model.PartitionDefinition) {
 	for _, v := range is.schemaMap {
 		for _, tbl := range v.tables {
 			pi := tbl.Meta().GetPartitionInfo()
@@ -280,12 +282,12 @@ func (is *infoSchema) FindTableByPartitionID(partitionID int64) (table.Table, *m
 			}
 			for _, p := range pi.Definitions {
 				if p.ID == partitionID {
-					return tbl, v.dbInfo
+					return tbl, v.dbInfo, &p
 				}
 			}
 		}
 	}
-	return nil, nil
+	return nil, nil, nil
 }
 
 func (is *infoSchema) Clone() (result []*model.DBInfo) {
@@ -400,4 +402,8 @@ func GetInfoSchemaBySessionVars(sessVar *variable.SessionVars) InfoSchema {
 func (is *infoSchema) BundleByName(name string) (*placement.Bundle, bool) {
 	t, r := is.ruleBundleMap[name]
 	return t, r
+}
+
+func (is *infoSchema) RuleBundles() map[string]*placement.Bundle {
+	return is.ruleBundleMap
 }
