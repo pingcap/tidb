@@ -6208,7 +6208,7 @@ func (s *testIntegrationSerialSuite) TestCollateConstantPropagation(c *C) {
 	tk.MustQuery("select * from t1 left join t2 on t1.a = t2.a collate utf8mb4_unicode_ci where t1.a = 's';").Check(testkit.Rows("ß s <nil> <nil>"))
 }
 
-func (s *testIntegrationSuite2) TestIssue17791(c *C)  {
+func (s *testIntegrationSuite2) TestIssue17791(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
 	tk.MustExec("use test;")
