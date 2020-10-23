@@ -239,6 +239,31 @@ func sign(i int) int {
 	return 0
 }
 
+// decode rune by hand
+func decodeRune(s string, si int) (r rune, newIndex int) {
+	switch b := s[si]; {
+	case b < 0x80:
+		r = rune(b)
+		newIndex = si + 1
+	case b < 0xE0:
+		r = rune(b&b2Mask)<<6 |
+			rune(s[1+si]&mbMask)
+		newIndex = si + 2
+	case b < 0xF0:
+		r = rune(b&b3Mask)<<12 |
+			rune(s[si+1]&mbMask)<<6 |
+			rune(s[si+2]&mbMask)
+		newIndex = si + 3
+	default:
+		r = rune(b&b4Mask)<<18 |
+			rune(s[si+1]&mbMask)<<12 |
+			rune(s[si+2]&mbMask)<<6 |
+			rune(s[si+3]&mbMask)
+		newIndex = si + 4
+	}
+	return
+}
+
 // IsCICollation returns if the collation is case-sensitive
 func IsCICollation(collate string) bool {
 	return collate == "utf8_general_ci" || collate == "utf8mb4_general_ci" ||
