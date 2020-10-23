@@ -707,6 +707,9 @@ type SessionVars struct {
 	// EnableParallelApply indicates that thether to use parallel apply.
 	EnableParallelApply bool
 
+	// EnableRedactLog indicates that whether redact log.
+	EnableRedactLog bool
+
 	// ShardAllocateStep indicates the max size of continuous rowid shard in one transaction.
 	ShardAllocateStep int64
 
@@ -858,6 +861,7 @@ func NewSessionVars() *SessionVars {
 	}
 	vars.MemQuota = MemQuota{
 		MemQuotaQuery:               config.GetGlobalConfig().MemQuotaQuery,
+		MemQuotaStatistics:          config.GetGlobalConfig().MemQuotaStatistics,
 		NestedLoopJoinCacheCapacity: config.GetGlobalConfig().NestedLoopJoinCacheCapacity,
 
 		// The variables below do not take any effect anymore, it's remaining for compatibility.
@@ -1094,6 +1098,9 @@ func (s *SessionVars) GetSystemVar(name string) (string, bool) {
 	} else if name == ErrorCount {
 		return strconv.Itoa(int(s.SysErrorCount)), true
 	}
+	if name == TiDBSlowLogMasking {
+		name = TiDBRedactLog
+	}
 	val, ok := s.systems[name]
 	return val, ok
 }
@@ -1303,6 +1310,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.InitChunkSize = tidbOptPositiveInt32(val, DefInitChunkSize)
 	case TIDBMemQuotaQuery:
 		s.MemQuotaQuery = tidbOptInt64(val, config.GetGlobalConfig().MemQuotaQuery)
+	case TIDBMemQuotaStatistics:
+		s.MemQuotaStatistics = tidbOptInt64(val, config.GetGlobalConfig().MemQuotaStatistics)
 	case TIDBNestedLoopJoinCacheCapacity:
 		s.NestedLoopJoinCacheCapacity = tidbOptInt64(val, config.GetGlobalConfig().NestedLoopJoinCacheCapacity)
 	case TIDBMemQuotaHashJoin:
@@ -1461,8 +1470,12 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.PartitionPruneMode.Store(strings.ToLower(strings.TrimSpace(val)))
 	case TiDBEnableParallelApply:
 		s.EnableParallelApply = TiDBOptOn(val)
-	case TiDBSlowLogMasking, TiDBRedactLog:
-		config.SetRedactLog(TiDBOptOn(val))
+	case TiDBSlowLogMasking:
+		// TiDBSlowLogMasking is deprecated and a alias of TiDBRedactLog.
+		return s.SetSystemVar(TiDBRedactLog, val)
+	case TiDBRedactLog:
+		s.EnableRedactLog = TiDBOptOn(val)
+		errors.RedactLogEnabled.Store(s.EnableRedactLog)
 	case TiDBShardAllocateStep:
 		s.ShardAllocateStep = tidbOptInt64(val, DefTiDBShardAllocateStep)
 	case TiDBEnableChangeColumnType:
@@ -1728,7 +1741,8 @@ func (c *Concurrency) UnionConcurrency() int {
 type MemQuota struct {
 	// MemQuotaQuery defines the memory quota for a query.
 	MemQuotaQuery int64
-
+	// MemQuotaStatistics defines the memory quota for the statistic Cache.
+	MemQuotaStatistics int64
 	// NestedLoopJoinCacheCapacity defines the memory capacity for apply cache.
 	NestedLoopJoinCacheCapacity int64
 

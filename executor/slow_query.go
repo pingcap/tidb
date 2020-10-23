@@ -48,6 +48,9 @@ import (
 	"go.uber.org/zap"
 )
 
+// ParseSlowLogBatchSize is the batch size of slow-log lines for a worker to parse, exported for testing.
+var ParseSlowLogBatchSize = 64
+
 //slowQueryRetriever is used to read slow log data.
 type slowQueryRetriever struct {
 	table       *model.TableInfo
@@ -146,13 +149,13 @@ func (e *slowQueryRetriever) getNextFile() *os.File {
 }
 
 func (e *slowQueryRetriever) parseDataForSlowLog(ctx context.Context, sctx sessionctx.Context) {
-	defer close(e.parsedSlowLogCh)
 	file := e.getNextFile()
 	if file == nil {
+		close(e.parsedSlowLogCh)
 		return
 	}
 	reader := bufio.NewReader(file)
-	e.parseSlowLog(ctx, sctx, reader, 64)
+	e.parseSlowLog(ctx, sctx, reader, ParseSlowLogBatchSize)
 }
 
 func (e *slowQueryRetriever) dataForSlowLog(ctx context.Context) ([][]types.Datum, bool, error) {
@@ -275,6 +278,7 @@ func (e *slowQueryRetriever) getBatchLog(reader *bufio.Reader, offset *offset, n
 }
 
 func (e *slowQueryRetriever) parseSlowLog(ctx context.Context, sctx sessionctx.Context, reader *bufio.Reader, logNum int) {
+	defer close(e.parsedSlowLogCh)
 	var wg sync.WaitGroup
 	offset := offset{offset: 0, length: 0}
 	// To limit the num of go routine
@@ -287,8 +291,11 @@ func (e *slowQueryRetriever) parseSlowLog(ctx context.Context, sctx sessionctx.C
 	for {
 		startTime := time.Now()
 		log, err := e.getBatchLog(reader, &offset, logNum)
-		if err != nil || len(log) == 0 {
+		if err != nil {
 			e.parsedSlowLogCh <- parsedSlowLog{nil, err}
+			break
+		}
+		if len(log) == 0 {
 			break
 		}
 		if e.stats != nil {
@@ -300,17 +307,9 @@ func (e *slowQueryRetriever) parseSlowLog(ctx context.Context, sctx sessionctx.C
 		go func() {
 			defer wg.Done()
 			result, err := e.parseLog(sctx, log, start)
-			if err != nil {
-				e.parsedSlowLogCh <- parsedSlowLog{nil, err}
-			} else {
-				e.parsedSlowLogCh <- parsedSlowLog{result, err}
-			}
+			e.parsedSlowLogCh <- parsedSlowLog{result, err}
 			<-ch
 		}()
-		// Read the next file, offset = 0
-		if e.fileIdx >= len(e.files) {
-			break
-		}
 		offset.offset = e.fileLine
 		offset.length = 0
 		select {
@@ -431,68 +430,73 @@ func (e *slowQueryRetriever) parseLog(ctx sessionctx.Context, log []string, offs
 }
 
 type slowQueryTuple struct {
-	time                   types.Time
-	txnStartTs             uint64
-	user                   string
-	host                   string
-	connID                 uint64
-	execRetryCount         uint64
-	execRetryTime          float64
-	queryTime              float64
-	parseTime              float64
-	compileTime            float64
-	rewriteTime            float64
-	preprocSubqueries      uint64
-	preprocSubQueryTime    float64
-	optimizeTime           float64
-	waitTSTime             float64
-	preWriteTime           float64
-	waitPrewriteBinlogTime float64
-	commitTime             float64
-	getCommitTSTime        float64
-	commitBackoffTime      float64
-	backoffTypes           string
-	resolveLockTime        float64
-	localLatchWaitTime     float64
-	writeKeys              uint64
-	writeSize              uint64
-	prewriteRegion         uint64
-	txnRetry               uint64
-	copTime                float64
-	processTime            float64
-	waitTime               float64
-	backOffTime            float64
-	lockKeysTime           float64
-	requestCount           uint64
-	totalKeys              uint64
-	processKeys            uint64
-	db                     string
-	indexIDs               string
-	digest                 string
-	statsInfo              string
-	avgProcessTime         float64
-	p90ProcessTime         float64
-	maxProcessTime         float64
-	maxProcessAddress      string
-	avgWaitTime            float64
-	p90WaitTime            float64
-	maxWaitTime            float64
-	maxWaitAddress         string
-	memMax                 int64
-	diskMax                int64
-	prevStmt               string
-	sql                    string
-	isInternal             bool
-	succ                   bool
-	planFromCache          bool
-	prepared               bool
-	kvTotal                float64
-	pdTotal                float64
-	backoffTotal           float64
-	writeSQLRespTotal      float64
-	plan                   string
-	planDigest             string
-	backoffDetail          string
+	time                      types.Time
+	txnStartTs                uint64
+	user                      string
+	host                      string
+	connID                    uint64
+	execRetryCount            uint64
+	execRetryTime             float64
+	queryTime                 float64
+	parseTime                 float64
+	compileTime               float64
+	rewriteTime               float64
+	preprocSubqueries         uint64
+	preprocSubQueryTime       float64
+	optimizeTime              float64
+	waitTSTime                float64
+	preWriteTime              float64
+	waitPrewriteBinlogTime    float64
+	commitTime                float64
+	getCommitTSTime           float64
+	commitBackoffTime         float64
+	backoffTypes              string
+	resolveLockTime           float64
+	localLatchWaitTime        float64
+	writeKeys                 uint64
+	writeSize                 uint64
+	prewriteRegion            uint64
+	txnRetry                  uint64
+	copTime                   float64
+	processTime               float64
+	waitTime                  float64
+	backOffTime               float64
+	lockKeysTime              float64
+	requestCount              uint64
+	totalKeys                 uint64
+	processKeys               uint64
+	db                        string
+	indexIDs                  string
+	digest                    string
+	statsInfo                 string
+	avgProcessTime            float64
+	p90ProcessTime            float64
+	maxProcessTime            float64
+	maxProcessAddress         string
+	avgWaitTime               float64
+	p90WaitTime               float64
+	maxWaitTime               float64
+	maxWaitAddress            string
+	memMax                    int64
+	diskMax                   int64
+	prevStmt                  string
+	sql                       string
+	isInternal                bool
+	succ                      bool
+	planFromCache             bool
+	prepared                  bool
+	kvTotal                   float64
+	pdTotal                   float64
+	backoffTotal              float64
+	writeSQLRespTotal         float64
+	plan                      string
+	planDigest                string
+	backoffDetail             string
+	rocksdbDeleteSkippedCount uint64
+	rocksdbKeySkippedCount    uint64
+	rocksdbBlockCacheCount    uint64
+	rocksdbBlockReadCount     uint64
+	rocksdbBlockReadByte      uint64
 }
 
 func (st *slowQueryTuple) setFieldValue(tz *time.Location, field, value string, lineNum int, checker *slowLogChecker) (valid bool, err error) {
@@ -596,6 +600,16 @@ func (st *slowQueryTuple) setFieldValue(tz *time.Location, field, value string, 
 		st.totalKeys, err = strconv.ParseUint(value, 10, 64)
 	case execdetails.ProcessKeysStr:
 		st.processKeys, err = strconv.ParseUint(value, 10, 64)
+	case execdetails.RocksdbDeleteSkippedCountStr:
+		st.rocksdbDeleteSkippedCount, err = strconv.ParseUint(value, 10, 64)
+	case execdetails.RocksdbKeySkippedCountStr:
+		st.rocksdbKeySkippedCount, err = strconv.ParseUint(value, 10, 64)
+	case execdetails.RocksdbBlockCacheHitCountStr:
+		st.rocksdbBlockCacheCount, err = strconv.ParseUint(value, 10, 64)
+	case execdetails.RocksdbBlockReadCountStr:
+		st.rocksdbBlockReadCount, err = strconv.ParseUint(value, 10, 64)
+	case execdetails.RocksdbBlockReadByteStr:
+		st.rocksdbBlockReadByte, err = strconv.ParseUint(value, 10, 64)
 	case variable.SlowLogDBStr:
 		st.db = value
 	case variable.SlowLogIndexNamesStr:
@@ -702,6 +716,11 @@ func (st *slowQueryTuple) convertToDatumRow() []types.Datum {
 	record = append(record, types.NewUintDatum(st.requestCount))
 	record = append(record, types.NewUintDatum(st.totalKeys))
 	record = append(record, types.NewUintDatum(st.processKeys))
+	record = append(record, types.NewUintDatum(st.rocksdbDeleteSkippedCount))
+	record = append(record, types.NewUintDatum(st.rocksdbKeySkippedCount))
+	record = append(record, types.NewUintDatum(st.rocksdbBlockCacheCount))
+	record = append(record, types.NewUintDatum(st.rocksdbBlockReadCount))
+	record = append(record, types.NewUintDatum(st.rocksdbBlockReadByte))
 	record = append(record, types.NewStringDatum(st.db))
 	record = append(record, types.NewStringDatum(st.indexIDs))
 	record = append(record, types.NewDatum(st.isInternal))
