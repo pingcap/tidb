@@ -20,17 +20,6 @@ import (
 const (
 	// magic number indicate weight has 2 uint64, should get from `longRuneMap`
 	longRune uint64 = 0xFFFD
-	// first byte of a 2-byte encoding starts 110 and carries 5 bits of data
-	b2Mask = 0x1F // 0001 1111
-
-	// first byte of a 3-byte encoding starts 1110 and carries 4 bits of data
-	b3Mask = 0x0F // 0000 1111
-
-	// first byte of a 4-byte encoding starts 11110 and carries 3 bits of data
-	b4Mask = 0x07 // 0000 0111
-
-	// non-first bytes start 10 and carry 6 bits of data
-	mbMask = 0x3F // 0011 1111
 )
 
 // unicodeCICollator implements UCA. see http://unicode.org/reports/tr10/
