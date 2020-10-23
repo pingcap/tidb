@@ -200,7 +200,7 @@ func (e *MPPGather) constructSinglePhysicalTable(ctx context.Context, tableID in
 	return tasks, nil
 }
 
-func (e *MPPGather) getPlanFragments(p plannercore.PhysicalPlan, pf *planFragment) {
+func getPlanFragments(ctx sessionctx.Context, p plannercore.PhysicalPlan, pf *planFragment) {
 	switch x := p.(type) {
 	case *plannercore.PhysicalTableScan:
 		x.IsGlobalRead = false
@@ -209,7 +209,7 @@ func (e *MPPGather) getPlanFragments(p plannercore.PhysicalPlan, pf *planFragmen
 		// This is a pipeline breaker. So we replace broadcast side with a exchangerClient
 		bcChild := x.Children()[x.InnerChildIdx]
 		exchangeSender := &ExchangeSender{exchangeType: tipb.ExchangeType_Broadcast}
-		exchangeSender.InitBasePlan(e.ctx, plancodec.TypeExchangeSender)
+		exchangeSender.InitBasePlan(ctx, plancodec.TypeExchangeSender)
 		npf := &planFragment{p: bcChild, exchangeSender: exchangeSender}
 		exchangeSender.SetChildren(npf.p)
 
@@ -217,16 +217,16 @@ func (e *MPPGather) getPlanFragments(p plannercore.PhysicalPlan, pf *planFragmen
 			childPf: npf,
 			schema:  bcChild.Schema(),
 		}
-		exchangeReceivers.InitBasePlan(e.ctx, plancodec.TypeExchangeReceiver)
+		exchangeReceivers.InitBasePlan(ctx, plancodec.TypeExchangeReceiver)
 		x.Children()[x.InnerChildIdx] = exchangeReceivers
 		pf.exchangeReceivers = append(pf.exchangeReceivers, exchangeReceivers)
 
 		// For the inner side of join, we use a new plan fragment.
-		e.getPlanFragments(bcChild, npf)
-		e.getPlanFragments(x.Children()[1-x.InnerChildIdx], pf)
+		getPlanFragments(ctx, bcChild, npf)
+		getPlanFragments(ctx, x.Children()[1-x.InnerChildIdx], pf)
 	default:
 		if len(x.Children()) > 0 {
-			e.getPlanFragments(x.Children()[0], pf)
+			getPlanFragments(ctx, x.Children()[0], pf)
 		}
 	}
 }
@@ -302,7 +302,7 @@ func (e *MPPGather) Open(ctx context.Context) error {
 	rootPf.exchangeSender.InitBasePlan(e.ctx, plancodec.TypeExchangeSender)
 	rootPf.exchangeSender.SetChildren(rootPf.p)
 
-	e.getPlanFragments(e.originalPlan, rootPf)
+	getPlanFragments(e.ctx, e.originalPlan, rootPf)
 	_, err := e.constructMPPTasks(ctx, rootPf, true)
 	if err != nil {
 		return errors.Trace(err)
