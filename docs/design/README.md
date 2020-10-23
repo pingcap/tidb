@@ -34,6 +34,7 @@ Writing a design document can promote us to think deliberately and gather knowle
 - [Proposal: Join Reorder Design v1](./2018-10-20-join-reorder-dp-v1.md)
 - [Proposal: Support Window Functions](./2018-10-31-window-functions.md)
 - [Proposal: Access a table using multiple indexes](./2019-04-11-indexmerge.md)
+- [Proposal: Collations in TiDB](./2020-01-24-collations.md)
 
 ### Completed
 

@@ -3691,43 +3691,85 @@ func (s *testSuite) TestLimit(c *C) {
 	tk.MustExec(`use test;`)
 	tk.MustExec(`drop table if exists t;`)
 	tk.MustExec(`create table t(a bigint, b bigint);`)
-	tk.MustExec(`insert into t values(1, 1), (2, 2), (3, 3), (4, 4), (5, 5), (6, 6);`)
+	tk.MustExec(`insert into t values(1, 1), (2, 2), (3, 30), (4, 40), (5, 5), (6, 6);`)
 	tk.MustQuery(`select * from t order by a limit 1, 1;`).Check(testkit.Rows(
 		"2 2",
 	))
 	tk.MustQuery(`select * from t order by a limit 1, 2;`).Check(testkit.Rows(
 		"2 2",
-		"3 3",
+		"3 30",
 	))
 	tk.MustQuery(`select * from t order by a limit 1, 3;`).Check(testkit.Rows(
 		"2 2",
-		"3 3",
-		"4 4",
+		"3 30",
+		"4 40",
 	))
 	tk.MustQuery(`select * from t order by a limit 1, 4;`).Check(testkit.Rows(
 		"2 2",
-		"3 3",
-		"4 4",
+		"3 30",
+		"4 40",
 		"5 5",
 	))
+
+	// test inline projection
+	tk.MustQuery(`select a from t where a > 0 limit 1, 1;`).Check(testkit.Rows(
+		"2",
+	))
+	tk.MustQuery(`select a from t where a > 0 limit 1, 2;`).Check(testkit.Rows(
+		"2",
+		"3",
+	))
+	tk.MustQuery(`select b from t where a > 0 limit 1, 3;`).Check(testkit.Rows(
+		"2",
+		"30",
+		"40",
+	))
+	tk.MustQuery(`select b from t where a > 0 limit 1, 4;`).Check(testkit.Rows(
+		"2",
+		"30",
+		"40",
+		"5",
+	))
+
+	// test @@tidb_init_chunk_size=2
 	tk.MustExec(`set @@tidb_init_chunk_size=2;`)
-	tk.MustQuery(`select * from t order by a limit 2, 1;`).Check(testkit.Rows(
-		"3 3",
+	tk.MustQuery(`select * from t where a > 0 limit 2, 1;`).Check(testkit.Rows(
+		"3 30",
 	))
-	tk.MustQuery(`select * from t order by a limit 2, 2;`).Check(testkit.Rows(
-		"3 3",
-		"4 4",
+	tk.MustQuery(`select * from t where a > 0 limit 2, 2;`).Check(testkit.Rows(
+		"3 30",
+		"4 40",
 	))
-	tk.MustQuery(`select * from t order by a limit 2, 3;`).Check(testkit.Rows(
-		"3 3",
-		"4 4",
+	tk.MustQuery(`select * from t where a > 0 limit 2, 3;`).Check(testkit.Rows(
+		"3 30",
+		"4 40",
 		"5 5",
 	))
-	tk.MustQuery(`select * from t order by a limit 2, 4;`).Check(testkit.Rows(
-		"3 3",
-		"4 4",
+	tk.MustQuery(`select * from t where a > 0 limit 2, 4;`).Check(testkit.Rows(
+		"3 30",
+		"4 40",
 		"5 5",
 		"6 6",
+	))
+
+	// test inline projection
+	tk.MustQuery(`select a from t order by a limit 2, 1;`).Check(testkit.Rows(
+		"3",
+	))
+	tk.MustQuery(`select b from t order by a limit 2, 2;`).Check(testkit.Rows(
+		"30",
+		"40",
+	))
+	tk.MustQuery(`select a from t order by a limit 2, 3;`).Check(testkit.Rows(
+		"3",
+		"4",
+		"5",
+	))
+	tk.MustQuery(`select b from t order by a limit 2, 4;`).Check(testkit.Rows(
+		"30",
+		"40",
+		"5",
+		"6",
 	))
 }
 
@@ -6335,6 +6377,36 @@ func (s *testSlowQuery) TestSlowQuerySensitiveQuery(c *C) {
 		))
 }
 
+func (s *testSlowQuery) TestSlowQuery(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	f, err := ioutil.TempFile("", "tidb-slow-*.log")
+	c.Assert(err, IsNil)
+	f.WriteString(`
+# Time: 2020-10-13T20:08:13.970563+08:00
+select * from t;
+# Time: 2020-10-16T20:08:13.970563+08:00
+select * from t;
+`)
+	f.Close()
+
+	executor.ParseSlowLogBatchSize = 1
+	originCfg := config.GetGlobalConfig()
+	newCfg := *originCfg
+	newCfg.Log.SlowQueryFile = f.Name()
+	config.StoreGlobalConfig(&newCfg)
+	defer func() {
+		executor.ParseSlowLogBatchSize = 64
+		config.StoreGlobalConfig(originCfg)
+		os.Remove(newCfg.Log.SlowQueryFile)
+	}()
+	err = logutil.InitLogger(newCfg.Log.ToLogConfig())
+	c.Assert(err, IsNil)
+
+	tk.MustQuery("select count(*) from `information_schema`.`slow_query` where time > '2020-10-16 20:08:13' and time < '2020-10-16 21:08:13'").Check(testkit.Rows("1"))
+	tk.MustQuery("select count(*) from `information_schema`.`slow_query` where time > '2019-10-13 20:08:13' and time < '2020-10-16 21:08:13'").Check(testkit.Rows("2"))
+}
+
 func (s *testSerialSuite) TestKillTableReader(c *C) {
 	var retry = "github.com/pingcap/tidb/store/tikv/mockRetrySendReqToRegion"
 	defer func() {
@@ -6364,16 +6436,13 @@ func (s *testSerialSuite) TestKillTableReader(c *C) {
 func (s *testSerialSuite) TestPrevStmtDesensitization(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test;")
-	oriCfg := config.GetGlobalConfig()
-	defer config.StoreGlobalConfig(oriCfg)
-	newCfg := *oriCfg
-	newCfg.EnableRedactLog = 1
-	config.StoreGlobalConfig(&newCfg)
+	tk.MustExec(fmt.Sprintf("set @@session.%v=1", variable.TiDBRedactLog))
 	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t (a int)")
+	tk.MustExec("create table t (a int, unique key (a))")
 	tk.MustExec("begin")
 	tk.MustExec("insert into t values (1),(2)")
 	c.Assert(tk.Se.GetSessionVars().PrevStmt.String(), Equals, "insert into t values ( ? ) , ( ? )")
+	c.Assert(tk.ExecToErr("insert into t values (1)").Error(), Equals, `[kv:1062]Duplicate entry '?' for key '?'`)
 }
 
 func (s *testSuite) TestIssue19372(c *C) {

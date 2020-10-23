@@ -1066,6 +1066,13 @@ func checkTooManyColumns(colDefs []*model.ColumnInfo) error {
 	return nil
 }
 
+func checkTooManyIndexes(idxDefs []*model.IndexInfo) error {
+	if uint32(len(idxDefs)) > atomic.LoadUint32(&TableIndexCountLimit) {
+		return errTooManyKeys.GenWithStackByArgs(TableIndexCountLimit)
+	}
+	return nil
+}
+
 // checkColumnsAttributes checks attributes for multiple columns.
 func checkColumnsAttributes(colDefs []*model.ColumnInfo) error {
 	for _, colDef := range colDefs {
@@ -1465,6 +1472,9 @@ func checkTableInfoValidExtra(tbInfo *model.TableInfo) error {
 		return err
 	}
 	if err := checkTooManyColumns(tbInfo.Columns); err != nil {
+		return errors.Trace(err)
+	}
+	if err := checkTooManyIndexes(tbInfo.Indices); err != nil {
 		return errors.Trace(err)
 	}
 	if err := checkColumnsAttributes(tbInfo.Columns); err != nil {
@@ -3336,14 +3346,16 @@ func checkModifyCharsetAndCollation(toCharset, toCollate, origCharset, origColla
 // field length and precision.
 func CheckModifyTypeCompatible(origin *types.FieldType, to *types.FieldType) (allowedChangeColumnValueMsg string, err error) {
 	unsupportedMsg := fmt.Sprintf("type %v not match origin %v", to.CompactStr(), origin.CompactStr())
-	var canChange bool
+	var skipSignCheck bool
+	var skipLenCheck bool
 	switch origin.Tp {
 	case mysql.TypeVarchar, mysql.TypeString, mysql.TypeVarString, mysql.TypeBlob,
 		mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
 		switch to.Tp {
 		case mysql.TypeVarchar, mysql.TypeString, mysql.TypeVarString,
 			mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
-			canChange = true
+			skipSignCheck = true
+			skipLenCheck = true
 		case mysql.TypeEnum, mysql.TypeSet:
 			return unsupportedMsg, errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
 		default:
@@ -3352,9 +3364,12 @@ func CheckModifyTypeCompatible(origin *types.FieldType, to *types.FieldType) (al
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
 		switch to.Tp {
 		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
-			canChange = true
+			// Changing integer to integer, whether reorg is necessary is depend on the flen/decimal/signed.
+			skipSignCheck = true
+			skipLenCheck = true
 		default:
-			return "", errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
+			// Changing integer to other types, reorg is absolutely necessary.
+			return unsupportedMsg, errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
 		}
 	case mysql.TypeEnum, mysql.TypeSet:
 		var typeVar string
@@ -3395,6 +3410,50 @@ func CheckModifyTypeCompatible(origin *types.FieldType, to *types.FieldType) (al
 			msg := fmt.Sprintf("decimal change from decimal(%d, %d) to decimal(%d, %d)", origin.Flen, origin.Decimal, to.Flen, to.Decimal)
 			return msg, errUnsupportedModifyColumn.GenWithStackByArgs(msg)
 		}
+	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp, mysql.TypeDuration, mysql.TypeYear:
+		switch origin.Tp {
+		case mysql.TypeDuration:
+			switch to.Tp {
+			case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
+				return "", errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
+			}
+		case mysql.TypeDate:
+			switch to.Tp {
+			case mysql.TypeDatetime, mysql.TypeTimestamp:
+				return "", errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
+			}
+		case mysql.TypeTimestamp:
+			switch to.Tp {
+			case mysql.TypeDuration, mysql.TypeDatetime:
+				return "", errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
+			}
+		case mysql.TypeDatetime:
+			switch to.Tp {
+			case mysql.TypeTimestamp:
+				return "", errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
+			}
+		case mysql.TypeYear:
+			switch to.Tp {
+			case mysql.TypeDuration:
+				return "", errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
+			case mysql.TypeYear:
+			default:
+				return "", ErrTruncatedWrongValue.GenWithStack("banned conversion that must fail")
+			}
+		}
+		switch to.Tp {
+		case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp, mysql.TypeDuration:
+			skipSignCheck = true
+			skipLenCheck = true
+		case mysql.TypeYear:
+			if origin.Tp != mysql.TypeYear {
+				return "", ErrWarnDataOutOfRange.GenWithStack("banned conversion that must fail")
+			}
+			skipSignCheck = true
+			skipLenCheck = true
+		default:
+			return "", errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
+		}
 	default:
 		if origin.Tp != to.Tp {
 			return "", errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
@@ -3403,7 +3462,7 @@ func CheckModifyTypeCompatible(origin *types.FieldType, to *types.FieldType) (al
 
 	if to.Flen > 0 && to.Flen < origin.Flen {
 		msg := fmt.Sprintf("length %d is less than origin %d", to.Flen, origin.Flen)
-		if canChange {
+		if skipLenCheck {
 			return msg, errUnsupportedModifyColumn.GenWithStackByArgs(msg)
 		}
 		return "", errUnsupportedModifyColumn.GenWithStackByArgs(msg)
@@ -3417,7 +3476,7 @@ func CheckModifyTypeCompatible(origin *types.FieldType, to *types.FieldType) (al
 	originUnsigned := mysql.HasUnsignedFlag(origin.Flag)
 	if originUnsigned != toUnsigned {
 		msg := fmt.Sprintf("can't change unsigned integer to signed or vice versa")
-		if canChange {
+		if skipSignCheck {
 			return msg, errUnsupportedModifyColumn.GenWithStackByArgs(msg)
 		}
 		return "", errUnsupportedModifyColumn.GenWithStackByArgs(msg)
@@ -3430,6 +3489,7 @@ func CheckModifyTypeCompatible(origin *types.FieldType, to *types.FieldType) (al
 // It returns error if the two types has incompatible charset and collation, different sign, different
 // digital/string types, or length of new Flen and Decimal is less than origin.
 func checkModifyTypes(ctx sessionctx.Context, origin *types.FieldType, to *types.FieldType, needRewriteCollationData bool) error {
+	var needReorg bool
 	changeColumnValueMsg, err := CheckModifyTypeCompatible(origin, to)
 	if err != nil {
 		enableChangeColumnType := ctx.GetSessionVars().EnableChangeColumnType
@@ -3444,9 +3504,14 @@ func checkModifyTypes(ctx sessionctx.Context, origin *types.FieldType, to *types
 			msg := "tidb_enable_change_column_type is true and this column has primary key flag"
 			return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
 		}
+		needReorg = true
 	}
 
 	err = checkModifyCharsetAndCollation(to.Charset, to.Collate, origin.Charset, origin.Collate, needRewriteCollationData)
+	// column type change can handle the charset change between these two types in the process of the reorg.
+	if err != nil && errUnsupportedModifyCharset.Equal(err) && needReorg {
+		return nil
+	}
 	return errors.Trace(err)
 }
 
