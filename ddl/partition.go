@@ -1133,6 +1133,8 @@ func (w *worker) onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (
 			w.reorgCtx.cleanNotifyReorgCancel()
 		}
 		tblInfo.Partition.DroppingDefinitions = nil
+		// used by ApplyDiff in updateSchemaVersion
+		job.CtxVars = []interface{}{physicalTableIDs}
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
 		if err != nil {
 			return ver, errors.Trace(err)
@@ -1164,6 +1166,7 @@ func onTruncateTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, e
 	}
 
 	newPartitions := make([]model.PartitionDefinition, 0, len(oldIDs))
+	newIDs := make([]int64, 0, len(oldIDs))
 	for _, oldID := range oldIDs {
 		for i := 0; i < len(pi.Definitions); i++ {
 			def := &pi.Definitions[i]
@@ -1175,6 +1178,7 @@ func onTruncateTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, e
 				def.ID = pid
 				// Shallow copy only use the def.ID in event handle.
 				newPartitions = append(newPartitions, *def)
+				newIDs = append(newIDs, pid)
 				break
 			}
 		}
@@ -1206,7 +1210,7 @@ func onTruncateTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, e
 			oldBundle, ok := d.infoHandle.Get().BundleByName(placement.GroupID(oldID))
 			if ok && !oldBundle.IsEmpty() {
 				bundles = append(bundles, placement.BuildPlacementDropBundle(oldID))
-				bundles = append(bundles, placement.BuildPlacementTruncateBundle(oldBundle, newPartitions[i].ID))
+				bundles = append(bundles, placement.BuildPlacementTruncateBundle(oldBundle, newIDs[i]))
 			}
 		}
 
@@ -1217,6 +1221,8 @@ func onTruncateTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, e
 		}
 	}
 
+	// used by ApplyDiff in updateSchemaVersion
+	job.CtxVars = []interface{}{oldIDs, newIDs}
 	ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
 	if err != nil {
 		return ver, errors.Trace(err)
@@ -1732,6 +1738,8 @@ func onAlterTablePartition(t *meta.Meta, job *model.Job) (int64, error) {
 		return 0, errors.Wrapf(err, "failed to notify PD the placement rules")
 	}
 
+	// used by ApplyDiff in updateSchemaVersion
+	job.CtxVars = []interface{}{partitionID}
 	ver, err := updateSchemaVersion(t, job)
 	if err != nil {
 		return ver, errors.Trace(err)
