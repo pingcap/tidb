@@ -506,7 +506,7 @@ func (sc *StatementContext) MergeExecDetails(details *execdetails.ExecDetails, c
 
 // MergeCopDetails merges cop details into self.
 func (sc *StatementContext) MergeCopDetails(copDetails *execdetails.CopDetails) {
-	// Currently TiFlash cop task will not fill copDetails, so need to skip it if copDetails is nil
+	// Currently TiFlash cop task does not fill copDetails, so need to skip it if copDetails is nil
 	if copDetails == nil {
 		return
 	}
