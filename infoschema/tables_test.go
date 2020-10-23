@@ -1348,3 +1348,21 @@ func (s *testTableSuite) TestPerformanceSchemaforPlanCache(c *C) {
 	tk.MustQuery("select plan_cache_hits, plan_in_cache from information_schema.statements_summary where digest_text='select * from t'").Check(
 		testkit.Rows("3 1"))
 }
+
+func (s *testTableSuite) TestServerInfoResolveLoopBackAddr(c *C) {
+	nodes := []infoschema.ServerInfo{
+		{Address: "127.0.0.1:4000", StatusAddr: "192.168.130.22:10080"},
+		{Address: "0.0.0.0:4000", StatusAddr: "192.168.130.22:10080"},
+		{Address: "localhost:4000", StatusAddr: "192.168.130.22:10080"},
+		{Address: "192.168.130.22:4000", StatusAddr: "0.0.0.0:10080"},
+		{Address: "192.168.130.22:4000", StatusAddr: "127.0.0.1:10080"},
+		{Address: "192.168.130.22:4000", StatusAddr: "localhost:10080"},
+	}
+	for i := range nodes {
+		nodes[i].ResolveLoopBackAddr()
+	}
+	for _, n := range nodes {
+		c.Assert(n.Address, Equals, "192.168.130.22:4000")
+		c.Assert(n.StatusAddr, Equals, "192.168.130.22:10080")
+	}
+}
