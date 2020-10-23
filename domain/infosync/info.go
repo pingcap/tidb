@@ -695,6 +695,11 @@ type metricStorage struct {
 
 func (is *InfoSyncer) getPrometheusAddr() (string, error) {
 	// Get PD servers info.
+	failpoint.Inject("mockEtcdClientNil", func(val failpoint.Value) {
+		if val.(bool) {
+			is.etcdCli = nil
+		}
+	})
 	clientAvailable := is.etcdCli != nil
 	var pdAddrs []string
 	if clientAvailable {

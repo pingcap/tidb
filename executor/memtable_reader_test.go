@@ -924,3 +924,11 @@ func (s *testMemTableReaderSuite) TestTiDBClusterLogError(c *C) {
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "denied to scan full logs (use `SELECT * FROM cluster_log WHERE message LIKE '%'` explicitly if intentionally)")
 }
+
+func (s *testMemTableReaderSuite) TestIssue17942(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/domain/infosync/mockEtcdClientNil", "return(true)"), IsNil)
+	defer func() { c.Assert(failpoint.Disable("github.com/pingcap/tidb/domain/infosync/mockEtcdClientNil"), IsNil) }()
+	err := tk.QueryToErr("select * from metrics_schema.tikv_storage_async_request_avg_duration")
+	c.Assert(err.Error(), Equals, "query metric error: pd unavailable")
+}
