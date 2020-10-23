@@ -659,9 +659,19 @@ func needChangeColumnData(oldCol, newCol *model.ColumnInfo) bool {
 		newCol.Tp == mysql.TypeEnum || newCol.Tp == mysql.TypeSet {
 		return true
 	}
+
+	switch oldCol.Tp {
+	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp, mysql.TypeDuration, mysql.TypeYear:
+		switch newCol.Tp {
+		case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp, mysql.TypeDuration, mysql.TypeYear:
+			return oldCol.Tp != newCol.Tp
+		}
+	}
+
 	if newCol.Flen > 0 && newCol.Flen < oldCol.Flen || toUnsigned != originUnsigned {
 		return true
 	}
+
 	return false
 }
 
