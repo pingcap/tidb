@@ -114,6 +114,7 @@ func (s *pkgTestSuite) TestHashJoinRuntimeStats(c *C) {
 			buildTableElapse: time.Millisecond * 100,
 		},
 		fetchAndProbe:    int64(5 * time.Second),
+		fetch:            int64(time.Second),
 		probe:            int64(4 * time.Second),
 		concurrent:       4,
 		maxFetchAndProbe: int64(2 * time.Second),

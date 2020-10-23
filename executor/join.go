@@ -187,6 +187,13 @@ func (e *HashJoinExec) Open(ctx context.Context) error {
 // fetchProbeSideChunks get chunks from fetches chunks from the big table in a background goroutine
 // and sends the chunks to multiple channels which will be read by multiple join workers.
 func (e *HashJoinExec) fetchProbeSideChunks(ctx context.Context) {
+	if e.stats != nil {
+		start := time.Now()
+		defer func() {
+			atomic.AddInt64(&e.stats.fetch, int64(time.Since(start)))
+		}()
+	}
+
 	hasWaitedForBuild := false
 	for {
 		if e.finished.Load().(bool) {
@@ -1043,6 +1050,7 @@ type hashJoinRuntimeStats struct {
 	fetchAndBuildHashTable time.Duration
 	hashStat               hashStatistic
 	fetchAndProbe          int64
+	fetch                  int64
 	probe                  int64
 	concurrent             int
 	maxFetchAndProbe       int64
@@ -1086,7 +1094,7 @@ func (e *hashJoinRuntimeStats) String() string {
 		buf.WriteString(", probe:")
 		buf.WriteString(time.Duration(e.probe).String())
 		buf.WriteString(", fetch:")
-		buf.WriteString(time.Duration(e.fetchAndProbe - e.probe).String())
+		buf.WriteString(time.Duration(e.fetch).String())
 		if e.hashStat.probeCollision > 0 {
 			buf.WriteString(", probe_collision:")
 			buf.WriteString(strconv.Itoa(e.hashStat.probeCollision))
@@ -1101,6 +1109,7 @@ func (e *hashJoinRuntimeStats) Clone() execdetails.RuntimeStats {
 		fetchAndBuildHashTable: e.fetchAndBuildHashTable,
 		hashStat:               e.hashStat,
 		fetchAndProbe:          e.fetchAndProbe,
+		fetch:                  e.fetch,
 		probe:                  e.probe,
 		concurrent:             e.concurrent,
 		maxFetchAndProbe:       e.maxFetchAndProbe,
@@ -1116,6 +1125,7 @@ func (e *hashJoinRuntimeStats) Merge(rs execdetails.RuntimeStats) {
 	e.hashStat.buildTableElapse += tmp.hashStat.buildTableElapse
 	e.hashStat.probeCollision += tmp.hashStat.probeCollision
 	e.fetchAndProbe += tmp.fetchAndProbe
+	e.fetch += tmp.fetch
 	e.probe += tmp.probe
 	if e.maxFetchAndProbe < tmp.maxFetchAndProbe {
 		e.maxFetchAndProbe = tmp.maxFetchAndProbe
