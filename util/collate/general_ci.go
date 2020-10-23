@@ -80,7 +80,7 @@ func compilePatternGeneralCI(pattern string, escape byte) (patWeights []uint16, 
 		default:
 			tp = stringutil.PatMatch
 		}
-		patWeights[patLen] = convertRune(r)
+		patWeights[patLen] = generalCIConverter(r)
 		patTypes[patLen] = tp
 		patLen++
 	}
@@ -102,7 +102,7 @@ func doMatchGeneralCI(str string, patWeights []uint16, patTypes []byte) bool {
 		if pIdx < len(patWeights) {
 			switch patTypes[pIdx] {
 			case stringutil.PatMatch:
-				if rIdx < lenRunes && convertRune(runes[rIdx]) == patWeights[pIdx] {
+				if rIdx < lenRunes && generalCIConverter(runes[rIdx]) == patWeights[pIdx] {
 					pIdx++
 					rIdx++
 					continue
@@ -143,7 +143,7 @@ func (gc *generalCICollator) Compare(a, b string) int {
 		r1, r1size := utf8.DecodeRuneInString(a)
 		r2, r2size := utf8.DecodeRuneInString(b)
 
-		cmp := int(convertRune(r1)) - int(convertRune(r2))
+		cmp := int(generalCIConverter(r1)) - int(generalCIConverter(r2))
 		if cmp != 0 {
 			return sign(cmp)
 		}
@@ -159,7 +159,7 @@ func (gc *generalCICollator) Key(str string) []byte {
 	buf := make([]byte, 0, len(str))
 	i := 0
 	for _, r := range []rune(str) {
-		u16 := convertRune(r)
+		u16 := generalCIConverter(r)
 		buf = append(buf, byte(u16>>8), byte(u16))
 		i++
 	}
@@ -172,21 +172,23 @@ func (gc *generalCICollator) Pattern() WildcardPattern {
 }
 
 type ciPattern struct {
-	patChars []uint16
+	patChars []rune
 	patTypes []byte
 }
 
 // Compile implements WildcardPattern interface.
 func (p *ciPattern) Compile(patternStr string, escape byte) {
-	p.patChars, p.patTypes = compilePatternGeneralCI(patternStr, escape)
+	p.patChars, p.patTypes = stringutil.CompilePatternInner(patternStr, escape)
 }
 
 // Compile implements WildcardPattern interface.
 func (p *ciPattern) DoMatch(str string) bool {
-	return doMatchGeneralCI(str, p.patChars, p.patTypes)
+	return stringutil.DoMatchInner(str, p.patChars, p.patTypes, func(a, b rune) bool {
+		return generalCIConverter(a) == generalCIConverter(b)
+	})
 }
 
-func convertRune(r rune) uint16 {
+func generalCIConverter(r rune) uint16 {
 	if r > 0xFFFF {
 		return 0xFFFD
 	}

@@ -140,19 +140,29 @@ const (
 // CompilePattern handles escapes and wild cards convert pattern characters and
 // pattern types.
 func CompilePattern(pattern string, escape byte) (patChars, patTypes []byte) {
-	patChars = make([]byte, len(pattern))
-	patTypes = make([]byte, len(pattern))
+	patWeights, patTypes := CompilePatternInner(pattern, escape)
+	patChars = []byte(string(patWeights))
+
+	return patChars, patTypes
+}
+
+func CompilePatternInner(pattern string, escape byte) (patWeights []rune, patTypes []byte) {
+	runes := []rune(pattern)
+	escapeRune := rune(escape)
+	lenRunes := len(runes)
+	patWeights = make([]rune, lenRunes)
+	patTypes = make([]byte, lenRunes)
 	patLen := 0
-	for i := 0; i < len(pattern); i++ {
+	for i := 0; i < lenRunes; i++ {
 		var tp byte
-		var c = pattern[i]
-		switch c {
-		case escape:
+		var r = runes[i]
+		switch r {
+		case escapeRune:
 			tp = PatMatch
-			if i < len(pattern)-1 {
+			if i < lenRunes-1 {
 				i++
-				c = pattern[i]
-				if c == escape || c == '_' || c == '%' {
+				r = runes[i]
+				if r == escapeRune || r == '_' || r == '%' {
 					// Valid escape.
 				} else {
 					// Invalid escape, fall back to escape byte.
@@ -162,15 +172,15 @@ func CompilePattern(pattern string, escape byte) (patChars, patTypes []byte) {
 					// Following case is correct just for escape \, not for others like +.
 					// TODO: Add more checks for other escapes.
 					i--
-					c = escape
+					r = escapeRune
 				}
 			}
 		case '_':
 			// %_ => _%
 			if patLen > 0 && patTypes[patLen-1] == PatAny {
 				tp = PatAny
-				c = '%'
-				patChars[patLen-1], patTypes[patLen-1] = '_', PatOne
+				r = '%'
+				patWeights[patLen-1], patTypes[patLen-1] = '_', PatOne
 			} else {
 				tp = PatOne
 			}
@@ -183,16 +193,16 @@ func CompilePattern(pattern string, escape byte) (patChars, patTypes []byte) {
 		default:
 			tp = PatMatch
 		}
-		patChars[patLen] = c
+		patWeights[patLen] = r
 		patTypes[patLen] = tp
 		patLen++
 	}
-	patChars = patChars[:patLen]
+	patWeights = patWeights[:patLen]
 	patTypes = patTypes[:patLen]
 	return
 }
 
-func matchByte(a, b byte) bool {
+func matchByte(a, b rune) bool {
 	return a == b
 	// We may reuse below code block when like function go back to case insensitive.
 	/*
@@ -227,20 +237,27 @@ func CompileLike2Regexp(str string) string {
 // The algorithm has linear time complexity.
 // https://research.swtch.com/glob
 func DoMatch(str string, patChars, patTypes []byte) bool {
-	var sIdx, pIdx, nextSIdx, nextPIdx int
-	for pIdx < len(patChars) || sIdx < len(str) {
-		if pIdx < len(patChars) {
+	return DoMatchInner(str, []rune(string(patChars)), patTypes, matchByte)
+}
+
+func DoMatchInner(str string, patWeights []rune, patTypes []byte, mather func(a, b rune) bool) bool {
+	// TODO(bb7133): it is possible to get the rune one by one to avoid the cost of get them as a whole.
+	runes := []rune(str)
+	lenRunes := len(runes)
+	var rIdx, pIdx, nextRIdx, nextPIdx int
+	for pIdx < len(patWeights) || rIdx < lenRunes {
+		if pIdx < len(patWeights) {
 			switch patTypes[pIdx] {
 			case PatMatch:
-				if sIdx < len(str) && matchByte(str[sIdx], patChars[pIdx]) {
+				if rIdx < lenRunes && mather(runes[rIdx], patWeights[pIdx]) {
 					pIdx++
-					sIdx++
+					rIdx++
 					continue
 				}
 			case PatOne:
-				if sIdx < len(str) {
+				if rIdx < lenRunes {
 					pIdx++
-					sIdx++
+					rIdx++
 					continue
 				}
 			case PatAny:
@@ -248,15 +265,15 @@ func DoMatch(str string, patChars, patTypes []byte) bool {
 				// If that doesn't work out,
 				// restart at sIdx+1 next.
 				nextPIdx = pIdx
-				nextSIdx = sIdx + 1
+				nextRIdx = rIdx + 1
 				pIdx++
 				continue
 			}
 		}
 		// Mismatch. Maybe restart.
-		if 0 < nextSIdx && nextSIdx <= len(str) {
+		if 0 < nextRIdx && nextRIdx <= lenRunes {
 			pIdx = nextPIdx
-			sIdx = nextSIdx
+			rIdx = nextRIdx
 			continue
 		}
 		return false

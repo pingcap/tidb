@@ -78,7 +78,7 @@ func (uc *unicodeCICollator) Compare(a, b string) int {
 			if as == 0 {
 				for an == 0 && ai < len(a) {
 					ar, ai = decodeRune(a, ai)
-					an, as = convertUnicode(ar)
+					an, as = unicodeCIConverter(ar)
 				}
 			} else {
 				an = as
@@ -90,7 +90,7 @@ func (uc *unicodeCICollator) Compare(a, b string) int {
 			if bs == 0 {
 				for bn == 0 && bi < len(b) {
 					br, bi = decodeRune(b, bi)
-					bn, bs = convertUnicode(br)
+					bn, bs = unicodeCIConverter(br)
 				}
 			} else {
 				bn = bs
@@ -128,7 +128,7 @@ func (uc *unicodeCICollator) Key(str string) []byte {
 
 	for si < len(str) {
 		r, si = decodeRune(str, si)
-		sn, ss = convertUnicode(r)
+		sn, ss = unicodeCIConverter(r)
 		for sn != 0 {
 			buf = append(buf, byte((sn&0xFF00)>>8), byte(sn))
 			sn >>= 16
@@ -144,7 +144,7 @@ func (uc *unicodeCICollator) Key(str string) []byte {
 // convert rune to weights.
 // `first` represent first 4 uint16 weights of rune
 // `second` represent last 4 uint16 weights of rune if exist, 0 if not
-func convertUnicode(r rune) (first, second uint64) {
+func unicodeCIConverter(r rune) (first, second uint64) {
 	if r > 0xFFFF {
 		return 0xFFFD, 0
 	}
@@ -166,12 +166,14 @@ type unicodePattern struct {
 
 // Compile implements WildcardPattern interface.
 func (p *unicodePattern) Compile(patternStr string, escape byte) {
-	p.patChars, p.patTypes = compilePatternUnicodeCI(patternStr, escape)
+	p.patChars, p.patTypes = stringutil.CompilePatternInner(patternStr, escape)
 }
 
 // DoMatch implements WildcardPattern interface.
 func (p *unicodePattern) DoMatch(str string) bool {
-	return doMatchUnicodeCI(str, p.patChars, p.patTypes)
+	return stringutil.DoMatchInner(str, p.patChars, p.patTypes, func(a, b rune) bool {
+		return unicodeCIConverter(a) == unicodeCIConverter(b)
+	})
 }
 
 // compilePatternUnicodeCI handles escapes and wild cards, generate pattern weights and types.
