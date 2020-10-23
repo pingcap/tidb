@@ -173,6 +173,12 @@ type clientConn struct {
 	status       int32             // dispatching/reading/shutdown/waitshutdown
 	lastCode     uint16            // last error code
 	collation    uint8             // collation used by client, may be different from the collation used by database.
+
+	// mu is used for cancelling the execution of current transaction.
+	mu struct {
+		sync.RWMutex
+		cancelFunc context.CancelFunc
+	}
 }
 
 func (cc *clientConn) String() string {
@@ -912,6 +918,12 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 	span := opentracing.StartSpan("server.dispatch")
 	ctx = opentracing.ContextWithSpan(ctx, span)
 
+	var cancelFunc context.CancelFunc
+	ctx, cancelFunc = context.WithCancel(ctx)
+	cc.mu.Lock()
+	cc.mu.cancelFunc = cancelFunc
+	cc.mu.Unlock()
+
 	t := time.Now()
 	cc.lastPacket = data
 	cmd := data[0]
@@ -1026,7 +1038,7 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 		return cc.handleResetConnection(ctx)
 	// ComEnd
 	default:
-		return mysql.NewErrf(mysql.ErrUnknown, "command %d not supported now", cmd)
+		return mysql.NewErrf(mysql.ErrUnknown, "command %d not supported now", nil, cmd)
 	}
 }
 
@@ -1103,7 +1115,7 @@ func (cc *clientConn) writeError(ctx context.Context, e error) error {
 		case *terror.Error:
 			m = terror.ToSQLError(y)
 		default:
-			m = mysql.NewErrf(mysql.ErrUnknown, "%s", e.Error())
+			m = mysql.NewErrf(mysql.ErrUnknown, "%s", nil, e.Error())
 		}
 	}
 
@@ -1439,7 +1451,7 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 	}
 	vars := cc.ctx.GetSessionVars()
 	if vars.TxnCtx.IsPessimistic {
-		if vars.IsReadConsistencyTxn() {
+		if vars.IsIsolation(ast.ReadCommitted) {
 			// TODO: to support READ-COMMITTED, we need to avoid getting new TS for each statement in the query.
 			return nil, nil
 		}
@@ -1948,7 +1960,7 @@ func (cc getLastStmtInConn) String() string {
 		return "ListFields " + string(data)
 	case mysql.ComQuery, mysql.ComStmtPrepare:
 		sql := string(hack.String(data))
-		if config.RedactLogEnabled() {
+		if cc.ctx.GetSessionVars().EnableRedactLog {
 			sql, _ = parser.NormalizeDigest(sql)
 		}
 		return queryStrForLog(sql)
