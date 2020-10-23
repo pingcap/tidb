@@ -3364,10 +3364,12 @@ func CheckModifyTypeCompatible(origin *types.FieldType, to *types.FieldType) (al
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
 		switch to.Tp {
 		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
+			// Changing integer to integer, whether reorg is necessary is depend on the flen/decimal/signed.
 			skipSignCheck = true
 			skipLenCheck = true
 		default:
-			return "", errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
+			// Changing integer to other types, reorg is absolutely necessary.
+			return unsupportedMsg, errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
 		}
 	case mysql.TypeEnum, mysql.TypeSet:
 		var typeVar string
@@ -3487,6 +3489,7 @@ func CheckModifyTypeCompatible(origin *types.FieldType, to *types.FieldType) (al
 // It returns error if the two types has incompatible charset and collation, different sign, different
 // digital/string types, or length of new Flen and Decimal is less than origin.
 func checkModifyTypes(ctx sessionctx.Context, origin *types.FieldType, to *types.FieldType, needRewriteCollationData bool) error {
+	var needReorg bool
 	changeColumnValueMsg, err := CheckModifyTypeCompatible(origin, to)
 	if err != nil {
 		enableChangeColumnType := ctx.GetSessionVars().EnableChangeColumnType
@@ -3501,9 +3504,14 @@ func checkModifyTypes(ctx sessionctx.Context, origin *types.FieldType, to *types
 			msg := "tidb_enable_change_column_type is true and this column has primary key flag"
 			return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
 		}
+		needReorg = true
 	}
 
 	err = checkModifyCharsetAndCollation(to.Charset, to.Collate, origin.Charset, origin.Collate, needRewriteCollationData)
+	// column type change can handle the charset change between these two types in the process of the reorg.
+	if err != nil && errUnsupportedModifyCharset.Equal(err) && needReorg {
+		return nil
+	}
 	return errors.Trace(err)
 }
 
