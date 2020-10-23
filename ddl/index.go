@@ -530,6 +530,8 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 		// This provides a safe window for async commit and 1PC to commit with an old schema.
 		cfg := config.GetGlobalConfig().TiKVClient.AsyncCommit
 		addIndexDelay := cfg.SafeWindow + cfg.AllowedClockDrift
+		logutil.BgLogger().Info("sleep before changing add index state to write-reorg to make async commit safe",
+			zap.Duration("duration", addIndexDelay))
 		time.Sleep(addIndexDelay)
 
 		// write only -> reorganization
