@@ -146,6 +146,8 @@ func CompilePattern(pattern string, escape byte) (patChars, patTypes []byte) {
 	return patChars, patTypes
 }
 
+// CompilePatternInner handles escapes and wild cards convert pattern characters and
+// pattern types.
 func CompilePatternInner(pattern string, escape byte) (patWeights []rune, patTypes []byte) {
 	runes := []rune(pattern)
 	escapeRune := rune(escape)
@@ -240,6 +242,9 @@ func DoMatch(str string, patChars, patTypes []byte) bool {
 	return DoMatchInner(str, []rune(string(patChars)), patTypes, matchByte)
 }
 
+// DoMatchInner matches the string with patChars and patTypes.
+// The algorithm has linear time complexity.
+// https://research.swtch.com/glob
 func DoMatchInner(str string, patWeights []rune, patTypes []byte, mather func(a, b rune) bool) bool {
 	// TODO(bb7133): it is possible to get the rune one by one to avoid the cost of get them as a whole.
 	runes := []rune(str)
