@@ -884,26 +884,36 @@ func (e *HashAggRuntimeStats) String() string {
 	if e.PartialTask != 0 {
 		result += fmt.Sprintf("partial_worker:{used_time:%s, PartialConcurrency:%d, task_num:%d", e.PartialTask, e.PartialNum, e.PartialTaskNum)
 	}
-	partialTime := make([]time.Duration, 0, e.PartialNum)
-	for i := range e.PartialTime {
-		partialTime = append(partialTime, i)
+	if e.PartialTime != nil {
+		partialTime := make([]time.Duration, 0, e.PartialNum)
+		for i := range e.PartialTime {
+			partialTime = append(partialTime, i)
+		}
+		sort.Slice(partialTime, func(i, j int) bool { return partialTime[i] < partialTime[j] })
+		n := len(partialTime)
+		if n != 0 {
+			result += fmt.Sprintf(", partial_max:%v, p95:%v", partialTime[n-1], partialTime[n*19/20])
+		}
 	}
-	sort.Slice(partialTime, func(i, j int) bool { return partialTime[i] < partialTime[j] })
-	n := len(partialTime)
-	if n != 0 {
-		result += fmt.Sprintf(", partial_max:%v, p95:%v}", partialTime[n-1], partialTime[n*19/20])
-	}
-	finalTime := make([]time.Duration, 0, e.FinalNum)
-	for i := range e.FinalTime {
-		finalTime = append(finalTime, i)
+	if len(result) > 0 {
+		result += "}, "
 	}
 	if e.FinalTask != 0 {
-		result += fmt.Sprintf(", final_worker:{total_time:%s, FinalConcurrency:%d, task_num:%d", e.FinalTask, e.FinalNum, e.FinalTaskNum)
+		result += fmt.Sprintf("final_worker:{used_time:%s, FinalConcurrency:%d, task_num:%d", e.FinalTask, e.FinalNum, e.FinalTaskNum)
 	}
-	sort.Slice(finalTime, func(i, j int) bool { return finalTime[i] < finalTime[j] })
-	m := len(finalTime)
-	if m != 0 {
-		result += fmt.Sprintf(", final_max:%v, p95:%v}", finalTime[m-1], finalTime[m*19/20])
+	if e.FinalTime != nil {
+		finalTime := make([]time.Duration, 0, e.FinalNum)
+		for i := range e.FinalTime {
+			finalTime = append(finalTime, i)
+		}
+		sort.Slice(finalTime, func(i, j int) bool { return finalTime[i] < finalTime[j] })
+		m := len(finalTime)
+		if m != 0 {
+			result += fmt.Sprintf(", final_max:%v, p95:%v", finalTime[m-1], finalTime[m*19/20])
+		}
+	}
+	if len(result) > 0 {
+		return result + "}"
 	}
 	return result
 }
