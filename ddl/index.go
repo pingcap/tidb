@@ -604,10 +604,6 @@ func onDropIndexes(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
-	if len(indexesInfo) == 0 {
-		job.State = model.JobStateCancelled
-		return ver, nil
-	}
 
 	dependentHiddenCols := make([]*model.ColumnInfo, 0)
 	for _, indexInfo := range indexesInfo {
@@ -618,6 +614,10 @@ func onDropIndexes(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		}
 	}
 
+	if len(indexesInfo) == 0 {
+		job.State = model.JobStateCancelled
+		return ver, nil
+	}
 	originalState := indexesInfo[0].State
 	switch indexesInfo[0].State {
 	case model.StatePublic:
@@ -692,26 +692,29 @@ func checkDropIndexes(t *meta.Meta, job *model.Job) (*model.TableInfo, []*model.
 		return nil, nil, errors.Trace(err)
 	}
 
-	var indexNames []model.CIStr
+	var indexesNames []model.CIStr
 	var ifExists []bool
-	if err = job.DecodeArgs(&indexNames, &ifExists); err != nil {
+	if err = job.DecodeArgs(&indexesNames, &ifExists); err != nil {
 		// Compatible with the previous function: DropIndex
 		var indexName model.CIStr
 		if err = job.DecodeArgs(&indexName); err != nil {
 			job.State = model.JobStateCancelled
 			return nil, nil, errors.Trace(err)
 		}
-		indexNames = append(indexNames, indexName)
+		indexesNames = append(indexesNames, indexName)
 		ifExists = append(ifExists, false)
 	}
 
-	indexesInfo := make([]*model.IndexInfo, 0, len(indexNames))
-	indexesMap := make(map[string]bool)
-	for i, indexName := range indexNames {
+	indexesInfo := make([]*model.IndexInfo, 0, len(indexesNames))
+	droppedIndexes := make(map[string]bool, len(indexesNames))
+	for i, indexName := range indexesNames {
 		indexInfo := tblInfo.FindIndexByName(indexName.L)
-		if indexInfo == nil && !ifExists[i] {
-			job.State = model.JobStateCancelled
-			return nil, nil, ErrCantDropFieldOrKey.GenWithStack("index %s doesn't exist", indexName)
+		if indexInfo == nil {
+			if !ifExists[i] {
+				job.State = model.JobStateCancelled
+				return nil, nil, ErrCantDropFieldOrKey.GenWithStack("index %s doesn't exist", indexName)
+			}
+			continue
 		}
 
 		// Double check for drop index on auto_increment column.
@@ -722,18 +725,16 @@ func checkDropIndexes(t *meta.Meta, job *model.Job) (*model.TableInfo, []*model.
 		}
 
 		indexesInfo = append(indexesInfo, indexInfo)
-		indexesMap[indexName.L] = true
+		droppedIndexes[indexName.L] = true
 	}
 
 	// Check that drop primary index will not cause invisible implicit primary index.
 	newIndices := make([]*model.IndexInfo, 0, len(tblInfo.Indices))
-
 	for _, idx := range tblInfo.Indices {
-		if _, ok := indexesMap[idx.Name.L]; !ok {
+		if _, ok := droppedIndexes[idx.Name.L]; !ok {
 			newIndices = append(newIndices, idx)
 		}
 	}
-
 	newTbl := tblInfo.Clone()
 	newTbl.Indices = newIndices
 	err = checkInvisibleIndexOnPK(newTbl)
