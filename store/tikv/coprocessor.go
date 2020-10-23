@@ -520,10 +520,12 @@ func (worker *copIteratorWorker) run(ctx context.Context) {
 		worker.handleTask(ctx, task, respCh)
 		close(task.respChan)
 		worker.maxID.setMaxIDIfLarger(task.id)
-		worker.actionOnExceed.destroyTokenIfNeeded(func() {
+		// If destroyTokenIfNeeded return false, we should put token back
+		if !worker.actionOnExceed.broadcastTokenDestroyedIfNeeded() {
 			worker.sendRate.putToken()
-		})
+		}
 		worker.actionOnExceed.waitIfNeeded()
+		worker.actionOnExceed.initActionIfNeeded()
 		if worker.vars != nil && worker.vars.Killed != nil && atomic.LoadUint32(worker.vars.Killed) == 1 {
 			return
 		}
@@ -693,7 +695,7 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 			return nil, nil
 		}
 		// The respCh has been drained out
-		it.actionOnExceed.resetExceededIfNeeded(len(it.respChan) < 1)
+		it.actionOnExceed.broadcastEmptyIfNeeded(len(it.respChan) < 1)
 	} else {
 		for {
 			if it.curr >= len(it.tasks) {
@@ -718,7 +720,7 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 			// The tasks whose id is less than maxID are assumed that being sending to their task channel.
 			// So the response channel would be thought as drained out if the current taskID is greater or equal than
 			// the maxID as all the workers are being suspended at that time.
-			it.actionOnExceed.resetExceededIfNeeded(finishedTaskID >= maxID)
+			it.actionOnExceed.broadcastEmptyIfNeeded(finishedTaskID >= maxID)
 		}
 	}
 
@@ -1277,7 +1279,7 @@ func (it copErrorResponse) Close() error {
 }
 
 // rateLimitAction an OOM Action which is used to control the token if OOM triggered. The token number should be
-// set on initial. Each time the Action is triggered, one token would be destroyed. If the count of the token is less
+// set on initial. Each time the Action is triggered, one token should be destroyed. If the count of the token is less
 // than 2, the action would be delegated to the fallback action.
 type rateLimitAction struct {
 	// enabled indicates whether the rateLimitAction is permitted to Action. 1 means permitted, 0 denied.
@@ -1287,12 +1289,16 @@ type rateLimitAction struct {
 	totalTokenNum uint
 	cond          struct {
 		*sync.Cond
-		// exceeded indicates whether have encountered OOM situation.
-		exceeded bool
+		// triggered indicates whether the rateLimitAction Action has been triggered.
+		triggered bool
+		// empty is the one of condition flag, it indicates whether the remaining response have been drained out after
+		// triggered being enabled.
+		empty bool
+		// isTokenDestroyed is the one of condition flag, it indicates whether
+		// there is one token has been isTokenDestroyed after triggered being enabled.
+		isTokenDestroyed bool
 		// remainingTokenNum indicates the count of tokens which still exists
 		remainingTokenNum uint
-		// isTokenDestroyed indicates whether there is one token has been isTokenDestroyed after Action been triggered
-		isTokenDestroyed bool
 		// once should be initialized only if the `initOnce` is false
 		once sync.Once
 		// needInitOnce indicate whether the once needed to be initialized
@@ -1307,15 +1313,15 @@ func newRateLimitAction(totalTokenNumber uint, cond *sync.Cond) *rateLimitAction
 		totalTokenNum: totalTokenNumber,
 		cond: struct {
 			*sync.Cond
-			exceeded          bool
-			remainingTokenNum uint
+			triggered         bool
+			empty             bool
 			isTokenDestroyed  bool
+			remainingTokenNum uint
 			once              sync.Once
 			needInitOnce      bool
 			triggerCount      uint
 		}{
 			Cond:              cond,
-			exceeded:          false,
 			remainingTokenNum: totalTokenNumber,
 			once:              sync.Once{},
 		},
@@ -1360,8 +1366,9 @@ func (e *rateLimitAction) Action(t *memory.Tracker) {
 			zap.Int64("quota", t.GetBytesLimit()),
 			zap.Uint("total token count", e.totalTokenNum),
 			zap.Uint("remaining token count", e.cond.remainingTokenNum))
+		e.cond.triggered = true
+		e.cond.empty = false
 		e.cond.isTokenDestroyed = false
-		e.cond.exceeded = true
 		e.cond.needInitOnce = true
 		e.cond.triggerCount++
 	})
@@ -1377,51 +1384,57 @@ func (e *rateLimitAction) SetFallback(a memory.ActionOnExceed) {
 	e.fallbackAction = a
 }
 
-// resetExceededIfNeeded will check whether the copWorkers is under suspended status.
-// If they are, `resetExceededIfNeeded` would try to recover them if there are no more
-// copResponse remained in the channel.
-func (e *rateLimitAction) resetExceededIfNeeded(needed bool) {
+// broadcastEmptyIfNeeded will broadcast the empty condition when rateLimitAction's triggered is enabled
+// and the response channel is empty.
+func (e *rateLimitAction) broadcastEmptyIfNeeded(needed bool) {
 	e.conditionLock()
 	defer e.conditionUnlock()
-	if e.cond.exceeded && needed {
-		e.cond.exceeded = false
+	if e.cond.triggered && needed {
+		e.cond.empty = true
 		e.cond.Broadcast()
+		logutil.BgLogger().Info("rateLimitAction has drained out response")
 	}
 }
 
-// destroyTokenIfNeeded will check the `exceed` flag after copWorker finished one task.
-// If the exceed flag is true and there is no token been destroyed before, one token will be destroyed,
-// or the token would be return back. When the token is destroyed, the condition will broadcast and try
-// to recover the suspended workers.
-func (e *rateLimitAction) destroyTokenIfNeeded(returnToken func()) {
+// broadcastTokenDestroyedIfNeeded will broadcast the isTokenDestroyed condition when rateLimitAction's triggered
+// is enabled and there is no token has been destroyed. It will also return whether the token should be put back.
+func (e *rateLimitAction) broadcastTokenDestroyedIfNeeded() bool {
 	e.conditionLock()
 	defer e.conditionUnlock()
 	// If actionOnExceed has been triggered and there is no token have been destroyed before,
 	// destroy one token.
-	if e.cond.exceeded && !e.cond.isTokenDestroyed {
+	if e.cond.triggered && !e.cond.isTokenDestroyed {
 		e.cond.remainingTokenNum = e.cond.remainingTokenNum - 1
 		e.cond.isTokenDestroyed = true
 		e.cond.Broadcast()
 		logutil.BgLogger().Info("destroy one token now",
 			zap.Uint("total token count", e.totalTokenNum),
 			zap.Uint("remaining token count", e.cond.remainingTokenNum))
-	} else {
-		returnToken()
+		return true
 	}
+	return false
 }
 
-// waitIfNeeded will check the exceeded and isTokenDestroyed and decided whether the workers should be suspended.
+// waitIfNeeded will check both condition(empty and isTokenDestroyed) when rateLimitAction's triggered is enabled.
 func (e *rateLimitAction) waitIfNeeded() {
 	e.conditionLock()
 	defer e.conditionUnlock()
-	// Only if the un-exceeded and isTokenDestroyed are both satisfied, the worker should be permitted to continue.
-	for e.cond.exceeded && !e.cond.isTokenDestroyed {
-		e.cond.Wait()
+	if e.cond.triggered {
+		for !e.cond.empty || !e.cond.isTokenDestroyed {
+			e.cond.Wait()
+		}
 	}
-	// As one Token is destroyed and the exceeded data is consumed now, the once can be initialized again if it haven't.
-	if e.cond.needInitOnce {
+}
+
+// initActionIfNeeded will initialize rateLimitAction if the once haven't been initialized after worker recovered during
+// rateLimitAction's Action.
+func (e *rateLimitAction) initActionIfNeeded() {
+	e.conditionLock()
+	defer e.conditionUnlock()
+	if e.cond.triggered && e.cond.needInitOnce {
 		e.cond.once = sync.Once{}
 		e.cond.needInitOnce = false
+		e.cond.triggered = false
 	}
 }
 
@@ -1437,9 +1450,10 @@ func (e *rateLimitAction) close() {
 	e.setEnabled(false)
 	e.conditionLock()
 	defer e.conditionUnlock()
-	e.cond.exceeded = false
-	e.cond.isTokenDestroyed = false
+	e.cond.triggered = false
 	e.cond.needInitOnce = false
+	e.cond.isTokenDestroyed = true
+	e.cond.empty = true
 	// broadcast the signal in order not to leak worker goroutine if it is being suspended
 	e.cond.Broadcast()
 }
