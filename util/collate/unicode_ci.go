@@ -172,7 +172,9 @@ func (p *unicodePattern) Compile(patternStr string, escape byte) {
 // DoMatch implements WildcardPattern interface.
 func (p *unicodePattern) DoMatch(str string) bool {
 	return stringutil.DoMatchInner(str, p.patChars, p.patTypes, func(a, b rune) bool {
-		return unicodeCIConverter(a) == unicodeCIConverter(b)
+		af, as := unicodeCIConverter(a)
+		bf, bs := unicodeCIConverter(b)
+		return af == bf && as == bs
 	})
 }
 
