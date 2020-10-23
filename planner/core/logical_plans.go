@@ -485,7 +485,8 @@ type DataSource struct {
 	pushedDownConds []expression.Expression
 	// allConds contains all the filters on this table. For now it's maintained
 	// in predicate push down and used only in partition pruning.
-	allConds []expression.Expression
+	allConds         []expression.Expression
+	usedPartitionIDs []int
 
 	statisticTable *statistics.Table
 	tableStats     *property.StatsInfo

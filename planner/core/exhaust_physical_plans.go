@@ -890,12 +890,7 @@ func (p *LogicalJoin) constructInnerTableScanTask(
 		cst:               sessVars.ScanFactor * rowSize * ts.stats.RowCount,
 		tblColHists:       ds.TblColHists,
 		keepOrder:         ts.KeepOrder,
-	}
-	copTask.partitionInfo = PartitionInfo{
-		PruningConds:   ds.allConds,
-		PartitionNames: ds.partitionNames,
-		Columns:        ds.TblCols,
-		ColumnNames:    ds.names,
+		partitionInfo:     buildPartitionInfoFromDs(ds),
 	}
 	selStats := ts.stats.Scale(selectivity)
 	ts.addPushedDownSelection(copTask, selStats)
@@ -955,16 +950,11 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 		physicalTableID:  ds.physicalTableID,
 	}.Init(ds.ctx, ds.blockOffset)
 	cop := &copTask{
-		indexPlan:   is,
-		tblColHists: ds.TblColHists,
-		tblCols:     ds.TblCols,
-		keepOrder:   is.KeepOrder,
-	}
-	cop.partitionInfo = PartitionInfo{
-		PruningConds:   ds.allConds,
-		PartitionNames: ds.partitionNames,
-		Columns:        ds.TblCols,
-		ColumnNames:    ds.names,
+		indexPlan:     is,
+		tblColHists:   ds.TblColHists,
+		tblCols:       ds.TblCols,
+		keepOrder:     is.KeepOrder,
+		partitionInfo: buildPartitionInfoFromDs(ds),
 	}
 	if !ds.isCoveringIndex(ds.schema.Columns, path.FullIdxCols, path.FullIdxColLens, is.Table) {
 		// On this way, it's double read case.

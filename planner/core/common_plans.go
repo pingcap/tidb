@@ -408,6 +408,25 @@ func (e *Execute) tryCachePointPlan(ctx context.Context, sctx sessionctx.Context
 	return err
 }
 
+func (e *Execute) rebuildPartitionTable(sctx sessionctx.Context, metaTbl *model.TableInfo, partitionInfo *PartitionInfo) error {
+	if metaTbl.Partition == nil || !sctx.GetSessionVars().UseDynamicPartitionPrune() {
+		return nil
+	}
+	is := infoschema.GetInfoSchema(sctx)
+	tmp, ok := is.TableByID(metaTbl.ID)
+	if !ok {
+		return errors.Errorf("partition table not found: %d", metaTbl.ID)
+	}
+	tbl := tmp.(table.PartitionedTable)
+	usedPartition, err := PartitionPruning(sctx, tbl, partitionInfo.PruningConds,
+		partitionInfo.PartitionNames, partitionInfo.Columns, partitionInfo.ColumnNames)
+	if err != nil {
+		return err
+	}
+	partitionInfo.UsedPartitions = usedPartition
+	return nil
+}
+
 func (e *Execute) rebuildRange(p Plan) error {
 	sctx := p.SCtx()
 	sc := p.SCtx().GetSessionVars().StmtCtx
@@ -444,15 +463,27 @@ func (e *Execute) rebuildRange(p Plan) error {
 				ts.Ranges = ranger.FullIntRange(false)
 			}
 		}
+		err = e.rebuildPartitionTable(p.SCtx(), ts.Table, &x.PartitionInfo)
+		if err != nil {
+			return err
+		}
 	case *PhysicalIndexReader:
 		is := x.IndexPlans[0].(*PhysicalIndexScan)
 		is.Ranges, err = e.buildRangeForIndexScan(sctx, is)
 		if err != nil {
 			return err
 		}
+		err = e.rebuildPartitionTable(p.SCtx(), is.Table, &x.PartitionInfo)
+		if err != nil {
+			return err
+		}
 	case *PhysicalIndexLookUpReader:
 		is := x.IndexPlans[0].(*PhysicalIndexScan)
 		is.Ranges, err = e.buildRangeForIndexScan(sctx, is)
+		if err != nil {
+			return err
+		}
+		err = e.rebuildPartitionTable(p.SCtx(), is.Table, &x.PartitionInfo)
 		if err != nil {
 			return err
 		}

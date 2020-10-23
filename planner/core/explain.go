@@ -290,11 +290,7 @@ func (p *PhysicalTableReader) accessObject(sctx sessionctx.Context) string {
 
 func partitionAccessObject(sctx sessionctx.Context, tbl table.PartitionedTable, pi *model.PartitionInfo, partTable *PartitionInfo) string {
 	var buffer bytes.Buffer
-	idxArr, err := PartitionPruning(sctx, tbl, partTable.PruningConds, partTable.PartitionNames, partTable.Columns, partTable.ColumnNames)
-	if err != nil {
-		return "partition pruning error" + err.Error()
-	}
-
+	idxArr := partTable.UsedPartitions
 	if len(idxArr) == 0 {
 		return "partition:dual"
 	}

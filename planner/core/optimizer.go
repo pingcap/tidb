@@ -50,6 +50,7 @@ const (
 	flagPredicatePushDown
 	flagEliminateOuterJoin
 	flagPartitionProcessor
+	flagPartitionProcessor2
 	flagPushDownAgg
 	flagPushDownTopN
 	flagJoinReOrder
@@ -67,6 +68,7 @@ var optRuleList = []logicalOptRule{
 	&ppdSolver{},
 	&outerJoinEliminator{},
 	&partitionProcessor{},
+	&partitionProcessor2{},
 	&aggregationPushDownSolver{},
 	&pushDownTopNOptimizer{},
 	&joinReOrderSolver{},

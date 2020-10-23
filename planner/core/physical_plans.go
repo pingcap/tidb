@@ -86,6 +86,7 @@ type PartitionInfo struct {
 	PartitionNames []model.CIStr
 	Columns        []*expression.Column
 	ColumnNames    types.NameSlice
+	UsedPartitions []int
 }
 
 // GetTablePlan exports the tablePlan.
@@ -112,16 +113,21 @@ func (p *PhysicalTableReader) GetTableScan() *PhysicalTableScan {
 // GetPhysicalTableReader returns PhysicalTableReader for logical TiKVSingleGather.
 func (sg *TiKVSingleGather) GetPhysicalTableReader(schema *expression.Schema, stats *property.StatsInfo, props ...*property.PhysicalProperty) *PhysicalTableReader {
 	reader := PhysicalTableReader{}.Init(sg.ctx, sg.blockOffset)
-	reader.PartitionInfo = PartitionInfo{
-		PruningConds:   sg.Source.allConds,
-		PartitionNames: sg.Source.partitionNames,
-		Columns:        sg.Source.TblCols,
-		ColumnNames:    sg.Source.names,
-	}
+	reader.PartitionInfo = buildPartitionInfoFromDs(sg.Source)
 	reader.stats = stats
 	reader.SetSchema(schema)
 	reader.childrenReqProps = props
 	return reader
+}
+
+func buildPartitionInfoFromDs(ds *DataSource) PartitionInfo {
+	return PartitionInfo{
+		PruningConds:   ds.allConds,
+		PartitionNames: ds.partitionNames,
+		Columns:        ds.TblCols,
+		ColumnNames:    ds.names,
+		UsedPartitions: ds.usedPartitionIDs,
+	}
 }
 
 // GetPhysicalIndexReader returns PhysicalIndexReader for logical TiKVSingleGather.
