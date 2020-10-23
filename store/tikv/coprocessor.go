@@ -1291,19 +1291,19 @@ type rateLimitAction struct {
 		*sync.Cond
 		// triggered indicates whether the rateLimitAction Action has been triggered.
 		triggered bool
-		// empty is the one of condition flag, it indicates whether the remaining response have been drained out after
-		// triggered being enabled.
+		// empty is one of the condition flag, it indicates whether the remaining response have been drained out after
+		// `triggered` being enabled.
 		empty bool
-		// isTokenDestroyed is the one of condition flag, it indicates whether
-		// there is one token has been isTokenDestroyed after triggered being enabled.
+		// isTokenDestroyed is one of the condition flag, it indicates whether there exists one token has been
+		// destroyed after `triggered` being enabled.
 		isTokenDestroyed bool
 		// remainingTokenNum indicates the count of tokens which still exists
 		remainingTokenNum uint
-		// once should be initialized only if the `initOnce` is false
+		// once should be initialized only if the `needInitOnce` is true
 		once sync.Once
-		// needInitOnce indicate whether the once needed to be initialized
+		// needInitOnce indicate whether the once needs to be initialized
 		needInitOnce bool
-		// triggerCount indicates the count of rateLimitAction being triggered, only used for unit test
+		// triggerCount indicates the count of rateLimitAction being triggered, only being used for unit test
 		triggerCount uint
 	}
 }
@@ -1384,12 +1384,12 @@ func (e *rateLimitAction) SetFallback(a memory.ActionOnExceed) {
 	e.fallbackAction = a
 }
 
-// broadcastEmptyIfNeeded will broadcast the empty condition when rateLimitAction's triggered is enabled
+// broadcastEmptyIfNeeded will broadcast the empty condition when rateLimitAction `trigger` is enabled
 // and the response channel is empty.
 func (e *rateLimitAction) broadcastEmptyIfNeeded(needed bool) {
 	e.conditionLock()
 	defer e.conditionUnlock()
-	if e.cond.triggered && needed {
+	if e.cond.triggered && needed && !e.cond.empty {
 		e.cond.empty = true
 		e.cond.Broadcast()
 		logutil.BgLogger().Info("rateLimitAction has drained out response")
@@ -1416,6 +1416,7 @@ func (e *rateLimitAction) broadcastTokenDestroyedIfNeeded() bool {
 }
 
 // waitIfNeeded will check both condition(empty and isTokenDestroyed) when rateLimitAction's triggered is enabled.
+// If they are both satisfied, the waiting should be stopped.
 func (e *rateLimitAction) waitIfNeeded() {
 	e.conditionLock()
 	defer e.conditionUnlock()
@@ -1426,8 +1427,7 @@ func (e *rateLimitAction) waitIfNeeded() {
 	}
 }
 
-// initActionIfNeeded will initialize rateLimitAction if the once haven't been initialized after worker recovered during
-// rateLimitAction's Action.
+// initActionIfNeeded will initialize rateLimitAction once all the conditions have 
 func (e *rateLimitAction) initActionIfNeeded() {
 	e.conditionLock()
 	defer e.conditionUnlock()
