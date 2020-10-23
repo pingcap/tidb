@@ -57,6 +57,7 @@ var (
 	errInvalidDDLJobVersion                   = dbterror.ClassDDL.NewStd(mysql.ErrInvalidDDLJobVersion)
 	errInvalidUseOfNull                       = dbterror.ClassDDL.NewStd(mysql.ErrInvalidUseOfNull)
 	errTooManyFields                          = dbterror.ClassDDL.NewStd(mysql.ErrTooManyFields)
+	errTooManyKeys                            = dbterror.ClassDDL.NewStd(mysql.ErrTooManyKeys)
 	errInvalidSplitRegionRanges               = dbterror.ClassDDL.NewStd(mysql.ErrInvalidSplitRegionRanges)
 	errReorgPanic                             = dbterror.ClassDDL.NewStd(mysql.ErrReorgPanic)
 	errFkColumnCannotDrop                     = dbterror.ClassDDL.NewStd(mysql.ErrFkColumnCannotDrop)
