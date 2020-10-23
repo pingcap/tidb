@@ -120,9 +120,9 @@ func (s *inspectionResultSuite) TestInspectionResult(c *C) {
 			rows: []string{
 				"config coprocessor.high tikv inconsistent consistent warning 192.168.3.32:26600,192.168.3.33:26600 config value is 8\n192.168.3.34:26600,192.168.3.35:26600 config value is 7",
 				"config ddl.lease tidb inconsistent consistent warning 192.168.3.22:4000,192.168.3.24:4000,192.168.3.25:4000 config value is 1\n192.168.3.23:4000 config value is 2",
-				"config log.slow-threshold tidb 0 not 0 warning slow-threshold = 0 will record every query to slow log, it may affect performance",
+				"config log.slow-threshold tidb 0 > 0 warning slow-threshold = 0 will record every query to slow log, it may affect performance",
 				"config log.slow-threshold tidb inconsistent consistent warning 192.168.3.24:4000 config value is 0\n192.168.3.25:4000 config value is 1",
-				"config raftstore.sync-log tikv false not false warning sync-log should be true to avoid recover region when the machine breaks down",
+				"config raftstore.sync-log tikv false true warning sync-log should be true to avoid recover region when the machine breaks down",
 				"version git_hash pd inconsistent consistent critical the cluster has 3 different pd versions, execute the sql to see more detail: select * from information_schema.cluster_info where type='pd'",
 				"version git_hash tidb inconsistent consistent critical the cluster has 3 different tidb versions, execute the sql to see more detail: select * from information_schema.cluster_info where type='tidb'",
 				"version git_hash tikv inconsistent consistent critical the cluster has 2 different tikv versions, execute the sql to see more detail: select * from information_schema.cluster_info where type='tikv'",
@@ -140,9 +140,9 @@ func (s *inspectionResultSuite) TestInspectionResult(c *C) {
 			rows: []string{
 				"config coprocessor.high tikv inconsistent consistent warning 192.168.3.32:26600,192.168.3.33:26600 config value is 8\n192.168.3.34:26600,192.168.3.35:26600 config value is 7",
 				"config ddl.lease tidb inconsistent consistent warning 192.168.3.22:4000,192.168.3.24:4000,192.168.3.25:4000 config value is 1\n192.168.3.23:4000 config value is 2",
-				"config log.slow-threshold tidb 0 not 0 warning slow-threshold = 0 will record every query to slow log, it may affect performance",
+				"config log.slow-threshold tidb 0 > 0 warning slow-threshold = 0 will record every query to slow log, it may affect performance",
 				"config log.slow-threshold tidb inconsistent consistent warning 192.168.3.24:4000 config value is 0\n192.168.3.25:4000 config value is 1",
-				"config raftstore.sync-log tikv false not false warning sync-log should be true to avoid recover region when the machine breaks down",
+				"config raftstore.sync-log tikv false true warning sync-log should be true to avoid recover region when the machine breaks down",
 			},
 		},
 		{
