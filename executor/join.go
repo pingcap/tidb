@@ -187,13 +187,6 @@ func (e *HashJoinExec) Open(ctx context.Context) error {
 // fetchProbeSideChunks get chunks from fetches chunks from the big table in a background goroutine
 // and sends the chunks to multiple channels which will be read by multiple join workers.
 func (e *HashJoinExec) fetchProbeSideChunks(ctx context.Context) {
-	if e.stats != nil {
-		start := time.Now()
-		defer func() {
-			atomic.AddInt64(&e.stats.fetch, int64(time.Since(start)))
-		}()
-	}
-
 	hasWaitedForBuild := false
 	for {
 		if e.finished.Load().(bool) {
@@ -417,11 +410,13 @@ func (e *HashJoinExec) waitJoinWorkersAndCloseResultChan() {
 }
 
 func (e *HashJoinExec) runJoinWorker(workerID uint, probeKeyColIdx []int) {
+	fetchTime := int64(0)
 	probeTime := int64(0)
 	if e.stats != nil {
 		start := time.Now()
 		defer func() {
 			t := time.Since(start)
+			atomic.AddInt64(&e.stats.fetch, fetchTime)
 			atomic.AddInt64(&e.stats.probe, probeTime)
 			atomic.AddInt64(&e.stats.fetchAndProbe, int64(t))
 			e.stats.setMaxFetchAndProbeTime(int64(t))
@@ -449,6 +444,7 @@ func (e *HashJoinExec) runJoinWorker(workerID uint, probeKeyColIdx []int) {
 		if e.finished.Load().(bool) {
 			break
 		}
+		startFetch := time.Now()
 		select {
 		case <-e.closeCh:
 			return
@@ -457,13 +453,14 @@ func (e *HashJoinExec) runJoinWorker(workerID uint, probeKeyColIdx []int) {
 		if !ok {
 			break
 		}
-		start := time.Now()
+		startProbe := time.Now()
+		fetchTime += int64(startProbe.Sub(startFetch))
 		if e.useOuterToBuild {
 			ok, joinResult = e.join2ChunkForOuterHashJoin(workerID, probeSideResult, hCtx, joinResult)
 		} else {
 			ok, joinResult = e.join2Chunk(workerID, probeSideResult, hCtx, joinResult, selected)
 		}
-		probeTime += int64(time.Since(start))
+		probeTime += int64(time.Since(startProbe))
 		if !ok {
 			break
 		}
