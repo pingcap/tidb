@@ -2901,6 +2901,8 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		// Use the new partition implementation, clean up the code here when it's full implemented.
 		if !b.ctx.GetSessionVars().UseDynamicPartitionPrune() {
 			b.optFlag = b.optFlag | flagPartitionProcessor
+		} else {
+			b.optFlag = b.optFlag | flagPartitionProcessor2
 		}
 
 		pt := tbl.(table.PartitionedTable)
