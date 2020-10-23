@@ -325,7 +325,7 @@ func (c configInspection) inspectCheckConfig(ctx context.Context, sctx sessionct
 			key:    "transparent_hugepage_enabled",
 			expect: "always madvise [never]",
 			cond:   "system_name = 'kernel' and name = 'transparent_hugepage_enabled' and value not like '%[never]%'",
-			detail: "Transparent HugePages can cause memory allocation delays during runtime, TiDB recommends that you disable Transparent HugePages on all TiDB servers.",
+			detail: "Transparent HugePages can cause memory allocation delays during runtime, TiDB recommends that you disable Transparent HugePages on all TiDB servers",
 		},
 	}
 
