@@ -43,6 +43,7 @@ const (
 	Div
 	Mul
 	Not
+	Not2
 	BitNeg
 	IntDiv
 	LogicXor
@@ -158,7 +159,12 @@ var ops = [...]struct {
 	},
 	Not: {
 		name:      "not",
-		literal:   "!", // perhaps should use `NOT` here.
+		literal:   "not ",
+		isKeyword: true,
+	},
+	Not2: {
+		name:      "!",
+		literal:   "!",
 		isKeyword: false,
 	},
 	BitNeg: {
