@@ -692,8 +692,6 @@ type Update struct {
 
 	OrderedList []*expression.Assignment
 
-	VirtualList []*expression.Assignment
-
 	AllAssignmentsAreConstant bool
 
 	VirtualAssignmentsOffset int

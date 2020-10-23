@@ -271,7 +271,7 @@ func (s *testUpdateSuite) TestUpdateSwapColumnValues(c *C) {
 	tk.MustQuery("select * from t").Check(testkit.Rows("10 30 -10 -30", "20 30 -20 -30"))
 }
 
-func (s *testUpdateSuite) TestUpdateMultiAliasesTable(c *C) {
+func (s *testUpdateSuite) TestMultiUpdateOnSameTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -291,6 +291,15 @@ func (s *testUpdateSuite) TestUpdateMultiAliasesTable(c *C) {
 
 	tk.MustExec("update t t1, t t2 set t1.x=5, t2.y=t1.x where t1.x=3")
 	tk.MustQuery("select * from t").Check(testkit.Rows("2 3 12 -7", "5 3 15 -7"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, c int as (a+b) stored)")
+	tk.MustExec("insert into t(a, b) values (1, 2)")
+	tk.MustExec("update t t1, t t2 set t2.a=3")
+	tk.MustQuery("select * from t").Check(testkit.Rows("3 2 5"))
+
+	tk.MustExec("update t t1, t t2 set t1.a=4, t2.b=5")
+	tk.MustQuery("select * from t").Check(testkit.Rows("4 5 9"))
 }
 
 var _ = SerialSuites(&testSuite11{&baseTestSuite{}})

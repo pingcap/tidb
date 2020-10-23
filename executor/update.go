@@ -34,16 +34,15 @@ import (
 type UpdateExec struct {
 	baseExecutor
 
-	OrderedList []*expression.Assignment // OrderedList is for non-generated columns
-	VirtualList []*expression.Assignment // VirtualList is for generated columns
+	OrderedList []*expression.Assignment
 
-	// updatedRowKeys is a map for unique (Alias(column index), handle) pair.
+	// updatedRowKeys is a map for unique (TableAlias, handle) pair.
 	// The value is true if the row is changed, or false otherwise
 	updatedRowKeys map[int]*kv.HandleMap
-	// updatedRowData is a map for unique (Table, handle) pair.
+	// mergedRowData is a map for unique (Table, handle) pair.
 	// The value is cached table row
-	updatedRowData map[int64]*kv.HandleMap
-	tblID2table    map[int64]table.Table
+	mergedRowData map[int64]*kv.HandleMap
+	tblID2table   map[int64]table.Table
 
 	matched uint64 // a counter of matched rows during update
 	// tblColPosInfos stores relationship between column ordinal to its table handle.
@@ -51,77 +50,120 @@ type UpdateExec struct {
 	tblColPosInfos            plannercore.TblColPosInfoSlice
 	evalBuffer                chunk.MutRow
 	allAssignmentsAreConstant bool
-	hasMultiAliasesTable      bool
+	virtualAssignmentsOffset  int
+	multiUpdateOnSameTable    bool
 	drained                   bool
 	memTracker                *memory.Tracker
 
 	stats *runtimeStatsWithSnapshot
+
+	handles   []kv.Handle
+	updatable []bool
+	changed   []bool
 }
 
-func (e *UpdateExec) merge(ctx context.Context, schema *expression.Schema, row, newData []types.Datum, virtual bool) error {
-	if e.hasMultiAliasesTable {
+// computeHandles precomputes and saves `handles`, `updatable` and `changed` to avoid re-computations.
+func (e *UpdateExec) computeHandles(ctx context.Context, schema *expression.Schema, row []types.Datum) error {
+	assignFlag, err := plannercore.GetUpdateColumns(e.ctx, e.OrderedList, schema.Len())
+	if err != nil {
+		return err
+	}
+	if e.updatedRowKeys == nil {
+		e.updatedRowKeys = make(map[int]*kv.HandleMap)
+	}
+	e.handles = e.handles[:0]
+	e.updatable = e.updatable[:0]
+	e.changed = e.changed[:0]
+	for _, content := range e.tblColPosInfos {
+		if e.updatedRowKeys[content.Start] == nil {
+			e.updatedRowKeys[content.Start] = kv.NewHandleMap()
+		}
+		handle, err := content.HandleCols.BuildHandleByDatums(row)
+		if err != nil {
+			return err
+		}
+		e.handles = append(e.handles, handle)
+
+		updatable := false
+		flags := assignFlag[content.Start:content.End]
+		for _, flag := range flags {
+			if flag {
+				updatable = true
+				break
+			}
+		}
+		e.updatable = append(e.updatable, updatable)
+
+		var changed bool
+		v, ok := e.updatedRowKeys[content.Start].Get(handle)
+		if ok {
+			changed = v.(bool)
+		}
+		e.changed = append(e.changed, changed)
+	}
+	return nil
+}
+
+func (e *UpdateExec) merge(ctx context.Context, schema *expression.Schema, row, newData []types.Datum) error {
+	if e.multiUpdateOnSameTable {
 		assignFlag, err := plannercore.GetUpdateColumns(e.ctx, e.OrderedList, schema.Len())
 		if err != nil {
 			return err
 		}
-		if e.updatedRowKeys == nil {
-			e.updatedRowKeys = make(map[int]*kv.HandleMap)
+		if e.mergedRowData == nil {
+			e.mergedRowData = make(map[int64]*kv.HandleMap)
 		}
-		if e.updatedRowData == nil {
-			e.updatedRowData = make(map[int64]*kv.HandleMap)
-		}
-		for _, content := range e.tblColPosInfos {
-			if e.updatedRowKeys[content.Start] == nil {
-				e.updatedRowKeys[content.Start] = kv.NewHandleMap()
-			}
-			var handle kv.Handle
-			handle, err = content.HandleCols.BuildHandleByDatums(row)
-			if err != nil {
-				return err
-			}
-
-			oldData := row[content.Start:content.End]
-			newTableData := newData[content.Start:content.End]
-			updatable := false
-			flags := assignFlag[content.Start:content.End]
-			for _, flag := range flags {
-				if flag {
-					updatable = true
-					break
-				}
-			}
-			if !updatable {
+		// write to mergedData
+		for i, content := range e.tblColPosInfos {
+			if !e.updatable[i] {
 				// If there's nothing to update, we can just skip current row
 				continue
 			}
-
-			var changed bool
-			v, ok := e.updatedRowKeys[content.Start].Get(handle)
-			if ok {
-				changed = v.(bool)
-			}
-			if changed {
+			if e.changed[i] {
 				// Each matched row is updated once, even if it matches the conditions multiple times.
 				continue
 			}
+			handle := e.handles[i]
+			flags := assignFlag[content.Start:content.End]
 
-			if e.updatedRowData[content.TblID] == nil {
-				e.updatedRowData[content.TblID] = kv.NewHandleMap()
+			if e.mergedRowData[content.TblID] == nil {
+				e.mergedRowData[content.TblID] = kv.NewHandleMap()
 			}
-			var updatedData []types.Datum
-			v, ok = e.updatedRowData[content.TblID].Get(handle)
+			newTableData := newData[content.Start:content.End]
+			var mergedData []types.Datum
+			v, ok := e.mergedRowData[content.TblID].Get(handle)
 			if !ok {
-				updatedData = append([]types.Datum{}, newTableData...)
+				mergedData = append([]types.Datum{}, newTableData...)
 			} else {
+				mergedData = v.([]types.Datum)
+				for i, flag := range flags {
+					if flag {
+						newTableData[i].Copy(&mergedData[i])
+					}
+				}
+			}
+			e.mergedRowData[content.TblID].Set(handle, mergedData)
+		}
+		// read from mergedData
+		for i, content := range e.tblColPosInfos {
+			if !e.updatable[i] {
+				// If there's nothing to update, we can just skip current row
+				continue
+			}
+			if e.changed[i] {
+				// Each matched row is updated once, even if it matches the conditions multiple times.
+				continue
+			}
+			handle := e.handles[i]
+			flags := assignFlag[content.Start:content.End]
+
+			oldData := row[content.Start:content.End]
+			newTableData := newData[content.Start:content.End]
+			var updatedData []types.Datum
+			if v, ok := e.mergedRowData[content.TblID].Get(handle); ok {
 				updatedData = v.([]types.Datum)
 				for i, flag := range flags {
-					if virtual && schema.Columns[content.Start+i].VirtualExpr == nil ||
-						!virtual && schema.Columns[content.Start+i].VirtualExpr != nil {
-						continue
-					}
-					if flag {
-						newTableData[i].Copy(&updatedData[i])
-					} else {
+					if !flag {
 						updatedData[i].Copy(&oldData[i])
 						updatedData[i].Copy(&newTableData[i])
 					}
@@ -138,34 +180,15 @@ func (e *UpdateExec) exec(ctx context.Context, schema *expression.Schema, row, n
 	if err != nil {
 		return err
 	}
-	if e.updatedRowKeys == nil {
-		e.updatedRowKeys = make(map[int]*kv.HandleMap)
-	}
-	for _, content := range e.tblColPosInfos {
+	for i, content := range e.tblColPosInfos {
 		tbl := e.tblID2table[content.TblID]
-		if e.updatedRowKeys[content.Start] == nil {
-			e.updatedRowKeys[content.Start] = kv.NewHandleMap()
-		}
-		var handle kv.Handle
-		handle, err = content.HandleCols.BuildHandleByDatums(row)
-		if err != nil {
-			return err
-		}
 
-		oldData := row[content.Start:content.End]
-		newTableData := newData[content.Start:content.End]
-		updatable := false
-		flags := assignFlag[content.Start:content.End]
-		for _, flag := range flags {
-			if flag {
-				updatable = true
-				break
-			}
-		}
-		if !updatable {
+		if !e.updatable[i] {
 			// If there's nothing to update, we can just skip current row
 			continue
 		}
+
+		handle := e.handles[i]
 		var changed bool
 		v, ok := e.updatedRowKeys[content.Start].Get(handle)
 		if !ok {
@@ -178,6 +201,11 @@ func (e *UpdateExec) exec(ctx context.Context, schema *expression.Schema, row, n
 			// Each matched row is updated once, even if it matches the conditions multiple times.
 			continue
 		}
+
+		oldData := row[content.Start:content.End]
+		newTableData := newData[content.Start:content.End]
+		flags := assignFlag[content.Start:content.End]
+
 		// Update row
 		changed, err1 := updateRecord(ctx, e.ctx, handle, oldData, newTableData, flags, tbl, false, e.memTracker)
 		if err1 == nil {
@@ -260,20 +288,29 @@ func (e *UpdateExec) updateRows(ctx context.Context) (int, error) {
 		for rowIdx := 0; rowIdx < chk.NumRows(); rowIdx++ {
 			chunkRow := chk.GetRow(rowIdx)
 			datumRow := chunkRow.GetDatumRow(fields)
-			newRow, err1 := composeFunc(globalRowIdx, datumRow, colsInfo)
-			if err1 != nil {
-				return 0, err1
+			// precomputes handles
+			if err := e.computeHandles(ctx, e.children[0].Schema(), datumRow); err != nil {
+				return 0, err
 			}
-			if err := e.merge(ctx, e.children[0].Schema(), datumRow, newRow, false); err != nil {
-				return 0, nil
+			// compose non-generated columns
+			newRow, err := composeFunc(globalRowIdx, datumRow, colsInfo)
+			if err != nil {
+				return 0, err
 			}
-			newRow, err1 = e.composeVirtualColumns(globalRowIdx, newRow, colsInfo)
-			if err1 != nil {
-				return 0, err1
+			// merge non-generated columns
+			if err := e.merge(ctx, e.children[0].Schema(), datumRow, newRow); err != nil {
+				return 0, err
 			}
-			if err := e.merge(ctx, e.children[0].Schema(), datumRow, newRow, true); err != nil {
-				return 0, nil
+			// compose generated columns
+			newRow, err = e.composeVirtualColumns(globalRowIdx, newRow, colsInfo)
+			if err != nil {
+				return 0, err
 			}
+			// merge generated columns
+			if err := e.merge(ctx, e.children[0].Schema(), datumRow, newRow); err != nil {
+				return 0, err
+			}
+			// write to table
 			if err := e.exec(ctx, e.children[0].Schema(), datumRow, newRow); err != nil {
 				return 0, err
 			}
@@ -330,15 +367,13 @@ func (e *UpdateExec) fastComposeNewRow(rowIdx int, oldRow []types.Datum, cols []
 
 func (e *UpdateExec) composeNewRow(rowIdx int, oldRow []types.Datum, cols []*table.Column) ([]types.Datum, error) {
 	newRowData := types.CloneRow(oldRow)
-	e.evalBuffer.SetDatums(oldRow...)
-	for _, assign := range e.OrderedList {
+	e.evalBuffer.SetDatums(newRowData...)
+	for _, assign := range e.OrderedList[:e.virtualAssignmentsOffset] {
 		handleIdx, handleFound := e.tblColPosInfos.FindHandle(assign.Col.Index)
 		if handleFound && e.canNotUpdate(oldRow[handleIdx]) {
 			continue
 		}
-		var val types.Datum
-		var err error
-		val, err = assign.Expr.Eval(e.evalBuffer.ToRow())
+		val, err := assign.Expr.Eval(e.evalBuffer.ToRow())
 		if err = e.handleErr(assign.ColName, rowIdx, err); err != nil {
 			return nil, err
 		}
@@ -353,22 +388,21 @@ func (e *UpdateExec) composeNewRow(rowIdx int, oldRow []types.Datum, cols []*tab
 		}
 
 		val.Copy(&newRowData[assign.Col.Index])
-		e.evalBuffer.SetDatum(assign.Col.Index, val)
 	}
 	return newRowData, nil
 }
 
-func (e *UpdateExec) composeVirtualColumns(rowIdx int, oldRow []types.Datum, cols []*table.Column) ([]types.Datum, error) {
-	newRowData := types.CloneRow(oldRow)
+func (e *UpdateExec) composeVirtualColumns(rowIdx int, newRowData []types.Datum, cols []*table.Column) ([]types.Datum, error) {
+	if e.allAssignmentsAreConstant {
+		return newRowData, nil
+	}
 	e.evalBuffer.SetDatums(newRowData...)
-	for _, assign := range e.VirtualList {
+	for _, assign := range e.OrderedList[e.virtualAssignmentsOffset:] {
 		handleIdx, handleFound := e.tblColPosInfos.FindHandle(assign.Col.Index)
-		if handleFound && e.canNotUpdate(oldRow[handleIdx]) {
+		if handleFound && e.canNotUpdate(newRowData[handleIdx]) {
 			continue
 		}
-		var val types.Datum
-		var err error
-		val, err = assign.Expr.Eval(e.evalBuffer.ToRow())
+		val, err := assign.Expr.Eval(e.evalBuffer.ToRow())
 		if err = e.handleErr(assign.ColName, rowIdx, err); err != nil {
 			return nil, err
 		}

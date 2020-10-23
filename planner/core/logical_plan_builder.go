@@ -3581,7 +3581,7 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 
 	var updateTableList []*ast.TableName
 	updateTableList = extractTableList(update.TableRefs.TableRefs, updateTableList, true)
-	orderedList, virtualList, np, allAssignmentsAreConstant, err := b.buildUpdateLists(ctx, updateTableList, update.List, p)
+	orderedList, np, allAssignmentsAreConstant, virtualAssignmentsOffset, err := b.buildUpdateLists(ctx, updateTableList, update.List, p)
 	if err != nil {
 		return nil, err
 	}
@@ -3589,8 +3589,8 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 
 	updt := Update{
 		OrderedList:               orderedList,
-		VirtualList:               virtualList,
 		AllAssignmentsAreConstant: allAssignmentsAreConstant,
+		VirtualAssignmentsOffset:  virtualAssignmentsOffset,
 	}.Init(b.ctx)
 	updt.names = p.OutputNames()
 	// We cannot apply projection elimination when building the subplan, because
@@ -3655,9 +3655,9 @@ func (b *PlanBuilder) buildUpdateLists(
 	list []*ast.Assignment,
 	p LogicalPlan,
 ) (newList []*expression.Assignment,
-	virtualList []*expression.Assignment,
 	po LogicalPlan,
 	allAssignmentsAreConstant bool,
+	virtualAssignmentsOffset int,
 	e error,
 ) {
 	b.curClause = fieldList
@@ -3673,10 +3673,10 @@ func (b *PlanBuilder) buildUpdateLists(
 	for _, assign := range list {
 		idx, err := expression.FindFieldName(p.OutputNames(), assign.Column)
 		if err != nil {
-			return nil, nil, nil, false, err
+			return nil, nil, false, 0, err
 		}
 		if idx < 0 {
-			return nil, nil, nil, false, ErrUnknownColumn.GenWithStackByArgs(assign.Column.Name, "field list")
+			return nil, nil, false, 0, ErrUnknownColumn.GenWithStackByArgs(assign.Column.Name, "field list")
 		}
 		if cacheColumnsIdx {
 			columnsIdx[assign.Column] = idx
@@ -3700,7 +3700,7 @@ func (b *PlanBuilder) buildUpdateLists(
 		tableInfo := tn.TableInfo
 		tableVal, found := b.is.TableByID(tableInfo.ID)
 		if !found {
-			return nil, nil, nil, false, infoschema.ErrTableNotExists.GenWithStackByArgs(tn.DBInfo.Name.O, tableInfo.Name.O)
+			return nil, nil, false, 0, infoschema.ErrTableNotExists.GenWithStackByArgs(tn.DBInfo.Name.O, tableInfo.Name.O)
 		}
 		for i, colInfo := range tableInfo.Columns {
 			if !colInfo.IsGenerated() {
@@ -3709,12 +3709,12 @@ func (b *PlanBuilder) buildUpdateLists(
 			columnFullName := fmt.Sprintf("%s.%s.%s", tn.Schema.L, tn.Name.L, colInfo.Name.L)
 			isDefault, ok := modifyColumns[columnFullName]
 			if ok && colInfo.Hidden {
-				return nil, nil, nil, false, ErrUnknownColumn.GenWithStackByArgs(colInfo.Name, clauseMsg[fieldList])
+				return nil, nil, false, 0, ErrUnknownColumn.GenWithStackByArgs(colInfo.Name, clauseMsg[fieldList])
 			}
 			// Note: For INSERT, REPLACE, and UPDATE, if a generated column is inserted into, replaced, or updated explicitly, the only permitted value is DEFAULT.
 			// see https://dev.mysql.com/doc/refman/8.0/en/create-table-generated-columns.html
 			if ok && !isDefault {
-				return nil, nil, nil, false, ErrBadGeneratedColumn.GenWithStackByArgs(colInfo.Name.O, tableInfo.Name.O)
+				return nil, nil, false, 0, ErrBadGeneratedColumn.GenWithStackByArgs(colInfo.Name.O, tableInfo.Name.O)
 			}
 			virtualAssignments = append(virtualAssignments, &ast.Assignment{
 				Column: &ast.ColumnName{Schema: tn.Schema, Table: tn.Name, Name: colInfo.Name},
@@ -3724,6 +3724,7 @@ func (b *PlanBuilder) buildUpdateLists(
 	}
 
 	allAssignmentsAreConstant = true
+	virtualAssignmentsOffset = len(list)
 	newList = make([]*expression.Assignment, 0, p.Schema().Len())
 	tblDbMap := make(map[string]string, len(tableList))
 	for _, tbl := range tableList {
@@ -3745,7 +3746,7 @@ func (b *PlanBuilder) buildUpdateLists(
 			idx, err = expression.FindFieldName(p.OutputNames(), assign.Column)
 		}
 		if err != nil {
-			return nil, nil, nil, false, err
+			return nil, nil, false, 0, err
 		}
 		col := p.Schema().Columns[idx]
 		name := p.OutputNames()[idx]
@@ -3773,6 +3774,7 @@ func (b *PlanBuilder) buildUpdateLists(
 				}
 			}
 			newExpr, np, err = b.rewriteWithPreprocess(ctx, assign.Expr, p, nil, nil, false, rewritePreprocess)
+			// check if the column is modified
 			dependentColumns := expression.ExtractDependentColumns(newExpr)
 			var isModified bool
 			for _, col := range dependentColumns {
@@ -3787,17 +3789,13 @@ func (b *PlanBuilder) buildUpdateLists(
 			}
 		}
 		if err != nil {
-			return nil, nil, nil, false, err
+			return nil, nil, false, 0, err
 		}
 		if _, isConst := newExpr.(*expression.Constant); !isConst {
 			allAssignmentsAreConstant = false
 		}
 		p = np
-		if i < len(list) {
-			newList = append(newList, &expression.Assignment{Col: col, ColName: name.ColName, Expr: newExpr})
-		} else {
-			virtualList = append(virtualList, &expression.Assignment{Col: col, ColName: name.ColName, Expr: newExpr})
-		}
+		newList = append(newList, &expression.Assignment{Col: col, ColName: name.ColName, Expr: newExpr})
 		dbName := name.DBName.L
 		// To solve issue#10028, we need to get database name by the table alias name.
 		if dbNameTmp, ok := tblDbMap[name.TblName.L]; ok {
@@ -3808,7 +3806,7 @@ func (b *PlanBuilder) buildUpdateLists(
 		}
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.UpdatePriv, dbName, name.OrigTblName.L, "", nil)
 	}
-	return newList, virtualList, p, allAssignmentsAreConstant, nil
+	return newList, p, allAssignmentsAreConstant, virtualAssignmentsOffset, nil
 }
 
 // extractDefaultExpr extract a `DefaultExpr` from `ExprNode`,
