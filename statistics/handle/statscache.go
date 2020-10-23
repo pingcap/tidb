@@ -31,9 +31,9 @@ type StatsCache interface {
 	Update(tables []*statistics.Table, deletedIDs []int64, newVersion uint64)
 	GetVersion() uint64
 	InitStatsCache(tables map[int64]*statistics.Table, version uint64)
+	GetAll() []*statistics.Table
 
 	// interface below are used only for test
-	GetAll() []*statistics.Table
 	Clear()
 	Close()
 	GetBytesLimit() int64
@@ -127,11 +127,11 @@ func newRistrettoStatsCache(memoryLimit int64) (*ristrettoStatsCache, error) {
 		MaxCost:     memoryLimit, // maximum cost of cache (1GB).
 		BufferItems: 64,          // number of keys per Get buffer.
 		Cost: func(value interface{}) int64 {
-			return (value.(*statistics.Table).MemoryUsage())
+			return (value.(*statistics.Table).MemUsage)
 		},
 		OnEvict: func(key uint64, value interface{}) {
 			if t, ok := sc.Get(int64(key)); ok {
-				if value != nil && t.PhysicalID == int64(key) {
+				if value != nil {
 					sc.memTracker.Consume(-t.MemUsage)
 					sc.Set(int64(key), t.CopyWithoutBucketsAndCMS())
 				}
@@ -318,8 +318,6 @@ func (sc *simpleStatsCache) SetBytesLimit(BytesLimit int64) {
 
 // BytesConsumed returns the consumed memory usage value in bytes.
 func (sc *simpleStatsCache) BytesConsumed() int64 {
-	sc.mu.Lock()
-	defer sc.mu.Unlock()
 	return sc.memTracker.BytesConsumed()
 }
 
