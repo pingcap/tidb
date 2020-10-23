@@ -95,7 +95,7 @@ func TestCopRuntimeStats(t *testing.T) {
 		t.Fatal("exist")
 	}
 	cop := stats.GetCopStats(tableScanID)
-	if cop.String() != "proc max:2ns, min:1ns, p80:2ns, p95:2ns, iters:3, tasks:2" {
+	if cop.String() != "tikv_task:{proc max:2ns, min:1ns, p80:2ns, p95:2ns, iters:3, tasks:2}" {
 		t.Fatal("table_scan")
 	}
 	copStats := cop.stats["8.8.8.8"]
@@ -108,7 +108,7 @@ func TestCopRuntimeStats(t *testing.T) {
 		t.Fatalf("cop stats string is not expect, got: %v", copStats[0].String())
 	}
 
-	if stats.GetCopStats(aggID).String() != "proc max:4ns, min:3ns, p80:4ns, p95:4ns, iters:7, tasks:2" {
+	if stats.GetCopStats(aggID).String() != "tikv_task:{proc max:4ns, min:3ns, p80:4ns, p95:4ns, iters:7, tasks:2}" {
 		t.Fatal("agg")
 	}
 	rootStats := stats.GetRootStats(tableReaderID)
@@ -120,6 +120,46 @@ func TestCopRuntimeStats(t *testing.T) {
 	}
 }
 
+<<<<<<< HEAD
+=======
+func TestCopRuntimeStatsForTiFlash(t *testing.T) {
+	stats := NewRuntimeStatsColl()
+	tableScanID := 1
+	aggID := 2
+	tableReaderID := 3
+	stats.RecordOneCopTask(aggID, "8.8.8.8", mockExecutorExecutionSummaryForTiFlash(1, 1, 1, "tablescan_"+strconv.Itoa(tableScanID)))
+	stats.RecordOneCopTask(aggID, "8.8.8.9", mockExecutorExecutionSummaryForTiFlash(2, 2, 2, "tablescan_"+strconv.Itoa(tableScanID)))
+	stats.RecordOneCopTask(tableScanID, "8.8.8.8", mockExecutorExecutionSummaryForTiFlash(3, 3, 3, "aggregation_"+strconv.Itoa(aggID)))
+	stats.RecordOneCopTask(tableScanID, "8.8.8.9", mockExecutorExecutionSummaryForTiFlash(4, 4, 4, "aggregation_"+strconv.Itoa(aggID)))
+	if stats.ExistsCopStats(tableScanID) != true {
+		t.Fatal("exist")
+	}
+	cop := stats.GetCopStats(tableScanID)
+	if cop.String() != "tikv_task:{proc max:2ns, min:1ns, p80:2ns, p95:2ns, iters:3, tasks:2}" {
+		t.Fatal("table_scan")
+	}
+	copStats := cop.stats["8.8.8.8"]
+	if copStats == nil {
+		t.Fatal("cop stats is nil")
+	}
+	copStats[0].SetRowNum(10)
+	copStats[0].Record(time.Second, 10)
+	if copStats[0].String() != "time:1.000000001s, loops:2" {
+		t.Fatalf("cop stats string is not expect, got: %v", copStats[0].String())
+	}
+
+	if stats.GetCopStats(aggID).String() != "tikv_task:{proc max:4ns, min:3ns, p80:4ns, p95:4ns, iters:7, tasks:2}" {
+		t.Fatal("agg")
+	}
+	rootStats := stats.GetRootStats(tableReaderID)
+	if rootStats == nil {
+		t.Fatal("table_reader")
+	}
+	if stats.ExistsRootStats(tableReaderID) == false {
+		t.Fatal("table_reader not exists")
+	}
+}
+>>>>>>> 58f2a48b1... *:add the indexlookup runtime stats infomation (#20145)
 func TestRuntimeStatsWithCommit(t *testing.T) {
 	commitDetail := &CommitDetails{
 		GetCommitTsTime:   time.Second,
