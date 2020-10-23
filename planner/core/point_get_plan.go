@@ -74,11 +74,6 @@ type nameValuePair struct {
 	param   *driver.ParamMarkerExpr
 }
 
-// DBName return the database name in PointGetPlan.
-func (p *PointGetPlan) DBName() string {
-	return p.dbName
-}
-
 // Schema implements the Plan interface.
 func (p *PointGetPlan) Schema() *expression.Schema {
 	return p.schema
