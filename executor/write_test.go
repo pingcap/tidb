@@ -1573,6 +1573,7 @@ func (s *testSuite8) TestUpdate(c *C) {
 	tk.MustGetErrCode("update t2 set a=default(b), b=default(b);", mysql.ErrBadGeneratedColumn)
 	tk.MustGetErrCode("update t2 set a=default(a), c=default(c);", mysql.ErrBadGeneratedColumn)
 	tk.MustGetErrCode("update t2 set a=default(a), c=default(a);", mysql.ErrBadGeneratedColumn)
+	tk.MustGetErrCode("update t2 as tt set c = 123;", mysql.ErrBadGeneratedColumn)
 	tk.MustExec("drop table t1, t2")
 }
 
