@@ -100,3 +100,5 @@ require (
 )
 
 go 1.13
+
+replace github.com/pingcap/parser => github.com/watchpoints/parser v0.0.0-20201023163303-211578574e01

@@ -1129,8 +1129,9 @@ func checkDuplicateConstraint(namesMap map[string]bool, name string, foreign boo
 	namesMap[nameLower] = true
 	return nil
 }
+// checkEmptyIndexInfo check if a index is empty .
 func checkEmptyIndexInfo(name string, isEmptyIndex bool) error {
-	if isEmptyIndex && name == "" {
+	if isEmptyIndex {
 		return ErrWrongNameForIndex.GenWithStackByArgs(name)
 	}
 	return nil

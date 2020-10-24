@@ -491,11 +491,6 @@ func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 				p.err = err
 				return
 			}
-			err = checkEmptyIndexInfo(constraint.Name,constraint.IsEmptyIndex)
-			if err != nil {
-				p.err = err
-				return
-			}
 		case ast.ConstraintPrimaryKey:
 			if countPrimaryKey > 0 {
 				p.err = infoschema.ErrMultiplePriKey
@@ -770,14 +765,6 @@ func checkIndexInfo(indexName string, IndexPartSpecifications []*ast.IndexPartSp
 		return infoschema.ErrTooManyKeyParts.GenWithStackByArgs(mysql.MaxKeyParts)
 	}
 	return checkDuplicateColumnName(IndexPartSpecifications)
-}
-
-// checkEmptyIndexInfo checks  empty index name
-func checkEmptyIndexInfo(name string, isEmptyIndex bool) error {
-	if isEmptyIndex && name == "" {
-		return ddl.ErrWrongNameForIndex.GenWithStackByArgs(name)
-	}
-	return nil
 }
 
 // checkUnsupportedTableOptions checks if there exists unsupported table options
