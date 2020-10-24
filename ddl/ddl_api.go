@@ -1066,6 +1066,13 @@ func checkTooManyColumns(colDefs []*model.ColumnInfo) error {
 	return nil
 }
 
+func checkTooManyIndexes(idxDefs []*model.IndexInfo) error {
+	if uint32(len(idxDefs)) > atomic.LoadUint32(&TableIndexCountLimit) {
+		return errTooManyKeys.GenWithStackByArgs(TableIndexCountLimit)
+	}
+	return nil
+}
+
 // checkColumnsAttributes checks attributes for multiple columns.
 func checkColumnsAttributes(colDefs []*model.ColumnInfo) error {
 	for _, colDef := range colDefs {
@@ -1467,6 +1474,9 @@ func checkTableInfoValidExtra(tbInfo *model.TableInfo) error {
 	if err := checkTooManyColumns(tbInfo.Columns); err != nil {
 		return errors.Trace(err)
 	}
+	if err := checkTooManyIndexes(tbInfo.Indices); err != nil {
+		return errors.Trace(err)
+	}
 	if err := checkColumnsAttributes(tbInfo.Columns); err != nil {
 		return errors.Trace(err)
 	}
@@ -1502,6 +1512,8 @@ func checkTableInfoValidWithStmt(ctx sessionctx.Context, tbInfo *model.TableInfo
 				err = checkPartitionByRange(ctx, tbInfo, s)
 			case model.PartitionTypeHash:
 				err = checkPartitionByHash(ctx, tbInfo, s)
+			case model.PartitionTypeList:
+				err = checkPartitionByList(ctx, tbInfo, s)
 			}
 			if err != nil {
 				return errors.Trace(err)
@@ -1955,14 +1967,14 @@ func checkPartitionByRange(ctx sessionctx.Context, tbInfo *model.TableInfo, s *a
 	}
 
 	// Check for range columns partition.
-	if err := checkRangeColumnsPartitionType(tbInfo); err != nil {
+	if err := checkColumnsPartitionType(tbInfo); err != nil {
 		return err
 	}
 
 	if s != nil {
 		for _, def := range s.Partition.Definitions {
 			exprs := def.Clause.(*ast.PartitionDefinitionClauseLessThan).Exprs
-			if err := checkRangeColumnsTypeAndValuesMatch(ctx, tbInfo, exprs); err != nil {
+			if err := checkColumnsTypeAndValuesMatch(ctx, tbInfo, exprs); err != nil {
 				return err
 			}
 		}
@@ -1971,7 +1983,49 @@ func checkPartitionByRange(ctx sessionctx.Context, tbInfo *model.TableInfo, s *a
 	return checkRangeColumnsPartitionValue(ctx, tbInfo)
 }
 
-func checkRangeColumnsPartitionType(tbInfo *model.TableInfo) error {
+// checkPartitionByList checks validity of a "BY LIST" partition.
+func checkPartitionByList(ctx sessionctx.Context, tbInfo *model.TableInfo, s *ast.CreateTableStmt) error {
+	pi := tbInfo.Partition
+	if err := checkPartitionNameUnique(pi); err != nil {
+		return err
+	}
+
+	if err := checkAddPartitionTooManyPartitions(uint64(len(pi.Definitions))); err != nil {
+		return err
+	}
+
+	if err := checkListPartitionValue(ctx, tbInfo); err != nil {
+		return err
+	}
+
+	// s maybe nil when add partition.
+	if s == nil {
+		return nil
+	}
+	if len(pi.Columns) == 0 {
+		if err := checkPartitionFuncValid(ctx, tbInfo, s.Partition.Expr); err != nil {
+			return err
+		}
+		return checkPartitionFuncType(ctx, s, tbInfo)
+	}
+	if err := checkColumnsPartitionType(tbInfo); err != nil {
+		return err
+	}
+
+	if len(pi.Columns) > 0 {
+		for _, def := range s.Partition.Definitions {
+			inValues := def.Clause.(*ast.PartitionDefinitionClauseIn).Values
+			for _, vs := range inValues {
+				if err := checkColumnsTypeAndValuesMatch(ctx, tbInfo, vs); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func checkColumnsPartitionType(tbInfo *model.TableInfo) error {
 	for _, col := range tbInfo.Partition.Columns {
 		colInfo := getColumnInfoByName(tbInfo, col.L)
 		if colInfo == nil {
@@ -3292,22 +3346,30 @@ func checkModifyCharsetAndCollation(toCharset, toCollate, origCharset, origColla
 // field length and precision.
 func CheckModifyTypeCompatible(origin *types.FieldType, to *types.FieldType) (allowedChangeColumnValueMsg string, err error) {
 	unsupportedMsg := fmt.Sprintf("type %v not match origin %v", to.CompactStr(), origin.CompactStr())
-	var isIntType bool
+	var skipSignCheck bool
+	var skipLenCheck bool
 	switch origin.Tp {
-	case mysql.TypeVarchar, mysql.TypeString, mysql.TypeVarString,
-		mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
+	case mysql.TypeVarchar, mysql.TypeString, mysql.TypeVarString, mysql.TypeBlob,
+		mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
 		switch to.Tp {
 		case mysql.TypeVarchar, mysql.TypeString, mysql.TypeVarString,
 			mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
+			skipSignCheck = true
+			skipLenCheck = true
+		case mysql.TypeEnum, mysql.TypeSet:
+			return unsupportedMsg, errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
 		default:
 			return "", errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
 		}
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
 		switch to.Tp {
 		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
-			isIntType = true
+			// Changing integer to integer, whether reorg is necessary is depend on the flen/decimal/signed.
+			skipSignCheck = true
+			skipLenCheck = true
 		default:
-			return "", errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
+			// Changing integer to other types, reorg is absolutely necessary.
+			return unsupportedMsg, errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
 		}
 	case mysql.TypeEnum, mysql.TypeSet:
 		var typeVar string
@@ -3316,20 +3378,26 @@ func CheckModifyTypeCompatible(origin *types.FieldType, to *types.FieldType) (al
 		} else {
 			typeVar = "set"
 		}
-		if origin.Tp != to.Tp {
+		switch to.Tp {
+		case mysql.TypeEnum, mysql.TypeSet:
+			if len(to.Elems) < len(origin.Elems) {
+				msg := fmt.Sprintf("the number of %s column's elements is less than the original: %d", typeVar, len(origin.Elems))
+				return msg, errUnsupportedModifyColumn.GenWithStackByArgs(msg)
+			}
+			for index, originElem := range origin.Elems {
+				toElem := to.Elems[index]
+				if originElem != toElem {
+					msg := fmt.Sprintf("cannot modify %s column value %s to %s", typeVar, originElem, toElem)
+					return msg, errUnsupportedModifyColumn.GenWithStackByArgs(msg)
+				}
+			}
+		case mysql.TypeVarchar, mysql.TypeString, mysql.TypeVarString,
+			mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
+			msg := fmt.Sprintf("cannot modify %s type column's to type %s", typeVar, to.String())
+			return msg, errUnsupportedModifyColumn.GenWithStackByArgs(msg)
+		default:
 			msg := fmt.Sprintf("cannot modify %s type column's to type %s", typeVar, to.String())
 			return "", errUnsupportedModifyColumn.GenWithStackByArgs(msg)
-		}
-		if len(to.Elems) < len(origin.Elems) {
-			msg := fmt.Sprintf("the number of %s column's elements is less than the original: %d", typeVar, len(origin.Elems))
-			return "", errUnsupportedModifyColumn.GenWithStackByArgs(msg)
-		}
-		for index, originElem := range origin.Elems {
-			toElem := to.Elems[index]
-			if originElem != toElem {
-				msg := fmt.Sprintf("cannot modify %s column value %s to %s", typeVar, originElem, toElem)
-				return "", errUnsupportedModifyColumn.GenWithStackByArgs(msg)
-			}
 		}
 	case mysql.TypeNewDecimal:
 		if origin.Tp != to.Tp {
@@ -3342,6 +3410,50 @@ func CheckModifyTypeCompatible(origin *types.FieldType, to *types.FieldType) (al
 			msg := fmt.Sprintf("decimal change from decimal(%d, %d) to decimal(%d, %d)", origin.Flen, origin.Decimal, to.Flen, to.Decimal)
 			return msg, errUnsupportedModifyColumn.GenWithStackByArgs(msg)
 		}
+	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp, mysql.TypeDuration, mysql.TypeYear:
+		switch origin.Tp {
+		case mysql.TypeDuration:
+			switch to.Tp {
+			case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
+				return "", errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
+			}
+		case mysql.TypeDate:
+			switch to.Tp {
+			case mysql.TypeDatetime, mysql.TypeTimestamp:
+				return "", errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
+			}
+		case mysql.TypeTimestamp:
+			switch to.Tp {
+			case mysql.TypeDuration, mysql.TypeDatetime:
+				return "", errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
+			}
+		case mysql.TypeDatetime:
+			switch to.Tp {
+			case mysql.TypeTimestamp:
+				return "", errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
+			}
+		case mysql.TypeYear:
+			switch to.Tp {
+			case mysql.TypeDuration:
+				return "", errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
+			case mysql.TypeYear:
+			default:
+				return "", ErrTruncatedWrongValue.GenWithStack("banned conversion that must fail")
+			}
+		}
+		switch to.Tp {
+		case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp, mysql.TypeDuration:
+			skipSignCheck = true
+			skipLenCheck = true
+		case mysql.TypeYear:
+			if origin.Tp != mysql.TypeYear {
+				return "", ErrWarnDataOutOfRange.GenWithStack("banned conversion that must fail")
+			}
+			skipSignCheck = true
+			skipLenCheck = true
+		default:
+			return "", errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
+		}
 	default:
 		if origin.Tp != to.Tp {
 			return "", errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
@@ -3350,7 +3462,7 @@ func CheckModifyTypeCompatible(origin *types.FieldType, to *types.FieldType) (al
 
 	if to.Flen > 0 && to.Flen < origin.Flen {
 		msg := fmt.Sprintf("length %d is less than origin %d", to.Flen, origin.Flen)
-		if isIntType {
+		if skipLenCheck {
 			return msg, errUnsupportedModifyColumn.GenWithStackByArgs(msg)
 		}
 		return "", errUnsupportedModifyColumn.GenWithStackByArgs(msg)
@@ -3364,7 +3476,7 @@ func CheckModifyTypeCompatible(origin *types.FieldType, to *types.FieldType) (al
 	originUnsigned := mysql.HasUnsignedFlag(origin.Flag)
 	if originUnsigned != toUnsigned {
 		msg := fmt.Sprintf("can't change unsigned integer to signed or vice versa")
-		if isIntType {
+		if skipSignCheck {
 			return msg, errUnsupportedModifyColumn.GenWithStackByArgs(msg)
 		}
 		return "", errUnsupportedModifyColumn.GenWithStackByArgs(msg)
@@ -3377,6 +3489,7 @@ func CheckModifyTypeCompatible(origin *types.FieldType, to *types.FieldType) (al
 // It returns error if the two types has incompatible charset and collation, different sign, different
 // digital/string types, or length of new Flen and Decimal is less than origin.
 func checkModifyTypes(ctx sessionctx.Context, origin *types.FieldType, to *types.FieldType, needRewriteCollationData bool) error {
+	var needReorg bool
 	changeColumnValueMsg, err := CheckModifyTypeCompatible(origin, to)
 	if err != nil {
 		enableChangeColumnType := ctx.GetSessionVars().EnableChangeColumnType
@@ -3391,9 +3504,14 @@ func checkModifyTypes(ctx sessionctx.Context, origin *types.FieldType, to *types
 			msg := "tidb_enable_change_column_type is true and this column has primary key flag"
 			return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
 		}
+		needReorg = true
 	}
 
 	err = checkModifyCharsetAndCollation(to.Charset, to.Collate, origin.Charset, origin.Collate, needRewriteCollationData)
+	// column type change can handle the charset change between these two types in the process of the reorg.
+	if err != nil && errUnsupportedModifyCharset.Equal(err) && needReorg {
+		return nil
+	}
 	return errors.Trace(err)
 }
 
@@ -4966,7 +5084,7 @@ func buildPartitionInfo(ctx sessionctx.Context, meta *model.TableInfo, d *ddl, s
 		// For RANGE partition only VALUES LESS THAN should be possible.
 		clause := def.Clause.(*ast.PartitionDefinitionClauseLessThan)
 		if len(part.Columns) > 0 {
-			if err := checkRangeColumnsTypeAndValuesMatch(ctx, meta, clause.Exprs); err != nil {
+			if err := checkColumnsTypeAndValuesMatch(ctx, meta, clause.Exprs); err != nil {
 				return nil, err
 			}
 		}
@@ -4989,7 +5107,7 @@ func buildPartitionInfo(ctx sessionctx.Context, meta *model.TableInfo, d *ddl, s
 	return part, nil
 }
 
-func checkRangeColumnsTypeAndValuesMatch(ctx sessionctx.Context, meta *model.TableInfo, exprs []ast.ExprNode) error {
+func checkColumnsTypeAndValuesMatch(ctx sessionctx.Context, meta *model.TableInfo, exprs []ast.ExprNode) error {
 	// Validate() has already checked len(colNames) = len(exprs)
 	// create table ... partition by range columns (cols)
 	// partition p0 values less than (expr)
@@ -5011,7 +5129,6 @@ func checkRangeColumnsTypeAndValuesMatch(ctx sessionctx.Context, meta *model.Tab
 		if err != nil {
 			return err
 		}
-
 		// Check val.ConvertTo(colType) doesn't work, so we need this case by case check.
 		switch colType.Tp {
 		case mysql.TypeDate, mysql.TypeDatetime:
@@ -5019,6 +5136,46 @@ func checkRangeColumnsTypeAndValuesMatch(ctx sessionctx.Context, meta *model.Tab
 			case types.KindString, types.KindBytes:
 			default:
 				return ErrWrongTypeColumnValue.GenWithStackByArgs()
+			}
+		}
+	}
+	return nil
+}
+
+func formatListPartitionValue(ctx sessionctx.Context, tblInfo *model.TableInfo) error {
+	defs := tblInfo.Partition.Definitions
+	pi := tblInfo.Partition
+	var colTps []*types.FieldType
+	if len(pi.Columns) == 0 {
+		tp := types.NewFieldType(mysql.TypeLonglong)
+		if isRangePartitionColUnsignedBigint(tblInfo.Columns, tblInfo.Partition) {
+			tp.Flag |= mysql.UnsignedFlag
+		}
+		colTps = []*types.FieldType{tp}
+	} else {
+		colTps = make([]*types.FieldType, 0, len(pi.Columns))
+		for _, colName := range pi.Columns {
+			colInfo := findColumnByName(colName.L, tblInfo)
+			if colInfo == nil {
+				return errors.Trace(ErrFieldNotFoundPart)
+			}
+			colTps = append(colTps, &colInfo.FieldType)
+		}
+	}
+	for i := range defs {
+		for j, vs := range defs[i].InValues {
+			for k, v := range vs {
+				if colTps[k].EvalType() != types.ETInt {
+					continue
+				}
+				isUnsigned := mysql.HasUnsignedFlag(colTps[k].Flag)
+				currentRangeValue, isNull, err := getListPartitionValue(ctx, v, isUnsigned)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				if !isNull {
+					defs[i].InValues[j][k] = fmt.Sprintf("%d", currentRangeValue)
+				}
 			}
 		}
 	}
@@ -5317,6 +5474,49 @@ func (d *ddl) CreateSequence(ctx sessionctx.Context, stmt *ast.CreateSequenceStm
 	}
 
 	return d.CreateTableWithInfo(ctx, ident.Schema, tbInfo, onExist, false /*tryRetainID*/)
+}
+
+func (d *ddl) AlterSequence(ctx sessionctx.Context, stmt *ast.AlterSequenceStmt) error {
+	ident := ast.Ident{Name: stmt.Name.Name, Schema: stmt.Name.Schema}
+	is := d.GetInfoSchemaWithInterceptor(ctx)
+	// Check schema existence.
+	db, ok := is.SchemaByName(ident.Schema)
+	if !ok {
+		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(ident.Schema)
+	}
+	// Check table existence.
+	tbl, err := is.TableByName(ident.Schema, ident.Name)
+	if err != nil {
+		if stmt.IfExists {
+			ctx.GetSessionVars().StmtCtx.AppendNote(err)
+			return nil
+		}
+		return err
+	}
+	if !tbl.Meta().IsSequence() {
+		return ErrWrongObject.GenWithStackByArgs(ident.Schema, ident.Name, "SEQUENCE")
+	}
+
+	// Validate the new sequence option value in old sequenceInfo.
+	oldSequenceInfo := tbl.Meta().Sequence
+	copySequenceInfo := *oldSequenceInfo
+	_, _, err = alterSequenceOptions(stmt.SeqOptions, ident, &copySequenceInfo)
+	if err != nil {
+		return err
+	}
+
+	job := &model.Job{
+		SchemaID:   db.ID,
+		TableID:    tbl.Meta().ID,
+		SchemaName: db.Name.L,
+		Type:       model.ActionAlterSequence,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{ident, stmt.SeqOptions},
+	}
+
+	err = d.doDDLJob(ctx, job)
+	err = d.callHookOnChanged(err)
+	return errors.Trace(err)
 }
 
 func (d *ddl) DropSequence(ctx sessionctx.Context, ti ast.Ident, ifExists bool) (err error) {

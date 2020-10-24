@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -97,7 +98,7 @@ func (r *streamResult) readDataFromResponse(ctx context.Context, resp kv.Respons
 		return false, errors.Errorf("stream response error: [%d]%s\n", stream.Error.Code, stream.Error.Msg)
 	}
 	for _, warning := range stream.Warnings {
-		r.ctx.GetSessionVars().StmtCtx.AppendWarning(terror.ClassTiKV.Synthesize(terror.ErrCode(warning.Code), warning.Msg))
+		r.ctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ClassTiKV.Synthesize(terror.ErrCode(warning.Code), warning.Msg))
 	}
 
 	err = result.Unmarshal(stream.Data)
