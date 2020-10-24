@@ -188,7 +188,7 @@ func updateAddIndexProgress(w *worker, tblInfo *model.TableInfo, addedRowCount i
 	if tblInfo == nil || addedRowCount == 0 {
 		return
 	}
-	totalCount := GetTableTotalCount(w, tblInfo)
+	totalCount := getTableTotalCount(w, tblInfo)
 	progress := float64(0)
 	if totalCount > 0 {
 		progress = float64(addedRowCount) / float64(totalCount)
@@ -201,7 +201,7 @@ func updateAddIndexProgress(w *worker, tblInfo *model.TableInfo, addedRowCount i
 	metrics.AddIndexProgress.Set(progress * 100)
 }
 
-func GetTableTotalCount(w *worker, tblInfo *model.TableInfo) int64 {
+func getTableTotalCount(w *worker, tblInfo *model.TableInfo) int64 {
 	var ctx sessionctx.Context
 	ctx, err := w.sessPool.get()
 	if err != nil {
@@ -236,10 +236,12 @@ func (w *worker) isReorgRunnable(d *ddlCtx) error {
 		return errCancelledDDLJob
 	}
 
-	if !d.isOwner() {
-		// If it's not the owner, we will try later, so here just returns an error.
-		logutil.BgLogger().Info("[ddl] DDL worker is not the DDL owner", zap.String("ID", d.uuid))
-		return errors.Trace(errNotOwner)
+	if w.typeStr() != subTaskTypeStr {
+		if !d.isOwner() {
+			// If it's not the owner, we will try later, so here just returns an error.
+			logutil.BgLogger().Info("[ddl] DDL worker is not the DDL owner", zap.String("ID", d.uuid))
+			return errors.Trace(errNotOwner)
+		}
 	}
 	return nil
 }
@@ -532,6 +534,14 @@ func getReorgInfo(d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table) (*re
 }
 
 func (r *reorgInfo) UpdateReorgMeta(txn kv.Transaction, startHandle, endHandle kv.Handle, physicalTableID int64) error {
+	if startHandle == nil && endHandle == nil {
+		return nil
+	}
+	t := meta.NewMeta(txn)
+	return errors.Trace(t.UpdateDDLReorgHandle(r.Job, startHandle, endHandle, physicalTableID))
+}
+
+func (r *reorgInfo) UpdateSubTaskReorgMeta(txn kv.Transaction, startHandle, endHandle kv.Handle, physicalTableID int64) error {
 	if startHandle == nil && endHandle == nil {
 		return nil
 	}

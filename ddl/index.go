@@ -378,6 +378,31 @@ func updateHiddenColumns(tblInfo *model.TableInfo, idxInfo *model.IndexInfo, sta
 	}
 }
 
+func (w *worker) onCreateIndexSubTask(d *ddlCtx, t *meta.Meta, subTask *SubTask) (err error) {
+	var (
+		indexInfo      model.IndexInfo
+		startHandle    kv.Handle
+		endHandle      kv.Handle
+		isCommonHandle bool
+		status         SubTaskStatus
+		runner         string
+		physicalID     int64
+	)
+	err = subTask.DecodeArgs(&indexInfo, &isCommonHandle)
+
+	startHandle, endHandle, physicalID, runner, status, err = t.GetDDLSubTaskReorgInfo(subTask.jobID, subTask.taskID, isCommonHandle)
+
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	if runner == "" && status == Unclaimed {
+		t.UpdateDDLSubTaskReorgInfo(subTask.jobID, subTask.taskID, startHandle, endHandle, physicalID, runner, Running)
+	}
+
+	return
+}
+
 func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK bool) (ver int64, err error) {
 	// Handle the rolling back job.
 	if job.IsRollingback() {
@@ -554,26 +579,32 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 		// (only the owner can execute the parent job)
 		// 1. It will get all the subTasks from the subTaskQueue, then check the 'runner' status
 		// which represents the TIDB instance that is executing the subTask,
-		// (if it's down, update the runner to nil and set status to unclaimed)
-		// 2. Check the subTask's status one by one, reset the failed subTask' runner and status to nil and unclaimed.
+		// (if it's down, update the runner to nil and set status to Unclaimed)
+		// 2. Check the subTask's status one by one, reset the failed subTask' runner and status to nil and Unclaimed.
 
-		// 	All the TIDB instance in the cluster will read the subTaskQueue on time, get at most one unclaimed task and execute each time.
+		// 	All the TIDB instance in the cluster will read the subTaskQueue on time, get at most one Unclaimed task and execute each time.
 		//  If owner find all the subTasks in queue witch have same jobId were done, it will finish the job.
-		if GetTableTotalCount(w, tblInfo) > limit {
+
+		var parentJob parentJob
+		err = job.DecodeArgs(&parentJob.subTaskNum)
+		if err == nil {
+			ver, err = w.handleParentJob(d, t, job)
+		} else if getTableTotalCount(w, tblInfo) > limit {
 			reorgInfos, getReorgErr := getParentJobReorgInfo(d, t, job, tbl)
 			if getReorgErr != nil {
 				return ver, errors.Trace(getReorgErr)
 			}
-			w.dispatchAddIndexSubTasks(d, tbl, indexInfo, reorgInfos)
+			err = w.dispatchAddIndexSubTasks(d, tbl, indexInfo, reorgInfos, t)
+		} else {
+			err = w.runReorgJob(t, reorgInfo, tbl.Meta(), d.lease, func() (addIndexErr error) {
+				defer util.Recover(metrics.LabelDDL, "onCreateIndex",
+					func() {
+						addIndexErr = errCancelledDDLJob.GenWithStack("add table `%v` index `%v` panic", tblInfo.Name, indexInfo.Name)
+					}, false)
+				return w.addTableIndex(tbl, indexInfo, reorgInfo)
+			})
 		}
 
-		err = w.runReorgJob(t, reorgInfo, tbl.Meta(), d.lease, func() (addIndexErr error) {
-			defer util.Recover(metrics.LabelDDL, "onCreateIndex",
-				func() {
-					addIndexErr = errCancelledDDLJob.GenWithStack("add table `%v` index `%v` panic", tblInfo.Name, indexInfo.Name)
-				}, false)
-			return w.addTableIndex(tbl, indexInfo, reorgInfo)
-		})
 		if err != nil {
 			if errWaitReorgTimeout.Equal(err) {
 				// if timeout, we should return, check for the owner and re-wait job done.
@@ -1108,15 +1139,15 @@ type addIndexSubTaskRange struct {
 }
 
 type parentJob struct {
-	isParent bool `json:"is_parent"`
+	subTaskNum int64 `json:"sub_task_num"`
 }
 
-func (w *worker) dispatchAddIndexSubTasks(d *ddlCtx, t table.Table, idx *model.IndexInfo, reorgInfos []reorgInfo) error {
+func (w *worker) dispatchAddIndexSubTasks(d *ddlCtx, t table.Table, idx *model.IndexInfo, reorgInfos []reorgInfo, m *meta.Meta) (err error) {
 	var (
-		job                   *model.Job
-		err                   error
-		addIndexSubTaskRanges []addIndexSubTaskRange
-		subTasks              []*SubTask
+		job         *model.Job
+		subTasks    []*SubTask
+		startHandle kv.Handle
+		endHandle   kv.Handle
 	)
 	job = reorgInfos[0].Job
 	if tbl, ok := t.(table.PartitionedTable); ok {
@@ -1126,8 +1157,17 @@ func (w *worker) dispatchAddIndexSubTasks(d *ddlCtx, t table.Table, idx *model.I
 				return errors.Trace(err)
 			}
 			for _, kvRange := range kvRanges {
-				item := addIndexSubTaskRange{kvRange, reorgInfo.PhysicalTableID}
-				addIndexSubTaskRanges = append(addIndexSubTaskRanges, item)
+				startHandle, endHandle, err = decodeHandleRange(kvRange)
+				tid := int64(len(subTasks))
+				subTask := SubTask{
+					taskID:   tid,
+					jobID:    job.ID,
+					TaskType: addIndexSubTaskType,
+				}
+				addSubTask := addIndexSubTask{idx, tbl.Meta().IsCommonHandle}
+				subTask.Args = append(subTask.Args, addSubTask.IndexInfo)
+				subTasks = append(subTasks, &subTask)
+				m.UpdateDDLSubTaskReorgInfo(job.ID, tid, startHandle, endHandle, reorgInfo.PhysicalTableID, "", Unclaimed)
 			}
 		}
 	} else {
@@ -1136,34 +1176,34 @@ func (w *worker) dispatchAddIndexSubTasks(d *ddlCtx, t table.Table, idx *model.I
 			return errors.Trace(err)
 		}
 		for _, kvRange := range kvRanges {
-			item := addIndexSubTaskRange{kvRange, reorgInfos[0].PhysicalTableID}
-			addIndexSubTaskRanges = append(addIndexSubTaskRanges, item)
+			startHandle, endHandle, err = decodeHandleRange(kvRange)
+			tid := int64(len(subTasks))
+			subTask := SubTask{
+				taskID:   tid,
+				jobID:    job.ID,
+				TaskType: addIndexSubTaskType,
+			}
+			addSubTask := addIndexSubTask{idx, tbl.Meta().IsCommonHandle}
+			subTask.Args = append(subTask.Args, addSubTask.IndexInfo)
+			subTasks = append(subTasks, &subTask)
+			m.UpdateDDLSubTaskReorgInfo(job.ID, tid, startHandle, endHandle, reorgInfos[0].PhysicalTableID, "", Unclaimed)
 		}
 	}
-
-	sessCtx := newContext(reorgInfos[0].d.store)
-	servers, err := infoschema.GetTiDBServerInfo(sessCtx)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	minRangeSizeForEachTask := len(addIndexSubTaskRanges) / len(servers)
-	decodeColMap, err := makeupDecodeColMap(sessCtx, t)
+	parentJob := parentJob{int64(len(subTasks))}
+	job.Args = append(job.Args, parentJob.subTaskNum)
 
-	for i := 0; i < len(addIndexSubTaskRanges)-minRangeSizeForEachTask; i = i + minRangeSizeForEachTask {
-		subTask := SubTask{
-			Job:      reorgInfos[0].Job,
-			TaskType: addIndexSubTaskType,
-			runner:   nil,
-			Status:   unclaimed,
-		}
-		addSubTask := addIndexSubTask{idx, addIndexSubTaskRanges[i : i+minRangeSizeForEachTask], decodeColMap}
-		subTask.Args = append(subTask.Args, addSubTask.IndexInfo, addSubTask.decodeColMap, addSubTask.AddIndexSubTaskRanges)
-		subTasks = append(subTasks, &subTask)
+	err = d.addBatchTaskToQueue(subTasks)
+	if err != nil {
+		return errors.Trace(err)
 	}
-	parentJob := parentJob{true}
-	job.Args = append(job.Args, parentJob.isParent)
-	//TODO mark the job as parent job with add json agrs isParent to true
-	err = d.AddBatchTaskToQueue(subTasks)
+	err = m.UpdateDDLJob(0, job, true)
+
+	if err != nil {
+		//TODO delete subTasks from subTask queue, when update ddl job faild
+	}
 	return errors.Trace(err)
 }
 
