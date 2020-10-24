@@ -20,7 +20,18 @@ import (
 // node is the struct implements node interface except for Accept method.
 // Node implementations should embed it in.
 type node struct {
-	text string
+	text   string
+	offset int
+}
+
+// SetOriginTextPosition implements Node interface.
+func (n *node) SetOriginTextPosition(offset int) {
+	n.offset = offset
+}
+
+// OriginTextPosition implements Node interface.
+func (n *node) OriginTextPosition() int {
+	return n.offset
 }
 
 // SetText implements Node interface.

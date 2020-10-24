@@ -25,6 +25,7 @@ import (
 %}
 
 %union {
+	offset  int
 	ident   string
 	number  uint64
 	hint    *ast.TableOptimizerHint
