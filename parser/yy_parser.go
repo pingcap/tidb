@@ -82,6 +82,15 @@ type Parser struct {
 	yyVAL  *yySymType
 }
 
+func yySetOffset(yyVAL *yySymType, offset int) {
+	if yyVAL.expr != nil {
+		yyVAL.expr.SetOriginTextPosition(offset)
+	}
+}
+
+func yyhintSetOffset(_ *yyhintSymType, _ int) {
+}
+
 type stmtTexter interface {
 	stmtText() string
 }

@@ -1998,6 +1998,14 @@ func (n *AdminStmt) Accept(v Visitor) (Node, bool) {
 		n.Tables[i] = node.(*TableName)
 	}
 
+	if n.Where != nil {
+		node, ok := n.Where.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.Where = node.(ExprNode)
+	}
+
 	return v.Leave(n)
 }
 

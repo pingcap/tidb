@@ -1276,8 +1276,46 @@ func (n *Assignment) Accept(v Visitor) (Node, bool) {
 }
 
 type ColumnNameOrUserVar struct {
+	node
 	ColumnName *ColumnName
 	UserVar    *VariableExpr
+}
+
+func (n *ColumnNameOrUserVar) Restore(ctx *format.RestoreCtx) error {
+	if n.ColumnName != nil {
+		if err := n.ColumnName.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore ColumnNameOrUserVar.ColumnName")
+		}
+	}
+	if n.UserVar != nil {
+		if err := n.UserVar.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore ColumnNameOrUserVar.UserVar")
+		}
+	}
+	return nil
+}
+
+func (n *ColumnNameOrUserVar) Accept(v Visitor) (node Node, ok bool) {
+	newNode, skipChild := v.Enter(n)
+	if skipChild {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*ColumnNameOrUserVar)
+	if n.ColumnName != nil {
+		node, ok = n.ColumnName.Accept(v)
+		if !ok {
+			return node, false
+		}
+		n.ColumnName = node.(*ColumnName)
+	}
+	if n.UserVar != nil {
+		node, ok = n.UserVar.Accept(v)
+		if !ok {
+			return node, false
+		}
+		n.UserVar = node.(*VariableExpr)
+	}
+	return v.Leave(n)
 }
 
 // LoadDataStmt is a statement to load data from a specified file, then insert this rows into an existing table.
@@ -1328,17 +1366,9 @@ func (n *LoadDataStmt) Restore(ctx *format.RestoreCtx) error {
 			if i != 0 {
 				ctx.WritePlain(",")
 			}
-			if c.ColumnName != nil {
-				if err := c.ColumnName.Restore(ctx); err != nil {
-					return errors.Annotate(err, "An error occurred while restore LoadDataStmt.ColumnsAndUserVars")
-				}
+			if err := c.Restore(ctx); err != nil {
+				return errors.Annotate(err, "An error occurred while restore LoadDataStmt.ColumnsAndUserVars")
 			}
-			if c.UserVar != nil {
-				if err := c.UserVar.Restore(ctx); err != nil {
-					return errors.Annotate(err, "An error occurred while restore LoadDataStmt.ColumnsAndUserVars")
-				}
-			}
-
 		}
 		ctx.WritePlain(")")
 	}
@@ -1386,6 +1416,13 @@ func (n *LoadDataStmt) Accept(v Visitor) (Node, bool) {
 			return n, false
 		}
 		n.ColumnAssignments[i] = node.(*Assignment)
+	}
+	for i, cuVars := range n.ColumnsAndUserVars {
+		node, ok := cuVars.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.ColumnsAndUserVars[i] = node.(*ColumnNameOrUserVar)
 	}
 	return v.Leave(n)
 }
@@ -2351,13 +2388,6 @@ func (n *ShowStmt) Accept(v Visitor) (Node, bool) {
 			return n, false
 		}
 		n.Pattern = node.(*PatternLikeExpr)
-	}
-
-	switch n.Tp {
-	case ShowTriggers, ShowProcedureStatus, ShowProcessList, ShowEvents:
-		// We don't have any data to return for those types,
-		// but visiting Where may cause resolving error, so return here to avoid error.
-		return v.Leave(n)
 	}
 
 	if n.Where != nil {

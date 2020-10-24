@@ -27,6 +27,7 @@ import (
 
 type yyhintSymType struct {
 	yys         int
+	offset      int
 	ident       string
 	number      uint64
 	hint        *ast.TableOptimizerHint
@@ -1312,6 +1313,8 @@ yynewstate:
 		}
 
 	}
+
+	yyhintSetOffset(parser.yyVAL, parser.yyVAL.offset)
 
 	if yyEx != nil && yyEx.Reduced(r, exState, parser.yyVAL) {
 		return -1
