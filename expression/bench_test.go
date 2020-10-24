@@ -780,10 +780,10 @@ func (g *dateStrGener) gen() interface{} {
 		g.Year = 1970 + g.randGen.Intn(100)
 	}
 	if g.Month == 0 {
-		g.Month = g.randGen.Intn(10) + 1
+		g.Month = g.randGen.Intn(10)
 	}
 	if g.Day == 0 {
-		g.Day = g.randGen.Intn(20) + 1
+		g.Day = g.randGen.Intn(20)
 	}
 
 	return fmt.Sprintf("%d-%d-%d", g.Year, g.Month, g.Day)
@@ -1094,6 +1094,9 @@ func genVecExprBenchCase(ctx sessionctx.Context, funcName string, testCase vecEx
 // expression is evaluated correctly during projection
 func testVectorizedEvalOneVec(c *C, vecExprCases vecExprBenchCases) {
 	ctx := mock.NewContext()
+	if err := ctx.GetSessionVars().SetSystemVar(variable.SQLModeVar, ""); err != nil {
+		return
+	}
 	for funcName, testCases := range vecExprCases {
 		for _, testCase := range testCases {
 			expr, fts, input, output := genVecExprBenchCase(ctx, funcName, testCase)
