@@ -857,6 +857,28 @@ func (s *testIntegrationSuite) TestIndexMerge(c *C) {
 	}
 }
 
+func (s *testIntegrationSuite) TestIndexMergeHint4CNF(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(id int primary key, a int, b int, c int, key(a), key(b), key(c))")
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+		})
+		tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
+	}
+}
+
 func (s *testIntegrationSuite) TestInvisibleIndex(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
@@ -1266,11 +1288,14 @@ func (s *testIntegrationSerialSuite) TestIndexMerge(c *C) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int, b int, unique key(a), unique key(b))")
 	tk.MustQuery("desc select /*+ use_index_merge(t) */ * from t where a =1 or (b=1 and b+2>1)").Check(testkit.Rows(
-		"TableReader_7 8000.00 root  data:Selection_6",
-		"└─Selection_6 8000.00 cop[tikv]  or(eq(test.t.a, 1), and(eq(test.t.b, 1), 1))",
-		"  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+		"Projection_4 8000.00 root  test.t.a, test.t.b",
+		"└─IndexMerge_9 2.00 root  ",
+		"  ├─IndexRangeScan_5(Build) 1.00 cop[tikv] table:t, index:a(a) range:[1,1], keep order:false, stats:pseudo",
+		"  ├─Selection_7(Build) 0.80 cop[tikv]  1",
+		"  │ └─IndexRangeScan_6 1.00 cop[tikv] table:t, index:b(b) range:[1,1], keep order:false, stats:pseudo",
+		"  └─TableRowIDScan_8(Probe) 2.00 cop[tikv] table:t keep order:false, stats:pseudo",
 	))
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 IndexMerge is inapplicable or disabled"))
+	tk.MustQuery("show warnings").Check(testkit.Rows())
 
 	tk.MustQuery("desc select /*+ use_index_merge(t) */ * from t where a =1 or (b=1 and length(b)=1)").Check(testkit.Rows(
 		"Projection_4 1.80 root  test.t.a, test.t.b",
