@@ -774,7 +774,7 @@ func checkIndexInfo(indexName string, IndexPartSpecifications []*ast.IndexPartSp
 
 // checkEmptyIndexInfo checks  empty index name
 func checkEmptyIndexInfo(name string, isEmptyIndex bool) error {
-	if isEmptyIndex == true {
+	if isEmptyIndex {
 		return ddl.ErrWrongNameForIndex.GenWithStackByArgs(name)
 	}
 	return nil
