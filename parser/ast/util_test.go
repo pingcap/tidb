@@ -125,6 +125,7 @@ type nodeTextCleaner struct {
 // Enter implements Visitor interface.
 func (checker *nodeTextCleaner) Enter(in Node) (out Node, skipChildren bool) {
 	in.SetText("")
+	in.SetOriginTextPosition(0)
 	switch node := in.(type) {
 	case *Constraint:
 		if node.Option != nil {
