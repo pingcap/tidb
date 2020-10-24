@@ -2726,7 +2726,7 @@ func (du *baseDateArithmitical) getDateFromString(ctx sessionctx.Context, args [
 			return types.ZeroTime, isErr, err
 		}
 	} else if ctx.GetSessionVars().SQLMode.HasNoZeroDateMode() && (date.Year() == 0 || date.Month() == 0 || date.Day() == 0) {
-		return types.ZeroTime, isErr, handleInvalidTimeError(ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, dateStr))
+		return types.ZeroTime, true, handleInvalidTimeError(ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, dateStr))
 	}
 	return date, isErr, handleInvalidTimeError(ctx, err)
 }
@@ -3000,8 +3000,6 @@ func (du *baseDateArithmitical) vecGetDateFromString(b *baseBuiltinFunc, input *
 		}
 
 		date, err := types.ParseTime(sc, dateStr, dateTp, types.MaxFsp)
-		// fmt.Println("++++++++++++++++++++++>>>2")
-		// fmt.Printf("value:%v  type:%T\n", b.ctx.GetSessionVars().SQLMode.HasNoZeroDateMode(), b.ctx.GetSessionVars().SQLMode.HasNoZeroDateMode())
 		if err != nil {
 			err = handleInvalidTimeError(b.ctx, err)
 			if err != nil {
