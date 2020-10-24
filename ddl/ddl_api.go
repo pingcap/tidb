@@ -1129,13 +1129,6 @@ func checkDuplicateConstraint(namesMap map[string]bool, name string, foreign boo
 	namesMap[nameLower] = true
 	return nil
 }
-// checkEmptyIndexInfo check if a index is empty .
-func checkEmptyIndexInfo(name string, isEmptyIndex bool) error {
-	if isEmptyIndex {
-		return ErrWrongNameForIndex.GenWithStackByArgs(name)
-	}
-	return nil
-}
 func setEmptyConstraintName(namesMap map[string]bool, constr *ast.Constraint, foreign bool) {
 	if constr.Name == "" && len(constr.Keys) > 0 {
 		var colName string
@@ -1188,10 +1181,6 @@ func checkConstraintNames(constraints []*ast.Constraint) error {
 
 	// Set empty constraint names.
 	for _, constr := range constraints {
-		err := checkEmptyIndexInfo(constr.Name, constr.IsEmptyIndex)
-		if err != nil {
-			return errors.Trace(err)
-		}
 		if constr.Tp == ast.ConstraintForeignKey {
 			setEmptyConstraintName(fkNames, constr, true)
 		} else {
@@ -1934,9 +1923,9 @@ func checkPartitionByHash(ctx sessionctx.Context, tbInfo *model.TableInfo, s *as
 
 // checkPartitionByRange checks validity of a "BY RANGE" partition.
 func checkPartitionByRange(ctx sessionctx.Context, tbInfo *model.TableInfo, s *ast.CreateTableStmt) error {
-	if _, _err_ := failpoint.Eval(_curpkg_("CheckPartitionByRangeErr")); _err_ == nil {
+	failpoint.Inject("CheckPartitionByRangeErr", func() {
 		panic("Out Of Memory Quota!")
-	}
+	})
 	pi := tbInfo.Partition
 	if err := checkPartitionNameUnique(pi); err != nil {
 		return err

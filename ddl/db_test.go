@@ -2648,7 +2648,6 @@ func (s *testSerialDBSuite) TestCreateTable(c *C) {
 	tk.MustGetErrCode(failSQL, errno.ErrTableOptionInsertMethodUnsupported)
 	tk.MustExec("drop table x;")
 	tk.MustExec("drop table y;")
-	
 }
 
 func (s *testSerialDBSuite) TestRepairTable(c *C) {
