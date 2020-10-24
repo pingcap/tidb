@@ -1066,16 +1066,15 @@ func (b *builtinUUIDShortSig) Clone() builtinFunc {
 	return newSig
 }
 
-var increment int64
-
 // evalInt evals a builtinUUIDShortSig.
 // See https://dev.mysql.com/doc/refman/8.0/en/miscellaneous-functions.html#function_uuid-short
-func (b *builtinUUIDShortSig) evalInt(_ chunk.Row) (d int64, isNull bool, err error) {
-	var ip int64
-	var m1 int64 = 255
-	var m2 int64 = 56
-	var m3 int64 = 24
-	increment++
-	uuidShort := ((ip & m1) << m2) + (time.Now().Unix() << m3) + increment
-	return uuidShort, false, nil
+func (b *builtinUUIDShortSig) EvalInt(_ chunk.Row) (d int64, isNull bool, err error) {
+	buf := make([]byte, 2, 8)
+	buf = append(buf, uuid.NodeID()...)
+
+	var uuid int64
+	for _, b := range buf {
+		uuid = (uuid << 8) | int64(b)
+	}
+	return uuid, false, nil
 }
