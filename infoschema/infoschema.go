@@ -58,6 +58,8 @@ type InfoSchema interface {
 	BundleByName(name string) (*placement.Bundle, bool)
 	// RuleBundles returns all placement rule bundles.
 	RuleBundles() map[string]*placement.Bundle
+	// MockBundles is only used for TEST.
+	MockBundles(map[string]*placement.Bundle)
 }
 
 type sortedTables []table.Table
@@ -406,4 +408,8 @@ func (is *infoSchema) BundleByName(name string) (*placement.Bundle, bool) {
 
 func (is *infoSchema) RuleBundles() map[string]*placement.Bundle {
 	return is.ruleBundleMap
+}
+
+func (is *infoSchema) MockBundles(ruleBundleMap map[string]*placement.Bundle) {
+	is.ruleBundleMap = ruleBundleMap
 }
