@@ -363,11 +363,11 @@ func (s *session) StoreQueryFeedback(feedback interface{}) {
 }
 
 // StoreIndexUsage stores index usage information in idxUsageCollector.
-func (s *session) StoreIndexUsage(dbName string, tblName string, idxName string, rowsSelected int64) {
+func (s *session) StoreIndexUsage(tblID int64, idxID int64, rowsSelected int64) {
 	if s.idxUsageCollector == nil {
 		return
 	}
-	s.idxUsageCollector.Update(dbName, tblName, idxName, &handle.IndexUsageInformation{QueryCount: 1, RowsSelected: rowsSelected})
+	s.idxUsageCollector.Update(tblID, idxID, &handle.IndexUsageInformation{QueryCount: 1, RowsSelected: rowsSelected})
 }
 
 // FieldList returns fields list of a table.
