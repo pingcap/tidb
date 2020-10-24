@@ -2648,10 +2648,7 @@ func (s *testSerialDBSuite) TestCreateTable(c *C) {
 	tk.MustGetErrCode(failSQL, errno.ErrTableOptionInsertMethodUnsupported)
 	tk.MustExec("drop table x;")
 	tk.MustExec("drop table y;")
-	// For issue #18149
-	tk.MustExec("use test")
-	failSQL = "CREATE TABLE t(a INT, KEY ``(a));"
-	tk.MustGetErrCode(failSQL, errno.ErrWrongNameForIndex)
+	
 }
 
 func (s *testSerialDBSuite) TestRepairTable(c *C) {
