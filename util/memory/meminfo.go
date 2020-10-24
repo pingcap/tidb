@@ -20,11 +20,17 @@ import (
 // MemTotal returns the total amount of RAM on this system
 func MemTotal() (uint64, error) {
 	v, err := mem.VirtualMemory()
+	if err != nil {
+		return 0, err
+	}
 	return v.Total, err
 }
 
 // MemUsed returns the total used amount of RAM on this system
 func MemUsed() (uint64, error) {
 	v, err := mem.VirtualMemory()
+	if err != nil {
+		return 0, err
+	}
 	return v.Total - (v.Free + v.Buffers + v.Cached), err
 }
