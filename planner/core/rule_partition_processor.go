@@ -224,6 +224,15 @@ func (s *partitionProcessor) processHashPartition(ds *DataSource, pi *model.Part
 	return tableDual, nil
 }
 
+func (s *partitionProcessor) pruneListPartition(tbl table.Table, partitionNames []model.CIStr) []int {
+	if len(partitionNames) > 0 {
+		pi := tbl.Meta().Partition
+		or := partitionRangeOR{partitionRange{0, len(pi.Definitions)}}
+		return s.convertToIntSlice(or, pi, partitionNames)
+	}
+	return []int{FullRange}
+}
+
 func (s *partitionProcessor) prune(ds *DataSource) (LogicalPlan, error) {
 	pi := ds.tableInfo.GetPartitionInfo()
 	if pi == nil {
@@ -939,6 +948,8 @@ func (s *partitionProcessor) makeUnionAllChildren(ds *DataSource, pi *model.Part
 			newDataSource := *ds
 			newDataSource.baseLogicalPlan = newBaseLogicalPlan(ds.SCtx(), plancodec.TypeTableScan, &newDataSource, ds.blockOffset)
 			newDataSource.schema = ds.schema.Clone()
+			newDataSource.Columns = make([]*model.ColumnInfo, len(ds.Columns))
+			copy(newDataSource.Columns, ds.Columns)
 			newDataSource.isPartition = true
 			newDataSource.physicalTableID = pi.Definitions[i].ID
 
