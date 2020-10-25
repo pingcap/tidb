@@ -4937,6 +4937,10 @@ func (d *ddl) DropIndexes(ctx sessionctx.Context, ti ast.Ident, specs []*ast.Alt
 		ifExists = append(ifExists, spec.IfExists)
 	}
 
+	if len(indexesNames) == 0 {
+		return nil
+	}
+
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    t.Meta().ID,
