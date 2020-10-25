@@ -921,6 +921,7 @@ func (c *getIntVarFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 		return nil, err
 	}
 	bf.tp.Flen = c.tp.Flen
+	bf.tp.Flag = c.tp.Flag
 	sig = &builtinGetIntVarSig{bf}
 	return sig, nil
 }
