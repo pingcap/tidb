@@ -657,6 +657,7 @@ func (pb *profileBuilder) genTiDBQueryTree() *metricNode {
 		children: []*metricNode{
 			{
 				table: "tidb_batch_client_wait",
+				unit:  int64(10e8),
 			},
 			{
 				table: "tidb_batch_client_wait_conn",
