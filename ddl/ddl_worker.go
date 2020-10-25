@@ -814,12 +814,16 @@ func (w *worker) waitSchemaSynced(d *ddlCtx, job *model.Job, waitTime time.Durat
 }
 
 func buildPlacementAffects(oldIDs []int64, newIDs []int64) []*model.AffectedOption {
+	if len(oldIDs) == 0 {
+		return nil
+	}
+
 	affects := make([]*model.AffectedOption, len(oldIDs))
 	for i := 0; i < len(oldIDs); i++ {
 		affects[i] = &model.AffectedOption{
 			OldTableID: oldIDs[i],
 		}
-		if newIDs != nil {
+		if i < len(newIDs) {
 			affects[i].TableID = newIDs[i]
 		} else {
 			affects[i].TableID = oldIDs[i]
