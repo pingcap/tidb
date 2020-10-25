@@ -637,3 +637,32 @@ func (s *testColumnTypeChangeSuite) TestColumnTypeChangeFromStringToOthers(c *C)
 	tk.MustExec("alter table t modify s json")
 	tk.MustQuery("select * from t").Check(testkit.Rows("{\"k1\": \"value\"} {\"k1\": \"value\"} {\"k1\": \"value\"} {\"k1\": \"value\"} {\"k1\": \"value\"} {\"k1\": \"value\"} \"{\\\"k1\\\": \\\"value\\\"}\" \"{\\\"k1\\\": \\\"value\\\"}\""))
 }
+
+func (s *testColumnTypeChangeSuite) TestColumnTypeChangeCastFailed(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	// Enable column change variable.
+	tk.Se.GetSessionVars().EnableChangeColumnType = true
+
+	// Set time zone to UTC
+	originalTz := tk.Se.GetSessionVars().TimeZone
+	tk.Se.GetSessionVars().TimeZone = time.UTC
+	defer func() {
+		tk.Se.GetSessionVars().EnableChangeColumnType = false
+		tk.Se.GetSessionVars().TimeZone = originalTz
+	}()
+
+	reset := func(tk *testkit.TestKit) {
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("create table t (vc varchar(20))")
+	}
+
+	// wrong json data
+	reset(tk)
+	tk.MustExec("insert into t values ('{\"k1\": \"value\"')")
+	tk.MustGetErrCode("alter table t modify vc json", mysql.ErrInvalidJSONText)
+	// decimal bad number
+	reset(tk)
+	tk.MustExec("insert into t values ('abc')")
+	tk.MustGetErrCode("alter table t modify vc decimal(5,3)", mysql.ErrBadNumber)
+}
