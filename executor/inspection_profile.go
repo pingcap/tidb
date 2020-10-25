@@ -529,6 +529,9 @@ func (pb *profileBuilder) addNodeDef(name, labelValue, comment string, fontWeigh
 	baseFontSize, maxFontGrowth := 5, 18.0
 	fontSize := baseFontSize
 	fontSize += int(math.Ceil(maxFontGrowth * math.Sqrt(math.Abs(fontWeight)/pb.totalValue)))
+	if fontSize > 50 {
+		fontSize = 50
+	}
 
 	pb.buf.WriteString(fmt.Sprintf(`N%d [label="%s" tooltip="%s" fontsize=%d shape=box color="%s" fillcolor="%s"]`,
 		pb.getNameID(name), labelValue, comment, fontSize,
