@@ -647,45 +647,39 @@ func onSetDefaultValue(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 func needChangeColumnData(oldCol, newCol *model.ColumnInfo) bool {
 	toUnsigned := mysql.HasUnsignedFlag(newCol.Flag)
 	originUnsigned := mysql.HasUnsignedFlag(oldCol.Flag)
-	if oldCol.Tp == newCol.Tp && oldCol.Tp == mysql.TypeNewDecimal {
-		// Since type decimal will encode the precision, frac, negative(signed) and wordBuf into storage together, there is no short
-		// cut to eliminate data reorg change for column type change between decimal.
-		return oldCol.Flen != newCol.Flen || oldCol.Decimal != newCol.Decimal || toUnsigned != originUnsigned
-	}
-	if oldCol.Tp == newCol.Tp && (oldCol.Tp == mysql.TypeEnum || oldCol.Tp == mysql.TypeSet) {
-		return isElemsChangedToModifyColumn(oldCol.Elems, newCol.Elems)
-	}
-	if oldCol.Tp == mysql.TypeEnum || oldCol.Tp == mysql.TypeSet ||
-		newCol.Tp == mysql.TypeEnum || newCol.Tp == mysql.TypeSet {
-		return true
+	needTruncationOrToggleSign := func() bool {
+		return newCol.Flen > 0 && newCol.Flen < oldCol.Flen || toUnsigned != originUnsigned
 	}
 
-	switch oldCol.Tp {
-	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp, mysql.TypeDuration, mysql.TypeYear:
-		switch newCol.Tp {
-		case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp, mysql.TypeDuration, mysql.TypeYear:
-			return oldCol.Tp != newCol.Tp
+	// deal with same type
+	if oldCol.Tp == newCol.Tp {
+		switch oldCol.Tp {
+		case mysql.TypeNewDecimal:
+			// Since type decimal will encode the precision, frac, negative(signed) and wordBuf into storage together, there is no short
+			// cut to eliminate data reorg change for column type change between decimal.
+			return oldCol.Flen != newCol.Flen || oldCol.Decimal != newCol.Decimal || toUnsigned != originUnsigned
+		case mysql.TypeEnum, mysql.TypeSet:
+			return isElemsChangedToModifyColumn(oldCol.Elems, newCol.Elems)
 		}
+
+		return needTruncationOrToggleSign()
 	}
 
-	if mysql.IsIntegerType(oldCol.Tp) && !mysql.IsIntegerType(newCol.Tp) {
-		return true
-	}
-
+	// deal with different type
 	switch oldCol.Tp {
-	case mysql.TypeVarchar, mysql.TypeString, mysql.TypeVarString, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeEnum, mysql.TypeSet:
+	case mysql.TypeVarchar, mysql.TypeString, mysql.TypeVarString, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
 		switch newCol.Tp {
 		case mysql.TypeVarchar, mysql.TypeString, mysql.TypeVarString, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
-		default:
-			return true
+			return needTruncationOrToggleSign()
+		}
+	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
+		switch newCol.Tp {
+		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
+			return needTruncationOrToggleSign()
 		}
 	}
 
-	if newCol.Flen > 0 && newCol.Flen < oldCol.Flen || toUnsigned != originUnsigned {
-		return true
-	}
-
-	return false
+	return true
 }
 
 func isElemsChangedToModifyColumn(oldElems, newElems []string) bool {
