@@ -556,21 +556,21 @@ func GetFsp(s string) int8 {
 	return int8(fsp)
 }
 
-// IstTimeZone finds if there is a timezone in the string.
+// IsTimeZone returns true if there is a timezone sign in the string, otherwise return false.
 // for example '2020-07-07 17:55:00.163721+08:00'.
-func IstTimeZone(s string) (tz bool) {
+func IsTimeZone(s string) (tz bool) {
 	timezoneRegexp := regexp.MustCompile(`[-|+][\d]{2}:[\d]{2}`)
 
 	idx1 := strings.LastIndex(s, "+")
 	idx2 := strings.LastIndex(s, "-")
 	if idx1 > 10 {
-		timezoneList := timezoneRegexp.FindStringSubmatch(s[idx1:])
-		if len(timezoneList) > 0 {
+		isTimezone := timezoneRegexp.MatchString(s[idx1:])
+		if isTimezone {
 			return true
 		}
 	} else if idx2 > 10 {
-		timezoneList := timezoneRegexp.FindStringSubmatch(s[idx2:])
-		if len(timezoneList) > 0 {
+		isTimezone := timezoneRegexp.MatchString(s[idx2:])
+		if isTimezone {
 			return true
 		}
 	}
@@ -592,7 +592,7 @@ func handleTimeZone(timeZone string, systemTZ *gotime.Location) (diffMinute goti
 		return diffMinute, errors.Trace(err)
 	}
 	timeDiff := 0
-	if timeZone[0:1] == "+" {
+	if timeZone[:1] == "+" {
 		timeDiff = offset/60 - (hour*60 + minute)
 	} else {
 		timeDiff = offset/60 + (hour*60 + minute)
@@ -842,7 +842,7 @@ func isValidSeparator(c byte, prevParts int) bool {
 // splitDateTime The only delimiter recognized between a date and time part and a fractional seconds part is the decimal point.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-literals.html.
 func splitDateTime(format string) (seps []string, fracStr string, timeZone string) {
-	isTimezone := IstTimeZone(format)
+	isTimezone := IsTimeZone(format)
 	if isTimezone {
 		timeZone = format[len(format)-6:]
 		format = format[:len(format)-6]
