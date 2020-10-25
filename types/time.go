@@ -591,11 +591,18 @@ func handleTimeZone(timeZone string, systemTZ *gotime.Location) (diffMinute goti
 	if err != nil {
 		return diffMinute, errors.Trace(err)
 	}
+
+	minuteTime := hour*60 + minute
+	// valid timezone ranges from -14:00 to +14:00, and -00:00 is also invalid.
+	if minuteTime > 840 || minuteTime < -840 || minuteTime == 0 {
+		return diffMinute, errors.Trace(ErrWrongValue.GenWithStackByArgs(TimeStr, timeZone))
+	}
+
 	timeDiff := 0
 	if timeZone[:1] == "+" {
-		timeDiff = offset/60 - (hour*60 + minute)
+		timeDiff = offset/60 - minuteTime
 	} else {
-		timeDiff = offset/60 + (hour*60 + minute)
+		timeDiff = offset/60 + minuteTime
 	}
 
 	diffMinute, err = gotime.ParseDuration(fmt.Sprintf("%vm", timeDiff))
