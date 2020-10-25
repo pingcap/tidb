@@ -520,13 +520,18 @@ func (s *testSuite3) TestKillStmt(c *C) {
 	result = tk.MustQuery("show warnings")
 	result.Check(testkit.Rows("Warning 1105 Kill failed: Received a 32bits truncated ConnectionID, expect 64bits. Please execute 'KILL [CONNECTION | QUERY] ConnectionID' to send a Kill without truncating ConnectionID."))
 
+	// excceed int64
+	tk.MustExec("kill 9223372036854775808") // 9223372036854775808 == 2^63
+	result = tk.MustQuery("show warnings")
+	result.Check(testkit.Rows("Warning 1105 Parse ConnectionID failed: Unexpected connectionID excceeds int64"))
+
 	// local kill
 	connID := util.GlobalConnID{Is64bits: true, ServerID: 1, LocalConnID: 101}
 	tk.MustExec("kill " + strconv.FormatUint(connID.ID(), 10))
 	result = tk.MustQuery("show warnings")
 	result.Check(testkit.Rows())
 
-	// remote kill is tested in `cmd/globalkilltest`
+	// remote kill is tested in `tests/globalkilltest`
 }
 
 func (s *testSuite3) TestFlushPrivileges(c *C) {

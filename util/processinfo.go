@@ -15,6 +15,7 @@ package util
 
 import (
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"strings"
 	"sync/atomic"
@@ -155,17 +156,17 @@ type SessionManager interface {
 
 // GlobalConnID is the global connection ID, providing UNIQUE connection IDs across the whole TiDB cluster.
 // 64 bits version:
-//  63                   41 40                                   1    0
-// +-----------------------+--------------------------------------+--------+
-// |       serverId        |             local connId             | markup |
-// |        (23b)          |                 (40b)                |(1b,==1)|
-// +-----------------------+--------------------------------------+--------+
+//  63 62                 41 40                                   1   0
+// +--+---------------------+--------------------------------------+------+
+// |  |      serverId       |             local connId             |markup|
+// |=0|       (22b)         |                 (40b)                |  =1  |
+// +--+---------------------+--------------------------------------+------+
 // 32 bits version(coming soon):
-// 31                          1    0
-// +-----------------------------+--------+
-// |             ???             | markup |
-// |             ???             |(1b,==0)|
-// +-----------------------------+--------+
+//  31                          1   0
+// +-----------------------------+------+
+// |             ???             |markup|
+// |             ???             |  =0  |
+// +-----------------------------+------+
 type GlobalConnID struct {
 	ServerID       uint64
 	LocalConnID    uint64
@@ -175,7 +176,7 @@ type GlobalConnID struct {
 
 const (
 	// MaxServerID is maximum serverID.
-	MaxServerID = 1<<23 - 1
+	MaxServerID = 1<<22 - 1
 )
 
 func (g *GlobalConnID) makeID(localConnID uint64) uint64 {
@@ -191,7 +192,7 @@ func (g *GlobalConnID) makeID(localConnID uint64) uint64 {
 	if g.Is64bits {
 		id |= 0x1
 		id |= localConnID & 0xff_ffff_ffff << 1 // 40 bits local connID.
-		id |= serverID & MaxServerID << 41      // 23 bits serverID.
+		id |= serverID & MaxServerID << 41      // 22 bits serverID.
 	} else {
 		// TODO: update after new design for 32 bits version.
 		id |= localConnID & 0x7fff_ffff << 1 // 31 bits local connID.
@@ -212,21 +213,24 @@ func (g *GlobalConnID) NextID() uint64 {
 
 // ParseGlobalConnID parses an uint64 to GlobalConnID.
 //   `isTruncated` indicates that older versions of the client truncated the 64-bit GlobalConnID to 32-bit.
-func ParseGlobalConnID(id uint64) (g GlobalConnID, isTruncated bool) {
+func ParseGlobalConnID(id uint64) (g GlobalConnID, isTruncated bool, err error) {
+	if id&0x80000000_00000000 > 0 {
+		return GlobalConnID{}, false, errors.New("Unexpected connectionID excceeds int64")
+	}
 	if id&0x1 > 0 {
 		if id&0xffffffff_00000000 == 0 {
-			return GlobalConnID{}, true
+			return GlobalConnID{}, true, nil
 		}
 		return GlobalConnID{
 			Is64bits:    true,
 			LocalConnID: (id >> 1) & 0xff_ffff_ffff,
 			ServerID:    (id >> 41) & MaxServerID,
-		}, false
+		}, false, nil
 	}
 	// TODO: update after new design for 32 bits version.
 	return GlobalConnID{
 		Is64bits:    false,
 		LocalConnID: (id >> 1) & 0x7fff_ffff,
 		ServerID:    0,
-	}, false
+	}, false, nil
 }

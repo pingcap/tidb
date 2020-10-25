@@ -1093,7 +1093,12 @@ func (e *SimpleExec) executeKillStmt(ctx context.Context, s *ast.KillStmt) error
 		return nil
 	}
 
-	connID, isTruncated := util.ParseGlobalConnID(s.ConnectionID)
+	connID, isTruncated, err := util.ParseGlobalConnID(s.ConnectionID)
+	if err != nil {
+		err1 := errors.New("Parse ConnectionID failed: " + err.Error())
+		e.ctx.GetSessionVars().StmtCtx.AppendWarning(err1)
+		return nil
+	}
 	if isTruncated {
 		message := "Kill failed: Received a 32bits truncated ConnectionID, expect 64bits. Please execute 'KILL [CONNECTION | QUERY] ConnectionID' to send a Kill without truncating ConnectionID."
 		logutil.BgLogger().Warn(message, zap.Uint64("connID", s.ConnectionID))

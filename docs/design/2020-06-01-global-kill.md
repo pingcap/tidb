@@ -1,7 +1,7 @@
 # Global Kill
 
 - Author(s):     [pingyu](https://github.com/pingyu) (Ping Yu)
-- Last updated:  2020-09-19
+- Last updated:  2020-10-25
 - Discussion at: https://github.com/pingcap/tidb/issues/8854
 
 ## Abstract
@@ -24,29 +24,32 @@ To support "Global Kill", we need:
 #### 1. Structure of `connId`
 ##### 64 bits version
 ```
- 63                   41 40                                   1    0    
-+-----------------------+--------------------------------------+--------+
-|       serverId        |             local connId             | markup |
-|        (23b)          |                 (40b)                |(1b,==1)|
-+-----------------------+--------------------------------------+--------+
+  63 62                 41 40                                   1    0    
+ +--+---------------------+--------------------------------------+------+
+ |  |      serverId       |             local connId             |markup|
+ |=0|       (22b)         |                 (40b)                |  =1  |
+ +--+---------------------+--------------------------------------+------+
 ```
 ##### 32 bits version
 (To be discussed in another RFC)
 ```
-                                  31                          1    0
-                                 +-----------------------------+--------+
-                                 |             ???             | markup |
-                                 |             ???             |(1b,==0)|
-                                 +-----------------------------+--------+
+                                    31                          1    0
+                                   +-----------------------------+------+
+                                   |             ???             |markup|
+                                   |             ???             |  =0  |
+                                   +-----------------------------+------+
 ```
 
-#### 2. markup
+#### 2. bit 63
+Bit 63 is always __ZERO__, making `connId` in range of non-negative int64, to be more friendly to exists codes, and some languages don't have primitive type `uint64`.
+
+#### 3. markup
 -  `markup == 0` indicates that the `connID` is just 32 bits long effectively, and high 32 bits should be all zeros. Compatible with legacy 32 bits clients.
 -  `markup == 1` indicates that the `connID` is 64 bits long. Incompatible with legacy 32 bits clients.
 -  `markup == 1` while __high 32 bits are zeros__, indicates that 32 bits truncation happens. See `Compatibility` section.
 
 
-#### 3. serverId
+#### 4. serverId
 `serverId` is selected RANDOMLY by each TiDB instance on startup, and the uniqueness is guaranteed by PD(etcd). `serverId` should be larger or equal to 1, to ensure that high 32 bits of `connId` is always non-zero, and make it possible to detect truncation.
 
 On failure (e.g. fail connecting to PD, or all `serverId` are unavailable), we block any new connection.
@@ -55,12 +58,12 @@ On failure (e.g. fail connecting to PD, or all `serverId` are unavailable), we b
 
 On single TiDB instance without PD, a `serverId` of `1` is assigned.
 
-#### 4. local connId
+#### 5. local connId
 `local connId` is allocated by each TiDB instance on establishing connections incrementally.
 
 Integer overflow is ignored at this stage, as `local connId` should be long enough.
 
-#### 5. global kill
+#### 6. global kill
 On processing `KILL x` command, first extract `serverId` from `x`. Then if `serverId` aims to a remote TiDB instance, get the address from cluster info (see also [`CLUSTER_INFO`](https://docs.pingcap.com/tidb/stable/information-schema-cluster-info#cluster_info)), and redirect the command to it by "Coprocessor API" provided by the remote TiDB, along with the original user authentication.
 
 ## Compatibility

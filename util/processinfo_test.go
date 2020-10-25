@@ -40,14 +40,19 @@ func (s *testProcessInfoSuite) TestGlobalConnID(c *C) {
 	next := connID.NextID()
 	c.Assert(next, Equals, (uint64(1001)<<41)|(uint64(124)<<1)|1)
 
-	connID1, isTruncated := util.ParseGlobalConnID(next)
+	connID1, isTruncated, err := util.ParseGlobalConnID(next)
+	c.Assert(err, IsNil)
 	c.Assert(isTruncated, IsFalse)
 	c.Assert(connID1.ServerID, Equals, uint64(1001))
 	c.Assert(connID1.LocalConnID, Equals, uint64(124))
 	c.Assert(connID1.Is64bits, IsTrue)
 
-	_, isTruncated = util.ParseGlobalConnID(101)
+	_, isTruncated, err = util.ParseGlobalConnID(101)
+	c.Assert(err, IsNil)
 	c.Assert(isTruncated, IsTrue)
+
+	_, _, err = util.ParseGlobalConnID(0x80000000_00000321)
+	c.Assert(err, NotNil)
 
 	connID2 := util.GlobalConnID{
 		Is64bits:       true,
