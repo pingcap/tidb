@@ -813,7 +813,7 @@ func (w *worker) waitSchemaSynced(d *ddlCtx, job *model.Job, waitTime time.Durat
 	w.waitSchemaChanged(ctx, d, waitTime, latestSchemaVersion, job)
 }
 
-func buildPlacementAffects(oldIDs []int64, newIDs []in64) []*model.AffectedOption {
+func buildPlacementAffects(oldIDs []int64, newIDs []int64) []*model.AffectedOption {
 	affects := make([]*model.AffectedOption, len(oldIDs))
 	for i := 0; i < len(oldIDs); i++ {
 		affects[i] = &model.AffectedOption{
