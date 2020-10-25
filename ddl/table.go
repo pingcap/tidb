@@ -479,25 +479,31 @@ func onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ erro
 		}
 	}
 
-	bundles := make([]*placement.Bundle, 0, len(oldPartitionIDs)+1)
-	if oldBundle, ok := d.infoHandle.Get().BundleByName(placement.GroupID(tableID)); ok {
-		bundles = append(bundles, placement.BuildPlacementTruncateBundle(oldBundle, newTableID))
-	}
-
-	newDefs := tblInfo.Partition.Definitions
 	newIDs := make([]int64, 0, len(oldPartitionIDs))
-	for i := range oldPartitionIDs {
-		if oldBundle, ok := d.infoHandle.Get().BundleByName(placement.GroupID(oldPartitionIDs[i])); ok {
-			newID := newDefs[i].ID
-			newIDs = append(newIDs, newID)
-			bundles = append(bundles, placement.BuildPlacementTruncateBundle(oldBundle, newID))
-		}
-	}
+	if d.infoHandle != nil && d.infoHandle.IsValid() {
+		is := d.infoHandle.Get()
 
-	err = infosync.PutRuleBundles(nil, bundles)
-	if err != nil {
-		job.State = model.JobStateCancelled
-		return 0, errors.Wrapf(err, "failed to notify PD the placement rules")
+		bundles := make([]*placement.Bundle, 0, len(oldPartitionIDs)+1)
+		if oldBundle, ok := is.BundleByName(placement.GroupID(tableID)); ok {
+			bundles = append(bundles, placement.BuildPlacementTruncateBundle(oldBundle, newTableID))
+		}
+
+		if pi := tblInfo.GetPartitionInfo(); pi != nil {
+			newDefs := pi.Definitions
+			for i := range oldPartitionIDs {
+				if oldBundle, ok := is.BundleByName(placement.GroupID(oldPartitionIDs[i])); ok {
+					newID := newDefs[i].ID
+					newIDs = append(newIDs, newID)
+					bundles = append(bundles, placement.BuildPlacementTruncateBundle(oldBundle, newID))
+				}
+			}
+		}
+
+		err = infosync.PutRuleBundles(nil, bundles)
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return 0, errors.Wrapf(err, "failed to notify PD the placement rules")
+		}
 	}
 
 	// Clear the tiflash replica available status.

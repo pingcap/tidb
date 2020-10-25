@@ -1018,7 +1018,7 @@ func getTableInfoWithDroppingPartitions(t *model.TableInfo) *model.TableInfo {
 }
 
 func dropRuleBundles(d *ddlCtx, physicalTableIDs []int64) error {
-	if d.infoHandle != nil {
+	if d.infoHandle != nil && d.infoHandle.IsValid() {
 		bundles := make([]*placement.Bundle, 0, len(physicalTableIDs))
 		for _, ID := range physicalTableIDs {
 			oldBundle, ok := d.infoHandle.Get().BundleByName(placement.GroupID(ID))
@@ -1203,7 +1203,7 @@ func onTruncateTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, e
 		}
 	}
 
-	if d.infoHandle != nil {
+	if d.infoHandle != nil && d.infoHandle.IsValid() {
 		bundles := make([]*placement.Bundle, 0, len(oldIDs))
 
 		for i, oldID := range oldIDs {
