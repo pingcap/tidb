@@ -605,6 +605,11 @@ func onDropIndexes(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		return ver, errors.Trace(err)
 	}
 
+	if len(indexesInfo) == 0 {
+		job.State = model.JobStateCancelled
+		return ver, nil
+	}
+
 	dependentHiddenCols := make([]*model.ColumnInfo, 0)
 	for _, indexInfo := range indexesInfo {
 		for _, indexColumn := range indexInfo.Columns {
@@ -614,10 +619,6 @@ func onDropIndexes(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		}
 	}
 
-	if len(indexesInfo) == 0 {
-		job.State = model.JobStateCancelled
-		return ver, nil
-	}
 	originalState := indexesInfo[0].State
 	switch indexesInfo[0].State {
 	case model.StatePublic:
@@ -636,20 +637,28 @@ func onDropIndexes(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	case model.StateWriteOnly:
 		// write only -> delete only
 		job.SchemaState = model.StateDeleteOnly
-		setIndicesState(indexesInfo, model.StateDeleteOnly)
+		for _, indexInfo := range indexesInfo {
+			indexInfo.State = model.StateDeleteOnly
+			updateHiddenColumns(tblInfo, indexInfo, model.StateDeleteOnly)
+		}
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != indexesInfo[0].State)
 	case model.StateDeleteOnly:
 		// delete only -> reorganization
 		job.SchemaState = model.StateDeleteReorganization
-		setIndicesState(indexesInfo, model.StateDeleteReorganization)
+		for _, indexInfo := range indexesInfo {
+			indexInfo.State = model.StateDeleteReorganization
+			updateHiddenColumns(tblInfo, indexInfo, model.StateDeleteReorganization)
+		}
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != indexesInfo[0].State)
 	case model.StateDeleteReorganization:
+		// reorganization -> absent
 		indexesIDs := make([]int64, 0, len(indexesInfo))
 		indexesLName := make(map[string]bool, len(indexesInfo))
 		for _, indexInfo := range indexesInfo {
 			indexesLName[indexInfo.Name.L] = true
 			indexesIDs = append(indexesIDs, indexInfo.ID)
 		}
+
 		newIndices := make([]*model.IndexInfo, 0, len(tblInfo.Indices))
 		for _, idx := range tblInfo.Indices {
 			if _, ok := indexesLName[idx.Name.L]; !ok {
@@ -657,6 +666,7 @@ func onDropIndexes(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 			}
 		}
 		tblInfo.Indices = newIndices
+
 		// Set column index flag.
 		for _, indexInfo := range indexesInfo {
 			dropIndexColumnFlag(tblInfo, indexInfo)
