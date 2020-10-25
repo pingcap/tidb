@@ -25,7 +25,9 @@ import (
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
 	field_types "github.com/pingcap/parser/types"
+	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/ddl/util"
+	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -183,6 +185,8 @@ func onDropTableOrView(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != tblInfo.State)
 	case model.StateDeleteOnly:
 		tblInfo.State = model.StateNone
+		oldIDs := getPartitionIDs(tblInfo)
+		job.CtxVars = []interface{}{oldIDs}
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != tblInfo.State)
 		if err != nil {
 			return ver, errors.Trace(err)
@@ -199,7 +203,7 @@ func onDropTableOrView(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
 		startKey := tablecodec.EncodeTablePrefix(job.TableID)
-		job.Args = append(job.Args, startKey, getPartitionIDs(tblInfo))
+		job.Args = append(job.Args, startKey, oldIDs)
 	default:
 		err = ErrInvalidDDLState.GenWithStackByArgs("table", tblInfo.State)
 	}
@@ -321,6 +325,7 @@ func (w *worker) onRecoverTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 			}
 		})
 
+		job.CtxVars = []interface{}{tids}
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
 		if err != nil {
 			return ver, errors.Trace(err)
@@ -474,6 +479,27 @@ func onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ erro
 		}
 	}
 
+	bundles := make([]*placement.Bundle, 0, len(oldPartitionIDs)+1)
+	if oldBundle, ok := d.infoHandle.Get().BundleByName(placement.GroupID(tableID)); ok {
+		bundles = append(bundles, placement.BuildPlacementTruncateBundle(oldBundle, newTableID))
+	}
+
+	newDefs := tblInfo.Partition.Definitions
+	newIDs := make([]int64, 0, len(oldPartitionIDs))
+	for i := range oldPartitionIDs {
+		if oldBundle, ok := d.infoHandle.Get().BundleByName(placement.GroupID(oldPartitionIDs[i])); ok {
+			newID := newDefs[i].ID
+			newIDs = append(newIDs, newID)
+			bundles = append(bundles, placement.BuildPlacementTruncateBundle(oldBundle, newID))
+		}
+	}
+
+	err = infosync.PutRuleBundles(nil, bundles)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return 0, errors.Wrapf(err, "failed to notify PD the placement rules")
+	}
+
 	// Clear the tiflash replica available status.
 	if tblInfo.TiFlashReplica != nil {
 		tblInfo.TiFlashReplica.AvailablePartitionIDs = nil
@@ -493,6 +519,7 @@ func onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ erro
 		}
 	})
 
+	job.CtxVars = []interface{}{oldPartitionIDs, newIDs}
 	ver, err = updateSchemaVersion(t, job)
 	if err != nil {
 		return ver, errors.Trace(err)
