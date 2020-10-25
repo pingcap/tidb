@@ -32,7 +32,7 @@ dev: checklist check test
 # Install the check tools.
 check-setup:tools/bin/revive tools/bin/goword tools/bin/gometalinter tools/bin/gosec
 
-check: fmt errcheck unconvert lint tidy testSuite check-static vet staticcheck
+check: fmt errcheck unconvert lint tidy testSuite check-static vet staticcheck errdoc
 
 # These need to be fixed before they can be ran regularly
 check-fail: goword check-slow
@@ -70,6 +70,10 @@ unconvert:tools/bin/unconvert
 gogenerate:
 	@echo "go generate ./..."
 	./tools/check/check-gogenerate.sh
+
+errdoc:tools/bin/errdoc-gen
+	@echo "generator errors.toml"
+	./tools/check/check-errdoc.sh
 
 lint:tools/bin/revive
 	@echo "linting"
@@ -231,6 +235,9 @@ tools/bin/unconvert: tools/check/go.mod
 
 tools/bin/failpoint-ctl: go.mod
 	$(GO) build -o $@ github.com/pingcap/failpoint/failpoint-ctl
+
+tools/bin/errdoc-gen: go.mod
+	$(GO) build -o $@ github.com/pingcap/tiup/components/errdoc/errdoc-gen
 
 tools/bin/golangci-lint:
 	curl -sfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh| sh -s -- -b ./tools/bin v1.29.0
