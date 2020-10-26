@@ -709,7 +709,26 @@ func (e *memtableRetriever) setDataFromPartitions(ctx sessionctx.Context, schema
 
 					var partitionDesc string
 					if table.Partition.Type == model.PartitionTypeRange {
-						partitionDesc = pi.LessThan[0]
+						partitionDesc = strings.Join(pi.LessThan, ",")
+					} else if table.Partition.Type == model.PartitionTypeList {
+						if len(pi.InValues) > 0 {
+							if len(pi.InValues[0]) == 1 {
+								for i, vs := range pi.InValues {
+									if i > 0 {
+										partitionDesc += ","
+									}
+									partitionDesc += vs[0]
+								}
+							} else if len(pi.InValues[0]) > 1 {
+								for i, vs := range pi.InValues {
+									if i > 0 {
+										partitionDesc += ","
+									}
+									partitionDesc += ("(" + strings.Join(vs, ",") + ")")
+								}
+
+							}
+						}
 					}
 
 					partitionMethod := table.Partition.Type.String()
@@ -717,6 +736,15 @@ func (e *memtableRetriever) setDataFromPartitions(ctx sessionctx.Context, schema
 					if table.Partition.Type == model.PartitionTypeRange && len(table.Partition.Columns) > 0 {
 						partitionMethod = "RANGE COLUMNS"
 						partitionExpr = table.Partition.Columns[0].String()
+					} else if table.Partition.Type == model.PartitionTypeList && len(table.Partition.Columns) > 0 {
+						partitionMethod = "LIST COLUMNS"
+						partitionExpr = ""
+						for i, col := range table.Partition.Columns {
+							if i > 0 {
+								partitionExpr += ","
+							}
+							partitionExpr += col.String()
+						}
 					}
 
 					record := types.MakeDatums(
