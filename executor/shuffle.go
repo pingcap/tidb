@@ -357,6 +357,7 @@ func (e *shuffleWorker) run(ctx context.Context, waitGroup *sync.WaitGroup) {
 }
 
 var _ partitionSplitter = &partitionHashSplitter{}
+var _ partitionSplitter = &partitionRangeSplitter{}
 
 type partitionSplitter interface {
 	split(ctx sessionctx.Context, input *chunk.Chunk, workerIndices []int) ([]int, error)
@@ -379,5 +380,15 @@ func (s *partitionHashSplitter) split(ctx sessionctx.Context, input *chunk.Chunk
 	for i := 0; i < numRows; i++ {
 		workerIndices = append(workerIndices, int(murmur3.Sum32(s.hashKeys[i]))%s.numWorkers)
 	}
+	return workerIndices, nil
+}
+
+type partitionRangeSplitter struct {
+	byItems    []expression.Expression
+	numWorkers int
+}
+
+func (s *partitionRangeSplitter) split(ctx sessionctx.Context, input *chunk.Chunk, workerIndices []int) ([]int, error) {
+	// todo: make split by range work
 	return workerIndices, nil
 }

@@ -3663,6 +3663,11 @@ func (b *executorBuilder) buildShuffle(v *plannercore.PhysicalShuffle) *ShuffleE
 			byItems:    v.HashByItems,
 			numWorkers: shuffle.concurrency,
 		}
+	case plannercore.PartitionRangeSplitterType:
+		shuffle.splitter = &partitionRangeSplitter{
+			byItems:    nil,
+			numWorkers: shuffle.concurrency,
+		}
 	default:
 		panic("Not implemented. Should not reach here.")
 	}
