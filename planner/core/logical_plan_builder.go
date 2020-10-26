@@ -513,10 +513,12 @@ func (p *LogicalJoin) setPreferredJoinType(hintInfo *tableHintInfo) {
 		p.preferJoinType |= preferRightAsINLHJInner
 	}
 	if hintInfo.ifPreferINLMJ(lhsAlias) {
-		p.preferJoinType |= preferLeftAsINLMJInner
+		// TODO: reopen index merge join change to preferLeftAsINLMJInner in future
+		p.preferJoinType |= preferLeftAsINLJInner
 	}
 	if hintInfo.ifPreferINLMJ(rhsAlias) {
-		p.preferJoinType |= preferRightAsINLMJInner
+		// TODO: reopen index merge join change to preferRightAsINLMJInner in future
+		p.preferJoinType |= preferRightAsINLJInner
 	}
 	if containDifferentJoinTypes(p.preferJoinType) {
 		errMsg := "Join hints are conflict, you can only specify one type of join"
