@@ -116,24 +116,20 @@ func (record *memoryUsageAlarm) alarm4ExcessiveMemUsage(sm util.SessionManager) 
 }
 
 func (record *memoryUsageAlarm) doRecord(memUsage uint64, instanceMemoryUsage uint64, sm util.SessionManager) {
+	fields := make([]zap.Field, 0, 6)
+	fields = append(fields, zap.Bool("is server-memory-quota set", record.isServerMemoryQuotaSet))
 	if record.isServerMemoryQuotaSet {
-		logutil.BgLogger().Warn("system now takes a lot of memory, the Tidb instance has the risk of OOM. TiDB will record running SQLs and heap profile in the record path",
-			zap.Bool("is server-memory-quota set", record.isServerMemoryQuotaSet),
-			zap.Any("server-memory-quota", record.serverMemoryQuota),
-			zap.Any("tidb instance memory usage", memUsage),
-			zap.Any("memory-usage-alarm-ratio", config.GetGlobalConfig().Performance.MemoryUsageAlarmRatio),
-			zap.Any("record path", record.tmpDir),
-		)
+		fields = append(fields, zap.Any("server-memory-quota", record.serverMemoryQuota))
+		fields = append(fields, zap.Any("tidb-server memory usage", memUsage))
 	} else {
-		logutil.BgLogger().Warn("system now takes a lot of memory, the Tidb instance has the risk of OOM. TiDB will record running SQLs and heap profile in the record path",
-			zap.Bool("is server-memory-quota set", record.isServerMemoryQuotaSet),
-			zap.Any("system memory total", record.serverMemoryQuota),
-			zap.Any("system memory usage", memUsage),
-			zap.Any("tidb instance memory usage", instanceMemoryUsage),
-			zap.Any("memory-usage-alarm-ratio", config.GetGlobalConfig().Performance.MemoryUsageAlarmRatio),
-			zap.Any("record path", record.tmpDir),
-		)
+		fields = append(fields, zap.Any("system memory total", record.serverMemoryQuota))
+		fields = append(fields, zap.Any("system memory usage", memUsage))
+		fields = append(fields, zap.Any("tidb-server memory usage", instanceMemoryUsage))
 	}
+	fields = append(fields, zap.Any("memory-usage-alarm-ratio", config.GetGlobalConfig().Performance.MemoryUsageAlarmRatio))
+	fields = append(fields, zap.Any("record path", record.tmpDir))
+
+	logutil.BgLogger().Warn("tidb-server has the risk of OOM. Running SQLs and heap profile will be recorded in record path", fields...)
 
 	if record.err = disk.CheckAndInitTempDir(); record.err != nil {
 		return
