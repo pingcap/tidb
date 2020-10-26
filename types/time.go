@@ -1675,21 +1675,12 @@ func parseSingleTimeValue(unit string, format string, strictCheck bool) (int64, 
 		dvPreLen := len(dvPre)
 		if dvPreLen >= 6 {
 			// MySQL rounds down to 1e-6.
-<<<<<<< HEAD
-			if dv, err = strconv.ParseInt(format[decimalPointPos+1:decimalPointPos+7], 10, 64); err != nil {
-				return 0, 0, 0, 0, ErrIncorrectDatetimeValue.GenWithStackByArgs(format)
-			}
-		} else {
-			if dv, err = strconv.ParseInt(format[decimalPointPos+1:]+"000000"[:6-(lf-decimalPointPos)], 10, 64); err != nil {
-				return 0, 0, 0, 0, ErrIncorrectDatetimeValue.GenWithStackByArgs(format)
-=======
 			if dv, err = strconv.ParseInt(dvPre[0:6], 10, 64); err != nil {
-				return 0, 0, 0, 0, ErrWrongValue.GenWithStackByArgs(DateTimeStr, format)
+				return 0, 0, 0, 0, ErrIncorrectDatetimeValue.GenWithStackByArgs(format)
 			}
 		} else {
 			if dv, err = strconv.ParseInt(dvPre[:]+"000000"[:6-dvPreLen], 10, 64); err != nil {
-				return 0, 0, 0, 0, ErrWrongValue.GenWithStackByArgs(DateTimeStr, format)
->>>>>>> 3db90e425... types: fix incompatible result of `DATE_ADD()` (#19880)
+				return 0, 0, 0, 0, ErrIncorrectDatetimeValue.GenWithStackByArgs(format)
 			}
 		}
 		if dv >= 500000 { // Round up, and we should keep 6 digits for microsecond, so dv should in [000000, 999999].
