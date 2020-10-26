@@ -74,11 +74,13 @@ func (s *testVarsutilSuite) TestNewSessionVars(c *C) {
 	c.Assert(vars.hashAggPartialConcurrency, Equals, ConcurrencyUnset)
 	c.Assert(vars.hashAggFinalConcurrency, Equals, ConcurrencyUnset)
 	c.Assert(vars.windowConcurrency, Equals, ConcurrencyUnset)
+	c.Assert(vars.streamAggConcurrency, Equals, ConcurrencyUnset)
 	c.Assert(vars.distSQLScanConcurrency, Equals, DefDistSQLScanConcurrency)
 	c.Assert(vars.ProjectionConcurrency(), Equals, DefExecutorConcurrency)
 	c.Assert(vars.HashAggPartialConcurrency(), Equals, DefExecutorConcurrency)
 	c.Assert(vars.HashAggFinalConcurrency(), Equals, DefExecutorConcurrency)
 	c.Assert(vars.WindowConcurrency(), Equals, DefExecutorConcurrency)
+	c.Assert(vars.StreamAggConcurrency(), Equals, DefExecutorConcurrency)
 	c.Assert(vars.DistSQLScanConcurrency(), Equals, DefDistSQLScanConcurrency)
 	c.Assert(vars.ExecutorConcurrency, Equals, DefExecutorConcurrency)
 	c.Assert(vars.MaxChunkSize, Equals, DefMaxChunkSize)
@@ -657,6 +659,14 @@ func (s *testVarsutilSuite) TestConcurrencyVariables(c *C) {
 	c.Assert(vars.windowConcurrency, Equals, wdConcurrency)
 	c.Assert(vars.WindowConcurrency(), Equals, wdConcurrency)
 
+	saConcurrency := 2
+	c.Assert(vars.streamAggConcurrency, Equals, ConcurrencyUnset)
+	c.Assert(vars.StreamAggConcurrency(), Equals, DefExecutorConcurrency)
+	err = SetSessionSystemVar(vars, TiDBStreamAggConcurrency, types.NewIntDatum(int64(saConcurrency)))
+	c.Assert(err, IsNil)
+	c.Assert(vars.streamAggConcurrency, Equals, saConcurrency)
+	c.Assert(vars.StreamAggConcurrency(), Equals, saConcurrency)
+
 	c.Assert(vars.indexLookupConcurrency, Equals, ConcurrencyUnset)
 	c.Assert(vars.IndexLookupConcurrency(), Equals, DefExecutorConcurrency)
 	exeConcurrency := DefExecutorConcurrency + 1
@@ -665,4 +675,5 @@ func (s *testVarsutilSuite) TestConcurrencyVariables(c *C) {
 	c.Assert(vars.indexLookupConcurrency, Equals, ConcurrencyUnset)
 	c.Assert(vars.IndexLookupConcurrency(), Equals, exeConcurrency)
 	c.Assert(vars.WindowConcurrency(), Equals, wdConcurrency)
+	c.Assert(vars.StreamAggConcurrency(), Equals, saConcurrency)
 }
