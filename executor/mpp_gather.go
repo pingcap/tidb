@@ -15,6 +15,7 @@ package executor
 
 import (
 	"context"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/mpp"
 	"github.com/pingcap/tidb/distsql"
