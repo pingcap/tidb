@@ -1380,28 +1380,43 @@ func (s *testTableSuite) TestPlacementPolicy(c *C) {
 
 	bundles := make(map[string]*placement.Bundle)
 	is.MockBundles(bundles)
-	tk.MustQuery("select group_id, group_index, rule_id, schema_name, table_name, partition_name, index_name, " +
-		"role, replicas, constraints from information_schema.placement_policy").Check(testkit.Rows())
-
-	bundleID := "pd"
-	bundle := &placement.Bundle{
-		ID:       bundleID,
-		Index:    0,
-		Override: false,
-		Rules: []*placement.Rule{
-			{
-				GroupID: bundleID,
-				ID:      "default",
-				Role:    "voter",
-				Count:   3,
-			},
-		},
-	}
-	bundles[bundleID] = bundle
 	tk.MustQuery("select * from information_schema.placement_policy").Check(testkit.Rows())
 
-	bundleID = fmt.Sprintf("%s%d", placement.BundleIDPrefix, partDefs[0].ID)
-	bundle = &placement.Bundle{
+	testCases := []struct {
+		bundleID  string
+		expectErr bool
+	}{
+		{"pd", false},
+		{"TiDB_DDL_foo", true},
+		{"TiDB_DDL_3x", true},
+		{"TiDB_DDL_3.0", true},
+	}
+	for _, tc := range testCases {
+		bundle := &placement.Bundle{
+			ID: tc.bundleID,
+			Rules: []*placement.Rule{
+				{
+					GroupID: tc.bundleID,
+					ID:      "default",
+					Role:    "voter",
+					Count:   3,
+				},
+			},
+		}
+		bundles[tc.bundleID] = bundle
+		if tc.expectErr {
+			err := tk.QueryToErr("select * from information_schema.placement_policy")
+			c.Assert(err, NotNil)
+			errMsg := fmt.Sprintf("Restore bundle %s failed: Rule %s doesn't include an id", tc.bundleID, tc.bundleID)
+			c.Assert(err.Error(), Equals, errMsg)
+		} else {
+			tk.MustQuery("select * from information_schema.placement_policy").Check(testkit.Rows())
+		}
+		delete(bundles, tc.bundleID)
+	}
+
+	bundleID := fmt.Sprintf("%s%d", placement.BundleIDPrefix, partDefs[0].ID)
+	bundle := &placement.Bundle{
 		ID:       bundleID,
 		Index:    3,
 		Override: true,
@@ -1422,12 +1437,12 @@ func (s *testTableSuite) TestPlacementPolicy(c *C) {
 		},
 	}
 	bundles[bundleID] = bundle
-	expected := fmt.Sprintf("%s 3 0 test test_placement p0 <nil> voter 3 \"+zone=bj\"", bundleID)
-	tk.MustQuery("select group_id, group_index, rule_id, schema_name, table_name, partition_name, index_name, " +
-		"role, replicas, constraints from information_schema.placement_policy").Check(testkit.Rows(expected))
+	expected := fmt.Sprintf(`%s 3 0 test test_placement p0 <nil> voter 3 "+zone=bj"`, bundleID)
+	tk.MustQuery(`select group_id, group_index, rule_id, schema_name, table_name, partition_name, index_name, 
+		role, replicas, constraints from information_schema.placement_policy`).Check(testkit.Rows(expected))
 
 	bundle.Rules[0].LabelConstraints[0].Values = []string{"bj", "sh"}
-	tk.MustQuery("select constraints from information_schema.placement_policy").Check(testkit.Rows("\"+zone=bj,+zone=sh\""))
+	tk.MustQuery("select constraints from information_schema.placement_policy").Check(testkit.Rows(`"+zone=bj,+zone=sh"`))
 
 	bundle.Rules[0].LabelConstraints = []placement.LabelConstraint{
 		{
@@ -1441,7 +1456,7 @@ func (s *testTableSuite) TestPlacementPolicy(c *C) {
 			Values: []string{"sh"},
 		},
 	}
-	tk.MustQuery("select constraints from information_schema.placement_policy").Check(testkit.Rows("\"+zone=bj\",\"-zone=sh\""))
+	tk.MustQuery("select constraints from information_schema.placement_policy").Check(testkit.Rows(`"+zone=bj","-zone=sh"`))
 
 	rule1 := bundle.Rules[0].Clone()
 	rule1.ID = "1"
