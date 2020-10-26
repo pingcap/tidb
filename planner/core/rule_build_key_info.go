@@ -70,7 +70,7 @@ func (p *LogicalSelection) checkMaxOneRowCond(unique expression.Expression, cons
 	if !ok {
 		return false
 	}
-	if !childSchema.IsUniqueKey(col) {
+	if !childSchema.IsUniqueKey(col) && !childSchema.IsUnique(col) {
 		return false
 	}
 	_, okCon := constOrCorCol.(*expression.Constant)
@@ -202,35 +202,43 @@ func (p *LogicalJoin) BuildKeyInfo(selfSchema *expression.Schema, childSchema []
 }
 
 // checkIndexCanBeKey checks whether an Index can be a Key in schema.
-func checkIndexCanBeKey(idx *model.IndexInfo, columns []*model.ColumnInfo, schema *expression.Schema) expression.KeyInfo {
+func checkIndexCanBeKey(idx *model.IndexInfo, columns []*model.ColumnInfo, schema *expression.Schema) (uniqueKey, newKey expression.KeyInfo) {
 	if !idx.Unique {
-		return nil
+		return nil, nil
 	}
-	newKey := make([]*expression.Column, 0, len(idx.Columns))
-	ok := true
+	newKeyOK := true
+	uniqueKeyOK := true
 	for _, idxCol := range idx.Columns {
 		// The columns of this index should all occur in column schema.
 		// Since null value could be duplicate in unique key. So we check NotNull flag of every column.
-		find := false
+		findUniqueKey := false
 		for i, col := range columns {
 			if idxCol.Name.L == col.Name.L {
-				if !mysql.HasNotNullFlag(col.Flag) {
+				uniqueKey = append(uniqueKey, schema.Columns[i])
+				findUniqueKey = true
+				if newKeyOK {
+					if !mysql.HasNotNullFlag(col.Flag) {
+						newKeyOK = false
+						break
+					}
+					newKey = append(newKey, schema.Columns[i])
 					break
 				}
-				newKey = append(newKey, schema.Columns[i])
-				find = true
-				break
 			}
 		}
-		if !find {
-			ok = false
+		if !findUniqueKey {
+			newKeyOK = false
+			uniqueKeyOK = false
 			break
 		}
 	}
-	if ok {
-		return newKey
+	if newKeyOK {
+		return nil, newKey
+	} else if uniqueKeyOK {
+		return uniqueKey, nil
 	}
-	return nil
+
+	return nil, nil
 }
 
 // BuildKeyInfo implements LogicalPlan BuildKeyInfo interface.
@@ -240,8 +248,10 @@ func (ds *DataSource) BuildKeyInfo(selfSchema *expression.Schema, childSchema []
 		if path.IsIntHandlePath {
 			continue
 		}
-		if newKey := checkIndexCanBeKey(path.Index, ds.Columns, selfSchema); newKey != nil {
+		if uniqueKey, newKey := checkIndexCanBeKey(path.Index, ds.Columns, selfSchema); newKey != nil {
 			selfSchema.Keys = append(selfSchema.Keys, newKey)
+		} else if uniqueKey != nil {
+			selfSchema.UniqueKeys = append(selfSchema.UniqueKeys, uniqueKey)
 		}
 	}
 	if ds.tableInfo.PKIsHandle {
@@ -266,8 +276,10 @@ func (is *LogicalIndexScan) BuildKeyInfo(selfSchema *expression.Schema, childSch
 		if path.IsTablePath() {
 			continue
 		}
-		if newKey := checkIndexCanBeKey(path.Index, is.Columns, selfSchema); newKey != nil {
+		if uniqueKey, newKey := checkIndexCanBeKey(path.Index, is.Columns, selfSchema); newKey != nil {
 			selfSchema.Keys = append(selfSchema.Keys, newKey)
+		} else if uniqueKey != nil {
+			selfSchema.UniqueKeys = append(selfSchema.UniqueKeys, uniqueKey)
 		}
 	}
 	handle := is.getPKIsHandleCol(selfSchema)

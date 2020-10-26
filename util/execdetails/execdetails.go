@@ -453,11 +453,11 @@ func (crs *CopRuntimeStats) String() string {
 
 	var result string
 	if totalTasks == 1 {
-		result += fmt.Sprintf("time:%v, loops:%d", procTimes[0], totalIters)
+		result += fmt.Sprintf("tikv_task:{time:%v, loops:%d}", procTimes[0], totalIters)
 	} else {
 		n := len(procTimes)
 		sort.Slice(procTimes, func(i, j int) bool { return procTimes[i] < procTimes[j] })
-		result += fmt.Sprintf("proc max:%v, min:%v, p80:%v, p95:%v, iters:%v, tasks:%v",
+		result += fmt.Sprintf("tikv_task:{proc max:%v, min:%v, p80:%v, p95:%v, iters:%v, tasks:%v}",
 			procTimes[n-1], procTimes[0], procTimes[n*4/5], procTimes[n*19/20], totalIters, totalTasks)
 	}
 	if crs.copDetails != nil {
@@ -491,6 +491,8 @@ const (
 	TpSelectResultRuntimeStats
 	// TpInsertRuntimeStat is the tp for InsertRuntimeStat
 	TpInsertRuntimeStat
+	// TpIndexLookUpRunTimeStats is the tp for TpIndexLookUpRunTimeStats
+	TpIndexLookUpRunTimeStats
 	// TpSlowQueryRuntimeStat is the tp for TpSlowQueryRuntimeStat
 	TpSlowQueryRuntimeStat
 )

@@ -114,7 +114,7 @@ func TestCopRuntimeStats(t *testing.T) {
 		t.Fatal("exist")
 	}
 	cop := stats.GetCopStats(tableScanID)
-	if cop.String() != "proc max:2ns, min:1ns, p80:2ns, p95:2ns, iters:3, tasks:2"+
+	if cop.String() != "tikv_task:{proc max:2ns, min:1ns, p80:2ns, p95:2ns, iters:3, tasks:2}"+
 		", total_keys:10, processed_keys:10, rocksdb:{delete_skipped_count:10, key_skipped_count:1, block_cache_hit_count:10, block_read_count:10, block_read_byte:100}" {
 		t.Fatal("table_scan")
 	}
@@ -128,7 +128,7 @@ func TestCopRuntimeStats(t *testing.T) {
 		t.Fatalf("cop stats string is not expect, got: %v", copStats[0].String())
 	}
 
-	if stats.GetCopStats(aggID).String() != "proc max:4ns, min:3ns, p80:4ns, p95:4ns, iters:7, tasks:2" {
+	if stats.GetCopStats(aggID).String() != "tikv_task:{proc max:4ns, min:3ns, p80:4ns, p95:4ns, iters:7, tasks:2}" {
 		t.Fatal("agg")
 	}
 	rootStats := stats.GetRootStats(tableReaderID)
@@ -163,7 +163,7 @@ func TestCopRuntimeStatsForTiFlash(t *testing.T) {
 		t.Fatal("exist")
 	}
 	cop := stats.GetCopStats(tableScanID)
-	if cop.String() != "proc max:2ns, min:1ns, p80:2ns, p95:2ns, iters:3, tasks:2"+
+	if cop.String() != "tikv_task:{proc max:2ns, min:1ns, p80:2ns, p95:2ns, iters:3, tasks:2}"+
 		", total_keys:10, processed_keys:10, rocksdb:{delete_skipped_count:10, key_skipped_count:1, block_cache_hit_count:10, block_read_count:10, block_read_byte:100}" {
 		t.Fatal("table_scan")
 	}
@@ -177,7 +177,7 @@ func TestCopRuntimeStatsForTiFlash(t *testing.T) {
 		t.Fatalf("cop stats string is not expect, got: %v", copStats[0].String())
 	}
 
-	if stats.GetCopStats(aggID).String() != "proc max:4ns, min:3ns, p80:4ns, p95:4ns, iters:7, tasks:2" {
+	if stats.GetCopStats(aggID).String() != "tikv_task:{proc max:4ns, min:3ns, p80:4ns, p95:4ns, iters:7, tasks:2}" {
 		t.Fatal("agg")
 	}
 	rootStats := stats.GetRootStats(tableReaderID)

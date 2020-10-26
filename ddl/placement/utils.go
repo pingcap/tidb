@@ -14,10 +14,13 @@
 package placement
 
 import (
+	"encoding/hex"
 	"fmt"
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/util/codec"
 )
 
 func checkLabelConstraint(label string) (LabelConstraint, error) {
@@ -74,4 +77,25 @@ func CheckLabelConstraints(labels []string) ([]LabelConstraint, error) {
 // GroupID accepts a tableID or whatever integer, and encode the integer into a valid GroupID for PD.
 func GroupID(id int64) string {
 	return fmt.Sprintf("TIDB_DDL_%d", id)
+}
+
+// BuildPlacementDropBundle builds the bundle to drop placement rules.
+func BuildPlacementDropBundle(partitionID int64) *Bundle {
+	return &Bundle{
+		ID: GroupID(partitionID),
+	}
+}
+
+// BuildPlacementTruncateBundle builds the bundle to copy placement rules from old id to new id.
+func BuildPlacementTruncateBundle(oldBundle *Bundle, newID int64) *Bundle {
+	newBundle := oldBundle.Clone()
+	newBundle.ID = GroupID(newID)
+	startKey := hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(newID)))
+	endKey := hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(newID+1)))
+	for _, rule := range newBundle.Rules {
+		rule.GroupID = newBundle.ID
+		rule.StartKeyHex = startKey
+		rule.EndKeyHex = endKey
+	}
+	return newBundle
 }

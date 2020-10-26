@@ -467,6 +467,9 @@ type SessionVars struct {
 	// If value is set to 2 , which means to force to send batch cop for any query. Value is set to 0 means never use batch cop.
 	AllowBatchCop int
 
+	// AllowMPPExecution will prefer using mpp way to execute a query.
+	AllowMPPExecution bool
+
 	// TiDBAllowAutoRandExplicitInsert indicates whether explicit insertion on auto_random column is allowed.
 	AllowAutoRandExplicitInsert bool
 
@@ -707,6 +710,9 @@ type SessionVars struct {
 	// EnableParallelApply indicates that thether to use parallel apply.
 	EnableParallelApply bool
 
+	// EnableRedactLog indicates that whether redact log.
+	EnableRedactLog bool
+
 	// ShardAllocateStep indicates the max size of continuous rowid shard in one transaction.
 	ShardAllocateStep int64
 
@@ -888,6 +894,7 @@ func NewSessionVars() *SessionVars {
 	terror.Log(vars.SetSystemVar(TiDBEnableStreaming, enableStreaming))
 
 	vars.AllowBatchCop = DefTiDBAllowBatchCop
+	vars.AllowMPPExecution = DefTiDBAllowMPPExecution
 
 	var enableChunkRPC string
 	if config.GetGlobalConfig().TiKVClient.EnableChunkRPC {
@@ -1095,6 +1102,9 @@ func (s *SessionVars) GetSystemVar(name string) (string, bool) {
 	} else if name == ErrorCount {
 		return strconv.Itoa(int(s.SysErrorCount)), true
 	}
+	if name == TiDBSlowLogMasking {
+		name = TiDBRedactLog
+	}
 	val, ok := s.systems[name]
 	return val, ok
 }
@@ -1264,6 +1274,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.IndexJoinBatchSize = tidbOptPositiveInt32(val, DefIndexJoinBatchSize)
 	case TiDBAllowBatchCop:
 		s.AllowBatchCop = int(tidbOptInt64(val, DefTiDBAllowBatchCop))
+	case TiDBAllowMPPExecution:
+		s.AllowMPPExecution = TiDBOptOn(val)
 	case TiDBIndexLookupSize:
 		s.IndexLookupSize = tidbOptPositiveInt32(val, DefIndexLookupSize)
 	case TiDBHashJoinConcurrency:
@@ -1464,8 +1476,12 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.PartitionPruneMode.Store(strings.ToLower(strings.TrimSpace(val)))
 	case TiDBEnableParallelApply:
 		s.EnableParallelApply = TiDBOptOn(val)
-	case TiDBSlowLogMasking, TiDBRedactLog:
-		config.SetRedactLog(TiDBOptOn(val))
+	case TiDBSlowLogMasking:
+		// TiDBSlowLogMasking is deprecated and a alias of TiDBRedactLog.
+		return s.SetSystemVar(TiDBRedactLog, val)
+	case TiDBRedactLog:
+		s.EnableRedactLog = TiDBOptOn(val)
+		errors.RedactLogEnabled.Store(s.EnableRedactLog)
 	case TiDBShardAllocateStep:
 		s.ShardAllocateStep = tidbOptInt64(val, DefTiDBShardAllocateStep)
 	case TiDBEnableChangeColumnType:
