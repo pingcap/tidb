@@ -186,6 +186,8 @@ type session struct {
 	// client shared coprocessor client per session
 	client kv.Client
 
+	mppClient kv.MPPClient
+
 	// indexUsageCollector collects index usage information.
 	idxUsageCollector *handle.SessionIndexUsageCollector
 }
@@ -361,11 +363,11 @@ func (s *session) StoreQueryFeedback(feedback interface{}) {
 }
 
 // StoreIndexUsage stores index usage information in idxUsageCollector.
-func (s *session) StoreIndexUsage(dbName string, tblName string, idxName string, rowsSelected int64) {
+func (s *session) StoreIndexUsage(tblID int64, idxID int64, rowsSelected int64) {
 	if s.idxUsageCollector == nil {
 		return
 	}
-	s.idxUsageCollector.Update(dbName, tblName, idxName, &handle.IndexUsageInformation{QueryCount: 1, RowsSelected: rowsSelected})
+	s.idxUsageCollector.Update(tblID, idxID, &handle.IndexUsageInformation{QueryCount: 1, RowsSelected: rowsSelected})
 }
 
 // FieldList returns fields list of a table.
@@ -572,6 +574,10 @@ func (s *session) RollbackTxn(ctx context.Context) {
 
 func (s *session) GetClient() kv.Client {
 	return s.client
+}
+
+func (s *session) GetMPPClient() kv.MPPClient {
+	return s.mppClient
 }
 
 func (s *session) String() string {
@@ -1967,6 +1973,7 @@ func createSessionWithOpt(store kv.Storage, opt *Opt) (*session, error) {
 		sessionVars:     variable.NewSessionVars(),
 		ddlOwnerChecker: dom.DDL().OwnerManager(),
 		client:          store.GetClient(),
+		mppClient:       store.GetMPPClient(),
 	}
 	if plannercore.PreparedPlanCacheEnabled() {
 		if opt != nil && opt.PreparedPlanCache != nil {
@@ -1999,6 +2006,7 @@ func CreateSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 		parser:      parser.New(),
 		sessionVars: variable.NewSessionVars(),
 		client:      store.GetClient(),
+		mppClient:   store.GetMPPClient(),
 	}
 	if plannercore.PreparedPlanCacheEnabled() {
 		s.preparedPlanCache = kvcache.NewSimpleLRUCache(plannercore.PreparedPlanCacheCapacity,
@@ -2138,6 +2146,7 @@ var builtinGlobalVariable = []string{
 	variable.TiDBEnableIndexMerge,
 	variable.TiDBTxnMode,
 	variable.TiDBAllowBatchCop,
+	variable.TiDBAllowMPPExecution,
 	variable.TiDBOptBCJ,
 	variable.TiDBRowFormatVersion,
 	variable.TiDBEnableStmtSummary,
