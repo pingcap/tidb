@@ -2446,7 +2446,7 @@ func (b *executorBuilder) buildIndexLookUpMergeJoin(v *plannercore.PhysicalIndex
 			b.err = err
 			return e
 		}
-		if partInfo != nil {
+		if partInfo != nil && len(partInfo.PartitionNames) > 0 {
 			e.innerMergeCtx.readerBuilder.preponePartitions, err = partitionPruning(
 				b.ctx, tbl.(table.PartitionedTable), partInfo.PruningConds, partInfo.PartitionNames, partInfo.Columns, partInfo.ColumnNames)
 			if err != nil {
