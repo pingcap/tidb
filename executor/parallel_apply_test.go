@@ -25,21 +25,22 @@ import (
 
 func checkApplyPlan(c *C, tk *testkit.TestKit, sql string, parallel int) {
 	results := tk.MustQuery("explain analyze " + sql)
-	first := true
+	containApply := false
 	for _, row := range results.Rows() {
 		line := fmt.Sprintf("%v", row)
 		if strings.Contains(line, "Apply") {
-			if parallel > 0 && first {
+			if parallel > 0 { // check the concurrency if parallel is larger than 0
 				str := "Concurrency:"
 				if parallel > 1 {
 					str += fmt.Sprintf("%v", parallel)
 				}
 				c.Assert(strings.Contains(line, str), IsTrue)
 			}
-			first = false
+			containApply = true
+			break
 		}
 	}
-	c.Assert(first, IsFalse)
+	c.Assert(containApply, IsTrue)
 	return
 }
 
@@ -252,6 +253,7 @@ func (s *testSuite) TestSetTiDBEnableParallelApply(c *C) {
 	c.Assert(tk.ExecToErr("set tidb_enable_parallel_apply=-1"), NotNil)
 	c.Assert(tk.ExecToErr("set tidb_enable_parallel_apply=2"), NotNil)
 	c.Assert(tk.ExecToErr("set tidb_enable_parallel_apply=1000"), NotNil)
+	c.Assert(tk.ExecToErr("set tidb_enable_parallel_apply='onnn'"), NotNil)
 }
 
 func (s *testSuite) TestMultipleApply(c *C) {
