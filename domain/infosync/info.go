@@ -318,61 +318,6 @@ func doRequest(ctx context.Context, addrs []string, route, method string, body i
 	return nil, err
 }
 
-// GetPlacementRules is used to retrieve placement rules from PD.
-func GetPlacementRules(ctx context.Context) ([]*placement.RuleOp, error) {
-	is, err := getGlobalInfoSyncer()
-	if err != nil {
-		return nil, err
-	}
-
-	if is.etcdCli == nil {
-		return nil, nil
-	}
-
-	addrs := is.etcdCli.Endpoints()
-
-	if len(addrs) == 0 {
-		return nil, errors.Errorf("pd unavailable")
-	}
-
-	rules := []*placement.RuleOp{}
-	res, err := doRequest(ctx, addrs, path.Join(pdapi.Config, "rules"), http.MethodGet, nil)
-	if err == nil && res != nil {
-		err = json.Unmarshal(res, &rules)
-	}
-	return rules, err
-}
-
-// UpdatePlacementRules is used to notify PD changes of placement rules.
-func UpdatePlacementRules(ctx context.Context, rules []*placement.RuleOp) error {
-	if len(rules) == 0 {
-		return nil
-	}
-
-	is, err := getGlobalInfoSyncer()
-	if err != nil {
-		return err
-	}
-
-	if is.etcdCli == nil {
-		return nil
-	}
-
-	addrs := is.etcdCli.Endpoints()
-
-	if len(addrs) == 0 {
-		return errors.Errorf("pd unavailable")
-	}
-
-	b, err := json.Marshal(rules)
-	if err != nil {
-		return err
-	}
-
-	_, err = doRequest(ctx, addrs, path.Join(pdapi.Config, "rules/batch"), http.MethodPost, bytes.NewReader(b))
-	return err
-}
-
 // GetAllRuleBundles is used to get all rule bundles from PD. It is used to load full rules from PD while fullload infoschema.
 func GetAllRuleBundles(ctx context.Context) ([]*placement.Bundle, error) {
 	is, err := getGlobalInfoSyncer()
