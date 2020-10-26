@@ -227,8 +227,8 @@ func SetSessionSystemVar(vars *SessionVars, name string, value types.Datum) erro
 	return vars.SetSystemVar(name, sVal)
 }
 
-// SetSessionSQLLevelVar sets system variable and updates SessionVars states.
-func SetSessionSQLLevelVar(vars *SessionVars, name string, value string) error {
+// SetStmtVar sets system variable and updates SessionVars states.
+func SetStmtVar(vars *SessionVars, name string, value string) error {
 	name = strings.ToLower(name)
 	sysVar := GetSysVar(name)
 	if sysVar == nil {
@@ -239,7 +239,7 @@ func SetSessionSQLLevelVar(vars *SessionVars, name string, value string) error {
 		return err
 	}
 	CheckDeprecationSetSystemVar(vars, name)
-	return vars.SetSQLLevelVar(name, sVal)
+	return vars.SetStmtVar(name, sVal)
 }
 
 // ValidateGetSystemVar checks if system variable exists and validates its scope when get system variable.

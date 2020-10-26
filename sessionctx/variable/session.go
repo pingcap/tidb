@@ -367,9 +367,9 @@ type SessionVars struct {
 	Users map[string]types.Datum
 	// systems variables, don't modify it directly, use GetSystemVar/SetSystemVar method.
 	systems map[string]string
-	// sqlLevels variables are temporarily set by SET_VAR hint
+	// stmtVars variables are temporarily set by SET_VAR hint
 	// It only take effect for the duration of a single statement
-	sqlLevels map[string]string
+	stmtVars map[string]string
 	// SysWarningCount is the system variable "warning_count", because it is on the hot path, so we extract it from the systems
 	SysWarningCount int
 	// SysErrorCount is the system variable "error_count", because it is on the hot path, so we extract it from the systems
@@ -794,7 +794,7 @@ func NewSessionVars() *SessionVars {
 	vars := &SessionVars{
 		Users:                       make(map[string]types.Datum),
 		systems:                     make(map[string]string),
-		sqlLevels:                   make(map[string]string),
+		stmtVars:                    make(map[string]string),
 		PreparedStmts:               make(map[uint32]interface{}),
 		PreparedStmtNameToID:        make(map[string]uint32),
 		PreparedParams:              make([]types.Datum, 0, 10),
@@ -1123,7 +1123,7 @@ func (s *SessionVars) GetSystemVar(name string) (string, bool) {
 	if name == TiDBSlowLogMasking {
 		name = TiDBRedactLog
 	}
-	if val, ok := s.sqlLevels[name]; ok {
+	if val, ok := s.stmtVars[name]; ok {
 		return val, ok
 	}
 	val, ok := s.systems[name]
@@ -1184,15 +1184,15 @@ func (s *SessionVars) WithdrawAllPreparedStmt() {
 	metrics.PreparedStmtGauge.Set(float64(afterMinus))
 }
 
-// SetSQLLevelVar sets the value of a system variable temporarily
-func (s *SessionVars) SetSQLLevelVar(name string, val string) error {
-	s.sqlLevels[name] = val
+// SetStmtVar sets the value of a system variable temporarily
+func (s *SessionVars) SetStmtVar(name string, val string) error {
+	s.stmtVars[name] = val
 	return nil
 }
 
-// ClearSQLLevelVars clear temporarily system variables.
-func (s *SessionVars) ClearSQLLevelVars() {
-	s.sqlLevels = make(map[string]string)
+// ClearStmtVars clear temporarily system variables.
+func (s *SessionVars) ClearStmtVars() {
+	s.stmtVars = make(map[string]string)
 }
 
 // SetSystemVar sets the value of a system variable.

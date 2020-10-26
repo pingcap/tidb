@@ -113,7 +113,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	}
 	warns = warns[:0]
 	for name, val := range stmtHints.SetVars {
-		err := variable.SetSessionSQLLevelVar(sessVars, name, val)
+		err := variable.SetStmtVar(sessVars, name, val)
 		if err != nil {
 			sctx.GetSessionVars().StmtCtx.AppendWarning(err)
 		}
