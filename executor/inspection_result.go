@@ -241,6 +241,7 @@ func (configInspection) inspectDiffConfig(ctx context.Context, sctx sessionctx.C
 		// TiKV
 		"server.addr",
 		"server.advertise-addr",
+		"server.advertise-status-addr",
 		"server.status-addr",
 		"log-file",
 		"raftstore.raftdb-path",
