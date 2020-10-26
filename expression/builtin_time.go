@@ -2719,7 +2719,6 @@ func (du *baseDateArithmitical) getDateFromString(ctx sessionctx.Context, args [
 
 	sc := ctx.GetSessionVars().StmtCtx
 	date, err := types.ParseTime(sc, dateStr, dateTp, types.MaxFsp)
-	// isErr := err != nil
 	if err != nil {
 		err = handleInvalidTimeError(ctx, err)
 		if err != nil {
