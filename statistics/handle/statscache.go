@@ -340,7 +340,7 @@ func (sc *simpleStatsCache) Close() {
 func (sc *simpleStatsCache) Clear() {
 	sc.mu.Lock()
 	sc.cache.DeleteAll()
-	sc.memTracker = memory.NewTracker(memory.LabelForStatsCache, 1024*1024*1024)
+	sc.memTracker = memory.NewTracker(memory.LabelForStatsCache, -1)
 	sc.mu.Unlock()
 }
 
