@@ -1383,8 +1383,25 @@ func (s *testTableSuite) TestPlacementPolicy(c *C) {
 	tk.MustQuery("select group_id, group_index, rule_id, schema_name, table_name, partition_name, index_name, " +
 		"role, replicas, constraints from information_schema.placement_policy").Check(testkit.Rows())
 
-	bundleID := fmt.Sprintf("%s%d", placement.BundleIDPrefix, partDefs[0].ID)
+	bundleID := "pd"
 	bundle := &placement.Bundle{
+		ID:       bundleID,
+		Index:    0,
+		Override: false,
+		Rules: []*placement.Rule{
+			{
+				GroupID: bundleID,
+				ID:      "default",
+				Role:    "voter",
+				Count:   3,
+			},
+		},
+	}
+	bundles[bundleID] = bundle
+	tk.MustQuery("select * from information_schema.placement_policy").Check(testkit.Rows())
+
+	bundleID = fmt.Sprintf("%s%d", placement.BundleIDPrefix, partDefs[0].ID)
+	bundle = &placement.Bundle{
 		ID:       bundleID,
 		Index:    3,
 		Override: true,
