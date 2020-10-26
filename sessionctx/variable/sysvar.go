@@ -663,6 +663,7 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal, Name: ThreadPoolSize, Value: "16", Type: TypeUnsigned, MinValue: 1, MaxValue: 64, AutoConvertOutOfRange: true},
 	{Scope: ScopeGlobal | ScopeSession, Name: WindowingUseHighPrecision, Value: BoolOn, Type: TypeBool},
 	/* TiDB specific variables */
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBAllowMPPExecution, Value: BoolToIntStr(DefTiDBAllowMPPExecution)},
 	{Scope: ScopeSession, Name: TiDBSnapshot, Value: ""},
 	{Scope: ScopeSession, Name: TiDBOptAggPushDown, Value: BoolToOnOff(DefOptAggPushDown), Type: TypeBool},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptBCJ, Value: BoolToOnOff(DefOptBCJ)},
