@@ -739,7 +739,7 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeSession, Name: TiDBLowResolutionTSO, Value: "0", Type: TypeBool},
 	{Scope: ScopeSession, Name: TiDBExpensiveQueryTimeThreshold, Value: strconv.Itoa(DefTiDBExpensiveQueryTimeThreshold), Type: TypeUnsigned, MinValue: int64(MinExpensiveQueryTimeThreshold), MaxValue: uint64(math.MaxInt64), AutoConvertOutOfRange: true},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableNoopFuncs, Value: BoolToIntStr(DefTiDBEnableNoopFuncs), Type: TypeBool},
-	{Scope: ScopeSession, Name: TiDBReplicaRead, Value: "leader"},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBReplicaRead, Value: "leader"},
 	{Scope: ScopeSession, Name: TiDBAllowRemoveAutoInc, Value: BoolToIntStr(DefTiDBAllowRemoveAutoInc), Type: TypeBool},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableStmtSummary, Value: BoolToIntStr(config.GetGlobalConfig().StmtSummary.Enable)},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBStmtSummaryInternalQuery, Value: BoolToIntStr(config.GetGlobalConfig().StmtSummary.EnableInternalQuery)},
