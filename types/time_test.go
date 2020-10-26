@@ -1361,6 +1361,11 @@ func (s *testTimeSuite) TestExtractDurationValue(c *C) {
 			failed: true,
 		},
 		{
+			unit:   "SECOND",
+			format: "50.-2",
+			ans:    "00:00:50",
+		},
+		{
 			unit:   "MONTH",
 			format: "1",
 			ans:    "720:00:00",
