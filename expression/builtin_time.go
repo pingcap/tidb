@@ -2719,16 +2719,17 @@ func (du *baseDateArithmitical) getDateFromString(ctx sessionctx.Context, args [
 
 	sc := ctx.GetSessionVars().StmtCtx
 	date, err := types.ParseTime(sc, dateStr, dateTp, types.MaxFsp)
-	isErr := err != nil
+	// isErr := err != nil
 	if err != nil {
 		err = handleInvalidTimeError(ctx, err)
 		if err != nil {
-			return types.ZeroTime, isErr, err
+			return types.ZeroTime, true, err
 		}
+		return date, true, handleInvalidTimeError(ctx, err)
 	} else if ctx.GetSessionVars().SQLMode.HasNoZeroDateMode() && (date.Year() == 0 || date.Month() == 0 || date.Day() == 0) {
 		return types.ZeroTime, true, handleInvalidTimeError(ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, dateStr))
 	}
-	return date, isErr, handleInvalidTimeError(ctx, err)
+	return date, false, handleInvalidTimeError(ctx, err)
 }
 
 func (du *baseDateArithmitical) getDateFromInt(ctx sessionctx.Context, args []Expression, row chunk.Row, unit string) (types.Time, bool, error) {
