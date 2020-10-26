@@ -548,6 +548,9 @@ type SessionVars struct {
 	// EnableWindowFunction enables the window function.
 	EnableWindowFunction bool
 
+	// EnableStreamAggRangePartition enables the shuffle range partition for stream-agg function.
+	EnableStreamAggRangePartition bool
+
 	// EnableVectorizedExpression  enables the vectorized expression evaluation.
 	EnableVectorizedExpression bool
 
@@ -1096,6 +1099,11 @@ func (s *SessionVars) Location() *time.Location {
 	return loc
 }
 
+func (s *SessionVars) IsStreamAggRangePartitionEnabled() bool {
+	v, ok := s.GetSystemVar(TiDBEnableStreamAggRangePartition)
+	return ok && v == BoolOn
+}
+
 // GetSystemVar gets the string value of a system variable.
 func (s *SessionVars) GetSystemVar(name string) (string, bool) {
 	if name == WarningCount {
@@ -1365,6 +1373,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.EnableRadixJoin = TiDBOptOn(val)
 	case TiDBEnableWindowFunction:
 		s.EnableWindowFunction = TiDBOptOn(val)
+	case TiDBEnableStreamAggRangePartition:
+		s.EnableStreamAggRangePartition = TiDBOptOn(val)
 	case TiDBEnableVectorizedExpression:
 		s.EnableVectorizedExpression = TiDBOptOn(val)
 	case TiDBOptJoinReorderThreshold:

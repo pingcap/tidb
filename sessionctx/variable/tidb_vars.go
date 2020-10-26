@@ -366,6 +366,9 @@ const (
 	// tidb_enable_window_function is used to control whether to enable the window function.
 	TiDBEnableWindowFunction = "tidb_enable_window_function"
 
+	// tidb_enable_stream_agg_range_partition is used to control whether to enable range partition for stream-agg function
+	TiDBEnableStreamAggRangePartition = "tidb_enable_stream_agg_range_partition"
+
 	// tidb_enable_vectorized_expression is used to control whether to enable the vectorized expression evaluation.
 	TiDBEnableVectorizedExpression = "tidb_enable_vectorized_expression"
 
@@ -532,6 +535,7 @@ const (
 	DefTiDBForcePriority               = mysql.NoPriority
 	DefTiDBUseRadixJoin                = false
 	DefEnableWindowFunction            = true
+	DefEnableStreamAggRangePartition   = false
 	DefEnableVectorizedExpression      = true
 	DefTiDBOptJoinReorderThreshold     = 0
 	DefTiDBDDLSlowOprThreshold         = 300

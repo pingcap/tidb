@@ -107,16 +107,35 @@ func optimizeByShuffle4StreamAgg(pp *PhysicalStreamAgg, ctx sessionctx.Context) 
 	}
 
 	// todo: make all fields to be valid
+	var tail, dataSource PhysicalPlan
+	switch p := pp.Children()[0].(type) {
+	case *PhysicalTableScan:
+		tail, dataSource = extractTailAndDataSource4TableScan(p, ctx)
+	default:
+		panic("other physical plan is not implemented")
+	}
 
 	reqProp := &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64}
 	shuffle := PhysicalShuffle{
 		Concurrency:  concurrency,
-		Tail:         nil,
-		DataSource:   nil,
-		SplitterType: PartitionHashSplitterType,
-		HashByItems:  nil,
+		Tail:         tail,
+		DataSource:   dataSource,
+		SplitterType: getPartitionSplitter(ctx),
+		HashByItems:  pp.GroupByItems,
 	}.Init(ctx, pp.statsInfo(), pp.SelectBlockOffset(), reqProp)
 	return shuffle
+}
+
+func getPartitionSplitter(ctx sessionctx.Context) PartitionSplitterType {
+	if ctx.GetSessionVars().IsStreamAggRangePartitionEnabled() {
+		return PartitionRangeSplitterType
+	}
+	return PartitionHashSplitterType
+}
+
+// PhysicalTableScan should not have any other child, it's the dataSource, also child
+func extractTailAndDataSource4TableScan(pp *PhysicalTableScan, ctx sessionctx.Context) (tail, dataSource PhysicalPlan) {
+	return pp, pp
 }
 
 func optimizeByShuffle4Window(pp *PhysicalWindow, ctx sessionctx.Context) *PhysicalShuffle {
