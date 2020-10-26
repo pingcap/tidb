@@ -516,17 +516,18 @@ func checkDropColumnForStatePublic(tblInfo *model.TableInfo, colInfo *model.Colu
 	// When the dropping column has not-null flag and it hasn't the default value, we can backfill the column value like "add column".
 	// NOTE: If the state of StateWriteOnly can be rollbacked, we'd better reconsider the original default value.
 	// And we need consider the column without not-null flag.
-	if colInfo.OriginDefaultValue == nil && mysql.HasNotNullFlag(colInfo.Flag) {
+	if colInfo.GetOriginDefaultValue() == nil && mysql.HasNotNullFlag(colInfo.Flag) {
 		// If the column is timestamp default current_timestamp, and DDL owner is new version TiDB that set column.Version to 1,
 		// then old TiDB update record in the column write only stage will uses the wrong default value of the dropping column.
 		// Because new version of the column default value is UTC time, but old version TiDB will think the default value is the time in system timezone.
 		// But currently will be ok, because we can't cancel the drop column job when the job is running,
 		// so the column will be dropped succeed and client will never see the wrong default value of the dropped column.
 		// More info about this problem, see PR#9115.
-		colInfo.OriginDefaultValue, err = generateOriginDefaultValue(colInfo)
+		originDefVal, err := generateOriginDefaultValue(colInfo)
 		if err != nil {
 			return err
 		}
+		return colInfo.SetOriginDefaultValue(originDefVal)
 	}
 	return nil
 }
@@ -651,10 +652,43 @@ func needChangeColumnData(oldCol, newCol *model.ColumnInfo) bool {
 		// cut to eliminate data reorg change for column type change between decimal.
 		return oldCol.Flen != newCol.Flen || oldCol.Decimal != newCol.Decimal || toUnsigned != originUnsigned
 	}
+	if oldCol.Tp == newCol.Tp && (oldCol.Tp == mysql.TypeEnum || oldCol.Tp == mysql.TypeSet) {
+		return isElemsChangedToModifyColumn(oldCol.Elems, newCol.Elems)
+	}
+	if oldCol.Tp == mysql.TypeEnum || oldCol.Tp == mysql.TypeSet ||
+		newCol.Tp == mysql.TypeEnum || newCol.Tp == mysql.TypeSet {
+		return true
+	}
+
+	switch oldCol.Tp {
+	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp, mysql.TypeDuration, mysql.TypeYear:
+		switch newCol.Tp {
+		case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp, mysql.TypeDuration, mysql.TypeYear:
+			return oldCol.Tp != newCol.Tp
+		}
+	}
+
+	if mysql.IsIntegerType(oldCol.Tp) && !mysql.IsIntegerType(newCol.Tp) {
+		return true
+	}
+
 	if newCol.Flen > 0 && newCol.Flen < oldCol.Flen || toUnsigned != originUnsigned {
 		return true
 	}
 
+	return false
+}
+
+func isElemsChangedToModifyColumn(oldElems, newElems []string) bool {
+	if len(newElems) < len(oldElems) {
+		return true
+	}
+	for index, oldElem := range oldElems {
+		newElem := newElems[index]
+		if oldElem != newElem {
+			return true
+		}
+	}
 	return false
 }
 
@@ -900,7 +934,7 @@ func (w *worker) doModifyColumnTypeWithData(
 				// If timeout, we should return, check for the owner and re-wait job done.
 				return ver, nil
 			}
-			if kv.ErrKeyExists.Equal(err) || errCancelledDDLJob.Equal(err) || errCantDecodeRecord.Equal(err) || types.ErrOverflow.Equal(err) {
+			if needRollbackData(err) {
 				if err1 := t.RemoveDDLReorgHandle(job, reorgInfo.elements); err1 != nil {
 					logutil.BgLogger().Warn("[ddl] run modify column job failed, RemoveDDLReorgHandle failed, can't convert job to rollback",
 						zap.String("job", job.String()), zap.Error(err1))
@@ -957,6 +991,12 @@ func (w *worker) doModifyColumnTypeWithData(
 	}
 
 	return ver, errors.Trace(err)
+}
+
+// needRollbackData indicates whether it needs to rollback data when specific error occurs.
+func needRollbackData(err error) bool {
+	return kv.ErrKeyExists.Equal(err) || errCancelledDDLJob.Equal(err) || errCantDecodeRecord.Equal(err) ||
+		types.ErrOverflow.Equal(err) || types.ErrDataTooLong.Equal(err) || types.ErrTruncated.Equal(err)
 }
 
 // BuildElements is exported for testing.
@@ -1147,6 +1187,7 @@ func (w *updateColumnWorker) getRowRecord(handle kv.Handle, recordKey []byte, ra
 	var recordWarning *terror.Error
 	newColVal, err := table.CastValue(w.sessCtx, w.rowMap[w.oldColInfo.ID], w.newColInfo, false, false)
 	if err != nil {
+		err = w.reformatErrors(err)
 		if IsNormalWarning(err) || (!w.sqlMode.HasStrictMode() && IsStrictWarning(err)) {
 			// Keep the warnings.
 			recordWarning = errors.Cause(err).(*terror.Error)
@@ -1181,6 +1222,15 @@ func (w *updateColumnWorker) getRowRecord(handle kv.Handle, recordKey []byte, ra
 	return nil
 }
 
+// reformatErrors casted error because `convertTo` function couldn't package column name and datum value for some errors.
+func (w *updateColumnWorker) reformatErrors(err error) error {
+	// Since row count is not precious in concurrent reorganization, here we substitute row count with datum value.
+	if types.ErrTruncated.Equal(err) {
+		err = types.ErrTruncated.GenWithStack("Data truncated for column '%s', value is '%s'", w.oldColInfo.Name, w.rowMap[w.oldColInfo.ID])
+	}
+	return err
+}
+
 // IsNormalWarning is used to check the normal warnings, for example data-truncated warnings.
 // This kind of warning will be always thrown out regard less of what kind of the sql mode is.
 func IsNormalWarning(err error) bool {
@@ -1195,7 +1245,7 @@ func IsNormalWarning(err error) bool {
 // non-strict SQL Mode.
 func IsStrictWarning(err error) bool {
 	// TODO: there are more errors here can be identified as warnings under non-strict SQL mode.
-	if types.ErrOverflow.Equal(err) {
+	if types.ErrOverflow.Equal(err) || types.ErrTruncated.Equal(err) {
 		return true
 	}
 	return false

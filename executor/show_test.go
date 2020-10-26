@@ -262,11 +262,10 @@ func (s *testSuite5) TestShow2(c *C) {
 
 	tk.MustExec("set global autocommit=0")
 	tk1 := testkit.NewTestKit(c, s.store)
-	tk1.MustQuery("show global variables where variable_name = 'autocommit'").Check(testkit.Rows("autocommit 0"))
+	tk1.MustQuery("show global variables where variable_name = 'autocommit'").Check(testkit.Rows("autocommit OFF"))
 	tk.MustExec("set global autocommit = 1")
 	tk2 := testkit.NewTestKit(c, s.store)
-	// TODO: In MySQL, the result is "autocommit ON".
-	tk2.MustQuery("show global variables where variable_name = 'autocommit'").Check(testkit.Rows("autocommit 1"))
+	tk2.MustQuery("show global variables where variable_name = 'autocommit'").Check(testkit.Rows("autocommit ON"))
 
 	// TODO: Specifying the charset for national char/varchar should not be supported.
 	tk.MustExec("drop table if exists test_full_column")
