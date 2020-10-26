@@ -108,22 +108,23 @@ type Config struct {
 	TxnLocalLatches  TxnLocalLatches `toml:"-" json:"-"`
 	// Set sys variable lower-case-table-names, ref: https://dev.mysql.com/doc/refman/5.7/en/identifier-case-sensitivity.html.
 	// TODO: We actually only support mode 2, which keeps the original case, but the comparison is case-insensitive.
-	LowerCaseTableNames int               `toml:"lower-case-table-names" json:"lower-case-table-names"`
-	ServerVersion       string            `toml:"server-version" json:"server-version"`
-	Log                 Log               `toml:"log" json:"log"`
-	Security            Security          `toml:"security" json:"security"`
-	Status              Status            `toml:"status" json:"status"`
-	Performance         Performance       `toml:"performance" json:"performance"`
-	PreparedPlanCache   PreparedPlanCache `toml:"prepared-plan-cache" json:"prepared-plan-cache"`
-	OpenTracing         OpenTracing       `toml:"opentracing" json:"opentracing"`
-	ProxyProtocol       ProxyProtocol     `toml:"proxy-protocol" json:"proxy-protocol"`
-	TiKVClient          TiKVClient        `toml:"tikv-client" json:"tikv-client"`
-	Binlog              Binlog            `toml:"binlog" json:"binlog"`
-	CompatibleKillQuery bool              `toml:"compatible-kill-query" json:"compatible-kill-query"`
-	Plugin              Plugin            `toml:"plugin" json:"plugin"`
-	PessimisticTxn      PessimisticTxn    `toml:"pessimistic-txn" json:"pessimistic-txn"`
-	CheckMb4ValueInUTF8 bool              `toml:"check-mb4-value-in-utf8" json:"check-mb4-value-in-utf8"`
-	MaxIndexLength      int               `toml:"max-index-length" json:"max-index-length"`
+	LowerCaseTableNames        int               `toml:"lower-case-table-names" json:"lower-case-table-names"`
+	ServerVersion              string            `toml:"server-version" json:"server-version"`
+	Log                        Log               `toml:"log" json:"log"`
+	Security                   Security          `toml:"security" json:"security"`
+	Status                     Status            `toml:"status" json:"status"`
+	Performance                Performance       `toml:"performance" json:"performance"`
+	PreparedPlanCache          PreparedPlanCache `toml:"prepared-plan-cache" json:"prepared-plan-cache"`
+	OpenTracing                OpenTracing       `toml:"opentracing" json:"opentracing"`
+	ProxyProtocol              ProxyProtocol     `toml:"proxy-protocol" json:"proxy-protocol"`
+	TiKVClient                 TiKVClient        `toml:"tikv-client" json:"tikv-client"`
+	Binlog                     Binlog            `toml:"binlog" json:"binlog"`
+	CompatibleKillQuery        bool              `toml:"compatible-kill-query" json:"compatible-kill-query"`
+	GracefulWaitBeforeShutdown int               `toml:"graceful-wait-before-shutdown" json:"graceful-wait-before-shutdown"`
+	Plugin                     Plugin            `toml:"plugin" json:"plugin"`
+	PessimisticTxn             PessimisticTxn    `toml:"pessimistic-txn" json:"pessimistic-txn"`
+	CheckMb4ValueInUTF8        bool              `toml:"check-mb4-value-in-utf8" json:"check-mb4-value-in-utf8"`
+	MaxIndexLength             int               `toml:"max-index-length" json:"max-index-length"`
 	// AlterPrimaryKey is used to control alter primary key feature.
 	AlterPrimaryKey bool `toml:"alter-primary-key" json:"alter-primary-key"`
 	// TreatOldVersionUTF8AsUTF8MB4 is use to treat old version table/column UTF8 charset as UTF8MB4. This is for compatibility.
@@ -631,8 +632,9 @@ var defaultConf = Config{
 		Enabled:  false,
 		Capacity: 0,
 	},
-	LowerCaseTableNames: 2,
-	ServerVersion:       "",
+	LowerCaseTableNames:        2,
+	GracefulWaitBeforeShutdown: 0,
+	ServerVersion:              "",
 	Log: Log{
 		Level:               "info",
 		Format:              "text",
