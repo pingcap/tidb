@@ -14,7 +14,9 @@
 package stringutil
 
 import (
+	"bytes"
 	"fmt"
+	"sort"
 	"strings"
 	"unicode/utf8"
 
@@ -314,4 +316,24 @@ func Escape(str string, sqlMode mysql.SQLMode) string {
 		quote = "`"
 	}
 	return quote + strings.Replace(str, quote, quote+quote, -1) + quote
+}
+
+// BuildStringFromLabels construct config labels into string by following format:
+// "keyA=valueA,keyB=valueB"
+func BuildStringFromLabels(labels map[string]string) string {
+	if len(labels) < 1 {
+		return ""
+	}
+	s := make([]string, 0, len(labels))
+	for k := range labels {
+		s = append(s, k)
+	}
+	sort.Strings(s)
+	r := new(bytes.Buffer)
+	// visit labels by sorted key in order to make sure that result should be consistency
+	for _, key := range s {
+		r.WriteString(fmt.Sprintf("%s=%s,", key, labels[key]))
+	}
+	returned := r.String()
+	return returned[:len(returned)-1]
 }

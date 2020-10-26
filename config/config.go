@@ -38,6 +38,7 @@ import (
 	tracing "github.com/uber/jaeger-client-go/config"
 
 	"go.uber.org/zap"
+	"google.golang.org/grpc/encoding/gzip"
 )
 
 // Config number limitations
@@ -51,6 +52,8 @@ const (
 	DefMaxIndexLength = 3072
 	// DefMaxOfMaxIndexLength is the maximum index length(in bytes) for TiDB v3.0.7 and previous version.
 	DefMaxOfMaxIndexLength = 3072 * 4
+	// DefMinQuotaStatistics is the minimum statistic memory quota(in bytes).
+	DefMinQuotaStatistics = 32 << 30
 	// DefPort is the default port of TiDB
 	DefPort = 4000
 	// DefStatusPort is the default status port of TiDB
@@ -75,7 +78,7 @@ var (
 	// checkBeforeDropLDFlag is a go build flag.
 	checkBeforeDropLDFlag = "None"
 	// tempStorageDirName is the default temporary storage dir name by base64 encoding a string `port/statusPort`
-	tempStorageDirName = encodeDefTempStorageDir(DefHost, DefStatusHost, DefPort, DefStatusPort)
+	tempStorageDirName = encodeDefTempStorageDir(os.TempDir(), DefHost, DefStatusHost, DefPort, DefStatusPort)
 )
 
 // Config contains configuration options.
@@ -95,6 +98,7 @@ type Config struct {
 	TempStoragePath             string `toml:"tmp-storage-path" json:"tmp-storage-path"`
 	OOMAction                   string `toml:"oom-action" json:"oom-action"`
 	MemQuotaQuery               int64  `toml:"mem-quota-query" json:"mem-quota-query"`
+	MemQuotaStatistics          int64  `toml:"mem-quota-statistics" json:"mem-quota-statistics"`
 	NestedLoopJoinCacheCapacity int64  `toml:"nested-loop-join-cache-capacity" json:"nested-loop-join-cache-capacity"`
 	// TempStorageQuota describe the temporary storage Quota during query exector when OOMUseTmpStorage is enabled
 	// If the quota exceed the capacity of the TempStoragePath, the tidb-server would exit with fatal error
@@ -148,17 +152,29 @@ type Config struct {
 	SkipRegisterToDashboard bool `toml:"skip-register-to-dashboard" json:"skip-register-to-dashboard"`
 	// EnableTelemetry enables the usage data report to PingCAP.
 	EnableTelemetry bool `toml:"enable-telemetry" json:"enable-telemetry"`
+	// Labels indicates the labels set for the tidb server. The labels describe some specific properties for the tidb
+	// server like `zone`/`rack`/`host`. Currently, labels won't affect the tidb server except for some special
+	// label keys. Now we only have `group` as a special label key.
+	// Note that: 'group' is a special label key which should be automatically set by tidb-operator. We don't suggest
+	// users to set 'group' in labels.
+	Labels map[string]string `toml:"labels" json:"labels"`
+	// EnableGlobalIndex enables creating global index.
+	EnableGlobalIndex bool `toml:"enable-global-index" json:"enable-global-index"`
+	// DeprecateIntegerDisplayWidth indicates whether deprecating the max display length for integer.
+	DeprecateIntegerDisplayWidth bool `toml:"deprecate-integer-display-length" json:"deprecate-integer-display-length"`
 }
 
 // UpdateTempStoragePath is to update the `TempStoragePath` if port/statusPort was changed
 // and the `tmp-storage-path` was not specified in the conf.toml or was specified the same as the default value.
 func (c *Config) UpdateTempStoragePath() {
 	if c.TempStoragePath == tempStorageDirName {
-		c.TempStoragePath = encodeDefTempStorageDir(c.Host, c.Status.StatusHost, c.Port, c.Status.StatusPort)
+		c.TempStoragePath = encodeDefTempStorageDir(os.TempDir(), c.Host, c.Status.StatusHost, c.Port, c.Status.StatusPort)
+	} else {
+		c.TempStoragePath = encodeDefTempStorageDir(c.TempStoragePath, c.Host, c.Status.StatusHost, c.Port, c.Status.StatusPort)
 	}
 }
 
-func encodeDefTempStorageDir(host, statusHost string, port, statusPort uint) string {
+func encodeDefTempStorageDir(tempDir string, host, statusHost string, port, statusPort uint) string {
 	dirName := base64.URLEncoding.EncodeToString([]byte(fmt.Sprintf("%v:%v/%v:%v", host, port, statusHost, statusPort)))
 	var osUID string
 	currentUser, err := user.Current()
@@ -167,7 +183,7 @@ func encodeDefTempStorageDir(host, statusHost string, port, statusPort uint) str
 	} else {
 		osUID = currentUser.Uid
 	}
-	return filepath.Join(os.TempDir(), osUID+"_tidb", dirName, "tmp-storage")
+	return filepath.Join(tempDir, osUID+"_tidb", dirName, "tmp-storage")
 }
 
 // nullableBool defaults unset bool options to unset instead of false, which enables us to know if the user has set 2
@@ -287,6 +303,16 @@ func (l *Log) getDisableErrorStack() bool {
 	return !l.EnableErrorStack.toBool()
 }
 
+// The following constants represents the valid action configurations for Security.SpilledFileEncryptionMethod.
+// "plaintext" means encryption is disabled.
+// NOTE: Although the values is case insensitive, we should use lower-case
+// strings because the configuration value will be transformed to lower-case
+// string and compared with these constants in the further usage.
+const (
+	SpilledFileEncryptionMethodPlaintext = "plaintext"
+	SpilledFileEncryptionMethodAES128CTR = "aes128-ctr"
+)
+
 // Security is the security section of the config.
 type Security struct {
 	SkipGrantTable         bool     `toml:"skip-grant-table" json:"skip-grant-table"`
@@ -298,6 +324,8 @@ type Security struct {
 	ClusterSSLCert         string   `toml:"cluster-ssl-cert" json:"cluster-ssl-cert"`
 	ClusterSSLKey          string   `toml:"cluster-ssl-key" json:"cluster-ssl-key"`
 	ClusterVerifyCN        []string `toml:"cluster-verify-cn" json:"cluster-verify-cn"`
+	// If set to "plaintext", the spilled files will not be encrypted.
+	SpilledFileEncryptionMethod string `toml:"spilled-file-encryption-method" json:"spilled-file-encryption-method"`
 }
 
 // The ErrConfigValidationFailed error is used so that external callers can do a type assertion
@@ -310,7 +338,11 @@ type ErrConfigValidationFailed struct {
 }
 
 func (e *ErrConfigValidationFailed) Error() string {
-	return fmt.Sprintf("config file %s contained unknown configuration options: %s", e.confFile, strings.Join(e.UndecodedItems, ", "))
+	return fmt.Sprintf("config file %s contained invalid configuration options: %s; check "+
+		"TiDB manual to make sure this option has not been deprecated and removed from your TiDB "+
+		"version if the option does not appear to be a typo", e.confFile, strings.Join(
+		e.UndecodedItems, ", "))
+
 }
 
 // ToTLSConfig generates tls's config based on security section of the config.
@@ -372,24 +404,26 @@ type Status struct {
 type Performance struct {
 	MaxProcs uint `toml:"max-procs" json:"max-procs"`
 	// Deprecated: use ServerMemoryQuota instead
-	MaxMemory            uint64  `toml:"max-memory" json:"max-memory"`
-	ServerMemoryQuota    uint64  `toml:"server-memory-quota" json:"server-memory-quota"`
-	StatsLease           string  `toml:"stats-lease" json:"stats-lease"`
-	StmtCountLimit       uint    `toml:"stmt-count-limit" json:"stmt-count-limit"`
-	FeedbackProbability  float64 `toml:"feedback-probability" json:"feedback-probability"`
-	QueryFeedbackLimit   uint    `toml:"query-feedback-limit" json:"query-feedback-limit"`
-	PseudoEstimateRatio  float64 `toml:"pseudo-estimate-ratio" json:"pseudo-estimate-ratio"`
-	ForcePriority        string  `toml:"force-priority" json:"force-priority"`
-	BindInfoLease        string  `toml:"bind-info-lease" json:"bind-info-lease"`
-	TxnEntrySizeLimit    uint64  `toml:"txn-entry-size-limit" json:"txn-entry-size-limit"`
-	TxnTotalSizeLimit    uint64  `toml:"txn-total-size-limit" json:"txn-total-size-limit"`
-	TCPKeepAlive         bool    `toml:"tcp-keep-alive" json:"tcp-keep-alive"`
-	CrossJoin            bool    `toml:"cross-join" json:"cross-join"`
-	RunAutoAnalyze       bool    `toml:"run-auto-analyze" json:"run-auto-analyze"`
-	DistinctAggPushDown  bool    `toml:"distinct-agg-push-down" json:"agg-push-down-join"`
-	CommitterConcurrency int     `toml:"committer-concurrency" json:"committer-concurrency"`
-	MaxTxnTTL            uint64  `toml:"max-txn-ttl" json:"max-txn-ttl"`
-	MemProfileInterval   string  `toml:"mem-profile-interval" json:"mem-profile-interval"`
+	MaxMemory             uint64  `toml:"max-memory" json:"max-memory"`
+	ServerMemoryQuota     uint64  `toml:"server-memory-quota" json:"server-memory-quota"`
+	MemoryUsageAlarmRatio float64 `toml:"memory-usage-alarm-ratio" json:"memory-usage-alarm-ratio"`
+	StatsLease            string  `toml:"stats-lease" json:"stats-lease"`
+	StmtCountLimit        uint    `toml:"stmt-count-limit" json:"stmt-count-limit"`
+	FeedbackProbability   float64 `toml:"feedback-probability" json:"feedback-probability"`
+	QueryFeedbackLimit    uint    `toml:"query-feedback-limit" json:"query-feedback-limit"`
+	PseudoEstimateRatio   float64 `toml:"pseudo-estimate-ratio" json:"pseudo-estimate-ratio"`
+	ForcePriority         string  `toml:"force-priority" json:"force-priority"`
+	BindInfoLease         string  `toml:"bind-info-lease" json:"bind-info-lease"`
+	TxnEntrySizeLimit     uint64  `toml:"txn-entry-size-limit" json:"txn-entry-size-limit"`
+	TxnTotalSizeLimit     uint64  `toml:"txn-total-size-limit" json:"txn-total-size-limit"`
+	TCPKeepAlive          bool    `toml:"tcp-keep-alive" json:"tcp-keep-alive"`
+	CrossJoin             bool    `toml:"cross-join" json:"cross-join"`
+	RunAutoAnalyze        bool    `toml:"run-auto-analyze" json:"run-auto-analyze"`
+	DistinctAggPushDown   bool    `toml:"distinct-agg-push-down" json:"agg-push-down-join"`
+	CommitterConcurrency  int     `toml:"committer-concurrency" json:"committer-concurrency"`
+	MaxTxnTTL             uint64  `toml:"max-txn-ttl" json:"max-txn-ttl"`
+	MemProfileInterval    string  `toml:"mem-profile-interval" json:"mem-profile-interval"`
+	IndexUsageSyncLease   string  `toml:"index-usage-sync-lease" json:"index-usage-sync-lease"`
 }
 
 // PlanCache is the PlanCache section of the config.
@@ -460,11 +494,11 @@ type TiKVClient struct {
 	// After having pinged for keepalive check, the client waits for a duration of Timeout in seconds
 	// and if no activity is seen even after that the connection is closed.
 	GrpcKeepAliveTimeout uint `toml:"grpc-keepalive-timeout" json:"grpc-keepalive-timeout"`
+	// GrpcCompressionType is the compression type for gRPC channel: none or gzip.
+	GrpcCompressionType string `toml:"grpc-compression-type" json:"grpc-compression-type"`
 	// CommitTimeout is the max time which command 'commit' will wait.
-	CommitTimeout string `toml:"commit-timeout" json:"commit-timeout"`
-	// EnableAsyncCommit enables async commit for all transactions.
-	EnableAsyncCommit bool `toml:"enable-async-commit" json:"enable-async-commit"`
-
+	CommitTimeout string      `toml:"commit-timeout" json:"commit-timeout"`
+	AsyncCommit   AsyncCommit `toml:"async-commit" json:"async-commit"`
 	// MaxBatchSize is the max batch size when calling batch commands API.
 	MaxBatchSize uint `toml:"max-batch-size" json:"max-batch-size"`
 	// If TiKV load is greater than this, TiDB will wait for a while to avoid little batch.
@@ -486,6 +520,16 @@ type TiKVClient struct {
 	CoprCache            CoprocessorCache `toml:"copr-cache" json:"copr-cache"`
 	// TTLRefreshedTxnSize controls whether a transaction should update its TTL or not.
 	TTLRefreshedTxnSize int64 `toml:"ttl-refreshed-txn-size" json:"ttl-refreshed-txn-size"`
+}
+
+// AsyncCommit is the config for the async commit feature.
+type AsyncCommit struct {
+	// Whether to enable the async commit feature.
+	Enable bool `toml:"enable" json:"enable"`
+	// Use async commit only if the number of keys does not exceed KeysLimit.
+	KeysLimit uint `toml:"keys-limit" json:"keys-limit"`
+	// Use async commit only if the total size of keys does not exceed TotalKeySizeLimit.
+	TotalKeySizeLimit uint64 `toml:"total-key-size-limit" json:"total-key-size-limit"`
 }
 
 // CoprocessorCache is the config for coprocessor cache.
@@ -522,8 +566,6 @@ type Plugin struct {
 
 // PessimisticTxn is the config for pessimistic transaction.
 type PessimisticTxn struct {
-	// Enable must be true for 'begin lock' or session variable to start a pessimistic transaction.
-	Enable bool `toml:"enable" json:"enable"`
 	// The max count of retry for a single statement in a pessimistic transaction.
 	MaxRetryCount uint `toml:"max-retry-count" json:"max-retry-count"`
 }
@@ -553,8 +595,6 @@ type IsolationRead struct {
 // Experimental controls the features that are still experimental: their semantics, interfaces are subject to change.
 // Using these features in the production environment is not recommended.
 type Experimental struct {
-	// Whether enable creating expression index.
-	AllowsExpressionIndex bool `toml:"allow-expression-index" json:"allow-expression-index"`
 }
 
 var defaultConf = Config{
@@ -573,6 +613,7 @@ var defaultConf = Config{
 	TempStoragePath:              tempStorageDirName,
 	OOMAction:                    OOMActionCancel,
 	MemQuotaQuery:                1 << 30,
+	MemQuotaStatistics:           32 << 30,
 	NestedLoopJoinCacheCapacity:  20971520,
 	EnableStreaming:              false,
 	EnableBatchDML:               false,
@@ -615,24 +656,27 @@ var defaultConf = Config{
 		RecordQPSbyDB:   false,
 	},
 	Performance: Performance{
-		MaxMemory:            0,
-		ServerMemoryQuota:    0,
-		TCPKeepAlive:         true,
-		CrossJoin:            true,
-		StatsLease:           "3s",
-		RunAutoAnalyze:       true,
-		StmtCountLimit:       5000,
-		FeedbackProbability:  0.05,
-		QueryFeedbackLimit:   512,
-		PseudoEstimateRatio:  0.8,
-		ForcePriority:        "NO_PRIORITY",
-		BindInfoLease:        "3s",
-		TxnEntrySizeLimit:    DefTxnEntrySizeLimit,
-		TxnTotalSizeLimit:    DefTxnTotalSizeLimit,
-		DistinctAggPushDown:  false,
-		CommitterConcurrency: 16,
-		MaxTxnTTL:            10 * 60 * 1000, // 10min
-		MemProfileInterval:   "1m",
+		MaxMemory:             0,
+		ServerMemoryQuota:     0,
+		MemoryUsageAlarmRatio: 0.8,
+		TCPKeepAlive:          true,
+		CrossJoin:             true,
+		StatsLease:            "3s",
+		RunAutoAnalyze:        true,
+		StmtCountLimit:        5000,
+		FeedbackProbability:   0.05,
+		QueryFeedbackLimit:    512,
+		PseudoEstimateRatio:   0.8,
+		ForcePriority:         "NO_PRIORITY",
+		BindInfoLease:         "3s",
+		TxnEntrySizeLimit:     DefTxnEntrySizeLimit,
+		TxnTotalSizeLimit:     DefTxnTotalSizeLimit,
+		DistinctAggPushDown:   false,
+		CommitterConcurrency:  16,
+		MaxTxnTTL:             60 * 60 * 1000, // 1hour
+		MemProfileInterval:    "1m",
+		// TODO: set indexUsageSyncLease to 60s.
+		IndexUsageSyncLease: "0s",
 	},
 	ProxyProtocol: ProxyProtocol{
 		Networks:      "",
@@ -655,8 +699,14 @@ var defaultConf = Config{
 		GrpcConnectionCount:  4,
 		GrpcKeepAliveTime:    10,
 		GrpcKeepAliveTimeout: 3,
+		GrpcCompressionType:  "none",
 		CommitTimeout:        "41s",
-		EnableAsyncCommit:    false,
+		AsyncCommit: AsyncCommit{
+			Enable: false,
+			// FIXME: Find an appropriate default limit.
+			KeysLimit:         256,
+			TotalKeySizeLimit: 4 * 1024, // 4 KiB
+		},
 
 		MaxBatchSize:      128,
 		OverloadThreshold: 200,
@@ -683,7 +733,6 @@ var defaultConf = Config{
 		Strategy:     "range",
 	},
 	PessimisticTxn: PessimisticTxn{
-		Enable:        true,
 		MaxRetryCount: 256,
 	},
 	StmtSummary: StmtSummary{
@@ -697,11 +746,15 @@ var defaultConf = Config{
 	IsolationRead: IsolationRead{
 		Engines: []string{"tikv", "tiflash", "tidb"},
 	},
-	Experimental: Experimental{
-		AllowsExpressionIndex: false,
-	},
+	Experimental:               Experimental{},
 	EnableCollectExecutionInfo: true,
 	EnableTelemetry:            true,
+	Labels:                     make(map[string]string),
+	EnableGlobalIndex:          false,
+	Security: Security{
+		SpilledFileEncryptionMethod: SpilledFileEncryptionMethodPlaintext,
+	},
+	DeprecateIntegerDisplayWidth: false,
 }
 
 var (
@@ -728,6 +781,7 @@ func StoreGlobalConfig(config *Config) {
 
 var deprecatedConfig = map[string]struct{}{
 	"pessimistic-txn.ttl":            {},
+	"pessimistic-txn.enable":         {},
 	"log.file.log-rotate":            {},
 	"log.log-slow-query":             {},
 	"txn-local-latches":              {},
@@ -736,6 +790,7 @@ var deprecatedConfig = map[string]struct{}{
 	"performance.max-memory":         {},
 	"max-txn-time-use":               {},
 	"experimental.allow-auto-random": {},
+	"enable-redact-log":              {}, // use variable tidb_redact_log instead
 }
 
 func isAllDeprecatedConfigItems(items []string) bool {
@@ -834,7 +889,7 @@ func (c *Config) Valid() error {
 	if c.Security.SkipGrantTable && !hasRootPrivilege() {
 		return fmt.Errorf("TiDB run with skip-grant-table need root privilege")
 	}
-	if _, ok := ValidStorage[c.Store]; !ok {
+	if !ValidStorage[c.Store] {
 		nameList := make([]string, 0, len(ValidStorage))
 		for k, v := range ValidStorage {
 			if v {
@@ -870,9 +925,16 @@ func (c *Config) Valid() error {
 	if c.TiKVClient.GrpcConnectionCount == 0 {
 		return fmt.Errorf("grpc-connection-count should be greater than 0")
 	}
+	if c.TiKVClient.GrpcCompressionType != "none" && c.TiKVClient.GrpcCompressionType != gzip.Name {
+		return fmt.Errorf("grpc-compression-type should be none or %s, but got %s", gzip.Name, c.TiKVClient.GrpcCompressionType)
+	}
 
 	if c.Performance.TxnTotalSizeLimit > 10<<30 {
 		return fmt.Errorf("txn-total-size-limit should be less than %d", 10<<30)
+	}
+
+	if c.Performance.MemoryUsageAlarmRatio > 1 || c.Performance.MemoryUsageAlarmRatio < 0 {
+		return fmt.Errorf("memory-usage-alarm-ratio in [Performance] must be greater than or equal to 0 and less than or equal to 1")
 	}
 
 	if c.StmtSummary.MaxStmtCount <= 0 {
@@ -891,6 +953,9 @@ func (c *Config) Valid() error {
 	if c.PreparedPlanCache.MemoryGuardRatio < 0 || c.PreparedPlanCache.MemoryGuardRatio > 1 {
 		return fmt.Errorf("memory-guard-ratio in [prepared-plan-cache] must be NOT less than 0 and more than 1")
 	}
+	if c.MemQuotaStatistics < DefMinQuotaStatistics {
+		return fmt.Errorf("memory-quota-statistics should be greater than %dB", DefMinQuotaStatistics)
+	}
 	if len(c.IsolationRead.Engines) < 1 {
 		return fmt.Errorf("the number of [isolation-read]engines for isolation read should be at least 1")
 	}
@@ -898,6 +963,15 @@ func (c *Config) Valid() error {
 		if engine != "tidb" && engine != "tikv" && engine != "tiflash" {
 			return fmt.Errorf("type of [isolation-read]engines can't be %v should be one of tidb or tikv or tiflash", engine)
 		}
+	}
+
+	// test security
+	c.Security.SpilledFileEncryptionMethod = strings.ToLower(c.Security.SpilledFileEncryptionMethod)
+	switch c.Security.SpilledFileEncryptionMethod {
+	case SpilledFileEncryptionMethodPlaintext, SpilledFileEncryptionMethodAES128CTR:
+	default:
+		return fmt.Errorf("unsupported [security]spilled-file-encryption-method %v, TiDB only supports [%v, %v]",
+			c.Security.SpilledFileEncryptionMethod, SpilledFileEncryptionMethodPlaintext, SpilledFileEncryptionMethodAES128CTR)
 	}
 
 	// test log level

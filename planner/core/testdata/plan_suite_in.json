@@ -126,7 +126,10 @@
       "select * from ((SELECT 1 a,6 b) UNION (SELECT 2,5) UNION (SELECT 2, 4) ORDER BY 1) t order by 1, 2",
       "select * from (select *, NULL as xxx from t) t order by xxx",
       "select * from t use index(f) where f = 1 and a = 1",
-      "select * from t2 use index(b) where b = 1 and a = 1"
+      "select * from t2 use index(b) where b = 1 and a = 1",
+      // Test inline project for Limit
+      "select f from t where a > 1",
+      "select f from t where a > 1 limit 10"
     ]
   },
   {
@@ -537,6 +540,15 @@
     ]
   },
   {
+    "name": "TestLimitToCopHint",
+    "cases": [
+      "select /*+ LIMIT_TO_COP() */ * from tn where a = 1 and b > 10 and b < 20 and c > 50 order by d limit 1",
+      "select * from tn where a = 1 and b > 10 and b < 20 and c > 50 order by d limit 1",
+      "select /*+ LIMIT_TO_COP() */ a from tn where mod(a, 2) order by a limit 1",
+      "select /*+ LIMIT_TO_COP() */ a from tn where a > 10 limit 1"
+    ]
+  },
+  {
     "name": "TestPushdownDistinctEnable",
     "cases": [
       "select /*+ HASH_AGG() */ avg(distinct a) from t;", // InjectProjBelowAgg
@@ -641,6 +653,14 @@
       "select /*+nth_plan(3)*/ * from test.tt where a=1 and b=1;",
       "select /*+nth_plan(2)*/ * from test.tt where a=1 and b=1;",
       "select * from test.tt where a=1 and b=1"
+    ]
+  },
+  {
+    "name": "TestEliminateMaxOneRow",
+    "cases": [
+      "select a from t2 where t2.a < (select t1.a from t1 where t1.a = t2.a);",
+      "select a from t2 where t2.a < (select t1.a from t1 where t1.b = t2.b and t1.a is null);",
+      "select a from t2 where t2.a < (select t3.a from t3 where t3.a = t2.a);"
     ]
   }
 ]

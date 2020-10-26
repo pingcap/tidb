@@ -185,9 +185,28 @@ func (s *decorrelateSolver) optimize(ctx context.Context, p LogicalPlan) (Logica
 					outerCol.RetType = first.RetTp
 					outerColsInSchema = append(outerColsInSchema, outerCol)
 				}
-				newAggFuncs = append(newAggFuncs, agg.AggFuncs...)
-				agg.AggFuncs = newAggFuncs
 				apply.SetSchema(expression.MergeSchema(expression.NewSchema(outerColsInSchema...), innerPlan.Schema()))
+				resetNotNullFlag(apply.schema, outerPlan.Schema().Len(), apply.schema.Len())
+
+				for i, aggFunc := range agg.AggFuncs {
+					switch expr := aggFunc.Args[0].(type) {
+					case *expression.Column:
+						if idx := apply.schema.ColumnIndex(expr); idx != -1 {
+							desc, err := aggregation.NewAggFuncDesc(agg.ctx, agg.AggFuncs[i].Name, []expression.Expression{apply.schema.Columns[idx]}, false)
+							if err != nil {
+								return nil, err
+							}
+							newAggFuncs = append(newAggFuncs, desc)
+						}
+					case *expression.ScalarFunction:
+						expr.RetType = expr.RetType.Clone()
+						expr.RetType.Flag &= ^mysql.NotNullFlag
+						newAggFuncs = append(newAggFuncs, aggFunc)
+					default:
+						newAggFuncs = append(newAggFuncs, aggFunc)
+					}
+				}
+				agg.AggFuncs = newAggFuncs
 				np, err := s.optimize(ctx, p)
 				if err != nil {
 					return nil, err
@@ -195,7 +214,6 @@ func (s *decorrelateSolver) optimize(ctx context.Context, p LogicalPlan) (Logica
 				agg.SetChildren(np)
 				// TODO: Add a Projection if any argument of aggregate funcs or group by items are scalar functions.
 				// agg.buildProjectionIfNecessary()
-				agg.collectGroupByColumns()
 				return agg, nil
 			}
 			// We can pull up the equal conditions below the aggregation as the join key of the apply, if only
@@ -218,7 +236,7 @@ func (s *decorrelateSolver) optimize(ctx context.Context, p LogicalPlan) (Logica
 					sel.Conditions = remainedExpr
 					apply.CorCols = extractCorColumnsBySchema4LogicalPlan(apply.children[1], apply.children[0].Schema())
 					// There's no other correlated column.
-					groupByCols := expression.NewSchema(agg.groupByCols...)
+					groupByCols := expression.NewSchema(agg.GetGroupByCols()...)
 					if len(apply.CorCols) == 0 {
 						join := &apply.LogicalJoin
 						join.EqualConditions = append(join.EqualConditions, eqCondWithCorCol...)
@@ -240,7 +258,6 @@ func (s *decorrelateSolver) optimize(ctx context.Context, p LogicalPlan) (Logica
 								groupByCols.Append(clonedCol)
 							}
 						}
-						agg.collectGroupByColumns()
 						// The selection may be useless, check and remove it.
 						if len(sel.Conditions) == 0 {
 							agg.SetChildren(sel.children[0])

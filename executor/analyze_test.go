@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/store/mockstore"
@@ -50,64 +51,66 @@ var _ = Suite(&testFastAnalyze{})
 
 func (s *testSuite1) TestAnalyzePartition(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	createTable := `CREATE TABLE t (a int, b int, c varchar(10), primary key(a), index idx(b))
+	testkit.WithPruneMode(tk, variable.StaticOnly, func() {
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists t")
+		createTable := `CREATE TABLE t (a int, b int, c varchar(10), primary key(a), index idx(b))
 PARTITION BY RANGE ( a ) (
 		PARTITION p0 VALUES LESS THAN (6),
 		PARTITION p1 VALUES LESS THAN (11),
 		PARTITION p2 VALUES LESS THAN (16),
 		PARTITION p3 VALUES LESS THAN (21)
 )`
-	tk.MustExec(createTable)
-	for i := 1; i < 21; i++ {
-		tk.MustExec(fmt.Sprintf(`insert into t values (%d, %d, "hello")`, i, i))
-	}
-	tk.MustExec("analyze table t")
-
-	is := infoschema.GetInfoSchema(tk.Se.(sessionctx.Context))
-	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	c.Assert(err, IsNil)
-	pi := table.Meta().GetPartitionInfo()
-	c.Assert(pi, NotNil)
-	do, err := session.GetDomain(s.store)
-	c.Assert(err, IsNil)
-	handle := do.StatsHandle()
-	for _, def := range pi.Definitions {
-		statsTbl := handle.GetPartitionStats(table.Meta(), def.ID)
-		c.Assert(statsTbl.Pseudo, IsFalse)
-		c.Assert(len(statsTbl.Columns), Equals, 3)
-		c.Assert(len(statsTbl.Indices), Equals, 1)
-		for _, col := range statsTbl.Columns {
-			c.Assert(col.Len(), Greater, 0)
+		tk.MustExec(createTable)
+		for i := 1; i < 21; i++ {
+			tk.MustExec(fmt.Sprintf(`insert into t values (%d, %d, "hello")`, i, i))
 		}
-		for _, idx := range statsTbl.Indices {
-			c.Assert(idx.Len(), Greater, 0)
-		}
-	}
+		tk.MustExec("analyze table t")
 
-	tk.MustExec("drop table t")
-	tk.MustExec(createTable)
-	for i := 1; i < 21; i++ {
-		tk.MustExec(fmt.Sprintf(`insert into t values (%d, %d, "hello")`, i, i))
-	}
-	tk.MustExec("alter table t analyze partition p0")
-	is = infoschema.GetInfoSchema(tk.Se.(sessionctx.Context))
-	table, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	c.Assert(err, IsNil)
-	pi = table.Meta().GetPartitionInfo()
-	c.Assert(pi, NotNil)
-
-	for i, def := range pi.Definitions {
-		statsTbl := handle.GetPartitionStats(table.Meta(), def.ID)
-		if i == 0 {
+		is := infoschema.GetInfoSchema(tk.Se.(sessionctx.Context))
+		table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+		c.Assert(err, IsNil)
+		pi := table.Meta().GetPartitionInfo()
+		c.Assert(pi, NotNil)
+		do, err := session.GetDomain(s.store)
+		c.Assert(err, IsNil)
+		handle := do.StatsHandle()
+		for _, def := range pi.Definitions {
+			statsTbl := handle.GetPartitionStats(table.Meta(), def.ID)
 			c.Assert(statsTbl.Pseudo, IsFalse)
 			c.Assert(len(statsTbl.Columns), Equals, 3)
 			c.Assert(len(statsTbl.Indices), Equals, 1)
-		} else {
-			c.Assert(statsTbl.Pseudo, IsTrue)
+			for _, col := range statsTbl.Columns {
+				c.Assert(col.Len(), Greater, 0)
+			}
+			for _, idx := range statsTbl.Indices {
+				c.Assert(idx.Len(), Greater, 0)
+			}
 		}
-	}
+
+		tk.MustExec("drop table t")
+		tk.MustExec(createTable)
+		for i := 1; i < 21; i++ {
+			tk.MustExec(fmt.Sprintf(`insert into t values (%d, %d, "hello")`, i, i))
+		}
+		tk.MustExec("alter table t analyze partition p0")
+		is = infoschema.GetInfoSchema(tk.Se.(sessionctx.Context))
+		table, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+		c.Assert(err, IsNil)
+		pi = table.Meta().GetPartitionInfo()
+		c.Assert(pi, NotNil)
+
+		for i, def := range pi.Definitions {
+			statsTbl := handle.GetPartitionStats(table.Meta(), def.ID)
+			if i == 0 {
+				c.Assert(statsTbl.Pseudo, IsFalse)
+				c.Assert(len(statsTbl.Columns), Equals, 3)
+				c.Assert(len(statsTbl.Indices), Equals, 1)
+			} else {
+				c.Assert(statsTbl.Pseudo, IsTrue)
+			}
+		}
+	})
 }
 
 func (s *testSuite1) TestAnalyzeReplicaReadFollower(c *C) {
@@ -263,14 +266,17 @@ func (s *testFastAnalyze) TestAnalyzeFastSample(c *C) {
 	opts := make(map[ast.AnalyzeOptionType]uint64)
 	opts[ast.AnalyzeOptNumSamples] = 20
 	mockExec := &executor.AnalyzeTestFastExec{
-		Ctx:             tk.Se.(sessionctx.Context),
-		HandleCols:      handleCols,
-		ColsInfo:        colsInfo,
-		IdxsInfo:        indicesInfo,
-		Concurrency:     1,
-		PhysicalTableID: tbl.(table.PhysicalTable).GetPhysicalID(),
-		TblInfo:         tblInfo,
-		Opts:            opts,
+		Ctx:         tk.Se.(sessionctx.Context),
+		HandleCols:  handleCols,
+		ColsInfo:    colsInfo,
+		IdxsInfo:    indicesInfo,
+		Concurrency: 1,
+		TableID: core.AnalyzeTableID{
+			CollectIDs: []int64{tbl.(table.PhysicalTable).GetPhysicalID()},
+			PersistID:  tbl.(table.PhysicalTable).GetPhysicalID(),
+		},
+		TblInfo: tblInfo,
+		Opts:    opts,
 	}
 	err = mockExec.TestFastSample()
 	c.Assert(err, IsNil)
@@ -384,6 +390,16 @@ func (s *testFastAnalyze) TestFastAnalyze(c *C) {
 	tk.MustQuery("show stats_buckets where table_name = 't2'").Check(testkit.Rows(
 		"test t2  a 0 0 1 1 0 0",
 		"test t2  a 0 1 2 1 18446744073709551615 18446744073709551615"))
+
+	tk.MustExec(`set @@tidb_partition_prune_mode='` + string(variable.StaticOnly) + `'`)
+	tk.MustExec(`create table t3 (id int, v int, primary key(id), index k(v)) partition by hash (id) partitions 4`)
+	tk.MustExec(`insert into t3 values(1, 1), (2, 2), (5, 1), (9, 3), (13, 3), (17, 5), (3, 0)`)
+	tk.MustExec(`analyze table t3`)
+	tk.MustQuery(`explain select v from t3 partition(p1) where v = 3`).Check(testkit.Rows(
+		"IndexReader_8 2.00 root  index:IndexRangeScan_7",
+		"└─IndexRangeScan_7 2.00 cop[tikv] table:t3, partition:p1, index:k(v) range:[3,3], keep order:false",
+	))
+	tk.MustExec(`set @@tidb_partition_prune_mode='` + string(variable.DynamicOnly) + `'`)
 }
 
 func (s *testSuite1) TestIssue15993(c *C) {
@@ -414,6 +430,24 @@ func (s *testSuite1) TestIssue15752(c *C) {
 	tk.MustExec("CREATE INDEX i0 ON t0(c0)")
 	tk.MustExec("set @@tidb_enable_fast_analyze=1")
 	tk.MustExec("ANALYZE TABLE t0 INDEX i0")
+}
+
+func (s *testSuite1) TestAnalyzeIndex(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (id int, v int, primary key(id), index k(v))")
+	tk.MustExec("insert into t1(id, v) values(1, 2), (2, 2), (3, 2), (4, 2), (5, 1), (6, 3), (7, 4)")
+	tk.MustExec("analyze table t1 index k")
+	c.Assert(len(tk.MustQuery("show stats_buckets where table_name = 't1' and column_name = 'k' and is_index = 1").Rows()), Greater, 0)
+
+	func() {
+		defer tk.MustExec("set @@session.tidb_enable_fast_analyze=0")
+		tk.MustExec("drop stats t1")
+		tk.MustExec("set @@session.tidb_enable_fast_analyze=1")
+		tk.MustExec("analyze table t1 index k")
+		c.Assert(len(tk.MustQuery("show stats_buckets where table_name = 't1' and column_name = 'k' and is_index = 1").Rows()), Greater, 1)
+	}()
 }
 
 func (s *testSuite1) TestAnalyzeIncremental(c *C) {
@@ -671,4 +705,36 @@ func (s *testSuite1) TestNormalAnalyzeOnCommonHandle(c *C) {
 		"test t3  c 1 0 1 1 1 1",
 		"test t3  c 1 1 2 1 2 2",
 		"test t3  c 1 2 3 1 3 3"))
+}
+
+func (s *testSuite1) TestDefaultValForAnalyze(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("drop database if exists test_default_val_for_analyze;")
+	tk.MustExec("create database test_default_val_for_analyze;")
+	tk.MustExec("use test_default_val_for_analyze")
+
+	tk.MustExec("create table t (a int, key(a));")
+	for i := 0; i < 2048; i++ {
+		tk.MustExec("insert into t values (0)")
+	}
+	for i := 1; i < 4; i++ {
+		tk.MustExec("insert into t values (?)", i)
+	}
+	tk.MustExec("analyze table t with 0 topn;")
+	tk.MustQuery("explain select * from t where a = 1").Check(testkit.Rows("IndexReader_6 512.00 root  index:IndexRangeScan_5",
+		"└─IndexRangeScan_5 512.00 cop[tikv] table:t, index:a(a) range:[1,1], keep order:false"))
+	tk.MustQuery("explain select * from t where a = 999").Check(testkit.Rows("IndexReader_6 0.00 root  index:IndexRangeScan_5",
+		"└─IndexRangeScan_5 0.00 cop[tikv] table:t, index:a(a) range:[999,999], keep order:false"))
+
+	tk.MustExec("drop table t;")
+	tk.MustExec("create table t (a int, key(a));")
+	for i := 0; i < 2048; i++ {
+		tk.MustExec("insert into t values (0)")
+	}
+	for i := 1; i < 2049; i++ {
+		tk.MustExec("insert into t values (?)", i)
+	}
+	tk.MustExec("analyze table t with 0 topn;")
+	tk.MustQuery("explain select * from t where a = 1").Check(testkit.Rows("IndexReader_6 1.00 root  index:IndexRangeScan_5",
+		"└─IndexRangeScan_5 1.00 cop[tikv] table:t, index:a(a) range:[1,1], keep order:false"))
 }

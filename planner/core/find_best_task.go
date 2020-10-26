@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/set"
@@ -675,11 +676,16 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 		canConvertPointGet = canConvertPointGet && candidate.path.StoreType != kv.TiFlash
 		if !candidate.path.IsIntHandlePath {
 			canConvertPointGet = canConvertPointGet &&
-				candidate.path.Index.Unique &&
-				!candidate.path.Index.HasPrefixIndex() &&
-				len(candidate.path.Ranges[0].LowVal) == len(candidate.path.Index.Columns)
+				candidate.path.Index.Unique && !candidate.path.Index.HasPrefixIndex()
+			idxColsLen := len(candidate.path.Index.Columns)
+			for _, ran := range candidate.path.Ranges {
+				if len(ran.LowVal) != idxColsLen {
+					canConvertPointGet = false
+					break
+				}
+			}
 		}
-		if ds.table.Meta().GetPartitionInfo() != nil && !tryOldPartitionImplementation(ds.ctx) {
+		if ds.table.Meta().GetPartitionInfo() != nil && ds.ctx.GetSessionVars().UseDynamicPartitionPrune() {
 			canConvertPointGet = false
 		}
 		if canConvertPointGet {
@@ -761,27 +767,33 @@ func (ds *DataSource) convertToIndexMergeScan(prop *property.PhysicalProperty, c
 		return invalidTask, nil
 	}
 	path := candidate.path
-	var totalCost, totalRowCount float64
+	var totalCost float64
 	scans := make([]PhysicalPlan, 0, len(path.PartialIndexPaths))
 	cop := &copTask{
 		indexPlanFinished: true,
 		tblColHists:       ds.TblColHists,
 	}
-	cop.partitionTable.pruningConds = ds.allConds
-	cop.partitionTable.partitionNames = ds.partitionNames
+	cop.partitionInfo = PartitionInfo{
+		PruningConds:   ds.allConds,
+		PartitionNames: ds.partitionNames,
+		Columns:        ds.TblCols,
+		ColumnNames:    ds.names,
+	}
 	for _, partPath := range path.PartialIndexPaths {
 		var scan PhysicalPlan
-		var partialCost, rowCount float64
+		var partialCost float64
 		if partPath.IsTablePath() {
-			scan, partialCost, rowCount = ds.convertToPartialTableScan(prop, partPath)
+			scan, partialCost = ds.convertToPartialTableScan(prop, partPath)
 		} else {
-			scan, partialCost, rowCount = ds.convertToPartialIndexScan(prop, partPath)
+			scan, partialCost = ds.convertToPartialIndexScan(prop, partPath)
 		}
 		scans = append(scans, scan)
 		totalCost += partialCost
-		totalRowCount += rowCount
 	}
-
+	totalRowCount := path.CountAfterAccess
+	if prop.ExpectedCnt < ds.stats.RowCount {
+		totalRowCount *= prop.ExpectedCnt / ds.stats.RowCount
+	}
 	ts, partialCost, err := ds.buildIndexMergeTableScan(prop, path.TableFilters, totalRowCount)
 	if err != nil {
 		return nil, err
@@ -796,8 +808,7 @@ func (ds *DataSource) convertToIndexMergeScan(prop *property.PhysicalProperty, c
 
 func (ds *DataSource) convertToPartialIndexScan(prop *property.PhysicalProperty, path *util.AccessPath) (
 	indexPlan PhysicalPlan,
-	partialCost float64,
-	rowCount float64) {
+	partialCost float64) {
 	idx := path.Index
 	is, partialCost, rowCount := ds.getOriginalPhysicalIndexScan(prop, path, false, false)
 	rowSize := is.indexScanRowSize(idx, ds, false)
@@ -819,17 +830,16 @@ func (ds *DataSource) convertToPartialIndexScan(prop *property.PhysicalProperty,
 		indexPlan := PhysicalSelection{Conditions: indexConds}.Init(is.ctx, stats, ds.blockOffset)
 		indexPlan.SetChildren(is)
 		partialCost += rowCount * rowSize * sessVars.NetworkFactor
-		return indexPlan, partialCost, rowCount
+		return indexPlan, partialCost
 	}
 	partialCost += rowCount * rowSize * sessVars.NetworkFactor
 	indexPlan = is
-	return indexPlan, partialCost, rowCount
+	return indexPlan, partialCost
 }
 
 func (ds *DataSource) convertToPartialTableScan(prop *property.PhysicalProperty, path *util.AccessPath) (
 	tablePlan PhysicalPlan,
-	partialCost float64,
-	rowCount float64) {
+	partialCost float64) {
 	ts, partialCost, rowCount := ds.getOriginalPhysicalTableScan(prop, path, false)
 	rowSize := ds.TblColHists.GetAvgRowSize(ds.ctx, ds.TblCols, false, false)
 	sessVars := ds.ctx.GetSessionVars()
@@ -843,11 +853,11 @@ func (ds *DataSource) convertToPartialTableScan(prop *property.PhysicalProperty,
 		tablePlan.SetChildren(ts)
 		partialCost += rowCount * sessVars.CopCPUFactor
 		partialCost += selectivity * rowCount * rowSize * sessVars.NetworkFactor
-		return tablePlan, partialCost, rowCount
+		return tablePlan, partialCost
 	}
 	partialCost += rowCount * rowSize * sessVars.NetworkFactor
 	tablePlan = ts
-	return tablePlan, partialCost, rowCount
+	return tablePlan, partialCost
 }
 
 func (ds *DataSource) buildIndexMergeTableScan(prop *property.PhysicalProperty, tableFilters []expression.Expression, totalRowCount float64) (PhysicalPlan, float64, error) {
@@ -875,7 +885,6 @@ func (ds *DataSource) buildIndexMergeTableScan(prop *property.PhysicalProperty, 
 	if err != nil {
 		return nil, 0, err
 	}
-	ts.Columns = ExpandVirtualColumn(ts.Columns, ts.schema, ts.Table.Columns)
 	if ts.Table.PKIsHandle {
 		if pkColInfo := ts.Table.GetPkColInfo(); pkColInfo != nil {
 			if ds.statisticTable.Columns[pkColInfo.ID] != nil {
@@ -906,8 +915,6 @@ func (ds *DataSource) buildIndexMergeTableScan(prop *property.PhysicalProperty, 
 func indexCoveringCol(col *expression.Column, indexCols []*expression.Column, idxColLens []int) bool {
 	for i, indexCol := range indexCols {
 		isFullLen := idxColLens[i] == types.UnspecifiedLength || idxColLens[i] == col.RetType.Flen
-		// We use col.OrigColName instead of col.ColName.
-		// Related issue: https://github.com/pingcap/tidb/issues/9636.
 		if indexCol != nil && col.Equal(nil, indexCol) && isFullLen {
 			return true
 		}
@@ -923,7 +930,16 @@ func (ds *DataSource) isCoveringIndex(columns, indexColumns []*expression.Column
 		if col.ID == model.ExtraHandleID {
 			continue
 		}
-		if !indexCoveringCol(col, indexColumns, idxColLens) && !indexCoveringCol(col, ds.commonHandleCols, ds.commonHandleLens) {
+		coveredByPlainIndex := indexCoveringCol(col, indexColumns, idxColLens)
+		coveredByClusteredIndex := indexCoveringCol(col, ds.commonHandleCols, ds.commonHandleLens)
+		if !coveredByPlainIndex && !coveredByClusteredIndex {
+			return false
+		}
+
+		isClusteredNewCollationIdx := collate.NewCollationEnabled() &&
+			col.GetType().EvalType() == types.ETString &&
+			!mysql.HasBinaryFlag(col.GetType().Flag)
+		if !coveredByPlainIndex && coveredByClusteredIndex && isClusteredNewCollationIdx {
 			return false
 		}
 	}
@@ -963,8 +979,12 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, candid
 		tblColHists: ds.TblColHists,
 		tblCols:     ds.TblCols,
 	}
-	cop.partitionTable.pruningConds = ds.allConds
-	cop.partitionTable.partitionNames = ds.partitionNames
+	cop.partitionInfo = PartitionInfo{
+		PruningConds:   ds.allConds,
+		PartitionNames: ds.partitionNames,
+		Columns:        ds.TblCols,
+		ColumnNames:    ds.names,
+	}
 	if !candidate.isSingleScan {
 		// On this way, it's double read case.
 		ts := PhysicalTableScan{
@@ -975,7 +995,6 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, candid
 			physicalTableID: ds.physicalTableID,
 		}.Init(ds.ctx, is.blockOffset)
 		ts.SetSchema(ds.schema.Clone())
-		ts.Columns = ExpandVirtualColumn(ts.Columns, ts.schema, ts.Table.Columns)
 		cop.tablePlan = ts
 	}
 	cop.cst = cost
@@ -1054,8 +1073,6 @@ func (is *PhysicalIndexScan) initSchema(idxExprCols []*expression.Column, isDoub
 		for i := len(is.Index.Columns); i < len(idxExprCols); i++ {
 			indexCols = append(indexCols, idxExprCols[i])
 		}
-		is.SetSchema(expression.NewSchema(indexCols...))
-		return
 	}
 	setHandle := len(indexCols) > len(is.Index.Columns)
 	if !setHandle {
@@ -1067,13 +1084,24 @@ func (is *PhysicalIndexScan) initSchema(idxExprCols []*expression.Column, isDoub
 			}
 		}
 	}
-	// If it's double read case, the first index must return handle. So we should add extra handle column
-	// if there isn't a handle column.
-	if isDoubleRead && !setHandle {
-		if !is.Table.IsCommonHandle {
+
+	if isDoubleRead {
+		// If it's double read case, the first index must return handle. So we should add extra handle column
+		// if there isn't a handle column.
+		if !setHandle {
+			if !is.Table.IsCommonHandle {
+				indexCols = append(indexCols, &expression.Column{
+					RetType:  types.NewFieldType(mysql.TypeLonglong),
+					ID:       model.ExtraHandleID,
+					UniqueID: is.ctx.GetSessionVars().AllocPlanColumnID(),
+				})
+			}
+		}
+		// If index is global, we should add extra column for pid.
+		if is.Index.Global {
 			indexCols = append(indexCols, &expression.Column{
 				RetType:  types.NewFieldType(mysql.TypeLonglong),
-				ID:       model.ExtraHandleID,
+				ID:       model.ExtraPidColID,
 				UniqueID: is.ctx.GetSessionVars().AllocPlanColumnID(),
 			})
 		}
@@ -1154,9 +1182,9 @@ func (ds *DataSource) splitIndexFilterConditions(conditions []expression.Express
 	return indexConditions, tableConditions
 }
 
-// getMostCorrColFromExprs checks if column in the condition is correlated enough with handle. If the condition
+// getMostCorrCol4Handle checks if column in the condition is correlated enough with handle. If the condition
 // contains multiple columns, return nil and get the max correlation, which would be used in the heuristic estimation.
-func getMostCorrColFromExprs(exprs []expression.Expression, histColl *statistics.Table, threshold float64) (*expression.Column, float64) {
+func getMostCorrCol4Handle(exprs []expression.Expression, histColl *statistics.Table, threshold float64) (*expression.Column, float64) {
 	var cols []*expression.Column
 	cols = expression.ExtractColumnsFromExpressions(cols, exprs, nil)
 	if len(cols) == 0 {
@@ -1174,13 +1202,13 @@ func getMostCorrColFromExprs(exprs []expression.Expression, histColl *statistics
 		if !ok {
 			continue
 		}
-		curCorr := math.Abs(hist.Correlation)
-		if corrCol == nil || corr < curCorr {
+		curCorr := hist.Correlation
+		if corrCol == nil || math.Abs(corr) < math.Abs(curCorr) {
 			corrCol = col
 			corr = curCorr
 		}
 	}
-	if len(colSet) == 1 && corr >= threshold {
+	if len(colSet) == 1 && math.Abs(corr) >= threshold {
 		return corrCol, corr
 	}
 	return nil, corr
@@ -1194,7 +1222,7 @@ func getColumnRangeCounts(sc *stmtctx.StatementContext, colID int64, ranges []*r
 	for i, ran := range ranges {
 		if idxID >= 0 {
 			idxHist := histColl.Indices[idxID]
-			if idxHist == nil || idxHist.IsInvalid(false) {
+			if idxHist == nil || idxHist.IsInvalid(sc, false) {
 				return nil, false
 			}
 			count, err = histColl.GetRowCountByIndexRanges(sc, idxID, []*ranger.Range{ran})
@@ -1245,28 +1273,31 @@ func convertRangeFromExpectedCnt(ranges []*ranger.Range, rangeCounts []float64, 
 	return convertedRanges, count, false
 }
 
-// crossEstimateRowCount estimates row count of table scan using histogram of another column which is in TableFilters
+// crossEstimateTableRowCount estimates row count of table scan using histogram of another column which is in TableFilters
 // and has high order correlation with handle column. For example, if the query is like:
 // `select * from tbl where a = 1 order by pk limit 1`
 // if order of column `a` is strictly correlated with column `pk`, the row count of table scan should be:
 // `1 + row_count(a < 1 or a is null)`
-func (ds *DataSource) crossEstimateRowCount(path *util.AccessPath, expectedCnt float64, desc bool) (float64, bool, float64) {
+func (ds *DataSource) crossEstimateTableRowCount(path *util.AccessPath, expectedCnt float64, desc bool) (float64, bool, float64) {
 	if ds.statisticTable.Pseudo || len(path.TableFilters) == 0 {
 		return 0, false, 0
 	}
-	col, corr := getMostCorrColFromExprs(path.TableFilters, ds.statisticTable, ds.ctx.GetSessionVars().CorrelationThreshold)
-	// If table scan is not full range scan, we cannot use histogram of other columns for estimation, because
+	col, corr := getMostCorrCol4Handle(path.TableFilters, ds.statisticTable, ds.ctx.GetSessionVars().CorrelationThreshold)
+	return ds.crossEstimateRowCount(path, path.TableFilters, col, corr, expectedCnt, desc)
+}
+
+// crossEstimateRowCount is the common logic of crossEstimateTableRowCount and crossEstimateIndexRowCount.
+func (ds *DataSource) crossEstimateRowCount(path *util.AccessPath, conds []expression.Expression, col *expression.Column, corr, expectedCnt float64, desc bool) (float64, bool, float64) {
+	// If the scan is not full range scan, we cannot use histogram of other columns for estimation, because
 	// the histogram reflects value distribution in the whole table level.
 	if col == nil || len(path.AccessConds) > 0 {
 		return 0, false, corr
 	}
-	colInfoID := col.ID
-	colID := col.UniqueID
-	colHist := ds.statisticTable.Columns[colInfoID]
-	if colHist.Correlation < 0 {
+	colInfoID, colID := col.ID, col.UniqueID
+	if corr < 0 {
 		desc = !desc
 	}
-	accessConds, remained := ranger.DetachCondsForColumn(ds.ctx, path.TableFilters, col)
+	accessConds, remained := ranger.DetachCondsForColumn(ds.ctx, conds, col)
 	if len(accessConds) == 0 {
 		return 0, false, corr
 	}
@@ -1302,6 +1333,62 @@ func (ds *DataSource) crossEstimateRowCount(path *util.AccessPath, expectedCnt f
 	}
 	scanCount = math.Min(scanCount, path.CountAfterAccess)
 	return scanCount, true, 0
+}
+
+// crossEstimateIndexRowCount estimates row count of index scan using histogram of another column which is in TableFilters/IndexFilters
+// and has high order correlation with the first index column. For example, if the query is like:
+// `select * from tbl where a = 1 order by b limit 1`
+// if order of column `a` is strictly correlated with column `b`, the row count of IndexScan(b) should be:
+// `1 + row_count(a < 1 or a is null)`
+func (ds *DataSource) crossEstimateIndexRowCount(path *util.AccessPath, expectedCnt float64, desc bool) (float64, bool, float64) {
+	filtersLen := len(path.TableFilters) + len(path.IndexFilters)
+	if ds.statisticTable.Pseudo || filtersLen == 0 {
+		return 0, false, 0
+	}
+	col, corr := getMostCorrCol4Index(path, ds.statisticTable, ds.ctx.GetSessionVars().CorrelationThreshold)
+	filters := make([]expression.Expression, 0, filtersLen)
+	filters = append(filters, path.TableFilters...)
+	filters = append(filters, path.IndexFilters...)
+	return ds.crossEstimateRowCount(path, filters, col, corr, expectedCnt, desc)
+}
+
+// getMostCorrCol4Index checks if column in the condition is correlated enough with the first index column. If the condition
+// contains multiple columns, return nil and get the max correlation, which would be used in the heuristic estimation.
+func getMostCorrCol4Index(path *util.AccessPath, histColl *statistics.Table, threshold float64) (*expression.Column, float64) {
+	if histColl.ExtendedStats == nil || len(histColl.ExtendedStats.Stats) == 0 {
+		return nil, 0
+	}
+	var cols []*expression.Column
+	cols = expression.ExtractColumnsFromExpressions(cols, path.TableFilters, nil)
+	cols = expression.ExtractColumnsFromExpressions(cols, path.IndexFilters, nil)
+	if len(cols) == 0 {
+		return nil, 0
+	}
+	colSet := set.NewInt64Set()
+	var corr float64
+	var corrCol *expression.Column
+	for _, col := range cols {
+		if colSet.Exist(col.UniqueID) {
+			continue
+		}
+		colSet.Insert(col.UniqueID)
+		curCorr := float64(0)
+		for _, item := range histColl.ExtendedStats.Stats {
+			if (col.ID == item.ColIDs[0] && path.FullIdxCols[0].ID == item.ColIDs[1]) ||
+				(col.ID == item.ColIDs[1] && path.FullIdxCols[0].ID == item.ColIDs[0]) {
+				curCorr = item.ScalarVals
+				break
+			}
+		}
+		if corrCol == nil || math.Abs(corr) < math.Abs(curCorr) {
+			corrCol = col
+			corr = curCorr
+		}
+	}
+	if len(colSet) == 1 && math.Abs(corr) >= threshold {
+		return corrCol, corr
+	}
+	return nil, corr
 }
 
 // GetPhysicalScan returns PhysicalTableScan for the LogicalTableScan.
@@ -1367,8 +1454,13 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 		tblColHists:       ds.TblColHists,
 		cst:               cost,
 	}
-	copTask.partitionTable.pruningConds = ds.allConds
-	copTask.partitionTable.partitionNames = ds.partitionNames
+	copTask.partitionInfo = PartitionInfo{
+		PruningConds:   ds.allConds,
+		PartitionNames: ds.partitionNames,
+		Columns:        ds.TblCols,
+		ColumnNames:    ds.names,
+	}
+	ts.PartitionInfo = copTask.partitionInfo
 	task = copTask
 	if candidate.isMatchProp {
 		copTask.keepOrder = true
@@ -1398,6 +1490,7 @@ func (ds *DataSource) convertToPointGet(prop *property.PhysicalProperty, candida
 		return invalidTask
 	}
 
+	accessCnt := math.Min(candidate.path.CountAfterAccess, float64(1))
 	pointGetPlan := PointGetPlan{
 		ctx:              ds.ctx,
 		AccessConditions: candidate.path.AccessConds,
@@ -1407,7 +1500,7 @@ func (ds *DataSource) convertToPointGet(prop *property.PhysicalProperty, candida
 		outputNames:      ds.OutputNames(),
 		LockWaitTime:     ds.ctx.GetSessionVars().LockWaitTimeout,
 		Columns:          ds.Columns,
-	}.Init(ds.ctx, ds.stats.ScaleByExpectCnt(1.0), ds.blockOffset)
+	}.Init(ds.ctx, ds.tableStats.ScaleByExpectCnt(accessCnt), ds.blockOffset)
 	var partitionInfo *model.PartitionDefinition
 	if ds.isPartition {
 		if pi := ds.tableInfo.GetPartitionInfo(); pi != nil {
@@ -1475,13 +1568,14 @@ func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty, ca
 		return invalidTask
 	}
 
+	accessCnt := math.Min(candidate.path.CountAfterAccess, float64(len(candidate.path.Ranges)))
 	batchPointGetPlan := BatchPointGetPlan{
 		ctx:              ds.ctx,
 		AccessConditions: candidate.path.AccessConds,
 		TblInfo:          ds.TableInfo(),
 		KeepOrder:        !prop.IsEmpty(),
 		Columns:          ds.Columns,
-	}.Init(ds.ctx, ds.stats.ScaleByExpectCnt(float64(len(candidate.path.Ranges))), ds.schema.Clone(), ds.names, ds.blockOffset)
+	}.Init(ds.ctx, ds.tableStats.ScaleByExpectCnt(accessCnt), ds.schema.Clone(), ds.names, ds.blockOffset)
 	if batchPointGetPlan.KeepOrder {
 		batchPointGetPlan.Desc = prop.Items[0].Desc
 	}
@@ -1574,7 +1668,7 @@ func (ds *DataSource) getOriginalPhysicalTableScan(prop *property.PhysicalProper
 	}
 	rowCount := path.CountAfterAccess
 	if prop.ExpectedCnt < ds.stats.RowCount {
-		count, ok, corr := ds.crossEstimateRowCount(path, prop.ExpectedCnt, isMatchProp && prop.Items[0].Desc)
+		count, ok, corr := ds.crossEstimateTableRowCount(path, prop.ExpectedCnt, isMatchProp && prop.Items[0].Desc)
 		if ok {
 			// TODO: actually, before using this count as the estimated row count of table scan, we need additionally
 			// check if count < row_count(first_region | last_region), and use the larger one since we build one copTask
@@ -1584,8 +1678,8 @@ func (ds *DataSource) getOriginalPhysicalTableScan(prop *property.PhysicalProper
 			// Considering that when this scenario happens, the execution time is close between IndexScan and TableScan,
 			// we do not add this check temporarily.
 			rowCount = count
-		} else if corr < 1 {
-			correlationFactor := math.Pow(1-corr, float64(ds.ctx.GetSessionVars().CorrelationExpFactor))
+		} else if abs := math.Abs(corr); abs < 1 {
+			correlationFactor := math.Pow(1-abs, float64(ds.ctx.GetSessionVars().CorrelationExpFactor))
 			selectivity := ds.stats.RowCount / rowCount
 			rowCount = math.Min(prop.ExpectedCnt/selectivity/correlationFactor, rowCount)
 		}
@@ -1647,12 +1741,15 @@ func (ds *DataSource) getOriginalPhysicalIndexScan(prop *property.PhysicalProper
 	}
 	rowCount := path.CountAfterAccess
 	is.initSchema(append(path.FullIdxCols, ds.commonHandleCols...), !isSingleScan)
-	// Only use expectedCnt when it's smaller than the count we calculated.
-	// e.g. IndexScan(count1)->After Filter(count2). The `ds.stats.RowCount` is count2. count1 is the one we need to calculate
-	// If expectedCnt and count2 are both zero and we go into the below `if` block, the count1 will be set to zero though it's shouldn't be.
 	if (isMatchProp || prop.IsEmpty()) && prop.ExpectedCnt < ds.stats.RowCount {
-		selectivity := ds.stats.RowCount / path.CountAfterAccess
-		rowCount = math.Min(prop.ExpectedCnt/selectivity, rowCount)
+		count, ok, corr := ds.crossEstimateIndexRowCount(path, prop.ExpectedCnt, isMatchProp && prop.Items[0].Desc)
+		if ok {
+			rowCount = count
+		} else if abs := math.Abs(corr); abs < 1 {
+			correlationFactor := math.Pow(1-abs, float64(ds.ctx.GetSessionVars().CorrelationExpFactor))
+			selectivity := ds.stats.RowCount / rowCount
+			rowCount = math.Min(prop.ExpectedCnt/selectivity/correlationFactor, rowCount)
+		}
 	}
 	is.stats = ds.tableStats.ScaleByExpectCnt(rowCount)
 	rowSize := is.indexScanRowSize(idx, ds, true)

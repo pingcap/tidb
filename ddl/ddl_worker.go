@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	tidbutil "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/admin"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
@@ -108,7 +109,7 @@ func (w *worker) typeStr() string {
 	case addIdxWorker:
 		str = model.AddIndexStr
 	default:
-		str = "unknow"
+		str = "unknown"
 	}
 	return str
 }
@@ -345,7 +346,7 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 			// After rolling back an AddIndex operation, we need to use delete-range to delete the half-done index data.
 			err = w.deleteRange(job)
 		case model.ActionDropSchema, model.ActionDropTable, model.ActionTruncateTable, model.ActionDropIndex, model.ActionDropPrimaryKey,
-			model.ActionDropTablePartition, model.ActionTruncateTablePartition, model.ActionDropColumn, model.ActionDropColumns:
+			model.ActionDropTablePartition, model.ActionTruncateTablePartition, model.ActionDropColumn, model.ActionDropColumns, model.ActionModifyColumn:
 			err = w.deleteRange(job)
 		}
 	}
@@ -481,6 +482,9 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 				// And the job state is rollback done, it means the job was already finished, also shouldn't discard too.
 				// Otherwise, we should discard the KV modification when running job.
 				txn.Reset()
+				// If error happens after updateSchemaVersion(), then the schemaVer is updated.
+				// Result in the retry duration is up to 2 * lease.
+				schemaVer = 0
 			}
 			err = w.updateDDLJob(t, job, runJobErr != nil)
 			if err = w.handleUpdateJobError(t, job, err); err != nil {
@@ -619,7 +623,7 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 	case model.ActionDropTable, model.ActionDropView, model.ActionDropSequence:
 		ver, err = onDropTableOrView(t, job)
 	case model.ActionDropTablePartition:
-		ver, err = onDropTablePartition(t, job)
+		ver, err = w.onDropTablePartition(d, t, job)
 	case model.ActionTruncateTablePartition:
 		ver, err = onTruncateTablePartition(d, t, job)
 	case model.ActionExchangeTablePartition:
@@ -633,7 +637,7 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 	case model.ActionDropColumns:
 		ver, err = onDropColumns(t, job)
 	case model.ActionModifyColumn:
-		ver, err = w.onModifyColumn(t, job)
+		ver, err = w.onModifyColumn(d, t, job)
 	case model.ActionSetDefaultValue:
 		ver, err = onSetDefaultValue(t, job)
 	case model.ActionAddIndex:
@@ -663,7 +667,7 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 	case model.ActionModifyTableAutoIdCache:
 		ver, err = onModifyTableAutoIDCache(t, job)
 	case model.ActionAddTablePartition:
-		ver, err = onAddTablePartition(d, t, job)
+		ver, err = w.onAddTablePartition(d, t, job)
 	case model.ActionModifyTableCharsetAndCollate:
 		ver, err = onModifyTableCharsetAndCollate(t, job)
 	case model.ActionRecoverTable:
@@ -682,6 +686,8 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 		ver, err = onAlterIndexVisibility(t, job)
 	case model.ActionAlterTableAlterPartition:
 		ver, err = onAlterTablePartition(t, job)
+	case model.ActionAlterSequence:
+		ver, err = onAlterSequence(t, job)
 	default:
 		// Invalid job, cancel it.
 		job.State = model.JobStateCancelled
@@ -732,7 +738,7 @@ func toTError(err error) *terror.Error {
 	}
 
 	// TODO: Add the error code.
-	return terror.ClassDDL.Synthesize(terror.CodeUnknown, err.Error())
+	return dbterror.ClassDDL.Synthesize(terror.CodeUnknown, err.Error())
 }
 
 // waitSchemaChanged waits for the completion of updating all servers' schema. In order to make sure that happens,
@@ -862,6 +868,37 @@ func updateSchemaVersion(t *meta.Meta, job *model.Job) (int64, error) {
 			OldTableID: ptTableID,
 		}
 		diff.AffectedOpts = affects
+	case model.ActionTruncateTablePartition:
+		oldIDs := job.CtxVars[0].([]int64)
+		newIDs := job.CtxVars[1].([]int64)
+		diff.TableID = job.TableID
+		affects := make([]*model.AffectedOption, len(oldIDs))
+		for i := 0; i < len(oldIDs); i++ {
+			affects[i] = &model.AffectedOption{
+				SchemaID:   job.SchemaID,
+				TableID:    newIDs[i],
+				OldTableID: oldIDs[i],
+			}
+		}
+		diff.AffectedOpts = affects
+	case model.ActionDropTablePartition:
+		// affects are used to update placement rule cache
+		diff.TableID = job.TableID
+		if len(job.CtxVars) > 0 {
+			if oldIDs, ok := job.CtxVars[0].([]int64); ok {
+				affects := make([]*model.AffectedOption, len(oldIDs))
+				for i := 0; i < len(oldIDs); i++ {
+					affects[i] = &model.AffectedOption{
+						SchemaID:   job.SchemaID,
+						TableID:    oldIDs[i],
+						OldTableID: oldIDs[i],
+					}
+				}
+				diff.AffectedOpts = affects
+			}
+		}
+	case model.ActionAlterTableAlterPartition:
+		diff.TableID = job.CtxVars[0].(int64)
 	default:
 		diff.TableID = job.TableID
 	}

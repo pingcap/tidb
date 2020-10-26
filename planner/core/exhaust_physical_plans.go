@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
@@ -622,7 +623,10 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *property.PhysicalProperty, ou
 
 func (p *LogicalJoin) getIndexJoinBuildHelper(ds *DataSource, innerJoinKeys []*expression.Column,
 	checkPathValid func(path *util.AccessPath) bool) (*indexJoinBuildHelper, []int) {
-	helper := &indexJoinBuildHelper{join: p}
+	helper := &indexJoinBuildHelper{
+		join:      p,
+		innerPlan: ds,
+	}
 	for _, path := range ds.possibleAccessPaths {
 		if checkPathValid(path) {
 			emptyRange, err := helper.analyzeLookUpFilters(path, ds, innerJoinKeys)
@@ -741,7 +745,7 @@ func (p *LogicalJoin) buildIndexJoinInner2IndexScan(
 	joins = make([]PhysicalPlan, 0, 3)
 	rangeInfo := helper.buildRangeDecidedByInformation(helper.chosenPath.IdxCols, outerJoinKeys)
 	maxOneRow := false
-	if helper.chosenPath.Index.Unique && helper.maxUsedCols == len(helper.chosenPath.FullIdxCols) {
+	if helper.chosenPath.Index.Unique && helper.usedColsLen == len(helper.chosenPath.FullIdxCols) {
 		l := len(helper.chosenAccess)
 		if l == 0 {
 			maxOneRow = true
@@ -766,16 +770,20 @@ func (p *LogicalJoin) buildIndexJoinInner2IndexScan(
 	// we can't construct index merge join.
 	if us == nil {
 		innerTask2 := p.constructInnerIndexScanTask(ds, helper.chosenPath, helper.chosenRemained, outerJoinKeys, us, rangeInfo, true, !prop.IsEmpty() && prop.Items[0].Desc, avgInnerRowCnt, maxOneRow)
-		joins = append(joins, p.constructIndexMergeJoin(prop, outerIdx, innerTask2, helper.chosenRanges, keyOff2IdxOff, helper.chosenPath, helper.lastColManager)...)
+		if innerTask2 != nil {
+			joins = append(joins, p.constructIndexMergeJoin(prop, outerIdx, innerTask2, helper.chosenRanges, keyOff2IdxOff, helper.chosenPath, helper.lastColManager)...)
+		}
 	}
 	return joins
 }
 
 type indexJoinBuildHelper struct {
-	join *LogicalJoin
+	join      *LogicalJoin
+	innerPlan *DataSource
 
 	chosenIndexInfo *model.IndexInfo
-	maxUsedCols     int
+	usedColsLen     int
+	usedColsNDV     float64
 	chosenAccess    []expression.Expression
 	chosenRemained  []expression.Expression
 	idxOff2KeyOff   []int
@@ -825,6 +833,12 @@ func (p *LogicalJoin) constructInnerTableScanTask(
 	desc bool,
 	rowCount float64,
 ) task {
+	// If `ds.tableInfo.GetPartitionInfo() != nil`,
+	// it means the data source is a partition table reader.
+	// If the inner task need to keep order, the partition table reader can't satisfy it.
+	if keepOrder && ds.tableInfo.GetPartitionInfo() != nil {
+		return nil
+	}
 	var ranges []*ranger.Range
 	// pk is nil means the table uses the common handle.
 	if pk == nil {
@@ -842,6 +856,8 @@ func (p *LogicalJoin) constructInnerTableScanTask(
 		rangeDecidedBy:  outerJoinKeys,
 		KeepOrder:       keepOrder,
 		Desc:            desc,
+		physicalTableID: ds.physicalTableID,
+		isPartition:     ds.isPartition,
 	}.Init(ds.ctx, ds.blockOffset)
 	ts.SetSchema(ds.schema.Clone())
 	if rowCount <= 0 {
@@ -874,6 +890,12 @@ func (p *LogicalJoin) constructInnerTableScanTask(
 		cst:               sessVars.ScanFactor * rowSize * ts.stats.RowCount,
 		tblColHists:       ds.TblColHists,
 		keepOrder:         ts.KeepOrder,
+	}
+	copTask.partitionInfo = PartitionInfo{
+		PruningConds:   ds.allConds,
+		PartitionNames: ds.partitionNames,
+		Columns:        ds.TblCols,
+		ColumnNames:    ds.names,
 	}
 	selStats := ts.stats.Scale(selectivity)
 	ts.addPushedDownSelection(copTask, selStats)
@@ -910,6 +932,12 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 	rowCount float64,
 	maxOneRow bool,
 ) task {
+	// If `ds.tableInfo.GetPartitionInfo() != nil`,
+	// it means the data source is a partition table reader.
+	// If the inner task need to keep order, the partition table reader can't satisfy it.
+	if keepOrder && ds.tableInfo.GetPartitionInfo() != nil {
+		return nil
+	}
 	is := PhysicalIndexScan{
 		Table:            ds.tableInfo,
 		TableAsName:      ds.TableAsName,
@@ -931,6 +959,12 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 		tblColHists: ds.TblColHists,
 		tblCols:     ds.TblCols,
 		keepOrder:   is.KeepOrder,
+	}
+	cop.partitionInfo = PartitionInfo{
+		PruningConds:   ds.allConds,
+		PartitionNames: ds.partitionNames,
+		Columns:        ds.TblCols,
+		ColumnNames:    ds.names,
 	}
 	if !ds.isCoveringIndex(ds.schema.Columns, path.FullIdxCols, path.FullIdxColLens, is.Table) {
 		// On this way, it's double read case.
@@ -1244,7 +1278,7 @@ func (ijHelper *indexJoinBuildHelper) analyzeLookUpFilters(path *util.AccessPath
 		if emptyRange {
 			return true, nil
 		}
-		ijHelper.updateBestChoice(ranges, path, accesses, remained, nil)
+		ijHelper.updateBestChoice(ranges, path, accesses, remained, nil, lastColPos)
 		return false, nil
 	}
 	lastPossibleCol := path.IdxCols[lastColPos]
@@ -1283,7 +1317,10 @@ func (ijHelper *indexJoinBuildHelper) analyzeLookUpFilters(path *util.AccessPath
 			remained = append(remained, colAccesses...)
 		}
 		accesses = append(accesses, colAccesses...)
-		ijHelper.updateBestChoice(ranges, path, accesses, remained, nil)
+		if len(colAccesses) > 0 {
+			lastColPos = lastColPos + 1
+		}
+		ijHelper.updateBestChoice(ranges, path, accesses, remained, nil, lastColPos)
 		return false, nil
 	}
 	accesses = append(accesses, lastColAccess...)
@@ -1295,24 +1332,38 @@ func (ijHelper *indexJoinBuildHelper) analyzeLookUpFilters(path *util.AccessPath
 	if emptyRange {
 		return true, nil
 	}
-	ijHelper.updateBestChoice(ranges, path, accesses, remained, lastColManager)
+	ijHelper.updateBestChoice(ranges, path, accesses, remained, lastColManager, lastColPos+1)
 	return false, nil
 }
 
 func (ijHelper *indexJoinBuildHelper) updateBestChoice(ranges []*ranger.Range, path *util.AccessPath, accesses,
-	remained []expression.Expression, lastColManager *ColWithCmpFuncManager) {
-	// We choose the index by the number of used columns of the range, the much the better.
-	// Notice that there may be the cases like `t1.a=t2.a and b > 2 and b < 1`. So ranges can be nil though the conditions are valid.
-	// But obviously when the range is nil, we don't need index join.
-	if len(ranges) > 0 && len(ranges[0].LowVal) > ijHelper.maxUsedCols {
-		ijHelper.chosenPath = path
-		ijHelper.maxUsedCols = len(ranges[0].LowVal)
-		ijHelper.chosenRanges = ranges
-		ijHelper.chosenAccess = accesses
-		ijHelper.chosenRemained = remained
-		ijHelper.idxOff2KeyOff = ijHelper.curIdxOff2KeyOff
-		ijHelper.lastColManager = lastColManager
+	remained []expression.Expression, lastColManager *ColWithCmpFuncManager, usedColsLen int) {
+	// Notice that there may be the cases like `t1.a = t2.a and b > 2 and b < 1`, so ranges can be nil though the conditions are valid.
+	// Obviously when the range is nil, we don't need index join.
+	if len(ranges) == 0 {
+		return
 	}
+	var innerNDV float64
+	if stats := ijHelper.innerPlan.statsInfo(); stats != nil && stats.StatsVersion != statistics.PseudoVersion {
+		innerNDV = getCardinality(path.IdxCols[:usedColsLen], ijHelper.innerPlan.Schema(), stats)
+	}
+	// We choose the index by the NDV of the used columns, the larger the better.
+	// If NDVs are same, we choose index which uses more columns.
+	// Note that these 2 heuristic rules are too simple to cover all cases,
+	// since the NDV of outer join keys are not considered, and the detached access conditions
+	// may contain expressions like `t1.a > t2.a`. It's pretty hard to evaluate the join selectivity
+	// of these non-column-equal conditions, so I prefer to keep these heuristic rules simple at least for now.
+	if innerNDV < ijHelper.usedColsNDV || (innerNDV == ijHelper.usedColsNDV && usedColsLen <= ijHelper.usedColsLen) {
+		return
+	}
+	ijHelper.chosenPath = path
+	ijHelper.usedColsLen = len(ranges[0].LowVal)
+	ijHelper.usedColsNDV = innerNDV
+	ijHelper.chosenRanges = ranges
+	ijHelper.chosenAccess = accesses
+	ijHelper.chosenRemained = remained
+	ijHelper.idxOff2KeyOff = ijHelper.curIdxOff2KeyOff
+	ijHelper.lastColManager = lastColManager
 }
 
 func (ijHelper *indexJoinBuildHelper) buildTemplateRange(matchedKeyCnt int, eqAndInFuncs []expression.Expression, nextColRange []*ranger.Range, haveExtraCol bool) (ranges []*ranger.Range, emptyRange bool, err error) {
@@ -1574,6 +1625,15 @@ func (p *LogicalJoin) tryToGetBroadCastJoin(prop *property.PhysicalProperty) []P
 		return nil
 	}
 
+	// Disable broadcast join on partition table for TiFlash.
+	for _, child := range p.children {
+		if ds, isDataSource := child.(*DataSource); isDataSource {
+			if ds.tableInfo.GetPartitionInfo() != nil {
+				return nil
+			}
+		}
+	}
+
 	// for left join the global idx must be 1, and for right join the global idx must be 0
 	if (p.JoinType != InnerJoin && p.JoinType != LeftOuterJoin && p.JoinType != RightOuterJoin) || len(p.LeftConditions) != 0 || len(p.RightConditions) != 0 || len(p.OtherConditions) != 0 || len(p.EqualConditions) == 0 {
 		return nil
@@ -1666,8 +1726,29 @@ func (p *LogicalProjection) exhaustPhysicalPlans(prop *property.PhysicalProperty
 	return []PhysicalPlan{proj}, true
 }
 
+func (lt *LogicalTopN) canPushToCop() bool {
+	// At present, only Aggregation, Limit, TopN can be pushed to cop task, and Projection will be supported in the future.
+	// When we push task to coprocessor, finishCopTask will close the cop task and create a root task in the current implementation.
+	// Thus, we can't push two different tasks to coprocessor now, and can only push task to coprocessor when the child is Datasource.
+
+	// TODO: develop this function after supporting push several tasks to coprecessor and supporting Projection to coprocessor.
+	_, ok := lt.children[0].(*DataSource)
+	return ok
+}
+
 func (lt *LogicalTopN) getPhysTopN(prop *property.PhysicalProperty) []PhysicalPlan {
-	allTaskTypes := prop.GetAllPossibleChildTaskTypes()
+	if lt.limitHints.preferLimitToCop {
+		if !lt.canPushToCop() {
+			errMsg := "Optimizer Hint LIMIT_TO_COP is inapplicable"
+			warning := ErrInternal.GenWithStack(errMsg)
+			lt.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
+			lt.limitHints.preferLimitToCop = false
+		}
+	}
+	allTaskTypes := []property.TaskType{property.CopSingleReadTaskType, property.CopDoubleReadTaskType}
+	if !lt.limitHints.preferLimitToCop {
+		allTaskTypes = append(allTaskTypes, property.RootTaskType)
+	}
 	ret := make([]PhysicalPlan, 0, len(allTaskTypes))
 	for _, tp := range allTaskTypes {
 		resultProp := &property.PhysicalProperty{TaskTp: tp, ExpectedCnt: math.MaxFloat64}
@@ -1686,8 +1767,21 @@ func (lt *LogicalTopN) getPhysLimits(prop *property.PhysicalProperty) []Physical
 	if !canPass {
 		return nil
 	}
-	allTaskTypes := prop.GetAllPossibleChildTaskTypes()
-	ret := make([]PhysicalPlan, 0, 3)
+
+	if lt.limitHints.preferLimitToCop {
+		if !lt.canPushToCop() {
+			errMsg := "Optimizer Hint LIMIT_TO_COP is inapplicable"
+			warning := ErrInternal.GenWithStack(errMsg)
+			lt.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
+			lt.limitHints.preferLimitToCop = false
+		}
+	}
+
+	allTaskTypes := []property.TaskType{property.CopSingleReadTaskType, property.CopDoubleReadTaskType}
+	if !lt.limitHints.preferLimitToCop {
+		allTaskTypes = append(allTaskTypes, property.RootTaskType)
+	}
+	ret := make([]PhysicalPlan, 0, len(allTaskTypes))
 	for _, tp := range allTaskTypes {
 		resultProp := &property.PhysicalProperty{TaskTp: tp, ExpectedCnt: float64(lt.Count + lt.Offset), Items: p.Items}
 		limit := PhysicalLimit{
@@ -1808,7 +1902,7 @@ func (la *LogicalAggregation) getEnforcedStreamAggs(prop *property.PhysicalPrope
 	childProp := &property.PhysicalProperty{
 		ExpectedCnt: math.Max(prop.ExpectedCnt*la.inputCount/la.stats.RowCount, prop.ExpectedCnt),
 		Enforced:    true,
-		Items:       property.ItemsFromCols(la.groupByCols, desc),
+		Items:       property.ItemsFromCols(la.GetGroupByCols(), desc),
 	}
 	if !prop.IsPrefix(childProp) {
 		return enforcedAggs
@@ -1867,7 +1961,8 @@ func (la *LogicalAggregation) getStreamAggs(prop *property.PhysicalProperty) []P
 		}
 	}
 	// group by a + b is not interested in any order.
-	if len(la.groupByCols) != len(la.GroupByItems) {
+	groupByCols := la.GetGroupByCols()
+	if len(groupByCols) != len(la.GroupByItems) {
 		return nil
 	}
 
@@ -1878,7 +1973,7 @@ func (la *LogicalAggregation) getStreamAggs(prop *property.PhysicalProperty) []P
 	}
 
 	for _, possibleChildProperty := range la.possibleProperties {
-		childProp.Items = property.ItemsFromCols(possibleChildProperty[:len(la.groupByCols)], desc)
+		childProp.Items = property.ItemsFromCols(possibleChildProperty[:len(groupByCols)], desc)
 		if !prop.IsPrefix(childProp) {
 			continue
 		}
@@ -2004,11 +2099,34 @@ func (p *LogicalSelection) exhaustPhysicalPlans(prop *property.PhysicalProperty)
 	return []PhysicalPlan{sel}, true
 }
 
+func (p *LogicalLimit) canPushToCop() bool {
+	// At present, only Aggregation, Limit, TopN can be pushed to cop task, and Projection will be supported in the future.
+	// When we push task to coprocessor, finishCopTask will close the cop task and create a root task in the current implementation.
+	// Thus, we can't push two different tasks to coprocessor now, and can only push task to coprocessor when the child is Datasource.
+
+	// TODO: develop this function after supporting push several tasks to coprecessor and supporting Projection to coprocessor.
+	_, ok := p.children[0].(*DataSource)
+	return ok
+}
+
 func (p *LogicalLimit) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]PhysicalPlan, bool) {
 	if !prop.IsEmpty() {
 		return nil, true
 	}
-	allTaskTypes := prop.GetAllPossibleChildTaskTypes()
+	// allTaskTypes := prop.GetAllPossibleChildTaskTypes()
+	if p.limitHints.preferLimitToCop {
+		if !p.canPushToCop() {
+			errMsg := "Optimizer Hint LIMIT_TO_COP is inapplicable"
+			warning := ErrInternal.GenWithStack(errMsg)
+			p.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
+			p.limitHints.preferLimitToCop = false
+		}
+	}
+
+	allTaskTypes := []property.TaskType{property.CopSingleReadTaskType, property.CopDoubleReadTaskType}
+	if !p.limitHints.preferLimitToCop {
+		allTaskTypes = append(allTaskTypes, property.RootTaskType)
+	}
 	ret := make([]PhysicalPlan, 0, len(allTaskTypes))
 	for _, tp := range allTaskTypes {
 		resultProp := &property.PhysicalProperty{TaskTp: tp, ExpectedCnt: float64(p.Count + p.Offset)}
@@ -2016,6 +2134,7 @@ func (p *LogicalLimit) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]
 			Offset: p.Offset,
 			Count:  p.Count,
 		}.Init(p.ctx, p.stats, p.blockOffset, resultProp)
+		limit.SetSchema(p.Schema())
 		ret = append(ret, limit)
 	}
 	return ret, true

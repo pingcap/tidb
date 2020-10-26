@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
-	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"go.uber.org/zap"
@@ -42,7 +41,7 @@ type batchCopTask struct {
 
 type batchCopResponse struct {
 	pbResp *coprocessor.BatchResponse
-	detail *execdetails.ExecDetails
+	detail *CopRuntimeStats
 
 	// batch Cop Response is yet to return startKey. So batchCop cannot retry partially.
 	startKey kv.Key
@@ -63,7 +62,7 @@ func (rs *batchCopResponse) GetStartKey() kv.Key {
 
 // GetExecDetails is unavailable currently, because TiFlash has not collected exec details for batch cop.
 // TODO: Will fix in near future.
-func (rs *batchCopResponse) GetExecDetails() *execdetails.ExecDetails {
+func (rs *batchCopResponse) GetCopRuntimeStats() *CopRuntimeStats {
 	return rs.detail
 }
 
@@ -77,9 +76,6 @@ func (rs *batchCopResponse) MemSize() int64 {
 	rs.respSize += int64(cap(rs.startKey))
 	if rs.detail != nil {
 		rs.respSize += int64(sizeofExecDetails)
-		if rs.detail.CommitDetail != nil {
-			rs.respSize += int64(sizeofCommitDetails)
-		}
 	}
 	if rs.pbResp != nil {
 		// Using a approximate size since it's hard to get a accurate value.
@@ -97,7 +93,7 @@ type copTaskAndRPCContext struct {
 	ctx  *RPCContext
 }
 
-func buildBatchCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, req *kv.Request) ([]*batchCopTask, error) {
+func buildBatchCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, storeType kv.StoreType) ([]*batchCopTask, error) {
 	start := time.Now()
 	const cmdType = tikvrpc.CmdBatchCop
 	rangesLen := ranges.len()
@@ -108,7 +104,7 @@ func buildBatchCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, re
 				region:    regionWithRangeInfo.Region,
 				ranges:    ranges,
 				cmdType:   cmdType,
-				storeType: req.StoreType,
+				storeType: storeType,
 			})
 		}
 
@@ -172,7 +168,7 @@ func (c *CopClient) sendBatch(ctx context.Context, req *kv.Request, vars *kv.Var
 	}
 	ctx = context.WithValue(ctx, txnStartKey, req.StartTs)
 	bo := NewBackofferWithVars(ctx, copBuildTaskMaxBackoff, vars)
-	tasks, err := buildBatchCopTasks(bo, c.store.regionCache, &copRanges{mid: req.KeyRanges}, req)
+	tasks, err := buildBatchCopTasks(bo, c.store.regionCache, &copRanges{mid: req.KeyRanges}, req.StoreType)
 	if err != nil {
 		return copErrorResponse{err}
 	}
@@ -299,12 +295,11 @@ func (b *batchCopIterator) Close() error {
 }
 
 func (b *batchCopIterator) handleTask(ctx context.Context, bo *Backoffer, task *batchCopTask) {
-	logutil.BgLogger().Debug("handle batch task")
 	tasks := []*batchCopTask{task}
 	for idx := 0; idx < len(tasks); idx++ {
 		ret, err := b.handleTaskOnce(ctx, bo, tasks[idx])
 		if err != nil {
-			resp := &batchCopResponse{err: errors.Trace(err), detail: new(execdetails.ExecDetails)}
+			resp := &batchCopResponse{err: errors.Trace(err), detail: new(CopRuntimeStats)}
 			b.sendToRespCh(resp)
 			break
 		}
@@ -321,11 +316,10 @@ func (b *batchCopIterator) retryBatchCopTask(ctx context.Context, bo *Backoffer,
 			ranges.mid = append(ranges.mid, *ran)
 		})
 	}
-	return buildBatchCopTasks(bo, b.RegionCache, ranges, b.req)
+	return buildBatchCopTasks(bo, b.RegionCache, ranges, b.req.StoreType)
 }
 
 func (b *batchCopIterator) handleTaskOnce(ctx context.Context, bo *Backoffer, task *batchCopTask) ([]*batchCopTask, error) {
-	logutil.BgLogger().Debug("handle batch task once")
 	sender := NewRegionBatchRequestSender(b.store.regionCache, b.store.client)
 	var regionInfos []*coprocessor.RegionInfo
 	for _, task := range task.copTasks {
@@ -415,7 +409,7 @@ func (b *batchCopIterator) handleBatchCopResponse(bo *Backoffer, response *copro
 
 	resp := batchCopResponse{
 		pbResp: response,
-		detail: new(execdetails.ExecDetails),
+		detail: new(CopRuntimeStats),
 	}
 
 	resp.detail.BackoffTime = time.Duration(bo.totalSleep) * time.Millisecond

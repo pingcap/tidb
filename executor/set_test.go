@@ -375,7 +375,7 @@ func (s *testSuite5) TestSetVar(c *C) {
 	tk.MustQuery(`select @@session.tidb_wait_split_region_timeout;`).Check(testkit.Rows("1"))
 	_, err = tk.Exec("set tidb_wait_split_region_timeout = 0")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "tidb_wait_split_region_timeout(0) cannot be smaller than 1")
+	c.Assert(err, ErrorMatches, ".*Variable 'tidb_wait_split_region_timeout' can't be set to the value of '0'")
 	tk.MustQuery(`select @@session.tidb_wait_split_region_timeout;`).Check(testkit.Rows("1"))
 
 	tk.MustExec("set session tidb_backoff_weight = 3")
@@ -404,18 +404,24 @@ func (s *testSuite5) TestSetVar(c *C) {
 	tk.MustQuery("select @@session.tidb_store_limit;").Check(testkit.Rows("0"))
 	tk.MustQuery("select @@global.tidb_store_limit;").Check(testkit.Rows("100"))
 
+	tk.MustQuery("select @@tidb_enable_change_column_type;").Check(testkit.Rows("0"))
+	tk.MustExec("set global tidb_enable_change_column_type = 1")
+	tk.MustQuery("select @@tidb_enable_change_column_type;").Check(testkit.Rows("1"))
+	tk.MustExec("set global tidb_enable_change_column_type = off")
+	tk.MustQuery("select @@tidb_enable_change_column_type;").Check(testkit.Rows("0"))
+
 	tk.MustQuery("select @@session.tidb_metric_query_step;").Check(testkit.Rows("60"))
 	tk.MustExec("set @@session.tidb_metric_query_step = 120")
 	_, err = tk.Exec("set @@session.tidb_metric_query_step = 9")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "tidb_metric_query_step(9) cannot be smaller than 10 or larger than 216000")
+	c.Assert(err, ErrorMatches, ".*Variable 'tidb_metric_query_step' can't be set to the value of '9'")
 	tk.MustQuery("select @@session.tidb_metric_query_step;").Check(testkit.Rows("120"))
 
 	tk.MustQuery("select @@session.tidb_metric_query_range_duration;").Check(testkit.Rows("60"))
 	tk.MustExec("set @@session.tidb_metric_query_range_duration = 120")
 	_, err = tk.Exec("set @@session.tidb_metric_query_range_duration = 9")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "tidb_metric_query_range_duration(9) cannot be smaller than 10 or larger than 216000")
+	c.Assert(err, ErrorMatches, ".*Variable 'tidb_metric_query_range_duration' can't be set to the value of '9'")
 	tk.MustQuery("select @@session.tidb_metric_query_range_duration;").Check(testkit.Rows("120"))
 
 	// test for tidb_slow_log_masking
@@ -424,17 +430,20 @@ func (s *testSuite5) TestSetVar(c *C) {
 	tk.MustQuery(`select @@global.tidb_slow_log_masking;`).Check(testkit.Rows("1"))
 	tk.MustExec("set global tidb_slow_log_masking = 0")
 	tk.MustQuery(`select @@global.tidb_slow_log_masking;`).Check(testkit.Rows("0"))
-	_, err = tk.Exec("set session tidb_slow_log_masking = 0")
-	c.Assert(err, NotNil)
-	_, err = tk.Exec(`select @@session.tidb_slow_log_masking;`)
-	c.Assert(err, NotNil)
+	tk.MustExec("set session tidb_slow_log_masking = 0")
+	tk.MustQuery(`select @@session.tidb_slow_log_masking;`).Check(testkit.Rows("0"))
+	tk.MustExec("set session tidb_slow_log_masking = 1")
+	tk.MustQuery(`select @@session.tidb_slow_log_masking;`).Check(testkit.Rows("1"))
 
 	tk.MustQuery("select @@tidb_dml_batch_size;").Check(testkit.Rows("0"))
 	tk.MustExec("set @@session.tidb_dml_batch_size = 120")
 	tk.MustQuery("select @@tidb_dml_batch_size;").Check(testkit.Rows("120"))
 	c.Assert(tk.ExecToErr("set @@session.tidb_dml_batch_size = -120"), NotNil)
-	c.Assert(tk.ExecToErr("set @@global.tidb_dml_batch_size = 120"), NotNil)
-	tk.MustQuery("select @@tidb_dml_batch_size;").Check(testkit.Rows("120"))
+	c.Assert(tk.ExecToErr("set @@global.tidb_dml_batch_size = 200"), IsNil)  // now permitted due to TiDB #19809
+	tk.MustQuery("select @@tidb_dml_batch_size;").Check(testkit.Rows("120")) // global only applies to new sessions
+
+	_, err = tk.Exec("set tidb_enable_parallel_apply=-1")
+	c.Assert(terror.ErrorEqual(err, variable.ErrWrongValueForVar), IsTrue)
 }
 
 func (s *testSuite5) TestTruncateIncorrectIntSessionVar(c *C) {

@@ -246,9 +246,9 @@ func (e *HashAggExec) Close() error {
 		}
 		partialConcurrencyInfo := execdetails.NewConcurrencyInfo("PartialConcurrency", partialConcurrency)
 		finalConcurrencyInfo := execdetails.NewConcurrencyInfo("FinalConcurrency", finalConcurrency)
-		runtimeStats := &execdetails.RuntimeStatsWithConcurrencyInfo{BasicRuntimeStats: e.runtimeStats}
+		runtimeStats := &execdetails.RuntimeStatsWithConcurrencyInfo{}
 		runtimeStats.SetConcurrencyInfo(partialConcurrencyInfo, finalConcurrencyInfo)
-		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id.String(), runtimeStats)
+		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, runtimeStats)
 	}
 	return e.baseExecutor.Close()
 }
@@ -452,7 +452,7 @@ func getGroupKey(ctx sessionctx.Context, input *chunk.Chunk, groupKey [][]byte, 
 			return nil, err
 		}
 
-		if err := expression.EvalExpr(ctx, item, input, buf); err != nil {
+		if err := expression.EvalExpr(ctx, item, tp.EvalType(), input, buf); err != nil {
 			expression.PutColumn(buf)
 			return nil, err
 		}
@@ -1296,7 +1296,7 @@ func (e *vecGroupChecker) evalGroupItemsAndResolveGroups(item expression.Express
 		return err
 	}
 	defer e.releaseBuffer(col)
-	err = expression.EvalExpr(e.ctx, item, chk, col)
+	err = expression.EvalExpr(e.ctx, item, eType, chk, col)
 	if err != nil {
 		return err
 	}

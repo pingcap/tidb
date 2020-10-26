@@ -16,6 +16,7 @@ package executor
 import (
 	"context"
 	"crypto/tls"
+	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
@@ -32,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/ranger"
-	"github.com/pingcap/tidb/util/stringutil"
 )
 
 var _ = Suite(&testExecSuite{})
@@ -109,7 +109,7 @@ func (s *testExecSuite) TestShowProcessList(c *C) {
 
 	// Compose executor.
 	e := &ShowExec{
-		baseExecutor: newBaseExecutor(sctx, schema, nil),
+		baseExecutor: newBaseExecutor(sctx, schema, 0),
 		Tp:           ast.ShowProcessList,
 	}
 
@@ -268,7 +268,7 @@ func (s *testExecSerialSuite) TestSortSpillDisk(c *C) {
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().InitChunkSize = variable.DefMaxChunkSize
 	ctx.GetSessionVars().MaxChunkSize = variable.DefMaxChunkSize
-	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(nil, -1)
+	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(-1, -1)
 	cas := &sortCase{rows: 2048, orderByIdx: []int{0, 1}, ndvs: []int{0, 0}, ctx: ctx}
 	opt := mockDataSourceParameters{
 		schema: expression.NewSchema(cas.columns()...),
@@ -278,7 +278,7 @@ func (s *testExecSerialSuite) TestSortSpillDisk(c *C) {
 	}
 	dataSource := buildMockDataSource(opt)
 	exec := &SortExec{
-		baseExecutor: newBaseExecutor(cas.ctx, dataSource.schema, stringutil.StringerStr("sort"), dataSource),
+		baseExecutor: newBaseExecutor(cas.ctx, dataSource.schema, 0, dataSource),
 		ByItems:      make([]*plannerutil.ByItems, 0, len(cas.orderByIdx)),
 		schema:       dataSource.schema,
 	}
@@ -304,7 +304,7 @@ func (s *testExecSerialSuite) TestSortSpillDisk(c *C) {
 	err = exec.Close()
 	c.Assert(err, IsNil)
 
-	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(nil, 1)
+	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(-1, 1)
 	dataSource.prepareChunks()
 	err = exec.Open(tmpCtx)
 	c.Assert(err, IsNil)
@@ -334,7 +334,7 @@ func (s *testExecSerialSuite) TestSortSpillDisk(c *C) {
 	err = exec.Close()
 	c.Assert(err, IsNil)
 
-	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(nil, 24000)
+	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(-1, 24000)
 	dataSource.prepareChunks()
 	err = exec.Open(tmpCtx)
 	c.Assert(err, IsNil)
@@ -356,7 +356,7 @@ func (s *testExecSerialSuite) TestSortSpillDisk(c *C) {
 	ctx = mock.NewContext()
 	ctx.GetSessionVars().InitChunkSize = variable.DefMaxChunkSize
 	ctx.GetSessionVars().MaxChunkSize = variable.DefMaxChunkSize
-	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(nil, 16864*50)
+	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(-1, 16864*50)
 	ctx.GetSessionVars().StmtCtx.MemTracker.Consume(16864 * 45)
 	cas = &sortCase{rows: 20480, orderByIdx: []int{0, 1}, ndvs: []int{0, 0}, ctx: ctx}
 	opt = mockDataSourceParameters{
@@ -367,7 +367,7 @@ func (s *testExecSerialSuite) TestSortSpillDisk(c *C) {
 	}
 	dataSource = buildMockDataSource(opt)
 	exec = &SortExec{
-		baseExecutor: newBaseExecutor(cas.ctx, dataSource.schema, stringutil.StringerStr("sort"), dataSource),
+		baseExecutor: newBaseExecutor(cas.ctx, dataSource.schema, 0, dataSource),
 		ByItems:      make([]*plannerutil.ByItems, 0, len(cas.orderByIdx)),
 		schema:       dataSource.schema,
 	}
@@ -390,4 +390,20 @@ func (s *testExecSerialSuite) TestSortSpillDisk(c *C) {
 	c.Assert(len(exec.partitionList) <= 4, IsTrue)
 	err = exec.Close()
 	c.Assert(err, IsNil)
+}
+
+func (s *pkgTestSuite) TestSlowQueryRuntimeStats(c *C) {
+	stats := &slowQueryRuntimeStats{
+		totalFileNum: 2,
+		readFileNum:  2,
+		readFile:     time.Second,
+		initialize:   time.Millisecond,
+		readFileSize: 1024 * 1024 * 1024,
+		parseLog:     int64(time.Millisecond * 100),
+		concurrent:   15,
+	}
+	c.Assert(stats.String(), Equals, "initialize: 1ms, read_file: 1s, parse_log: {time:100ms, concurrency:15}, total_file: 2, read_file: 2, read_size: 1024 MB")
+	c.Assert(stats.String(), Equals, stats.Clone().String())
+	stats.Merge(stats.Clone())
+	c.Assert(stats.String(), Equals, "initialize: 2ms, read_file: 2s, parse_log: {time:200ms, concurrency:15}, total_file: 4, read_file: 4, read_size: 2 GB")
 }
