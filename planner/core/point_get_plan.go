@@ -128,7 +128,11 @@ func (p *PointGetPlan) AccessObject() string {
 			buffer.WriteString(", index:" + p.IndexInfo.Name.O + "(")
 		}
 		for i, idxCol := range p.IndexInfo.Columns {
-			buffer.WriteString(idxCol.Name.O)
+			if tblCol := p.TblInfo.Columns[idxCol.Offset]; tblCol.Hidden {
+				buffer.WriteString(tblCol.GeneratedExprString)
+			} else {
+				buffer.WriteString(idxCol.Name.O)
+			}
 			if i+1 < len(p.IndexInfo.Columns) {
 				buffer.WriteString(", ")
 			}
@@ -294,7 +298,11 @@ func (p *BatchPointGetPlan) AccessObject() string {
 			buffer.WriteString(", index:" + p.IndexInfo.Name.O + "(")
 		}
 		for i, idxCol := range p.IndexInfo.Columns {
-			buffer.WriteString(idxCol.Name.O)
+			if tblCol := p.TblInfo.Columns[idxCol.Offset]; tblCol.Hidden {
+				buffer.WriteString(tblCol.GeneratedExprString)
+			} else {
+				buffer.WriteString(idxCol.Name.O)
+			}
 			if i+1 < len(p.IndexInfo.Columns) {
 				buffer.WriteString(", ")
 			}
@@ -570,6 +578,9 @@ func newBatchPointGetPlan(
 		switch x := item.(type) {
 		case *ast.RowExpr:
 			// The `len(values) == len(valuesParams)` should be satisfied in this mode
+			if len(x.Values) != len(whereColNames) {
+				return nil
+			}
 			values = make([]types.Datum, len(x.Values))
 			valuesParams = make([]*driver.ParamMarkerExpr, len(x.Values))
 			for index, inner := range x.Values {
