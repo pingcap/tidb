@@ -492,6 +492,7 @@ func (sc *StatementContext) ResetForRetry() {
 // the information in slow query log.
 func (sc *StatementContext) MergeExecDetails(details *execdetails.ExecDetails, commitDetails *execdetails.CommitDetails) {
 	sc.mu.Lock()
+	defer sc.mu.Unlock()
 	if details != nil {
 		sc.mu.execDetails.CopTime += details.CopTime
 		sc.mu.execDetails.ProcessTime += details.ProcessTime
@@ -502,11 +503,14 @@ func (sc *StatementContext) MergeExecDetails(details *execdetails.ExecDetails, c
 		sc.mu.allExecDetails = append(sc.mu.allExecDetails, details)
 	}
 	sc.mu.execDetails.CommitDetail = commitDetails
-	sc.mu.Unlock()
 }
 
 // MergeCopDetails merges cop details into self.
 func (sc *StatementContext) MergeCopDetails(copDetails *execdetails.CopDetails) {
+	// Currently TiFlash cop task does not fill copDetails, so need to skip it if copDetails is nil
+	if copDetails == nil {
+		return
+	}
 	if sc.mu.execDetails.CopDetail == nil {
 		sc.mu.execDetails.CopDetail = copDetails
 	} else {
