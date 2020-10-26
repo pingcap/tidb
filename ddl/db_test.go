@@ -607,6 +607,111 @@ func (s *testDBSuite4) TestCancelDropPrimaryKey(c *C) {
 	testCancelDropIndex(c, s.store, s.dom.DDL(), idxName, addIdxSQL, dropIdxSQL)
 }
 
+func (s *testDBSuite5) TestCancelDropIndexes(c *C) {
+	indexesName := []string{"idx_c1", "idx_c2"}
+	addIdxesSQL := "alter table t add index idx_c1 (c1);alter table t add index idx_c2 (c2);"
+	dropIdxesSQL := "alter table t drop index idx_c1;alter table t drop index idx_c2;"
+
+	store := s.store
+	d := s.dom.DDL()
+
+	tk := testkit.NewTestKit(c, store)
+	tk.MustExec("use test_db")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(c1 int, c2 int)")
+	defer tk.MustExec("drop table t;")
+	for i := 0; i < 5; i++ {
+		tk.MustExec("insert into t values (?, ?)", i, i)
+	}
+	testCases := []struct {
+		needAddIndex   bool
+		jobState       model.JobState
+		JobSchemaState model.SchemaState
+		cancelSucc     bool
+	}{
+		// model.JobStateNone means the jobs is canceled before the first run.
+		// if we cancel successfully, we need to set needAddIndex to false in the next test case. Otherwise, set needAddIndex to true.
+		{true, model.JobStateNone, model.StateNone, true},
+		{false, model.JobStateRunning, model.StateWriteOnly, false},
+		{true, model.JobStateRunning, model.StateDeleteOnly, false},
+		{true, model.JobStateRunning, model.StateDeleteReorganization, false},
+	}
+	var checkErr error
+	hook := &ddl.TestDDLCallback{}
+	var jobID int64
+	testCase := &testCases[0]
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		if (job.Type == model.ActionDropIndex || job.Type == model.ActionDropPrimaryKey) &&
+			job.State == testCase.jobState && job.SchemaState == testCase.JobSchemaState {
+			jobID = job.ID
+			jobIDs := []int64{job.ID}
+			hookCtx := mock.NewContext()
+			hookCtx.Store = store
+			err := hookCtx.NewTxn(context.TODO())
+			if err != nil {
+				checkErr = errors.Trace(err)
+				return
+			}
+			txn, err := hookCtx.Txn(true)
+			if err != nil {
+				checkErr = errors.Trace(err)
+				return
+			}
+
+			errs, err := admin.CancelJobs(txn, jobIDs)
+			if err != nil {
+				checkErr = errors.Trace(err)
+				return
+			}
+			if errs[0] != nil {
+				checkErr = errors.Trace(errs[0])
+				return
+			}
+			checkErr = txn.Commit(context.Background())
+		}
+	}
+	originalHook := d.GetHook()
+	d.(ddl.DDLForTest).SetHook(hook)
+	ctx := tk.Se.(sessionctx.Context)
+	for i := range testCases {
+		testCase = &testCases[i]
+		if testCase.needAddIndex {
+			tk.MustExec(addIdxesSQL)
+		}
+		rs, err := tk.Exec(dropIdxesSQL)
+		if rs != nil {
+			rs.Close()
+		}
+		t := testGetTableByName(c, ctx, "test_db", "t")
+
+		var indexesInfo []*model.IndexInfo
+		for _, idxName := range indexesName {
+			indexInfo := t.Meta().FindIndexByName(idxName)
+			if indexInfo != nil {
+				indexesInfo = append(indexesInfo, indexInfo)
+			}
+		}
+
+		if testCase.cancelSucc {
+			c.Assert(checkErr, IsNil)
+			c.Assert(err, NotNil)
+			c.Assert(err.Error(), Equals, "[ddl:8214]Cancelled DDL job")
+			c.Assert(indexesInfo, NotNil)
+			c.Assert(indexesInfo[0].State, Equals, model.StatePublic)
+		} else {
+			err1 := admin.ErrCannotCancelDDLJob.GenWithStackByArgs(jobID)
+			c.Assert(err, IsNil)
+			c.Assert(checkErr, NotNil)
+			c.Assert(checkErr.Error(), Equals, err1.Error())
+			c.Assert(indexesInfo, IsNil)
+		}
+	}
+	d.(ddl.DDLForTest).SetHook(originalHook)
+	tk.MustExec(addIdxesSQL)
+	tk.MustExec(dropIdxesSQL)
+
+}
+
 // TestCancelDropIndex tests cancel ddl job which type is drop index.
 func (s *testDBSuite5) TestCancelDropIndex(c *C) {
 	idxName := "idx_c2"
