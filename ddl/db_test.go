@@ -1482,8 +1482,14 @@ LOOP:
 
 func (s *testDBSuite2) TestDropIndexes(c *C) {
 	idxNames := []string{"c2_index", "c3_index"}
-	createSQL := "create table test_drop_indexes (c1 int, c2 int, c3 int, unique key(c1), key c2_index(c2), key c3_index(c3))"
+	createSQL := "create table test_drop_indexes (c1 int, c2 int, c3 int, primary key(c1), key c2_index(c2), key c3_index(c3))"
 	dropIdxSQL := "alter table test_drop_indexes drop index c2_index, drop index c3_index;"
+	testDropIndexes(c, s.store, s.lease, createSQL, dropIdxSQL, idxNames)
+
+	// test drop primary key and index
+	idxNames = []string{"primary", "c2_index"}
+	createSQL = "create table test_drop_indexes (c1 int, c2 int, c3 int, primary key(c1), key c2_index(c2), key c3_index(c3))"
+	dropIdxSQL = "alter table test_drop_indexes drop primary key, drop index c2_index;"
 	testDropIndexes(c, s.store, s.lease, createSQL, dropIdxSQL, idxNames)
 }
 
