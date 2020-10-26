@@ -281,6 +281,8 @@ github.com/hanfei1991/tipb v0.0.0-20201010080135-620d2834aa7f h1:JD7fa1eVv/Gdsmz
 github.com/hanfei1991/tipb v0.0.0-20201010080135-620d2834aa7f/go.mod h1:nPMpOLbGpW71jAalpqgYYjMAZfCGk+DdSPhoIVVizkU=
 github.com/hanfei1991/unistore v0.0.0-20201010100424-5f305fc2cfb3 h1:pM33PeolLmdG6CyWQya4dSiYMMpgzjnL61mRSgDsnsQ=
 github.com/hanfei1991/unistore v0.0.0-20201010100424-5f305fc2cfb3/go.mod h1:dYHXAMp/PI2X/afqZ0dff0pzd33hVpUdBtyOGsFwS2A=
+github.com/hanfei1991/unistore v0.0.0-20201026050551-4e843da2d4a5 h1:l2cK0hsHJ8XYhsQHIJPcljRKUV8gxeoRGekpKqZqSwQ=
+github.com/hanfei1991/unistore v0.0.0-20201026050551-4e843da2d4a5/go.mod h1:dYHXAMp/PI2X/afqZ0dff0pzd33hVpUdBtyOGsFwS2A=
 github.com/hashicorp/golang-lru v0.5.0/go.mod h1:/m3WP610KZHVQ1SGc6re/UDhFvYD7pJ4Ao+sR/qLZy8=
 github.com/hashicorp/golang-lru v0.5.1/go.mod h1:/m3WP610KZHVQ1SGc6re/UDhFvYD7pJ4Ao+sR/qLZy8=
 github.com/hashicorp/hcl v1.0.0/go.mod h1:E5yfLk+7swimpb2L/Alb/PJmXilQ/rhwaUYs4T20WEQ=
@@ -424,6 +426,8 @@ github.com/ngaut/sync2 v0.0.0-20141008032647-7a24ed77b2ef h1:K0Fn+DoFqNqktdZtdV3
 github.com/ngaut/sync2 v0.0.0-20141008032647-7a24ed77b2ef/go.mod h1:7WjlapSfwQyo6LNmIvEWzsW1hbBQfpUO4JWnuQRmva8=
 github.com/ngaut/unistore v0.0.0-20200929093420-76a7b18be28e h1:1a8YbLM1sBmwEjzEVT/JD12Vjf6BNnBBEUV3nAcZYKU=
 github.com/ngaut/unistore v0.0.0-20200929093420-76a7b18be28e/go.mod h1:ZR3NH+HzqfiYetwdoAivApnIy8iefPZHTMLfrFNm8g4=
+github.com/ngaut/unistore v0.0.0-20201026053041-4333e8d852f1 h1:WHACEcI4Om4RVVUCssGTUwvJeF2CTuHHLmxr2h3joWQ=
+github.com/ngaut/unistore v0.0.0-20201026053041-4333e8d852f1/go.mod h1:ZR3NH+HzqfiYetwdoAivApnIy8iefPZHTMLfrFNm8g4=
 github.com/nicksnyder/go-i18n v1.10.0/go.mod h1:HrK7VCrbOvQoUAQ7Vpy7i87N7JZZZ7R2xBGjv0j365Q=
 github.com/niemeyer/pretty v0.0.0-20200227124842-a10e7caefd8e h1:fD57ERR4JtEqsWbfPhv4DMiApHyliiK5xCTNVSPiaAs=
 github.com/niemeyer/pretty v0.0.0-20200227124842-a10e7caefd8e/go.mod h1:zD1mROLANZcx1PVRCS0qkT7pwLkGfwJo4zjcN/Tysno=
@@ -502,6 +506,8 @@ github.com/pingcap/tidb-tools v4.0.5-0.20200820092506-34ea90c93237+incompatible 
 github.com/pingcap/tidb-tools v4.0.5-0.20200820092506-34ea90c93237+incompatible/go.mod h1:XGdcy9+yqlDSEMTpOXnwf3hiTeqrV6MN/u1se9N8yIM=
 github.com/pingcap/tipb v0.0.0-20200618092958-4fad48b4c8c3 h1:ESL3eIt1kUt8IMvR1011ejZlAyDcOzw89ARvVHvpD5k=
 github.com/pingcap/tipb v0.0.0-20200618092958-4fad48b4c8c3/go.mod h1:RtkHW8WbcNxj8lsbzjaILci01CtYnYbIkQhjyZWrWVI=
+github.com/pingcap/tipb v0.0.0-20201026044621-45e60c77588f h1:J+0TAI+7Hvebz4bM4GnRCRT4MpjYnUxbyi9ky5ZQUsU=
+github.com/pingcap/tipb v0.0.0-20201026044621-45e60c77588f/go.mod h1:RtkHW8WbcNxj8lsbzjaILci01CtYnYbIkQhjyZWrWVI=
 github.com/pkg/errors v0.8.0/go.mod h1:bwawxfHBFNV+L2hUp1rHADufV3IMtnDRdf1r5NINEl0=
 github.com/pkg/errors v0.8.1/go.mod h1:bwawxfHBFNV+L2hUp1rHADufV3IMtnDRdf1r5NINEl0=
 github.com/pkg/errors v0.9.1 h1:FEBLx1zS214owpjy7qsBeixbURkuhQAwrK5UwLGTwt4=
