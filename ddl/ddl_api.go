@@ -2260,6 +2260,15 @@ func isSameTypeMultiSpecs(specs []*ast.AlterTableSpec) bool {
 	return true
 }
 
+func isDropIndexes(specs []*ast.AlterTableSpec) bool {
+	for _, spec := range specs {
+		if spec.Tp != ast.AlterTableDropPrimaryKey && spec.Tp != ast.AlterTableDropIndex {
+			return false
+		}
+	}
+	return true
+}
+
 func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.AlterTableSpec) (err error) {
 	validSpecs, err := resolveAlterTableSpec(ctx, specs)
 	if err != nil {
@@ -2272,14 +2281,19 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 	}
 
 	if len(validSpecs) > 1 {
+		if isDropIndexes(validSpecs) {
+			if err = d.DropIndexes(ctx, ident, validSpecs); err != nil {
+				return errors.Trace(err)
+			}
+			return nil
+		}
+
 		if isSameTypeMultiSpecs(validSpecs) {
 			switch validSpecs[0].Tp {
 			case ast.AlterTableAddColumns:
 				err = d.AddColumns(ctx, ident, validSpecs)
 			case ast.AlterTableDropColumn:
 				err = d.DropColumns(ctx, ident, validSpecs)
-			case ast.AlterTableDropIndex:
-				err = d.DropIndexes(ctx, ident, validSpecs)
 			default:
 				return errRunMultiSchemaChanges
 			}
@@ -2288,6 +2302,7 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 			}
 			return nil
 		}
+
 		return errRunMultiSchemaChanges
 	}
 
@@ -4919,7 +4934,12 @@ func (d *ddl) DropIndexes(ctx sessionctx.Context, ti ast.Ident, specs []*ast.Alt
 	indexesNames := make([]model.CIStr, 0, len(specs))
 	ifExists := make([]bool, 0, len(specs))
 	for _, spec := range specs {
-		indexName := model.NewCIStr(spec.Name)
+		var indexName model.CIStr
+		if spec.Tp == ast.AlterTableDropPrimaryKey {
+			indexName = model.NewCIStr(mysql.PrimaryKeyName)
+		} else {
+			indexName = model.NewCIStr(spec.Name)
+		}
 		_, shouldIgnore, err := checkIndexInfo(ctx, t, indexName, spec.IfExists)
 		if err != nil {
 			return err
