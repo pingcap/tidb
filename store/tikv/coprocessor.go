@@ -1407,8 +1407,8 @@ func (e *rateLimitAction) destroyTokenIfNeeded(returnToken func()) {
 	} else {
 		returnToken()
 	}
-	// As there would always exist one worker to destroy token. we would broadcast the condition to notify `broadcastIfNeeded`
-	// to check `isTokenDestroyed` flag before the working being suspended.
+	// As there would always exist one worker to destroy token, we would broadcast the condition
+	// to notify `broadcastIfNeeded` each time before the worker being suspended.
 	e.cond.Broadcast()
 	// we suspend worker when `exceeded` is true until being notified by `broadcastIfNeeded`
 	for e.cond.exceeded {
