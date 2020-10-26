@@ -120,7 +120,7 @@ func (s *testStringUtilSuite) TestPatternMatch(c *C) {
 	}
 	for _, v := range tbl {
 		patChars, patTypes := CompilePattern(v.pattern, v.escape)
-		match := DoMatch(v.input, patChars, patTypes)
+		match := DoMatchInner(v.input, patChars, patTypes)
 		c.Assert(match, Equals, v.match, Commentf("%v", v))
 	}
 }
@@ -231,7 +231,7 @@ func BenchmarkDoMatch(b *testing.B) {
 			patChars, patTypes := CompilePattern(v.pattern, escape)
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				match := DoMatch(v.target, patChars, patTypes)
+				match := DoMatchInner(v.target, patChars, patTypes)
 				if !match {
 					b.Fatal("Match expected.")
 				}
@@ -254,7 +254,7 @@ func BenchmarkDoMatchNegative(b *testing.B) {
 			patChars, patTypes := CompilePattern(v.pattern, escape)
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				match := DoMatch(v.target, patChars, patTypes)
+				match := DoMatchInner(v.target, patChars, patTypes)
 				if match {
 					b.Fatal("Unmatch expected.")
 				}

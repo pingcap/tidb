@@ -137,13 +137,17 @@ const (
 	PatAny
 )
 
-// CompilePattern handles escapes and wild cards convert pattern characters and
-// pattern types.
-func CompilePattern(pattern string, escape byte) (patChars, patTypes []byte) {
+// CompilePatternByte is a adapter for `CompilePatternInner`. `pattern` can only be ascii
+func CompilePatternByte(pattern string, escape byte) (patChars, patTypes []byte) {
 	patWeights, patTypes := CompilePatternInner(pattern, escape)
 	patChars = []byte(string(patWeights))
 
 	return patChars, patTypes
+}
+
+// CompilePattern is a adapter for `CompilePatternInner`. `pattern` can be any unicode string
+func CompilePattern(pattern string, escape byte) (patWeights []rune, patTypes []byte) {
+	return CompilePatternInner(pattern, escape)
 }
 
 // CompilePatternInner handles escapes and wild cards convert pattern characters and
@@ -221,7 +225,7 @@ func matchByte(a, b rune) bool {
 // CompileLike2Regexp convert a like `lhs` to a regular expression
 func CompileLike2Regexp(str string) string {
 	patChars, patTypes := CompilePattern(str, '\\')
-	var result []byte
+	var result []rune
 	for i := 0; i < len(patChars); i++ {
 		switch patTypes[i] {
 		case PatMatch:
@@ -235,17 +239,20 @@ func CompileLike2Regexp(str string) string {
 	return string(result)
 }
 
-// DoMatch matches the string with patChars and patTypes.
-// The algorithm has linear time complexity.
-// https://research.swtch.com/glob
-func DoMatch(str string, patChars, patTypes []byte) bool {
+// DoMatchByte is a adapter for `DoMatchInner`. `str` can only be ascii
+func DoMatchByte(str string, patChars, patTypes []byte) bool {
 	return DoMatchInner(str, []rune(string(patChars)), patTypes, matchByte)
+}
+
+// DoMatch is a adapter for `DoMatchInner`. `str` can be any unicode string
+func DoMatch(str string, patChars []rune, patTypes []byte) bool {
+	return DoMatchInner(str, patChars, patTypes, matchByte)
 }
 
 // DoMatchInner matches the string with patChars and patTypes.
 // The algorithm has linear time complexity.
 // https://research.swtch.com/glob
-func DoMatchInner(str string, patWeights []rune, patTypes []byte, mather func(a, b rune) bool) bool {
+func DoMatchInner(str string, patWeights []rune, patTypes []byte, matcher func(a, b rune) bool) bool {
 	// TODO(bb7133): it is possible to get the rune one by one to avoid the cost of get them as a whole.
 	runes := []rune(str)
 	lenRunes := len(runes)
@@ -254,7 +261,7 @@ func DoMatchInner(str string, patWeights []rune, patTypes []byte, mather func(a,
 		if pIdx < len(patWeights) {
 			switch patTypes[pIdx] {
 			case PatMatch:
-				if rIdx < lenRunes && mather(runes[rIdx], patWeights[pIdx]) {
+				if rIdx < lenRunes && matcher(runes[rIdx], patWeights[pIdx]) {
 					pIdx++
 					rIdx++
 					continue

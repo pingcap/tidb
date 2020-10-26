@@ -7518,6 +7518,13 @@ func (s *testIntegrationSuite) TestIssue17767(c *C) {
 	tk.MustExec("rollback")
 }
 
+func (s *testIntegrationSuite) TestIssue20608(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustQuery("select '䇇Հ' collate utf8mb4_bin like '___Հ';").Check(testkit.Rows("0"))
+}
+
 func (s *testIntegrationSuite) TestIssue19596(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
