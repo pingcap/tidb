@@ -561,7 +561,7 @@ create table t(
 			exprStr:     `e = "你好啊"`,
 			accessConds: "[eq(test.t.e, 你好啊)]",
 			filterConds: "[eq(test.t.e, 你好啊)]",
-			resultStr:   "[[\"[228 189]\",\"[228 189]\"]]",
+			resultStr:   "[[0xE4BD,0xE4BD]]",
 		},
 		{
 			indexPos:    2,

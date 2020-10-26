@@ -306,13 +306,12 @@ const (
 
 	// CreateSchemaIndexUsageTable stores the index usage information.
 	CreateSchemaIndexUsageTable = `CREATE TABLE IF NOT EXISTS mysql.schema_index_usage (
-		TABLE_SCHEMA varchar(64),
-		TABLE_NAME varchar(64),
-		INDEX_NAME varchar(64),
+		TABLE_ID bigint(64),
+		INDEX_ID bigint(21),
 		QUERY_COUNT bigint(64),
 		ROWS_SELECTED bigint(64),
 		LAST_USED_AT timestamp,
-		PRIMARY KEY(TABLE_SCHEMA, TABLE_NAME, INDEX_NAME)
+		PRIMARY KEY(TABLE_ID, INDEX_ID)
 	);`
 )
 
