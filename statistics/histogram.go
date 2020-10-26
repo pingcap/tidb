@@ -274,6 +274,9 @@ func HistogramEqual(a, b *Histogram, ignoreID bool) bool {
 // If the version number is 0, it means the most original statistics.
 const (
 	CurStatsVersion = Version2
+
+	// Version0 is the most early statistics only histogram.
+	Version0 = 0
 	// Version1 added CMSketch.
 	Version1 = 1
 	// Version2 added bucket NDV for index's full analyze.

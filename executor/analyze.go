@@ -112,7 +112,7 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			continue
 		}
 		for i, hg := range result.Hist {
-			err1 := statsHandle.SaveStatsToStorage(result.PhysicalTableID, result.Count, result.IsIndex, hg, result.Cms[i], 1)
+			err1 := statsHandle.SaveStatsToStorage(result.PhysicalTableID, result.Count, result.IsIndex, hg, result.Cms[i], statistics.CurStatsVersion, 1)
 			if err1 != nil {
 				err = err1
 				logutil.Logger(ctx).Error("save stats to storage failed", zap.Error(err))
@@ -239,6 +239,7 @@ func analyzeIndexPushdown(idxExec *AnalyzeIndexExec) analyzeResult {
 		Cms:             []*statistics.CMSketch{cms},
 		IsIndex:         1,
 		job:             idxExec.job,
+		StatsVer:        statistics.CurStatsVersion,
 	}
 	result.Count = hist.NullCount
 	if hist.Len() > 0 {
@@ -401,6 +402,7 @@ func analyzeColumnsPushdown(colExec *AnalyzeColumnsExec) analyzeResult {
 		Cms:             cms,
 		ExtStats:        extStats,
 		job:             colExec.job,
+		StatsVer:        statistics.Version0,
 	}
 	hist := hists[0]
 	result.Count = hist.NullCount
@@ -598,6 +600,7 @@ func analyzeFastExec(exec *AnalyzeFastExec) []analyzeResult {
 				IsIndex:         1,
 				Count:           hists[i].NullCount,
 				job:             exec.job,
+				StatsVer:        statistics.Version1,
 			}
 			if hists[i].Len() > 0 {
 				idxResult.Count += hists[i].Buckets[hists[i].Len()-1].Count
@@ -1220,6 +1223,7 @@ func analyzeIndexIncremental(idxExec *analyzeIndexIncrementalExec) analyzeResult
 		Cms:             []*statistics.CMSketch{cms},
 		IsIndex:         1,
 		job:             idxExec.job,
+		StatsVer:        statistics.Version2,
 	}
 	result.Count = hist.NullCount
 	if hist.Len() > 0 {
@@ -1257,6 +1261,7 @@ func analyzePKIncremental(colExec *analyzePKIncrementalExec) analyzeResult {
 		Hist:            []*statistics.Histogram{hist},
 		Cms:             []*statistics.CMSketch{nil},
 		job:             colExec.job,
+		StatsVer:        statistics.Version0,
 	}
 	if hist.Len() > 0 {
 		result.Count += hist.Buckets[hist.Len()-1].Count
@@ -1275,4 +1280,5 @@ type analyzeResult struct {
 	IsIndex         int
 	Err             error
 	job             *statistics.AnalyzeJob
+	StatsVer        int64
 }

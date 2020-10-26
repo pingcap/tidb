@@ -564,9 +564,11 @@ func (h *Handle) handleSingleHistogramUpdate(is infoschema.InfoSchema, rows []ch
 	}
 	var cms *statistics.CMSketch
 	var hist *statistics.Histogram
+	var statsVer int64 = 0
 	if isIndex == 1 {
 		idx, ok := tbl.Indices[histID]
 		if ok && idx.Histogram.Len() > 0 {
+			statsVer = idx.StatsVer
 			idxHist := idx.Histogram
 			hist = &idxHist
 			cms = idx.CMSketch.Copy()
@@ -589,7 +591,7 @@ func (h *Handle) handleSingleHistogramUpdate(is infoschema.InfoSchema, rows []ch
 			logutil.BgLogger().Debug("decode feedback failed", zap.Error(err))
 		}
 	}
-	err = h.dumpStatsUpdateToKV(physicalTableID, isIndex, q, hist, cms)
+	err = h.dumpStatsUpdateToKV(physicalTableID, isIndex, q, hist, cms, statsVer)
 	return errors.Trace(err)
 }
 
@@ -608,9 +610,9 @@ func (h *Handle) deleteOutdatedFeedback(tableID, histID, isIndex int64) error {
 	return nil
 }
 
-func (h *Handle) dumpStatsUpdateToKV(tableID, isIndex int64, q *statistics.QueryFeedback, hist *statistics.Histogram, cms *statistics.CMSketch) error {
+func (h *Handle) dumpStatsUpdateToKV(tableID, isIndex int64, q *statistics.QueryFeedback, hist *statistics.Histogram, cms *statistics.CMSketch, statsVer int64) error {
 	hist = statistics.UpdateHistogram(hist, q)
-	err := h.SaveStatsToStorage(tableID, -1, int(isIndex), hist, cms, 0)
+	err := h.SaveStatsToStorage(tableID, -1, int(isIndex), hist, cms, statsVer, 0)
 	metrics.UpdateStatsCounter.WithLabelValues(metrics.RetLabel(err)).Inc()
 	return errors.Trace(err)
 }
