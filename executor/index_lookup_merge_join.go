@@ -531,7 +531,12 @@ func (imw *innerMergeWorker) fetchNewChunkWhenFull(ctx context.Context, task *lo
 }
 
 func (imw *innerMergeWorker) doMergeJoin(ctx context.Context, task *lookUpMergeJoinTask) (err error) {
-	chk := <-imw.joinChkResourceCh
+	var chk *chunk.Chunk
+	select {
+	case chk = <-imw.joinChkResourceCh:
+	case <-ctx.Done():
+		return
+	}
 	defer func() {
 		if chk == nil {
 			return
