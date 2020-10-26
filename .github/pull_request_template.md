@@ -4,6 +4,10 @@ PR Title Format:
 1. pkg [, pkg2, pkg3]: what's changed
 2. *: what's changed
 
+If you want to open the **Challenge Program** pull request, please use the following template:
+https://raw.githubusercontent.com/pingcap/.github/master/.github/PULL_REQUEST_TEMPLATE/challenge-program.md
+
+You can use it with query parameters: https://github.com/pingcap/tidb/compare/master...${you branch}?template=challenge-program.md
 -->
 
 ### What problem does this PR solve?
