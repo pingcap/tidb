@@ -28,17 +28,18 @@ Based on the issue description and [MySQL’s description](https://dev.mysql.com
     *   And only `set global read_only = off` to turn off the mode.
     *   The `read_only` global variable will have 3 values, the reason for such design is to make the status more intuitive, see section technical issues 4 for a detailed explanation.
         *   off, when the cluster acts in a normal mode
-        *   enabling, when the turning on process is going on
+        *   enabling, when the turning on process is going on, user can't set the variable to `enabling`, it is only meant to represent TiDB is in the transition state from `off` to `on`, and it is a natural extension as TiDB is a distributed system. Once the enabling attempt is triggered, until all TiDB servers responded in `read_only` mode, the value of the variable will be `enabling`.
         *   on, when the whole cluster is in read only mode
     *   `set global read_only = on` upon return
         *   if there are warnings, meaning there are still some TiDB servers in the cluster that are possibly not read only, the user should check if these TiDB servers are down or have unreleased write lock or have large transactions committing.
             *   The warnings contain all known TiDB servers that have not acknowledged the read only mode.
-            *   If the user examines the `read_only` global variable, it will be `enabling`, not `on`.
+            *   If the user examines the `read_only` global variable, it will be `enabling`, not `on`, and warnings will be shown as well.
             *   She could rerun `set global read_only = on` to wait for another period of time (default to 10 seconds, could have exponential backoff behavior).
-            *   If some of the TiDB servers reported in the warnings are indeed down, the user should remove them and rerun the enabling command, and expect an immediate return of success.
+            *   If some of the TiDB servers reported in the warnings are indeed down, the user would wait for a longer period of time (several minutes) until the record in the `cluster_info` table is cleaned by PD and then rerun the enabling command, and expect an immediate return of success. We could provide a manual unregister mechanism to the user for quicker enabling.
         *   if there is another session running `set global read_only = off` while waiting for enabling, an error will be returned, marking the fail of the attempt. \
 ERROR 1227 (42000):Enabling failed; the enabling attempt is interrupted by another session setting back the read only mode to off.
-        *   if there are no warnings or errors, the cluster is then read only. \
+        *   if there are no warnings or errors, the cluster is then read only.
+    * As long as the user has executed `set global read_only = on`, the enabling process will be handled as a job running in TiDB, and it will continue to take effect even if the user who attempted has disconnected, see detailed explanation bellow. \
 
 *   `read_only` once enabled, all users without SuperPriv will not be able to execute SQL queries that might update the data to the whole cluster (currently not support table level `read_only`, if you want such behavior, use table lock instead).
 *   Only users with `SuperPriv` could enable or disable this option, otherwise the following error will be returned. This behavior is implied by the fact that setting global variables requires SUPER privilege level. \
