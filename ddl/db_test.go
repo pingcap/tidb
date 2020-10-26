@@ -4311,6 +4311,10 @@ func (s *testDBSuite4) TestIfExists(c *C) {
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
 	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Note|1091|index idx_c doesn't exist"))
 
+	// DROP INDEXES
+	s.mustExec(tk, c, "alter table t1 drop index if exists idxes_a,drop index if exists idxes_b")
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(2))
+
 	// DROP PARTITION
 	s.mustExec(tk, c, "drop table if exists t2")
 	s.mustExec(tk, c, "create table t2 (a int key) partition by range(a) (partition p0 values less than (10), partition p1 values less than (20))")
