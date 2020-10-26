@@ -347,7 +347,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 	isPessimistic := sctx.GetSessionVars().TxnCtx.IsPessimistic
 
 	// Special handle for "select for update statement" in pessimistic transaction.
-	if isPessimistic && a.isSelectForUpdate && e.Schema().Len() > 0 {
+	if isPessimistic && a.isSelectForUpdate {
 		return a.handlePessimisticSelectForUpdate(ctx, e)
 	}
 
@@ -763,7 +763,7 @@ func (a *ExecStmt) buildExecutor() (Executor, error) {
 		}
 		e = executorExec.stmtExec
 	}
-	a.isSelectForUpdate = b.hasLock && (!stmtCtx.InDeleteStmt && !stmtCtx.InUpdateStmt)
+	a.isSelectForUpdate = b.hasLock && (!stmtCtx.InDeleteStmt && !stmtCtx.InUpdateStmt && !stmtCtx.InInsertStmt)
 	return e, nil
 }
 
