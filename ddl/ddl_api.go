@@ -5100,6 +5100,9 @@ func buildPartitionInfo(ctx sessionctx.Context, meta *model.TableInfo, d *ddl, s
 		case model.PartitionTypeList:
 			err = buildListPartitionInfo(ctx, meta, part, def, &piDef)
 		}
+		if err != nil {
+			return nil, err
+		}
 
 		part.Definitions = append(part.Definitions, piDef)
 	}
