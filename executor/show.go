@@ -1125,7 +1125,7 @@ func appendPartitionInfo(partitionInfo *model.PartitionInfo, buf *bytes.Buffer) 
 		buf.WriteString(") (\n")
 	} else if partitionInfo.Type == model.PartitionTypeList {
 		if len(partitionInfo.Columns) == 0 {
-			fmt.Fprintf(buf, "\nPARTITION BY %s ( %s ) (\n", partitionInfo.Type.String(), partitionInfo.Expr)
+			fmt.Fprintf(buf, "\nPARTITION BY %s (%s) (\n", partitionInfo.Type.String(), partitionInfo.Expr)
 		} else {
 			colsName := ""
 			for _, col := range partitionInfo.Columns {

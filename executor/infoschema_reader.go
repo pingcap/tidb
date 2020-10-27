@@ -14,6 +14,7 @@
 package executor
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -712,22 +713,25 @@ func (e *memtableRetriever) setDataFromPartitions(ctx sessionctx.Context, schema
 						partitionDesc = strings.Join(pi.LessThan, ",")
 					} else if table.Partition.Type == model.PartitionTypeList {
 						if len(pi.InValues) > 0 {
+							buf := bytes.NewBuffer(nil)
 							if len(pi.InValues[0]) == 1 {
 								for i, vs := range pi.InValues {
 									if i > 0 {
-										partitionDesc += ","
+										buf.WriteString(",")
 									}
-									partitionDesc += vs[0]
+									buf.WriteString(vs[0])
 								}
 							} else if len(pi.InValues[0]) > 1 {
 								for i, vs := range pi.InValues {
 									if i > 0 {
-										partitionDesc += ","
+										buf.WriteString(",")
 									}
-									partitionDesc += ("(" + strings.Join(vs, ",") + ")")
+									buf.WriteString("(")
+									buf.WriteString(strings.Join(vs, ","))
+									buf.WriteString(")")
 								}
-
 							}
+							partitionDesc = buf.String()
 						}
 					}
 
@@ -738,13 +742,14 @@ func (e *memtableRetriever) setDataFromPartitions(ctx sessionctx.Context, schema
 						partitionExpr = table.Partition.Columns[0].String()
 					} else if table.Partition.Type == model.PartitionTypeList && len(table.Partition.Columns) > 0 {
 						partitionMethod = "LIST COLUMNS"
-						partitionExpr = ""
+						buf := bytes.NewBuffer(nil)
 						for i, col := range table.Partition.Columns {
 							if i > 0 {
-								partitionExpr += ","
+								buf.WriteString(",")
 							}
-							partitionExpr += col.String()
+							buf.WriteString(col.String())
 						}
+						partitionExpr = buf.String()
 					}
 
 					record := types.MakeDatums(
