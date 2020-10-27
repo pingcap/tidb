@@ -3362,7 +3362,7 @@ func CheckModifyTypeCompatible(origin *types.FieldType, to *types.FieldType) (al
 			skipSignCheck = true
 			skipLenCheck = true
 		case mysql.TypeBit:
-			// todo: currently string data type cast to bit are not compatible with mysql, should fix here after compatible
+			// TODO: Currently string data type cast to bit are not compatible with mysql, should fix here after compatible.
 			return "", errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
 		default:
 			return unsupportedMsg, errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
@@ -3402,7 +3402,7 @@ func CheckModifyTypeCompatible(origin *types.FieldType, to *types.FieldType) (al
 			msg := fmt.Sprintf("cannot modify %s type column's to type %s", typeVar, to.String())
 			return msg, errUnsupportedModifyColumn.GenWithStackByArgs(msg)
 		case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp, mysql.TypeDuration:
-			// todo: currently enum/set cast to date and time are not support yet(expect year), should fix here after supported
+			// TODO: Currently enum/set cast to date and time are not support yet(expect year), should fix here after supported.
 			return "", errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
 		default:
 			return unsupportedMsg, errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)

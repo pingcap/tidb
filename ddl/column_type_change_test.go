@@ -451,7 +451,7 @@ func (s *testColumnTypeChangeSuite) TestColumnTypeChangeFromStringToOthers(c *C)
 	// Enable column change variable.
 	tk.Se.GetSessionVars().EnableChangeColumnType = true
 
-	// Set time zone to UTC
+	// Set time zone to UTC.
 	originalTz := tk.Se.GetSessionVars().TimeZone
 	tk.Se.GetSessionVars().TimeZone = time.UTC
 	defer func() {
@@ -459,7 +459,7 @@ func (s *testColumnTypeChangeSuite) TestColumnTypeChangeFromStringToOthers(c *C)
 		tk.Se.GetSessionVars().TimeZone = originalTz
 	}()
 
-	// init string date type table
+	// Init string date type table.
 	reset := func(tk *testkit.TestKit) {
 		tk.MustExec("drop table if exists t")
 		tk.MustExec(`
@@ -476,7 +476,7 @@ func (s *testColumnTypeChangeSuite) TestColumnTypeChangeFromStringToOthers(c *C)
 		`)
 	}
 
-	// to numeric data types
+	// To numeric data types.
 	// tinyint
 	reset(tk)
 	tk.MustExec("insert into t values ('123', '123', '123', '123', '123', '123', '123', '123')")
@@ -550,7 +550,7 @@ func (s *testColumnTypeChangeSuite) TestColumnTypeChangeFromStringToOthers(c *C)
 	tk.MustExec("alter table t modify s double(7, 4)")
 	tk.MustQuery("select * from t").Check(testkit.Rows("123.45 123.45 123.45 123.45 123.45 123.45 1 1"))
 
-	// to date and time data types
+	// To date and time data types.
 	// date
 	reset(tk)
 	tk.MustExec("insert into t values ('20200826', '2008261', '20200826', '200826', '2020-08-26', '08-26 19:35:41', '2020-07-15 18:32:17.888', '2020-07-15 18:32:17.888')")
@@ -620,7 +620,7 @@ func (s *testColumnTypeChangeSuite) TestColumnTypeChangeFromStringToOthers(c *C)
 	tk.MustExec("alter table t modify s year")
 	tk.MustQuery("select * from t").Check(testkit.Rows("2020 1991 2002 2020 2020 1999 2002 2002"))
 
-	// to json data types
+	// To json data type.
 	reset(tk)
 	tk.MustExec("alter table t modify c char(15)")
 	tk.MustExec("alter table t modify vc varchar(15)")
@@ -636,33 +636,55 @@ func (s *testColumnTypeChangeSuite) TestColumnTypeChangeFromStringToOthers(c *C)
 	tk.MustExec("alter table t modify e json")
 	tk.MustExec("alter table t modify s json")
 	tk.MustQuery("select * from t").Check(testkit.Rows("{\"k1\": \"value\"} {\"k1\": \"value\"} {\"k1\": \"value\"} {\"k1\": \"value\"} {\"k1\": \"value\"} {\"k1\": \"value\"} \"{\\\"k1\\\": \\\"value\\\"}\" \"{\\\"k1\\\": \\\"value\\\"}\""))
-}
 
-func (s *testColumnTypeChangeSuite) TestColumnTypeChangeCastFailed(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	// Enable column change variable.
-	tk.Se.GetSessionVars().EnableChangeColumnType = true
-
-	// Set time zone to UTC
-	originalTz := tk.Se.GetSessionVars().TimeZone
-	tk.Se.GetSessionVars().TimeZone = time.UTC
-	defer func() {
-		tk.Se.GetSessionVars().EnableChangeColumnType = false
-		tk.Se.GetSessionVars().TimeZone = originalTz
-	}()
-
-	reset := func(tk *testkit.TestKit) {
-		tk.MustExec("drop table if exists t")
-		tk.MustExec("create table t (vc varchar(20))")
-	}
-
-	// wrong json data
+	// Special cases about different behavior between TiDB and MySQL.
+	// MySQL get error but TiDB get warning.
 	reset(tk)
-	tk.MustExec("insert into t values ('{\"k1\": \"value\"')")
-	tk.MustGetErrCode("alter table t modify vc json", mysql.ErrInvalidJSONText)
-	// decimal bad number
+	tk.MustExec("insert into t values ('123x', 'x123', 'abc', 'datetime', 'timestamp', 'date', '123', '123')")
+	tk.MustExec("alter table t modify c int")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1292 Truncated incorrect FLOAT value: '123x'"))
+	tk.MustQuery("select c from t").Check(testkit.Rows("123"))
+
+	tk.MustExec("alter table t modify vc smallint")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1292 Truncated incorrect FLOAT value: 'x123'"))
+	tk.MustQuery("select vc from t").Check(testkit.Rows("0"))
+
+	tk.MustExec("alter table t modify bny bigint")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1292 Truncated incorrect FLOAT value: 'abc\x00\x00\x00\x00\x00'"))
+	tk.MustQuery("select bny from t").Check(testkit.Rows("0"))
+
+	tk.MustExec("alter table t modify vbny datetime")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1292 Incorrect datetime value: 'datetime'"))
+	tk.MustQuery("select vbny from t").Check(testkit.Rows("0000-00-00 00:00:00"))
+
+	tk.MustExec("alter table t modify bb timestamp")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1292 Incorrect datetime value: 'timestamp'"))
+	tk.MustQuery("select bb from t").Check(testkit.Rows("0000-00-00 00:00:00"))
+
+	tk.MustExec("alter table t modify txt date")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1292 Incorrect datetime value: 'date'"))
+	tk.MustQuery("select txt from t").Check(testkit.Rows("0000-00-00"))
+
 	reset(tk)
-	tk.MustExec("insert into t values ('abc')")
+	tk.MustExec("alter table t modify vc varchar(20)")
+	tk.MustExec("insert into t(c, vc) values ('1x', '20200915110836')")
+	tk.MustExec("alter table t modify c year")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1292 Truncated incorrect FLOAT value: '1x'"))
+	tk.MustQuery("select c from t").Check(testkit.Rows("0"))
+
+	// MySQL will get warning but TiDB not.
+	// MySQL will get "Warning 1292 Incorrect time value: '20200915110836' for column 'vc'"
+	tk.MustExec("alter table t modify vc time")
+	tk.MustQuery("select vc from t").Check(testkit.Rows("11:08:36"))
+
+	// Both error but different error message.
+	// MySQL will get "ERROR 3140 (22032): Invalid JSON text: "The document root must not be followed by other values." at position 1 in value for column '#sql-5b_42.c'." error.
+	reset(tk)
+	tk.MustExec("alter table t modify c char(15)")
+	tk.MustExec("insert into t(c) values ('{\"k1\": \"value\"')")
+	tk.MustGetErrCode("alter table t modify c json", mysql.ErrInvalidJSONText)
+
+	// MySQL will get "ERROR 1366 (HY000): Incorrect DECIMAL value: '0' for column '' at row -1" error.
+	tk.MustExec("insert into t(vc) values ('abc')")
 	tk.MustGetErrCode("alter table t modify vc decimal(5,3)", mysql.ErrBadNumber)
 }

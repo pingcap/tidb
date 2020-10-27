@@ -652,7 +652,7 @@ func needChangeColumnData(oldCol, newCol *model.ColumnInfo) bool {
 		return newCol.Flen > 0 && newCol.Flen < oldCol.Flen || toUnsigned != originUnsigned
 	}
 
-	// deal with same type
+	// Deal with the same type.
 	if oldCol.Tp == newCol.Tp {
 		switch oldCol.Tp {
 		case mysql.TypeNewDecimal:
@@ -666,7 +666,7 @@ func needChangeColumnData(oldCol, newCol *model.ColumnInfo) bool {
 		return needTruncationOrToggleSign()
 	}
 
-	// deal with different type
+	// Deal with the different type.
 	switch oldCol.Tp {
 	case mysql.TypeVarchar, mysql.TypeString, mysql.TypeVarString, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
 		switch newCol.Tp {
