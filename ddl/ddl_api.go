@@ -3361,10 +3361,11 @@ func CheckModifyTypeCompatible(origin *types.FieldType, to *types.FieldType) (al
 			mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
 			skipSignCheck = true
 			skipLenCheck = true
-		case mysql.TypeEnum, mysql.TypeSet:
-			return unsupportedMsg, errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
-		default:
+		case mysql.TypeBit:
+			// TODO: Currently string data type cast to bit are not compatible with mysql, should fix here after compatible.
 			return "", errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
+		default:
+			return unsupportedMsg, errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
 		}
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
 		switch to.Tp {
@@ -3400,9 +3401,11 @@ func CheckModifyTypeCompatible(origin *types.FieldType, to *types.FieldType) (al
 			mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
 			msg := fmt.Sprintf("cannot modify %s type column's to type %s", typeVar, to.String())
 			return msg, errUnsupportedModifyColumn.GenWithStackByArgs(msg)
+		case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp, mysql.TypeDuration:
+			// TODO: Currently enum/set cast to date and time are not support yet(expect year), should fix here after supported.
+			return "", errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
 		default:
-			msg := fmt.Sprintf("cannot modify %s type column's to type %s", typeVar, to.String())
-			return "", errUnsupportedModifyColumn.GenWithStackByArgs(msg)
+			return unsupportedMsg, errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
 		}
 	case mysql.TypeNewDecimal:
 		if origin.Tp != to.Tp {
