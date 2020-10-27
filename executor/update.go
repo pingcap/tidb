@@ -105,7 +105,7 @@ func (e *UpdateExec) computeHandles(ctx context.Context, schema *expression.Sche
 }
 
 func (e *UpdateExec) merge(ctx context.Context, schema *expression.Schema, row, newData []types.Datum) error {
-	if e.multiUpdateOnSameTable {
+	if !e.multiUpdateOnSameTable {
 		return nil
 	}
 	assignFlag, err := plannercore.GetUpdateColumns(e.ctx, e.OrderedList, schema.Len())
