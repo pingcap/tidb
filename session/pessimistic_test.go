@@ -1966,7 +1966,7 @@ func (s *testPessimisticSuite) TestSelectForUpdateConflictRetry(c *C) {
 	// should increase
 	c.Assert(tk3LastTs, Greater, tk2LastTS)
 	// wait until the goroutine exists
-	<- tsCh
+	<-tsCh
 }
 
 func (s *testPessimisticSuite) TestAsyncCommitWithSchemaChange(c *C) {
