@@ -299,7 +299,7 @@ func (s *testPlanNormalize) TestNormalizedDigest(c *C) {
 		},
 		{ // test for partition
 			sql1:   "select * from t3 where a<5",
-			sql2:   "select * from t3 where a>15",
+			sql2:   "select * from t3 where a<15",
 			isSame: true,
 		},
 		{
