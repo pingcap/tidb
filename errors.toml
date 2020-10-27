@@ -1506,11 +1506,6 @@ error = '''
 The isolation level '%s' is not supported. Set tidb_skip_isolation_level_check=1 to skip this error
 '''
 
-["variable:8054"]
-error = '''
-cannot set variable to null
-'''
-
 ["variable:8055"]
 error = '''
 snapshot is older than GC safe point %s
