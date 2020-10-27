@@ -30,7 +30,7 @@ var (
 	ErrUnknown                         = dbterror.ClassOptimizer.NewStd(mysql.ErrUnknown)
 	ErrUnknownTable                    = dbterror.ClassOptimizer.NewStd(mysql.ErrUnknownTable)
 	ErrNoSuchTable                     = dbterror.ClassOptimizer.NewStd(mysql.ErrNoSuchTable)
-	ErrViewRecursive				   = dbterror.ClassOptimizer.NewStd(mysql.ErrViewRecursive)
+	ErrViewRecursive                   = dbterror.ClassOptimizer.NewStd(mysql.ErrViewRecursive)
 	ErrWrongArguments                  = dbterror.ClassOptimizer.NewStd(mysql.ErrWrongArguments)
 	ErrWrongNumberOfColumnsInSelect    = dbterror.ClassOptimizer.NewStd(mysql.ErrWrongNumberOfColumnsInSelect)
 	ErrBadGeneratedColumn              = dbterror.ClassOptimizer.NewStd(mysql.ErrBadGeneratedColumn)

@@ -3235,11 +3235,11 @@ func (b *PlanBuilder) checkRecursiveView(dbName model.CIStr, tableName model.CIS
 		return nil, ErrViewRecursive.GenWithStackByArgs(dbName.O, tableName.O)
 	}
 	// If the view is being renamed, we return the mysql compatible error message.
-	if b.capFlag & renameView != 0 && viewFullName == b.renamingViewName {
+	if b.capFlag&renameView != 0 && viewFullName == b.renamingViewName {
 		return nil, ErrNoSuchTable.GenWithStackByArgs(dbName.O, tableName.O)
 	}
 	b.buildingViewStack.Insert(viewFullName)
-	return func() {delete(b.buildingViewStack, viewFullName)}, nil
+	return func() { delete(b.buildingViewStack, viewFullName) }, nil
 }
 
 // BuildDataSourceFromView is used to build LogicalPlan from view
