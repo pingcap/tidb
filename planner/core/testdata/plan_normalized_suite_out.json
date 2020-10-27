@@ -197,6 +197,20 @@
         "Plan": [
           ""
         ]
+      },
+      {
+        "SQL": "insert into t3 values (4,20),(30,30)",
+        "Plan": [
+          ""
+        ]
+      },
+      {
+        "SQL": "select * from t3 where a<5",
+        "Plan": [
+          " TableReader   root ",
+          " └─Selection   cop  lt(test.t3.a, ?)",
+          "   └─TableScan cop  table:t3, range:[?,?], keep order:false"
+        ]
       }
     ]
   },
