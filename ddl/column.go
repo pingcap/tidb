@@ -889,6 +889,10 @@ func needChangeColumnData(oldCol, newCol *model.ColumnInfo) bool {
 		}
 	}
 
+	if mysql.IsIntegerType(oldCol.Tp) && !mysql.IsIntegerType(newCol.Tp) {
+		return true
+	}
+
 	if newCol.Flen > 0 && newCol.Flen < oldCol.Flen || toUnsigned != originUnsigned {
 		return true
 	}

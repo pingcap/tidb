@@ -1066,6 +1066,13 @@ func checkTooManyColumns(colDefs []*model.ColumnInfo) error {
 	return nil
 }
 
+func checkTooManyIndexes(idxDefs []*model.IndexInfo) error {
+	if uint32(len(idxDefs)) > atomic.LoadUint32(&TableIndexCountLimit) {
+		return errTooManyKeys.GenWithStackByArgs(TableIndexCountLimit)
+	}
+	return nil
+}
+
 // checkColumnsAttributes checks attributes for multiple columns.
 func checkColumnsAttributes(colDefs []*model.ColumnInfo) error {
 	for _, colDef := range colDefs {
@@ -1465,6 +1472,9 @@ func checkTableInfoValidExtra(tbInfo *model.TableInfo) error {
 		return err
 	}
 	if err := checkTooManyColumns(tbInfo.Columns); err != nil {
+		return errors.Trace(err)
+	}
+	if err := checkTooManyIndexes(tbInfo.Indices); err != nil {
 		return errors.Trace(err)
 	}
 	if err := checkColumnsAttributes(tbInfo.Columns); err != nil {
@@ -2837,7 +2847,12 @@ func (d *ddl) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, spec *
 	tmp := *partInfo
 	tmp.Definitions = append(pi.Definitions, tmp.Definitions...)
 	clonedMeta.Partition = &tmp
-	err = checkPartitionByRange(ctx, clonedMeta, nil)
+	switch pi.Type {
+	case model.PartitionTypeRange:
+		err = checkPartitionByRange(ctx, clonedMeta, nil)
+	case model.PartitionTypeList:
+		err = checkPartitionByList(ctx, clonedMeta, nil)
+	}
 	if err != nil {
 		if ErrSameNamePartition.Equal(err) && spec.IfNotExists {
 			ctx.GetSessionVars().StmtCtx.AppendNote(err)
@@ -3366,10 +3381,12 @@ func CheckModifyTypeCompatible(origin *types.FieldType, to *types.FieldType) (al
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
 		switch to.Tp {
 		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
+			// Changing integer to integer, whether reorg is necessary is depend on the flen/decimal/signed.
 			skipSignCheck = true
 			skipLenCheck = true
 		default:
-			return "", errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
+			// Changing integer to other types, reorg is absolutely necessary.
+			return unsupportedMsg, errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
 		}
 	case mysql.TypeEnum, mysql.TypeSet:
 		var typeVar string
@@ -3489,6 +3506,7 @@ func CheckModifyTypeCompatible(origin *types.FieldType, to *types.FieldType) (al
 // It returns error if the two types has incompatible charset and collation, different sign, different
 // digital/string types, or length of new Flen and Decimal is less than origin.
 func checkModifyTypes(ctx sessionctx.Context, origin *types.FieldType, to *types.FieldType, needRewriteCollationData bool) error {
+	var needReorg bool
 	changeColumnValueMsg, err := CheckModifyTypeCompatible(origin, to)
 	if err != nil {
 		enableChangeColumnType := ctx.GetSessionVars().EnableChangeColumnType
@@ -3503,9 +3521,14 @@ func checkModifyTypes(ctx sessionctx.Context, origin *types.FieldType, to *types
 			msg := "tidb_enable_change_column_type is true and this column has primary key flag"
 			return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
 		}
+		needReorg = true
 	}
 
 	err = checkModifyCharsetAndCollation(to.Charset, to.Collate, origin.Charset, origin.Collate, needRewriteCollationData)
+	// column type change can handle the charset change between these two types in the process of the reorg.
+	if err != nil && errUnsupportedModifyCharset.Equal(err) && needReorg {
+		return nil
+	}
 	return errors.Trace(err)
 }
 
@@ -5048,11 +5071,12 @@ func validateCommentLength(vars *variable.SessionVars, indexName string, indexOp
 }
 
 func buildPartitionInfo(ctx sessionctx.Context, meta *model.TableInfo, d *ddl, spec *ast.AlterTableSpec) (*model.PartitionInfo, error) {
-	if meta.Partition.Type == model.PartitionTypeRange {
+	switch meta.Partition.Type {
+	case model.PartitionTypeRange, model.PartitionTypeList:
 		if len(spec.PartDefinitions) == 0 {
 			return nil, ast.ErrPartitionsMustBeDefined.GenWithStackByArgs(meta.Partition.Type)
 		}
-	} else {
+	default:
 		// we don't support ADD PARTITION for all other partition types yet.
 		return nil, errors.Trace(ErrUnsupportedAddPartition)
 	}
@@ -5075,14 +5099,6 @@ func buildPartitionInfo(ctx sessionctx.Context, meta *model.TableInfo, d *ddl, s
 		if err := checkTooLongTable(def.Name); err != nil {
 			return nil, err
 		}
-		// For RANGE partition only VALUES LESS THAN should be possible.
-		clause := def.Clause.(*ast.PartitionDefinitionClauseLessThan)
-		if len(part.Columns) > 0 {
-			if err := checkColumnsTypeAndValuesMatch(ctx, meta, clause.Exprs); err != nil {
-				return nil, err
-			}
-		}
-
 		comment, _ := def.Comment()
 		piDef := model.PartitionDefinition{
 			Name:    def.Name,
@@ -5090,15 +5106,60 @@ func buildPartitionInfo(ctx sessionctx.Context, meta *model.TableInfo, d *ddl, s
 			Comment: comment,
 		}
 
-		buf := new(bytes.Buffer)
-		for _, expr := range clause.Exprs {
-			expr.Format(buf)
-			piDef.LessThan = append(piDef.LessThan, buf.String())
-			buf.Reset()
+		switch meta.Partition.Type {
+		case model.PartitionTypeRange:
+			err = buildRangePartitionInfo(ctx, meta, part, def, &piDef)
+		case model.PartitionTypeList:
+			err = buildListPartitionInfo(ctx, meta, part, def, &piDef)
 		}
+		if err != nil {
+			return nil, err
+		}
+
 		part.Definitions = append(part.Definitions, piDef)
 	}
 	return part, nil
+}
+
+func buildRangePartitionInfo(ctx sessionctx.Context, meta *model.TableInfo, part *model.PartitionInfo, def *ast.PartitionDefinition, piDef *model.PartitionDefinition) error {
+	// For RANGE partition only VALUES LESS THAN should be possible.
+	clause := def.Clause.(*ast.PartitionDefinitionClauseLessThan)
+	if len(part.Columns) > 0 {
+		if err := checkColumnsTypeAndValuesMatch(ctx, meta, clause.Exprs); err != nil {
+			return err
+		}
+	}
+	buf := new(bytes.Buffer)
+	for _, expr := range clause.Exprs {
+		expr.Format(buf)
+		piDef.LessThan = append(piDef.LessThan, buf.String())
+		buf.Reset()
+	}
+	return nil
+}
+
+func buildListPartitionInfo(ctx sessionctx.Context, meta *model.TableInfo, part *model.PartitionInfo, def *ast.PartitionDefinition, piDef *model.PartitionDefinition) error {
+	// For List partition only VALUES IN should be possible.
+	clause := def.Clause.(*ast.PartitionDefinitionClauseIn)
+	if len(part.Columns) > 0 {
+		for _, vs := range clause.Values {
+			if err := checkColumnsTypeAndValuesMatch(ctx, meta, vs); err != nil {
+				return err
+			}
+		}
+	}
+	buf := new(bytes.Buffer)
+	for _, vs := range clause.Values {
+		inValue := make([]string, 0, len(vs))
+		for i := range vs {
+			buf.Reset()
+			vs[i].Format(buf)
+			inValue = append(inValue, buf.String())
+		}
+		piDef.InValues = append(piDef.InValues, inValue)
+		buf.Reset()
+	}
+	return nil
 }
 
 func checkColumnsTypeAndValuesMatch(ctx sessionctx.Context, meta *model.TableInfo, exprs []ast.ExprNode) error {
