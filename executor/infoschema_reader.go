@@ -1090,6 +1090,7 @@ func (e *memtableRetriever) dataForTiDBClusterInfo(ctx sessionctx.Context) error
 			server.GitHash,
 			startTimeStr,
 			upTimeStr,
+			server.ServerID,
 		)
 		rows = append(rows, row)
 	}
