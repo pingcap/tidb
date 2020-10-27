@@ -199,7 +199,9 @@ func (e *AnalyzeExec) analyzeWorker(taskCh <-chan *analyzeTask, resultCh chan<- 
 		switch task.taskType {
 		case colTask:
 			task.colExec.job = task.job
-			resultCh <- analyzeColumnsPushdown(task.colExec)
+			for _, result := range analyzeColumnsPushdown(task.colExec) {
+				resultCh <- result
+			}
 		case idxTask:
 			task.idxExec.job = task.job
 			resultCh <- analyzeIndexPushdown(task.idxExec)
@@ -383,7 +385,7 @@ func (e *AnalyzeIndexExec) buildStats(ranges []*ranger.Range, considerNull bool)
 	return hist, cms, nil
 }
 
-func analyzeColumnsPushdown(colExec *AnalyzeColumnsExec) analyzeResult {
+func analyzeColumnsPushdown(colExec *AnalyzeColumnsExec) []analyzeResult {
 	var ranges []*ranger.Range
 	if hc := colExec.handleCols; hc != nil {
 		if hc.IsInt() {
@@ -396,19 +398,37 @@ func analyzeColumnsPushdown(colExec *AnalyzeColumnsExec) analyzeResult {
 	}
 	hists, cms, extStats, err := colExec.buildStats(ranges, true)
 	if err != nil {
-		return analyzeResult{Err: err, job: colExec.job}
+		return []analyzeResult{{Err: err, job: colExec.job}}
 	}
-	result := analyzeResult{
+	lenIdx := len(colExec.analyzePB.IdxReq)
+	colResult := analyzeResult{
 		TableID:  colExec.tableID,
-		Hist:     hists,
-		Cms:      cms,
+		Hist:     hists[:len(hists)-lenIdx],
+		Cms:      cms[:len(cms)-lenIdx],
 		ExtStats: extStats,
 		job:      colExec.job,
 	}
 	hist := hists[0]
-	result.Count = hist.NullCount
+	colResult.Count = hist.NullCount
 	if hist.Len() > 0 {
-		result.Count += hist.Buckets[hist.Len()-1].Count
+		colResult.Count += hist.Buckets[hist.Len()-1].Count
+	}
+	result := []analyzeResult{colResult}
+	for i := 0; i < lenIdx; i++ {
+		idxHist := hists[len(hists)-lenIdx+i]
+		idxCMS := cms[len(cms)-lenIdx+i]
+		idxResult := analyzeResult{
+			TableID: colExec.tableID,
+			Hist:    []*statistics.Histogram{idxHist},
+			Cms:     []*statistics.CMSketch{idxCMS},
+			IsIndex: 1,
+			job:     colExec.job,
+		}
+		idxResult.Count = hist.NullCount
+		if hist.Len() > 0 {
+			idxResult.Count += hist.Buckets[hist.Len()-1].Count
+		}
+		result = append(result, idxResult)
 	}
 	return result
 }
@@ -498,6 +518,12 @@ func (e *AnalyzeColumnsExec) buildStats(ranges []*ranger.Range, needExtStats boo
 			CMSketch:      statistics.NewCMSketch(int32(e.opts[ast.AnalyzeOptCMSketchDepth]), int32(e.opts[ast.AnalyzeOptCMSketchWidth])),
 		}
 	}
+	indexHists := make([]*statistics.Histogram, len(e.analyzePB.IdxReq))
+	idxCMSs := make([]*statistics.CMSketch, len(e.analyzePB.IdxReq))
+	for i := range indexHists {
+		indexHists[i] = &statistics.Histogram{}
+		idxCMSs[i] = statistics.NewCMSketch(int32(e.opts[ast.AnalyzeOptCMSketchDepth]), int32(e.opts[ast.AnalyzeOptCMSketchWidth]))
+	}
 	for {
 		data, err1 := e.resultHandler.nextRaw(context.TODO())
 		if err1 != nil {
@@ -506,10 +532,22 @@ func (e *AnalyzeColumnsExec) buildStats(ranges []*ranger.Range, needExtStats boo
 		if data == nil {
 			break
 		}
-		resp := &tipb.AnalyzeColumnsResp{}
-		err = resp.Unmarshal(data)
-		if err != nil {
-			return nil, nil, nil, err
+		var resp *tipb.AnalyzeColumnsResp
+		var idxResp []*tipb.AnalyzeIndexResp
+		if e.analyzePB.Tp == tipb.AnalyzeType_TypeMixed {
+			analyzeResp := &tipb.AnalyzeResp{}
+			err = analyzeResp.Unmarshal(data)
+			if err != nil {
+				return nil, nil, nil, err
+			}
+			idxResp = analyzeResp.IndexResp
+			resp = analyzeResp.ColumnsResp
+		} else {
+			resp = &tipb.AnalyzeColumnsResp{}
+			err = resp.Unmarshal(data)
+			if err != nil {
+				return nil, nil, nil, err
+			}
 		}
 		sc := e.ctx.GetSessionVars().StmtCtx
 		rowCount := int64(0)
@@ -525,6 +563,20 @@ func (e *AnalyzeColumnsExec) buildStats(ranges []*ranger.Range, needExtStats boo
 			respSample := statistics.SampleCollectorFromProto(rc)
 			rowCount = respSample.Count + respSample.NullCount
 			collectors[i].MergeSampleCollector(sc, respSample)
+		}
+		if len(idxResp) > 0 {
+			for i, resp := range idxResp {
+				respHist := statistics.HistogramFromProto(resp.Hist)
+				e.job.Update(int64(respHist.TotalRowCount()))
+				indexHists[i], err = statistics.MergeHistograms(e.ctx.GetSessionVars().StmtCtx, indexHists[i], respHist, int(e.opts[ast.AnalyzeOptNumBuckets]))
+				if err != nil {
+					return nil, nil, nil, err
+				}
+				err := idxCMSs[i].MergeCMSketch(statistics.CMSketchFromProto(resp.Cms), 0)
+				if err != nil {
+					return nil, nil, nil, err
+				}
+			}
 		}
 		e.job.Update(rowCount)
 	}
@@ -566,7 +618,7 @@ func (e *AnalyzeColumnsExec) buildStats(ranges []*ranger.Range, needExtStats boo
 			return nil, nil, nil, err
 		}
 	}
-	return hists, cms, extStats, nil
+	return append(hists, indexHists...), append(cms, idxCMSs...), extStats, nil
 }
 
 func hasPkHist(handleCols core.HandleCols) bool {
