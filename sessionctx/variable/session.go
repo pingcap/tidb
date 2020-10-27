@@ -82,21 +82,27 @@ func (r *RetryInfo) ResetOffset() {
 
 // AddAutoIncrementID adds id to autoIncrementIDs.
 func (r *RetryInfo) AddAutoIncrementID(id int64) {
+	if r.Retrying {
+		return
+	}
 	r.autoIncrementIDs.autoIDs = append(r.autoIncrementIDs.autoIDs, id)
 }
 
 // GetCurrAutoIncrementID gets current autoIncrementID.
-func (r *RetryInfo) GetCurrAutoIncrementID() (int64, error) {
+func (r *RetryInfo) GetCurrAutoIncrementID() (int64, bool) {
 	return r.autoIncrementIDs.getCurrent()
 }
 
 // AddAutoRandomID adds id to autoRandomIDs.
 func (r *RetryInfo) AddAutoRandomID(id int64) {
+	if r.Retrying {
+		return
+	}
 	r.autoRandomIDs.autoIDs = append(r.autoRandomIDs.autoIDs, id)
 }
 
 // GetCurrAutoRandomID gets current AutoRandomID.
-func (r *RetryInfo) GetCurrAutoRandomID() (int64, error) {
+func (r *RetryInfo) GetCurrAutoRandomID() (int64, bool) {
 	return r.autoRandomIDs.getCurrent()
 }
 
@@ -116,13 +122,13 @@ func (r *retryInfoAutoIDs) clean() {
 	}
 }
 
-func (r *retryInfoAutoIDs) getCurrent() (int64, error) {
+func (r *retryInfoAutoIDs) getCurrent() (int64, bool) {
 	if r.currentOffset >= len(r.autoIDs) {
-		return 0, errCantGetValidID
+		return 0, false
 	}
 	id := r.autoIDs[r.currentOffset]
 	r.currentOffset++
-	return id, nil
+	return id, true
 }
 
 // stmtFuture is used to async get timestamp for statement.

@@ -101,7 +101,7 @@ func updateRecord(ctx context.Context, sctx sessionctx.Context, h kv.Handle, old
 			modified[i] = true
 			// Rebase auto increment id if the field is changed.
 			if mysql.HasAutoIncrementFlag(col.Flag) {
-				recordID, err := getAutoRecordID(newData[i], &col.FieldType, false)
+				recordID, err := getAutoRecordID(&newData[i], &col.FieldType, false)
 				if err != nil {
 					return false, err
 				}
@@ -228,7 +228,7 @@ func rebaseAutoRandomValue(sctx sessionctx.Context, t table.Table, newData *type
 	if !tableInfo.ContainsAutoRandomBits() {
 		return nil
 	}
-	recordID, err := getAutoRecordID(*newData, &col.FieldType, false)
+	recordID, err := getAutoRecordID(newData, &col.FieldType, false)
 	if err != nil {
 		return err
 	}

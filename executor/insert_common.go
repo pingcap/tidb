@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/sessionctx"
 	"math"
 	"time"
 
@@ -598,7 +599,7 @@ func (e *InsertValues) fillRow(ctx context.Context, row []types.Datum, hasValue 
 
 // isAutoNull can help judge whether a datum is AutoIncrement Null quickly.
 // This used to help lazyFillAutoIncrement to find consecutive N datum backwards for batch autoID alloc.
-func (e *InsertValues) isAutoNull(ctx context.Context, d types.Datum, col *table.Column) bool {
+func (e *InsertValues) isAutoNull(ctx context.Context, d *types.Datum, col *table.Column) bool {
 	var err error
 	var recordID int64
 	if !d.IsNull() {
@@ -619,41 +620,20 @@ func (e *InsertValues) isAutoNull(ctx context.Context, d types.Datum, col *table
 	return false
 }
 
-func (e *InsertValues) hasAutoIncrementColumn() (int, bool) {
-	colIdx := -1
-	for i, c := range e.Table.Cols() {
+func findAutoIncrementColumn(t table.Table) (col *table.Column, offsetInRow int, found bool) {
+	for i, c := range t.Cols() {
 		if mysql.HasAutoIncrementFlag(c.Flag) {
-			colIdx = i
-			break
+			return c, i, true
 		}
 	}
-	return colIdx, colIdx != -1
+	return nil, -1, false
 }
 
-func (e *InsertValues) lazyAdjustAutoIncrementDatumInRetry(ctx context.Context, rows [][]types.Datum, colIdx int) ([][]types.Datum, error) {
-	// Get the autoIncrement column.
-	col := e.Table.Cols()[colIdx]
-	// Consider the colIdx of autoIncrement in row are the same.
-	length := len(rows)
-	for i := 0; i < length; i++ {
-		autoDatum := rows[i][colIdx]
-
-		// autoID can be found in RetryInfo.
-		retryInfo := e.ctx.GetSessionVars().RetryInfo
-		if retryInfo.Retrying {
-			id, err := retryInfo.GetCurrAutoIncrementID()
-			if err != nil {
-				return nil, err
-			}
-			autoDatum.SetAutoID(id, col.Flag)
-
-			if err = col.HandleBadNull(&autoDatum, e.ctx.GetSessionVars().StmtCtx); err != nil {
-				return nil, err
-			}
-			rows[i][colIdx] = autoDatum
-		}
-	}
-	return rows, nil
+func setDatumAutoIDWithCast(ctx sessionctx.Context, d *types.Datum, id int64, col *table.Column) error {
+	d.SetAutoID(id, col.Flag)
+	var err error
+	*d, err = table.CastValue(ctx, *d, col.ToInfo(), false, false)
+	return err
 }
 
 // lazyAdjustAutoIncrementDatum is quite similar to adjustAutoIncrementDatum
@@ -663,22 +643,14 @@ func (e *InsertValues) lazyAdjustAutoIncrementDatum(ctx context.Context, rows []
 	if !e.lazyFillAutoID {
 		return rows, nil
 	}
-	// No autoIncrement column means no need to fill.
-	colIdx, ok := e.hasAutoIncrementColumn()
-	if !ok {
+	col, idx, found := findAutoIncrementColumn(e.Table)
+	if !found {
 		return rows, nil
 	}
-	// autoID can be found in RetryInfo.
 	retryInfo := e.ctx.GetSessionVars().RetryInfo
-	if retryInfo.Retrying {
-		return e.lazyAdjustAutoIncrementDatumInRetry(ctx, rows, colIdx)
-	}
-	// Get the autoIncrement column.
-	col := e.Table.Cols()[colIdx]
-	// Consider the colIdx of autoIncrement in row are the same.
-	length := len(rows)
-	for i := 0; i < length; i++ {
-		autoDatum := rows[i][colIdx]
+	rowCount := len(rows)
+	for processedIdx := 0; processedIdx < rowCount; processedIdx++ {
+		autoDatum := &rows[processedIdx][idx]
 
 		var err error
 		var recordID int64
@@ -696,24 +668,38 @@ func (e *InsertValues) lazyAdjustAutoIncrementDatum(ctx context.Context, rows []
 			}
 			e.ctx.GetSessionVars().StmtCtx.InsertID = uint64(recordID)
 			retryInfo.AddAutoIncrementID(recordID)
-			rows[i][colIdx] = autoDatum
 			continue
 		}
 
 		// Change NULL to auto id.
 		// Change value 0 to auto id, if NoAutoValueOnZero SQL mode is not set.
 		if autoDatum.IsNull() || e.ctx.GetSessionVars().SQLMode&mysql.ModeNoAutoValueOnZero == 0 {
+			// Consume the auto IDs in RetryInfo first.
+			for retryInfo.Retrying && processedIdx < rowCount {
+				nextID, ok := retryInfo.GetCurrAutoIncrementID()
+				if !ok {
+					break
+				}
+				err = setDatumAutoIDWithCast(e.ctx, autoDatum, nextID, col)
+				if err != nil {
+					return nil, err
+				}
+				processedIdx++
+				if processedIdx == rowCount {
+					return rows, nil
+				}
+			}
 			// Find consecutive num.
-			start := i
+			start := processedIdx
 			cnt := 1
-			for i+1 < length && e.isAutoNull(ctx, rows[i+1][colIdx], col) {
-				i++
+			for processedIdx+1 < rowCount && e.isAutoNull(ctx, &rows[processedIdx+1][idx], col) {
+				processedIdx++
 				cnt++
 			}
 			// AllocBatchAutoIncrementValue allocates batch N consecutive autoIDs.
 			// The max value can be derived from adding the increment value to min for cnt-1 times.
 			min, increment, err := table.AllocBatchAutoIncrementValue(ctx, e.Table, e.ctx, cnt)
-			if e.handleErr(col, &autoDatum, cnt, err) != nil {
+			if e.handleErr(col, autoDatum, cnt, err) != nil {
 				return nil, err
 			}
 			// It's compatible with mysql setting the first allocated autoID to lastInsertID.
@@ -724,31 +710,20 @@ func (e *InsertValues) lazyAdjustAutoIncrementDatum(ctx context.Context, rows []
 			// Assign autoIDs to rows.
 			for j := 0; j < cnt; j++ {
 				offset := j + start
-				d := rows[offset][colIdx]
-
 				id := int64(uint64(min) + uint64(j)*uint64(increment))
-				d.SetAutoID(id, col.Flag)
-				retryInfo.AddAutoIncrementID(id)
-
-				// The value of d is adjusted by auto ID, so we need to cast it again.
-				d, err := table.CastValue(e.ctx, d, col.ToInfo(), false, false)
+				err = setDatumAutoIDWithCast(e.ctx, &rows[offset][idx], id, col)
 				if err != nil {
 					return nil, err
 				}
-				rows[offset][colIdx] = d
+				retryInfo.AddAutoIncrementID(id)
 			}
 			continue
 		}
 
-		autoDatum.SetAutoID(recordID, col.Flag)
-		retryInfo.AddAutoIncrementID(recordID)
-
-		// the value of d is adjusted by auto ID, so we need to cast it again.
-		autoDatum, err = table.CastValue(e.ctx, autoDatum, col.ToInfo(), false, false)
+		err = setDatumAutoIDWithCast(e.ctx, autoDatum, recordID, col)
 		if err != nil {
 			return nil, err
 		}
-		rows[i][colIdx] = autoDatum
 	}
 	return rows, nil
 }
@@ -756,12 +731,11 @@ func (e *InsertValues) lazyAdjustAutoIncrementDatum(ctx context.Context, rows []
 func (e *InsertValues) adjustAutoIncrementDatum(ctx context.Context, d types.Datum, hasValue bool, c *table.Column) (types.Datum, error) {
 	retryInfo := e.ctx.GetSessionVars().RetryInfo
 	if retryInfo.Retrying {
-		id, err := retryInfo.GetCurrAutoIncrementID()
-		if err != nil {
-			return types.Datum{}, err
+		id, ok := retryInfo.GetCurrAutoIncrementID()
+		if ok {
+			d.SetAutoID(id, c.Flag)
+			return d, nil
 		}
-		d.SetAutoID(id, c.Flag)
-		return d, nil
 	}
 
 	var err error
@@ -770,7 +744,7 @@ func (e *InsertValues) adjustAutoIncrementDatum(ctx context.Context, d types.Dat
 		d.SetNull()
 	}
 	if !d.IsNull() {
-		recordID, err = getAutoRecordID(d, &c.FieldType, true)
+		recordID, err = getAutoRecordID(&d, &c.FieldType, true)
 		if err != nil {
 			return types.Datum{}, err
 		}
@@ -800,20 +774,18 @@ func (e *InsertValues) adjustAutoIncrementDatum(ctx context.Context, d types.Dat
 		}
 	}
 
-	d.SetAutoID(recordID, c.Flag)
-	retryInfo.AddAutoIncrementID(recordID)
-
-	// the value of d is adjusted by auto ID, so we need to cast it again.
-	casted, err := table.CastValue(e.ctx, d, c.ToInfo(), false, false)
+	err = setDatumAutoIDWithCast(e.ctx, &d, recordID, c)
 	if err != nil {
 		return types.Datum{}, err
 	}
-	return casted, nil
+	return d, nil
 }
 
-func getAutoRecordID(d types.Datum, target *types.FieldType, isInsert bool) (int64, error) {
+func getAutoRecordID(d *types.Datum, target *types.FieldType, isInsert bool) (int64, error) {
+	if d == nil {
+		return 0, errors.Trace(errors.Errorf("datum is empty"))
+	}
 	var recordID int64
-
 	switch target.Tp {
 	case mysql.TypeFloat, mysql.TypeDouble:
 		f := d.GetFloat64()
@@ -834,12 +806,11 @@ func getAutoRecordID(d types.Datum, target *types.FieldType, isInsert bool) (int
 func (e *InsertValues) adjustAutoRandomDatum(ctx context.Context, d types.Datum, hasValue bool, c *table.Column) (types.Datum, error) {
 	retryInfo := e.ctx.GetSessionVars().RetryInfo
 	if retryInfo.Retrying {
-		autoRandomID, err := retryInfo.GetCurrAutoRandomID()
-		if err != nil {
-			return types.Datum{}, err
+		autoRandomID, ok := retryInfo.GetCurrAutoRandomID()
+		if ok {
+			d.SetAutoID(autoRandomID, c.Flag)
+			return d, nil
 		}
-		d.SetAutoID(autoRandomID, c.Flag)
-		return d, nil
 	}
 
 	var err error
@@ -848,7 +819,7 @@ func (e *InsertValues) adjustAutoRandomDatum(ctx context.Context, d types.Datum,
 		d.SetNull()
 	}
 	if !d.IsNull() {
-		recordID, err = getAutoRecordID(d, &c.FieldType, true)
+		recordID, err = getAutoRecordID(&d, &c.FieldType, true)
 		if err != nil {
 			return types.Datum{}, err
 		}
@@ -886,14 +857,11 @@ func (e *InsertValues) adjustAutoRandomDatum(ctx context.Context, d types.Datum,
 		}
 	}
 
-	d.SetAutoID(recordID, c.Flag)
-	retryInfo.AddAutoRandomID(recordID)
-
-	casted, err := table.CastValue(e.ctx, d, c.ToInfo(), false, false)
+	err = setDatumAutoIDWithCast(e.ctx, &d, recordID, c)
 	if err != nil {
 		return types.Datum{}, err
 	}
-	return casted, nil
+	return d, nil
 }
 
 // allocAutoRandomID allocates a random id for primary key column. It assumes tableInfo.AutoRandomBits > 0.
