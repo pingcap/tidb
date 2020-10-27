@@ -6216,6 +6216,21 @@ func (s *testIntegrationSerialSuite) TestCollateConstantPropagation(c *C) {
 	tk.MustQuery("select * from t1 left join t2 on t1.a = t2.a collate utf8mb4_unicode_ci where t1.a = 's';").Check(testkit.Rows("ß s <nil> <nil>"))
 }
 
+func (s *testIntegrationSuite2) TestIssue17791(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("SET sql_mode=DEFAULT;")
+	tk.MustExec("CREATE TABLE t1 (" +
+		" id INT NOT NULL PRIMARY KEY auto_increment," +
+		" pad VARCHAR(10) NOT NULL," +
+		" expr varchar(100) AS (NOT 1 BETWEEN -5 AND 5)" +
+		");")
+	tk.MustExec("INSERT INTO t1 (pad) VALUES ('a'), ('b');")
+	tk.MustQuery("SELECT id, pad, expr, NOT 1 BETWEEN -5 AND 5 as expr_in_select FROM t1;").Check(testkit.Rows("1 a 0 0", "2 b 0 0"))
+}
+
 func (s *testIntegrationSerialSuite) TestMixCollation(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	collate.SetNewCollationEnabledForTest(true)
