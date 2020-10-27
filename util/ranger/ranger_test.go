@@ -1193,7 +1193,7 @@ func (s *testRangerSuite) TestIndexStringIsTrueRange(c *C) {
 	testKit.MustExec("drop table if exists t0")
 	testKit.MustExec("CREATE TABLE t0(c0 TEXT(10));")
 	testKit.MustExec("INSERT INTO t0(c0) VALUES (1);")
-	testKit.MustExec("CREATE INDEX i0 ON t0(c0(10));")
+	testKit.MustExec("CREATE INDEX i0 ON t0(c0(255));")
 	testKit.MustExec("analyze table t0;")
 
 	var input []string
