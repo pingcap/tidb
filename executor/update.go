@@ -39,10 +39,10 @@ type UpdateExec struct {
 	// updatedRowKeys is a map for unique (TableAlias, handle) pair.
 	// The value is true if the row is changed, or false otherwise
 	updatedRowKeys map[int]*kv.HandleMap
+	tblID2table    map[int64]table.Table
 	// mergedRowData is a map for unique (Table, handle) pair.
 	// The value is cached table row
 	mergedRowData map[int64]*kv.HandleMap
-	tblID2table   map[int64]table.Table
 
 	matched uint64 // a counter of matched rows during update
 	// tblColPosInfos stores relationship between column ordinal to its table handle.
@@ -106,67 +106,68 @@ func (e *UpdateExec) computeHandles(ctx context.Context, schema *expression.Sche
 
 func (e *UpdateExec) merge(ctx context.Context, schema *expression.Schema, row, newData []types.Datum) error {
 	if e.multiUpdateOnSameTable {
-		assignFlag, err := plannercore.GetUpdateColumns(e.ctx, e.OrderedList, schema.Len())
-		if err != nil {
-			return err
+		return nil
+	}
+	assignFlag, err := plannercore.GetUpdateColumns(e.ctx, e.OrderedList, schema.Len())
+	if err != nil {
+		return err
+	}
+	if e.mergedRowData == nil {
+		e.mergedRowData = make(map[int64]*kv.HandleMap)
+	}
+	// write to mergedData
+	for i, content := range e.tblColPosInfos {
+		if !e.updatable[i] {
+			// If there's nothing to update, we can just skip current row
+			continue
 		}
-		if e.mergedRowData == nil {
-			e.mergedRowData = make(map[int64]*kv.HandleMap)
+		if e.changed[i] {
+			// Each matched row is updated once, even if it matches the conditions multiple times.
+			continue
 		}
-		// write to mergedData
-		for i, content := range e.tblColPosInfos {
-			if !e.updatable[i] {
-				// If there's nothing to update, we can just skip current row
-				continue
-			}
-			if e.changed[i] {
-				// Each matched row is updated once, even if it matches the conditions multiple times.
-				continue
-			}
-			handle := e.handles[i]
-			flags := assignFlag[content.Start:content.End]
+		handle := e.handles[i]
+		flags := assignFlag[content.Start:content.End]
 
-			if e.mergedRowData[content.TblID] == nil {
-				e.mergedRowData[content.TblID] = kv.NewHandleMap()
-			}
-			newTableData := newData[content.Start:content.End]
-			var mergedData []types.Datum
-			v, ok := e.mergedRowData[content.TblID].Get(handle)
-			if !ok {
-				mergedData = append([]types.Datum{}, newTableData...)
-			} else {
-				mergedData = v.([]types.Datum)
-				for i, flag := range flags {
-					if flag {
-						newTableData[i].Copy(&mergedData[i])
-					}
+		if e.mergedRowData[content.TblID] == nil {
+			e.mergedRowData[content.TblID] = kv.NewHandleMap()
+		}
+		newTableData := newData[content.Start:content.End]
+		var mergedData []types.Datum
+		v, ok := e.mergedRowData[content.TblID].Get(handle)
+		if !ok {
+			mergedData = append([]types.Datum{}, newTableData...)
+		} else {
+			mergedData = v.([]types.Datum)
+			for i, flag := range flags {
+				if flag {
+					newTableData[i].Copy(&mergedData[i])
 				}
 			}
-			e.mergedRowData[content.TblID].Set(handle, mergedData)
 		}
-		// read from mergedData
-		for i, content := range e.tblColPosInfos {
-			if !e.updatable[i] {
-				// If there's nothing to update, we can just skip current row
-				continue
-			}
-			if e.changed[i] {
-				// Each matched row is updated once, even if it matches the conditions multiple times.
-				continue
-			}
-			handle := e.handles[i]
-			flags := assignFlag[content.Start:content.End]
+		e.mergedRowData[content.TblID].Set(handle, mergedData)
+	}
+	// read from mergedData
+	for i, content := range e.tblColPosInfos {
+		if !e.updatable[i] {
+			// If there's nothing to update, we can just skip current row
+			continue
+		}
+		if e.changed[i] {
+			// Each matched row is updated once, even if it matches the conditions multiple times.
+			continue
+		}
+		handle := e.handles[i]
+		flags := assignFlag[content.Start:content.End]
 
-			oldData := row[content.Start:content.End]
-			newTableData := newData[content.Start:content.End]
-			var updatedData []types.Datum
-			if v, ok := e.mergedRowData[content.TblID].Get(handle); ok {
-				updatedData = v.([]types.Datum)
-				for i, flag := range flags {
-					if !flag {
-						updatedData[i].Copy(&oldData[i])
-						updatedData[i].Copy(&newTableData[i])
-					}
+		oldData := row[content.Start:content.End]
+		newTableData := newData[content.Start:content.End]
+		var updatedData []types.Datum
+		if v, ok := e.mergedRowData[content.TblID].Get(handle); ok {
+			updatedData = v.([]types.Datum)
+			for i, flag := range flags {
+				if !flag {
+					updatedData[i].Copy(&oldData[i])
+					updatedData[i].Copy(&newTableData[i])
 				}
 			}
 		}
