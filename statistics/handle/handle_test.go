@@ -809,7 +809,13 @@ func (s *testStatsSuite) TestIndexUsageInformation(c *C) {
 	tk.MustExec("create unique index idx_a on t_idx(a)")
 	tk.MustExec("create unique index idx_b on t_idx(b)")
 	tk.MustQuery("select a from t_idx where a=1")
-	querySQL := `select table_schema, table_name, index_name, query_count, rows_selected from mysql.schema_index_usage where table_name = "t_idx"`
+	querySQL := `select idx.table_schema, idx.table_name, idx.key_name, stats.query_count, stats.rows_selected 
+					from mysql.schema_index_usage as stats, information_schema.tidb_indexes as idx, information_schema.tables as tables
+					where tables.table_schema = idx.table_schema
+						AND tables.table_name = idx.table_name
+						AND tables.tidb_table_id = stats.table_id
+						AND idx.index_id = stats.index_id
+						AND idx.table_name = "t_idx"`
 	do := s.do
 	err := do.StatsHandle().DumpIndexUsageToKV()
 	c.Assert(err, IsNil)
