@@ -273,7 +273,7 @@ func (s *testSuite6) TestCreateView(c *C) {
 	tk.MustExec("create definer='root'@'localhost' view v_nested as select * from test_v_nested")
 	tk.MustExec("create definer='root'@'localhost' view v_nested2 as select * from v_nested")
 	_, err = tk.Exec("create or replace definer='root'@'localhost' view v_nested as select * from v_nested2")
-	c.Assert(terror.ErrorEqual(err, plannercore.ErrViewRecursive), IsTrue)
+	c.Assert(terror.ErrorEqual(err, plannercore.ErrNoSuchTable), IsTrue)
 	tk.MustExec("drop table test_v_nested")
 	tk.MustExec("drop view v_nested, v_nested2")
 }

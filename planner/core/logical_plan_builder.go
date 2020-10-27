@@ -3234,21 +3234,32 @@ func (b *PlanBuilder) buildMemTable(_ context.Context, dbName model.CIStr, table
 	return p, nil
 }
 
-// BuildDataSourceFromView is used to build LogicalPlan from view
-func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName model.CIStr, tableInfo *model.TableInfo) (LogicalPlan, error) {
-	viewFullName := dbName.L + "." + tableInfo.Name.L
+// checkRecursiveView checks whether this view is recursively defined.
+func (b *PlanBuilder) checkRecursiveView(dbName model.CIStr, tableName model.CIStr) (func(), error) {
+	viewFullName := dbName.L + "." + tableName.L
 	if b.buildingViewStack == nil {
 		b.buildingViewStack = set.NewStringSet()
 	}
 	// If this view has already been on the building stack, it means
 	// this view contains a recursive definition.
 	if b.buildingViewStack.Exist(viewFullName) {
-		return nil, ErrViewRecursive.GenWithStackByArgs(dbName.O, tableInfo.Name.O)
+		return nil, ErrViewRecursive.GenWithStackByArgs(dbName.O, tableName.O)
+	}
+	// If the view is being renamed, we return the mysql compatible error message.
+	if b.capFlag & renameView != 0 && viewFullName == b.renamingViewName {
+		return nil, ErrNoSuchTable.GenWithStackByArgs(dbName.O, tableName.O)
 	}
 	b.buildingViewStack.Insert(viewFullName)
-	defer func() {
-		delete(b.buildingViewStack, viewFullName)
-	}()
+	return func() {delete(b.buildingViewStack, viewFullName)}, nil
+}
+
+// BuildDataSourceFromView is used to build LogicalPlan from view
+func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName model.CIStr, tableInfo *model.TableInfo) (LogicalPlan, error) {
+	deferFunc, err := b.checkRecursiveView(dbName, tableInfo.Name)
+	if err != nil {
+		return nil, err
+	}
+	defer deferFunc()
 
 	charset, collation := b.ctx.GetSessionVars().GetCharsetInfo()
 	viewParser := parser.New()
@@ -3261,7 +3272,8 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName model.
 	b.visitInfo = make([]visitInfo, 0)
 	selectLogicalPlan, err := b.Build(ctx, selectNode)
 	if err != nil {
-		if terror.ErrorNotEqual(err, ErrViewRecursive) {
+		if terror.ErrorNotEqual(err, ErrViewRecursive) &&
+			terror.ErrorNotEqual(err, ErrNoSuchTable) {
 			err = ErrViewInvalid.GenWithStackByArgs(dbName.O, tableInfo.Name.O)
 		}
 		return nil, err

@@ -394,6 +394,9 @@ const (
 	// canExpandAST indicates whether the origin AST can be expanded during plan
 	// building. ONLY used for `CreateViewStmt` now.
 	canExpandAST
+	// renameView indicates a view is being renamed, so we cannot use the origin
+	// definition of that view.
+	renameView
 )
 
 // PlanBuilder builds Plan from an ast.Node.
@@ -445,6 +448,8 @@ type PlanBuilder struct {
 	partitionedTable []table.PartitionedTable
 	// buildingViewStack is used to check whether there is a recursive view.
 	buildingViewStack set.StringSet
+	// renamingViewName is the name of the view which is being renamed.
+	renamingViewName string
 
 	// evalDefaultExpr needs this information to find the corresponding column.
 	// It stores the OutputNames before buildProjection.
@@ -3028,17 +3033,11 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (Plan, err
 				v.ReferTable.Name.L, "", authErr)
 		}
 	case *ast.CreateViewStmt:
-		b.capFlag |= canExpandAST
+		b.capFlag |= canExpandAST | renameView
+		b.renamingViewName = v.ViewName.Schema.L + "." + v.ViewName.Name.L
 		defer func() {
 			b.capFlag &= ^canExpandAST
-		}()
-		viewFullName := v.ViewName.Schema.L + "." + v.ViewName.Name.L
-		b.buildingViewStack = set.NewStringSet()
-		// We push this view onto the building stack. So it can check
-		// the recursive definition of this view when building the select statement.
-		b.buildingViewStack.Insert(viewFullName)
-		defer func() {
-			delete(b.buildingViewStack, viewFullName)
+			b.capFlag &= ^renameView
 		}()
 		plan, err := b.Build(ctx, v.Select)
 		if err != nil {
