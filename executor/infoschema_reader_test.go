@@ -112,38 +112,38 @@ func (s *inspectionSuite) TearDownSuite(c *C) {
 func (s *inspectionSuite) TestInspectionTables(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	instances := []string{
-		"pd,127.0.0.1:11080,127.0.0.1:10080,mock-version,mock-githash",
-		"tidb,127.0.0.1:11080,127.0.0.1:10080,mock-version,mock-githash",
-		"tikv,127.0.0.1:11080,127.0.0.1:10080,mock-version,mock-githash",
+		"pd,127.0.0.1:11080,127.0.0.1:10080,mock-version,mock-githash,0",
+		"tidb,127.0.0.1:11080,127.0.0.1:10080,mock-version,mock-githash,1001",
+		"tikv,127.0.0.1:11080,127.0.0.1:10080,mock-version,mock-githash,0",
 	}
 	fpName := "github.com/pingcap/tidb/infoschema/mockClusterInfo"
 	fpExpr := `return("` + strings.Join(instances, ";") + `")`
 	c.Assert(failpoint.Enable(fpName, fpExpr), IsNil)
 	defer func() { c.Assert(failpoint.Disable(fpName), IsNil) }()
 
-	tk.MustQuery("select type, instance, status_address, version, git_hash from information_schema.cluster_info").Check(testkit.Rows(
-		"pd 127.0.0.1:11080 127.0.0.1:10080 mock-version mock-githash",
-		"tidb 127.0.0.1:11080 127.0.0.1:10080 mock-version mock-githash",
-		"tikv 127.0.0.1:11080 127.0.0.1:10080 mock-version mock-githash",
+	tk.MustQuery("select type, instance, status_address, version, git_hash, server_id from information_schema.cluster_info").Check(testkit.Rows(
+		"pd 127.0.0.1:11080 127.0.0.1:10080 mock-version mock-githash 0",
+		"tidb 127.0.0.1:11080 127.0.0.1:10080 mock-version mock-githash 1001",
+		"tikv 127.0.0.1:11080 127.0.0.1:10080 mock-version mock-githash 0",
 	))
 
 	// enable inspection mode
 	inspectionTableCache := map[string]variable.TableSnapshot{}
 	tk.Se.GetSessionVars().InspectionTableCache = inspectionTableCache
-	tk.MustQuery("select type, instance, status_address, version, git_hash from information_schema.cluster_info").Check(testkit.Rows(
-		"pd 127.0.0.1:11080 127.0.0.1:10080 mock-version mock-githash",
-		"tidb 127.0.0.1:11080 127.0.0.1:10080 mock-version mock-githash",
-		"tikv 127.0.0.1:11080 127.0.0.1:10080 mock-version mock-githash",
+	tk.MustQuery("select type, instance, status_address, version, git_hash, server_id from information_schema.cluster_info").Check(testkit.Rows(
+		"pd 127.0.0.1:11080 127.0.0.1:10080 mock-version mock-githash 0",
+		"tidb 127.0.0.1:11080 127.0.0.1:10080 mock-version mock-githash 1001",
+		"tikv 127.0.0.1:11080 127.0.0.1:10080 mock-version mock-githash 0",
 	))
 	c.Assert(inspectionTableCache["cluster_info"].Err, IsNil)
 	c.Assert(len(inspectionTableCache["cluster_info"].Rows), DeepEquals, 3)
 
 	// check whether is obtain data from cache at the next time
 	inspectionTableCache["cluster_info"].Rows[0][0].SetString("modified-pd", mysql.DefaultCollationName)
-	tk.MustQuery("select type, instance, status_address, version, git_hash from information_schema.cluster_info").Check(testkit.Rows(
-		"modified-pd 127.0.0.1:11080 127.0.0.1:10080 mock-version mock-githash",
-		"tidb 127.0.0.1:11080 127.0.0.1:10080 mock-version mock-githash",
-		"tikv 127.0.0.1:11080 127.0.0.1:10080 mock-version mock-githash",
+	tk.MustQuery("select type, instance, status_address, version, git_hash, server_id from information_schema.cluster_info").Check(testkit.Rows(
+		"modified-pd 127.0.0.1:11080 127.0.0.1:10080 mock-version mock-githash 0",
+		"tidb 127.0.0.1:11080 127.0.0.1:10080 mock-version mock-githash 1001",
+		"tikv 127.0.0.1:11080 127.0.0.1:10080 mock-version mock-githash 0",
 	))
 	tk.Se.GetSessionVars().InspectionTableCache = nil
 }
@@ -588,7 +588,10 @@ func (s *testInfoschemaClusterTableSuite) setUpRPCService(c *C, addr string) (*g
 	lis, err := net.Listen("tcp", addr)
 	c.Assert(err, IsNil)
 	// Fix issue 9836
-	sm := &mockSessionManager{make(map[uint64]*util.ProcessInfo, 1)}
+	sm := &mockSessionManager{
+		processInfoMap: make(map[uint64]*util.ProcessInfo, 1),
+		serverID:       1,
+	}
 	sm.processInfoMap[1] = &util.ProcessInfo{
 		ID:      1,
 		User:    "root",
@@ -693,6 +696,7 @@ func (s *testInfoschemaClusterTableSuite) TearDownSuite(c *C) {
 
 type mockSessionManager struct {
 	processInfoMap map[uint64]*util.ProcessInfo
+	serverID       uint64
 }
 
 func (sm *mockSessionManager) ShowProcessList() map[uint64]*util.ProcessInfo {
@@ -706,7 +710,17 @@ func (sm *mockSessionManager) GetProcessInfo(id uint64) (*util.ProcessInfo, bool
 
 func (sm *mockSessionManager) Kill(connectionID uint64, query bool) {}
 
+func (sm *mockSessionManager) KillAllConnections() {}
+
 func (sm *mockSessionManager) UpdateTLSConfig(cfg *tls.Config) {}
+
+func (sm *mockSessionManager) ServerID() uint64 {
+	return sm.serverID
+}
+
+func (sm *mockSessionManager) SetServerID(serverID uint64) {
+	sm.serverID = serverID
+}
 
 type mockStore struct {
 	tikv.Storage
@@ -745,13 +759,18 @@ func (s *testInfoschemaClusterTableSuite) TestTiDBClusterInfo(c *C) {
 
 	// information_schema.cluster_config
 	instances := []string{
-		"pd,127.0.0.1:11080," + mockAddr + ",mock-version,mock-githash",
-		"tidb,127.0.0.1:11080," + mockAddr + ",mock-version,mock-githash",
-		"tikv,127.0.0.1:11080," + mockAddr + ",mock-version,mock-githash",
+		"pd,127.0.0.1:11080," + mockAddr + ",mock-version,mock-githash,0",
+		"tidb,127.0.0.1:11080," + mockAddr + ",mock-version,mock-githash,1001",
+		"tikv,127.0.0.1:11080," + mockAddr + ",mock-version,mock-githash,0",
 	}
 	fpExpr := `return("` + strings.Join(instances, ";") + `")`
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/infoschema/mockClusterInfo", fpExpr), IsNil)
 	defer func() { c.Assert(failpoint.Disable("github.com/pingcap/tidb/infoschema/mockClusterInfo"), IsNil) }()
+	tk.MustQuery("select type, instance, status_address, version, git_hash, server_id from information_schema.cluster_info").Check(testkit.Rows(
+		row("pd", "127.0.0.1:11080", mockAddr, "mock-version", "mock-githash", "0"),
+		row("tidb", "127.0.0.1:11080", mockAddr, "mock-version", "mock-githash", "1001"),
+		row("tikv", "127.0.0.1:11080", mockAddr, "mock-version", "mock-githash", "0"),
+	))
 	tk.MustQuery("select * from information_schema.cluster_config").Check(testkit.Rows(
 		"pd 127.0.0.1:11080 key1 value1",
 		"pd 127.0.0.1:11080 key2.nest1 n-value1",
