@@ -87,7 +87,7 @@ func ObjectIDFromGroupID(groupID string) (int64, error) {
 		return 0, nil
 	}
 	id, err := strconv.ParseInt(groupID[len(BundleIDPrefix):], 10, 64)
-	if err != nil {
+	if err != nil || id <= 0 {
 		return 0, errors.Errorf("Rule %s doesn't include an id", groupID)
 	}
 	return id, nil
@@ -100,7 +100,7 @@ func RestoreLabelConstraintList(constraints []LabelConstraint) (string, error) {
 		sb.WriteByte('"')
 		conStr, err := constraint.Restore()
 		if err != nil {
-			return "", nil
+			return "", err
 		}
 		sb.WriteString(conStr)
 		sb.WriteByte('"')
