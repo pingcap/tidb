@@ -822,8 +822,8 @@ func buildPlacementAffects(oldIDs []int64, newIDs []int64) []*model.AffectedOpti
 	for i := 0; i < len(oldIDs); i++ {
 		affects[i] = &model.AffectedOption{
 			OldTableID: oldIDs[i],
+			TableID:    newIDs[i],
 		}
-		affects[i].TableID = newIDs[i]
 	}
 	return affects
 }
