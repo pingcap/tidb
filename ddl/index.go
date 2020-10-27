@@ -1219,6 +1219,20 @@ func indexColumnSliceEqual(a, b []*model.IndexColumn) bool {
 	return true
 }
 
+func adjustColumnInfoInDropIndexes(tblInfo *model.TableInfo, colInfo *model.ColumnInfo) {
+	offset := -1
+	for i := 0; i < len(tblInfo.Columns); i++ {
+		col := tblInfo.Columns[i]
+		if col.ID == colInfo.ID {
+			offset = i
+			break
+		}
+	}
+	if offset >= 0 {
+		adjustColumnInfoInDropColumn(tblInfo, offset)
+	}
+}
+
 func doDropIndexes(t *meta.Meta, job *model.Job, tblInfo *model.TableInfo, indexInfos []*model.IndexInfo) (ver int64, err error) {
 	dependentHiddenCols := make([]*model.ColumnInfo, 0)
 	for _, indexInfo := range indexInfos {
@@ -1236,11 +1250,10 @@ func doDropIndexes(t *meta.Meta, job *model.Job, tblInfo *model.TableInfo, index
 		job.SchemaState = model.StateWriteOnly
 		setIndexesState(indexInfos, model.StateWriteOnly)
 		if len(dependentHiddenCols) > 0 {
-			firstHiddenOffset := dependentHiddenCols[0].Offset
-			for i := 0; i < len(dependentHiddenCols); i++ {
-				tblInfo.Columns[firstHiddenOffset].State = model.StateWriteOnly
+			for _, hcolInfo := range dependentHiddenCols {
+				hcolInfo.State = model.StateWriteOnly
 				// Set this column's offset to the last and reset all following columns' offsets.
-				adjustColumnInfoInDropColumn(tblInfo, firstHiddenOffset)
+				adjustColumnInfoInDropIndexes(tblInfo, hcolInfo)
 			}
 		}
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != indexInfos[0].State)
