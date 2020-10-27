@@ -83,12 +83,11 @@ func (p *PhysicalIndexScan) AccessObject(normalized bool) string {
 	if p.isPartition {
 		if normalized {
 			fmt.Fprintf(buffer, ", partition:?")
-		} else {
-			if pi := p.Table.GetPartitionInfo(); pi != nil {
-				partitionName := pi.GetNameByID(p.physicalTableID)
-				fmt.Fprintf(buffer, ", partition:%s", partitionName)
-			}
+		} else if pi := p.Table.GetPartitionInfo(); pi != nil {
+			partitionName := pi.GetNameByID(p.physicalTableID)
+			fmt.Fprintf(buffer, ", partition:%s", partitionName)
 		}
+
 	}
 	if len(p.Index.Columns) > 0 {
 		buffer.WriteString(", index:" + p.Index.Name.O + "(")
@@ -195,11 +194,9 @@ func (p *PhysicalTableScan) AccessObject(normalized bool) string {
 	if p.isPartition {
 		if normalized {
 			fmt.Fprintf(buffer, ", partition:?")
-		} else {
-			if pi := p.Table.GetPartitionInfo(); pi != nil {
-				partitionName := pi.GetNameByID(p.physicalTableID)
-				fmt.Fprintf(buffer, ", partition:%s", partitionName)
-			}
+		} else if pi := p.Table.GetPartitionInfo(); pi != nil {
+			partitionName := pi.GetNameByID(p.physicalTableID)
+			fmt.Fprintf(buffer, ", partition:%s", partitionName)
 		}
 	}
 	return buffer.String()
