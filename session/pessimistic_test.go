@@ -1998,6 +1998,7 @@ func (s *testPessimisticSuite) TestAsyncCommitWithSchemaChange(c *C) {
 	// key for c2 should be amended
 	tk.MustExec("commit")
 	tk3.MustQuery("select * from tk where c2 = 2").Check(testkit.Rows("2 2 2"))
+	tk3.MustExec("admin check table tk")
 
 	tk.MustExec("begin optimistic")
 	tk.MustExec("insert into tk values(3, 3, 3)")
@@ -2005,6 +2006,7 @@ func (s *testPessimisticSuite) TestAsyncCommitWithSchemaChange(c *C) {
 	// Add index for c3 after commit
 	tk2.MustExec("alter table tk add index k3(c3)")
 	tk3.MustQuery("select * from tk where c3 = 3").Check(testkit.Rows("3 3 3"))
+	tk3.MustExec("admin check table tk")
 
 	tk.MustExec("drop table if exists tk")
 	tk.MustExec("create table tk (c1 int primary key, c2 int)")
@@ -2015,10 +2017,9 @@ func (s *testPessimisticSuite) TestAsyncCommitWithSchemaChange(c *C) {
 		tk2.MustExec("alter table tk add index k2(c2)")
 	}()
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/beforePrewrite", "1*sleep(1000)"), IsNil)
-	defer func() {
-		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/beforePrewrite"), IsNil)
-	}()
 	// should fail if prewrite takes too long
 	err := tk.ExecToErr("commit")
 	c.Assert(err, ErrorMatches, ".*commit TS \\d+ is too large")
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/beforePrewrite"), IsNil)
+	tk3.MustExec("admin check table tk")
 }
