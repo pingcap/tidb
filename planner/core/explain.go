@@ -87,7 +87,6 @@ func (p *PhysicalIndexScan) AccessObject(normalized bool) string {
 			partitionName := pi.GetNameByID(p.physicalTableID)
 			fmt.Fprintf(buffer, ", partition:%s", partitionName)
 		}
-
 	}
 	if len(p.Index.Columns) > 0 {
 		buffer.WriteString(", index:" + p.Index.Name.O + "(")
