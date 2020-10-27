@@ -1294,6 +1294,7 @@ type rateLimitAction struct {
 		isTokenDestroyed bool
 		once             sync.Once
 		triggerCount     uint
+		waitingWorkers   uint
 	}
 }
 
@@ -1307,6 +1308,7 @@ func newRateLimitAction(totalTokenNumber uint, cond *sync.Cond) *rateLimitAction
 			isTokenDestroyed  bool
 			once              sync.Once
 			triggerCount      uint
+			waitingWorkers    uint
 		}{
 			Cond:              cond,
 			exceeded:          false,
@@ -1357,6 +1359,7 @@ func (e *rateLimitAction) Action(t *memory.Tracker) {
 		e.cond.isTokenDestroyed = false
 		e.cond.exceeded = true
 		e.cond.triggerCount++
+		e.cond.waitingWorkers = 0
 	})
 }
 
@@ -1385,7 +1388,6 @@ func (e *rateLimitAction) broadcastIfNeeded(needed bool) {
 		e.cond.Wait()
 	}
 	e.cond.exceeded = false
-	e.cond.once = sync.Once{}
 	e.cond.Broadcast()
 }
 
@@ -1412,7 +1414,12 @@ func (e *rateLimitAction) destroyTokenIfNeeded(returnToken func()) {
 	e.cond.Broadcast()
 	// we suspend worker when `exceeded` is true until being notified by `broadcastIfNeeded`
 	for e.cond.exceeded {
+		e.cond.waitingWorkers++
 		e.cond.Wait()
+		e.cond.waitingWorkers--
+	}
+	if e.cond.waitingWorkers < 1 {
+		e.cond.once = sync.Once{}
 	}
 }
 
@@ -1429,7 +1436,7 @@ func (e *rateLimitAction) close() {
 	e.conditionLock()
 	defer e.conditionUnlock()
 	e.cond.exceeded = false
-	e.cond.isTokenDestroyed = false
+	e.cond.isTokenDestroyed = true
 	// broadcast the signal in order not to leak worker goroutine if it is being suspended
 	e.cond.Broadcast()
 }
