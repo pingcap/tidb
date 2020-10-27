@@ -57,6 +57,7 @@ require (
 	github.com/pingcap/sysutil v0.0.0-20200715082929-4c47bcac246a
 	github.com/pingcap/tidb-tools v4.0.5-0.20200820092506-34ea90c93237+incompatible
 	github.com/pingcap/tipb v0.0.0-20200618092958-4fad48b4c8c3
+	github.com/pingcap/tiup v1.2.2 // indirect
 	github.com/prometheus/client_golang v1.5.1
 	github.com/prometheus/client_model v0.2.0
 	github.com/prometheus/common v0.9.1
@@ -101,4 +102,4 @@ require (
 
 go 1.13
 
-replace github.com/pingcap/parser v0.0.0-20200929032957-9678b2b7cefb => github.com/blacktear23/parser v0.0.0-20201012083737-c439fb0b0d05
+replace github.com/pingcap/parser v0.0.0-20201021061956-783a03250c77 => github.com/blacktear23/parser v0.0.0-20201022024742-b73d61bfa763

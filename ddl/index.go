@@ -39,7 +39,6 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	decoder "github.com/pingcap/tidb/util/rowDecoder"
 	"github.com/pingcap/tidb/util/timeutil"
@@ -539,44 +538,69 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 	case model.StateWriteReorganization:
 		// reorganization -> public
 		updateHiddenColumns(tblInfo, indexInfo, model.StatePublic)
-		tbl, err := getTable(d.store, schemaID, tblInfo)
-		if err != nil {
-			return ver, errors.Trace(err)
-		}
-
-		elements := []*meta.Element{{ID: indexInfo.ID, TypeKey: meta.IndexElementKey}}
-		reorgInfo, err := getReorgInfo(d, t, job, tbl, elements)
-		if err != nil || reorgInfo.first {
-			// If we run reorg firstly, we should update the job snapshot version
-			// and then run the reorg next time.
-			return ver, errors.Trace(err)
-		}
-
-		err = w.runReorgJob(t, reorgInfo, tbl.Meta(), d.lease, func() (addIndexErr error) {
-			defer util.Recover(metrics.LabelDDL, "onCreateIndex",
-				func() {
-					addIndexErr = errCancelledDDLJob.GenWithStack("add table `%v` index `%v` panic", tblInfo.Name, indexInfo.Name)
-				}, false)
-			return w.addTableIndex(tbl, indexInfo, reorgInfo)
-		})
-		if err != nil {
-			if errWaitReorgTimeout.Equal(err) {
-				// if timeout, we should return, check for the owner and re-wait job done.
-				return ver, nil
+		/*
+			tbl, err := getTable(d.store, schemaID, tblInfo)
+			if err != nil {
+				return ver, errors.Trace(err)
 			}
-			if kv.ErrKeyExists.Equal(err) || errCancelledDDLJob.Equal(err) || errCantDecodeRecord.Equal(err) {
+
+			elements := []*meta.Element{{ID: indexInfo.ID, TypeKey: meta.IndexElementKey}}
+			reorgInfo, err := getReorgInfo(d, t, job, tbl, elements)
+			if err != nil || reorgInfo.first {
+				// If we run reorg firstly, we should update the job snapshot version
+				// and then run the reorg next time.
+				return ver, errors.Trace(err)
+			}
+
+			err = w.runReorgJob(t, reorgInfo, tbl.Meta(), d.lease, func() (addIndexErr error) {
+				defer util.Recover(metrics.LabelDDL, "onCreateIndex",
+					func() {
+						addIndexErr = errCancelledDDLJob.GenWithStack("add table `%v` index `%v` panic", tblInfo.Name, indexInfo.Name)
+					}, false)
+				return w.addTableIndex(tbl, indexInfo, reorgInfo)
+			})
+			if err != nil {
+				if errWaitReorgTimeout.Equal(err) {
+					// if timeout, we should return, check for the owner and re-wait job done.
+					return ver, nil
+				}
+				if kv.ErrKeyExists.Equal(err) || errCancelledDDLJob.Equal(err) || errCantDecodeRecord.Equal(err) {
+					logutil.BgLogger().Warn("[ddl] run add index job failed, convert job to rollback", zap.String("job", job.String()), zap.Error(err))
+					ver, err = convertAddIdxJob2RollbackJob(t, job, tblInfo, indexInfo, err)
+					if err1 := t.RemoveDDLReorgHandle(job, reorgInfo.elements); err1 != nil {
+						logutil.BgLogger().Warn("[ddl] run add index job failed, convert job to rollback, RemoveDDLReorgHandle failed", zap.String("job", job.String()), zap.Error(err1))
+					}
+				}
+				// Clean up the channel of notifyCancelReorgJob. Make sure it can't affect other jobs.
+				w.reorgCtx.cleanNotifyReorgCancel()
+				return ver, errors.Trace(err)
+			}
+			// Clean up the channel of notifyCancelReorgJob. Make sure it can't affect other jobs.
+			w.reorgCtx.cleanNotifyReorgCancel()
+		*/
+		var first bool
+		ver, first, err = runAndWaitReorgIndexesJob(w, d, t, job, tblInfo, []*model.IndexInfo{indexInfo}, ver,
+			"add index", "onCreateIndex",
+			func(err error, reorgInfo *reorgInfo) (int64, error) {
 				logutil.BgLogger().Warn("[ddl] run add index job failed, convert job to rollback", zap.String("job", job.String()), zap.Error(err))
 				ver, err = convertAddIdxJob2RollbackJob(t, job, tblInfo, indexInfo, err)
 				if err1 := t.RemoveDDLReorgHandle(job, reorgInfo.elements); err1 != nil {
 					logutil.BgLogger().Warn("[ddl] run add index job failed, convert job to rollback, RemoveDDLReorgHandle failed", zap.String("job", job.String()), zap.Error(err1))
 				}
+				return ver, err
+			})
+		if err != nil {
+			if errWaitReorgTimeout.Equal(err) {
+				return ver, nil
 			}
-			// Clean up the channel of notifyCancelReorgJob. Make sure it can't affect other jobs.
-			w.reorgCtx.cleanNotifyReorgCancel()
 			return ver, errors.Trace(err)
 		}
-		// Clean up the channel of notifyCancelReorgJob. Make sure it can't affect other jobs.
-		w.reorgCtx.cleanNotifyReorgCancel()
+
+		if first {
+			// If we run reorg firstly, we should update the job snapshot version
+			// and then run the reorg next time.
+			return ver, nil
+		}
 
 		indexInfo.State = model.StatePublic
 		// Set column index flag.

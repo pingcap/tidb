@@ -458,7 +458,16 @@ func (w *worker) onDropColumns(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int
 			case model.StateWriteReorganization:
 				var first bool
 				// Run reorg job
-				ver, first, err = runAndWaitReorgJob(w, d, t, job, tblInfo, ctidxInfos, ver)
+				ver, first, err = runAndWaitReorgIndexesJob(w, d, t, job, tblInfo, ctidxInfos, ver,
+					"drop columns with composite indexes", "onDropColumns",
+					func(err error, reorgInfo *reorgInfo) (int64, error) {
+						logutil.BgLogger().Warn("[ddl] run drop columns job failed, convert job to rollback", zap.String("job", job.String()), zap.Error(err))
+						ver, err = convertDropColumnWithCompositeIdxJob2RollbackJob(t, job, tblInfo, nil, ctidxInfos, err)
+						if err1 := t.RemoveDDLReorgHandle(job, reorgInfo.elements); err1 != nil {
+							logutil.BgLogger().Warn("[ddl] run drop columns job failed, convert job to rollback, RemoveDDLReorgHandle failed", zap.String("job", job.String()), zap.Error(err1))
+						}
+						return ver, err
+					})
 				if err != nil {
 					if errWaitReorgTimeout.Equal(err) {
 						return ver, nil
@@ -691,7 +700,16 @@ func (w *worker) onDropColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int6
 		case model.StateWriteReorganization:
 			var first bool
 			// Run reorg job
-			ver, first, err = runAndWaitReorgJob(w, d, t, job, tblInfo, ctidxInfos, ver)
+			ver, first, err = runAndWaitReorgIndexesJob(w, d, t, job, tblInfo, ctidxInfos, ver,
+				"drop column with composite indexes", "onDropColumn",
+				func(err error, reorgInfo *reorgInfo) (int64, error) {
+					logutil.BgLogger().Warn("[ddl] run drop column job failed, convert job to rollback", zap.String("job", job.String()), zap.Error(err))
+					ver, err = convertDropColumnWithCompositeIdxJob2RollbackJob(t, job, tblInfo, nil, ctidxInfos, err)
+					if err1 := t.RemoveDDLReorgHandle(job, reorgInfo.elements); err1 != nil {
+						logutil.BgLogger().Warn("[ddl] run drop column job failed, convert job to rollback, RemoveDDLReorgHandle failed", zap.String("job", job.String()), zap.Error(err1))
+					}
+					return ver, err
+				})
 			if err != nil {
 				if errWaitReorgTimeout.Equal(err) {
 					return ver, nil

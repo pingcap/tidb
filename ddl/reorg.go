@@ -678,7 +678,9 @@ func (r *reorgInfo) UpdateReorgMeta(startHandle kv.Handle) error {
 	return nil
 }
 
-func runAndWaitReorgJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job, tblInfo *model.TableInfo, indexInfos []*model.IndexInfo, ver int64) (int64, bool, error) {
+type onReorgErrorToRollbackFunc func(err error, reorgInfo *reorgInfo) (int64, error)
+
+func runAndWaitReorgIndexesJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job, tblInfo *model.TableInfo, indexInfos []*model.IndexInfo, ver int64, jobDesc string, metricsLabel string, onRollback onReorgErrorToRollbackFunc) (int64, bool, error) {
 	tbl, err := getTable(d.store, job.SchemaID, tblInfo)
 	if err != nil {
 		return ver, false, errors.Trace(err)
@@ -688,12 +690,15 @@ func runAndWaitReorgJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job, tblI
 	if err != nil || reorgInfo.first {
 		// If we run reorg firstly, we should update the job snapshot version
 		// and then run the reorg next time.
-		return ver, true, errors.Trace(err)
+		return ver, reorgInfo.first, errors.Trace(err)
 	}
 
 	err = w.runReorgJob(t, reorgInfo, tbl.Meta(), d.lease, func() (addIndexErr error) {
-		var currentIdx *model.IndexInfo
-		defer util.Recover(metrics.LabelDDL, "onDropColumn",
+		var (
+			currentIdx *model.IndexInfo
+			pid        int64
+		)
+		defer util.Recover(metrics.LabelDDL, metricsLabel,
 			func() {
 				if currentIdx != nil {
 					addIndexErr = errCancelledDDLJob.GenWithStack("add table `%v` indices `%v` panic", tblInfo.Name, currentIdx.Name)
@@ -707,18 +712,25 @@ func runAndWaitReorgJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job, tblI
 		if err != nil {
 			return errors.Trace(err)
 		}
-		originalStartHandle, originalEndHandle, err := getTableRange(reorgInfo.d, tbl.(table.PhysicalTable), currentVer.Ver, reorgInfo.Job.Priority)
+		tblInfo := tbl.Meta()
+		pid = tblInfo.ID
+		var tb table.PhysicalTable
+		if pi := tblInfo.GetPartitionInfo(); pi != nil {
+			pid = pi.Definitions[0].ID
+			tb = tbl.(table.PartitionedTable).GetPartition(pid)
+		} else {
+			tb = tbl.(table.PhysicalTable)
+		}
+		originalStartHandle, originalEndHandle, err := getTableRange(reorgInfo.d, tb, currentVer.Ver, reorgInfo.Job.Priority)
 		if err != nil {
 			return errors.Trace(err)
 		}
 
 		startElementOffset := 0
-		startElementOffsetToResetHandle := -1
 		if bytes.Equal(reorgInfo.currElement.TypeKey, meta.IndexElementKey) {
 			for i, idx := range indexInfos {
 				if reorgInfo.currElement.ID == idx.ID {
 					startElementOffset = i
-					startElementOffsetToResetHandle = i
 					break
 				}
 			}
@@ -726,14 +738,14 @@ func runAndWaitReorgJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job, tblI
 
 		for i := startElementOffset; i < len(indexInfos); i++ {
 			currentIdx = indexInfos[i]
-			if i == startElementOffsetToResetHandle {
-				reorgInfo.StartHandle, reorgInfo.EndHandle = originalStartHandle, originalEndHandle
+			if i > startElementOffset {
+				reorgInfo.StartHandle, reorgInfo.EndHandle, reorgInfo.PhysicalTableID = originalStartHandle, originalEndHandle, pid
 			}
 
 			reorgInfo.currElement = reorgInfo.elements[i]
 			// Write the reorg info to store so the whole reorganize process can recover from panic.
 			err := reorgInfo.UpdateReorgMeta(reorgInfo.StartHandle)
-			logutil.BgLogger().Info("[ddl] drop columns with composite indices", zap.Int64("jobID", reorgInfo.Job.ID),
+			logutil.BgLogger().Info(fmt.Sprintf("[ddl] %s", jobDesc), zap.Int64("jobID", reorgInfo.Job.ID),
 				zap.ByteString("elementType", reorgInfo.currElement.TypeKey), zap.Int64("elementID", reorgInfo.currElement.ID),
 				zap.String("startHandle", toString(reorgInfo.StartHandle)), zap.String("endHandle", toString(reorgInfo.EndHandle)))
 			if err != nil {
@@ -753,8 +765,7 @@ func runAndWaitReorgJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job, tblI
 			return ver, false, err
 		}
 		if kv.ErrKeyExists.Equal(err) || errCancelledDDLJob.Equal(err) || errCantDecodeRecord.Equal(err) {
-			logutil.BgLogger().Warn("[ddl] run add index job failed, convert job to rollback", zap.String("job", job.String()), zap.Error(err))
-			ver, err = convertDropColumnWithCompositeIdxJob2RollbackJob(t, job, tblInfo, nil, indexInfos, err)
+			ver, err = onRollback(err, reorgInfo)
 		}
 		// Clean up the channel of notifyCancelReorgJob. Make sure it can't affect other jobs.
 		w.reorgCtx.cleanNotifyReorgCancel()
