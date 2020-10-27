@@ -572,7 +572,6 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 			col.FieldType.Flen = tinyBlobMaxLength
 			col.FieldType.Tp = mysql.TypeTinyBlob
 		} else if col.FieldType.Flen <= blobMaxLength {
-			logutil.BgLogger().Info("Auto convert Blob to Blob", zap.Int("Blob Length", col.FieldType.Flen))
 			col.FieldType.Flen = blobMaxLength
 		} else if col.FieldType.Flen <= mediumBlobMaxLength {
 			logutil.BgLogger().Info("Auto convert Blob to MediumBlob", zap.Int("Blob Length", col.FieldType.Flen))
