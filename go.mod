@@ -1,6 +1,6 @@
 module github.com/pingcap/tidb
 
-replace github.com/pingcap/parser => github.com/iosmanthus/parser add-sql-digest-style-spm
+replace github.com/pingcap/parser => github.com/iosmanthus/parser v0.0.0-20201027073535-62df755de405
 
 require (
 	cloud.google.com/go v0.51.0 // indirect

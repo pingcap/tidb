@@ -280,6 +280,8 @@ github.com/inconshreveable/mousetrap v1.0.0 h1:Z8tu5sraLXCXIcARxBp/8cbvlwVa7Z1NH
 github.com/inconshreveable/mousetrap v1.0.0/go.mod h1:PxqpIevigyE2G7u3NXJIT2ANytuPF1OarO4DADm73n8=
 github.com/iosmanthus/parser v0.0.0-20201015084531-0f615b332ce8 h1:lHLBqR9RW0hME+baNXcvfgLW94Nnay1H8bZMwh+dU6k=
 github.com/iosmanthus/parser v0.0.0-20201015084531-0f615b332ce8/go.mod h1:RlLfMRJwFBSiXd2lUaWdV5pSXtrpyvZM8k5bbZWsheU=
+github.com/iosmanthus/parser v0.0.0-20201027073535-62df755de405 h1:y+dTPMYnLEwk/Vf4+QGiyA8F1ArTZb6h45LLFx2LZ5A=
+github.com/iosmanthus/parser v0.0.0-20201027073535-62df755de405/go.mod h1:74+OEdwM4B/jMpBRl92ch6CSmSYkQtv2TNxIjFdT/GE=
 github.com/jessevdk/go-flags v1.4.0/go.mod h1:4FA24M0QyGHXBuZZK/XkWh8h0e1EYbRYJSGM75WSRxI=
 github.com/jinzhu/gorm v1.9.12/go.mod h1:vhTjlKSJUTWNtcbQtrMBFCxy7eXTzeCAzfL5fBZT/Qs=
 github.com/jinzhu/inflection v1.0.0/go.mod h1:h+uFLlag+Qp1Va5pdKtLDYj+kHp5pxUVkryuEj+Srlc=
