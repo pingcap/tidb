@@ -4231,7 +4231,7 @@ func (d *ddl) UpdateTableReplicaInfo(ctx sessionctx.Context, physicalID int64, a
 	is := d.infoHandle.Get()
 	tb, ok := is.TableByID(physicalID)
 	if !ok {
-		tb, _ = is.FindTableByPartitionID(physicalID)
+		tb, _, _ = is.FindTableByPartitionID(physicalID)
 		if tb == nil {
 			return infoschema.ErrTableNotExists.GenWithStack("Table which ID = %d does not exist.", physicalID)
 		}
