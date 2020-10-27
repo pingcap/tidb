@@ -1293,8 +1293,8 @@ type rateLimitAction struct {
 		// isTokenDestroyed indicates whether there is one token has been isTokenDestroyed after Action been triggered
 		isTokenDestroyed bool
 		once             sync.Once
-		// waitingWorkers indicates the total count of workers which is under condition.Waiting
-		waitingWorkers uint
+		// waitingWorkerCnt indicates the total count of workers which is under condition.Waiting
+		waitingWorkerCnt uint
 		// triggerCountForTest indicates the total count of the rateLimitAction's Action being executed
 		triggerCountForTest uint
 	}
@@ -1309,7 +1309,7 @@ func newRateLimitAction(totalTokenNumber uint, cond *sync.Cond) *rateLimitAction
 			remainingTokenNum   uint
 			isTokenDestroyed    bool
 			once                sync.Once
-			waitingWorkers      uint
+			waitingWorkerCnt    uint
 			triggerCountForTest uint
 		}{
 			Cond:              cond,
@@ -1346,10 +1346,13 @@ func (e *rateLimitAction) Action(t *memory.Tracker) {
 			}
 			return
 		}
-		failpoint.Inject("testRateLimitActionTokenDestroyed", func(val failpoint.Value) {
+		failpoint.Inject("testRateLimitActionAsserting", func(val failpoint.Value) {
 			if val.(bool) {
 				if e.cond.triggerCountForTest+e.cond.remainingTokenNum != e.totalTokenNum {
 					panic("triggerCount + remainingTokenNum not equal to totalTokenNum")
+				}
+				if e.cond.waitingWorkerCnt > 0 {
+					panic("waitingWorkerCnt not equal to 0")
 				}
 			}
 		})
@@ -1382,7 +1385,7 @@ func (e *rateLimitAction) broadcastIfNeeded(needed bool) {
 	}
 	e.conditionLock()
 	defer e.conditionUnlock()
-	if !e.cond.exceeded || e.cond.waitingWorkers < 1 {
+	if !e.cond.exceeded || e.cond.waitingWorkerCnt < 1 {
 		return
 	}
 	for !e.cond.isTokenDestroyed {
@@ -1413,12 +1416,12 @@ func (e *rateLimitAction) destroyTokenIfNeeded(returnToken func()) {
 	}
 	// we suspend worker when `exceeded` is true until being notified by `broadcastIfNeeded`
 	for e.cond.exceeded {
-		e.cond.waitingWorkers++
+		e.cond.waitingWorkerCnt++
 		e.cond.Wait()
-		e.cond.waitingWorkers--
+		e.cond.waitingWorkerCnt--
 	}
-	// only when all the waiting workers have been recovered, the Action could be initialized again.
-	if e.cond.waitingWorkers < 1 {
+	// only when all the waiting workers have been resumed, the Action could be initialized again.
+	if e.cond.waitingWorkerCnt < 1 {
 		e.cond.once = sync.Once{}
 	}
 }
@@ -1437,7 +1440,7 @@ func (e *rateLimitAction) close() {
 	defer e.conditionUnlock()
 	e.cond.exceeded = false
 	e.cond.isTokenDestroyed = true
-	e.cond.waitingWorkers = 0
+	e.cond.waitingWorkerCnt = 0
 	// broadcast the signal in order not to leak worker goroutine if it is being suspended
 	e.cond.Broadcast()
 }

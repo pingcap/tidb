@@ -6661,8 +6661,8 @@ func (s *testSerialSuite) TestCoprocessorOOMAction(c *C) {
 	})
 	failpoint.Enable("github.com/pingcap/tidb/store/tikv/testRateLimitActionMockConsume", `return(true)`)
 	defer failpoint.Disable("github.com/pingcap/tidb/store/tikv/testRateLimitActionMockConsume")
-	failpoint.Enable("github.com/pingcap/tidb/store/tikv/testRateLimitActionTokenDestroyed", `return(true)`)
-	defer failpoint.Disable("github.com/pingcap/tidb/store/tikv/testRateLimitActionTokenDestroyed")
+	failpoint.Enable("github.com/pingcap/tidb/store/tikv/testRateLimitActionAsserting", `return(true)`)
+	defer failpoint.Disable("github.com/pingcap/tidb/store/tikv/testRateLimitActionAsserting")
 	// assert oom action
 	for _, testcase := range testcases {
 		c.Log(testcase.name)
