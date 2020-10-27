@@ -119,3 +119,14 @@ func (s *testSuite9) TestIssue20400(c *C) {
 	tk.MustQuery("select /*+ inl_merge_join(t,s)*/ * from t left join s on t.a=s.a and t.a>1").Check(
 		testkit.Rows("1 <nil>"))
 }
+
+func (s *testSuite9) TestIndexMergeJoinBinding(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(a int, b int, key(b))")
+	tk.MustExec("create table t2(a int, b int, key(b))")
+	tk.MustExec("create session binding for select * from t1 join t2 on t1.b = t2.b using select /*+ inl_merge_join(t1, t2) */ * from t1 join t2 on t1.b = t2.b")
+	rows := tk.MustQuery("explain select * from t1 join t2 on t1.b = t2.b").Rows()
+	// TODO: reopen index merge join in future
+	c.Assert(strings.Index(rows[0][0].(string), "IndexJoin"), Equals, 0)
+}

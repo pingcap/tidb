@@ -2091,36 +2091,36 @@ func (s *testSuiteJoinSerial) TestInlineProjection4HashJoinIssue15316(c *C) {
 		"        └─TableFullScan_12 10000.00 cop[tikv] table:S keep order:false, stats:pseudo"))
 }
 
-// TODO: reopen the index merge join in future.
+func (s *testSuiteJoinSerial) TestIssue18070(c *C) {
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.OOMAction = config.OOMActionCancel
+	})
+	defer func() {
+		config.UpdateGlobal(func(conf *config.Config) {
+			conf.OOMAction = config.OOMActionLog
+		})
+	}()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(a int, index(a))")
+	tk.MustExec("create table t2(a int, index(a))")
+	tk.MustExec("insert into t1 values(1),(2)")
+	tk.MustExec("insert into t2 values(1),(1),(2),(2)")
+	tk.MustExec("set @@tidb_mem_quota_query=1000")
+	err := tk.QueryToErr("select /*+ inl_hash_join(t1)*/ * from t1 join t2 on t1.a = t2.a;")
+	c.Assert(strings.Contains(err.Error(), "Out Of Memory Quota!"), IsTrue)
 
-//func (s *testSuiteJoinSerial) TestIssue18070(c *C) {
-//	config.UpdateGlobal(func(conf *config.Config) {
-//		conf.OOMAction = config.OOMActionCancel
-//	})
-//	defer func() {
-//		config.UpdateGlobal(func(conf *config.Config) {
-//			conf.OOMAction = config.OOMActionLog
-//		})
-//	}()
-//	tk := testkit.NewTestKit(c, s.store)
-//	tk.MustExec("use test")
-//	tk.MustExec("drop table if exists t1, t2")
-//	tk.MustExec("create table t1(a int, index(a))")
-//	tk.MustExec("create table t2(a int, index(a))")
-//	tk.MustExec("insert into t1 values(1),(2)")
-//	tk.MustExec("insert into t2 values(1),(1),(2),(2)")
-//	tk.MustExec("set @@tidb_mem_quota_query=1000")
-//	err := tk.QueryToErr("select /*+ inl_hash_join(t1)*/ * from t1 join t2 on t1.a = t2.a;")
-//	c.Assert(strings.Contains(err.Error(), "Out Of Memory Quota!"), IsTrue)
-//
-//	fpName := "github.com/pingcap/tidb/executor/mockIndexMergeJoinOOMPanic"
-//	c.Assert(failpoint.Enable(fpName, `panic("ERROR 1105 (HY000): Out Of Memory Quota![conn_id=1]")`), IsNil)
-//	defer func() {
-//		c.Assert(failpoint.Disable(fpName), IsNil)
-//	}()
-//	err = tk.QueryToErr("select /*+ inl_merge_join(t1)*/ * from t1 join t2 on t1.a = t2.a;")
-//	c.Assert(strings.Contains(err.Error(), "Out Of Memory Quota!"), IsTrue)
-//}
+	// TODO: reopen the index merge join in future.
+
+	//fpName := "github.com/pingcap/tidb/executor/mockIndexMergeJoinOOMPanic"
+	//c.Assert(failpoint.Enable(fpName, `panic("ERROR 1105 (HY000): Out Of Memory Quota![conn_id=1]")`), IsNil)
+	//defer func() {
+	//	c.Assert(failpoint.Disable(fpName), IsNil)
+	//}()
+	//err = tk.QueryToErr("select /*+ inl_merge_join(t1)*/ * from t1 join t2 on t1.a = t2.a;")
+	//c.Assert(strings.Contains(err.Error(), "Out Of Memory Quota!"), IsTrue)
+}
 
 func (s *testSuiteJoin1) TestIssue18564(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
