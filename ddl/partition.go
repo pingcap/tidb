@@ -1210,7 +1210,7 @@ func onTruncateTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, e
 			oldBundle, ok := d.infoHandle.Get().BundleByName(placement.GroupID(oldID))
 			if ok && !oldBundle.IsEmpty() {
 				bundles = append(bundles, placement.BuildPlacementDropBundle(oldID))
-				bundles = append(bundles, placement.BuildPlacementTruncateBundle(oldBundle, newIDs[i]))
+				bundles = append(bundles, placement.BuildPlacementCopyBundle(oldBundle, newIDs[i]))
 			}
 		}
 

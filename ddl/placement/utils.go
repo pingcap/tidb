@@ -118,8 +118,8 @@ func BuildPlacementDropBundle(partitionID int64) *Bundle {
 	}
 }
 
-// BuildPlacementTruncateBundle builds the bundle to copy placement rules from old id to new id.
-func BuildPlacementTruncateBundle(oldBundle *Bundle, newID int64) *Bundle {
+// BuildPlacementCopyBundle copy a new bundle from the old, with a new name, and new keyranges.
+func BuildPlacementCopyBundle(oldBundle *Bundle, newID int64) *Bundle {
 	newBundle := oldBundle.Clone()
 	newBundle.ID = GroupID(newID)
 	startKey := hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(newID)))

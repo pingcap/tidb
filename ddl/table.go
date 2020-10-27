@@ -485,7 +485,7 @@ func onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ erro
 
 		bundles := make([]*placement.Bundle, 0, len(oldPartitionIDs)+1)
 		if oldBundle, ok := is.BundleByName(placement.GroupID(tableID)); ok {
-			bundles = append(bundles, placement.BuildPlacementTruncateBundle(oldBundle, newTableID))
+			bundles = append(bundles, placement.BuildPlacementCopyBundle(oldBundle, newTableID))
 		}
 
 		if pi := tblInfo.GetPartitionInfo(); pi != nil {
@@ -494,7 +494,7 @@ func onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ erro
 				if oldBundle, ok := is.BundleByName(placement.GroupID(oldPartitionIDs[i])); ok {
 					newID := newDefs[i].ID
 					newIDs = append(newIDs, newID)
-					bundles = append(bundles, placement.BuildPlacementTruncateBundle(oldBundle, newID))
+					bundles = append(bundles, placement.BuildPlacementCopyBundle(oldBundle, newID))
 				}
 			}
 		}
