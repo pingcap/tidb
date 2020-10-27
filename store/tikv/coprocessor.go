@@ -675,7 +675,7 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 		closed bool
 	)
 	// wait unit at least 2 copResponse received.
-	failpoint.Inject("testRateLimitActionMockConsume", func(val failpoint.Value) {
+	failpoint.Inject("testRateLimitActionMockWaitMax", func(val failpoint.Value) {
 		if val.(bool) {
 			for it.memTracker.MaxConsumed() < 200 {
 			}
@@ -1346,7 +1346,7 @@ func (e *rateLimitAction) Action(t *memory.Tracker) {
 			}
 			return
 		}
-		failpoint.Inject("testRateLimitActionAsserting", func(val failpoint.Value) {
+		failpoint.Inject("testRateLimitActionMockConsumeAndAssert", func(val failpoint.Value) {
 			if val.(bool) {
 				if e.cond.triggerCountForTest+e.cond.remainingTokenNum != e.totalTokenNum {
 					panic("triggerCount + remainingTokenNum not equal to totalTokenNum")
