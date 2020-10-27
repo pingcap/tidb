@@ -444,7 +444,13 @@ func (sm *mockSessionManager) GetProcessInfo(id uint64) (*util.ProcessInfo, bool
 
 func (sm *mockSessionManager) Kill(connectionID uint64, query bool) {}
 
+func (sm *mockSessionManager) KillAllConnections() {}
+
 func (sm *mockSessionManager) UpdateTLSConfig(cfg *tls.Config) {}
+
+func (sm *mockSessionManager) ServerID() uint64 {
+	return 1
+}
 
 func (s *testTableSuite) TestSomeTables(c *C) {
 	se, err := session.CreateSession4Test(s.store)
@@ -691,9 +697,9 @@ func (s *testTableSuite) TestReloadDropDatabase(c *C) {
 func (s *testClusterTableSuite) TestForClusterServerInfo(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	instances := []string{
-		strings.Join([]string{"tidb", s.listenAddr, s.listenAddr, "mock-version,mock-githash"}, ","),
-		strings.Join([]string{"pd", s.listenAddr, s.listenAddr, "mock-version,mock-githash"}, ","),
-		strings.Join([]string{"tikv", s.listenAddr, s.listenAddr, "mock-version,mock-githash"}, ","),
+		strings.Join([]string{"tidb", s.listenAddr, s.listenAddr, "mock-version,mock-githash,1001"}, ","),
+		strings.Join([]string{"pd", s.listenAddr, s.listenAddr, "mock-version,mock-githash,0"}, ","),
+		strings.Join([]string{"tikv", s.listenAddr, s.listenAddr, "mock-version,mock-githash,0"}, ","),
 	}
 
 	fpExpr := `return("` + strings.Join(instances, ";") + `")`
