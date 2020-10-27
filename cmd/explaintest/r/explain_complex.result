@@ -150,9 +150,9 @@ Projection_5	1.00	root		test.st.cm, test.st.p1, test.st.p2, test.st.p3, test.st.
       └─TableRowIDScan_11	250.00	cop[tikv]	table:st	keep order:false, stats:pseudo
 explain select dt.id as id, dt.aid as aid, dt.pt as pt, dt.dic as dic, dt.cm as cm, rr.gid as gid, rr.acd as acd, rr.t as t,dt.p1 as p1, dt.p2 as p2, dt.p3 as p3, dt.p4 as p4, dt.p5 as p5, dt.p6_md5 as p6, dt.p7_md5 as p7 from dt dt join rr rr on (rr.pt = 'ios' and rr.t > 1478185592 and dt.aid = rr.aid and dt.dic = rr.dic) where dt.pt = 'ios' and dt.t > 1478185592 and dt.bm = 0 limit 2000;
 id	estRows	task	access object	operator info
-Projection_10	0.00	root		test.dt.id, test.dt.aid, test.dt.pt, test.dt.dic, test.dt.cm, test.rr.gid, test.rr.acd, test.rr.t, test.dt.p1, test.dt.p2, test.dt.p3, test.dt.p4, test.dt.p5, test.dt.p6_md5, test.dt.p7_md5
-└─Limit_13	0.00	root		offset:0, count:2000
-  └─IndexMergeJoin_43	0.00	root		inner join, inner:IndexLookUp_41, outer key:test.rr.aid, test.rr.dic, inner key:test.dt.aid, test.dt.dic
+Projection_10	0.01	root		test.dt.id, test.dt.aid, test.dt.pt, test.dt.dic, test.dt.cm, test.rr.gid, test.rr.acd, test.rr.t, test.dt.p1, test.dt.p2, test.dt.p3, test.dt.p4, test.dt.p5, test.dt.p6_md5, test.dt.p7_md5
+└─Limit_13	0.01	root		offset:0, count:2000
+  └─IndexMergeJoin_43	0.01	root		inner join, inner:IndexLookUp_41, outer key:test.rr.aid, test.rr.dic, inner key:test.dt.aid, test.dt.dic
     ├─TableReader_61(Build)	3.33	root		data:Selection_60
     │ └─Selection_60	3.33	cop[tikv]		eq(test.rr.pt, "ios"), gt(test.rr.t, 1478185592)
     │   └─TableFullScan_59	10000.00	cop[tikv]	table:rr	keep order:false, stats:pseudo
