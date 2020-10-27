@@ -1954,6 +1954,7 @@ func (s *testPessimisticSuite) TestSelectForUpdateConflictRetry(c *C) {
 		c.Assert(err, IsNil)
 		tsCh <- lastTS
 		tk3.MustExec("commit")
+		tsCh <- lastTS
 	}()
 	// tk2LastTS should be its forUpdateTS
 	tk2LastTS, err := s.store.GetOracle().GetLowResolutionTimestamp(context.Background())
@@ -1964,6 +1965,8 @@ func (s *testPessimisticSuite) TestSelectForUpdateConflictRetry(c *C) {
 	// it must get a new ts on pessimistic write conflict so the latest timestamp
 	// should increase
 	c.Assert(tk3LastTs, Greater, tk2LastTS)
+	// wait until the goroutine exists
+	<- tsCh
 }
 
 func (s *testPessimisticSuite) TestAsyncCommitWithSchemaChange(c *C) {
