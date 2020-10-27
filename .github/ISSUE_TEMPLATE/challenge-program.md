@@ -7,4 +7,5 @@ You can choose from the following Challenge Program(open the URL):
 
 - [challenge-program-high-performance](https://github.com/pingcap/tidb/issues/new?labels=challenge-program%2Chigh-performance&template=challenge-program-high-performance.md)
 - [challenge-program-hptc](https://github.com/pingcap/tidb/issues/new?labels=challenge-program%2Chptc&template=challenge-program-hptc.md)
+- [challenge-program-with-no-theme](https://github.com/pingcap/tidb/issues/new?template=challenge-program.md)
 
