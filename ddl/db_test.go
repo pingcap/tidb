@@ -3294,7 +3294,7 @@ func (s *testDBSuite) testRenameTable(c *C, sql string, isAlterTable bool) {
 	tk.MustExec("drop database test1")
 }
 
-func (s *testDBSuite6) TestRenameMultiTables(c *C) {
+func (s *testDBSuite1) TestRenameMultiTables(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t1(id int)")
