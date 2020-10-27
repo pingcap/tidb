@@ -647,7 +647,6 @@ func (e *HashAggExec) fetchChildData(ctx context.Context) {
 func (e *HashAggExec) waitPartialWorkerAndCloseOutputChs(waitGroup *sync.WaitGroup) {
 	waitGroup.Wait()
 	close(e.inputCh)
-	close(e.stats.PartialTime)
 	for input := range e.inputCh {
 		e.memTracker.Consume(-input.chk.MemoryUsage())
 	}
@@ -658,7 +657,6 @@ func (e *HashAggExec) waitPartialWorkerAndCloseOutputChs(waitGroup *sync.WaitGro
 
 func (e *HashAggExec) waitFinalWorkerAndCloseFinalOutput(waitGroup *sync.WaitGroup) {
 	waitGroup.Wait()
-	close(e.stats.FinalTime)
 	close(e.finalOutputCh)
 }
 
