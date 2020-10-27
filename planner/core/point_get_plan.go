@@ -118,9 +118,6 @@ func (p *PointGetPlan) AccessObject() string {
 	buffer := bytes.NewBufferString("")
 	tblName := p.TblInfo.Name.O
 	fmt.Fprintf(buffer, "table:%s", tblName)
-	if p.PartitionInfo != nil {
-		fmt.Fprintf(buffer, ", partition:%s", p.PartitionInfo.Name.L)
-	}
 	if p.IndexInfo != nil {
 		if p.IndexInfo.Primary && p.TblInfo.IsCommonHandle {
 			buffer.WriteString(", clustered index:" + p.IndexInfo.Name.O + "(")
@@ -154,6 +151,13 @@ func (p *PointGetPlan) OperatorInfo(normalized bool) string {
 			} else {
 				fmt.Fprintf(buffer, "handle:%s, ", p.Handle)
 			}
+		}
+	}
+	if p.PartitionInfo != nil {
+		if normalized {
+			fmt.Fprintf(buffer, "partition:?, ")
+		} else {
+			fmt.Fprintf(buffer, "partition:%s, ", p.PartitionInfo.Name.L)
 		}
 	}
 	if p.Lock {
