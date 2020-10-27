@@ -646,7 +646,11 @@ func (a *ExecStmt) buildExecutor() (Executor, error) {
 		}
 		e = executorExec.stmtExec
 	}
+<<<<<<< HEAD
 	a.isSelectForUpdate = b.isSelectForUpdate
+=======
+	a.isSelectForUpdate = b.hasLock && (!stmtCtx.InDeleteStmt && !stmtCtx.InUpdateStmt && !stmtCtx.InInsertStmt)
+>>>>>>> 3ed192eb0... executor,server: fix pessimistic "insert select for update" return malformed packet (#20584)
 	return e, nil
 }
 
