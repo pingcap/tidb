@@ -575,16 +575,22 @@ func (coll *HistColl) crossValidationSelectivity(sc *stmtctx.StatementContext, i
 		}
 		if col, ok := coll.Columns[colID]; ok {
 			lowExclude := idxPointRange.LowExclude
-			highExclue := idxPointRange.HighExclude
-			if lowExclude != highExclue && i < usedColsLen {
+			highExclude := idxPointRange.HighExclude
+			// Consider this case:
+			// create table t(a int, b int, c int, primary key(a,b,c));
+			// insert into t values(1,1,1),(2,2,3);
+			// explain select * from t where (a,b) in ((1,1),(2,2)) and c > 2;
+			// For column a, we will get range: (1, 1], (2, 2], but GetColumnRowCount() with rang = (2, 2] will return 0.
+			// And the result of the explain statement will output estRow 0.0. So we change it to [2, 2].
+			if lowExclude != highExclude && i < usedColsLen {
 				lowExclude = false
-				highExclue = false
+				highExclude = false
 			}
 			rang := ranger.Range{
 				LowVal:      []types.Datum{idxPointRange.LowVal[i]},
 				LowExclude:  lowExclude,
 				HighVal:     []types.Datum{idxPointRange.HighVal[i]},
-				HighExclude: highExclue,
+				HighExclude: highExclude,
 			}
 
 			rowCount, err := col.GetColumnRowCount(sc, []*ranger.Range{&rang}, coll.ModifyCount, col.IsHandle)
@@ -627,14 +633,14 @@ func (coll *HistColl) getEqualCondSelectivity(sc *stmtctx.StatementContext, idx 
 		return outOfRangeEQSelectivity(ndv, coll.ModifyCount, int64(idx.TotalRowCount())), nil
 	}
 
-	minRowCount, crossValidationCount, err := coll.crossValidationSelectivity(sc, idx, usedColsLen, idxPointRange)
+	minRowCount, crossValidationSelectivity, err := coll.crossValidationSelectivity(sc, idx, usedColsLen, idxPointRange)
 	if err != nil {
 		return 0, nil
 	}
 
 	idxCount := float64(idx.CMSketch.QueryBytes(bytes))
 	if minRowCount < idxCount {
-		return crossValidationCount, nil
+		return crossValidationSelectivity, nil
 	}
 	return idxCount / float64(idx.TotalRowCount()), nil
 }
