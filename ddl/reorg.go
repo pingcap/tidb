@@ -16,6 +16,7 @@ package ddl
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/config"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -154,6 +155,14 @@ func (rc *reorgCtx) clean() {
 }
 
 func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, tblInfo *model.TableInfo, lease time.Duration, f func() error) error {
+	// Sleep for addIndexDelay before changing the state to write reorganization.
+	// This provides a safe window for async commit and 1PC to commit with an old schema.
+	cfg := config.GetGlobalConfig().TiKVClient.AsyncCommit
+	addIndexDelay := cfg.SafeWindow + cfg.AllowedClockDrift
+	logutil.BgLogger().Info("sleep before changing add index state to write-reorg to make async commit safe",
+		zap.Duration("duration", addIndexDelay))
+	time.Sleep(addIndexDelay)
+
 	job := reorgInfo.Job
 	// This is for tests compatible, because most of the early tests try to build the reorg job manually
 	// without reorg meta info, which will cause nil pointer in here.
