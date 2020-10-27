@@ -823,11 +823,7 @@ func buildPlacementAffects(oldIDs []int64, newIDs []int64) []*model.AffectedOpti
 		affects[i] = &model.AffectedOption{
 			OldTableID: oldIDs[i],
 		}
-		if i < len(newIDs) {
-			affects[i].TableID = newIDs[i]
-		} else {
-			affects[i].TableID = oldIDs[i]
-		}
+		affects[i].TableID = newIDs[i]
 	}
 	return affects
 }
@@ -902,7 +898,7 @@ func updateSchemaVersion(t *meta.Meta, job *model.Job) (int64, error) {
 		diff.TableID = job.TableID
 		if len(job.CtxVars) > 0 {
 			if oldIDs, ok := job.CtxVars[0].([]int64); ok {
-				diff.AffectedOpts = buildPlacementAffects(oldIDs, nil)
+				diff.AffectedOpts = buildPlacementAffects(oldIDs, oldIDs)
 			}
 		}
 	case model.ActionAlterTableAlterPartition:
