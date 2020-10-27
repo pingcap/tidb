@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	tidbutil "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/admin"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
@@ -737,7 +738,7 @@ func toTError(err error) *terror.Error {
 	}
 
 	// TODO: Add the error code.
-	return terror.ClassDDL.Synthesize(terror.CodeUnknown, err.Error())
+	return dbterror.ClassDDL.Synthesize(terror.CodeUnknown, err.Error())
 }
 
 // waitSchemaChanged waits for the completion of updating all servers' schema. In order to make sure that happens,
@@ -868,21 +869,36 @@ func updateSchemaVersion(t *meta.Meta, job *model.Job) (int64, error) {
 		}
 		diff.AffectedOpts = affects
 	case model.ActionTruncateTablePartition:
-		var oldIDs []int64
-		err = job.DecodeArgs(&oldIDs)
-		if err != nil {
-			return 0, errors.Trace(err)
-		}
+		oldIDs := job.CtxVars[0].([]int64)
+		newIDs := job.CtxVars[1].([]int64)
 		diff.TableID = job.TableID
 		affects := make([]*model.AffectedOption, len(oldIDs))
 		for i := 0; i < len(oldIDs); i++ {
 			affects[i] = &model.AffectedOption{
 				SchemaID:   job.SchemaID,
-				TableID:    oldIDs[i],
+				TableID:    newIDs[i],
 				OldTableID: oldIDs[i],
 			}
 		}
 		diff.AffectedOpts = affects
+	case model.ActionDropTablePartition:
+		// affects are used to update placement rule cache
+		diff.TableID = job.TableID
+		if len(job.CtxVars) > 0 {
+			if oldIDs, ok := job.CtxVars[0].([]int64); ok {
+				affects := make([]*model.AffectedOption, len(oldIDs))
+				for i := 0; i < len(oldIDs); i++ {
+					affects[i] = &model.AffectedOption{
+						SchemaID:   job.SchemaID,
+						TableID:    oldIDs[i],
+						OldTableID: oldIDs[i],
+					}
+				}
+				diff.AffectedOpts = affects
+			}
+		}
+	case model.ActionAlterTableAlterPartition:
+		diff.TableID = job.CtxVars[0].(int64)
 	default:
 		diff.TableID = job.TableID
 	}
