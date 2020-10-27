@@ -38,9 +38,9 @@ func NewSessionBindHandle(parser *parser.Parser) *SessionHandle {
 
 // appendBindRecord adds the BindRecord to the cache, all the stale bindMetas are
 // removed from the cache after this operation.
-func (h *SessionHandle) appendBindRecord(hash string, meta *BindRecord) {
-	oldRecord := h.ch.getBindRecord(hash, meta.OriginalSQL, meta.Db)
-	h.ch.setBindRecord(hash, meta)
+func (h *SessionHandle) appendBindRecord(meta *BindRecord) {
+	oldRecord := h.ch.getBindRecord(meta)
+	h.ch.setBindRecord(meta)
 	updateMetrics(metrics.ScopeSession, oldRecord, meta, false)
 }
 
@@ -58,34 +58,36 @@ func (h *SessionHandle) CreateBindRecord(sctx sessionctx.Context, record *BindRe
 	}
 
 	// update the BindMeta to the cache.
-	h.appendBindRecord(parser.DigestNormalized(record.OriginalSQL), record)
+	h.appendBindRecord(record)
 	return nil
 }
 
 // DropBindRecord drops a BindRecord in the cache.
-func (h *SessionHandle) DropBindRecord(originalSQL, db string, binding *Binding) error {
-	oldRecord := h.GetBindRecord(originalSQL, db)
+func (h *SessionHandle) DropBindRecord(sctx sessionctx.Context, record *BindRecord, binding *Binding) error {
+	oldRecord := h.GetBindRecord(record)
 	var newRecord *BindRecord
-	record := &BindRecord{OriginalSQL: originalSQL, Db: db}
 	if binding != nil {
 		record.Bindings = append(record.Bindings, *binding)
+	}
+	err := record.prepareHints(nil)
+	if err != nil {
+		return err
 	}
 	if oldRecord != nil {
 		newRecord = oldRecord.remove(record)
 	} else {
 		newRecord = record
 	}
-	h.ch.setBindRecord(parser.DigestNormalized(record.OriginalSQL), newRecord)
+	h.ch.setBindRecord(newRecord)
 	updateMetrics(metrics.ScopeSession, oldRecord, newRecord, false)
 	return nil
 }
 
 // GetBindRecord return the BindMeta of the (normdOrigSQL,db) if BindMeta exist.
-func (h *SessionHandle) GetBindRecord(normdOrigSQL, db string) *BindRecord {
-	hash := parser.DigestNormalized(normdOrigSQL)
-	bindRecords := h.ch[hash]
+func (h *SessionHandle) GetBindRecord(record *BindRecord) *BindRecord {
+	bindRecords := h.ch[record.StmtDigest]
 	for _, bindRecord := range bindRecords {
-		if bindRecord.OriginalSQL == normdOrigSQL && bindRecord.Db == db {
+		if bindRecord.Db == record.Db {
 			return bindRecord
 		}
 	}

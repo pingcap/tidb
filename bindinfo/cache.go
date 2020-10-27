@@ -18,6 +18,7 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/parser"
+	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
@@ -46,7 +47,8 @@ const (
 
 // Binding stores the basic bind hint info.
 type Binding struct {
-	BindSQL string
+	BindSQL   string
+	BindingTp ast.BindingType
 	// Status represents the status of the binding. It can only be one of the following values:
 	// 1. deleted: BindRecord is deleted, can not be used anymore.
 	// 2. using: Binding is in the normal active mode.
@@ -84,6 +86,7 @@ type cache map[string][]*BindRecord
 
 // BindRecord represents a sql bind record retrieved from the storage.
 type BindRecord struct {
+	StmtDigest  string
 	OriginalSQL string
 	Db          string
 
@@ -118,16 +121,29 @@ func (br *BindRecord) prepareHints(sctx sessionctx.Context) error {
 		if (bind.Hint != nil && bind.ID != "") || bind.Status == deleted {
 			continue
 		}
-		if sctx != nil {
+		if sctx != nil && bind.BindingTp == ast.BindingForStmt {
 			_, err := getHintsForSQL(sctx, bind.BindSQL)
 			if err != nil {
 				return err
 			}
 		}
-		hintsSet, warns, err := hint.ParseHintsSet(p, bind.BindSQL, bind.Charset, bind.Collation, br.Db)
+		var (
+			hintsSet = bind.Hint
+			warns    []error
+			err      error
+		)
+		switch bind.BindingTp {
+		case ast.BindingForStmt:
+			hintsSet, warns, err = hint.ParseHintsSet(p, bind.BindSQL, bind.Charset, bind.Collation, br.Db)
+		case ast.BindingForDigest:
+			if bind.ID != "" {
+				hintsSet, err = hint.FromHintComments(bind.ID)
+			}
+		}
 		if err != nil {
 			return err
 		}
+
 		hintsStr, err := hintsSet.Restore()
 		if err != nil {
 			return err
@@ -174,7 +190,7 @@ func merge(lBindRecord, rBindRecord *BindRecord) *BindRecord {
 func (br *BindRecord) remove(deleted *BindRecord) *BindRecord {
 	// Delete all bindings.
 	if len(deleted.Bindings) == 0 {
-		return &BindRecord{OriginalSQL: br.OriginalSQL, Db: br.Db}
+		return &BindRecord{StmtDigest: br.StmtDigest, OriginalSQL: br.OriginalSQL, Db: br.Db}
 	}
 	result := br.shallowCopy()
 	for _, deletedBind := range deleted.Bindings {
@@ -189,7 +205,12 @@ func (br *BindRecord) remove(deleted *BindRecord) *BindRecord {
 }
 
 func (br *BindRecord) removeDeletedBindings() *BindRecord {
-	result := BindRecord{OriginalSQL: br.OriginalSQL, Db: br.Db, Bindings: make([]Binding, 0, len(br.Bindings))}
+	result := BindRecord{
+		StmtDigest:  br.StmtDigest,
+		OriginalSQL: br.OriginalSQL,
+		Db:          br.Db,
+		Bindings:    make([]Binding, 0, len(br.Bindings)),
+	}
 	for _, binding := range br.Bindings {
 		if binding.Status != deleted {
 			result.Bindings = append(result.Bindings, binding)
@@ -201,6 +222,7 @@ func (br *BindRecord) removeDeletedBindings() *BindRecord {
 // shallowCopy shallow copies the BindRecord.
 func (br *BindRecord) shallowCopy() *BindRecord {
 	result := BindRecord{
+		StmtDigest:  br.StmtDigest,
 		OriginalSQL: br.OriginalSQL,
 		Db:          br.Db,
 		Bindings:    make([]Binding, len(br.Bindings)),
@@ -210,7 +232,7 @@ func (br *BindRecord) shallowCopy() *BindRecord {
 }
 
 func (br *BindRecord) isSame(other *BindRecord) bool {
-	return br.OriginalSQL == other.OriginalSQL && br.Db == other.Db
+	return br.StmtDigest == other.StmtDigest && br.Db == other.Db
 }
 
 var statusIndex = map[string]int{
@@ -225,7 +247,7 @@ func (br *BindRecord) metrics() ([]float64, []int) {
 	if br == nil {
 		return sizes, count
 	}
-	commonLength := float64(len(br.OriginalSQL) + len(br.Db))
+	commonLength := float64(len(br.StmtDigest) + len(br.OriginalSQL) + len(br.Db))
 	// We treat it as deleted if there are no bindings. It could only occur in session handles.
 	if len(br.Bindings) == 0 {
 		sizes[statusIndex[deleted]] = commonLength

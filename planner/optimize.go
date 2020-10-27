@@ -171,6 +171,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 		if err != nil {
 			binding.Status = bindinfo.Invalid
 			handleInvalidBindRecord(ctx, sctx, scope, bindinfo.BindRecord{
+				StmtDigest:  bindRecord.StmtDigest,
 				OriginalSQL: bindRecord.OriginalSQL,
 				Db:          bindRecord.Db,
 				Bindings:    []bindinfo.Binding{binding},
@@ -295,14 +296,20 @@ func getBindRecord(ctx sessionctx.Context, stmt ast.StmtNode) (*bindinfo.BindRec
 	if ctx.Value(bindinfo.SessionBindInfoKeyType) == nil {
 		return nil, ""
 	}
-	stmtNode, normalizedSQL, hash := extractSelectAndNormalizeDigest(stmt)
+	stmtNode, _, hash := extractSelectAndNormalizeDigest(stmt)
 	if stmtNode == nil {
 		return nil, ""
 	}
 	sessionHandle := ctx.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
-	bindRecord := sessionHandle.GetBindRecord(normalizedSQL, ctx.GetSessionVars().CurrentDB)
+	bindRecord := sessionHandle.GetBindRecord(&bindinfo.BindRecord{
+		StmtDigest: hash,
+		Db:         ctx.GetSessionVars().CurrentDB,
+	})
 	if bindRecord == nil {
-		bindRecord = sessionHandle.GetBindRecord(normalizedSQL, "")
+		bindRecord = sessionHandle.GetBindRecord(&bindinfo.BindRecord{
+			StmtDigest: hash,
+			Db:         "",
+		})
 	}
 	if bindRecord != nil {
 		if bindRecord.HasUsingBinding() {
@@ -314,16 +321,22 @@ func getBindRecord(ctx sessionctx.Context, stmt ast.StmtNode) (*bindinfo.BindRec
 	if globalHandle == nil {
 		return nil, ""
 	}
-	bindRecord = globalHandle.GetBindRecord(hash, normalizedSQL, ctx.GetSessionVars().CurrentDB)
+	bindRecord = globalHandle.GetBindRecord(&bindinfo.BindRecord{
+		StmtDigest: hash,
+		Db:         ctx.GetSessionVars().CurrentDB,
+	})
 	if bindRecord == nil {
-		bindRecord = globalHandle.GetBindRecord(hash, normalizedSQL, "")
+		bindRecord = globalHandle.GetBindRecord(&bindinfo.BindRecord{
+			StmtDigest: hash,
+			Db:         "",
+		})
 	}
 	return bindRecord, metrics.ScopeGlobal
 }
 
 func handleInvalidBindRecord(ctx context.Context, sctx sessionctx.Context, level string, bindRecord bindinfo.BindRecord) {
 	sessionHandle := sctx.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
-	err := sessionHandle.DropBindRecord(bindRecord.OriginalSQL, bindRecord.Db, &bindRecord.Bindings[0])
+	err := sessionHandle.DropBindRecord(sctx, &bindRecord, &bindRecord.Bindings[0])
 	if err != nil {
 		logutil.Logger(ctx).Info("drop session bindings failed")
 	}
@@ -349,7 +362,7 @@ func handleEvolveTasks(ctx context.Context, sctx sessionctx.Context, br *bindinf
 		Source:    bindinfo.Evolve,
 	}
 	globalHandle := domain.GetDomain(sctx).BindHandle()
-	globalHandle.AddEvolvePlanTask(br.OriginalSQL, br.Db, binding)
+	globalHandle.AddEvolvePlanTask(br, binding)
 }
 
 // useMaxTS returns true when meets following conditions:

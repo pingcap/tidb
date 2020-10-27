@@ -243,7 +243,9 @@ const (
 		charset 		TEXT NOT NULL,
 		collation 		TEXT NOT NULL,
 		source 			VARCHAR(10) NOT NULL DEFAULT 'unknown',
-		INDEX sql_index(original_sql(1024),default_db(1024)) COMMENT "accelerate the speed when add global binding query",
+		stmt_digest  	TEXT NOT NULL,
+		hint			TEXT NOT NULL,
+		INDEX sql_index(stmt_digest(1024),default_db(1024),hint(1024)) COMMENT "accelerate the speed when add global binding query",
 		INDEX time_index(update_time) COMMENT "accelerate the speed when querying with last update time"
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`
 
@@ -426,6 +428,8 @@ const (
 	version50 = 50
 	// version51 introduces CreateTablespacePriv to mysql.user.
 	version51 = 51
+	// version52 change mysql.bind_info schema.
+	version52 = 52
 )
 
 var (
@@ -480,6 +484,7 @@ var (
 		upgradeToVer49,
 		upgradeToVer50,
 		upgradeToVer51,
+		upgradeToVer52,
 	}
 )
 
@@ -1180,6 +1185,16 @@ func upgradeToVer51(s Session, ver int64) {
 	}
 	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `Create_tablespace_priv` ENUM('N','Y') DEFAULT 'N'", infoschema.ErrColumnExists)
 	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET Create_tablespace_priv='Y' where Super_priv='Y'")
+}
+
+func upgradeToVer52(s Session, ver int64) {
+	if ver >= version52 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.bind_info ADD COLUMN `stmt_digets` TEXT NOT NULL", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.bind_info ADD COLUMN `hint` TEXT NOT NULL", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.bind_info DROP INDEX sql_index")
+	doReentrantDDL(s, "ALTER TABLE mysql.bind_info ADD INDEX sql_index (stmt_digest(1024),default_db(1024),hint(1024))", ddl.ErrDupKeyName)
 }
 
 // updateBootstrapVer updates bootstrap version variable in mysql.TiDB table.

@@ -154,9 +154,11 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	case *ast.Join:
 		p.checkNonUniqTableAlias(node)
 	case *ast.CreateBindingStmt:
-		EraseLastSemicolon(node.OriginNode)
-		EraseLastSemicolon(node.HintedNode)
-		p.checkBindGrammar(node.OriginNode, node.HintedNode)
+		if node.BindingTp == ast.BindingForStmt {
+			EraseLastSemicolon(node.OriginNode)
+			EraseLastSemicolon(node.HintedNode)
+			p.checkBindGrammar(node.OriginNode, node.HintedNode)
+		}
 		return in, true
 	case *ast.DropBindingStmt:
 		EraseLastSemicolon(node.OriginNode)

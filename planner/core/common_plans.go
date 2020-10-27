@@ -635,8 +635,11 @@ type SQLBindPlan struct {
 	baseSchemaProducer
 
 	SQLBindOp    SQLBindOpType
+	BindingTp    ast.BindingType
 	NormdOrigSQL string
+	StmtDigest   string
 	BindSQL      string
+	Hints        *hint.HintsSet
 	IsGlobal     bool
 	BindStmt     ast.StmtNode
 	Db           string

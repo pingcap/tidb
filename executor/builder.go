@@ -3691,8 +3691,11 @@ func (b *executorBuilder) buildSQLBindExec(v *plannercore.SQLBindPlan) Executor 
 	e := &SQLBindExec{
 		baseExecutor: base,
 		sqlBindOp:    v.SQLBindOp,
+		bindingTp:    v.BindingTp,
+		stmtDigest:   v.StmtDigest,
 		normdOrigSQL: v.NormdOrigSQL,
 		bindSQL:      v.BindSQL,
+		hints:        v.Hints,
 		charset:      v.Charset,
 		collation:    v.Collation,
 		db:           v.Db,

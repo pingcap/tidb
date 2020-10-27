@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/hint"
 )
 
 // SQLBindExec represents a bind executor.
@@ -29,8 +30,11 @@ type SQLBindExec struct {
 	baseExecutor
 
 	sqlBindOp    plannercore.SQLBindOpType
+	bindingTp    ast.BindingType
 	normdOrigSQL string
+	stmtDigest   string
 	bindSQL      string
+	hints        *hint.HintsSet
 	charset      string
 	collation    string
 	db           string
@@ -65,26 +69,37 @@ func (e *SQLBindExec) dropSQLBind() error {
 	if e.bindSQL != "" {
 		bindInfo = &bindinfo.Binding{
 			BindSQL:   e.bindSQL,
+			BindingTp: e.bindingTp,
+			Hint:      e.hints,
 			Charset:   e.charset,
 			Collation: e.collation,
 		}
+
+	}
+	record := &bindinfo.BindRecord{
+		StmtDigest:  e.stmtDigest,
+		OriginalSQL: e.normdOrigSQL,
+		Db:          e.db,
 	}
 	if !e.isGlobal {
 		handle := e.ctx.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
-		return handle.DropBindRecord(e.normdOrigSQL, e.db, bindInfo)
+		return handle.DropBindRecord(e.ctx, record, bindInfo)
 	}
-	return domain.GetDomain(e.ctx).BindHandle().DropBindRecord(e.normdOrigSQL, e.db, bindInfo)
+	return domain.GetDomain(e.ctx).BindHandle().DropBindRecord(record, bindInfo)
 }
 
 func (e *SQLBindExec) createSQLBind() error {
 	bindInfo := bindinfo.Binding{
 		BindSQL:   e.bindSQL,
+		BindingTp: e.bindingTp,
+		Hint:      e.hints,
 		Charset:   e.charset,
 		Collation: e.collation,
 		Status:    bindinfo.Using,
 		Source:    bindinfo.Manual,
 	}
 	record := &bindinfo.BindRecord{
+		StmtDigest:  e.stmtDigest,
 		OriginalSQL: e.normdOrigSQL,
 		Db:          e.db,
 		Bindings:    []bindinfo.Binding{bindInfo},

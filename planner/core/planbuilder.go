@@ -41,7 +41,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/parser_driver"
+	driver "github.com/pingcap/tidb/types/parser_driver"
 	util2 "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/execdetails"
@@ -722,13 +722,21 @@ func (b *PlanBuilder) buildSet(ctx context.Context, v *ast.SetStmt) (Plan, error
 
 func (b *PlanBuilder) buildDropBindPlan(v *ast.DropBindingStmt) (Plan, error) {
 	p := &SQLBindPlan{
-		SQLBindOp:    OpSQLBindDrop,
-		NormdOrigSQL: parser.Normalize(v.OriginNode.Text()),
-		IsGlobal:     v.GlobalScope,
-		Db:           utilparser.GetDefaultDB(v.OriginNode, b.ctx.GetSessionVars().CurrentDB),
+		SQLBindOp: OpSQLBindDrop,
+		BindingTp: v.BindingTp,
+		IsGlobal:  v.GlobalScope,
 	}
 	if v.HintedNode != nil {
 		p.BindSQL = v.HintedNode.Text()
+	}
+	switch v.BindingTp {
+	case ast.BindingForStmt:
+		p.NormdOrigSQL = parser.Normalize(v.OriginNode.Text())
+		p.StmtDigest = parser.DigestNormalized(p.NormdOrigSQL)
+		p.Db = utilparser.GetDefaultDB(v.OriginNode, b.ctx.GetSessionVars().CurrentDB)
+	case ast.BindingForDigest:
+		p.StmtDigest = v.StmtDigest
+		p.Db = b.ctx.GetSessionVars().CurrentDB
 	}
 	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", nil)
 	return p, nil
@@ -737,14 +745,23 @@ func (b *PlanBuilder) buildDropBindPlan(v *ast.DropBindingStmt) (Plan, error) {
 func (b *PlanBuilder) buildCreateBindPlan(v *ast.CreateBindingStmt) (Plan, error) {
 	charSet, collation := b.ctx.GetSessionVars().GetCharsetInfo()
 	p := &SQLBindPlan{
-		SQLBindOp:    OpSQLBindCreate,
-		NormdOrigSQL: parser.Normalize(v.OriginNode.Text()),
-		BindSQL:      v.HintedNode.Text(),
-		IsGlobal:     v.GlobalScope,
-		BindStmt:     v.HintedNode,
-		Db:           utilparser.GetDefaultDB(v.OriginNode, b.ctx.GetSessionVars().CurrentDB),
-		Charset:      charSet,
-		Collation:    collation,
+		SQLBindOp: OpSQLBindCreate,
+		BindingTp: v.BindingTp,
+		IsGlobal:  v.GlobalScope,
+		BindStmt:  v.HintedNode,
+		Charset:   charSet,
+		Collation: collation,
+	}
+	switch v.BindingTp {
+	case ast.BindingForStmt:
+		p.NormdOrigSQL = parser.Normalize(v.OriginNode.Text())
+		p.StmtDigest = parser.DigestNormalized(p.NormdOrigSQL)
+		p.BindSQL = v.HintedNode.Text()
+		p.Db = utilparser.GetDefaultDB(v.OriginNode, b.ctx.GetSessionVars().CurrentDB)
+	case ast.BindingForDigest:
+		p.StmtDigest = v.StmtDigest
+		p.Hints = hint.FromTableHints(v.Hints)
+		p.Db = b.ctx.GetSessionVars().CurrentDB
 	}
 	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", nil)
 	return p, nil
@@ -3439,8 +3456,8 @@ func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *exp
 		names = []string{"Privilege", "Context", "Comment"}
 		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar}
 	case ast.ShowBindings:
-		names = []string{"Original_sql", "Bind_sql", "Default_db", "Status", "Create_time", "Update_time", "Charset", "Collation", "Source"}
-		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeDatetime, mysql.TypeDatetime, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar}
+		names = []string{"Original_sql", "Bind_sql", "Default_db", "Status", "Create_time", "Update_time", "Charset", "Collation", "Source", "Stmt_digets", "Hints"}
+		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeDatetime, mysql.TypeDatetime, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar}
 	case ast.ShowAnalyzeStatus:
 		names = []string{"Table_schema", "Table_name", "Partition_name", "Job_info", "Processed_rows", "Start_time", "State"}
 		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeDatetime, mysql.TypeVarchar}

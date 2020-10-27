@@ -23,9 +23,9 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/format"
 	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
@@ -60,6 +60,24 @@ func (hs *HintsSet) ContainTableHint(hint string) bool {
 		}
 	}
 	return false
+}
+
+func FromTableHints(hints []*ast.TableOptimizerHint) *HintsSet {
+	if len(hints) > 0 {
+		hs := &HintsSet{}
+		hs.tableHints = append(hs.tableHints, hints)
+		return hs
+	}
+	return nil
+}
+
+func FromHintComments(hints string) (*HintsSet, error) {
+	p := parser.New()
+	tableHints, errs := p.ParseHint(fmt.Sprintf("/*+%s*/", hints))
+	if len(errs) > 0 {
+		return nil, errs[0]
+	}
+	return FromTableHints(tableHints), nil
 }
 
 // ExtractTableHintsFromStmtNode extracts table hints from this node.
@@ -105,7 +123,7 @@ func checkInsertStmtHintDuplicated(node ast.Node, sctx sessionctx.Context) {
 				}
 				if duplicatedHint != nil {
 					hint := fmt.Sprintf("%s(`%v`)", duplicatedHint.HintName.O, duplicatedHint.HintData)
-					err := terror.ClassUtil.New(errno.ErrWarnConflictingHint, fmt.Sprintf(errno.MySQLErrName[errno.ErrWarnConflictingHint], hint))
+					err := dbterror.ClassUtil.NewStd(errno.ErrWarnConflictingHint).FastGenByArgs(hint)
 					sctx.GetSessionVars().StmtCtx.AppendWarning(err)
 				}
 			}

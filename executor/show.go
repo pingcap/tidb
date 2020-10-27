@@ -254,22 +254,24 @@ func (e *ShowExec) fetchShowBind() error {
 	parser := parser.New()
 	for _, bindData := range bindRecords {
 		for _, hint := range bindData.Bindings {
-			stmt, err := parser.ParseOneStmt(hint.BindSQL, hint.Charset, hint.Collation)
-			if err != nil {
-				return err
+			if hint.BindingTp == ast.BindingForStmt {
+				stmt, err := parser.ParseOneStmt(hint.BindSQL, hint.Charset, hint.Collation)
+				if err != nil {
+					return err
+				}
+				checker := visibleChecker{
+					defaultDB: bindData.Db,
+					ctx:       e.ctx,
+					is:        e.is,
+					manager:   privilege.GetPrivilegeManager(e.ctx),
+					ok:        true,
+				}
+				stmt.Accept(&checker)
+				if !checker.ok {
+					continue
+				}
 			}
-			checker := visibleChecker{
-				defaultDB: bindData.Db,
-				ctx:       e.ctx,
-				is:        e.is,
-				manager:   privilege.GetPrivilegeManager(e.ctx),
-				ok:        true,
-			}
-			stmt.Accept(&checker)
-			if !checker.ok {
-				continue
-			}
-			e.appendRow([]interface{}{
+			row := []interface{}{
 				bindData.OriginalSQL,
 				hint.BindSQL,
 				bindData.Db,
@@ -279,7 +281,13 @@ func (e *ShowExec) fetchShowBind() error {
 				hint.Charset,
 				hint.Collation,
 				hint.Source,
-			})
+				bindData.StmtDigest,
+				hint.ID,
+			}
+			if hint.BindingTp == ast.BindingForDigest {
+				row[0], row[1] = nil, nil
+			}
+			e.appendRow(row)
 		}
 	}
 	return nil

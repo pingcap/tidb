@@ -1255,7 +1255,7 @@ func (s *testTableSuite) TestStmtSummaryInternalQuery(c *C) {
 	tk.MustQuery(`select digest_text
 		from information_schema.statements_summary
 		where digest_text like "select original_sql , bind_sql , default_db , status%"`).Check(testkit.Rows(
-		"select original_sql , bind_sql , default_db , status , create_time , update_time , charset , collation , source from mysql . bind_info" +
+		"select original_sql , bind_sql , default_db , status , create_time , update_time , charset , collation , source , stmt_digest , hint from mysql . bind_info" +
 			" where update_time > ? order by update_time"))
 }
 
