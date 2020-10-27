@@ -728,8 +728,12 @@ type metricStorage struct {
 
 func (is *InfoSyncer) getPrometheusAddr() (string, error) {
 	// Get PD servers info.
-	pdAddrs := is.etcdCli.Endpoints()
-	if len(pdAddrs) == 0 {
+	clientAvailable := is.etcdCli != nil
+	var pdAddrs []string
+	if clientAvailable {
+		pdAddrs = is.etcdCli.Endpoints()
+	}
+	if !clientAvailable || len(pdAddrs) == 0 {
 		return "", errors.Errorf("pd unavailable")
 	}
 
