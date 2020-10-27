@@ -15,6 +15,7 @@ package statistics
 
 import (
 	"context"
+	"fmt"
 	"sort"
 	"time"
 
@@ -217,6 +218,11 @@ type SampleBuilder struct {
 	CMSketchWidth   int32
 	Collators       []collate.Collator
 	ColsFieldType   []*types.FieldType
+
+	IndexInfos        []*tipb.IndexInfo
+	IndexStatsBuilder []*SortedBuilder
+	IndexCMS          []*CMSketch
+	Columns           []*tipb.ColumnInfo
 }
 
 // CollectColumnStats collects sample from the result set using Reservoir Sampling algorithm,
@@ -240,6 +246,11 @@ func (s SampleBuilder) CollectColumnStats() ([]*SampleCollector, *SortedBuilder,
 	ctx := context.TODO()
 	req := s.RecordSet.NewChunk()
 	it := chunk.NewIterator4Chunk(req)
+	colIDIdx := make(map[int64]int)
+	for i, col := range s.Columns {
+		colIDIdx[col.ColumnId] = i
+	}
+	indexValBuff := make([][]byte, len(s.IndexInfos))
 	for {
 		err := s.RecordSet.Next(ctx, req)
 		if err != nil {
@@ -276,6 +287,26 @@ func (s SampleBuilder) CollectColumnStats() ([]*SampleCollector, *SortedBuilder,
 				err = collectors[i].collect(s.Sc, val)
 				if err != nil {
 					return nil, nil, errors.Trace(err)
+				}
+			}
+			for i, indexInfo := range s.IndexInfos {
+				indexValBuff[i] = indexValBuff[i][:0]
+				for _, idxCol := range indexInfo.Columns {
+					if idx, ok := colIDIdx[idxCol.ColumnId]; ok {
+						bytesValue := datums[idx].GetBytes()
+						if idxCol.ColumnLen != -1 && int(idxCol.ColumnLen) < len(bytesValue) {
+							bytesValue = bytesValue[:idxCol.ColumnLen]
+						}
+						indexValBuff[i] = append(indexValBuff[i], bytesValue...)
+					} else {
+						return nil, nil, errors.New(fmt.Sprintf("index column id %d can't found in analyze columns", idxCol.ColumnId))
+					}
+				}
+				s.IndexCMS[i].InsertBytes(indexValBuff[i])
+				rowData := append([]byte{}, indexValBuff[i]...)
+				err = s.IndexStatsBuilder[i].Iterate(types.NewBytesDatum(rowData))
+				if err != nil {
+					return nil, nil, err
 				}
 			}
 		}

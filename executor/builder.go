@@ -52,6 +52,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/rowcodec"
+	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
@@ -1907,17 +1908,29 @@ func (b *executorBuilder) buildAnalyzeIndexPushdown(task plannercore.AnalyzeInde
 		},
 		opts: opts,
 	}
-	e.analyzePB.IdxReq = &tipb.AnalyzeIndexReq{
+	e.analyzePB.IdxReq = []*tipb.AnalyzeIndexReq{{
 		BucketSize: int64(opts[ast.AnalyzeOptNumBuckets]),
 		NumColumns: int32(len(task.IndexInfo.Columns)),
+		IndexInfo: &tipb.IndexInfo{
+			TableId: task.TblInfo.ID,
+			IndexId: e.idxInfo.ID,
+			Columns: make([]*tipb.ColumnInfo, len(e.idxInfo.Columns)),
+			Unique:  e.idxInfo.Unique,
+		},
+	}}
+	for i, idxCol := range e.idxInfo.Columns {
+		e.analyzePB.IdxReq[0].IndexInfo.Columns[i] = &tipb.ColumnInfo{
+			ColumnId:  task.TblInfo.Columns[idxCol.Offset].ID,
+			ColumnLen: int32(idxCol.Length),
+		}
 	}
 	if e.isCommonHandle && e.idxInfo.Primary {
 		e.analyzePB.Tp = tipb.AnalyzeType_TypeCommonHandle
 	}
 	depth := int32(opts[ast.AnalyzeOptCMSketchDepth])
 	width := int32(opts[ast.AnalyzeOptCMSketchWidth])
-	e.analyzePB.IdxReq.CmsketchDepth = &depth
-	e.analyzePB.IdxReq.CmsketchWidth = &width
+	e.analyzePB.IdxReq[0].CmsketchDepth = &depth
+	e.analyzePB.IdxReq[0].CmsketchWidth = &width
 	job := &statistics.AnalyzeJob{DBName: task.DBName, TableName: task.TableName, PartitionName: task.PartitionName, JobInfo: autoAnalyze + "analyze index " + task.IndexInfo.Name.O}
 	return &analyzeTask{taskType: idxTask, idxExec: e, job: job}
 }
@@ -1938,8 +1951,8 @@ func (b *executorBuilder) buildAnalyzeIndexIncremental(task plannercore.AnalyzeI
 		exec := analyzeTask.idxExec
 		if idx.CMSketch != nil {
 			width, depth := idx.CMSketch.GetWidthAndDepth()
-			exec.analyzePB.IdxReq.CmsketchWidth = &width
-			exec.analyzePB.IdxReq.CmsketchDepth = &depth
+			exec.analyzePB.IdxReq[0].CmsketchWidth = &width
+			exec.analyzePB.IdxReq[0].CmsketchDepth = &depth
 		}
 		oldHist = idx.Histogram.Copy()
 	} else {
@@ -1956,7 +1969,7 @@ func (b *executorBuilder) buildAnalyzeIndexIncremental(task plannercore.AnalyzeI
 	return analyzeTask
 }
 
-func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plannercore.AnalyzeColumnsTask, opts map[ast.AnalyzeOptionType]uint64, autoAnalyze string) *analyzeTask {
+func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plannercore.AnalyzeColumnsTask, opts map[ast.AnalyzeOptionType]uint64, idxTasks []plannercore.AnalyzeIndexTask, autoAnalyze string) (*analyzeTask, []plannercore.AnalyzeIndexTask) {
 	cols := task.ColsInfo
 	if hasPkHist(task.HandleCols) {
 		colInfo := task.TblInfo.Columns[task.HandleCols.GetCol(0).Index]
@@ -1999,14 +2012,35 @@ func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plannercore.AnalyzeCo
 		e.analyzePB.ColReq.PrimaryColumnIds = tables.TryGetCommonPkColumnIds(task.TblInfo)
 	}
 	b.err = plannercore.SetPBColumnsDefaultValue(b.ctx, e.analyzePB.ColReq.ColumnsInfo, cols)
+	colSet := set.Int64Set{}
+	for _, col := range e.colsInfo {
+		colSet.Insert(col.ID)
+	}
+	remainIndexTasks := make([]plannercore.AnalyzeIndexTask, 0, 0)
+	e.analyzePB.IdxReq = make([]*tipb.AnalyzeIndexReq, 0, len(idxTasks))
+	for _, idxTask := range idxTasks {
+		isColTaskContainIdxCol := true
+		for _, idxCol := range idxTask.IndexInfo.Columns {
+			if !colSet.Exist(idxTask.TblInfo.Columns[idxCol.Offset].ID) {
+				isColTaskContainIdxCol = false
+				break
+			}
+		}
+		if isColTaskContainIdxCol {
+			e.analyzePB.Tp = tipb.AnalyzeType_TypeMixed
+			e.analyzePB.IdxReq = append(e.analyzePB.IdxReq, b.buildAnalyzeIndexPushdown(idxTask, opts, autoAnalyze).idxExec.analyzePB.IdxReq[0])
+		} else {
+			remainIndexTasks = append(remainIndexTasks, idxTask)
+		}
+	}
 	job := &statistics.AnalyzeJob{DBName: task.DBName, TableName: task.TableName, PartitionName: task.PartitionName, JobInfo: autoAnalyze + "analyze columns"}
-	return &analyzeTask{taskType: colTask, colExec: e, job: job}
+	return &analyzeTask{taskType: colTask, colExec: e, job: job}, remainIndexTasks
 }
 
 func (b *executorBuilder) buildAnalyzePKIncremental(task plannercore.AnalyzeColumnsTask, opts map[ast.AnalyzeOptionType]uint64) *analyzeTask {
 	h := domain.GetDomain(b.ctx).StatsHandle()
 	statsTbl := h.GetPartitionStats(&model.TableInfo{}, task.TableID.PersistID)
-	analyzeTask := b.buildAnalyzeColumnsPushdown(task, opts, "")
+	analyzeTask, _ := b.buildAnalyzeColumnsPushdown(task, opts, nil, "")
 	if statsTbl.Pseudo {
 		return analyzeTask
 	}
@@ -2131,7 +2165,9 @@ func (b *executorBuilder) buildAnalyze(v *plannercore.Analyze) Executor {
 			if enableFastAnalyze {
 				b.buildAnalyzeFastColumn(e, task, v.Opts)
 			} else {
-				e.tasks = append(e.tasks, b.buildAnalyzeColumnsPushdown(task, v.Opts, autoAnalyze))
+				var colTask *analyzeTask
+				colTask, v.IdxTasks = b.buildAnalyzeColumnsPushdown(task, v.Opts, v.IdxTasks, autoAnalyze)
+				e.tasks = append(e.tasks, colTask)
 			}
 		}
 		if b.err != nil {

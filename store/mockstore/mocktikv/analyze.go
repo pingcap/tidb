@@ -72,7 +72,7 @@ func (h *rpcHandler) handleAnalyzeIndexReq(req *coprocessor.Request, analyzeReq 
 		startTS = analyzeReq.GetStartTsFallback()
 	}
 	e := &indexScanExec{
-		colsLen:        int(analyzeReq.IdxReq.NumColumns),
+		colsLen:        int(analyzeReq.IdxReq[0].NumColumns),
 		kvRanges:       ranges,
 		startTS:        startTS,
 		isolationLevel: h.isolationLevel,
@@ -81,10 +81,10 @@ func (h *rpcHandler) handleAnalyzeIndexReq(req *coprocessor.Request, analyzeReq 
 		execDetail:     new(execDetail),
 		hdStatus:       tablecodec.HandleNotNeeded,
 	}
-	statsBuilder := statistics.NewSortedBuilder(flagsToStatementContext(analyzeReq.Flags), analyzeReq.IdxReq.BucketSize, 0, types.NewFieldType(mysql.TypeBlob))
+	statsBuilder := statistics.NewSortedBuilder(flagsToStatementContext(analyzeReq.Flags), analyzeReq.IdxReq[0].BucketSize, 0, types.NewFieldType(mysql.TypeBlob))
 	var cms *statistics.CMSketch
-	if analyzeReq.IdxReq.CmsketchDepth != nil && analyzeReq.IdxReq.CmsketchWidth != nil {
-		cms = statistics.NewCMSketch(*analyzeReq.IdxReq.CmsketchDepth, *analyzeReq.IdxReq.CmsketchWidth)
+	if analyzeReq.IdxReq[0].CmsketchDepth != nil && analyzeReq.IdxReq[0].CmsketchWidth != nil {
+		cms = statistics.NewCMSketch(*analyzeReq.IdxReq[0].CmsketchDepth, *analyzeReq.IdxReq[0].CmsketchWidth)
 	}
 	ctx := context.TODO()
 	var values [][]byte

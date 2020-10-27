@@ -62,8 +62,10 @@ func handleCopAnalyzeRequest(dbReader *dbreader.DBReader, req *coprocessor.Reque
 		resp, err = handleAnalyzeIndexReq(dbReader, ranges, analyzeReq, req.StartTs)
 	} else if analyzeReq.Tp == tipb.AnalyzeType_TypeCommonHandle {
 		resp, err = handleAnalyzeCommonHandleReq(dbReader, ranges, analyzeReq, req.StartTs)
-	} else {
+	} else if analyzeReq.Tp == tipb.AnalyzeType_TypeColumn {
 		resp, err = handleAnalyzeColumnsReq(dbReader, ranges, analyzeReq, req.StartTs)
+	} else {
+		resp, err = handleAnalyzeMixedReq(dbReader, ranges, analyzeReq, req.StartTs)
 	}
 	if err != nil {
 		resp = &coprocessor.Response{
@@ -74,12 +76,15 @@ func handleCopAnalyzeRequest(dbReader *dbreader.DBReader, req *coprocessor.Reque
 }
 
 func handleAnalyzeIndexReq(dbReader *dbreader.DBReader, rans []kv.KeyRange, analyzeReq *tipb.AnalyzeReq, startTS uint64) (*coprocessor.Response, error) {
-	processor := &analyzeIndexProcessor{
-		colLen:       int(analyzeReq.IdxReq.NumColumns),
-		statsBuilder: statistics.NewSortedBuilder(flagsToStatementContext(analyzeReq.Flags), analyzeReq.IdxReq.BucketSize, 0, types.NewFieldType(mysql.TypeBlob)),
+	if len(analyzeReq.IdxReq) == 0 {
+		return nil, nil
 	}
-	if analyzeReq.IdxReq.CmsketchDepth != nil && analyzeReq.IdxReq.CmsketchWidth != nil {
-		processor.cms = statistics.NewCMSketch(*analyzeReq.IdxReq.CmsketchDepth, *analyzeReq.IdxReq.CmsketchWidth)
+	processor := &analyzeIndexProcessor{
+		colLen:       int(analyzeReq.IdxReq[0].NumColumns),
+		statsBuilder: statistics.NewSortedBuilder(flagsToStatementContext(analyzeReq.Flags), analyzeReq.IdxReq[0].BucketSize, 0, types.NewFieldType(mysql.TypeBlob)),
+	}
+	if analyzeReq.IdxReq[0].CmsketchDepth != nil && analyzeReq.IdxReq[0].CmsketchWidth != nil {
+		processor.cms = statistics.NewCMSketch(*analyzeReq.IdxReq[0].CmsketchDepth, *analyzeReq.IdxReq[0].CmsketchWidth)
 	}
 	for _, ran := range rans {
 		err := dbReader.Scan(ran.StartKey, ran.EndKey, math.MaxInt64, startTS, processor)
@@ -100,12 +105,15 @@ func handleAnalyzeIndexReq(dbReader *dbreader.DBReader, rans []kv.KeyRange, anal
 }
 
 func handleAnalyzeCommonHandleReq(dbReader *dbreader.DBReader, rans []kv.KeyRange, analyzeReq *tipb.AnalyzeReq, startTS uint64) (*coprocessor.Response, error) {
-	processor := &analyzeCommonHandleProcessor{
-		colLen:       int(analyzeReq.IdxReq.NumColumns),
-		statsBuilder: statistics.NewSortedBuilder(flagsToStatementContext(analyzeReq.Flags), analyzeReq.IdxReq.BucketSize, 0, types.NewFieldType(mysql.TypeBlob)),
+	if len(analyzeReq.IdxReq) == 0 {
+		return nil, nil
 	}
-	if analyzeReq.IdxReq.CmsketchDepth != nil && analyzeReq.IdxReq.CmsketchWidth != nil {
-		processor.cms = statistics.NewCMSketch(*analyzeReq.IdxReq.CmsketchDepth, *analyzeReq.IdxReq.CmsketchWidth)
+	processor := &analyzeCommonHandleProcessor{
+		colLen:       int(analyzeReq.IdxReq[0].NumColumns),
+		statsBuilder: statistics.NewSortedBuilder(flagsToStatementContext(analyzeReq.Flags), analyzeReq.IdxReq[0].BucketSize, 0, types.NewFieldType(mysql.TypeBlob)),
+	}
+	if analyzeReq.IdxReq[0].CmsketchDepth != nil && analyzeReq.IdxReq[0].CmsketchWidth != nil {
+		processor.cms = statistics.NewCMSketch(*analyzeReq.IdxReq[0].CmsketchDepth, *analyzeReq.IdxReq[0].CmsketchWidth)
 	}
 	for _, ran := range rans {
 		err := dbReader.Scan(ran.StartKey, ran.EndKey, math.MaxInt64, startTS, processor)
@@ -349,4 +357,119 @@ func (e *analyzeColumnsExec) NewChunk() *chunk.Chunk {
 // Close implements the sqlexec.RecordSet Close interface.
 func (e *analyzeColumnsExec) Close() error {
 	return nil
+}
+
+type analyzeMixedExec struct {
+	analyzeColumnsExec
+
+	IndexReqs []*tipb.AnalyzeIndexReq
+}
+
+func handleAnalyzeMixedReq(dbReader *dbreader.DBReader, rans []kv.KeyRange, analyzeReq *tipb.AnalyzeReq, startTS uint64)  (*coprocessor.Response, error) {
+	sc := flagsToStatementContext(analyzeReq.Flags)
+	sc.TimeZone = time.FixedZone("UTC", int(analyzeReq.TimeZoneOffset))
+	evalCtx := &evalContext{sc: sc}
+	columns := analyzeReq.ColReq.ColumnsInfo
+	evalCtx.setColumnInfo(columns)
+	if len(analyzeReq.ColReq.PrimaryColumnIds) > 0 {
+		evalCtx.primaryCols = analyzeReq.ColReq.PrimaryColumnIds
+	}
+	decoder, err := evalCtx.newRowDecoder()
+	if err != nil {
+		return nil, err
+	}
+	e := &analyzeMixedExec{
+		analyzeColumnsExec: analyzeColumnsExec{
+			reader:  dbReader,
+			seekKey: rans[0].StartKey,
+			endKey:  rans[0].EndKey,
+			ranges:  rans,
+			curRan:  0,
+			startTS: startTS,
+			chk:     chunk.NewChunkWithCapacity(evalCtx.fieldTps, 1),
+			decoder: decoder,
+			evalCtx: evalCtx,
+		},
+		IndexReqs: analyzeReq.IdxReq,
+	}
+	e.fields = make([]*ast.ResultField, len(columns))
+	for i := range e.fields {
+		rf := new(ast.ResultField)
+		rf.Column = new(model.ColumnInfo)
+		rf.Column.FieldType = types.FieldType{Tp: mysql.TypeBlob, Flen: mysql.MaxBlobWidth, Charset: charset.CharsetUTF8, Collate: charset.CollationUTF8}
+		e.fields[i] = rf
+	}
+
+	pkID := int64(-1)
+	numCols := len(columns)
+	if columns[0].GetPkHandle() {
+		pkID = columns[0].ColumnId
+		columns = columns[1:]
+		numCols--
+	}
+	collators := make([]collate.Collator, numCols)
+	fts := make([]*types.FieldType, numCols)
+	for i, col := range columns {
+		ft := fieldTypeFromPBColumn(col)
+		fts[i] = ft
+		if ft.EvalType() == types.ETString {
+			collators[i] = collate.GetCollator(ft.Collate)
+		}
+	}
+	colReq := analyzeReq.ColReq
+	builder := statistics.SampleBuilder{
+		Sc:              sc,
+		RecordSet:       e,
+		ColLen:          numCols,
+		MaxBucketSize:   colReq.BucketSize,
+		MaxFMSketchSize: colReq.SketchSize,
+		MaxSampleSize:   colReq.SampleSize,
+		Collators:       collators,
+		ColsFieldType:   fts,
+		IndexStatsBuilder: make([]*statistics.SortedBuilder, 0, len(analyzeReq.IdxReq)),
+		IndexCMS: make([]*statistics.CMSketch, 0, len(analyzeReq.IdxReq)),
+		IndexInfos: make([]*tipb.IndexInfo, 0, len(analyzeReq.IdxReq)),
+		Columns: columns,
+	}
+	if pkID != -1 {
+		builder.PkBuilder = statistics.NewSortedBuilder(sc, builder.MaxBucketSize, pkID, types.NewFieldType(mysql.TypeBlob))
+	}
+	if colReq.CmsketchWidth != nil && colReq.CmsketchDepth != nil {
+		builder.CMSketchWidth = *colReq.CmsketchWidth
+		builder.CMSketchDepth = *colReq.CmsketchDepth
+	}
+	for _, idxReq := range e.IndexReqs {
+		builder.IndexStatsBuilder = append(builder.IndexStatsBuilder, statistics.NewSortedBuilder(flagsToStatementContext(analyzeReq.Flags), idxReq.BucketSize, 0, types.NewFieldType(mysql.TypeBlob)))
+		if idxReq.CmsketchDepth != nil && idxReq.CmsketchWidth != nil {
+			builder.IndexCMS = append(builder.IndexCMS, statistics.NewCMSketch(*idxReq.CmsketchDepth, *idxReq.CmsketchWidth))
+		} else {
+			builder.IndexCMS = append(builder.IndexCMS, nil)
+		}
+		builder.IndexInfos = append(builder.IndexInfos, idxReq.IndexInfo)
+	}
+	collectors, pkBuilder, err := builder.CollectColumnStats()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	colResp := &tipb.AnalyzeColumnsResp{}
+	if pkID != -1 {
+		colResp.PkHist = statistics.HistogramToProto(pkBuilder.Hist())
+	}
+	for _, c := range collectors {
+		colResp.Collectors = append(colResp.Collectors, statistics.SampleCollectorToProto(c))
+	}
+	analyzeResp := &tipb.AnalyzeResp{ColumnsResp: colResp, IndexResp: make([]*tipb.AnalyzeIndexResp, 0, len(e.IndexReqs))}
+	for i := range e.IndexReqs {
+		hg := statistics.HistogramToProto(builder.IndexStatsBuilder[i].Hist())
+		var cm *tipb.CMSketch
+		if len(builder.IndexCMS) > i && builder.IndexCMS[i] != nil {
+			cm = statistics.CMSketchToProto(builder.IndexCMS[i])
+		}
+		analyzeResp.IndexResp = append(analyzeResp.IndexResp, &tipb.AnalyzeIndexResp{Hist: hg, Cms: cm})
+	}
+	data, err := proto.Marshal(analyzeResp)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return &coprocessor.Response{Data: data}, nil
 }
