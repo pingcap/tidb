@@ -822,6 +822,7 @@ func GetTimezone(lit string) (idx int, tzSign, tzHour, tzSep, tzMinute string) {
 	// sidx is for the sign
 	// spidx is for the separator
 	l := len(lit)
+	// the following loop finds the first index of Z, sign, and separator from backwards.
 	for i := l - 1; 0 <= i; i-- {
 		if lit[i] == 'Z' {
 			zidx = i
@@ -866,18 +867,17 @@ func GetTimezone(lit string) (idx int, tzSign, tzHour, tzSep, tzMinute string) {
 		if v.h != 0 {
 			tzHour = lit[hidx : hidx+2]
 			if !valid(tzHour) {
-				goto BAD
+				return -1, "", "", "", ""
 			}
 		}
 		if v.m != 0 {
 			tzMinute = lit[midx : midx+2]
 			if !valid(tzMinute) {
-				goto BAD
+				return -1, "", "", "", ""
 			}
 		}
 		return
 	}
-BAD:
 	return -1, "", "", "", ""
 }
 
