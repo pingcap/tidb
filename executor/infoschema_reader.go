@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/infoschema"
@@ -139,6 +140,8 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			infoschema.ClusterTableStatementsSummary,
 			infoschema.ClusterTableStatementsSummaryHistory:
 			err = e.setDataForStatementsSummary(sctx, e.table.Name.O)
+		case infoschema.TablePlacementPolicy:
+			err = e.setDataForPlacementPolicy(sctx)
 		}
 		if err != nil {
 			return nil, err
@@ -1809,6 +1812,51 @@ func (e *memtableRetriever) setDataForStatementsSummary(ctx sessionctx.Context, 
 		}
 		e.rows = rows
 	}
+	return nil
+}
+
+func (e *memtableRetriever) setDataForPlacementPolicy(ctx sessionctx.Context) error {
+	checker := privilege.GetPrivilegeManager(ctx)
+	is := infoschema.GetInfoSchema(ctx)
+	ruleBundles := is.RuleBundles()
+	var rows [][]types.Datum
+	for _, bundle := range ruleBundles {
+		id, err := placement.ObjectIDFromGroupID(bundle.ID)
+		if err != nil {
+			return errors.Wrapf(err, "Restore bundle %s failed", bundle.ID)
+		}
+		if id == 0 {
+			continue
+		}
+		// Currently, only partitions have placement rules.
+		tb, db, part := is.FindTableByPartitionID(id)
+		if tb == nil {
+			return errors.Errorf("Can't find partition by id %d", id)
+		}
+		if checker != nil && !checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, db.Name.L, tb.Meta().Name.L, "", mysql.SelectPriv) {
+			continue
+		}
+		for _, rule := range bundle.Rules {
+			constraint, err := placement.RestoreLabelConstraintList(rule.LabelConstraints)
+			if err != nil {
+				return errors.Wrapf(err, "Restore rule %s in bundle %s failed", rule.ID, bundle.ID)
+			}
+			row := types.MakeDatums(
+				bundle.ID,
+				bundle.Index,
+				rule.ID,
+				db.Name.L,
+				tb.Meta().Name.L,
+				part.Name.L,
+				nil,
+				string(rule.Role),
+				rule.Count,
+				constraint,
+			)
+			rows = append(rows, row)
+		}
+	}
+	e.rows = rows
 	return nil
 }
 
