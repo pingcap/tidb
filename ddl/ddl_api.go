@@ -22,6 +22,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"github.com/pingcap/log"
 	"math"
 	"strconv"
 	"strings"
@@ -66,6 +67,10 @@ const (
 	expressionIndexPrefix = "_V$"
 	changingColumnPrefix  = "_Col$_"
 	changingIndexPrefix   = "_Idx$_"
+	tinyBlobMaxLength     = 255
+	blobMaxLength         = 65535
+	mediumBlobMaxLength   = 16777215
+	longBlobMaxLength     = 4294967295
 )
 
 func (d *ddl) CreateSchema(ctx sessionctx.Context, schema model.CIStr, charsetInfo *ast.CharsetOpt) error {
@@ -561,6 +566,25 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 		// TODO: remove this version field after there is no old version.
 		Version: model.CurrLatestColumnInfoVersion,
 	})
+
+	if col.FieldType.Tp == mysql.TypeBlob {
+		if col.FieldType.Flen <= tinyBlobMaxLength {
+			log.Info("Auto convert Blob to TinyBlob", zap.Int("Blob Length", col.FieldType.Flen))
+			col.FieldType.Flen = tinyBlobMaxLength
+			col.FieldType.Tp = mysql.TypeTinyBlob
+		} else if col.FieldType.Flen <= blobMaxLength {
+			log.Info("Auto convert Blob to Blob", zap.Int("Blob Length", col.FieldType.Flen))
+			col.FieldType.Flen = blobMaxLength
+		} else if col.FieldType.Flen <= mediumBlobMaxLength {
+			log.Info("Auto convert Blob to MediumBlob", zap.Int("Blob Length", col.FieldType.Flen))
+			col.FieldType.Flen = mediumBlobMaxLength
+			col.FieldType.Tp = mysql.TypeMediumBlob
+		} else if col.FieldType.Flen <= longBlobMaxLength {
+			log.Info("Auto convert Blob to LongBlob", zap.Int("Blob Length", col.FieldType.Flen))
+			col.FieldType.Flen = longBlobMaxLength
+			col.FieldType.Tp = mysql.TypeLongBlob
+		}
+	}
 
 	if !isExplicitTimeStamp() {
 		// Check and set TimestampFlag, OnUpdateNowFlag and NotNullFlag.
