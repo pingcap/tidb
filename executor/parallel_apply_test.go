@@ -384,7 +384,7 @@ func (s *testSuite) TestApplyWithOtherOperators(c *C) {
 	tk.MustQuery(sql).Sort().Check(testkit.Rows("1"))
 }
 
-func (s *testSuite) TestApplyWithOtherFeatures(c *C) {
+func (s *testSerialSuite) TestApplyWithOtherFeatures(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("set tidb_enable_parallel_apply=true")
 
