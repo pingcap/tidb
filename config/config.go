@@ -119,12 +119,11 @@ type Config struct {
 	ProxyProtocol              ProxyProtocol     `toml:"proxy-protocol" json:"proxy-protocol"`
 	TiKVClient                 TiKVClient        `toml:"tikv-client" json:"tikv-client"`
 	Binlog                     Binlog            `toml:"binlog" json:"binlog"`
-	CompatibleKillQuery        bool              `toml:"compatible-kill-query" json:"compatible-kill-query"`
-	GracefulWaitBeforeShutdown int               `toml:"graceful-wait-before-shutdown" json:"graceful-wait-before-shutdown"`
 	Plugin                     Plugin            `toml:"plugin" json:"plugin"`
 	PessimisticTxn             PessimisticTxn    `toml:"pessimistic-txn" json:"pessimistic-txn"`
 	CheckMb4ValueInUTF8        bool              `toml:"check-mb4-value-in-utf8" json:"check-mb4-value-in-utf8"`
 	MaxIndexLength             int               `toml:"max-index-length" json:"max-index-length"`
+	GracefulWaitBeforeShutdown int               `toml:"graceful-wait-before-shutdown" json:"graceful-wait-before-shutdown"`
 	// AlterPrimaryKey is used to control alter primary key feature.
 	AlterPrimaryKey bool `toml:"alter-primary-key" json:"alter-primary-key"`
 	// TreatOldVersionUTF8AsUTF8MB4 is use to treat old version table/column UTF8 charset as UTF8MB4. This is for compatibility.

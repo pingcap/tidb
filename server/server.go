@@ -118,9 +118,10 @@ type Server struct {
 	socket            net.Listener
 	rwlock            sync.RWMutex
 	concurrentLimiter *TokenLimiter
-	clients           map[uint32]*clientConn
+	clients           map[uint64]*clientConn
 	capability        uint32
 	dom               *domain.Domain
+	globalConnID      util.GlobalConnID
 
 	statusAddr     string
 	statusListener net.Listener
@@ -152,6 +153,14 @@ func (s *Server) releaseToken(token *Token) {
 // SetDomain use to set the server domain.
 func (s *Server) SetDomain(dom *domain.Domain) {
 	s.dom = dom
+}
+
+// InitGlobalConnID initialize global connection id.
+func (s *Server) InitGlobalConnID(serverIDGetter func() uint64) {
+	s.globalConnID = util.GlobalConnID{
+		ServerIDGetter: serverIDGetter,
+		Is64bits:       true,
+	}
 }
 
 // newConn creates a new *clientConn from a net.Conn.
@@ -213,7 +222,8 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 		cfg:               cfg,
 		driver:            driver,
 		concurrentLimiter: NewTokenLimiter(cfg.TokenLimit),
-		clients:           make(map[uint32]*clientConn),
+		clients:           make(map[uint64]*clientConn),
+		globalConnID:      util.GlobalConnID{ServerID: 0, Is64bits: true},
 	}
 
 	tlsConfig, err := util.LoadTLSCertificates(s.cfg.Security.SSLCA, s.cfg.Security.SSLKey, s.cfg.Security.SSLCert)
@@ -336,6 +346,12 @@ func (s *Server) Run() error {
 			return nil
 		})
 		if err != nil {
+			continue
+		}
+
+		if s.dom != nil && s.dom.IsLostConnectionToPD() {
+			logutil.BgLogger().Warn("reject connection due to lost connection to PD")
+			terror.Log(clientConn.Close())
 			continue
 		}
 
@@ -517,7 +533,7 @@ func (s *Server) ShowProcessList() map[uint64]*util.ProcessInfo {
 // GetProcessInfo implements the SessionManager interface.
 func (s *Server) GetProcessInfo(id uint64) (*util.ProcessInfo, bool) {
 	s.rwlock.RLock()
-	conn, ok := s.clients[uint32(id)]
+	conn, ok := s.clients[id]
 	s.rwlock.RUnlock()
 	if !ok || atomic.LoadInt32(&conn.status) == connStatusWaitShutdown {
 		return &util.ProcessInfo{}, false
@@ -532,7 +548,7 @@ func (s *Server) Kill(connectionID uint64, query bool) {
 
 	s.rwlock.RLock()
 	defer s.rwlock.RUnlock()
-	conn, ok := s.clients[uint32(connectionID)]
+	conn, ok := s.clients[connectionID]
 	if !ok {
 		return
 	}
@@ -642,6 +658,11 @@ func (s *Server) kickIdleConnection() {
 			logutil.BgLogger().Error("close connection", zap.Error(err))
 		}
 	}
+}
+
+// ServerID implements SessionManager interface.
+func (s *Server) ServerID() uint64 {
+	return s.dom.ServerID()
 }
 
 // setSysTimeZoneOnce is used for parallel run tests. When several servers are running,
