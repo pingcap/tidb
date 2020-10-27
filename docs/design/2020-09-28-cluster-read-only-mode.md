@@ -147,7 +147,7 @@ In this case, MySQL will also block the update, and once the table is unlocked, 
 
 However, it would be too difficult to achieve this in a distributed environment, therefore the proposed solution is to fail the update immediately, since the enabling attempt will eventually succeed, it doesn’t matter if we act like the update comes after the enabling of the `read_only` mode.
 
-In a sentence, attempts to turn on `read_only` will never fail, it will block until committing transactions and write locks held from/by unprivileged users before the attempt on all TiDB servers are committed or released, and TiDB server enters a `read_only` mode as long as it receives the update of the global variable, hence no blockage will be caused by turning on `read_only`, queries either fail immediately or get processed.
+In a sentence, attempts to turn on `read_only` will never fail after privilege check, `SET GLOBAL read_only=1` will always take priority over DML, and will never fail because of long running DML or DDL. The failure modes are only as a result of not being able to contact all TiDB servers. The attempt will block until committing transactions and write locks held from/by unprivileged users before the attempt on all TiDB servers are committed or released, and TiDB server enters a `read_only` mode as long as it receives the update of the global variable, hence no blockage will be caused by turning on `read_only`, queries either fail immediately or get processed.
 
 
 ### Technical Issues
@@ -184,7 +184,7 @@ If the TiDB cluster is scaling in or there is server shutdown, or even network s
 
 #### How to identify committing transactions & held locks
 
-As described above, enabling attempts should be blocked when there are committing transactions or held write locks.
+As described above, enabling attempts should be blocked waiting when there are committing transactions or held write locks.
 
 It is relatively easy to check held locks, since locks are synchronized by DDL jobs, and we can check the held locks at the same TiDB server and the same session where the read only mode is turned on.
 
