@@ -5089,11 +5089,11 @@ func (s *testSerialDBSuite) TestSetTableFlashReplica(c *C) {
 
 	// Test for FindTableByPartitionID.
 	is := domain.GetDomain(tk.Se).InfoSchema()
-	t, dbInfo := is.FindTableByPartitionID(partition.Definitions[0].ID)
+	t, dbInfo, _ := is.FindTableByPartitionID(partition.Definitions[0].ID)
 	c.Assert(t, NotNil)
 	c.Assert(dbInfo, NotNil)
 	c.Assert(t.Meta().Name.L, Equals, "t_flash")
-	t, dbInfo = is.FindTableByPartitionID(t.Meta().ID)
+	t, dbInfo, _ = is.FindTableByPartitionID(t.Meta().ID)
 	c.Assert(t, IsNil)
 	c.Assert(dbInfo, IsNil)
 	failpoint.Disable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount")

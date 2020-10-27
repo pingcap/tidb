@@ -92,8 +92,8 @@ func initMemoryUsageAlarmRecord() (record *memoryUsageAlarm) {
 func (record *memoryUsageAlarm) alarm4ExcessiveMemUsage(sm util.SessionManager) {
 	var memoryUsage uint64
 	instanceStats := &runtime.MemStats{}
+	runtime.ReadMemStats(instanceStats)
 	if record.isServerMemoryQuotaSet {
-		runtime.ReadMemStats(instanceStats)
 		memoryUsage = instanceStats.HeapAlloc
 	} else {
 		memoryUsage, record.err = memory.MemUsed()
@@ -110,23 +110,31 @@ func (record *memoryUsageAlarm) alarm4ExcessiveMemUsage(sm util.SessionManager) 
 		interval := time.Since(record.lastCheckTime)
 		record.lastCheckTime = time.Now()
 		if interval > 10*time.Second {
-			record.doRecord(memoryUsage, sm)
+			record.doRecord(memoryUsage, instanceStats.HeapAlloc, sm)
 		}
 	}
 }
 
-func (record *memoryUsageAlarm) doRecord(memUsage uint64, sm util.SessionManager) {
-	logutil.BgLogger().Warn("the TiDB instance now takes a lot of memory, has the risk of OOM",
-		zap.Bool("is server-momory-quota set", record.isServerMemoryQuotaSet),
-		zap.Any("memory size", record.serverMemoryQuota),
-		zap.Any("memory usage", memUsage),
-		zap.Any("memory-usage-alarm-ratio", config.GetGlobalConfig().Performance.MemoryUsageAlarmRatio),
-	)
+func (record *memoryUsageAlarm) doRecord(memUsage uint64, instanceMemoryUsage uint64, sm util.SessionManager) {
+	fields := make([]zap.Field, 0, 6)
+	fields = append(fields, zap.Bool("is server-memory-quota set", record.isServerMemoryQuotaSet))
+	if record.isServerMemoryQuotaSet {
+		fields = append(fields, zap.Any("server-memory-quota", record.serverMemoryQuota))
+		fields = append(fields, zap.Any("tidb-server memory usage", memUsage))
+	} else {
+		fields = append(fields, zap.Any("system memory total", record.serverMemoryQuota))
+		fields = append(fields, zap.Any("system memory usage", memUsage))
+		fields = append(fields, zap.Any("tidb-server memory usage", instanceMemoryUsage))
+	}
+	fields = append(fields, zap.Any("memory-usage-alarm-ratio", config.GetGlobalConfig().Performance.MemoryUsageAlarmRatio))
+	fields = append(fields, zap.Any("record path", record.tmpDir))
+
+	logutil.BgLogger().Warn("tidb-server has the risk of OOM. Running SQLs and heap profile will be recorded in record path", fields...)
 
 	if record.err = disk.CheckAndInitTempDir(); record.err != nil {
 		return
 	}
-	record.recordSQLAndSummaryTable(sm)
+	record.recordSQL(sm)
 	record.recordProfile()
 
 	tryRemove := func(filename *[]string) {
@@ -146,7 +154,7 @@ func (record *memoryUsageAlarm) doRecord(memUsage uint64, sm util.SessionManager
 	}
 }
 
-func (record *memoryUsageAlarm) recordSQLAndSummaryTable(sm util.SessionManager) {
+func (record *memoryUsageAlarm) recordSQL(sm util.SessionManager) {
 	processInfo := sm.ShowProcessList()
 	pinfo := make([]*util.ProcessInfo, 0, len(processInfo))
 	for _, info := range processInfo {
@@ -203,8 +211,6 @@ func (record *memoryUsageAlarm) recordSQLAndSummaryTable(sm util.SessionManager)
 	printTop10(func(i, j int) bool {
 		return pinfo[i].Time.Before(pinfo[j].Time)
 	})
-
-	logutil.BgLogger().Info("record SQLs with the most memory usage or time usage", zap.Any("SQLs file path", fileName))
 }
 
 func (record *memoryUsageAlarm) recordProfile() {
@@ -235,6 +241,5 @@ func (record *memoryUsageAlarm) recordProfile() {
 			logutil.BgLogger().Error(fmt.Sprintf("write %v profile file fail", item.name), zap.Error(err))
 			return
 		}
-		logutil.BgLogger().Info(fmt.Sprintf("record %v profile successfully", item.name), zap.Any("Profile file path", fileName))
 	}
 }
