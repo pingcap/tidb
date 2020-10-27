@@ -351,8 +351,21 @@ const (
 
 func appendFormatFloat(in []byte, fVal float64, prec, bitSize int) []byte {
 	absVal := math.Abs(fVal)
+	isEFormat := false
+	if bitSize == 32 {
+		isEFormat = (prec == types.UnspecifiedLength && (float32(absVal) >= expFormatBig || (float32(absVal) != 0 && float32(absVal) < expFormatSmall)))
+	} else {
+		isEFormat = (prec == types.UnspecifiedLength && (absVal >= expFormatBig || (absVal != 0 && absVal < expFormatSmall)))
+	}
 	var out []byte
+<<<<<<< HEAD
 	if prec == types.UnspecifiedLength && (absVal >= expFormatBig || (absVal != 0 && absVal < expFormatSmall)) {
+=======
+	if isEFormat {
+		if bitSize == 32 {
+			prec = defaultMySQLPrec
+		}
+>>>>>>> b8685c5db... executor: fix float data result (#20525)
 		out = strconv.AppendFloat(in, fVal, 'e', prec, bitSize)
 		valStr := out[len(in):]
 		// remove the '+' from the string for compatibility.
