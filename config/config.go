@@ -713,8 +713,8 @@ var defaultConf = Config{
 			// FIXME: Find an appropriate default limit.
 			KeysLimit:         256,
 			TotalKeySizeLimit: 4 * 1024, // 4 KiB
-			SafeWindow:        3 * time.Second,
-			AllowedClockDrift: time.Second,
+			SafeWindow:        2 * time.Second,
+			AllowedClockDrift: 500 * time.Millisecond,
 		},
 
 		MaxBatchSize:      128,
