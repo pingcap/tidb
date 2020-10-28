@@ -466,6 +466,8 @@ type PhysicalTableScan struct {
 	Desc      bool
 
 	isChildOfIndexLookUp bool
+
+	PartitionInfo PartitionInfo
 }
 
 // Clone implements PhysicalPlan interface.
@@ -833,6 +835,11 @@ type PhysicalMergeJoin struct {
 type PhysicalBroadCastJoin struct {
 	basePhysicalJoin
 	globalChildIndex int
+}
+
+// PhysicalExchangerBase is the common part of Exchanger and ExchangerClient.
+type PhysicalExchangerBase struct {
+	basePhysicalPlan
 }
 
 // Clone implements PhysicalPlan interface.
