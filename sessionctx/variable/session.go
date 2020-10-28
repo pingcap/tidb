@@ -1183,13 +1183,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	case TiDBBatchCommit:
 		s.BatchCommit = TiDBOptOn(val)
 	case TiDBDMLBatchSize:
-<<<<<<< HEAD
 		s.DMLBatchSize = tidbOptPositiveInt32(val, DefDMLBatchSize)
-	case TiDBCurrentTS, TiDBConfig:
-=======
-		s.DMLBatchSize = int(tidbOptInt64(val, DefOptCorrelationExpFactor))
 	case TiDBCurrentTS, TiDBLastTxnInfo, TiDBConfig:
->>>>>>> 64c2cc5cb... sessionctx,store,kv: add a session variable to export last txn info (#19949)
 		return ErrReadOnly
 	case TiDBMaxChunkSize:
 		s.MaxChunkSize = tidbOptPositiveInt32(val, DefMaxChunkSize)
