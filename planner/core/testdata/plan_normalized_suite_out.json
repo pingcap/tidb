@@ -207,17 +207,29 @@
       {
         "SQL": "select * from t3 where a=4",
         "Plan": [
-          " TableReader   root ",
-          " └─Selection   cop  eq(test.t3.a, ?)",
-          "   └─TableScan cop  table:t3, range:[?,?], keep order:false"
+          " Point_Get root table:t3, partition:?, handle:?"
         ]
       },
       {
         "SQL": "select * from t3 where a=30",
         "Plan": [
-          " TableReader   root ",
-          " └─Selection   cop  eq(test.t3.a, ?)",
-          "   └─TableScan cop  table:t3, range:[?,?], keep order:false"
+          " Point_Get root table:t3, partition:?, handle:?"
+        ]
+      },
+      {
+        "SQL": "select * from t4 where a=10",
+        "Plan": [
+          " IndexLookUp root ",
+          " ├─IndexScan cop  table:t4, partition:?, index:a(a), range:[?,?], keep order:false",
+          " └─TableScan cop  table:t4, partition:?, keep order:false"
+        ]
+      },
+      {
+        "SQL": "select * from t4 where a=20",
+        "Plan": [
+          " IndexLookUp root ",
+          " ├─IndexScan cop  table:t4, partition:?, index:a(a), range:[?,?], keep order:false",
+          " └─TableScan cop  table:t4, partition:?, keep order:false"
         ]
       }
     ]

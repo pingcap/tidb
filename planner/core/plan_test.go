@@ -61,10 +61,12 @@ func (s *testPlanNormalize) TearDownSuite(c *C) {
 func (s *testPlanNormalize) TestNormalizedPlan(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1,t2,t3")
+	tk.MustExec("set @@tidb_partition_prune_mode='static-only';")
+	tk.MustExec("drop table if exists t1,t2,t3,t4")
 	tk.MustExec("create table t1 (a int key,b int,c int, index (b));")
 	tk.MustExec("create table t2 (a int key,b int,c int, index (b));")
-	tk.MustExec("create table t3 (a int, b int) partition by range(a) (partition p0 values less than (10),partition p1 values less than MAXVALUE);")
+	tk.MustExec("create table t3 (a int key,b int) partition by hash(a) partitions 2;")
+	tk.MustExec("create table t4 (a int, b int, index(a)) partition by range(a) (partition p0 values less than (10),partition p1 values less than MAXVALUE);")
 	var input []string
 	var output []struct {
 		SQL  string
@@ -166,10 +168,11 @@ func (s *testPlanNormalize) TestEncodeDecodePlan(c *C) {
 func (s *testPlanNormalize) TestNormalizedDigest(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1,t2,t3, bmsql_order_line, bmsql_district,bmsql_stock")
+	tk.MustExec("drop table if exists t1,t2,t3,t4, bmsql_order_line, bmsql_district,bmsql_stock")
 	tk.MustExec("create table t1 (a int key,b int,c int, index (b));")
 	tk.MustExec("create table t2 (a int key,b int,c int, index (b));")
-	tk.MustExec("create table t3 (a int, b int) partition by range(a) (partition p0 values less than (10),partition p1 values less than MAXVALUE);")
+	tk.MustExec("create table t3 (a int, b int, index(a)) partition by range(a) (partition p0 values less than (10),partition p1 values less than MAXVALUE);")
+	tk.MustExec("create table t4 (a int key,b int) partition by hash(a) partitions 2;")
 	tk.MustExec(`CREATE TABLE  bmsql_order_line  (
 	   ol_w_id  int(11) NOT NULL,
 	   ol_d_id  int(11) NOT NULL,
@@ -297,9 +300,14 @@ func (s *testPlanNormalize) TestNormalizedDigest(c *C) {
 			sql2:   "select count(1) as num,a from t1 where a=2 group by a union select count(1) as num,a from t1 where a=4 group by a;",
 			isSame: true,
 		},
-		{ // test for partition
-			sql1:   "select * from t3 where a<5",
-			sql2:   "select * from t3 where a<15",
+		{ // test for tablescan partition
+			sql1:   "select * from t3 where a=5",
+			sql2:   "select * from t3 where a=15",
+			isSame: true,
+		},
+		{ // test for point get partition
+			sql1:   "select * from t4 where a=4",
+			sql2:   "select * from t4 where a=30",
 			isSame: true,
 		},
 		{
