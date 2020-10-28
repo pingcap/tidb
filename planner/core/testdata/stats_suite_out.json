@@ -128,5 +128,158 @@
         "JoinInput": ""
       }
     ]
+  },
+  {
+    "Name": "TestCardinalityGroupCols",
+    "Cases": [
+      {
+        "SQL": "select count(1) from t1 group by a, b",
+        "Plan": [
+          "StreamAgg_9 4.00 root  group by:test.t1.a, test.t1.b, funcs:count(1)->Column#4",
+          "└─IndexReader_22 4.00 root  index:IndexFullScan_21",
+          "  └─IndexFullScan_21 4.00 cop[tikv] table:t1, index:a(a, b) keep order:true"
+        ]
+      },
+      {
+        "SQL": "select * from t1, t2 where t1.a = t2.a and t1.b = t2.b",
+        "Plan": [
+          "IndexMergeJoin_17 4.00 root  inner join, inner:IndexReader_15, outer key:test.t1.a, test.t1.b, inner key:test.t2.a, test.t2.b",
+          "├─TableReader_34(Build) 4.00 root  data:TableFullScan_33",
+          "│ └─TableFullScan_33 4.00 cop[tikv] table:t1 keep order:false",
+          "└─IndexReader_15(Probe) 1.00 root  index:IndexRangeScan_14",
+          "  └─IndexRangeScan_14 1.00 cop[tikv] table:t2, index:a(a, b) range: decided by [eq(test.t2.a, test.t1.a) eq(test.t2.b, test.t1.b)], keep order:true"
+        ]
+      },
+      {
+        "SQL": "select count(1) from t1 where a > 0 group by a, b",
+        "Plan": [
+          "StreamAgg_10 4.00 root  group by:test.t1.a, test.t1.b, funcs:count(1)->Column#4",
+          "└─IndexReader_20 4.00 root  index:IndexRangeScan_19",
+          "  └─IndexRangeScan_19 4.00 cop[tikv] table:t1, index:a(a, b) range:(0,+inf], keep order:true"
+        ]
+      },
+      {
+        "SQL": "select count(1) from t1 where b > 0 group by a, b",
+        "Plan": [
+          "StreamAgg_10 4.00 root  group by:test.t1.a, test.t1.b, funcs:count(1)->Column#4",
+          "└─IndexReader_29 4.00 root  index:Selection_28",
+          "  └─Selection_28 4.00 cop[tikv]  gt(test.t1.b, 0)",
+          "    └─IndexFullScan_27 4.00 cop[tikv] table:t1, index:a(a, b) keep order:true"
+        ]
+      },
+      {
+        "SQL": "select count(c3) from (select a as c1, b as c2, a+1 as c3 from t1) as tmp group by c2, c1",
+        "Plan": [
+          "StreamAgg_10 4.00 root  group by:test.t1.a, test.t1.b, funcs:count(Column#4)->Column#5",
+          "└─Projection_16 4.00 root  test.t1.a, test.t1.b, plus(test.t1.a, 1)->Column#4",
+          "  └─IndexReader_18 4.00 root  index:IndexFullScan_17",
+          "    └─IndexFullScan_17 4.00 cop[tikv] table:t1, index:a(a, b) keep order:true"
+        ]
+      },
+      {
+        "SQL": "select count(tmp.cmp) from (select t1.a as a, t1.b as b, (t1.b > (select t2.b from t2 where t2.a = t1.a)) as cmp from t1) tmp group by tmp.a, tmp.b",
+        "Plan": [
+          "StreamAgg_15 4.00 root  group by:test.t1.a, test.t1.b, funcs:count(Column#7)->Column#8",
+          "└─Projection_26 4.00 root  test.t1.a, test.t1.b, gt(test.t1.b, test.t2.b)->Column#7",
+          "  └─Apply_28 4.00 root  CARTESIAN left outer join",
+          "    ├─IndexReader_30(Build) 4.00 root  index:IndexFullScan_29",
+          "    │ └─IndexFullScan_29 4.00 cop[tikv] table:t1, index:a(a, b) keep order:true",
+          "    └─MaxOneRow_23(Probe) 1.00 root  ",
+          "      └─IndexReader_25 2.00 root  index:IndexRangeScan_24",
+          "        └─IndexRangeScan_24 2.00 cop[tikv] table:t2, index:a(a, b) range: decided by [eq(test.t2.a, test.t1.a)], keep order:false"
+        ]
+      },
+      {
+        "SQL": "select count(tmp.cmp) from (select t1.a as a, t1.b as b, (t1.b in (select t2.b from t2 where t2.a = t1.a limit 3)) as cmp from t1) tmp group by tmp.a, tmp.b",
+        "Plan": [
+          "StreamAgg_17 4.00 root  group by:test.t1.a, test.t1.b, funcs:count(Column#7)->Column#8",
+          "└─Apply_33 4.00 root  left outer semi join, equal:[eq(test.t1.b, test.t2.b)]",
+          "  ├─IndexReader_35(Build) 4.00 root  index:IndexFullScan_34",
+          "  │ └─IndexFullScan_34 4.00 cop[tikv] table:t1, index:a(a, b) keep order:true",
+          "  └─Limit_24(Probe) 3.00 root  offset:0, count:3",
+          "    └─IndexReader_29 3.00 root  index:Limit_28",
+          "      └─Limit_28 3.00 cop[tikv]  offset:0, count:3",
+          "        └─IndexRangeScan_27 3.00 cop[tikv] table:t2, index:a(a, b) range: decided by [eq(test.t2.a, test.t1.a)], keep order:false"
+        ]
+      },
+      {
+        "SQL": "select count(tmp.cmp) from (select t1.a as a, t1.b as b, (t1.b not in (select t2.b from t2 where t2.a = t1.a limit 3)) as cmp from t1) tmp group by tmp.a, tmp.b",
+        "Plan": [
+          "StreamAgg_17 4.00 root  group by:test.t1.a, test.t1.b, funcs:count(Column#7)->Column#8",
+          "└─Apply_33 4.00 root  anti left outer semi join, equal:[eq(test.t1.b, test.t2.b)]",
+          "  ├─IndexReader_35(Build) 4.00 root  index:IndexFullScan_34",
+          "  │ └─IndexFullScan_34 4.00 cop[tikv] table:t1, index:a(a, b) keep order:true",
+          "  └─Limit_24(Probe) 3.00 root  offset:0, count:3",
+          "    └─IndexReader_29 3.00 root  index:Limit_28",
+          "      └─Limit_28 3.00 cop[tikv]  offset:0, count:3",
+          "        └─IndexRangeScan_27 3.00 cop[tikv] table:t2, index:a(a, b) range: decided by [eq(test.t2.a, test.t1.a)], keep order:false"
+        ]
+      },
+      {
+        "SQL": "select count(1) from t1 left join t2 on t1.a = t2.a group by t1.a, t1.b",
+        "Plan": [
+          "HashAgg_9 4.00 root  group by:test.t1.a, test.t1.b, funcs:count(1)->Column#7",
+          "└─HashJoin_23 12.00 root  left outer join, equal:[eq(test.t1.a, test.t2.a)]",
+          "  ├─TableReader_29(Build) 4.00 root  data:TableFullScan_28",
+          "  │ └─TableFullScan_28 4.00 cop[tikv] table:t1 keep order:false",
+          "  └─TableReader_33(Probe) 9.00 root  data:TableFullScan_32",
+          "    └─TableFullScan_32 9.00 cop[tikv] table:t2 keep order:false"
+        ]
+      },
+      {
+        "SQL": "select count(1) from t1 right join t2 on t1.a = t2.a group by t2.a, t2.b",
+        "Plan": [
+          "HashAgg_9 9.00 root  group by:test.t2.a, test.t2.b, funcs:count(1)->Column#7",
+          "└─HashJoin_22 12.00 root  right outer join, equal:[eq(test.t1.a, test.t2.a)]",
+          "  ├─TableReader_33(Build) 4.00 root  data:TableFullScan_32",
+          "  │ └─TableFullScan_32 4.00 cop[tikv] table:t1 keep order:false",
+          "  └─TableReader_29(Probe) 9.00 root  data:TableFullScan_28",
+          "    └─TableFullScan_28 9.00 cop[tikv] table:t2 keep order:false"
+        ]
+      },
+      {
+        "SQL": "select count(tmp.cmp) from (select t1.a as a, t1.b as b, (t1.b in (select t2.b from t2 where t2.a > t1.a)) as cmp from t1) tmp group by tmp.a, tmp.b",
+        "Plan": [
+          "HashAgg_12 4.00 root  group by:test.t1.a, test.t1.b, funcs:count(Column#7)->Column#8",
+          "└─HashJoin_15 4.00 root  left outer semi join, equal:[eq(test.t1.b, test.t2.b)], other cond:gt(test.t2.a, test.t1.a)",
+          "  ├─TableReader_21(Build) 9.00 root  data:TableFullScan_20",
+          "  │ └─TableFullScan_20 9.00 cop[tikv] table:t2 keep order:false",
+          "  └─TableReader_17(Probe) 4.00 root  data:TableFullScan_16",
+          "    └─TableFullScan_16 4.00 cop[tikv] table:t1 keep order:false"
+        ]
+      },
+      {
+        "SQL": "select count(tmp.cmp) from (select t1.a as a, t1.b as b, (t1.b not in (select t2.b from t2 where t2.a > t1.a)) as cmp from t1) tmp group by tmp.a, tmp.b",
+        "Plan": [
+          "HashAgg_12 4.00 root  group by:test.t1.a, test.t1.b, funcs:count(Column#7)->Column#8",
+          "└─HashJoin_15 4.00 root  anti left outer semi join, equal:[eq(test.t1.b, test.t2.b)], other cond:gt(test.t2.a, test.t1.a)",
+          "  ├─TableReader_21(Build) 9.00 root  data:TableFullScan_20",
+          "  │ └─TableFullScan_20 9.00 cop[tikv] table:t2 keep order:false",
+          "  └─TableReader_17(Probe) 4.00 root  data:TableFullScan_16",
+          "    └─TableFullScan_16 4.00 cop[tikv] table:t1 keep order:false"
+        ]
+      },
+      {
+        "SQL": "select * from t1 left join (select t2.a as a, t2.b as b, count(1) as cnt from t2 group by t2.a, t2.b) as tmp on t1.a = tmp.a and t1.b = tmp.b",
+        "Plan": [
+          "Projection_7 4.00 root  test.t1.a, test.t1.b, test.t2.a, test.t2.b, Column#7",
+          "└─MergeJoin_8 4.00 root  left outer join, left key:test.t1.a, test.t1.b, right key:test.t2.a, test.t2.b",
+          "  ├─StreamAgg_14(Build) 9.00 root  group by:test.t2.a, test.t2.b, funcs:count(1)->Column#7, funcs:firstrow(test.t2.a)->test.t2.a, funcs:firstrow(test.t2.b)->test.t2.b",
+          "  │ └─IndexReader_19 9.00 root  index:IndexFullScan_18",
+          "  │   └─IndexFullScan_18 9.00 cop[tikv] table:t2, index:a(a, b) keep order:true",
+          "  └─IndexReader_12(Probe) 4.00 root  index:IndexFullScan_11",
+          "    └─IndexFullScan_11 4.00 cop[tikv] table:t1, index:a(a, b) keep order:true"
+        ]
+      },
+      {
+        "SQL": "select count(tmp.a_sum) from (select t1.a as a, t1.b as b, sum(a) over() as a_sum from t1) tmp group by tmp.a, tmp.b",
+        "Plan": [
+          "HashAgg_11 4.00 root  group by:test.t1.a, test.t1.b, funcs:count(Column#5)->Column#6",
+          "└─Window_12 4.00 root  sum(cast(test.t1.a, decimal(65,0) BINARY))->Column#5 over()",
+          "  └─TableReader_14 4.00 root  data:TableFullScan_13",
+          "    └─TableFullScan_13 4.00 cop[tikv] table:t1 keep order:false"
+        ]
+      }
+    ]
   }
 ]
