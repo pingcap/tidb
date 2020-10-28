@@ -1624,7 +1624,7 @@ func (s *testPlanSuite) TestNthPlanHintWithExplain(c *C) {
 	tk.MustQuery("explain select * from test.tt where a=1 and b=1").Check(testkit.Rows(output[1].Plan...))
 }
 
-func (s *testPlanSuite) TestPreferRangeScan(c *C) {
+func (s *testPlanSuite) TestPreferRangeScanOff(c *C) {
 	var (
 		input  []string
 		output []struct {
@@ -1652,6 +1652,54 @@ func (s *testPlanSuite) TestPreferRangeScan(c *C) {
 	tk.MustExec("insert into test(name,age,addr) select name,age,addr from test;")
 	tk.MustExec("insert into test(name,age,addr) select name,age,addr from test;")
 	tk.MustExec("insert into test(name,age,addr) select name,age,addr from test;")
+	tk.MustExec("insert into test(name,age,addr) select name,age,addr from test;")
+	tk.MustExec("insert into test(name,age,addr) select name,age,addr from test;")
+	tk.MustExec("insert into test(name,age,addr) select name,age,addr from test;")
+	tk.MustExec("insert into test(name,age,addr) select name,age,addr from test;")
+	tk.MustExec("analyze table test;")
+	tk.MustExec(fmt.Sprintf("set session tidb_opt_prefer_range_scan = %v", 0))
+
+	for i, ts := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = ts
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain " + ts).Rows())
+		})
+		tk.MustQuery("explain " + ts).Check(testkit.Rows(output[i].Plan...))
+	}
+}
+
+func (s *testPlanSuite) TestPreferRangeScanOn(c *C) {
+	var (
+		input  []string
+		output []struct {
+			SQL    string
+			Plan   []string
+			Result []string
+		}
+	)
+	s.testData.GetTestCases(c, &input, &output)
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	tk := testkit.NewTestKit(c, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists test;")
+	tk.MustExec("create table test(`id` int(10) NOT NULL AUTO_INCREMENT,`name` varchar(50) NOT NULL DEFAULT 'tidb',`age` int(11) NOT NULL,`addr` varchar(50) DEFAULT 'The ocean of stars',PRIMARY KEY (`id`),KEY `idx_age` (`age`))")
+	tk.MustExec("insert into test(age) values(5);")
+	tk.MustExec("insert into test(name,age,addr) select name,age,addr from test;")
+	tk.MustExec("insert into test(name,age,addr) select name,age,addr from test;")
+	tk.MustExec("insert into test(name,age,addr) select name,age,addr from test;")
+	tk.MustExec("insert into test(name,age,addr) select name,age,addr from test;")
+	tk.MustExec("insert into test(name,age,addr) select name,age,addr from test;")
+	tk.MustExec("insert into test(name,age,addr) select name,age,addr from test;")
+	tk.MustExec("insert into test(name,age,addr) select name,age,addr from test;")
+	tk.MustExec("insert into test(name,age,addr) select name,age,addr from test;")
+	tk.MustExec("insert into test(name,age,addr) select name,age,addr from test;")
+	tk.MustExec("insert into test(name,age,addr) select name,age,addr from test;")
+	tk.MustExec("insert into test(name,age,addr) select name,age,addr from test;")
 	tk.MustExec("analyze table test;")
 	tk.MustExec(fmt.Sprintf("set session tidb_opt_prefer_range_scan = %v", 1))
 
@@ -1659,9 +1707,7 @@ func (s *testPlanSuite) TestPreferRangeScan(c *C) {
 		s.testData.OnRecord(func() {
 			output[i].SQL = ts
 			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain " + ts).Rows())
-			output[i].Result = s.testData.ConvertRowsToStrings(tk.MustQuery(ts).Sort().Rows())
 		})
 		tk.MustQuery("explain " + ts).Check(testkit.Rows(output[i].Plan...))
-		tk.MustQuery(ts).Check(testkit.Rows(output[i].Result...))
 	}
 }
