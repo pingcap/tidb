@@ -1,7 +1,5 @@
 module github.com/pingcap/tidb
 
-replace github.com/pingcap/parser => github.com/TszKitLo40/parser v0.0.0-20201028022828-a96dc9a5bf4d
-
 require (
 	cloud.google.com/go v0.51.0 // indirect
 	github.com/BurntSushi/toml v0.3.1
@@ -55,7 +53,7 @@ require (
 	github.com/pingcap/goleveldb v0.0.0-20191226122134-f82aafb29989
 	github.com/pingcap/kvproto v0.0.0-20201023092649-e6d6090277c9
 	github.com/pingcap/log v0.0.0-20200828042413-fce0951f1463
-	github.com/pingcap/parser v0.0.0-20201024025010-3b2fb4b41d73
+	github.com/pingcap/parser v0.0.0-20201028030005-1328d877c9f3
 	github.com/pingcap/sysutil v0.0.0-20200715082929-4c47bcac246a
 	github.com/pingcap/tidb-tools v4.0.5-0.20200820092506-34ea90c93237+incompatible
 	github.com/pingcap/tipb v0.0.0-20201026044621-45e60c77588f
