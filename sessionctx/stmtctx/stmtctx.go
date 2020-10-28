@@ -177,6 +177,7 @@ type StmtHints struct {
 	HasReplicaReadHint             bool
 	HasMaxExecutionTime            bool
 	HasEnableCascadesPlannerHint   bool
+	SetVars                        map[string]string
 }
 
 // TaskMapNeedBackUp indicates that whether we need to back up taskMap during physical optimizing.
