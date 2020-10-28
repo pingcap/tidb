@@ -66,6 +66,7 @@ const (
 	expressionIndexPrefix = "_V$"
 	changingColumnPrefix  = "_Col$_"
 	changingIndexPrefix   = "_Idx$_"
+	tableNotExist         = -1
 )
 
 func (d *ddl) CreateSchema(ctx sessionctx.Context, schema model.CIStr, charsetInfo *ast.CharsetOpt) error {
@@ -3361,10 +3362,11 @@ func CheckModifyTypeCompatible(origin *types.FieldType, to *types.FieldType) (al
 			mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
 			skipSignCheck = true
 			skipLenCheck = true
-		case mysql.TypeEnum, mysql.TypeSet:
-			return unsupportedMsg, errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
-		default:
+		case mysql.TypeBit:
+			// TODO: Currently string data type cast to bit are not compatible with mysql, should fix here after compatible.
 			return "", errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
+		default:
+			return unsupportedMsg, errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
 		}
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
 		switch to.Tp {
@@ -3400,9 +3402,11 @@ func CheckModifyTypeCompatible(origin *types.FieldType, to *types.FieldType) (al
 			mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
 			msg := fmt.Sprintf("cannot modify %s type column's to type %s", typeVar, to.String())
 			return msg, errUnsupportedModifyColumn.GenWithStackByArgs(msg)
+		case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp, mysql.TypeDuration:
+			// TODO: Currently enum/set cast to date and time are not support yet(expect year), should fix here after supported.
+			return "", errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
 		default:
-			msg := fmt.Sprintf("cannot modify %s type column's to type %s", typeVar, to.String())
-			return "", errUnsupportedModifyColumn.GenWithStackByArgs(msg)
+			return unsupportedMsg, errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
 		}
 	case mysql.TypeNewDecimal:
 		if origin.Tp != to.Tp {
@@ -4477,57 +4481,137 @@ func (d *ddl) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
 
 func (d *ddl) RenameTable(ctx sessionctx.Context, oldIdent, newIdent ast.Ident, isAlterTable bool) error {
 	is := d.GetInfoSchemaWithInterceptor(ctx)
-	oldSchema, ok := is.SchemaByName(oldIdent.Schema)
-	if !ok {
-		if isAlterTable {
-			return infoschema.ErrTableNotExists.GenWithStackByArgs(oldIdent.Schema, oldIdent.Name)
-		}
-		if is.TableExists(newIdent.Schema, newIdent.Name) {
-			return infoschema.ErrTableExists.GenWithStackByArgs(newIdent)
-		}
-		return errFileNotFound.GenWithStackByArgs(oldIdent.Schema, oldIdent.Name)
-	}
-	oldTbl, err := is.TableByName(oldIdent.Schema, oldIdent.Name)
+	tables := make(map[string]int64)
+	schemas, tableID, err := extractTblInfos(is, oldIdent, newIdent, isAlterTable, tables)
 	if err != nil {
-		if isAlterTable {
-			return infoschema.ErrTableNotExists.GenWithStackByArgs(oldIdent.Schema, oldIdent.Name)
-		}
-		if is.TableExists(newIdent.Schema, newIdent.Name) {
-			return infoschema.ErrTableExists.GenWithStackByArgs(newIdent)
-		}
-		return errFileNotFound.GenWithStackByArgs(oldIdent.Schema, oldIdent.Name)
+		return err
 	}
-	if isAlterTable && newIdent.Schema.L == oldIdent.Schema.L && newIdent.Name.L == oldIdent.Name.L {
-		// oldIdent is equal to newIdent, do nothing
+
+	if schemas == nil {
 		return nil
-	}
-	newSchema, ok := is.SchemaByName(newIdent.Schema)
-	if !ok {
-		return ErrErrorOnRename.GenWithStackByArgs(
-			fmt.Sprintf("%s.%s", oldIdent.Schema, oldIdent.Name),
-			fmt.Sprintf("%s.%s", newIdent.Schema, newIdent.Name),
-			168,
-			fmt.Sprintf("Database `%s` doesn't exist", newIdent.Schema))
-	}
-	if is.TableExists(newIdent.Schema, newIdent.Name) {
-		return infoschema.ErrTableExists.GenWithStackByArgs(newIdent)
-	}
-	if err := checkTooLongTable(newIdent.Name); err != nil {
-		return errors.Trace(err)
 	}
 
 	job := &model.Job{
-		SchemaID:   newSchema.ID,
-		TableID:    oldTbl.Meta().ID,
-		SchemaName: newSchema.Name.L,
+		SchemaID:   schemas[1].ID,
+		TableID:    tableID,
+		SchemaName: schemas[1].Name.L,
 		Type:       model.ActionRenameTable,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{oldSchema.ID, newIdent.Name},
+		Args:       []interface{}{schemas[0].ID, newIdent.Name},
 	}
 
 	err = d.doDDLJob(ctx, job)
 	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
+}
+
+func (d *ddl) RenameTables(ctx sessionctx.Context, oldIdents, newIdents []ast.Ident, isAlterTable bool) error {
+	is := d.GetInfoSchemaWithInterceptor(ctx)
+	tableNames := make([]*model.CIStr, 0, len(oldIdents))
+	oldSchemaIDs := make([]int64, 0, len(oldIdents))
+	newSchemaIDs := make([]int64, 0, len(oldIdents))
+	tableIDs := make([]int64, 0, len(oldIdents))
+
+	var schemas []*model.DBInfo
+	var tableID int64
+	var err error
+
+	tables := make(map[string]int64)
+	for i := 0; i < len(oldIdents); i++ {
+		schemas, tableID, err = extractTblInfos(is, oldIdents[i], newIdents[i], isAlterTable, tables)
+		if err != nil {
+			return err
+		}
+		tableIDs = append(tableIDs, tableID)
+		tableNames = append(tableNames, &newIdents[i].Name)
+		oldSchemaIDs = append(oldSchemaIDs, schemas[0].ID)
+		newSchemaIDs = append(newSchemaIDs, schemas[1].ID)
+	}
+
+	job := &model.Job{
+		SchemaID:   schemas[1].ID,
+		TableID:    tableIDs[0],
+		SchemaName: schemas[1].Name.L,
+		Type:       model.ActionRenameTables,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{oldSchemaIDs, newSchemaIDs, tableNames, tableIDs},
+	}
+
+	err = d.doDDLJob(ctx, job)
+	err = d.callHookOnChanged(err)
+	return errors.Trace(err)
+}
+
+func extractTblInfos(is infoschema.InfoSchema, oldIdent, newIdent ast.Ident, isAlterTable bool, tables map[string]int64) ([]*model.DBInfo, int64, error) {
+	oldSchema, ok := is.SchemaByName(oldIdent.Schema)
+	if !ok {
+		if isAlterTable {
+			return nil, 0, infoschema.ErrTableNotExists.GenWithStackByArgs(oldIdent.Schema, oldIdent.Name)
+		}
+		if tableExists(is, newIdent, tables) {
+			return nil, 0, infoschema.ErrTableExists.GenWithStackByArgs(newIdent)
+		}
+		return nil, 0, errFileNotFound.GenWithStackByArgs(oldIdent.Schema, oldIdent.Name)
+	}
+	if !tableExists(is, oldIdent, tables) {
+		if isAlterTable {
+			return nil, 0, infoschema.ErrTableNotExists.GenWithStackByArgs(oldIdent.Schema, oldIdent.Name)
+		}
+		if tableExists(is, newIdent, tables) {
+			return nil, 0, infoschema.ErrTableExists.GenWithStackByArgs(newIdent)
+		}
+		return nil, 0, errFileNotFound.GenWithStackByArgs(oldIdent.Schema, oldIdent.Name)
+	}
+	if isAlterTable && newIdent.Schema.L == oldIdent.Schema.L && newIdent.Name.L == oldIdent.Name.L {
+		//oldIdent is equal to newIdent, do nothing
+		return nil, 0, nil
+	}
+	newSchema, ok := is.SchemaByName(newIdent.Schema)
+	if !ok {
+		return nil, 0, ErrErrorOnRename.GenWithStackByArgs(
+			fmt.Sprintf("%s.%s", oldIdent.Schema, oldIdent.Name),
+			fmt.Sprintf("%s.%s", newIdent.Schema, newIdent.Name),
+			168,
+			fmt.Sprintf("Database `%s` doesn't exist", newIdent.Schema))
+	}
+	if tableExists(is, newIdent, tables) {
+		return nil, 0, infoschema.ErrTableExists.GenWithStackByArgs(newIdent)
+	}
+	if err := checkTooLongTable(newIdent.Name); err != nil {
+		return nil, 0, errors.Trace(err)
+	}
+	oldTableID := getTableID(is, oldIdent, tables)
+	oldIdentKey := getIdentKey(oldIdent)
+	tables[oldIdentKey] = tableNotExist
+	newIdentKey := getIdentKey(newIdent)
+	tables[newIdentKey] = oldTableID
+	return []*model.DBInfo{oldSchema, newSchema}, oldTableID, nil
+}
+
+func tableExists(is infoschema.InfoSchema, ident ast.Ident, tables map[string]int64) bool {
+	identKey := getIdentKey(ident)
+	tableID, ok := tables[identKey]
+	if (ok && tableID != tableNotExist) || (!ok && is.TableExists(ident.Schema, ident.Name)) {
+		return true
+	}
+	return false
+}
+
+func getTableID(is infoschema.InfoSchema, ident ast.Ident, tables map[string]int64) int64 {
+	identKey := getIdentKey(ident)
+	tableID, ok := tables[identKey]
+	if !ok {
+		oldTbl, err := is.TableByName(ident.Schema, ident.Name)
+		if err != nil {
+			return tableNotExist
+		}
+		tableID = oldTbl.Meta().ID
+	}
+	return tableID
+}
+
+func getIdentKey(ident ast.Ident) string {
+	return fmt.Sprintf("%s.%s", ident.Schema.L, ident.Name.L)
 }
 
 func getAnonymousIndex(t table.Table, colName model.CIStr) model.CIStr {

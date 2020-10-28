@@ -294,12 +294,12 @@ func (s *testTableSuite) TestInfoschemaFieldValue(c *C) {
 	tk.MustQuery("show create table information_schema.PROCESSLIST").Check(
 		testkit.Rows("" +
 			"PROCESSLIST CREATE TABLE `PROCESSLIST` (\n" +
-			"  `ID` bigint(21) unsigned NOT NULL DEFAULT 0,\n" +
+			"  `ID` bigint(21) unsigned NOT NULL DEFAULT '0',\n" +
 			"  `USER` varchar(16) NOT NULL DEFAULT '',\n" +
 			"  `HOST` varchar(64) NOT NULL DEFAULT '',\n" +
 			"  `DB` varchar(64) DEFAULT NULL,\n" +
 			"  `COMMAND` varchar(16) NOT NULL DEFAULT '',\n" +
-			"  `TIME` int(7) NOT NULL DEFAULT 0,\n" +
+			"  `TIME` int(7) NOT NULL DEFAULT '0',\n" +
 			"  `STATE` varchar(7) DEFAULT NULL,\n" +
 			"  `INFO` longtext DEFAULT NULL,\n" +
 			"  `DIGEST` varchar(64) DEFAULT '',\n" +
@@ -444,7 +444,13 @@ func (sm *mockSessionManager) GetProcessInfo(id uint64) (*util.ProcessInfo, bool
 
 func (sm *mockSessionManager) Kill(connectionID uint64, query bool) {}
 
+func (sm *mockSessionManager) KillAllConnections() {}
+
 func (sm *mockSessionManager) UpdateTLSConfig(cfg *tls.Config) {}
+
+func (sm *mockSessionManager) ServerID() uint64 {
+	return 1
+}
 
 func (s *testTableSuite) TestSomeTables(c *C) {
 	se, err := session.CreateSession4Test(s.store)
@@ -691,9 +697,9 @@ func (s *testTableSuite) TestReloadDropDatabase(c *C) {
 func (s *testClusterTableSuite) TestForClusterServerInfo(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	instances := []string{
-		strings.Join([]string{"tidb", s.listenAddr, s.listenAddr, "mock-version,mock-githash"}, ","),
-		strings.Join([]string{"pd", s.listenAddr, s.listenAddr, "mock-version,mock-githash"}, ","),
-		strings.Join([]string{"tikv", s.listenAddr, s.listenAddr, "mock-version,mock-githash"}, ","),
+		strings.Join([]string{"tidb", s.listenAddr, s.listenAddr, "mock-version,mock-githash,1001"}, ","),
+		strings.Join([]string{"pd", s.listenAddr, s.listenAddr, "mock-version,mock-githash,0"}, ","),
+		strings.Join([]string{"tikv", s.listenAddr, s.listenAddr, "mock-version,mock-githash,0"}, ","),
 	}
 
 	fpExpr := `return("` + strings.Join(instances, ";") + `")`
