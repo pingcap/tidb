@@ -55,6 +55,7 @@ var _ = Suite(&testIntegrationSuite4{&testIntegrationSuite{}})
 var _ = Suite(&testIntegrationSuite5{&testIntegrationSuite{}})
 var _ = Suite(&testIntegrationSuite6{&testIntegrationSuite{}})
 var _ = SerialSuites(&testIntegrationSuite7{&testIntegrationSuite{}})
+var _ = SerialSuites(&testIntegrationSuite8{&testIntegrationSuite{}})
 
 type testIntegrationSuite struct {
 	lease   time.Duration
@@ -123,6 +124,7 @@ type testIntegrationSuite4 struct{ *testIntegrationSuite }
 type testIntegrationSuite5 struct{ *testIntegrationSuite }
 type testIntegrationSuite6 struct{ *testIntegrationSuite }
 type testIntegrationSuite7 struct{ *testIntegrationSuite }
+type testIntegrationSuite8 struct{ *testIntegrationSuite }
 
 func (s *testIntegrationSuite5) TestNoZeroDateMode(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
@@ -430,13 +432,13 @@ func (s *testIntegrationSuite1) TestIssue5092(c *C) {
 	tk.MustExec("alter table t_issue_5092 add column d int default 4 after c1, add column aa int default 0 first")
 	tk.MustQuery("select * from t_issue_5092").Check(testkit.Rows("0 1 2 22 3 33 4"))
 	tk.MustQuery("show create table t_issue_5092").Check(testkit.Rows("t_issue_5092 CREATE TABLE `t_issue_5092` (\n" +
-		"  `aa` int(11) DEFAULT 0,\n" +
-		"  `a` int(11) DEFAULT 1,\n" +
-		"  `b` int(11) DEFAULT 2,\n" +
-		"  `b1` int(11) DEFAULT 22,\n" +
-		"  `c` int(11) DEFAULT 3,\n" +
-		"  `c1` int(11) DEFAULT 33,\n" +
-		"  `d` int(11) DEFAULT 4\n" +
+		"  `aa` int(11) DEFAULT '0',\n" +
+		"  `a` int(11) DEFAULT '1',\n" +
+		"  `b` int(11) DEFAULT '2',\n" +
+		"  `b1` int(11) DEFAULT '22',\n" +
+		"  `c` int(11) DEFAULT '3',\n" +
+		"  `c1` int(11) DEFAULT '33',\n" +
+		"  `d` int(11) DEFAULT '4'\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 	tk.MustExec("drop table t_issue_5092")
 
@@ -947,15 +949,15 @@ func (s *testIntegrationSuite5) TestModifyColumnOption(c *C) {
 	tk.MustExec("create table t2 (b char, c int)")
 	assertErrCode("alter table t2 modify column c int references t1(a)", errMsg)
 	_, err := tk.Exec("alter table t1 change a a varchar(16)")
-	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify column: type varchar(16) not match origin int(11)")
+	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify column: type varchar(16) not match origin int(11), and tidb_enable_change_column_type is false")
 	_, err = tk.Exec("alter table t1 change a a varchar(10)")
-	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify column: type varchar(10) not match origin int(11)")
+	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify column: type varchar(10) not match origin int(11), and tidb_enable_change_column_type is false")
 	_, err = tk.Exec("alter table t1 change a a datetime")
-	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify column: type datetime not match origin int(11)")
+	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify column: type datetime not match origin int(11), and tidb_enable_change_column_type is false")
 	_, err = tk.Exec("alter table t1 change a a int(11) unsigned")
 	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify column: can't change unsigned integer to signed or vice versa, and tidb_enable_change_column_type is false")
 	_, err = tk.Exec("alter table t2 change b b int(11) unsigned")
-	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify column: type int(11) not match origin char(1)")
+	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify column: type int(11) not match origin char(1), and tidb_enable_change_column_type is false")
 }
 
 func (s *testIntegrationSuite4) TestIndexOnMultipleGeneratedColumn(c *C) {
@@ -1351,6 +1353,26 @@ func (s *testIntegrationSuite6) TestCreateTableTooLarge(c *C) {
 	atomic.StoreUint32(&ddl.TableColumnCountLimit, originLimit)
 }
 
+func (s *testIntegrationSuite8) TestCreateTableTooManyIndexes(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	sql := "create table t_too_many_indexes ("
+	for i := 0; i < 100; i++ {
+		if i != 0 {
+			sql += ","
+		}
+		sql += fmt.Sprintf("c%d int", i)
+	}
+	for i := 0; i < 100; i++ {
+		sql += ","
+		sql += fmt.Sprintf("key k%d(c%d)", i, i)
+	}
+	sql += ");"
+
+	tk.MustGetErrCode(sql, errno.ErrTooManyKeys)
+}
+
 func (s *testIntegrationSuite3) TestChangeColumnPosition(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -1458,6 +1480,28 @@ func (s *testIntegrationSuite6) TestAddColumnTooMany(c *C) {
 	tk.MustExec("alter table t_column_too_many add column a_512 int")
 	alterSQL := "alter table t_column_too_many add column a_513 int"
 	tk.MustGetErrCode(alterSQL, errno.ErrTooManyFields)
+}
+
+func (s *testIntegrationSuite8) TestCreateTooManyIndexes(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	count := int(atomic.LoadUint32(&ddl.TableIndexCountLimit) - 1)
+	sql := "create table t_index_too_many ("
+	for i := 0; i < 100; i++ {
+		if i != 0 {
+			sql += ","
+		}
+		sql += fmt.Sprintf("c%d int", i)
+	}
+	for i := 0; i < count; i++ {
+		sql += ","
+		sql += fmt.Sprintf("key k%d(c%d)", i, i)
+	}
+	sql += ");"
+	tk.MustExec(sql)
+	tk.MustExec("create index idx1 on t_index_too_many (c62)")
+	alterSQL := "create index idx2 on t_index_too_many (c63)"
+	tk.MustGetErrCode(alterSQL, errno.ErrTooManyKeys)
 }
 
 func (s *testIntegrationSuite3) TestAlterColumn(c *C) {
@@ -2200,6 +2244,8 @@ func (s *testIntegrationSuite7) TestCreateExpressionIndexError(c *C) {
 	tk.MustExec("drop table if exists t;")
 	tk.MustGetErrCode("create table t (j json, key k (((j,j))))", errno.ErrFunctionalIndexRowValueIsNotAllowed)
 	tk.MustExec("create table t (j json, key k ((j+1),(j+1)))")
+
+	tk.MustGetErrCode("create table t1 (col1 int, index ((concat(''))));", errno.ErrWrongKeyColumnFunctionalIndex)
 }
 
 func (s *testIntegrationSuite7) TestAddExpressionIndexOnPartition(c *C) {
@@ -2450,4 +2496,17 @@ func (s *testIntegrationSuite7) TestAutoIncrementTableOption(c *C) {
 	tk.MustExec("alter table t auto_increment = 12345678901234567890;")
 	tk.MustExec("insert into t values ();")
 	tk.MustQuery("select * from t;").Check(testkit.Rows("12345678901234567890"))
+}
+
+func (s *testIntegrationSuite3) TestIssue20490(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("create table issue20490 (a int);")
+	tk.MustExec("insert into issue20490(a) values(1);")
+	tk.MustExec("alter table issue20490 add b int not null default 1;")
+	tk.MustExec("insert into issue20490(a) values(2);")
+	tk.MustExec("alter table issue20490 modify b int null;")
+	tk.MustExec("insert into issue20490(a) values(3);")
+
+	tk.MustQuery("select b from issue20490 order by a;").Check(testkit.Rows("1", "1", "<nil>"))
 }
