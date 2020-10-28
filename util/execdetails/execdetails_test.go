@@ -15,6 +15,7 @@ package execdetails
 
 import (
 	"fmt"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -120,8 +121,6 @@ func TestCopRuntimeStats(t *testing.T) {
 	}
 }
 
-<<<<<<< HEAD
-=======
 func TestCopRuntimeStatsForTiFlash(t *testing.T) {
 	stats := NewRuntimeStatsColl()
 	tableScanID := 1
@@ -159,7 +158,7 @@ func TestCopRuntimeStatsForTiFlash(t *testing.T) {
 		t.Fatal("table_reader not exists")
 	}
 }
->>>>>>> 58f2a48b1... *:add the indexlookup runtime stats infomation (#20145)
+
 func TestRuntimeStatsWithCommit(t *testing.T) {
 	commitDetail := &CommitDetails{
 		GetCommitTsTime:   time.Second,
