@@ -1092,3 +1092,151 @@ func (s *testSuite5) TestAdminCheckWithSnapshot(c *C) {
 	tk.MustExec("admin check index admin_t_s a;")
 	tk.MustExec("drop table if exists admin_t_s")
 }
+
+func (s *globalIndexSuite) TestAdminCheckWithGlobalIndex(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	check := func() {
+		tk.MustExec("insert admin_test (c1, c2) values (1, 1), (2, 2), (5, 5), (10, 10), (11, 11), (NULL, NULL)")
+		tk.MustExec("admin check table admin_test")
+		tk.MustExec("admin check index admin_test c1")
+		tk.MustExec("admin check index admin_test c2")
+	}
+
+	// Test for hash partition table.
+	tk.MustExec("drop table if exists admin_test")
+	tk.MustExec("create table admin_test (c1 int, c2 int, c3 int default 1) partition by hash(c2) partitions 5;")
+	// c1 is global, c2 is local
+	tk.MustExec("create unique index c1 on admin_test(c1)")
+	tk.MustExec("create unique index c2 on admin_test(c2)")
+	check()
+
+	// Test for range partition table.
+	tk.MustExec("drop table if exists admin_test")
+	tk.MustExec(`create table admin_test (c1 int, c2 int, c3 int default 1) PARTITION BY RANGE ( c2 ) (
+		PARTITION p0 VALUES LESS THAN (5),
+		PARTITION p1 VALUES LESS THAN (10),
+		PARTITION p2 VALUES LESS THAN (MAXVALUE))`)
+	// c1 is global, c2 is local
+	tk.MustExec("create unique index c1 on admin_test(c1)")
+	tk.MustExec("create unique index c2 on admin_test(c2)")
+	check()
+}
+
+func (s *globalIndexSuite) TestAdminRecoverIndexWithGlobalIndex(c *C) {
+	// Test no corruption case.
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists admin_test")
+	tk.MustExec("create table admin_test (c1 int, c2 int, c3 int default 1) partition by hash(c2) partitions 5;")
+	// c1 is global, c2 is local
+	tk.MustExec("create unique index c1 on admin_test(c1)")
+	tk.MustExec("create unique index c2 on admin_test(c2)")
+	tk.MustExec("insert admin_test (c1, c2) values (1, 1), (2, 2), (NULL, NULL)")
+
+	r := tk.MustQuery("admin recover index admin_test c1")
+	r.Check(testkit.Rows("0 3"))
+
+	r = tk.MustQuery("admin recover index admin_test c2")
+	r.Check(testkit.Rows("0 3"))
+
+	tk.MustExec("admin check index admin_test c1")
+	tk.MustExec("admin check index admin_test c2")
+
+	tk.MustExec("drop table if exists admin_test")
+	tk.MustExec("create table admin_test (c1 int, c2 int, c3 int default 1) partition by hash(c2) partitions 5;")
+	tk.MustExec("create unique index c1 on admin_test(c1)")
+	tk.MustExec("insert admin_test (c1, c2) values (1, 1), (2, 2), (3, 3), (10, 10), (20, 20)")
+
+	r = tk.MustQuery("admin recover index admin_test c1")
+	r.Check(testkit.Rows("0 5"))
+	tk.MustExec("admin check index admin_test c1")
+
+	// Make some corrupted index.
+	s.ctx = mock.NewContext()
+	s.ctx.Store = s.store
+	is := s.domain.InfoSchema()
+	dbName := model.NewCIStr("test")
+	tblName := model.NewCIStr("admin_test")
+	tbl, err := is.TableByName(dbName, tblName)
+	c.Assert(err, IsNil)
+
+	tblInfo := tbl.Meta()
+	idxInfo := tblInfo.FindIndexByName("c1")
+	indexOpr := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo)
+	sc := s.ctx.GetSessionVars().StmtCtx
+	txn, err := s.store.Begin()
+	c.Assert(err, IsNil)
+	err = indexOpr.Delete(sc, txn, types.MakeDatums(1), kv.IntHandle(1))
+	c.Assert(err, IsNil)
+	err = txn.Commit(context.Background())
+	c.Assert(err, IsNil)
+	err = tk.ExecToErr("admin check table admin_test")
+	c.Assert(err, NotNil)
+	c.Assert(executor.ErrAdminCheckTable.Equal(err), IsTrue)
+	err = tk.ExecToErr("admin check index admin_test c1")
+	c.Assert(err, NotNil)
+
+	r = tk.MustQuery("SELECT COUNT(*) FROM admin_test USE INDEX(c1)")
+	r.Check(testkit.Rows("4"))
+
+	r = tk.MustQuery("admin recover index admin_test c1")
+	r.Check(testkit.Rows("1 5"))
+
+	r = tk.MustQuery("SELECT COUNT(*) FROM admin_test USE INDEX(c1)")
+	r.Check(testkit.Rows("5"))
+	tk.MustExec("admin check index admin_test c1")
+	tk.MustExec("admin check table admin_test")
+}
+
+func (s *globalIndexSuite) TestAdminCheckIndexRangeWithGlobalIndex(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec(`drop table if exists check_index_test`)
+	tk.MustExec("create table check_index_test (a int, b varchar(10), c int) partition by hash(c) partitions 5;")
+	tk.MustExec("create unique index a_b on check_index_test(a, b)")
+	tk.MustExec(`insert check_index_test values (3, "ab", 1), (2, "cd", 2), (1, "ef", 3), (-1, "hi", 4)`)
+	result := tk.MustQuery("admin check index check_index_test a_b (2, 4);")
+	result.Check(testkit.Rows("1 ef 3", "2 cd 2"))
+
+	result = tk.MustQuery("admin check index check_index_test a_b (3, 5);")
+	result.Check(testkit.Rows("-1 hi 4", "1 ef 3"))
+
+	tk.MustExec("use mysql")
+	result = tk.MustQuery("admin check index test.check_index_test a_b (2, 3), (4, 5);")
+	result.Check(testkit.Rows("-1 hi 4", "2 cd 2"))
+}
+
+func (s *globalIndexSuite) TestAdminChecksumWithGlobalIndex(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("DROP TABLE IF EXISTS admin_checksum_partition_test;")
+	tk.MustExec("CREATE TABLE admin_checksum_partition_test (a INT, b INT, c INT) PARTITION BY HASH(a) PARTITIONS 4;")
+
+	// Mocktikv returns 1 for every table/index scan, then we will xor the checksums of a table.
+	// So if x requests are built, result will be (x%2, x, x)
+	// Here, 4 partitions + 1 table are scaned.
+	r := tk.MustQuery("ADMIN CHECKSUM TABLE admin_checksum_partition_test;")
+	r.Check(testkit.Rows("test admin_checksum_partition_test 1 5 5"))
+
+	tk.MustExec("create unique index b on admin_checksum_partition_test(b)")
+	// (4 partitions + 1 table) * (1 index scan + 1 table scan)
+	r = tk.MustQuery("ADMIN CHECKSUM TABLE admin_checksum_partition_test;")
+	r.Check(testkit.Rows("test admin_checksum_partition_test 0 10 10"))
+}
+
+func (s *globalIndexSuite) TestAdminCleanupIndexWithGlobalIndex(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists admin_test")
+	tk.MustExec("create table admin_test (c1 int, c2 int, c3 int) partition by hash(c1) partitions 5;")
+	// c1 is global, c2 is local
+	tk.MustExec("create unique index c2 on admin_test(c2)")
+	tk.MustExec("create unique index c3 on admin_test(c3)")
+	tk.MustExec("insert admin_test (c1, c2, c3) values (1, 1, 1), (2, 2, 2), (NULL, NULL, 3)")
+
+	r := tk.MustQuery("admin cleanup index admin_test c2")
+	r.Check(testkit.Rows("0"))
+	r = tk.MustQuery("admin cleanup index admin_test c3")
+	r.Check(testkit.Rows("0"))
+}

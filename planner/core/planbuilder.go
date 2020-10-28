@@ -41,7 +41,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/parser_driver"
+	driver "github.com/pingcap/tidb/types/parser_driver"
 	util2 "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/execdetails"
@@ -1272,12 +1272,9 @@ func getIndexColsSchema(tblInfo *model.TableInfo, idx *model.IndexInfo, allColSc
 }
 
 func getPhysicalID(t table.Table) (physicalID int64, isPartition bool) {
-	tblInfo := t.Meta()
-	if tblInfo.GetPartitionInfo() != nil {
-		pid := t.(table.PhysicalTable).GetPhysicalID()
-		return pid, true
-	}
-	return tblInfo.ID, false
+	// In global index, pid is equal to tid in PartionedTable.
+	pid := t.(table.PhysicalTable).GetPhysicalID()
+	return pid, pid != t.Meta().ID
 }
 
 func tryGetPkExtraColumn(sv *variable.SessionVars, tblInfo *model.TableInfo) (*model.ColumnInfo, *expression.Column, bool) {
@@ -1330,7 +1327,7 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReaders(ctx context.Context, dbNam
 		}
 		indexInfos = append(indexInfos, idxInfo)
 		// For partition tables.
-		if pi := tbl.Meta().GetPartitionInfo(); pi != nil {
+		if pi := tbl.Meta().GetPartitionInfo(); pi != nil && !idxInfo.Global {
 			for _, def := range pi.Definitions {
 				t := tbl.(table.PartitionedTable).GetPartition(def.ID)
 				reader, err := b.buildPhysicalIndexLookUpReader(ctx, dbName, t, idxInfo)
@@ -1341,7 +1338,7 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReaders(ctx context.Context, dbNam
 			}
 			continue
 		}
-		// For non-partition tables.
+		// For non-partition tables or global index.
 		reader, err := b.buildPhysicalIndexLookUpReader(ctx, dbName, tbl, idxInfo)
 		if err != nil {
 			return nil, nil, err
