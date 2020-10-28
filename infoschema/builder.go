@@ -51,7 +51,8 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 	case model.ActionModifySchemaCharsetAndCollate:
 		return nil, b.applyModifySchemaCharsetAndCollate(m, diff)
 	case model.ActionAlterTableAlterPartition:
-		return nil, b.applyPartitionPlacementUpdate(m, diff)
+		// there is no need to udpate table schema
+		return nil, b.applyPlacementUpdate(placement.GroupID(diff.TableID))
 	}
 	roDBInfo, ok := b.is.SchemaByID(diff.SchemaID)
 	if !ok {
@@ -85,13 +86,15 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 			// For normal node's information schema, repaired table is existed.
 			// For repair node's information schema, repaired table is filtered (couldn't find it in `is`).
 			// So here skip to reserve the allocators when repairing table.
-			diff.Type != model.ActionRepairTable {
+			diff.Type != model.ActionRepairTable &&
+			// Alter sequence will change the sequence info in the allocator, so the old allocator is not valid any more.
+			diff.Type != model.ActionAlterSequence {
 			oldAllocs, _ := b.is.AllocByID(oldTableID)
 			allocs = filterAllocators(diff, oldAllocs)
 		}
 
 		tmpIDs := tblIDs
-		if diff.Type == model.ActionRenameTable && diff.OldSchemaID != diff.SchemaID {
+		if (diff.Type == model.ActionRenameTable || diff.Type == model.ActionRenameTables) && diff.OldSchemaID != diff.SchemaID {
 			oldRoDBInfo, ok := b.is.SchemaByID(diff.OldSchemaID)
 			if !ok {
 				return nil, ErrDatabaseNotExists.GenWithStackByArgs(
@@ -122,8 +125,17 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 			// Reduce the impact on DML when executing partition DDL. eg.
 			// While session 1 performs the DML operation associated with partition 1,
 			// the TRUNCATE operation of session 2 on partition 2 does not cause the operation of session 1 to fail.
-			if diff.Type == model.ActionTruncateTablePartition {
+			switch diff.Type {
+			case model.ActionTruncateTablePartition:
 				tblIDs = append(tblIDs, opt.OldTableID)
+				b.applyPlacementDelete(placement.GroupID(opt.OldTableID))
+				err := b.applyPlacementUpdate(placement.GroupID(opt.TableID))
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
+				continue
+			case model.ActionDropTablePartition:
+				b.applyPlacementDelete(placement.GroupID(opt.OldTableID))
 				continue
 			}
 			var err error
@@ -270,6 +282,22 @@ func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID i
 			fmt.Sprintf("(Table ID %d)", tableID),
 		)
 	}
+
+	switch tp {
+	case model.ActionDropTablePartition:
+	case model.ActionTruncateTablePartition:
+	default:
+		pi := tblInfo.GetPartitionInfo()
+		if pi != nil {
+			for _, partition := range pi.Definitions {
+				err = b.applyPlacementUpdate(placement.GroupID(partition.ID))
+				if err != nil {
+					return nil, err
+				}
+			}
+		}
+	}
+
 	if tp != model.ActionTruncateTablePartition {
 		affected = appendAffectedIDs(affected, tblInfo)
 	}
@@ -378,15 +406,19 @@ func (b *Builder) applyDropTable(dbInfo *model.DBInfo, tableID int64, affected [
 	return affected
 }
 
-func (b *Builder) applyPartitionPlacementUpdate(m *meta.Meta, diff *model.SchemaDiff) error {
-	tID := placement.GroupID(diff.TableID)
+func (b *Builder) applyPlacementDelete(id string) {
+	delete(b.is.ruleBundleMap, id)
+}
 
-	bundle, err := infosync.GetRuleBundle(nil, tID)
+func (b *Builder) applyPlacementUpdate(id string) error {
+	bundle, err := infosync.GetRuleBundle(nil, id)
 	if err != nil {
 		return err
 	}
 
-	b.is.ruleBundleMap[tID] = bundle
+	if !bundle.IsEmpty() {
+		b.is.ruleBundleMap[id] = bundle
+	}
 	return nil
 }
 

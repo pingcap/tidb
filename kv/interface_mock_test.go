@@ -158,10 +158,10 @@ func (s *mockStorage) BeginWithStartTS(startTS uint64) (Transaction, error) {
 	return s.Begin()
 }
 
-func (s *mockStorage) GetSnapshot(ver Version) (Snapshot, error) {
+func (s *mockStorage) GetSnapshot(ver Version) Snapshot {
 	return &mockSnapshot{
 		store: newMemDB(),
-	}, nil
+	}
 }
 
 func (s *mockStorage) Close() error {
@@ -178,6 +178,10 @@ func (s *mockStorage) CurrentVersion() (Version, error) {
 }
 
 func (s *mockStorage) GetClient() Client {
+	return nil
+}
+
+func (s *mockStorage) GetMPPClient() MPPClient {
 	return nil
 }
 

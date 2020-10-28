@@ -474,6 +474,9 @@ func (e *ShowExec) fetchShowColumns(ctx context.Context) error {
 			if idx >= 0 {
 				col.FieldType = *viewSchema.Columns[idx].GetType()
 			}
+			if col.Tp == mysql.TypeVarString {
+				col.Tp = mysql.TypeVarchar
+			}
 		}
 	}
 	for _, col := range cols {
@@ -650,9 +653,9 @@ func (e *ShowExec) fetchShowVariables() (err error) {
 		value         string
 		ok            bool
 		sessionVars   = e.ctx.GetSessionVars()
-		unreachedVars = make([]string, 0, len(variable.SysVars))
+		unreachedVars = make([]string, 0, len(variable.GetSysVars()))
 	)
-	for _, v := range variable.SysVars {
+	for _, v := range variable.GetSysVars() {
 		if !e.GlobalScope {
 			// For a session scope variable,
 			// 1. try to fetch value from SessionVars.Systems;
@@ -682,7 +685,7 @@ func (e *ShowExec) fetchShowVariables() (err error) {
 		for _, varName := range unreachedVars {
 			varValue, ok := systemVars[varName]
 			if !ok {
-				varValue = variable.SysVars[varName].Value
+				varValue = variable.GetSysVar(varName).Value
 			}
 			e.appendRow([]interface{}{varName, varValue})
 		}
@@ -815,7 +818,7 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 					if col.Tp == mysql.TypeBit {
 						defaultValBinaryLiteral := types.BinaryLiteral(defaultValStr)
 						fmt.Fprintf(buf, " DEFAULT %s", defaultValBinaryLiteral.ToBitLiteralString(true))
-					} else if types.IsTypeNumeric(col.Tp) || col.DefaultIsExpr {
+					} else if col.DefaultIsExpr {
 						fmt.Fprintf(buf, " DEFAULT %s", format.OutputFormat(defaultValStr))
 					} else {
 						fmt.Fprintf(buf, " DEFAULT '%s'", format.OutputFormat(defaultValStr))
@@ -1120,19 +1123,57 @@ func appendPartitionInfo(partitionInfo *model.PartitionInfo, buf *bytes.Buffer) 
 			}
 		}
 		buf.WriteString(") (\n")
+	} else if partitionInfo.Type == model.PartitionTypeList {
+		if len(partitionInfo.Columns) == 0 {
+			fmt.Fprintf(buf, "\nPARTITION BY %s (%s) (\n", partitionInfo.Type.String(), partitionInfo.Expr)
+		} else {
+			colsName := ""
+			for _, col := range partitionInfo.Columns {
+				if len(colsName) > 0 {
+					colsName += ","
+				}
+				colsName += col.L
+			}
+			fmt.Fprintf(buf, "\nPARTITION BY LIST COLUMNS(%s) (\n", colsName)
+		}
 	} else {
 		fmt.Fprintf(buf, "\nPARTITION BY %s ( %s ) (\n", partitionInfo.Type.String(), partitionInfo.Expr)
 	}
-	for i, def := range partitionInfo.Definitions {
-		lessThans := strings.Join(def.LessThan, ",")
-		fmt.Fprintf(buf, "  PARTITION `%s` VALUES LESS THAN (%s)", def.Name, lessThans)
-		if i < len(partitionInfo.Definitions)-1 {
-			buf.WriteString(",\n")
-		} else {
-			buf.WriteString("\n")
+	if partitionInfo.Type == model.PartitionTypeRange {
+		for i, def := range partitionInfo.Definitions {
+			lessThans := strings.Join(def.LessThan, ",")
+			fmt.Fprintf(buf, "  PARTITION `%s` VALUES LESS THAN (%s)", def.Name, lessThans)
+			if i < len(partitionInfo.Definitions)-1 {
+				buf.WriteString(",\n")
+			} else {
+				buf.WriteString("\n")
+			}
 		}
+		buf.WriteString(")")
+	} else if partitionInfo.Type == model.PartitionTypeList {
+		for i, def := range partitionInfo.Definitions {
+			values := bytes.NewBuffer(nil)
+			for j, inValues := range def.InValues {
+				if j > 0 {
+					values.WriteString(",")
+				}
+				if len(inValues) > 1 {
+					values.WriteString("(")
+					values.WriteString(strings.Join(inValues, ","))
+					values.WriteString(")")
+				} else {
+					values.WriteString(strings.Join(inValues, ","))
+				}
+			}
+			fmt.Fprintf(buf, "  PARTITION `%s` VALUES IN (%s)", def.Name, values.String())
+			if i < len(partitionInfo.Definitions)-1 {
+				buf.WriteString(",\n")
+			} else {
+				buf.WriteString("\n")
+			}
+		}
+		buf.WriteString(")")
 	}
-	buf.WriteString(")")
 }
 
 // ConstructResultOfShowCreateDatabase constructs the result for show create database.

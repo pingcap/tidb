@@ -104,7 +104,7 @@ func (s *testBootstrapSuite) TestBootstrap(c *C) {
 
 func globalVarsCount() int64 {
 	var count int64
-	for _, v := range variable.SysVars {
+	for _, v := range variable.GetSysVars() {
 		if v.Scope != variable.ScopeSession {
 			count++
 		}

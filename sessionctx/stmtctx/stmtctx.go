@@ -177,6 +177,7 @@ type StmtHints struct {
 	HasReplicaReadHint             bool
 	HasMaxExecutionTime            bool
 	HasEnableCascadesPlannerHint   bool
+	SetVars                        map[string]string
 }
 
 // TaskMapNeedBackUp indicates that whether we need to back up taskMap during physical optimizing.
@@ -491,18 +492,30 @@ func (sc *StatementContext) ResetForRetry() {
 // the information in slow query log.
 func (sc *StatementContext) MergeExecDetails(details *execdetails.ExecDetails, commitDetails *execdetails.CommitDetails) {
 	sc.mu.Lock()
+	defer sc.mu.Unlock()
 	if details != nil {
 		sc.mu.execDetails.CopTime += details.CopTime
 		sc.mu.execDetails.ProcessTime += details.ProcessTime
 		sc.mu.execDetails.WaitTime += details.WaitTime
 		sc.mu.execDetails.BackoffTime += details.BackoffTime
 		sc.mu.execDetails.RequestCount++
-		sc.mu.execDetails.TotalKeys += details.TotalKeys
-		sc.mu.execDetails.ProcessedKeys += details.ProcessedKeys
+		sc.MergeCopDetails(details.CopDetail)
 		sc.mu.allExecDetails = append(sc.mu.allExecDetails, details)
 	}
 	sc.mu.execDetails.CommitDetail = commitDetails
-	sc.mu.Unlock()
+}
+
+// MergeCopDetails merges cop details into self.
+func (sc *StatementContext) MergeCopDetails(copDetails *execdetails.CopDetails) {
+	// Currently TiFlash cop task does not fill copDetails, so need to skip it if copDetails is nil
+	if copDetails == nil {
+		return
+	}
+	if sc.mu.execDetails.CopDetail == nil {
+		sc.mu.execDetails.CopDetail = copDetails
+	} else {
+		sc.mu.execDetails.CopDetail.Merge(copDetails)
+	}
 }
 
 // MergeLockKeysExecDetails merges lock keys execution details into self.

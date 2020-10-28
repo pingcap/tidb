@@ -81,7 +81,6 @@ type ParallelNestedLoopApplyExec struct {
 	useCache           bool
 	cacheHitCounter    int64
 	cacheAccessCounter int64
-	cacheLock          sync.RWMutex
 
 	memTracker *memory.Tracker // track memory usage.
 }
@@ -277,9 +276,7 @@ func (e *ParallelNestedLoopApplyExec) fetchAllInners(ctx context.Context, id int
 	}
 	if e.useCache { // look up the cache
 		atomic.AddInt64(&e.cacheAccessCounter, 1)
-		e.cacheLock.RLock()
 		value, err := e.cache.Get(key)
-		e.cacheLock.RUnlock()
 		if err != nil {
 			return err
 		}
@@ -325,8 +322,6 @@ func (e *ParallelNestedLoopApplyExec) fetchAllInners(ctx context.Context, id int
 	}
 
 	if e.useCache { // update the cache
-		e.cacheLock.Lock()
-		defer e.cacheLock.Unlock()
 		if _, err := e.cache.Set(key, e.innerList[id]); err != nil {
 			return err
 		}
