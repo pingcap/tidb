@@ -63,7 +63,6 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) Executor {
 type PointGetExecutor struct {
 	baseExecutor
 
-	dbName       string
 	tblInfo      *model.TableInfo
 	handle       kv.Handle
 	idxInfo      *model.IndexInfo
@@ -93,7 +92,6 @@ type PointGetExecutor struct {
 // Init set fields needed for PointGetExecutor reuse, this does NOT change baseExecutor field
 func (e *PointGetExecutor) Init(p *plannercore.PointGetPlan, startTs uint64) {
 	decoder := NewRowDecoder(e.ctx, p.Schema(), p.TblInfo)
-	e.dbName = p.DBName()
 	e.tblInfo = p.TblInfo
 	e.handle = p.Handle
 	e.idxInfo = p.IndexInfo
@@ -161,7 +159,7 @@ func (e *PointGetExecutor) Close() error {
 		if e.runtimeStats != nil {
 			actRows = e.runtimeStats.GetActRows()
 		}
-		e.ctx.StoreIndexUsage(e.dbName, e.tblInfo.Name.L, e.idxInfo.Name.L, actRows)
+		e.ctx.StoreIndexUsage(e.tblInfo.ID, e.idxInfo.ID, actRows)
 	}
 	e.done = false
 	return nil

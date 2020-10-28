@@ -440,7 +440,7 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal, Name: "innodb_max_undo_log_size", Value: ""},
 	{Scope: ScopeGlobal | ScopeSession, Name: "range_alloc_block_size", Value: "4096", IsHintUpdatable: true},
 	{Scope: ScopeGlobal, Name: ConnectTimeout, Value: "10", Type: TypeUnsigned, MinValue: 2, MaxValue: secondsPerYear, AutoConvertOutOfRange: true},
-	{Scope: ScopeGlobal | ScopeSession, Name: MaxExecutionTime, Value: "0", Type: TypeUnsigned, MinValue: 0, MaxValue: math.MaxUint64, AutoConvertOutOfRange: true},
+	{Scope: ScopeGlobal | ScopeSession, Name: MaxExecutionTime, Value: "0", Type: TypeUnsigned, MinValue: 0, MaxValue: math.MaxUint64, AutoConvertOutOfRange: true, IsHintUpdatable: true},
 	{Scope: ScopeGlobal | ScopeSession, Name: CollationServer, Value: mysql.DefaultCollationName, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 		if _, err := collate.GetCollationByName(normalizedValue); err != nil {
 			return normalizedValue, errors.Trace(err)
@@ -481,7 +481,7 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal, Name: "key_cache_division_limit", Value: "100"},
 	{Scope: ScopeGlobal | ScopeSession, Name: "max_insert_delayed_threads", Value: "20"},
 	{Scope: ScopeNone, Name: "performance_schema_session_connect_attrs_size", Value: "512"},
-	{Scope: ScopeGlobal | ScopeSession, Name: TimeZone, Value: "SYSTEM", Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+	{Scope: ScopeGlobal | ScopeSession, Name: TimeZone, Value: "SYSTEM", IsHintUpdatable: true, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 		if strings.EqualFold(normalizedValue, "SYSTEM") {
 			return "SYSTEM", nil
 		}
@@ -623,7 +623,7 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeNone, Name: "innodb_log_buffer_size", Value: "8388608"},
 	{Scope: ScopeGlobal, Name: "delayed_insert_timeout", Value: "300"},
 	{Scope: ScopeGlobal, Name: "max_relay_log_size", Value: "0"},
-	{Scope: ScopeGlobal | ScopeSession, Name: MaxSortLength, Value: "1024", Type: TypeUnsigned, MinValue: 4, MaxValue: 8388608, AutoConvertOutOfRange: true},
+	{Scope: ScopeGlobal | ScopeSession, Name: MaxSortLength, Value: "1024", Type: TypeUnsigned, MinValue: 4, MaxValue: 8388608, AutoConvertOutOfRange: true, IsHintUpdatable: true},
 	{Scope: ScopeNone, Name: "metadata_locks_hash_instances", Value: "8"},
 	{Scope: ScopeGlobal, Name: "ndb_eventbuffer_free_percent", Value: ""},
 	{Scope: ScopeNone, Name: "large_files_support", Value: "1"},
@@ -808,7 +808,7 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeSession, Name: "insert_id", Value: ""},
 	{Scope: ScopeGlobal | ScopeSession, Name: "default_tmp_storage_engine", Value: "InnoDB", IsHintUpdatable: true},
 	{Scope: ScopeGlobal | ScopeSession, Name: "optimizer_search_depth", Value: "62", IsHintUpdatable: true},
-	{Scope: ScopeGlobal, Name: "max_points_in_geometry", Value: "65536", IsHintUpdatable: true},
+	{Scope: ScopeGlobal | ScopeSession, Name: "max_points_in_geometry", Value: "65536", IsHintUpdatable: true},
 	{Scope: ScopeGlobal, Name: "innodb_stats_sample_pages", Value: "8"},
 	{Scope: ScopeGlobal | ScopeSession, Name: "profiling_history_size", Value: "15"},
 	{Scope: ScopeGlobal | ScopeSession, Name: "character_set_database", Value: mysql.DefaultCharset},
@@ -899,7 +899,7 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeNone, Name: "performance_schema_max_cond_instances", Value: "3504"},
 	{Scope: ScopeGlobal, Name: "delayed_insert_limit", Value: "100"},
 	{Scope: ScopeGlobal, Name: Flush, Value: BoolOff, Type: TypeBool},
-	{Scope: ScopeGlobal | ScopeSession, Name: "eq_range_index_dive_limit", Value: "10", IsHintUpdatable: true},
+	{Scope: ScopeGlobal | ScopeSession, Name: "eq_range_index_dive_limit", Value: "200", IsHintUpdatable: true},
 	{Scope: ScopeNone, Name: "performance_schema_events_stages_history_size", Value: "10"},
 	{Scope: ScopeGlobal | ScopeSession, Name: "character_set_connection", Value: mysql.DefaultCharset},
 	{Scope: ScopeGlobal, Name: MyISAMUseMmap, Value: BoolOff, Type: TypeBool, AutoConvertNegativeBool: true},
@@ -941,6 +941,7 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal, Name: ThreadPoolSize, Value: "16", Type: TypeUnsigned, MinValue: 1, MaxValue: 64, AutoConvertOutOfRange: true},
 	{Scope: ScopeGlobal | ScopeSession, Name: WindowingUseHighPrecision, Value: BoolOn, Type: TypeBool, IsHintUpdatable: true},
 	/* TiDB specific variables */
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBAllowMPPExecution, Type: TypeBool, Value: BoolToOnOff(DefTiDBAllowMPPExecution)},
 	{Scope: ScopeSession, Name: TiDBSnapshot, Value: ""},
 	{Scope: ScopeSession, Name: TiDBOptAggPushDown, Value: BoolToOnOff(DefOptAggPushDown), Type: TypeBool},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptBCJ, Value: BoolToOnOff(DefOptBCJ), Type: TypeBool, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
@@ -959,6 +960,7 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBExecutorConcurrency, Value: strconv.Itoa(DefExecutorConcurrency), Type: TypeUnsigned, MinValue: 1, MaxValue: math.MaxUint64},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBDistSQLScanConcurrency, Value: strconv.Itoa(DefDistSQLScanConcurrency), Type: TypeUnsigned, MinValue: 1, MaxValue: math.MaxUint64},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptInSubqToJoinAndAgg, Value: BoolToOnOff(DefOptInSubqToJoinAndAgg), Type: TypeBool},
+	{Scope: ScopeSession, Name: TiDBOptPreferRangeScan, Value: BoolToOnOff(DefOptPreferRangeScan), Type: TypeBool, IsHintUpdatable: true},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptCorrelationThreshold, Value: strconv.FormatFloat(DefOptCorrelationThreshold, 'f', -1, 64), Type: TypeFloat, MinValue: 0, MaxValue: 1},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptCorrelationExpFactor, Value: strconv.Itoa(DefOptCorrelationExpFactor), Type: TypeUnsigned, MinValue: 0, MaxValue: math.MaxUint64},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptCPUFactor, Value: strconv.FormatFloat(DefOptCPUFactor, 'f', -1, 64), Type: TypeFloat, MinValue: 0, MaxValue: math.MaxUint64},
