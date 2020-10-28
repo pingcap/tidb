@@ -1723,10 +1723,9 @@ func (batchExe *batchExecutor) process(batches []batchMutations) error {
 	}
 
 	// For prewrite, stop sending other requests after receiving first error.
-	backoffer := batchExe.backoffer
 	var cancel context.CancelFunc
 	if _, ok := batchExe.action.(actionPrewrite); ok {
-		backoffer, cancel = batchExe.backoffer.Fork()
+		batchExe.backoffer, cancel = batchExe.backoffer.Fork()
 		defer cancel()
 	}
 	// concurrently do the work for each batch.
@@ -1736,14 +1735,14 @@ func (batchExe *batchExecutor) process(batches []batchMutations) error {
 	// check results
 	for i := 0; i < len(batches); i++ {
 		if e := <-ch; e != nil {
-			logutil.Logger(backoffer.ctx).Debug("2PC doActionOnBatch failed",
+			logutil.Logger(batchExe.backoffer.ctx).Debug("2PC doActionOnBatch failed",
 				zap.Uint64("conn", batchExe.committer.connID),
 				zap.Stringer("action type", batchExe.action),
 				zap.Error(e),
 				zap.Uint64("txnStartTS", batchExe.committer.startTS))
 			// Cancel other requests and return the first error.
 			if cancel != nil {
-				logutil.Logger(backoffer.ctx).Debug("2PC doActionOnBatch to cancel other actions",
+				logutil.Logger(batchExe.backoffer.ctx).Debug("2PC doActionOnBatch to cancel other actions",
 					zap.Uint64("conn", batchExe.committer.connID),
 					zap.Stringer("action type", batchExe.action),
 					zap.Uint64("txnStartTS", batchExe.committer.startTS))
