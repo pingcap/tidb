@@ -381,6 +381,9 @@ func (w *partialTableWorker) fetchHandles(ctx context.Context, exitCh <-chan str
 			return count, nil
 		case fetchCh <- task:
 		}
+		if basic := w.tableReader.base(); basic != nil {
+			basic.runtimeStats.Record(time.Since(start), chk.NumRows())
+		}
 	}
 }
 
