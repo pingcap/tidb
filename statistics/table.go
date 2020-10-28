@@ -58,7 +58,7 @@ const (
 	PseudoRowCount = 10000
 )
 
-// CMSketchSizeLimit indicates the max width and depth of CMSketch.
+// CMSketchSizeLimit indicates the max size(width * depth) of a CMSketch.
 var CMSketchSizeLimit = kv.TxnEntrySizeLimit / binary.MaxVarintLen32
 
 // AnalyzeOptionLimit indicates the upper bound of some attribute.
