@@ -20,7 +20,6 @@ package tables
 import (
 	"context"
 	"encoding/binary"
-	"github.com/pingcap/tidb/util/collate"
 	"math"
 	"strconv"
 	"strings"
