@@ -943,6 +943,10 @@ func (ts *tidbTestSuite) TestGracefulShutdown(c *C) {
 	cli := newTestServerClient()
 	cfg := newTestConfig()
 	cfg.GracefulWaitBeforeShutdown = 2 // wait before shutdown
+	cfg.Port = 0
+	cfg.Status.StatusPort = 0
+	cfg.Status.ReportStatus = true
+	cfg.Performance.TCPKeepAlive = true
 	server, err := NewServer(cfg, ts.tidbdrv)
 	c.Assert(err, IsNil)
 	c.Assert(server, NotNil)
