@@ -79,4 +79,6 @@ var (
 	ErrWrongFieldSpec = dbterror.ClassTypes.NewStd(mysql.ErrWrongFieldSpec)
 	// ErrSyntax is returned when the syntax is not allowed.
 	ErrSyntax = dbterror.ClassTypes.NewStdErr(mysql.ErrParse, mysql.MySQLErrName[mysql.ErrSyntax], "", "")
+	// ErrWrongValueForType is returned when the input value is in wrong format for function.
+	ErrWrongValueForType = dbterror.ClassTypes.NewStdErr(mysql.ErrWrongValueForType, mysql.MySQLErrName[mysql.ErrWrongValueForType], "", "")
 )

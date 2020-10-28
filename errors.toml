@@ -901,6 +901,16 @@ error = '''
 '%s' is not supported for generated columns.
 '''
 
+["planner:3126"]
+error = '''
+Hint %s is ignored as conflicting/duplicated.
+'''
+
+["planner:3128"]
+error = '''
+Unresolved name '%s' for %s hint
+'''
+
 ["planner:3579"]
 error = '''
 Window name '%s' is not defined.
@@ -984,6 +994,11 @@ Window '%s': INTERVAL can only be used with RANGE frames.
 ["planner:3599"]
 error = '''
 Window function '%s' ignores the frame clause of window '%s' and aggregates over the whole partition
+'''
+
+["planner:3637"]
+error = '''
+Variable '%s' cannot be set using SET_VAR hint.
 '''
 
 ["planner:8108"]
@@ -1399,6 +1414,11 @@ Illegal %s '%-.192s' value found during parsing
 ["types:1406"]
 error = '''
 Data too long for column '%s' at row %d
+'''
+
+["types:1411"]
+error = '''
+Incorrect %-.32s value: '%-.128s' for function %-.32s
 '''
 
 ["types:1425"]
