@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"math"
 	"math/rand"
+	"net"
 	"sort"
 	"strconv"
 	"strings"
@@ -768,7 +769,7 @@ func (pps PreparedParams) String() string {
 
 // ConnectionInfo present connection used by audit.
 type ConnectionInfo struct {
-	ConnectionID      uint32
+	ConnectionID      uint64
 	ConnectionType    string
 	Host              string
 	ClientIP          string
@@ -1640,6 +1641,9 @@ type Concurrency struct {
 
 	// ExecutorConcurrency is the number of concurrent worker for all executors.
 	ExecutorConcurrency int
+
+	// SourceAddr is the source address of request. Available in coprocessor ONLY.
+	SourceAddr net.TCPAddr
 }
 
 // SetIndexLookupConcurrency set the number of concurrent index lookup worker.
