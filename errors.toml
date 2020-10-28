@@ -1391,6 +1391,11 @@ error = '''
 Data too long for column '%s' at row %d
 '''
 
+["types:1411"]
+error = '''
+Incorrect %-.32s value: '%-.128s' for function %-.32s
+'''
+
 ["types:1425"]
 error = '''
 Too big scale %d specified for column '%-.192s'. Maximum is %d.
