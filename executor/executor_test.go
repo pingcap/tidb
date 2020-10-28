@@ -6479,15 +6479,15 @@ func (s *testSerialSuite1) TestIndexMergeRuntimeStats(c *C) {
 	tk.MustExec("create index t1a on t1(a)")
 	tk.MustExec("create index t1b on t1(b)")
 	tk.MustExec("insert into t1 values(1,1,1,1,1),(2,2,2,2,2),(3,3,3,3,3),(4,4,4,4,4),(5,5,5,5,5)")
-	sql := " explain analyze select /*+ use_index_merge(t1, primary, t1a) */ * from t1 where id < 2 or a > 4;"
+	sql := "explain analyze select /*+ use_index_merge(t1, primary, t1a) */ * from t1 where id < 2 or a > 4;"
 	rows := tk.MustQuery(sql).Rows()
 	c.Assert(len(rows), Equals, 4)
 	explain := fmt.Sprintf("%v", rows[0])
 	c.Assert(explain, Matches, ".*time:.*loops:.*index_task:.*table_task:{num.*concurrency.*time.*}.*")
 	indexExplain := fmt.Sprintf("%v", rows[2])
 	tableExplain := fmt.Sprintf("%v", rows[3])
-	c.Assert(indexExplain, Matches, ".*time:.*loops:.*cop_task:.*tikv_task:.*")
-	c.Assert(tableExplain, Matches, ".*time:.*loops:.*cop_task:.*tikv_task:.*")
+	c.Assert(indexExplain, Matches, ".*time:.*loops:.*cop_task:.*")
+	c.Assert(tableExplain, Matches, ".*time:.*loops:.*cop_task:.*")
 }
 
 func (s *testSerialSuite1) TestIndexlookupRuntimeStats(c *C) {
