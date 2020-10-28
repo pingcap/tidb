@@ -82,9 +82,6 @@ func (r *RetryInfo) ResetOffset() {
 
 // AddAutoIncrementID adds id to autoIncrementIDs.
 func (r *RetryInfo) AddAutoIncrementID(id int64) {
-	if r.Retrying {
-		return
-	}
 	r.autoIncrementIDs.autoIDs = append(r.autoIncrementIDs.autoIDs, id)
 }
 
@@ -95,9 +92,6 @@ func (r *RetryInfo) GetCurrAutoIncrementID() (int64, bool) {
 
 // AddAutoRandomID adds id to autoRandomIDs.
 func (r *RetryInfo) AddAutoRandomID(id int64) {
-	if r.Retrying {
-		return
-	}
 	r.autoRandomIDs.autoIDs = append(r.autoRandomIDs.autoIDs, id)
 }
 

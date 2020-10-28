@@ -680,7 +680,7 @@ func (e *InsertValues) lazyAdjustAutoIncrementDatum(ctx context.Context, rows []
 				if !ok {
 					break
 				}
-				err = setDatumAutoIDWithCast(e.ctx, autoDatum, nextID, col)
+				err = setDatumAutoIDWithCast(e.ctx, &rows[processedIdx][idx], nextID, col)
 				if err != nil {
 					return nil, err
 				}
@@ -724,6 +724,7 @@ func (e *InsertValues) lazyAdjustAutoIncrementDatum(ctx context.Context, rows []
 		if err != nil {
 			return nil, err
 		}
+		retryInfo.AddAutoIncrementID(recordID)
 	}
 	return rows, nil
 }
@@ -778,6 +779,7 @@ func (e *InsertValues) adjustAutoIncrementDatum(ctx context.Context, d types.Dat
 	if err != nil {
 		return types.Datum{}, err
 	}
+	retryInfo.AddAutoIncrementID(recordID)
 	return d, nil
 }
 
@@ -861,6 +863,7 @@ func (e *InsertValues) adjustAutoRandomDatum(ctx context.Context, d types.Datum,
 	if err != nil {
 		return types.Datum{}, err
 	}
+	retryInfo.AddAutoRandomID(recordID)
 	return d, nil
 }
 
