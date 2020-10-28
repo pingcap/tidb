@@ -21,7 +21,7 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 )
 
-// Fragment is cut from the whole pushed-down plan by pipeline breaker.
+// Fragment is cut from the whole pushed-down plan by network communication.
 // Communication by pfs are always through shuffling / broadcasting / passing through.
 type Fragment struct {
 	p PhysicalPlan
@@ -40,7 +40,8 @@ func (f *Fragment) Schema() *expression.Schema {
 	return f.p.Schema()
 }
 
-// GetRootPlanFragments will cut and generate all the plan fragments which is divided by a pipeline breaker. Then return the root plan fragment.
+// GetRootPlanFragments will cut and generate all the plan fragments which is divided by network communication.
+// Then return the root plan fragment.
 func GetRootPlanFragments(ctx sessionctx.Context, p PhysicalPlan, startTS uint64) *Fragment {
 	tidbTask := &kv.MPPTask{
 		StartTs: startTS,
@@ -56,13 +57,15 @@ func GetRootPlanFragments(ctx sessionctx.Context, p PhysicalPlan, startTS uint64
 	return rootPf
 }
 
+// getPlanFragment passes the plan and which fragment the plan belongs to, then walk through the plan recursively.
+// When we found an edge can be cut, we will add exchange operators and construct new fragment.
 func getPlanFragments(ctx sessionctx.Context, p PhysicalPlan, pf *Fragment) {
 	switch x := p.(type) {
 	case *PhysicalTableScan:
 		x.IsGlobalRead = false
 		pf.TableScan = x
 	case *PhysicalBroadCastJoin:
-		// This is a pipeline breaker. So we replace broadcast side with a exchangerClient
+		// This is a fragment cutter. So we replace broadcast side with a exchangerClient
 		bcChild := x.Children()[x.InnerChildIdx]
 		exchangeSender := &PhysicalExchangeSender{ExchangeType: tipb.ExchangeType_Broadcast}
 		exchangeSender.InitBasePlan(ctx, plancodec.TypeExchangeSender)

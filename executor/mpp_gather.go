@@ -74,6 +74,7 @@ func (e *MPPGather) constructMPPTasksImpl(ctx context.Context, p *plannercore.Fr
 	return allTasks, nil
 }
 
+// single physical table means a table without partitions or a single partition in a partition table.
 func (e *MPPGather) constructSinglePhysicalTable(ctx context.Context, tableID int64, ranges []*ranger.Range) ([]*kv.MPPTask, error) {
 	kvRanges := distsql.TableRangesToKVRanges(tableID, ranges, nil)
 	req := &kv.MPPBuildTasksRequest{KeyRanges: kvRanges}
