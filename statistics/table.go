@@ -642,7 +642,7 @@ func (coll *HistColl) getEqualCondSelectivity(sc *stmtctx.StatementContext, idx 
 	if minRowCount < idxCount {
 		return crossValidationSelectivity, nil
 	}
-	return float64(idx.QueryBytes(bytes)) / float64(idx.TotalRowCount()), nil
+	return float64(idx.QueryBytes(bytes)) / idx.TotalRowCount(), nil
 }
 
 func (coll *HistColl) getIndexRowCount(sc *stmtctx.StatementContext, idxID int64, indexRanges []*ranger.Range) (float64, error) {

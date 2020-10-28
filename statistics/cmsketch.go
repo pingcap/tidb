@@ -329,19 +329,18 @@ func (c *CMSketch) queryHashValue(h1, h2 uint64) uint64 {
 	return uint64(res)
 }
 
-// MergeTopN ...
+// MergeTopN merges the src TopN into the dst, and spilled values will be inserted into the CMSketch.
 func MergeTopN(dst, src *TopN, c *CMSketch, numTop uint32, usingMax bool) {
 	if dst.TotalCount() == 0 || src.TotalCount() == 0 {
 		return
 	}
-	lTopN, rTopN := dst.topN, src.topN
 	counter := make(map[hack.MutableString]uint64)
-	for _, metas := range lTopN {
+	for _, metas := range dst.topN {
 		for _, meta := range metas {
 			counter[hack.String(meta.Data)] += meta.Count
 		}
 	}
-	for _, metas := range rTopN {
+	for _, metas := range src.topN {
 		for _, meta := range metas {
 			if usingMax {
 				counter[hack.String(meta.Data)] = mathutil.MaxUint64(counter[hack.String(meta.Data)], meta.Count)
@@ -443,7 +442,7 @@ func CMSketchAndTopNFromProto(protoSketch *tipb.CMSketch) (*CMSketch, *TopN) {
 	return c, TopNFromProto(protoSketch.TopN)
 }
 
-// TopNFromProto ...
+// TopNFromProto converts TopN from its protobuf representation.
 func TopNFromProto(protoTopN []*tipb.CMSketchTopN) *TopN {
 	topN := NewTopN(32)
 	for _, e := range protoTopN {
@@ -489,7 +488,7 @@ func (c *CMSketch) TotalCount() uint64 {
 	return c.count
 }
 
-// TotalCount ...
+// TotalCount returns the total count in the TopN.
 func (c *TopN) TotalCount() uint64 {
 	if c == nil {
 		return 0
@@ -523,20 +522,20 @@ func (c *CMSketch) Copy() *CMSketch {
 
 // Copy makes a copy for current TopN.
 func (c *TopN) Copy() *TopN {
-	if c != nil {
-		topN := make(map[uint64][]*TopNMeta, len(c.topN))
-		for h1, vals := range c.topN {
-			newVals := make([]*TopNMeta, 0, len(vals))
-			for _, val := range vals {
-				newVal := TopNMeta{h2: val.h2, Count: val.Count, Data: make([]byte, len(val.Data))}
-				copy(newVal.Data, val.Data)
-				newVals = append(newVals, &newVal)
-			}
-			topN[h1] = newVals
-		}
-		return &TopN{topN}
+	if c == nil {
+		return nil
 	}
-	return nil
+	topN := make(map[uint64][]*TopNMeta, len(c.topN))
+	for h1, vals := range c.topN {
+		newVals := make([]*TopNMeta, 0, len(vals))
+		for _, val := range vals {
+			newVal := TopNMeta{h2: val.h2, Count: val.Count, Data: make([]byte, len(val.Data))}
+			copy(newVal.Data, val.Data)
+			newVals = append(newVals, &newVal)
+		}
+		topN[h1] = newVals
+	}
+	return &TopN{topN}
 }
 
 // TopN gets all the topN meta.
@@ -576,7 +575,7 @@ func (c *CMSketch) CalcDefaultValForAnalyze(NDV uint64) {
 	c.defaultValue = c.count / mathutil.MaxUint64(1, NDV)
 }
 
-// TopN .
+// TopN stores most-common values, which is used to estimate point queries.
 type TopN struct {
 	topN map[uint64][]*TopNMeta
 }
