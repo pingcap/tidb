@@ -1346,6 +1346,16 @@ error = '''
 TiKV max timestamp is not synced
 '''
 
+["types:1063"]
+error = '''
+Incorrect column specifier for column '%-.192s'
+'''
+
+["types:1064"]
+error = '''
+You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use
+'''
+
 ["types:1074"]
 error = '''
 Column length too big for column '%-.192s' (max = %d); use BLOB or TEXT instead
