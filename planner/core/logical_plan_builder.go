@@ -18,7 +18,6 @@ import (
 	"fmt"
 	"math"
 	"math/bits"
-	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -2170,7 +2169,7 @@ func checkExprInGroupBy(
 	}
 	if _, ok := expr.(*ast.ColumnNameExpr); !ok {
 		for _, gbyExpr := range gbyExprs {
-			if reflect.DeepEqual(gbyExpr, expr) {
+			if ast.ExpressionDeepEqual(gbyExpr, expr) {
 				return
 			}
 		}
