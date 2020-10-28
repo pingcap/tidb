@@ -568,7 +568,7 @@ func (coll *HistColl) crossValidationSelectivity(sc *stmtctx.StatementContext, i
 	minRowCount := math.MaxFloat64
 	cols := coll.Idx2ColumnIDs[idx.ID]
 	crossValidationSelectivity := 1.0
-	totalRowCount := float64(idx.TotalRowCount())
+	totalRowCount := idx.TotalRowCount()
 	for i, colID := range cols {
 		if i >= usedColsLen {
 			break
@@ -638,11 +638,11 @@ func (coll *HistColl) getEqualCondSelectivity(sc *stmtctx.StatementContext, idx 
 		return 0, nil
 	}
 
-	idxCount := float64(idx.CMSketch.QueryBytes(bytes))
+	idxCount := float64(idx.QueryBytes(bytes))
 	if minRowCount < idxCount {
 		return crossValidationSelectivity, nil
 	}
-	return idxCount / float64(idx.TotalRowCount()), nil
+	return idxCount / idx.TotalRowCount(), nil
 }
 
 func (coll *HistColl) getIndexRowCount(sc *stmtctx.StatementContext, idxID int64, indexRanges []*ranger.Range) (float64, error) {
