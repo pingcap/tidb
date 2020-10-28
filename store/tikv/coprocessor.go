@@ -45,8 +45,11 @@ import (
 	"go.uber.org/zap"
 )
 
-var tikvTxnRegionsNumHistogramWithCoprocessor = metrics.TiKVTxnRegionsNumHistogram.WithLabelValues("coprocessor")
-var tikvTxnRegionsNumHistogramWithBatchCoprocessor = metrics.TiKVTxnRegionsNumHistogram.WithLabelValues("batch_coprocessor")
+var (
+	tikvTxnRegionsNumHistogramWithCoprocessor      = metrics.TiKVTxnRegionsNumHistogram.WithLabelValues("coprocessor")
+	tikvTxnRegionsNumHistogramWithBatchCoprocessor = metrics.TiKVTxnRegionsNumHistogram.WithLabelValues("batch_coprocessor")
+	coprCacheHistogramEvict                        = metrics.DistSQLCoprCacheHistogram.WithLabelValues("evict")
+)
 
 // CopClient is coprocessor client.
 type CopClient struct {
@@ -298,6 +301,10 @@ func buildTiDBMemCopTasks(ranges *copRanges, req *kv.Request) ([]*copTask, error
 	}
 	tasks := make([]*copTask, 0, len(servers))
 	for _, ser := range servers {
+		if req.TiDBServerID > 0 && req.TiDBServerID != ser.ServerIDGetter() {
+			continue
+		}
+
 		addr := ser.IP + ":" + strconv.FormatUint(uint64(ser.StatusPort), 10)
 		tasks = append(tasks, &copTask{
 			ranges:    ranges,
@@ -520,7 +527,6 @@ func (worker *copIteratorWorker) run(ctx context.Context) {
 		worker.actionOnExceed.destroyTokenIfNeeded(func() {
 			worker.sendRate.putToken()
 		})
-		worker.actionOnExceed.waitIfNeeded()
 		if worker.vars != nil && worker.vars.Killed != nil && atomic.LoadUint32(worker.vars.Killed) == 1 {
 			return
 		}
@@ -570,8 +576,8 @@ func (it *copIterator) open(ctx context.Context) {
 		sendRate: it.sendRate,
 	}
 	taskSender.respChan = it.respChan
-	go taskSender.run()
 	it.actionOnExceed.setEnabled(true)
+	go taskSender.run()
 }
 
 func (sender *copIteratorTaskSender) run() {
@@ -608,7 +614,13 @@ func (it *copIterator) recvFromRespCh(ctx context.Context, respCh <-chan *copRes
 		select {
 		case resp, ok = <-respCh:
 			if it.memTracker != nil && resp != nil {
-				it.memTracker.Consume(-resp.MemSize())
+				consumed := resp.MemSize()
+				failpoint.Inject("testRateLimitActionMockConsume", func(val failpoint.Value) {
+					if val.(bool) {
+						consumed = 100
+					}
+				})
+				it.memTracker.Consume(-consumed)
 			}
 			return
 		case <-it.finishCh:
@@ -642,7 +654,13 @@ func (sender *copIteratorTaskSender) sendToTaskCh(t *copTask) (exit bool) {
 
 func (worker *copIteratorWorker) sendToRespCh(resp *copResponse, respCh chan<- *copResponse, checkOOM bool) (exit bool) {
 	if worker.memTracker != nil && checkOOM {
-		worker.memTracker.Consume(resp.MemSize())
+		consumed := resp.MemSize()
+		failpoint.Inject("testRateLimitActionMockConsume", func(val failpoint.Value) {
+			if val.(bool) {
+				consumed = 100
+			}
+		})
+		worker.memTracker.Consume(consumed)
 	}
 	select {
 	case respCh <- resp:
@@ -660,6 +678,13 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 		ok     bool
 		closed bool
 	)
+	// wait unit at least 2 copResponse received.
+	failpoint.Inject("testRateLimitActionMockWaitMax", func(val failpoint.Value) {
+		if val.(bool) {
+			for it.memTracker.MaxConsumed() < 200 {
+			}
+		}
+	})
 
 	// If data order matters, response should be returned in the same order as copTask slice.
 	// Otherwise all responses are returned from a single channel.
@@ -757,6 +782,9 @@ func (worker *copIteratorWorker) handleTask(ctx context.Context, task *copTask, 
 		} else {
 			remainTasks = remainTasks[1:]
 		}
+	}
+	if worker.store.coprCache != nil && worker.store.coprCache.cache.Metrics != nil {
+		coprCacheHistogramEvict.Observe(float64(worker.store.coprCache.cache.Metrics.KeysEvicted()))
 	}
 }
 
@@ -956,6 +984,15 @@ func (worker *copIteratorWorker) logTimeCopTask(costTime time.Duration, task *co
 				logStr = appendScanDetail(logStr, "data", detail.ScanDetail.Data)
 				logStr = appendScanDetail(logStr, "lock", detail.ScanDetail.Lock)
 			}
+			if detail.ScanDetailV2 != nil {
+				logStr += fmt.Sprintf(" processed versions: %d", detail.ScanDetailV2.ProcessedVersions)
+				logStr += fmt.Sprintf(" total versions: %d", detail.ScanDetailV2.TotalVersions)
+				logStr += fmt.Sprintf(" delete skipped count: %d", detail.ScanDetailV2.RocksdbDeleteSkippedCount)
+				logStr += fmt.Sprintf(" key skipped count: %d", detail.ScanDetailV2.RocksdbKeySkippedCount)
+				logStr += fmt.Sprintf(" cache hit count: %d", detail.ScanDetailV2.RocksdbBlockCacheHitCount)
+				logStr += fmt.Sprintf(" read count: %d", detail.ScanDetailV2.RocksdbBlockReadCount)
+				logStr += fmt.Sprintf(" read byte: %d", detail.ScanDetailV2.RocksdbBlockReadByte)
+			}
 		}
 		if waitMs > minLogKVWaitTime {
 			logStr += fmt.Sprintf(" kv_wait_ms:%d", waitMs)
@@ -1083,10 +1120,23 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *RPCCon
 			resp.detail.WaitTime = time.Duration(handleTime.WaitMs) * time.Millisecond
 			resp.detail.ProcessTime = time.Duration(handleTime.ProcessMs) * time.Millisecond
 		}
-		if scanDetail := pbDetails.ScanDetail; scanDetail != nil {
+		if scanDetailV2 := pbDetails.ScanDetailV2; scanDetailV2 != nil {
+			copDetail := &execdetails.CopDetails{
+				ProcessedKeys:             int64(scanDetailV2.ProcessedVersions),
+				TotalKeys:                 int64(scanDetailV2.TotalVersions),
+				RocksdbDeleteSkippedCount: scanDetailV2.RocksdbDeleteSkippedCount,
+				RocksdbKeySkippedCount:    scanDetailV2.RocksdbKeySkippedCount,
+				RocksdbBlockCacheHitCount: scanDetailV2.RocksdbBlockCacheHitCount,
+				RocksdbBlockReadCount:     scanDetailV2.RocksdbBlockReadCount,
+				RocksdbBlockReadByte:      scanDetailV2.RocksdbBlockReadByte,
+			}
+			resp.detail.CopDetail = copDetail
+		} else if scanDetail := pbDetails.ScanDetail; scanDetail != nil {
 			if scanDetail.Write != nil {
-				resp.detail.TotalKeys += scanDetail.Write.Total
-				resp.detail.ProcessedKeys += scanDetail.Write.Processed
+				resp.detail.CopDetail = &execdetails.CopDetails{
+					ProcessedKeys: scanDetail.Write.Processed,
+					TotalKeys:     scanDetail.Write.Total,
+				}
 			}
 		}
 	}
@@ -1247,6 +1297,10 @@ type rateLimitAction struct {
 		// isTokenDestroyed indicates whether there is one token has been isTokenDestroyed after Action been triggered
 		isTokenDestroyed bool
 		once             sync.Once
+		// waitingWorkerCnt indicates the total count of workers which is under condition.Waiting
+		waitingWorkerCnt uint
+		// triggerCountForTest indicates the total count of the rateLimitAction's Action being executed
+		triggerCountForTest uint
 	}
 }
 
@@ -1255,10 +1309,12 @@ func newRateLimitAction(totalTokenNumber uint, cond *sync.Cond) *rateLimitAction
 		totalTokenNum: totalTokenNumber,
 		cond: struct {
 			*sync.Cond
-			exceeded          bool
-			remainingTokenNum uint
-			isTokenDestroyed  bool
-			once              sync.Once
+			exceeded            bool
+			remainingTokenNum   uint
+			isTokenDestroyed    bool
+			once                sync.Once
+			waitingWorkerCnt    uint
+			triggerCountForTest uint
 		}{
 			Cond:              cond,
 			exceeded:          false,
@@ -1294,6 +1350,16 @@ func (e *rateLimitAction) Action(t *memory.Tracker) {
 			}
 			return
 		}
+		failpoint.Inject("testRateLimitActionMockConsumeAndAssert", func(val failpoint.Value) {
+			if val.(bool) {
+				if e.cond.triggerCountForTest+e.cond.remainingTokenNum != e.totalTokenNum {
+					panic("triggerCount + remainingTokenNum not equal to totalTokenNum")
+				}
+				if e.cond.waitingWorkerCnt > 0 {
+					panic("waitingWorkerCnt not equal to 0")
+				}
+			}
+		})
 		logutil.BgLogger().Info("memory exceeds quota, destroy one token now.",
 			zap.Int64("consumed", t.BytesConsumed()),
 			zap.Int64("quota", t.GetBytesLimit()),
@@ -1301,6 +1367,7 @@ func (e *rateLimitAction) Action(t *memory.Tracker) {
 			zap.Uint("remaining token count", e.cond.remainingTokenNum))
 		e.cond.isTokenDestroyed = false
 		e.cond.exceeded = true
+		e.cond.triggerCountForTest++
 	})
 }
 
@@ -1314,17 +1381,22 @@ func (e *rateLimitAction) SetFallback(a memory.ActionOnExceed) {
 	e.fallbackAction = a
 }
 
-// broadcastIfNeeded will check whether the copWorkers is under suspended status.
-// If they are, `broadcastIfNeeded` would try to recover them if there are no more
-// copResponse remained in the channel.
+// broadcastIfNeeded will broadcast the condition to recover all suspended workers when exceeded is enabled
+// and one token have already been destroyed.
 func (e *rateLimitAction) broadcastIfNeeded(needed bool) {
+	if !needed {
+		return
+	}
 	e.conditionLock()
 	defer e.conditionUnlock()
-	if e.cond.exceeded && needed {
-		e.cond.exceeded = false
-		e.cond.Broadcast()
-		e.cond.once = sync.Once{}
+	if !e.cond.exceeded || e.cond.waitingWorkerCnt < 1 {
+		return
 	}
+	for !e.cond.isTokenDestroyed {
+		e.cond.Wait()
+	}
+	e.cond.exceeded = false
+	e.cond.Broadcast()
 }
 
 // destroyTokenIfNeeded will check the `exceed` flag after copWorker finished one task.
@@ -1333,21 +1405,28 @@ func (e *rateLimitAction) broadcastIfNeeded(needed bool) {
 func (e *rateLimitAction) destroyTokenIfNeeded(returnToken func()) {
 	e.conditionLock()
 	defer e.conditionUnlock()
+	if !e.cond.exceeded {
+		returnToken()
+		return
+	}
 	// If actionOnExceed has been triggered and there is no token have been destroyed before,
 	// destroy one token.
-	if e.cond.exceeded && !e.cond.isTokenDestroyed {
+	if !e.cond.isTokenDestroyed {
 		e.cond.remainingTokenNum = e.cond.remainingTokenNum - 1
 		e.cond.isTokenDestroyed = true
+		e.cond.Broadcast()
 	} else {
 		returnToken()
 	}
-}
-
-func (e *rateLimitAction) waitIfNeeded() {
-	e.conditionLock()
-	defer e.conditionUnlock()
+	// we suspend worker when `exceeded` is true until being notified by `broadcastIfNeeded`
 	for e.cond.exceeded {
+		e.cond.waitingWorkerCnt++
 		e.cond.Wait()
+		e.cond.waitingWorkerCnt--
+	}
+	// only when all the waiting workers have been resumed, the Action could be initialized again.
+	if e.cond.waitingWorkerCnt < 1 {
+		e.cond.once = sync.Once{}
 	}
 }
 
@@ -1364,7 +1443,8 @@ func (e *rateLimitAction) close() {
 	e.conditionLock()
 	defer e.conditionUnlock()
 	e.cond.exceeded = false
-	e.cond.isTokenDestroyed = false
+	e.cond.isTokenDestroyed = true
+	e.cond.waitingWorkerCnt = 0
 	// broadcast the signal in order not to leak worker goroutine if it is being suspended
 	e.cond.Broadcast()
 }

@@ -103,7 +103,7 @@ func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) error {
 			}
 		}
 		if e.stats != nil {
-			e.stats.checkInsertTime += time.Since(start)
+			e.stats.CheckInsertTime += time.Since(start)
 		}
 	}
 	e.memTracker.Consume(int64(txn.Size() - txnSize))
@@ -214,7 +214,7 @@ func (e *InsertExec) batchUpdateDupRows(ctx context.Context, newRows [][]types.D
 		return err
 	}
 	if e.stats != nil {
-		e.stats.prefetch += time.Since(prefetchStart)
+		e.stats.Prefetch += time.Since(prefetchStart)
 	}
 	for i, r := range toBeCheckedRows {
 		if r.handleKey != nil {
@@ -274,7 +274,7 @@ func (e *InsertExec) batchUpdateDupRows(ctx context.Context, newRows [][]types.D
 		}
 	}
 	if e.stats != nil {
-		e.stats.checkInsertTime += time.Since(start)
+		e.stats.CheckInsertTime += time.Since(start)
 	}
 	return nil
 }
@@ -392,7 +392,7 @@ func (e *InsertExec) setMessage() {
 				numDuplicates = stmtCtx.UpdatedRows()
 			}
 		}
-		msg := fmt.Sprintf(mysql.MySQLErrName[mysql.ErrInsertInfo], numRecords, numDuplicates, numWarnings)
+		msg := fmt.Sprintf(mysql.MySQLErrName[mysql.ErrInsertInfo].Raw, numRecords, numDuplicates, numWarnings)
 		stmtCtx.SetMessage(msg)
 	}
 }
