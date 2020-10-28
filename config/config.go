@@ -535,6 +535,8 @@ type AsyncCommit struct {
 	// on purpose.
 	// The duration within which is safe for async commit or 1PC to commit with an old schema.
 	// It is only changed in tests.
+	// TODO: 1PC is not part of async commit. These two fields should be moved to a more suitable
+	// place.
 	SafeWindow time.Duration
 	// The duration in addition to SafeWindow to make DDL safe.
 	AllowedClockDrift time.Duration
