@@ -466,6 +466,8 @@ type PhysicalTableScan struct {
 	Desc      bool
 
 	isChildOfIndexLookUp bool
+
+	PartitionInfo PartitionInfo
 }
 
 // Clone implements PhysicalPlan interface.
@@ -835,6 +837,11 @@ type PhysicalBroadCastJoin struct {
 	globalChildIndex int
 }
 
+// PhysicalExchangerBase is the common part of Exchanger and ExchangerClient.
+type PhysicalExchangerBase struct {
+	basePhysicalPlan
+}
+
 // Clone implements PhysicalPlan interface.
 func (p *PhysicalMergeJoin) Clone() (PhysicalPlan, error) {
 	cloned := new(PhysicalMergeJoin)
@@ -862,7 +869,7 @@ type PhysicalLock struct {
 
 // PhysicalLimit is the physical operator of Limit.
 type PhysicalLimit struct {
-	basePhysicalPlan
+	physicalSchemaProducer
 
 	Offset uint64
 	Count  uint64
@@ -872,11 +879,11 @@ type PhysicalLimit struct {
 func (p *PhysicalLimit) Clone() (PhysicalPlan, error) {
 	cloned := new(PhysicalLimit)
 	*cloned = *p
-	base, err := p.basePhysicalPlan.cloneWithSelf(cloned)
+	base, err := p.physicalSchemaProducer.cloneWithSelf(cloned)
 	if err != nil {
 		return nil, err
 	}
-	cloned.basePhysicalPlan = *base
+	cloned.physicalSchemaProducer = *base
 	return cloned, nil
 }
 
