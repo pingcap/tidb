@@ -3333,11 +3333,11 @@ func checkDropVisibleColumnCnt(t table.Table, columnCnt int) error {
 		if !column.Hidden {
 			visibleColumCnt++
 		}
+		if visibleColumCnt > columnCnt {
+			return nil
+		}
 	}
-	if visibleColumCnt == columnCnt {
-		return ErrTableMustHaveColumns
-	}
-	return nil
+	return ErrTableMustHaveColumns
 }
 
 // checkModifyCharsetAndCollation returns error when the charset or collation is not modifiable.
