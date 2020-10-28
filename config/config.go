@@ -119,7 +119,6 @@ type Config struct {
 	ProxyProtocol       ProxyProtocol     `toml:"proxy-protocol" json:"proxy-protocol"`
 	TiKVClient          TiKVClient        `toml:"tikv-client" json:"tikv-client"`
 	Binlog              Binlog            `toml:"binlog" json:"binlog"`
-	CompatibleKillQuery bool              `toml:"compatible-kill-query" json:"compatible-kill-query"`
 	Plugin              Plugin            `toml:"plugin" json:"plugin"`
 	PessimisticTxn      PessimisticTxn    `toml:"pessimistic-txn" json:"pessimistic-txn"`
 	CheckMb4ValueInUTF8 bool              `toml:"check-mb4-value-in-utf8" json:"check-mb4-value-in-utf8"`
@@ -530,6 +529,13 @@ type AsyncCommit struct {
 	KeysLimit uint `toml:"keys-limit" json:"keys-limit"`
 	// Use async commit only if the total size of keys does not exceed TotalKeySizeLimit.
 	TotalKeySizeLimit uint64 `toml:"total-key-size-limit" json:"total-key-size-limit"`
+	// The following two fields should never be modified by the user, so tags are not provided
+	// on purpose.
+	// The duration within which is safe for async commit or 1PC to commit with an old schema.
+	// It is only changed in tests.
+	SafeWindow time.Duration
+	// The duration in addition to SafeWindow to make DDL safe.
+	AllowedClockDrift time.Duration
 }
 
 // CoprocessorCache is the config for coprocessor cache.
@@ -706,6 +712,8 @@ var defaultConf = Config{
 			// FIXME: Find an appropriate default limit.
 			KeysLimit:         256,
 			TotalKeySizeLimit: 4 * 1024, // 4 KiB
+			SafeWindow:        2 * time.Second,
+			AllowedClockDrift: 500 * time.Millisecond,
 		},
 
 		MaxBatchSize:      128,

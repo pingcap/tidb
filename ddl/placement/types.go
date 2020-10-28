@@ -15,6 +15,9 @@ package placement
 
 import (
 	"encoding/json"
+	"strings"
+
+	"github.com/pingcap/errors"
 )
 
 // Refer to https://github.com/tikv/pd/issues/2701 .
@@ -57,6 +60,28 @@ type LabelConstraint struct {
 	Key    string            `json:"key,omitempty"`
 	Op     LabelConstraintOp `json:"op,omitempty"`
 	Values []string          `json:"values,omitempty"`
+}
+
+// Restore converts the LabelConstraint to a string.
+func (c *LabelConstraint) Restore() (string, error) {
+	var sb strings.Builder
+	for i, value := range c.Values {
+		switch c.Op {
+		case In:
+			sb.WriteString("+")
+		case NotIn:
+			sb.WriteString("-")
+		default:
+			return "", errors.Errorf("Unsupported label constraint operation: %s", c.Op)
+		}
+		sb.WriteString(c.Key)
+		sb.WriteString("=")
+		sb.WriteString(value)
+		if i < len(c.Values)-1 {
+			sb.WriteString(",")
+		}
+	}
+	return sb.String(), nil
 }
 
 // Rule is the placement rule. Check https://github.com/tikv/pd/blob/master/server/schedule/placement/rule.go.
