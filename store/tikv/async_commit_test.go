@@ -104,7 +104,7 @@ type testAsyncCommitSuite struct {
 	bo *Backoffer
 }
 
-var _ = Suite(&testAsyncCommitSuite{})
+var _ = SerialSuites(&testAsyncCommitSuite{})
 
 func (s *testAsyncCommitSuite) SetUpTest(c *C) {
 	s.testAsyncCommitCommon.setUpTest(c)

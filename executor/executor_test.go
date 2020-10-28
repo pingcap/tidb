@@ -87,6 +87,8 @@ func TestT(t *testing.T) {
 
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.Log.SlowThreshold = 30000 // 30s
+		conf.TiKVClient.AsyncCommit.SafeWindow = 0
+		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
 	})
 	tmpDir := config.GetGlobalConfig().TempStoragePath
 	_ = os.RemoveAll(tmpDir) // clean the uncleared temp file during the last run.
@@ -4478,6 +4480,14 @@ func (s *testSuiteP2) TestStrToDateBuiltin(c *C) {
 	tk.MustQuery(`SELECT STR_TO_DATE('2020-07-04 00:22:33', '%Y-%m-%d %T')`).Check(testkit.Rows("2020-07-04 00:22:33"))
 }
 
+func (s *testSuiteP2) TestStrToDateBuiltinWithWarnings(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set @@sql_mode='NO_ZERO_DATE'")
+	tk.MustExec("use test")
+	tk.MustQuery(`SELECT STR_TO_DATE('0000-1-01', '%Y-%m-%d');`).Check(testkit.Rows("<nil>"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1411 Incorrect datetime value: '0000-1-01' for function str_to_date"))
+}
+
 func (s *testSuiteP2) TestReadPartitionedTable(c *C) {
 	// Test three reader on partitioned table.
 	tk := testkit.NewTestKit(c, s.store)
@@ -6437,6 +6447,7 @@ func (s *testSerialSuite) TestPrevStmtDesensitization(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test;")
 	tk.MustExec(fmt.Sprintf("set @@session.%v=1", variable.TiDBRedactLog))
+	defer tk.MustExec(fmt.Sprintf("set @@session.%v=0", variable.TiDBRedactLog))
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int, unique key (a))")
 	tk.MustExec("begin")
@@ -6468,6 +6479,23 @@ func (s *testSerialSuite1) TestCollectCopRuntimeStats(c *C) {
 	explain := fmt.Sprintf("%v", rows[0])
 	c.Assert(explain, Matches, ".*rpc_num: 2, .*regionMiss:.*")
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/tikvStoreRespResult"), IsNil)
+}
+
+func (s *testSerialSuite1) TestIndexlookupRuntimeStats(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (a int, b int, index(a))")
+	tk.MustExec("insert into t1 values (1,2),(2,3),(3,4)")
+	sql := "explain analyze select * from t1 use index(a) where a > 1;"
+	rows := tk.MustQuery(sql).Rows()
+	c.Assert(len(rows), Equals, 3)
+	explain := fmt.Sprintf("%v", rows[0])
+	c.Assert(explain, Matches, ".*time:.*loops:.*index_task:.*table_task:{num.*concurrency.*time.*}.*")
+	indexExplain := fmt.Sprintf("%v", rows[1])
+	tableExplain := fmt.Sprintf("%v", rows[2])
+	c.Assert(indexExplain, Matches, ".*time:.*loops:.*cop_task:.*")
+	c.Assert(tableExplain, Matches, ".*time:.*loops:.*cop_task:.*")
 }
 
 func (s *testSuite) TestCollectDMLRuntimeStats(c *C) {
@@ -6642,8 +6670,10 @@ func (s *testSerialSuite) TestCoprocessorOOMAction(c *C) {
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.OOMAction = config.OOMActionCancel
 	})
-	failpoint.Enable("github.com/pingcap/tidb/store/tikv/testRateLimitActionMockConsume", `return(true)`)
-	defer failpoint.Disable("github.com/pingcap/tidb/store/tikv/testRateLimitActionMockConsume")
+	failpoint.Enable("github.com/pingcap/tidb/store/tikv/testRateLimitActionMockConsumeAndAssert", `return(true)`)
+	defer failpoint.Disable("github.com/pingcap/tidb/store/tikv/testRateLimitActionMockConsumeAndAssert")
+
+	failpoint.Enable("github.com/pingcap/tidb/store/tikv/testRateLimitActionMockWaitMax", `return(true)`)
 	// assert oom action
 	for _, testcase := range testcases {
 		c.Log(testcase.name)
@@ -6664,6 +6694,7 @@ func (s *testSerialSuite) TestCoprocessorOOMAction(c *C) {
 		c.Assert(tk.Se.GetSessionVars().StmtCtx.MemTracker.MaxConsumed(), Greater, int64(quota))
 		se.Close()
 	}
+	failpoint.Disable("github.com/pingcap/tidb/store/tikv/testRateLimitActionMockWaitMax")
 
 	// assert oom fallback
 	for _, testcase := range testcases {
@@ -6672,7 +6703,7 @@ func (s *testSerialSuite) TestCoprocessorOOMAction(c *C) {
 		c.Check(err, IsNil)
 		tk.Se = se
 		tk.MustExec("use test")
-		tk.MustExec("set tidb_distsql_scan_concurrency = 2")
+		tk.MustExec("set tidb_distsql_scan_concurrency = 1")
 		tk.MustExec("set @@tidb_mem_quota_query=1;")
 		err = tk.QueryToErr(testcase.sql)
 		c.Assert(err, NotNil)

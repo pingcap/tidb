@@ -673,8 +673,8 @@ func (p *preprocessor) checkStatisticsOpGrammar(node ast.Node) {
 }
 
 func (p *preprocessor) checkRenameTableGrammar(stmt *ast.RenameTableStmt) {
-	oldTable := stmt.OldTable.Name.String()
-	newTable := stmt.NewTable.Name.String()
+	oldTable := stmt.TableToTables[0].OldTable.Name.String()
+	newTable := stmt.TableToTables[0].NewTable.Name.String()
 
 	p.checkRenameTable(oldTable, newTable)
 }
