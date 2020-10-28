@@ -51,64 +51,66 @@ var _ = Suite(&testFastAnalyze{})
 
 func (s *testSuite1) TestAnalyzePartition(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	createTable := `CREATE TABLE t (a int, b int, c varchar(10), primary key(a), index idx(b))
+	testkit.WithPruneMode(tk, variable.StaticOnly, func() {
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists t")
+		createTable := `CREATE TABLE t (a int, b int, c varchar(10), primary key(a), index idx(b))
 PARTITION BY RANGE ( a ) (
 		PARTITION p0 VALUES LESS THAN (6),
 		PARTITION p1 VALUES LESS THAN (11),
 		PARTITION p2 VALUES LESS THAN (16),
 		PARTITION p3 VALUES LESS THAN (21)
 )`
-	tk.MustExec(createTable)
-	for i := 1; i < 21; i++ {
-		tk.MustExec(fmt.Sprintf(`insert into t values (%d, %d, "hello")`, i, i))
-	}
-	tk.MustExec("analyze table t")
-
-	is := infoschema.GetInfoSchema(tk.Se.(sessionctx.Context))
-	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	c.Assert(err, IsNil)
-	pi := table.Meta().GetPartitionInfo()
-	c.Assert(pi, NotNil)
-	do, err := session.GetDomain(s.store)
-	c.Assert(err, IsNil)
-	handle := do.StatsHandle()
-	for _, def := range pi.Definitions {
-		statsTbl := handle.GetPartitionStats(table.Meta(), def.ID)
-		c.Assert(statsTbl.Pseudo, IsFalse)
-		c.Assert(len(statsTbl.Columns), Equals, 3)
-		c.Assert(len(statsTbl.Indices), Equals, 1)
-		for _, col := range statsTbl.Columns {
-			c.Assert(col.Len(), Greater, 0)
+		tk.MustExec(createTable)
+		for i := 1; i < 21; i++ {
+			tk.MustExec(fmt.Sprintf(`insert into t values (%d, %d, "hello")`, i, i))
 		}
-		for _, idx := range statsTbl.Indices {
-			c.Assert(idx.Len(), Greater, 0)
-		}
-	}
+		tk.MustExec("analyze table t")
 
-	tk.MustExec("drop table t")
-	tk.MustExec(createTable)
-	for i := 1; i < 21; i++ {
-		tk.MustExec(fmt.Sprintf(`insert into t values (%d, %d, "hello")`, i, i))
-	}
-	tk.MustExec("alter table t analyze partition p0")
-	is = infoschema.GetInfoSchema(tk.Se.(sessionctx.Context))
-	table, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	c.Assert(err, IsNil)
-	pi = table.Meta().GetPartitionInfo()
-	c.Assert(pi, NotNil)
-
-	for i, def := range pi.Definitions {
-		statsTbl := handle.GetPartitionStats(table.Meta(), def.ID)
-		if i == 0 {
+		is := infoschema.GetInfoSchema(tk.Se.(sessionctx.Context))
+		table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+		c.Assert(err, IsNil)
+		pi := table.Meta().GetPartitionInfo()
+		c.Assert(pi, NotNil)
+		do, err := session.GetDomain(s.store)
+		c.Assert(err, IsNil)
+		handle := do.StatsHandle()
+		for _, def := range pi.Definitions {
+			statsTbl := handle.GetPartitionStats(table.Meta(), def.ID)
 			c.Assert(statsTbl.Pseudo, IsFalse)
 			c.Assert(len(statsTbl.Columns), Equals, 3)
 			c.Assert(len(statsTbl.Indices), Equals, 1)
-		} else {
-			c.Assert(statsTbl.Pseudo, IsTrue)
+			for _, col := range statsTbl.Columns {
+				c.Assert(col.Len(), Greater, 0)
+			}
+			for _, idx := range statsTbl.Indices {
+				c.Assert(idx.Len(), Greater, 0)
+			}
 		}
-	}
+
+		tk.MustExec("drop table t")
+		tk.MustExec(createTable)
+		for i := 1; i < 21; i++ {
+			tk.MustExec(fmt.Sprintf(`insert into t values (%d, %d, "hello")`, i, i))
+		}
+		tk.MustExec("alter table t analyze partition p0")
+		is = infoschema.GetInfoSchema(tk.Se.(sessionctx.Context))
+		table, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+		c.Assert(err, IsNil)
+		pi = table.Meta().GetPartitionInfo()
+		c.Assert(pi, NotNil)
+
+		for i, def := range pi.Definitions {
+			statsTbl := handle.GetPartitionStats(table.Meta(), def.ID)
+			if i == 0 {
+				c.Assert(statsTbl.Pseudo, IsFalse)
+				c.Assert(len(statsTbl.Columns), Equals, 3)
+				c.Assert(len(statsTbl.Indices), Equals, 1)
+			} else {
+				c.Assert(statsTbl.Pseudo, IsTrue)
+			}
+		}
+	})
 }
 
 func (s *testSuite1) TestAnalyzeReplicaReadFollower(c *C) {
@@ -179,7 +181,7 @@ func (s *testSuite1) TestAnalyzeParameters(c *C) {
 	tbl := s.dom.StatsHandle().GetTableStats(tableInfo)
 	col := tbl.Columns[1]
 	c.Assert(col.Len(), Equals, 20)
-	c.Assert(len(col.CMSketch.TopN()), Equals, 1)
+	c.Assert(len(col.TopN.TopN()), Equals, 1)
 	width, depth := col.CMSketch.GetWidthAndDepth()
 	c.Assert(depth, Equals, int32(5))
 	c.Assert(width, Equals, int32(2048))
@@ -188,7 +190,7 @@ func (s *testSuite1) TestAnalyzeParameters(c *C) {
 	tbl = s.dom.StatsHandle().GetTableStats(tableInfo)
 	col = tbl.Columns[1]
 	c.Assert(col.Len(), Equals, 4)
-	c.Assert(len(col.CMSketch.TopN()), Equals, 0)
+	c.Assert(len(col.TopN.TopN()), Equals, 0)
 	width, depth = col.CMSketch.GetWidthAndDepth()
 	c.Assert(depth, Equals, int32(4))
 	c.Assert(width, Equals, int32(4))
@@ -264,14 +266,17 @@ func (s *testFastAnalyze) TestAnalyzeFastSample(c *C) {
 	opts := make(map[ast.AnalyzeOptionType]uint64)
 	opts[ast.AnalyzeOptNumSamples] = 20
 	mockExec := &executor.AnalyzeTestFastExec{
-		Ctx:             tk.Se.(sessionctx.Context),
-		HandleCols:      handleCols,
-		ColsInfo:        colsInfo,
-		IdxsInfo:        indicesInfo,
-		Concurrency:     1,
-		PhysicalTableID: tbl.(table.PhysicalTable).GetPhysicalID(),
-		TblInfo:         tblInfo,
-		Opts:            opts,
+		Ctx:         tk.Se.(sessionctx.Context),
+		HandleCols:  handleCols,
+		ColsInfo:    colsInfo,
+		IdxsInfo:    indicesInfo,
+		Concurrency: 1,
+		TableID: core.AnalyzeTableID{
+			CollectIDs: []int64{tbl.(table.PhysicalTable).GetPhysicalID()},
+			PersistID:  tbl.(table.PhysicalTable).GetPhysicalID(),
+		},
+		TblInfo: tblInfo,
+		Opts:    opts,
 	}
 	err = mockExec.TestFastSample()
 	c.Assert(err, IsNil)
@@ -500,7 +505,7 @@ func (s *testSuite1) testAnalyzeIncremental(tk *testkit.TestKit, c *C) {
 	tblStats := h.GetTableStats(tblInfo)
 	val, err := codec.EncodeKey(tk.Se.GetSessionVars().StmtCtx, nil, types.NewIntDatum(3))
 	c.Assert(err, IsNil)
-	c.Assert(tblStats.Indices[tblInfo.Indices[0].ID].CMSketch.QueryBytes(val), Equals, uint64(1))
+	c.Assert(tblStats.Indices[tblInfo.Indices[0].ID].QueryBytes(val), Equals, uint64(1))
 	c.Assert(statistics.IsAnalyzed(tblStats.Indices[tblInfo.Indices[0].ID].Flag), IsFalse)
 	c.Assert(statistics.IsAnalyzed(tblStats.Columns[tblInfo.Columns[0].ID].Flag), IsFalse)
 
@@ -508,7 +513,7 @@ func (s *testSuite1) testAnalyzeIncremental(tk *testkit.TestKit, c *C) {
 	tk.MustQuery("show stats_buckets").Check(testkit.Rows("test t  a 0 0 1 1 1 1", "test t  a 0 1 2 1 2 2", "test t  a 0 2 3 1 3 3",
 		"test t  idx 1 0 1 1 1 1", "test t  idx 1 1 2 1 2 2", "test t  idx 1 2 3 1 3 3"))
 	tblStats = h.GetTableStats(tblInfo)
-	c.Assert(tblStats.Indices[tblInfo.Indices[0].ID].CMSketch.QueryBytes(val), Equals, uint64(1))
+	c.Assert(tblStats.Indices[tblInfo.Indices[0].ID].QueryBytes(val), Equals, uint64(1))
 }
 
 type testFastAnalyze struct {
@@ -608,12 +613,12 @@ func (s *testSuite1) TestExtractTopN(c *C) {
 	tblInfo := table.Meta()
 	tblStats := s.dom.StatsHandle().GetTableStats(tblInfo)
 	colStats := tblStats.Columns[tblInfo.Columns[1].ID]
-	c.Assert(len(colStats.CMSketch.TopN()), Equals, 1)
-	item := colStats.CMSketch.TopN()[0]
+	c.Assert(len(colStats.TopN.TopN()), Equals, 1)
+	item := colStats.TopN.TopN()[0]
 	c.Assert(item.Count, Equals, uint64(11))
 	idxStats := tblStats.Indices[tblInfo.Indices[0].ID]
-	c.Assert(len(idxStats.CMSketch.TopN()), Equals, 1)
-	item = idxStats.CMSketch.TopN()[0]
+	c.Assert(len(idxStats.TopN.TopN()), Equals, 1)
+	item = idxStats.TopN.TopN()[0]
 	c.Assert(item.Count, Equals, uint64(11))
 }
 
@@ -643,8 +648,8 @@ func (s *testSuite1) TestHashInTopN(c *C) {
 	tblStats2 := s.dom.StatsHandle().GetTableStats(tblInfo).Copy()
 	// check the hash for topn
 	for _, col := range tblInfo.Columns {
-		topn1 := tblStats1.Columns[col.ID].CMSketch.TopNMap()
-		cm2 := tblStats2.Columns[col.ID].CMSketch
+		topn1 := tblStats1.Columns[col.ID].TopN.TopNMap()
+		cm2 := tblStats2.Columns[col.ID].TopN
 		for h1, topnMetas := range topn1 {
 			for _, topnMeta1 := range topnMetas {
 				count2, exists := cm2.QueryTopN(h1, topnMeta1.GetH2(), topnMeta1.Data)

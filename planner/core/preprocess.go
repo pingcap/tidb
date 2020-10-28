@@ -188,6 +188,11 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		if node.Kind == ast.BRIEKindRestore {
 			p.flag |= inCreateOrDropTable
 		}
+	case *ast.TableSource:
+		isModeOracle := p.ctx.GetSessionVars().SQLMode&mysql.ModeOracle != 0
+		if _, ok := node.Source.(*ast.SelectStmt); ok && !isModeOracle && len(node.AsName.L) == 0 {
+			p.err = ddl.ErrDerivedMustHaveAlias.GenWithStackByArgs()
+		}
 	case *ast.CreateStatisticsStmt, *ast.DropStatisticsStmt:
 		p.checkStatisticsOpGrammar(in)
 	default:
@@ -580,13 +585,16 @@ func (p *preprocessor) checkNonUniqTableAlias(stmt *ast.Join) {
 		p.tableAliasInJoin = append(p.tableAliasInJoin, make(map[string]interface{}))
 	}
 	tableAliases := p.tableAliasInJoin[len(p.tableAliasInJoin)-1]
-	if err := isTableAliasDuplicate(stmt.Left, tableAliases); err != nil {
-		p.err = err
-		return
-	}
-	if err := isTableAliasDuplicate(stmt.Right, tableAliases); err != nil {
-		p.err = err
-		return
+	isOracleMode := p.ctx.GetSessionVars().SQLMode&mysql.ModeOracle != 0
+	if !isOracleMode {
+		if err := isTableAliasDuplicate(stmt.Left, tableAliases); err != nil {
+			p.err = err
+			return
+		}
+		if err := isTableAliasDuplicate(stmt.Right, tableAliases); err != nil {
+			p.err = err
+			return
+		}
 	}
 	p.flag |= parentIsJoin
 }
@@ -657,8 +665,8 @@ func (p *preprocessor) checkStatisticsOpGrammar(node ast.Node) {
 }
 
 func (p *preprocessor) checkRenameTableGrammar(stmt *ast.RenameTableStmt) {
-	oldTable := stmt.OldTable.Name.String()
-	newTable := stmt.NewTable.Name.String()
+	oldTable := stmt.TableToTables[0].OldTable.Name.String()
+	newTable := stmt.TableToTables[0].NewTable.Name.String()
 
 	p.checkRenameTable(oldTable, newTable)
 }
