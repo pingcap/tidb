@@ -17,7 +17,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/util/execdetails"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -291,13 +290,7 @@ func (e *LoadDataInfo) CommitOneTask(ctx context.Context, task CommitTask) error
 	})
 	e.Ctx.StmtCommit()
 	// Make sure that there are no retries when committing.
-	var commitDetail *execdetails.CommitDetails
-	ctx = context.WithValue(ctx, execdetails.CommitDetailCtxKey, &commitDetail)
-	err = e.Ctx.RefreshTxnCtx(ctx)
-	if commitDetail != nil {
-		e.ctx.GetSessionVars().StmtCtx.MergeExecDetails(nil, commitDetail)
-	}
-	if err != nil {
+	if err = e.Ctx.RefreshTxnCtx(ctx); err != nil {
 		logutil.Logger(ctx).Error("commit error refresh", zap.Error(err))
 		return err
 	}

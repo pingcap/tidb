@@ -17,7 +17,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/util/plancodec"
 	"strconv"
 	"strings"
 
@@ -825,12 +824,6 @@ type LoadData struct {
 	ColumnsAndUserVars []*ast.ColumnNameOrUserVar
 
 	GenCols InsertGeneratedColumns
-}
-
-// Init initializes Insert.
-func (p LoadData) Init(ctx sessionctx.Context) *LoadData {
-	p.basePlan = newBasePlan(ctx, plancodec.TypeLoadData, 0)
-	return &p
 }
 
 // LoadStats represents a load stats plan.
