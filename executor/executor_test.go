@@ -6495,8 +6495,10 @@ func (s *testSerialSuite1) TestIndexMergeRuntimeStats(c *C) {
 	c.Assert(len(rows), Equals, 4)
 	explain := fmt.Sprintf("%v", rows[0])
 	c.Assert(explain, Matches, ".*time:.*loops:.*index_task:.*table_task:{num.*concurrency.*time.*}.*")
+	tableRangeExplain := fmt.Sprintf("%v", rows[1])
 	indexExplain := fmt.Sprintf("%v", rows[2])
 	tableExplain := fmt.Sprintf("%v", rows[3])
+	c.Assert(tableRangeExplain, Matches, ".*time:.*loops:.*cop_task:.*")
 	c.Assert(indexExplain, Matches, ".*time:.*loops:.*cop_task:.*")
 	c.Assert(tableExplain, Matches, ".*time:.*loops:.*cop_task:.*")
 }
