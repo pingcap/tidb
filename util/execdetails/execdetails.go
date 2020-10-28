@@ -430,13 +430,8 @@ const (
 	TpJoinRuntimeStats
 	// TpSelectResultRuntimeStats is the tp for SelectResultRuntimeStats.
 	TpSelectResultRuntimeStats
-<<<<<<< HEAD
-=======
-	// TpInsertRuntimeStat is the tp for InsertRuntimeStat
-	TpInsertRuntimeStat
 	// TpIndexLookUpRunTimeStats is the tp for TpIndexLookUpRunTimeStats
 	TpIndexLookUpRunTimeStats
->>>>>>> 58f2a48b1... *:add the indexlookup runtime stats infomation (#20145)
 	// TpSlowQueryRuntimeStat is the tp for TpSlowQueryRuntimeStat
 	TpSlowQueryRuntimeStat
 	// TpInsertRuntimeStat is the tp for InsertRuntimeStat

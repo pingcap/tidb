@@ -16,6 +16,7 @@ package executor
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"math"
 	"runtime"
 	"runtime/trace"
@@ -40,12 +41,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
-<<<<<<< HEAD
-=======
-	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/execdetails"
->>>>>>> 58f2a48b1... *:add the indexlookup runtime stats infomation (#20145)
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/ranger"
@@ -458,15 +454,11 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, kvRanges []k
 	if err != nil {
 		return err
 	}
-<<<<<<< HEAD
 	tps := []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}
 	if e.checkIndexValue != nil {
 		tps = e.idxColTps
 	}
-=======
-	tps := e.getRetTpsByHandle()
 	idxID := e.getIndexPlanRootID()
->>>>>>> 58f2a48b1... *:add the indexlookup runtime stats infomation (#20145)
 	// Since the first read only need handle information. So its returned col is only 1.
 	result, err := distsql.SelectWithRuntimeStats(ctx, e.ctx, kvReq, tps, e.feedback, getPhysicalPlanIDs(e.idxPlans), idxID)
 	if err != nil {
@@ -633,7 +625,7 @@ func (e *IndexLookUpExecutor) initRuntimeStats() {
 				IndexScan:    0,
 				TableRowScan: 0,
 				TableTaskNum: 0,
-				Concurrency:  e.ctx.GetSessionVars().IndexLookupConcurrency(),
+				Concurrency:  e.ctx.GetSessionVars().IndexLookupConcurrency,
 			}
 			e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
 		}
@@ -694,15 +686,12 @@ func (w *indexWorker) fetchHandles(ctx context.Context, result distsql.SelectRes
 			}
 		}
 	}()
-<<<<<<< HEAD
 	var chk *chunk.Chunk
 	if w.checkIndexValue != nil {
 		chk = chunk.NewChunkWithCapacity(w.idxColTps, w.maxChunkSize)
 	} else {
 		chk = chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}, w.idxLookup.maxChunkSize)
-=======
-	retTps := w.idxLookup.getRetTpsByHandle()
-	chk := chunk.NewChunkWithCapacity(retTps, w.idxLookup.maxChunkSize)
+	}
 	idxID := w.idxLookup.getIndexPlanRootID()
 	var basicStats *execdetails.BasicRuntimeStats
 	if w.idxLookup.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl != nil {
@@ -710,7 +699,6 @@ func (w *indexWorker) fetchHandles(ctx context.Context, result distsql.SelectRes
 			basicStats = &execdetails.BasicRuntimeStats{}
 			w.idxLookup.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(idxID, basicStats)
 		}
->>>>>>> 58f2a48b1... *:add the indexlookup runtime stats infomation (#20145)
 	}
 	for {
 		startTime := time.Now()
@@ -883,56 +871,6 @@ func (w *tableWorker) pickAndExecTask(ctx context.Context) {
 	}
 }
 
-<<<<<<< HEAD
-=======
-func (e *IndexLookUpExecutor) getHandle(row chunk.Row, handleIdx []int,
-	isCommonHandle bool, tp getHandleType) (handle kv.Handle, err error) {
-	if isCommonHandle {
-		var handleEncoded []byte
-		var datums []types.Datum
-		for i, idx := range handleIdx {
-			// If the new collation is enabled and the handle contains non-binary string,
-			// the handle in the index is encoded as "sortKey". So we cannot restore its
-			// original value(the primary key) here.
-			// We use a trick to avoid encoding the "sortKey" again by changing the charset
-			// collation to `binary`.
-			// TODO: Add the restore value to the secondary index to remove this trick.
-			rtp := e.handleCols[i].RetType
-			if collate.NewCollationEnabled() && rtp.EvalType() == types.ETString &&
-				!mysql.HasBinaryFlag(rtp.Flag) && tp == getHandleFromIndex {
-				rtp = rtp.Clone()
-				rtp.Collate = charset.CollationBin
-				datums = append(datums, row.GetDatum(idx, rtp))
-				continue
-			}
-			datums = append(datums, row.GetDatum(idx, e.handleCols[i].RetType))
-		}
-		if tp == getHandleFromTable {
-			tablecodec.TruncateIndexValues(e.table.Meta(), e.primaryKeyIndex, datums)
-		}
-		handleEncoded, err = codec.EncodeKey(e.ctx.GetSessionVars().StmtCtx, nil, datums...)
-		if err != nil {
-			return nil, err
-		}
-		handle, err = kv.NewCommonHandle(handleEncoded)
-		if err != nil {
-			return nil, err
-		}
-	} else {
-		if len(handleIdx) == 0 {
-			handle = kv.IntHandle(row.GetInt64(0))
-		} else {
-			handle = kv.IntHandle(row.GetInt64(handleIdx[0]))
-		}
-	}
-	if e.index.Global {
-		pidOffset := row.Len() - 1
-		pid := row.GetInt64(pidOffset)
-		handle = kv.NewPartitionHandle(pid, handle)
-	}
-	return
-}
-
 // IndexLookUpRunTimeStats record the indexlookup runtime stat
 type IndexLookUpRunTimeStats struct {
 	IndexScan    int64
@@ -987,7 +925,6 @@ func (e *IndexLookUpRunTimeStats) Tp() int {
 	return execdetails.TpIndexLookUpRunTimeStats
 }
 
->>>>>>> 58f2a48b1... *:add the indexlookup runtime stats infomation (#20145)
 func (w *tableWorker) compareData(ctx context.Context, task *lookupTableTask, tableReader Executor) error {
 	chk := newFirstChunk(tableReader)
 	tblInfo := w.idxLookup.table.Meta()
