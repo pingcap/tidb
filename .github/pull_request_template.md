@@ -1,5 +1,10 @@
 <!--
 Thank you for contributing to Dumpling! Please read the [CONTRIBUTING](https://github.com/pingcap/dumpling/blob/master/CONTRIBUTING.md) document **BEFORE** filing this PR.
+
+If you want to open the **Challenge Program** pull request, please use the following template:
+https://raw.githubusercontent.com/pingcap/.github/master/.github/PULL_REQUEST_TEMPLATE/challenge-program.md
+
+You can use it with query parameters: https://github.com/pingcap/dumpling/compare/master...${you branch}?template=challenge-program.md
 -->
 
 ### What problem does this PR solve? <!--add issue link with summary if exists-->
