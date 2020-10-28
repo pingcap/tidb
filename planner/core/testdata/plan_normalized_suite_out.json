@@ -205,10 +205,18 @@
         ]
       },
       {
-        "SQL": "select * from t3 where a<5",
+        "SQL": "select * from t3 where a=4",
         "Plan": [
           " TableReader   root ",
-          " └─Selection   cop  lt(test.t3.a, ?)",
+          " └─Selection   cop  eq(test.t3.a, ?)",
+          "   └─TableScan cop  table:t3, range:[?,?], keep order:false"
+        ]
+      },
+      {
+        "SQL": "select * from t3 where a=30",
+        "Plan": [
+          " TableReader   root ",
+          " └─Selection   cop  eq(test.t3.a, ?)",
           "   └─TableScan cop  table:t3, range:[?,?], keep order:false"
         ]
       }
