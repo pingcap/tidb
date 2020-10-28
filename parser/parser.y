@@ -2189,15 +2189,14 @@ Symbol:
 /**************************************RenameTableStmt***************************************
  * See http://dev.mysql.com/doc/refman/5.7/en/rename-table.html
  *
- * TODO: refactor this when you are going to add full support for multiple schema changes.
- * Currently it is only useful for syncer which depends heavily on tidb parser to do some dirty work.
+ * RENAME TABLE
+ *     tbl_name TO new_tbl_name
+ *     [, tbl_name2 TO new_tbl_name2] ...
  *******************************************************************************************/
 RenameTableStmt:
 	"RENAME" "TABLE" TableToTableList
 	{
 		$$ = &ast.RenameTableStmt{
-			OldTable:      $3.([]*ast.TableToTable)[0].OldTable,
-			NewTable:      $3.([]*ast.TableToTable)[0].NewTable,
 			TableToTables: $3.([]*ast.TableToTable),
 		}
 	}
