@@ -169,6 +169,8 @@ type MemBufferIterator interface {
 	Iterator
 	HasValue() bool
 	Flags() KeyFlags
+	UpdateFlags(...FlagsOp)
+	Handle() MemKeyHandle
 }
 
 // MemBuffer is an in-memory kv collection, can be used to buffer write operations.
@@ -194,6 +196,9 @@ type MemBuffer interface {
 	// UpdateFlags update the flags associated with key.
 	UpdateFlags(Key, ...FlagsOp)
 
+	GetKeyByHandle(MemKeyHandle) []byte
+	GetValueByHandle(MemKeyHandle) ([]byte, bool)
+
 	// Reset reset the MemBuffer to initial states.
 	Reset()
 	// DiscardValues releases the memory used by all values.
@@ -212,6 +217,8 @@ type MemBuffer interface {
 	// InspectStage used to inspect the value updates in the given stage.
 	InspectStage(StagingHandle, func(Key, KeyFlags, []byte))
 
+	// SelectValueHistory select the latest value which makes `predicate` returns true from the modification history.
+	SelectValueHistory(key Key, predicate func(value []byte) bool) ([]byte, error)
 	// SnapshotGetter returns a Getter for a snapshot of MemBuffer.
 	SnapshotGetter() Getter
 	// SnapshotIter returns a Iterator for a snapshot of MemBuffer.
@@ -292,6 +299,16 @@ type LockCtx struct {
 type ReturnedValue struct {
 	Value         []byte
 	AlreadyLocked bool
+}
+
+// MPPClient accepts and processes mpp requests.
+type MPPClient interface {
+	// ConstructMPPTasks schedules task for a plan fragment.
+	// TODO:: This interface will be refined after we support more executors.
+	ConstructMPPTasks(context.Context, *MPPBuildTasksRequest) ([]MPPTask, error)
+
+	// DispatchMPPTasks dispatches ALL mpp requests at once, and returns an iterator that transfers the data.
+	DispatchMPPTasks(context.Context, []*MPPDispatchRequest) Response
 }
 
 // Client is used to send request to KV layer.
@@ -387,6 +404,33 @@ type Request struct {
 	BatchCop bool
 	// TaskID is an unique ID for an execution of a statement
 	TaskID uint64
+	// TiDBServerID is the specified TiDB serverID to execute request. `0` means all TiDB instances.
+	TiDBServerID uint64
+}
+
+// MPPTask stands for a min execution unit for mpp.
+type MPPTask interface {
+	// GetAddress indicates which node this task should execute on.
+	GetAddress() string
+}
+
+// MPPBuildTasksRequest request the stores allocation for a mpp plan fragment.
+// However, the request doesn't contain the particular plan, because only key ranges take effect on the location assignment.
+type MPPBuildTasksRequest struct {
+	KeyRanges []KeyRange
+	StartTS   uint64
+}
+
+// MPPDispatchRequest stands for a dispatching task.
+type MPPDispatchRequest struct {
+	Data    []byte  // data encodes the dag coprocessor request.
+	Task    MPPTask // mpp store is the location of tiflash store.
+	IsRoot  bool    // root task returns data to tidb directly.
+	Timeout uint64  // If task is assigned but doesn't receive a connect request during timeout, the task should be destroyed.
+	// SchemaVer is for any schema-ful storage (like tiflash) to validate schema correctness if necessary.
+	SchemaVar int64
+	StartTs   uint64
+	ID        int64 // identify a single task
 }
 
 // ResultSubset represents a result subset from a single storage unit.
@@ -445,9 +489,11 @@ type Storage interface {
 	BeginWithStartTS(startTS uint64) (Transaction, error)
 	// GetSnapshot gets a snapshot that is able to read any data which data is <= ver.
 	// if ver is MaxVersion or > current max committed version, we will use current version for this snapshot.
-	GetSnapshot(ver Version) (Snapshot, error)
+	GetSnapshot(ver Version) Snapshot
 	// GetClient gets a client instance.
 	GetClient() Client
+	// GetClient gets a mpp client instance.
+	GetMPPClient() MPPClient
 	// Close store
 	Close() error
 	// UUID return a unique ID which represents a Storage.

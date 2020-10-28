@@ -14,6 +14,7 @@
 package statistics
 
 import (
+	"encoding/binary"
 	"fmt"
 	"math"
 	"sort"
@@ -22,6 +23,7 @@ import (
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
@@ -55,6 +57,27 @@ const (
 	// between condition selects 1/40 of total rows.
 	PseudoRowCount = 10000
 )
+
+// CMSketchSizeLimit indicates the max width and depth of CMSketch.
+var CMSketchSizeLimit = kv.TxnEntrySizeLimit / binary.MaxVarintLen32
+
+// AnalyzeOptionLimit indicates the upper bound of some attribute.
+var AnalyzeOptionLimit = map[ast.AnalyzeOptionType]uint64{
+	ast.AnalyzeOptNumBuckets:    1024,
+	ast.AnalyzeOptNumTopN:       1024,
+	ast.AnalyzeOptCMSketchWidth: CMSketchSizeLimit,
+	ast.AnalyzeOptCMSketchDepth: CMSketchSizeLimit,
+	ast.AnalyzeOptNumSamples:    100000,
+}
+
+// AnalyzeOptionDefault indicates the default values of some attributes.
+var AnalyzeOptionDefault = map[ast.AnalyzeOptionType]uint64{
+	ast.AnalyzeOptNumBuckets:    256,
+	ast.AnalyzeOptNumTopN:       20,
+	ast.AnalyzeOptCMSketchWidth: 2048,
+	ast.AnalyzeOptCMSketchDepth: 5,
+	ast.AnalyzeOptNumSamples:    10000,
+}
 
 // Table represents statistics for a table.
 type Table struct {
@@ -159,6 +182,48 @@ func (t *Table) Copy() *Table {
 	return nt
 }
 
+// CopyWithoutBucketsAndCMS copies the current table only with metadata.
+func (t *Table) CopyWithoutBucketsAndCMS() *Table {
+	newHistColl := HistColl{
+		PhysicalID:     t.PhysicalID,
+		HavePhysicalID: t.HavePhysicalID,
+		Count:          t.Count,
+		Columns:        make(map[int64]*Column, len(t.Columns)),
+		Indices:        make(map[int64]*Index, len(t.Indices)),
+		Pseudo:         t.Pseudo,
+		ModifyCount:    t.ModifyCount,
+	}
+	for id, col := range t.Columns {
+		oldHg := &col.Histogram
+		newHg := NewHistogram(oldHg.ID, oldHg.NDV, oldHg.NullCount, oldHg.LastUpdateVersion, oldHg.Tp, 0, oldHg.TotColSize)
+		newHistColl.Columns[id] = &Column{
+			Histogram:  *newHg,
+			PhysicalID: col.PhysicalID,
+			Info:       col.Info,
+			Count:      col.Count,
+			IsHandle:   col.IsHandle,
+			Flag:       col.Flag,
+		}
+	}
+	for id, idx := range t.Indices {
+		oldHg := &idx.Histogram
+		newHg := NewHistogram(oldHg.ID, oldHg.NDV, oldHg.NullCount, oldHg.LastUpdateVersion, oldHg.Tp, 0, oldHg.TotColSize)
+		newHistColl.Indices[id] = &Index{
+			Histogram:  *newHg,
+			PhysicalID: idx.PhysicalID,
+			Info:       idx.Info,
+			StatsVer:   idx.StatsVer,
+			Flag:       idx.Flag,
+		}
+	}
+	nt := &Table{
+		HistColl: newHistColl,
+		Version:  t.Version,
+		Name:     t.Name,
+	}
+	return nt
+}
+
 // String implements Stringer interface.
 func (t *Table) String() string {
 	strs := make([]string, 0, len(t.Columns)+1)
@@ -232,6 +297,40 @@ func (n *neededColumnMap) insert(col tableColumnID) {
 func (n *neededColumnMap) Delete(col tableColumnID) {
 	n.m.Lock()
 	delete(n.cols, col)
+	n.m.Unlock()
+}
+
+type tableIndexID struct {
+	TableID int64
+	IndexID int64
+}
+
+type neededIndexMap struct {
+	m    sync.Mutex
+	idxs map[tableIndexID]struct{}
+}
+
+// AllIdxs returns all the idx with an array
+func (n *neededIndexMap) AllIdxs() []tableIndexID {
+	n.m.Lock()
+	keys := make([]tableIndexID, 0, len(n.idxs))
+	for key := range n.idxs {
+		keys = append(keys, key)
+	}
+	n.m.Unlock()
+	return keys
+}
+
+func (n *neededIndexMap) insert(idx tableIndexID) {
+	n.m.Lock()
+	n.idxs[idx] = struct{}{}
+	n.m.Unlock()
+}
+
+// Delete delete a idx from idxs
+func (n *neededIndexMap) Delete(idx tableIndexID) {
+	n.m.Lock()
+	delete(n.idxs, idx)
 	n.m.Unlock()
 }
 
@@ -320,7 +419,7 @@ func (coll *HistColl) GetRowCountByColumnRanges(sc *stmtctx.StatementContext, co
 // GetRowCountByIndexRanges estimates the row count by a slice of Range.
 func (coll *HistColl) GetRowCountByIndexRanges(sc *stmtctx.StatementContext, idxID int64, indexRanges []*ranger.Range) (float64, error) {
 	idx := coll.Indices[idxID]
-	if idx == nil || idx.IsInvalid(coll.Pseudo) {
+	if idx == nil || idx.IsInvalid(sc, coll.Pseudo) {
 		colsLen := -1
 		if idx != nil && idx.Info.Unique {
 			colsLen = len(idx.Info.Columns)
@@ -464,19 +563,63 @@ func outOfRangeEQSelectivity(ndv, modifyRows, totalRows int64) float64 {
 	return selectivity
 }
 
+// crossValidationSelectivity gets the selectivity of multi-column equal conditions by cross validation.
+func (coll *HistColl) crossValidationSelectivity(sc *stmtctx.StatementContext, idx *Index, usedColsLen int, idxPointRange *ranger.Range) (float64, float64, error) {
+	minRowCount := math.MaxFloat64
+	cols := coll.Idx2ColumnIDs[idx.ID]
+	crossValidationSelectivity := 1.0
+	totalRowCount := float64(idx.TotalRowCount())
+	for i, colID := range cols {
+		if i >= usedColsLen {
+			break
+		}
+		if col, ok := coll.Columns[colID]; ok {
+			lowExclude := idxPointRange.LowExclude
+			highExclude := idxPointRange.HighExclude
+			// Consider this case:
+			// create table t(a int, b int, c int, primary key(a,b,c));
+			// insert into t values(1,1,1),(2,2,3);
+			// explain select * from t where (a,b) in ((1,1),(2,2)) and c > 2;
+			// For column a, we will get range: (1, 1], (2, 2], but GetColumnRowCount() with rang = (2, 2] will return 0.
+			// And the result of the explain statement will output estRow 0.0. So we change it to [2, 2].
+			if lowExclude != highExclude && i < usedColsLen {
+				lowExclude = false
+				highExclude = false
+			}
+			rang := ranger.Range{
+				LowVal:      []types.Datum{idxPointRange.LowVal[i]},
+				LowExclude:  lowExclude,
+				HighVal:     []types.Datum{idxPointRange.HighVal[i]},
+				HighExclude: highExclude,
+			}
+
+			rowCount, err := col.GetColumnRowCount(sc, []*ranger.Range{&rang}, coll.ModifyCount, col.IsHandle)
+			if err != nil {
+				return 0, 0, err
+			}
+			crossValidationSelectivity = crossValidationSelectivity * (rowCount / totalRowCount)
+
+			if rowCount < minRowCount {
+				minRowCount = rowCount
+			}
+		}
+	}
+	return minRowCount, crossValidationSelectivity, nil
+}
+
 // getEqualCondSelectivity gets the selectivity of the equal conditions.
-func (coll *HistColl) getEqualCondSelectivity(idx *Index, bytes []byte, usedColsLen int) float64 {
+func (coll *HistColl) getEqualCondSelectivity(sc *stmtctx.StatementContext, idx *Index, bytes []byte, usedColsLen int, idxPointRange *ranger.Range) (float64, error) {
 	coverAll := len(idx.Info.Columns) == usedColsLen
 	// In this case, the row count is at most 1.
 	if idx.Info.Unique && coverAll {
-		return 1.0 / float64(idx.TotalRowCount())
+		return 1.0 / float64(idx.TotalRowCount()), nil
 	}
 	val := types.NewBytesDatum(bytes)
 	if idx.outOfRange(val) {
 		// When the value is out of range, we could not found this value in the CM Sketch,
 		// so we use heuristic methods to estimate the selectivity.
 		if idx.NDV > 0 && coverAll {
-			return outOfRangeEQSelectivity(idx.NDV, coll.ModifyCount, int64(idx.TotalRowCount()))
+			return outOfRangeEQSelectivity(idx.NDV, coll.ModifyCount, int64(idx.TotalRowCount())), nil
 		}
 		// The equal condition only uses prefix columns of the index.
 		colIDs := coll.Idx2ColumnIDs[idx.ID]
@@ -487,9 +630,19 @@ func (coll *HistColl) getEqualCondSelectivity(idx *Index, bytes []byte, usedCols
 			}
 			ndv = mathutil.MaxInt64(ndv, coll.Columns[colID].NDV)
 		}
-		return outOfRangeEQSelectivity(ndv, coll.ModifyCount, int64(idx.TotalRowCount()))
+		return outOfRangeEQSelectivity(ndv, coll.ModifyCount, int64(idx.TotalRowCount())), nil
 	}
-	return float64(idx.CMSketch.QueryBytes(bytes)) / float64(idx.TotalRowCount())
+
+	minRowCount, crossValidationSelectivity, err := coll.crossValidationSelectivity(sc, idx, usedColsLen, idxPointRange)
+	if err != nil {
+		return 0, nil
+	}
+
+	idxCount := float64(idx.CMSketch.QueryBytes(bytes))
+	if minRowCount < idxCount {
+		return crossValidationSelectivity, nil
+	}
+	return idxCount / float64(idx.TotalRowCount()), nil
 }
 
 func (coll *HistColl) getIndexRowCount(sc *stmtctx.StatementContext, idxID int64, indexRanges []*ranger.Range) (float64, error) {
@@ -523,7 +676,10 @@ func (coll *HistColl) getIndexRowCount(sc *stmtctx.StatementContext, idxID int64
 			if err != nil {
 				return 0, errors.Trace(err)
 			}
-			selectivity = coll.getEqualCondSelectivity(idx, bytes, rangePosition)
+			selectivity, err = coll.getEqualCondSelectivity(sc, idx, bytes, rangePosition, ran)
+			if err != nil {
+				return 0, errors.Trace(err)
+			}
 		} else {
 			bytes, err := codec.EncodeKey(sc, nil, ran.LowVal[:rangePosition-1]...)
 			if err != nil {
@@ -536,7 +692,11 @@ func (coll *HistColl) getIndexRowCount(sc *stmtctx.StatementContext, idxID int64
 				if err != nil {
 					return 0, err
 				}
-				selectivity += coll.getEqualCondSelectivity(idx, bytes, rangePosition)
+				res, err := coll.getEqualCondSelectivity(sc, idx, bytes, rangePosition, ran)
+				if err != nil {
+					return 0, errors.Trace(err)
+				}
+				selectivity += res
 			}
 		}
 		// use histogram to estimate the range condition

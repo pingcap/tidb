@@ -15,6 +15,7 @@ package executor_test
 
 import (
 	"context"
+	"strconv"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
@@ -29,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
 )
@@ -502,10 +504,34 @@ func (s *testSuite3) TestSetPwd(c *C) {
 func (s *testSuite3) TestKillStmt(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("kill 1")
+	sm := &mockSessionManager{
+		serverID: 0,
+	}
+	tk.Se.SetSessionManager(sm)
 
+	// ZERO serverID, treated as truncated.
+	tk.MustExec("kill 1")
 	result := tk.MustQuery("show warnings")
-	result.Check(testkit.Rows("Warning 1105 Invalid operation. Please use 'KILL TIDB [CONNECTION | QUERY] connectionID' instead"))
+	result.Check(testkit.Rows("Warning 1105 Kill failed: Received a 32bits truncated ConnectionID, expect 64bits. Please execute 'KILL [CONNECTION | QUERY] ConnectionID' to send a Kill without truncating ConnectionID."))
+
+	// truncated
+	sm.SetServerID(1)
+	tk.MustExec("kill 101")
+	result = tk.MustQuery("show warnings")
+	result.Check(testkit.Rows("Warning 1105 Kill failed: Received a 32bits truncated ConnectionID, expect 64bits. Please execute 'KILL [CONNECTION | QUERY] ConnectionID' to send a Kill without truncating ConnectionID."))
+
+	// excceed int64
+	tk.MustExec("kill 9223372036854775808") // 9223372036854775808 == 2^63
+	result = tk.MustQuery("show warnings")
+	result.Check(testkit.Rows("Warning 1105 Parse ConnectionID failed: Unexpected connectionID excceeds int64"))
+
+	// local kill
+	connID := util.GlobalConnID{Is64bits: true, ServerID: 1, LocalConnID: 101}
+	tk.MustExec("kill " + strconv.FormatUint(connID.ID(), 10))
+	result = tk.MustQuery("show warnings")
+	result.Check(testkit.Rows())
+
+	// remote kill is tested in `tests/globalkilltest`
 }
 
 func (s *testSuite3) TestFlushPrivileges(c *C) {
@@ -564,7 +590,7 @@ func (s *testSuite3) TestDropStats(c *C) {
 	c.Assert(err, IsNil)
 	tableInfo := tbl.Meta()
 	h := do.StatsHandle()
-	h.Clear()
+	h.Clear4Test()
 	testKit.MustExec("analyze table t")
 	statsTbl := h.GetTableStats(tableInfo)
 	c.Assert(statsTbl.Pseudo, IsFalse)

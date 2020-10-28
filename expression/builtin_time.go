@@ -27,6 +27,7 @@ import (
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
@@ -1684,7 +1685,6 @@ func (c *fromUnixTimeFunctionClass) getFunction(ctx sessionctx.Context, args []E
 	}
 
 	if len(args) > 1 {
-		bf.tp.Flen = args[1].GetType().Flen
 		sig = &builtinFromUnixTime2ArgSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_FromUnixTime2Arg)
 		return sig, nil
@@ -1937,7 +1937,7 @@ func (b *builtinStrToDateDateSig) evalTime(row chunk.Row) (types.Time, bool, err
 		return types.ZeroTime, true, handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, t.String()))
 	}
 	if b.ctx.GetSessionVars().SQLMode.HasNoZeroDateMode() && (t.Year() == 0 || t.Month() == 0 || t.Day() == 0) {
-		return types.ZeroTime, true, handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, t.String()))
+		return types.ZeroTime, true, handleInvalidTimeError(b.ctx, types.ErrWrongValueForType.GenWithStackByArgs(types.DateTimeStr, date, ast.StrToDate))
 	}
 	t.SetType(mysql.TypeDate)
 	t.SetFsp(types.MinFsp)
@@ -2852,7 +2852,10 @@ func (du *baseDateArithmitical) add(ctx sessionctx.Context, date types.Time, int
 	if err := handleInvalidTimeError(ctx, err); err != nil {
 		return types.ZeroTime, true, err
 	}
+	return du.addDate(ctx, date, year, month, day, nano)
+}
 
+func (du *baseDateArithmitical) addDate(ctx sessionctx.Context, date types.Time, year, month, day, nano int64) (types.Time, bool, error) {
 	goTime, err := date.GoTime(time.Local)
 	if err := handleInvalidTimeError(ctx, err); err != nil {
 		return types.ZeroTime, true, err
@@ -2865,6 +2868,13 @@ func (du *baseDateArithmitical) add(ctx sessionctx.Context, date types.Time, int
 		date.SetFsp(0)
 	} else {
 		date.SetFsp(6)
+	}
+
+	// fix https://github.com/pingcap/tidb/issues/11329
+	if goTime.Year() == 0 {
+		hour, minute, second := goTime.Clock()
+		date.SetCoreTime(types.FromDate(0, 0, 0, hour, minute, second, goTime.Nanosecond()/1000))
+		return date, false, nil
 	}
 
 	if goTime.Year() < 0 || goTime.Year() > 9999 {
@@ -2911,36 +2921,7 @@ func (du *baseDateArithmitical) sub(ctx sessionctx.Context, date types.Time, int
 	if err := handleInvalidTimeError(ctx, err); err != nil {
 		return types.ZeroTime, true, err
 	}
-	year, month, day, nano = -year, -month, -day, -nano
-
-	goTime, err := date.GoTime(time.Local)
-	if err := handleInvalidTimeError(ctx, err); err != nil {
-		return types.ZeroTime, true, err
-	}
-
-	duration := time.Duration(nano)
-	goTime = goTime.Add(duration)
-	goTime = types.AddDate(year, month, day, goTime)
-
-	if goTime.Nanosecond() == 0 {
-		date.SetFsp(0)
-	} else {
-		date.SetFsp(6)
-	}
-
-	if goTime.Year() < 0 || goTime.Year() > 9999 {
-		return types.ZeroTime, true, handleInvalidTimeError(ctx, types.ErrDatetimeFunctionOverflow.GenWithStackByArgs("datetime"))
-	}
-
-	date.SetCoreTime(types.FromGoTime(goTime))
-	overflow, err := types.DateTimeIsOverflow(ctx.GetSessionVars().StmtCtx, date)
-	if err := handleInvalidTimeError(ctx, err); err != nil {
-		return types.ZeroTime, true, err
-	}
-	if overflow {
-		return types.ZeroTime, true, handleInvalidTimeError(ctx, types.ErrDatetimeFunctionOverflow.GenWithStackByArgs("datetime"))
-	}
-	return date, false, nil
+	return du.addDate(ctx, date, -year, -month, -day, -nano)
 }
 
 func (du *baseDateArithmitical) vecGetDateFromInt(b *baseBuiltinFunc, input *chunk.Chunk, unit string, result *chunk.Column) error {
@@ -4871,7 +4852,7 @@ func (c *timestampFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 	}
 	isFloat := false
 	switch args[0].GetType().Tp {
-	case mysql.TypeFloat, mysql.TypeDouble, mysql.TypeNewDecimal:
+	case mysql.TypeFloat, mysql.TypeDouble, mysql.TypeNewDecimal, mysql.TypeLonglong:
 		isFloat = true
 	}
 	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETDatetime, evalTps...)
