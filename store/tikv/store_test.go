@@ -117,7 +117,7 @@ func (c *mockPDClient) disable() {
 	c.stop = true
 }
 
-func (c *mockPDClient) GetMemberInfo(ctx context.Context) ([]*pdpb.Member, error) {
+func (c *mockPDClient) GetAllMembers(ctx context.Context) ([]*pdpb.Member, error) {
 	return nil, nil
 }
 
@@ -139,6 +139,14 @@ func (c *mockPDClient) GetTSAsync(ctx context.Context) pd.TSFuture {
 	return nil
 }
 
+func (c *mockPDClient) GetLocalTS(ctx context.Context, dcLocation string) (int64, int64, error) {
+	return 0, 0, nil
+}
+
+func (c *mockPDClient) GetLocalTSAsync(ctx context.Context, dcLocation string) pd.TSFuture {
+	return nil
+}
+
 func (c *mockPDClient) GetRegion(ctx context.Context, key []byte) (*pd.Region, error) {
 	c.RLock()
 	defer c.RUnlock()
@@ -147,6 +155,10 @@ func (c *mockPDClient) GetRegion(ctx context.Context, key []byte) (*pd.Region, e
 		return nil, errors.Trace(errStopped)
 	}
 	return c.client.GetRegion(ctx, key)
+}
+
+func (c *mockPDClient) GetRegionFromMember(ctx context.Context, key []byte, memberURLs []string) (*pd.Region, error) {
+	return nil, nil
 }
 
 func (c *mockPDClient) GetPrevRegion(ctx context.Context, key []byte) (*pd.Region, error) {
