@@ -803,7 +803,7 @@ type InspectionResultTableExtractor struct {
 	// Rules represents rules applied to, and we should apply all inspection rules if there is no rules specified
 	// e.g: SELECT * FROM inspection_result WHERE rule in ('ddl', 'config')
 	Rules set.StringSet
-	// Items represents items applied to, and we should apply all inspection item if there is no rules specified
+	// SortItems represents items applied to, and we should apply all inspection item if there is no rules specified
 	// e.g: SELECT * FROM inspection_result WHERE item in ('ddl.lease', 'raftstore.threadpool')
 	Items set.StringSet
 }

@@ -188,7 +188,7 @@ func (*testSuite) TestEnqueue(c *C) {
 		{10, []int64{1}, []uint64{1}},
 	}
 	c.Assert(validator.deltaSchemaInfos, DeepEquals, ret)
-	// The Items' relatedTableIDs have different order.
+	// The SortItems' relatedTableIDs have different order.
 	validator.enqueue(11, &tikv.RelatedSchemaChange{PhyTblIDS: []int64{1, 2, 3, 4}, ActionTypes: []uint64{1, 2, 3, 4}})
 	validator.enqueue(12, &tikv.RelatedSchemaChange{PhyTblIDS: []int64{4, 1, 2, 3, 1}, ActionTypes: []uint64{4, 1, 2, 3, 1}})
 	validator.enqueue(13, &tikv.RelatedSchemaChange{PhyTblIDS: []int64{4, 1, 3, 2, 5}, ActionTypes: []uint64{4, 1, 3, 2, 5}})
