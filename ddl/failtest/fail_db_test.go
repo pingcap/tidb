@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/ddl/testutil"
 	ddlutil "github.com/pingcap/tidb/ddl/util"
@@ -46,6 +47,10 @@ func TestT(t *testing.T) {
 	CustomVerboseFlag = true
 	logLevel := os.Getenv("log_level")
 	logutil.InitLogger(logutil.NewLogConfig(logLevel, "", "", logutil.EmptyFileLogConfig, false))
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TiKVClient.AsyncCommit.SafeWindow = 0
+		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
+	})
 	testleak.BeforeTest()
 	TestingT(t)
 	testleak.AfterTestT(t)()
@@ -119,7 +124,7 @@ func (s *testFailDBSuite) TestHalfwayCancelOperations(c *C) {
 	// Test schema is correct.
 	tk.MustExec("select * from t")
 	// test for renaming table
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/renameTableErr", `return(true)`), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/renameTableErr", `return("ty")`), IsNil)
 	defer func() {
 		c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/renameTableErr"), IsNil)
 	}()
@@ -127,6 +132,15 @@ func (s *testFailDBSuite) TestHalfwayCancelOperations(c *C) {
 	tk.MustExec("insert into tx values(1)")
 	_, err = tk.Exec("rename table tx to ty")
 	c.Assert(err, NotNil)
+	tk.MustExec("create table ty(a int)")
+	tk.MustExec("insert into ty values(2)")
+	_, err = tk.Exec("rename table ty to tz, tx to ty")
+	c.Assert(err, NotNil)
+	_, err = tk.Exec("select * from tz")
+	c.Assert(err, NotNil)
+	_, err = tk.Exec("rename table tx to ty, ty to tz")
+	c.Assert(err, NotNil)
+	tk.MustQuery("select * from ty").Check(testkit.Rows("2"))
 	// Make sure that the table's data has not been deleted.
 	tk.MustQuery("select * from tx").Check(testkit.Rows("1"))
 	// Execute ddl statement reload schema.
