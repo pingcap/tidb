@@ -500,7 +500,7 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeNone, Name: "ssl_key", Value: ""},
 	{Scope: ScopeNone, Name: "ssl_cipher", Value: ""},
 	{Scope: ScopeNone, Name: "tls_version", Value: "TLSv1,TLSv1.1,TLSv1.2"},
-	{Scope: ScopeNone, Name: "system_time_zone", Value: "CST", IsHintUpdatable: true},
+	{Scope: ScopeNone, Name: "system_time_zone", Value: "CST"},
 	{Scope: ScopeGlobal, Name: InnodbPrintAllDeadlocks, Value: BoolOff, Type: TypeBool, AutoConvertNegativeBool: true},
 	{Scope: ScopeNone, Name: "innodb_autoinc_lock_mode", Value: "1"},
 	{Scope: ScopeGlobal, Name: "key_buffer_size", Value: "8388608"},
