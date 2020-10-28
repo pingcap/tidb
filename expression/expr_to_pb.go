@@ -189,16 +189,17 @@ func collationToProto(c string) int32 {
 }
 
 func protoToCollation(c int32) string {
-	if coll, err := charset.GetCollationByID(int(collate.RestoreCollationIDIfNeeded(c))); err == nil {
+	coll, err := charset.GetCollationByID(int(collate.RestoreCollationIDIfNeeded(c)))
+	if err == nil {
 		return coll.Name
 	}
+	logutil.BgLogger().Error(err.Error())
 	logutil.BgLogger().Warn(
 		"Unable to get collation name from ID, use name of the default collation instead",
 		zap.Int32("id", c),
 		zap.Int("default collation ID", mysql.DefaultCollationID),
 		zap.String("default collation", mysql.DefaultCollationName),
 	)
-
 	return mysql.DefaultCollationName
 }
 
