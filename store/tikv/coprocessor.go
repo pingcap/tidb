@@ -632,6 +632,7 @@ func (it *copIterator) recvFromRespCh(ctx context.Context, respCh <-chan *copRes
 						consumed = 100
 					}
 				})
+				it.actionOnExceed.consumeResponse()
 				it.memTracker.Consume(-consumed)
 			}
 			return
@@ -672,6 +673,7 @@ func (worker *copIteratorWorker) sendToRespCh(resp *copResponse, respCh chan<- *
 				consumed = 100
 			}
 		})
+		worker.actionOnExceed.addResponse()
 		worker.memTracker.Consume(consumed)
 	}
 	select {
@@ -1313,6 +1315,8 @@ type rateLimitAction struct {
 		waitingWorkerCnt uint
 		// triggerCountForTest indicates the total count of the rateLimitAction's Action being executed
 		triggerCountForTest uint
+		// remainingResponseCount indicates the cached response in the channel
+		remainingResponseCount uint
 	}
 }
 
@@ -1321,12 +1325,13 @@ func newRateLimitAction(totalTokenNumber uint, cond *sync.Cond) *rateLimitAction
 		totalTokenNum: totalTokenNumber,
 		cond: struct {
 			*sync.Cond
-			exceeded            bool
-			remainingTokenNum   uint
-			isTokenDestroyed    bool
-			once                sync.Once
-			waitingWorkerCnt    uint
-			triggerCountForTest uint
+			exceeded               bool
+			remainingTokenNum      uint
+			isTokenDestroyed       bool
+			once                   sync.Once
+			waitingWorkerCnt       uint
+			triggerCountForTest    uint
+			remainingResponseCount uint
 		}{
 			Cond:              cond,
 			exceeded:          false,
@@ -1352,6 +1357,16 @@ func (e *rateLimitAction) Action(t *memory.Tracker) {
 	}
 	e.conditionLock()
 	defer e.conditionUnlock()
+	// If there is not cached response, delegate it to the fallback action.
+	if e.cond.remainingResponseCount < 1 {
+		logutil.BgLogger().Info("memory exceed quota, rateLimitAction delegate to fallback action",
+			zap.Uint("remaining response count", e.cond.remainingResponseCount),
+			zap.Uint("total token count", e.totalTokenNum))
+		if e.fallbackAction != nil {
+			e.fallbackAction.Action(t)
+		}
+		return
+	}
 	e.cond.once.Do(func() {
 		if e.cond.remainingTokenNum < 2 {
 			e.setEnabled(false)
@@ -1440,6 +1455,18 @@ func (e *rateLimitAction) destroyTokenIfNeeded(returnToken func()) {
 	if e.cond.waitingWorkerCnt < 1 {
 		e.cond.once = sync.Once{}
 	}
+}
+
+func (e *rateLimitAction) consumeResponse() {
+	e.conditionLock()
+	defer e.conditionUnlock()
+	e.cond.remainingResponseCount--
+}
+
+func (e *rateLimitAction) addResponse() {
+	e.conditionLock()
+	defer e.conditionUnlock()
+	e.cond.remainingResponseCount++
 }
 
 func (e *rateLimitAction) conditionLock() {
