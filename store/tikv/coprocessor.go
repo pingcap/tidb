@@ -522,6 +522,18 @@ func (worker *copIteratorWorker) run(ctx context.Context) {
 			respCh = task.respChan
 		}
 		worker.handleTask(ctx, task, respCh)
+		failpoint.Inject("testRateLimitActionMockOtherExecutorConsume", func(val failpoint.Value) {
+			if val.(bool) {
+				// wait until action being enabled and response channel become empty
+				if worker.respChan != nil {
+					for !worker.actionOnExceed.isEnabled() || len(worker.respChan) > 0 {
+
+					}
+					// simulate other executor consume and trigger oom action
+					worker.memTracker.Consume(99999)
+				}
+			}
+		})
 		close(task.respChan)
 		worker.maxID.setMaxIDIfLarger(task.id)
 		worker.actionOnExceed.destroyTokenIfNeeded(func() {
