@@ -64,7 +64,7 @@ type tableShard struct {
 }
 
 // Set set key with value
-func (ts *tablesMap) Set(key int64, value *statistics.Table) {
+func (ts *tablesMap) set(key int64, value *statistics.Table) {
 	shard := &ts.tablesShards[key&(numShards-1)]
 	shard.Lock()
 	defer shard.Unlock()
@@ -72,7 +72,7 @@ func (ts *tablesMap) Set(key int64, value *statistics.Table) {
 }
 
 // Get get key with value table
-func (ts *tablesMap) Get(key int64) (*statistics.Table, bool) {
+func (ts *tablesMap) get(key int64) (*statistics.Table, bool) {
 	shard := &ts.tablesShards[key&(numShards-1)]
 	shard.RLock()
 	defer shard.RUnlock()
@@ -81,7 +81,7 @@ func (ts *tablesMap) Get(key int64) (*statistics.Table, bool) {
 }
 
 // Del delete key
-func (ts *tablesMap) Del(key int64) {
+func (ts *tablesMap) del(key int64) {
 	shard := &ts.tablesShards[key&(numShards-1)]
 	shard.Lock()
 	defer shard.Unlock()
@@ -130,10 +130,10 @@ func newRistrettoStatsCache(memoryLimit int64) (*ristrettoStatsCache, error) {
 			return (value.(*statistics.Table).MemUsage)
 		},
 		OnEvict: func(key uint64, value interface{}) {
-			if t, ok := sc.Get(int64(key)); ok {
+			if t, ok := sc.get(int64(key)); ok {
 				if value != nil {
 					sc.memTracker.Consume(-t.MemUsage)
-					sc.Set(int64(key), t.CopyWithoutBucketsAndCMS())
+					sc.set(int64(key), t.CopyWithoutBucketsAndCMS())
 				}
 			}
 		},
@@ -187,7 +187,6 @@ func (sc *ristrettoStatsCache) Clear() {
 		sc.tablesShards[i].Unlock()
 	}
 	sc.memTracker = memory.NewTracker(memory.LabelForStatsCache, -1)
-
 }
 
 // GetAll get all the tables.
@@ -208,7 +207,7 @@ func (sc *ristrettoStatsCache) lookupUnsafe(id int64) (*statistics.Table, bool) 
 	key := uint64(id)
 	value, hit := sc.cache.Get(key)
 	if !hit || value == nil {
-		if table, ok := sc.Get(id); ok {
+		if table, ok := sc.get(id); ok {
 			return table, true
 		}
 		return nil, false
@@ -226,14 +225,14 @@ func (sc *ristrettoStatsCache) Lookup(id int64) (*statistics.Table, bool) {
 func (sc *ristrettoStatsCache) Insert(table *statistics.Table) {
 	key := table.PhysicalID
 	// Calc memusage only on insert.
-	if oldTbl, ok := sc.Get(key); ok {
+	if oldTbl, ok := sc.get(key); ok {
 		sc.memTracker.Consume(-oldTbl.MemUsage)
 	}
 	mem := table.MemoryUsage()
 	table.MemUsage = mem
 	sc.cache.Set(uint64(key), table, mem)
 	sc.memTracker.Consume(mem)
-	sc.Set(key, table)
+	sc.set(key, table)
 	return
 }
 
@@ -241,10 +240,10 @@ func (sc *ristrettoStatsCache) Insert(table *statistics.Table) {
 func (sc *ristrettoStatsCache) Erase(deletedID int64) bool {
 	key := deletedID
 	sc.cache.Del(uint64(key))
-	if oldTbl, ok := sc.Get(key); ok {
+	if oldTbl, ok := sc.get(key); ok {
 		sc.memTracker.Consume(-oldTbl.MemUsage)
 	}
-	sc.Del(deletedID)
+	sc.del(deletedID)
 	return true
 }
 
@@ -339,9 +338,9 @@ func (sc *simpleStatsCache) Close() {
 // Clear clears the cache
 func (sc *simpleStatsCache) Clear() {
 	sc.mu.Lock()
+	defer sc.mu.Unlock()
 	sc.cache.DeleteAll()
-	sc.memTracker = memory.NewTracker(memory.LabelForStatsCache, -1)
-	sc.mu.Unlock()
+	sc.memTracker = memory.NewTracker(memory.LabelForStatsCache, sc.memCapacity)
 }
 
 // Lookup get table with id.
