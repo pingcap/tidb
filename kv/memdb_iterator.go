@@ -112,6 +112,13 @@ func (i *memdbIterator) Key() Key {
 	return i.curr.getKey()
 }
 
+func (i *memdbIterator) Handle() MemKeyHandle {
+	return MemKeyHandle{
+		idx: uint16(i.curr.addr.idx),
+		off: i.curr.addr.off,
+	}
+}
+
 func (i *memdbIterator) Value() []byte {
 	return i.db.vlog.getValue(i.curr.vptr)
 }

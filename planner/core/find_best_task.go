@@ -583,6 +583,19 @@ func (ds *DataSource) skylinePruning(prop *property.PhysicalProperty) []*candida
 			candidates = append(candidates, currentCandidate)
 		}
 	}
+
+	if ds.ctx.GetSessionVars().GetAllowPreferRangeScan() && len(candidates) > 1 {
+		// remove the table/index full scan path
+		for i, c := range candidates {
+			for _, ran := range c.path.Ranges {
+				if ran.IsFullRange() {
+					candidates = append(candidates[:i], candidates[i+1:]...)
+					return candidates
+				}
+			}
+		}
+	}
+
 	return candidates
 }
 
@@ -1222,7 +1235,7 @@ func getColumnRangeCounts(sc *stmtctx.StatementContext, colID int64, ranges []*r
 	for i, ran := range ranges {
 		if idxID >= 0 {
 			idxHist := histColl.Indices[idxID]
-			if idxHist == nil || idxHist.IsInvalid(false) {
+			if idxHist == nil || idxHist.IsInvalid(sc, false) {
 				return nil, false
 			}
 			count, err = histColl.GetRowCountByIndexRanges(sc, idxID, []*ranger.Range{ran})
@@ -1460,6 +1473,7 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 		Columns:        ds.TblCols,
 		ColumnNames:    ds.names,
 	}
+	ts.PartitionInfo = copTask.partitionInfo
 	task = copTask
 	if candidate.isMatchProp {
 		copTask.keepOrder = true
