@@ -208,7 +208,7 @@ func CompilePatternInner(pattern string, escape byte) (patWeights []rune, patTyp
 	return
 }
 
-func matchByte(a, b rune) bool {
+func matchRune(a, b rune) bool {
 	return a == b
 	// We may reuse below code block when like function go back to case insensitive.
 	/*
@@ -241,12 +241,12 @@ func CompileLike2Regexp(str string) string {
 
 // DoMatchByte is a adapter for `DoMatchInner`, `str` can only be an ascii string.
 func DoMatchByte(str string, patChars, patTypes []byte) bool {
-	return DoMatchInner(str, []rune(string(patChars)), patTypes, matchByte)
+	return DoMatchInner(str, []rune(string(patChars)), patTypes, matchRune)
 }
 
 // DoMatch is a adapter for `DoMatchInner`, `str` can be any unicode string.
 func DoMatch(str string, patChars []rune, patTypes []byte) bool {
-	return DoMatchInner(str, patChars, patTypes, matchByte)
+	return DoMatchInner(str, patChars, patTypes, matchRune)
 }
 
 // DoMatchInner matches the string with patChars and patTypes.

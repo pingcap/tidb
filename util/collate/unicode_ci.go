@@ -78,7 +78,7 @@ func (uc *unicodeCICollator) Compare(a, b string) int {
 			if as == 0 {
 				for an == 0 && ai < len(a) {
 					ar, ai = decodeRune(a, ai)
-					an, as = unicodeCIConverter(ar)
+					an, as = convertRuneUnicodeCI(ar)
 				}
 			} else {
 				an = as
@@ -90,7 +90,7 @@ func (uc *unicodeCICollator) Compare(a, b string) int {
 			if bs == 0 {
 				for bn == 0 && bi < len(b) {
 					br, bi = decodeRune(b, bi)
-					bn, bs = unicodeCIConverter(br)
+					bn, bs = convertRuneUnicodeCI(br)
 				}
 			} else {
 				bn = bs
@@ -128,7 +128,7 @@ func (uc *unicodeCICollator) Key(str string) []byte {
 
 	for si < len(str) {
 		r, si = decodeRune(str, si)
-		sn, ss = unicodeCIConverter(r)
+		sn, ss = convertRuneUnicodeCI(r)
 		for sn != 0 {
 			buf = append(buf, byte((sn&0xFF00)>>8), byte(sn))
 			sn >>= 16
@@ -144,7 +144,7 @@ func (uc *unicodeCICollator) Key(str string) []byte {
 // convert rune to weights.
 // `first` represent first 4 uint16 weights of rune
 // `second` represent last 4 uint16 weights of rune if exist, 0 if not
-func unicodeCIConverter(r rune) (first, second uint64) {
+func convertRuneUnicodeCI(r rune) (first, second uint64) {
 	if r > 0xFFFF {
 		return 0xFFFD, 0
 	}
@@ -171,23 +171,20 @@ func (p *unicodePattern) Compile(patternStr string, escape byte) {
 
 // DoMatch implements WildcardPattern interface.
 func (p *unicodePattern) DoMatch(str string) bool {
-	return stringutil.DoMatchInner(str, p.patChars, p.patTypes, unicodeCIMatcher)
-}
+	return stringutil.DoMatchInner(str, p.patChars, p.patTypes, func(a, b rune) bool {
+		if a > 0xFFFF || b > 0xFFFF {
+			return a == b
+		}
 
-// unicodeCIMatcher compare rune is equal with unicode_ci collation, return true if they are equal
-func unicodeCIMatcher(a, b rune) bool {
-	if a > 0xFFFF || b > 0xFFFF {
-		return a == b
-	}
+		ar, br := mapTable[a], mapTable[b]
+		if ar != br {
+			return false
+		}
 
-	ar, br := mapTable[a], mapTable[b]
-	if ar != br {
-		return false
-	}
+		if ar == longRune {
+			return a == b
+		}
 
-	if ar == longRune {
-		return a == b
-	}
-
-	return true
+		return true
+	})
 }

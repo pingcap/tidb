@@ -39,7 +39,7 @@ func (gc *generalCICollator) Compare(a, b string) int {
 		r1, r1size := utf8.DecodeRuneInString(a)
 		r2, r2size := utf8.DecodeRuneInString(b)
 
-		cmp := int(generalCIConverter(r1)) - int(generalCIConverter(r2))
+		cmp := int(convertRuneGeneralCI(r1)) - int(convertRuneGeneralCI(r2))
 		if cmp != 0 {
 			return sign(cmp)
 		}
@@ -55,7 +55,7 @@ func (gc *generalCICollator) Key(str string) []byte {
 	buf := make([]byte, 0, len(str))
 	i := 0
 	for _, r := range []rune(str) {
-		u16 := generalCIConverter(r)
+		u16 := convertRuneGeneralCI(r)
 		buf = append(buf, byte(u16>>8), byte(u16))
 		i++
 	}
@@ -80,11 +80,11 @@ func (p *ciPattern) Compile(patternStr string, escape byte) {
 // Compile implements WildcardPattern interface.
 func (p *ciPattern) DoMatch(str string) bool {
 	return stringutil.DoMatchInner(str, p.patChars, p.patTypes, func(a, b rune) bool {
-		return generalCIConverter(a) == generalCIConverter(b)
+		return convertRuneGeneralCI(a) == convertRuneGeneralCI(b)
 	})
 }
 
-func generalCIConverter(r rune) uint16 {
+func convertRuneGeneralCI(r rune) uint16 {
 	if r > 0xFFFF {
 		return 0xFFFD
 	}
