@@ -66,6 +66,10 @@ func TestT(t *testing.T) {
 	CustomVerboseFlag = true
 	logLevel := os.Getenv("log_level")
 	logutil.InitLogger(logutil.NewLogConfig(logLevel, logutil.DefaultLogFormat, "", logutil.EmptyFileLogConfig, false))
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TiKVClient.AsyncCommit.SafeWindow = 0
+		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
+	})
 	TestingT(t)
 }
 
