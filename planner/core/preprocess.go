@@ -161,10 +161,12 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		}
 		return in, true
 	case *ast.DropBindingStmt:
-		EraseLastSemicolon(node.OriginNode)
-		if node.HintedNode != nil {
-			EraseLastSemicolon(node.HintedNode)
-			p.checkBindGrammar(node.OriginNode, node.HintedNode)
+		if node.BindingTp == ast.BindingForStmt {
+			EraseLastSemicolon(node.OriginNode)
+			if node.HintedNode != nil {
+				EraseLastSemicolon(node.HintedNode)
+				p.checkBindGrammar(node.OriginNode, node.HintedNode)
+			}
 		}
 		return in, true
 	case *ast.RecoverTableStmt, *ast.FlashBackTableStmt:
