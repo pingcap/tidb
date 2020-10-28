@@ -99,17 +99,15 @@ func (s *testAsyncCommitCommon) mustPointGet(c *C, key, expectedValue []byte) {
 }
 
 func (s *testAsyncCommitCommon) mustGetFromSnapshot(c *C, version uint64, key, expectedValue []byte) {
-	snap, err := s.store.GetSnapshot(kv.Version{Ver: version})
-	c.Assert(err, IsNil)
+	snap := s.store.GetSnapshot(kv.Version{Ver: version})
 	value, err := snap.Get(context.Background(), key)
 	c.Assert(err, IsNil)
 	c.Assert(value, BytesEquals, expectedValue)
 }
 
 func (s *testAsyncCommitCommon) mustGetNoneFromSnapshot(c *C, version uint64, key []byte) {
-	snap, err := s.store.GetSnapshot(kv.Version{Ver: version})
-	c.Assert(err, IsNil)
-	_, err = snap.Get(context.Background(), key)
+	snap := s.store.GetSnapshot(kv.Version{Ver: version})
+	_, err := snap.Get(context.Background(), key)
 	c.Assert(errors.Cause(err), Equals, kv.ErrNotExist)
 }
 
@@ -480,8 +478,7 @@ func (s *testAsyncCommitSuite) Test1PC(c *C) {
 	values := [][]byte{v1, v2, v3, v35, v4, v45, v5, v6New}
 	ver, err := s.store.CurrentVersion()
 	c.Assert(err, IsNil)
-	snap, err := s.store.GetSnapshot(ver)
-	c.Assert(err, IsNil)
+	snap := s.store.GetSnapshot(ver)
 	for i, k := range keys {
 		v, err := snap.Get(ctx, k)
 		c.Assert(err, IsNil)

@@ -93,9 +93,6 @@ func (c *twoPhaseCommitter) buildPrewriteRequest(batch batchMutations, txnSize u
 
 	if c.isOnePC() {
 		req.TryOnePc = true
-		// Temporarily set it to max uint64. TODO: Use this field to avoid commit ts exceed the
-		// current DDL lease.
-		req.OnePcMaxCommitTs = math.MaxUint64
 	}
 
 	return tikvrpc.NewRequest(tikvrpc.CmdPrewrite, req, pb.Context{Priority: c.priority, SyncLog: c.syncLog})
@@ -154,6 +151,23 @@ func (action actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoff
 					c.run(c, nil)
 				}
 			}
+
+			if c.isOnePC() {
+				if prewriteResp.OnePcCommitTs == 0 {
+					logutil.Logger(bo.ctx).Warn("1pc failed and fallbacks to normal commit procedure",
+						zap.Uint64("satrTS", c.startTS))
+					tikvOnePCTxnCounterFallback.Inc()
+					c.setOnePC(false)
+				} else {
+					c.mu.Lock()
+					if c.onePCCommitTS != 0 {
+						logutil.Logger(bo.ctx).Fatal("one pc happened multiple times",
+							zap.Uint64("startTS", c.startTS))
+					}
+					c.onePCCommitTS = prewriteResp.OnePcCommitTs
+					c.mu.Unlock()
+				}
+			}
 			if c.isAsyncCommit() {
 				// 0 if the min_commit_ts is not ready or any other reason that async
 				// commit cannot proceed. The client can then fallback to normal way to
@@ -170,22 +184,6 @@ func (action actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoff
 					if prewriteResp.MinCommitTs > c.minCommitTS {
 						c.minCommitTS = prewriteResp.MinCommitTs
 					}
-					c.mu.Unlock()
-				}
-			}
-			if c.isOnePC() {
-				if prewriteResp.OnePcCommitTs == 0 {
-					logutil.Logger(bo.ctx).Warn("1pc failed and fallbacks to normal commit procedure",
-						zap.Uint64("satrTS", c.startTS))
-					tikvOnePCTxnCounterFallback.Inc()
-					c.setOnePC(false)
-				} else {
-					c.mu.Lock()
-					if c.onePCCommitTS != 0 {
-						logutil.Logger(bo.ctx).Fatal("one pc happened multiple times",
-							zap.Uint64("startTS", c.startTS))
-					}
-					c.onePCCommitTS = prewriteResp.OnePcCommitTs
 					c.mu.Unlock()
 				}
 			}

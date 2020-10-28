@@ -900,6 +900,11 @@ func (c *twoPhaseCommitter) checkAsyncCommit() bool {
 	return false
 }
 
+// checkOnePC checks if 1PC protocol is available for current transaction.
+func (c *twoPhaseCommitter) checkOnePC() bool {
+	return config.GetGlobalConfig().TiKVClient.EnableOnePC && c.connID > 0
+}
+
 func (c *twoPhaseCommitter) isAsyncCommit() bool {
 	return atomic.LoadUint32(&c.useAsyncCommit) > 0
 }
@@ -997,15 +1002,21 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 	}()
 
 	// Check async commit is available or not.
+	needCalcMaxCommitTS := false
 	if c.checkAsyncCommit() {
-		if err = c.calculateMaxCommitTS(ctx); err != nil {
-			return errors.Trace(err)
-		}
+		needCalcMaxCommitTS = true
 		c.setAsyncCommit(true)
 	}
 	// Check if 1PC is enabled.
-	if config.GetGlobalConfig().TiKVClient.EnableOnePC && c.connID > 0 {
+	if c.checkOnePC() {
+		needCalcMaxCommitTS = true
 		c.setOnePC(true)
+	}
+	// Calculate maxCommitTS if necessary
+	if needCalcMaxCommitTS {
+		if err = c.calculateMaxCommitTS(ctx); err != nil {
+			return errors.Trace(err)
+		}
 	}
 
 	failpoint.Inject("beforePrewrite", nil)
@@ -1101,8 +1112,8 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 		})
 	}
 
-	if !c.isAsyncCommit() {
-		tryAmend := c.isPessimistic && c.connID > 0 && !c.isOnePC() && c.txn.schemaAmender != nil
+	if !c.isAsyncCommit() && !c.isOnePC() {
+		tryAmend := c.isPessimistic && c.connID > 0 && c.txn.schemaAmender != nil
 		if !tryAmend {
 			_, _, err = c.checkSchemaValid(ctx, commitTS, c.txn.txnInfoSchema, false)
 			if err != nil {
@@ -1130,6 +1141,11 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 	}
 	c.commitTS = commitTS
 
+	if c.isOnePC() {
+		c.txn.commitTS = c.commitTS
+		return nil
+	}
+
 	if c.store.oracle.IsExpired(c.startTS, kv.MaxTxnTimeUse) {
 		err = errors.Errorf("conn %d txn takes too much time, txnStartTS: %d, comm: %d",
 			c.connID, c.startTS, c.commitTS)
@@ -1138,11 +1154,6 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 
 	if c.connID > 0 {
 		failpoint.Inject("beforeCommit", func() {})
-	}
-
-	if c.isOnePC() {
-		c.txn.commitTS = c.commitTS
-		return nil
 	}
 
 	if c.isAsyncCommit() {
