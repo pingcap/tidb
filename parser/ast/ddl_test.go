@@ -39,7 +39,7 @@ func (ts *testDDLSuite) TestDDLVisitorCover(c *C) {
 		{&DropDatabaseStmt{}, 0, 0},
 		{&DropIndexStmt{Table: &TableName{}}, 0, 0},
 		{&DropTableStmt{Tables: []*TableName{{}, {}}}, 0, 0},
-		{&RenameTableStmt{OldTable: &TableName{}, NewTable: &TableName{}}, 0, 0},
+		{&RenameTableStmt{TableToTables: []*TableToTable{}}, 0, 0},
 		{&TruncateTableStmt{Table: &TableName{}}, 0, 0},
 
 		// TODO: cover children
