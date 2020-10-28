@@ -1,6 +1,6 @@
 module github.com/pingcap/tidb
 
-replace github.com/pingcap/parser => github.com/TszKitLo40/parser v0.0.0-20201021071953-d956ea462ea5
+replace github.com/pingcap/parser => github.com/TszKitLo40/parser v0.0.0-20201028022828-a96dc9a5bf4d
 
 require (
 	cloud.google.com/go v0.51.0 // indirect
