@@ -1932,6 +1932,8 @@ func (s *testPessimisticSuite) TestSelectForUpdateConflictRetry(c *C) {
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.TiKVClient.AsyncCommit.Enable = true
+		conf.TiKVClient.AsyncCommit.SafeWindow = 500 * time.Millisecond
+		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
 	})
 
 	tk := testkit.NewTestKitWithInit(c, s.store)
@@ -1952,6 +1954,7 @@ func (s *testPessimisticSuite) TestSelectForUpdateConflictRetry(c *C) {
 		c.Assert(err, IsNil)
 		tsCh <- lastTS
 		tk3.MustExec("commit")
+		tsCh <- lastTS
 	}()
 	// tk2LastTS should be its forUpdateTS
 	tk2LastTS, err := s.store.GetOracle().GetLowResolutionTimestamp(context.Background())
@@ -1962,12 +1965,21 @@ func (s *testPessimisticSuite) TestSelectForUpdateConflictRetry(c *C) {
 	// it must get a new ts on pessimistic write conflict so the latest timestamp
 	// should increase
 	c.Assert(tk3LastTs, Greater, tk2LastTS)
+	// wait until the goroutine exists
+	<-tsCh
 }
 
 func (s *testPessimisticSuite) TestAsyncCommitWithSchemaChange(c *C) {
+	// TODO: implement commit_ts calculation in unistore
+	if !*withTiKV {
+		return
+	}
+
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.TiKVClient.AsyncCommit.Enable = true
+		conf.TiKVClient.AsyncCommit.SafeWindow = 500 * time.Millisecond
+		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
 	})
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/beforeSchemaCheck", "return"), IsNil)
 	defer func() {
@@ -1976,20 +1988,41 @@ func (s *testPessimisticSuite) TestAsyncCommitWithSchemaChange(c *C) {
 
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("drop table if exists tk")
-	tk.MustExec("create table tk (c1 int primary key, c2 int)")
-	tk.MustExec("insert into tk values(1,1),(2,2)")
+	tk.MustExec("create table tk (c1 int primary key, c2 int, c3 int)")
+	tk.MustExec("insert into tk values(1, 1, 1)")
 	tk2 := testkit.NewTestKitWithInit(c, s.store)
 	tk3 := testkit.NewTestKitWithInit(c, s.store)
 
 	// The txn tk writes something but with failpoint the primary key is not committed.
 	tk.MustExec("begin optimistic")
-	// Change the schema version.
-	tk2.MustExec("alter table tk add column c3 int after c2")
-	tk.MustExec("insert into tk values(3, 3)")
+	tk.MustExec("insert into tk values(2, 2, 2)")
+	// Add index for c2 before commit
+	tk2.MustExec("alter table tk add index k2(c2)")
+	// key for c2 should be amended
 	tk.MustExec("commit")
+	tk3.MustQuery("select * from tk where c2 = 2").Check(testkit.Rows("2 2 2"))
+	tk3.MustExec("admin check table tk")
 
-	// Trigger the recovery process, the left locks should not be committed.
-	tk3.MustExec("begin")
-	tk3.MustQuery("select * from tk").Check(testkit.Rows("1 1 <nil>", "2 2 <nil>"))
-	tk3.MustExec("rollback")
+	tk.MustExec("begin optimistic")
+	tk.MustExec("insert into tk values(3, 3, 3)")
+	tk.MustExec("commit")
+	// Add index for c3 after commit
+	tk2.MustExec("alter table tk add index k3(c3)")
+	tk3.MustQuery("select * from tk where c3 = 3").Check(testkit.Rows("3 3 3"))
+	tk3.MustExec("admin check table tk")
+
+	tk.MustExec("drop table if exists tk")
+	tk.MustExec("create table tk (c1 int primary key, c2 int)")
+	tk.MustExec("begin optimistic")
+	tk.MustExec("insert into tk values(1, 1)")
+	go func() {
+		time.Sleep(200 * time.Millisecond)
+		tk2.MustExec("alter table tk add index k2(c2)")
+	}()
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/beforePrewrite", "1*sleep(1000)"), IsNil)
+	// should fail if prewrite takes too long
+	err := tk.ExecToErr("commit")
+	c.Assert(err, ErrorMatches, ".*commit TS \\d+ is too large")
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/beforePrewrite"), IsNil)
+	tk3.MustExec("admin check table tk")
 }
