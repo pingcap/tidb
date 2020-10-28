@@ -137,8 +137,8 @@ const (
 	PatAny
 )
 
-// CompilePatternByte is a adapter for `CompilePatternInner`, `pattern` can only be an ascii string.
-func CompilePatternByte(pattern string, escape byte) (patChars, patTypes []byte) {
+// CompilePatternBytes is a adapter for `CompilePatternInner`, `pattern` can only be an ascii string.
+func CompilePatternBytes(pattern string, escape byte) (patChars, patTypes []byte) {
 	patWeights, patTypes := CompilePatternInner(pattern, escape)
 	patChars = []byte(string(patWeights))
 
@@ -239,8 +239,8 @@ func CompileLike2Regexp(str string) string {
 	return string(result)
 }
 
-// DoMatchByte is a adapter for `DoMatchInner`, `str` can only be an ascii string.
-func DoMatchByte(str string, patChars, patTypes []byte) bool {
+// DoMatchBytes is a adapter for `DoMatchInner`, `str` can only be an ascii string.
+func DoMatchBytes(str string, patChars, patTypes []byte) bool {
 	return DoMatchInner(str, []rune(string(patChars)), patTypes, matchRune)
 }
 
