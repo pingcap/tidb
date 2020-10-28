@@ -52,7 +52,8 @@ func cleanEnv(c *C, store kv.Storage, do *domain.Domain) {
 	tk.MustExec("delete from mysql.stats_histograms")
 	tk.MustExec("delete from mysql.stats_buckets")
 	tk.MustExec("delete from mysql.stats_extended")
-	do.StatsHandle().Clear()
+	tk.MustExec("delete from mysql.schema_index_usage")
+	do.StatsHandle().Clear4Test()
 }
 
 func (s *testStatsSuite) TestStatsCache(c *C) {
@@ -85,7 +86,7 @@ func (s *testStatsSuite) TestStatsCache(c *C) {
 	// If the new schema drop a column, the table stats can still work.
 	testKit.MustExec("alter table t drop column c2")
 	is = do.InfoSchema()
-	do.StatsHandle().Clear()
+	do.StatsHandle().Clear4Test()
 	do.StatsHandle().Update(is)
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
 	c.Assert(statsTbl.Pseudo, IsFalse)
@@ -94,7 +95,7 @@ func (s *testStatsSuite) TestStatsCache(c *C) {
 	testKit.MustExec("alter table t add column c10 int")
 	is = do.InfoSchema()
 
-	do.StatsHandle().Clear()
+	do.StatsHandle().Clear4Test()
 	do.StatsHandle().Update(is)
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
 	c.Assert(statsTbl.Pseudo, IsFalse)
@@ -117,7 +118,7 @@ func (s *testStatsSuite) TestStatsCacheMemTracker(c *C) {
 
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
 	c.Assert(statsTbl.MemoryUsage() > 0, IsTrue)
-	c.Assert(do.StatsHandle().GetAllTableStatsMemUsage(), Equals, do.StatsHandle().GetMemConsumed())
+	c.Assert(do.StatsHandle().GetAllTableStatsMemUsage4Test(), Equals, do.StatsHandle().GetMemConsumed())
 
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
 
@@ -139,23 +140,24 @@ func (s *testStatsSuite) TestStatsCacheMemTracker(c *C) {
 	// If the new schema drop a column, the table stats can still work.
 	testKit.MustExec("alter table t drop column c2")
 	is = do.InfoSchema()
-	do.StatsHandle().Clear()
+	do.StatsHandle().Clear4Test()
 	do.StatsHandle().Update(is)
 
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
-	c.Assert(statsTbl.MemoryUsage() > 0, IsTrue)
-	c.Assert(do.StatsHandle().GetAllTableStatsMemUsage(), Equals, do.StatsHandle().GetMemConsumed())
+	c.Assert(statsTbl.MemoryUsage() >= 0, IsTrue)
+
+	c.Assert(do.StatsHandle().GetAllTableStatsMemUsage4Test(), Equals, do.StatsHandle().GetMemConsumed())
 	c.Assert(statsTbl.Pseudo, IsFalse)
 
 	// If the new schema add a column, the table stats can still work.
 	testKit.MustExec("alter table t add column c10 int")
 	is = do.InfoSchema()
 
-	do.StatsHandle().Clear()
+	do.StatsHandle().Clear4Test()
 	do.StatsHandle().Update(is)
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
 	c.Assert(statsTbl.Pseudo, IsFalse)
-	c.Assert(do.StatsHandle().GetAllTableStatsMemUsage(), Equals, do.StatsHandle().GetMemConsumed())
+	c.Assert(do.StatsHandle().GetAllTableStatsMemUsage4Test(), Equals, do.StatsHandle().GetMemConsumed())
 }
 
 func assertTableEqual(c *C, a *statistics.Table, b *statistics.Table) {
@@ -231,7 +233,7 @@ func (s *testStatsSuite) TestStatsStoreAndLoad(c *C) {
 	testKit.MustExec("analyze table t")
 	statsTbl1 := do.StatsHandle().GetTableStats(tableInfo)
 
-	do.StatsHandle().Clear()
+	do.StatsHandle().Clear4Test()
 	do.StatsHandle().Update(is)
 	statsTbl2 := do.StatsHandle().GetTableStats(tableInfo)
 	c.Assert(statsTbl2.Pseudo, IsFalse)
@@ -276,7 +278,7 @@ func (s *testStatsSuite) TestColumnIDs(c *C) {
 	// Drop a column and the offset changed,
 	testKit.MustExec("alter table t drop column c1")
 	is = do.InfoSchema()
-	do.StatsHandle().Clear()
+	do.StatsHandle().Clear4Test()
 	do.StatsHandle().Update(is)
 	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
@@ -354,7 +356,8 @@ func (s *testStatsSuite) TestVersion(c *C) {
 	tbl1, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
 	c.Assert(err, IsNil)
 	tableInfo1 := tbl1.Meta()
-	h := handle.NewHandle(testKit.Se, time.Millisecond)
+	h, err := handle.NewHandle(testKit.Se, time.Millisecond)
+	c.Assert(err, IsNil)
 	unit := oracle.ComposeTS(1, 0)
 	testKit.MustExec("update mysql.stats_meta set version = ? where table_id = ?", 2*unit, tableInfo1.ID)
 
@@ -493,14 +496,14 @@ func (s *testStatsSuite) TestInitStats(c *C) {
 	// `Lease` is not 0, so here we just change it.
 	h.SetLease(time.Millisecond)
 
-	h.Clear()
+	h.Clear4Test()
 	c.Assert(h.InitStats(is), IsNil)
 	table0 := h.GetTableStats(tbl.Meta())
 	cols := table0.Columns
 	c.Assert(cols[1].LastAnalyzePos.GetBytes()[0], Equals, uint8(0x36))
 	c.Assert(cols[2].LastAnalyzePos.GetBytes()[0], Equals, uint8(0x37))
 	c.Assert(cols[3].LastAnalyzePos.GetBytes()[0], Equals, uint8(0x38))
-	h.Clear()
+	h.Clear4Test()
 	c.Assert(h.Update(is), IsNil)
 	table1 := h.GetTableStats(tbl.Meta())
 	assertTableEqual(c, table0, table1)
@@ -685,7 +688,7 @@ func (s *testStatsSuite) TestExtendedStatsOps(c *C) {
 	c.Assert(len(statsTbl.ExtendedStats.Stats), Equals, 0)
 
 	tk.MustExec("update mysql.stats_extended set status = 1 where stats_name = 's1' and db = 'test'")
-	do.StatsHandle().Clear()
+	do.StatsHandle().Clear4Test()
 	do.StatsHandle().Update(is)
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
 	c.Assert(statsTbl, NotNil)
@@ -725,7 +728,7 @@ func (s *testStatsSuite) TestAdminReloadStatistics(c *C) {
 	c.Assert(len(statsTbl.ExtendedStats.Stats), Equals, 0)
 
 	tk.MustExec("update mysql.stats_extended set status = 1 where stats_name = 's1' and db = 'test'")
-	do.StatsHandle().Clear()
+	do.StatsHandle().Clear4Test()
 	do.StatsHandle().Update(is)
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
 	c.Assert(statsTbl, NotNil)
@@ -794,4 +797,44 @@ func (s *testStatsSuite) TestCorrelationStatsCompute(c *C) {
 		}
 	}
 	c.Assert(foundS1 && foundS2, IsTrue)
+}
+
+func (s *testStatsSuite) TestIndexUsageInformation(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t_idx")
+	tk.MustExec("create table t_idx(a int, b int)")
+	tk.MustExec("create unique index idx_a on t_idx(a)")
+	tk.MustExec("create unique index idx_b on t_idx(b)")
+	tk.MustQuery("select a from t_idx where a=1")
+	querySQL := `select idx.table_schema, idx.table_name, idx.key_name, stats.query_count, stats.rows_selected 
+					from mysql.schema_index_usage as stats, information_schema.tidb_indexes as idx, information_schema.tables as tables
+					where tables.table_schema = idx.table_schema
+						AND tables.table_name = idx.table_name
+						AND tables.tidb_table_id = stats.table_id
+						AND idx.index_id = stats.index_id
+						AND idx.table_name = "t_idx"`
+	do := s.do
+	err := do.StatsHandle().DumpIndexUsageToKV()
+	c.Assert(err, IsNil)
+	tk.MustQuery(querySQL).Check(testkit.Rows(
+		"test t_idx idx_a 1 0",
+	))
+	tk.MustExec("insert into t_idx values(1, 0)")
+	tk.MustQuery("select a from t_idx where a=1")
+	tk.MustQuery("select a from t_idx where a=1")
+	err = do.StatsHandle().DumpIndexUsageToKV()
+	c.Assert(err, IsNil)
+	tk.MustQuery(querySQL).Check(testkit.Rows(
+		"test t_idx idx_a 3 2",
+	))
+	tk.MustQuery("select b from t_idx where b=0")
+	tk.MustQuery("select b from t_idx where b=0")
+	err = do.StatsHandle().DumpIndexUsageToKV()
+	c.Assert(err, IsNil)
+	tk.MustQuery(querySQL).Check(testkit.Rows(
+		"test t_idx idx_a 3 2",
+		"test t_idx idx_b 2 2",
+	))
 }

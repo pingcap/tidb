@@ -125,6 +125,18 @@ var tombstone = []byte{}
 // IsTombstone returns whether the value is a tombstone.
 func IsTombstone(val []byte) bool { return len(val) == 0 }
 
+// MemKeyHandle represents a pointer for key in MemBuffer.
+type MemKeyHandle struct {
+	// Opaque user data
+	UserData uint16
+	idx      uint16
+	off      uint32
+}
+
+func (h MemKeyHandle) toAddr() memdbArenaAddr {
+	return memdbArenaAddr{idx: uint32(h.idx), off: h.off}
+}
+
 // memdb is rollbackable Red-Black Tree optimized for TiDB's transaction states buffer use scenario.
 // You can think memdb is a combination of two separate tree map, one for key => value and another for key => keyFlags.
 //
@@ -297,6 +309,22 @@ func (db *memdb) SetWithFlags(key Key, value []byte, ops ...FlagsOp) error {
 
 func (db *memdb) Delete(key Key) error {
 	return db.set(key, tombstone)
+}
+
+func (db *memdb) GetKeyByHandle(handle MemKeyHandle) []byte {
+	x := db.getNode(handle.toAddr())
+	return x.getKey()
+}
+
+func (db *memdb) GetValueByHandle(handle MemKeyHandle) ([]byte, bool) {
+	if db.vlogInvalid {
+		return nil, false
+	}
+	x := db.getNode(handle.toAddr())
+	if x.vptr.isNull() {
+		return nil, false
+	}
+	return db.vlog.getValue(x.vptr), true
 }
 
 func (db *memdb) Len() int {
