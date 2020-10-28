@@ -94,7 +94,7 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 		}
 
 		tmpIDs := tblIDs
-		if diff.Type == model.ActionRenameTable && diff.OldSchemaID != diff.SchemaID {
+		if (diff.Type == model.ActionRenameTable || diff.Type == model.ActionRenameTables) && diff.OldSchemaID != diff.SchemaID {
 			oldRoDBInfo, ok := b.is.SchemaByID(diff.OldSchemaID)
 			if !ok {
 				return nil, ErrDatabaseNotExists.GenWithStackByArgs(
