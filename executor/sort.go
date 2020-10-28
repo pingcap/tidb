@@ -481,7 +481,7 @@ func (e *TopNExec) processChildChk(childRowChk *chunk.Chunk) error {
 		next = childRowChk.GetRow(i)
 		if e.chkHeap.greaterRow(heapMax, next) {
 			// Evict heap max, keep the next row.
-			e.rowPtrs[0] = e.rowChunks.AppendRowByColIdxs(childRowChk.GetRow(i), e.columnIdxsUsedByChild)
+			e.rowPtrs[0] = e.rowChunks.AppendRow(childRowChk.GetRow(i))
 			heap.Fix(e.chkHeap, 0)
 		}
 	}

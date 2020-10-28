@@ -141,11 +141,13 @@ func pruneByItems(old []*util.ByItems) (new []*util.ByItems, parentUsedCols []*e
 	for _, byItem := range old {
 		hash := string(byItem.Expr.HashCode(nil))
 		_, hashMatch := seen[hash]
-		seen[hash] = struct{}{}
-		cols := expression.ExtractColumns(byItem.Expr)
 		if hashMatch {
 			// do nothing, should be filtered
-		} else if len(cols) == 0 {
+			continue
+		}
+		seen[hash] = struct{}{}
+		cols := expression.ExtractColumns(byItem.Expr)
+		if len(cols) == 0 {
 			if !expression.IsRuntimeConstExpr(byItem.Expr) {
 				new = append(new, byItem)
 			}
@@ -163,22 +165,28 @@ func pruneByItems(old []*util.ByItems) (new []*util.ByItems, parentUsedCols []*e
 // If any expression can view as a constant in execution stage, such as correlated column, constant,
 // we do prune them. Note that we can't prune the expressions contain non-deterministic functions, such as rand().
 func (ls *LogicalSort) PruneColumns(parentUsedCols []*expression.Column) error {
-	child := ls.children[0]
+	// fmt.Println("Before inline projection, Schema=", ls.Schema())
+	// fmt.Println("Before inline projection, parentUsedCols=", parentUsedCols)
+	ls.inlineProjection(parentUsedCols)
+	// fmt.Println("After inline projection, Schema=", ls.Schema())
+	// fmt.Println("After inline projection, parentUsedCols=", parentUsedCols)
 	var cols []*expression.Column
 	ls.ByItems, cols = pruneByItems(ls.ByItems)
 	parentUsedCols = append(parentUsedCols, cols...)
-	return child.PruneColumns(parentUsedCols)
+	// fmt.Println("After pruneByItems, parentUsedCols=", parentUsedCols)
+	ls.inlineProjection(parentUsedCols)
+	return ls.children[0].PruneColumns(parentUsedCols)
 }
 
 // PruneColumns implements LogicalPlan interface.
 // If any expression can view as a constant in execution stage, such as correlated column, constant,
 // we do prune them. Note that we can't prune the expressions contain non-deterministic functions, such as rand().
 func (lt *LogicalTopN) PruneColumns(parentUsedCols []*expression.Column) error {
-	child := lt.children[0]
 	var cols []*expression.Column
 	lt.ByItems, cols = pruneByItems(lt.ByItems)
 	parentUsedCols = append(parentUsedCols, cols...)
-	return child.PruneColumns(parentUsedCols)
+	lt.inlineProjection(parentUsedCols)
+	return lt.children[0].PruneColumns(parentUsedCols)
 }
 
 // PruneColumns implements LogicalPlan interface.

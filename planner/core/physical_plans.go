@@ -584,7 +584,7 @@ func (p *PhysicalProjection) ExtractCorrelatedCols() []*expression.CorrelatedCol
 
 // PhysicalTopN is the physical operator of topN.
 type PhysicalTopN struct {
-	basePhysicalPlan
+	physicalSchemaProducer
 
 	ByItems []*util.ByItems
 	Offset  uint64
@@ -595,11 +595,11 @@ type PhysicalTopN struct {
 func (lt *PhysicalTopN) Clone() (PhysicalPlan, error) {
 	cloned := new(PhysicalTopN)
 	*cloned = *lt
-	base, err := lt.basePhysicalPlan.cloneWithSelf(cloned)
+	base, err := lt.physicalSchemaProducer.cloneWithSelf(cloned)
 	if err != nil {
 		return nil, err
 	}
-	cloned.basePhysicalPlan = *base
+	cloned.physicalSchemaProducer = *base
 	cloned.ByItems = make([]*util.ByItems, 0, len(lt.ByItems))
 	for _, it := range lt.ByItems {
 		cloned.ByItems = append(cloned.ByItems, it.Clone())
@@ -994,7 +994,7 @@ func (p *PhysicalStreamAgg) Clone() (PhysicalPlan, error) {
 
 // PhysicalSort is the physical operator of sort, which implements a memory sort.
 type PhysicalSort struct {
-	basePhysicalPlan
+	physicalSchemaProducer
 
 	ByItems []*util.ByItems
 }
@@ -1002,11 +1002,11 @@ type PhysicalSort struct {
 // Clone implements PhysicalPlan interface.
 func (ls *PhysicalSort) Clone() (PhysicalPlan, error) {
 	cloned := new(PhysicalSort)
-	base, err := ls.basePhysicalPlan.cloneWithSelf(cloned)
+	base, err := ls.physicalSchemaProducer.cloneWithSelf(cloned)
 	if err != nil {
 		return nil, err
 	}
-	cloned.basePhysicalPlan = *base
+	cloned.physicalSchemaProducer = *base
 	for _, it := range ls.ByItems {
 		cloned.ByItems = append(cloned.ByItems, it.Clone())
 	}
@@ -1025,7 +1025,7 @@ func (ls *PhysicalSort) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 // NominalSort asks sort properties for its child. It is a fake operator that will not
 // appear in final physical operator tree. It will be eliminated or converted to Projection.
 type NominalSort struct {
-	basePhysicalPlan
+	physicalSchemaProducer
 
 	// These two fields are used to switch ScalarFunctions to Constants. For these
 	// NominalSorts, we need to converted to Projections check if the ScalarFunctions

@@ -104,7 +104,7 @@ func (p *LogicalLimit) BuildKeyInfo(selfSchema *expression.Schema, childSchema [
 
 // BuildKeyInfo implements LogicalPlan BuildKeyInfo interface.
 func (p *LogicalTopN) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
-	p.baseLogicalPlan.BuildKeyInfo(selfSchema, childSchema)
+	p.logicalSchemaProducer.BuildKeyInfo(selfSchema, childSchema)
 	if p.Count == 1 {
 		p.maxOneRow = true
 	}

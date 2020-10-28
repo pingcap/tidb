@@ -967,7 +967,7 @@ type LogicalPartitionUnionAll struct {
 
 // LogicalSort stands for the order by plan.
 type LogicalSort struct {
-	baseLogicalPlan
+	logicalSchemaProducer
 
 	ByItems []*util.ByItems
 }
@@ -983,7 +983,7 @@ func (ls *LogicalSort) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 
 // LogicalTopN represents a top-n plan.
 type LogicalTopN struct {
-	baseLogicalPlan
+	logicalSchemaProducer
 
 	ByItems    []*util.ByItems
 	Offset     uint64
