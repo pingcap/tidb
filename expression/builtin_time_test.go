@@ -782,6 +782,7 @@ func (s *testEvaluatorSuite) TestTime(c *C) {
 		{"01:02:03.000123", "01:02:03.000123", false, false},
 		{"01:02:03", "01:02:03", false, false},
 		{"-838:59:59.000000", "-838:59:59.000000", false, false},
+		{"60", "<nil>", true, false},
 	}
 
 	for _, t := range cases {

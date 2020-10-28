@@ -1395,7 +1395,7 @@ func hhmmssAddOverflow(hms []int, overflow bool) {
 	}
 }
 
-func checkHHMMSS(hms [3]int) bool {
+func isValidMMSS(hms [3]int) bool {
 	m, s := hms[1], hms[2]
 	return m < 60 && s < 60
 }
@@ -1457,8 +1457,8 @@ func matchDuration(str string, fsp int8) (Duration, error) {
 		frac = 0
 	}
 
-	if !checkHHMMSS(hhmmss) {
-		return ZeroDuration, ErrTruncatedWrongVal.GenWithStackByArgs("time", str)
+	if !isValidMMSS(hhmmss) {
+		return ZeroDuration, ErrOverflow.GenWithStackByArgs("time", str)
 	}
 
 	if hhmmss[0] > TimeMaxHour {
@@ -1523,6 +1523,33 @@ func ParseDuration(sc *stmtctx.StatementContext, str string, fsp int8) (Duration
 	d, err := matchDuration(rest, fsp)
 	if err == nil {
 		return d, nil
+	}
+	if !canFallbackToDateTime(rest) {
+		return d, ErrTruncatedWrongVal.GenWithStackByArgs("time", str)
+	}
+
+	datetime, err := ParseDatetime(sc, rest)
+	if err != nil {
+		return ZeroDuration, ErrTruncatedWrongVal.GenWithStackByArgs("time", str)
+	}
+
+	d, err = datetime.ConvertToDuration()
+	if err != nil {
+		return ZeroDuration, ErrTruncatedWrongVal.GenWithStackByArgs("time", str)
+	}
+
+	return d.RoundFrac(fsp)
+}
+
+// ParseDurationForTime is a special patched version for TIME() sql function
+func ParseDurationForTime(sc *stmtctx.StatementContext, str string, fsp int8) (Duration, error) {
+	rest := strings.TrimSpace(str)
+	d, err := matchDuration(rest, fsp)
+	if err == nil {
+		return d, nil
+	}
+	if ErrOverflow.Equal(err) {
+		return d, err
 	}
 	if !canFallbackToDateTime(rest) {
 		return d, ErrTruncatedWrongVal.GenWithStackByArgs("time", str)

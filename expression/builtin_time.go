@@ -2257,7 +2257,7 @@ func (b *builtinTimeSig) Clone() builtinFunc {
 	return newSig
 }
 
-// evalDuration evals a builtinTimeSig.
+// evalDuration evals TIME(expr).
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_time.
 func (b *builtinTimeSig) evalDuration(row chunk.Row) (res types.Duration, isNull bool, err error) {
 	expr, isNull, err := b.args[0].EvalString(b.ctx, row)
@@ -2277,9 +2277,13 @@ func (b *builtinTimeSig) evalDuration(row chunk.Row) (res types.Duration, isNull
 	fsp = int(tmpFsp)
 
 	sc := b.ctx.GetSessionVars().StmtCtx
-	res, err = types.ParseDuration(sc, expr, int8(fsp))
+	res, err = types.ParseDurationForTime(sc, expr, int8(fsp))
 	if types.ErrTruncatedWrongVal.Equal(err) {
 		err = sc.HandleTruncate(err)
+	} else if types.ErrOverflow.Equal(err) {
+		isNull = true
+		// omit overflow error for hhmmss, there must be a better way
+		err = nil
 	}
 	return res, isNull, err
 }
