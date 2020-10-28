@@ -2336,10 +2336,12 @@ func (s *testSuiteJoinSerial) TestIssue20270(c *C) {
 	c.Assert(err, Equals, executor.ErrQueryInterrupted)
 	failpoint.Disable("github.com/pingcap/tidb/executor/killedInJoin2Chunk")
 	plannercore.ForceUseOuterBuild4Test = true
+	defer func() {
+		plannercore.ForceUseOuterBuild4Test = false
+	}()
 	failpoint.Enable("github.com/pingcap/tidb/executor/killedInJoin2ChunkForOuterHashJoin", "return(true)")
 	tk.MustExec("insert into t1 values(1,30),(2,40)")
 	err = tk.QueryToErr("select /*+ TIDB_HJ(t, t1) */ * from t left outer join t1 on t.c1 = t1.c1 where t.c1 = 1 or t1.c2 > 20")
 	c.Assert(err, Equals, executor.ErrQueryInterrupted)
 	failpoint.Disable("github.com/pingcap/tidb/executor/killedInJoin2ChunkForOuterHashJoin")
-	plannercore.ForceUseOuterBuild4Test = false
 }
