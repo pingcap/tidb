@@ -173,6 +173,7 @@ func (p *basePhysicalPlan) attach2Task(tasks ...task) task {
 
 func (p *PhysicalUnionScan) attach2Task(tasks ...task) task {
 	if pj, ok := tasks[0].plan().(*PhysicalProjection); ok {
+		// Convert unionScan->projection to projection->unionScan, because unionScan can't handle projection as its children.
 		p.SetChildren(pj.children...)
 		p.stats = tasks[0].plan().statsInfo()
 		rt, _ := tasks[0].(*rootTask)
@@ -741,6 +742,7 @@ func finishCopTask(ctx sessionctx.Context, task task) task {
 		prevSchema = ts.schema.Clone()
 		ts.Columns = ExpandVirtualColumn(ts.Columns, ts.schema, ts.Table.Columns)
 		if len(ts.Columns) > prevColumnLen {
+			// Add an projection to make sure not to output extract columns.
 			needExtraProj = true
 		}
 	}

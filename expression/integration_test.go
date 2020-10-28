@@ -6008,6 +6008,19 @@ func (s *testIntegrationSerialSuite) TestCacheConstEval(c *C) {
 	tk.MustExec("admin reload expr_pushdown_blacklist")
 }
 
+func (s *testSuite) TestIssue20071(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists table_30_utf8_4")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("insert into t values(1)")
+	tk.MustExec("create table table_30_utf8_4 ( `pk` int primary key, `col_int_key_unsigned` int unsigned , `col_int_key_signed` int, `col_float_key_signed` float  , `col_float_key_unsigned` float unsigned) character set utf8 partition by hash(pk) partitions 4);")
+	tk.MustExec("insert ignore into table_30_utf8_4 values (0,91, 10, 14,19.0495)")
+	tk.MustExec("alter table table_30_utf8_4 add column a int as (col_int_key_signed * 2)")
+	tk.MustExec("SELECT count(1) AS val FROM table_30_utf8_4 WHERE table_30_utf8_4.col_int_key_unsigned!=table_30_utf8_4.a OR (SELECT count(1) AS val FROM t WHERE table_30_utf8_4.col_float_key_signed!=table_30_utf8_4.col_float_key_unsigned )!=7984764426240273913;")
+	tk.MustExec("select a from table_30_utf8_4 order by a")
+}
+
 func (s *testIntegrationSerialSuite) TestCollationBasic(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	collate.SetNewCollationEnabledForTest(true)
