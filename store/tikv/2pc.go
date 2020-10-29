@@ -1075,33 +1075,35 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 			err = errors.Errorf("conn %d invalid onePCCommitTS for 1PC protocol after prewrite, startTS=%v", c.connID, c.startTS)
 			return errors.Trace(err)
 		}
-		commitTS = c.onePCCommitTS
-	} else {
-		if c.onePCCommitTS != 0 {
-			logutil.Logger(ctx).Fatal("non 1PC transaction committed in 1PC",
-				zap.Uint64("connID", c.connID), zap.Uint64("startTS", c.startTS))
-		}
+		c.commitTS = c.onePCCommitTS
+		c.txn.commitTS = c.commitTS
+		return nil
+	}
 
-		if c.isAsyncCommit() {
-			if c.minCommitTS == 0 {
-				err = errors.Errorf("conn %d invalid minCommitTS for async commit protocol after prewrite, startTS=%v", c.connID, c.startTS)
-				return errors.Trace(err)
-			}
-			commitTS = c.minCommitTS
-		} else {
-			start = time.Now()
-			logutil.Event(ctx, "start get commit ts")
-			commitTS, err = c.store.getTimestampWithRetry(NewBackofferWithVars(ctx, tsoMaxBackoff, c.txn.vars))
-			if err != nil {
-				logutil.Logger(ctx).Warn("2PC get commitTS failed",
-					zap.Error(err),
-					zap.Uint64("txnStartTS", c.startTS))
-				return errors.Trace(err)
-			}
-			commitDetail.GetCommitTsTime = time.Since(start)
-			logutil.Event(ctx, "finish get commit ts")
-			logutil.SetTag(ctx, "commitTs", commitTS)
+	if c.onePCCommitTS != 0 {
+		logutil.Logger(ctx).Fatal("non 1PC transaction committed in 1PC",
+			zap.Uint64("connID", c.connID), zap.Uint64("startTS", c.startTS))
+	}
+
+	if c.isAsyncCommit() {
+		if c.minCommitTS == 0 {
+			err = errors.Errorf("conn %d invalid minCommitTS for async commit protocol after prewrite, startTS=%v", c.connID, c.startTS)
+			return errors.Trace(err)
 		}
+		commitTS = c.minCommitTS
+	} else {
+		start = time.Now()
+		logutil.Event(ctx, "start get commit ts")
+		commitTS, err = c.store.getTimestampWithRetry(NewBackofferWithVars(ctx, tsoMaxBackoff, c.txn.vars))
+		if err != nil {
+			logutil.Logger(ctx).Warn("2PC get commitTS failed",
+				zap.Error(err),
+				zap.Uint64("txnStartTS", c.startTS))
+			return errors.Trace(err)
+		}
+		commitDetail.GetCommitTsTime = time.Since(start)
+		logutil.Event(ctx, "finish get commit ts")
+		logutil.SetTag(ctx, "commitTs", commitTS)
 	}
 
 	if c.connID > 0 {
@@ -1110,7 +1112,7 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 		})
 	}
 
-	if !c.isAsyncCommit() && !c.isOnePC() {
+	if !c.isAsyncCommit() {
 		tryAmend := c.isPessimistic && c.connID > 0 && c.txn.schemaAmender != nil
 		if !tryAmend {
 			_, _, err = c.checkSchemaValid(ctx, commitTS, c.txn.txnInfoSchema, false)
@@ -1138,11 +1140,6 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 		}
 	}
 	c.commitTS = commitTS
-
-	if c.isOnePC() {
-		c.txn.commitTS = c.commitTS
-		return nil
-	}
 
 	if c.store.oracle.IsExpired(c.startTS, kv.MaxTxnTimeUse) {
 		err = errors.Errorf("conn %d txn takes too much time, txnStartTS: %d, comm: %d",

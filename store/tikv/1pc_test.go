@@ -15,7 +15,6 @@ package tikv
 
 import (
 	"context"
-	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/config"
@@ -162,7 +161,12 @@ func (s *testOnePCSuite) Test1PCIsolation(c *C) {
 	txn = s.begin(c)
 	txn.Set(k, v2)
 
-	time.Sleep(time.Millisecond * 300)
+	// Make `txn`'s commitTs more likely to be less than `txn2`'s startTs if there's bug in commitTs
+	// calculation.
+	for i := 0; i < 10; i++ {
+		_, err := s.store.oracle.GetTimestamp(ctx)
+		c.Assert(err, IsNil)
+	}
 
 	txn2 := s.begin(c)
 	s.mustGetFromTxn(c, txn2, k, v1)
