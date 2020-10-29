@@ -599,9 +599,11 @@ func (p *LogicalJoin) buildIndexJoinInner2TableScan(
 	keyOff2IdxOff := make([]int, len(innerJoinKeys))
 	newOuterJoinKeys := make([]*expression.Column, 0)
 	pkMatched := false
+	coverAllJoinKeys := true
 	for i, key := range innerJoinKeys {
 		if !key.Equal(nil, pkCol) {
 			keyOff2IdxOff[i] = -1
+			coverAllJoinKeys = false
 			continue
 		}
 		pkMatched = true
@@ -625,13 +627,15 @@ func (p *LogicalJoin) buildIndexJoinInner2TableScan(
 	// should construct another inner plan for it.
 	// Because we can't keep order for union scan, if there is a union scan in inner task,
 	// we can't construct index merge join.
-	if us == nil {
+	if us == nil && coverAllJoinKeys {
 		innerTask2 := p.constructInnerTableScanTask(ds, pkCol, outerJoinKeys, us, true, !prop.IsEmpty() && prop.Items[0].Desc, avgInnerRowCnt)
 		joins = append(joins, p.constructIndexMergeJoin(prop, outerIdx, innerTask2, nil, keyOff2IdxOff, nil, nil)...)
 	}
 	// We can reuse the `innerTask` here since index nested loop hash join
 	// do not need the inner child to promise the order.
-	joins = append(joins, p.constructIndexHashJoin(prop, outerIdx, innerTask, nil, keyOff2IdxOff, nil, nil)...)
+	if coverAllJoinKeys {
+		joins = append(joins, p.constructIndexHashJoin(prop, outerIdx, innerTask, nil, keyOff2IdxOff, nil, nil)...)
+	}
 	return joins
 }
 
@@ -658,9 +662,12 @@ func (p *LogicalJoin) buildIndexJoinInner2IndexScan(
 	for i := range keyOff2IdxOff {
 		keyOff2IdxOff[i] = -1
 	}
+	coverAllJoinKeys := true
 	for idxOff, keyOff := range helper.idxOff2KeyOff {
 		if keyOff != -1 {
 			keyOff2IdxOff[keyOff] = idxOff
+		} else {
+			coverAllJoinKeys = false
 		}
 	}
 	joins = make([]PhysicalPlan, 0, 3)
@@ -686,13 +693,15 @@ func (p *LogicalJoin) buildIndexJoinInner2IndexScan(
 	// should construct another inner plan for it.
 	// Because we can't keep order for union scan, if there is a union scan in inner task,
 	// we can't construct index merge join.
-	if us == nil {
+	if us == nil && coverAllJoinKeys {
 		innerTask2 := p.constructInnerIndexScanTask(ds, helper.chosenPath, helper.chosenRemained, outerJoinKeys, us, rangeInfo, true, !prop.IsEmpty() && prop.Items[0].Desc, avgInnerRowCnt, maxOneRow)
 		joins = append(joins, p.constructIndexMergeJoin(prop, outerIdx, innerTask2, helper.chosenRanges, keyOff2IdxOff, helper.chosenPath, helper.lastColManager)...)
 	}
 	// We can reuse the `innerTask` here since index nested loop hash join
 	// do not need the inner child to promise the order.
-	joins = append(joins, p.constructIndexHashJoin(prop, outerIdx, innerTask, helper.chosenRanges, keyOff2IdxOff, helper.chosenPath, helper.lastColManager)...)
+	if coverAllJoinKeys {
+		joins = append(joins, p.constructIndexHashJoin(prop, outerIdx, innerTask, helper.chosenRanges, keyOff2IdxOff, helper.chosenPath, helper.lastColManager)...)
+	}
 	return joins
 }
 
@@ -1370,7 +1379,7 @@ func (p *LogicalJoin) tryToGetIndexJoin(prop *property.PhysicalProperty) (indexJ
 		for _, j := range allLeftOuterJoins {
 			switch j.(type) {
 			case *PhysicalIndexJoin:
-				if inljLeftOuter {
+				if inljLeftOuter || inlhjLeftOuter || inlmjLeftOuter {
 					forcedLeftOuterJoins = append(forcedLeftOuterJoins, j)
 				}
 			case *PhysicalIndexHashJoin:
@@ -1396,7 +1405,7 @@ func (p *LogicalJoin) tryToGetIndexJoin(prop *property.PhysicalProperty) (indexJ
 		for _, j := range allRightOuterJoins {
 			switch j.(type) {
 			case *PhysicalIndexJoin:
-				if inljRightOuter {
+				if inljRightOuter || inlhjRightOuter || inlmjRightOuter {
 					forcedRightOuterJoins = append(forcedRightOuterJoins, j)
 				}
 			case *PhysicalIndexHashJoin:

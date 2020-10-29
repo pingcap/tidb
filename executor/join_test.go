@@ -2299,3 +2299,19 @@ func (s *testSuiteJoinSerial) TestExplainAnalyzeJoin(c *C) {
 	c.Assert(rows[0][0], Matches, "HashJoin.*")
 	c.Assert(rows[0][5], Matches, "time:.*, loops:.*, build_hash_table:{total:.*, fetch:.*, build:.*}, probe:{concurrency:5, total:.*, max:.*, probe:.*, fetch:.*}")
 }
+
+func (s *testSuiteJoinSerial) TestIssue20710(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("drop table if exists s;")
+	tk.MustExec("create table t(a int, b int)")
+	tk.MustExec("create table s(a int, b int, index(a))")
+	tk.MustExec("insert into t values(1,1),(1,2),(2,2)")
+	tk.MustExec("insert into s values(1,1),(2,2),(2,1)")
+	tk.MustQuery("select /*+ inl_join(s) */ * from t join s on t.a=s.a and t.b = s.b").Sort().Check(testkit.Rows("1 1 1 1", "2 2 2 2"))
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustQuery("select /*+ inl_join(s) */ * from t join s on t.a=s.a and t.b = s.a").Sort().Check(testkit.Rows("1 1 1 1", "2 2 2 1", "2 2 2 2"))
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustQuery("select /*+ inl_join(s) */ * from t join s on t.a=s.a and t.a = s.b").Sort().Check(testkit.Rows("1 1 1 1", "1 2 1 1", "2 2 2 2"))
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+}

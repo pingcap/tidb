@@ -2128,12 +2128,43 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 	for i := 0; i < len(v.OuterJoinKeys); i++ {
 		outerKeyCols[i] = v.OuterJoinKeys[i].Index
 	}
-	e.outerCtx.keyCols = outerKeyCols
 	innerKeyCols := make([]int, len(v.InnerJoinKeys))
 	for i := 0; i < len(v.InnerJoinKeys); i++ {
 		innerKeyCols[i] = v.InnerJoinKeys[i].Index
 	}
+	e.outerCtx.keyCols = outerKeyCols
 	e.innerCtx.keyCols = innerKeyCols
+	outerHashCols, innerHashCols := make([]int, len(outerKeyCols)), make([]int, len(innerKeyCols))
+	copy(outerHashCols, outerKeyCols)
+	copy(innerHashCols, innerKeyCols)
+
+	// we can use the `col <eq> col` in `OtherCondition` to build the hashtable to avoid the unnecessary calculating.
+	for i := len(v.OtherConditions) - 1; i >= 0; i = i - 1 {
+		switch c := v.OtherConditions[i].(type) {
+		case *expression.ScalarFunction:
+			if c.FuncName.L == ast.EQ {
+				lhs, ok1 := c.GetArgs()[0].(*expression.Column)
+				rhs, ok2 := c.GetArgs()[1].(*expression.Column)
+				if ok1 && ok2 {
+					innerSchema, outerSchema := v.Children()[v.InnerChildIdx].Schema(), v.Children()[1-v.InnerChildIdx].Schema()
+					if outerSchema.Contains(lhs) && innerSchema.Contains(rhs) {
+						outerHashCols = append(outerHashCols, outerSchema.ColumnIndex(lhs))
+						innerHashCols = append(innerHashCols, innerSchema.ColumnIndex(rhs))
+					} else if innerSchema.Contains(lhs) && outerSchema.Contains(rhs) {
+						outerHashCols = append(outerHashCols, outerSchema.ColumnIndex(rhs))
+						innerHashCols = append(innerHashCols, innerSchema.ColumnIndex(lhs))
+					}
+					v.OtherConditions = append(v.OtherConditions[:i], v.OtherConditions[i:]...)
+				}
+			}
+		default:
+			continue
+		}
+	}
+
+	e.outerCtx.hashCols = outerHashCols
+	e.innerCtx.hashCols = innerHashCols
+
 	e.joinResult = newFirstChunk(e)
 	executorCounterIndexLookUpJoin.Inc()
 	return e
