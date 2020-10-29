@@ -926,6 +926,7 @@ func (e *HashAggRuntimeStats) Clone() execdetails.RuntimeStats {
 		PartialTime:    e.PartialTime,
 		FinalTime:      e.FinalTime,
 	}
+
 	return newRs
 }
 

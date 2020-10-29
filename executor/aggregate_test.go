@@ -15,12 +15,12 @@ package executor_test
 
 import (
 	"fmt"
-	"github.com/pingcap/tidb/executor"
 	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/executor"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
