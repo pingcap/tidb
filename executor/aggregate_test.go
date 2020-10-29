@@ -1154,8 +1154,8 @@ func (s *testSuiteAgg) TestHashAggRuntimeStat(c *C) {
 		FinalTaskNum:   5,
 		FinalTask:      2 * time.Second,
 	}
-	c.Assert(stats.String(), Equals, "partial_worker:{used_time:1s, PartialConcurrency:5, task_num:5}, final_worker:{used_time:2, FinalConcurrency:5, task_num:5}")
+	c.Assert(stats.String(), Equals, "partial_worker:{used_time:1s, PartialConcurrency:5, task_num:5}, final_worker:{used_time:2s, FinalConcurrency:5, task_num:5}")
 	c.Assert(stats.String(), Equals, stats.Clone().String())
 	stats.Merge(stats.Clone())
-	c.Assert(stats.String(), Equals, "partial_worker:{used_time:2s, PartialConcurrency:10, task_num:10}, final_worker:{used_time:4, FinalConcurrency:10, task_num:10}")
+	c.Assert(stats.String(), Equals, "partial_worker:{used_time:2s, PartialConcurrency:10, task_num:10}, final_worker:{used_time:4s, FinalConcurrency:10, task_num:10}")
 }

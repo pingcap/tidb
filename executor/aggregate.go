@@ -667,13 +667,13 @@ func (e *HashAggExec) prepare4ParallelExec(ctx context.Context) {
 	partialWorkerWaitGroup.Add(len(e.partialWorkers))
 	partialStart := time.Now()
 	for i := range e.partialWorkers {
-		go func() {
+		go func(index int) {
 			workerStart := time.Now()
-			e.partialWorkers[i].run(e.ctx, partialWorkerWaitGroup, len(e.finalWorkers))
+			e.partialWorkers[index].run(e.ctx, partialWorkerWaitGroup, len(e.finalWorkers))
 			if e.stats != nil {
 				e.stats.PartialTime <- time.Since(workerStart)
 			}
-		}()
+		}(i)
 	}
 	go func() {
 		e.waitPartialWorkerAndCloseOutputChs(partialWorkerWaitGroup)
@@ -686,13 +686,13 @@ func (e *HashAggExec) prepare4ParallelExec(ctx context.Context) {
 	finalWorkerWaitGroup.Add(len(e.finalWorkers))
 	finalStart := time.Now()
 	for i := range e.finalWorkers {
-		go func() {
+		go func(index int) {
 			workerStart := time.Now()
-			e.finalWorkers[i].run(e.ctx, finalWorkerWaitGroup)
+			e.finalWorkers[index].run(e.ctx, finalWorkerWaitGroup)
 			if e.stats != nil {
 				e.stats.FinalTime <- time.Since(workerStart)
 			}
-		}()
+		}(i)
 	}
 	go func() {
 		e.waitFinalWorkerAndCloseFinalOutput(finalWorkerWaitGroup)
@@ -923,8 +923,6 @@ func (e *HashAggRuntimeStats) Clone() execdetails.RuntimeStats {
 		FinalTask:      e.FinalTask,
 		PartialNum:     e.PartialNum,
 		FinalNum:       e.FinalNum,
-		PartialTime:    e.PartialTime,
-		FinalTime:      e.FinalTime,
 	}
 
 	return newRs
@@ -940,12 +938,6 @@ func (e *HashAggRuntimeStats) Merge(other execdetails.RuntimeStats) {
 	e.FinalTask += tmp.FinalTask
 	e.PartialTaskNum += tmp.PartialTaskNum
 	e.FinalTaskNum += tmp.FinalTaskNum
-	for i := range tmp.PartialTime {
-		e.PartialTime <- i
-	}
-	for j := range tmp.FinalTime {
-		e.FinalTime <- j
-	}
 }
 
 // Tp implements the RuntimeStats interface.
