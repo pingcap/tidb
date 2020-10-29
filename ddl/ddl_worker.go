@@ -490,7 +490,11 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 				// Result in the retry duration is up to 2 * lease.
 				schemaVer = 0
 			}
-			if job.IsCancelling() {
+			inCancellingList, err := isInCancellingList(t, job)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if inCancellingList {
 				schemaVer, runJobErr = convertJob2RollbackJob(w, d, t, job)
 				return nil
 			}
@@ -550,6 +554,19 @@ func getDDLJobsInQueue(t *meta.Meta, jobListKey meta.JobListKeyType) ([]*model.J
 	return jobs, nil
 }
 
+func isInCancellingList(t *meta.Meta, job *model.Job) (bool, error){
+	cancelledJobs, err := getDDLJobsInQueue(t, meta.CancelJobListKey)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	for _, cancelledJob := range cancelledJobs {
+		if cancelledJob.ID == job.ID {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 func removeJobFromCancellingList(t *meta.Meta, job *model.Job) error {
 	cancelledJobs, err := getDDLJobsInQueue(t, meta.CancelJobListKey)
 	if err != nil {
@@ -558,7 +575,7 @@ func removeJobFromCancellingList(t *meta.Meta, job *model.Job) error {
 	found := false
 	pos := 0
 	for i, cancelledJob := range cancelledJobs {
-		if canceledJob.ID == job.ID {
+		if cancelledJob.ID == job.ID {
 			found = true
 			pos = i
 			break
