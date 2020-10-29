@@ -662,7 +662,7 @@ func (e *HashAggExec) waitFinalWorkerAndCloseFinalOutput(waitGroup *sync.WaitGro
 
 func (e *HashAggExec) prepare4ParallelExec(ctx context.Context) {
 	go e.fetchChildData(ctx)
-
+	partialTime := make(chan time.Duration, e.ctx.GetSessionVars().HashAggPartialConcurrency())
 	partialWorkerWaitGroup := &sync.WaitGroup{}
 	partialWorkerWaitGroup.Add(len(e.partialWorkers))
 	partialStart := time.Now()
@@ -671,17 +671,21 @@ func (e *HashAggExec) prepare4ParallelExec(ctx context.Context) {
 			workerStart := time.Now()
 			e.partialWorkers[index].run(e.ctx, partialWorkerWaitGroup, len(e.finalWorkers))
 			if e.stats != nil {
-				e.stats.PartialTime <- time.Since(workerStart)
+				partialTime <- time.Since(workerStart)
 			}
 		}(i)
 	}
 	go func() {
 		e.waitPartialWorkerAndCloseOutputChs(partialWorkerWaitGroup)
+		close(partialTime)
 		if e.stats != nil {
 			e.stats.PartialTask = time.Since(partialStart)
+			for i := range partialTime {
+				e.stats.PartialTime = append(e.stats.PartialTime, i)
+			}
 		}
 	}()
-
+	finalTime := make(chan time.Duration, e.ctx.GetSessionVars().HashAggFinalConcurrency())
 	finalWorkerWaitGroup := &sync.WaitGroup{}
 	finalWorkerWaitGroup.Add(len(e.finalWorkers))
 	finalStart := time.Now()
@@ -690,14 +694,21 @@ func (e *HashAggExec) prepare4ParallelExec(ctx context.Context) {
 			workerStart := time.Now()
 			e.finalWorkers[index].run(e.ctx, finalWorkerWaitGroup)
 			if e.stats != nil {
-				e.stats.FinalTime <- time.Since(workerStart)
+				finalTime <- time.Since(workerStart)
+				for i := range finalTime {
+					e.stats.FinalTime = append(e.stats.FinalTime, i)
+				}
 			}
 		}(i)
 	}
 	go func() {
 		e.waitFinalWorkerAndCloseFinalOutput(finalWorkerWaitGroup)
+		close(finalTime)
 		if e.stats != nil {
 			e.stats.FinalTask = time.Since(finalStart)
+			for i := range finalTime {
+				e.stats.FinalTime = append(e.stats.FinalTime, i)
+			}
 		}
 	}()
 }
@@ -852,8 +863,8 @@ func (e *HashAggExec) initRuntimeStats() {
 				FinalTaskNum:   0,
 				PartialTask:    0,
 				FinalTask:      0,
-				PartialTime:    make(chan time.Duration, e.ctx.GetSessionVars().HashAggPartialConcurrency()),
-				FinalTime:      make(chan time.Duration, e.ctx.GetSessionVars().HashAggFinalConcurrency()),
+				PartialTime:    make([]time.Duration, 0, e.ctx.GetSessionVars().HashAggPartialConcurrency()),
+				FinalTime:      make([]time.Duration, 0, e.ctx.GetSessionVars().HashAggFinalConcurrency()),
 			}
 			e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
 		}
@@ -871,8 +882,8 @@ type HashAggRuntimeStats struct {
 	PartialTask time.Duration
 	FinalTask   time.Duration
 
-	PartialTime chan time.Duration
-	FinalTime   chan time.Duration
+	PartialTime []time.Duration
+	FinalTime   []time.Duration
 }
 
 func (e *HashAggRuntimeStats) String() string {
@@ -881,14 +892,10 @@ func (e *HashAggRuntimeStats) String() string {
 		result += fmt.Sprintf("partial_worker:{used_time:%s, PartialConcurrency:%d, task_num:%d", e.PartialTask, e.PartialNum, e.PartialTaskNum)
 	}
 	if e.PartialTime != nil {
-		partialTime := make([]time.Duration, 0, e.PartialNum)
-		for i := range e.PartialTime {
-			partialTime = append(partialTime, i)
-		}
-		sort.Slice(partialTime, func(i, j int) bool { return partialTime[i] < partialTime[j] })
-		n := len(partialTime)
+		sort.Slice(e.PartialTime, func(i, j int) bool { return e.PartialTime[i] < e.PartialTime[j] })
+		n := len(e.PartialTime)
 		if n != 0 {
-			result += fmt.Sprintf(", partial_max:%v, p95:%v", partialTime[n-1], partialTime[n*19/20])
+			result += fmt.Sprintf(", partial_max:%v, p95:%v", e.PartialTime[n-1], e.PartialTime[n*19/20])
 		}
 	}
 	if len(result) > 0 {
@@ -898,14 +905,10 @@ func (e *HashAggRuntimeStats) String() string {
 		result += fmt.Sprintf("final_worker:{used_time:%s, FinalConcurrency:%d, task_num:%d", e.FinalTask, e.FinalNum, e.FinalTaskNum)
 	}
 	if e.FinalTime != nil {
-		finalTime := make([]time.Duration, 0, e.FinalNum)
-		for i := range e.FinalTime {
-			finalTime = append(finalTime, i)
-		}
-		sort.Slice(finalTime, func(i, j int) bool { return finalTime[i] < finalTime[j] })
-		m := len(finalTime)
+		sort.Slice(e.FinalTime, func(i, j int) bool { return e.FinalTime[i] < e.FinalTime[j] })
+		m := len(e.FinalTime)
 		if m != 0 {
-			result += fmt.Sprintf(", final_max:%v, p95:%v", finalTime[m-1], finalTime[m*19/20])
+			result += fmt.Sprintf(", final_max:%v, p95:%v", e.FinalTime[m-1], e.FinalTime[m*19/20])
 		}
 	}
 	if len(result) > 0 {
