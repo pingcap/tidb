@@ -1,6 +1,6 @@
 module github.com/pingcap/tidb
 
-replace github.com/pingcap/parser => github.com/iosmanthus/parser v0.0.0-20201027094132-d761c9eae04c
+replace github.com/pingcap/parser => github.com/iosmanthus/parser v0.0.0-20201029061817-3088485df3ab
 
 require (
 	cloud.google.com/go v0.51.0 // indirect
