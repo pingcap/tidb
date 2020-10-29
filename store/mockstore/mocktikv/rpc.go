@@ -794,8 +794,8 @@ func (c *RPCClient) getAndCheckStoreByAddr(addr string) (*metapb.Store, error) {
 	return store, nil
 }
 
-func (c *RPCClient) getMPPTaskHandle(storeId uint64, meta *mpp.TaskMeta, h *rpcHandler) (*mppTaskHandler, bool, error) {
-	set := c.Cluster.GetMPPTaskSet(storeId)
+func (c *RPCClient) getMPPTaskHandle(storeID uint64, meta *mpp.TaskMeta, h *rpcHandler) (*mppTaskHandler, bool, error) {
+	set := c.Cluster.getMPPTaskSet(storeID)
 	if set == nil {
 		return nil, false, errors.New("cannot find mpp task set for store")
 	}
@@ -1123,11 +1123,12 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 			return nil, errors.Trace(err)
 		}
 		if created {
-			return nil, errors.New("task not found!")
+			return nil, errors.New("task not found")
 		}
 		ctx1, cancel := context.WithCancel(ctx)
 		mockClient, err := mppHandler.handleEstablishConn(ctx1, mppReq)
 		if err != nil {
+			cancel()
 			return nil, errors.Trace(err)
 		}
 		streamResp := &tikvrpc.MPPStreamResponse{Tikv_EstablishMPPConnectionClient: mockClient}

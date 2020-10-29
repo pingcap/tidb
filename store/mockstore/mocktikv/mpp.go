@@ -2,27 +2,30 @@ package mocktikv
 
 import (
 	"context"
+	"io"
+	"sync"
+	"time"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/mpp"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/uber-go/atomic"
-	"io"
-	"sync"
-	"time"
 )
 
 const (
+	// MPPErrTunnelNotFound means you can't find an expected tunnel.
 	MPPErrTunnelNotFound = iota
+	// MPPErrEstablishConnMultiTimes means we receive the Establish requests at least twice.
 	MPPErrEstablishConnMultiTimes
 )
 
 const (
-	TaskInit int32 = iota
-	TaskRunning
-	TaskFailed
-	TaskFinished
+	taskInit int32 = iota
+	taskRunning
+	taskFailed
+	taskFinished
 )
 
 // mppTaskHandler exists in a single store.
@@ -42,30 +45,30 @@ type mppTaskHandler struct {
 }
 
 func (h *mppTaskHandler) run() {
-	h.status.Store(TaskRunning)
+	h.status.Store(taskRunning)
 	_, err := h.exec.Next(context.Background())
 	// TODO: Remove itself after execution is closed.
 	if err != nil {
 		h.err = err
-		h.status.Store(TaskFailed)
+		h.status.Store(taskFailed)
 	} else {
-		h.status.Store(TaskFinished)
+		h.status.Store(taskFinished)
 	}
 }
 
 func (h *mppTaskHandler) registerTunnel(tunnel *exchangerTunnel) error {
-	taskId := tunnel.targetTask.TaskId
-	_, ok := h.tunnelSet[taskId]
+	taskID := tunnel.targetTask.TaskId
+	_, ok := h.tunnelSet[taskID]
 	if ok {
-		return errors.Errorf("task id %d has been registered", taskId)
+		return errors.Errorf("task id %d has been registered", taskID)
 	}
-	h.tunnelSet[taskId] = tunnel
+	h.tunnelSet[taskID] = tunnel
 	return nil
 }
 
 func (h *mppTaskHandler) getAndActiveTunnel(req *mpp.EstablishMPPConnectionRequest) (*exchangerTunnel, *mpp.Error, error) {
-	targetId := req.ReceiverMeta.TaskId
-	if tunnel, ok := h.tunnelSet[targetId]; ok {
+	targetID := req.ReceiverMeta.TaskId
+	if tunnel, ok := h.tunnelSet[targetID]; ok {
 		if tunnel.active {
 			// We find the dataCh, but the dataCh has been used.
 			return nil, &mpp.Error{Code: MPPErrEstablishConnMultiTimes, Msg: "dataCh has been connected"}, nil

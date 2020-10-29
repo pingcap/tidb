@@ -208,7 +208,7 @@ func (c *Cluster) AddStore(storeID uint64, addr string) {
 	c.mppTaskSet[storeID] = make(map[int64]*mppTaskHandler)
 }
 
-func (c *Cluster) GetMPPTaskSet(storeID uint64) map[int64]*mppTaskHandler {
+func (c *Cluster) getMPPTaskSet(storeID uint64) map[int64]*mppTaskHandler {
 	return c.mppTaskSet[storeID]
 }
 
