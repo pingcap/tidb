@@ -15,6 +15,7 @@ package chunk
 
 import (
 	"errors"
+	"fmt"
 	"sort"
 	"sync"
 	"time"
@@ -80,6 +81,7 @@ func (c *RowContainer) SpillToDisk() {
 	N := c.m.records.NumChunks()
 	c.m.recordsInDisk = NewListInDisk(c.m.records.FieldTypes())
 	c.m.recordsInDisk.diskTracker.AttachTo(c.diskTracker)
+	logutil.BgLogger().Info(fmt.Sprint("SpillToDisk", N, c.m.records.NumRowsOfChunk(0)))
 	for i := 0; i < N; i++ {
 		chk := c.m.records.GetChunk(i)
 		err = c.m.recordsInDisk.Add(chk)
@@ -309,7 +311,7 @@ func (a *SpillDiskAction) Action(t *memory.Tracker) {
 	if a.getStatus() == notSpilled {
 		a.once.Do(func() {
 			logutil.BgLogger().Info("memory exceeds quota, spill to disk now.",
-				zap.Int64("consumed", t.BytesConsumed()), zap.Int64("quota", t.GetBytesLimit()))
+				zap.Int64("consumed", t.BytesConsumed()), zap.Int64("quota", t.GetBytesLimit()), zap.String("debug", t.String()))
 			if a.testSyncInputFunc != nil {
 				a.testSyncInputFunc()
 				c := a.c

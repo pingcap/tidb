@@ -106,21 +106,25 @@ func optimizeByShuffle4StreamAgg(pp *PhysicalStreamAgg, ctx sessionctx.Context) 
 		return nil
 	}
 
-	// todo: make all fields to be valid
-	var tail, dataSource PhysicalPlan
-	switch p := pp.Children()[0].(type) {
-	case *PhysicalTableScan:
-		tail, dataSource = extractTailAndDataSource4TableScan(p, ctx)
-	default:
-		panic("other physical plan is not implemented")
+	sort, ok := pp.Children()[0].(*PhysicalSort)
+	if !ok {
+		return nil
 	}
+
+	tail, dataSource := sort, sort.Children()[0]
+	//switch p := pp.Children()[0].(type) {
+	//case *PhysicalTableScan:
+	//	tail, dataSource = extractTailAndDataSource4TableScan(p, ctx)
+	//default:
+	//	panic("other physical plan is not implemented")
+	//}
 
 	reqProp := &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64}
 	shuffle := PhysicalShuffle{
 		Concurrency:  concurrency,
 		Tail:         tail,
 		DataSource:   dataSource,
-		SplitterType: getPartitionSplitter(ctx),
+		SplitterType: PartitionHashSplitterType,
 		HashByItems:  pp.GroupByItems,
 	}.Init(ctx, pp.statsInfo(), pp.SelectBlockOffset(), reqProp)
 	return shuffle

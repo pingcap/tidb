@@ -93,7 +93,7 @@ func (a *PanicOnExceed) Action(t *Tracker) {
 	if a.logHook != nil {
 		a.logHook(a.ConnID)
 	}
-	panic(PanicMemoryExceed + fmt.Sprintf("[conn_id=%d]", a.ConnID))
+	panic(PanicMemoryExceed + fmt.Sprintf("[conn_id=%d] [%v]", a.ConnID, t.String()))
 }
 
 // SetFallback sets a fallback action.
