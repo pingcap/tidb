@@ -464,19 +464,28 @@ func (cli *testServerClient) runTestLoadDataForSlowLog(c *C, server *Server) {
 		dbt.mustExec("create table t_slow (a int key, b int)")
 		defer func() {
 			dbt.mustExec("set tidb_slow_log_threshold=300;")
+			dbt.mustExec("set @@global.tidb_enable_stmt_summary=0")
 		}()
 		dbt.mustExec("set tidb_slow_log_threshold=0;")
+		dbt.mustExec("set @@global.tidb_enable_stmt_summary=1")
 		query := fmt.Sprintf("load data local infile %q into table t_slow", path)
 		dbt.mustExec(query)
 		// Test for record slow log for load data statement.
+		checkPlan := func(rows *sql.Rows) {
+			dbt.Check(rows.Next(), IsTrue, Commentf("unexpected data"))
+			var plan sql.NullString
+			err = rows.Scan(&plan)
+			dbt.Check(err, IsNil)
+			planStr := strings.ReplaceAll(plan.String, "\t", " ")
+			planStr = strings.ReplaceAll(planStr, "\n", " ")
+			c.Assert(planStr, Matches, ".*Load_Data.* time.* loops.* prepare.* check_insert.* mem_insert_time:.* prefetch.* rpc.* commit_txn.*")
+		}
+
 		rows := dbt.mustQuery(fmt.Sprintf("select plan from information_schema.slow_query where query like 'load data local infile %% into table t_slow;' order by time desc limit 1"))
-		dbt.Check(rows.Next(), IsTrue, Commentf("unexpected data"))
-		var plan sql.NullString
-		err = rows.Scan(&plan)
-		dbt.Check(err, IsNil)
-		planStr := strings.ReplaceAll(plan.String, "\t", " ")
-		planStr = strings.ReplaceAll(planStr, "\n", " ")
-		c.Assert(planStr, Matches, ".*Load_Data.* time.* loops.* prepare.* check_insert.* mem_insert_time:.* prefetch.* rpc.* commit_txn.*")
+		checkPlan(rows)
+		// Test for record statements_summary for load data statement.
+		rows = dbt.mustQuery(fmt.Sprintf("select plan from information_schema.STATEMENTS_SUMMARY where QUERY_SAMPLE_TEXT like 'load data local infile %%' limit 1"))
+		checkPlan(rows)
 	})
 }
 
