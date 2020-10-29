@@ -18,7 +18,6 @@ import (
 	"strconv"
 
 	"github.com/cznic/mathutil"
-
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
