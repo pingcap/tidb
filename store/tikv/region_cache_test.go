@@ -1116,7 +1116,7 @@ func (s *testRegionCacheSuite) TestPeersLenChange(c *C) {
 	s.cache.OnSendFail(NewNoopBackoff(context.Background()), ctx, false, errors.New("send fail"))
 }
 
-func (s *testRegionRequestSuite) TestGetRegionByIDFromCache(c *C) {
+func (s *testRegionRequestToSingleStoreSuite) TestGetRegionByIDFromCache(c *C) {
 	region, err := s.cache.LocateRegionByID(s.bo, s.region)
 	c.Assert(err, IsNil)
 	c.Assert(region, NotNil)

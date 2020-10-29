@@ -92,8 +92,7 @@ func (s *testAsyncCommitCommon) mustGetLock(c *C, key []byte) *Lock {
 }
 
 func (s *testAsyncCommitCommon) mustPointGet(c *C, key, expectedValue []byte) {
-	snap, err := s.store.GetSnapshot(kv.MaxVersion)
-	c.Assert(err, IsNil)
+	snap := s.store.GetSnapshot(kv.MaxVersion)
 	value, err := snap.Get(context.Background(), key)
 	c.Assert(err, IsNil)
 	c.Assert(value, BytesEquals, expectedValue)
@@ -105,7 +104,7 @@ type testAsyncCommitSuite struct {
 	bo *Backoffer
 }
 
-var _ = Suite(&testAsyncCommitSuite{})
+var _ = SerialSuites(&testAsyncCommitSuite{})
 
 func (s *testAsyncCommitSuite) SetUpTest(c *C) {
 	s.testAsyncCommitCommon.setUpTest(c)

@@ -114,6 +114,14 @@ func (c *Context) GetClient() kv.Client {
 	return c.Store.GetClient()
 }
 
+// GetMPPClient implements sessionctx.Context GetMPPClient interface.
+func (c *Context) GetMPPClient() kv.MPPClient {
+	if c.Store == nil {
+		return nil
+	}
+	return c.Store.GetMPPClient()
+}
+
 // GetGlobalSysVar implements GlobalVarAccessor GetGlobalSysVar interface.
 func (c *Context) GetGlobalSysVar(ctx sessionctx.Context, name string) (string, error) {
 	v := variable.GetSysVar(name)
@@ -211,6 +219,9 @@ func (c *Context) GoCtx() context.Context {
 // StoreQueryFeedback stores the query feedback.
 func (c *Context) StoreQueryFeedback(_ interface{}) {}
 
+// StoreIndexUsage strores the index usage information.
+func (c *Context) StoreIndexUsage(_ int64, _ int64, _ int64) {}
+
 // StmtCommit implements the sessionctx.Context interface.
 func (c *Context) StmtCommit() {}
 
@@ -221,10 +232,6 @@ func (c *Context) StmtRollback() {
 // StmtGetMutation implements the sessionctx.Context interface.
 func (c *Context) StmtGetMutation(tableID int64) *binlog.TableMutation {
 	return nil
-}
-
-// StmtAddDirtyTableOP implements the sessionctx.Context interface.
-func (c *Context) StmtAddDirtyTableOP(op int, tid int64, handle kv.Handle) {
 }
 
 // AddTableLock implements the sessionctx.Context interface.
