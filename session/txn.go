@@ -105,6 +105,11 @@ func (st *TxnState) NewStagingBuffer() kv.MemBuffer {
 	return st.stmtBuf.NewStagingBuffer()
 }
 
+// SetBuffer set the given MemBuffer
+func (st *TxnState) SetBuffer(m kv.MemBuffer) {
+	st.stmtBuf = m
+}
+
 // Flush flushes all staging kvs into parent buffer.
 func (st *TxnState) Flush() (int, error) {
 	if st.stmtBuf == nil {
@@ -362,6 +367,12 @@ func (st *TxnState) Set(k kv.Key, v []byte) error {
 func (st *TxnState) Delete(k kv.Key) error {
 	st.initStmtBuf()
 	return st.stmtBuf.Delete(k)
+}
+
+// DeleteWithNeedLock overrides the Transaction interface.
+func (st *TxnState) DeleteWithNeedLock(k kv.Key) error {
+	st.initStmtBuf()
+	return st.stmtBuf.DeleteWithNeedLock(k)
 }
 
 // Iter overrides the Transaction interface.

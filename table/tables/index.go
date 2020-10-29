@@ -263,9 +263,8 @@ func (c *index) Delete(sc *stmtctx.StatementContext, m kv.RetrieverMutator, inde
 	if err != nil {
 		return err
 	}
-	if buf, ok := m.(*kv.BufferStore); ok && distinct {
-		buf.MemBuffer = m.(kv.MemBuffer).NewStagingBuffer()
-		buf.DeleteWithNeedLock(key)
+	if distinct {
+		err = m.DeleteWithNeedLock(key)
 	} else {
 		err = m.Delete(key)
 	}
