@@ -481,8 +481,8 @@ func (s *testFailDBSuite) TestModifyColumn(c *C) {
 	tk.MustQuery("select * from t").Check(testkit.Rows("2 1 3", "22 11 33"))
 	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
 		"  `bb` mediumint(9) DEFAULT NULL,\n" +
-		"  `a` int(11) NOT NULL DEFAULT 1,\n" +
-		"  `c` int(11) NOT NULL DEFAULT 0,\n" +
+		"  `a` int(11) NOT NULL DEFAULT '1',\n" +
+		"  `c` int(11) NOT NULL DEFAULT '0',\n" +
 		"  PRIMARY KEY (`c`),\n" +
 		"  KEY `idx` (`bb`),\n" +
 		"  KEY `idx1` (`a`),\n" +
@@ -495,7 +495,7 @@ func (s *testFailDBSuite) TestModifyColumn(c *C) {
 	tk.MustExec("alter table t change column a aa mediumint after c")
 	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
 		"  `bb` mediumint(9) DEFAULT NULL,\n" +
-		"  `c` int(11) NOT NULL DEFAULT 0,\n" +
+		"  `c` int(11) NOT NULL DEFAULT '0',\n" +
 		"  `aa` mediumint(9) DEFAULT NULL,\n" +
 		"  PRIMARY KEY (`c`),\n" +
 		"  KEY `idx` (`bb`),\n" +
