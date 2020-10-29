@@ -477,7 +477,10 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 					// cancelling logic for it.
 					txn.Reset()
 					logutil.Logger(w.logCtx).Info("[ddl] DDL job kv modification abandoned, since it has been cancelling.")
-					removeJobFromCancellingList(t, job)
+					err := removeJobFromCancellingList(t, job)
+					if err != nil {
+						return errors.Trace(err)
+					}
 					return nil
 				}
 			}
@@ -570,7 +573,7 @@ func isInCancellingList(t *meta.Meta, job *model.Job) (bool, error) {
 func removeJobFromCancellingList(t *meta.Meta, job *model.Job) error {
 	cancelledJobs, err := getDDLJobsInQueue(t, meta.CancelJobListKey)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	found := false
 	pos := 0
