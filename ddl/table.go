@@ -479,7 +479,6 @@ func onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ erro
 		}
 	}
 
-	newIDs := make([]int64, 0, len(oldPartitionIDs))
 	if d.infoHandle != nil && d.infoHandle.IsValid() {
 		is := d.infoHandle.Get()
 
@@ -489,14 +488,18 @@ func onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ erro
 		}
 
 		if pi := tblInfo.GetPartitionInfo(); pi != nil {
+			oldIDs := make([]int64, 0, len(oldPartitionIDs))
+			newIDs := make([]int64, 0, len(oldPartitionIDs))
 			newDefs := pi.Definitions
 			for i := range oldPartitionIDs {
-				if oldBundle, ok := is.BundleByName(placement.GroupID(oldPartitionIDs[i])); ok {
-					newID := newDefs[i].ID
+				newID := newDefs[i].ID
+				if oldBundle, ok := is.BundleByName(placement.GroupID(oldPartitionIDs[i])); ok && !oldBundle.IsEmpty() {
+					oldIDs = append(oldIDs, oldPartitionIDs[i])
 					newIDs = append(newIDs, newID)
 					bundles = append(bundles, placement.BuildPlacementCopyBundle(oldBundle, newID))
 				}
 			}
+			job.CtxVars = []interface{}{oldIDs, newIDs}
 		}
 
 		err = infosync.PutRuleBundles(nil, bundles)
@@ -525,7 +528,6 @@ func onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ erro
 		}
 	})
 
-	job.CtxVars = []interface{}{oldPartitionIDs, newIDs}
 	ver, err = updateSchemaVersion(t, job)
 	if err != nil {
 		return ver, errors.Trace(err)

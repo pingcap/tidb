@@ -849,9 +849,11 @@ func updateSchemaVersion(t *meta.Meta, job *model.Job) (int64, error) {
 		diff.OldTableID = job.TableID
 
 		// affects are used to update placement rule cache
-		oldIDs := job.CtxVars[0].([]int64)
-		newIDs := job.CtxVars[1].([]int64)
-		diff.AffectedOpts = buildPlacementAffects(oldIDs, newIDs)
+		if len(job.CtxVars) > 0 {
+			oldIDs := job.CtxVars[0].([]int64)
+			newIDs := job.CtxVars[1].([]int64)
+			diff.AffectedOpts = buildPlacementAffects(oldIDs, newIDs)
+		}
 	case model.ActionCreateView:
 		tbInfo := &model.TableInfo{}
 		var orReplace bool
@@ -890,9 +892,11 @@ func updateSchemaVersion(t *meta.Meta, job *model.Job) (int64, error) {
 		diff.AffectedOpts = affects
 	case model.ActionTruncateTablePartition:
 		diff.TableID = job.TableID
-		oldIDs := job.CtxVars[0].([]int64)
-		newIDs := job.CtxVars[1].([]int64)
-		diff.AffectedOpts = buildPlacementAffects(oldIDs, newIDs)
+		if len(job.CtxVars) > 0 {
+			oldIDs := job.CtxVars[0].([]int64)
+			newIDs := job.CtxVars[1].([]int64)
+			diff.AffectedOpts = buildPlacementAffects(oldIDs, newIDs)
+		}
 	case model.ActionDropTablePartition, model.ActionRecoverTable, model.ActionDropTable:
 		// affects are used to update placement rule cache
 		diff.TableID = job.TableID
