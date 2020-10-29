@@ -554,7 +554,7 @@ func getDDLJobsInQueue(t *meta.Meta, jobListKey meta.JobListKeyType) ([]*model.J
 	return jobs, nil
 }
 
-func isInCancellingList(t *meta.Meta, job *model.Job) (bool, error){
+func isInCancellingList(t *meta.Meta, job *model.Job) (bool, error) {
 	cancelledJobs, err := getDDLJobsInQueue(t, meta.CancelJobListKey)
 	if err != nil {
 		return false, errors.Trace(err)
