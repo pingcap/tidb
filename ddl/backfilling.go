@@ -47,7 +47,7 @@ const (
 	typeCleanUpIndexWorker backfillWorkerType = 2
 )
 
-// By now the DDL jobs including:
+// By now the DDL jobs that need backfilling include:
 // 1: add-index
 // 2: modify-column-type
 // 3: clean-up global index
