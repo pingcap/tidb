@@ -98,9 +98,3 @@ func (s *BufferStore) IterReverse(k Key) (Iterator, error) {
 func (s *BufferStore) WalkBuffer(f func(k Key, v []byte) error) error {
 	return WalkMemBuffer(s.MemBuffer, f)
 }
-
-// DeleteWithNeedLock overrides the Transaction interface.
-func (s *BufferStore) DeleteWithNeedLock(k Key) error {
-	s.MemBuffer = s.MemBuffer.NewStagingBuffer()
-	return s.MemBuffer.DeleteWithNeedLock(k)
-}
