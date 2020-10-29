@@ -959,8 +959,24 @@ func (c *twoPhaseCommitter) cleanup(ctx context.Context) {
 func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 	var binlogSkipped bool
 	defer func() {
-		isOnePC := c.isOnePC()
-		if !c.isAsyncCommit() && !isOnePC {
+		if c.isOnePC() {
+			// The error means the 1PC transaction failed.
+			if err != nil {
+				tikvOnePCTxnCounterError.Inc()
+			} else {
+				tikvOnePCTxnCounterOk.Inc()
+			}
+		} else if c.isAsyncCommit() {
+			// The error means the async commit should not succeed.
+			if err != nil {
+				if c.prewriteStarted && c.getUndeterminedErr() == nil {
+					c.cleanup(ctx)
+				}
+				tikvAsyncCommitTxnCounterError.Inc()
+			} else {
+				tikvAsyncCommitTxnCounterOk.Inc()
+			}
+		} else {
 			// Always clean up all written keys if the txn does not commit.
 			c.mu.RLock()
 			committed := c.mu.committed
@@ -978,23 +994,6 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 				} else {
 					c.writeFinishBinlog(ctx, binlog.BinlogType_Commit, int64(c.commitTS))
 				}
-			}
-		} else if isOnePC {
-			// The error means the 1PC transaction failed.
-			if err != nil {
-				tikvOnePCTxnCounterError.Inc()
-			} else {
-				tikvOnePCTxnCounterOk.Inc()
-			}
-		} else {
-			// The error means the async commit should not succeed.
-			if err != nil {
-				if c.prewriteStarted && c.getUndeterminedErr() == nil {
-					c.cleanup(ctx)
-				}
-				tikvAsyncCommitTxnCounterError.Inc()
-			} else {
-				tikvAsyncCommitTxnCounterOk.Inc()
 			}
 		}
 	}()
