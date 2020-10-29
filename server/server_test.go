@@ -26,6 +26,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -435,6 +436,47 @@ func (cli *testServerClient) runTestLoadDataWithSelectIntoOutfile(c *C, server *
 				c.Assert(fmt.Sprintf("%v", res[i][j]), Equals, fmt.Sprintf("%v", res1[i][j]))
 			}
 		}
+	})
+}
+func (cli *testServerClient) runTestLoadDataForSlowLog(c *C, server *Server) {
+	path := "/tmp/load_data_test.csv"
+	fp, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
+	c.Assert(err, IsNil)
+	c.Assert(fp, NotNil)
+	defer func() {
+		err = fp.Close()
+		c.Assert(err, IsNil)
+		err = os.Remove(path)
+		c.Assert(err, IsNil)
+	}()
+	_, err = fp.WriteString(
+		"1	1\n" +
+			"2	2\n" +
+			"3	3\n" +
+			"4	4\n" +
+			"5	5\n")
+	c.Assert(err, IsNil)
+
+	cli.runTestsOnNewDB(c, func(config *mysql.Config) {
+		config.AllowAllFiles = true
+		config.Params = map[string]string{"sql_mode": "''"}
+	}, "load_data_slow_query", func(dbt *DBTest) {
+		dbt.mustExec("create table t_slow (a int key, b int)")
+		defer func() {
+			dbt.mustExec("set tidb_slow_log_threshold=300;")
+		}()
+		dbt.mustExec("set tidb_slow_log_threshold=0;")
+		query := fmt.Sprintf("load data local infile %q into table t_slow", path)
+		dbt.mustExec(query)
+		// Test for record slow log for load data statement.
+		rows := dbt.mustQuery(fmt.Sprintf("select plan from information_schema.slow_query where query like 'load data local infile %% into table t_slow;' order by time desc limit 1"))
+		dbt.Check(rows.Next(), IsTrue, Commentf("unexpected data"))
+		var plan sql.NullString
+		err = rows.Scan(&plan)
+		dbt.Check(err, IsNil)
+		planStr := strings.ReplaceAll(plan.String, "\t", " ")
+		planStr = strings.ReplaceAll(planStr, "\n", " ")
+		c.Assert(planStr, Matches, ".*Load_Data.* time.* loops.* prepare.* check_insert.* mem_insert_time:.* prefetch.* rpc.* commit_txn.*")
 	})
 }
 
