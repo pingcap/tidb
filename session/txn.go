@@ -449,7 +449,7 @@ func keyNeedToLock(k, v []byte) bool {
 	}
 
 	// do not lock row key for delete operation,
-	// lock primary key and unique index only.
+	// primary key and unique indexes will be handled outside.
 	if len(v) == 0 {
 		return false
 	}

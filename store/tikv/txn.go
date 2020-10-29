@@ -215,6 +215,7 @@ func (txn *tikvTxn) Delete(k kv.Key) error {
 }
 
 func (txn *tikvTxn) DeleteWithNeedLock(k kv.Key) error {
+	txn.dirty = true
 	return txn.us.DeleteWithNeedLock(k)
 }
 
