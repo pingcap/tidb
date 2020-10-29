@@ -885,7 +885,7 @@ func (t *TableCommon) removeRowIndices(ctx sessionctx.Context, h int64, rec []ty
 			logutil.BgLogger().Info("remove row index failed", zap.Any("index", v.Meta()), zap.Uint64("txnStartTS", txn.StartTS()), zap.Int64("handle", h), zap.Any("record", rec), zap.Error(err))
 			return err
 		}
-		if err = v.Delete(ctx.GetSessionVars().StmtCtx, txn.GetMemBuffer(), vals, h); err != nil {
+		if err = v.Delete(ctx.GetSessionVars().StmtCtx, txn, vals, h); err != nil {
 			if v.Meta().State != model.StatePublic && kv.ErrNotExist.Equal(err) {
 				// If the index is not in public state, we may have not created the index,
 				// or already deleted the index, so skip ErrNotExist error.
@@ -900,7 +900,7 @@ func (t *TableCommon) removeRowIndices(ctx sessionctx.Context, h int64, rec []ty
 
 // removeRowIndex implements table.Table RemoveRowIndex interface.
 func (t *TableCommon) removeRowIndex(sc *stmtctx.StatementContext, rm kv.RetrieverMutator, h int64, vals []types.Datum, idx table.Index, txn kv.Transaction) error {
-	return idx.Delete(sc, txn.GetMemBuffer(), vals, h)
+	return idx.Delete(sc, rm, vals, h)
 }
 
 // buildIndexForRow implements table.Table BuildIndexForRow interface.

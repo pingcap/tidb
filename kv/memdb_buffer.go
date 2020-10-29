@@ -142,7 +142,7 @@ func (m *memDbBuffer) NewStagingBuffer() MemBuffer {
 		sandbox:         m.sandbox.Derive(),
 		entrySizeLimit:  TxnEntrySizeLimit,
 		bufferSizeLimit: m.bufferSizeLimit - uint64(m.sandbox.Size()),
-		needLockKey:     make(map[string]struct{}),
+		needLockKey:     m.needLockKey,
 	}
 }
 
