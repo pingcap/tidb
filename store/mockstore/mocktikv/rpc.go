@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"math"
 	"strconv"
 	"sync"
@@ -31,6 +32,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/kvproto/pkg/mpp"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
@@ -157,6 +159,8 @@ type rpcHandler struct {
 	// isolationLevel is used for current request.
 	isolationLevel kvrpcpb.IsolationLevel
 	resolvedLocks  []uint64
+
+	taskHandler *mppTaskHandler
 }
 
 func isTiFlashStore(store *metapb.Store) bool {
@@ -689,6 +693,33 @@ func drainRowsFromExecutor(ctx context.Context, e executor, req *tipb.DAGRequest
 	}
 }
 
+func (h *mppTaskHandler) handleMPPDispatch(ctx context.Context, req *mpp.DispatchTaskRequest) (*mpp.DispatchTaskResponse, error) {
+	// At first register task to store.
+	copReq := &coprocessor.Request{
+		Tp:      kv.ReqTypeDAG,
+		Data:    req.EncodedPlan,
+		StartTs: req.Meta.StartTs,
+	}
+	for _, regionMeta := range req.Regions {
+		copReq.Ranges = append(copReq.Ranges, regionMeta.Ranges...)
+	}
+	_, exec, _, err := h.buildDAGExecutor(copReq)
+	if err != nil {
+		return nil, err
+	}
+	h.exec = exec
+	go h.run()
+	return &mpp.DispatchTaskResponse{}, nil
+}
+
+func (h *mppTaskHandler) handleEstablishConn(ctx context.Context, req *mpp.EstablishMPPConnectionRequest) (*mockMPPConnStream, error) {
+	meta := req.ReceiverMeta
+	if tunnel, ok := h.tunnelSet[meta.TaskId]; ok {
+		return &mockMPPConnStream{tunnel: tunnel}, nil
+	}
+	return nil, errors.Errorf("cannot find client task %d registered in server task %d", meta.TaskId, req.SenderMeta.TaskId)
+}
+
 func (h *rpcHandler) handleBatchCopRequest(ctx context.Context, req *coprocessor.BatchRequest) (*mockBatchCopDataClient, error) {
 	client := &mockBatchCopDataClient{}
 	for _, ri := range req.Regions {
@@ -761,6 +792,27 @@ func (c *RPCClient) getAndCheckStoreByAddr(addr string) (*metapb.Store, error) {
 		return nil, errors.New("connection refused")
 	}
 	return store, nil
+}
+
+func (c *RPCClient) getMPPTaskHandle(storeId uint64, meta *mpp.TaskMeta, h *rpcHandler) (*mppTaskHandler, bool, error) {
+	set := c.Cluster.GetMPPTaskSet(storeId)
+	if set == nil {
+		return nil, false, errors.New("cannot find mpp task set for store")
+	}
+	if handler, ok := set[meta.TaskId]; ok {
+		handler.rpcHandler = h
+		h.taskHandler = handler
+		return handler, false, nil
+	}
+	handler := &mppTaskHandler{
+		rpcHandler: h,
+		tunnelSet:  make(map[int64]*exchangerTunnel),
+		meta:       meta,
+		client:     c,
+	}
+	h.taskHandler = handler
+	set[meta.TaskId] = handler
+	return handler, true, nil
 }
 
 func (c *RPCClient) checkArgs(ctx context.Context, addr string) (*rpcHandler, error) {
@@ -1050,6 +1102,47 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 			panic(fmt.Sprintf("unknown coprocessor request type: %v", r.GetTp()))
 		}
 		resp.Resp = res
+	case tikvrpc.CmdMPPTask:
+		r := req.DispatchMPPTask()
+		mppHandler, created, err := c.getMPPTaskHandle(handler.storeID, r.Meta, handler)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if !created {
+			return nil, errors.New("task has been created")
+		}
+		taskResp, err := mppHandler.handleMPPDispatch(ctx, r)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		resp.Resp = taskResp
+	case tikvrpc.CmdMPPConn:
+		mppReq := req.EstablishMPPConn()
+		mppHandler, created, err := c.getMPPTaskHandle(handler.storeID, mppReq.SenderMeta, handler)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if created {
+			return nil, errors.New("task not found!")
+		}
+		ctx1, cancel := context.WithCancel(ctx)
+		mockClient, err := mppHandler.handleEstablishConn(ctx1, mppReq)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		streamResp := &tikvrpc.MPPStreamResponse{Tikv_EstablishMPPConnectionClient: mockClient}
+		streamResp.Lease.Cancel = cancel
+		streamResp.Timeout = timeout
+		c.streamTimeout <- &streamResp.Lease
+		resp.Resp = streamResp
+		if mppReq.ReceiverMeta.TaskId == -1 {
+			streamResp.MPPDataPacket, err = streamResp.Recv()
+			if err != nil {
+				if errors.Cause(err) != io.EOF {
+					return nil, errors.Trace(err)
+				}
+			}
+		}
 	case tikvrpc.CmdBatchCop:
 		failpoint.Inject("BatchCopCancelled", func(value failpoint.Value) {
 			if value.(bool) {

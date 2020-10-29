@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/kvproto/pkg/mpp"
 	"github.com/pingcap/kvproto/pkg/tikvpb"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -52,6 +53,14 @@ type dagContext struct {
 	keyRanges []*coprocessor.KeyRange
 	startTS   uint64
 	evalCtx   *evalContext
+}
+
+func (c *dagContext) copyWithNewEvalCtx() *dagContext {
+	n := &(*c)
+	n.evalCtx = &evalContext{
+		sc: c.evalCtx.sc,
+	}
+	return n
 }
 
 func (h *rpcHandler) handleCopDAGRequest(req *coprocessor.Request) *coprocessor.Response {
@@ -171,6 +180,13 @@ func (h *rpcHandler) buildExec(ctx *dagContext, curr *tipb.Executor) (executor, 
 	case tipb.ExecType_TypeLimit:
 		currExec = &limitExec{limit: curr.Limit.GetLimit(), execDetail: new(execDetail)}
 		childExec = curr.Limit.Child
+	case tipb.ExecType_TypeExchangeSender:
+		currExec, err = h.buildExchangeServer(curr.ExchangeSender, ctx.dagReq.OutputOffsets)
+		childExec = curr.ExchangeSender.Child
+	case tipb.ExecType_TypeExchangeReceiver:
+		currExec, err = h.buildExchangeClient(ctx, curr.ExchangeReceiver)
+	case tipb.ExecType_TypeJoin:
+		currExec, err = h.buildJoin(ctx, curr.Join)
 	default:
 		// TODO: Support other types.
 		err = errors.Errorf("this exec type %v doesn't support yet.", curr.GetTp())
@@ -205,6 +221,108 @@ func (h *rpcHandler) buildDAG(ctx *dagContext, executors []*tipb.Executor) (exec
 		src = curr
 	}
 	return src, nil
+}
+
+func (h *rpcHandler) buildJoin(ctx *dagContext, joinPb *tipb.Join) (executor, error) {
+	if joinPb.JoinType != tipb.JoinType_TypeInnerJoin {
+		return nil, errors.New("Only support Inner join right now")
+	}
+	if len(joinPb.LeftJoinKeys) > 1 || len(joinPb.RightJoinKeys) > 1 {
+		return nil, errors.New("Only 1 join key is allowed right now")
+	}
+	buildCtx := ctx.copyWithNewEvalCtx()
+	buildCh, err := h.buildDAGForTiFlash(buildCtx, joinPb.Children[joinPb.InnerIdx])
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	probeCtx := ctx.copyWithNewEvalCtx()
+	probeCh, err := h.buildDAGForTiFlash(probeCtx, joinPb.Children[1-joinPb.InnerIdx])
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	e := &join{
+		Join:       joinPb,
+		hashMap:    make(map[string][][][]byte),
+		buildChild: buildCh,
+		probeChild: probeCh,
+	}
+	var buildKeys, probeKeys []expression.Expression
+	if e.InnerIdx == 0 {
+		buildKeys, err = convertToExprs(buildCtx.evalCtx.sc, buildCtx.evalCtx.fieldTps, joinPb.LeftJoinKeys)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		probeKeys, err = convertToExprs(buildCtx.evalCtx.sc, buildCtx.evalCtx.fieldTps, joinPb.RightJoinKeys)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	} else {
+		buildKeys, err = convertToExprs(buildCtx.evalCtx.sc, buildCtx.evalCtx.fieldTps, joinPb.RightJoinKeys)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		probeKeys, err = convertToExprs(buildCtx.evalCtx.sc, buildCtx.evalCtx.fieldTps, joinPb.LeftJoinKeys)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+	e.buildKey = buildKeys[0].(*expression.Column)
+	e.probeKey = probeKeys[0].(*expression.Column)
+	return e, nil
+}
+
+func (h *rpcHandler) buildExchangeServer(exc *tipb.ExchangeSender, outputOffsets []uint32) (executor, error) {
+	exchanger := &exchangeServer{
+		ExchangeSender: exc,
+		outputOffsets:  outputOffsets,
+		meta:           h.taskHandler.meta,
+	}
+	for _, taskMeta := range exc.EncodedTaskMeta {
+		targetTask := new(mpp.TaskMeta)
+		err := targetTask.Unmarshal(taskMeta)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		tunnel := &exchangerTunnel{
+			dataCh:     make(chan [][]byte, 10),
+			sourceTask: h.taskHandler.meta,
+			targetTask: targetTask,
+			active:     false,
+			errCh:      make(chan error, 1),
+		}
+		exchanger.tunnels = append(exchanger.tunnels, tunnel)
+		err = h.taskHandler.registerTunnel(tunnel)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+	return exchanger, nil
+}
+
+func (h *rpcHandler) buildExchangeClient(ctx *dagContext, client *tipb.ExchangeReceiver) (executor, error) {
+	ctx.evalCtx.columnInfos = make([]*tipb.ColumnInfo, len(client.FieldTypes))
+	for _, tp := range client.FieldTypes {
+		ctx.evalCtx.fieldTps = append(ctx.evalCtx.fieldTps, expression.FieldTypeFromPB(tp))
+	}
+	e := &exchangeClient{
+		ExchangeReceiver: client,
+		result:           make(chan [][]byte, 1024),
+		closeCh:          make(chan struct{}),
+	}
+	serverMetas := make([]*mpp.TaskMeta, 0, len(client.EncodedTaskMeta))
+	for _, encodedMeta := range client.EncodedTaskMeta {
+		meta := new(mpp.TaskMeta)
+		err := meta.Unmarshal(encodedMeta)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		serverMetas = append(serverMetas, meta)
+	}
+	for _, meta := range serverMetas {
+		go e.runTunnelWorker(h.taskHandler, meta)
+	}
+	go e.waitAllWorkersDone()
+	return e, nil
 }
 
 func (h *rpcHandler) buildTableScan(ctx *dagContext, executor *tipb.Executor) (*tableScanExec, error) {

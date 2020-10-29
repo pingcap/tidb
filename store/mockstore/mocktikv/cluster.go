@@ -42,9 +42,10 @@ import (
 //    to client's request.
 type Cluster struct {
 	sync.RWMutex
-	id      uint64
-	stores  map[uint64]*Store
-	regions map[uint64]*Region
+	id         uint64
+	stores     map[uint64]*Store
+	regions    map[uint64]*Region
+	mppTaskSet map[uint64]map[int64]*mppTaskHandler
 
 	mvccStore MVCCStore
 
@@ -66,6 +67,7 @@ func NewCluster(mvccStore MVCCStore) *Cluster {
 		regions:     make(map[uint64]*Region),
 		delayEvents: make(map[delayKey]time.Duration),
 		mvccStore:   mvccStore,
+		mppTaskSet:  make(map[uint64]map[int64]*mppTaskHandler),
 	}
 }
 
@@ -203,6 +205,11 @@ func (c *Cluster) AddStore(storeID uint64, addr string) {
 	defer c.Unlock()
 
 	c.stores[storeID] = newStore(storeID, addr)
+	c.mppTaskSet[storeID] = make(map[int64]*mppTaskHandler)
+}
+
+func (c *Cluster) GetMPPTaskSet(storeID uint64) map[int64]*mppTaskHandler {
+	return c.mppTaskSet[storeID]
 }
 
 // RemoveStore removes a Store from the cluster.
