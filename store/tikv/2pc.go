@@ -902,7 +902,7 @@ func (c *twoPhaseCommitter) checkAsyncCommit() bool {
 
 // checkOnePC checks if 1PC protocol is available for current transaction.
 func (c *twoPhaseCommitter) checkOnePC() bool {
-	return config.GetGlobalConfig().TiKVClient.EnableOnePC && c.connID > 0
+	return config.GetGlobalConfig().TiKVClient.EnableOnePC && c.connID > 0 && !c.shouldWriteBinlog()
 }
 
 func (c *twoPhaseCommitter) isAsyncCommit() bool {
@@ -979,24 +979,22 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 					c.writeFinishBinlog(ctx, binlog.BinlogType_Commit, int64(c.commitTS))
 				}
 			}
+		} else if isOnePC {
+			// The error means the 1PC transaction failed.
+			if err != nil {
+				tikvOnePCTxnCounterError.Inc()
+			} else {
+				tikvOnePCTxnCounterOk.Inc()
+			}
 		} else {
 			// The error means the async commit should not succeed.
 			if err != nil {
 				if c.prewriteStarted && c.getUndeterminedErr() == nil {
 					c.cleanup(ctx)
 				}
-				if isOnePC {
-					tikvOnePCTxnCounterError.Inc()
-				} else {
-					tikvAsyncCommitTxnCounterError.Inc()
-				}
+				tikvAsyncCommitTxnCounterError.Inc()
 			} else {
-				if isOnePC {
-					tikvOnePCTxnCounterOk.Inc()
-				} else {
-					tikvAsyncCommitTxnCounterOk.Inc()
-				}
-
+				tikvAsyncCommitTxnCounterOk.Inc()
 			}
 		}
 	}()

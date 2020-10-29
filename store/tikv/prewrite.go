@@ -155,7 +155,7 @@ func (action actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoff
 			if c.isOnePC() {
 				if prewriteResp.OnePcCommitTs == 0 {
 					logutil.Logger(bo.ctx).Warn("1pc failed and fallbacks to normal commit procedure",
-						zap.Uint64("satrTS", c.startTS))
+						zap.Uint64("startTS", c.startTS))
 					tikvOnePCTxnCounterFallback.Inc()
 					c.setOnePC(false)
 				} else {
@@ -167,6 +167,10 @@ func (action actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoff
 					c.onePCCommitTS = prewriteResp.OnePcCommitTs
 					c.mu.Unlock()
 				}
+				return nil
+			} else if prewriteResp.OnePcCommitTs != 0 {
+				logutil.Logger(bo.ctx).Fatal("tikv committed a non-1pc transaction with 1pc protocol",
+					zap.Uint64("startTS", c.startTS))
 			}
 			if c.isAsyncCommit() {
 				// 0 if the min_commit_ts is not ready or any other reason that async
