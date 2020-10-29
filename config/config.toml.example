@@ -123,6 +123,10 @@ enable-telemetry = true
 # a warning like `Integer display width is deprecated and will be removed in a future release`.
 deprecate-integer-display-length = false
 
+// dc-location indicates the data center zone where the tidb server located in, the default value is global. When dc-location is defined,
+// the `tidb_txn_scope` will use it by default.
+dc-location = global
+
 [log]
 # Log level: debug, info, warn, error, fatal.
 level = "info"

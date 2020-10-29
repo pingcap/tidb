@@ -453,6 +453,9 @@ const (
 
 	// TiDBEnableAmendPessimisticTxn indicates if amend pessimistic transactions is enabled.
 	TiDBEnableAmendPessimisticTxn = "tidb_enable_amend_pessimistic_txn"
+
+	// TiDBTxnScope indicates whether using global transactions or local transactions.
+	TiDBTxnScope = "tidb_txn_scope"
 )
 
 // Default TiDB system variable values.
