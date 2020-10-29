@@ -938,6 +938,8 @@ func (e *HashAggRuntimeStats) Merge(other execdetails.RuntimeStats) {
 	e.FinalTask += tmp.FinalTask
 	e.PartialTaskNum += tmp.PartialTaskNum
 	e.FinalTaskNum += tmp.FinalTaskNum
+	e.PartialNum += tmp.PartialNum
+	e.FinalNum += tmp.FinalNum
 }
 
 // Tp implements the RuntimeStats interface.
