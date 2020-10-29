@@ -13,20 +13,21 @@
 
 package collate
 
-type zhPinyinTiDBASCS struct {
+// Collation of utf8mb4_zh_pinyin_tidb_as_cs
+type zhPinyinTiDBASCSCollator struct {
 }
 
 // Collator interface, no implements now.
-func (g zhPinyinTiDBASCS) Compare(a, b string) int {
+func (py *zhPinyinTiDBASCSCollator) Compare(a, b string) int {
 	panic("implement me")
 }
 
 // Collator interface, no implements now.
-func (g zhPinyinTiDBASCS) Key(str string) []byte {
+func (py *zhPinyinTiDBASCSCollator) Key(str string) []byte {
 	panic("implement me")
 }
 
 // Collator interface, no implements now.
-func (g zhPinyinTiDBASCS) Pattern() WildcardPattern {
+func (py *zhPinyinTiDBASCSCollator) Pattern() WildcardPattern {
 	panic("implement me")
 }
