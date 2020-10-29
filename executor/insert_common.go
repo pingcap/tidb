@@ -690,7 +690,7 @@ func (e *InsertValues) lazyAdjustAutoIncrementDatum(ctx context.Context, rows []
 		}
 		// Use the value if it's not null and not 0.
 		if recordID != 0 {
-			err = e.Table.RebaseAutoID(e.ctx, recordID, true, autoid.RowIDAllocType)
+			err = e.Table.RebaseAutoID(e.ctx, recordID, true, autoid.AutoIncrementType)
 			if err != nil {
 				return nil, err
 			}
@@ -777,7 +777,7 @@ func (e *InsertValues) adjustAutoIncrementDatum(ctx context.Context, d types.Dat
 	}
 	// Use the value if it's not null and not 0.
 	if recordID != 0 {
-		err = e.Table.RebaseAutoID(e.ctx, recordID, true, autoid.RowIDAllocType)
+		err = e.Table.RebaseAutoID(e.ctx, recordID, true, autoid.AutoIncrementType)
 		if err != nil {
 			return types.Datum{}, err
 		}

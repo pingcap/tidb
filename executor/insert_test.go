@@ -1087,13 +1087,13 @@ func (s *testSuite3) TestAutoIDIncrementAndOffset(c *C) {
 	// AutoID allocation will take increment and offset into consideration.
 	tk.MustQuery(`select b from io`).Check(testkit.Rows("10", "12", "14"))
 	// HandleID allocation will ignore the increment and offset.
-	tk.MustQuery(`select _tidb_rowid from io`).Check(testkit.Rows("15", "16", "17"))
+	tk.MustQuery(`select _tidb_rowid from io`).Check(testkit.Rows("1", "2", "3"))
 	tk.MustExec(`delete from io`)
 
 	tk.Se.GetSessionVars().AutoIncrementIncrement = 10
 	tk.MustExec(`insert into io(b) values (null),(null),(null)`)
 	tk.MustQuery(`select b from io`).Check(testkit.Rows("20", "30", "40"))
-	tk.MustQuery(`select _tidb_rowid from io`).Check(testkit.Rows("41", "42", "43"))
+	tk.MustQuery(`select _tidb_rowid from io`).Check(testkit.Rows("4", "5", "6"))
 
 	// Test invalid value.
 	tk.Se.GetSessionVars().AutoIncrementIncrement = -1

@@ -799,17 +799,17 @@ func HelperTestAdminShowNextID(c *C, s *seqTestSuite, str string) {
 	tk.MustExec("create table t(id int, c int)")
 	// Start handle is 1.
 	r := tk.MustQuery(str + " t next_row_id")
-	r.Check(testkit.Rows("test t _tidb_rowid 1 AUTO_INCREMENT"))
+	r.Check(testkit.Rows("test t _tidb_rowid 1 "))
 	// Row ID is step + 1.
 	tk.MustExec("insert into t values(1, 1)")
 	r = tk.MustQuery(str + " t next_row_id")
-	r.Check(testkit.Rows("test t _tidb_rowid 11 AUTO_INCREMENT"))
+	r.Check(testkit.Rows("test t _tidb_rowid 11 "))
 	// Row ID is original + step.
 	for i := 0; i < int(step); i++ {
 		tk.MustExec("insert into t values(10000, 1)")
 	}
 	r = tk.MustQuery(str + " t next_row_id")
-	r.Check(testkit.Rows("test t _tidb_rowid 21 AUTO_INCREMENT"))
+	r.Check(testkit.Rows("test t _tidb_rowid 21 "))
 	tk.MustExec("drop table t")
 
 	// test for a table with the primary key
@@ -854,19 +854,19 @@ func HelperTestAdminShowNextID(c *C, s *seqTestSuite, str string) {
 	// Test for a sequence.
 	tk.MustExec("create sequence seq1 start 15 cache 57")
 	r = tk.MustQuery(str + " seq1 next_row_id")
-	r.Check(testkit.Rows("test1 seq1 _tidb_rowid 1 AUTO_INCREMENT", "test1 seq1  15 SEQUENCE"))
+	r.Check(testkit.Rows("test1 seq1 _tidb_rowid 1 ", "test1 seq1  15 SEQUENCE"))
 	r = tk.MustQuery("select nextval(seq1)")
 	r.Check(testkit.Rows("15"))
 	r = tk.MustQuery(str + " seq1 next_row_id")
-	r.Check(testkit.Rows("test1 seq1 _tidb_rowid 1 AUTO_INCREMENT", "test1 seq1  72 SEQUENCE"))
+	r.Check(testkit.Rows("test1 seq1 _tidb_rowid 1 ", "test1 seq1  72 SEQUENCE"))
 	r = tk.MustQuery("select nextval(seq1)")
 	r.Check(testkit.Rows("16"))
 	r = tk.MustQuery(str + " seq1 next_row_id")
-	r.Check(testkit.Rows("test1 seq1 _tidb_rowid 1 AUTO_INCREMENT", "test1 seq1  72 SEQUENCE"))
+	r.Check(testkit.Rows("test1 seq1 _tidb_rowid 1 ", "test1 seq1  72 SEQUENCE"))
 	r = tk.MustQuery("select setval(seq1, 96)")
 	r.Check(testkit.Rows("96"))
 	r = tk.MustQuery(str + " seq1 next_row_id")
-	r.Check(testkit.Rows("test1 seq1 _tidb_rowid 1 AUTO_INCREMENT", "test1 seq1  97 SEQUENCE"))
+	r.Check(testkit.Rows("test1 seq1 _tidb_rowid 1 ", "test1 seq1  97 SEQUENCE"))
 }
 
 func (s *seqTestSuite) TestNoHistoryWhenDisableRetry(c *C) {

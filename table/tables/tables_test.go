@@ -102,10 +102,6 @@ func (ts *testSuite) TestBasic(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(autoID, Greater, int64(0))
 
-	handle, err := tables.AllocHandle(nil, tb)
-	c.Assert(err, IsNil)
-	c.Assert(handle.IntValue(), Greater, int64(0))
-
 	ctx := ts.se
 	rid, err := tb.AddRecord(ctx, types.MakeDatums(1, "abc"))
 	c.Assert(err, IsNil)
@@ -159,10 +155,10 @@ func (ts *testSuite) TestBasic(c *C) {
 	c.Assert(err, IsNil)
 
 	table.MockTableFromMeta(tb.Meta())
-	alc := tb.Allocators(nil).Get(autoid.RowIDAllocType)
+	alc := tb.Allocators(nil).Get(autoid.AutoIncrementType)
 	c.Assert(alc, NotNil)
 
-	err = tb.RebaseAutoID(nil, 0, false, autoid.RowIDAllocType)
+	err = tb.RebaseAutoID(nil, 0, false, autoid.AutoIncrementType)
 	c.Assert(err, IsNil)
 }
 
@@ -245,10 +241,6 @@ func (ts *testSuite) TestUniqueIndexMultipleNullEntries(c *C) {
 	c.Assert(string(tb.IndexPrefix()), Not(Equals), "")
 	c.Assert(string(tb.RecordPrefix()), Not(Equals), "")
 	c.Assert(tables.FindIndexByColName(tb, "b"), NotNil)
-
-	handle, err := tables.AllocHandle(nil, tb)
-	c.Assert(err, IsNil)
-	c.Assert(handle.IntValue(), Greater, int64(0))
 
 	autoid, err := table.AllocAutoIncrementValue(context.Background(), tb, ts.se)
 	c.Assert(err, IsNil)

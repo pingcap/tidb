@@ -66,6 +66,7 @@ var (
 	mSeqCyclePrefix   = "SequenceCycle"
 	mTableIDPrefix    = "TID"
 	mRandomIDPrefix   = "TARID"
+	mAutoIncIDPrefix  = "TINCID"
 	mBootstrapKey     = []byte("BootstrapKey")
 	mSchemaDiffPrefix = "Diff"
 )
@@ -154,6 +155,10 @@ func (m *Meta) autoRandomTableIDKey(tableID int64) []byte {
 	return []byte(fmt.Sprintf("%s:%d", mRandomIDPrefix, tableID))
 }
 
+func (m *Meta) autoIncrementIDKey(tableID int64) []byte {
+	return []byte(fmt.Sprintf("%s:%d", mAutoIncIDPrefix, tableID))
+}
+
 func (m *Meta) tableKey(tableID int64) []byte {
 	return []byte(fmt.Sprintf("%s:%d", mTablePrefix, tableID))
 }
@@ -178,8 +183,7 @@ func (m *Meta) GenAutoTableIDKeyValue(dbID, tableID, autoID int64) (key, value [
 	return m.txn.EncodeHashAutoIDKeyValue(dbKey, autoTableIDKey, autoID)
 }
 
-// GenAutoTableID adds step to the auto ID of the table and returns the sum.
-func (m *Meta) GenAutoTableID(dbID, tableID, step int64) (int64, error) {
+func (m *Meta) generateID(dbID, tableID, step int64, idKey []byte) (int64, error) {
 	// Check if DB exists.
 	dbKey := m.dbKey(dbID)
 	if err := m.checkDBExists(dbKey); err != nil {
@@ -190,24 +194,22 @@ func (m *Meta) GenAutoTableID(dbID, tableID, step int64) (int64, error) {
 	if err := m.checkTableExists(dbKey, tableKey); err != nil {
 		return 0, errors.Trace(err)
 	}
-
-	return m.txn.HInc(dbKey, m.autoTableIDKey(tableID), step)
+	return m.txn.HInc(dbKey, idKey, step)
 }
 
-// GenAutoRandomID adds step to the auto shard ID of the table and returns the sum.
-func (m *Meta) GenAutoRandomID(dbID, tableID, step int64) (int64, error) {
-	// Check if DB exists.
-	dbKey := m.dbKey(dbID)
-	if err := m.checkDBExists(dbKey); err != nil {
-		return 0, errors.Trace(err)
-	}
-	// Check if table exists.
-	tableKey := m.tableKey(tableID)
-	if err := m.checkTableExists(dbKey, tableKey); err != nil {
-		return 0, errors.Trace(err)
-	}
+// GenAutoTableID adds step to the auto ID of the table and returns the sum.
+func (m *Meta) GenAutoTableID(dbID, tableID, step int64) (int64, error) {
+	return m.generateID(dbID, tableID, step, m.autoTableIDKey(tableID))
+}
 
-	return m.txn.HInc(dbKey, m.autoRandomTableIDKey(tableID), step)
+// GenAutoRandomID adds step to the auto random ID of the table and returns the sum.
+func (m *Meta) GenAutoRandomID(dbID, tableID, step int64) (int64, error) {
+	return m.generateID(dbID, tableID, step, m.autoRandomTableIDKey(tableID))
+}
+
+// GenAutoIncrementID adds step to the auto increment ID of the table and returns the sum.
+func (m *Meta) GenAutoIncrementID(dbID, tableID, step int64) (int64, error) {
+	return m.generateID(dbID, tableID, step, m.autoIncrementIDKey(tableID))
 }
 
 // GetAutoTableID gets current auto id with table id.
@@ -218,6 +220,25 @@ func (m *Meta) GetAutoTableID(dbID int64, tableID int64) (int64, error) {
 // GetAutoRandomID gets current auto random id with table id.
 func (m *Meta) GetAutoRandomID(dbID int64, tableID int64) (int64, error) {
 	return m.txn.HGetInt64(m.dbKey(dbID), m.autoRandomTableIDKey(tableID))
+}
+
+// GetAutoIncrementID gets current auto increment id with table id.
+func (m *Meta) GetAutoIncrementID(dbID int64, tableID int64) (int64, error) {
+	return m.txn.HGetInt64(m.dbKey(dbID), m.autoIncrementIDKey(tableID))
+}
+
+// GetAllAutoIDs gets all the auto IDs from a table, including _tidb_rowid, auto_increment ID and auto_random ID.
+func (m *Meta) GetAllAutoIDs(dbID int64, tableID int64) (rowID, autoIncID, autoRandID int64, err error) {
+	rowID, err = m.GetAutoTableID(dbID, tableID)
+	if err != nil {
+		return
+	}
+	autoIncID, err = m.GetAutoIncrementID(dbID, tableID)
+	if err != nil {
+		return
+	}
+	autoRandID, err = m.GetAutoRandomID(dbID, tableID)
+	return
 }
 
 // GenSequenceValue adds step to the sequence value and returns the sum.
@@ -352,18 +373,27 @@ func (m *Meta) CreateTableOrView(dbID int64, tableInfo *model.TableInfo) error {
 }
 
 // CreateTableAndSetAutoID creates a table with tableInfo in database,
-// and rebases the table autoID.
-func (m *Meta) CreateTableAndSetAutoID(dbID int64, tableInfo *model.TableInfo, autoIncID, autoRandID int64) error {
+// and rebase the table autoIDs.
+func (m *Meta) CreateTableAndSetAutoID(dbID int64, tableInfo *model.TableInfo, rowID, autoIncID, autoRandID int64) error {
 	err := m.CreateTableOrView(dbID, tableInfo)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	_, err = m.txn.HInc(m.dbKey(dbID), m.autoTableIDKey(tableInfo.ID), autoIncID)
-	if err != nil {
-		return errors.Trace(err)
+	hasRowID := !tableInfo.PKIsHandle && !tableInfo.IsCommonHandle
+	if hasRowID {
+		_, err = m.txn.HInc(m.dbKey(dbID), m.autoTableIDKey(tableInfo.ID), rowID)
+		if err != nil {
+			return errors.Trace(err)
+		}
 	}
 	if tableInfo.AutoRandomBits > 0 {
 		_, err = m.txn.HInc(m.dbKey(dbID), m.autoRandomTableIDKey(tableInfo.ID), autoRandID)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+	if tableInfo.GetAutoIncrementColInfo() != nil {
+		_, err = m.txn.HInc(m.dbKey(dbID), m.autoIncrementIDKey(tableInfo.ID), autoIncID)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -447,6 +477,9 @@ func (m *Meta) DropTableOrView(dbID int64, tblID int64, delAutoID bool) error {
 			return errors.Trace(err)
 		}
 		if err := m.txn.HDel(dbKey, m.autoRandomTableIDKey(tblID)); err != nil {
+			return errors.Trace(err)
+		}
+		if err := m.txn.HDel(dbKey, m.autoIncrementIDKey(tblID)); err != nil {
 			return errors.Trace(err)
 		}
 	}

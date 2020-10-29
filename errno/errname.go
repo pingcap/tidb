@@ -990,6 +990,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrUnknownAllocatorType:       mysql.Message("Invalid allocator type", nil),
 	ErrAutoRandReadFailed:         mysql.Message("Failed to read auto-random value from storage engine", nil),
 	ErrInvalidIncrementAndOffset:  mysql.Message("Invalid auto_increment settings: auto_increment_increment: %d, auto_increment_offset: %d, both of them must be in range [1..65535]", nil),
+	ErrAutoIDAllocatorNotFound:    mysql.Message("ID allocator for %s not found", nil),
 
 	ErrWarnOptimizerHintInvalidInteger:  mysql.Message("integer value is out of range in '%s'", nil),
 	ErrWarnOptimizerHintUnsupportedHint: mysql.Message("Optimizer hint %s is not supported by TiDB and is ignored", nil),

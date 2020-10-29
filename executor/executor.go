@@ -334,13 +334,15 @@ func (e *ShowNextRowIDExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 		var colName, idType string
 		switch alloc.GetType() {
-		case autoid.RowIDAllocType, autoid.AutoIncrementType:
+		case autoid.RowIDAllocType:
+			colName = model.ExtraHandleName.O
+		case autoid.AutoIncrementType:
 			idType = "AUTO_INCREMENT"
-			if col := tblMeta.GetAutoIncrementColInfo(); col != nil {
-				colName = col.Name.O
-			} else {
-				colName = model.ExtraHandleName.O
+			col := tblMeta.GetAutoIncrementColInfo()
+			if col == nil {
+				return errors.Errorf("auto_increment column not found")
 			}
+			colName = col.Name.O
 		case autoid.AutoRandomType:
 			idType = "AUTO_RANDOM"
 			colName = tblMeta.GetPkName().O

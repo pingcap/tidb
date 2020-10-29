@@ -428,12 +428,21 @@ func NewAllocatorsFromTblInfo(store kv.Storage, schemaID int64, tblInfo *model.T
 	var allocs []Allocator
 	dbID := tblInfo.GetDBID(schemaID)
 	hasRowID := !tblInfo.PKIsHandle && !tblInfo.IsCommonHandle
-	hasAutoIncID := tblInfo.GetAutoIncrementColInfo() != nil
-	if hasRowID || hasAutoIncID {
+	if hasRowID {
 		if tblInfo.AutoIdCache > 0 {
-			allocs = append(allocs, NewAllocator(store, dbID, tblInfo.IsAutoIncColUnsigned(), RowIDAllocType, CustomAutoIncCacheOption(tblInfo.AutoIdCache)))
+			opt := CustomAutoIncCacheOption(tblInfo.AutoIdCache)
+			allocs = append(allocs, NewAllocator(store, dbID, tblInfo.IsAutoIncColUnsigned(), RowIDAllocType, opt))
 		} else {
 			allocs = append(allocs, NewAllocator(store, dbID, tblInfo.IsAutoIncColUnsigned(), RowIDAllocType))
+		}
+	}
+	hasAutoIncID := tblInfo.GetAutoIncrementColInfo() != nil
+	if hasAutoIncID {
+		if tblInfo.AutoIdCache > 0 {
+			opt := CustomAutoIncCacheOption(tblInfo.AutoIdCache)
+			allocs = append(allocs, NewAllocator(store, dbID, tblInfo.IsAutoIncColUnsigned(), AutoIncrementType, opt))
+		} else {
+			allocs = append(allocs, NewAllocator(store, dbID, tblInfo.IsAutoIncColUnsigned(), AutoIncrementType))
 		}
 	}
 	if tblInfo.ContainsAutoRandomBits() {
@@ -465,7 +474,7 @@ func (alloc *allocator) Alloc(tableID int64, n uint64, increment, offset int64) 
 	if n == 0 {
 		return 0, 0, nil
 	}
-	if alloc.allocType == AutoIncrementType || alloc.allocType == RowIDAllocType {
+	if alloc.allocType == AutoIncrementType {
 		if !validIncrementAndOffset(increment, offset) {
 			return 0, 0, errInvalidIncrementAndOffset.GenWithStackByArgs(increment, offset)
 		}
@@ -872,9 +881,10 @@ func (alloc *allocator) alloc4Sequence(tableID int64) (min int64, max int64, rou
 
 func getAutoIDByAllocType(m *meta.Meta, dbID, tableID int64, allocType AllocatorType) (int64, error) {
 	switch allocType {
-	// Currently, row id allocator and auto-increment value allocator shares the same key-value pair.
-	case RowIDAllocType, AutoIncrementType:
+	case RowIDAllocType:
 		return m.GetAutoTableID(dbID, tableID)
+	case AutoIncrementType:
+		return m.GetAutoIncrementID(dbID, tableID)
 	case AutoRandomType:
 		return m.GetAutoRandomID(dbID, tableID)
 	case SequenceType:
@@ -886,8 +896,10 @@ func getAutoIDByAllocType(m *meta.Meta, dbID, tableID int64, allocType Allocator
 
 func generateAutoIDByAllocType(m *meta.Meta, dbID, tableID, step int64, allocType AllocatorType) (int64, error) {
 	switch allocType {
-	case RowIDAllocType, AutoIncrementType:
+	case RowIDAllocType:
 		return m.GenAutoTableID(dbID, tableID, step)
+	case AutoIncrementType:
+		return m.GenAutoIncrementID(dbID, tableID, step)
 	case AutoRandomType:
 		return m.GenAutoRandomID(dbID, tableID, step)
 	case SequenceType:

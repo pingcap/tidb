@@ -2321,13 +2321,13 @@ func (s *testIntegrationSuite3) TestCreateTableWithAutoIdCache(c *C) {
 	c.Assert(err, IsNil)
 
 	tk.MustExec("insert into t(b) values(NULL)")
-	tk.MustQuery("select b, _tidb_rowid from t").Check(testkit.Rows("1 2"))
+	tk.MustQuery("select b, _tidb_rowid from t").Check(testkit.Rows("1 1"))
 	tk.MustExec("delete from t")
 
 	// Invalid the allocator cache, insert will trigger a new cache.
 	tk.MustExec("rename table t to t1;")
 	tk.MustExec("insert into t1(b) values(NULL)")
-	tk.MustQuery("select b, _tidb_rowid from t1").Check(testkit.Rows("101 102"))
+	tk.MustQuery("select b, _tidb_rowid from t1").Check(testkit.Rows("101 101"))
 	tk.MustExec("delete from t1")
 
 	// Test alter auto_id_cache.
@@ -2337,13 +2337,13 @@ func (s *testIntegrationSuite3) TestCreateTableWithAutoIdCache(c *C) {
 	c.Assert(tblInfo.Meta().AutoIdCache, Equals, int64(200))
 
 	tk.MustExec("insert into t1(b) values(NULL)")
-	tk.MustQuery("select b, _tidb_rowid from t1").Check(testkit.Rows("201 202"))
+	tk.MustQuery("select b, _tidb_rowid from t1").Check(testkit.Rows("201 201"))
 	tk.MustExec("delete from t1")
 
 	// Invalid the allocator cache, insert will trigger a new cache.
 	tk.MustExec("rename table t1 to t;")
 	tk.MustExec("insert into t(b) values(NULL)")
-	tk.MustQuery("select b, _tidb_rowid from t").Check(testkit.Rows("401 402"))
+	tk.MustQuery("select b, _tidb_rowid from t").Check(testkit.Rows("401 401"))
 	tk.MustExec("delete from t")
 
 	tk.MustExec("drop table if exists t;")
@@ -2354,7 +2354,9 @@ func (s *testIntegrationSuite3) TestCreateTableWithAutoIdCache(c *C) {
 	c.Assert(tblInfo.Meta().AutoIdCache, Equals, int64(3))
 
 	// Test insert batch size(4 here) greater than the customized autoid step(3 here).
-	tk.MustExec("insert into t(a) values(NULL),(NULL),(NULL),(NULL)")
+	// We split them into 2 statements to trigger the cache for the second time.
+	tk.MustExec("insert into t(a) values(NULL),(NULL),(NULL);")
+	tk.MustExec("insert into t(a) values(NULL);")
 	tk.MustQuery("select a from t").Check(testkit.Rows("1", "2", "3", "4"))
 	tk.MustExec("delete from t")
 

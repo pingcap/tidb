@@ -320,8 +320,15 @@ func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID i
 	} else {
 		switch tp {
 		case model.ActionRebaseAutoID, model.ActionModifyTableAutoIdCache:
-			newAlloc := autoid.NewAllocator(b.handle.store, dbInfo.ID, tblInfo.IsAutoIncColUnsigned(), autoid.RowIDAllocType)
-			allocs = append(allocs, newAlloc)
+			hasRowID := !tblInfo.PKIsHandle && !tblInfo.IsCommonHandle
+			if hasRowID {
+				newAlloc := autoid.NewAllocator(b.handle.store, dbInfo.ID, tblInfo.IsAutoIncColUnsigned(), autoid.RowIDAllocType)
+				allocs = append(allocs, newAlloc)
+			}
+			if ok, _ := HasAutoIncrementColumn(tblInfo); ok {
+				newAlloc := autoid.NewAllocator(b.handle.store, dbInfo.ID, tblInfo.IsAutoIncColUnsigned(), autoid.AutoIncrementType)
+				allocs = append(allocs, newAlloc)
+			}
 		case model.ActionRebaseAutoRandomBase:
 			newAlloc := autoid.NewAllocator(b.handle.store, dbInfo.ID, tblInfo.IsAutoRandomBitColUnsigned(), autoid.AutoRandomType)
 			allocs = append(allocs, newAlloc)

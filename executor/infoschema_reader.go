@@ -281,7 +281,7 @@ func getAutoIncrementID(ctx sessionctx.Context, schema *model.DBInfo, tblInfo *m
 	if err != nil {
 		return 0, err
 	}
-	return tbl.Allocators(ctx).Get(autoid.RowIDAllocType).Base() + 1, nil
+	return tbl.Allocators(ctx).Get(autoid.AutoIncrementType).Base() + 1, nil
 }
 
 func (e *memtableRetriever) setDataFromSchemata(ctx sessionctx.Context, schemas []*model.DBInfo) {

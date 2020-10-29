@@ -5122,10 +5122,9 @@ func (s *testSerialDBSuite) TestAlterShardRowIDBits(c *C) {
 	tk.MustExec(fmt.Sprintf("alter table t1 auto_increment = %d;", 1<<56))
 	tk.MustExec("insert into t1 set a=1;")
 
-	// Test increase shard_row_id_bits failed by overflow global auto ID.
+	// Test rebase auto_increment does not affect shard_row_id_bits.
 	_, err := tk.Exec("alter table t1 SHARD_ROW_ID_BITS = 10;")
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[autoid:1467]shard_row_id_bits 10 will cause next global auto ID 72057594037932936 overflow")
+	c.Assert(err, IsNil)
 
 	// Test reduce shard_row_id_bits will be ok.
 	tk.MustExec("alter table t1 SHARD_ROW_ID_BITS = 3;")
@@ -5134,7 +5133,7 @@ func (s *testSerialDBSuite) TestAlterShardRowIDBits(c *C) {
 		c.Assert(tbl.Meta().MaxShardRowIDBits == maxShardRowIDBits, IsTrue)
 		c.Assert(tbl.Meta().ShardRowIDBits == shardRowIDBits, IsTrue)
 	}
-	checkShardRowID(5, 3)
+	checkShardRowID(10, 3)
 
 	// Test reduce shard_row_id_bits but calculate overflow should use the max record shard_row_id_bits.
 	tk.MustExec("drop table if exists t1")
@@ -5143,8 +5142,7 @@ func (s *testSerialDBSuite) TestAlterShardRowIDBits(c *C) {
 	checkShardRowID(10, 5)
 	tk.MustExec(fmt.Sprintf("alter table t1 auto_increment = %d;", 1<<56))
 	_, err = tk.Exec("insert into t1 set a=1;")
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[autoid:1467]Failed to read auto-increment value from storage engine")
+	c.Assert(err, IsNil)
 }
 
 // port from mysql

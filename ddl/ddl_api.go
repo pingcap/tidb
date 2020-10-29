@@ -1793,7 +1793,7 @@ func (d *ddl) CreateTableWithInfo(
 			// Default tableAutoIncID base is 0.
 			// If the first ID is expected to greater than 1, we need to do rebase.
 			newEnd := tbInfo.AutoIncID - 1
-			if err = d.handleAutoIncID(tbInfo, schema.ID, newEnd, autoid.RowIDAllocType); err != nil {
+			if err = d.handleAutoIncID(tbInfo, schema.ID, newEnd, autoid.AutoIncrementType); err != nil {
 				return errors.Trace(err)
 			}
 		}
@@ -1860,8 +1860,8 @@ func (d *ddl) RecoverTable(ctx sessionctx.Context, recoverInfo *RecoverInfo) (er
 		SchemaName: schema.Name.L,
 		Type:       model.ActionRecoverTable,
 		BinlogInfo: &model.HistoryInfo{},
-		Args: []interface{}{tbInfo, recoverInfo.CurAutoIncID, recoverInfo.DropJobID,
-			recoverInfo.SnapshotTS, recoverTableCheckFlagNone, recoverInfo.CurAutoRandID},
+		Args: []interface{}{tbInfo, recoverInfo.CurRowID, recoverInfo.DropJobID,
+			recoverInfo.SnapshotTS, recoverTableCheckFlagNone, recoverInfo.CurAutoRandID, recoverInfo.CurAutoIncID},
 	}
 	err = d.doDDLJob(ctx, job)
 	err = d.callHookOnChanged(err)
@@ -2434,7 +2434,7 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 					}
 					err = d.ShardRowID(ctx, ident, opt.UintValue)
 				case ast.TableOptionAutoIncrement:
-					err = d.RebaseAutoID(ctx, ident, int64(opt.UintValue), autoid.RowIDAllocType)
+					err = d.RebaseAutoID(ctx, ident, int64(opt.UintValue), autoid.AutoIncrementType)
 				case ast.TableOptionAutoIdCache:
 					if opt.UintValue > uint64(math.MaxInt64) {
 						// TODO: Refine this error.
@@ -2517,7 +2517,7 @@ func (d *ddl) RebaseAutoID(ctx sessionctx.Context, ident ast.Ident, newBase int6
 			return errors.Trace(ErrInvalidAutoRandom.GenWithStackByArgs(errMsg))
 		}
 		actionType = model.ActionRebaseAutoRandomBase
-	case autoid.RowIDAllocType:
+	case autoid.AutoIncrementType:
 		actionType = model.ActionRebaseAutoID
 	}
 
@@ -2552,15 +2552,21 @@ func (d *ddl) ShardRowID(ctx sessionctx.Context, tableIdent ast.Ident, uVal uint
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if uVal == t.Meta().ShardRowIDBits {
+	tblInfo := t.Meta()
+	if uVal == tblInfo.ShardRowIDBits {
 		// Nothing need to do.
 		return nil
 	}
-	if uVal > 0 && t.Meta().PKIsHandle {
+	noRowID := tblInfo.PKIsHandle || tblInfo.IsCommonHandle
+	if uVal > 0 && noRowID {
 		return errUnsupportedShardRowIDBits
 	}
 	err = verifyNoOverflowShardBits(d.sessPool, t, uVal)
 	if err != nil {
+		// Ignore the 'shard_row_id_bits' option if there is no _tidb_rowid allocator.
+		if errors.ErrorEqual(err, autoid.ErrAutoIDAllocatorNotFound) {
+			return nil
+		}
 		return err
 	}
 	job := &model.Job{

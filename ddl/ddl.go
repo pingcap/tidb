@@ -618,4 +618,5 @@ type RecoverInfo struct {
 	SnapshotTS    uint64
 	CurAutoIncID  int64
 	CurAutoRandID int64
+	CurRowID      int64
 }

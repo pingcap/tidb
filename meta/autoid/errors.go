@@ -26,6 +26,7 @@ var (
 	ErrWrongAutoKey              = dbterror.ClassAutoid.NewStd(mysql.ErrWrongAutoKey)
 	ErrInvalidAllocatorType      = dbterror.ClassAutoid.NewStd(mysql.ErrUnknownAllocatorType)
 	ErrAutoRandReadFailed        = dbterror.ClassAutoid.NewStd(mysql.ErrAutoRandReadFailed)
+	ErrAutoIDAllocatorNotFound   = dbterror.ClassAutoid.NewStd(mysql.ErrAutoIDAllocatorNotFound)
 )
 
 const (

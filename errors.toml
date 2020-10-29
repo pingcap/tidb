@@ -46,6 +46,11 @@ error = '''
 Failed to read auto-random value from storage engine
 '''
 
+["autoid:8236"]
+error = '''
+ID allocator for %s not found
+'''
+
 ["ddl:1025"]
 error = '''
 Error on rename of '%-.210s' to '%-.210s' (errno: %d - %s)

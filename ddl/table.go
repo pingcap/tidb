@@ -216,10 +216,10 @@ const (
 func (w *worker) onRecoverTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
 	schemaID := job.SchemaID
 	tblInfo := &model.TableInfo{}
-	var autoIncID, autoRandID, dropJobID, recoverTableCheckFlag int64
+	var rowID, autoIncID, autoRandID, dropJobID, recoverTableCheckFlag int64
 	var snapshotTS uint64
 	const checkFlagIndexInJobArgs = 4 // The index of `recoverTableCheckFlag` in job arg list.
-	if err = job.DecodeArgs(tblInfo, &autoIncID, &dropJobID, &snapshotTS, &recoverTableCheckFlag, &autoRandID); err != nil {
+	if err = job.DecodeArgs(tblInfo, &rowID, &dropJobID, &snapshotTS, &recoverTableCheckFlag, &autoRandID, &autoIncID); err != nil {
 		// Invalid arguments, cancel this job.
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -310,7 +310,7 @@ func (w *worker) onRecoverTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 
 		tblInfo.State = model.StatePublic
 		tblInfo.UpdateTS = t.StartTS
-		err = t.CreateTableAndSetAutoID(schemaID, tblInfo, autoIncID, autoRandID)
+		err = t.CreateTableAndSetAutoID(schemaID, tblInfo, rowID, autoIncID, autoRandID)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -504,8 +504,8 @@ func onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ erro
 	return ver, nil
 }
 
-func onRebaseRowIDType(store kv.Storage, t *meta.Meta, job *model.Job) (ver int64, _ error) {
-	return onRebaseAutoID(store, t, job, autoid.RowIDAllocType)
+func onRebaseAutoIncrementIDType(store kv.Storage, t *meta.Meta, job *model.Job) (ver int64, _ error) {
+	return onRebaseAutoID(store, t, job, autoid.AutoIncrementType)
 }
 
 func onRebaseAutoRandomType(store kv.Storage, t *meta.Meta, job *model.Job) (ver int64, _ error) {
@@ -526,7 +526,7 @@ func onRebaseAutoID(store kv.Storage, t *meta.Meta, job *model.Job, tp autoid.Al
 		return ver, errors.Trace(err)
 	}
 	// No need to check `newBase` again, because `RebaseAutoID` will do this check.
-	if tp == autoid.RowIDAllocType {
+	if tp == autoid.AutoIncrementType {
 		tblInfo.AutoIncID = newBase
 	} else {
 		tblInfo.AutoRandID = newBase
@@ -619,7 +619,11 @@ func verifyNoOverflowShardBits(s *sessionPool, tbl table.Table, shardRowIDBits u
 	defer s.put(ctx)
 
 	// Check next global max auto ID first.
-	autoIncID, err := tbl.Allocators(ctx).Get(autoid.RowIDAllocType).NextGlobalAutoID(tbl.Meta().ID)
+	var alloc autoid.Allocator
+	if alloc = tbl.Allocators(ctx).Get(autoid.RowIDAllocType); alloc == nil {
+		return autoid.ErrAutoIDAllocatorNotFound.GenWithStackByArgs("_tidb_rowid")
+	}
+	autoIncID, err := alloc.NextGlobalAutoID(tbl.Meta().ID)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -694,17 +698,10 @@ func checkAndRenameTables(t *meta.Meta, job *model.Job, oldSchemaID int64, newSc
 		return ver, tblInfo, errors.Trace(err)
 	}
 
-	var autoTableID int64
-	var autoRandID int64
-	shouldDelAutoID := false
-	if newSchemaID != oldSchemaID {
-		shouldDelAutoID = true
-		autoTableID, err = t.GetAutoTableID(tblInfo.GetDBID(oldSchemaID), tblInfo.ID)
-		if err != nil {
-			job.State = model.JobStateCancelled
-			return ver, tblInfo, errors.Trace(err)
-		}
-		autoRandID, err = t.GetAutoRandomID(tblInfo.GetDBID(oldSchemaID), tblInfo.ID)
+	var rowID, incID, randID int64
+	shouldRecreateAutoID := newSchemaID != oldSchemaID
+	if shouldRecreateAutoID {
+		rowID, incID, randID, err = t.GetAllAutoIDs(tblInfo.GetDBID(oldSchemaID), tblInfo.ID)
 		if err != nil {
 			job.State = model.JobStateCancelled
 			return ver, tblInfo, errors.Trace(err)
@@ -714,7 +711,7 @@ func checkAndRenameTables(t *meta.Meta, job *model.Job, oldSchemaID int64, newSc
 		tblInfo.OldSchemaID = 0
 	}
 
-	err = t.DropTableOrView(oldSchemaID, tblInfo.ID, shouldDelAutoID)
+	err = t.DropTableOrView(oldSchemaID, tblInfo.ID, shouldRecreateAutoID)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, tblInfo, errors.Trace(err)
@@ -730,23 +727,10 @@ func checkAndRenameTables(t *meta.Meta, job *model.Job, oldSchemaID int64, newSc
 	})
 
 	tblInfo.Name = *tableName
-	err = t.CreateTableOrView(newSchemaID, tblInfo)
+	err = t.CreateTableAndSetAutoID(newSchemaID, tblInfo, rowID, incID, randID)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, tblInfo, errors.Trace(err)
-	}
-	// Update the table's auto-increment ID.
-	if newSchemaID != oldSchemaID {
-		_, err = t.GenAutoTableID(newSchemaID, tblInfo.ID, autoTableID)
-		if err != nil {
-			job.State = model.JobStateCancelled
-			return ver, tblInfo, errors.Trace(err)
-		}
-		_, err = t.GenAutoRandomID(newSchemaID, tblInfo.ID, autoRandID)
-		if err != nil {
-			job.State = model.JobStateCancelled
-			return ver, tblInfo, errors.Trace(err)
-		}
 	}
 
 	return ver, tblInfo, nil
