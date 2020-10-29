@@ -1244,8 +1244,9 @@ func (s *session) hasQuerySpecial() bool {
 	found := false
 	s.mu.RLock()
 	for _, k := range querySpecialKeys {
-		_, found = s.mu.values[k]
-		if found {
+		v := s.mu.values[k]
+		if v != nil {
+			found = true
 			break
 		}
 	}
