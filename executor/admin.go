@@ -536,17 +536,8 @@ func (e *CleanupIndexExec) deleteDanglingIdx(txn kv.Transaction, values map[stri
 			if err != nil {
 				return err
 			}
-<<<<<<< HEAD
 			for _, idxVals := range e.idxValues[handle] {
-				if err := e.index.Delete(e.ctx.GetSessionVars().StmtCtx, txn, idxVals, handle); err != nil {
-=======
-			handleIdxValsGroup, ok := e.idxValues.Get(handle)
-			if !ok {
-				return errors.Trace(errors.Errorf("batch keys are inconsistent with handles"))
-			}
-			for _, handleIdxVals := range handleIdxValsGroup.([][]types.Datum) {
-				if err := e.index.Delete(e.ctx.GetSessionVars().StmtCtx, txn.GetUnionStore(), handleIdxVals, handle); err != nil {
->>>>>>> de4612597... transaction: lock unique key for delete operation (#19220)
+				if err := e.index.Delete(e.ctx.GetSessionVars().StmtCtx, txn.GetMemBuffer(), idxVals, handle); err != nil {
 					return err
 				}
 				e.removeCnt++

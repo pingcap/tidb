@@ -214,6 +214,14 @@ func (txn *tikvTxn) Delete(k kv.Key) error {
 	return txn.us.Delete(k)
 }
 
+func (txn *tikvTxn) DeleteWithNeedLock(k kv.Key) error {
+	return txn.us.DeleteWithNeedLock(k)
+}
+
+func (txn *tikvTxn) IfKeyNeedLock(k kv.Key) bool {
+	return txn.us.IfKeyNeedLock(k)
+}
+
 func (txn *tikvTxn) SetOption(opt kv.Option, val interface{}) {
 	txn.us.SetOption(opt, val)
 	switch opt {

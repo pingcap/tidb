@@ -81,6 +81,7 @@ func (t *mockTxn) IterReverse(k Key) (Iterator, error) {
 func (t *mockTxn) Set(k Key, v []byte) error {
 	return nil
 }
+
 func (t *mockTxn) Delete(k Key) error {
 	return nil
 }
@@ -139,6 +140,14 @@ func (t *mockTxn) ResetStmtKeyExistErrs() {
 
 func (t *mockTxn) MergeStmtKeyExistErrs() {
 
+}
+
+func (t *mockTxn) DeleteWithNeedLock(k Key) error {
+	return t.Delete(k)
+}
+
+func (t *mockTxn) IfKeyNeedLock(k Key) bool {
+	return false
 }
 
 // NewMockTxn new a mockTxn.

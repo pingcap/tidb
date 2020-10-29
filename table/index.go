@@ -72,11 +72,7 @@ type Index interface {
 	// Create supports insert into statement.
 	Create(ctx sessionctx.Context, rm kv.RetrieverMutator, indexedValues []types.Datum, h int64, opts ...CreateIdxOptFunc) (int64, error)
 	// Delete supports delete from statement.
-<<<<<<< HEAD
-	Delete(sc *stmtctx.StatementContext, m kv.Mutator, indexedValues []types.Datum, h int64) error
-=======
-	Delete(sc *stmtctx.StatementContext, us kv.UnionStore, indexedValues []types.Datum, h kv.Handle) error
->>>>>>> de4612597... transaction: lock unique key for delete operation (#19220)
+	Delete(sc *stmtctx.StatementContext, m kv.MemBuffer, indexedValues []types.Datum, h int64) error
 	// Drop supports drop table, drop index statements.
 	Drop(rm kv.RetrieverMutator) error
 	// Exist supports check index exists or not.

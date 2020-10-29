@@ -114,11 +114,7 @@ func (s *testSuite5) TestAdminRecoverIndex(c *C) {
 	sc := s.ctx.GetSessionVars().StmtCtx
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
-<<<<<<< HEAD
 	err = indexOpr.Delete(sc, txn, types.MakeDatums(1), 1)
-=======
-	err = indexOpr.Delete(sc, txn.GetUnionStore(), types.MakeDatums(1), kv.IntHandle(1))
->>>>>>> de4612597... transaction: lock unique key for delete operation (#19220)
 	c.Assert(err, IsNil)
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
@@ -141,11 +137,7 @@ func (s *testSuite5) TestAdminRecoverIndex(c *C) {
 
 	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
-<<<<<<< HEAD
 	err = indexOpr.Delete(sc, txn, types.MakeDatums(10), 10)
-=======
-	err = indexOpr.Delete(sc, txn.GetUnionStore(), types.MakeDatums(10), kv.IntHandle(10))
->>>>>>> de4612597... transaction: lock unique key for delete operation (#19220)
 	c.Assert(err, IsNil)
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
@@ -159,7 +151,6 @@ func (s *testSuite5) TestAdminRecoverIndex(c *C) {
 
 	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
-<<<<<<< HEAD
 	err = indexOpr.Delete(sc, txn, types.MakeDatums(1), 1)
 	c.Assert(err, IsNil)
 	err = indexOpr.Delete(sc, txn, types.MakeDatums(2), 2)
@@ -169,17 +160,6 @@ func (s *testSuite5) TestAdminRecoverIndex(c *C) {
 	err = indexOpr.Delete(sc, txn, types.MakeDatums(10), 10)
 	c.Assert(err, IsNil)
 	err = indexOpr.Delete(sc, txn, types.MakeDatums(20), 20)
-=======
-	err = indexOpr.Delete(sc, txn.GetUnionStore(), types.MakeDatums(1), kv.IntHandle(1))
-	c.Assert(err, IsNil)
-	err = indexOpr.Delete(sc, txn.GetUnionStore(), types.MakeDatums(2), kv.IntHandle(2))
-	c.Assert(err, IsNil)
-	err = indexOpr.Delete(sc, txn.GetUnionStore(), types.MakeDatums(3), kv.IntHandle(3))
-	c.Assert(err, IsNil)
-	err = indexOpr.Delete(sc, txn.GetUnionStore(), types.MakeDatums(10), kv.IntHandle(10))
-	c.Assert(err, IsNil)
-	err = indexOpr.Delete(sc, txn.GetUnionStore(), types.MakeDatums(20), kv.IntHandle(20))
->>>>>>> de4612597... transaction: lock unique key for delete operation (#19220)
 	c.Assert(err, IsNil)
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
@@ -205,52 +185,6 @@ func (s *testSuite5) TestAdminRecoverIndex(c *C) {
 	tk.MustExec("admin check table admin_test")
 }
 
-<<<<<<< HEAD
-=======
-func (s *testSuite5) TestClusteredIndexAdminRecoverIndex(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("drop database if exists test_cluster_index_admin_recover;")
-	tk.MustExec("create database test_cluster_index_admin_recover;")
-	tk.MustExec("use test_cluster_index_admin_recover;")
-	tk.MustExec("set tidb_enable_clustered_index=1;")
-	dbName := model.NewCIStr("test_cluster_index_admin_recover")
-	tblName := model.NewCIStr("t")
-
-	// Test no corruption case.
-	tk.MustExec("create table t (a varchar(255), b int, c char(10), primary key(a, c), index idx(b));")
-	tk.MustExec("insert into t values ('1', 2, '3'), ('1', 2, '4'), ('1', 2, '5');")
-	tk.MustQuery("admin recover index t `primary`;").Check(testkit.Rows("0 0"))
-	tk.MustQuery("admin recover index t `idx`;").Check(testkit.Rows("0 3"))
-	tk.MustExec("admin check table t;")
-
-	s.ctx = mock.NewContext()
-	s.ctx.Store = s.store
-	is := s.domain.InfoSchema()
-	tbl, err := is.TableByName(dbName, tblName)
-	c.Assert(err, IsNil)
-	tblInfo := tbl.Meta()
-	idxInfo := tblInfo.FindIndexByName("idx")
-	indexOpr := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo)
-	sc := s.ctx.GetSessionVars().StmtCtx
-
-	// Some index entries are missed.
-	txn, err := s.store.Begin()
-	c.Assert(err, IsNil)
-	cHandle := testutil.MustNewCommonHandle(c, "1", "3")
-	err = indexOpr.Delete(sc, txn.GetUnionStore(), types.MakeDatums(2), cHandle)
-	c.Assert(err, IsNil)
-	err = txn.Commit(context.Background())
-	c.Assert(err, IsNil)
-	tk.MustGetErrCode("admin check table t", mysql.ErrAdminCheckTable)
-	tk.MustGetErrCode("admin check index t idx", mysql.ErrAdminCheckTable)
-
-	tk.MustQuery("SELECT COUNT(*) FROM t USE INDEX(idx)").Check(testkit.Rows("2"))
-	tk.MustQuery("admin recover index t idx").Check(testkit.Rows("1 3"))
-	tk.MustQuery("SELECT COUNT(*) FROM t USE INDEX(idx)").Check(testkit.Rows("3"))
-	tk.MustExec("admin check table t;")
-}
-
->>>>>>> de4612597... transaction: lock unique key for delete operation (#19220)
 func (s *testSuite5) TestAdminRecoverPartitionTableIndex(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -271,11 +205,7 @@ func (s *testSuite5) TestAdminRecoverPartitionTableIndex(c *C) {
 		sc := s.ctx.GetSessionVars().StmtCtx
 		txn, err := s.store.Begin()
 		c.Assert(err, IsNil)
-<<<<<<< HEAD
 		err = indexOpr.Delete(sc, txn, types.MakeDatums(idxValue), int64(idxValue))
-=======
-		err = indexOpr.Delete(sc, txn.GetUnionStore(), types.MakeDatums(idxValue), kv.IntHandle(idxValue))
->>>>>>> de4612597... transaction: lock unique key for delete operation (#19220)
 		c.Assert(err, IsNil)
 		err = txn.Commit(context.Background())
 		c.Assert(err, IsNil)
@@ -350,7 +280,6 @@ func (s *testSuite5) TestAdminRecoverIndex1(c *C) {
 
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
-<<<<<<< HEAD
 	err = indexOpr.Delete(sc, txn, types.MakeDatums("1"), 1)
 	c.Assert(err, IsNil)
 	err = indexOpr.Delete(sc, txn, types.MakeDatums("2"), 2)
@@ -358,15 +287,6 @@ func (s *testSuite5) TestAdminRecoverIndex1(c *C) {
 	err = indexOpr.Delete(sc, txn, types.MakeDatums("3"), 3)
 	c.Assert(err, IsNil)
 	err = indexOpr.Delete(sc, txn, types.MakeDatums("10"), 4)
-=======
-	err = indexOpr.Delete(sc, txn.GetUnionStore(), types.MakeDatums("1"), kv.IntHandle(1))
-	c.Assert(err, IsNil)
-	err = indexOpr.Delete(sc, txn.GetUnionStore(), types.MakeDatums("2"), kv.IntHandle(2))
-	c.Assert(err, IsNil)
-	err = indexOpr.Delete(sc, txn.GetUnionStore(), types.MakeDatums("3"), kv.IntHandle(3))
-	c.Assert(err, IsNil)
-	err = indexOpr.Delete(sc, txn.GetUnionStore(), types.MakeDatums("10"), kv.IntHandle(4))
->>>>>>> de4612597... transaction: lock unique key for delete operation (#19220)
 	c.Assert(err, IsNil)
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
@@ -752,11 +672,7 @@ func (s *testSuite3) TestAdminCheckPartitionTableFailed(c *C) {
 		// TODO: fix admin recover for partition table.
 		txn, err = s.store.Begin()
 		c.Assert(err, IsNil)
-<<<<<<< HEAD
 		err = indexOpr.Delete(sc, txn, types.MakeDatums(i+8), int64(i))
-=======
-		err = indexOpr.Delete(sc, txn.GetUnionStore(), types.MakeDatums(i+8), kv.IntHandle(i))
->>>>>>> de4612597... transaction: lock unique key for delete operation (#19220)
 		c.Assert(err, IsNil)
 		err = txn.Commit(context.Background())
 		c.Assert(err, IsNil)
@@ -791,11 +707,7 @@ func (s *testSuite5) TestAdminCheckTableFailed(c *C) {
 	// Index c2 is missing 11.
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
-<<<<<<< HEAD
 	err = indexOpr.Delete(sc, txn, types.MakeDatums(-10), -1)
-=======
-	err = indexOpr.Delete(sc, txn.GetUnionStore(), types.MakeDatums(-10), kv.IntHandle(-1))
->>>>>>> de4612597... transaction: lock unique key for delete operation (#19220)
 	c.Assert(err, IsNil)
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
@@ -824,11 +736,7 @@ func (s *testSuite5) TestAdminCheckTableFailed(c *C) {
 	// Index c2 has two more values than table data: 10, 13, and these handles have correlative record.
 	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
-<<<<<<< HEAD
 	err = indexOpr.Delete(sc, txn, types.MakeDatums(0), 0)
-=======
-	err = indexOpr.Delete(sc, txn.GetUnionStore(), types.MakeDatums(0), kv.IntHandle(0))
->>>>>>> de4612597... transaction: lock unique key for delete operation (#19220)
 	c.Assert(err, IsNil)
 	// Make sure the index value "19" is smaller "21". Then we scan to "19" before "21".
 	_, err = indexOpr.Create(s.ctx, txn, types.MakeDatums(19), 10)
@@ -844,15 +752,9 @@ func (s *testSuite5) TestAdminCheckTableFailed(c *C) {
 	// Two indices have the same handle.
 	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
-<<<<<<< HEAD
 	err = indexOpr.Delete(sc, txn, types.MakeDatums(13), 2)
 	c.Assert(err, IsNil)
 	err = indexOpr.Delete(sc, txn, types.MakeDatums(12), 2)
-=======
-	err = indexOpr.Delete(sc, txn.GetUnionStore(), types.MakeDatums(13), kv.IntHandle(2))
-	c.Assert(err, IsNil)
-	err = indexOpr.Delete(sc, txn.GetUnionStore(), types.MakeDatums(12), kv.IntHandle(2))
->>>>>>> de4612597... transaction: lock unique key for delete operation (#19220)
 	c.Assert(err, IsNil)
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
@@ -865,11 +767,7 @@ func (s *testSuite5) TestAdminCheckTableFailed(c *C) {
 	c.Assert(err, IsNil)
 	_, err = indexOpr.Create(s.ctx, txn, types.MakeDatums(12), 2)
 	c.Assert(err, IsNil)
-<<<<<<< HEAD
 	err = indexOpr.Delete(sc, txn, types.MakeDatums(20), 10)
-=======
-	err = indexOpr.Delete(sc, txn.GetUnionStore(), types.MakeDatums(20), kv.IntHandle(10))
->>>>>>> de4612597... transaction: lock unique key for delete operation (#19220)
 	c.Assert(err, IsNil)
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
@@ -879,11 +777,7 @@ func (s *testSuite5) TestAdminCheckTableFailed(c *C) {
 	// Recover records.
 	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
-<<<<<<< HEAD
 	err = indexOpr.Delete(sc, txn, types.MakeDatums(19), 10)
-=======
-	err = indexOpr.Delete(sc, txn.GetUnionStore(), types.MakeDatums(19), kv.IntHandle(10))
->>>>>>> de4612597... transaction: lock unique key for delete operation (#19220)
 	c.Assert(err, IsNil)
 	_, err = indexOpr.Create(s.ctx, txn, types.MakeDatums(20), 10)
 	c.Assert(err, IsNil)

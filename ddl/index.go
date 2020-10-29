@@ -44,7 +44,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/rowDecoder"
+	decoder "github.com/pingcap/tidb/util/rowDecoder"
 	"github.com/pingcap/tidb/util/timeutil"
 	"go.uber.org/zap"
 )
@@ -1584,23 +1584,9 @@ func iterateSnapshotRows(store kv.Storage, priority int, t table.Table, version 
 		}
 		rk := t.RecordKey(handle)
 
-<<<<<<< HEAD
 		more, err := fn(handle, rk, it.Value())
 		if !more || err != nil {
 			return errors.Trace(err)
-=======
-		n := len(w.indexes)
-		for i, idxRecord := range idxRecords {
-			taskCtx.scanCount++
-			// we fetch records row by row, so records will belong to
-			// index[0], index[1] ... index[n-1], index[0], index[1] ...
-			// respectively. So indexes[i%n] is the index of idxRecords[i].
-			err := w.indexes[i%n].Delete(w.sessCtx.GetSessionVars().StmtCtx, txn.GetUnionStore(), idxRecord.vals, idxRecord.handle)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			taskCtx.addedCount++
->>>>>>> de4612597... transaction: lock unique key for delete operation (#19220)
 		}
 
 		err = kv.NextUntil(it, util.RowKeyPrefixFilter(rk))

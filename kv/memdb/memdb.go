@@ -63,7 +63,7 @@ func (sb *Sandbox) Get(key []byte) []byte {
 // Put inserts kv into this sandbox.
 func (sb *Sandbox) Put(key, value []byte) {
 	if sb.frozen {
-		panic("cannot write to a sandbox when it has forked a new sanbox")
+		panic("cannot write to a sandbox when it has forked a new sandbox")
 	}
 
 	head := sb.getHead()
