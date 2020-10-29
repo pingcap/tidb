@@ -16,8 +16,6 @@ package aggfuncs
 import (
 	"unsafe"
 
-	"github.com/cznic/mathutil"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -168,11 +166,7 @@ func (e *sum4Decimal) AppendFinalResult2Chunk(sctx sessionctx.Context, pr Partia
 		chk.AppendNull(e.ordinal)
 		return nil
 	}
-	frac := e.args[0].GetType().Decimal
-	if frac == -1 {
-		frac = mysql.MaxDecimalScale
-	}
-	err := p.val.Round(&p.val, mathutil.Min(frac, mysql.MaxDecimalScale), types.ModeHalfEven)
+	err := p.val.Round(&p.val, e.frac, types.ModeHalfEven)
 	if err != nil {
 		return err
 	}
