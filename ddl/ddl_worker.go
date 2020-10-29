@@ -557,7 +557,7 @@ func removeJobFromCancellingList(t *meta.Meta, job *model.Job) error {
 	}
 	found := false
 	pos := 0
-	for i, canceledJob := range cancelledJobs {
+	for i, cancelledJob := range cancelledJobs {
 		if canceledJob.ID == job.ID {
 			found = true
 			pos = i
