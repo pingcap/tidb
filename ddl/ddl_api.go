@@ -569,17 +569,17 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 
 	if col.FieldType.Tp == mysql.TypeBlob {
 		if col.FieldType.Flen <= tinyBlobMaxLength {
-			logutil.BgLogger().Info("Auto convert Blob to TinyBlob", zap.Int("Blob Length", col.FieldType.Flen))
+			logutil.BgLogger().Info(fmt.Sprintf("Automatically convert BLOB(%d) to TINYBLOB", col.FieldType.Flen))
 			col.FieldType.Flen = tinyBlobMaxLength
 			col.FieldType.Tp = mysql.TypeTinyBlob
 		} else if col.FieldType.Flen <= blobMaxLength {
 			col.FieldType.Flen = blobMaxLength
 		} else if col.FieldType.Flen <= mediumBlobMaxLength {
-			logutil.BgLogger().Info("Auto convert Blob to MediumBlob", zap.Int("Blob Length", col.FieldType.Flen))
+			logutil.BgLogger().Info(fmt.Sprintf("Automatically convert BLOB(%d) to MEDIUMBLOB", col.FieldType.Flen))
 			col.FieldType.Flen = mediumBlobMaxLength
 			col.FieldType.Tp = mysql.TypeMediumBlob
 		} else if col.FieldType.Flen <= longBlobMaxLength {
-			logutil.BgLogger().Info("Auto convert Blob to LongBlob", zap.Int("Blob Length", col.FieldType.Flen))
+			logutil.BgLogger().Info(fmt.Sprintf("Automatically convert BLOB(%d) to LONGBLOB", col.FieldType.Flen))
 			col.FieldType.Flen = longBlobMaxLength
 			col.FieldType.Tp = mysql.TypeLongBlob
 		}
