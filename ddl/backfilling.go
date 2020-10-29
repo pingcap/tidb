@@ -93,11 +93,11 @@ const (
 //                [ batch ] [ batch ] [ batch ] [ batch ] ...
 //                    |         |         |         |
 //                    v         v         v         v
-//                (a kv txn)   ...       ...       ...
+//                (a kv txn)   ->        ->        ->
 //
-// For a single region range, the one backfillworker doesn't backfill the data in one kv
-// transaction. There is a serial kv transaction conducted with a single batch rows (default
-// 256) for every round time.
+// For a single range, backfill worker doesn't backfill all the data in one kv transaction.
+// Instead, it is divided into batches, each time a kv transaction completes the backfilling
+// of a partial batch.
 
 func (bWT backfillWorkerType) String() string {
 	switch bWT {
