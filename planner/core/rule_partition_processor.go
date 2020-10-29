@@ -16,6 +16,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/pingcap/tidb/infoschema"
 	"sort"
 	"strings"
 
@@ -224,14 +225,114 @@ func (s *partitionProcessor) processHashPartition(ds *DataSource, pi *model.Part
 	return tableDual, nil
 }
 
-func (s *partitionProcessor) pruneListPartition(tbl table.Table, partitionNames []model.CIStr) []int {
-	if len(partitionNames) > 0 {
-		pi := tbl.Meta().Partition
-		or := partitionRangeOR{partitionRange{0, len(pi.Definitions)}}
-		return s.convertToIntSlice(or, pi, partitionNames)
+func extractListPartitionExprColumns(ctx sessionctx.Context, tbl table.Table, columns []*expression.Column, names types.NameSlice) ([]*expression.Column, error) {
+	var cols []*expression.Column
+	pi := tbl.Meta().Partition
+	if len(pi.Columns) == 0 {
+		schema := expression.NewSchema(columns...)
+		exprs, err := expression.ParseSimpleExprsWithNames(ctx, pi.Expr, schema, names)
+		if err != nil {
+			return nil, err
+		}
+		exprs[0].HashCode(ctx.GetSessionVars().StmtCtx)
+		cols = expression.ExtractColumns(exprs[0])
+		return cols, nil
 	}
-	return []int{FullRange}
+	for _, col := range pi.Columns {
+		idx := expression.FindFieldNameIdxByColName(names, pi.Columns[0].L)
+		if idx < 0 {
+			return nil, infoschema.ErrColumnNotExists.GenWithStackByArgs(col.L, tbl.Meta().Name.L)
+		}
+		cols = append(cols, columns[idx].Clone().(*expression.Column))
+	}
+	return cols, nil
 }
+
+func (s *partitionProcessor) findUsedListPartitions(ctx sessionctx.Context, tbl table.Table, partitionNames []model.CIStr,
+	conds []expression.Expression, columns []*expression.Column, names types.NameSlice) ([]int, error) {
+	pi := tbl.Meta().Partition
+	partIdx, err := extractListPartitionExprColumns(ctx, tbl, columns, names)
+	if err != nil {
+		return nil, err
+	}
+	colLen := make([]int, 0, len(partIdx))
+	for i := 0; i < len(partIdx); i++ {
+		partIdx[i].Index = i
+		colLen = append(colLen, types.UnspecifiedLength)
+	}
+	datchedResult, err := ranger.DetachCondAndBuildRangeForPartition(ctx, conds, partIdx, colLen)
+	if err != nil {
+		return nil, err
+	}
+	partExpr, err := tbl.(partitionTable).PartitionExpr()
+	if err != nil {
+		return nil, err
+	}
+
+	ranges := datchedResult.Ranges
+	used := make([]int, 0, len(ranges))
+	for _, r := range ranges {
+		if r.IsPointNullable(ctx.GetSessionVars().StmtCtx) {
+			//if !r.HighVal[0].IsNull() {
+			//	if len(r.HighVal) != len(partIdx) {
+			//		used = []int{-1}
+			//		break
+			//	}
+			//}
+			found := int64(-1)
+			for j, expr := range partExpr.ForListPruning.InValues {
+				ret, _, err := expr.EvalInt(ctx, chunk.MutRowFromDatums(r.HighVal).ToRow())
+				if err != nil {
+					return nil, err
+				}
+				if ret > 0 {
+					found = int64(j)
+					break
+				}
+			}
+			if found == -1 {
+				continue
+			}
+			if len(partitionNames) > 0 && !s.findByName(partitionNames, pi.Definitions[found].Name.L) {
+				continue
+			}
+			used = append(used, int(found))
+		} else {
+			used = []int{FullRange}
+			break
+		}
+	}
+	if len(partitionNames) > 0 && len(used) == 1 && used[0] == FullRange {
+		or := partitionRangeOR{partitionRange{0, len(pi.Definitions)}}
+		return s.convertToIntSlice(or, pi, partitionNames), nil
+	}
+	sort.Ints(used)
+	ret := used[:0]
+	for i := 0; i < len(used); i++ {
+		if i == 0 || used[i] != used[i-1] {
+			ret = append(ret, used[i])
+		}
+	}
+	return ret, nil
+}
+
+func (s *partitionProcessor) pruneListPartition(ctx sessionctx.Context, tbl table.Table, partitionNames []model.CIStr,
+	conds []expression.Expression, columns []*expression.Column, names types.NameSlice) ([]int, error) {
+	used, err := s.findUsedListPartitions(ctx, tbl, partitionNames, conds, columns, names)
+	if err != nil {
+		return nil, err
+	}
+	return used, nil
+}
+
+//func (s *partitionProcessor) pruneListPartition(tbl table.Table, partitionNames []model.CIStr) []int {
+//	if len(partitionNames) > 0 {
+//		pi := tbl.Meta().Partition
+//		or := partitionRangeOR{partitionRange{0, len(pi.Definitions)}}
+//		return s.convertToIntSlice(or, pi, partitionNames)
+//	}
+//	return []int{FullRange}
+//}
 
 func (s *partitionProcessor) prune(ds *DataSource) (LogicalPlan, error) {
 	pi := ds.tableInfo.GetPartitionInfo()
@@ -239,11 +340,17 @@ func (s *partitionProcessor) prune(ds *DataSource) (LogicalPlan, error) {
 		return ds, nil
 	}
 	// Try to locate partition directly for hash partition.
-	if pi.Type == model.PartitionTypeHash {
+	switch pi.Type {
+	case model.PartitionTypeRange:
+		return s.processRangePartition(ds, pi)
+	case model.PartitionTypeHash:
 		return s.processHashPartition(ds, pi)
+	case model.PartitionTypeList:
+		return s.processListPartition(ds, pi)
+	}
+	if pi.Type == model.PartitionTypeHash {
 	}
 	if pi.Type == model.PartitionTypeRange {
-		return s.processRangePartition(ds, pi)
 	}
 
 	// We haven't implement partition by list and so on.
@@ -456,6 +563,19 @@ func (s *partitionProcessor) processRangePartition(ds *DataSource, pi *model.Par
 		return nil, err
 	}
 	return s.makeUnionAllChildren(ds, pi, used)
+}
+
+func (s *partitionProcessor) processListPartition(ds *DataSource, pi *model.PartitionInfo) (LogicalPlan, error) {
+	used, err := s.pruneListPartition(ds.SCtx(), ds.table, ds.partitionNames, ds.allConds, ds.TblCols, ds.names)
+	if err != nil {
+		return nil, err
+	}
+	if used != nil {
+		return s.makeUnionAllChildren(ds, pi, convertToRangeOr(used, pi))
+	}
+	tableDual := LogicalTableDual{RowCount: 0}.Init(ds.SCtx(), ds.blockOffset)
+	tableDual.schema = ds.Schema()
+	return tableDual, nil
 }
 
 // makePartitionByFnCol extracts the column and function information in 'partition by ... fn(col)'.
