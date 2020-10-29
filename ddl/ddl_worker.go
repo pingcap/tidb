@@ -362,10 +362,6 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = removeJobFromCancellingList(t, job)
-	if err != nil {
-		return errors.Trace(err)
-	}
 
 	job.BinlogInfo.FinishedTS = t.StartTS
 	logutil.Logger(w.logCtx).Info("[ddl] finish DDL job", zap.String("job", job.String()))
@@ -473,6 +469,18 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 			// If running job meets error, we will save this error in job Error
 			// and retry later if the job is not cancelled.
 			schemaVer, runJobErr = w.runDDLJob(d, t, job)
+			// Check whether a job is cancelling when we are handling it.
+			if inCancellingList, err := isInCancellingList(t, job); err == nil {
+				if inCancellingList {
+					// If we found a job is cancelling here, we should abandon the kv txn modification,
+					// and skip storing the job modification down. the next ddl round will handle the
+					// cancelling logic for it.
+					txn.Reset()
+					logutil.Logger(w.logCtx).Info("[ddl] DDL job kv modification abandoned, since it has been cancelling.")
+					removeJobFromCancellingList(t, job)
+					return nil
+				}
+			}
 			if job.IsCancelled() {
 				txn.Reset()
 				err = w.finishDDLJob(t, job)
@@ -489,14 +497,6 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 				// If error happens after updateSchemaVersion(), then the schemaVer is updated.
 				// Result in the retry duration is up to 2 * lease.
 				schemaVer = 0
-			}
-			inCancellingList, err := isInCancellingList(t, job)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			if inCancellingList {
-				schemaVer, runJobErr = convertJob2RollbackJob(w, d, t, job)
-				return nil
 			}
 			err = w.updateDDLJob(t, job, runJobErr != nil)
 			if err = w.handleUpdateJobError(t, job, err); err != nil {
@@ -585,6 +585,7 @@ func removeJobFromCancellingList(t *meta.Meta, job *model.Job) error {
 		return nil
 	}
 	cancelledJobs = append(cancelledJobs[:pos], cancelledJobs[pos+1:]...)
+	t.ResetCancelledJobList(cancelledJobs, meta.CancelJobListKey)
 	return nil
 }
 

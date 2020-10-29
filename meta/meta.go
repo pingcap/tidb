@@ -568,11 +568,11 @@ func (m *Meta) GetTable(dbID int64, tableID int64) (*model.TableInfo, error) {
 // to operate DDL jobs, and dispatch them to MR Jobs.
 
 var (
-	mDDLJobListKey    = []byte("DDLJobList")
-	mDDLJobAddIdxList = []byte("DDLJobAddIdxList")
-	mDDLJobHistoryKey = []byte("DDLJobHistory")
-	mDDLJobReorgKey   = []byte("DDLJobReorg")
-	mDDLJobCancelKey  = []byte("DDLJobCancel")
+	mDDLJobListKey     = []byte("DDLJobList")
+	mDDLJobAddIdxList  = []byte("DDLJobAddIdxList")
+	mDDLJobHistoryKey  = []byte("DDLJobHistory")
+	mDDLJobReorgKey    = []byte("DDLJobReorg")
+	mDDLJobIDCancelKey = []byte("DDLJobCancel")
 )
 
 // JobListKeyType is a key type of the DDL job queue.
@@ -584,7 +584,7 @@ var (
 	// AddIndexJobListKey only keeps the action of adding index.
 	AddIndexJobListKey JobListKeyType = mDDLJobAddIdxList
 	// CancelJobListKey keeps the action of canceling job.
-	CancelJobListKey JobListKeyType = mDDLJobCancelKey
+	CancelJobListKey JobListKeyType = mDDLJobIDCancelKey
 )
 
 func (m *Meta) enQueueDDLJob(key []byte, job *model.Job) error {
@@ -721,6 +721,18 @@ func (m *Meta) GetAllDDLJobsInQueue(jobListKeys ...JobListKeyType) ([]*model.Job
 	}
 
 	return jobs, nil
+}
+
+func (m *Meta) ResetCancelledJobList(jobs []*model.Job, jobListKeys ...JobListKeyType) {
+	listKey := m.jobListKey
+	if len(jobListKeys) != 0 {
+		listKey = jobListKeys[0]
+	}
+
+	m.txn.LClear(listKey)
+	for _, job := range jobs {
+		m.EnQueueDDLJob(job, listKey)
+	}
 }
 
 func (m *Meta) jobIDKey(id int64) []byte {
