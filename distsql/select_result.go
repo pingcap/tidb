@@ -281,6 +281,10 @@ func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *tikv
 	}
 	r.stats.mergeCopRuntimeStats(copStats, respTime)
 
+	if copStats.CopDetail != nil && len(r.copPlanIDs) > 0 {
+		r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RecordCopDetail(r.copPlanIDs[len(r.copPlanIDs)-1], copStats.CopDetail)
+	}
+
 	for i, detail := range r.selectResp.GetExecutionSummaries() {
 		if detail != nil && detail.TimeProcessedNs != nil &&
 			detail.NumProducedRows != nil && detail.NumIterations != nil {
