@@ -599,7 +599,7 @@ func (e *InsertValues) fillRow(ctx context.Context, row []types.Datum, hasValue 
 
 // isAutoNull can help judge whether a datum is AutoIncrement Null quickly.
 // This used to help lazyFillAutoIncrement to find consecutive N datum backwards for batch autoID alloc.
-func (e *InsertValues) isAutoNull(ctx context.Context, d *types.Datum, col *table.Column) bool {
+func (e *InsertValues) isAutoNull(ctx context.Context, d types.Datum, col *table.Column) bool {
 	var err error
 	var recordID int64
 	if !d.IsNull() {
@@ -629,7 +629,7 @@ func findAutoIncrementColumn(t table.Table) (col *table.Column, offsetInRow int,
 	return nil, -1, false
 }
 
-func setDatumAutoIDWithCast(ctx sessionctx.Context, d *types.Datum, id int64, col *table.Column) error {
+func setDatumAutoIDAndCast(ctx sessionctx.Context, d *types.Datum, id int64, col *table.Column) error {
 	d.SetAutoID(id, col.Flag)
 	var err error
 	*d, err = table.CastValue(ctx, *d, col.ToInfo(), false, false)
@@ -650,7 +650,7 @@ func (e *InsertValues) lazyAdjustAutoIncrementDatum(ctx context.Context, rows []
 	retryInfo := e.ctx.GetSessionVars().RetryInfo
 	rowCount := len(rows)
 	for processedIdx := 0; processedIdx < rowCount; processedIdx++ {
-		autoDatum := &rows[processedIdx][idx]
+		autoDatum := rows[processedIdx][idx]
 
 		var err error
 		var recordID int64
@@ -680,7 +680,7 @@ func (e *InsertValues) lazyAdjustAutoIncrementDatum(ctx context.Context, rows []
 				if !ok {
 					break
 				}
-				err = setDatumAutoIDWithCast(e.ctx, &rows[processedIdx][idx], nextID, col)
+				err = setDatumAutoIDAndCast(e.ctx, &rows[processedIdx][idx], nextID, col)
 				if err != nil {
 					return nil, err
 				}
@@ -692,14 +692,14 @@ func (e *InsertValues) lazyAdjustAutoIncrementDatum(ctx context.Context, rows []
 			// Find consecutive num.
 			start := processedIdx
 			cnt := 1
-			for processedIdx+1 < rowCount && e.isAutoNull(ctx, &rows[processedIdx+1][idx], col) {
+			for processedIdx+1 < rowCount && e.isAutoNull(ctx, rows[processedIdx+1][idx], col) {
 				processedIdx++
 				cnt++
 			}
 			// AllocBatchAutoIncrementValue allocates batch N consecutive autoIDs.
 			// The max value can be derived from adding the increment value to min for cnt-1 times.
 			min, increment, err := table.AllocBatchAutoIncrementValue(ctx, e.Table, e.ctx, cnt)
-			if e.handleErr(col, autoDatum, cnt, err) != nil {
+			if e.handleErr(col, &autoDatum, cnt, err) != nil {
 				return nil, err
 			}
 			// It's compatible with mysql setting the first allocated autoID to lastInsertID.
@@ -711,7 +711,7 @@ func (e *InsertValues) lazyAdjustAutoIncrementDatum(ctx context.Context, rows []
 			for j := 0; j < cnt; j++ {
 				offset := j + start
 				id := int64(uint64(min) + uint64(j)*uint64(increment))
-				err = setDatumAutoIDWithCast(e.ctx, &rows[offset][idx], id, col)
+				err = setDatumAutoIDAndCast(e.ctx, &rows[offset][idx], id, col)
 				if err != nil {
 					return nil, err
 				}
@@ -720,7 +720,7 @@ func (e *InsertValues) lazyAdjustAutoIncrementDatum(ctx context.Context, rows []
 			continue
 		}
 
-		err = setDatumAutoIDWithCast(e.ctx, autoDatum, recordID, col)
+		err = setDatumAutoIDAndCast(e.ctx, &rows[processedIdx][idx], recordID, col)
 		if err != nil {
 			return nil, err
 		}
@@ -745,7 +745,7 @@ func (e *InsertValues) adjustAutoIncrementDatum(ctx context.Context, d types.Dat
 		d.SetNull()
 	}
 	if !d.IsNull() {
-		recordID, err = getAutoRecordID(&d, &c.FieldType, true)
+		recordID, err = getAutoRecordID(d, &c.FieldType, true)
 		if err != nil {
 			return types.Datum{}, err
 		}
@@ -775,7 +775,7 @@ func (e *InsertValues) adjustAutoIncrementDatum(ctx context.Context, d types.Dat
 		}
 	}
 
-	err = setDatumAutoIDWithCast(e.ctx, &d, recordID, c)
+	err = setDatumAutoIDAndCast(e.ctx, &d, recordID, c)
 	if err != nil {
 		return types.Datum{}, err
 	}
@@ -783,10 +783,7 @@ func (e *InsertValues) adjustAutoIncrementDatum(ctx context.Context, d types.Dat
 	return d, nil
 }
 
-func getAutoRecordID(d *types.Datum, target *types.FieldType, isInsert bool) (int64, error) {
-	if d == nil {
-		return 0, errors.Trace(errors.Errorf("datum is empty"))
-	}
+func getAutoRecordID(d types.Datum, target *types.FieldType, isInsert bool) (int64, error) {
 	var recordID int64
 	switch target.Tp {
 	case mysql.TypeFloat, mysql.TypeDouble:
@@ -821,7 +818,7 @@ func (e *InsertValues) adjustAutoRandomDatum(ctx context.Context, d types.Datum,
 		d.SetNull()
 	}
 	if !d.IsNull() {
-		recordID, err = getAutoRecordID(&d, &c.FieldType, true)
+		recordID, err = getAutoRecordID(d, &c.FieldType, true)
 		if err != nil {
 			return types.Datum{}, err
 		}
@@ -859,7 +856,7 @@ func (e *InsertValues) adjustAutoRandomDatum(ctx context.Context, d types.Datum,
 		}
 	}
 
-	err = setDatumAutoIDWithCast(e.ctx, &d, recordID, c)
+	err = setDatumAutoIDAndCast(e.ctx, &d, recordID, c)
 	if err != nil {
 		return types.Datum{}, err
 	}
