@@ -14,8 +14,6 @@
 package collate
 
 import (
-	"unicode/utf8"
-
 	"github.com/pingcap/tidb/util/stringutil"
 )
 
@@ -35,18 +33,18 @@ func sign(i int) int {
 func (gc *generalCICollator) Compare(a, b string) int {
 	a = truncateTailingSpace(a)
 	b = truncateTailingSpace(b)
-	for len(a) > 0 && len(b) > 0 {
-		r1, r1size := utf8.DecodeRuneInString(a)
-		r2, r2size := utf8.DecodeRuneInString(b)
+	r1, r2 := rune(0), rune(0)
+	ai, bi := 0, 0
+	for ai < len(a) && bi < len(b) {
+		r1, ai = decodeRune(a, ai)
+		r2, bi = decodeRune(b, bi)
 
 		cmp := int(convertRuneGeneralCI(r1)) - int(convertRuneGeneralCI(r2))
 		if cmp != 0 {
 			return sign(cmp)
 		}
-		a = a[r1size:]
-		b = b[r2size:]
 	}
-	return sign(len(a) - len(b))
+	return sign((len(a) - ai) - (len(b) - bi))
 }
 
 // Key implements Collator interface.
@@ -54,10 +52,11 @@ func (gc *generalCICollator) Key(str string) []byte {
 	str = truncateTailingSpace(str)
 	buf := make([]byte, 0, len(str))
 	i := 0
-	for _, r := range []rune(str) {
+	r := rune(0)
+	for i < len(str) {
+		r, i = decodeRune(str, i)
 		u16 := convertRuneGeneralCI(r)
 		buf = append(buf, byte(u16>>8), byte(u16))
-		i++
 	}
 	return buf
 }
