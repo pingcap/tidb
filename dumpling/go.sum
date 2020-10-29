@@ -449,8 +449,9 @@ github.com/pingcap/log v0.0.0-20200828042413-fce0951f1463/go.mod h1:4rbK1p9ILyIf
 github.com/pingcap/parser v0.0.0-20201028030005-1328d877c9f3 h1:dfdPB1Ot9cNki/hVUgWFUiM8b05b5JCw7Oq9x6HaDeM=
 github.com/pingcap/parser v0.0.0-20201028030005-1328d877c9f3/go.mod h1:74+OEdwM4B/jMpBRl92ch6CSmSYkQtv2TNxIjFdT/GE=
 github.com/pingcap/sysutil v0.0.0-20200206130906-2bfa6dc40bcd/go.mod h1:EB/852NMQ+aRKioCpToQ94Wl7fktV+FNnxf3CX/TTXI=
-github.com/pingcap/sysutil v0.0.0-20200715082929-4c47bcac246a h1:i2RElJ2aykSqZKeY+3SK18NHhajil8cQdG77wHe+P1Y=
 github.com/pingcap/sysutil v0.0.0-20200715082929-4c47bcac246a/go.mod h1:EB/852NMQ+aRKioCpToQ94Wl7fktV+FNnxf3CX/TTXI=
+github.com/pingcap/sysutil v0.0.0-20201021075216-f93ced2829e2 h1:b2G/eqDeywtdJF3w9nIUdqMmXChsmpLvf4FzUxJ9Vmk=
+github.com/pingcap/sysutil v0.0.0-20201021075216-f93ced2829e2/go.mod h1:EB/852NMQ+aRKioCpToQ94Wl7fktV+FNnxf3CX/TTXI=
 github.com/pingcap/tidb-tools v4.0.5-0.20200820092506-34ea90c93237+incompatible h1:qPppnsXVh3KswqRZdSAShGLLPd7dB+5w4lXDnpYn0SQ=
 github.com/pingcap/tidb-tools v4.0.5-0.20200820092506-34ea90c93237+incompatible/go.mod h1:XGdcy9+yqlDSEMTpOXnwf3hiTeqrV6MN/u1se9N8yIM=
 github.com/pingcap/tipb v0.0.0-20201026044621-45e60c77588f h1:J+0TAI+7Hvebz4bM4GnRCRT4MpjYnUxbyi9ky5ZQUsU=
