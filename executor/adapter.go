@@ -763,7 +763,7 @@ func (a *ExecStmt) buildExecutor() (Executor, error) {
 		}
 		e = executorExec.stmtExec
 	}
-	a.isSelectForUpdate = b.hasLock && (!stmtCtx.InDeleteStmt && !stmtCtx.InUpdateStmt)
+	a.isSelectForUpdate = b.hasLock && (!stmtCtx.InDeleteStmt && !stmtCtx.InUpdateStmt && !stmtCtx.InInsertStmt)
 	return e, nil
 }
 

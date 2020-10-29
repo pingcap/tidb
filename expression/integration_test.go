@@ -1743,7 +1743,7 @@ func (s *testIntegrationSuite2) TestTimeBuiltin(c *C) {
 	result.Check(testkit.Rows("<nil> <nil> 0"))
 	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|",
 		"Warning|1292|Incorrect time value: '0'",
-		"Warning|1292|Incorrect time value: '0.0'"))
+		"Warning|1292|Incorrect datetime value: '0.0'"))
 	result = tk.MustQuery(`SELECT DATE_FORMAT(0, '%W %M %e %Y %r %y'), DATE_FORMAT(0.0, '%W %M %e %Y %r %y');`)
 	result.Check(testkit.Rows("<nil> <nil>"))
 	tk.MustQuery("show warnings").Check(testkit.Rows())
@@ -1938,12 +1938,27 @@ func (s *testIntegrationSuite2) TestTimeBuiltin(c *C) {
 	result.Check(testkit.Rows("2017-01-01 2017-01-01 12:20:59 12:20:59"))
 	result = tk.MustQuery("select str_to_date('aaa01-01-2017', 'aaa%d-%m-%Y'), str_to_date('59:20:12 aaa01-01-2017', '%s:%i:%H aaa%d-%m-%Y'), str_to_date('59:20:12aaa', '%s:%i:%Haaa')")
 	result.Check(testkit.Rows("2017-01-01 2017-01-01 12:20:59 12:20:59"))
+
 	result = tk.MustQuery("select str_to_date('01-01-2017', '%d'), str_to_date('59', '%d-%Y')")
 	// TODO: MySQL returns "<nil> <nil>".
 	result.Check(testkit.Rows("0000-00-01 <nil>"))
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Incorrect datetime value: '0000-00-00 00:00:00'"))
+	result = tk.MustQuery("show warnings")
+	result.Sort().Check(testutil.RowsWithSep("|",
+		"Warning|1292|Incorrect datetime value: '0000-00-00 00:00:00'",
+		"Warning|1292|Truncated incorrect datetime value: '01-01-2017'"))
+
 	result = tk.MustQuery("select str_to_date('2018-6-1', '%Y-%m-%d'), str_to_date('2018-6-1', '%Y-%c-%d'), str_to_date('59:20:1', '%s:%i:%k'), str_to_date('59:20:1', '%s:%i:%l')")
 	result.Check(testkit.Rows("2018-06-01 2018-06-01 01:20:59 01:20:59"))
+
+	result = tk.MustQuery("select str_to_date('2020-07-04 11:22:33 PM c', '%Y-%m-%d %r')")
+	result.Check(testkit.Rows("2020-07-04 23:22:33"))
+	result = tk.MustQuery("show warnings")
+	result.Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect datetime value: '2020-07-04 11:22:33 PM c'"))
+
+	result = tk.MustQuery("select str_to_date('11:22:33 PM', ' %r')")
+	result.Check(testkit.Rows("23:22:33"))
+	result = tk.MustQuery("show warnings")
+	result.Check(testkit.Rows())
 
 	// for maketime
 	tk.MustExec(`drop table if exists t`)
@@ -6214,6 +6229,21 @@ func (s *testIntegrationSerialSuite) TestCollateConstantPropagation(c *C) {
 	tk.MustExec("insert into t1 values ('ß', 's');")
 	tk.MustExec("insert into t2 values ('s', 's')")
 	tk.MustQuery("select * from t1 left join t2 on t1.a = t2.a collate utf8mb4_unicode_ci where t1.a = 's';").Check(testkit.Rows("ß s <nil> <nil>"))
+}
+
+func (s *testIntegrationSuite2) TestIssue17791(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("SET sql_mode=DEFAULT;")
+	tk.MustExec("CREATE TABLE t1 (" +
+		" id INT NOT NULL PRIMARY KEY auto_increment," +
+		" pad VARCHAR(10) NOT NULL," +
+		" expr varchar(100) AS (NOT 1 BETWEEN -5 AND 5)" +
+		");")
+	tk.MustExec("INSERT INTO t1 (pad) VALUES ('a'), ('b');")
+	tk.MustQuery("SELECT id, pad, expr, NOT 1 BETWEEN -5 AND 5 as expr_in_select FROM t1;").Check(testkit.Rows("1 a 0 0", "2 b 0 0"))
 }
 
 func (s *testIntegrationSerialSuite) TestMixCollation(c *C) {

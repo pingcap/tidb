@@ -181,7 +181,7 @@ func (s *testSuite1) TestAnalyzeParameters(c *C) {
 	tbl := s.dom.StatsHandle().GetTableStats(tableInfo)
 	col := tbl.Columns[1]
 	c.Assert(col.Len(), Equals, 20)
-	c.Assert(len(col.CMSketch.TopN()), Equals, 1)
+	c.Assert(len(col.TopN.TopN()), Equals, 1)
 	width, depth := col.CMSketch.GetWidthAndDepth()
 	c.Assert(depth, Equals, int32(5))
 	c.Assert(width, Equals, int32(2048))
@@ -190,7 +190,7 @@ func (s *testSuite1) TestAnalyzeParameters(c *C) {
 	tbl = s.dom.StatsHandle().GetTableStats(tableInfo)
 	col = tbl.Columns[1]
 	c.Assert(col.Len(), Equals, 4)
-	c.Assert(len(col.CMSketch.TopN()), Equals, 0)
+	c.Assert(len(col.TopN.TopN()), Equals, 0)
 	width, depth = col.CMSketch.GetWidthAndDepth()
 	c.Assert(depth, Equals, int32(4))
 	c.Assert(width, Equals, int32(4))
@@ -505,7 +505,7 @@ func (s *testSuite1) testAnalyzeIncremental(tk *testkit.TestKit, c *C) {
 	tblStats := h.GetTableStats(tblInfo)
 	val, err := codec.EncodeKey(tk.Se.GetSessionVars().StmtCtx, nil, types.NewIntDatum(3))
 	c.Assert(err, IsNil)
-	c.Assert(tblStats.Indices[tblInfo.Indices[0].ID].CMSketch.QueryBytes(val), Equals, uint64(1))
+	c.Assert(tblStats.Indices[tblInfo.Indices[0].ID].QueryBytes(val), Equals, uint64(1))
 	c.Assert(statistics.IsAnalyzed(tblStats.Indices[tblInfo.Indices[0].ID].Flag), IsFalse)
 	c.Assert(statistics.IsAnalyzed(tblStats.Columns[tblInfo.Columns[0].ID].Flag), IsFalse)
 
@@ -513,7 +513,7 @@ func (s *testSuite1) testAnalyzeIncremental(tk *testkit.TestKit, c *C) {
 	tk.MustQuery("show stats_buckets").Check(testkit.Rows("test t  a 0 0 1 1 1 1", "test t  a 0 1 2 1 2 2", "test t  a 0 2 3 1 3 3",
 		"test t  idx 1 0 1 1 1 1", "test t  idx 1 1 2 1 2 2", "test t  idx 1 2 3 1 3 3"))
 	tblStats = h.GetTableStats(tblInfo)
-	c.Assert(tblStats.Indices[tblInfo.Indices[0].ID].CMSketch.QueryBytes(val), Equals, uint64(1))
+	c.Assert(tblStats.Indices[tblInfo.Indices[0].ID].QueryBytes(val), Equals, uint64(1))
 }
 
 type testFastAnalyze struct {
@@ -613,12 +613,12 @@ func (s *testSuite1) TestExtractTopN(c *C) {
 	tblInfo := table.Meta()
 	tblStats := s.dom.StatsHandle().GetTableStats(tblInfo)
 	colStats := tblStats.Columns[tblInfo.Columns[1].ID]
-	c.Assert(len(colStats.CMSketch.TopN()), Equals, 1)
-	item := colStats.CMSketch.TopN()[0]
+	c.Assert(len(colStats.TopN.TopN()), Equals, 1)
+	item := colStats.TopN.TopN()[0]
 	c.Assert(item.Count, Equals, uint64(11))
 	idxStats := tblStats.Indices[tblInfo.Indices[0].ID]
-	c.Assert(len(idxStats.CMSketch.TopN()), Equals, 1)
-	item = idxStats.CMSketch.TopN()[0]
+	c.Assert(len(idxStats.TopN.TopN()), Equals, 1)
+	item = idxStats.TopN.TopN()[0]
 	c.Assert(item.Count, Equals, uint64(11))
 }
 
@@ -648,8 +648,8 @@ func (s *testSuite1) TestHashInTopN(c *C) {
 	tblStats2 := s.dom.StatsHandle().GetTableStats(tblInfo).Copy()
 	// check the hash for topn
 	for _, col := range tblInfo.Columns {
-		topn1 := tblStats1.Columns[col.ID].CMSketch.TopNMap()
-		cm2 := tblStats2.Columns[col.ID].CMSketch
+		topn1 := tblStats1.Columns[col.ID].TopN.TopNMap()
+		cm2 := tblStats2.Columns[col.ID].TopN
 		for h1, topnMetas := range topn1 {
 			for _, topnMeta1 := range topnMetas {
 				count2, exists := cm2.QueryTopN(h1, topnMeta1.GetH2(), topnMeta1.Data)
