@@ -2511,13 +2511,14 @@ func (s *testIntegrationSuite3) TestIssue20490(c *C) {
 	tk.MustQuery("select b from issue20490 order by a;").Check(testkit.Rows("1", "1", "<nil>"))
 }
 
-// TestDefaultValueIsLatin1Enum for issue #18977
-func (s *testIntegrationSuite3) TestDefaultValueIsLatin1Enum(c *C) {
+// TestDefaultValueIsLatin1 for issue #18977
+func (s *testIntegrationSuite3) TestDefaultValueIsLatin1(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	defer tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t (a enum(0x61, '1', '2') not null default 0x61) character set latin1")
+	tk.MustExec("create table t (a enum(0x61, 'b') not null default 0x61, b set(0x61, 'b') not null default 0x61) character set latin1")
 	tbl := testGetTableByName(c, s.ctx, "test", "t")
 	c.Assert(tbl.Meta().Columns[0].DefaultValue, Equals, "a")
+	c.Assert(tbl.Meta().Columns[1].DefaultValue, Equals, "a")
 }
