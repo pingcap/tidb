@@ -1357,10 +1357,11 @@ func (e *rateLimitAction) Action(t *memory.Tracker) {
 	}
 	e.conditionLock()
 	defer e.conditionUnlock()
-	// If there is not cached response, delegate it to the fallback action.
-	if e.cond.remainingResponseCount < 1 {
+	// If there is not cached response, or the only exists one token, delegate it to the fallback action.
+	if e.cond.remainingResponseCount < 1 || e.cond.remainingTokenNum < 2 {
 		logutil.BgLogger().Info("memory exceed quota, rateLimitAction delegate to fallback action",
 			zap.Uint("remaining response count", e.cond.remainingResponseCount),
+			zap.Uint("remaining token count", e.cond.remainingTokenNum),
 			zap.Uint("total token count", e.totalTokenNum))
 		if e.fallbackAction != nil {
 			e.fallbackAction.Action(t)
@@ -1368,15 +1369,6 @@ func (e *rateLimitAction) Action(t *memory.Tracker) {
 		return
 	}
 	e.cond.once.Do(func() {
-		if e.cond.remainingTokenNum < 2 {
-			e.setEnabled(false)
-			logutil.BgLogger().Info("memory exceed quota, rateLimitAction delegate to fallback action",
-				zap.Uint("total token count", e.totalTokenNum))
-			if e.fallbackAction != nil {
-				e.fallbackAction.Action(t)
-			}
-			return
-		}
 		failpoint.Inject("testRateLimitActionMockConsumeAndAssert", func(val failpoint.Value) {
 			if val.(bool) {
 				if e.cond.triggerCountForTest+e.cond.remainingTokenNum != e.totalTokenNum {
