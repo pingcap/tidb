@@ -69,7 +69,7 @@ const (
 //       |                    |                   |                  |              |
 // backfillworker1     backfillworker2     backfillworker3     backfillworker4     ...
 //
-// The worker master is responsible for scale the backfilling workers according to the
+// The worker master is responsible for scaling the backfilling workers according to the
 // system variable "tidb_ddl_reorg_worker_cnt". Essentially, reorg job is mainly based
 // on the [start, end] range of the table to backfill data. We did not do it overnight,
 // there were several ddl rounds.
