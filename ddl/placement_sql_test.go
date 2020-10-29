@@ -14,8 +14,12 @@
 package ddl_test
 
 import (
+	"fmt"
+
 	. "github.com/pingcap/check"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
@@ -270,4 +274,38 @@ add placement policy
 	role=leader
 	replicas=3`)
 	c.Assert(ddl.ErrPartitionMgmtOnNonpartitioned.Equal(err), IsTrue)
+}
+
+func (s *testDBSuite1) TestPlacementPolicyCache(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	defer tk.MustExec("drop table if exists t1")
+
+	bundles := make(map[string]*placement.Bundle)
+
+	tk.MustExec("create table t1(id int) partition by hash(id) partitions 2")
+
+	is := s.dom.InfoSchema()
+	is.MockBundles(bundles)
+
+	tb, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	c.Assert(err, IsNil)
+	partDefs := tb.Meta().GetPartitionInfo().Definitions
+
+	rows := []string{}
+	for _, v := range partDefs {
+		ptID := placement.GroupID(v.ID)
+		bundles[ptID] = &placement.Bundle{
+			ID: ptID,
+			Rules: []*placement.Rule{
+				{ID: "default"},
+			},
+		}
+		rows = append(rows, fmt.Sprintf("%s 0 default test t1 %s <nil>  0 ", ptID, v.Name.L))
+	}
+
+	tk.MustQuery("select * from information_schema.placement_policy").Check(testkit.Rows(rows...))
+	tk.MustExec("drop table t1")
+	tk.MustQuery("select * from information_schema.placement_policy").Check(testkit.Rows())
 }
