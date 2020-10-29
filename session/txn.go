@@ -447,11 +447,23 @@ func keyNeedToLock(k, v []byte) bool {
 		// meta key always need to lock.
 		return true
 	}
+<<<<<<< HEAD
 	isDelete := len(v) == 0
 	if isDelete {
 		// only need to delete row key.
 		return k[10] == 'r'
+=======
+	if flags.HasPresumeKeyNotExists() {
+		return true
 	}
+
+	// do not lock row key for delete operation,
+	// lock primary key and unique index only.
+	if len(v) == 0 {
+		return flags.HasNeedLocked()
+>>>>>>> de4612597... transaction: lock unique key for delete operation (#19220)
+	}
+
 	if tablecodec.IsUntouchedIndexKValue(k, v) {
 		return false
 	}

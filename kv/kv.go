@@ -163,6 +163,59 @@ type RetrieverMutator interface {
 // MemBuffer is an in-memory kv collection, can be used to buffer write operations.
 type MemBuffer interface {
 	RetrieverMutator
+<<<<<<< HEAD
+=======
+
+	// RLock locks the MemBuffer for shared read.
+	// In the most case, MemBuffer will only used by single goroutine,
+	// but it will be read by multiple goroutine when combined with executor.UnionScanExec.
+	// To avoid race introduced by executor.UnionScanExec, MemBuffer expose read lock for it.
+	RLock()
+	// RUnlock unlocks the MemBuffer.
+	RUnlock()
+
+	// GetFlags returns the latest flags associated with key.
+	GetFlags(Key) (KeyFlags, error)
+	// IterWithFlags returns a MemBufferIterator.
+	IterWithFlags(k Key, upperBound Key) MemBufferIterator
+	// IterReverseWithFlags returns a reversed MemBufferIterator.
+	IterReverseWithFlags(k Key) MemBufferIterator
+	// SetWithFlags put key-value into the last active staging buffer with the given KeyFlags.
+	SetWithFlags(Key, []byte, ...FlagsOp) error
+	// UpdateFlags update the flags associated with key.
+	UpdateFlags(Key, ...FlagsOp)
+	// DeleteWithFlags delete key with the given KeyFlags
+	DeleteWithFlags(Key, ...FlagsOp) error
+
+	GetKeyByHandle(MemKeyHandle) []byte
+	GetValueByHandle(MemKeyHandle) ([]byte, bool)
+
+	// Reset reset the MemBuffer to initial states.
+	Reset()
+	// DiscardValues releases the memory used by all values.
+	// NOTE: any operation need value will panic after this function.
+	DiscardValues()
+
+	// Staging create a new staging buffer inside the MemBuffer.
+	// Subsequent writes will be temporarily stored in this new staging buffer.
+	// When you think all modifications looks good, you can call `Release` to public all of them to the upper level buffer.
+	Staging() StagingHandle
+	// Release publish all modifications in the latest staging buffer to upper level.
+	Release(StagingHandle)
+	// Cleanup cleanup the resources referenced by the StagingHandle.
+	// If the changes are not published by `Release`, they will be discarded.
+	Cleanup(StagingHandle)
+	// InspectStage used to inspect the value updates in the given stage.
+	InspectStage(StagingHandle, func(Key, KeyFlags, []byte))
+
+	// SelectValueHistory select the latest value which makes `predicate` returns true from the modification history.
+	SelectValueHistory(key Key, predicate func(value []byte) bool) ([]byte, error)
+	// SnapshotGetter returns a Getter for a snapshot of MemBuffer.
+	SnapshotGetter() Getter
+	// SnapshotIter returns a Iterator for a snapshot of MemBuffer.
+	SnapshotIter(k, upperbound Key) Iterator
+
+>>>>>>> de4612597... transaction: lock unique key for delete operation (#19220)
 	// Size returns sum of keys and values length.
 	Size() int
 	// Len returns the number of entries in the DB.
