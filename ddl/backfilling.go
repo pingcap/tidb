@@ -82,7 +82,7 @@ const (
 //        |             |             |             |       |            |
 //        +---------------- (round1)----------------+       +--(round2)--+
 //
-// The main range [start, end] will be split into small range by the regions it covered.
+// The main range [start, end] will be split into small ranges.
 // Each small range corresponds to a region and it will be delivered to a backfillworker.
 // Each worker can only be assigned with one range at one round, those remained ranges
 // will be cached until all the backfillworkers have had their previous range job done.
