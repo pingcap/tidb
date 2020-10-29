@@ -603,11 +603,7 @@ func (s *testSuite3) TestAdminCheckPartitionTableFailed(c *C) {
 		indexOpr := tables.NewIndex(tblInfo.GetPartitionInfo().Definitions[partitionIdx].ID, tblInfo, idxInfo)
 		txn, err := s.store.Begin()
 		c.Assert(err, IsNil)
-<<<<<<< HEAD
 		err = indexOpr.Delete(sc, txn, types.MakeDatums(i), int64(i))
-=======
-		err = indexOpr.Delete(sc, txn.GetUnionStore(), types.MakeDatums(i), kv.IntHandle(i))
->>>>>>> de4612597... transaction: lock unique key for delete operation (#19220)
 		c.Assert(err, IsNil)
 		err = txn.Commit(context.Background())
 		c.Assert(err, IsNil)
@@ -645,11 +641,7 @@ func (s *testSuite3) TestAdminCheckPartitionTableFailed(c *C) {
 		// TODO: fix admin recover for partition table.
 		txn, err = s.store.Begin()
 		c.Assert(err, IsNil)
-<<<<<<< HEAD
 		err = indexOpr.Delete(sc, txn, types.MakeDatums(i+8), int64(i+8))
-=======
-		err = indexOpr.Delete(sc, txn.GetUnionStore(), types.MakeDatums(i+8), kv.IntHandle(i+8))
->>>>>>> de4612597... transaction: lock unique key for delete operation (#19220)
 		c.Assert(err, IsNil)
 		err = txn.Commit(context.Background())
 		c.Assert(err, IsNil)
