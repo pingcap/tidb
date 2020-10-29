@@ -695,9 +695,6 @@ func (e *HashAggExec) prepare4ParallelExec(ctx context.Context) {
 			e.finalWorkers[index].run(e.ctx, finalWorkerWaitGroup)
 			if e.stats != nil {
 				finalTime <- time.Since(workerStart)
-				for i := range finalTime {
-					e.stats.FinalTime = append(e.stats.FinalTime, i)
-				}
 			}
 		}(i)
 	}
