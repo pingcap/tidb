@@ -34,10 +34,17 @@ require (
 	github.com/pingcap/goleveldb v0.0.0-20191226122134-f82aafb29989
 	github.com/pingcap/kvproto v0.0.0-20200907074027-32a3a0accf7d
 	github.com/pingcap/log v0.0.0-20200828042413-fce0951f1463
+<<<<<<< HEAD
 	github.com/pingcap/parser v0.0.0-20201022083903-fbe80b0c40bb
 	github.com/pingcap/sysutil v0.0.0-20200715082929-4c47bcac246a
 	github.com/pingcap/tidb-tools v4.0.6-0.20200828085514-03575b185007+incompatible
 	github.com/pingcap/tipb v0.0.0-20200618092958-4fad48b4c8c3
+=======
+	github.com/pingcap/parser v0.0.0-20201028030005-1328d877c9f3
+	github.com/pingcap/sysutil v0.0.0-20201021075216-f93ced2829e2
+	github.com/pingcap/tidb-tools v4.0.5-0.20200820092506-34ea90c93237+incompatible
+	github.com/pingcap/tipb v0.0.0-20201026044621-45e60c77588f
+>>>>>>> 3d536a6e7... executor: add diagnosis rule to check Transparent Huge Pages(THP) enabled (#20611)
 	github.com/prometheus/client_golang v1.5.1
 	github.com/prometheus/client_model v0.2.0
 	github.com/prometheus/common v0.9.1
