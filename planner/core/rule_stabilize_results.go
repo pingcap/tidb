@@ -46,16 +46,7 @@ func (rs *resultsStabilizer) extractPKs(lp LogicalPlan) ([]*expression.Column, e
 	pks := make([]*expression.Column, 0, 4)
 	switch x := lp.(type) {
 	case *DataSource:
-		for _, col := range x.Schema().Columns {
-			if x.tableInfo.PKIsHandle {
-				pkCol := x.tableInfo.GetPkColInfo()
-				if col.ID == pkCol.ID {
-					pks = append(pks, col)
-				}
-			} else {
-				// TODO
-			}
-		}
+		pks = append(pks, x.handleCol)
 	default:
 		for _, child := range lp.Children() {
 			cols, err := rs.extractPKs(child)
