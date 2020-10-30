@@ -3497,48 +3497,18 @@ func CheckModifyTypeCompatible(origin *types.FieldType, to *types.FieldType) (al
 			return msg, errUnsupportedModifyColumn.GenWithStackByArgs(msg)
 		}
 	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp, mysql.TypeDuration, mysql.TypeYear:
-		switch origin.Tp {
-		case mysql.TypeDuration:
-			switch to.Tp {
-			case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
-				return "", errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
-			}
-		case mysql.TypeDate:
-			switch to.Tp {
-			case mysql.TypeDatetime, mysql.TypeTimestamp:
-				return "", errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
-			}
-		case mysql.TypeTimestamp:
-			switch to.Tp {
-			case mysql.TypeDuration, mysql.TypeDatetime:
-				return "", errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
-			}
-		case mysql.TypeDatetime:
-			switch to.Tp {
-			case mysql.TypeTimestamp:
-				return "", errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
-			}
-		case mysql.TypeYear:
-			switch to.Tp {
-			case mysql.TypeDuration:
-				return "", errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
-			case mysql.TypeYear:
-			default:
-				return "", ErrTruncatedWrongValue.GenWithStack("banned conversion that must fail")
-			}
+		if origin.Tp == to.Tp {
+			skipSignCheck = true
+			skipLenCheck = true
+			break
 		}
+
 		switch to.Tp {
-		case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp, mysql.TypeDuration:
-			skipSignCheck = true
-			skipLenCheck = true
-		case mysql.TypeYear:
-			if origin.Tp != mysql.TypeYear {
-				return "", ErrWarnDataOutOfRange.GenWithStack("banned conversion that must fail")
-			}
-			skipSignCheck = true
-			skipLenCheck = true
-		default:
+		case mysql.TypeEnum, mysql.TypeSet, mysql.TypeBit:
+			// TODO: Currently enum/set/bit cast to date and time are not support yet, should fix here after supported.
 			return "", errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
+		default:
+			return unsupportedMsg, errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
 		}
 	default:
 		if origin.Tp != to.Tp {
