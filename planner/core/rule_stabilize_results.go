@@ -21,7 +21,11 @@ func (rs *resultsStabilizer) optimize(ctx context.Context, lp LogicalPlan) (Logi
 func (rs *resultsStabilizer) injectHandleColsIntoSort(lp LogicalPlan) (LogicalPlan, error) {
 	switch x := lp.(type) {
 	case *LogicalSort:
-		proj := LogicalProjection{Exprs: expression.Column2Exprs(lp.Schema().Columns)}.Init(lp.SCtx(), 0)
+		originSchema := lp.Schema().Clone()
+		originCols := make([]expression.Expression, 0, len(originSchema.Columns))
+		for _, col := range originSchema.Columns {
+			originCols = append(originCols, col)
+		}
 		handleCols, err := rs.extraHandleCols(lp)
 		if err != nil {
 			return nil, err
@@ -29,6 +33,8 @@ func (rs *resultsStabilizer) injectHandleColsIntoSort(lp LogicalPlan) (LogicalPl
 		for _, hc := range handleCols {
 			x.ByItems = append(x.ByItems, &util.ByItems{Expr: hc})
 		}
+		proj := LogicalProjection{Exprs: originCols}.Init(x.ctx, x.SelectBlockOffset())
+		proj.SetSchema(originSchema)
 		proj.SetChildren(x)
 		return proj, nil
 	case *LogicalSelection, *LogicalProjection:
