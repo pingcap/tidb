@@ -720,6 +720,8 @@ func (s *testSuite1) TestDefaultValForAnalyze(c *C) {
 	for i := 1; i < 4; i++ {
 		tk.MustExec("insert into t values (?)", i)
 	}
+	tk.MustQuery("select @@tidb_enable_fast_analyze").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@session.tidb_enable_fast_analyze").Check(testkit.Rows("0"))
 	tk.MustExec("analyze table t with 0 topn;")
 	tk.MustQuery("explain select * from t where a = 1").Check(testkit.Rows("IndexReader_6 512.00 root  index:IndexRangeScan_5",
 		"└─IndexRangeScan_5 512.00 cop[tikv] table:t, index:a(a) range:[1,1], keep order:false"))
