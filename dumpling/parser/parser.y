@@ -960,6 +960,7 @@ import (
 	IndexOption                            "Index Option"
 	IndexOptionList                        "Index Option List or empty"
 	IndexType                              "index type"
+	IndexName                              "index name"
 	IndexTypeName                          "index type name"
 	IndexTypeOpt                           "optional index type"
 	IndexPartSpecification                 "Index column name or expression"
@@ -1274,7 +1275,6 @@ import (
 	FieldTerminator                 "Field terminator"
 	FlashbackToNewName              "Flashback to new name"
 	HashString                      "Hashed string"
-	IndexName                       "index name"
 	LikeEscapeOpt                   "like escape option"
 	LinesTerminated                 "Lines terminated by"
 	OptCharset                      "Optional Character setting"
@@ -2879,9 +2879,10 @@ ConstraintElem:
 	"PRIMARY" "KEY" IndexNameAndTypeOpt '(' IndexPartSpecificationList ')' IndexOptionList
 	{
 		c := &ast.Constraint{
-			Tp:   ast.ConstraintPrimaryKey,
-			Keys: $5.([]*ast.IndexPartSpecification),
-			Name: $3.([]interface{})[0].(string),
+			Tp:           ast.ConstraintPrimaryKey,
+			Keys:         $5.([]*ast.IndexPartSpecification),
+			Name:         $3.([]interface{})[0].(*ast.NullString).String,
+			IsEmptyIndex: $3.([]interface{})[0].(*ast.NullString).Empty,
 		}
 		if $7 != nil {
 			c.Option = $7.(*ast.IndexOption)
@@ -2897,9 +2898,10 @@ ConstraintElem:
 |	"FULLTEXT" KeyOrIndexOpt IndexName '(' IndexPartSpecificationList ')' IndexOptionList
 	{
 		c := &ast.Constraint{
-			Tp:   ast.ConstraintFulltext,
-			Keys: $5.([]*ast.IndexPartSpecification),
-			Name: $3,
+			Tp:           ast.ConstraintFulltext,
+			Keys:         $5.([]*ast.IndexPartSpecification),
+			Name:         $3.(*ast.NullString).String,
+			IsEmptyIndex: $3.(*ast.NullString).Empty,
 		}
 		if $7 != nil {
 			c.Option = $7.(*ast.IndexOption)
@@ -2909,14 +2911,15 @@ ConstraintElem:
 |	KeyOrIndex IfNotExists IndexNameAndTypeOpt '(' IndexPartSpecificationList ')' IndexOptionList
 	{
 		c := &ast.Constraint{
-			IfNotExists: $2.(bool),
-			Tp:          ast.ConstraintIndex,
-			Keys:        $5.([]*ast.IndexPartSpecification),
+			IfNotExists:  $2.(bool),
+			Tp:           ast.ConstraintIndex,
+			Keys:         $5.([]*ast.IndexPartSpecification),
+			Name:         $3.([]interface{})[0].(*ast.NullString).String,
+			IsEmptyIndex: $3.([]interface{})[0].(*ast.NullString).Empty,
 		}
 		if $7 != nil {
 			c.Option = $7.(*ast.IndexOption)
 		}
-		c.Name = $3.([]interface{})[0].(string)
 		if indexType := $3.([]interface{})[1]; indexType != nil {
 			if c.Option == nil {
 				c.Option = &ast.IndexOption{}
@@ -2928,13 +2931,15 @@ ConstraintElem:
 |	"UNIQUE" KeyOrIndexOpt IndexNameAndTypeOpt '(' IndexPartSpecificationList ')' IndexOptionList
 	{
 		c := &ast.Constraint{
-			Tp:   ast.ConstraintUniq,
-			Keys: $5.([]*ast.IndexPartSpecification),
+			Tp:           ast.ConstraintUniq,
+			Keys:         $5.([]*ast.IndexPartSpecification),
+			Name:         $3.([]interface{})[0].(*ast.NullString).String,
+			IsEmptyIndex: $3.([]interface{})[0].(*ast.NullString).Empty,
 		}
 		if $7 != nil {
 			c.Option = $7.(*ast.IndexOption)
 		}
-		c.Name = $3.([]interface{})[0].(string)
+
 		if indexType := $3.([]interface{})[1]; indexType != nil {
 			if c.Option == nil {
 				c.Option = &ast.IndexOption{}
@@ -2946,11 +2951,12 @@ ConstraintElem:
 |	"FOREIGN" "KEY" IfNotExists IndexName '(' IndexPartSpecificationList ')' ReferDef
 	{
 		$$ = &ast.Constraint{
-			IfNotExists: $3.(bool),
-			Tp:          ast.ConstraintForeignKey,
-			Keys:        $6.([]*ast.IndexPartSpecification),
-			Name:        $4,
-			Refer:       $8.(*ast.ReferenceDef),
+			IfNotExists:  $3.(bool),
+			Tp:           ast.ConstraintForeignKey,
+			Keys:         $6.([]*ast.IndexPartSpecification),
+			Name:         $4.(*ast.NullString).String,
+			Refer:        $8.(*ast.ReferenceDef),
+			IsEmptyIndex: $4.(*ast.NullString).Empty,
 		}
 	}
 |	"CHECK" '(' Expression ')' EnforcedOrNotOpt
@@ -4947,9 +4953,18 @@ IgnoreOptional:
 
 IndexName:
 	{
-		$$ = ""
+		$$ = &ast.NullString{
+			String: "",
+			Empty:  false,
+		}
 	}
 |	Identifier
+	{
+		$$ = &ast.NullString{
+			String: $1,
+			Empty:  len($1) == 0,
+		}
+	}
 
 IndexOptionList:
 	{
@@ -5042,7 +5057,7 @@ IndexNameAndTypeOpt:
 	}
 |	Identifier "TYPE" IndexTypeName
 	{
-		$$ = []interface{}{$1, $3}
+		$$ = []interface{}{&ast.NullString{String: $1, Empty: len($1) == 0}, $3}
 	}
 
 IndexTypeOpt:
