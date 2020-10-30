@@ -49,7 +49,7 @@ func (rs *resultsStabilizer) injectSort(lp LogicalPlan) LogicalPlan {
 		return lp
 	default:
 		byItems := make([]*util.ByItems, 0, len(lp.Schema().Columns))
-		cols := rs.extractHandleCols(lp.Children()[0])
+		cols := rs.extractHandleCols(lp)
 		for _, col := range cols {
 			byItems = append(byItems, &util.ByItems{Expr: col})
 		}
