@@ -120,6 +120,7 @@ func (s *testSuite2) TestListPartitionPruner(c *C) {
 		Plan   []string
 	}
 	s.testData.GetTestCases(c, &input, &output)
+	valid := false
 	for i, tt := range input {
 		s.testData.OnRecord(func() {
 			output[i].SQL = tt
@@ -132,7 +133,9 @@ func (s *testSuite2) TestListPartitionPruner(c *C) {
 		// If the query doesn't specified the partition, compare the result with normal table
 		if !strings.Contains(tt, "partition(") {
 			result.Check(tk2.MustQuery(tt).Rows())
+			valid = true
 		}
+		c.Assert(valid, IsTrue)
 	}
 }
 
@@ -163,6 +166,7 @@ func (s *testSuite2) TestListColumnsPartitionPruner(c *C) {
 		Plan   []string
 	}
 	s.testData.GetTestCases(c, &input, &output)
+	valid := false
 	for i, tt := range input {
 		s.testData.OnRecord(func() {
 			output[i].SQL = tt
@@ -175,6 +179,8 @@ func (s *testSuite2) TestListColumnsPartitionPruner(c *C) {
 		// If the query doesn't specified the partition, compare the result with normal table
 		if !strings.Contains(tt, "partition(") {
 			result.Check(tk2.MustQuery(tt).Rows())
+			valid = true
 		}
 	}
+	c.Assert(valid, IsTrue)
 }
