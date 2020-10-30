@@ -2882,8 +2882,21 @@ func processColumnOptions(ctx sessionctx.Context, col *table.Column, options []*
 	// Set `NoDefaultValueFlag` if this field doesn't have a default value and
 	// it is `not null` and not an `AUTO_INCREMENT` field or `TIMESTAMP` field.
 	setNoDefaultValueFlag(col, hasDefaultValue)
-
+	if col.FieldType.EvalType().IsStringKind() && col.Charset == charset.CharsetBin {
+		col.Flag |= mysql.BinaryFlag
+	}
 	if col.Tp == mysql.TypeBit {
+		col.Flag |= mysql.UnsignedFlag
+	}
+	if col.Tp == mysql.TypeYear {
+		// For Year field, it's charset is binary but does not have binary flag.
+		col.Flag &= ^mysql.BinaryFlag
+		col.Flag |= mysql.ZerofillFlag
+	}
+	// If you specify ZEROFILL for a numeric column, MySQL automatically adds the UNSIGNED attribute to the column.
+	// See https://dev.mysql.com/doc/refman/5.7/en/numeric-type-overview.html for more details.
+	// But some types like bit and year, won't show its unsigned flag in `show create table`.
+	if mysql.HasZerofillFlag(col.Flag) {
 		col.Flag |= mysql.UnsignedFlag
 	}
 
@@ -2971,6 +2984,14 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 		)
 	}
 
+	if !isExplicitTimeStamp() {
+		// Check and set TimestampFlag, OnUpdateNowFlag and NotNullFlag.
+		if newCol.Tp == mysql.TypeTimestamp {
+			newCol.Flag |= mysql.TimestampFlag
+			newCol.Flag |= mysql.OnUpdateNowFlag
+			newCol.Flag |= mysql.NotNullFlag
+		}
+	}
 	if err = setCharsetCollationFlenDecimal(&newCol.FieldType, chs, coll); err != nil {
 		return nil, errors.Trace(err)
 	}
