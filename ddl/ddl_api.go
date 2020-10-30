@@ -4931,8 +4931,9 @@ func (d *ddl) DropIndexes(ctx sessionctx.Context, ti ast.Ident, specs []*ast.Alt
 		return err
 	}
 
-	indexesNames := make([]model.CIStr, 0, len(specs))
-	ifExists := make([]bool, 0, len(specs))
+	// We need to confirm whether we should return an error when dropping duplicate indexes
+	indexesIfExists := make(map[string]bool, len(specs))
+	droppingIndex := make([]model.CIStr, 0, len(specs))
 	for _, spec := range specs {
 		var indexName model.CIStr
 		if spec.Tp == ast.AlterTableDropPrimaryKey {
@@ -4940,24 +4941,33 @@ func (d *ddl) DropIndexes(ctx sessionctx.Context, ti ast.Ident, specs []*ast.Alt
 		} else {
 			indexName = model.NewCIStr(spec.Name)
 		}
-		_, shouldIgnore, err := checkIndexInfo(ctx, t, indexName, spec.IfExists)
+		_, ok := indexesIfExists[indexName.L]
+		if !ok {
+			indexesIfExists[indexName.L] = spec.IfExists
+			droppingIndex = append(droppingIndex, indexName)
+		} else {
+			if spec.IfExists {
+				continue
+			}
+			return ErrCantDropFieldOrKey.GenWithStack("index %s doesn't exist", indexName)
+		}
+	}
+
+	//
+	indexNames := make([]model.CIStr, 0, len(droppingIndex))
+	ifExists := make([]bool, 0, len(droppingIndex))
+	for _, indexName := range droppingIndex {
+		_, shouldIgnore, err := checkIndexInfo(ctx, t, indexName, indexesIfExists[indexName.L])
 		if err != nil {
 			return err
 		}
 		if shouldIgnore {
 			continue
 		}
-
-		for _, idxName := range indexesNames {
-			if idxName == indexName {
-				return ErrCantDropFieldOrKey.GenWithStack("Can't DROP '%s'; check that column/key exists", indexName)
-			}
-		}
-		indexesNames = append(indexesNames, indexName)
-		ifExists = append(ifExists, spec.IfExists)
+		indexNames = append(indexNames, indexName)
+		ifExists = append(ifExists, indexesIfExists[indexName.L])
 	}
-
-	if len(indexesNames) == 0 {
+	if len(indexNames) == 0 {
 		return nil
 	}
 
@@ -4967,7 +4977,7 @@ func (d *ddl) DropIndexes(ctx sessionctx.Context, ti ast.Ident, specs []*ast.Alt
 		SchemaName: schema.Name.L,
 		Type:       model.ActionDropIndex,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{indexesNames, ifExists},
+		Args:       []interface{}{indexNames, ifExists},
 	}
 
 	err = d.doDDLJob(ctx, job)

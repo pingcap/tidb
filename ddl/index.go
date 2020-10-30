@@ -693,22 +693,23 @@ func checkDropIndexes(t *meta.Meta, job *model.Job) (*model.TableInfo, []*model.
 		return nil, nil, errors.Trace(err)
 	}
 
-	var indexesNames []model.CIStr
+	var indexNames []model.CIStr
 	var ifExists []bool
-	if err = job.DecodeArgs(&indexesNames, &ifExists); err != nil {
+	if err = job.DecodeArgs(&indexNames, &ifExists); err != nil {
 		// Compatible with the previous function: DropIndex
 		var indexName model.CIStr
 		if err = job.DecodeArgs(&indexName); err != nil {
 			job.State = model.JobStateCancelled
 			return nil, nil, errors.Trace(err)
 		}
-		indexesNames = append(indexesNames, indexName)
+		indexNames = append(indexNames, indexName)
 		ifExists = append(ifExists, false)
 	}
 
-	indexesInfo := make([]*model.IndexInfo, 0, len(indexesNames))
-	droppedIndexes := make(map[string]bool, len(indexesNames))
-	for i, indexName := range indexesNames {
+	indexesInfo := make([]*model.IndexInfo, 0, len(indexNames))
+	droppedIndexes := make(map[string]bool, len(indexNames))
+	for i, indexName := range indexNames {
+		// Double check the index is exists
 		indexInfo := tblInfo.FindIndexByName(indexName.L)
 		if indexInfo == nil {
 			if !ifExists[i] {
@@ -717,18 +718,15 @@ func checkDropIndexes(t *meta.Meta, job *model.Job) (*model.TableInfo, []*model.
 			}
 			continue
 		}
-
 		// Double check for drop index on auto_increment column.
 		err = checkDropIndexOnAutoIncrementColumn(tblInfo, indexInfo)
 		if err != nil {
 			job.State = model.JobStateCancelled
 			return nil, nil, autoid.ErrWrongAutoKey
 		}
-
 		indexesInfo = append(indexesInfo, indexInfo)
 		droppedIndexes[indexName.L] = true
 	}
-
 	// Check that drop primary index will not cause invisible implicit primary index.
 	newIndices := make([]*model.IndexInfo, 0, len(tblInfo.Indices))
 	for _, idx := range tblInfo.Indices {
@@ -743,7 +741,6 @@ func checkDropIndexes(t *meta.Meta, job *model.Job) (*model.TableInfo, []*model.
 		job.State = model.JobStateCancelled
 		return nil, nil, errors.Trace(err)
 	}
-
 	return tblInfo, indexesInfo, nil
 }
 
