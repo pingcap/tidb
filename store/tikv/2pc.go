@@ -1076,6 +1076,9 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 		}
 		c.commitTS = c.onePCCommitTS
 		c.txn.commitTS = c.commitTS
+		logutil.Logger(ctx).Info("1PC protocol is used to commit this txn",
+			zap.Uint64("startTS", c.startTS), zap.Uint64("commitTS", c.commitTS),
+			zap.Uint64("connID", c.connID))
 		return nil
 	}
 
