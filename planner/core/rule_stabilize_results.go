@@ -64,6 +64,17 @@ func (rs *resultsStabilizer) injectSort(lp LogicalPlan) LogicalPlan {
 // extractHandleCols does the best effort to get handle columns from this plan.
 func (rs *resultsStabilizer) extractHandleCols(lp LogicalPlan) []*expression.Column {
 	switch x := lp.(type) {
+	case *LogicalSelection:
+		return rs.extractHandleCols(lp)
+	case *LogicalProjection:
+		hcs := rs.extractHandleCols(lp)
+		for _, hc := range hcs { // update these columns on this Projection
+			if !x.Schema().Contains(hc) {
+				x.Schema().Columns = append(x.Schema().Columns)
+				x.Exprs = append(x.Exprs, hc)
+			}
+		}
+		return hcs
 	case *DataSource:
 		if x.handleCol != nil {
 			return []*expression.Column{x.handleCol}
