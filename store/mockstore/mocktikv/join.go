@@ -1,13 +1,24 @@
+// Copyright 2020 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package mocktikv
 
 import (
 	"context"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tipb/go-tipb"
-	"go.uber.org/zap"
 )
 
 // TODO: Let the join support conditions / multiple keys
@@ -36,7 +47,6 @@ func (e *join) buildHashTable(ctx context.Context) error {
 		if err != nil {
 			return errors.Trace(err)
 		}
-		log.Info("join build", zap.Int("len", len(row)))
 		if row == nil {
 			return nil
 		}
@@ -55,7 +65,6 @@ func (e *join) fetchRows(ctx context.Context) (bool, error) {
 	if err != nil {
 		return false, errors.Trace(err)
 	}
-	log.Info("join probe", zap.Int("len", len(row)))
 	if row == nil {
 		return true, nil
 	}
@@ -72,7 +81,6 @@ func (e *join) fetchRows(ctx context.Context) (bool, error) {
 				newRow = append(newRow, row...)
 				newRow = append(newRow, matched...)
 			}
-			log.Info("matched key", zap.ByteStrings("new row", newRow))
 			e.reservedRows = append(e.reservedRows, newRow)
 		}
 	}
