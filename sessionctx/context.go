@@ -42,6 +42,9 @@ type Context interface {
 	// GetClient gets a kv.Client.
 	GetClient() kv.Client
 
+	// GetClient gets a kv.Client.
+	GetMPPClient() kv.MPPClient
+
 	// SetValue saves a value associated with this context for key.
 	SetValue(key fmt.Stringer, value interface{})
 
@@ -104,6 +107,8 @@ type Context interface {
 	HasLockedTables() bool
 	// PrepareTSFuture uses to prepare timestamp by future.
 	PrepareTSFuture(ctx context.Context)
+	// StoreIndexUsage stores the index usage information.
+	StoreIndexUsage(tblID int64, idxID int64, rowsSelected int64)
 }
 
 type basicCtxType int
