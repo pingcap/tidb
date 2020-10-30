@@ -723,16 +723,23 @@ func (m *Meta) GetAllDDLJobsInQueue(jobListKeys ...JobListKeyType) ([]*model.Job
 	return jobs, nil
 }
 
-func (m *Meta) ResetCancelledJobList(jobs []*model.Job, jobListKeys ...JobListKeyType) {
+func (m *Meta) ResetCancelledJobList(jobs []*model.Job, jobListKeys ...JobListKeyType) error {
 	listKey := m.jobListKey
 	if len(jobListKeys) != 0 {
 		listKey = jobListKeys[0]
 	}
 
-	m.txn.LClear(listKey)
-	for _, job := range jobs {
-		m.EnQueueDDLJob(job, listKey)
+	err := m.txn.LClear(listKey)
+	if err != nil {
+		return errors.Trace(err)
 	}
+	for _, job := range jobs {
+		err := m.EnQueueDDLJob(job, listKey)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return nil
 }
 
 func (m *Meta) jobIDKey(id int64) []byte {

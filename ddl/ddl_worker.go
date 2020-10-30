@@ -588,7 +588,10 @@ func removeJobFromCancellingList(t *meta.Meta, job *model.Job) error {
 		return nil
 	}
 	cancelledJobs = append(cancelledJobs[:pos], cancelledJobs[pos+1:]...)
-	t.ResetCancelledJobList(cancelledJobs, meta.CancelJobListKey)
+	err = t.ResetCancelledJobList(cancelledJobs, meta.CancelJobListKey)
+	if err != nil {
+		return err
+	}
 	return nil
 }
 
