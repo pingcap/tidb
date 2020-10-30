@@ -32,7 +32,16 @@ func (rs *resultsStabilizer) stabilizeSort(lp LogicalPlan) (bool, error) {
 	switch x := lp.(type) {
 	case *LogicalSort:
 		for _, col := range x.Schema().Columns {
-			x.ByItems = append(x.ByItems, &util.ByItems{Expr: col})
+			exist := false
+			for _, byItem := range x.ByItems {
+				if col.Equal(nil, byItem.Expr) {
+					exist = true
+					break
+				}
+			}
+			if !exist {
+				x.ByItems = append(x.ByItems, &util.ByItems{Expr: col})
+			}
 		}
 		return true, nil
 	case *LogicalSelection, *LogicalProjection:
