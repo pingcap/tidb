@@ -7624,7 +7624,7 @@ func (s *testIntegrationSuite) TestIssue20180(c *C) {
 	tk.MustQuery("select * from t where a > 1  and a = \"b\";").Check(testkit.Rows("b"))
 }
 
-func (s *testIntegrationSuite) TestIssue20608(c *C) {
+func (s *testIntegrationSerialSuite) TestIssue20608(c *C) {
 	collate.SetNewCollationEnabledForTest(true)
 	defer collate.SetNewCollationEnabledForTest(false)
 	tk := testkit.NewTestKit(c, s.store)
