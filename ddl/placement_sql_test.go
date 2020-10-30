@@ -297,7 +297,7 @@ func (s *testDBSuite1) TestPlacementPolicyCache(c *C) {
 		for _, v := range partDefs {
 			ptID := placement.GroupID(v.ID)
 			bundles[ptID] = &placement.Bundle{
-				ID: ptID,
+				ID:    ptID,
 				Rules: []*placement.Rule{{ID: "default"}},
 			}
 			rows = append(rows, fmt.Sprintf("%s 0 default test t1 %s <nil>  0 ", ptID, v.Name.L))
