@@ -54,6 +54,12 @@ type CharsetOpt struct {
 	Col string
 }
 
+// NullString represents a string that may be nil.
+type NullString struct {
+	String string
+	Empty  bool // Empty is true if String is empty backtick.
+}
+
 // DatabaseOptionType is the type for database options.
 type DatabaseOptionType int
 
@@ -714,6 +720,7 @@ type Constraint struct {
 	InColumn bool // Used for Check
 
 	InColumnName string // Used for Check
+	IsEmptyIndex bool   // Used for Check
 }
 
 // Restore implements Node interface.
@@ -771,7 +778,7 @@ func (n *Constraint) Restore(ctx *format.RestoreCtx) error {
 		if n.IfNotExists {
 			ctx.WriteKeyWord("IF NOT EXISTS ")
 		}
-	} else if n.Name != "" {
+	} else if n.Name != "" || n.IsEmptyIndex {
 		ctx.WritePlain(" ")
 		ctx.WriteName(n.Name)
 	}

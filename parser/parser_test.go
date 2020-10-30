@@ -3078,6 +3078,9 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"alter sequence seq start with 3 restart with 5", true, "ALTER SEQUENCE `seq` START WITH 3 RESTART WITH 5"},
 		{"alter sequence seq restart = 5", true, "ALTER SEQUENCE `seq` RESTART WITH 5"},
 		{"create sequence seq restart = 5", false, ""},
+
+		// for issue 18149
+		{"create table t (a int, index ``(a))", true, "CREATE TABLE `t` (`a` INT,INDEX ``(`a`))"},
 	}
 	s.RunTest(c, table)
 }
