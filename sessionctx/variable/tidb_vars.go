@@ -415,6 +415,9 @@ const (
 
 	// TiDBEnableAmendPessimisticTxn indicates if amend pessimistic transactions is enabled.
 	TiDBEnableAmendPessimisticTxn = "tidb_enable_amend_pessimistic_txn"
+
+	// TiDBEnableStableResults indicates if stabilize query results.
+	TiDBEnableStableResults = "tidb_enable_stable_results"
 )
 
 // Default TiDB system variable values.
@@ -516,6 +519,7 @@ const (
 	DefTiDBAllowAutoRandExplicitInsert = false
 	DefTiDBEnableTelemetry             = true
 	DefTiDBEnableAmendPessimisticTxn   = false
+	DefTiDBEnableStableResults         = false
 )
 
 // Process global variables.
