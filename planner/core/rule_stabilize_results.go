@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/planner/util"
 )
 
@@ -20,7 +21,8 @@ func (rs *resultsStabilizer) optimize(ctx context.Context, lp LogicalPlan) (Logi
 func (rs *resultsStabilizer) stabilizeSort(lp LogicalPlan) bool {
 	switch x := lp.(type) {
 	case *LogicalSort:
-		for _, col := range x.Schema().Columns {
+		cols := rs.extractHandleCols(x.Children()[0])
+		for _, col := range cols {
 			exist := false
 			for _, byItem := range x.ByItems {
 				if col.Equal(nil, byItem.Expr) {
@@ -47,7 +49,8 @@ func (rs *resultsStabilizer) injectSort(lp LogicalPlan) LogicalPlan {
 		return lp
 	default:
 		byItems := make([]*util.ByItems, 0, len(lp.Schema().Columns))
-		for _, col := range lp.Schema().Columns {
+		cols := rs.extractHandleCols(lp.Children()[0])
+		for _, col := range cols {
 			byItems = append(byItems, &util.ByItems{Expr: col})
 		}
 		sort := LogicalSort{
@@ -56,6 +59,17 @@ func (rs *resultsStabilizer) injectSort(lp LogicalPlan) LogicalPlan {
 		sort.SetChildren(lp)
 		return sort
 	}
+}
+
+// extractHandleCols does the best effort to get handle columns from this plan.
+func (rs *resultsStabilizer) extractHandleCols(lp LogicalPlan) []*expression.Column {
+	switch x := lp.(type) {
+	case *DataSource:
+		if x.handleCol != nil {
+			return []*expression.Column{x.handleCol}
+		}
+	}
+	return lp.Schema().Columns
 }
 
 func (rs *resultsStabilizer) name() string {
