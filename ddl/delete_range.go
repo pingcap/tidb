@@ -336,16 +336,16 @@ func insertJobIntoDeleteRangeTable(ctx sessionctx.Context, job *model.Job) error
 			}
 			indexNames = append(indexNames, indexName)
 		}
-
-		if len(indexIDs) > 0 {
-			if len(partitionIDs) > 0 {
-				for _, pid := range partitionIDs {
-					if err := doBatchDeleteIndiceRange(s, job.ID, pid, indexIDs, now); err != nil {
-						return errors.Trace(err)
-					}
-				}
-			} else {
-				return doBatchDeleteIndiceRange(s, job.ID, job.TableID, indexIDs, now)
+		// Remove data in TiKV.
+		if len(indexIDs) == 0 {
+			return nil
+		}
+		if len(partitionIDs) == 0 {
+			return doBatchDeleteIndiceRange(s, job.ID, job.TableID, indexIDs, now)
+		}
+		for _, pid := range partitionIDs {
+			if err := doBatchDeleteIndiceRange(s, job.ID, pid, indexIDs, now); err != nil {
+				return errors.Trace(err)
 			}
 		}
 	case model.ActionDropColumn:

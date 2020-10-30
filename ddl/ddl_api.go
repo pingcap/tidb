@@ -4953,7 +4953,7 @@ func (d *ddl) DropIndexes(ctx sessionctx.Context, ti ast.Ident, specs []*ast.Alt
 		}
 	}
 
-	//
+	// Check the index is droppable.
 	indexNames := make([]model.CIStr, 0, len(droppingIndex))
 	ifExists := make([]bool, 0, len(droppingIndex))
 	for _, indexName := range droppingIndex {
