@@ -53,7 +53,7 @@ require (
 	github.com/pingcap/goleveldb v0.0.0-20191226122134-f82aafb29989
 	github.com/pingcap/kvproto v0.0.0-20201023092649-e6d6090277c9
 	github.com/pingcap/log v0.0.0-20200828042413-fce0951f1463
-	github.com/pingcap/parser v0.0.0-20201028030005-1328d877c9f3
+	github.com/pingcap/parser v0.0.0-20201030090627-3d18e257aed6
 	github.com/pingcap/sysutil v0.0.0-20200715082929-4c47bcac246a
 	github.com/pingcap/tidb-tools v4.0.5-0.20200820092506-34ea90c93237+incompatible
 	github.com/pingcap/tipb v0.0.0-20201026044621-45e60c77588f
@@ -86,7 +86,7 @@ require (
 	golang.org/x/oauth2 v0.0.0-20200107190931-bf48bf16ab8d // indirect
 	golang.org/x/sync v0.0.0-20200625203802-6e8e738ad208
 	golang.org/x/sys v0.0.0-20200819171115-d785dc25833f
-	golang.org/x/text v0.3.3
+	golang.org/x/text v0.3.4
 	golang.org/x/time v0.0.0-20191024005414-555d28b269f0 // indirect
 	golang.org/x/tools v0.0.0-20200820010801-b793a1359eac
 	google.golang.org/api v0.15.1 // indirect
@@ -100,5 +100,3 @@ require (
 )
 
 go 1.13
-
-replace github.com/pingcap/parser => github.com/watchpoints/parser v0.0.0-20201029130500-f78c72712090
