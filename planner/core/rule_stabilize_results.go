@@ -65,9 +65,9 @@ func (rs *resultsStabilizer) injectSort(lp LogicalPlan) LogicalPlan {
 func (rs *resultsStabilizer) extractHandleCols(lp LogicalPlan) []*expression.Column {
 	switch x := lp.(type) {
 	case *LogicalSelection:
-		return rs.extractHandleCols(lp)
+		return rs.extractHandleCols(lp.Children()[0])
 	case *LogicalProjection:
-		hcs := rs.extractHandleCols(lp)
+		hcs := rs.extractHandleCols(lp.Children()[0])
 		for _, hc := range hcs { // update these columns on this Projection
 			if !x.Schema().Contains(hc) {
 				x.Schema().Columns = append(x.Schema().Columns)
