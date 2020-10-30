@@ -1978,7 +1978,7 @@ func (s *testPessimisticSuite) TestAsyncCommitWithSchemaChange(c *C) {
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.TiKVClient.AsyncCommit.Enable = true
-		conf.TiKVClient.AsyncCommit.SafeWindow = 500 * time.Millisecond
+		conf.TiKVClient.AsyncCommit.SafeWindow = time.Second
 		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
 	})
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/beforeSchemaCheck", "return"), IsNil)
@@ -2036,7 +2036,7 @@ func (s *testPessimisticSuite) Test1PCWithSchemaChange(c *C) {
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.TiKVClient.EnableOnePC = true
-		conf.TiKVClient.AsyncCommit.SafeWindow = 500 * time.Millisecond
+		conf.TiKVClient.AsyncCommit.SafeWindow = time.Second
 		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
 	})
 
