@@ -360,7 +360,6 @@ func extractListPartitionExprColumns(ctx sessionctx.Context, pi *model.Partition
 		idx := expression.FindFieldNameIdxByColName(names, col.L)
 		if idx < 0 {
 			panic("should never happen")
-			//return nil, infoschema.ErrColumnNotExists.GenWithStackByArgs(col.L, tbInfo.Name.L)
 		}
 		cols = append(cols, columns[idx].Clone().(*expression.Column))
 	}
@@ -409,7 +408,7 @@ func generateListPartitionExpr(ctx sessionctx.Context, pi *model.PartitionInfo,
 	}
 	ret := &PartitionExpr{
 		InValues:       locateExprs,
-		ForListPruning: &ForListPruning{pruneExprs},
+		ForListPruning: &ForListPruning{InValues: pruneExprs},
 	}
 	return ret, nil
 }
