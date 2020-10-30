@@ -962,7 +962,6 @@ func (h *Handle) ReloadExtendedStatistics() error {
 	tables := make([]*statistics.Table, 0, len(allTables))
 	for _, tbl := range allTables {
 		t, err := h.extendedStatsFromStorage(reader, tbl.Copy(), tbl.PhysicalID, true)
-
 		if err != nil {
 			return err
 		}

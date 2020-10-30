@@ -194,10 +194,11 @@ func (sc *ristrettoStatsCache) GetAll() []*statistics.Table {
 	tables := make([]*statistics.Table, 0)
 	for i := range sc.tablesShards {
 		shard := &sc.tablesShards[i]
+		shard.RLock()
 		for _, tbl := range shard.data {
-			ntbl, _ := sc.Lookup(tbl.PhysicalID)
-			tables = append(tables, ntbl)
+			tables = append(tables, tbl)
 		}
+		shard.RUnlock()
 	}
 	return tables
 }
