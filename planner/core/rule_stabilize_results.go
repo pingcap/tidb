@@ -35,7 +35,7 @@ func (rs *resultsStabilizer) stabilizeSort(lp LogicalPlan) bool {
 			}
 		}
 		return true
-	case *LogicalSelection, *LogicalProjection:
+	case *LogicalSelection, *LogicalProjection, *LogicalLimit:
 		return rs.stabilizeSort(lp.Children()[0])
 	}
 	return false
@@ -43,7 +43,7 @@ func (rs *resultsStabilizer) stabilizeSort(lp LogicalPlan) bool {
 
 func (rs *resultsStabilizer) injectSort(lp LogicalPlan) LogicalPlan {
 	switch lp.(type) {
-	case *LogicalSelection, *LogicalProjection:
+	case *LogicalSelection, *LogicalProjection, *LogicalLimit:
 		newChild := rs.injectSort(lp.Children()[0])
 		lp.SetChildren(newChild)
 		return lp
@@ -64,7 +64,7 @@ func (rs *resultsStabilizer) injectSort(lp LogicalPlan) LogicalPlan {
 // extractHandleCols does the best effort to get handle columns from this plan.
 func (rs *resultsStabilizer) extractHandleCols(lp LogicalPlan) []*expression.Column {
 	switch x := lp.(type) {
-	case *LogicalSelection:
+	case *LogicalSelection, *LogicalLimit:
 		return rs.extractHandleCols(lp.Children()[0])
 	case *DataSource:
 		if x.handleCol != nil {
