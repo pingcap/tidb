@@ -25,5 +25,56 @@
       "explain select * from t7 where (a = 1 and b = 2) or (a = 1 and b = 2)",
       "explain select * from t7 partition(p0) where (a = 1 and b = 2) or (a = 3 and b = 4)"
     ]
+  },
+  {
+    "name": "TestListPartitionPruner",
+    "cases": [
+      "select * from t1 where id = 7 and a = 6",
+      "select * from t2 where id = 7 and a = 6",
+      "select * from t3 where id = 7 and a = 6",
+      "select * from t1 where id = 7 and (a = 6 or a is null)",
+      "select * from t2 where id = 7 and (a = 6 or a is null)",
+      "select * from t3 where id = 7 and (a = 6 or a is null)",
+      "select * from t1 where id = 7 and (a = 1 or a is null)",
+      "select * from t2 where id = 7 and (a = 1 or a is null)",
+      "select * from t3 where id = 7 and (a = 1 or a is null)",
+      "select * from t1 where (id = 7 and a = 1) or a is null",
+      "select * from t2 where (id = 7 and a = 1) or a is null",
+      "select * from t3 where (id = 7 and a = 1) or a is null",
+      "select * from t1 where (id = 7 and a = 1) or (a = 1 and id = 1)",
+      "select * from t2 where (id = 7 and a = 1) or (a = 1 and id = 1)",
+      "select * from t3 where (id = 7 and a = 1) or (a = 1 and id = 1)",
+      "select * from t1 where a is null",
+      "select * from t2 where a is null",
+      "select * from t3 where a is null",
+      "select * from t1 where a=id",
+      "select * from t2 where a=id",
+      "select * from t3 where a=id",
+      "select * from t1 where a=id or a is null",
+      "select * from t2 where a=id or a is null",
+      "select * from t3 where a=id or a is null",
+      "select * from t1 where a in (1,2) or a=4",
+      "select * from t2 where a in (1,2) or a=4",
+      "select * from t3 where a in (1,2) or a=4",
+      "select * from t1 where a in (1,2) or a=6",
+      "select * from t2 where a in (1,2) or a=7",
+      "select * from t3 where a in (1,2) or a=8",
+      "select * from t1 where id = 1 or b = 1",
+      "select * from t2 where id = 1 or b = 1",
+      "select * from t3 where id = 1 or b = 1",
+      "select * from t1 where a = 100",
+      "select * from t2 where a = 100",
+      "select * from t3 where a = 100"
+    ]
+  },
+  {
+    "name": "TestListColumnsPartitionPruner",
+    "cases": [
+      "select * from t1 where a = 1 or b = 2",
+      "select * from t1 where a = 1 and b = 2",
+      "select * from t1 where a in (1,2,3) or b in (4,5,6)",
+      "select * from t1 where a in (1,2,3) and b in (4,5,6)",
+      "select 1"
+    ]
   }
 ]

@@ -16,7 +16,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/pingcap/tidb/infoschema"
 	"sort"
 	"strings"
 
@@ -225,46 +224,23 @@ func (s *partitionProcessor) processHashPartition(ds *DataSource, pi *model.Part
 	return tableDual, nil
 }
 
-func extractListPartitionExprColumns(ctx sessionctx.Context, tbl table.Table, columns []*expression.Column, names types.NameSlice) ([]*expression.Column, error) {
-	var cols []*expression.Column
-	pi := tbl.Meta().Partition
-	if len(pi.Columns) == 0 {
-		schema := expression.NewSchema(columns...)
-		exprs, err := expression.ParseSimpleExprsWithNames(ctx, pi.Expr, schema, names)
-		if err != nil {
-			return nil, err
-		}
-		exprs[0].HashCode(ctx.GetSessionVars().StmtCtx)
-		cols = expression.ExtractColumns(exprs[0])
-		return cols, nil
-	}
-	for _, col := range pi.Columns {
-		idx := expression.FindFieldNameIdxByColName(names, pi.Columns[0].L)
-		if idx < 0 {
-			return nil, infoschema.ErrColumnNotExists.GenWithStackByArgs(col.L, tbl.Meta().Name.L)
-		}
-		cols = append(cols, columns[idx].Clone().(*expression.Column))
-	}
-	return cols, nil
-}
-
 func (s *partitionProcessor) findUsedListPartitions(ctx sessionctx.Context, tbl table.Table, partitionNames []model.CIStr,
 	conds []expression.Expression, columns []*expression.Column, names types.NameSlice) ([]int, error) {
 	pi := tbl.Meta().Partition
-	partIdx, err := extractListPartitionExprColumns(ctx, tbl, columns, names)
-	if err != nil {
-		return nil, err
-	}
-	colLen := make([]int, 0, len(partIdx))
-	for i := 0; i < len(partIdx); i++ {
-		partIdx[i].Index = i
-		colLen = append(colLen, types.UnspecifiedLength)
-	}
-	datchedResult, err := ranger.DetachCondAndBuildRangeForPartition(ctx, conds, partIdx, colLen)
-	if err != nil {
-		return nil, err
-	}
 	partExpr, err := tbl.(partitionTable).PartitionExpr()
+	if err != nil {
+		return nil, err
+	}
+	pruneList := partExpr.ForListPruning
+	cols := make([]*expression.Column, 0, len(pruneList.ExprCols))
+	colLen := make([]int, 0, len(pruneList.ExprCols))
+	for _, c := range pruneList.ExprCols {
+		cols = append(cols, c.Clone().(*expression.Column))
+		colLen = append(colLen, types.UnspecifiedLength)
+		//fmt.Printf("find column %v idx is %v, %v, unique idx: %v  \n\n", cols[i].OrigName, cols[i].Index, pruneList.ExprCols[i].Index, cols[i].UniqueID)
+	}
+
+	datchedResult, err := ranger.DetachCondAndBuildRangeForPartition(ctx, conds, cols, colLen)
 	if err != nil {
 		return nil, err
 	}
@@ -273,14 +249,14 @@ func (s *partitionProcessor) findUsedListPartitions(ctx sessionctx.Context, tbl 
 	used := make([]int, 0, len(ranges))
 	for _, r := range ranges {
 		if r.IsPointNullable(ctx.GetSessionVars().StmtCtx) {
-			//if !r.HighVal[0].IsNull() {
-			//	if len(r.HighVal) != len(partIdx) {
-			//		used = []int{-1}
-			//		break
-			//	}
-			//}
+			if !r.HighVal[0].IsNull() {
+				if len(r.HighVal) != len(cols) {
+					used = []int{-1}
+					break
+				}
+			}
 			found := int64(-1)
-			for j, expr := range partExpr.ForListPruning.InValues {
+			for j, expr := range pruneList.Exprs {
 				ret, _, err := expr.EvalInt(ctx, chunk.MutRowFromDatums(r.HighVal).ToRow())
 				if err != nil {
 					return nil, err

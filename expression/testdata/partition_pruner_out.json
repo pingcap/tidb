@@ -177,5 +177,390 @@
         ]
       }
     ]
+  },
+  {
+    "Name": "TestListPartitionPruner",
+    "Cases": [
+      {
+        "SQL": "select * from t1 where id = 7 and a = 6",
+        "Result": null,
+        "Plan": [
+          "TableReader_7 0.01 root partition:p1 data:Selection_6",
+          "└─Selection_6 0.01 cop[tikv]  eq(test_partition.t1.a, 6), eq(test_partition.t1.id, 7)",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t2 where id = 7 and a = 6",
+        "Result": null,
+        "Plan": [
+          "IndexLookUp_11 0.01 root partition:all ",
+          "├─IndexRangeScan_8(Build) 10.00 cop[tikv] table:t2, index:a(a, b) range:[6,6], keep order:false, stats:pseudo",
+          "└─Selection_10(Probe) 0.01 cop[tikv]  eq(test_partition.t2.id, 7)",
+          "  └─TableRowIDScan_9 10.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t3 where id = 7 and a = 6",
+        "Result": null,
+        "Plan": [
+          "TableReader_7 0.01 root partition:p1 data:Selection_6",
+          "└─Selection_6 0.01 cop[tikv]  eq(test_partition.t3.a, 6), eq(test_partition.t3.id, 7)",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t1 where id = 7 and (a = 6 or a is null)",
+        "Result": null,
+        "Plan": [
+          "TableReader_7 0.02 root partition:p1 data:Selection_6",
+          "└─Selection_6 0.02 cop[tikv]  eq(test_partition.t1.id, 7), or(eq(test_partition.t1.a, 6), isnull(test_partition.t1.a))",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t2 where id = 7 and (a = 6 or a is null)",
+        "Result": null,
+        "Plan": [
+          "IndexLookUp_11 0.02 root partition:all ",
+          "├─IndexRangeScan_8(Build) 20.00 cop[tikv] table:t2, index:a(a, b) range:[NULL,NULL], [6,6], keep order:false, stats:pseudo",
+          "└─Selection_10(Probe) 0.02 cop[tikv]  eq(test_partition.t2.id, 7)",
+          "  └─TableRowIDScan_9 20.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t3 where id = 7 and (a = 6 or a is null)",
+        "Result": null,
+        "Plan": [
+          "TableReader_7 0.02 root partition:p1 data:Selection_6",
+          "└─Selection_6 0.02 cop[tikv]  eq(test_partition.t3.id, 7), or(eq(test_partition.t3.a, 6), isnull(test_partition.t3.a))",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t1 where id = 7 and (a = 1 or a is null)",
+        "Result": null,
+        "Plan": [
+          "TableReader_7 0.02 root partition:p0,p1 data:Selection_6",
+          "└─Selection_6 0.02 cop[tikv]  eq(test_partition.t1.id, 7), or(eq(test_partition.t1.a, 1), isnull(test_partition.t1.a))",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t2 where id = 7 and (a = 1 or a is null)",
+        "Result": null,
+        "Plan": [
+          "IndexLookUp_11 0.02 root partition:all ",
+          "├─IndexRangeScan_8(Build) 20.00 cop[tikv] table:t2, index:a(a, b) range:[NULL,NULL], [1,1], keep order:false, stats:pseudo",
+          "└─Selection_10(Probe) 0.02 cop[tikv]  eq(test_partition.t2.id, 7)",
+          "  └─TableRowIDScan_9 20.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t3 where id = 7 and (a = 1 or a is null)",
+        "Result": null,
+        "Plan": [
+          "TableReader_7 0.02 root partition:p0,p1 data:Selection_6",
+          "└─Selection_6 0.02 cop[tikv]  eq(test_partition.t3.id, 7), or(eq(test_partition.t3.a, 1), isnull(test_partition.t3.a))",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t1 where (id = 7 and a = 1) or a is null",
+        "Result": null,
+        "Plan": [
+          "TableReader_7 10.01 root partition:p0,p1 data:Selection_6",
+          "└─Selection_6 10.01 cop[tikv]  or(and(eq(test_partition.t1.id, 7), eq(test_partition.t1.a, 1)), isnull(test_partition.t1.a))",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t2 where (id = 7 and a = 1) or a is null",
+        "Result": null,
+        "Plan": [
+          "IndexLookUp_11 16.00 root partition:all ",
+          "├─IndexRangeScan_8(Build) 20.00 cop[tikv] table:t2, index:a(a, b) range:[NULL,NULL], [1,1], keep order:false, stats:pseudo",
+          "└─Selection_10(Probe) 16.00 cop[tikv]  or(and(eq(test_partition.t2.id, 7), eq(test_partition.t2.a, 1)), isnull(test_partition.t2.a))",
+          "  └─TableRowIDScan_9 20.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t3 where (id = 7 and a = 1) or a is null",
+        "Result": null,
+        "Plan": [
+          "TableReader_7 10.01 root partition:p0,p1 data:Selection_6",
+          "└─Selection_6 10.01 cop[tikv]  or(and(eq(test_partition.t3.id, 7), eq(test_partition.t3.a, 1)), isnull(test_partition.t3.a))",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t1 where (id = 7 and a = 1) or (a = 1 and id = 1)",
+        "Result": null,
+        "Plan": [
+          "TableReader_7 0.02 root partition:p0 data:Selection_6",
+          "└─Selection_6 0.02 cop[tikv]  or(and(eq(test_partition.t1.id, 7), eq(test_partition.t1.a, 1)), and(eq(test_partition.t1.a, 1), eq(test_partition.t1.id, 1)))",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t2 where (id = 7 and a = 1) or (a = 1 and id = 1)",
+        "Result": null,
+        "Plan": [
+          "IndexLookUp_11 8.00 root partition:all ",
+          "├─IndexRangeScan_8(Build) 10.00 cop[tikv] table:t2, index:a(a, b) range:[1,1], keep order:false, stats:pseudo",
+          "└─Selection_10(Probe) 8.00 cop[tikv]  or(and(eq(test_partition.t2.id, 7), eq(test_partition.t2.a, 1)), and(eq(test_partition.t2.a, 1), eq(test_partition.t2.id, 1)))",
+          "  └─TableRowIDScan_9 10.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t3 where (id = 7 and a = 1) or (a = 1 and id = 1)",
+        "Result": null,
+        "Plan": [
+          "TableReader_7 0.02 root partition:p0 data:Selection_6",
+          "└─Selection_6 0.02 cop[tikv]  or(and(eq(test_partition.t3.id, 7), eq(test_partition.t3.a, 1)), and(eq(test_partition.t3.a, 1), eq(test_partition.t3.id, 1)))",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t1 where a is null",
+        "Result": null,
+        "Plan": [
+          "TableReader_7 10.00 root partition:p1 data:Selection_6",
+          "└─Selection_6 10.00 cop[tikv]  isnull(test_partition.t1.a)",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t2 where a is null",
+        "Result": null,
+        "Plan": [
+          "IndexLookUp_10 10.00 root partition:p1 ",
+          "├─IndexRangeScan_8(Build) 10.00 cop[tikv] table:t2, index:a(a, b) range:[NULL,NULL], keep order:false, stats:pseudo",
+          "└─TableRowIDScan_9(Probe) 10.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t3 where a is null",
+        "Result": null,
+        "Plan": [
+          "TableReader_7 10.00 root partition:p1 data:Selection_6",
+          "└─Selection_6 10.00 cop[tikv]  isnull(test_partition.t3.a)",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t1 where a=id",
+        "Result": null,
+        "Plan": [
+          "TableReader_7 8000.00 root partition:all data:Selection_6",
+          "└─Selection_6 8000.00 cop[tikv]  eq(test_partition.t1.a, test_partition.t1.id)",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t2 where a=id",
+        "Result": null,
+        "Plan": [
+          "TableReader_7 8000.00 root partition:all data:Selection_6",
+          "└─Selection_6 8000.00 cop[tikv]  eq(test_partition.t2.a, test_partition.t2.id)",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t3 where a=id",
+        "Result": null,
+        "Plan": [
+          "TableReader_7 8000.00 root partition:all data:Selection_6",
+          "└─Selection_6 8000.00 cop[tikv]  eq(test_partition.t3.a, test_partition.t3.id)",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t1 where a=id or a is null",
+        "Result": null,
+        "Plan": [
+          "TableReader_7 8002.00 root partition:all data:Selection_6",
+          "└─Selection_6 8002.00 cop[tikv]  or(eq(test_partition.t1.a, test_partition.t1.id), isnull(test_partition.t1.a))",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t2 where a=id or a is null",
+        "Result": null,
+        "Plan": [
+          "TableReader_7 8002.00 root partition:all data:Selection_6",
+          "└─Selection_6 8002.00 cop[tikv]  or(eq(test_partition.t2.a, test_partition.t2.id), isnull(test_partition.t2.a))",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t3 where a=id or a is null",
+        "Result": null,
+        "Plan": [
+          "TableReader_7 8002.00 root partition:all data:Selection_6",
+          "└─Selection_6 8002.00 cop[tikv]  or(eq(test_partition.t3.a, test_partition.t3.id), isnull(test_partition.t3.a))",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t1 where a in (1,2) or a=4",
+        "Result": null,
+        "Plan": [
+          "TableReader_7 30.00 root partition:p0 data:Selection_6",
+          "└─Selection_6 30.00 cop[tikv]  or(in(test_partition.t1.a, 1, 2), eq(test_partition.t1.a, 4))",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t2 where a in (1,2) or a=4",
+        "Result": null,
+        "Plan": [
+          "IndexLookUp_10 260.00 root partition:all ",
+          "├─IndexRangeScan_8(Build) 260.00 cop[tikv] table:t2, index:a(a, b) range:[1,2], [4,4], keep order:false, stats:pseudo",
+          "└─TableRowIDScan_9(Probe) 260.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t3 where a in (1,2) or a=4",
+        "Result": null,
+        "Plan": [
+          "TableReader_7 30.00 root partition:p0 data:Selection_6",
+          "└─Selection_6 30.00 cop[tikv]  or(in(test_partition.t3.a, 1, 2), eq(test_partition.t3.a, 4))",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t1 where a in (1,2) or a=6",
+        "Result": null,
+        "Plan": [
+          "TableReader_7 30.00 root partition:p0,p1 data:Selection_6",
+          "└─Selection_6 30.00 cop[tikv]  or(in(test_partition.t1.a, 1, 2), eq(test_partition.t1.a, 6))",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t2 where a in (1,2) or a=7",
+        "Result": null,
+        "Plan": [
+          "IndexLookUp_10 260.00 root partition:all ",
+          "├─IndexRangeScan_8(Build) 260.00 cop[tikv] table:t2, index:a(a, b) range:[1,2], [7,7], keep order:false, stats:pseudo",
+          "└─TableRowIDScan_9(Probe) 260.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t3 where a in (1,2) or a=8",
+        "Result": null,
+        "Plan": [
+          "TableReader_7 30.00 root partition:p0,p1 data:Selection_6",
+          "└─Selection_6 30.00 cop[tikv]  or(in(test_partition.t3.a, 1, 2), eq(test_partition.t3.a, 8))",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t1 where id = 1 or b = 1",
+        "Result": null,
+        "Plan": [
+          "TableReader_7 19.99 root partition:all data:Selection_6",
+          "└─Selection_6 19.99 cop[tikv]  or(eq(test_partition.t1.id, 1), eq(test_partition.t1.b, 1))",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t2 where id = 1 or b = 1",
+        "Result": null,
+        "Plan": [
+          "TableReader_7 19.99 root partition:all data:Selection_6",
+          "└─Selection_6 19.99 cop[tikv]  or(eq(test_partition.t2.id, 1), eq(test_partition.t2.b, 1))",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t3 where id = 1 or b = 1",
+        "Result": null,
+        "Plan": [
+          "TableReader_7 19.99 root partition:all data:Selection_6",
+          "└─Selection_6 19.99 cop[tikv]  or(eq(test_partition.t3.id, 1), eq(test_partition.t3.b, 1))",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t1 where a = 100",
+        "Result": null,
+        "Plan": [
+          "TableReader_7 10.00 root partition:dual data:Selection_6",
+          "└─Selection_6 10.00 cop[tikv]  eq(test_partition.t1.a, 100)",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t2 where a = 100",
+        "Result": null,
+        "Plan": [
+          "IndexLookUp_10 10.00 root partition:all ",
+          "├─IndexRangeScan_8(Build) 10.00 cop[tikv] table:t2, index:a(a, b) range:[100,100], keep order:false, stats:pseudo",
+          "└─TableRowIDScan_9(Probe) 10.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t3 where a = 100",
+        "Result": null,
+        "Plan": [
+          "TableReader_7 10.00 root partition:dual data:Selection_6",
+          "└─Selection_6 10.00 cop[tikv]  eq(test_partition.t3.a, 100)",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo"
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestListColumnsPartitionPruner",
+    "Cases": [
+      {
+        "SQL": "select * from t1 where a = 1 or b = 2",
+        "Result": null,
+        "Plan": [
+          "TableReader_7 19.99 root partition:all data:Selection_6",
+          "└─Selection_6 19.99 cop[tikv]  or(eq(test_partition.t1.a, 1), eq(test_partition.t1.b, 2))",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t1 where a = 1 and b = 2",
+        "Result": null,
+        "Plan": [
+          "TableReader_7 0.01 root partition:dual data:Selection_6",
+          "└─Selection_6 0.01 cop[tikv]  eq(test_partition.t1.a, 1), eq(test_partition.t1.b, 2)",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t1 where a in (1,2,3) or b in (4,5,6)",
+        "Result": null,
+        "Plan": [
+          "TableReader_7 59.91 root partition:all data:Selection_6",
+          "└─Selection_6 59.91 cop[tikv]  or(in(test_partition.t1.a, 1, 2, 3), in(test_partition.t1.b, 4, 5, 6))",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t1 where a in (1,2,3) and b in (4,5,6)",
+        "Result": null,
+        "Plan": [
+          "TableReader_7 0.09 root partition:dual data:Selection_6",
+          "└─Selection_6 0.09 cop[tikv]  in(test_partition.t1.a, 1, 2, 3), in(test_partition.t1.b, 4, 5, 6)",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select 1",
+        "Result": [
+          "1"
+        ],
+        "Plan": [
+          "Projection_3 1.00 root  1->Column#1",
+          "└─TableDual_4 1.00 root  rows:1"
+        ]
+      }
+    ]
   }
 ]

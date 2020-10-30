@@ -199,7 +199,8 @@ func parseSimpleExprWithNames(p *parser.Parser, ctx sessionctx.Context, exprStr 
 
 // ForListPruning is used for list partition pruning.
 type ForListPruning struct {
-	InValues []expression.Expression
+	Exprs    []expression.Expression
+	ExprCols []*expression.Column
 }
 
 // ForRangePruning is used for range partition pruning.
@@ -354,16 +355,33 @@ func extractListPartitionExprColumns(ctx sessionctx.Context, pi *model.Partition
 		}
 		exprs[0].HashCode(ctx.GetSessionVars().StmtCtx)
 		cols = expression.ExtractColumns(exprs[0])
-		return cols, nil
-	}
-	for _, col := range pi.Columns {
-		idx := expression.FindFieldNameIdxByColName(names, col.L)
-		if idx < 0 {
-			panic("should never happen")
+	} else {
+		for _, col := range pi.Columns {
+			idx := expression.FindFieldNameIdxByColName(names, col.L)
+			if idx < 0 {
+				panic("should never happen")
+			}
+			cols = append(cols, columns[idx])
 		}
-		cols = append(cols, columns[idx].Clone().(*expression.Column))
 	}
-	return cols, nil
+	deDupCols := make([]*expression.Column, 0, len(cols))
+	for _, col := range cols {
+		if findIdxByColUniqueID(deDupCols, col) < 0 {
+			c := col.Clone().(*expression.Column)
+			c.Index = len(deDupCols)
+			deDupCols = append(deDupCols, c)
+		}
+	}
+	return deDupCols, nil
+}
+
+func findIdxByColUniqueID(cols []*expression.Column, col *expression.Column) int {
+	for idx, c := range cols {
+		if c.UniqueID == col.UniqueID {
+			return idx
+		}
+	}
+	return -1
 }
 
 func generateListPartitionExpr(ctx sessionctx.Context, pi *model.PartitionInfo,
@@ -372,11 +390,11 @@ func generateListPartitionExpr(ctx sessionctx.Context, pi *model.PartitionInfo,
 	locateExprs := make([]expression.Expression, 0, len(pi.Definitions))
 	pruneExprs := make([]expression.Expression, 0, len(pi.Definitions))
 	schema := expression.NewSchema(columns...)
-	p := parser.New()
 	exprCols, err := extractListPartitionExprColumns(ctx, pi, columns, names)
 	if err != nil {
 		return nil, err
 	}
+	p := parser.New()
 	for _, def := range pi.Definitions {
 		exprStr, err := generateListPartitionExprStr(ctx, pi, schema, names, &def, p)
 		if err != nil {
@@ -392,23 +410,26 @@ func generateListPartitionExpr(ctx sessionctx.Context, pi *model.PartitionInfo,
 		pruneExpr := expr.Clone()
 		cols := expression.ExtractColumns(pruneExpr)
 		for _, c := range cols {
-			found := false
-			for idx, ec := range exprCols {
-				if c.UniqueID == ec.UniqueID {
-					c.Index = idx
-					found = true
-					break
-				}
-			}
-			if !found {
+			idx := findIdxByColUniqueID(exprCols, c)
+			if idx < 0 {
 				panic("should never happen")
 			}
+			c.Index = idx
+			//fmt.Printf("build 1 column %v idx is %v, unique idx: %v  \n\n", c.OrigName, c.Index, c.UniqueID)
 		}
+
+		//if true {
+		//	cols := expression.ExtractColumns(pruneExpr)
+		//	for _, c := range cols {
+		//		fmt.Printf("build 2 column %v idx is %v, unique idx: %v  \n\n", c.OrigName, c.Index, c.UniqueID)
+		//	}
+		//}
+		//
 		pruneExprs = append(pruneExprs, pruneExpr)
 	}
 	ret := &PartitionExpr{
 		InValues:       locateExprs,
-		ForListPruning: &ForListPruning{InValues: pruneExprs},
+		ForListPruning: &ForListPruning{Exprs: pruneExprs, ExprCols: exprCols},
 	}
 	return ret, nil
 }
