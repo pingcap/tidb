@@ -600,18 +600,17 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 }
 
 func onDropIndexes(t *meta.Meta, job *model.Job) (ver int64, _ error) {
-	tblInfo, indexesInfo, err := checkDropIndexes(t, job)
+	tblInfo, idxInfos, err := checkDropIndexes(t, job)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
-
-	if len(indexesInfo) == 0 {
+	if len(idxInfos) == 0 {
 		job.State = model.JobStateCancelled
 		return ver, nil
 	}
 
 	dependentHiddenCols := make([]*model.ColumnInfo, 0)
-	for _, indexInfo := range indexesInfo {
+	for _, indexInfo := range idxInfos {
 		for _, indexColumn := range indexInfo.Columns {
 			if tblInfo.Columns[indexColumn.Offset].Hidden {
 				dependentHiddenCols = append(dependentHiddenCols, tblInfo.Columns[indexColumn.Offset])
@@ -619,42 +618,34 @@ func onDropIndexes(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		}
 	}
 
-	originalState := indexesInfo[0].State
-	switch indexesInfo[0].State {
+	originalState := idxInfos[0].State
+	switch idxInfos[0].State {
 	case model.StatePublic:
 		// public -> write only
 		job.SchemaState = model.StateWriteOnly
-		setIndicesState(indexesInfo, model.StateWriteOnly)
-		if len(dependentHiddenCols) > 0 {
-			firstHiddenOffset := dependentHiddenCols[0].Offset
-			for i := 0; i < len(dependentHiddenCols); i++ {
-				tblInfo.Columns[firstHiddenOffset].State = model.StateWriteOnly
-				// Set this column's offset to the last and reset all following columns' offsets.
-				adjustColumnInfoInDropColumn(tblInfo, firstHiddenOffset)
-			}
+		setIndicesState(idxInfos, model.StateWriteOnly)
+		setColumnsState(dependentHiddenCols, model.StateWriteOnly)
+		for _, colInfo := range dependentHiddenCols {
+			adjustColumnInfoInDropColumn(tblInfo, colInfo.Offset)
 		}
-		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != indexesInfo[0].State)
+		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != idxInfos[0].State)
 	case model.StateWriteOnly:
 		// write only -> delete only
 		job.SchemaState = model.StateDeleteOnly
-		for _, indexInfo := range indexesInfo {
-			indexInfo.State = model.StateDeleteOnly
-			updateHiddenColumns(tblInfo, indexInfo, model.StateDeleteOnly)
-		}
-		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != indexesInfo[0].State)
+		setIndicesState(idxInfos, model.StateDeleteOnly)
+		setColumnsState(dependentHiddenCols, model.StateDeleteOnly)
+		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != idxInfos[0].State)
 	case model.StateDeleteOnly:
 		// delete only -> reorganization
 		job.SchemaState = model.StateDeleteReorganization
-		for _, indexInfo := range indexesInfo {
-			indexInfo.State = model.StateDeleteReorganization
-			updateHiddenColumns(tblInfo, indexInfo, model.StateDeleteReorganization)
-		}
-		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != indexesInfo[0].State)
+		setIndicesState(idxInfos, model.StateDeleteReorganization)
+		setColumnsState(dependentHiddenCols, model.StateDeleteReorganization)
+		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != idxInfos[0].State)
 	case model.StateDeleteReorganization:
 		// reorganization -> absent
-		indexesIDs := make([]int64, 0, len(indexesInfo))
-		indexesLName := make(map[string]bool, len(indexesInfo))
-		for _, indexInfo := range indexesInfo {
+		indexesIDs := make([]int64, 0, len(idxInfos))
+		indexesLName := make(map[string]bool, len(idxInfos))
+		for _, indexInfo := range idxInfos {
 			indexesLName[indexInfo.Name.L] = true
 			indexesIDs = append(indexesIDs, indexInfo.ID)
 		}
@@ -668,7 +659,7 @@ func onDropIndexes(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		tblInfo.Indices = newIndices
 
 		// Set column index flag.
-		for _, indexInfo := range indexesInfo {
+		for _, indexInfo := range idxInfos {
 			dropIndexColumnFlag(tblInfo, indexInfo)
 		}
 
@@ -690,7 +681,7 @@ func onDropIndexes(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 			job.Args = append(job.Args, indexesIDs, getPartitionIDs(tblInfo))
 		}
 	default:
-		err = ErrInvalidDDLState.GenWithStackByArgs("index", indexesInfo[0].State)
+		err = ErrInvalidDDLState.GenWithStackByArgs("index", idxInfos[0].State)
 	}
 	return ver, errors.Trace(err)
 }
