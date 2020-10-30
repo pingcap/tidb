@@ -78,6 +78,7 @@ func (c *twoPhaseCommitter) buildPrewriteRequest(batch batchMutations, txnSize u
 		ForUpdateTs:       c.forUpdateTS,
 		TxnSize:           txnSize,
 		MinCommitTs:       minCommitTS,
+		MaxCommitTs:       c.maxCommitTS,
 	}
 
 	if c.isAsyncCommit() {

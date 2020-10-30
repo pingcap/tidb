@@ -679,8 +679,8 @@ type groupedMutations struct {
 	mutations CommitterMutations
 }
 
-// GroupSortedMutationsByRegion separates keys into groups by their belonging Regions.
-func (c *RegionCache) GroupSortedMutationsByRegion(bo *Backoffer, m CommitterMutations) ([]groupedMutations, error) {
+// groupSortedMutationsByRegion separates keys into groups by their belonging Regions.
+func (c *RegionCache) groupSortedMutationsByRegion(bo *Backoffer, m CommitterMutations) ([]groupedMutations, error) {
 	var (
 		groups  []groupedMutations
 		lastLoc *KeyLocation

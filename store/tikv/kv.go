@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"math/rand"
 	"net/url"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -235,10 +236,22 @@ func (s *tikvStore) IsLatchEnabled() bool {
 	return s.txnLatches != nil
 }
 
+var (
+	ldflagGetEtcdAddrsFromConfig = "0" // 1:Yes, otherwise:No
+)
+
 func (s *tikvStore) EtcdAddrs() ([]string, error) {
 	if s.etcdAddrs == nil {
 		return nil, nil
 	}
+
+	if ldflagGetEtcdAddrsFromConfig == "1" {
+		// For automated test purpose.
+		// To manipulate connection to etcd by mandatorily setting path to a proxy.
+		cfg := config.GetGlobalConfig()
+		return strings.Split(cfg.Path, ","), nil
+	}
+
 	ctx := context.Background()
 	bo := NewBackoffer(ctx, GetMemberInfoBackoff)
 	etcdAddrs := make([]string, 0)
@@ -407,6 +420,12 @@ func (s *tikvStore) GetClient() kv.Client {
 	return &CopClient{
 		store:           s,
 		replicaReadSeed: s.nextReplicaReadSeed(),
+	}
+}
+
+func (s *tikvStore) GetMPPClient() kv.MPPClient {
+	return &MPPClient{
+		store: s,
 	}
 }
 
