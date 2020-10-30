@@ -1,7 +1,5 @@
 module github.com/pingcap/tidb
 
-replace github.com/tikv/pd v1.1.0-beta.0.20200910042021-254d1345be09 => github.com/JmPotato/pd v1.1.0-beta.0.20201028065902-c7c308265982
-
 require (
 	github.com/BurntSushi/toml v0.3.1
 	github.com/HdrHistogram/hdrhistogram-go v0.9.0 // indirect
