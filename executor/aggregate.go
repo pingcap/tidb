@@ -361,7 +361,7 @@ func recoveryHashAgg(output chan *AfFinalResult, r interface{}) {
 	logutil.BgLogger().Error("parallel hash aggregation panicked", zap.Error(err), zap.Stack("stack"))
 }
 
-func (w *HashAggPartialWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitGroup, finalConcurrency int) {
+func (w *HashAggPartialWorker) run(ctx sessionctx.Context, finalConcurrency int) {
 	needShuffle, sc := false, ctx.GetSessionVars().StmtCtx
 	defer func() {
 		if r := recover(); r != nil {
@@ -371,7 +371,6 @@ func (w *HashAggPartialWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitG
 			w.shuffleIntermData(sc, finalConcurrency)
 		}
 		w.memTracker.Consume(-w.chk.MemoryUsage())
-		waitGroup.Done()
 	}()
 	for {
 		if w.hashAgg.stats != nil {
@@ -581,12 +580,11 @@ func (w *HashAggFinalWorker) receiveFinalResultHolder() (*chunk.Chunk, bool) {
 	}
 }
 
-func (w *HashAggFinalWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitGroup) {
+func (w *HashAggFinalWorker) run(ctx sessionctx.Context) {
 	defer func() {
 		if r := recover(); r != nil {
 			recoveryHashAgg(w.outputCh, r)
 		}
-		waitGroup.Done()
 	}()
 	if err := w.consumeIntermData(ctx); err != nil {
 		w.outputCh <- &AfFinalResult{err: err}
@@ -669,10 +667,11 @@ func (e *HashAggExec) prepare4ParallelExec(ctx context.Context) {
 	for i := range e.partialWorkers {
 		go func(index int) {
 			workerStart := time.Now()
-			e.partialWorkers[index].run(e.ctx, partialWorkerWaitGroup, len(e.finalWorkers))
+			e.partialWorkers[index].run(e.ctx, len(e.finalWorkers))
 			if e.stats != nil {
 				partialTime <- time.Since(workerStart)
 			}
+			partialWorkerWaitGroup.Done()
 		}(i)
 	}
 	go func() {
@@ -692,10 +691,11 @@ func (e *HashAggExec) prepare4ParallelExec(ctx context.Context) {
 	for i := range e.finalWorkers {
 		go func(index int) {
 			workerStart := time.Now()
-			e.finalWorkers[index].run(e.ctx, finalWorkerWaitGroup)
+			e.finalWorkers[index].run(e.ctx)
 			if e.stats != nil {
 				finalTime <- time.Since(workerStart)
 			}
+			finalWorkerWaitGroup.Done()
 		}(i)
 	}
 	go func() {
