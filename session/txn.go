@@ -105,11 +105,6 @@ func (st *TxnState) NewStagingBuffer() kv.MemBuffer {
 	return st.stmtBuf.NewStagingBuffer()
 }
 
-// SetBuffer set the given MemBuffer
-func (st *TxnState) SetBuffer(m kv.MemBuffer) {
-	st.stmtBuf = m
-}
-
 // Flush flushes all staging kvs into parent buffer.
 func (st *TxnState) Flush() (int, error) {
 	if st.stmtBuf == nil {

@@ -15,6 +15,8 @@ package tables
 
 import (
 	"context"
+	"io"
+
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
@@ -26,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
-	"io"
 )
 
 // indexIter is for KV store index iterator.
@@ -258,7 +259,7 @@ func (c *index) Create(sctx sessionctx.Context, rm kv.RetrieverMutator, indexedV
 }
 
 // Delete removes the entry for handle h and indexedValues from KV index.
-func (c *index) Delete(sc *stmtctx.StatementContext, m kv.RetrieverMutator, indexedValues []types.Datum, h int64) error {
+func (c *index) Delete(sc *stmtctx.StatementContext, m kv.Mutator, indexedValues []types.Datum, h int64) error {
 	key, distinct, err := c.GenIndexKey(sc, indexedValues, h, nil)
 	if err != nil {
 		return err
