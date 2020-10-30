@@ -2046,6 +2046,18 @@ func (s *testPessimisticSuite) Test1PCWithSchemaChange(c *C) {
 
 	tk.MustExec("drop table if exists tk")
 	tk.MustExec("create table tk (c1 int primary key, c2 int)")
+
+	tk.MustExec("begin optimistic")
+	tk.MustExec("insert into tk values(2, 2)")
+	// Add index for c2 before commit
+	tk2.MustExec("alter table tk add index k2(c2)")
+	// The transaction will not be committed by 1PC protocol.
+	tk.MustExec("commit")
+	tk3.MustQuery("select * from tk where c2 = 2").Check(testkit.Rows("2 2"))
+	tk3.MustExec("admin check table tk")
+
+	tk.MustExec("drop table if exists tk")
+	tk.MustExec("create table tk (c1 int primary key, c2 int)")
 	tk.MustExec("begin optimistic")
 	tk.MustExec("insert into tk values(1, 1)")
 	go func() {
