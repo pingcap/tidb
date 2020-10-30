@@ -66,15 +66,6 @@ func (rs *resultsStabilizer) extractHandleCols(lp LogicalPlan) []*expression.Col
 	switch x := lp.(type) {
 	case *LogicalSelection:
 		return rs.extractHandleCols(lp.Children()[0])
-	case *LogicalProjection:
-		hcs := rs.extractHandleCols(lp.Children()[0])
-		for _, hc := range hcs { // update these columns on this Projection
-			if !x.Schema().Contains(hc) {
-				x.Schema().Columns = append(x.Schema().Columns)
-				x.Exprs = append(x.Exprs, hc)
-			}
-		}
-		return hcs
 	case *DataSource:
 		if x.handleCol != nil {
 			return []*expression.Column{x.handleCol}
