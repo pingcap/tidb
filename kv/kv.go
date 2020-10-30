@@ -152,8 +152,6 @@ type Mutator interface {
 	Set(k Key, v []byte) error
 	// Delete removes the entry for key k from kv store.
 	Delete(k Key) error
-	// DeleteWithNeedLock deletes key with a need lock mark
-	DeleteWithNeedLock(Key) error
 }
 
 // RetrieverMutator is the interface that groups Retriever and Mutator interfaces.
@@ -180,6 +178,8 @@ type MemBuffer interface {
 	Flush() (int, error)
 	// Discard discards all kvs in this buffer.
 	Discard()
+	// DeleteWithNeedLock deletes key with a need lock mark
+	DeleteWithNeedLock(Key) error
 	// IfKeyNeedLock sees if a key need to be locked
 	IfKeyNeedLock(Key) bool
 }

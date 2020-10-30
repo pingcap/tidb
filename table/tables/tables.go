@@ -413,7 +413,7 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx sessionctx.Context,
 	return nil
 }
 
-func (t *TableCommon) rebuildIndices(ctx sessionctx.Context, rm kv.RetrieverMutator, h int64, touched []bool, oldData []types.Datum, newData []types.Datum, opts ...table.CreateIdxOptFunc) error {
+func (t *TableCommon) rebuildIndices(ctx sessionctx.Context, rm kv.MemBuffer, h int64, touched []bool, oldData []types.Datum, newData []types.Datum, opts ...table.CreateIdxOptFunc) error {
 	txn, err := ctx.Txn(true)
 	if err != nil {
 		return err
@@ -899,7 +899,7 @@ func (t *TableCommon) removeRowIndices(ctx sessionctx.Context, h int64, rec []ty
 }
 
 // removeRowIndex implements table.Table RemoveRowIndex interface.
-func (t *TableCommon) removeRowIndex(sc *stmtctx.StatementContext, rm kv.RetrieverMutator, h int64, vals []types.Datum, idx table.Index, txn kv.Transaction) error {
+func (t *TableCommon) removeRowIndex(sc *stmtctx.StatementContext, rm kv.MemBuffer, h int64, vals []types.Datum, idx table.Index, txn kv.Transaction) error {
 	return idx.Delete(sc, rm, vals, h)
 }
 
