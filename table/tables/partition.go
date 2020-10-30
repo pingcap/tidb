@@ -415,16 +415,8 @@ func generateListPartitionExpr(ctx sessionctx.Context, pi *model.PartitionInfo,
 				panic("should never happen")
 			}
 			c.Index = idx
-			//fmt.Printf("build 1 column %v idx is %v, unique idx: %v  \n\n", c.OrigName, c.Index, c.UniqueID)
 		}
 
-		//if true {
-		//	cols := expression.ExtractColumns(pruneExpr)
-		//	for _, c := range cols {
-		//		fmt.Printf("build 2 column %v idx is %v, unique idx: %v  \n\n", c.OrigName, c.Index, c.UniqueID)
-		//	}
-		//}
-		//
 		pruneExprs = append(pruneExprs, pruneExpr)
 	}
 	ret := &PartitionExpr{

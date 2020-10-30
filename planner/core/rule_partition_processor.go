@@ -237,7 +237,6 @@ func (s *partitionProcessor) findUsedListPartitions(ctx sessionctx.Context, tbl 
 	for _, c := range pruneList.ExprCols {
 		cols = append(cols, c.Clone().(*expression.Column))
 		colLen = append(colLen, types.UnspecifiedLength)
-		//fmt.Printf("find column %v idx is %v, %v, unique idx: %v  \n\n", cols[i].OrigName, cols[i].Index, pruneList.ExprCols[i].Index, cols[i].UniqueID)
 	}
 
 	datchedResult, err := ranger.DetachCondAndBuildRangeForPartition(ctx, conds, cols, colLen)
