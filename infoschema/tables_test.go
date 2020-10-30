@@ -1426,7 +1426,7 @@ func (s *testTableSuite) TestPlacementPolicy(c *C) {
 	}
 	bundles[bundleID] = bundle
 	expected := fmt.Sprintf(`%s 3 0 test test_placement p0 <nil> voter 3 "+zone=bj"`, bundleID)
-	tk.MustQuery(`select group_id, group_index, rule_id, schema_name, table_name, partition_name, index_name,
+	tk.MustQuery(`select group_id, group_index, rule_id, schema_name, table_name, partition_name, index_name, 
 		role, replicas, constraints from information_schema.placement_policy`).Check(testkit.Rows(expected))
 
 	rule1 := bundle.Rules[0].Clone()
