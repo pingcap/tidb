@@ -2051,7 +2051,7 @@ func (s *testPessimisticSuite) Test1PCWithSchemaChange(c *C) {
 	tk.MustExec("insert into tk values(2, 2)")
 	// Add index for c2 before commit
 	tk2.MustExec("alter table tk add index k2(c2)")
-	// The transaction will not be committed by 1PC protocol.
+	// key for c2 should be amended
 	tk.MustExec("commit")
 	tk3.MustQuery("select * from tk where c2 = 2").Check(testkit.Rows("2 2"))
 	tk3.MustExec("admin check table tk")
