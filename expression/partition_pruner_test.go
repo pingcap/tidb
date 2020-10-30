@@ -15,6 +15,7 @@ package expression_test
 
 import (
 	"fmt"
+	"strings"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/domain"
@@ -93,11 +94,24 @@ func (s *testSuite2) TestListPartitionPruner(c *C) {
 	tk.MustExec("drop database if exists test_partition;")
 	tk.MustExec("create database test_partition")
 	tk.MustExec("use test_partition")
-	//tk.MustExec("set @@tidb_enable_clustered_index=0;")
-
 	tk.MustExec("create table t1 (id int, a int, b int                 ) partition by list (    a    ) (partition p0 values in (1,2,3,4,5), partition p1 values in (6,7,8,9,10,null));")
-	tk.MustExec("create table t2 (a int, id int, b int, unique index (a,b)) partition by list (a*3 + b - 2*a - b) (partition p0 values in (1,2,3,4,5), partition p1 values in (6,7,8,9,10,null));")
+	tk.MustExec("create table t2 (a int, id int, b int) partition by list (a*3 + b - 2*a - b) (partition p0 values in (1,2,3,4,5), partition p1 values in (6,7,8,9,10,null));")
 	tk.MustExec("create table t3 (b int, id int, a int) partition by list columns (a) (partition p0 values in (1,2,3,4,5), partition p1 values in (6,7,8,9,10,null));")
+	tk.MustExec("insert into t1 (id,a,b) values (1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5),(6,6,6),(7,7,7),(8,8,8),(9,9,9),(10,10,10),(null,null,null)")
+	tk.MustExec("insert into t2 (id,a,b) values (1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5),(6,6,6),(7,7,7),(8,8,8),(9,9,9),(10,10,10),(null,null,null)")
+	tk.MustExec("insert into t3 (id,a,b) values (1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5),(6,6,6),(7,7,7),(8,8,8),(9,9,9),(10,10,10),(null,null,null)")
+
+	// tk2 use to compare the result with normal table.
+	tk2 := testkit.NewTestKit(c, s.store)
+	tk2.MustExec("drop database if exists test_partition_2;")
+	tk2.MustExec("create database test_partition_2")
+	tk2.MustExec("use test_partition_2")
+	tk2.MustExec("create table t1 (id int, a int, b int)")
+	tk2.MustExec("create table t2 (a int, id int, b int)")
+	tk2.MustExec("create table t3 (b int, id int, a int)")
+	tk2.MustExec("insert into t1 (id,a,b) values (1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5),(6,6,6),(7,7,7),(8,8,8),(9,9,9),(10,10,10),(null,null,null)")
+	tk2.MustExec("insert into t2 (id,a,b) values (1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5),(6,6,6),(7,7,7),(8,8,8),(9,9,9),(10,10,10),(null,null,null)")
+	tk2.MustExec("insert into t3 (id,a,b) values (1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5),(6,6,6),(7,7,7),(8,8,8),(9,9,9),(10,10,10),(null,null,null)")
 
 	var input []string
 	var output []struct {
@@ -113,7 +127,12 @@ func (s *testSuite2) TestListPartitionPruner(c *C) {
 			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain " + tt).Rows())
 		})
 		tk.MustQuery("explain " + tt).Check(testkit.Rows(output[i].Plan...))
-		tk.MustQuery(tt).Check(testkit.Rows(output[i].Result...))
+		result := tk.MustQuery(tt)
+		result.Check(testkit.Rows(output[i].Result...))
+		// If the query doesn't specified the partition, compare the result with normal table
+		if !strings.Contains(tt, "partition(") {
+			result.Check(tk2.MustQuery(tt).Rows())
+		}
 	}
 }
 
@@ -123,6 +142,19 @@ func (s *testSuite2) TestListColumnsPartitionPruner(c *C) {
 	tk.MustExec("create database test_partition")
 	tk.MustExec("use test_partition")
 	tk.MustExec("create table t1 (id int, a int, b int) partition by list columns (b,a) (partition p0 values in ((1,1),(2,2),(3,3),(4,4),(5,5)), partition p1 values in ((6,6),(7,7),(8,8),(9,9),(10,10),(null,10)));")
+	tk.MustExec("create table t2 (id int, a int, b int) partition by list columns (id,a,b) (partition p0 values in ((1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5)), partition p1 values in ((6,6,6),(7,7,7),(8,8,8),(9,9,9),(10,10,10),(null,null,null)));")
+	tk.MustExec("insert into t1 (id,a,b) values (1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5),(6,6,6),(7,7,7),(8,8,8),(9,9,9),(10,10,10),(null,10,null)")
+	tk.MustExec("insert into t2 (id,a,b) values (1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5),(6,6,6),(7,7,7),(8,8,8),(9,9,9),(10,10,10),(null,null,null)")
+
+	// tk2 use to compare the result with normal table.
+	tk2 := testkit.NewTestKit(c, s.store)
+	tk2.MustExec("drop database if exists test_partition_2;")
+	tk2.MustExec("create database test_partition_2")
+	tk2.MustExec("use test_partition_2")
+	tk2.MustExec("create table t1 (id int, a int, b int)")
+	tk2.MustExec("create table t2 (id int, a int, b int)")
+	tk2.MustExec("insert into t1 (id,a,b) values (1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5),(6,6,6),(7,7,7),(8,8,8),(9,9,9),(10,10,10),(null,10,null)")
+	tk2.MustExec("insert into t2 (id,a,b) values (1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5),(6,6,6),(7,7,7),(8,8,8),(9,9,9),(10,10,10),(null,null,null)")
 
 	var input []string
 	var output []struct {
@@ -138,6 +170,11 @@ func (s *testSuite2) TestListColumnsPartitionPruner(c *C) {
 			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain " + tt).Rows())
 		})
 		tk.MustQuery("explain " + tt).Check(testkit.Rows(output[i].Plan...))
-		tk.MustQuery(tt).Check(testkit.Rows(output[i].Result...))
+		result := tk.MustQuery(tt)
+		result.Check(testkit.Rows(output[i].Result...))
+		// If the query doesn't specified the partition, compare the result with normal table
+		if !strings.Contains(tt, "partition(") {
+			result.Check(tk2.MustQuery(tt).Rows())
+		}
 	}
 }
