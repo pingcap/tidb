@@ -434,7 +434,7 @@ func (st *TxnState) KeysNeedToLock() ([]kv.Key, error) {
 	}
 	keys := make([]kv.Key, 0, st.stmtBufLen())
 	if err := kv.WalkMemBuffer(st.stmtBuf, func(k kv.Key, v []byte) error {
-		if !st.stmtBuf.IfKeyNeedLock(k) && !keyNeedToLock(k, v) {
+		if !st.stmtBuf.GetFlags(context.Background(), k).HasNeedLocked() && !keyNeedToLock(k, v) {
 			return nil
 		}
 		// If the key is already locked, it will be deduplicated in LockKeys method later.
@@ -454,10 +454,10 @@ func keyNeedToLock(k, v []byte) bool {
 		return true
 	}
 
-	// do not lock row key for delete operation,
-	// primary key and unique indexes will be handled outside.
+	// only need to delete row key here,
+	// primary key and unique indexes are handled outside.
 	if len(v) == 0 {
-		return false
+		return k[10] == 'r'
 	}
 
 	if tablecodec.IsUntouchedIndexKValue(k, v) {

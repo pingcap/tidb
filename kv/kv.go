@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/kv/memdb"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/memory"
@@ -178,10 +179,10 @@ type MemBuffer interface {
 	Flush() (int, error)
 	// Discard discards all kvs in this buffer.
 	Discard()
+	// GetFlag get KeyFlags by an exist key
+	GetFlags(ctx context.Context, k Key) memdb.KeyFlags
 	// DeleteWithNeedLock deletes key with a need lock mark
 	DeleteWithNeedLock(Key) error
-	// IfKeyNeedLock sees if a key need to be locked
-	IfKeyNeedLock(Key) bool
 }
 
 // Transaction defines the interface for operations inside a Transaction.

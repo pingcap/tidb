@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/kv/memdb"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/execdetails"
@@ -219,8 +220,8 @@ func (txn *tikvTxn) DeleteWithNeedLock(k kv.Key) error {
 	return txn.us.DeleteWithNeedLock(k)
 }
 
-func (txn *tikvTxn) IfKeyNeedLock(k kv.Key) bool {
-	return txn.us.IfKeyNeedLock(k)
+func (txn *tikvTxn) GetFlags(ctx context.Context, k kv.Key) memdb.KeyFlags {
+	return txn.us.GetFlags(ctx, k)
 }
 
 func (txn *tikvTxn) SetOption(opt kv.Option, val interface{}) {

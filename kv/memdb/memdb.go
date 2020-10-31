@@ -21,11 +21,41 @@ import (
 	"github.com/pingcap/tidb/util/fastrand"
 )
 
+// KeyFlags are metadata associated with key
+type KeyFlags uint8
+
 const (
+	flagNeedLocked KeyFlags = 1 << iota
+
+	// flagTouched is a internal flag to help `Mark` operation.
+	// The default value of `KeyFlags` is 0 and the flags returned by any operation will set `flagTouched`.
+	// When merge two flags, if the newer one haven't set the `flagTouched`, the newer value will be ignored.
+	flagTouched KeyFlags = 0x80
+
 	maxHeight      = 16
 	nodeHeaderSize = int(unsafe.Sizeof(nodeHeader{}))
 	initBlockSize  = 4 * 1024
 )
+
+// HasNeedLocked returns whether the associated key required lock.
+func (m KeyFlags) HasNeedLocked() bool {
+	return m&flagNeedLocked != 0
+}
+
+func (m KeyFlags) isTouched() bool {
+	return m&flagTouched != 0
+}
+
+// Merge used to merge two KeyFlags.
+func (m KeyFlags) Merge(old KeyFlags) KeyFlags {
+	// Only consider flagPresumeKeyNotExists in merge operation for now.
+	// We should always respect to the older setting,
+	// the delete operation will overwrite flags in root tree instead of invoke merge.
+	if old.isTouched() {
+		return old
+	}
+	return m
+}
 
 // Sandbox is a space to keep pending kvs.
 type Sandbox struct {
@@ -60,8 +90,17 @@ func (sb *Sandbox) Get(key []byte) []byte {
 	return node.getValue(data)
 }
 
+// Get returns flag for key in this sandbox's space.
+func (sb *Sandbox) GetFlags(key []byte) KeyFlags {
+	node, _, match := sb.findGreaterEqual(key)
+	if !match {
+		return 0
+	}
+	return node.flags
+}
+
 // Put inserts kv into this sandbox.
-func (sb *Sandbox) Put(key, value []byte) {
+func (sb *Sandbox) PutWithFlags(key []byte, flags KeyFlags, value []byte) {
 	if sb.frozen {
 		panic("cannot write to a sandbox when it has forked a new sandbox")
 	}
@@ -90,6 +129,7 @@ func (sb *Sandbox) Put(key, value []byte) {
 	if height > lsHeight {
 		sb.height = height
 	}
+	x.flags |= flags
 
 	// We always insert from the base level and up. After you add a node in base level, we cannot
 	// create a node in the level above because it would have discovered the node in the base level.
@@ -108,6 +148,16 @@ func (sb *Sandbox) Put(key, value []byte) {
 
 	sb.length++
 	sb.size += len(key) + len(value)
+}
+
+// Put inserts kv into this sandbox.
+func (sb *Sandbox) Put(key, value []byte) {
+	sb.PutWithFlags(key, 0, value)
+}
+
+// PutWithNeedLock inserts kv into this sandbox and mark it with flagNeedLocked.
+func (sb *Sandbox) PutWithNeedLock(key, value []byte) {
+	sb.PutWithFlags(key, flagNeedLocked|flagTouched, value)
 }
 
 // Derive derive a new sandbox to buffer a batch of modifactions.
@@ -382,12 +432,15 @@ func (sb *Sandbox) merge(new *Sandbox) int {
 
 		height := int(newNode.height)
 		if exists {
+			newNode.flags = newNode.flags.Merge(ms.next[0].flags)
 			height = sb.prepareOverwrite(ms.next[:])
 			if height > int(newNode.height) {
 				// The space is not enough, we have to create a new node.
 				k := newNode.getKey(newNodeData)
 				v := newNode.getValue(newNodeData)
+				flags := newNode.flags
 				newNode, newNodeAddr = arena.newNode(k, v, height)
+				newNode.flags = flags
 			}
 		}
 
@@ -475,6 +528,7 @@ func (ms *mergeState) calculateRecomputeHeight(key []byte, sb *Sandbox) int {
 }
 
 type nodeHeader struct {
+	flags  KeyFlags
 	height uint16
 	keyLen uint16
 	valLen uint32

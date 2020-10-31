@@ -16,6 +16,7 @@ package kv
 import (
 	"context"
 
+	"github.com/pingcap/tidb/kv/memdb"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 )
 
@@ -146,8 +147,8 @@ func (t *mockTxn) DeleteWithNeedLock(k Key) error {
 	return t.Delete(k)
 }
 
-func (t *mockTxn) IfKeyNeedLock(k Key) bool {
-	return false
+func (t *mockTxn) GetFlags(ctx context.Context, k Key) memdb.KeyFlags {
+	return 0
 }
 
 // NewMockTxn new a mockTxn.
