@@ -509,7 +509,7 @@ func (ms *mergeState) calculateRecomputeHeight(key []byte, sb *Sandbox) int {
 
 type nodeHeader struct {
 	flags  KeyFlags
-	height uint16
+	height uint8
 	keyLen uint16
 	valLen uint32
 }
