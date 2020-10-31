@@ -30,8 +30,6 @@ require (
 	github.com/grpc-ecosystem/go-grpc-middleware v1.1.0
 	github.com/grpc-ecosystem/grpc-gateway v1.14.3 // indirect
 	github.com/iancoleman/strcase v0.0.0-20191112232945-16388991a334
-	github.com/juju/errors v0.0.0-20200330140219-3fe23663418f
-	github.com/juju/testing v0.0.0-20200923013621-75df6121fbb0 // indirect
 	github.com/klauspost/cpuid v1.2.1
 	github.com/mattn/go-colorable v0.1.6 // indirect
 	github.com/montanaflynn/stats v0.5.0 // indirect
