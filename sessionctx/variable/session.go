@@ -639,6 +639,9 @@ type SessionVars struct {
 
 	// EnableAmendPessimisticTxn indicates if schema change amend is enabled for pessimistic transactions.
 	EnableAmendPessimisticTxn bool
+
+	// EnableStableResults if stabilize query results.
+	EnableStableResults bool
 }
 
 // PreparedParams contains the parameters of the current prepared statement when executing it.
@@ -1348,6 +1351,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		config.SetRedactLog(TiDBOptOn(val))
 	case TiDBEnableAmendPessimisticTxn:
 		s.EnableAmendPessimisticTxn = TiDBOptOn(val)
+	case TiDBEnableStableResults:
+		s.EnableStableResults = TiDBOptOn(val)
 	}
 	s.systems[name] = val
 	return nil
