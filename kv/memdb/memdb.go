@@ -90,7 +90,7 @@ func (sb *Sandbox) Get(key []byte) []byte {
 	return node.getValue(data)
 }
 
-// Get returns flag for key in this sandbox's space.
+// GetFlags returns flag for key in this sandbox's space.
 func (sb *Sandbox) GetFlags(key []byte) KeyFlags {
 	node, _, match := sb.findGreaterEqual(key)
 	if !match {
@@ -99,7 +99,7 @@ func (sb *Sandbox) GetFlags(key []byte) KeyFlags {
 	return node.flags
 }
 
-// Put inserts kv into this sandbox.
+// PutWithFlags inserts kv into this sandbox with flags.
 func (sb *Sandbox) PutWithFlags(key []byte, flags KeyFlags, value []byte) {
 	if sb.frozen {
 		panic("cannot write to a sandbox when it has forked a new sandbox")

@@ -74,7 +74,7 @@ func (s *testSuite8) TestDeleteLockKey(c *C) {
 				tk2.MustExec(t.tk2Stmt)
 				doneCh <- struct{}{}
 			}()
-			time.Sleep(20 * time.Millisecond)
+			time.Sleep(50 * time.Millisecond)
 			tk1.MustExec("commit")
 			<-doneCh
 			tk2.MustExec("commit")
