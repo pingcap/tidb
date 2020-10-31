@@ -27,11 +27,6 @@ type KeyFlags uint8
 const (
 	flagNeedLocked KeyFlags = 1 << iota
 
-	// flagTouched is a internal flag to help `Mark` operation.
-	// The default value of `KeyFlags` is 0 and the flags returned by any operation will set `flagTouched`.
-	// When merge two flags, if the newer one haven't set the `flagTouched`, the newer value will be ignored.
-	flagTouched KeyFlags = 0x80
-
 	maxHeight      = 16
 	nodeHeaderSize = int(unsafe.Sizeof(nodeHeader{}))
 	initBlockSize  = 4 * 1024
@@ -40,21 +35,6 @@ const (
 // HasNeedLocked returns whether the associated key required lock.
 func (m KeyFlags) HasNeedLocked() bool {
 	return m&flagNeedLocked != 0
-}
-
-func (m KeyFlags) isTouched() bool {
-	return m&flagTouched != 0
-}
-
-// Merge used to merge two KeyFlags.
-func (m KeyFlags) Merge(old KeyFlags) KeyFlags {
-	// Only consider flagPresumeKeyNotExists in merge operation for now.
-	// We should always respect to the older setting,
-	// the delete operation will overwrite flags in root tree instead of invoke merge.
-	if old.isTouched() {
-		return old
-	}
-	return m
 }
 
 // Sandbox is a space to keep pending kvs.
@@ -157,7 +137,7 @@ func (sb *Sandbox) Put(key, value []byte) {
 
 // PutWithNeedLock inserts kv into this sandbox and mark it with flagNeedLocked.
 func (sb *Sandbox) PutWithNeedLock(key, value []byte) {
-	sb.PutWithFlags(key, flagNeedLocked|flagTouched, value)
+	sb.PutWithFlags(key, flagNeedLocked, value)
 }
 
 // Derive derive a new sandbox to buffer a batch of modifactions.
@@ -432,7 +412,7 @@ func (sb *Sandbox) merge(new *Sandbox) int {
 
 		height := int(newNode.height)
 		if exists {
-			newNode.flags = newNode.flags.Merge(ms.next[0].flags)
+			newNode.flags = newNode.flags | ms.next[0].flags
 			height = sb.prepareOverwrite(ms.next[:])
 			if height > int(newNode.height) {
 				// The space is not enough, we have to create a new node.

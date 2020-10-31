@@ -30,7 +30,6 @@ type memDbBuffer struct {
 	entrySizeLimit  int
 	bufferLenLimit  uint64
 	bufferSizeLimit uint64
-	needLockKey     map[string]struct{}
 }
 
 type memDbIter struct {
@@ -46,7 +45,6 @@ func NewMemDbBuffer() MemBuffer {
 		sandbox:         memdb.NewSandbox(),
 		entrySizeLimit:  TxnEntrySizeLimit,
 		bufferSizeLimit: atomic.LoadUint64(&TxnTotalSizeLimit),
-		needLockKey:     make(map[string]struct{}),
 	}
 }
 
@@ -122,7 +120,6 @@ func (m *memDbBuffer) Delete(k Key) error {
 
 // DeleteWithNeedLock delete key with a need lock mark
 func (m *memDbBuffer) DeleteWithNeedLock(k Key) error {
-	//m.needLockKey[k.String()] = struct{}{}
 	m.sandbox.PutWithNeedLock(k, nil)
 	if m.Size() > int(m.bufferSizeLimit) {
 		return ErrTxnTooLarge.GenWithStackByArgs(atomic.LoadUint64(&TxnTotalSizeLimit))
@@ -145,7 +142,6 @@ func (m *memDbBuffer) NewStagingBuffer() MemBuffer {
 		sandbox:         m.sandbox.Derive(),
 		entrySizeLimit:  TxnEntrySizeLimit,
 		bufferSizeLimit: m.bufferSizeLimit - uint64(m.sandbox.Size()),
-		needLockKey:     m.needLockKey,
 	}
 }
 
