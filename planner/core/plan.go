@@ -106,18 +106,22 @@ func optimizeByShuffle4StreamAgg(pp *PhysicalStreamAgg, ctx sessionctx.Context) 
 		return nil
 	}
 
-	sort, ok := pp.Children()[0].(*PhysicalSort)
-	if !ok {
-		return nil
+	var tail, dataSource PhysicalPlan
+	switch p := pp.Children()[0].(type) {
+	case *PhysicalTopN:
+		tail, dataSource = p, p.Children()[0]
+	case *PhysicalSort:
+		tail, dataSource = p, p.Children()[0]
+	case *PhysicalProjection:
+		tail, dataSource = p, p.Children()[0]
+	case *PhysicalSelection:
+		tail, dataSource = p, p.Children()[0]
+	case *PhysicalTableScan, *PhysicalTableReader, *PhysicalIndexScan, *PhysicalIndexReader, *PhysicalIndexLookUpReader:
+		tail, dataSource = p, p
+		// return nil
+	default:
+		panic("other physical plan is not implemented")
 	}
-
-	tail, dataSource := sort, sort.Children()[0]
-	//switch p := pp.Children()[0].(type) {
-	//case *PhysicalTableScan:
-	//	tail, dataSource = extractTailAndDataSource4TableScan(p, ctx)
-	//default:
-	//	panic("other physical plan is not implemented")
-	//}
 
 	reqProp := &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64}
 	shuffle := PhysicalShuffle{
@@ -125,7 +129,7 @@ func optimizeByShuffle4StreamAgg(pp *PhysicalStreamAgg, ctx sessionctx.Context) 
 		Tail:         tail,
 		DataSource:   dataSource,
 		SplitterType: PartitionHashSplitterType,
-		HashByItems:  pp.GroupByItems,
+		ByItems:      pp.GroupByItems,
 	}.Init(ctx, pp.statsInfo(), pp.SelectBlockOffset(), reqProp)
 	return shuffle
 }
@@ -176,7 +180,7 @@ func optimizeByShuffle4Window(pp *PhysicalWindow, ctx sessionctx.Context) *Physi
 		Tail:         tail,
 		DataSource:   dataSource,
 		SplitterType: PartitionHashSplitterType,
-		HashByItems:  byItems,
+		ByItems:      byItems,
 	}.Init(ctx, pp.statsInfo(), pp.SelectBlockOffset(), reqProp)
 	return shuffle
 }

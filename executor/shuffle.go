@@ -84,7 +84,9 @@ type ShuffleExec struct {
 	splitter   []partitionSplitter
 	dataSource Executor
 
+	// when the execution of workers finish, receive signal from finishCh
 	finishCh chan struct{}
+	// worker will send output to outputCh
 	outputCh chan *shuffleOutput
 }
 
@@ -106,7 +108,7 @@ func (e *ShuffleExec) Open(ctx context.Context) error {
 	for _, w := range e.workers {
 		_, ok1 := w.childExec.(*StreamAggExec)
 		_, ok2 := w.childExec.base().children[0].(*SortExec)
-		logutil.BgLogger().Info(fmt.Sprintf("ShuffleExec: %v, %v, %v, %v", ok1, ok2, w.childExec.base().partNum, w.childExec.base().children[0].base().partNum))
+		logutil.BgLogger().Info(fmt.Sprintf("ShuffleExec: %v, %v, %v, %v", ok1, ok2, w.childExec.base().partitionId, w.childExec.base().children[0].base().partitionId))
 	}
 
 	e.prepared = false
@@ -278,16 +280,14 @@ func (e *ShuffleExec) fetchDataAndSplit(ctx context.Context) {
 	)
 
 	chkCh := make(chan *chunk.Chunk, e.concurrency)
-	splitInput := make(chan *chunk.Chunk, e.concurrency)
+	splitInputCh := make(chan *chunk.Chunk, e.concurrency)
 
-	//results := make([]*chunk.Chunk, len(e.workers))
-	//chk := newFirstChunk(e.dataSource)
 	splitWg := &sync.WaitGroup{}
 	defer func() {
 		if r := recover(); r != nil {
 			recoveryShuffleExec(e.outputCh, r)
 		}
-		close(splitInput)
+		close(splitInputCh)
 		splitWg.Wait()
 		for _, w := range e.workers {
 			close(w.inputCh)
@@ -295,12 +295,11 @@ func (e *ShuffleExec) fetchDataAndSplit(ctx context.Context) {
 	}()
 
 	for i := 0; i < e.concurrency; i++ {
-		splitter := e.splitter[i]
 		chk := newFirstChunk(e.dataSource)
 		chkCh <- chk
 
 		splitWg.Add(1)
-		go e.split(splitter, splitInput, chkCh, splitWg)
+		go e.split(e.splitter[i], splitInputCh, chkCh, splitWg)
 	}
 
 	for {
@@ -321,53 +320,11 @@ func (e *ShuffleExec) fetchDataAndSplit(ctx context.Context) {
 		}
 
 		select {
-		case splitInput <- chk:
+		case splitInputCh <- chk:
 		case <-e.finishCh:
 			return
 		}
 	}
-
-	//for {
-	//	err = Next(ctx, e.dataSource, chk)
-	//	if err != nil {
-	//		e.outputCh <- &shuffleOutput{err: err}
-	//		return
-	//	}
-	//	if chk.NumRows() == 0 {
-	//		break
-	//	}
-	//
-	//	workerIndices, err = e.splitter.split(e.ctx, chk, workerIndices)
-	//	if err != nil {
-	//		e.outputCh <- &shuffleOutput{err: err}
-	//		return
-	//	}
-	//	numRows := chk.NumRows()
-	//	for i := 0; i < numRows; i++ {
-	//		workerIdx := workerIndices[i]
-	//		w := e.workers[workerIdx]
-	//
-	//		if results[workerIdx] == nil {
-	//			select {
-	//			case <-e.finishCh:
-	//				return
-	//			case results[workerIdx] = <-w.inputHolderCh:
-	//				break
-	//			}
-	//		}
-	//		results[workerIdx].AppendRow(chk.GetRow(i))
-	//		if results[workerIdx].IsFull() {
-	//			w.inputCh <- results[workerIdx]
-	//			results[workerIdx] = nil
-	//		}
-	//	}
-	//}
-	//for i, w := range e.workers {
-	//	if results[i] != nil {
-	//		w.inputCh <- results[i]
-	//		results[i] = nil
-	//	}
-	//}
 }
 
 var _ Executor = &shuffleWorker{}
@@ -377,16 +334,19 @@ type shuffleWorker struct {
 	baseExecutor
 	childExec Executor
 
+	// when the worker finish the execution of childExec, send signal to finishCh
 	finishCh <-chan struct{}
 	executed bool
 
-	// Workers get inputs from dataFetcherThread by `inputCh`,
-	//   and output results to main thread by `outputCh`.
+	// get input from dataFetcherThread by inputCh
+	inputCh chan *chunk.Chunk
+
+	// send output to the main thread by outputCh
+	outputCh chan *shuffleOutput
+
 	// `inputHolderCh` and `outputHolderCh` are "Chunk Holder" channels of `inputCh` and `outputCh` respectively,
 	//   which give the `*Chunk` back, to implement the data transport in a streaming manner.
-	inputCh        chan *chunk.Chunk
 	inputHolderCh  chan *chunk.Chunk
-	outputCh       chan *shuffleOutput
 	outputHolderCh chan *chunk.Chunk
 }
 

@@ -1168,7 +1168,7 @@ type PhysicalShuffle struct {
 	DataSource  PhysicalPlan
 
 	SplitterType PartitionSplitterType
-	HashByItems  []expression.Expression
+	ByItems      []expression.Expression
 }
 
 // PartitionSplitterType is the type of `Shuffle` executor splitter, which splits data source into partitions.

@@ -874,7 +874,7 @@ func (e *StreamAggExec) Close() error {
 func (e *StreamAggExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	req.Reset()
 	if e.executed {
-		logutil.BgLogger().Info(fmt.Sprintf("StreamAggExec end %v", e.partNum))
+		logutil.BgLogger().Info(fmt.Sprintf("StreamAggExec end %v", e.partitionId))
 	}
 	for !e.executed && !req.IsFull() {
 		err = e.consumeOneGroup(ctx, req)
