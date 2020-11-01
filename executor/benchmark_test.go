@@ -70,6 +70,19 @@ type mockDataPhysicalPlan struct {
 	MockPhysicalPlan
 	schema *expression.Schema
 	exec   Executor
+	id     int
+}
+
+func buildMockDataPhysicalPlan(ctx sessionctx.Context, srcExec Executor) *mockDataPhysicalPlan {
+	return &mockDataPhysicalPlan{
+		schema: srcExec.Schema(),
+		exec:   srcExec,
+		id:     ctx.GetSessionVars().PlanID,
+	}
+}
+
+func (mp *mockDataPhysicalPlan) ID() int {
+	return mp.id
 }
 
 func (mp *mockDataPhysicalPlan) GetExecutor() Executor {
@@ -278,12 +291,9 @@ func buildHashAggExecutor(ctx sessionctx.Context, src Executor, schema *expressi
 	return exec
 }
 
-func buildStreamAggExecutor(ctx sessionctx.Context, src Executor, schema *expression.Schema,
+func buildStreamAggExecutor(ctx sessionctx.Context, srcExec Executor, schema *expression.Schema,
 	aggFuncs []*aggregation.AggFuncDesc, groupItems []expression.Expression, concurrency int, dataSourceSorted bool) Executor {
-	dataSrc := &mockDataPhysicalPlan{
-		schema: src.Schema(),
-		exec:   src,
-	}
+	src := buildMockDataPhysicalPlan(ctx, srcExec)
 
 	sg := new(core.PhysicalStreamAgg)
 	sg.AggFuncs = aggFuncs
@@ -298,11 +308,11 @@ func buildStreamAggExecutor(ctx sessionctx.Context, src Executor, schema *expres
 			byItems = append(byItems, &util.ByItems{Expr: col, Desc: false})
 		}
 		sortPP := &core.PhysicalSort{ByItems: byItems}
-		sortPP.SetChildren(dataSrc)
+		sortPP.SetChildren(src)
 		sg.SetChildren(sortPP)
 		tail = sortPP
 	} else {
-		sg.SetChildren(dataSrc)
+		sg.SetChildren(src)
 	}
 
 	var plan core.PhysicalPlan
@@ -310,7 +320,7 @@ func buildStreamAggExecutor(ctx sessionctx.Context, src Executor, schema *expres
 		plan = core.PhysicalShuffle{
 			Concurrency:  concurrency,
 			Tail:         tail,
-			DataSource:   dataSrc,
+			DataSource:   src,
 			SplitterType: core.PartitionHashSplitterType,
 			ByItems:      sg.GroupByItems,
 		}.Init(ctx, nil, 0)
@@ -467,10 +477,7 @@ func BenchmarkAggDistinct(b *testing.B) {
 }
 
 func buildWindowExecutor(ctx sessionctx.Context, windowFunc string, funcs int, frame *core.WindowFrame, srcExec Executor, schema *expression.Schema, partitionBy []*expression.Column, concurrency int, dataSourceSorted bool) Executor {
-	src := &mockDataPhysicalPlan{
-		schema: srcExec.Schema(),
-		exec:   srcExec,
-	}
+	src := buildMockDataPhysicalPlan(ctx, srcExec)
 
 	win := new(core.PhysicalWindow)
 	win.WindowFuncDescs = make([]*aggregation.WindowFuncDesc, 0)
