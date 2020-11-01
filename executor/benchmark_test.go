@@ -412,23 +412,37 @@ func benchmarkAggExecWithCase(b *testing.B, casTest *aggTestCase) {
 	}
 }
 
-func BenchmarkAggRows(b *testing.B) {
-	sortTypes := []bool{true, false}
+func BenchmarkStreamAggRows(b *testing.B) {
+	b.ReportAllocs()
+	sortTypes := []bool{false, true}
+	rows := []int{100000, 1000000, 10000000}
+	concurrencies := []int{1, 2, 4, 8}
+	for _, row := range rows {
+		for _, con := range concurrencies {
+			for _, sorted := range sortTypes {
+				cas := defaultAggTestCase("stream")
+				cas.rows = row
+				cas.dataSourceSorted = sorted
+				cas.concurrency = con
+				b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
+					benchmarkAggExecWithCase(b, cas)
+				})
+			}
+		}
+	}
+}
+
+func BenchmarkHashAggRows(b *testing.B) {
 	rows := []int{100000, 1000000, 10000000}
 	concurrencies := []int{1, 4, 8, 15, 20, 30, 40}
 	for _, row := range rows {
 		for _, con := range concurrencies {
-			for _, exec := range []string{"stream", "hash"} {
-				for _, sorted := range sortTypes {
-					cas := defaultAggTestCase(exec)
-					cas.rows = row
-					cas.dataSourceSorted = sorted
-					cas.concurrency = con
-					b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
-						benchmarkAggExecWithCase(b, cas)
-					})
-				}
-			}
+			cas := defaultAggTestCase("hash")
+			cas.rows = row
+			cas.concurrency = con
+			b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
+				benchmarkAggExecWithCase(b, cas)
+			})
 		}
 	}
 }
