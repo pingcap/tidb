@@ -493,7 +493,7 @@ func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 			}
 			if constraint.IsEmptyIndex {
 				p.err = ddl.ErrWrongNameForIndex.GenWithStackByArgs(constraint.Name)
-				return 
+				return
 			}
 		case ast.ConstraintPrimaryKey:
 			if countPrimaryKey > 0 {
@@ -650,7 +650,7 @@ func (p *preprocessor) checkCreateIndexGrammar(stmt *ast.CreateIndexStmt) {
 		p.err = ddl.ErrWrongTableName.GenWithStackByArgs(tName)
 		return
 	}
-	if stmt.IndexName == ""{
+	if stmt.IndexName == "" {
 		p.err = ddl.ErrWrongNameForIndex.GenWithStackByArgs(stmt.IndexName)
 		return
 	}
