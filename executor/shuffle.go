@@ -86,7 +86,7 @@ type ShuffleExec struct {
 
 	// when the execution of workers finish, receive signal from finishCh
 	finishCh chan struct{}
-	// worker will send output to outputCh
+	// worker will send output to outputCh, then the main goroutine get result from it.
 	outputCh chan *shuffleOutput
 }
 
@@ -119,7 +119,8 @@ func (e *ShuffleExec) Open(ctx context.Context) error {
 		w.finishCh = e.finishCh
 
 		w.inputCh = make(chan *chunk.Chunk, 1)
-		w.inputHolderCh = make(chan *chunk.Chunk, e.concurrency)
+		w.inputHolderCh = make(chan *chunk.Chunk, 1)
+
 		w.outputCh = e.outputCh
 		w.outputHolderCh = make(chan *chunk.Chunk, 1)
 
@@ -127,10 +128,7 @@ func (e *ShuffleExec) Open(ctx context.Context) error {
 			return err
 		}
 
-		for i := 0; i < e.concurrency; i++ {
-			w.inputHolderCh <- newFirstChunk(e.dataSource)
-		}
-
+		w.inputHolderCh <- newFirstChunk(e.dataSource)
 		w.outputHolderCh <- newFirstChunk(e)
 	}
 
@@ -341,7 +339,7 @@ type shuffleWorker struct {
 	// get input from dataFetcherThread by inputCh
 	inputCh chan *chunk.Chunk
 
-	// send output to the main thread by outputCh
+	// send output to the main goroutine by outputCh
 	outputCh chan *shuffleOutput
 
 	// `inputHolderCh` and `outputHolderCh` are "Chunk Holder" channels of `inputCh` and `outputCh` respectively,
