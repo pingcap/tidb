@@ -675,11 +675,13 @@ func buildLeadLag(ctx sessionctx.Context, aggFuncDesc *aggregation.AggFuncDesc, 
 	var defaultExpr expression.Expression
 	defaultExpr = expression.NewNull()
 	if len(aggFuncDesc.Args) == 3 {
-		expr := aggFuncDesc.Args[2]
-		switch et := expr.(type) {
+		defaultExpr = aggFuncDesc.Args[2]
+		switch et := defaultExpr.(type) {
 		case *expression.Constant:
-			res, _ := et.Value.ConvertTo(ctx.GetSessionVars().StmtCtx, aggFuncDesc.RetTp)
-			defaultExpr = &expression.Constant{Value: res, RetType: aggFuncDesc.RetTp}
+			res, err1 := et.Value.ConvertTo(ctx.GetSessionVars().StmtCtx, aggFuncDesc.RetTp)
+			if err1 == nil {
+				defaultExpr = &expression.Constant{Value: res, RetType: aggFuncDesc.RetTp}
+			}
 		}
 	}
 	base := baseAggFunc{
