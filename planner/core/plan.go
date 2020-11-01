@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -116,12 +117,15 @@ func optimizeByShuffle4StreamAgg(pp *PhysicalStreamAgg, ctx sessionctx.Context) 
 		tail, dataSource = p, p.Children()[0]
 	case *PhysicalSelection:
 		tail, dataSource = p, p.Children()[0]
-	case *PhysicalTableScan, *PhysicalTableReader, *PhysicalIndexScan, *PhysicalIndexReader, *PhysicalIndexLookUpReader:
+	case *PhysicalTableReader, *PhysicalIndexReader, *PhysicalIndexLookUpReader:
 		tail, dataSource = p, p
 		// return nil
 	default:
-		panic("other physical plan is not implemented")
+		// panic("other physical plan is not implemented")
+		return nil
 	}
+
+	logutil.BgLogger().Info(fmt.Sprintf("optimizeByShuffle4StreamAgg. tail: %+v, dataSource: %+v", tail.ExplainInfo(), dataSource.ExplainInfo()))
 
 	reqProp := &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64}
 	shuffle := PhysicalShuffle{

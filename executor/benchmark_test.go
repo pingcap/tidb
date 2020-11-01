@@ -414,7 +414,8 @@ func benchmarkAggExecWithCase(b *testing.B, casTest *aggTestCase) {
 
 func BenchmarkStreamAggRows(b *testing.B) {
 	b.ReportAllocs()
-	sortTypes := []bool{false, true}
+	// sortTypes := []bool{false, true}
+	sortTypes := []bool{false}
 	rows := []int{100000, 1000000, 10000000}
 	concurrencies := []int{1, 2, 4, 8}
 	for _, row := range rows {

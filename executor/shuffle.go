@@ -15,7 +15,6 @@ package executor
 
 import (
 	"context"
-	"fmt"
 	"sync"
 
 	"github.com/pingcap/errors"
@@ -81,7 +80,7 @@ type ShuffleExec struct {
 	prepared bool
 	executed bool
 
-	splitter   []partitionSplitter
+	splitter   partitionSplitter
 	dataSource Executor
 
 	// when the execution of workers finish, receive signal from finishCh
@@ -105,11 +104,11 @@ func (e *ShuffleExec) Open(ctx context.Context) error {
 		return err
 	}
 
-	for _, w := range e.workers {
-		_, ok1 := w.childExec.(*StreamAggExec)
-		_, ok2 := w.childExec.base().children[0].(*SortExec)
-		logutil.BgLogger().Info(fmt.Sprintf("ShuffleExec: %v, %v, %v, %v", ok1, ok2, w.childExec.base().partitionId, w.childExec.base().children[0].base().partitionId))
-	}
+	// for _, w := range e.workers {
+	// 	_, ok1 := w.childExec.(*StreamAggExec)
+	// 	_, ok2 := w.childExec.base().children[0].(*SortExec)
+	// 	logutil.BgLogger().Info(fmt.Sprintf("ShuffleExec: %v, %v, %v, %v", ok1, ok2, w.childExec.base().partitionId, w.childExec.base().children[0].base().partitionId))
+	// }
 
 	e.prepared = false
 	e.finishCh = make(chan struct{}, 1)
@@ -223,15 +222,137 @@ func recoveryShuffleExec(output chan *shuffleOutput, r interface{}) {
 	logutil.BgLogger().Error("shuffle panicked", zap.Error(err), zap.Stack("stack"))
 }
 
-func (e *ShuffleExec) split(splitter partitionSplitter, input <-chan *chunk.Chunk, giveBack chan<- *chunk.Chunk, wg *sync.WaitGroup) {
-	defer wg.Done()
+// func (e *ShuffleExec) split(splitter partitionSplitter, input <-chan *chunk.Chunk, giveBack chan<- *chunk.Chunk, wg *sync.WaitGroup) {
+// 	defer wg.Done()
+//
+// 	var err error
+// 	var workerIndices []int
+// 	results := make([]*chunk.Chunk, len(e.workers))
+//
+// 	for chk := range input {
+// 		workerIndices, err = splitter.split(e.ctx, chk, workerIndices)
+// 		if err != nil {
+// 			e.outputCh <- &shuffleOutput{err: err}
+// 			return
+// 		}
+//
+// 		numRows := chk.NumRows()
+// 		for i := 0; i < numRows; i++ {
+// 			workerIdx := workerIndices[i]
+// 			w := e.workers[workerIdx]
+//
+// 			if results[workerIdx] == nil {
+// 				select {
+// 				case <-e.finishCh:
+// 					return
+// 				case results[workerIdx] = <-w.inputHolderCh:
+// 					break
+// 				}
+// 			}
+//
+// 			results[workerIdx].AppendRow(chk.GetRow(i))
+// 			if results[workerIdx].IsFull() {
+// 				w.inputCh <- results[workerIdx]
+// 				results[workerIdx] = nil
+// 			}
+// 		}
+// 		giveBack <- chk
+// 	}
+//
+// 	for i, w := range e.workers {
+// 		if results[i] != nil {
+// 			if results[i].NumRows() > 0 {
+// 				w.inputCh <- results[i]
+// 				results[i] = nil
+// 			} else {
+// 				w.inputHolderCh <- results[i]
+// 			}
+// 		}
+// 	}
+// }
 
-	var err error
-	var workerIndices []int
+// func (e *ShuffleExec) fetchDataAndSplit(ctx context.Context) {
+// 	var (
+// 		err error
+// 	)
+//
+// 	chkCh := make(chan *chunk.Chunk, e.concurrency)
+// 	splitInputCh := make(chan *chunk.Chunk, e.concurrency)
+//
+// 	splitWg := &sync.WaitGroup{}
+// 	defer func() {
+// 		if r := recover(); r != nil {
+// 			recoveryShuffleExec(e.outputCh, r)
+// 		}
+// 		close(splitInputCh)
+// 		splitWg.Wait()
+// 		for _, w := range e.workers {
+// 			close(w.inputCh)
+// 		}
+// 	}()
+//
+// 	for i := 0; i < e.concurrency; i++ {
+// 		chk := newFirstChunk(e.dataSource)
+// 		chkCh <- chk
+//
+// 		splitWg.Add(1)
+// 		go e.split(e.splitter[i], splitInputCh, chkCh, splitWg)
+// 	}
+//
+// 	for {
+// 		var chk *chunk.Chunk
+// 		select {
+// 		case chk = <-chkCh:
+// 		case <-e.finishCh:
+// 			return
+// 		}
+//
+// 		err = Next(ctx, e.dataSource, chk)
+// 		if err != nil {
+// 			e.outputCh <- &shuffleOutput{err: err}
+// 			return
+// 		}
+// 		if chk.NumRows() == 0 {
+// 			break
+// 		}
+//
+// 		select {
+// 		case splitInputCh <- chk:
+// 		case <-e.finishCh:
+// 			return
+// 		}
+// 	}
+// }
+
+func (e *ShuffleExec) fetchDataAndSplit(ctx context.Context) {
+	var (
+		err           error
+		workerIndices []int
+	)
+
 	results := make([]*chunk.Chunk, len(e.workers))
+	chk := newFirstChunk(e.dataSource)
 
-	for chk := range input {
-		workerIndices, err = splitter.split(e.ctx, chk, workerIndices)
+	defer func() {
+		if r := recover(); r != nil {
+			recoveryShuffleExec(e.outputCh, r)
+		}
+		for _, w := range e.workers {
+			close(w.inputCh)
+		}
+	}()
+
+	for {
+		err = Next(ctx, e.dataSource, chk)
+		if err != nil {
+			e.outputCh <- &shuffleOutput{err: err}
+			return
+		}
+		if chk.NumRows() == 0 {
+			break
+		}
+
+		workerIndices, err = e.splitter.split(e.ctx, chk, workerIndices)
 		if err != nil {
 			e.outputCh <- &shuffleOutput{err: err}
 			return
@@ -250,77 +371,18 @@ func (e *ShuffleExec) split(splitter partitionSplitter, input <-chan *chunk.Chun
 					break
 				}
 			}
-
 			results[workerIdx].AppendRow(chk.GetRow(i))
 			if results[workerIdx].IsFull() {
 				w.inputCh <- results[workerIdx]
 				results[workerIdx] = nil
 			}
 		}
-		giveBack <- chk
 	}
 
 	for i, w := range e.workers {
 		if results[i] != nil {
-			if results[i].NumRows() > 0 {
-				w.inputCh <- results[i]
-				results[i] = nil
-			} else {
-				w.inputHolderCh <- results[i]
-			}
-		}
-	}
-}
-
-func (e *ShuffleExec) fetchDataAndSplit(ctx context.Context) {
-	var (
-		err error
-	)
-
-	chkCh := make(chan *chunk.Chunk, e.concurrency)
-	splitInputCh := make(chan *chunk.Chunk, e.concurrency)
-
-	splitWg := &sync.WaitGroup{}
-	defer func() {
-		if r := recover(); r != nil {
-			recoveryShuffleExec(e.outputCh, r)
-		}
-		close(splitInputCh)
-		splitWg.Wait()
-		for _, w := range e.workers {
-			close(w.inputCh)
-		}
-	}()
-
-	for i := 0; i < e.concurrency; i++ {
-		chk := newFirstChunk(e.dataSource)
-		chkCh <- chk
-
-		splitWg.Add(1)
-		go e.split(e.splitter[i], splitInputCh, chkCh, splitWg)
-	}
-
-	for {
-		var chk *chunk.Chunk
-		select {
-		case chk = <-chkCh:
-		case <-e.finishCh:
-			return
-		}
-
-		err = Next(ctx, e.dataSource, chk)
-		if err != nil {
-			e.outputCh <- &shuffleOutput{err: err}
-			return
-		}
-		if chk.NumRows() == 0 {
-			break
-		}
-
-		select {
-		case splitInputCh <- chk:
-		case <-e.finishCh:
-			return
+			w.inputCh <- results[i]
+			results[i] = nil
 		}
 	}
 }

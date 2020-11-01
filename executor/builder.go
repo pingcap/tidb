@@ -3657,21 +3657,35 @@ func (b *executorBuilder) buildShuffle(v *plannercore.PhysicalShuffle) *ShuffleE
 		concurrency: v.Concurrency,
 	}
 
-	shuffle.splitter = make([]partitionSplitter, shuffle.concurrency)
+	// shuffle.splitter = make([]partitionSplitter, shuffle.concurrency)
+	// switch v.SplitterType {
+	// case plannercore.PartitionHashSplitterType:
+	// 	for i := 0; i < shuffle.concurrency; i++ {
+	// 		shuffle.splitter[i] = &partitionHashSplitter{
+	// 			byItems:    v.ByItems,
+	// 			numWorkers: shuffle.concurrency,
+	// 		}
+	// 	}
+	// case plannercore.PartitionRangeSplitterType:
+	// 	for i := 0; i < shuffle.concurrency; i++ {
+	// 		shuffle.splitter[i] = &partitionRangeSplitter{
+	// 			byItems:    nil,
+	// 			numWorkers: shuffle.concurrency,
+	// 		}
+	// 	}
+	// default:
+	// 	panic("Not implemented. Should not reach here.")
+	// }
 	switch v.SplitterType {
 	case plannercore.PartitionHashSplitterType:
-		for i := 0; i < shuffle.concurrency; i++ {
-			shuffle.splitter[i] = &partitionHashSplitter{
-				byItems:    v.ByItems,
-				numWorkers: shuffle.concurrency,
-			}
+		shuffle.splitter = &partitionHashSplitter{
+			byItems:    v.ByItems,
+			numWorkers: shuffle.concurrency,
 		}
 	case plannercore.PartitionRangeSplitterType:
-		for i := 0; i < shuffle.concurrency; i++ {
-			shuffle.splitter[i] = &partitionRangeSplitter{
-				byItems:    nil,
-				numWorkers: shuffle.concurrency,
-			}
+		shuffle.splitter = &partitionRangeSplitter{
+			byItems:    v.ByItems,
+			numWorkers: shuffle.concurrency,
 		}
 	default:
 		panic("Not implemented. Should not reach here.")

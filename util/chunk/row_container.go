@@ -15,7 +15,6 @@ package chunk
 
 import (
 	"errors"
-	"fmt"
 	"sort"
 	"sync"
 	"time"
@@ -81,7 +80,7 @@ func (c *RowContainer) SpillToDisk() {
 	N := c.m.records.NumChunks()
 	c.m.recordsInDisk = NewListInDisk(c.m.records.FieldTypes())
 	c.m.recordsInDisk.diskTracker.AttachTo(c.diskTracker)
-	logutil.BgLogger().Info(fmt.Sprint("SpillToDisk", N, c.m.records.NumRowsOfChunk(0)))
+	// logutil.BgLogger().Info(fmt.Sprint("SpillToDisk", N, c.m.records.NumRowsOfChunk(0)))
 	for i := 0; i < N; i++ {
 		chk := c.m.records.GetChunk(i)
 		err = c.m.recordsInDisk.Add(chk)
