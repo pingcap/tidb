@@ -256,11 +256,11 @@ func (a aggTestCase) String() string {
 		a.execType, a.aggFunc, a.groupByNDV, a.hasDistinct, a.rows, a.concurrency, a.dataSourceSorted)
 }
 
-func defaultAggTestCase(exec string, aggFunc string) *aggTestCase {
+func defaultAggTestCase(exec string) *aggTestCase {
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().InitChunkSize = variable.DefInitChunkSize
 	ctx.GetSessionVars().MaxChunkSize = variable.DefMaxChunkSize
-	return &aggTestCase{exec, aggFunc, 1000, false, 10000000, 4, true, ctx}
+	return &aggTestCase{exec, ast.AggFuncSum, 1000, false, 10000000, 4, true, ctx}
 }
 
 func buildHashAggExecutor(ctx sessionctx.Context, src Executor, schema *expression.Schema,
@@ -307,7 +307,7 @@ func buildStreamAggExecutor(ctx sessionctx.Context, src Executor, schema *expres
 
 	var plan core.PhysicalPlan
 	if concurrency > 1 {
-		plan := core.PhysicalShuffle{
+		plan = core.PhysicalShuffle{
 			Concurrency:  concurrency,
 			Tail:         tail,
 			DataSource:   dataSrc,
@@ -403,15 +403,16 @@ func benchmarkAggExecWithCase(b *testing.B, casTest *aggTestCase) {
 }
 
 func BenchmarkAggRows(b *testing.B) {
+	sortTypes := []bool{true, false}
 	rows := []int{100000, 1000000, 10000000}
 	concurrencies := []int{1, 4, 8, 15, 20, 30, 40}
-	aggFuncs := []string{ast.AggFuncSum, ast.AggFuncAvg, ast.AggFuncMax, ast.AggFuncMin, ast.AggFuncCount, ast.AggFuncStddevPop}
 	for _, row := range rows {
 		for _, con := range concurrencies {
 			for _, exec := range []string{"stream", "hash"} {
-				for _, af := range aggFuncs {
-					cas := defaultAggTestCase(exec, af)
+				for _, sorted := range sortTypes {
+					cas := defaultAggTestCase(exec)
 					cas.rows = row
+					cas.dataSourceSorted = sorted
 					cas.concurrency = con
 					b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
 						benchmarkAggExecWithCase(b, cas)
@@ -424,32 +425,26 @@ func BenchmarkAggRows(b *testing.B) {
 
 func BenchmarkAggGroupByNDV(b *testing.B) {
 	NDVs := []int{10, 100, 1000, 10000, 100000, 1000000, 10000000}
-	aggFuncs := []string{ast.AggFuncSum, ast.AggFuncAvg, ast.AggFuncMax, ast.AggFuncMin, ast.AggFuncCount, ast.AggFuncStddevPop}
 	for _, NDV := range NDVs {
 		for _, exec := range []string{"hash", "stream"} {
-			for _, af := range aggFuncs {
-				cas := defaultAggTestCase(exec, af)
-				cas.groupByNDV = NDV
-				b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
-					benchmarkAggExecWithCase(b, cas)
-				})
-			}
+			cas := defaultAggTestCase(exec)
+			cas.groupByNDV = NDV
+			b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
+				benchmarkAggExecWithCase(b, cas)
+			})
 		}
 	}
 }
 
 func BenchmarkAggConcurrency(b *testing.B) {
 	concs := []int{1, 4, 8, 15, 20, 30, 40}
-	aggFuncs := []string{ast.AggFuncSum, ast.AggFuncAvg, ast.AggFuncMax, ast.AggFuncMin, ast.AggFuncCount, ast.AggFuncStddevPop}
 	for _, con := range concs {
 		for _, exec := range []string{"hash", "stream"} {
-			for _, af := range aggFuncs {
-				cas := defaultAggTestCase(exec, af)
-				cas.concurrency = con
-				b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
-					benchmarkAggExecWithCase(b, cas)
-				})
-			}
+			cas := defaultAggTestCase(exec)
+			cas.concurrency = con
+			b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
+				benchmarkAggExecWithCase(b, cas)
+			})
 		}
 	}
 }
@@ -457,18 +452,15 @@ func BenchmarkAggConcurrency(b *testing.B) {
 func BenchmarkAggDistinct(b *testing.B) {
 	rows := []int{100000, 1000000, 10000000}
 	distincts := []bool{false, true}
-	aggFuncs := []string{ast.AggFuncSum, ast.AggFuncAvg, ast.AggFuncMax, ast.AggFuncMin, ast.AggFuncCount, ast.AggFuncStddevPop}
 	for _, row := range rows {
 		for _, exec := range []string{"hash", "stream"} {
 			for _, distinct := range distincts {
-				for _, af := range aggFuncs {
-					cas := defaultAggTestCase(exec, af)
-					cas.rows = row
-					cas.hasDistinct = distinct
-					b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
-						benchmarkAggExecWithCase(b, cas)
-					})
-				}
+				cas := defaultAggTestCase(exec)
+				cas.rows = row
+				cas.hasDistinct = distinct
+				b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
+					benchmarkAggExecWithCase(b, cas)
+				})
 			}
 		}
 	}
