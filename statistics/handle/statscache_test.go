@@ -188,7 +188,7 @@ func (s *testStatsSuite) TestManyTableChange(c *C) {
 	h.SetBytesLimit4Test(BytesLimit)
 	tableSize := 100
 	testKit.MustExec("use test")
-	for i := 0; i <= tableSize; i++ {
+	for i := 0; i < tableSize; i++ {
 		testKit.MustExec(fmt.Sprintf("create table t%d(c int)", i))
 		testKit.MustExec(fmt.Sprintf("insert into t%d values(1),(2),(3)", i))
 		testKit.MustExec(fmt.Sprintf("analyze table t%d", i))
@@ -198,7 +198,7 @@ func (s *testStatsSuite) TestManyTableChange(c *C) {
 	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 
 	c.Assert(h.Update(s.do.InfoSchema()), IsNil)
-	for i := 0; i <= tableSize; i++ {
+	for i := 0; i < tableSize; i++ {
 		tableName := fmt.Sprintf("t%d", i)
 		tbl, err := s.do.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr(tableName))
 		c.Assert(err, IsNil)
@@ -215,14 +215,15 @@ func (s *testStatsSuite) TestManyTableChange(c *C) {
 		for _, v := range statsTbl.Columns {
 			v.IsInvalid(&stmtctx.StatementContext{}, false)
 		}
-		c.Assert(h.LoadNeededHistograms(), IsNil)
-		time.Sleep(10 * time.Millisecond)
 		var statsTblnew *statistics.Table
 		//lookup more time to guarantee table in the cache
-		for j := 0; j < 10; j++ {
+		for j := 0; j < (i*3 + 1); j++ {
 			statsTblnew = h.GetTableStats(tableInfo)
 		}
-		c.Assert(statsTblnew.MemoryUsage() >= 0, IsTrue)
+		c.Assert(h.LoadNeededHistograms(), IsNil)
+		time.Sleep(10 * time.Millisecond)
+		statsTblnew = h.GetTableStats(tableInfo)
+		c.Assert(statsTblnew.MemoryUsage() > 0, IsTrue)
 		for _, v := range statsTblnew.Columns {
 			c.Assert(v.IsInvalid(&stmtctx.StatementContext{}, false), IsFalse)
 		}
