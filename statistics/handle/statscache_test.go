@@ -217,7 +217,7 @@ func (s *testStatsSuite) TestManyTableChange(c *C) {
 		}
 		var statsTblnew *statistics.Table
 		//lookup more time to guarantee table in the cache
-		for j := 0; j < (i*3 + 1); j++ {
+		for j := 0; j < i*3+1; j++ {
 			statsTblnew = h.GetTableStats(tableInfo)
 		}
 		c.Assert(h.LoadNeededHistograms(), IsNil)
