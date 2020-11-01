@@ -195,6 +195,8 @@ type MemBuffer interface {
 	SetWithFlags(Key, []byte, ...FlagsOp) error
 	// UpdateFlags update the flags associated with key.
 	UpdateFlags(Key, ...FlagsOp)
+	// DeleteWithFlags delete key with the given KeyFlags
+	DeleteWithFlags(Key, ...FlagsOp) error
 
 	GetKeyByHandle(MemKeyHandle) []byte
 	GetValueByHandle(MemKeyHandle) ([]byte, bool)
