@@ -491,6 +491,10 @@ func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 				p.err = err
 				return
 			}
+			if constraint.IsEmptyIndex {
+				p.err = ddl.ErrWrongNameForIndex.GenWithStackByArgs(constraint.Name)
+				return 
+			}
 		case ast.ConstraintPrimaryKey:
 			if countPrimaryKey > 0 {
 				p.err = infoschema.ErrMultiplePriKey
@@ -644,6 +648,10 @@ func (p *preprocessor) checkCreateIndexGrammar(stmt *ast.CreateIndexStmt) {
 	tName := stmt.Table.Name.String()
 	if isIncorrectName(tName) {
 		p.err = ddl.ErrWrongTableName.GenWithStackByArgs(tName)
+		return
+	}
+	if stmt.IndexName == ""{
+		p.err = ddl.ErrWrongNameForIndex.GenWithStackByArgs(stmt.IndexName)
 		return
 	}
 	p.err = checkIndexInfo(stmt.IndexName, stmt.IndexPartSpecifications)
