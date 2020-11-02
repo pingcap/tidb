@@ -270,7 +270,6 @@ func checkActRows(c *C, tk *testkit.TestKit, sql string, expected []string) {
 			strs[i] = c.(string)
 		}
 
-		fmt.Println(row)
 		c.Assert(strs[actRowsCol], Equals, expected[id])
 	}
 }
