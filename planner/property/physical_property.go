@@ -30,6 +30,14 @@ type SortItem struct {
 	Desc bool
 }
 
+type PartitionType int
+
+const (
+	AnyType PartitionType = iota
+	BroadcastType
+	HashType
+)
+
 // PhysicalProperty stands for the required physical property by parents.
 // It contains the orders and the task types.
 type PhysicalProperty struct {
@@ -56,6 +64,12 @@ type PhysicalProperty struct {
 
 	// whether need to enforce property.
 	Enforced bool
+
+	// If the partition type is hash, the data should be reshuffled by partition cols.
+	PartitionCols []*expression.Column
+
+	// which types the exchange sender belongs to, only take effects when it's a mpp task.
+	PartitionTp PartitionType
 }
 
 // NewPhysicalProperty builds property from columns.
@@ -90,7 +104,7 @@ func (p *PhysicalProperty) AllColsFromSchema(schema *expression.Schema) bool {
 
 // IsFlashProp return true if this physical property is only allowed to generate flash related task
 func (p *PhysicalProperty) IsFlashProp() bool {
-	return p.TaskTp == CopTiFlashLocalReadTaskType || p.TaskTp == CopTiFlashGlobalReadTaskType
+	return p.TaskTp == CopTiFlashLocalReadTaskType || p.TaskTp == CopTiFlashGlobalReadTaskType || p.TaskTp == MppTaskType
 }
 
 // GetAllPossibleChildTaskTypes enumrates the possible types of tasks for children.
@@ -142,6 +156,12 @@ func (p *PhysicalProperty) HashCode() []byte {
 			p.hashcode = codec.EncodeInt(p.hashcode, 0)
 		}
 	}
+	if p.TaskTp == MppTaskType {
+		p.hashcode = codec.EncodeInt(p.hashcode, int64(p.PartitionTp))
+		for _, col := range p.PartitionCols {
+			p.hashcode = append(p.hashcode, col.HashCode(nil)...)
+		}
+	}
 	return p.hashcode
 }
 
@@ -156,9 +176,11 @@ func (p *PhysicalProperty) String() string {
 // for children nodes.
 func (p *PhysicalProperty) Clone() *PhysicalProperty {
 	prop := &PhysicalProperty{
-		SortItems:   p.SortItems,
-		TaskTp:      p.TaskTp,
-		ExpectedCnt: p.ExpectedCnt,
+		SortItems:     p.SortItems,
+		TaskTp:        p.TaskTp,
+		ExpectedCnt:   p.ExpectedCnt,
+		PartitionTp:   p.PartitionTp,
+		PartitionCols: p.PartitionCols,
 	}
 	return prop
 }

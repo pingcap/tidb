@@ -16,6 +16,7 @@ package core
 import (
 	"bytes"
 	"fmt"
+	"github.com/pingcap/tipb/go-tipb"
 	"strconv"
 	"strings"
 
@@ -619,32 +620,6 @@ func (p *PhysicalMergeJoin) ExplainNormalizedInfo() string {
 }
 
 // ExplainInfo implements Plan interface.
-func (p *PhysicalBroadCastJoin) ExplainInfo() string {
-	return p.explainInfo()
-}
-
-// ExplainNormalizedInfo implements Plan interface.
-func (p *PhysicalBroadCastJoin) ExplainNormalizedInfo() string {
-	return p.explainInfo()
-}
-
-func (p *PhysicalBroadCastJoin) explainInfo() string {
-	buffer := new(bytes.Buffer)
-
-	buffer.WriteString(p.JoinType.String())
-
-	if len(p.LeftJoinKeys) > 0 {
-		fmt.Fprintf(buffer, ", left key:%s",
-			expression.ExplainColumnList(p.LeftJoinKeys))
-	}
-	if len(p.RightJoinKeys) > 0 {
-		fmt.Fprintf(buffer, ", right key:%s",
-			expression.ExplainColumnList(p.RightJoinKeys))
-	}
-	return buffer.String()
-}
-
-// ExplainInfo implements Plan interface.
 func (p *PhysicalTopN) ExplainInfo() string {
 	buffer := bytes.NewBufferString("")
 	buffer = explainByItems(buffer, p.ByItems)
@@ -829,6 +804,20 @@ func (p *DataSource) ExplainInfo() string {
 			partitionName := pi.GetNameByID(p.physicalTableID)
 			fmt.Fprintf(buffer, ", partition:%s", partitionName)
 		}
+	}
+	return buffer.String()
+}
+
+func (p *PhysicalExchangeSender) ExplainInfo() string {
+	buffer := bytes.NewBufferString("ExchangeType: ")
+	switch p.ExchangeType {
+	case tipb.ExchangeType_PassThrough:
+		fmt.Fprintf(buffer, "PassThrough")
+	case tipb.ExchangeType_Broadcast:
+		fmt.Fprintf(buffer, "Broadcast")
+	case tipb.ExchangeType_Hash:
+		fmt.Fprintf(buffer, "HashPartition")
+		fmt.Fprintf(buffer, ", Hash Cols: %s", expression.ExplainColumnList(p.HashCols))
 	}
 	return buffer.String()
 }

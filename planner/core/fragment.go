@@ -14,18 +14,19 @@
 package core
 
 import (
-	"github.com/pingcap/tidb/expression"
+	"context"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/util/plancodec"
-	"github.com/pingcap/tipb/go-tipb"
+	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/ranger"
+	"go.uber.org/zap"
 )
 
 // Fragment is cut from the whole pushed-down plan by network communication.
 // Communication by pfs are always through shuffling / broadcasting / passing through.
 type Fragment struct {
-	p PhysicalPlan
-
 	/// following field are filled during getPlanFragment.
 	// TODO: Strictly speaking, not all plan fragment contain table scan. we can do this assumption until more plans are supported.
 	TableScan         *PhysicalTableScan          // result physical table scan
@@ -35,56 +36,60 @@ type Fragment struct {
 	ExchangeSender *PhysicalExchangeSender // data exporter
 }
 
-// Schema is the output schema of the current plan fragment.
-func (f *Fragment) Schema() *expression.Schema {
-	return f.p.Schema()
+type MppTaskGenerator struct {
+	ctx         sessionctx.Context
+	startTS     uint64
+	allocTaskID int64
 }
 
-// GetRootPlanFragments will cut and generate all the plan fragments which is divided by network communication.
-// Then return the root plan fragment.
-func GetRootPlanFragments(ctx sessionctx.Context, p PhysicalPlan, startTS uint64) *Fragment {
+func GenerateRootMPPTasks(ctx sessionctx.Context, startTs uint64, sender *PhysicalExchangeSender) ([]*kv.MPPTask, error) {
+	g := &MppTaskGenerator{ctx: ctx, startTS: startTs}
+	return g.generateMPPTasks(sender)
+}
+
+func (e *MppTaskGenerator) generateMPPTasks(s *PhysicalExchangeSender) ([]*kv.MPPTask, error) {
+	logutil.BgLogger().Info("Mpp will generate tasks", zap.String("plan", ToString(s)))
 	tidbTask := &kv.MPPTask{
-		StartTs: startTS,
+		StartTs: e.startTS,
 		ID:      -1,
 	}
-	rootPf := &Fragment{
-		p:              p,
-		ExchangeSender: &PhysicalExchangeSender{ExchangeType: tipb.ExchangeType_PassThrough, Tasks: []*kv.MPPTask{tidbTask}},
+	rootTasks, err := e.generateMPPTasksForFragment(s.Fragment)
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
-	rootPf.ExchangeSender.InitBasePlan(ctx, plancodec.TypeExchangeSender)
-	rootPf.ExchangeSender.SetChildren(rootPf.p)
-	getPlanFragments(ctx, p, rootPf)
-	return rootPf
+	s.Tasks = []*kv.MPPTask{tidbTask}
+	return rootTasks, nil
 }
 
-// getPlanFragment passes the plan and which fragment the plan belongs to, then walk through the plan recursively.
-// When we found an edge can be cut, we will add exchange operators and construct new fragment.
-func getPlanFragments(ctx sessionctx.Context, p PhysicalPlan, pf *Fragment) {
-	switch x := p.(type) {
-	case *PhysicalTableScan:
-		x.IsGlobalRead = false
-		pf.TableScan = x
-	case *PhysicalBroadCastJoin:
-		// This is a fragment cutter. So we replace broadcast side with a exchangerClient
-		bcChild := x.Children()[x.InnerChildIdx]
-		exchangeSender := &PhysicalExchangeSender{ExchangeType: tipb.ExchangeType_Broadcast}
-		exchangeSender.InitBasePlan(ctx, plancodec.TypeExchangeSender)
-		npf := &Fragment{p: bcChild, ExchangeSender: exchangeSender}
-		exchangeSender.SetChildren(npf.p)
-
-		exchangeReceivers := &PhysicalExchangeReceiver{
-			ChildPf: npf,
-		}
-		exchangeReceivers.InitBasePlan(ctx, plancodec.TypeExchangeReceiver)
-		x.Children()[x.InnerChildIdx] = exchangeReceivers
-		pf.ExchangeReceivers = append(pf.ExchangeReceivers, exchangeReceivers)
-
-		// For the inner side of join, we use a new plan fragment.
-		getPlanFragments(ctx, bcChild, npf)
-		getPlanFragments(ctx, x.Children()[1-x.InnerChildIdx], pf)
-	default:
-		if len(x.Children()) > 0 {
-			getPlanFragments(ctx, x.Children()[0], pf)
-		}
+func (e *MppTaskGenerator) generateMPPTasksForFragment(f *Fragment) (tasks []*kv.MPPTask, err error) {
+	if f.TableScan != nil {
+		tasks, err = e.constructSinglePhysicalTable(context.Background(), f.TableScan.Table.ID, f.TableScan.Ranges)
+	} else {
+		tasks, err = e.constructSinglePhysicalTable(context.Background(), -1, nil)
 	}
+	for _, r := range f.ExchangeReceivers {
+		r.Tasks, err = e.generateMPPTasksForFragment(r.ChildPf)
+		s := r.ChildPf.ExchangeSender
+		s.Tasks = tasks
+	}
+	return tasks, nil
+}
+
+// single physical table means a table without partitions or a single partition in a partition table.
+func (e *MppTaskGenerator) constructSinglePhysicalTable(ctx context.Context, tableID int64, ranges []*ranger.Range) ([]*kv.MPPTask, error) {
+	var kvRanges []kv.KeyRange
+	if tableID != -1 {
+		kvRanges = distsql.TableRangesToKVRanges(tableID, ranges, nil)
+	}
+	req := &kv.MPPBuildTasksRequest{KeyRanges: kvRanges}
+	metas, err := e.ctx.GetMPPClient().ConstructMPPTasks(ctx, req)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	tasks := make([]*kv.MPPTask, 0, len(metas))
+	for _, meta := range metas {
+		e.allocTaskID++
+		tasks = append(tasks, &kv.MPPTask{Meta: meta, ID: e.allocTaskID, StartTs: e.startTS, TableID: tableID})
+	}
+	return tasks, nil
 }
