@@ -591,12 +591,27 @@ func (s *testSuiteJoin1) TestNaturalJoin(c *C) {
 	tk.MustExec("drop table if exists t1, t2")
 	tk.MustExec("create table t1 (a int, b int)")
 	tk.MustExec("create table t2 (a int, c int)")
+	tk.MustExec("create table t3 (b int, c int)")
 	tk.MustExec("insert t1 values (1, 2), (10, 20)")
 	tk.MustExec("insert t2 values (1, 3), (100, 200)")
+	tk.MustExec("insert t3 values (2, 3), (10, 200)")
 
 	tk.MustQuery("select * from t1 natural join t2").Check(testkit.Rows("1 2 3"))
 	tk.MustQuery("select * from t1 natural left join t2 order by a").Check(testkit.Rows("1 2 3", "10 20 <nil>"))
 	tk.MustQuery("select * from t1 natural right join t2 order by a").Check(testkit.Rows("1 3 2", "100 200 <nil>"))
+
+	tk.MustQuery("select t1.*,t2.*,t3.* from t1 natural left join t2 natural left join t3").Check(testkit.Rows("2 1 3 1 3 2", "20 10 <nil> <nil> <nil> <nil>"))
+	tk.MustQuery("select t1.*,t2.*,t3.* from t1 natural left join t2 natural left join t3 order by t3.b").Check(testkit.Rows("20 10 <nil> <nil> <nil> <nil>", "2 1 3 1 3 2"))
+	tk.MustQuery("select * from t1 natural left join t2 natural left join t3 order by t3.b").Check(testkit.Rows("20 <nil> 10", "2 3 1"))
+	tk.MustQuery("select sum(t3.b) from t1 natural left join t2 natural left join t3").Check(testkit.Rows("2"))
+
+	tk.MustExec("insert t1 values (1, 2), (10, 20)")
+	tk.MustExec("insert t2 values (1, 23), (10, 22)")
+
+	tk.MustQuery("select *,rank()over(partition by t1.a order by t2.c desc) as ranking  from t1 natural left join t2 natural left join t3 order by a").Check(testkit.Rows("2 3 1 1", "20 <nil> 10 1"))
+	tk.MustQuery("select t2.a from (t1 join t2 using (a)) join t3 using (c)").Check(testkit.Rows("1"))
+	tk.MustQuery("select t2.a from t1 natural left join t2 where t2.c = 3").Check(testkit.Rows("1"))
+	tk.MustQuery("select * from t1 natural left join t2 where t1.b in (select t3.b from t3 where c = t2.c)").Check(testkit.Rows("1 2 3"))
 }
 
 func (s *testSuiteJoin3) TestMultiJoin(c *C) {

@@ -1644,14 +1644,23 @@ func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 			return
 		}
 	}
-	if join, ok := er.p.(*LogicalJoin); ok && join.redundantSchema != nil {
-		idx, err := expression.FindFieldName(join.redundantNames, v)
-		if err != nil {
-			er.err = err
+
+	for i := len(er.b.redundantInfos) - 1; i >= 0; i-- {
+		redundantInfo := er.b.redundantInfos[i]
+		redundantSchema, redundantNames := redundantInfo.redundantSchema, redundantInfo.redundantNames
+		idx, err = expression.FindFieldName(redundantNames, v)
+		if idx >= 0 {
+			col := redundantSchema.Columns[idx]
+			name := redundantNames[idx]
+			if i < len(er.b.redundantInfos)-1 {
+				er.ctxStackAppend(&expression.CorrelatedColumn{Column: *col, Data: new(types.Datum)}, name)
+			} else {
+				er.ctxStackAppend(col, name)
+			}
 			return
 		}
-		if idx >= 0 {
-			er.ctxStackAppend(join.redundantSchema.Columns[idx], join.redundantNames[idx])
+		if err != nil {
+			er.err = ErrAmbiguous.GenWithStackByArgs(v.Name, clauseMsg[fieldList])
 			return
 		}
 	}

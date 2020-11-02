@@ -633,26 +633,6 @@ func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (Logica
 		joinPlan.JoinType = InnerJoin
 	}
 
-	// Merge sub join's redundantSchema into this join plan. When handle query like
-	// select t2.a from (t1 join t2 using (a)) join t3 using (a);
-	// we can simply search in the top level join plan to find redundant column.
-	var (
-		lRedundantSchema, rRedundantSchema *expression.Schema
-		lRedundantNames, rRedundantNames   types.NameSlice
-	)
-	if left, ok := leftPlan.(*LogicalJoin); ok && left.redundantSchema != nil {
-		lRedundantSchema = left.redundantSchema
-		lRedundantNames = left.redundantNames
-	}
-	if right, ok := rightPlan.(*LogicalJoin); ok && right.redundantSchema != nil {
-		rRedundantSchema = right.redundantSchema
-		rRedundantNames = right.redundantNames
-	}
-	joinPlan.redundantSchema = expression.MergeSchema(lRedundantSchema, rRedundantSchema)
-	joinPlan.redundantNames = make([]*types.FieldName, len(lRedundantNames)+len(rRedundantNames))
-	copy(joinPlan.redundantNames, lRedundantNames)
-	copy(joinPlan.redundantNames[len(lRedundantNames):], rRedundantNames)
-
 	// Set preferred join algorithm if some join hints is specified by user.
 	joinPlan.setPreferredJoinType(b.TableHints())
 
@@ -799,10 +779,10 @@ func (b *PlanBuilder) coalesceCommonColumns(p *LogicalJoin, leftPlan, rightPlan 
 
 	p.SetSchema(expression.NewSchema(schemaCols...))
 	p.names = names
-	p.redundantSchema = expression.MergeSchema(p.redundantSchema, expression.NewSchema(rColumns[:commonLen]...))
-	p.redundantNames = append(p.redundantNames.Shallow(), rNames[:commonLen]...)
 	p.OtherConditions = append(conds, p.OtherConditions...)
-
+	redundantInfo := b.redundantInfos[len(b.redundantInfos)-1]
+	redundantInfo.redundantNames = append(redundantInfo.redundantNames, rNames[:commonLen]...)
+	redundantInfo.redundantSchema = expression.MergeSchema(redundantInfo.redundantSchema, expression.NewSchema(rColumns[:commonLen]...))
 	return nil
 }
 
@@ -943,9 +923,12 @@ func (b *PlanBuilder) buildProjectionField(ctx context.Context, p LogicalPlan, f
 		// The column maybe the one from join's redundant part.
 		// TODO: Fully support USING/NATURAL JOIN, refactor here.
 		if idx == -1 {
-			if join, ok := p.(*LogicalJoin); ok {
-				idx = join.redundantSchema.ColumnIndex(col)
-				name = join.redundantNames[idx]
+			if b.redundantInfos != nil {
+				for i := len(b.redundantInfos) - 1; i >= 0 && idx == -1; i-- {
+					redundantInfo := b.redundantInfos[i]
+					idx = redundantInfo.redundantSchema.ColumnIndex(col)
+					name = redundantInfo.redundantNames[idx]
+				}
 			}
 		} else {
 			name = p.OutputNames()[idx]
@@ -1607,6 +1590,7 @@ type havingWindowAndOrderbyExprResolver struct {
 	outerSchemas []*expression.Schema
 	outerNames   [][]*types.FieldName
 	curClause    clauseCode
+	b            *PlanBuilder
 }
 
 // Enter implements Visitor interface.
@@ -1634,14 +1618,36 @@ func (a *havingWindowAndOrderbyExprResolver) resolveFromPlan(v *ast.ColumnNameEx
 	if err != nil {
 		return -1, err
 	}
+	var col *expression.Column
+	var name *types.FieldName
+	if idx >= 0 {
+		col = p.Schema().Columns[idx]
+		if col.IsHidden {
+			return -1, ErrUnknownColumn.GenWithStackByArgs(v.Name, clauseMsg[a.curClause])
+		}
+		name = p.OutputNames()[idx]
+	}
+	if idx < 0 {
+		// search from redundantInfo
+		redundantInfo := a.b.redundantInfos[len(a.b.redundantInfos)-1]
+		redundantSchema, redundantNames := redundantInfo.redundantSchema, redundantInfo.redundantNames
+		idx, err = expression.FindFieldName(redundantNames, v.Name)
+		if err != nil {
+			return -1, err
+		}
+		if idx >= 0 {
+			col = redundantSchema.Columns[idx]
+			if col.IsHidden {
+				return -1, ErrUnknownColumn.GenWithStackByArgs(v.Name, clauseMsg[a.curClause])
+			}
+			name = redundantNames[idx]
+		}
+	}
+
 	if idx < 0 {
 		return -1, nil
 	}
-	col := p.Schema().Columns[idx]
-	if col.IsHidden {
-		return -1, ErrUnknownColumn.GenWithStackByArgs(v.Name, clauseMsg[a.curClause])
-	}
-	name := p.OutputNames()[idx]
+
 	newColName := &ast.ColumnName{
 		Schema: name.DBName,
 		Table:  name.TblName,
@@ -1784,6 +1790,7 @@ func (b *PlanBuilder) resolveHavingAndOrderBy(sel *ast.SelectStmt, p LogicalPlan
 		colMapper:    b.colMapper,
 		outerSchemas: b.outerSchemas,
 		outerNames:   b.outerNames,
+		b:            b,
 	}
 	if sel.GroupBy != nil {
 		extractor.gbyItems = sel.GroupBy.Items
@@ -1843,6 +1850,7 @@ func (b *PlanBuilder) resolveWindowFunction(sel *ast.SelectStmt, p LogicalPlan) 
 		colMapper:    b.colMapper,
 		outerSchemas: b.outerSchemas,
 		outerNames:   b.outerNames,
+		b:            b,
 	}
 	extractor.curClause = fieldList
 	for _, field := range sel.Fields.Fields {
@@ -2421,6 +2429,31 @@ func (b *PlanBuilder) unfoldWildStar(p LogicalPlan, selectFields []*ast.SelectFi
 				resultList = append(resultList, field)
 			}
 		}
+		if tblName.L != "" {
+			// find form redundantCols
+			redundantInfo := b.redundantInfos[len(b.redundantInfos)-1]
+			redundantSchema, redundantNames := redundantInfo.redundantSchema, redundantInfo.redundantNames
+			for i := len(redundantNames) - 1; i >= 0; i-- {
+				redundantName := redundantNames[i]
+				if (dbName.L == "" || dbName.L == redundantName.DBName.L) &&
+					(tblName.L == "" || tblName.L == redundantName.TblName.L) {
+					col := redundantSchema.Columns[i]
+					if col.ID != model.ExtraHandleID {
+						findTblNameInSchema = true
+						colName := &ast.ColumnNameExpr{
+							Name: &ast.ColumnName{
+								Schema: redundantName.DBName,
+								Table:  redundantName.TblName,
+								Name:   redundantName.ColName,
+							}}
+						colName.SetType(col.GetType())
+						field := &ast.SelectField{Expr: colName}
+						field.SetText(redundantName.ColName.O)
+						resultList = append(resultList, field)
+					}
+				}
+			}
+		}
 		if !findTblNameInSchema {
 			return nil, ErrBadTable.GenWithStackByArgs(tblName)
 		}
@@ -2628,7 +2661,9 @@ func (b *PlanBuilder) TableHints() *tableHintInfo {
 func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p LogicalPlan, err error) {
 	b.pushSelectOffset(sel.QueryBlockOffset)
 	b.pushTableHints(sel.TableHints, utilhint.TypeSelect, sel.QueryBlockOffset)
+	b.redundantInfos = append(b.redundantInfos, &redundantInfo{})
 	defer func() {
+		b.redundantInfos = b.redundantInfos[:len(b.redundantInfos)-1]
 		b.popSelectOffset()
 		// table hints are only visible in the current SELECT statement.
 		b.popTableHints()

@@ -405,6 +405,8 @@ type PlanBuilder struct {
 	is           infoschema.InfoSchema
 	outerSchemas []*expression.Schema
 	outerNames   [][]*types.FieldName
+	// redundantSchema,redundantNames is used for column redundant
+	redundantInfos []*redundantInfo
 	// colMapper stores the column that must be pre-resolved.
 	colMapper map[*ast.ColumnNameExpr]int
 	// visitInfo is used for privilege check.
@@ -456,6 +458,12 @@ type PlanBuilder struct {
 type handleColHelper struct {
 	id2HandleMapStack []map[int64][]HandleCols
 	stackTail         int
+}
+
+// redundantSchema,redundantNames is used for column redundant
+type redundantInfo struct {
+	redundantSchema *expression.Schema
+	redundantNames  []*types.FieldName
 }
 
 func (hch *handleColHelper) appendColToLastMap(tblID int64, handleCols HandleCols) {
