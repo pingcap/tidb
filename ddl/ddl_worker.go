@@ -470,7 +470,7 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 			// and retry later if the job is not cancelled.
 			schemaVer, runJobErr = w.runDDLJob(d, t, job)
 			// Check whether a job is cancelling when we are handling it.
-			if inCancellingList, err := isInCancellingList(t, job); err == nil {
+			if inCancellingList, err := t.IsInCancellingJobList(job); err == nil {
 				if inCancellingList {
 					if job.State != model.JobStateRollingback && job.State != model.JobStateCancelled && job.State != model.JobStateRollbackDone {
 						// If we found a job is cancelling here, we should abandon the kv txn modification,
@@ -478,7 +478,7 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 						// cancelling logic for it.
 						txn.Reset()
 						logutil.Logger(w.logCtx).Info("[ddl] DDL job kv modification abandoned, since it has been cancelling.")
-						err := removeJobFromCancellingList(t, job)
+						err := t.RemoveJobFromCancellingList(job)
 						if err != nil {
 							return errors.Trace(err)
 						}
@@ -486,7 +486,7 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 						return nil
 					}
 					// Since we are already in the cancel handling logic, keep going on.
-					err := removeJobFromCancellingList(t, job)
+					err := t.RemoveJobFromCancellingList(job)
 					if err != nil {
 						return errors.Trace(err)
 					}
@@ -548,59 +548,6 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 			asyncNotify(d.ddlJobDoneCh)
 		}
 	}
-}
-
-func getDDLJobsInQueue(t *meta.Meta, jobListKey meta.JobListKeyType) ([]*model.Job, error) {
-	cnt, err := t.DDLJobQueueLen(jobListKey)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	jobs := make([]*model.Job, cnt)
-	for i := range jobs {
-		jobs[i], err = t.GetDDLJobByIdx(int64(i), jobListKey)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-	}
-	return jobs, nil
-}
-
-func isInCancellingList(t *meta.Meta, job *model.Job) (bool, error) {
-	cancelledJobs, err := getDDLJobsInQueue(t, meta.CancelJobListKey)
-	if err != nil {
-		return false, errors.Trace(err)
-	}
-	for _, cancelledJob := range cancelledJobs {
-		if cancelledJob.ID == job.ID {
-			return true, nil
-		}
-	}
-	return false, nil
-}
-
-func removeJobFromCancellingList(t *meta.Meta, job *model.Job) error {
-	cancelledJobs, err := getDDLJobsInQueue(t, meta.CancelJobListKey)
-	if err != nil {
-		return err
-	}
-	found := false
-	pos := 0
-	for i, cancelledJob := range cancelledJobs {
-		if cancelledJob.ID == job.ID {
-			found = true
-			pos = i
-			break
-		}
-	}
-	if !found {
-		return nil
-	}
-	cancelledJobs = append(cancelledJobs[:pos], cancelledJobs[pos+1:]...)
-	err = t.ResetCancelledJobList(cancelledJobs, meta.CancelJobListKey)
-	if err != nil {
-		return err
-	}
-	return nil
 }
 
 func skipWriteBinlog(job *model.Job) bool {

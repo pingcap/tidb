@@ -185,7 +185,7 @@ func CancelJobs(txn kv.Transaction, ids []int64) ([]error, error) {
 				errs[i] = errors.Trace(err)
 				continue
 			}
-			err = t.EnQueueDDLJob(job, meta.CancelJobListKey)
+			err = t.AddCancellingJobList(job)
 			if err != nil {
 				errs[i] = errors.Trace(err)
 			}

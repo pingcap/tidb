@@ -723,24 +723,75 @@ func (m *Meta) GetAllDDLJobsInQueue(jobListKeys ...JobListKeyType) ([]*model.Job
 	return jobs, nil
 }
 
-// ResetCancelledJobList reset the job queue with the corresponding jobs.
-func (m *Meta) ResetCancelledJobList(jobs []*model.Job, jobListKeys ...JobListKeyType) error {
-	listKey := m.jobListKey
-	if len(jobListKeys) != 0 {
-		listKey = jobListKeys[0]
-	}
-
-	err := m.txn.LClear(listKey)
+func (m *Meta) addCancellingJobList(key []byte, job *model.Job) error {
+	value, err := m.txn.Get(key)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	for _, job := range jobs {
-		err := m.EnQueueDDLJob(job, listKey)
+
+	value = []byte(string(value) + "_" + strconv.FormatInt(job.ID, 10))
+	return m.txn.Set(key, value)
+}
+
+// AddCancellingJobList adds DDL job to cancelling list.
+func (m *Meta) AddCancellingJobList(job *model.Job) error {
+	return m.addCancellingJobList(mDDLJobIDCancelKey, job)
+}
+
+func (m *Meta) isInCancellingJobList(key []byte, job *model.Job) (bool, error) {
+	value, err := m.txn.Get(key)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+
+	cancellingJobIDs := strings.Split("_", string(value))
+	for _, c := range cancellingJobIDs {
+		cancellingJobID, err := strconv.ParseInt(c, 10, 64)
+		if err != nil {
+			return false, errors.Trace(err)
+		}
+		if cancellingJobID == job.ID {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// IsInCancellingJobIDList checks whether a given job is in cancelling list.
+func (m *Meta) IsInCancellingJobList(job *model.Job) (bool, error) {
+	return m.isInCancellingJobList(mDDLJobIDCancelKey, job)
+}
+
+func (m *Meta) removeJobFromCancellingList(key []byte, job *model.Job) error {
+	value, err := m.txn.Get(key)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	cancellingJobIDs := strings.Split("_", string(value))
+	found := false
+	pos := 0
+	for i, c := range cancellingJobIDs {
+		cancellingJobID, err := strconv.ParseInt(c, 10, 64)
 		if err != nil {
 			return errors.Trace(err)
 		}
+		if cancellingJobID == job.ID {
+			found = true
+			pos = i
+			break
+		}
 	}
-	return nil
+	if !found {
+		return nil
+	}
+	cancellingJobIDs = append(cancellingJobIDs[:pos], cancellingJobIDs[pos+1:]...)
+	return m.txn.Set(key, []byte(strings.Join(cancellingJobIDs, "_")))
+}
+
+// RemoveJobFromCancellingList removes a job from the cancelling list.
+func (m *Meta) RemoveJobFromCancellingList(job *model.Job) error {
+	return m.removeJobFromCancellingList(mDDLJobIDCancelKey, job)
 }
 
 func (m *Meta) jobIDKey(id int64) []byte {
