@@ -643,6 +643,7 @@ func (e *ShowExec) fetchShowMasterStatus() error {
 
 func (e *ShowExec) fetchShowVariables() (err error) {
 	var (
+<<<<<<< HEAD
 		value         string
 		ok            bool
 		sessionVars   = e.ctx.GetSessionVars()
@@ -667,14 +668,37 @@ func (e *ShowExec) fetchShowVariables() (err error) {
 		if !ok {
 			unreachedVars = append(unreachedVars, v.Name)
 			continue
+=======
+		value       string
+		sessionVars = e.ctx.GetSessionVars()
+	)
+	if e.GlobalScope {
+		// Collect global scope variables,
+		// 1. Exclude the variables of ScopeSession in variable.SysVars;
+		// 2. If the variable is ScopeNone, it's a read-only variable, return the default value of it,
+		// 		otherwise, fetch the value from table `mysql.Global_Variables`.
+		for _, v := range variable.GetSysVars() {
+			if v.Scope != variable.ScopeSession {
+				value, err = variable.GetGlobalSystemVar(sessionVars, v.Name)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				e.appendRow([]interface{}{v.Name, value})
+			}
+>>>>>>> cc7a38327... executor: fix show global variables return session variables also (#19341)
 		}
-		e.appendRow([]interface{}{v.Name, value})
+		return nil
 	}
-	if len(unreachedVars) != 0 {
-		systemVars, err := sessionVars.GlobalVarsAccessor.GetAllSysVars()
+
+	// Collect session scope variables,
+	// If it is a session only variable, use the default value defined in code,
+	//   otherwise, fetch the value from table `mysql.Global_Variables`.
+	for _, v := range variable.GetSysVars() {
+		value, err = variable.GetSessionSystemVar(sessionVars, v.Name)
 		if err != nil {
 			return errors.Trace(err)
 		}
+<<<<<<< HEAD
 		for _, varName := range unreachedVars {
 			varValue, ok := systemVars[varName]
 			if !ok {
@@ -682,6 +706,9 @@ func (e *ShowExec) fetchShowVariables() (err error) {
 			}
 			e.appendRow([]interface{}{varName, varValue})
 		}
+=======
+		e.appendRow([]interface{}{v.Name, value})
+>>>>>>> cc7a38327... executor: fix show global variables return session variables also (#19341)
 	}
 	return nil
 }

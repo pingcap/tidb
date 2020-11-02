@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
@@ -951,3 +952,93 @@ func (s *testSuite5) TestShowClusterConfig(c *C) {
 	confErr = fmt.Errorf("something unknown error")
 	c.Assert(tk.QueryToErr("show config"), ErrorMatches, confErr.Error())
 }
+<<<<<<< HEAD
+=======
+
+func (s *testSerialSuite1) TestShowCreateTableWithIntegerDisplayLengthWarnings(c *C) {
+	parsertypes.TiDBStrictIntegerDisplayWidth = true
+	defer func() {
+		parsertypes.TiDBStrictIntegerDisplayWidth = false
+	}()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int(2), b varchar(2))")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1064 You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use [parser:1681]Integer display width is deprecated and will be removed in a future release."))
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
+		"  `a` int DEFAULT NULL,\n" +
+		"  `b` varchar(2) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a bigint(10), b bigint)")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1064 You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use [parser:1681]Integer display width is deprecated and will be removed in a future release."))
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
+		"  `a` bigint DEFAULT NULL,\n" +
+		"  `b` bigint DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a tinyint(5), b tinyint(2), c tinyint)")
+	// Here it will occur 2 warnings.
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1064 You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use [parser:1681]Integer display width is deprecated and will be removed in a future release.",
+		"Warning 1064 You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use [parser:1681]Integer display width is deprecated and will be removed in a future release."))
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
+		"  `a` tinyint DEFAULT NULL,\n" +
+		"  `b` tinyint DEFAULT NULL,\n" +
+		"  `c` tinyint DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a smallint(5), b smallint)")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1064 You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use [parser:1681]Integer display width is deprecated and will be removed in a future release."))
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
+		"  `a` smallint DEFAULT NULL,\n" +
+		"  `b` smallint DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a mediumint(5), b mediumint)")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1064 You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use [parser:1681]Integer display width is deprecated and will be removed in a future release."))
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
+		"  `a` mediumint DEFAULT NULL,\n" +
+		"  `b` mediumint DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int1(1), b int2(2), c int3, d int4, e int8)")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1064 You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use [parser:1681]Integer display width is deprecated and will be removed in a future release.",
+		"Warning 1064 You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use [parser:1681]Integer display width is deprecated and will be removed in a future release."))
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
+		"  `a` tinyint DEFAULT NULL,\n" +
+		"  `b` smallint DEFAULT NULL,\n" +
+		"  `c` mediumint DEFAULT NULL,\n" +
+		"  `d` int DEFAULT NULL,\n" +
+		"  `e` bigint DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+}
+
+func (s *testSuite5) TestShowVar(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	var showSQL string
+	for _, v := range variable.GetSysVars() {
+		// When ScopeSession only. `show global variables` must return empty.
+		if v.Scope == variable.ScopeSession {
+			showSQL = "show variables like '" + v.Name + "'"
+			res := tk.MustQuery(showSQL)
+			c.Check(res.Rows(), HasLen, 1)
+			showSQL = "show global variables like '" + v.Name + "'"
+			res = tk.MustQuery(showSQL)
+			c.Check(res.Rows(), HasLen, 0)
+		} else {
+			showSQL = "show global variables like '" + v.Name + "'"
+			res := tk.MustQuery(showSQL)
+			c.Check(res.Rows(), HasLen, 1)
+			showSQL = "show variables like '" + v.Name + "'"
+			res = tk.MustQuery(showSQL)
+			c.Check(res.Rows(), HasLen, 1)
+		}
+	}
+}
+>>>>>>> cc7a38327... executor: fix show global variables return session variables also (#19341)
