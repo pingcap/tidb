@@ -56,6 +56,30 @@ const (
 	PseudoRowCount = 10000
 )
 
+<<<<<<< HEAD
+=======
+// CMSketchSizeLimit indicates the max size(width * depth) of a CMSketch.
+var CMSketchSizeLimit = kv.TxnEntrySizeLimit / binary.MaxVarintLen32
+
+// AnalyzeOptionLimit indicates the upper bound of some attribute.
+var AnalyzeOptionLimit = map[ast.AnalyzeOptionType]uint64{
+	ast.AnalyzeOptNumBuckets:    1024,
+	ast.AnalyzeOptNumTopN:       1024,
+	ast.AnalyzeOptCMSketchWidth: CMSketchSizeLimit,
+	ast.AnalyzeOptCMSketchDepth: CMSketchSizeLimit,
+	ast.AnalyzeOptNumSamples:    100000,
+}
+
+// AnalyzeOptionDefault indicates the default values of some attributes.
+var AnalyzeOptionDefault = map[ast.AnalyzeOptionType]uint64{
+	ast.AnalyzeOptNumBuckets:    256,
+	ast.AnalyzeOptNumTopN:       20,
+	ast.AnalyzeOptCMSketchWidth: 2048,
+	ast.AnalyzeOptCMSketchDepth: 5,
+	ast.AnalyzeOptNumSamples:    10000,
+}
+
+>>>>>>> 152b60ebe... session: increase cm_sketch column max length to 6291456(6MB) (#20152)
 // Table represents statistics for a table.
 type Table struct {
 	HistColl

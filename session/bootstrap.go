@@ -171,6 +171,7 @@ const (
 	);`
 
 	// CreateStatsColsTable stores the statistics of table columns.
+<<<<<<< HEAD
 	CreateStatsColsTable = `CREATE TABLE if not exists mysql.stats_histograms (
 		table_id bigint(64) NOT NULL,
 		is_index tinyint(2) NOT NULL,
@@ -186,6 +187,23 @@ const (
 		correlation double NOT NULL DEFAULT 0,
 		last_analyze_pos blob DEFAULT NULL,
 		unique index tbl(table_id, is_index, hist_id)
+=======
+	CreateStatsColsTable = `CREATE TABLE IF NOT EXISTS mysql.stats_histograms (
+		table_id 			BIGINT(64) NOT NULL,
+		is_index 			TINYINT(2) NOT NULL,
+		hist_id 			BIGINT(64) NOT NULL,
+		distinct_count 		BIGINT(64) NOT NULL,
+		null_count 			BIGINT(64) NOT NULL DEFAULT 0,
+		tot_col_size 		BIGINT(64) NOT NULL DEFAULT 0,
+		modify_count 		BIGINT(64) NOT NULL DEFAULT 0,
+		version 			BIGINT(64) UNSIGNED NOT NULL DEFAULT 0,
+		cm_sketch 			BLOB(6291456),
+		stats_ver 			BIGINT(64) NOT NULL DEFAULT 0,
+		flag 				BIGINT(64) NOT NULL DEFAULT 0,
+		correlation 		DOUBLE NOT NULL DEFAULT 0,
+		last_analyze_pos 	BLOB DEFAULT NULL,
+		UNIQUE INDEX tbl(table_id, is_index, hist_id)
+>>>>>>> 152b60ebe... session: increase cm_sketch column max length to 6291456(6MB) (#20152)
 	);`
 
 	// CreateStatsBucketsTable stores the histogram info for every table columns.
@@ -389,6 +407,19 @@ const (
 	version46 = 46
 	// version47 add Source to bindings to indicate the way binding created.
 	version47 = 47
+<<<<<<< HEAD
+=======
+	// version48 reset all deprecated concurrency related system-variables if they were all default value.
+	version48 = 48
+	// version49 introduces mysql.stats_extended table.
+	version49 = 49
+	// version50 add mysql.schema_index_usage table.
+	version50 = 50
+	// version51 introduces CreateTablespacePriv to mysql.user.
+	version51 = 51
+	// version52 change mysql.stats_histograms cm_sketch column from blob to blob(6291456)
+	version52 = 52
+>>>>>>> 152b60ebe... session: increase cm_sketch column max length to 6291456(6MB) (#20152)
 )
 
 var (
@@ -439,6 +470,14 @@ var (
 		upgradeToVer45,
 		upgradeToVer46,
 		upgradeToVer47,
+<<<<<<< HEAD
+=======
+		upgradeToVer48,
+		upgradeToVer49,
+		upgradeToVer50,
+		upgradeToVer51,
+		upgradeToVer52,
+>>>>>>> 152b60ebe... session: increase cm_sketch column max length to 6291456(6MB) (#20152)
 	}
 )
 
@@ -1071,6 +1110,86 @@ func upgradeToVer47(s Session, ver int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.bind_info ADD COLUMN `source` varchar(10) NOT NULL default 'unknown'", infoschema.ErrColumnExists)
 }
 
+<<<<<<< HEAD
+=======
+func upgradeToVer48(s Session, ver int64) {
+	if ver >= version48 {
+		return
+	}
+	defValues := map[string]string{
+		variable.TiDBIndexLookupConcurrency:     "4",
+		variable.TiDBIndexLookupJoinConcurrency: "4",
+		variable.TiDBHashAggFinalConcurrency:    "4",
+		variable.TiDBHashAggPartialConcurrency:  "4",
+		variable.TiDBWindowConcurrency:          "4",
+		variable.TiDBProjectionConcurrency:      "4",
+		variable.TiDBHashJoinConcurrency:        "5",
+	}
+	names := make([]string, 0, len(defValues))
+	for n := range defValues {
+		names = append(names, n)
+	}
+
+	selectSQL := "select HIGH_PRIORITY * from mysql.global_variables where variable_name in ('" + strings.Join(names, quoteCommaQuote) + "')"
+	ctx := context.Background()
+	rs, err := s.Execute(ctx, selectSQL)
+	terror.MustNil(err)
+	r := rs[0]
+	defer terror.Call(r.Close)
+	req := r.NewChunk()
+	it := chunk.NewIterator4Chunk(req)
+	err = r.Next(ctx, req)
+	for err == nil && req.NumRows() != 0 {
+		for row := it.Begin(); row != it.End(); row = it.Next() {
+			n := strings.ToLower(row.GetString(0))
+			v := row.GetString(1)
+			if defValue, ok := defValues[n]; !ok || defValue != v {
+				return
+			}
+		}
+		err = r.Next(ctx, req)
+	}
+	terror.MustNil(err)
+
+	mustExecute(s, "BEGIN")
+	v := strconv.Itoa(variable.ConcurrencyUnset)
+	sql := fmt.Sprintf("UPDATE %s.%s SET variable_value='%%s' WHERE variable_name='%%s'", mysql.SystemDB, mysql.GlobalVariablesTable)
+	for _, name := range names {
+		mustExecute(s, fmt.Sprintf(sql, v, name))
+	}
+	mustExecute(s, "COMMIT")
+}
+
+func upgradeToVer49(s Session, ver int64) {
+	if ver >= version49 {
+		return
+	}
+	doReentrantDDL(s, CreateStatsExtended)
+}
+
+func upgradeToVer50(s Session, ver int64) {
+	if ver >= version50 {
+		return
+	}
+	doReentrantDDL(s, CreateSchemaIndexUsageTable)
+}
+
+func upgradeToVer51(s Session, ver int64) {
+	if ver >= version51 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `Create_tablespace_priv` ENUM('N','Y') DEFAULT 'N'", infoschema.ErrColumnExists)
+	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET Create_tablespace_priv='Y' where Super_priv='Y'")
+}
+
+func upgradeToVer52(s Session, ver int64) {
+	if ver >= version52 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.stats_histograms MODIFY cm_sketch BLOB(6291456)")
+}
+
+>>>>>>> 152b60ebe... session: increase cm_sketch column max length to 6291456(6MB) (#20152)
 // updateBootstrapVer updates bootstrap version variable in mysql.TiDB table.
 func updateBootstrapVer(s Session) {
 	// Update bootstrap version.
