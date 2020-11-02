@@ -262,7 +262,7 @@ func (s *testSuite2) checkActRowsNotEmpty(c *C, tk *testkit.TestKit, sql string)
 
 func checkActRows(c *C, tk *testkit.TestKit, sql string, expected []string) {
 	actRowsCol := 2
-	rows := tk.MustQuery("explain analyze "+sql).Rows()
+	rows := tk.MustQuery("explain analyze " + sql).Rows()
 	c.Assert(len(rows), Equals, len(expected))
 	for id, row := range rows {
 		strs := make([]string, len(row))
@@ -275,7 +275,7 @@ func checkActRows(c *C, tk *testkit.TestKit, sql string, expected []string) {
 	}
 }
 
-func (s *testSuite1) TestCheckActRowsWithUnistore (c *C) {
+func (s *testSuite1) TestCheckActRowsWithUnistore(c *C) {
 	// testSuite1 use default mockstore which is unistore
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("drop table if exists t_unistore_act_rows")
@@ -284,42 +284,42 @@ func (s *testSuite1) TestCheckActRowsWithUnistore (c *C) {
 	tk.MustExec("analyze table t_unistore_act_rows")
 
 	type testStruct struct {
-		sql string
+		sql      string
 		expected []string
 	}
 
-	tests := []testStruct {
+	tests := []testStruct{
 		{
-			sql: "select * from t_unistore_act_rows",
-			expected: []string {"4", "4"},
+			sql:      "select * from t_unistore_act_rows",
+			expected: []string{"4", "4"},
 		},
 		{
-			sql: "select * from t_unistore_act_rows where a > 1",
-			expected: []string {"2", "2"},
+			sql:      "select * from t_unistore_act_rows where a > 1",
+			expected: []string{"2", "2"},
 		},
 		{
-			sql: "select * from t_unistore_act_rows where a > 1 and b > 0",
-			expected: []string {"1", "1", "2"},
+			sql:      "select * from t_unistore_act_rows where a > 1 and b > 0",
+			expected: []string{"1", "1", "2"},
 		},
 		{
-			sql: "select b from t_unistore_act_rows",
-			expected: []string {"4", "4"},
+			sql:      "select b from t_unistore_act_rows",
+			expected: []string{"4", "4"},
 		},
 		{
-			sql: "select * from t_unistore_act_rows where b > 0",
-			expected: []string {"1", "1", "4"},
+			sql:      "select * from t_unistore_act_rows where b > 0",
+			expected: []string{"1", "1", "4"},
 		},
 		{
-			sql: "select count(*) from t_unistore_act_rows",
-			expected: []string {"1", "1", "1", "4"},
+			sql:      "select count(*) from t_unistore_act_rows",
+			expected: []string{"1", "1", "1", "4"},
 		},
 		{
-			sql: "select count(*) from t_unistore_act_rows group by a",
-			expected: []string {"2", "2", "2", "4"},
+			sql:      "select count(*) from t_unistore_act_rows group by a",
+			expected: []string{"2", "2", "2", "4"},
 		},
 		{
-			sql: "select count(*) from t_unistore_act_rows group by b",
-			expected: []string {"2", "2", "2", "4"},
+			sql:      "select count(*) from t_unistore_act_rows group by b",
+			expected: []string{"2", "2", "2", "4"},
 		},
 	}
 
