@@ -25,6 +25,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/terror"
+
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -38,7 +39,11 @@ func parseLog(retriever *slowQueryRetriever, sctx sessionctx.Context, reader *bu
 	ctx := context.Background()
 	retriever.parseSlowLog(ctx, sctx, reader, 64)
 	task := <-retriever.taskList
-	rows, err := task.result.rows, task.result.err
+	var rows [][]types.Datum
+	var err error
+	if task != nil {
+		rows, err = task.result.rows, task.result.err
+	}
 	if err == io.EOF {
 		err = nil
 	}
