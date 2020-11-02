@@ -69,6 +69,12 @@ func (s *testSerialSuite) TestPrepareStmtAfterIsolationReadChange(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost", CurrentUser: true, AuthUsername: "root", AuthHostname: "%"}, nil, []byte("012345678901234567890"))
 
+	orgEnable := plannercore.PreparedPlanCacheEnabled()
+	defer func() {
+		plannercore.SetPreparedPlanCache(orgEnable)
+	}()
+	plannercore.SetPreparedPlanCache(false) // requires plan cache disabled
+
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int)")
 	// create virtual tiflash replica.
@@ -132,7 +138,11 @@ func (sm *mockSessionManager2) Kill(connectionID uint64, query bool) {
 	sm.killed = true
 	atomic.StoreUint32(&sm.se.GetSessionVars().Killed, 1)
 }
+func (sm *mockSessionManager2) KillAllConnections()             {}
 func (sm *mockSessionManager2) UpdateTLSConfig(cfg *tls.Config) {}
+func (sm *mockSessionManager2) ServerID() uint64 {
+	return 1
+}
 
 var _ = SerialSuites(&testSuite12{&baseTestSuite{}})
 

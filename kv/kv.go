@@ -170,6 +170,7 @@ type MemBufferIterator interface {
 	HasValue() bool
 	Flags() KeyFlags
 	UpdateFlags(...FlagsOp)
+	Handle() MemKeyHandle
 }
 
 // MemBuffer is an in-memory kv collection, can be used to buffer write operations.
@@ -194,6 +195,11 @@ type MemBuffer interface {
 	SetWithFlags(Key, []byte, ...FlagsOp) error
 	// UpdateFlags update the flags associated with key.
 	UpdateFlags(Key, ...FlagsOp)
+	// DeleteWithFlags delete key with the given KeyFlags
+	DeleteWithFlags(Key, ...FlagsOp) error
+
+	GetKeyByHandle(MemKeyHandle) []byte
+	GetValueByHandle(MemKeyHandle) ([]byte, bool)
 
 	// Reset reset the MemBuffer to initial states.
 	Reset()
@@ -390,6 +396,8 @@ type Request struct {
 	BatchCop bool
 	// TaskID is an unique ID for an execution of a statement
 	TaskID uint64
+	// TiDBServerID is the specified TiDB serverID to execute request. `0` means all TiDB instances.
+	TiDBServerID uint64
 }
 
 // ResultSubset represents a result subset from a single storage unit.
@@ -448,9 +456,11 @@ type Storage interface {
 	BeginWithStartTS(startTS uint64) (Transaction, error)
 	// GetSnapshot gets a snapshot that is able to read any data which data is <= ver.
 	// if ver is MaxVersion or > current max committed version, we will use current version for this snapshot.
-	GetSnapshot(ver Version) (Snapshot, error)
+	GetSnapshot(ver Version) Snapshot
 	// GetClient gets a client instance.
 	GetClient() Client
+	// GetClient gets a mpp client instance.
+	GetMPPClient() MPPClient
 	// Close store
 	Close() error
 	// UUID return a unique ID which represents a Storage.
