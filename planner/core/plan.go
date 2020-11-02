@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -107,26 +106,12 @@ func optimizeByShuffle4StreamAgg(pp *PhysicalStreamAgg, ctx sessionctx.Context) 
 		return nil
 	}
 
-	var tail, dataSource PhysicalPlan
-	switch p := pp.Children()[0].(type) {
-	case *PhysicalTopN:
-		tail, dataSource = p, p.Children()[0]
-	case *PhysicalSort:
-		tail, dataSource = p, p.Children()[0]
-	case *PhysicalProjection:
-		tail, dataSource = p, p.Children()[0]
-	case *PhysicalSelection:
-		tail, dataSource = p, p.Children()[0]
-	case *PhysicalTableReader, *PhysicalIndexReader, *PhysicalIndexLookUpReader:
-		tail, dataSource = p, p
-		// return nil
-	default:
-		// panic("other physical plan is not implemented")
+	sort, ok := pp.Children()[0].(*PhysicalSort)
+	if !ok {
 		return nil
 	}
 
-	logutil.BgLogger().Info(fmt.Sprintf("optimizeByShuffle4StreamAgg. tail: %+v, dataSource: %+v", tail.ExplainInfo(), dataSource.ExplainInfo()))
-
+	tail, dataSource := sort, sort.Children()[0]
 	reqProp := &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64}
 	shuffle := PhysicalShuffle{
 		Concurrency:  concurrency,
@@ -143,11 +128,6 @@ func getPartitionSplitter(ctx sessionctx.Context) PartitionSplitterType {
 		return PartitionRangeSplitterType
 	}
 	return PartitionHashSplitterType
-}
-
-// PhysicalTableScan should not have any other child, it's the dataSource, also child
-func extractTailAndDataSource4TableScan(pp *PhysicalTableScan, ctx sessionctx.Context) (tail, dataSource PhysicalPlan) {
-	return pp, pp
 }
 
 func optimizeByShuffle4Window(pp *PhysicalWindow, ctx sessionctx.Context) *PhysicalShuffle {
