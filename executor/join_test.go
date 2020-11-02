@@ -1249,7 +1249,7 @@ func (s *testSuiteJoinSerial) TestIndexNestedLoopHashJoin(c *C) {
 	tk.MustExec("analyze table s")
 	// Test IndexNestedLoopHashJoin keepOrder.
 	tk.MustQuery("explain select /*+ INL_HASH_JOIN(s) */ * from t left join s on t.a=s.a order by t.pk").Check(testkit.Rows(
-		"IndexHashJoin_27 100.00 root  left outer join, inner:TableReader_22, outer key:test.t.a, inner key:test.s.a",
+		"IndexHashJoin_27 100.00 root  left outer join, inner:TableReader_22, outer key:test.t.a, inner key:test.s.a, equal cond:eq(test.t.a, test.s.a)",
 		"├─TableReader_30(Build) 100.00 root  data:TableFullScan_29",
 		"│ └─TableFullScan_29 100.00 cop[tikv] table:t keep order:true",
 		"└─TableReader_22(Probe) 1.00 root  data:TableRangeScan_21",
@@ -1980,7 +1980,7 @@ func (s *testSuiteJoinSerial) TestOuterTableBuildHashTableIsuse13933(c *C) {
 	tk.MustExec("Insert into t values (11,2),(1,2),(5,2)")
 	tk.MustQuery("select /*+ INL_HASH_JOIN(s)*/ * from t left join s on s.b=t.b and s.a < t.a;").Sort().Check(testkit.Rows("1 2 <nil> <nil>", "11 2 1 2", "5 2 1 2"))
 	tk.MustQuery("explain select /*+ INL_HASH_JOIN(s)*/ * from t left join s on s.b=t.b and s.a < t.a;").Check(testkit.Rows(
-		"IndexHashJoin_14 12475.01 root  left outer join, inner:IndexLookUp_11, outer key:test.t.b, inner key:test.s.b, other cond:lt(test.s.a, test.t.a)",
+		"IndexHashJoin_14 12475.01 root  left outer join, inner:IndexLookUp_11, outer key:test.t.b, inner key:test.s.b, equal cond:eq(test.t.b, test.s.b), other cond:lt(test.s.a, test.t.a)",
 		"├─TableReader_24(Build) 10000.00 root  data:TableFullScan_23",
 		"│ └─TableFullScan_23 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
 		"└─IndexLookUp_11(Probe) 1.25 root  ",
@@ -2069,6 +2069,7 @@ func (s *testSuiteJoinSerial) TestInlineProjection4HashJoinIssue15316(c *C) {
 	defer func() { plannercore.ForcedHashLeftJoin4Test = false }()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	tk.MustExec("drop table S, T")
 	tk.MustExec("create table S (a int not null, b int, c int);")
 	tk.MustExec("create table T (a int not null, b int, c int);")
 	tk.MustExec("insert into S values (0,1,2),(0,1,null),(0,1,2);")
