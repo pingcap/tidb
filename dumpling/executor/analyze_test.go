@@ -194,6 +194,26 @@ func (s *testSuite1) TestAnalyzeParameters(c *C) {
 	width, depth = col.CMSketch.GetWidthAndDepth()
 	c.Assert(depth, Equals, int32(4))
 	c.Assert(width, Equals, int32(4))
+
+	// Test very large cmsketch
+	tk.MustExec(fmt.Sprintf("analyze table t with %d cmsketch width, %d cmsketch depth", statistics.CMSketchSizeLimit, 1))
+	tbl = s.dom.StatsHandle().GetTableStats(tableInfo)
+	col = tbl.Columns[1]
+	c.Assert(col.Len(), Equals, 20)
+	c.Assert(len(col.TopN.TopN()), Equals, 1)
+	width, depth = col.CMSketch.GetWidthAndDepth()
+	c.Assert(depth, Equals, int32(1))
+	c.Assert(width, Equals, int32(statistics.CMSketchSizeLimit))
+
+	// Test very large cmsketch
+	tk.MustExec("analyze table t with 20480 cmsketch width, 50 cmsketch depth")
+	tbl = s.dom.StatsHandle().GetTableStats(tableInfo)
+	col = tbl.Columns[1]
+	c.Assert(col.Len(), Equals, 20)
+	c.Assert(len(col.TopN.TopN()), Equals, 1)
+	width, depth = col.CMSketch.GetWidthAndDepth()
+	c.Assert(depth, Equals, int32(50))
+	c.Assert(width, Equals, int32(20480))
 }
 
 func (s *testSuite1) TestAnalyzeTooLongColumns(c *C) {
