@@ -86,6 +86,7 @@ func NewGlobalTracker(label int, bytesLimit int64) *Tracker {
 	return t
 }
 
+// SetIgnoreAction set the ignoreAction flag.
 func (t *Tracker) SetIgnoreAction(b bool) {
 	t.ignoreAction = b
 }
