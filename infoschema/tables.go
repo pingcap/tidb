@@ -264,7 +264,6 @@ func buildTableMeta(tableName string, cs []columnInfo) *model.TableInfo {
 	primaryIndices := make([]*model.IndexInfo, 0, 1)
 	tblInfo := &model.TableInfo{
 		Name:    model.NewCIStr(tableName),
-		Columns: cols,
 		State:   model.StatePublic,
 		Charset: mysql.DefaultCharset,
 		Collate: mysql.DefaultCollationName,
@@ -292,6 +291,7 @@ func buildTableMeta(tableName string, cs []columnInfo) *model.TableInfo {
 	for i, col := range cols {
 		col.Offset = i
 	}
+	tblInfo.Columns = cols
 	return tblInfo
 }
 
