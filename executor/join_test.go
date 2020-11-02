@@ -2389,4 +2389,40 @@ func (s *testSuiteJoinSerial) TestIssue20710(c *C) {
 		"    └─TableRowIDScan_7 1.25 cop[tikv] table:s keep order:false, stats:pseudo"))
 	tk.MustQuery("select /*+ inl_join(s) */ * from t join s on t.a=s.a and t.a = s.b").Sort().Check(testkit.Rows("1 1 1 1", "1 2 1 1", "2 2 2 2"))
 	tk.MustQuery("show warnings").Check(testkit.Rows())
+
+	tk.MustQuery("explain select /*+ inl_hash_join(s) */ * from t join s on t.a=s.a and t.b = s.b").Check(testkit.Rows(
+		"IndexHashJoin_13 12475.01 root  inner join, inner:IndexLookUp_10, outer key:test.t.a, test.t.b, inner key:test.s.a, test.s.b",
+		"├─TableReader_24(Build) 9980.01 root  data:Selection_23",
+		"│ └─Selection_23 9980.01 cop[tikv]  not(isnull(test.t.a)), not(isnull(test.t.b))",
+		"│   └─TableFullScan_22 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+		"└─IndexLookUp_10(Probe) 1.25 root  ",
+		"  ├─Selection_8(Build) 1.25 cop[tikv]  not(isnull(test.s.a))",
+		"  │ └─IndexRangeScan_6 1.25 cop[tikv] table:s, index:a(a) range: decided by [eq(test.s.a, test.t.a)], keep order:false, stats:pseudo",
+		"  └─Selection_9(Probe) 1.25 cop[tikv]  not(isnull(test.s.b))",
+		"    └─TableRowIDScan_7 1.25 cop[tikv] table:s keep order:false, stats:pseudo"))
+	tk.MustQuery("select /*+ inl_join(s) */ * from t join s on t.a=s.a and t.b = s.b").Sort().Check(testkit.Rows("1 1 1 1", "2 2 2 2"))
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustQuery("explain select /*+ inl_hash_join(s) */ * from t join s on t.a=s.a and t.b = s.a").Check(testkit.Rows(
+		"IndexHashJoin_12 12475.01 root  inner join, inner:IndexLookUp_9, outer key:test.t.a, test.t.b, inner key:test.s.a, test.s.a",
+		"├─TableReader_22(Build) 9980.01 root  data:Selection_21",
+		"│ └─Selection_21 9980.01 cop[tikv]  not(isnull(test.t.a)), not(isnull(test.t.b))",
+		"│   └─TableFullScan_20 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+		"└─IndexLookUp_9(Probe) 1.25 root  ",
+		"  ├─Selection_8(Build) 1.25 cop[tikv]  not(isnull(test.s.a))",
+		"  │ └─IndexRangeScan_6 1.25 cop[tikv] table:s, index:a(a) range: decided by [eq(test.s.a, test.t.a)], keep order:false, stats:pseudo",
+		"  └─TableRowIDScan_7(Probe) 1.25 cop[tikv] table:s keep order:false, stats:pseudo"))
+	tk.MustQuery("select /*+ inl_join(s) */ * from t join s on t.a=s.a and t.b = s.a").Sort().Check(testkit.Rows("1 1 1 1", "2 2 2 1", "2 2 2 2"))
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustQuery("explain select /*+ inl_hash_join(s) */ * from t join s on t.a=s.a and t.a = s.b").Check(testkit.Rows(
+		"IndexHashJoin_13 12475.01 root  inner join, inner:IndexLookUp_10, outer key:test.t.a, test.t.a, inner key:test.s.a, test.s.b",
+		"├─TableReader_24(Build) 9990.00 root  data:Selection_23",
+		"│ └─Selection_23 9990.00 cop[tikv]  not(isnull(test.t.a))",
+		"│   └─TableFullScan_22 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+		"└─IndexLookUp_10(Probe) 1.25 root  ",
+		"  ├─Selection_8(Build) 1.25 cop[tikv]  not(isnull(test.s.a))",
+		"  │ └─IndexRangeScan_6 1.25 cop[tikv] table:s, index:a(a) range: decided by [eq(test.s.a, test.t.a)], keep order:false, stats:pseudo",
+		"  └─Selection_9(Probe) 1.25 cop[tikv]  not(isnull(test.s.b))",
+		"    └─TableRowIDScan_7 1.25 cop[tikv] table:s keep order:false, stats:pseudo"))
+	tk.MustQuery("select /*+ inl_join(s) */ * from t join s on t.a=s.a and t.a = s.b").Sort().Check(testkit.Rows("1 1 1 1", "1 2 1 1", "2 2 2 2"))
+	tk.MustQuery("show warnings").Check(testkit.Rows())
 }
