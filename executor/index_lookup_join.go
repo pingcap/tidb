@@ -106,7 +106,6 @@ type lookUpJoinTask struct {
 
 	innerResult       *chunk.List
 	encodedLookUpKeys []*chunk.Chunk
-	hashLookUpKeys    []*chunk.Chunk
 	lookupMap         *mvmap.MVMap
 	matchedInners     []chunk.Row
 

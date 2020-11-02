@@ -297,7 +297,7 @@ id	estRows	task	access object	operator info
 Sort_10	1.00	root		tpch.orders.o_orderpriority
 └─Projection_12	1.00	root		tpch.orders.o_orderpriority, Column#27
   └─HashAgg_15	1.00	root		group by:tpch.orders.o_orderpriority, funcs:count(1)->Column#27, funcs:firstrow(tpch.orders.o_orderpriority)->tpch.orders.o_orderpriority
-    └─IndexHashJoin_23	2340750.00	root		semi join, inner:IndexLookUp_20, outer key:tpch.orders.o_orderkey, inner key:tpch.lineitem.l_orderkey
+    └─IndexHashJoin_23	2340750.00	root		semi join, inner:IndexLookUp_20, outer key:tpch.orders.o_orderkey, inner key:tpch.lineitem.l_orderkey, equal cond:eq(tpch.orders.o_orderkey, tpch.lineitem.l_orderkey)
       ├─TableReader_42(Build)	2925937.50	root		data:Selection_41
       │ └─Selection_41	2925937.50	cop[tikv]		ge(tpch.orders.o_orderdate, 1995-01-01 00:00:00.000000), lt(tpch.orders.o_orderdate, 1995-04-01)
       │   └─TableFullScan_40	75000000.00	cop[tikv]	table:orders	keep order:false
@@ -530,7 +530,7 @@ Sort_29	719.02	root		Column#62
               ├─TableReader_117(Build)	61674.00	root		data:Selection_116
               │ └─Selection_116	61674.00	cop[tikv]		eq(tpch.part.p_type, "SMALL PLATED COPPER")
               │   └─TableFullScan_115	10000000.00	cop[tikv]	table:part	keep order:false
-              └─IndexHashJoin_77(Probe)	90788402.51	root		inner join, inner:IndexLookUp_74, outer key:tpch.orders.o_orderkey, inner key:tpch.lineitem.l_orderkey
+              └─IndexHashJoin_77(Probe)	90788402.51	root		inner join, inner:IndexLookUp_74, outer key:tpch.orders.o_orderkey, inner key:tpch.lineitem.l_orderkey, equal cond:eq(tpch.orders.o_orderkey, tpch.lineitem.l_orderkey)
                 ├─HashJoin_87(Build)	22413367.93	root		inner join, equal:[eq(tpch.customer.c_custkey, tpch.orders.o_custkey)]
                 │ ├─HashJoin_89(Build)	1500000.00	root		inner join, equal:[eq(tpch.nation.n_nationkey, tpch.customer.c_nationkey)]
                 │ │ ├─HashJoin_102(Build)	5.00	root		inner join, equal:[eq(tpch.region.r_regionkey, tpch.nation.n_regionkey)]
@@ -661,7 +661,7 @@ Projection_17	20.00	root		tpch.customer.c_custkey, tpch.customer.c_name, Column#
 └─TopN_20	20.00	root		Column#39:desc, offset:0, count:20
   └─HashAgg_26	3017307.69	root		group by:Column#53, Column#54, Column#55, Column#56, Column#57, Column#58, Column#59, funcs:sum(Column#45)->Column#39, funcs:firstrow(Column#46)->tpch.customer.c_custkey, funcs:firstrow(Column#47)->tpch.customer.c_name, funcs:firstrow(Column#48)->tpch.customer.c_address, funcs:firstrow(Column#49)->tpch.customer.c_phone, funcs:firstrow(Column#50)->tpch.customer.c_acctbal, funcs:firstrow(Column#51)->tpch.customer.c_comment, funcs:firstrow(Column#52)->tpch.nation.n_name
     └─Projection_67	12222016.17	root		mul(tpch.lineitem.l_extendedprice, minus(1, tpch.lineitem.l_discount))->Column#45, tpch.customer.c_custkey, tpch.customer.c_name, tpch.customer.c_address, tpch.customer.c_phone, tpch.customer.c_acctbal, tpch.customer.c_comment, tpch.nation.n_name, tpch.customer.c_custkey, tpch.customer.c_name, tpch.customer.c_acctbal, tpch.customer.c_phone, tpch.nation.n_name, tpch.customer.c_address, tpch.customer.c_comment
-      └─IndexHashJoin_34	12222016.17	root		inner join, inner:IndexLookUp_31, outer key:tpch.orders.o_orderkey, inner key:tpch.lineitem.l_orderkey
+      └─IndexHashJoin_34	12222016.17	root		inner join, inner:IndexLookUp_31, outer key:tpch.orders.o_orderkey, inner key:tpch.lineitem.l_orderkey, equal cond:eq(tpch.orders.o_orderkey, tpch.lineitem.l_orderkey)
         ├─HashJoin_44(Build)	3017307.69	root		inner join, equal:[eq(tpch.customer.c_custkey, tpch.orders.o_custkey)]
         │ ├─TableReader_63(Build)	3017307.69	root		data:Selection_62
         │ │ └─Selection_62	3017307.69	cop[tikv]		ge(tpch.orders.o_orderdate, 1993-08-01 00:00:00.000000), lt(tpch.orders.o_orderdate, 1993-11-01)
@@ -1156,7 +1156,7 @@ Sort_28	20000.00	root		tpch.supplier.s_name
       └─Selection_55	257492.04	root		gt(cast(tpch.partsupp.ps_availqty), mul(0.5, Column#44))
         └─HashAgg_58	321865.05	root		group by:tpch.partsupp.ps_partkey, tpch.partsupp.ps_suppkey, funcs:firstrow(tpch.partsupp.ps_suppkey)->tpch.partsupp.ps_suppkey, funcs:firstrow(tpch.partsupp.ps_availqty)->tpch.partsupp.ps_availqty, funcs:sum(tpch.lineitem.l_quantity)->Column#44
           └─HashJoin_62	9711455.06	root		left outer join, equal:[eq(tpch.partsupp.ps_partkey, tpch.lineitem.l_partkey) eq(tpch.partsupp.ps_suppkey, tpch.lineitem.l_suppkey)]
-            ├─IndexHashJoin_69(Build)	321865.05	root		inner join, inner:IndexLookUp_66, outer key:tpch.part.p_partkey, inner key:tpch.partsupp.ps_partkey
+            ├─IndexHashJoin_69(Build)	321865.05	root		inner join, inner:IndexLookUp_66, outer key:tpch.part.p_partkey, inner key:tpch.partsupp.ps_partkey, equal cond:eq(tpch.part.p_partkey, tpch.partsupp.ps_partkey)
             │ ├─TableReader_98(Build)	80007.93	root		data:Selection_97
             │ │ └─Selection_97	80007.93	cop[tikv]		like(tpch.part.p_name, "green%", 92)
             │ │   └─TableFullScan_96	10000000.00	cop[tikv]	table:part	keep order:false
@@ -1218,8 +1218,8 @@ id	estRows	task	access object	operator info
 Projection_25	100.00	root		tpch.supplier.s_name, Column#72
 └─TopN_28	100.00	root		Column#72:desc, tpch.supplier.s_name, offset:0, count:100
   └─HashAgg_34	12800.00	root		group by:tpch.supplier.s_name, funcs:count(1)->Column#72, funcs:firstrow(tpch.supplier.s_name)->tpch.supplier.s_name
-    └─IndexHashJoin_42	7828961.66	root		anti semi join, inner:IndexLookUp_39, outer key:tpch.lineitem.l_orderkey, inner key:tpch.lineitem.l_orderkey, other cond:ne(tpch.lineitem.l_suppkey, tpch.lineitem.l_suppkey)
-      ├─IndexHashJoin_82(Build)	9786202.08	root		semi join, inner:IndexLookUp_79, outer key:tpch.lineitem.l_orderkey, inner key:tpch.lineitem.l_orderkey, other cond:ne(tpch.lineitem.l_suppkey, tpch.lineitem.l_suppkey), ne(tpch.lineitem.l_suppkey, tpch.supplier.s_suppkey)
+    └─IndexHashJoin_42	7828961.66	root		anti semi join, inner:IndexLookUp_39, outer key:tpch.lineitem.l_orderkey, inner key:tpch.lineitem.l_orderkey, equal cond:eq(tpch.lineitem.l_orderkey, tpch.lineitem.l_orderkey), other cond:ne(tpch.lineitem.l_suppkey, tpch.lineitem.l_suppkey)
+      ├─IndexHashJoin_82(Build)	9786202.08	root		semi join, inner:IndexLookUp_79, outer key:tpch.lineitem.l_orderkey, inner key:tpch.lineitem.l_orderkey, equal cond:eq(tpch.lineitem.l_orderkey, tpch.lineitem.l_orderkey), other cond:ne(tpch.lineitem.l_suppkey, tpch.lineitem.l_suppkey), ne(tpch.lineitem.l_suppkey, tpch.supplier.s_suppkey)
       │ ├─IndexMergeJoin_101(Build)	12232752.60	root		inner join, inner:TableReader_96, outer key:tpch.lineitem.l_orderkey, inner key:tpch.orders.o_orderkey
       │ │ ├─HashJoin_105(Build)	12232752.60	root		inner join, equal:[eq(tpch.supplier.s_suppkey, tpch.lineitem.l_suppkey)]
       │ │ │ ├─HashJoin_118(Build)	20000.00	root		inner join, equal:[eq(tpch.nation.n_nationkey, tpch.supplier.s_nationkey)]

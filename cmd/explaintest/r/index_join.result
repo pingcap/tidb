@@ -8,7 +8,7 @@ set session tidb_hashagg_partial_concurrency = 1;
 set session tidb_hashagg_final_concurrency = 1;
 explain select /*+ TIDB_INLJ(t1, t2) */ * from t1 join t2 on t1.a=t2.a;
 id	estRows	task	access object	operator info
-IndexJoin_25	5.00	root		inner join, inner:IndexLookUp_24, outer key:test.t2.a, inner key:test.t1.a
+IndexJoin_25	5.00	root		inner join, inner:IndexLookUp_24, outer key:test.t2.a, inner key:test.t1.a, equal cond:eq(test.t2.a, test.t1.a)
 ├─TableReader_43(Build)	1.00	root		data:Selection_42
 │ └─Selection_42	1.00	cop[tikv]		not(isnull(test.t2.a))
 │   └─TableFullScan_41	1.00	cop[tikv]	table:t2	keep order:false
@@ -32,7 +32,7 @@ create table t2(a int not null, b int not null, key a(a));
 set @@tidb_opt_insubq_to_join_and_agg=0;
 explain select /*+ TIDB_INLJ(t2@sel_2) */ * from t1 where t1.a in (select t2.a from t2);
 id	estRows	task	access object	operator info
-IndexJoin_10	8000.00	root		semi join, inner:IndexReader_9, outer key:test.t1.a, inner key:test.t2.a
+IndexJoin_10	8000.00	root		semi join, inner:IndexReader_9, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a)
 ├─TableReader_18(Build)	10000.00	root		data:TableFullScan_17
 │ └─TableFullScan_17	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 └─IndexReader_9(Probe)	1.25	root		index:IndexRangeScan_8
@@ -45,7 +45,7 @@ create table t1(a int not null, b int not null, key a(a));
 create table t2(a int not null, b int not null, key a(a));
 explain select /*+ TIDB_INLJ(t1) */ * from t1 where t1.a in (select t2.a from t2);
 id	estRows	task	access object	operator info
-IndexJoin_13	10000.00	root		inner join, inner:IndexLookUp_12, outer key:test.t2.a, inner key:test.t1.a
+IndexJoin_13	10000.00	root		inner join, inner:IndexLookUp_12, outer key:test.t2.a, inner key:test.t1.a, equal cond:eq(test.t2.a, test.t1.a)
 ├─StreamAgg_26(Build)	8000.00	root		group by:test.t2.a, funcs:firstrow(test.t2.a)->test.t2.a
 │ └─IndexReader_39	10000.00	root		index:IndexFullScan_38
 │   └─IndexFullScan_38	10000.00	cop[tikv]	table:t2, index:a(a)	keep order:true, stats:pseudo

@@ -72,7 +72,7 @@ VALUES ('{"a": 1}', '{"1": "1"}');
 ANALYZE TABLE sgc1, sgc2;
 EXPLAIN SELECT /*+ TIDB_INLJ(sgc1, sgc2) */ * from sgc1 join sgc2 on sgc1.a=sgc2.a;
 id	estRows	task	access object	operator info
-IndexJoin_26	5.00	root		inner join, inner:IndexLookUp_25, outer key:test.sgc2.a, inner key:test.sgc1.a
+IndexJoin_26	5.00	root		inner join, inner:IndexLookUp_25, outer key:test.sgc2.a, inner key:test.sgc1.a, equal cond:eq(test.sgc2.a, test.sgc1.a)
 ├─TableReader_47(Build)	1.00	root		data:Selection_46
 │ └─Selection_46	1.00	cop[tikv]		not(isnull(test.sgc2.a))
 │   └─TableFullScan_45	1.00	cop[tikv]	table:sgc2	keep order:false
