@@ -200,7 +200,7 @@ func (s *testSuite1) TestAnalyzeParameters(c *C) {
 	tbl = s.dom.StatsHandle().GetTableStats(tableInfo)
 	col = tbl.Columns[1]
 	c.Assert(col.Len(), Equals, 20)
-	c.Assert(len(col.CMSketch.TopN()), Equals, 1)
+	c.Assert(len(col.TopN.TopN()), Equals, 1)
 	width, depth = col.CMSketch.GetWidthAndDepth()
 	c.Assert(depth, Equals, int32(1))
 	c.Assert(width, Equals, int32(statistics.CMSketchSizeLimit))
@@ -210,7 +210,7 @@ func (s *testSuite1) TestAnalyzeParameters(c *C) {
 	tbl = s.dom.StatsHandle().GetTableStats(tableInfo)
 	col = tbl.Columns[1]
 	c.Assert(col.Len(), Equals, 20)
-	c.Assert(len(col.CMSketch.TopN()), Equals, 1)
+	c.Assert(len(col.TopN.TopN()), Equals, 1)
 	width, depth = col.CMSketch.GetWidthAndDepth()
 	c.Assert(depth, Equals, int32(50))
 	c.Assert(width, Equals, int32(20480))
