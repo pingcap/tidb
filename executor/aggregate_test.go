@@ -1078,7 +1078,7 @@ func (s *testSuiteAgg) TestIssue15690(c *C) {
 	tk.MustExec(`create table t(a int);`)
 	tk.MustExec(`insert into t values(null),(null);`)
 	tk.MustExec(`insert into t values(0),(2),(2),(4),(8);`)
-	tk.MustQuery(`select /*+ stream_agg() */ distinct * from t;`).Check(testkit.Rows("<nil>", "0", "2", "4", "8"))
+	tk.MustQuery(`select /*+ stream_agg() */ distinct * from t;`).Sort().Check(testkit.Rows("0", "2", "4", "8", "<nil>"))
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0))
 
 	// check for FLOAT type

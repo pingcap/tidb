@@ -56,11 +56,12 @@
       },
       {
         "SQL": "select /*+ STREAM_AGG() */ s, count(s) from (select /*+ HASH_AGG() */ sum(t1.a) as s from t t1, t t2 where t1.a = t2.b group by t1.a) p group by s",
-        "Best": "LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]])->TableReader(Table(t))}(test.t.a,test.t.b)->Projection->HashAgg->Sort->StreamAgg->Projection"
+        "Best":"LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]])->TableReader(Table(t))}(test.t.a,test.t.b)->Projection->HashAgg->Sort->StreamAgg->Partition(execution info: concurrency:5, data source:HashAgg_19)->Projection"
+
       },
       {
         "SQL": "select /*+ HASH_AGG() */ s, count(s) from (select /*+ STREAM_AGG() */ sum(t1.a) as s from t t1, t t2 where t1.a = t2.b group by t1.a) p group by s",
-        "Best": "LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]])->TableReader(Table(t))}(test.t.a,test.t.b)->Sort->Projection->StreamAgg->HashAgg->Projection"
+        "Best": "LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]])->TableReader(Table(t))}(test.t.a,test.t.b)->Sort->Projection->StreamAgg->Partition(execution info: concurrency:5, data source:HashJoin_31)->HashAgg->Projection",
       },
       {
         "SQL": "select /*+ HASH_AGG() */ s, count(s) from (select sum(t1.a) as s from t t1, t t2 where t1.a = t2.b group by t1.a) p group by s",
@@ -68,7 +69,7 @@
       },
       {
         "SQL": "select /*+ STREAM_AGG() */ s, count(s) from (select sum(t1.a) as s from t t1, t t2 where t1.a = t2.b group by t1.a) p group by s",
-        "Best": "LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]])->TableReader(Table(t))}(test.t.a,test.t.b)->Projection->HashAgg->Sort->StreamAgg->Projection"
+        "Best": "LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]])->TableReader(Table(t))}(test.t.a,test.t.b)->Projection->HashAgg->Sort->StreamAgg->Partition(execution info: concurrency:5, data source:HashAgg_19)->Projection"
       }
     ]
   },
@@ -770,7 +771,7 @@
       },
       {
         "SQL": "select count(*) from (select * from t order by b) t group by b",
-        "Best": "TableReader(Table(t))->Sort->StreamAgg"
+        "Best": "TableReader(Table(t))->Sort->StreamAgg->Partition(execution info: concurrency:4, data source:TableReader_15)"
       },
       {
         "SQL": "select count(*), x from (select b as bbb, a + 1 as x from (select * from t order by b) t) t group by bbb",
@@ -1218,7 +1219,7 @@
       },
       {
         "SQL": "select /*+ STREAM_AGG() */ count(t1.a) from t t1, t t2 where t1.a = t2.a*2 group by t1.a",
-        "Best": "LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]])->IndexReader(Index(t.f)[[NULL,+inf]])->Projection}(test.t.a,Column#26)->Sort->StreamAgg",
+        "Best": "LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]])->IndexReader(Index(t.f)[[NULL,+inf]])->Projection}(test.t.a,Column#26)->Sort->StreamAgg->Partition(execution info: concurrency:5, data source:HashJoin_27)",
         "Warning": ""
       },
       {
@@ -1248,7 +1249,7 @@
       },
       {
         "SQL": "select /*+ STREAM_AGG() */ sum(t1.a) from t t1 join t t2 on t1.b = t2.b group by t1.b",
-        "Best": "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))->Sort->Projection->StreamAgg}(test.t.b,test.t.b)->HashAgg",
+        "Best": "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))->Sort->Projection->StreamAgg->Partition(execution info: concurrency:5, data source:TableReader_23)}(test.t.b,test.t.b)->HashAgg",
         "Warning": ""
       },
       {
