@@ -57,14 +57,15 @@ type UpdateExec struct {
 
 	stats *runtimeStatsWithSnapshot
 
-	handles   []kv.Handle
-	updatable []bool
-	changed   []bool
+	handles    []kv.Handle
+	updatable  []bool
+	changed    []bool
+	assignFlag []bool
 }
 
-// computeHandles precomputes and saves `handles`, `updatable` and `changed` to avoid re-computations.
-func (e *UpdateExec) computeHandles(ctx context.Context, schema *expression.Schema, row []types.Datum) error {
-	assignFlag, err := plannercore.GetUpdateColumns(e.ctx, e.OrderedList, schema.Len())
+// prepare `handles`, `updatable`, `changed` and `assignFlag` to avoid re-computations.
+func (e *UpdateExec) prepare(ctx context.Context, schema *expression.Schema, row []types.Datum) (err error) {
+	e.assignFlag, err = plannercore.GetUpdateColumns(e.ctx, e.OrderedList, schema.Len())
 	if err != nil {
 		return err
 	}
@@ -85,7 +86,7 @@ func (e *UpdateExec) computeHandles(ctx context.Context, schema *expression.Sche
 		e.handles = append(e.handles, handle)
 
 		updatable := false
-		flags := assignFlag[content.Start:content.End]
+		flags := e.assignFlag[content.Start:content.End]
 		for _, flag := range flags {
 			if flag {
 				updatable = true
@@ -108,14 +109,11 @@ func (e *UpdateExec) merge(ctx context.Context, schema *expression.Schema, row, 
 	if !e.multiUpdateOnSameTable {
 		return nil
 	}
-	assignFlag, err := plannercore.GetUpdateColumns(e.ctx, e.OrderedList, schema.Len())
-	if err != nil {
-		return err
-	}
 	if e.mergedRowData == nil {
 		e.mergedRowData = make(map[int64]*kv.HandleMap)
 	}
-	// write to mergedData
+	var mergedData []types.Datum
+	// write to mergedRowData
 	for i, content := range e.tblColPosInfos {
 		if !e.updatable[i] {
 			// If there's nothing to update, we can just skip current row
@@ -126,13 +124,12 @@ func (e *UpdateExec) merge(ctx context.Context, schema *expression.Schema, row, 
 			continue
 		}
 		handle := e.handles[i]
-		flags := assignFlag[content.Start:content.End]
+		flags := e.assignFlag[content.Start:content.End]
 
 		if e.mergedRowData[content.TblID] == nil {
 			e.mergedRowData[content.TblID] = kv.NewHandleMap()
 		}
 		newTableData := newData[content.Start:content.End]
-		var mergedData []types.Datum
 		v, ok := e.mergedRowData[content.TblID].Get(handle)
 		if !ok {
 			mergedData = append([]types.Datum{}, newTableData...)
@@ -146,7 +143,7 @@ func (e *UpdateExec) merge(ctx context.Context, schema *expression.Schema, row, 
 		}
 		e.mergedRowData[content.TblID].Set(handle, mergedData)
 	}
-	// read from mergedData
+	// read from mergedRowData
 	for i, content := range e.tblColPosInfos {
 		if !e.updatable[i] {
 			// If there's nothing to update, we can just skip current row
@@ -157,17 +154,16 @@ func (e *UpdateExec) merge(ctx context.Context, schema *expression.Schema, row, 
 			continue
 		}
 		handle := e.handles[i]
-		flags := assignFlag[content.Start:content.End]
+		flags := e.assignFlag[content.Start:content.End]
 
 		oldData := row[content.Start:content.End]
 		newTableData := newData[content.Start:content.End]
-		var updatedData []types.Datum
 		if v, ok := e.mergedRowData[content.TblID].Get(handle); ok {
-			updatedData = v.([]types.Datum)
+			mergedData = v.([]types.Datum)
 			for i, flag := range flags {
 				if !flag {
-					updatedData[i].Copy(&oldData[i])
-					updatedData[i].Copy(&newTableData[i])
+					mergedData[i].Copy(&oldData[i])
+					mergedData[i].Copy(&newTableData[i])
 				}
 			}
 		}
@@ -177,10 +173,6 @@ func (e *UpdateExec) merge(ctx context.Context, schema *expression.Schema, row, 
 
 func (e *UpdateExec) exec(ctx context.Context, schema *expression.Schema, row, newData []types.Datum) error {
 	defer trace.StartRegion(ctx, "UpdateExec").End()
-	assignFlag, err := plannercore.GetUpdateColumns(e.ctx, e.OrderedList, schema.Len())
-	if err != nil {
-		return err
-	}
 	for i, content := range e.tblColPosInfos {
 		tbl := e.tblID2table[content.TblID]
 
@@ -205,7 +197,7 @@ func (e *UpdateExec) exec(ctx context.Context, schema *expression.Schema, row, n
 
 		oldData := row[content.Start:content.End]
 		newTableData := newData[content.Start:content.End]
-		flags := assignFlag[content.Start:content.End]
+		flags := e.assignFlag[content.Start:content.End]
 
 		// Update row
 		changed, err1 := updateRecord(ctx, e.ctx, handle, oldData, newTableData, flags, tbl, false, e.memTracker)
@@ -290,7 +282,7 @@ func (e *UpdateExec) updateRows(ctx context.Context) (int, error) {
 			chunkRow := chk.GetRow(rowIdx)
 			datumRow := chunkRow.GetDatumRow(fields)
 			// precomputes handles
-			if err := e.computeHandles(ctx, e.children[0].Schema(), datumRow); err != nil {
+			if err := e.prepare(ctx, e.children[0].Schema(), datumRow); err != nil {
 				return 0, err
 			}
 			// compose non-generated columns
@@ -302,14 +294,16 @@ func (e *UpdateExec) updateRows(ctx context.Context) (int, error) {
 			if err := e.merge(ctx, e.children[0].Schema(), datumRow, newRow); err != nil {
 				return 0, err
 			}
-			// compose generated columns
-			newRow, err = e.composeVirtualColumns(globalRowIdx, newRow, colsInfo)
-			if err != nil {
-				return 0, err
-			}
-			// merge generated columns
-			if err := e.merge(ctx, e.children[0].Schema(), datumRow, newRow); err != nil {
-				return 0, err
+			if e.virtualAssignmentsOffset < len(e.OrderedList) {
+				// compose generated columns
+				newRow, err = e.composeVirtualColumns(globalRowIdx, newRow, colsInfo)
+				if err != nil {
+					return 0, err
+				}
+				// merge generated columns
+				if err := e.merge(ctx, e.children[0].Schema(), datumRow, newRow); err != nil {
+					return 0, err
+				}
 			}
 			// write to table
 			if err := e.exec(ctx, e.children[0].Schema(), datumRow, newRow); err != nil {
