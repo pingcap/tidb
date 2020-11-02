@@ -679,24 +679,24 @@ type groupedMutations struct {
 	mutations CommitterMutations
 }
 
-// GroupSortedMutationsByRegion separates keys into groups by their belonging Regions.
-func (c *RegionCache) GroupSortedMutationsByRegion(bo *Backoffer, m CommitterMutations) ([]groupedMutations, error) {
+// groupSortedMutationsByRegion separates keys into groups by their belonging Regions.
+func (c *RegionCache) groupSortedMutationsByRegion(bo *Backoffer, m CommitterMutations) ([]groupedMutations, error) {
 	var (
 		groups  []groupedMutations
 		lastLoc *KeyLocation
 	)
 	lastUpperBound := 0
-	for i := range m.keys {
-		if lastLoc == nil || !lastLoc.Contains(m.keys[i]) {
+	for i := 0; i < m.Len(); i++ {
+		if lastLoc == nil || !lastLoc.Contains(m.GetKey(i)) {
 			if lastLoc != nil {
 				groups = append(groups, groupedMutations{
 					region:    lastLoc.Region,
-					mutations: m.subRange(lastUpperBound, i),
+					mutations: m.Slice(lastUpperBound, i),
 				})
 				lastUpperBound = i
 			}
 			var err error
-			lastLoc, err = c.LocateKey(bo, m.keys[i])
+			lastLoc, err = c.LocateKey(bo, m.GetKey(i))
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -705,7 +705,7 @@ func (c *RegionCache) GroupSortedMutationsByRegion(bo *Backoffer, m CommitterMut
 	if lastLoc != nil {
 		groups = append(groups, groupedMutations{
 			region:    lastLoc.Region,
-			mutations: m.subRange(lastUpperBound, m.len()),
+			mutations: m.Slice(lastUpperBound, m.Len()),
 		})
 	}
 	return groups, nil
