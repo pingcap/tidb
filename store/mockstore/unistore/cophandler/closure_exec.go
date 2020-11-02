@@ -324,7 +324,7 @@ func (e *execDetail) buildSummary() *tipb.ExecutorExecutionSummary {
 	return &tipb.ExecutorExecutionSummary{
 		TimeProcessedNs: &costNs,
 		NumProducedRows: &rows,
-		NumIterations:  &numIter,
+		NumIterations:   &numIter,
 	}
 }
 
@@ -371,7 +371,7 @@ type scanCtx struct {
 
 	newCollationRd  *rowcodec.BytesDecoder
 	newCollationIds map[int64]int
-	execDetail		 *execDetail
+	execDetail      *execDetail
 }
 
 type idxScanCtx struct {
@@ -379,11 +379,11 @@ type idxScanCtx struct {
 	columnLen        int
 	colInfos         []rowcodec.ColInfo
 	primaryColumnIds []int64
-	execDetail		 *execDetail
+	execDetail       *execDetail
 }
 
 type aggCtx struct {
-	col *tipb.ColumnInfo
+	col        *tipb.ColumnInfo
 	execDetail *execDetail
 }
 
@@ -396,7 +396,7 @@ type topNCtx struct {
 	heap         *topNHeap
 	orderByExprs []expression.Expression
 	sortRow      *sortRow
-	execDetail		 *execDetail
+	execDetail   *execDetail
 }
 
 func (e *closureExecutor) execute() ([]tipb.Chunk, error) {
