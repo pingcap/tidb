@@ -310,7 +310,6 @@ func buildResp(chunks []tipb.Chunk, closureExecutor *closureExecutor, dagReq *ti
 			switch executors[i].Tp {
 			case tipb.ExecType_TypeTableScan:
 				execSummary[i] = closureExecutor.scanCtx.execDetail.buildSummary()
-				fmt.Println("[table scan]", i, *execSummary[i].NumProducedRows)
 			case tipb.ExecType_TypeIndexScan:
 				execSummary[i] = closureExecutor.idxScanCtx.execDetail.buildSummary()
 			case tipb.ExecType_TypeSelection:
