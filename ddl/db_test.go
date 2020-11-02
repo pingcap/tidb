@@ -4977,41 +4977,44 @@ func (s *testDBSuite1) TestModifyColumnTime(c *C) {
 		//{"year", `70`, "time", "", errno.ErrTruncatedWrongValue},
 		//{"year", `99`, "time", "", errno.ErrTruncatedWrongValue},
 
-		// year to date, will get "Warning: Incorrect time value", in MySQL it will get "Error: Incorrect date value"
-		{"year", `"2019"`, "date", "0000-00-00", 0},
-		{"year", `2019`, "date", "0000-00-00", 0},
-		{"year", `"00"`, "date", "0000-00-00", 0},
-		{"year", `"69"`, "date", "0000-00-00", 0},
-		{"year", `"70"`, "date", "0000-00-00", 0},
-		{"year", `"99"`, "date", "0000-00-00", 0},
+		// year to date
+		{"year", `"2019"`, "date", "", errno.ErrTruncatedWrongValue},
+		{"year", `2019`, "date", "", errno.ErrTruncatedWrongValue},
+		{"year", `"00"`, "date", "", errno.ErrTruncatedWrongValue},
+		{"year", `"69"`, "date", "", errno.ErrTruncatedWrongValue},
+		{"year", `"70"`, "date", "", errno.ErrTruncatedWrongValue},
+		{"year", `"99"`, "date", "", errno.ErrTruncatedWrongValue},
+		// MySQL will get "Data truncation: Incorrect date value: '0000'", but TiDB treat 00 as valid datetime.
 		{"year", `00`, "date", "0000-00-00", 0},
-		{"year", `69`, "date", "0000-00-00", 0},
-		{"year", `70`, "date", "0000-00-00", 0},
-		{"year", `99`, "date", "0000-00-00", 0},
+		{"year", `69`, "date", "", errno.ErrTruncatedWrongValue},
+		{"year", `70`, "date", "", errno.ErrTruncatedWrongValue},
+		{"year", `99`, "date", "", errno.ErrTruncatedWrongValue},
 
-		// year to datetime, will get "Warning: Incorrect time value", in MySQL it will get "Error: Incorrect datetime value"
-		{"year", `"2019"`, "datetime", "0000-00-00 00:00:00", 0},
-		{"year", `2019`, "datetime", "0000-00-00 00:00:00", 0},
-		{"year", `"00"`, "datetime", "0000-00-00 00:00:00", 0},
-		{"year", `"69"`, "datetime", "0000-00-00 00:00:00", 0},
-		{"year", `"70"`, "datetime", "0000-00-00 00:00:00", 0},
-		{"year", `"99"`, "datetime", "0000-00-00 00:00:00", 0},
+		// year to datetime
+		{"year", `"2019"`, "datetime", "", errno.ErrTruncatedWrongValue},
+		{"year", `2019`, "datetime", "", errno.ErrTruncatedWrongValue},
+		{"year", `"00"`, "datetime", "", errno.ErrTruncatedWrongValue},
+		{"year", `"69"`, "datetime", "", errno.ErrTruncatedWrongValue},
+		{"year", `"70"`, "datetime", "", errno.ErrTruncatedWrongValue},
+		{"year", `"99"`, "datetime", "", errno.ErrTruncatedWrongValue},
+		// MySQL will get "Data truncation: Incorrect date value: '0000'", but TiDB treat 00 as valid datetime.
 		{"year", `00`, "datetime", "0000-00-00 00:00:00", 0},
-		{"year", `69`, "datetime", "0000-00-00 00:00:00", 0},
-		{"year", `70`, "datetime", "0000-00-00 00:00:00", 0},
-		{"year", `99`, "datetime", "0000-00-00 00:00:00", 0},
+		{"year", `69`, "datetime", "", errno.ErrTruncatedWrongValue},
+		{"year", `70`, "datetime", "", errno.ErrTruncatedWrongValue},
+		{"year", `99`, "datetime", "", errno.ErrTruncatedWrongValue},
 
-		// year to timestamp, will get "Warning: Incorrect time value", in MySQL it will get "Error: Invalid default value"
-		{"year", `"2019"`, "timestamp", "0000-00-00 00:00:00", 0},
-		{"year", `2019`, "timestamp", "0000-00-00 00:00:00", 0},
-		{"year", `"00"`, "timestamp", "0000-00-00 00:00:00", 0},
-		{"year", `"69"`, "timestamp", "0000-00-00 00:00:00", 0},
-		{"year", `"70"`, "timestamp", "0000-00-00 00:00:00", 0},
-		{"year", `"99"`, "timestamp", "0000-00-00 00:00:00", 0},
+		// year to timestamp
+		{"year", `"2019"`, "timestamp", "", errno.ErrTruncatedWrongValue},
+		{"year", `2019`, "timestamp", "", errno.ErrTruncatedWrongValue},
+		{"year", `"00"`, "timestamp", "", errno.ErrTruncatedWrongValue},
+		{"year", `"69"`, "timestamp", "", errno.ErrTruncatedWrongValue},
+		{"year", `"70"`, "timestamp", "", errno.ErrTruncatedWrongValue},
+		{"year", `"99"`, "timestamp", "", errno.ErrTruncatedWrongValue},
+		// MySQL will get "Data truncation: Incorrect date value: '0000'", but TiDB treat 00 as valid datetime.
 		{"year", `00`, "timestamp", "0000-00-00 00:00:00", 0},
-		{"year", `69`, "timestamp", "0000-00-00 00:00:00", 0},
-		{"year", `70`, "timestamp", "0000-00-00 00:00:00", 0},
-		{"year", `99`, "timestamp", "0000-00-00 00:00:00", 0},
+		{"year", `69`, "timestamp", "", errno.ErrTruncatedWrongValue},
+		{"year", `70`, "timestamp", "", errno.ErrTruncatedWrongValue},
+		{"year", `99`, "timestamp", "", errno.ErrTruncatedWrongValue},
 	}
 
 	for _, t := range tests {
