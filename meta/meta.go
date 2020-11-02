@@ -757,7 +757,7 @@ func (m *Meta) isInCancellingJobList(key []byte, job *model.Job) (bool, error) {
 	return false, nil
 }
 
-// IsInCancellingJobIDList checks whether a given job is in cancelling list.
+// IsInCancellingJobList checks whether a given job is in cancelling list.
 func (m *Meta) IsInCancellingJobList(job *model.Job) (bool, error) {
 	return m.isInCancellingJobList(mDDLJobIDCancelKey, job)
 }
