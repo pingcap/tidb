@@ -21,17 +21,23 @@ import (
 )
 
 /*
-	resultsStabilizer stabilizes query results by modifying Sort in the plan or inject new Sort into the plan.
+	resultsStabilizer stabilizes query results.
+	Results of some queries are not stable, for example:
+		create table t (a int);
+		insert into t values (1), (2);
+		select a from t;
+	In the case above, the result can be `1 2` or `2 1`, which is not stable.
+	This rule stabilizes query results by modifying Sort in the plan or inject new Sort into the plan
 
 	First, all operators are divided into 2 types:
 	1. input-order keepers: Selection, Projection, Limit;
 	2. all other operators.
 
-	The basic idea of this rule is that:
+	The basic idea of this rule is:
 	1. iterate the plan from the root, and ignore all input-order keepers;
 	2. when meeting the first non-input-order keeper,
 		2.1. if it's a Sort, complete it by appending its output columns into its order-by list,
-		2.2. otherwise inject a new Sort upon this operator.
+		2.2. otherwise, inject a new Sort upon this operator.
 */
 type resultsStabilizer struct {
 }
