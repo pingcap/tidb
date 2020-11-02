@@ -145,9 +145,11 @@ func (action actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoff
 		keyErrs := prewriteResp.GetErrors()
 		if len(keyErrs) == 0 {
 			if batch.isPrimary {
-				// After writing the primary key, if the size of the transaction is large than 32M,
+				// After writing the primary key, if the size of the transaction is larger than 32M,
 				// start the ttlManager. The ttlManager will be closed in tikvTxn.Commit().
-				if int64(c.txnSize) > config.GetGlobalConfig().TiKVClient.TTLRefreshedTxnSize {
+				// In this case 1PC is not expected to be used, but still check it for safety.
+				if int64(c.txnSize) > config.GetGlobalConfig().TiKVClient.TTLRefreshedTxnSize &&
+					prewriteResp.OnePcCommitTs == 0 {
 					c.run(c, nil)
 				}
 			}
@@ -159,13 +161,13 @@ func (action actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoff
 					tikvOnePCTxnCounterFallback.Inc()
 					c.setOnePC(false)
 				} else {
-					c.mu.Lock()
+					// For 1PC, there's no racing to access to access `onePCCommmitTS` so it's safe
+					// not to lock the mutex.
 					if c.onePCCommitTS != 0 {
 						logutil.Logger(bo.ctx).Fatal("one pc happened multiple times",
 							zap.Uint64("startTS", c.startTS))
 					}
 					c.onePCCommitTS = prewriteResp.OnePcCommitTs
-					c.mu.Unlock()
 				}
 				return nil
 			} else if prewriteResp.OnePcCommitTs != 0 {

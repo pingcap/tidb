@@ -53,6 +53,8 @@ func (s *testOnePCSuite) Test1PC(c *C) {
 	c.Assert(txn.committer.isOnePC(), IsTrue)
 	c.Assert(txn.committer.onePCCommitTS, Equals, txn.committer.commitTS)
 	c.Assert(txn.committer.onePCCommitTS, Greater, txn.startTS)
+	// ttlManager is not used for 1PC.
+	c.Assert(txn.committer.ttlManager.state, Equals, stateUninitialized)
 
 	// 1PC doesn't work if connID == 0
 	k2 := []byte("k2")
