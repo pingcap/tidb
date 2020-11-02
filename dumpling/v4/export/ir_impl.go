@@ -4,13 +4,14 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"strconv"
+
+	"math/big"
 	"strings"
 
-	"github.com/pkg/errors"
 	"go.uber.org/zap"
 
 	"github.com/pingcap/dumpling/v4/log"
+	"github.com/pingcap/errors"
 )
 
 // rowIter implements the SQLRowIter interface.
@@ -193,14 +194,15 @@ func splitTableDataIntoChunks(
 		return
 	}
 
-	var max uint64
-	var min uint64
-	if max, err = strconv.ParseUint(smax.String, 10, 64); err != nil {
-		errCh <- errors.WithMessagef(err, "fail to convert max value %s in query %s", smax.String, query)
+	max := new(big.Int)
+	min := new(big.Int)
+	var ok bool
+	if max, ok = max.SetString(smax.String, 10); !ok {
+		errCh <- errors.Errorf("fail to convert max value %s in query %s", smax.String, query)
 		return
 	}
-	if min, err = strconv.ParseUint(smin.String, 10, 64); err != nil {
-		errCh <- errors.WithMessagef(err, "fail to convert min value %s in query %s", smin.String, query)
+	if min, ok = min.SetString(smin.String, 10); !ok {
+		errCh <- errors.Errorf("fail to convert min value %s in query %s", smin.String, query)
 		return
 	}
 
@@ -215,11 +217,12 @@ func splitTableDataIntoChunks(
 		linear <- struct{}{}
 		return
 	}
-
 	// every chunk would have eventual adjustments
 	estimatedChunks := count / conf.Rows
-	estimatedStep := (max-min)/estimatedChunks + 1
-	cutoff := min
+	estimatedStep := new(big.Int).Sub(max,min).Uint64() /estimatedChunks + 1
+	bigEstimatedStep := new(big.Int).SetUint64(estimatedStep)
+	cutoff := new(big.Int).Set(min)
+	nextCutoff := new(big.Int)
 
 	selectedField, err := buildSelectField(db, dbName, tableName, conf.CompleteInsert)
 	if err != nil {
@@ -241,9 +244,9 @@ func splitTableDataIntoChunks(
 	chunkIndex := 0
 	nullValueCondition := fmt.Sprintf("`%s` IS NULL OR ", escapeString(field))
 LOOP:
-	for cutoff <= max {
+	for max.Cmp(cutoff) >= 0 {
 		chunkIndex += 1
-		where := fmt.Sprintf("%s(`%s` >= %d AND `%s` < %d)", nullValueCondition, escapeString(field), cutoff, escapeString(field), cutoff+estimatedStep)
+		where := fmt.Sprintf("%s(`%s` >= %d AND `%s` < %d)", nullValueCondition, escapeString(field), cutoff, escapeString(field), nextCutoff.Add(cutoff,bigEstimatedStep))
 		query = buildSelectQuery(dbName, tableName, selectedField, buildWhereCondition(conf, where), orderByClause)
 		if len(nullValueCondition) > 0 {
 			nullValueCondition = ""
@@ -261,7 +264,7 @@ LOOP:
 				"/*!40101 SET NAMES binary*/;",
 			},
 		}
-		cutoff += estimatedStep
+		cutoff.Set(nextCutoff)
 		select {
 		case <-ctx.Done():
 			break LOOP
