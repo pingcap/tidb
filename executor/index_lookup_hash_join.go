@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/ranger"
-	"github.com/sirupsen/logrus"
 )
 
 // numResChkHold indicates the number of resource chunks that an inner worker
@@ -271,7 +270,6 @@ func (e *IndexNestedLoopHashJoin) runInOrder(ctx context.Context, req *chunk.Chu
 				continue
 			}
 			if result.err != nil {
-				logrus.Warning("result.err !=nil ", result.err.Error())
 				return result.err
 			}
 		case <-ctx.Done():
