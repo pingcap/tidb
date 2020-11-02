@@ -123,7 +123,7 @@ func (s *testSuite1) TestAnalyzeReplicaReadFollower(c *C) {
 	tk.MustExec("analyze table t")
 }
 
-func (s *testSuite1) TestClusterIndexAnalyze(c *C) {
+func (s *testSerialSuite1) TestClusterIndexAnalyze(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("drop database if exists test_cluster_index_analyze;")
 	tk.MustExec("create database test_cluster_index_analyze;")
