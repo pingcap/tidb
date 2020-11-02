@@ -225,7 +225,7 @@ func (s *partitionProcessor) processHashPartition(ds *DataSource, pi *model.Part
 }
 
 func (s *partitionProcessor) findUsedListPartitions(ctx sessionctx.Context, tbl table.Table, partitionNames []model.CIStr,
-	conds []expression.Expression, columns []*expression.Column, names types.NameSlice) ([]int, error) {
+	conds []expression.Expression) ([]int, error) {
 	pi := tbl.Meta().Partition
 	partExpr, err := tbl.(partitionTable).PartitionExpr()
 	if err != nil {
@@ -292,8 +292,8 @@ func (s *partitionProcessor) findUsedListPartitions(ctx sessionctx.Context, tbl 
 }
 
 func (s *partitionProcessor) pruneListPartition(ctx sessionctx.Context, tbl table.Table, partitionNames []model.CIStr,
-	conds []expression.Expression, columns []*expression.Column, names types.NameSlice) ([]int, error) {
-	used, err := s.findUsedListPartitions(ctx, tbl, partitionNames, conds, columns, names)
+	conds []expression.Expression) ([]int, error) {
+	used, err := s.findUsedListPartitions(ctx, tbl, partitionNames, conds)
 	if err != nil {
 		return nil, err
 	}
@@ -532,7 +532,7 @@ func (s *partitionProcessor) processRangePartition(ds *DataSource, pi *model.Par
 }
 
 func (s *partitionProcessor) processListPartition(ds *DataSource, pi *model.PartitionInfo) (LogicalPlan, error) {
-	used, err := s.pruneListPartition(ds.SCtx(), ds.table, ds.partitionNames, ds.allConds, ds.TblCols, ds.names)
+	used, err := s.pruneListPartition(ds.SCtx(), ds.table, ds.partitionNames, ds.allConds)
 	if err != nil {
 		return nil, err
 	}
