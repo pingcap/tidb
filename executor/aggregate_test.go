@@ -1117,7 +1117,7 @@ func (s *testSuiteAgg) TestIssue15690(c *C) {
 	tk.MustExec(`create table t(a char);`)
 	tk.MustExec(`insert into t values(null),(null),(null),(null);`)
 	tk.MustExec(`insert into t values('a'),('b');`)
-	tk.MustQuery(`select /*+ stream_agg() */ distinct * from t;`).Sort().Check(testkit.Rows("a", "b", "<nil>"))
+	tk.MustQuery(`select /*+ stream_agg() */ distinct * from t;`).Sort().Check(testkit.Rows("<nil>", "a", "b"))
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0))
 }
 

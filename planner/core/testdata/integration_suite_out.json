@@ -677,7 +677,7 @@
         "SQL": "select /*+ stream_agg() */ count(*) c from t group by a order by a",
         "Plan": [
           "Projection_6 8000.00 root  Column#3",
-          "└─StreamAgg_21 8000.00 root  group by:test.t.a, funcs:count(1)->Column#3, funcs:firstrow(test.t.a)->test.t.a",
+          "└─StreamAgg_23 8000.00 root  group by:test.t.a, funcs:count(1)->Column#3, funcs:firstrow(test.t.a)->test.t.a",
           "  └─Sort_17 10000.00 root  test.t.a",
           "    └─TableReader_16 10000.00 root  data:TableFullScan_15",
           "      └─TableFullScan_15 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"

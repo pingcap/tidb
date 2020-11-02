@@ -1254,7 +1254,7 @@
       },
       {
         "SQL": "select /*+ STREAM_AGG() */ e, sum(b) from t group by e",
-        "Best": "TableReader(Table(t))->Sort->Projection->StreamAgg->Projection",
+        "Best": "TableReader(Table(t))->Sort->Projection->StreamAgg->Partition(execution info: concurrency:5, data source:TableReader_12)->Projection",
         "Warning": ""
       }
     ]
