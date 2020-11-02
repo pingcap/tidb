@@ -1460,6 +1460,109 @@ func prepare4MergeJoin(tc *mergeJoinTestCase, leftExec, rightExec *mockDataSourc
 	return e
 }
 
+func prepare4ShuffleMergeJoin(tc *mergeJoinTestCase, leftExec, rightExec *mockDataSource) *ShuffleMergeJoinExec {
+	outerCols, innerCols := tc.columns(), tc.columns()
+
+	joinSchema := expression.NewSchema()
+	if tc.childrenUsedSchema != nil {
+		for i, used := range tc.childrenUsedSchema[0] {
+			if used {
+				joinSchema.Append(outerCols[i])
+			}
+		}
+		for i, used := range tc.childrenUsedSchema[1] {
+			if used {
+				joinSchema.Append(innerCols[i])
+			}
+		}
+	} else {
+		joinSchema.Append(outerCols...)
+		joinSchema.Append(innerCols...)
+	}
+
+	outerJoinKeys := make([]*expression.Column, 0, len(tc.outerJoinKeyIdx))
+	innerJoinKeys := make([]*expression.Column, 0, len(tc.innerJoinKeyIdx))
+	for _, keyIdx := range tc.outerJoinKeyIdx {
+		outerJoinKeys = append(outerJoinKeys, outerCols[keyIdx])
+	}
+	for _, keyIdx := range tc.innerJoinKeyIdx {
+		innerJoinKeys = append(innerJoinKeys, innerCols[keyIdx])
+	}
+	compareFuncs := make([]expression.CompareFunc, 0, len(outerJoinKeys))
+	outerCompareFuncs := make([]expression.CompareFunc, 0, len(outerJoinKeys))
+	for i := range outerJoinKeys {
+		compareFuncs = append(compareFuncs, expression.GetCmpFunction(nil, outerJoinKeys[i], innerJoinKeys[i]))
+		outerCompareFuncs = append(outerCompareFuncs, expression.GetCmpFunction(nil, outerJoinKeys[i], outerJoinKeys[i]))
+	}
+
+	defaultValues := make([]types.Datum, len(innerCols))
+
+	// build ShuffleMergeJoinExec
+	innerByItems := make([]expression.Expression, 0, len(innerJoinKeys))
+	for _, innerJoinKey := range innerJoinKeys {
+		innerByItems = append(innerByItems, innerJoinKey)
+	}
+	outerByItems := make([]expression.Expression, 0, len(outerJoinKeys))
+	for _, outerJoinKey := range outerJoinKeys {
+		outerByItems = append(outerByItems, outerJoinKey)
+	}
+	shuffle := &ShuffleMergeJoinExec{
+		baseExecutor: newBaseExecutor(tc.ctx, joinSchema, 4),
+		concurrency:  4,
+		innerSplitter: &partitionHashSplitter{
+			byItems:    innerByItems,
+			numWorkers: 4,
+		},
+		outerSplitter: &partitionHashSplitter{
+			byItems:    outerByItems,
+			numWorkers: 4,
+		},
+		innerDataSource: rightExec,
+		outerDataSource: leftExec,
+	}
+	// build workers, only benchmark inner join
+	shuffle.workers = make([]*shuffleMergeJoinWorker, shuffle.concurrency)
+	for i := range shuffle.workers {
+		w := &shuffleMergeJoinWorker{}
+		// only benchmark inner join
+		mergeJoinExec := &MergeJoinExec{
+			stmtCtx:      tc.ctx.GetSessionVars().StmtCtx,
+			baseExecutor: newBaseExecutor(tc.ctx, joinSchema, 3, &w.outerPartition, &w.innerPartition),
+			compareFuncs: compareFuncs,
+			isOuterJoin:  false,
+		}
+
+		mergeJoinExec.joiner = newJoiner(
+			tc.ctx,
+			0,
+			false,
+			defaultValues,
+			nil,
+			retTypes(leftExec),
+			retTypes(rightExec),
+			tc.childrenUsedSchema,
+		)
+
+		mergeJoinExec.innerTable = &mergeJoinTable{
+			isInner:    true,
+			childIndex: 1,
+			joinKeys:   innerJoinKeys,
+		}
+
+		mergeJoinExec.outerTable = &mergeJoinTable{
+			childIndex: 0,
+			filters:    nil,
+			joinKeys:   outerJoinKeys,
+		}
+
+		w.childExec = mergeJoinExec
+
+		shuffle.workers[i] = w
+	}
+
+	return shuffle
+}
+
 func defaultMergeJoinTestCase() *mergeJoinTestCase {
 	return &mergeJoinTestCase{*defaultIndexJoinTestCase(), nil}
 }
@@ -1540,7 +1643,8 @@ func benchmarkMergeJoinExecWithCase(b *testing.B, tc *mergeJoinTestCase, innerDS
 		var exec Executor
 		switch joinType {
 		case innerMergeJoin:
-			exec = prepare4MergeJoin(tc, innerDS, outerDS)
+			//exec = prepare4MergeJoin(tc, innerDS, outerDS)
+			exec = prepare4ShuffleMergeJoin(tc, innerDS, outerDS)
 		}
 
 		tmpCtx := context.Background()
