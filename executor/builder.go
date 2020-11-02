@@ -54,7 +54,6 @@ import (
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
-	"github.com/sirupsen/logrus"
 	"go.uber.org/zap"
 )
 
@@ -2330,7 +2329,6 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 	for i := 0; i < len(v.InnerHashKeys); i++ {
 		innerHashCols[i] = v.InnerHashKeys[i].Index
 	}
-	logrus.Warning(v.OuterHashKeys, outerHashCols, v.InnerHashKeys, innerHashCols)
 	e.outerCtx.hashCols = outerHashCols
 	e.innerCtx.hashCols = innerHashCols
 
