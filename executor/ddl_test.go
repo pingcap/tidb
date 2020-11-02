@@ -30,6 +30,7 @@ import (
 	ddltestutil "github.com/pingcap/tidb/ddl/testutil"
 	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -834,6 +835,14 @@ type testAutoRandomSuite struct {
 	*baseTestSuite
 }
 
+func (s *testAutoRandomSuite) SetUpTest(c *C) {
+	testutil.ConfigTestUtils.SetupAutoRandomTestConfig()
+}
+
+func (s *testAutoRandomSuite) TearDownTest(c *C) {
+	testutil.ConfigTestUtils.RestoreAutoRandomTestConfig()
+}
+
 func (s *testAutoRandomSuite) TestAutoRandomBitsData(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
@@ -848,8 +857,6 @@ func (s *testAutoRandomSuite) TestAutoRandomBitsData(c *C) {
 		return allHds
 	}
 
-	testutil.ConfigTestUtils.SetupAutoRandomTestConfig()
-	defer testutil.ConfigTestUtils.RestoreAutoRandomTestConfig()
 	tk.MustExec("set @@allow_auto_random_explicit_insert = true")
 
 	tk.MustExec("create table t (a bigint primary key auto_random(15), b int)")
@@ -971,9 +978,6 @@ func (s *testAutoRandomSuite) TestAutoRandomTableOption(c *C) {
 	tk.MustExec("use test")
 
 	// test table option is auto-random
-	testutil.ConfigTestUtils.SetupAutoRandomTestConfig()
-	defer testutil.ConfigTestUtils.RestoreAutoRandomTestConfig()
-
 	tk.MustExec("drop table if exists auto_random_table_option")
 	tk.MustExec("create table auto_random_table_option (a bigint auto_random(5) key) auto_random_base = 1000")
 	t, err := domain.GetDomain(tk.Se).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("auto_random_table_option"))
@@ -1041,9 +1045,6 @@ func (s *testAutoRandomSuite) TestFilterDifferentAllocators(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("drop table if exists t1")
-
-	testutil.ConfigTestUtils.SetupAutoRandomTestConfig()
-	defer testutil.ConfigTestUtils.RestoreAutoRandomTestConfig()
 
 	tk.MustExec("create table t(a bigint auto_random(5) key, b int auto_increment unique)")
 	tk.MustExec("insert into t values()")
@@ -1425,4 +1426,70 @@ func (s *testRecoverTable) TestRenameTable(c *C) {
 	c.Assert(err, NotNil)
 	tk.MustExec("drop database rename1")
 	tk.MustExec("drop database rename2")
+}
+
+func (s *testSuite6) TestAutoIncrementColumnErrorMessage(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	// Test create an exist database
+	_, err := tk.Exec("CREATE database test")
+	c.Assert(err, NotNil)
+
+	tk.MustExec("CREATE TABLE t1 (t1_id INT NOT NULL AUTO_INCREMENT PRIMARY KEY);")
+
+	_, err = tk.Exec("CREATE INDEX idx1 ON t1 ((t1_id + t1_id));")
+	c.Assert(err.Error(), Equals, ddl.ErrExpressionIndexCanNotRefer.GenWithStackByArgs("idx1").Error())
+}
+
+func (s *testRecoverTable) TestRenameMultiTables(c *C) {
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange", `return(true)`), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange"), IsNil)
+	}()
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("create database rename1")
+	tk.MustExec("create database rename2")
+	tk.MustExec("create database rename3")
+	tk.MustExec("create database rename4")
+	tk.MustExec("create table rename1.t1 (a int primary key auto_increment)")
+	tk.MustExec("create table rename3.t3 (a int primary key auto_increment)")
+	tk.MustExec("insert rename1.t1 values ()")
+	tk.MustExec("insert rename3.t3 values ()")
+	tk.MustExec("rename table rename1.t1 to rename2.t2, rename3.t3 to rename4.t4")
+	// Make sure the drop old database doesn't affect t2,t4's operations.
+	tk.MustExec("drop database rename1")
+	tk.MustExec("insert rename2.t2 values ()")
+	tk.MustExec("drop database rename3")
+	tk.MustExec("insert rename4.t4 values ()")
+	tk.MustQuery("select * from rename2.t2").Check(testkit.Rows("1", "2"))
+	tk.MustQuery("select * from rename4.t4").Check(testkit.Rows("1", "2"))
+	// Rename a table to another table in the same database.
+	tk.MustExec("rename table rename2.t2 to rename2.t1, rename4.t4 to rename4.t3")
+	tk.MustExec("insert rename2.t1 values ()")
+	tk.MustQuery("select * from rename2.t1").Check(testkit.Rows("1", "2", "3"))
+	tk.MustExec("insert rename4.t3 values ()")
+	tk.MustQuery("select * from rename4.t3").Check(testkit.Rows("1", "2", "3"))
+	tk.MustExec("drop database rename2")
+	tk.MustExec("drop database rename4")
+
+	tk.MustExec("create database rename1")
+	tk.MustExec("create database rename2")
+	tk.MustExec("create database rename3")
+	tk.MustExec("create table rename1.t1 (a int primary key auto_increment)")
+	tk.MustExec("create table rename3.t3 (a int primary key auto_increment)")
+	tk.MustGetErrCode("rename table rename1.t1 to rename2.t2, rename3.t3 to rename2.t2", errno.ErrTableExists)
+	tk.MustExec("rename table rename1.t1 to rename2.t2, rename2.t2 to rename1.t1")
+	tk.MustExec("rename table rename1.t1 to rename2.t2, rename3.t3 to rename1.t1")
+	tk.MustExec("use rename1")
+	tk.MustQuery("show tables").Check(testkit.Rows("t1"))
+	tk.MustExec("use rename2")
+	tk.MustQuery("show tables").Check(testkit.Rows("t2"))
+	tk.MustExec("use rename3")
+	tk.MustExec("create table rename3.t3 (a int primary key auto_increment)")
+	tk.MustGetErrCode("rename table rename1.t1 to rename1.t2, rename1.t1 to rename3.t3", errno.ErrTableExists)
+	tk.MustGetErrCode("rename table rename1.t1 to rename1.t2, rename1.t1 to rename3.t4", errno.ErrFileNotFound)
+	tk.MustExec("drop database rename1")
+	tk.MustExec("drop database rename2")
+	tk.MustExec("drop database rename3")
 }

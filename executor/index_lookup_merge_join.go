@@ -17,12 +17,14 @@ import (
 	"context"
 	"fmt"
 	"runtime"
+	"runtime/trace"
 	"sort"
 	"sync"
 	"sync/atomic"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/expression"
 	plannercore "github.com/pingcap/tidb/planner/core"
@@ -33,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/ranger"
-	"github.com/pingcap/tidb/util/stringutil"
 	"go.uber.org/zap"
 )
 
@@ -94,6 +95,7 @@ type innerMergeCtx struct {
 
 type lookUpMergeJoinTask struct {
 	outerResult   *chunk.List
+	outerMatch    [][]bool
 	outerOrderIdx []chunk.RowPtr
 
 	innerResult *chunk.Chunk
@@ -281,7 +283,7 @@ func (e *IndexLookUpMergeJoin) Next(ctx context.Context, req *chunk.Chunk) error
 			result.src <- result.chk
 			return nil
 		case <-ctx.Done():
-			return nil
+			return ctx.Err()
 		}
 	}
 
@@ -299,16 +301,20 @@ func (e *IndexLookUpMergeJoin) getFinishedTask(ctx context.Context) {
 }
 
 func (omw *outerMergeWorker) run(ctx context.Context, wg *sync.WaitGroup, cancelFunc context.CancelFunc) {
+	defer trace.StartRegion(ctx, "IndexLookupMergeJoinOuterWorker").End()
 	defer func() {
+		if r := recover(); r != nil {
+			task := &lookUpMergeJoinTask{
+				doneErr: errors.New(fmt.Sprintf("%v", r)),
+				results: make(chan *indexMergeJoinResult, numResChkHold),
+			}
+			close(task.results)
+			omw.resultCh <- task
+			cancelFunc()
+		}
 		close(omw.resultCh)
 		close(omw.innerCh)
 		wg.Done()
-		if r := recover(); r != nil {
-			logutil.Logger(ctx).Error("panic in outerMergeWorker.run",
-				zap.Reflect("r", r),
-				zap.Stack("stack trace"))
-			cancelFunc()
-		}
 	}()
 	for {
 		task, err := omw.buildTask(ctx)
@@ -318,6 +324,7 @@ func (omw *outerMergeWorker) run(ctx context.Context, wg *sync.WaitGroup, cancel
 			omw.pushToChan(ctx, task, omw.resultCh)
 			return
 		}
+		failpoint.Inject("mockIndexMergeJoinOOMPanic", nil)
 		if task == nil {
 			return
 		}
@@ -348,7 +355,7 @@ func (omw *outerMergeWorker) buildTask(ctx context.Context) (*lookUpMergeJoinTas
 		results:     make(chan *indexMergeJoinResult, numResChkHold),
 		outerResult: chunk.NewList(omw.rowTypes, omw.executor.base().initCap, omw.executor.base().maxChunkSize),
 	}
-	task.memTracker = memory.NewTracker(stringutil.MemoizeStr(func() string { return fmt.Sprintf("lookup join task %p", task) }), -1)
+	task.memTracker = memory.NewTracker(memory.LabelForSimpleTask, -1)
 	task.memTracker.AttachTo(omw.parentMemTracker)
 
 	omw.increaseBatchSize()
@@ -391,6 +398,7 @@ func (omw *outerMergeWorker) increaseBatchSize() {
 }
 
 func (imw *innerMergeWorker) run(ctx context.Context, wg *sync.WaitGroup, cancelFunc context.CancelFunc) {
+	defer trace.StartRegion(ctx, "IndexLookupMergeJoinInnerWorker").End()
 	var task *lookUpMergeJoinTask
 	defer func() {
 		wg.Done()
@@ -425,25 +433,23 @@ func (imw *innerMergeWorker) run(ctx context.Context, wg *sync.WaitGroup, cancel
 
 func (imw *innerMergeWorker) handleTask(ctx context.Context, task *lookUpMergeJoinTask) (err error) {
 	numOuterChks := task.outerResult.NumChunks()
-	var outerMatch [][]bool
 	if imw.outerMergeCtx.filter != nil {
-		outerMatch = make([][]bool, numOuterChks)
+		task.outerMatch = make([][]bool, numOuterChks)
 		for i := 0; i < numOuterChks; i++ {
 			chk := task.outerResult.GetChunk(i)
-			outerMatch[i] = make([]bool, chk.NumRows())
-			outerMatch[i], err = expression.VectorizedFilter(imw.ctx, imw.outerMergeCtx.filter, chunk.NewIterator4Chunk(chk), outerMatch[i])
+			task.outerMatch[i] = make([]bool, chk.NumRows())
+			task.outerMatch[i], err = expression.VectorizedFilter(imw.ctx, imw.outerMergeCtx.filter, chunk.NewIterator4Chunk(chk), task.outerMatch[i])
 			if err != nil {
 				return err
 			}
 		}
 	}
+	task.memTracker.Consume(int64(cap(task.outerMatch)))
 	task.outerOrderIdx = make([]chunk.RowPtr, 0, task.outerResult.Len())
 	for i := 0; i < numOuterChks; i++ {
 		numRow := task.outerResult.GetChunk(i).NumRows()
 		for j := 0; j < numRow; j++ {
-			if len(outerMatch) == 0 || outerMatch[i][j] {
-				task.outerOrderIdx = append(task.outerOrderIdx, chunk.RowPtr{ChkIdx: uint32(i), RowIdx: uint32(j)})
-			}
+			task.outerOrderIdx = append(task.outerOrderIdx, chunk.RowPtr{ChkIdx: uint32(i), RowIdx: uint32(j)})
 		}
 	}
 	task.memTracker.Consume(int64(cap(task.outerOrderIdx)))
@@ -470,9 +476,10 @@ func (imw *innerMergeWorker) handleTask(ctx context.Context, task *lookUpMergeJo
 				}
 			}
 			if cmp != 0 || imw.nextColCompareFilters == nil {
-				return cmp < 0
+				return (cmp < 0 && !imw.desc) || (cmp > 0 && imw.desc)
 			}
-			return imw.nextColCompareFilters.CompareRow(rowI, rowJ) < 0
+			cmp = int64(imw.nextColCompareFilters.CompareRow(rowI, rowJ))
+			return (cmp < 0 && !imw.desc) || (cmp > 0 && imw.desc)
 		})
 	}
 	dLookUpKeys, err := imw.constructDatumLookupKeys(task)
@@ -482,13 +489,13 @@ func (imw *innerMergeWorker) handleTask(ctx context.Context, task *lookUpMergeJo
 	dLookUpKeys = imw.dedupDatumLookUpKeys(dLookUpKeys)
 	// If the order requires descending, the deDupedLookUpContents is keep descending order before.
 	// So at the end, we should generate the ascending deDupedLookUpContents to build the correct range for inner read.
-	if !imw.outerMergeCtx.needOuterSort && imw.desc {
+	if imw.desc {
 		lenKeys := len(dLookUpKeys)
 		for i := 0; i < lenKeys/2; i++ {
 			dLookUpKeys[i], dLookUpKeys[lenKeys-i-1] = dLookUpKeys[lenKeys-i-1], dLookUpKeys[i]
 		}
 	}
-	imw.innerExec, err = imw.readerBuilder.buildExecutorForIndexJoin(ctx, dLookUpKeys, imw.indexRanges, imw.keyOff2IdxOff, imw.nextColCompareFilters)
+	imw.innerExec, err = imw.readerBuilder.buildExecutorForIndexJoin(ctx, dLookUpKeys, imw.indexRanges, imw.keyOff2IdxOff, imw.nextColCompareFilters, false)
 	if err != nil {
 		return err
 	}
@@ -511,8 +518,12 @@ func (imw *innerMergeWorker) fetchNewChunkWhenFull(ctx context.Context, task *lo
 		return false
 	}
 	var ok bool
-	*chk, ok = <-imw.joinChkResourceCh
-	if !ok {
+	select {
+	case *chk, ok = <-imw.joinChkResourceCh:
+		if !ok {
+			return false
+		}
+	case <-ctx.Done():
 		return false
 	}
 	(*chk).Reset()
@@ -520,7 +531,12 @@ func (imw *innerMergeWorker) fetchNewChunkWhenFull(ctx context.Context, task *lo
 }
 
 func (imw *innerMergeWorker) doMergeJoin(ctx context.Context, task *lookUpMergeJoinTask) (err error) {
-	chk := <-imw.joinChkResourceCh
+	var chk *chunk.Chunk
+	select {
+	case chk = <-imw.joinChkResourceCh:
+	case <-ctx.Done():
+		return
+	}
 	defer func() {
 		if chk == nil {
 			return
@@ -641,8 +657,11 @@ func (imw *innerMergeWorker) constructDatumLookupKeys(task *lookUpMergeJoinTask)
 	return dLookUpKeys, nil
 }
 
-func (imw *innerMergeWorker) constructDatumLookupKey(task *lookUpMergeJoinTask, rowIdx chunk.RowPtr) (*indexJoinLookUpContent, error) {
-	outerRow := task.outerResult.GetRow(rowIdx)
+func (imw *innerMergeWorker) constructDatumLookupKey(task *lookUpMergeJoinTask, idx chunk.RowPtr) (*indexJoinLookUpContent, error) {
+	if task.outerMatch != nil && !task.outerMatch[idx.ChkIdx][idx.RowIdx] {
+		return nil, nil
+	}
+	outerRow := task.outerResult.GetRow(idx)
 	sc := imw.ctx.GetSessionVars().StmtCtx
 	keyLen := len(imw.keyCols)
 	dLookupKey := make([]types.Datum, 0, keyLen)
@@ -661,6 +680,9 @@ func (imw *innerMergeWorker) constructDatumLookupKey(task *lookUpMergeJoinTask, 
 			if terror.ErrorEqual(err, types.ErrOverflow) {
 				return nil, nil
 			}
+			if terror.ErrorEqual(err, types.ErrTruncated) && (innerColType.Tp == mysql.TypeSet || innerColType.Tp == mysql.TypeEnum) {
+				return nil, nil
+			}
 			return nil, err
 		}
 		cmp, err := outerValue.CompareDatum(sc, &innerValue)
@@ -673,7 +695,7 @@ func (imw *innerMergeWorker) constructDatumLookupKey(task *lookUpMergeJoinTask, 
 		}
 		dLookupKey = append(dLookupKey, innerValue)
 	}
-	return &indexJoinLookUpContent{keys: dLookupKey, row: task.outerResult.GetRow(rowIdx)}, nil
+	return &indexJoinLookUpContent{keys: dLookupKey, row: task.outerResult.GetRow(idx)}, nil
 }
 
 func (imw *innerMergeWorker) dedupDatumLookUpKeys(lookUpContents []*indexJoinLookUpContent) []*indexJoinLookUpContent {
@@ -711,9 +733,6 @@ func (e *IndexLookUpMergeJoin) Close() error {
 		}
 		e.resultCh = nil
 	}
-	for i := range e.joinChkResourceCh {
-		close(e.joinChkResourceCh[i])
-	}
 	e.joinChkResourceCh = nil
 	// joinChkResourceCh is to recycle result chunks, used by inner worker.
 	// resultCh is the main thread get the results, used by main thread and inner worker.
@@ -722,7 +741,9 @@ func (e *IndexLookUpMergeJoin) Close() error {
 	e.memTracker = nil
 	if e.runtimeStats != nil {
 		concurrency := cap(e.resultCh)
-		e.runtimeStats.SetConcurrencyInfo(execdetails.NewConcurrencyInfo("Concurrency", concurrency))
+		runtimeStats := &execdetails.RuntimeStatsWithConcurrencyInfo{}
+		runtimeStats.SetConcurrencyInfo(execdetails.NewConcurrencyInfo("Concurrency", concurrency))
+		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, runtimeStats)
 	}
 	return e.baseExecutor.Close()
 }

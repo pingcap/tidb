@@ -25,8 +25,8 @@ type percentRank struct {
 	rowComparer
 }
 
-func (pr *percentRank) AllocPartialResult() PartialResult {
-	return PartialResult(&partialResult4Rank{})
+func (pr *percentRank) AllocPartialResult() (partial PartialResult, memDelta int64) {
+	return PartialResult(&partialResult4Rank{}), DefPartialResult4RankSize
 }
 
 func (pr *percentRank) ResetPartialResult(partial PartialResult) {
@@ -36,10 +36,11 @@ func (pr *percentRank) ResetPartialResult(partial PartialResult) {
 	p.rows = p.rows[:0]
 }
 
-func (pr *percentRank) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, partial PartialResult) error {
+func (pr *percentRank) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, partial PartialResult) (memDelta int64, err error) {
 	p := (*partialResult4Rank)(partial)
 	p.rows = append(p.rows, rowsInGroup...)
-	return nil
+	memDelta += int64(len(rowsInGroup)) * DefRowSize
+	return memDelta, nil
 }
 
 func (pr *percentRank) AppendFinalResult2Chunk(sctx sessionctx.Context, partial PartialResult, chk *chunk.Chunk) error {

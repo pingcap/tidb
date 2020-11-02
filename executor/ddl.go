@@ -59,7 +59,7 @@ func (e *DDLExec) toErr(err error) error {
 		logutil.BgLogger().Error("active txn failed", zap.Error(err))
 		return err1
 	}
-	schemaInfoErr := checker.Check(txn.StartTS())
+	_, schemaInfoErr := checker.Check(txn.StartTS())
 	if schemaInfoErr != nil {
 		return errors.Trace(schemaInfoErr)
 	}
@@ -122,7 +122,8 @@ func (e *DDLExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 		err = e.executeCreateSequence(x)
 	case *ast.DropSequenceStmt:
 		err = e.executeDropSequence(x)
-
+	case *ast.AlterSequenceStmt:
+		err = e.executeAlterSequence(x)
 	}
 	if err != nil {
 		// If the owner return ErrTableNotExists error when running this DDL, it may be caused by schema changed,
@@ -153,14 +154,23 @@ func (e *DDLExec) executeTruncateTable(s *ast.TruncateTableStmt) error {
 }
 
 func (e *DDLExec) executeRenameTable(s *ast.RenameTableStmt) error {
-	if len(s.TableToTables) != 1 {
-		// Now we only allow one schema changing at the same time.
-		return errors.Errorf("can't run multi schema change")
-	}
-	oldIdent := ast.Ident{Schema: s.OldTable.Schema, Name: s.OldTable.Name}
-	newIdent := ast.Ident{Schema: s.NewTable.Schema, Name: s.NewTable.Name}
 	isAlterTable := false
-	err := domain.GetDomain(e.ctx).DDL().RenameTable(e.ctx, oldIdent, newIdent, isAlterTable)
+	var err error
+	if len(s.TableToTables) == 1 {
+		oldIdent := ast.Ident{Schema: s.TableToTables[0].OldTable.Schema, Name: s.TableToTables[0].OldTable.Name}
+		newIdent := ast.Ident{Schema: s.TableToTables[0].NewTable.Schema, Name: s.TableToTables[0].NewTable.Name}
+		err = domain.GetDomain(e.ctx).DDL().RenameTable(e.ctx, oldIdent, newIdent, isAlterTable)
+	} else {
+		oldIdents := make([]ast.Ident, 0, len(s.TableToTables))
+		newIdents := make([]ast.Ident, 0, len(s.TableToTables))
+		for _, tables := range s.TableToTables {
+			oldIdent := ast.Ident{Schema: tables.OldTable.Schema, Name: tables.OldTable.Name}
+			newIdent := ast.Ident{Schema: tables.NewTable.Schema, Name: tables.NewTable.Name}
+			oldIdents = append(oldIdents, oldIdent)
+			newIdents = append(newIdents, newIdent)
+		}
+		err = domain.GetDomain(e.ctx).DDL().RenameTables(e.ctx, oldIdents, newIdents, isAlterTable)
+	}
 	return err
 }
 
@@ -463,13 +473,13 @@ func (e *DDLExec) getRecoverTableByJobID(s *ast.RecoverTableStmt, t *meta.Meta, 
 // it will use the `start_ts` of DDL job as snapshot to get the dropped/truncated table information.
 func GetDropOrTruncateTableInfoFromJobs(jobs []*model.Job, gcSafePoint uint64, dom *domain.Domain, fn func(*model.Job, *model.TableInfo) (bool, error)) (bool, error) {
 	for _, job := range jobs {
-		if job.Type != model.ActionDropTable && job.Type != model.ActionTruncateTable {
-			continue
-		}
 		// Check GC safe point for getting snapshot infoSchema.
 		err := gcutil.ValidateSnapshotWithGCSafePoint(job.StartTS, gcSafePoint)
 		if err != nil {
 			return false, err
+		}
+		if job.Type != model.ActionDropTable && job.Type != model.ActionTruncateTable {
+			continue
 		}
 
 		snapMeta, err := dom.GetSnapshotMeta(job.StartTS)
@@ -607,4 +617,8 @@ func (e *DDLExec) executeRepairTable(s *ast.RepairTableStmt) error {
 
 func (e *DDLExec) executeCreateSequence(s *ast.CreateSequenceStmt) error {
 	return domain.GetDomain(e.ctx).DDL().CreateSequence(e.ctx, s)
+}
+
+func (e *DDLExec) executeAlterSequence(s *ast.AlterSequenceStmt) error {
+	return domain.GetDomain(e.ctx).DDL().AlterSequence(e.ctx, s)
 }

@@ -106,6 +106,7 @@ const (
 	preferRightAsINLMJInner
 	preferHashJoin
 	preferMergeJoin
+	preferBCJoin
 	preferHashAgg
 	preferStreamAgg
 )
@@ -157,11 +158,15 @@ func (p *LogicalJoin) Shallow() *LogicalJoin {
 	return join.Init(p.ctx, p.blockOffset)
 }
 
-// GetJoinKeys extracts join keys(columns) from EqualConditions.
-func (p *LogicalJoin) GetJoinKeys() (leftKeys, rightKeys []*expression.Column) {
+// GetJoinKeys extracts join keys(columns) from EqualConditions. It returns left join keys, right
+// join keys and an `isNullEQ` array which means the `joinKey[i]` is a `NullEQ` function. The `hasNullEQ`
+// means whether there is a `NullEQ` of a join key.
+func (p *LogicalJoin) GetJoinKeys() (leftKeys, rightKeys []*expression.Column, isNullEQ []bool, hasNullEQ bool) {
 	for _, expr := range p.EqualConditions {
 		leftKeys = append(leftKeys, expr.GetArgs()[0].(*expression.Column))
 		rightKeys = append(rightKeys, expr.GetArgs()[1].(*expression.Column))
+		isNullEQ = append(isNullEQ, expr.FuncName.L == ast.NullEQ)
+		hasNullEQ = hasNullEQ || expr.FuncName.L == ast.NullEQ
 	}
 	return
 }
@@ -302,8 +307,6 @@ type LogicalAggregation struct {
 
 	AggFuncs     []*aggregation.AggFuncDesc
 	GroupByItems []expression.Expression
-	// groupByCols stores the columns that are group-by items.
-	groupByCols []*expression.Column
 
 	// aggHints stores aggregation hint information.
 	aggHints aggHintInfo
@@ -344,14 +347,16 @@ func (la *LogicalAggregation) IsCompleteModeAgg() bool {
 	return la.AggFuncs[0].Mode == aggregation.CompleteMode
 }
 
-// GetGroupByCols returns the groupByCols. If the groupByCols haven't be collected,
-// this method would collect them at first. If the GroupByItems have been changed,
-// we should explicitly collect GroupByColumns before this method.
+// GetGroupByCols returns the columns that are group-by items.
+// For example, `group by a, b, c+d` will return [a, b].
 func (la *LogicalAggregation) GetGroupByCols() []*expression.Column {
-	if la.groupByCols == nil {
-		la.collectGroupByColumns()
+	groupByCols := make([]*expression.Column, 0, len(la.GroupByItems))
+	for _, item := range la.GroupByItems {
+		if col, ok := item.(*expression.Column); ok {
+			groupByCols = append(groupByCols, col)
+		}
 	}
-	return la.groupByCols
+	return groupByCols
 }
 
 // ExtractCorrelatedCols implements LogicalPlan interface.
@@ -459,7 +464,7 @@ type LogicalUnionScan struct {
 
 	conditions []expression.Expression
 
-	handleCol *expression.Column
+	handleCols HandleCols
 }
 
 // DataSource represents a tableScan without condition push down.
@@ -495,7 +500,8 @@ type DataSource struct {
 
 	// handleCol represents the handle column for the datasource, either the
 	// int primary key column or extra handle column.
-	handleCol *expression.Column
+	//handleCol *expression.Column
+	handleCols HandleCols
 	// TblCols contains the original columns of table before being pruned, and it
 	// is used for estimating table scan cost.
 	TblCols []*expression.Column
@@ -536,7 +542,7 @@ type TiKVSingleGather struct {
 type LogicalTableScan struct {
 	logicalSchemaProducer
 	Source      *DataSource
-	Handle      *expression.Column
+	HandleCols  HandleCols
 	AccessConds expression.CNFExprs
 	Ranges      []*ranger.Range
 }
@@ -569,8 +575,8 @@ func (p *LogicalIndexScan) MatchIndexProp(prop *property.PhysicalProperty) (matc
 		return false
 	}
 	for i, col := range p.IdxCols {
-		if col.Equal(nil, prop.Items[0].Col) {
-			return matchIndicesProp(p.IdxCols[i:], p.IdxColLens[i:], prop.Items)
+		if col.Equal(nil, prop.SortItems[0].Col) {
+			return matchIndicesProp(p.IdxCols[i:], p.IdxColLens[i:], prop.SortItems)
 		} else if i >= p.EqCondCount {
 			break
 		}
@@ -589,7 +595,7 @@ func getTablePath(paths []*util.AccessPath) *util.AccessPath {
 }
 
 func (ds *DataSource) buildTableGather() LogicalPlan {
-	ts := LogicalTableScan{Source: ds, Handle: ds.getHandleCol()}.Init(ds.ctx, ds.blockOffset)
+	ts := LogicalTableScan{Source: ds, HandleCols: ds.handleCols}.Init(ds.ctx, ds.blockOffset)
 	ts.SetSchema(ds.Schema())
 	sg := TiKVSingleGather{Source: ds, IsIndexGather: false}.Init(ds.ctx, ds.blockOffset)
 	sg.SetSchema(ds.Schema())
@@ -628,7 +634,7 @@ func (ds *DataSource) Convert2Gathers() (gathers []LogicalPlan) {
 	tg := ds.buildTableGather()
 	gathers = append(gathers, tg)
 	for _, path := range ds.possibleAccessPaths {
-		if !path.IsTablePath() {
+		if !path.IsIntHandlePath {
 			path.FullIdxCols, path.FullIdxColLens = expression.IndexInfo2Cols(ds.Columns, ds.schema.Columns, path.Index)
 			path.IdxCols, path.IdxColLens = expression.IndexInfo2PrefixCols(ds.Columns, ds.schema.Columns, path.Index)
 			// If index columns can cover all of the needed columns, we can use a IndexGather + IndexScan.
@@ -644,12 +650,12 @@ func (ds *DataSource) Convert2Gathers() (gathers []LogicalPlan) {
 func (ds *DataSource) deriveCommonHandleTablePathStats(path *util.AccessPath, conds []expression.Expression, isIm bool) (bool, error) {
 	path.CountAfterAccess = float64(ds.statisticTable.Count)
 	path.Ranges = ranger.FullNotNullRange()
+	path.IdxCols, path.IdxColLens = expression.IndexInfo2PrefixCols(ds.Columns, ds.schema.Columns, path.Index)
+	path.FullIdxCols, path.FullIdxColLens = expression.IndexInfo2Cols(ds.Columns, ds.schema.Columns, path.Index)
 	if len(conds) == 0 {
 		return false, nil
 	}
 	sc := ds.ctx.GetSessionVars().StmtCtx
-	path.IdxCols, path.IdxColLens = expression.IndexInfo2PrefixCols(ds.Columns, ds.schema.Columns, path.Index)
-	path.FullIdxCols, path.FullIdxColLens = expression.IndexInfo2Cols(ds.Columns, ds.schema.Columns, path.Index)
 	if len(path.IdxCols) != 0 {
 		res, err := ranger.DetachCondAndBuildRangeForIndex(ds.ctx, conds, path.IdxCols, path.IdxColLens)
 		if err != nil {
@@ -812,8 +818,17 @@ func (ds *DataSource) fillIndexPath(path *util.AccessPath, conds []expression.Ex
 	if !path.Index.Unique && !path.Index.Primary && len(path.Index.Columns) == len(path.IdxCols) {
 		handleCol := ds.getPKIsHandleCol()
 		if handleCol != nil && !mysql.HasUnsignedFlag(handleCol.RetType.Flag) {
-			path.IdxCols = append(path.IdxCols, handleCol)
-			path.IdxColLens = append(path.IdxColLens, types.UnspecifiedLength)
+			alreadyHandle := false
+			for _, col := range path.IdxCols {
+				if col.ID == model.ExtraHandleID || col.Equal(nil, handleCol) {
+					alreadyHandle = true
+				}
+			}
+			// Don't add one column twice to the index. May cause unexpected errors.
+			if !alreadyHandle {
+				path.IdxCols = append(path.IdxCols, handleCol)
+				path.IdxColLens = append(path.IdxColLens, types.UnspecifiedLength)
+			}
 		}
 	}
 	if len(path.IdxCols) != 0 {
@@ -935,26 +950,6 @@ func (p *LogicalIndexScan) getPKIsHandleCol(schema *expression.Schema) *expressi
 	return getPKIsHandleColFromSchema(p.Columns, schema, p.Source.tableInfo.PKIsHandle)
 }
 
-func (ds *DataSource) getHandleCol() *expression.Column {
-	if ds.handleCol != nil {
-		return ds.handleCol
-	}
-
-	if !ds.tableInfo.PKIsHandle {
-		ds.handleCol = ds.newExtraHandleSchemaCol()
-		return ds.handleCol
-	}
-
-	for i, col := range ds.Columns {
-		if mysql.HasPriKeyFlag(col.Flag) {
-			ds.handleCol = ds.schema.Columns[i]
-			break
-		}
-	}
-
-	return ds.handleCol
-}
-
 // TableInfo returns the *TableInfo of data source.
 func (ds *DataSource) TableInfo() *model.TableInfo {
 	return ds.tableInfo
@@ -990,9 +985,10 @@ func (ls *LogicalSort) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 type LogicalTopN struct {
 	baseLogicalPlan
 
-	ByItems []*util.ByItems
-	Offset  uint64
-	Count   uint64
+	ByItems    []*util.ByItems
+	Offset     uint64
+	Count      uint64
+	limitHints limitHintInfo
 }
 
 // ExtractCorrelatedCols implements LogicalPlan interface.
@@ -1011,18 +1007,19 @@ func (lt *LogicalTopN) isLimit() bool {
 
 // LogicalLimit represents offset and limit plan.
 type LogicalLimit struct {
-	baseLogicalPlan
+	logicalSchemaProducer
 
-	Offset uint64
-	Count  uint64
+	Offset     uint64
+	Count      uint64
+	limitHints limitHintInfo
 }
 
 // LogicalLock represents a select lock plan.
 type LogicalLock struct {
 	baseLogicalPlan
 
-	Lock             ast.SelectLockType
-	tblID2Handle     map[int64][]*expression.Column
+	Lock             *ast.SelectLockInfo
+	tblID2Handle     map[int64][]HandleCols
 	partitionedTable []table.PartitionedTable
 }
 
@@ -1051,8 +1048,8 @@ type LogicalWindow struct {
 	logicalSchemaProducer
 
 	WindowFuncDescs []*aggregation.WindowFuncDesc
-	PartitionBy     []property.Item
-	OrderBy         []property.Item
+	PartitionBy     []property.SortItem
+	OrderBy         []property.SortItem
 	Frame           *WindowFrame
 }
 

@@ -42,7 +42,7 @@ func (ds mockDataSource) Init(ctx sessionctx.Context) *mockDataSource {
 	return &ds
 }
 
-func (ds *mockDataSource) findBestTask(prop *property.PhysicalProperty) (task, error) {
+func (ds *mockDataSource) findBestTask(prop *property.PhysicalProperty, planCounter *PlanCounterTp) (task, int64, error) {
 	// It can satisfy any of the property!
 	// Just use a TableDual for convenience.
 	p := PhysicalTableDual{}.Init(ds.ctx, &property.StatsInfo{RowCount: 1}, 0)
@@ -50,7 +50,8 @@ func (ds *mockDataSource) findBestTask(prop *property.PhysicalProperty) (task, e
 		p:   p,
 		cst: 10000,
 	}
-	return task, nil
+	planCounter.Dec(1)
+	return task, 1, nil
 }
 
 // mockLogicalPlan4Test is a LogicalPlan which is used for unit test.
@@ -151,7 +152,7 @@ func (s *testFindBestTaskSuite) TestCostOverflow(c *C) {
 	mockPlan.SetChildren(mockDS)
 	// An empty property is enough for this test.
 	prop := property.NewPhysicalProperty(property.RootTaskType, nil, false, 0, false)
-	t, err := mockPlan.findBestTask(prop)
+	t, _, err := mockPlan.findBestTask(prop, &PlanCounterDisabled)
 	c.Assert(err, IsNil)
 	// The cost should be overflowed, but the task shouldn't be invalid.
 	c.Assert(t.invalid(), IsFalse)
@@ -169,25 +170,25 @@ func (s *testFindBestTaskSuite) TestEnforcedProperty(c *C) {
 	col1 := &expression.Column{UniqueID: 2}
 	// Use different order, so that mockLogicalPlan cannot generate any of the
 	// physical plans.
-	item0 := property.Item{Col: col0, Desc: false}
-	item1 := property.Item{Col: col1, Desc: true}
-	items := []property.Item{item0, item1}
+	item0 := property.SortItem{Col: col0, Desc: false}
+	item1 := property.SortItem{Col: col1, Desc: true}
+	items := []property.SortItem{item0, item1}
 
 	prop0 := &property.PhysicalProperty{
-		Items:    items,
-		Enforced: false,
+		SortItems: items,
+		Enforced:  false,
 	}
 	// should return invalid task because no physical plan can match this property.
-	task, err := mockPlan.findBestTask(prop0)
+	task, _, err := mockPlan.findBestTask(prop0, &PlanCounterDisabled)
 	c.Assert(err, IsNil)
 	c.Assert(task.invalid(), IsTrue)
 
 	prop1 := &property.PhysicalProperty{
-		Items:    items,
-		Enforced: true,
+		SortItems: items,
+		Enforced:  true,
 	}
 	// should return the valid task when the property is enforced.
-	task, err = mockPlan.findBestTask(prop1)
+	task, _, err = mockPlan.findBestTask(prop1, &PlanCounterDisabled)
 	c.Assert(err, IsNil)
 	c.Assert(task.invalid(), IsFalse)
 }
@@ -203,14 +204,14 @@ func (s *testFindBestTaskSuite) TestHintCannotFitProperty(c *C) {
 	mockPlan0.SetChildren(mockDS)
 
 	col0 := &expression.Column{UniqueID: 1}
-	item0 := property.Item{Col: col0}
-	items := []property.Item{item0}
+	item0 := property.SortItem{Col: col0}
+	items := []property.SortItem{item0}
 	// case 1, The property is not empty and enforced, should enforce a sort.
 	prop0 := &property.PhysicalProperty{
-		Items:    items,
-		Enforced: true,
+		SortItems: items,
+		Enforced:  true,
 	}
-	task, err := mockPlan0.findBestTask(prop0)
+	task, _, err := mockPlan0.findBestTask(prop0, &PlanCounterDisabled)
 	c.Assert(err, IsNil)
 	c.Assert(task.invalid(), IsFalse)
 	_, enforcedSort := task.plan().(*PhysicalSort)
@@ -223,10 +224,10 @@ func (s *testFindBestTaskSuite) TestHintCannotFitProperty(c *C) {
 	// case 2, The property is not empty but not enforced, still need to enforce a sort
 	// to ensure the hint can work
 	prop1 := &property.PhysicalProperty{
-		Items:    items,
-		Enforced: false,
+		SortItems: items,
+		Enforced:  false,
 	}
-	task, err = mockPlan0.findBestTask(prop1)
+	task, _, err = mockPlan0.findBestTask(prop1, &PlanCounterDisabled)
 	c.Assert(err, IsNil)
 	c.Assert(task.invalid(), IsFalse)
 	_, enforcedSort = task.plan().(*PhysicalSort)
@@ -239,15 +240,15 @@ func (s *testFindBestTaskSuite) TestHintCannotFitProperty(c *C) {
 	// case 3, The hint cannot work even if the property is empty, should return a warning
 	// and generate physicalPlan1.
 	prop2 := &property.PhysicalProperty{
-		Items:    items,
-		Enforced: false,
+		SortItems: items,
+		Enforced:  false,
 	}
 	mockPlan1 := mockLogicalPlan4Test{
 		hasHintForPlan2:  true,
 		canGeneratePlan2: false,
 	}.Init(ctx)
 	mockPlan1.SetChildren(mockDS)
-	task, err = mockPlan1.findBestTask(prop2)
+	task, _, err = mockPlan1.findBestTask(prop2, &PlanCounterDisabled)
 	c.Assert(err, IsNil)
 	c.Assert(task.invalid(), IsFalse)
 	c.Assert(ctx.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
@@ -260,10 +261,10 @@ func (s *testFindBestTaskSuite) TestHintCannotFitProperty(c *C) {
 	// the same with case 3.
 	ctx.GetSessionVars().StmtCtx.SetWarnings(nil)
 	prop3 := &property.PhysicalProperty{
-		Items:    items,
-		Enforced: true,
+		SortItems: items,
+		Enforced:  true,
 	}
-	task, err = mockPlan1.findBestTask(prop3)
+	task, _, err = mockPlan1.findBestTask(prop3, &PlanCounterDisabled)
 	c.Assert(err, IsNil)
 	c.Assert(task.invalid(), IsFalse)
 	c.Assert(ctx.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))

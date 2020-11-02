@@ -234,7 +234,7 @@ func (opt *Optimizer) fillGroupStats(g *memo.Group) (err error) {
 		childSchema[i] = childGroup.Prop.Schema
 	}
 	planNode := expr.ExprNode
-	g.Prop.Stats, err = planNode.DeriveStats(childStats, g.Prop.Schema, childSchema)
+	g.Prop.Stats, err = planNode.DeriveStats(childStats, g.Prop.Schema, childSchema, nil)
 	return err
 }
 
@@ -366,7 +366,7 @@ func preparePossibleProperties(g *memo.Group, propertyMap map[*memo.Group][][]*e
 		exprProperties := expr.ExprNode.PreparePossibleProperties(expr.Schema(), childrenProperties...)
 		for _, newPropCols := range exprProperties {
 			// Check if the prop has already been in `groupPropertyMap`.
-			newProp := property.PhysicalProperty{Items: property.ItemsFromCols(newPropCols, true)}
+			newProp := property.PhysicalProperty{SortItems: property.SortItemsFromCols(newPropCols, true)}
 			key := newProp.HashCode()
 			if _, ok := groupPropertyMap[string(key)]; !ok {
 				groupPropertyMap[string(key)] = newPropCols

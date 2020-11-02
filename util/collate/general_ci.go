@@ -14,8 +14,6 @@
 package collate
 
 import (
-	"unicode/utf8"
-
 	"github.com/pingcap/tidb/util/stringutil"
 )
 
@@ -63,8 +61,19 @@ func compilePatternGeneralCI(pattern string, escape byte) (patWeights []uint16, 
 				}
 			}
 		case '_':
-			tp = stringutil.PatOne
+			// %_ => _%
+			if patLen > 0 && patTypes[patLen-1] == stringutil.PatAny {
+				tp = stringutil.PatAny
+				r = '%'
+				patWeights[patLen-1], patTypes[patLen-1] = '_', stringutil.PatOne
+			} else {
+				tp = stringutil.PatOne
+			}
 		case '%':
+			// %% => %
+			if patLen > 0 && patTypes[patLen-1] == stringutil.PatAny {
+				continue
+			}
 			tp = stringutil.PatAny
 		default:
 			tp = stringutil.PatMatch
@@ -97,7 +106,7 @@ func doMatchGeneralCI(str string, patWeights []uint16, patTypes []byte) bool {
 					continue
 				}
 			case stringutil.PatOne:
-				if rIdx < len(str) {
+				if rIdx < lenRunes {
 					pIdx++
 					rIdx++
 					continue
@@ -113,7 +122,7 @@ func doMatchGeneralCI(str string, patWeights []uint16, patTypes []byte) bool {
 			}
 		}
 		// Mismatch. Maybe restart.
-		if 0 < nextRIdx && nextRIdx <= len(str) {
+		if 0 < nextRIdx && nextRIdx <= lenRunes {
 			pIdx = nextPIdx
 			rIdx = nextRIdx
 			continue
@@ -128,18 +137,18 @@ func doMatchGeneralCI(str string, patWeights []uint16, patTypes []byte) bool {
 func (gc *generalCICollator) Compare(a, b string) int {
 	a = truncateTailingSpace(a)
 	b = truncateTailingSpace(b)
-	for len(a) > 0 && len(b) > 0 {
-		r1, r1size := utf8.DecodeRuneInString(a)
-		r2, r2size := utf8.DecodeRuneInString(b)
+	r1, r2 := rune(0), rune(0)
+	ai, bi := 0, 0
+	for ai < len(a) && bi < len(b) {
+		r1, ai = decodeRune(a, ai)
+		r2, bi = decodeRune(b, bi)
 
 		cmp := int(convertRune(r1)) - int(convertRune(r2))
 		if cmp != 0 {
 			return sign(cmp)
 		}
-		a = a[r1size:]
-		b = b[r2size:]
 	}
-	return sign(len(a) - len(b))
+	return sign((len(a) - ai) - (len(b) - bi))
 }
 
 // Key implements Collator interface.
@@ -147,10 +156,11 @@ func (gc *generalCICollator) Key(str string) []byte {
 	str = truncateTailingSpace(str)
 	buf := make([]byte, 0, len(str))
 	i := 0
-	for _, r := range []rune(str) {
+	r := rune(0)
+	for i < len(str) {
+		r, i = decodeRune(str, i)
 		u16 := convertRune(r)
 		buf = append(buf, byte(u16>>8), byte(u16))
-		i++
 	}
 	return buf
 }

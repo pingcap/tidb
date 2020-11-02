@@ -146,13 +146,14 @@ type StatementContext struct {
 	planNormalized        string
 	planDigest            string
 	Tables                []TableEntry
-	PointExec             bool       // for point update cached execution, Constant expression need to set "paramMarker"
-	lockWaitStartTime     *time.Time // LockWaitStartTime stores the pessimistic lock wait start time
+	PointExec             bool  // for point update cached execution, Constant expression need to set "paramMarker"
+	lockWaitStartTime     int64 // LockWaitStartTime stores the pessimistic lock wait start time
 	PessimisticLockWaited int32
-	LockKeysDuration      time.Duration
+	LockKeysDuration      int64
 	LockKeysCount         int32
 	TblInfo2UnionScan     map[*model.TableInfo]bool
 	TaskID                uint64 // unique ID for an execution of a statement
+	TaskMapBakTS          uint64 // counter for
 }
 
 // StmtHints are SessionVars related sql hints.
@@ -166,6 +167,9 @@ type StmtHints struct {
 	NoIndexMergeHint        bool
 	// EnableCascadesPlanner is use cascades planner for a single query only.
 	EnableCascadesPlanner bool
+	// ForceNthPlan indicates the PlanCounterTp number for finding physical plan.
+	// -1 for disable.
+	ForceNthPlan int64
 
 	// Hint flags
 	HasAllowInSubqToJoinAndAggHint bool
@@ -173,6 +177,12 @@ type StmtHints struct {
 	HasReplicaReadHint             bool
 	HasMaxExecutionTime            bool
 	HasEnableCascadesPlannerHint   bool
+	SetVars                        map[string]string
+}
+
+// TaskMapNeedBackUp indicates that whether we need to back up taskMap during physical optimizing.
+func (sh *StmtHints) TaskMapNeedBackUp() bool {
+	return sh.ForceNthPlan != -1
 }
 
 // GetNowTsCached getter for nowTs, if not set get now time and cache it
@@ -482,17 +492,40 @@ func (sc *StatementContext) ResetForRetry() {
 // the information in slow query log.
 func (sc *StatementContext) MergeExecDetails(details *execdetails.ExecDetails, commitDetails *execdetails.CommitDetails) {
 	sc.mu.Lock()
+	defer sc.mu.Unlock()
 	if details != nil {
 		sc.mu.execDetails.CopTime += details.CopTime
 		sc.mu.execDetails.ProcessTime += details.ProcessTime
 		sc.mu.execDetails.WaitTime += details.WaitTime
 		sc.mu.execDetails.BackoffTime += details.BackoffTime
 		sc.mu.execDetails.RequestCount++
-		sc.mu.execDetails.TotalKeys += details.TotalKeys
-		sc.mu.execDetails.ProcessedKeys += details.ProcessedKeys
+		sc.MergeCopDetails(details.CopDetail)
 		sc.mu.allExecDetails = append(sc.mu.allExecDetails, details)
 	}
 	sc.mu.execDetails.CommitDetail = commitDetails
+}
+
+// MergeCopDetails merges cop details into self.
+func (sc *StatementContext) MergeCopDetails(copDetails *execdetails.CopDetails) {
+	// Currently TiFlash cop task does not fill copDetails, so need to skip it if copDetails is nil
+	if copDetails == nil {
+		return
+	}
+	if sc.mu.execDetails.CopDetail == nil {
+		sc.mu.execDetails.CopDetail = copDetails
+	} else {
+		sc.mu.execDetails.CopDetail.Merge(copDetails)
+	}
+}
+
+// MergeLockKeysExecDetails merges lock keys execution details into self.
+func (sc *StatementContext) MergeLockKeysExecDetails(lockKeys *execdetails.LockKeysDetails) {
+	sc.mu.Lock()
+	if sc.mu.execDetails.LockKeysDetail == nil {
+		sc.mu.execDetails.LockKeysDetail = lockKeys
+	} else {
+		sc.mu.execDetails.LockKeysDetail.Merge(lockKeys)
+	}
 	sc.mu.Unlock()
 }
 
@@ -501,7 +534,7 @@ func (sc *StatementContext) GetExecDetails() execdetails.ExecDetails {
 	var details execdetails.ExecDetails
 	sc.mu.Lock()
 	details = sc.mu.execDetails
-	details.LockKeysDuration = sc.LockKeysDuration
+	details.LockKeysDuration = time.Duration(atomic.LoadInt64(&sc.LockKeysDuration))
 	sc.mu.Unlock()
 	return details
 }
@@ -512,7 +545,7 @@ func (sc *StatementContext) GetExecDetails() execdetails.ExecDetails {
 func (sc *StatementContext) ShouldClipToZero() bool {
 	// TODO: Currently altering column of integer to unsigned integer is not supported.
 	// If it is supported one day, that case should be added here.
-	return sc.InInsertStmt || sc.InLoadDataStmt
+	return sc.InInsertStmt || sc.InLoadDataStmt || sc.InUpdateStmt
 }
 
 // ShouldIgnoreOverflowError indicates whether we should ignore the error when type conversion overflows,
@@ -642,11 +675,12 @@ func (sc *StatementContext) SetFlagsFromPBFlag(flags uint64) {
 
 // GetLockWaitStartTime returns the statement pessimistic lock wait start time
 func (sc *StatementContext) GetLockWaitStartTime() time.Time {
-	if sc.lockWaitStartTime == nil {
-		curTime := time.Now()
-		sc.lockWaitStartTime = &curTime
+	startTime := atomic.LoadInt64(&sc.lockWaitStartTime)
+	if startTime == 0 {
+		startTime = time.Now().UnixNano()
+		atomic.StoreInt64(&sc.lockWaitStartTime, startTime)
 	}
-	return *sc.lockWaitStartTime
+	return time.Unix(0, startTime)
 }
 
 //CopTasksDetails collects some useful information of cop-tasks during execution.
