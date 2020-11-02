@@ -1160,7 +1160,8 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
 		er.err = err
 		return
 	}
-	e := expression.DatumToConstant(types.NewStringDatum(val), mysql.TypeVarString)
+	nativeVal, nativeType := variable.GetNativeValType(name, val)
+	e := expression.DatumToConstant(nativeVal, nativeType)
 	e.GetType().Charset, _ = er.sctx.GetSessionVars().GetSystemVar(variable.CharacterSetConnection)
 	e.GetType().Collate, _ = er.sctx.GetSessionVars().GetSystemVar(variable.CollationConnection)
 	er.ctxStackAppend(e, types.EmptyName)
@@ -1177,7 +1178,7 @@ func (er *expressionRewriter) unaryOpToExpression(v *ast.UnaryOperationExpr) {
 		op = ast.UnaryMinus
 	case opcode.BitNeg:
 		op = ast.BitNeg
-	case opcode.Not:
+	case opcode.Not, opcode.Not2:
 		op = ast.UnaryNot
 	default:
 		er.err = errors.Errorf("Unknown Unary Op %T", v.Op)

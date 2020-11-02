@@ -56,15 +56,22 @@ func (msm *mockSessionManager1) GetProcessInfo(id uint64) (*util.ProcessInfo, bo
 
 // Kill implements the SessionManager.Kill interface.
 func (msm *mockSessionManager1) Kill(cid uint64, query bool) {
+}
 
+func (msm *mockSessionManager1) KillAllConnections() {
 }
 
 func (msm *mockSessionManager1) UpdateTLSConfig(cfg *tls.Config) {
 }
 
+func (msm *mockSessionManager1) ServerID() uint64 {
+	return 1
+}
+
 func (s *testSerialSuite) TestExplainFor(c *C) {
 	tkRoot := testkit.NewTestKitWithInit(c, s.store)
 	tkUser := testkit.NewTestKitWithInit(c, s.store)
+	tkRoot.MustExec("drop table if exists t1, t2;")
 	tkRoot.MustExec("create table t1(c1 int, c2 int)")
 	tkRoot.MustExec("create table t2(c1 int, c2 int)")
 	tkRoot.MustExec("create user tu@'%'")

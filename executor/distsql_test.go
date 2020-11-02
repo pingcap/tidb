@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"runtime/pprof"
 	"strings"
+	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/model"
@@ -234,7 +235,7 @@ func (s *testSuite3) TestInconsistentIndex(c *C) {
 	for i := 0; i < 10; i++ {
 		txn, err := s.store.Begin()
 		c.Assert(err, IsNil)
-		err = idxOp.Delete(ctx.GetSessionVars().StmtCtx, txn, types.MakeDatums(i+10), kv.IntHandle(100+i))
+		err = idxOp.Delete(ctx.GetSessionVars().StmtCtx, txn.GetUnionStore(), types.MakeDatums(i+10), kv.IntHandle(100+i))
 		c.Assert(err, IsNil)
 		err = txn.Commit(context.Background())
 		c.Assert(err, IsNil)
@@ -254,4 +255,17 @@ func (s *testSuite3) TestPushLimitDownIndexLookUpReader(c *C) {
 	tk.MustQuery("select * from tbl use index(idx_b_c) where b > 1 limit 1").Check(testkit.Rows("2 2 2"))
 	tk.MustQuery("select * from tbl use index(idx_b_c) where b > 1 order by b desc limit 2,1").Check(testkit.Rows("3 3 3"))
 	tk.MustQuery("select * from tbl use index(idx_b_c) where b > 1 and c > 1 limit 2,1").Check(testkit.Rows("4 4 4"))
+}
+
+func (s *testSuite3) TestIndexLookUpStats(c *C) {
+	stats := &executor.IndexLookUpRunTimeStats{
+		IndexScan:    int64(2 * time.Second),
+		TableRowScan: int64(2 * time.Second),
+		TableTaskNum: 2,
+		Concurrency:  1,
+	}
+	c.Assert(stats.String(), Equals, "index_task:2s, table_task:{num:2, concurrency:1, time:2s}")
+	c.Assert(stats.String(), Equals, stats.Clone().String())
+	stats.Merge(stats.Clone())
+	c.Assert(stats.String(), Equals, "index_task:4s, table_task:{num:4, concurrency:2, time:4s}")
 }
