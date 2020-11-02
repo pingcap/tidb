@@ -723,6 +723,7 @@ func (m *Meta) GetAllDDLJobsInQueue(jobListKeys ...JobListKeyType) ([]*model.Job
 	return jobs, nil
 }
 
+// ResetCancelledJobList reset the job queue with the corresponding jobs.
 func (m *Meta) ResetCancelledJobList(jobs []*model.Job, jobListKeys ...JobListKeyType) error {
 	listKey := m.jobListKey
 	if len(jobListKeys) != 0 {

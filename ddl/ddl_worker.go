@@ -472,16 +472,24 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 			// Check whether a job is cancelling when we are handling it.
 			if inCancellingList, err := isInCancellingList(t, job); err == nil {
 				if inCancellingList {
-					// If we found a job is cancelling here, we should abandon the kv txn modification,
-					// and skip storing the job modification down. the next ddl round will handle the
-					// cancelling logic for it.
-					txn.Reset()
-					logutil.Logger(w.logCtx).Info("[ddl] DDL job kv modification abandoned, since it has been cancelling.")
+					if job.State != model.JobStateRollingback && job.State != model.JobStateCancelled && job.State != model.JobStateRollbackDone {
+						// If we found a job is cancelling here, we should abandon the kv txn modification,
+						// and skip storing the job modification down. the next ddl round will handle the
+						// cancelling logic for it.
+						txn.Reset()
+						logutil.Logger(w.logCtx).Info("[ddl] DDL job kv modification abandoned, since it has been cancelling.")
+						err := removeJobFromCancellingList(t, job)
+						if err != nil {
+							return errors.Trace(err)
+						}
+						// return directly to step into the cancelling in next ddl round.
+						return nil
+					}
+					// Since we are already in the cancel handling logic, keep going on.
 					err := removeJobFromCancellingList(t, job)
 					if err != nil {
 						return errors.Trace(err)
 					}
-					return nil
 				}
 			}
 			if job.IsCancelled() {
