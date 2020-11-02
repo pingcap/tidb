@@ -234,7 +234,7 @@ func (t *Tracker) Consume(bytes int64) {
 			break
 		}
 	}
-	if t.ignoreAction {
+	if t != nil && t.ignoreAction {
 		return
 	}
 	if bytes > 0 && rootExceed != nil {
