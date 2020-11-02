@@ -731,6 +731,9 @@ type SessionVars struct {
 
 	// PartitionPruneMode indicates how and when to prune partitions.
 	PartitionPruneMode atomic2.String
+
+	// EnableStableResultMode if stabilize query results.
+	EnableStableResultMode bool
 }
 
 // UseDynamicPartitionPrune indicates whether use new dynamic partition prune.
@@ -1523,6 +1526,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.EnableChangeColumnType = TiDBOptOn(val)
 	case TiDBEnableAmendPessimisticTxn:
 		s.EnableAmendPessimisticTxn = TiDBOptOn(val)
+	case TiDBEnableStableResultMode:
+		s.EnableStableResultMode = TiDBOptOn(val)
 	}
 	s.systems[name] = val
 	return nil

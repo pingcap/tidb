@@ -42,6 +42,7 @@ var AllowCartesianProduct = atomic.NewBool(true)
 const (
 	flagGcSubstitute uint64 = 1 << iota
 	flagPrunColumns
+	flagStabilizeResults
 	flagBuildKeyInfo
 	flagDecorrelate
 	flagEliminateAgg
@@ -59,6 +60,7 @@ const (
 var optRuleList = []logicalOptRule{
 	&gcSubstituter{},
 	&columnPruner{},
+	&resultsStabilizer{},
 	&buildKeySolver{},
 	&decorrelateSolver{},
 	&aggregationEliminator{},
@@ -124,6 +126,9 @@ func DoOptimize(ctx context.Context, sctx sessionctx.Context, flag uint64, logic
 	// if there is something after flagPrunColumns, do flagPrunColumnsAgain
 	if flag&flagPrunColumns > 0 && flag-flagPrunColumns > flagPrunColumns {
 		flag |= flagPrunColumnsAgain
+	}
+	if sctx.GetSessionVars().EnableStableResultMode {
+		flag |= flagStabilizeResults
 	}
 	logic, err := logicalOptimize(ctx, flag, logic)
 	if err != nil {
