@@ -1153,9 +1153,11 @@ func (s *testSuiteAgg) TestHashAggRuntimeStat(c *C) {
 		PartialTask:    1 * time.Second,
 		FinalTaskNum:   5,
 		FinalTask:      2 * time.Second,
+		PartialTime:    []time.Duration{1 * time.Second, 1 * time.Second, 1 * time.Second, 2 * time.Second, 3 * time.Second},
+		FinalTime:      []time.Duration{1 * time.Second, 1 * time.Second, 1 * time.Second, 2 * time.Second, 4 * time.Second},
 	}
-	c.Assert(stats.String(), Equals, "partial_worker:{used_time:1s, PartialConcurrency:5, task_num:5}, final_worker:{used_time:2s, FinalConcurrency:5, task_num:5}")
+	c.Assert(stats.String(), Equals, "partial_worker:{used_time:1s, PartialConcurrency:5, task_num:5, partial_max:3s, p95:3s}, final_worker:{used_time:2s, FinalConcurrency:5, task_num:5, partial_max:4s, p95:4s}")
 	c.Assert(stats.String(), Equals, stats.Clone().String())
 	stats.Merge(stats.Clone())
-	c.Assert(stats.String(), Equals, "partial_worker:{used_time:2s, PartialConcurrency:10, task_num:10}, final_worker:{used_time:4s, FinalConcurrency:10, task_num:10}")
+	c.Assert(stats.String(), Equals, "partial_worker:{used_time:2s, PartialConcurrency:10, task_num:10, partial_max:3s, p95:3s}, final_worker:{used_time:4s, FinalConcurrency:10, task_num:10, partial_max:4s, p95:4s}")
 }

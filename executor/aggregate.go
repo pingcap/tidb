@@ -923,8 +923,9 @@ func (e *HashAggRuntimeStats) Clone() execdetails.RuntimeStats {
 		FinalTask:      e.FinalTask,
 		PartialNum:     e.PartialNum,
 		FinalNum:       e.FinalNum,
+		PartialTime:    e.PartialTime,
+		FinalTime:      e.FinalTime,
 	}
-
 	return newRs
 }
 
@@ -940,6 +941,8 @@ func (e *HashAggRuntimeStats) Merge(other execdetails.RuntimeStats) {
 	e.FinalTaskNum += tmp.FinalTaskNum
 	e.PartialNum += tmp.PartialNum
 	e.FinalNum += tmp.FinalNum
+	e.FinalTime = append(e.FinalTime, tmp.FinalTime...)
+	e.PartialTime = append(e.PartialTime, tmp.PartialTime...)
 }
 
 // Tp implements the RuntimeStats interface.
