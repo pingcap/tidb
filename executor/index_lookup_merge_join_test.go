@@ -134,3 +134,15 @@ func (s *testSuiteWithData) TestIndexJoinOnSinglePartitionTable(c *C) {
 		c.Assert(strings.Index(rows[0], "IndexJoin"), Equals, 0)
 	}
 }
+
+func (s *testSuite9) TestIssue20400(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists t, s")
+	tk.MustExec("create table s(a int, index(a))")
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("insert into t values(1)")
+	tk.MustQuery("select /*+ hash_join(t,s)*/ * from t left join s on t.a=s.a and t.a>1").Check(
+		testkit.Rows("1 <nil>"))
+	tk.MustQuery("select /*+ inl_merge_join(t,s)*/ * from t left join s on t.a=s.a and t.a>1").Check(
+		testkit.Rows("1 <nil>"))
+}

@@ -15,6 +15,9 @@ package placement
 
 import (
 	"encoding/json"
+	"strings"
+
+	"github.com/pingcap/errors"
 )
 
 // Refer to https://github.com/tikv/pd/issues/2701 .
@@ -59,6 +62,28 @@ type LabelConstraint struct {
 	Values []string          `json:"values,omitempty"`
 }
 
+// Restore converts the LabelConstraint to a string.
+func (c *LabelConstraint) Restore() (string, error) {
+	var sb strings.Builder
+	for i, value := range c.Values {
+		switch c.Op {
+		case In:
+			sb.WriteString("+")
+		case NotIn:
+			sb.WriteString("-")
+		default:
+			return "", errors.Errorf("Unsupported label constraint operation: %s", c.Op)
+		}
+		sb.WriteString(c.Key)
+		sb.WriteString("=")
+		sb.WriteString(value)
+		if i < len(c.Values)-1 {
+			sb.WriteString(",")
+		}
+	}
+	return sb.String(), nil
+}
+
 // Rule is the placement rule. Check https://github.com/tikv/pd/blob/master/server/schedule/placement/rule.go.
 type Rule struct {
 	GroupID          string            `json:"group_id"`
@@ -101,9 +126,11 @@ func (b *Bundle) String() string {
 func (b *Bundle) Clone() *Bundle {
 	newBundle := &Bundle{}
 	*newBundle = *b
-	newBundle.Rules = make([]*Rule, 0, len(b.Rules))
-	for i := range b.Rules {
-		newBundle.Rules = append(newBundle.Rules, b.Rules[i].Clone())
+	if len(b.Rules) > 0 {
+		newBundle.Rules = make([]*Rule, 0, len(b.Rules))
+		for i := range b.Rules {
+			newBundle.Rules = append(newBundle.Rules, b.Rules[i].Clone())
+		}
 	}
 	return newBundle
 }
