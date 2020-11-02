@@ -5283,6 +5283,10 @@ func checkColumnsTypeAndValuesMatch(ctx sessionctx.Context, meta *model.TableInf
 		case mysql.TypeDate, mysql.TypeDatetime:
 			switch val.Kind() {
 			case types.KindString, types.KindBytes:
+				_, err = types.ParseTime(ctx.GetSessionVars().StmtCtx, val.GetString(), colType.Tp, types.DefaultFsp)
+				if err != nil {
+					return ErrWrongTypeColumnValue.GenWithStackByArgs()
+				}
 			default:
 				return ErrWrongTypeColumnValue.GenWithStackByArgs()
 			}

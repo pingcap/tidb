@@ -476,6 +476,12 @@ create table log_message_1 (
 				"PARTITION p1 VALUES LESS THAN (20190906));",
 			ddl.ErrWrongTypeColumnValue,
 		},
+		{
+			"create table t (col datetime not null default '2000-01-01')" +
+				"partition by range columns (col) (" +
+				"PARTITION p0 VALUES LESS THAN ('abc'));",
+			ddl.ErrWrongTypeColumnValue,
+		},
 	}
 	for i, t := range cases {
 		_, err := tk.Exec(t.sql)
