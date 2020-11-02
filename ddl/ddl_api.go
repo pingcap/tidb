@@ -1215,8 +1215,10 @@ func buildTableInfo(
 		}
 
 		if constr.Tp == ast.ConstraintFulltext {
-			sc := ctx.GetSessionVars().StmtCtx
-			sc.AppendWarning(ErrTableCantHandleFt)
+			ctx.GetSessionVars().StmtCtx.AppendWarning(ErrTableCantHandleFt.GenWithStackByArgs())
+			continue
+		}
+		if constr.Tp == ast.ConstraintCheck {
 			continue
 		}
 		// build index info.
@@ -2424,7 +2426,11 @@ func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTab
 		return errors.Trace(err)
 	}
 
-	col.OriginDefaultValue, err = generateOriginDefaultValue(col.ToInfo())
+	originDefVal, err := generateOriginDefaultValue(col.ToInfo())
+	if err != nil {
+		return errors.Trace(err)
+	}
+	err = col.SetOriginDefaultValue(originDefVal)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -2732,19 +2738,25 @@ func CheckModifyTypeCompatible(origin *types.FieldType, to *types.FieldType) err
 		default:
 			return errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
 		}
-	case mysql.TypeEnum:
+	case mysql.TypeEnum, mysql.TypeSet:
+		var typeVar string
+		if origin.Tp == mysql.TypeEnum {
+			typeVar = "enum"
+		} else {
+			typeVar = "set"
+		}
 		if origin.Tp != to.Tp {
-			msg := fmt.Sprintf("cannot modify enum type column's to type %s", to.String())
+			msg := fmt.Sprintf("cannot modify %s type column's to type %s", typeVar, to.String())
 			return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
 		}
 		if len(to.Elems) < len(origin.Elems) {
-			msg := fmt.Sprintf("the number of enum column's elements is less than the original: %d", len(origin.Elems))
+			msg := fmt.Sprintf("the number of %s column's elements is less than the original: %d", typeVar, len(origin.Elems))
 			return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
 		}
 		for index, originElem := range origin.Elems {
 			toElem := to.Elems[index]
 			if originElem != toElem {
-				msg := fmt.Sprintf("cannot modify enum column value %s to %s", originElem, toElem)
+				msg := fmt.Sprintf("cannot modify %s column value %s to %s", typeVar, originElem, toElem)
 				return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
 			}
 		}
@@ -2962,12 +2974,13 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 		// a new version TiDB builds the DDL job that doesn't be set the column's offset and state,
 		// and the old version TiDB is the DDL owner, it doesn't get offset and state from the store. Then it will encounter errors.
 		// So here we set offset and state to support the rolling upgrade.
-		Offset:             col.Offset,
-		State:              col.State,
-		OriginDefaultValue: col.OriginDefaultValue,
-		FieldType:          *specNewColumn.Tp,
-		Name:               newColName,
-		Version:            col.Version,
+		Offset:                col.Offset,
+		State:                 col.State,
+		OriginDefaultValue:    col.OriginDefaultValue,
+		OriginDefaultValueBit: col.OriginDefaultValueBit,
+		FieldType:             *specNewColumn.Tp,
+		Name:                  newColName,
+		Version:               col.Version,
 	})
 
 	var chs, coll string
@@ -2994,6 +3007,10 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 	}
 
 	if err = processColumnOptions(ctx, newCol, specNewColumn.Options); err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	if err = checkColumnValueConstraint(newCol, newCol.Collate); err != nil {
 		return nil, errors.Trace(err)
 	}
 
