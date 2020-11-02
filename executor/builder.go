@@ -54,6 +54,7 @@ import (
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/sirupsen/logrus"
 	"go.uber.org/zap"
 )
 
@@ -2315,12 +2316,24 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 	for i := 0; i < len(v.OuterJoinKeys); i++ {
 		outerKeyCols[i] = v.OuterJoinKeys[i].Index
 	}
-	e.outerCtx.keyCols = outerKeyCols
 	innerKeyCols := make([]int, len(v.InnerJoinKeys))
 	for i := 0; i < len(v.InnerJoinKeys); i++ {
 		innerKeyCols[i] = v.InnerJoinKeys[i].Index
 	}
+	e.outerCtx.keyCols = outerKeyCols
 	e.innerCtx.keyCols = innerKeyCols
+
+	outerHashCols, innerHashCols := make([]int, len(v.OuterHashKeys)), make([]int, len(v.InnerHashKeys))
+	for i := 0; i < len(v.OuterHashKeys); i++ {
+		outerHashCols[i] = v.OuterHashKeys[i].Index
+	}
+	for i := 0; i < len(v.InnerHashKeys); i++ {
+		innerHashCols[i] = v.InnerHashKeys[i].Index
+	}
+	logrus.Warning(v.OuterHashKeys, outerHashCols, v.InnerHashKeys, innerHashCols)
+	e.outerCtx.hashCols = outerHashCols
+	e.innerCtx.hashCols = innerHashCols
+
 	e.joinResult = newFirstChunk(e)
 	executorCounterIndexLookUpJoin.Inc()
 	return e

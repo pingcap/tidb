@@ -139,7 +139,7 @@ explain select gad.id as gid,sdk.id as sid,gad.aid as aid,gad.cm as cm,sdk.dic a
 id	estRows	task	access object	operator info
 Projection_10	170.34	root		test.st.id, test.dd.id, test.st.aid, test.st.cm, test.dd.dic, test.dd.ip, test.dd.t, test.st.p1, test.st.p2, test.st.p3, test.st.p4, test.st.p5, test.st.p6_md5, test.st.p7_md5, test.st.ext
 └─Limit_13	170.34	root		offset:0, count:3000
-  └─IndexMergeJoin_26	170.34	root		inner join, inner:IndexLookUp_24, outer key:test.st.aid, inner key:test.dd.aid, other cond:eq(test.st.dic, test.dd.mac), lt(test.st.t, test.dd.t)
+  └─IndexMergeJoin_26	170.34	root		inner join, inner:IndexLookUp_24, outer key:test.st.aid, test.st.dic, inner key:test.dd.aid, test.dd.mac, other cond:lt(test.st.t, test.dd.t)
     ├─TableReader_31(Build)	170.34	root		data:Selection_30
     │ └─Selection_30	170.34	cop[tikv]		eq(test.st.bm, 0), eq(test.st.dit, "mac"), eq(test.st.pt, "ios"), gt(test.st.t, 1477971479), not(isnull(test.st.dic))
     │   └─TableRangeScan_29	1999.00	cop[tikv]	table:gad	range:[0,+inf], keep order:false

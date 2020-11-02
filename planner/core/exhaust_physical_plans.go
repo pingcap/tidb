@@ -438,6 +438,33 @@ func (p *LogicalJoin) constructIndexJoin(
 		newIsNullEQ = append(newIsNullEQ, isNullEQ[keyOff])
 		newKeyOff = append(newKeyOff, idxOff)
 	}
+
+	outerHashKeys, innerHashKeys := make([]*expression.Column, len(newOuterKeys)), make([]*expression.Column, len(newInnerKeys))
+	copy(outerHashKeys, newOuterKeys)
+	copy(innerHashKeys, newInnerKeys)
+	// we can use the `col <eq> col` in `OtherCondition` to build the hashtable to avoid the unnecessary calculating.
+	for i := len(newOtherConds) - 1; i >= 0; i = i - 1 {
+		switch c := newOtherConds[i].(type) {
+		case *expression.ScalarFunction:
+			if c.FuncName.L == ast.EQ {
+				lhs, ok1 := c.GetArgs()[0].(*expression.Column)
+				rhs, ok2 := c.GetArgs()[1].(*expression.Column)
+				if ok1 && ok2 {
+					outerSchema, innerSchema := p.Children()[outerIdx].Schema(), p.Children()[1-outerIdx].Schema()
+					if outerSchema.Contains(lhs) && innerSchema.Contains(rhs) {
+						outerHashKeys = append(outerHashKeys, lhs)
+						innerHashKeys = append(innerHashKeys, rhs)
+					} else if innerSchema.Contains(lhs) && outerSchema.Contains(rhs) {
+						outerHashKeys = append(outerHashKeys, rhs)
+						innerHashKeys = append(innerHashKeys, lhs)
+					}
+					newOtherConds = append(newOtherConds[:i], newOtherConds[i+1:]...)
+				}
+			}
+		default:
+			continue
+		}
+	}
 	baseJoin := basePhysicalJoin{
 		InnerChildIdx:   1 - outerIdx,
 		LeftConditions:  p.LeftConditions,
@@ -455,6 +482,8 @@ func (p *LogicalJoin) constructIndexJoin(
 		KeyOff2IdxOff:    newKeyOff,
 		Ranges:           ranges,
 		CompareFilters:   compareFilters,
+		OuterHashKeys:    outerHashKeys,
+		InnerHashKeys:    innerHashKeys,
 	}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), p.blockOffset, chReqProps...)
 	if path != nil {
 		join.IdxColLens = path.IdxColLens

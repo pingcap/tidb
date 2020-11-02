@@ -251,6 +251,17 @@ func (p *PhysicalIndexJoin) ResolveIndices() (err error) {
 			p.CompareFilters.affectedColSchema.Columns[i] = resolvedCol.(*expression.Column)
 		}
 	}
+	for i := range p.OuterHashKeys {
+		outerKey, err := p.OuterHashKeys[i].ResolveIndices(p.children[1-p.InnerChildIdx].Schema())
+		if err != nil {
+			return err
+		}
+		innerKey, err := p.InnerHashKeys[i].ResolveIndices(p.children[p.InnerChildIdx].Schema())
+		if err != nil {
+			return err
+		}
+		p.OuterHashKeys[i], p.InnerHashKeys[i] = outerKey.(*expression.Column), innerKey.(*expression.Column)
+	}
 	return
 }
 

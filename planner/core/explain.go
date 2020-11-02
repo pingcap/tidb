@@ -500,11 +500,11 @@ func (p *PhysicalIndexJoin) explainInfo(normalized bool) string {
 	}
 	if len(p.OuterJoinKeys) > 0 {
 		fmt.Fprintf(buffer, ", outer key:%s",
-			expression.ExplainColumnList(p.OuterJoinKeys))
+			expression.ExplainColumnList(p.OuterHashKeys))
 	}
 	if len(p.InnerJoinKeys) > 0 {
 		fmt.Fprintf(buffer, ", inner key:%s",
-			expression.ExplainColumnList(p.InnerJoinKeys))
+			expression.ExplainColumnList(p.InnerHashKeys))
 	}
 	if len(p.LeftConditions) > 0 {
 		fmt.Fprintf(buffer, ", left cond:%s",
