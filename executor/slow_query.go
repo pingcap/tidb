@@ -62,8 +62,8 @@ type slowQueryRetriever struct {
 	fileLine    int
 	checker     *slowLogChecker
 
-	taskList        chan *slowLogTask
-	stats           *slowQueryRuntimeStats
+	taskList chan *slowLogTask
+	stats    *slowQueryRuntimeStats
 }
 
 func (e *slowQueryRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
@@ -163,7 +163,7 @@ func (e *slowQueryRetriever) parseDataForSlowLog(ctx context.Context, sctx sessi
 func (e *slowQueryRetriever) dataForSlowLog(ctx context.Context) ([][]types.Datum, bool, error) {
 	var (
 		task *slowLogTask
-		ok      bool
+		ok   bool
 	)
 	for {
 		select {
