@@ -46,23 +46,16 @@ const (
 )
 
 func heapProfileForPreparePlanCache() error {
-	total := int64(0)
-	bytes, err := col.getFuncMemUsage(PreparePlanCacheKey)
+	bytes, err := col.GetFuncMemUsage(PreparePlanCacheKey, PreparePlanCacheValue)
 	if err != nil {
 		return err
 	}
-	total += bytes
-	bytes, err = col.getFuncMemUsage(PreparePlanCacheValue)
-	if err != nil {
-		return err
-	}
-	total += bytes
 
 	defer func() {
 		if p := recover(); p != nil {
 			log.Error("GlobalLRUMemUsageTracker meet panic", zap.Any("panic", p), zap.Stack("stack"))
 		}
 	}()
-	kvcache.GlobalPreparePlanCacheMemUsageTracker.ReplaceBytesUsed(total)
+	kvcache.GlobalPreparePlanCacheMemUsageTracker.ReplaceBytesUsed(bytes)
 	return nil
 }

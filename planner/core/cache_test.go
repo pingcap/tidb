@@ -18,6 +18,9 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/util/kvcache"
+	"github.com/pingcap/tidb/util/profile"
 	"github.com/pingcap/tidb/util/testleak"
 )
 
@@ -40,4 +43,27 @@ func (s *testCacheSuite) TestCacheKey(c *C) {
 	defer testleak.AfterTest(c)()
 	key := NewPSTMTPlanCacheKey(s.ctx.GetSessionVars(), 1, 1)
 	c.Assert(key.Hash(), DeepEquals, []byte{0x74, 0x65, 0x73, 0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x74, 0x69, 0x64, 0x62, 0x74, 0x69, 0x6b, 0x76, 0x74, 0x69, 0x66, 0x6c, 0x61, 0x73, 0x68, 0x7f, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff})
+}
+
+var col = &profile.Collector{}
+
+func (s *testCacheSuite) TestHeapProfileForPreparePlanCache(c *C) {
+	keys := make([]kvcache.Key, 100000)
+	values := make([]*PSTMTPlanCacheValue, 100000)
+	for i := 0; i < 100000; i++ {
+		keys[i] = NewPSTMTPlanCacheKey(variable.NewSessionVars(), uint32(i), int64(i))
+		values[i] = NewPSTMTPlanCacheValue(nil, nil, nil)
+	}
+
+	// Can't trace the memory usage of the Plan now. Only check the Key/Value object memory greater than 0.
+	keyBytes, err := col.GetFuncMemUsage(profile.PreparePlanCacheKey)
+	c.Assert(err, IsNil)
+	c.Assert(keyBytes, Greater, int64(0))
+	valueBytes, err := col.GetFuncMemUsage(profile.PreparePlanCacheValue)
+	c.Assert(err, IsNil)
+	c.Assert(valueBytes, Greater, int64(0))
+	totalBytes, err := col.GetFuncMemUsage(profile.PreparePlanCacheKey, profile.PreparePlanCacheValue)
+	c.Assert(err, IsNil)
+	c.Assert(totalBytes, Greater, int64(0))
+	c.Assert(totalBytes, Equals, keyBytes+valueBytes)
 }

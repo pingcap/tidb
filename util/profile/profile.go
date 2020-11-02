@@ -147,11 +147,11 @@ func (c *Collector) ParseGoroutines(reader io.Reader) ([][]types.Datum, error) {
 	return rows, nil
 }
 
-// getFuncMemUsage get function memory usage from heap profile
-func (c *Collector) getFuncMemUsage(name string) (int64, error) {
+// GetFuncMemUsage get function memory usage from heap profile
+func (c *Collector) GetFuncMemUsage(names ...string) (int64, error) {
 	prof := pprof.Lookup("heap")
 	if prof == nil {
-		return 0, errors.Errorf("cannot retrieve %s profile", name)
+		return 0, errors.Errorf("cannot retrieve %s profile", names)
 	}
 	debug := 0
 	buffer := &bytes.Buffer{}
@@ -166,5 +166,9 @@ func (c *Collector) getFuncMemUsage(name string) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	return root.collectFuncUsage(name), nil
+	total := int64(0)
+	for _, name := range names {
+		total += root.collectFuncUsage(name)
+	}
+	return total, nil
 }
