@@ -593,10 +593,6 @@ func (iw *innerWorker) constructDatumLookupKey(task *lookUpJoinTask, chkIdx, row
 		}
 		dHashKey = append(dHashKey, innerValue)
 	}
-	for _, d := range dHashKey {
-		s, _ := d.ToString()
-
-	}
 	return dLookupKey, dHashKey, nil
 }
 
