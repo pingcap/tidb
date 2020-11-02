@@ -40,7 +40,6 @@ import (
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/mvmap"
 	"github.com/pingcap/tidb/util/ranger"
-	"github.com/sirupsen/logrus"
 	"go.uber.org/zap"
 )
 
@@ -596,7 +595,6 @@ func (iw *innerWorker) constructDatumLookupKey(task *lookUpJoinTask, chkIdx, row
 	}
 	for _, d := range dHashKey {
 		s, _ := d.ToString()
-		logrus.Warning(s)
 
 	}
 	return dLookupKey, dHashKey, nil
