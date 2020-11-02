@@ -1076,7 +1076,7 @@ func (s *testSerialSuite1) TestShowCreateTableWithIntegerDisplayLengthWarnings(c
 func (s *testSuite5) TestShowVar(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	var showSQL string
-	for _, v := range variable.SysVars {
+	for _, v := range variable.GetSysVars() {
 		// When ScopeSession only. `show global variables` must return empty.
 		if v.Scope == variable.ScopeSession {
 			showSQL = "show variables like '" + v.Name + "'"
