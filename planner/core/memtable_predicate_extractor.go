@@ -942,6 +942,7 @@ type SlowQueryExtractor struct {
 	// Enable is false, means the executor should keep the behavior compatible with before, which is only parse the
 	// current slow-log file.
 	Enable bool
+	Desc   bool
 }
 
 // Extract implements the MemTablePredicateExtractor Extract interface

@@ -62,7 +62,7 @@ type slowQueryRetriever struct {
 	fileLine    int
 	checker     *slowLogChecker
 
-	parsedSlowLogCh chan parsedSlowLog
+	taskList        chan *slowLogTask
 	stats           *slowQueryRuntimeStats
 }
 
@@ -151,28 +151,30 @@ func (e *slowQueryRetriever) getNextFile() *os.File {
 func (e *slowQueryRetriever) parseDataForSlowLog(ctx context.Context, sctx sessionctx.Context) {
 	file := e.getNextFile()
 	if file == nil {
-		close(e.parsedSlowLogCh)
+		close(e.taskList)
 		return
 	}
 	reader := bufio.NewReader(file)
-	e.parseSlowLog(ctx, sctx, reader, ParseSlowLogBatchSize)
+	if !e.extractor.Desc {
+		e.parseSlowLog(ctx, sctx, reader, ParseSlowLogBatchSize)
+	}
 }
 
 func (e *slowQueryRetriever) dataForSlowLog(ctx context.Context) ([][]types.Datum, bool, error) {
 	var (
-		slowLog parsedSlowLog
+		task *slowLogTask
 		ok      bool
 	)
 	for {
 		select {
-		case slowLog, ok = <-e.parsedSlowLogCh:
+		case task, ok = <-e.taskList:
 		case <-ctx.Done():
 			return nil, false, ctx.Err()
 		}
 		if !ok {
 			return nil, true, nil
 		}
-		rows, err := slowLog.rows, slowLog.err
+		rows, err := task.result.rows, task.result.err
 		if err != nil {
 			return nil, false, err
 		}
@@ -243,6 +245,10 @@ type offset struct {
 	length int
 }
 
+type slowLogTask struct {
+	result parsedSlowLog
+}
+
 func (e *slowQueryRetriever) getBatchLog(reader *bufio.Reader, offset *offset, num int) ([]string, error) {
 	var line string
 	log := make([]string, 0, num)
@@ -278,7 +284,7 @@ func (e *slowQueryRetriever) getBatchLog(reader *bufio.Reader, offset *offset, n
 }
 
 func (e *slowQueryRetriever) parseSlowLog(ctx context.Context, sctx sessionctx.Context, reader *bufio.Reader, logNum int) {
-	defer close(e.parsedSlowLogCh)
+	defer close(e.taskList)
 	var wg sync.WaitGroup
 	offset := offset{offset: 0, length: 0}
 	// To limit the num of go routine
@@ -292,7 +298,7 @@ func (e *slowQueryRetriever) parseSlowLog(ctx context.Context, sctx sessionctx.C
 		startTime := time.Now()
 		log, err := e.getBatchLog(reader, &offset, logNum)
 		if err != nil {
-			e.parsedSlowLogCh <- parsedSlowLog{nil, err}
+			e.taskList <- &slowLogTask{parsedSlowLog{nil, err}}
 			break
 		}
 		if len(log) == 0 {
@@ -304,10 +310,12 @@ func (e *slowQueryRetriever) parseSlowLog(ctx context.Context, sctx sessionctx.C
 		start := offset
 		wg.Add(1)
 		ch <- 1
+		t := &slowLogTask{}
+		e.taskList <- t
 		go func() {
 			defer wg.Done()
 			result, err := e.parseLog(sctx, log, start)
-			e.parsedSlowLogCh <- parsedSlowLog{result, err}
+			t.result = parsedSlowLog{result, err}
 			<-ch
 		}()
 		offset.offset = e.fileLine
@@ -1048,6 +1056,6 @@ func readLastLines(file *os.File, endCursor int64) ([]string, int, error) {
 }
 
 func (e *slowQueryRetriever) initializeAsyncParsing(ctx context.Context, sctx sessionctx.Context) {
-	e.parsedSlowLogCh = make(chan parsedSlowLog, 100)
+	e.taskList = make(chan *slowLogTask, 100)
 	go e.parseDataForSlowLog(ctx, sctx)
 }

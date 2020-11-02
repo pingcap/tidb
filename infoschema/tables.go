@@ -261,19 +261,38 @@ func buildColumnInfo(col columnInfo) *model.ColumnInfo {
 
 func buildTableMeta(tableName string, cs []columnInfo) *model.TableInfo {
 	cols := make([]*model.ColumnInfo, 0, len(cs))
-	for _, c := range cs {
-		cols = append(cols, buildColumnInfo(c))
-	}
-	for i, col := range cols {
-		col.Offset = i
-	}
-	return &model.TableInfo{
+	primaryIndices := make([]*model.IndexInfo, 0, 1)
+	tblInfo := &model.TableInfo{
 		Name:    model.NewCIStr(tableName),
 		Columns: cols,
 		State:   model.StatePublic,
 		Charset: mysql.DefaultCharset,
 		Collate: mysql.DefaultCollationName,
 	}
+	for _, c := range cs {
+		if c.flag&mysql.PriKeyFlag == 1 {
+			if c.tp == mysql.TypeInt24 {
+				tblInfo.PKIsHandle = true
+			} else {
+				tblInfo.PKIsHandle = true
+				index := &model.IndexInfo{
+					Name:    model.NewCIStr("primary"),
+					State:   model.StatePublic,
+					Primary: true,
+					Unique:  true,
+					Columns: []*model.IndexColumn{
+						{Name: model.NewCIStr(c.name), Offset: 0}},
+				}
+				primaryIndices = append(primaryIndices, index)
+				tblInfo.Indices = primaryIndices
+			}
+		}
+		cols = append(cols, buildColumnInfo(c))
+	}
+	for i, col := range cols {
+		col.Offset = i
+	}
+	return tblInfo
 }
 
 var schemataCols = []columnInfo{
@@ -719,7 +738,7 @@ var tableTiDBIndexesCols = []columnInfo{
 }
 
 var slowQueryCols = []columnInfo{
-	{name: variable.SlowLogTimeStr, tp: mysql.TypeTimestamp, size: 26, decimal: 6},
+	{name: variable.SlowLogTimeStr, tp: mysql.TypeTimestamp, size: 26, decimal: 6, flag: mysql.PriKeyFlag},
 	{name: variable.SlowLogTxnStartTSStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.UnsignedFlag},
 	{name: variable.SlowLogUserStr, tp: mysql.TypeVarchar, size: 64},
 	{name: variable.SlowLogHostStr, tp: mysql.TypeVarchar, size: 64},

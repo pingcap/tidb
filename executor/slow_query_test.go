@@ -34,11 +34,11 @@ import (
 )
 
 func parseLog(retriever *slowQueryRetriever, sctx sessionctx.Context, reader *bufio.Reader) ([][]types.Datum, error) {
-	retriever.parsedSlowLogCh = make(chan parsedSlowLog, 100)
+	retriever.taskList = make(chan *slowLogTask, 100)
 	ctx := context.Background()
 	retriever.parseSlowLog(ctx, sctx, reader, 64)
-	slowLog := <-retriever.parsedSlowLogCh
-	rows, err := slowLog.rows, slowLog.err
+	task := <-retriever.taskList
+	rows, err := task.result.rows, task.result.err
 	if err == io.EOF {
 		err = nil
 	}

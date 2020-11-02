@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -104,7 +105,19 @@ func (b *PBPlanBuilder) pbToTableScan(e *tipb.Executor) (PhysicalPlan, error) {
 	}.Init(b.sctx, nil, 0)
 	p.SetSchema(schema)
 	if strings.ToUpper(p.Table.Name.O) == infoschema.ClusterTableSlowLog {
-		p.Extractor = &SlowQueryExtractor{}
+		start, err := tablecodec.DecodeRowKey(tblScan.Ranges[0].Low)
+		if err != nil {
+			return nil, errors.Errorf("fail to decode start time")
+		}
+		end, err := tablecodec.DecodeRowKey(tblScan.Ranges[0].High)
+		if err != nil {
+			return nil, errors.Errorf("fail to decode end time")
+		}
+		extractor := &SlowQueryExtractor{
+			Desc: tblScan.Desc,
+		}
+		extractor.setTimeRange(start.IntValue(), end.IntValue())
+		p.Extractor = extractor
 	}
 	return p, nil
 }
