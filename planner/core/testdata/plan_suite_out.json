@@ -2186,7 +2186,8 @@
           "└─TableReader_25(Probe) 7992.00 root  data:Selection_24",
           "  └─Selection_24 7992.00 cop[tikv]  lt(test.t2.a, test.t2.a), not(isnull(test.t2.a))",
           "    └─TableFullScan_23 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
-        ]
+        ],
+        "Result": null
       },
       {
         "SQL": "select a from t2 where t2.a < (select t1.a from t1 where t1.b = t2.b and t1.a is null);",
@@ -2202,7 +2203,8 @@
           "        ├─IndexRangeScan_21(Build) 1.00 cop[tikv] table:t1, index:idx_a(a) range:[NULL,NULL], keep order:false, stats:pseudo",
           "        └─Selection_23(Probe) 0.00 cop[tikv]  eq(test.t1.b, test.t2.b)",
           "          └─TableRowIDScan_22 1.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
-        ]
+        ],
+        "Result": null
       },
       {
         "SQL": "select a from t2 where t2.a < (select t3.a from t3 where t3.a = t2.a);",
@@ -2216,7 +2218,8 @@
           "    └─MaxOneRow_17 1.00 root  ",
           "      └─IndexReader_19 2.00 root  index:IndexRangeScan_18",
           "        └─IndexRangeScan_18 2.00 cop[tikv] table:t3, index:idx_abc(a, b, c) range: decided by [eq(test.t3.a, test.t2.a)], keep order:false, stats:pseudo"
-        ]
+        ],
+        "Result": null
       }
     ]
   }

@@ -68,7 +68,7 @@
       {
         "SQL": "explain select /*+ inl_join(t2) */ * from t1, t2 where t1.a = t2.a and t1.b = t2.b and t1.c = t2.c",
         "Plan": [
-          "IndexJoin_10 3.00 root  inner join, inner:IndexLookUp_9, outer key:test.t1.c, inner key:test.t2.c, other cond:eq(test.t1.a, test.t2.a), eq(test.t1.b, test.t2.b)",
+          "IndexJoin_10 3.00 root  inner join, inner:IndexLookUp_9, outer key:test.t1.c, test.t1.b, test.t1.a, inner key:test.t2.c, test.t2.b, test.t2.a",
           "├─TableReader_20(Build) 3.00 root  data:TableFullScan_19",
           "│ └─TableFullScan_19 3.00 cop[tikv] table:t1 keep order:false",
           "└─IndexLookUp_9(Probe) 1.00 root  ",
@@ -174,7 +174,7 @@
       {
         "SQL": "explain select /*+ TIDB_INLJ(t2) */ * from t1 join t2 on t1.a = t2.a and t1.c = t2.c",
         "Plan": [
-          "IndexJoin_9 2.00 root  inner join, inner:IndexLookUp_8, outer key:test.t1.a, inner key:test.t2.a, other cond:eq(test.t1.c, test.t2.c)",
+          "IndexJoin_9 2.00 root  inner join, inner:IndexLookUp_8, outer key:test.t1.a, test.t1.c, inner key:test.t2.a, test.t2.c",
           "├─TableReader_19(Build) 1.00 root  data:TableFullScan_18",
           "│ └─TableFullScan_18 1.00 cop[tikv] table:t1 keep order:false",
           "└─IndexLookUp_8(Probe) 2.00 root  ",
@@ -319,7 +319,7 @@
       {
         "SQL": "desc select /*+ TIDB_INLJ(t2)*/ * from t1, t2 where t1.a = t2.a and t1.b = t2.b",
         "Plan": [
-          "IndexJoin_15 12487.50 root  inner join, inner:TableReader_11, outer key:test.t1.a, inner key:test.t2.a, other cond:eq(test.t1.b, test.t2.b)",
+          "IndexJoin_15 12487.50 root  inner join, inner:TableReader_11, outer key:test.t1.a, test.t1.b, inner key:test.t2.a, test.t2.b",
           "├─IndexReader_21(Build) 9990.00 root  index:IndexFullScan_20",
           "│ └─IndexFullScan_20 9990.00 cop[tikv] table:t1, index:idx_t1_b(b) keep order:false, stats:pseudo",
           "└─TableReader_11(Probe) 1.00 root  data:Selection_10",
@@ -330,7 +330,7 @@
       {
         "SQL": "desc select /*+ TIDB_INLJ(t2)*/ * from t1, t2 where t1.a = t2.a and t1.b = t2.a and t1.b = t2.b",
         "Plan": [
-          "IndexJoin_15 12487.50 root  inner join, inner:TableReader_11, outer key:test.t1.a, test.t1.b, inner key:test.t2.a, test.t2.a, other cond:eq(test.t1.b, test.t2.b)",
+          "IndexJoin_15 12487.50 root  inner join, inner:TableReader_11, outer key:test.t1.a, test.t1.b, test.t1.b, inner key:test.t2.a, test.t2.a, test.t2.b",
           "├─IndexReader_20(Build) 9990.00 root  index:IndexFullScan_19",
           "│ └─IndexFullScan_19 9990.00 cop[tikv] table:t1, index:idx_t1_b(b) keep order:false, stats:pseudo",
           "└─TableReader_11(Probe) 1.00 root  data:Selection_10",
