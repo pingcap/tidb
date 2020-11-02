@@ -39,6 +39,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/binary"
+	goerr "errors"
 	"fmt"
 	"io"
 	"net"
@@ -62,6 +63,7 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -1058,7 +1060,18 @@ func (cc *clientConn) useDB(ctx context.Context, db string) (err error) {
 }
 
 func (cc *clientConn) flush(ctx context.Context) error {
-	defer trace.StartRegion(ctx, "FlushClientConn").End()
+	defer func() {
+		trace.StartRegion(ctx, "FlushClientConn").End()
+		if cc.ctx != nil && cc.ctx.WarningCount() > 0 {
+			for _, err := range cc.ctx.GetWarnings() {
+				var warn *errors.Error
+				if ok := goerr.As(err.Err, &warn); ok {
+					code := uint16(warn.Code())
+					errno.IncrementWarning(code, cc.user, cc.peerHost)
+				}
+			}
+		}
+	}()
 	failpoint.Inject("FakeClientConn", func() {
 		if cc.pkt == nil {
 			failpoint.Return(nil)
@@ -1120,6 +1133,7 @@ func (cc *clientConn) writeError(ctx context.Context, e error) error {
 	}
 
 	cc.lastCode = m.Code
+	defer errno.IncrementError(m.Code, cc.user, cc.peerHost)
 	data := cc.alloc.AllocWithLen(4, 16+len(m.Message))
 	data = append(data, mysql.ErrHeader)
 	data = append(data, byte(m.Code), byte(m.Code>>8))
