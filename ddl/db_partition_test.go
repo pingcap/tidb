@@ -708,6 +708,200 @@ func (s *testIntegrationSuite1) TestCreateTableWithListColumnsPartition(c *C) {
 	}
 }
 
+func (s *testIntegrationSuite5) TestAlterTableAddPartitionByList(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec(`create table t (id int) partition by list  (id) (
+	    partition p0 values in (1,2),
+	    partition p1 values in (3,4),
+	    partition p3 values in (5,null)
+	);`)
+	tk.MustExec(`alter table t add partition (
+		partition p4 values in (7),
+		partition p5 values in (8,9));`)
+
+	ctx := tk.Se.(sessionctx.Context)
+	is := domain.GetDomain(ctx).InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	c.Assert(tbl.Meta().Partition, NotNil)
+	part := tbl.Meta().Partition
+	c.Assert(part.Type == model.PartitionTypeList, IsTrue)
+
+	c.Assert(part.Expr, Equals, "`id`")
+	c.Assert(part.Definitions, HasLen, 5)
+	c.Assert(part.Definitions[0].InValues, DeepEquals, [][]string{{"1"}, {"2"}})
+	c.Assert(part.Definitions[0].Name, Equals, model.NewCIStr("p0"))
+	c.Assert(part.Definitions[1].InValues, DeepEquals, [][]string{{"3"}, {"4"}})
+	c.Assert(part.Definitions[1].Name, Equals, model.NewCIStr("p1"))
+	c.Assert(part.Definitions[2].InValues, DeepEquals, [][]string{{"5"}, {"NULL"}})
+	c.Assert(part.Definitions[2].Name, Equals, model.NewCIStr("p3"))
+	c.Assert(part.Definitions[3].InValues, DeepEquals, [][]string{{"7"}})
+	c.Assert(part.Definitions[3].Name, Equals, model.NewCIStr("p4"))
+	c.Assert(part.Definitions[4].InValues, DeepEquals, [][]string{{"8"}, {"9"}})
+	c.Assert(part.Definitions[4].Name, Equals, model.NewCIStr("p5"))
+
+	errorCases := []struct {
+		sql string
+		err *terror.Error
+	}{
+		{"alter table t add partition (partition p4 values in (7))",
+			ddl.ErrSameNamePartition,
+		},
+		{"alter table t add partition (partition p6 values less than (7))",
+			ast.ErrPartitionWrongValues,
+		},
+		{"alter table t add partition (partition p6 values in (null))",
+			ddl.ErrMultipleDefConstInListPart,
+		},
+		{"alter table t add partition (partition p6 values in (7))",
+			ddl.ErrMultipleDefConstInListPart,
+		},
+		{"alter table t add partition (partition p6 values in ('a'))",
+			ddl.ErrNotAllowedTypeInPartition,
+		},
+	}
+
+	for i, t := range errorCases {
+		_, err := tk.Exec(t.sql)
+		c.Assert(t.err.Equal(err), IsTrue, Commentf(
+			"case %d fail, sql = `%s`\nexpected error = `%v`\n  actual error = `%v`",
+			i, t.sql, t.err, err,
+		))
+	}
+}
+
+func (s *testIntegrationSuite5) TestAlterTableAddPartitionByListColumns(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec(`create table t (id int, name varchar(10)) partition by list columns (id,name) (
+	    partition p0 values in ((1,'a'),(2,'b')),
+	    partition p1 values in ((3,'a'),(4,'b')),
+	    partition p3 values in ((5,null))
+	);`)
+	tk.MustExec(`alter table t add partition (
+		partition p4 values in ((7,'a')),
+		partition p5 values in ((8,'a')));`)
+
+	ctx := tk.Se.(sessionctx.Context)
+	is := domain.GetDomain(ctx).InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	c.Assert(tbl.Meta().Partition, NotNil)
+	part := tbl.Meta().Partition
+	c.Assert(part.Type == model.PartitionTypeList, IsTrue)
+
+	c.Assert(part.Expr, Equals, "")
+	c.Assert(part.Columns[0].O, Equals, "id")
+	c.Assert(part.Columns[1].O, Equals, "name")
+	c.Assert(part.Definitions, HasLen, 5)
+	c.Assert(part.Definitions[0].InValues, DeepEquals, [][]string{{"1", `"a"`}, {"2", `"b"`}})
+	c.Assert(part.Definitions[0].Name, Equals, model.NewCIStr("p0"))
+	c.Assert(part.Definitions[1].InValues, DeepEquals, [][]string{{"3", `"a"`}, {"4", `"b"`}})
+	c.Assert(part.Definitions[1].Name, Equals, model.NewCIStr("p1"))
+	c.Assert(part.Definitions[2].InValues, DeepEquals, [][]string{{"5", `NULL`}})
+	c.Assert(part.Definitions[2].Name, Equals, model.NewCIStr("p3"))
+	c.Assert(part.Definitions[3].InValues, DeepEquals, [][]string{{"7", `"a"`}})
+	c.Assert(part.Definitions[3].Name, Equals, model.NewCIStr("p4"))
+	c.Assert(part.Definitions[4].InValues, DeepEquals, [][]string{{"8", `"a"`}})
+	c.Assert(part.Definitions[4].Name, Equals, model.NewCIStr("p5"))
+
+	errorCases := []struct {
+		sql string
+		err *terror.Error
+	}{
+		{"alter table t add partition (partition p4 values in ((7,'b')))",
+			ddl.ErrSameNamePartition,
+		},
+		{"alter table t add partition (partition p6 values less than ((7,'a')))",
+			ast.ErrPartitionWrongValues,
+		},
+		{"alter table t add partition (partition p6 values in ((5,null)))",
+			ddl.ErrMultipleDefConstInListPart,
+		},
+		{"alter table t add partition (partition p6 values in ((7,'a')))",
+			ddl.ErrMultipleDefConstInListPart,
+		},
+		{"alter table t add partition (partition p6 values in (('a','a')))",
+			ddl.ErrNotAllowedTypeInPartition,
+		},
+	}
+
+	for i, t := range errorCases {
+		_, err := tk.Exec(t.sql)
+		c.Assert(t.err.Equal(err), IsTrue, Commentf(
+			"case %d fail, sql = `%s`\nexpected error = `%v`\n  actual error = `%v`",
+			i, t.sql, t.err, err,
+		))
+	}
+}
+
+func (s *testIntegrationSuite5) TestAlterTableDropPartitionByList(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec(`create table t (id int) partition by list  (id) (
+	    partition p0 values in (1,2),
+	    partition p1 values in (3,4),
+	    partition p3 values in (5,null)
+	);`)
+	tk.MustExec(`alter table t drop partition p1`)
+	ctx := tk.Se.(sessionctx.Context)
+	is := domain.GetDomain(ctx).InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	c.Assert(tbl.Meta().Partition, NotNil)
+	part := tbl.Meta().Partition
+	c.Assert(part.Type == model.PartitionTypeList, IsTrue)
+	c.Assert(part.Expr, Equals, "`id`")
+	c.Assert(part.Definitions, HasLen, 2)
+	c.Assert(part.Definitions[0].InValues, DeepEquals, [][]string{{"1"}, {"2"}})
+	c.Assert(part.Definitions[0].Name, Equals, model.NewCIStr("p0"))
+	c.Assert(part.Definitions[1].InValues, DeepEquals, [][]string{{"5"}, {"NULL"}})
+	c.Assert(part.Definitions[1].Name, Equals, model.NewCIStr("p3"))
+
+	sql := "alter table t drop partition p10;"
+	tk.MustGetErrCode(sql, tmysql.ErrDropPartitionNonExistent)
+	tk.MustExec(`alter table t drop partition p3`)
+	sql = "alter table t drop partition p0;"
+	tk.MustGetErrCode(sql, tmysql.ErrDropLastPartition)
+}
+
+func (s *testIntegrationSuite5) TestAlterTableDropPartitionByListColumns(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec(`create table t (id int, name varchar(10)) partition by list columns (id,name) (
+	    partition p0 values in ((1,'a'),(2,'b')),
+	    partition p1 values in ((3,'a'),(4,'b')),
+	    partition p3 values in ((5,'a'),(null,null))
+	);`)
+	tk.MustExec(`alter table t drop partition p1`)
+	ctx := tk.Se.(sessionctx.Context)
+	is := domain.GetDomain(ctx).InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	c.Assert(tbl.Meta().Partition, NotNil)
+	part := tbl.Meta().Partition
+	c.Assert(part.Type == model.PartitionTypeList, IsTrue)
+	c.Assert(part.Expr, Equals, "")
+	c.Assert(part.Columns[0].O, Equals, "id")
+	c.Assert(part.Columns[1].O, Equals, "name")
+	c.Assert(part.Definitions, HasLen, 2)
+	c.Assert(part.Definitions[0].InValues, DeepEquals, [][]string{{"1", `"a"`}, {"2", `"b"`}})
+	c.Assert(part.Definitions[0].Name, Equals, model.NewCIStr("p0"))
+	c.Assert(part.Definitions[1].InValues, DeepEquals, [][]string{{"5", `"a"`}, {"NULL", "NULL"}})
+	c.Assert(part.Definitions[1].Name, Equals, model.NewCIStr("p3"))
+
+	sql := "alter table t drop partition p10;"
+	tk.MustGetErrCode(sql, tmysql.ErrDropPartitionNonExistent)
+	tk.MustExec(`alter table t drop partition p3`)
+	sql = "alter table t drop partition p0;"
+	tk.MustGetErrCode(sql, tmysql.ErrDropLastPartition)
+}
+
 func (s *testIntegrationSuite3) TestCreateTableWithKeyPartition(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test;")

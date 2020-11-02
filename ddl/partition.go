@@ -16,7 +16,6 @@ package ddl
 import (
 	"bytes"
 	"context"
-	"encoding/hex"
 	"fmt"
 	"strconv"
 	"strings"
@@ -46,7 +45,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	tidbutil "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
@@ -1019,19 +1017,13 @@ func getTableInfoWithDroppingPartitions(t *model.TableInfo) *model.TableInfo {
 	return nt
 }
 
-func buildPlacementDropBundle(partitionID int64) *placement.Bundle {
-	return &placement.Bundle{
-		ID: placement.GroupID(partitionID),
-	}
-}
-
 func dropRuleBundles(d *ddlCtx, physicalTableIDs []int64) error {
-	if d.infoHandle != nil {
+	if d.infoHandle != nil && d.infoHandle.IsValid() {
 		bundles := make([]*placement.Bundle, 0, len(physicalTableIDs))
 		for _, ID := range physicalTableIDs {
 			oldBundle, ok := d.infoHandle.Get().BundleByName(placement.GroupID(ID))
 			if ok && !oldBundle.IsEmpty() {
-				bundles = append(bundles, buildPlacementDropBundle(ID))
+				bundles = append(bundles, placement.BuildPlacementDropBundle(ID))
 			}
 		}
 		err := infosync.PutRuleBundles(nil, bundles)
@@ -1141,6 +1133,8 @@ func (w *worker) onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (
 			w.reorgCtx.cleanNotifyReorgCancel()
 		}
 		tblInfo.Partition.DroppingDefinitions = nil
+		// used by ApplyDiff in updateSchemaVersion
+		job.CtxVars = []interface{}{physicalTableIDs}
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
 		if err != nil {
 			return ver, errors.Trace(err)
@@ -1152,19 +1146,6 @@ func (w *worker) onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (
 		err = ErrInvalidDDLState.GenWithStackByArgs("partition", job.SchemaState)
 	}
 	return ver, errors.Trace(err)
-}
-
-func buildPlacementTruncateBundle(oldBundle *placement.Bundle, newID int64) *placement.Bundle {
-	newBundle := oldBundle.Clone()
-	newBundle.ID = placement.GroupID(newID)
-	startKey := hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(newID)))
-	endKey := hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(newID+1)))
-	for _, rule := range newBundle.Rules {
-		rule.GroupID = newBundle.ID
-		rule.StartKeyHex = startKey
-		rule.EndKeyHex = endKey
-	}
-	return newBundle
 }
 
 // onTruncateTablePartition truncates old partition meta.
@@ -1220,16 +1201,21 @@ func onTruncateTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, e
 		}
 	}
 
-	if d.infoHandle != nil {
+	if d.infoHandle != nil && d.infoHandle.IsValid() {
 		bundles := make([]*placement.Bundle, 0, len(oldIDs))
 
+		yoldIDs := make([]int64, 0, len(oldIDs))
+		newIDs := make([]int64, 0, len(oldIDs))
 		for i, oldID := range oldIDs {
 			oldBundle, ok := d.infoHandle.Get().BundleByName(placement.GroupID(oldID))
 			if ok && !oldBundle.IsEmpty() {
-				bundles = append(bundles, buildPlacementDropBundle(oldID))
-				bundles = append(bundles, buildPlacementTruncateBundle(oldBundle, newPartitions[i].ID))
+				yoldIDs = append(yoldIDs, oldID)
+				newIDs = append(newIDs, newIDs[i])
+				bundles = append(bundles, placement.BuildPlacementDropBundle(oldID))
+				bundles = append(bundles, placement.BuildPlacementCopyBundle(oldBundle, newIDs[i]))
 			}
 		}
+		job.CtxVars = []interface{}{yoldIDs, newIDs}
 
 		err = infosync.PutRuleBundles(nil, bundles)
 		if err != nil {
@@ -1753,6 +1739,8 @@ func onAlterTablePartition(t *meta.Meta, job *model.Job) (int64, error) {
 		return 0, errors.Wrapf(err, "failed to notify PD the placement rules")
 	}
 
+	// used by ApplyDiff in updateSchemaVersion
+	job.CtxVars = []interface{}{partitionID}
 	ver, err := updateSchemaVersion(t, job)
 	if err != nil {
 		return ver, errors.Trace(err)

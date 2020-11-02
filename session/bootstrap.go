@@ -182,7 +182,7 @@ const (
 		tot_col_size 		BIGINT(64) NOT NULL DEFAULT 0,
 		modify_count 		BIGINT(64) NOT NULL DEFAULT 0,
 		version 			BIGINT(64) UNSIGNED NOT NULL DEFAULT 0,
-		cm_sketch 			BLOB,
+		cm_sketch 			BLOB(6291456),
 		stats_ver 			BIGINT(64) NOT NULL DEFAULT 0,
 		flag 				BIGINT(64) NOT NULL DEFAULT 0,
 		correlation 		DOUBLE NOT NULL DEFAULT 0,
@@ -306,13 +306,12 @@ const (
 
 	// CreateSchemaIndexUsageTable stores the index usage information.
 	CreateSchemaIndexUsageTable = `CREATE TABLE IF NOT EXISTS mysql.schema_index_usage (
-		TABLE_SCHEMA varchar(64),
-		TABLE_NAME varchar(64),
-		INDEX_NAME varchar(64),
+		TABLE_ID bigint(64),
+		INDEX_ID bigint(21),
 		QUERY_COUNT bigint(64),
 		ROWS_SELECTED bigint(64),
 		LAST_USED_AT timestamp,
-		PRIMARY KEY(TABLE_SCHEMA, TABLE_NAME, INDEX_NAME)
+		PRIMARY KEY(TABLE_ID, INDEX_ID)
 	);`
 )
 
@@ -426,6 +425,8 @@ const (
 	version50 = 50
 	// version51 introduces CreateTablespacePriv to mysql.user.
 	version51 = 51
+	// version52 change mysql.stats_histograms cm_sketch column from blob to blob(6291456)
+	version52 = 52
 )
 
 var (
@@ -480,6 +481,7 @@ var (
 		upgradeToVer49,
 		upgradeToVer50,
 		upgradeToVer51,
+		upgradeToVer52,
 	}
 )
 
@@ -1180,6 +1182,13 @@ func upgradeToVer51(s Session, ver int64) {
 	}
 	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `Create_tablespace_priv` ENUM('N','Y') DEFAULT 'N'", infoschema.ErrColumnExists)
 	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET Create_tablespace_priv='Y' where Super_priv='Y'")
+}
+
+func upgradeToVer52(s Session, ver int64) {
+	if ver >= version52 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.stats_histograms MODIFY cm_sketch BLOB(6291456)")
 }
 
 // updateBootstrapVer updates bootstrap version variable in mysql.TiDB table.
