@@ -107,3 +107,37 @@ const (
 	// PanicMemoryExceed represents the panic message when out of memory quota.
 	PanicMemoryExceed string = "Out Of Memory Quota!"
 )
+
+// GlobalPanicOnExceed panics when GlobalDisTracker storage usage exceeds storage quota.
+type GlobalPanicOnExceed struct {
+	mutex sync.Mutex // For synchronization.
+}
+
+const (
+	// globalPanicStorageExceed represents the panic message when out of storage quota.
+	globalPanicStorageExceed string = "Out Of Global Storage Quota!"
+	// globalPanicMemoryExceed represents the panic message when out of memory limit.
+	globalPanicMemoryExceed string = "Out Of Global Memory Limit!"
+)
+
+// SetLogHook sets a hook for PanicOnExceed.
+func (a *GlobalPanicOnExceed) SetLogHook(hook func(uint64)) {}
+
+// Action panics when storage usage exceeds storage quota.
+func (a *GlobalPanicOnExceed) Action(t *Tracker) {
+	a.mutex.Lock()
+	defer a.mutex.Unlock()
+	msg := ""
+	switch t.Label() {
+	case LabelForGlobalStorage:
+		msg = globalPanicStorageExceed
+	case LabelForGlobalMemory:
+		msg = globalPanicMemoryExceed
+	default:
+		msg = "Out of Unknown Resource Quota!"
+	}
+	panic(msg)
+}
+
+// SetFallback sets a fallback action.
+func (a *GlobalPanicOnExceed) SetFallback(ActionOnExceed) {}

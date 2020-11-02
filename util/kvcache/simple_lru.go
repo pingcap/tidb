@@ -38,15 +38,15 @@ type cacheEntry struct {
 var (
 	// GlobalLRUMemUsageTracker tracks all the memory usage of SimpleLRUCache
 	GlobalLRUMemUsageTracker *memory.Tracker
-)
-
-const (
-	// ProfileName is the function name in heap profile
-	ProfileName = "github.com/pingcap/tidb/util/kvcache.(*SimpleLRUCache).Put"
+	// GlobalPreparePlanCacheMemUsageTracker tracks all the memory usage of Prepare Plan Cache.
+	GlobalPreparePlanCacheMemUsageTracker *memory.Tracker
 )
 
 func init() {
 	GlobalLRUMemUsageTracker = memory.NewTracker(memory.LabelForGlobalSimpleLRUCache, -1)
+	GlobalPreparePlanCacheMemUsageTracker = memory.NewTracker(memory.LabelForPreparePlanCache, -1)
+	GlobalPreparePlanCacheMemUsageTracker.SetIgnoreAction(true)
+	GlobalPreparePlanCacheMemUsageTracker.AttachTo(GlobalLRUMemUsageTracker)
 }
 
 // SimpleLRUCache is a simple least recently used cache, not thread-safe, use it carefully.

@@ -31,7 +31,7 @@ func HeapProfileForGlobalMemTracker(d time.Duration) {
 	for {
 		select {
 		case <-t.C:
-			err := heapProfileForGlobalMemTracker()
+			err := heapProfileForPreparePlanCache()
 			if err != nil {
 				log.Warn("profile memory into tracker failed", zap.Error(err))
 			}
@@ -39,16 +39,30 @@ func HeapProfileForGlobalMemTracker(d time.Duration) {
 	}
 }
 
-func heapProfileForGlobalMemTracker() error {
-	bytes, err := col.getFuncMemUsage(kvcache.ProfileName)
+// Profile name for prepare plan cache.
+const (
+	PreparePlanCacheKey   = "github.com/pingcap/tidb/planner/core.NewPSTMTPlanCacheKey"
+	PreparePlanCacheValue = "github.com/pingcap/tidb/planner/core.NewPSTMTPlanCacheValue"
+)
+
+func heapProfileForPreparePlanCache() error {
+	total := int64(0)
+	bytes, err := col.getFuncMemUsage(PreparePlanCacheKey)
 	if err != nil {
 		return err
 	}
+	total += bytes
+	bytes, err = col.getFuncMemUsage(PreparePlanCacheValue)
+	if err != nil {
+		return err
+	}
+	total += bytes
+
 	defer func() {
 		if p := recover(); p != nil {
 			log.Error("GlobalLRUMemUsageTracker meet panic", zap.Any("panic", p), zap.Stack("stack"))
 		}
 	}()
-	kvcache.GlobalLRUMemUsageTracker.ReplaceBytesUsed(bytes)
+	kvcache.GlobalPreparePlanCacheMemUsageTracker.ReplaceBytesUsed(total)
 	return nil
 }

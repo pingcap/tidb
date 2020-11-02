@@ -49,6 +49,8 @@ func newStatsCache(memoryLimit int64) *statsCache {
 		memCapacity: memoryLimit,
 		memTracker:  memory.NewTracker(memory.LabelForStatsCache, -1),
 	}
+	c.memTracker.SetIgnoreAction(true)
+	c.memTracker.AttachTo(kvcache.GlobalLRUMemUsageTracker)
 	return &c
 }
 

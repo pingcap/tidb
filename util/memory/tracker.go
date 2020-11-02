@@ -58,6 +58,7 @@ type Tracker struct {
 	bytesLimit    int64 // bytesLimit <= 0 means no limit.
 	maxConsumed   int64 // max number of bytes consumed during execution.
 	isGlobal      bool  // isGlobal indicates whether this tracker is global tracker
+	ignoreAction  bool  // ignoreAction indicates whether this tracker can trigger action.
 }
 
 // NewTracker creates a memory tracker.
@@ -83,6 +84,10 @@ func NewGlobalTracker(label int, bytesLimit int64) *Tracker {
 	t.actionMu.actionOnExceed = &LogOnExceed{}
 	t.isGlobal = true
 	return t
+}
+
+func (t *Tracker) SetIgnoreAction(b bool) {
+	t.ignoreAction = b
 }
 
 // CheckBytesLimit check whether the bytes limit of the tracker is equal to a value.
@@ -228,6 +233,9 @@ func (t *Tracker) Consume(bytes int64) {
 			}
 			break
 		}
+	}
+	if t.ignoreAction {
+		return
 	}
 	if bytes > 0 && rootExceed != nil {
 		rootExceed.actionMu.Lock()
@@ -416,4 +424,6 @@ const (
 	LabelForApplyCache int = -17
 	// LabelForSimpleTask represents the label of the simple task
 	LabelForSimpleTask int = -18
+	// LabelForPreparePlanCache represents the label of the prepare plan cache
+	LabelForPreparePlanCache int = -19
 )

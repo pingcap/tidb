@@ -324,7 +324,6 @@ func (s *testSuite) TestGlobalTracker(c *C) {
 	}()
 	c2.AttachTo(commonTracker)
 	c2.DetachFromGlobalTracker()
-
 }
 
 func BenchmarkConsume(b *testing.B) {
@@ -340,4 +339,36 @@ func BenchmarkConsume(b *testing.B) {
 
 func (s *testSuite) TestErrorCode(c *C) {
 	c.Assert(int(terror.ToSQLError(errMemExceedThreshold).Code), Equals, errno.ErrMemExceedThreshold)
+}
+
+func (s *testSuite) TestIgnoreAction(c *C) {
+	g := NewGlobalTracker(1, 100000)
+	g.SetActionOnExceed(&GlobalPanicOnExceed{})
+	runtimeTracker := NewTracker(2, -1)
+	runtimeTracker.AttachToGlobalTracker(g)
+	cacheTracker := NewTracker(3, -1)
+	cacheTracker.SetIgnoreAction(true)
+
+	testPanic := func(t *Tracker) (hasPanic bool) {
+		defer func() {
+			if f := recover(); f != nil {
+				hasPanic = true
+			} else {
+				hasPanic = false
+			}
+		}()
+		if t == nil {
+			panic("test")
+		} else {
+			t.Consume(100001)
+		}
+		return false
+	}
+
+	for i := 1; i <= 10; i++ {
+		c.Assert(testPanic(cacheTracker), IsFalse)
+	}
+	for i := 1; i <= 10; i++ {
+		c.Assert(testPanic(runtimeTracker), IsTrue)
+	}
 }
