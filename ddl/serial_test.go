@@ -1221,6 +1221,9 @@ func (s *testSerialSuite) TestAutoRandomIncBitsIncrementAndOffset(c *C) {
 		for i, value := range values {
 			vs[i] = strconv.Itoa(value)
 		}
+		for _, row := range tk.MustQuery("trace " + sql).Rows() {
+			fmt.Println(row)
+		}
 		tk.MustQuery(sql).Check(testkit.Rows(vs...))
 	}
 

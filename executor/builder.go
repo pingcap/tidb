@@ -1577,14 +1577,10 @@ func (b *executorBuilder) buildSort(v *plannercore.PhysicalSort) Executor {
 		return nil
 	}
 	sortExec := SortExec{
-		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID(), childExec),
-		ByItems:      v.ByItems,
-		schema:       v.Schema(),
-	}
-	childrenUsedColsMark := markChildrenUsedCols(v.Schema(), v.Children()[0].Schema())
-	if childrenUsedColsMark != nil &&
-		len(childrenUsedColsMark[0]) != v.Schema().Len() {
-		sortExec.columnIdxsUsedByChild = extractChildUsedColIdxs(childrenUsedColsMark[0])
+		baseExecutor:          newBaseExecutor(b.ctx, v.Schema(), v.ID(), childExec),
+		ByItems:               v.ByItems,
+		schema:                v.Schema(),
+		columnIdxsUsedByChild: retrieveColumnIdxsUsedByChild(v.Schema(), v.Children()[0].Schema()),
 	}
 	executorCounterSortExec.Inc()
 	return &sortExec
@@ -1596,14 +1592,10 @@ func (b *executorBuilder) buildTopN(v *plannercore.PhysicalTopN) Executor {
 		return nil
 	}
 	sortExec := SortExec{
-		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID(), childExec),
-		ByItems:      v.ByItems,
-		schema:       v.Schema(),
-	}
-	childrenUsedColsMark := markChildrenUsedCols(v.Schema(), v.Children()[0].Schema())
-	if childrenUsedColsMark != nil &&
-		len(childrenUsedColsMark[0]) != v.Schema().Len() {
-		sortExec.columnIdxsUsedByChild = extractChildUsedColIdxs(childrenUsedColsMark[0])
+		baseExecutor:          newBaseExecutor(b.ctx, v.Schema(), v.ID(), childExec),
+		ByItems:               v.ByItems,
+		schema:                v.Schema(),
+		columnIdxsUsedByChild: retrieveColumnIdxsUsedByChild(v.Schema(), v.Children()[0].Schema()),
 	}
 	executorCounterTopNExec.Inc()
 	return &TopNExec{
@@ -2204,6 +2196,28 @@ func extractChildUsedColIdxs(childUsedColsMark []bool) []int {
 		}
 	}
 	return childUsedColIdxs
+}
+
+// retrieveColumnIdxsUsedByChild retrieve column indices map from child physical plan schema columns
+func retrieveColumnIdxsUsedByChild(selfSchema *expression.Schema, childSchema *expression.Schema) []int {
+	equalSchema := true
+	var columnIdxsUsedByChild []int
+	// columnIdxsUsedByChild := make([]int, 0, selfSchema.Len())
+	for selfIdx, selfCol := range selfSchema.Columns {
+		colIdxInChild := childSchema.ColumnIndex(selfCol)
+		if colIdxInChild == -1 {
+			columnIdxsUsedByChild = nil
+			break
+		}
+		if equalSchema && selfIdx != colIdxInChild {
+			equalSchema = false
+		}
+		columnIdxsUsedByChild = append(columnIdxsUsedByChild, colIdxInChild)
+	}
+	if equalSchema {
+		columnIdxsUsedByChild = nil
+	}
+	return columnIdxsUsedByChild
 }
 
 func constructDistExecForTiFlash(sctx sessionctx.Context, p plannercore.PhysicalPlan) ([]*tipb.Executor, bool, error) {

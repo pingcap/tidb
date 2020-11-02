@@ -165,15 +165,9 @@ func pruneByItems(old []*util.ByItems) (new []*util.ByItems, parentUsedCols []*e
 // If any expression can view as a constant in execution stage, such as correlated column, constant,
 // we do prune them. Note that we can't prune the expressions contain non-deterministic functions, such as rand().
 func (ls *LogicalSort) PruneColumns(parentUsedCols []*expression.Column) error {
-	// fmt.Println("Before inline projection, Schema=", ls.Schema())
-	// fmt.Println("Before inline projection, parentUsedCols=", parentUsedCols)
-	ls.inlineProjection(parentUsedCols)
-	// fmt.Println("After inline projection, Schema=", ls.Schema())
-	// fmt.Println("After inline projection, parentUsedCols=", parentUsedCols)
 	var cols []*expression.Column
 	ls.ByItems, cols = pruneByItems(ls.ByItems)
 	parentUsedCols = append(parentUsedCols, cols...)
-	// fmt.Println("After pruneByItems, parentUsedCols=", parentUsedCols)
 	ls.inlineProjection(parentUsedCols)
 	return ls.children[0].PruneColumns(parentUsedCols)
 }
