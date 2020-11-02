@@ -197,6 +197,40 @@
         "Plan": [
           ""
         ]
+      },
+      {
+        "SQL": "insert into t3 values (4,20),(30,30)",
+        "Plan": [
+          ""
+        ]
+      },
+      {
+        "SQL": "select * from t3 where a=4",
+        "Plan": [
+          " Point_Get root table:t3, partition:?, handle:?"
+        ]
+      },
+      {
+        "SQL": "select * from t3 where a=30",
+        "Plan": [
+          " Point_Get root table:t3, partition:?, handle:?"
+        ]
+      },
+      {
+        "SQL": "select * from t4 where a=10",
+        "Plan": [
+          " IndexLookUp root ",
+          " ├─IndexScan cop  table:t4, partition:?, index:a(a), range:[?,?], keep order:false",
+          " └─TableScan cop  table:t4, partition:?, keep order:false"
+        ]
+      },
+      {
+        "SQL": "select * from t4 where a=20",
+        "Plan": [
+          " IndexLookUp root ",
+          " ├─IndexScan cop  table:t4, partition:?, index:a(a), range:[?,?], keep order:false",
+          " └─TableScan cop  table:t4, partition:?, keep order:false"
+        ]
       }
     ]
   },
