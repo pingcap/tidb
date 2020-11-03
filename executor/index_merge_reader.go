@@ -14,7 +14,9 @@
 package executor
 
 import (
+	"bytes"
 	"context"
+	"fmt"
 	"runtime/trace"
 	"sync"
 	"sync/atomic"
@@ -104,7 +106,7 @@ type IndexMergeReaderExecutor struct {
 	colLens         [][]int
 
 	handleCols plannercore.HandleCols
-	stats      *IndexLookUpRunTimeStats
+	stats      *IndexMergeRuntimeStat
 }
 
 // Open implements the Executor Open interface
@@ -173,7 +175,9 @@ func (e *IndexMergeReaderExecutor) waitPartialWorkersAndCloseFetchChan(partialWo
 }
 
 func (e *IndexMergeReaderExecutor) startIndexMergeProcessWorker(ctx context.Context, workCh chan<- *lookupTableTask, fetch <-chan *lookupTableTask) {
-	idxMergeProcessWorker := &indexMergeProcessWorker{}
+	idxMergeProcessWorker := &indexMergeProcessWorker{
+		stats: e.stats,
+	}
 	e.processWokerWg.Add(1)
 	go func() {
 		defer trace.StartRegion(ctx, "IndexMergeProcessWorker").End()
@@ -315,11 +319,12 @@ func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, 
 func (e *IndexMergeReaderExecutor) initRuntimeStats() {
 	if e.runtimeStats != nil {
 		if e.stats == nil {
-			e.stats = &IndexLookUpRunTimeStats{
-				IndexScan:    0,
-				TableRowScan: 0,
-				TableTaskNum: 0,
-				Concurrency:  e.ctx.GetSessionVars().IndexLookupConcurrency(),
+			e.stats = &IndexMergeRuntimeStat{
+				IndexMergeProcess: 0,
+				IndexScan:         0,
+				TableRowScan:      0,
+				TableTaskNum:      0,
+				Concurrency:       e.ctx.GetSessionVars().IndexLookupConcurrency(),
 			}
 			e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
 		}
@@ -341,7 +346,7 @@ func (e *IndexMergeReaderExecutor) getTablePlanRootID() int {
 }
 
 type partialTableWorker struct {
-	stats        *IndexLookUpRunTimeStats
+	stats        *IndexMergeRuntimeStat
 	sc           sessionctx.Context
 	batchSize    int
 	maxBatchSize int
@@ -552,6 +557,7 @@ func (e *IndexMergeReaderExecutor) Close() error {
 }
 
 type indexMergeProcessWorker struct {
+	stats *IndexMergeRuntimeStat
 }
 
 func (w *indexMergeProcessWorker) fetchLoop(ctx context.Context, fetchCh <-chan *lookupTableTask,
@@ -562,7 +568,7 @@ func (w *indexMergeProcessWorker) fetchLoop(ctx context.Context, fetchCh <-chan 
 	}()
 
 	distinctHandles := kv.NewHandleMap()
-
+	start := time.Now()
 	for task := range fetchCh {
 		handles := task.handles
 		fhs := make([]kv.Handle, 0, 8)
@@ -578,6 +584,9 @@ func (w *indexMergeProcessWorker) fetchLoop(ctx context.Context, fetchCh <-chan 
 		task := &lookupTableTask{
 			handles: fhs,
 			doneCh:  make(chan error, 1),
+		}
+		if w.stats != nil {
+			atomic.AddInt64(&w.stats.IndexMergeProcess, int64(time.Since(start)))
 		}
 		select {
 		case <-ctx.Done():
@@ -607,7 +616,7 @@ func (w *indexMergeProcessWorker) handleLoopFetcherPanic(ctx context.Context, re
 }
 
 type partialIndexWorker struct {
-	stats        *IndexLookUpRunTimeStats
+	stats        *IndexMergeRuntimeStat
 	sc           sessionctx.Context
 	idxID        int
 	batchSize    int
@@ -625,7 +634,7 @@ func (w *partialIndexWorker) fetchHandles(
 	handleCols plannercore.HandleCols) (count int64, err error) {
 	chk := chunk.NewChunkWithCapacity(handleCols.GetFieldsTypes(), w.maxChunkSize)
 	var basicStats *execdetails.BasicRuntimeStats
-	if w.sc.GetSessionVars().StmtCtx.RuntimeStatsColl != nil {
+	if w.stats != nil {
 		if w.idxID != 0 {
 			basicStats = &execdetails.BasicRuntimeStats{}
 			w.sc.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(w.idxID, basicStats)
@@ -703,7 +712,7 @@ func (w *partialIndexWorker) buildTableTask(handles []kv.Handle, retChk *chunk.C
 }
 
 type indexMergeTableScanWorker struct {
-	stats          *IndexLookUpRunTimeStats
+	stats          *IndexMergeRuntimeStat
 	workCh         <-chan *lookupTableTask
 	finished       <-chan struct{}
 	buildTblReader func(ctx context.Context, handles []kv.Handle) (Executor, error)
@@ -783,4 +792,62 @@ func (w *indexMergeTableScanWorker) executeTask(ctx context.Context, task *looku
 		return errors.Errorf("handle count %d isn't equal to value count %d", handleCnt, len(task.rows))
 	}
 	return nil
+}
+
+type IndexMergeRuntimeStat struct {
+	IndexMergeProcess int64
+	IndexScan         int64
+	TableRowScan      int64
+	TableTaskNum      int64
+	Concurrency       int
+}
+
+func (e *IndexMergeRuntimeStat) String() string {
+	var buf bytes.Buffer
+	indexMergeProcess := atomic.LoadInt64(&e.IndexMergeProcess)
+	indexScan := atomic.LoadInt64(&e.IndexScan)
+	tableScan := atomic.LoadInt64(&e.TableRowScan)
+	tableTaskNum := atomic.LoadInt64(&e.TableTaskNum)
+	concurrency := e.Concurrency
+	if indexScan != 0 {
+		buf.WriteString(fmt.Sprintf("index_task:{index_scan:%s", time.Duration(indexScan)))
+		if indexMergeProcess != 0 {
+			buf.WriteString(fmt.Sprintf(", index_process:%s", time.Duration(indexMergeProcess)))
+		}
+		buf.WriteByte('}')
+	}
+	if tableScan != 0 {
+		if buf.Len() > 0 {
+			buf.WriteByte(',')
+		}
+		buf.WriteString(fmt.Sprintf(" table_task:{num:%d, concurrency:%d, time:%s}", tableTaskNum, concurrency, time.Duration(tableScan)))
+	}
+	return buf.String()
+}
+
+func (e *IndexMergeRuntimeStat) Clone() execdetails.RuntimeStats {
+	newRs := &IndexMergeRuntimeStat{
+		IndexMergeProcess: e.IndexMergeProcess,
+		IndexScan:         e.IndexScan,
+		TableRowScan:      e.TableRowScan,
+		TableTaskNum:      e.TableTaskNum,
+		Concurrency:       e.Concurrency,
+	}
+	return newRs
+}
+
+func (e *IndexMergeRuntimeStat) Merge(other execdetails.RuntimeStats) {
+	tmp, ok := other.(*IndexMergeRuntimeStat)
+	if !ok {
+		return
+	}
+	e.IndexMergeProcess += tmp.IndexMergeProcess
+	e.IndexScan += tmp.IndexScan
+	e.TableRowScan += tmp.TableRowScan
+	e.TableTaskNum += tmp.TableTaskNum
+	e.Concurrency += tmp.Concurrency
+}
+
+func (e *IndexMergeRuntimeStat) Tp() int {
+	return execdetails.TpIndexLookUpRunTimeStats
 }

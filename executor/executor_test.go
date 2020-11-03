@@ -6494,7 +6494,7 @@ func (s *testSerialSuite1) TestIndexMergeRuntimeStats(c *C) {
 	rows := tk.MustQuery(sql).Rows()
 	c.Assert(len(rows), Equals, 4)
 	explain := fmt.Sprintf("%v", rows[0])
-	c.Assert(explain, Matches, ".*time:.*loops:.*index_task:.*table_task:{num.*concurrency.*time.*}.*")
+	c.Assert(explain, Matches, ".*time:.*loops:.*index_task:{index_scan:.*, index_process:.*}.*table_task:{num.*concurrency.*time.*}.*")
 	tableRangeExplain := fmt.Sprintf("%v", rows[1])
 	indexExplain := fmt.Sprintf("%v", rows[2])
 	tableExplain := fmt.Sprintf("%v", rows[3])
