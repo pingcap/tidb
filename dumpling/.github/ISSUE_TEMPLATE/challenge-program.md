@@ -1,11 +1,37 @@
 ---
-name: "\U0001F947 Propose a Challenge Program task"
-about: As a developer, I want to propose a Challenge Program task.
+name: "\U0001F947 Propose a Challenge Program task with no theme"
+about: As a developer, I want to propose a Challenge Program task with no theme.
+labels: challenge-program
 ---
 
-You can choose from the following Challenge Program(open the URL):
+<!-- 
+If you want to specify a special theme challenge program task, please add the theme label to the issue(`challenge-program`+`{some-theme-label}`).
+Current support theme labels:
+ - hptc
+ - high-performance
+-->
 
-- [challenge-program-high-performance](https://github.com/pingcap/dumpling/issues/new?labels=challenge-program%2Chigh-performance&template=challenge-program-high-performance.md)
-- [challenge-program-hptc](https://github.com/pingcap/dumpling/issues/new?labels=challenge-program%2Chptc&template=challenge-program-hptc.md)
-- [challenge-program-with-no-theme](https://github.com/pingcap/dumpling/issues/new?template=challenge-program.md)
+## Description
 
+issue background
+
+## Tasks
+
+- task 1
+- task 2
+- task 3
+
+## Score
+
+- score number
+
+## Mentor
+
+- @mentor
+
+## Recommended Skills
+- skill 1
+- skill 2
+- skill 3
+
+## Learning Materials(optional)
