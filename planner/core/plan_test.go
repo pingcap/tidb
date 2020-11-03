@@ -474,7 +474,6 @@ func (s *testPlanNormalize) TestEncodePlanPerformance(c *C) {
 	tk.MustExec("create table th (i int, a int,b int, c int, index (a)) partition by hash (a) partitions 8192;")
 	tk.MustExec("set @@tidb_slow_log_threshold=200000")
 
-	// generate SQL
 	query := "select count(*) from th t1 join th t2 join th t3 join th t4 join th t5 join th t6 join th t7 join th t8 where t1.i=t2.a and t1.i=t3.i and t3.i=t4.i and t4.i=t5.i and t5.i=t6.i and t6.i=t7.i and t7.i=t8.i"
 	tk.Se.GetSessionVars().PlanID = 0
 	tk.MustExec(query)
