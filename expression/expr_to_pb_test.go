@@ -611,6 +611,7 @@ func (s *testEvaluatorSuite) TestExprPushDownToFlash(c *C) {
 	realColumn := dg.genColumn(mysql.TypeDouble, 3)
 	decimalColumn := dg.genColumn(mysql.TypeNewDecimal, 4)
 	stringColumn := dg.genColumn(mysql.TypeString, 5)
+	datetimeColumn := dg.genColumn(mysql.TypeDatetime, 6)
 	function, err := NewFunction(mock.NewContext(), ast.JSONLength, types.NewFieldType(mysql.TypeLonglong), jsonColumn)
 	c.Assert(err, IsNil)
 	exprs = append(exprs, function)
@@ -647,6 +648,11 @@ func (s *testEvaluatorSuite) TestExprPushDownToFlash(c *C) {
 	c.Assert(err, IsNil)
 	exprs = append(exprs, function)
 
+	// CastTimeAsInt
+	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeLonglong), datetimeColumn)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+
 	// CastIntAsDecimal
 	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeNewDecimal), intColumn)
 	c.Assert(err, IsNil)
@@ -667,6 +673,11 @@ func (s *testEvaluatorSuite) TestExprPushDownToFlash(c *C) {
 	c.Assert(err, IsNil)
 	exprs = append(exprs, function)
 
+	// CastTimeAsDecimal
+	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeNewDecimal), datetimeColumn)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+
 	// CastIntAsString
 	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeString), intColumn)
 	c.Assert(err, IsNil)
@@ -684,6 +695,26 @@ func (s *testEvaluatorSuite) TestExprPushDownToFlash(c *C) {
 
 	// CastStringAsString
 	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeString), stringColumn)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+
+	// CastIntAsTime
+	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeDatetime), intColumn)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+
+	// CastRealAsTime
+	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeDatetime), realColumn)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+
+	// CastDecimalAsTime
+	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeDatetime), decimalColumn)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+
+	// CastTimeAsTime
+	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeDatetime), datetimeColumn)
 	c.Assert(err, IsNil)
 	exprs = append(exprs, function)
 
