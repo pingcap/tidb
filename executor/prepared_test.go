@@ -65,9 +65,15 @@ func (s *testSuite1) TestIgnorePlanCache(c *C) {
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.UseCache, IsFalse)
 }
 
-func (s *testSuite1) TestPrepareStmtAfterIsolationReadChange(c *C) {
+func (s *testSerialSuite) TestPrepareStmtAfterIsolationReadChange(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost", CurrentUser: true, AuthUsername: "root", AuthHostname: "%"}, nil, []byte("012345678901234567890"))
+
+	orgEnable := plannercore.PreparedPlanCacheEnabled()
+	defer func() {
+		plannercore.SetPreparedPlanCache(orgEnable)
+	}()
+	plannercore.SetPreparedPlanCache(false) // requires plan cache disabled
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int)")
@@ -86,6 +92,7 @@ func (s *testSuite1) TestPrepareStmtAfterIsolationReadChange(c *C) {
 	}
 
 	tk.MustExec("set @@session.tidb_isolation_read_engines='tikv'")
+	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
 	tk.MustExec("prepare stmt from \"select * from t\"")
 	tk.MustQuery("execute stmt")
 	tkProcess := tk.Se.ShowProcess()
@@ -131,7 +138,11 @@ func (sm *mockSessionManager2) Kill(connectionID uint64, query bool) {
 	sm.killed = true
 	atomic.StoreUint32(&sm.se.GetSessionVars().Killed, 1)
 }
+func (sm *mockSessionManager2) KillAllConnections()             {}
 func (sm *mockSessionManager2) UpdateTLSConfig(cfg *tls.Config) {}
+func (sm *mockSessionManager2) ServerID() uint64 {
+	return 1
+}
 
 var _ = SerialSuites(&testSuite12{&baseTestSuite{}})
 
@@ -163,7 +174,7 @@ func (s *testSuite12) TestPreparedStmtWithHint(c *C) {
 	c.Check(sm.killed, Equals, true)
 }
 
-func (s *testSuite9) TestPlanCacheClusterIndex(c *C) {
+func (s *testSerialSuite) TestPlanCacheClusterIndex(c *C) {
 	store, dom, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
 	tk := testkit.NewTestKit(c, store)
@@ -179,6 +190,7 @@ func (s *testSuite9) TestPlanCacheClusterIndex(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("set @@tidb_enable_clustered_index = 1")
+	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
 	tk.MustExec("create table t1(a varchar(20), b varchar(20), c varchar(20), primary key(a, b))")
 	tk.MustExec("insert into t1 values('1','1','111'),('2','2','222'),('3','3','333')")
 

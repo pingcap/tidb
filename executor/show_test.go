@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
@@ -262,11 +263,10 @@ func (s *testSuite5) TestShow2(c *C) {
 
 	tk.MustExec("set global autocommit=0")
 	tk1 := testkit.NewTestKit(c, s.store)
-	tk1.MustQuery("show global variables where variable_name = 'autocommit'").Check(testkit.Rows("autocommit 0"))
+	tk1.MustQuery("show global variables where variable_name = 'autocommit'").Check(testkit.Rows("autocommit OFF"))
 	tk.MustExec("set global autocommit = 1")
 	tk2 := testkit.NewTestKit(c, s.store)
-	// TODO: In MySQL, the result is "autocommit ON".
-	tk2.MustQuery("show global variables where variable_name = 'autocommit'").Check(testkit.Rows("autocommit 1"))
+	tk2.MustQuery("show global variables where variable_name = 'autocommit'").Check(testkit.Rows("autocommit ON"))
 
 	// TODO: Specifying the charset for national char/varchar should not be supported.
 	tk.MustExec("drop table if exists test_full_column")
@@ -626,6 +626,17 @@ func (s *testSuite5) TestShowCreateTable(c *C) {
 	))
 	tk.MustExec("drop table t")
 
+	// for issue #20446
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1(c int unsigned default 0);")
+	tk.MustQuery("show create table `t1`").Check(testutil.RowsWithSep("|",
+		""+
+			"t1 CREATE TABLE `t1` (\n"+
+			"  `c` int(10) unsigned DEFAULT '0'\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+	))
+	tk.MustExec("drop table t1")
+
 	tk.MustExec("CREATE TABLE `log` (" +
 		"`LOG_ID` bigint(20) UNSIGNED NOT NULL AUTO_INCREMENT," +
 		"`ROUND_ID` bigint(20) UNSIGNED NOT NULL," +
@@ -746,7 +757,7 @@ func (s *testSuite5) TestShowCreateTable(c *C) {
 	tk.MustQuery("show create table default_num").Check(testutil.RowsWithSep("|",
 		""+
 			"default_num CREATE TABLE `default_num` (\n"+
-			"  `a` int(11) DEFAULT 11\n"+
+			"  `a` int(11) DEFAULT '11'\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
 	))
 	tk.MustExec(`drop table if exists default_varchar`)
@@ -797,6 +808,60 @@ func (s *testSuite5) TestShowCreateTable(c *C) {
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
 	))
 
+	// Test show list partition table
+	tk.MustExec(`DROP TABLE IF EXISTS t`)
+	tk.MustExec(`create table t (id int, name varchar(10), unique index idx (id)) partition by list  (id) (
+    	partition p0 values in (3,5,6,9,17),
+    	partition p1 values in (1,2,10,11,19,20),
+    	partition p2 values in (4,12,13,14,18),
+    	partition p3 values in (7,8,15,16,null)
+	);`)
+	tk.MustQuery(`show create table t`).Check(testutil.RowsWithSep("|",
+		"t CREATE TABLE `t` (\n"+
+			"  `id` int(11) DEFAULT NULL,\n"+
+			"  `name` varchar(10) DEFAULT NULL,\n"+
+			"  UNIQUE KEY `idx` (`id`)\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n"+
+			"PARTITION BY LIST (`id`) (\n"+
+			"  PARTITION `p0` VALUES IN (3,5,6,9,17),\n"+
+			"  PARTITION `p1` VALUES IN (1,2,10,11,19,20),\n"+
+			"  PARTITION `p2` VALUES IN (4,12,13,14,18),\n"+
+			"  PARTITION `p3` VALUES IN (7,8,15,16,NULL)\n"+
+			")"))
+	// Test show list column partition table
+	tk.MustExec(`DROP TABLE IF EXISTS t`)
+	tk.MustExec(`create table t (id int, name varchar(10), unique index idx (id)) partition by list columns (id) (
+    	partition p0 values in (3,5,6,9,17),
+    	partition p1 values in (1,2,10,11,19,20),
+    	partition p2 values in (4,12,13,14,18),
+    	partition p3 values in (7,8,15,16,null)
+	);`)
+	tk.MustQuery(`show create table t`).Check(testutil.RowsWithSep("|",
+		"t CREATE TABLE `t` (\n"+
+			"  `id` int(11) DEFAULT NULL,\n"+
+			"  `name` varchar(10) DEFAULT NULL,\n"+
+			"  UNIQUE KEY `idx` (`id`)\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n"+
+			"PARTITION BY LIST COLUMNS(id) (\n"+
+			"  PARTITION `p0` VALUES IN (3,5,6,9,17),\n"+
+			"  PARTITION `p1` VALUES IN (1,2,10,11,19,20),\n"+
+			"  PARTITION `p2` VALUES IN (4,12,13,14,18),\n"+
+			"  PARTITION `p3` VALUES IN (7,8,15,16,NULL)\n"+
+			")"))
+	tk.MustExec(`DROP TABLE IF EXISTS t`)
+	tk.MustExec(`create table t (id int, name varchar(10), unique index idx (id, name)) partition by list columns (id, name) (
+    	partition p0 values in ((3, '1'), (5, '5')),
+    	partition p1 values in ((1, '1')));`)
+	tk.MustQuery(`show create table t`).Check(testutil.RowsWithSep("|",
+		"t CREATE TABLE `t` (\n"+
+			"  `id` int(11) DEFAULT NULL,\n"+
+			"  `name` varchar(10) DEFAULT NULL,\n"+
+			"  UNIQUE KEY `idx` (`id`,`name`)\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n"+
+			"PARTITION BY LIST COLUMNS(id,name) (\n"+
+			"  PARTITION `p0` VALUES IN ((3,\"1\"),(5,\"5\")),\n"+
+			"  PARTITION `p1` VALUES IN ((1,\"1\"))\n"+
+			")"))
 }
 
 func (s *testAutoRandomSuite) TestShowCreateTableAutoRandom(c *C) {
@@ -1070,4 +1135,27 @@ func (s *testSerialSuite1) TestShowCreateTableWithIntegerDisplayLengthWarnings(c
 		"  `d` int DEFAULT NULL,\n" +
 		"  `e` bigint DEFAULT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+}
+
+func (s *testSuite5) TestShowVar(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	var showSQL string
+	for _, v := range variable.GetSysVars() {
+		// When ScopeSession only. `show global variables` must return empty.
+		if v.Scope == variable.ScopeSession {
+			showSQL = "show variables like '" + v.Name + "'"
+			res := tk.MustQuery(showSQL)
+			c.Check(res.Rows(), HasLen, 1)
+			showSQL = "show global variables like '" + v.Name + "'"
+			res = tk.MustQuery(showSQL)
+			c.Check(res.Rows(), HasLen, 0)
+		} else {
+			showSQL = "show global variables like '" + v.Name + "'"
+			res := tk.MustQuery(showSQL)
+			c.Check(res.Rows(), HasLen, 1)
+			showSQL = "show variables like '" + v.Name + "'"
+			res = tk.MustQuery(showSQL)
+			c.Check(res.Rows(), HasLen, 1)
+		}
+	}
 }

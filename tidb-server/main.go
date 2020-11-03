@@ -552,18 +552,18 @@ func setGlobalVars() {
 
 	priority := mysql.Str2Priority(cfg.Performance.ForcePriority)
 	variable.ForcePriority = int32(priority)
-	variable.SysVars[variable.TiDBForcePriority].Value = mysql.Priority2Str[priority]
-	variable.SysVars[variable.TiDBOptDistinctAggPushDown].Value = variable.BoolToIntStr(cfg.Performance.DistinctAggPushDown)
 
-	variable.SysVars[variable.TIDBMemQuotaQuery].Value = strconv.FormatInt(cfg.MemQuotaQuery, 10)
-	variable.SysVars["lower_case_table_names"].Value = strconv.Itoa(cfg.LowerCaseTableNames)
-	variable.SysVars[variable.LogBin].Value = variable.BoolToIntStr(config.GetGlobalConfig().Binlog.Enable)
-
-	variable.SysVars[variable.Port].Value = fmt.Sprintf("%d", cfg.Port)
-	variable.SysVars[variable.Socket].Value = cfg.Socket
-	variable.SysVars[variable.DataDir].Value = cfg.Path
-	variable.SysVars[variable.TiDBSlowQueryFile].Value = cfg.Log.SlowQueryFile
-	variable.SysVars[variable.TiDBIsolationReadEngines].Value = strings.Join(cfg.IsolationRead.Engines, ", ")
+	variable.SetSysVar(variable.TiDBForcePriority, mysql.Priority2Str[priority])
+	variable.SetSysVar(variable.TiDBOptDistinctAggPushDown, variable.BoolToIntStr(cfg.Performance.DistinctAggPushDown))
+	variable.SetSysVar(variable.TIDBMemQuotaQuery, strconv.FormatInt(cfg.MemQuotaQuery, 10))
+	variable.SetSysVar(variable.TIDBMemQuotaStatistics, strconv.FormatInt(cfg.MemQuotaStatistics, 10))
+	variable.SetSysVar("lower_case_table_names", strconv.Itoa(cfg.LowerCaseTableNames))
+	variable.SetSysVar(variable.LogBin, variable.BoolToIntStr(config.GetGlobalConfig().Binlog.Enable))
+	variable.SetSysVar(variable.Port, fmt.Sprintf("%d", cfg.Port))
+	variable.SetSysVar(variable.Socket, cfg.Socket)
+	variable.SetSysVar(variable.DataDir, cfg.Path)
+	variable.SetSysVar(variable.TiDBSlowQueryFile, cfg.Log.SlowQueryFile)
+	variable.SetSysVar(variable.TiDBIsolationReadEngines, strings.Join(cfg.IsolationRead.Engines, ", "))
 
 	// For CI environment we default enable prepare-plan-cache.
 	plannercore.SetPreparedPlanCache(config.CheckTableBeforeDrop || cfg.PreparedPlanCache.Enabled)
@@ -637,6 +637,7 @@ func createServer() {
 	// Both domain and storage have started, so we have to clean them before exiting.
 	terror.MustNil(err, closeDomainAndStorage)
 	svr.SetDomain(dom)
+	svr.InitGlobalConnID(dom.ServerID)
 	go dom.ExpensiveQueryHandle().SetSessionManager(svr).Run()
 	dom.InfoSyncer().SetSessionManager(svr)
 }
