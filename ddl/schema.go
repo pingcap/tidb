@@ -152,14 +152,22 @@ func onDropSchema(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	switch dbInfo.State {
 	case model.StatePublic:
 		// public -> write only
-		job.SchemaState = model.StateWriteOnly
 		dbInfo.State = model.StateWriteOnly
 		err = t.UpdateDatabase(dbInfo)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		// Update the job state when all affairs done.
+		job.SchemaState = model.StateWriteOnly
 	case model.StateWriteOnly:
 		// write only -> delete only
-		job.SchemaState = model.StateDeleteOnly
 		dbInfo.State = model.StateDeleteOnly
 		err = t.UpdateDatabase(dbInfo)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		// Update the job state when all affairs done.
+		job.SchemaState = model.StateDeleteOnly
 	case model.StateDeleteOnly:
 		dbInfo.State = model.StateNone
 		var tables []*model.TableInfo
