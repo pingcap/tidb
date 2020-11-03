@@ -46,6 +46,7 @@ type SafePointKV interface {
 	Put(k string, v string) error
 	Get(k string) (string, error)
 	GetWithPrefix(k string) ([]*mvccpb.KeyValue, error)
+	Close() error
 }
 
 // MockSafePointKV implements SafePointKV at mock test
@@ -88,6 +89,11 @@ func (w *MockSafePointKV) GetWithPrefix(prefix string) ([]*mvccpb.KeyValue, erro
 		}
 	}
 	return kvs, nil
+}
+
+// Close implements the Close method for SafePointKV
+func (w *MockSafePointKV) Close() error {
+	return nil
 }
 
 // EtcdSafePointKV implements SafePointKV at runtime
@@ -138,6 +144,11 @@ func (w *EtcdSafePointKV) GetWithPrefix(k string) ([]*mvccpb.KeyValue, error) {
 		return nil, errors.Trace(err)
 	}
 	return resp.Kvs, nil
+}
+
+// Close implements the Close for SafePointKV
+func (w *EtcdSafePointKV) Close() error {
+	return errors.Trace(w.cli.Close())
 }
 
 func saveSafePoint(kv SafePointKV, t uint64) error {
