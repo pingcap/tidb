@@ -1693,6 +1693,7 @@ LOOP:
 		case <-ticker.C:
 			// delete some rows, and add some data
 			for i := num; i < num+step; i++ {
+				forceReloadDomain(tk.Se)
 				n := rand.Intn(num)
 				s.tk.MustExec("begin")
 				s.tk.MustExec("delete from t2 where c1 = ?", n)
@@ -3864,7 +3865,35 @@ func (s *testDBSuite1) TestModifyColumnCharset(c *C) {
 	s.tk.MustExec("create table t_mcc(a varchar(8) charset utf8, b varchar(8) charset utf8)")
 	defer s.mustExec(c, "drop table t_mcc;")
 
+<<<<<<< HEAD
 	result := s.tk.MustQuery(`show create table t_mcc`)
+=======
+	tk.MustExec("alter table t modify a year(4)")
+	check("a", yearcheck)
+
+	tk.MustExec("alter table t modify a year(4) unsigned")
+	check("a", yearcheck)
+
+	tk.MustExec("alter table t modify a year(4) zerofill")
+
+	tk.MustExec("alter table t modify b year")
+	check("b", yearcheck)
+
+	tk.MustExec("alter table t modify c bit")
+	check("c", func(f uint) bool {
+		return mysql.HasUnsignedFlag(f) && !mysql.HasBinaryFlag(f)
+	})
+}
+
+func (s *testSerialDBSuite) TestModifyColumnCharset(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test_db")
+	tk.MustExec("create table t_mcc(a varchar(8) charset utf8, b varchar(8) charset utf8)")
+	defer s.mustExec(tk, c, "drop table t_mcc;")
+
+	forceReloadDomain(tk.Se)
+	result := tk.MustQuery(`show create table t_mcc`)
+>>>>>>> 52c5a10fe... ddl, ci: force domain to reload schema before execute SQL. (#19580)
 	result.Check(testkit.Rows(
 		"t_mcc CREATE TABLE `t_mcc` (\n" +
 			"  `a` varchar(8) CHARACTER SET utf8 COLLATE utf8_bin DEFAULT NULL,\n" +
@@ -4561,6 +4590,7 @@ func (s *testDBSuite4) testParallelExecSQL(c *C, sql1, sql2 string, se1, se2 ses
 func checkTableLock(c *C, se session.Session, dbName, tableName string, lockTp model.TableLockType) {
 	tb := testGetTableByName(c, se, dbName, tableName)
 	dom := domain.GetDomain(se)
+	dom.Reload()
 	if lockTp != model.TableLockNone {
 		c.Assert(tb.Meta().Lock, NotNil)
 		c.Assert(tb.Meta().Lock.Tp, Equals, lockTp)
