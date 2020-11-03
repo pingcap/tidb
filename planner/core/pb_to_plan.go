@@ -14,6 +14,7 @@
 package core
 
 import (
+	"sort"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -22,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/tablecodec"
@@ -105,21 +107,62 @@ func (b *PBPlanBuilder) pbToTableScan(e *tipb.Executor) (PhysicalPlan, error) {
 	}.Init(b.sctx, nil, 0)
 	p.SetSchema(schema)
 	if strings.ToUpper(p.Table.Name.O) == infoschema.ClusterTableSlowLog {
-		start, err := tablecodec.DecodeRowKey(tblScan.Ranges[0].Low)
-		if err != nil {
-			return nil, errors.Errorf("fail to decode start time")
+		extractor := &SlowQueryExtractor{}
+		if len(tblScan.Ranges) > 0 {
+			timeRanges := mergeKeyRanges(tblScan.Ranges)
+			extractor.Desc = tblScan.Desc
+			extractor.setTimeRange(timeRanges[0][0], timeRanges[0][1])
 		}
-		end, err := tablecodec.DecodeRowKey(tblScan.Ranges[0].High)
-		if err != nil {
-			return nil, errors.Errorf("fail to decode end time")
-		}
-		extractor := &SlowQueryExtractor{
-			Desc: tblScan.Desc,
-		}
-		extractor.setTimeRange(start.IntValue(), end.IntValue())
 		p.Extractor = extractor
 	}
 	return p, nil
+}
+
+func mergeKeyRanges(keyRanges []tipb.KeyRange) [][]int64 {
+	sort.Slice(keyRanges, func(i, j int) bool {
+		ilow, err := tablecodec.DecodeRowKey(keyRanges[i].Low)
+		if err != nil {
+			return false
+		}
+		jlow, err := tablecodec.DecodeRowKey(keyRanges[i].Low)
+		if err != nil {
+			return false
+		}
+		return ilow.IntValue() < jlow.IntValue()
+	})
+
+	var result [][]int64
+	ckr := keyRanges[0]
+	var start kv.Handle
+	var end kv.Handle
+	for i := 1; i < len(keyRanges); i++ {
+		start, err := tablecodec.DecodeRowKey(ckr.Low)
+		if err != nil {
+			return result
+		}
+		end, err := tablecodec.DecodeRowKey(ckr.High)
+		if err != nil {
+			return result
+		}
+		krl, err := tablecodec.DecodeRowKey(keyRanges[i].Low)
+		if err != nil {
+			return result
+		}
+		krh, err := tablecodec.DecodeRowKey(keyRanges[i].High)
+		if err != nil {
+			return result
+		}
+		if end.IntValue() >= krl.IntValue() {
+			if end.IntValue() < krh.IntValue() {
+				ckr.High = keyRanges[i].High
+			}
+		} else {
+			result = append(result, []int64{start.IntValue(), end.IntValue()})
+			ckr = keyRanges[i]
+		}
+	}
+	result = append(result, []int64{start.IntValue(), end.IntValue()})
+	return result
 }
 
 func (b *PBPlanBuilder) buildTableScanSchema(tblInfo *model.TableInfo, columns []*model.ColumnInfo) *expression.Schema {

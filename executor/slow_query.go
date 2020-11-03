@@ -174,7 +174,8 @@ func (e *slowQueryRetriever) dataForSlowLog(ctx context.Context) ([][]types.Datu
 		if !ok {
 			return nil, true, nil
 		}
-		rows, err := task.result.rows, task.result.err
+		result := <-task.result
+		rows, err := result.rows, result.err
 		if err != nil {
 			return nil, false, err
 		}
@@ -246,7 +247,7 @@ type offset struct {
 }
 
 type slowLogTask struct {
-	result parsedSlowLog
+	result chan parsedSlowLog
 }
 
 func (e *slowQueryRetriever) getBatchLog(reader *bufio.Reader, offset *offset, num int) ([]string, error) {
@@ -297,8 +298,11 @@ func (e *slowQueryRetriever) parseSlowLog(ctx context.Context, sctx sessionctx.C
 	for {
 		startTime := time.Now()
 		log, err := e.getBatchLog(reader, &offset, logNum)
+		t := &slowLogTask{}
+		t.result = make(chan parsedSlowLog, 1)
 		if err != nil {
-			e.taskList <- &slowLogTask{parsedSlowLog{nil, err}}
+			e.taskList <- t
+			t.result <- parsedSlowLog{nil, err}
 			break
 		}
 		if len(log) == 0 {
@@ -310,12 +314,11 @@ func (e *slowQueryRetriever) parseSlowLog(ctx context.Context, sctx sessionctx.C
 		start := offset
 		wg.Add(1)
 		ch <- 1
-		t := &slowLogTask{}
 		e.taskList <- t
 		go func() {
 			defer wg.Done()
 			result, err := e.parseLog(sctx, log, start)
-			t.result = parsedSlowLog{result, err}
+			t.result <- parsedSlowLog{result, err}
 			<-ch
 		}()
 		offset.offset = e.fileLine
