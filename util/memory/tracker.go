@@ -16,6 +16,7 @@ package memory
 import (
 	"bytes"
 	"fmt"
+	"sort"
 	"sync"
 	"sync/atomic"
 )
@@ -169,13 +170,19 @@ func (t *Tracker) remove(oldChild *Tracker) {
 	found := false
 	label := oldChild.label
 	t.mu.Lock()
-	children := t.mu.children[label]
-	for i, child := range children {
-		if child == oldChild {
-			children = append(children[:i], children[i+1:]...)
-			t.mu.children[label] = children
-			found = true
-			break
+	if t.mu.children != nil {
+		children := t.mu.children[label]
+		for i, child := range children {
+			if child == oldChild {
+				children = append(children[:i], children[i+1:]...)
+				if len(children) > 0 {
+					t.mu.children[label] = children
+				} else {
+					delete(t.mu.children, label)
+				}
+				found = true
+				break
+			}
 		}
 	}
 	t.mu.Unlock()
@@ -194,22 +201,30 @@ func (t *Tracker) ReplaceChild(oldChild, newChild *Tracker) {
 		return
 	}
 
+	if oldChild.label != newChild.label {
+		t.remove(oldChild)
+		newChild.AttachTo(t)
+		return
+	}
+
 	newConsumed := newChild.BytesConsumed()
 	newChild.setParent(t)
 
 	label := oldChild.label
 	t.mu.Lock()
-	children := t.mu.children[label]
-	for i, child := range children {
-		if child != oldChild {
-			continue
-		}
+	if t.mu.children != nil {
+		children := t.mu.children[label]
+		for i, child := range children {
+			if child != oldChild {
+				continue
+			}
 
-		newConsumed -= oldChild.BytesConsumed()
-		oldChild.setParent(nil)
-		children[i] = newChild
-		t.mu.children[label] = children
-		break
+			newConsumed -= oldChild.BytesConsumed()
+			oldChild.setParent(nil)
+			children[i] = newChild
+			t.mu.children[label] = children
+			break
+		}
 	}
 	t.mu.Unlock()
 
@@ -284,7 +299,13 @@ func (t *Tracker) toString(indent string, buffer *bytes.Buffer) {
 	fmt.Fprintf(buffer, "%s  \"consumed\": %s\n", indent, t.BytesToString(t.BytesConsumed()))
 
 	t.mu.Lock()
-	for _, children := range t.mu.children {
+	labels := make([]int, 0, len(t.mu.children))
+	for label := range t.mu.children {
+		labels = append(labels, label)
+	}
+	sort.Ints(labels)
+	for _, label := range labels {
+		children := t.mu.children[label]
 		for _, child := range children {
 			child.toString(indent+"  ", buffer)
 		}
