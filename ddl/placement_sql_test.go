@@ -307,13 +307,13 @@ func (s *testDBSuite1) TestPlacementPolicyCache(c *C) {
 
 	// test drop
 	rows := initTable()
-	tk.MustQuery("select * from information_schema.placement_policy").Check(testkit.Rows(rows...))
+	tk.MustQuery("select * from information_schema.placement_policy order by partition_name").Check(testkit.Rows(rows...))
 	tk.MustExec("drop table t1")
 	tk.MustQuery("select * from information_schema.placement_policy").Check(testkit.Rows())
 
 	// test truncate
 	rows = initTable()
-	tk.MustQuery("select * from information_schema.placement_policy").Check(testkit.Rows(rows...))
+	tk.MustQuery("select * from information_schema.placement_policy order by partition_name").Check(testkit.Rows(rows...))
 	tk.MustExec("truncate table t1")
 	tk.MustQuery("select * from information_schema.placement_policy").Check(testkit.Rows())
 }
