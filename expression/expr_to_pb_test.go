@@ -667,6 +667,26 @@ func (s *testEvaluatorSuite) TestExprPushDownToFlash(c *C) {
 	c.Assert(err, IsNil)
 	exprs = append(exprs, function)
 
+	// CastIntAsString
+	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeString), intColumn)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+
+	// CastRealAsString
+	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeString), realColumn)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+
+	// CastDecimalAsString
+	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeString), decimalColumn)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+
+	// CastStringAsString
+	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeString), stringColumn)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+
 	canPush := CanExprsPushDown(sc, exprs, client, kv.TiFlash)
 	c.Assert(canPush, Equals, true)
 
