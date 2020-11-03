@@ -210,19 +210,30 @@ func onAddColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error)
 	switch columnInfo.State {
 	case model.StateNone:
 		// none -> delete only
-		job.SchemaState = model.StateDeleteOnly
 		columnInfo.State = model.StateDeleteOnly
 		ver, err = updateVersionAndTableInfoWithCheck(t, job, tblInfo, originalState != columnInfo.State)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		job.SchemaState = model.StateDeleteOnly
 	case model.StateDeleteOnly:
 		// delete only -> write only
-		job.SchemaState = model.StateWriteOnly
 		columnInfo.State = model.StateWriteOnly
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != columnInfo.State)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		// Update the job state when all affairs done.
+		job.SchemaState = model.StateWriteOnly
 	case model.StateWriteOnly:
 		// write only -> reorganization
-		job.SchemaState = model.StateWriteReorganization
 		columnInfo.State = model.StateWriteReorganization
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != columnInfo.State)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		// Update the job state when all affairs done.
+		job.SchemaState = model.StateWriteReorganization
 	case model.StateWriteReorganization:
 		// reorganization -> public
 		// Adjust table column offset.
@@ -347,19 +358,28 @@ func onAddColumns(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error
 	switch columnInfos[0].State {
 	case model.StateNone:
 		// none -> delete only
-		job.SchemaState = model.StateDeleteOnly
 		setColumnsState(columnInfos, model.StateDeleteOnly)
 		ver, err = updateVersionAndTableInfoWithCheck(t, job, tblInfo, originalState != columnInfos[0].State)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		job.SchemaState = model.StateDeleteOnly
 	case model.StateDeleteOnly:
 		// delete only -> write only
-		job.SchemaState = model.StateWriteOnly
 		setColumnsState(columnInfos, model.StateWriteOnly)
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != columnInfos[0].State)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		job.SchemaState = model.StateWriteOnly
 	case model.StateWriteOnly:
 		// write only -> reorganization
-		job.SchemaState = model.StateWriteReorganization
 		setColumnsState(columnInfos, model.StateWriteReorganization)
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != columnInfos[0].State)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		job.SchemaState = model.StateWriteReorganization
 	case model.StateWriteReorganization:
 		// reorganization -> public
 		// Adjust table column offsets.
@@ -411,7 +431,6 @@ func onDropColumns(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	switch colInfos[0].State {
 	case model.StatePublic:
 		// public -> write only
-		job.SchemaState = model.StateWriteOnly
 		setColumnsState(colInfos, model.StateWriteOnly)
 		setIndicesState(idxInfos, model.StateWriteOnly)
 		for _, colInfo := range colInfos {
@@ -421,18 +440,28 @@ func onDropColumns(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 			}
 		}
 		ver, err = updateVersionAndTableInfoWithCheck(t, job, tblInfo, originalState != colInfos[0].State)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		job.SchemaState = model.StateWriteOnly
 	case model.StateWriteOnly:
 		// write only -> delete only
-		job.SchemaState = model.StateDeleteOnly
 		setColumnsState(colInfos, model.StateDeleteOnly)
 		setIndicesState(idxInfos, model.StateDeleteOnly)
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != colInfos[0].State)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		job.SchemaState = model.StateDeleteOnly
 	case model.StateDeleteOnly:
 		// delete only -> reorganization
-		job.SchemaState = model.StateDeleteReorganization
 		setColumnsState(colInfos, model.StateDeleteReorganization)
 		setIndicesState(idxInfos, model.StateDeleteReorganization)
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != colInfos[0].State)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		job.SchemaState = model.StateDeleteReorganization
 	case model.StateDeleteReorganization:
 		// reorganization -> absent
 		// All reorganization jobs are done, drop this column.
@@ -543,7 +572,6 @@ func onDropColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	switch colInfo.State {
 	case model.StatePublic:
 		// public -> write only
-		job.SchemaState = model.StateWriteOnly
 		colInfo.State = model.StateWriteOnly
 		setIndicesState(idxInfos, model.StateWriteOnly)
 		err = checkDropColumnForStatePublic(tblInfo, colInfo)
@@ -551,18 +579,28 @@ func onDropColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 			return ver, errors.Trace(err)
 		}
 		ver, err = updateVersionAndTableInfoWithCheck(t, job, tblInfo, originalState != colInfo.State)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		job.SchemaState = model.StateWriteOnly
 	case model.StateWriteOnly:
 		// write only -> delete only
-		job.SchemaState = model.StateDeleteOnly
 		colInfo.State = model.StateDeleteOnly
 		setIndicesState(idxInfos, model.StateDeleteOnly)
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != colInfo.State)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		job.SchemaState = model.StateDeleteOnly
 	case model.StateDeleteOnly:
 		// delete only -> reorganization
-		job.SchemaState = model.StateDeleteReorganization
 		colInfo.State = model.StateDeleteReorganization
 		setIndicesState(idxInfos, model.StateDeleteReorganization)
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != colInfo.State)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		job.SchemaState = model.StateDeleteReorganization
 	case model.StateDeleteReorganization:
 		// reorganization -> absent
 		// All reorganization jobs are done, drop this column.
@@ -912,6 +950,8 @@ func (w *worker) doModifyColumnTypeWithData(
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
+		// Initialize SnapshotVer to 0 for later reorganization check.
+		job.SnapshotVer = 0
 		job.SchemaState = model.StateWriteReorganization
 	case model.StateWriteReorganization:
 		tbl, err := getTable(d.store, dbInfo.ID, tblInfo)
@@ -926,6 +966,11 @@ func (w *worker) doModifyColumnTypeWithData(
 			return ver, errors.Trace(err)
 		}
 
+		// Inject a failpoint so that we can pause here and do verification on other components.
+		// With a failpoint-enabled version of TiDB, you can trigger this failpoint by the following command:
+		// enable: curl -X PUT -d "pause" "http://127.0.0.1:10080/fail/github.com/pingcap/tidb/ddl/mockDelayInModifyColumnTypeWithData".
+		// disable: curl -X DELETE "http://127.0.0.1:10080/fail/github.com/pingcap/tidb/ddl/mockDelayInModifyColumnTypeWithData"
+		failpoint.Inject("mockDelayInModifyColumnTypeWithData", func() {})
 		err = w.runReorgJob(t, reorgInfo, tbl.Meta(), d.lease, func() (addIndexErr error) {
 			defer util.Recover(metrics.LabelDDL, "onModifyColumn",
 				func() {
