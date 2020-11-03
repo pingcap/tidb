@@ -5838,6 +5838,9 @@ func buildPlacementSpecs(bundle *placement.Bundle, specs []*ast.PlacementSpec) (
 		}
 
 		var newRules []*placement.Rule
+		if role == placement.Leader {
+			spec.Replicas = 1
+		}
 		newRules, err = buildPlacementSpecReplicasAndConstraint(spec.Replicas, spec.Constraints)
 		if err != nil {
 			break
