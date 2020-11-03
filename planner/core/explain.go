@@ -512,7 +512,9 @@ func (p *PhysicalIndexJoin) explainInfo(normalized bool) string {
 	if len(p.OuterHashKeys) > 0 {
 		exprs := make([]expression.Expression, 0, len(p.OuterHashKeys))
 		for i := range p.OuterHashKeys {
-			expr, _ := expression.NewFunctionBase(MockContext(), ast.EQ, types.NewFieldType(mysql.TypeLonglong), p.OuterHashKeys[i], p.InnerHashKeys[i])
+			expr, err := expression.NewFunctionBase(MockContext(), ast.EQ, types.NewFieldType(mysql.TypeLonglong), p.OuterHashKeys[i], p.InnerHashKeys[i])
+			if err != nil {
+			}
 			exprs = append(exprs, expr)
 		}
 		fmt.Fprintf(buffer, ", equal cond:%s",
