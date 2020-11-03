@@ -2187,27 +2187,14 @@ func markChildrenUsedCols(outputSchema *expression.Schema, childSchema ...*expre
 	return
 }
 
-// extractChildUsedColIdxs extract column indexes of child executors from child used columns mark
-func extractChildUsedColIdxs(childUsedColsMark []bool) []int {
-	childUsedColIdxs := make([]int, 0, len(childUsedColsMark))
-	for colIdx, colUsedMark := range childUsedColsMark {
-		if colUsedMark {
-			childUsedColIdxs = append(childUsedColIdxs, colIdx)
-		}
-	}
-	return childUsedColIdxs
-}
-
 // retrieveColumnIdxsUsedByChild retrieve column indices map from child physical plan schema columns
 func retrieveColumnIdxsUsedByChild(selfSchema *expression.Schema, childSchema *expression.Schema) []int {
-	equalSchema := true
-	var columnIdxsUsedByChild []int
-	// columnIdxsUsedByChild := make([]int, 0, selfSchema.Len())
+	equalSchema := (selfSchema.Len() == childSchema.Len())
+	columnIdxsUsedByChild := make([]int, 0, selfSchema.Len())
 	for selfIdx, selfCol := range selfSchema.Columns {
 		colIdxInChild := childSchema.ColumnIndex(selfCol)
 		if colIdxInChild == -1 {
-			columnIdxsUsedByChild = nil
-			break
+			return nil
 		}
 		if equalSchema && selfIdx != colIdxInChild {
 			equalSchema = false

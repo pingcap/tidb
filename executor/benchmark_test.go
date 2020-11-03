@@ -1609,12 +1609,12 @@ func BenchmarkMergeJoinExec(b *testing.B) {
 }
 
 type sortCase struct {
-	rows                 int
-	orderByIdx           []int
-	ndvs                 []int
-	ctx                  sessionctx.Context
-	childUsedSchema      []bool
-	withInlineProjection bool
+	rows                  int
+	orderByIdx            []int
+	ndvs                  []int
+	ctx                   sessionctx.Context
+	columnIdxsUsedByChild []int
+	withInlineProjection  bool
 }
 
 func (tc sortCase) columns() []*expression.Column {
@@ -1622,10 +1622,6 @@ func (tc sortCase) columns() []*expression.Column {
 		{Index: 0, RetType: types.NewFieldType(mysql.TypeLonglong)},
 		{Index: 1, RetType: types.NewFieldType(mysql.TypeLonglong)},
 		{Index: 2, RetType: types.NewFieldType(mysql.TypeLonglong)},
-		{Index: 3, RetType: types.NewFieldType(mysql.TypeLonglong)},
-		{Index: 4, RetType: types.NewFieldType(mysql.TypeLonglong)},
-		{Index: 5, RetType: types.NewFieldType(mysql.TypeLonglong)},
-		{Index: 6, RetType: types.NewFieldType(mysql.TypeLonglong)},
 	}
 }
 
@@ -1640,19 +1636,11 @@ func defaultSortTestCase() *sortCase {
 	ctx.GetSessionVars().MaxChunkSize = variable.DefMaxChunkSize
 	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(-1, -1)
 	tc := &sortCase{
-		rows:       100000,
-		orderByIdx: []int{0, 1},
-		ndvs:       []int{0, 0},
-		ctx:        ctx,
-		childUsedSchema: []bool{
-			false,
-			false,
-			false,
-			false,
-			false,
-			false,
-			true,
-		},
+		rows:                  100000,
+		orderByIdx:            []int{0, 1, 2},
+		ndvs:                  []int{0, 0, 0},
+		ctx:                   ctx,
+		columnIdxsUsedByChild: []int{0},
 	}
 	return tc
 }
@@ -1668,7 +1656,10 @@ func benchmarkSortExec(b *testing.B, cas *sortCase) {
 	sort := &SortExec{
 		baseExecutor: newBaseExecutor(cas.ctx, dataSource.schema, 4, dataSource),
 		ByItems:      make([]*util.ByItems, 0, len(cas.orderByIdx)),
-		schema:       dataSource.schema,
+	}
+	sort.schema = expression.NewSchema()
+	for _, childColIdx := range cas.columnIdxsUsedByChild {
+		sort.schema.Append(dataSource.schema.Columns[childColIdx])
 	}
 	for _, idx := range cas.orderByIdx {
 		sort.ByItems = append(sort.ByItems, &util.ByItems{Expr: cas.columns()[idx]})
@@ -1678,20 +1669,22 @@ func benchmarkSortExec(b *testing.B, cas *sortCase) {
 	// On the sort operation will append a projection operation
 	var exec Executor
 	if cas.withInlineProjection {
-		sort.columnIdxsUsedByChild = extractChildUsedColIdxs(cas.childUsedSchema)
+		sort.columnIdxsUsedByChild = cas.columnIdxsUsedByChild
 		exec = sort
 	} else {
-		columns := cas.columns()
-		usedCols := make([]*expression.Column, 0, len(columns))
-		exprs := make([]expression.Expression, 0, len(columns))
-		for i, used := range cas.childUsedSchema {
-			if used {
-				usedCols = append(usedCols, columns[i])
-				exprs = append(exprs, columns[i])
+		projSchema := sort.Schema().Clone()
+		exprs := make([]expression.Expression, 0, projSchema.Len())
+		for _, col := range projSchema.Columns {
+			exprs = append(exprs, col.Clone())
+		}
+		for _, byItem := range sort.ByItems {
+			if !sort.schema.Contains(byItem.Expr.(*expression.Column)) {
+				sort.schema.Append(byItem.Expr.(*expression.Column))
 			}
 		}
+		sort.columnIdxsUsedByChild = nil
 		projection := &ProjectionExec{
-			baseExecutor:  newBaseExecutor(cas.ctx, expression.NewSchema(usedCols...), 4, sort),
+			baseExecutor:  newBaseExecutor(cas.ctx, projSchema, 3, sort),
 			numWorkers:    1,
 			evaluatorSuit: expression.NewEvaluatorSuite(exprs, false),
 		}
@@ -1727,29 +1720,24 @@ func benchmarkSortExec(b *testing.B, cas *sortCase) {
 func BenchmarkSortExec(b *testing.B) {
 	b.ReportAllocs()
 	cas := defaultSortTestCase()
-	// all random data
-	cas.ndvs = []int{0, 0}
-	cas.orderByIdx = []int{0, 1}
-	b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
-		benchmarkSortExec(b, cas)
-	})
-	ndvs := []int{1, 10000}
+	ndvs := []int{0, 1, 10000}
 	withInlineProjection := []bool{false, true}
 	for _, with := range withInlineProjection {
 		cas.withInlineProjection = with
 		for _, ndv := range ndvs {
-			cas.ndvs = []int{ndv, 0}
-			cas.orderByIdx = []int{0, 1}
+			cas.ndvs = cas.ndvs[len(cas.ndvs):]
+			for i := 0; i < len(cas.columns()); i++ {
+				cas.ndvs = append(cas.ndvs, ndv)
+			}
+			cas.orderByIdx = []int{0, 1, 2}
 			b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
 				benchmarkSortExec(b, cas)
 			})
-			cas.ndvs = []int{ndv, 0}
-			cas.orderByIdx = []int{0}
+			cas.orderByIdx = []int{1, 2}
 			b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
 				benchmarkSortExec(b, cas)
 			})
-			cas.ndvs = []int{ndv, 0}
-			cas.orderByIdx = []int{1}
+			cas.orderByIdx = []int{2}
 			b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
 				benchmarkSortExec(b, cas)
 			})

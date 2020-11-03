@@ -165,10 +165,10 @@ func pruneByItems(old []*util.ByItems) (new []*util.ByItems, parentUsedCols []*e
 // If any expression can view as a constant in execution stage, such as correlated column, constant,
 // we do prune them. Note that we can't prune the expressions contain non-deterministic functions, such as rand().
 func (ls *LogicalSort) PruneColumns(parentUsedCols []*expression.Column) error {
+	ls.inlineProjection(parentUsedCols)
 	var cols []*expression.Column
 	ls.ByItems, cols = pruneByItems(ls.ByItems)
 	parentUsedCols = append(parentUsedCols, cols...)
-	ls.inlineProjection(parentUsedCols)
 	return ls.children[0].PruneColumns(parentUsedCols)
 }
 
@@ -176,10 +176,10 @@ func (ls *LogicalSort) PruneColumns(parentUsedCols []*expression.Column) error {
 // If any expression can view as a constant in execution stage, such as correlated column, constant,
 // we do prune them. Note that we can't prune the expressions contain non-deterministic functions, such as rand().
 func (lt *LogicalTopN) PruneColumns(parentUsedCols []*expression.Column) error {
+	lt.inlineProjection(parentUsedCols)
 	var cols []*expression.Column
 	lt.ByItems, cols = pruneByItems(lt.ByItems)
 	parentUsedCols = append(parentUsedCols, cols...)
-	lt.inlineProjection(parentUsedCols)
 	return lt.children[0].PruneColumns(parentUsedCols)
 }
 

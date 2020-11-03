@@ -17,7 +17,6 @@ import (
 	"container/heap"
 	"context"
 	"errors"
-	"fmt"
 	"sort"
 
 	"github.com/pingcap/failpoint"
@@ -134,7 +133,6 @@ func (e *SortExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			if err != nil {
 				return err
 			}
-			fmt.Println("e.columnIdxsUsedByChild=", e.columnIdxsUsedByChild)
 			req.AppendRowByColIdxs(row, e.columnIdxsUsedByChild)
 			e.Idx++
 		}
@@ -191,7 +189,6 @@ func (e *SortExec) externalSorting(req *chunk.Chunk) (err error) {
 
 	for !req.IsFull() && e.multiWayMerge.Len() > 0 {
 		partitionPtr := e.multiWayMerge.elements[0]
-		fmt.Println("e.columnIdxsUsedByChild=", e.columnIdxsUsedByChild)
 		req.AppendRowByColIdxs(partitionPtr.row, e.columnIdxsUsedByChild)
 		partitionPtr.consumed++
 		if partitionPtr.consumed >= e.partitionList[partitionPtr.partitionID].NumRow() {
