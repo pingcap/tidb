@@ -44,14 +44,16 @@ func (actionPrewrite) tiKVTxnRegionsNumHistogram() prometheus.Observer {
 }
 
 func (c *twoPhaseCommitter) buildPrewriteRequest(batch batchMutations, txnSize uint64) *tikvrpc.Request {
-	m := &batch.mutations
-	mutations := make([]*pb.Mutation, m.len())
-	for i := range m.keys {
+	m := batch.mutations
+	mutations := make([]*pb.Mutation, m.Len())
+	isPessimisticLock := make([]bool, m.Len())
+	for i := 0; i < m.Len(); i++ {
 		mutations[i] = &pb.Mutation{
-			Op:    m.ops[i],
-			Key:   m.keys[i],
-			Value: m.values[i],
+			Op:    m.GetOp(i),
+			Key:   m.GetKey(i),
+			Value: m.GetValue(i),
 		}
+		isPessimisticLock[i] = m.IsPessimisticLock(i)
 	}
 	var minCommitTS uint64
 	if c.forUpdateTS > 0 {
@@ -72,10 +74,11 @@ func (c *twoPhaseCommitter) buildPrewriteRequest(batch batchMutations, txnSize u
 		PrimaryLock:       c.primary(),
 		StartVersion:      c.startTS,
 		LockTtl:           c.lockTTL,
-		IsPessimisticLock: m.isPessimisticLock,
+		IsPessimisticLock: isPessimisticLock,
 		ForUpdateTs:       c.forUpdateTS,
 		TxnSize:           txnSize,
 		MinCommitTs:       minCommitTS,
+		MaxCommitTs:       c.maxCommitTS,
 	}
 
 	if c.isAsyncCommit() {
@@ -100,7 +103,15 @@ func (action actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoff
 
 	req := c.buildPrewriteRequest(batch, txnSize)
 	for {
-		resp, err := c.store.SendReq(bo, req, batch.region, readTimeoutShort)
+		sender := NewRegionRequestSender(c.store.regionCache, c.store.client)
+		resp, err := sender.SendReq(bo, req, batch.region, readTimeoutShort)
+
+		// If we fail to receive response for async commit prewrite, it will be undetermined whether this
+		// transaction has been successfully committed.
+		if c.isAsyncCommit() && sender.rpcError != nil {
+			c.setUndeterminedErr(errors.Trace(sender.rpcError))
+		}
+
 		if err != nil {
 			return errors.Trace(err)
 		}

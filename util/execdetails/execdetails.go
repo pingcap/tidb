@@ -49,10 +49,9 @@ type ExecDetails struct {
 	BackoffSleep     map[string]time.Duration
 	BackoffTimes     map[string]int
 	RequestCount     int
-	TotalKeys        int64
-	ProcessedKeys    int64
 	CommitDetail     *CommitDetails
 	LockKeysDetail   *LockKeysDetails
+	CopDetail        *CopDetails
 }
 
 type stmtExecDetailKeyType struct{}
@@ -168,6 +167,28 @@ func (ld *LockKeysDetails) Clone() *LockKeysDetails {
 	return lock
 }
 
+// CopDetails contains coprocessor detail information.
+type CopDetails struct {
+	TotalKeys                 int64
+	ProcessedKeys             int64
+	RocksdbDeleteSkippedCount uint64
+	RocksdbKeySkippedCount    uint64
+	RocksdbBlockCacheHitCount uint64
+	RocksdbBlockReadCount     uint64
+	RocksdbBlockReadByte      uint64
+}
+
+// Merge merges lock keys execution details into self.
+func (cd *CopDetails) Merge(copDetails *CopDetails) {
+	cd.TotalKeys += copDetails.TotalKeys
+	cd.ProcessedKeys += copDetails.ProcessedKeys
+	cd.RocksdbDeleteSkippedCount += copDetails.RocksdbDeleteSkippedCount
+	cd.RocksdbKeySkippedCount += copDetails.RocksdbKeySkippedCount
+	cd.RocksdbBlockCacheHitCount += copDetails.RocksdbBlockCacheHitCount
+	cd.RocksdbBlockReadCount += copDetails.RocksdbBlockReadCount
+	cd.RocksdbBlockReadByte += copDetails.RocksdbBlockReadByte
+}
+
 const (
 	// CopTimeStr represents the sum of cop-task time spend in TiDB distSQL.
 	CopTimeStr = "Cop_time"
@@ -209,6 +230,16 @@ const (
 	PrewriteRegionStr = "Prewrite_region"
 	// TxnRetryStr means the count of transaction retry.
 	TxnRetryStr = "Txn_retry"
+	// RocksdbDeleteSkippedCountStr means the count of rocksdb delete skipped count.
+	RocksdbDeleteSkippedCountStr = "Rocksdb_delete_skipped_count"
+	// RocksdbKeySkippedCountStr means the count of rocksdb key skipped count.
+	RocksdbKeySkippedCountStr = "Rocksdb_key_skipped_count"
+	// RocksdbBlockCacheHitCountStr means the count of rocksdb block cache hit.
+	RocksdbBlockCacheHitCountStr = "Rocksdb_block_cache_hit_count"
+	// RocksdbBlockReadCountStr means the count of rocksdb block read.
+	RocksdbBlockReadCountStr = "Rocksdb_block_read_count"
+	// RocksdbBlockReadByteStr means the bytes of rocksdb block read.
+	RocksdbBlockReadByteStr = "Rocksdb_block_read_byte"
 )
 
 // String implements the fmt.Stringer interface.
@@ -231,12 +262,6 @@ func (d ExecDetails) String() string {
 	}
 	if d.RequestCount > 0 {
 		parts = append(parts, RequestCountStr+": "+strconv.FormatInt(int64(d.RequestCount), 10))
-	}
-	if d.TotalKeys > 0 {
-		parts = append(parts, TotalKeysStr+": "+strconv.FormatInt(d.TotalKeys, 10))
-	}
-	if d.ProcessedKeys > 0 {
-		parts = append(parts, ProcessKeysStr+": "+strconv.FormatInt(d.ProcessedKeys, 10))
 	}
 	commitDetails := d.CommitDetail
 	if commitDetails != nil {
@@ -282,6 +307,30 @@ func (d ExecDetails) String() string {
 			parts = append(parts, TxnRetryStr+": "+strconv.FormatInt(int64(commitDetails.TxnRetry), 10))
 		}
 	}
+	copDetails := d.CopDetail
+	if copDetails != nil {
+		if copDetails.ProcessedKeys > 0 {
+			parts = append(parts, ProcessKeysStr+": "+strconv.FormatInt(copDetails.ProcessedKeys, 10))
+		}
+		if copDetails.TotalKeys > 0 {
+			parts = append(parts, TotalKeysStr+": "+strconv.FormatInt(copDetails.TotalKeys, 10))
+		}
+		if copDetails.RocksdbDeleteSkippedCount > 0 {
+			parts = append(parts, RocksdbDeleteSkippedCountStr+": "+strconv.FormatUint(copDetails.RocksdbDeleteSkippedCount, 10))
+		}
+		if copDetails.RocksdbKeySkippedCount > 0 {
+			parts = append(parts, RocksdbKeySkippedCountStr+": "+strconv.FormatUint(copDetails.RocksdbKeySkippedCount, 10))
+		}
+		if copDetails.RocksdbBlockCacheHitCount > 0 {
+			parts = append(parts, RocksdbBlockCacheHitCountStr+": "+strconv.FormatUint(copDetails.RocksdbBlockCacheHitCount, 10))
+		}
+		if copDetails.RocksdbBlockReadCount > 0 {
+			parts = append(parts, RocksdbBlockReadCountStr+": "+strconv.FormatUint(copDetails.RocksdbBlockReadCount, 10))
+		}
+		if copDetails.RocksdbBlockReadByte > 0 {
+			parts = append(parts, RocksdbBlockReadByteStr+": "+strconv.FormatUint(copDetails.RocksdbBlockReadByte, 10))
+		}
+	}
 	return strings.Join(parts, " ")
 }
 
@@ -303,11 +352,11 @@ func (d ExecDetails) ToZapFields() (fields []zap.Field) {
 	if d.RequestCount > 0 {
 		fields = append(fields, zap.String(strings.ToLower(RequestCountStr), strconv.FormatInt(int64(d.RequestCount), 10)))
 	}
-	if d.TotalKeys > 0 {
-		fields = append(fields, zap.String(strings.ToLower(TotalKeysStr), strconv.FormatInt(d.TotalKeys, 10)))
+	if d.CopDetail != nil && d.CopDetail.TotalKeys > 0 {
+		fields = append(fields, zap.String(strings.ToLower(TotalKeysStr), strconv.FormatInt(d.CopDetail.TotalKeys, 10)))
 	}
-	if d.ProcessedKeys > 0 {
-		fields = append(fields, zap.String(strings.ToLower(ProcessKeysStr), strconv.FormatInt(d.ProcessedKeys, 10)))
+	if d.CopDetail != nil && d.CopDetail.ProcessedKeys > 0 {
+		fields = append(fields, zap.String(strings.ToLower(ProcessKeysStr), strconv.FormatInt(d.CopDetail.ProcessedKeys, 10)))
 	}
 	commitDetails := d.CommitDetail
 	if commitDetails != nil {
@@ -362,7 +411,8 @@ type CopRuntimeStats struct {
 	// have many region leaders, several coprocessor tasks can be sent to the
 	// same tikv-server instance. We have to use a list to maintain all tasks
 	// executed on each instance.
-	stats map[string][]*BasicRuntimeStats
+	stats      map[string][]*BasicRuntimeStats
+	copDetails *CopDetails
 }
 
 // RecordOneCopTask records a specific cop tasks's execution detail.
@@ -401,14 +451,23 @@ func (crs *CopRuntimeStats) String() string {
 		}
 	}
 
+	var result string
 	if totalTasks == 1 {
-		return fmt.Sprintf("time:%v, loops:%d", procTimes[0], totalIters)
+		result += fmt.Sprintf("tikv_task:{time:%v, loops:%d}", procTimes[0], totalIters)
+	} else {
+		n := len(procTimes)
+		sort.Slice(procTimes, func(i, j int) bool { return procTimes[i] < procTimes[j] })
+		result += fmt.Sprintf("tikv_task:{proc max:%v, min:%v, p80:%v, p95:%v, iters:%v, tasks:%v}",
+			procTimes[n-1], procTimes[0], procTimes[n*4/5], procTimes[n*19/20], totalIters, totalTasks)
 	}
-
-	n := len(procTimes)
-	sort.Slice(procTimes, func(i, j int) bool { return procTimes[i] < procTimes[j] })
-	return fmt.Sprintf("proc max:%v, min:%v, p80:%v, p95:%v, iters:%v, tasks:%v",
-		procTimes[n-1], procTimes[0], procTimes[n*4/5], procTimes[n*19/20], totalIters, totalTasks)
+	if crs.copDetails != nil {
+		result += fmt.Sprintf(", total_keys:%v, processed_keys:%v, rocksdb:{delete_skipped_count:%v, "+
+			"key_skipped_count:%v, block_cache_hit_count:%v, block_read_count:%v, block_read_byte:%v}",
+			crs.copDetails.TotalKeys, crs.copDetails.ProcessedKeys,
+			crs.copDetails.RocksdbDeleteSkippedCount, crs.copDetails.RocksdbKeySkippedCount, crs.copDetails.RocksdbBlockCacheHitCount,
+			crs.copDetails.RocksdbBlockReadCount, crs.copDetails.RocksdbBlockReadByte)
+	}
+	return result
 }
 
 const (
@@ -430,6 +489,12 @@ const (
 	TpJoinRuntimeStats
 	// TpSelectResultRuntimeStats is the tp for SelectResultRuntimeStats.
 	TpSelectResultRuntimeStats
+	// TpInsertRuntimeStat is the tp for InsertRuntimeStat
+	TpInsertRuntimeStat
+	// TpIndexLookUpRunTimeStats is the tp for TpIndexLookUpRunTimeStats
+	TpIndexLookUpRunTimeStats
+	// TpSlowQueryRuntimeStat is the tp for TpSlowQueryRuntimeStat
+	TpSlowQueryRuntimeStat
 )
 
 // RuntimeStats is used to express the executor runtime information.
@@ -548,6 +613,11 @@ func (e *BasicRuntimeStats) String() string {
 	return fmt.Sprintf("time:%v, loops:%d", time.Duration(e.consume), e.loop)
 }
 
+// GetTime get the int64 total time
+func (e *BasicRuntimeStats) GetTime() int64 {
+	return e.consume
+}
+
 // RuntimeStatsColl collects executors's execution info.
 type RuntimeStatsColl struct {
 	mu        sync.Mutex
@@ -634,6 +704,15 @@ func (e *RuntimeStatsColl) RecordOneCopTask(planID int, address string, summary 
 	}
 	copStats := e.GetCopStats(planID)
 	copStats.RecordOneCopTask(address, summary)
+}
+
+// RecordCopDetail records a specific cop tasks's cop detail.
+func (e *RuntimeStatsColl) RecordCopDetail(planID int, detail *CopDetails) {
+	copStats := e.GetCopStats(planID)
+	if copStats.copDetails == nil {
+		copStats.copDetails = &CopDetails{}
+	}
+	copStats.copDetails.Merge(detail)
 }
 
 // ExistsRootStats checks if the planID exists in the rootStats collection.

@@ -148,29 +148,7 @@ type innerWorker struct {
 
 // Open implements the Executor interface.
 func (e *IndexLookUpJoin) Open(ctx context.Context) error {
-	// Be careful, very dirty hack in this line!!!
-	// IndexLookUpJoin need to rebuild executor (the dataReaderBuilder) during
-	// executing. However `executor.Next()` is lazy evaluation when the RecordSet
-	// result is drained.
-	// Lazy evaluation means the saved session context may change during executor's
-	// building and its running.
-	// A specific sequence for example:
-	//
-	// e := buildExecutor()   // txn at build time
-	// recordSet := runStmt(e)
-	// session.CommitTxn()    // txn closed
-	// recordSet.Next()
-	// e.dataReaderBuilder.Build() // txn is used again, which is already closed
-	//
-	// The trick here is `getSnapshotTS` will cache snapshot ts in the dataReaderBuilder,
-	// so even txn is destroyed later, the dataReaderBuilder could still use the
-	// cached snapshot ts to construct DAG.
-	_, err := e.innerCtx.readerBuilder.getSnapshotTS()
-	if err != nil {
-		return err
-	}
-
-	err = e.children[0].Open(ctx)
+	err := e.children[0].Open(ctx)
 	if err != nil {
 		return err
 	}
@@ -492,8 +470,9 @@ func (iw *innerWorker) run(ctx context.Context, wg *sync.WaitGroup) {
 }
 
 type indexJoinLookUpContent struct {
-	keys []types.Datum
-	row  chunk.Row
+	keys    []types.Datum
+	row     chunk.Row
+	keyCols []int
 }
 
 func (iw *innerWorker) handleTask(ctx context.Context, task *lookUpJoinTask) error {
@@ -558,7 +537,7 @@ func (iw *innerWorker) constructLookupContent(task *lookUpJoinTask) ([]*indexJoi
 				// dLookUpKey is sorted and deduplicated at sortAndDedupLookUpContents.
 				// So we don't need to do it here.
 			}
-			lookUpContents = append(lookUpContents, &indexJoinLookUpContent{keys: dLookUpKey, row: chk.GetRow(rowIdx)})
+			lookUpContents = append(lookUpContents, &indexJoinLookUpContent{keys: dLookUpKey, row: chk.GetRow(rowIdx), keyCols: iw.keyCols})
 		}
 	}
 
@@ -653,7 +632,7 @@ func (iw *innerWorker) fetchInnerResults(ctx context.Context, task *lookUpJoinTa
 			atomic.AddInt64(&iw.stats.fetch, int64(time.Since(start)))
 		}()
 	}
-	innerExec, err := iw.readerBuilder.buildExecutorForIndexJoin(ctx, lookUpContent, iw.indexRanges, iw.keyOff2IdxOff, iw.nextColCompareFilters)
+	innerExec, err := iw.readerBuilder.buildExecutorForIndexJoin(ctx, lookUpContent, iw.indexRanges, iw.keyOff2IdxOff, iw.nextColCompareFilters, true)
 	if err != nil {
 		return err
 	}

@@ -834,6 +834,7 @@ const (
 	ErrDependentByGeneratedColumn                                   = 3108
 	ErrGeneratedColumnRefAutoInc                                    = 3109
 	ErrWarnConflictingHint                                          = 3126
+	ErrUnresolvedHintName                                           = 3128
 	ErrInvalidJSONText                                              = 3140
 	ErrInvalidJSONPath                                              = 3143
 	ErrInvalidTypeForJSON                                           = 3146
@@ -871,6 +872,7 @@ const (
 	ErrWindowNoGroupOrderUnused                                     = 3597
 	ErrWindowExplainJSON                                            = 3598
 	ErrWindowFunctionIgnoresFrame                                   = 3599
+	ErrNotHintUpdatable                                             = 3637
 	ErrDataTruncatedFunctionalIndex                                 = 3751
 	ErrDataOutOfRangeFunctionalIndex                                = 3752
 	ErrFunctionalIndexOnJSONOrGeometryFunction                      = 3753
@@ -883,6 +885,7 @@ const (
 	ErrSpatialFunctionalIndex                                       = 3760
 	ErrWrongKeyColumnFunctionalIndex                                = 3761
 	ErrFunctionalIndexOnField                                       = 3762
+	ErrGeneratedColumnRowValueIsNotAllowed                          = 3764
 	ErrFKIncompatibleColumns                                        = 3780
 	ErrFunctionalIndexRowValueIsNotAllowed                          = 3800
 	ErrDependentByFunctionalIndex                                   = 3837
@@ -1019,6 +1022,7 @@ const (
 	ErrTableOptionUnionUnsupported        = 8232
 	ErrTableOptionInsertMethodUnsupported = 8233
 	ErrInvalidPlacementSpec               = 8234
+	ErrDDLReorgElementNotExist            = 8235
 
 	// TiKV/PD errors.
 	ErrPDServerTimeout           = 9001

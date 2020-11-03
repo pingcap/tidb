@@ -849,7 +849,6 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrUserAlreadyExists:                                     mysql.Message("User %s already exists.", nil),
 	ErrInvalidJSONPathArrayCell:                              mysql.Message("A path expression is not a path to a cell in an array.", nil),
 	ErrInvalidEncryptionOption:                               mysql.Message("Invalid encryption option.", nil),
-	ErrTooLongValueInType:                                    mysql.Message("Too long enumeration/set value for column %s.", nil),
 	ErrPKIndexCantBeInvisible:                                mysql.Message("A primary key index cannot be invisible", nil),
 	ErrWindowNoSuchWindow:                                    mysql.Message("Window name '%s' is not defined.", nil),
 	ErrWindowCircularityInWindowGraph:                        mysql.Message("There is a circularity in the window dependency graph.", nil),

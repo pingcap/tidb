@@ -17,14 +17,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"go.etcd.io/etcd/clientv3"
 )
 
@@ -44,14 +43,8 @@ const (
 )
 
 func getTelemetryGlobalVariable(ctx sessionctx.Context) (bool, error) {
-	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(`SELECT @@global.tidb_enable_telemetry`)
-	if err != nil {
-		return false, errors.Trace(err)
-	}
-	if len(rows) != 1 || rows[0].Len() == 0 {
-		return false, fmt.Errorf("unexpected telemetry global variable")
-	}
-	return rows[0].GetString(0) == "1", nil
+	val, err := ctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBEnableTelemetry)
+	return variable.TiDBOptOn(val), err
 }
 
 func isTelemetryEnabled(ctx sessionctx.Context) (bool, error) {

@@ -28,12 +28,13 @@ import (
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/hack"
 )
 
 // error definitions.
 var (
-	ErrNoDB = terror.ClassOptimizer.New(mysql.ErrNoDB, mysql.MySQLErrName[mysql.ErrNoDB])
+	ErrNoDB = dbterror.ClassOptimizer.NewStd(mysql.ErrNoDB)
 )
 
 // ScalarFunction is the function that returns a value.
@@ -136,7 +137,7 @@ func (sf *ScalarFunction) String() string {
 
 // MarshalJSON implements json.Marshaler interface.
 func (sf *ScalarFunction) MarshalJSON() ([]byte, error) {
-	return []byte(fmt.Sprintf("\"%s\"", sf)), nil
+	return []byte(fmt.Sprintf("%q", sf)), nil
 }
 
 // typeInferForNull infers the NULL constants field type and set the field type
