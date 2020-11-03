@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
@@ -2962,4 +2963,16 @@ func (s *testSuite4) TestWriteListColumnsPartitionTable(c *C) {
 	tk.MustQuery("select * from t order by id").Check(testkit.Rows("<nil> <nil>", "1 a", "2 b", "4 d", "7 f"))
 	tk.MustExec("delete from t partition (p3,p2)")
 	tk.MustQuery("select * from t order by id").Check(testkit.Rows("1 a", "2 b"))
+}
+
+func (s *testSuite7) TestIssue20724(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1(a varchar(10) collate utf8mb4_general_ci)")
+	tk.MustExec("insert into t1 values ('a')")
+	tk.MustExec("update t1 set a = 'A'")
+	tk.MustQuery("select * from t1").Check(testkit.Rows("A"))
 }

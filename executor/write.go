@@ -92,7 +92,11 @@ func updateRecord(ctx context.Context, sctx sessionctx.Context, h kv.Handle, old
 
 	// 3. Compare datum, then handle some flags.
 	for i, col := range t.Cols() {
+		collation := newData[i].Collation()
+		// We should use binary collation to compare datum, otherwise the result will be incorrect.
+		newData[i].SetString(newData[i].GetString(), "utf8mb4_bin")
 		cmp, err := newData[i].CompareDatum(sc, &oldData[i])
+		newData[i].SetString(newData[i].GetString(), collation)
 		if err != nil {
 			return false, err
 		}
