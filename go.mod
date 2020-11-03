@@ -1,7 +1,6 @@
 module github.com/pingcap/tidb
 
 require (
-	cloud.google.com/go v0.51.0 // indirect
 	github.com/BurntSushi/toml v0.3.1
 	github.com/HdrHistogram/hdrhistogram-go v0.9.0 // indirect
 	github.com/Jeffail/gabs/v2 v2.5.1
@@ -37,7 +36,7 @@ require (
 	github.com/montanaflynn/stats v0.5.0 // indirect
 	github.com/ngaut/pools v0.0.0-20180318154953-b7bc8c42aac7
 	github.com/ngaut/sync2 v0.0.0-20141008032647-7a24ed77b2ef
-	github.com/ngaut/unistore v0.0.0-20200929093420-76a7b18be28e
+	github.com/ngaut/unistore v0.0.0-20201026053041-4333e8d852f1
 	github.com/onsi/ginkgo v1.9.0 // indirect
 	github.com/onsi/gomega v1.6.0 // indirect
 	github.com/opentracing/basictracer-go v1.0.0
@@ -51,12 +50,12 @@ require (
 	github.com/pingcap/failpoint v0.0.0-20200702092429-9f69995143ce
 	github.com/pingcap/fn v0.0.0-20200306044125-d5540d389059
 	github.com/pingcap/goleveldb v0.0.0-20191226122134-f82aafb29989
-	github.com/pingcap/kvproto v0.0.0-20200927054727-1290113160f0
+	github.com/pingcap/kvproto v0.0.0-20201023092649-e6d6090277c9
 	github.com/pingcap/log v0.0.0-20200828042413-fce0951f1463
-	github.com/pingcap/parser v0.0.0-20201021061956-783a03250c77
-	github.com/pingcap/sysutil v0.0.0-20200715082929-4c47bcac246a
+	github.com/pingcap/parser v0.0.0-20201028030005-1328d877c9f3
+	github.com/pingcap/sysutil v0.0.0-20201021075216-f93ced2829e2
 	github.com/pingcap/tidb-tools v4.0.5-0.20200820092506-34ea90c93237+incompatible
-	github.com/pingcap/tipb v0.0.0-20200618092958-4fad48b4c8c3
+	github.com/pingcap/tipb v0.0.0-20201026044621-45e60c77588f
 	github.com/prometheus/client_golang v1.5.1
 	github.com/prometheus/client_model v0.2.0
 	github.com/prometheus/common v0.9.1
