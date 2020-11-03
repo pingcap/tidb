@@ -600,11 +600,24 @@ func compareRow(sc *stmtctx.StatementContext, left, right []types.Datum) int {
 }
 
 func (iw *innerWorker) fetchInnerResults(ctx context.Context, task *lookUpJoinTask, lookUpContent []*indexJoinLookUpContent) error {
+<<<<<<< HEAD
 	innerExec, err := iw.readerBuilder.buildExecutorForIndexJoin(ctx, lookUpContent, iw.indexRanges, iw.keyOff2IdxOff, iw.nextColCompareFilters)
+=======
+	if iw.stats != nil {
+		start := time.Now()
+		defer func() {
+			atomic.AddInt64(&iw.stats.fetch, int64(time.Since(start)))
+		}()
+	}
+	innerExec, err := iw.readerBuilder.buildExecutorForIndexJoin(ctx, lookUpContent, iw.indexRanges, iw.keyOff2IdxOff, iw.nextColCompareFilters, true)
+	if innerExec != nil {
+		defer terror.Call(innerExec.Close)
+	}
+>>>>>>> 6444a0550... executor: avoid goroutine leak in index Lookup join (#19251)
 	if err != nil {
 		return err
 	}
-	defer terror.Call(innerExec.Close)
+
 	innerResult := chunk.NewList(retTypes(innerExec), iw.ctx.GetSessionVars().MaxChunkSize, iw.ctx.GetSessionVars().MaxChunkSize)
 	innerResult.GetMemTracker().SetLabel(innerResultLabel)
 	innerResult.GetMemTracker().AttachTo(task.memTracker)
