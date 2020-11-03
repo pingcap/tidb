@@ -213,8 +213,8 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 
 	result.Fetch(ctx)
 	worker := &partialIndexWorker{
-		idxMerge:     e,
-		workID:       workID,
+		stats:        e.stats,
+		idxID:        e.getIndexID(workID),
 		sc:           e.ctx,
 		batchSize:    e.maxChunkSize,
 		maxBatchSize: e.ctx.GetSessionVars().IndexLookupSize,
@@ -255,7 +255,7 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 
 func (e *IndexMergeReaderExecutor) buildPartialTableReader(ctx context.Context, workID int) Executor {
 	tableReaderExec := &TableReaderExecutor{
-		baseExecutor: newBaseExecutor(e.ctx, e.schema, e.getIndexID(workID)),
+		baseExecutor: newBaseExecutor(e.ctx, e.schema, e.getTableID()),
 		table:        e.table,
 		dagPB:        e.dagPBs[workID],
 		startTS:      e.startTS,
@@ -277,7 +277,7 @@ func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, 
 	}
 	tableInfo := e.partialPlans[workID][0].(*plannercore.PhysicalTableScan).Table
 	worker := &partialTableWorker{
-		idxMerge:     e,
+		stats:        e.stats,
 		sc:           e.ctx,
 		batchSize:    e.maxChunkSize,
 		maxBatchSize: e.ctx.GetSessionVars().IndexLookupSize,
@@ -341,7 +341,7 @@ func (e *IndexMergeReaderExecutor) getTableID() int {
 }
 
 type partialTableWorker struct {
-	idxMerge     *IndexMergeReaderExecutor
+	stats        *IndexLookUpRunTimeStats
 	sc           sessionctx.Context
 	batchSize    int
 	maxBatchSize int
@@ -369,8 +369,8 @@ func (w *partialTableWorker) fetchHandles(ctx context.Context, exitCh <-chan str
 		}
 		count += int64(len(handles))
 		task := w.buildTableTask(handles, retChunk)
-		if w.idxMerge.stats != nil {
-			atomic.AddInt64(&w.idxMerge.stats.IndexScan, int64(time.Since(start)))
+		if w.stats != nil {
+			atomic.AddInt64(&w.stats.TableRowScan, int64(time.Since(start)))
 		}
 		select {
 		case <-ctx.Done():
@@ -426,13 +426,10 @@ func (w *partialTableWorker) buildTableTask(handles []kv.Handle, retChk *chunk.C
 
 func (e *IndexMergeReaderExecutor) startIndexMergeTableScanWorker(ctx context.Context, workCh <-chan *lookupTableTask) {
 	lookupConcurrencyLimit := e.ctx.GetSessionVars().IndexLookupConcurrency()
-	if e.stats != nil {
-		e.stats.Concurrency = lookupConcurrencyLimit
-	}
 	e.tblWorkerWg.Add(lookupConcurrencyLimit)
 	for i := 0; i < lookupConcurrencyLimit; i++ {
 		worker := &indexMergeTableScanWorker{
-			idxMerge:       e,
+			stats:          e.stats,
 			workCh:         workCh,
 			finished:       e.finished,
 			buildTblReader: e.buildFinalTableReader,
@@ -610,9 +607,9 @@ func (w *indexMergeProcessWorker) handleLoopFetcherPanic(ctx context.Context, re
 }
 
 type partialIndexWorker struct {
-	idxMerge     *IndexMergeReaderExecutor
+	stats        *IndexLookUpRunTimeStats
 	sc           sessionctx.Context
-	workID       int
+	idxID        int
 	batchSize    int
 	maxBatchSize int
 	maxChunkSize int
@@ -627,12 +624,11 @@ func (w *partialIndexWorker) fetchHandles(
 	finished <-chan struct{},
 	handleCols plannercore.HandleCols) (count int64, err error) {
 	chk := chunk.NewChunkWithCapacity(handleCols.GetFieldsTypes(), w.maxChunkSize)
-	idxID := w.idxMerge.getIndexID(w.workID)
 	var basicStats *execdetails.BasicRuntimeStats
 	if w.sc.GetSessionVars().StmtCtx.RuntimeStatsColl != nil {
-		if idxID != 0 {
+		if w.idxID != 0 {
 			basicStats = &execdetails.BasicRuntimeStats{}
-			w.sc.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(idxID, basicStats)
+			w.sc.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(w.idxID, basicStats)
 		}
 	}
 	for {
@@ -651,8 +647,8 @@ func (w *partialIndexWorker) fetchHandles(
 		}
 		count += int64(len(handles))
 		task := w.buildTableTask(handles, retChunk)
-		if w.idxMerge.stats != nil {
-			atomic.AddInt64(&w.idxMerge.stats.IndexScan, int64(time.Since(start)))
+		if w.stats != nil {
+			atomic.AddInt64(&w.stats.IndexScan, int64(time.Since(start)))
 		}
 		select {
 		case <-ctx.Done():
@@ -707,7 +703,7 @@ func (w *partialIndexWorker) buildTableTask(handles []kv.Handle, retChk *chunk.C
 }
 
 type indexMergeTableScanWorker struct {
-	idxMerge       *IndexMergeReaderExecutor
+	stats          *IndexLookUpRunTimeStats
 	workCh         <-chan *lookupTableTask
 	finished       <-chan struct{}
 	buildTblReader func(ctx context.Context, handles []kv.Handle) (Executor, error)
@@ -729,8 +725,8 @@ func (w *indexMergeTableScanWorker) pickAndExecTask(ctx context.Context) (task *
 			return
 		}
 		err := w.executeTask(ctx, task)
-		if w.idxMerge.stats != nil {
-			atomic.AddInt64(&w.idxMerge.stats.TableTaskNum, 1)
+		if w.stats != nil {
+			atomic.AddInt64(&w.stats.TableTaskNum, 1)
 		}
 		task.doneCh <- err
 	}
