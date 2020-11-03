@@ -419,7 +419,13 @@ func (ds *DataSource) generateIndexMergeOrPaths() {
 		}
 		if len(partialPaths) > 1 {
 			possiblePath := ds.buildIndexMergeOrPath(partialPaths, i)
-			sel, _, err := ds.tableStats.HistColl.Selectivity(ds.ctx, []expression.Expression{sf}, nil)
+
+			accessConds := make([]expression.Expression, 0, len(partialPaths))
+			for _, p := range partialPaths {
+				accessConds = append(accessConds, p.AccessConds...)
+			}
+			accessDNF := expression.ComposeDNFCondition(ds.ctx, accessConds...)
+			sel, _, err := ds.tableStats.HistColl.Selectivity(ds.ctx, []expression.Expression{accessDNF}, nil)
 			if err != nil {
 				logutil.BgLogger().Debug("something wrong happened, use the default selectivity", zap.Error(err))
 				sel = SelectionFactor
