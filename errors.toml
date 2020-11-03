@@ -1446,6 +1446,11 @@ error = '''
 Invalid size for column '%s'.
 '''
 
+["types:3505"]
+error = '''
+Too long enumeration/set value for column %s.
+'''
+
 ["types:8029"]
 error = '''
 Bad Number
