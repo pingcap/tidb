@@ -136,29 +136,23 @@ func (s *testStatsSuite) TestStatsCacheMemTracker(c *C) {
 	statsTbl := do.StatsHandle().GetTableStats(tableInfo)
 	c.Assert(statsTbl.Pseudo, IsTrue)
 	testKit.MustExec("analyze table t")
-
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
 	c.Assert(statsTbl.MemoryUsage() > 0, IsTrue)
 	c.Assert(do.StatsHandle().GetAllTableStatsMemUsage4Test(), Equals, do.StatsHandle().GetMemConsumed())
-
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
-
 	c.Assert(statsTbl.Pseudo, IsFalse)
 	testKit.MustExec("create index idx_t on t(c1)")
 	time.Sleep(10 * time.Millisecond)
 	do.InfoSchema()
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
-
 	// If index is build, but stats is not updated. statsTbl can also work.
 	c.Assert(statsTbl.Pseudo, IsFalse)
 	// But the added index will not work.
 	c.Assert(statsTbl.Indices[int64(1)], IsNil)
-
 	testKit.MustExec("analyze table t")
 	time.Sleep(10 * time.Millisecond)
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
 	c.Assert(statsTbl.Pseudo, IsFalse)
-
 	// If the new schema drop a column, the table stats can still work.
 	testKit.MustExec("alter table t drop column c2")
 	is = do.InfoSchema()
@@ -309,7 +303,6 @@ func (s *testStatsSuite) TestColumnIDs(c *C) {
 	testKit.MustExec("insert into t values(1, 2)")
 	testKit.MustExec("analyze table t")
 	time.Sleep(10 * time.Millisecond)
-
 	do := s.do
 	is := do.InfoSchema()
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
@@ -323,13 +316,11 @@ func (s *testStatsSuite) TestColumnIDs(c *C) {
 	// Drop a column and the offset changed,
 	testKit.MustExec("alter table t drop column c1")
 	is = do.InfoSchema()
-
 	clearRW.RUnlock()
 	cleanHandle(c, do)
 	clearRW.RLock()
 	do.StatsHandle().Update(is)
 	time.Sleep(10 * time.Millisecond)
-
 	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	tableInfo = tbl.Meta()
