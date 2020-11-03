@@ -1150,7 +1150,7 @@ func (s *testSuiteAgg) TestIssue20658(c *C) {
 	tk.MustExec("use test;")
 
 	sqlFormat := "select /*+ stream_agg() */ %s from t group by b;"
-	aggFuns := []string{"count(a)", "sum(a)", "max(a)", "avg(a)"}
+	aggFuns := []string{"count(a)", "sum(a)", "avg(a)", "max(a)", "min(a)", "bit_or(a)", "bit_xor(a)", "bit_and(a)"}
 	concurrencies := []int{1, 2, 4, 8}
 	rows := []int{10000, 1000000}
 
@@ -1167,7 +1167,6 @@ func (s *testSuiteAgg) TestIssue20658(c *C) {
 			var correct *testkit.Result
 			for _, con := range concurrencies {
 				tk.MustExec(fmt.Sprintf("set @@tidb_stream_agg_concurrency=%d;", con))
-				// result := tk.MustQuery(sql).Sort()
 				if con == 1 {
 					correct = tk.MustQuery(sql).Sort()
 				} else {
