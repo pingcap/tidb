@@ -572,17 +572,10 @@ func (e *tableScanProcessor) Process(key, value []byte) error {
 	if e.rowCount == e.limit {
 		return dbreader.ScanBreak
 	}
-	gotRow := false
-	defer func(begin time.Time) {
-		e.scanCtx.execDetail.update(begin, gotRow)
-	}(time.Now())
 	e.rowCount++
-	err := e.tableScanProcessCore(key, value, false)
+	err := e.tableScanProcessCore(key, value)
 	if e.scanCtx.chk.NumRows() == chunkMaxRows {
 		err = e.chunkToOldChunk(e.scanCtx.chk)
-	}
-	if err == nil {
-		gotRow = true
 	}
 	return err
 }
@@ -593,9 +586,9 @@ func (e *tableScanProcessor) Finish() error {
 
 func (e *closureExecutor) processCore(key, value []byte) error {
 	if e.idxScanCtx != nil {
-		return e.indexScanProcessCore(key, value, true)
+		return e.indexScanProcessCore(key, value)
 	}
-	return e.tableScanProcessCore(key, value, true)
+	return e.tableScanProcessCore(key, value)
 }
 
 func (e *closureExecutor) hasSelection() bool {
@@ -659,13 +652,11 @@ func (e *closureExecutor) copyError(err error) error {
 	return ret
 }
 
-func (e *closureExecutor) tableScanProcessCore(key, value []byte, needCollectDetail bool) error {
+func (e *closureExecutor) tableScanProcessCore(key, value []byte) error {
 	incRow := false
-	if needCollectDetail {
-		defer func(begin time.Time) {
-			e.scanCtx.execDetail.update(begin, incRow)
-		}(time.Now())
-	}
+	defer func(begin time.Time) {
+		e.scanCtx.execDetail.update(begin, incRow)
+	}(time.Now())
 	handle, err := tablecodec.DecodeRowKey(key)
 	if err != nil {
 		return errors.Trace(err)
@@ -691,17 +682,10 @@ func (e *indexScanProcessor) Process(key, value []byte) error {
 	if e.rowCount == e.limit {
 		return dbreader.ScanBreak
 	}
-	gotRow := false
-	defer func(begin time.Time) {
-		e.idxScanCtx.execDetail.update(begin, gotRow)
-	}(time.Now())
 	e.rowCount++
-	err := e.indexScanProcessCore(key, value, false)
+	err := e.indexScanProcessCore(key, value)
 	if e.scanCtx.chk.NumRows() == chunkMaxRows {
 		err = e.chunkToOldChunk(e.scanCtx.chk)
-	}
-	if err == nil {
-		gotRow = true
 	}
 	return err
 }
@@ -710,13 +694,11 @@ func (e *indexScanProcessor) Finish() error {
 	return e.scanFinish()
 }
 
-func (e *closureExecutor) indexScanProcessCore(key, value []byte, needCollectDetail bool) error {
+func (e *closureExecutor) indexScanProcessCore(key, value []byte) error {
 	gotRow := false
-	if needCollectDetail {
-		defer func(begin time.Time) {
-			e.idxScanCtx.execDetail.update(begin, gotRow)
-		}(time.Now())
-	}
+	defer func(begin time.Time) {
+		e.idxScanCtx.execDetail.update(begin, gotRow)
+	}(time.Now())
 	handleStatus := mapPkStatusToHandleStatus(e.idxScanCtx.pkStatus)
 	restoredCols := make([]rowcodec.ColInfo, 0, len(e.idxScanCtx.colInfos))
 	for _, c := range e.idxScanCtx.colInfos {
