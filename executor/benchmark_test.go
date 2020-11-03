@@ -1523,7 +1523,14 @@ func prepare4ShuffleMergeJoin(tc *mergeJoinTestCase, leftExec, rightExec *mockDa
 	// build workers, only benchmark inner join
 	shuffle.workers = make([]*shuffleMergeJoinWorker, shuffle.concurrency)
 	for i := range shuffle.workers {
-		w := &shuffleMergeJoinWorker{}
+		w := &shuffleMergeJoinWorker{
+			innerPartition: shufflePartition{
+				baseExecutor: newBaseExecutor(tc.ctx, leftExec.Schema(), 0),
+			},
+			outerPartition: shufflePartition{
+				baseExecutor: newBaseExecutor(tc.ctx, rightExec.Schema(), 0),
+			},
+		}
 		// only benchmark inner join
 		mergeJoinExec := &MergeJoinExec{
 			stmtCtx:      tc.ctx.GetSessionVars().StmtCtx,
