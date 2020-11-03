@@ -16,11 +16,8 @@ package core_test
 import (
 	"bytes"
 	"fmt"
-	"net/http"
 	"strings"
 	"time"
-
-	_ "net/http/pprof"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/model"
@@ -469,9 +466,6 @@ func (s *testPlanNormalize) TestDecodePlanPerformance(c *C) {
 }
 
 func (s *testPlanNormalize) TestEncodePlanPerformance(c *C) {
-	go func() {
-		http.ListenAndServe("localhost:10080", nil)
-	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists th")
@@ -488,13 +482,9 @@ func (s *testPlanNormalize) TestEncodePlanPerformance(c *C) {
 	c.Assert(info, NotNil)
 	p, ok := info.Plan.(core.PhysicalPlan)
 	c.Assert(ok, IsTrue)
-	for i := 0; i < 30; i++ {
-		start := time.Now()
-		encodedPlanStr := core.EncodePlan(p)
-		start2 := time.Now()
-		decodePlanStr, err := plancodec.DecodePlan(encodedPlanStr)
-		c.Assert(err, IsNil)
-		fmt.Printf("%v  \n\n%v--%v--\n\n", float64(len(decodePlanStr))/1024.0/1024.0, time.Since(start), time.Since(start2))
-		//c.Assert(time.Since(start).Seconds(), Less, 3.0)
-	}
+	start := time.Now()
+	encodedPlanStr := core.EncodePlan(p)
+	c.Assert(time.Since(start).Seconds(), Less, 5.0)
+	_, err := plancodec.DecodePlan(encodedPlanStr)
+	c.Assert(err, IsNil)
 }
