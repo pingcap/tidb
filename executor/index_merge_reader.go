@@ -568,8 +568,8 @@ func (w *indexMergeProcessWorker) fetchLoop(ctx context.Context, fetchCh <-chan 
 	}()
 
 	distinctHandles := kv.NewHandleMap()
-	start := time.Now()
 	for task := range fetchCh {
+		start := time.Now()
 		handles := task.handles
 		fhs := make([]kv.Handle, 0, 8)
 		for _, h := range handles {
