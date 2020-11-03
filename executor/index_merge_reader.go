@@ -794,6 +794,7 @@ func (w *indexMergeTableScanWorker) executeTask(ctx context.Context, task *looku
 	return nil
 }
 
+// IndexMergeRuntimeStat record the indexMerge runtime stat
 type IndexMergeRuntimeStat struct {
 	IndexMergeProcess int64
 	IndexScan         int64
@@ -825,6 +826,7 @@ func (e *IndexMergeRuntimeStat) String() string {
 	return buf.String()
 }
 
+// Clone implements the RuntimeStats interface.
 func (e *IndexMergeRuntimeStat) Clone() execdetails.RuntimeStats {
 	newRs := &IndexMergeRuntimeStat{
 		IndexMergeProcess: e.IndexMergeProcess,
@@ -836,6 +838,7 @@ func (e *IndexMergeRuntimeStat) Clone() execdetails.RuntimeStats {
 	return newRs
 }
 
+// Merge implements the RuntimeStats interface.
 func (e *IndexMergeRuntimeStat) Merge(other execdetails.RuntimeStats) {
 	tmp, ok := other.(*IndexMergeRuntimeStat)
 	if !ok {
@@ -848,6 +851,7 @@ func (e *IndexMergeRuntimeStat) Merge(other execdetails.RuntimeStats) {
 	e.Concurrency += tmp.Concurrency
 }
 
+// Tp implements the RuntimeStats interface.
 func (e *IndexMergeRuntimeStat) Tp() int {
-	return execdetails.TpIndexLookUpRunTimeStats
+	return execdetails.TpIndexMergeRunTimeStats
 }
