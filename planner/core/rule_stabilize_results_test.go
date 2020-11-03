@@ -18,6 +18,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pingcap/tidb/util/testutil"
 )
 
 var _ = Suite(&testRuleStabilizeRestuls{})
@@ -25,12 +26,31 @@ var _ = Suite(&testRuleStabilizeRestuls{})
 type testRuleStabilizeRestuls struct {
 	store kv.Storage
 	dom   *domain.Domain
+
+	testData testutil.TestData
 }
 
 func (s *testRuleStabilizeRestuls) SetUpTest(c *C) {
 	var err error
 	s.store, s.dom, err = newStoreWithBootstrap()
 	c.Assert(err, IsNil)
+
+	s.testData, err = testutil.LoadTestSuiteData("testdata", "plan_normalized_suite")
+	c.Assert(err, IsNil)
+}
+
+func (s *testRuleStabilizeRestuls) TestStableResultMode(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_stable_result_mode=1")
+	tk.MustExec("create table t (a int primary key, b int, c int, d int, key(b))")
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
 }
 
 func (s *testRuleStabilizeRestuls) TestEnableStableResultMode(c *C) {
