@@ -15,12 +15,15 @@ package executor
 
 import (
 	"context"
+	"fmt"
 	"net/url"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/pelletier/go-toml"
 	"github.com/pingcap/br/pkg/glue"
 	"github.com/pingcap/br/pkg/storage"
 	"github.com/pingcap/br/pkg/task"
@@ -29,6 +32,8 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb-lightning/lightning"
+	importcfg "github.com/pingcap/tidb-lightning/lightning/config"
 	filter "github.com/pingcap/tidb-tools/pkg/table-filter"
 	pd "github.com/tikv/pd/client"
 
@@ -43,6 +48,10 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
+)
+
+const (
+	defaultImportID = "default_lightning"
 )
 
 // brieTaskProgress tracks a task's current progress.
@@ -181,17 +190,48 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 		return nil
 	}
 
-	cfg := task.Config{
-		TLS: task.TLSConfig{
-			CA:   tidbCfg.Security.ClusterSSLCA,
-			Cert: tidbCfg.Security.ClusterSSLCert,
-			Key:  tidbCfg.Security.ClusterSSLKey,
-		},
-		PD:          strings.Split(tidbCfg.Path, ","),
-		Concurrency: 4,
-		Checksum:    true,
-		SendCreds:   true,
-		LogProgress: true,
+	var (
+		brCfg           task.Config
+		importGlobalCfg *importcfg.GlobalConfig
+		importCfg       *importcfg.Config
+	)
+	switch s.Kind {
+	case ast.BRIEKindBackup, ast.BRIEKindRestore:
+		brCfg = task.Config{
+			TLS: task.TLSConfig{
+				CA:   tidbCfg.Security.ClusterSSLCA,
+				Cert: tidbCfg.Security.ClusterSSLCert,
+				Key:  tidbCfg.Security.ClusterSSLKey,
+			},
+			PD:          strings.Split(tidbCfg.Path, ","),
+			Concurrency: 4,
+			Checksum:    true,
+			SendCreds:   true,
+			LogProgress: true,
+		}
+	case ast.BRIEKindImport:
+		importGlobalCfg = importcfg.NewGlobalConfig()
+		importCfg = importcfg.NewConfig()
+
+		// TODO: remove this if implement glue
+		importGlobalCfg.TiDB.Port = 4000
+
+		importGlobalCfg.App.StatusAddr = ":8289"
+		//importGlobalCfg.App.Level = tidbCfg.Log.Level
+		importGlobalCfg.Security.CAPath = tidbCfg.Security.ClusterSSLCA
+		importGlobalCfg.Security.CertPath = tidbCfg.Security.ClusterSSLCert
+		importGlobalCfg.Security.KeyPath = tidbCfg.Security.ClusterSSLKey
+		importGlobalCfg.TikvImporter.Backend = importcfg.BackendLocal
+		importGlobalCfg.TikvImporter.SortedKVDir = filepath.Join(tidbCfg.Path, defaultImportID)
+
+		importCfg.Checkpoint.Schema = defaultImportID
+		importCfg.Checkpoint.Driver = importcfg.CheckpointDriverMySQL
+		importCfg.Mydumper.CSV.Header = false // TODO(lance6716): address this behaviour to user
+		importCfg.PostRestore.Analyze = importcfg.OpLevelRequired
+		// TODO(lance6716): test sql_mode
+	default:
+		b.err = errors.Errorf("unsupported BRIE statement kind: %s", s.Kind)
+		return nil
 	}
 
 	storageURL, err := url.Parse(s.Storage)
@@ -200,51 +240,80 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 		return nil
 	}
 
-	switch storageURL.Scheme {
-	case "s3":
-		storage.ExtractQueryParameters(storageURL, &cfg.S3)
-	case "gs", "gcs":
-		storage.ExtractQueryParameters(storageURL, &cfg.GCS)
-	default:
-		break
+	switch s.Kind {
+	case ast.BRIEKindBackup, ast.BRIEKindRestore:
+		switch storageURL.Scheme {
+		case "s3":
+			storage.ExtractQueryParameters(storageURL, &brCfg.S3)
+		case "gs", "gcs":
+			storage.ExtractQueryParameters(storageURL, &brCfg.GCS)
+		default:
+			break
+		}
+		brCfg.Storage = storageURL.String()
+	case ast.BRIEKindImport:
+		importCfg.Mydumper.SourceDir = storageURL.String()
 	}
 
-	cfg.Storage = storageURL.String()
-	e.info.storage = cfg.Storage
+	e.info.storage = storageURL.String()
 
-	for _, opt := range s.Options {
-		switch opt.Tp {
-		case ast.BRIEOptionRateLimit:
-			cfg.RateLimit = opt.UintValue
-		case ast.BRIEOptionConcurrency:
-			cfg.Concurrency = uint32(opt.UintValue)
-		case ast.BRIEOptionChecksum:
-			cfg.Checksum = opt.UintValue != 0
-		case ast.BRIEOptionSendCreds:
-			cfg.SendCreds = opt.UintValue != 0
+	if s.Kind == ast.BRIEKindBackup || s.Kind == ast.BRIEKindRestore {
+		for _, opt := range s.Options {
+			switch opt.Tp {
+			case ast.BRIEOptionRateLimit:
+				brCfg.RateLimit = opt.UintValue
+			case ast.BRIEOptionConcurrency:
+				brCfg.Concurrency = uint32(opt.UintValue)
+			case ast.BRIEOptionChecksum:
+				brCfg.Checksum = opt.UintValue != 0
+			case ast.BRIEOptionSendCreds:
+				brCfg.SendCreds = opt.UintValue != 0
+			}
 		}
 	}
 
-	switch {
-	case len(s.Tables) != 0:
-		tables := make([]filter.Table, 0, len(s.Tables))
-		for _, tbl := range s.Tables {
-			tables = append(tables, filter.Table{Name: tbl.Name.O, Schema: tbl.Schema.O})
+	switch s.Kind {
+	case ast.BRIEKindBackup, ast.BRIEKindRestore:
+		switch {
+		case len(s.Tables) != 0:
+			tables := make([]filter.Table, 0, len(s.Tables))
+			for _, tbl := range s.Tables {
+				tables = append(tables, filter.Table{Name: tbl.Name.O, Schema: tbl.Schema.O})
+			}
+			brCfg.TableFilter = filter.NewTablesFilter(tables...)
+		case len(s.Schemas) != 0:
+			brCfg.TableFilter = filter.NewSchemasFilter(s.Schemas...)
+		default:
+			brCfg.TableFilter = filter.All()
 		}
-		cfg.TableFilter = filter.NewTablesFilter(tables...)
-	case len(s.Schemas) != 0:
-		cfg.TableFilter = filter.NewSchemasFilter(s.Schemas...)
-	default:
-		cfg.TableFilter = filter.All()
-	}
 
-	if tidbCfg.LowerCaseTableNames != 0 {
-		cfg.TableFilter = filter.CaseInsensitive(cfg.TableFilter)
+		if tidbCfg.LowerCaseTableNames != 0 {
+			brCfg.TableFilter = filter.CaseInsensitive(brCfg.TableFilter)
+		}
+	case ast.BRIEKindImport:
+		switch {
+		case len(s.Tables) != 0:
+			tbls := make([]string, 0, len(s.Tables))
+			for _, tbl := range s.Tables {
+				if tbl.Schema.L == "" {
+					b.err = errors.Errorf("please specify schema for %s in IMPORT", tbl.Name.O)
+					return nil
+				}
+				tbls = append(tbls, fmt.Sprintf("%s.%s", tbl.Schema, tbl.Name))
+			}
+			importCfg.Mydumper.Filter = tbls
+		case len(s.Schemas) != 0:
+			dbs := make([]string, 0, len(s.Schemas))
+			for _, db := range s.Schemas {
+				dbs = append(dbs, fmt.Sprintf("%v.*", db))
+			}
+			importCfg.Mydumper.Filter = dbs
+		}
 	}
 
 	switch s.Kind {
 	case ast.BRIEKindBackup:
-		e.backupCfg = &task.BackupConfig{Config: cfg}
+		e.backupCfg = &task.BackupConfig{Config: brCfg}
 
 		for _, opt := range s.Options {
 			switch opt.Tp {
@@ -272,7 +341,7 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 		}
 
 	case ast.BRIEKindRestore:
-		e.restoreCfg = &task.RestoreConfig{Config: cfg}
+		e.restoreCfg = &task.RestoreConfig{Config: brCfg}
 		for _, opt := range s.Options {
 			switch opt.Tp {
 			case ast.BRIEOptionOnline:
@@ -280,9 +349,49 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 			}
 		}
 
-	default:
-		b.err = errors.Errorf("unsupported BRIE statement kind: %s", s.Kind)
-		return nil
+	case ast.BRIEKindImport:
+		for _, opt := range s.Options {
+			switch opt.Tp {
+			case ast.BRIEOptionSkipSchemaFiles:
+				importCfg.Mydumper.NoSchema = opt.UintValue != 0
+			case ast.BRIEOptionStrictFormat:
+				importCfg.Mydumper.StrictFormat = opt.UintValue != 0
+			case ast.BRIEOptionCSVSeparator:
+				importCfg.Mydumper.CSV.Separator = opt.StrValue
+			case ast.BRIEOptionCSVDelimiter:
+				importCfg.Mydumper.CSV.Delimiter = opt.StrValue
+			case ast.BRIEOptionCSVHeader:
+				if opt.UintValue == ast.BRIECSVHeaderIsColumns {
+					importCfg.Mydumper.CSV.Header = true
+				} else {
+					b.err = errors.Errorf("CSV_HEADER only support FIELDS or COLUMNS")
+					return nil
+				}
+			case ast.BRIEOptionCSVNotNull:
+				importCfg.Mydumper.CSV.NotNull = opt.UintValue != 0
+			case ast.BRIEOptionCSVNull:
+				importCfg.Mydumper.CSV.Null = opt.StrValue
+			case ast.BRIEOptionCSVBackslashEscape:
+				importCfg.Mydumper.CSV.BackslashEscape = opt.UintValue != 0
+			case ast.BRIEOptionCSVTrimLastSeparators:
+				importCfg.Mydumper.CSV.TrimLastSep = opt.UintValue != 0
+			case ast.BRIEOptionChecksum:
+				if opt.UintValue == 0 {
+					importCfg.PostRestore.Checksum = importcfg.OpLevelOff
+				}
+			case ast.BRIEOptionAnalyze:
+				if opt.UintValue == 0 {
+					importCfg.PostRestore.Analyze = importcfg.OpLevelOff
+				}
+			}
+		}
+		content, err := toml.Marshal(importCfg)
+		if err != nil {
+			b.err = errors.Errorf("error build IMPORT config: %v", err)
+			return nil
+		}
+		importGlobalCfg.ConfigFileContent = content
+		e.importCfg = importGlobalCfg
 	}
 
 	return e
@@ -294,6 +403,7 @@ type BRIEExec struct {
 
 	backupCfg  *task.BackupConfig
 	restoreCfg *task.RestoreConfig
+	importCfg  *importcfg.GlobalConfig
 	info       *brieTaskInfo
 }
 
@@ -342,6 +452,10 @@ func (e *BRIEExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		err = handleBRIEError(task.RunBackup(taskCtx, glue, "Backup", e.backupCfg), ErrBRIEBackupFailed)
 	case ast.BRIEKindRestore:
 		err = handleBRIEError(task.RunRestore(taskCtx, glue, "Restore", e.restoreCfg), ErrBRIERestoreFailed)
+	case ast.BRIEKindImport:
+		// TODO(lance6716): need add a syntax like `RESUME FROM LAST`, to continue on checkpoint
+		l := lightning.New(e.importCfg)
+		err = handleBRIEError(l.RunOnce(), ErrBRIEImportFailed)
 	default:
 		err = errors.Errorf("unsupported BRIE statement kind: %s", e.info.kind)
 	}
@@ -391,7 +505,7 @@ type tidbGlueSession struct {
 	info     *brieTaskInfo
 }
 
-// BootstrapSession implements glue.Glue
+// GetDomain implements glue.Glue
 func (gs *tidbGlueSession) GetDomain(store kv.Storage) (*domain.Domain, error) {
 	return domain.GetDomain(gs.se), nil
 }
