@@ -67,10 +67,6 @@ enable-batch-dml = false
 # Set system variable 'lower_case_table_names'
 lower-case-table-names = 2
 
-# Make "kill query" behavior compatible with MySQL. It's not recommend to
-# turn on this option when TiDB server is behind a proxy.
-compatible-kill-query = false
-
 # check mb4 value in utf8 is used to control whether to check the mb4 characters when the charset is utf8.
 check-mb4-value-in-utf8 = true
 
@@ -303,7 +299,7 @@ networks = ""
 header-timeout = 5
 
 [prepared-plan-cache]
-enabled = false
+enabled = true
 capacity = 100
 memory-guard-ratio = 0.1
 
@@ -375,6 +371,9 @@ grpc-compression-type = "none"
 
 # Max time for commit command, must be twice bigger than raft election timeout.
 commit-timeout = "41s"
+
+# Allow TiDB try to use 1PC protocol to commit transactions that involves only one region.
+enable-one-pc = false
 
 # Max batch size in gRPC.
 max-batch-size = 128

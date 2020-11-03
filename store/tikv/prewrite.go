@@ -34,6 +34,7 @@ type actionPrewrite struct{}
 
 var _ twoPhaseCommitAction = actionPrewrite{}
 var tiKVTxnRegionsNumHistogramPrewrite = metrics.TiKVTxnRegionsNumHistogram.WithLabelValues(metricsTag("prewrite"))
+var tikvOnePCTxnCounterFallback = metrics.TiKVOnePCTxnCounter.WithLabelValues("fallback")
 
 func (actionPrewrite) String() string {
 	return "prewrite"
@@ -78,6 +79,7 @@ func (c *twoPhaseCommitter) buildPrewriteRequest(batch batchMutations, txnSize u
 		ForUpdateTs:       c.forUpdateTS,
 		TxnSize:           txnSize,
 		MinCommitTs:       minCommitTS,
+		MaxCommitTs:       c.maxCommitTS,
 	}
 
 	if c.isAsyncCommit() {
@@ -89,10 +91,20 @@ func (c *twoPhaseCommitter) buildPrewriteRequest(batch batchMutations, txnSize u
 		req.MinCommitTs = 0
 	}
 
+	if c.isOnePC() {
+		req.TryOnePc = true
+	}
+
 	return tikvrpc.NewRequest(tikvrpc.CmdPrewrite, req, pb.Context{Priority: c.priority, SyncLog: c.syncLog})
 }
 
 func (action actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, batch batchMutations) error {
+	// WARNING: This function only tries to send a single request to a single region, so it don't
+	// need to unset the `useOnePC` flag when it fails. A special case is that when TiKV returns
+	// regionErr, it's uncertain if the request will be splitted into multiple and sent to multiple
+	// regions. It invokes `prewriteMutations` recursively here, and the number of batches will be
+	// checked there.
+
 	txnSize := uint64(c.regionTxnSize[batch.region.id])
 	// When we retry because of a region miss, we don't know the transaction size. We set the transaction size here
 	// to MaxUint64 to avoid unexpected "resolve lock lite".
@@ -107,7 +119,7 @@ func (action actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoff
 
 		// If we fail to receive response for async commit prewrite, it will be undetermined whether this
 		// transaction has been successfully committed.
-		if c.isAsyncCommit() && sender.rpcError != nil {
+		if (c.isAsyncCommit() || c.isOnePC()) && sender.rpcError != nil {
 			c.setUndeterminedErr(errors.Trace(sender.rpcError))
 		}
 
@@ -133,11 +145,34 @@ func (action actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoff
 		keyErrs := prewriteResp.GetErrors()
 		if len(keyErrs) == 0 {
 			if batch.isPrimary {
-				// After writing the primary key, if the size of the transaction is large than 32M,
+				// After writing the primary key, if the size of the transaction is larger than 32M,
 				// start the ttlManager. The ttlManager will be closed in tikvTxn.Commit().
-				if int64(c.txnSize) > config.GetGlobalConfig().TiKVClient.TTLRefreshedTxnSize {
+				// In this case 1PC is not expected to be used, but still check it for safety.
+				if int64(c.txnSize) > config.GetGlobalConfig().TiKVClient.TTLRefreshedTxnSize &&
+					prewriteResp.OnePcCommitTs == 0 {
 					c.run(c, nil)
 				}
+			}
+
+			if c.isOnePC() {
+				if prewriteResp.OnePcCommitTs == 0 {
+					logutil.Logger(bo.ctx).Warn("1pc failed and fallbacks to normal commit procedure",
+						zap.Uint64("startTS", c.startTS))
+					tikvOnePCTxnCounterFallback.Inc()
+					c.setOnePC(false)
+				} else {
+					// For 1PC, there's no racing to access to access `onePCCommmitTS` so it's safe
+					// not to lock the mutex.
+					if c.onePCCommitTS != 0 {
+						logutil.Logger(bo.ctx).Fatal("one pc happened multiple times",
+							zap.Uint64("startTS", c.startTS))
+					}
+					c.onePCCommitTS = prewriteResp.OnePcCommitTs
+				}
+				return nil
+			} else if prewriteResp.OnePcCommitTs != 0 {
+				logutil.Logger(bo.ctx).Fatal("tikv committed a non-1pc transaction with 1pc protocol",
+					zap.Uint64("startTS", c.startTS))
 			}
 			if c.isAsyncCommit() {
 				// 0 if the min_commit_ts is not ready or any other reason that async
@@ -200,5 +235,6 @@ func (c *twoPhaseCommitter) prewriteMutations(bo *Backoffer, mutations Committer
 		bo.ctx = opentracing.ContextWithSpan(bo.ctx, span1)
 	}
 
+	// `doActionOnMutations` will unset `useOnePC` if the mutations is splitted into multiple batches.
 	return c.doActionOnMutations(bo, actionPrewrite{}, mutations)
 }

@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -156,6 +157,17 @@ func (rc *reorgCtx) clean() {
 }
 
 func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, tblInfo *model.TableInfo, lease time.Duration, f func() error) error {
+	// Sleep for reorgDelay before doing reorganization.
+	// This provides a safe window for async commit and 1PC to commit with an old schema.
+	// lease = 0 means it's in an integration test. In this case we don't delay so the test won't run too slowly.
+	if lease > 0 {
+		cfg := config.GetGlobalConfig().TiKVClient.AsyncCommit
+		reorgDelay := cfg.SafeWindow + cfg.AllowedClockDrift
+		logutil.BgLogger().Info("sleep before reorganization to make async commit safe",
+			zap.Duration("duration", reorgDelay))
+		time.Sleep(reorgDelay)
+	}
+
 	job := reorgInfo.Job
 	// This is for tests compatible, because most of the early tests try to build the reorg job manually
 	// without reorg meta info, which will cause nil pointer in here.
