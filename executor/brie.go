@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/br/pkg/storage"
 	"github.com/pingcap/br/pkg/task"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/log"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -36,6 +37,7 @@ import (
 	importcfg "github.com/pingcap/tidb-lightning/lightning/config"
 	filter "github.com/pingcap/tidb-tools/pkg/table-filter"
 	pd "github.com/tikv/pd/client"
+	"go.uber.org/zap"
 
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
@@ -217,12 +219,12 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 		importGlobalCfg.TiDB.Port = 4000
 
 		importGlobalCfg.App.StatusAddr = ":8289"
-		//importGlobalCfg.App.Level = tidbCfg.Log.Level
+		importGlobalCfg.App.Level = tidbCfg.Log.Level
 		importGlobalCfg.Security.CAPath = tidbCfg.Security.ClusterSSLCA
 		importGlobalCfg.Security.CertPath = tidbCfg.Security.ClusterSSLCert
 		importGlobalCfg.Security.KeyPath = tidbCfg.Security.ClusterSSLKey
 		importGlobalCfg.TikvImporter.Backend = importcfg.BackendLocal
-		importGlobalCfg.TikvImporter.SortedKVDir = filepath.Join(tidbCfg.Path, defaultImportID)
+		importGlobalCfg.TikvImporter.SortedKVDir = filepath.Join(tidbCfg.TempStoragePath, defaultImportID)
 
 		importCfg.Checkpoint.Schema = defaultImportID
 		importCfg.Checkpoint.Driver = importcfg.CheckpointDriverMySQL
@@ -252,7 +254,7 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 		}
 		brCfg.Storage = storageURL.String()
 	case ast.BRIEKindImport:
-		importCfg.Mydumper.SourceDir = storageURL.String()
+		importGlobalCfg.Mydumper.SourceDir = storageURL.String()
 	}
 
 	e.info.storage = storageURL.String()
@@ -301,13 +303,13 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 				}
 				tbls = append(tbls, fmt.Sprintf("%s.%s", tbl.Schema, tbl.Name))
 			}
-			importCfg.Mydumper.Filter = tbls
+			importGlobalCfg.Mydumper.Filter = tbls
 		case len(s.Schemas) != 0:
 			dbs := make([]string, 0, len(s.Schemas))
 			for _, db := range s.Schemas {
 				dbs = append(dbs, fmt.Sprintf("%v.*", db))
 			}
-			importCfg.Mydumper.Filter = dbs
+			importGlobalCfg.Mydumper.Filter = dbs
 		}
 	}
 
@@ -353,7 +355,7 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 		for _, opt := range s.Options {
 			switch opt.Tp {
 			case ast.BRIEOptionSkipSchemaFiles:
-				importCfg.Mydumper.NoSchema = opt.UintValue != 0
+				importGlobalCfg.Mydumper.NoSchema = opt.UintValue != 0
 			case ast.BRIEOptionStrictFormat:
 				importCfg.Mydumper.StrictFormat = opt.UintValue != 0
 			case ast.BRIEOptionCSVSeparator:
@@ -377,11 +379,11 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 				importCfg.Mydumper.CSV.TrimLastSep = opt.UintValue != 0
 			case ast.BRIEOptionChecksum:
 				if opt.UintValue == 0 {
-					importCfg.PostRestore.Checksum = importcfg.OpLevelOff
+					importGlobalCfg.PostRestore.Checksum = importcfg.OpLevelOff
 				}
 			case ast.BRIEOptionAnalyze:
 				if opt.UintValue == 0 {
-					importCfg.PostRestore.Analyze = importcfg.OpLevelOff
+					importGlobalCfg.PostRestore.Analyze = importcfg.OpLevelOff
 				}
 			}
 		}
@@ -390,6 +392,16 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 			b.err = errors.Errorf("error build IMPORT config: %v", err)
 			return nil
 		}
+		// hack for lighting's config
+		tmp := string(content)
+		tmp = strings.ReplaceAll(tmp, "analyze = 2", "analyze = \"required\"")
+		tmp = strings.ReplaceAll(tmp, "checksum = 2", "checksum = \"required\"")
+		tmp = strings.ReplaceAll(tmp, "[cron.log-progress]\n    Duration = \"5m0s\"", "log-progress = \"5m\"")
+		tmp = strings.ReplaceAll(tmp, "[cron.switch-mode]\n    Duration = \"5m0s\"", "switch-mode = \"5m\"")
+
+		content = []byte(tmp)
+		log.L().Warn("lance test", zap.String("content", string(content)))
+
 		importGlobalCfg.ConfigFileContent = content
 		e.importCfg = importGlobalCfg
 	}

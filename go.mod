@@ -6,6 +6,7 @@ require (
 	github.com/Jeffail/gabs/v2 v2.5.1
 	github.com/aws/aws-sdk-go v1.30.24 // indirect
 	github.com/blacktear23/go-proxyprotocol v0.0.0-20180807104634-af7a81e8dd0d
+	github.com/burntsushi/toml v0.3.1 // indirect
 	github.com/carlmjohnson/flagext v0.20.2 // indirect
 	github.com/cheggaaa/pb/v3 v3.0.4 // indirect
 	github.com/cockroachdb/pebble v0.0.0-20200617141519-3b241b76ed3b // indirect
