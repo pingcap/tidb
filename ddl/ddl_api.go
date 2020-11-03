@@ -666,7 +666,7 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
-	err = checkColumnValueConstraint(col, col.Collate)
+	err = checkColumnValueConstraint(ctx, col, col.Collate)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
@@ -956,13 +956,19 @@ func checkPriKeyConstraint(col *table.Column, hasDefaultValue, hasNullFlag bool,
 	return nil
 }
 
-func checkColumnValueConstraint(col *table.Column, collation string) error {
+func checkColumnValueConstraint(ctx sessionctx.Context, col *table.Column, collation string) error {
 	if col.Tp != mysql.TypeEnum && col.Tp != mysql.TypeSet {
 		return nil
 	}
 	valueMap := make(map[string]bool, len(col.Elems))
 	ctor := collate.GetCollator(collation)
-	enumLengthLimit := config.GetGlobalConfig().EnableEnumLengthLimit
+	var enumLengthLimit bool
+	val, err := variable.GetGlobalSystemVar(ctx.GetSessionVars(), variable.TiDBEnableEnumLengthLimit)
+	if err != nil {
+		return errors.Trace(err)
+	} else {
+		enumLengthLimit = variable.TiDBOptOn(val)
+	}
 	desc, err := charset.GetCharsetDesc(col.Charset)
 	if err != nil {
 		return errors.Trace(err)
@@ -970,8 +976,7 @@ func checkColumnValueConstraint(col *table.Column, collation string) error {
 	for i := range col.Elems {
 		val := string(ctor.Key(col.Elems[i]))
 		if enumLengthLimit && (len(val) > 255 || len(val)*desc.Maxlen > 1020) {
-			errMsg := fmt.Sprintf("Too long enumeration/set value for column %s. You can set enable-enum-length-limit = false in configuration to disable the length limit.", col.Name)
-			return types.ErrTooLongValueInType.GenWithStack(errMsg)
+			return types.ErrTooLongValueForType.GenWithStackByArgs(col.Name)
 		}
 		if _, ok := valueMap[val]; ok {
 			tpStr := "ENUM"
@@ -3763,7 +3768,7 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 		return nil, errors.Trace(err)
 	}
 
-	if err = checkColumnValueConstraint(newCol, newCol.Collate); err != nil {
+	if err = checkColumnValueConstraint(ctx, newCol, newCol.Collate); err != nil {
 		return nil, errors.Trace(err)
 	}
 

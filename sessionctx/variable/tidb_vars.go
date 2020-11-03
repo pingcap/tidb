@@ -453,6 +453,9 @@ const (
 
 	// TiDBEnableAmendPessimisticTxn indicates if amend pessimistic transactions is enabled.
 	TiDBEnableAmendPessimisticTxn = "tidb_enable_amend_pessimistic_txn"
+
+	// TiDBEnableEnumLengthLimit indicates the enum/set element length should be shorter than 255 is enabled.
+	TiDBEnableEnumLengthLimit = "tidb_enable_enum_length_limit"
 )
 
 // Default TiDB system variable values.
@@ -561,6 +564,7 @@ const (
 	DefTiDBEnableParallelApply         = false
 	DefTiDBEnableAmendPessimisticTxn   = true
 	DefTiDBPartitionPruneMode          = "static-only"
+	DefTiDBEnableEnumLengthLimit       = true
 )
 
 // Process global variables.

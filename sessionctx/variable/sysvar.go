@@ -797,6 +797,7 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBShardAllocateStep, Value: strconv.Itoa(DefTiDBShardAllocateStep), Type: TypeInt, MinValue: 1, MaxValue: uint64(math.MaxInt64), AutoConvertOutOfRange: true},
 	{Scope: ScopeGlobal, Name: TiDBEnableTelemetry, Value: BoolToOnOff(DefTiDBEnableTelemetry), Type: TypeBool},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableAmendPessimisticTxn, Value: BoolToOnOff(DefTiDBEnableAmendPessimisticTxn), Type: TypeBool},
+	{Scope: ScopeGlobal, Name: TiDBEnableEnumLengthLimit, Value: BoolToOnOff(DefTiDBEnableEnumLengthLimit), Type: TypeBool},
 
 	// for compatibility purpose, we should leave them alone.
 	// TODO: Follow the Terminology Updates of MySQL after their changes arrived.
