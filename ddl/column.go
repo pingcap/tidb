@@ -1668,10 +1668,21 @@ func generateOriginDefaultValue(col *model.ColumnInfo) (interface{}, error) {
 	var err error
 	odValue := col.GetDefaultValue()
 	if odValue == nil && mysql.HasNotNullFlag(col.Flag) {
-		zeroVal := table.GetZeroValue(col)
-		odValue, err = zeroVal.ToString()
-		if err != nil {
-			return nil, errors.Trace(err)
+		switch col.Tp {
+		// Just use enum field's first element for OriginDefaultValue.
+		case mysql.TypeEnum:
+			defEnum, verr := types.ParseEnumValue(col.FieldType.Elems, 1)
+			if verr != nil {
+				return nil, errors.Trace(verr)
+			}
+			defVal := types.NewCollateMysqlEnumDatum(defEnum, col.Collate)
+			return defVal.ToString()
+		default:
+			zeroVal := table.GetZeroValue(col)
+			odValue, err = zeroVal.ToString()
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
 		}
 	}
 
