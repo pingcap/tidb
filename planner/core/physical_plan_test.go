@@ -1305,6 +1305,7 @@ func (s *testPlanSuite) TestInlineProjection(c *C) {
 	s.testData.GetTestCases(c, &input, &output)
 	for i, tt := range input {
 		comment := Commentf("case:%v sql: %s", i, tt)
+		fmt.Printf("================test: %s\n", comment)
 		stmt, err := s.ParseOneStmt(tt, "", "")
 		c.Assert(err, IsNil, comment)
 

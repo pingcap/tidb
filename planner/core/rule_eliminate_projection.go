@@ -15,7 +15,6 @@ package core
 
 import (
 	"context"
-
 	"github.com/pingcap/tidb/expression"
 )
 

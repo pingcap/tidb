@@ -1638,8 +1638,9 @@ func (b *executorBuilder) buildApply(v *plannercore.PhysicalApply) Executor {
 		outerExec, innerExec = rightChild, leftChild
 		outerFilter, innerFilter = v.RightConditions, v.LeftConditions
 	}
+	childrenUsedSchema := markChildrenUsedCols(v.Schema(), v.Children()[0].Schema(), v.Children()[1].Schema())
 	tupleJoiner := newJoiner(b.ctx, v.JoinType, v.InnerChildIdx == 0,
-		defaultValues, otherConditions, retTypes(leftChild), retTypes(rightChild), nil)
+		defaultValues, otherConditions, retTypes(leftChild), retTypes(rightChild), childrenUsedSchema)
 	serialExec := &NestedLoopApplyExec{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID(), outerExec, innerExec),
 		innerExec:    innerExec,
@@ -1676,7 +1677,7 @@ func (b *executorBuilder) buildApply(v *plannercore.PhysicalApply) Executor {
 			corCols = append(corCols, corCol)
 			innerFilters = append(innerFilters, innerFilter.Clone())
 			joiners = append(joiners, newJoiner(b.ctx, v.JoinType, v.InnerChildIdx == 0,
-				defaultValues, otherConditions, retTypes(leftChild), retTypes(rightChild), nil))
+				defaultValues, otherConditions, retTypes(leftChild), retTypes(rightChild), childrenUsedSchema))
 		}
 
 		allExecs := append([]Executor{outerExec}, innerExecs...)

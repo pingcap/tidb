@@ -264,18 +264,17 @@
     "Name": "TestCorrelatedEstimation",
     "Cases": [
       [
-        "Projection_11 10.00 root  Column#14",
-        "└─Apply_13 10.00 root  CARTESIAN left outer semi join, other cond:eq(test.t.c, Column#13)",
-        "  ├─TableReader_15(Build) 10.00 root  data:TableFullScan_14",
-        "  │ └─TableFullScan_14 10.00 cop[tikv] table:t keep order:false",
-        "  └─StreamAgg_22(Probe) 1.00 root  funcs:count(1)->Column#13",
-        "    └─HashJoin_23 1.00 root  inner join, equal:[eq(test.t.a, test.t.a)]",
-        "      ├─TableReader_33(Build) 1.00 root  data:Selection_32",
-        "      │ └─Selection_32 1.00 cop[tikv]  eq(test.t.a, test.t.a), not(isnull(test.t.a))",
-        "      │   └─TableFullScan_31 10.00 cop[tikv] table:t1 keep order:false",
-        "      └─TableReader_27(Probe) 1.00 root  data:Selection_26",
-        "        └─Selection_26 1.00 cop[tikv]  eq(test.t.a, test.t.a), not(isnull(test.t.a))",
-        "          └─TableFullScan_25 10.00 cop[tikv] table:s keep order:false"
+        "Apply_13 10.00 root  CARTESIAN left outer semi join, other cond:eq(test.t.c, Column#13)",
+        "├─TableReader_15(Build) 10.00 root  data:TableFullScan_14",
+        "│ └─TableFullScan_14 10.00 cop[tikv] table:t keep order:false",
+        "└─StreamAgg_22(Probe) 1.00 root  funcs:count(1)->Column#13",
+        "  └─HashJoin_23 1.00 root  inner join, equal:[eq(test.t.a, test.t.a)]",
+        "    ├─TableReader_33(Build) 1.00 root  data:Selection_32",
+        "    │ └─Selection_32 1.00 cop[tikv]  eq(test.t.a, test.t.a), not(isnull(test.t.a))",
+        "    │   └─TableFullScan_31 10.00 cop[tikv] table:t1 keep order:false",
+        "    └─TableReader_27(Probe) 1.00 root  data:Selection_26",
+        "      └─Selection_26 1.00 cop[tikv]  eq(test.t.a, test.t.a), not(isnull(test.t.a))",
+        "        └─TableFullScan_25 10.00 cop[tikv] table:s keep order:false"
       ],
       [
         "Projection_8 10.00 root  Column#9",

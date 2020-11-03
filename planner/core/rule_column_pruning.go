@@ -15,7 +15,6 @@ package core
 
 import (
 	"context"
-
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -361,6 +360,16 @@ func (la *LogicalApply) PruneColumns(parentUsedCols []*expression.Column) error 
 	}
 
 	la.mergeSchema()
+
+	if la.JoinType != SemiJoin && la.JoinType != LeftOuterSemiJoin && la.JoinType != AntiSemiJoin && la.JoinType != AntiLeftOuterSemiJoin {
+		return nil
+	}
+	if la.JoinType == LeftOuterSemiJoin || la.JoinType == AntiLeftOuterSemiJoin {
+		joinCol := la.schema.Columns[len(la.schema.Columns)-1]
+		parentUsedCols = append(parentUsedCols, joinCol)
+	}
+
+	la.inlineProjection(parentUsedCols)
 	return nil
 }
 
