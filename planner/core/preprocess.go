@@ -491,6 +491,10 @@ func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 				p.err = err
 				return
 			}
+			if constraint.IsEmptyIndex {
+				p.err = ddl.ErrWrongNameForIndex.GenWithStackByArgs(constraint.Name)
+				return
+			}
 		case ast.ConstraintPrimaryKey:
 			if countPrimaryKey > 0 {
 				p.err = infoschema.ErrMultiplePriKey
@@ -646,6 +650,10 @@ func (p *preprocessor) checkCreateIndexGrammar(stmt *ast.CreateIndexStmt) {
 		p.err = ddl.ErrWrongTableName.GenWithStackByArgs(tName)
 		return
 	}
+	if stmt.IndexName == "" {
+		p.err = ddl.ErrWrongNameForIndex.GenWithStackByArgs(stmt.IndexName)
+		return
+	}
 	p.err = checkIndexInfo(stmt.IndexName, stmt.IndexPartSpecifications)
 }
 
@@ -665,8 +673,8 @@ func (p *preprocessor) checkStatisticsOpGrammar(node ast.Node) {
 }
 
 func (p *preprocessor) checkRenameTableGrammar(stmt *ast.RenameTableStmt) {
-	oldTable := stmt.OldTable.Name.String()
-	newTable := stmt.NewTable.Name.String()
+	oldTable := stmt.TableToTables[0].OldTable.Name.String()
+	newTable := stmt.TableToTables[0].NewTable.Name.String()
 
 	p.checkRenameTable(oldTable, newTable)
 }
