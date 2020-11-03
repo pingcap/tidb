@@ -58,11 +58,13 @@ func interestingGoroutines() (gs []string) {
 		"github.com/pingcap/goleveldb/leveldb/util.(*BufferPool).drain",
 		"github.com/pingcap/goleveldb/leveldb.(*DB).compactionError",
 		"github.com/pingcap/goleveldb/leveldb.(*DB).mpoolDrain",
+		"go.etcd.io/etcd/pkg/logutil.(*MergeLogger).outputLoop",
 		"go.etcd.io/etcd/v3/pkg/logutil.(*MergeLogger).outputLoop",
 		"oracles.(*pdOracle).updateTS",
 		"tikv.(*tikvStore).runSafePointChecker",
 		"tikv.(*RegionCache).asyncCheckAndResolveLoop",
-		"github.com/pingcap/badger.(*writeWorker).runMergeLSM",
+		"github.com/pingcap/badger",
+		"github.com/ngaut/unistore/tikv.(*MVCCStore).runUpdateSafePointLoop",
 	}
 	shouldIgnore := func(stack string) bool {
 		if stack == "" {

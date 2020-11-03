@@ -543,7 +543,7 @@ func (s *testEvaluatorSuite) TestIsTrueOrFalse(c *C) {
 	}
 
 	for _, tc := range testCases {
-		isTrueSig, err := funcs[ast.IsTruth].getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(tc.args...)))
+		isTrueSig, err := funcs[ast.IsTruthWithoutNull].getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(tc.args...)))
 		c.Assert(err, IsNil)
 		c.Assert(isTrueSig, NotNil)
 

@@ -74,8 +74,8 @@ func (s *testDecoderSuite) TestRowDecoder(c *C) {
 		}
 		decodeColsMap[col.ID] = tpExpr
 	}
-	de := decoder.NewRowDecoder(tbl, decodeColsMap)
-	deWithNoGenCols := decoder.NewRowDecoder(tbl, decodeColsMap2)
+	de := decoder.NewRowDecoder(tbl, tbl.Cols(), decodeColsMap)
+	deWithNoGenCols := decoder.NewRowDecoder(tbl, tbl.Cols(), decodeColsMap2)
 
 	timeZoneIn8, err := time.LoadLocation("Asia/Shanghai")
 	c.Assert(err, IsNil)
@@ -183,7 +183,7 @@ func (s *testDecoderSuite) TestClusterIndexRowDecoder(c *C) {
 		}
 		decodeColsMap[col.ID] = tpExpr
 	}
-	de := decoder.NewRowDecoder(tbl, decodeColsMap)
+	de := decoder.NewRowDecoder(tbl, tbl.Cols(), decodeColsMap)
 
 	timeZoneIn8, err := time.LoadLocation("Asia/Shanghai")
 	c.Assert(err, IsNil)

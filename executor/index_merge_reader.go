@@ -15,6 +15,7 @@ package executor
 
 import (
 	"context"
+	"runtime/trace"
 	"sync"
 	"sync/atomic"
 	"unsafe"
@@ -110,7 +111,7 @@ func (e *IndexMergeReaderExecutor) Open(ctx context.Context) error {
 		_, ok := plan[0].(*plannercore.PhysicalIndexScan)
 		if !ok {
 			if e.table.Meta().IsCommonHandle {
-				keyRanges, err := distsql.CommonHandleRangesToKVRanges(e.ctx.GetSessionVars().StmtCtx, getPhysicalTableID(e.table), e.ranges[i])
+				keyRanges, err := distsql.CommonHandleRangesToKVRanges(e.ctx.GetSessionVars().StmtCtx, []int64{getPhysicalTableID(e.table)}, e.ranges[i])
 				if err != nil {
 					return err
 				}
@@ -171,6 +172,7 @@ func (e *IndexMergeReaderExecutor) startIndexMergeProcessWorker(ctx context.Cont
 	idxMergeProcessWorker := &indexMergeProcessWorker{}
 	e.processWokerWg.Add(1)
 	go func() {
+		defer trace.StartRegion(ctx, "IndexMergeProcessWorker").End()
 		util.WithRecovery(
 			func() {
 				idxMergeProcessWorker.fetchLoop(ctx, fetch, workCh, e.resultCh, e.finished)
@@ -223,6 +225,7 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 	})
 
 	go func() {
+		defer trace.StartRegion(ctx, "IndexMergePartialIndexWorker").End()
 		defer partialWorkerWg.Done()
 		ctx1, cancel := context.WithCancel(ctx)
 		var err error
@@ -281,6 +284,7 @@ func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, 
 		worker.batchSize = worker.maxBatchSize
 	}
 	go func() {
+		defer trace.StartRegion(ctx, "IndexMergePartialTableWorker").End()
 		defer partialWorkerWg.Done()
 		ctx1, cancel := context.WithCancel(ctx)
 		var err error
@@ -391,6 +395,7 @@ func (e *IndexMergeReaderExecutor) startIndexMergeTableScanWorker(ctx context.Co
 		}
 		ctx1, cancel := context.WithCancel(ctx)
 		go func() {
+			defer trace.StartRegion(ctx, "IndexMergeTableScanWorker").End()
 			var task *lookupTableTask
 			util.WithRecovery(
 				func() { task = worker.pickAndExecTask(ctx1) },
@@ -414,7 +419,7 @@ func (e *IndexMergeReaderExecutor) buildFinalTableReader(ctx context.Context, ha
 		plans:        e.tblPlans,
 	}
 	tableReaderExec.buildVirtualColumnInfo()
-	tableReader, err := e.dataReaderBuilder.buildTableReaderFromHandles(ctx, tableReaderExec, handles)
+	tableReader, err := e.dataReaderBuilder.buildTableReaderFromHandles(ctx, tableReaderExec, handles, false)
 	if err != nil {
 		logutil.Logger(ctx).Error("build table reader from handles failed", zap.Error(err))
 		return nil, err

@@ -266,18 +266,6 @@ func (t *testTableSuite) TestCastValue(c *C) {
 	c.Assert(err, Not(Equals), nil)
 	c.Assert(val.GetInt64(), Equals, int64(0))
 
-	col := ToColumn(&model.ColumnInfo{
-		FieldType: *types.NewFieldType(mysql.TypeTiny),
-		State:     model.StatePublic,
-	})
-
-	err = CastValues(ctx, []types.Datum{types.NewDatum("test")}, []*Column{col})
-	c.Assert(err, NotNil)
-	ctx.GetSessionVars().StmtCtx.DupKeyAsWarning = true
-	err = CastValues(ctx, []types.Datum{types.NewDatum("test")}, []*Column{col})
-	c.Assert(err, IsNil)
-	ctx.GetSessionVars().StmtCtx.DupKeyAsWarning = false
-
 	colInfoS := model.ColumnInfo{
 		FieldType: *types.NewFieldType(mysql.TypeString),
 		State:     model.StatePublic,

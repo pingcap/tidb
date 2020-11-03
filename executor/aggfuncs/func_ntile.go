@@ -14,8 +14,15 @@
 package aggfuncs
 
 import (
+	"unsafe"
+
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/chunk"
+)
+
+const (
+	// DefPartialResult4Ntile is the size of partialResult4Ntile
+	DefPartialResult4Ntile = int64(unsafe.Sizeof(partialResult4Ntile{}))
 )
 
 // ntile divides the partition into n ranked groups and returns the group number a row belongs to.
@@ -35,7 +42,7 @@ type partialResult4Ntile struct {
 }
 
 func (n *ntile) AllocPartialResult() (pr PartialResult, memDelta int64) {
-	return PartialResult(&partialResult4Ntile{curGroupIdx: 1}), 0
+	return PartialResult(&partialResult4Ntile{curGroupIdx: 1}), DefPartialResult4Ntile
 }
 
 func (n *ntile) ResetPartialResult(pr PartialResult) {

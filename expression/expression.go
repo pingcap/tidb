@@ -322,12 +322,15 @@ func VecEvalBool(ctx sessionctx.Context, exprList CNFExprs, input *chunk.Chunk, 
 	defer deallocateZeroSlice(isZero)
 	for _, expr := range exprList {
 		eType := expr.GetType().EvalType()
+		if expr.GetType().Hybrid() {
+			eType = types.ETInt
+		}
 		buf, err := globalColumnAllocator.get(eType, n)
 		if err != nil {
 			return nil, nil, err
 		}
 
-		if err := EvalExpr(ctx, expr, input, buf); err != nil {
+		if err := EvalExpr(ctx, expr, eType, input, buf); err != nil {
 			return nil, nil, err
 		}
 
@@ -473,8 +476,9 @@ func toBool(sc *stmtctx.StatementContext, eType types.EvalType, buf *chunk.Colum
 // EvalExpr evaluates this expr according to its type.
 // And it selects the method for evaluating expression based on
 // the environment variables and whether the expression can be vectorized.
-func EvalExpr(ctx sessionctx.Context, expr Expression, input *chunk.Chunk, result *chunk.Column) (err error) {
-	evalType := expr.GetType().EvalType()
+// Note: the input argument `evalType` is needed because of that when `expr` is
+// of the hybrid type(ENUM/SET/BIT), we need the invoker decide the actual EvalType.
+func EvalExpr(ctx sessionctx.Context, expr Expression, evalType types.EvalType, input *chunk.Chunk, result *chunk.Column) (err error) {
 	if expr.Vectorized() && ctx.GetSessionVars().EnableVectorizedExpression {
 		switch evalType {
 		case types.ETInt:
@@ -727,7 +731,7 @@ func EvaluateExprWithNull(ctx sessionctx.Context, schema *Schema, expr Expressio
 
 // TableInfo2SchemaAndNames converts the TableInfo to the schema and name slice.
 func TableInfo2SchemaAndNames(ctx sessionctx.Context, dbName model.CIStr, tbl *model.TableInfo) (*Schema, []*types.FieldName, error) {
-	cols, names, err := ColumnInfos2ColumnsAndNames(ctx, dbName, tbl.Name, tbl.Columns, tbl)
+	cols, names, err := ColumnInfos2ColumnsAndNames(ctx, dbName, tbl.Name, tbl.Cols(), tbl)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -777,9 +781,6 @@ func ColumnInfos2ColumnsAndNames(ctx sessionctx.Context, dbName, tblName model.C
 	columns := make([]*Column, 0, len(colInfos))
 	names := make([]*types.FieldName, 0, len(colInfos))
 	for i, col := range colInfos {
-		if col.State != model.StatePublic {
-			continue
-		}
 		names = append(names, &types.FieldName{
 			OrigTblName: tblName,
 			OrigColName: col.Name,
@@ -806,9 +807,6 @@ func ColumnInfos2ColumnsAndNames(ctx sessionctx.Context, dbName, tblName model.C
 	}()
 	ctx.GetSessionVars().StmtCtx.IgnoreTruncate = true
 	for i, col := range colInfos {
-		if col.State != model.StatePublic {
-			continue
-		}
 		if col.IsGenerated() && !col.GeneratedStored {
 			expr, err := generatedexpr.ParseExpression(col.GeneratedExprString)
 			if err != nil {
@@ -897,7 +895,8 @@ func canFuncBePushed(sf *ScalarFunction, storeType kv.StoreType) bool {
 		ast.In,
 		ast.IsNull,
 		ast.Like,
-		ast.IsTruth,
+		ast.IsTruthWithoutNull,
+		ast.IsTruthWithNull,
 		ast.IsFalsity,
 
 		// arithmetical functions.
@@ -1119,7 +1118,9 @@ func canExprPushDown(expr Expression, pc PbConverter, storeType kv.StoreType) bo
 		return false
 	}
 	switch x := expr.(type) {
-	case *Constant, *CorrelatedColumn:
+	case *CorrelatedColumn:
+		return pc.conOrCorColToPBExpr(expr) != nil && pc.columnToPBExpr(&x.Column) != nil
+	case *Constant:
 		return pc.conOrCorColToPBExpr(expr) != nil
 	case *Column:
 		return pc.columnToPBExpr(x) != nil
@@ -1191,6 +1192,14 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 		default:
 			return false
 		}
+	case ast.Round:
+		switch function.Function.PbCode() {
+		case tipb.ScalarFuncSig_RoundInt, tipb.ScalarFuncSig_RoundReal,
+			tipb.ScalarFuncSig_RoundDec:
+			return true
+		default:
+			return false
+		}
 	default:
 		return false
 	}
@@ -1214,15 +1223,23 @@ func wrapWithIsTrue(ctx sessionctx.Context, keepNull bool, arg Expression, wrapF
 			}
 		}
 	}
-	fc := &isTrueOrFalseFunctionClass{baseFunctionClass{ast.IsTruth, 1, 1}, opcode.IsTruth, keepNull}
+	var fc *isTrueOrFalseFunctionClass
+	if keepNull {
+		fc = &isTrueOrFalseFunctionClass{baseFunctionClass{ast.IsTruthWithNull, 1, 1}, opcode.IsTruth, keepNull}
+	} else {
+		fc = &isTrueOrFalseFunctionClass{baseFunctionClass{ast.IsTruthWithoutNull, 1, 1}, opcode.IsTruth, keepNull}
+	}
 	f, err := fc.getFunction(ctx, []Expression{arg})
 	if err != nil {
 		return nil, err
 	}
 	sf := &ScalarFunction{
-		FuncName: model.NewCIStr(ast.IsTruth),
+		FuncName: model.NewCIStr(ast.IsTruthWithoutNull),
 		Function: f,
 		RetType:  f.getRetTp(),
+	}
+	if keepNull {
+		sf.FuncName = model.NewCIStr(ast.IsTruthWithNull)
 	}
 	return FoldConstant(sf), nil
 }

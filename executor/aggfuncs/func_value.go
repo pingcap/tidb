@@ -14,6 +14,8 @@
 package aggfuncs
 
 import (
+	"unsafe"
+
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
@@ -22,11 +24,37 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 )
 
+const (
+	// DefPartialResult4FirstValueSize is the size of partialResult4FirstValue
+	DefPartialResult4FirstValueSize = int64(unsafe.Sizeof(partialResult4FirstValue{}))
+	// DefPartialResult4LastValueSize is the size of partialResult4LastValue
+	DefPartialResult4LastValueSize = int64(unsafe.Sizeof(partialResult4LastValue{}))
+	// DefPartialResult4NthValueSize is the size of partialResult4NthValue
+	DefPartialResult4NthValueSize = int64(unsafe.Sizeof(partialResult4NthValue{}))
+
+	// DefValue4IntSize is the size of value4Int
+	DefValue4IntSize = int64(unsafe.Sizeof(value4Int{}))
+	// DefValue4Float32Size is the size of value4Float32
+	DefValue4Float32Size = int64(unsafe.Sizeof(value4Float32{}))
+	// DefValue4Float64Size is the size of value4Float64
+	DefValue4Float64Size = int64(unsafe.Sizeof(value4Float64{}))
+	// DefValue4DecimalSize is the size of value4Decimal
+	DefValue4DecimalSize = int64(unsafe.Sizeof(value4Decimal{}))
+	// DefValue4TimeSize is the size of value4Time
+	DefValue4TimeSize = int64(unsafe.Sizeof(value4Time{}))
+	// DefValue4DurationSize is the size of value4Duration
+	DefValue4DurationSize = int64(unsafe.Sizeof(value4Duration{}))
+	// DefValue4StringSize is the size of value4String
+	DefValue4StringSize = int64(unsafe.Sizeof(value4String{}))
+	// DefValue4JSONSize is the size of value4JSON
+	DefValue4JSONSize = int64(unsafe.Sizeof(value4JSON{}))
+)
+
 // valueEvaluator is used to evaluate values for `first_value`, `last_value`, `nth_value`,
 // `lead` and `lag`.
 type valueEvaluator interface {
 	// evaluateRow evaluates the expression using row and stores the result inside.
-	evaluateRow(ctx sessionctx.Context, expr expression.Expression, row chunk.Row) error
+	evaluateRow(ctx sessionctx.Context, expr expression.Expression, row chunk.Row) (memDelta int64, err error)
 	// appendResult appends the result to chunk.
 	appendResult(chk *chunk.Chunk, colIdx int)
 }
@@ -36,10 +64,9 @@ type value4Int struct {
 	isNull bool
 }
 
-func (v *value4Int) evaluateRow(ctx sessionctx.Context, expr expression.Expression, row chunk.Row) error {
-	var err error
+func (v *value4Int) evaluateRow(ctx sessionctx.Context, expr expression.Expression, row chunk.Row) (memDelta int64, err error) {
 	v.val, v.isNull, err = expr.EvalInt(ctx, row)
-	return err
+	return 0, err
 }
 
 func (v *value4Int) appendResult(chk *chunk.Chunk, colIdx int) {
@@ -55,12 +82,11 @@ type value4Float32 struct {
 	isNull bool
 }
 
-func (v *value4Float32) evaluateRow(ctx sessionctx.Context, expr expression.Expression, row chunk.Row) error {
-	var err error
+func (v *value4Float32) evaluateRow(ctx sessionctx.Context, expr expression.Expression, row chunk.Row) (memDelta int64, err error) {
 	var val float64
 	val, v.isNull, err = expr.EvalReal(ctx, row)
 	v.val = float32(val)
-	return err
+	return 0, err
 }
 
 func (v *value4Float32) appendResult(chk *chunk.Chunk, colIdx int) {
@@ -76,10 +102,9 @@ type value4Decimal struct {
 	isNull bool
 }
 
-func (v *value4Decimal) evaluateRow(ctx sessionctx.Context, expr expression.Expression, row chunk.Row) error {
-	var err error
+func (v *value4Decimal) evaluateRow(ctx sessionctx.Context, expr expression.Expression, row chunk.Row) (memDelta int64, err error) {
 	v.val, v.isNull, err = expr.EvalDecimal(ctx, row)
-	return err
+	return 0, err
 }
 
 func (v *value4Decimal) appendResult(chk *chunk.Chunk, colIdx int) {
@@ -95,10 +120,9 @@ type value4Float64 struct {
 	isNull bool
 }
 
-func (v *value4Float64) evaluateRow(ctx sessionctx.Context, expr expression.Expression, row chunk.Row) error {
-	var err error
+func (v *value4Float64) evaluateRow(ctx sessionctx.Context, expr expression.Expression, row chunk.Row) (memDelta int64, err error) {
 	v.val, v.isNull, err = expr.EvalReal(ctx, row)
-	return err
+	return 0, err
 }
 
 func (v *value4Float64) appendResult(chk *chunk.Chunk, colIdx int) {
@@ -114,10 +138,10 @@ type value4String struct {
 	isNull bool
 }
 
-func (v *value4String) evaluateRow(ctx sessionctx.Context, expr expression.Expression, row chunk.Row) error {
-	var err error
+func (v *value4String) evaluateRow(ctx sessionctx.Context, expr expression.Expression, row chunk.Row) (memDelta int64, err error) {
+	originalLength := len(v.val)
 	v.val, v.isNull, err = expr.EvalString(ctx, row)
-	return err
+	return int64(len(v.val) - originalLength), err
 }
 
 func (v *value4String) appendResult(chk *chunk.Chunk, colIdx int) {
@@ -133,10 +157,9 @@ type value4Time struct {
 	isNull bool
 }
 
-func (v *value4Time) evaluateRow(ctx sessionctx.Context, expr expression.Expression, row chunk.Row) error {
-	var err error
+func (v *value4Time) evaluateRow(ctx sessionctx.Context, expr expression.Expression, row chunk.Row) (memDelta int64, err error) {
 	v.val, v.isNull, err = expr.EvalTime(ctx, row)
-	return err
+	return 0, err
 }
 
 func (v *value4Time) appendResult(chk *chunk.Chunk, colIdx int) {
@@ -152,10 +175,9 @@ type value4Duration struct {
 	isNull bool
 }
 
-func (v *value4Duration) evaluateRow(ctx sessionctx.Context, expr expression.Expression, row chunk.Row) error {
-	var err error
+func (v *value4Duration) evaluateRow(ctx sessionctx.Context, expr expression.Expression, row chunk.Row) (memDelta int64, err error) {
 	v.val, v.isNull, err = expr.EvalDuration(ctx, row)
-	return err
+	return 0, err
 }
 
 func (v *value4Duration) appendResult(chk *chunk.Chunk, colIdx int) {
@@ -171,11 +193,11 @@ type value4JSON struct {
 	isNull bool
 }
 
-func (v *value4JSON) evaluateRow(ctx sessionctx.Context, expr expression.Expression, row chunk.Row) error {
-	var err error
+func (v *value4JSON) evaluateRow(ctx sessionctx.Context, expr expression.Expression, row chunk.Row) (memDelta int64, err error) {
+	originalLength := len(v.val.Value)
 	v.val, v.isNull, err = expr.EvalJSON(ctx, row)
 	v.val = v.val.Copy() // deep copy to avoid content change.
-	return err
+	return int64(len(v.val.Value) - originalLength), err
 }
 
 func (v *value4JSON) appendResult(chk *chunk.Chunk, colIdx int) {
@@ -186,33 +208,33 @@ func (v *value4JSON) appendResult(chk *chunk.Chunk, colIdx int) {
 	}
 }
 
-func buildValueEvaluator(tp *types.FieldType) valueEvaluator {
+func buildValueEvaluator(tp *types.FieldType) (ve valueEvaluator, memDelta int64) {
 	evalType := tp.EvalType()
 	if tp.Tp == mysql.TypeBit {
 		evalType = types.ETString
 	}
 	switch evalType {
 	case types.ETInt:
-		return &value4Int{}
+		return &value4Int{}, DefValue4IntSize
 	case types.ETReal:
 		switch tp.Tp {
 		case mysql.TypeFloat:
-			return &value4Float32{}
+			return &value4Float32{}, DefValue4Float32Size
 		case mysql.TypeDouble:
-			return &value4Float64{}
+			return &value4Float64{}, DefValue4Float64Size
 		}
 	case types.ETDecimal:
-		return &value4Decimal{}
+		return &value4Decimal{}, DefValue4DecimalSize
 	case types.ETDatetime, types.ETTimestamp:
-		return &value4Time{}
+		return &value4Time{}, DefValue4TimeSize
 	case types.ETDuration:
-		return &value4Duration{}
+		return &value4Duration{}, DefValue4DurationSize
 	case types.ETString:
-		return &value4String{}
+		return &value4String{}, DefValue4StringSize
 	case types.ETJson:
-		return &value4JSON{}
+		return &value4JSON{}, DefValue4JSONSize
 	}
-	return nil
+	return nil, 0
 }
 
 type firstValue struct {
@@ -227,7 +249,9 @@ type partialResult4FirstValue struct {
 }
 
 func (v *firstValue) AllocPartialResult() (pr PartialResult, memDelta int64) {
-	return PartialResult(&partialResult4FirstValue{evaluator: buildValueEvaluator(v.tp)}), 0
+	ve, veMemDelta := buildValueEvaluator(v.tp)
+	p := &partialResult4FirstValue{evaluator: ve}
+	return PartialResult(p), DefPartialResult4FirstValueSize + veMemDelta
 }
 
 func (v *firstValue) ResetPartialResult(pr PartialResult) {
@@ -242,12 +266,12 @@ func (v *firstValue) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []
 	}
 	if len(rowsInGroup) > 0 {
 		p.gotFirstValue = true
-		err := p.evaluator.evaluateRow(sctx, v.args[0], rowsInGroup[0])
+		memDelta, err = p.evaluator.evaluateRow(sctx, v.args[0], rowsInGroup[0])
 		if err != nil {
 			return 0, err
 		}
 	}
-	return 0, nil
+	return memDelta, nil
 }
 
 func (v *firstValue) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
@@ -272,7 +296,9 @@ type partialResult4LastValue struct {
 }
 
 func (v *lastValue) AllocPartialResult() (pr PartialResult, memDelta int64) {
-	return PartialResult(&partialResult4LastValue{evaluator: buildValueEvaluator(v.tp)}), 0
+	ve, veMemDelta := buildValueEvaluator(v.tp)
+	p := &partialResult4FirstValue{evaluator: ve}
+	return PartialResult(p), DefPartialResult4LastValueSize + veMemDelta
 }
 
 func (v *lastValue) ResetPartialResult(pr PartialResult) {
@@ -284,12 +310,12 @@ func (v *lastValue) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []c
 	p := (*partialResult4LastValue)(pr)
 	if len(rowsInGroup) > 0 {
 		p.gotLastValue = true
-		err := p.evaluator.evaluateRow(sctx, v.args[0], rowsInGroup[len(rowsInGroup)-1])
+		memDelta, err = p.evaluator.evaluateRow(sctx, v.args[0], rowsInGroup[len(rowsInGroup)-1])
 		if err != nil {
 			return 0, err
 		}
 	}
-	return 0, nil
+	return memDelta, nil
 }
 
 func (v *lastValue) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
@@ -315,7 +341,9 @@ type partialResult4NthValue struct {
 }
 
 func (v *nthValue) AllocPartialResult() (pr PartialResult, memDelta int64) {
-	return PartialResult(&partialResult4NthValue{evaluator: buildValueEvaluator(v.tp)}), 0
+	ve, veMemDelta := buildValueEvaluator(v.tp)
+	p := &partialResult4FirstValue{evaluator: ve}
+	return PartialResult(p), DefPartialResult4NthValueSize + veMemDelta
 }
 
 func (v *nthValue) ResetPartialResult(pr PartialResult) {
@@ -330,13 +358,13 @@ func (v *nthValue) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []ch
 	p := (*partialResult4NthValue)(pr)
 	numRows := uint64(len(rowsInGroup))
 	if v.nth > p.seenRows && v.nth-p.seenRows <= numRows {
-		err := p.evaluator.evaluateRow(sctx, v.args[0], rowsInGroup[v.nth-p.seenRows-1])
+		memDelta, err = p.evaluator.evaluateRow(sctx, v.args[0], rowsInGroup[v.nth-p.seenRows-1])
 		if err != nil {
 			return 0, err
 		}
 	}
 	p.seenRows += numRows
-	return 0, nil
+	return memDelta, nil
 }
 
 func (v *nthValue) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {

@@ -15,6 +15,7 @@ package executor
 
 import (
 	"context"
+	"runtime/trace"
 	"sync"
 	"sync/atomic"
 
@@ -80,7 +81,6 @@ type ParallelNestedLoopApplyExec struct {
 	useCache           bool
 	cacheHitCounter    int64
 	cacheAccessCounter int64
-	cacheLock          sync.RWMutex
 
 	memTracker *memory.Tracker // track memory usage.
 }
@@ -166,7 +166,7 @@ func (e *ParallelNestedLoopApplyExec) Close() error {
 	}
 
 	if e.runtimeStats != nil {
-		runtimeStats := newJoinRuntimeStats(e.runtimeStats)
+		runtimeStats := newJoinRuntimeStats()
 		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, runtimeStats)
 		if e.useCache {
 			var hitRatio float64
@@ -191,6 +191,7 @@ func (e *ParallelNestedLoopApplyExec) notifyWorker(ctx context.Context) {
 }
 
 func (e *ParallelNestedLoopApplyExec) outerWorker(ctx context.Context) {
+	defer trace.StartRegion(ctx, "ParallelApplyOuterWorker").End()
 	defer e.handleWorkerPanic(ctx, &e.workerWg)
 	var selected []bool
 	var err error
@@ -223,6 +224,7 @@ func (e *ParallelNestedLoopApplyExec) outerWorker(ctx context.Context) {
 }
 
 func (e *ParallelNestedLoopApplyExec) innerWorker(ctx context.Context, id int) {
+	defer trace.StartRegion(ctx, "ParallelApplyInnerWorker").End()
 	defer e.handleWorkerPanic(ctx, &e.workerWg)
 	for {
 		var chk *chunk.Chunk
@@ -274,9 +276,7 @@ func (e *ParallelNestedLoopApplyExec) fetchAllInners(ctx context.Context, id int
 	}
 	if e.useCache { // look up the cache
 		atomic.AddInt64(&e.cacheAccessCounter, 1)
-		e.cacheLock.RLock()
 		value, err := e.cache.Get(key)
-		e.cacheLock.RUnlock()
 		if err != nil {
 			return err
 		}
@@ -322,8 +322,6 @@ func (e *ParallelNestedLoopApplyExec) fetchAllInners(ctx context.Context, id int
 	}
 
 	if e.useCache { // update the cache
-		e.cacheLock.Lock()
-		defer e.cacheLock.Unlock()
 		if _, err := e.cache.Set(key, e.innerList[id]); err != nil {
 			return err
 		}

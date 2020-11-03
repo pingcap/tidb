@@ -14,8 +14,12 @@
 package ddl_test
 
 import (
+	"fmt"
+
 	. "github.com/pingcap/check"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
@@ -39,47 +43,47 @@ add placement policy
 	constraints='["+zone=sh"]'
 	role=leader
 	replicas=3`)
-	c.Assert(err, ErrorMatches, ".*pd unavailable.*")
+	c.Assert(err, IsNil)
 
 	_, err = tk.Exec(`alter table t1 alter partition p0
 add placement policy
 	constraints='["+   zone   =   sh  ",     "- zone = bj    "]'
 	role=leader
 	replicas=3`)
-	c.Assert(err, ErrorMatches, ".*pd unavailable.*")
+	c.Assert(err, IsNil)
 
 	_, err = tk.Exec(`alter table t1 alter partition p0
 add placement policy
 	constraints='{"+   zone   =   sh  ": 1}'
 	role=leader
 	replicas=3`)
-	c.Assert(err, ErrorMatches, ".*pd unavailable.*")
+	c.Assert(err, IsNil)
 
 	_, err = tk.Exec(`alter table t1 alter partition p0
 add placement policy
 	constraints='{"+   zone   =   sh, -zone =   bj ": 1}'
 	role=leader
 	replicas=3`)
-	c.Assert(err, ErrorMatches, ".*pd unavailable.*")
+	c.Assert(err, IsNil)
 
 	_, err = tk.Exec(`alter table t1 alter partition p0
 add placement policy
 	constraints='{"+   zone   =   sh  ": 1, "- zone = bj": 2}'
 	role=leader
 	replicas=3`)
-	c.Assert(err, ErrorMatches, ".*pd unavailable.*")
+	c.Assert(err, IsNil)
 
 	_, err = tk.Exec(`alter table t1 alter partition p0
 alter placement policy
 	constraints='{"+   zone   =   sh, -zone =   bj ": 1}'
 	role=leader
 	replicas=3`)
-	c.Assert(err, ErrorMatches, ".*pd unavailable.*")
+	c.Assert(err, IsNil)
 
 	_, err = tk.Exec(`alter table t1 alter partition p0
 drop placement policy
 	role=leader`)
-	c.Assert(err, ErrorMatches, ".*pd unavailable.*")
+	c.Assert(err, IsNil)
 
 	// multiple statements
 	_, err = tk.Exec(`alter table t1 alter partition p0
@@ -91,7 +95,7 @@ add placement policy
 	constraints='{"+   zone   =   sh, -zone =   bj ": 1}'
 	role=leader
 	replicas=3`)
-	c.Assert(err, ErrorMatches, ".*pd unavailable.*")
+	c.Assert(err, IsNil)
 
 	_, err = tk.Exec(`alter table t1 alter partition p0
 add placement policy
@@ -102,7 +106,7 @@ add placement policy
 	constraints='{"+zone=sh,+zone=bj":1,"+zone=sh,+zone=bj":1}'
 	role=leader
 	replicas=3`)
-	c.Assert(err, ErrorMatches, ".*pd unavailable.*")
+	c.Assert(err, IsNil)
 
 	_, err = tk.Exec(`alter table t1 alter partition p0
 add placement policy
@@ -113,7 +117,7 @@ alter placement policy
 	constraints='{"+   zone   =   sh, -zone =   bj ": 1}'
 	role=leader
 	replicas=3`)
-	c.Assert(err, ErrorMatches, ".*pd unavailable.*")
+	c.Assert(err, IsNil)
 
 	_, err = tk.Exec(`alter table t1 alter partition p0
 add placement policy
@@ -132,14 +136,14 @@ alter placement policy
 	constraints='{"+zone=sh": 1, "-zon =bj,+zone=sh": 1}'
 	role=leader
 	replicas=3`)
-	c.Assert(err, ErrorMatches, ".*pd unavailable.*")
+	c.Assert(err, IsNil)
 
 	_, err = tk.Exec(`alter table t1 alter partition p0
 drop placement policy
 	role=leader,
 drop placement policy
 	role=leader`)
-	c.Assert(err, ErrorMatches, ".*pd unavailable.*")
+	c.Assert(err, IsNil)
 
 	_, err = tk.Exec(`alter table t1 alter partition p0
 add placement policy
@@ -148,7 +152,7 @@ add placement policy
 	replicas=3,
 drop placement policy
 	role=leader`)
-	c.Assert(err, ErrorMatches, ".*pd unavailable.*")
+	c.Assert(err, IsNil)
 
 	// list/dict detection
 	_, err = tk.Exec(`alter table t1 alter partition p0
@@ -270,4 +274,46 @@ add placement policy
 	role=leader
 	replicas=3`)
 	c.Assert(ddl.ErrPartitionMgmtOnNonpartitioned.Equal(err), IsTrue)
+}
+
+func (s *testDBSuite1) TestPlacementPolicyCache(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	defer tk.MustExec("drop table if exists t1")
+
+	initTable := func() []string {
+		bundles := make(map[string]*placement.Bundle)
+		tk.MustExec("drop table if exists t1")
+		tk.MustExec("create table t1(id int) partition by hash(id) partitions 2")
+
+		is := s.dom.InfoSchema()
+		is.MockBundles(bundles)
+
+		tb, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+		c.Assert(err, IsNil)
+		partDefs := tb.Meta().GetPartitionInfo().Definitions
+
+		rows := []string{}
+		for k, v := range partDefs {
+			ptID := placement.GroupID(v.ID)
+			bundles[ptID] = &placement.Bundle{
+				ID:    ptID,
+				Rules: []*placement.Rule{{Count: k}},
+			}
+			rows = append(rows, fmt.Sprintf("%s 0  test t1 %s <nil>  %d ", ptID, v.Name.L, k))
+		}
+		return rows
+	}
+
+	// test drop
+	rows := initTable()
+	tk.MustQuery("select * from information_schema.placement_policy order by REPLICAS").Check(testkit.Rows(rows...))
+	tk.MustExec("drop table t1")
+	tk.MustQuery("select * from information_schema.placement_policy").Check(testkit.Rows())
+
+	// test truncate
+	rows = initTable()
+	tk.MustQuery("select * from information_schema.placement_policy order by REPLICAS").Check(testkit.Rows(rows...))
+	tk.MustExec("truncate table t1")
+	tk.MustQuery("select * from information_schema.placement_policy").Check(testkit.Rows())
 }

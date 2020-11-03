@@ -218,16 +218,16 @@ func getStmtDbLabel(stmtNode ast.StmtNode) map[string]struct{} {
 			}
 		}
 	case *ast.CreateBindingStmt:
-		if x.OriginSel != nil {
-			originSelect := x.OriginSel.(*ast.SelectStmt)
+		if x.OriginNode != nil {
+			originSelect := x.OriginNode.(*ast.SelectStmt)
 			dbLabels := getDbFromResultNode(originSelect.From.TableRefs)
 			for _, db := range dbLabels {
 				dbLabelSet[db] = struct{}{}
 			}
 		}
 
-		if len(dbLabelSet) == 0 && x.HintedSel != nil {
-			hintedSelect := x.HintedSel.(*ast.SelectStmt)
+		if len(dbLabelSet) == 0 && x.HintedNode != nil {
+			hintedSelect := x.HintedNode.(*ast.SelectStmt)
 			dbLabels := getDbFromResultNode(hintedSelect.From.TableRefs)
 			for _, db := range dbLabels {
 				dbLabelSet[db] = struct{}{}

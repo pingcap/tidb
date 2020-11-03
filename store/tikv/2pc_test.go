@@ -47,7 +47,7 @@ var _ = SerialSuites(&testCommitterSuite{})
 func (s *testCommitterSuite) SetUpSuite(c *C) {
 	atomic.StoreUint64(&ManagedLockTTL, 3000) // 3s
 	s.OneByOneSuite.SetUpSuite(c)
-	CommitMaxBackoff = 1000
+	atomic.StoreUint64(&CommitMaxBackoff, 1000)
 }
 
 func (s *testCommitterSuite) SetUpTest(c *C) {
@@ -81,7 +81,7 @@ func (s *testCommitterSuite) SetUpTest(c *C) {
 }
 
 func (s *testCommitterSuite) TearDownSuite(c *C) {
-	CommitMaxBackoff = 20000
+	atomic.StoreUint64(&CommitMaxBackoff, 20000)
 	s.store.Close()
 	s.OneByOneSuite.TearDownSuite(c)
 }
@@ -228,7 +228,7 @@ func (s *testCommitterSuite) TestPrewriteRollback(c *C) {
 	}
 	committer.commitTS, err = s.store.oracle.GetTimestamp(ctx)
 	c.Assert(err, IsNil)
-	err = committer.commitMutations(NewBackofferWithVars(ctx, CommitMaxBackoff, nil), CommitterMutations{keys: [][]byte{[]byte("a")}})
+	err = committer.commitMutations(NewBackofferWithVars(ctx, int(atomic.LoadUint64(&CommitMaxBackoff)), nil), &PlainMutations{keys: [][]byte{[]byte("a")}})
 	c.Assert(err, IsNil)
 
 	txn3 := s.begin(c)
@@ -553,9 +553,9 @@ func (s *testCommitterSuite) TestRejectCommitTS(c *C) {
 	c.Assert(err, IsNil)
 	mutations := []*kvrpcpb.Mutation{
 		{
-			Op:    committer.mutations.ops[0],
-			Key:   committer.mutations.keys[0],
-			Value: committer.mutations.values[0],
+			Op:    committer.mutations.GetOp(0),
+			Key:   committer.mutations.GetKey(0),
+			Value: committer.mutations.GetValue(0),
 		},
 	}
 	prewrite := &kvrpcpb.PrewriteRequest{
@@ -602,7 +602,7 @@ func (s *testCommitterSuite) TestPessimisticPrewriteRequest(c *C) {
 	c.Assert(err, IsNil)
 	committer.forUpdateTS = 100
 	var batch batchMutations
-	batch.mutations = committer.mutations.subRange(0, 1)
+	batch.mutations = committer.mutations.Slice(0, 1)
 	batch.region = RegionVerID{1, 1, 1}
 	req := committer.buildPrewriteRequest(batch, 1)
 	c.Assert(len(req.Prewrite().IsPessimisticLock), Greater, 0)
@@ -859,13 +859,9 @@ func (s *testCommitterSuite) TestAcquireFalseTimeoutLock(c *C) {
 
 	// test no wait
 	lockCtx = &kv.LockCtx{ForUpdateTS: txn2.startTS, LockWaitTime: kv.LockNoWait, WaitStartTime: time.Now()}
-	startTime := time.Now()
 	err = txn2.LockKeys(context.Background(), lockCtx, k2)
-	elapsed := time.Since(startTime)
 	// cannot acquire lock immediately thus error
 	c.Assert(err.Error(), Equals, ErrLockAcquireFailAndNoWaitSet.Error())
-	// it should return immediately
-	c.Assert(elapsed, Less, 50*time.Millisecond)
 
 	// test for wait limited time (200ms)
 	lockCtx = &kv.LockCtx{ForUpdateTS: txn2.startTS, LockWaitTime: 200, WaitStartTime: time.Now()}
@@ -883,7 +879,7 @@ func (s *testCommitterSuite) getLockInfo(c *C, key []byte) *kvrpcpb.LockInfo {
 	bo := NewBackofferWithVars(context.Background(), getMaxBackoff, nil)
 	loc, err := s.store.regionCache.LocateKey(bo, key)
 	c.Assert(err, IsNil)
-	batch := batchMutations{region: loc.Region, mutations: committer.mutations.subRange(0, 1)}
+	batch := batchMutations{region: loc.Region, mutations: committer.mutations.Slice(0, 1)}
 	req := committer.buildPrewriteRequest(batch, 1)
 	resp, err := s.store.SendReq(bo, req, loc.Region, readTimeoutShort)
 	c.Assert(err, IsNil)
@@ -919,7 +915,7 @@ func (s *testCommitterSuite) TestPkNotFound(c *C) {
 	// while the secondary lock operation succeeded
 	bo := NewBackofferWithVars(context.Background(), pessimisticLockMaxBackoff, nil)
 	txn1.committer.ttlManager.close()
-	err = txn1.committer.pessimisticRollbackMutations(bo, CommitterMutations{keys: [][]byte{k1}})
+	err = txn1.committer.pessimisticRollbackMutations(bo, &PlainMutations{keys: [][]byte{k1}})
 	c.Assert(err, IsNil)
 
 	// Txn2 tries to lock the secondary key k2, dead loop if the left secondary lock by txn1 not resolved
@@ -993,16 +989,16 @@ func (s *testCommitterSuite) TestPessimisticLockPrimary(c *C) {
 }
 
 func (c *twoPhaseCommitter) mutationsOfKeys(keys [][]byte) CommitterMutations {
-	var res CommitterMutations
-	for i := range c.mutations.keys {
+	var res PlainMutations
+	for i := 0; i < c.mutations.Len(); i++ {
 		for _, key := range keys {
-			if bytes.Equal(c.mutations.keys[i], key) {
-				res.Push(c.mutations.ops[i], c.mutations.keys[i], c.mutations.values[i], c.mutations.isPessimisticLock[i])
+			if bytes.Equal(c.mutations.GetKey(i), key) {
+				res.Push(c.mutations.GetOp(i), c.mutations.GetKey(i), c.mutations.GetValue(i), c.mutations.IsPessimisticLock(i))
 				break
 			}
 		}
 	}
-	return res
+	return &res
 }
 
 func (s *testCommitterSuite) TestCommitDeadLock(c *C) {
@@ -1074,7 +1070,7 @@ func (s *testCommitterSuite) TestPushPessimisticLock(c *C) {
 	err = txn1.committer.initKeysAndMutations()
 	c.Assert(err, IsNil)
 	// Strip the prewrite of the primary key.
-	txn1.committer.mutations = txn1.committer.mutations.subRange(1, 2)
+	txn1.committer.mutations.handles = txn1.committer.mutations.handles[1:2]
 	c.Assert(err, IsNil)
 	err = txn1.committer.prewriteMutations(NewBackofferWithVars(ctx, PrewriteMaxBackoff, nil), txn1.committer.mutations)
 	c.Assert(err, IsNil)
@@ -1143,7 +1139,7 @@ func (s *testCommitterSuite) TestResolveMixed(c *C) {
 	// stop txn ttl manager and remove primary key, make the other keys left behind
 	bo := NewBackofferWithVars(context.Background(), pessimisticLockMaxBackoff, nil)
 	txn1.committer.ttlManager.close()
-	err = txn1.committer.pessimisticRollbackMutations(bo, CommitterMutations{keys: [][]byte{pk}})
+	err = txn1.committer.pessimisticRollbackMutations(bo, &PlainMutations{keys: [][]byte{pk}})
 	c.Assert(err, IsNil)
 
 	// try to resolve the left optimistic locks, use clean whole region
@@ -1172,7 +1168,7 @@ func (s *testCommitterSuite) TestResolveMixed(c *C) {
 func (s *testCommitterSuite) TestPrewriteSecondaryKeys(c *C) {
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
-		conf.TiKVClient.EnableAsyncCommit = true
+		conf.TiKVClient.AsyncCommit.Enable = true
 	})
 
 	// Prepare two regions first: (, 100) and [100, )
@@ -1211,7 +1207,7 @@ func (s *testCommitterSuite) TestPrewriteSecondaryKeys(c *C) {
 func (s *testCommitterSuite) TestAsyncCommit(c *C) {
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
-		conf.TiKVClient.EnableAsyncCommit = true
+		conf.TiKVClient.AsyncCommit.Enable = true
 	})
 
 	ctx := context.Background()
@@ -1232,12 +1228,43 @@ func (s *testCommitterSuite) TestAsyncCommit(c *C) {
 	err = committer.execute(ctx)
 	c.Assert(err, IsNil)
 
-	// TODO remove sleep when recovery logic is done
-	time.Sleep(1 * time.Second)
 	s.checkValues(c, map[string]string{
 		string(pk): string(pkVal),
 		string(k1): string(k1Val),
 	})
+}
+
+func (s *testCommitterSuite) TestAsyncCommitCheck(c *C) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TiKVClient.AsyncCommit.Enable = true
+		conf.TiKVClient.AsyncCommit.KeysLimit = 16
+		conf.TiKVClient.AsyncCommit.TotalKeySizeLimit = 64
+	})
+
+	txn := s.begin(c)
+	buf := []byte{0, 0, 0, 0}
+	// Set 16 keys, each key is 4 bytes long. So the total size of keys is 64 bytes.
+	for i := 0; i < 16; i++ {
+		buf[0] = byte(i)
+		err := txn.Set(buf, []byte("v"))
+		c.Assert(err, IsNil)
+	}
+
+	committer, err := newTwoPhaseCommitterWithInit(txn, 1)
+	c.Assert(err, IsNil)
+	c.Assert(committer.checkAsyncCommit(), IsTrue)
+
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TiKVClient.AsyncCommit.KeysLimit = 15
+	})
+	c.Assert(committer.checkAsyncCommit(), IsFalse)
+
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TiKVClient.AsyncCommit.KeysLimit = 20
+		conf.TiKVClient.AsyncCommit.TotalKeySizeLimit = 63
+	})
+	c.Assert(committer.checkAsyncCommit(), IsFalse)
 }
 
 type mockClient struct {

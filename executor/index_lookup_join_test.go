@@ -15,6 +15,7 @@ package executor_test
 
 import (
 	"context"
+	"fmt"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/util/testkit"
@@ -211,4 +212,58 @@ func (s *testSuite5) TestIssue16887(c *C) {
 	c.Assert(len(rows), Equals, 70)
 	rows = tk.MustQuery("show warnings").Rows()
 	c.Assert(len(rows) > 0, Equals, true)
+}
+
+func (s *testSuite5) TestIndexJoinEnumSetIssue19233(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("drop table if exists i;")
+	tk.MustExec("drop table if exists p1;")
+	tk.MustExec("drop table if exists p2;")
+	tk.MustExec(`CREATE TABLE p1 (type enum('HOST_PORT') NOT NULL, UNIQUE KEY (type)) ;`)
+	tk.MustExec(`CREATE TABLE p2 (type set('HOST_PORT') NOT NULL, UNIQUE KEY (type)) ;`)
+	tk.MustExec(`CREATE TABLE i (objectType varchar(64) NOT NULL);`)
+	tk.MustExec(`insert into i values ('SWITCH');`)
+	tk.MustExec(`create table t like i;`)
+	tk.MustExec(`insert into t values ('HOST_PORT');`)
+	tk.MustExec(`insert into t select * from t;`)
+	tk.MustExec(`insert into t select * from t;`)
+	tk.MustExec(`insert into t select * from t;`)
+	tk.MustExec(`insert into t select * from t;`)
+	tk.MustExec(`insert into t select * from t;`)
+	tk.MustExec(`insert into t select * from t;`)
+
+	tk.MustExec(`insert into i select * from t;`)
+
+	tk.MustExec(`insert into p1 values('HOST_PORT');`)
+	tk.MustExec(`insert into p2 values('HOST_PORT');`)
+	for _, table := range []string{"p1", "p2"} {
+		for _, hint := range []string{"INL_HASH_JOIN", "INL_MERGE_JOIN", "INL_JOIN"} {
+			sql := fmt.Sprintf(`select /*+ %s(%s) */ * from i, %s where i.objectType = %s.type;`, hint, table, table, table)
+			rows := tk.MustQuery(sql).Rows()
+			c.Assert(len(rows), Equals, 64)
+			for i := 0; i < len(rows); i++ {
+				c.Assert(fmt.Sprint(rows[i][0]), Equals, "HOST_PORT")
+			}
+			rows = tk.MustQuery("show warnings").Rows()
+			c.Assert(len(rows), Equals, 0)
+		}
+	}
+}
+
+func (s *testSuite5) TestIssue19411(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1  (c_int int, primary key (c_int))")
+	tk.MustExec("create table t2  (c_int int, primary key (c_int)) partition by hash (c_int) partitions 4")
+	tk.MustExec("insert into t1 values (1)")
+	tk.MustExec("insert into t2 values (1)")
+	tk.MustExec("begin")
+	tk.MustExec("insert into t1 values (2)")
+	tk.MustExec("insert into t2 values (2)")
+	tk.MustQuery("select /*+ INL_JOIN(t1,t2) */ * from t1 left join t2 on t1.c_int = t2.c_int").Check(testkit.Rows(
+		"1 1",
+		"2 2"))
+	tk.MustExec("commit")
 }

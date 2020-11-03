@@ -23,6 +23,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/executor"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/util"
@@ -412,7 +413,7 @@ func (s *testSuiteJoin2) TestJoinCast(c *C) {
 	result = tk.MustQuery("select * from t a , t1 b where (a.c1, a.c2) = (b.c1, b.c2);")
 	result.Check(testkit.Rows("1 2 1 2"))
 
-	/* Enable & fix this test after https://github.com/pingcap/tidb/issues/11895 is fixed.
+	/* Issue 11895 */
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("drop table if exists t1;")
 	tk.MustExec("create table t(c1 bigint unsigned);")
@@ -421,9 +422,8 @@ func (s *testSuiteJoin2) TestJoinCast(c *C) {
 	tk.MustExec("insert into t1 value(-1);")
 	result = tk.MustQuery("select * from t, t1 where t.c1 = t1.c1;")
 	c.Check(len(result.Rows()), Equals, 1)
-	*/
 
-	/* https://github.com/pingcap/tidb/issues/11896
+	/* Issues 11896 */
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("drop table if exists t1;")
 	tk.MustExec("create table t(c1 bigint);")
@@ -432,7 +432,6 @@ func (s *testSuiteJoin2) TestJoinCast(c *C) {
 	tk.MustExec("insert into t1 value(1);")
 	result = tk.MustQuery("select * from t, t1 where t.c1 = t1.c1;")
 	c.Check(len(result.Rows()), Equals, 1)
-	*/
 
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("drop table if exists t1;")
@@ -1233,6 +1232,7 @@ func (s *testSuiteJoinSerial) TestIndexNestedLoopHashJoin(c *C) {
 	tk.MustExec("set @@tidb_init_chunk_size=2")
 	tk.MustExec("set @@tidb_index_join_batch_size=10")
 	tk.MustExec("DROP TABLE IF EXISTS t, s")
+	tk.MustExec("set @@tidb_enable_clustered_index=0;")
 	tk.MustExec("create table t(pk int primary key, a int)")
 	for i := 0; i < 100; i++ {
 		tk.MustExec(fmt.Sprintf("insert into t values(%d, %d)", i, i))
@@ -1881,6 +1881,21 @@ func (s *testSuiteJoin2) TestNullEmptyAwareSemiJoin(c *C) {
 			result.Check(results[i].result)
 		}
 	}
+
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(a int)")
+	tk.MustExec("create table t2(a int)")
+	tk.MustExec("insert into t1 values(1),(2)")
+	tk.MustExec("insert into t2 values(1),(null)")
+	tk.MustQuery("select * from t1 where a not in (select a from t2 where t1.a = t2.a)").Check(testkit.Rows(
+		"2",
+	))
+	tk.MustQuery("select * from t1 where a != all (select a from t2 where t1.a = t2.a)").Check(testkit.Rows(
+		"2",
+	))
+	tk.MustQuery("select * from t1 where a <> all (select a from t2 where t1.a = t2.a)").Check(testkit.Rows(
+		"2",
+	))
 }
 
 func (s *testSuiteJoin1) TestScalarFuncNullSemiJoin(c *C) {
@@ -2080,8 +2095,14 @@ func (s *testSuiteJoinSerial) TestInlineProjection4HashJoinIssue15316(c *C) {
 }
 
 func (s *testSuiteJoinSerial) TestIssue18070(c *C) {
-	config.GetGlobalConfig().OOMAction = config.OOMActionCancel
-	defer func() { config.GetGlobalConfig().OOMAction = config.OOMActionLog }()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.OOMAction = config.OOMActionCancel
+	})
+	defer func() {
+		config.UpdateGlobal(func(conf *config.Config) {
+			conf.OOMAction = config.OOMActionLog
+		})
+	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1, t2")
@@ -2231,4 +2252,114 @@ func (s *testSuiteJoin3) TestIssue11896(c *C) {
 	tk.MustExec("insert into t1 value(1)")
 	tk.MustQuery("select * from t, t1 where t.c1 = t1.c1").Check(
 		testkit.Rows("1 \x01"))
+}
+
+func (s *testSuiteJoin3) TestIssue19498(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1 (c_int int, primary key (c_int));")
+	tk.MustExec("insert into t1 values (1),(2),(3),(4)")
+	tk.MustExec("drop table if exists t2;")
+	tk.MustExec("create table t2 (c_str varchar(40));")
+	tk.MustExec("insert into t2 values ('zen sammet');")
+	tk.MustExec("insert into t2 values ('happy fermat');")
+	tk.MustExec("insert into t2 values ('happy archimedes');")
+	tk.MustExec("insert into t2 values ('happy hypatia');")
+
+	tk.MustExec("drop table if exists t3;")
+	tk.MustExec("create table t3 (c_int int, c_str varchar(40), primary key (c_int), key (c_str));")
+	tk.MustExec("insert into t3 values (1, 'sweet hoover');")
+	tk.MustExec("insert into t3 values (2, 'awesome elion');")
+	tk.MustExec("insert into t3 values (3, 'hungry khayyam');")
+	tk.MustExec("insert into t3 values (4, 'objective kapitsa');")
+
+	rs := tk.MustQuery("select c_str, (select /*+ INL_JOIN(t1,t3) */ max(t1.c_int) from t1, t3 where t1.c_int = t3.c_int and t2.c_str > t3.c_str) q from t2 order by c_str;")
+	rs.Check(testkit.Rows("happy archimedes 2", "happy fermat 2", "happy hypatia 2", "zen sammet 4"))
+
+	rs = tk.MustQuery("select c_str, (select /*+ INL_HASH_JOIN(t1,t3) */ max(t1.c_int) from t1, t3 where t1.c_int = t3.c_int and t2.c_str > t3.c_str) q from t2 order by c_str;")
+	rs.Check(testkit.Rows("happy archimedes 2", "happy fermat 2", "happy hypatia 2", "zen sammet 4"))
+
+	rs = tk.MustQuery("select c_str, (select /*+ INL_MERGE_JOIN(t1,t3) */ max(t1.c_int) from t1, t3 where t1.c_int = t3.c_int and t2.c_str > t3.c_str) q from t2 order by c_str;")
+	rs.Check(testkit.Rows("happy archimedes 2", "happy fermat 2", "happy hypatia 2", "zen sammet 4"))
+}
+
+func (s *testSuiteJoin3) TestIssue19500(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1 (c_int int, primary key (c_int));")
+	tk.MustExec("insert into t1 values (1),(2),(3),(4),(5);")
+	tk.MustExec("drop table if exists t2;")
+	tk.MustExec("create table t2 (c_int int unsigned, c_str varchar(40), primary key (c_int), key (c_str));")
+	tk.MustExec("insert into t2 values (1, 'dazzling panini'),(2, 'infallible perlman'),(3, 'recursing cannon'),(4, 'vigorous satoshi'),(5, 'vigilant gauss'),(6, 'nervous jackson');\n")
+	tk.MustExec("drop table if exists t3;")
+	tk.MustExec("create table t3 (c_int int, c_str varchar(40), key (c_str));")
+	tk.MustExec("insert into t3 values (1, 'sweet morse'),(2, 'reverent golick'),(3, 'clever rubin'),(4, 'flamboyant morse');")
+	tk.MustQuery("select (select (select sum(c_int) from t3 where t3.c_str > t2.c_str) from t2 where t2.c_int > t1.c_int order by c_int limit 1) q from t1 order by q;").
+		Check(testkit.Rows("<nil>", "<nil>", "3", "3", "3"))
+}
+
+func (s *testSuiteJoinSerial) TestExplainAnalyzeJoin(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists t1,t2;")
+	tk.MustExec("create table t1 (a int, b int, unique index (a));")
+	tk.MustExec("create table t2 (a int, b int, unique index (a))")
+	tk.MustExec("insert into t1 values (1,1),(2,2),(3,3),(4,4),(5,5)")
+	tk.MustExec("insert into t2 values (1,1),(2,2),(3,3),(4,4),(5,5)")
+	// Test for index lookup join.
+	rows := tk.MustQuery("explain analyze select /*+ INL_JOIN(t1, t2) */ * from t1,t2 where t1.a=t2.a;").Rows()
+	c.Assert(len(rows), Equals, 8)
+	c.Assert(rows[0][0], Matches, "IndexJoin_.*")
+	c.Assert(rows[0][5], Matches, "time:.*, loops:.*, inner:{total:.*, concurrency:.*, task:.*, construct:.*, fetch:.*, build:.*}, probe:.*")
+	// Test for index lookup hash join.
+	rows = tk.MustQuery("explain analyze select /*+ INL_HASH_JOIN(t1, t2) */ * from t1,t2 where t1.a=t2.a;").Rows()
+	c.Assert(len(rows), Equals, 8)
+	c.Assert(rows[0][0], Matches, "IndexHashJoin.*")
+	c.Assert(rows[0][5], Matches, "time:.*, loops:.*, inner:{total:.*, concurrency:.*, task:.*, construct:.*, fetch:.*, build:.*, join:.*}")
+	// Test for hash join.
+	rows = tk.MustQuery("explain analyze select /*+ HASH_JOIN(t1, t2) */ * from t1,t2 where t1.a=t2.a;").Rows()
+	c.Assert(len(rows), Equals, 7)
+	c.Assert(rows[0][0], Matches, "HashJoin.*")
+	c.Assert(rows[0][5], Matches, "time:.*, loops:.*, build_hash_table:{total:.*, fetch:.*, build:.*}, probe:{concurrency:5, total:.*, max:.*, probe:.*, fetch:.*}")
+}
+
+func (s *testSuiteJoinSerial) TestIssue20270(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	failpoint.Enable("github.com/pingcap/tidb/executor/killedInJoin2Chunk", "return(true)")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t(c1 int, c2 int)")
+	tk.MustExec("create table t1(c1 int, c2 int)")
+	tk.MustExec("insert into t values(1,1),(2,2)")
+	tk.MustExec("insert into t1 values(2,3),(4,4)")
+	err := tk.QueryToErr("select /*+ TIDB_HJ(t, t1) */ * from t left join t1 on t.c1 = t1.c1 where t.c1 = 1 or t1.c2 > 20")
+	c.Assert(err, Equals, executor.ErrQueryInterrupted)
+	failpoint.Disable("github.com/pingcap/tidb/executor/killedInJoin2Chunk")
+	plannercore.ForceUseOuterBuild4Test = true
+	defer func() {
+		plannercore.ForceUseOuterBuild4Test = false
+	}()
+	failpoint.Enable("github.com/pingcap/tidb/executor/killedInJoin2ChunkForOuterHashJoin", "return(true)")
+	tk.MustExec("insert into t1 values(1,30),(2,40)")
+	err = tk.QueryToErr("select /*+ TIDB_HJ(t, t1) */ * from t left outer join t1 on t.c1 = t1.c1 where t.c1 = 1 or t1.c2 > 20")
+	c.Assert(err, Equals, executor.ErrQueryInterrupted)
+	failpoint.Disable("github.com/pingcap/tidb/executor/killedInJoin2ChunkForOuterHashJoin")
+}
+
+func (s *testSuiteJoinSerial) TestIssue20779(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1(a int, b int, index idx(b));")
+	tk.MustExec("insert into t1 values(1, 1);")
+	tk.MustExec("insert into t1 select * from t1;")
+
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/testIssue20779", "return"), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/testIssue20779"), IsNil)
+	}()
+
+	rs, err := tk.Exec("select /*+ inl_hash_join(t2) */ t1.b from t1 left join t1 t2 on t1.b=t2.b order by t1.b;")
+	c.Assert(err, IsNil)
+	_, err = session.GetRows4Test(context.Background(), nil, rs)
+	c.Assert(err.Error(), Matches, "testIssue20779")
 }

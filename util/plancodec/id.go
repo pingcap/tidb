@@ -54,6 +54,10 @@ const (
 	TypeHashJoin = "HashJoin"
 	// TypeBroadcastJoin is the type of broad cast join.
 	TypeBroadcastJoin = "BroadcastJoin"
+	// TypeExchangeSender is the type of mpp exchanger sender.
+	TypeExchangeSender = "ExchangeSender"
+	// TypeExchangeReceiver is the type of mpp exchanger receiver.
+	TypeExchangeReceiver = "ExchangeReceiver"
 	// TypeMergeJoin is the type of merge join.
 	TypeMergeJoin = "MergeJoin"
 	// TypeIndexJoin is the type of index look up join.
