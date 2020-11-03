@@ -502,7 +502,6 @@ func (imw *innerMergeWorker) handleTask(ctx context.Context, task *lookUpMergeJo
 	if err != nil {
 		return err
 	}
-	defer terror.Call(imw.innerExec.Close)
 	_, err = imw.fetchNextInnerResult(ctx, task)
 	if err != nil {
 		return err
