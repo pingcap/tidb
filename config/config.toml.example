@@ -299,7 +299,7 @@ networks = ""
 header-timeout = 5
 
 [prepared-plan-cache]
-enabled = false
+enabled = true
 capacity = 100
 memory-guard-ratio = 0.1
 
@@ -371,6 +371,9 @@ grpc-compression-type = "none"
 
 # Max time for commit command, must be twice bigger than raft election timeout.
 commit-timeout = "41s"
+
+# Allow TiDB try to use 1PC protocol to commit transactions that involves only one region.
+enable-one-pc = false
 
 # Max batch size in gRPC.
 max-batch-size = 128
