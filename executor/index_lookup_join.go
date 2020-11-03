@@ -654,10 +654,13 @@ func (iw *innerWorker) fetchInnerResults(ctx context.Context, task *lookUpJoinTa
 		}()
 	}
 	innerExec, err := iw.readerBuilder.buildExecutorForIndexJoin(ctx, lookUpContent, iw.indexRanges, iw.keyOff2IdxOff, iw.nextColCompareFilters, true)
+	if innerExec != nil {
+		defer terror.Call(innerExec.Close)
+	}
 	if err != nil {
 		return err
 	}
-	defer terror.Call(innerExec.Close)
+
 	innerResult := chunk.NewList(retTypes(innerExec), iw.ctx.GetSessionVars().MaxChunkSize, iw.ctx.GetSessionVars().MaxChunkSize)
 	innerResult.GetMemTracker().SetLabel(memory.LabelForBuildSideResult)
 	innerResult.GetMemTracker().AttachTo(task.memTracker)

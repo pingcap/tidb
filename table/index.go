@@ -72,7 +72,7 @@ type Index interface {
 	// Create supports insert into statement.
 	Create(ctx sessionctx.Context, rm kv.RetrieverMutator, indexedValues []types.Datum, h int64, opts ...CreateIdxOptFunc) (int64, error)
 	// Delete supports delete from statement.
-	Delete(sc *stmtctx.StatementContext, m kv.Mutator, indexedValues []types.Datum, h int64) error
+	Delete(sc *stmtctx.StatementContext, m kv.MemBuffer, indexedValues []types.Datum, h int64) error
 	// Drop supports drop table, drop index statements.
 	Drop(rm kv.RetrieverMutator) error
 	// Exist supports check index exists or not.
