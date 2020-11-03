@@ -376,6 +376,9 @@ grpc-compression-type = "none"
 # Max time for commit command, must be twice bigger than raft election timeout.
 commit-timeout = "41s"
 
+# Allow TiDB try to use 1PC protocol to commit transactions that involves only one region.
+enable-one-pc = false
+
 # Max batch size in gRPC.
 max-batch-size = 128
 # Overload threshold of TiKV.
