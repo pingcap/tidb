@@ -815,6 +815,21 @@ func (w *worker) waitSchemaSynced(d *ddlCtx, job *model.Job, waitTime time.Durat
 	w.waitSchemaChanged(ctx, d, waitTime, latestSchemaVersion, job)
 }
 
+func buildPlacementAffects(oldIDs []int64, newIDs []int64) []*model.AffectedOption {
+	if len(oldIDs) == 0 {
+		return nil
+	}
+
+	affects := make([]*model.AffectedOption, len(oldIDs))
+	for i := 0; i < len(oldIDs); i++ {
+		affects[i] = &model.AffectedOption{
+			OldTableID: oldIDs[i],
+			TableID:    newIDs[i],
+		}
+	}
+	return affects
+}
+
 // updateSchemaVersion increments the schema version by 1 and sets SchemaDiff.
 func updateSchemaVersion(t *meta.Meta, job *model.Job) (int64, error) {
 	schemaVersion, err := t.GenSchemaVersion()
@@ -834,6 +849,13 @@ func updateSchemaVersion(t *meta.Meta, job *model.Job) (int64, error) {
 			return 0, errors.Trace(err)
 		}
 		diff.OldTableID = job.TableID
+
+		// affects are used to update placement rule cache
+		if len(job.CtxVars) > 0 {
+			oldIDs := job.CtxVars[0].([]int64)
+			newIDs := job.CtxVars[1].([]int64)
+			diff.AffectedOpts = buildPlacementAffects(oldIDs, newIDs)
+		}
 	case model.ActionCreateView:
 		tbInfo := &model.TableInfo{}
 		var orReplace bool
@@ -893,32 +915,18 @@ func updateSchemaVersion(t *meta.Meta, job *model.Job) (int64, error) {
 		}
 		diff.AffectedOpts = affects
 	case model.ActionTruncateTablePartition:
-		oldIDs := job.CtxVars[0].([]int64)
-		newIDs := job.CtxVars[1].([]int64)
 		diff.TableID = job.TableID
-		affects := make([]*model.AffectedOption, len(oldIDs))
-		for i := 0; i < len(oldIDs); i++ {
-			affects[i] = &model.AffectedOption{
-				SchemaID:   job.SchemaID,
-				TableID:    newIDs[i],
-				OldTableID: oldIDs[i],
-			}
+		if len(job.CtxVars) > 0 {
+			oldIDs := job.CtxVars[0].([]int64)
+			newIDs := job.CtxVars[1].([]int64)
+			diff.AffectedOpts = buildPlacementAffects(oldIDs, newIDs)
 		}
-		diff.AffectedOpts = affects
-	case model.ActionDropTablePartition:
+	case model.ActionDropTablePartition, model.ActionRecoverTable, model.ActionDropTable:
 		// affects are used to update placement rule cache
 		diff.TableID = job.TableID
 		if len(job.CtxVars) > 0 {
 			if oldIDs, ok := job.CtxVars[0].([]int64); ok {
-				affects := make([]*model.AffectedOption, len(oldIDs))
-				for i := 0; i < len(oldIDs); i++ {
-					affects[i] = &model.AffectedOption{
-						SchemaID:   job.SchemaID,
-						TableID:    oldIDs[i],
-						OldTableID: oldIDs[i],
-					}
-				}
-				diff.AffectedOpts = affects
+				diff.AffectedOpts = buildPlacementAffects(oldIDs, oldIDs)
 			}
 		}
 	case model.ActionAlterTableAlterPartition:
