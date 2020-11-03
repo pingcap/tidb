@@ -19,6 +19,7 @@ import (
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
@@ -94,7 +95,7 @@ func updateRecord(ctx context.Context, sctx sessionctx.Context, h kv.Handle, old
 	for i, col := range t.Cols() {
 		collation := newData[i].Collation()
 		// We should use binary collation to compare datum, otherwise the result will be incorrect.
-		newData[i].SetCollation("utf8mb4_bin")
+		newData[i].SetCollation(charset.CollationUTF8MB4)
 		cmp, err := newData[i].CompareDatum(sc, &oldData[i])
 		newData[i].SetCollation(collation)
 		if err != nil {
