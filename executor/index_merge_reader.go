@@ -206,7 +206,7 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 	if err != nil {
 		return err
 	}
-	result, err := distsql.SelectWithRuntimeStats(ctx, e.ctx, kvReq, e.handleCols.GetFieldsTypes(), e.feedbacks[workID], getPhysicalPlanIDs(e.partialPlans[workID]), e.getIndexID(workID))
+	result, err := distsql.SelectWithRuntimeStats(ctx, e.ctx, kvReq, e.handleCols.GetFieldsTypes(), e.feedbacks[workID], getPhysicalPlanIDs(e.partialPlans[workID]), e.getIndexPlanRootID(workID))
 	if err != nil {
 		return err
 	}
@@ -214,7 +214,7 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 	result.Fetch(ctx)
 	worker := &partialIndexWorker{
 		stats:        e.stats,
-		idxID:        e.getIndexID(workID),
+		idxID:        e.getIndexPlanRootID(workID),
 		sc:           e.ctx,
 		batchSize:    e.maxChunkSize,
 		maxBatchSize: e.ctx.GetSessionVars().IndexLookupSize,
@@ -255,7 +255,7 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 
 func (e *IndexMergeReaderExecutor) buildPartialTableReader(ctx context.Context, workID int) Executor {
 	tableReaderExec := &TableReaderExecutor{
-		baseExecutor: newBaseExecutor(e.ctx, e.schema, e.getIndexID(workID)),
+		baseExecutor: newBaseExecutor(e.ctx, e.schema, e.getIndexPlanRootID(workID)),
 		table:        e.table,
 		dagPB:        e.dagPBs[workID],
 		startTS:      e.startTS,
@@ -326,14 +326,14 @@ func (e *IndexMergeReaderExecutor) initRuntimeStats() {
 	}
 }
 
-func (e *IndexMergeReaderExecutor) getIndexID(workID int) int {
+func (e *IndexMergeReaderExecutor) getIndexPlanRootID(workID int) int {
 	if len(e.partialPlans[workID]) > 0 {
 		return e.partialPlans[workID][len(e.partialPlans[workID])-1].ID()
 	}
 	return 0
 }
 
-func (e *IndexMergeReaderExecutor) getTableID() int {
+func (e *IndexMergeReaderExecutor) getTablePlanRoootID() int {
 	if len(e.tblPlans) > 0 {
 		return e.tblPlans[len(e.tblPlans)-1].ID()
 	}
@@ -456,7 +456,7 @@ func (e *IndexMergeReaderExecutor) startIndexMergeTableScanWorker(ctx context.Co
 
 func (e *IndexMergeReaderExecutor) buildFinalTableReader(ctx context.Context, handles []kv.Handle) (Executor, error) {
 	tableReaderExec := &TableReaderExecutor{
-		baseExecutor: newBaseExecutor(e.ctx, e.schema, e.getTableID()),
+		baseExecutor: newBaseExecutor(e.ctx, e.schema, e.getTablePlanRoootID()),
 		table:        e.table,
 		dagPB:        e.tableRequest,
 		startTS:      e.startTS,
