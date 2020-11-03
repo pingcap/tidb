@@ -289,10 +289,9 @@ func keyNeedToLock(k, v []byte, flags kv.KeyFlags) bool {
 		return true
 	}
 
-	// do not lock row key for delete operation,
-	// lock primary key and unique index only.
+	// lock row key, primary key and unique index for delete operation,
 	if len(v) == 0 {
-		return flags.HasNeedLocked() || k[10] == 'r'
+		return flags.HasNeedLocked() || tablecodec.IsRecordKey(k)
 	}
 
 	if tablecodec.IsUntouchedIndexKValue(k, v) {
