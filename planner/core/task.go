@@ -33,7 +33,7 @@ import (
 )
 
 // task is a new version of `PhysicalPlanInfo`. It stores cost information for a task.
-// A task may be CopTask, RootTask, MPPTask or a ParallelTask.
+// A task may be CopTask, RootTask, MPPTaskMeta or a ParallelTask.
 type task interface {
 	count() float64
 	addCost(cost float64)
