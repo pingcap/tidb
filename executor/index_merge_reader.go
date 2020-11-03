@@ -255,7 +255,7 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 
 func (e *IndexMergeReaderExecutor) buildPartialTableReader(ctx context.Context, workID int) Executor {
 	tableReaderExec := &TableReaderExecutor{
-		baseExecutor: newBaseExecutor(e.ctx, e.schema, e.getTableID()),
+		baseExecutor: newBaseExecutor(e.ctx, e.schema, e.getIndexID(workID)),
 		table:        e.table,
 		dagPB:        e.dagPBs[workID],
 		startTS:      e.startTS,
