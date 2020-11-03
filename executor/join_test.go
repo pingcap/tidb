@@ -588,7 +588,7 @@ func (s *testSuiteJoin1) TestNaturalJoin(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
 	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("drop table if exists t1, t2, t3")
 	tk.MustExec("create table t1 (a int, b int)")
 	tk.MustExec("create table t2 (a int, c int)")
 	tk.MustExec("create table t3 (b int, c int)")
