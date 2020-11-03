@@ -4670,7 +4670,8 @@ func getAnonymousIndex(t table.Table, colName model.CIStr) model.CIStr {
 func (d *ddl) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexName model.CIStr,
 	indexPartSpecifications []*ast.IndexPartSpecification, indexOption *ast.IndexOption) error {
 	if !config.GetGlobalConfig().AlterPrimaryKey {
-		return ErrUnsupportedModifyPrimaryKey.GenWithStack("Unsupported add primary key, alter-primary-key is false")
+		return ErrUnsupportedModifyPrimaryKey.GenWithStack("Unsupported add primary key, alter-primary-key is false. " +
+			"Please check the documentation for the tidb-server configuration files")
 	}
 
 	schema, t, err := d.getSchemaAndTableByIdent(ctx, ti)
