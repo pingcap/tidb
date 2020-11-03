@@ -1638,7 +1638,7 @@ func (p *LogicalJoin) tryToGetBroadCastJoin(prop *property.PhysicalProperty) []P
 		}
 	}
 
-	if p.JoinType == LeftOuterSemiJoin || p.JoinType == AntiLeftOuterSemiJoin || len(p.EqualConditions) == 0 {
+	if (p.JoinType != InnerJoin && p.JoinType != LeftOuterJoin && p.JoinType != RightOuterJoin && p.JoinType != SemiJoin && p.JoinType != AntiSemiJoin) || len(p.EqualConditions) == 0 {
 		return nil
 	}
 
