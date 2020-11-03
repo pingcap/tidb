@@ -14,6 +14,7 @@
 package executor
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -31,6 +32,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/infoschema"
@@ -138,6 +140,8 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			infoschema.ClusterTableStatementsSummary,
 			infoschema.ClusterTableStatementsSummaryHistory:
 			err = e.setDataForStatementsSummary(sctx, e.table.Name.O)
+		case infoschema.TablePlacementPolicy:
+			err = e.setDataForPlacementPolicy(sctx)
 		}
 		if err != nil {
 			return nil, err
@@ -451,7 +455,7 @@ func (e *memtableRetriever) setDataFromTables(ctx sessionctx.Context, schemas []
 				}
 
 				var rowCount, dataLength, indexLength uint64
-				if table.GetPartitionInfo() == nil {
+				if table.GetPartitionInfo() == nil || ctx.GetSessionVars().UseDynamicPartitionPrune() {
 					rowCount = tableRowsMap[table.ID]
 					dataLength, indexLength = getDataAndIndexLength(table, table.ID, rowCount, colLengthMap)
 				} else {
@@ -709,7 +713,29 @@ func (e *memtableRetriever) setDataFromPartitions(ctx sessionctx.Context, schema
 
 					var partitionDesc string
 					if table.Partition.Type == model.PartitionTypeRange {
-						partitionDesc = pi.LessThan[0]
+						partitionDesc = strings.Join(pi.LessThan, ",")
+					} else if table.Partition.Type == model.PartitionTypeList {
+						if len(pi.InValues) > 0 {
+							buf := bytes.NewBuffer(nil)
+							if len(pi.InValues[0]) == 1 {
+								for i, vs := range pi.InValues {
+									if i > 0 {
+										buf.WriteString(",")
+									}
+									buf.WriteString(vs[0])
+								}
+							} else if len(pi.InValues[0]) > 1 {
+								for i, vs := range pi.InValues {
+									if i > 0 {
+										buf.WriteString(",")
+									}
+									buf.WriteString("(")
+									buf.WriteString(strings.Join(vs, ","))
+									buf.WriteString(")")
+								}
+							}
+							partitionDesc = buf.String()
+						}
 					}
 
 					partitionMethod := table.Partition.Type.String()
@@ -717,6 +743,16 @@ func (e *memtableRetriever) setDataFromPartitions(ctx sessionctx.Context, schema
 					if table.Partition.Type == model.PartitionTypeRange && len(table.Partition.Columns) > 0 {
 						partitionMethod = "RANGE COLUMNS"
 						partitionExpr = table.Partition.Columns[0].String()
+					} else if table.Partition.Type == model.PartitionTypeList && len(table.Partition.Columns) > 0 {
+						partitionMethod = "LIST COLUMNS"
+						buf := bytes.NewBuffer(nil)
+						for i, col := range table.Partition.Columns {
+							if i > 0 {
+								buf.WriteString(",")
+							}
+							buf.WriteString(col.String())
+						}
+						partitionExpr = buf.String()
 					}
 
 					record := types.MakeDatums(
@@ -1054,6 +1090,7 @@ func (e *memtableRetriever) dataForTiDBClusterInfo(ctx sessionctx.Context) error
 			server.GitHash,
 			startTimeStr,
 			upTimeStr,
+			server.ServerID,
 		)
 		rows = append(rows, row)
 	}
@@ -1583,7 +1620,7 @@ func (e *memtableRetriever) setDataFromSessionVar(ctx sessionctx.Context) error 
 	var rows [][]types.Datum
 	var err error
 	sessionVars := ctx.GetSessionVars()
-	for _, v := range variable.SysVars {
+	for _, v := range variable.GetSysVars() {
 		var value string
 		value, err = variable.GetSessionSystemVar(sessionVars, v.Name)
 		if err != nil {
@@ -1779,6 +1816,51 @@ func (e *memtableRetriever) setDataForStatementsSummary(ctx sessionctx.Context, 
 	return nil
 }
 
+func (e *memtableRetriever) setDataForPlacementPolicy(ctx sessionctx.Context) error {
+	checker := privilege.GetPrivilegeManager(ctx)
+	is := infoschema.GetInfoSchema(ctx)
+	ruleBundles := is.RuleBundles()
+	var rows [][]types.Datum
+	for _, bundle := range ruleBundles {
+		id, err := placement.ObjectIDFromGroupID(bundle.ID)
+		if err != nil {
+			return errors.Wrapf(err, "Restore bundle %s failed", bundle.ID)
+		}
+		if id == 0 {
+			continue
+		}
+		// Currently, only partitions have placement rules.
+		tb, db, part := is.FindTableByPartitionID(id)
+		if tb == nil {
+			return errors.Errorf("Can't find partition by id %d", id)
+		}
+		if checker != nil && !checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, db.Name.L, tb.Meta().Name.L, "", mysql.SelectPriv) {
+			continue
+		}
+		for _, rule := range bundle.Rules {
+			constraint, err := placement.RestoreLabelConstraintList(rule.LabelConstraints)
+			if err != nil {
+				return errors.Wrapf(err, "Restore rule %s in bundle %s failed", rule.ID, bundle.ID)
+			}
+			row := types.MakeDatums(
+				bundle.ID,
+				bundle.Index,
+				rule.ID,
+				db.Name.L,
+				tb.Meta().Name.L,
+				part.Name.L,
+				nil,
+				string(rule.Role),
+				rule.Count,
+				constraint,
+			)
+			rows = append(rows, row)
+		}
+	}
+	e.rows = rows
+	return nil
+}
+
 type hugeMemTableRetriever struct {
 	dummyCloser
 	table       *model.TableInfo
@@ -1882,7 +1964,12 @@ type tiflashInstanceInfo struct {
 func (e *TiFlashSystemTableRetriever) initialize(sctx sessionctx.Context, tiflashInstances set.StringSet) error {
 	store := sctx.GetStore()
 	if etcd, ok := store.(tikv.EtcdBackend); ok {
-		if addrs := etcd.EtcdAddrs(); addrs != nil {
+		var addrs []string
+		var err error
+		if addrs, err = etcd.EtcdAddrs(); err != nil {
+			return err
+		}
+		if addrs != nil {
 			domainFromCtx := domain.GetDomain(sctx)
 			if domainFromCtx != nil {
 				cli := domainFromCtx.GetEtcdClient()
@@ -1918,7 +2005,6 @@ func (e *TiFlashSystemTableRetriever) initialize(sctx sessionctx.Context, tiflas
 				e.initialized = true
 				return nil
 			}
-			return errors.Errorf("Etcd client not found")
 		}
 		return errors.Errorf("Etcd addrs not found")
 	}

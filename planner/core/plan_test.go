@@ -20,6 +20,7 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/planner/core"
@@ -60,9 +61,12 @@ func (s *testPlanNormalize) TearDownSuite(c *C) {
 func (s *testPlanNormalize) TestNormalizedPlan(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1,t2")
+	tk.MustExec("set @@tidb_partition_prune_mode='static-only';")
+	tk.MustExec("drop table if exists t1,t2,t3,t4")
 	tk.MustExec("create table t1 (a int key,b int,c int, index (b));")
 	tk.MustExec("create table t2 (a int key,b int,c int, index (b));")
+	tk.MustExec("create table t3 (a int key,b int) partition by hash(a) partitions 2;")
+	tk.MustExec("create table t4 (a int, b int, index(a)) partition by range(a) (partition p0 values less than (10),partition p1 values less than MAXVALUE);")
 	var input []string
 	var output []struct {
 		SQL  string
@@ -85,6 +89,46 @@ func (s *testPlanNormalize) TestNormalizedPlan(c *C) {
 			output[i].Plan = normalizedPlanRows
 		})
 		compareStringSlice(c, normalizedPlanRows, output[i].Plan)
+	}
+}
+
+func (s *testPlanNormalize) TestNormalizedPlanForDiffStore(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (a int, b int, c int, primary key(a))")
+	tk.MustExec("insert into t1 values(1,1,1), (2,2,2), (3,3,3)")
+
+	tbl, err := s.dom.InfoSchema().TableByName(model.CIStr{O: "test", L: "test"}, model.CIStr{O: "t1", L: "t1"})
+	c.Assert(err, IsNil)
+	// Set the hacked TiFlash replica for explain tests.
+	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
+
+	var input []string
+	var output []struct {
+		Digest string
+		Plan   []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	lastDigest := ""
+	for i, tt := range input {
+		tk.Se.GetSessionVars().PlanID = 0
+		tk.MustExec(tt)
+		info := tk.Se.ShowProcess()
+		c.Assert(info, NotNil)
+		ep, ok := info.Plan.(*core.Explain)
+		c.Assert(ok, IsTrue)
+		normalized, digest := core.NormalizePlan(ep.TargetPlan)
+		normalizedPlan, err := plancodec.DecodeNormalizedPlan(normalized)
+		normalizedPlanRows := getPlanRows(normalizedPlan)
+		c.Assert(err, IsNil)
+		s.testData.OnRecord(func() {
+			output[i].Digest = digest
+			output[i].Plan = normalizedPlanRows
+		})
+		compareStringSlice(c, normalizedPlanRows, output[i].Plan)
+		c.Assert(digest != lastDigest, IsTrue)
+		lastDigest = digest
 	}
 }
 
@@ -124,9 +168,11 @@ func (s *testPlanNormalize) TestEncodeDecodePlan(c *C) {
 func (s *testPlanNormalize) TestNormalizedDigest(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1,t2, bmsql_order_line, bmsql_district,bmsql_stock")
+	tk.MustExec("drop table if exists t1,t2,t3,t4, bmsql_order_line, bmsql_district,bmsql_stock")
 	tk.MustExec("create table t1 (a int key,b int,c int, index (b));")
 	tk.MustExec("create table t2 (a int key,b int,c int, index (b));")
+	tk.MustExec("create table t3 (a int, b int, index(a)) partition by range(a) (partition p0 values less than (10),partition p1 values less than MAXVALUE);")
+	tk.MustExec("create table t4 (a int key,b int) partition by hash(a) partitions 2;")
 	tk.MustExec(`CREATE TABLE  bmsql_order_line  (
 	   ol_w_id  int(11) NOT NULL,
 	   ol_d_id  int(11) NOT NULL,
@@ -254,6 +300,16 @@ func (s *testPlanNormalize) TestNormalizedDigest(c *C) {
 			sql2:   "select count(1) as num,a from t1 where a=2 group by a union select count(1) as num,a from t1 where a=4 group by a;",
 			isSame: true,
 		},
+		{ // test for tablescan partition
+			sql1:   "select * from t3 where a=5",
+			sql2:   "select * from t3 where a=15",
+			isSame: true,
+		},
+		{ // test for point get partition
+			sql1:   "select * from t4 where a=4",
+			sql2:   "select * from t4 where a=30",
+			isSame: true,
+		},
 		{
 			sql1: `SELECT  COUNT(*) AS low_stock
 					FROM
@@ -367,6 +423,14 @@ func (s *testPlanNormalize) TestNthPlanHint(c *C) {
 		"1 1"))
 	tk.MustQuery("select  /*+ nth_plan(3) */ * from tt where a=1 and b=1;").Check(testkit.Rows(
 		"1 1"))
+
+	// Make sure nth_plan() doesn't affect separately executed subqueries by asserting there's only one warning.
+	tk.MustExec("select /*+ nth_plan(1000) */ count(1) from t where (select count(1) from t, tt) > 1;")
+	tk.MustQuery("show warnings").Check(testkit.Rows(
+		"Warning 1105 The parameter of nth_plan() is out of range."))
+	tk.MustExec("select /*+ nth_plan(1000) */ count(1) from t where exists (select count(1) from t, tt);")
+	tk.MustQuery("show warnings").Check(testkit.Rows(
+		"Warning 1105 The parameter of nth_plan() is out of range."))
 }
 
 func (s *testPlanNormalize) TestDecodePlanPerformance(c *C) {

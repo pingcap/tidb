@@ -5,6 +5,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/testkit"
 )
@@ -92,11 +93,24 @@ func (s *testSuite9) TestIssue19408(c *C) {
 	tk.MustExec("commit")
 }
 
+func (s *testSuite9) TestIssue20137(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1 (id bigint(20) unsigned, primary key(id))")
+	tk.MustExec("create table t2 (id bigint(20) unsigned)")
+	tk.MustExec("insert into t1 values (8738875760185212610)")
+	tk.MustExec("insert into t1 values (9814441339970117597)")
+	tk.MustExec("insert into t2 values (8738875760185212610)")
+	tk.MustExec("insert into t2 values (9814441339970117597)")
+	tk.MustQuery("select /*+ INL_MERGE_JOIN(t1, t2) */ * from t2 left join t1 on t1.id = t2.id order by t1.id").Check(
+		testkit.Rows("8738875760185212610 8738875760185212610", "9814441339970117597 9814441339970117597"))
+}
+
 func (s *testSuiteWithData) TestIndexJoinOnSinglePartitionTable(c *C) {
 	// For issue 19145
 	tk := testkit.NewTestKitWithInit(c, s.store)
-	for _, val := range []string{"1", "null"} {
-		tk.MustExec("set @try_old_partition_implementation = " + val)
+	for _, val := range []string{string(variable.StaticOnly), string(variable.DynamicOnly)} {
+		tk.MustExec("set @@tidb_partition_prune_mode= '" + val + "'")
 		tk.MustExec("drop table if exists t1, t2")
 		tk.MustExec("create table t1  (c_int int, c_str varchar(40), primary key (c_int) ) partition by range (c_int) ( partition p0 values less than (10), partition p1 values less than maxvalue )")
 		tk.MustExec("create table t2  (c_int int, c_str varchar(40), primary key (c_int) ) partition by range (c_int) ( partition p0 values less than (10), partition p1 values less than maxvalue )")
@@ -119,4 +133,16 @@ func (s *testSuiteWithData) TestIndexJoinOnSinglePartitionTable(c *C) {
 		rows = s.testData.ConvertRowsToStrings(tk.MustQuery("explain " + sql).Rows())
 		c.Assert(strings.Index(rows[0], "IndexJoin"), Equals, 0)
 	}
+}
+
+func (s *testSuite9) TestIssue20400(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists t, s")
+	tk.MustExec("create table s(a int, index(a))")
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("insert into t values(1)")
+	tk.MustQuery("select /*+ hash_join(t,s)*/ * from t left join s on t.a=s.a and t.a>1").Check(
+		testkit.Rows("1 <nil>"))
+	tk.MustQuery("select /*+ inl_merge_join(t,s)*/ * from t left join s on t.a=s.a and t.a>1").Check(
+		testkit.Rows("1 <nil>"))
 }

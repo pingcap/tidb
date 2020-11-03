@@ -148,9 +148,7 @@ func (e *IndexNestedLoopHashJoin) Open(ctx context.Context) error {
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 	e.innerPtrBytes = make([][]byte, 0, 8)
 	if e.runtimeStats != nil {
-		e.stats = &indexLookUpJoinRuntimeStats{
-			BasicRuntimeStats: e.runtimeStats,
-		}
+		e.stats = &indexLookUpJoinRuntimeStats{}
 		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
 	}
 	e.startWorkers(ctx)
@@ -202,8 +200,12 @@ func (e *IndexNestedLoopHashJoin) startWorkers(ctx context.Context) {
 
 func (e *IndexNestedLoopHashJoin) finishJoinWorkers(r interface{}) {
 	if r != nil {
-		e.resultCh <- &indexHashJoinResult{
-			err: errors.New(fmt.Sprintf("%v", r)),
+		err := errors.New(fmt.Sprintf("%v", r))
+		if !e.keepOuterOrder {
+			e.resultCh <- &indexHashJoinResult{err: err}
+		} else {
+			task := &indexHashJoinTask{err: err}
+			e.taskCh <- task
 		}
 		if e.cancelFunc != nil {
 			e.cancelFunc()
@@ -257,6 +259,9 @@ func (e *IndexNestedLoopHashJoin) runInOrder(ctx context.Context, req *chunk.Chu
 	for {
 		if e.isDryUpTasks(ctx) {
 			return nil
+		}
+		if e.curTask.err != nil {
+			return e.curTask.err
 		}
 		select {
 		case result, ok = <-e.curTask.resultCh:
@@ -340,6 +345,9 @@ func (ow *indexHashJoinOuterWorker) run(ctx context.Context) {
 			return
 		}
 		if ow.keepOuterOrder {
+			failpoint.Inject("testIssue20779", func() {
+				panic("testIssue20779")
+			})
 			if finished := ow.pushToChan(ctx, task, ow.taskCh); finished {
 				return
 			}

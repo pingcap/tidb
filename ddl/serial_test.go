@@ -591,7 +591,11 @@ func (s *testSerialSuite) TestCancelAddIndexPanic(c *C) {
 	}
 	c.Assert(checkErr, IsNil)
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:8214]Cancelled DDL job")
+	errMsg := err.Error()
+	// Cancelling the job can either succeed or not, it depends on whether the cancelled job takes affect.
+	// For now, there's no way to guarantee that cancelling will always take effect.
+	// TODO: After issue #17904 is fixed, there is no need to tolerate it here.
+	c.Assert(strings.HasPrefix(errMsg, "[ddl:8214]Cancelled DDL job") || strings.HasPrefix(errMsg, "[ddl:8211]DDL job rollback"), IsTrue)
 }
 
 func (s *testSerialSuite) TestRecoverTableByJobID(c *C) {
@@ -1281,6 +1285,7 @@ func (s *testSerialSuite) TestModifyingColumn4NewCollations(c *C) {
 	tk.MustExec("alter table t collate utf8mb4_general_ci")
 	tk.MustExec("alter table t charset utf8mb4 collate utf8mb4_bin")
 	tk.MustExec("alter table t charset utf8mb4 collate utf8mb4_unicode_ci")
+	tk.MustExec("alter table t charset utf8mb4 collate utf8mb4_zh_pinyin_tidb_as_cs")
 	// Change the default collation of database is allowed.
 	tk.MustExec("alter database dct charset utf8mb4 collate utf8mb4_general_ci")
 }
