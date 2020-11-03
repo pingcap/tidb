@@ -38,7 +38,12 @@ type testAsyncCommitCommon struct {
 	store   *tikvStore
 }
 
-func (s *testAsyncCommitCommon) setUpTest(c *C) {
+func (s *testAsyncCommitCommon) setUpTest(c *C, useTiKV bool) {
+	if *WithTiKV && useTiKV {
+		s.store = NewTestStore(c).(*tikvStore)
+		return
+	}
+
 	client, pdClient, cluster, err := unistore.New("")
 	c.Assert(err, IsNil)
 	unistore.BootstrapWithSingleStore(cluster)
@@ -98,6 +103,25 @@ func (s *testAsyncCommitCommon) mustPointGet(c *C, key, expectedValue []byte) {
 	c.Assert(value, BytesEquals, expectedValue)
 }
 
+func (s *testAsyncCommitCommon) mustGetFromSnapshot(c *C, version uint64, key, expectedValue []byte) {
+	snap := s.store.GetSnapshot(kv.Version{Ver: version})
+	value, err := snap.Get(context.Background(), key)
+	c.Assert(err, IsNil)
+	c.Assert(value, BytesEquals, expectedValue)
+}
+
+func (s *testAsyncCommitCommon) mustGetNoneFromSnapshot(c *C, version uint64, key []byte) {
+	snap := s.store.GetSnapshot(kv.Version{Ver: version})
+	_, err := snap.Get(context.Background(), key)
+	c.Assert(errors.Cause(err), Equals, kv.ErrNotExist)
+}
+
+func (s *testAsyncCommitCommon) begin(c *C) *tikvTxn {
+	txn, err := s.store.Begin()
+	c.Assert(err, IsNil)
+	return txn.(*tikvTxn)
+}
+
 type testAsyncCommitSuite struct {
 	OneByOneSuite
 	testAsyncCommitCommon
@@ -107,7 +131,7 @@ type testAsyncCommitSuite struct {
 var _ = SerialSuites(&testAsyncCommitSuite{})
 
 func (s *testAsyncCommitSuite) SetUpTest(c *C) {
-	s.testAsyncCommitCommon.setUpTest(c)
+	s.testAsyncCommitCommon.setUpTest(c, false)
 	s.bo = NewBackofferWithVars(context.Background(), 5000, nil)
 }
 
