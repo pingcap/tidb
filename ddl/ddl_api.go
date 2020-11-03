@@ -966,9 +966,8 @@ func checkColumnValueConstraint(ctx sessionctx.Context, col *table.Column, colla
 	val, err := variable.GetGlobalSystemVar(ctx.GetSessionVars(), variable.TiDBEnableEnumLengthLimit)
 	if err != nil {
 		return errors.Trace(err)
-	} else {
-		enumLengthLimit = variable.TiDBOptOn(val)
 	}
+	enumLengthLimit = variable.TiDBOptOn(val)
 	desc, err := charset.GetCharsetDesc(col.Charset)
 	if err != nil {
 		return errors.Trace(err)
