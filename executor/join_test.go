@@ -1176,7 +1176,7 @@ func (s *testSuiteJoin1) TestIndexLookupJoin(c *C) {
 
 	tk.MustQuery("desc select /*+ TIDB_INLJ(s) */ count(*) from t join s use index(idx) on s.a = t.a and s.b < t.b").Check(testkit.Rows(
 		"HashAgg_9 1.00 root  funcs:count(1)->Column#6",
-		"└─IndexJoin_16 64.00 root  inner join, inner:IndexReader_15, outer key:test.t.a, inner key:test.s.a, other cond:lt(test.s.b, test.t.b)",
+		"└─IndexJoin_16 64.00 root  inner join, inner:IndexReader_15, outer key:test.t.a, inner key:test.s.a, equal cond:eq(test.t.a, test.s.a), other cond:lt(test.s.b, test.t.b)",
 		"  ├─TableReader_26(Build) 64.00 root  data:Selection_25",
 		"  │ └─Selection_25 64.00 cop[tikv]  not(isnull(test.t.b))",
 		"  │   └─TableFullScan_24 64.00 cop[tikv] table:t keep order:false",
@@ -1203,7 +1203,7 @@ func (s *testSuiteJoin1) TestIndexLookupJoin(c *C) {
 
 	tk.MustQuery("desc select /*+ INL_HASH_JOIN(s) */ count(*) from t join s use index(idx) on s.a = t.a and s.b < t.b").Check(testkit.Rows(
 		"HashAgg_9 1.00 root  funcs:count(1)->Column#6",
-		"└─IndexHashJoin_18 64.00 root  inner join, inner:IndexReader_15, outer key:test.t.a, inner key:test.s.a, other cond:lt(test.s.b, test.t.b)",
+		"└─IndexHashJoin_18 64.00 root  inner join, inner:IndexReader_15, outer key:test.t.a, inner key:test.s.a, equal cond:eq(test.t.a, test.s.a), other cond:lt(test.s.b, test.t.b)",
 		"  ├─TableReader_26(Build) 64.00 root  data:Selection_25",
 		"  │ └─Selection_25 64.00 cop[tikv]  not(isnull(test.t.b))",
 		"  │   └─TableFullScan_24 64.00 cop[tikv] table:t keep order:false",
@@ -1285,7 +1285,7 @@ func (s *testSuiteJoinSerial) TestIndexNestedLoopHashJoin(c *C) {
 	tk.MustExec("set @@tidb_index_join_batch_size=2")
 	tk.MustQuery("desc select * from t l1 where exists ( select * from t l2 where l2.l_orderkey = l1.l_orderkey and l2.l_suppkey <> l1.l_suppkey ) order by `l_orderkey`,`l_linenumber`;").Check(testkit.Rows(
 		"Sort_9 7.20 root  test.t.l_orderkey, test.t.l_linenumber",
-		"└─IndexHashJoin_17 7.20 root  semi join, inner:IndexLookUp_15, outer key:test.t.l_orderkey, inner key:test.t.l_orderkey, other cond:ne(test.t.l_suppkey, test.t.l_suppkey)",
+		"└─IndexHashJoin_17 7.20 root  semi join, inner:IndexLookUp_15, outer key:test.t.l_orderkey, inner key:test.t.l_orderkey, equal cond:eq(test.t.l_orderkey, test.t.l_orderkey), other cond:ne(test.t.l_suppkey, test.t.l_suppkey)",
 		"  ├─TableReader_20(Build) 9.00 root  data:Selection_19",
 		"  │ └─Selection_19 9.00 cop[tikv]  not(isnull(test.t.l_suppkey))",
 		"  │   └─TableFullScan_18 9.00 cop[tikv] table:l1 keep order:false",
@@ -1296,7 +1296,7 @@ func (s *testSuiteJoinSerial) TestIndexNestedLoopHashJoin(c *C) {
 	tk.MustQuery("select * from t l1 where exists ( select * from t l2 where l2.l_orderkey = l1.l_orderkey and l2.l_suppkey <> l1.l_suppkey )order by `l_orderkey`,`l_linenumber`;").Check(testkit.Rows("0 0 0 0", "0 1 0 1", "0 2 0 0", "1 0 1 0", "1 1 1 1", "1 2 1 0", "2 0 0 0", "2 1 0 1", "2 2 0 0"))
 	tk.MustQuery("desc select count(*) from t l1 where exists ( select * from t l2 where l2.l_orderkey = l1.l_orderkey and l2.l_suppkey <> l1.l_suppkey );").Check(testkit.Rows(
 		"StreamAgg_14 1.00 root  funcs:count(1)->Column#11",
-		"└─IndexHashJoin_29 7.20 root  semi join, inner:IndexLookUp_27, outer key:test.t.l_orderkey, inner key:test.t.l_orderkey, other cond:ne(test.t.l_suppkey, test.t.l_suppkey)",
+		"└─IndexHashJoin_29 7.20 root  semi join, inner:IndexLookUp_27, outer key:test.t.l_orderkey, inner key:test.t.l_orderkey, equal cond:eq(test.t.l_orderkey, test.t.l_orderkey), other cond:ne(test.t.l_suppkey, test.t.l_suppkey)",
 		"  ├─TableReader_23(Build) 9.00 root  data:Selection_22",
 		"  │ └─Selection_22 9.00 cop[tikv]  not(isnull(test.t.l_suppkey))",
 		"  │   └─TableFullScan_21 9.00 cop[tikv] table:l1 keep order:false",
@@ -1392,7 +1392,7 @@ func (s *testSuiteJoin3) TestIssue13449(c *C) {
 	tk.MustExec("set @@tidb_index_join_batch_size=32;")
 
 	tk.MustQuery("desc select /*+ INL_HASH_JOIN(s) */ * from t join s on t.a=s.a order by t.a;").Check(testkit.Rows(
-		"IndexHashJoin_30 12487.50 root  inner join, inner:IndexReader_27, outer key:test.t.a, inner key:test.s.a",
+		"IndexHashJoin_30 12487.50 root  inner join, inner:IndexReader_27, outer key:test.t.a, inner key:test.s.a, equal cond:eq(test.t.a, test.s.a)",
 		"├─IndexReader_37(Build) 9990.00 root  index:IndexFullScan_36",
 		"│ └─IndexFullScan_36 9990.00 cop[tikv] table:t, index:a(a) keep order:true, stats:pseudo",
 		"└─IndexReader_27(Probe) 1.25 root  index:Selection_26",
