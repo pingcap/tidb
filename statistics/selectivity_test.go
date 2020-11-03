@@ -25,6 +25,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -146,7 +147,7 @@ func cleanEnv(c *C, store kv.Storage, do *domain.Domain) {
 	tk.MustExec("delete from mysql.stats_meta")
 	tk.MustExec("delete from mysql.stats_histograms")
 	tk.MustExec("delete from mysql.stats_buckets")
-	do.StatsHandle().Clear()
+	do.StatsHandle().Clear4Test()
 }
 
 // generateIntDatum will generate a datum slice, every dimension is begin from 0, end with num - 1.
@@ -676,7 +677,7 @@ func (s *testStatsSuite) TestDNFCondSelectivity(c *C) {
 
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
-	testKit.MustExec("create table t(a int primary key, b int, c int, d int)")
+	testKit.MustExec("create table t(a int, b int, c int, d int)")
 	testKit.MustExec("insert into t value(1,5,4,4),(3,4,1,8),(4,2,6,10),(6,7,2,5),(7,1,4,9),(8,9,8,3),(9,1,9,1),(10,6,6,2)")
 	testKit.MustExec("alter table t add index (b)")
 	testKit.MustExec("alter table t add index (d)")
@@ -723,4 +724,22 @@ func (s *testStatsSuite) TestDNFCondSelectivity(c *C) {
 		c.Assert(math.Abs(ratio-output[i].Selectivity) < eps, IsTrue,
 			Commentf("for %s, needed: %v, got: %v", tt, output[i].Selectivity, ratio))
 	}
+
+	// Test issue 19981
+	testKit.MustExec("select * from t where _tidb_rowid is null or _tidb_rowid > 7")
+}
+
+func (s *testStatsSuite) TestIndexEstimationCrossValidate(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, key(a,b))")
+	tk.MustExec("insert into t values(1, 1), (1, 2), (1, 3), (2, 2)")
+	tk.MustExec("analyze table t")
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/statistics/table/mockQueryBytesMaxUint64", `return(100000)`), IsNil)
+	tk.MustQuery("explain select * from t where a = 1 and b = 2").Check(testkit.Rows(
+		"IndexReader_6 1.00 root  index:IndexRangeScan_5",
+		"└─IndexRangeScan_5 1.00 cop[tikv] table:t, index:a(a, b) range:[1 2,1 2], keep order:false"))
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/statistics/table/mockQueryBytesMaxUint64"), IsNil)
 }

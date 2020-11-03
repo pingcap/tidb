@@ -20,6 +20,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"runtime/trace"
 	"sort"
 	"strings"
 	"time"
@@ -345,14 +346,51 @@ func BgLogger() *zap.Logger {
 }
 
 // WithConnID attaches connId to context.
-func WithConnID(ctx context.Context, connID uint32) context.Context {
+func WithConnID(ctx context.Context, connID uint64) context.Context {
 	var logger *zap.Logger
 	if ctxLogger, ok := ctx.Value(ctxLogKey).(*zap.Logger); ok {
 		logger = ctxLogger
 	} else {
 		logger = zaplog.L()
 	}
-	return context.WithValue(ctx, ctxLogKey, logger.With(zap.Uint32("conn", connID)))
+	return context.WithValue(ctx, ctxLogKey, logger.With(zap.Uint64("conn", connID)))
+}
+
+// WithTraceLogger attaches trace identifier to context
+func WithTraceLogger(ctx context.Context, connID uint64) context.Context {
+	var logger *zap.Logger
+	if ctxLogger, ok := ctx.Value(ctxLogKey).(*zap.Logger); ok {
+		logger = ctxLogger
+	} else {
+		logger = zaplog.L()
+	}
+	return context.WithValue(ctx, ctxLogKey, wrapTraceLogger(ctx, connID, logger))
+}
+
+func wrapTraceLogger(ctx context.Context, connID uint64, logger *zap.Logger) *zap.Logger {
+	return logger.WithOptions(zap.WrapCore(func(core zapcore.Core) zapcore.Core {
+		tl := &traceLog{ctx: ctx}
+		traceCore := zaplog.NewTextCore(zaplog.NewTextEncoder(&zaplog.Config{}), tl, tl).
+			With([]zapcore.Field{zap.Uint64("conn", connID)})
+		return zapcore.NewTee(traceCore, core)
+	}))
+}
+
+type traceLog struct {
+	ctx context.Context
+}
+
+func (t *traceLog) Enabled(_ zapcore.Level) bool {
+	return true
+}
+
+func (t *traceLog) Write(p []byte) (n int, err error) {
+	trace.Log(t.ctx, "log", string(p))
+	return len(p), nil
+}
+
+func (t *traceLog) Sync() error {
+	return nil
 }
 
 // WithKeyValue attaches key/value to context.
