@@ -608,6 +608,9 @@ func (s *testEvaluatorSuite) TestExprPushDownToFlash(c *C) {
 
 	jsonColumn := dg.genColumn(mysql.TypeJSON, 1)
 	intColumn := dg.genColumn(mysql.TypeLonglong, 2)
+	realColumn := dg.genColumn(mysql.TypeDouble, 3)
+	decimalColumn := dg.genColumn(mysql.TypeNewDecimal, 4)
+	stringColumn := dg.genColumn(mysql.TypeString, 5)
 	function, err := NewFunction(mock.NewContext(), ast.JSONLength, types.NewFieldType(mysql.TypeLonglong), jsonColumn)
 	c.Assert(err, IsNil)
 	exprs = append(exprs, function)
@@ -621,6 +624,26 @@ func (s *testEvaluatorSuite) TestExprPushDownToFlash(c *C) {
 	exprs = append(exprs, function)
 
 	function, err = NewFunction(mock.NewContext(), ast.Xor, types.NewFieldType(mysql.TypeLonglong), intColumn, intColumn)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+
+	// CastIntAsInt
+	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeLonglong), intColumn)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+
+	// CastRealAsInt
+	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeLonglong), realColumn)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+
+	// CastDecimalAsInt
+	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeLonglong), decimalColumn)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+
+	// CastStringAsInt
+	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeLonglong), stringColumn)
 	c.Assert(err, IsNil)
 	exprs = append(exprs, function)
 
