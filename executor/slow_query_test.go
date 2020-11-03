@@ -42,7 +42,8 @@ func parseLog(retriever *slowQueryRetriever, sctx sessionctx.Context, reader *bu
 	var rows [][]types.Datum
 	var err error
 	if task != nil {
-		rows, err = task.result.rows, task.result.err
+		result := <-task.result
+		rows, err = result.rows, result.err
 	}
 	if err == io.EOF {
 		err = nil
