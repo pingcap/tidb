@@ -1854,11 +1854,7 @@ func CreateSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 
 const (
 	notBootstrapped         = 0
-<<<<<<< HEAD
-	currentBootstrapVersion = version47
-=======
-	currentBootstrapVersion = version52
->>>>>>> 152b60ebe... session: increase cm_sketch column max length to 6291456(6MB) (#20152)
+	currentBootstrapVersion = version48
 )
 
 func getStoreBootstrapVersion(store kv.Storage) int64 {
