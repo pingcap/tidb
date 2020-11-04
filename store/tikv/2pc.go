@@ -1036,7 +1036,6 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 	binlogChan := c.prewriteBinlog(ctx)
 	prewriteBo := NewBackofferWithVars(ctx, PrewriteMaxBackoff, c.txn.vars)
 	start := time.Now()
-	c.prewriteStarted = true
 	err = c.prewriteMutations(prewriteBo, c.mutations)
 
 	if err != nil {
