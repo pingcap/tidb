@@ -1107,6 +1107,9 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 		StatsInfo:        plannercore.GetStatsInfo,
 		MaxExecutionTime: maxExecutionTime,
 	}
+	if s.GetSessionVars().EnableRedactLog {
+		pi.RedactSQL = parser.Normalize(sql)
+	}
 	_, pi.Digest = s.sessionVars.StmtCtx.SQLDigest()
 	s.currentPlan = nil
 	if s.sessionVars.User != nil {

@@ -159,6 +159,9 @@ func genLogFields(costTime time.Duration, info *util.ProcessInfo) []zap.Field {
 	var sql string
 	if len(info.Info) > 0 {
 		sql = info.Info
+		if info.RedactSQL != "" {
+			sql = info.RedactSQL
+		}
 	}
 	if len(sql) > logSQLLen {
 		sql = fmt.Sprintf("%s len(%d)", sql[:logSQLLen], len(sql))
