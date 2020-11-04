@@ -490,15 +490,12 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 			break
 		}
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != indexInfo.State)
-<<<<<<< HEAD
-=======
 		if err != nil {
 			return ver, err
 		}
 		// Initialize SnapshotVer to 0 for later reorganization check.
 		job.SnapshotVer = 0
 		job.SchemaState = model.StateWriteReorganization
->>>>>>> b1f4aa893... standardize change the job state after all other checks (#20212)
 	case model.StateWriteReorganization:
 		// reorganization -> public
 		updateHiddenColumns(tblInfo, indexInfo, model.StatePublic)
