@@ -20,6 +20,7 @@
       },
       {
         "SQL": "explain select * from t where b > 'a' order by convert(b, unsigned) limit 2",
+<<<<<<< HEAD
         "Result": [
           "Projection_17 2.00 root  test.t.a, test.t.b",
           "└─TopN_8 2.00 root  Column#3:asc, offset:0, count:2",
@@ -27,6 +28,16 @@
           "    └─TableReader_13 3333.33 root  data:Selection_12",
           "      └─Selection_12 3333.33 cop[tiflash]  gt(test.t.b, \"a\")",
           "        └─TableFullScan_11 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+=======
+        "Plan": [
+          "Projection_18 2.00 root  test.t.a, test.t.b",
+          "└─TopN_8 2.00 root  Column#3, offset:0, count:2",
+          "  └─Projection_19 2.00 root  test.t.a, test.t.b, cast(test.t.b, bigint(22) UNSIGNED BINARY)->Column#3",
+          "    └─TableReader_14 2.00 root  data:TopN_13",
+          "      └─TopN_13 2.00 cop[tiflash]  cast(test.t.b), offset:0, count:2",
+          "        └─Selection_12 3333.33 cop[tiflash]  gt(test.t.b, \"a\")",
+          "          └─TableFullScan_11 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+>>>>>>> a53c1d05b... expression: Support some cast functions push down to TiFlash (#20787)
         ]
       },
       {
