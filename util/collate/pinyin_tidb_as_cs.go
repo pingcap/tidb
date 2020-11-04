@@ -43,7 +43,7 @@ func (py *zhPinyinTiDBASCSCollator) Compare(a, b string) int {
 // Key implements Collator interface.
 func (py *zhPinyinTiDBASCSCollator) Key(str string) []byte {
 	str = truncateTailingSpace(str)
-	buf := make([]byte, 0, len(str))
+	buf := make([]byte, 0, len(str)*2)
 	r, i := rune(0), 0
 
 	for i < len(str) {

@@ -12,10 +12,10 @@ const middle = 2 << 10
 const long = 2 << 20
 
 func generateData(length int) string {
-	rs := []rune("ßss")
+	rand.Seed(1)
 	r := make([]rune, length)
 	for i := range r {
-		r[i] = rs[rand.Intn(len(rs))]
+		r[i] = rand.Int31()
 	}
 
 	return string(r)
@@ -53,6 +53,10 @@ func BenchmarkUtf8mb4UnicodeCI_CompareShort(b *testing.B) {
 	compare(b, &unicodeCICollator{}, short)
 }
 
+func BenchmarkUtf8mb4Pinyin_CompareShort(b *testing.B) {
+	compare(b, &zhPinyinTiDBASCSCollator{}, short)
+}
+
 func BenchmarkUtf8mb4Bin_CompareMid(b *testing.B) {
 	compare(b, &binCollator{}, middle)
 }
@@ -63,6 +67,10 @@ func BenchmarkUtf8mb4GeneralCI_CompareMid(b *testing.B) {
 
 func BenchmarkUtf8mb4UnicodeCI_CompareMid(b *testing.B) {
 	compare(b, &unicodeCICollator{}, middle)
+}
+
+func BenchmarkUtf8mb4Pinyin_CompareMid(b *testing.B) {
+	compare(b, &zhPinyinTiDBASCSCollator{}, middle)
 }
 
 func BenchmarkUtf8mb4Bin_CompareLong(b *testing.B) {
@@ -77,6 +85,10 @@ func BenchmarkUtf8mb4UnicodeCI_CompareLong(b *testing.B) {
 	compare(b, &unicodeCICollator{}, long)
 }
 
+func BenchmarkUtf8mb4Pinyin_CompareLong(b *testing.B) {
+	compare(b, &zhPinyinTiDBASCSCollator{}, long)
+}
+
 func BenchmarkUtf8mb4Bin_KeyShort(b *testing.B) {
 	key(b, &binCollator{}, short)
 }
@@ -87,6 +99,10 @@ func BenchmarkUtf8mb4GeneralCI_KeyShort(b *testing.B) {
 
 func BenchmarkUtf8mb4UnicodeCI_KeyShort(b *testing.B) {
 	key(b, &unicodeCICollator{}, short)
+}
+
+func BenchmarkUtf8mb4Pinyin_KeyShort(b *testing.B) {
+	key(b, &zhPinyinTiDBASCSCollator{}, short)
 }
 
 func BenchmarkUtf8mb4Bin_KeyMid(b *testing.B) {
@@ -101,6 +117,10 @@ func BenchmarkUtf8mb4UnicodeCI_KeyMid(b *testing.B) {
 	key(b, &unicodeCICollator{}, middle)
 }
 
+func BenchmarkUtf8mb4Pinyin_KeyMid(b *testing.B) {
+	key(b, &zhPinyinTiDBASCSCollator{}, middle)
+}
+
 func BenchmarkUtf8mb4Bin_KeyLong(b *testing.B) {
 	key(b, &binCollator{}, long)
 }
@@ -111,4 +131,8 @@ func BenchmarkUtf8mb4GeneralCI_KeyLong(b *testing.B) {
 
 func BenchmarkUtf8mb4UnicodeCI_KeyLong(b *testing.B) {
 	key(b, &unicodeCICollator{}, long)
+}
+
+func BenchmarkUtf8mb4Pinyin_KeyLong(b *testing.B) {
+	key(b, &zhPinyinTiDBASCSCollator{}, long)
 }
