@@ -1149,11 +1149,14 @@ func (s *testSuiteAgg) TestIssue20658(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("use test;")
 
-	sqlFormat := "select /*+ stream_agg() */ %s from t group by b;"
-	aggFuns := []string{"count(a)", "sum(a)", "avg(a)", "max(a)", "min(a)", "bit_or(a)", "bit_xor(a)", "bit_and(a)"}
-	concurrencies := []int{1, 2, 4, 8}
-	rows := []int{10000, 1000000}
+	aggFuncs := []string{"count(a)", "sum(a)", "avg(a)", "max(a)", "min(a)", "bit_or(a)", "bit_xor(a)", "bit_and(a)"}
+	aggFuncs2 := []string{"var_pop(a)", "var_samp(a)", "stddev_pop(a)", "stddev_samp(a)", "approx_count_distinct(a)", "approx_percentile(a, 7)"}
 
+	sqlFormat := "select /*+ stream_agg() */ %s from t group by b;"
+	castFormat := "cast(%s as decimal(32, 4))"
+
+	concurrencies := []int{1, 2, 4, 8}
+	rows := []int{100000}
 	for _, row := range rows {
 		tk.MustExec("drop table if exists t;")
 		tk.MustExec("CREATE TABLE t(a bigint, b bigint, key(a));")
@@ -1162,8 +1165,32 @@ func (s *testSuiteAgg) TestIssue20658(c *C) {
 			tk.MustExec("insert into t values (?, ?);", rand.Intn(100), rand.Intn(100))
 		}
 
-		for _, af := range aggFuns {
+		for _, af := range aggFuncs {
 			sql := fmt.Sprintf(sqlFormat, af)
+			var correct *testkit.Result
+			for _, con := range concurrencies {
+				tk.MustExec(fmt.Sprintf("set @@tidb_stream_agg_concurrency=%d;", con))
+				if con == 1 {
+					correct = tk.MustQuery(sql).Sort()
+				} else {
+					er := tk.MustQuery("explain " + sql).Rows()
+					ok := false
+					for _, l := range er {
+						str := fmt.Sprintf("%v", l)
+						if strings.Contains(str, "Shuffle") {
+							ok = true
+							break
+						}
+					}
+					c.Assert(ok, Equals, true)
+					result := tk.MustQuery(sql).Sort()
+					result.Check(correct.Rows())
+				}
+			}
+		}
+
+		for _, af := range aggFuncs2 {
+			sql := fmt.Sprintf(sqlFormat, fmt.Sprintf(castFormat, af))
 			var correct *testkit.Result
 			for _, con := range concurrencies {
 				tk.MustExec(fmt.Sprintf("set @@tidb_stream_agg_concurrency=%d;", con))
