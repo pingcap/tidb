@@ -485,6 +485,8 @@ const (
 	TpIndexLookUpRunTimeStats
 	// TpSlowQueryRuntimeStat is the tp for TpSlowQueryRuntimeStat
 	TpSlowQueryRuntimeStat
+	// TpUnionScanRuntimeStat is the tp for TpUnionScanRuntimeStats
+	TpUnionScanRuntimeStat
 )
 
 // RuntimeStats is used to express the executor runtime information.

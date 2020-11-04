@@ -14,9 +14,12 @@
 package executor
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/util/execdetails"
 	"runtime/trace"
+	"time"
 
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -55,6 +58,7 @@ type UnionScanExec struct {
 	// virtualColumnIndex records all the indices of virtual columns and sort them in definition
 	// to make sure we can compute the virtual column in right order.
 	virtualColumnIndex []int
+	stats              *UnionScanRuntimeStats
 }
 
 // Open implements the Executor Open interface.
@@ -62,6 +66,7 @@ func (us *UnionScanExec) Open(ctx context.Context) error {
 	if err := us.baseExecutor.Open(ctx); err != nil {
 		return err
 	}
+	us.initRuntimeStats()
 	return us.open(ctx)
 }
 
@@ -80,7 +85,6 @@ func (us *UnionScanExec) open(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-
 	mb := txn.GetMemBuffer()
 	mb.RLock()
 	defer mb.RUnlock()
@@ -114,7 +118,11 @@ func (us *UnionScanExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.GrowAndReset(us.maxChunkSize)
 	mutableRow := chunk.MutRowFromTypes(retTypes(us))
 	for i, batchSize := 0, req.Capacity(); i < batchSize; i++ {
+		start := time.Now()
 		row, err := us.getOneRow(ctx)
+		if us.stats != nil {
+			us.stats.GetRowTime += int64(time.Since(start))
+		}
 		if err != nil {
 			return err
 		}
@@ -122,6 +130,7 @@ func (us *UnionScanExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		if row == nil {
 			return nil
 		}
+		startTime := time.Now()
 		mutableRow.SetDatums(row...)
 
 		for _, idx := range us.virtualColumnIndex {
@@ -148,6 +157,9 @@ func (us *UnionScanExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		}
 		if matched {
 			req.AppendRow(mutableRow.ToRow())
+		}
+		if us.stats != nil {
+			us.stats.MergeTime += int64(time.Since(startTime))
 		}
 	}
 	return nil
@@ -274,4 +286,51 @@ func (us *UnionScanExec) compare(a, b []types.Datum) (int, error) {
 		}
 	}
 	return us.belowHandleCols.Compare(a, b)
+}
+
+func (us *UnionScanExec) initRuntimeStats() {
+	us.stats = &UnionScanRuntimeStats{
+		GetRowTime: 0,
+		MergeTime:  0,
+	}
+}
+
+type UnionScanRuntimeStats struct {
+	GetRowTime int64
+	MergeTime  int64
+}
+
+func (e *UnionScanRuntimeStats) String() string {
+	var result bytes.Buffer
+	if e.GetRowTime != 0 {
+		result.WriteString(fmt.Sprintf("GetRow:%v", time.Duration(e.GetRowTime)))
+	}
+	if result.Len() > 0 {
+		result.WriteByte(',')
+	}
+	if e.MergeTime != 0 {
+		result.WriteString(fmt.Sprintf(" Merge:%v", time.Duration(e.MergeTime)))
+	}
+	return result.String()
+}
+
+func (e *UnionScanRuntimeStats) Clone() execdetails.RuntimeStats {
+	newRs := &UnionScanRuntimeStats{
+		GetRowTime: e.GetRowTime,
+		MergeTime:  e.MergeTime,
+	}
+	return newRs
+}
+
+func (e *UnionScanRuntimeStats) Merge(other execdetails.RuntimeStats) {
+	tmp, ok := other.(*UnionScanRuntimeStats)
+	if !ok {
+		return
+	}
+	e.GetRowTime += tmp.GetRowTime
+	e.MergeTime += tmp.MergeTime
+}
+
+func (e *UnionScanRuntimeStats) Tp() int {
+	return execdetails.TpUnionScanRuntimeStat
 }
