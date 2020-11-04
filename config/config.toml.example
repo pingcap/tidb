@@ -123,6 +123,9 @@ enable-telemetry = true
 # a warning like `Integer display width is deprecated and will be removed in a future release`.
 deprecate-integer-display-length = false
 
+# enable-enum-length-limit is used to deal with compatibility issues. When true, the enum element length should be shorter than 255.
+enable-enum-length-limit = true
+
 [log]
 # Log level: debug, info, warn, error, fatal.
 level = "info"
