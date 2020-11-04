@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/ranger"
+	"github.com/pingcap/tipb/go-tipb"
 )
 
 var (
@@ -842,6 +843,80 @@ type PhysicalExchangerBase struct {
 	basePhysicalPlan
 }
 
+// PhysicalExchangeReceiver accepts connection and receives data passively.
+type PhysicalExchangeReceiver struct {
+	PhysicalExchangerBase
+
+	Tasks   []*kv.MPPTask
+	ChildPf *Fragment
+}
+
+// ToPB generates the pb structure.
+func (e *PhysicalExchangeReceiver) ToPB(ctx sessionctx.Context, storeType kv.StoreType) (*tipb.Executor, error) {
+	encodedTask := make([][]byte, 0, len(e.Tasks))
+
+	for _, task := range e.Tasks {
+		encodedStr, err := task.ToPB().Marshal()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		encodedTask = append(encodedTask, encodedStr)
+	}
+
+	fieldTypes := make([]*tipb.FieldType, 0, len(e.ChildPf.Schema().Columns))
+	for _, column := range e.ChildPf.Schema().Columns {
+		fieldTypes = append(fieldTypes, expression.ToPBFieldType(column.RetType))
+	}
+	ecExec := &tipb.ExchangeReceiver{
+		EncodedTaskMeta: encodedTask,
+		FieldTypes:      fieldTypes,
+	}
+	executorID := e.ExplainID().String()
+	return &tipb.Executor{
+		Tp:               tipb.ExecType_TypeExchangeReceiver,
+		ExchangeReceiver: ecExec,
+		ExecutorId:       &executorID,
+	}, nil
+}
+
+// PhysicalExchangeSender dispatches data to upstream tasks. That means push mode processing,
+type PhysicalExchangeSender struct {
+	PhysicalExchangerBase
+
+	Tasks        []*kv.MPPTask
+	ExchangeType tipb.ExchangeType
+}
+
+// ToPB generates the pb structure.
+func (e *PhysicalExchangeSender) ToPB(ctx sessionctx.Context, storeType kv.StoreType) (*tipb.Executor, error) {
+	child, err := e.Children()[0].ToPB(ctx, kv.TiFlash)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	encodedTask := make([][]byte, 0, len(e.Tasks))
+
+	for _, task := range e.Tasks {
+		encodedStr, err := task.ToPB().Marshal()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		encodedTask = append(encodedTask, encodedStr)
+	}
+
+	ecExec := &tipb.ExchangeSender{
+		Tp:              e.ExchangeType,
+		EncodedTaskMeta: encodedTask,
+		Child:           child,
+	}
+	executorID := e.ExplainID().String()
+	return &tipb.Executor{
+		Tp:             tipb.ExecType_TypeExchangeSender,
+		ExchangeSender: ecExec,
+		ExecutorId:     &executorID,
+	}, nil
+}
+
 // Clone implements PhysicalPlan interface.
 func (p *PhysicalMergeJoin) Clone() (PhysicalPlan, error) {
 	cloned := new(PhysicalMergeJoin)
@@ -1124,8 +1199,8 @@ type PhysicalWindow struct {
 	physicalSchemaProducer
 
 	WindowFuncDescs []*aggregation.WindowFuncDesc
-	PartitionBy     []property.Item
-	OrderBy         []property.Item
+	PartitionBy     []property.SortItem
+	OrderBy         []property.SortItem
 	Frame           *WindowFrame
 }
 
