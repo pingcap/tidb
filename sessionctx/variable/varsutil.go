@@ -163,6 +163,8 @@ func GetSessionOnlySysVars(s *SessionVars, key string) (string, bool, error) {
 		return BoolToIntStr(s.PrevFoundInPlanCache), true, nil
 	case TiDBEnableCollectExecutionInfo:
 		return BoolToIntStr(config.GetGlobalConfig().EnableCollectExecutionInfo), true, nil
+	case TiDBAutoFreeOSMemoryThreshold:
+		return strconv.FormatUint(atomic.LoadUint64(&config.GetGlobalConfig().AutoFreeOSMemoryThreshold), 10), true, nil
 	}
 	sVal, ok := s.GetSystemVar(key)
 	if ok {

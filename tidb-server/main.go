@@ -666,7 +666,7 @@ func setupMetrics() {
 		}
 	}
 	go systimemon.StartMonitor(time.Now, systimeErrHandler, sucessCallBack)
-
+	go systimemon.StartAutoFreeOSMemory()
 	pushMetric(cfg.Status.MetricsAddr, time.Duration(cfg.Status.MetricsInterval)*time.Second)
 }
 

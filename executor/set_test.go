@@ -444,6 +444,15 @@ func (s *testSuite5) TestSetVar(c *C) {
 
 	_, err = tk.Exec("set tidb_enable_parallel_apply=-1")
 	c.Assert(terror.ErrorEqual(err, variable.ErrWrongValueForVar), IsTrue)
+
+	_, err = tk.Exec("set @@tidb_auto_free_os_memory_threshold=-1")
+	c.Assert(terror.ErrorEqual(err, variable.ErrWrongValueForVar), IsTrue)
+	tk.MustExec("set @@session.tidb_auto_free_os_memory_threshold = 100")
+	tk.MustQuery("select @@tidb_auto_free_os_memory_threshold;").Check(testkit.Rows("100"))
+	c.Assert(config.GetGlobalConfig().AutoFreeOSMemoryThreshold, Equals, uint64(100))
+	tk.MustExec("set @@session.tidb_auto_free_os_memory_threshold = 0")
+	tk.MustQuery("select @@tidb_auto_free_os_memory_threshold;").Check(testkit.Rows("0"))
+	c.Assert(config.GetGlobalConfig().AutoFreeOSMemoryThreshold, Equals, uint64(0))
 }
 
 func (s *testSuite5) TestTruncateIncorrectIntSessionVar(c *C) {

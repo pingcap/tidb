@@ -162,6 +162,8 @@ type Config struct {
 	EnableGlobalIndex bool `toml:"enable-global-index" json:"enable-global-index"`
 	// DeprecateIntegerDisplayWidth indicates whether deprecating the max display length for integer.
 	DeprecateIntegerDisplayWidth bool `toml:"deprecate-integer-display-length" json:"deprecate-integer-display-length"`
+	// FreeOSMemoryThreshold is the threshold that auto free os memory.
+	AutoFreeOSMemoryThreshold uint64 `toml:"auto-free-os-memory-threshold" json:"auto-free-os-memory-threshold"`
 }
 
 // UpdateTempStoragePath is to update the `TempStoragePath` if port/statusPort was changed
@@ -770,6 +772,7 @@ var defaultConf = Config{
 		SpilledFileEncryptionMethod: SpilledFileEncryptionMethodPlaintext,
 	},
 	DeprecateIntegerDisplayWidth: false,
+	AutoFreeOSMemoryThreshold:    0,
 }
 
 var (

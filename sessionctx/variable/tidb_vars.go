@@ -453,6 +453,9 @@ const (
 
 	// TiDBEnableAmendPessimisticTxn indicates if amend pessimistic transactions is enabled.
 	TiDBEnableAmendPessimisticTxn = "tidb_enable_amend_pessimistic_txn"
+
+	// TiDBAutoFreeOSMemoryThreshold is used to set the auto free os memory threshold.
+	TiDBAutoFreeOSMemoryThreshold = "tidb_auto_free_os_memory_threshold"
 )
 
 // Default TiDB system variable values.
