@@ -270,7 +270,7 @@ type shuffleMergeJoinWorker struct {
 	// executed bool
 
 	// each receiver corresponse to a dataSource
-	receivers []shuffleReceiver
+	receivers []*shuffleReceiver
 
 	outputCh       chan *shuffleOutput
 	outputHolderCh chan *chunk.Chunk
