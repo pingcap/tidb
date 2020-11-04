@@ -290,6 +290,8 @@ func (w *GCWorker) prepare() (bool, uint64, error) {
 		return false, 0, errors.Trace(err)
 	}
 	doGC, safePoint, err := w.checkPrepare(ctx)
+	logutil.Logger(ctx).Info("[gc worker] checkPrepare result",
+		zap.Bool("doGC", doGC), zap.Uint64("safePoint", safePoint), zap.Error(err))
 	if doGC {
 		err = se.CommitTxn(ctx)
 		if err != nil {
@@ -500,13 +502,16 @@ func (w *GCWorker) calculateNewSafePoint(ctx context.Context, now time.Time) (*t
 	}
 	// We should never decrease safePoint.
 	if lastSafePoint != nil && safePoint.Before(*lastSafePoint) {
-		logutil.BgLogger().Info("[gc worker] last safe point is later than current one."+
+		logutil.Logger(ctx).Info("[gc worker] last safe point is later than current one."+
 			"No need to gc."+
 			"This might be caused by manually enlarging gc lifetime",
 			zap.String("leaderTick on", w.uuid),
 			zap.Time("last safe point", *lastSafePoint),
 			zap.Time("current safe point", safePoint))
 		return nil, 0, nil
+	} else {
+		logutil.Logger(ctx).Info("[gc worker] calculated safe point",
+			zap.Time("safePointTime", safePoint), zap.Uint64("safePoint", safePointValue))
 	}
 	return &safePoint, safePointValue, nil
 }
