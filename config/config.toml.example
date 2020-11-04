@@ -38,9 +38,6 @@ mem-quota-query = 1073741824
 # This value must not be less than 32GB.
 mem-quota-statistics = 34359738368
 
-# The maximum number available of a NLJ cache for a single SQL statement. Default: 20MB
-nested-loop-join-cache-capacity = 20971520
-
 # Controls whether to enable the temporary storage for some operators when a single SQL statement exceeds the memory quota specified by mem-quota-query.
 oom-use-tmp-storage = true
 

@@ -444,6 +444,27 @@ func (s *testSuite5) TestSetVar(c *C) {
 
 	_, err = tk.Exec("set tidb_enable_parallel_apply=-1")
 	c.Assert(terror.ErrorEqual(err, variable.ErrWrongValueForVar), IsTrue)
+
+	// test for tidb_mem_quota_apply_cache
+	defVal := fmt.Sprintf("%v", variable.DefTiDBMemQuotaApplyCache)
+	tk.MustQuery(`select @@tidb_mem_quota_apply_cache`).Check(testkit.Rows(defVal))
+	tk.MustExec(`set global tidb_mem_quota_apply_cache = 1`)
+	tk.MustQuery(`select @@global.tidb_mem_quota_apply_cache`).Check(testkit.Rows("1"))
+	tk.MustExec(`set global tidb_mem_quota_apply_cache = 0`)
+	tk.MustQuery(`select @@global.tidb_mem_quota_apply_cache`).Check(testkit.Rows("0"))
+	tk.MustExec(`set tidb_mem_quota_apply_cache = 123`)
+	tk.MustQuery(`select @@global.tidb_mem_quota_apply_cache`).Check(testkit.Rows("0"))
+	tk.MustQuery(`select @@tidb_mem_quota_apply_cache`).Check(testkit.Rows("123"))
+
+	// test for tidb_enable_parallel_apply
+	tk.MustQuery(`select @@tidb_enable_parallel_apply`).Check(testkit.Rows("0"))
+	tk.MustExec(`set global tidb_enable_parallel_apply = 1`)
+	tk.MustQuery(`select @@global.tidb_enable_parallel_apply`).Check(testkit.Rows("1"))
+	tk.MustExec(`set global tidb_enable_parallel_apply = 0`)
+	tk.MustQuery(`select @@global.tidb_enable_parallel_apply`).Check(testkit.Rows("0"))
+	tk.MustExec(`set tidb_enable_parallel_apply=1`)
+	tk.MustQuery(`select @@global.tidb_enable_parallel_apply`).Check(testkit.Rows("0"))
+	tk.MustQuery(`select @@tidb_enable_parallel_apply`).Check(testkit.Rows("1"))
 }
 
 func (s *testSuite5) TestTruncateIncorrectIntSessionVar(c *C) {
