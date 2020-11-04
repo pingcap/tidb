@@ -962,8 +962,20 @@ func checkColumnValueConstraint(col *table.Column, collation string) error {
 	}
 	valueMap := make(map[string]bool, len(col.Elems))
 	ctor := collate.GetCollator(collation)
+	enumLengthLimit := config.GetGlobalConfig().EnableEnumLengthLimit
+	desc, err := charset.GetCharsetDesc(col.Charset)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	for i := range col.Elems {
 		val := string(ctor.Key(col.Elems[i]))
+		// According to MySQL 8.0 Refman:
+		// The maximum supported length of an individual ENUM element is M <= 255 and (M x w) <= 1020,
+		// where M is the element literal length and w is the number of bytes required for the maximum-length character in the character set.
+		// See https://dev.mysql.com/doc/refman/8.0/en/string-type-syntax.html for more details.
+		if enumLengthLimit && (len(val) > 255 || len(val)*desc.Maxlen > 1020) {
+			return ErrTooLongValueForType.GenWithStackByArgs(col.Name)
+		}
 		if _, ok := valueMap[val]; ok {
 			tpStr := "ENUM"
 			if col.Tp == mysql.TypeSet {
