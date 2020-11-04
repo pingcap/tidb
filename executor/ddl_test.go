@@ -1493,11 +1493,3 @@ func (s *testRecoverTable) TestRenameMultiTables(c *C) {
 	tk.MustExec("drop database rename2")
 	tk.MustExec("drop database rename3")
 }
-
-func (s *testSuite6) TestIssue20751(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("create TABLE t_part_pk_id (c1 int,c2 int) partition by range(c1 div c2 ) (partition p0 values less than (2))")
-	tk.MustExec("alter table t_part_pk_id alter partition p0 add placement policy constraints='[\"+host=store1\"]' role=leader;")
-	tk.MustExec("drop table t_part_pk_id")
-}

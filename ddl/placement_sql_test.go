@@ -274,6 +274,12 @@ add placement policy
 	role=leader
 	replicas=3`)
 	c.Assert(ddl.ErrPartitionMgmtOnNonpartitioned.Equal(err), IsTrue)
+
+	// issue 20751
+	tk.MustExec("drop table if exists t_part_pk_id")
+	tk.MustExec("create TABLE t_part_pk_id (c1 int,c2 int) partition by range(c1 div c2 ) (partition p0 values less than (2))")
+	tk.MustExec("alter table t_part_pk_id alter partition p0 add placement policy constraints='[\"+host=store1\"]' role=leader;")
+	tk.MustExec("drop table t_part_pk_id")
 }
 
 func (s *testDBSuite1) TestPlacementPolicyCache(c *C) {
