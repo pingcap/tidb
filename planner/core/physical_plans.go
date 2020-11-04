@@ -52,6 +52,7 @@ var (
 	_ PhysicalPlan = &PhysicalStreamAgg{}
 	_ PhysicalPlan = &PhysicalApply{}
 	_ PhysicalPlan = &PhysicalIndexJoin{}
+	_ PhysicalPlan = &PhysicalBroadCastJoin{}
 	_ PhysicalPlan = &PhysicalHashJoin{}
 	_ PhysicalPlan = &PhysicalMergeJoin{}
 	_ PhysicalPlan = &PhysicalUnionScan{}
@@ -71,6 +72,27 @@ type PhysicalTableReader struct {
 
 	// StoreType indicates table read from which type of store.
 	StoreType kv.StoreType
+}
+
+// GetTablePlan exports the tablePlan.
+func (p *PhysicalTableReader) GetTablePlan() PhysicalPlan {
+	return p.tablePlan
+}
+
+// GetTableScan exports the tableScan that contained in tablePlan.
+func (p *PhysicalTableReader) GetTableScan() *PhysicalTableScan {
+	curPlan := p.tablePlan
+	for {
+		chCnt := len(curPlan.Children())
+		if chCnt == 0 {
+			return curPlan.(*PhysicalTableScan)
+		} else if chCnt == 1 {
+			curPlan = curPlan.Children()[0]
+		} else {
+			join := curPlan.(*PhysicalBroadCastJoin)
+			curPlan = join.children[1-join.globalChildIndex]
+		}
+	}
 }
 
 // GetPhysicalTableReader returns PhysicalTableReader for logical TiKVSingleGather.
@@ -246,6 +268,8 @@ type PhysicalTableScan struct {
 
 	StoreType kv.StoreType
 
+	IsGlobalRead bool
+
 	// The table scan may be a partition, rather than a real table.
 	isPartition bool
 	// KeepOrder is true, if sort data by scanning pkcol,
@@ -263,6 +287,16 @@ func (ts *PhysicalTableScan) IsPartition() (bool, int64) {
 // ExpandVirtualColumn expands the virtual column's dependent columns to ts's schema and column.
 func ExpandVirtualColumn(columns []*model.ColumnInfo, schema *expression.Schema,
 	colsInfo []*model.ColumnInfo) []*model.ColumnInfo {
+	copyColumn := make([]*model.ColumnInfo, len(columns))
+	copy(copyColumn, columns)
+	var extraColumn *expression.Column
+	var extraColumnModel *model.ColumnInfo
+	if schema.Columns[len(schema.Columns)-1].ID == model.ExtraHandleID {
+		extraColumn = schema.Columns[len(schema.Columns)-1]
+		extraColumnModel = copyColumn[len(copyColumn)-1]
+		schema.Columns = schema.Columns[:len(schema.Columns)-1]
+		copyColumn = copyColumn[:len(copyColumn)-1]
+	}
 	schemaColumns := schema.Columns
 	for _, col := range schemaColumns {
 		if col.VirtualExpr == nil {
@@ -273,11 +307,15 @@ func ExpandVirtualColumn(columns []*model.ColumnInfo, schema *expression.Schema,
 		for _, baseCol := range baseCols {
 			if !schema.Contains(baseCol) {
 				schema.Columns = append(schema.Columns, baseCol)
-				columns = append(columns, FindColumnInfoByID(colsInfo, baseCol.ID))
+				copyColumn = append(copyColumn, FindColumnInfoByID(colsInfo, baseCol.ID))
 			}
 		}
 	}
-	return columns
+	if extraColumn != nil {
+		schema.Columns = append(schema.Columns, extraColumn)
+		copyColumn = append(copyColumn, extraColumnModel)
+	}
+	return copyColumn
 }
 
 //SetIsChildOfIndexLookUp is to set the bool if is a child of IndexLookUpReader
@@ -413,6 +451,12 @@ type PhysicalMergeJoin struct {
 	CompareFuncs []expression.CompareFunc
 	// Desc means whether inner child keep desc order.
 	Desc bool
+}
+
+// PhysicalBroadCastJoin only works for TiFlash Engine, which broadcast the small table to every replica of probe side of tables.
+type PhysicalBroadCastJoin struct {
+	basePhysicalJoin
+	globalChildIndex int
 }
 
 // PhysicalLock is the physical operator of lock, which is used for `select ... for update` clause.

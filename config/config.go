@@ -58,6 +58,8 @@ const (
 	DefStatusHost = "0.0.0.0"
 	// DefStoreLivenessTimeout is the default value for store liveness timeout.
 	DefStoreLivenessTimeout = "5s"
+	// DefTiDBRedactLog is the default value for redact log.
+	DefTiDBRedactLog = 0
 )
 
 // Valid config maps
@@ -143,6 +145,8 @@ type Config struct {
 	SkipRegisterToDashboard bool `toml:"skip-register-to-dashboard" json:"skip-register-to-dashboard"`
 	// EnableTelemetry enables the usage data report to PingCAP.
 	EnableTelemetry bool `toml:"enable-telemetry" json:"enable-telemetry"`
+	// EnableRedactLog indicates that whether redact log, 0 is disable. 1 is enable.
+	EnableRedactLog int32 `toml:"enable-redact-log" json:"enable-redact-log"`
 }
 
 // UpdateTempStoragePath is to update the `TempStoragePath` if port/statusPort was changed
@@ -610,7 +614,7 @@ var defaultConf = Config{
 		StatsLease:           "3s",
 		RunAutoAnalyze:       true,
 		StmtCountLimit:       5000,
-		FeedbackProbability:  0.05,
+		FeedbackProbability:  0.0,
 		QueryFeedbackLimit:   512,
 		PseudoEstimateRatio:  0.8,
 		ForcePriority:        "NO_PRIORITY",
@@ -685,6 +689,7 @@ var defaultConf = Config{
 	},
 	EnableCollectExecutionInfo: true,
 	EnableTelemetry:            true,
+	EnableRedactLog:            DefTiDBRedactLog,
 }
 
 var (
@@ -816,7 +821,7 @@ func (c *Config) Valid() error {
 	if c.Security.SkipGrantTable && !hasRootPrivilege() {
 		return fmt.Errorf("TiDB run with skip-grant-table need root privilege")
 	}
-	if _, ok := ValidStorage[c.Store]; !ok {
+	if !ValidStorage[c.Store] {
 		nameList := make([]string, 0, len(ValidStorage))
 		for k, v := range ValidStorage {
 			if v {
@@ -915,6 +920,23 @@ func TableLockEnabled() bool {
 // TableLockDelayClean uses to get the time of delay clean table lock.
 var TableLockDelayClean = func() uint64 {
 	return GetGlobalConfig().DelayCleanTableLock
+}
+
+// RedactLogEnabled uses to check whether enabled the log redact.
+func RedactLogEnabled() bool {
+	return atomic.LoadInt32(&GetGlobalConfig().EnableRedactLog) == 1
+}
+
+// SetRedactLog uses to set log redact status.
+func SetRedactLog(enable bool) {
+	value := int32(0)
+	if enable {
+		value = 1
+	}
+	g := GetGlobalConfig()
+	newConf := *g
+	newConf.EnableRedactLog = value
+	StoreGlobalConfig(&newConf)
 }
 
 // ToLogConfig converts *Log to *logutil.LogConfig.

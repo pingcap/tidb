@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/logutil"
@@ -495,6 +496,9 @@ func (e *Execute) rebuildRange(p Plan) error {
 				return err
 			}
 			if x.PartitionInfo != nil {
+				if x.TblInfo.Partition.Type != model.PartitionTypeHash {
+					return errors.New("range partition table can not use plan cache")
+				}
 				num := x.TblInfo.Partition.Num
 				pos := math.Abs(x.Handle) % int64(num)
 				x.PartitionInfo = &x.TblInfo.Partition.Definitions[pos]
@@ -507,12 +511,39 @@ func (e *Execute) rebuildRange(p Plan) error {
 			}
 		}
 		if x.PartitionInfo != nil {
+			if x.TblInfo.Partition.Type != model.PartitionTypeHash {
+				return errors.New("range partition table can not use plan cache")
+			}
 			val := x.IndexValues[x.partitionColumnPos].GetInt64()
 			partitionID := val % int64(x.TblInfo.Partition.Num)
 			x.PartitionInfo = &x.TblInfo.Partition.Definitions[partitionID]
 		}
 		return nil
 	case *BatchPointGetPlan:
+		if x.Path != nil {
+			if x.Path.IsTablePath {
+				x.Path.Ranges, err = ranger.BuildTableRange(x.Path.AccessConds, sc, x.Path.PkCol.RetType)
+				// For col = NULL case, the length of the final ranges could be empty.
+				if err != nil || len(x.Path.Ranges) != 1 {
+					return errors.Errorf("Rebuilding range for PointGet failed")
+				}
+				x.Handles = make([]int64, len(x.Path.Ranges))
+				for i, ran := range x.Path.Ranges {
+					x.Handles[i] = ran.LowVal[0].GetInt64()
+				}
+				return nil
+			}
+			res, err := ranger.DetachCondAndBuildRangeForIndex(p.SCtx(), x.Path.AccessConds, x.Path.IdxCols, x.Path.IdxColLens)
+			// For col = NULL case, the length of the final ranges could be empty.
+			if err != nil || len(res.Ranges) != 1 {
+				return errors.Errorf("Rebuilding range for BatchPointGet failed")
+			}
+			x.IndexValues = make([][]types.Datum, 0, len(res.Ranges))
+			for _, ran := range res.Ranges {
+				x.IndexValues = append(x.IndexValues, ran.LowVal)
+			}
+			return nil
+		}
 		for i, param := range x.HandleParams {
 			if param != nil {
 				x.Handles[i], err = param.Datum.ToInt64(sc)
@@ -799,12 +830,14 @@ type SelectInto struct {
 type Explain struct {
 	baseSchemaProducer
 
-	TargetPlan Plan
-	Format     string
-	Analyze    bool
-	ExecStmt   ast.StmtNode
+	TargetPlan       Plan
+	Format           string
+	Analyze          bool
+	ExecStmt         ast.StmtNode
+	RuntimeStatsColl *execdetails.RuntimeStatsColl
 
 	Rows           [][]string
+	ExplainRows    [][]string
 	explainedPlans map[int]bool
 }
 
@@ -827,9 +860,9 @@ func (e *Explain) prepareSchema() error {
 	format := strings.ToLower(e.Format)
 
 	switch {
-	case format == ast.ExplainFormatROW && !e.Analyze:
+	case format == ast.ExplainFormatROW && (!e.Analyze && e.RuntimeStatsColl == nil):
 		fieldNames = []string{"id", "estRows", "task", "access object", "operator info"}
-	case format == ast.ExplainFormatROW && e.Analyze:
+	case format == ast.ExplainFormatROW && (e.Analyze || e.RuntimeStatsColl != nil):
 		fieldNames = []string{"id", "estRows", "actRows", "task", "access object", "execution info", "operator info", "memory", "disk"}
 	case format == ast.ExplainFormatDOT:
 		fieldNames = []string{"dot contents"}
@@ -915,6 +948,8 @@ func (e *Explain) explainPlanInRowFormat(p Plan, taskType, driverSide, indent st
 			buildSide = plan.InnerChildIdx ^ 1
 		case *PhysicalIndexHashJoin:
 			buildSide = plan.InnerChildIdx ^ 1
+		case *PhysicalBroadCastJoin:
+			buildSide = plan.InnerChildIdx
 		}
 
 		if buildSide != -1 {
@@ -977,20 +1012,18 @@ func (e *Explain) explainPlanInRowFormat(p Plan, taskType, driverSide, indent st
 	return
 }
 
-func getRuntimeInfo(ctx sessionctx.Context, p Plan) (actRows, analyzeInfo, memoryInfo, diskInfo string) {
-	runtimeStatsColl := ctx.GetSessionVars().StmtCtx.RuntimeStatsColl
+func getRuntimeInfo(ctx sessionctx.Context, p Plan, runtimeStatsColl *execdetails.RuntimeStatsColl) (actRows, analyzeInfo, memoryInfo, diskInfo string) {
 	if runtimeStatsColl == nil {
-		return
+		runtimeStatsColl = ctx.GetSessionVars().StmtCtx.RuntimeStatsColl
+		if runtimeStatsColl == nil {
+			return
+		}
 	}
-	explainID := p.ExplainID().String()
+	explainID := p.ID()
 
 	// There maybe some mock information for cop task to let runtimeStatsColl.Exists(p.ExplainID()) is true.
 	// So check copTaskEkxecDetail first and print the real cop task information if it's not empty.
-	if runtimeStatsColl.ExistsCopStats(explainID) {
-		copstats := runtimeStatsColl.GetCopStats(explainID)
-		analyzeInfo = copstats.String()
-		actRows = fmt.Sprint(copstats.GetActRows())
-	} else if runtimeStatsColl.ExistsRootStats(explainID) {
+	if runtimeStatsColl.ExistsRootStats(explainID) {
 		rootstats := runtimeStatsColl.GetRootStats(explainID)
 		analyzeInfo = rootstats.String()
 		actRows = fmt.Sprint(rootstats.GetActRows())
@@ -998,21 +1031,22 @@ func getRuntimeInfo(ctx sessionctx.Context, p Plan) (actRows, analyzeInfo, memor
 		analyzeInfo = "time:0ns, loops:0"
 		actRows = "0"
 	}
-	switch p.(type) {
-	case *PhysicalTableReader, *PhysicalIndexReader, *PhysicalIndexLookUpReader:
-		if s := runtimeStatsColl.GetReaderStats(explainID); s != nil && len(s.String()) > 0 {
-			analyzeInfo += ", " + s.String()
+	if runtimeStatsColl.ExistsCopStats(explainID) {
+		copstats := runtimeStatsColl.GetCopStats(explainID)
+		if len(analyzeInfo) > 0 {
+			analyzeInfo += ", "
 		}
+		analyzeInfo += copstats.String()
+		actRows = fmt.Sprint(copstats.GetActRows())
 	}
-
 	memoryInfo = "N/A"
-	memTracker := ctx.GetSessionVars().StmtCtx.MemTracker.SearchTracker(p.ExplainID().String())
+	memTracker := ctx.GetSessionVars().StmtCtx.MemTracker.SearchTrackerWithoutLock(p.ID())
 	if memTracker != nil {
 		memoryInfo = memTracker.BytesToString(memTracker.MaxConsumed())
 	}
 
 	diskInfo = "N/A"
-	diskTracker := ctx.GetSessionVars().StmtCtx.DiskTracker.SearchTracker(p.ExplainID().String())
+	diskTracker := ctx.GetSessionVars().StmtCtx.DiskTracker.SearchTrackerWithoutLock(p.ID())
 	if diskTracker != nil {
 		diskInfo = diskTracker.BytesToString(diskTracker.MaxConsumed())
 	}
@@ -1027,12 +1061,35 @@ func (e *Explain) prepareOperatorInfo(p Plan, taskType, driverSide, indent strin
 	}
 
 	id := texttree.PrettyIdentifier(p.ExplainID().String()+driverSide, indent, isLastChild)
+	estRows, accessObject, operatorInfo := e.getOperatorInfo(p, id)
 
+	var row []string
+	if e.Analyze {
+		actRows, analyzeInfo, memoryInfo, diskInfo := getRuntimeInfo(e.ctx, p, nil)
+		row = []string{id, estRows, actRows, taskType, accessObject, analyzeInfo, operatorInfo, memoryInfo, diskInfo}
+	} else if e.RuntimeStatsColl != nil {
+		actRows, analyzeInfo, memoryInfo, diskInfo := getRuntimeInfo(e.ctx, p, e.RuntimeStatsColl)
+		row = []string{id, estRows, actRows, taskType, accessObject, analyzeInfo, operatorInfo, memoryInfo, diskInfo}
+	} else {
+		row = []string{id, estRows, taskType, accessObject, operatorInfo}
+	}
+	e.Rows = append(e.Rows, row)
+}
+
+func (e *Explain) getOperatorInfo(p Plan, id string) (string, string, string) {
+	// For `explain for connection` statement, `e.ExplainRows` will be set.
+	for _, row := range e.ExplainRows {
+		if len(row) < 5 {
+			panic("should never happen")
+		}
+		if row[0] == id {
+			return row[1], row[3], row[4]
+		}
+	}
 	estRows := "N/A"
 	if si := p.statsInfo(); si != nil {
 		estRows = strconv.FormatFloat(si.RowCount, 'f', 2, 64)
 	}
-
 	var accessObject, operatorInfo string
 	if plan, ok := p.(dataAccesser); ok {
 		accessObject = plan.AccessObject()
@@ -1040,15 +1097,7 @@ func (e *Explain) prepareOperatorInfo(p Plan, taskType, driverSide, indent strin
 	} else {
 		operatorInfo = p.ExplainInfo()
 	}
-
-	var row []string
-	if e.Analyze {
-		actRows, analyzeInfo, memoryInfo, diskInfo := getRuntimeInfo(e.ctx, p)
-		row = []string{id, estRows, actRows, taskType, accessObject, analyzeInfo, operatorInfo, memoryInfo, diskInfo}
-	} else {
-		row = []string{id, estRows, taskType, accessObject, operatorInfo}
-	}
-	e.Rows = append(e.Rows, row)
+	return estRows, accessObject, operatorInfo
 }
 
 func (e *Explain) prepareDotInfo(p PhysicalPlan) {

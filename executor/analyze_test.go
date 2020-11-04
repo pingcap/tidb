@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
+	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -160,6 +161,26 @@ func (s *testSuite1) TestAnalyzeParameters(c *C) {
 	width, depth = col.CMSketch.GetWidthAndDepth()
 	c.Assert(depth, Equals, int32(4))
 	c.Assert(width, Equals, int32(4))
+
+	// Test very large cmsketch
+	tk.MustExec(fmt.Sprintf("analyze table t with %d cmsketch width, %d cmsketch depth", plannercore.CMSketchSizeLimit, 1))
+	tbl = s.dom.StatsHandle().GetTableStats(tableInfo)
+	col = tbl.Columns[1]
+	c.Assert(col.Len(), Equals, 20)
+	c.Assert(len(col.CMSketch.TopN()), Equals, 1)
+	width, depth = col.CMSketch.GetWidthAndDepth()
+	c.Assert(depth, Equals, int32(1))
+	c.Assert(width, Equals, int32(plannercore.CMSketchSizeLimit))
+
+	// Test very large cmsketch
+	tk.MustExec("analyze table t with 20480 cmsketch width, 50 cmsketch depth")
+	tbl = s.dom.StatsHandle().GetTableStats(tableInfo)
+	col = tbl.Columns[1]
+	c.Assert(col.Len(), Equals, 20)
+	c.Assert(len(col.CMSketch.TopN()), Equals, 1)
+	width, depth = col.CMSketch.GetWidthAndDepth()
+	c.Assert(depth, Equals, int32(50))
+	c.Assert(width, Equals, int32(20480))
 }
 
 func (s *testSuite1) TestAnalyzeTooLongColumns(c *C) {
@@ -591,4 +612,36 @@ func (s *testSuite1) TestHashInTopN(c *C) {
 			}
 		}
 	}
+}
+
+func (s *testSuite1) TestDefaultValForAnalyze(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("drop database if exists test_default_val_for_analyze;")
+	tk.MustExec("create database test_default_val_for_analyze;")
+	tk.MustExec("use test_default_val_for_analyze")
+
+	tk.MustExec("create table t (a int, key(a));")
+	for i := 0; i < 2048; i++ {
+		tk.MustExec("insert into t values (0)")
+	}
+	for i := 1; i < 4; i++ {
+		tk.MustExec("insert into t values (?)", i)
+	}
+	tk.MustExec("analyze table t with 0 topn;")
+	tk.MustQuery("explain select * from t where a = 1").Check(testkit.Rows("IndexReader_6 512.00 root  index:IndexRangeScan_5",
+		"└─IndexRangeScan_5 512.00 cop[tikv] table:t, index:a(a) range:[1,1], keep order:false"))
+	tk.MustQuery("explain select * from t where a = 999").Check(testkit.Rows("IndexReader_6 0.00 root  index:IndexRangeScan_5",
+		"└─IndexRangeScan_5 0.00 cop[tikv] table:t, index:a(a) range:[999,999], keep order:false"))
+
+	tk.MustExec("drop table t;")
+	tk.MustExec("create table t (a int, key(a));")
+	for i := 0; i < 2048; i++ {
+		tk.MustExec("insert into t values (0)")
+	}
+	for i := 1; i < 2049; i++ {
+		tk.MustExec("insert into t values (?)", i)
+	}
+	tk.MustExec("analyze table t with 0 topn;")
+	tk.MustQuery("explain select * from t where a = 1").Check(testkit.Rows("IndexReader_6 1.00 root  index:IndexRangeScan_5",
+		"└─IndexRangeScan_5 1.00 cop[tikv] table:t, index:a(a) range:[1,1], keep order:false"))
 }

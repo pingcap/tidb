@@ -25,6 +25,8 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
 
 // Build is used to build a specific AggFunc implementation according to the
@@ -53,10 +55,18 @@ func Build(ctx sessionctx.Context, aggFuncDesc *aggregation.AggFuncDesc, ordinal
 		return buildBitAnd(aggFuncDesc, ordinal)
 	case ast.AggFuncVarPop:
 		return buildVarPop(aggFuncDesc, ordinal)
+	case ast.AggFuncStddevPop:
+		return buildStdDevPop(aggFuncDesc, ordinal)
 	case ast.AggFuncJsonObjectAgg:
 		return buildJSONObjectAgg(aggFuncDesc, ordinal)
 	case ast.AggFuncApproxCountDistinct:
 		return buildApproxCountDistinct(aggFuncDesc, ordinal)
+	case ast.AggFuncApproxPercentile:
+		return buildApproxPercentile(ctx, aggFuncDesc, ordinal)
+	case ast.AggFuncVarSamp:
+		return buildVarSamp(aggFuncDesc, ordinal)
+	case ast.AggFuncStddevSamp:
+		return buildStddevSamp(aggFuncDesc, ordinal)
 	}
 	return nil
 }
@@ -118,6 +128,43 @@ func buildApproxCountDistinct(aggFuncDesc *aggregation.AggFuncDesc, ordinal int)
 			return &approxCountDistinctPartial1{approxCountDistinctOriginal{base}}
 		case aggregation.Partial2Mode, aggregation.FinalMode:
 			return &approxCountDistinctPartial2{approxCountDistinctPartial1{approxCountDistinctOriginal{base}}}
+		}
+	}
+
+	return nil
+}
+
+func buildApproxPercentile(sctx sessionctx.Context, aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
+	if aggFuncDesc.Mode == aggregation.DedupMode {
+		return nil
+	}
+
+	// Checked while building descriptor
+	percent, _, err := aggFuncDesc.Args[1].EvalInt(sctx, chunk.Row{})
+	if err != nil {
+		// Should not reach here
+		logutil.BgLogger().Error("Error happened when buildApproxPercentile", zap.Error(err))
+		return nil
+	}
+
+	base := basePercentile{percent: int(percent), baseAggFunc: baseAggFunc{args: aggFuncDesc.Args, ordinal: ordinal}}
+
+	switch aggFuncDesc.Mode {
+	case aggregation.CompleteMode, aggregation.Partial1Mode, aggregation.FinalMode:
+		switch aggFuncDesc.Args[0].GetType().EvalType() {
+		case types.ETInt:
+			return &percentileOriginal4Int{base}
+		case types.ETReal:
+			return &percentileOriginal4Real{base}
+		case types.ETDecimal:
+			return &percentileOriginal4Decimal{base}
+		case types.ETDatetime, types.ETTimestamp:
+			return &percentileOriginal4Time{base}
+		case types.ETDuration:
+			return &percentileOriginal4Duration{base}
+		default:
+			// Return NULL in any case
+			return &base
 		}
 	}
 
@@ -321,6 +368,13 @@ func buildMaxMin(aggFuncDesc *aggregation.AggFuncDesc, ordinal int, isMax bool) 
 	switch aggFuncDesc.Mode {
 	case aggregation.DedupMode:
 	default:
+		switch fieldType.Tp {
+		case mysql.TypeEnum:
+			return &maxMin4Enum{base}
+		case mysql.TypeSet:
+			return &maxMin4Set{base}
+		}
+
 		switch evalType {
 		case types.ETInt:
 			if mysql.HasUnsignedFlag(fieldType.Flag) {
@@ -439,6 +493,63 @@ func buildVarPop(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 			return &varPop4DistinctFloat64{base}
 		}
 		return &varPop4Float64{base}
+	}
+}
+
+// buildStdDevPop builds the AggFunc implementation for function "STD()/STDDEV()/STDDEV_POP()"
+func buildStdDevPop(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
+	base := baseVarPopAggFunc{
+		baseAggFunc{
+			args:    aggFuncDesc.Args,
+			ordinal: ordinal,
+		},
+	}
+	switch aggFuncDesc.Mode {
+	case aggregation.DedupMode:
+		return nil
+	default:
+		if aggFuncDesc.HasDistinct {
+			return &stdDevPop4DistinctFloat64{varPop4DistinctFloat64{base}}
+		}
+		return &stdDevPop4Float64{varPop4Float64{base}}
+	}
+}
+
+// buildVarSamp builds the AggFunc implementation for function "VAR_SAMP()"
+func buildVarSamp(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
+	base := baseVarPopAggFunc{
+		baseAggFunc{
+			args:    aggFuncDesc.Args,
+			ordinal: ordinal,
+		},
+	}
+	switch aggFuncDesc.Mode {
+	case aggregation.DedupMode:
+		return nil
+	default:
+		if aggFuncDesc.HasDistinct {
+			return &varSamp4DistinctFloat64{varPop4DistinctFloat64{base}}
+		}
+		return &varSamp4Float64{varPop4Float64{base}}
+	}
+}
+
+// buildStddevSamp builds the AggFunc implementation for function "STDDEV_SAMP()"
+func buildStddevSamp(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
+	base := baseVarPopAggFunc{
+		baseAggFunc{
+			args:    aggFuncDesc.Args,
+			ordinal: ordinal,
+		},
+	}
+	switch aggFuncDesc.Mode {
+	case aggregation.DedupMode:
+		return nil
+	default:
+		if aggFuncDesc.HasDistinct {
+			return &stddevSamp4DistinctFloat64{varPop4DistinctFloat64{base}}
+		}
+		return &stddevSamp4Float64{varPop4Float64{base}}
 	}
 }
 

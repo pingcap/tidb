@@ -357,7 +357,7 @@
       },
       {
         "SQL": "select * from (select * from t use index() order by b) t left join t t1 on t.a=t1.a limit 10",
-        "Best": "IndexMergeJoin{TableReader(Table(t)->TopN([test.t.b],0,10))->TopN([test.t.b],0,10)->TableReader(Table(t))}(test.t.a,test.t.a)->Limit"
+        "Best": "IndexJoin{TableReader(Table(t)->TopN([test.t.b],0,10))->TopN([test.t.b],0,10)->TableReader(Table(t))}(test.t.a,test.t.a)->Limit"
       },
       {
         "SQL": "select * from ((SELECT 1 a,3 b) UNION (SELECT 2,1) ORDER BY (SELECT 2)) t order by a,b",
@@ -414,11 +414,11 @@
       },
       {
         "SQL": "select * from t t1 left join t t2 on t1.b = t2.a where 1 = 1 limit 1",
-        "Best": "IndexMergeJoin{TableReader(Table(t)->Limit)->Limit->TableReader(Table(t))}(test.t.b,test.t.a)->Limit"
+        "Best": "IndexJoin{TableReader(Table(t)->Limit)->Limit->TableReader(Table(t))}(test.t.b,test.t.a)->Limit"
       },
       {
         "SQL": "select * from t t1 join t t2 on t1.b = t2.a and t1.c = 1 and t1.d = 1 and t1.e = 1 order by t1.a limit 1",
-        "Best": "IndexMergeJoin{PointGet(Index(t.c_d_e)[KindInt64 1 KindInt64 1 KindInt64 1])->TableReader(Table(t))}(test.t.b,test.t.a)->TopN([test.t.a],0,1)"
+        "Best": "IndexJoin{PointGet(Index(t.c_d_e)[KindInt64 1 KindInt64 1 KindInt64 1])->TableReader(Table(t))}(test.t.b,test.t.a)->TopN([test.t.a],0,1)"
       },
       {
         "SQL": "select * from t t1 join t t2 on t1.b = t2.b join t t3 on t1.b = t3.b",
@@ -434,7 +434,7 @@
       },
       {
         "SQL": "select * from t t1 join t t2 on t1.a = t2.a join t t3 on t1.a = t3.a and t1.b = 1 and t3.c = 1",
-        "Best": "IndexMergeJoin{IndexMergeJoin{TableReader(Table(t)->Sel([eq(test.t.b, 1)]))->IndexLookUp(Index(t.c_d_e)[[1,1]], Table(t))}(test.t.a,test.t.a)->TableReader(Table(t))}(test.t.a,test.t.a)->Projection"
+        "Best": "IndexJoin{IndexJoin{TableReader(Table(t)->Sel([eq(test.t.b, 1)]))->IndexLookUp(Index(t.c_d_e)[[1,1]], Table(t))}(test.t.a,test.t.a)->TableReader(Table(t))}(test.t.a,test.t.a)->Projection"
       },
       {
         "SQL": "select * from t where t.c in (select b from t s where s.a = t.a)",
@@ -879,7 +879,7 @@
     "Cases": [
       {
         "SQL": "select a from t where c is not null",
-        "Best": "IndexReader(Index(t.c_d_e)[[-inf,+inf]])->Projection"
+        "Best": "IndexReader(Index(t.f)[[NULL,+inf]])"
       },
       {
         "SQL": "select a from t where c >= 4",
@@ -1225,17 +1225,17 @@
       },
       {
         "SQL": "select /*+ HASH_AGG() */ t1.a from t t1 where t1.a < any(select t2.b from t t2)",
-        "Best": "LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]]->Sel([if(isnull(test.t.a), <nil>, 1)]))->TableReader(Table(t)->HashAgg)->HashAgg->Sel([ne(Column#27, 0)])}",
+        "Best": "LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]]->Sel([1]))->TableReader(Table(t)->Sel([1])->HashAgg)->HashAgg->Sel([ne(Column#27, 0) 1])}",
         "Warning": ""
       },
       {
         "SQL": "select /*+ hash_agg() */ t1.a from t t1 where t1.a != any(select t2.b from t t2)",
-        "Best": "LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]]->Sel([if(isnull(test.t.a), <nil>, 1)]))->TableReader(Table(t))->Projection->HashAgg->Sel([ne(Column#28, 0)])}",
+        "Best": "LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]]->Sel([1]))->TableReader(Table(t)->Sel([1]))->HashAgg->Sel([ne(Column#28, 0) 1])}",
         "Warning": ""
       },
       {
         "SQL": "select /*+ hash_agg() */ t1.a from t t1 where t1.a = all(select t2.b from t t2)",
-        "Best": "LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]])->TableReader(Table(t))->Projection->HashAgg}",
+        "Best": "LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]])->TableReader(Table(t))->HashAgg->Sel([or(and(le(Column#26, 1), if(ne(Column#27, 0), <nil>, 1)), or(eq(Column#28, 0), 0))])}",
         "Warning": ""
       },
       {
@@ -1390,7 +1390,7 @@
     "Cases": [
       {
         "SQL": "select t1.a, (select count(t2.a) from t t2 where t2.g in (select t3.d from t t3 where t3.c = t1.a)) as agg_col from t t1;",
-        "Best": "Apply{IndexReader(Index(t.f)[[NULL,+inf]])->IndexMergeJoin{IndexReader(Index(t.c_d_e)[[NULL,+inf]]->HashAgg)->HashAgg->IndexReader(Index(t.g)[[NULL,+inf]])}(test.t.d,test.t.g)}->HashAgg"
+        "Best": "Apply{IndexReader(Index(t.f)[[NULL,+inf]])->IndexJoin{IndexReader(Index(t.c_d_e)[[NULL,+inf]]->HashAgg)->HashAgg->IndexReader(Index(t.g)[[NULL,+inf]])}(test.t.d,test.t.g)}->HashAgg"
       }
     ]
   },
@@ -1407,15 +1407,15 @@
       },
       {
         "SQL": "select /*+ INL_MERGE_JOIN(t1) */ * from t1 join t2 on t1.a = t2.a;",
-        "Plan": "IndexMergeJoin{IndexLookUp(Index(t1.idx_a)[[NULL,+inf]]->Sel([not(isnull(test.t1.a))]), Table(t1))->Projection->TableReader(Table(t2)->Sel([not(isnull(test.t2.a))]))}(test.t2.a,test.t1.a)"
+        "Plan": "IndexJoin{IndexLookUp(Index(t1.idx_a)[[NULL,+inf]]->Sel([not(isnull(test.t1.a))]), Table(t1))->TableReader(Table(t2)->Sel([not(isnull(test.t2.a))]))}(test.t2.a,test.t1.a)"
       },
       {
         "SQL": "select /*+ inl_merge_join(t2) */ t1.a, t2.a from t t1 left join t t2 use index(g_2) on t1.g=t2.g",
-        "Plan": "IndexMergeJoin{IndexReader(Index(t.g_3)[[NULL,+inf]])->IndexReader(Index(t.g_2)[[NULL,+inf]]->Sel([not(isnull(test.t.g))]))}(test.t.g,test.t.g)"
+        "Plan": "IndexJoin{IndexReader(Index(t.g_3)[[NULL,+inf]])->IndexReader(Index(t.g_2)[[NULL,+inf]]->Sel([not(isnull(test.t.g))]))}(test.t.g,test.t.g)"
       },
       {
         "SQL": "select /*+inl_merge_join(t2)*/ t1.a, t2.a from t t1 left join t t2 use index(g_2) on t1.g=t2.g order by t1.a",
-        "Plan": "IndexMergeJoin{IndexReader(Index(t.g_3)[[NULL,+inf]])->IndexReader(Index(t.g_2)[[NULL,+inf]]->Sel([not(isnull(test.t.g))]))}(test.t.g,test.t.g)->Sort"
+        "Plan": "IndexJoin{TableReader(Table(t))->IndexReader(Index(t.g_2)[[NULL,+inf]]->Sel([not(isnull(test.t.g))]))}(test.t.g,test.t.g)"
       }
     ]
   },
@@ -1441,6 +1441,42 @@
         "SQL": "select /*+ AGG_TO_COP(), HASH_AGG(), HASH_JOIN(t1), USE_INDEX(t1), USE_INDEX(t2) */ sum(t1.a) from ta t1, ta t2 where t1.a = t2.b group by t1.a",
         "Best": "LeftHashJoin{TableReader(Table(ta)->Sel([not(isnull(test.ta.a))]))->TableReader(Table(ta)->Sel([not(isnull(test.ta.b))]))}(test.ta.a,test.ta.b)->Projection->HashAgg",
         "Warning": "[planner:1815]Optimizer Hint AGG_TO_COP is inapplicable"
+      }
+    ]
+  },
+  {
+    "Name": "TestLimitToCopHint",
+    "Cases": [
+      {
+        "SQL": "select /*+ LIMIT_TO_COP() */ * from tn where a = 1 and b > 10 and b < 20 and c > 50 order by d limit 1",
+        "Plan": [
+          "TopN_8 0.83 root  test.tn.d:asc, offset:0, count:1",
+          "└─IndexReader_15 0.83 root  index:TopN_14",
+          "  └─TopN_14 0.83 cop[tikv]  test.tn.d:asc, offset:0, count:1",
+          "    └─Selection_13 0.83 cop[tikv]  gt(test.tn.c, 50)",
+          "      └─IndexRangeScan_12 2.50 cop[tikv] table:tn, index:a(a, b, c, d) range:(1 10,1 20), keep order:false, stats:pseudo"
+        ],
+        "Warning": ""
+      },
+      {
+        "SQL": "select * from tn where a = 1 and b > 10 and b < 20 and c > 50 order by d limit 1",
+        "Plan": [
+          "TopN_10 0.83 root  test.tn.d:asc, offset:0, count:1",
+          "└─IndexReader_20 0.83 root  index:Selection_19",
+          "  └─Selection_19 0.83 cop[tikv]  gt(test.tn.c, 50)",
+          "    └─IndexRangeScan_18 2.50 cop[tikv] table:tn, index:a(a, b, c, d) range:(1 10,1 20), keep order:false, stats:pseudo"
+        ],
+        "Warning": ""
+      },
+      {
+        "SQL": "select /*+ LIMIT_TO_COP() */ a from tn where mod(a, 2) order by a limit 1",
+        "Plan": [
+          "Limit_13 1.00 root  offset:0, count:1",
+          "└─Selection_19 1.00 root  mod(test.tn.a, 2)",
+          "  └─IndexReader_21 1.00 root  index:IndexFullScan_20",
+          "    └─IndexFullScan_20 1.00 cop[tikv] table:tn, index:a(a, b, c, d) keep order:true, stats:pseudo"
+        ],
+        "Warning": "[planner:1815]Optimizer Hint LIMIT_TO_COP is inapplicable"
       }
     ]
   },
@@ -2067,8 +2103,8 @@
       },
       {
         "SQL": "select /*+ INL_MERGE_JOIN(t1) */ t1.b, t2.b from t1 inner join t2 on t1.a = t2.a;",
-        "Plan": "IndexMergeJoin{IndexLookUp(Index(t1.idx_a)[[NULL,+inf]]->Sel([not(isnull(test.t1.a))]), Table(t1))->Projection->TableReader(Table(t2)->Sel([not(isnull(test.t2.a))]))}(test.t2.a,test.t1.a)",
-        "Hints": "use_index(@`sel_1` `test`.`t1` `idx_a`), use_index(@`sel_1` `test`.`t2` )"
+        "Plan": "IndexJoin{IndexLookUp(Index(t1.idx_a)[[NULL,+inf]]->Sel([not(isnull(test.t1.a))]), Table(t1))->TableReader(Table(t2)->Sel([not(isnull(test.t2.a))]))}(test.t2.a,test.t1.a)",
+        "Hints": "use_index(@`sel_1` `test`.`t1` `idx_a`), use_index(@`sel_1` `test`.`t2` ), inl_join(@`sel_1` `test`.`t1`)"
       }
     ]
   },

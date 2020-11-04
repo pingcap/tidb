@@ -80,6 +80,6 @@ var (
 	ErrCartesianProductUnsupported     = terror.ClassOptimizer.New(mysql.ErrCartesianProductUnsupported, mysql.MySQLErrName[mysql.ErrCartesianProductUnsupported])
 	ErrStmtNotFound                    = terror.ClassOptimizer.New(mysql.ErrPreparedStmtNotFound, mysql.MySQLErrName[mysql.ErrPreparedStmtNotFound])
 	ErrAmbiguous                       = terror.ClassOptimizer.New(mysql.ErrNonUniq, mysql.MySQLErrName[mysql.ErrNonUniq])
-	// Since we cannot know if user loggined with a password, use message of ErrAccessDeniedNoPassword instead
+	// Since we cannot know if user logged in with a password, use message of ErrAccessDeniedNoPassword instead
 	ErrAccessDenied = terror.ClassOptimizer.New(mysql.ErrAccessDenied, mysql.MySQLErrName[mysql.ErrAccessDeniedNoPassword])
 )

@@ -111,8 +111,9 @@ func (s *seqTestSuite) TestPrepared(c *C) {
 		query = "select c1 from prepare_test where c1 = (select c1 from prepare_test where c1 = ?)"
 		stmtID, _, _, err = tk.Se.PrepareStmt(query)
 		c.Assert(err, IsNil)
-		_, err = tk.Se.ExecutePreparedStmt(ctx, stmtID, []types.Datum{types.NewDatum(3)})
+		rs, err = tk.Se.ExecutePreparedStmt(ctx, stmtID, []types.Datum{types.NewDatum(3)})
 		c.Assert(err, IsNil)
+		tk.ResultSetToResult(rs, Commentf("%v", rs)).Check(testkit.Rows())
 		tk1.MustExec("insert prepare_test (c1) values (3)")
 		rs, err = tk.Se.ExecutePreparedStmt(ctx, stmtID, []types.Datum{types.NewDatum(3)})
 		c.Assert(err, IsNil)
@@ -122,8 +123,10 @@ func (s *seqTestSuite) TestPrepared(c *C) {
 		query = "select c1 from prepare_test where c1 in (select c1 from prepare_test where c1 = ?)"
 		stmtID, _, _, err = tk.Se.PrepareStmt(query)
 		c.Assert(err, IsNil)
-		_, err = tk.Se.ExecutePreparedStmt(ctx, stmtID, []types.Datum{types.NewDatum(3)})
+		rs, err = tk.Se.ExecutePreparedStmt(ctx, stmtID, []types.Datum{types.NewDatum(3)})
 		c.Assert(err, IsNil)
+		tk.ResultSetToResult(rs, Commentf("%v", rs)).Check(testkit.Rows())
+
 		tk1.MustExec("insert prepare_test (c1) values (3)")
 		rs, err = tk.Se.ExecutePreparedStmt(ctx, stmtID, []types.Datum{types.NewDatum(3)})
 		c.Assert(err, IsNil)

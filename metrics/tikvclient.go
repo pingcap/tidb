@@ -75,7 +75,7 @@ var (
 			Subsystem: "tikvclient",
 			Name:      "txn_write_kv_num",
 			Help:      "Count of kv pairs to write in a transaction.",
-			Buckets:   prometheus.ExponentialBuckets(1, 2, 21), // 1 ~ 1048576
+			Buckets:   prometheus.ExponentialBuckets(1, 4, 17), // 1 ~ 4G
 		})
 
 	TiKVTxnWriteSizeHistogram = prometheus.NewHistogram(
@@ -84,7 +84,7 @@ var (
 			Subsystem: "tikvclient",
 			Name:      "txn_write_size_bytes",
 			Help:      "Size of kv pairs to write in a transaction.",
-			Buckets:   prometheus.ExponentialBuckets(1, 2, 30), // 1Byte ~ 500MB
+			Buckets:   prometheus.ExponentialBuckets(16, 4, 17), // 16Bytes ~ 64GB
 		})
 
 	TiKVRawkvCmdHistogram = prometheus.NewHistogramVec(
@@ -189,6 +189,14 @@ var (
 			Name:      "batch_client_unavailable_seconds",
 			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 28), // 1ms ~ 1.5days
 			Help:      "batch client unavailable",
+		})
+	TiKVBatchClientWaitEstablish = prometheus.NewHistogram(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "tikvclient",
+			Name:      "batch_client_wait_connection_establish",
+			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 20), // 1ms ~ 1000s
+			Help:      "batch client wait new connection establish",
 		})
 
 	TiKVRangeTaskStats = prometheus.NewGaugeVec(

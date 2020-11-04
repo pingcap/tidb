@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"runtime/trace"
 	"strings"
 	"sync/atomic"
 
@@ -179,7 +180,7 @@ func (st *TxnState) changeInvalidToPending(future *txnFuture) {
 	st.txnFuture = future
 }
 
-func (st *TxnState) changePendingToValid() error {
+func (st *TxnState) changePendingToValid(ctx context.Context) error {
 	if st.txnFuture == nil {
 		return errors.New("transaction future is not set")
 	}
@@ -187,6 +188,7 @@ func (st *TxnState) changePendingToValid() error {
 	future := st.txnFuture
 	st.txnFuture = nil
 
+	defer trace.StartRegion(ctx, "WaitTsoFuture").End()
 	txn, err := future.wait()
 	if err != nil {
 		st.Transaction = nil
@@ -315,6 +317,11 @@ func (st *TxnState) GetMemBuffer() kv.MemBuffer {
 	return kv.NewBufferStoreFrom(st.Transaction.GetMemBuffer(), st.stmtBuf)
 }
 
+// GetMemBufferSnapshot overrides the Transaction interface.
+func (st *TxnState) GetMemBufferSnapshot() kv.MemBuffer {
+	return st.Transaction.GetMemBuffer()
+}
+
 // BatchGet overrides the Transaction interface.
 func (st *TxnState) BatchGet(ctx context.Context, keys []kv.Key) (map[string][]byte, error) {
 	bufferValues := make([][]byte, len(keys))
@@ -355,6 +362,12 @@ func (st *TxnState) Set(k kv.Key, v []byte) error {
 func (st *TxnState) Delete(k kv.Key) error {
 	st.initStmtBuf()
 	return st.stmtBuf.Delete(k)
+}
+
+// DeleteWithNeedLock overrides the Transaction interface.
+func (st *TxnState) DeleteWithNeedLock(k kv.Key) error {
+	st.initStmtBuf()
+	return st.stmtBuf.DeleteWithNeedLock(k)
 }
 
 // Iter overrides the Transaction interface.
@@ -409,6 +422,9 @@ func (st *TxnState) cleanup() {
 			st.dirtyTableOP = st.dirtyTableOP[:0]
 		}
 	}
+	if st.Transaction != nil {
+		st.Transaction.ResetStmtKeyExistErrs()
+	}
 }
 
 // KeysNeedToLock returns the keys need to be locked.
@@ -418,7 +434,7 @@ func (st *TxnState) KeysNeedToLock() ([]kv.Key, error) {
 	}
 	keys := make([]kv.Key, 0, st.stmtBufLen())
 	if err := kv.WalkMemBuffer(st.stmtBuf, func(k kv.Key, v []byte) error {
-		if !keyNeedToLock(k, v) {
+		if !st.stmtBuf.GetFlags(context.Background(), k).HasNeedLocked() && !keyNeedToLock(k, v) {
 			return nil
 		}
 		// If the key is already locked, it will be deduplicated in LockKeys method later.
@@ -437,11 +453,13 @@ func keyNeedToLock(k, v []byte) bool {
 		// meta key always need to lock.
 		return true
 	}
-	isDelete := len(v) == 0
-	if isDelete {
-		// only need to delete row key.
+
+	// only need to delete row key here,
+	// primary key and unique indexes are handled outside.
+	if len(v) == 0 {
 		return k[10] == 'r'
 	}
+
 	if tablecodec.IsUntouchedIndexKValue(k, v) {
 		return false
 	}
@@ -540,17 +558,10 @@ func (s *session) HasDirtyContent(tid int64) bool {
 // StmtCommit implements the sessionctx.Context interface.
 func (s *session) StmtCommit(memTracker *memory.Tracker) error {
 	defer func() {
-		// If StmtCommit is called in batch mode, we need to clear the txn size
-		// in memTracker to avoid double-counting. If it's not batch mode, this
-		// work has no effect because that no more data will be appended into
-		// s.txn.
-		if memTracker != nil {
-			memTracker.Consume(int64(-s.txn.Size()))
-		}
 		s.txn.cleanup()
 	}()
+
 	st := &s.txn
-	txnSize := st.Transaction.Size()
 
 	if _, err := st.Flush(); err != nil {
 		return err
@@ -566,9 +577,6 @@ func (s *session) StmtCommit(memTracker *memory.Tracker) error {
 		st.doNotCommit = err
 		return err
 	}
-	if memTracker != nil {
-		memTracker.Consume(int64(st.Transaction.Size() - txnSize))
-	}
 
 	// Need to flush binlog.
 	for tableID, delta := range st.mutations {
@@ -582,6 +590,7 @@ func (s *session) StmtCommit(memTracker *memory.Tracker) error {
 			mergeToDirtyDB(dirtyDB, op)
 		}
 	}
+	st.MergeStmtKeyExistErrs()
 	return nil
 }
 

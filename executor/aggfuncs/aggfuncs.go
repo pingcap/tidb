@@ -45,6 +45,11 @@ var (
 	_ AggFunc = (*approxCountDistinctPartial2)(nil)
 	_ AggFunc = (*approxCountDistinctFinal)(nil)
 
+	// All the AggFunc implementations for "APPROX_PERCENTILE" are listed here.
+	_ AggFunc = (*percentileOriginal4Int)(nil)
+	_ AggFunc = (*percentileOriginal4Real)(nil)
+	_ AggFunc = (*percentileOriginal4Decimal)(nil)
+
 	// All the AggFunc implementations for "FIRSTROW" are listed here.
 	_ AggFunc = (*firstRow4Decimal)(nil)
 	_ AggFunc = (*firstRow4Int)(nil)
@@ -66,6 +71,8 @@ var (
 	_ AggFunc = (*maxMin4String)(nil)
 	_ AggFunc = (*maxMin4Duration)(nil)
 	_ AggFunc = (*maxMin4JSON)(nil)
+	_ AggFunc = (*maxMin4Enum)(nil)
+	_ AggFunc = (*maxMin4Set)(nil)
 
 	// All the AggFunc implementations for "AVG" are listed here.
 	_ AggFunc = (*avgOriginal4Decimal)(nil)

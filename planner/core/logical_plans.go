@@ -106,6 +106,7 @@ const (
 	preferRightAsINLMJInner
 	preferHashJoin
 	preferMergeJoin
+	preferBCJoin
 	preferHashAgg
 	preferStreamAgg
 )
@@ -466,15 +467,16 @@ type LogicalUnionScan struct {
 type DataSource struct {
 	logicalSchemaProducer
 
-	indexHints []*ast.IndexHint
-	table      table.Table
-	tableInfo  *model.TableInfo
-	Columns    []*model.ColumnInfo
-	DBName     model.CIStr
+	astIndexHints []*ast.IndexHint
+	IndexHints    []indexHintInfo
+	table         table.Table
+	tableInfo     *model.TableInfo
+	Columns       []*model.ColumnInfo
+	DBName        model.CIStr
 
 	TableAsName *model.CIStr
 	// indexMergeHints are the hint for indexmerge.
-	indexMergeHints []*ast.IndexHint
+	indexMergeHints []indexHintInfo
 	// pushedDownConds are the conditions that will be pushed down to coprocessor.
 	pushedDownConds []expression.Expression
 	// allConds contains all the filters on this table. For now it's maintained
@@ -501,8 +503,10 @@ type DataSource struct {
 	// TblColHists contains the Histogram of all original table columns,
 	// it is converted from statisticTable, and used for IO/network cost estimating.
 	TblColHists *statistics.HistColl
-	//preferStoreType means the DataSource is enforced to which storage.
+	// preferStoreType means the DataSource is enforced to which storage.
 	preferStoreType int
+	// preferPartitions store the map, the key represents store type, the value represents the partition name list.
+	preferPartitions map[int][]model.CIStr
 }
 
 // ExtractCorrelatedCols implements LogicalPlan interface.
@@ -791,7 +795,9 @@ func (ds *DataSource) deriveIndexPathStats(path *util.AccessPath, conds []expres
 			}
 		}
 	}
-	path.IndexFilters, path.TableFilters = splitIndexFilterConditions(path.TableFilters, path.FullIdxCols, path.FullIdxColLens, ds.tableInfo)
+	var indexFilters []expression.Expression
+	indexFilters, path.TableFilters = splitIndexFilterConditions(path.TableFilters, path.FullIdxCols, path.FullIdxColLens, ds.tableInfo)
+	path.IndexFilters = append(path.IndexFilters, indexFilters...)
 	// If the `CountAfterAccess` is less than `stats.RowCount`, there must be some inconsistent stats info.
 	// We prefer the `stats.RowCount` because it could use more stats info to calculate the selectivity.
 	if path.CountAfterAccess < ds.stats.RowCount && !isIm {
@@ -919,6 +925,8 @@ type LogicalTopN struct {
 	ByItems []*util.ByItems
 	Offset  uint64
 	Count   uint64
+
+	limitHints limitHintInfo
 }
 
 // ExtractCorrelatedCols implements LogicalPlan interface.
@@ -941,6 +949,8 @@ type LogicalLimit struct {
 
 	Offset uint64
 	Count  uint64
+
+	limitHints limitHintInfo
 }
 
 // LogicalLock represents a select lock plan.

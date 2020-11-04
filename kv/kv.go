@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/kv/memdb"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/memory"
@@ -60,6 +61,10 @@ const (
 	CollectRuntimeStats
 	// CheckExist map for key existence check.
 	CheckExists
+	// InfoSchema is schema version used by txn startTS.
+	InfoSchema
+	// SchemaAmender is used to amend mutations for pessimistic transactions
+	SchemaAmender
 )
 
 // Priority value for transaction priority.
@@ -172,8 +177,12 @@ type MemBuffer interface {
 	NewStagingBuffer() MemBuffer
 	// Flush flushes all kvs in this buffer to parrent buffer.
 	Flush() (int, error)
-	// Discard discads all kvs in this buffer.
+	// Discard discards all kvs in this buffer.
 	Discard()
+	// GetFlag get KeyFlags by an exist key
+	GetFlags(ctx context.Context, k Key) memdb.KeyFlags
+	// DeleteWithNeedLock deletes key with a need lock mark
+	DeleteWithNeedLock(Key) error
 }
 
 // Transaction defines the interface for operations inside a Transaction.
@@ -202,6 +211,8 @@ type Transaction interface {
 	Valid() bool
 	// GetMemBuffer return the MemBuffer binding to this transaction.
 	GetMemBuffer() MemBuffer
+	// GetMemBufferSnapshot is used to return a snapshot of MemBuffer without any statement modify.
+	GetMemBufferSnapshot() MemBuffer
 	// GetSnapshot returns the Snapshot binding to this transaction.
 	GetSnapshot() Snapshot
 	// SetVars sets variables to the transaction.
@@ -213,6 +224,8 @@ type Transaction interface {
 	// If a key doesn't exist, there shouldn't be any corresponding entry in the result map.
 	BatchGet(ctx context.Context, keys []Key) (map[string][]byte, error)
 	IsPessimistic() bool
+	ResetStmtKeyExistErrs()
+	MergeStmtKeyExistErrs()
 }
 
 // LockCtx contains information for LockKeys method.
@@ -229,6 +242,7 @@ type LockCtx struct {
 	ValuesLock            sync.Mutex
 	LockExpired           *uint32
 	CheckKeyExists        map[string]struct{}
+	Stats                 *execdetails.LockKeysDetails
 }
 
 // ReturnedValue pairs the Value and AlreadyLocked flag for PessimisticLock return values result.
@@ -339,8 +353,6 @@ type ResultSubset interface {
 	GetData() []byte
 	// GetStartKey gets the start key.
 	GetStartKey() Key
-	// GetExecDetails gets the detail information.
-	GetExecDetails() *execdetails.ExecDetails
 	// MemSize returns how many bytes of memory this result use for tracing memory usage.
 	MemSize() int64
 	// RespTime returns the response time for the request.
@@ -425,7 +437,7 @@ type Iterator interface {
 
 // SplittableStore is the kv store which supports split regions.
 type SplittableStore interface {
-	SplitRegions(ctx context.Context, splitKey [][]byte, scatter bool) (regionID []uint64, err error)
+	SplitRegions(ctx context.Context, splitKey [][]byte, scatter bool, tableID *int64) (regionID []uint64, err error)
 	WaitScatterRegionFinish(ctx context.Context, regionID uint64, backOff int) error
 	CheckRegionInScattering(regionID uint64) (bool, error)
 }

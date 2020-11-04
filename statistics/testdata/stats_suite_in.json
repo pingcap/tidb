@@ -44,5 +44,13 @@
     "cases": [
       "explain select * from t where kid = 1"
     ]
+  },
+  {
+    "name": "TestCollationColumnEstimate",
+    "cases": [
+      "show stats_buckets",
+      "explain select * from t where a='aÄa'",
+      "explain select * from t where a > 'aÄa'"
+    ]
   }
 ]

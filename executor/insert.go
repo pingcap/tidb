@@ -17,13 +17,14 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
+	"runtime/trace"
+	"time"
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -45,6 +46,7 @@ type InsertExec struct {
 }
 
 func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) error {
+	defer trace.StartRegion(ctx, "InsertExec").End()
 	logutil.Eventf(ctx, "insert %d rows into table `%s`", len(rows), stringutil.MemoizeStr(func() string {
 		var tblName string
 		if meta := e.Table.Meta(); meta != nil {
@@ -81,6 +83,8 @@ func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) error {
 			return err
 		}
 	} else {
+		e.collectRuntimeStatsEnabled()
+		start := time.Now()
 		for i, row := range rows {
 			var err error
 			if i == 0 {
@@ -91,6 +95,9 @@ func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) error {
 			if err != nil {
 				return err
 			}
+		}
+		if e.stats != nil {
+			e.stats.CheckInsertTime += time.Since(start)
 		}
 	}
 	e.memTracker.Consume(int64(txn.Size() - txnSize))
@@ -114,10 +121,10 @@ func prefetchUniqueIndices(ctx context.Context, txn kv.Transaction, rows []toBeC
 	batchKeys := make([]kv.Key, 0, nKeys)
 	for _, r := range rows {
 		if r.handleKey != nil {
-			batchKeys = append(batchKeys, r.handleKey.newKV.key)
+			batchKeys = append(batchKeys, r.handleKey.newKey)
 		}
 		for _, k := range r.uniqueKeys {
-			batchKeys = append(batchKeys, k.newKV.key)
+			batchKeys = append(batchKeys, k.newKey)
 		}
 	}
 	return txn.BatchGet(ctx, batchKeys)
@@ -133,8 +140,8 @@ func prefetchConflictedOldRows(ctx context.Context, txn kv.Transaction, rows []t
 	batchKeys := make([]kv.Key, 0, len(rows))
 	for _, r := range rows {
 		for _, uk := range r.uniqueKeys {
-			if val, found := values[string(uk.newKV.key)]; found {
-				handle, err := tables.DecodeHandle(val)
+			if val, found := values[string(uk.newKey)]; found {
+				handle, err := tablecodec.DecodeHandle(val)
 				if err != nil {
 					return err
 				}
@@ -177,6 +184,7 @@ func (e *InsertExec) updateDupRow(ctx context.Context, txn kv.Transaction, row t
 // batchUpdateDupRows updates multi-rows in batch if they are duplicate with rows in table.
 func (e *InsertExec) batchUpdateDupRows(ctx context.Context, newRows [][]types.Datum) error {
 	// Get keys need to be checked.
+	start := time.Now()
 	toBeCheckedRows, err := getKeysNeedCheck(ctx, e.ctx, e.Table, newRows)
 	if err != nil {
 		return err
@@ -187,15 +195,24 @@ func (e *InsertExec) batchUpdateDupRows(ctx context.Context, newRows [][]types.D
 		return err
 	}
 
+	if e.collectRuntimeStatsEnabled() {
+		if snapshot := txn.GetSnapshot(); snapshot != nil {
+			snapshot.SetOption(kv.CollectRuntimeStats, e.stats.SnapshotRuntimeStats)
+			defer snapshot.DelOption(kv.CollectRuntimeStats)
+		}
+	}
+	PrefetchStart := time.Now()
 	// Use BatchGet to fill cache.
 	// It's an optimization and could be removed without affecting correctness.
 	if err = prefetchDataCache(ctx, txn, toBeCheckedRows); err != nil {
 		return err
 	}
-
+	if e.stats != nil {
+		e.stats.Prefetch += time.Since(PrefetchStart)
+	}
 	for i, r := range toBeCheckedRows {
 		if r.handleKey != nil {
-			handle, err := tablecodec.DecodeRowKey(r.handleKey.newKV.key)
+			handle, err := tablecodec.DecodeRowKey(r.handleKey.newKey)
 			if err != nil {
 				return err
 			}
@@ -210,14 +227,14 @@ func (e *InsertExec) batchUpdateDupRows(ctx context.Context, newRows [][]types.D
 		}
 
 		for _, uk := range r.uniqueKeys {
-			val, err := txn.Get(ctx, uk.newKV.key)
+			val, err := txn.Get(ctx, uk.newKey)
 			if err != nil {
 				if kv.IsErrNotFound(err) {
 					continue
 				}
 				return err
 			}
-			handle, err := tables.DecodeHandle(val)
+			handle, err := tablecodec.DecodeHandle(val)
 			if err != nil {
 				return err
 			}
@@ -228,7 +245,7 @@ func (e *InsertExec) batchUpdateDupRows(ctx context.Context, newRows [][]types.D
 					// Data index inconsistent? A unique key provide the handle information, but the
 					// handle points to nothing.
 					logutil.BgLogger().Error("get old row failed when insert on dup",
-						zap.String("uniqueKey", hex.EncodeToString(uk.newKV.key)),
+						zap.String("uniqueKey", hex.EncodeToString(uk.newKey)),
 						zap.Int64("handle", handle),
 						zap.String("toBeInsertedRow", types.DatumsToStrNoErr(r.row)))
 				}
@@ -249,6 +266,9 @@ func (e *InsertExec) batchUpdateDupRows(ctx context.Context, newRows [][]types.D
 				return err
 			}
 		}
+	}
+	if e.stats != nil {
+		e.stats.CheckInsertTime += time.Since(start)
 	}
 	return nil
 }

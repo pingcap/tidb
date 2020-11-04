@@ -19,6 +19,7 @@ import (
 	"io"
 	"math"
 	"math/rand"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -1692,6 +1693,7 @@ LOOP:
 		case <-ticker.C:
 			// delete some rows, and add some data
 			for i := num; i < num+step; i++ {
+				forceReloadDomain(s.tk.Se)
 				n := rand.Intn(num)
 				s.tk.MustExec("begin")
 				s.tk.MustExec("delete from t2 where c1 = ?", n)
@@ -3863,6 +3865,7 @@ func (s *testDBSuite1) TestModifyColumnCharset(c *C) {
 	s.tk.MustExec("create table t_mcc(a varchar(8) charset utf8, b varchar(8) charset utf8)")
 	defer s.mustExec(c, "drop table t_mcc;")
 
+	forceReloadDomain(s.tk.Se)
 	result := s.tk.MustQuery(`show create table t_mcc`)
 	result.Check(testkit.Rows(
 		"t_mcc CREATE TABLE `t_mcc` (\n" +
@@ -4560,6 +4563,7 @@ func (s *testDBSuite4) testParallelExecSQL(c *C, sql1, sql2 string, se1, se2 ses
 func checkTableLock(c *C, se session.Session, dbName, tableName string, lockTp model.TableLockType) {
 	tb := testGetTableByName(c, se, dbName, tableName)
 	dom := domain.GetDomain(se)
+	dom.Reload()
 	if lockTp != model.TableLockNone {
 		c.Assert(tb.Meta().Lock, NotNil)
 		c.Assert(tb.Meta().Lock.Tp, Equals, lockTp)
@@ -4601,6 +4605,19 @@ func (s *testDBSuite2) TestDDLWithInvalidTableInfo(c *C) {
 	_, err = tk.Exec("alter table t add column d int GENERATED ALWAYS AS ((case when (a = 0) then 0when (a > 0) then (b / a) end));")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[parser:1064]You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 94 near \"then (b / a) end));\" ")
+}
+
+func (s *testDBSuite7) TestCreateTableIngoreCheckConstraint(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use " + s.schemaName)
+	tk.MustExec("drop table if exists table_constraint_check")
+	tk.MustExec("CREATE TABLE admin_user (enable bool, CHECK (enable IN (0, 1)));")
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1064|You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 63 near \");\"The CHECK clause is parsed but ignored by all storage engines. "))
+	tk.MustQuery("show create table admin_user").Check(testutil.RowsWithSep("|", ""+
+		"admin_user CREATE TABLE `admin_user` (\n"+
+		"  `enable` tinyint(1) DEFAULT NULL\n"+
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 }
 
 func (s *testDBSuite6) TestAlterOrderBy(c *C) {
@@ -4691,6 +4708,223 @@ func (s *testSerialDBSuite) TestAddIndexFailOnCaseWhenCanExit(c *C) {
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[ddl:8214]Cancelled DDL job")
 	tk.MustExec("drop table if exists t")
+}
+
+func (s *testSerialDBSuite) TestCommitTxnWithIndexChange(c *C) {
+	// Prepare work.
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set global tidb_enable_amend_pessimistic_txn = 1;")
+	tk.MustExec("set tidb_enable_amend_pessimistic_txn = 1;")
+	defer tk.MustExec("set global tidb_enable_amend_pessimistic_txn = 0;")
+	tk.MustExec("drop database if exists test_db")
+	tk.MustExec("create database test_db")
+	tk.MustExec("use test_db")
+	tk.MustExec("create table t1 (c1 int primary key, c2 int, c3 int, index ok2(c2))")
+	tk.MustExec("insert t1 values (1, 10, 100), (2, 20, 200)")
+	tk.MustExec("alter table t1 add index k2(c2)")
+	tk.MustExec("alter table t1 drop index k2")
+	tk.MustExec("alter table t1 add index k2(c2)")
+	tk.MustExec("alter table t1 drop index k2")
+	tk2 := testkit.NewTestKit(c, s.store)
+	tk2.MustExec("use test_db")
+
+	// tkSQLs are the sql statements for the pessimistic transaction.
+	// tk2DDL are the ddl statements executed before the pessimistic transaction.
+	// idxDDL is the DDL statement executed between pessimistic transaction begin and commit.
+	// failCommit means the pessimistic transaction commit should fail not.
+	type caseUnit struct {
+		tkSQLs     []string
+		tk2DDL     []string
+		idxDDL     string
+		checkSQLs  []string
+		rowsExps   [][]string
+		failCommit bool
+		stateEnd   model.SchemaState
+	}
+
+	cases := []caseUnit{
+		// Test secondary index
+		{[]string{"insert into t1 values(3, 30, 300)",
+			"insert into t2 values(11, 11, 11)"},
+			[]string{"alter table t1 add index k2(c2)",
+				"alter table t1 drop index k2",
+				"alter table t1 add index kk2(c2, c1)",
+				"alter table t1 add index k2(c2)",
+				"alter table t1 drop index k2"},
+			"alter table t1 add index k2(c2)",
+			[]string{"select c3, c2 from t1 use index(k2) where c2 = 20",
+				"select c3, c2 from t1 use index(k2) where c2 = 10",
+				"select * from t1",
+				"select * from t2 where c1 = 11"},
+			[][]string{{"200 20"},
+				{"100 10"},
+				{"1 10 100", "2 20 200", "3 30 300"},
+				{"11 11 11"}},
+			false,
+			model.StateNone},
+		// Test secondary index
+		{[]string{"insert into t2 values(5, 50, 500)",
+			"insert into t2 values(11, 11, 11)",
+			"delete from t2 where c2 = 11",
+			"update t2 set c2 = 110 where c1 = 11"},
+			//"update t2 set c1 = 10 where c3 = 100"},
+			[]string{"alter table t1 add index k2(c2)",
+				"alter table t1 drop index k2",
+				"alter table t1 add index kk2(c2, c1)",
+				"alter table t1 add index k2(c2)",
+				"alter table t1 drop index k2"},
+			"alter table t1 add index k2(c2)",
+			[]string{"select c3, c2 from t1 use index(k2) where c2 = 20",
+				"select c3, c2 from t1 use index(k2) where c2 = 10",
+				"select * from t1",
+				"select * from t2 where c1 = 11",
+				"select * from t2 where c3 = 100"},
+			[][]string{{"200 20"},
+				{"100 10"},
+				{"1 10 100", "2 20 200"},
+				{},
+				{"1 10 100"}},
+			false,
+			model.StateNone},
+		// Test unique index
+		/* TODO unique index is not supported now.
+		{[]string{"insert into t1 values(3, 30, 300)",
+			"insert into t1 values(4, 40, 400)",
+			"insert into t2 values(11, 11, 11)",
+			"insert into t2 values(12, 12, 11)"},
+			[]string{"alter table t1 add unique index uk3(c3)",
+				"alter table t1 drop index uk3",
+				"alter table t2 add unique index ukc1c3(c1, c3)",
+				"alter table t2 add unique index ukc3(c3)",
+				"alter table t2 drop index ukc1c3",
+				"alter table t2 drop index ukc3",
+				"alter table t2 add index kc3(c3)"},
+			"alter table t1 add unique index uk3(c3)",
+			[]string{"select c3, c2 from t1 use index(uk3) where c3 = 200",
+				"select c3, c2 from t1 use index(uk3) where c3 = 300",
+				"select c3, c2 from t1 use index(uk3) where c3 = 400",
+				"select * from t1",
+				"select * from t2"},
+			[][]string{{"200 20"},
+				{"300 30"},
+				{"400 40"},
+				{"1 10 100", "2 20 200", "3 30 300", "4 40 400"},
+				{"1 10 100", "2 20 200", "11 11 11", "12 12 11"}},
+			false, model.StateNone},
+		// Test unique index fail to commit, this case needs the new index could be inserted
+		{[]string{"insert into t1 values(3, 30, 300)",
+			"insert into t1 values(4, 40, 300)",
+			"insert into t2 values(11, 11, 11)",
+			"insert into t2 values(12, 11, 12)"},
+			//[]string{"alter table t1 add unique index uk3(c3)", "alter table t1 drop index uk3"},
+			[]string{},
+			"alter table t1 add unique index uk3(c3)",
+			[]string{"select c3, c2 from t1 use index(uk3) where c3 = 200",
+				"select c3, c2 from t1 use index(uk3) where c3 = 300",
+				"select c3, c2 from t1 where c1 = 4",
+				"select * from t1",
+				"select * from t2"},
+			[][]string{{"200 20"},
+				{},
+				{},
+				{"1 10 100", "2 20 200"},
+				{"1 10 100", "2 20 200"}},
+			true,
+			model.StateWriteOnly},
+		*/
+	}
+	tk.MustQuery("select * from t1;").Check(testkit.Rows("1 10 100", "2 20 200"))
+
+	// Test add index state change
+	do := s.dom.DDL()
+	startStates := []model.SchemaState{model.StateNone, model.StateDeleteOnly}
+	for _, startState := range startStates {
+		endStatMap := session.ConstOpAddIndex[startState]
+		var endStates []model.SchemaState
+		for st := range endStatMap {
+			endStates = append(endStates, st)
+		}
+		sort.Slice(endStates, func(i, j int) bool { return endStates[i] < endStates[j] })
+		for _, endState := range endStates {
+			for _, curCase := range cases {
+				if endState < curCase.stateEnd {
+					break
+				}
+				tk2.MustExec("drop table if exists t1")
+				tk2.MustExec("drop table if exists t2")
+				tk2.MustExec("create table t1 (c1 int primary key, c2 int, c3 int, index ok2(c2))")
+				tk2.MustExec("create table t2 (c1 int primary key, c2 int, c3 int, index ok2(c2))")
+				tk2.MustExec("insert t1 values (1, 10, 100), (2, 20, 200)")
+				tk2.MustExec("insert t2 values (1, 10, 100), (2, 20, 200)")
+				tk2.MustQuery("select * from t1;").Check(testkit.Rows("1 10 100", "2 20 200"))
+				tk.MustQuery("select * from t1;").Check(testkit.Rows("1 10 100", "2 20 200"))
+				tk.MustQuery("select * from t2;").Check(testkit.Rows("1 10 100", "2 20 200"))
+
+				for _, DDLSQL := range curCase.tk2DDL {
+					tk2.MustExec(DDLSQL)
+				}
+				hook := &ddl.TestDDLCallback{}
+				prepared := false
+				committed := false
+				hook.OnJobUpdatedExported = func(job *model.Job) {
+					if job.SchemaState == startState {
+						if !prepared {
+							tk.MustExec("begin pessimistic")
+							for _, tkSQL := range curCase.tkSQLs {
+								tk.MustExec(tkSQL)
+							}
+							prepared = true
+						}
+					} else if job.SchemaState == endState {
+						if !committed {
+							if curCase.failCommit {
+								_, err := tk.Exec("commit")
+								c.Assert(err, NotNil)
+							} else {
+								tk.MustExec("commit")
+							}
+						}
+						committed = true
+					}
+				}
+				originalCallback := do.GetHook()
+				do.(ddl.DDLForTest).SetHook(hook)
+				tk2.MustExec(curCase.idxDDL)
+				do.(ddl.DDLForTest).SetHook(originalCallback)
+				tk2.MustExec("admin check table t1")
+				for i, checkSQL := range curCase.checkSQLs {
+					if len(curCase.rowsExps[i]) > 0 {
+						tk2.MustQuery(checkSQL).Check(testkit.Rows(curCase.rowsExps[i]...))
+					} else {
+						tk2.MustQuery(checkSQL).Check(nil)
+					}
+				}
+			}
+		}
+	}
+	tk.MustExec("admin check table t1")
+}
+
+func (s *testDBSuite5) TestChangeColumnShouldKeepFlagWhenTypeIsTimestamp(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use " + s.schemaName)
+	s.mustExec(c, "drop table if exists tt")
+	s.mustExec(c, "create table tt(id int auto_increment primary key, c timestamp)")
+	ctx := s.tk.Se.(sessionctx.Context)
+	is := domain.GetDomain(ctx).InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr(s.schemaName), model.NewCIStr("tt"))
+	c.Assert(err, IsNil)
+	colC := tbl.Meta().Columns[1]
+	originFlag := colC.Flag
+	c.Assert(originFlag > 0, IsTrue)
+	c.Assert(colC.Name.L, Equals, "c")
+	s.mustExec(c, "alter table tt change column c cc timestamp")
+	is = domain.GetDomain(ctx).InfoSchema()
+	tbl, err = is.TableByName(model.NewCIStr(s.schemaName), model.NewCIStr("tt"))
+	c.Assert(err, IsNil)
+	colCC := tbl.Meta().Columns[1]
+	c.Assert(colCC.Name.L, Equals, "cc")
+	c.Assert(originFlag, Equals, colCC.Flag)
 }
 
 func init() {

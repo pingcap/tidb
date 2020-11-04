@@ -16,7 +16,9 @@ package planner
 import (
 	"context"
 	"math"
+	"runtime/trace"
 	"strings"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser"
@@ -97,13 +99,11 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 
 	tableHints := hint.ExtractTableHintsFromStmtNode(node, sctx)
 	stmtHints, warns := handleStmtHints(tableHints)
-	defer func() {
-		sessVars.StmtCtx.StmtHints = stmtHints
-		for _, warn := range warns {
-			sctx.GetSessionVars().StmtCtx.AppendWarning(warn)
-		}
-	}()
 	sessVars.StmtCtx.StmtHints = stmtHints
+	for _, warn := range warns {
+		sctx.GetSessionVars().StmtCtx.AppendWarning(warn)
+	}
+	warns = warns[:0]
 	bestPlan, names, _, err := optimize(ctx, sctx, node, is)
 	if err != nil {
 		return nil, nil, err
@@ -134,6 +134,12 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	}
 	bestPlanHintStr := hint.RestoreOptimizerHints(bestPlanHint)
 
+	defer func() {
+		sessVars.StmtCtx.StmtHints = stmtHints
+		for _, warn := range warns {
+			sctx.GetSessionVars().StmtCtx.AppendWarning(warn)
+		}
+	}()
 	binding := bindRecord.FindBinding(bestPlanHintStr)
 	// If the best bestPlan is in baselines, just use it.
 	if binding != nil && binding.Status == bindinfo.Using {
@@ -195,10 +201,15 @@ func optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	hintProcessor := &hint.BlockHintProcessor{Ctx: sctx}
 	node.Accept(hintProcessor)
 	builder := plannercore.NewPlanBuilder(sctx, is, hintProcessor)
+
+	// reset fields about rewrite
+	sctx.GetSessionVars().RewritePhaseInfo.Reset()
+	beginRewrite := time.Now()
 	p, err := builder.Build(ctx, node)
 	if err != nil {
 		return nil, nil, 0, err
 	}
+	sctx.GetSessionVars().RewritePhaseInfo.DurationRewrite = time.Since(beginRewrite)
 
 	sctx.GetSessionVars().StmtCtx.Tables = builder.GetDBTableInfo()
 	activeRoles := sctx.GetSessionVars().ActiveRoles
@@ -337,6 +348,7 @@ func useMaxTS(ctx sessionctx.Context, p plannercore.Plan) bool {
 // for point select like plan which does not need extra things
 func OptimizeExecStmt(ctx context.Context, sctx sessionctx.Context,
 	execAst *ast.ExecuteStmt, is infoschema.InfoSchema) (plannercore.Plan, error) {
+	defer trace.StartRegion(ctx, "Optimize").End()
 	var err error
 	builder := plannercore.NewPlanBuilder(sctx, is, nil)
 	p, err := builder.Build(ctx, execAst)

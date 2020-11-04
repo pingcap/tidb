@@ -129,7 +129,7 @@ func (s *testSplitIndex) TestSplitIndex(c *C) {
 	// region10: [90 ~ +inf)
 	ctx := mock.NewContext()
 	e := &SplitIndexRegionExec{
-		baseExecutor: newBaseExecutor(ctx, nil, nil),
+		baseExecutor: newBaseExecutor(ctx, nil, 0),
 		tableInfo:    tbInfo,
 		indexInfo:    idxInfo,
 		lower:        []types.Datum{types.NewDatum(0)},
@@ -318,7 +318,7 @@ func (s *testSplitIndex) TestSplitTable(c *C) {
 	// region10: [90 ~ +inf)
 	ctx := mock.NewContext()
 	e := &SplitTableRegionExec{
-		baseExecutor: newBaseExecutor(ctx, nil, nil),
+		baseExecutor: newBaseExecutor(ctx, nil, 0),
 		tableInfo:    tbInfo,
 		lower:        types.NewDatum(0),
 		upper:        types.NewDatum(100),

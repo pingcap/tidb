@@ -91,7 +91,7 @@ func (s *testPointGetSuite) TestPointGetPlanCache(c *C) {
 		"└─Point_Get_1 1.00 root table:t handle:1",
 	))
 	tk.MustQuery("explain select a from t where a = -1").Check(testkit.Rows(
-		"TableDual_5 0.00 root  rows:0",
+		"TableDual_6 0.00 root  rows:0",
 	))
 	tk.MustExec(`prepare stmt0 from "select a from t where a = ?"`)
 	tk.MustExec("set @p0 = -1")

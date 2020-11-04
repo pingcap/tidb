@@ -16,6 +16,7 @@ package kv
 import (
 	"context"
 
+	"github.com/pingcap/tidb/kv/memdb"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 )
 
@@ -81,6 +82,7 @@ func (t *mockTxn) IterReverse(k Key) (Iterator, error) {
 func (t *mockTxn) Set(k Key, v []byte) error {
 	return nil
 }
+
 func (t *mockTxn) Delete(k Key) error {
 	return nil
 }
@@ -98,6 +100,10 @@ func (t *mockTxn) Size() int {
 }
 
 func (t *mockTxn) GetMemBuffer() MemBuffer {
+	return nil
+}
+
+func (t *mockTxn) GetMemBufferSnapshot() MemBuffer {
 	return nil
 }
 
@@ -127,6 +133,22 @@ func (t *mockTxn) SetVars(vars *Variables) {
 
 func (t *mockTxn) GetVars() *Variables {
 	return nil
+}
+
+func (t *mockTxn) ResetStmtKeyExistErrs() {
+
+}
+
+func (t *mockTxn) MergeStmtKeyExistErrs() {
+
+}
+
+func (t *mockTxn) DeleteWithNeedLock(k Key) error {
+	return t.Delete(k)
+}
+
+func (t *mockTxn) GetFlags(ctx context.Context, k Key) memdb.KeyFlags {
+	return 0
 }
 
 // NewMockTxn new a mockTxn.
