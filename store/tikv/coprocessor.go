@@ -1431,9 +1431,9 @@ func (e *rateLimitAction) destroyTokenIfNeeded(returnToken func()) {
 		e.cond.isTokenDestroyed = true
 		e.cond.Broadcast()
 		return
-	} else {
-		returnToken()
 	}
+
+	returnToken()
 	// we suspend worker when `exceeded` is true until being notified by `broadcastIfNeeded`
 	for e.cond.exceeded {
 		e.cond.waitingWorkerCnt++
