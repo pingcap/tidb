@@ -1371,7 +1371,6 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 			err = cc.writeMultiResultset(ctx, rss, false)
 		}
 	} else {
-		//
 		var handled bool
 		handled, err = cc.handleQuerySpecial(ctx)
 		if handled {

@@ -150,7 +150,7 @@ const (
 	typeBatchPointGet
 	typeClusterMemTableReader
 	typeDataSourceID
-	typeLoadDataID int = 41
+	typeLoadDataID
 )
 
 // TypeStringToPhysicalID converts the plan type string to plan id.
