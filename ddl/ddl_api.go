@@ -3412,6 +3412,26 @@ func CheckModifyTypeCompatible(origin *types.FieldType, to *types.FieldType) (al
 			// Changing integer to other types, reorg is absolutely necessary.
 			return unsupportedMsg, errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
 		}
+	case mysql.TypeFloat, mysql.TypeDouble:
+		switch to.Tp {
+		case mysql.TypeFloat, mysql.TypeDouble:
+			skipSignCheck = true
+			skipLenCheck = true
+		case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp, mysql.TypeEnum, mysql.TypeSet:
+			// TODO: Currently float/double cast to date/datetime/timestamp/enum/set are all not support yet, should fix here after supported.
+			return "", errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
+		default:
+			return unsupportedMsg, errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
+		}
+	case mysql.TypeBit:
+		switch to.Tp {
+		case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp, mysql.TypeDuration, mysql.TypeEnum, mysql.TypeSet:
+			// TODO: Currently bit cast to date/datetime/timestamp/time/enum/set are all not support yet, should fix here after supported.
+			return "", errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
+		case mysql.TypeBit:
+		default:
+			return unsupportedMsg, errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
+		}
 	case mysql.TypeEnum, mysql.TypeSet:
 		var typeVar string
 		if origin.Tp == mysql.TypeEnum {
@@ -3444,7 +3464,11 @@ func CheckModifyTypeCompatible(origin *types.FieldType, to *types.FieldType) (al
 		}
 	case mysql.TypeNewDecimal:
 		if origin.Tp != to.Tp {
-			return "", errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
+			switch to.Tp {
+			case mysql.TypeEnum, mysql.TypeSet:
+				return "", errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
+			}
+			return unsupportedMsg, errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
 		}
 		// Floating-point and fixed-point types also can be UNSIGNED. As with integer types, this attribute prevents
 		// negative values from being stored in the column. Unlike the integer types, the upper range of column values
