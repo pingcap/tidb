@@ -515,6 +515,7 @@ const minLogCopTaskTime = 300 * time.Millisecond
 // run is a worker function that get a copTask from channel, handle it and
 // send the result back.
 func (worker *copIteratorWorker) run(ctx context.Context) {
+	worker.memTracker
 	defer worker.wg.Done()
 	for task := range worker.taskCh {
 		respCh := worker.respChan
