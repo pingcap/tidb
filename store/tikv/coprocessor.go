@@ -516,7 +516,7 @@ const minLogCopTaskTime = 300 * time.Millisecond
 // send the result back.
 func (worker *copIteratorWorker) run(ctx context.Context) {
 	defer func() {
-		worker.actionOnExceed.close()
+		worker.actionOnExceed.broadcastExceed()
 		worker.wg.Done()
 	}()
 	for task := range worker.taskCh {
@@ -1408,6 +1408,9 @@ func (e *rateLimitAction) broadcastIfNeeded(needed bool) {
 	}
 	e.cond.exceeded = false
 	e.cond.Broadcast()
+	if e.cond.waitingWorkerCnt < 1 {
+		e.cond.once = sync.Once{}
+	}
 }
 
 // destroyTokenIfNeeded will check the `exceed` flag after copWorker finished one task.
@@ -1461,6 +1464,13 @@ func (e *rateLimitAction) close() {
 	e.cond.isTokenDestroyed = true
 	e.cond.waitingWorkerCnt = 0
 	// broadcast the signal in order not to leak worker goroutine if it is being suspended
+	e.cond.Broadcast()
+}
+
+func (e *rateLimitAction) broadcastExceed() {
+	e.conditionLock()
+	defer e.conditionUnlock()
+	e.cond.exceeded = false
 	e.cond.Broadcast()
 }
 
