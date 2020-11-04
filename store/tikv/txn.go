@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/kv/memdb"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/execdetails"
@@ -212,6 +213,15 @@ func (txn *tikvTxn) IterReverse(k kv.Key) (kv.Iterator, error) {
 func (txn *tikvTxn) Delete(k kv.Key) error {
 	txn.dirty = true
 	return txn.us.Delete(k)
+}
+
+func (txn *tikvTxn) DeleteWithNeedLock(k kv.Key) error {
+	txn.dirty = true
+	return txn.us.DeleteWithNeedLock(k)
+}
+
+func (txn *tikvTxn) GetFlags(ctx context.Context, k kv.Key) memdb.KeyFlags {
+	return txn.us.GetFlags(ctx, k)
 }
 
 func (txn *tikvTxn) SetOption(opt kv.Option, val interface{}) {
