@@ -166,6 +166,33 @@ func (s *testCollateSuite) TestUnicodeCICollator(c *C) {
 	testKeyTable(keyTable, "utf8mb4_unicode_ci", c)
 }
 
+func (s *testCollateSuite) TestPinyinCollator(c *C) {
+	defer testleak.AfterTest(c)()
+	SetNewCollationEnabledForTest(true)
+	defer SetNewCollationEnabledForTest(false)
+
+	compareTable := []compareTable{
+		{"a", "b", -1},
+		{"a", "A", 1},
+		{"😜", "😃", 1},
+		{"a\t", "a", 1},
+		{"中", "文", 1},
+		{"年轻", "简单", 1},
+	}
+	keyTable := []keyTable{
+		{"a", []byte{0x61}},
+		{"A", []byte{0x41}},
+		{"Foo © bar 𝌆 baz ☃ qux", []byte{0x46, 0x6F, 0x6F, 0x20, 0xFF, 0x00, 0x00, 0x26, 0x20, 0x62, 0x61, 0x72,
+			0x20, 0xFF, 0x03, 0xB5, 0x4E, 0x20, 0x62, 0x61, 0x7A, 0x20, 0xFF, 0x00,
+			0x23, 0xC8, 0x20, 0x71, 0x75, 0x78}},
+		{"a ", []byte{0x61}},
+		{"ﷻ", []byte{0xFF, 0x00, 0x98, 0x8F}},
+	}
+
+	testCompareTable(compareTable, "utf8mb4_zh_pinyin_tidb_as_cs", c)
+	testKeyTable(keyTable, "utf8mb4_zh_pinyin_tidb_as_cs", c)
+}
+
 func (s *testCollateSuite) TestSetNewCollateEnabled(c *C) {
 	defer SetNewCollationEnabledForTest(false)
 

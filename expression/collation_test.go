@@ -50,6 +50,11 @@ func (s *testCollationSuites) TestCompareString(c *C) {
 	c.Assert(types.CompareString("😜", "😃", "binary"), Not(Equals), 0)
 	c.Assert(types.CompareString("a ", "a  ", "binary"), Not(Equals), 0)
 
+	c.Assert(types.CompareString("a ", "a  ", "utf8mb4_zh_pinyin_tidb_as_cs"), Equals, 0)
+	c.Assert(types.CompareString("一", "二", "utf8mb4_zh_pinyin_tidb_as_cs"), Equals, 1)
+	c.Assert(types.CompareString("À", "A", "utf8mb4_zh_pinyin_tidb_as_cs"), Equals, 1)
+	c.Assert(types.CompareString("😜", "😃", "utf8mb4_zh_pinyin_tidb_as_cs"), Equals, 1)
+
 	ctx := mock.NewContext()
 	ft := types.NewFieldType(mysql.TypeVarString)
 	col1 := &Column{

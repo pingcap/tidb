@@ -2371,7 +2371,7 @@ func (s *testEvaluatorSuite) TestWeightString(c *C) {
 	}
 }
 
-func (s *testEvaluatorSerialSuites) TestCIWeightString(c *C) {
+func (s *testEvaluatorSerialSuites) TestCollationWeightString(c *C) {
 	collate.SetNewCollationEnabledForTest(true)
 	defer collate.SetNewCollationEnabledForTest(false)
 
@@ -2442,6 +2442,16 @@ func (s *testEvaluatorSerialSuites) TestCIWeightString(c *C) {
 		{"中", "BINARY", 5, "中\x00\x00"},
 	}
 
+	pinyinTests := []weightStringTest{
+		{"aAÁàãăâ", "NONE", 0, "aA\xff\x00\x00;\xa8\xa4\xff\x00\x00Z\xff\x00\x00n\xff\x00\x00Y"},
+		{"中", "NONE", 0, "\xff\xa0\x9b\xc1"},
+		{"a", "CHAR", 5, "a"},
+		{"a ", "CHAR", 5, "a"},
+		{"中", "CHAR", 5, "\xff\xa0\x9b\xc1"},
+		{"中 ", "CHAR", 5, "\xff\xa0\x9b\xc1"},
+	}
+
 	checkResult("utf8mb4_general_ci", generalTests)
 	checkResult("utf8mb4_unicode_ci", unicodeTests)
+	checkResult("utf8mb4_zh_pinyin_tidb_as_cs", pinyinTests)
 }
