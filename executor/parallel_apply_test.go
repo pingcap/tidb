@@ -15,10 +15,10 @@ package executor_test
 
 import (
 	"fmt"
-	"github.com/pingcap/failpoint"
 	"strings"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/testkit"

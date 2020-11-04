@@ -15,12 +15,12 @@ package executor
 
 import (
 	"context"
-	"github.com/pingcap/failpoint"
 	"runtime/trace"
 	"sync"
 	"sync/atomic"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/util/chunk"
