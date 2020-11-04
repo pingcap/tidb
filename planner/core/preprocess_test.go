@@ -255,6 +255,21 @@ func (s *testValidatorSuite) TestValidator(c *C) {
 		{"CREATE TABLE origin (a int primary key auto_increment, b int);", false, nil},
 		{"CREATE TABLE origin (a int unique auto_increment, b int);", false, nil},
 		{"CREATE TABLE origin (a int key auto_increment, b int);", false, nil},
+
+		// issue 20295
+		// issue 11193
+		{"select cast(1.23 as decimal(65,65))", true,
+			errors.New("[types:1425]Too big scale 65 specified for column '1.23'. Maximum is 30.")},
+		{"select CONVERT( 2, DECIMAL(62,60) )", true,
+			errors.New("[types:1425]Too big scale 60 specified for column '2'. Maximum is 30.")},
+		{"select CONVERT( 2, DECIMAL(66,29) )", true,
+			errors.New("[types:1426]Too big precision 66 specified for column '2'. Maximum is 65.")},
+		{"select CONVERT( 2, DECIMAL(28,29) )", true,
+			errors.New("[types:1427]For float(M,D), double(M,D) or decimal(M,D), M must be >= D (column '2').")},
+		{"select CONVERT( 2, DECIMAL(30,65) )", true,
+			errors.New("[types:1427]For float(M,D), double(M,D) or decimal(M,D), M must be >= D (column '2').")},
+		{"select CONVERT( 2, DECIMAL(66,99) )", true,
+			errors.New("[types:1427]For float(M,D), double(M,D) or decimal(M,D), M must be >= D (column '2').")},
 	}
 
 	_, err := s.se.Execute(context.Background(), "use test")
