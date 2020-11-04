@@ -64,6 +64,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/plugin"
+	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/arena"
@@ -1370,22 +1371,46 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 			err = cc.writeMultiResultset(ctx, rss, false)
 		}
 	} else {
+<<<<<<< HEAD
 		loadDataInfo := cc.ctx.Value(executor.LoadDataVarKey)
 		if loadDataInfo != nil {
 			defer cc.ctx.SetValue(executor.LoadDataVarKey, nil)
 			if err = cc.handleLoadData(ctx, loadDataInfo.(*executor.LoadDataInfo)); err != nil {
 				return err
 			}
+=======
+		handled, err := cc.handleQuerySpecial(ctx, status)
+		if handled {
+			execStmt := cc.ctx.Value(session.ExecStmtVarKey)
+			if execStmt != nil {
+				execStmt.(*executor.ExecStmt).FinishExecuteStmt(0, err == nil, false)
+			}
+		}
+		if err != nil {
+			return err
+>>>>>>> ae5dc3f69... executor: fix issue of load data statement doesn't record into slow query and statements_summary (#20713)
 		}
 
+<<<<<<< HEAD
 		loadStats := cc.ctx.Value(executor.LoadStatsVarKey)
 		if loadStats != nil {
 			defer cc.ctx.SetValue(executor.LoadStatsVarKey, nil)
 			if err = cc.handleLoadStats(ctx, loadStats.(*executor.LoadStatsInfo)); err != nil {
 				return err
 			}
+=======
+func (cc *clientConn) handleQuerySpecial(ctx context.Context, status uint16) (bool, error) {
+	handled := false
+	loadDataInfo := cc.ctx.Value(executor.LoadDataVarKey)
+	if loadDataInfo != nil {
+		handled = true
+		defer cc.ctx.SetValue(executor.LoadDataVarKey, nil)
+		if err := cc.handleLoadData(ctx, loadDataInfo.(*executor.LoadDataInfo)); err != nil {
+			return handled, err
+>>>>>>> ae5dc3f69... executor: fix issue of load data statement doesn't record into slow query and statements_summary (#20713)
 		}
 
+<<<<<<< HEAD
 		indexAdvise := cc.ctx.Value(executor.IndexAdviseVarKey)
 		if indexAdvise != nil {
 			defer cc.ctx.SetValue(executor.IndexAdviseVarKey, nil)
@@ -1393,11 +1418,31 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 			if err != nil {
 				return err
 			}
+=======
+	loadStats := cc.ctx.Value(executor.LoadStatsVarKey)
+	if loadStats != nil {
+		handled = true
+		defer cc.ctx.SetValue(executor.LoadStatsVarKey, nil)
+		if err := cc.handleLoadStats(ctx, loadStats.(*executor.LoadStatsInfo)); err != nil {
+			return handled, err
+>>>>>>> ae5dc3f69... executor: fix issue of load data statement doesn't record into slow query and statements_summary (#20713)
 		}
 
+<<<<<<< HEAD
 		err = cc.writeOK(ctx)
 	}
 	return err
+=======
+	indexAdvise := cc.ctx.Value(executor.IndexAdviseVarKey)
+	if indexAdvise != nil {
+		handled = true
+		defer cc.ctx.SetValue(executor.IndexAdviseVarKey, nil)
+		if err := cc.handleIndexAdvise(ctx, indexAdvise.(*executor.IndexAdviseInfo)); err != nil {
+			return handled, err
+		}
+	}
+	return handled, cc.writeOkWith(ctx, cc.ctx.LastMessage(), cc.ctx.AffectedRows(), cc.ctx.LastInsertID(), status, cc.ctx.WarningCount())
+>>>>>>> ae5dc3f69... executor: fix issue of load data statement doesn't record into slow query and statements_summary (#20713)
 }
 
 // handleFieldList returns the field list for a table.

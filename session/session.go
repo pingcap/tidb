@@ -1167,12 +1167,69 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 			}
 			return nil, err
 		}
+<<<<<<< HEAD
 		durCompile := time.Since(s.sessionVars.StartTime)
 		s.GetSessionVars().DurationCompile = durCompile
 		if isInternal {
 			sessionExecuteCompileDurationInternal.Observe(durCompile.Seconds())
 		} else {
 			sessionExecuteCompileDurationGeneral.Observe(durCompile.Seconds())
+=======
+		return nil, err
+	}
+	return recordSet, nil
+}
+
+// querySpecialKeys contains the keys of special query, the special query will handled by handleQuerySpecial method.
+var querySpecialKeys = []fmt.Stringer{
+	executor.LoadDataVarKey,
+	executor.LoadStatsVarKey,
+	executor.IndexAdviseVarKey,
+}
+
+func (s *session) hasQuerySpecial() bool {
+	found := false
+	s.mu.RLock()
+	for _, k := range querySpecialKeys {
+		v := s.mu.values[k]
+		if v != nil {
+			found = true
+			break
+		}
+	}
+	s.mu.RUnlock()
+	return found
+}
+
+// runStmt executes the sqlexec.Statement and commit or rollback the current transaction.
+func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.RecordSet, err error) {
+	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+		span1 := span.Tracer().StartSpan("session.runStmt", opentracing.ChildOf(span.Context()))
+		span1.LogKV("sql", s.OriginText())
+		defer span1.Finish()
+		ctx = opentracing.ContextWithSpan(ctx, span1)
+	}
+	se.SetValue(sessionctx.QueryString, s.OriginText())
+	if _, ok := s.(*executor.ExecStmt).StmtNode.(ast.DDLNode); ok {
+		se.SetValue(sessionctx.LastExecuteDDL, true)
+	} else {
+		se.ClearValue(sessionctx.LastExecuteDDL)
+	}
+
+	sessVars := se.sessionVars
+	// Save origTxnCtx here to avoid it reset in the transaction retry.
+	origTxnCtx := sessVars.TxnCtx
+	err = se.checkTxnAborted(s)
+	if err != nil {
+		return nil, err
+	}
+	rs, err = s.Exec(ctx)
+	sessVars.TxnCtx.StatementCount++
+	if !s.IsReadOnly(sessVars) {
+		// All the history should be added here.
+		if err == nil && sessVars.TxnCtx.CouldRetry {
+			GetHistory(se).Add(s, sessVars.StmtCtx)
+>>>>>>> ae5dc3f69... executor: fix issue of load data statement doesn't record into slow query and statements_summary (#20713)
 		}
 		s.currentPlan = stmt.Plan
 
@@ -1181,11 +1238,54 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 			return nil, err
 		}
 	}
+<<<<<<< HEAD
 
 	if s.sessionVars.ClientCapability&mysql.ClientMultiResults == 0 && len(recordSets) > 1 {
 		// return the first recordset if client doesn't support ClientMultiResults.
 		recordSets = recordSets[:1]
 	}
+=======
+	if rs != nil {
+		return &execStmtResult{
+			RecordSet: rs,
+			sql:       s,
+			se:        se,
+		}, err
+	}
+
+	if se.hasQuerySpecial() {
+		// The special query will be handled later in handleQuerySpecial,
+		// then should call the ExecStmt.FinishExecuteStmt to finish this statement.
+		se.SetValue(ExecStmtVarKey, s.(*executor.ExecStmt))
+	} else {
+		// If it is not a select statement or special query, we record its slow log here,
+		// then it could include the transaction commit time.
+		s.(*executor.ExecStmt).FinishExecuteStmt(origTxnCtx.StartTS, err == nil, false)
+	}
+	return nil, err
+}
+
+// ExecStmtVarKeyType is a dummy type to avoid naming collision in context.
+type ExecStmtVarKeyType int
+
+// String defines a Stringer function for debugging and pretty printing.
+func (k ExecStmtVarKeyType) String() string {
+	return "exec_stmt_var_key"
+}
+
+// ExecStmtVarKey is a variable key for ExecStmt.
+const ExecStmtVarKey ExecStmtVarKeyType = 0
+
+// execStmtResult is the return value of ExecuteStmt and it implements the sqlexec.RecordSet interface.
+// Why we need a struct to wrap a RecordSet and provide another RecordSet?
+// This is because there are so many session state related things that definitely not belongs to the original
+// RecordSet, so this struct exists and RecordSet.Close() is overrided handle that.
+type execStmtResult struct {
+	sqlexec.RecordSet
+	se  *session
+	sql sqlexec.Statement
+}
+>>>>>>> ae5dc3f69... executor: fix issue of load data statement doesn't record into slow query and statements_summary (#20713)
 
 	for _, warn := range warns {
 		s.sessionVars.StmtCtx.AppendWarning(util.SyntaxWarn(warn))
@@ -2106,7 +2206,13 @@ func (s *session) PrepareTSFuture(ctx context.Context) {
 
 // RefreshTxnCtx implements context.RefreshTxnCtx interface.
 func (s *session) RefreshTxnCtx(ctx context.Context) error {
-	if err := s.doCommit(ctx); err != nil {
+	var commitDetail *execdetails.CommitDetails
+	ctx = context.WithValue(ctx, execdetails.CommitDetailCtxKey, &commitDetail)
+	err := s.doCommit(ctx)
+	if commitDetail != nil {
+		s.GetSessionVars().StmtCtx.MergeExecDetails(nil, commitDetail)
+	}
+	if err != nil {
 		return err
 	}
 

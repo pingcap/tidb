@@ -493,8 +493,31 @@ func (sc *StatementContext) MergeExecDetails(details *execdetails.ExecDetails, c
 		sc.mu.execDetails.ProcessedKeys += details.ProcessedKeys
 		sc.mu.allExecDetails = append(sc.mu.allExecDetails, details)
 	}
+<<<<<<< HEAD
 	sc.mu.execDetails.CommitDetail = commitDetails
 	sc.mu.Unlock()
+=======
+	if commitDetails != nil {
+		if sc.mu.execDetails.CommitDetail == nil {
+			sc.mu.execDetails.CommitDetail = commitDetails
+		} else {
+			sc.mu.execDetails.CommitDetail.Merge(commitDetails)
+		}
+	}
+}
+
+// MergeCopDetails merges cop details into self.
+func (sc *StatementContext) MergeCopDetails(copDetails *execdetails.CopDetails) {
+	// Currently TiFlash cop task does not fill copDetails, so need to skip it if copDetails is nil
+	if copDetails == nil {
+		return
+	}
+	if sc.mu.execDetails.CopDetail == nil {
+		sc.mu.execDetails.CopDetail = copDetails
+	} else {
+		sc.mu.execDetails.CopDetail.Merge(copDetails)
+	}
+>>>>>>> ae5dc3f69... executor: fix issue of load data statement doesn't record into slow query and statements_summary (#20713)
 }
 
 // MergeLockKeysExecDetails merges lock keys execution details into self.

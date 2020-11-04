@@ -2457,6 +2457,7 @@ func (b *PlanBuilder) buildSelectPlanOfInsert(ctx context.Context, insert *ast.I
 }
 
 func (b *PlanBuilder) buildLoadData(ctx context.Context, ld *ast.LoadDataStmt) (Plan, error) {
+<<<<<<< HEAD
 	p := &LoadData{
 		IsLocal:     ld.IsLocal,
 		OnDuplicate: ld.OnDuplicate,
@@ -2467,6 +2468,20 @@ func (b *PlanBuilder) buildLoadData(ctx context.Context, ld *ast.LoadDataStmt) (
 		LinesInfo:   ld.LinesInfo,
 		IgnoreLines: ld.IgnoreLines,
 	}
+=======
+	p := LoadData{
+		IsLocal:            ld.IsLocal,
+		OnDuplicate:        ld.OnDuplicate,
+		Path:               ld.Path,
+		Table:              ld.Table,
+		Columns:            ld.Columns,
+		FieldsInfo:         ld.FieldsInfo,
+		LinesInfo:          ld.LinesInfo,
+		IgnoreLines:        ld.IgnoreLines,
+		ColumnAssignments:  ld.ColumnAssignments,
+		ColumnsAndUserVars: ld.ColumnsAndUserVars,
+	}.Init(b.ctx)
+>>>>>>> ae5dc3f69... executor: fix issue of load data statement doesn't record into slow query and statements_summary (#20713)
 	user := b.ctx.GetSessionVars().User
 	var insertErr error
 	if user != nil {
