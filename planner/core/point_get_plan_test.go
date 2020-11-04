@@ -217,13 +217,16 @@ func (s *testPointGetSuite) TestWhereIn2BatchPointGet(c *C) {
 		"4 4 5",
 	))
 	tk.MustQuery("explain select * from t where a = 1 and b = 1 and c = 1").Check(testkit.Rows(
-		"Point_Get_1 1.00 root table:t, index:idx_abc(a, b, c) ",
+		"Selection_6 1.00 root  eq(test.t.b, 1), eq(test.t.c, 1)",
+		"└─Point_Get_5 1.00 root table:t handle:1",
 	))
 	tk.MustQuery("explain select * from t where 1 = a and 1 = b and 1 = c").Check(testkit.Rows(
-		"Point_Get_1 1.00 root table:t, index:idx_abc(a, b, c) ",
+		"Selection_6 1.00 root  eq(test.t.b, 1), eq(test.t.c, 1)",
+		"└─Point_Get_5 1.00 root table:t handle:1",
 	))
 	tk.MustQuery("explain select * from t where 1 = a and b = 1 and 1 = c").Check(testkit.Rows(
-		"Point_Get_1 1.00 root table:t, index:idx_abc(a, b, c) ",
+		"Selection_6 1.00 root  eq(test.t.b, 1), eq(test.t.c, 1)",
+		"└─Point_Get_5 1.00 root table:t handle:1",
 	))
 	tk.MustQuery("explain select * from t where (a, b, c) in ((1, 1, 1), (2, 2, 2))").Check(testkit.Rows(
 		"Batch_Point_Get_1 2.00 root table:t, index:idx_abc(a, b, c) keep order:false, desc:false",

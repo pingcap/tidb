@@ -794,6 +794,8 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointGetP
 		p.HandleParam = handlePair.param
 		p.PartitionInfo = partitionInfo
 		return p
+	} else if handlePair.value.Kind() != types.KindNull {
+		return nil
 	}
 
 	for _, idxInfo := range tbl.Indices {
@@ -1081,6 +1083,19 @@ func findInPairs(colName string, pairs []nameValuePair) int {
 		}
 	}
 	return -1
+}
+
+func findInPairsAndJudgeSame(colName string, pairs []nameValuePair) (int, bool) {
+	var r = -1
+	var s = true
+	for i, pair := range pairs {
+		if pair.colName == colName {
+			r = i
+		} else {
+			s = false
+		}
+	}
+	return r, s
 }
 
 func tryUpdatePointPlan(ctx sessionctx.Context, updateStmt *ast.UpdateStmt) Plan {
