@@ -23,7 +23,6 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
@@ -363,21 +362,32 @@ func (s *testAsyncCommitSuite) TestRepeatableRead(c *C) {
 	test(true)
 }
 
-func (s *testAsyncCommitSuite) TestExternalConsistency(c *C) {
+// It's just a simple validation of external consistency.
+// Extra  tests are needed to test this feature with the control of the TiKV cluster.
+func (s *testAsyncCommitSuite) TestAsyncCommitExternalConsistency(c *C) {
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.TiKVClient.AsyncCommit.Enable = true
-		conf.TiKVClient.AsyncCommit.ExternalConsistency = true
+		conf.TiKVClient.ExternalConsistency = true
 	})
 
 	t1, err := s.store.Begin()
 	c.Assert(err, IsNil)
+	t2, err := s.store.Begin()
+	c.Assert(err, IsNil)
 	err = t1.Set([]byte("a"), []byte("a1"))
 	c.Assert(err, IsNil)
+	err = t2.Set([]byte("b"), []byte("b1"))
+	c.Assert(err, IsNil)
 	ctx := context.WithValue(context.Background(), sessionctx.ConnID, uint64(1))
+	// t2 commits earlier than t1
+	err = t2.Commit(ctx)
+	c.Assert(err, IsNil)
 	err = t1.Commit(ctx)
-	c.Assert(err, NotNil)
-	c.Assert(terror.ErrorEqual(err, terror.ErrResultUndetermined), IsTrue, Commentf("%s", errors.ErrorStack(err)))
+	c.Assert(err, IsNil)
+	commitTS1 := t1.(*tikvTxn).committer.commitTS
+	commitTS2 := t2.(*tikvTxn).committer.commitTS
+	c.Assert(commitTS2, Less, commitTS1)
 }
 
 type mockResolveClient struct {
