@@ -2965,7 +2965,7 @@ func (s *testSuite4) TestWriteListColumnsPartitionTable(c *C) {
 	tk.MustQuery("select * from t order by id").Check(testkit.Rows("1 a", "2 b"))
 }
 
-func (s *testSuite7) TestIssue20724(c *C) {
+func (s *testSerialSuite) TestIssue20724(c *C) {
 	collate.SetNewCollationEnabledForTest(true)
 	defer collate.SetNewCollationEnabledForTest(false)
 
