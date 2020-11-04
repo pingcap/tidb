@@ -1238,6 +1238,12 @@ func (it *copIterator) Close() error {
 	it.rpcCancel.CancelAll()
 	it.actionOnExceed.close()
 	it.wg.Wait()
+	failpoint.Inject("ticase-4169", func(val failpoint.Value) {
+		if val.(bool) {
+			it.memTracker.Consume(9999999)
+			it.memTracker.Consume(9999999)
+		}
+	})
 	return nil
 }
 
