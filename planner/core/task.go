@@ -835,6 +835,8 @@ func (p *PhysicalLimit) attach2Task(tasks ...task) task {
 			stats := deriveLimitStats(childProfile, float64(newCount))
 			pushedDownLimit := PhysicalLimit{Count: newCount}.Init(p.ctx, stats, p.blockOffset)
 			cop = attachPlan2Task(pushedDownLimit, cop).(*copTask)
+			// Don't use clone() so that Limit and its children share the same schema. Otherwise the virtual generated column may not be resolved right.
+			pushedDownLimit.SetSchema(pushedDownLimit.children[0].Schema())
 		}
 		t = finishCopTask(p.ctx, cop)
 		sunk = p.sinkIntoIndexLookUp(t)
