@@ -628,7 +628,7 @@
         "Plan": [
           "Projection_7 0.01 root  test_partition.t1.id, test_partition.t1.a, test_partition.t1.b, test_partition.t2.a, test_partition.t2.id, test_partition.t2.b",
           "└─HashJoin_9 0.01 root  inner join, equal:[eq(test_partition.t2.id, test_partition.t1.id)]",
-          "  ├─TableReader_12(Build) 0.01 root partition:all data:Selection_11",
+          "  ├─TableReader_12(Build) 0.01 root partition:p1 data:Selection_11",
           "  │ └─Selection_11 0.01 cop[tikv]  eq(test_partition.t2.a, 6), eq(test_partition.t2.b, 6), not(isnull(test_partition.t2.id))",
           "  │   └─TableFullScan_10 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
           "  └─TableReader_15(Probe) 19.98 root partition:p0 data:Selection_14",
@@ -644,7 +644,7 @@
           "├─TableReader_11(Build) 19.98 root partition:p0 data:Selection_10",
           "│ └─Selection_10 19.98 cop[tikv]  not(isnull(test_partition.t1.id)), or(eq(test_partition.t1.a, 1), eq(test_partition.t1.a, 3))",
           "│   └─TableFullScan_9 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-          "└─TableReader_14(Probe) 29.97 root partition:all data:Selection_13",
+          "└─TableReader_14(Probe) 29.97 root partition:p1 data:Selection_13",
           "  └─Selection_13 29.97 cop[tikv]  in(test_partition.t3.a, 6, 7, 8), not(isnull(test_partition.t3.id))",
           "    └─TableFullScan_12 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo"
         ]
@@ -654,7 +654,7 @@
         "Result": null,
         "Plan": [
           "HashJoin_7 0.04 root  inner join, equal:[eq(test_partition.t3.id, test_partition.t2.id)]",
-          "├─TableReader_14(Build) 0.03 root partition:all data:Selection_13",
+          "├─TableReader_14(Build) 0.03 root partition:p1 data:Selection_13",
           "│ └─Selection_13 0.03 cop[tikv]  eq(test_partition.t2.b, 6), in(test_partition.t2.a, 6, 7, 8), not(isnull(test_partition.t2.id))",
           "│   └─TableFullScan_12 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
           "└─TableReader_11(Probe) 19.98 root partition:p0 data:Selection_10",
@@ -668,7 +668,7 @@
         "Plan": [
           "Projection_7 80.00 root  test_partition.t1.id, test_partition.t1.a, test_partition.t1.b, test_partition.t2.a, test_partition.t2.id, test_partition.t2.b",
           "└─HashJoin_9 80.00 root  CARTESIAN inner join",
-          "  ├─TableReader_12(Build) 8.00 root partition:all data:Selection_11",
+          "  ├─TableReader_12(Build) 8.00 root partition:p1 data:Selection_11",
           "  │ └─Selection_11 8.00 cop[tikv]  1, eq(minus(5, test_partition.t2.a), 1), eq(test_partition.t2.b, 6), in(test_partition.t2.a, 6, 7, 8)",
           "  │   └─TableFullScan_10 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
           "  └─TableReader_15(Probe) 10.00 root partition:p0 data:Selection_14",
@@ -689,7 +689,7 @@
           "    ├─TableReader_21 10.00 root partition:p1 data:Selection_20",
           "    │ └─Selection_20 10.00 cop[tikv]  eq(test_partition.t1.a, 6)",
           "    │   └─TableFullScan_19 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-          "    └─TableReader_25 10.00 root partition:all data:Selection_24",
+          "    └─TableReader_25 10.00 root partition:p0 data:Selection_24",
           "      └─Selection_24 10.00 cop[tikv]  eq(test_partition.t1.a, 1)",
           "        └─TableFullScan_23 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ]
@@ -794,7 +794,7 @@
         "Plan": [
           "Projection_7 0.00 root  test_partition.t1.id, test_partition.t1.a, test_partition.t1.b, test_partition.t2.id, test_partition.t2.a, test_partition.t2.b",
           "└─HashJoin_9 0.00 root  CARTESIAN inner join",
-          "  ├─TableReader_12(Build) 0.00 root partition:all data:Selection_11",
+          "  ├─TableReader_12(Build) 0.00 root partition:p1 data:Selection_11",
           "  │ └─Selection_11 0.00 cop[tikv]  eq(test_partition.t2.b, 7), eq(test_partition.t2.id, 7), in(test_partition.t2.a, 6, 7, 8)",
           "  │   └─TableFullScan_10 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
           "  └─TableReader_15(Probe) 0.01 root partition:all data:Selection_14",
@@ -810,7 +810,7 @@
         ],
         "Plan": [
           "HashJoin_7 80.16 root  CARTESIAN inner join",
-          "├─TableReader_14(Build) 8.00 root partition:all data:Selection_13",
+          "├─TableReader_14(Build) 8.00 root partition:p1 data:Selection_13",
           "│ └─Selection_13 8.00 cop[tikv]  1, eq(test_partition.t2.b, 7), eq(test_partition.t2.id, 7), in(test_partition.t2.a, 6, 7, 8)",
           "│   └─TableFullScan_12 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
           "└─TableReader_11(Probe) 10.02 root partition:all data:Selection_10",

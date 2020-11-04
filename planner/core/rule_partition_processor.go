@@ -231,10 +231,23 @@ func (s *partitionProcessor) findUsedListPartitions(ctx sessionctx.Context, tbl 
 	if err != nil {
 		return nil, err
 	}
+
+	colsIDToUniqueID := make(map[int64]int64)
+	for _, cond := range conds {
+		condCols := expression.ExtractColumns(cond)
+		for _, c := range condCols {
+			colsIDToUniqueID[c.ID] = c.UniqueID
+		}
+	}
+
 	pruneList := partExpr.ForListPruning
 	cols := make([]*expression.Column, 0, len(pruneList.ExprCols))
 	colLen := make([]int, 0, len(pruneList.ExprCols))
 	for _, c := range pruneList.ExprCols {
+		c = c.Clone().(*expression.Column)
+		if uniqueID, ok := colsIDToUniqueID[c.ID]; ok {
+			c.UniqueID = uniqueID
+		}
 		cols = append(cols, c.Clone().(*expression.Column))
 		colLen = append(colLen, types.UnspecifiedLength)
 	}
