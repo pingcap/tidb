@@ -675,6 +675,24 @@
           "    └─Selection_14 10.00 cop[tikv]  1, eq(test_partition.t1.a, 5)",
           "      └─TableFullScan_13 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ]
+      },
+      {
+        "SQL": "select * from t1 where a = 6 union select * from t1 where a = 1 order by a",
+        "Result": [
+          "1 1 1",
+          "6 6 6"
+        ],
+        "Plan": [
+          "Sort_12 16.00 root  Column#10",
+          "└─HashAgg_16 16.00 root  group by:Column#10, Column#11, Column#9, funcs:firstrow(Column#9)->Column#9, funcs:firstrow(Column#10)->Column#10, funcs:firstrow(Column#11)->Column#11",
+          "  └─Union_17 20.00 root  ",
+          "    ├─TableReader_21 10.00 root partition:p1 data:Selection_20",
+          "    │ └─Selection_20 10.00 cop[tikv]  eq(test_partition.t1.a, 6)",
+          "    │   └─TableFullScan_19 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "    └─TableReader_25 10.00 root partition:all data:Selection_24",
+          "      └─Selection_24 10.00 cop[tikv]  eq(test_partition.t1.a, 1)",
+          "        └─TableFullScan_23 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ]
       }
     ]
   },

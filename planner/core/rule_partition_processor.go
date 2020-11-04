@@ -245,18 +245,19 @@ func (s *partitionProcessor) findUsedListPartitions(ctx sessionctx.Context, tbl 
 	}
 
 	ranges := datchedResult.Ranges
-	used := make([]int, 0, len(ranges))
+	used := make(map[int]struct{}, len(ranges))
 	for _, r := range ranges {
 		if r.IsPointNullable(ctx.GetSessionVars().StmtCtx) {
 			if !r.HighVal[0].IsNull() {
 				if len(r.HighVal) != len(cols) {
-					used = []int{-1}
+					used[FullRange] = struct{}{}
 					break
 				}
 			}
 			found := int64(-1)
+			row := chunk.MutRowFromDatums(r.HighVal).ToRow()
 			for j, expr := range pruneList.Exprs {
-				ret, _, err := expr.EvalInt(ctx, chunk.MutRowFromDatums(r.HighVal).ToRow())
+				ret, _, err := expr.EvalInt(ctx, row)
 				if err != nil {
 					return nil, err
 				}
@@ -271,23 +272,23 @@ func (s *partitionProcessor) findUsedListPartitions(ctx sessionctx.Context, tbl 
 			if len(partitionNames) > 0 && !s.findByName(partitionNames, pi.Definitions[found].Name.L) {
 				continue
 			}
-			used = append(used, int(found))
+			used[int(found)] = struct{}{}
 		} else {
-			used = []int{FullRange}
+			used[FullRange] = struct{}{}
 			break
 		}
 	}
-	if len(partitionNames) > 0 && len(used) == 1 && used[0] == FullRange {
-		or := partitionRangeOR{partitionRange{0, len(pi.Definitions)}}
-		return s.convertToIntSlice(or, pi, partitionNames), nil
-	}
-	sort.Ints(used)
-	ret := used[:0]
-	for i := 0; i < len(used); i++ {
-		if i == 0 || used[i] != used[i-1] {
-			ret = append(ret, used[i])
+	if len(partitionNames) > 0 && len(used) == 1 {
+		if _, ok := used[FullRange]; ok {
+			or := partitionRangeOR{partitionRange{0, len(pi.Definitions)}}
+			return s.convertToIntSlice(or, pi, partitionNames), nil
 		}
 	}
+	ret := make([]int, 0, len(used))
+	for k := range used {
+		ret = append(ret, k)
+	}
+	sort.Ints(ret)
 	return ret, nil
 }
 
@@ -313,10 +314,6 @@ func (s *partitionProcessor) prune(ds *DataSource) (LogicalPlan, error) {
 		return s.processHashPartition(ds, pi)
 	case model.PartitionTypeList:
 		return s.processListPartition(ds, pi)
-	}
-	if pi.Type == model.PartitionTypeHash {
-	}
-	if pi.Type == model.PartitionTypeRange {
 	}
 
 	// We haven't implement partition by list and so on.
