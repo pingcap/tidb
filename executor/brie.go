@@ -14,6 +14,7 @@
 package executor
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"net/url"
@@ -23,12 +24,11 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/pelletier/go-toml"
+	"github.com/BurntSushi/toml"
 	"github.com/pingcap/br/pkg/glue"
 	"github.com/pingcap/br/pkg/storage"
 	"github.com/pingcap/br/pkg/task"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/log"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -36,9 +36,6 @@ import (
 	"github.com/pingcap/tidb-lightning/lightning"
 	importcfg "github.com/pingcap/tidb-lightning/lightning/config"
 	filter "github.com/pingcap/tidb-tools/pkg/table-filter"
-	pd "github.com/tikv/pd/client"
-	"go.uber.org/zap"
-
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
@@ -50,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
+	pd "github.com/tikv/pd/client"
 )
 
 const (
@@ -215,7 +213,7 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 		importGlobalCfg = importcfg.NewGlobalConfig()
 		importCfg = importcfg.NewConfig()
 
-		// TODO: remove this if implement glue
+		// TODO: remove this if implement glue interface, which means lightning could use host TiDB's connection
 		importGlobalCfg.TiDB.Port = 4000
 
 		importGlobalCfg.App.StatusAddr = ":8289"
@@ -223,7 +221,7 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 		importGlobalCfg.Security.CAPath = tidbCfg.Security.ClusterSSLCA
 		importGlobalCfg.Security.CertPath = tidbCfg.Security.ClusterSSLCert
 		importGlobalCfg.Security.KeyPath = tidbCfg.Security.ClusterSSLKey
-		importGlobalCfg.TikvImporter.Backend = importcfg.BackendLocal
+		importGlobalCfg.TikvImporter.Backend = importcfg.BackendLocal // TODO(lance6716): will test tidb backend later
 		importGlobalCfg.TikvImporter.SortedKVDir = filepath.Join(tidbCfg.TempStoragePath, defaultImportID)
 
 		importCfg.Checkpoint.Schema = defaultImportID
@@ -387,22 +385,16 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 				}
 			}
 		}
-		content, err := toml.Marshal(importCfg)
+
+		var buf bytes.Buffer
+		err := toml.NewEncoder(&buf).Encode(importCfg)
+
 		if err != nil {
 			b.err = errors.Errorf("error build IMPORT config: %v", err)
 			return nil
 		}
-		// hack for lighting's config
-		tmp := string(content)
-		tmp = strings.ReplaceAll(tmp, "analyze = 2", "analyze = \"required\"")
-		tmp = strings.ReplaceAll(tmp, "checksum = 2", "checksum = \"required\"")
-		tmp = strings.ReplaceAll(tmp, "[cron.log-progress]\n    Duration = \"5m0s\"", "log-progress = \"5m\"")
-		tmp = strings.ReplaceAll(tmp, "[cron.switch-mode]\n    Duration = \"5m0s\"", "switch-mode = \"5m\"")
 
-		content = []byte(tmp)
-		log.L().Warn("lance test", zap.String("content", string(content)))
-
-		importGlobalCfg.ConfigFileContent = content
+		importGlobalCfg.ConfigFileContent = buf.Bytes()
 		e.importCfg = importGlobalCfg
 	}
 

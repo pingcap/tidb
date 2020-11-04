@@ -507,6 +507,8 @@ github.com/pingcap/sysutil v0.0.0-20201021075216-f93ced2829e2 h1:b2G/eqDeywtdJF3
 github.com/pingcap/sysutil v0.0.0-20201021075216-f93ced2829e2/go.mod h1:EB/852NMQ+aRKioCpToQ94Wl7fktV+FNnxf3CX/TTXI=
 github.com/pingcap/tidb-lightning v4.0.9-0.20201102232031-4d973516e633+incompatible h1:rdfQ2erdQ/Y1aKwhZPhPg4893lXUGfR4UVSmk5qMLNY=
 github.com/pingcap/tidb-lightning v4.0.9-0.20201102232031-4d973516e633+incompatible/go.mod h1:UrN2l06neiEfkass87Tjvv5JFIMsOMb2DT7P7s+fwMc=
+github.com/pingcap/tidb-lightning v4.0.9-0.20201104053247-8013216a3446+incompatible h1:icFGoMZZswVk5OhgEj0mMO4c6+GHq6gBB+fm0oqrN4k=
+github.com/pingcap/tidb-lightning v4.0.9-0.20201104053247-8013216a3446+incompatible/go.mod h1:UrN2l06neiEfkass87Tjvv5JFIMsOMb2DT7P7s+fwMc=
 github.com/pingcap/tidb-tools v4.0.5-0.20200820092506-34ea90c93237+incompatible h1:qPppnsXVh3KswqRZdSAShGLLPd7dB+5w4lXDnpYn0SQ=
 github.com/pingcap/tidb-tools v4.0.5-0.20200820092506-34ea90c93237+incompatible/go.mod h1:XGdcy9+yqlDSEMTpOXnwf3hiTeqrV6MN/u1se9N8yIM=
 github.com/pingcap/tipb v0.0.0-20201026044621-45e60c77588f h1:J+0TAI+7Hvebz4bM4GnRCRT4MpjYnUxbyi9ky5ZQUsU=
