@@ -1536,7 +1536,7 @@ func prepare4ShuffleMergeJoin(tc *mergeJoinTestCase, leftExec, rightExec *mockDa
 			baseExecutor: newBaseExecutor(tc.ctx, rightExec.Schema(), 0),
 		}
 		w := &shuffleMergeJoinWorker{
-			receivers: []shuffleReceiver{leftReceiver, rightReceiver},
+			receivers: []*shuffleReceiver{&leftReceiver, &rightReceiver},
 		}
 		// only benchmark inner join
 		mergeJoinExec := &MergeJoinExec{
