@@ -90,7 +90,7 @@ func (a *arena) newNode(key []byte, v []byte, height int) (*node, arenaAddr) {
 	addr, data := a.alloc(nodeSize)
 	node := (*node)(unsafe.Pointer(&data[0]))
 	node.keyLen = uint16(len(key))
-	node.height = uint16(height)
+	node.height = uint8(height)
 	node.valLen = uint32(len(v))
 	copy(data[node.nodeLen():], key)
 	copy(data[node.nodeLen()+int(node.keyLen):], v)
