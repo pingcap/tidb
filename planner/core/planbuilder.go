@@ -1849,16 +1849,29 @@ func buildCancelDDLJobsFields() (*expression.Schema, types.NameSlice) {
 	return schema.col2Schema(), schema.names
 }
 
-func buildBRIESchema() (*expression.Schema, types.NameSlice) {
+func buildBRIESchema(kind ast.BRIEKind) (*expression.Schema, types.NameSlice) {
 	longlongSize, _ := mysql.GetDefaultFieldLengthAndDecimal(mysql.TypeLonglong)
 	datetimeSize, _ := mysql.GetDefaultFieldLengthAndDecimal(mysql.TypeDatetime)
 
-	schema := newColumnsWithNames(5)
-	schema.Append(buildColumnWithName("", "Destination", mysql.TypeVarchar, 255))
-	schema.Append(buildColumnWithName("", "Size", mysql.TypeLonglong, longlongSize))
-	schema.Append(buildColumnWithName("", "BackupTS", mysql.TypeLonglong, longlongSize))
-	schema.Append(buildColumnWithName("", "Queue Time", mysql.TypeDatetime, datetimeSize))
-	schema.Append(buildColumnWithName("", "Execution Time", mysql.TypeDatetime, datetimeSize))
+	var schema *columnsWithNames
+	switch kind {
+	case ast.BRIEKindBackup, ast.BRIEKindRestore:
+		schema = newColumnsWithNames(5)
+		schema.Append(buildColumnWithName("", "Destination", mysql.TypeVarchar, 255))
+		schema.Append(buildColumnWithName("", "Size", mysql.TypeLonglong, longlongSize))
+		schema.Append(buildColumnWithName("", "BackupTS", mysql.TypeLonglong, longlongSize))
+		schema.Append(buildColumnWithName("", "Queue Time", mysql.TypeDatetime, datetimeSize))
+		schema.Append(buildColumnWithName("", "Execution Time", mysql.TypeDatetime, datetimeSize))
+	case ast.BRIEKindImport:
+		schema = newColumnsWithNames(5)
+		schema.Append(buildColumnWithName("", "Data Source", mysql.TypeVarchar, 255))
+		schema.Append(buildColumnWithName("", "Size", mysql.TypeLonglong, longlongSize))
+		schema.Append(buildColumnWithName("", "CommitTS", mysql.TypeLonglong, longlongSize))
+		schema.Append(buildColumnWithName("", "Queue Time", mysql.TypeDatetime, datetimeSize))
+		schema.Append(buildColumnWithName("", "Execution Time", mysql.TypeDatetime, datetimeSize))
+		// TODO(lance6716): add a finish time
+	}
+
 	return schema.col2Schema(), schema.names
 }
 
@@ -2059,7 +2072,7 @@ func (b *PlanBuilder) buildSimple(node ast.StmtNode) (Plan, error) {
 		}
 		b.visitInfo = collectVisitInfoFromGrantStmt(b.ctx, b.visitInfo, raw)
 	case *ast.BRIEStmt:
-		p.setSchemaAndNames(buildBRIESchema())
+		p.setSchemaAndNames(buildBRIESchema(raw.Kind))
 		err := ErrSpecificAccessDenied.GenWithStackByArgs("SUPER")
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", err)
 	case *ast.GrantRoleStmt, *ast.RevokeRoleStmt:

@@ -426,6 +426,7 @@ func (e *BRIEExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		return nil
 	}
 
+	// TODO(lance6717): replace this memory based queue to persistent queue
 	bq := globalBRIEQueue
 
 	e.info.connID = e.ctx.GetSessionVars().ConnectionID
@@ -492,6 +493,7 @@ func handleBRIEError(err error, terror *terror.Error) error {
 }
 
 func (e *ShowExec) fetchShowBRIE(kind ast.BRIEKind) error {
+	// TODO: after change to persistent queue, we can't use Range
 	globalBRIEQueue.tasks.Range(func(key, value interface{}) bool {
 		item := value.(*brieQueueItem)
 		if item.info.kind == kind {
@@ -574,6 +576,7 @@ func (gs *tidbGlueSession) OwnsStorage() bool {
 
 // StartProgress implements glue.Glue
 func (gs *tidbGlueSession) StartProgress(ctx context.Context, cmdName string, total int64, redirectLog bool) glue.Progress {
+	// TODO(lance6716): maybe periodically flush to tikv
 	gs.progress.lock.Lock()
 	gs.progress.cmd = cmdName
 	gs.progress.total = total
