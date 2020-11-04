@@ -1455,7 +1455,7 @@ func (e *rateLimitAction) conditionUnlock() {
 }
 
 func (e *rateLimitAction) close() {
-	if !e.isEnded() {
+	if e.isEnded() {
 		return
 	}
 	e.end()
