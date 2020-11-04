@@ -559,10 +559,11 @@ func (s *testColumnTypeChangeSuite) TestColumnTypeChangeFromStringToOthers(c *C)
 	tk.MustExec("alter table t modify bny date")
 	tk.MustExec("alter table t modify vbny date")
 	tk.MustExec("alter table t modify bb date")
-	tk.MustExec("alter table t modify txt date")
+	// Alter text '08-26 19:35:41' to date will error. (same as mysql does)
+	tk.MustGetErrCode("alter table t modify txt date", mysql.ErrTruncatedWrongValue)
 	tk.MustGetErrCode("alter table t modify e date", mysql.ErrUnsupportedDDLOperation)
 	tk.MustGetErrCode("alter table t modify s date", mysql.ErrUnsupportedDDLOperation)
-	tk.MustQuery("select * from t").Check(testkit.Rows("2020-08-26 2020-08-26 2020-08-26 2020-08-26 2020-08-26 0000-00-00 2020-07-15 18:32:17.888 2020-07-15 18:32:17.888"))
+	tk.MustQuery("select * from t").Check(testkit.Rows("2020-08-26 2020-08-26 2020-08-26 2020-08-26 2020-08-26 08-26 19:35:41 2020-07-15 18:32:17.888 2020-07-15 18:32:17.888"))
 	// time
 	reset(tk)
 	tk.MustExec("insert into t values ('19:35:41', '19:35:41', '19:35:41', '19:35:41', '19:35:41.45678', '19:35:41.45678', '2020-07-15 18:32:17.888', '2020-07-15 18:32:17.888')")
@@ -637,41 +638,26 @@ func (s *testColumnTypeChangeSuite) TestColumnTypeChangeFromStringToOthers(c *C)
 	tk.MustExec("alter table t modify s json")
 	tk.MustQuery("select * from t").Check(testkit.Rows("{\"k1\": \"value\"} {\"k1\": \"value\"} {\"k1\": \"value\"} {\"k1\": \"value\"} {\"k1\": \"value\"} {\"k1\": \"value\"} \"{\\\"k1\\\": \\\"value\\\"}\" \"{\\\"k1\\\": \\\"value\\\"}\""))
 
-	// Special cases about different behavior between TiDB and MySQL.
-	// MySQL get error but TiDB get warning.
 	reset(tk)
 	tk.MustExec("insert into t values ('123x', 'x123', 'abc', 'datetime', 'timestamp', 'date', '123', '123')")
-	tk.MustExec("alter table t modify c int")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1292 Truncated incorrect FLOAT value: '123x'"))
-	tk.MustQuery("select c from t").Check(testkit.Rows("123"))
+	tk.MustGetErrCode("alter table t modify c int", mysql.ErrTruncatedWrongValue)
 
-	tk.MustExec("alter table t modify vc smallint")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1292 Truncated incorrect FLOAT value: 'x123'"))
-	tk.MustQuery("select vc from t").Check(testkit.Rows("0"))
+	tk.MustGetErrCode("alter table t modify vc smallint", mysql.ErrTruncatedWrongValue)
 
-	tk.MustExec("alter table t modify bny bigint")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1292 Truncated incorrect FLOAT value: 'abc\x00\x00\x00\x00\x00'"))
-	tk.MustQuery("select bny from t").Check(testkit.Rows("0"))
+	tk.MustGetErrCode("alter table t modify bny bigint", mysql.ErrTruncatedWrongValue)
 
-	tk.MustExec("alter table t modify vbny datetime")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1292 Incorrect datetime value: 'datetime'"))
-	tk.MustQuery("select vbny from t").Check(testkit.Rows("0000-00-00 00:00:00"))
+	tk.MustGetErrCode("alter table t modify vbny datetime", mysql.ErrTruncatedWrongValue)
 
-	tk.MustExec("alter table t modify bb timestamp")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1292 Incorrect datetime value: 'timestamp'"))
-	tk.MustQuery("select bb from t").Check(testkit.Rows("0000-00-00 00:00:00"))
+	tk.MustGetErrCode("alter table t modify bb timestamp", mysql.ErrTruncatedWrongValue)
 
-	tk.MustExec("alter table t modify txt date")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1292 Incorrect datetime value: 'date'"))
-	tk.MustQuery("select txt from t").Check(testkit.Rows("0000-00-00"))
+	tk.MustGetErrCode("alter table t modify txt date", mysql.ErrTruncatedWrongValue)
 
 	reset(tk)
 	tk.MustExec("alter table t modify vc varchar(20)")
 	tk.MustExec("insert into t(c, vc) values ('1x', '20200915110836')")
-	tk.MustExec("alter table t modify c year")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1292 Truncated incorrect FLOAT value: '1x'"))
-	tk.MustQuery("select c from t").Check(testkit.Rows("0"))
+	tk.MustGetErrCode("alter table t modify c year", mysql.ErrTruncatedWrongValue)
 
+	// Special cases about different behavior between TiDB and MySQL.
 	// MySQL will get warning but TiDB not.
 	// MySQL will get "Warning 1292 Incorrect time value: '20200915110836' for column 'vc'"
 	tk.MustExec("alter table t modify vc time")
