@@ -1155,7 +1155,7 @@ func (e *Explain) getOperatorInfo(p Plan, id string) (estRows string, accessObje
 		estRows = strconv.FormatFloat(si.RowCount, 'f', 2, 64)
 	}
 	if plan, ok := p.(dataAccesser); ok {
-		accessObject = plan.AccessObject()
+		accessObject = plan.AccessObject(false)
 		operatorInfo = plan.OperatorInfo(false)
 	} else {
 		if pa, ok := p.(partitionAccesser); ok && e.ctx != nil {
