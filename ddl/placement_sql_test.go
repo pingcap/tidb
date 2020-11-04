@@ -41,42 +41,42 @@ PARTITION BY RANGE (c) (
 	_, err := tk.Exec(`alter table t1 alter partition p0
 add placement policy
 	constraints='["+zone=sh"]'
-	role=leader
+	role=follower
 	replicas=3`)
 	c.Assert(err, IsNil)
 
 	_, err = tk.Exec(`alter table t1 alter partition p0
 add placement policy
 	constraints='["+   zone   =   sh  ",     "- zone = bj    "]'
-	role=leader
+	role=follower
 	replicas=3`)
 	c.Assert(err, IsNil)
 
 	_, err = tk.Exec(`alter table t1 alter partition p0
 add placement policy
 	constraints='{"+   zone   =   sh  ": 1}'
-	role=leader
+	role=follower
 	replicas=3`)
 	c.Assert(err, IsNil)
 
 	_, err = tk.Exec(`alter table t1 alter partition p0
 add placement policy
 	constraints='{"+   zone   =   sh, -zone =   bj ": 1}'
-	role=leader
+	role=follower
 	replicas=3`)
 	c.Assert(err, IsNil)
 
 	_, err = tk.Exec(`alter table t1 alter partition p0
 add placement policy
 	constraints='{"+   zone   =   sh  ": 1, "- zone = bj": 2}'
-	role=leader
+	role=follower
 	replicas=3`)
 	c.Assert(err, IsNil)
 
 	_, err = tk.Exec(`alter table t1 alter partition p0
 alter placement policy
 	constraints='{"+   zone   =   sh, -zone =   bj ": 1}'
-	role=leader
+	role=follower
 	replicas=3`)
 	c.Assert(err, IsNil)
 
@@ -89,52 +89,52 @@ drop placement policy
 	_, err = tk.Exec(`alter table t1 alter partition p0
 add placement policy
 	constraints='["+   zone   =   sh  "]'
-	role=leader
+	role=follower
 	replicas=3,
 add placement policy
 	constraints='{"+   zone   =   sh, -zone =   bj ": 1}'
-	role=leader
+	role=follower
 	replicas=3`)
 	c.Assert(err, IsNil)
 
 	_, err = tk.Exec(`alter table t1 alter partition p0
 add placement policy
 	constraints='["+   zone   =   sh  "]'
-	role=leader
+	role=follower
 	replicas=3,
 add placement policy
 	constraints='{"+zone=sh,+zone=bj":1,"+zone=sh,+zone=bj":1}'
-	role=leader
+	role=follower
 	replicas=3`)
 	c.Assert(err, IsNil)
 
 	_, err = tk.Exec(`alter table t1 alter partition p0
 add placement policy
 	constraints='{"+   zone   =   sh  ": 1, "- zone = bj,+zone=sh": 2}'
-	role=leader
+	role=follower
 	replicas=3,
 alter placement policy
 	constraints='{"+   zone   =   sh, -zone =   bj ": 1}'
-	role=leader
+	role=follower
 	replicas=3`)
 	c.Assert(err, IsNil)
 
 	_, err = tk.Exec(`alter table t1 alter partition p0
 add placement policy
 	constraints='["+zone=sh", "-zone=bj"]'
-	role=leader
+	role=follower
 	replicas=3,
 add placement policy
 	constraints='{"+zone=sh": 1}'
-	role=leader
+	role=follower
 	replicas=3,
 add placement policy
 	constraints='{"+zone=sh,+zone=bj":1,"+zone=sh,+zone=bj":1}'
-	role=leader
+	role=follower
 	replicas=3,
 alter placement policy
 	constraints='{"+zone=sh": 1, "-zon =bj,+zone=sh": 1}'
-	role=leader
+	role=follower
 	replicas=3`)
 	c.Assert(err, IsNil)
 
@@ -158,28 +158,28 @@ drop placement policy
 	_, err = tk.Exec(`alter table t1 alter partition p0
 add placement policy
 	constraints=',,,'
-	role=leader
+	role=follower
 	replicas=3`)
 	c.Assert(err, ErrorMatches, ".*array or object.*")
 
 	_, err = tk.Exec(`alter table t1 alter partition p0
 add placement policy
 	constraints='[,,,'
-	role=leader
+	role=follower
 	replicas=3`)
 	c.Assert(err, ErrorMatches, ".*invalid character.*")
 
 	_, err = tk.Exec(`alter table t1 alter partition p0
 add placement policy
 	constraints='{,,,'
-	role=leader
+	role=follower
 	replicas=3`)
 	c.Assert(err, ErrorMatches, ".*invalid character.*")
 
 	_, err = tk.Exec(`alter table t1 alter partition p0
 add placement policy
 	constraints='{"+   zone   =   sh  ": 1, "- zone = bj": 2}'
-	role=leader
+	role=follower
 	replicas=2`)
 	c.Assert(err, ErrorMatches, ".*should be larger or equal to the number of total replicas.*")
 
@@ -187,14 +187,14 @@ add placement policy
 	_, err = tk.Exec(`alter table t1 alter partition p0
 add placement policy
 	constraints='[",,,"]'
-	role=leader
+	role=follower
 	replicas=3`)
 	c.Assert(err, ErrorMatches, ".*label constraint should be in format.*")
 
 	_, err = tk.Exec(`alter table t1 alter partition p0
 add placement policy
 	constraints='["+    "]'
-	role=leader
+	role=follower
 	replicas=3`)
 	c.Assert(err, ErrorMatches, ".*label constraint should be in format.*")
 
@@ -202,7 +202,7 @@ add placement policy
 	_, err = tk.Exec(`alter table t1 alter partition p0
 add placement policy
 	constraints='["0000"]'
-	role=leader
+	role=follower
 	replicas=3`)
 	c.Assert(err, ErrorMatches, ".*label constraint should be in format.*")
 
@@ -210,7 +210,7 @@ add placement policy
 	_, err = tk.Exec(`alter table t1 alter partition p0
 add placement policy
 	constraints='["+000"]'
-	role=leader
+	role=follower
 	replicas=3`)
 	c.Assert(err, ErrorMatches, ".*label constraint should be in format.*")
 
@@ -218,14 +218,14 @@ add placement policy
 	_, err = tk.Exec(`alter table t1 alter partition p0
 add placement policy
 	constraints='["+ =zone1"]'
-	role=leader
+	role=follower
 	replicas=3`)
 	c.Assert(err, ErrorMatches, ".*label constraint should be in format.*")
 
 	_, err = tk.Exec(`alter table t1 alter partition p0
 add placement policy
 	constraints='["+  =   z"]'
-	role=leader
+	role=follower
 	replicas=3`)
 	c.Assert(err, ErrorMatches, ".*label constraint should be in format.*")
 
@@ -233,28 +233,28 @@ add placement policy
 	_, err = tk.Exec(`alter table t1 alter partition p0
 add placement policy
 	constraints='["+zone="]'
-	role=leader
+	role=follower
 	replicas=3`)
 	c.Assert(err, ErrorMatches, ".*label constraint should be in format.*")
 
 	_, err = tk.Exec(`alter table t1 alter partition p0
 add placement policy
 	constraints='["+z  =   "]'
-	role=leader
+	role=follower
 	replicas=3`)
 	c.Assert(err, ErrorMatches, ".*label constraint should be in format.*")
 
 	_, err = tk.Exec(`alter table t1 alter partition p
 add placement policy
 	constraints='["+zone=sh"]'
-	role=leader
+	role=follower
 	replicas=3`)
 	c.Assert(err, ErrorMatches, ".*Unknown partition.*")
 
 	_, err = tk.Exec(`alter table t1 alter partition p0
 add placement policy
 	constraints='{"+   zone   =   sh, -zone =   bj ": -1}'
-	role=leader
+	role=follower
 	replicas=3`)
 	c.Assert(err, ErrorMatches, ".*count should be positive.*")
 
@@ -271,14 +271,17 @@ add placement policy
 	_, err = tk.Exec(`alter table t1 alter partition p
 add placement policy
 	constraints='["+zone=sh"]'
-	role=leader
+	role=follower
 	replicas=3`)
 	c.Assert(ddl.ErrPartitionMgmtOnNonpartitioned.Equal(err), IsTrue)
 
 	// issue 20751
 	tk.MustExec("drop table if exists t_part_pk_id")
 	tk.MustExec("create TABLE t_part_pk_id (c1 int,c2 int) partition by range(c1 div c2 ) (partition p0 values less than (2))")
-	tk.MustExec(`alter table t_part_pk_id alter partition p0 add placement policy constraints='["+host=store1"]' role=leader;`)
+	_, err = tk.Exec(`alter table t_part_pk_id alter partition p0 add placement policy constraints='["+host=store1"]' role=leader;`)
+	c.Assert(err, IsNil)
+	_, err = tk.Exec(`alter table t_part_pk_id alter partition p0 add placement policy constraints='["+host=store1"]' role=leader replicas=3;`)
+	c.Assert(err, ErrorMatches, ".*replicas can only be 1 when the role is leader")
 	tk.MustExec("drop table t_part_pk_id")
 }
 
