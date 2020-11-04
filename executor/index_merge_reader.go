@@ -811,9 +811,9 @@ func (e *IndexMergeRuntimeStat) String() string {
 	tableTaskNum := atomic.LoadInt64(&e.TableTaskNum)
 	concurrency := e.Concurrency
 	if indexScan != 0 {
-		buf.WriteString(fmt.Sprintf("index_task:{index_scan:%s", time.Duration(indexScan)))
+		buf.WriteString(fmt.Sprintf("index_task:{Scan:%s", time.Duration(indexScan)))
 		if indexMergeProcess != 0 {
-			buf.WriteString(fmt.Sprintf(", index_process:%s", time.Duration(indexMergeProcess)))
+			buf.WriteString(fmt.Sprintf(", Process:%s", time.Duration(indexMergeProcess)))
 		}
 		buf.WriteByte('}')
 	}
