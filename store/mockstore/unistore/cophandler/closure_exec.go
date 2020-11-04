@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"time"
 
 	"github.com/juju/errors"
 	"github.com/ngaut/unistore/tikv/dbreader"
@@ -84,6 +85,7 @@ func buildClosureExecutor(dagCtx *dagContext, dagReq *tipb.DAGRequest) (*closure
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+		ce.selectionCtx.execDetail = new(execDetail)
 		ce.processor = &selectionProcessor{closureExecutor: ce}
 	}
 	lastExecutor := executors[len(executors)-1]
@@ -158,6 +160,7 @@ func newClosureExecutor(dagCtx *dagContext, dagReq *tipb.DAGRequest) (*closureEx
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+		e.scanCtx.execDetail = new(execDetail)
 	}
 	return e, nil
 }
@@ -166,6 +169,7 @@ func (e *closureExecutor) initIdxScanCtx(idxScan *tipb.IndexScan) {
 	e.idxScanCtx = new(idxScanCtx)
 	e.idxScanCtx.columnLen = len(e.columnInfos)
 	e.idxScanCtx.pkStatus = pkColNotExists
+	e.idxScanCtx.execDetail = new(execDetail)
 
 	e.idxScanCtx.primaryColumnIds = idxScan.PrimaryColumnIds
 	lastColumn := e.columnInfos[len(e.columnInfos)-1]
@@ -248,6 +252,7 @@ func tryBuildCountProcessor(e *closureExecutor, executors []*tipb.Executor) (boo
 	default:
 		e.processor = &countStarProcessor{skipVal: skipVal(true), closureExecutor: e}
 	}
+	e.aggCtx.execDetail = new(execDetail)
 	return true, nil
 }
 
@@ -261,6 +266,7 @@ func buildTopNProcessor(e *closureExecutor, topN *tipb.TopN) error {
 		heap:         heap,
 		orderByExprs: conds,
 		sortRow:      e.newTopNSortRow(),
+		execDetail:   new(execDetail),
 	}
 
 	e.topNCtx = ctx
@@ -281,6 +287,7 @@ func buildHashAggProcessor(e *closureExecutor, ctx *dagContext, agg *tipb.Aggreg
 		groupKeys:       nil,
 		aggCtxsMap:      map[string][]*aggregation.AggEvaluateContext{},
 	}
+	e.aggCtx.execDetail = new(execDetail)
 	return nil
 }
 
@@ -290,6 +297,35 @@ func buildStreamAggProcessor(e *closureExecutor, ctx *dagContext, executors []*t
 		return err
 	}
 	return buildHashAggProcessor(e, ctx, executors[len(executors)-1].Aggregation)
+}
+
+type execDetail struct {
+	timeProcessed   time.Duration
+	numProducedRows int
+	numIterations   int
+}
+
+func (e *execDetail) update(begin time.Time, gotRow bool) {
+	e.timeProcessed += time.Since(begin)
+	e.numIterations++
+	if gotRow {
+		e.numProducedRows++
+	}
+}
+
+func (e *execDetail) updateOnlyRows(gotRow int) {
+	e.numProducedRows += gotRow
+}
+
+func (e *execDetail) buildSummary() *tipb.ExecutorExecutionSummary {
+	costNs := uint64(e.timeProcessed / time.Nanosecond)
+	rows := uint64(e.numProducedRows)
+	numIter := uint64(e.numIterations)
+	return &tipb.ExecutorExecutionSummary{
+		TimeProcessedNs: &costNs,
+		NumProducedRows: &rows,
+		NumIterations:   &numIter,
+	}
 }
 
 // closureExecutor is an execution engine that flatten the DAGRequest.Executors to a single closure `processor` that
@@ -335,6 +371,7 @@ type scanCtx struct {
 
 	newCollationRd  *rowcodec.BytesDecoder
 	newCollationIds map[int64]int
+	execDetail      *execDetail
 }
 
 type idxScanCtx struct {
@@ -342,20 +379,24 @@ type idxScanCtx struct {
 	columnLen        int
 	colInfos         []rowcodec.ColInfo
 	primaryColumnIds []int64
+	execDetail       *execDetail
 }
 
 type aggCtx struct {
-	col *tipb.ColumnInfo
+	col        *tipb.ColumnInfo
+	execDetail *execDetail
 }
 
 type selectionCtx struct {
 	conditions []expression.Expression
+	execDetail *execDetail
 }
 
 type topNCtx struct {
 	heap         *topNHeap
 	orderByExprs []expression.Expression
 	sortRow      *sortRow
+	execDetail   *execDetail
 }
 
 func (e *closureExecutor) execute() ([]tipb.Chunk, error) {
@@ -445,11 +486,20 @@ type countStarProcessor struct {
 
 // countStarProcess is used for `count(*)`.
 func (e *countStarProcessor) Process(key, value []byte) error {
+	defer func(begin time.Time) {
+		if e.idxScanCtx != nil {
+			e.idxScanCtx.execDetail.update(begin, true)
+		} else {
+			e.scanCtx.execDetail.update(begin, true)
+		}
+		e.aggCtx.execDetail.update(begin, false)
+	}(time.Now())
 	e.rowCount++
 	return nil
 }
 
 func (e *countStarProcessor) Finish() error {
+	e.aggCtx.execDetail.updateOnlyRows(1)
 	return e.countFinish()
 }
 
@@ -470,6 +520,15 @@ type countColumnProcessor struct {
 }
 
 func (e *countColumnProcessor) Process(key, value []byte) error {
+	gotRow := false
+	defer func(begin time.Time) {
+		if e.idxScanCtx != nil {
+			e.idxScanCtx.execDetail.update(begin, gotRow)
+		} else {
+			e.scanCtx.execDetail.update(begin, gotRow)
+		}
+		e.aggCtx.execDetail.update(begin, false)
+	}(time.Now())
 	if e.idxScanCtx != nil {
 		values, _, err := tablecodec.CutIndexKeyNew(key, e.idxScanCtx.columnLen)
 		if err != nil {
@@ -477,6 +536,7 @@ func (e *countColumnProcessor) Process(key, value []byte) error {
 		}
 		if values[0][0] != codec.NilFlag {
 			e.rowCount++
+			gotRow = true
 		}
 	} else {
 		// Since the handle value doesn't affect the count result, we don't need to decode the handle.
@@ -486,12 +546,14 @@ func (e *countColumnProcessor) Process(key, value []byte) error {
 		}
 		if !isNull {
 			e.rowCount++
+			gotRow = true
 		}
 	}
 	return nil
 }
 
 func (e *countColumnProcessor) Finish() error {
+	e.aggCtx.execDetail.updateOnlyRows(1)
 	return e.countFinish()
 }
 
@@ -533,7 +595,12 @@ func (e *closureExecutor) hasSelection() bool {
 	return len(e.selectionCtx.conditions) > 0
 }
 
-func (e *closureExecutor) processSelection() (gotRow bool, err error) {
+func (e *closureExecutor) processSelection(needCollectDetail bool) (gotRow bool, err error) {
+	if needCollectDetail {
+		defer func(begin time.Time) {
+			e.selectionCtx.execDetail.update(begin, gotRow)
+		}(time.Now())
+	}
 	chk := e.scanCtx.chk
 	row := chk.GetRow(chk.NumRows() - 1)
 	gotRow = true
@@ -586,6 +653,10 @@ func (e *closureExecutor) copyError(err error) error {
 }
 
 func (e *closureExecutor) tableScanProcessCore(key, value []byte) error {
+	incRow := false
+	defer func(begin time.Time) {
+		e.scanCtx.execDetail.update(begin, incRow)
+	}(time.Now())
 	handle, err := tablecodec.DecodeRowKey(key)
 	if err != nil {
 		return errors.Trace(err)
@@ -594,6 +665,7 @@ func (e *closureExecutor) tableScanProcessCore(key, value []byte) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+	incRow = true
 	return nil
 }
 
@@ -623,6 +695,10 @@ func (e *indexScanProcessor) Finish() error {
 }
 
 func (e *closureExecutor) indexScanProcessCore(key, value []byte) error {
+	gotRow := false
+	defer func(begin time.Time) {
+		e.idxScanCtx.execDetail.update(begin, gotRow)
+	}(time.Now())
 	handleStatus := mapPkStatusToHandleStatus(e.idxScanCtx.pkStatus)
 	restoredCols := make([]rowcodec.ColInfo, 0, len(e.idxScanCtx.colInfos))
 	for _, c := range e.idxScanCtx.colInfos {
@@ -644,6 +720,7 @@ func (e *closureExecutor) indexScanProcessCore(key, value []byte) error {
 			}
 		}
 	}
+	gotRow = true
 	return nil
 }
 
@@ -672,6 +749,10 @@ type selectionProcessor struct {
 }
 
 func (e *selectionProcessor) Process(key, value []byte) error {
+	var gotRow bool
+	defer func(begin time.Time) {
+		e.selectionCtx.execDetail.update(begin, gotRow)
+	}(time.Now())
 	if e.rowCount == e.limit {
 		return dbreader.ScanBreak
 	}
@@ -679,7 +760,7 @@ func (e *selectionProcessor) Process(key, value []byte) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	gotRow, err := e.processSelection()
+	gotRow, err = e.processSelection(false)
 	if err != nil {
 		return err
 	}
@@ -702,11 +783,15 @@ type topNProcessor struct {
 }
 
 func (e *topNProcessor) Process(key, value []byte) (err error) {
+	gotRow := false
+	defer func(begin time.Time) {
+		e.topNCtx.execDetail.update(begin, gotRow)
+	}(time.Now())
 	if err = e.processCore(key, value); err != nil {
 		return err
 	}
 	if e.hasSelection() {
-		gotRow, err1 := e.processSelection()
+		gotRow, err1 := e.processSelection(true)
 		if err1 != nil || !gotRow {
 			return err1
 		}
@@ -727,6 +812,9 @@ func (e *topNProcessor) Process(key, value []byte) (err error) {
 		ctx.sortRow.data[0] = safeCopy(key)
 		ctx.sortRow.data[1] = safeCopy(value)
 		ctx.sortRow = e.newTopNSortRow()
+	}
+	if ctx.heap.err == nil {
+		gotRow = true
 	}
 	return errors.Trace(ctx.heap.err)
 }
@@ -768,12 +856,16 @@ type hashAggProcessor struct {
 }
 
 func (e *hashAggProcessor) Process(key, value []byte) (err error) {
+	incRow := false
+	defer func(begin time.Time) {
+		e.aggCtx.execDetail.update(begin, incRow)
+	}(time.Now())
 	err = e.processCore(key, value)
 	if err != nil {
 		return err
 	}
 	if e.hasSelection() {
-		gotRow, err1 := e.processSelection()
+		gotRow, err1 := e.processSelection(true)
 		if err1 != nil || !gotRow {
 			return err1
 		}
@@ -783,6 +875,7 @@ func (e *hashAggProcessor) Process(key, value []byte) (err error) {
 	if _, ok := e.groups[string(gk)]; !ok {
 		e.groups[string(gk)] = struct{}{}
 		e.groupKeys = append(e.groupKeys, gk)
+		incRow = true
 	}
 	// Update aggregate expressions.
 	aggCtxs := e.getContexts(gk)
