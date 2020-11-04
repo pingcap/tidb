@@ -51,9 +51,9 @@ func (py *zhPinyinTiDBASCSCollator) Key(str string) []byte {
 		k := convertRunePinyin(r)
 
 		switch {
-		case k < 0xFF:
+		case k <= 0xFF:
 			buf = append(buf, byte(k))
-		case k < 0xFFFF:
+		case k <= 0xFFFF:
 			buf = append(buf, byte(k>>8), byte(k))
 		default:
 			buf = append(buf, byte(k>>24), byte(k>>16), byte(k>>8), byte(k))
