@@ -527,14 +527,10 @@ func (worker *copIteratorWorker) run(ctx context.Context) {
 		worker.handleTask(ctx, task, respCh)
 		failpoint.Inject("testRateLimitActionMockOtherExecutorConsume", func(val failpoint.Value) {
 			if val.(bool) {
-				// wait until action being enabled and response channel become empty
-				if worker.respChan != nil {
-					for worker.actionOnExceed.isUnEnabled() || len(worker.respChan) > 0 {
-
-					}
-					// simulate other executor consume and trigger oom action
-					worker.memTracker.Consume(99999)
-				}
+				// wait action being enabled and response channel become empty
+				time.Sleep(2 * time.Millisecond)
+				// simulate other executor consume and trigger oom action
+				worker.memTracker.Consume(99999)
 			}
 		})
 		close(task.respChan)
@@ -591,7 +587,7 @@ func (it *copIterator) open(ctx context.Context) {
 		sendRate: it.sendRate,
 	}
 	taskSender.respChan = it.respChan
-	it.actionOnExceed.enable()
+	it.actionOnExceed.setEnabled(true)
 	go taskSender.run()
 }
 
@@ -1298,8 +1294,8 @@ func (it copErrorResponse) Close() error {
 // set on initial. Each time the Action is triggered, one token would be destroyed. If the count of the token is less
 // than 2, the action would be delegated to the fallback action.
 type rateLimitAction struct {
-	// status indicates whether the rateLimitAction is permitted to Action. 1 means permitted, 0 denied, 2 ended.
-	status         uint32
+	// enabled indicates whether the rateLimitAction is permitted to Action. 1 means permitted, 0 denied.
+	enabled        uint32
 	fallbackAction memory.ActionOnExceed
 	// totalTokenNum indicates the total token at initial
 	totalTokenNum uint
@@ -1343,7 +1339,7 @@ func newRateLimitAction(totalTokenNumber uint, cond *sync.Cond) *rateLimitAction
 func (e *rateLimitAction) Action(t *memory.Tracker) {
 	failpoint.Inject("testRateLimitActionDisable", func(val failpoint.Value) {
 		if val.(bool) {
-			e.end()
+			e.setEnabled(false)
 		}
 	})
 
@@ -1357,7 +1353,7 @@ func (e *rateLimitAction) Action(t *memory.Tracker) {
 	defer e.conditionUnlock()
 	e.cond.once.Do(func() {
 		if e.cond.remainingTokenNum < 2 {
-			e.end()
+			e.setEnabled(false)
 			logutil.BgLogger().Info("memory exceed quota, rateLimitAction delegate to fallback action",
 				zap.Uint("total token count", e.totalTokenNum))
 			if e.fallbackAction != nil {
@@ -1455,10 +1451,10 @@ func (e *rateLimitAction) conditionUnlock() {
 }
 
 func (e *rateLimitAction) close() {
-	if e.isEnded() {
+	if !e.isEnabled() {
 		return
 	}
-	e.end()
+	e.setEnabled(false)
 	e.conditionLock()
 	defer e.conditionUnlock()
 	e.cond.exceeded = false
@@ -1468,24 +1464,16 @@ func (e *rateLimitAction) close() {
 	e.cond.Broadcast()
 }
 
-func (e *rateLimitAction) enable() {
-	atomic.StoreUint32(&e.status, 1)
-}
-
-func (e *rateLimitAction) end() {
-	atomic.StoreUint32(&e.status, 2)
-}
-
-func (e *rateLimitAction) isUnEnabled() bool {
-	return atomic.LoadUint32(&e.status) == 0
+func (e *rateLimitAction) setEnabled(enabled bool) {
+	newValue := uint32(0)
+	if enabled {
+		newValue = uint32(1)
+	}
+	atomic.StoreUint32(&e.enabled, newValue)
 }
 
 func (e *rateLimitAction) isEnabled() bool {
-	return atomic.LoadUint32(&e.status) == 1
-}
-
-func (e *rateLimitAction) isEnded() bool {
-	return atomic.LoadUint32(&e.status) == 2
+	return atomic.LoadUint32(&e.enabled) > 0
 }
 
 type maxIDHandler struct {
