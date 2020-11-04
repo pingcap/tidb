@@ -178,6 +178,7 @@ func (s *testCollateSuite) TestPinyinCollator(c *C) {
 		{"a\t", "a", 1},
 		{"中", "文", 1},
 		{"年轻", "简单", 1},
+		{"一", "衣", 1},
 	}
 	keyTable := []keyTable{
 		{"a", []byte{0x61}},
