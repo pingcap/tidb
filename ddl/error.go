@@ -259,4 +259,7 @@ var (
 	// ErrWarnDataOutOfRange is returned when the value in a numeric column that is outside the permissible range of the column data type.
 	// See https://dev.mysql.com/doc/refman/5.5/en/out-of-range-and-overflow.html for details
 	ErrWarnDataOutOfRange = dbterror.ClassDDL.NewStd(mysql.ErrWarnDataOutOfRange)
+
+	// ErrTooLongValueForType is returned when the individual enum element length is too long.
+	ErrTooLongValueForType = dbterror.ClassDDL.NewStd(mysql.ErrTooLongValueForType)
 )

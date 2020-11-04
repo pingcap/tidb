@@ -1,6 +1,7 @@
 module github.com/pingcap/tidb
 
 require (
+	cloud.google.com/go v0.51.0 // indirect
 	github.com/BurntSushi/toml v0.3.1
 	github.com/HdrHistogram/hdrhistogram-go v0.9.0 // indirect
 	github.com/Jeffail/gabs/v2 v2.5.1
