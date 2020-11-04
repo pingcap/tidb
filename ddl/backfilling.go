@@ -47,6 +47,58 @@ const (
 	typeCleanUpIndexWorker backfillWorkerType = 2
 )
 
+// By now the DDL jobs that need backfilling include:
+// 1: add-index
+// 2: modify-column-type
+// 3: clean-up global index
+//
+// They all have a write reorganization state to back fill data into the rows existed.
+// Backfilling is time consuming, to accelerate this process, TiDB has built some sub
+// workers to do this in the DDL owner node.
+//
+//                                DDL owner thread
+//                                      ^
+//                                      | (reorgCtx.doneCh)
+//                                      |
+//                                worker master
+//                                      ^ (waitTaskResults)
+//                                      |
+//                                      |
+//                                      v (sendRangeTask)
+//       +--------------------+---------+---------+------------------+--------------+
+//       |                    |                   |                  |              |
+// backfillworker1     backfillworker2     backfillworker3     backfillworker4     ...
+//
+// The worker master is responsible for scaling the backfilling workers according to the
+// system variable "tidb_ddl_reorg_worker_cnt". Essentially, reorg job is mainly based
+// on the [start, end] range of the table to backfill data. We did not do it all at once,
+// there were several ddl rounds.
+//
+// [start1---end1 start2---end2 start3---end3 start4---end4 ...         ...         ]
+//    |       |     |       |     |       |     |       |
+//    +-------+     +-------+     +-------+     +-------+   ...         ...
+//        |             |             |             |
+//     bfworker1    bfworker2     bfworker3     bfworker4   ...         ...
+//        |             |             |             |       |            |
+//        +---------------- (round1)----------------+       +--(round2)--+
+//
+// The main range [start, end] will be split into small ranges.
+// Each small range corresponds to a region and it will be delivered to a backfillworker.
+// Each worker can only be assigned with one range at one round, those remaining ranges
+// will be cached until all the backfill workers have had their previous range jobs done.
+//
+//                [ region start --------------------- region end ]
+//                                        |
+//                                        v
+//                [ batch ] [ batch ] [ batch ] [ batch ] ...
+//                    |         |         |         |
+//                    v         v         v         v
+//                (a kv txn)   ->        ->        ->
+//
+// For a single range, backfill worker doesn't backfill all the data in one kv transaction.
+// Instead, it is divided into batches, each time a kv transaction completes the backfilling
+// of a partial batch.
+
 func (bWT backfillWorkerType) String() string {
 	switch bWT {
 	case typeAddIndexWorker:
@@ -514,6 +566,15 @@ func (w *worker) writePhysicalTableRecord(t table.PhysicalTable, bfWorkerType ba
 		for i := len(backfillWorkers); i < int(workerCnt); i++ {
 			sessCtx := newContext(reorgInfo.d.store)
 			sessCtx.GetSessionVars().StmtCtx.IsDDLJobInQueue = true
+			// Simulate the sql mode environment in the worker sessionCtx.
+			sqlMode := reorgInfo.ReorgMeta.SQLMode
+			sessCtx.GetSessionVars().SQLMode = sqlMode
+			sessCtx.GetSessionVars().StmtCtx.BadNullAsWarning = !sqlMode.HasStrictMode()
+			sessCtx.GetSessionVars().StmtCtx.TruncateAsWarning = !sqlMode.HasStrictMode()
+			sessCtx.GetSessionVars().StmtCtx.OverflowAsWarning = !sqlMode.HasStrictMode()
+			sessCtx.GetSessionVars().StmtCtx.AllowInvalidDate = sqlMode.HasAllowInvalidDatesMode()
+			sessCtx.GetSessionVars().StmtCtx.DividedByZeroAsWarning = !sqlMode.HasStrictMode()
+			sessCtx.GetSessionVars().StmtCtx.IgnoreZeroInDate = !sqlMode.HasStrictMode() || sqlMode.HasAllowInvalidDatesMode()
 
 			switch bfWorkerType {
 			case typeAddIndexWorker:

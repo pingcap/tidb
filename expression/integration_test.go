@@ -5235,8 +5235,7 @@ func (s *testIntegrationSuite) TestIssue16973(c *C) {
 func (s *testIntegrationSuite) TestExprPushdownBlacklist(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustQuery(`select * from mysql.expr_pushdown_blacklist`).Check(testkit.Rows(
-		"date_add tiflash DST(daylight saving time) does not take effect in TiFlash date_add",
-		"cast tiflash Behavior of some corner cases(overflow, truncate etc) is different in TiFlash and TiDB"))
+		"date_add tiflash DST(daylight saving time) does not take effect in TiFlash date_add"))
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -5257,7 +5256,7 @@ func (s *testIntegrationSuite) TestExprPushdownBlacklist(c *C) {
 	}
 
 	tk.MustExec("insert into mysql.expr_pushdown_blacklist " +
-		"values('<', 'tikv,tiflash,tidb', 'for test'),('date_format', 'tikv', 'for test')")
+		"values('<', 'tikv,tiflash,tidb', 'for test'),('cast', 'tiflash', 'for test'),('date_format', 'tikv', 'for test')")
 	tk.MustExec("admin reload expr_pushdown_blacklist")
 
 	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash'")
@@ -7649,4 +7648,11 @@ func (s *testIntegrationSuite) TestIssue20180(c *C) {
 	tk.MustExec("create table t(a enum('a','b'));")
 	tk.MustExec("insert into t values('b');")
 	tk.MustQuery("select * from t where a > 1  and a = \"b\";").Check(testkit.Rows("b"))
+}
+
+func (s *testIntegrationSerialSuite) TestIssue20608(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustQuery("select '䇇Հ' collate utf8mb4_bin like '___Հ';").Check(testkit.Rows("0"))
 }
