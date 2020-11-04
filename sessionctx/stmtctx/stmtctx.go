@@ -493,7 +493,13 @@ func (sc *StatementContext) MergeExecDetails(details *execdetails.ExecDetails, c
 		sc.mu.execDetails.ProcessedKeys += details.ProcessedKeys
 		sc.mu.allExecDetails = append(sc.mu.allExecDetails, details)
 	}
-	sc.mu.execDetails.CommitDetail = commitDetails
+	if commitDetails != nil {
+		if sc.mu.execDetails.CommitDetail == nil {
+			sc.mu.execDetails.CommitDetail = commitDetails
+		} else {
+			sc.mu.execDetails.CommitDetail.Merge(commitDetails)
+		}
+	}
 	sc.mu.Unlock()
 }
 

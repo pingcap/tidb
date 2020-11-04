@@ -64,6 +64,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/plugin"
+	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/arena"
@@ -1370,34 +1371,49 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 			err = cc.writeMultiResultset(ctx, rss, false)
 		}
 	} else {
-		loadDataInfo := cc.ctx.Value(executor.LoadDataVarKey)
-		if loadDataInfo != nil {
-			defer cc.ctx.SetValue(executor.LoadDataVarKey, nil)
-			if err = cc.handleLoadData(ctx, loadDataInfo.(*executor.LoadDataInfo)); err != nil {
-				return err
+		//
+		var handled bool
+		handled, err = cc.handleQuerySpecial(ctx)
+		if handled {
+			execStmt := cc.ctx.Value(session.ExecStmtVarKey)
+			if execStmt != nil {
+				execStmt.(*executor.ExecStmt).FinishExecuteStmt(0, err == nil, false)
 			}
 		}
-
-		loadStats := cc.ctx.Value(executor.LoadStatsVarKey)
-		if loadStats != nil {
-			defer cc.ctx.SetValue(executor.LoadStatsVarKey, nil)
-			if err = cc.handleLoadStats(ctx, loadStats.(*executor.LoadStatsInfo)); err != nil {
-				return err
-			}
-		}
-
-		indexAdvise := cc.ctx.Value(executor.IndexAdviseVarKey)
-		if indexAdvise != nil {
-			defer cc.ctx.SetValue(executor.IndexAdviseVarKey, nil)
-			err = cc.handleIndexAdvise(ctx, indexAdvise.(*executor.IndexAdviseInfo))
-			if err != nil {
-				return err
-			}
-		}
-
-		err = cc.writeOK(ctx)
 	}
 	return err
+}
+
+func (cc *clientConn) handleQuerySpecial(ctx context.Context) (handled bool, err error) {
+	loadDataInfo := cc.ctx.Value(executor.LoadDataVarKey)
+	if loadDataInfo != nil {
+		handled = true
+		defer cc.ctx.SetValue(executor.LoadDataVarKey, nil)
+		if err = cc.handleLoadData(ctx, loadDataInfo.(*executor.LoadDataInfo)); err != nil {
+			return handled, err
+		}
+	}
+
+	loadStats := cc.ctx.Value(executor.LoadStatsVarKey)
+	if loadStats != nil {
+		handled = true
+		defer cc.ctx.SetValue(executor.LoadStatsVarKey, nil)
+		if err = cc.handleLoadStats(ctx, loadStats.(*executor.LoadStatsInfo)); err != nil {
+			return handled, err
+		}
+	}
+
+	indexAdvise := cc.ctx.Value(executor.IndexAdviseVarKey)
+	if indexAdvise != nil {
+		handled = true
+		defer cc.ctx.SetValue(executor.IndexAdviseVarKey, nil)
+		err = cc.handleIndexAdvise(ctx, indexAdvise.(*executor.IndexAdviseInfo))
+		if err != nil {
+			return handled, err
+		}
+	}
+
+	return handled, cc.writeOK(ctx)
 }
 
 // handleFieldList returns the field list for a table.
