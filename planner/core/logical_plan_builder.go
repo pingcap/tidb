@@ -586,6 +586,11 @@ func resetNotNullFlag(schema *expression.Schema, start, end int) {
 }
 
 func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (LogicalPlan, error) {
+	b.redundantInfos = append(b.redundantInfos, &redundantInfo{})
+	defer func() {
+		b.redundantInfos = b.redundantInfos[:len(b.redundantInfos)-1]
+	}()
+
 	// We will construct a "Join" node for some statements like "INSERT",
 	// "DELETE", "UPDATE", "REPLACE". For this scenario "joinNode.Right" is nil
 	// and we only build the left "ResultSetNode".
@@ -2661,9 +2666,7 @@ func (b *PlanBuilder) TableHints() *tableHintInfo {
 func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p LogicalPlan, err error) {
 	b.pushSelectOffset(sel.QueryBlockOffset)
 	b.pushTableHints(sel.TableHints, utilhint.TypeSelect, sel.QueryBlockOffset)
-	b.redundantInfos = append(b.redundantInfos, &redundantInfo{})
 	defer func() {
-		b.redundantInfos = b.redundantInfos[:len(b.redundantInfos)-1]
 		b.popSelectOffset()
 		// table hints are only visible in the current SELECT statement.
 		b.popTableHints()
