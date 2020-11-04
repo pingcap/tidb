@@ -13,11 +13,13 @@
 
 package collate
 
+import "github.com/pingcap/tidb/util/stringutil"
+
 // Collation of utf8mb4_zh_pinyin_tidb_as_cs
 type zhPinyinTiDBASCSCollator struct {
 }
 
-// Collator interface, no implements now.
+// Compare implements Collator interface.
 func (py *zhPinyinTiDBASCSCollator) Compare(a, b string) int {
 	a = truncateTailingSpace(a)
 	b = truncateTailingSpace(b)
@@ -38,7 +40,7 @@ func (py *zhPinyinTiDBASCSCollator) Compare(a, b string) int {
 	return sign((len(a) - ai) - (len(b) - bi))
 }
 
-// Collator interface, no implements now.
+// Key implements Collator interface.
 func (py *zhPinyinTiDBASCSCollator) Key(str string) []byte {
 	str = truncateTailingSpace(str)
 	buf := make([]byte, 0, len(str))
@@ -61,9 +63,26 @@ func (py *zhPinyinTiDBASCSCollator) Key(str string) []byte {
 	return buf
 }
 
-// Collator interface, no implements now.
+// Pattern implements Collator interface.
 func (py *zhPinyinTiDBASCSCollator) Pattern() WildcardPattern {
-	panic("implement me")
+	return &pinyinPattern{}
+}
+
+type pinyinPattern struct {
+	patChars []rune
+	patTypes []byte
+}
+
+// Compile implements WildcardPattern interface.
+func (p *pinyinPattern) Compile(pattern string, escape byte) {
+	p.patChars, p.patTypes = stringutil.CompilePatternInner(pattern, escape)
+}
+
+// DoMatch implements WildcardPattern interface.
+func (p *pinyinPattern) DoMatch(str string) bool {
+	return stringutil.DoMatchInner(str, p.patChars, p.patTypes, func(a, b rune) bool {
+		return convertRunePinyin(a) == convertRunePinyin(b)
+	})
 }
 
 func convertRunePinyin(r rune) uint32 {
