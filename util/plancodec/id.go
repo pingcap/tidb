@@ -109,7 +109,7 @@ const (
 	// TypeDataSource is the type of DataSource.
 	TypeDataSource = "DataSource"
 	// TypeLoadData is the type of LoadData.
-	TypeLoadData = "Load_Data"
+	TypeLoadData = "LoadData"
 )
 
 // plan id.

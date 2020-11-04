@@ -484,7 +484,7 @@ func (cli *testServerClient) runTestLoadDataForSlowLog(c *C, server *Server) {
 
 		// Test for record slow log for load data statement.
 		rows := dbt.mustQuery(fmt.Sprintf("select plan from information_schema.slow_query where query like 'load data local infile %% into table t_slow;' order by time desc limit 1"))
-		expectedPlan := ".*Load_Data.* time.* loops.* prepare.* check_insert.* mem_insert_time:.* prefetch.* rpc.* commit_txn.*"
+		expectedPlan := ".*LoadData.* time.* loops.* prepare.* check_insert.* mem_insert_time:.* prefetch.* rpc.* commit_txn.*"
 		checkPlan(rows, expectedPlan)
 		// Test for record statements_summary for load data statement.
 		rows = dbt.mustQuery(fmt.Sprintf("select plan from information_schema.STATEMENTS_SUMMARY where QUERY_SAMPLE_TEXT like 'load data local infile %%' limit 1"))

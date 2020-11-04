@@ -516,7 +516,7 @@ func (e *LoadDataInfo) InsertData(ctx context.Context, prevData, curData []byte)
 func (e *LoadDataInfo) CheckAndInsertOneBatch(ctx context.Context, rows [][]types.Datum, cnt uint64) error {
 	if e.stats != nil && e.stats.BasicRuntimeStats != nil {
 		// Since this method will not call by executor Next,
-		// so we need record the basic executor runtime stats by myself.
+		// so we need record the basic executor runtime stats by ourself.
 		start := time.Now()
 		defer func() {
 			e.stats.BasicRuntimeStats.Record(time.Since(start), 0)
