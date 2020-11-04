@@ -1978,7 +1978,7 @@ func (s *testPessimisticSuite) TestAsyncCommitWithSchemaChange(c *C) {
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.TiKVClient.AsyncCommit.Enable = true
-		conf.TiKVClient.AsyncCommit.SafeWindow = 500 * time.Millisecond
+		conf.TiKVClient.AsyncCommit.SafeWindow = time.Second
 		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
 	})
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/beforeSchemaCheck", "return"), IsNil)
@@ -2019,10 +2019,55 @@ func (s *testPessimisticSuite) TestAsyncCommitWithSchemaChange(c *C) {
 		time.Sleep(200 * time.Millisecond)
 		tk2.MustExec("alter table tk add index k2(c2)")
 	}()
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/beforePrewrite", "1*sleep(1000)"), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/beforePrewrite", "1*sleep(1200)"), IsNil)
 	// should fail if prewrite takes too long
 	err := tk.ExecToErr("commit")
 	c.Assert(err, ErrorMatches, ".*commit TS \\d+ is too large")
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/beforePrewrite"), IsNil)
+	tk3.MustExec("admin check table tk")
+}
+
+func (s *testPessimisticSuite) Test1PCWithSchemaChange(c *C) {
+	// TODO: implement commit_ts calculation in unistore
+	if !*withTiKV {
+		return
+	}
+
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TiKVClient.EnableOnePC = true
+		conf.TiKVClient.AsyncCommit.SafeWindow = time.Second
+		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
+	})
+
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk2 := testkit.NewTestKitWithInit(c, s.store)
+	tk3 := testkit.NewTestKitWithInit(c, s.store)
+
+	tk.MustExec("drop table if exists tk")
+	tk.MustExec("create table tk (c1 int primary key, c2 int)")
+
+	tk.MustExec("begin optimistic")
+	tk.MustExec("insert into tk values(2, 2)")
+	// Add index for c2 before commit
+	tk2.MustExec("alter table tk add index k2(c2)")
+	// key for c2 should be amended
+	tk.MustExec("commit")
+	tk3.MustQuery("select * from tk where c2 = 2").Check(testkit.Rows("2 2"))
+	tk3.MustExec("admin check table tk")
+
+	tk.MustExec("drop table if exists tk")
+	tk.MustExec("create table tk (c1 int primary key, c2 int)")
+	tk.MustExec("begin optimistic")
+	tk.MustExec("insert into tk values(1, 1)")
+	go func() {
+		time.Sleep(200 * time.Millisecond)
+		tk2.MustExec("alter table tk add index k2(c2)")
+	}()
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/beforePrewrite", "1*sleep(1000)"), IsNil)
+	_ = tk.ExecToErr("commit")
+	// TODO: Check the error after supporting falling back to 2PC in TiKV.
+	// c.Assert(err, IsNil)
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/beforePrewrite"), IsNil)
 	tk3.MustExec("admin check table tk")
 }

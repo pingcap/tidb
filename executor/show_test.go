@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
@@ -539,7 +540,7 @@ func (s *testSuite5) TestShowCreateTable(c *C) {
 
 	tk.MustExec("drop view if exists v")
 	tk.MustExec("create or replace definer=`root`@`127.0.0.1` view v as select JSON_MERGE('{}', '{}') as col;")
-	tk.MustQuery("show create view v").Check(testutil.RowsWithSep("|", "v|CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`127.0.0.1` SQL SECURITY DEFINER VIEW `v` (`col`) AS SELECT JSON_MERGE('{}', '{}') AS `col`  "))
+	tk.MustQuery("show create view v").Check(testutil.RowsWithSep("|", "v|CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`127.0.0.1` SQL SECURITY DEFINER VIEW `v` (`col`) AS SELECT JSON_MERGE(_UTF8MB4'{}', _UTF8MB4'{}') AS `col`  "))
 	tk.MustExec("drop view if exists v")
 
 	tk.MustExec("drop table if exists t1")
@@ -806,6 +807,16 @@ func (s *testSuite5) TestShowCreateTable(c *C) {
 			"  CONSTRAINT `child_ibfk_1` FOREIGN KEY (`parent_id`) REFERENCES `parent` (`id`) ON DELETE SET NULL ON UPDATE CASCADE\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
 	))
+
+	// Test issue #20327
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a int, b char(10) as ('a'));")
+	result := tk.MustQuery("show create table t;").Rows()[0][1]
+	c.Assert(result, Matches, `(?s).*GENERATED ALWAYS AS \(_utf8mb4'a'\).*`)
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a int, b char(10) as (_utf8'a'));")
+	result = tk.MustQuery("show create table t;").Rows()[0][1]
+	c.Assert(result, Matches, `(?s).*GENERATED ALWAYS AS \(_utf8'a'\).*`)
 
 	// Test show list partition table
 	tk.MustExec(`DROP TABLE IF EXISTS t`)
@@ -1134,4 +1145,27 @@ func (s *testSerialSuite1) TestShowCreateTableWithIntegerDisplayLengthWarnings(c
 		"  `d` int DEFAULT NULL,\n" +
 		"  `e` bigint DEFAULT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+}
+
+func (s *testSuite5) TestShowVar(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	var showSQL string
+	for _, v := range variable.GetSysVars() {
+		// When ScopeSession only. `show global variables` must return empty.
+		if v.Scope == variable.ScopeSession {
+			showSQL = "show variables like '" + v.Name + "'"
+			res := tk.MustQuery(showSQL)
+			c.Check(res.Rows(), HasLen, 1)
+			showSQL = "show global variables like '" + v.Name + "'"
+			res = tk.MustQuery(showSQL)
+			c.Check(res.Rows(), HasLen, 0)
+		} else {
+			showSQL = "show global variables like '" + v.Name + "'"
+			res := tk.MustQuery(showSQL)
+			c.Check(res.Rows(), HasLen, 1)
+			showSQL = "show variables like '" + v.Name + "'"
+			res = tk.MustQuery(showSQL)
+			c.Check(res.Rows(), HasLen, 1)
+		}
+	}
 }
