@@ -3394,7 +3394,9 @@ func checkModifyCharsetAndCollation(toCharset, toCollate, origCharset, origColla
 }
 
 // CheckModifyTypeCompatible checks whether changes column type to another is compatible considering
-// field length and precision.
+// field length and precision. Any incompatible will return an error with individual error msg, and
+// if the "origin" type can be changed to "to" type by reorganization, the "canReorg" will be true,
+// false "canReorg" means the types change are not supported.
 func CheckModifyTypeCompatible(origin *types.FieldType, to *types.FieldType) (canReorg bool, errMsg string, err error) {
 	checkLengthDecimalSign := func() (bool, string, error) {
 		if to.Flen > 0 && to.Flen < origin.Flen {
@@ -3500,10 +3502,10 @@ func checkUnsupportedConversionFromTypeChange(origin *types.FieldType, to *types
 	return false
 }
 
-// checkModifyTypes checks if the 'origin' type can be modified to 'to' type without the need to
-// change or check existing data in the table.
-// It returns error if the two types has incompatible charset and collation, different sign, different
-// digital/string types, or length of new Flen and Decimal is less than origin.
+// checkModifyTypes checks if the 'origin' type can be modified to 'to' type no matter directly change
+// or change by reorg. It returns error if the two types are incompatible and correlated change are not
+// supported. However, even the two types can be change, if the flag "tidb_enable_change_column_type" not
+// set, or the "origin" type contains primary key, error will be returned.
 func checkModifyTypes(ctx sessionctx.Context, origin *types.FieldType, to *types.FieldType, needRewriteCollationData bool) error {
 	canReorg, changeColumnErrMsg, err := CheckModifyTypeCompatible(origin, to)
 	if err != nil {
