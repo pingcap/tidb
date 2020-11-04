@@ -67,6 +67,11 @@ type testStateChangeSuiteBase struct {
 	preSQL string
 }
 
+func forceReloadDomain(sess session.Session) {
+	dom := domain.GetDomain(sess)
+	dom.Reload()
+}
+
 func (s *testStateChangeSuiteBase) SetUpSuite(c *C) {
 	s.lease = 200 * time.Millisecond
 	ddl.SetWaitTimeWhenErrorOccurred(1 * time.Microsecond)
@@ -824,6 +829,7 @@ func (s *testStateChangeSuiteBase) runTestInSchemaState(c *C, state model.Schema
 		if job.SchemaState != state {
 			return
 		}
+		forceReloadDomain(se)
 		for _, sqlWithErr := range sqlWithErrs {
 			_, err = se.Execute(context.Background(), sqlWithErr.sql)
 			if !terror.ErrorEqual(err, sqlWithErr.expectErr) {
