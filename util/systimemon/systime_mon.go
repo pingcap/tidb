@@ -62,7 +62,7 @@ func StartAutoFreeOSMemory() {
 		logutil.BgLogger().Error(msg, fields...)
 	}
 	count := 0
-	for _ = range tick.C {
+	for range tick.C {
 		threshold := int(atomic.LoadUint64(&config.GetGlobalConfig().AutoFreeOSMemoryThreshold))
 		if threshold <= 0 {
 			continue
