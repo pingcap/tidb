@@ -2976,5 +2976,5 @@ func (s *testSerialSuite) TestIssue20724(c *C) {
 	tk.MustExec("insert into t1 values ('a')")
 	tk.MustExec("update t1 set a = 'A'")
 	tk.MustQuery("select * from t1").Check(testkit.Rows("A"))
-	tk.MustExec("drop table t")
+	tk.MustExec("drop table t1")
 }
