@@ -110,8 +110,8 @@ func (s *testSerialSuite) TestExplainFor(c *C) {
 		}
 	}
 	c.Assert(buf.String(), Matches, ""+
-		"TableReader_5 10000.00 0 root  time:.*, loops:1, cop_task:.*num: 1, max:.*, proc_keys: 0, rpc_num: 1, rpc_time: .* data:TableFullScan_4 N/A N/A\n"+
-		"└─TableFullScan_4 10000.00 0 cop.* table:t1 time:.*, loops:0 keep order:false, stats:pseudo N/A N/A")
+		"TableReader_5 10000.00 0 root  time:.*, loops:1, cop_task: {num:.*, max:.*, proc_keys: 0, rpc_num: 1, rpc_time:.*, copr_cache_hit_ratio: 0.00} data:TableFullScan_4 N/A N/A\n"+
+		"└─TableFullScan_4 10000.00 0 cop.* table:t1 time:.*, loops:0, tikv_task:{time:.*, loops:0} keep order:false, stats:pseudo N/A N/A")
 	err := tkUser.ExecToErr(fmt.Sprintf("explain for connection %d", tkRootProcess.ID))
 	c.Check(core.ErrAccessDenied.Equal(err), IsTrue)
 	err = tkUser.ExecToErr("explain for connection 42")
