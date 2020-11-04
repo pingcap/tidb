@@ -41,7 +41,6 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
@@ -88,8 +87,6 @@ func (ts *tidbTestSuiteBase) SetUpSuite(c *C) {
 	cfg.Status.ReportStatus = true
 	cfg.Status.StatusPort = ts.statusPort
 	cfg.Performance.TCPKeepAlive = true
-	err = logutil.InitLogger(cfg.Log.ToLogConfig())
-	c.Assert(err, IsNil)
 
 	server, err := NewServer(cfg, ts.tidbdrv)
 	c.Assert(err, IsNil)
@@ -143,7 +140,6 @@ func (ts *tidbTestSuite) TestPreparedTimestamp(c *C) {
 func (ts *tidbTestSerialSuite) TestLoadData(c *C) {
 	ts.runTestLoadData(c, ts.server)
 	ts.runTestLoadDataWithSelectIntoOutfile(c, ts.server)
-	ts.runTestLoadDataForSlowLog(c, ts.server)
 }
 
 func (ts *tidbTestSerialSuite) TestStmtCount(c *C) {

@@ -48,6 +48,17 @@ type LoadDataExec struct {
 	loadDataInfo *LoadDataInfo
 }
 
+// NewLoadDataInfo returns a LoadDataInfo structure, and it's only used for tests now.
+func NewLoadDataInfo(ctx sessionctx.Context, row []types.Datum, tbl table.Table, cols []*table.Column) *LoadDataInfo {
+	insertVal := &InsertValues{baseExecutor: newBaseExecutor(ctx, nil, 0), Table: tbl}
+	return &LoadDataInfo{
+		row:          row,
+		InsertValues: insertVal,
+		Table:        tbl,
+		Ctx:          ctx,
+	}
+}
+
 // Next implements the Executor Next interface.
 func (e *LoadDataExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.GrowAndReset(e.maxChunkSize)
@@ -88,8 +99,6 @@ func (e *LoadDataExec) Open(ctx context.Context) error {
 	if e.loadDataInfo.insertColumns != nil {
 		e.loadDataInfo.initEvalBuffer()
 	}
-	// Init for runtime stats.
-	e.loadDataInfo.collectRuntimeStatsEnabled()
 	return nil
 }
 
@@ -424,14 +433,6 @@ func (e *LoadDataInfo) InsertData(ctx context.Context, prevData, curData []byte)
 
 // CheckAndInsertOneBatch is used to commit one transaction batch full filled data
 func (e *LoadDataInfo) CheckAndInsertOneBatch(ctx context.Context, rows [][]types.Datum, cnt uint64) error {
-	if e.stats != nil && e.stats.BasicRuntimeStats != nil {
-		// Since this method will not call by executor Next,
-		// so we need record the basic executor runtime stats by ourself.
-		start := time.Now()
-		defer func() {
-			e.stats.BasicRuntimeStats.Record(time.Since(start), 0)
-		}()
-	}
 	var err error
 	if cnt == 0 {
 		return err

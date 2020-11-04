@@ -1083,9 +1083,7 @@ func (e *InsertRuntimeStat) String() string {
 	if e.Prefetch > 0 {
 		buf.WriteString(fmt.Sprintf("check_insert:{total_time:%v, mem_insert_time:%v, prefetch:%v", e.CheckInsertTime, e.CheckInsertTime-e.Prefetch, e.Prefetch))
 		if e.SnapshotRuntimeStats != nil {
-			if rpc := e.SnapshotRuntimeStats.String(); len(rpc) > 0 {
-				buf.WriteString(fmt.Sprintf(", rpc:{%s}", rpc))
-			}
+			buf.WriteString(fmt.Sprintf(", rpc:{%s}", e.SnapshotRuntimeStats.String()))
 		}
 		buf.WriteString("}")
 	} else {
