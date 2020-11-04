@@ -489,7 +489,7 @@ func (c *CMSketch) CalcDefaultValForAnalyze(NDV uint64) {
 
 // TopN stores most-common values, which is used to estimate point queries.
 type TopN struct {
-	TopN   []TopNMeta
+	TopN []TopNMeta
 }
 
 // Copy makes a copy for current TopN.
@@ -504,7 +504,7 @@ func (c *TopN) Copy() *TopN {
 		topN[i].Count = t.Count
 	}
 	return &TopN{
-		TopN:   topN,
+		TopN: topN,
 	}
 }
 
