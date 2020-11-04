@@ -883,3 +883,242 @@ func (s *testSuite3) TestIssue16366(c *C) {
 	c.Assert(err, NotNil)
 	c.Assert(strings.Contains(err.Error(), "Duplicate entry '0' for key 'PRIMARY'"), IsTrue, Commentf("%v", err))
 }
+<<<<<<< HEAD
+=======
+
+var _ = SerialSuites(&testSuite10{&baseTestSuite{}})
+
+type testSuite10 struct {
+	*baseTestSuite
+}
+
+func (s *testSuite10) TestClusterPrimaryTablePlainInsert(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`set @@tidb_enable_clustered_index=true`)
+
+	tk.MustExec(`drop table if exists t1pk`)
+	tk.MustExec(`create table t1pk(id varchar(200) primary key, v int)`)
+	tk.MustExec(`insert into t1pk(id, v) values('abc', 1)`)
+	tk.MustQuery(`select * from t1pk`).Check(testkit.Rows("abc 1"))
+	tk.MustExec(`set @@tidb_constraint_check_in_place=true`)
+	tk.MustGetErrCode(`insert into t1pk(id, v) values('abc', 2)`, errno.ErrDupEntry)
+	tk.MustExec(`set @@tidb_constraint_check_in_place=false`)
+	tk.MustGetErrCode(`insert into t1pk(id, v) values('abc', 3)`, errno.ErrDupEntry)
+	tk.MustQuery(`select v, id from t1pk`).Check(testkit.Rows("1 abc"))
+	tk.MustQuery(`select id from t1pk where id = 'abc'`).Check(testkit.Rows("abc"))
+	tk.MustQuery(`select v, id from t1pk where id = 'abc'`).Check(testkit.Rows("1 abc"))
+
+	tk.MustExec(`drop table if exists t3pk`)
+	tk.MustExec(`create table t3pk(id1 varchar(200), id2 varchar(200), v int, id3 int, primary key(id1, id2, id3))`)
+	tk.MustExec(`insert into t3pk(id1, id2, id3, v) values('abc', 'xyz', 100, 1)`)
+	tk.MustQuery(`select * from t3pk`).Check(testkit.Rows("abc xyz 1 100"))
+	tk.MustExec(`set @@tidb_constraint_check_in_place=true`)
+	tk.MustGetErrCode(`insert into t3pk(id1, id2, id3, v) values('abc', 'xyz', 100, 2)`, errno.ErrDupEntry)
+	tk.MustExec(`set @@tidb_constraint_check_in_place=false`)
+	tk.MustGetErrCode(`insert into t3pk(id1, id2, id3, v) values('abc', 'xyz', 100, 3)`, errno.ErrDupEntry)
+	tk.MustQuery(`select v, id3, id2, id1 from t3pk`).Check(testkit.Rows("1 100 xyz abc"))
+	tk.MustQuery(`select id3, id2, id1 from t3pk where id3 = 100 and id2 = 'xyz' and id1 = 'abc'`).Check(testkit.Rows("100 xyz abc"))
+	tk.MustQuery(`select id3, id2, id1, v from t3pk where id3 = 100 and id2 = 'xyz' and id1 = 'abc'`).Check(testkit.Rows("100 xyz abc 1"))
+	tk.MustExec(`insert into t3pk(id1, id2, id3, v) values('abc', 'xyz', 101, 1)`)
+	tk.MustExec(`insert into t3pk(id1, id2, id3, v) values('abc', 'zzz', 101, 1)`)
+
+	tk.MustExec(`drop table if exists t1pku`)
+	tk.MustExec(`create table t1pku(id varchar(200) primary key, uk int, v int, unique key ukk(uk))`)
+	tk.MustExec(`insert into t1pku(id, uk, v) values('abc', 1, 2)`)
+	tk.MustQuery(`select * from t1pku where id = 'abc'`).Check(testkit.Rows("abc 1 2"))
+	tk.MustGetErrCode(`insert into t1pku(id, uk, v) values('aaa', 1, 3)`, errno.ErrDupEntry)
+	tk.MustQuery(`select * from t1pku`).Check(testkit.Rows("abc 1 2"))
+
+	tk.MustQuery(`select * from t3pk where (id1, id2, id3) in (('abc', 'xyz', 100), ('abc', 'xyz', 101), ('abc', 'zzz', 101))`).
+		Check(testkit.Rows("abc xyz 1 100", "abc xyz 1 101", "abc zzz 1 101"))
+}
+
+func (s *testSuite10) TestClusterPrimaryTableInsertIgnore(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`set @@tidb_enable_clustered_index=true`)
+
+	tk.MustExec(`drop table if exists it1pk`)
+	tk.MustExec(`create table it1pk(id varchar(200) primary key, v int)`)
+	tk.MustExec(`insert into it1pk(id, v) values('abc', 1)`)
+	tk.MustExec(`insert ignore into it1pk(id, v) values('abc', 2)`)
+	tk.MustQuery(`select * from it1pk where id = 'abc'`).Check(testkit.Rows("abc 1"))
+
+	tk.MustExec(`drop table if exists it2pk`)
+	tk.MustExec(`create table it2pk(id1 varchar(200), id2 varchar(200), v int, primary key(id1, id2))`)
+	tk.MustExec(`insert into it2pk(id1, id2, v) values('abc', 'cba', 1)`)
+	tk.MustQuery(`select * from it2pk where id1 = 'abc' and id2 = 'cba'`).Check(testkit.Rows("abc cba 1"))
+	tk.MustExec(`insert ignore into it2pk(id1, id2, v) values('abc', 'cba', 2)`)
+	tk.MustQuery(`select * from it2pk where id1 = 'abc' and id2 = 'cba'`).Check(testkit.Rows("abc cba 1"))
+
+	tk.MustExec(`drop table if exists it1pku`)
+	tk.MustExec(`create table it1pku(id varchar(200) primary key, uk int, v int, unique key ukk(uk))`)
+	tk.MustExec(`insert into it1pku(id, uk, v) values('abc', 1, 2)`)
+	tk.MustQuery(`select * from it1pku where id = 'abc'`).Check(testkit.Rows("abc 1 2"))
+	tk.MustExec(`insert ignore into it1pku(id, uk, v) values('aaa', 1, 3), ('bbb', 2, 1)`)
+	tk.MustQuery(`select * from it1pku`).Check(testkit.Rows("abc 1 2", "bbb 2 1"))
+}
+
+func (s *testSuite10) TestClusterPrimaryTableInsertDuplicate(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`set @@tidb_enable_clustered_index=true`)
+
+	tk.MustExec(`drop table if exists dt1pi`)
+	tk.MustExec(`create table dt1pi(id varchar(200) primary key, v int)`)
+	tk.MustExec(`insert into dt1pi(id, v) values('abb', 1),('acc', 2)`)
+	tk.MustExec(`insert into dt1pi(id, v) values('abb', 2) on duplicate key update v = v + 1`)
+	tk.MustQuery(`select * from dt1pi`).Check(testkit.Rows("abb 2", "acc 2"))
+	tk.MustExec(`insert into dt1pi(id, v) values('abb', 2) on duplicate key update v = v + 1, id = 'xxx'`)
+	tk.MustQuery(`select * from dt1pi`).Check(testkit.Rows("acc 2", "xxx 3"))
+
+	tk.MustExec(`drop table if exists dt1piu`)
+	tk.MustExec(`create table dt1piu(id varchar(200) primary key, uk int, v int, unique key uuk(uk))`)
+	tk.MustExec(`insert into dt1piu(id, uk, v) values('abb', 1, 10),('acc', 2, 20)`)
+	tk.MustExec(`insert into dt1piu(id, uk, v) values('xyz', 1, 100) on duplicate key update v = v + 1`)
+	tk.MustQuery(`select * from dt1piu`).Check(testkit.Rows("abb 1 11", "acc 2 20"))
+	tk.MustExec(`insert into dt1piu(id, uk, v) values('abb', 1, 2) on duplicate key update v = v + 1, id = 'xxx'`)
+	tk.MustQuery(`select * from dt1piu`).Check(testkit.Rows("acc 2 20", "xxx 1 12"))
+
+	tk.MustExec(`drop table if exists ts1pk`)
+	tk.MustExec(`create table ts1pk(id1 timestamp, id2 timestamp, v int, primary key(id1, id2))`)
+	ts := "2018-01-01 11:11:11"
+	tk.MustExec(`insert into ts1pk (id1, id2, v) values(?, ?, ?)`, ts, ts, 1)
+	tk.MustQuery(`select id1, id2, v from ts1pk`).Check(testkit.Rows("2018-01-01 11:11:11 2018-01-01 11:11:11 1"))
+	tk.MustExec(`insert into ts1pk (id1, id2, v) values(?, ?, ?) on duplicate key update v = values(v)`, ts, ts, 2)
+	tk.MustQuery(`select id1, id2, v from ts1pk`).Check(testkit.Rows("2018-01-01 11:11:11 2018-01-01 11:11:11 2"))
+	tk.MustExec(`insert into ts1pk (id1, id2, v) values(?, ?, ?) on duplicate key update v = values(v), id1 = ?`, ts, ts, 2, "2018-01-01 11:11:12")
+	tk.MustQuery(`select id1, id2, v from ts1pk`).Check(testkit.Rows("2018-01-01 11:11:12 2018-01-01 11:11:11 2"))
+}
+
+func (s *testSuite10) TestClusterPrimaryKeyForIndexScan(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`set @@tidb_enable_clustered_index=true`)
+
+	tk.MustExec("drop table if exists pkt1;")
+	tk.MustExec("CREATE TABLE pkt1 (a varchar(255), b int, index idx(b), primary key(a,b));")
+	tk.MustExec("insert into pkt1 values ('aaa',1);")
+	tk.MustQuery(`select b from pkt1 where b = 1;`).Check(testkit.Rows("1"))
+
+	tk.MustExec("drop table if exists pkt2;")
+	tk.MustExec("CREATE TABLE pkt2 (a varchar(255), b int, unique index idx(b), primary key(a,b));")
+	tk.MustExec("insert into pkt2 values ('aaa',1);")
+	tk.MustQuery(`select b from pkt2 where b = 1;`).Check(testkit.Rows("1"))
+
+	tk.MustExec("drop table if exists issue_18232;")
+	tk.MustExec("create table issue_18232 (a int, b int, c int, d int, primary key (a, b), index idx(c));")
+
+	iter, cnt := combination([]string{"a", "b", "c", "d"}), 0
+	for {
+		comb := iter()
+		if comb == nil {
+			break
+		}
+		selField := strings.Join(comb, ",")
+		sql := fmt.Sprintf("select %s from issue_18232 use index (idx);", selField)
+		tk.MustExec(sql)
+		cnt++
+	}
+	c.Assert(cnt, Equals, 15)
+}
+
+func (s *testSuite10) TestInsertRuntimeStat(c *C) {
+	stats := &executor.InsertRuntimeStat{
+		BasicRuntimeStats:    &execdetails.BasicRuntimeStats{},
+		SnapshotRuntimeStats: nil,
+		CheckInsertTime:      2 * time.Second,
+		Prefetch:             1 * time.Second,
+	}
+	stats.BasicRuntimeStats.Record(5*time.Second, 1)
+	c.Assert(stats.String(), Equals, "prepare:3s, check_insert:{total_time:2s, mem_insert_time:1s, prefetch:1s}")
+	c.Assert(stats.String(), Equals, stats.Clone().String())
+	stats.Merge(stats.Clone())
+	c.Assert(stats.String(), Equals, "prepare:6s, check_insert:{total_time:4s, mem_insert_time:2s, prefetch:2s}")
+}
+
+func (s *testSerialSuite) TestDuplicateEntryMessage(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	for _, enable := range []int{0, 1} {
+		tk.MustExec(fmt.Sprintf("set session tidb_enable_clustered_index=%d;", enable))
+		tk.MustExec("drop table if exists t;")
+		tk.MustExec("create table t(a int, b char(10), unique key(b)) collate utf8mb4_general_ci;")
+		tk.MustExec("insert into t value (34, '12Ak');")
+		tk.MustGetErrMsg("insert into t value (34, '12Ak');", "[kv:1062]Duplicate entry '12Ak' for key 'b'")
+
+		tk.MustExec("begin optimistic;")
+		tk.MustExec("insert into t value (34, '12ak');")
+		tk.MustExec("delete from t where b = '12ak';")
+		tk.MustGetErrMsg("commit;", "previous statement: delete from t where b = '12ak';: [kv:1062]Duplicate entry '12ak' for key 'b'")
+
+		tk.MustExec("drop table if exists t;")
+		tk.MustExec("create table t (a datetime primary key);")
+		tk.MustExec("insert into t values ('2020-01-01');")
+		tk.MustGetErrMsg("insert into t values ('2020-01-01');", "[kv:1062]Duplicate entry '2020-01-01 00:00:00' for key 'PRIMARY'")
+
+		tk.MustExec("begin optimistic;")
+		tk.MustExec("insert into t values ('2020-01-01');")
+		tk.MustExec("delete from t where a = '2020-01-01';")
+		tk.MustGetErrMsg("commit;", "previous statement: delete from t where a = '2020-01-01';: [kv:1062]Duplicate entry '2020-01-01 00:00:00' for key 'PRIMARY'")
+
+		tk.MustExec("drop table if exists t;")
+		tk.MustExec("create table t (a int primary key );")
+		tk.MustExec("insert into t value (1);")
+		tk.MustGetErrMsg("insert into t value (1);", "[kv:1062]Duplicate entry '1' for key 'PRIMARY'")
+
+		tk.MustExec("drop table if exists t;")
+		tk.MustExec("create table t (a datetime unique);")
+		tk.MustExec("insert into t values ('2020-01-01');")
+		tk.MustGetErrMsg("insert into t values ('2020-01-01');", "[kv:1062]Duplicate entry '2020-01-01 00:00:00' for key 'a'")
+
+		tk.MustExec("drop table if exists t;")
+		tk.MustExec("create table t (a datetime, b int, c varchar(10), primary key (a, b, c)) collate utf8mb4_general_ci;")
+		tk.MustExec("insert into t values ('2020-01-01', 1, 'aSDd');")
+		tk.MustGetErrMsg("insert into t values ('2020-01-01', 1, 'ASDD');", "[kv:1062]Duplicate entry '2020-01-01 00:00:00-1-ASDD' for key 'PRIMARY'")
+
+		tk.MustExec("drop table if exists t;")
+		tk.MustExec("create table t (a datetime, b int, c varchar(10), unique key (a, b, c)) collate utf8mb4_general_ci;")
+		tk.MustExec("insert into t values ('2020-01-01', 1, 'aSDd');")
+		tk.MustGetErrMsg("insert into t values ('2020-01-01', 1, 'ASDD');", "[kv:1062]Duplicate entry '2020-01-01 00:00:00-1-ASDD' for key 'a'")
+	}
+}
+
+func (s *testSerialSuite) TestIssue20768(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(a year, primary key(a))")
+	tk.MustExec("insert ignore into t1 values(null)")
+	tk.MustExec("create table t2(a int, key(a))")
+	tk.MustExec("insert into t2 values(0)")
+	tk.MustQuery("select /*+ hash_join(t1) */ * from t1 join t2 on t1.a = t2.a").Check(testkit.Rows("0 0"))
+	tk.MustQuery("select /*+ inl_join(t1) */ * from t1 join t2 on t1.a = t2.a").Check(testkit.Rows("0 0"))
+	tk.MustQuery("select /*+ inl_join(t2) */ * from t1 join t2 on t1.a = t2.a").Check(testkit.Rows("0 0"))
+	tk.MustQuery("select /*+ inl_hash_join(t1) */ * from t1 join t2 on t1.a = t2.a").Check(testkit.Rows("0 0"))
+	tk.MustQuery("select /*+ inl_merge_join(t1) */ * from t1 join t2 on t1.a = t2.a").Check(testkit.Rows("0 0"))
+	tk.MustQuery("select /*+ merge_join(t1) */ * from t1 join t2 on t1.a = t2.a").Check(testkit.Rows("0 0"))
+}
+
+func combination(items []string) func() []string {
+	current := 1
+	buf := make([]string, len(items))
+	return func() []string {
+		if current >= int(math.Pow(2, float64(len(items)))) {
+			return nil
+		}
+		buf = buf[:0]
+		for i, e := range items {
+			if (1<<i)&current != 0 {
+				buf = append(buf, e)
+			}
+		}
+		current++
+		return buf
+	}
+}
+>>>>>>> 04729d2b2... executor: fix wrong default zero value for year type (#20824)
