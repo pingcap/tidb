@@ -5810,6 +5810,9 @@ func buildPlacementSpecs(bundle *placement.Bundle, specs []*ast.PlacementSpec) (
 		case ast.PlacementRoleFollower:
 			role = placement.Follower
 		case ast.PlacementRoleLeader:
+			if spec.Replicas == 0 {
+				spec.Replicas = 1
+			}
 			role = placement.Leader
 		case ast.PlacementRoleLearner:
 			role = placement.Learner
@@ -5838,9 +5841,6 @@ func buildPlacementSpecs(bundle *placement.Bundle, specs []*ast.PlacementSpec) (
 		}
 
 		var newRules []*placement.Rule
-		if role == placement.Leader {
-			spec.Replicas = 1
-		}
 		newRules, err = buildPlacementSpecReplicasAndConstraint(spec.Replicas, spec.Constraints)
 		if err != nil {
 			break
