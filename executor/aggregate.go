@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
@@ -835,6 +836,7 @@ type StreamAggExec struct {
 	childResult        *chunk.Chunk
 
 	memTracker *memory.Tracker // track memory usage.
+	stats      *StreamAggRuntimeStat
 }
 
 // Open implements the Executor Open interface.
@@ -948,6 +950,7 @@ func (e *StreamAggExec) consumeGroupRows() error {
 
 func (e *StreamAggExec) consumeCurGroupRowsAndFetchChild(ctx context.Context, chk *chunk.Chunk) (err error) {
 	// Before fetching a new batch of input, we should consume the last group.
+	start := time.Now()
 	err = e.consumeGroupRows()
 	if err != nil {
 		return err
@@ -973,6 +976,9 @@ func (e *StreamAggExec) consumeCurGroupRowsAndFetchChild(ctx context.Context, ch
 	// Reach here, "e.childrenResults[0].NumRows() > 0" is guaranteed.
 	e.isChildReturnEmpty = false
 	e.inputRow = e.inputIter.Begin()
+	if e.stats != nil {
+		e.stats.Allocate = time.Since(start)
+	}
 	return nil
 }
 
@@ -990,6 +996,10 @@ func (e *StreamAggExec) appendResult2Chunk(chk *chunk.Chunk) error {
 		chk.SetNumVirtualRows(chk.NumRows() + 1)
 	}
 	return nil
+}
+
+type StreamAggRuntimeStat struct {
+	Allocate time.Duration
 }
 
 // vecGroupChecker is used to split a given chunk according to the `group by` expression in a vectorized manner
