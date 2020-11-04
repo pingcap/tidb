@@ -528,7 +528,7 @@ func (worker *copIteratorWorker) run(ctx context.Context) {
 		failpoint.Inject("testRateLimitActionMockOtherExecutorConsume", func(val failpoint.Value) {
 			if val.(bool) {
 				// wait action being enabled and response channel become empty
-				time.Sleep(2 * time.Millisecond)
+				time.Sleep(500 * time.Millisecond)
 				// simulate other executor consume and trigger oom action
 				worker.memTracker.Consume(99999)
 			}
