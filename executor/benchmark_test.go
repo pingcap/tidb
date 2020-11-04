@@ -1833,6 +1833,7 @@ type ApplyTestCase struct {
 	ctx                sessionctx.Context
 	disk               bool
 	childrenUsedSchema [][]bool
+	isInlineProjection bool
 }
 
 func (a ApplyTestCase) columns() []*expression.Column {
@@ -1853,8 +1854,6 @@ func defaultApplyTestCase() *ApplyTestCase {
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().InitChunkSize = variable.DefInitChunkSize
 	ctx.GetSessionVars().MaxChunkSize = variable.DefMaxChunkSize
-	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(-1, -1)
-	ctx.GetSessionVars().StmtCtx.DiskTracker = disk.NewTracker(-1, -1)
 	tc := &ApplyTestCase{
 		rows: 300000,
 		ctx: ctx,
@@ -1867,12 +1866,13 @@ func defaultApplyTestCase() *ApplyTestCase {
 }
 
 func benchmarkApplyExec(b *testing.B, testCase *ApplyTestCase) {
+	col := testCase.columns()
 	opt1 := mockDataSourceParameters{
-		schema: expression.NewSchema(testCase.columns()...),
+		schema: expression.NewSchema(col...),
 		rows: testCase.rows,
 		ctx:  testCase.ctx,
 		genDataFunc: func(row int, typ *types.FieldType) interface{} {
-			return int64(row)
+			return int64(row + 1)
 		},
 	}
 	opt2 := opt1
@@ -1881,46 +1881,83 @@ func benchmarkApplyExec(b *testing.B, testCase *ApplyTestCase) {
 
 	con := &expression.Constant{Value: types.NewDatum(testCase.rows), RetType: types.NewFieldType(mysql.TypeLonglong)}
 
-	outerFilter := expression.NewFunctionInternal(testCase.ctx, ast.LT, types.NewFieldType(mysql.TypeLonglong), testCase.columns()[0], con)
+	outerFilter := expression.NewFunctionInternal(testCase.ctx, ast.LT, types.NewFieldType(mysql.TypeTiny), col[0], con)
 	innerFilter := outerFilter.Clone()
-	otherFilter := expression.NewFunctionInternal(testCase.ctx, ast.EQ, types.NewFieldType(mysql.TypeLonglong), testCase.columns()[0], testCase.columns()[1])
+	otherFilter := expression.NewFunctionInternal(testCase.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), col[0], col[1])
 
 	joinSchema := expression.NewSchema()
-	joinSchema.Append(testCase.columns()...)
-	joinSchema.Append(testCase.columns()...)
+	var childrenUsedSchema [][]bool
+
+	if testCase.isInlineProjection {
+		for i, used := range testCase.childrenUsedSchema[0] {
+			if used {
+				joinSchema.Append(col[i])
+			}
+		}
+		for i, used := range testCase.childrenUsedSchema[1] {
+			if used {
+				joinSchema.Append(col[i])
+			}
+		}
+		childrenUsedSchema = testCase.childrenUsedSchema
+	} else {
+		joinSchema.Append(col...)
+		joinSchema.Append(col...)
+		childrenUsedSchema = nil
+	}
+
 	joiner := newJoiner(testCase.ctx, core.InnerJoin, false,
 		make([]types.Datum, innerExec.Schema().Len()), []expression.Expression{otherFilter},
-		retTypes(outerExec), retTypes(innerExec), testCase.childrenUsedSchema)
-	exec := &NestedLoopApplyExec{
-		baseExecutor: newBaseExecutor(testCase.ctx, joinSchema, 0),
+		retTypes(outerExec), retTypes(innerExec), childrenUsedSchema)
+	apply := &NestedLoopApplyExec {
+		baseExecutor: newBaseExecutor(testCase.ctx, joinSchema, 4, outerExec, innerExec),
 		outerExec:    outerExec,
 		innerExec:    innerExec,
 		outerFilter:  []expression.Expression{outerFilter},
 		innerFilter:  []expression.Expression{innerFilter},
-		joiner: joiner,
+		joiner:       joiner,
 		ctx:          testCase.ctx,
 	}
-	memLimit := int64(-1)
-	if testCase.disk {
-		memLimit = 1
+
+	var exec Executor
+	if testCase.isInlineProjection {
+		exec = apply
+	} else {
+		usedCols := make([]*expression.Column, 0, len(col))
+		exprs := make([]expression.Expression, 0, len(col))
+		for i, used := range testCase.childrenUsedSchema[0] {
+			if used {
+				usedCols = append(usedCols, col[i])
+				exprs = append(exprs, col[i])
+			}
+		}
+		for i, used := range testCase.childrenUsedSchema[1] {
+			if used {
+				usedCols = append(usedCols, col[i])
+				exprs = append(exprs, col[i])
+			}
+		}
+
+		proj := &ProjectionExec{
+			baseExecutor:  newBaseExecutor(testCase.ctx, expression.NewSchema(usedCols...), 0, apply),
+			numWorkers:    1,
+			evaluatorSuit: expression.NewEvaluatorSuite(exprs, false),
+		}
+		exec = proj
 	}
-	t := memory.NewTracker(-1, memLimit)
-	t.SetActionOnExceed(nil)
-	t2 := disk.NewTracker(-1, -1)
-	exec.ctx.GetSessionVars().StmtCtx.MemTracker = t
-	exec.ctx.GetSessionVars().StmtCtx.DiskTracker = t2
-	exec.innerList = chunk.NewList(retTypes(innerExec), innerExec.initCap, innerExec.maxChunkSize)
-	exec.innerChunk = newFirstChunk(innerExec)
-	exec.outerChunk = newFirstChunk(outerExec)
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		b.StopTimer()
 		tmpCtx := context.Background()
+		chk := newFirstChunk(exec)
 		outerExec.prepareChunks()
 		innerExec.prepareChunks()
-		chk := newFirstChunk(exec)
+		apply.innerList = chunk.NewList(retTypes(innerExec), innerExec.initCap, innerExec.maxChunkSize)
+		apply.innerChunk = newFirstChunk(innerExec)
+		apply.outerChunk = newFirstChunk(outerExec)
 
+		totalRow := 0
 		b.StartTimer()
 		if err := exec.Open(tmpCtx); err != nil {
 			b.Fatal(err)
@@ -1932,31 +1969,36 @@ func benchmarkApplyExec(b *testing.B, testCase *ApplyTestCase) {
 			if chk.NumRows() == 0 {
 				break
 			}
+			totalRow += chk.NumRows()
 		}
 
 		if err := exec.Close(); err != nil {
 			b.Fatal(err)
 		}
 		b.StopTimer()
+		if totalRow == 0 {
+			b.Fatal("totalRow == 0")
+		}
 	}
 }
 
 func BenchmarkApplyInlineProjection(b *testing.B) {
 	b.ReportAllocs()
+	cas := defaultApplyTestCase()
+	cas.childrenUsedSchema = [][]bool{
+		{false, true},
+		{false, false},
+	}
 
 	{
-		cas := defaultApplyTestCase()
-		cas.childrenUsedSchema = [][]bool{
-			{false, true},
-			{false, false},
-		}
+		cas.isInlineProjection = true
 		b.Run("InlineProjection:ON", func(b *testing.B) {
 			benchmarkApplyExec(b, cas)
 		})
 	}
 
 	{
-		cas := defaultApplyTestCase()
+		cas.isInlineProjection = false
 		b.Run("InlineProjection:OFF", func(b *testing.B) {
 			benchmarkApplyExec(b, cas)
 		})
