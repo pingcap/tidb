@@ -605,9 +605,6 @@ func (s *testSuiteJoin1) TestNaturalJoin(c *C) {
 	tk.MustQuery("select * from t1 natural left join t2 natural left join t3 order by t3.b").Check(testkit.Rows("20 <nil> 10", "2 3 1"))
 	tk.MustQuery("select sum(t3.b) from t1 natural left join t2 natural left join t3").Check(testkit.Rows("2"))
 
-	tk.MustExec("insert t1 values (1, 2), (10, 20)")
-	tk.MustExec("insert t2 values (1, 23), (10, 22)")
-
 	tk.MustQuery("select *,rank()over(partition by t1.a order by t2.c desc) as ranking  from t1 natural left join t2 natural left join t3 order by a").Check(testkit.Rows("2 3 1 1", "20 <nil> 10 1"))
 	tk.MustQuery("select t2.a from (t1 join t2 using (a)) join t3 using (c)").Check(testkit.Rows("1"))
 	tk.MustQuery("select t2.a from t1 natural left join t2 where t2.c = 3").Check(testkit.Rows("1"))
