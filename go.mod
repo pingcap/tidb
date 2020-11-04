@@ -2,15 +2,14 @@ module github.com/pingcap/tidb
 
 require (
 	github.com/BurntSushi/toml v0.3.1
+	github.com/DATA-DOG/go-sqlmock v1.5.0 // indirect
 	github.com/HdrHistogram/hdrhistogram-go v0.9.0 // indirect
 	github.com/Jeffail/gabs/v2 v2.5.1
 	github.com/aws/aws-sdk-go v1.30.24 // indirect
 	github.com/blacktear23/go-proxyprotocol v0.0.0-20180807104634-af7a81e8dd0d
-	github.com/burntsushi/toml v0.3.1 // indirect
 	github.com/carlmjohnson/flagext v0.20.2 // indirect
 	github.com/cheggaaa/pb/v3 v3.0.4 // indirect
 	github.com/cockroachdb/pebble v0.0.0-20200617141519-3b241b76ed3b // indirect
-	github.com/cockroachdb/redact v0.0.0-20200622112456-cd282804bbd3 // indirect
 	github.com/codahale/hdrhistogram v0.9.0 // indirect
 	github.com/coreos/go-semver v0.3.0 // indirect
 	github.com/coreos/go-systemd v0.0.0-20190719114852-fd7a80b32e1f // indirect
@@ -46,7 +45,6 @@ require (
 	github.com/onsi/gomega v1.6.0 // indirect
 	github.com/opentracing/basictracer-go v1.0.0
 	github.com/opentracing/opentracing-go v1.1.0
-	github.com/pelletier/go-toml v1.3.0
 	github.com/phayes/freeport v0.0.0-20180830031419-95f893ade6f2
 	github.com/pierrec/lz4 v2.5.2+incompatible // indirect
 	github.com/pingcap/badger v1.5.1-0.20200908111422-2e78ee155d19
