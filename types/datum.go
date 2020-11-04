@@ -101,6 +101,11 @@ func (d *Datum) Collation() string {
 	return d.collation
 }
 
+// SetCollation sets the collation of the datum.
+func (d *Datum) SetCollation(collation string) {
+	d.collation = collation
+}
+
 // Frac gets the frac of the datum.
 func (d *Datum) Frac() int {
 	return int(d.decimal)
@@ -1300,14 +1305,8 @@ func ProduceDecWithSpecifiedTp(dec *MyDecimal, tp *FieldType, sc *stmtctx.Statem
 				return nil, err
 			}
 			if !dec.IsZero() && frac > decimal && dec.Compare(&old) != 0 {
-				if sc.InInsertStmt || sc.InUpdateStmt || sc.InDeleteStmt {
-					// fix https://github.com/pingcap/tidb/issues/3895
-					// fix https://github.com/pingcap/tidb/issues/5532
-					sc.AppendWarning(ErrTruncatedWrongVal.GenWithStackByArgs("DECIMAL", &old))
-					err = nil
-				} else {
-					err = sc.HandleTruncate(ErrTruncatedWrongVal.GenWithStackByArgs("DECIMAL", &old))
-				}
+				sc.AppendWarning(ErrTruncatedWrongVal.GenWithStackByArgs("DECIMAL", &old))
+				err = nil
 			}
 		}
 	}
