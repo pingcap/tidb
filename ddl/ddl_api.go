@@ -666,7 +666,7 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
-	err = checkColumnValueConstraint(ctx, col, col.Collate)
+	err = checkColumnValueConstraint(col, col.Collate)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
@@ -956,20 +956,20 @@ func checkPriKeyConstraint(col *table.Column, hasDefaultValue, hasNullFlag bool,
 	return nil
 }
 
-func checkColumnValueConstraint(ctx sessionctx.Context, col *table.Column, collation string) error {
+func checkColumnValueConstraint(col *table.Column, collation string) error {
 	if col.Tp != mysql.TypeEnum && col.Tp != mysql.TypeSet {
 		return nil
 	}
 	valueMap := make(map[string]bool, len(col.Elems))
 	ctor := collate.GetCollator(collation)
-	enumLengthLimit, _ := ctx.GetSessionVars().GetSystemVar(variable.TiDBEnableEnumLengthLimit)
+	enumLengthLimit := config.GetGlobalConfig().EnableEnumLengthLimit
 	desc, err := charset.GetCharsetDesc(col.Charset)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	for i := range col.Elems {
 		val := string(ctor.Key(col.Elems[i]))
-		if variable.TiDBOptOn(enumLengthLimit) && (len(val) > 255 || len(val)*desc.Maxlen > 1020) {
+		if enumLengthLimit && (len(val) > 255 || len(val)*desc.Maxlen > 1020) {
 			return ErrTooLongValueForType.GenWithStackByArgs(col.Name)
 		}
 		if _, ok := valueMap[val]; ok {
@@ -3762,7 +3762,7 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 		return nil, errors.Trace(err)
 	}
 
-	if err = checkColumnValueConstraint(ctx, newCol, newCol.Collate); err != nil {
+	if err = checkColumnValueConstraint(newCol, newCol.Collate); err != nil {
 		return nil, errors.Trace(err)
 	}
 
