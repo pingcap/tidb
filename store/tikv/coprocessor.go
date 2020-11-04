@@ -1415,7 +1415,7 @@ func (e *rateLimitAction) broadcastIfNeeded(needed bool) {
 	}
 	e.conditionLock()
 	defer e.conditionUnlock()
-	if !e.cond.exceeded || e.cond.waitingWorkerCnt < 1 {
+	if !e.cond.exceeded {
 		return
 	}
 	for !e.cond.isTokenDestroyed {
