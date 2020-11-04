@@ -463,7 +463,7 @@ func buildWindowExecutor(ctx sessionctx.Context, windowFunc string, funcs int, f
 		})
 	}
 	for _, col := range partitionBy {
-		win.PartitionBy = append(win.PartitionBy, property.Item{Col: col})
+		win.PartitionBy = append(win.PartitionBy, property.SortItem{Col: col})
 	}
 	win.Frame = frame
 	win.OrderBy = nil

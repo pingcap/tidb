@@ -242,6 +242,12 @@ func (p Insert) Init(ctx sessionctx.Context) *Insert {
 	return &p
 }
 
+// Init initializes LoadData.
+func (p LoadData) Init(ctx sessionctx.Context) *LoadData {
+	p.basePlan = newBasePlan(ctx, plancodec.TypeLoadData, 0)
+	return &p
+}
+
 // Init initializes LogicalShow.
 func (p LogicalShow) Init(ctx sessionctx.Context) *LogicalShow {
 	p.baseLogicalPlan = newBaseLogicalPlan(ctx, plancodec.TypeShow, &p, 0)

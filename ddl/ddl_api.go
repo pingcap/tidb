@@ -3208,6 +3208,10 @@ func (d *ddl) DropColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTa
 		return nil
 	}
 	colName := spec.OldColumnName.Name
+	err = checkDropVisibleColumnCnt(t, 1)
+	if err != nil {
+		return err
+	}
 
 	job := &model.Job{
 		SchemaID:   schema.ID,
@@ -3276,6 +3280,10 @@ func (d *ddl) DropColumns(ctx sessionctx.Context, ti ast.Ident, specs []*ast.Alt
 		return ErrCantRemoveAllFields.GenWithStack("can't drop all columns in table %s",
 			tblInfo.Name)
 	}
+	err = checkDropVisibleColumnCnt(t, len(colNames))
+	if err != nil {
+		return err
+	}
 
 	job := &model.Job{
 		SchemaID:   schema.ID,
@@ -3316,6 +3324,20 @@ func checkIsDroppableColumn(ctx sessionctx.Context, t table.Table, spec *ast.Alt
 		return false, errUnsupportedPKHandle
 	}
 	return true, nil
+}
+
+func checkDropVisibleColumnCnt(t table.Table, columnCnt int) error {
+	tblInfo := t.Meta()
+	visibleColumCnt := 0
+	for _, column := range tblInfo.Columns {
+		if !column.Hidden {
+			visibleColumCnt++
+		}
+		if visibleColumCnt > columnCnt {
+			return nil
+		}
+	}
+	return ErrTableMustHaveColumns
 }
 
 // checkModifyCharsetAndCollation returns error when the charset or collation is not modifiable.
@@ -3378,6 +3400,26 @@ func CheckModifyTypeCompatible(origin *types.FieldType, to *types.FieldType) (al
 			// Changing integer to other types, reorg is absolutely necessary.
 			return unsupportedMsg, errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
 		}
+	case mysql.TypeFloat, mysql.TypeDouble:
+		switch to.Tp {
+		case mysql.TypeFloat, mysql.TypeDouble:
+			skipSignCheck = true
+			skipLenCheck = true
+		case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp, mysql.TypeEnum, mysql.TypeSet:
+			// TODO: Currently float/double cast to date/datetime/timestamp/enum/set are all not support yet, should fix here after supported.
+			return "", errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
+		default:
+			return unsupportedMsg, errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
+		}
+	case mysql.TypeBit:
+		switch to.Tp {
+		case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp, mysql.TypeDuration, mysql.TypeEnum, mysql.TypeSet:
+			// TODO: Currently bit cast to date/datetime/timestamp/time/enum/set are all not support yet, should fix here after supported.
+			return "", errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
+		case mysql.TypeBit:
+		default:
+			return unsupportedMsg, errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
+		}
 	case mysql.TypeEnum, mysql.TypeSet:
 		var typeVar string
 		if origin.Tp == mysql.TypeEnum {
@@ -3410,7 +3452,11 @@ func CheckModifyTypeCompatible(origin *types.FieldType, to *types.FieldType) (al
 		}
 	case mysql.TypeNewDecimal:
 		if origin.Tp != to.Tp {
-			return "", errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
+			switch to.Tp {
+			case mysql.TypeEnum, mysql.TypeSet:
+				return "", errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
+			}
+			return unsupportedMsg, errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
 		}
 		// Floating-point and fixed-point types also can be UNSIGNED. As with integer types, this attribute prevents
 		// negative values from being stored in the column. Unlike the integer types, the upper range of column values
@@ -4635,7 +4681,8 @@ func getAnonymousIndex(t table.Table, colName model.CIStr) model.CIStr {
 func (d *ddl) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexName model.CIStr,
 	indexPartSpecifications []*ast.IndexPartSpecification, indexOption *ast.IndexOption) error {
 	if !config.GetGlobalConfig().AlterPrimaryKey {
-		return ErrUnsupportedModifyPrimaryKey.GenWithStack("Unsupported add primary key, alter-primary-key is false")
+		return ErrUnsupportedModifyPrimaryKey.GenWithStack("Unsupported add primary key, alter-primary-key is false. " +
+			"Please check the documentation for the tidb-server configuration files")
 	}
 
 	schema, t, err := d.getSchemaAndTableByIdent(ctx, ti)

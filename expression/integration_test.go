@@ -1938,12 +1938,27 @@ func (s *testIntegrationSuite2) TestTimeBuiltin(c *C) {
 	result.Check(testkit.Rows("2017-01-01 2017-01-01 12:20:59 12:20:59"))
 	result = tk.MustQuery("select str_to_date('aaa01-01-2017', 'aaa%d-%m-%Y'), str_to_date('59:20:12 aaa01-01-2017', '%s:%i:%H aaa%d-%m-%Y'), str_to_date('59:20:12aaa', '%s:%i:%Haaa')")
 	result.Check(testkit.Rows("2017-01-01 2017-01-01 12:20:59 12:20:59"))
+
 	result = tk.MustQuery("select str_to_date('01-01-2017', '%d'), str_to_date('59', '%d-%Y')")
 	// TODO: MySQL returns "<nil> <nil>".
 	result.Check(testkit.Rows("0000-00-01 <nil>"))
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Incorrect datetime value: '0000-00-00 00:00:00'"))
+	result = tk.MustQuery("show warnings")
+	result.Sort().Check(testutil.RowsWithSep("|",
+		"Warning|1292|Incorrect datetime value: '0000-00-00 00:00:00'",
+		"Warning|1292|Truncated incorrect datetime value: '01-01-2017'"))
+
 	result = tk.MustQuery("select str_to_date('2018-6-1', '%Y-%m-%d'), str_to_date('2018-6-1', '%Y-%c-%d'), str_to_date('59:20:1', '%s:%i:%k'), str_to_date('59:20:1', '%s:%i:%l')")
 	result.Check(testkit.Rows("2018-06-01 2018-06-01 01:20:59 01:20:59"))
+
+	result = tk.MustQuery("select str_to_date('2020-07-04 11:22:33 PM c', '%Y-%m-%d %r')")
+	result.Check(testkit.Rows("2020-07-04 23:22:33"))
+	result = tk.MustQuery("show warnings")
+	result.Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect datetime value: '2020-07-04 11:22:33 PM c'"))
+
+	result = tk.MustQuery("select str_to_date('11:22:33 PM', ' %r')")
+	result.Check(testkit.Rows("23:22:33"))
+	result = tk.MustQuery("show warnings")
+	result.Check(testkit.Rows())
 
 	// for maketime
 	tk.MustExec(`drop table if exists t`)
@@ -5220,8 +5235,7 @@ func (s *testIntegrationSuite) TestIssue16973(c *C) {
 func (s *testIntegrationSuite) TestExprPushdownBlacklist(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustQuery(`select * from mysql.expr_pushdown_blacklist`).Check(testkit.Rows(
-		"date_add tiflash DST(daylight saving time) does not take effect in TiFlash date_add",
-		"cast tiflash Behavior of some corner cases(overflow, truncate etc) is different in TiFlash and TiDB"))
+		"date_add tiflash DST(daylight saving time) does not take effect in TiFlash date_add"))
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -5242,7 +5256,7 @@ func (s *testIntegrationSuite) TestExprPushdownBlacklist(c *C) {
 	}
 
 	tk.MustExec("insert into mysql.expr_pushdown_blacklist " +
-		"values('<', 'tikv,tiflash,tidb', 'for test'),('date_format', 'tikv', 'for test')")
+		"values('<', 'tikv,tiflash,tidb', 'for test'),('cast', 'tiflash', 'for test'),('date_format', 'tikv', 'for test')")
 	tk.MustExec("admin reload expr_pushdown_blacklist")
 
 	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash'")
@@ -5691,6 +5705,24 @@ func (s *testIntegrationSuite) TestCastStrToInt(c *C) {
 	}
 }
 
+func (s *testIntegrationSerialSuite) TestPreparePlanCache(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	// Plan cache should now be on by default
+	c.Assert(plannercore.PreparedPlanCacheEnabled(), Equals, true)
+
+	// Use the example from the docs https://docs.pingcap.com/tidb/stable/sql-prepare-plan-cache
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a int);")
+	tk.MustExec("prepare stmt from 'select * from t where a = ?';")
+	tk.MustExec("set @a = 1;")
+	tk.MustExec("execute stmt using @a;")
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+	tk.MustExec("execute stmt using @a;")
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+}
+
 func (s *testIntegrationSerialSuite) TestIssue16205(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	orgEnable := plannercore.PreparedPlanCacheEnabled()
@@ -6006,6 +6038,15 @@ func (s *testIntegrationSerialSuite) TestCacheConstEval(c *C) {
 	tk.Se.GetSessionVars().EnableVectorizedExpression = true
 	tk.MustExec("delete from mysql.expr_pushdown_blacklist where name = 'cast' and store_type = 'tikv,tiflash,tidb' and reason = 'for test'")
 	tk.MustExec("admin reload expr_pushdown_blacklist")
+}
+
+func (s *testSuite) TestVirtualGeneratedColumnAndLimit(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int, b int as (a + 1));")
+	tk.MustExec("insert into t(a) values (1);")
+	tk.MustQuery("select /*+ LIMIT_TO_COP() */ b from t limit 1;").Check(testkit.Rows("2"))
+	tk.MustQuery("select /*+ LIMIT_TO_COP() */ b from t order by b limit 1;").Check(testkit.Rows("2"))
 }
 
 func (s *testIntegrationSerialSuite) TestCollationBasic(c *C) {
@@ -7607,4 +7648,11 @@ func (s *testIntegrationSuite) TestIssue20180(c *C) {
 	tk.MustExec("create table t(a enum('a','b'));")
 	tk.MustExec("insert into t values('b');")
 	tk.MustQuery("select * from t where a > 1  and a = \"b\";").Check(testkit.Rows("b"))
+}
+
+func (s *testIntegrationSerialSuite) TestIssue20608(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustQuery("select '䇇Հ' collate utf8mb4_bin like '___Հ';").Check(testkit.Rows("0"))
 }
