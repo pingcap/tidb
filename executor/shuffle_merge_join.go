@@ -19,10 +19,9 @@ type ShuffleMergeJoinExec struct {
 	prepared bool
 	executed bool
 
-	innerSplitter   partitionSplitter
-	outerSplitter   partitionSplitter
-	innerDataSource Executor
-	outerDataSource Executor
+	// each dataSource has a corresponding spliter
+	splitters   []partitionSplitter
+	dataSources []Executor
 
 	finishCh chan struct{}
 	outputCh chan *shuffleOutput
@@ -30,11 +29,11 @@ type ShuffleMergeJoinExec struct {
 
 // Open implements the Executor Open interface.
 func (e *ShuffleMergeJoinExec) Open(ctx context.Context) error {
-	if err := e.innerDataSource.Open(ctx); err != nil {
-		return err
-	}
-	if err := e.outerDataSource.Open(ctx); err != nil {
-		return err
+	for _, s := range e.dataSources {
+		if err := s.Open(ctx); err != nil {
+			return err
+		}
+
 	}
 	if err := e.baseExecutor.Open(ctx); err != nil {
 		return err
@@ -47,10 +46,10 @@ func (e *ShuffleMergeJoinExec) Open(ctx context.Context) error {
 	for _, w := range e.workers {
 		w.finishCh = e.finishCh
 
-		w.innerPartition.inputCh = make(chan *chunk.Chunk, 1)
-		w.innerPartition.inputHolderCh = make(chan *chunk.Chunk, 1)
-		w.outerPartition.inputCh = make(chan *chunk.Chunk, 1)
-		w.outerPartition.inputHolderCh = make(chan *chunk.Chunk, 1)
+		for _, r := range w.receivers {
+			r.inputCh = make(chan *chunk.Chunk, 1)
+			r.inputHolderCh = make(chan *chunk.Chunk, 1)
+		}
 
 		w.outputCh = e.outputCh
 		w.outputHolderCh = make(chan *chunk.Chunk, 1)
@@ -59,8 +58,9 @@ func (e *ShuffleMergeJoinExec) Open(ctx context.Context) error {
 			return err
 		}
 
-		w.innerPartition.inputHolderCh <- newFirstChunk(e.innerDataSource)
-		w.outerPartition.inputHolderCh <- newFirstChunk(e.outerDataSource)
+		for i, r := range w.receivers {
+			r.inputHolderCh <- newFirstChunk(e.dataSources[i])
+		}
 		w.outputHolderCh <- newFirstChunk(e)
 	}
 
@@ -71,19 +71,19 @@ func (e *ShuffleMergeJoinExec) Open(ctx context.Context) error {
 func (e *ShuffleMergeJoinExec) Close() error {
 	if !e.prepared {
 		for _, w := range e.workers {
-			close(w.innerPartition.inputHolderCh)
-			close(w.outerPartition.inputHolderCh)
-			close(w.innerPartition.inputCh)
-			close(w.outerPartition.inputCh)
+			for _, r := range w.receivers {
+				close(r.inputHolderCh)
+				close(r.inputCh)
+			}
 			close(w.outputHolderCh)
 		}
 		close(e.outputCh)
 	}
 	close(e.finishCh)
 	for _, w := range e.workers {
-		for range w.innerPartition.inputCh {
-		}
-		for range w.outerPartition.inputCh {
+		for _, r := range w.receivers {
+			for range r.inputCh {
+			}
 		}
 	}
 	for range e.outputCh { // workers exit before `e.outputCh` is closed.
@@ -96,19 +96,20 @@ func (e *ShuffleMergeJoinExec) Close() error {
 		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, runtimeStats)
 	}
 
-	if err := e.innerDataSource.Close(); err != nil {
-		return errors.Trace(err)
-	}
-	if err := e.outerDataSource.Close(); err != nil {
-		return errors.Trace(err)
+	for _, r := range e.dataSources {
+		if err := r.Close(); err != nil {
+			return errors.Trace(err)
+		}
 	}
 	err := e.baseExecutor.Close()
 	return errors.Trace(err)
 }
 
 func (e *ShuffleMergeJoinExec) prepare4ParallelExec(ctx context.Context) {
-	go e.fetchInnerDataAndSplit(ctx)
-	go e.fetchOuterDataAndSplit(ctx)
+	// create a goroutine for each dataSource to fetch and split data
+	for i := range e.dataSources {
+		go e.fetchDataAndSplit(ctx, i)
+	}
 
 	waitGroup := &sync.WaitGroup{}
 	waitGroup.Add(len(e.workers))
@@ -156,25 +157,25 @@ func (e *ShuffleMergeJoinExec) Next(ctx context.Context, req *chunk.Chunk) error
 	return nil
 }
 
-func (e *ShuffleMergeJoinExec) fetchInnerDataAndSplit(ctx context.Context) {
+func (e *ShuffleMergeJoinExec) fetchDataAndSplit(ctx context.Context, dataSourceIndex int) {
 	var (
 		err           error
 		workerIndices []int
 	)
 	results := make([]*chunk.Chunk, len(e.workers))
-	chk := newFirstChunk(e.innerDataSource)
+	chk := newFirstChunk(e.dataSources[dataSourceIndex])
 
 	defer func() {
 		if r := recover(); r != nil {
 			recoveryShuffleExec(e.outputCh, r)
 		}
 		for _, w := range e.workers {
-			close(w.innerPartition.inputCh)
+			close(w.receivers[dataSourceIndex].inputCh)
 		}
 	}()
 
 	for {
-		err = Next(ctx, e.innerDataSource, chk)
+		err = Next(ctx, e.dataSources[dataSourceIndex], chk)
 		if err != nil {
 			e.outputCh <- &shuffleOutput{err: err}
 			return
@@ -183,7 +184,7 @@ func (e *ShuffleMergeJoinExec) fetchInnerDataAndSplit(ctx context.Context) {
 			break
 		}
 
-		workerIndices, err = e.innerSplitter.split(e.ctx, chk, workerIndices)
+		workerIndices, err = e.splitters[dataSourceIndex].split(e.ctx, chk, workerIndices)
 		if err != nil {
 			e.outputCh <- &shuffleOutput{err: err}
 			return
@@ -197,86 +198,27 @@ func (e *ShuffleMergeJoinExec) fetchInnerDataAndSplit(ctx context.Context) {
 				select {
 				case <-e.finishCh:
 					return
-				case results[workerIdx] = <-w.innerPartition.inputHolderCh:
+				case results[workerIdx] = <-w.receivers[dataSourceIndex].inputHolderCh:
 					break
 				}
 			}
 			results[workerIdx].AppendRow(chk.GetRow(i))
 			if results[workerIdx].IsFull() {
-				w.innerPartition.inputCh <- results[workerIdx]
+				w.receivers[dataSourceIndex].inputCh <- results[workerIdx]
 				results[workerIdx] = nil
 			}
 		}
 	}
 	for i, w := range e.workers {
 		if results[i] != nil {
-			w.innerPartition.inputCh <- results[i]
+			w.receivers[dataSourceIndex].inputCh <- results[i]
 			results[i] = nil
 		}
 	}
 }
 
-func (e *ShuffleMergeJoinExec) fetchOuterDataAndSplit(ctx context.Context) {
-	var (
-		err           error
-		workerIndices []int
-	)
-	results := make([]*chunk.Chunk, len(e.workers))
-	chk := newFirstChunk(e.outerDataSource)
-
-	defer func() {
-		if r := recover(); r != nil {
-			recoveryShuffleExec(e.outputCh, r)
-		}
-		for _, w := range e.workers {
-			close(w.outerPartition.inputCh)
-		}
-	}()
-
-	for {
-		err = Next(ctx, e.outerDataSource, chk)
-		if err != nil {
-			e.outputCh <- &shuffleOutput{err: err}
-			return
-		}
-		if chk.NumRows() == 0 {
-			break
-		}
-
-		workerIndices, err = e.outerSplitter.split(e.ctx, chk, workerIndices)
-		if err != nil {
-			e.outputCh <- &shuffleOutput{err: err}
-			return
-		}
-		numRows := chk.NumRows()
-		for i := 0; i < numRows; i++ {
-			workerIdx := workerIndices[i]
-			w := e.workers[workerIdx]
-
-			if results[workerIdx] == nil {
-				select {
-				case <-e.finishCh:
-					return
-				case results[workerIdx] = <-w.outerPartition.inputHolderCh:
-					break
-				}
-			}
-			results[workerIdx].AppendRow(chk.GetRow(i))
-			if results[workerIdx].IsFull() {
-				w.outerPartition.inputCh <- results[workerIdx]
-				results[workerIdx] = nil
-			}
-		}
-	}
-	for i, w := range e.workers {
-		if results[i] != nil {
-			w.outerPartition.inputCh <- results[i]
-			results[i] = nil
-		}
-	}
-}
-
-type shufflePartition struct {
+// shuffleReceiver receives chunk from dataSource through inputCh
+type shuffleReceiver struct {
 	baseExecutor
 
 	finishCh <-chan struct{}
@@ -287,7 +229,7 @@ type shufflePartition struct {
 }
 
 // Open implements the Executor Open interface.
-func (e *shufflePartition) Open(ctx context.Context) error {
+func (e *shuffleReceiver) Open(ctx context.Context) error {
 	if err := e.baseExecutor.Open(ctx); err != nil {
 		return err
 	}
@@ -296,13 +238,12 @@ func (e *shufflePartition) Open(ctx context.Context) error {
 }
 
 // Close implements the Executor Close interface.
-func (e *shufflePartition) Close() error {
+func (e *shuffleReceiver) Close() error {
 	return errors.Trace(e.baseExecutor.Close())
 }
 
 // Next implements the Executor Next interface.
-// It is called by `Tail` executor within "shuffle", to fetch data from `DataSource` by `inputCh`.
-func (e *shufflePartition) Next(ctx context.Context, req *chunk.Chunk) error {
+func (e *shuffleReceiver) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.Reset()
 	// if e.executed {
 	// 	return nil
@@ -328,8 +269,8 @@ type shuffleMergeJoinWorker struct {
 	finishCh <-chan struct{}
 	// executed bool
 
-	innerPartition shufflePartition
-	outerPartition shufflePartition
+	// each receiver corresponse to a dataSource
+	receivers []shuffleReceiver
 
 	outputCh       chan *shuffleOutput
 	outputHolderCh chan *chunk.Chunk

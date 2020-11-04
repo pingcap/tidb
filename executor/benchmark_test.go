@@ -1497,7 +1497,9 @@ func prepare4ShuffleMergeJoin(tc *mergeJoinTestCase, leftExec, rightExec *mockDa
 
 	defaultValues := make([]types.Datum, len(innerCols))
 
-	// build ShuffleMergeJoinExec
+	// build dataSources
+	dataSources := []Executor{leftExec, rightExec}
+	// build splitters
 	innerByItems := make([]expression.Expression, 0, len(innerJoinKeys))
 	for _, innerJoinKey := range innerJoinKeys {
 		innerByItems = append(innerByItems, innerJoinKey)
@@ -1506,35 +1508,40 @@ func prepare4ShuffleMergeJoin(tc *mergeJoinTestCase, leftExec, rightExec *mockDa
 	for _, outerJoinKey := range outerJoinKeys {
 		outerByItems = append(outerByItems, outerJoinKey)
 	}
-	shuffle := &ShuffleMergeJoinExec{
-		baseExecutor: newBaseExecutor(tc.ctx, joinSchema, 4),
-		concurrency:  4,
-		innerSplitter: &partitionHashSplitter{
+	splitters := []partitionSplitter{
+		&partitionHashSplitter{
 			byItems:    innerByItems,
 			numWorkers: 4,
 		},
-		outerSplitter: &partitionHashSplitter{
+		&partitionHashSplitter{
 			byItems:    outerByItems,
 			numWorkers: 4,
 		},
-		innerDataSource: rightExec,
-		outerDataSource: leftExec,
 	}
+	// build ShuffleMergeJoinExec
+	shuffle := &ShuffleMergeJoinExec{
+		baseExecutor: newBaseExecutor(tc.ctx, joinSchema, 4),
+		concurrency:  4,
+		dataSources:  dataSources,
+		splitters:    splitters,
+	}
+
 	// build workers, only benchmark inner join
 	shuffle.workers = make([]*shuffleMergeJoinWorker, shuffle.concurrency)
 	for i := range shuffle.workers {
+		leftReceiver := shuffleReceiver{
+			baseExecutor: newBaseExecutor(tc.ctx, leftExec.Schema(), 0),
+		}
+		rightReceiver := shuffleReceiver{
+			baseExecutor: newBaseExecutor(tc.ctx, rightExec.Schema(), 0),
+		}
 		w := &shuffleMergeJoinWorker{
-			innerPartition: shufflePartition{
-				baseExecutor: newBaseExecutor(tc.ctx, leftExec.Schema(), 0),
-			},
-			outerPartition: shufflePartition{
-				baseExecutor: newBaseExecutor(tc.ctx, rightExec.Schema(), 0),
-			},
+			receivers: []shuffleReceiver{leftReceiver, rightReceiver},
 		}
 		// only benchmark inner join
 		mergeJoinExec := &MergeJoinExec{
 			stmtCtx:      tc.ctx.GetSessionVars().StmtCtx,
-			baseExecutor: newBaseExecutor(tc.ctx, joinSchema, 3, &w.outerPartition, &w.innerPartition),
+			baseExecutor: newBaseExecutor(tc.ctx, joinSchema, 3, &leftReceiver, &rightReceiver),
 			compareFuncs: compareFuncs,
 			isOuterJoin:  false,
 		}
@@ -1650,7 +1657,7 @@ func benchmarkMergeJoinExecWithCase(b *testing.B, tc *mergeJoinTestCase, innerDS
 		var exec Executor
 		switch joinType {
 		case innerMergeJoin:
-			//exec = prepare4MergeJoin(tc, innerDS, outerDS)
+			// exec = prepare4MergeJoin(tc, innerDS, outerDS)
 			exec = prepare4ShuffleMergeJoin(tc, innerDS, outerDS)
 		}
 
