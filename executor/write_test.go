@@ -2971,8 +2971,10 @@ func (s *testSerialSuite) TestIssue20724(c *C) {
 
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t1(a varchar(10) collate utf8mb4_general_ci)")
 	tk.MustExec("insert into t1 values ('a')")
 	tk.MustExec("update t1 set a = 'A'")
 	tk.MustQuery("select * from t1").Check(testkit.Rows("A"))
+	tk.MustExec("drop table t")
 }
