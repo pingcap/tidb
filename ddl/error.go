@@ -189,13 +189,8 @@ var (
 	ErrFunctionalIndexOnField = terror.ClassDDL.New(mysql.ErrFunctionalIndexOnField, mysql.MySQLErrName[mysql.ErrFunctionalIndexOnField])
 	// ErrInvalidAutoRandom returns when auto_random is used incorrectly.
 	ErrInvalidAutoRandom = terror.ClassDDL.New(mysql.ErrInvalidAutoRandom, mysql.MySQLErrName[mysql.ErrInvalidAutoRandom])
-<<<<<<< HEAD
-=======
-	// ErrUnsupportedConstraintCheck returns when use ADD CONSTRAINT CHECK.
-	ErrUnsupportedConstraintCheck = terror.ClassDDL.New(mysql.ErrUnsupportedConstraintCheck, mysql.MySQLErrName[mysql.ErrUnsupportedConstraintCheck])
 	// ErrDerivedMustHaveAlias returns when a sub select statement does not have a table alias.
 	ErrDerivedMustHaveAlias = terror.ClassDDL.New(mysql.ErrDerivedMustHaveAlias, mysql.MySQLErrName[mysql.ErrDerivedMustHaveAlias])
->>>>>>> 789581bf2... parser: disallow subquery without table alias (#19102)
 
 	// ErrSequenceRunOut returns when the sequence has been run out.
 	ErrSequenceRunOut = terror.ClassDDL.New(mysql.ErrSequenceRunOut, mysql.MySQLErrName[mysql.ErrSequenceRunOut])

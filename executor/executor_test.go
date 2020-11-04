@@ -3861,9 +3861,6 @@ func (s *testSuite3) TestDoSubquery(c *C) {
 	c.Assert(r, IsNil, Commentf("result of Do not empty"))
 }
 
-<<<<<<< HEAD
-func (s *testSuite3) TestTSOFail(c *C) {
-=======
 func (s *testSuite3) TestSubqueryTableAlias(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test`)
@@ -3890,8 +3887,7 @@ func (s *testSuite3) TestSubqueryTableAlias(c *C) {
 	tk.MustGetErrCode("select a from (select 1 a), (select 2 a);", mysql.ErrNonUniq)
 }
 
-func (s *testSerialSuite) TestTSOFail(c *C) {
->>>>>>> 789581bf2... parser: disallow subquery without table alias (#19102)
+func (s *testSerialSuite1) TestTSOFail(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test`)
 	tk.MustExec(`drop table if exists t`)

@@ -188,16 +188,11 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		if node.Kind == ast.BRIEKindRestore {
 			p.flag |= inCreateOrDropTable
 		}
-<<<<<<< HEAD
-=======
 	case *ast.TableSource:
 		isModeOracle := p.ctx.GetSessionVars().SQLMode&mysql.ModeOracle != 0
 		if _, ok := node.Source.(*ast.SelectStmt); ok && !isModeOracle && len(node.AsName.L) == 0 {
 			p.err = ddl.ErrDerivedMustHaveAlias.GenWithStackByArgs()
 		}
-	case *ast.CreateStatisticsStmt, *ast.DropStatisticsStmt:
-		p.checkStatisticsOpGrammar(in)
->>>>>>> 789581bf2... parser: disallow subquery without table alias (#19102)
 	default:
 		p.flag &= ^parentIsJoin
 	}
