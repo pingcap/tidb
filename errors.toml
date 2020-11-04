@@ -121,6 +121,11 @@ error = '''
 The used table type doesn't support FULLTEXT indexes
 '''
 
+["ddl:1248"]
+error = '''
+Every derived table must have its own alias
+'''
+
 ["ddl:1253"]
 error = '''
 COLLATION '%s' is not valid for CHARACTER SET '%s'
