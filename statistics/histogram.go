@@ -959,7 +959,7 @@ func (idx *Index) equalRowCount(sc *stmtctx.StatementContext, b []byte, modifyCo
 // QueryBytes is used to query the count of specified bytes.
 func (idx *Index) QueryBytes(d []byte) uint64 {
 	h1, h2 := murmur3.Sum128(d)
-	if count, ok := idx.TopN.QueryTopN(h1, h2, d); ok {
+	if count, ok := idx.TopN.QueryTopN(d); ok {
 		return count
 	}
 	return idx.queryHashValue(h1, h2)
@@ -1268,12 +1268,12 @@ func (hg *Histogram) ExtractTopN(cms *CMSketch, topN *TopN, numCols int, numTopN
 	if len(dataCnts) > int(numTopN) {
 		dataCnts = dataCnts[:numTopN]
 	}
-	topN.topN = make(map[uint64][]*TopNMeta, len(dataCnts))
+	topN.TopN = make([]TopNMeta, 0, len(dataCnts))
 	for _, dataCnt := range dataCnts {
 		h1, h2 := murmur3.Sum128(dataCnt.data)
 		realCnt := cms.queryHashValue(h1, h2)
 		cms.subValue(h1, h2, realCnt)
-		topN.topN[h1] = append(topN.topN[h1], &TopNMeta{h2, dataCnt.data, realCnt})
+		topN.AppendTopN(dataCnt.data, realCnt)
 	}
 	return nil
 }

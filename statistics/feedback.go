@@ -740,15 +740,15 @@ func UpdateHistogram(h *Histogram, feedback *QueryFeedback) *Histogram {
 	return hist
 }
 
-// UpdateCMSketch updates the CMSketch by feedback.
-func UpdateCMSketch(c *CMSketch, t *TopN, eqFeedbacks []Feedback) (*CMSketch, *TopN) {
+// UpdateCMSketchAndTopN updates the CMSketch and TopN by feedback.
+func UpdateCMSketchAndTopN(c *CMSketch, t *TopN, eqFeedbacks []Feedback) (*CMSketch, *TopN) {
 	if c == nil || len(eqFeedbacks) == 0 {
 		return c, t
 	}
 	newCMSketch := c.Copy()
 	newTopN := t.Copy()
 	for _, fb := range eqFeedbacks {
-		updateValueBytes(newCMSketch, newTopN, fb.Lower.GetBytes(), uint64(fb.Count))
+		updateValueBytesNew(newCMSketch, newTopN, fb.Lower.GetBytes(), uint64(fb.Count))
 	}
 	return newCMSketch, newTopN
 }
@@ -871,7 +871,7 @@ func decodeFeedbackForIndex(q *QueryFeedback, pb *queryFeedback, c *CMSketch, t 
 			return
 		}
 		for i := 0; i < len(pb.IndexPoints); i++ {
-			updateValueBytes(c, t, pb.IndexPoints[i], uint64(pb.Counts[start+i]))
+			updateValueBytesNew(c, t, pb.IndexPoints[i], uint64(pb.Counts[start+i]))
 		}
 	}
 }
