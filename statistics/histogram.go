@@ -1275,5 +1275,6 @@ func (hg *Histogram) ExtractTopN(cms *CMSketch, topN *TopN, numCols int, numTopN
 		cms.subValue(h1, h2, realCnt)
 		topN.AppendTopN(dataCnt.data, realCnt)
 	}
+	topN.Sort()
 	return nil
 }

@@ -748,7 +748,7 @@ func UpdateCMSketchAndTopN(c *CMSketch, t *TopN, eqFeedbacks []Feedback) (*CMSke
 	newCMSketch := c.Copy()
 	newTopN := t.Copy()
 	for _, fb := range eqFeedbacks {
-		updateValueBytesNew(newCMSketch, newTopN, fb.Lower.GetBytes(), uint64(fb.Count))
+		updateValueBytes(newCMSketch, newTopN, fb.Lower.GetBytes(), uint64(fb.Count))
 	}
 	return newCMSketch, newTopN
 }
@@ -871,7 +871,7 @@ func decodeFeedbackForIndex(q *QueryFeedback, pb *queryFeedback, c *CMSketch, t 
 			return
 		}
 		for i := 0; i < len(pb.IndexPoints); i++ {
-			updateValueBytesNew(c, t, pb.IndexPoints[i], uint64(pb.Counts[start+i]))
+			updateValueBytes(c, t, pb.IndexPoints[i], uint64(pb.Counts[start+i]))
 		}
 	}
 }

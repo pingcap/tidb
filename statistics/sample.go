@@ -322,5 +322,6 @@ func (c *SampleCollector) ExtractTopN(numTop uint32, sc *stmtctx.StatementContex
 		cms.subValue(h1, h2, realCnt)
 		c.TopN.AppendTopN(data, realCnt)
 	}
+	c.TopN.Sort()
 	return nil
 }

@@ -133,6 +133,7 @@ func buildCMSAndTopN(helper *topNHelper, d, w int32, scaleRatio uint64, defaultV
 			data, cnt := helper.sorted[i].data, helper.sorted[i].cnt
 			t.AppendTopN(data, cnt*scaleRatio)
 		}
+		t.Sort()
 		helper.sorted = helper.sorted[helper.actualNumTop:]
 	}
 	c.defaultValue = defaultVal
@@ -200,7 +201,7 @@ func (c *CMSketch) considerDefVal(cnt uint64) bool {
 	return (cnt == 0 || (cnt > c.defaultValue && cnt < 2*(c.count/uint64(c.width)))) && c.defaultValue > 0
 }
 
-func updateValueBytesNew(c *CMSketch, t *TopN, d []byte, count uint64) {
+func updateValueBytes(c *CMSketch, t *TopN, d []byte, count uint64) {
 	h1, h2 := murmur3.Sum128(d)
 	if oriCount, ok := t.QueryTopN(d); ok {
 		deltaCount := count - oriCount
@@ -329,6 +330,7 @@ func MergeTopN(dst, src *TopN, c *CMSketch, numTop uint32, usingMax bool) {
 			c.insertBytesByCount(data, cnt)
 		}
 	}
+	dst.Sort()
 }
 
 // MergeCMSketch merges two CM Sketch.
@@ -411,6 +413,7 @@ func TopNFromProto(protoTopN []*tipb.CMSketchTopN) *TopN {
 		copy(d, e.Data)
 		topN.AppendTopN(d, e.Count)
 	}
+	topN.Sort()
 	return topN
 }
 
@@ -470,7 +473,6 @@ func (c *CMSketch) Copy() *CMSketch {
 
 // AppendTopN appends a topn into the TopN struct.
 func (c *TopN) AppendTopN(data []byte, count uint64) {
-	c.sorted = false
 	c.TopN = append(c.TopN, TopNMeta{data, count})
 }
 
@@ -488,7 +490,6 @@ func (c *CMSketch) CalcDefaultValForAnalyze(NDV uint64) {
 // TopN stores most-common values, which is used to estimate point queries.
 type TopN struct {
 	TopN   []TopNMeta
-	sorted bool
 }
 
 // Copy makes a copy for current TopN.
@@ -504,7 +505,6 @@ func (c *TopN) Copy() *TopN {
 	}
 	return &TopN{
 		TopN:   topN,
-		sorted: c.sorted,
 	}
 }
 
@@ -527,9 +527,6 @@ func (c *TopN) QueryTopN(d []byte) (uint64, bool) {
 }
 
 func (c *TopN) findTopN(d []byte) int {
-	if c.sorted == false {
-		c.Sort()
-	}
 	match := false
 	idx := sort.Search(len(c.TopN), func(i int) bool {
 		cmp := bytes.Compare(c.TopN[i].Encoded, d)
@@ -549,7 +546,6 @@ func (c *TopN) Sort() {
 	sort.Slice(c.TopN, func(i, j int) bool {
 		return bytes.Compare(c.TopN[i].Encoded, c.TopN[j].Encoded) < 0
 	})
-	c.sorted = true
 }
 
 // TotalCount returns how many data is stored in TopN.
