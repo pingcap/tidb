@@ -1487,7 +1487,7 @@ func (s *testSerialSuite) TestDuplicateEntryMessage(c *C) {
 func (s *testSerialSuite) TestIssue20768(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1")
+	tk.MustExec("drop table if exists t1, t2")
 	tk.MustExec("create table t1(a year, primary key(a))")
 	tk.MustExec("insert ignore into t1 values(null)")
 	tk.MustExec("create table t2(a int, key(a))")
