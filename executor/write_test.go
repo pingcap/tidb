@@ -2859,7 +2859,7 @@ from t order by c_str;`).Check(testkit.Rows("10"))
 from t order by c_str;`).Check(testkit.Rows("10"))
 }
 
-func (s *testSerialSuite) TestIssue20724(c *C) {
+func (s *testSerialSuite1) TestIssue20724(c *C) {
 	collate.SetNewCollationEnabledForTest(true)
 	defer collate.SetNewCollationEnabledForTest(false)
 
