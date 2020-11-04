@@ -77,6 +77,4 @@ var (
 	ErrWrongValue = dbterror.ClassTypes.NewStdErr(mysql.ErrTruncatedWrongValue, mysql.MySQLErrName[mysql.ErrWrongValue], "", "")
 	// ErrWrongValueForType is returned when the input value is in wrong format for function.
 	ErrWrongValueForType = dbterror.ClassTypes.NewStdErr(mysql.ErrWrongValueForType, mysql.MySQLErrName[mysql.ErrWrongValueForType], "", "")
-	// ErrTooLongValueForType is returned when the individual enum element length is too long.
-	ErrTooLongValueForType = dbterror.ClassTypes.NewStdErr(mysql.ErrTooLongValueForType, mysql.MySQLErrName[mysql.ErrTooLongValueForType], "", "")
 )

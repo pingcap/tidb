@@ -962,20 +962,15 @@ func checkColumnValueConstraint(ctx sessionctx.Context, col *table.Column, colla
 	}
 	valueMap := make(map[string]bool, len(col.Elems))
 	ctor := collate.GetCollator(collation)
-	var enumLengthLimit bool
-	val, err := variable.GetGlobalSystemVar(ctx.GetSessionVars(), variable.TiDBEnableEnumLengthLimit)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	enumLengthLimit = variable.TiDBOptOn(val)
+	enumLengthLimit, _ := ctx.GetSessionVars().GetSystemVar(variable.TiDBEnableEnumLengthLimit)
 	desc, err := charset.GetCharsetDesc(col.Charset)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	for i := range col.Elems {
 		val := string(ctor.Key(col.Elems[i]))
-		if enumLengthLimit && (len(val) > 255 || len(val)*desc.Maxlen > 1020) {
-			return types.ErrTooLongValueForType.GenWithStackByArgs(col.Name)
+		if variable.TiDBOptOn(enumLengthLimit) && (len(val) > 255 || len(val)*desc.Maxlen > 1020) {
+			return ErrTooLongValueForType.GenWithStackByArgs(col.Name)
 		}
 		if _, ok := valueMap[val]; ok {
 			tpStr := "ENUM"

@@ -731,6 +731,9 @@ type SessionVars struct {
 
 	// PartitionPruneMode indicates how and when to prune partitions.
 	PartitionPruneMode atomic2.String
+
+	// EnableEnumLengthLimit indicates the enum/set element length should be shorter than 255 is enabled.
+	EnableEnumLengthLimit bool
 }
 
 // UseDynamicPartitionPrune indicates whether use new dynamic partition prune.
@@ -857,6 +860,7 @@ func NewSessionVars() *SessionVars {
 		EnableChangeColumnType:      DefTiDBChangeColumnType,
 		EnableAmendPessimisticTxn:   DefTiDBEnableAmendPessimisticTxn,
 		PartitionPruneMode:          *atomic2.NewString(DefTiDBPartitionPruneMode),
+		EnableEnumLengthLimit:       DefTiDBEnableEnumLengthLimit,
 	}
 	vars.KVVars = kv.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{
@@ -1523,6 +1527,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.EnableChangeColumnType = TiDBOptOn(val)
 	case TiDBEnableAmendPessimisticTxn:
 		s.EnableAmendPessimisticTxn = TiDBOptOn(val)
+	case TiDBEnableEnumLengthLimit:
+		s.EnableEnumLengthLimit = TiDBOptOn(val)
 	}
 	s.systems[name] = val
 	return nil

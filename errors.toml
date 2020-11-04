@@ -311,6 +311,11 @@ error = '''
 Generated column '%s' cannot refer to auto-increment column.
 '''
 
+["ddl:3505"]
+error = '''
+Too long enumeration/set value for column %s.
+'''
+
 ["ddl:3522"]
 error = '''
 A primary key index cannot be invisible
@@ -1444,11 +1449,6 @@ error = '''
 ["types:3013"]
 error = '''
 Invalid size for column '%s'.
-'''
-
-["types:3505"]
-error = '''
-Too long enumeration/set value for column %s.
 '''
 
 ["types:8029"]
