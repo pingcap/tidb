@@ -577,6 +577,12 @@ func (it *copIterator) open(ctx context.Context) {
 	}
 	taskSender.respChan = it.respChan
 	it.actionOnExceed.setEnabled(true)
+	failpoint.Inject("ticase-4171", func(val failpoint.Value) {
+		if val.(bool) {
+			it.memTracker.Consume(9999999)
+			it.memTracker.Consume(9999999)
+		}
+	})
 	go taskSender.run()
 }
 
@@ -693,6 +699,12 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 		resp, ok, closed = it.recvFromRespCh(ctx, it.respChan)
 		if !ok || closed {
 			it.actionOnExceed.close()
+			failpoint.Inject("ticase-4170", func(val failpoint.Value) {
+				if val.(bool) {
+					it.memTracker.Consume(9999999)
+					it.memTracker.Consume(9999999)
+				}
+			})
 			return nil, nil
 		}
 		// The respCh has been drained out

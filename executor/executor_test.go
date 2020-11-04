@@ -6767,6 +6767,8 @@ func (s *testSerialSuite) TestCoprocessorOOMTicase(c *C) {
 
 	// ticase-4169, trigger oom action twice after workers consuming all the data
 	failpoint.Enable("github.com/pingcap/tidb/store/tikv/ticase-4169", `return(true)`)
+	failpoint.Enable("github.com/pingcap/tidb/store/tikv/ticase-4170", `return(true)`)
+	failpoint.Enable("github.com/pingcap/tidb/store/tikv/ticase-4171", `return(true)`)
 	for _, testcase := range testcases {
 		c.Log(testcase.name)
 		// larger than one copResponse, smaller than 2 copResponse
@@ -6786,11 +6788,12 @@ func (s *testSerialSuite) TestCoprocessorOOMTicase(c *C) {
 		se.Close()
 	}
 	failpoint.Disable("github.com/pingcap/tidb/store/tikv/ticase-4169")
-
-	// ticase-4170, trigger oom action twice after iterator recving all the data.
-	failpoint.Enable("github.com/pingcap/tidb/store/tikv/ticase-4170", `return(true)`)
 	failpoint.Disable("github.com/pingcap/tidb/store/tikv/ticase-4170")
+	failpoint.Disable("github.com/pingcap/tidb/store/tikv/ticase-4171")
 
+	// ticase-4170, trigger oom action twice after iterator receiving all the data.
+	//failpoint.Enable("github.com/pingcap/tidb/store/tikv/ticase-4170", `return(true)`)
+	//failpoint.Disable("github.com/pingcap/tidb/store/tikv/ticase-4170")
 
 	// ticase-4171, trigger oom before reading or consuming any data
 	//failpoint.Enable("github.com/pingcap/tidb/store/tikv/ticase-4171", `return(true)`)
