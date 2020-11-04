@@ -1693,6 +1693,7 @@ LOOP:
 		case <-ticker.C:
 			// delete some rows, and add some data
 			for i := num; i < num+step; i++ {
+				forceReloadDomain(s.tk.Se)
 				n := rand.Intn(num)
 				s.tk.MustExec("begin")
 				s.tk.MustExec("delete from t2 where c1 = ?", n)
@@ -3864,6 +3865,7 @@ func (s *testDBSuite1) TestModifyColumnCharset(c *C) {
 	s.tk.MustExec("create table t_mcc(a varchar(8) charset utf8, b varchar(8) charset utf8)")
 	defer s.mustExec(c, "drop table t_mcc;")
 
+	forceReloadDomain(s.tk.Se)
 	result := s.tk.MustQuery(`show create table t_mcc`)
 	result.Check(testkit.Rows(
 		"t_mcc CREATE TABLE `t_mcc` (\n" +
@@ -4561,6 +4563,7 @@ func (s *testDBSuite4) testParallelExecSQL(c *C, sql1, sql2 string, se1, se2 ses
 func checkTableLock(c *C, se session.Session, dbName, tableName string, lockTp model.TableLockType) {
 	tb := testGetTableByName(c, se, dbName, tableName)
 	dom := domain.GetDomain(se)
+	dom.Reload()
 	if lockTp != model.TableLockNone {
 		c.Assert(tb.Meta().Lock, NotNil)
 		c.Assert(tb.Meta().Lock.Tp, Equals, lockTp)
@@ -4900,6 +4903,28 @@ func (s *testSerialDBSuite) TestCommitTxnWithIndexChange(c *C) {
 		}
 	}
 	tk.MustExec("admin check table t1")
+}
+
+func (s *testDBSuite5) TestChangeColumnShouldKeepFlagWhenTypeIsTimestamp(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use " + s.schemaName)
+	s.mustExec(c, "drop table if exists tt")
+	s.mustExec(c, "create table tt(id int auto_increment primary key, c timestamp)")
+	ctx := s.tk.Se.(sessionctx.Context)
+	is := domain.GetDomain(ctx).InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr(s.schemaName), model.NewCIStr("tt"))
+	c.Assert(err, IsNil)
+	colC := tbl.Meta().Columns[1]
+	originFlag := colC.Flag
+	c.Assert(originFlag > 0, IsTrue)
+	c.Assert(colC.Name.L, Equals, "c")
+	s.mustExec(c, "alter table tt change column c cc timestamp")
+	is = domain.GetDomain(ctx).InfoSchema()
+	tbl, err = is.TableByName(model.NewCIStr(s.schemaName), model.NewCIStr("tt"))
+	c.Assert(err, IsNil)
+	colCC := tbl.Meta().Columns[1]
+	c.Assert(colCC.Name.L, Equals, "cc")
+	c.Assert(originFlag, Equals, colCC.Flag)
 }
 
 func init() {
