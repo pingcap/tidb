@@ -515,7 +515,10 @@ const minLogCopTaskTime = 300 * time.Millisecond
 // run is a worker function that get a copTask from channel, handle it and
 // send the result back.
 func (worker *copIteratorWorker) run(ctx context.Context) {
-	defer worker.wg.Done()
+	defer func() {
+		worker.actionOnExceed.close()
+		worker.wg.Done()
+	}()
 	for task := range worker.taskCh {
 		respCh := worker.respChan
 		if respCh == nil {
@@ -632,7 +635,6 @@ func (it *copIterator) recvFromRespCh(ctx context.Context, respCh <-chan *copRes
 						consumed = 100
 					}
 				})
-				it.actionOnExceed.consumeResponse()
 				it.memTracker.Consume(-consumed)
 			}
 			return
@@ -673,7 +675,6 @@ func (worker *copIteratorWorker) sendToRespCh(resp *copResponse, respCh chan<- *
 				consumed = 100
 			}
 		})
-		worker.actionOnExceed.addResponse()
 		worker.memTracker.Consume(consumed)
 	}
 	select {
@@ -1315,8 +1316,6 @@ type rateLimitAction struct {
 		waitingWorkerCnt uint
 		// triggerCountForTest indicates the total count of the rateLimitAction's Action being executed
 		triggerCountForTest uint
-		// remainingResponseCount indicates the cached response in the channel
-		remainingResponseCount uint
 	}
 }
 
@@ -1325,13 +1324,12 @@ func newRateLimitAction(totalTokenNumber uint, cond *sync.Cond) *rateLimitAction
 		totalTokenNum: totalTokenNumber,
 		cond: struct {
 			*sync.Cond
-			exceeded               bool
-			remainingTokenNum      uint
-			isTokenDestroyed       bool
-			once                   sync.Once
-			waitingWorkerCnt       uint
-			triggerCountForTest    uint
-			remainingResponseCount uint
+			exceeded            bool
+			remainingTokenNum   uint
+			isTokenDestroyed    bool
+			once                sync.Once
+			waitingWorkerCnt    uint
+			triggerCountForTest uint
 		}{
 			Cond:              cond,
 			exceeded:          false,
@@ -1357,24 +1355,16 @@ func (e *rateLimitAction) Action(t *memory.Tracker) {
 	}
 	e.conditionLock()
 	defer e.conditionUnlock()
-	// If there is not cached response, or the only exists one token, delegate it to the fallback action.
-	if e.cond.remainingResponseCount < 1 || e.cond.remainingTokenNum < 2 {
+	e.cond.once.Do(func() {
 		if e.cond.remainingTokenNum < 2 {
 			e.setEnabled(false)
+			logutil.BgLogger().Info("memory exceed quota, rateLimitAction delegate to fallback action",
+				zap.Uint("total token count", e.totalTokenNum))
+			if e.fallbackAction != nil {
+				e.fallbackAction.Action(t)
+			}
+			return
 		}
-		logutil.BgLogger().Info("memory exceed quota, rateLimitAction delegate to fallback action",
-			zap.Uint("remaining response count", e.cond.remainingResponseCount),
-			zap.Uint("remaining token count", e.cond.remainingTokenNum),
-			zap.Uint("total token count", e.totalTokenNum))
-		// Since there is no remaining response or token, we should se exceeded as false and broadcast
-		e.cond.exceeded = false
-		e.cond.Broadcast()
-		if e.fallbackAction != nil {
-			e.fallbackAction.Action(t)
-		}
-		return
-	}
-	e.cond.once.Do(func() {
 		failpoint.Inject("testRateLimitActionMockConsumeAndAssert", func(val failpoint.Value) {
 			if val.(bool) {
 				if e.cond.triggerCountForTest+e.cond.remainingTokenNum != e.totalTokenNum {
@@ -1389,8 +1379,7 @@ func (e *rateLimitAction) Action(t *memory.Tracker) {
 			zap.Int64("consumed", t.BytesConsumed()),
 			zap.Int64("quota", t.GetBytesLimit()),
 			zap.Uint("total token count", e.totalTokenNum),
-			zap.Uint("remaining token count", e.cond.remainingTokenNum),
-			zap.Uint("remain response count", e.cond.remainingResponseCount))
+			zap.Uint("remaining token count", e.cond.remainingTokenNum))
 		e.cond.isTokenDestroyed = false
 		e.cond.exceeded = true
 		e.cond.triggerCountForTest++
@@ -1441,6 +1430,7 @@ func (e *rateLimitAction) destroyTokenIfNeeded(returnToken func()) {
 		e.cond.remainingTokenNum = e.cond.remainingTokenNum - 1
 		e.cond.isTokenDestroyed = true
 		e.cond.Broadcast()
+		return
 	} else {
 		returnToken()
 	}
@@ -1456,18 +1446,6 @@ func (e *rateLimitAction) destroyTokenIfNeeded(returnToken func()) {
 	}
 }
 
-func (e *rateLimitAction) consumeResponse() {
-	e.conditionLock()
-	defer e.conditionUnlock()
-	e.cond.remainingResponseCount--
-}
-
-func (e *rateLimitAction) addResponse() {
-	e.conditionLock()
-	defer e.conditionUnlock()
-	e.cond.remainingResponseCount++
-}
-
 func (e *rateLimitAction) conditionLock() {
 	e.cond.L.Lock()
 }
@@ -1477,6 +1455,9 @@ func (e *rateLimitAction) conditionUnlock() {
 }
 
 func (e *rateLimitAction) close() {
+	if !e.isEnabled() {
+		return
+	}
 	e.setEnabled(false)
 	e.conditionLock()
 	defer e.conditionUnlock()
