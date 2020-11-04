@@ -1359,10 +1359,16 @@ func (e *rateLimitAction) Action(t *memory.Tracker) {
 	defer e.conditionUnlock()
 	// If there is not cached response, or the only exists one token, delegate it to the fallback action.
 	if e.cond.remainingResponseCount < 1 || e.cond.remainingTokenNum < 2 {
+		if e.cond.remainingTokenNum < 2 {
+			e.setEnabled(false)
+		}
 		logutil.BgLogger().Info("memory exceed quota, rateLimitAction delegate to fallback action",
 			zap.Uint("remaining response count", e.cond.remainingResponseCount),
 			zap.Uint("remaining token count", e.cond.remainingTokenNum),
 			zap.Uint("total token count", e.totalTokenNum))
+		// Since there is no remaining response or token, we should se exceeded as false and broadcast
+		e.cond.exceeded = false
+		e.cond.Broadcast()
 		if e.fallbackAction != nil {
 			e.fallbackAction.Action(t)
 		}
@@ -1383,7 +1389,8 @@ func (e *rateLimitAction) Action(t *memory.Tracker) {
 			zap.Int64("consumed", t.BytesConsumed()),
 			zap.Int64("quota", t.GetBytesLimit()),
 			zap.Uint("total token count", e.totalTokenNum),
-			zap.Uint("remaining token count", e.cond.remainingTokenNum))
+			zap.Uint("remaining token count", e.cond.remainingTokenNum),
+			zap.Uint("remain response count", e.cond.remainingResponseCount))
 		e.cond.isTokenDestroyed = false
 		e.cond.exceeded = true
 		e.cond.triggerCountForTest++
