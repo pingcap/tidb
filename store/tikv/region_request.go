@@ -421,6 +421,21 @@ func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, rpcCtx *RPCContext,
 			}
 		})
 	}
+
+	failpoint.Inject("rpcContextCancelErr", func(val failpoint.Value) {
+		if val.(bool) {
+			ctx1, cancel := context.WithCancel(context.Background())
+			cancel()
+			select {
+			case <-ctx1.Done():
+			}
+
+			ctx = ctx1
+			err = ctx.Err()
+			resp = nil
+		}
+	})
+
 	if err != nil {
 		s.rpcError = err
 
