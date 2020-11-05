@@ -458,7 +458,6 @@ type copIteratorTaskSender struct {
 	finishCh <-chan struct{}
 	respChan chan<- *copResponse
 	sendRate *rateLimit
-	maxId    *maxIDHandler
 }
 
 type copResponse struct {
@@ -586,7 +585,6 @@ func (it *copIterator) open(ctx context.Context) {
 		tasks:    it.tasks,
 		finishCh: it.finishCh,
 		sendRate: it.sendRate,
-		maxId:    it.maxID,
 	}
 	taskSender.respChan = it.respChan
 	it.actionOnExceed.setEnabled(true)
