@@ -965,7 +965,7 @@ func (h tableHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	case opTableRegions:
 		h.handleRegionRequest(schema, tableVal, w, req)
 	case opTableDiskUsage:
-		h.handleDiskUsageRequest(schema, tableVal, w, req)
+		h.handleDiskUsageRequest(tableVal, w)
 	case opTableScatter:
 		// supports partition table, only get one physical table, prevent too many scatter schedulers.
 		ptbl, err := h.getPartition(tableVal, partitionName)
@@ -1274,51 +1274,11 @@ func (h tableHandler) getRegionsByID(tbl table.Table, id int64, name string) (*T
 	}, nil
 }
 
-// pdRegionStats is the json response from PD.
-type pdRegionStats struct {
-	Count            int              `json:"count"`
-	EmptyCount       int              `json:"empty_count"`
-	StorageSize      int64            `json:"storage_size"`
-	StoreLeaderCount map[uint64]int   `json:"store_leader_count"`
-	StorePeerCount   map[uint64]int   `json:"store_peer_count"`
-	StoreLeaderSize  map[uint64]int64 `json:"store_leader_size"`
-	StorePeerSize    map[uint64]int64 `json:"store_peer_size"`
-}
-
-func (h tableHandler) handleDiskUsageRequest(schema infoschema.InfoSchema, tbl table.Table, w http.ResponseWriter, req *http.Request) {
+func (h tableHandler) handleDiskUsageRequest(tbl table.Table, w http.ResponseWriter) {
 	tableID := tbl.Meta().ID
-	pdAddrs, err := h.getPDAddr()
+	var stats helper.PDRegionStats
+	err := h.GetPDRegionStats(tableID, &stats)
 	if err != nil {
-		writeError(w, err)
-		return
-	}
-
-	// Include table and index data, because their range located in tableID_i tableID_r
-	startKey := tablecodec.EncodeTablePrefix(tableID)
-	endKey := tablecodec.EncodeTablePrefix(tableID + 1)
-	startKey = codec.EncodeBytes([]byte{}, startKey)
-	endKey = codec.EncodeBytes([]byte{}, endKey)
-
-	statURL := fmt.Sprintf("%s://%s/pd/api/v1/stats/region?start_key=%s&end_key=%s",
-		util.InternalHTTPSchema(),
-		pdAddrs[0],
-		url.QueryEscape(string(startKey)),
-		url.QueryEscape(string(endKey)))
-
-	resp, err := util.InternalHTTPClient().Get(statURL)
-	if err != nil {
-		writeError(w, err)
-		return
-	}
-	defer func() {
-		if err := resp.Body.Close(); err != nil {
-			log.Error(err)
-		}
-	}()
-
-	var stats pdRegionStats
-	dec := json.NewDecoder(resp.Body)
-	if err := dec.Decode(&stats); err != nil {
 		writeError(w, err)
 		return
 	}

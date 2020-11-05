@@ -18,13 +18,16 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
 )
@@ -291,6 +294,93 @@ func (s *testSuite3) TestInsertDateTimeWithTimeZone(c *C) {
 	tk.MustQuery(`select * from t;`).Check(testkit.Rows(
 		`1 1970-01-01 09:20:34`,
 	))
+
+	// test for ambiguous cases
+	cases := []struct {
+		lit    string
+		expect string
+	}{
+		{"2020-10-22", "2020-10-22 00:00:00"},
+		{"2020-10-22-16", "2020-10-22 16:00:00"},
+		{"2020-10-22 16-31", "2020-10-22 16:31:00"},
+		{"2020-10-22 16:31-15", "2020-10-22 16:31:15"},
+		{"2020-10-22T16:31:15-10", "2020-10-23 10:31:15"},
+
+		{"2020.10-22", "2020-10-22 00:00:00"},
+		{"2020-10.22-16", "2020-10-22 16:00:00"},
+		{"2020-10-22.16-31", "2020-10-22 16:31:00"},
+		{"2020-10-22 16.31-15", "2020-10-22 16:31:15"},
+		{"2020-10-22T16.31.15+14", "2020-10-22 10:31:15"},
+
+		{"2020-10:22", "2020-10-22 00:00:00"},
+		{"2020-10-22:16", "2020-10-22 16:00:00"},
+		{"2020-10-22-16:31", "2020-10-22 16:31:00"},
+		{"2020-10-22 16-31:15", "2020-10-22 16:31:15"},
+		{"2020-10-22T16.31.15+09:30", "2020-10-22 15:01:15"},
+
+		{"2020.10-22:16", "2020-10-22 16:00:00"},
+		{"2020-10.22-16:31", "2020-10-22 16:31:00"},
+		{"2020-10-22.16-31:15", "2020-10-22 16:31:15"},
+		{"2020-10-22T16:31.15+09:30", "2020-10-22 15:01:15"},
+	}
+	tk.MustExec(`drop table if exists t`)
+	tk.MustExec(`create table t (dt datetime)`)
+	tk.MustExec(`set @@time_zone='+08:00'`)
+	for _, ca := range cases {
+		tk.MustExec(`delete from t`)
+		tk.MustExec(fmt.Sprintf("insert into t values ('%s')", ca.lit))
+		tk.MustQuery(`select * from t`).Check(testkit.Rows(ca.expect))
+	}
+
+	// test for time zone change
+	tzcCases := []struct {
+		tz1  string
+		lit  string
+		tz2  string
+		exp1 string
+		exp2 string
+	}{
+		{"+08:00", "2020-10-22T16:53:40Z", "+00:00", "2020-10-23 00:53:40", "2020-10-22 16:53:40"},
+		{"-08:00", "2020-10-22T16:53:40Z", "+08:00", "2020-10-22 08:53:40", "2020-10-23 00:53:40"},
+		{"-03:00", "2020-10-22T16:53:40+03:00", "+08:00", "2020-10-22 10:53:40", "2020-10-22 21:53:40"},
+		{"+08:00", "2020-10-22T16:53:40+08:00", "+08:00", "2020-10-22 16:53:40", "2020-10-22 16:53:40"},
+	}
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (dt datetime, ts timestamp)")
+	for _, ca := range tzcCases {
+		tk.MustExec("delete from t")
+		tk.MustExec(fmt.Sprintf("set @@time_zone='%s'", ca.tz1))
+		tk.MustExec(fmt.Sprintf("insert into t values ('%s', '%s')", ca.lit, ca.lit))
+		tk.MustExec(fmt.Sprintf("set @@time_zone='%s'", ca.tz2))
+		tk.MustQuery("select * from t").Check(testkit.Rows(ca.exp1 + " " + ca.exp2))
+	}
+
+	// test for datetime in compare
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (ts timestamp)")
+	tk.MustExec("insert into t values ('2020-10-22T12:00:00Z'), ('2020-10-22T13:00:00Z'), ('2020-10-22T14:00:00Z')")
+	tk.MustQuery(fmt.Sprintf("select count(*) from t where ts > '2020-10-22T12:00:00Z'")).Check(testkit.Rows("2"))
+
+	// test for datetime with fsp
+	fspCases := []struct {
+		fsp  uint
+		lit  string
+		exp1 string
+		exp2 string
+	}{
+		{2, "2020-10-27T14:39:10.10+00:00", "2020-10-27 22:39:10.10", "2020-10-27 22:39:10.10"},
+		{1, "2020-10-27T14:39:10.3+0200", "2020-10-27 20:39:10.3", "2020-10-27 20:39:10.3"},
+		{6, "2020-10-27T14:39:10.3-02", "2020-10-28 00:39:10.300000", "2020-10-28 00:39:10.300000"},
+		{2, "2020-10-27T14:39:10.10Z", "2020-10-27 22:39:10.10", "2020-10-27 22:39:10.10"},
+	}
+
+	tk.MustExec("set @@time_zone='+08:00'")
+	for _, ca := range fspCases {
+		tk.MustExec("drop table if exists t")
+		tk.MustExec(fmt.Sprintf("create table t (dt datetime(%d), ts timestamp(%d))", ca.fsp, ca.fsp))
+		tk.MustExec(fmt.Sprintf("insert into t values ('%s', '%s')", ca.lit, ca.lit))
+		tk.MustQuery("select * from t").Check(testkit.Rows(ca.exp1 + " " + ca.exp2))
+	}
 }
 
 func (s *testSuite3) TestInsertZeroYear(c *C) {
@@ -1147,4 +1237,18 @@ func (s *testSuite9) TestIssue16366(c *C) {
 	_, err := tk.Exec(`insert into t values(0);`)
 	c.Assert(err, NotNil)
 	c.Assert(strings.Contains(err.Error(), "Duplicate entry '0' for key 'PRIMARY'"), IsTrue, Commentf("%v", err))
+}
+
+func (s *testSuite9) TestInsertRuntimeStat(c *C) {
+	stats := &executor.InsertRuntimeStat{
+		BasicRuntimeStats:    &execdetails.BasicRuntimeStats{},
+		SnapshotRuntimeStats: nil,
+		CheckInsertTime:      2 * time.Second,
+		Prefetch:             1 * time.Second,
+	}
+	stats.BasicRuntimeStats.Record(5*time.Second, 1)
+	c.Assert(stats.String(), Equals, "prepare:3s, check_insert:{total_time:2s, mem_insert_time:1s, prefetch:1s}")
+	c.Assert(stats.String(), Equals, stats.Clone().String())
+	stats.Merge(stats.Clone())
+	c.Assert(stats.String(), Equals, "prepare:6s, check_insert:{total_time:4s, mem_insert_time:2s, prefetch:2s}")
 }
