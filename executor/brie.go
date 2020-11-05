@@ -108,9 +108,7 @@ type brieQueueItem struct {
 }
 
 type brieQueue struct {
-	//nextID uint64
-	//tasks  sync.Map
-
+	// currently only one BRIE task could run on one TiDB
 	workerCh chan struct{}
 }
 
@@ -483,7 +481,6 @@ func (e *BRIEExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		return nil
 	}
 
-	// TODO(lance6717): replace this memory based queue to persistent queue
 	bq := globalBRIEQueue
 
 	e.info.connID = e.ctx.GetSessionVars().ConnectionID
