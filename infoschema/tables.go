@@ -268,19 +268,19 @@ func buildTableMeta(tableName string, cs []columnInfo) *model.TableInfo {
 		Charset: mysql.DefaultCharset,
 		Collate: mysql.DefaultCollationName,
 	}
-	for _, c := range cs {
-		if c.flag&mysql.PriKeyFlag == 1 {
+	for offset, c := range cs {
+		if mysql.HasPriKeyFlag(c.flag) {
 			if c.tp == mysql.TypeInt24 {
 				tblInfo.PKIsHandle = true
 			} else {
-				tblInfo.PKIsHandle = true
+				tblInfo.IsCommonHandle = true
 				index := &model.IndexInfo{
 					Name:    model.NewCIStr("primary"),
 					State:   model.StatePublic,
 					Primary: true,
 					Unique:  true,
 					Columns: []*model.IndexColumn{
-						{Name: model.NewCIStr(c.name), Offset: 0}},
+						{Name: model.NewCIStr(c.name), Offset: offset, Length: types.UnspecifiedLength}},
 				}
 				primaryIndices = append(primaryIndices, index)
 				tblInfo.Indices = primaryIndices
@@ -738,7 +738,7 @@ var tableTiDBIndexesCols = []columnInfo{
 }
 
 var slowQueryCols = []columnInfo{
-	{name: variable.SlowLogTimeStr, tp: mysql.TypeTimestamp, size: 26, decimal: 6, flag: mysql.PriKeyFlag},
+	{name: variable.SlowLogTimeStr, tp: mysql.TypeTimestamp, size: 26, decimal: 6, flag: mysql.PriKeyFlag | mysql.NotNullFlag | mysql.BinaryFlag},
 	{name: variable.SlowLogTxnStartTSStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.UnsignedFlag},
 	{name: variable.SlowLogUserStr, tp: mysql.TypeVarchar, size: 64},
 	{name: variable.SlowLogHostStr, tp: mysql.TypeVarchar, size: 64},

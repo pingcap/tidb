@@ -938,11 +938,18 @@ type SlowQueryExtractor struct {
 	SkipRequest bool
 	StartTime   time.Time
 	EndTime     time.Time
+	TimeRanges  []*TimeRange
 	// Enable is true means the executor should use the time range to locate the slow-log file that need to be parsed.
 	// Enable is false, means the executor should keep the behavior compatible with before, which is only parse the
 	// current slow-log file.
 	Enable bool
 	Desc   bool
+}
+
+// TimeRange is used to check whether a given log should be extracted.
+type TimeRange struct {
+	StartTime time.Time
+	EndTime   time.Time
 }
 
 // Extract implements the MemTablePredicateExtractor Extract interface
@@ -979,7 +986,12 @@ func (e *SlowQueryExtractor) setTimeRange(start, end int64) {
 	if end == 0 {
 		endTime = startTime.Add(defaultSlowQueryDuration)
 	}
-	e.StartTime, e.EndTime = startTime, endTime
+	//e.StartTime, e.EndTime = startTime, endTime
+	timeRange := &TimeRange{
+		StartTime: startTime,
+		EndTime:   endTime,
+	}
+	e.TimeRanges = append(e.TimeRanges, timeRange)
 	e.Enable = true
 }
 

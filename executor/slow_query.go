@@ -108,8 +108,17 @@ func (e *slowQueryRetriever) initialize(sctx sessionctx.Context) error {
 	e.stats = &slowQueryRuntimeStats{}
 	if e.extractor != nil {
 		e.checker.enableTimeCheck = e.extractor.Enable
-		e.checker.startTime = types.NewTime(types.FromGoTime(e.extractor.StartTime), mysql.TypeDatetime, types.MaxFsp)
-		e.checker.endTime = types.NewTime(types.FromGoTime(e.extractor.EndTime), mysql.TypeDatetime, types.MaxFsp)
+		for _, tr := range e.extractor.TimeRanges {
+			startTime := types.NewTime(types.FromGoTime(tr.StartTime), mysql.TypeDatetime, types.MaxFsp)
+			endTime := types.NewTime(types.FromGoTime(tr.EndTime), mysql.TypeDatetime, types.MaxFsp)
+			timeRange := &timeRange{
+				startTime: startTime,
+				endTime: endTime,
+			}
+			e.checker.timeRanges = append(e.checker.timeRanges, timeRange)
+		}
+		//e.checker.startTime = types.NewTime(types.FromGoTime(e.extractor.StartTime), mysql.TypeDatetime, types.MaxFsp)
+		//e.checker.endTime = types.NewTime(types.FromGoTime(e.extractor.EndTime), mysql.TypeDatetime, types.MaxFsp)
 	}
 	e.initialized = true
 	e.files, err = e.getAllFiles(sctx, sctx.GetSessionVars().SlowQueryFile)
@@ -198,6 +207,12 @@ type slowLogChecker struct {
 	enableTimeCheck bool
 	startTime       types.Time
 	endTime         types.Time
+	timeRanges      []*timeRange
+}
+
+type timeRange struct {
+	startTime types.Time
+	endTime   types.Time
 }
 
 func (sc *slowLogChecker) hasPrivilege(userName string) bool {
@@ -205,10 +220,15 @@ func (sc *slowLogChecker) hasPrivilege(userName string) bool {
 }
 
 func (sc *slowLogChecker) isTimeValid(t types.Time) bool {
-	if sc.enableTimeCheck && (t.Compare(sc.startTime) < 0 || t.Compare(sc.endTime) > 0) {
-		return false
+	for _, tr := range sc.timeRanges {
+		if sc.enableTimeCheck && (t.Compare(tr.startTime) >= 0 && t.Compare(tr.endTime) <= 0) {
+			return true
+		}
 	}
-	return true
+	//if sc.enableTimeCheck && (t.Compare(sc.startTime) < 0 || t.Compare(sc.endTime) > 0) {
+	//	return false
+	//}
+	return !sc.enableTimeCheck
 }
 
 func getOneLine(reader *bufio.Reader) ([]byte, error) {
@@ -867,9 +887,9 @@ func (e *slowQueryRetriever) getAllFiles(sctx sessionctx.Context, logFilePath st
 			return handleErr(err)
 		}
 		start := types.NewTime(types.FromGoTime(fileStartTime), mysql.TypeDatetime, types.MaxFsp)
-		if start.Compare(e.checker.endTime) > 0 {
-			return nil
-		}
+		//if start.Compare(e.checker.endTime) > 0 {
+		//	return nil
+		//}
 
 		// Get the file end time.
 		fileEndTime, err := e.getFileEndTime(file)
@@ -877,7 +897,17 @@ func (e *slowQueryRetriever) getAllFiles(sctx sessionctx.Context, logFilePath st
 			return handleErr(err)
 		}
 		end := types.NewTime(types.FromGoTime(fileEndTime), mysql.TypeDatetime, types.MaxFsp)
-		if end.Compare(e.checker.startTime) < 0 {
+		//if end.Compare(e.checker.startTime) < 0 {
+		//	return nil
+		//}
+		inTimeRanges := false
+		for _, tr := range e.checker.timeRanges {
+			if start.Compare(tr.startTime) >= 0 && end.Compare(tr.endTime) <= 0 {
+				inTimeRanges = true
+				break
+			}
+		}
+		if !inTimeRanges {
 			return nil
 		}
 		_, err = file.Seek(0, io.SeekStart)
