@@ -1327,7 +1327,6 @@ func (s *testTableSuite) TestPerformanceSchemaforPlanCache(c *C) {
 		testkit.Rows("3 1"))
 }
 
-<<<<<<< HEAD
 func (s *testTableSuite) TestFormatVersion(c *C) {
 	// Test for defaultVersions.
 	defaultVersions := []string{"5.7.25-TiDB-None", "5.7.25-TiDB-8.0.18", "5.7.25-TiDB-8.0.18-beta.1", "5.7.25-TiDB-v4.0.0-beta-446-g5268094af"}
@@ -1343,7 +1342,9 @@ func (s *testTableSuite) TestFormatVersion(c *C) {
 	for i, v := range versions {
 		version := infoschema.FormatVersion(v, false)
 		c.Assert(version, Equals, res[i])
-=======
+	}
+}
+
 func (s *testTableSuite) TestServerInfoResolveLoopBackAddr(c *C) {
 	nodes := []infoschema.ServerInfo{
 		{Address: "127.0.0.1:4000", StatusAddr: "192.168.130.22:10080"},
@@ -1359,6 +1360,5 @@ func (s *testTableSuite) TestServerInfoResolveLoopBackAddr(c *C) {
 	for _, n := range nodes {
 		c.Assert(n.Address, Equals, "192.168.130.22:4000")
 		c.Assert(n.StatusAddr, Equals, "192.168.130.22:10080")
->>>>>>> b9ef68e0b... infoschema: resolve loopback address of node (#20546)
 	}
 }
