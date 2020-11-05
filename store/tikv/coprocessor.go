@@ -529,6 +529,7 @@ func (worker *copIteratorWorker) run(ctx context.Context) {
 		if respCh == nil {
 			respCh = task.respChan
 		}
+		logutil.BgLogger().Info("worker handle Task", zap.Int("workerID", worker.id), zap.Uint32("taskID", task.id))
 		worker.handleTask(ctx, task, respCh)
 		failpoint.Inject("testRateLimitActionMockOtherExecutorConsume", func(val failpoint.Value) {
 			if val.(bool) {
@@ -601,6 +602,7 @@ func (it *copIterator) open(ctx context.Context) {
 func (sender *copIteratorTaskSender) run() {
 	// Send tasks to feed the worker goroutines.
 	sender.maxId.setTotalID(uint32(len(sender.tasks) - 1))
+	logutil.BgLogger().Info("sending Task", zap.Int("taskCount", len(sender.tasks)))
 	for i, t := range sender.tasks {
 		// we control the sending rate to prevent all tasks
 		// being done (aka. all of the responses are buffered) by copIteratorWorker.
@@ -1316,6 +1318,8 @@ type rateLimitAction struct {
 		// isTokenDestroyed indicates whether there is one token has been isTokenDestroyed after Action been triggered
 		isTokenDestroyed bool
 		once             sync.Once
+		// consumed indicates whether the once has been consumed
+		consumed bool
 		// waitingWorkerCnt indicates the total count of workers which is under condition.Waiting
 		waitingWorkerCnt uint
 		// triggerCountForTest indicates the total count of the rateLimitAction's Action being executed
@@ -1332,6 +1336,7 @@ func newRateLimitAction(totalTokenNumber uint, cond *sync.Cond) *rateLimitAction
 			remainingTokenNum   uint
 			isTokenDestroyed    bool
 			once                sync.Once
+			consumed            bool
 			waitingWorkerCnt    uint
 			triggerCountForTest uint
 		}{
@@ -1357,6 +1362,7 @@ func (e *rateLimitAction) Action(t *memory.Tracker) {
 		}
 		return
 	}
+	logutil.BgLogger().Info("Action Exceeded")
 	e.conditionLock()
 	defer e.conditionUnlock()
 	e.cond.once.Do(func() {
@@ -1387,6 +1393,7 @@ func (e *rateLimitAction) Action(t *memory.Tracker) {
 		e.cond.isTokenDestroyed = false
 		e.cond.exceeded = true
 		e.cond.triggerCountForTest++
+		e.cond.consumed = true
 	})
 }
 
@@ -1417,6 +1424,11 @@ func (e *rateLimitAction) broadcastIfNeeded(needed bool) {
 	logutil.BgLogger().Info("broadcastIfneeded")
 	e.cond.exceeded = false
 	e.cond.Broadcast()
+	if e.cond.waitingWorkerCnt < 1 && e.cond.consumed {
+		logutil.BgLogger().Info("iterator init once")
+		e.cond.consumed = false
+		e.cond.once = sync.Once{}
+	}
 }
 
 // destroyTokenIfNeeded will check the `exceed` flag after copWorker finished one task.
@@ -1449,8 +1461,9 @@ func (e *rateLimitAction) destroyTokenIfNeeded(id int, returnToken func()) {
 	}
 	logutil.BgLogger().Info("worker awake", zap.Int("workerID", id))
 	// only when all the waiting workers have been resumed, the Action could be initialized again.
-	if e.cond.waitingWorkerCnt < 1 {
+	if e.cond.waitingWorkerCnt < 1 && e.cond.consumed {
 		logutil.BgLogger().Info("worker init once", zap.Int("workerID", id))
+		e.cond.consumed = false
 		e.cond.once = sync.Once{}
 	}
 }
@@ -1526,12 +1539,3 @@ func (handler *maxIDHandler) setTotalID(totalID uint32) {
 	handler.totalID = totalID
 }
 
-func (handler *maxIDHandler) isAllTasksRunning(id int) bool {
-	handler.Lock()
-	defer handler.Unlock()
-	logutil.BgLogger().Info("worker query task running",
-		zap.Int("workerID", id),
-		zap.Uint32("maxID", handler.maxID),
-		zap.Uint32("totalID", handler.totalID))
-	return handler.maxID >= handler.totalID
-}
