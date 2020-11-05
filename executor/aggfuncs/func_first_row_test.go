@@ -28,8 +28,8 @@ import (
 
 func (s *testSuite) TestMergePartialResult4FirstRow(c *C) {
 	elems := []string{"a", "b", "c", "d", "e"}
-	enumA, _ := types.ParseEnumName(elems, "a", mysql.DefaultCollationName)
-	enumC, _ := types.ParseEnumName(elems, "c", mysql.DefaultCollationName)
+	enumA, _ := types.ParseEnum(elems, "a", mysql.DefaultCollationName)
+	enumC, _ := types.ParseEnum(elems, "c", mysql.DefaultCollationName)
 
 	setA, _ := types.ParseSet(elems, "a", mysql.DefaultCollationName)
 	setAB, _ := types.ParseSet(elems, "a,b", mysql.DefaultCollationName)

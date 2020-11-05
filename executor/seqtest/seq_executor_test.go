@@ -617,7 +617,7 @@ func (s *seqTestSuite) TestShow(c *C) {
 		c7 set('a', 'b', 'c', 'd') default 'a,c,c',
 		c8 datetime default current_timestamp on update current_timestamp,
 		c9 year default '2014',
-		c7 enum('2', '3', '4') default 2
+		c10 enum('2', '3', '4') default 2
 	);`)
 	tk.MustQuery(`show columns from t`).Check(testutil.RowsWithSep("|",
 		"c0|int(11)|YES||1|",

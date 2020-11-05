@@ -48,7 +48,7 @@ func (e Set) Copy() Set {
 	}
 }
 
-// ParseSet creates a Set with name.
+// ParseSet creates a Set with name or value.
 func ParseSet(elems []string, name string, collation string) (Set, error) {
 	if setName, err := ParseSetName(elems, name, collation); err == nil {
 		return setName, nil
