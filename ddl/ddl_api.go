@@ -5846,6 +5846,12 @@ func buildPlacementSpecs(bundle *placement.Bundle, specs []*ast.PlacementSpec) (
 		case ast.PlacementRoleFollower:
 			role = placement.Follower
 		case ast.PlacementRoleLeader:
+			if spec.Replicas == 0 {
+				spec.Replicas = 1
+			}
+			if spec.Replicas > 1 {
+				err = errors.Errorf("replicas can only be 1 when the role is leader")
+			}
 			role = placement.Leader
 		case ast.PlacementRoleLearner:
 			role = placement.Learner
