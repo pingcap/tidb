@@ -206,6 +206,9 @@ func (t *Tracker) ReplaceChild(oldChild, newChild *Tracker) {
 // which means this is a memory release operation. When memory usage of a tracker
 // exceeds its bytesLimit, the tracker calls its action, so does each of its ancestors.
 func (t *Tracker) Consume(bytes int64) {
+	if bytes == 0 {
+		return
+	}
 	var rootExceed *Tracker
 	for tracker := t; tracker != nil; tracker = tracker.parent {
 		if atomic.AddInt64(&tracker.bytesConsumed, bytes) >= tracker.bytesLimit && tracker.bytesLimit > 0 {
@@ -294,6 +297,11 @@ func (t *Tracker) toString(indent string, buffer *bytes.Buffer) {
 
 // BytesToString converts the memory consumption to a readable string.
 func (t *Tracker) BytesToString(numBytes int64) string {
+	return BytesToString(numBytes)
+}
+
+// BytesToString converts the memory consumption to a readable string.
+func BytesToString(numBytes int64) string {
 	GB := float64(numBytes) / float64(1<<30)
 	if GB > 1 {
 		return fmt.Sprintf("%v GB", GB)

@@ -413,7 +413,7 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx sessionctx.Context,
 	return nil
 }
 
-func (t *TableCommon) rebuildIndices(ctx sessionctx.Context, rm kv.RetrieverMutator, h int64, touched []bool, oldData []types.Datum, newData []types.Datum, opts ...table.CreateIdxOptFunc) error {
+func (t *TableCommon) rebuildIndices(ctx sessionctx.Context, rm kv.MemBuffer, h int64, touched []bool, oldData []types.Datum, newData []types.Datum, opts ...table.CreateIdxOptFunc) error {
 	txn, err := ctx.Txn(true)
 	if err != nil {
 		return err
@@ -870,11 +870,7 @@ func (t *TableCommon) removeRowData(ctx sessionctx.Context, h int64) error {
 	}
 
 	key := t.RecordKey(h)
-	err = txn.Delete([]byte(key))
-	if err != nil {
-		return err
-	}
-	return nil
+	return txn.Delete(key)
 }
 
 // removeRowIndices removes all the indices of a row.
@@ -903,7 +899,7 @@ func (t *TableCommon) removeRowIndices(ctx sessionctx.Context, h int64, rec []ty
 }
 
 // removeRowIndex implements table.Table RemoveRowIndex interface.
-func (t *TableCommon) removeRowIndex(sc *stmtctx.StatementContext, rm kv.RetrieverMutator, h int64, vals []types.Datum, idx table.Index, txn kv.Transaction) error {
+func (t *TableCommon) removeRowIndex(sc *stmtctx.StatementContext, rm kv.MemBuffer, h int64, vals []types.Datum, idx table.Index, txn kv.Transaction) error {
 	return idx.Delete(sc, rm, vals, h)
 }
 
@@ -1006,7 +1002,7 @@ func (t *TableCommon) IterRecords(ctx sessionctx.Context, startKey kv.Key, cols 
 // The defaultVals is used to avoid calculating the default value multiple times.
 func GetColDefaultValue(ctx sessionctx.Context, col *table.Column, defaultVals []types.Datum) (
 	colVal types.Datum, err error) {
-	if col.OriginDefaultValue == nil && mysql.HasNotNullFlag(col.Flag) {
+	if col.GetOriginDefaultValue() == nil && mysql.HasNotNullFlag(col.Flag) {
 		return colVal, errors.New("Miss column")
 	}
 	if col.State != model.StatePublic {

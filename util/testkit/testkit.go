@@ -279,7 +279,7 @@ func (tk *TestKit) MustGetErrCode(sql string, errCode int) {
 	originErr := errors.Cause(err)
 	tErr, ok := originErr.(*terror.Error)
 	tk.c.Assert(ok, check.IsTrue, check.Commentf("expect type 'terror.Error', but obtain '%T'", originErr))
-	sqlErr := tErr.ToSQLError()
+	sqlErr := terror.ToSQLError(tErr)
 	tk.c.Assert(int(sqlErr.Code), check.Equals, errCode, check.Commentf("Assertion failed, origin err:\n  %v", sqlErr))
 }
 

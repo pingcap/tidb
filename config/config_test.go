@@ -148,7 +148,8 @@ disable-error-stack = false
 }
 
 func (s *testConfigSuite) TestConfig(c *C) {
-	conf := new(Config)
+	conf := NewConfig()
+	c.Assert(conf.Performance.FeedbackProbability, Equals, 0.0)
 	conf.TempStoragePath = tempStorageDirName
 	conf.Binlog.Enable = true
 	conf.Binlog.IgnoreError = true
