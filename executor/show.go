@@ -207,6 +207,8 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 		return e.fetchShowBRIE(ctx, ast.BRIEKindBackup)
 	case ast.ShowRestores:
 		return e.fetchShowBRIE(ctx, ast.BRIEKindRestore)
+	case ast.ShowImports:
+		return e.fetchShowBRIE(ctx, ast.BRIEKindImport)
 	}
 	return nil
 }

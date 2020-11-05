@@ -16,6 +16,7 @@ package executor
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"fmt"
 	"net/url"
 	"path/filepath"
@@ -41,7 +42,6 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -127,7 +127,7 @@ func (bq *brieQueue) registerTask(
 	info *brieTaskInfo,
 	se sessionctx.Context,
 ) (context.Context, uint64, *brieQueueItem, error) {
-	s := se.(session.Session)
+	s := se.(sqlexec.SQLExecutor)
 	taskCtx, taskCancel := context.WithCancel(ctx)
 	item := &brieQueueItem{
 		info:   info,
@@ -139,23 +139,19 @@ func (bq *brieQueue) registerTask(
 	}
 
 	// use prepare to avoid SQL injection
-	sql := `INSERT INTO mysql.brie_tasks (
+	sql := fmt.Sprintf(`INSERT INTO mysql.brie_tasks (
 				kind, origin_sql, queue_time, data_path, conn_id, status, progress, cancel
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`
-	stmtID, _, _, err := s.PrepareStmt(sql)
-	if err != nil {
-		return nil, 0, item, err
-	}
-	_, err = s.ExecutePreparedStmt(ctx, stmtID, []types.Datum{
-		types.NewDatum(info.kind),
-		types.NewDatum(info.originSQL),
-		types.NewDatum(info.queueTime),
-		types.NewDatum(info.storage),
-		types.NewDatum(info.connID),
-		types.NewDatum(item.progress.cmd),
-		types.NewDatum(item.progress.GetPercent()),
-		types.NewDatum(0),
-	})
+			) VALUES ('%s', '%s', '%s', '%s', %d, '%s', %f, %d);`,
+		info.kind.String(),
+		base64.StdEncoding.EncodeToString([]byte(info.originSQL)),
+		info.queueTime.String(),
+		base64.StdEncoding.EncodeToString([]byte(info.storage)),
+		info.connID,
+		item.progress.cmd,
+		item.progress.GetPercent(),
+		0,
+	)
+	_, err := s.Execute(ctx, sql)
 	if err != nil {
 		return nil, 0, item, err
 	}
@@ -164,6 +160,7 @@ func (bq *brieQueue) registerTask(
 		return nil, 0, item, err
 	}
 	r := rs[0]
+	defer terror.Call(r.Close)
 	req := r.NewChunk()
 	err = r.Next(ctx, req)
 	if err != nil || req.NumRows() != 1 {
@@ -177,17 +174,23 @@ func (bq *brieQueue) registerTask(
 // executed at a time, and this function blocks until the task is ready.
 //
 // Returns an object to track the task's progress.
-func (bq *brieQueue) acquireTask(taskCtx context.Context, taskID uint64, se sessionctx.Context) error {
+func (bq *brieQueue) acquireTask(taskCtx context.Context, taskID uint64, se sessionctx.Context) (err error) {
 	// wait until we are at the front of the queue.
 	select {
 	case bq.workerCh <- struct{}{}:
-		defer bq.releaseTask()
+		defer func() {
+			if err != nil {
+				bq.releaseTask()
+			}
+		}()
 		sql := fmt.Sprintf("SELECT cancel FROM mysql.brie_tasks WHERE id = %d;", taskID)
-		rs, err := se.(session.Session).Execute(taskCtx, sql)
+		var rs []sqlexec.RecordSet
+		rs, err = se.(sqlexec.SQLExecutor).Execute(taskCtx, sql)
 		if err != nil {
 			return err
 		}
 		r := rs[0]
+		defer terror.Call(r.Close)
 		req := r.NewChunk()
 		err = r.Next(taskCtx, req)
 		if err != nil {
@@ -212,8 +215,8 @@ func (bq *brieQueue) releaseTask() {
 func (bq *brieQueue) cancelTask(ctx context.Context, taskID uint64, se sessionctx.Context, cancel func()) {
 	timeoutCtx, cancel2 := context.WithTimeout(ctx, cancelTimeout)
 	defer cancel2()
-	sql := fmt.Sprintf("UPDATE mysql.brie_tasks SET cancel = 1 WHERE id = %d", taskID)
-	_, err := se.(session.Session).Execute(timeoutCtx, sql)
+	sql := fmt.Sprintf("UPDATE mysql.brie_tasks SET cancel = 1 WHERE id = %d;", taskID)
+	_, err := se.(sqlexec.SQLExecutor).Execute(timeoutCtx, sql)
 	if err != nil {
 		logutil.Logger(ctx).Error("failed to update BRIE task table to cancel",
 			zap.Uint64("taskID", taskID),
@@ -553,12 +556,13 @@ func handleBRIEError(err error, terror *terror.Error) error {
 
 func (e *ShowExec) fetchShowBRIE(ctx context.Context, kind ast.BRIEKind) error {
 	sql := fmt.Sprintf(`SELECT data_path, status, progress, queue_time, exec_time, finish_time, conn_id
-			FROM mysql.brie_tasks WHERE kind = %s;`, kind.String())
-	rs, err := e.ctx.(session.Session).Execute(ctx, sql)
+			FROM mysql.brie_tasks WHERE kind = '%s';`, kind.String())
+	rs, err := e.ctx.(sqlexec.SQLExecutor).Execute(ctx, sql)
 	if err != nil {
 		return err
 	}
 	r := rs[0]
+	defer terror.Call(r.Close)
 	req := r.NewChunk()
 	it := chunk.NewIterator4Chunk(req)
 	for {
@@ -571,7 +575,13 @@ func (e *ShowExec) fetchShowBRIE(ctx context.Context, kind ast.BRIEKind) error {
 		}
 
 		for row := it.Begin(); row != it.End(); row = it.Next() {
-			e.result.AppendString(0, row.GetString(0))
+			dataPath, err := base64.StdEncoding.DecodeString(row.GetString(0))
+			if err != nil {
+				logutil.Logger(ctx).Error("failed to decode base64", zap.Error(err))
+				continue
+			}
+
+			e.result.AppendBytes(0, dataPath)
 			e.result.AppendString(1, row.GetString(1))
 			e.result.AppendFloat64(2, row.GetFloat64(2))
 			e.result.AppendTime(3, row.GetTime(3))
