@@ -15,7 +15,6 @@ package systimemon
 
 import (
 	"os"
-	"runtime"
 	"runtime/debug"
 	"sync/atomic"
 	"time"
@@ -81,7 +80,6 @@ func StartAutoFreeOSMemory() {
 		}
 		rss := stat.ResidentMemory()
 		if rss > threshold {
-			runtime.GC()
 			debug.FreeOSMemory()
 			count++
 			logutil.BgLogger().Warn("auto free os memory", zap.Int("rss", rss), zap.Int("threshold", threshold), zap.Int("count", count))
