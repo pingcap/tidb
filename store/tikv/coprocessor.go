@@ -1354,7 +1354,6 @@ func (e *rateLimitAction) Action(t *memory.Tracker) {
 		}
 		return
 	}
-	logutil.BgLogger().Info("Action Exceeded")
 	e.conditionLock()
 	defer e.conditionUnlock()
 	e.cond.once.Do(func() {
