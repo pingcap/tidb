@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
@@ -267,18 +268,12 @@ func (s *testValidatorSuite) TestValidator(c *C) {
 
 		// issue 20295
 		// issue 11193
-		{"select cast(1.23 as decimal(65,65))", true,
-			errors.New("[types:1425]Too big scale 65 specified for column '1.23'. Maximum is 30.")},
-		{"select CONVERT( 2, DECIMAL(62,60) )", true,
-			errors.New("[types:1425]Too big scale 60 specified for column '2'. Maximum is 30.")},
-		{"select CONVERT( 2, DECIMAL(66,29) )", true,
-			errors.New("[types:1426]Too big precision 66 specified for column '2'. Maximum is 65.")},
-		{"select CONVERT( 2, DECIMAL(28,29) )", true,
-			errors.New("[types:1427]For float(M,D), double(M,D) or decimal(M,D), M must be >= D (column '2').")},
-		{"select CONVERT( 2, DECIMAL(30,65) )", true,
-			errors.New("[types:1427]For float(M,D), double(M,D) or decimal(M,D), M must be >= D (column '2').")},
-		{"select CONVERT( 2, DECIMAL(66,99) )", true,
-			errors.New("[types:1427]For float(M,D), double(M,D) or decimal(M,D), M must be >= D (column '2').")},
+		{"select cast(1.23 as decimal(65,65))", true, types.ErrTooBigScale.GenWithStackByArgs(65, "1.23", mysql.MaxDecimalScale)},
+		{"select CONVERT( 2, DECIMAL(62,60) )", true, types.ErrTooBigScale.GenWithStackByArgs(60, "2", mysql.MaxDecimalScale)},
+		{"select CONVERT( 2, DECIMAL(66,29) )", true, types.ErrTooBigPrecision.GenWithStackByArgs(66, "2", mysql.MaxDecimalWidth)},
+		{"select CONVERT( 2, DECIMAL(28,29) )", true, types.ErrMBiggerThanD.GenWithStackByArgs("2")},
+		{"select CONVERT( 2, DECIMAL(30,65) )", true, types.ErrMBiggerThanD.GenWithStackByArgs("2")},
+		{"select CONVERT( 2, DECIMAL(66,99) )", true, types.ErrMBiggerThanD.GenWithStackByArgs("2")},
 	}
 
 	_, err := s.se.Execute(context.Background(), "use test")
