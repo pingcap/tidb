@@ -136,7 +136,7 @@ func (bq *brieQueue) registerTask(
 		},
 	}
 
-	// use prepare to avoid SQL injection
+	// use base64 encode to avoid SQL injection
 	sql := fmt.Sprintf(`INSERT INTO mysql.brie_tasks (
 				kind, origin_sql, queue_time, data_path, conn_id, status, progress, cancel
 			) VALUES ('%s', '%s', '%s', '%s', %d, '%s', %f, %d);`,
@@ -211,16 +211,14 @@ func (bq *brieQueue) releaseTask() {
 }
 
 func (bq *brieQueue) cancelTask(ctx context.Context, taskID uint64, se sessionctx.Context, cancel func()) {
-	timeoutCtx, cancel2 := context.WithTimeout(ctx, cancelTimeout)
-	defer cancel2()
 	sql := fmt.Sprintf("UPDATE mysql.brie_tasks SET cancel = 1 WHERE id = %d;", taskID)
-	_, err := se.(sqlexec.SQLExecutor).Execute(timeoutCtx, sql)
+	_, err := se.(sqlexec.SQLExecutor).Execute(ctx, sql)
 	if err != nil {
 		logutil.Logger(ctx).Error("failed to update BRIE task table to cancel",
 			zap.Uint64("taskID", taskID),
 			zap.Error(err))
 	}
-	// If failed to update BRIE task table, we still try cancel IMPORT's context
+	// If failed to update BRIE task table (maybe by user cancel this ctx), we still try cancel IMPORT's context
 	cancel()
 }
 
@@ -483,12 +481,17 @@ func (e *BRIEExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 	bq := globalBRIEQueue
 
+	taskExecuted := false
+
 	e.info.connID = e.ctx.GetSessionVars().ConnectionID
 	e.info.queueTime = types.CurrentTime(mysql.TypeDatetime)
 	// TODO(lance6716): flush this item periodically
 	taskCtx, taskID, item, err := bq.registerTask(ctx, e.info, e.ctx)
-	defer item.cancel()
-	//defer bq.cancelTask(ctx, taskID, e.ctx, item.cancel)
+	defer func() {
+		if !taskExecuted {
+			bq.cancelTask(ctx, taskID, e.ctx, item.cancel)
+		}
+	}()
 	if err != nil {
 		return err
 	}
@@ -526,11 +529,13 @@ func (e *BRIEExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		err = handleBRIEError(task.RunRestore(taskCtx, glue, "Restore", e.restoreCfg), ErrBRIERestoreFailed)
 	case ast.BRIEKindImport:
 		// TODO(lance6716): support taskCtx later
+		// TODO(lance6716): use taskID to build a unique checkpoint/sort-kv-dir
 		l := lightning.New(e.importCfg)
 		err = handleBRIEError(l.RunOnce(), ErrBRIEImportFailed)
 	default:
-		err = errors.Errorf("unsupported BRIE statement kind: %s", e.info.kind)
+		return errors.Errorf("unsupported BRIE statement kind: %s", e.info.kind)
 	}
+	taskExecuted = true
 	if err != nil {
 		return err
 	}
