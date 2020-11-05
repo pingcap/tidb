@@ -345,13 +345,32 @@ func generateRangePartitionExpr(ctx sessionctx.Context, pi *model.PartitionInfo,
 	return ret, nil
 }
 
-func extractListPartitionExprColumns(ctx sessionctx.Context, pi *model.PartitionInfo, columns []*expression.Column, names types.NameSlice) ([]*expression.Column, error) {
+func getColumnsOffset(cols, columns []*expression.Column) []int {
+	colsOffset := make([]int, len(cols))
+	for i, col := range columns {
+		if idx := findIdxByColUniqueID(cols, col); idx >= 0 {
+			colsOffset[idx] = i
+		}
+	}
+	return colsOffset
+}
+
+func findIdxByColUniqueID(cols []*expression.Column, col *expression.Column) int {
+	for idx, c := range cols {
+		if c.UniqueID == col.UniqueID {
+			return idx
+		}
+	}
+	return -1
+}
+
+func extractListPartitionExprColumns(ctx sessionctx.Context, pi *model.PartitionInfo, columns []*expression.Column, names types.NameSlice) ([]*expression.Column, []int, error) {
 	var cols []*expression.Column
 	if len(pi.Columns) == 0 {
 		schema := expression.NewSchema(columns...)
 		exprs, err := expression.ParseSimpleExprsWithNames(ctx, pi.Expr, schema, names)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		exprs[0].HashCode(ctx.GetSessionVars().StmtCtx)
 		cols = expression.ExtractColumns(exprs[0])
@@ -364,6 +383,7 @@ func extractListPartitionExprColumns(ctx sessionctx.Context, pi *model.Partition
 			cols = append(cols, columns[idx])
 		}
 	}
+	offset := getColumnsOffset(cols, columns)
 	deDupCols := make([]*expression.Column, 0, len(cols))
 	for _, col := range cols {
 		if findIdxByColUniqueID(deDupCols, col) < 0 {
@@ -372,16 +392,7 @@ func extractListPartitionExprColumns(ctx sessionctx.Context, pi *model.Partition
 			deDupCols = append(deDupCols, c)
 		}
 	}
-	return deDupCols, nil
-}
-
-func findIdxByColUniqueID(cols []*expression.Column, col *expression.Column) int {
-	for idx, c := range cols {
-		if c.UniqueID == col.UniqueID {
-			return idx
-		}
-	}
-	return -1
+	return deDupCols, offset, nil
 }
 
 func generateListPartitionExpr(ctx sessionctx.Context, pi *model.PartitionInfo,
@@ -390,7 +401,7 @@ func generateListPartitionExpr(ctx sessionctx.Context, pi *model.PartitionInfo,
 	locateExprs := make([]expression.Expression, 0, len(pi.Definitions))
 	pruneExprs := make([]expression.Expression, 0, len(pi.Definitions))
 	schema := expression.NewSchema(columns...)
-	exprCols, err := extractListPartitionExprColumns(ctx, pi, columns, names)
+	exprCols, offset, err := extractListPartitionExprColumns(ctx, pi, columns, names)
 	if err != nil {
 		return nil, err
 	}
@@ -422,6 +433,7 @@ func generateListPartitionExpr(ctx sessionctx.Context, pi *model.PartitionInfo,
 	ret := &PartitionExpr{
 		InValues:       locateExprs,
 		ForListPruning: &ForListPruning{Exprs: pruneExprs, ExprCols: exprCols},
+		ColumnOffset:   offset,
 	}
 	return ret, nil
 }

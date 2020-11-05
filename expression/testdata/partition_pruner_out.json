@@ -761,7 +761,7 @@
       {
         "SQL": "select /*+ INL_JOIN(t6,t5) */ count(*) from t6 join t5 on t6.b = t5.b where t6.a in (1,2) and t5.a in (1,6) and t5.b in (1,6)",
         "Result": [
-          "0"
+          "1"
         ],
         "Plan": [
           "StreamAgg_12 1.00 root  funcs:count(1)->Column#9",
