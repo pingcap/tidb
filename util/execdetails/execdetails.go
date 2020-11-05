@@ -485,6 +485,8 @@ const (
 	TpIndexLookUpRunTimeStats
 	// TpSlowQueryRuntimeStat is the tp for TpSlowQueryRuntimeStat
 	TpSlowQueryRuntimeStat
+	// TpStreamAggRuntimeStat is the tp for StreamAggRuntimeStat
+	TpStreamAggRuntimeStat
 )
 
 // RuntimeStats is used to express the executor runtime information.

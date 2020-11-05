@@ -849,7 +849,7 @@ func (e *StreamAggExec) Open(ctx context.Context) error {
 	e.isChildReturnEmpty = true
 	e.inputIter = chunk.NewIterator4Chunk(e.childResult)
 	e.inputRow = e.inputIter.End()
-
+	e.initRuntimeStat()
 	e.partialResults = make([]aggfuncs.PartialResult, 0, len(e.aggFuncs))
 	for _, aggFunc := range e.aggFuncs {
 		partialResult, memDelta := aggFunc.AllocPartialResult()
@@ -886,12 +886,17 @@ func (e *StreamAggExec) Next(ctx context.Context, req *chunk.Chunk) (err error) 
 }
 
 func (e *StreamAggExec) consumeOneGroup(ctx context.Context, chk *chunk.Chunk) (err error) {
+	var start time.Time
 	if e.groupChecker.isExhausted() {
 		if err = e.consumeCurGroupRowsAndFetchChild(ctx, chk); err != nil {
 			return err
 		}
 		if !e.executed {
+			start = time.Now()
 			_, err := e.groupChecker.splitIntoGroups(e.childResult)
+			if e.stats != nil {
+				e.stats.Split += int64(time.Since(start))
+			}
 			if err != nil {
 				return err
 			}
@@ -909,8 +914,11 @@ func (e *StreamAggExec) consumeOneGroup(ctx context.Context, chk *chunk.Chunk) (
 		if err = e.consumeCurGroupRowsAndFetchChild(ctx, chk); err != nil || e.executed {
 			return err
 		}
-
+		start = time.Now()
 		isFirstGroupSameAsPrev, err := e.groupChecker.splitIntoGroups(e.childResult)
+		if e.stats != nil {
+			e.stats.Split += int64(time.Since(start))
+		}
 		if err != nil {
 			return err
 		}
@@ -977,7 +985,7 @@ func (e *StreamAggExec) consumeCurGroupRowsAndFetchChild(ctx context.Context, ch
 	e.isChildReturnEmpty = false
 	e.inputRow = e.inputIter.Begin()
 	if e.stats != nil {
-		e.stats.Allocate = time.Since(start)
+		e.stats.Allocate += int64(time.Since(start))
 	}
 	return nil
 }
@@ -998,8 +1006,56 @@ func (e *StreamAggExec) appendResult2Chunk(chk *chunk.Chunk) error {
 	return nil
 }
 
+func (e *StreamAggExec) initRuntimeStat() {
+	if e.runtimeStats != nil {
+		if e.stats == nil {
+			e.stats = &StreamAggRuntimeStat{
+				Allocate: 0,
+				Split:    0,
+			}
+			e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
+		}
+	}
+}
+
 type StreamAggRuntimeStat struct {
-	Allocate time.Duration
+	Allocate int64
+	Split    int64
+}
+
+func (e *StreamAggRuntimeStat) String() string {
+	var result bytes.Buffer
+	if e.Allocate != 0 {
+		result.WriteString(fmt.Sprintf("Allocate_time:%v", time.Duration(e.Allocate)))
+	}
+	if e.Split != 0 {
+		if result.Len() > 0 {
+			result.WriteByte(',')
+		}
+		result.WriteString(fmt.Sprintf("Split_time:%v", time.Duration(e.Split)))
+	}
+	return result.String()
+}
+
+func (e *StreamAggRuntimeStat) Clone() execdetails.RuntimeStats {
+	newRs := &StreamAggRuntimeStat{
+		Allocate: 0,
+		Split:    0,
+	}
+	return newRs
+}
+
+func (e *StreamAggRuntimeStat) Merge(other execdetails.RuntimeStats) {
+	tmp, ok := other.(*StreamAggRuntimeStat)
+	if !ok {
+		return
+	}
+	e.Allocate += tmp.Allocate
+	e.Split += tmp.Split
+}
+
+func (e *StreamAggRuntimeStat) Tp() int {
+	return execdetails.TpStreamAggRuntimeStat
 }
 
 // vecGroupChecker is used to split a given chunk according to the `group by` expression in a vectorized manner
