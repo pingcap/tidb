@@ -14,6 +14,7 @@
 package core
 
 import (
+	"fmt"
 	"sort"
 	"strings"
 
@@ -111,7 +112,9 @@ func (b *PBPlanBuilder) pbToTableScan(e *tipb.Executor) (PhysicalPlan, error) {
 		if len(tblScan.Ranges) > 0 {
 			timeRanges := mergeKeyRanges(tblScan.Ranges)
 			extractor.Desc = tblScan.Desc
-			extractor.setTimeRange(timeRanges[0][0], timeRanges[0][1])
+			for _, tr := range timeRanges {
+				extractor.setTimeRange(tr[0], tr[1])
+			}
 		}
 		p.Extractor = extractor
 	}
