@@ -15,6 +15,7 @@ package executor_test
 
 import (
 	"context"
+	"strconv"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
@@ -29,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
 )
@@ -403,7 +405,7 @@ func (s *testSuite7) TestUser(c *C) {
 	tk.Se, err = session.CreateSession4Test(s.store)
 	c.Check(err, IsNil)
 	ctx := tk.Se.(sessionctx.Context)
-	ctx.GetSessionVars().User = &auth.UserIdentity{Username: "test1", Hostname: "localhost"}
+	ctx.GetSessionVars().User = &auth.UserIdentity{Username: "test1", Hostname: "localhost", AuthHostname: "localhost"}
 	tk.MustExec(alterUserSQL)
 	result = tk.MustQuery(`SELECT authentication_string FROM mysql.User WHERE User="test1" and Host="localhost"`)
 	result.Check(testkit.Rows(auth.EncodePassword("1")))
@@ -502,17 +504,40 @@ func (s *testSuite3) TestSetPwd(c *C) {
 func (s *testSuite3) TestKillStmt(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("kill 1")
+	sm := &mockSessionManager{
+		serverID: 0,
+	}
+	tk.Se.SetSessionManager(sm)
 
+	// ZERO serverID, treated as truncated.
+	tk.MustExec("kill 1")
 	result := tk.MustQuery("show warnings")
-	result.Check(testkit.Rows("Warning 1105 Invalid operation. Please use 'KILL TIDB [CONNECTION | QUERY] connectionID' instead"))
+	result.Check(testkit.Rows("Warning 1105 Kill failed: Received a 32bits truncated ConnectionID, expect 64bits. Please execute 'KILL [CONNECTION | QUERY] ConnectionID' to send a Kill without truncating ConnectionID."))
+
+	// truncated
+	sm.SetServerID(1)
+	tk.MustExec("kill 101")
+	result = tk.MustQuery("show warnings")
+	result.Check(testkit.Rows("Warning 1105 Kill failed: Received a 32bits truncated ConnectionID, expect 64bits. Please execute 'KILL [CONNECTION | QUERY] ConnectionID' to send a Kill without truncating ConnectionID."))
+
+	// excceed int64
+	tk.MustExec("kill 9223372036854775808") // 9223372036854775808 == 2^63
+	result = tk.MustQuery("show warnings")
+	result.Check(testkit.Rows("Warning 1105 Parse ConnectionID failed: Unexpected connectionID excceeds int64"))
+
+	// local kill
+	connID := util.GlobalConnID{Is64bits: true, ServerID: 1, LocalConnID: 101}
+	tk.MustExec("kill " + strconv.FormatUint(connID.ID(), 10))
+	result = tk.MustQuery("show warnings")
+	result.Check(testkit.Rows())
+
+	// remote kill is tested in `tests/globalkilltest`
 }
 
 func (s *testSuite3) TestFlushPrivileges(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
 	tk.MustExec(`CREATE USER 'testflush'@'localhost' IDENTIFIED BY '';`)
-	tk.MustExec(`FLUSH PRIVILEGES;`)
 	tk.MustExec(`UPDATE mysql.User SET Select_priv='Y' WHERE User="testflush" and Host="localhost"`)
 
 	// Create a new session.
@@ -565,7 +590,7 @@ func (s *testSuite3) TestDropStats(c *C) {
 	c.Assert(err, IsNil)
 	tableInfo := tbl.Meta()
 	h := do.StatsHandle()
-	h.Clear()
+	h.Clear4Test()
 	testKit.MustExec("analyze table t")
 	statsTbl := h.GetTableStats(tableInfo)
 	c.Assert(statsTbl.Pseudo, IsFalse)
@@ -585,6 +610,42 @@ func (s *testSuite3) TestDropStats(c *C) {
 	statsTbl = h.GetTableStats(tableInfo)
 	c.Assert(statsTbl.Pseudo, IsTrue)
 	h.SetLease(0)
+}
+
+func (s *testSuite3) TestDropStatsFromKV(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (c1 varchar(20), c2 varchar(20))")
+	tk.MustExec(`insert into t values("1","1"),("2","2"),("3","3"),("4","4")`)
+	tk.MustExec("insert into t select * from t")
+	tk.MustExec("insert into t select * from t")
+	tk.MustExec("analyze table t")
+	tblID := tk.MustQuery(`select tidb_table_id from information_schema.tables where table_name = "t" and table_schema = "test"`).Rows()[0][0].(string)
+	tk.MustQuery("select modify_count, count from mysql.stats_meta where table_id = " + tblID).Check(
+		testkit.Rows("0 16"))
+	tk.MustQuery("select hist_id from mysql.stats_histograms where table_id = " + tblID).Check(
+		testkit.Rows("1", "2"))
+	tk.MustQuery("select hist_id, bucket_id from mysql.stats_buckets where table_id = " + tblID).Check(
+		testkit.Rows("1 0",
+			"1 1",
+			"1 2",
+			"1 3",
+			"2 0",
+			"2 1",
+			"2 2",
+			"2 3"))
+	tk.MustQuery("select hist_id from mysql.stats_top_n where table_id = " + tblID).Check(
+		testkit.Rows("1", "1", "1", "1", "2", "2", "2", "2"))
+
+	tk.MustExec("drop stats t")
+	tk.MustQuery("select modify_count, count from mysql.stats_meta where table_id = " + tblID).Check(
+		testkit.Rows("0 16"))
+	tk.MustQuery("select hist_id from mysql.stats_histograms where table_id = " + tblID).Check(
+		testkit.Rows())
+	tk.MustQuery("select hist_id, bucket_id from mysql.stats_buckets where table_id = " + tblID).Check(
+		testkit.Rows())
+	tk.MustQuery("select hist_id from mysql.stats_top_n where table_id = " + tblID).Check(
+		testkit.Rows())
 }
 
 func (s *testSuite3) TestFlushTables(c *C) {
@@ -686,4 +747,55 @@ func (s *testSuite3) TestRoleAtomic(c *C) {
 	result = tk.MustQuery(`SELECT user FROM mysql.User WHERE user in ('r1', 'r2', 'r3')`)
 	result.Check(testkit.Rows("r2"))
 	tk.MustExec("drop role r2;")
+}
+
+func (s *testSuite3) TestExtendedStatsPrivileges(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int)")
+	tk.MustExec("create user 'u1'@'%'")
+	se, err := session.CreateSession4Test(s.store)
+	c.Check(err, IsNil)
+	defer se.Close()
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "u1", Hostname: "%"}, nil, nil), IsTrue)
+	ctx := context.Background()
+	_, err = se.Execute(ctx, "create statistics s1(correlation) on test.t(a,b)")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[planner:1142]CREATE STATISTICS command denied to user 'u1'@'%' for table 't'")
+	tk.MustExec("grant select on test.* to 'u1'@'%'")
+	_, err = se.Execute(ctx, "create statistics s1(correlation) on test.t(a,b)")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[planner:1142]CREATE STATISTICS command denied to user 'u1'@'%' for table 'stats_extended'")
+	tk.MustExec("grant insert on mysql.stats_extended to 'u1'@'%'")
+	_, err = se.Execute(ctx, "create statistics s1(correlation) on test.t(a,b)")
+	c.Assert(err, IsNil)
+
+	_, err = se.Execute(ctx, "use test")
+	c.Assert(err, IsNil)
+	_, err = se.Execute(ctx, "drop statistics s1")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[planner:1142]DROP STATISTICS command denied to user 'u1'@'%' for table 'stats_extended'")
+	tk.MustExec("grant update on mysql.stats_extended to 'u1'@'%'")
+	_, err = se.Execute(ctx, "drop statistics s1")
+	c.Assert(err, IsNil)
+	tk.MustExec("drop user 'u1'@'%'")
+}
+
+func (s *testSuite3) TestIssue17247(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create user 'issue17247'")
+	tk.MustExec("grant CREATE USER on *.* to 'issue17247'")
+
+	tk1 := testkit.NewTestKit(c, s.store)
+	tk1.MustExec("use test")
+	c.Assert(tk1.Se.Auth(&auth.UserIdentity{Username: "issue17247", Hostname: "%"}, nil, nil), IsTrue)
+	tk1.MustExec("ALTER USER USER() IDENTIFIED BY 'xxx'")
+	tk1.MustExec("ALTER USER CURRENT_USER() IDENTIFIED BY 'yyy'")
+	tk1.MustExec("ALTER USER CURRENT_USER IDENTIFIED BY 'zzz'")
+	tk.MustExec("ALTER USER 'issue17247'@'%' IDENTIFIED BY 'kkk'")
+	tk.MustExec("ALTER USER 'issue17247'@'%' IDENTIFIED BY PASSWORD '*B50FBDB37F1256824274912F2A1CE648082C3F1F'")
+	// Wrong grammar
+	_, err := tk1.Exec("ALTER USER USER() IDENTIFIED BY PASSWORD '*B50FBDB37F1256824274912F2A1CE648082C3F1F'")
+	c.Assert(err, NotNil)
 }

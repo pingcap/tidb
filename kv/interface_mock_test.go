@@ -105,6 +105,10 @@ func (t *mockTxn) GetSnapshot() Snapshot {
 	return nil
 }
 
+func (t *mockTxn) GetUnionStore() UnionStore {
+	return nil
+}
+
 func (t *mockTxn) NewStagingBuffer() MemBuffer {
 	return nil
 }
@@ -154,10 +158,10 @@ func (s *mockStorage) BeginWithStartTS(startTS uint64) (Transaction, error) {
 	return s.Begin()
 }
 
-func (s *mockStorage) GetSnapshot(ver Version) (Snapshot, error) {
+func (s *mockStorage) GetSnapshot(ver Version) Snapshot {
 	return &mockSnapshot{
-		store: NewMemDbBuffer(),
-	}, nil
+		store: newMemDB(),
+	}
 }
 
 func (s *mockStorage) Close() error {
@@ -174,6 +178,10 @@ func (s *mockStorage) CurrentVersion() (Version, error) {
 }
 
 func (s *mockStorage) GetClient() Client {
+	return nil
+}
+
+func (s *mockStorage) GetMPPClient() MPPClient {
 	return nil
 }
 

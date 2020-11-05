@@ -106,7 +106,7 @@ var (
 			Help:      "Counter of creating ddl/worker and isowner.",
 		}, []string{LblType})
 
-	AddIndexTotalCounter = prometheus.NewCounterVec(
+	BackfillTotalCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "ddl",

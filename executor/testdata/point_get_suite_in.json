@@ -1,0 +1,13 @@
+[
+  {
+    "name": "TestClusterIndexCBOPointGet",
+    "cases": [
+      "select * from t1 where a = 1 and b = 1 and c = 1",
+      "select * from t2 where t2.a = '111' and t2.b = 1",
+      "select * from t1 join t2 on t1.a = t2.b where t1.a = 1",
+      "select * from t1 where (a,b) in ((1,1),(2,2)) and c = 2",
+      "select * from t2 where a in ('111','222') and b = 2",
+      "select * from t2 where a in ('111','222') union all select a,c from t1 where (a,b) in ((1,1),(2,2))"
+    ]
+  }
+]

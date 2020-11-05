@@ -136,12 +136,14 @@ func (*testSessionSuite) TestSlowLogFormat(c *C) {
 	txnTS := uint64(406649736972468225)
 	costTime := time.Second
 	execDetail := execdetails.ExecDetails{
-		ProcessTime:   time.Second * time.Duration(2),
-		WaitTime:      time.Minute,
-		BackoffTime:   time.Millisecond,
-		RequestCount:  2,
-		TotalKeys:     10000,
-		ProcessedKeys: 20001,
+		ProcessTime:  time.Second * time.Duration(2),
+		WaitTime:     time.Minute,
+		BackoffTime:  time.Millisecond,
+		RequestCount: 2,
+		CopDetail: &execdetails.CopDetails{
+			ProcessedKeys: 20001,
+			TotalKeys:     10000,
+		},
 	}
 	statsInfos := make(map[string]uint64)
 	statsInfos["t1"] = 0
@@ -178,13 +180,14 @@ func (*testSessionSuite) TestSlowLogFormat(c *C) {
 	resultFields := `# Txn_start_ts: 406649736972468225
 # User@Host: root[root] @ 192.168.0.1 [192.168.0.1]
 # Conn_ID: 1
+# Exec_retry_time: 5.1 Exec_retry_count: 3
 # Query_time: 1
 # Parse_time: 0.00000001
 # Compile_time: 0.00000001
 # Rewrite_time: 0.000000003 Preproc_subqueries: 2 Preproc_subqueries_time: 0.000000002
 # Optimize_time: 0.00000001
 # Wait_TS: 0.000000003
-# Process_time: 2 Wait_time: 60 Backoff_time: 0.001 Request_count: 2 Total_keys: 10000 Process_keys: 20001
+# Process_time: 2 Wait_time: 60 Backoff_time: 0.001 Request_count: 2 Process_keys: 20001 Total_keys: 10000
 # DB: test
 # Index_names: [t1:a,t2:b]
 # Is_internal: true
@@ -236,6 +239,8 @@ func (*testSessionSuite) TestSlowLogFormat(c *C) {
 			DurationPreprocessSubQuery: 2,
 			PreprocessSubQueries:       2,
 		},
+		ExecRetryCount: 3,
+		ExecRetryTime:  5*time.Second + time.Millisecond*100,
 	}
 	logString := seVar.SlowLogFormat(logItems)
 	c.Assert(logString, Equals, resultFields+"\n"+sql)

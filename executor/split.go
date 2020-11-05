@@ -98,7 +98,7 @@ func (e *SplitIndexRegionExec) splitIndexRegion(ctx context.Context) error {
 	start := time.Now()
 	ctxWithTimeout, cancel := context.WithTimeout(ctx, e.ctx.GetSessionVars().GetSplitRegionTimeout())
 	defer cancel()
-	regionIDs, err := s.SplitRegions(ctxWithTimeout, e.splitIdxKeys, true)
+	regionIDs, err := s.SplitRegions(ctxWithTimeout, e.splitIdxKeys, true, &e.tableInfo.ID)
 	if err != nil {
 		logutil.BgLogger().Warn("split table index region failed",
 			zap.String("table", e.tableInfo.Name.L),
@@ -368,7 +368,7 @@ func (e *SplitTableRegionExec) splitTableRegion(ctx context.Context) error {
 	ctxWithTimeout, cancel := context.WithTimeout(ctx, e.ctx.GetSessionVars().GetSplitRegionTimeout())
 	defer cancel()
 
-	regionIDs, err := s.SplitRegions(ctxWithTimeout, e.splitKeys, true)
+	regionIDs, err := s.SplitRegions(ctxWithTimeout, e.splitKeys, true, &e.tableInfo.ID)
 	if err != nil {
 		logutil.BgLogger().Warn("split table region failed",
 			zap.String("table", e.tableInfo.Name.L),
@@ -731,10 +731,14 @@ func (d *regionKeyDecoder) decodeRegionKey(key []byte) string {
 		if len(d.recordPrefix) == len(key) {
 			return fmt.Sprintf("t_%d_r", d.physicalTableID)
 		}
-		_, handle, err := codec.DecodeInt(key[len(d.recordPrefix):])
-		if err == nil {
-			return fmt.Sprintf("t_%d_r_%d", d.physicalTableID, handle)
+		isIntHandle := len(key)-len(d.recordPrefix) == 8
+		if isIntHandle {
+			_, handle, err := codec.DecodeInt(key[len(d.recordPrefix):])
+			if err == nil {
+				return fmt.Sprintf("t_%d_r_%d", d.physicalTableID, handle)
+			}
 		}
+		return fmt.Sprintf("t_%d_r_%x", d.physicalTableID, key[len(d.recordPrefix):])
 	}
 	if len(d.tablePrefix) > 0 && bytes.HasPrefix(key, d.tablePrefix) {
 		key = key[len(d.tablePrefix):]
@@ -788,7 +792,10 @@ func getRegionInfo(store tikv.Storage, regions []regionMeta) ([]regionMeta, erro
 	if !ok {
 		return regions, nil
 	}
-	pdHosts := etcd.EtcdAddrs()
+	pdHosts, err := etcd.EtcdAddrs()
+	if err != nil {
+		return regions, err
+	}
 	if len(pdHosts) == 0 {
 		return regions, nil
 	}

@@ -65,7 +65,7 @@ func newRequiredRowsDataSource(ctx sessionctx.Context, totalRows int, expectedRo
 		cols[i] = &expression.Column{Index: i, RetType: retTypes[i]}
 	}
 	schema := expression.NewSchema(cols...)
-	baseExec := newBaseExecutor(ctx, schema, nil)
+	baseExec := newBaseExecutor(ctx, schema, 0)
 	return &requiredRowsDataSource{baseExec, totalRows, 0, ctx, expectedRowsRet, 0, defaultGenerator}
 }
 
@@ -193,7 +193,7 @@ func (s *testExecSuite) TestLimitRequiredRows(c *C) {
 
 func buildLimitExec(ctx sessionctx.Context, src Executor, offset, count int) Executor {
 	n := mathutil.Min(count, ctx.GetSessionVars().MaxChunkSize)
-	base := newBaseExecutor(ctx, src.Schema(), nil, src)
+	base := newBaseExecutor(ctx, src.Schema(), 0, src)
 	base.initCap = n
 	limitExec := &LimitExec{
 		baseExecutor: base,
@@ -207,8 +207,8 @@ func defaultCtx() sessionctx.Context {
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().InitChunkSize = variable.DefInitChunkSize
 	ctx.GetSessionVars().MaxChunkSize = variable.DefMaxChunkSize
-	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(nil, ctx.GetSessionVars().MemQuotaQuery)
-	ctx.GetSessionVars().StmtCtx.DiskTracker = disk.NewTracker(nil, -1)
+	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(-1, ctx.GetSessionVars().MemQuotaQuery)
+	ctx.GetSessionVars().StmtCtx.DiskTracker = disk.NewTracker(-1, -1)
 	ctx.GetSessionVars().SnapshotTS = uint64(1)
 	return ctx
 }
@@ -276,7 +276,7 @@ func (s *testExecSuite) TestSortRequiredRows(c *C) {
 
 func buildSortExec(sctx sessionctx.Context, byItems []*util.ByItems, src Executor) Executor {
 	sortExec := SortExec{
-		baseExecutor: newBaseExecutor(sctx, src.Schema(), nil, src),
+		baseExecutor: newBaseExecutor(sctx, src.Schema(), 0, src),
 		ByItems:      byItems,
 		schema:       src.Schema(),
 	}
@@ -383,7 +383,7 @@ func (s *testExecSuite) TestTopNRequiredRows(c *C) {
 
 func buildTopNExec(ctx sessionctx.Context, offset, count int, byItems []*util.ByItems, src Executor) Executor {
 	sortExec := SortExec{
-		baseExecutor: newBaseExecutor(ctx, src.Schema(), nil, src),
+		baseExecutor: newBaseExecutor(ctx, src.Schema(), 0, src),
 		ByItems:      byItems,
 		schema:       src.Schema(),
 	}
@@ -476,7 +476,7 @@ func (s *testExecSuite) TestSelectionRequiredRows(c *C) {
 
 func buildSelectionExec(ctx sessionctx.Context, filters []expression.Expression, src Executor) Executor {
 	return &SelectionExec{
-		baseExecutor: newBaseExecutor(ctx, src.Schema(), nil, src),
+		baseExecutor: newBaseExecutor(ctx, src.Schema(), 0, src),
 		filters:      filters,
 	}
 }
@@ -594,7 +594,7 @@ func (s *testExecSuite) TestProjectionParallelRequiredRows(c *C) {
 
 func buildProjectionExec(ctx sessionctx.Context, exprs []expression.Expression, src Executor, numWorkers int) Executor {
 	return &ProjectionExec{
-		baseExecutor:  newBaseExecutor(ctx, src.Schema(), nil, src),
+		baseExecutor:  newBaseExecutor(ctx, src.Schema(), 0, src),
 		numWorkers:    int64(numWorkers),
 		evaluatorSuit: expression.NewEvaluatorSuite(exprs, false),
 	}

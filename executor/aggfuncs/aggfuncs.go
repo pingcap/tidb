@@ -18,6 +18,7 @@ import (
 
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 )
 
@@ -45,6 +46,11 @@ var (
 	_ AggFunc = (*approxCountDistinctPartial2)(nil)
 	_ AggFunc = (*approxCountDistinctFinal)(nil)
 
+	// All the AggFunc implementations for "APPROX_PERCENTILE" are listed here.
+	_ AggFunc = (*percentileOriginal4Int)(nil)
+	_ AggFunc = (*percentileOriginal4Real)(nil)
+	_ AggFunc = (*percentileOriginal4Decimal)(nil)
+
 	// All the AggFunc implementations for "FIRSTROW" are listed here.
 	_ AggFunc = (*firstRow4Decimal)(nil)
 	_ AggFunc = (*firstRow4Int)(nil)
@@ -66,6 +72,8 @@ var (
 	_ AggFunc = (*maxMin4String)(nil)
 	_ AggFunc = (*maxMin4Duration)(nil)
 	_ AggFunc = (*maxMin4JSON)(nil)
+	_ AggFunc = (*maxMin4Enum)(nil)
+	_ AggFunc = (*maxMin4Set)(nil)
 
 	// All the AggFunc implementations for "AVG" are listed here.
 	_ AggFunc = (*avgOriginal4Decimal)(nil)
@@ -97,6 +105,29 @@ var (
 
 	// All the AggFunc implementations for "JSON_OBJECTAGG" are listed here
 	_ AggFunc = (*jsonObjectAgg)(nil)
+)
+
+const (
+	// DefUint32Size is the size of uint32
+	DefUint32Size = int64(unsafe.Sizeof(uint32(0)))
+	// DefUint64Size is the size of uint64
+	DefUint64Size = int64(unsafe.Sizeof(uint64(0)))
+	// DefInt64Size is the size of int64
+	DefInt64Size = int64(unsafe.Sizeof(int64(0)))
+	// DefFloat64Size is the size of float64
+	DefFloat64Size = int64(unsafe.Sizeof(float64(0)))
+	// DefTimeSize is the size of time
+	DefTimeSize = int64(unsafe.Sizeof(types.Time{}))
+	// DefRowSize is the size of row
+	DefRowSize = int64(unsafe.Sizeof(chunk.Row{}))
+	// DefBoolSize is the size of bool
+	DefBoolSize = int64(unsafe.Sizeof(false))
+	// DefInterfaceSize is the size of interface
+	DefInterfaceSize = int64(16)
+	// DefMyDecimalSize is the size of MyDecimal
+	DefMyDecimalSize = int64(unsafe.Sizeof(types.MyDecimal{}))
+	// DefDurationSize is the size of duration
+	DefDurationSize = int64(unsafe.Sizeof(types.Duration{}))
 )
 
 // PartialResult represents data structure to store the partial result for the

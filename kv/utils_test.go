@@ -26,7 +26,7 @@ type testUtilsSuite struct {
 }
 
 func (s testUtilsSuite) TestIncInt64(c *C) {
-	mb := NewMemDbBuffer()
+	mb := newMemDB()
 	key := Key("key")
 	v, err := IncInt64(mb, key, 1)
 	c.Check(err, IsNil)
@@ -51,7 +51,7 @@ func (s testUtilsSuite) TestIncInt64(c *C) {
 }
 
 func (s testUtilsSuite) TestGetInt64(c *C) {
-	mb := NewMemDbBuffer()
+	mb := newMemDB()
 	key := Key("key")
 	v, err := GetInt64(context.TODO(), mb, key)
 	c.Check(v, Equals, int64(0))

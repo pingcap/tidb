@@ -45,8 +45,11 @@ import (
 	"go.uber.org/zap"
 )
 
-var tikvTxnRegionsNumHistogramWithCoprocessor = metrics.TiKVTxnRegionsNumHistogram.WithLabelValues("coprocessor")
-var tikvTxnRegionsNumHistogramWithBatchCoprocessor = metrics.TiKVTxnRegionsNumHistogram.WithLabelValues("batch_coprocessor")
+var (
+	tikvTxnRegionsNumHistogramWithCoprocessor      = metrics.TiKVTxnRegionsNumHistogram.WithLabelValues("coprocessor")
+	tikvTxnRegionsNumHistogramWithBatchCoprocessor = metrics.TiKVTxnRegionsNumHistogram.WithLabelValues("batch_coprocessor")
+	coprCacheHistogramEvict                        = metrics.DistSQLCoprCacheHistogram.WithLabelValues("evict")
+)
 
 // CopClient is coprocessor client.
 type CopClient struct {
@@ -56,7 +59,7 @@ type CopClient struct {
 }
 
 // Send builds the request and gets the coprocessor iterator response.
-func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variables) kv.Response {
+func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variables, sessionMemTracker *memory.Tracker) kv.Response {
 	if req.StoreType == kv.TiFlash && req.BatchCop {
 		logutil.BgLogger().Debug("send batch requests")
 		return c.sendBatch(ctx, req, vars)
@@ -75,12 +78,10 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variable
 		vars:            vars,
 		memTracker:      req.MemTracker,
 		replicaReadSeed: c.replicaReadSeed,
-		actionOnExceed:  &EndCopWorkerAction{},
+		rpcCancel:       NewRPCanceller(),
+		maxID:           &maxIDHandler{},
 	}
-	if it.memTracker != nil {
-		it.memTracker.FallbackOldAndSetNewAction(it.actionOnExceed)
-	}
-
+	it.maxID.maxID = 0
 	it.minCommitTSPushed.data = make(map[uint64]struct{}, 5)
 	it.tasks = tasks
 	if it.concurrency > len(tasks) {
@@ -90,18 +91,28 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variable
 		// Make sure that there is at least one worker.
 		it.concurrency = 1
 	}
+
 	if it.req.KeepOrder {
 		it.sendRate = newRateLimit(2 * it.concurrency)
 	} else {
 		it.respChan = make(chan *copResponse, it.concurrency)
+		it.sendRate = newRateLimit(it.concurrency)
 	}
-	it.actionOnExceed.mu.aliveWorker = it.concurrency
+	it.actionOnExceed = newRateLimitAction(uint(cap(it.sendRate.token)), sync.NewCond(&sync.Mutex{}))
+	if sessionMemTracker != nil {
+		sessionMemTracker.FallbackOldAndSetNewAction(it.actionOnExceed)
+	}
+
+	if !it.req.Streaming {
+		ctx = context.WithValue(ctx, RPCCancellerCtxKey{}, it.rpcCancel)
+	}
 	it.open(ctx)
 	return it
 }
 
 // copTask contains a related Region and KeyRange for a kv.Request.
 type copTask struct {
+	id     uint32
 	region RegionVerID
 	ranges *copRanges
 
@@ -290,6 +301,10 @@ func buildTiDBMemCopTasks(ranges *copRanges, req *kv.Request) ([]*copTask, error
 	}
 	tasks := make([]*copTask, 0, len(servers))
 	for _, ser := range servers {
+		if req.TiDBServerID > 0 && req.TiDBServerID != ser.ServerIDGetter() {
+			continue
+		}
+
 		addr := ser.IP + ":" + strconv.FormatUint(uint64(ser.StatusPort), 10)
 		tasks = append(tasks, &copTask{
 			ranges:    ranges,
@@ -382,9 +397,13 @@ type copIterator struct {
 
 	// If keepOrder, results are stored in copTask.respChan, read them out one by one.
 	tasks []*copTask
-	curr  int
-	// sendRate controls the sending rate of copIteratorTaskSender, if keepOrder,
-	// to prevent all tasks being done (aka. all of the responses are buffered)
+	// curr indicates the curr id of the finished copTask
+	curr int
+
+	// maxID indicates the max id of the running copTask
+	maxID *maxIDHandler
+
+	// sendRate controls the sending rate of copIteratorTaskSender
 	sendRate *rateLimit
 
 	// Otherwise, results are stored in respChan.
@@ -396,6 +415,8 @@ type copIterator struct {
 
 	replicaReadSeed uint32
 
+	rpcCancel *RPCCanceller
+
 	wg sync.WaitGroup
 	// closed represents when the Close is called.
 	// There are two cases we need to close the `finishCh` channel, one is when context is done, the other one is
@@ -404,12 +425,11 @@ type copIterator struct {
 
 	minCommitTSPushed
 
-	actionOnExceed *EndCopWorkerAction
+	actionOnExceed *rateLimitAction
 }
 
 // copIteratorWorker receives tasks from copIteratorTaskSender, handles tasks and sends the copResponse to respChan.
 type copIteratorWorker struct {
-	id       string
 	taskCh   <-chan *copTask
 	wg       *sync.WaitGroup
 	store    *tikvStore
@@ -423,7 +443,11 @@ type copIteratorWorker struct {
 
 	replicaReadSeed uint32
 
-	actionOnExceed *EndCopWorkerAction
+	sendRate *rateLimit
+
+	actionOnExceed *rateLimitAction
+
+	maxID *maxIDHandler
 }
 
 // copIteratorTaskSender sends tasks to taskCh then wait for the workers to exit.
@@ -438,7 +462,7 @@ type copIteratorTaskSender struct {
 
 type copResponse struct {
 	pbResp   *coprocessor.Response
-	detail   *execdetails.ExecDetails
+	detail   *CopRuntimeStats
 	startKey kv.Key
 	err      error
 	respSize int64
@@ -460,7 +484,7 @@ func (rs *copResponse) GetStartKey() kv.Key {
 	return rs.startKey
 }
 
-func (rs *copResponse) GetExecDetails() *execdetails.ExecDetails {
+func (rs *copResponse) GetCopRuntimeStats() *CopRuntimeStats {
 	return rs.detail
 }
 
@@ -474,9 +498,6 @@ func (rs *copResponse) MemSize() int64 {
 	rs.respSize += int64(cap(rs.startKey))
 	if rs.detail != nil {
 		rs.respSize += int64(sizeofExecDetails)
-		if rs.detail.CommitDetail != nil {
-			rs.respSize += int64(sizeofCommitDetails)
-		}
 	}
 	if rs.pbResp != nil {
 		// Using a approximate size since it's hard to get a accurate value.
@@ -495,49 +516,26 @@ const minLogCopTaskTime = 300 * time.Millisecond
 // send the result back.
 func (worker *copIteratorWorker) run(ctx context.Context) {
 	defer worker.wg.Done()
-
 	for task := range worker.taskCh {
-		endWorker, remainWorkers := worker.checkWorkerOOM()
-		if endWorker {
-			logutil.BgLogger().Info("end one copIterator worker.",
-				zap.String("copIteratorWorker id", worker.id), zap.Int("remain alive worker", remainWorkers))
-			return
-		}
 		respCh := worker.respChan
 		if respCh == nil {
 			respCh = task.respChan
 		}
-
 		worker.handleTask(ctx, task, respCh)
 		close(task.respChan)
+		worker.maxID.setMaxIDIfLarger(task.id)
+		worker.actionOnExceed.destroyTokenIfNeeded(func() {
+			worker.sendRate.putToken()
+		})
 		if worker.vars != nil && worker.vars.Killed != nil && atomic.LoadUint32(worker.vars.Killed) == 1 {
 			return
 		}
 		select {
 		case <-worker.finishCh:
-			worker.actionOnExceed.mu.Lock()
-			worker.actionOnExceed.mu.aliveWorker--
-			worker.actionOnExceed.mu.Unlock()
 			return
 		default:
 		}
 	}
-}
-
-func (worker *copIteratorWorker) checkWorkerOOM() (bool, int) {
-	endWorker := false
-	remainWorkers := 0
-	worker.actionOnExceed.mu.Lock()
-	defer worker.actionOnExceed.mu.Unlock()
-	if worker.actionOnExceed.mu.exceeded != 0 {
-		endWorker = true
-		worker.actionOnExceed.mu.aliveWorker--
-		remainWorkers = worker.actionOnExceed.mu.aliveWorker
-		// reset action
-		worker.actionOnExceed.mu.exceeded = 0
-		worker.actionOnExceed.once = sync.Once{}
-	}
-	return endWorker, remainWorkers
 }
 
 // open starts workers and sender goroutines.
@@ -547,7 +545,6 @@ func (it *copIterator) open(ctx context.Context) {
 	// Start it.concurrency number of workers to handle cop requests.
 	for i := 0; i < it.concurrency; i++ {
 		worker := &copIteratorWorker{
-			id:       fmt.Sprintf("copIteratorWorker-%d", i),
 			taskCh:   taskCh,
 			wg:       &it.wg,
 			store:    it.store,
@@ -565,7 +562,9 @@ func (it *copIterator) open(ctx context.Context) {
 			memTracker: it.memTracker,
 
 			replicaReadSeed: it.replicaReadSeed,
+			sendRate:        it.sendRate,
 			actionOnExceed:  it.actionOnExceed,
+			maxID:           it.maxID,
 		}
 		go worker.run(ctx)
 	}
@@ -577,23 +576,24 @@ func (it *copIterator) open(ctx context.Context) {
 		sendRate: it.sendRate,
 	}
 	taskSender.respChan = it.respChan
+	it.actionOnExceed.setEnabled(true)
 	go taskSender.run()
 }
 
 func (sender *copIteratorTaskSender) run() {
 	// Send tasks to feed the worker goroutines.
-	for _, t := range sender.tasks {
-		// If keepOrder, we must control the sending rate to prevent all tasks
+	for i, t := range sender.tasks {
+		// we control the sending rate to prevent all tasks
 		// being done (aka. all of the responses are buffered) by copIteratorWorker.
-		// We keep the number of inflight tasks within the number of concurrency * 2.
+		// We keep the number of inflight tasks within the number of 2 * concurrency when Keep Order is true.
+		// If KeepOrder is false, the number equals the concurrency.
 		// It sends one more task if a task has been finished in copIterator.Next.
-		if sender.sendRate != nil {
-			exit := sender.sendRate.getToken(sender.finishCh)
-			if exit {
-				break
-			}
+		exit := sender.sendRate.getToken(sender.finishCh)
+		if exit {
+			break
 		}
-		exit := sender.sendToTaskCh(t)
+		t.id = uint32(i)
+		exit = sender.sendToTaskCh(t)
 		if exit {
 			break
 		}
@@ -608,21 +608,39 @@ func (sender *copIteratorTaskSender) run() {
 }
 
 func (it *copIterator) recvFromRespCh(ctx context.Context, respCh <-chan *copResponse) (resp *copResponse, ok bool, exit bool) {
-	select {
-	case resp, ok = <-respCh:
-		if it.memTracker != nil && resp != nil {
-			it.memTracker.Consume(-resp.MemSize())
+	ticker := time.NewTicker(3 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case resp, ok = <-respCh:
+			if it.memTracker != nil && resp != nil {
+				consumed := resp.MemSize()
+				failpoint.Inject("testRateLimitActionMockConsume", func(val failpoint.Value) {
+					if val.(bool) {
+						consumed = 100
+					}
+				})
+				it.memTracker.Consume(-consumed)
+			}
+			return
+		case <-it.finishCh:
+			exit = true
+			return
+		case <-ticker.C:
+			if atomic.LoadUint32(it.vars.Killed) == 1 {
+				resp = &copResponse{err: ErrQueryInterrupted}
+				ok = true
+				return
+			}
+		case <-ctx.Done():
+			// We select the ctx.Done() in the thread of `Next` instead of in the worker to avoid the cost of `WithCancel`.
+			if atomic.CompareAndSwapUint32(&it.closed, 0, 1) {
+				close(it.finishCh)
+			}
+			exit = true
+			return
 		}
-	case <-it.finishCh:
-		exit = true
-	case <-ctx.Done():
-		// We select the ctx.Done() in the thread of `Next` instead of in the worker to avoid the cost of `WithCancel`.
-		if atomic.CompareAndSwapUint32(&it.closed, 0, 1) {
-			close(it.finishCh)
-		}
-		exit = true
 	}
-	return
 }
 
 func (sender *copIteratorTaskSender) sendToTaskCh(t *copTask) (exit bool) {
@@ -636,7 +654,13 @@ func (sender *copIteratorTaskSender) sendToTaskCh(t *copTask) (exit bool) {
 
 func (worker *copIteratorWorker) sendToRespCh(resp *copResponse, respCh chan<- *copResponse, checkOOM bool) (exit bool) {
 	if worker.memTracker != nil && checkOOM {
-		worker.memTracker.Consume(resp.MemSize())
+		consumed := resp.MemSize()
+		failpoint.Inject("testRateLimitActionMockConsume", func(val failpoint.Value) {
+			if val.(bool) {
+				consumed = 100
+			}
+		})
+		worker.memTracker.Consume(consumed)
 	}
 	select {
 	case respCh <- resp:
@@ -654,18 +678,30 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 		ok     bool
 		closed bool
 	)
+	// wait unit at least 2 copResponse received.
+	failpoint.Inject("testRateLimitActionMockWaitMax", func(val failpoint.Value) {
+		if val.(bool) {
+			for it.memTracker.MaxConsumed() < 200 {
+			}
+		}
+	})
+
 	// If data order matters, response should be returned in the same order as copTask slice.
 	// Otherwise all responses are returned from a single channel.
 	if it.respChan != nil {
 		// Get next fetched resp from chan
 		resp, ok, closed = it.recvFromRespCh(ctx, it.respChan)
 		if !ok || closed {
+			it.actionOnExceed.close()
 			return nil, nil
 		}
+		// The respCh has been drained out
+		it.actionOnExceed.broadcastIfNeeded(len(it.respChan) < 1)
 	} else {
 		for {
 			if it.curr >= len(it.tasks) {
 				// Resp will be nil if iterator is finishCh.
+				it.actionOnExceed.close()
 				return nil, nil
 			}
 			task := it.tasks[it.curr]
@@ -677,10 +713,15 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 			if ok {
 				break
 			}
+			finishedTaskID := it.tasks[it.curr].id
 			// Switch to next task.
 			it.tasks[it.curr] = nil
 			it.curr++
-			it.sendRate.putToken()
+			maxID := it.maxID.getMaxID()
+			// The tasks whose id is less than maxID are assumed that being sending to their task channel.
+			// So the response channel would be thought as drained out if the current taskID is greater or equal than
+			// the maxID as all the workers are being suspended at that time.
+			it.actionOnExceed.broadcastIfNeeded(finishedTaskID >= maxID)
 		}
 	}
 
@@ -742,6 +783,9 @@ func (worker *copIteratorWorker) handleTask(ctx context.Context, task *copTask, 
 			remainTasks = remainTasks[1:]
 		}
 	}
+	if worker.store.coprCache != nil && worker.store.coprCache.cache.Metrics != nil {
+		coprCacheHistogramEvict.Observe(float64(worker.store.coprCache.cache.Metrics.KeysEvicted()))
+	}
 }
 
 // handleTaskOnce handles single copTask, successful results are send to channel.
@@ -795,6 +839,9 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 	})
 	req.StoreTp = task.storeType
 	startTime := time.Now()
+	if worker.Stats == nil {
+		worker.Stats = make(map[tikvrpc.CmdType]*RPCRuntimeStats)
+	}
 	resp, rpcCtx, storeAddr, err := worker.SendReqCtx(bo, req, task.region, ReadTimeoutMedium, task.storeType, task.storeAddr)
 	if err != nil {
 		if task.storeType == kv.TiDB {
@@ -860,6 +907,7 @@ type clientHelper struct {
 	*minCommitTSPushed
 	Client
 	resolveLite bool
+	RegionRequestRuntimeStats
 }
 
 // ResolveLocks wraps the ResolveLocks function and store the resolved result.
@@ -867,6 +915,11 @@ func (ch *clientHelper) ResolveLocks(bo *Backoffer, callerStartTS uint64, locks 
 	var err error
 	var resolvedLocks []uint64
 	var msBeforeTxnExpired int64
+	if ch.Stats != nil {
+		defer func(start time.Time) {
+			recordRegionRequestRuntimeStats(ch.Stats, tikvrpc.CmdResolveLock, time.Since(start))
+		}(time.Now())
+	}
 	if ch.resolveLite {
 		msBeforeTxnExpired, resolvedLocks, err = ch.LockResolver.resolveLocksLite(bo, callerStartTS, locks)
 	} else {
@@ -888,6 +941,7 @@ func (ch *clientHelper) SendReqCtx(bo *Backoffer, req *tikvrpc.Request, regionID
 	if len(directStoreAddr) > 0 {
 		sender.storeAddr = directStoreAddr
 	}
+	sender.Stats = ch.Stats
 	req.Context.ResolvedLocks = ch.minCommitTSPushed.Get()
 	resp, ctx, err := sender.SendReqCtx(bo, req, regionID, timeout, sType)
 	return resp, ctx, sender.storeAddr, err
@@ -929,6 +983,15 @@ func (worker *copIteratorWorker) logTimeCopTask(costTime time.Duration, task *co
 				logStr = appendScanDetail(logStr, "write", detail.ScanDetail.Write)
 				logStr = appendScanDetail(logStr, "data", detail.ScanDetail.Data)
 				logStr = appendScanDetail(logStr, "lock", detail.ScanDetail.Lock)
+			}
+			if detail.ScanDetailV2 != nil {
+				logStr += fmt.Sprintf(" processed versions: %d", detail.ScanDetailV2.ProcessedVersions)
+				logStr += fmt.Sprintf(" total versions: %d", detail.ScanDetailV2.TotalVersions)
+				logStr += fmt.Sprintf(" delete skipped count: %d", detail.ScanDetailV2.RocksdbDeleteSkippedCount)
+				logStr += fmt.Sprintf(" key skipped count: %d", detail.ScanDetailV2.RocksdbKeySkippedCount)
+				logStr += fmt.Sprintf(" cache hit count: %d", detail.ScanDetailV2.RocksdbBlockCacheHitCount)
+				logStr += fmt.Sprintf(" read count: %d", detail.ScanDetailV2.RocksdbBlockReadCount)
+				logStr += fmt.Sprintf(" read byte: %d", detail.ScanDetailV2.RocksdbBlockReadByte)
 			}
 		}
 		if waitMs > minLogKVWaitTime {
@@ -1036,8 +1099,10 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *RPCCon
 		resp.startKey = task.ranges.at(0).StartKey
 	}
 	if resp.detail == nil {
-		resp.detail = new(execdetails.ExecDetails)
+		resp.detail = new(CopRuntimeStats)
 	}
+	resp.detail.Stats = worker.Stats
+	worker.Stats = nil
 	resp.detail.BackoffTime = time.Duration(bo.totalSleep) * time.Millisecond
 	resp.detail.BackoffSleep = make(map[string]time.Duration, len(bo.backoffTimes))
 	resp.detail.BackoffTimes = make(map[string]int, len(bo.backoffTimes))
@@ -1055,10 +1120,23 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *RPCCon
 			resp.detail.WaitTime = time.Duration(handleTime.WaitMs) * time.Millisecond
 			resp.detail.ProcessTime = time.Duration(handleTime.ProcessMs) * time.Millisecond
 		}
-		if scanDetail := pbDetails.ScanDetail; scanDetail != nil {
+		if scanDetailV2 := pbDetails.ScanDetailV2; scanDetailV2 != nil {
+			copDetail := &execdetails.CopDetails{
+				ProcessedKeys:             int64(scanDetailV2.ProcessedVersions),
+				TotalKeys:                 int64(scanDetailV2.TotalVersions),
+				RocksdbDeleteSkippedCount: scanDetailV2.RocksdbDeleteSkippedCount,
+				RocksdbKeySkippedCount:    scanDetailV2.RocksdbKeySkippedCount,
+				RocksdbBlockCacheHitCount: scanDetailV2.RocksdbBlockCacheHitCount,
+				RocksdbBlockReadCount:     scanDetailV2.RocksdbBlockReadCount,
+				RocksdbBlockReadByte:      scanDetailV2.RocksdbBlockReadByte,
+			}
+			resp.detail.CopDetail = copDetail
+		} else if scanDetail := pbDetails.ScanDetail; scanDetail != nil {
 			if scanDetail.Write != nil {
-				resp.detail.TotalKeys += scanDetail.Write.Total
-				resp.detail.ProcessedKeys += scanDetail.Write.Processed
+				resp.detail.CopDetail = &execdetails.CopDetails{
+					ProcessedKeys: scanDetail.Write.Processed,
+					TotalKeys:     scanDetail.Write.Total,
+				}
 			}
 		}
 	}
@@ -1070,6 +1148,7 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *RPCCon
 		data := make([]byte, len(cacheValue.Data))
 		copy(data, cacheValue.Data)
 		resp.pbResp.Data = data
+		resp.detail.CoprCacheHit = true
 	} else {
 		// Cache not hit or cache hit but not valid: update the cache if the response can be cached.
 		if cacheKey != nil && resp.pbResp.CanBeCached && resp.pbResp.CacheLastVersion > 0 {
@@ -1089,6 +1168,14 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *RPCCon
 	}
 	worker.sendToRespCh(resp, ch, true)
 	return nil, nil
+}
+
+// CopRuntimeStats contains execution detail information.
+type CopRuntimeStats struct {
+	execdetails.ExecDetails
+	RegionRequestRuntimeStats
+
+	CoprCacheHit bool
 }
 
 func (worker *copIteratorWorker) handleTiDBSendReqErr(err error, task *copTask, ch chan<- *copResponse) error {
@@ -1114,7 +1201,7 @@ func (worker *copIteratorWorker) handleTiDBSendReqErr(err error, task *copTask, 
 		pbResp: &coprocessor.Response{
 			Data: data,
 		},
-		detail: &execdetails.ExecDetails{},
+		detail: &CopRuntimeStats{},
 	}
 	worker.sendToRespCh(resp, ch, true)
 	return nil
@@ -1148,6 +1235,8 @@ func (it *copIterator) Close() error {
 	if atomic.CompareAndSwapUint32(&it.closed, 0, 1) {
 		close(it.finishCh)
 	}
+	it.rpcCancel.CancelAll()
+	it.actionOnExceed.close()
 	it.wg.Wait()
 	return nil
 }
@@ -1190,47 +1279,203 @@ func (it copErrorResponse) Close() error {
 	return nil
 }
 
-// EndCopWorkerAction implements memory.ActionOnExceed for copIteratorWorker. If
-// the memory quota of a query is exceeded, EndCopWorkAction.Action would end one copIteratorWorker.
-// If there is only one or zero worker is running, delegate to the fallback action.
-type EndCopWorkerAction struct {
-	once           sync.Once
+// rateLimitAction an OOM Action which is used to control the token if OOM triggered. The token number should be
+// set on initial. Each time the Action is triggered, one token would be destroyed. If the count of the token is less
+// than 2, the action would be delegated to the fallback action.
+type rateLimitAction struct {
+	// enabled indicates whether the rateLimitAction is permitted to Action. 1 means permitted, 0 denied.
+	enabled        uint32
 	fallbackAction memory.ActionOnExceed
-	mu             struct {
-		sync.Mutex
-		// exceeded indicates that datasource have exceeded memQuota.
-		exceeded uint32
-
-		// alive worker indicates how many copIteratorWorker are running
-		aliveWorker int
+	// totalTokenNum indicates the total token at initial
+	totalTokenNum uint
+	cond          struct {
+		*sync.Cond
+		// exceeded indicates whether have encountered OOM situation.
+		exceeded bool
+		// remainingTokenNum indicates the count of tokens which still exists
+		remainingTokenNum uint
+		// isTokenDestroyed indicates whether there is one token has been isTokenDestroyed after Action been triggered
+		isTokenDestroyed bool
+		once             sync.Once
+		// waitingWorkerCnt indicates the total count of workers which is under condition.Waiting
+		waitingWorkerCnt uint
+		// triggerCountForTest indicates the total count of the rateLimitAction's Action being executed
+		triggerCountForTest uint
 	}
 }
 
-// Action sends a signal to trigger end one copIterator worker.
-func (e *EndCopWorkerAction) Action(t *memory.Tracker) {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	// only one or zero worker is running, delegate to the fallback action
-	if e.mu.aliveWorker < 2 {
+func newRateLimitAction(totalTokenNumber uint, cond *sync.Cond) *rateLimitAction {
+	return &rateLimitAction{
+		totalTokenNum: totalTokenNumber,
+		cond: struct {
+			*sync.Cond
+			exceeded            bool
+			remainingTokenNum   uint
+			isTokenDestroyed    bool
+			once                sync.Once
+			waitingWorkerCnt    uint
+			triggerCountForTest uint
+		}{
+			Cond:              cond,
+			exceeded:          false,
+			remainingTokenNum: totalTokenNumber,
+			once:              sync.Once{},
+		},
+	}
+}
+
+// Action implements ActionOnExceed.Action
+func (e *rateLimitAction) Action(t *memory.Tracker) {
+	failpoint.Inject("testRateLimitActionDisable", func(val failpoint.Value) {
+		if val.(bool) {
+			e.setEnabled(false)
+		}
+	})
+
+	if !e.isEnabled() {
 		if e.fallbackAction != nil {
 			e.fallbackAction.Action(t)
 		}
 		return
 	}
-	// set exceeded as 1
-	e.once.Do(func() {
-		e.mu.exceeded = 1
-		logutil.BgLogger().Info("memory exceeds quota, mark EndCopWorkerAction exceed signal.",
-			zap.Int64("consumed", t.BytesConsumed()), zap.Int64("quota", t.GetBytesLimit()), zap.Int64("maxConsumed", t.MaxConsumed()))
+	e.conditionLock()
+	defer e.conditionUnlock()
+	e.cond.once.Do(func() {
+		if e.cond.remainingTokenNum < 2 {
+			e.setEnabled(false)
+			logutil.BgLogger().Info("memory exceed quota, rateLimitAction delegate to fallback action",
+				zap.Uint("total token count", e.totalTokenNum))
+			if e.fallbackAction != nil {
+				e.fallbackAction.Action(t)
+			}
+			return
+		}
+		failpoint.Inject("testRateLimitActionMockConsumeAndAssert", func(val failpoint.Value) {
+			if val.(bool) {
+				if e.cond.triggerCountForTest+e.cond.remainingTokenNum != e.totalTokenNum {
+					panic("triggerCount + remainingTokenNum not equal to totalTokenNum")
+				}
+				if e.cond.waitingWorkerCnt > 0 {
+					panic("waitingWorkerCnt not equal to 0")
+				}
+			}
+		})
+		logutil.BgLogger().Info("memory exceeds quota, destroy one token now.",
+			zap.Int64("consumed", t.BytesConsumed()),
+			zap.Int64("quota", t.GetBytesLimit()),
+			zap.Uint("total token count", e.totalTokenNum),
+			zap.Uint("remaining token count", e.cond.remainingTokenNum))
+		e.cond.isTokenDestroyed = false
+		e.cond.exceeded = true
+		e.cond.triggerCountForTest++
 	})
 }
 
 // SetLogHook implements ActionOnExceed.SetLogHook
-func (e *EndCopWorkerAction) SetLogHook(hook func(uint64)) {
+func (e *rateLimitAction) SetLogHook(hook func(uint64)) {
 
 }
 
 // SetFallback implements ActionOnExceed.SetFallback
-func (e *EndCopWorkerAction) SetFallback(a memory.ActionOnExceed) {
+func (e *rateLimitAction) SetFallback(a memory.ActionOnExceed) {
 	e.fallbackAction = a
+}
+
+// broadcastIfNeeded will broadcast the condition to recover all suspended workers when exceeded is enabled
+// and one token have already been destroyed.
+func (e *rateLimitAction) broadcastIfNeeded(needed bool) {
+	if !needed {
+		return
+	}
+	e.conditionLock()
+	defer e.conditionUnlock()
+	if !e.cond.exceeded || e.cond.waitingWorkerCnt < 1 {
+		return
+	}
+	for !e.cond.isTokenDestroyed {
+		e.cond.Wait()
+	}
+	e.cond.exceeded = false
+	e.cond.Broadcast()
+}
+
+// destroyTokenIfNeeded will check the `exceed` flag after copWorker finished one task.
+// If the exceed flag is true and there is no token been destroyed before, one token will be destroyed,
+// or the token would be return back.
+func (e *rateLimitAction) destroyTokenIfNeeded(returnToken func()) {
+	e.conditionLock()
+	defer e.conditionUnlock()
+	if !e.cond.exceeded {
+		returnToken()
+		return
+	}
+	// If actionOnExceed has been triggered and there is no token have been destroyed before,
+	// destroy one token.
+	if !e.cond.isTokenDestroyed {
+		e.cond.remainingTokenNum = e.cond.remainingTokenNum - 1
+		e.cond.isTokenDestroyed = true
+		e.cond.Broadcast()
+	} else {
+		returnToken()
+	}
+	// we suspend worker when `exceeded` is true until being notified by `broadcastIfNeeded`
+	for e.cond.exceeded {
+		e.cond.waitingWorkerCnt++
+		e.cond.Wait()
+		e.cond.waitingWorkerCnt--
+	}
+	// only when all the waiting workers have been resumed, the Action could be initialized again.
+	if e.cond.waitingWorkerCnt < 1 {
+		e.cond.once = sync.Once{}
+	}
+}
+
+func (e *rateLimitAction) conditionLock() {
+	e.cond.L.Lock()
+}
+
+func (e *rateLimitAction) conditionUnlock() {
+	e.cond.L.Unlock()
+}
+
+func (e *rateLimitAction) close() {
+	e.setEnabled(false)
+	e.conditionLock()
+	defer e.conditionUnlock()
+	e.cond.exceeded = false
+	e.cond.isTokenDestroyed = true
+	e.cond.waitingWorkerCnt = 0
+	// broadcast the signal in order not to leak worker goroutine if it is being suspended
+	e.cond.Broadcast()
+}
+
+func (e *rateLimitAction) setEnabled(enabled bool) {
+	newValue := uint32(0)
+	if enabled {
+		newValue = uint32(1)
+	}
+	atomic.StoreUint32(&e.enabled, newValue)
+}
+
+func (e *rateLimitAction) isEnabled() bool {
+	return atomic.LoadUint32(&e.enabled) > 0
+}
+
+type maxIDHandler struct {
+	sync.Mutex
+	maxID uint32
+}
+
+func (handler *maxIDHandler) getMaxID() uint32 {
+	handler.Lock()
+	defer handler.Unlock()
+	return handler.maxID
+}
+
+func (handler *maxIDHandler) setMaxIDIfLarger(newID uint32) {
+	handler.Lock()
+	defer handler.Unlock()
+	if newID > handler.maxID {
+		handler.maxID = newID
+	}
 }

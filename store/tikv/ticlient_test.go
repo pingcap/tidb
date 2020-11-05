@@ -23,7 +23,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/store/mockstore/mocktikv"
+	"github.com/pingcap/tidb/store/mockstore/unistore"
 	"github.com/pingcap/tidb/util/codec"
 )
 
@@ -47,18 +47,11 @@ func NewTestStore(c *C) kv.Storage {
 		c.Assert(err, IsNil)
 		return store
 	}
-
-	client, cluster, pdClient, err := mocktikv.NewTiKVAndPDClient("")
+	client, pdClient, cluster, err := unistore.New("")
 	c.Assert(err, IsNil)
-	mocktikv.BootstrapWithSingleStore(cluster)
-
+	unistore.BootstrapWithSingleStore(cluster)
 	store, err := NewTestTiKVStore(client, pdClient, nil, nil, 0)
 	c.Assert(err, IsNil)
-
-	// TODO: make this possible
-	// store, err := mockstore.NewMockStore()
-	// c.Assert(err, IsNil)
-
 	return store
 }
 

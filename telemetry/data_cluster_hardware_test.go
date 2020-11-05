@@ -31,7 +31,7 @@ func (s *testClusterHardwareSuite) TestNormalizeDiskName(c *C) {
 func (s *testClusterHardwareSuite) TestIsNormalizedDiskNameAllowed(c *C) {
 	c.Parallel()
 
-	passList := []string{"disk1s4", "rootfs", "devtmpfs", "sda", "sda1", "sdb", "sdb3", "sdc", "nvme0", "nvme0n1", "nvme0n1p0"}
+	passList := []string{"disk1s4", "rootfs", "devtmpfs", "sda", "sda1", "sdb", "sdb3", "sdc", "nvme0", "nvme0n1", "nvme0n1p0", "md127", "mdisk1s4"}
 	for _, n := range passList {
 		c.Assert(isNormalizedDiskNameAllowed(n), Equals, true)
 	}

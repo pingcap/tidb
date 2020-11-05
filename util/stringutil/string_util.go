@@ -16,6 +16,7 @@ package stringutil
 import (
 	"bytes"
 	"fmt"
+	"sort"
 	"strings"
 	"unicode/utf8"
 
@@ -165,8 +166,19 @@ func CompilePattern(pattern string, escape byte) (patChars, patTypes []byte) {
 				}
 			}
 		case '_':
-			tp = PatOne
+			// %_ => _%
+			if patLen > 0 && patTypes[patLen-1] == PatAny {
+				tp = PatAny
+				c = '%'
+				patChars[patLen-1], patTypes[patLen-1] = '_', PatOne
+			} else {
+				tp = PatOne
+			}
 		case '%':
+			// %% => %
+			if patLen > 0 && patTypes[patLen-1] == PatAny {
+				continue
+			}
 			tp = PatAny
 		default:
 			tp = PatMatch
@@ -205,11 +217,7 @@ func CompileLike2Regexp(str string) string {
 		case PatOne:
 			result = append(result, '.')
 		case PatAny:
-			// .*.* == .*
-			if !bytes.HasSuffix(result, []byte{'.', '*'}) {
-				result = append(result, '.')
-				result = append(result, '*')
-			}
+			result = append(result, '.', '*')
 		}
 	}
 	return string(result)
@@ -308,4 +316,24 @@ func Escape(str string, sqlMode mysql.SQLMode) string {
 		quote = "`"
 	}
 	return quote + strings.Replace(str, quote, quote+quote, -1) + quote
+}
+
+// BuildStringFromLabels construct config labels into string by following format:
+// "keyA=valueA,keyB=valueB"
+func BuildStringFromLabels(labels map[string]string) string {
+	if len(labels) < 1 {
+		return ""
+	}
+	s := make([]string, 0, len(labels))
+	for k := range labels {
+		s = append(s, k)
+	}
+	sort.Strings(s)
+	r := new(bytes.Buffer)
+	// visit labels by sorted key in order to make sure that result should be consistency
+	for _, key := range s {
+		r.WriteString(fmt.Sprintf("%s=%s,", key, labels[key]))
+	}
+	returned := r.String()
+	return returned[:len(returned)-1]
 }

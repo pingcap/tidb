@@ -212,13 +212,15 @@ func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) e
 			terror.Log(err)
 		}
 	}
-	if name != variable.AutoCommit {
+	if scopeStr == scopeGlobal {
 		logutil.BgLogger().Info(fmt.Sprintf("set %s var", scopeStr), zap.Uint64("conn", sessionVars.ConnectionID), zap.String("name", name), zap.String("val", valStr))
 	} else {
-		// Some applications will set `autocommit` variable before query.
-		// This will print too many unnecessary log info.
+		// Clients are often noisy in setting session variables such as
+		// autocommit, timezone, query cache
 		logutil.BgLogger().Debug(fmt.Sprintf("set %s var", scopeStr), zap.Uint64("conn", sessionVars.ConnectionID), zap.String("name", name), zap.String("val", valStr))
 	}
+
+	valStrToBoolStr := variable.BoolToOnOff(variable.TiDBOptOn(valStr))
 
 	switch name {
 	case variable.TiDBEnableStmtSummary:
@@ -234,7 +236,7 @@ func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) e
 	case variable.TiDBStmtSummaryMaxSQLLength:
 		return stmtsummary.StmtSummaryByDigestMap.SetMaxSQLLength(valStr, !v.IsGlobal)
 	case variable.TiDBCapturePlanBaseline:
-		variable.CapturePlanBaseline.Set(strings.ToLower(valStr), !v.IsGlobal)
+		variable.CapturePlanBaseline.Set(valStrToBoolStr, !v.IsGlobal)
 	}
 
 	return nil

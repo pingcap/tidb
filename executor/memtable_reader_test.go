@@ -442,7 +442,7 @@ func (s *testClusterTableBase) setupClusterGRPCServer(c *C) map[string]*testServ
 		diagnosticspb.RegisterDiagnosticsServer(server, sysutil.NewDiagnosticsServer(logFile))
 
 		// Find a available port
-		listener, err := net.Listen("tcp", ":0")
+		listener, err := net.Listen("tcp", "127.0.0.1:0")
 		c.Assert(err, IsNil, Commentf("cannot find available port"))
 
 		testServers[typ] = &testServer{

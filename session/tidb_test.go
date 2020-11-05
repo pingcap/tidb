@@ -24,6 +24,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/auth"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/planner/core"
@@ -40,6 +41,10 @@ func TestT(t *testing.T) {
 	logutil.InitLogger(logutil.NewLogConfig(logLevel, logutil.DefaultLogFormat, "", logutil.EmptyFileLogConfig, false))
 	CustomVerboseFlag = true
 	SetSchemaLease(20 * time.Millisecond)
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TiKVClient.AsyncCommit.SafeWindow = 0
+		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
+	})
 	TestingT(t)
 }
 
@@ -188,7 +193,7 @@ func (s *testMainSuite) TestKeysNeedLock(c *C) {
 		need bool
 	}{
 		{rowKey, rowVal, true},
-		{rowKey, deleteVal, true},
+		{rowKey, deleteVal, false},
 		{indexKey, nonUniqueVal, false},
 		{indexKey, nonUniqueUntouched, false},
 		{indexKey, uniqueValue, true},
@@ -196,6 +201,9 @@ func (s *testMainSuite) TestKeysNeedLock(c *C) {
 		{indexKey, deleteVal, false},
 	}
 	for _, tt := range tests {
-		c.Assert(keyNeedToLock(tt.key, tt.val), Equals, tt.need)
+		c.Assert(keyNeedToLock(tt.key, tt.val, 0), Equals, tt.need)
 	}
+	flag := kv.KeyFlags(1)
+	c.Assert(flag.HasPresumeKeyNotExists(), IsTrue)
+	c.Assert(keyNeedToLock(indexKey, deleteVal, flag), IsTrue)
 }
