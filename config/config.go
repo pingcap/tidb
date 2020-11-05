@@ -65,7 +65,7 @@ const (
 	// DefStoreLivenessTimeout is the default value for store liveness timeout.
 	DefStoreLivenessTimeout = "5s"
 	// DefTxnScope is the default value for TxnScope
-	DefTxnScope = "global"
+	DefTxnScope = "xaxaxa"
 )
 
 // Valid config maps
@@ -767,6 +767,7 @@ var defaultConf = Config{
 		SpilledFileEncryptionMethod: SpilledFileEncryptionMethodPlaintext,
 	},
 	DeprecateIntegerDisplayWidth: false,
+	TxnScope:                     DefTxnScope,
 }
 
 var (

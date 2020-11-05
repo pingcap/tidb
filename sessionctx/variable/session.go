@@ -860,13 +860,7 @@ func NewSessionVars() *SessionVars {
 		EnableChangeColumnType:      DefTiDBChangeColumnType,
 		EnableAmendPessimisticTxn:   DefTiDBEnableAmendPessimisticTxn,
 		PartitionPruneMode:          *atomic2.NewString(DefTiDBPartitionPruneMode),
-		TxnScope: func() string {
-			c := config.GetGlobalConfig()
-			if len(c.TxnScope) < 1 {
-				return config.DefTxnScope
-			}
-			return c.TxnScope
-		}(),
+		TxnScope:                    config.GetGlobalConfig().TxnScope,
 	}
 	vars.KVVars = kv.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{

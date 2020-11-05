@@ -1383,6 +1383,9 @@ func (cc *clientConn) handleIndexAdvise(ctx context.Context, indexAdviseInfo *ex
 // Query `load stats` does not return result either.
 func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 	defer trace.StartRegion(ctx, "handleQuery").End()
+	logutil.BgLogger().Info("config",
+		zap.String("txn_scope", config.GetGlobalConfig().TxnScope),
+		zap.String("txn_scope_session", cc.ctx.GetSessionVars().TxnScope))
 	sc := cc.ctx.GetSessionVars().StmtCtx
 	prevWarns := sc.GetWarnings()
 	stmts, err := cc.ctx.Parse(ctx, sql)
