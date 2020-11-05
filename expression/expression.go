@@ -240,16 +240,14 @@ func EvalBool(ctx sessionctx.Context, exprList CNFExprs, row chunk.Row) (bool, b
 						if isBool != 0 {
 							if remainConditionLength != 0 {
 								continue
-							} else {
-								return false, false, err
 							}
+							return false, false, err
 						}
 					}
 				}
 				return false, false, nil
-			} else {
-				return false, false, err
 			}
+			return false, false, err
 		}
 		if data.IsNull() {
 			// For queries like `select a in (select a from s where t.b = s.b) from t`,

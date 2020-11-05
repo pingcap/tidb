@@ -471,16 +471,14 @@ func evalBool(exprs []expression.Expression, row []types.Datum, ctx *stmtctx.Sta
 						if isBool != 0 {
 							if remainConditionLength != 0 {
 								continue
-							} else {
-								return false, errors.Trace(err)
 							}
+							return false, errors.Trace(err)
 						}
 					}
 				}
 				return false, nil
-			} else {
-				return false, errors.Trace(err)
 			}
+			return false, errors.Trace(err)
 		}
 		if data.IsNull() {
 			return false, nil

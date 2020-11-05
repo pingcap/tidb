@@ -629,17 +629,15 @@ func (e *closureExecutor) processSelection(needCollectDetail bool) (gotRow bool,
 						if isBool != 0 {
 							if remainConditionLength != 0 {
 								continue
-							} else {
-								return false, errors.Trace(err)
 							}
+							return false, errors.Trace(err)
 						}
 					}
 				}
 				chk.TruncateTo(chk.NumRows() - 1)
 				break
-			} else {
-				return false, errors.Trace(err)
 			}
+			return false, errors.Trace(err)
 		}
 
 		if d.IsNull() {
