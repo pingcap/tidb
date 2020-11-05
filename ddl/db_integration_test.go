@@ -2474,6 +2474,26 @@ func (s *testIntegrationSuite5) TestDropColumnsWithMultiIndex(c *C) {
 	tk.MustQuery(query).Check(testkit.Rows())
 }
 
+func (s *testIntegrationSuite5) TestDropLastVisibleColumn(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test_db")
+	tk.MustExec("create table t_drop_last_column(x int, key((1+1)))")
+	defer tk.MustExec("drop table if exists t_drop_last_column")
+	_, err := tk.Exec("alter table t_drop_last_column drop column x")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:1113]A table must have at least 1 column")
+}
+
+func (s *testIntegrationSuite5) TestDropLastVisibleColumns(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test_db")
+	tk.MustExec("create table t_drop_last_columns(x int, y int, key((1+1)))")
+	defer tk.MustExec("drop table if exists t_drop_last_columns")
+	_, err := tk.Exec("alter table t_drop_last_columns drop column x, drop column y")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:1113]A table must have at least 1 column")
+}
+
 func (s *testIntegrationSuite7) TestAutoIncrementTableOption(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	defer config.RestoreFunc()()
@@ -2509,4 +2529,22 @@ func (s *testIntegrationSuite3) TestIssue20490(c *C) {
 	tk.MustExec("insert into issue20490(a) values(3);")
 
 	tk.MustQuery("select b from issue20490 order by a;").Check(testkit.Rows("1", "1", "<nil>"))
+}
+
+// TestDefaultValueIsLatin1 for issue #18977
+func (s *testIntegrationSuite3) TestEnumAndSetDefaultValue(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	defer tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a enum(0x61, 'b') not null default 0x61, b set(0x61, 'b') not null default 0x61) character set latin1")
+	tbl := testGetTableByName(c, s.ctx, "test", "t")
+	c.Assert(tbl.Meta().Columns[0].DefaultValue, Equals, "a")
+	c.Assert(tbl.Meta().Columns[1].DefaultValue, Equals, "a")
+
+	tk.MustExec("drop table t")
+	tk.MustExec("create table t (a enum(0x61, 'b') not null default 0x61, b set(0x61, 'b') not null default 0x61) character set utf8mb4")
+	tbl = testGetTableByName(c, s.ctx, "test", "t")
+	c.Assert(tbl.Meta().Columns[0].DefaultValue, Equals, "a")
+	c.Assert(tbl.Meta().Columns[1].DefaultValue, Equals, "a")
 }
