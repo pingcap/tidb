@@ -176,7 +176,11 @@ func (c *TopN) updateTopNWithDelta(d []byte, delta uint64, increase bool) bool {
 	}
 	idx := c.findTopN(d)
 	if idx >= 0 {
-		c.TopN[idx].Count += delta
+		if increase {
+			c.TopN[idx].Count += delta
+		} else {
+			c.TopN[idx].Count -= delta
+		}
 		return true
 	}
 	return false
