@@ -170,7 +170,7 @@ func (c *CMSketch) MemoryUsage() (sum int64) {
 
 // queryAddTopN TopN adds count to CMSketch.topN if exists, and returns the count of such elements after insert.
 // If such elements does not in topn elements, nothing will happen and false will be returned.
-func (c *TopN) updateTopNWithDelta(d []byte, delta uint64) bool {
+func (c *TopN) updateTopNWithDelta(d []byte, delta uint64, increase bool) bool {
 	if c == nil || c.TopN == nil {
 		return false
 	}
@@ -204,8 +204,11 @@ func (c *CMSketch) considerDefVal(cnt uint64) bool {
 func updateValueBytes(c *CMSketch, t *TopN, d []byte, count uint64) {
 	h1, h2 := murmur3.Sum128(d)
 	if oriCount, ok := t.QueryTopN(d); ok {
-		deltaCount := count - oriCount
-		t.updateTopNWithDelta(d, deltaCount)
+		if count > oriCount {
+			t.updateTopNWithDelta(d, count-oriCount, true)
+		} else {
+			t.updateTopNWithDelta(d, oriCount-count, false)
+		}
 	}
 	c.setValue(h1, h2, count)
 }
