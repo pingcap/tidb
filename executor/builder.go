@@ -2509,6 +2509,11 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 		dagReq.OutputOffsets = append(dagReq.OutputOffsets, uint32(i))
 	}
 
+	if v.SampleInfo != nil && v.SampleInfo.AstNode.SampleMethod == ast.SampleMethodTypeTiDBRegion {
+		e.sampler = NewTableRegionSampler(b.ctx, tbl, startTS, v.SampleInfo.Partitions, e.schema,
+			v.SampleInfo.FullSchema, e.retFieldTypes, e.desc)
+	}
+
 	return e, nil
 }
 

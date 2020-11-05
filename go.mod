@@ -100,3 +100,5 @@ require (
 )
 
 go 1.13
+
+replace github.com/pingcap/parser => /home/tangenta/gopath/src/github.com/pingcap/parser

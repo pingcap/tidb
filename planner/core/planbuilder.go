@@ -451,6 +451,9 @@ type PlanBuilder struct {
 	// evalDefaultExpr needs this information to find the corresponding column.
 	// It stores the OutputNames before buildProjection.
 	allNames [][]*types.FieldName
+
+	// isSampling indicates whether the query is sampling.
+	isSampling bool
 }
 
 type handleColHelper struct {
@@ -523,6 +526,9 @@ func (b *PlanBuilder) GetDBTableInfo() []stmtctx.TableEntry {
 
 // GetOptFlag gets the optFlag of the PlanBuilder.
 func (b *PlanBuilder) GetOptFlag() uint64 {
+	if b.isSampling {
+		return 0
+	}
 	return b.optFlag
 }
 
@@ -969,6 +975,16 @@ func filterPathByIsolationRead(ctx sessionctx.Context, paths []*util.AccessPath,
 			variable.TiDBIsolationReadEngines, engineVals, availableEngineStr))
 	}
 	return paths, err
+}
+
+func tagAccessPathWithSample(paths []*util.AccessPath, tn *ast.TableName) []*util.AccessPath {
+	if tn.TableSample == nil {
+		return paths
+	}
+	for i := range paths {
+		paths[i].IsSampling = true
+	}
+	return paths
 }
 
 func removeIgnoredPaths(paths, ignoredPaths []*util.AccessPath, tblInfo *model.TableInfo) []*util.AccessPath {

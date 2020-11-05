@@ -163,6 +163,9 @@ func (p *PhysicalIndexScan) isFullScan() bool {
 // ExplainID overrides the ExplainID in order to match different range.
 func (p *PhysicalTableScan) ExplainID() fmt.Stringer {
 	return stringutil.MemoizeStr(func() string {
+		if p.SampleInfo != nil {
+			return "TableSample_" + strconv.Itoa(p.id)
+		}
 		if p.isChildOfIndexLookUp {
 			return "TableRowIDScan_" + strconv.Itoa(p.id)
 		} else if p.isFullScan() {

@@ -685,6 +685,12 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 				p: dual,
 			}, cntPlan, nil
 		}
+		if path.IsSampling {
+			cntPlan += 1
+			planCounter.Dec(1)
+			tsk, err := ds.convertSampleTableScan(prop, candidate.path, candidate.isMatchProp)
+			return tsk, cntPlan, err
+		}
 		canConvertPointGet := (!ds.isPartition && len(path.Ranges) > 0) || (ds.isPartition && len(path.Ranges) == 1)
 		canConvertPointGet = canConvertPointGet && candidate.path.StoreType != kv.TiFlash
 		if !candidate.path.IsIntHandlePath {
@@ -884,6 +890,7 @@ func (ds *DataSource) buildIndexMergeTableScan(prop *property.PhysicalProperty, 
 		isPartition:     ds.isPartition,
 		physicalTableID: ds.physicalTableID,
 		HandleCols:      ds.handleCols,
+		SampleInfo:      ds.SampleInfo,
 	}.Init(ds.ctx, ds.blockOffset)
 	ts.SetSchema(ds.schema.Clone())
 	if ts.HandleCols == nil {
@@ -1006,6 +1013,7 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, candid
 			TableAsName:     ds.TableAsName,
 			isPartition:     ds.isPartition,
 			physicalTableID: ds.physicalTableID,
+			SampleInfo:      ds.SampleInfo,
 		}.Init(ds.ctx, is.blockOffset)
 		ts.SetSchema(ds.schema.Clone())
 		cop.tablePlan = ts
@@ -1416,6 +1424,7 @@ func (s *LogicalTableScan) GetPhysicalScan(schema *expression.Schema, stats *pro
 		physicalTableID: ds.physicalTableID,
 		Ranges:          s.Ranges,
 		AccessCondition: s.AccessConds,
+		SampleInfo:      ds.SampleInfo,
 	}.Init(s.ctx, s.blockOffset)
 	ts.stats = stats
 	ts.SetSchema(schema.Clone())
@@ -1492,6 +1501,55 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 		return invalidTask, nil
 	}
 	return task, nil
+}
+
+func (ds *DataSource) convertSampleTableScan(
+	prop *property.PhysicalProperty, path *util.AccessPath, isMatchProp bool) (task task, err error) {
+	if !prop.IsEmpty() && !isMatchProp {
+		return invalidTask, nil
+	}
+
+	ts := PhysicalTableScan{
+		Table:           ds.tableInfo,
+		Columns:         ds.Columns,
+		TableAsName:     ds.TableAsName,
+		DBName:          ds.DBName,
+		isPartition:     ds.isPartition,
+		physicalTableID: ds.physicalTableID,
+		Ranges:          path.Ranges,
+		AccessCondition: path.AccessConds,
+		filterCondition: path.TableFilters,
+		StoreType:       path.StoreType,
+		IsGlobalRead:    path.IsTiFlashGlobalRead,
+		SampleInfo:      ds.SampleInfo,
+		PartitionInfo: PartitionInfo{
+			PruningConds:   ds.allConds,
+			PartitionNames: ds.partitionNames,
+			Columns:        ds.TblCols,
+			ColumnNames:    ds.names,
+		},
+	}.Init(ds.ctx, ds.blockOffset)
+	ts.SetSchema(ds.schema.Clone())
+	ts.stats = ds.tableStats.ScaleByExpectCnt(path.CountAfterAccess)
+	ts.Columns = ExpandVirtualColumn(ts.Columns, ts.schema, ts.Table.Columns)
+
+	p := PhysicalTableReader{
+		tablePlan:      ts,
+		StoreType:      ts.StoreType,
+		IsCommonHandle: ts.Table.IsCommonHandle,
+		SampleInfo:     ts.SampleInfo,
+	}.Init(ds.ctx, ts.SelectBlockOffset())
+	p.PartitionInfo = ts.PartitionInfo
+	p.stats = ts.statsInfo()
+	if isMatchProp {
+		if prop.SortItems[0].Desc {
+			ts.Desc = true
+		}
+		ts.KeepOrder = true
+	}
+	return &rootTask{
+		p: p,
+	}, nil
 }
 
 func (ds *DataSource) convertToPointGet(prop *property.PhysicalProperty, candidate *candidatePath) task {
@@ -1670,6 +1728,7 @@ func (ds *DataSource) getOriginalPhysicalTableScan(prop *property.PhysicalProper
 		filterCondition: path.TableFilters,
 		StoreType:       path.StoreType,
 		IsGlobalRead:    path.IsTiFlashGlobalRead,
+		SampleInfo:      ds.SampleInfo,
 	}.Init(ds.ctx, ds.blockOffset)
 	ts.SetSchema(ds.schema.Clone())
 	if ts.Table.PKIsHandle {

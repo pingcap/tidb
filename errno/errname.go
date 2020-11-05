@@ -1027,6 +1027,8 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrBRIEImportFailed:  mysql.Message("Import failed: %s", nil),
 	ErrBRIEExportFailed:  mysql.Message("Export failed: %s", nil),
 
+	ErrInvalidTableSample: mysql.Message("Invalid TABLESAMPLE: %s", nil),
+
 	ErrInvalidPlacementSpec: mysql.Message("Invalid placement policy '%s': %s", nil),
 
 	// TiKV/PD errors.

@@ -79,6 +79,25 @@ type PhysicalTableReader struct {
 
 	// Used by partition table.
 	PartitionInfo PartitionInfo
+
+	SampleInfo *TableSampleInfo
+}
+
+type TableSampleInfo struct {
+	AstNode    *ast.TableSample
+	FullSchema *expression.Schema
+	Partitions []table.PartitionedTable
+}
+
+func NewTableSampleInfo(node *ast.TableSample, fullSchema *expression.Schema, pt []table.PartitionedTable) *TableSampleInfo {
+	if node == nil {
+		return nil
+	}
+	return &TableSampleInfo{
+		AstNode:    node,
+		FullSchema: fullSchema,
+		Partitions: pt,
+	}
 }
 
 // PartitionInfo indicates partition helper info in physical plan.
@@ -469,6 +488,8 @@ type PhysicalTableScan struct {
 	isChildOfIndexLookUp bool
 
 	PartitionInfo PartitionInfo
+
+	SampleInfo *TableSampleInfo
 }
 
 // Clone implements PhysicalPlan interface.
