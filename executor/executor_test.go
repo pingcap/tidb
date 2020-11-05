@@ -6677,13 +6677,13 @@ func (s *testSerialSuite) TestCoprocessorOOMAction(c *C) {
 	// assert oom action
 	for _, testcase := range testcases {
 		c.Log(testcase.name)
-		// larger than one copResponse, smaller than 2 copResponse
-		quota := 199
+		// larger than 4 copResponse, smaller than 5 copResponse
+		quota := 499
 		se, err := session.CreateSession4Test(s.store)
 		c.Check(err, IsNil)
 		tk.Se = se
 		tk.MustExec("use test")
-		tk.MustExec("set @@tidb_distsql_scan_concurrency = 30")
+		tk.MustExec("set @@tidb_distsql_scan_concurrency = 2")
 		tk.MustExec(fmt.Sprintf("set @@tidb_mem_quota_query=%v;", quota))
 		var expect []string
 		for i := 0; i < count; i++ {

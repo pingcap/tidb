@@ -516,7 +516,7 @@ const minLogCopTaskTime = 300 * time.Millisecond
 // send the result back.
 func (worker *copIteratorWorker) run(ctx context.Context) {
 	defer func() {
-		worker.actionOnExceed.broadcastExceed()
+		worker.actionOnExceed.close()
 		worker.wg.Done()
 	}()
 	for task := range worker.taskCh {
@@ -689,10 +689,10 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 		ok     bool
 		closed bool
 	)
-	// wait unit at least 2 copResponse received.
+	// wait unit at least 5 copResponse received.
 	failpoint.Inject("testRateLimitActionMockWaitMax", func(val failpoint.Value) {
 		if val.(bool) {
-			for it.memTracker.MaxConsumed() < 200 {
+			for it.memTracker.MaxConsumed() < 500 {
 			}
 		}
 	})
@@ -1471,15 +1471,6 @@ func (e *rateLimitAction) close() {
 	e.cond.waitingWorkerCnt = 0
 	// broadcast the signal in order not to leak worker goroutine if it is being suspended
 	e.cond.Broadcast()
-}
-
-func (e *rateLimitAction) broadcastExceed() {
-	e.conditionLock()
-	defer e.conditionUnlock()
-	if e.cond.exceeded && e.cond.isTokenDestroyed {
-		e.cond.exceeded = false
-		e.cond.Broadcast()
-	}
 }
 
 func (e *rateLimitAction) setEnabled(enabled bool) {
