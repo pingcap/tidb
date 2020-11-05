@@ -36,7 +36,7 @@ type testAsyncCommitFailSuite struct {
 var _ = SerialSuites(&testAsyncCommitFailSuite{})
 
 func (s *testAsyncCommitFailSuite) SetUpTest(c *C) {
-	s.testAsyncCommitCommon.setUpTest(c)
+	s.testAsyncCommitCommon.setUpTest(c, false)
 }
 
 // TestFailCommitPrimaryRpcErrors tests rpc errors are handled properly when

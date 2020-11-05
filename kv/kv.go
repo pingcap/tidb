@@ -303,16 +303,6 @@ type ReturnedValue struct {
 	AlreadyLocked bool
 }
 
-// MPPClient accepts and processes mpp requests.
-type MPPClient interface {
-	// ConstructMPPTasks schedules task for a plan fragment.
-	// TODO:: This interface will be refined after we support more executors.
-	ConstructMPPTasks(context.Context, *MPPBuildTasksRequest) ([]MPPTask, error)
-
-	// DispatchMPPTasks dispatches ALL mpp requests at once, and returns an iterator that transfers the data.
-	DispatchMPPTasks(context.Context, []*MPPDispatchRequest) Response
-}
-
 // Client is used to send request to KV layer.
 type Client interface {
 	// Send sends request to KV layer, returns a Response.
@@ -408,31 +398,6 @@ type Request struct {
 	TaskID uint64
 	// TiDBServerID is the specified TiDB serverID to execute request. `0` means all TiDB instances.
 	TiDBServerID uint64
-}
-
-// MPPTask stands for a min execution unit for mpp.
-type MPPTask interface {
-	// GetAddress indicates which node this task should execute on.
-	GetAddress() string
-}
-
-// MPPBuildTasksRequest request the stores allocation for a mpp plan fragment.
-// However, the request doesn't contain the particular plan, because only key ranges take effect on the location assignment.
-type MPPBuildTasksRequest struct {
-	KeyRanges []KeyRange
-	StartTS   uint64
-}
-
-// MPPDispatchRequest stands for a dispatching task.
-type MPPDispatchRequest struct {
-	Data    []byte  // data encodes the dag coprocessor request.
-	Task    MPPTask // mpp store is the location of tiflash store.
-	IsRoot  bool    // root task returns data to tidb directly.
-	Timeout uint64  // If task is assigned but doesn't receive a connect request during timeout, the task should be destroyed.
-	// SchemaVer is for any schema-ful storage (like tiflash) to validate schema correctness if necessary.
-	SchemaVar int64
-	StartTs   uint64
-	ID        int64 // identify a single task
 }
 
 // ResultSubset represents a result subset from a single storage unit.

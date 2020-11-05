@@ -194,6 +194,7 @@ max-index-length = 3080
 skip-register-to-dashboard = true
 deprecate-integer-display-length = true
 txn-scope = "dc-1"
+enable-enum-length-limit = false
 [performance]
 txn-total-size-limit=2000
 [tikv-client]
@@ -202,6 +203,7 @@ max-batch-size=128
 region-cache-ttl=6000
 store-limit=0
 ttl-refreshed-txn-size=8192
+enable-one-pc=true
 [tikv-client.async-commit]
 enable=true
 keys-limit=123
@@ -242,6 +244,7 @@ spilled-file-encryption-method = "plaintext"
 	c.Assert(conf.TiKVClient.AsyncCommit.Enable, Equals, true)
 	c.Assert(conf.TiKVClient.AsyncCommit.KeysLimit, Equals, uint(123))
 	c.Assert(conf.TiKVClient.AsyncCommit.TotalKeySizeLimit, Equals, uint64(1024))
+	c.Assert(conf.TiKVClient.EnableOnePC, Equals, true)
 	c.Assert(conf.TiKVClient.MaxBatchSize, Equals, uint(128))
 	c.Assert(conf.TiKVClient.RegionCacheTTL, Equals, uint(6000))
 	c.Assert(conf.TiKVClient.StoreLimit, Equals, int64(0))
@@ -271,6 +274,7 @@ spilled-file-encryption-method = "plaintext"
 	c.Assert(conf.Security.SpilledFileEncryptionMethod, Equals, SpilledFileEncryptionMethodPlaintext)
 	c.Assert(conf.DeprecateIntegerDisplayWidth, Equals, true)
 	c.Assert(conf.TxnScope, Equals, "dc-1")
+	c.Assert(conf.EnableEnumLengthLimit, Equals, false)
 
 	_, err = f.WriteString(`
 [log.file]
