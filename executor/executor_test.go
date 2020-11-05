@@ -6752,3 +6752,12 @@ func (s *testSerialSuite) TestIssue19148(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(int(tblInfo.Meta().Columns[0].Flag), Equals, 0)
 }
+
+func (s *testSuite) TestIssue19667(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("CREATE TABLE t (a DATETIME)")
+	tk.MustExec("INSERT INTO t VALUES('1988-04-17 01:59:59')")
+	tk.MustQuery(`SELECT DATE_ADD(a, INTERVAL 1 SECOND) FROM t`).Check(testkit.Rows("1988-04-17 02:00:00"))
+}
