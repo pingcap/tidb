@@ -1303,7 +1303,7 @@
       },
       {
         "SQL": "select /*+ HASH_AGG(@sel_2) */ a, (select count(*) from t t1 where t1.b > t.a) from t where b > (select b from t t2 where t2.b = t.a limit 1)",
-        "Plan": "Apply{Apply{TableReader(Table(t))->TableReader(Table(t)->Sel([eq(test.t.b, test.t.a)])->Limit)->Limit}->TableReader(Table(t)->Sel([gt(test.t.b, test.t.a)])->HashAgg)->HashAgg}->Projection",
+        "Plan": "Apply{Apply{TableReader(Table(t))->TableReader(Table(t)->Sel([eq(test.t.b, test.t.a)])->Limit)->Limit}->TableReader(Table(t)->Sel([gt(test.t.b, test.t.a)])->HashAgg)->HashAgg}",
         "Hints": "use_index(@`sel_1` `test`.`t` ), use_index(@`sel_3` `test`.`t2` ), use_index(@`sel_2` `test`.`t1` ), hash_agg(@`sel_2`)"
       },
       {
@@ -2192,32 +2192,30 @@
       {
         "SQL": "select a from t2 where t2.a < (select t1.a from t1 where t1.b = t2.b and t1.a is null);",
         "Plan": [
-          "Projection_10 9990.00 root  test.t2.a",
-          "└─Apply_12 9990.00 root  CARTESIAN inner join, other cond:lt(test.t2.a, test.t1.a)",
-          "  ├─TableReader_15(Build) 9990.00 root  data:Selection_14",
-          "  │ └─Selection_14 9990.00 cop[tikv]  not(isnull(test.t2.a))",
-          "  │   └─TableFullScan_13 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
-          "  └─Selection_16(Probe) 0.80 root  not(isnull(test.t1.a))",
-          "    └─MaxOneRow_17 1.00 root  ",
-          "      └─IndexLookUp_24 0.00 root  ",
-          "        ├─IndexRangeScan_21(Build) 1.00 cop[tikv] table:t1, index:idx_a(a) range:[NULL,NULL], keep order:false, stats:pseudo",
-          "        └─Selection_23(Probe) 0.00 cop[tikv]  eq(test.t1.b, test.t2.b)",
-          "          └─TableRowIDScan_22 1.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+          "Apply_12 9990.00 root  CARTESIAN inner join, other cond:lt(test.t2.a, test.t1.a)",
+          "├─TableReader_15(Build) 9990.00 root  data:Selection_14",
+          "│ └─Selection_14 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "│   └─TableFullScan_13 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─Selection_16(Probe) 0.80 root  not(isnull(test.t1.a))",
+          "  └─MaxOneRow_17 1.00 root  ",
+          "    └─IndexLookUp_24 0.00 root  ",
+          "      ├─IndexRangeScan_21(Build) 1.00 cop[tikv] table:t1, index:idx_a(a) range:[NULL,NULL], keep order:false, stats:pseudo",
+          "      └─Selection_23(Probe) 0.00 cop[tikv]  eq(test.t1.b, test.t2.b)",
+          "        └─TableRowIDScan_22 1.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "Result": null
       },
       {
         "SQL": "select a from t2 where t2.a < (select t3.a from t3 where t3.a = t2.a);",
         "Plan": [
-          "Projection_10 9990.00 root  test.t2.a",
-          "└─Apply_12 9990.00 root  CARTESIAN inner join, other cond:lt(test.t2.a, test.t3.a)",
-          "  ├─TableReader_15(Build) 9990.00 root  data:Selection_14",
-          "  │ └─Selection_14 9990.00 cop[tikv]  not(isnull(test.t2.a))",
-          "  │   └─TableFullScan_13 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
-          "  └─Selection_16(Probe) 0.80 root  not(isnull(test.t3.a))",
-          "    └─MaxOneRow_17 1.00 root  ",
-          "      └─IndexReader_19 2.00 root  index:IndexRangeScan_18",
-          "        └─IndexRangeScan_18 2.00 cop[tikv] table:t3, index:idx_abc(a, b, c) range: decided by [eq(test.t3.a, test.t2.a)], keep order:false, stats:pseudo"
+          "Apply_12 9990.00 root  CARTESIAN inner join, other cond:lt(test.t2.a, test.t3.a)",
+          "├─TableReader_15(Build) 9990.00 root  data:Selection_14",
+          "│ └─Selection_14 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "│   └─TableFullScan_13 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─Selection_16(Probe) 0.80 root  not(isnull(test.t3.a))",
+          "  └─MaxOneRow_17 1.00 root  ",
+          "    └─IndexReader_19 2.00 root  index:IndexRangeScan_18",
+          "      └─IndexRangeScan_18 2.00 cop[tikv] table:t3, index:idx_abc(a, b, c) range: decided by [eq(test.t3.a, test.t2.a)], keep order:false, stats:pseudo"
         ],
         "Result": null
       }
