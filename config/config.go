@@ -64,8 +64,8 @@ const (
 	DefStatusHost = "0.0.0.0"
 	// DefStoreLivenessTimeout is the default value for store liveness timeout.
 	DefStoreLivenessTimeout = "5s"
-	// DefDcLocation is the default value for DcLocation
-	DefDcLocation = "global"
+	// DefTxnScope is the default value for TxnScope
+	DefTxnScope = "global"
 )
 
 // Valid config maps
@@ -163,8 +163,8 @@ type Config struct {
 	EnableGlobalIndex bool `toml:"enable-global-index" json:"enable-global-index"`
 	// DeprecateIntegerDisplayWidth indicates whether deprecating the max display length for integer.
 	DeprecateIntegerDisplayWidth bool `toml:"deprecate-integer-display-length" json:"deprecate-integer-display-length"`
-	// DcLocation indicates the data center zone where the tidb server located in.
-	DcLocation string `toml:"dc-location" json:"dc-location"`
+	// TxnScope indicates the default value for session variable tidb_txn_scope
+	TxnScope string `toml:"txn-scope" json:"txn-scope"`
 }
 
 // UpdateTempStoragePath is to update the `TempStoragePath` if port/statusPort was changed
@@ -767,7 +767,6 @@ var defaultConf = Config{
 		SpilledFileEncryptionMethod: SpilledFileEncryptionMethodPlaintext,
 	},
 	DeprecateIntegerDisplayWidth: false,
-	DcLocation:                   DefDcLocation,
 }
 
 var (
