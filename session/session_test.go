@@ -2031,7 +2031,7 @@ func (s *testSchemaSerialSuite) TestLoadSchemaFailed(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(ver, NotNil)
 
-	failpoint.Disable("github.com/pingcap/tidb/domain/ErrorMockReloadFailed")
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/domain/ErrorMockReloadFailed"), IsNil)
 	time.Sleep(lease * 2)
 
 	tk.MustExec("drop table if exists t;")

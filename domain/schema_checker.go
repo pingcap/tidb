@@ -73,5 +73,6 @@ func (s *SchemaChecker) CheckBySchemaVer(txnTS uint64, startSchemaVer tikv.Schem
 
 	}
 	metrics.SchemaLeaseErrorCounter.WithLabelValues("outdated").Inc()
+	printLog()
 	return nil, ErrInfoSchemaExpired
 }
