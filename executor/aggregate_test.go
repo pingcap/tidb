@@ -16,6 +16,7 @@ package executor_test
 import (
 	"fmt"
 	"math/rand"
+	"sort"
 	"strings"
 
 	. "github.com/pingcap/check"
@@ -1145,24 +1146,48 @@ func (s *testSuiteAgg) TestIssue17216(c *C) {
 	tk.MustQuery("SELECT count(distinct col1) FROM t1").Check(testkit.Rows("48"))
 }
 
+func reconstructParallelGroupConcatResult(rows [][]interface{}) []string {
+	data := make([]string, 0, len(rows))
+	for _, row := range rows {
+		if str, ok := row[0].(string); ok {
+			data = append(data, str)
+		}
+	}
+
+	for i := 0; i < len(data); i++ {
+		tokens := strings.Split(data[i], ",")
+		sort.Slice(tokens, func(i, j int) bool {
+			return tokens[i] < tokens[j]
+		})
+		data[i] = strings.Join(tokens, ",")
+	}
+
+	sort.Slice(data, func(i, j int) bool {
+		return data[i] < data[j]
+	})
+
+	return data
+}
+
 func (s *testSuiteAgg) TestParallelStreamAggGroupConcat(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("CREATE TABLE t(a bigint, b bigint);")
 
-	sql := "select /*+ stream_agg() */ group_concat(a, b) from t group by b;"
+	sql := "select /*+ stream_agg() */ group_concat(a, b) as ab from t group by b order by ab;"
 
 	for i := 0; i < 10000; i++ {
 		tk.MustExec("insert into t values(?, ?);", rand.Intn(100), rand.Intn(100))
 	}
 
 	concurrencies := []int{1, 2, 4, 8}
-	var correct *testkit.Result
+
+	var expected []string
 	for _, con := range concurrencies {
 		tk.MustExec(fmt.Sprintf("set @@tidb_stream_agg_concurrency=%d", con))
 		if con == 1 {
-			correct = tk.MustQuery(sql).Sort()
+			expected = reconstructParallelGroupConcatResult(tk.MustQuery(sql).Rows())
 		} else {
 			er := tk.MustQuery("explain " + sql).Rows()
 			ok := false
@@ -1174,11 +1199,13 @@ func (s *testSuiteAgg) TestParallelStreamAggGroupConcat(c *C) {
 				}
 			}
 			c.Assert(ok, Equals, true)
-			result := tk.MustQuery(sql).Sort()
-			result.Check(correct.Rows())
+			obtained := reconstructParallelGroupConcatResult(tk.MustQuery(sql).Rows())
+			c.Assert(len(obtained), Equals, len(expected))
+			for i := 0; i < len(obtained); i++ {
+				c.Assert(obtained[i], Equals, expected[i])
+			}
 		}
 	}
-
 }
 
 func (s *testSuiteAgg) TestIssue20658(c *C) {
