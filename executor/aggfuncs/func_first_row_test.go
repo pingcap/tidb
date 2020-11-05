@@ -31,8 +31,8 @@ func (s *testSuite) TestMergePartialResult4FirstRow(c *C) {
 	enumA, _ := types.ParseEnumName(elems, "a", mysql.DefaultCollationName)
 	enumC, _ := types.ParseEnumName(elems, "c", mysql.DefaultCollationName)
 
-	setA, _ := types.ParseSetName(elems, "a", mysql.DefaultCollationName)
-	setAB, _ := types.ParseSetName(elems, "a,b", mysql.DefaultCollationName)
+	setA, _ := types.ParseSet(elems, "a", mysql.DefaultCollationName)
+	setAB, _ := types.ParseSet(elems, "a,b", mysql.DefaultCollationName)
 
 	tests := []aggTest{
 		buildAggTester(ast.AggFuncFirstRow, mysql.TypeLonglong, 5, 0, 2, 0),

@@ -2948,7 +2948,7 @@ func (s *testDBSuite2) TestCreateTableWithEnumCol(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	// It's for failure cases.
 	// The type of default value is string.
-	tk.MustExec("drop table t_enum")
+	tk.MustExec("drop table if exists t_enum")
 	failedSQL := "create table t_enum (a enum('1', '4', '10') default '3');"
 	tk.MustGetErrCode(failedSQL, errno.ErrInvalidDefault)
 	failedSQL = "create table t_enum (a enum('1', '4', '10') default '');"
@@ -2961,6 +2961,7 @@ func (s *testDBSuite2) TestCreateTableWithEnumCol(c *C) {
 
 	// The type of default value is int.
 	// It's for successful cases
+	tk.MustExec("drop table if exists t_enum")
 	tk.MustExec("create table t_enum (a enum('2', '3', '4') default 2);")
 	ret := tk.MustQuery("show create table t_enum").Rows()[0][1]
 	c.Assert(strings.Contains(ret.(string), "`a` enum('2', '3', '4') DEFAULT '3'"), IsTrue)
