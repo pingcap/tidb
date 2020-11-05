@@ -478,4 +478,105 @@ func (s *testPlanNormalize) TestJSONExplain(c *C) {
 	c.Assert(len(result.Rows()), Equals, 1)           // always 1 row
 	c.Assert(json.Unmarshal([]byte(res), &js), IsNil) // valid JSON and JSONOperatorRow
 	c.Assert(len(js.Children), GreaterEqual, 2)       // A join requires at least 2 children.
+
+	// The output of EXPLAIN is simplified so that the testcase
+	// is more tolerant to small changes in statistics or operator naming.
+
+	simplifiedExplain := []struct {
+		explain string
+		output  string
+	}{
+		{
+			explain: "EXPLAIN FORMAT=JsOn SELECT * FROM t1 WHERE id = 1",
+			output: `\{
+  "id": "Point_Get_.*",
+  "estRows": 1,
+  "task": "root",
+  "accessObject": "table:t1",
+  "operatorInfo": "handle:1",
+  "children": null
+\}\n`,
+		},
+		{
+			explain: "EXPLAIN FORMAT = JSON SELECT 1 FROM dual",
+			output: `\{
+  "id": "Projection_.*",
+  "estRows": 1,
+  "task": "root",
+  "accessObject": "",
+  "operatorInfo": "1\-\>Column#1",
+  "children": \[
+    \{
+      "id": "TableDual_.*",
+      "estRows": 1,
+      "task": "root",
+      "accessObject": "",
+      "operatorInfo": "rows:1",
+      "children": null
+    \}
+  \]
+\}\n`,
+		},
+		{
+			explain: "EXPLAIN FORMAT=JSON SELECT /*+ INL_JOIN(t1,t2) */ STRAIGHT_JOIN t1.* FROM t1 INNER JOIN t2 ON t1.id=t2.t1_id;",
+			output: `\{
+  "id": "IndexJoin_.*",
+  "estRows": .*,
+  "task": "root",
+  "accessObject": "",
+  "operatorInfo": "inner join, inner:TableReader_.*, outer key:test.t2.t1_id, inner key:test.t1.id",
+  "children": \[
+    \{
+      "id": "TableReader_.*\(Build\)",
+      "estRows": .*,
+      "task": "root",
+      "accessObject": "",
+      "operatorInfo": "data:Selection_.*",
+      "children": \[
+        \{
+          "id": "Selection_.*",
+          "estRows": .*,
+          "task": "cop\[tikv\]",
+          "accessObject": "",
+          "operatorInfo": "not\(isnull\(test.t2.t1_id\)\)",
+          "children": \[
+            \{
+              "id": "TableFullScan_.*",
+              "estRows": .*,
+              "task": "cop\[tikv\]",
+              "accessObject": "table:t2",
+              "operatorInfo": "keep order:false, stats:pseudo",
+              "children": null
+            \}
+          \]
+        \}
+      \]
+    \},
+    \{
+      "id": "TableReader_.*\(Probe\)",
+      "estRows": 1,
+      "task": "root",
+      "accessObject": "",
+      "operatorInfo": "data:TableRangeScan_.*",
+      "children": \[
+        \{
+          "id": "TableRangeScan_.*",
+          "estRows": 1,
+          "task": "cop\[tikv\]",
+          "accessObject": "table:t1",
+          "operatorInfo": "range: decided by \[test.t2.t1_id\], keep order:false, stats:pseudo",
+          "children": null
+        \}
+      \]
+    \}
+  \]
+\}\n`,
+		},
+	}
+
+	for _, testCase := range simplifiedExplain {
+		result := tk.MustQuery(testCase.explain)
+		res := result.Rows()[0][0].(string)
+		c.Assert(res, Matches, testCase.output)
+	}
 }
