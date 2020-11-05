@@ -15,7 +15,6 @@ package executor_test
 
 import (
 	"fmt"
-	"math"
 	"strings"
 
 	. "github.com/pingcap/check"
