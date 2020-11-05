@@ -3393,27 +3393,12 @@ func checkModifyCharsetAndCollation(toCharset, toCollate, origCharset, origColla
 	return nil
 }
 
-// CheckModifyTypeCompatible checks whether changes column type to another is compatible considering
-// field length and precision. Any incompatible will return an error with individual error msg, and
-// if the "origin" type can be changed to "to" type by reorganization, the "canReorg" will be true,
-// false "canReorg" means the types change are not supported.
+// CheckModifyTypeCompatible checks whether changes column type to another is compatible and can be changed.
+// If types are compatible and can be directly changed, nil err will be returned; otherwise the types are incompatible.
+// There are two cases when types incompatible:
+// 1. returned canReorg == true: types can be changed by reorg
+// 2. returned canReorg == false: type change not supported yet
 func CheckModifyTypeCompatible(origin *types.FieldType, to *types.FieldType) (canReorg bool, errMsg string, err error) {
-	checkLengthDecimalSign := func() (bool, string, error) {
-		if to.Flen > 0 && to.Flen < origin.Flen {
-			msg := fmt.Sprintf("length %d is less than origin %d", to.Flen, origin.Flen)
-			return true, msg, errUnsupportedModifyColumn.GenWithStackByArgs(msg)
-		}
-		if to.Decimal > 0 && to.Decimal < origin.Decimal {
-			msg := fmt.Sprintf("decimal %d is less than origin %d", to.Decimal, origin.Decimal)
-			return true, msg, errUnsupportedModifyColumn.GenWithStackByArgs(msg)
-		}
-		if mysql.HasUnsignedFlag(origin.Flag) != mysql.HasUnsignedFlag(to.Flag) {
-			msg := fmt.Sprintf("can't change unsigned integer to signed or vice versa")
-			return true, msg, errUnsupportedModifyColumn.GenWithStackByArgs(msg)
-		}
-		return false, "", nil
-	}
-
 	// Deal with the same type.
 	if origin.Tp == to.Tp {
 		if origin.Tp == mysql.TypeEnum || origin.Tp == mysql.TypeSet {
@@ -3444,11 +3429,15 @@ func CheckModifyTypeCompatible(origin *types.FieldType, to *types.FieldType) (ca
 			}
 		}
 
-		return checkLengthDecimalSign()
+		needReorg, reason := needReorgToChange(origin, to)
+		if !needReorg {
+			return false, "", nil
+		}
+		return true, reason, errUnsupportedModifyColumn.GenWithStackByArgs(reason)
 	}
 
 	// Deal with the different type.
-	if checkUnsupportedConversionFromTypeChange(origin, to) {
+	if !checkTypeChangeSupported(origin, to) {
 		unsupportedMsg := fmt.Sprintf("change from original type %v to %v is currently unsupported yet", to.CompactStr(), origin.CompactStr())
 		return false, unsupportedMsg, errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
 	}
@@ -3457,49 +3446,75 @@ func CheckModifyTypeCompatible(origin *types.FieldType, to *types.FieldType) (ca
 	stringToString := types.IsString(origin.Tp) && types.IsString(to.Tp)
 	integerToInteger := mysql.IsIntegerType(origin.Tp) && mysql.IsIntegerType(to.Tp)
 	if stringToString || integerToInteger {
-		return checkLengthDecimalSign()
+		needReorg, reason := needReorgToChange(origin, to)
+		if !needReorg {
+			return false, "", nil
+		}
+		return true, reason, errUnsupportedModifyColumn.GenWithStackByArgs(reason)
 	}
 
 	notCompatibleMsg := fmt.Sprintf("type %v not match origin %v", to.CompactStr(), origin.CompactStr())
 	return true, notCompatibleMsg, errUnsupportedModifyColumn.GenWithStackByArgs(notCompatibleMsg)
 }
 
-func checkUnsupportedConversionFromTypeChange(origin *types.FieldType, to *types.FieldType) bool {
+func needReorgToChange(origin *types.FieldType, to *types.FieldType) (needOreg bool, reasonMsg string) {
+	toFlen := to.Flen
+	originFlen := origin.Flen
+	if mysql.IsIntegerType(to.Tp) && mysql.IsIntegerType(origin.Tp) {
+		// For integers, we should ignore the potential display length represented by flen, using
+		// the default flen of the type.
+		originFlen, _ = mysql.GetDefaultFieldLengthAndDecimal(origin.Tp)
+		toFlen, _ = mysql.GetDefaultFieldLengthAndDecimal(to.Tp)
+	}
+
+	if toFlen > 0 && toFlen < originFlen {
+		return true, fmt.Sprintf("length %d is less than origin %d", to.Flen, origin.Flen)
+	}
+	if to.Decimal > 0 && to.Decimal < origin.Decimal {
+		return true, fmt.Sprintf("decimal %d is less than origin %d", to.Decimal, origin.Decimal)
+	}
+	if mysql.HasUnsignedFlag(origin.Flag) != mysql.HasUnsignedFlag(to.Flag) {
+		return true, fmt.Sprintf("can't change unsigned integer to signed or vice versa")
+	}
+	return false, ""
+}
+
+func checkTypeChangeSupported(origin *types.FieldType, to *types.FieldType) bool {
 	if types.IsString(origin.Tp) && to.Tp == mysql.TypeBit {
 		// TODO: Currently string data type cast to bit are not compatible with mysql, should fix here after compatible.
-		return true
+		return false
 	}
 
 	if (origin.Tp == mysql.TypeEnum || origin.Tp == mysql.TypeSet) &&
 		(types.IsTypeTime(to.Tp) || to.Tp == mysql.TypeDuration) {
 		// TODO: Currently enum/set cast to date/datetime/timestamp/time/bit are not support yet, should fix here after supported.
-		return true
+		return false
 	}
 
 	if (types.IsTypeTime(origin.Tp) || origin.Tp == mysql.TypeDuration || origin.Tp == mysql.TypeYear) &&
 		(to.Tp == mysql.TypeEnum || to.Tp == mysql.TypeSet || to.Tp == mysql.TypeBit) {
 		// TODO: Currently date and time cast to enum/set/bit are not support yet, should fix here after supported.
-		return true
+		return false
 	}
 
 	if (origin.Tp == mysql.TypeFloat || origin.Tp == mysql.TypeDouble) &&
 		(types.IsTypeTime(to.Tp) || to.Tp == mysql.TypeEnum || to.Tp == mysql.TypeSet) {
 		// TODO: Currently float/double cast to date/datetime/timestamp/enum/set type are not support yet, should fix here after supported.
-		return true
+		return false
 	}
 
 	if origin.Tp == mysql.TypeBit &&
 		(types.IsTypeTime(to.Tp) || to.Tp == mysql.TypeDuration || to.Tp == mysql.TypeEnum || to.Tp == mysql.TypeSet) {
 		// TODO: Currently bit cast to date/datetime/timestamp/time/enum/set are not support yet, should fix here after supported.
-		return true
+		return false
 	}
 
 	if origin.Tp == mysql.TypeNewDecimal && (to.Tp == mysql.TypeEnum || to.Tp == mysql.TypeSet) {
 		// TODO: Currently decimal cast to enum/set are not support yet, should fix here after supported.
-		return true
+		return false
 	}
 
-	return false
+	return true
 }
 
 // checkModifyTypes checks if the 'origin' type can be modified to 'to' type no matter directly change
