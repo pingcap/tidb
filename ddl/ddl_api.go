@@ -843,9 +843,6 @@ func getEnumDefaultValue(v types.Datum, col *table.Column) (string, error) {
 	if err != nil {
 		return "", errors.Trace(err)
 	}
-	if str == "" {
-		return "", ErrInvalidDefaultValue.GenWithStackByArgs(col.Name.O)
-	}
 	enumVal, err := types.ParseEnumName(col.Elems, str, col.Collate)
 	if err != nil {
 		return "", ErrInvalidDefaultValue.GenWithStackByArgs(col.Name.O)
