@@ -617,11 +617,15 @@ func (e *closureExecutor) processSelection(needCollectDetail bool) (gotRow bool,
 			if remainConditionLength != 0 {
 				for _, expr := range e.selectionCtx.conditions[conditionLength-remainConditionLength:] {
 					remainConditionLength = remainConditionLength - 1
-					d, _ := expr.Eval(row)
+					d, err1 := expr.Eval(row)
+					if err1 != nil {
+						errors.Trace(err1)
+					}
 					if !d.IsNull() {
-						isBool, _ := d.ToBool(e.sc)
+						isBool, err1 := d.ToBool(e.sc)
 						if isBool != 0 {
 							if remainConditionLength != 0 {
+								errors.Trace(err1)
 								continue
 							} else {
 								return false, errors.Trace(err)

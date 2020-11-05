@@ -228,11 +228,15 @@ func EvalBool(ctx sessionctx.Context, exprList CNFExprs, row chunk.Row) (bool, b
 			if remainConditionLength != 0 {
 				for _, expr := range exprList[conditionLength-remainConditionLength:] {
 					remainConditionLength = remainConditionLength - 1
-					d, _ := expr.Eval(row)
+					d, err1 := expr.Eval(row)
+					if err1 != nil {
+						errors.Trace(err1)
+					}
 					if !d.IsNull() {
-						isBool, _ := data.ToBool(ctx.GetSessionVars().StmtCtx)
+						isBool, err1 := data.ToBool(ctx.GetSessionVars().StmtCtx)
 						if isBool != 0 {
 							if remainConditionLength != 0 {
+								errors.Trace(err1)
 								continue
 							} else {
 								return false, false, err

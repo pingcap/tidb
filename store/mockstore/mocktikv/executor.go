@@ -459,11 +459,15 @@ func evalBool(exprs []expression.Expression, row []types.Datum, ctx *stmtctx.Sta
 			if remainConditionLength != 0 {
 				for _, expr := range exprs[conditionLength-remainConditionLength:] {
 					remainConditionLength = remainConditionLength - 1
-					d, _ := expr.Eval(chunk.MutRowFromDatums(row).ToRow())
+					d, err1 := expr.Eval(chunk.MutRowFromDatums(row).ToRow())
+					if err1 != nil {
+						errors.Trace(err1)
+					}
 					if !d.IsNull() {
-						isBool, _ := data.ToBool(ctx)
+						isBool, err1 := data.ToBool(ctx)
 						if isBool != 0 {
 							if remainConditionLength != 0 {
+								errors.Trace(err1)
 								continue
 							} else {
 								return false, errors.Trace(err)
