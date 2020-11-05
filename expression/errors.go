@@ -54,7 +54,7 @@ var (
 
 // handleInvalidTimeError reports error or warning depend on the context.
 func handleInvalidTimeError(ctx sessionctx.Context, err error) error {
-	if err == nil || !(types.ErrWrongValue.Equal(err) ||
+	if err == nil || !(types.ErrWrongValue.Equal(err) || types.ErrWrongValueForType.Equal(err) ||
 		types.ErrTruncatedWrongVal.Equal(err) || types.ErrInvalidWeekModeFormat.Equal(err) ||
 		types.ErrDatetimeFunctionOverflow.Equal(err)) {
 		return err

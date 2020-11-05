@@ -544,6 +544,11 @@ const (
 )
 
 func (s *testGCWorkerSuite) testDeleteRangesFailureImpl(c *C, failType int) {
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/gcworker/mockHistoryJobForGC", "return(1)"), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/gcworker/mockHistoryJobForGC"), IsNil)
+	}()
+
 	// Put some delete range tasks.
 	se := createSession(s.gcWorker.store)
 	defer se.Close()
@@ -1468,4 +1473,16 @@ func (s *testGCWorkerSuite) TestPhyscailScanLockDeadlock(c *C) {
 	case <-time.After(5 * time.Second):
 		c.Fatal("physicalScanAndResolveLocks blocks")
 	}
+}
+
+func (s *testGCWorkerSuite) TestGCPlacementRules(c *C) {
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/gcworker/mockHistoryJobForGC", "return(1)"), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/gcworker/mockHistoryJobForGC"), IsNil)
+	}()
+
+	dr := util.DelRangeTask{JobID: 1, ElementID: 1}
+	pid, err := s.gcWorker.doGCPlacementRules(dr)
+	c.Assert(pid, Equals, int64(1))
+	c.Assert(err, IsNil)
 }
