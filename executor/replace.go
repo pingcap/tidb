@@ -20,8 +20,10 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -72,7 +74,7 @@ func (e *ReplaceExec) removeRow(ctx context.Context, txn kv.Transaction, handle 
 		return false, err
 	}
 
-	rowUnchanged, err := types.EqualDatums(e.ctx.GetSessionVars().StmtCtx, oldRow, newRow)
+	rowUnchanged, err := e.equalDatums(e.ctx.GetSessionVars().StmtCtx, oldRow, newRow)
 	if err != nil {
 		return false, err
 	}
@@ -87,6 +89,33 @@ func (e *ReplaceExec) removeRow(ctx context.Context, txn kv.Transaction, handle 
 	}
 	e.ctx.GetSessionVars().StmtCtx.AddAffectedRows(1)
 	return false, nil
+}
+
+// equalDatums compare if a and b contains the same datum values.
+func (e *ReplaceExec) equalDatums(sc *stmtctx.StatementContext, a []types.Datum, b []types.Datum) (bool, error) {
+	if len(a) != len(b) {
+		return false, nil
+	}
+	if a == nil && b == nil {
+		return true, nil
+	}
+	if a == nil || b == nil {
+		return false, nil
+	}
+	for i, ai := range a {
+		collation := ai.Collation()
+		// We should use binary collation to compare datum, otherwise the result will be incorrect
+		ai.SetCollation(charset.CollationBin)
+		v, err := ai.CompareDatum(sc, &b[i])
+		ai.SetCollation(collation)
+		if err != nil {
+			return false, errors.Trace(err)
+		}
+		if v != 0 {
+			return false, nil
+		}
+	}
+	return true, nil
 }
 
 // replaceRow removes all duplicate rows for one row, then inserts it.

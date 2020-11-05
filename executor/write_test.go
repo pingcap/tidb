@@ -2978,3 +2978,18 @@ func (s *testSerialSuite) TestIssue20724(c *C) {
 	tk.MustQuery("select * from t1").Check(testkit.Rows("A"))
 	tk.MustExec("drop table t1")
 }
+
+func (s *testSerialSuite) TestIssue20840(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("set tidb_enable_clustered_index = 0")
+	tk.MustExec("create table t1 (i varchar(20) unique key) collate=utf8mb4_general_ci")
+	tk.MustExec("insert into t1 values ('a')")
+	tk.MustExec("replace into t1 values ('A')")
+	tk.MustQuery("select * from t1").Check(testkit.Rows("A"))
+	tk.MustExec("drop table t1")
+}
