@@ -210,7 +210,8 @@ func (bq *brieQueue) releaseTask() {
 	<-bq.workerCh
 }
 
-func (bq *brieQueue) cancelTask(ctx context.Context, taskID uint64, se sessionctx.Context, cancel func()) {
+func (bq *brieQueue) cancelTask(ctx context.Context, taskID uint64, se sessionctx.Context) {
+	// TODO(lance6716): for BR task, delete row to keep compatibility. and rename this function
 	sql := fmt.Sprintf("UPDATE mysql.brie_tasks SET cancel = 1 WHERE id = %d;", taskID)
 	_, err := se.(sqlexec.SQLExecutor).Execute(ctx, sql)
 	if err != nil {
@@ -218,8 +219,6 @@ func (bq *brieQueue) cancelTask(ctx context.Context, taskID uint64, se sessionct
 			zap.Uint64("taskID", taskID),
 			zap.Error(err))
 	}
-	// If failed to update BRIE task table (maybe by user cancel this ctx), we still try cancel IMPORT's context
-	cancel()
 }
 
 func (b *executorBuilder) parseTSString(ts string) (uint64, error) {
@@ -489,8 +488,9 @@ func (e *BRIEExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	taskCtx, taskID, item, err := bq.registerTask(ctx, e.info, e.ctx)
 	defer func() {
 		if !taskExecuted {
-			bq.cancelTask(ctx, taskID, e.ctx, item.cancel)
+			bq.cancelTask(ctx, taskID, e.ctx)
 		}
+		item.cancel()
 	}()
 	if err != nil {
 		return err
@@ -504,7 +504,8 @@ func (e *BRIEExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			select {
 			case <-ticker.C:
 				if atomic.LoadUint32(&e.ctx.GetSessionVars().Killed) == 1 {
-					bq.cancelTask(ctx, taskID, e.ctx, item.cancel)
+					bq.cancelTask(ctx, taskID, e.ctx)
+					item.cancel()
 					return
 				}
 			case <-taskCtx.Done():
@@ -528,8 +529,7 @@ func (e *BRIEExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	case ast.BRIEKindRestore:
 		err = handleBRIEError(task.RunRestore(taskCtx, glue, "Restore", e.restoreCfg), ErrBRIERestoreFailed)
 	case ast.BRIEKindImport:
-		// TODO(lance6716): support taskCtx later
-		// TODO(lance6716): use taskID to build a unique checkpoint/sort-kv-dir
+		// TODO(lance6716): use taskID to build a unique checkpoint/sort-kv-dir, and pass taskCtx
 		l := lightning.New(e.importCfg)
 		err = handleBRIEError(l.RunOnce(), ErrBRIEImportFailed)
 	default:
