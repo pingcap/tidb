@@ -894,7 +894,6 @@ func (s *testStatsSuite) TestIndexUsage4IndexLookUp(c *C) {
 	))
 }
 
-
 func (s *testStatsSuite) TestIndexUsage4TableReader(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	tk := testkit.NewTestKit(c, s.store)

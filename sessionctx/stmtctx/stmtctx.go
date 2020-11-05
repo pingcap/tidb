@@ -164,7 +164,7 @@ type StatementContext struct {
 	TaskMapBakTS          uint64 // counter for
 
 	// IdxUsageMap collects index usage during one statement.
-	IdxUsageMap		  StatementIndexUsageMap
+	IdxUsageMap StatementIndexUsageMap
 }
 
 // StmtHints are SessionVars related sql hints.
