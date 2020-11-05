@@ -267,8 +267,9 @@ func HistogramEqual(a, b *Histogram, ignoreID bool) bool {
 
 // constants for stats version. These const can be used for solving compatibility issue.
 const (
-	CurStatsVersion = Version1
+	CurStatsVersion = Version2
 	Version1        = 1
+	Version2        = 2
 )
 
 // AnalyzeFlag is set when the statistics comes from analyze and has not been modified by feedback.
@@ -467,6 +468,14 @@ func (idx *Index) GetIncreaseFactor(totalCount int64) float64 {
 	}
 	log.Warn("ppp", zap.Int64("coll's count", totalCount), zap.Float64("index's count", columnCount))
 	return float64(totalCount) / columnCount
+}
+
+func (idx *Index) BetweenRowCount(l, r types.Datum) float64 {
+	histBetweenCnt := idx.Histogram.BetweenRowCount(l, r)
+	if idx.StatsVer == Version1 {
+		return histBetweenCnt
+	}
+	return float64(idx.TopN.BetweenCount(l.GetBytes(), r.GetBytes())) + histBetweenCnt
 }
 
 // GetIncreaseFactor will return a factor of data increasing after the last analysis.

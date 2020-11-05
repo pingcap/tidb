@@ -115,7 +115,7 @@ func handleAnalyzeIndexReq(dbReader *dbreader.DBReader, rans []kv.KeyRange, anal
 			h1, h2 := murmur3.Sum128(valueCnt.Encoded)
 			processor.cms.SubValue(h1, h2, valueCnt.Count)
 		}
-		cm = statistics.CMSketchToProto(processor.cms, &statistics.TopN{TopN:processor.topNValuePairs})
+		cm = statistics.CMSketchToProto(processor.cms, &statistics.TopN{TopN: processor.topNValuePairs})
 	}
 	data, err := proto.Marshal(&tipb.AnalyzeIndexResp{Hist: hg, Cms: cm})
 	if err != nil {

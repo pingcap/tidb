@@ -548,10 +548,40 @@ func (c *TopN) findTopN(d []byte) int {
 	return idx
 }
 
+// lowerBound searches on the sorted top-n items,
+// returns the smallest index i such that the value at element i is not less than `d`.
+func (c *TopN) lowerBound(d []byte) (idx int, match bool) {
+	idx = sort.Search(len(c.TopN), func(i int) bool {
+		cmp := bytes.Compare(c.TopN[i].Encoded, d)
+		if cmp == 0 {
+			match = true
+		}
+		return cmp >= 0
+	})
+	return idx, match
+}
+
+func (c *TopN) BetweenCount(l, r []byte) uint64 {
+	if c == nil {
+		return 0
+	}
+	lIdx, _ := c.lowerBound(l)
+	rIdx, rMatch := c.lowerBound(r)
+	if !rMatch {
+		rIdx--
+	}
+	ret := uint64(0)
+	for i := lIdx; i <= rIdx; i++ {
+		ret += c.TopN[i].Count
+	}
+	return ret
+}
+
 // GetWidthAndDepth returns the width and depth of CM Sketch.
 func (c *CMSketch) GetWidthAndDepth() (int32, int32) {
 	return c.width, c.depth
 }
+
 // Sort sorts the topn items.
 func (c *TopN) Sort() {
 	sort.Slice(c.TopN, func(i, j int) bool {
