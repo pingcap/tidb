@@ -944,15 +944,9 @@ func (s *testColumnTypeChangeSuite) TestColumnTypeChangeFromNumericToOthers(c *C
 func (s *testColumnTypeChangeSuite) TestColumnTypeChangeIgnoreDisplayLength(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	// Enable column change variable.
 	tk.Se.GetSessionVars().EnableChangeColumnType = true
-
-	// Set time zone to UTC.
-	originalTz := tk.Se.GetSessionVars().TimeZone
-	tk.Se.GetSessionVars().TimeZone = time.UTC
 	defer func() {
 		tk.Se.GetSessionVars().EnableChangeColumnType = false
-		tk.Se.GetSessionVars().TimeZone = originalTz
 	}()
 
 	originalHook := s.dom.DDL().GetHook()
@@ -974,8 +968,8 @@ func (s *testColumnTypeChangeSuite) TestColumnTypeChangeIgnoreDisplayLength(c *C
 		s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
 	}
 
-	// Change int to tinyint, although display length is expended,
-	// but the default flen is shrunk, reorg is needed.
+	// Change int to tinyint.
+	// Although display length is increased, the default flen is decreased, reorg is needed.
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int(1))")
 	tbl := testGetTableByName(c, tk.Se, "test", "t")
@@ -983,8 +977,8 @@ func (s *testColumnTypeChangeSuite) TestColumnTypeChangeIgnoreDisplayLength(c *C
 	tk.MustExec("alter table t modify column a tinyint(3)")
 	c.Assert(assertResult, Equals, true)
 
-	// Change tinyint to tinyint, although display length is shrunk,
-	// but default flen is the same, reorg is not needed.
+	// Change tinyint to tinyint
+	// Although display length is decreased, default flen is the same, reorg is not needed.
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a tinyint(3))")
 	tbl = testGetTableByName(c, tk.Se, "test", "t")
