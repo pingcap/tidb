@@ -1175,14 +1175,12 @@ func (s *testSuiteAgg) TestParallelStreamAggGroupConcat(c *C) {
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("CREATE TABLE t(a bigint, b bigint);")
 
-	sql := "select /*+ stream_agg() */ group_concat(a, b) as ab from t group by b order by ab;"
-
 	for i := 0; i < 10000; i++ {
 		tk.MustExec("insert into t values(?, ?);", rand.Intn(100), rand.Intn(100))
 	}
 
+	sql := "select /*+ stream_agg() */ group_concat(a, b) from t group by b;"
 	concurrencies := []int{1, 2, 4, 8}
-
 	var expected []string
 	for _, con := range concurrencies {
 		tk.MustExec(fmt.Sprintf("set @@tidb_stream_agg_concurrency=%d", con))
