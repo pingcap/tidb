@@ -430,7 +430,6 @@ type copIterator struct {
 
 // copIteratorWorker receives tasks from copIteratorTaskSender, handles tasks and sends the copResponse to respChan.
 type copIteratorWorker struct {
-	id       int
 	taskCh   <-chan *copTask
 	wg       *sync.WaitGroup
 	store    *tikvStore
@@ -518,10 +517,7 @@ const minLogCopTaskTime = 300 * time.Millisecond
 // send the result back.
 func (worker *copIteratorWorker) run(ctx context.Context) {
 	defer func() {
-		logutil.BgLogger().Info("worker exit",
-			zap.Int("workerID", worker.id),
-			zap.Uint32("maxID", worker.maxID.getMaxID()))
-		worker.actionOnExceed.broadcastExceed(worker.id)
+		worker.actionOnExceed.broadcastExceed()
 		worker.wg.Done()
 	}()
 	for task := range worker.taskCh {
@@ -540,7 +536,7 @@ func (worker *copIteratorWorker) run(ctx context.Context) {
 		})
 		close(task.respChan)
 		worker.maxID.setMaxIDIfLarger(task.id)
-		worker.actionOnExceed.destroyTokenIfNeeded(worker.id, func() {
+		worker.actionOnExceed.destroyTokenIfNeeded(func() {
 			worker.sendRate.putToken()
 		})
 		if worker.vars != nil && worker.vars.Killed != nil && atomic.LoadUint32(worker.vars.Killed) == 1 {
@@ -561,7 +557,6 @@ func (it *copIterator) open(ctx context.Context) {
 	// Start it.concurrency number of workers to handle cop requests.
 	for i := 0; i < it.concurrency; i++ {
 		worker := &copIteratorWorker{
-			id:       i,
 			taskCh:   taskCh,
 			wg:       &it.wg,
 			store:    it.store,
@@ -1422,7 +1417,7 @@ func (e *rateLimitAction) broadcastIfNeeded(needed bool) {
 // destroyTokenIfNeeded will check the `exceed` flag after copWorker finished one task.
 // If the exceed flag is true and there is no token been destroyed before, one token will be destroyed,
 // or the token would be return back.
-func (e *rateLimitAction) destroyTokenIfNeeded(id int, returnToken func()) {
+func (e *rateLimitAction) destroyTokenIfNeeded(returnToken func()) {
 	e.conditionLock()
 	defer e.conditionUnlock()
 	if !e.cond.exceeded {
@@ -1435,7 +1430,6 @@ func (e *rateLimitAction) destroyTokenIfNeeded(id int, returnToken func()) {
 		e.cond.remainingTokenNum = e.cond.remainingTokenNum - 1
 		e.cond.isTokenDestroyed = true
 		e.cond.Broadcast()
-		logutil.BgLogger().Info("worker destroyToken", zap.Int("workerID", id))
 		return
 	}
 
@@ -1443,14 +1437,11 @@ func (e *rateLimitAction) destroyTokenIfNeeded(id int, returnToken func()) {
 	// we suspend worker when `exceeded` is true until being notified by `broadcastIfNeeded`
 	for e.cond.exceeded {
 		e.cond.waitingWorkerCnt++
-		logutil.BgLogger().Info("worker sleep", zap.Int("workerID", id))
 		e.cond.Wait()
 		e.cond.waitingWorkerCnt--
 	}
-	logutil.BgLogger().Info("worker awake", zap.Int("workerID", id))
 	// only when all the waiting workers have been resumed, the Action could be initialized again.
 	if e.cond.waitingWorkerCnt < 1 {
-		logutil.BgLogger().Info("worker init once", zap.Int("workerID", id))
 		e.cond.once = sync.Once{}
 	}
 }
@@ -1477,11 +1468,9 @@ func (e *rateLimitAction) close() {
 	e.cond.Broadcast()
 }
 
-func (e *rateLimitAction) broadcastExceed(id int) {
+func (e *rateLimitAction) broadcastExceed() {
 	e.conditionLock()
 	defer e.conditionUnlock()
-	logutil.BgLogger().Info("worker try broadcast", zap.Int("workerID", id),
-		zap.Bool("exceed", e.cond.exceeded), zap.Bool("isTokenDestroyed", e.cond.isTokenDestroyed))
 	if e.cond.exceeded && e.cond.isTokenDestroyed {
 		e.cond.exceeded = false
 		e.cond.Broadcast()
@@ -1524,14 +1513,4 @@ func (handler *maxIDHandler) setTotalID(totalID uint32) {
 	handler.Lock()
 	defer handler.Unlock()
 	handler.totalID = totalID
-}
-
-func (handler *maxIDHandler) isAllTasksRunning(id int) bool {
-	handler.Lock()
-	defer handler.Unlock()
-	logutil.BgLogger().Info("worker query task running",
-		zap.Int("workerID", id),
-		zap.Uint32("maxID", handler.maxID),
-		zap.Uint32("totalID", handler.totalID))
-	return handler.maxID >= handler.totalID
 }
