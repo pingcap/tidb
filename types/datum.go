@@ -1930,7 +1930,11 @@ func EqualDatums(sc *stmtctx.StatementContext, a []Datum, b []Datum) (bool, erro
 		return false, nil
 	}
 	for i, ai := range a {
+		collation := ai.Collation()
+		// We should use binary collation to compare datum, otherwise the result will be incorrect
+		ai.SetCollation(charset.CollationBin)
 		v, err := ai.CompareDatum(sc, &b[i])
+		ai.SetCollation(collation)
 		if err != nil {
 			return false, errors.Trace(err)
 		}
