@@ -474,16 +474,17 @@ func (s *testPlanNormalize) TestEncodePlanPerformance(c *C) {
 	tk.MustExec("create table th (i int, a int,b int, c int, index (a)) partition by hash (a) partitions 8192;")
 	tk.MustExec("set @@tidb_slow_log_threshold=200000")
 
-	query := "select count(*) from th t1 join th t2 join th t3 join th t4 join th t5 join th t6 join th t7 join th t8 where t1.i=t2.a and t1.i=t3.i and t3.i=t4.i and t4.i=t5.i and t5.i=t6.i and t6.i=t7.i and t7.i=t8.i"
+	query := "select count(*) from th t1 join th t2 join th t3 join th t4 join th t5 join th t6 where t1.i=t2.a and t1.i=t3.i and t3.i=t4.i and t4.i=t5.i and t5.i=t6.i"
 	tk.Se.GetSessionVars().PlanID = 0
 	tk.MustExec(query)
 	info := tk.Se.ShowProcess()
 	c.Assert(info, NotNil)
 	p, ok := info.Plan.(core.PhysicalPlan)
 	c.Assert(ok, IsTrue)
+	tk.Se.GetSessionVars().StmtCtx.RuntimeStatsColl = nil
 	start := time.Now()
 	encodedPlanStr := core.EncodePlan(p)
-	c.Assert(time.Since(start).Seconds(), Less, 5.0)
+	c.Assert(time.Since(start).Seconds(), Less, 10.0)
 	_, err := plancodec.DecodePlan(encodedPlanStr)
 	c.Assert(err, IsNil)
 }
