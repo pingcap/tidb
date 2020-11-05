@@ -15,7 +15,6 @@ package executor_test
 
 import (
 	"fmt"
-	"math"
 	"strconv"
 	"strings"
 	"sync"
