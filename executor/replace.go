@@ -74,7 +74,7 @@ func (e *ReplaceExec) removeRow(ctx context.Context, txn kv.Transaction, handle 
 		return false, err
 	}
 
-	rowUnchanged, err := e.equalDatums(e.ctx.GetSessionVars().StmtCtx, oldRow, newRow)
+	rowUnchanged, err := e.EqualDatums(e.ctx.GetSessionVars().StmtCtx, oldRow, newRow)
 	if err != nil {
 		return false, err
 	}
@@ -91,8 +91,8 @@ func (e *ReplaceExec) removeRow(ctx context.Context, txn kv.Transaction, handle 
 	return false, nil
 }
 
-// equalDatums compare if a and b contains the same datum values.
-func (e *ReplaceExec) equalDatums(sc *stmtctx.StatementContext, a []types.Datum, b []types.Datum) (bool, error) {
+// EqualDatums compare if a and b contains the same datum values.
+func (e *ReplaceExec) EqualDatums(sc *stmtctx.StatementContext, a []types.Datum, b []types.Datum) (bool, error) {
 	if len(a) != len(b) {
 		return false, nil
 	}
