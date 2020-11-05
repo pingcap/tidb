@@ -480,15 +480,12 @@ func (s *testPointGetSuite) TestIssue20692(c *C) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (id int primary key, v int, vv int, vvv int, unique key u0(id, v, vv));")
 	tk.MustExec("insert into t values(1, 1, 1, 1);")
-
 	se1, err := session.CreateSession(s.store)
 	c.Assert(err, IsNil)
 	tk1 := testkit.NewTestKitWithSession(c, s.store, se1)
-
 	se2, err := session.CreateSession(s.store)
 	c.Assert(err, IsNil)
 	tk2 := testkit.NewTestKitWithSession(c, s.store, se2)
-
 	se3, err := session.CreateSession(s.store)
 	c.Assert(err, IsNil)
 	tk3 := testkit.NewTestKitWithSession(c, s.store, se3)
