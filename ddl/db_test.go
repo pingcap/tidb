@@ -2964,11 +2964,11 @@ func (s *testDBSuite2) TestCreateTableWithEnumCol(c *C) {
 	tk.MustExec("drop table if exists t_enum")
 	tk.MustExec("create table t_enum (a enum('2', '3', '4') default 2);")
 	ret := tk.MustQuery("show create table t_enum").Rows()[0][1]
-	c.Assert(strings.Contains(ret.(string), "`a` enum('2', '3', '4') DEFAULT '3'"), IsTrue)
+	c.Assert(strings.Contains(ret.(string), "`a` enum('2','3','4') DEFAULT '3'"), IsTrue)
 	tk.MustExec("drop table t_enum")
 	tk.MustExec("create table t_enum (a enum('a', 'c', 'd') default 2);")
 	ret = tk.MustQuery("show create table t_enum").Rows()[0][1]
-	c.Assert(strings.Contains(ret.(string), "`a` enum('a', 'c', 'd') DEFAULT 'c'"), IsTrue)
+	c.Assert(strings.Contains(ret.(string), "`a` enum('a','c','d') DEFAULT 'c'"), IsTrue)
 	tk.MustExec("insert into t_enum value()")
 	tk.MustQuery("select * from t_enum").Check(testkit.Rows("c"))
 }
