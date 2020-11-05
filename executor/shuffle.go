@@ -328,10 +328,11 @@ func (e *ShuffleExec) fetchDataAndSplit(ctx context.Context) {
 	var (
 		err           error
 		workerIndices []int
+		chk           *chunk.Chunk
 	)
 
 	results := make([]*chunk.Chunk, len(e.workers))
-	chk := newFirstChunk(e.dataSource)
+	chk = newFirstChunk(e.dataSource)
 
 	defer func() {
 		if r := recover(); r != nil {
