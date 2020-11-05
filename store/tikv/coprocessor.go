@@ -458,6 +458,7 @@ type copIteratorTaskSender struct {
 	finishCh <-chan struct{}
 	respChan chan<- *copResponse
 	sendRate *rateLimit
+	maxId    *maxIDHandler
 }
 
 type copResponse struct {
@@ -516,7 +517,9 @@ const minLogCopTaskTime = 300 * time.Millisecond
 // send the result back.
 func (worker *copIteratorWorker) run(ctx context.Context) {
 	defer func() {
-		worker.actionOnExceed.broadcastExceed()
+		if worker.maxID.isAllTasksRunning() {
+			worker.actionOnExceed.broadcastExceed()
+		}
 		worker.wg.Done()
 	}()
 	for task := range worker.taskCh {
@@ -585,6 +588,7 @@ func (it *copIterator) open(ctx context.Context) {
 		tasks:    it.tasks,
 		finishCh: it.finishCh,
 		sendRate: it.sendRate,
+		maxId:    it.maxID,
 	}
 	taskSender.respChan = it.respChan
 	it.actionOnExceed.setEnabled(true)
@@ -593,6 +597,7 @@ func (it *copIterator) open(ctx context.Context) {
 
 func (sender *copIteratorTaskSender) run() {
 	// Send tasks to feed the worker goroutines.
+	sender.maxId.setTotalID(uint32(len(sender.tasks) - 1))
 	for i, t := range sender.tasks {
 		// we control the sending rate to prevent all tasks
 		// being done (aka. all of the responses are buffered) by copIteratorWorker.
@@ -1408,9 +1413,6 @@ func (e *rateLimitAction) broadcastIfNeeded(needed bool) {
 	}
 	e.cond.exceeded = false
 	e.cond.Broadcast()
-	if e.cond.waitingWorkerCnt < 1 {
-		e.cond.once = sync.Once{}
-	}
 }
 
 // destroyTokenIfNeeded will check the `exceed` flag after copWorker finished one task.
@@ -1470,8 +1472,10 @@ func (e *rateLimitAction) close() {
 func (e *rateLimitAction) broadcastExceed() {
 	e.conditionLock()
 	defer e.conditionUnlock()
-	e.cond.exceeded = false
-	e.cond.Broadcast()
+	if e.cond.isTokenDestroyed && e.cond.exceeded {
+		e.cond.exceeded = false
+		e.cond.Broadcast()
+	}
 }
 
 func (e *rateLimitAction) setEnabled(enabled bool) {
@@ -1488,7 +1492,8 @@ func (e *rateLimitAction) isEnabled() bool {
 
 type maxIDHandler struct {
 	sync.Mutex
-	maxID uint32
+	maxID   uint32
+	totalID uint32
 }
 
 func (handler *maxIDHandler) getMaxID() uint32 {
@@ -1503,4 +1508,16 @@ func (handler *maxIDHandler) setMaxIDIfLarger(newID uint32) {
 	if newID > handler.maxID {
 		handler.maxID = newID
 	}
+}
+
+func (handler *maxIDHandler) setTotalID(totalID uint32) {
+	handler.Lock()
+	defer handler.Unlock()
+	handler.totalID = totalID
+}
+
+func (handler *maxIDHandler) isAllTasksRunning() bool {
+	handler.Lock()
+	defer handler.Unlock()
+	return handler.maxID >= handler.totalID
 }
