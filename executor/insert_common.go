@@ -294,10 +294,7 @@ func (e *InsertValues) handleErr(col *table.Column, val *types.Datum, rowIdx int
 	} else if types.ErrTruncated.Equal(err) {
 		err = types.ErrTruncated.GenWithStackByArgs(colName, rowIdx+1)
 	} else if types.ErrTruncatedWrongVal.Equal(err) && (colTp == mysql.TypeDuration || colTp == mysql.TypeDatetime) {
-		valStr, err1 := val.ToString()
-		if err1 != nil {
-			logutil.BgLogger().Warn("truncate value failed", zap.Error(err1))
-		}
+		valStr, _ := val.ToString()
 		err = dbterror.ClassTable.NewStdErr(
 			errno.ErrTruncatedWrongValue,
 			mysql.Message("Incorrect %-.32s value: '%-.128s' for column '%.192s' at row %d", nil),
