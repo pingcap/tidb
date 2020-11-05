@@ -757,6 +757,22 @@
           "    └─Selection_29 4.00 cop[tikv]  not(isnull(test_partition.t6.b))",
           "      └─IndexRangeScan_28 4.00 cop[tikv] table:t6, index:a(a, b) range:[1 1,1 1], [1 6,1 6], [2 1,2 1], [2 6,2 6], keep order:false, stats:pseudo"
         ]
+      },
+      {
+        "SQL": "select /*+ INL_JOIN(t6,t5) */ count(*) from t6 join t5 on t6.b = t5.b where t6.a in (1,2) and t5.a in (1,6) and t5.b in (1,6)",
+        "Result": [
+          "0"
+        ],
+        "Plan": [
+          "StreamAgg_12 1.00 root  funcs:count(1)->Column#9",
+          "└─IndexJoin_34 4.00 root  inner join, inner:IndexReader_33, outer key:test_partition.t6.b, inner key:test_partition.t5.b",
+          "  ├─IndexReader_27(Build) 4.00 root partition:p0 index:Selection_26",
+          "  │ └─Selection_26 4.00 cop[tikv]  not(isnull(test_partition.t6.b))",
+          "  │   └─IndexRangeScan_25 4.00 cop[tikv] table:t6, index:a(a, b) range:[1 1,1 1], [1 6,1 6], [2 1,2 1], [2 6,2 6], keep order:false, stats:pseudo",
+          "  └─IndexReader_33(Probe) 1.25 root partition:p0,p1 index:Selection_32",
+          "    └─Selection_32 1.25 cop[tikv]  in(test_partition.t5.b, 1, 6), not(isnull(test_partition.t5.b))",
+          "      └─IndexRangeScan_31 625.00 cop[tikv] table:t5, index:a(a, b) range: decided by [eq(test_partition.t5.b, test_partition.t6.b) in(test_partition.t5.a, 1, 6)], keep order:false, stats:pseudo"
+        ]
       }
     ]
   },
