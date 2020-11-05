@@ -108,21 +108,22 @@ type Config struct {
 	TxnLocalLatches  TxnLocalLatches `toml:"-" json:"-"`
 	// Set sys variable lower-case-table-names, ref: https://dev.mysql.com/doc/refman/5.7/en/identifier-case-sensitivity.html.
 	// TODO: We actually only support mode 2, which keeps the original case, but the comparison is case-insensitive.
-	LowerCaseTableNames int               `toml:"lower-case-table-names" json:"lower-case-table-names"`
-	ServerVersion       string            `toml:"server-version" json:"server-version"`
-	Log                 Log               `toml:"log" json:"log"`
-	Security            Security          `toml:"security" json:"security"`
-	Status              Status            `toml:"status" json:"status"`
-	Performance         Performance       `toml:"performance" json:"performance"`
-	PreparedPlanCache   PreparedPlanCache `toml:"prepared-plan-cache" json:"prepared-plan-cache"`
-	OpenTracing         OpenTracing       `toml:"opentracing" json:"opentracing"`
-	ProxyProtocol       ProxyProtocol     `toml:"proxy-protocol" json:"proxy-protocol"`
-	TiKVClient          TiKVClient        `toml:"tikv-client" json:"tikv-client"`
-	Binlog              Binlog            `toml:"binlog" json:"binlog"`
-	Plugin              Plugin            `toml:"plugin" json:"plugin"`
-	PessimisticTxn      PessimisticTxn    `toml:"pessimistic-txn" json:"pessimistic-txn"`
-	CheckMb4ValueInUTF8 bool              `toml:"check-mb4-value-in-utf8" json:"check-mb4-value-in-utf8"`
-	MaxIndexLength      int               `toml:"max-index-length" json:"max-index-length"`
+	LowerCaseTableNames        int               `toml:"lower-case-table-names" json:"lower-case-table-names"`
+	ServerVersion              string            `toml:"server-version" json:"server-version"`
+	Log                        Log               `toml:"log" json:"log"`
+	Security                   Security          `toml:"security" json:"security"`
+	Status                     Status            `toml:"status" json:"status"`
+	Performance                Performance       `toml:"performance" json:"performance"`
+	PreparedPlanCache          PreparedPlanCache `toml:"prepared-plan-cache" json:"prepared-plan-cache"`
+	OpenTracing                OpenTracing       `toml:"opentracing" json:"opentracing"`
+	ProxyProtocol              ProxyProtocol     `toml:"proxy-protocol" json:"proxy-protocol"`
+	TiKVClient                 TiKVClient        `toml:"tikv-client" json:"tikv-client"`
+	Binlog                     Binlog            `toml:"binlog" json:"binlog"`
+	Plugin                     Plugin            `toml:"plugin" json:"plugin"`
+	PessimisticTxn             PessimisticTxn    `toml:"pessimistic-txn" json:"pessimistic-txn"`
+	CheckMb4ValueInUTF8        bool              `toml:"check-mb4-value-in-utf8" json:"check-mb4-value-in-utf8"`
+	MaxIndexLength             int               `toml:"max-index-length" json:"max-index-length"`
+	GracefulWaitBeforeShutdown int               `toml:"graceful-wait-before-shutdown" json:"graceful-wait-before-shutdown"`
 	// AlterPrimaryKey is used to control alter primary key feature.
 	AlterPrimaryKey bool `toml:"alter-primary-key" json:"alter-primary-key"`
 	// TreatOldVersionUTF8AsUTF8MB4 is use to treat old version table/column UTF8 charset as UTF8MB4. This is for compatibility.
@@ -161,6 +162,12 @@ type Config struct {
 	EnableGlobalIndex bool `toml:"enable-global-index" json:"enable-global-index"`
 	// DeprecateIntegerDisplayWidth indicates whether deprecating the max display length for integer.
 	DeprecateIntegerDisplayWidth bool `toml:"deprecate-integer-display-length" json:"deprecate-integer-display-length"`
+	// EnableEnumLengthLimit indicates whether the enum/set element length is limited.
+	// According to MySQL 8.0 Refman:
+	// The maximum supported length of an individual SET element is M <= 255 and (M x w) <= 1020,
+	// where M is the element literal length and w is the number of bytes required for the maximum-length character in the character set.
+	// See https://dev.mysql.com/doc/refman/8.0/en/string-type-syntax.html for more details.
+	EnableEnumLengthLimit bool `toml:"enable-enum-length-limit" json:"enable-enum-length-limit"`
 }
 
 // UpdateTempStoragePath is to update the `TempStoragePath` if port/statusPort was changed
@@ -498,6 +505,8 @@ type TiKVClient struct {
 	// CommitTimeout is the max time which command 'commit' will wait.
 	CommitTimeout string      `toml:"commit-timeout" json:"commit-timeout"`
 	AsyncCommit   AsyncCommit `toml:"async-commit" json:"async-commit"`
+	// Allow TiDB try to use 1PC protocol to commit transactions that involves only one region.
+	EnableOnePC bool `toml:"enable-one-pc" json:"enable-one-pc"`
 	// MaxBatchSize is the max batch size when calling batch commands API.
 	MaxBatchSize uint `toml:"max-batch-size" json:"max-batch-size"`
 	// If TiKV load is greater than this, TiDB will wait for a while to avoid little batch.
@@ -529,6 +538,15 @@ type AsyncCommit struct {
 	KeysLimit uint `toml:"keys-limit" json:"keys-limit"`
 	// Use async commit only if the total size of keys does not exceed TotalKeySizeLimit.
 	TotalKeySizeLimit uint64 `toml:"total-key-size-limit" json:"total-key-size-limit"`
+	// The following two fields should never be modified by the user, so tags are not provided
+	// on purpose.
+	// The duration within which is safe for async commit or 1PC to commit with an old schema.
+	// It is only changed in tests.
+	// TODO: 1PC is not part of async commit. These two fields should be moved to a more suitable
+	// place.
+	SafeWindow time.Duration
+	// The duration in addition to SafeWindow to make DDL safe.
+	AllowedClockDrift time.Duration
 }
 
 // CoprocessorCache is the config for coprocessor cache.
@@ -630,8 +648,9 @@ var defaultConf = Config{
 		Enabled:  false,
 		Capacity: 0,
 	},
-	LowerCaseTableNames: 2,
-	ServerVersion:       "",
+	LowerCaseTableNames:        2,
+	GracefulWaitBeforeShutdown: 0,
+	ServerVersion:              "",
 	Log: Log{
 		Level:               "info",
 		Format:              "text",
@@ -682,7 +701,7 @@ var defaultConf = Config{
 		HeaderTimeout: 5,
 	},
 	PreparedPlanCache: PreparedPlanCache{
-		Enabled:          false,
+		Enabled:          true,
 		Capacity:         100,
 		MemoryGuardRatio: 0.1,
 	},
@@ -705,7 +724,10 @@ var defaultConf = Config{
 			// FIXME: Find an appropriate default limit.
 			KeysLimit:         256,
 			TotalKeySizeLimit: 4 * 1024, // 4 KiB
+			SafeWindow:        2 * time.Second,
+			AllowedClockDrift: 500 * time.Millisecond,
 		},
+		EnableOnePC: false,
 
 		MaxBatchSize:      128,
 		OverloadThreshold: 200,
@@ -754,6 +776,7 @@ var defaultConf = Config{
 		SpilledFileEncryptionMethod: SpilledFileEncryptionMethodPlaintext,
 	},
 	DeprecateIntegerDisplayWidth: false,
+	EnableEnumLengthLimit:        true,
 }
 
 var (

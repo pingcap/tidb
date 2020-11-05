@@ -527,7 +527,6 @@ func (worker *copIteratorWorker) run(ctx context.Context) {
 		worker.actionOnExceed.destroyTokenIfNeeded(func() {
 			worker.sendRate.putToken()
 		})
-		worker.actionOnExceed.waitIfNeeded()
 		if worker.vars != nil && worker.vars.Killed != nil && atomic.LoadUint32(worker.vars.Killed) == 1 {
 			return
 		}
@@ -680,7 +679,7 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 		closed bool
 	)
 	// wait unit at least 2 copResponse received.
-	failpoint.Inject("testRateLimitActionMockConsume", func(val failpoint.Value) {
+	failpoint.Inject("testRateLimitActionMockWaitMax", func(val failpoint.Value) {
 		if val.(bool) {
 			for it.memTracker.MaxConsumed() < 200 {
 			}
@@ -1298,6 +1297,10 @@ type rateLimitAction struct {
 		// isTokenDestroyed indicates whether there is one token has been isTokenDestroyed after Action been triggered
 		isTokenDestroyed bool
 		once             sync.Once
+		// waitingWorkerCnt indicates the total count of workers which is under condition.Waiting
+		waitingWorkerCnt uint
+		// triggerCountForTest indicates the total count of the rateLimitAction's Action being executed
+		triggerCountForTest uint
 	}
 }
 
@@ -1306,10 +1309,12 @@ func newRateLimitAction(totalTokenNumber uint, cond *sync.Cond) *rateLimitAction
 		totalTokenNum: totalTokenNumber,
 		cond: struct {
 			*sync.Cond
-			exceeded          bool
-			remainingTokenNum uint
-			isTokenDestroyed  bool
-			once              sync.Once
+			exceeded            bool
+			remainingTokenNum   uint
+			isTokenDestroyed    bool
+			once                sync.Once
+			waitingWorkerCnt    uint
+			triggerCountForTest uint
 		}{
 			Cond:              cond,
 			exceeded:          false,
@@ -1345,6 +1350,16 @@ func (e *rateLimitAction) Action(t *memory.Tracker) {
 			}
 			return
 		}
+		failpoint.Inject("testRateLimitActionMockConsumeAndAssert", func(val failpoint.Value) {
+			if val.(bool) {
+				if e.cond.triggerCountForTest+e.cond.remainingTokenNum != e.totalTokenNum {
+					panic("triggerCount + remainingTokenNum not equal to totalTokenNum")
+				}
+				if e.cond.waitingWorkerCnt > 0 {
+					panic("waitingWorkerCnt not equal to 0")
+				}
+			}
+		})
 		logutil.BgLogger().Info("memory exceeds quota, destroy one token now.",
 			zap.Int64("consumed", t.BytesConsumed()),
 			zap.Int64("quota", t.GetBytesLimit()),
@@ -1352,6 +1367,7 @@ func (e *rateLimitAction) Action(t *memory.Tracker) {
 			zap.Uint("remaining token count", e.cond.remainingTokenNum))
 		e.cond.isTokenDestroyed = false
 		e.cond.exceeded = true
+		e.cond.triggerCountForTest++
 	})
 }
 
@@ -1365,17 +1381,22 @@ func (e *rateLimitAction) SetFallback(a memory.ActionOnExceed) {
 	e.fallbackAction = a
 }
 
-// broadcastIfNeeded will check whether the copWorkers is under suspended status.
-// If they are, `broadcastIfNeeded` would try to recover them if there are no more
-// copResponse remained in the channel.
+// broadcastIfNeeded will broadcast the condition to recover all suspended workers when exceeded is enabled
+// and one token have already been destroyed.
 func (e *rateLimitAction) broadcastIfNeeded(needed bool) {
+	if !needed {
+		return
+	}
 	e.conditionLock()
 	defer e.conditionUnlock()
-	if e.cond.exceeded && needed {
-		e.cond.exceeded = false
-		e.cond.Broadcast()
-		e.cond.once = sync.Once{}
+	if !e.cond.exceeded || e.cond.waitingWorkerCnt < 1 {
+		return
 	}
+	for !e.cond.isTokenDestroyed {
+		e.cond.Wait()
+	}
+	e.cond.exceeded = false
+	e.cond.Broadcast()
 }
 
 // destroyTokenIfNeeded will check the `exceed` flag after copWorker finished one task.
@@ -1384,21 +1405,28 @@ func (e *rateLimitAction) broadcastIfNeeded(needed bool) {
 func (e *rateLimitAction) destroyTokenIfNeeded(returnToken func()) {
 	e.conditionLock()
 	defer e.conditionUnlock()
+	if !e.cond.exceeded {
+		returnToken()
+		return
+	}
 	// If actionOnExceed has been triggered and there is no token have been destroyed before,
 	// destroy one token.
-	if e.cond.exceeded && !e.cond.isTokenDestroyed {
+	if !e.cond.isTokenDestroyed {
 		e.cond.remainingTokenNum = e.cond.remainingTokenNum - 1
 		e.cond.isTokenDestroyed = true
+		e.cond.Broadcast()
 	} else {
 		returnToken()
 	}
-}
-
-func (e *rateLimitAction) waitIfNeeded() {
-	e.conditionLock()
-	defer e.conditionUnlock()
+	// we suspend worker when `exceeded` is true until being notified by `broadcastIfNeeded`
 	for e.cond.exceeded {
+		e.cond.waitingWorkerCnt++
 		e.cond.Wait()
+		e.cond.waitingWorkerCnt--
+	}
+	// only when all the waiting workers have been resumed, the Action could be initialized again.
+	if e.cond.waitingWorkerCnt < 1 {
+		e.cond.once = sync.Once{}
 	}
 }
 
@@ -1415,7 +1443,8 @@ func (e *rateLimitAction) close() {
 	e.conditionLock()
 	defer e.conditionUnlock()
 	e.cond.exceeded = false
-	e.cond.isTokenDestroyed = false
+	e.cond.isTokenDestroyed = true
+	e.cond.waitingWorkerCnt = 0
 	// broadcast the signal in order not to leak worker goroutine if it is being suspended
 	e.cond.Broadcast()
 }
