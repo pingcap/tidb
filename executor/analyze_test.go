@@ -728,6 +728,7 @@ func (s *testSuite1) TestNormalAnalyzeOnCommonHandle(c *C) {
 }
 
 func (s *testSuite1) TestDefaultValForAnalyze(c *C) {
+	c.Skip("skip race test")
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("drop database if exists test_default_val_for_analyze;")
 	tk.MustExec("create database test_default_val_for_analyze;")
