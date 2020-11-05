@@ -699,7 +699,7 @@ func (s *testColumnTypeChangeSuite) TestColumnTypeChangeFromNumericToOthers(c *C
 				r real(20, 12),
 				db real(32, 11),
 				f32 float(23),
-				f64 double(46),
+				f64 double,
 				b bit(5)
 			)
 		`)
