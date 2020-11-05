@@ -90,26 +90,27 @@ func handleAnalyzeIndexReq(dbReader *dbreader.DBReader, ran kv.KeyRange, analyze
 	if err != nil {
 		return nil, err
 	}
-	if processor.topNCurValuePair.cnt != 0 {
+	if processor.topNCurValuePair.Cnt != 0 {
 		processor.topNValuePairs = append(processor.topNValuePairs, processor.topNCurValuePair)
 	}
 	sort.Slice(processor.topNValuePairs, func(i, j int) bool {
-		cmp := processor.topNValuePairs[i].cnt - processor.topNValuePairs[j].cnt
+		cmp := processor.topNValuePairs[i].Cnt - processor.topNValuePairs[j].Cnt
 		if cmp > 0 {
 			return true
 		} else if cmp < 0 {
 			return false
 		}
-		return bytes.Compare(processor.topNValuePairs[i].val, processor.topNValuePairs[j].val) < 0
+		return bytes.Compare(processor.topNValuePairs[i].Val, processor.topNValuePairs[j].Val) < 0
 	})
 	if len(processor.topNValuePairs) > int(processor.topNCount) {
 		processor.topNValuePairs = processor.topNValuePairs[:processor.topNCount]
 	}
+	processor.statsBuilder.Hist().RemoveIdxVals(processor.topNValuePairs)
 	hg := statistics.HistogramToProto(processor.statsBuilder.Hist())
 	var cm *tipb.CMSketch
 	if processor.cms != nil {
 		for _, valueCnt := range processor.topNValuePairs {
-			processor.cms.AppendTopNAndSub(valueCnt.val, uint64(valueCnt.cnt))
+			processor.cms.AppendTopNAndSub(valueCnt.Val, uint64(valueCnt.Cnt))
 		}
 		cm = statistics.CMSketchToProto(processor.cms)
 	}
@@ -153,13 +154,8 @@ type analyzeIndexProcessor struct {
 	rowBuf       []byte
 
 	topNCount        int32
-	topNValuePairs   []valueCntPair
-	topNCurValuePair valueCntPair
-}
-
-type valueCntPair struct {
-	val []byte
-	cnt int
+	topNValuePairs   []statistics.IndexValCntPair
+	topNCurValuePair statistics.IndexValCntPair
 }
 
 func (p *analyzeIndexProcessor) Process(key, _ []byte) error {
@@ -175,14 +171,14 @@ func (p *analyzeIndexProcessor) Process(key, _ []byte) error {
 			p.cms.InsertBytes(p.rowBuf)
 		}
 	}
-	if bytes.Compare(p.topNCurValuePair.val, p.rowBuf) == 0 {
-		p.topNCurValuePair.cnt++
+	if bytes.Compare(p.topNCurValuePair.Val, p.rowBuf) == 0 {
+		p.topNCurValuePair.Cnt++
 	} else {
-		if p.topNCurValuePair.cnt > 0 {
+		if p.topNCurValuePair.Cnt > 0 {
 			p.topNValuePairs = append(p.topNValuePairs, p.topNCurValuePair)
 		}
-		p.topNCurValuePair.val = safeCopy(p.rowBuf)
-		p.topNCurValuePair.cnt = 1
+		p.topNCurValuePair.Val = safeCopy(p.rowBuf)
+		p.topNCurValuePair.Cnt = 1
 	}
 	rowData := safeCopy(p.rowBuf)
 	err = p.statsBuilder.Iterate(types.NewBytesDatum(rowData))

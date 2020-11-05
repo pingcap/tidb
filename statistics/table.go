@@ -22,6 +22,7 @@ import (
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/log"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
@@ -34,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/ranger"
 	"go.uber.org/atomic"
+	"go.uber.org/zap"
 )
 
 const (
@@ -266,7 +268,7 @@ func (coll *HistColl) GetRowCountByColumnRanges(sc *stmtctx.StatementContext, co
 // GetRowCountByIndexRanges estimates the row count by a slice of Range.
 func (coll *HistColl) GetRowCountByIndexRanges(sc *stmtctx.StatementContext, idxID int64, indexRanges []*ranger.Range) (float64, error) {
 	idx := coll.Indices[idxID]
-	if idx == nil || idx.IsInvalid(coll.Pseudo) {
+	if idx == nil || idx.IsInvalid(coll.Pseudo, idx.CMSketch != nil) {
 		colsLen := -1
 		if idx != nil && idx.Info.Unique {
 			colsLen = len(idx.Info.Columns)
@@ -281,6 +283,7 @@ func (coll *HistColl) GetRowCountByIndexRanges(sc *stmtctx.StatementContext, idx
 		result, err = idx.GetRowCount(sc, indexRanges, coll.ModifyCount)
 	}
 	result *= idx.GetIncreaseFactor(coll.Count)
+	log.Warn("wtf", zap.Float64("?? count", result))
 	return result, errors.Trace(err)
 }
 

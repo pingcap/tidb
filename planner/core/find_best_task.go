@@ -1128,7 +1128,7 @@ func getColumnRangeCounts(sc *stmtctx.StatementContext, colID int64, ranges []*r
 	for i, ran := range ranges {
 		if idxID >= 0 {
 			idxHist := histColl.Indices[idxID]
-			if idxHist == nil || idxHist.IsInvalid(false) {
+			if idxHist == nil || idxHist.IsInvalid(false, idxHist.CMSketch != nil) {
 				return nil, false
 			}
 			count, err = histColl.GetRowCountByIndexRanges(sc, idxID, []*ranger.Range{ran})

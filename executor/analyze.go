@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/debugpb"
+	"github.com/pingcap/log"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -334,11 +335,17 @@ func (e *AnalyzeIndexExec) buildStatsFromResult(result distsql.SelectResult, nee
 			return nil, nil, err
 		}
 		if needCMS {
+			var (
+				poped []statistics.IndexValCntPair
+				err error
+			)
 			if resp.Cms == nil {
 				logutil.Logger(context.TODO()).Warn("nil CMS in response", zap.String("table", e.idxInfo.Table.O), zap.String("index", e.idxInfo.Name.O))
-			} else if err := cms.MergeCMSketch(statistics.CMSketchFromProto(resp.Cms), uint32(e.opts[ast.AnalyzeOptNumTopN])); err != nil {
+			} else if poped, err = cms.MergeCMSketchReturnPoped(statistics.CMSketchFromProto(resp.Cms), uint32(e.opts[ast.AnalyzeOptNumTopN])); err != nil {
 				return nil, nil, err
 			}
+			log.Warn("aaaaa")
+			hist.RemoveIdxVals(poped)
 		}
 	}
 	return hist, cms, nil

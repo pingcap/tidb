@@ -312,7 +312,13 @@ func (c *CMSketch) queryHashValue(h1, h2 uint64) uint64 {
 	return uint64(res)
 }
 
-func (c *CMSketch) mergeTopN(lTopN map[uint64][]*TopNMeta, rTopN map[uint64][]*TopNMeta, numTop uint32, usingMax bool) {
+func (c *CMSketch) mergeTopN(
+	lTopN map[uint64][]*TopNMeta,
+	rTopN map[uint64][]*TopNMeta,
+	numTop uint32,
+	usingMax bool,
+) []IndexValCntPair {
+	popedTopNPair := make([]IndexValCntPair, 0, 4)
 	counter := make(map[hack.MutableString]uint64)
 	for _, metas := range lTopN {
 		for _, meta := range metas {
@@ -344,9 +350,11 @@ func (c *CMSketch) mergeTopN(lTopN map[uint64][]*TopNMeta, rTopN map[uint64][]*T
 			h1, h2 := murmur3.Sum128(data)
 			c.topN[h1] = append(c.topN[h1], &TopNMeta{h2, data, cnt})
 		} else {
+			popedTopNPair = append(popedTopNPair, IndexValCntPair{Val: data, Cnt: int64(cnt)})
 			c.insertBytesByCount(data, cnt)
 		}
 	}
+	return popedTopNPair
 }
 
 // MergeCMSketch merges two CM Sketch.
@@ -367,6 +375,26 @@ func (c *CMSketch) MergeCMSketch(rc *CMSketch, numTopN uint32) error {
 		}
 	}
 	return nil
+}
+
+// MergeCMSketch merges two CM Sketch.
+func (c *CMSketch) MergeCMSketchReturnPoped(rc *CMSketch, numTopN uint32) (poped []IndexValCntPair, _ error) {
+	if c == nil || rc == nil {
+		return nil, nil
+	}
+	if c.depth != rc.depth || c.width != rc.width {
+		return nil, errors.New("Dimensions of Count-Min Sketch should be the same")
+	}
+	if len(c.topN) > 0 || len(rc.topN) > 0 {
+		poped = c.mergeTopN(c.topN, rc.topN, numTopN, false)
+	}
+	c.count += rc.count
+	for i := range c.table {
+		for j := range c.table[i] {
+			c.table[i][j] += rc.table[i][j]
+		}
+	}
+	return poped, nil
 }
 
 // MergeCMSketch4IncrementalAnalyze merges two CM Sketch for incremental analyze. Since there is no value

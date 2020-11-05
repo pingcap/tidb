@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/log"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
@@ -292,6 +293,37 @@ func (hg *Histogram) BucketToString(bktID, idxCols int) string {
 	return fmt.Sprintf("num: %d lower_bound: %s upper_bound: %s repeats: %d", hg.bucketCount(bktID), lowerVal, upperVal, hg.Buckets[bktID].Repeat)
 }
 
+type IndexValCntPair struct {
+	Val []byte
+	Cnt int64
+}
+
+// RemoveIdxVals remove the given values from the histogram.
+func (hg *Histogram) RemoveIdxVals(idxValCntPairs []IndexValCntPair) {
+	sort.Slice(idxValCntPairs, func(i, j int) bool {
+		return bytes.Compare(idxValCntPairs[i].Val, idxValCntPairs[j].Val) < 0
+	})
+	totalSubCnt := int64(0)
+	for bktIdx, pairIdx := 0, 0; bktIdx < hg.Len(); bktIdx++ {
+		for pairIdx < len(idxValCntPairs) {
+			cmpResult := bytes.Compare(hg.Bounds.Column(0).GetBytes(bktIdx*2+1), idxValCntPairs[pairIdx].Val)
+			if cmpResult < 0 {
+				break
+			}
+			totalSubCnt += idxValCntPairs[pairIdx].Cnt
+			pairIdx++
+			if cmpResult == 0 {
+				hg.Buckets[bktIdx].Repeat = 0
+				break
+			}
+		}
+		log.Warn("xxxx", zap.Int64("cur count", hg.Buckets[bktIdx].Count),
+			zap.Int64("cur topn count", totalSubCnt),
+		)
+		hg.Buckets[bktIdx].Count -= totalSubCnt
+	}
+}
+
 // ToString gets the string representation for the histogram.
 func (hg *Histogram) ToString(idxCols int) string {
 	strs := make([]string, 0, hg.Len()+1)
@@ -410,6 +442,15 @@ func (hg *Histogram) mergeBuckets(bucketIdx int) {
 	}
 	hg.Bounds = c
 	hg.Buckets = hg.Buckets[:curBuck]
+}
+
+func (idx *Index) GetIncreaseFactor(totalCount int64) float64 {
+	columnCount := idx.TotalRowCount()
+	if columnCount == 0 {
+		return 1.0
+	}
+	log.Warn("ppp", zap.Int64("coll's count", totalCount), zap.Float64("index's count", columnCount))
+	return float64(totalCount) / columnCount
 }
 
 // GetIncreaseFactor will return a factor of data increasing after the last analysis.
@@ -876,9 +917,13 @@ func (idx *Index) String() string {
 	return idx.Histogram.ToString(len(idx.Info.Columns))
 }
 
+func (idx *Index) TotalRowCount() float64 {
+	return idx.Histogram.TotalRowCount() + float64(idx.CMSketch.TotalCount())
+}
+
 // IsInvalid checks if this index is invalid.
-func (idx *Index) IsInvalid(collPseudo bool) bool {
-	return (collPseudo && idx.NotAccurate()) || idx.TotalRowCount() == 0
+func (idx *Index) IsInvalid(collPseudo bool, hasCMSketch bool) bool {
+	return (collPseudo && idx.NotAccurate()) || (idx.TotalRowCount() == 0 && !hasCMSketch)
 }
 
 var nullKeyBytes, _ = codec.EncodeKey(nil, nil, types.NewDatum(nil))
