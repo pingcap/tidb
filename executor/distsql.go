@@ -252,10 +252,10 @@ func (e *IndexReaderExecutor) Close() error {
 	e.result = nil
 	e.ctx.StoreQueryFeedback(e.feedback)
 	for _, plan := range e.plans {
-		copStats := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetCopStats(plan.ID())
-		if copStats == nil {
+		if !e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.ExistsCopStats(plan.ID()) {
 			continue
 		}
+		copStats := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetCopStats(plan.ID())
 		if indexScan, ok := plan.(*plannercore.PhysicalIndexScan); ok && !indexScan.IsFullScan() {
 			e.ctx.GetSessionVars().StmtCtx.RecordIndexUsage(indexScan.Table.ID, indexScan.Index.ID, copStats.GetActRows())
 		}
