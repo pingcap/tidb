@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/owner"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/disk"
@@ -221,6 +222,8 @@ func (c *Context) StoreQueryFeedback(_ interface{}) {}
 
 // StoreIndexUsage strores the index usage information.
 func (c *Context) StoreIndexUsage(_ int64, _ int64, _ int64) {}
+
+func (c *Context) RecordIndexUsageFromStatement(_ stmtctx.StatementIndexUsageMap) {}
 
 // StmtCommit implements the sessionctx.Context interface.
 func (c *Context) StmtCommit() {}

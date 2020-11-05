@@ -1559,6 +1559,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		DiskTracker: disk.NewTracker(memory.LabelForSQLText, -1),
 		TaskID:      stmtctx.AllocateTaskID(),
 	}
+	sc.InitIndexUsage()
 	sc.MemTracker.AttachToGlobalTracker(GlobalMemoryUsageTracker)
 	globalConfig := config.GetGlobalConfig()
 	if globalConfig.OOMUseTmpStorage && GlobalDiskUsageTracker != nil {

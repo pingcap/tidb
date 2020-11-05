@@ -52,6 +52,14 @@ type SQLWarn struct {
 	Err   error
 }
 
+// GlobalIndexID is the key type for indexUsageMap.
+type GlobalIndexID struct {
+	TableID int64
+	IndexID int64
+}
+
+type StatementIndexUsageMap map[GlobalIndexID]int64
+
 // StatementContext contains variables for a statement.
 // It should be reset before executing a statement.
 type StatementContext struct {
@@ -154,6 +162,9 @@ type StatementContext struct {
 	TblInfo2UnionScan     map[*model.TableInfo]bool
 	TaskID                uint64 // unique ID for an execution of a statement
 	TaskMapBakTS          uint64 // counter for
+
+	// IdxUsageMap collects index usage during one statement.
+	IdxUsageMap		  StatementIndexUsageMap
 }
 
 // StmtHints are SessionVars related sql hints.
@@ -486,6 +497,7 @@ func (sc *StatementContext) ResetForRetry() {
 	sc.TableIDs = sc.TableIDs[:0]
 	sc.IndexNames = sc.IndexNames[:0]
 	sc.TaskID = AllocateTaskID()
+	sc.InitIndexUsage()
 }
 
 // MergeExecDetails merges a single region execution details into self, used to print
@@ -687,6 +699,16 @@ func (sc *StatementContext) GetLockWaitStartTime() time.Time {
 		atomic.StoreInt64(&sc.lockWaitStartTime, startTime)
 	}
 	return time.Unix(0, startTime)
+}
+
+func (sc *StatementContext) InitIndexUsage() {
+	sc.IdxUsageMap = make(StatementIndexUsageMap)
+}
+
+func (sc *StatementContext) RecordIndexUsage(tblID int64, idxID int64, rows int64) {
+	id := GlobalIndexID{TableID: tblID, IndexID: idxID}
+	value := sc.IdxUsageMap[id]
+	sc.IdxUsageMap[id] = value + rows
 }
 
 //CopTasksDetails collects some useful information of cop-tasks during execution.

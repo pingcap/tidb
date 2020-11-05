@@ -1729,6 +1729,9 @@ func (ds *DataSource) getOriginalPhysicalTableScan(prop *property.PhysicalProper
 	case kv.TiFlash:
 		cost += float64(len(ts.Ranges)) * float64(len(ts.Columns)) * sessVars.SeekFactor
 	}
+	if path.Index != nil {
+		ts.IdxID = path.Index.ID
+	}
 	return ts, cost, rowCount
 }
 

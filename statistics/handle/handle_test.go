@@ -800,7 +800,15 @@ func (s *testStatsSuite) TestCorrelationStatsCompute(c *C) {
 	c.Assert(foundS1 && foundS2, IsTrue)
 }
 
-func (s *testStatsSuite) TestIndexUsageInformation(c *C) {
+var querySQL = string(`select distinct idx.table_schema, idx.table_name, idx.key_name, stats.query_count, stats.rows_selected 
+					from mysql.schema_index_usage as stats, information_schema.tidb_indexes as idx, information_schema.tables as tables
+					where tables.table_schema = idx.table_schema
+						AND tables.table_name = idx.table_name
+						AND tables.tidb_table_id = stats.table_id
+						AND idx.index_id = stats.index_id
+						AND idx.table_name = "t_idx"`)
+
+func (s *testStatsSuite) TestIndexUsage4PointGet(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -808,15 +816,8 @@ func (s *testStatsSuite) TestIndexUsageInformation(c *C) {
 	tk.MustExec("create table t_idx(a int, b int)")
 	tk.MustExec("create unique index idx_a on t_idx(a)")
 	tk.MustExec("create unique index idx_b on t_idx(b)")
-	tk.MustQuery("select a from t_idx where a=1")
-	querySQL := `select idx.table_schema, idx.table_name, idx.key_name, stats.query_count, stats.rows_selected 
-					from mysql.schema_index_usage as stats, information_schema.tidb_indexes as idx, information_schema.tables as tables
-					where tables.table_schema = idx.table_schema
-						AND tables.table_name = idx.table_name
-						AND tables.tidb_table_id = stats.table_id
-						AND idx.index_id = stats.index_id
-						AND idx.table_name = "t_idx"`
 	do := s.do
+	tk.MustQuery("select a from t_idx where a=1")
 	err := do.StatsHandle().DumpIndexUsageToKV()
 	c.Assert(err, IsNil)
 	tk.MustQuery(querySQL).Check(testkit.Rows(
@@ -834,8 +835,127 @@ func (s *testStatsSuite) TestIndexUsageInformation(c *C) {
 	tk.MustQuery("select b from t_idx where b=0")
 	err = do.StatsHandle().DumpIndexUsageToKV()
 	c.Assert(err, IsNil)
-	tk.MustQuery(querySQL).Check(testkit.Rows(
+	tk.MustQuery(querySQL).Sort().Check(testkit.Rows(
 		"test t_idx idx_a 3 2",
 		"test t_idx idx_b 2 2",
+	))
+}
+
+func (s *testStatsSuite) TestIndexUsage4IndexReader(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t_idx")
+	tk.MustExec("create table t_idx(a int, b int)")
+	tk.MustExec("create index idx_a on t_idx(a)")
+	do := s.do
+	tk.MustExec("insert into t_idx values (1, 0), (2, 0)")
+	tk.MustQuery("select /*+ USE_INDEX(t_idx, idx_a) */ a from t_idx where a > 1").Check(testkit.Rows("2"))
+	err := do.StatsHandle().DumpIndexUsageToKV()
+	c.Assert(err, IsNil)
+	tk.MustQuery(querySQL).Check(testkit.Rows(
+		"test t_idx idx_a 1 1",
+	))
+	tk.MustQuery("select /*+ USE_INDEX(t_idx, idx_a) */ a from t_idx where a > 2").Check(testkit.Rows())
+	err = do.StatsHandle().DumpIndexUsageToKV()
+	c.Assert(err, IsNil)
+	tk.MustQuery(querySQL).Check(testkit.Rows(
+		"test t_idx idx_a 2 1",
+	))
+	tk.MustQuery("select /*+ USE_INDEX(t_idx, idx_a) */ a from t_idx where a > 0").Check(testkit.Rows("1", "2"))
+	err = do.StatsHandle().DumpIndexUsageToKV()
+	c.Assert(err, IsNil)
+	tk.MustQuery(querySQL).Check(testkit.Rows(
+		"test t_idx idx_a 3 3",
+	))
+	tk.MustQuery("select /*+ USE_INDEX(t_idx, idx_a) */ a from t_idx").Check(testkit.Rows("1", "2"))
+	err = do.StatsHandle().DumpIndexUsageToKV()
+	c.Assert(err, IsNil)
+	tk.MustQuery(querySQL).Check(testkit.Rows(
+		"test t_idx idx_a 3 3",
+	))
+}
+
+func (s *testStatsSuite) TestIndexUsage4IndexLookUp(c *C) {
+	c.Skip("Not currently supported.")
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t_idx")
+	tk.MustExec("create table t_idx(a int, b int)")
+	tk.MustExec("create index idx_a on t_idx(a)")
+	do := s.do
+	tk.MustExec("insert into t_idx values (1, 0), (2, 0)")
+	tk.MustQuery("select * from t_idx use index(idx_a)").Check(testkit.Rows("1 0", "2 0"))
+	err := do.StatsHandle().DumpIndexUsageToKV()
+	c.Assert(err, IsNil)
+	tk.MustQuery(querySQL).Check(testkit.Rows(
+		"test t_idx idx_a 1 2",
+	))
+}
+
+
+func (s *testStatsSuite) TestIndexUsage4TableReader(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t_idx")
+	tk.MustExec("create table t_idx(a int, b int, primary key(a))")
+	do := s.do
+	tk.MustExec("insert into t_idx values (1, 0), (2, 0)")
+	tk.MustQuery("select a from t_idx where a > 1").Check(testkit.Rows("2"))
+	err := do.StatsHandle().DumpIndexUsageToKV()
+	c.Assert(err, IsNil)
+	tk.MustQuery(querySQL).Check(testkit.Rows(
+		"test t_idx PRIMARY 1 1",
+	))
+	tk.MustQuery("select a from t_idx where a > 2").Check(testkit.Rows())
+	err = do.StatsHandle().DumpIndexUsageToKV()
+	c.Assert(err, IsNil)
+	tk.MustQuery(querySQL).Check(testkit.Rows(
+		"test t_idx PRIMARY 2 1",
+	))
+	tk.MustQuery("select a from t_idx where a > 0").Check(testkit.Rows("1", "2"))
+	err = do.StatsHandle().DumpIndexUsageToKV()
+	c.Assert(err, IsNil)
+	tk.MustQuery(querySQL).Check(testkit.Rows(
+		"test t_idx PRIMARY 3 3",
+	))
+	tk.MustQuery("select a from t_idx").Check(testkit.Rows("1", "2"))
+	err = do.StatsHandle().DumpIndexUsageToKV()
+	c.Assert(err, IsNil)
+	tk.MustQuery(querySQL).Check(testkit.Rows(
+		"test t_idx PRIMARY 3 3",
+	))
+}
+
+func (s *testStatsSuite) TestIndexUsage4IndexJoin(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t_idx")
+	tk.MustExec("create table t_idx(a int, b int)")
+	tk.MustExec("create table s_idx(a int)")
+	tk.MustExec("create index idx_a on t_idx(a)")
+	do := s.do
+	tk.MustExec("insert into t_idx values (1, 0), (2, 0), (3, 0), (4, 0)")
+	tk.MustExec("insert into s_idx values (1), (2), (2), (-1)")
+	tk.MustQuery("select /*+ INL_JOIN(t_idx, s_idx) */ t_idx.a from t_idx, s_idx where t_idx.a=s_idx.a").Check(testkit.Rows("1", "2", "2"))
+	err := do.StatsHandle().DumpIndexUsageToKV()
+	c.Assert(err, IsNil)
+	tk.MustQuery(querySQL).Check(testkit.Rows(
+		"test t_idx idx_a 1 2",
+	))
+	tk.MustQuery("select /*+ INL_HASH_JOIN(t_idx, s_idx) */ t_idx.a from t_idx, s_idx where t_idx.a=s_idx.a").Check(testkit.Rows("1", "2", "2"))
+	err = do.StatsHandle().DumpIndexUsageToKV()
+	c.Assert(err, IsNil)
+	tk.MustQuery(querySQL).Check(testkit.Rows(
+		"test t_idx idx_a 2 4",
+	))
+	tk.MustQuery("select /*+ INL_MERGE_JOIN(t_idx, s_idx) */ t_idx.a from t_idx, s_idx where t_idx.a=s_idx.a").Check(testkit.Rows("1", "2", "2"))
+	err = do.StatsHandle().DumpIndexUsageToKV()
+	c.Assert(err, IsNil)
+	tk.MustQuery(querySQL).Check(testkit.Rows(
+		"test t_idx idx_a 3 6",
 	))
 }

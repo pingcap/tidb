@@ -811,6 +811,7 @@ var (
 // 2. record summary statement.
 // 3. record execute duration metric.
 // 4. update the `PrevStmt` in session variable.
+// 5. record index usage to session collector.
 func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, succ bool, hasMoreResults bool) {
 	sessVars := a.Ctx.GetSessionVars()
 	execDetail := sessVars.StmtCtx.GetExecDetails()
@@ -839,6 +840,8 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, succ bool, hasMoreResults boo
 	} else {
 		sessionExecuteRunDurationGeneral.Observe(executeDuration.Seconds())
 	}
+
+	a.Ctx.RecordIndexUsageFromStatement(sessVars.StmtCtx.IdxUsageMap)
 }
 
 // CloseRecordSet will finish the execution of current statement and do some record work

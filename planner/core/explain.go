@@ -55,7 +55,7 @@ func (p *PhysicalLock) ExplainInfo() string {
 // ExplainID overrides the ExplainID in order to match different range.
 func (p *PhysicalIndexScan) ExplainID() fmt.Stringer {
 	return stringutil.MemoizeStr(func() string {
-		if p.isFullScan() {
+		if p.IsFullScan() {
 			return "IndexFullScan_" + strconv.Itoa(p.id)
 		}
 		return "IndexRangeScan_" + strconv.Itoa(p.id)
@@ -121,7 +121,7 @@ func (p *PhysicalIndexScan) OperatorInfo(normalized bool) string {
 	} else if len(p.Ranges) > 0 {
 		if normalized {
 			fmt.Fprint(buffer, "range:[?,?], ")
-		} else if !p.isFullScan() {
+		} else if !p.IsFullScan() {
 			fmt.Fprint(buffer, "range:")
 			for _, idxRange := range p.Ranges {
 				fmt.Fprint(buffer, idxRange.String()+", ")
@@ -148,7 +148,7 @@ func (p *PhysicalIndexScan) haveCorCol() bool {
 	return false
 }
 
-func (p *PhysicalIndexScan) isFullScan() bool {
+func (p *PhysicalIndexScan) IsFullScan() bool {
 	if len(p.rangeInfo) > 0 || p.haveCorCol() {
 		return false
 	}
@@ -165,7 +165,7 @@ func (p *PhysicalTableScan) ExplainID() fmt.Stringer {
 	return stringutil.MemoizeStr(func() string {
 		if p.isChildOfIndexLookUp {
 			return "TableRowIDScan_" + strconv.Itoa(p.id)
-		} else if p.isFullScan() {
+		} else if p.IsFullScan() {
 			return "TableFullScan_" + strconv.Itoa(p.id)
 		}
 		return "TableRangeScan_" + strconv.Itoa(p.id)
@@ -227,7 +227,7 @@ func (p *PhysicalTableScan) OperatorInfo(normalized bool) string {
 	} else if len(p.Ranges) > 0 {
 		if normalized {
 			fmt.Fprint(buffer, "range:[?,?], ")
-		} else if !p.isFullScan() {
+		} else if !p.IsFullScan() {
 			fmt.Fprint(buffer, "range:")
 			for _, idxRange := range p.Ranges {
 				fmt.Fprint(buffer, idxRange.String()+", ")
@@ -257,7 +257,7 @@ func (p *PhysicalTableScan) haveCorCol() bool {
 	return false
 }
 
-func (p *PhysicalTableScan) isFullScan() bool {
+func (p *PhysicalTableScan) IsFullScan() bool {
 	if len(p.rangeDecidedBy) > 0 || p.haveCorCol() {
 		return false
 	}

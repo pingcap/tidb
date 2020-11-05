@@ -159,7 +159,7 @@ func (e *PointGetExecutor) Close() error {
 		if e.runtimeStats != nil {
 			actRows = e.runtimeStats.GetActRows()
 		}
-		e.ctx.StoreIndexUsage(e.tblInfo.ID, e.idxInfo.ID, actRows)
+		e.ctx.GetSessionVars().StmtCtx.RecordIndexUsage(e.tblInfo.ID, e.idxInfo.ID, actRows)
 	}
 	e.done = false
 	return nil

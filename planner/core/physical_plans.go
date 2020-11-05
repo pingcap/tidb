@@ -469,6 +469,8 @@ type PhysicalTableScan struct {
 	isChildOfIndexLookUp bool
 
 	PartitionInfo PartitionInfo
+
+	IdxID int64
 }
 
 // Clone implements PhysicalPlan interface.

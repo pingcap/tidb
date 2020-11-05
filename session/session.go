@@ -370,6 +370,15 @@ func (s *session) StoreIndexUsage(tblID int64, idxID int64, rowsSelected int64) 
 	s.idxUsageCollector.Update(tblID, idxID, &handle.IndexUsageInformation{QueryCount: 1, RowsSelected: rowsSelected})
 }
 
+func (s *session) RecordIndexUsageFromStatement(mapper stmtctx.StatementIndexUsageMap) {
+	if s.idxUsageCollector == nil {
+		return
+	}
+	for id, value := range mapper {
+		s.idxUsageCollector.Update(id.TableID, id.IndexID, &handle.IndexUsageInformation{QueryCount: 1, RowsSelected: value})
+	}
+}
+
 // FieldList returns fields list of a table.
 func (s *session) FieldList(tableName string) ([]*ast.ResultField, error) {
 	is := infoschema.GetInfoSchema(s)

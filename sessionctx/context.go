@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/owner"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/kvcache"
@@ -109,6 +110,8 @@ type Context interface {
 	PrepareTSFuture(ctx context.Context)
 	// StoreIndexUsage stores the index usage information.
 	StoreIndexUsage(tblID int64, idxID int64, rowsSelected int64)
+
+	RecordIndexUsageFromStatement(mapper stmtctx.StatementIndexUsageMap)
 }
 
 type basicCtxType int

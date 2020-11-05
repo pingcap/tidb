@@ -215,13 +215,7 @@ type IndexUsageInformation struct {
 	LastUsedAt   string
 }
 
-// GlobalIndexID is the key type for indexUsageMap.
-type GlobalIndexID struct {
-	TableID int64
-	IndexID int64
-}
-
-type indexUsageMap map[GlobalIndexID]IndexUsageInformation
+type indexUsageMap map[stmtctx.GlobalIndexID]IndexUsageInformation
 
 // SessionIndexUsageCollector is a list item that holds the index usage mapper. If you want to write or read mapper, you must lock it.
 type SessionIndexUsageCollector struct {
@@ -232,7 +226,7 @@ type SessionIndexUsageCollector struct {
 	deleted bool
 }
 
-func (m indexUsageMap) updateByKey(id GlobalIndexID, value *IndexUsageInformation) {
+func (m indexUsageMap) updateByKey(id stmtctx.GlobalIndexID, value *IndexUsageInformation) {
 	item := m[id]
 	item.QueryCount += value.QueryCount
 	item.RowsSelected += value.RowsSelected
@@ -243,7 +237,7 @@ func (m indexUsageMap) updateByKey(id GlobalIndexID, value *IndexUsageInformatio
 }
 
 func (m indexUsageMap) update(tableID int64, indexID int64, value *IndexUsageInformation) {
-	id := GlobalIndexID{TableID: tableID, IndexID: indexID}
+	id := stmtctx.GlobalIndexID{TableID: tableID, IndexID: indexID}
 	m.updateByKey(id, value)
 }
 
