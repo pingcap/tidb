@@ -586,10 +586,6 @@ func resetNotNullFlag(schema *expression.Schema, start, end int) {
 }
 
 func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (LogicalPlan, error) {
-	b.redundantInfos = append(b.redundantInfos, &redundantInfo{})
-	defer func() {
-		b.redundantInfos = b.redundantInfos[:len(b.redundantInfos)-1]
-	}()
 
 	// We will construct a "Join" node for some statements like "INSERT",
 	// "DELETE", "UPDATE", "REPLACE". For this scenario "joinNode.Right" is nil
@@ -2666,7 +2662,9 @@ func (b *PlanBuilder) TableHints() *tableHintInfo {
 func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p LogicalPlan, err error) {
 	b.pushSelectOffset(sel.QueryBlockOffset)
 	b.pushTableHints(sel.TableHints, utilhint.TypeSelect, sel.QueryBlockOffset)
+	b.redundantInfos = append(b.redundantInfos, &redundantInfo{})
 	defer func() {
+		b.redundantInfos = b.redundantInfos[:len(b.redundantInfos)-1]
 		b.popSelectOffset()
 		// table hints are only visible in the current SELECT statement.
 		b.popTableHints()
@@ -3536,7 +3534,9 @@ func buildColumns2Handle(
 func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (Plan, error) {
 	b.pushSelectOffset(0)
 	b.pushTableHints(update.TableHints, utilhint.TypeUpdate, 0)
+	b.redundantInfos = append(b.redundantInfos, &redundantInfo{})
 	defer func() {
+		b.redundantInfos = b.redundantInfos[:len(b.redundantInfos)-1]
 		b.popSelectOffset()
 		// table hints are only visible in the current UPDATE statement.
 		b.popTableHints()
@@ -3841,7 +3841,9 @@ func extractDefaultExpr(node ast.ExprNode) *ast.DefaultExpr {
 func (b *PlanBuilder) buildDelete(ctx context.Context, delete *ast.DeleteStmt) (Plan, error) {
 	b.pushSelectOffset(0)
 	b.pushTableHints(delete.TableHints, utilhint.TypeDelete, 0)
+	b.redundantInfos = append(b.redundantInfos, &redundantInfo{})
 	defer func() {
+		b.redundantInfos = b.redundantInfos[:len(b.redundantInfos)-1]
 		b.popSelectOffset()
 		// table hints are only visible in the current DELETE statement.
 		b.popTableHints()
