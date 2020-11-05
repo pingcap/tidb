@@ -3241,7 +3241,7 @@ func (s *testSessionSuite2) TestSetTxnScope(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	// assert default value
 	result := tk.MustQuery("select @@tidb_txn_scope;")
-	result.Check(testkit.Rows(config.DefDcLocation))
+	result.Check(testkit.Rows(config.DefTxnScope))
 
 	// assert set sys variable
 	tk.MustExec("set @@session.tidb_txn_scope = 'dc-1';")
@@ -3253,7 +3253,7 @@ func (s *testSessionSuite2) TestSetTxnScope(c *C) {
 	c.Check(err, IsNil)
 	tk.Se = se
 	result = tk.MustQuery("select @@tidb_txn_scope;")
-	result.Check(testkit.Rows(config.DefDcLocation))
+	result.Check(testkit.Rows(config.DefTxnScope))
 }
 
 func (s *testSessionSuite3) TestSetVarHint(c *C) {
