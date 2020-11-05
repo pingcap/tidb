@@ -85,6 +85,7 @@ func (us *UnionScanExec) open(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+
 	mb := txn.GetMemBuffer()
 	mb.RLock()
 	defer mb.RUnlock()
@@ -295,6 +296,7 @@ func (us *UnionScanExec) initRuntimeStats() {
 	}
 }
 
+// UnionScanRuntimeStats record the UnionScan runtime stat
 type UnionScanRuntimeStats struct {
 	GetRowTime int64
 	MergeTime  int64
@@ -305,15 +307,16 @@ func (e *UnionScanRuntimeStats) String() string {
 	if e.GetRowTime != 0 {
 		result.WriteString(fmt.Sprintf("GetRow:%v", time.Duration(e.GetRowTime)))
 	}
-	if result.Len() > 0 {
-		result.WriteByte(',')
-	}
 	if e.MergeTime != 0 {
+		if result.Len() > 0 {
+			result.WriteByte(',')
+		}
 		result.WriteString(fmt.Sprintf(" Merge:%v", time.Duration(e.MergeTime)))
 	}
 	return result.String()
 }
 
+// Clone implements the RuntimeStats interface.
 func (e *UnionScanRuntimeStats) Clone() execdetails.RuntimeStats {
 	newRs := &UnionScanRuntimeStats{
 		GetRowTime: e.GetRowTime,
@@ -322,6 +325,7 @@ func (e *UnionScanRuntimeStats) Clone() execdetails.RuntimeStats {
 	return newRs
 }
 
+// Merge implements the RuntimeStats interface.
 func (e *UnionScanRuntimeStats) Merge(other execdetails.RuntimeStats) {
 	tmp, ok := other.(*UnionScanRuntimeStats)
 	if !ok {
@@ -331,6 +335,7 @@ func (e *UnionScanRuntimeStats) Merge(other execdetails.RuntimeStats) {
 	e.MergeTime += tmp.MergeTime
 }
 
+// Tp implements the RuntimeStats interface.
 func (e *UnionScanRuntimeStats) Tp() int {
 	return execdetails.TpUnionScanRuntimeStat
 }
