@@ -204,9 +204,9 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 	case ast.ShowBuiltins:
 		return e.fetchShowBuiltins()
 	case ast.ShowBackups:
-		return e.fetchShowBRIE(ast.BRIEKindBackup)
+		return e.fetchShowBRIE(ctx, ast.BRIEKindBackup)
 	case ast.ShowRestores:
-		return e.fetchShowBRIE(ast.BRIEKindRestore)
+		return e.fetchShowBRIE(ctx, ast.BRIEKindRestore)
 	}
 	return nil
 }

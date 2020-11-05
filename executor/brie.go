@@ -41,17 +41,21 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	pd "github.com/tikv/pd/client"
+	"go.uber.org/zap"
 )
 
 const (
-	defaultImportID = "default_lightning"
+	defaultImportID = "tidb_import_"
+	cancelTimeout   = 10 * time.Second
 )
 
 // brieTaskProgress tracks a task's current progress.
@@ -81,6 +85,11 @@ func (p *brieTaskProgress) Close() {
 	p.lock.Unlock()
 }
 
+// GetPercent returns a percentage whose range is [0, 1]
+func (p *brieTaskProgress) GetPercent() float64 {
+	return float64(p.current) / float64(p.total)
+}
+
 type brieTaskInfo struct {
 	queueTime   types.Time
 	execTime    types.Time
@@ -89,6 +98,7 @@ type brieTaskInfo struct {
 	connID      uint64
 	backupTS    uint64
 	archiveSize uint64
+	originSQL   string
 }
 
 type brieQueueItem struct {
@@ -98,8 +108,8 @@ type brieQueueItem struct {
 }
 
 type brieQueue struct {
-	nextID uint64
-	tasks  sync.Map
+	//nextID uint64
+	//tasks  sync.Map
 
 	workerCh chan struct{}
 }
@@ -111,10 +121,13 @@ var globalBRIEQueue = &brieQueue{
 }
 
 // registerTask registers a BRIE task in the queue.
+// we should ensure returned *brieQueueItem is not nil
 func (bq *brieQueue) registerTask(
 	ctx context.Context,
 	info *brieTaskInfo,
-) (context.Context, uint64) {
+	se sessionctx.Context,
+) (context.Context, uint64, *brieQueueItem, error) {
+	s := se.(session.Session)
 	taskCtx, taskCancel := context.WithCancel(ctx)
 	item := &brieQueueItem{
 		info:   info,
@@ -125,28 +138,70 @@ func (bq *brieQueue) registerTask(
 		},
 	}
 
-	taskID := atomic.AddUint64(&bq.nextID, 1)
-	bq.tasks.Store(taskID, item)
-
-	return taskCtx, taskID
+	// use prepare to avoid SQL injection
+	sql := `INSERT INTO mysql.brie_tasks (
+				kind, origin_sql, queue_time, data_path, conn_id, status, progress, cancel
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`
+	stmtID, _, _, err := s.PrepareStmt(sql)
+	if err != nil {
+		return nil, 0, item, err
+	}
+	_, err = s.ExecutePreparedStmt(ctx, stmtID, []types.Datum{
+		types.NewDatum(info.kind),
+		types.NewDatum(info.originSQL),
+		types.NewDatum(info.queueTime),
+		types.NewDatum(info.storage),
+		types.NewDatum(info.connID),
+		types.NewDatum(item.progress.cmd),
+		types.NewDatum(item.progress.GetPercent()),
+		types.NewDatum(0),
+	})
+	if err != nil {
+		return nil, 0, item, err
+	}
+	rs, err := s.Execute(ctx, "SELECT LAST_INSERT_ID();")
+	if err != nil {
+		return nil, 0, item, err
+	}
+	r := rs[0]
+	req := r.NewChunk()
+	err = r.Next(ctx, req)
+	if err != nil || req.NumRows() != 1 {
+		return nil, 0, item, fmt.Errorf("SELECT LAST_INSERT_ID() didn't return one row, err: %v", err)
+	}
+	taskID := req.GetRow(0).GetUint64(0)
+	return taskCtx, taskID, item, nil
 }
 
 // acquireTask prepares to execute a BRIE task. Only one BRIE task can be
 // executed at a time, and this function blocks until the task is ready.
 //
 // Returns an object to track the task's progress.
-func (bq *brieQueue) acquireTask(taskCtx context.Context, taskID uint64) (*brieTaskProgress, error) {
+func (bq *brieQueue) acquireTask(taskCtx context.Context, taskID uint64, se sessionctx.Context) error {
 	// wait until we are at the front of the queue.
 	select {
 	case bq.workerCh <- struct{}{}:
-		if item, ok := bq.tasks.Load(taskID); ok {
-			return item.(*brieQueueItem).progress, nil
+		defer bq.releaseTask()
+		sql := fmt.Sprintf("SELECT cancel FROM mysql.brie_tasks WHERE id = %d;", taskID)
+		rs, err := se.(session.Session).Execute(taskCtx, sql)
+		if err != nil {
+			return err
 		}
-		// cannot find task, perhaps it has been canceled. allow the next task to run.
-		bq.releaseTask()
-		return nil, errors.Errorf("backup/restore task %d is canceled", taskID)
+		r := rs[0]
+		req := r.NewChunk()
+		err = r.Next(taskCtx, req)
+		if err != nil {
+			return err
+		}
+		if req.NumRows() == 0 {
+			return errors.Errorf("task with ID %d not found", taskID)
+		}
+		if req.GetRow(0).GetUint64(0) == 1 {
+			return errors.Errorf("task with ID %d has been canceled", taskID)
+		}
+		return nil
 	case <-taskCtx.Done():
-		return nil, taskCtx.Err()
+		return taskCtx.Err()
 	}
 }
 
@@ -154,13 +209,18 @@ func (bq *brieQueue) releaseTask() {
 	<-bq.workerCh
 }
 
-func (bq *brieQueue) cancelTask(taskID uint64) {
-	item, ok := bq.tasks.Load(taskID)
-	if !ok {
-		return
+func (bq *brieQueue) cancelTask(ctx context.Context, taskID uint64, se sessionctx.Context, cancel func()) {
+	timeoutCtx, cancel2 := context.WithTimeout(ctx, cancelTimeout)
+	defer cancel2()
+	sql := fmt.Sprintf("UPDATE mysql.brie_tasks SET cancel = 1 WHERE id = %d", taskID)
+	_, err := se.(session.Session).Execute(timeoutCtx, sql)
+	if err != nil {
+		logutil.Logger(ctx).Error("failed to update BRIE task table to cancel",
+			zap.Uint64("taskID", taskID),
+			zap.Error(err))
 	}
-	bq.tasks.Delete(taskID)
-	item.(*brieQueueItem).cancel()
+	// If failed to update BRIE task table, we still try cancel IMPORT's context
+	cancel()
 }
 
 func (b *executorBuilder) parseTSString(ts string) (uint64, error) {
@@ -180,7 +240,8 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 	e := &BRIEExec{
 		baseExecutor: newBaseExecutor(b.ctx, schema, 0),
 		info: &brieTaskInfo{
-			kind: s.Kind,
+			kind:      s.Kind,
+			originSQL: s.Text(),
 		},
 	}
 
@@ -424,8 +485,13 @@ func (e *BRIEExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 	e.info.connID = e.ctx.GetSessionVars().ConnectionID
 	e.info.queueTime = types.CurrentTime(mysql.TypeDatetime)
-	taskCtx, taskID := bq.registerTask(ctx, e.info)
-	defer bq.cancelTask(taskID)
+	// TODO(lance6716): flush this item periodically
+	taskCtx, taskID, item, err := bq.registerTask(ctx, e.info, e.ctx)
+	defer item.cancel()
+	//defer bq.cancelTask(ctx, taskID, e.ctx, item.cancel)
+	if err != nil {
+		return err
+	}
 
 	// manually monitor the Killed status...
 	go func() {
@@ -435,7 +501,7 @@ func (e *BRIEExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			select {
 			case <-ticker.C:
 				if atomic.LoadUint32(&e.ctx.GetSessionVars().Killed) == 1 {
-					bq.cancelTask(taskID)
+					bq.cancelTask(ctx, taskID, e.ctx, item.cancel)
 					return
 				}
 			case <-taskCtx.Done():
@@ -444,14 +510,14 @@ func (e *BRIEExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		}
 	}()
 
-	progress, err := bq.acquireTask(taskCtx, taskID)
+	err = bq.acquireTask(taskCtx, taskID, e.ctx)
 	if err != nil {
 		return err
 	}
 	defer bq.releaseTask()
 
 	e.info.execTime = types.CurrentTime(mysql.TypeDatetime)
-	glue := &tidbGlueSession{se: e.ctx, progress: progress, info: e.info}
+	glue := &tidbGlueSession{se: e.ctx, progress: item.progress, info: e.info}
 
 	switch e.info.kind {
 	case ast.BRIEKindBackup:
@@ -485,24 +551,35 @@ func handleBRIEError(err error, terror *terror.Error) error {
 	return terror.GenWithStackByArgs(err)
 }
 
-func (e *ShowExec) fetchShowBRIE(kind ast.BRIEKind) error {
-	// TODO: after change to persistent queue, we can't use Range
-	globalBRIEQueue.tasks.Range(func(key, value interface{}) bool {
-		item := value.(*brieQueueItem)
-		if item.info.kind == kind {
-			item.progress.lock.Lock()
-			defer item.progress.lock.Unlock()
-			current := atomic.LoadInt64(&item.progress.current)
-			e.result.AppendString(0, item.info.storage)
-			e.result.AppendString(1, item.progress.cmd)
-			e.result.AppendFloat64(2, 100.0*float64(current)/float64(item.progress.total))
-			e.result.AppendTime(3, item.info.queueTime)
-			e.result.AppendTime(4, item.info.execTime)
-			e.result.AppendNull(5) // FIXME: fill in finish time after keeping history.
-			e.result.AppendUint64(6, item.info.connID)
+func (e *ShowExec) fetchShowBRIE(ctx context.Context, kind ast.BRIEKind) error {
+	sql := fmt.Sprintf(`SELECT data_path, status, progress, queue_time, exec_time, finish_time, conn_id
+			FROM mysql.brie_tasks WHERE kind = %s;`, kind.String())
+	rs, err := e.ctx.(session.Session).Execute(ctx, sql)
+	if err != nil {
+		return err
+	}
+	r := rs[0]
+	req := r.NewChunk()
+	it := chunk.NewIterator4Chunk(req)
+	for {
+		err = r.Next(ctx, req)
+		if err != nil {
+			return err
 		}
-		return true
-	})
+		if req.NumRows() == 0 {
+			break
+		}
+
+		for row := it.Begin(); row != it.End(); row = it.Next() {
+			e.result.AppendString(0, row.GetString(0))
+			e.result.AppendString(1, row.GetString(1))
+			e.result.AppendFloat64(2, row.GetFloat64(2))
+			e.result.AppendTime(3, row.GetTime(3))
+			e.result.AppendTime(4, row.GetTime(4))
+			e.result.AppendTime(5, row.GetTime(5))
+			e.result.AppendUint64(6, row.GetUint64(6))
+		}
+	}
 	return nil
 }
 

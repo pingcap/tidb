@@ -313,6 +313,24 @@ const (
 		LAST_USED_AT timestamp,
 		PRIMARY KEY(TABLE_ID, INDEX_ID)
 	);`
+
+	// CreateBRIEJobTable stores BRIE job information and is periodically accessed by BRIE components
+	CreateBRIEJobTable = `CREATE TABLE IF NOT EXISTS mysql.brie_tasks (
+		id          INT AUTO_INCREMENT,
+		kind        VARCHAR(16) NOT NULL,
+		origin_sql  TEXT NOT NULL,
+		queue_time  DATETIME NOT NULL,
+		exec_time   DATETIME NULL,
+		finish_time DATETIME NULL,
+		data_path   TEXT NOT NULL,
+		conn_id		BIGINT(64) UNSIGNED NOT NULL,
+		ts			BIGINT(64) UNSIGNED NULL,
+		data_size	BIGINT(64) UNSIGNED NULL,
+		status		VARCHAR(64) NOT NULL,
+		progress	FLOAT NOT NULL,
+		cancel		TINYINT(1) NOT NULL,
+		PRIMARY KEY(id)
+	);`
 )
 
 // bootstrap initiates system DB for a store.
@@ -427,6 +445,8 @@ const (
 	version51 = 51
 	// version52 change mysql.stats_histograms cm_sketch column from blob to blob(6291456)
 	version52 = 52
+	// version53 add mysql.brie_jobs table.
+	version53 = 53
 )
 
 var (
@@ -482,6 +502,7 @@ var (
 		upgradeToVer50,
 		upgradeToVer51,
 		upgradeToVer52,
+		upgradeToVer53,
 	}
 )
 
@@ -1190,6 +1211,13 @@ func upgradeToVer52(s Session, ver int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.stats_histograms MODIFY cm_sketch BLOB(6291456)")
 }
 
+func upgradeToVer53(s Session, ver int64) {
+	if ver >= version53 {
+		return
+	}
+	doReentrantDDL(s, CreateBRIEJobTable)
+}
+
 // updateBootstrapVer updates bootstrap version variable in mysql.TiDB table.
 func updateBootstrapVer(s Session) {
 	// Update bootstrap version.
@@ -1257,6 +1285,8 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreateStatsExtended)
 	// Create schema_index_usage.
 	mustExecute(s, CreateSchemaIndexUsageTable)
+	// Create brie_jobs table.
+	mustExecute(s, CreateBRIEJobTable)
 }
 
 // doDMLWorks executes DML statements in bootstrap stage.
