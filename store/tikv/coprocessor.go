@@ -528,7 +528,7 @@ func (worker *copIteratorWorker) run(ctx context.Context) {
 		failpoint.Inject("testRateLimitActionMockOtherExecutorConsume", func(val failpoint.Value) {
 			if val.(bool) {
 				// wait action being enabled and response channel become empty
-				time.Sleep(500 * time.Millisecond)
+				time.Sleep(20 * time.Millisecond)
 				// simulate other executor consume and trigger oom action
 				worker.memTracker.Consume(99999)
 			}
@@ -538,7 +538,6 @@ func (worker *copIteratorWorker) run(ctx context.Context) {
 		worker.actionOnExceed.destroyTokenIfNeeded(func() {
 			worker.sendRate.putToken()
 		})
-		worker.actionOnExceed.initOnceIfNeeded()
 		if worker.vars != nil && worker.vars.Killed != nil && atomic.LoadUint32(worker.vars.Killed) == 1 {
 			return
 		}
@@ -709,7 +708,6 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 		}
 		// The respCh has been drained out
 		it.actionOnExceed.broadcastIfNeeded(len(it.respChan) < 1)
-		it.actionOnExceed.initOnceIfNeeded()
 	} else {
 		for {
 			if it.curr >= len(it.tasks) {
@@ -735,7 +733,6 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 			// So the response channel would be thought as drained out if the current taskID is greater or equal than
 			// the maxID as all the workers are being suspended at that time.
 			it.actionOnExceed.broadcastIfNeeded(finishedTaskID >= maxID)
-			it.actionOnExceed.initOnceIfNeeded()
 		}
 	}
 
@@ -1415,6 +1412,7 @@ func (e *rateLimitAction) broadcastIfNeeded(needed bool) {
 	}
 	e.cond.exceeded = false
 	e.cond.Broadcast()
+	e.initOnceIfNeeded()
 }
 
 // destroyTokenIfNeeded will check the `exceed` flag after copWorker finished one task.
@@ -1443,11 +1441,11 @@ func (e *rateLimitAction) destroyTokenIfNeeded(returnToken func()) {
 		e.cond.Wait()
 		e.cond.waitingWorkerCnt--
 	}
+	e.initOnceIfNeeded()
 }
 
+// initOnceIfNeeded would init once if the condition is meet. This should be used under condition's lock.
 func (e *rateLimitAction) initOnceIfNeeded() {
-	e.conditionLock()
-	defer e.conditionUnlock()
 	// only when all the waiting workers have been resumed, the Action could be initialized again.
 	if e.cond.waitingWorkerCnt < 1 && e.cond.triggered {
 		e.cond.triggered = false
