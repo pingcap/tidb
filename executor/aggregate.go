@@ -1018,6 +1018,7 @@ func (e *StreamAggExec) initRuntimeStat() {
 	}
 }
 
+// StreamAggRuntimeStat record the StreamAgg runtime stat
 type StreamAggRuntimeStat struct {
 	Allocate int64
 	Split    int64
@@ -1037,6 +1038,7 @@ func (e *StreamAggRuntimeStat) String() string {
 	return result.String()
 }
 
+// Clone implements the RuntimeStats interface.
 func (e *StreamAggRuntimeStat) Clone() execdetails.RuntimeStats {
 	newRs := &StreamAggRuntimeStat{
 		Allocate: 0,
@@ -1045,6 +1047,7 @@ func (e *StreamAggRuntimeStat) Clone() execdetails.RuntimeStats {
 	return newRs
 }
 
+// Merge implements the RuntimeStats interface.
 func (e *StreamAggRuntimeStat) Merge(other execdetails.RuntimeStats) {
 	tmp, ok := other.(*StreamAggRuntimeStat)
 	if !ok {
@@ -1054,6 +1057,7 @@ func (e *StreamAggRuntimeStat) Merge(other execdetails.RuntimeStats) {
 	e.Split += tmp.Split
 }
 
+// Tp implements the RuntimeStats interface.
 func (e *StreamAggRuntimeStat) Tp() int {
 	return execdetails.TpStreamAggRuntimeStat
 }
