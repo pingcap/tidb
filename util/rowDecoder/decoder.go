@@ -57,7 +57,14 @@ func NewRowDecoder(tbl table.Table, cols []*table.Column, decodeColMap map[int64
 
 	tps := make([]*types.FieldType, len(cols))
 	for _, col := range cols {
-		tps[col.Offset] = &col.FieldType
+		if col.ChangeStateInfo == nil {
+			tps[col.Offset] = &col.FieldType
+		} else {
+			// Since changing column in the mutRow will be set with relative column's old value in the process of column-type-change,
+			// we should set fieldType as the relative column does. Otherwise it may get a panic, take change json to int as an example,
+			// setting json value to a int type column in mutRow will panic because it lacks of offset array.
+			tps[col.Offset] = &cols[col.ChangeStateInfo.DependencyColumnOffset].FieldType
+		}
 	}
 	var pkCols []int64
 	switch {
