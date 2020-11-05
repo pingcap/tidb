@@ -65,7 +65,7 @@ const (
 	// DefStoreLivenessTimeout is the default value for store liveness timeout.
 	DefStoreLivenessTimeout = "5s"
 	// DefTxnScope is the default value for TxnScope
-	DefTxnScope = "xaxaxa"
+	DefTxnScope = "global"
 )
 
 // Valid config maps
