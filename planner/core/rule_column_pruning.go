@@ -345,32 +345,25 @@ func (la *LogicalApply) PruneColumns(parentUsedCols []*expression.Column) error 
 	leftCols, rightCols := la.extractUsedCols(parentUsedCols)
 
 	err := la.children[1].PruneColumns(rightCols)
-	//fmt.Printf("[PruneColumns]: rightCos: la.children[1]=%v\n", la.children[1].Schema())
 	if err != nil {
 		return err
 	}
 
 	la.CorCols = extractCorColumnsBySchema4LogicalPlan(la.children[1], la.children[0].Schema())
-	//fmt.Printf("[PruneColumns]: la.CorCols=%v\n", la.CorCols)
 	for _, col := range la.CorCols {
 		leftCols = append(leftCols, &col.Column)
 	}
 
 	err = la.children[0].PruneColumns(leftCols)
-	//fmt.Printf("[PruneColumns]: leftCos: la.children[1]=%v\n", la.children[0].Schema())
 	if err != nil {
 		return err
 	}
 
 	la.mergeSchema()
-	//fmt.Printf("[PruneColumns]: after mergeSchema, la.Schema=%v\n", la.schema)
-	//fmt.Printf("[PruneColumns]: parentUsedCols=%v\n", parentUsedCols)
-	//fmt.Printf("JoinType=%v\n", la.JoinType)
 
 	if la.JoinType == LeftOuterSemiJoin || la.JoinType == AntiLeftOuterSemiJoin {
 		joinCol := la.schema.Columns[len(la.schema.Columns)-1]
 		parentUsedCols = append(parentUsedCols, joinCol)
-		//fmt.Printf("[PruneColumns]: JoinType=%v, update parentUsedCols=%v\n", la.JoinType,  parentUsedCols)
 	} else if la.JoinType == LeftOuterJoin {
 		parentUsedCols = append(parentUsedCols, la.children[0].Schema().Columns...)
 	}

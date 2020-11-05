@@ -127,14 +127,12 @@ func (s *logicalSchemaProducer) setSchemaAndNames(schema *expression.Schema, nam
 
 // inlineProjection prunes unneeded columns inline a executor.
 func (s *logicalSchemaProducer) inlineProjection(parentUsedCols []*expression.Column) {
-	//fmt.Printf("===Before %v inlineProjection, s.schema=%v, parentUsedCols=%v\n", s.TP(), s.schema, parentUsedCols)
 	used := expression.GetUsedList(parentUsedCols, s.Schema())
 	for i := len(used) - 1; i >= 0; i-- {
 		if !used[i] {
 			s.schema.Columns = append(s.Schema().Columns[:i], s.Schema().Columns[i+1:]...)
 		}
 	}
-	//fmt.Printf("===After %v inlineProjection, s.schema=%v\n", s.TP(), s.schema)
 }
 
 // physicalSchemaProducer stores the schema for the physical plans who can produce schema directly.

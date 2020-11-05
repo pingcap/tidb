@@ -191,9 +191,7 @@ func logicalOptimize(ctx context.Context, flag uint64, logic LogicalPlan) (Logic
 		if flag&(1<<uint(i)) == 0 || isLogicalRuleDisabled(rule) {
 			continue
 		}
-		//fmt.Printf("==Before use %s optimize: %s\n", rule.name(), ToString(logic))
 		logic, err = rule.optimize(ctx, logic)
-		//fmt.Printf("==Before after %s optimize: %s\n", rule.name(), ToString(logic))
 		if err != nil {
 			return nil, err
 		}
