@@ -448,10 +448,33 @@ func (e *selectionExec) Counts() []int64 {
 
 // evalBool evaluates expression to a boolean value.
 func evalBool(exprs []expression.Expression, row []types.Datum, ctx *stmtctx.StatementContext) (bool, error) {
+	var (
+		conditionLength       = len(exprs)
+		remainConditionLength = 0
+	)
 	for _, expr := range exprs {
+		remainConditionLength = conditionLength - 1
 		data, err := expr.Eval(chunk.MutRowFromDatums(row).ToRow())
 		if err != nil {
-			return false, errors.Trace(err)
+			if remainConditionLength != 0 {
+				for _, expr := range exprs[conditionLength-remainConditionLength:] {
+					remainConditionLength = remainConditionLength - 1
+					d, _ := expr.Eval(chunk.MutRowFromDatums(row).ToRow())
+					if !d.IsNull() {
+						isBool, _ := data.ToBool(ctx)
+						if isBool != 0 {
+							if remainConditionLength != 0 {
+								continue
+							} else {
+								return false, errors.Trace(err)
+							}
+						}
+					}
+				}
+				return false, nil
+			} else {
+				return false, errors.Trace(err)
+			}
 		}
 		if data.IsNull() {
 			return false, nil

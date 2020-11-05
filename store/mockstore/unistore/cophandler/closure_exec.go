@@ -601,14 +601,39 @@ func (e *closureExecutor) processSelection(needCollectDetail bool) (gotRow bool,
 			e.selectionCtx.execDetail.update(begin, gotRow)
 		}(time.Now())
 	}
-	chk := e.scanCtx.chk
-	row := chk.GetRow(chk.NumRows() - 1)
+
+	var (
+		chk                   = e.scanCtx.chk
+		row                   = chk.GetRow(chk.NumRows() - 1)
+		conditionLength       = len(e.selectionCtx.conditions)
+		remainConditionLength = 0
+	)
 	gotRow = true
 	for _, expr := range e.selectionCtx.conditions {
+		remainConditionLength = conditionLength - 1
 		wc := e.sc.WarningCount()
 		d, err := expr.Eval(row)
 		if err != nil {
-			return false, errors.Trace(err)
+			if remainConditionLength != 0 {
+				for _, expr := range e.selectionCtx.conditions[conditionLength-remainConditionLength:] {
+					remainConditionLength = remainConditionLength - 1
+					d, _ := expr.Eval(row)
+					if !d.IsNull() {
+						isBool, _ := d.ToBool(e.sc)
+						if isBool != 0 {
+							if remainConditionLength != 0 {
+								continue
+							} else {
+								return false, errors.Trace(err)
+							}
+						}
+					}
+				}
+				chk.TruncateTo(chk.NumRows() - 1)
+				break
+			} else {
+				return false, errors.Trace(err)
+			}
 		}
 
 		if d.IsNull() {

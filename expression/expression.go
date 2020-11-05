@@ -216,11 +216,34 @@ func HandleOverflowOnSelection(sc *stmtctx.StatementContext, val int64, err erro
 // whether the result of the expression list is null, it can only be true when the
 // first returned values is false.
 func EvalBool(ctx sessionctx.Context, exprList CNFExprs, row chunk.Row) (bool, bool, error) {
-	hasNull := false
+	var (
+		hasNull               = false
+		conditionLength       = len(exprList)
+		remainConditionLength = 0
+	)
 	for _, expr := range exprList {
+		remainConditionLength = conditionLength - 1
 		data, err := expr.Eval(row)
 		if err != nil {
-			return false, false, err
+			if remainConditionLength != 0 {
+				for _, expr := range exprList[conditionLength-remainConditionLength:] {
+					remainConditionLength = remainConditionLength - 1
+					d, _ := expr.Eval(row)
+					if !d.IsNull() {
+						isBool, _ := data.ToBool(ctx.GetSessionVars().StmtCtx)
+						if isBool != 0 {
+							if remainConditionLength != 0 {
+								continue
+							} else {
+								return false, false, err
+							}
+						}
+					}
+				}
+				return false, false, nil
+			} else {
+				return false, false, err
+			}
 		}
 		if data.IsNull() {
 			// For queries like `select a in (select a from s where t.b = s.b) from t`,
