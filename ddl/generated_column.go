@@ -229,6 +229,7 @@ type illegalFunctionChecker struct {
 	hasIllegalFunc bool
 	hasAggFunc     bool
 	hasRowVal      bool // hasRowVal checks whether the functional index refers to a row value
+	hasWindowFunc  bool
 }
 
 func (c *illegalFunctionChecker) Enter(inNode ast.Node) (outNode ast.Node, skipChildren bool) {
@@ -250,6 +251,9 @@ func (c *illegalFunctionChecker) Enter(inNode ast.Node) (outNode ast.Node, skipC
 		return inNode, true
 	case *ast.RowExpr:
 		c.hasRowVal = true
+		return inNode, true
+	case *ast.WindowFuncExpr:
+		c.hasWindowFunc = true
 		return inNode, true
 	}
 	return inNode, false
@@ -288,6 +292,9 @@ func checkIllegalFn4Generated(name string, genType int, expr ast.ExprNode) error
 		case typeIndex:
 			return ErrFunctionalIndexRowValueIsNotAllowed.GenWithStackByArgs(name)
 		}
+	}
+	if c.hasWindowFunc {
+		return errWindowInvalidWindowFuncUse.GenWithStackByArgs(name)
 	}
 	return nil
 }

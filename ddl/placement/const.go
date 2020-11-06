@@ -13,9 +13,8 @@
 
 package placement
 
-// RuleDefaultGroupID is the default GroupID for all placement rules, to
-//  indicate that it is from TiDB_DDL statements.
-const RuleDefaultGroupID = "TiDB_DDL"
+// BundleIDPrefix is the bundle prefix of all rules from TiDB_DDL statements.
+const BundleIDPrefix = "TiDB_DDL_"
 
 const (
 	// RuleIndexDefault is the default index for a rule, check Rule.Index.
