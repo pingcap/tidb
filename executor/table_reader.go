@@ -205,13 +205,15 @@ func (e *TableReaderExecutor) Close() error {
 	}
 	e.kvRanges = e.kvRanges[:0]
 	e.ctx.StoreQueryFeedback(e.feedback)
-	for _, plan := range e.plans {
-		if !e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.ExistsCopStats(plan.ID()) {
-			continue
-		}
-		copStats := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetCopStats(plan.ID())
-		if tableScan, ok := plan.(*plannercore.PhysicalTableScan); ok && !tableScan.IsFullScan() {
-			e.ctx.GetSessionVars().StmtCtx.RecordIndexUsage(tableScan.Table.ID, tableScan.IdxID, copStats.GetActRows())
+	if e.ctx.IndexUsageCollectorActivated() {
+		for _, plan := range e.plans {
+			if !e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.ExistsCopStats(plan.ID()) {
+				continue
+			}
+			copStats := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetCopStats(plan.ID())
+			if tableScan, ok := plan.(*plannercore.PhysicalTableScan); ok && !tableScan.IsFullScan() {
+				e.ctx.GetSessionVars().StmtCtx.RecordIndexUsage(tableScan.Table.ID, tableScan.IdxID, copStats.GetActRows())
+			}
 		}
 	}
 	return err

@@ -225,6 +225,10 @@ func (c *Context) StoreIndexUsage(_ int64, _ int64, _ int64) {}
 
 func (c *Context) RecordIndexUsageFromStatement(_ stmtctx.StatementIndexUsageMap) {}
 
+func (c *Context) IndexUsageCollectorActivated() bool {
+	return false
+}
+
 // StmtCommit implements the sessionctx.Context interface.
 func (c *Context) StmtCommit() {}
 

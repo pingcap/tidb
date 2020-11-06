@@ -112,6 +112,8 @@ type Context interface {
 	StoreIndexUsage(tblID int64, idxID int64, rowsSelected int64)
 
 	RecordIndexUsageFromStatement(mapper stmtctx.StatementIndexUsageMap)
+
+	IndexUsageCollectorActivated() bool
 }
 
 type basicCtxType int
