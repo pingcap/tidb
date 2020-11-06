@@ -977,3 +977,29 @@ func (s *testStatsSuite) TestIndexUsage4IndexJoin(c *C) {
 		"test t_idx idx_a 3 6",
 	))
 }
+
+func (s *testStatsSuite) TestIndexUsage4IndexMerge(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t_idx")
+	tk.MustExec("create table t_idx(a int, b int)")
+	tk.MustExec("create index idx_a on t_idx(a)")
+	tk.MustExec("create index idx_b on t_idx(b)")
+	do := s.do
+	tk.MustExec("insert into t_idx values (1, 2), (2, 0), (3, 0), (4, 0), (-1, 5)")
+	tk.MustQuery("select /*+ USE_INDEX_MERGE(t_idx, idx_a, idx_b) */ * from t_idx where a>1 or b>1").Sort().Check(testkit.Rows("-1 5", "1 2", "2 0", "3 0", "4 0"))
+	err := do.StatsHandle().DumpIndexUsageToKV()
+	c.Assert(err, IsNil)
+	tk.MustQuery(querySQL).Sort().Check(testkit.Rows(
+		"test t_idx idx_a 1 3",
+		"test t_idx idx_b 1 2",
+	))
+	tk.MustQuery("select /*+ USE_INDEX_MERGE(t_idx, idx_a, idx_b) */ * from t_idx where a>-10 or b>-10").Sort().Check(testkit.Rows("-1 5", "1 2", "2 0", "3 0", "4 0"))
+	err = do.StatsHandle().DumpIndexUsageToKV()
+	c.Assert(err, IsNil)
+	tk.MustQuery(querySQL).Sort().Check(testkit.Rows(
+		"test t_idx idx_a 2 8",
+		"test t_idx idx_b 2 7",
+	))
+}

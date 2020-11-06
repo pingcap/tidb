@@ -58,6 +58,8 @@ type GlobalIndexID struct {
 	IndexID int64
 }
 
+// StatementIndexUsageMap is used to collect index usage information in statement-level.
+// The value of it is row counts.
 type StatementIndexUsageMap map[GlobalIndexID]int64
 
 // StatementContext contains variables for a statement.
@@ -704,10 +706,12 @@ func (sc *StatementContext) GetLockWaitStartTime() time.Time {
 	return time.Unix(0, startTime)
 }
 
+// InitIndexUsage initialize the index usage map in statement-level
 func (sc *StatementContext) InitIndexUsage() {
 	sc.IdxUsageCollector.Map = make(StatementIndexUsageMap)
 }
 
+// RRecordIndexUsage records the index usage information in statement-level
 func (sc *StatementContext) RecordIndexUsage(tblID int64, idxID int64, rows int64) {
 	id := GlobalIndexID{TableID: tblID, IndexID: idxID}
 	sc.IdxUsageCollector.Lock()

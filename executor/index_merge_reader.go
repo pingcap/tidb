@@ -498,10 +498,27 @@ func (e *IndexMergeReaderExecutor) Close() error {
 	close(e.finished)
 	e.processWokerWg.Wait()
 	e.tblWorkerWg.Wait()
+	e.collectIndexUsage()
 	e.finished = nil
 	e.workerStarted = false
 	// TODO: how to store e.feedbacks
 	return nil
+}
+
+func (e *IndexMergeReaderExecutor) collectIndexUsage() {
+	if e.ctx.IndexUsageCollectorActivated() {
+		for _, plan := range e.partialPlans {
+			scanPlan := plan[0]
+			rsc := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl
+			if !rsc.ExistsCopStats(scanPlan.ID()) {
+				continue
+			}
+			copStats := rsc.GetCopStats(scanPlan.ID())
+			if indexScan, ok := scanPlan.(*plannercore.PhysicalIndexScan); ok && !indexScan.IsFullScan() {
+				e.ctx.GetSessionVars().StmtCtx.RecordIndexUsage(indexScan.Table.ID, indexScan.Index.ID, copStats.GetActRows())
+			}
+		}
+	}
 }
 
 type indexMergeProcessWorker struct {

@@ -205,6 +205,11 @@ func (e *TableReaderExecutor) Close() error {
 	}
 	e.kvRanges = e.kvRanges[:0]
 	e.ctx.StoreQueryFeedback(e.feedback)
+	e.collectIndexUsage()
+	return err
+}
+
+func (e *TableReaderExecutor) collectIndexUsage() {
 	if e.ctx.IndexUsageCollectorActivated() {
 		for _, plan := range e.plans {
 			rsc := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl
@@ -217,7 +222,6 @@ func (e *TableReaderExecutor) Close() error {
 			}
 		}
 	}
-	return err
 }
 
 // buildResp first builds request and sends it to tikv using distsql.Select. It uses SelectResut returned by the callee

@@ -251,6 +251,11 @@ func (e *IndexReaderExecutor) Close() error {
 	err := e.result.Close()
 	e.result = nil
 	e.ctx.StoreQueryFeedback(e.feedback)
+	e.collectIndexUsage()
+	return err
+}
+
+func (e *IndexReaderExecutor) collectIndexUsage() {
 	if e.ctx.IndexUsageCollectorActivated() {
 		for _, plan := range e.plans {
 			rsc := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl
@@ -263,7 +268,6 @@ func (e *IndexReaderExecutor) Close() error {
 			}
 		}
 	}
-	return err
 }
 
 // Next implements the Executor Next interface.
@@ -644,6 +648,15 @@ func (e *IndexLookUpExecutor) Close() error {
 	}
 	e.idxWorkerWg.Wait()
 	e.tblWorkerWg.Wait()
+	e.collectIndexUsage()
+	e.finished = nil
+	e.workerStarted = false
+	e.memTracker = nil
+	e.resultCurr = nil
+	return nil
+}
+
+func (e *IndexLookUpExecutor) collectIndexUsage() {
 	if e.ctx.IndexUsageCollectorActivated() {
 		for _, plan := range e.idxPlans {
 			rsc := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl
@@ -656,11 +669,6 @@ func (e *IndexLookUpExecutor) Close() error {
 			}
 		}
 	}
-	e.finished = nil
-	e.workerStarted = false
-	e.memTracker = nil
-	e.resultCurr = nil
-	return nil
 }
 
 // Next implements Exec Next interface.

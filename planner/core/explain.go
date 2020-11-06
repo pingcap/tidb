@@ -148,6 +148,7 @@ func (p *PhysicalIndexScan) haveCorCol() bool {
 	return false
 }
 
+// IsFullScan checks if the index scan is full scan.
 func (p *PhysicalIndexScan) IsFullScan() bool {
 	if len(p.rangeInfo) > 0 || p.haveCorCol() {
 		return false
@@ -257,6 +258,7 @@ func (p *PhysicalTableScan) haveCorCol() bool {
 	return false
 }
 
+// IsFullScan checks if the table scan is full scan.
 func (p *PhysicalTableScan) IsFullScan() bool {
 	if len(p.rangeDecidedBy) > 0 || p.haveCorCol() {
 		return false
