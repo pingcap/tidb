@@ -1382,7 +1382,7 @@ func (e *rateLimitAction) Action(t *memory.Tracker) {
 		e.cond.isTokenDestroyed = false
 		e.cond.exceeded = true
 		e.cond.triggerCountForTest++
-		e.cond.triggered = false
+		e.cond.triggered = true
 	})
 }
 
@@ -1412,7 +1412,7 @@ func (e *rateLimitAction) broadcastIfNeeded(needed bool) {
 	}
 	e.cond.exceeded = false
 	e.cond.Broadcast()
-	e.initOnceIfNeeded()
+	e.unsafeInitOnce()
 }
 
 // destroyTokenIfNeeded will check the `exceed` flag after copWorker finished one task.
@@ -1441,11 +1441,11 @@ func (e *rateLimitAction) destroyTokenIfNeeded(returnToken func()) {
 		e.cond.Wait()
 		e.cond.waitingWorkerCnt--
 	}
-	e.initOnceIfNeeded()
+	e.unsafeInitOnce()
 }
 
-// initOnceIfNeeded would init once if the condition is meet. This should be used under condition's lock.
-func (e *rateLimitAction) initOnceIfNeeded() {
+// unsafeInitOnce would init once if the condition is meet. This should be used under condition's lock.
+func (e *rateLimitAction) unsafeInitOnce() {
 	// only when all the waiting workers have been resumed, the Action could be initialized again.
 	if e.cond.waitingWorkerCnt < 1 && e.cond.triggered {
 		e.cond.triggered = false
