@@ -517,6 +517,12 @@ const minLogCopTaskTime = 300 * time.Millisecond
 func (worker *copIteratorWorker) run(ctx context.Context) {
 	defer func() {
 		worker.actionOnExceed.close()
+		failpoint.Inject("ticase-4170", func(val failpoint.Value) {
+			if val.(bool) {
+				worker.memTracker.Consume(9999999)
+				worker.memTracker.Consume(9999999)
+			}
+		})
 		worker.wg.Done()
 	}()
 	for task := range worker.taskCh {
@@ -710,12 +716,6 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 		resp, ok, closed = it.recvFromRespCh(ctx, it.respChan)
 		if !ok || closed {
 			it.actionOnExceed.close()
-			failpoint.Inject("ticase-4170", func(val failpoint.Value) {
-				if val.(bool) {
-					it.memTracker.Consume(9999999)
-					it.memTracker.Consume(9999999)
-				}
-			})
 			return nil, nil
 		}
 		// The respCh has been drained out
