@@ -711,7 +711,7 @@ func (sc *StatementContext) InitIndexUsage() {
 	sc.IdxUsageCollector.Map = make(StatementIndexUsageMap)
 }
 
-// RRecordIndexUsage records the index usage information in statement-level
+// RecordIndexUsage records the index usage information in statement-level
 func (sc *StatementContext) RecordIndexUsage(tblID int64, idxID int64, rows int64) {
 	id := GlobalIndexID{TableID: tblID, IndexID: idxID}
 	sc.IdxUsageCollector.Lock()
