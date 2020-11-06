@@ -168,8 +168,11 @@ func (e *closureExecutor) initIdxScanCtx(idxScan *tipb.IndexScan) {
 	e.idxScanCtx.pkStatus = pkColNotExists
 
 	e.idxScanCtx.primaryColumnIds = idxScan.PrimaryColumnIds
-
 	lastColumn := e.columnInfos[len(e.columnInfos)-1]
+	if lastColumn.GetColumnId() == model.ExtraPidColID {
+		lastColumn = e.columnInfos[len(e.columnInfos)-2]
+		e.idxScanCtx.columnLen--
+	}
 
 	if len(e.idxScanCtx.primaryColumnIds) == 0 {
 		if lastColumn.GetPkHandle() {

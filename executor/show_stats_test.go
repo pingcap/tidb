@@ -18,6 +18,7 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/util/testkit"
 )
@@ -174,35 +175,37 @@ func (s *testShowStatsSuite) TestShowStatsHasNullValue(c *C) {
 
 func (s *testShowStatsSuite) TestShowPartitionStats(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("set @@session.tidb_enable_table_partition=1")
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	createTable := `CREATE TABLE t (a int, b int, primary key(a), index idx(b))
+	testkit.WithPruneMode(tk, variable.StaticOnly, func() {
+		tk.MustExec("set @@session.tidb_enable_table_partition=1")
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists t")
+		createTable := `CREATE TABLE t (a int, b int, primary key(a), index idx(b))
 						PARTITION BY RANGE ( a ) (PARTITION p0 VALUES LESS THAN (6))`
-	tk.MustExec(createTable)
-	tk.MustExec(`insert into t values (1, 1)`)
-	tk.MustExec("analyze table t")
+		tk.MustExec(createTable)
+		tk.MustExec(`insert into t values (1, 1)`)
+		tk.MustExec("analyze table t")
 
-	result := tk.MustQuery("show stats_meta")
-	c.Assert(len(result.Rows()), Equals, 1)
-	c.Assert(result.Rows()[0][0], Equals, "test")
-	c.Assert(result.Rows()[0][1], Equals, "t")
-	c.Assert(result.Rows()[0][2], Equals, "p0")
+		result := tk.MustQuery("show stats_meta")
+		c.Assert(len(result.Rows()), Equals, 1)
+		c.Assert(result.Rows()[0][0], Equals, "test")
+		c.Assert(result.Rows()[0][1], Equals, "t")
+		c.Assert(result.Rows()[0][2], Equals, "p0")
 
-	result = tk.MustQuery("show stats_histograms").Sort()
-	c.Assert(len(result.Rows()), Equals, 3)
-	c.Assert(result.Rows()[0][2], Equals, "p0")
-	c.Assert(result.Rows()[0][3], Equals, "a")
-	c.Assert(result.Rows()[1][2], Equals, "p0")
-	c.Assert(result.Rows()[1][3], Equals, "b")
-	c.Assert(result.Rows()[2][2], Equals, "p0")
-	c.Assert(result.Rows()[2][3], Equals, "idx")
+		result = tk.MustQuery("show stats_histograms").Sort()
+		c.Assert(len(result.Rows()), Equals, 3)
+		c.Assert(result.Rows()[0][2], Equals, "p0")
+		c.Assert(result.Rows()[0][3], Equals, "a")
+		c.Assert(result.Rows()[1][2], Equals, "p0")
+		c.Assert(result.Rows()[1][3], Equals, "b")
+		c.Assert(result.Rows()[2][2], Equals, "p0")
+		c.Assert(result.Rows()[2][3], Equals, "idx")
 
-	result = tk.MustQuery("show stats_buckets").Sort()
-	result.Check(testkit.Rows("test t p0 a 0 0 1 1 1 1", "test t p0 b 0 0 1 1 1 1", "test t p0 idx 1 0 1 1 1 1"))
+		result = tk.MustQuery("show stats_buckets").Sort()
+		result.Check(testkit.Rows("test t p0 a 0 0 1 1 1 1", "test t p0 b 0 0 1 1 1 1", "test t p0 idx 1 0 1 1 1 1"))
 
-	result = tk.MustQuery("show stats_healthy")
-	result.Check(testkit.Rows("test t p0 100"))
+		result = tk.MustQuery("show stats_healthy")
+		result.Check(testkit.Rows("test t p0 100"))
+	})
 }
 
 func (s *testShowStatsSuite) TestShowAnalyzeStatus(c *C) {

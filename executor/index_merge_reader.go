@@ -111,7 +111,7 @@ func (e *IndexMergeReaderExecutor) Open(ctx context.Context) error {
 		_, ok := plan[0].(*plannercore.PhysicalIndexScan)
 		if !ok {
 			if e.table.Meta().IsCommonHandle {
-				keyRanges, err := distsql.CommonHandleRangesToKVRanges(e.ctx.GetSessionVars().StmtCtx, getPhysicalTableID(e.table), e.ranges[i])
+				keyRanges, err := distsql.CommonHandleRangesToKVRanges(e.ctx.GetSessionVars().StmtCtx, []int64{getPhysicalTableID(e.table)}, e.ranges[i])
 				if err != nil {
 					return err
 				}

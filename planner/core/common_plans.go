@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/logutil"
@@ -648,6 +649,18 @@ type Simple struct {
 	baseSchemaProducer
 
 	Statement ast.StmtNode
+
+	// IsFromRemote indicates whether the statement IS FROM REMOTE TiDB instance in cluster,
+	//   and executing in co-processor.
+	//   Used for `global kill`. See https://github.com/pingcap/tidb/blob/master/docs/design/2020-06-01-global-kill.md.
+	IsFromRemote bool
+}
+
+// PhysicalSimpleWrapper is a wrapper of `Simple` to implement physical plan interface.
+//   Used for simple statements executing in coprocessor.
+type PhysicalSimpleWrapper struct {
+	basePhysicalPlan
+	Inner Simple
 }
 
 // InsertGeneratedColumns is for completing generated columns in Insert.
@@ -871,12 +884,14 @@ type SelectInto struct {
 type Explain struct {
 	baseSchemaProducer
 
-	TargetPlan Plan
-	Format     string
-	Analyze    bool
-	ExecStmt   ast.StmtNode
+	TargetPlan       Plan
+	Format           string
+	Analyze          bool
+	ExecStmt         ast.StmtNode
+	RuntimeStatsColl *execdetails.RuntimeStatsColl
 
 	Rows           [][]string
+	ExplainRows    [][]string
 	explainedPlans map[int]bool
 }
 
@@ -899,9 +914,9 @@ func (e *Explain) prepareSchema() error {
 	format := strings.ToLower(e.Format)
 
 	switch {
-	case format == ast.ExplainFormatROW && !e.Analyze:
+	case format == ast.ExplainFormatROW && (!e.Analyze && e.RuntimeStatsColl == nil):
 		fieldNames = []string{"id", "estRows", "task", "access object", "operator info"}
-	case format == ast.ExplainFormatROW && e.Analyze:
+	case format == ast.ExplainFormatROW && (e.Analyze || e.RuntimeStatsColl != nil):
 		fieldNames = []string{"id", "estRows", "actRows", "task", "access object", "execution info", "operator info", "memory", "disk"}
 	case format == ast.ExplainFormatDOT:
 		fieldNames = []string{"dot contents"}
@@ -1051,20 +1066,18 @@ func (e *Explain) explainPlanInRowFormat(p Plan, taskType, driverSide, indent st
 	return
 }
 
-func getRuntimeInfo(ctx sessionctx.Context, p Plan) (actRows, analyzeInfo, memoryInfo, diskInfo string) {
-	runtimeStatsColl := ctx.GetSessionVars().StmtCtx.RuntimeStatsColl
+func getRuntimeInfo(ctx sessionctx.Context, p Plan, runtimeStatsColl *execdetails.RuntimeStatsColl) (actRows, analyzeInfo, memoryInfo, diskInfo string) {
 	if runtimeStatsColl == nil {
-		return
+		runtimeStatsColl = ctx.GetSessionVars().StmtCtx.RuntimeStatsColl
+		if runtimeStatsColl == nil {
+			return
+		}
 	}
 	explainID := p.ID()
 
 	// There maybe some mock information for cop task to let runtimeStatsColl.Exists(p.ExplainID()) is true.
 	// So check copTaskEkxecDetail first and print the real cop task information if it's not empty.
-	if runtimeStatsColl.ExistsCopStats(explainID) {
-		copstats := runtimeStatsColl.GetCopStats(explainID)
-		analyzeInfo = copstats.String()
-		actRows = fmt.Sprint(copstats.GetActRows())
-	} else if runtimeStatsColl.ExistsRootStats(explainID) {
+	if runtimeStatsColl.ExistsRootStats(explainID) {
 		rootstats := runtimeStatsColl.GetRootStats(explainID)
 		analyzeInfo = rootstats.String()
 		actRows = fmt.Sprint(rootstats.GetActRows())
@@ -1072,7 +1085,14 @@ func getRuntimeInfo(ctx sessionctx.Context, p Plan) (actRows, analyzeInfo, memor
 		analyzeInfo = "time:0ns, loops:0"
 		actRows = "0"
 	}
-
+	if runtimeStatsColl.ExistsCopStats(explainID) {
+		copstats := runtimeStatsColl.GetCopStats(explainID)
+		if len(analyzeInfo) > 0 {
+			analyzeInfo += ", "
+		}
+		analyzeInfo += copstats.String()
+		actRows = fmt.Sprint(copstats.GetActRows())
+	}
 	memoryInfo = "N/A"
 	memTracker := ctx.GetSessionVars().StmtCtx.MemTracker.SearchTrackerWithoutLock(p.ID())
 	if memTracker != nil {
@@ -1095,12 +1115,35 @@ func (e *Explain) prepareOperatorInfo(p Plan, taskType, driverSide, indent strin
 	}
 
 	id := texttree.PrettyIdentifier(p.ExplainID().String()+driverSide, indent, isLastChild)
+	estRows, accessObject, operatorInfo := e.getOperatorInfo(p, id)
 
+	var row []string
+	if e.Analyze {
+		actRows, analyzeInfo, memoryInfo, diskInfo := getRuntimeInfo(e.ctx, p, nil)
+		row = []string{id, estRows, actRows, taskType, accessObject, analyzeInfo, operatorInfo, memoryInfo, diskInfo}
+	} else if e.RuntimeStatsColl != nil {
+		actRows, analyzeInfo, memoryInfo, diskInfo := getRuntimeInfo(e.ctx, p, e.RuntimeStatsColl)
+		row = []string{id, estRows, actRows, taskType, accessObject, analyzeInfo, operatorInfo, memoryInfo, diskInfo}
+	} else {
+		row = []string{id, estRows, taskType, accessObject, operatorInfo}
+	}
+	e.Rows = append(e.Rows, row)
+}
+
+func (e *Explain) getOperatorInfo(p Plan, id string) (string, string, string) {
+	// For `explain for connection` statement, `e.ExplainRows` will be set.
+	for _, row := range e.ExplainRows {
+		if len(row) < 5 {
+			panic("should never happen")
+		}
+		if row[0] == id {
+			return row[1], row[3], row[4]
+		}
+	}
 	estRows := "N/A"
 	if si := p.statsInfo(); si != nil {
 		estRows = strconv.FormatFloat(si.RowCount, 'f', 2, 64)
 	}
-
 	var accessObject, operatorInfo string
 	if plan, ok := p.(dataAccesser); ok {
 		accessObject = plan.AccessObject()
@@ -1111,15 +1154,7 @@ func (e *Explain) prepareOperatorInfo(p Plan, taskType, driverSide, indent strin
 		}
 		operatorInfo = p.ExplainInfo()
 	}
-
-	var row []string
-	if e.Analyze {
-		actRows, analyzeInfo, memoryInfo, diskInfo := getRuntimeInfo(e.ctx, p)
-		row = []string{id, estRows, actRows, taskType, accessObject, analyzeInfo, operatorInfo, memoryInfo, diskInfo}
-	} else {
-		row = []string{id, estRows, taskType, accessObject, operatorInfo}
-	}
-	e.Rows = append(e.Rows, row)
+	return estRows, accessObject, operatorInfo
 }
 
 func (e *Explain) prepareDotInfo(p PhysicalPlan) {

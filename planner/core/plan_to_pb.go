@@ -202,6 +202,8 @@ func (p *PhysicalIndexScan) ToPB(ctx sessionctx.Context, _ kv.StoreType) (*tipb.
 	for _, col := range p.schema.Columns {
 		if col.ID == model.ExtraHandleID {
 			columns = append(columns, model.NewExtraHandleColInfo())
+		} else if col.ID == model.ExtraPidColID {
+			columns = append(columns, model.NewExtraPartitionIDColInfo())
 		} else {
 			columns = append(columns, findColumnInfoByID(tableColumns, col.ID))
 		}
@@ -282,7 +284,7 @@ func SetPBColumnsDefaultValue(ctx sessionctx.Context, pbColumns []*tipb.ColumnIn
 		if c.IsGenerated() && !c.GeneratedStored {
 			pbColumns[i].DefaultVal = []byte{codec.NilFlag}
 		}
-		if c.OriginDefaultValue == nil {
+		if c.GetOriginDefaultValue() == nil {
 			continue
 		}
 

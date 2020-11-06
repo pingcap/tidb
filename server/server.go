@@ -58,6 +58,7 @@ import (
 	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/fastrand"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sys/linux"
@@ -90,13 +91,14 @@ func init() {
 }
 
 var (
-	errUnknownFieldType        = terror.ClassServer.New(errno.ErrUnknownFieldType, errno.MySQLErrName[errno.ErrUnknownFieldType])
-	errInvalidSequence         = terror.ClassServer.New(errno.ErrInvalidSequence, errno.MySQLErrName[errno.ErrInvalidSequence])
-	errInvalidType             = terror.ClassServer.New(errno.ErrInvalidType, errno.MySQLErrName[errno.ErrInvalidType])
-	errNotAllowedCommand       = terror.ClassServer.New(errno.ErrNotAllowedCommand, errno.MySQLErrName[errno.ErrNotAllowedCommand])
-	errAccessDenied            = terror.ClassServer.New(errno.ErrAccessDenied, errno.MySQLErrName[errno.ErrAccessDenied])
-	errConCount                = terror.ClassServer.New(errno.ErrConCount, errno.MySQLErrName[errno.ErrConCount])
-	errSecureTransportRequired = terror.ClassServer.New(errno.ErrSecureTransportRequired, errno.MySQLErrName[errno.ErrSecureTransportRequired])
+	errUnknownFieldType        = dbterror.ClassServer.NewStd(errno.ErrUnknownFieldType)
+	errInvalidSequence         = dbterror.ClassServer.NewStd(errno.ErrInvalidSequence)
+	errInvalidType             = dbterror.ClassServer.NewStd(errno.ErrInvalidType)
+	errNotAllowedCommand       = dbterror.ClassServer.NewStd(errno.ErrNotAllowedCommand)
+	errAccessDenied            = dbterror.ClassServer.NewStd(errno.ErrAccessDenied)
+	errConCount                = dbterror.ClassServer.NewStd(errno.ErrConCount)
+	errSecureTransportRequired = dbterror.ClassServer.NewStd(errno.ErrSecureTransportRequired)
+	errMultiStatementDisabled  = dbterror.ClassServer.NewStdErr(errno.ErrUnknown, mysql.Message("client has multi-statement capability disabled", nil), "", "") // MySQL returns a parse error
 )
 
 // DefaultCapability is the capability of the server when it is created using the default configuration.
@@ -116,9 +118,10 @@ type Server struct {
 	socket            net.Listener
 	rwlock            sync.RWMutex
 	concurrentLimiter *TokenLimiter
-	clients           map[uint32]*clientConn
+	clients           map[uint64]*clientConn
 	capability        uint32
 	dom               *domain.Domain
+	globalConnID      util.GlobalConnID
 
 	statusAddr     string
 	statusListener net.Listener
@@ -149,6 +152,14 @@ func (s *Server) releaseToken(token *Token) {
 // SetDomain use to set the server domain.
 func (s *Server) SetDomain(dom *domain.Domain) {
 	s.dom = dom
+}
+
+// InitGlobalConnID initialize global connection id.
+func (s *Server) InitGlobalConnID(serverIDGetter func() uint64) {
+	s.globalConnID = util.GlobalConnID{
+		ServerIDGetter: serverIDGetter,
+		Is64bits:       true,
+	}
 }
 
 // newConn creates a new *clientConn from a net.Conn.
@@ -210,7 +221,8 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 		cfg:               cfg,
 		driver:            driver,
 		concurrentLimiter: NewTokenLimiter(cfg.TokenLimit),
-		clients:           make(map[uint32]*clientConn),
+		clients:           make(map[uint64]*clientConn),
+		globalConnID:      util.GlobalConnID{ServerID: 0, Is64bits: true},
 	}
 
 	tlsConfig, err := util.LoadTLSCertificates(s.cfg.Security.SSLCA, s.cfg.Security.SSLKey, s.cfg.Security.SSLCert)
@@ -220,7 +232,7 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 	if tlsConfig != nil {
 		setSSLVariable(s.cfg.Security.SSLCA, s.cfg.Security.SSLKey, s.cfg.Security.SSLCert)
 		atomic.StorePointer(&s.tlsConfig, unsafe.Pointer(tlsConfig))
-		logutil.BgLogger().Info("mysql protocol server secure connection is enabled", zap.Bool("client verification enabled", len(variable.SysVars["ssl_ca"].Value) > 0))
+		logutil.BgLogger().Info("mysql protocol server secure connection is enabled", zap.Bool("client verification enabled", len(variable.GetSysVar("ssl_ca").Value) > 0))
 	} else if cfg.Security.RequireSecureTransport {
 		return nil, errSecureTransportRequired.FastGenByArgs()
 	}
@@ -278,11 +290,11 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 }
 
 func setSSLVariable(ca, key, cert string) {
-	variable.SysVars["have_openssl"].Value = "YES"
-	variable.SysVars["have_ssl"].Value = "YES"
-	variable.SysVars["ssl_cert"].Value = cert
-	variable.SysVars["ssl_key"].Value = key
-	variable.SysVars["ssl_ca"].Value = ca
+	variable.SetSysVar("have_openssl", "YES")
+	variable.SetSysVar("have_ssl", "YES")
+	variable.SetSysVar("ssl_cert", cert)
+	variable.SetSysVar("ssl_key", key)
+	variable.SetSysVar("ssl_ca", ca)
 }
 
 // Run runs the server.
@@ -333,6 +345,12 @@ func (s *Server) Run() error {
 			return nil
 		})
 		if err != nil {
+			continue
+		}
+
+		if s.dom != nil && s.dom.IsLostConnectionToPD() {
+			logutil.BgLogger().Warn("reject connection due to lost connection to PD")
+			terror.Log(clientConn.Close())
 			continue
 		}
 
@@ -499,7 +517,7 @@ func (s *Server) ShowProcessList() map[uint64]*util.ProcessInfo {
 // GetProcessInfo implements the SessionManager interface.
 func (s *Server) GetProcessInfo(id uint64) (*util.ProcessInfo, bool) {
 	s.rwlock.RLock()
-	conn, ok := s.clients[uint32(id)]
+	conn, ok := s.clients[id]
 	s.rwlock.RUnlock()
 	if !ok || atomic.LoadInt32(&conn.status) == connStatusWaitShutdown {
 		return &util.ProcessInfo{}, false
@@ -514,7 +532,7 @@ func (s *Server) Kill(connectionID uint64, query bool) {
 
 	s.rwlock.RLock()
 	defer s.rwlock.RUnlock()
-	conn, ok := s.clients[uint32(connectionID)]
+	conn, ok := s.clients[connectionID]
 	if !ok {
 		return
 	}
@@ -539,6 +557,12 @@ func (s *Server) getTLSConfig() *tls.Config {
 func killConn(conn *clientConn) {
 	sessVars := conn.ctx.GetSessionVars()
 	atomic.StoreUint32(&sessVars.Killed, 1)
+	conn.mu.RLock()
+	cancelFunc := conn.mu.cancelFunc
+	conn.mu.RUnlock()
+	if cancelFunc != nil {
+		cancelFunc()
+	}
 }
 
 // KillAllConnections kills all connections when server is not gracefully shutdown.
@@ -620,6 +644,11 @@ func (s *Server) kickIdleConnection() {
 	}
 }
 
+// ServerID implements SessionManager interface.
+func (s *Server) ServerID() uint64 {
+	return s.dom.ServerID()
+}
+
 // setSysTimeZoneOnce is used for parallel run tests. When several servers are running,
 // only the first will actually do setSystemTimeZoneVariable, thus we can avoid data race.
 var setSysTimeZoneOnce = &sync.Once{}
@@ -631,10 +660,10 @@ func setSystemTimeZoneVariable() {
 			logutil.BgLogger().Error(
 				"Error getting SystemTZ, use default value instead",
 				zap.Error(err),
-				zap.String("default system_time_zone", variable.SysVars["system_time_zone"].Value))
+				zap.String("default system_time_zone", variable.GetSysVar("system_time_zone").Value))
 			return
 		}
-		variable.SysVars["system_time_zone"].Value = tz
+		variable.SetSysVar("system_time_zone", tz)
 	})
 }
 

@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/terror"
 	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
@@ -43,6 +44,7 @@ type backfillWorkerType byte
 const (
 	typeAddIndexWorker     backfillWorkerType = 0
 	typeUpdateColumnWorker backfillWorkerType = 1
+	typeCleanUpIndexWorker backfillWorkerType = 2
 )
 
 func (bWT backfillWorkerType) String() string {
@@ -51,6 +53,8 @@ func (bWT backfillWorkerType) String() string {
 		return "add index"
 	case typeUpdateColumnWorker:
 		return "update column"
+	case typeCleanUpIndexWorker:
+		return "clean up index"
 	default:
 		return "unknown"
 	}
@@ -71,10 +75,12 @@ type backfillResult struct {
 // backfillTaskContext is the context of the batch adding indices or updating column values.
 // After finishing the batch adding indices or updating column values, result in backfillTaskContext will be merged into backfillResult.
 type backfillTaskContext struct {
-	nextHandle kv.Handle
-	done       bool
-	addedCount int
-	scanCount  int
+	nextHandle    kv.Handle
+	done          bool
+	addedCount    int
+	scanCount     int
+	warnings      map[errors.ErrorID]*terror.Error
+	warningsCount map[errors.ErrorID]int64
 }
 
 type backfillWorker struct {
@@ -130,7 +136,7 @@ func (r *reorgBackfillTask) String() string {
 	if r.endIncluded {
 		rightParenthesis = "]"
 	}
-	return "physicalTableID" + strconv.FormatInt(r.physicalTableID, 10) + "_" + "[" + r.startHandle.String() + "," + r.endHandle.String() + rightParenthesis
+	return "physicalTableID_" + strconv.FormatInt(r.physicalTableID, 10) + "_" + "[" + r.startHandle.String() + "," + r.endHandle.String() + rightParenthesis
 }
 
 func logSlowOperations(elapsed time.Duration, slowMsg string, threshold uint32) {
@@ -150,10 +156,26 @@ func mergeBackfillCtxToResult(taskCtx *backfillTaskContext, result *backfillResu
 	result.scanCount += taskCtx.scanCount
 }
 
+func mergeWarningsAndWarningsCount(partWarnings, totalWarnings map[errors.ErrorID]*terror.Error, partWarningsCount, totalWarningsCount map[errors.ErrorID]int64) (map[errors.ErrorID]*terror.Error, map[errors.ErrorID]int64) {
+	for _, warn := range partWarnings {
+		if _, ok := totalWarningsCount[warn.ID()]; ok {
+			totalWarningsCount[warn.ID()] += partWarningsCount[warn.ID()]
+		} else {
+			totalWarningsCount[warn.ID()] = partWarningsCount[warn.ID()]
+			totalWarnings[warn.ID()] = warn
+		}
+	}
+	return totalWarnings, totalWarningsCount
+}
+
 // handleBackfillTask backfills range [task.startHandle, task.endHandle) handle's index to table.
 func (w *backfillWorker) handleBackfillTask(d *ddlCtx, task *reorgBackfillTask, bf backfiller) *backfillResult {
 	handleRange := *task
-	result := &backfillResult{addedCount: 0, nextHandle: handleRange.startHandle, err: nil}
+	result := &backfillResult{
+		err:        nil,
+		addedCount: 0,
+		nextHandle: handleRange.startHandle,
+	}
 	lastLogCount := 0
 	lastLogTime := time.Now()
 	startTime := lastLogTime
@@ -177,7 +199,17 @@ func (w *backfillWorker) handleBackfillTask(d *ddlCtx, task *reorgBackfillTask, 
 
 		bf.AddMetricInfo(float64(taskCtx.addedCount))
 		mergeBackfillCtxToResult(&taskCtx, result)
+
+		// Although `handleRange` is for data in one region, but back fill worker still split it into many
+		// small reorg batch size slices and reorg them in many different kv txn.
+		// If a task failed, it may contained some committed small kv txn which has already finished the
+		// small range reorganization.
+		// In the next round of reorganization, the target handle range may overlap with last committed
+		// small ranges. This will cause the `redo` action in reorganization.
+		// So for added count and warnings collection, it is recommended to collect the statistics in every
+		// successfully committed small ranges rather than fetching it in the total result.
 		w.ddlWorker.reorgCtx.increaseRowCount(int64(taskCtx.addedCount))
+		w.ddlWorker.reorgCtx.mergeWarnings(taskCtx.warnings, taskCtx.warningsCount)
 
 		if num := result.scanCount - lastLogCount; num >= 30000 {
 			lastLogCount = result.scanCount
@@ -303,11 +335,10 @@ func (w *worker) handleReorgTasks(reorgInfo *reorgInfo, totalAddedCount *int64, 
 
 	if err != nil {
 		// Update the reorg handle that has been processed.
-		err1 := kv.RunInNewTxn(reorgInfo.d.store, true, func(txn kv.Transaction) error {
-			return errors.Trace(reorgInfo.UpdateReorgMeta(txn, nextHandle, reorgInfo.EndHandle, reorgInfo.PhysicalTableID))
-		})
+		err1 := reorgInfo.UpdateReorgMeta(nextHandle)
 		metrics.BatchAddIdxHistogram.WithLabelValues(metrics.LblError).Observe(elapsedTime.Seconds())
 		logutil.BgLogger().Warn("[ddl] backfill worker handle batch tasks failed",
+			zap.ByteString("elementType", reorgInfo.currElement.TypeKey), zap.Int64("elementID", reorgInfo.currElement.ID),
 			zap.Int64("totalAddedCount", *totalAddedCount), zap.String("startHandle", toString(startHandle)),
 			zap.String("nextHandle", toString(nextHandle)), zap.Int64("batchAddedCount", taskAddedCount),
 			zap.String("taskFailedError", err.Error()), zap.String("takeTime", elapsedTime.String()),
@@ -318,7 +349,9 @@ func (w *worker) handleReorgTasks(reorgInfo *reorgInfo, totalAddedCount *int64, 
 	// nextHandle will be updated periodically in runReorgJob, so no need to update it here.
 	w.reorgCtx.setNextHandle(nextHandle)
 	metrics.BatchAddIdxHistogram.WithLabelValues(metrics.LblOK).Observe(elapsedTime.Seconds())
-	logutil.BgLogger().Info("[ddl] backfill worker handle batch tasks successful", zap.Int64("totalAddedCount", *totalAddedCount), zap.String("startHandle", toString(startHandle)),
+	logutil.BgLogger().Info("[ddl] backfill workers successfully processed batch",
+		zap.ByteString("elementType", reorgInfo.currElement.TypeKey), zap.Int64("elementID", reorgInfo.currElement.ID),
+		zap.Int64("totalAddedCount", *totalAddedCount), zap.String("startHandle", toString(startHandle)),
 		zap.String("nextHandle", toString(nextHandle)), zap.Int64("batchAddedCount", taskAddedCount), zap.String("takeTime", elapsedTime.String()))
 	return nil
 }
@@ -385,6 +418,8 @@ var (
 	TestCheckWorkerNumCh = make(chan struct{})
 	// TestCheckWorkerNumber use for test adjust backfill worker.
 	TestCheckWorkerNumber = int32(16)
+	// TestCheckReorgTimeout is used to mock timeout when reorg data.
+	TestCheckReorgTimeout = int32(0)
 )
 
 func loadDDLReorgVars(w *worker) error {
@@ -480,16 +515,24 @@ func (w *worker) writePhysicalTableRecord(t table.PhysicalTable, bfWorkerType ba
 			sessCtx := newContext(reorgInfo.d.store)
 			sessCtx.GetSessionVars().StmtCtx.IsDDLJobInQueue = true
 
-			if bfWorkerType == typeAddIndexWorker {
-				idxWorker := newAddIndexWorker(sessCtx, w, i, t, indexInfo, decodeColMap)
+			switch bfWorkerType {
+			case typeAddIndexWorker:
+				idxWorker := newAddIndexWorker(sessCtx, w, i, t, indexInfo, decodeColMap, reorgInfo.ReorgMeta.SQLMode)
 				idxWorker.priority = job.Priority
 				backfillWorkers = append(backfillWorkers, idxWorker.backfillWorker)
 				go idxWorker.backfillWorker.run(reorgInfo.d, idxWorker)
-			} else {
-				updateWorker := newUpdateColumnWorker(sessCtx, w, i, t, oldColInfo, colInfo, decodeColMap)
+			case typeUpdateColumnWorker:
+				updateWorker := newUpdateColumnWorker(sessCtx, w, i, t, oldColInfo, colInfo, decodeColMap, reorgInfo.ReorgMeta.SQLMode)
 				updateWorker.priority = job.Priority
 				backfillWorkers = append(backfillWorkers, updateWorker.backfillWorker)
 				go updateWorker.backfillWorker.run(reorgInfo.d, updateWorker)
+			case typeCleanUpIndexWorker:
+				idxWorker := newCleanUpIndexWorker(sessCtx, w, i, t, decodeColMap, reorgInfo.ReorgMeta.SQLMode)
+				idxWorker.priority = job.Priority
+				backfillWorkers = append(backfillWorkers, idxWorker.backfillWorker)
+				go idxWorker.backfillWorker.run(reorgInfo.d, idxWorker)
+			default:
+				return errors.New("unknow backfill type")
 			}
 		}
 		// Shrink the worker size.
@@ -560,11 +603,8 @@ func iterateSnapshotRows(store kv.Storage, priority int, t table.Table, version 
 	}
 
 	ver := kv.Version{Ver: version}
-	snap, err := store.GetSnapshot(ver)
+	snap := store.GetSnapshot(ver)
 	snap.SetOption(kv.Priority, priority)
-	if err != nil {
-		return errors.Trace(err)
-	}
 
 	it, err := snap.Iter(firstKey, upperBound)
 	if err != nil {
