@@ -448,25 +448,20 @@ func (e *selectionExec) Counts() []int64 {
 
 // evalBool evaluates expression to a boolean value.
 func evalBool(exprs []expression.Expression, row []types.Datum, ctx *stmtctx.StatementContext) (bool, error) {
-	var (
-		conditionLength       = len(exprs)
-		remainConditionLength = 0
-	)
+	conditionLength := len(exprs)
 	for _, expr := range exprs {
-		remainConditionLength = conditionLength - 1
+		remainConditionLength := conditionLength - 1
 		data, err := expr.Eval(chunk.MutRowFromDatums(row).ToRow())
 		if err != nil {
 			if remainConditionLength != 0 {
 				for _, expr := range exprs[conditionLength-remainConditionLength:] {
-					remainConditionLength = remainConditionLength - 1
+					remainConditionLength--
 					d, err1 := expr.Eval(chunk.MutRowFromDatums(row).ToRow())
-					if err1 != nil {
-						err1 = nil
-					}
-					if !d.IsNull() {
-						isBool, err1 := data.ToBool(ctx)
+					if !d.IsNull() && err1 == nil {
+						isBool, err1 := d.ToBool(ctx)
+						isBool, err1 = expression.HandleOverflowOnSelection(ctx, isBool, err1)
 						if err1 != nil {
-							err1 = nil
+							return false, errors.Trace(err1)
 						}
 						if isBool != 0 {
 							if remainConditionLength != 0 {
@@ -474,9 +469,10 @@ func evalBool(exprs []expression.Expression, row []types.Datum, ctx *stmtctx.Sta
 							}
 							return false, errors.Trace(err)
 						}
+						return false, nil
 					}
 				}
-				return false, nil
+				return false, errors.Trace(err)
 			}
 			return false, errors.Trace(err)
 		}

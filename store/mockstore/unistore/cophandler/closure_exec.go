@@ -601,30 +601,24 @@ func (e *closureExecutor) processSelection(needCollectDetail bool) (gotRow bool,
 			e.selectionCtx.execDetail.update(begin, gotRow)
 		}(time.Now())
 	}
-
-	var (
-		chk                   = e.scanCtx.chk
-		row                   = chk.GetRow(chk.NumRows() - 1)
-		conditionLength       = len(e.selectionCtx.conditions)
-		remainConditionLength = 0
-	)
+	chk := e.scanCtx.chk
+	row := chk.GetRow(chk.NumRows() - 1)
 	gotRow = true
+	conditionLength := len(e.selectionCtx.conditions)
 	for _, expr := range e.selectionCtx.conditions {
-		remainConditionLength = conditionLength - 1
+		remainConditionLength := conditionLength - 1
 		wc := e.sc.WarningCount()
 		d, err := expr.Eval(row)
 		if err != nil {
 			if remainConditionLength != 0 {
 				for _, expr := range e.selectionCtx.conditions[conditionLength-remainConditionLength:] {
-					remainConditionLength = remainConditionLength - 1
+					remainConditionLength--
 					d, err1 := expr.Eval(row)
-					if err1 != nil {
-						err1 = nil
-					}
-					if !d.IsNull() {
+					if !d.IsNull() && err1 == nil {
 						isBool, err1 := d.ToBool(e.sc)
+						isBool, err1 = expression.HandleOverflowOnSelection(e.sc, isBool, err1)
 						if err1 != nil {
-							err1 = nil
+							return false, errors.Trace(err1)
 						}
 						if isBool != 0 {
 							if remainConditionLength != 0 {
@@ -632,10 +626,11 @@ func (e *closureExecutor) processSelection(needCollectDetail bool) (gotRow bool,
 							}
 							return false, errors.Trace(err)
 						}
+						chk.TruncateTo(chk.NumRows() - 1)
+						return false, nil
 					}
 				}
-				chk.TruncateTo(chk.NumRows() - 1)
-				break
+				return false, errors.Trace(err)
 			}
 			return false, errors.Trace(err)
 		}

@@ -216,26 +216,21 @@ func HandleOverflowOnSelection(sc *stmtctx.StatementContext, val int64, err erro
 // whether the result of the expression list is null, it can only be true when the
 // first returned values is false.
 func EvalBool(ctx sessionctx.Context, exprList CNFExprs, row chunk.Row) (bool, bool, error) {
-	var (
-		hasNull               = false
-		conditionLength       = len(exprList)
-		remainConditionLength = 0
-	)
+	hasNull := false
+	conditionLength := len(exprList)
 	for _, expr := range exprList {
-		remainConditionLength = conditionLength - 1
+		remainConditionLength := conditionLength - 1
 		data, err := expr.Eval(row)
 		if err != nil {
 			if remainConditionLength != 0 {
 				for _, expr := range exprList[conditionLength-remainConditionLength:] {
-					remainConditionLength = remainConditionLength - 1
+					remainConditionLength--
 					d, err1 := expr.Eval(row)
-					if err1 != nil {
-						err1 = nil
-					}
-					if !d.IsNull() {
-						isBool, err1 := data.ToBool(ctx.GetSessionVars().StmtCtx)
+					if !d.IsNull() && err1 == nil {
+						isBool, err1 := d.ToBool(ctx.GetSessionVars().StmtCtx)
+						isBool, err1 = HandleOverflowOnSelection(ctx.GetSessionVars().StmtCtx, isBool, err1)
 						if err1 != nil {
-							err1 = nil
+							return false, false, err
 						}
 						if isBool != 0 {
 							if remainConditionLength != 0 {
@@ -243,9 +238,10 @@ func EvalBool(ctx sessionctx.Context, exprList CNFExprs, row chunk.Row) (bool, b
 							}
 							return false, false, err
 						}
+						return false, false, nil
 					}
 				}
-				return false, false, nil
+				return false, false, err
 			}
 			return false, false, err
 		}
