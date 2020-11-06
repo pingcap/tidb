@@ -16,6 +16,11 @@ package core_test
 import (
 	"context"
 	"fmt"
+	"math"
+	"strings"
+	"sync"
+	"time"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
@@ -29,10 +34,6 @@ import (
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
 	dto "github.com/prometheus/client_model/go"
-	"math"
-	"strings"
-	"sync"
-	"time"
 )
 
 var _ = SerialSuites(&testPointGetSuite{})
