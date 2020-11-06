@@ -2852,12 +2852,8 @@ func (du *baseDateArithmitical) add(ctx sessionctx.Context, date types.Time, int
 		return types.ZeroTime, true, err
 	}
 
-<<<<<<< HEAD
-	goTime, err := date.GoTime(time.Local)
-=======
 func (du *baseDateArithmitical) addDate(ctx sessionctx.Context, date types.Time, year, month, day, nano int64) (types.Time, bool, error) {
 	goTime, err := date.GoTime(time.UTC)
->>>>>>> c243a0b8c... expression: fix ADD_DATE daylight saving time change (#20871)
 	if err := handleInvalidTimeError(ctx, err); err != nil {
 		return types.ZeroTime, true, err
 	}
