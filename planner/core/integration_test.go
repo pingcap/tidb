@@ -1759,3 +1759,16 @@ func (s *testIntegrationSuite) TestPartitionUnionWithPPruningColumn(c *C) {
 			"3290 LE1327_r5"))
 
 }
+
+func (s *testIntegrationSuite) TestDoubleProjectionEliminate(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int, index(a))")
+	tk.MustQuery("explain select b from t order by a limit 5").Check(testkit.Rows(
+		"Projection_7 5.00 root  test.t.b",
+		"└─IndexLookUp_22 5.00 root  limit embedded(offset:0, count:5)",
+		"  ├─Limit_21(Build) 5.00 cop[tikv]  offset:0, count:5",
+		"  │ └─IndexFullScan_19 5.00 cop[tikv] table:t, index:a(a) keep order:true, stats:pseudo",
+		"  └─TableRowIDScan_20(Probe) 5.00 cop[tikv] table:t keep order:false, stats:pseudo"))
+}

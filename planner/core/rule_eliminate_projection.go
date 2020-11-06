@@ -84,8 +84,17 @@ func doPhysicalProjectionElimination(p PhysicalPlan) PhysicalPlan {
 
 	proj, isProj := p.(*PhysicalProjection)
 	if !isProj || !canProjectionBeEliminatedStrict(proj) {
+		if isProj {
+			if child, ok := p.Children()[0].(*PhysicalProjection); ok && !ExprsHasSideEffects(child.Exprs) {
+				for i := range proj.Exprs {
+					proj.Exprs[i] = expression.FoldConstant(ReplaceColumnOfExprInPhysicalProjection(proj.Exprs[i], child, child.Schema()))
+				}
+				p.Children()[0] = child.Children()[0]
+			}
+		}
 		return p
 	}
+
 	child := p.Children()[0]
 	return child
 }
@@ -107,6 +116,22 @@ func eliminatePhysicalProjection(p PhysicalPlan) PhysicalPlan {
 }
 
 type projectionEliminator struct {
+}
+
+// ReplaceColumnOfExprInPhysicalProjection replaces column of expression by another PhysicalProjection.
+func ReplaceColumnOfExprInPhysicalProjection(expr expression.Expression, proj *PhysicalProjection, schema *expression.Schema) expression.Expression {
+	switch v := expr.(type) {
+	case *expression.Column:
+		idx := schema.ColumnIndex(v)
+		if idx != -1 && idx < len(proj.Exprs) {
+			return proj.Exprs[idx]
+		}
+	case *expression.ScalarFunction:
+		for i := range v.GetArgs() {
+			v.GetArgs()[i] = ReplaceColumnOfExprInPhysicalProjection(v.GetArgs()[i], proj, schema)
+		}
+	}
+	return expr
 }
 
 // optimize implements the logicalOptRule interface.

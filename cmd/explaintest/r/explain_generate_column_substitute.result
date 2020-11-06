@@ -261,10 +261,9 @@ a	b	c	e
 desc select * from t order by a+1;
 id	estRows	task	access object	operator info
 Projection_5	10000.00	root		test.t.a, test.t.b, test.t.c, test.t.e
-└─Projection_13	10000.00	root		test.t.a, test.t.b, test.t.c, test.t.e, EMPTY_NAME
-  └─IndexLookUp_12	10000.00	root		
-    ├─IndexFullScan_10(Build)	10000.00	cop[tikv]	table:t, index:expr_idx_c(`a` + 1)	keep order:true, stats:pseudo
-    └─TableRowIDScan_11(Probe)	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+└─IndexLookUp_12	10000.00	root		
+  ├─IndexFullScan_10(Build)	10000.00	cop[tikv]	table:t, index:expr_idx_c(`a` + 1)	keep order:true, stats:pseudo
+  └─TableRowIDScan_11(Probe)	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select * from t order by a+1;
 a	b	c	e
 -1	-2	0	-3
