@@ -78,7 +78,7 @@ func inContainer() bool {
 	return false
 }
 
-// copied from https://github.com/containerd/cgroups/blob/318312a373405e5e91134d8063d04d59768a1bff/utils.go#L251
+// refer to https://github.com/containerd/cgroups/blob/318312a373405e5e91134d8063d04d59768a1bff/utils.go#L251
 func parseUint(s string, base, bitSize int) (uint64, error) {
 	v, err := strconv.ParseUint(s, base, bitSize)
 	if err != nil {
@@ -97,7 +97,7 @@ func parseUint(s string, base, bitSize int) (uint64, error) {
 	return v, nil
 }
 
-// copied from https://github.com/containerd/cgroups/blob/318312a373405e5e91134d8063d04d59768a1bff/utils.go#L243
+// refer to https://github.com/containerd/cgroups/blob/318312a373405e5e91134d8063d04d59768a1bff/utils.go#L243
 func readUint(path string) (uint64, error) {
 	v, err := ioutil.ReadFile(path)
 	if err != nil {
