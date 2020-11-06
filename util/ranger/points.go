@@ -210,8 +210,34 @@ func (r *builder) buildFormBinOp(expr *expression.ScalarFunction) []point {
 		err   error
 		ft    *types.FieldType
 	)
+<<<<<<< HEAD
+=======
+
+	// refineValue refines the constant datum:
+	// 1. for string type since we may eval the constant to another collation instead of its own collation.
+	// 2. for year type since 2-digit year value need adjustment, see https://dev.mysql.com/doc/refman/5.6/en/year.html
+	refineValue := func(col *expression.Column, value *types.Datum) (err error) {
+		if col.RetType.EvalType() == types.ETString && value.Kind() == types.KindString {
+			value.SetString(value.GetString(), col.RetType.Collate)
+		}
+		if col.GetType().Tp == mysql.TypeYear {
+			*value, err = types.ConvertDatumToFloatYear(r.sc, *value)
+		}
+		return
+	}
+>>>>>>> cc0bef82b... util, types: fix overflow & adjustment for the year type in index ranger (#20338)
 	if col, ok := expr.GetArgs()[0].(*expression.Column); ok {
 		value, err = expr.GetArgs()[1].Eval(chunk.Row{})
+<<<<<<< HEAD
+=======
+		if err != nil {
+			return nil
+		}
+		err = refineValue(col, &value)
+		if err != nil {
+			return nil
+		}
+>>>>>>> cc0bef82b... util, types: fix overflow & adjustment for the year type in index ranger (#20338)
 		op = expr.FuncName.L
 		ft = col.RetType
 	} else {
@@ -220,6 +246,17 @@ func (r *builder) buildFormBinOp(expr *expression.ScalarFunction) []point {
 			return nil
 		}
 		ft = col.RetType
+<<<<<<< HEAD
+=======
+		value, err = expr.GetArgs()[0].Eval(chunk.Row{})
+		if err != nil {
+			return nil
+		}
+		err = refineValue(col, &value)
+		if err != nil {
+			return nil
+		}
+>>>>>>> cc0bef82b... util, types: fix overflow & adjustment for the year type in index ranger (#20338)
 
 		value, err = expr.GetArgs()[0].Eval(chunk.Row{})
 		switch expr.FuncName.L {
@@ -368,8 +405,26 @@ func (r *builder) buildFromIn(expr *expression.ScalarFunction) ([]point, bool) {
 			hasNull = true
 			continue
 		}
+<<<<<<< HEAD
 		startPoint := point{value: types.NewDatum(dt.GetValue()), start: true}
 		endPoint := point{value: types.NewDatum(dt.GetValue())}
+=======
+		if dt.Kind() == types.KindString {
+			dt.SetString(dt.GetString(), colCollate)
+		}
+		if expr.GetArgs()[0].GetType().Tp == mysql.TypeYear {
+			dt, err = types.ConvertDatumToFloatYear(r.sc, dt)
+			if err != nil {
+				r.err = ErrUnsupportedType.GenWithStack("expr:%v is not converted to year", e)
+				return fullRange, hasNull
+			}
+		}
+		var startValue, endValue types.Datum
+		dt.Copy(&startValue)
+		dt.Copy(&endValue)
+		startPoint := point{value: startValue, start: true}
+		endPoint := point{value: endValue}
+>>>>>>> cc0bef82b... util, types: fix overflow & adjustment for the year type in index ranger (#20338)
 		rangePoints = append(rangePoints, startPoint, endPoint)
 	}
 	sorter := pointSorter{points: rangePoints, sc: r.sc}

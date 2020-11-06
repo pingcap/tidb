@@ -908,13 +908,42 @@ func AdjustYear(y int64, shouldAdjust bool) (int64, error) {
 		return y, nil
 	}
 	y = int64(adjustYear(int(y)))
-	if y < int64(MinYear) || y > int64(MaxYear) {
+	if y < 0 {
 		return 0, errors.Trace(ErrInvalidYear)
+	}
+	if y < int64(MinYear) {
+		return int64(MinYear), errors.Trace(ErrInvalidYear)
+	}
+	if y > int64(MaxYear) {
+		return int64(MaxYear), errors.Trace(ErrInvalidYear)
 	}
 
 	return y, nil
 }
 
+<<<<<<< HEAD
+=======
+func adjustYearForFloat(y float64, shouldAdjust bool) float64 {
+	if y == 0 && !shouldAdjust {
+		return y
+	}
+	if y >= 0 && y <= 69 {
+		y = 2000 + y
+	} else if y >= 70 && y <= 99 {
+		y = 1900 + y
+	}
+	return y
+}
+
+// NewDuration construct duration with time.
+func NewDuration(hour, minute, second, microsecond int, fsp int8) Duration {
+	return Duration{
+		Duration: gotime.Duration(hour)*gotime.Hour + gotime.Duration(minute)*gotime.Minute + gotime.Duration(second)*gotime.Second + gotime.Duration(microsecond)*gotime.Microsecond,
+		Fsp:      fsp,
+	}
+}
+
+>>>>>>> cc0bef82b... util, types: fix overflow & adjustment for the year type in index ranger (#20338)
 // Duration is the type for MySQL TIME type.
 type Duration struct {
 	gotime.Duration
