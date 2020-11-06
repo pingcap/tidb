@@ -120,7 +120,7 @@ func NewTestKit(c *check.C, store kv.Storage) *TestKit {
 	}
 }
 
-// NewTestKit returns a new *TestKit with a session.
+// NewTestKitWithSession returns a new *TestKit with a session.
 func NewTestKitWithSession(c *check.C, store kv.Storage, se session.Session) *TestKit {
 	return &TestKit{
 		c:     c,
