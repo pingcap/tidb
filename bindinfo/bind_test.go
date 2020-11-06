@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/metrics"
+	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/cluster"
@@ -604,6 +605,13 @@ func (s *testSuite) TestErrorBind(c *C) {
 func (s *testSuite) TestPreparedStmt(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	s.cleanBindingEnv(tk)
+
+	orgEnable := plannercore.PreparedPlanCacheEnabled()
+	defer func() {
+		plannercore.SetPreparedPlanCache(orgEnable)
+	}()
+	plannercore.SetPreparedPlanCache(false) // requires plan cache disabled, or the IndexNames = 1 on first test.
+
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, index idx(a))")
@@ -797,13 +805,13 @@ func (s *testSuite) TestDefaultSessionVars(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	s.cleanBindingEnv(tk)
 	tk.MustQuery(`show variables like "%baselines%"`).Sort().Check(testkit.Rows(
-		"tidb_capture_plan_baselines off",
-		"tidb_evolve_plan_baselines off",
-		"tidb_use_plan_baselines on"))
+		"tidb_capture_plan_baselines OFF",
+		"tidb_evolve_plan_baselines OFF",
+		"tidb_use_plan_baselines ON"))
 	tk.MustQuery(`show global variables like "%baselines%"`).Sort().Check(testkit.Rows(
-		"tidb_capture_plan_baselines off",
-		"tidb_evolve_plan_baselines off",
-		"tidb_use_plan_baselines on"))
+		"tidb_capture_plan_baselines OFF",
+		"tidb_evolve_plan_baselines OFF",
+		"tidb_use_plan_baselines ON"))
 }
 
 func (s *testSuite) TestCaptureBaselinesScope(c *C) {
@@ -811,16 +819,16 @@ func (s *testSuite) TestCaptureBaselinesScope(c *C) {
 	tk2 := testkit.NewTestKit(c, s.store)
 	s.cleanBindingEnv(tk1)
 	tk1.MustQuery(`show session variables like "tidb_capture_plan_baselines"`).Check(testkit.Rows(
-		"tidb_capture_plan_baselines off",
+		"tidb_capture_plan_baselines OFF",
 	))
 	tk1.MustQuery(`show global variables like "tidb_capture_plan_baselines"`).Check(testkit.Rows(
-		"tidb_capture_plan_baselines off",
+		"tidb_capture_plan_baselines OFF",
 	))
 	tk1.MustQuery(`select @@session.tidb_capture_plan_baselines`).Check(testkit.Rows(
-		"off",
+		"0",
 	))
 	tk1.MustQuery(`select @@global.tidb_capture_plan_baselines`).Check(testkit.Rows(
-		"off",
+		"0",
 	))
 
 	tk1.MustExec("set @@session.tidb_capture_plan_baselines = on")
@@ -828,28 +836,28 @@ func (s *testSuite) TestCaptureBaselinesScope(c *C) {
 		tk1.MustExec(" set @@session.tidb_capture_plan_baselines = off")
 	}()
 	tk1.MustQuery(`show session variables like "tidb_capture_plan_baselines"`).Check(testkit.Rows(
-		"tidb_capture_plan_baselines on",
+		"tidb_capture_plan_baselines ON",
 	))
 	tk1.MustQuery(`show global variables like "tidb_capture_plan_baselines"`).Check(testkit.Rows(
-		"tidb_capture_plan_baselines off",
+		"tidb_capture_plan_baselines OFF",
 	))
 	tk1.MustQuery(`select @@session.tidb_capture_plan_baselines`).Check(testkit.Rows(
-		"on",
+		"1",
 	))
 	tk1.MustQuery(`select @@global.tidb_capture_plan_baselines`).Check(testkit.Rows(
-		"off",
+		"0",
 	))
 	tk2.MustQuery(`show session variables like "tidb_capture_plan_baselines"`).Check(testkit.Rows(
-		"tidb_capture_plan_baselines on",
+		"tidb_capture_plan_baselines ON",
 	))
 	tk2.MustQuery(`show global variables like "tidb_capture_plan_baselines"`).Check(testkit.Rows(
-		"tidb_capture_plan_baselines off",
+		"tidb_capture_plan_baselines OFF",
 	))
 	tk2.MustQuery(`select @@session.tidb_capture_plan_baselines`).Check(testkit.Rows(
-		"on",
+		"1",
 	))
 	tk2.MustQuery(`select @@global.tidb_capture_plan_baselines`).Check(testkit.Rows(
-		"off",
+		"0",
 	))
 }
 

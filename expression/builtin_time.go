@@ -27,6 +27,7 @@ import (
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
@@ -1936,7 +1937,7 @@ func (b *builtinStrToDateDateSig) evalTime(row chunk.Row) (types.Time, bool, err
 		return types.ZeroTime, true, handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, t.String()))
 	}
 	if b.ctx.GetSessionVars().SQLMode.HasNoZeroDateMode() && (t.Year() == 0 || t.Month() == 0 || t.Day() == 0) {
-		return types.ZeroTime, true, handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, t.String()))
+		return types.ZeroTime, true, handleInvalidTimeError(b.ctx, types.ErrWrongValueForType.GenWithStackByArgs(types.DateTimeStr, date, ast.StrToDate))
 	}
 	t.SetType(mysql.TypeDate)
 	t.SetFsp(types.MinFsp)
@@ -2002,9 +2003,6 @@ func (b *builtinStrToDateDurationSig) evalDuration(row chunk.Row) (types.Duratio
 	sc := b.ctx.GetSessionVars().StmtCtx
 	succ := t.StrToDate(sc, date, format)
 	if !succ {
-		return types.Duration{}, true, handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, t.String()))
-	}
-	if b.ctx.GetSessionVars().SQLMode.HasNoZeroDateMode() && (t.Year() == 0 || t.Month() == 0 || t.Day() == 0) {
 		return types.Duration{}, true, handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, t.String()))
 	}
 	t.SetFsp(int8(b.tp.Decimal))
@@ -2855,7 +2853,7 @@ func (du *baseDateArithmitical) add(ctx sessionctx.Context, date types.Time, int
 }
 
 func (du *baseDateArithmitical) addDate(ctx sessionctx.Context, date types.Time, year, month, day, nano int64) (types.Time, bool, error) {
-	goTime, err := date.GoTime(time.Local)
+	goTime, err := date.GoTime(time.UTC)
 	if err := handleInvalidTimeError(ctx, err); err != nil {
 		return types.ZeroTime, true, err
 	}
@@ -4851,7 +4849,7 @@ func (c *timestampFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 	}
 	isFloat := false
 	switch args[0].GetType().Tp {
-	case mysql.TypeFloat, mysql.TypeDouble, mysql.TypeNewDecimal:
+	case mysql.TypeFloat, mysql.TypeDouble, mysql.TypeNewDecimal, mysql.TypeLonglong:
 		isFloat = true
 	}
 	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETDatetime, evalTps...)

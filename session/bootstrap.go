@@ -182,7 +182,7 @@ const (
 		tot_col_size 		BIGINT(64) NOT NULL DEFAULT 0,
 		modify_count 		BIGINT(64) NOT NULL DEFAULT 0,
 		version 			BIGINT(64) UNSIGNED NOT NULL DEFAULT 0,
-		cm_sketch 			BLOB,
+		cm_sketch 			BLOB(6291456),
 		stats_ver 			BIGINT(64) NOT NULL DEFAULT 0,
 		flag 				BIGINT(64) NOT NULL DEFAULT 0,
 		correlation 		DOUBLE NOT NULL DEFAULT 0,
@@ -306,14 +306,12 @@ const (
 
 	// CreateSchemaIndexUsageTable stores the index usage information.
 	CreateSchemaIndexUsageTable = `CREATE TABLE IF NOT EXISTS mysql.schema_index_usage (
-		TABLE_SCHEMA varchar(64),
-		TABLE_NAME varchar(64),
-		INDEX_NAME varchar(64),
+		TABLE_ID bigint(64),
+		INDEX_ID bigint(21),
 		QUERY_COUNT bigint(64),
 		ROWS_SELECTED bigint(64),
 		LAST_USED_AT timestamp,
-		LAST_UPDATED_AT timestamp,
-		PRIMARY KEY(TABLE_SCHEMA, TABLE_NAME, INDEX_NAME)
+		PRIMARY KEY(TABLE_ID, INDEX_ID)
 	);`
 )
 
@@ -427,6 +425,8 @@ const (
 	version50 = 50
 	// version51 introduces CreateTablespacePriv to mysql.user.
 	version51 = 51
+	// version52 change mysql.stats_histograms cm_sketch column from blob to blob(6291456)
+	version52 = 52
 )
 
 var (
@@ -481,6 +481,7 @@ var (
 		upgradeToVer49,
 		upgradeToVer50,
 		upgradeToVer51,
+		upgradeToVer52,
 	}
 )
 
@@ -1047,8 +1048,7 @@ func upgradeToVer41(s Session, ver int64) {
 // writeDefaultExprPushDownBlacklist writes default expr pushdown blacklist into mysql.expr_pushdown_blacklist
 func writeDefaultExprPushDownBlacklist(s Session) {
 	mustExecute(s, "INSERT HIGH_PRIORITY INTO mysql.expr_pushdown_blacklist VALUES"+
-		"('date_add','tiflash', 'DST(daylight saving time) does not take effect in TiFlash date_add'),"+
-		"('cast','tiflash', 'Behavior of some corner cases(overflow, truncate etc) is different in TiFlash and TiDB')")
+		"('date_add','tiflash', 'DST(daylight saving time) does not take effect in TiFlash date_add')")
 }
 
 func upgradeToVer42(s Session, ver int64) {
@@ -1183,6 +1183,13 @@ func upgradeToVer51(s Session, ver int64) {
 	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET Create_tablespace_priv='Y' where Super_priv='Y'")
 }
 
+func upgradeToVer52(s Session, ver int64) {
+	if ver >= version52 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.stats_histograms MODIFY cm_sketch BLOB(6291456)")
+}
+
 // updateBootstrapVer updates bootstrap version variable in mysql.TiDB table.
 func updateBootstrapVer(s Session) {
 	// Update bootstrap version.
@@ -1274,7 +1281,7 @@ func doDMLWorks(s Session) {
 				vVal = strconv.Itoa(variable.DefTiDBRowFormatV2)
 			}
 			if v.Name == variable.TiDBEnableClusteredIndex {
-				vVal = "1"
+				vVal = variable.BoolOn
 			}
 			if v.Name == variable.TiDBPartitionPruneMode {
 				vVal = string(variable.StaticOnly)
