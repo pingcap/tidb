@@ -3657,25 +3657,6 @@ func (b *executorBuilder) buildShuffle(v *plannercore.PhysicalShuffle) *ShuffleE
 		concurrency: v.Concurrency,
 	}
 
-	// shuffle.splitter = make([]partitionSplitter, shuffle.concurrency)
-	// switch v.SplitterType {
-	// case plannercore.PartitionHashSplitterType:
-	// 	for i := 0; i < shuffle.concurrency; i++ {
-	// 		shuffle.splitter[i] = &partitionHashSplitter{
-	// 			byItems:    v.ByItems,
-	// 			numWorkers: shuffle.concurrency,
-	// 		}
-	// 	}
-	// case plannercore.PartitionRangeSplitterType:
-	// 	for i := 0; i < shuffle.concurrency; i++ {
-	// 		shuffle.splitter[i] = &partitionRangeSplitter{
-	// 			byItems:    nil,
-	// 			numWorkers: shuffle.concurrency,
-	// 		}
-	// 	}
-	// default:
-	// 	panic("Not implemented. Should not reach here.")
-	// }
 	switch v.SplitterType {
 	case plannercore.PartitionHashSplitterType:
 		shuffle.splitter = &partitionHashSplitter{
@@ -3715,8 +3696,6 @@ func (b *executorBuilder) buildShuffle(v *plannercore.PhysicalShuffle) *ShuffleE
 		if b.err != nil {
 			return nil
 		}
-		w.childExec.base().partitionId = i
-		w.childExec.base().children[0].base().partitionId = i
 
 		shuffle.workers[i] = w
 	}

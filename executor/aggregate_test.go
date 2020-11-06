@@ -1150,16 +1150,12 @@ func reconstructParallelGroupConcatResult(rows [][]interface{}) []string {
 	data := make([]string, 0, len(rows))
 	for _, row := range rows {
 		if str, ok := row[0].(string); ok {
-			data = append(data, str)
+			tokens := strings.Split(str, ",")
+			sort.Slice(tokens, func(i, j int) bool {
+				return tokens[i] < tokens[j]
+			})
+			data = append(data, strings.Join(tokens, ","))
 		}
-	}
-
-	for i := 0; i < len(data); i++ {
-		tokens := strings.Split(data[i], ",")
-		sort.Slice(tokens, func(i, j int) bool {
-			return tokens[i] < tokens[j]
-		})
-		data[i] = strings.Join(tokens, ",")
 	}
 
 	sort.Slice(data, func(i, j int) bool {
