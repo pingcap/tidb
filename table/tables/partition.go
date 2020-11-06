@@ -116,6 +116,8 @@ func newPartitionExpr(tblInfo *model.TableInfo) (*PartitionExpr, error) {
 		return generateRangePartitionExpr(ctx, pi, columns, names)
 	case model.PartitionTypeHash:
 		return generateHashPartitionExpr(ctx, pi, columns, names)
+	case model.PartitionTypeList:
+		return generateListPartitionExpr(ctx, pi, columns, names)
 	}
 	panic("cannot reach here")
 }
@@ -132,6 +134,10 @@ type PartitionExpr struct {
 	*ForRangePruning
 	// Used in the range column pruning process.
 	*ForRangeColumnsPruning
+	// ColOffset is the offsets of partition columns.
+	ColumnOffset []int
+	// InValues: x in (1,2); x in (3,4); x in (5,6), used for list partition.
+	InValues []expression.Expression
 }
 
 func initEvalBufferType(t *partitionedTable) {
@@ -292,12 +298,28 @@ func generateRangePartitionExpr(ctx sessionctx.Context, pi *model.PartitionInfo,
 		UpperBounds: locateExprs,
 	}
 
+	// build column offset.
+	partExp := pi.Expr
+	if len(pi.Columns) == 1 {
+		partExp = pi.Columns[0].L
+	}
+	exprs, err := parseSimpleExprWithNames(p, ctx, partExp, schema, names)
+	if err != nil {
+		return nil, err
+	}
+	partitionCols := expression.ExtractColumns(exprs)
+	offset := make([]int, len(partitionCols))
+	for i, col := range columns {
+		for j, partitionCol := range partitionCols {
+			if partitionCol.UniqueID == col.UniqueID {
+				offset[j] = i
+			}
+		}
+	}
+	ret.ColumnOffset = offset
+
 	switch len(pi.Columns) {
 	case 0:
-		exprs, err := parseSimpleExprWithNames(p, ctx, pi.Expr, schema, names)
-		if err != nil {
-			return nil, err
-		}
 		tmp, err := dataForRangePruning(ctx, pi)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -316,6 +338,134 @@ func generateRangePartitionExpr(ctx sessionctx.Context, pi *model.PartitionInfo,
 	return ret, nil
 }
 
+func generateListPartitionExpr(ctx sessionctx.Context, pi *model.PartitionInfo,
+	columns []*expression.Column, names types.NameSlice) (*PartitionExpr, error) {
+	// The caller should assure partition info is not nil.
+	locateExprs := make([]expression.Expression, 0, len(pi.Definitions))
+	schema := expression.NewSchema(columns...)
+	p := parser.New()
+	for _, def := range pi.Definitions {
+		exprStr, err := generateListPartitionExprStr(ctx, pi, schema, names, &def, p)
+		if err != nil {
+			return nil, err
+		}
+		expr, err := parseSimpleExprWithNames(p, ctx, exprStr, schema, names)
+		if err != nil {
+			// If it got an error here, ddl may hang forever, so this error log is important.
+			logutil.BgLogger().Error("wrong table partition expression", zap.String("expression", exprStr), zap.Error(err))
+			return nil, errors.Trace(err)
+		}
+		locateExprs = append(locateExprs, expr)
+	}
+	ret := &PartitionExpr{
+		InValues: locateExprs,
+	}
+	return ret, nil
+}
+
+func generateListPartitionExprStr(ctx sessionctx.Context, pi *model.PartitionInfo,
+	schema *expression.Schema, names types.NameSlice, def *model.PartitionDefinition, p *parser.Parser) (string, error) {
+	if len(pi.Columns) < 2 {
+		return generateListColumnsPartitionExprStr(ctx, pi, schema, names, def, p)
+	}
+	return generateMultiListColumnsPartitionExprStr(ctx, pi, schema, names, def, p)
+}
+
+func generateListColumnsPartitionExprStr(ctx sessionctx.Context, pi *model.PartitionInfo,
+	schema *expression.Schema, names types.NameSlice, def *model.PartitionDefinition, p *parser.Parser) (string, error) {
+	var partStr string
+	if len(pi.Columns) == 0 {
+		partStr = pi.Expr
+	} else if len(pi.Columns) == 1 {
+		partStr = pi.Columns[0].L
+	} else {
+		return generateMultiListColumnsPartitionExprStr(ctx, pi, schema, names, def, p)
+	}
+	var buf, nullCondBuf bytes.Buffer
+	fmt.Fprintf(&buf, "(%s in (", partStr)
+	for i, vs := range def.InValues {
+		if i > 0 {
+			buf.WriteByte(',')
+		}
+		buf.WriteString(vs[0])
+	}
+	buf.WriteString("))")
+	for _, vs := range def.InValues {
+		nullCondBuf.Reset()
+		hasNull := false
+		for i, value := range vs {
+			expr, err := parseSimpleExprWithNames(p, ctx, value, schema, names)
+			if err != nil {
+				return "", errors.Trace(err)
+			}
+			v, err := expr.Eval(chunk.Row{})
+			if err != nil {
+				return "", errors.Trace(err)
+			}
+			if i > 0 {
+				nullCondBuf.WriteString(" and ")
+			}
+			if v.IsNull() {
+				hasNull = true
+				fmt.Fprintf(&nullCondBuf, "%s is null", partStr)
+			} else {
+				fmt.Fprintf(&nullCondBuf, "%s = %s", partStr, value)
+			}
+		}
+		if hasNull {
+			fmt.Fprintf(&buf, " or (%s) ", nullCondBuf.String())
+		}
+	}
+	return buf.String(), nil
+}
+
+func generateMultiListColumnsPartitionExprStr(ctx sessionctx.Context, pi *model.PartitionInfo,
+	schema *expression.Schema, names types.NameSlice, def *model.PartitionDefinition, p *parser.Parser) (string, error) {
+	var buf, nullCondBuf bytes.Buffer
+	var partStr string
+	for i, col := range pi.Columns {
+		if i > 0 {
+			partStr += ","
+		}
+		partStr += col.L
+	}
+	fmt.Fprintf(&buf, "((%s) in (", partStr)
+	for i, vs := range def.InValues {
+		if i > 0 {
+			buf.WriteByte(',')
+		}
+		fmt.Fprintf(&buf, "(%s)", strings.Join(vs, ","))
+	}
+	buf.WriteString("))")
+	for _, vs := range def.InValues {
+		nullCondBuf.Reset()
+		hasNull := false
+		for i, value := range vs {
+			expr, err := parseSimpleExprWithNames(p, ctx, value, schema, names)
+			if err != nil {
+				return "", errors.Trace(err)
+			}
+			v, err := expr.Eval(chunk.Row{})
+			if err != nil {
+				return "", errors.Trace(err)
+			}
+			if i > 0 {
+				nullCondBuf.WriteString(" and ")
+			}
+			if v.IsNull() {
+				hasNull = true
+				fmt.Fprintf(&nullCondBuf, "%s is null", pi.Columns[i])
+			} else {
+				fmt.Fprintf(&nullCondBuf, "%s = %s", pi.Columns[i], value)
+			}
+		}
+		if hasNull {
+			fmt.Fprintf(&buf, " or (%s) ", nullCondBuf.String())
+		}
+	}
+	return buf.String(), nil
+}
+
 func generateHashPartitionExpr(ctx sessionctx.Context, pi *model.PartitionInfo,
 	columns []*expression.Column, names types.NameSlice) (*PartitionExpr, error) {
 	// The caller should assure partition info is not nil.
@@ -330,10 +480,21 @@ func generateHashPartitionExpr(ctx sessionctx.Context, pi *model.PartitionInfo,
 		logutil.BgLogger().Error("wrong table partition expression", zap.String("expression", pi.Expr), zap.Error(err))
 		return nil, errors.Trace(err)
 	}
+	// build column offset.
+	partitionCols := expression.ExtractColumns(exprs)
+	offset := make([]int, len(partitionCols))
+	for i, col := range columns {
+		for j, partitionCol := range partitionCols {
+			if partitionCol.UniqueID == col.UniqueID {
+				offset[j] = i
+			}
+		}
+	}
 	exprs.HashCode(ctx.GetSessionVars().StmtCtx)
 	return &PartitionExpr{
-		Expr:     exprs,
-		OrigExpr: origExpr,
+		Expr:         exprs,
+		OrigExpr:     origExpr,
+		ColumnOffset: offset,
 	}, nil
 }
 
@@ -361,6 +522,8 @@ func (t *partitionedTable) locatePartition(ctx sessionctx.Context, pi *model.Par
 		}
 	case model.PartitionTypeHash:
 		idx, err = t.locateHashPartition(ctx, pi, r)
+	case model.PartitionTypeList:
+		idx, err = t.locateListPartition(ctx, pi, r)
 	}
 	if err != nil {
 		return 0, errors.Trace(err)
@@ -411,6 +574,33 @@ func (t *partitionedTable) locateRangeColumnPartition(ctx sessionctx.Context, pi
 		return 0, table.ErrNoPartitionForGivenValue.GenWithStackByArgs(valueMsg)
 	}
 	return idx, nil
+}
+
+func (t *partitionedTable) locateListPartition(ctx sessionctx.Context, pi *model.PartitionInfo, r []types.Datum) (int, error) {
+	for i, expr := range t.partitionExpr.InValues {
+		ret, _, err := expr.EvalInt(ctx, chunk.MutRowFromDatums(r).ToRow())
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		if ret > 0 {
+			return i, nil
+		}
+	}
+	// The data does not belong to any of the partition returns `table has no partition for value %s`.
+	var valueMsg string
+	if pi.Expr != "" {
+		e, err := expression.ParseSimpleExprWithTableInfo(ctx, pi.Expr, t.meta)
+		if err == nil {
+			val, _, err := e.EvalInt(ctx, chunk.MutRowFromDatums(r).ToRow())
+			if err == nil {
+				valueMsg = fmt.Sprintf("%d", val)
+			}
+		}
+	} else {
+		// When the table is partitioned by list columns.
+		valueMsg = "from column_list"
+	}
+	return 0, table.ErrNoPartitionForGivenValue.GenWithStackByArgs(valueMsg)
 }
 
 func (t *partitionedTable) locateRangePartition(ctx sessionctx.Context, pi *model.PartitionInfo, r []types.Datum) (int, error) {

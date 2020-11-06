@@ -19,6 +19,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/printer"
@@ -340,12 +341,16 @@ func (b *builtinTiDBDecodeKeySig) vecEvalString(input *chunk.Chunk, result *chun
 		return err
 	}
 	result.ReserveString(n)
+	decode := func(ctx sessionctx.Context, s string) string { return s }
+	if fn := b.ctx.Value(TiDBDecodeKeyFunctionKey); fn != nil {
+		decode = fn.(func(ctx sessionctx.Context, s string) string)
+	}
 	for i := 0; i < n; i++ {
 		if buf.IsNull(i) {
 			result.AppendNull()
 			continue
 		}
-		result.AppendString(decodeKey(b.ctx, buf.GetString(i)))
+		result.AppendString(decode(b.ctx, buf.GetString(i)))
 	}
 	return nil
 }

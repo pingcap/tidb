@@ -29,6 +29,7 @@ import (
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
@@ -135,12 +136,11 @@ func (ss *RegionBatchRequestSender) sendStreamReqToAddr(bo *Backoffer, ctxs []co
 	if rawHook := ctx.Value(RPCCancellerCtxKey{}); rawHook != nil {
 		ctx, cancel = rawHook.(*RPCCanceller).WithCancel(ctx)
 	}
-	if ss.Stats != nil {
-		defer func(start time.Time) {
-			recordRegionRequestRuntimeStats(ss.Stats, req.Type, time.Since(start))
-		}(time.Now())
-	}
+	start := time.Now()
 	resp, err = ss.client.SendRequest(ctx, rpcCtx.Addr, req, timout)
+	if ss.Stats != nil {
+		recordRegionRequestRuntimeStats(ss.Stats, req.Type, time.Since(start))
+	}
 	if err != nil {
 		cancel()
 		ss.rpcError = err
@@ -204,6 +204,28 @@ func (s *RegionRequestSender) SendReq(bo *Backoffer, req *tikvrpc.Request, regio
 	return resp, err
 }
 
+func (s *RegionRequestSender) getRPCContext(
+	bo *Backoffer,
+	req *tikvrpc.Request,
+	regionID RegionVerID,
+	sType kv.StoreType,
+) (*RPCContext, error) {
+	switch sType {
+	case kv.TiKV:
+		var seed uint32
+		if req.ReplicaReadSeed != nil {
+			seed = *req.ReplicaReadSeed
+		}
+		return s.regionCache.GetTiKVRPCContext(bo, regionID, req.ReplicaReadType, seed)
+	case kv.TiFlash:
+		return s.regionCache.GetTiFlashRPCContext(bo, regionID)
+	case kv.TiDB:
+		return &RPCContext{Addr: s.storeAddr}, nil
+	default:
+		return nil, errors.Errorf("unsupported storage type: %v", sType)
+	}
+}
+
 // SendReqCtx sends a request to tikv server and return response and RPCCtx of this RPC.
 func (s *RegionRequestSender) SendReqCtx(
 	bo *Backoffer,
@@ -217,7 +239,7 @@ func (s *RegionRequestSender) SendReqCtx(
 	err error,
 ) {
 	if span := opentracing.SpanFromContext(bo.ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("regionReqauest.SendReqCtx", opentracing.ChildOf(span.Context()))
+		span1 := span.Tracer().StartSpan("regionRequest.SendReqCtx", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
 		bo = bo.Clone()
 		bo.ctx = opentracing.ContextWithSpan(bo.ctx, span1)
@@ -250,36 +272,17 @@ func (s *RegionRequestSender) SendReqCtx(
 		}
 	})
 
-	var replicaRead kv.ReplicaReadType
-	if req.ReplicaRead {
-		replicaRead = kv.ReplicaReadFollower
-	} else {
-		replicaRead = kv.ReplicaReadLeader
-	}
 	tryTimes := 0
 	for {
 		if (tryTimes > 0) && (tryTimes%100000 == 0) {
 			logutil.Logger(bo.ctx).Warn("retry get ", zap.Uint64("region = ", regionID.GetID()), zap.Int("times = ", tryTimes))
 		}
-		switch sType {
-		case kv.TiKV:
-			var seed uint32
-			if req.ReplicaReadSeed != nil {
-				seed = *req.ReplicaReadSeed
-			}
-			rpcCtx, err = s.regionCache.GetTiKVRPCContext(bo, regionID, replicaRead, seed)
-		case kv.TiFlash:
-			rpcCtx, err = s.regionCache.GetTiFlashRPCContext(bo, regionID)
-		case kv.TiDB:
-			rpcCtx = &RPCContext{
-				Addr: s.storeAddr,
-			}
-		default:
-			err = errors.Errorf("unsupported storage type: %v", sType)
-		}
+
+		rpcCtx, err = s.getRPCContext(bo, req, regionID, sType)
 		if err != nil {
 			return nil, nil, err
 		}
+
 		failpoint.Inject("invalidCacheAndRetry", func() {
 			// cooperate with github.com/pingcap/tidb/store/tikv/gcworker/setGcResolveMaxBackoff
 			if c := bo.ctx.Value("injectedBackoff"); c != nil {
@@ -398,21 +401,40 @@ func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, rpcCtx *RPCContext,
 		defer s.releaseStoreToken(rpcCtx.Store)
 	}
 
-	if s.Stats != nil {
-		defer func(start time.Time) {
-			recordRegionRequestRuntimeStats(s.Stats, req.Type, time.Since(start))
-		}(time.Now())
-	}
-
 	ctx := bo.ctx
 	if rawHook := ctx.Value(RPCCancellerCtxKey{}); rawHook != nil {
 		var cancel context.CancelFunc
 		ctx, cancel = rawHook.(*RPCCanceller).WithCancel(ctx)
 		defer cancel()
 	}
+	start := time.Now()
 	resp, err = s.client.SendRequest(ctx, rpcCtx.Addr, req, timeout)
+	if s.Stats != nil {
+		recordRegionRequestRuntimeStats(s.Stats, req.Type, time.Since(start))
+		failpoint.Inject("tikvStoreRespResult", func(val failpoint.Value) {
+			if val.(bool) {
+				if req.Type == tikvrpc.CmdCop && bo.totalSleep == 0 {
+					failpoint.Return(&tikvrpc.Response{
+						Resp: &coprocessor.Response{RegionError: &errorpb.Error{EpochNotMatch: &errorpb.EpochNotMatch{}}},
+					}, false, nil)
+				}
+			}
+		})
+	}
 	if err != nil {
+		// Because in rpc logic, context.Cancel() will be transferred to rpcContext.Cancel error. For rpcContext cancel,
+		// we need to retry the request. But for context cancel active, for example, limitExec gets the required rows,
+		// we shouldn't retry the request, it will go to backoff and hang in retry logic.
+		if ctx.Err() != nil && errors.Cause(ctx.Err()) == context.Canceled {
+			return nil, false, errors.Trace(ctx.Err())
+		}
+
 		s.rpcError = err
+		failpoint.Inject("noRetryOnRpcError", func(val failpoint.Value) {
+			if val.(bool) {
+				failpoint.Return(nil, false, err)
+			}
+		})
 		if e := s.onSendFail(bo, rpcCtx, err); e != nil {
 			return nil, false, errors.Trace(e)
 		}

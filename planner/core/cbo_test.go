@@ -496,7 +496,7 @@ func (s *testAnalyzeSuite) TestNullCount(c *C) {
 		testKit.MustQuery(input[i]).Check(testkit.Rows(output[i]...))
 	}
 	h := dom.StatsHandle()
-	h.Clear()
+	h.Clear4Test()
 	c.Assert(h.Update(dom.InfoSchema()), IsNil)
 	for i := 2; i < 4; i++ {
 		s.testData.OnRecord(func() {
@@ -552,7 +552,7 @@ func (s *testAnalyzeSuite) TestInconsistentEstimation(c *C) {
 	tk.MustExec("analyze table t with 2 buckets")
 	// Force using the histogram to estimate.
 	tk.MustExec("update mysql.stats_histograms set stats_ver = 0")
-	dom.StatsHandle().Clear()
+	dom.StatsHandle().Clear4Test()
 	dom.StatsHandle().Update(dom.InfoSchema())
 	// Using the histogram (a, b) to estimate `a = 5` will get 1.22, while using the CM Sketch to estimate
 	// the `a = 5 and c = 5` will get 10, it is not consistent.
@@ -815,6 +815,38 @@ func (s *testAnalyzeSuite) TestLimitCrossEstimation(c *C) {
 	}
 }
 
+func (s *testAnalyzeSuite) TestLowSelIndexGreedySearch(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	testKit := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("create table t (a varchar(32) default null, b varchar(10) default null, c varchar(12) default null, d varchar(32) default null, e bigint(10) default null, key idx1 (d,a), key idx2 (a,c), key idx3 (c,b), key idx4 (e))")
+	err = s.loadTableStats("analyzeSuiteTestLowSelIndexGreedySearchT.json", dom)
+	c.Assert(err, IsNil)
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	// The test purposes are:
+	// - index `idx2` runs much faster than `idx4` experimentally;
+	// - estimated row count of IndexLookUp should be 0;
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
+		})
+		testKit.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
+	}
+}
+
 func (s *testAnalyzeSuite) TestUpdateProjEliminate(c *C) {
 	store, dom, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
@@ -894,5 +926,37 @@ func (s *testAnalyzeSuite) TestIndexEqualUnknown(c *C) {
 			output[i].Plan = s.testData.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
 		})
 		testKit.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
+	}
+}
+
+func (s *testAnalyzeSuite) TestLimitIndexEstimation(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, key idx_a(a), key idx_b(b))")
+	// Values in column a are from 1 to 1000000, values in column b are from 1000000 to 1,
+	// these 2 columns are strictly correlated in reverse order.
+	err = s.loadTableStats("analyzeSuiteTestLimitIndexEstimationT.json", dom)
+	c.Assert(err, IsNil)
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+		})
+		tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
 	}
 }

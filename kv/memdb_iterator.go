@@ -98,12 +98,25 @@ func (i *memdbIterator) Flags() KeyFlags {
 	return i.curr.getKeyFlags()
 }
 
+func (i *memdbIterator) UpdateFlags(ops ...FlagsOp) {
+	origin := i.curr.getKeyFlags()
+	n := applyFlagsOps(origin, ops...)
+	i.curr.setKeyFlags(n)
+}
+
 func (i *memdbIterator) HasValue() bool {
 	return !i.isFlagsOnly()
 }
 
 func (i *memdbIterator) Key() Key {
 	return i.curr.getKey()
+}
+
+func (i *memdbIterator) Handle() MemKeyHandle {
+	return MemKeyHandle{
+		idx: uint16(i.curr.addr.idx),
+		off: i.curr.addr.off,
+	}
 }
 
 func (i *memdbIterator) Value() []byte {

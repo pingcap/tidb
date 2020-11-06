@@ -18,7 +18,6 @@ import (
 	"fmt"
 	"math"
 	"math/bits"
-	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -102,8 +101,8 @@ const (
 	HintTimeRange = "time_range"
 	// HintIgnorePlanCache is a hint to enforce ignoring plan cache
 	HintIgnorePlanCache = "ignore_plan_cache"
-	// HintTopNToCop is a hint enforce pushing topn to coprocessor.
-	HintTopNToCop = "topn_to_cop"
+	// HintLimitToCop is a hint enforce pushing limit or topn to coprocessor.
+	HintLimitToCop = "limit_to_cop"
 )
 
 const (
@@ -112,15 +111,6 @@ const (
 	// ErrExprInOrderBy  is in order by items for the error of ErrFieldNotInGroupBy
 	ErrExprInOrderBy = "ORDER BY"
 )
-
-func (la *LogicalAggregation) collectGroupByColumns() {
-	la.groupByCols = la.groupByCols[:0]
-	for _, item := range la.GroupByItems {
-		if col, ok := item.(*expression.Column); ok {
-			la.groupByCols = append(la.groupByCols, col)
-		}
-	}
-}
 
 // aggOrderByResolver is currently resolving expressions of order by clause
 // in aggregate function GROUP_CONCAT.
@@ -260,7 +250,6 @@ func (b *PlanBuilder) buildAggregation(ctx context.Context, p LogicalPlan, aggFu
 	plan4Agg.SetChildren(p)
 	plan4Agg.GroupByItems = gbyItems
 	plan4Agg.SetSchema(schema4Agg)
-	plan4Agg.collectGroupByColumns()
 	return plan4Agg, aggIndexMap, nil
 }
 
@@ -1083,7 +1072,6 @@ func (b *PlanBuilder) buildDistinct(child LogicalPlan, length int) (*LogicalAggr
 	if hint := b.TableHints(); hint != nil {
 		plan4Agg.aggHints = hint.aggHints
 	}
-	plan4Agg.collectGroupByColumns()
 	for _, col := range child.Schema().Columns {
 		aggDesc, err := aggregation.NewAggFuncDesc(b.ctx, ast.AggFuncFirstRow, []expression.Expression{col}, false)
 		if err != nil {
@@ -1171,8 +1159,22 @@ func (b *PlanBuilder) buildSetOpr(ctx context.Context, setOpr *ast.SetOprStmt) (
 	afterSetOprs := make([]*ast.SetOprType, 0, len(setOpr.SelectList.Selects))
 	selects := setOpr.SelectList.Selects
 	for i := 0; i < len(selects); i++ {
-		intersects := []*ast.SelectStmt{selects[i]}
-		for i+1 < len(selects) && *selects[i+1].AfterSetOperator == ast.Intersect {
+		intersects := []ast.Node{selects[i]}
+		for i+1 < len(selects) {
+			breakIteration := false
+			switch x := selects[i+1].(type) {
+			case *ast.SelectStmt:
+				if *x.AfterSetOperator != ast.Intersect && *x.AfterSetOperator != ast.IntersectAll {
+					breakIteration = true
+				}
+			case *ast.SetOprSelectList:
+				if *x.AfterSetOperator != ast.Intersect && *x.AfterSetOperator != ast.IntersectAll {
+					breakIteration = true
+				}
+			}
+			if breakIteration {
+				break
+			}
 			intersects = append(intersects, selects[i+1])
 			i++
 		}
@@ -1255,18 +1257,42 @@ func (b *PlanBuilder) buildSemiJoinForSetOperator(
 
 // buildIntersect build the set operator for 'intersect'. It is called before buildExcept and buildUnion because of its
 // higher precedence.
-func (b *PlanBuilder) buildIntersect(ctx context.Context, selects []*ast.SelectStmt) (LogicalPlan, *ast.SetOprType, error) {
-	leftPlan, err := b.buildSelect(ctx, selects[0])
+func (b *PlanBuilder) buildIntersect(ctx context.Context, selects []ast.Node) (LogicalPlan, *ast.SetOprType, error) {
+	var leftPlan LogicalPlan
+	var err error
+	var afterSetOperator *ast.SetOprType
+	switch x := selects[0].(type) {
+	case *ast.SelectStmt:
+		afterSetOperator = x.AfterSetOperator
+		leftPlan, err = b.buildSelect(ctx, x)
+	case *ast.SetOprSelectList:
+		afterSetOperator = x.AfterSetOperator
+		leftPlan, err = b.buildSetOpr(ctx, &ast.SetOprStmt{SelectList: x})
+	}
 	if err != nil {
 		return nil, nil, err
 	}
 	if len(selects) == 1 {
-		return leftPlan, selects[0].AfterSetOperator, nil
+		return leftPlan, afterSetOperator, nil
 	}
 
 	columnNums := leftPlan.Schema().Len()
 	for i := 1; i < len(selects); i++ {
-		rightPlan, err := b.buildSelect(ctx, selects[i])
+		var rightPlan LogicalPlan
+		switch x := selects[i].(type) {
+		case *ast.SelectStmt:
+			if *x.AfterSetOperator == ast.IntersectAll {
+				// TODO: support intersect all
+				return nil, nil, errors.Errorf("TiDB do not support intersect all")
+			}
+			rightPlan, err = b.buildSelect(ctx, x)
+		case *ast.SetOprSelectList:
+			if *x.AfterSetOperator == ast.IntersectAll {
+				// TODO: support intersect all
+				return nil, nil, errors.Errorf("TiDB do not support intersect all")
+			}
+			rightPlan, err = b.buildSetOpr(ctx, &ast.SetOprStmt{SelectList: x})
+		}
 		if err != nil {
 			return nil, nil, err
 		}
@@ -1278,7 +1304,7 @@ func (b *PlanBuilder) buildIntersect(ctx context.Context, selects []*ast.SelectS
 			return nil, nil, err
 		}
 	}
-	return leftPlan, selects[0].AfterSetOperator, nil
+	return leftPlan, afterSetOperator, nil
 }
 
 // buildExcept build the set operators for 'except', and in this function, it calls buildUnion at the same time. Because
@@ -1303,6 +1329,9 @@ func (b *PlanBuilder) buildExcept(ctx context.Context, selects []LogicalPlan, af
 			}
 			unionPlans = []LogicalPlan{leftPlan}
 			tmpAfterSetOpts = []*ast.SetOprType{nil}
+		} else if *afterSetOpts[i] == ast.ExceptAll {
+			// TODO: support except all.
+			return nil, errors.Errorf("TiDB do not support except all")
 		} else {
 			unionPlans = append(unionPlans, rightPlan)
 			tmpAfterSetOpts = append(tmpAfterSetOpts, afterSetOpts[i])
@@ -1499,7 +1528,7 @@ func (b *PlanBuilder) buildLimit(src LogicalPlan, limit *ast.Limit) (LogicalPlan
 		Count:  count,
 	}.Init(b.ctx, b.getSelectOffset())
 	if hint := b.TableHints(); hint != nil {
-		li.topnHints = hint.topnHints
+		li.limitHints = hint.limitHints
 	}
 	li.SetChildren(src)
 	return li, nil
@@ -1926,12 +1955,12 @@ func (g *gbyResolver) Leave(inNode ast.Node) (ast.Node, bool) {
 		}
 		ret := g.fields[pos-1].Expr
 		ret.Accept(extractor)
-		if len(extractor.AggFuncs) != 0 {
-			g.err = ErrWrongGroupField.GenWithStackByArgs(g.fields[pos-1].Text())
-			return inNode, false
-		}
-		if _, ok := ret.(*ast.WindowFuncExpr); ok {
-			g.err = ErrWrongGroupField.GenWithStackByArgs(g.fields[pos-1].Text())
+		if len(extractor.AggFuncs) != 0 || ast.HasWindowFlag(ret) {
+			fieldName := g.fields[pos-1].AsName.String()
+			if fieldName == "" {
+				fieldName = g.fields[pos-1].Text()
+			}
+			g.err = ErrWrongGroupField.GenWithStackByArgs(fieldName)
 			return inNode, false
 		}
 		return ret, true
@@ -2140,7 +2169,7 @@ func checkExprInGroupBy(
 	}
 	if _, ok := expr.(*ast.ColumnNameExpr); !ok {
 		for _, gbyExpr := range gbyExprs {
-			if reflect.DeepEqual(gbyExpr, expr) {
+			if ast.ExpressionDeepEqual(gbyExpr, expr) {
 				return
 			}
 		}
@@ -2417,7 +2446,7 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, nodeType u
 		tiflashTables, tikvTables                                                                             []hintTableInfo
 		aggHints                                                                                              aggHintInfo
 		timeRangeHint                                                                                         ast.HintTimeRange
-		topnHints                                                                                             topnHintInfo
+		limitHints                                                                                            limitHintInfo
 	)
 	for _, hint := range hints {
 		// Set warning for the hint that requires the table name.
@@ -2505,8 +2534,8 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, nodeType u
 			})
 		case HintTimeRange:
 			timeRangeHint = hint.HintData.(ast.HintTimeRange)
-		case HintTopNToCop:
-			topnHints.preferTopNToCop = true
+		case HintLimitToCop:
+			limitHints.preferLimitToCop = true
 		default:
 			// ignore hints that not implemented
 		}
@@ -2523,7 +2552,7 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, nodeType u
 		aggHints:                    aggHints,
 		indexMergeHintList:          indexMergeHintList,
 		timeRangeHint:               timeRangeHint,
-		topnHints:                   topnHints,
+		limitHints:                  limitHints,
 	})
 }
 
@@ -2604,8 +2633,12 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 		// table hints are only visible in the current SELECT statement.
 		b.popTableHints()
 	}()
-
+	enableNoopFuncs := b.ctx.GetSessionVars().EnableNoopFuncs
 	if sel.SelectStmtOpts != nil {
+		if sel.SelectStmtOpts.CalcFoundRows && !enableNoopFuncs {
+			err = expression.ErrFunctionsNoopImpl.GenWithStackByArgs("SQL_CALC_FOUND_ROWS")
+			return nil, err
+		}
 		origin := b.inStraightJoin
 		b.inStraightJoin = sel.SelectStmtOpts.StraightJoin
 		defer func() { b.inStraightJoin = origin }()
@@ -2665,14 +2698,26 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 		return nil, err
 	}
 
+	// b.allNames will be used in evalDefaultExpr(). Default function is special because it needs to find the
+	// corresponding column name, but does not need the value in the column.
+	// For example, select a from t order by default(b), the column b will not be in select fields. Also because
+	// buildSort is after buildProjection, so we need get OutputNames before BuildProjection and store in allNames.
+	// Otherwise, we will get select fields instead of all OutputNames, so that we can't find the column b in the
+	// above example.
+	b.allNames = append(b.allNames, p.OutputNames())
+	defer func() { b.allNames = b.allNames[:len(b.allNames)-1] }()
+
 	if sel.Where != nil {
 		p, err = b.buildSelection(ctx, p, sel.Where, nil)
 		if err != nil {
 			return nil, err
 		}
 	}
-
 	if sel.LockInfo != nil && sel.LockInfo.LockType != ast.SelectLockNone {
+		if sel.LockInfo.LockType == ast.SelectLockInShareMode && !enableNoopFuncs {
+			err = expression.ErrFunctionsNoopImpl.GenWithStackByArgs("LOCK IN SHARE MODE")
+			return nil, err
+		}
 		p = b.buildSelectLock(p, sel.LockInfo)
 	}
 	b.handleHelper.popMap()
@@ -2800,10 +2845,10 @@ func getStatsTable(ctx sessionctx.Context, tblInfo *model.TableInfo, pid int64) 
 	}
 
 	var statsTbl *statistics.Table
-	if pid != tblInfo.ID {
-		statsTbl = statsHandle.GetPartitionStats(tblInfo, pid)
-	} else {
+	if pid == tblInfo.ID || ctx.GetSessionVars().UseDynamicPartitionPrune() {
 		statsTbl = statsHandle.GetTableStats(tblInfo)
+	} else {
+		statsTbl = statsHandle.GetPartitionStats(tblInfo, pid)
 	}
 
 	// 2. table row count from statistics is zero.
@@ -2919,7 +2964,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		columns = tbl.Cols()
 	}
 	var statisticTable *statistics.Table
-	if _, ok := tbl.(table.PartitionedTable); !ok {
+	if _, ok := tbl.(table.PartitionedTable); !ok || b.ctx.GetSessionVars().UseDynamicPartitionPrune() {
 		statisticTable = getStatsTable(b.ctx, tbl.Meta(), tbl.Meta().ID)
 	}
 
@@ -3983,7 +4028,7 @@ func getWindowName(name string) string {
 
 // buildProjectionForWindow builds the projection for expressions in the window specification that is not an column,
 // so after the projection, window functions only needs to deal with columns.
-func (b *PlanBuilder) buildProjectionForWindow(ctx context.Context, p LogicalPlan, spec *ast.WindowSpec, args []ast.ExprNode, aggMap map[*ast.AggregateFuncExpr]int) (LogicalPlan, []property.Item, []property.Item, []expression.Expression, error) {
+func (b *PlanBuilder) buildProjectionForWindow(ctx context.Context, p LogicalPlan, spec *ast.WindowSpec, args []ast.ExprNode, aggMap map[*ast.AggregateFuncExpr]int) (LogicalPlan, []property.SortItem, []property.SortItem, []expression.Expression, error) {
 	b.optFlag |= flagEliminateProjection
 
 	var partitionItems, orderItems []*ast.ByItem
@@ -4004,7 +4049,7 @@ func (b *PlanBuilder) buildProjectionForWindow(ctx context.Context, p LogicalPla
 	}
 	copy(proj.names, p.OutputNames())
 
-	propertyItems := make([]property.Item, 0, len(partitionItems)+len(orderItems))
+	propertyItems := make([]property.SortItem, 0, len(partitionItems)+len(orderItems))
 	var err error
 	p, propertyItems, err = b.buildByItemsForWindow(ctx, p, proj, partitionItems, propertyItems, aggMap)
 	if err != nil {
@@ -4075,9 +4120,9 @@ func (b *PlanBuilder) buildByItemsForWindow(
 	p LogicalPlan,
 	proj *LogicalProjection,
 	items []*ast.ByItem,
-	retItems []property.Item,
+	retItems []property.SortItem,
 	aggMap map[*ast.AggregateFuncExpr]int,
-) (LogicalPlan, []property.Item, error) {
+) (LogicalPlan, []property.SortItem, error) {
 	transformer := &itemTransformer{}
 	for _, item := range items {
 		newExpr, _ := item.Expr.Accept(transformer)
@@ -4091,7 +4136,7 @@ func (b *PlanBuilder) buildByItemsForWindow(
 			continue
 		}
 		if col, ok := it.(*expression.Column); ok {
-			retItems = append(retItems, property.Item{Col: col, Desc: item.Desc})
+			retItems = append(retItems, property.SortItem{Col: col, Desc: item.Desc})
 			continue
 		}
 		proj.Exprs = append(proj.Exprs, it)
@@ -4101,7 +4146,7 @@ func (b *PlanBuilder) buildByItemsForWindow(
 			RetType:  it.GetType(),
 		}
 		proj.schema.Append(col)
-		retItems = append(retItems, property.Item{Col: col, Desc: item.Desc})
+		retItems = append(retItems, property.SortItem{Col: col, Desc: item.Desc})
 	}
 	return p, retItems, nil
 }
@@ -4109,7 +4154,7 @@ func (b *PlanBuilder) buildByItemsForWindow(
 // buildWindowFunctionFrameBound builds the bounds of window function frames.
 // For type `Rows`, the bound expr must be an unsigned integer.
 // For type `Range`, the bound expr must be temporal or numeric types.
-func (b *PlanBuilder) buildWindowFunctionFrameBound(ctx context.Context, spec *ast.WindowSpec, orderByItems []property.Item, boundClause *ast.FrameBound) (*FrameBound, error) {
+func (b *PlanBuilder) buildWindowFunctionFrameBound(ctx context.Context, spec *ast.WindowSpec, orderByItems []property.SortItem, boundClause *ast.FrameBound) (*FrameBound, error) {
 	frameType := spec.Frame.Type
 	bound := &FrameBound{Type: boundClause.Type, UnBounded: boundClause.UnBounded}
 	if bound.UnBounded {
@@ -4219,7 +4264,7 @@ func (pc *paramMarkerInPrepareChecker) Leave(in ast.Node) (out ast.Node, ok bool
 
 // buildWindowFunctionFrame builds the window function frames.
 // See https://dev.mysql.com/doc/refman/8.0/en/window-functions-frames.html
-func (b *PlanBuilder) buildWindowFunctionFrame(ctx context.Context, spec *ast.WindowSpec, orderByItems []property.Item) (*WindowFrame, error) {
+func (b *PlanBuilder) buildWindowFunctionFrame(ctx context.Context, spec *ast.WindowSpec, orderByItems []property.SortItem) (*WindowFrame, error) {
 	frameClause := spec.Frame
 	if frameClause == nil {
 		return nil, nil
@@ -4372,7 +4417,7 @@ func (b *PlanBuilder) buildWindowFunctions(ctx context.Context, p LogicalPlan, g
 
 // checkOriginWindowSpecs checks the validation for origin window specifications for a group of functions.
 // Because of the grouped specification is different from it, we should especially check them before build window frame.
-func (b *PlanBuilder) checkOriginWindowSpecs(funcs []*ast.WindowFuncExpr, orderByItems []property.Item) error {
+func (b *PlanBuilder) checkOriginWindowSpecs(funcs []*ast.WindowFuncExpr, orderByItems []property.SortItem) error {
 	for _, f := range funcs {
 		if f.IgnoreNull {
 			return ErrNotSupportedYet.GenWithStackByArgs("IGNORE NULLS")
@@ -4419,7 +4464,7 @@ func (b *PlanBuilder) checkOriginWindowSpecs(funcs []*ast.WindowFuncExpr, orderB
 	return nil
 }
 
-func (b *PlanBuilder) checkOriginWindowFrameBound(bound *ast.FrameBound, spec *ast.WindowSpec, orderByItems []property.Item) error {
+func (b *PlanBuilder) checkOriginWindowFrameBound(bound *ast.FrameBound, spec *ast.WindowSpec, orderByItems []property.SortItem) error {
 	if bound.Type == ast.CurrentRow || bound.UnBounded {
 		return nil
 	}

@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -121,7 +122,10 @@ func (hg *Histogram) MemoryUsage() (sum int64) {
 	if hg == nil {
 		return
 	}
-	sum = hg.Bounds.MemoryUsage() + int64(cap(hg.Buckets)*int(unsafe.Sizeof(Bucket{}))) + int64(cap(hg.scalars)*int(unsafe.Sizeof(scalar{})))
+	//let the initial sum = 0
+	sum = hg.Bounds.MemoryUsage() - chunk.NewChunkWithCapacity([]*types.FieldType{hg.Tp}, 0).MemoryUsage()
+	sum = sum + int64(cap(hg.Buckets)*int(unsafe.Sizeof(Bucket{}))) + int64(cap(hg.scalars)*int(unsafe.Sizeof(scalar{})))
+
 	return
 }
 
@@ -281,12 +285,16 @@ func ResetAnalyzeFlag(flag int64) int64 {
 
 // ValueToString converts a possible encoded value to a formatted string. If the value is encoded, then
 // idxCols equals to number of origin values, else idxCols is 0.
-func ValueToString(value *types.Datum, idxCols int) (string, error) {
+func ValueToString(vars *variable.SessionVars, value *types.Datum, idxCols int, idxColumnTypes []byte) (string, error) {
 	if idxCols == 0 {
 		return value.ToString()
 	}
+	var loc *time.Location
+	if vars != nil {
+		loc = vars.Location()
+	}
 	// Ignore the error and treat remaining part that cannot decode successfully as bytes.
-	decodedVals, remained, err := codec.DecodeRange(value.GetBytes(), idxCols)
+	decodedVals, remained, err := codec.DecodeRange(value.GetBytes(), idxCols, idxColumnTypes, loc)
 	// Ignore err explicit to pass errcheck.
 	_ = err
 	if len(remained) > 0 {
@@ -298,9 +306,9 @@ func ValueToString(value *types.Datum, idxCols int) (string, error) {
 
 // BucketToString change the given bucket to string format.
 func (hg *Histogram) BucketToString(bktID, idxCols int) string {
-	upperVal, err := ValueToString(hg.GetUpper(bktID), idxCols)
+	upperVal, err := ValueToString(nil, hg.GetUpper(bktID), idxCols, nil)
 	terror.Log(errors.Trace(err))
-	lowerVal, err := ValueToString(hg.GetLower(bktID), idxCols)
+	lowerVal, err := ValueToString(nil, hg.GetLower(bktID), idxCols, nil)
 	terror.Log(errors.Trace(err))
 	return fmt.Sprintf("num: %d lower_bound: %s upper_bound: %s repeats: %d", hg.bucketCount(bktID), lowerVal, upperVal, hg.Buckets[bktID].Repeat)
 }
@@ -738,6 +746,7 @@ func (e *ErrorRate) Merge(rate *ErrorRate) {
 type Column struct {
 	Histogram
 	*CMSketch
+	*TopN
 	PhysicalID int64
 	Count      int64
 	Info       *model.ColumnInfo
@@ -790,7 +799,7 @@ func (c *Column) equalRowCount(sc *stmtctx.StatementContext, val types.Datum, mo
 		return outOfRangeEQSelectivity(c.NDV, modifyCount, int64(c.TotalRowCount())) * c.TotalRowCount(), nil
 	}
 	if c.CMSketch != nil {
-		count, err := c.CMSketch.queryValue(sc, val)
+		count, err := queryValue(sc, c.CMSketch, c.TopN, val)
 		return float64(count), errors.Trace(err)
 	}
 	return c.Histogram.equalRowCount(val), nil
@@ -888,10 +897,12 @@ func (c *Column) GetColumnRowCount(sc *stmtctx.StatementContext, ranges []*range
 type Index struct {
 	Histogram
 	*CMSketch
+	*TopN
 	ErrorRate
 	StatsVer       int64 // StatsVer is the version of the current stats, used to maintain compatibility
 	Info           *model.IndexInfo
 	Flag           int64
+	PhysicalID     int64 // PhysicalID for lazy load
 	LastAnalyzePos types.Datum
 }
 
@@ -899,9 +910,22 @@ func (idx *Index) String() string {
 	return idx.Histogram.ToString(len(idx.Info.Columns))
 }
 
-// IsInvalid checks if this index is invalid.
-func (idx *Index) IsInvalid(collPseudo bool) bool {
-	return (collPseudo && idx.NotAccurate()) || idx.TotalRowCount() == 0
+// HistogramNeededIndices stores the Index whose Histograms need to be loaded from physical kv layer.
+// Currently, we only load index/pk's Histogram from kv automatically. Columns' are loaded by needs.
+var HistogramNeededIndices = neededIndexMap{idxs: map[tableIndexID]struct{}{}}
+
+// IsInvalid checks if this Index is invalid.
+// If this Index has histogram but not loaded yet, then we mark it
+// as need Index.
+func (idx *Index) IsInvalid(sc *stmtctx.StatementContext, collPseudo bool) bool {
+	if collPseudo && idx.NotAccurate() {
+		return true
+	}
+	if idx.NDV > 0 && idx.Len() == 0 && sc != nil {
+		sc.SetHistogramsNotLoad()
+		HistogramNeededIndices.insert(tableIndexID{TableID: idx.PhysicalID, IndexID: idx.Info.ID})
+	}
+	return idx.TotalRowCount() == 0 || (idx.NDV > 0 && idx.Len() == 0)
 }
 
 // MemoryUsage returns the total memory usage of a Histogram and CMSketch in Index.
@@ -927,9 +951,18 @@ func (idx *Index) equalRowCount(sc *stmtctx.StatementContext, b []byte, modifyCo
 		return outOfRangeEQSelectivity(idx.NDV, modifyCount, int64(idx.TotalRowCount())) * idx.TotalRowCount(), nil
 	}
 	if idx.CMSketch != nil {
-		return float64(idx.CMSketch.QueryBytes(b)), nil
+		return float64(idx.QueryBytes(b)), nil
 	}
 	return idx.Histogram.equalRowCount(val), nil
+}
+
+// QueryBytes is used to query the count of specified bytes.
+func (idx *Index) QueryBytes(d []byte) uint64 {
+	h1, h2 := murmur3.Sum128(d)
+	if count, ok := idx.TopN.QueryTopN(h1, h2, d); ok {
+		return count
+	}
+	return idx.queryHashValue(h1, h2)
 }
 
 // GetRowCount returns the row count of the given ranges.
@@ -1202,7 +1235,7 @@ func getIndexPrefixLens(data []byte, numCols int) (prefixLens []int, err error) 
 }
 
 // ExtractTopN extracts topn from histogram.
-func (hg *Histogram) ExtractTopN(cms *CMSketch, numCols int, numTopN uint32) error {
+func (hg *Histogram) ExtractTopN(cms *CMSketch, topN *TopN, numCols int, numTopN uint32) error {
 	if hg.Len() == 0 || cms == nil || numTopN == 0 {
 		return nil
 	}
@@ -1235,12 +1268,12 @@ func (hg *Histogram) ExtractTopN(cms *CMSketch, numCols int, numTopN uint32) err
 	if len(dataCnts) > int(numTopN) {
 		dataCnts = dataCnts[:numTopN]
 	}
-	cms.topN = make(map[uint64][]*TopNMeta, len(dataCnts))
+	topN.topN = make(map[uint64][]*TopNMeta, len(dataCnts))
 	for _, dataCnt := range dataCnts {
 		h1, h2 := murmur3.Sum128(dataCnt.data)
 		realCnt := cms.queryHashValue(h1, h2)
 		cms.subValue(h1, h2, realCnt)
-		cms.topN[h1] = append(cms.topN[h1], &TopNMeta{h2, dataCnt.data, realCnt})
+		topN.topN[h1] = append(topN.topN[h1], &TopNMeta{h2, dataCnt.data, realCnt})
 	}
 	return nil
 }

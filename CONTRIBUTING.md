@@ -1,4 +1,3 @@
-# Contribution Guide
+# Contributing Guide
 
-See the [Contribution Guide](https://github.com/pingcap/community/blob/master/CONTRIBUTING.md) in the
-[community](https://github.com/pingcap/community) repo.
+See the [Contributing Guide](https://github.com/pingcap/community/blob/master/contributors/README.md) in the [community](https://github.com/pingcap/community) repository.

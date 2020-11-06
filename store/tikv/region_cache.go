@@ -554,6 +554,16 @@ func (c *RegionCache) OnSendFail(bo *Backoffer, ctx *RPCContext, scheduleReload 
 	tikvRegionCacheCounterWithSendFail.Inc()
 	r := c.getCachedRegionWithRLock(ctx.Region)
 	if r != nil {
+		peersNum := len(r.meta.Peers)
+		if len(ctx.Meta.Peers) != peersNum {
+			logutil.Logger(bo.ctx).Info("retry and refresh current ctx after send request fail and up/down stores length changed",
+				zap.Stringer("current", ctx),
+				zap.Bool("needReload", scheduleReload),
+				zap.Reflect("oldPeers", ctx.Meta.Peers),
+				zap.Reflect("newPeers", r.meta.Peers),
+				zap.Error(err))
+			return
+		}
 		rs := r.getStore()
 		if err != nil {
 			storeIdx, s := rs.accessStore(ctx.AccessMode, ctx.AccessIdx)
@@ -669,24 +679,24 @@ type groupedMutations struct {
 	mutations CommitterMutations
 }
 
-// GroupSortedMutationsByRegion separates keys into groups by their belonging Regions.
-func (c *RegionCache) GroupSortedMutationsByRegion(bo *Backoffer, m CommitterMutations) ([]groupedMutations, error) {
+// groupSortedMutationsByRegion separates keys into groups by their belonging Regions.
+func (c *RegionCache) groupSortedMutationsByRegion(bo *Backoffer, m CommitterMutations) ([]groupedMutations, error) {
 	var (
 		groups  []groupedMutations
 		lastLoc *KeyLocation
 	)
 	lastUpperBound := 0
-	for i := range m.keys {
-		if lastLoc == nil || !lastLoc.Contains(m.keys[i]) {
+	for i := 0; i < m.Len(); i++ {
+		if lastLoc == nil || !lastLoc.Contains(m.GetKey(i)) {
 			if lastLoc != nil {
 				groups = append(groups, groupedMutations{
 					region:    lastLoc.Region,
-					mutations: m.subRange(lastUpperBound, i),
+					mutations: m.Slice(lastUpperBound, i),
 				})
 				lastUpperBound = i
 			}
 			var err error
-			lastLoc, err = c.LocateKey(bo, m.keys[i])
+			lastLoc, err = c.LocateKey(bo, m.GetKey(i))
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -695,7 +705,7 @@ func (c *RegionCache) GroupSortedMutationsByRegion(bo *Backoffer, m CommitterMut
 	if lastLoc != nil {
 		groups = append(groups, groupedMutations{
 			region:    lastLoc.Region,
-			mutations: m.subRange(lastUpperBound, m.len()),
+			mutations: m.Slice(lastUpperBound, m.Len()),
 		})
 	}
 	return groups, nil
@@ -1211,7 +1221,7 @@ func (r *Region) GetMeta() *metapb.Region {
 // GetLeaderPeerID returns leader peer ID.
 func (r *Region) GetLeaderPeerID() uint64 {
 	store := r.getStore()
-	if int(store.workTiKVIdx) >= len(r.meta.Peers) {
+	if int(store.workTiKVIdx) >= store.accessStoreNum(TiKvOnly) {
 		return 0
 	}
 	storeIdx, _ := store.accessStore(TiKvOnly, store.workTiKVIdx)
@@ -1221,7 +1231,7 @@ func (r *Region) GetLeaderPeerID() uint64 {
 // GetLeaderStoreID returns the store ID of the leader region.
 func (r *Region) GetLeaderStoreID() uint64 {
 	store := r.getStore()
-	if int(store.workTiKVIdx) >= len(r.meta.Peers) {
+	if int(store.workTiKVIdx) >= store.accessStoreNum(TiKvOnly) {
 		return 0
 	}
 	storeIdx, _ := store.accessStore(TiKvOnly, store.workTiKVIdx)
