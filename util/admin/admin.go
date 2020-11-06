@@ -77,11 +77,6 @@ func GetDDLInfo(txn kv.Transaction) (*DDLInfo, error) {
 		return info, nil
 	}
 
-	tbl, err := t.GetTable(addIdxJob.SchemaID, addIdxJob.TableID)
-	if err != nil {
-		return info, nil
-	}
-
 	_, info.ReorgHandle, _, _, err = t.GetDDLReorgHandle(addIdxJob)
 	if err != nil {
 		if meta.ErrDDLReorgElementNotExist.Equal(err) {
