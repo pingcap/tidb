@@ -549,7 +549,7 @@ func (ds *DataSource) buildIndexMergeOrPath(partialPaths []*util.AccessPath, cur
 	indexMergePath.TableFilters = append(indexMergePath.TableFilters, ds.pushedDownConds[current+1:]...)
 	for _, path := range partialPaths {
 		if len(path.TableFilters) > 0 {
-			indexMergePath.TableFilters = append(indexMergePath.TableFilters, ds.pushedDownConds[current])
+			indexMergePath.TableFilters = append(indexMergePath.TableFilters, path.TableFilters...)
 			break
 		}
 	}
