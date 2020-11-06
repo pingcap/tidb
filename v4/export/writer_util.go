@@ -402,7 +402,7 @@ func buildInterceptFileWriter(s storage.ExternalStorage, path string) (storage.W
 		if writer == nil {
 			return
 		}
-		log.Debug("tear down lazy file writer...")
+		log.Debug("tear down lazy file writer...", zap.String("path", fullPath))
 		err := writer.Close(ctx)
 		if err != nil {
 			log.Error("close file failed", zap.String("path", fullPath))

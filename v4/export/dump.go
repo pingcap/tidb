@@ -11,6 +11,7 @@ import (
 	"github.com/pingcap/dumpling/v4/log"
 
 	_ "github.com/go-sql-driver/mysql"
+	"github.com/pingcap/br/pkg/utils"
 	"github.com/pingcap/failpoint"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
@@ -233,9 +234,9 @@ func Dump(pCtx context.Context, conf *Config) (err error) {
 	return nil
 }
 
-func dumpDatabases(ctx context.Context, conf *Config, connectPool *connectionsPool, writer Writer) error {
+func dumpDatabases(pCtx context.Context, conf *Config, connectPool *connectionsPool, writer Writer) error {
 	allTables := conf.Tables
-	var g errgroup.Group
+	g, ctx := errgroup.WithContext(pCtx)
 	for dbName, tables := range allTables {
 		conn := connectPool.getConn()
 		createDatabaseSQL, err := ShowCreateDatabase(conn, dbName)
@@ -261,21 +262,24 @@ func dumpDatabases(ctx context.Context, conf *Config, connectPool *connectionsPo
 			for _, tableIR := range tableDataIRArray {
 				tableIR := tableIR
 				g.Go(func() error {
-					conn := connectPool.getConn()
-					defer connectPool.releaseConn(conn)
-					err := tableIR.Start(ctx, conn)
-					if err != nil {
-						return err
-					}
-					return writer.WriteTableData(ctx, tableIR)
+					retryTime := 1
+					return utils.WithRetry(ctx, func() error {
+						log.Debug("trying to dump table chunk", zap.Int("retryTime", retryTime), zap.String("db", tableIR.DatabaseName()),
+							zap.String("table", tableIR.TableName()), zap.Int("chunkIndex", tableIR.ChunkIndex()))
+						conn := connectPool.getConn()
+						defer connectPool.releaseConn(conn)
+						retryTime += 1
+						err := tableIR.Start(ctx, conn)
+						if err != nil {
+							return err
+						}
+						return writer.WriteTableData(ctx, tableIR)
+					}, newDumpChunkBackoffer())
 				})
 			}
 		}
 	}
-	if err := g.Wait(); err != nil {
-		return err
-	}
-	return nil
+	return g.Wait()
 }
 
 func prepareTableListToDump(conf *Config, pool *sql.Conn) error {
