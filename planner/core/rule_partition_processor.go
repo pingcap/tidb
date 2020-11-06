@@ -232,11 +232,11 @@ func (s *partitionProcessor) findUsedListPartitions(ctx sessionctx.Context, tbl 
 		return nil, err
 	}
 
-	colsIDToUniqueID := make(map[int64]int64)
+	colIDToUniqueID := make(map[int64]int64)
 	for _, cond := range conds {
 		condCols := expression.ExtractColumns(cond)
 		for _, c := range condCols {
-			colsIDToUniqueID[c.ID] = c.UniqueID
+			colIDToUniqueID[c.ID] = c.UniqueID
 		}
 	}
 
@@ -245,19 +245,19 @@ func (s *partitionProcessor) findUsedListPartitions(ctx sessionctx.Context, tbl 
 	colLen := make([]int, 0, len(pruneList.ExprCols))
 	for _, c := range pruneList.ExprCols {
 		c = c.Clone().(*expression.Column)
-		if uniqueID, ok := colsIDToUniqueID[c.ID]; ok {
+		if uniqueID, ok := colIDToUniqueID[c.ID]; ok {
 			c.UniqueID = uniqueID
 		}
-		cols = append(cols, c.Clone().(*expression.Column))
+		cols = append(cols, c)
 		colLen = append(colLen, types.UnspecifiedLength)
 	}
 
-	datchedResult, err := ranger.DetachCondAndBuildRangeForPartition(ctx, conds, cols, colLen)
+	detachedResult, err := ranger.DetachCondAndBuildRangeForPartition(ctx, conds, cols, colLen)
 	if err != nil {
 		return nil, err
 	}
 
-	ranges := datchedResult.Ranges
+	ranges := detachedResult.Ranges
 	used := make(map[int]struct{}, len(ranges))
 	for _, r := range ranges {
 		if r.IsPointNullable(ctx.GetSessionVars().StmtCtx) {

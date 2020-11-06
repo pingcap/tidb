@@ -372,7 +372,6 @@ func extractListPartitionExprColumns(ctx sessionctx.Context, pi *model.Partition
 		if err != nil {
 			return nil, nil, err
 		}
-		exprs[0].HashCode(ctx.GetSessionVars().StmtCtx)
 		cols = expression.ExtractColumns(exprs[0])
 	} else {
 		for _, col := range pi.Columns {
