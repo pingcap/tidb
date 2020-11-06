@@ -6255,6 +6255,12 @@ func (s *testIntegrationSerialSuite) TestCollateConstantPropagation(c *C) {
 	tk.MustExec("insert into t1 values ('ß', 's');")
 	tk.MustExec("insert into t2 values ('s', 's')")
 	tk.MustQuery("select * from t1 left join t2 on t1.a = t2.a collate utf8mb4_unicode_ci where t1.a = 's';").Check(testkit.Rows("ß s <nil> <nil>"))
+	tk.MustExec("drop table if exists t1, t2;")
+	tk.MustExec("create table t1(a char, b varchar(10)) charset utf8mb4 collate utf8mb4_unicode_ci;")
+	tk.MustExec("create table t2(a char, b varchar(10)) charset utf8mb4 collate utf8mb4_zh_pinyin_tidb_as_cs;")
+	tk.MustExec("insert into t1 values ('A', 'a');")
+	tk.MustExec("insert into t2 values ('a', 'a')")
+	tk.MustQuery("select * from t1 left join t2 on t1.a = t2.a collate utf8mb4_zh_pinyin_tidb_as_cs where t1.a = 'a';").Check(testkit.Rows("A a <nil> <nil>"))
 }
 
 func (s *testIntegrationSuite2) TestIssue17791(c *C) {
@@ -6354,6 +6360,12 @@ func (s *testIntegrationSerialSuite) TestMixCollation(c *C) {
 	tk.MustGetErrMsg("select concat(mb4unicode, mb4general) = mb4unicode from t;", "[expression:1267]Illegal mix of collations (utf8mb4_bin,NONE) and (utf8mb4_unicode_ci,IMPLICIT) for operation 'eq'")
 
 	tk.MustExec("drop table t;")
+
+	tk.MustExec("create table t(a char(10) collate utf8mb4_zh_pinyin_tidb_as_cs, b char(10) collate utf8mb4_general_ci), c char(10) collate utf8_unicode_ci")
+	tk.MustExec("insert into t values ('s', 'S', 'S');")
+	tk.MustGetErrMsg("select * from t where a = b;", "[expression:1267]Illegal mix of collations (utf8mb4_zh_pinyin_tidb_as_cs,IMPLICIT) and (utf8mb4_general_ci,IMPLICIT) for operation 'eq'")
+	tk.MustQuery("select * from t where a = c;").Check(testkit.Rows())
+	tk.MustQuery("select collation(concat(a, c)) from t;").Check(testkit.Rows("utf8mb4_zh_pinyin_tidb_as_cs"))
 }
 
 func (s *testIntegrationSerialSuite) prepare4Join(c *C) *testkit.TestKit {

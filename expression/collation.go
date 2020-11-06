@@ -114,28 +114,30 @@ var (
 	// collationPriority is the priority when infer the result collation, the priority of collation a > b iff collationPriority[a] > collationPriority[b]
 	// collation a and b are incompatible if collationPriority[a] = collationPriority[b]
 	collationPriority = map[string]int{
-		charset.CollationASCII:   1,
-		charset.CollationLatin1:  2,
-		"utf8_general_ci":        3,
-		"utf8_unicode_ci":        3,
-		charset.CollationUTF8:    4,
-		"utf8mb4_general_ci":     5,
-		"utf8mb4_unicode_ci":     5,
-		charset.CollationUTF8MB4: 6,
-		charset.CollationBin:     7,
+		charset.CollationASCII:         1,
+		charset.CollationLatin1:        2,
+		"utf8_general_ci":              3,
+		"utf8_unicode_ci":              3,
+		charset.CollationUTF8:          4,
+		"utf8mb4_general_ci":           5,
+		"utf8mb4_unicode_ci":           5,
+		"utf8mb4_zh_pinyin_tidb_as_cs": 5,
+		charset.CollationUTF8MB4:       6,
+		charset.CollationBin:           7,
 	}
 
 	// CollationStrictnessGroup group collation by strictness
 	CollationStrictnessGroup = map[string]int{
-		"utf8_general_ci":        1,
-		"utf8mb4_general_ci":     1,
-		"utf8_unicode_ci":        2,
-		"utf8mb4_unicode_ci":     2,
-		charset.CollationASCII:   3,
-		charset.CollationLatin1:  3,
-		charset.CollationUTF8:    3,
-		charset.CollationUTF8MB4: 3,
-		charset.CollationBin:     4,
+		"utf8_general_ci":              1,
+		"utf8mb4_general_ci":           1,
+		"utf8_unicode_ci":              2,
+		"utf8mb4_unicode_ci":           2,
+		charset.CollationASCII:         3,
+		charset.CollationLatin1:        3,
+		charset.CollationUTF8:          3,
+		charset.CollationUTF8MB4:       3,
+		"utf8mb4_zh_pinyin_tidb_as_cs": 3,
+		charset.CollationBin:           4,
 	}
 
 	// CollationStrictness indicates the strictness of comparison of the collation. The unequal order in a weak collation also holds in a strict collation.
