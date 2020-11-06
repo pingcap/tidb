@@ -82,7 +82,7 @@ func GetDDLInfo(txn kv.Transaction) (*DDLInfo, error) {
 		return info, nil
 	}
 
-	_, info.ReorgHandle, _, _, err = t.GetDDLReorgKey(addIdxJob, tbl.IsCommonHandle)
+	_, info.ReorgHandle, _, _, err = t.GetDDLReorgHandle(addIdxJob)
 	if err != nil {
 		if meta.ErrDDLReorgElementNotExist.Equal(err) {
 			return info, nil

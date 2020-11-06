@@ -259,8 +259,10 @@ func (w *backfillWorker) handleBackfillTask(d *ddlCtx, task *reorgBackfillTask, 
 
 		if num := result.scanCount - lastLogCount; num >= 30000 {
 			lastLogCount = result.scanCount
-			logutil.BgLogger().Info("[ddl] backfill worker back fill index", zap.Int("workerID", w.id),
-				zap.Int("addedCount", result.addedCount), zap.Int("scanCount", result.scanCount),
+			logutil.BgLogger().Info("[ddl] backfill worker back fill index",
+				zap.Int("workerID", w.id),
+				zap.Int("addedCount", result.addedCount),
+				zap.Int("scanCount", result.scanCount),
 				zap.String("nextHandle", tryDecodeToHandleString(taskCtx.nextKey)),
 				zap.Float64("speed(rows/s)", float64(num)/time.Since(lastLogTime).Seconds()))
 			lastLogTime = time.Now()
@@ -272,8 +274,10 @@ func (w *backfillWorker) handleBackfillTask(d *ddlCtx, task *reorgBackfillTask, 
 		}
 	}
 	logutil.BgLogger().Info("[ddl] backfill worker finish task", zap.Int("workerID", w.id),
-		zap.String("task", task.String()), zap.Int("addedCount", result.addedCount),
-		zap.Int("scanCount", result.scanCount), zap.String("nextHandle", tryDecodeToHandleString(result.nextKey)),
+		zap.String("task", task.String()),
+		zap.Int("addedCount", result.addedCount),
+		zap.Int("scanCount", result.scanCount),
+		zap.String("nextHandle", tryDecodeToHandleString(result.nextKey)),
 		zap.String("takeTime", time.Since(startTime).String()))
 	return result
 }
@@ -311,8 +315,10 @@ func (w *backfillWorker) run(d *ddlCtx, bf backfiller) {
 // to speed up backfilling data in table with disperse handle.
 // The `t` should be a non-partitioned table or a partition.
 func splitTableRanges(t table.PhysicalTable, store kv.Storage, startKey, endKey kv.Key) ([]kv.KeyRange, error) {
-	logutil.BgLogger().Info("[ddl] split table range from PD", zap.Int64("physicalTableID", t.GetPhysicalID()),
-		zap.String("startHandle", tryDecodeToHandleString(startKey)), zap.String("endHandle", tryDecodeToHandleString(endKey)))
+	logutil.BgLogger().Info("[ddl] split table range from PD",
+		zap.Int64("physicalTableID", t.GetPhysicalID()),
+		zap.String("startHandle", tryDecodeToHandleString(startKey)),
+		zap.String("endHandle", tryDecodeToHandleString(endKey)))
 	kvRange := kv.KeyRange{StartKey: startKey, EndKey: endKey}
 	s, ok := store.(tikv.Storage)
 	if !ok {
@@ -332,7 +338,8 @@ func splitTableRanges(t table.PhysicalTable, store kv.Storage, startKey, endKey 
 	return ranges, nil
 }
 
-func (w *worker) waitTaskResults(workers []*backfillWorker, taskCnt int, totalAddedCount *int64, startKey kv.Key) (kv.Key, int64, error) {
+func (w *worker) waitTaskResults(workers []*backfillWorker, taskCnt int,
+	totalAddedCount *int64, startKey kv.Key) (kv.Key, int64, error) {
 	var (
 		addedCount int64
 		nextKey    = startKey
@@ -425,8 +432,10 @@ func (w *worker) sendRangeTaskToWorkers(workers []*backfillWorker, reorgInfo *re
 
 	// Build reorg tasks.
 	for _, keyRange := range kvRanges {
-		task := &reorgBackfillTask{physicalTableID: physicalTableID,
-			startKey: keyRange.StartKey, endKey: keyRange.EndKey}
+		task := &reorgBackfillTask{
+			physicalTableID: physicalTableID,
+			startKey:        keyRange.StartKey,
+			endKey:          keyRange.EndKey}
 		batchTasks = append(batchTasks, task)
 
 		if len(batchTasks) >= len(workers) {
@@ -607,8 +616,10 @@ func (w *worker) writePhysicalTableRecord(t table.PhysicalTable, bfWorkerType ba
 			}
 		})
 
-		logutil.BgLogger().Info("[ddl] start backfill workers to reorg record", zap.Int("workerCnt", len(backfillWorkers)),
-			zap.Int("regionCnt", len(kvRanges)), zap.String("startHandle", tryDecodeToHandleString(startKey)),
+		logutil.BgLogger().Info("[ddl] start backfill workers to reorg record",
+			zap.Int("workerCnt", len(backfillWorkers)),
+			zap.Int("regionCnt", len(kvRanges)),
+			zap.String("startHandle", tryDecodeToHandleString(startKey)),
 			zap.String("endHandle", tryDecodeToHandleString(endKey)))
 		remains, err := w.sendRangeTaskToWorkers(backfillWorkers, reorgInfo, &totalAddedCount, kvRanges)
 		if err != nil {

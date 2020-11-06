@@ -363,12 +363,12 @@ func (s *testSuite) TestDDL(c *C) {
 	// There are 3 meta key relate to index reorganization:
 	// start_handle, end_handle and physical_table_id.
 	// Only start_handle is initialized.
-	err = t.UpdateDDLReorgStartKey(job, element, kv.IntHandle(1).Encoded())
+	err = t.UpdateDDLReorgStartHandle(job, element, kv.IntHandle(1).Encoded())
 	c.Assert(err, IsNil)
 
 	// Since physical_table_id is uninitialized, we simulate older TiDB version that doesn't store them.
-	// In this case GetDDLReorgKey always return maxInt64 as end_handle.
-	e, i, j, k, err := t.GetDDLReorgKey(job, false)
+	// In this case GetDDLReorgHandle always return maxInt64 as end_handle.
+	e, i, j, k, err := t.GetDDLReorgHandle(job)
 	c.Assert(err, IsNil)
 	c.Assert(e, DeepEquals, element)
 	c.Assert(i, DeepEquals, kv.Key(kv.IntHandle(1).Encoded()))
@@ -378,13 +378,13 @@ func (s *testSuite) TestDDL(c *C) {
 	startHandle := s.NewHandle().Int(1).Common("abc", 1222, "string")
 	endHandle := s.NewHandle().Int(2).Common("dddd", 1222, "string")
 	element = &meta.Element{ID: 222, TypeKey: meta.ColumnElementKey}
-	err = t.UpdateDDLReorgKey(job, startHandle.Encoded(), endHandle.Encoded(), 3, element)
+	err = t.UpdateDDLReorgHandle(job, startHandle.Encoded(), endHandle.Encoded(), 3, element)
 	c.Assert(err, IsNil)
 	element1 := &meta.Element{ID: 223, TypeKey: meta.IndexElementKey}
-	err = t.UpdateDDLReorgKey(job, startHandle.Encoded(), endHandle.Encoded(), 3, element1)
+	err = t.UpdateDDLReorgHandle(job, startHandle.Encoded(), endHandle.Encoded(), 3, element1)
 	c.Assert(err, IsNil)
 
-	e, i, j, k, err = t.GetDDLReorgKey(job, s.IsCommonHandle)
+	e, i, j, k, err = t.GetDDLReorgHandle(job)
 	c.Assert(err, IsNil)
 	c.Assert(e, DeepEquals, element1)
 	c.Assert(i, DeepEquals, kv.Key(startHandle.Encoded()))
@@ -393,7 +393,7 @@ func (s *testSuite) TestDDL(c *C) {
 
 	err = t.RemoveDDLReorgHandle(job, []*meta.Element{element, element1})
 	c.Assert(err, IsNil)
-	e, i, j, k, err = t.GetDDLReorgKey(job, false)
+	e, i, j, k, err = t.GetDDLReorgHandle(job)
 	c.Assert(meta.ErrDDLReorgElementNotExist.Equal(err), IsTrue)
 	c.Assert(e, IsNil)
 	c.Assert(i, IsNil)
@@ -401,15 +401,15 @@ func (s *testSuite) TestDDL(c *C) {
 	c.Assert(k, Equals, int64(0))
 
 	// new TiDB binary running on old TiDB DDL reorg data.
-	e, i, j, k, err = t.GetDDLReorgKey(job, s.IsCommonHandle)
+	e, i, j, k, err = t.GetDDLReorgHandle(job)
 	c.Assert(meta.ErrDDLReorgElementNotExist.Equal(err), IsTrue)
 	c.Assert(e, IsNil)
 	c.Assert(i, IsNil)
 	c.Assert(j, IsNil)
 	c.Assert(k, Equals, int64(0))
 
-	// Test GetDDLReorgKey failed.
-	_, _, _, _, err = t.GetDDLReorgKey(job, s.IsCommonHandle)
+	// Test GetDDLReorgHandle failed.
+	_, _, _, _, err = t.GetDDLReorgHandle(job)
 	c.Assert(meta.ErrDDLReorgElementNotExist.Equal(err), IsTrue)
 
 	v, err = t.DeQueueDDLJob()

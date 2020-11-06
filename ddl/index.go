@@ -965,8 +965,8 @@ func (w *baseIndexWorker) fetchRowColVals(txn kv.Transaction, taskRange reorgBac
 			logSlowOperations(oprEndTime.Sub(oprStartTime), "iterateSnapshotRows in baseIndexWorker fetchRowColVals", 0)
 			oprStartTime = oprEndTime
 
-			handleRecordKey := w.table.RecordKey(handle)
-			taskDone = handleRecordKey.Cmp(taskRange.endKey) > 0
+			handleKey := w.table.RecordKey(handle)
+			taskDone = handleKey.Cmp(taskRange.endKey) > 0
 
 			if taskDone || len(w.idxRecords) >= w.batchCnt {
 				return false, nil
@@ -988,7 +988,7 @@ func (w *baseIndexWorker) fetchRowColVals(txn kv.Transaction, taskRange reorgBac
 			// the generated value, so we need to clear up the reusing map.
 			w.cleanRowMap()
 
-			if handleRecordKey.Cmp(taskRange.endKey) == 0 {
+			if handleKey.Cmp(taskRange.endKey) == 0 {
 				// If taskRange.endIncluded == false, we will not reach here when handle == taskRange.endHandle
 				taskDone = true
 				return false, nil
@@ -1205,9 +1205,12 @@ func (w *worker) updateReorgInfo(t table.PartitionedTable, reorg *reorgInfo) (bo
 
 	// Write the reorg info to store so the whole reorganize process can recover from panic.
 	err = reorg.UpdateReorgMeta(start)
-	logutil.BgLogger().Info("[ddl] job update reorgInfo", zap.Int64("jobID", reorg.Job.ID),
-		zap.ByteString("elementType", reorg.currElement.TypeKey), zap.Int64("elementID", reorg.currElement.ID),
-		zap.Int64("partitionTableID", pid), zap.String("startHandle", tryDecodeToHandleString(start)),
+	logutil.BgLogger().Info("[ddl] job update reorgInfo",
+		zap.Int64("jobID", reorg.Job.ID),
+		zap.ByteString("elementType", reorg.currElement.TypeKey),
+		zap.Int64("elementID", reorg.currElement.ID),
+		zap.Int64("partitionTableID", pid),
+		zap.String("startHandle", tryDecodeToHandleString(start)),
 		zap.String("endHandle", tryDecodeToHandleString(end)), zap.Error(err))
 	return false, errors.Trace(err)
 }

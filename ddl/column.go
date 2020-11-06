@@ -1112,8 +1112,10 @@ func (w *worker) updateColumnAndIndexes(t table.Table, oldCol, col *model.Column
 		reorgInfo.currElement = reorgInfo.elements[i+1]
 		// Write the reorg info to store so the whole reorganize process can recover from panic.
 		err := reorgInfo.UpdateReorgMeta(reorgInfo.StartKey)
-		logutil.BgLogger().Info("[ddl] update column and indexes", zap.Int64("jobID", reorgInfo.Job.ID),
-			zap.ByteString("elementType", reorgInfo.currElement.TypeKey), zap.Int64("elementID", reorgInfo.currElement.ID),
+		logutil.BgLogger().Info("[ddl] update column and indexes",
+			zap.Int64("jobID", reorgInfo.Job.ID),
+			zap.ByteString("elementType", reorgInfo.currElement.TypeKey),
+			zap.Int64("elementID", reorgInfo.currElement.ID),
 			zap.String("startHandle", tryDecodeToHandleString(reorgInfo.StartKey)),
 			zap.String("endHandle", tryDecodeToHandleString(reorgInfo.EndKey)))
 		if err != nil {

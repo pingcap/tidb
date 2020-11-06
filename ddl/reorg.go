@@ -244,10 +244,14 @@ func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, tblInfo *model.
 
 		w.reorgCtx.resetWarnings()
 		// Update a reorgInfo's handle.
-		err := t.UpdateDDLReorgStartKey(job, reorgInfo.currElement, doneKey)
-		logutil.BgLogger().Info("[ddl] run reorg job wait timeout", zap.Duration("waitTime", waitTimeout),
-			zap.ByteString("elementType", reorgInfo.currElement.TypeKey), zap.Int64("elementID", reorgInfo.currElement.ID),
-			zap.Int64("totalAddedRowCount", rowCount), zap.String("doneKey", tryDecodeToHandleString(doneKey)), zap.Error(err))
+		err := t.UpdateDDLReorgStartHandle(job, reorgInfo.currElement, doneKey)
+		logutil.BgLogger().Info("[ddl] run reorg job wait timeout",
+			zap.Duration("waitTime", waitTimeout),
+			zap.ByteString("elementType", reorgInfo.currElement.TypeKey),
+			zap.Int64("elementID", reorgInfo.currElement.ID),
+			zap.Int64("totalAddedRowCount", rowCount),
+			zap.String("doneKey", tryDecodeToHandleString(doneKey)),
+			zap.Error(err))
 		// If timeout, we will return, check the owner and retry to wait job done again.
 		return errWaitReorgTimeout
 	}
@@ -577,7 +581,7 @@ func getReorgInfo(d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table, elem
 		failpoint.Inject("errorUpdateReorgHandle", func() (*reorgInfo, error) {
 			return &info, errors.New("occur an error when update reorg handle")
 		})
-		err = t.UpdateDDLReorgKey(job, start, end, pid, elements[0])
+		err = t.UpdateDDLReorgHandle(job, start, end, pid, elements[0])
 		if err != nil {
 			return &info, errors.Trace(err)
 		}
@@ -597,7 +601,7 @@ func getReorgInfo(d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table, elem
 		})
 
 		var err error
-		element, start, end, pid, err = t.GetDDLReorgKey(job, tbl.Meta().IsCommonHandle)
+		element, start, end, pid, err = t.GetDDLReorgHandle(job)
 		if err != nil {
 			// If the reorg element doesn't exist, this reorg info should be saved by the older TiDB versions.
 			// It's compatible with the older TiDB versions.
@@ -646,7 +650,7 @@ func getReorgInfoFromPartitions(d *ddlCtx, t *meta.Meta, job *model.Job, tbl tab
 			zap.String("startHandle", tryDecodeToHandleString(start)),
 			zap.String("endHandle", tryDecodeToHandleString(end)))
 
-		err = t.UpdateDDLReorgKey(job, start, end, pid, elements[0])
+		err = t.UpdateDDLReorgHandle(job, start, end, pid, elements[0])
 		if err != nil {
 			return &info, errors.Trace(err)
 		}
@@ -655,7 +659,7 @@ func getReorgInfoFromPartitions(d *ddlCtx, t *meta.Meta, job *model.Job, tbl tab
 		element = elements[0]
 	} else {
 		var err error
-		element, start, end, pid, err = t.GetDDLReorgKey(job, tbl.Meta().IsCommonHandle)
+		element, start, end, pid, err = t.GetDDLReorgHandle(job)
 		if err != nil {
 			// If the reorg element doesn't exist, this reorg info should be saved by the older TiDB versions.
 			// It's compatible with the older TiDB versions.
@@ -685,7 +689,7 @@ func (r *reorgInfo) UpdateReorgMeta(startHandle kv.Key) error {
 
 	err := kv.RunInNewTxn(r.d.store, true, func(txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
-		return errors.Trace(t.UpdateDDLReorgKey(r.Job, startHandle, r.EndKey, r.PhysicalTableID, r.currElement))
+		return errors.Trace(t.UpdateDDLReorgHandle(r.Job, startHandle, r.EndKey, r.PhysicalTableID, r.currElement))
 	})
 	if err != nil {
 		return errors.Trace(err)
