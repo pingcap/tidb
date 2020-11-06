@@ -7,6 +7,7 @@ import (
 	"strconv"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/go-sql-driver/mysql"
 	. "github.com/pingcap/check"
 )
 
@@ -193,5 +194,38 @@ func (s *testDumpSuite) TestDumpTableWhereClause(c *C) {
 		rowIter.Next()
 	}
 	c.Assert(tbDataRes.Rows().HasNext(), IsFalse)
+	c.Assert(mock.ExpectationsWereMet(), IsNil)
+}
+
+func (s *testDumpSuite) TestDumpDatabaseWithRetry(c *C) {
+	mockConfig := DefaultConfig()
+	mockConfig.SortByPk = false
+	mockConfig.Databases = []string{"test"}
+	mockConfig.Tables = NewDatabaseTables().AppendTables("test", "t")
+	db, mock, err := sqlmock.New()
+	c.Assert(err, IsNil)
+
+	showCreateDatabase := "CREATE DATABASE `test`"
+	rows := mock.NewRows([]string{"Database", "Create Database"}).AddRow("test", showCreateDatabase)
+	mock.ExpectQuery("SHOW CREATE DATABASE `test`").WillReturnRows(rows)
+	showCreateTableResult := "CREATE TABLE t (a INT)"
+	rows = mock.NewRows([]string{"Table", "Create Table"}).AddRow("t", showCreateTableResult)
+	mock.ExpectQuery("SHOW CREATE TABLE `test`.`t`").WillReturnRows(rows)
+	rows = mock.NewRows([]string{"column_name", "extra"}).AddRow("id", "").AddRow("name", "")
+	mock.ExpectQuery("SELECT COLUMN_NAME").WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg()).WillReturnRows(rows)
+	rows = mock.NewRows([]string{"a"}).AddRow(1)
+	mock.ExpectQuery("SELECT (.) FROM `test`.`t` LIMIT 1").WillReturnRows(rows)
+	rows = mock.NewRows([]string{"a"}).AddRow(1).AddRow(2)
+	mock.ExpectQuery("SELECT (.) FROM `test`.`t`").WillReturnError(&mysql.MySQLError{Number: 9001, Message: "pd is timeout"})
+	mock.ExpectQuery("SELECT (.) FROM `test`.`t`").WillReturnRows(rows)
+
+	mockWriter := newMockWriter()
+	connectPool := newMockConnectPool(c, db)
+	err = dumpDatabases(context.Background(), mockConfig, connectPool, mockWriter)
+	c.Assert(err, IsNil)
+
+	c.Assert(len(mockWriter.databaseMeta), Equals, 1)
+	c.Assert(mockWriter.databaseMeta["test"], Equals, "CREATE DATABASE `test`")
+	c.Assert(mockWriter.tableMeta["test.t"], Equals, showCreateTableResult)
 	c.Assert(mock.ExpectationsWereMet(), IsNil)
 }

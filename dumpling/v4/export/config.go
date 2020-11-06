@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"regexp"
 	"strings"
 	"text/template"
@@ -133,7 +134,19 @@ func (config *Config) createExternalStorage(ctx context.Context) (storage.Extern
 	if err != nil {
 		return nil, err
 	}
-	return storage.Create(ctx, b, false)
+	httpClient := http.DefaultClient
+	httpClient.Timeout = 30 * time.Second
+	maxIdleConnsPerHost := http.DefaultMaxIdleConnsPerHost
+	if config.Threads > maxIdleConnsPerHost {
+		maxIdleConnsPerHost = config.Threads
+	}
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.MaxIdleConnsPerHost = maxIdleConnsPerHost
+	httpClient.Transport = transport
+
+	return storage.New(ctx, b, &storage.ExternalStorageOptions{
+		HTTPClient: httpClient,
+	})
 }
 
 const (
