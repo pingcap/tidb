@@ -14,6 +14,8 @@
 package core
 
 import (
+	"fmt"
+
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -370,7 +372,9 @@ func MockContext() sessionctx.Context {
 	}
 	ctx.GetSessionVars().CurrentDB = "test"
 	do := &domain.Domain{}
-	do.CreateStatsHandle(ctx)
+	if err := do.CreateStatsHandle(ctx); err != nil {
+		panic(fmt.Sprintf("create mock context panic: %+v", err))
+	}
 	domain.BindDomain(ctx, do)
 	return ctx
 }

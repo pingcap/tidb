@@ -132,10 +132,7 @@ func (e *PointGetExecutor) Open(context.Context) error {
 	if e.txn.Valid() && txnCtx.StartTS == txnCtx.GetForUpdateTS() {
 		e.snapshot = e.txn.GetSnapshot()
 	} else {
-		e.snapshot, err = e.ctx.GetStore().GetSnapshot(kv.Version{Ver: snapshotTS})
-		if err != nil {
-			return err
-		}
+		e.snapshot = e.ctx.GetStore().GetSnapshot(kv.Version{Ver: snapshotTS})
 	}
 	if e.runtimeStats != nil {
 		snapshotStats := &tikv.SnapshotRuntimeStats{}
@@ -156,6 +153,13 @@ func (e *PointGetExecutor) Open(context.Context) error {
 func (e *PointGetExecutor) Close() error {
 	if e.runtimeStats != nil && e.snapshot != nil {
 		e.snapshot.DelOption(kv.CollectRuntimeStats)
+	}
+	if e.idxInfo != nil && e.tblInfo != nil {
+		actRows := int64(0)
+		if e.runtimeStats != nil {
+			actRows = e.runtimeStats.GetActRows()
+		}
+		e.ctx.StoreIndexUsage(e.tblInfo.ID, e.idxInfo.ID, actRows)
 	}
 	e.done = false
 	return nil

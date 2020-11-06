@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -154,6 +155,17 @@ func (rc *reorgCtx) clean() {
 }
 
 func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, tblInfo *model.TableInfo, lease time.Duration, f func() error) error {
+	// Sleep for reorgDelay before doing reorganization.
+	// This provides a safe window for async commit and 1PC to commit with an old schema.
+	// lease = 0 means it's in an integration test. In this case we don't delay so the test won't run too slowly.
+	if lease > 0 {
+		cfg := config.GetGlobalConfig().TiKVClient.AsyncCommit
+		reorgDelay := cfg.SafeWindow + cfg.AllowedClockDrift
+		logutil.BgLogger().Info("sleep before reorganization to make async commit safe",
+			zap.Duration("duration", reorgDelay))
+		time.Sleep(reorgDelay)
+	}
+
 	job := reorgInfo.Job
 	// This is for tests compatible, because most of the early tests try to build the reorg job manually
 	// without reorg meta info, which will cause nil pointer in here.
@@ -580,6 +592,63 @@ func getReorgInfo(d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table, elem
 			}
 		})
 
+		var err error
+		element, start, end, pid, err = t.GetDDLReorgHandle(job, tbl.Meta().IsCommonHandle)
+		if err != nil {
+			// If the reorg element doesn't exist, this reorg info should be saved by the older TiDB versions.
+			// It's compatible with the older TiDB versions.
+			// We'll try to remove it in the next major TiDB version.
+			if meta.ErrDDLReorgElementNotExist.Equal(err) {
+				job.SnapshotVer = 0
+				logutil.BgLogger().Warn("[ddl] get reorg info, the element does not exist", zap.String("job", job.String()))
+			}
+			return &info, errors.Trace(err)
+		}
+	}
+	info.Job = job
+	info.d = d
+	info.StartHandle = start
+	info.EndHandle = end
+	info.PhysicalTableID = pid
+	info.currElement = element
+	info.elements = elements
+
+	return &info, nil
+}
+
+func getReorgInfoFromPartitions(d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table, partitionIDs []int64, elements []*meta.Element) (*reorgInfo, error) {
+	var (
+		element *meta.Element
+		start   kv.Handle
+		end     kv.Handle
+		pid     int64
+		info    reorgInfo
+	)
+	if job.SnapshotVer == 0 {
+		info.first = true
+		// get the current version for reorganization if we don't have
+		ver, err := getValidCurrentVersion(d.store)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		pid = partitionIDs[0]
+		tb := tbl.(table.PartitionedTable).GetPartition(pid)
+		start, end, err = getTableRange(d, tb, ver.Ver, job.Priority)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		logutil.BgLogger().Info("[ddl] job get table range",
+			zap.Int64("jobID", job.ID), zap.Int64("physicalTableID", pid),
+			zap.String("startHandle", toString(start)), zap.String("endHandle", toString(end)))
+
+		err = t.UpdateDDLReorgHandle(job, start, end, pid, elements[0])
+		if err != nil {
+			return &info, errors.Trace(err)
+		}
+		// Update info should after data persistent.
+		job.SnapshotVer = ver.Ver
+		element = elements[0]
+	} else {
 		var err error
 		element, start, end, pid, err = t.GetDDLReorgHandle(job, tbl.Meta().IsCommonHandle)
 		if err != nil {
