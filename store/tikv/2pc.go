@@ -184,6 +184,14 @@ func NewCommiterMutations(sizeHint int) CommitterMutations {
 	}
 }
 
+// Reset the CommitterMutations contents.
+func (c *CommitterMutations) Reset() {
+	c.ops = c.ops[:0]
+	c.keys = c.keys[:0]
+	c.values = c.values[:0]
+	c.isPessimisticLock = c.isPessimisticLock[:0]
+}
+
 func (c *CommitterMutations) subRange(from, to int) CommitterMutations {
 	var res CommitterMutations
 	res.keys = c.keys[from:to]
