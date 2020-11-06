@@ -17,6 +17,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"os"
 	"testing"
 	"time"
@@ -26,7 +27,6 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
@@ -185,69 +185,63 @@ var testSQLs = []struct {
 	originSQL   string
 	bindSQL     string
 	dropSQL     string
-	idForDigest string
-	idForStmt   string
+	id          string
 	memoryUsage float64
 }{
 	{
 		createSQL:   "binding for select * from t where i>100 using select * from t use index(index_t) where i>100",
 		overlaySQL:  "binding for select * from t where i>99 using select * from t use index(index_t) where i>99",
-		digestSQL:   "binding for digest '6dabb0b1d885bdd2acf135e85d03ef55e2034b42c9a00aff4b00b84148d7fbeb' using /*+ use_index(@`sel_1` `test`.`t` `index_t`) */",
+		digestSQL:   "binding for digest '6dabb0b1d885bdd2acf135e85d03ef55e2034b42c9a00aff4b00b84148d7fbeb' using ",
 		querySQL:    "select * from t where i          >      30.0",
 		originSQL:   "select * from t where i > ?",
 		bindSQL:     "select * from t use index(index_t) where i>99",
 		dropSQL:     "binding for select * from t where i>100",
-		idForDigest: "use_index(@`sel_1` `test`.`t` `index_t`)",
-		idForStmt:   "use index (`index_t`)",
-		memoryUsage: float64(182),
+		id:          "use_index(@`sel_1` `test`.`t` `index_t`)",
+		memoryUsage: float64(201),
 	},
 	{
 		createSQL:   "binding for select * from t union all select * from t using select * from t use index(index_t) union all select * from t use index()",
 		overlaySQL:  "",
-		digestSQL:   "binding for digest '7ba52942d074d24813d00dbd4a0a6250a2d330755235dd87bf55b9e753172fd2' using /*+ use_index(@`sel_1` `test`.`t` `index_t`), use_index(@`sel_2` `test`.`t` `index_t`) */",
+		digestSQL:   "binding for digest '7ba52942d074d24813d00dbd4a0a6250a2d330755235dd87bf55b9e753172fd2' using ",
 		querySQL:    "select * from t union all         select * from t",
 		originSQL:   "select * from t union all select * from t",
 		bindSQL:     "select * from t use index(index_t) union all select * from t use index()",
 		dropSQL:     "binding for select * from t union all select * from t",
-		idForDigest: "use_index(@`sel_1` `test`.`t` `index_t`), use_index(@`sel_2` `test`.`t` `index_t`)",
-		idForStmt:   "use index (`index_t`), use index ()",
-		memoryUsage: float64(237),
+		id:          "use_index(@`sel_1` `test`.`t` `index_t`), use_index(@`sel_2` `test`.`t` )",
+		memoryUsage: float64(275),
 	},
 	{
 		createSQL:   "binding for (select * from t) union all (select * from t) using (select * from t use index(index_t)) union all (select * from t use index())",
 		overlaySQL:  "",
-		digestSQL:   "binding for digest '37f991923f17d1993e09e289b08bea60eed42db0ccf2218f45e573f458d19e2d' using /*+ use_index(@`sel_1` `test`.`t` `index_t`), use_index(@`sel_2` `test`.`t` ) */",
+		digestSQL:   "binding for digest '37f991923f17d1993e09e289b08bea60eed42db0ccf2218f45e573f458d19e2d' using ",
 		querySQL:    "(select * from t) union all         (select * from t)",
 		originSQL:   "( select * from t ) union all ( select * from t )",
 		bindSQL:     "(select * from t use index(index_t)) union all (select * from t use index())",
 		dropSQL:     "binding for (select * from t) union all (select * from t)",
-		idForDigest: "use_index(@`sel_1` `test`.`t` `index_t`), use_index(@`sel_2` `test`.`t` )",
-		idForStmt:   "use index (`index_t`), use index ()",
-		memoryUsage: float64(249),
+		id:          "use_index(@`sel_1` `test`.`t` `index_t`), use_index(@`sel_2` `test`.`t` )",
+		memoryUsage: float64(287),
 	},
 	{
 		createSQL:   "binding for select * from t intersect select * from t using select * from t use index(index_t) intersect select * from t use index()",
 		overlaySQL:  "",
-		digestSQL:   "binding for digest 'f98a7d635de504dbe9beefd90a3c9873a2347b0b749987e3be5eb23723dade78' using /*+ use_index(@`sel_1` `test`.`t` `index_t`), hash_agg(@`sel_1`), use_index(@`sel_2` `test`.`t` ), hash_join(@`sel_-1` ``) */",
+		digestSQL:   "binding for digest 'f98a7d635de504dbe9beefd90a3c9873a2347b0b749987e3be5eb23723dade78' using ",
 		querySQL:    "select * from t intersect         select * from t",
 		originSQL:   "select * from t intersect select * from t",
 		bindSQL:     "select * from t use index(index_t) intersect select * from t use index()",
 		dropSQL:     "binding for select * from t intersect select * from t",
-		idForDigest: "use_index(@`sel_1` `test`.`t` `index_t`), hash_agg(@`sel_1`), use_index(@`sel_2` `test`.`t` ), hash_join(@`sel_-1` ``)",
-		idForStmt:   "use index (`index_t`), use index ()",
-		memoryUsage: float64(237),
+		id:          "use_index(@`sel_1` `test`.`t` `index_t`), stream_agg(@`sel_1`), use_index(@`sel_2` `test`.`t` ), hash_join(@`sel_-1` ``)",
+		memoryUsage: float64(322),
 	},
 	{
 		createSQL:   "binding for select * from t except select * from t using select * from t use index(index_t) except select * from t use index()",
 		overlaySQL:  "",
-		digestSQL:   "binding for digest 'e9d7ec64a02941f0c1faee87e192d32ad3103756469037b548f8a9237812e614' using /*+ use_index(@`sel_1` `test`.`t` `idx`), hash_agg(@`sel_1`), use_index(@`sel_2` `test`.`t` ), hash_join(@`sel_-1` ``) */",
+		digestSQL:   "binding for digest 'e9d7ec64a02941f0c1faee87e192d32ad3103756469037b548f8a9237812e614' using ",
 		querySQL:    "select * from t except         select * from t",
 		originSQL:   "select * from t except select * from t",
 		bindSQL:     "select * from t use index(index_t) except select * from t use index()",
 		dropSQL:     "binding for select * from t except select * from t",
-		idForDigest: "use_index(@`sel_1` `test`.`t` `idx`), hash_agg(@`sel_1`), use_index(@`sel_2` `test`.`t` ), hash_join(@`sel_-1` ``)",
-		idForStmt:   "use index (`index_t`), use index ()",
-		memoryUsage: float64(231),
+		id:          "use_index(@`sel_1` `test`.`t` `index_t`), stream_agg(@`sel_1`), use_index(@`sel_2` `test`.`t` ), hash_join(@`sel_-1` ``)",
+		memoryUsage: float64(316),
 	},
 }
 
@@ -323,7 +317,7 @@ func (s *testSuite) TestGlobalBinding(c *C) {
 		c.Check(bindData, NotNil)
 		c.Check(bindData.OriginalSQL, Equals, testSQL.originSQL)
 		bind = bindData.Bindings[0]
-		c.Check(bind.ID, Equals, testSQL.idForStmt)
+		c.Check(bind.ID, Equals, testSQL.id)
 		c.Check(bind.BindSQL, Equals, testSQL.bindSQL)
 		c.Check(bindData.Db, Equals, "test")
 		c.Check(bind.Status, Equals, "using")
@@ -376,14 +370,14 @@ func (s *testSuite) TestGlobalBindingForDigest(c *C) {
 		metrics.BindTotalGauge.Reset()
 		metrics.BindMemoryUsage.Reset()
 
-		_, err := tk.Exec("create global " + testSQL.digestSQL)
+		_, err := tk.Exec("create global " + testSQL.digestSQL + "/*+" + testSQL.id + "*/")
 		c.Assert(err, IsNil, Commentf("err %v", err))
 
 		pb := &dto.Metric{}
 		metrics.BindTotalGauge.WithLabelValues(metrics.ScopeGlobal, bindinfo.Using).Write(pb)
 		c.Assert(pb.GetGauge().GetValue(), Equals, float64(1))
 		metrics.BindMemoryUsage.WithLabelValues(metrics.ScopeGlobal, bindinfo.Using).Write(pb)
-		sizeDiff := len(testSQL.originSQL) + len(testSQL.idForStmt) + len(testSQL.bindSQL) - len(testSQL.idForDigest)
+		sizeDiff := len(testSQL.originSQL) + len(testSQL.bindSQL)
 		c.Assert(pb.GetGauge().GetValue(), Equals, testSQL.memoryUsage-float64(sizeDiff))
 
 		hash := parser.DigestNormalized(testSQL.originSQL)
@@ -399,7 +393,7 @@ func (s *testSuite) TestGlobalBindingForDigest(c *C) {
 		bind := bindData.Bindings[0]
 		c.Check(int(bind.BindingTp), Equals, ast.BindingForDigest)
 		c.Check(bind.BindSQL, Equals, "")
-		c.Check(bind.ID, Equals, testSQL.idForDigest)
+		c.Check(bind.ID, Equals, testSQL.id)
 		c.Check(bindData.Db, Equals, "test")
 		c.Check(bind.Status, Equals, "using")
 		c.Check(bind.Charset, NotNil)
@@ -423,7 +417,7 @@ func (s *testSuite) TestGlobalBindingForDigest(c *C) {
 		c.Check(row.GetString(6), NotNil)
 		c.Check(row.GetString(7), NotNil)
 		c.Check(row.GetString(9), Equals, parser.DigestNormalized(testSQL.originSQL))
-		c.Check(row.GetString(10), Equals, testSQL.idForDigest)
+		c.Check(row.GetString(10), Equals, testSQL.id)
 
 		bindHandle := bindinfo.NewBindHandle(tk.Se)
 		err = bindHandle.Update(true)
@@ -435,7 +429,7 @@ func (s *testSuite) TestGlobalBindingForDigest(c *C) {
 		c.Check(bindData.OriginalSQL, Equals, "")
 		bind = bindData.Bindings[0]
 		c.Check(bind.BindSQL, Equals, "")
-		c.Check(bind.ID, Equals, testSQL.idForDigest)
+		c.Check(bind.ID, Equals, testSQL.id)
 		c.Check(bindData.Db, Equals, "test")
 		c.Check(bind.Status, Equals, "using")
 		c.Check(bind.Charset, NotNil)
@@ -513,7 +507,7 @@ func (s *testSuite) TestSessionBinding(c *C) {
 		c.Check(bindData.OriginalSQL, Equals, testSQL.originSQL)
 		bind := bindData.Bindings[0]
 		c.Check(bind.BindSQL, Equals, testSQL.bindSQL)
-		c.Check(bind.ID, Equals, testSQL.idForStmt)
+		c.Check(bind.ID, Equals, testSQL.id)
 		c.Check(bindData.Db, Equals, "test")
 		c.Check(bind.Status, Equals, "using")
 		c.Check(bind.Charset, NotNil)
@@ -571,14 +565,14 @@ func (s *testSuite) TestSessionBindingForDigest(c *C) {
 		metrics.BindTotalGauge.Reset()
 		metrics.BindMemoryUsage.Reset()
 
-		_, err := tk.Exec("create session " + testSQL.digestSQL)
+		_, err := tk.Exec("create session " + testSQL.digestSQL + "/*+" + testSQL.id + "*/")
 		c.Assert(err, IsNil, Commentf("err %v", err))
 
 		pb := &dto.Metric{}
 		metrics.BindTotalGauge.WithLabelValues(metrics.ScopeSession, bindinfo.Using).Write(pb)
 		c.Assert(pb.GetGauge().GetValue(), Equals, float64(1))
 		metrics.BindMemoryUsage.WithLabelValues(metrics.ScopeSession, bindinfo.Using).Write(pb)
-		sizeDiff := len(testSQL.originSQL) + len(testSQL.idForStmt) + len(testSQL.bindSQL) - len(testSQL.idForDigest)
+		sizeDiff := len(testSQL.originSQL) + len(testSQL.bindSQL)
 		c.Assert(pb.GetGauge().GetValue(), Equals, testSQL.memoryUsage-float64(sizeDiff))
 
 		handle := tk.Se.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
@@ -594,7 +588,7 @@ func (s *testSuite) TestSessionBindingForDigest(c *C) {
 		c.Check(bind.BindSQL, Equals, "")
 		c.Check(bindData.Db, Equals, "test")
 		c.Check(int(bind.BindingTp), Equals, ast.BindingForDigest)
-		c.Check(bind.ID, Equals, testSQL.idForDigest)
+		c.Check(bind.ID, Equals, testSQL.id)
 		c.Check(bind.Status, Equals, "using")
 		c.Check(bind.Charset, NotNil)
 		c.Check(bind.Collation, NotNil)
@@ -613,7 +607,6 @@ func (s *testSuite) TestSessionBindingForDigest(c *C) {
 		c.Assert(err, IsNil)
 		chk = rs.NewChunk()
 		err = rs.Next(context.TODO(), chk)
-		c.Check(err, IsNil)
 		c.Check(chk.NumRows(), Equals, 1)
 		row := chk.GetRow(0)
 		c.Check(row.GetString(0), Equals, "")
@@ -625,7 +618,7 @@ func (s *testSuite) TestSessionBindingForDigest(c *C) {
 		c.Check(row.GetString(6), NotNil)
 		c.Check(row.GetString(7), NotNil)
 		c.Check(row.GetString(9), Equals, digest)
-		c.Check(row.GetString(10), Equals, testSQL.idForDigest)
+		c.Check(row.GetString(10), Equals, testSQL.id)
 
 		_, err = tk.Exec("drop session " + testSQL.dropSQL)
 		c.Assert(err, IsNil)
@@ -993,7 +986,8 @@ func (s *testSuite) TestDropSingleBindings(c *C) {
 	c.Assert(len(rows), Equals, 1)
 	c.Assert(rows[0][1], Equals, "select * from t use index(idx_b)")
 	tk.MustExec("drop table t")
-	tk.MustExec("drop binding for select * from t using select * from t use index(idx_b)")
+	err := tk.ExecToErr("drop binding for select * from t using select * from t use index(idx_b)")
+	c.Assert(err, NotNil)
 	rows = tk.MustQuery("show bindings").Rows()
 	c.Assert(len(rows), Equals, 0)
 
@@ -1011,7 +1005,8 @@ func (s *testSuite) TestDropSingleBindings(c *C) {
 	c.Assert(len(rows), Equals, 1)
 	c.Assert(rows[0][1], Equals, "select * from t use index(idx_b)")
 	tk.MustExec("drop table t")
-	tk.MustExec("drop global binding for select * from t using select * from t use index(idx_b)")
+	err = tk.ExecToErr("drop global binding for select * from t using select * from t use index(idx_b)")
+	c.Assert(err, NotNil)
 	rows = tk.MustQuery("show global bindings").Rows()
 	c.Assert(len(rows), Equals, 0)
 }
@@ -1257,16 +1252,13 @@ func (s *testSuite) TestEvolveInvalidBindings(c *C) {
 
 	tk.MustExec("alter table t drop index idx_a")
 	tk.MustExec("admin evolve bindings")
-	c.Assert(s.domain.BindHandle().Update(false), IsNil)
+	c.Assert(s.domain.BindHandle().Update(true), IsNil)
 	rows := tk.MustQuery("show global bindings").Sort().Rows()
 	c.Assert(len(rows), Equals, 2)
 	// Make sure this "using" binding is not overrided.
 	c.Assert(rows[0][1], Equals, "select /*+ USE_INDEX(t) */ * from t where a > 10")
 	status := rows[0][3].(string)
 	c.Assert(status == "using", IsTrue)
-	c.Assert(rows[1][1], Equals, "select /*+ USE_INDEX(t,idx_a) */ * from t where a > 10")
-	status = rows[1][3].(string)
-	c.Assert(status == "using" || status == "rejected", IsTrue)
 }
 
 func (s *testSuite) TestOutdatedInfoSchema(c *C) {
@@ -1343,7 +1335,7 @@ func (s *testSuite) TestHintsSetID(c *C) {
 	c.Check(bindData.OriginalSQL, Equals, "select * from t where a > ?")
 	c.Assert(len(bindData.Bindings), Equals, 1)
 	bind := bindData.Bindings[0]
-	c.Assert(bind.ID, Equals, "use_index(@`sel_1` `test`.`t` `idx_a`)")
+	c.Assert(bind.ID, Equals, "use_index(@`sel_1` `test`.`t` `idx_a`), use_index(`test`.`t` `idx_a`)")
 
 	s.cleanBindingEnv(tk)
 	tk.MustExec("create global binding for select * from t where a > 10 using select /*+ use_index(t, idx_a) */ * from t where a > 10")
@@ -1352,7 +1344,7 @@ func (s *testSuite) TestHintsSetID(c *C) {
 	c.Check(bindData.OriginalSQL, Equals, "select * from t where a > ?")
 	c.Assert(len(bindData.Bindings), Equals, 1)
 	bind = bindData.Bindings[0]
-	c.Assert(bind.ID, Equals, "use_index(@`sel_1` `test`.`t` `idx_a`)")
+	c.Assert(bind.ID, Equals, "use_index(@`sel_1` `test`.`t` `idx_a`), use_index(`t` `idx_a`)")
 
 	s.cleanBindingEnv(tk)
 	tk.MustExec("create global binding for select * from t where a > 10 using select /*+ use_index(@sel_1 t, idx_a) */ * from t where a > 10")
@@ -1361,7 +1353,7 @@ func (s *testSuite) TestHintsSetID(c *C) {
 	c.Check(bindData.OriginalSQL, Equals, "select * from t where a > ?")
 	c.Assert(len(bindData.Bindings), Equals, 1)
 	bind = bindData.Bindings[0]
-	c.Assert(bind.ID, Equals, "use_index(@`sel_1` `test`.`t` `idx_a`)")
+	c.Assert(bind.ID, Equals, "use_index(@`sel_1` `test`.`t` `idx_a`), use_index(@`sel_1` `t` `idx_a`)")
 
 	s.cleanBindingEnv(tk)
 	tk.MustExec("create global binding for select * from t where a > 10 using select /*+ use_index(@qb1 t, idx_a) qb_name(qb1) */ * from t where a > 10")
@@ -1370,7 +1362,7 @@ func (s *testSuite) TestHintsSetID(c *C) {
 	c.Check(bindData.OriginalSQL, Equals, "select * from t where a > ?")
 	c.Assert(len(bindData.Bindings), Equals, 1)
 	bind = bindData.Bindings[0]
-	c.Assert(bind.ID, Equals, "use_index(@`sel_1` `test`.`t` `idx_a`)")
+	c.Assert(bind.ID, Equals, "use_index(@`sel_1` `test`.`t` `idx_a`), use_index(@`qb1` `t` `idx_a`), qb_name(`qb1`)")
 
 	s.cleanBindingEnv(tk)
 	tk.MustExec("create global binding for select * from t where a > 10 using select /*+ use_index(T, IDX_A) */ * from t where a > 10")
@@ -1379,18 +1371,19 @@ func (s *testSuite) TestHintsSetID(c *C) {
 	c.Check(bindData.OriginalSQL, Equals, "select * from t where a > ?")
 	c.Assert(len(bindData.Bindings), Equals, 1)
 	bind = bindData.Bindings[0]
-	c.Assert(bind.ID, Equals, "use_index(@`sel_1` `test`.`t` `idx_a`)")
+	c.Assert(bind.ID, Equals, "use_index(@`sel_1` `test`.`t` `idx_a`), use_index(`t` `idx_a`)")
 
 	s.cleanBindingEnv(tk)
-	err := tk.ExecToErr("create global binding for select * from t using select /*+ non_exist_hint() */ * from t")
-	c.Assert(terror.ErrorEqual(err, parser.ErrWarnOptimizerHintParseError), IsTrue)
+	tk.Se.GetSessionVars().StmtCtx.SetWarnings([]stmtctx.SQLWarn{})
+	tk.MustExec("create global binding for select * from t using select /*+ non_exist_hint() */ * from t")
+	c.Check(tk.Se.GetSessionVars().StmtCtx.WarningCount() > 0, IsTrue)
 	tk.MustExec("create global binding for select * from t where a > 10 using select * from t where a > 10")
 	bindData = bindHandle.GetBindRecord(record)
 	c.Check(bindData, NotNil)
 	c.Check(bindData.OriginalSQL, Equals, "select * from t where a > ?")
 	c.Assert(len(bindData.Bindings), Equals, 1)
 	bind = bindData.Bindings[0]
-	c.Assert(bind.ID, Equals, "")
+	c.Assert(bind.ID, Equals, "use_index(@`sel_1` `test`.`t` `idx_a`)")
 }
 
 func (s *testSuite) TestCapturePlanBaselineIgnoreTiFlash(c *C) {

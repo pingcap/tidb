@@ -1,4 +1,3 @@
-// Copyright 2019 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -17,7 +16,6 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
@@ -66,7 +64,7 @@ type Binding struct {
 
 func (b *Binding) isSame(rb *Binding) bool {
 	if b.ID != "" && rb.ID != "" {
-		return b.ID == rb.ID
+		return b.ID == rb.ID || b.BindSQL == rb.BindSQL
 	}
 	// Sometimes we cannot construct `ID` because of the changed schema, so we need to compare by bind sql.
 	return b.BindSQL == rb.BindSQL
@@ -116,25 +114,23 @@ func (br *BindRecord) FindBinding(hint string) *Binding {
 // prepareHints builds ID and Hint for BindRecord. If sctx is not nil, we check if
 // the BindSQL is still valid.
 func (br *BindRecord) prepareHints(sctx sessionctx.Context) error {
-	p := parser.New()
 	for i, bind := range br.Bindings {
 		if (bind.Hint != nil && bind.ID != "") || bind.Status == deleted {
 			continue
 		}
+		var (
+			hintsSet = bind.Hint
+			err      error
+		)
 		if sctx != nil && bind.BindingTp == ast.BindingForStmt {
-			_, err := getHintsForSQL(sctx, bind.BindSQL)
+			bind.ID, err = getHintsForSQL(sctx, bind.BindSQL)
 			if err != nil {
 				return err
 			}
 		}
-		var (
-			hintsSet = bind.Hint
-			warns    []error
-			err      error
-		)
 		switch bind.BindingTp {
 		case ast.BindingForStmt:
-			hintsSet, warns, err = hint.ParseHintsSet(p, bind.BindSQL, bind.Charset, bind.Collation, br.Db)
+			hintsSet, err = hint.FromHintComments(bind.ID)
 		case ast.BindingForDigest:
 			if bind.ID != "" {
 				hintsSet, err = hint.FromHintComments(bind.ID)
@@ -147,12 +143,6 @@ func (br *BindRecord) prepareHints(sctx sessionctx.Context) error {
 		hintsStr, err := hintsSet.Restore()
 		if err != nil {
 			return err
-		}
-		// For `create global binding for select * from t using select * from t`, we allow it though hintsStr is empty.
-		// For `create global binding for select * from t using select /*+ non_exist_hint() */ * from t`,
-		// the hint is totally invalid, we escalate warning to error.
-		if hintsStr == "" && len(warns) > 0 {
-			return warns[0]
 		}
 		br.Bindings[i].Hint = hintsSet
 		br.Bindings[i].ID = hintsStr

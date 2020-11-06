@@ -51,10 +51,10 @@ func (hs *HintsSet) GetFirstTableHints() []*ast.TableOptimizerHint {
 }
 
 // ContainTableHint checks whether the table hint set contains a hint.
-func (hs *HintsSet) ContainTableHint(hint string) bool {
+func (hs *HintsSet) ContainTableHint(hint model.CIStr) bool {
 	for _, tableHintsForBlock := range hs.tableHints {
 		for _, tableHint := range tableHintsForBlock {
-			if tableHint.HintName.String() == hint {
+			if tableHint.HintName.L == hint.L {
 				return true
 			}
 		}

@@ -66,7 +66,7 @@ func (e *SQLBindExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 func (e *SQLBindExec) dropSQLBind() error {
 	var bindInfo *bindinfo.Binding
-	if e.bindSQL != "" {
+	if e.bindSQL != "" || e.hints != nil {
 		bindInfo = &bindinfo.Binding{
 			BindSQL:   e.bindSQL,
 			BindingTp: e.bindingTp,
@@ -74,7 +74,6 @@ func (e *SQLBindExec) dropSQLBind() error {
 			Charset:   e.charset,
 			Collation: e.collation,
 		}
-
 	}
 	record := &bindinfo.BindRecord{
 		StmtDigest:  e.stmtDigest,

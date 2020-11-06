@@ -737,6 +737,7 @@ func (b *PlanBuilder) buildDropBindPlan(v *ast.DropBindingStmt) (Plan, error) {
 	case ast.BindingForDigest:
 		p.StmtDigest = v.StmtDigest
 		p.Db = b.ctx.GetSessionVars().CurrentDB
+		p.Hints = hint.FromTableHints(v.Hints)
 	}
 	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", nil)
 	return p, nil

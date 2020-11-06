@@ -113,8 +113,7 @@ func NewBindHandle(ctx sessionctx.Context) *BindHandle {
 	}
 	handle.pendingVerifyBindRecordMap.Value.Store(make(map[string]*bindRecordUpdate))
 	handle.pendingVerifyBindRecordMap.flushFunc = func(record *BindRecord) error {
-		// BindSQL has already been validated when coming here, so we use nil sctx parameter.
-		return handle.AddBindRecord(nil, record)
+		return handle.AddBindRecord(handle.sctx.Context, record)
 	}
 	return handle
 }
@@ -348,11 +347,9 @@ func (h *BindHandle) DropBindRecord(record *BindRecord, binding *Binding) (err e
 		}
 
 		h.sctx.Lock()
-		err := record.prepareHints(nil)
+		err = record.prepareHints(h.sctx.Context)
 		h.sctx.Unlock()
-		if err != nil {
-			return
-		}
+
 		// Make sure there is only one goroutine writes the cache and uses parser.
 		h.bindInfo.Lock()
 		h.removeBindRecord(record)
@@ -650,13 +647,14 @@ func (h *BindHandle) CaptureBaselines() {
 			Collation: collation,
 			Source:    Capture,
 		}
-		// We don't need to pass the `sctx` because the BindSQL has been validated already.
-		err = h.AddBindRecord(nil, &BindRecord{
+
+		err = h.AddBindRecord(h.sctx.Context, &BindRecord{
 			StmtDigest:  digest,
 			OriginalSQL: normalized,
 			Db:          dbName,
 			Bindings:    []Binding{binding},
 		})
+
 		if err != nil {
 			logutil.BgLogger().Info("capture baseline failed", zap.String("SQL", sqls[i]), zap.Error(err))
 		}
@@ -915,7 +913,7 @@ func (h *BindHandle) HandleEvolvePlanTask(sctx sessionctx.Context, adminEvolve b
 		binding.Status = Using
 	}
 	// We don't need to pass the `sctx` because the BindSQL has been validated already.
-	return h.AddBindRecord(nil, &BindRecord{
+	return h.AddBindRecord(sctx, &BindRecord{
 		StmtDigest:  record.StmtDigest,
 		OriginalSQL: record.OriginalSQL,
 		Db:          record.Db,

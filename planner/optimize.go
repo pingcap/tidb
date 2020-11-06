@@ -16,6 +16,7 @@ package planner
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/parser/terror"
 	"math"
 	"runtime/trace"
 	"strings"
@@ -24,6 +25,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
@@ -142,7 +144,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	if len(bindRecord.Bindings) > 0 {
 		orgBinding := bindRecord.Bindings[0] // the first is the original binding
 		for _, tbHint := range tableHints {  // consider table hints which contained by the original binding
-			if orgBinding.Hint.ContainTableHint(tbHint.HintName.String()) {
+			if orgBinding.Hint.ContainTableHint(tbHint.HintName) {
 				bestPlanHint = append(bestPlanHint, tbHint)
 			}
 		}
@@ -175,8 +177,14 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 		hint.BindHint(stmtNode, binding.Hint)
 		curStmtHints, curWarns := handleStmtHints(binding.Hint.GetFirstTableHints())
 		sctx.GetSessionVars().StmtCtx.StmtHints = curStmtHints
+		oldWarnsLen := sctx.GetSessionVars().StmtCtx.WarningCount()
 		plan, _, cost, err := optimize(ctx, sctx, node, is)
-		if err != nil {
+		newWarns := sctx.GetSessionVars().StmtCtx.GetWarnings()[oldWarnsLen:]
+		hasInvalidKey := false
+		for _, warn := range newWarns {
+			hasInvalidKey = terror.ErrorEqual(warn.Err, plannercore.ErrKeyDoesNotExist)
+		}
+		if hasInvalidKey || err != nil {
 			binding.Status = bindinfo.Invalid
 			handleInvalidBindRecord(ctx, sctx, scope, bindinfo.BindRecord{
 				StmtDigest:  bindRecord.StmtDigest,
@@ -198,8 +206,8 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	// 2. If the origin binding contain `read_from_storage` hint, we should ignore the evolve task.
 	// 3. If the best plan contain TiFlash hint, we should ignore the evolve task.
 	if sctx.GetSessionVars().EvolvePlanBaselines && binding == nil &&
-		!originHints.ContainTableHint(plannercore.HintReadFromStorage) &&
-		!bindRecord.Bindings[0].Hint.ContainTableHint(plannercore.HintReadFromStorage) {
+		!originHints.ContainTableHint(model.NewCIStr(plannercore.HintReadFromStorage)) &&
+		!bindRecord.Bindings[0].Hint.ContainTableHint(model.NewCIStr(plannercore.HintReadFromStorage)) {
 		handleEvolveTasks(ctx, sctx, bindRecord, stmtNode, bestPlanHintStr)
 	}
 	// Restore the hint to avoid changing the stmt node.

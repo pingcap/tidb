@@ -69,10 +69,7 @@ func (h *SessionHandle) DropBindRecord(sctx sessionctx.Context, record *BindReco
 	if binding != nil {
 		record.Bindings = append(record.Bindings, *binding)
 	}
-	err := record.prepareHints(nil)
-	if err != nil {
-		return err
-	}
+	err := record.prepareHints(sctx)
 	if oldRecord != nil {
 		newRecord = oldRecord.remove(record)
 	} else {
@@ -80,7 +77,7 @@ func (h *SessionHandle) DropBindRecord(sctx sessionctx.Context, record *BindReco
 	}
 	h.ch.setBindRecord(newRecord)
 	updateMetrics(metrics.ScopeSession, oldRecord, newRecord, false)
-	return nil
+	return err
 }
 
 // GetBindRecord return the BindMeta of the (normdOrigSQL,db) if BindMeta exist.
