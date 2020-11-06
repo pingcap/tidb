@@ -540,7 +540,7 @@ func (s *testSuite5) TestShowCreateTable(c *C) {
 
 	tk.MustExec("drop view if exists v")
 	tk.MustExec("create or replace definer=`root`@`127.0.0.1` view v as select JSON_MERGE('{}', '{}') as col;")
-	tk.MustQuery("show create view v").Check(testutil.RowsWithSep("|", "v|CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`127.0.0.1` SQL SECURITY DEFINER VIEW `v` (`col`) AS SELECT JSON_MERGE('{}', '{}') AS `col`  "))
+	tk.MustQuery("show create view v").Check(testutil.RowsWithSep("|", "v|CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`127.0.0.1` SQL SECURITY DEFINER VIEW `v` (`col`) AS SELECT JSON_MERGE(_UTF8MB4'{}', _UTF8MB4'{}') AS `col`  "))
 	tk.MustExec("drop view if exists v")
 
 	tk.MustExec("drop table if exists t1")
@@ -807,6 +807,16 @@ func (s *testSuite5) TestShowCreateTable(c *C) {
 			"  CONSTRAINT `child_ibfk_1` FOREIGN KEY (`parent_id`) REFERENCES `parent` (`id`) ON DELETE SET NULL ON UPDATE CASCADE\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
 	))
+
+	// Test issue #20327
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a int, b char(10) as ('a'));")
+	result := tk.MustQuery("show create table t;").Rows()[0][1]
+	c.Assert(result, Matches, `(?s).*GENERATED ALWAYS AS \(_utf8mb4'a'\).*`)
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a int, b char(10) as (_utf8'a'));")
+	result = tk.MustQuery("show create table t;").Rows()[0][1]
+	c.Assert(result, Matches, `(?s).*GENERATED ALWAYS AS \(_utf8'a'\).*`)
 
 	// Test show list partition table
 	tk.MustExec(`DROP TABLE IF EXISTS t`)
