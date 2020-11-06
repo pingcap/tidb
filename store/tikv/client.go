@@ -128,7 +128,8 @@ func (a *connArray) Init(addr string, security config.Security, idleNotify *uint
 	allowBatch := (cfg.TiKVClient.MaxBatchSize > 0) && enableBatch
 	if allowBatch {
 		a.batchConn = newBatchConn(uint(len(a.v)), cfg.TiKVClient.MaxBatchSize, idleNotify)
-		a.pendingRequests = metrics.TiKVPendingBatchRequests.WithLabelValues(a.target)
+		a.pendingRequests = metrics.TiKVBatchPendingRequests.WithLabelValues(a.target)
+		a.batchSize = metrics.TiKVBatchRequests.WithLabelValues(a.target)
 	}
 	keepAlive := cfg.TiKVClient.GrpcKeepAliveTime
 	keepAliveTimeout := cfg.TiKVClient.GrpcKeepAliveTimeout
