@@ -99,7 +99,7 @@ func (s *testExpressionRewriterSuite) TestDefaultFunction(c *C) {
 	tk.MustExec("create table t2(a varchar(10), b varchar(10))")
 	tk.MustExec("insert into t2 values ('1', '1')")
 	err = tk.ExecToErr("select default(a) from t1, t2")
-	c.Assert(err.Error(), Equals, "[planner:1052]Column 'a' in field list is ambiguous")
+	c.Assert(err.Error(), Equals, "[expression:1052]Column 'a' in field list is ambiguous")
 	tk.MustQuery("select default(t1.a) from t1, t2").Check(testkit.Rows("def"))
 
 	tk.MustExec(`create table t3(
@@ -130,6 +130,21 @@ func (s *testExpressionRewriterSuite) TestDefaultFunction(c *C) {
 
 	tk.MustExec("update t1 set c = c + default(c)")
 	tk.MustQuery("select c from t1").Check(testkit.Rows("11"))
+
+	tk.MustExec("create table t6(a int default -1, b int)")
+	tk.MustExec(`insert into t6 values (0, 0), (1, 1), (2, 2)`)
+	tk.MustExec("create table t7(a int default 1, b int)")
+	tk.MustExec(`insert into t7 values (0, 0), (1, 1), (2, 2)`)
+
+	tk.MustQuery(`select a from t6 where a > (select default(a) from t7 where t6.a = t7.a)`).Check(testkit.Rows("2"))
+	tk.MustQuery(`select a, default(a) from t6 where a > (select default(a) from t7 where t6.a = t7.a)`).Check(testkit.Rows("2 -1"))
+
+	tk.MustExec("create table t8(a int default 1, b int default -1)")
+	tk.MustExec(`insert into t8 values (0, 0), (1, 1)`)
+
+	tk.MustQuery(`select a, a from t8 order by default(a)`).Check(testkit.Rows("0 0", "1 1"))
+	tk.MustQuery(`select a from t8 order by default(b)`).Check(testkit.Rows("0", "1"))
+	tk.MustQuery(`select a from t8 order by default(b) * a`).Check(testkit.Rows("1", "0"))
 }
 
 func (s *testExpressionRewriterSuite) TestCompareSubquery(c *C) {
@@ -224,6 +239,15 @@ func (s *testExpressionRewriterSuite) TestCompareSubquery(c *C) {
 		"<nil> 2",
 	))
 	tk.MustQuery("select * from t t1 where b = all (select a from t t2)").Check(testkit.Rows())
+
+	// for issue 20059
+	tk.MustExec("DROP TABLE IF EXISTS `t`")
+	tk.MustExec("CREATE TABLE `t` (  `a` int(11) DEFAULT NULL) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;")
+	tk.MustExec("INSERT INTO `t` VALUES (1);")
+	tk.MustExec("DROP TABLE IF EXISTS `table_40_utf8_4`;")
+	tk.MustExec("CREATE TABLE `table_40_utf8_4` (`col_tinyint_key_unsigned` tinyint(4) DEFAULT NULL,  `col_bit64_key_signed` bit(64) DEFAULT NULL) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin;")
+	tk.MustExec("INSERT INTO `table_40_utf8_4` VALUES (31, -18);")
+	tk.MustQuery("select count(1) from table_40_utf8_4 where ( select count(1) from t where table_40_utf8_4.col_bit64_key_signed!=table_40_utf8_4.col_tinyint_key_unsigned)").Check(testkit.Rows("1"))
 }
 
 func (s *testExpressionRewriterSuite) TestCheckFullGroupBy(c *C) {

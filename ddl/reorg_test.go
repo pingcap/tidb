@@ -89,8 +89,10 @@ func (s *testDDLSuite) TestReorg(c *C) {
 	txn, err = ctx.Txn(true)
 	c.Assert(err, IsNil)
 	m := meta.NewMeta(txn)
+	e := &meta.Element{ID: 333, TypeKey: meta.IndexElementKey}
 	rInfo := &reorgInfo{
-		Job: job,
+		Job:         job,
+		currElement: e,
 	}
 	mockTbl := tables.MockTableFromMeta(&model.TableInfo{IsCommonHandle: s.IsCommonHandle})
 	err = d.generalWorker().runReorgJob(m, rInfo, mockTbl.Meta(), d.lease, f)
@@ -111,9 +113,10 @@ func (s *testDDLSuite) TestReorg(c *C) {
 			c.Assert(err, IsNil)
 
 			m = meta.NewMeta(txn)
-			info, err1 := getReorgInfo(d.ddlCtx, m, job, mockTbl)
+			info, err1 := getReorgInfo(d.ddlCtx, m, job, mockTbl, nil)
 			c.Assert(err1, IsNil)
 			c.Assert(info.StartHandle, HandleEquals, handle)
+			c.Assert(info.currElement, DeepEquals, e)
 			_, doneHandle := d.generalWorker().reorgCtx.getRowCountAndHandle()
 			c.Assert(doneHandle, IsNil)
 			break
@@ -129,27 +132,35 @@ func (s *testDDLSuite) TestReorg(c *C) {
 		SnapshotVer: 1, // Make sure it is not zero. So the reorgInfo's first is false.
 	}
 
-	var info *reorgInfo
-	startHandle := s.NewHandle().Int(1).Common(100, "string")
-	endHandle := s.NewHandle().Int(0).Common(101, "string")
+	element := &meta.Element{ID: 123, TypeKey: meta.ColumnElementKey}
+	info := &reorgInfo{
+		Job:             job,
+		d:               d.ddlCtx,
+		currElement:     element,
+		StartHandle:     s.NewHandle().Int(1).Common(100, "string"),
+		EndHandle:       s.NewHandle().Int(0).Common(101, "string"),
+		PhysicalTableID: 456,
+	}
 	err = kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		var err1 error
-		info, err1 = getReorgInfo(d.ddlCtx, t, job, mockTbl)
-		c.Assert(err1, IsNil)
-		err1 = info.UpdateReorgMeta(txn, startHandle, endHandle, 1)
-		c.Assert(err1, IsNil)
+		_, err1 = getReorgInfo(d.ddlCtx, t, job, mockTbl, []*meta.Element{element})
+		c.Assert(meta.ErrDDLReorgElementNotExist.Equal(err1), IsTrue)
+		c.Assert(job.SnapshotVer, Equals, uint64(0))
 		return nil
 	})
 	c.Assert(err, IsNil)
-
+	job.SnapshotVer = uint64(1)
+	err = info.UpdateReorgMeta(info.StartHandle)
+	c.Assert(err, IsNil)
 	err = kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
-		var err1 error
-		info, err1 = getReorgInfo(d.ddlCtx, t, job, mockTbl)
+		info1, err1 := getReorgInfo(d.ddlCtx, t, job, mockTbl, []*meta.Element{element})
 		c.Assert(err1, IsNil)
-		c.Assert(info.StartHandle, HandleEquals, startHandle)
-		c.Assert(info.EndHandle, HandleEquals, endHandle)
+		c.Assert(info1.currElement, DeepEquals, info.currElement)
+		c.Assert(info1.StartHandle, HandleEquals, info.StartHandle)
+		c.Assert(info1.EndHandle, HandleEquals, info.EndHandle)
+		c.Assert(info1.PhysicalTableID, Equals, info.PhysicalTableID)
 		return nil
 	})
 	c.Assert(err, IsNil)

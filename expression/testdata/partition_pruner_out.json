@@ -133,7 +133,7 @@
       {
         "SQL": "explain select * from t5 where d is null",
         "Result": [
-          "TableDual_5 0.00 root  rows:0"
+          "TableDual_6 0.00 root  rows:0"
         ]
       },
       {

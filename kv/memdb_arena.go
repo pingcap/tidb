@@ -276,15 +276,25 @@ func (l *memdbVlog) getValue(addr memdbArenaAddr) []byte {
 }
 
 func (l *memdbVlog) getSnapshotValue(addr memdbArenaAddr, snap *memdbCheckpoint) ([]byte, bool) {
+	result := l.selectValueHistory(addr, func(addr memdbArenaAddr) bool {
+		return !l.canModify(snap, addr)
+	})
+	if result.isNull() {
+		return nil, false
+	}
+	return l.getValue(addr), true
+}
+
+func (l *memdbVlog) selectValueHistory(addr memdbArenaAddr, predicate func(memdbArenaAddr) bool) memdbArenaAddr {
 	for !addr.isNull() {
-		if !l.canModify(snap, addr) {
-			return l.getValue(addr), true
+		if predicate(addr) {
+			return addr
 		}
 		var hdr memdbVlogHdr
 		hdr.load(l.blocks[addr.idx].buf[addr.off-memdbVlogHdrSize:])
 		addr = hdr.oldValue
 	}
-	return nil, false
+	return nullAddr
 }
 
 func (l *memdbVlog) revertToCheckpoint(db *memdb, cp *memdbCheckpoint) {

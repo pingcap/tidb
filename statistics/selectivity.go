@@ -393,7 +393,7 @@ func GetUsableSetsByGreedy(nodes []*StatsNode) (newBlocks []*StatsNode) {
 	mask := int64(math.MaxInt64)
 	for {
 		// Choose the index that covers most.
-		bestID, bestCount, bestTp, bestNumCols, bestMask := -1, 0, ColType, 0, int64(0)
+		bestID, bestCount, bestTp, bestNumCols, bestMask, bestSel := -1, 0, ColType, 0, int64(0), float64(0)
 		for i, set := range nodes {
 			if marked[i] {
 				continue
@@ -413,8 +413,16 @@ func GetUsableSetsByGreedy(nodes []*StatsNode) (newBlocks []*StatsNode) {
 			// (1): The stats type, always prefer the primary key or index.
 			// (2): The number of expression that it covers, the more the better.
 			// (3): The number of columns that it contains, the less the better.
-			if (bestTp == ColType && set.Tp != ColType) || bestCount < bits || (bestCount == bits && bestNumCols > set.numCols) {
-				bestID, bestCount, bestTp, bestNumCols, bestMask = i, bits, set.Tp, set.numCols, curMask
+			// (4): The selectivity of the covered conditions, the less the better.
+			//      The rationale behind is that lower selectivity tends to reflect more functional dependencies
+			//      between columns. It's hard to decide the priority of this rule against rule 2 and 3, in order
+			//      to avoid massive plan changes between tidb-server versions, I adopt this conservative strategy
+			//      to impose this rule after rule 2 and 3.
+			if (bestTp == ColType && set.Tp != ColType) ||
+				bestCount < bits ||
+				(bestCount == bits && bestNumCols > set.numCols) ||
+				(bestCount == bits && bestNumCols == set.numCols && bestSel > set.Selectivity) {
+				bestID, bestCount, bestTp, bestNumCols, bestMask, bestSel = i, bits, set.Tp, set.numCols, curMask, set.Selectivity
 			}
 		}
 		if bestCount == 0 {
