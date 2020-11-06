@@ -2995,7 +2995,7 @@ func (s *testSerialSuite) TestIssue20840(c *C) {
 	tk.MustExec("drop table t1")
 }
 
-func (s *testSuite) TestEqualDatums(c *C) {
+func (s *testSuite) TestEqualDatumsAsBinary(c *C) {
 	tests := []struct {
 		a    []interface{}
 		b    []interface{}
@@ -3019,15 +3019,15 @@ func (s *testSuite) TestEqualDatums(c *C) {
 		{[]interface{}{nil}, []interface{}{1}, false},
 	}
 	for _, tt := range tests {
-		testEqualDatums(c, tt.a, tt.b, tt.same)
+		testEqualDatumsAsBinary(c, tt.a, tt.b, tt.same)
 	}
 }
 
-func testEqualDatums(c *C, a []interface{}, b []interface{}, same bool) {
+func testEqualDatumsAsBinary(c *C, a []interface{}, b []interface{}, same bool) {
 	sc := new(stmtctx.StatementContext)
 	re := new(executor.ReplaceExec)
 	sc.IgnoreTruncate = true
-	res, err := re.EqualDatums(sc, types.MakeDatums(a...), types.MakeDatums(b...))
+	res, err := re.EqualDatumsAsBinary(sc, types.MakeDatums(a...), types.MakeDatums(b...))
 	c.Assert(err, IsNil)
 	c.Assert(res, Equals, same, Commentf("a: %v, b: %v", a, b))
 }
