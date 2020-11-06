@@ -536,6 +536,7 @@ func (e *BRIEExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		return errors.Errorf("unsupported BRIE statement kind: %s", e.info.kind)
 	}
 	taskExecuted = true
+	// TODO(lance6716): for import, should not return err here, instead, return a row containing error message
 	if err != nil {
 		return err
 	}
@@ -557,7 +558,7 @@ func handleBRIEError(err error, terror *terror.Error) error {
 }
 
 func (e *ShowExec) fetchShowBRIE(ctx context.Context, kind ast.BRIEKind) error {
-	sql := fmt.Sprintf(`SELECT data_path, status, progress, queue_time, exec_time, finish_time, conn_id
+	sql := fmt.Sprintf(`SELECT data_path, status, progress, queue_time, exec_time, finish_time, conn_id, message
 			FROM mysql.brie_tasks WHERE kind = '%s';`, kind.String())
 	rs, err := e.ctx.(sqlexec.SQLExecutor).Execute(ctx, sql)
 	if err != nil {
@@ -590,6 +591,7 @@ func (e *ShowExec) fetchShowBRIE(ctx context.Context, kind ast.BRIEKind) error {
 			e.result.AppendTime(4, row.GetTime(4))
 			e.result.AppendTime(5, row.GetTime(5))
 			e.result.AppendUint64(6, row.GetUint64(6))
+			e.result.AppendString(7, row.GetString(7))
 		}
 	}
 	return nil
