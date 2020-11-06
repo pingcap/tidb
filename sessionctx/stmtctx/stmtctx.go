@@ -163,8 +163,11 @@ type StatementContext struct {
 	TaskID                uint64 // unique ID for an execution of a statement
 	TaskMapBakTS          uint64 // counter for
 
-	// IdxUsageMap collects index usage during one statement.
-	IdxUsageMap StatementIndexUsageMap
+	// IdxUsageCollector collects index usage during one statement.
+	IdxUsageCollector struct {
+		sync.Mutex
+		Map StatementIndexUsageMap
+	}
 }
 
 // StmtHints are SessionVars related sql hints.
@@ -702,13 +705,15 @@ func (sc *StatementContext) GetLockWaitStartTime() time.Time {
 }
 
 func (sc *StatementContext) InitIndexUsage() {
-	sc.IdxUsageMap = make(StatementIndexUsageMap)
+	sc.IdxUsageCollector.Map = make(StatementIndexUsageMap)
 }
 
 func (sc *StatementContext) RecordIndexUsage(tblID int64, idxID int64, rows int64) {
 	id := GlobalIndexID{TableID: tblID, IndexID: idxID}
-	value := sc.IdxUsageMap[id]
-	sc.IdxUsageMap[id] = value + rows
+	sc.IdxUsageCollector.Lock()
+	defer sc.IdxUsageCollector.Unlock()
+	value := sc.IdxUsageCollector.Map[id]
+	sc.IdxUsageCollector.Map[id] = value + rows
 }
 
 //CopTasksDetails collects some useful information of cop-tasks during execution.

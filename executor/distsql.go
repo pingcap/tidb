@@ -644,6 +644,18 @@ func (e *IndexLookUpExecutor) Close() error {
 	}
 	e.idxWorkerWg.Wait()
 	e.tblWorkerWg.Wait()
+	if e.ctx.IndexUsageCollectorActivated() {
+		for _, plan := range e.idxPlans {
+			rsc := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl
+			if !rsc.ExistsCopStats(plan.ID()) {
+				continue
+			}
+			copStats := rsc.GetCopStats(plan.ID())
+			if indexScan, ok := plan.(*plannercore.PhysicalIndexScan); ok && !indexScan.IsFullScan() {
+				e.ctx.GetSessionVars().StmtCtx.RecordIndexUsage(indexScan.Table.ID, indexScan.Index.ID, copStats.GetActRows())
+			}
+		}
+	}
 	e.finished = nil
 	e.workerStarted = false
 	e.memTracker = nil

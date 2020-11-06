@@ -893,7 +893,6 @@ func (s *testStatsSuite) TestIndexUsage4IndexReader(c *C) {
 }
 
 func (s *testStatsSuite) TestIndexUsage4IndexLookUp(c *C) {
-	c.Skip("Not currently supported.")
 	defer cleanEnv(c, s.store, s.do)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -905,8 +904,12 @@ func (s *testStatsSuite) TestIndexUsage4IndexLookUp(c *C) {
 	tk.MustQuery("select * from t_idx use index(idx_a)").Check(testkit.Rows("1 0", "2 0"))
 	err := do.StatsHandle().DumpIndexUsageToKV()
 	c.Assert(err, IsNil)
+	tk.MustQuery(querySQL).Check(testkit.Rows())
+	tk.MustQuery("select * from t_idx use index(idx_a) where a>1").Check(testkit.Rows("2 0"))
+	err = do.StatsHandle().DumpIndexUsageToKV()
+	c.Assert(err, IsNil)
 	tk.MustQuery(querySQL).Check(testkit.Rows(
-		"test t_idx idx_a 1 2",
+		"test t_idx idx_a 1 1",
 	))
 }
 

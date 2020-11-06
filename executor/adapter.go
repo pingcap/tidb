@@ -841,7 +841,7 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, succ bool, hasMoreResults boo
 		sessionExecuteRunDurationGeneral.Observe(executeDuration.Seconds())
 	}
 
-	a.Ctx.RecordIndexUsageFromStatement(sessVars.StmtCtx.IdxUsageMap)
+	a.Ctx.RecordIndexUsageFromStatement(sessVars.StmtCtx.IdxUsageCollector.Map)
 }
 
 // CloseRecordSet will finish the execution of current statement and do some record work
