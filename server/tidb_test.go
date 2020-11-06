@@ -922,6 +922,10 @@ func (ts *tidbTestSuite) TestSumAvg(c *C) {
 	ts.runTestSumAvg(c)
 }
 
+func (ts *tidbTestSuite) TestClientErrors(c *C) {
+	ts.runTestInfoschemaClientErrors(c)
+}
+
 func (ts *tidbTestSuite) TestNullFlag(c *C) {
 	// issue #9689
 	qctx, err := ts.tidbdrv.OpenCtx(uint64(0), 0, uint8(tmysql.DefaultCollationID), "test", nil)

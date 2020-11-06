@@ -18,11 +18,14 @@ import (
 	"time"
 )
 
-// A set of counters for errors and warnings displayed in infoschema
+// The error summary is protected by a mutex for simplicity.
+// It is not expected to be hot unless there are concurrent workloads
+// that are generating high error/warning counts, in which case
+// the system probably has other issues already.
 // TODO: provide a method to reset statistics.
 
 type errorSummary struct {
-	sync.RWMutex
+	sync.Mutex
 	ErrorCount   int
 	WarningCount int
 	FirstSeen    time.Time
@@ -30,17 +33,17 @@ type errorSummary struct {
 }
 
 type globalStats struct {
-	sync.RWMutex
+	sync.Mutex
 	errors map[uint16]*errorSummary
 }
 
 type userStats struct {
-	sync.RWMutex
+	sync.Mutex
 	errors map[string]map[uint16]*errorSummary
 }
 
 type hostStats struct {
-	sync.RWMutex
+	sync.Mutex
 	errors map[string]map[uint16]*errorSummary
 }
 
@@ -56,55 +59,85 @@ func init() {
 
 // GlobalStats summarizes errors and warnings across all users/hosts
 func GlobalStats() map[uint16]*errorSummary {
+	global.Lock()
+	defer global.Unlock()
 	return global.errors
 }
 
 // UserStats summarizes per-user
 func UserStats() map[string]map[uint16]*errorSummary {
+	users.Lock()
+	defer users.Unlock()
 	return users.errors
 }
 
 // HostStats summarizes per remote-host
 func HostStats() map[string]map[uint16]*errorSummary {
+	hosts.Lock()
+	defer hosts.Unlock()
 	return hosts.errors
 }
 
 func initCounters(errCode uint16, user, host string) {
+	global.Lock()
 	if _, ok := global.errors[errCode]; !ok {
 		global.errors[errCode] = &errorSummary{FirstSeen: time.Now()}
 	}
+	global.Unlock()
+	users.Lock()
 	if _, ok := users.errors[user]; !ok {
 		users.errors[user] = make(map[uint16]*errorSummary)
-	}
-	if _, ok := hosts.errors[host]; !ok {
-		hosts.errors[host] = make(map[uint16]*errorSummary)
 	}
 	if _, ok := users.errors[user][errCode]; !ok {
 		users.errors[user][errCode] = &errorSummary{FirstSeen: time.Now()}
 	}
+	users.Unlock()
+	hosts.Lock()
+	if _, ok := hosts.errors[host]; !ok {
+		hosts.errors[host] = make(map[uint16]*errorSummary)
+	}
 	if _, ok := hosts.errors[host][errCode]; !ok {
 		hosts.errors[host][errCode] = &errorSummary{FirstSeen: time.Now()}
 	}
+	hosts.Unlock()
 }
 
 // IncrementError increments the global/user/host statistics for an errCode
 func IncrementError(errCode uint16, user, host string) {
 	initCounters(errCode, user, host)
+	// Increment counter + update last seen
+	global.errors[errCode].Lock()
 	global.errors[errCode].ErrorCount++
 	global.errors[errCode].LastSeen = time.Now()
+	global.errors[errCode].Unlock()
+	// Increment counter + update last seen
+	users.errors[user][errCode].Lock()
 	users.errors[user][errCode].ErrorCount++
 	users.errors[user][errCode].LastSeen = time.Now()
+	users.errors[user][errCode].Unlock()
+	// Increment counter + update last seen
+	hosts.errors[host][errCode].Lock()
 	hosts.errors[host][errCode].ErrorCount++
 	hosts.errors[host][errCode].LastSeen = time.Now()
+	hosts.errors[host][errCode].Unlock()
 }
 
 // IncrementWarning increments the global/user/host statistics for an errCode
 func IncrementWarning(errCode uint16, user, host string) {
 	initCounters(errCode, user, host)
+	// Increment counter + update last seen
+	global.errors[errCode].Lock()
 	global.errors[errCode].WarningCount++
 	global.errors[errCode].LastSeen = time.Now()
+	global.errors[errCode].Unlock()
+	// Increment counter + update last seen
+	users.errors[user][errCode].Lock()
 	users.errors[user][errCode].WarningCount++
 	users.errors[user][errCode].LastSeen = time.Now()
+	users.errors[user][errCode].Unlock()
+	// Increment counter + update last seen
+	hosts.errors[host][errCode].Lock()
 	hosts.errors[host][errCode].WarningCount++
 	hosts.errors[host][errCode].LastSeen = time.Now()
+	hosts.errors[host][errCode].Unlock()
 }

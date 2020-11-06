@@ -1867,11 +1867,22 @@ func (e *memtableRetriever) setDataForPlacementPolicy(ctx sessionctx.Context) er
 }
 
 func (e *memtableRetriever) setDataForClientErrorsSummary(ctx sessionctx.Context, tableName string) error {
-	// TODO: check permisssions.
-	var rows [][]types.Datum
+	// Seeing client errors should require the PROCESS privilege, with the exception of errors for your own user.
+	// This is similar to information_schema.processlist, which is the closest comparison.
+	var hasProcessPriv bool
+	loginUser := ctx.GetSessionVars().User
+	if pm := privilege.GetPrivilegeManager(ctx); pm != nil {
+		if pm.RequestVerification(ctx.GetSessionVars().ActiveRoles, "", "", "", mysql.ProcessPriv) {
+			hasProcessPriv = true
+		}
+	}
 
+	var rows [][]types.Datum
 	switch tableName {
 	case infoschema.TableClientErrorsSummaryGlobal:
+		if !hasProcessPriv {
+			return plannercore.ErrSpecificAccessDenied.GenWithStackByArgs("PROCESS")
+		}
 		for code, summary := range errno.GlobalStats() {
 			firstSeen := types.NewTime(types.FromGoTime(summary.FirstSeen), mysql.TypeTimestamp, types.DefaultFsp)
 			lastSeen := types.NewTime(types.FromGoTime(summary.LastSeen), mysql.TypeTimestamp, types.DefaultFsp)
@@ -1888,6 +1899,10 @@ func (e *memtableRetriever) setDataForClientErrorsSummary(ctx sessionctx.Context
 	case infoschema.TableClientErrorsSummaryByUser:
 		for user, agg := range errno.UserStats() {
 			for code, summary := range agg {
+				// Allow anyone to see their own errors.
+				if !hasProcessPriv && loginUser != nil && loginUser.Username != user {
+					continue
+				}
 				firstSeen := types.NewTime(types.FromGoTime(summary.FirstSeen), mysql.TypeTimestamp, types.DefaultFsp)
 				lastSeen := types.NewTime(types.FromGoTime(summary.LastSeen), mysql.TypeTimestamp, types.DefaultFsp)
 				row := types.MakeDatums(
@@ -1903,6 +1918,9 @@ func (e *memtableRetriever) setDataForClientErrorsSummary(ctx sessionctx.Context
 			}
 		}
 	case infoschema.TableClientErrorsSummaryByHost:
+		if !hasProcessPriv {
+			return plannercore.ErrSpecificAccessDenied.GenWithStackByArgs("PROCESS")
+		}
 		for host, agg := range errno.HostStats() {
 			for code, summary := range agg {
 				firstSeen := types.NewTime(types.FromGoTime(summary.FirstSeen), mysql.TypeTimestamp, types.DefaultFsp)
