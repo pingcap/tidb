@@ -188,9 +188,9 @@ func splitTableDataIntoChunks(
 		return
 	}
 	if !smax.Valid || !smin.Valid {
-		// found no data
-		log.Warn("no data to dump", zap.String("schema", dbName), zap.String("table", tableName))
-		close(tableDataIRCh)
+		// smax and smin are not valid, but there can also be data to dump, so just skip split chunk logic. 
+		log.Debug("skip concurrent dump due to no valid smax or smin", zap.String("schema", dbName), zap.String("table", tableName))
+		linear <- struct{}{}
 		return
 	}
 
