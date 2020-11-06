@@ -263,7 +263,7 @@ func (s *testSuite) TestInsert(c *C) {
 	r.Check(testkit.Rows("0", "0", "18446744073709551615", "0", "0"))
 	tk.MustExec("set @@sql_mode = @orig_sql_mode;")
 
-	// issue 6424
+	// issue 6424 & issue 20207
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a time(6))")
 	tk.MustExec("insert into t value('20070219173709.055870'), ('20070219173709.055'), ('20070219173709.055870123')")
@@ -272,7 +272,7 @@ func (s *testSuite) TestInsert(c *C) {
 	tk.MustExec("insert into t value(20070219173709.055870), (20070219173709.055), (20070219173709.055870123)")
 	tk.MustQuery("select * from t").Check(testkit.Rows("17:37:09.055870", "17:37:09.055000", "17:37:09.055870"))
 	_, err = tk.Exec("insert into t value(-20070219173709.055870)")
-	c.Assert(err.Error(), Equals, "[table:1366]Incorrect time value: '-20070219173709.055870' for column 'a' at row 1")
+	c.Assert(err.Error(), Equals, "[table:1292]Incorrect time value: '-20070219173709.055870' for column 'a' at row 1")
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("set @@sql_mode=''")
