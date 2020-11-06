@@ -1863,13 +1863,13 @@ func buildBRIESchema(kind ast.BRIEKind) (*expression.Schema, types.NameSlice) {
 		schema.Append(buildColumnWithName("", "Queue Time", mysql.TypeDatetime, datetimeSize))
 		schema.Append(buildColumnWithName("", "Execution Time", mysql.TypeDatetime, datetimeSize))
 	case ast.BRIEKindImport:
+		// TODO(lance6716): refine later
 		schema = newColumnsWithNames(5)
 		schema.Append(buildColumnWithName("", "Data Source", mysql.TypeVarchar, 255))
 		schema.Append(buildColumnWithName("", "Size", mysql.TypeLonglong, longlongSize))
 		schema.Append(buildColumnWithName("", "CommitTS", mysql.TypeLonglong, longlongSize))
 		schema.Append(buildColumnWithName("", "Queue Time", mysql.TypeDatetime, datetimeSize))
 		schema.Append(buildColumnWithName("", "Execution Time", mysql.TypeDatetime, datetimeSize))
-		// TODO(lance6716): add a finish time
 	}
 
 	return schema.col2Schema(), schema.names

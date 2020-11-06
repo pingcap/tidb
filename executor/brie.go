@@ -305,7 +305,7 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 		case len(s.Schemas) != 0:
 			dbs := make([]string, 0, len(s.Schemas))
 			for _, db := range s.Schemas {
-				dbs = append(dbs, fmt.Sprintf("%v.*", db))
+				dbs = append(dbs, fmt.Sprintf("%s.*", db))
 			}
 			importGlobalCfg.Mydumper.Filter = dbs
 		}
@@ -364,7 +364,7 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 				if opt.UintValue == ast.BRIECSVHeaderIsColumns {
 					importCfg.Mydumper.CSV.Header = true
 				} else {
-					b.err = errors.Errorf("CSV_HEADER only support FIELDS or COLUMNS")
+					b.err = errors.Errorf("CSV_HEADER only support FIELDS or COLUMNS to indicate it has header")
 					return nil
 				}
 			case ast.BRIEOptionCSVNotNull:
@@ -376,6 +376,7 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 			case ast.BRIEOptionCSVTrimLastSeparators:
 				importCfg.Mydumper.CSV.TrimLastSep = opt.UintValue != 0
 			case ast.BRIEOptionChecksum:
+				// TODO(lance6717): support OpLevelOptional later
 				if opt.UintValue == 0 {
 					importGlobalCfg.PostRestore.Checksum = importcfg.OpLevelOff
 				}
@@ -458,7 +459,7 @@ func (e *BRIEExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	case ast.BRIEKindRestore:
 		err = handleBRIEError(task.RunRestore(taskCtx, glue, "Restore", e.restoreCfg), ErrBRIERestoreFailed)
 	case ast.BRIEKindImport:
-		// TODO(lance6716): need add a syntax like `RESUME FROM LAST`, to continue on checkpoint
+		// TODO(lance6716): support taskCtx later
 		l := lightning.New(e.importCfg)
 		err = handleBRIEError(l.RunOnce(), ErrBRIEImportFailed)
 	default:
