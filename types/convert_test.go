@@ -1160,6 +1160,7 @@ func (s *testTypeConvertSuite) TestConvertDecimalStrToUint(c *C) {
 		{"18446744073709551614.55", 18446744073709551615, true},
 		{"18446744073709551615.344", 18446744073709551615, true},
 		{"18446744073709551615.544", 0, false},
+		{"-111.111", 0, false},
 	}
 	for _, ca := range cases {
 		result, err := convertDecimalStrToUint(&stmtctx.StatementContext{}, ca.input, math.MaxUint64, 0)
