@@ -176,7 +176,11 @@ func (c *TopN) updateTopNWithDelta(d []byte, delta uint64, increase bool) bool {
 	}
 	idx := c.findTopN(d)
 	if idx >= 0 {
-		c.TopN[idx].Count += delta
+		if increase {
+			c.TopN[idx].Count += delta
+		} else {
+			c.TopN[idx].Count -= delta
+		}
 		return true
 	}
 	return false
@@ -488,6 +492,11 @@ func (c *TopN) AppendTopN(data []byte, count uint64) {
 	c.TopN = append(c.TopN, TopNMeta{data, count})
 }
 
+// GetWidthAndDepth returns the width and depth of CM Sketch.
+func (c *CMSketch) GetWidthAndDepth() (int32, int32) {
+	return c.width, c.depth
+}
+
 // CalcDefaultValForAnalyze calculate the default value for Analyze.
 // The value of it is count / NDV in CMSketch. This means count and NDV are not include topN.
 func (c *CMSketch) CalcDefaultValForAnalyze(NDV uint64) {
@@ -577,10 +586,6 @@ func (c *TopN) BetweenCount(l, r []byte) uint64 {
 	return ret
 }
 
-// GetWidthAndDepth returns the width and depth of CM Sketch.
-func (c *CMSketch) GetWidthAndDepth() (int32, int32) {
-	return c.width, c.depth
-}
 
 // Sort sorts the topn items.
 func (c *TopN) Sort() {
