@@ -2099,6 +2099,7 @@ var builtinGlobalVariable = []string{
 	variable.InnodbLockWaitTimeout,
 	variable.WindowingUseHighPrecision,
 	variable.SQLSelectLimit,
+	variable.SQLSafeUpdates,
 
 	/* TiDB specific global variables: */
 	variable.TiDBSkipASCIICheck,
@@ -2170,7 +2171,6 @@ var builtinGlobalVariable = []string{
 	variable.TiDBShardAllocateStep,
 	variable.TiDBEnableChangeColumnType,
 	variable.TiDBEnableAmendPessimisticTxn,
-	variable.TiDBEnableSafeUpdates,
 }
 
 var (

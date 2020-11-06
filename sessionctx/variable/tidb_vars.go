@@ -453,9 +453,6 @@ const (
 
 	// TiDBEnableAmendPessimisticTxn indicates if amend pessimistic transactions is enabled.
 	TiDBEnableAmendPessimisticTxn = "tidb_enable_amend_pessimistic_txn"
-
-	// TiDBEnableSafeUpdates indicates if the safe-update mode is enabled.
-	TiDBEnableSafeUpdates = "tidb_enable_safe_updates"
 )
 
 // Default TiDB system variable values.
@@ -563,7 +560,6 @@ const (
 	DefTiDBEnableTelemetry             = true
 	DefTiDBEnableParallelApply         = false
 	DefTiDBEnableAmendPessimisticTxn   = true
-	DefTiDBEnableSafeUpdates           = false
 	DefTiDBPartitionPruneMode          = "static-only"
 )
 

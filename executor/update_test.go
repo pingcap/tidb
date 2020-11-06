@@ -101,7 +101,7 @@ func (s *testUpdateSuite) TestSafeUpdates(c *C) {
 		c.Assert(err.Error(), Equals, "[planner:1175]You are using safe update mode and you tried to update a table without a WHERE that uses a KEY column")
 	}
 
-	tk.MustExec("set @@tidb_enable_safe_updates = 1")
+	tk.MustExec("set @@sql_safe_updates = 1")
 	safeUpdatesErr(tk.ExecToErr("delete from t"))
 	safeUpdatesErr(tk.ExecToErr("delete from t where 1=1"))
 	safeUpdatesErr(tk.ExecToErr("delete from t where c=1"))

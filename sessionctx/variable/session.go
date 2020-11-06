@@ -1526,7 +1526,7 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.EnableChangeColumnType = TiDBOptOn(val)
 	case TiDBEnableAmendPessimisticTxn:
 		s.EnableAmendPessimisticTxn = TiDBOptOn(val)
-	case TiDBEnableSafeUpdates:
+	case SQLSafeUpdates:
 		s.EnableSafeUpdates = TiDBOptOn(val)
 	}
 	s.systems[name] = val
