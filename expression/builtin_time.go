@@ -2726,7 +2726,7 @@ func (du *baseDateArithmitical) add(ctx sessionctx.Context, date types.Time, int
 		return types.Time{}, true, err
 	}
 
-	goTime, err := date.time.GoTime(time.UTC)
+	goTime, err := date.Time.GoTime(time.UTC)
 	if err := handleInvalidTimeError(ctx, err); err != nil {
 		return types.Time{}, true, err
 	}
