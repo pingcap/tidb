@@ -2648,7 +2648,7 @@ func (b *PlanBuilder) buildSelectPlanOfInsert(ctx context.Context, insert *ast.I
 }
 
 func (b *PlanBuilder) buildLoadData(ctx context.Context, ld *ast.LoadDataStmt) (Plan, error) {
-	p := &LoadData{
+	p := LoadData{
 		IsLocal:            ld.IsLocal,
 		OnDuplicate:        ld.OnDuplicate,
 		Path:               ld.Path,
@@ -2659,7 +2659,7 @@ func (b *PlanBuilder) buildLoadData(ctx context.Context, ld *ast.LoadDataStmt) (
 		IgnoreLines:        ld.IgnoreLines,
 		ColumnAssignments:  ld.ColumnAssignments,
 		ColumnsAndUserVars: ld.ColumnsAndUserVars,
-	}
+	}.Init(b.ctx)
 	user := b.ctx.GetSessionVars().User
 	var insertErr error
 	if user != nil {
