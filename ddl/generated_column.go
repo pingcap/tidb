@@ -272,7 +272,7 @@ func checkIllegalFn4GeneratedColumn(colName string, expr ast.ExprNode) error {
 		return ErrInvalidGroupFuncUse
 	}
 	if c.hasWindowFunc {
-		return errWindowInvalidWindowFuncUse.GenWithStackByArgs(name)
+		return errWindowInvalidWindowFuncUse
 	}
 	return nil
 }
