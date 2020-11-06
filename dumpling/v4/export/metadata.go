@@ -50,7 +50,7 @@ func (m *globalMetadata) recordFinishTime(t time.Time) {
 	m.buffer.WriteString("Finished dump at: " + t.Format(metadataTimeLayout) + "\n")
 }
 
-func (m *globalMetadata) recordGlobalMetaData(db *sql.Conn, serverType ServerType, afterConn bool) error {
+func (m *globalMetadata) recordGlobalMetaData(db *sql.Conn, serverType ServerType, afterConn bool, snapshot string) error {
 	// get master status info
 	m.buffer.WriteString("SHOW MASTER STATUS:")
 	if afterConn {
@@ -83,7 +83,12 @@ func (m *globalMetadata) recordGlobalMetaData(db *sql.Conn, serverType ServerTyp
 			return err
 		}
 		logFile := getValidStr(str, fileFieldIndex)
-		pos := getValidStr(str, posFieldIndex)
+		var pos string
+		if serverType == ServerTypeTiDB && snapshot != "" {
+			pos = snapshot
+		} else {
+			pos = getValidStr(str, posFieldIndex)
+		}
 		gtidSet := getValidStr(str, gtidSetFieldIndex)
 
 		if logFile != "" {

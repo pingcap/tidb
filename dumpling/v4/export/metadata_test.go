@@ -31,7 +31,7 @@ func (s *testMetaDataSuite) TestMysqlMetaData(c *C) {
 		sqlmock.NewRows([]string{"exec_master_log_pos", "relay_master_log_file", "master_host", "Executed_Gtid_Set", "Seconds_Behind_Master"}))
 
 	m := newGlobalMetadata(s.createStorage(c))
-	c.Assert(m.recordGlobalMetaData(conn, ServerTypeMySQL, false), IsNil)
+	c.Assert(m.recordGlobalMetaData(conn, ServerTypeMySQL, false, ""), IsNil)
 
 	c.Assert(m.buffer.String(), Equals, "SHOW MASTER STATUS:\n"+
 		"\tLog: ON.000001\n"+
@@ -69,8 +69,8 @@ func (s *testMetaDataSuite) TestMetaDataAfterConn(c *C) {
 	mock.ExpectQuery("SHOW MASTER STATUS").WillReturnRows(rows2)
 
 	m := newGlobalMetadata(s.createStorage(c))
-	c.Assert(m.recordGlobalMetaData(conn, ServerTypeMySQL, false), IsNil)
-	c.Assert(m.recordGlobalMetaData(conn, ServerTypeMySQL, true), IsNil)
+	c.Assert(m.recordGlobalMetaData(conn, ServerTypeMySQL, false, ""), IsNil)
+	c.Assert(m.recordGlobalMetaData(conn, ServerTypeMySQL, true, ""), IsNil)
 
 	c.Assert(m.buffer.String(), Equals, "SHOW MASTER STATUS:\n"+
 		"\tLog: ON.000001\n"+
@@ -102,7 +102,7 @@ func (s *testMetaDataSuite) TestMysqlWithFollowersMetaData(c *C) {
 	mock.ExpectQuery("SHOW SLAVE STATUS").WillReturnRows(followerRows)
 
 	m := newGlobalMetadata(s.createStorage(c))
-	c.Assert(m.recordGlobalMetaData(conn, ServerTypeMySQL, false), IsNil)
+	c.Assert(m.recordGlobalMetaData(conn, ServerTypeMySQL, false, ""), IsNil)
 
 	c.Assert(m.buffer.String(), Equals, "SHOW MASTER STATUS:\n"+
 		"\tLog: ON.000001\n"+
@@ -133,7 +133,7 @@ func (s *testMetaDataSuite) TestMysqlWithNullFollowersMetaData(c *C) {
 	mock.ExpectQuery("SHOW SLAVE STATUS").WillReturnRows(sqlmock.NewRows([]string{"SQL_Remaining_Delay"}).AddRow(nil))
 
 	m := newGlobalMetadata(s.createStorage(c))
-	c.Assert(m.recordGlobalMetaData(conn, ServerTypeMySQL, false), IsNil)
+	c.Assert(m.recordGlobalMetaData(conn, ServerTypeMySQL, false, ""), IsNil)
 
 	c.Assert(m.buffer.String(), Equals, "SHOW MASTER STATUS:\n"+
 		"\tLog: ON.000001\n"+
@@ -160,7 +160,7 @@ func (s *testMetaDataSuite) TestMariaDBMetaData(c *C) {
 	mock.ExpectQuery("SELECT @@global.gtid_binlog_pos").WillReturnRows(rows)
 	mock.ExpectQuery("SHOW SLAVE STATUS").WillReturnRows(rows)
 	m := newGlobalMetadata(s.createStorage(c))
-	c.Assert(m.recordGlobalMetaData(conn, ServerTypeMariaDB, false), IsNil)
+	c.Assert(m.recordGlobalMetaData(conn, ServerTypeMariaDB, false, ""), IsNil)
 
 	c.Assert(mock.ExpectationsWereMet(), IsNil)
 }
@@ -187,7 +187,7 @@ func (s *testMetaDataSuite) TestMariaDBWithFollowersMetaData(c *C) {
 	mock.ExpectQuery("SHOW ALL SLAVES STATUS").WillReturnRows(followerRows)
 
 	m := newGlobalMetadata(s.createStorage(c))
-	c.Assert(m.recordGlobalMetaData(conn, ServerTypeMySQL, false), IsNil)
+	c.Assert(m.recordGlobalMetaData(conn, ServerTypeMySQL, false, ""), IsNil)
 
 	c.Assert(m.buffer.String(), Equals, "SHOW MASTER STATUS:\n"+
 		"\tLog: ON.000001\n"+
@@ -225,11 +225,44 @@ func (s *testMetaDataSuite) TestEarlierMysqlMetaData(c *C) {
 		sqlmock.NewRows([]string{"exec_master_log_pos", "relay_master_log_file", "master_host", "Executed_Gtid_Set", "Seconds_Behind_Master"}))
 
 	m := newGlobalMetadata(s.createStorage(c))
-	c.Assert(m.recordGlobalMetaData(conn, ServerTypeMySQL, false), IsNil)
+	c.Assert(m.recordGlobalMetaData(conn, ServerTypeMySQL, false, ""), IsNil)
 
 	c.Assert(m.buffer.String(), Equals, "SHOW MASTER STATUS:\n"+
 		"\tLog: mysql-bin.000001\n"+
 		"\tPos: 4879\n"+
+		"\tGTID:\n\n")
+	c.Assert(mock.ExpectationsWereMet(), IsNil)
+}
+
+func (s *testMetaDataSuite) TestTiDBSnapshotMetaData(c *C) {
+	db, mock, err := sqlmock.New()
+	c.Assert(err, IsNil)
+	defer db.Close()
+	conn, err := db.Conn(context.Background())
+	c.Assert(err, IsNil)
+
+	logFile := "tidb-binlog"
+	pos := "420633329401856001"
+	rows := sqlmock.NewRows([]string{"File", "Position", "Binlog_Do_DB", "Binlog_Ignore_DB"}).
+		AddRow(logFile, pos, "", "")
+	mock.ExpectQuery("SHOW MASTER STATUS").WillReturnRows(rows)
+
+	m := newGlobalMetadata(s.createStorage(c))
+	c.Assert(m.recordGlobalMetaData(conn, ServerTypeTiDB, false, ""), IsNil)
+	c.Assert(m.buffer.String(), Equals, "SHOW MASTER STATUS:\n"+
+		"\tLog: tidb-binlog\n"+
+		"\tPos: 420633329401856001\n"+
+		"\tGTID:\n\n")
+
+	snapshot := "420633273211289601"
+	rows = sqlmock.NewRows([]string{"File", "Position", "Binlog_Do_DB", "Binlog_Ignore_DB"}).
+		AddRow(logFile, pos, "", "")
+	mock.ExpectQuery("SHOW MASTER STATUS").WillReturnRows(rows)
+	m = newGlobalMetadata(s.createStorage(c))
+	c.Assert(m.recordGlobalMetaData(conn, ServerTypeTiDB, false, snapshot), IsNil)
+	c.Assert(m.buffer.String(), Equals, "SHOW MASTER STATUS:\n"+
+		"\tLog: tidb-binlog\n"+
+		"\tPos: 420633273211289601\n"+
 		"\tGTID:\n\n")
 	c.Assert(mock.ExpectationsWereMet(), IsNil)
 }
