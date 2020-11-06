@@ -555,7 +555,6 @@ func (ds *DataSource) buildIndexMergeOrPath(partialPaths []*util.AccessPath, cur
 	for _, path := range partialPaths {
 		if len(path.TableFilters) > 0 {
 			indexMergePath.TableFilters = append(indexMergePath.TableFilters, path.TableFilters...)
-			break
 		}
 	}
 	return indexMergePath
