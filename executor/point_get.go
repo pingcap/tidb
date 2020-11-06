@@ -154,12 +154,8 @@ func (e *PointGetExecutor) Close() error {
 	if e.runtimeStats != nil && e.snapshot != nil {
 		e.snapshot.DelOption(kv.CollectRuntimeStats)
 	}
-	if e.idxInfo != nil && e.tblInfo != nil {
-		actRows := int64(0)
-		if e.runtimeStats != nil {
-			actRows = e.runtimeStats.GetActRows()
-		}
-		e.ctx.GetSessionVars().StmtCtx.RecordIndexUsage(e.tblInfo.ID, e.idxInfo.ID, actRows)
+	if e.idxInfo != nil && e.tblInfo != nil && e.runtimeStats != nil {
+		e.ctx.GetSessionVars().StmtCtx.RecordIndexUsage(e.tblInfo.ID, e.idxInfo.ID, e.runtimeStats.GetActRows())
 	}
 	e.done = false
 	return nil

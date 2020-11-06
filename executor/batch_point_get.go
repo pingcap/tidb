@@ -127,6 +127,9 @@ func (e *BatchPointGetExec) Close() error {
 	if e.runtimeStats != nil && e.snapshot != nil {
 		e.snapshot.DelOption(kv.CollectRuntimeStats)
 	}
+	if e.idxInfo != nil && e.tblInfo != nil && e.runtimeStats != nil {
+		e.ctx.GetSessionVars().StmtCtx.RecordIndexUsage(e.tblInfo.ID, e.idxInfo.ID, e.runtimeStats.GetActRows())
+	}
 	e.inited = 0
 	e.index = 0
 	return nil

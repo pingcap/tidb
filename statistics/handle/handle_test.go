@@ -835,8 +835,24 @@ func (s *testStatsSuite) TestIndexUsage4PointGet(c *C) {
 	tk.MustQuery("select b from t_idx where b=0")
 	err = do.StatsHandle().DumpIndexUsageToKV()
 	c.Assert(err, IsNil)
-	tk.MustQuery(querySQL).Sort().Check(testkit.Rows(
+	tk.MustQuery(querySQL).Sort().Sort().Check(testkit.Rows(
 		"test t_idx idx_a 3 2",
+		"test t_idx idx_b 2 2",
+	))
+	// For BatchPointGet
+	tk.MustExec("insert into t_idx values(3, 1)")
+	tk.MustQuery("select a from t_idx where a=1 or a=3")
+	err = do.StatsHandle().DumpIndexUsageToKV()
+	c.Assert(err, IsNil)
+	tk.MustQuery(querySQL).Sort().Check(testkit.Rows(
+		"test t_idx idx_a 4 4",
+		"test t_idx idx_b 2 2",
+	))
+	tk.MustQuery("select a from t_idx where a=1 or a=4")
+	err = do.StatsHandle().DumpIndexUsageToKV()
+	c.Assert(err, IsNil)
+	tk.MustQuery(querySQL).Sort().Check(testkit.Rows(
+		"test t_idx idx_a 5 5",
 		"test t_idx idx_b 2 2",
 	))
 }
