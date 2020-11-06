@@ -1762,4 +1762,15 @@ func (s *testPessimisticSuite) TestAmendForUniqueIndex(c *C) {
 	tk.MustExec("insert into t1 values(5, 5, 5)")
 	tk.MustExec("commit")
 	tk2.MustExec("admin check table t1")
+
+	// Update the old value with same unique key value, should abort.
+	tk2.MustExec("drop table if exists t;")
+	tk2.MustExec("create table t (id int auto_increment primary key, c int);")
+	tk2.MustExec("insert into t (id, c) values (1, 2), (3, 4);")
+	tk.MustExec("begin pessimistic")
+	tk2.MustExec("alter table t add unique index uk(c);")
+	tk.MustExec("update t set c = 2 where id = 3;")
+	err = tk.ExecToErr("commit")
+	c.Assert(err, NotNil)
+	tk2.MustExec("admin check table t")
 }

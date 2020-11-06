@@ -164,6 +164,9 @@ type twoPhaseCommitter struct {
 		acAfterCommitPrimary chan struct{}
 		bkAfterCommitPrimary chan struct{}
 	}
+
+	// doingAmend means the amend prewrite is ongoing.
+	doingAmend bool
 }
 
 // CommitterMutations contains transaction operations.
@@ -916,7 +919,7 @@ func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *
 			Key: m.keys[i],
 		}
 		existErr := c.txn.us.GetKeyExistErrInfo(m.keys[i])
-		if existErr != nil {
+		if existErr != nil || c.doingAmend {
 			mut.Assertion = pb.Assertion_NotExist
 		}
 		mutations[i] = mut
@@ -1503,6 +1506,9 @@ func (c *twoPhaseCommitter) tryAmendTxn(ctx context.Context, startInfoSchema Sch
 			}
 		}
 		// For unique index amend, we need to pessimistic lock the generated new index keys first.
+		// Set doingAmend to true to force the pessimistic lock do the exist check for these keys.
+		c.doingAmend = true
+		defer func() { c.doingAmend = false }()
 		if keysNeedToLock.len() > 0 {
 			pessimisticLockBo := NewBackofferWithVars(ctx, pessimisticLockMaxBackoff, c.txn.vars)
 			lCtx := &kv.LockCtx{
