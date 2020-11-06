@@ -531,7 +531,7 @@ const (
 	DefTiDBHashAggPartialConcurrency   = ConcurrencyUnset
 	DefTiDBHashAggFinalConcurrency     = ConcurrencyUnset
 	DefTiDBWindowConcurrency           = ConcurrencyUnset
-	DefTiDBStreamAggConcurrency        = ConcurrencyUnset
+	DefTiDBStreamAggConcurrency        = 1
 	DefTiDBForcePriority               = mysql.NoPriority
 	DefTiDBUseRadixJoin                = false
 	DefEnableWindowFunction            = true
