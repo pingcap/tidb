@@ -6752,3 +6752,65 @@ func (s *testSerialSuite) TestIssue19148(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(int(tblInfo.Meta().Columns[0].Flag), Equals, 0)
 }
+
+func (s *testSerialSuite) TestExpressionCompatibleIssue20069(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("CREATE TABLE t (a int(10) unsigned,b int(10) unsigned)")
+	tk.MustExec("insert into t values(1,10),(20,2)")
+
+	tests := []struct {
+		stmt string
+		err  int
+	}{
+		{`select * from t where a-b>0`, mysql.ErrDataOutOfRange},
+		{`select * from t where a-b>0 and a-b>0`, mysql.ErrDataOutOfRange},
+		{`select * from t where a-b>0 and a-b>0 or a=20`, mysql.ErrDataOutOfRange},
+		{`select * from t where a-b>0 and a-b>0 and b=10`, mysql.ErrDataOutOfRange},
+		{`select * from t where a-b>0 and a-b>0 and b=10 and a=1`, mysql.ErrDataOutOfRange},
+		{`select * from t where b=10 and a=1 and a-b>0 and a-b>0 and a-b>0`, mysql.ErrDataOutOfRange},
+		{`select * from t where a-b>0 and a-b>0 and a-b>0 and a=1 and a=1`, mysql.ErrDataOutOfRange},
+		{`select * from t where a-b>0 and a=20 and a=1 and a-b>0`, 0},
+		{`select * from t where a-b>0 and a=1 and a-b>0 and a=20`, 0},
+		{`select * from t where a=1 and a-b>0 and a=1 and a-b>0 and a=20`, 0},
+		{`select * from t where a-b>0 and a=1 and b=10 and a-b>0`, mysql.ErrDataOutOfRange},
+		{`select * from t where a-b>0 and a=1 and b=10 and a-b>0 and a=20`, 0},
+	}
+
+	for _, tt := range tests {
+		err := tk.QueryToErr(tt.stmt)
+		if tt.err != 0 {
+			c.Assert(err, NotNil)
+			terr := errors.Cause(err).(*terror.Error)
+			c.Assert(terr.Code(), Equals, errors.ErrCode(tt.err))
+		} else {
+			c.Assert(err, IsNil)
+		}
+	}
+
+	tests = []struct {
+		stmt string
+		err  int
+	}{
+		{`delete from t where a-b>0`, mysql.ErrDataOutOfRange},
+		{`delete from t where a-b>0 and a=1 and a-b>0`, mysql.ErrDataOutOfRange},
+		{`delete from t where a-b>0 and a=1 and b=10`, mysql.ErrDataOutOfRange},
+		{`update t set a=10 where a-b>0`, mysql.ErrDataOutOfRange},
+		{`update t set a=10 where a-b>0 and a=1 and a-b>0`, mysql.ErrDataOutOfRange},
+		{`insert into t select * from t where a-b>0`, mysql.ErrDataOutOfRange},
+		{`insert into t select * from t where a-b>0 and a=1 and b=10`, mysql.ErrDataOutOfRange},
+	}
+	for _, tt := range tests {
+		_, err := tk.Exec(tt.stmt)
+		if tt.err != 0 {
+			c.Assert(err, NotNil)
+			terr := errors.Cause(err).(*terror.Error)
+			c.Assert(terr.Code(), Equals, errors.ErrCode(tt.err))
+		} else {
+			c.Assert(err, IsNil)
+		}
+	}
+
+	tk.MustExec("drop table if exists t")
+}
