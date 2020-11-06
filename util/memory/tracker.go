@@ -16,6 +16,7 @@ package memory
 import (
 	"bytes"
 	"fmt"
+	"sort"
 	"sync"
 	"sync/atomic"
 )
@@ -42,7 +43,7 @@ type Tracker struct {
 		sync.Mutex
 		// The children memory trackers. If the Tracker is the Global Tracker, like executor.GlobalDiskUsageTracker,
 		// we wouldn't maintain its children in order to avoiding mutex contention.
-		children []*Tracker
+		children map[int][]*Tracker
 	}
 	actionMu struct {
 		sync.Mutex
@@ -143,7 +144,10 @@ func (t *Tracker) AttachTo(parent *Tracker) {
 		oldParent.remove(t)
 	}
 	parent.mu.Lock()
-	parent.mu.children = append(parent.mu.children, t)
+	if parent.mu.children == nil {
+		parent.mu.children = make(map[int][]*Tracker)
+	}
+	parent.mu.children[t.label] = append(parent.mu.children[t.label], t)
 	parent.mu.Unlock()
 
 	t.setParent(parent)
@@ -164,12 +168,21 @@ func (t *Tracker) Detach() {
 
 func (t *Tracker) remove(oldChild *Tracker) {
 	found := false
+	label := oldChild.label
 	t.mu.Lock()
-	for i, child := range t.mu.children {
-		if child == oldChild {
-			t.mu.children = append(t.mu.children[:i], t.mu.children[i+1:]...)
-			found = true
-			break
+	if t.mu.children != nil {
+		children := t.mu.children[label]
+		for i, child := range children {
+			if child == oldChild {
+				children = append(children[:i], children[i+1:]...)
+				if len(children) > 0 {
+					t.mu.children[label] = children
+				} else {
+					delete(t.mu.children, label)
+				}
+				found = true
+				break
+			}
 		}
 	}
 	t.mu.Unlock()
@@ -188,19 +201,30 @@ func (t *Tracker) ReplaceChild(oldChild, newChild *Tracker) {
 		return
 	}
 
+	if oldChild.label != newChild.label {
+		t.remove(oldChild)
+		newChild.AttachTo(t)
+		return
+	}
+
 	newConsumed := newChild.BytesConsumed()
 	newChild.setParent(t)
 
+	label := oldChild.label
 	t.mu.Lock()
-	for i, child := range t.mu.children {
-		if child != oldChild {
-			continue
-		}
+	if t.mu.children != nil {
+		children := t.mu.children[label]
+		for i, child := range children {
+			if child != oldChild {
+				continue
+			}
 
-		newConsumed -= oldChild.BytesConsumed()
-		oldChild.setParent(nil)
-		t.mu.children[i] = newChild
-		break
+			newConsumed -= oldChild.BytesConsumed()
+			oldChild.setParent(nil)
+			children[i] = newChild
+			t.mu.children[label] = children
+			break
+		}
 	}
 	t.mu.Unlock()
 
@@ -248,30 +272,14 @@ func (t *Tracker) MaxConsumed() int64 {
 	return atomic.LoadInt64(&t.maxConsumed)
 }
 
-// SearchTracker searches the specific tracker under this tracker.
-func (t *Tracker) SearchTracker(label int) *Tracker {
-	if t.label == label {
-		return t
-	}
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	for _, child := range t.mu.children {
-		if result := child.SearchTracker(label); result != nil {
-			return result
-		}
-	}
-	return nil
-}
-
 // SearchTrackerWithoutLock searches the specific tracker under this tracker without lock.
 func (t *Tracker) SearchTrackerWithoutLock(label int) *Tracker {
 	if t.label == label {
 		return t
 	}
-	for _, child := range t.mu.children {
-		if result := child.SearchTrackerWithoutLock(label); result != nil {
-			return result
-		}
+	children := t.mu.children[label]
+	if len(children) > 0 {
+		return children[0]
 	}
 	return nil
 }
@@ -291,9 +299,15 @@ func (t *Tracker) toString(indent string, buffer *bytes.Buffer) {
 	fmt.Fprintf(buffer, "%s  \"consumed\": %s\n", indent, t.BytesToString(t.BytesConsumed()))
 
 	t.mu.Lock()
-	for i := range t.mu.children {
-		if t.mu.children[i] != nil {
-			t.mu.children[i].toString(indent+"  ", buffer)
+	labels := make([]int, 0, len(t.mu.children))
+	for label := range t.mu.children {
+		labels = append(labels, label)
+	}
+	sort.Ints(labels)
+	for _, label := range labels {
+		children := t.mu.children[label]
+		for _, child := range children {
+			child.toString(indent+"  ", buffer)
 		}
 	}
 	t.mu.Unlock()
