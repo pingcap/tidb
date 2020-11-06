@@ -74,7 +74,7 @@ func (s *testVarsutilSuite) TestNewSessionVars(c *C) {
 	c.Assert(vars.hashAggPartialConcurrency, Equals, ConcurrencyUnset)
 	c.Assert(vars.hashAggFinalConcurrency, Equals, ConcurrencyUnset)
 	c.Assert(vars.windowConcurrency, Equals, ConcurrencyUnset)
-	c.Assert(vars.streamAggConcurrency, Equals, ConcurrencyUnset)
+	c.Assert(vars.streamAggConcurrency, Equals, DefTiDBStreamAggConcurrency)
 	c.Assert(vars.distSQLScanConcurrency, Equals, DefDistSQLScanConcurrency)
 	c.Assert(vars.ProjectionConcurrency(), Equals, DefExecutorConcurrency)
 	c.Assert(vars.HashAggPartialConcurrency(), Equals, DefExecutorConcurrency)
@@ -661,7 +661,7 @@ func (s *testVarsutilSuite) TestConcurrencyVariables(c *C) {
 
 	saConcurrency := 2
 	c.Assert(vars.streamAggConcurrency, Equals, DefTiDBStreamAggConcurrency)
-	c.Assert(vars.StreamAggConcurrency(), Equals, DefExecutorConcurrency)
+	c.Assert(vars.StreamAggConcurrency(), Equals, DefTiDBStreamAggConcurrency)
 	err = SetSessionSystemVar(vars, TiDBStreamAggConcurrency, types.NewIntDatum(int64(saConcurrency)))
 	c.Assert(err, IsNil)
 	c.Assert(vars.streamAggConcurrency, Equals, saConcurrency)

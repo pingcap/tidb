@@ -982,7 +982,7 @@ func (s *testSuite5) TestSetConcurrency(c *C) {
 	c.Assert(vars.HashAggPartialConcurrency(), Equals, variable.DefExecutorConcurrency)
 	c.Assert(vars.HashAggFinalConcurrency(), Equals, variable.DefExecutorConcurrency)
 	c.Assert(vars.WindowConcurrency(), Equals, variable.DefExecutorConcurrency)
-	c.Assert(vars.StreamAggConcurrency(), Equals, variable.DefExecutorConcurrency)
+	c.Assert(vars.StreamAggConcurrency(), Equals, variable.DefTiDBStreamAggConcurrency)
 	c.Assert(vars.ProjectionConcurrency(), Equals, variable.DefExecutorConcurrency)
 	c.Assert(vars.DistSQLScanConcurrency(), Equals, variable.DefDistSQLScanConcurrency)
 

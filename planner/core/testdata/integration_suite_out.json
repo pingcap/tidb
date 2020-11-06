@@ -647,11 +647,10 @@
         "SQL": "select /*+ stream_agg() */ count(*) c from t group by a order by c",
         "Plan": [
           "Sort_5 8000.00 root  Column#3",
-          "└─Shuffle_17 8000.00 root  execution info: concurrency:5, data source:TableReader_15",
-          "  └─StreamAgg_11 8000.00 root  group by:test.t.a, funcs:count(1)->Column#3",
-          "    └─Sort_16 10000.00 root  test.t.a",
-          "      └─TableReader_15 10000.00 root  data:TableFullScan_14",
-          "        └─TableFullScan_14 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "└─StreamAgg_11 8000.00 root  group by:test.t.a, funcs:count(1)->Column#3",
+          "  └─Sort_16 10000.00 root  test.t.a",
+          "    └─TableReader_15 10000.00 root  data:TableFullScan_14",
+          "      └─TableFullScan_14 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
         "Res": [
           "1",
