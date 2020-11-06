@@ -2441,5 +2441,5 @@ func (s *session) recordOnTransactionExecution(err error, counter int, duration 
 }
 
 func (s *session) IndexUsageCollectorActivated() bool {
-	return s.idxUsageCollector != nil
+	return s.idxUsageCollector != nil && s.GetSessionVars().StmtCtx.RuntimeStatsColl != nil
 }

@@ -253,10 +253,11 @@ func (e *IndexReaderExecutor) Close() error {
 	e.ctx.StoreQueryFeedback(e.feedback)
 	if e.ctx.IndexUsageCollectorActivated() {
 		for _, plan := range e.plans {
-			if !e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.ExistsCopStats(plan.ID()) {
+			rsc := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl
+			if !rsc.ExistsCopStats(plan.ID()) {
 				continue
 			}
-			copStats := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetCopStats(plan.ID())
+			copStats := rsc.GetCopStats(plan.ID())
 			if indexScan, ok := plan.(*plannercore.PhysicalIndexScan); ok && !indexScan.IsFullScan() {
 				e.ctx.GetSessionVars().StmtCtx.RecordIndexUsage(indexScan.Table.ID, indexScan.Index.ID, copStats.GetActRows())
 			}
