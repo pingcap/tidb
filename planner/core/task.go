@@ -535,9 +535,9 @@ func (p *PhysicalHashJoin) attach2Task(tasks ...task) task {
 
 // GetCost computes cost of broadcast join operator itself.
 func (p *PhysicalBroadCastJoin) GetCost(lCnt, rCnt float64) float64 {
-	buildCnt := lCnt
+	buildCnt, probeCnt := lCnt, rCnt
 	if p.InnerChildIdx == 1 {
-		buildCnt = rCnt
+		buildCnt, probeCnt = rCnt, lCnt
 	}
 	sessVars := p.ctx.GetSessionVars()
 	// Cost of building hash table.
@@ -554,7 +554,18 @@ func (p *PhysicalBroadCastJoin) GetCost(lCnt, rCnt float64) float64 {
 		rightSchema:   p.children[1].Schema(),
 	}
 	numPairs := helper.estimate()
+	if p.JoinType == SemiJoin || p.JoinType == AntiSemiJoin || p.JoinType == LeftOuterSemiJoin || p.JoinType == AntiLeftOuterSemiJoin {
+		if len(p.OtherConditions) > 0 {
+			numPairs *= 0.5
+		} else {
+			numPairs = 0
+		}
+	}
 	probeCost := numPairs * sessVars.CopCPUFactor
+	if len(p.LeftConditions)+len(p.RightConditions) > 0 {
+		probeCost *= SelectionFactor
+		probeCost += probeCnt * sessVars.CPUFactor
+	}
 	// should divided by the concurrency in tiflash, which should be the number of core in tiflash nodes.
 	probeCost /= float64(sessVars.CopTiFlashConcurrencyFactor)
 	cpuCost += probeCost
@@ -835,6 +846,8 @@ func (p *PhysicalLimit) attach2Task(tasks ...task) task {
 			stats := deriveLimitStats(childProfile, float64(newCount))
 			pushedDownLimit := PhysicalLimit{Count: newCount}.Init(p.ctx, stats, p.blockOffset)
 			cop = attachPlan2Task(pushedDownLimit, cop).(*copTask)
+			// Don't use clone() so that Limit and its children share the same schema. Otherwise the virtual generated column may not be resolved right.
+			pushedDownLimit.SetSchema(pushedDownLimit.children[0].Schema())
 		}
 		t = finishCopTask(p.ctx, cop)
 		sunk = p.sinkIntoIndexLookUp(t)
