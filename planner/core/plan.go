@@ -123,13 +123,6 @@ func optimizeByShuffle4StreamAgg(pp *PhysicalStreamAgg, ctx sessionctx.Context) 
 	return shuffle
 }
 
-func getPartitionSplitter(ctx sessionctx.Context) PartitionSplitterType {
-	if ctx.GetSessionVars().IsStreamAggRangePartitionEnabled() {
-		return PartitionRangeSplitterType
-	}
-	return PartitionHashSplitterType
-}
-
 func optimizeByShuffle4Window(pp *PhysicalWindow, ctx sessionctx.Context) *PhysicalShuffle {
 	concurrency := ctx.GetSessionVars().WindowConcurrency()
 	if concurrency <= 1 {
