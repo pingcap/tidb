@@ -1211,61 +1211,45 @@ func (s *testSuiteAgg) TestIssue20658(c *C) {
 	sqlFormat := "select /*+ stream_agg() */ %s from t group by b;"
 	castFormat := "cast(%s as decimal(32, 4))"
 
+	sqls := make([]string, 0, len(aggFuncs)+len(aggFuncs2))
+	for _, af := range aggFuncs {
+		sql := fmt.Sprintf(sqlFormat, af)
+		sqls = append(sqls, sql)
+	}
+
+	for _, af := range aggFuncs2 {
+		sql := fmt.Sprintf(sqlFormat, fmt.Sprintf(castFormat, af))
+		sqls = append(sqls, sql)
+	}
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("CREATE TABLE t(a bigint, b bigint);")
+	for i := 0; i < 10000; i++ {
+		tk.MustExec("insert into t values (?, ?);", rand.Intn(100), rand.Intn(100))
+	}
+
 	concurrencies := []int{1, 2, 4, 8}
-	rows := []int{10000}
-	for _, row := range rows {
-		tk.MustExec("drop table if exists t;")
-		tk.MustExec("CREATE TABLE t(a bigint, b bigint);")
-
-		for i := 0; i < row; i++ {
-			tk.MustExec("insert into t values (?, ?);", rand.Intn(100), rand.Intn(100))
-		}
-
-		for _, af := range aggFuncs {
-			sql := fmt.Sprintf(sqlFormat, af)
-			var expected *testkit.Result
-			for _, con := range concurrencies {
-				tk.MustExec(fmt.Sprintf("set @@tidb_stream_agg_concurrency=%d;", con))
-				if con == 1 {
-					expected = tk.MustQuery(sql).Sort()
-				} else {
-					er := tk.MustQuery("explain " + sql).Rows()
-					ok := false
-					for _, l := range er {
-						str := fmt.Sprintf("%v", l)
-						if strings.Contains(str, "Shuffle") {
-							ok = true
-							break
-						}
+	for _, sql := range sqls {
+		var expected *testkit.Result
+		for _, con := range concurrencies {
+			tk.MustExec(fmt.Sprintf("set @@tidb_stream_agg_concurrency=%d;", con))
+			if con == 1 {
+				expected = tk.MustQuery(sql).Sort()
+			} else {
+				er := tk.MustQuery("explain " + sql).Rows()
+				ok := false
+				for _, l := range er {
+					str := fmt.Sprintf("%v", l)
+					if strings.Contains(str, "Shuffle") {
+						ok = true
+						break
 					}
-					c.Assert(ok, Equals, true)
-					obtained := tk.MustQuery(sql).Sort()
-					obtained.Check(expected.Rows())
 				}
+				c.Assert(ok, Equals, true)
+				tk.MustQuery(sql).Sort().Check(expected.Rows())
 			}
-		}
 
-		for _, af := range aggFuncs2 {
-			sql := fmt.Sprintf(sqlFormat, fmt.Sprintf(castFormat, af))
-			var correct *testkit.Result
-			for _, con := range concurrencies {
-				tk.MustExec(fmt.Sprintf("set @@tidb_stream_agg_concurrency=%d;", con))
-				if con == 1 {
-					correct = tk.MustQuery(sql).Sort()
-				} else {
-					er := tk.MustQuery("explain " + sql).Rows()
-					ok := false
-					for _, l := range er {
-						str := fmt.Sprintf("%v", l)
-						if strings.Contains(str, "Shuffle") {
-							ok = true
-							break
-						}
-					}
-					c.Assert(ok, Equals, true)
-					tk.MustQuery(sql).Sort().Check(correct.Rows())
-				}
-			}
 		}
 	}
+
 }
