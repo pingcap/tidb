@@ -111,7 +111,6 @@ func (e *ShuffleExec) Open(ctx context.Context) error {
 
 		w.inputCh = make(chan *chunk.Chunk, 1)
 		w.inputHolderCh = make(chan *chunk.Chunk, 1)
-
 		w.outputCh = e.outputCh
 		w.outputHolderCh = make(chan *chunk.Chunk, 1)
 
@@ -219,7 +218,6 @@ func (e *ShuffleExec) fetchDataAndSplit(ctx context.Context) {
 		err           error
 		workerIndices []int
 	)
-
 	results := make([]*chunk.Chunk, len(e.workers))
 	chk := newFirstChunk(e.dataSource)
 
@@ -261,6 +259,7 @@ func (e *ShuffleExec) fetchDataAndSplit(ctx context.Context) {
 					break
 				}
 			}
+
 			results[workerIdx].AppendRow(chk.GetRow(i))
 			if results[workerIdx].IsFull() {
 				w.inputCh <- results[workerIdx]
@@ -284,19 +283,16 @@ type shuffleWorker struct {
 	baseExecutor
 	childExec Executor
 
-	// when the worker finish the execution of childExec, send signal to finishCh
 	finishCh <-chan struct{}
 	executed bool
 
-	// get input from dataFetcherThread by inputCh
-	inputCh chan *chunk.Chunk
-
-	// send output to the main goroutine by outputCh
-	outputCh chan *shuffleOutput
-
+	// Workers get inputs from dataFetcherThread by `inputCh`,
+	//   and ouput results to main thread by `outputCh`.
 	// `inputHolderCh` and `outputHolderCh` are "Chunk Holder" channels of `inputCh` and `outputCh` respectively,
 	//   which give the `*Chunk` back, to implement the data transport in a streaming manner.
+	inputCh        chan *chunk.Chunk
 	inputHolderCh  chan *chunk.Chunk
+	outputCh       chan *shuffleOutput
 	outputHolderCh chan *chunk.Chunk
 }
 
