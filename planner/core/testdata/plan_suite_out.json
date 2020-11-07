@@ -56,8 +56,7 @@
       },
       {
         "SQL": "select /*+ STREAM_AGG() */ s, count(s) from (select /*+ HASH_AGG() */ sum(t1.a) as s from t t1, t t2 where t1.a = t2.b group by t1.a) p group by s",
-        "Best":"LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]])->TableReader(Table(t))}(test.t.a,test.t.b)->Projection->HashAgg->Sort->StreamAgg->Projection"
-
+        "Best": "LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]])->TableReader(Table(t))}(test.t.a,test.t.b)->Projection->HashAgg->Sort->StreamAgg->Projection"
       },
       {
         "SQL": "select /*+ HASH_AGG() */ s, count(s) from (select /*+ STREAM_AGG() */ sum(t1.a) as s from t t1, t t2 where t1.a = t2.b group by t1.a) p group by s",

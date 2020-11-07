@@ -412,7 +412,7 @@ func benchmarkAggExecWithCase(b *testing.B, casTest *aggTestCase) {
 	}
 }
 
-func BenchmarkStreamAggRows(b *testing.B) {
+func BenchmarkShuffleStreamAggRows(b *testing.B) {
 	b.ReportAllocs()
 	// sortTypes := []bool{false, true}
 	sortTypes := []bool{false}
