@@ -113,7 +113,7 @@ func (e *slowQueryRetriever) initialize(sctx sessionctx.Context) error {
 			endTime := types.NewTime(types.FromGoTime(tr.EndTime), mysql.TypeDatetime, types.MaxFsp)
 			timeRange := &timeRange{
 				startTime: startTime,
-				endTime: endTime,
+				endTime:   endTime,
 			}
 			e.checker.timeRanges = append(e.checker.timeRanges, timeRange)
 		}
@@ -122,7 +122,17 @@ func (e *slowQueryRetriever) initialize(sctx sessionctx.Context) error {
 	}
 	e.initialized = true
 	e.files, err = e.getAllFiles(sctx, sctx.GetSessionVars().SlowQueryFile)
+	if e.extractor.Desc {
+		e.reverseLogFiles(e.files)
+	}
 	return err
+}
+
+func (e *slowQueryRetriever) reverseLogFiles(logFiles []logFile) {
+	for i := 0; i < len(logFiles)/2; i++ {
+		j := len(logFiles) - i - 1
+		logFiles[i], logFiles[j] = logFiles[j], logFiles[i]
+	}
 }
 
 func (e *slowQueryRetriever) close() error {
@@ -302,6 +312,61 @@ func (e *slowQueryRetriever) getBatchLog(reader *bufio.Reader, offset *offset, n
 		}
 	}
 	return log, err
+}
+
+func (e *slowQueryRetriever) getBatchLogBackwards(reader *bufio.Reader, offset *offset, num int) ([]string, error) {
+	var line string
+	var log string
+	logs := make([]string, 0, num)
+	var err error
+	for i := 0; i < num; i++ {
+		for {
+			e.fileLine++
+			lineByte, err := getOneLine(reader)
+			if err != nil {
+				if err == io.EOF {
+					e.fileLine = 0
+					file := e.getNextFile()
+					if file == nil {
+						return logs, nil
+					}
+					offset.length = len(logs)
+					reader.Reset(file)
+					continue
+				}
+				return logs, err
+			}
+			line = string(hack.String(lineByte))
+			if strings.HasPrefix(line, variable.SlowLogStartPrefixStr) {
+				start := strings.Index(line, variable.SlowLogStartPrefixStr)
+				if strings.HasPrefix(line, variable.SlowLogSQLSuffixStr) {
+					end := strings.Index(line, variable.SlowLogSQLSuffixStr)
+					logs = append(logs, line[start:end+1])
+				} else {
+					log += line
+				}
+			} else if strings.HasPrefix(line, variable.SlowLogSQLSuffixStr) {
+				end := strings.Index(line, variable.SlowLogSQLSuffixStr)
+				log += line[:end]
+				logs = append(logs, line)
+			}
+			if strings.HasSuffix(line, variable.SlowLogSQLSuffixStr) {
+				if strings.HasPrefix(line, "use") {
+					continue
+				}
+				break
+			}
+		}
+	}
+	reverse(logs)
+	return logs, err
+}
+
+func reverse(ss []string) {
+	last := len(ss) - 1
+	for i := 0; i < len(ss)/2; i++ {
+		ss[i], ss[last-i] = ss[last-i], ss[i]
+	}
 }
 
 func (e *slowQueryRetriever) parseSlowLog(ctx context.Context, sctx sessionctx.Context, reader *bufio.Reader, logNum int) {

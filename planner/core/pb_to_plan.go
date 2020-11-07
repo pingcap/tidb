@@ -15,12 +15,15 @@ package core
 
 import (
 	"fmt"
-	"sort"
+	"math"
 	"strings"
+	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/infoschema"
@@ -30,18 +33,22 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/rowcodec"
 )
 
 // PBPlanBuilder uses to build physical plan from dag protocol buffers.
 type PBPlanBuilder struct {
-	sctx sessionctx.Context
-	tps  []*types.FieldType
-	is   infoschema.InfoSchema
+	sctx   sessionctx.Context
+	tps    []*types.FieldType
+	is     infoschema.InfoSchema
+	ranges []*coprocessor.KeyRange
 }
 
 // NewPBPlanBuilder creates a new pb plan builder.
-func NewPBPlanBuilder(sctx sessionctx.Context, is infoschema.InfoSchema) *PBPlanBuilder {
-	return &PBPlanBuilder{sctx: sctx, is: is}
+func NewPBPlanBuilder(sctx sessionctx.Context, is infoschema.InfoSchema, req *coprocessor.Request) *PBPlanBuilder {
+	return &PBPlanBuilder{sctx: sctx, is: is, ranges: req.Ranges}
 }
 
 // Build builds physical plan from dag protocol buffers.
@@ -109,10 +116,13 @@ func (b *PBPlanBuilder) pbToTableScan(e *tipb.Executor) (PhysicalPlan, error) {
 	p.SetSchema(schema)
 	if strings.ToUpper(p.Table.Name.O) == infoschema.ClusterTableSlowLog {
 		extractor := &SlowQueryExtractor{}
-		if len(tblScan.Ranges) > 0 {
-			timeRanges := mergeKeyRanges(tblScan.Ranges)
+		if b.ranges != nil {
+			trs, err := b.decodeTimeRanges(b.ranges)
+			if err != nil {
+				return nil, err
+			}
 			extractor.Desc = tblScan.Desc
-			for _, tr := range timeRanges {
+			for _, tr := range trs {
 				extractor.setTimeRange(tr[0], tr[1])
 			}
 		}
@@ -121,51 +131,59 @@ func (b *PBPlanBuilder) pbToTableScan(e *tipb.Executor) (PhysicalPlan, error) {
 	return p, nil
 }
 
-func mergeKeyRanges(keyRanges []tipb.KeyRange) [][]int64 {
-	sort.Slice(keyRanges, func(i, j int) bool {
-		ilow, err := tablecodec.DecodeRowKey(keyRanges[i].Low)
-		if err != nil {
-			return false
-		}
-		jlow, err := tablecodec.DecodeRowKey(keyRanges[i].Low)
-		if err != nil {
-			return false
-		}
-		return ilow.IntValue() < jlow.IntValue()
-	})
-
-	var result [][]int64
-	ckr := keyRanges[0]
-	var start kv.Handle
-	var end kv.Handle
-	for i := 1; i < len(keyRanges); i++ {
-		start, err := tablecodec.DecodeRowKey(ckr.Low)
-		if err != nil {
-			return result
-		}
-		end, err := tablecodec.DecodeRowKey(ckr.High)
-		if err != nil {
-			return result
-		}
-		krl, err := tablecodec.DecodeRowKey(keyRanges[i].Low)
-		if err != nil {
-			return result
-		}
-		krh, err := tablecodec.DecodeRowKey(keyRanges[i].High)
-		if err != nil {
-			return result
-		}
-		if end.IntValue() >= krl.IntValue() {
-			if end.IntValue() < krh.IntValue() {
-				ckr.High = keyRanges[i].High
+func (b *PBPlanBuilder) decodeTimeRanges(keyRanges []*coprocessor.KeyRange) ([][]int64, error) {
+	var krs [][]int64
+	for _, kr := range keyRanges {
+		if len(kr.Start) >= tablecodec.RecordRowKeyLen && len(kr.Start) >= tablecodec.RecordRowKeyLen {
+			start, err := tablecodec.DecodeRowKey(kr.Start)
+			var startTime int64
+			if err != nil {
+				startTime = 0
+			} else {
+				startTime, err = b.decodeToTime(start)
+				if err != nil {
+					return nil, err
+				}
 			}
-		} else {
-			result = append(result, []int64{start.IntValue(), end.IntValue()})
-			ckr = keyRanges[i]
+			end, err := tablecodec.DecodeRowKey(kr.End)
+			var endTime int64
+			if err != nil {
+				endTime = math.MaxInt64
+			} else {
+				endTime, err = b.decodeToTime(end)
+				if err != nil {
+					return nil, err
+				}
+			}
+			kr := []int64{startTime, endTime}
+			fmt.Printf("kr %v\n", kr)
+			krs = append(krs, kr)
 		}
 	}
-	result = append(result, []int64{start.IntValue(), end.IntValue()})
-	return result
+	return krs, nil
+}
+
+func (b *PBPlanBuilder) decodeToTime(handle kv.Handle) (int64, error) {
+	tp := types.NewFieldType(mysql.TypeDatetime)
+	col := rowcodec.ColInfo{ID:0, Ft: tp}
+	chk := chunk.NewChunkWithCapacity([]*types.FieldType{tp}, 1)
+	coder := codec.NewDecoder(chk, nil)
+	_, err := coder.DecodeOne(handle.EncodedCol(0), 0, col.Ft)
+	if err != nil {
+		return 0, err
+	}
+	datum := chk.GetRow(0).GetDatum(0, tp)
+	mysqlTime := (&datum).GetMysqlTime()
+	timestampInNano := time.Date(mysqlTime.Year(),
+		time.Month(mysqlTime.Month()),
+		mysqlTime.Day(),
+		mysqlTime.Hour(),
+		mysqlTime.Minute(),
+		mysqlTime.Second(),
+		mysqlTime.Microsecond()*1000,
+		time.UTC,
+	).UnixNano()
+	return timestampInNano, err
 }
 
 func (b *PBPlanBuilder) buildTableScanSchema(tblInfo *model.TableInfo, columns []*model.ColumnInfo) *expression.Schema {
