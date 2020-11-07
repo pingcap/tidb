@@ -217,52 +217,7 @@ func (e *ShuffleMergeJoinExec) fetchDataAndSplit(ctx context.Context, dataSource
 	}
 }
 
-// shuffleReceiver receives chunk from dataSource through inputCh
-type shuffleReceiver struct {
-	baseExecutor
-
-	finishCh <-chan struct{}
-	// executed bool
-
-	inputCh       chan *chunk.Chunk
-	inputHolderCh chan *chunk.Chunk
-}
-
-// Open implements the Executor Open interface.
-func (e *shuffleReceiver) Open(ctx context.Context) error {
-	if err := e.baseExecutor.Open(ctx); err != nil {
-		return err
-	}
-	// e.executed = false
-	return nil
-}
-
-// Close implements the Executor Close interface.
-func (e *shuffleReceiver) Close() error {
-	return errors.Trace(e.baseExecutor.Close())
-}
-
 // Next implements the Executor Next interface.
-func (e *shuffleReceiver) Next(ctx context.Context, req *chunk.Chunk) error {
-	req.Reset()
-	// if e.executed {
-	// 	return nil
-	// }
-	select {
-	case <-e.finishCh:
-		// 	e.executed = true
-		return nil
-	case result, ok := <-e.inputCh:
-		if !ok || result.NumRows() == 0 {
-			// e.executed = true
-			return nil
-		}
-		req.SwapColumns(result)
-		e.inputHolderCh <- result
-		return nil
-	}
-}
-
 type shuffleMergeJoinWorker struct {
 	childExec Executor
 
