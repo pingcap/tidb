@@ -106,12 +106,9 @@ func optimizeByShuffle4StreamAgg(pp *PhysicalStreamAgg, ctx sessionctx.Context) 
 		return nil
 	}
 
-	sort, ok := pp.Children()[0].(*PhysicalSort)
-	if !ok {
-		return nil
-	}
+	childExec, _ := pp.Children()[0].(*PhysicalSort)
 
-	tail, dataSource := sort, sort.Children()[0]
+	tail, dataSource := childExec, childExec.Children()[0]
 	reqProp := &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64}
 	shuffle := PhysicalShuffle{
 		Concurrency:  concurrency,
