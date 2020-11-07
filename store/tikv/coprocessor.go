@@ -515,13 +515,24 @@ const minLogCopTaskTime = 300 * time.Millisecond
 // run is a worker function that get a copTask from channel, handle it and
 // send the result back.
 func (worker *copIteratorWorker) run(ctx context.Context) {
-	defer worker.wg.Done()
+	defer func() {
+		worker.actionOnExceed.close()
+		worker.wg.Done()
+	}()
 	for task := range worker.taskCh {
 		respCh := worker.respChan
 		if respCh == nil {
 			respCh = task.respChan
 		}
 		worker.handleTask(ctx, task, respCh)
+		failpoint.Inject("testRateLimitActionMockOtherExecutorConsume", func(val failpoint.Value) {
+			if val.(bool) {
+				// wait action being enabled and response channel become empty
+				time.Sleep(20 * time.Millisecond)
+				// simulate other executor consume and trigger oom action
+				worker.memTracker.Consume(99999)
+			}
+		})
 		close(task.respChan)
 		worker.maxID.setMaxIDIfLarger(task.id)
 		worker.actionOnExceed.destroyTokenIfNeeded(func() {
@@ -678,10 +689,10 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 		ok     bool
 		closed bool
 	)
-	// wait unit at least 2 copResponse received.
+	// wait unit at least 5 copResponse received.
 	failpoint.Inject("testRateLimitActionMockWaitMax", func(val failpoint.Value) {
 		if val.(bool) {
-			for it.memTracker.MaxConsumed() < 200 {
+			for it.memTracker.MaxConsumed() < 500 {
 			}
 		}
 	})
@@ -1297,6 +1308,8 @@ type rateLimitAction struct {
 		// isTokenDestroyed indicates whether there is one token has been isTokenDestroyed after Action been triggered
 		isTokenDestroyed bool
 		once             sync.Once
+		// triggered indicates whether the action is triggered
+		triggered bool
 		// waitingWorkerCnt indicates the total count of workers which is under condition.Waiting
 		waitingWorkerCnt uint
 		// triggerCountForTest indicates the total count of the rateLimitAction's Action being executed
@@ -1313,6 +1326,7 @@ func newRateLimitAction(totalTokenNumber uint, cond *sync.Cond) *rateLimitAction
 			remainingTokenNum   uint
 			isTokenDestroyed    bool
 			once                sync.Once
+			triggered           bool
 			waitingWorkerCnt    uint
 			triggerCountForTest uint
 		}{
@@ -1368,6 +1382,7 @@ func (e *rateLimitAction) Action(t *memory.Tracker) {
 		e.cond.isTokenDestroyed = false
 		e.cond.exceeded = true
 		e.cond.triggerCountForTest++
+		e.cond.triggered = true
 	})
 }
 
@@ -1389,7 +1404,7 @@ func (e *rateLimitAction) broadcastIfNeeded(needed bool) {
 	}
 	e.conditionLock()
 	defer e.conditionUnlock()
-	if !e.cond.exceeded || e.cond.waitingWorkerCnt < 1 {
+	if !e.cond.exceeded {
 		return
 	}
 	for !e.cond.isTokenDestroyed {
@@ -1397,6 +1412,7 @@ func (e *rateLimitAction) broadcastIfNeeded(needed bool) {
 	}
 	e.cond.exceeded = false
 	e.cond.Broadcast()
+	e.unsafeInitOnce()
 }
 
 // destroyTokenIfNeeded will check the `exceed` flag after copWorker finished one task.
@@ -1415,17 +1431,24 @@ func (e *rateLimitAction) destroyTokenIfNeeded(returnToken func()) {
 		e.cond.remainingTokenNum = e.cond.remainingTokenNum - 1
 		e.cond.isTokenDestroyed = true
 		e.cond.Broadcast()
-	} else {
-		returnToken()
+		return
 	}
+
+	returnToken()
 	// we suspend worker when `exceeded` is true until being notified by `broadcastIfNeeded`
 	for e.cond.exceeded {
 		e.cond.waitingWorkerCnt++
 		e.cond.Wait()
 		e.cond.waitingWorkerCnt--
 	}
+	e.unsafeInitOnce()
+}
+
+// unsafeInitOnce would init once if the condition is meet. This should be used under condition's lock.
+func (e *rateLimitAction) unsafeInitOnce() {
 	// only when all the waiting workers have been resumed, the Action could be initialized again.
-	if e.cond.waitingWorkerCnt < 1 {
+	if e.cond.waitingWorkerCnt < 1 && e.cond.triggered {
+		e.cond.triggered = false
 		e.cond.once = sync.Once{}
 	}
 }
@@ -1439,6 +1462,9 @@ func (e *rateLimitAction) conditionUnlock() {
 }
 
 func (e *rateLimitAction) close() {
+	if !e.isEnabled() {
+		return
+	}
 	e.setEnabled(false)
 	e.conditionLock()
 	defer e.conditionUnlock()
