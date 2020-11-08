@@ -140,29 +140,26 @@ func optimizeByShuffle4Window(pp *PhysicalWindow, ctx sessionctx.Context) *Physi
 	return shuffle
 }
 
-func optimizeByShuffle4MergeJoin(pp *PhysicalMergeJoin, ctx sessionctx.Context) *PhysicalShuffleMergeJoin {
+func optimizeByShuffle4MergeJoin(pp *PhysicalMergeJoin, ctx sessionctx.Context) *PhysicalShuffle {
 	concurrency := 4
 	// concurrency := ctx.GetSessionVars().WindowConcurrency()
 	// if concurrency <= 1 {
 	// 	return nil
 	// }
 
-	leftDataSource := pp.Children()[0]
-	sort, ok := pp.Children()[0].(*PhysicalSort)
-	if !ok {
-		// Multi-thread executing on SORTED data source is not effective enough by current implementation.
-		// TODO: Implement a better one.
-		return nil
-	}
-	leftTail, leftDataSource := sort, sort.Children()[0]
+	children := pp.Children()
+	dataSources := make([]PhysicalPlan, len(children))
+	tails := make([]PhysicalPlan, len(children))
 
-	sort, ok = pp.Children()[1].(*PhysicalSort)
-	if !ok {
-		// Multi-thread executing on SORTED data source is not effective enough by current implementation.
-		// TODO: Implement a better one.
-		return nil
+	for i := range children {
+		sort, ok := children[i].(*PhysicalSort)
+		if !ok {
+			// Multi-thread executing on SORTED data source is not effective enough by current implementation.
+			// TODO: Implement a better one.
+			return nil
+		}
+		tails[i], dataSources[i] = sort, sort.Children()[0]
 	}
-	rightTail, rightDataSource := sort, sort.Children()[0]
 
 	// partitionBy := make([]*expression.Column, 0, len(pp.PartitionBy))
 	// for _, item := range pp.PartitionBy {
@@ -174,24 +171,21 @@ func optimizeByShuffle4MergeJoin(pp *PhysicalMergeJoin, ctx sessionctx.Context) 
 	// }
 	// concurrency = mathutil.Min(concurrency, NDV)
 
-	leftByItems := make([]expression.Expression, 0, len(pp.LeftJoinKeys))
+	leftByItemArray := make([]expression.Expression, 0, len(pp.LeftJoinKeys))
 	for _, col := range pp.LeftJoinKeys {
-		leftByItems = append(leftByItems, col)
+		leftByItemArray = append(leftByItemArray, col)
 	}
-	rightByItems := make([]expression.Expression, 0, len(pp.RightJoinKeys))
+	rightByItemArray := make([]expression.Expression, 0, len(pp.RightJoinKeys))
 	for _, col := range pp.RightJoinKeys {
-		rightByItems = append(rightByItems, col)
+		rightByItemArray = append(rightByItemArray, col)
 	}
 	reqProp := &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64}
-	shuffle := PhysicalShuffleMergeJoin{
+	shuffle := PhysicalShuffle{
 		Concurrency:      concurrency,
-		LeftTail:         leftTail,
-		RightTail:        rightTail,
-		LeftDataSource:   leftDataSource,
-		RightDataSource:  rightDataSource,
+		Tails:            tails,
+		DataSources:      dataSources,
 		SplitterType:     PartitionHashSplitterType,
-		LeftHashByItems:  leftByItems,
-		RightHashByItems: rightByItems,
+		HashByItemArrays: [][]expression.Expression{leftByItemArray, rightByItemArray},
 	}.Init(ctx, pp.statsInfo(), pp.SelectBlockOffset(), reqProp)
 	return shuffle
 }

@@ -216,8 +216,6 @@ func (b *executorBuilder) build(p plannercore.Plan) Executor {
 		return b.buildWindow(v)
 	case *plannercore.PhysicalShuffle:
 		return b.buildShuffle(v)
-	case *plannercore.PhysicalShuffleMergeJoin:
-		return b.buildShuffleMergeJoin(v)
 	case *plannercore.PhysicalShuffleReceiverStub:
 		return b.buildShuffleReceiverStub(v)
 	case *plannercore.SQLBindPlan:
@@ -3657,78 +3655,6 @@ func (b *executorBuilder) buildWindow(v *plannercore.PhysicalWindow) *WindowExec
 	}
 }
 
-// buildShuffleMergeJoin builds ShuffleMergeJoinExec executor.
-func (b *executorBuilder) buildShuffleMergeJoin(v *plannercore.PhysicalShuffleMergeJoin) Executor {
-	base := newBaseExecutor(b.ctx, v.Schema(), v.ID())
-	shuffle := &ShuffleMergeJoinExec{
-		baseExecutor: base,
-		concurrency:  v.Concurrency,
-	}
-
-	switch v.SplitterType {
-	case plannercore.PartitionHashSplitterType:
-		shuffle.splitters = []partitionSplitter{
-			&partitionHashSplitter{
-				byItems:    v.LeftHashByItems,
-				numWorkers: shuffle.concurrency,
-			},
-			&partitionHashSplitter{
-				byItems:    v.RightHashByItems,
-				numWorkers: shuffle.concurrency,
-			},
-		}
-	default:
-		panic("Not implemented. Should not reach here.")
-	}
-
-	leftExec := b.build(v.LeftDataSource)
-	if b.err != nil {
-		return nil
-	}
-
-	rightExec := b.build(v.RightDataSource)
-	if b.err != nil {
-		return nil
-	}
-
-	shuffle.dataSources = []Executor{leftExec, rightExec}
-
-	shuffle.workers = make([]*shuffleMergeJoinWorker, shuffle.concurrency)
-	head := v.Children()[0]
-	tails := []plannercore.PhysicalPlan{v.LeftTail, v.RightTail}
-	for i := range shuffle.workers {
-		receivers := []*shuffleReceiver{
-			&shuffleReceiver{
-				baseExecutor: newBaseExecutor(b.ctx, v.LeftDataSource.Schema(), v.LeftDataSource.ID()),
-			},
-			&shuffleReceiver{
-				baseExecutor: newBaseExecutor(b.ctx, v.RightDataSource.Schema(), v.RightDataSource.ID()),
-			},
-		}
-		w := &shuffleMergeJoinWorker{
-			receivers: receivers,
-		}
-
-		sourcePlans := []plannercore.PhysicalPlan{v.LeftDataSource, v.RightDataSource}
-		for i := range shuffle.dataSources {
-			stub := plannercore.PhysicalShuffleReceiverStub{
-				Receiver: (unsafe.Pointer)(receivers[i]),
-			}.Init(b.ctx, sourcePlans[i].Stats(), sourcePlans[i].SelectBlockOffset(), nil)
-			stub.SetSchema(sourcePlans[i].Schema())
-			tails[i].SetChildren(stub)
-		}
-
-		w.childExec = b.build(head)
-		if b.err != nil {
-			return nil
-		}
-
-		shuffle.workers[i] = w
-	}
-
-	return shuffle
-}
-
 func (b *executorBuilder) buildShuffle(v *plannercore.PhysicalShuffle) *ShuffleExec {
 	base := newBaseExecutor(b.ctx, v.Schema(), v.ID())
 	shuffle := &ShuffleExec{
@@ -3789,10 +3715,6 @@ func (b *executorBuilder) buildShuffle(v *plannercore.PhysicalShuffle) *ShuffleE
 	}
 
 	return shuffle
-}
-
-func (b *executorBuilder) buildShuffleDataSourceStub(v *plannercore.PhysicalShuffleDataSourceStub) *shuffleWorker {
-	return (*shuffleWorker)(v.Worker)
 }
 
 func (b *executorBuilder) buildShuffleReceiverStub(v *plannercore.PhysicalShuffleReceiverStub) *shuffleReceiver {

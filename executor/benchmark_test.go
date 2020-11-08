@@ -1461,7 +1461,7 @@ func prepare4MergeJoin(tc *mergeJoinTestCase, leftExec, rightExec *mockDataSourc
 	return e
 }
 
-func prepare4ShuffleMergeJoin(tc *mergeJoinTestCase, leftExec, rightExec *mockDataSource) *ShuffleMergeJoinExec {
+func prepare4ShuffleMergeJoin(tc *mergeJoinTestCase, leftExec, rightExec *mockDataSource) *ShuffleExec {
 	outerCols, innerCols := tc.columns(), tc.columns()
 
 	joinSchema := expression.NewSchema()
@@ -1520,7 +1520,7 @@ func prepare4ShuffleMergeJoin(tc *mergeJoinTestCase, leftExec, rightExec *mockDa
 		},
 	}
 	// build ShuffleMergeJoinExec
-	shuffle := &ShuffleMergeJoinExec{
+	shuffle := &ShuffleExec{
 		baseExecutor: newBaseExecutor(tc.ctx, joinSchema, 4),
 		concurrency:  4,
 		dataSources:  dataSources,
@@ -1528,7 +1528,7 @@ func prepare4ShuffleMergeJoin(tc *mergeJoinTestCase, leftExec, rightExec *mockDa
 	}
 
 	// build workers, only benchmark inner join
-	shuffle.workers = make([]*shuffleMergeJoinWorker, shuffle.concurrency)
+	shuffle.workers = make([]*shuffleWorker, shuffle.concurrency)
 	for i := range shuffle.workers {
 		leftReceiver := shuffleReceiver{
 			baseExecutor: newBaseExecutor(tc.ctx, leftExec.Schema(), 0),
@@ -1536,7 +1536,7 @@ func prepare4ShuffleMergeJoin(tc *mergeJoinTestCase, leftExec, rightExec *mockDa
 		rightReceiver := shuffleReceiver{
 			baseExecutor: newBaseExecutor(tc.ctx, rightExec.Schema(), 0),
 		}
-		w := &shuffleMergeJoinWorker{
+		w := &shuffleWorker{
 			receivers: []*shuffleReceiver{&leftReceiver, &rightReceiver},
 		}
 		// only benchmark inner join
