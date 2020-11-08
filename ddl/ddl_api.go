@@ -5778,6 +5778,7 @@ func buildPlacementSpecReplicasAndConstraint(replicas uint64, cnstr string) ([]*
 
 		constraints := []string{}
 
+		cnstr = strings.Replace(cnstr, "'", "\"", -1)
 		err = json.Unmarshal([]byte(cnstr), &constraints)
 		if err != nil {
 			return rules, err
