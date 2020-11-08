@@ -236,12 +236,13 @@ func (w *worker) isReorgRunnable(d *ddlCtx) error {
 		return errCancelledDDLJob
 	}
 
-	if w.typeStr() != subTaskTypeStr {
-		if !d.isOwner() {
-			// If it's not the owner, we will try later, so here just returns an error.
-			logutil.BgLogger().Info("[ddl] DDL worker is not the DDL owner", zap.String("ID", d.uuid))
-			return errors.Trace(errNotOwner)
+	if !d.isOwner() {
+		if w.typeStr() == subTaskTypeStr {
+			return nil
 		}
+		// If it's not the owner, we will try later, so here just returns an error.
+		logutil.BgLogger().Info("[ddl] DDL worker is not the DDL owner", zap.String("ID", d.uuid))
+		return errors.Trace(errNotOwner)
 	}
 	return nil
 }
@@ -260,6 +261,19 @@ type reorgInfo struct {
 	// PhysicalTableID is used to trace the current partition we are handling.
 	// If the table is not partitioned, PhysicalTableID would be TableID.
 	PhysicalTableID int64
+}
+
+type subTaskReorgInfo struct {
+	*SubTask
+	StartHandle kv.Handle
+	// EndHandle is the last handle of the adding indices table.
+	EndHandle       kv.Handle
+	d               *ddlCtx
+	PhysicalTableID int64
+
+	Status SubTaskStatus
+
+	Runner string
 }
 
 func (r *reorgInfo) String() string {
@@ -534,14 +548,6 @@ func getReorgInfo(d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table) (*re
 }
 
 func (r *reorgInfo) UpdateReorgMeta(txn kv.Transaction, startHandle, endHandle kv.Handle, physicalTableID int64) error {
-	if startHandle == nil && endHandle == nil {
-		return nil
-	}
-	t := meta.NewMeta(txn)
-	return errors.Trace(t.UpdateDDLReorgHandle(r.Job, startHandle, endHandle, physicalTableID))
-}
-
-func (r *reorgInfo) UpdateSubTaskReorgMeta(txn kv.Transaction, startHandle, endHandle kv.Handle, physicalTableID int64) error {
 	if startHandle == nil && endHandle == nil {
 		return nil
 	}

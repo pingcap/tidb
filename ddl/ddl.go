@@ -335,11 +335,12 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 			return errors.Trace(err)
 		}
 
-		d.workers = make(map[workerType]*worker, 2)
+		d.workers = make(map[workerType]*worker, 3)
 		d.sessPool = newSessionPool(ctxPool)
 		d.delRangeMgr = d.newDeleteRangeManager(ctxPool == nil)
 		d.workers[generalWorker] = newWorker(d.ctx, generalWorker, d.sessPool, d.delRangeMgr)
 		d.workers[addIdxWorker] = newWorker(d.ctx, addIdxWorker, d.sessPool, d.delRangeMgr)
+		d.workers[subTaskWorker] = newWorker(d.ctx, subTaskWorker, d.sessPool, d.delRangeMgr)
 		for _, worker := range d.workers {
 			worker.wg.Add(1)
 			w := worker

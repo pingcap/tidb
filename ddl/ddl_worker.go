@@ -17,6 +17,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/pingcap/tidb/table"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -44,6 +45,9 @@ var (
 	RunWorker = true
 	// ddlWorkerID is used for generating the next DDL worker ID.
 	ddlWorkerID = int32(0)
+
+	// ddlSubTaskWorkerID is used for generating the next DDL SubTaskWorker ID.
+	ddlSubTaskWorkerID = int32(0)
 	// WaitTimeWhenErrorOccurred is waiting interval when processing DDL jobs encounter errors.
 	WaitTimeWhenErrorOccurred = int64(1 * time.Second)
 )
@@ -77,16 +81,31 @@ const (
 // Now we got three kinds of worker.
 // 1. generalWorker 2. addIdxWorker 3. subTaskWorker
 type worker struct {
-	id       int32
-	tp       workerType
-	ddlJobCh chan struct{}
-	ctx      context.Context
-	wg       sync.WaitGroup
-
+	id              int32
+	tp              workerType
+	ddlJobCh        chan struct{}
+	ctx             context.Context
+	wg              sync.WaitGroup
 	sessPool        *sessionPool // sessPool is used to new sessions to execute SQL in ddl package.
 	reorgCtx        *reorgCtx    // reorgCtx is used for reorganization.
 	delRangeManager delRangeManager
 	logCtx          context.Context
+}
+
+type subTaskDDLWorker struct {
+	id         int32
+	ddlSubTask *SubTask
+	sessPool   *sessionPool
+	logCtx     context.Context
+}
+
+func newDDLSubTaskWorker(ctx context.Context, sessPool *sessionPool, subTask *SubTask) *subTaskDDLWorker {
+	return &subTaskDDLWorker{
+		id:         atomic.AddInt32(&ddlSubTaskWorkerID, 1),
+		ddlSubTask: subTask,
+		logCtx:     ctx,
+		sessPool:   sessPool,
+	}
 }
 
 func newWorker(ctx context.Context, tp workerType, sessPool *sessionPool, delRangeMgr delRangeManager) *worker {
@@ -140,6 +159,13 @@ func (w *worker) start(d *ddlCtx) {
 		nil, true,
 	)
 
+	if w.typeStr() == subTaskTypeStr {
+		handleTaskErr := w.handleDDLSubTaskQueue(d)
+		if handleTaskErr != nil {
+			logutil.Logger(w.logCtx).Error("[ddl] handle DDL subTask failed", zap.Error(handleTaskErr))
+		}
+	}
+
 	// We use 4 * lease time to check owner's timeout, so here, we will update owner's status
 	// every 2 * lease time. If lease is 0, we will use default 1s.
 	// But we use etcd to speed up, normally it takes less than 1s now, so we use 1s as the max value.
@@ -148,37 +174,21 @@ func (w *worker) start(d *ddlCtx) {
 	ticker := time.NewTicker(checkTime)
 	defer ticker.Stop()
 
-	//for {
-	//	select {
-	//	case <-ticker.C:
-	//		logutil.Logger(w.logCtx).Debug("[ddl] wait to check DDL status again", zap.Duration("interval", checkTime))
-	//	case <-w.ddlJobCh:
-	//	case <-w.ctx.Done():
-	//		return
-	//	}
-	//
-	//	//handleJobErr := w.handleDDLJobQueue(d)
-	//	//
-	//	////TODO Whether it is owner or not，it will read the subTask queue and execute the one which is Unclaimed.
-	//	//handleTaskErr := w.handleDDLSubTaskQueue(d)
-	//	//if handleJobErr != nil {
-	//	//	logutil.Logger(w.logCtx).Error("[ddl] handle DDL job failed", zap.Error(handleJobErr))
-	//	//	//logutil.Logger(w.logCtx).Error("[ddl] handle DDL subTask failed", zap.Error(handleTaskErr))
-	//	//}
-	//}
-}
+	for {
+		select {
+		case <-ticker.C:
+			logutil.Logger(w.logCtx).Debug("[ddl] wait to check DDL status again", zap.Duration("interval", checkTime))
+		case <-w.ddlJobCh:
+		case <-w.ctx.Done():
+			return
+		}
 
-//func (w *worker) startHandleSubTask(d *ddlCtx) {
-//	logutil.Logger(w.logCtx).Info("[ddl] start DDL subTask worker")
-//
-//	for {
-//		select {
-//		case w.ddlJobCh:
-//
-//		}
-//
-//	}
-//}
+		handleJobErr := w.handleDDLJobQueue(d)
+		if handleJobErr != nil {
+			logutil.Logger(w.logCtx).Error("[ddl] handle DDL job failed", zap.Error(handleJobErr))
+		}
+	}
+}
 
 func asyncNotify(ch chan struct{}) {
 	select {
@@ -472,6 +482,7 @@ const (
 	Running   SubTaskStatus = 0
 	Unclaimed SubTaskStatus = 1
 	Failed    SubTaskStatus = 2
+	Success   SubTaskStatus = 3
 	UNKOWN    SubTaskStatus = 10
 )
 
@@ -484,14 +495,10 @@ type SubTask struct {
 	StartTS  uint64          `json:"start_ts"`
 }
 
-type SubTaskRecord struct {
-	StrarTS uint64 `json:"strar_ts"`
-	EndTs   uint64 `json:"end_ts"`
-}
-
 type addIndexSubTask struct {
 	IndexInfo      *model.IndexInfo `json:"index_info"`
 	IsCommonHandle bool             `json:"is_common_handle"`
+	SchemaID       int64            `json:"schema_id"`
 }
 
 func (task *SubTask) Decode(b []byte) error {
@@ -532,34 +539,65 @@ func (task *SubTask) DecodeArgs(args ...interface{}) error {
 	return nil
 }
 
-//func (w *worker) handleDDLSubTaskQueue (d *ddlCtx) error{
-//	for {
-//		if isChanClosed(w.ctx.Done()) {
-//			return nil
-//		}
-//		var (
-//			subTask *SubTask
-//			runTaskErr error
-//		)
-//		err := kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
-//
-//			meta := newMetaWithQueueTp(txn, w.typeStr())
-//			var err error
-//			subTask, err = w.getFirstDDLSubTask(meta)
-//			if subTask == nil || err != nil {
-//				return errors.Trace(err)
-//			}
-//			runTaskErr = w.runDDLSubTask(d, meta, subTask)
-//
-//		}
-//
-//		if err != nil {
-//			return errors.Trace(err)
-//		}
-//
-//	}
-//
-//}
+func (w *worker) handleDDLSubTaskQueue(d *ddlCtx) (err error) {
+	subTaskCheckTime := 1 * time.Second
+	ticker := time.NewTicker(subTaskCheckTime)
+	subTasks := make(chan *SubTask, 10)
+	go w.tryToClaimSubTaskFromTheQueue(ticker, subTasks, d, subTaskCheckTime)
+
+	err = w.runDDLSubTask(d, <-subTasks)
+
+	return errors.Trace(err)
+}
+
+func (w *worker) tryToClaimSubTaskFromTheQueue(ticker *time.Ticker, subTaskChan chan *SubTask, d *ddlCtx, subTaskCheckTime time.Duration) {
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			logutil.Logger(w.logCtx).Debug("[ddl] check DDL subTaskQueue again", zap.Duration("interval", subTaskCheckTime))
+		case <-w.ctx.Done():
+			return
+		}
+		//TODO add config var for batch size claiming subTasks
+		batchSize := 10
+		claimedSubTasks := make([]*SubTask, batchSize)
+		err := kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
+			t := newMetaWithQueueTp(txn, subTaskTypeStr)
+			subTasks, err := t.GetAllDDLSubTaskInQueue(meta.SubTaskListKey)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			for _, currentTask := range subTasks {
+				isUnClaimed, err := t.IsUnClaimedSubTask(currentTask.jobID, currentTask.taskID)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				if isUnClaimed {
+					err = t.SetReorgSubTaskFiledStatus(currentTask.jobID, currentTask.taskID, Running)
+					if err != nil {
+						return errors.Trace(err)
+					}
+					err = t.SetReorgSubTaskRunner(currentTask.jobID, currentTask.taskID, d.uuid)
+					if err != nil {
+						return errors.Trace(err)
+					}
+					claimedSubTasks = append(claimedSubTasks, currentTask)
+					if len(claimedSubTasks) == batchSize {
+						break
+					}
+				}
+			}
+			return errors.Trace(err)
+		})
+		if err != nil {
+			logutil.Logger(w.logCtx).Error("[ddl] claim DDL subTask failed", zap.Error(err))
+		}
+		for _, task := range claimedSubTasks {
+			subTaskChan <- task
+		}
+	}
+}
 
 // handleDDLJobQueue handles DDL jobs in DDL Job queue.
 func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
@@ -724,33 +762,68 @@ func chooseLeaseTime(t, max time.Duration) time.Duration {
 	return t
 }
 
-func (w *worker) runDDLSubTask(d *ddlCtx, t *meta.Meta, subTask *SubTask) (err error) {
-	switch subTask.TaskType {
-	case addIndexSubTaskType:
-		err = w.onCreateIndexSubTask(d, t, subTask)
+func (w *worker) runDDLSubTask(d *ddlCtx, subTask *SubTask) (err error) {
+	err = kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) (err error) {
+		t := newMetaWithQueueTp(txn, w.typeStr())
+		switch subTask.TaskType {
+		case addIndexSubTaskType:
+			err = w.onCreateIndexSubTask(d, t, subTask)
+		}
+		if err != nil {
+			return errors.Trace(err)
+		} else {
+			return nil
+		}
+	})
+	if err != nil {
+		logutil.Logger(w.logCtx).Error("[ddl] run DDL subTask failed", zap.Error(err))
 	}
-
 	return errors.Trace(err)
 }
 
-func (w *worker) handleParentJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
+func (w *worker) handleParentJob(d *ddlCtx, t *meta.Meta, job *model.Job, tbl *model.TableInfo) (ver int64, err error) {
 	switch job.Type {
 	case model.ActionAddIndex:
-		ver, err = w.handleAddIndexParentJob(d, t, job)
+		ver, err = w.handleAddIndexParentJob(d, t, job, tbl)
 	}
 	return ver, err
 }
 
-func (w *worker) handleAddIndexParentJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
+func (w *worker) handleAddIndexParentJob(d *ddlCtx, t *meta.Meta, job *model.Job, tableInfo *model.TableInfo) (ver int64, err error) {
 	var (
-		parentJob parentJob
+		parentJob  parentJob
+		physicalId int64
+		runner     string
+		status     SubTaskStatus
 	)
 	err = job.DecodeArgs(&parentJob.subTaskNum)
 	if err != nil {
 		return ver, err
 	}
+	tbl, err := getTable(d.store, job.SchemaID, tableInfo)
+	success := 0
+	failure := 0
 	for i := int64(0); i <= parentJob.subTaskNum; i++ {
+		physicalId, err = t.GetReorgSubTaskPhysicalTableId(job.ID, i)
+		if tbl, ok := tbl.(table.PartitionedTable); ok {
+			_, _, physicalId, runner, status, err = t.GetDDLSubTaskReorgInfo(job.ID, i, tbl.GetPartition(physicalId).Meta().IsCommonHandle)
+			switch status {
+			case Success:
+				success++
+				logutil.Logger(w.logCtx).Info("[ddl] run subTask ", zap.String("job", job.String()), zap.String("subTask:", string(i)+" "+runner+" done"), zap.String("Progress: ", string(success)+"/"+string(parentJob.subTaskNum)))
+				break
+			case Failed:
+				failure++
+				logutil.Logger(w.logCtx).Info("[ddl] run subTask ", zap.String("job", job.String()), zap.String("subTask:", string(i)+" "+runner+" failed"), zap.String("failedCount: ", string(failure)))
+				break
+			case UNKOWN:
+				break
+			default:
+				break
+			}
+		} else {
 
+		}
 	}
 	return ver, err
 }
