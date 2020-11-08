@@ -741,7 +741,8 @@ func (p *PhysicalWindow) ExplainInfo() string {
 // ExplainInfo implements Plan interface.
 func (p *PhysicalShuffle) ExplainInfo() string {
 	buffer := bytes.NewBufferString("")
-	fmt.Fprintf(buffer, "execution info: concurrency:%v, data source:%v", p.Concurrency, p.DataSource.ExplainID())
+	// TODO: print multiple data sources
+	fmt.Fprintf(buffer, "execution info: concurrency:%v, data source:%v", p.Concurrency, p.DataSources[0].ExplainID())
 	return buffer.String()
 }
 

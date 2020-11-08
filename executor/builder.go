@@ -3738,43 +3738,46 @@ func (b *executorBuilder) buildShuffle(v *plannercore.PhysicalShuffle) *ShuffleE
 
 	switch v.SplitterType {
 	case plannercore.PartitionHashSplitterType:
-		shuffle.splitters = []partitionSplitter{
-			&partitionHashSplitter{
-				byItems:    v.HashByItems,
+		splitters := make([]partitionSplitter, len(v.HashByItemArrays))
+		for i, hashByItemArray := range v.HashByItemArrays {
+			splitters[i] = &partitionHashSplitter{
+				byItems:    hashByItemArray,
 				numWorkers: shuffle.concurrency,
-			},
+			}
 		}
+		shuffle.splitters = splitters
 	default:
 		panic("Not implemented. Should not reach here.")
 	}
 
-	shuffle.dataSources = []Executor{b.build(v.DataSource)}
-	if b.err != nil {
-		return nil
+	shuffle.dataSources = make([]Executor, len(v.DataSources))
+	for i, dataSource := range v.DataSources {
+		shuffle.dataSources[i] = b.build(dataSource)
+		if b.err != nil {
+			return nil
+		}
 	}
 
-	// head & tail of physical plans' chain within "partition".
 	head := v.Children()[0]
-	tails := []plannercore.PhysicalPlan{v.Tail}
-
 	shuffle.workers = make([]*shuffleWorker, shuffle.concurrency)
 	for i := range shuffle.workers {
-		receivers := []*shuffleReceiver{
-			&shuffleReceiver{
-				baseExecutor: newBaseExecutor(b.ctx, v.DataSource.Schema(), v.DataSource.ID()),
-			},
+		receivers := make([]*shuffleReceiver, len(v.DataSources))
+		for j, dataSource := range v.DataSources {
+			receivers[j] = &shuffleReceiver{
+				baseExecutor: newBaseExecutor(b.ctx, dataSource.Schema(), dataSource.ID()),
+			}
 		}
+
 		w := &shuffleWorker{
 			receivers: receivers,
 		}
 
-		sourcePlans := []plannercore.PhysicalPlan{v.DataSource}
-		for i := range shuffle.dataSources {
+		for j, dataSource := range v.DataSources {
 			stub := plannercore.PhysicalShuffleReceiverStub{
-				Receiver: (unsafe.Pointer)(receivers[i]),
-			}.Init(b.ctx, sourcePlans[i].Stats(), sourcePlans[i].SelectBlockOffset(), nil)
-			stub.SetSchema(sourcePlans[i].Schema())
-			tails[i].SetChildren(stub)
+				Receiver: (unsafe.Pointer)(receivers[j]),
+			}.Init(b.ctx, dataSource.Stats(), dataSource.SelectBlockOffset(), nil)
+			stub.SetSchema(dataSource.Schema())
+			v.Tails[j].SetChildren(stub)
 		}
 
 		w.childExec = b.build(head)

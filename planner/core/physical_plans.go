@@ -1164,11 +1164,12 @@ type PhysicalShuffle struct {
 	basePhysicalPlan
 
 	Concurrency int
-	Tail        PhysicalPlan
-	DataSource  PhysicalPlan
+	Tails       []PhysicalPlan
+	DataSources []PhysicalPlan
 
 	SplitterType PartitionSplitterType
-	HashByItems  []expression.Expression
+	// each DataSource has an array of HashByItems
+	HashByItemArrays [][]expression.Expression
 }
 
 // PhysicalShuffleMergeJoin represents a shuffle plan for merge join

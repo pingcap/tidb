@@ -131,11 +131,11 @@ func optimizeByShuffle4Window(pp *PhysicalWindow, ctx sessionctx.Context) *Physi
 	}
 	reqProp := &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64}
 	shuffle := PhysicalShuffle{
-		Concurrency:  concurrency,
-		Tail:         tail,
-		DataSource:   dataSource,
-		SplitterType: PartitionHashSplitterType,
-		HashByItems:  byItems,
+		Concurrency:      concurrency,
+		Tails:            []PhysicalPlan{tail},
+		DataSources:      []PhysicalPlan{dataSource},
+		SplitterType:     PartitionHashSplitterType,
+		HashByItemArrays: [][]expression.Expression{byItems},
 	}.Init(ctx, pp.statsInfo(), pp.SelectBlockOffset(), reqProp)
 	return shuffle
 }
