@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/pkg/errors"
+	"github.com/pingcap/errors"
 	"go.uber.org/zap"
 
 	"github.com/pingcap/dumpling/v4/log"
@@ -39,7 +39,7 @@ func ShowCreateDatabase(db *sql.Conn, database string) (string, error) {
 	query := fmt.Sprintf("SHOW CREATE DATABASE `%s`", escapeString(database))
 	err := simpleQuery(db, query, handleOneRow)
 	if err != nil {
-		return "", errors.WithMessage(err, query)
+		return "", errors.Annotatef(err, "sql: %s", query)
 	}
 	return oneRow[1], nil
 }
@@ -52,7 +52,7 @@ func ShowCreateTable(db *sql.Conn, database, table string) (string, error) {
 	query := fmt.Sprintf("SHOW CREATE TABLE `%s`.`%s`", escapeString(database), escapeString(table))
 	err := simpleQuery(db, query, handleOneRow)
 	if err != nil {
-		return "", errors.WithMessage(err, query)
+		return "", errors.Annotatef(err, "sql: %s", query)
 	}
 	return oneRow[1], nil
 }
@@ -80,7 +80,7 @@ func ShowCreateView(db *sql.Conn, database, view string) (string, string, error)
 	query := fmt.Sprintf("SHOW FIELDS FROM `%s`.`%s`", escapeString(database), escapeString(view))
 	err := simpleQuery(db, query, handleFieldRow)
 	if err != nil {
-		return "", "", errors.WithMessage(err, query)
+		return "", "", errors.Annotatef(err, "sql: %s", query)
 	}
 	fmt.Fprintf(&createTableSQL, "CREATE TABLE `%s`(\n", escapeString(view))
 	createTableSQL.WriteString(strings.Join(fieldNames, ",\n"))
@@ -92,7 +92,7 @@ func ShowCreateView(db *sql.Conn, database, view string) (string, string, error)
 	query = fmt.Sprintf("SHOW CREATE VIEW `%s`.`%s`", escapeString(database), escapeString(view))
 	err = simpleQuery(db, query, handleOneRow)
 	if err != nil {
-		return "", "", errors.WithMessage(err, query)
+		return "", "", errors.Annotatef(err, "sql: %s", query)
 	}
 	// The result for `show create view` SQL
 	// mysql> show create view v1;
@@ -145,7 +145,7 @@ func ListAllDatabasesTables(db *sql.Conn, databaseNames []string, tableType Tabl
 	if err := simpleQueryWithArgs(db, func(rows *sql.Rows) error {
 		var schema, table string
 		if err := rows.Scan(&schema, &table); err != nil {
-			return withStack(err)
+			return errors.Trace(err)
 		}
 
 		// only append tables to schemas in databaseNames
@@ -154,27 +154,9 @@ func ListAllDatabasesTables(db *sql.Conn, databaseNames []string, tableType Tabl
 		}
 		return nil
 	}, query); err != nil {
-		return nil, errors.WithMessage(err, query)
+		return nil, errors.Annotatef(err, "sql: %s", query)
 	}
 	return dbTables, nil
-}
-
-func ListAllTables(db *sql.Conn, database string) ([]string, error) {
-	var tables oneStrColumnTable
-	const query = "SELECT table_name FROM information_schema.tables WHERE table_schema = ? and table_type = 'BASE TABLE'"
-	if err := simpleQueryWithArgs(db, tables.handleOneRow, query, database); err != nil {
-		return nil, errors.WithMessage(err, query)
-	}
-	return tables.data, nil
-}
-
-func ListAllViews(db *sql.Conn, database string) ([]string, error) {
-	var views oneStrColumnTable
-	const query = "SELECT table_name FROM information_schema.tables WHERE table_schema = ? and table_type = 'VIEW'"
-	if err := simpleQueryWithArgs(db, views.handleOneRow, query, database); err != nil {
-		return nil, errors.WithMessage(err, query)
-	}
-	return views.data, nil
 }
 
 func SelectVersion(db *sql.DB) (string, error) {
@@ -183,7 +165,7 @@ func SelectVersion(db *sql.DB) (string, error) {
 	row := db.QueryRow(query)
 	err := row.Scan(&versionInfo)
 	if err != nil {
-		return "", withStack(errors.WithMessage(err, query))
+		return "", errors.Annotatef(err, "sql: %s", query)
 	}
 	return versionInfo, nil
 }
@@ -234,15 +216,15 @@ func SelectFromSql(conf *Config, db *sql.Conn) (TableDataIR, error) {
 	log.Info("dump data from sql", zap.String("sql", conf.Sql))
 	rows, err := db.QueryContext(context.Background(), conf.Sql)
 	if err != nil {
-		return nil, withStack(errors.WithMessage(err, conf.Sql))
+		return nil, errors.Annotatef(err, "sql: %s", conf.Sql)
 	}
 	colTypes, err := rows.ColumnTypes()
 	if err != nil {
-		return nil, withStack(errors.WithMessage(err, conf.Sql))
+		return nil, errors.Annotatef(err, "sql: %s", conf.Sql)
 	}
 	cols, err := rows.Columns()
 	if err != nil {
-		return nil, withStack(errors.WithMessage(err, conf.Sql))
+		return nil, errors.Annotatef(err, "sql: %s", conf.Sql)
 	}
 	for i := range cols {
 		cols[i] = wrapBackTicks(cols[i])
@@ -290,7 +272,7 @@ func buildOrderByClause(conf *Config, db *sql.Conn, database, table string) (str
 	if conf.ServerInfo.ServerType == ServerTypeTiDB {
 		ok, err := SelectTiDBRowID(db, database, table)
 		if err != nil {
-			return "", withStack(err)
+			return "", errors.Trace(err)
 		}
 		if ok {
 			return "ORDER BY _tidb_rowid", nil
@@ -300,7 +282,7 @@ func buildOrderByClause(conf *Config, db *sql.Conn, database, table string) (str
 	}
 	pkName, err := GetPrimaryKeyName(db, database, table)
 	if err != nil {
-		return "", withStack(err)
+		return "", errors.Trace(err)
 	}
 	tableContainsPriKey := pkName != ""
 	if tableContainsPriKey {
@@ -318,7 +300,7 @@ func SelectTiDBRowID(db *sql.Conn, database, table string) (bool, error) {
 		if strings.Contains(errMsg, fmt.Sprintf("%d", errBadFieldCode)) {
 			return false, nil
 		}
-		return false, withStack(errors.WithMessage(err, tiDBRowIDQuery))
+		return false, errors.Annotatef(err, "sql: %s", tiDBRowIDQuery)
 	}
 	return true, nil
 }
@@ -327,7 +309,7 @@ func GetColumnTypes(db *sql.Conn, fields, database, table string) ([]*sql.Column
 	query := fmt.Sprintf("SELECT %s FROM `%s`.`%s` LIMIT 1", fields, escapeString(database), escapeString(table))
 	rows, err := db.QueryContext(context.Background(), query)
 	if err != nil {
-		return nil, withStack(errors.WithMessage(err, query))
+		return nil, errors.Annotatef(err, "sql: %s", query)
 	}
 	defer rows.Close()
 	return rows.ColumnTypes()
@@ -342,7 +324,7 @@ func GetPrimaryKeyName(db *sql.Conn, database, table string) (string, error) {
 		if err == sql.ErrNoRows {
 			return "", nil
 		} else {
-			return "", withStack(errors.WithMessage(err, priKeyQuery))
+			return "", errors.Annotatef(err, "sql: %s", priKeyQuery)
 		}
 	}
 	return colName, nil
@@ -357,7 +339,7 @@ func GetUniqueIndexName(db *sql.Conn, database, table string) (string, error) {
 		if err == sql.ErrNoRows {
 			return "", nil
 		} else {
-			return "", withStack(errors.WithMessage(err, uniKeyQuery))
+			return "", errors.Annotatef(err, "sql: %s", uniKeyQuery)
 		}
 	}
 	return colName, nil
@@ -366,24 +348,24 @@ func GetUniqueIndexName(db *sql.Conn, database, table string) (string, error) {
 func FlushTableWithReadLock(ctx context.Context, db *sql.Conn) error {
 	const ftwrlQuery = "FLUSH TABLES WITH READ LOCK"
 	_, err := db.ExecContext(ctx, ftwrlQuery)
-	return withStack(errors.WithMessage(err, ftwrlQuery))
+	return errors.Annotatef(err, "sql: %s", ftwrlQuery)
 }
 
 func LockTables(ctx context.Context, db *sql.Conn, database, table string) error {
 	lockTableQuery := fmt.Sprintf("LOCK TABLES `%s`.`%s` READ", escapeString(database), escapeString(table))
 	_, err := db.ExecContext(ctx, lockTableQuery)
-	return withStack(errors.WithMessage(err, lockTableQuery))
+	return errors.Annotatef(err, "sql: %s", lockTableQuery)
 }
 
 func UnlockTables(ctx context.Context, db *sql.Conn) error {
 	const unlockTableQuery = "UNLOCK TABLES"
 	_, err := db.ExecContext(ctx, unlockTableQuery)
-	return withStack(errors.WithMessage(err, unlockTableQuery))
+	return errors.Annotatef(err, "sql: %s", unlockTableQuery)
 }
 
 func UseDatabase(db *sql.DB, databaseName string) error {
 	_, err := db.Exec(fmt.Sprintf("USE `%s`", escapeString(databaseName)))
-	return withStack(err)
+	return errors.Trace(err)
 }
 
 func ShowMasterStatus(db *sql.Conn) ([]string, error) {
@@ -404,7 +386,7 @@ func ShowMasterStatus(db *sql.Conn) ([]string, error) {
 	const showMasterStatusQuery = "SHOW MASTER STATUS"
 	err := simpleQuery(db, showMasterStatusQuery, handleOneRow)
 	if err != nil {
-		return nil, withStack(errors.WithMessage(err, showMasterStatusQuery))
+		return nil, errors.Annotatef(err, "sql: %s", showMasterStatusQuery)
 	}
 	return oneRow, nil
 }
@@ -427,7 +409,7 @@ func GetSpecifiedColumnValue(rows *sql.Rows, columnName string) ([]string, error
 	for rows.Next() {
 		err := rows.Scan(addr...)
 		if err != nil {
-			return strs, err
+			return strs, errors.Trace(err)
 		}
 		strs = append(strs, oneRow[fieldIndex].String)
 	}
@@ -440,7 +422,7 @@ func GetPdAddrs(db *sql.DB) ([]string, error) {
 	if err != nil {
 		log.Warn("can't execute query from db",
 			zap.String("query", query), zap.Error(err))
-		return []string{}, withStack(errors.WithMessage(err, query))
+		return []string{}, errors.Annotatef(err, "sql: %s", query)
 	}
 	defer rows.Close()
 	return GetSpecifiedColumnValue(rows, "STATUS_ADDRESS")
@@ -452,7 +434,7 @@ func GetTiDBDDLIDs(db *sql.DB) ([]string, error) {
 	if err != nil {
 		log.Warn("can't execute query from db",
 			zap.String("query", query), zap.Error(err))
-		return []string{}, withStack(errors.WithMessage(err, query))
+		return []string{}, errors.Annotatef(err, "sql: %s", query)
 	}
 	defer rows.Close()
 	return GetSpecifiedColumnValue(rows, "DDL_ID")
@@ -464,7 +446,7 @@ func CheckTiDBWithTiKV(db *sql.DB) (bool, error) {
 	row := db.QueryRow(query)
 	err := row.Scan(&count)
 	if err != nil {
-		return false, withStack(errors.WithMessage(err, query))
+		return false, errors.Annotatef(err, "sql: %s", query)
 	}
 	return count > 0, nil
 }
@@ -491,7 +473,7 @@ func resetDBWithSessionParams(db *sql.DB, dsn string, params map[string]interfac
 				log.Info("session variable is not supported by db", zap.String("variable", k), zap.Reflect("value", v))
 				continue
 			}
-			return nil, withStack(err)
+			return nil, errors.Trace(err)
 		}
 
 		support[k] = v
@@ -511,7 +493,7 @@ func resetDBWithSessionParams(db *sql.DB, dsn string, params map[string]interfac
 
 	newDB, err := sql.Open("mysql", dsn)
 	if err != nil {
-		return nil, withStack(err)
+		return nil, errors.Trace(err)
 	}
 
 	db.Close()
@@ -522,17 +504,17 @@ func resetDBWithSessionParams(db *sql.DB, dsn string, params map[string]interfac
 func createConnWithConsistency(ctx context.Context, db *sql.DB) (*sql.Conn, error) {
 	conn, err := db.Conn(ctx)
 	if err != nil {
-		return nil, withStack(err)
+		return nil, errors.Trace(err)
 	}
 	query := "SET SESSION TRANSACTION ISOLATION LEVEL REPEATABLE READ"
 	_, err = conn.ExecContext(ctx, query)
 	if err != nil {
-		return nil, withStack(errors.WithMessage(err, query))
+		return nil, errors.Annotatef(err, "sql: %s", query)
 	}
 	query = "START TRANSACTION /*!40108 WITH CONSISTENT SNAPSHOT */"
 	_, err = conn.ExecContext(ctx, query)
 	if err != nil {
-		return nil, withStack(errors.WithMessage(err, query))
+		return nil, errors.Annotatef(err, "sql: %s", query)
 	}
 	return conn, nil
 }
@@ -541,7 +523,7 @@ func buildSelectField(db *sql.Conn, dbName, tableName string, completeInsert boo
 	query := `SELECT COLUMN_NAME,EXTRA FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=? AND TABLE_NAME=? ORDER BY ORDINAL_POSITION;`
 	rows, err := db.QueryContext(context.Background(), query, dbName, tableName)
 	if err != nil {
-		return "", withStack(errors.WithMessage(err, query))
+		return "", errors.Annotatef(err, "sql: %s", query)
 	}
 	defer rows.Close()
 	availableFields := make([]string, 0)
@@ -552,7 +534,7 @@ func buildSelectField(db *sql.Conn, dbName, tableName string, completeInsert boo
 	for rows.Next() {
 		err = rows.Scan(&fieldName, &extra)
 		if err != nil {
-			return "", withStack(errors.WithMessage(err, query))
+			return "", errors.Annotatef(err, "sql: %s", query)
 		}
 		switch extra {
 		case "STORED GENERATED", "VIRTUAL GENERATED":
@@ -574,7 +556,7 @@ type oneStrColumnTable struct {
 func (o *oneStrColumnTable) handleOneRow(rows *sql.Rows) error {
 	var str string
 	if err := rows.Scan(&str); err != nil {
-		return withStack(err)
+		return errors.Trace(err)
 	}
 	o.data = append(o.data, str)
 	return nil
@@ -587,14 +569,14 @@ func simpleQuery(conn *sql.Conn, sql string, handleOneRow func(*sql.Rows) error)
 func simpleQueryWithArgs(conn *sql.Conn, handleOneRow func(*sql.Rows) error, sql string, args ...interface{}) error {
 	rows, err := conn.QueryContext(context.Background(), sql, args...)
 	if err != nil {
-		return withStack(errors.WithMessage(err, sql))
+		return errors.Annotatef(err, "sql: %s", sql)
 	}
 	defer rows.Close()
 
 	for rows.Next() {
 		if err := handleOneRow(rows); err != nil {
 			rows.Close()
-			return withStack(errors.WithMessage(err, sql))
+			return errors.Annotatef(err, "sql: %s", sql)
 		}
 	}
 	rows.Close()
@@ -639,7 +621,7 @@ func pickupPossibleField(dbName, tableName string, db *sql.Conn, conf *Config) (
 		if err == sql.ErrNoRows {
 			return "", nil
 		} else {
-			return "", withStack(errors.WithMessage(err, query))
+			return "", errors.Annotatef(err, "sql: %s", query)
 		}
 	}
 	switch strings.ToLower(fieldType) {
@@ -737,10 +719,10 @@ func parseSnapshotToTSO(pool *sql.DB, snapshot string) (uint64, error) {
 	row := pool.QueryRow(query, snapshot)
 	err = row.Scan(&tso)
 	if err != nil {
-		return 0, withStack(errors.WithMessage(err, strings.ReplaceAll(query, "?", fmt.Sprintf(`"%s"`, snapshot))))
+		return 0, errors.Annotatef(err, "sql: %s", strings.ReplaceAll(query, "?", fmt.Sprintf(`"%s"`, snapshot)))
 	}
 	if !tso.Valid {
-		return 0, withStack(fmt.Errorf("snapshot %s format not supported. please use tso or '2006-01-02 15:04:05' format time", snapshot))
+		return 0, errors.Errorf("snapshot %s format not supported. please use tso or '2006-01-02 15:04:05' format time", snapshot)
 	}
 	return (uint64(tso.Int64)<<18)*1000 + 1, nil
 }

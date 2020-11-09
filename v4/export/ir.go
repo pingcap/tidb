@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+
+	"github.com/pingcap/errors"
 )
 
 // TableDataIR is table data intermediate representation.
@@ -50,7 +52,7 @@ func decodeFromRows(rows *sql.Rows, args []interface{}, row RowReceiver) error {
 	row.BindAddress(args)
 	if err := rows.Scan(args...); err != nil {
 		rows.Close()
-		return withStack(err)
+		return errors.Trace(err)
 	}
 	return nil
 }
