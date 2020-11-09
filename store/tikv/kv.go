@@ -367,6 +367,10 @@ func (s *tikvStore) Close() error {
 	if s.coprCache != nil {
 		s.coprCache.cache.Close()
 	}
+
+	if err := s.kv.Close(); err != nil {
+		return errors.Trace(err)
+	}
 	return nil
 }
 
