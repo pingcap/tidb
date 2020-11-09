@@ -2195,11 +2195,18 @@ func (ls *LogicalSort) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]
 	if MatchItems(prop, ls.ByItems) {
 		ret := make([]PhysicalPlan, 0, 2)
 		ps := ls.getPhysicalSort(prop)
+		ps.doInlineProjection = ls.doInlineProjection
 		ps.SetSchema(ls.Schema())
 		ret = append(ret, ps)
 		ns := ls.getNominalSort(prop)
 		if ns != nil {
+			ns.doInlineProjection = ls.doInlineProjection
 			ns.SetSchema(ls.Schema())
+			// if inlineProjection occurs, byItem Key is ordered.
+			// NorminalSort will be eliminated, so it need to manually inject a projection
+			if ns.doInlineProjection {
+				// TODO: inject projection
+			}
 			ret = append(ret, ns)
 		}
 		return ret, true

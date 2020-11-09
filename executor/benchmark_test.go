@@ -1653,14 +1653,12 @@ func benchmarkSortExec(b *testing.B, cas *sortCase) {
 		ndvs:   cas.ndvs,
 	}
 	dataSource := buildMockDataSource(opt)
+	// Build sort executor
 	sort := &SortExec{
 		baseExecutor: newBaseExecutor(cas.ctx, dataSource.schema, 4, dataSource),
 		ByItems:      make([]*util.ByItems, 0, len(cas.orderByIdx)),
 	}
-	sort.schema = expression.NewSchema()
-	for _, childColIdx := range cas.columnIdxsUsedByChild {
-		sort.schema.Append(dataSource.schema.Columns[childColIdx])
-	}
+	sort.schema = dataSource.schema.Clone()
 	for _, idx := range cas.orderByIdx {
 		sort.ByItems = append(sort.ByItems, &util.ByItems{Expr: cas.columns()[idx]})
 	}
@@ -1668,21 +1666,22 @@ func benchmarkSortExec(b *testing.B, cas *sortCase) {
 	// For fair performance comparison with inline projection
 	// On the sort operation will append a projection operation
 	var exec Executor
+	projSchema := expression.NewSchema()
+	// childColIdx means the index of child executor schema column map to parent executor schema column
+	// eg. columnIdxsUsedByChild = [2, 3, 1] means child[col2, col3, col1] -> parent[col0, col1, col2]
+	for _, childColIdx := range cas.columnIdxsUsedByChild {
+		projSchema.Append(dataSource.schema.Columns[childColIdx])
+	}
 	if cas.withInlineProjection {
+		sort.schema = projSchema
 		sort.columnIdxsUsedByChild = cas.columnIdxsUsedByChild
 		exec = sort
 	} else {
-		projSchema := sort.Schema().Clone()
+		sort.columnIdxsUsedByChild = nil
 		exprs := make([]expression.Expression, 0, projSchema.Len())
 		for _, col := range projSchema.Columns {
 			exprs = append(exprs, col.Clone())
 		}
-		for _, byItem := range sort.ByItems {
-			if !sort.schema.Contains(byItem.Expr.(*expression.Column)) {
-				sort.schema.Append(byItem.Expr.(*expression.Column))
-			}
-		}
-		sort.columnIdxsUsedByChild = nil
 		projection := &ProjectionExec{
 			baseExecutor:  newBaseExecutor(cas.ctx, projSchema, 3, sort),
 			numWorkers:    1,

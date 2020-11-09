@@ -1576,11 +1576,15 @@ func (b *executorBuilder) buildSort(v *plannercore.PhysicalSort) Executor {
 	if b.err != nil {
 		return nil
 	}
+	var columnIdxsUsedByChild []int
+	if v.DoInlineProjection() {
+		columnIdxsUsedByChild, _ = retrieveColumnIdxsUsedByChild(v.Schema(), v.Children()[0].Schema())
+	}
 	sortExec := SortExec{
 		baseExecutor:          newBaseExecutor(b.ctx, v.Schema(), v.ID(), childExec),
 		ByItems:               v.ByItems,
 		schema:                v.Schema(),
-		columnIdxsUsedByChild: retrieveColumnIdxsUsedByChild(v.Schema(), v.Children()[0].Schema()),
+		columnIdxsUsedByChild: columnIdxsUsedByChild,
 	}
 	executorCounterSortExec.Inc()
 	return &sortExec
@@ -1591,11 +1595,15 @@ func (b *executorBuilder) buildTopN(v *plannercore.PhysicalTopN) Executor {
 	if b.err != nil {
 		return nil
 	}
+	var columnIdxsUsedByChild []int
+	if v.DoInlineProjection() {
+		columnIdxsUsedByChild, _ = retrieveColumnIdxsUsedByChild(v.Schema(), v.Children()[0].Schema())
+	}
 	sortExec := SortExec{
 		baseExecutor:          newBaseExecutor(b.ctx, v.Schema(), v.ID(), childExec),
 		ByItems:               v.ByItems,
 		schema:                v.Schema(),
-		columnIdxsUsedByChild: retrieveColumnIdxsUsedByChild(v.Schema(), v.Children()[0].Schema()),
+		columnIdxsUsedByChild: columnIdxsUsedByChild,
 	}
 	executorCounterTopNExec.Inc()
 	return &TopNExec{
@@ -2188,13 +2196,21 @@ func markChildrenUsedCols(outputSchema *expression.Schema, childSchema ...*expre
 }
 
 // retrieveColumnIdxsUsedByChild retrieve column indices map from child physical plan schema columns
-func retrieveColumnIdxsUsedByChild(selfSchema *expression.Schema, childSchema *expression.Schema) []int {
+func retrieveColumnIdxsUsedByChild(selfSchema *expression.Schema, childSchema *expression.Schema) ([]int, bool) {
 	equalSchema := (selfSchema.Len() == childSchema.Len())
+	// columnMissing presents `false` when its own schema has any column that cannot be found in child schema.
+	// sometimes it's impossible column missing in child schema,
+	// which means if columnMissing presents `true` that the program is incorrect.
+	// sometimes it is possible, eg. cases of under the semantics of `group by`,
+	// specific validation needs to be performed when methods of `buildX` call.
+	columnMissing := false
 	columnIdxsUsedByChild := make([]int, 0, selfSchema.Len())
 	for selfIdx, selfCol := range selfSchema.Columns {
+		// colIdxInChild means the index of child executor schema column map to parent executor schema column
+		// eg. columnIdxsUsedByChild = [2, 3, 1] means child[col2, col3, col1] -> parent[col0, col1, col2]
 		colIdxInChild := childSchema.ColumnIndex(selfCol)
-		if colIdxInChild == -1 {
-			return nil
+		if !columnMissing && colIdxInChild == -1 {
+			columnMissing = true
 		}
 		if equalSchema && selfIdx != colIdxInChild {
 			equalSchema = false
@@ -2204,7 +2220,7 @@ func retrieveColumnIdxsUsedByChild(selfSchema *expression.Schema, childSchema *e
 	if equalSchema {
 		columnIdxsUsedByChild = nil
 	}
-	return columnIdxsUsedByChild
+	return columnIdxsUsedByChild, columnMissing
 }
 
 func constructDistExecForTiFlash(sctx sessionctx.Context, p plannercore.PhysicalPlan) ([]*tipb.Executor, bool, error) {

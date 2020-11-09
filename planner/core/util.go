@@ -83,8 +83,9 @@ func (a *WindowFuncExtractor) Leave(n ast.Node) (ast.Node, bool) {
 
 // logicalSchemaProducer stores the schema for the logical plans who can produce schema directly.
 type logicalSchemaProducer struct {
-	schema *expression.Schema
-	names  types.NameSlice
+	schema             *expression.Schema
+	names              types.NameSlice
+	doInlineProjection bool
 	baseLogicalPlan
 }
 
@@ -130,6 +131,9 @@ func (s *logicalSchemaProducer) inlineProjection(parentUsedCols []*expression.Co
 	used := expression.GetUsedList(parentUsedCols, s.Schema())
 	for i := len(used) - 1; i >= 0; i-- {
 		if !used[i] {
+			if !s.doInlineProjection {
+				s.doInlineProjection = true
+			}
 			s.schema.Columns = append(s.Schema().Columns[:i], s.Schema().Columns[i+1:]...)
 		}
 	}
@@ -137,7 +141,8 @@ func (s *logicalSchemaProducer) inlineProjection(parentUsedCols []*expression.Co
 
 // physicalSchemaProducer stores the schema for the physical plans who can produce schema directly.
 type physicalSchemaProducer struct {
-	schema *expression.Schema
+	schema             *expression.Schema
+	doInlineProjection bool
 	basePhysicalPlan
 }
 
@@ -169,6 +174,11 @@ func (s *physicalSchemaProducer) Schema() *expression.Schema {
 // SetSchema implements the Plan.SetSchema interface.
 func (s *physicalSchemaProducer) SetSchema(schema *expression.Schema) {
 	s.schema = schema
+}
+
+// DoInlineProjection present inline projection has happened or not
+func (s *physicalSchemaProducer) DoInlineProjection() bool {
+	return s.doInlineProjection
 }
 
 // baseSchemaProducer stores the schema for the base plans who can produce schema directly.
