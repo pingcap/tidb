@@ -119,7 +119,7 @@ func (s *testPrepareSuite) TestAdjustConfig(c *C) {
 	c.Assert(adjustConfig(nil, conf), IsNil)
 	conf.Sql = ""
 	conf.Rows = 5000
-	conf.FileSize = uint64(5000)
+	conf.FileSize = 5000
 	c.Assert(adjustConfig(nil, conf), IsNil)
-	c.Assert(conf.FileSize, Equals, uint64(UnspecifiedSize))
+	c.Assert(conf.FileSize, Equals, uint64(5000))
 }

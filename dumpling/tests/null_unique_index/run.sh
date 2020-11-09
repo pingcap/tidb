@@ -19,6 +19,6 @@ export DUMPLING_TEST_DATABASE=$DB_NAME
 run_dumpling -r 1
 
 data="NULL"
-cnt=$(sed "s/$data/$data\n/g" $DUMPLING_OUTPUT_DIR/$DB_NAME.t.1.sql | grep -c "$data") || true
+cnt=$(sed "s/$data/$data\n/g" $DUMPLING_OUTPUT_DIR/$DB_NAME.t.000000001.sql | grep -c "$data") || true
 [ $cnt = 1 ]
 
