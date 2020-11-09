@@ -36,7 +36,7 @@ type testAsyncCommitFailSuite struct {
 var _ = SerialSuites(&testAsyncCommitFailSuite{})
 
 func (s *testAsyncCommitFailSuite) SetUpTest(c *C) {
-	s.testAsyncCommitCommon.setUpTest(c, false)
+	s.testAsyncCommitCommon.setUpTest(c)
 }
 
 // TestFailCommitPrimaryRpcErrors tests rpc errors are handled properly when
@@ -109,6 +109,11 @@ func (s *testAsyncCommitFailSuite) TestPointGetWithAsyncCommit(c *C) {
 }
 
 func (s *testAsyncCommitFailSuite) TestSecondaryListInPrimaryLock(c *C) {
+	// This test doesn't support tikv mode.
+	if *WithTiKV {
+		return
+	}
+
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.TiKVClient.AsyncCommit.Enable = true
