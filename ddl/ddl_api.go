@@ -5777,9 +5777,30 @@ func buildPlacementSpecReplicasAndConstraint(replicas uint64, cnstr string) ([]*
 		}
 
 		constraints := []string{}
+		byteArr := bytes.Split([]byte(cnstr[0:len(cnstr)]), []byte(","))
+		var leftIndex, rightIndex int
+		for i := 0; i < len(byteArr); i++ {
+			switch i {
+			case 0:
+				leftIndex = 1
+			case len(byteArr[i]) - 1:
+				rightIndex = len(byteArr[i]) - 2
+			default:
+				leftIndex, rightIndex = 0, len(byteArr[i])-1
+			}
+			if len(byteArr) == 1 {
+				leftIndex, rightIndex = 1, len(byteArr[i])-2
+			}
+			if byteArr[i][leftIndex] == '\'' {
+				if byteArr[i][leftIndex] == byteArr[i][rightIndex] {
+					byteArr[i][leftIndex], byteArr[i][rightIndex] = '"', '"'
+				} else {
+					break
+				}
+			}
+		}
 
-		cnstr = strings.Replace(cnstr, "'", "\"", -1)
-		err = json.Unmarshal([]byte(cnstr), &constraints)
+		err = json.Unmarshal(bytes.Join(byteArr, []byte(",")), &constraints)
 		if err != nil {
 			return rules, err
 		}
