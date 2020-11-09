@@ -3,7 +3,7 @@
 set -eu
 
 mkdir -p "$DUMPLING_OUTPUT_DIR"/data
-cp "$DUMPLING_BASE_NAME/data/quote-database.quote-table.0.sql" "$DUMPLING_OUTPUT_DIR/data/quo\`te%2Fdatabase.quo\`te%2Ftable.0.sql"
+cp "$DUMPLING_BASE_NAME/data/quote-database.quote-table.000000000.sql" "$DUMPLING_OUTPUT_DIR/data/quo\`te%2Fdatabase.quo\`te%2Ftable.000000000.sql"
 cp "$DUMPLING_BASE_NAME/data/quote-database.quote-table-schema.sql" "$DUMPLING_OUTPUT_DIR/data/quo\`te%2Fdatabase.quo\`te%2Ftable-schema.sql"
 cp "$DUMPLING_BASE_NAME/data/quote-database-schema-create.sql" "$DUMPLING_OUTPUT_DIR/data/quo\`te%2Fdatabase-schema-create.sql"
 
@@ -13,7 +13,7 @@ run_sql_file "$DUMPLING_OUTPUT_DIR/data/quo\`te%2Fdatabase-schema-create.sql"
 export DUMPLING_TEST_DATABASE=$db
 
 run_sql_file "$DUMPLING_OUTPUT_DIR/data/quo\`te%2Fdatabase.quo\`te%2Ftable-schema.sql"
-run_sql_file "$DUMPLING_OUTPUT_DIR/data/quo\`te%2Fdatabase.quo\`te%2Ftable.0.sql"
+run_sql_file "$DUMPLING_OUTPUT_DIR/data/quo\`te%2Fdatabase.quo\`te%2Ftable.000000000.sql"
 
 run_dumpling
 

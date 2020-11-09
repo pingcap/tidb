@@ -3,7 +3,6 @@ package export
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"strconv"
 	"strings"
 	"time"
@@ -12,6 +11,7 @@ import (
 
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/pingcap/br/pkg/utils"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
@@ -218,6 +218,8 @@ func Dump(pCtx context.Context, conf *Config) (err error) {
 		writer = SQLWriter{SimpleWriter: simpleWriter}
 	case "csv":
 		writer = CSVWriter{SimpleWriter: simpleWriter}
+	default:
+		return errors.Errorf("unsupported filetype %s", conf.FileType)
 	}
 
 	if conf.Sql == "" {

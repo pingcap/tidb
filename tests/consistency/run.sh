@@ -34,7 +34,7 @@ run_sql "insert into $DB_NAME.$TABLE_NAME values $(seq -s, 100 | sed 's/,*$//g' 
 wait
 
 # check data record count
-cnt=`grep -o "(1)" ${DUMPLING_OUTPUT_DIR}/${DB_NAME}.${TABLE_NAME}.0.sql|wc -l`
+cnt=`grep -o "(1)" ${DUMPLING_OUTPUT_DIR}/${DB_NAME}.${TABLE_NAME}.000000000.sql|wc -l`
 echo "1st records count is ${cnt}"
 [ $cnt = 100 ]
 
@@ -55,6 +55,6 @@ fi
 # test dumpling normally
 export GO_FAILPOINTS=""
 run_dumpling
-cnt=`grep -o "(1)" ${DUMPLING_OUTPUT_DIR}/${DB_NAME}.${TABLE_NAME}.0.sql|wc -l`
+cnt=`grep -o "(1)" ${DUMPLING_OUTPUT_DIR}/${DB_NAME}.${TABLE_NAME}.000000000.sql|wc -l`
 echo "2nd records count is ${cnt}"
 [ $cnt = 200 ]
