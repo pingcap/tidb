@@ -551,11 +551,6 @@ func (worker *copIteratorWorker) run(ctx context.Context) {
 
 // open starts workers and sender goroutines.
 func (it *copIterator) open(ctx context.Context) {
-	failpoint.Inject("testRateLimitActionMockWaitMax", func(val failpoint.Value) {
-		if val.(bool) {
-			testRateLimitActionMockWaitMaxOnce = sync.Once{}
-		}
-	})
 	taskCh := make(chan *copTask, 1)
 	it.wg.Add(it.concurrency)
 	// Start it.concurrency number of workers to handle cop requests.
@@ -686,8 +681,6 @@ func (worker *copIteratorWorker) sendToRespCh(resp *copResponse, respCh chan<- *
 	return
 }
 
-var testRateLimitActionMockWaitMaxOnce sync.Once
-
 // Next returns next coprocessor result.
 // NOTE: Use nil to indicate finish, so if the returned ResultSubset is not nil, reader should continue to call Next().
 func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
@@ -700,12 +693,10 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 	failpoint.Inject("testRateLimitActionMockWaitMax", func(val failpoint.Value) {
 		if val.(bool) {
 			// we only need to trigger oom at least once.
-			testRateLimitActionMockWaitMaxOnce.Do(func() {
-				if len(it.tasks) > 5 {
-					for it.memTracker.MaxConsumed() < 500 {
-					}
+			if len(it.tasks) > 5 {
+				for it.memTracker.MaxConsumed() < 500 {
 				}
-			})
+			}
 		}
 	})
 
