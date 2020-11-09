@@ -1268,6 +1268,8 @@ func SetBinChsClnFlag(ft *FieldType) {
 // VarStorageLen indicates this column is a variable length column.
 const VarStorageLen = ast.VarStorageLen
 
+// CommonHandleNeedRestoredData indicates whether the column can be decoded directly from the common handle.
+// If can, then returns false. Otherwise returns true.
 func CommonHandleNeedRestoredData(ft *FieldType) bool {
 	return collate.NewCollationEnabled() &&
 		ft.EvalType() == ETString &&
