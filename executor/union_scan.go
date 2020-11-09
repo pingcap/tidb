@@ -290,9 +290,12 @@ func (us *UnionScanExec) compare(a, b []types.Datum) (int, error) {
 }
 
 func (us *UnionScanExec) initRuntimeStats() {
-	us.stats = &UnionScanRuntimeStats{
-		GetRowTime: 0,
-		MergeTime:  0,
+	if us.runtimeStats != nil && us.stats == nil {
+		us.stats = &UnionScanRuntimeStats{
+			GetRowTime: 0,
+			MergeTime:  0,
+		}
+		us.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(us.id, us.stats)
 	}
 }
 
