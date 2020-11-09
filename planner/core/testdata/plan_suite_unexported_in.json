@@ -163,6 +163,8 @@
       "select (select s.a from t s where t.a = s.a) from t order by t.a limit 5",
       // Test TopN + Left Semi Join Apply + Proj.
       "select exists (select s.a from t s where t.a = s.a) from t order by t.a limit 5",
+      // Test TopN + Left Semi Outer Join + Proj.
+      "select (exists (select s.a from t s where t.a = s.a)) as x from t order by x limit 5",
       // Test TopN + Semi Join Apply + Proj.
       "select * from t where exists (select s.a from t s where t.a = s.a) order by t.a limit 5",
       // Test TopN + Right Join + Proj.
