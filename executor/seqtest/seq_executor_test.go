@@ -1240,6 +1240,7 @@ func (s *seqTestSuite) TestShowForNewCollations(c *C) {
 		"utf8mb4_bin utf8mb4 46 Yes Yes 1",
 		"utf8mb4_general_ci utf8mb4 45  Yes 1",
 		"utf8mb4_unicode_ci utf8mb4 224  Yes 1",
+		"utf8mb4_zh_pinyin_tidb_as_cs utf8mb4 2048  Yes 1",
 	)
 	tk.MustQuery("show collation").Check(expectRows)
 	tk.MustQuery("select * from information_schema.COLLATIONS").Check(expectRows)
@@ -1314,6 +1315,52 @@ func (s *seqTestSuite) TestPessimisticConflictRetryAutoID(c *C) {
 	for _, e := range err {
 		c.Assert(e, IsNil)
 	}
+}
+
+func (s *seqTestSuite) TestInsertFromSelectConflictRetryAutoID(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (id int not null auto_increment unique key, idx int unique key, c int);")
+	tk.MustExec("create table src (a int);")
+	concurrency := 2
+	var wg sync.WaitGroup
+	var err []error
+	wgCount := concurrency + 1
+	wg.Add(wgCount)
+	err = make([]error, concurrency)
+	for i := 0; i < concurrency; i++ {
+		tk := testkit.NewTestKitWithInit(c, s.store)
+		go func(idx int) {
+			for i := 0; i < 10; i++ {
+				sql := fmt.Sprintf("insert into t(idx, c) select 1 as idx, 1 as c from src on duplicate key update c = %[1]d", i)
+				_, e := tk.Exec(sql)
+				if e != nil {
+					err[idx] = e
+					wg.Done()
+					return
+				}
+			}
+			wg.Done()
+		}(i)
+	}
+	var insertErr error
+	go func() {
+		tk := testkit.NewTestKitWithInit(c, s.store)
+		for i := 0; i < 10; i++ {
+			_, e := tk.Exec("insert into src values (null);")
+			if e != nil {
+				insertErr = e
+				wg.Done()
+				return
+			}
+		}
+		wg.Done()
+	}()
+	wg.Wait()
+	for _, e := range err {
+		c.Assert(e, IsNil)
+	}
+	c.Assert(insertErr, IsNil)
 }
 
 func (s *seqTestSuite) TestAutoRandIDRetry(c *C) {
