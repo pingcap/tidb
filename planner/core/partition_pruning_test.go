@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/mock"
 )
 
@@ -302,6 +303,52 @@ func (s *testPartitionPruningSuite) TestPartitionRangePrunner2VarChar(c *C) {
 		{"a < 'l' or a >= 'w'", partitionRangeOR{{0, 4}, {5, 6}}},
 		{"a is null", partitionRangeOR{{0, 1}}},
 		{"'mm' > a", partitionRangeOR{{0, 5}}},
+		{"'f' <= a", partitionRangeOR{{2, 6}}},
+		{"'f' >= a", partitionRangeOR{{0, 3}}},
+	}
+
+	for _, ca := range cases {
+		expr, err := expression.ParseSimpleExprsWithNames(tc.sctx, ca.input, tc.schema, tc.names)
+		c.Assert(err, IsNil)
+		result := fullRange(len(lessThan))
+		result = partitionRangeForExpr(tc.sctx, expr[0], prunner, result)
+		c.Assert(equalPartitionRangeOR(ca.result, result), IsTrue, Commentf("unexpected:", ca.input))
+	}
+}
+
+func (s *testPartitionPruningSuite) TestPartitionRangePrunner2CharWithCollation(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+	tc := prepareTestCtx(c,
+		"create table t (a char(32) collate utf8mb4_unicode_ci)",
+		"a",
+	)
+	lessThanDataInt := []string{"'c'", "'F'", "'h'", "'L'", "'t'"}
+	lessThan := make([]expression.Expression, len(lessThanDataInt)+1) // +1 for maxvalue
+	for i, str := range lessThanDataInt {
+		tmp, err := expression.ParseSimpleExprsWithNames(tc.sctx, str, tc.schema, tc.names)
+		c.Assert(err, IsNil)
+		lessThan[i] = tmp[0]
+	}
+
+	prunner := &rangeColumnsPruner{lessThan, tc.columns[0], true}
+	cases := []struct {
+		input  string
+		result partitionRangeOR
+	}{
+		{"a > 'G'", partitionRangeOR{{2, 6}}},
+		{"a > 'g'", partitionRangeOR{{2, 6}}},
+		{"a < 'h'", partitionRangeOR{{0, 3}}},
+		{"a >= 'M'", partitionRangeOR{{4, 6}}},
+		{"a > 'm'", partitionRangeOR{{4, 6}}},
+		{"a < 'F'", partitionRangeOR{{0, 2}}},
+		{"a = 'C'", partitionRangeOR{{1, 2}}},
+		{"a > 't'", partitionRangeOR{{5, 6}}},
+		{"a > 'C' and a < 'q'", partitionRangeOR{{1, 5}}},
+		{"a > 'c' and a < 'Q'", partitionRangeOR{{1, 5}}},
+		{"a < 'l' or a >= 'W'", partitionRangeOR{{0, 4}, {5, 6}}},
+		{"a is null", partitionRangeOR{{0, 1}}},
+		{"'Mm' > a", partitionRangeOR{{0, 5}}},
 		{"'f' <= a", partitionRangeOR{{2, 6}}},
 		{"'f' >= a", partitionRangeOR{{0, 3}}},
 	}

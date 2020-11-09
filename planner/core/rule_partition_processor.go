@@ -1061,11 +1061,12 @@ func (p *rangeColumnsPruner) partitionRangeForExpr(sctx sessionctx.Context, expr
 		return 0, len(p.data), false
 	}
 
-	start, end := p.pruneUseBinarySearch(sctx, opName, con)
+	_, collation := op.CharsetAndCollation(sctx)
+	start, end := p.pruneUseBinarySearch(sctx, opName, con, collation)
 	return start, end, true
 }
 
-func (p *rangeColumnsPruner) pruneUseBinarySearch(sctx sessionctx.Context, op string, data *expression.Constant) (start int, end int) {
+func (p *rangeColumnsPruner) pruneUseBinarySearch(sctx sessionctx.Context, op string, data *expression.Constant, collation string) (start int, end int) {
 	var err error
 	var isNull bool
 	compare := func(ith int, op string, v *expression.Constant) bool {
@@ -1075,7 +1076,8 @@ func (p *rangeColumnsPruner) pruneUseBinarySearch(sctx sessionctx.Context, op st
 			}
 		}
 		var expr expression.Expression
-		expr, err = expression.NewFunction(sctx, op, types.NewFieldType(mysql.TypeLonglong), p.data[ith], v)
+		expr, err = expression.NewFunctionBase(sctx, op, types.NewFieldType(mysql.TypeLonglong), p.data[ith], v)
+		expr.SetCharsetAndCollation("", collation)
 		var val int64
 		val, isNull, err = expr.EvalInt(sctx, chunk.Row{})
 		return val > 0

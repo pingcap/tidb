@@ -2110,7 +2110,14 @@ func checkTwoRangeColumns(ctx sessionctx.Context, curr, prev *model.PartitionDef
 		// PARTITION p0 VALUES LESS THAN (5,10,'ggg')
 		// PARTITION p1 VALUES LESS THAN (10,20,'mmm')
 		// PARTITION p2 VALUES LESS THAN (15,30,'sss')
-		succ, err := parseAndEvalBoolExpr(ctx, fmt.Sprintf("(%s) > (%s)", curr.LessThan[i], prev.LessThan[i]), tbInfo)
+		var s string
+		colInfo := findColumnByName(pi.Columns[i].L, tbInfo)
+		if colInfo.EvalType() == types.ETString {
+			s = fmt.Sprintf("(%s) > (%s collate %s)", curr.LessThan[i], prev.LessThan[i], colInfo.Collate)
+		} else {
+			s = fmt.Sprintf("(%s) > (%s)", curr.LessThan[i], prev.LessThan[i])
+		}
+		succ, err := parseAndEvalBoolExpr(ctx, s, tbInfo)
 		if err != nil {
 			return false, err
 		}
