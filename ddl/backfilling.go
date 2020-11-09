@@ -14,7 +14,9 @@
 package ddl
 
 import (
+	"bytes"
 	"context"
+	"fmt"
 	"strconv"
 	"sync/atomic"
 	"time"
@@ -419,7 +421,19 @@ func (w *worker) handleReorgTasks(reorgInfo *reorgInfo, totalAddedCount *int64, 
 func tryDecodeToHandleString(key kv.Key) string {
 	handle, err := tablecodec.DecodeRowKey(key)
 	if err != nil {
-		return ""
+		recordPrefixIdx := bytes.Index(key, []byte("_r"))
+		if recordPrefixIdx == -1 {
+			return fmt.Sprintf("key: %x", key)
+		}
+		handleBytes := key[recordPrefixIdx+2:]
+		terminatedWithZero := len(handleBytes) > 0 && handleBytes[len(handleBytes)-1] == 0
+		if terminatedWithZero {
+			handle, err := tablecodec.DecodeRowKey(key[:len(key)-1])
+			if err == nil {
+				return handle.String() + ".next"
+			}
+		}
+		return fmt.Sprintf("%x", handleBytes)
 	}
 	return handle.String()
 }
