@@ -499,7 +499,7 @@ func getTableRange(d *ddlCtx, tbl table.PhysicalTable, snapshotVer uint64, prior
 	// Get the start handle of this partition.
 	err = iterateSnapshotRows(d.store, priority, tbl, snapshotVer, nil, nil,
 		func(h kv.Handle, rowKey kv.Key, rawRecord []byte) (bool, error) {
-			startHandleKey = tbl.RecordKey(h)
+			startHandleKey = rowKey
 			return false, nil
 		})
 	if err != nil {
@@ -682,14 +682,14 @@ func getReorgInfoFromPartitions(d *ddlCtx, t *meta.Meta, job *model.Job, tbl tab
 	return &info, nil
 }
 
-func (r *reorgInfo) UpdateReorgMeta(startHandle kv.Key) error {
-	if startHandle == nil && r.EndKey == nil {
+func (r *reorgInfo) UpdateReorgMeta(startKey kv.Key) error {
+	if startKey == nil && r.EndKey == nil {
 		return nil
 	}
 
 	err := kv.RunInNewTxn(r.d.store, true, func(txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
-		return errors.Trace(t.UpdateDDLReorgHandle(r.Job, startHandle, r.EndKey, r.PhysicalTableID, r.currElement))
+		return errors.Trace(t.UpdateDDLReorgHandle(r.Job, startKey, r.EndKey, r.PhysicalTableID, r.currElement))
 	})
 	if err != nil {
 		return errors.Trace(err)
