@@ -617,8 +617,8 @@ func (ts *testSuite) TestAddRecordWithCtx(c *C) {
 	c.Assert(txn.Commit(context.Background()), IsNil)
 }
 
-func (s *testSuite) TestConstraintCheckForUniqueIndex(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func (ts *testSuite) TestConstraintCheckForUniqueIndex(c *C) {
+	tk := testkit.NewTestKit(c, ts.store)
 	tk.MustExec("set tidb_constraint_check_in_place = 0")
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
