@@ -261,7 +261,7 @@
         "SQL": "desc select * from (select b+b as x from t) t1, t t2 where t1.x=t2.b order by t1.x limit 1",
         "Plan": [
           "Projection_11 1.00 root  Column#4, test.t.a, test.t.b",
-          "└─TopN_14 1.00 root  Column#4, offset:0, count:1",
+          "└─TopN_14 1.00 root  Column#4:asc, offset:0, count:1",
           "  └─HashJoin_18 10000.00 root  inner join, equal:[eq(test.t.b, Column#4)]",
           "    ├─Projection_23(Build) 8000.00 root  plus(test.t.b, test.t.b)->Column#4",
           "    │ └─TableReader_26 8000.00 root  data:Selection_25",
