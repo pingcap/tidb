@@ -96,7 +96,10 @@ func (n *ValueExpr) Restore(ctx *format.RestoreCtx) error {
 	case types.KindFloat64:
 		ctx.WritePlain(strconv.FormatFloat(n.GetFloat64(), 'e', -1, 64))
 	case types.KindString:
-		// TODO: Try other method to restore the character set introducer. For example, add a field in ValueExpr.
+		if n.Type.Charset != "" {
+			ctx.WritePlain("_")
+			ctx.WriteKeyWord(n.Type.Charset)
+		}
 		ctx.WriteString(n.GetString())
 	case types.KindBytes:
 		ctx.WriteString(n.GetString())
