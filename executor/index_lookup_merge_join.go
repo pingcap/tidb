@@ -188,7 +188,17 @@ func (e *IndexLookUpMergeJoin) Open(ctx context.Context) error {
 func (e *IndexLookUpMergeJoin) startWorkers(ctx context.Context) {
 	// TODO: consider another session currency variable for index merge join.
 	// Because its parallelization is not complete.
+<<<<<<< HEAD
 	concurrency := e.ctx.GetSessionVars().IndexLookupJoinConcurrency
+=======
+	concurrency := e.ctx.GetSessionVars().IndexLookupJoinConcurrency()
+	if e.runtimeStats != nil {
+		runtimeStats := &execdetails.RuntimeStatsWithConcurrencyInfo{}
+		runtimeStats.SetConcurrencyInfo(execdetails.NewConcurrencyInfo("Concurrency", concurrency))
+		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, runtimeStats)
+	}
+
+>>>>>>> f140db6fc... executor: fix issue of runtime stats of index merge join is wrong (#20892)
 	resultCh := make(chan *lookUpMergeJoinTask, concurrency)
 	e.resultCh = resultCh
 	e.joinChkResourceCh = make([]chan *chunk.Chunk, concurrency)
@@ -736,11 +746,5 @@ func (e *IndexLookUpMergeJoin) Close() error {
 	// cancelFunc control the outer worker and outer worker close the task channel.
 	e.workerWg.Wait()
 	e.memTracker = nil
-	if e.runtimeStats != nil {
-		concurrency := cap(e.resultCh)
-		runtimeStats := &execdetails.RuntimeStatsWithConcurrencyInfo{}
-		runtimeStats.SetConcurrencyInfo(execdetails.NewConcurrencyInfo("Concurrency", concurrency))
-		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, runtimeStats)
-	}
 	return e.baseExecutor.Close()
 }
