@@ -20,9 +20,7 @@ import (
 
 // Error instances.
 var (
-	errCantGetValidID              = terror.ClassVariable.New(mysql.ErrCantGetValidID, mysql.MySQLErrName[mysql.ErrCantGetValidID])
 	errWarnDeprecatedSyntax        = terror.ClassVariable.New(mysql.ErrWarnDeprecatedSyntax, mysql.MySQLErrName[mysql.ErrWarnDeprecatedSyntax])
-	ErrCantSetToNull               = terror.ClassVariable.New(mysql.ErrCantSetToNull, mysql.MySQLErrName[mysql.ErrCantSetToNull])
 	ErrSnapshotTooOld              = terror.ClassVariable.New(mysql.ErrSnapshotTooOld, mysql.MySQLErrName[mysql.ErrSnapshotTooOld])
 	ErrUnsupportedValueForVar      = terror.ClassVariable.New(mysql.ErrUnsupportedValueForVar, mysql.MySQLErrName[mysql.ErrUnsupportedValueForVar])
 	ErrUnknownSystemVar            = terror.ClassVariable.New(mysql.ErrUnknownSystemVariable, mysql.MySQLErrName[mysql.ErrUnknownSystemVariable])
