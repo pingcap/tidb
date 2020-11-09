@@ -1153,7 +1153,7 @@ func (p *PhysicalWindow) ExtractCorrelatedCols() []*expression.CorrelatedColumn 
 }
 
 // PhysicalShuffle represents a shuffle plan.
-// `Tail` and `DataSource` are the last plan within and the first plan following the "shuffle", respectively,
+// `Tails` and `DataSources` are the last plan within and the first plan following the "shuffle", respectively,
 //  to build the child executors chain.
 // Take `Window` operator for example:
 //  Shuffle -> Window -> Sort -> DataSource, will be separated into:
