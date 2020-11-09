@@ -2321,6 +2321,11 @@ func (s *testSuiteJoinSerial) TestExplainAnalyzeJoin(c *C) {
 	c.Assert(len(rows), Equals, 7)
 	c.Assert(rows[0][0], Matches, "HashJoin.*")
 	c.Assert(rows[0][5], Matches, "time:.*, loops:.*, build_hash_table:{total:.*, fetch:.*, build:.*}, probe:{concurrency:5, total:.*, max:.*, probe:.*, fetch:.*}")
+	// Test for index merge join.
+	rows = tk.MustQuery("explain analyze select /*+ INL_MERGE_JOIN(t1, t2) */ * from t1,t2 where t1.a=t2.a;").Rows()
+	c.Assert(len(rows), Equals, 9)
+	c.Assert(rows[0][0], Matches, "IndexMergeJoin_.*")
+	c.Assert(rows[0][5], Matches, fmt.Sprintf(".*Concurrency:%v.*", tk.Se.GetSessionVars().IndexLookupJoinConcurrency()))
 }
 
 func (s *testSuiteJoinSerial) TestIssue20270(c *C) {
