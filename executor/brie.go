@@ -93,6 +93,7 @@ func (p *brieTaskProgress) GetPercent() float64 {
 type brieTaskInfo struct {
 	queueTime   types.Time
 	execTime    types.Time
+	finishTime  types.Time
 	kind        ast.BRIEKind
 	storage     string
 	connID      uint64
@@ -536,6 +537,7 @@ func (e *BRIEExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	default:
 		return errors.Errorf("unsupported BRIE statement kind: %s", e.info.kind)
 	}
+	e.info.finishTime = types.CurrentTime(mysql.TypeDatetime)
 	taskExecuted = true
 	// TODO(lance6716): for import, should not return err here, instead, return a row containing error message
 	if err != nil {
@@ -678,4 +680,5 @@ func (gs *tidbGlueSession) Record(name string, value uint64) {
 	case "Size":
 		gs.info.archiveSize = value
 	}
+	// TODO(lance6716): Stage, ProgressPermillage
 }
