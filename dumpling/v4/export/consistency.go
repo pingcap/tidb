@@ -3,8 +3,8 @@ package export
 import (
 	"context"
 	"database/sql"
-	"errors"
-	"fmt"
+
+	"github.com/pingcap/errors"
 )
 
 func NewConsistencyController(ctx context.Context, conf *Config, session *sql.DB) (ConsistencyController, error) {
@@ -26,13 +26,13 @@ func NewConsistencyController(ctx context.Context, conf *Config, session *sql.DB
 		}, nil
 	case "snapshot":
 		if conf.ServerInfo.ServerType != ServerTypeTiDB {
-			return nil, withStack(errors.New("snapshot consistency is not supported for this server"))
+			return nil, errors.New("snapshot consistency is not supported for this server")
 		}
 		return &ConsistencyNone{}, nil
 	case "none":
 		return &ConsistencyNone{}, nil
 	default:
-		return nil, withStack(fmt.Errorf("invalid consistency option %s", conf.Consistency))
+		return nil, errors.Errorf("invalid consistency option %s", conf.Consistency)
 	}
 }
 
@@ -58,7 +58,7 @@ type ConsistencyFlushTableWithReadLock struct {
 
 func (c *ConsistencyFlushTableWithReadLock) Setup(ctx context.Context) error {
 	if c.serverType == ServerTypeTiDB {
-		return withStack(errors.New("'flush table with read lock' cannot be used to ensure the consistency in TiDB"))
+		return errors.New("'flush table with read lock' cannot be used to ensure the consistency in TiDB")
 	}
 	return FlushTableWithReadLock(ctx, c.conn)
 }

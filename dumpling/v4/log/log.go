@@ -50,7 +50,7 @@ func InitAppLogger(cfg *Config) error {
 		Format: cfg.Format,
 	})
 	if err != nil {
-		return errors.WithStack(err)
+		return errors.Trace(err)
 	}
 	logger = logger.WithOptions(zap.AddCallerSkip(1))
 	appLogger = Logger{logger}
