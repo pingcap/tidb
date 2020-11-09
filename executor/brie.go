@@ -71,6 +71,9 @@ type brieTaskProgress struct {
 	// total is the total progress of the task.
 	// the percentage of completeness is `(100%) * current / total`.
 	total int64
+
+	importStage              string
+	importProgressPermillage uint64
 }
 
 // Inc implements glue.Progress
@@ -85,8 +88,11 @@ func (p *brieTaskProgress) Close() {
 	p.lock.Unlock()
 }
 
-// GetPercent returns a percentage whose range is [0, 1]
-func (p *brieTaskProgress) GetPercent() float64 {
+// GetFraction returns a percentage whose range is [0, 1]
+func (p *brieTaskProgress) GetFraction() float64 {
+	if p.importProgressPermillage != 0 {
+		return float64(p.importProgressPermillage) / 1000
+	}
 	return float64(p.current) / float64(p.total)
 }
 
@@ -147,7 +153,7 @@ func (bq *brieQueue) registerTask(
 		base64.StdEncoding.EncodeToString([]byte(info.storage)),
 		info.connID,
 		item.progress.cmd,
-		item.progress.GetPercent(),
+		item.progress.GetFraction(),
 		0,
 	)
 	_, err := s.Execute(ctx, sql)
@@ -211,9 +217,13 @@ func (bq *brieQueue) releaseTask() {
 	<-bq.workerCh
 }
 
-func (bq *brieQueue) cancelTask(ctx context.Context, taskID uint64, se sessionctx.Context) {
-	// TODO(lance6716): for BR task, delete row to keep compatibility. and rename this function
-	sql := fmt.Sprintf("UPDATE mysql.brie_tasks SET cancel = 1 WHERE id = %d;", taskID)
+func (bq *brieQueue) cancelTask(ctx context.Context, taskID uint64, se sessionctx.Context, delete bool) {
+	var sql string
+	if delete {
+		sql = fmt.Sprintf("DELETE FROM mysql.brie_tasks WHERE id = %d;", taskID)
+	} else {
+		sql = fmt.Sprintf("UPDATE mysql.brie_tasks SET cancel = 1 WHERE id = %d;", taskID)
+	}
 	_, err := se.(sqlexec.SQLExecutor).Execute(ctx, sql)
 	if err != nil {
 		logutil.Logger(ctx).Error("failed to update BRIE task table to cancel",
@@ -490,13 +500,15 @@ func (e *BRIEExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	taskCtx, taskID, item, err := bq.registerTask(ctx, e.info, e.ctx)
 	defer func() {
 		if !taskExecuted {
-			bq.cancelTask(ctx, taskID, e.ctx)
+			bq.cancelTask(ctx, taskID, e.ctx, e.info.kind != ast.BRIEKindImport)
 		}
 		item.cancel()
 	}()
 	if err != nil {
 		return err
 	}
+
+	glue := &tidbGlueSession{se: e.ctx, progress: item.progress, info: e.info}
 
 	// manually monitor the Killed status...
 	go func() {
@@ -506,10 +518,11 @@ func (e *BRIEExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			select {
 			case <-ticker.C:
 				if atomic.LoadUint32(&e.ctx.GetSessionVars().Killed) == 1 {
-					bq.cancelTask(ctx, taskID, e.ctx)
+					bq.cancelTask(ctx, taskID, e.ctx, e.info.kind != ast.BRIEKindImport)
 					item.cancel()
 					return
 				}
+				glue.Flush(taskCtx, taskID)
 			case <-taskCtx.Done():
 				return
 			}
@@ -523,7 +536,6 @@ func (e *BRIEExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	defer bq.releaseTask()
 
 	e.info.execTime = types.CurrentTime(mysql.TypeDatetime)
-	glue := &tidbGlueSession{se: e.ctx, progress: item.progress, info: e.info}
 
 	switch e.info.kind {
 	case ast.BRIEKindBackup:
@@ -681,4 +693,19 @@ func (gs *tidbGlueSession) Record(name string, value uint64) {
 		gs.info.archiveSize = value
 	}
 	// TODO(lance6716): Stage, ProgressPermillage
+}
+
+func (gs *tidbGlueSession) Flush(ctx context.Context, taskID uint64) {
+	// TODO(lance6716): need lock
+	sql := fmt.Sprintf(`UPDATE mysql.brie_tasks SET
+					exec_time = '%s', ts = %d, data_size = %d, status = '%s', progress = %f
+				WHERE id = %d`,
+		gs.info.execTime.String(), gs.info.backupTS, gs.info.archiveSize, gs.progress.importStage, gs.progress.GetFraction(),
+		taskID)
+	_, err := gs.se.(sqlexec.SQLExecutor).Execute(ctx, sql)
+	if err != nil {
+		logutil.Logger(ctx).Error("failed to update BRIE task table",
+			zap.Uint64("taskID", taskID),
+			zap.Error(err))
+	}
 }
