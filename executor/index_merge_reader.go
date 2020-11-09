@@ -317,17 +317,15 @@ func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, 
 }
 
 func (e *IndexMergeReaderExecutor) initRuntimeStats() {
-	if e.runtimeStats != nil {
-		if e.stats == nil {
-			e.stats = &IndexMergeRuntimeStat{
-				IndexMergeProcess: 0,
-				IndexScan:         0,
-				TableRowScan:      0,
-				TableTaskNum:      0,
-				Concurrency:       e.ctx.GetSessionVars().IndexLookupConcurrency(),
-			}
-			e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
+	if e.runtimeStats != nil && e.stats == nil {
+		e.stats = &IndexMergeRuntimeStat{
+			IndexMergeProcess: 0,
+			IndexScan:         0,
+			TableRowScan:      0,
+			TableTaskNum:      0,
+			Concurrency:       e.ctx.GetSessionVars().IndexLookupConcurrency(),
 		}
+		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
 	}
 }
 
@@ -586,7 +584,7 @@ func (w *indexMergeProcessWorker) fetchLoop(ctx context.Context, fetchCh <-chan 
 			doneCh:  make(chan error, 1),
 		}
 		if w.stats != nil {
-			atomic.AddInt64(&w.stats.IndexMergeProcess, int64(time.Since(start)))
+			w.stats.IndexMergeProcess = time.Since(start)
 		}
 		select {
 		case <-ctx.Done():
@@ -796,7 +794,7 @@ func (w *indexMergeTableScanWorker) executeTask(ctx context.Context, task *looku
 
 // IndexMergeRuntimeStat record the indexMerge runtime stat
 type IndexMergeRuntimeStat struct {
-	IndexMergeProcess int64
+	IndexMergeProcess time.Duration
 	IndexScan         int64
 	TableRowScan      int64
 	TableTaskNum      int64
@@ -805,15 +803,14 @@ type IndexMergeRuntimeStat struct {
 
 func (e *IndexMergeRuntimeStat) String() string {
 	var buf bytes.Buffer
-	indexMergeProcess := atomic.LoadInt64(&e.IndexMergeProcess)
 	indexScan := atomic.LoadInt64(&e.IndexScan)
 	tableScan := atomic.LoadInt64(&e.TableRowScan)
 	tableTaskNum := atomic.LoadInt64(&e.TableTaskNum)
 	concurrency := e.Concurrency
 	if indexScan != 0 {
-		buf.WriteString(fmt.Sprintf("index_task:{Scan:%s", time.Duration(indexScan)))
-		if indexMergeProcess != 0 {
-			buf.WriteString(fmt.Sprintf(", Process:%s", time.Duration(indexMergeProcess)))
+		buf.WriteString(fmt.Sprintf("index_task:{scan_time:%s", time.Duration(indexScan)))
+		if e.IndexMergeProcess != 0 {
+			buf.WriteString(fmt.Sprintf(", merge_time:%s", e.IndexMergeProcess))
 		}
 		buf.WriteByte('}')
 	}
@@ -828,14 +825,8 @@ func (e *IndexMergeRuntimeStat) String() string {
 
 // Clone implements the RuntimeStats interface.
 func (e *IndexMergeRuntimeStat) Clone() execdetails.RuntimeStats {
-	newRs := &IndexMergeRuntimeStat{
-		IndexMergeProcess: e.IndexMergeProcess,
-		IndexScan:         e.IndexScan,
-		TableRowScan:      e.TableRowScan,
-		TableTaskNum:      e.TableTaskNum,
-		Concurrency:       e.Concurrency,
-	}
-	return newRs
+	newRs := *e
+	return &newRs
 }
 
 // Merge implements the RuntimeStats interface.
