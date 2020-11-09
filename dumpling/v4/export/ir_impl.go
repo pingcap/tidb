@@ -4,14 +4,12 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-
 	"math/big"
 	"strings"
 
-	"go.uber.org/zap"
-
 	"github.com/pingcap/dumpling/v4/log"
 	"github.com/pingcap/errors"
+	"go.uber.org/zap"
 )
 
 // rowIter implements the SQLRowIter interface.
@@ -162,7 +160,7 @@ func splitTableDataIntoChunks(
 	dbName, tableName string, db *sql.Conn, conf *Config) {
 	field, err := pickupPossibleField(dbName, tableName, db, conf)
 	if err != nil {
-		errCh <- withStack(err)
+		errCh <- errors.Trace(err)
 		return
 	}
 	if field == "" {
@@ -185,7 +183,7 @@ func splitTableDataIntoChunks(
 	err = row.Scan(&smin, &smax)
 	if err != nil {
 		log.Error("split chunks - get max min failed", zap.String("query", query), zap.Error(err))
-		errCh <- withStack(err)
+		errCh <- errors.Trace(err)
 		return
 	}
 	if !smax.Valid || !smin.Valid {
@@ -227,18 +225,18 @@ func splitTableDataIntoChunks(
 
 	selectedField, err := buildSelectField(db, dbName, tableName, conf.CompleteInsert)
 	if err != nil {
-		errCh <- withStack(err)
+		errCh <- errors.Trace(err)
 		return
 	}
 
 	colTypes, err := GetColumnTypes(db, selectedField, dbName, tableName)
 	if err != nil {
-		errCh <- withStack(err)
+		errCh <- errors.Trace(err)
 		return
 	}
 	orderByClause, err := buildOrderByClause(conf, db, dbName, tableName)
 	if err != nil {
-		errCh <- withStack(err)
+		errCh <- errors.Trace(err)
 		return
 	}
 

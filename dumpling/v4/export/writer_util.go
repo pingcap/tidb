@@ -9,6 +9,7 @@ import (
 	"sync"
 
 	"github.com/pingcap/br/pkg/storage"
+	"github.com/pingcap/errors"
 	"go.uber.org/zap"
 
 	"github.com/pingcap/dumpling/v4/log"
@@ -421,7 +422,7 @@ type LazyStringWriter struct {
 func (l *LazyStringWriter) WriteString(str string) (int, error) {
 	l.Do(func() { l.err = l.initRoutine() })
 	if l.err != nil {
-		return 0, fmt.Errorf("open file error: %s", l.err.Error())
+		return 0, errors.Errorf("open file error: %s", l.err.Error())
 	}
 	return l.StringWriter.WriteString(str)
 }
@@ -443,7 +444,7 @@ func (w *InterceptFileWriter) Write(ctx context.Context, p []byte) (int, error) 
 		w.SomethingIsWritten = true
 	}
 	if w.err != nil {
-		return 0, fmt.Errorf("open file error: %s", w.err.Error())
+		return 0, errors.Annotate(w.err, "open file error")
 	}
 	return w.Writer.Write(ctx, p)
 }
