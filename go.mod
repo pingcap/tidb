@@ -99,4 +99,6 @@ require (
 	sourcegraph.com/sourcegraph/appdash-data v0.0.0-20151005221446-73f23eafcf67
 )
 
+replace github.com/pingcap/parser v0.0.0-20201104071116-b3d18bf9e537 => github.com/blacktear23/parser v0.0.0-20201106114346-4e56a722828b
+
 go 1.13
