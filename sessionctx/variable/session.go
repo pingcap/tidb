@@ -869,6 +869,7 @@ func NewSessionVars() *SessionVars {
 		hashAggPartialConcurrency:  DefTiDBHashAggPartialConcurrency,
 		hashAggFinalConcurrency:    DefTiDBHashAggFinalConcurrency,
 		windowConcurrency:          DefTiDBWindowConcurrency,
+		streamAggConcurrency:       DefTiDBStreamAggConcurrency,
 		ExecutorConcurrency:        DefExecutorConcurrency,
 	}
 	vars.MemQuota = MemQuota{
@@ -1323,6 +1324,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.hashAggFinalConcurrency = tidbOptPositiveInt32(val, ConcurrencyUnset)
 	case TiDBWindowConcurrency:
 		s.windowConcurrency = tidbOptPositiveInt32(val, ConcurrencyUnset)
+	case TiDBStreamAggConcurrency:
+		s.streamAggConcurrency = tidbOptPositiveInt32(val, ConcurrencyUnset)
 	case TiDBDistSQLScanConcurrency:
 		s.distSQLScanConcurrency = tidbOptPositiveInt32(val, DefDistSQLScanConcurrency)
 	case TiDBIndexSerialScanConcurrency:
