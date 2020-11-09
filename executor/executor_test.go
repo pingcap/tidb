@@ -6489,7 +6489,7 @@ func (s *testSerialSuite1) TestHashAggRuntimeStats(c *C) {
 	tk.MustExec("insert into t1 values (1,2),(2,3),(3,4)")
 	sql := "explain analyze SELECT /*+ HASH_AGG() */ count(*) FROM t1 WHERE a > 10;"
 	rows := tk.MustQuery(sql).Rows()
-	c.Assert(len(rows), Equals, 4)
+	c.Assert(len(rows), Equals, 5)
 	explain := fmt.Sprintf("%v", rows[0])
 	c.Assert(explain, Matches, ".*time:.*loops:.*partial_worker:.*final_worker:.*")
 }
@@ -6499,7 +6499,7 @@ func (s *testSerialSuite1) TestIndexlookupRuntimeStats(c *C) {
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1 (a int, b int, index(a))")
-
+	tk.MustExec("insert into t1 values (1,2),(2,3),(3,4)")
 	sql := "explain analyze select * from t1 use index(a) where a > 1;"
 	rows := tk.MustQuery(sql).Rows()
 	c.Assert(len(rows), Equals, 3)
