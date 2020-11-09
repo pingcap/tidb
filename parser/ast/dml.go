@@ -15,6 +15,7 @@ package ast
 
 import (
 	"github.com/pingcap/errors"
+
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/format"
 	"github.com/pingcap/parser/model"
@@ -27,6 +28,7 @@ var (
 	_ DMLNode = &SetOprStmt{}
 	_ DMLNode = &UpdateStmt{}
 	_ DMLNode = &SelectStmt{}
+	_ DMLNode = &CallStmt{}
 	_ DMLNode = &ShowStmt{}
 	_ DMLNode = &LoadDataStmt{}
 	_ DMLNode = &SplitRegionStmt{}
@@ -1494,6 +1496,46 @@ func (n *LinesClause) Restore(ctx *format.RestoreCtx) error {
 		}
 	}
 	return nil
+}
+
+// CallStmt represents a call procedure query node.
+// See https://dev.mysql.com/doc/refman/5.7/en/call.html
+type CallStmt struct {
+	dmlNode
+
+	Procedure *FuncCallExpr
+}
+
+// Restore implements Node interface.
+func (n *CallStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("CALL ")
+
+	if err := n.Procedure.Restore(ctx); err != nil {
+		return errors.Annotate(err, "An error occurred while restore CallStmt.Procedure")
+	}
+
+	return nil
+}
+
+// Accept implements Node Accept interface.
+func (n *CallStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+
+	n = newNode.(*CallStmt)
+
+	if n.Procedure != nil {
+		node, ok := n.Procedure.Accept(v)
+		if !ok {
+			return n, false
+		}
+
+		n.Procedure = node.(*FuncCallExpr)
+	}
+
+	return v.Leave(n)
 }
 
 // InsertStmt is a statement to insert new rows into an existing table.
