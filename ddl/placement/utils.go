@@ -135,14 +135,15 @@ func BuildPlacementCopyBundle(oldBundle *Bundle, newID int64) *Bundle {
 	return newBundle
 }
 
-func GetLeaderDCLocationByBundle(ctx context.Context, bundle *Bundle, pdClient pd.Client, dcLabelKey string) (map[string]struct{}, error) {
+// GetLeaderDCByBundle return the leaders' dc by Bundle
+func GetLeaderDCByBundle(ctx context.Context, bundle *Bundle, pdClient pd.Client, dcLabelKey string) (map[string]struct{}, error) {
 	bundleDCDistributions := make(map[string]struct{}, 1)
 	for _, rule := range bundle.Rules {
 		if rule.Role != Leader {
 			continue
 		}
 		//TODO: we can execute these in parallel
-		ruleDCDistributions, err := getLeaderDCLocationByRule(ctx, rule, pdClient, dcLabelKey)
+		ruleDCDistributions, err := getLeaderDCByRule(ctx, rule, pdClient, dcLabelKey)
 		if err != nil {
 			return nil, err
 		}
@@ -153,7 +154,7 @@ func GetLeaderDCLocationByBundle(ctx context.Context, bundle *Bundle, pdClient p
 	return bundleDCDistributions, nil
 }
 
-func getLeaderDCLocationByRule(parCtx context.Context, rule *Rule, pdClient pd.Client, dcLabelKey string) (map[string]struct{}, error) {
+func getLeaderDCByRule(parCtx context.Context, rule *Rule, pdClient pd.Client, dcLabelKey string) (map[string]struct{}, error) {
 	getLabelValueByKey := func(labels []*metapb.StoreLabel, key string) string {
 		for _, label := range labels {
 			if label.Key == key {
@@ -181,14 +182,14 @@ func getLeaderDCLocationByRule(parCtx context.Context, rule *Rule, pdClient pd.C
 		if region.Leader == nil {
 			return nil, fmt.Errorf("region %v have no leader", region.Meta.GetId())
 		}
-		// TODO: we can cache the storeInfo
+		// TODO: we can cache the storeInfo to reduce the query
 		storeInfo, err := pdClient.GetStore(ctx, region.Leader.StoreId)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get store %v information, err: %v", region.Leader.StoreId, err)
 		}
 		value := getLabelValueByKey(storeInfo.GetLabels(), dcLabelKey)
 		if len(value) < 1 {
-			return nil, fmt.Errorf("no dcLabel")
+			return nil, fmt.Errorf("store %v have no dc %v label key", storeInfo.GetId(), dcLabelKey)
 		}
 		dcLocations[value] = struct{}{}
 	}
