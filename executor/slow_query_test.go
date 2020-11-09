@@ -37,7 +37,7 @@ import (
 func parseLog(retriever *slowQueryRetriever, sctx sessionctx.Context, reader *bufio.Reader) ([][]types.Datum, error) {
 	retriever.taskList = make(chan *slowLogTask, 100)
 	ctx := context.Background()
-	retriever.parseSlowLog(ctx, sctx, reader, 64)
+	retriever.parseSlowLog(ctx, sctx, reader, 64, false)
 	task := <-retriever.taskList
 	var rows [][]types.Datum
 	var err error

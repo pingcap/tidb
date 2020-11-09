@@ -174,9 +174,7 @@ func (e *slowQueryRetriever) parseDataForSlowLog(ctx context.Context, sctx sessi
 		return
 	}
 	reader := bufio.NewReader(file)
-	if !e.extractor.Desc {
-		e.parseSlowLog(ctx, sctx, reader, ParseSlowLogBatchSize)
-	}
+	e.parseSlowLog(ctx, sctx, reader, ParseSlowLogBatchSize, e.extractor.Desc)
 }
 
 func (e *slowQueryRetriever) dataForSlowLog(ctx context.Context) ([][]types.Datum, bool, error) {
@@ -197,6 +195,9 @@ func (e *slowQueryRetriever) dataForSlowLog(ctx context.Context) ([][]types.Datu
 		rows, err := result.rows, result.err
 		if err != nil {
 			return nil, false, err
+		}
+		if e.extractor.Desc {
+			fmt.Printf("len of rows%d\n", len(rows))
 		}
 		if len(rows) == 0 {
 			continue
@@ -280,6 +281,10 @@ type slowLogTask struct {
 	result chan parsedSlowLog
 }
 
+type slowLogs struct {
+	log []string
+}
+
 func (e *slowQueryRetriever) getBatchLog(reader *bufio.Reader, offset *offset, num int) ([]string, error) {
 	var line string
 	log := make([]string, 0, num)
@@ -314,62 +319,64 @@ func (e *slowQueryRetriever) getBatchLog(reader *bufio.Reader, offset *offset, n
 	return log, err
 }
 
-func (e *slowQueryRetriever) getBatchLogBackwards(reader *bufio.Reader, offset *offset, num int) ([]string, error) {
+func (e *slowQueryRetriever) getBatchLogForReversedScan(reader *bufio.Reader, offset *offset) ([]string, error) {
 	var line string
-	var log string
-	logs := make([]string, 0, num)
+	var logs []slowLogs
+	var log []string
 	var err error
-	for i := 0; i < num; i++ {
-		for {
-			e.fileLine++
-			lineByte, err := getOneLine(reader)
-			if err != nil {
-				if err == io.EOF {
-					e.fileLine = 0
-					file := e.getNextFile()
-					if file == nil {
-						return logs, nil
-					}
-					offset.length = len(logs)
-					reader.Reset(file)
-					continue
-				}
-				return logs, err
+	reachEndOfSlowLog := false
+	scanNextFile := false
+	for {
+		e.fileLine++
+		lineByte, err := getOneLine(reader)
+		if err != nil {
+			if (err == io.EOF || scanNextFile) && reachEndOfSlowLog {
+				offset.length = len(combineLogs(logs))
+				reverse(logs)
+				return combineLogs(logs), nil
+			} else if err == io.EOF && !reachEndOfSlowLog {
+				e.fileLine = 0
+				scanNextFile = true
+				file := e.getNextFile()
+				reader.Reset(file)
+				continue
 			}
-			line = string(hack.String(lineByte))
-			if strings.HasPrefix(line, variable.SlowLogStartPrefixStr) {
-				start := strings.Index(line, variable.SlowLogStartPrefixStr)
-				if strings.HasPrefix(line, variable.SlowLogSQLSuffixStr) {
-					end := strings.Index(line, variable.SlowLogSQLSuffixStr)
-					logs = append(logs, line[start:end+1])
-				} else {
-					log += line
-				}
-			} else if strings.HasPrefix(line, variable.SlowLogSQLSuffixStr) {
-				end := strings.Index(line, variable.SlowLogSQLSuffixStr)
-				log += line[:end]
-				logs = append(logs, line)
+			reverse(logs)
+			return combineLogs(logs), err
+		}
+		line = string(hack.String(lineByte))
+		log = append(log, line)
+		if strings.HasSuffix(line, variable.SlowLogSQLSuffixStr) {
+			if strings.HasPrefix(line, "use") || strings.HasPrefix(line, variable.SlowLogRowPrefixStr) {
+				continue
 			}
-			if strings.HasSuffix(line, variable.SlowLogSQLSuffixStr) {
-				if strings.HasPrefix(line, "use") {
-					continue
-				}
-				break
-			}
+			logs = append(logs, slowLogs{log: log})
+			log = make([]string, 0)
+			reachEndOfSlowLog = true
+		} else {
+			reachEndOfSlowLog = false
 		}
 	}
 	reverse(logs)
-	return logs, err
+	return combineLogs(logs), err
 }
 
-func reverse(ss []string) {
+func combineLogs(logs []slowLogs) []string {
+	combinedLogs := make([]string, 0)
+	for _, log := range logs {
+		combinedLogs = append(combinedLogs, log.log...)
+	}
+	return combinedLogs
+}
+
+func reverse(ss []slowLogs) {
 	last := len(ss) - 1
 	for i := 0; i < len(ss)/2; i++ {
 		ss[i], ss[last-i] = ss[last-i], ss[i]
 	}
 }
 
-func (e *slowQueryRetriever) parseSlowLog(ctx context.Context, sctx sessionctx.Context, reader *bufio.Reader, logNum int) {
+func (e *slowQueryRetriever) parseSlowLog(ctx context.Context, sctx sessionctx.Context, reader *bufio.Reader, logNum int, desc bool) {
 	defer close(e.taskList)
 	var wg sync.WaitGroup
 	offset := offset{offset: 0, length: 0}
@@ -382,7 +389,13 @@ func (e *slowQueryRetriever) parseSlowLog(ctx context.Context, sctx sessionctx.C
 	defer close(ch)
 	for {
 		startTime := time.Now()
-		log, err := e.getBatchLog(reader, &offset, logNum)
+		var log []string
+		var err error
+		if !desc {
+			log, err = e.getBatchLog(reader, &offset, logNum)
+		} else {
+			log, err = e.getBatchLogForReversedScan(reader, &offset)
+		}
 		t := &slowLogTask{}
 		t.result = make(chan parsedSlowLog, 1)
 		if err != nil {
