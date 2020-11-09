@@ -706,3 +706,24 @@ func (c *Chunk) ToString(ft []*types.FieldType) string {
 	}
 	return string(buf)
 }
+
+// AppendRows appends multiple rows  to the chunk.
+func (c *Chunk) AppendRows(rows []Row) {
+	c.AppendPartialRows(0, rows)
+	c.numVirtualRows += len(rows)
+
+}
+
+// AppendPartialRows appends multiple row to the chunk.
+func (c *Chunk) AppendPartialRows(colOff int, rows []Row) {
+	columns := rows[0].c.columns //use rows 0 as standard
+	for j, rowCol := range columns {
+		chkCol := c.columns[colOff+j]
+		for _, row := range rows {
+			if j == 0 {
+				c.appendSel(colOff)
+			}
+			appendCellByCell(chkCol, rowCol, row.idx)
+		}
+	}
+}
