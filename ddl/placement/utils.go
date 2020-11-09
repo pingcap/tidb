@@ -14,14 +14,17 @@
 package placement
 
 import (
+	"context"
 	"encoding/hex"
 	"fmt"
+	"github.com/pingcap/kvproto/pkg/metapb"
 	"strconv"
 	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
+	pd "github.com/tikv/pd/client"
 )
 
 func checkLabelConstraint(label string) (LabelConstraint, error) {
@@ -130,4 +133,64 @@ func BuildPlacementCopyBundle(oldBundle *Bundle, newID int64) *Bundle {
 		rule.EndKeyHex = endKey
 	}
 	return newBundle
+}
+
+func GetLeaderDCLocationByBundle(ctx context.Context, bundle *Bundle, pdClient pd.Client, dcLabelKey string) (map[string]struct{}, error) {
+	bundleDCDistributions := make(map[string]struct{}, 1)
+	for _, rule := range bundle.Rules {
+		if rule.Role != Leader {
+			continue
+		}
+		//TODO: we can execute these in parallel
+		ruleDCDistributions, err := getLeaderDCLocationByRule(ctx, rule, pdClient, dcLabelKey)
+		if err != nil {
+			return nil, err
+		}
+		for dc := range ruleDCDistributions {
+			bundleDCDistributions[dc] = struct{}{}
+		}
+	}
+	return bundleDCDistributions, nil
+}
+
+func getLeaderDCLocationByRule(parCtx context.Context, rule *Rule, pdClient pd.Client, dcLabelKey string) (map[string]struct{}, error) {
+	getLabelValueByKey := func(labels []*metapb.StoreLabel, key string) string {
+		for _, label := range labels {
+			if label.Key == key {
+				return label.Value
+			}
+		}
+		return ""
+	}
+	dcLocations := make(map[string]struct{}, 1)
+	startKey, err := hex.DecodeString(rule.StartKeyHex)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode rule[%v,%v]'s startkey, err: %v", rule.GroupID, rule.ID, err)
+	}
+	endKey, err := hex.DecodeString(rule.EndKeyHex)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode rule[%v,%v]'s endKey, err: %v", rule.GroupID, rule.ID, err)
+	}
+	ctx, cancel := context.WithCancel(parCtx)
+	defer cancel()
+	regions, err := pdClient.ScanRegions(ctx, startKey, endKey, -1)
+	if err != nil {
+		return nil, fmt.Errorf("failed to scan regions, err: %v", err)
+	}
+	for _, region := range regions {
+		if region.Leader == nil {
+			return nil, fmt.Errorf("region %v have no leader", region.Meta.GetId())
+		}
+		// TODO: we can cache the storeInfo
+		storeInfo, err := pdClient.GetStore(ctx, region.Leader.StoreId)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get store %v information, err: %v", region.Leader.StoreId, err)
+		}
+		value := getLabelValueByKey(storeInfo.GetLabels(), dcLabelKey)
+		if len(value) < 1 {
+			return nil, fmt.Errorf("no dcLabel")
+		}
+		dcLocations[value] = struct{}{}
+	}
+	return dcLocations, nil
 }

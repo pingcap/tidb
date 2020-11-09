@@ -15,6 +15,8 @@ package placement
 
 import (
 	"encoding/json"
+	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/tidb/util/slice"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -82,6 +84,31 @@ func (c *LabelConstraint) Restore() (string, error) {
 		}
 	}
 	return sb.String(), nil
+}
+
+// MatchStore checks if a store matches the constraint.
+func (c *LabelConstraint) MatchStore(store *metapb.Store) bool {
+	getLabelValueByKey := func(labels []*metapb.StoreLabel, key string) string {
+		for _, label := range labels {
+			if label.Key == key {
+				return label.Value
+			}
+		}
+		return ""
+	}
+	switch c.Op {
+	case In:
+		label := getLabelValueByKey(store.GetLabels(), c.Key)
+		return label != "" && slice.AnyOf(c.Values, func(i int) bool { return c.Values[i] == label })
+	case NotIn:
+		label := getLabelValueByKey(store.GetLabels(), c.Key)
+		return label == "" || slice.NoneOf(c.Values, func(i int) bool { return c.Values[i] == label })
+	case Exists:
+		return getLabelValueByKey(store.GetLabels(), c.Key) != ""
+	case NotExists:
+		return getLabelValueByKey(store.GetLabels(), c.Key) == ""
+	}
+	return false
 }
 
 // Rule is the placement rule. Check https://github.com/tikv/pd/blob/master/server/schedule/placement/rule.go.
