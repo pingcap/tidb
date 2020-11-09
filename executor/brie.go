@@ -55,7 +55,6 @@ import (
 
 const (
 	defaultImportID = "tidb_import_"
-	cancelTimeout   = 10 * time.Second
 )
 
 // brieTaskProgress tracks a task's current progress.
@@ -72,7 +71,6 @@ type brieTaskProgress struct {
 	// the percentage of completeness is `(100%) * current / total`.
 	total int64
 
-	importStage              string
 	importProgressPermillage uint64
 }
 
@@ -97,15 +95,18 @@ func (p *brieTaskProgress) GetFraction() float64 {
 }
 
 type brieTaskInfo struct {
-	queueTime   types.Time
+	queueTime types.Time
+	kind      ast.BRIEKind
+	storage   string
+	connID    uint64
+	originSQL string
+	lock      sync.RWMutex
+	// below member should be protected by lock to access because of periodically flush
 	execTime    types.Time
 	finishTime  types.Time
-	kind        ast.BRIEKind
-	storage     string
-	connID      uint64
 	backupTS    uint64
 	archiveSize uint64
-	originSQL   string
+	message     string
 }
 
 type brieQueueItem struct {
@@ -299,7 +300,6 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 		importCfg.Checkpoint.Driver = importcfg.CheckpointDriverMySQL
 		importCfg.Mydumper.CSV.Header = false // TODO(lance6716): address this behaviour to user
 		importCfg.PostRestore.Analyze = importcfg.OpLevelRequired
-		// TODO(lance6716): test sql_mode
 	default:
 		b.err = errors.Errorf("unsupported BRIE statement kind: %s", s.Kind)
 		return nil
@@ -496,7 +496,6 @@ func (e *BRIEExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 	e.info.connID = e.ctx.GetSessionVars().ConnectionID
 	e.info.queueTime = types.CurrentTime(mysql.TypeDatetime)
-	// TODO(lance6716): flush this item periodically
 	taskCtx, taskID, item, err := bq.registerTask(ctx, e.info, e.ctx)
 	defer func() {
 		if !taskExecuted {
@@ -535,7 +534,9 @@ func (e *BRIEExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 	defer bq.releaseTask()
 
+	e.info.lock.Lock()
 	e.info.execTime = types.CurrentTime(mysql.TypeDatetime)
+	e.info.lock.Unlock()
 
 	switch e.info.kind {
 	case ast.BRIEKindBackup:
@@ -545,11 +546,20 @@ func (e *BRIEExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	case ast.BRIEKindImport:
 		// TODO(lance6716): use taskID to build a unique checkpoint/sort-kv-dir, and pass taskCtx
 		l := lightning.New(e.importCfg)
-		err = handleBRIEError(l.RunOnce(), ErrBRIEImportFailed)
+		err2 := handleBRIEError(l.RunOnce(), ErrBRIEImportFailed)
+		if err2 != nil {
+			e.info.lock.Lock()
+			e.info.message = err2.Error()
+			e.info.lock.Unlock()
+		}
+		// TODO(lance6716): change cmd to Finish or Stop
 	default:
 		return errors.Errorf("unsupported BRIE statement kind: %s", e.info.kind)
 	}
+	e.info.lock.Lock()
 	e.info.finishTime = types.CurrentTime(mysql.TypeDatetime)
+	e.info.lock.Unlock()
+	glue.Flush(ctx, taskID)
 	taskExecuted = true
 	// TODO(lance6716): for import, should not return err here, instead, return a row containing error message
 	if err != nil {
@@ -601,12 +611,17 @@ func (e *ShowExec) fetchShowBRIE(ctx context.Context, kind ast.BRIEKind) error {
 
 			e.result.AppendBytes(0, dataPath)
 			e.result.AppendString(1, row.GetString(1))
-			e.result.AppendFloat64(2, row.GetFloat64(2))
+			e.result.AppendFloat32(2, row.GetFloat32(2))
 			e.result.AppendTime(3, row.GetTime(3))
 			e.result.AppendTime(4, row.GetTime(4))
 			e.result.AppendTime(5, row.GetTime(5))
 			e.result.AppendUint64(6, row.GetUint64(6))
-			e.result.AppendString(7, row.GetString(7))
+			msg, err := base64.StdEncoding.DecodeString(row.GetString(7))
+			if err != nil {
+				logutil.Logger(ctx).Error("failed to decode base64", zap.Error(err))
+				continue
+			}
+			e.result.AppendBytes(7, msg)
 		}
 	}
 	return nil
@@ -675,7 +690,6 @@ func (gs *tidbGlueSession) OwnsStorage() bool {
 
 // StartProgress implements glue.Glue
 func (gs *tidbGlueSession) StartProgress(ctx context.Context, cmdName string, total int64, redirectLog bool) glue.Progress {
-	// TODO(lance6716): maybe periodically flush to tikv
 	gs.progress.lock.Lock()
 	gs.progress.cmd = cmdName
 	gs.progress.total = total
@@ -686,22 +700,39 @@ func (gs *tidbGlueSession) StartProgress(ctx context.Context, cmdName string, to
 
 // Record implements glue.Glue
 func (gs *tidbGlueSession) Record(name string, value uint64) {
+	gs.info.lock.Lock()
+	defer gs.info.lock.Unlock()
 	switch name {
 	case "BackupTS":
 		gs.info.backupTS = value
 	case "Size":
 		gs.info.archiveSize = value
 	}
-	// TODO(lance6716): Stage, ProgressPermillage
+	// TODO(lance6716): save Stage to cmd, ProgressPermillage
 }
 
 func (gs *tidbGlueSession) Flush(ctx context.Context, taskID uint64) {
-	// TODO(lance6716): need lock
+	gs.info.lock.RLock()
+	gs.progress.lock.Lock()
 	sql := fmt.Sprintf(`UPDATE mysql.brie_tasks SET
-					exec_time = '%s', ts = %d, data_size = %d, status = '%s', progress = %f
+					exec_time = '%s',
+					finish_time = '%s',
+					ts = %d,
+					data_size = %d,
+					status = '%s',
+					progress = %f,
+					message = '%s'
 				WHERE id = %d`,
-		gs.info.execTime.String(), gs.info.backupTS, gs.info.archiveSize, gs.progress.importStage, gs.progress.GetFraction(),
+		gs.info.execTime.String(),
+		gs.info.finishTime.String(),
+		gs.info.backupTS,
+		gs.info.archiveSize,
+		gs.progress.cmd,
+		gs.progress.GetFraction(),
+		base64.StdEncoding.EncodeToString([]byte(gs.info.message)),
 		taskID)
+	gs.progress.lock.Unlock()
+	gs.info.lock.RUnlock()
 	_, err := gs.se.(sqlexec.SQLExecutor).Execute(ctx, sql)
 	if err != nil {
 		logutil.Logger(ctx).Error("failed to update BRIE task table",
