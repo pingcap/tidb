@@ -5,6 +5,7 @@ cloud.google.com/go v0.44.1/go.mod h1:iSa0KzasP4Uvy3f1mN/7PiObzGgflwredwwASm/v6A
 cloud.google.com/go v0.44.2/go.mod h1:60680Gw3Yr4ikxnPRS/oxxkBccT6SA1yMk63TGekxKY=
 cloud.google.com/go v0.45.1/go.mod h1:RpBamKRgapWJb87xiFSdk4g1CME7QZg3uwTez+TSTjc=
 cloud.google.com/go v0.46.3/go.mod h1:a6bKKbmY7er1mI7TEI4lsAkts/mkhTSZK8w33B4RAg0=
+cloud.google.com/go v0.50.0 h1:0E3eE8MX426vUOs7aHfI7aN1BrIzzzf4ccKCSfSjGmc=
 cloud.google.com/go v0.50.0/go.mod h1:r9sluTvynVuxRIOHXQEHMFffphuXHOMZMycpNR5e6To=
 cloud.google.com/go v0.51.0 h1:PvKAVQWCtlGUSlZkGW3QLelKaWq7KYv/MW1EboG8bfM=
 cloud.google.com/go v0.51.0/go.mod h1:hWtGJ6gnXH+KgDv+V0zFGDvpi07n3z8ZNj3T1RW0Gcw=
@@ -446,11 +447,12 @@ github.com/pingcap/log v0.0.0-20200117041106-d28c14d3b1cd/go.mod h1:4rbK1p9ILyIf
 github.com/pingcap/log v0.0.0-20200511115504-543df19646ad/go.mod h1:4rbK1p9ILyIfb6hU7OG2CiWSqMXnp3JMbiaVJ6mvoY8=
 github.com/pingcap/log v0.0.0-20200828042413-fce0951f1463 h1:Jboj+s4jSCp5E1WDgmRUv5rIFKFHaaSWuSZ4wMwXIcc=
 github.com/pingcap/log v0.0.0-20200828042413-fce0951f1463/go.mod h1:4rbK1p9ILyIfb6hU7OG2CiWSqMXnp3JMbiaVJ6mvoY8=
-github.com/pingcap/parser v0.0.0-20201024025010-3b2fb4b41d73 h1:MN/e9n6GUBmmi6sKtriW0Dv1dfIohZRoKr/ZU1B4jrM=
-github.com/pingcap/parser v0.0.0-20201024025010-3b2fb4b41d73/go.mod h1:74+OEdwM4B/jMpBRl92ch6CSmSYkQtv2TNxIjFdT/GE=
+github.com/pingcap/parser v0.0.0-20201104071116-b3d18bf9e537 h1:YfUAzfwnHWnhUJVTGB7kMquFJeslYPe2dYq6GvD5o98=
+github.com/pingcap/parser v0.0.0-20201104071116-b3d18bf9e537/go.mod h1:74+OEdwM4B/jMpBRl92ch6CSmSYkQtv2TNxIjFdT/GE=
 github.com/pingcap/sysutil v0.0.0-20200206130906-2bfa6dc40bcd/go.mod h1:EB/852NMQ+aRKioCpToQ94Wl7fktV+FNnxf3CX/TTXI=
-github.com/pingcap/sysutil v0.0.0-20200715082929-4c47bcac246a h1:i2RElJ2aykSqZKeY+3SK18NHhajil8cQdG77wHe+P1Y=
 github.com/pingcap/sysutil v0.0.0-20200715082929-4c47bcac246a/go.mod h1:EB/852NMQ+aRKioCpToQ94Wl7fktV+FNnxf3CX/TTXI=
+github.com/pingcap/sysutil v0.0.0-20201021075216-f93ced2829e2 h1:b2G/eqDeywtdJF3w9nIUdqMmXChsmpLvf4FzUxJ9Vmk=
+github.com/pingcap/sysutil v0.0.0-20201021075216-f93ced2829e2/go.mod h1:EB/852NMQ+aRKioCpToQ94Wl7fktV+FNnxf3CX/TTXI=
 github.com/pingcap/tidb-tools v4.0.5-0.20200820092506-34ea90c93237+incompatible h1:qPppnsXVh3KswqRZdSAShGLLPd7dB+5w4lXDnpYn0SQ=
 github.com/pingcap/tidb-tools v4.0.5-0.20200820092506-34ea90c93237+incompatible/go.mod h1:XGdcy9+yqlDSEMTpOXnwf3hiTeqrV6MN/u1se9N8yIM=
 github.com/pingcap/tipb v0.0.0-20201026044621-45e60c77588f h1:J+0TAI+7Hvebz4bM4GnRCRT4MpjYnUxbyi9ky5ZQUsU=

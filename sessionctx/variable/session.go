@@ -368,6 +368,9 @@ type SessionVars struct {
 	Users map[string]types.Datum
 	// systems variables, don't modify it directly, use GetSystemVar/SetSystemVar method.
 	systems map[string]string
+	// stmtVars variables are temporarily set by SET_VAR hint
+	// It only take effect for the duration of a single statement
+	stmtVars map[string]string
 	// SysWarningCount is the system variable "warning_count", because it is on the hot path, so we extract it from the systems
 	SysWarningCount int
 	// SysErrorCount is the system variable "error_count", because it is on the hot path, so we extract it from the systems
@@ -792,6 +795,7 @@ func NewSessionVars() *SessionVars {
 	vars := &SessionVars{
 		Users:                       make(map[string]types.Datum),
 		systems:                     make(map[string]string),
+		stmtVars:                    make(map[string]string),
 		PreparedStmts:               make(map[uint32]interface{}),
 		PreparedStmtNameToID:        make(map[string]uint32),
 		PreparedParams:              make([]types.Datum, 0, 10),
@@ -1120,6 +1124,9 @@ func (s *SessionVars) GetSystemVar(name string) (string, bool) {
 	if name == TiDBSlowLogMasking {
 		name = TiDBRedactLog
 	}
+	if val, ok := s.stmtVars[name]; ok {
+		return val, ok
+	}
 	val, ok := s.systems[name]
 	return val, ok
 }
@@ -1176,6 +1183,17 @@ func (s *SessionVars) WithdrawAllPreparedStmt() {
 	}
 	afterMinus := atomic.AddInt64(&preparedStmtCount, -int64(psCount))
 	metrics.PreparedStmtGauge.Set(float64(afterMinus))
+}
+
+// SetStmtVar sets the value of a system variable temporarily
+func (s *SessionVars) SetStmtVar(name string, val string) error {
+	s.stmtVars[name] = val
+	return nil
+}
+
+// ClearStmtVars clear temporarily system variables.
+func (s *SessionVars) ClearStmtVars() {
+	s.stmtVars = make(map[string]string)
 }
 
 // SetSystemVar sets the value of a system variable.

@@ -66,6 +66,7 @@ const (
 	expressionIndexPrefix = "_V$"
 	changingColumnPrefix  = "_Col$_"
 	changingIndexPrefix   = "_Idx$_"
+	tableNotExist         = -1
 )
 
 func (d *ddl) CreateSchema(ctx sessionctx.Context, schema model.CIStr, charsetInfo *ast.CharsetOpt) error {
@@ -741,7 +742,7 @@ func getDefaultValue(ctx sessionctx.Context, col *table.Column, c *ast.ColumnOpt
 		if tp == mysql.TypeBit ||
 			tp == mysql.TypeString || tp == mysql.TypeVarchar || tp == mysql.TypeVarString ||
 			tp == mysql.TypeBlob || tp == mysql.TypeLongBlob || tp == mysql.TypeMediumBlob || tp == mysql.TypeTinyBlob ||
-			tp == mysql.TypeJSON {
+			tp == mysql.TypeJSON || tp == mysql.TypeEnum || tp == mysql.TypeSet {
 			// For BinaryLiteral / string fields, when getting default value we cast the value into BinaryLiteral{}, thus we return
 			// its raw string content here.
 			return v.GetBinaryLiteral().ToString(), false, nil
@@ -961,8 +962,20 @@ func checkColumnValueConstraint(col *table.Column, collation string) error {
 	}
 	valueMap := make(map[string]bool, len(col.Elems))
 	ctor := collate.GetCollator(collation)
+	enumLengthLimit := config.GetGlobalConfig().EnableEnumLengthLimit
+	desc, err := charset.GetCharsetDesc(col.Charset)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	for i := range col.Elems {
 		val := string(ctor.Key(col.Elems[i]))
+		// According to MySQL 8.0 Refman:
+		// The maximum supported length of an individual ENUM element is M <= 255 and (M x w) <= 1020,
+		// where M is the element literal length and w is the number of bytes required for the maximum-length character in the character set.
+		// See https://dev.mysql.com/doc/refman/8.0/en/string-type-syntax.html for more details.
+		if enumLengthLimit && (len(val) > 255 || len(val)*desc.Maxlen > 1020) {
+			return ErrTooLongValueForType.GenWithStackByArgs(col.Name)
+		}
 		if _, ok := valueMap[val]; ok {
 			tpStr := "ENUM"
 			if col.Tp == mysql.TypeSet {
@@ -3207,6 +3220,10 @@ func (d *ddl) DropColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTa
 		return nil
 	}
 	colName := spec.OldColumnName.Name
+	err = checkDropVisibleColumnCnt(t, 1)
+	if err != nil {
+		return err
+	}
 
 	job := &model.Job{
 		SchemaID:   schema.ID,
@@ -3275,6 +3292,10 @@ func (d *ddl) DropColumns(ctx sessionctx.Context, ti ast.Ident, specs []*ast.Alt
 		return ErrCantRemoveAllFields.GenWithStack("can't drop all columns in table %s",
 			tblInfo.Name)
 	}
+	err = checkDropVisibleColumnCnt(t, len(colNames))
+	if err != nil {
+		return err
+	}
 
 	job := &model.Job{
 		SchemaID:   schema.ID,
@@ -3315,6 +3336,20 @@ func checkIsDroppableColumn(ctx sessionctx.Context, t table.Table, spec *ast.Alt
 		return false, errUnsupportedPKHandle
 	}
 	return true, nil
+}
+
+func checkDropVisibleColumnCnt(t table.Table, columnCnt int) error {
+	tblInfo := t.Meta()
+	visibleColumCnt := 0
+	for _, column := range tblInfo.Columns {
+		if !column.Hidden {
+			visibleColumCnt++
+		}
+		if visibleColumCnt > columnCnt {
+			return nil
+		}
+	}
+	return ErrTableMustHaveColumns
 }
 
 // checkModifyCharsetAndCollation returns error when the charset or collation is not modifiable.
@@ -3377,6 +3412,26 @@ func CheckModifyTypeCompatible(origin *types.FieldType, to *types.FieldType) (al
 			// Changing integer to other types, reorg is absolutely necessary.
 			return unsupportedMsg, errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
 		}
+	case mysql.TypeFloat, mysql.TypeDouble:
+		switch to.Tp {
+		case mysql.TypeFloat, mysql.TypeDouble:
+			skipSignCheck = true
+			skipLenCheck = true
+		case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp, mysql.TypeEnum, mysql.TypeSet:
+			// TODO: Currently float/double cast to date/datetime/timestamp/enum/set are all not support yet, should fix here after supported.
+			return "", errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
+		default:
+			return unsupportedMsg, errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
+		}
+	case mysql.TypeBit:
+		switch to.Tp {
+		case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp, mysql.TypeDuration, mysql.TypeEnum, mysql.TypeSet:
+			// TODO: Currently bit cast to date/datetime/timestamp/time/enum/set are all not support yet, should fix here after supported.
+			return "", errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
+		case mysql.TypeBit:
+		default:
+			return unsupportedMsg, errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
+		}
 	case mysql.TypeEnum, mysql.TypeSet:
 		var typeVar string
 		if origin.Tp == mysql.TypeEnum {
@@ -3409,7 +3464,11 @@ func CheckModifyTypeCompatible(origin *types.FieldType, to *types.FieldType) (al
 		}
 	case mysql.TypeNewDecimal:
 		if origin.Tp != to.Tp {
-			return "", errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
+			switch to.Tp {
+			case mysql.TypeEnum, mysql.TypeSet:
+				return "", errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
+			}
+			return unsupportedMsg, errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
 		}
 		// Floating-point and fixed-point types also can be UNSIGNED. As with integer types, this attribute prevents
 		// negative values from being stored in the column. Unlike the integer types, the upper range of column values
@@ -4480,57 +4539,137 @@ func (d *ddl) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
 
 func (d *ddl) RenameTable(ctx sessionctx.Context, oldIdent, newIdent ast.Ident, isAlterTable bool) error {
 	is := d.GetInfoSchemaWithInterceptor(ctx)
-	oldSchema, ok := is.SchemaByName(oldIdent.Schema)
-	if !ok {
-		if isAlterTable {
-			return infoschema.ErrTableNotExists.GenWithStackByArgs(oldIdent.Schema, oldIdent.Name)
-		}
-		if is.TableExists(newIdent.Schema, newIdent.Name) {
-			return infoschema.ErrTableExists.GenWithStackByArgs(newIdent)
-		}
-		return errFileNotFound.GenWithStackByArgs(oldIdent.Schema, oldIdent.Name)
-	}
-	oldTbl, err := is.TableByName(oldIdent.Schema, oldIdent.Name)
+	tables := make(map[string]int64)
+	schemas, tableID, err := extractTblInfos(is, oldIdent, newIdent, isAlterTable, tables)
 	if err != nil {
-		if isAlterTable {
-			return infoschema.ErrTableNotExists.GenWithStackByArgs(oldIdent.Schema, oldIdent.Name)
-		}
-		if is.TableExists(newIdent.Schema, newIdent.Name) {
-			return infoschema.ErrTableExists.GenWithStackByArgs(newIdent)
-		}
-		return errFileNotFound.GenWithStackByArgs(oldIdent.Schema, oldIdent.Name)
+		return err
 	}
-	if isAlterTable && newIdent.Schema.L == oldIdent.Schema.L && newIdent.Name.L == oldIdent.Name.L {
-		// oldIdent is equal to newIdent, do nothing
+
+	if schemas == nil {
 		return nil
-	}
-	newSchema, ok := is.SchemaByName(newIdent.Schema)
-	if !ok {
-		return ErrErrorOnRename.GenWithStackByArgs(
-			fmt.Sprintf("%s.%s", oldIdent.Schema, oldIdent.Name),
-			fmt.Sprintf("%s.%s", newIdent.Schema, newIdent.Name),
-			168,
-			fmt.Sprintf("Database `%s` doesn't exist", newIdent.Schema))
-	}
-	if is.TableExists(newIdent.Schema, newIdent.Name) {
-		return infoschema.ErrTableExists.GenWithStackByArgs(newIdent)
-	}
-	if err := checkTooLongTable(newIdent.Name); err != nil {
-		return errors.Trace(err)
 	}
 
 	job := &model.Job{
-		SchemaID:   newSchema.ID,
-		TableID:    oldTbl.Meta().ID,
-		SchemaName: newSchema.Name.L,
+		SchemaID:   schemas[1].ID,
+		TableID:    tableID,
+		SchemaName: schemas[1].Name.L,
 		Type:       model.ActionRenameTable,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{oldSchema.ID, newIdent.Name},
+		Args:       []interface{}{schemas[0].ID, newIdent.Name},
 	}
 
 	err = d.doDDLJob(ctx, job)
 	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
+}
+
+func (d *ddl) RenameTables(ctx sessionctx.Context, oldIdents, newIdents []ast.Ident, isAlterTable bool) error {
+	is := d.GetInfoSchemaWithInterceptor(ctx)
+	tableNames := make([]*model.CIStr, 0, len(oldIdents))
+	oldSchemaIDs := make([]int64, 0, len(oldIdents))
+	newSchemaIDs := make([]int64, 0, len(oldIdents))
+	tableIDs := make([]int64, 0, len(oldIdents))
+
+	var schemas []*model.DBInfo
+	var tableID int64
+	var err error
+
+	tables := make(map[string]int64)
+	for i := 0; i < len(oldIdents); i++ {
+		schemas, tableID, err = extractTblInfos(is, oldIdents[i], newIdents[i], isAlterTable, tables)
+		if err != nil {
+			return err
+		}
+		tableIDs = append(tableIDs, tableID)
+		tableNames = append(tableNames, &newIdents[i].Name)
+		oldSchemaIDs = append(oldSchemaIDs, schemas[0].ID)
+		newSchemaIDs = append(newSchemaIDs, schemas[1].ID)
+	}
+
+	job := &model.Job{
+		SchemaID:   schemas[1].ID,
+		TableID:    tableIDs[0],
+		SchemaName: schemas[1].Name.L,
+		Type:       model.ActionRenameTables,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{oldSchemaIDs, newSchemaIDs, tableNames, tableIDs},
+	}
+
+	err = d.doDDLJob(ctx, job)
+	err = d.callHookOnChanged(err)
+	return errors.Trace(err)
+}
+
+func extractTblInfos(is infoschema.InfoSchema, oldIdent, newIdent ast.Ident, isAlterTable bool, tables map[string]int64) ([]*model.DBInfo, int64, error) {
+	oldSchema, ok := is.SchemaByName(oldIdent.Schema)
+	if !ok {
+		if isAlterTable {
+			return nil, 0, infoschema.ErrTableNotExists.GenWithStackByArgs(oldIdent.Schema, oldIdent.Name)
+		}
+		if tableExists(is, newIdent, tables) {
+			return nil, 0, infoschema.ErrTableExists.GenWithStackByArgs(newIdent)
+		}
+		return nil, 0, errFileNotFound.GenWithStackByArgs(oldIdent.Schema, oldIdent.Name)
+	}
+	if !tableExists(is, oldIdent, tables) {
+		if isAlterTable {
+			return nil, 0, infoschema.ErrTableNotExists.GenWithStackByArgs(oldIdent.Schema, oldIdent.Name)
+		}
+		if tableExists(is, newIdent, tables) {
+			return nil, 0, infoschema.ErrTableExists.GenWithStackByArgs(newIdent)
+		}
+		return nil, 0, errFileNotFound.GenWithStackByArgs(oldIdent.Schema, oldIdent.Name)
+	}
+	if isAlterTable && newIdent.Schema.L == oldIdent.Schema.L && newIdent.Name.L == oldIdent.Name.L {
+		//oldIdent is equal to newIdent, do nothing
+		return nil, 0, nil
+	}
+	newSchema, ok := is.SchemaByName(newIdent.Schema)
+	if !ok {
+		return nil, 0, ErrErrorOnRename.GenWithStackByArgs(
+			fmt.Sprintf("%s.%s", oldIdent.Schema, oldIdent.Name),
+			fmt.Sprintf("%s.%s", newIdent.Schema, newIdent.Name),
+			168,
+			fmt.Sprintf("Database `%s` doesn't exist", newIdent.Schema))
+	}
+	if tableExists(is, newIdent, tables) {
+		return nil, 0, infoschema.ErrTableExists.GenWithStackByArgs(newIdent)
+	}
+	if err := checkTooLongTable(newIdent.Name); err != nil {
+		return nil, 0, errors.Trace(err)
+	}
+	oldTableID := getTableID(is, oldIdent, tables)
+	oldIdentKey := getIdentKey(oldIdent)
+	tables[oldIdentKey] = tableNotExist
+	newIdentKey := getIdentKey(newIdent)
+	tables[newIdentKey] = oldTableID
+	return []*model.DBInfo{oldSchema, newSchema}, oldTableID, nil
+}
+
+func tableExists(is infoschema.InfoSchema, ident ast.Ident, tables map[string]int64) bool {
+	identKey := getIdentKey(ident)
+	tableID, ok := tables[identKey]
+	if (ok && tableID != tableNotExist) || (!ok && is.TableExists(ident.Schema, ident.Name)) {
+		return true
+	}
+	return false
+}
+
+func getTableID(is infoschema.InfoSchema, ident ast.Ident, tables map[string]int64) int64 {
+	identKey := getIdentKey(ident)
+	tableID, ok := tables[identKey]
+	if !ok {
+		oldTbl, err := is.TableByName(ident.Schema, ident.Name)
+		if err != nil {
+			return tableNotExist
+		}
+		tableID = oldTbl.Meta().ID
+	}
+	return tableID
+}
+
+func getIdentKey(ident ast.Ident) string {
+	return fmt.Sprintf("%s.%s", ident.Schema.L, ident.Name.L)
 }
 
 func getAnonymousIndex(t table.Table, colName model.CIStr) model.CIStr {
@@ -4554,7 +4693,8 @@ func getAnonymousIndex(t table.Table, colName model.CIStr) model.CIStr {
 func (d *ddl) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexName model.CIStr,
 	indexPartSpecifications []*ast.IndexPartSpecification, indexOption *ast.IndexOption) error {
 	if !config.GetGlobalConfig().AlterPrimaryKey {
-		return ErrUnsupportedModifyPrimaryKey.GenWithStack("Unsupported add primary key, alter-primary-key is false")
+		return ErrUnsupportedModifyPrimaryKey.GenWithStack("Unsupported add primary key, alter-primary-key is false. " +
+			"Please check the documentation for the tidb-server configuration files")
 	}
 
 	schema, t, err := d.getSchemaAndTableByIdent(ctx, ti)
@@ -5706,6 +5846,12 @@ func buildPlacementSpecs(bundle *placement.Bundle, specs []*ast.PlacementSpec) (
 		case ast.PlacementRoleFollower:
 			role = placement.Follower
 		case ast.PlacementRoleLeader:
+			if spec.Replicas == 0 {
+				spec.Replicas = 1
+			}
+			if spec.Replicas > 1 {
+				err = errors.Errorf("replicas can only be 1 when the role is leader")
+			}
 			role = placement.Leader
 		case ast.PlacementRoleLearner:
 			role = placement.Learner

@@ -294,12 +294,12 @@ func (s *testTableSuite) TestInfoschemaFieldValue(c *C) {
 	tk.MustQuery("show create table information_schema.PROCESSLIST").Check(
 		testkit.Rows("" +
 			"PROCESSLIST CREATE TABLE `PROCESSLIST` (\n" +
-			"  `ID` bigint(21) unsigned NOT NULL DEFAULT 0,\n" +
+			"  `ID` bigint(21) unsigned NOT NULL DEFAULT '0',\n" +
 			"  `USER` varchar(16) NOT NULL DEFAULT '',\n" +
 			"  `HOST` varchar(64) NOT NULL DEFAULT '',\n" +
 			"  `DB` varchar(64) DEFAULT NULL,\n" +
 			"  `COMMAND` varchar(16) NOT NULL DEFAULT '',\n" +
-			"  `TIME` int(7) NOT NULL DEFAULT 0,\n" +
+			"  `TIME` int(7) NOT NULL DEFAULT '0',\n" +
 			"  `STATE` varchar(7) DEFAULT NULL,\n" +
 			"  `INFO` longtext DEFAULT NULL,\n" +
 			"  `DIGEST` varchar(64) DEFAULT '',\n" +
@@ -803,6 +803,7 @@ func (s *testClusterTableSuite) TestSelectClusterTable(c *C) {
 		tk.MustExec("use information_schema")
 		tk.MustExec(fmt.Sprintf("set @@tidb_enable_streaming=%d", i))
 		tk.MustExec("set @@global.tidb_enable_stmt_summary=1")
+		tk.MustExec("set time_zone = '+08:00';")
 		tk.MustQuery("select count(*) from `CLUSTER_SLOW_QUERY`").Check(testkit.Rows("1"))
 		tk.MustQuery("select time from `CLUSTER_SLOW_QUERY` where time='2019-02-12 19:33:56.571953'").Check(testutil.RowsWithSep("|", "2019-02-12 19:33:56.571953"))
 		tk.MustQuery("select count(*) from `CLUSTER_PROCESSLIST`").Check(testkit.Rows("1"))
