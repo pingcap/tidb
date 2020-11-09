@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
@@ -262,7 +263,7 @@ func (s *testSuite) TestInsert(c *C) {
 	r.Check(testkit.Rows("0", "0", "18446744073709551615", "0", "0"))
 	tk.MustExec("set @@sql_mode = @orig_sql_mode;")
 
-	// issue 6424
+	// issue 6424 & issue 20207
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a time(6))")
 	tk.MustExec("insert into t value('20070219173709.055870'), ('20070219173709.055'), ('20070219173709.055870123')")
@@ -271,7 +272,7 @@ func (s *testSuite) TestInsert(c *C) {
 	tk.MustExec("insert into t value(20070219173709.055870), (20070219173709.055), (20070219173709.055870123)")
 	tk.MustQuery("select * from t").Check(testkit.Rows("17:37:09.055870", "17:37:09.055000", "17:37:09.055870"))
 	_, err = tk.Exec("insert into t value(-20070219173709.055870)")
-	c.Assert(err.Error(), Equals, "[table:1366]Incorrect time value: '-20070219173709.055870' for column 'a' at row 1")
+	c.Assert(err.Error(), Equals, "[table:1292]Incorrect time value: '-20070219173709.055870' for column 'a' at row 1")
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("set @@sql_mode=''")
@@ -1480,7 +1481,7 @@ func (s *testSuite8) TestUpdate(c *C) {
 	tk.MustExec("drop table t")
 	tk.MustExec("CREATE TABLE `t` (	`c1` year DEFAULT NULL, `c2` year DEFAULT NULL, `c3` date DEFAULT NULL, `c4` datetime DEFAULT NULL,	KEY `idx` (`c1`,`c2`))")
 	_, err = tk.Exec("UPDATE t SET c2=16777215 WHERE c1>= -8388608 AND c1 < -9 ORDER BY c1 LIMIT 2")
-	c.Assert(err.Error(), Equals, "[types:1690]DECIMAL value is out of range in '(4, 0)'")
+	c.Assert(err, IsNil)
 
 	tk.MustExec("update (select * from t) t set c1 = 1111111")
 
@@ -2962,4 +2963,18 @@ func (s *testSuite4) TestWriteListColumnsPartitionTable(c *C) {
 	tk.MustQuery("select * from t order by id").Check(testkit.Rows("<nil> <nil>", "1 a", "2 b", "4 d", "7 f"))
 	tk.MustExec("delete from t partition (p3,p2)")
 	tk.MustQuery("select * from t order by id").Check(testkit.Rows("1 a", "2 b"))
+}
+
+func (s *testSerialSuite) TestIssue20724(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1(a varchar(10) collate utf8mb4_general_ci)")
+	tk.MustExec("insert into t1 values ('a')")
+	tk.MustExec("update t1 set a = 'A'")
+	tk.MustQuery("select * from t1").Check(testkit.Rows("A"))
+	tk.MustExec("drop table t1")
 }

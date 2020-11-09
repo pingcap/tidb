@@ -18,6 +18,8 @@ import (
 	"fmt"
 	"math"
 	"strings"
+	"sync"
+	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/domain"
@@ -217,13 +219,16 @@ func (s *testPointGetSuite) TestWhereIn2BatchPointGet(c *C) {
 		"4 4 5",
 	))
 	tk.MustQuery("explain select * from t where a = 1 and b = 1 and c = 1").Check(testkit.Rows(
-		"Point_Get_1 1.00 root table:t, index:idx_abc(a, b, c) ",
+		"Selection_6 1.00 root  eq(test.t.b, 1), eq(test.t.c, 1)",
+		"└─Point_Get_5 1.00 root table:t handle:1",
 	))
 	tk.MustQuery("explain select * from t where 1 = a and 1 = b and 1 = c").Check(testkit.Rows(
-		"Point_Get_1 1.00 root table:t, index:idx_abc(a, b, c) ",
+		"Selection_6 1.00 root  eq(1, test.t.b), eq(1, test.t.c)",
+		"└─Point_Get_5 1.00 root table:t handle:1",
 	))
 	tk.MustQuery("explain select * from t where 1 = a and b = 1 and 1 = c").Check(testkit.Rows(
-		"Point_Get_1 1.00 root table:t, index:idx_abc(a, b, c) ",
+		"Selection_6 1.00 root  eq(1, test.t.c), eq(test.t.b, 1)",
+		"└─Point_Get_5 1.00 root table:t handle:1",
 	))
 	tk.MustQuery("explain select * from t where (a, b, c) in ((1, 1, 1), (2, 2, 2))").Check(testkit.Rows(
 		"Batch_Point_Get_1 2.00 root table:t, index:idx_abc(a, b, c) keep order:false, desc:false",
@@ -468,4 +473,47 @@ func (s *testPointGetSuite) TestSelectInMultiColumns(c *C) {
 	_, err = tk.Exec("select * from t2 where (a, b, c) in ((1, 1), (2, 2, 2));")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[expression:1241]Operand should contain 3 column(s)")
+}
+
+func (s *testPointGetSuite) TestIssue20692(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id int primary key, v int, vv int, vvv int, unique key u0(id, v, vv));")
+	tk.MustExec("insert into t values(1, 1, 1, 1);")
+	se1, err := session.CreateSession(s.store)
+	c.Assert(err, IsNil)
+	tk1 := testkit.NewTestKitWithSession(c, s.store, se1)
+	se2, err := session.CreateSession(s.store)
+	c.Assert(err, IsNil)
+	tk2 := testkit.NewTestKitWithSession(c, s.store, se2)
+	se3, err := session.CreateSession(s.store)
+	c.Assert(err, IsNil)
+	tk3 := testkit.NewTestKitWithSession(c, s.store, se3)
+	tk1.MustExec("begin pessimistic;")
+	tk1.MustExec("use test")
+	tk2.MustExec("begin pessimistic;")
+	tk2.MustExec("use test")
+	tk3.MustExec("begin pessimistic;")
+	tk3.MustExec("use test")
+	tk1.MustExec("delete from t where id = 1 and v = 1 and vv = 1;")
+	var stop1 sync.WaitGroup
+	stop1.Add(1)
+	go func() {
+		tk2.MustExec("insert into t values(1, 2, 3, 4);")
+		stop1.Done()
+	}()
+	time.Sleep(50 * time.Millisecond)
+	var stop2 sync.WaitGroup
+	stop2.Add(1)
+	go func() {
+		tk3.MustExec("update t set id = 10, v = 20, vv = 30, vvv = 40 where id = 1 and v = 2 and vv = 3;")
+		stop2.Done()
+	}()
+	tk1.MustExec("commit;")
+	stop1.Wait()
+	tk2.MustExec("commit;")
+	stop2.Wait()
+	tk3.MustExec("commit;")
+	tk3.MustQuery("select * from t;").Check(testkit.Rows("10 20 30 40"))
 }

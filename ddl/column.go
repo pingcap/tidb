@@ -717,6 +717,11 @@ func needChangeColumnData(oldCol, newCol *model.ColumnInfo) bool {
 		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
 			return needTruncationOrToggleSign()
 		}
+	case mysql.TypeFloat, mysql.TypeDouble:
+		switch newCol.Tp {
+		case mysql.TypeFloat, mysql.TypeDouble:
+			return needTruncationOrToggleSign()
+		}
 	}
 
 	return true
@@ -1047,7 +1052,7 @@ func (w *worker) doModifyColumnTypeWithData(
 func needRollbackData(err error) bool {
 	return kv.ErrKeyExists.Equal(err) || errCancelledDDLJob.Equal(err) || errCantDecodeRecord.Equal(err) ||
 		types.ErrOverflow.Equal(err) || types.ErrDataTooLong.Equal(err) || types.ErrTruncated.Equal(err) ||
-		json.ErrInvalidJSONText.Equal(err) || types.ErrBadNumber.Equal(err)
+		json.ErrInvalidJSONText.Equal(err) || types.ErrBadNumber.Equal(err) || types.ErrWrongValue.Equal(err)
 }
 
 // BuildElements is exported for testing.

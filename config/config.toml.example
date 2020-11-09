@@ -127,6 +127,13 @@ enable-telemetry = true
 # a warning like `Integer display width is deprecated and will be removed in a future release`.
 deprecate-integer-display-length = false
 
+# enable-enum-length-limit is used to deal with compatibility issues. When true, the enum/set element length is limited.
+# According to MySQL 8.0 Refman:
+# The maximum supported length of an individual SET element is M <= 255 and (M x w) <= 1020,
+# where M is the element literal length and w is the number of bytes required for the maximum-length character in the character set.
+# See https://dev.mysql.com/doc/refman/8.0/en/string-type-syntax.html for more details.
+enable-enum-length-limit = true
+
 [log]
 # Log level: debug, info, warn, error, fatal.
 level = "info"
@@ -293,6 +300,11 @@ mem-profile-interval = "1m"
 # Here we set to 0 to not dump index usage information to KV, 
 # because we have not completed GC and other functions.
 index-usage-sync-lease = "0s"
+
+# The Go GC trigger factor, you can get more information about it at https://golang.org/pkg/runtime.
+# If you encounter OOM when executing large query, you can decrease this value to trigger GC earlier.
+# If you find the CPU used by GC is too high or GC is too frequent and impact your business you can increase this value.
+gogc = 100
 
 [proxy-protocol]
 # PROXY protocol acceptable client networks.
