@@ -208,7 +208,7 @@ func (conf *Config) DefineFlags(flags *pflag.FlagSet) {
 	flags.BoolP(flagNoData, "d", false, "Do not dump table data")
 	flags.String(flagCsvNullValue, "\\N", "The null value used when export to csv")
 	flags.StringP(flagSql, "S", "", "Dump data with given sql. This argument doesn't support concurrent dump")
-	flags.StringSliceP(flagFilter, "f", []string{"*.*"}, "filter to select which tables to dump")
+	flags.StringSliceP(flagFilter, "f", []string{"*.*", DefaultTableFilter}, "filter to select which tables to dump")
 	flags.Bool(flagCaseSensitive, false, "whether the filter should be case-sensitive")
 	flags.Bool(flagDumpEmptyDatabase, true, "whether to dump empty database")
 	flags.Uint64(flagTidbMemQuotaQuery, DefaultTiDBMemQuotaQuery, "The maximum memory limit for a single SQL statement, in bytes. Default: 32GB")
@@ -483,11 +483,11 @@ func (config *Config) createExternalStorage(ctx context.Context) (storage.Extern
 }
 
 const (
-	UnspecifiedSize       = 0
-	DefaultStatementSize  = 1000000
-	TiDBMemQuotaQueryName = "tidb_mem_quota_query"
-
-	DefaultTiDBMemQuotaQuery uint64 = 32 << 30
+	UnspecifiedSize          = 0
+	DefaultTiDBMemQuotaQuery = 32 << 30
+	DefaultStatementSize     = 1000000
+	TiDBMemQuotaQueryName    = "tidb_mem_quota_query"
+	DefaultTableFilter       = "!/^(mysql|sys|INFORMATION_SCHEMA|PERFORMANCE_SCHEMA|METRICS_SCHEMA|INSPECTION_SCHEMA)$/.*"
 
 	defaultDumpThreads         = 128
 	defaultDumpGCSafePointTTL  = 5 * 60
