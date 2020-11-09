@@ -38,6 +38,7 @@ type memoryUsageAlarm struct {
 	err                    error
 	isServerMemoryQuotaSet bool
 	serverMemoryQuota      uint64
+	serverMemoryQuotaRatio float64
 	lastCheckTime          time.Time
 
 	tmpDir              string
@@ -47,10 +48,12 @@ type memoryUsageAlarm struct {
 
 func initMemoryUsageAlarmRecord() (record *memoryUsageAlarm) {
 	record = &memoryUsageAlarm{}
-	if alert := config.GetGlobalConfig().Performance.MemoryUsageAlarmRatio; alert == 0 || alert == 1 {
+	var alert float64
+	if alert = config.GetGlobalConfig().Performance.MemoryUsageAlarmRatio; alert == 0 || alert == 1 {
 		record.err = errors.New("close memory usage alarm recorder")
 		return
 	}
+	record.serverMemoryQuotaRatio = alert
 	if quota := config.GetGlobalConfig().Performance.ServerMemoryQuota; quota != 0 {
 		record.serverMemoryQuota = quota
 		record.isServerMemoryQuotaSet = true
@@ -104,7 +107,7 @@ func (record *memoryUsageAlarm) alarm4ExcessiveMemUsage(sm util.SessionManager) 
 	}
 
 	// TODO: Consider NextGC to record SQLs.
-	if float64(memoryUsage) > float64(record.serverMemoryQuota)*config.GetGlobalConfig().Performance.MemoryUsageAlarmRatio {
+	if float64(memoryUsage) > float64(record.serverMemoryQuota)*record.serverMemoryQuotaRatio {
 		// At least ten seconds between two recordings that memory usage is less than threshold (default 80% system memory).
 		// If the memory is still exceeded, only records once.
 		interval := time.Since(record.lastCheckTime)
@@ -126,7 +129,7 @@ func (record *memoryUsageAlarm) doRecord(memUsage uint64, instanceMemoryUsage ui
 		fields = append(fields, zap.Any("system memory usage", memUsage))
 		fields = append(fields, zap.Any("tidb-server memory usage", instanceMemoryUsage))
 	}
-	fields = append(fields, zap.Any("memory-usage-alarm-ratio", config.GetGlobalConfig().Performance.MemoryUsageAlarmRatio))
+	fields = append(fields, zap.Any("memory-usage-alarm-ratio", record.serverMemoryQuotaRatio))
 	fields = append(fields, zap.Any("record path", record.tmpDir))
 
 	logutil.BgLogger().Warn("tidb-server has the risk of OOM. Running SQLs and heap profile will be recorded in record path", fields...)

@@ -18,6 +18,7 @@ import (
 	"os"
 
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/config"
 	"github.com/uber-go/atomic"
 )
 
@@ -453,6 +454,9 @@ const (
 
 	// TiDBEnableAmendPessimisticTxn indicates if amend pessimistic transactions is enabled.
 	TiDBEnableAmendPessimisticTxn = "tidb_enable_amend_pessimistic_txn"
+
+	// TiDBMemoryQuotaAlarmRatio indicates the alarm threshold when memory usage of the tidb-server exceeds.
+	TiDBMemoryQuotaAlarmRatio = "tidb_memory_quota_alarm_ratio"
 )
 
 // Default TiDB system variable values.
@@ -584,4 +588,5 @@ var (
 	MinExpensiveQueryTimeThreshold uint64 = 10 //10s
 	CapturePlanBaseline                   = serverGlobalVariable{globalVal: BoolOff}
 	DefExecutorConcurrency                = 5
+	MemoryUsageAlarmRatio                 = atomic.NewFloat64(config.GetGlobalConfig().Performance.MemoryUsageAlarmRatio)
 )
