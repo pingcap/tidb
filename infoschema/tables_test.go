@@ -1450,6 +1450,8 @@ func (s *testTableSuite) TestPlacementPolicy(c *C) {
 func (s *testTableSuite) TestInfoschemaClientErrors(c *C) {
 	tk := s.newTestKitWithRoot(c)
 
+	tk.MustExec("FLUSH CLIENT_ERRORS_SUMMARY")
+
 	errno.IncrementError(1365, "root", "localhost")
 	errno.IncrementError(1365, "infoschematest", "localhost")
 	errno.IncrementError(1365, "root", "localhost")
@@ -1464,4 +1466,7 @@ func (s *testTableSuite) TestInfoschemaClientErrors(c *C) {
 	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the PROCESS privilege(s) for this operation")
 
 	tk.MustQuery("SELECT error_number, error_count, warning_count FROM information_schema.client_errors_summary_by_user ORDER BY error_number").Check(testkit.Rows("1365 1 0"))
+
+	err = tk.ExecToErr("FLUSH CLIENT_ERRORS_SUMMARY")
+	c.Assert(err.Error(), Equals, "[planner:1227]Access denied; you need (at least one of) the RELOAD privilege(s) for this operation")
 }

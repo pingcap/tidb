@@ -57,6 +57,20 @@ func init() {
 	hosts.errors = make(map[string]map[uint16]*errorSummary)
 }
 
+// FlushStats resets errors and warnings across global/users/hosts
+func FlushStats() {
+	global.Lock()
+	defer global.Unlock()
+	users.Lock()
+	defer users.Unlock()
+	hosts.Lock()
+	defer hosts.Unlock()
+
+	global.errors = make(map[uint16]*errorSummary)
+	users.errors = make(map[string]map[uint16]*errorSummary)
+	hosts.errors = make(map[string]map[uint16]*errorSummary)
+}
+
 // GlobalStats summarizes errors and warnings across all users/hosts
 func GlobalStats() map[uint16]*errorSummary {
 	global.Lock()
