@@ -17,11 +17,11 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
-	"github.com/pingcap/kvproto/pkg/metapb"
 	"strconv"
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
 	pd "github.com/tikv/pd/client"
