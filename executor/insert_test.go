@@ -1487,6 +1487,11 @@ func (s *testSerialSuite) TestDuplicateEntryMessage(c *C) {
 		tk.MustExec("insert ignore into t values ('$', 'C', 10);")
 		tk.MustExec("insert ignore into t values ('$', 'C', 10);")
 		tk.MustQuery("show warnings;").Check(testutil.RowsWithSep("|", "Warning|1062|Duplicate entry '$-C-10' for key 'PRIMARY'"))
+
+		tk.MustExec("begin pessimistic;")
+		tk.MustExec("insert into t values ('a7', 'a', 10);")
+		tk.MustGetErrMsg("insert into t values ('a7', 'a', 10);", "[kv:1062]Duplicate entry 'a7-a-10' for key 'PRIMARY'")
+		tk.MustExec("rollback;")
 	}
 }
 
