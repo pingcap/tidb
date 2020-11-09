@@ -557,7 +557,7 @@ func (h *Handle) UpdateStatsByLocalFeedback(is infoschema.InfoSchema) {
 				}
 				newIdx := *idx
 				eqFB, ranFB := statistics.SplitFeedbackByQueryType(fb.Feedback)
-				newIdx.CMSketch = statistics.UpdateCMSketch(idx.CMSketch, eqFB)
+				newIdx.CMSketch, newIdx.TopN = statistics.UpdateCMSketch(idx.CMSketch, idx.TopN, eqFB)
 				newIdx.Histogram = *statistics.UpdateHistogram(&idx.Histogram, &statistics.QueryFeedback{Feedback: ranFB})
 				newIdx.Histogram.PreCalculateScalar()
 				newIdx.Flag = statistics.ResetAnalyzeFlag(newIdx.Flag)
@@ -698,12 +698,14 @@ func (h *Handle) handleSingleHistogramUpdate(is infoschema.InfoSchema, rows []ch
 	}
 	var cms *statistics.CMSketch
 	var hist *statistics.Histogram
+	var topN *statistics.TopN
 	if isIndex == 1 {
 		idx, ok := tbl.Indices[histID]
 		if ok && idx.Histogram.Len() > 0 {
 			idxHist := idx.Histogram
 			hist = &idxHist
 			cms = idx.CMSketch.Copy()
+			topN = idx.TopN.Copy()
 		}
 	} else {
 		col, ok := tbl.Columns[histID]
@@ -718,12 +720,12 @@ func (h *Handle) handleSingleHistogramUpdate(is infoschema.InfoSchema, rows []ch
 	}
 	q := &statistics.QueryFeedback{}
 	for _, row := range rows {
-		err1 := statistics.DecodeFeedback(row.GetBytes(3), q, cms, hist.Tp)
+		err1 := statistics.DecodeFeedback(row.GetBytes(3), q, cms, topN, hist.Tp)
 		if err1 != nil {
 			logutil.BgLogger().Debug("decode feedback failed", zap.Error(err))
 		}
 	}
-	err = h.dumpStatsUpdateToKV(physicalTableID, isIndex, q, hist, cms)
+	err = h.dumpStatsUpdateToKV(physicalTableID, isIndex, q, hist, cms, topN)
 	return errors.Trace(err)
 }
 
@@ -742,9 +744,9 @@ func (h *Handle) deleteOutdatedFeedback(tableID, histID, isIndex int64) error {
 	return nil
 }
 
-func (h *Handle) dumpStatsUpdateToKV(tableID, isIndex int64, q *statistics.QueryFeedback, hist *statistics.Histogram, cms *statistics.CMSketch) error {
+func (h *Handle) dumpStatsUpdateToKV(tableID, isIndex int64, q *statistics.QueryFeedback, hist *statistics.Histogram, cms *statistics.CMSketch, topN *statistics.TopN) error {
 	hist = statistics.UpdateHistogram(hist, q)
-	err := h.SaveStatsToStorage(tableID, -1, int(isIndex), hist, cms, 0)
+	err := h.SaveStatsToStorage(tableID, -1, int(isIndex), hist, cms, topN, 0)
 	metrics.UpdateStatsCounter.WithLabelValues(metrics.RetLabel(err)).Inc()
 	return errors.Trace(err)
 }
@@ -977,7 +979,7 @@ func logForIndex(prefix string, t *statistics.Table, idx *statistics.Index, rang
 		if err != nil {
 			continue
 		}
-		equalityCount := idx.CMSketch.QueryBytes(bytes)
+		equalityCount := idx.QueryBytes(bytes)
 		rang := ranger.Range{
 			LowVal:  []types.Datum{ran.LowVal[rangePosition]},
 			HighVal: []types.Datum{ran.HighVal[rangePosition]},
@@ -1178,7 +1180,7 @@ func (h *Handle) DumpFeedbackForIndex(q *statistics.QueryFeedback, t *statistics
 			logutil.BgLogger().Debug("encode keys fail", zap.Error(err))
 			continue
 		}
-		equalityCount := float64(idx.CMSketch.QueryBytes(bytes)) * idx.GetIncreaseFactor(t.Count)
+		equalityCount := float64(idx.QueryBytes(bytes)) * idx.GetIncreaseFactor(t.Count)
 		rang := &ranger.Range{
 			LowVal:  []types.Datum{ran.LowVal[rangePosition]},
 			HighVal: []types.Datum{ran.HighVal[rangePosition]},

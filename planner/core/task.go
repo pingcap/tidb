@@ -33,7 +33,7 @@ import (
 )
 
 // task is a new version of `PhysicalPlanInfo`. It stores cost information for a task.
-// A task may be CopTask, RootTask, MPPTask or a ParallelTask.
+// A task may be CopTask, RootTask, MPPTaskMeta or a ParallelTask.
 type task interface {
 	count() float64
 	addCost(cost float64)
@@ -1158,7 +1158,7 @@ func BuildFinalModeAggregation(
 						// if partial agg is not cop, we must append firstrow function & schema, to output the group by
 						// items.
 						// maybe we can unify them sometime.
-						firstRow, err := aggregation.NewAggFuncDesc(sctx, ast.AggFuncFirstRow, []expression.Expression{gbyCol}, false)
+						firstRow, err := aggregation.NewAggFuncDesc(sctx, ast.AggFuncFirstRow, []expression.Expression{distinctArg}, false)
 						if err != nil {
 							panic("NewAggFuncDesc FirstRow meets error: " + err.Error())
 						}
