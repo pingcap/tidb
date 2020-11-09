@@ -162,6 +162,8 @@ func (b *executorBuilder) build(p plannercore.Plan) Executor {
 		return b.buildShow(v)
 	case *plannercore.Simple:
 		return b.buildSimple(v)
+	case *plannercore.PhysicalSimpleWrapper:
+		return b.buildSimple(&v.Inner)
 	case *plannercore.Set:
 		return b.buildSet(v)
 	case *plannercore.SetConfig:
@@ -701,6 +703,7 @@ func (b *executorBuilder) buildSimple(v *plannercore.Simple) Executor {
 	e := &SimpleExec{
 		baseExecutor: base,
 		Statement:    v.Statement,
+		IsFromRemote: v.IsFromRemote,
 		is:           b.is,
 	}
 	return e
@@ -3344,10 +3347,12 @@ func (builder *dataReaderBuilder) buildTableReaderFromHandles(ctx context.Contex
 		})
 	}
 	var b distsql.RequestBuilder
-	if _, ok := handles[0].(kv.PartitionHandle); ok {
-		b.SetPartitionsAndHandles(handles)
-	} else {
-		b.SetTableHandles(getPhysicalTableID(e.table), handles)
+	if len(handles) > 0 {
+		if _, ok := handles[0].(kv.PartitionHandle); ok {
+			b.SetPartitionsAndHandles(handles)
+		} else {
+			b.SetTableHandles(getPhysicalTableID(e.table), handles)
+		}
 	}
 	return builder.buildTableReaderBase(ctx, e, b)
 }
