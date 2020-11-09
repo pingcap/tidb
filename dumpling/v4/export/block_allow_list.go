@@ -2,28 +2,11 @@ package export
 
 import (
 	"github.com/pingcap/dumpling/v4/log"
-	"github.com/pingcap/tidb-tools/pkg/filter"
 	"go.uber.org/zap"
 )
 
-func filterDirtySchemaTables(conf *Config) {
-	switch conf.ServerInfo.ServerType {
-	case ServerTypeTiDB:
-		if conf.Sql == "" {
-			for dbName := range conf.Tables {
-				if filter.IsSystemSchema(dbName) {
-					log.Warn("unsupported dump schema in TiDB now", zap.String("schema", dbName))
-					delete(conf.Tables, dbName)
-				}
-			}
-		}
-	}
-}
-
 func filterTables(conf *Config) {
 	log.Debug("filter tables")
-	// filter dirty schema tables because of non-impedance implementation reasons
-	filterDirtySchemaTables(conf)
 	dbTables := DatabaseTables{}
 	ignoredDBTable := DatabaseTables{}
 
