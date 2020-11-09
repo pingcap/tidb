@@ -845,8 +845,8 @@ func (e *HashAggExec) initRuntimeStats() {
 			FinalTaskNum:      0,
 			PartialWallTime:   0,
 			FinalWallTime:     0,
-			PartialWorkerTime: make([]time.Duration, 0, e.ctx.GetSessionVars().HashAggPartialConcurrency()),
-			FinalWorkerTime:   make([]time.Duration, 0, e.ctx.GetSessionVars().HashAggFinalConcurrency()),
+			PartialWorkerTime: make([]time.Duration, e.ctx.GetSessionVars().HashAggPartialConcurrency()),
+			FinalWorkerTime:   make([]time.Duration, e.ctx.GetSessionVars().HashAggFinalConcurrency()),
 		}
 		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
 	}
