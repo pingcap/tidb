@@ -275,12 +275,13 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 		// TODO: remove this if implement glue interface, which means lightning could use host TiDB's connection
 		importGlobalCfg.TiDB.Port = 4000
 
+		importGlobalCfg.TiDB.StatusPort = int(tidbCfg.Status.StatusPort)
 		importGlobalCfg.App.StatusAddr = ":8289"
 		importGlobalCfg.App.Level = tidbCfg.Log.Level
 		importGlobalCfg.Security.CAPath = tidbCfg.Security.ClusterSSLCA
 		importGlobalCfg.Security.CertPath = tidbCfg.Security.ClusterSSLCert
 		importGlobalCfg.Security.KeyPath = tidbCfg.Security.ClusterSSLKey
-		importGlobalCfg.TikvImporter.Backend = importcfg.BackendLocal // TODO(lance6716): will test tidb backend later
+		importGlobalCfg.TikvImporter.Backend = importcfg.BackendLocal
 		importGlobalCfg.TikvImporter.SortedKVDir = filepath.Join(tidbCfg.TempStoragePath, defaultImportID)
 
 		importCfg.Checkpoint.Schema = defaultImportID
