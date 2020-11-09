@@ -48,7 +48,7 @@ A discussion of alternate approaches and the trade-offs, advantages, and disadva
 - What is the impact of not doing this?
 -->
 
-## Compatibility and Mirgration Plan
+## Compatibility and Migration Plan
 
 <!--
 A discussion of the change with regard to the compatibility issues:
