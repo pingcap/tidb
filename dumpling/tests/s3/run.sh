@@ -45,8 +45,8 @@ ls "${HOST_DIR}"
 
 curl -o "${HOST_DIR}/s3-schema-create.sql" http://localhost:5000/mybucket/dump/s3-schema-create.sql
 curl -o "${HOST_DIR}/s3.t-schema.sql" http://localhost:5000/mybucket/dump/s3.t-schema.sql
-curl -o "${HOST_DIR}/s3.t.0.sql" http://localhost:5000/mybucket/dump/s3.t.0.sql
+curl -o "${HOST_DIR}/s3.t.000000000.sql" http://localhost:5000/mybucket/dump/s3.t.000000000.sql
 
 file_should_exist "$HOST_DIR/s3-schema-create.sql"
 file_should_exist "$HOST_DIR/s3.t-schema.sql"
-file_should_exist "$HOST_DIR/s3.t.0.sql"
+file_should_exist "$HOST_DIR/s3.t.000000000.sql"

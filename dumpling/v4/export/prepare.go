@@ -99,10 +99,6 @@ func adjustConfig(ctx context.Context, conf *Config) error {
 		}
 	}
 
-	if conf.Rows != UnspecifiedSize {
-		// Disable filesize if rows was set
-		conf.FileSize = UnspecifiedSize
-	}
 	if conf.SessionParams == nil {
 		conf.SessionParams = make(map[string]interface{})
 	}
