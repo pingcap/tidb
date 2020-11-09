@@ -238,7 +238,7 @@ func (s *testOnePCSuite) Test1PCDisallowMultiRegion(c *C) {
 }
 
 // It's just a simple validation of external consistency.
-// Extra  tests are needed to test this feature with the control of the TiKV cluster.
+// Extra tests are needed to test this feature with the control of the TiKV cluster.
 func (s *testOnePCSuite) Test1PCExternalConsistency(c *C) {
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
