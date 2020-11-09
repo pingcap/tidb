@@ -111,6 +111,7 @@ var (
 	errUnsupportedCreatePartition          = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "partition type, treat as normal table"), nil), "", "")
 	errTablePartitionDisabled              = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message("Partitions are ignored because Table Partition is disabled, please set 'tidb_enable_table_partition' if you need to need to enable it", nil), "", "")
 	errUnsupportedIndexType                = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "index type"), nil), "", "")
+	errWindowInvalidWindowFuncUse          = dbterror.ClassDDL.NewStd(mysql.ErrWindowInvalidWindowFuncUse)
 
 	// ErrDupKeyName returns for duplicated key name
 	ErrDupKeyName = dbterror.ClassDDL.NewStd(mysql.ErrDupKeyName)
