@@ -516,6 +516,14 @@ const minLogCopTaskTime = 300 * time.Millisecond
 // send the result back.
 func (worker *copIteratorWorker) run(ctx context.Context) {
 	defer func() {
+		failpoint.Inject("testRateLimitActionMockWaitMax", func(val failpoint.Value) {
+			if val.(bool) {
+				// we need to prevent action from being closed before triggering action yet
+				for worker.memTracker.BytesConsumed() > 100 {
+					time.Sleep(10 * time.Millisecond)
+				}
+			}
+		})
 		worker.actionOnExceed.close()
 		worker.wg.Done()
 	}()
@@ -693,8 +701,9 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 	failpoint.Inject("testRateLimitActionMockWaitMax", func(val failpoint.Value) {
 		if val.(bool) {
 			// we only need to trigger oom at least once.
-			if len(it.tasks) > 5 {
+			if len(it.tasks) > 9 {
 				for it.memTracker.MaxConsumed() < 500 {
+					time.Sleep(10 * time.Millisecond)
 				}
 			}
 		}
