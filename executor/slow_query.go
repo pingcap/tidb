@@ -167,6 +167,17 @@ func (e *slowQueryRetriever) getNextFile() *os.File {
 	return file
 }
 
+func (e *slowQueryRetriever) getPreviousFile() *os.File {
+	e.fileIdx++
+	if e.fileIdx >= len(e.files) {
+		e.fileIdx--
+		return nil
+	}
+	file := e.files[e.fileIdx].file
+	e.fileIdx--
+	return file
+}
+
 func (e *slowQueryRetriever) parseDataForSlowLog(ctx context.Context, sctx sessionctx.Context) {
 	file := e.getNextFile()
 	if file == nil {
@@ -324,37 +335,53 @@ func (e *slowQueryRetriever) getBatchLogForReversedScan(reader *bufio.Reader, of
 	var logs []slowLogs
 	var log []string
 	var err error
-	reachEndOfSlowLog := false
-	scanNextFile := false
+	reachSlowLogSuffix := false
+	hasStartFlag := false
+	scanPreviousFile := false
 	for {
 		e.fileLine++
 		lineByte, err := getOneLine(reader)
 		if err != nil {
-			if (err == io.EOF || scanNextFile) && reachEndOfSlowLog {
-				offset.length = len(combineLogs(logs))
-				reverse(logs)
-				return combineLogs(logs), nil
-			} else if err == io.EOF && !reachEndOfSlowLog {
-				e.fileLine = 0
-				scanNextFile = true
-				file := e.getNextFile()
-				reader.Reset(file)
-				continue
+			if err == io.EOF {
+				if reachSlowLogSuffix {
+					offset.length = len(combineLogs(logs))
+					reverse(logs)
+					return combineLogs(logs), nil
+				} else {
+					e.fileLine = 0
+					file := e.getPreviousFile()
+					if file == nil {
+						reverse(logs)
+						return combineLogs(logs), nil
+					}
+					reader.Reset(file)
+					scanPreviousFile = true
+					continue
+				}
 			}
 			reverse(logs)
 			return combineLogs(logs), err
 		}
 		line = string(hack.String(lineByte))
 		log = append(log, line)
+		if strings.HasPrefix(line, variable.SlowLogStartPrefixStr) {
+			hasStartFlag = true
+		}
 		if strings.HasSuffix(line, variable.SlowLogSQLSuffixStr) {
 			if strings.HasPrefix(line, "use") || strings.HasPrefix(line, variable.SlowLogRowPrefixStr) {
 				continue
 			}
-			logs = append(logs, slowLogs{log: log})
+			if hasStartFlag {
+				logs = append(logs, slowLogs{log: log})
+			}
+			if scanPreviousFile {
+				break
+			}
 			log = make([]string, 0)
-			reachEndOfSlowLog = true
+			reachSlowLogSuffix = true
+			hasStartFlag = false
 		} else {
-			reachEndOfSlowLog = false
+			reachSlowLogSuffix = false
 		}
 	}
 	reverse(logs)
@@ -393,8 +420,10 @@ func (e *slowQueryRetriever) parseSlowLog(ctx context.Context, sctx sessionctx.C
 		var err error
 		if !desc {
 			log, err = e.getBatchLog(reader, &offset, logNum)
+			fmt.Printf("clog %v\n", log)
 		} else {
 			log, err = e.getBatchLogForReversedScan(reader, &offset)
+			fmt.Printf("dlog %v\n", log)
 		}
 		t := &slowLogTask{}
 		t.result = make(chan parsedSlowLog, 1)
