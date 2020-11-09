@@ -132,7 +132,7 @@ func GetSessionOnlySysVars(s *SessionVars, key string) (string, bool, error) {
 		return val, true, nil
 	case TiDBExpensiveQueryTimeThreshold:
 		return fmt.Sprintf("%d", atomic.LoadUint64(&ExpensiveQueryTimeThreshold)), true, nil
-	case TiDBMemoryQuotaAlarmRatio:
+	case TiDBMemoryUsageAlarmRatio:
 		return fmt.Sprintf("%g", MemoryUsageAlarmRatio.Load()), true, nil
 	case TiDBConfig:
 		conf := config.GetGlobalConfig()

@@ -2214,7 +2214,7 @@ var builtinGlobalVariable = []string{
 	variable.TiDBShardAllocateStep,
 	variable.TiDBEnableChangeColumnType,
 	variable.TiDBEnableAmendPessimisticTxn,
-	variable.TiDBMemoryQuotaAlarmRatio,
+	variable.TiDBMemoryUsageAlarmRatio,
 }
 
 var (

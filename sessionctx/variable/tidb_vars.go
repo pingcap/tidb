@@ -455,8 +455,8 @@ const (
 	// TiDBEnableAmendPessimisticTxn indicates if amend pessimistic transactions is enabled.
 	TiDBEnableAmendPessimisticTxn = "tidb_enable_amend_pessimistic_txn"
 
-	// TiDBMemoryQuotaAlarmRatio indicates the alarm threshold when memory usage of the tidb-server exceeds.
-	TiDBMemoryQuotaAlarmRatio = "tidb_memory_quota_alarm_ratio"
+	// TiDBMemoryUsageAlarmRatio indicates the alarm threshold when memory usage of the tidb-server exceeds.
+	TiDBMemoryUsageAlarmRatio = "tidb_memory_usage_alarm_ratio"
 )
 
 // Default TiDB system variable values.
