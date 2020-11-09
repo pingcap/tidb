@@ -287,7 +287,7 @@ type shuffleWorker struct {
 	executed bool
 
 	// Workers get inputs from dataFetcherThread by `inputCh`,
-	//   and ouput results to main thread by `outputCh`.
+	//   and output results to main thread by `outputCh`.
 	// `inputHolderCh` and `outputHolderCh` are "Chunk Holder" channels of `inputCh` and `outputCh` respectively,
 	//   which give the `*Chunk` back, to implement the data transport in a streaming manner.
 	inputCh        chan *chunk.Chunk
