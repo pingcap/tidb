@@ -208,6 +208,8 @@ func (b *executorBuilder) build(p plannercore.Plan) Executor {
 		return b.buildAnalyze(v)
 	case *plannercore.PhysicalTableReader:
 		return b.buildTableReader(v)
+	case *plannercore.PhysicalTableSample:
+		return b.buildTableSample(v)
 	case *plannercore.PhysicalIndexReader:
 		return b.buildIndexReader(v)
 	case *plannercore.PhysicalIndexLookUpReader:
@@ -2509,11 +2511,6 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 		dagReq.OutputOffsets = append(dagReq.OutputOffsets, uint32(i))
 	}
 
-	if v.SampleInfo != nil && v.SampleInfo.AstNode.SampleMethod == ast.SampleMethodTypeTiDBRegion {
-		e.sampler = NewTableRegionSampler(b.ctx, tbl, startTS, v.SampleInfo.Partitions, e.schema,
-			v.SampleInfo.FullSchema, e.retFieldTypes, e.desc)
-	}
-
 	return e, nil
 }
 
@@ -3904,4 +3901,23 @@ func partitionPruning(ctx sessionctx.Context, tbl table.PartitionedTable, conds 
 
 func fullRangePartition(idxArr []int) bool {
 	return len(idxArr) == 1 && idxArr[0] == plannercore.FullRange
+}
+
+func (b *executorBuilder) buildTableSample(v *plannercore.PhysicalTableSample) *TableSampleExecutor {
+	startTS, err := b.getSnapshotTS()
+	if err != nil {
+		b.err = err
+		return nil
+	}
+	e := &TableSampleExecutor{
+		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
+		table:        v.TableInfo,
+		startTS:      startTS,
+	}
+	if v.TableSampleInfo.AstNode.SampleMethod == ast.SampleMethodTypeTiDBRegion {
+		e.sampler = newTableRegionSampler(
+			b.ctx, v.TableInfo, startTS, v.TableSampleInfo.Partitions, v.Schema(),
+			v.TableSampleInfo.FullSchema, e.retFieldTypes, v.Desc)
+	}
+	return e
 }

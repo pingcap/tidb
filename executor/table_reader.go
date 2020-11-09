@@ -103,7 +103,6 @@ type TableReaderExecutor struct {
 	virtualColumnRetFieldTypes []*types.FieldType
 	// batchCop indicates whether use super batch coprocessor request, only works for TiFlash engine.
 	batchCop bool
-	sampler  RowSampler
 }
 
 // Open initializes necessary variables for using this executor.
@@ -116,9 +115,6 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 
 	e.memTracker = memory.NewTracker(e.id, -1)
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
-	if e.sampler != nil {
-		return nil
-	}
 
 	var err error
 	if e.corColInFilter {
@@ -181,9 +177,6 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 // Next fills data into the chunk passed by its caller.
 // The task was actually done by tableReaderHandler.
 func (e *TableReaderExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
-	if e.sampler != nil {
-		return e.sampler.WriteChunk(req)
-	}
 	logutil.Eventf(ctx, "table scan table: %s, range: %v", stringutil.MemoizeStr(func() string {
 		var tableName string
 		if meta := e.table.Meta(); meta != nil {

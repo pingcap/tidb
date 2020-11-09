@@ -566,6 +566,11 @@ error = '''
 Export failed: %s
 '''
 
+["executor:8128"]
+error = '''
+Invalid TABLESAMPLE: %s
+'''
+
 ["expression:1139"]
 error = '''
 Got error '%-.64s' from regexp
@@ -619,6 +624,11 @@ Invalid argument for logarithm
 ["expression:3064"]
 error = '''
 Incorrect type for argument %s in function %s.
+'''
+
+["expression:8128"]
+error = '''
+Invalid TABLESAMPLE: %s
 '''
 
 ["json:3069"]

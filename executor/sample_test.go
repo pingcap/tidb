@@ -86,22 +86,22 @@ func (s *testTableSampleSuite) TestTableSampleBasic(c *C) {
 
 func (s *testTableSampleSuite) TestTableSampleMultiRegions(c *C) {
 	tk := s.initSampleTest(c)
-	tk.MustExec("create table t (a int) shard_row_id_bits = 4 pre_split_regions = 4;")
+	tk.MustExec("create table t (a int) shard_row_id_bits = 2 pre_split_regions = 2;")
 	for i := 0; i < 100; i++ {
-		tk.MustExec("insert into t values (?)", i)
+		tk.MustExec("insert into t values (?);", i)
 	}
 	rows := tk.MustQuery("select * from t tablesample regions();").Rows()
-	c.Assert(len(rows), Equals, 16)
+	c.Assert(len(rows), Equals, 4)
 	tk.MustQuery("select a from t tablesample regions() order by a limit 1;").Check(testkit.Rows("0"))
 	tk.MustQuery("select a from t tablesample regions() where a = 0;").Check(testkit.Rows("0"))
 
 	tk.MustExec("create table t2 (a int) shard_row_id_bits = 2 pre_split_regions = 2;")
 	for i := 0; i < 100; i++ {
-		tk.MustExec("insert into t2 values (?)", i)
+		tk.MustExec("insert into t2 values (?);", i)
 	}
 	rows = tk.MustQuery("select * from t tablesample regions(), t2 tablesample regions();").Rows()
-	c.Assert(len(rows), Equals, 64)
-	tk.MustQuery("select count(*) from t tablesample regions();").Check(testkit.Rows("16"))
+	c.Assert(len(rows), Equals, 16)
+	tk.MustQuery("select count(*) from t tablesample regions();").Check(testkit.Rows("4"))
 	tk.MustExec("drop table t2;")
 }
 

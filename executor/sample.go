@@ -18,10 +18,12 @@ import (
 	"sort"
 	"time"
 
+	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
+	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table"
@@ -31,11 +33,50 @@ import (
 	decoder "github.com/pingcap/tidb/util/rowDecoder"
 )
 
-type RowSampler interface {
-	WriteChunk(req *chunk.Chunk) error
+var _ Executor = &TableSampleExecutor{}
+
+// TableSampleExecutor fetches a few rows through kv.Scan
+// according to the specific sample method.
+type TableSampleExecutor struct {
+	baseExecutor
+
+	table     table.Table
+	startTS   uint64
+	tablePlan plannercore.PhysicalPlan
+
+	sampler rowSampler
 }
 
-type TableRegionSampler struct {
+// Open initializes necessary variables for using this executor.
+func (e *TableSampleExecutor) Open(ctx context.Context) error {
+	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+		span1 := span.Tracer().StartSpan("TableSampleExecutor.Open", opentracing.ChildOf(span.Context()))
+		defer span1.Finish()
+	}
+	return nil
+}
+
+// Next fills data into the chunk passed by its caller.
+// The task was actually done by sampler.
+func (e *TableSampleExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
+	req.Reset()
+	if e.sampler.finished() {
+		return nil
+	}
+	return e.sampler.writeChunk(req)
+}
+
+// Close implements the Executor Close interface.
+func (e *TableSampleExecutor) Close() error {
+	return nil
+}
+
+type rowSampler interface {
+	writeChunk(req *chunk.Chunk) error
+	finished() bool
+}
+
+type tableRegionSampler struct {
 	ctx        sessionctx.Context
 	table      table.Table
 	startTS    uint64
@@ -44,35 +85,31 @@ type TableRegionSampler struct {
 	fullSchema *expression.Schema
 	isDesc     bool
 
-	retTypes []*types.FieldType
-	rowMap   map[int64]types.Datum
-	finished bool
+	retTypes   []*types.FieldType
+	rowMap     map[int64]types.Datum
+	isFinished bool
 }
 
-func NewTableRegionSampler(ctx sessionctx.Context, t table.Table, startTs uint64, partTables []table.PartitionedTable,
-	schema *expression.Schema, fullSchema *expression.Schema, retTypes []*types.FieldType, desc bool) *TableRegionSampler {
+func newTableRegionSampler(ctx sessionctx.Context, t table.Table, startTs uint64, partTables []table.PartitionedTable,
+	schema *expression.Schema, fullSchema *expression.Schema, retTypes []*types.FieldType, desc bool) *tableRegionSampler {
 	schemaFts := make(map[int64]*types.FieldType, len(schema.Columns))
 	for _, c := range schema.Columns {
 		schemaFts[c.ID] = c.RetType
 	}
-	return &TableRegionSampler{
+	return &tableRegionSampler{
 		ctx:        ctx,
 		table:      t,
 		startTS:    startTs,
 		partTables: partTables,
 		schema:     schema,
 		fullSchema: fullSchema,
-		isDesc: desc,
+		isDesc:     desc,
 		retTypes:   retTypes,
 		rowMap:     make(map[int64]types.Datum),
 	}
 }
 
-func (ts *TableRegionSampler) WriteChunk(req *chunk.Chunk) error {
-	req.Reset()
-	if ts.finished {
-		return nil
-	}
+func (ts *tableRegionSampler) writeChunk(req *chunk.Chunk) error {
 	regionKeyRanges, err := ts.splitTableRanges()
 	if err != nil {
 		return err
@@ -107,11 +144,11 @@ func (ts *TableRegionSampler) WriteChunk(req *chunk.Chunk) error {
 		ts.resetRowMap()
 		return nil
 	})
-	ts.finished = true
+	ts.isFinished = true
 	return err
 }
 
-func (ts *TableRegionSampler) splitTableRanges() ([]kv.KeyRange, error) {
+func (ts *tableRegionSampler) splitTableRanges() ([]kv.KeyRange, error) {
 	if len(ts.partTables) != 0 {
 		var ranges []kv.KeyRange
 		for _, t := range ts.partTables {
@@ -155,7 +192,7 @@ func splitTableRanges(store kv.Storage, startKey, endKey kv.Key) ([]kv.KeyRange,
 	return ranges, nil
 }
 
-func (ts *TableRegionSampler) buildSampleColAndDecodeColMap() ([]*table.Column, map[int64]decoder.Column, error) {
+func (ts *tableRegionSampler) buildSampleColAndDecodeColMap() ([]*table.Column, map[int64]decoder.Column, error) {
 	schema := ts.schema
 	cols := make([]*table.Column, 0, len(schema.Columns))
 	colMap := make(map[int64]decoder.Column, len(schema.Columns))
@@ -192,7 +229,7 @@ func (ts *TableRegionSampler) buildSampleColAndDecodeColMap() ([]*table.Column, 
 	return cols, colMap, nil
 }
 
-func (ts *TableRegionSampler) scanFirstKVForEachRange(
+func (ts *tableRegionSampler) scanFirstKVForEachRange(
 	ranges []kv.KeyRange, fn func(handle kv.Handle, value []byte) error) error {
 	ver := kv.Version{Ver: ts.startTS}
 	snap := ts.ctx.GetStore().GetSnapshot(ver)
@@ -224,7 +261,7 @@ func (ts *TableRegionSampler) scanFirstKVForEachRange(
 	return nil
 }
 
-func (ts *TableRegionSampler) resetRowMap() {
+func (ts *tableRegionSampler) resetRowMap() {
 	if ts.rowMap == nil {
 		colLen := len(ts.schema.Columns)
 		ts.rowMap = make(map[int64]types.Datum, colLen)
@@ -233,4 +270,8 @@ func (ts *TableRegionSampler) resetRowMap() {
 	for id := range ts.rowMap {
 		delete(ts.rowMap, id)
 	}
+}
+
+func (ts *tableRegionSampler) finished() bool {
+	return ts.isFinished
 }

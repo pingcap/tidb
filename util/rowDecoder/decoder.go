@@ -171,6 +171,8 @@ func BuildFullDecodeColMap(cols []*table.Column, schema *expression.Schema) map[
 	return decodeColMap
 }
 
+// CurrentRowWithDefaultVal returns current decoding row with default column values set properly.
+// Please make sure calling DecodeAndEvalRowWithMap first.
 func (rd *RowDecoder) CurrentRowWithDefaultVal() chunk.Row {
 	return rd.mutRow.ToRow()
 }
