@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	ast "github.com/pingcap/parser/types"
 	"github.com/pingcap/tidb/types/json"
+	"github.com/pingcap/tidb/util/collate"
 	utilMath "github.com/pingcap/tidb/util/math"
 )
 
@@ -1266,3 +1267,9 @@ func SetBinChsClnFlag(ft *FieldType) {
 
 // VarStorageLen indicates this column is a variable length column.
 const VarStorageLen = ast.VarStorageLen
+
+func CommonHandleNeedRestoredData(ft *FieldType) bool {
+	return collate.NewCollationEnabled() &&
+		ft.EvalType() == ETString &&
+		!mysql.HasBinaryFlag(ft.Flag)
+}
