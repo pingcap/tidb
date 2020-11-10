@@ -1145,5 +1145,4 @@ func BenchmarkBatchAppendRows(b *testing.B) {
 		chk.Reset()
 		chk.AppendRows(rows)
 	}
-
 }
