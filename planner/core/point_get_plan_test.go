@@ -497,23 +497,10 @@ func (s *testPointGetSuite) TestIssue20692(c *C) {
 	tk3.MustExec("begin pessimistic;")
 	tk3.MustExec("use test")
 	tk1.MustExec("delete from t where id = 1 and v = 1 and vv = 1;")
-	var stop1 sync.WaitGroup
-	stop1.Add(1)
-	go func() {
-		tk2.MustExec("insert into t values(1, 2, 3, 4);")
-		stop1.Done()
-	}()
-	time.Sleep(50 * time.Millisecond)
-	var stop2 sync.WaitGroup
-	stop2.Add(1)
-	go func() {
-		tk3.MustExec("update t set id = 10, v = 20, vv = 30, vvv = 40 where id = 1 and v = 2 and vv = 3;")
-		stop2.Done()
-	}()
+	tk2.MustExec("insert into t values(1, 2, 3, 4);")
+	tk3.MustExec("update t set id = 10, v = 20, vv = 30, vvv = 40 where id = 1 and v = 2 and vv = 3;")
 	tk1.MustExec("commit;")
-	stop1.Wait()
 	tk2.MustExec("commit;")
-	stop2.Wait()
 	tk3.MustExec("commit;")
 	tk3.MustQuery("select * from t;").Check(testkit.Rows("10 20 30 40"))
 }
