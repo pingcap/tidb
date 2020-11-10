@@ -77,11 +77,11 @@ func handleCopDAGRequest(dbReader *dbreader.DBReader, lockStore *lockstore.MemSt
 					resp.CanBeCached = true
 					resp.CacheLastVersion = uint64(cacheVersion.(int))
 					if resp.ExecDetails == nil {
-						resp.ExecDetails = &kvrpcpb.ExecDetails{HandleTime: &kvrpcpb.HandleTime{ProcessMs: 500}}
-					} else if resp.ExecDetails.HandleTime == nil {
-						resp.ExecDetails.HandleTime = &kvrpcpb.HandleTime{ProcessMs: 500}
+						resp.ExecDetails = &kvrpcpb.ExecDetails{TimeDetail: &kvrpcpb.TimeDetail{ProcessWallTimeMs: 500}}
+					} else if resp.ExecDetails.TimeDetail == nil {
+						resp.ExecDetails.TimeDetail = &kvrpcpb.TimeDetail{ProcessWallTimeMs: 500}
 					} else {
-						resp.ExecDetails.HandleTime.ProcessMs = 500
+						resp.ExecDetails.TimeDetail.ProcessWallTimeMs = 500
 					}
 				}()
 			}
@@ -348,7 +348,10 @@ func buildResp(chunks []tipb.Chunk, closureExecutor *closureExecutor, dagReq *ti
 		}
 	}
 	resp.ExecDetails = &kvrpcpb.ExecDetails{
-		HandleTime: &kvrpcpb.HandleTime{ProcessMs: int64(dur / time.Millisecond)},
+		TimeDetail: &kvrpcpb.TimeDetail{ProcessWallTimeMs: int64(dur / time.Millisecond)},
+	}
+	resp.ExecDetailsV2 = &kvrpcpb.ExecDetailsV2{
+		TimeDetail: resp.ExecDetails.TimeDetail,
 	}
 	data, err := proto.Marshal(selResp)
 	if err != nil {

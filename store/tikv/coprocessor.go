@@ -844,8 +844,8 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 		IsolationLevel: pbIsolationLevel(worker.req.IsolationLevel),
 		Priority:       kvPriorityToCommandPri(worker.req.Priority),
 		NotFillCache:   worker.req.NotFillCache,
-		HandleTime:     true,
-		ScanDetail:     true,
+		RecordTimeStat: true,
+		RecordScanStat: true,
 		TaskId:         worker.req.TaskID,
 	})
 	req.StoreTp = task.storeType
@@ -970,43 +970,38 @@ func (worker *copIteratorWorker) logTimeCopTask(costTime time.Duration, task *co
 		backoffTypes := strings.Replace(fmt.Sprintf("%v", bo.types), " ", ",", -1)
 		logStr += fmt.Sprintf(" backoff_ms:%d backoff_types:%s", bo.totalSleep, backoffTypes)
 	}
-	var detail *kvrpcpb.ExecDetails
+	var detail *kvrpcpb.ExecDetailsV2
 	if resp.Resp != nil {
 		switch r := resp.Resp.(type) {
 		case *coprocessor.Response:
-			detail = r.ExecDetails
+			detail = r.ExecDetailsV2
 		case *tikvrpc.CopStreamResponse:
 			// streaming request returns io.EOF, so the first CopStreamResponse.Response maybe nil.
 			if r.Response != nil {
-				detail = r.Response.ExecDetails
+				detail = r.Response.ExecDetailsV2
 			}
 		default:
 			panic("unreachable")
 		}
 	}
 
-	if detail != nil && detail.HandleTime != nil {
-		processMs := detail.HandleTime.ProcessMs
-		waitMs := detail.HandleTime.WaitMs
+	if detail != nil && detail.TimeDetail != nil {
+		processMs := detail.TimeDetail.ProcessWallTimeMs
+		waitMs := detail.TimeDetail.WaitWallTimeMs
 		if processMs > minLogKVProcessTime {
-			logStr += fmt.Sprintf(" kv_process_ms:%d", processMs)
-			if detail.ScanDetail != nil {
-				logStr = appendScanDetail(logStr, "write", detail.ScanDetail.Write)
-				logStr = appendScanDetail(logStr, "data", detail.ScanDetail.Data)
-				logStr = appendScanDetail(logStr, "lock", detail.ScanDetail.Lock)
-			}
+			logStr += fmt.Sprintf(" kv_process_ms: %d", processMs)
 			if detail.ScanDetailV2 != nil {
-				logStr += fmt.Sprintf(" processed versions: %d", detail.ScanDetailV2.ProcessedVersions)
-				logStr += fmt.Sprintf(" total versions: %d", detail.ScanDetailV2.TotalVersions)
-				logStr += fmt.Sprintf(" delete skipped count: %d", detail.ScanDetailV2.RocksdbDeleteSkippedCount)
-				logStr += fmt.Sprintf(" key skipped count: %d", detail.ScanDetailV2.RocksdbKeySkippedCount)
-				logStr += fmt.Sprintf(" cache hit count: %d", detail.ScanDetailV2.RocksdbBlockCacheHitCount)
-				logStr += fmt.Sprintf(" read count: %d", detail.ScanDetailV2.RocksdbBlockReadCount)
-				logStr += fmt.Sprintf(" read byte: %d", detail.ScanDetailV2.RocksdbBlockReadByte)
+				logStr += fmt.Sprintf(" rocksdb_processed_versions: %d", detail.ScanDetailV2.ProcessedVersions)
+				logStr += fmt.Sprintf(" rocksdb_total_versions: %d", detail.ScanDetailV2.TotalVersions)
+				logStr += fmt.Sprintf(" rocksdb_delete_skipped_count: %d", detail.ScanDetailV2.RocksdbDeleteSkippedCount)
+				logStr += fmt.Sprintf(" rocksdb_key_skipped_count: %d", detail.ScanDetailV2.RocksdbKeySkippedCount)
+				logStr += fmt.Sprintf(" rocksdb_cache_hit_count: %d", detail.ScanDetailV2.RocksdbBlockCacheHitCount)
+				logStr += fmt.Sprintf(" rocksdb_read_count: %d", detail.ScanDetailV2.RocksdbBlockReadCount)
+				logStr += fmt.Sprintf(" rocksdb_read_byte: %d", detail.ScanDetailV2.RocksdbBlockReadByte)
 			}
 		}
 		if waitMs > minLogKVWaitTime {
-			logStr += fmt.Sprintf(" kv_wait_ms:%d", waitMs)
+			logStr += fmt.Sprintf(" kv_wait_ms: %d", waitMs)
 			if processMs <= minLogKVProcessTime {
 				logStr = strings.Replace(logStr, "TIME_COP_PROCESS", "TIME_COP_WAIT", 1)
 			}
@@ -1126,10 +1121,10 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *RPCCon
 		resp.detail.CalleeAddress = rpcCtx.Addr
 	}
 	resp.respTime = costTime
-	if pbDetails := resp.pbResp.ExecDetails; pbDetails != nil {
-		if handleTime := pbDetails.HandleTime; handleTime != nil {
-			resp.detail.WaitTime = time.Duration(handleTime.WaitMs) * time.Millisecond
-			resp.detail.ProcessTime = time.Duration(handleTime.ProcessMs) * time.Millisecond
+	if pbDetails := resp.pbResp.ExecDetailsV2; pbDetails != nil {
+		if timeDetail := pbDetails.TimeDetail; timeDetail != nil {
+			resp.detail.WaitTime = time.Duration(timeDetail.WaitWallTimeMs) * time.Millisecond
+			resp.detail.ProcessTime = time.Duration(timeDetail.ProcessWallTimeMs) * time.Millisecond
 		}
 		if scanDetailV2 := pbDetails.ScanDetailV2; scanDetailV2 != nil {
 			copDetail := &execdetails.CopDetails{
@@ -1142,13 +1137,6 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *RPCCon
 				RocksdbBlockReadByte:      scanDetailV2.RocksdbBlockReadByte,
 			}
 			resp.detail.CopDetail = copDetail
-		} else if scanDetail := pbDetails.ScanDetail; scanDetail != nil {
-			if scanDetail.Write != nil {
-				resp.detail.CopDetail = &execdetails.CopDetails{
-					ProcessedKeys: scanDetail.Write.Processed,
-					TotalKeys:     scanDetail.Write.Total,
-				}
-			}
 		}
 	}
 	if resp.pbResp.IsCacheHit {
