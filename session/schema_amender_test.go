@@ -51,8 +51,11 @@ func initTblColIdxID(metaInfo *model.TableInfo) {
 	}
 	for i, idx := range metaInfo.Indices {
 		idx.ID = int64(i + 1)
-		// TODO unique index is not supported now.
-		idx.Unique = false
+		if idx.Name.L == "f_g" {
+			idx.Unique = true
+		} else {
+			idx.Unique = false
+		}
 	}
 	metaInfo.ID = 1
 	metaInfo.State = model.StatePublic
@@ -83,8 +86,10 @@ type data struct {
 	rowValue [][]types.Datum
 }
 
+// Generate exist old data and new data in transaction to be amended. Also generate the expected amend mutations
+// according to the old and new data and the full generated expected mutations.
 func prepareTestData(se *session, mutations *tikv.CommitterMutations, oldTblInfo table.Table, newTblInfo table.Table,
-	expecetedAmendOps []amendOp, c *C) (*data, *data, tikv.CommitterMutations) {
+	expectedAmendOps []amendOp, c *C) (*data, *data, tikv.CommitterMutations) {
 	var err error
 	// Generated test data.
 	colIds := make([]int64, len(oldTblInfo.Meta().Columns))
@@ -143,6 +148,8 @@ func prepareTestData(se *session, mutations *tikv.CommitterMutations, oldTblInfo
 		thisRowValue[0] = types.NewIntDatum(int64(i + 1))
 		// New column e value should be different from old row values.
 		thisRowValue[4] = types.NewIntDatum(int64(i+1+4) * 20)
+		// New column f value should be different since it has a related unique index.
+		thisRowValue[8] = types.NewIntDatum(int64(i+1+4) * 20)
 
 		var rowValue []byte
 		// Save new data.
@@ -165,7 +172,7 @@ func prepareTestData(se *session, mutations *tikv.CommitterMutations, oldTblInfo
 	}
 
 	// Prepare expected results.
-	for _, op := range expecetedAmendOps {
+	for _, op := range expectedAmendOps {
 		var oldOp *amendOperationDeleteOldIndex
 		var newOp *amendOperationAddNewIndex
 		var info *amendOperationAddIndexInfo
@@ -212,10 +219,12 @@ func prepareTestData(se *session, mutations *tikv.CommitterMutations, oldTblInfo
 					idxKey, idxVal := genIndexKV(thisRowValue)
 					c.Assert(err, IsNil)
 					mutOp := kvrpcpb.Op_Put
+					isPessimisticLock := false
 					if info.indexInfoAtCommit.Meta().Unique {
 						mutOp = kvrpcpb.Op_Insert
+						isPessimisticLock = true
 					}
-					expecteMutations.Push(mutOp, idxKey, idxVal, false)
+					expecteMutations.Push(mutOp, idxKey, idxVal, isPessimisticLock)
 				}
 			}
 		}
@@ -252,6 +261,7 @@ func (s *testSchemaAmenderSuite) TestAmendCollectAndGenMutations(c *C) {
 			c.Assert(err, IsNil)
 			oldTblMeta.Indices[0].State = startState
 			oldTblMeta.Indices[2].State = endState
+			oldTblMeta.Indices[3].State = startState
 
 			newTblMeta := core.MockSignedTable()
 			initTblColIdxID(newTblMeta)
@@ -274,6 +284,8 @@ func (s *testSchemaAmenderSuite) TestAmendCollectAndGenMutations(c *C) {
 			newTblMeta.Indices[1].State = endState
 			// Indices[3] is dropped
 			newTblMeta.Indices[3].State = startState
+			// Indices[4] is newly created unique index.
+			newTblMeta.Indices[4].State = endState
 
 			// Only the add index amend operations is collected in the results.
 			collector := newAmendCollector()
@@ -322,6 +334,28 @@ func (s *testSchemaAmenderSuite) TestAmendCollectAndGenMutations(c *C) {
 					info: addIndexOpInfo1,
 				})
 			}
+
+			// For index 3.
+			addIndexOpInfo2 := &amendOperationAddIndexInfo{
+				AmendOpType:       ConstOpAddIndex[startState][endState],
+				tblInfoAtStart:    oldTbInfo,
+				tblInfoAtCommit:   newTblInfo,
+				indexInfoAtStart:  oldTbInfo.Indices()[3],
+				indexInfoAtCommit: newTblInfo.Indices()[4],
+				relatedOldIdxCols: []*table.Column{oldTbInfo.Cols()[8], oldTbInfo.Cols()[9]},
+			}
+			if addIndexNeedRemoveOp(addIndexOpInfo1.AmendOpType) {
+				expectedAmendOps = append(expectedAmendOps, &amendOperationDeleteOldIndex{
+					info: addIndexOpInfo2,
+				})
+			}
+			if addIndexNeedAddOp(addIndexOpInfo1.AmendOpType) {
+				expectedAmendOps = append(expectedAmendOps, &amendOperationAddNewIndex{
+					info:                  addIndexOpInfo2,
+					processedNewIndexKeys: make(map[string]struct{}),
+				})
+			}
+
 			// Check collect results.
 			for i, amendOp := range collector.tblAmendOpMap[tblID] {
 				oldOp, ok := amendOp.(*amendOperationDeleteOldIndex)
@@ -346,7 +380,7 @@ func (s *testSchemaAmenderSuite) TestAmendCollectAndGenMutations(c *C) {
 				c.Assert(info.indexInfoAtStart, Equals, expectedInfo.indexInfoAtStart)
 				c.Assert(info.indexInfoAtCommit, Equals, expectedInfo.indexInfoAtCommit)
 				for j, col := range expectedInfo.relatedOldIdxCols {
-					c.Assert(col, Equals, expectedInfo.relatedOldIdxCols[j])
+					c.Assert(col, Equals, info.relatedOldIdxCols[j])
 				}
 			}
 			// Generated test data.
@@ -400,7 +434,7 @@ func (s *testSchemaAmenderSuite) TestAmendCollectAndGenMutations(c *C) {
 			// Some noisy index key values.
 			for i := 0; i < 4; i++ {
 				idxValue := []byte("idxValue")
-				idxKey := tablecodec.EncodeIndexSeekKey(oldTbInfo.Meta().ID, oldTbInfo.Indices()[2].Meta().ID, idxValue)
+				idxKey := tablecodec.EncodeIndexSeekKey(oldTbInfo.Meta().ID, oldTbInfo.Indices()[i].Meta().ID, idxValue)
 				err = txn.Set(idxKey, idxValue)
 				c.Assert(err, IsNil)
 				mutations.Push(kvrpcpb.Op_Put, idxKey, idxValue, false)
