@@ -324,6 +324,7 @@ func (a *amendOperationAddIndex) genMutations(ctx context.Context, sctx sessionc
 	kvMap *rowKvMap, resAddMutations *tikv.CommitterMutations) error {
 	newIdxMutation := &tikv.CommitterMutations{}
 	oldIdxMutation := &tikv.CommitterMutations{}
+	processedMutations := tikv.NewCommiterMutations(32)
 	for i, key := range commitMutations.GetKeys() {
 		if tablecodec.IsIndexKey(key) || tablecodec.DecodeTableID(key) != a.info.tblInfoAtCommit.Meta().ID {
 			continue
@@ -359,12 +360,33 @@ func (a *amendOperationAddIndex) genMutations(ctx context.Context, sctx sessionc
 		}
 		if !skipMerge {
 			if len(oldIdxMutation.GetKeys()) > 0 {
-				resAddMutations.MergeMutations(*oldIdxMutation)
+				processedMutations.MergeMutations(*oldIdxMutation)
 			}
 			if len(newIdxMutation.GetKeys()) > 0 {
-				resAddMutations.MergeMutations(*newIdxMutation)
+				processedMutations.MergeMutations(*newIdxMutation)
 			}
 		}
+	}
+	// For unique index, there may be conflicts on the same unique index key from different rows.Consider a update statement,
+	// "Op_Del" on row_key = 3, row_val = 4, the "Op_Del"     unique_key_4 -> nil will be generated.
+	// "Op_Put" on row_key = 0, row_val = 4, the "Op_Insert"  unique_key_4 -> 0   will be generated.
+	// The "Op_Insert" should cover the "Op_Del" otherwise the new put row value will not have a correspond index value.
+	if a.info.indexInfoAtCommit.Meta().Unique {
+		for i := 0; i < len(processedMutations.GetKeys()); i++ {
+			key := processedMutations.GetKeys()[i]
+			keyOp := processedMutations.GetOps()[i]
+			shouldSkip := false
+			if keyOp == pb.Op_Del {
+				if _, ok := a.processedNewIndexKeys[string(key)]; ok {
+					shouldSkip = true
+				}
+			}
+			if !shouldSkip {
+				resAddMutations.Push(keyOp, key, processedMutations.GetValues()[i], processedMutations.GetPessimisticFlags()[i])
+			}
+		}
+	} else {
+		resAddMutations.MergeMutations(processedMutations)
 	}
 	return nil
 }
@@ -556,6 +578,19 @@ func (s *SchemaAmender) genAllAmendMutations(ctx context.Context, commitMutation
 				return nil, err
 			}
 		}
+	}
+	// Check if there are duplicate key entries.
+	checkMap := make(map[string]pb.Op)
+	for i := 0; i < len(resultNewMutations.GetKeys()); i++ {
+		key := resultNewMutations.GetKeys()[i]
+		if foundOp, ok := checkMap[string(key)]; ok {
+			logutil.Logger(ctx).Error("duplicate key found in amend result mutations",
+				zap.Stringer("key", kv.Key(key)), zap.Stringer("foundKeyOp", foundOp),
+				zap.Stringer("thisKeyOp", resultNewMutations.GetOps()[i]),
+				zap.Stringer("thisKeyValue", kv.Key(resultNewMutations.GetValues()[i])))
+			return nil, errors.Trace(errors.Errorf("duplicate key=%s is found result mutations", kv.Key(key).String()))
+		}
+		checkMap[string(key)] = resultNewMutations.GetOps()[i]
 	}
 	return &resultNewMutations, nil
 }

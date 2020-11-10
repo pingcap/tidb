@@ -1773,4 +1773,17 @@ func (s *testPessimisticSuite) TestAmendForUniqueIndex(c *C) {
 	err = tk.ExecToErr("commit")
 	c.Assert(err, NotNil)
 	tk2.MustExec("admin check table t")
+
+	// Update the old value with same unique key, but the row key has changed.
+	tk2.MustExec("drop table if exists t;")
+	tk2.MustExec("create table t (id int auto_increment primary key, c int);")
+	tk2.MustExec("insert into t (id, c) values (1, 2), (3, 4);")
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("insert into t values (3, 2) on duplicate key update id = values(id) and c = values(c)")
+	go func() {
+		tk2.MustExec("alter table t add unique index uk(c);")
+	}()
+	time.Sleep(100 * time.Millisecond)
+	tk.MustExec("commit")
+	tk2.MustExec("admin check table t")
 }

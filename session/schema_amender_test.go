@@ -124,6 +124,8 @@ func prepareTestData(se *session, mutations *tikv.CommitterMutations, oldTblInfo
 		copy(thisRowValue, basicRowValue)
 		thisRowValue[0] = types.NewIntDatum(int64(i + 1))
 		thisRowValue[4] = types.NewIntDatum(int64(i + 1 + 4))
+		// f_g has a unique index.
+		thisRowValue[8] = types.NewIntDatum(int64(i + 1 + 8))
 
 		// Save old data, they will be put into db first.
 		rowKey := tablecodec.EncodeRowKeyWithHandle(oldTblInfo.Meta().ID, int64(i+1))
