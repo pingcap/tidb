@@ -244,6 +244,7 @@ import (
 	starting          "STARTING"
 	straightJoin      "STRAIGHT_JOIN"
 	tableKwd          "TABLE"
+	tableSample       "TABLESAMPLE"
 	stored            "STORED"
 	terminated        "TERMINATED"
 	then              "THEN"
@@ -303,6 +304,7 @@ import (
 	backup                "BACKUP"
 	backups               "BACKUPS"
 	begin                 "BEGIN"
+	bernoulli             "BERNOULLI"
 	binding               "BINDING"
 	bindings              "BINDINGS"
 	binlog                "BINLOG"
@@ -472,6 +474,7 @@ import (
 	partitioning          "PARTITIONING"
 	partitions            "PARTITIONS"
 	password              "PASSWORD"
+	percent               "PERCENT"
 	per_db                "PER_DB"
 	per_table             "PER_TABLE"
 	pipesAsOr
@@ -561,6 +564,7 @@ import (
 	super                 "SUPER"
 	swaps                 "SWAPS"
 	switchesSym           "SWITCHES"
+	system                "SYSTEM"
 	systemTime            "SYSTEM_TIME"
 	tableChecksum         "TABLE_CHECKSUM"
 	tables                "TABLES"
@@ -783,6 +787,7 @@ import (
 	NextValueForSequence   "Default nextval expression"
 	FunctionNameSequence   "Function with sequence function call"
 	WindowFuncCall         "WINDOW function call"
+	RepeatableOpt          "Repeatable optional in sample clause"
 	ProcedureCall          "Procedure call with Identifier or identifier"
 
 %type	<statement>
@@ -1098,6 +1103,9 @@ import (
 	TableOptionList                        "create table option list"
 	TableRef                               "table reference"
 	TableRefs                              "table references"
+	TableSampleOpt                         "table sample clause optional"
+	TableSampleMethodOpt                   "table sample method optional"
+	TableSampleUnitOpt                     "table sample unit optional"
 	TableToTable                           "rename table to table"
 	TableToTableList                       "rename table to table by list"
 	TextStringList                         "text string list"
@@ -5423,6 +5431,9 @@ UnReservedKeyword:
 |	"REPLICAS"
 |	"POLICY"
 |	"WAIT"
+|	"BERNOULLI"
+|	"SYSTEM"
+|	"PERCENT"
 
 TiDBKeyword:
 	"ADMIN"
@@ -7355,6 +7366,78 @@ SelectStmtFromTable:
 		$$ = st
 	}
 
+TableSampleOpt:
+	%prec empty
+	{
+		$$ = nil
+	}
+|	"TABLESAMPLE" TableSampleMethodOpt '(' Expression TableSampleUnitOpt ')' RepeatableOpt
+	{
+		var repSeed ast.ExprNode
+		if $7 != nil {
+			repSeed = ast.NewValueExpr($7, parser.charset, parser.collation)
+		}
+		$$ = &ast.TableSample{
+			SampleMethod:     $2.(ast.SampleMethodType),
+			Expr:             ast.NewValueExpr($4, parser.charset, parser.collation),
+			SampleClauseUnit: $5.(ast.SampleClauseUnitType),
+			RepeatableSeed:   repSeed,
+		}
+	}
+|	"TABLESAMPLE" TableSampleMethodOpt '(' ')' RepeatableOpt
+	{
+		var repSeed ast.ExprNode
+		if $5 != nil {
+			repSeed = ast.NewValueExpr($5, parser.charset, parser.collation)
+		}
+		$$ = &ast.TableSample{
+			SampleMethod:   $2.(ast.SampleMethodType),
+			RepeatableSeed: repSeed,
+		}
+	}
+
+TableSampleMethodOpt:
+	%prec empty
+	{
+		$$ = ast.SampleMethodTypeNone
+	}
+|	"SYSTEM"
+	{
+		$$ = ast.SampleMethodTypeSystem
+	}
+|	"BERNOULLI"
+	{
+		$$ = ast.SampleMethodTypeBernoulli
+	}
+|	"REGIONS"
+	{
+		$$ = ast.SampleMethodTypeTiDBRegion
+	}
+
+TableSampleUnitOpt:
+	%prec empty
+	{
+		$$ = ast.SampleClauseUnitTypeDefault
+	}
+|	"ROWS"
+	{
+		$$ = ast.SampleClauseUnitTypeRow
+	}
+|	"PERCENT"
+	{
+		$$ = ast.SampleClauseUnitTypePercent
+	}
+
+RepeatableOpt:
+	%prec empty
+	{
+		$$ = nil
+	}
+|	"REPEATABLE" '(' Expression ')'
+	{
+		$$ = $3
+	}
+
 SelectStmt:
 	SelectStmtBasic OrderByOptional SelectStmtLimitOpt SelectLockOpt SelectStmtIntoOption
 	{
@@ -7805,11 +7888,14 @@ TableRef:
 |	JoinTable
 
 TableFactor:
-	TableName PartitionNameListOpt TableAsNameOpt IndexHintListOpt
+	TableName PartitionNameListOpt TableAsNameOpt IndexHintListOpt TableSampleOpt
 	{
 		tn := $1.(*ast.TableName)
 		tn.PartitionNames = $2.([]model.CIStr)
 		tn.IndexHints = $4.([]*ast.IndexHint)
+		if $5 != nil {
+			tn.TableSample = $5.(*ast.TableSample)
+		}
 		$$ = &ast.TableSource{Source: tn, AsName: $3.(model.CIStr)}
 	}
 |	'(' SetOprStmt1 ')' TableAsNameOpt
