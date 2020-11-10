@@ -1152,14 +1152,14 @@ func BenchmarkAppendRows(b *testing.B) {
 			}
 		})
 		b.ResetTimer()
+		rows := make([]Row, conf.batchSize)
+		for i := 0; i < conf.batchSize; i++ {
+			rows[i] = rowChk.GetRow(i)
+
+		}
 		b.Run(fmt.Sprintf("column-%d", conf.batchSize), func(b *testing.B) {
 			for i := 0; i < b.N; i++ {
 				chk.Reset()
-				rows := make([]Row, conf.batchSize)
-				for i := 0; i < conf.batchSize; i++ {
-					rows[i] = rowChk.GetRow(i)
-
-				}
 				chk.AppendRows(rows)
 			}
 		})
