@@ -712,6 +712,9 @@ func (c *Chunk) AppendRows(rows []Row) {
 	if rows == nil {
 		return
 	}
+	if len(c.columns) != len(rows[0].c.columns) {
+		return
+	}
 	c.AppendPartialRows(0, rows)
 	c.numVirtualRows += len(rows)
 
