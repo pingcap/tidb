@@ -505,8 +505,10 @@ func (c *Chunk) Append(other *Chunk, begin, end int) {
 		} else {
 			beginOffset, endOffset := src.offsets[begin], src.offsets[end]
 			dst.data = append(dst.data, src.data[beginOffset:endOffset]...)
+			lastOffset := dst.offsets[len(dst.offsets)-1]
 			for i := begin; i < end; i++ {
-				dst.offsets = append(dst.offsets, dst.offsets[len(dst.offsets)-1]+src.offsets[i+1]-src.offsets[i])
+				lastOffset += src.offsets[i+1] - src.offsets[i]
+				dst.offsets = append(dst.offsets, lastOffset)
 			}
 		}
 		for i := begin; i < end; i++ {
