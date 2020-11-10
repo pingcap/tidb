@@ -803,6 +803,7 @@ func (s *testClusterTableSuite) TestSelectClusterTable(c *C) {
 		tk.MustExec("use information_schema")
 		tk.MustExec(fmt.Sprintf("set @@tidb_enable_streaming=%d", i))
 		tk.MustExec("set @@global.tidb_enable_stmt_summary=1")
+		tk.MustExec("set time_zone = '+08:00';")
 		tk.MustQuery("select count(*) from `CLUSTER_SLOW_QUERY`").Check(testkit.Rows("1"))
 		tk.MustQuery("select time from `CLUSTER_SLOW_QUERY` where time='2019-02-12 19:33:56.571953'").Check(testutil.RowsWithSep("|", "2019-02-12 19:33:56.571953"))
 		tk.MustQuery("select count(*) from `CLUSTER_PROCESSLIST`").Check(testkit.Rows("1"))
