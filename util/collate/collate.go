@@ -35,7 +35,7 @@ var (
 	binCollatorInstance = &binCollator{}
 
 	// ErrUnsupportedCollation is returned when an unsupported collation is specified.
-	ErrUnsupportedCollation = dbterror.ClassDDL.NewStdErr(mysql.ErrUnknownCollation, mysql.Message("Unsupported collation when new collation is enabled: '%-.64s'", nil), "", "")
+	ErrUnsupportedCollation = dbterror.ClassDDL.NewStdErr(mysql.ErrUnknownCollation, mysql.Message("Unsupported collation when new collation is enabled: '%-.64s'", nil))
 	// ErrIllegalMixCollation is returned when illegal mix of collations.
 	ErrIllegalMixCollation = dbterror.ClassExpression.NewStd(mysql.ErrCantAggregate2collations)
 )
