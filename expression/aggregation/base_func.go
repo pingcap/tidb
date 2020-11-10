@@ -209,18 +209,7 @@ func (a *baseFuncDesc) typeInfer4Sum(ctx sessionctx.Context) {
 // Because child returns integer or decimal type.
 func (a *baseFuncDesc) typeInfer4Avg(ctx sessionctx.Context) {
 	switch a.Args[0].GetType().Tp {
-	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeYear:
-		a.RetTp = types.NewFieldType(mysql.TypeNewDecimal)
-		if a.Args[0].GetType().Decimal < 0 {
-			a.RetTp.Decimal = mysql.MaxDecimalScale
-		} else {
-			a.RetTp.Decimal = mathutil.Min(a.Args[0].GetType().Decimal+types.DivFracIncr, mysql.MaxDecimalScale)
-		}
-		a.RetTp.Flen = utils.MinInt(mysql.MaxDecimalWidth, a.Args[0].GetType().Flen+3)
-		if a.Args[0].GetType().Flen < 0 {
-			a.RetTp.Flen = mysql.MaxDecimalWidth
-		}
-	case mysql.TypeNewDecimal:
+	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeYear, mysql.TypeNewDecimal:
 		a.RetTp = types.NewFieldType(mysql.TypeNewDecimal)
 		if a.Args[0].GetType().Decimal < 0 {
 			a.RetTp.Decimal = mysql.MaxDecimalScale
