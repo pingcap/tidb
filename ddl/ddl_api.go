@@ -3404,6 +3404,17 @@ func checkModifyCharsetAndCollation(toCharset, toCollate, origCharset, origColla
 	return nil
 }
 
+// checkConvertedBlobFlenSame is used for situation where the new Flen is less than the old one
+// but will be same after db automatically converts the Flen
+func checkConvertedBlobFlenSame(originFlen int, toFlen int) bool {
+	if (toFlen <= tinyBlobMaxLength && originFlen > tinyBlobMaxLength) ||
+		(toFlen <= blobMaxLength && originFlen > blobMaxLength) ||
+		(toFlen <= mediumBlobMaxLength && originFlen > mediumBlobMaxLength) {
+		return false
+	}
+	return true
+}
+
 // CheckModifyTypeCompatible checks whether changes column type to another is compatible considering
 // field length and precision.
 func CheckModifyTypeCompatible(origin *types.FieldType, to *types.FieldType) (allowedChangeColumnValueMsg string, err error) {
@@ -3549,7 +3560,9 @@ func CheckModifyTypeCompatible(origin *types.FieldType, to *types.FieldType) (al
 		}
 	}
 
-	if to.Flen > 0 && to.Flen < origin.Flen {
+	if to.Flen > 0 && to.Flen < origin.Flen &&
+		!(to.Tp == mysql.TypeBlob &&
+			checkConvertedBlobFlenSame(origin.Flen, to.Flen)) {
 		msg := fmt.Sprintf("length %d is less than origin %d", to.Flen, origin.Flen)
 		if skipLenCheck {
 			return msg, errUnsupportedModifyColumn.GenWithStackByArgs(msg)
