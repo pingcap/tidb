@@ -356,7 +356,7 @@ func (s *testIntegrationSuite2) TestCreateTableWithHashPartition(c *C) {
 	tk.MustExec("create table t2 (a date, b datetime) partition by hash (EXTRACT(YEAR_MONTH FROM a)) partitions 7")
 }
 
-func (s *testIntegrationSuite1) TestCreateTableWithRangeColumnPartition(c *C) {
+func (s *testIntegrationSuite7) TestCreateTableWithRangeColumnPartition(c *C) {
 	collate.SetNewCollationEnabledForTest(true)
 	defer collate.SetNewCollationEnabledForTest(false)
 	tk := testkit.NewTestKit(c, s.store)

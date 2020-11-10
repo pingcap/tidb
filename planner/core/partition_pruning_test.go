@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/tidb/util/mock"
 )
 
-var _ = Suite(&testPartitionPruningSuite{})
+var _ = SerialSuites(&testPartitionPruningSuite{})
 
 type testPartitionPruningSuite struct {
 	partitionProcessor
