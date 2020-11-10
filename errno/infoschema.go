@@ -22,7 +22,6 @@ import (
 // It is not expected to be hot unless there are concurrent workloads
 // that are generating high error/warning counts, in which case
 // the system probably has other issues already.
-// TODO: provide a method to reset statistics.
 
 type errorSummary struct {
 	sync.Mutex
