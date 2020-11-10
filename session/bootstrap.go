@@ -180,7 +180,7 @@ const (
 		tot_col_size bigint(64) NOT NULL DEFAULT 0,
 		modify_count bigint(64) NOT NULL DEFAULT 0,
 		version bigint(64) unsigned NOT NULL DEFAULT 0,
-		cm_sketch blob,
+		cm_sketch blob(6291456),
 		stats_ver bigint(64) NOT NULL DEFAULT 0,
 		flag bigint(64) NOT NULL DEFAULT 0,
 		correlation double NOT NULL DEFAULT 0,
@@ -389,6 +389,8 @@ const (
 	version46 = 46
 	// version47 add Source to bindings to indicate the way binding created.
 	version47 = 47
+	// version48 change mysql.stats_histograms cm_sketch column from blob to blob(6291456)
+	version48 = 48
 )
 
 var (
@@ -439,6 +441,7 @@ var (
 		upgradeToVer45,
 		upgradeToVer46,
 		upgradeToVer47,
+		upgradeToVer48,
 	}
 )
 
@@ -1069,6 +1072,13 @@ func upgradeToVer47(s Session, ver int64) {
 		return
 	}
 	doReentrantDDL(s, "ALTER TABLE mysql.bind_info ADD COLUMN `source` varchar(10) NOT NULL default 'unknown'", infoschema.ErrColumnExists)
+}
+
+func upgradeToVer48(s Session, ver int64) {
+	if ver >= version48 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.stats_histograms MODIFY cm_sketch BLOB(6291456)")
 }
 
 // updateBootstrapVer updates bootstrap version variable in mysql.TiDB table.
