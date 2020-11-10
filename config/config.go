@@ -430,6 +430,7 @@ type Performance struct {
 	MaxTxnTTL             uint64  `toml:"max-txn-ttl" json:"max-txn-ttl"`
 	MemProfileInterval    string  `toml:"mem-profile-interval" json:"mem-profile-interval"`
 	IndexUsageSyncLease   string  `toml:"index-usage-sync-lease" json:"index-usage-sync-lease"`
+	GOGC                  int     `toml:"gogc" json:"gogc"`
 }
 
 // PlanCache is the PlanCache section of the config.
@@ -695,6 +696,7 @@ var defaultConf = Config{
 		MemProfileInterval:    "1m",
 		// TODO: set indexUsageSyncLease to 60s.
 		IndexUsageSyncLease: "0s",
+		GOGC:                100,
 	},
 	ProxyProtocol: ProxyProtocol{
 		Networks:      "",
