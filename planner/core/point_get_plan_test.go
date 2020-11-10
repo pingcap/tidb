@@ -18,8 +18,6 @@ import (
 	"fmt"
 	"math"
 	"strings"
-	"sync"
-	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/domain"
