@@ -1265,8 +1265,7 @@ func (cc *clientConn) handleLoadData(ctx context.Context, loadDataInfo *executor
 	if loadDataInfo == nil {
 		return errors.New("load data info is empty")
 	}
-	tblInfo := loadDataInfo.Table.Meta()
-	if tblInfo.IsView() || tblInfo.IsSequence() {
+	if !loadDataInfo.Table.Meta().IsBaseTable() {
 		return errors.New("can only load data into base tables")
 	}
 	err := cc.writeReq(ctx, loadDataInfo.Path)
