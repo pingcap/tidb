@@ -276,17 +276,20 @@ func buildOrderByClause(conf *Config, db *sql.Conn, database, table string) (str
 		}
 		if ok {
 			return "ORDER BY _tidb_rowid", nil
-		} else {
-			return "", nil
 		}
 	}
-	pkName, err := GetPrimaryKeyName(db, database, table)
+	cols, err := GetPrimaryKeyColumns(db, database, table)
 	if err != nil {
 		return "", errors.Trace(err)
 	}
-	tableContainsPriKey := pkName != ""
+	tableContainsPriKey := len(cols) != 0
 	if tableContainsPriKey {
-		return fmt.Sprintf("ORDER BY `%s`", escapeString(pkName)), nil
+		separator := ", "
+		quotaCols := make([]string, len(cols))
+		for i, col := range cols {
+			quotaCols[i] = fmt.Sprintf("`%s`", escapeString(col))
+		}
+		return fmt.Sprintf("ORDER BY %s", strings.Join(quotaCols, separator)), nil
 	}
 	return "", nil
 }
@@ -313,6 +316,29 @@ func GetColumnTypes(db *sql.Conn, fields, database, table string) ([]*sql.Column
 	}
 	defer rows.Close()
 	return rows.ColumnTypes()
+}
+
+func GetPrimaryKeyColumns(db *sql.Conn, database, table string) ([]string, error) {
+	priKeyColsQuery := "SELECT column_name FROM information_schema.KEY_COLUMN_USAGE " +
+		"WHERE table_schema = ? AND table_name = ? AND CONSTRAINT_NAME = 'PRIMARY' order by ORDINAL_POSITION;"
+	rows, err := db.QueryContext(context.Background(), priKeyColsQuery, database, table)
+	if err != nil {
+		return nil, errors.Annotatef(err, "sql: %s", priKeyColsQuery)
+	}
+	defer rows.Close()
+	var cols []string
+	var col string
+	for rows.Next() {
+		err = rows.Scan(&col)
+		if err != nil {
+			return nil, errors.Annotatef(err, "sql: %s", priKeyColsQuery)
+		}
+		cols = append(cols, col)
+	}
+	if err = rows.Err(); err != nil {
+		return nil, errors.Annotatef(err, "sql: %s", priKeyColsQuery)
+	}
+	return cols, nil
 }
 
 func GetPrimaryKeyName(db *sql.Conn, database, table string) (string, error) {
