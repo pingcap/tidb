@@ -172,7 +172,7 @@ func CastValue(ctx sessionctx.Context, val types.Datum, col *model.ColumnInfo, r
 	if returnOverflow && types.ErrOverflow.Equal(err) {
 		return casted, err
 	}
-	if err != nil && types.ErrTruncated.Equal(err) {
+	if err != nil && types.ErrTruncated.Equal(err) && col.Tp != mysql.TypeSet && col.Tp != mysql.TypeEnum {
 		str, err1 := val.ToString()
 		if err1 != nil {
 			logutil.BgLogger().Warn("Datum ToString failed", zap.Stringer("Datum", val), zap.Error(err1))
@@ -393,13 +393,7 @@ func CheckNotNull(cols []*Column, row []types.Datum) error {
 
 // GetColOriginDefaultValue gets default value of the column from original default value.
 func GetColOriginDefaultValue(ctx sessionctx.Context, col *model.ColumnInfo) (types.Datum, error) {
-	// If the column type is BIT, both `OriginDefaultValue` and `DefaultValue` of ColumnInfo are corrupted, because
-	// after JSON marshaling and unmarshaling against the field with type `interface{}`, the content with actual type `[]byte` is changed.
-	// We need `DefaultValueBit` to restore OriginDefaultValue before reading it.
-	if col.Tp == mysql.TypeBit && col.DefaultValueBit != nil && col.OriginDefaultValue != nil {
-		col.OriginDefaultValue = col.DefaultValueBit
-	}
-	return getColDefaultValue(ctx, col, col.OriginDefaultValue)
+	return getColDefaultValue(ctx, col, col.GetOriginDefaultValue())
 }
 
 // GetColDefaultValue gets default value of the column.
@@ -523,12 +517,14 @@ func getColDefaultValueFromNil(ctx sessionctx.Context, col *model.ColumnInfo) (t
 func GetZeroValue(col *model.ColumnInfo) types.Datum {
 	var d types.Datum
 	switch col.Tp {
-	case mysql.TypeTiny, mysql.TypeInt24, mysql.TypeShort, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeYear:
+	case mysql.TypeTiny, mysql.TypeInt24, mysql.TypeShort, mysql.TypeLong, mysql.TypeLonglong:
 		if mysql.HasUnsignedFlag(col.Flag) {
 			d.SetUint64(0)
 		} else {
 			d.SetInt64(0)
 		}
+	case mysql.TypeYear:
+		d.SetInt64(0)
 	case mysql.TypeFloat:
 		d.SetFloat32(0)
 	case mysql.TypeDouble:

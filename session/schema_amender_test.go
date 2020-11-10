@@ -58,7 +58,7 @@ func initTblColIdxID(metaInfo *model.TableInfo) {
 	metaInfo.State = model.StatePublic
 }
 
-func mutationsEqual(res *tikv.CommitterMutations, expected *tikv.CommitterMutations, c *C) {
+func mutationsEqual(res tikv.CommitterMutations, expected tikv.CommitterMutations, c *C) {
 	c.Assert(len(res.GetKeys()), Equals, len(expected.GetKeys()))
 	for i := 0; i < len(res.GetKeys()); i++ {
 		foundIdx := -1
@@ -69,10 +69,10 @@ func mutationsEqual(res *tikv.CommitterMutations, expected *tikv.CommitterMutati
 			}
 		}
 		c.Assert(foundIdx, GreaterEqual, 0)
-		c.Assert(res.GetOps()[i], Equals, expected.GetOps()[foundIdx])
-		c.Assert(res.GetPessimisticFlags()[i], Equals, expected.GetPessimisticFlags()[foundIdx])
+		c.Assert(res.GetOp(i), Equals, expected.GetOp(foundIdx))
+		c.Assert(res.IsPessimisticLock(i), Equals, expected.IsPessimisticLock(foundIdx))
 		c.Assert(res.GetKeys()[i], BytesEquals, expected.GetKeys()[foundIdx])
-		c.Assert(res.GetValues()[i], BytesEquals, expected.GetValues()[foundIdx])
+		c.Assert(res.GetValue(i), BytesEquals, expected.GetValue(foundIdx))
 	}
 }
 
@@ -83,8 +83,8 @@ type data struct {
 	rowValue [][]types.Datum
 }
 
-func prepareTestData(se *session, mutations *tikv.CommitterMutations, oldTblInfo table.Table, newTblInfo table.Table,
-	expecetedAmendOps []amendOp, c *C) (*data, *data, tikv.CommitterMutations) {
+func prepareTestData(se *session, mutations *tikv.PlainMutations, oldTblInfo table.Table, newTblInfo table.Table,
+	expecetedAmendOps []amendOp, c *C) (*data, *data, *tikv.PlainMutations) {
 	var err error
 	// Generated test data.
 	colIds := make([]int64, len(oldTblInfo.Meta().Columns))
@@ -104,7 +104,7 @@ func prepareTestData(se *session, mutations *tikv.CommitterMutations, oldTblInfo
 	rd := rowcodec.Encoder{Enable: true}
 	newData := &data{}
 	oldData := &data{}
-	expecteMutations := tikv.NewCommiterMutations(8)
+	expecteMutations := tikv.NewPlainMutations(8)
 
 	// Generate old data.
 	for i := 0; i < len(KeyOps); i++ {
@@ -220,7 +220,7 @@ func prepareTestData(se *session, mutations *tikv.CommitterMutations, oldTblInfo
 			}
 		}
 	}
-	return newData, oldData, expecteMutations
+	return newData, oldData, &expecteMutations
 }
 
 func (s *testSchemaAmenderSuite) TestAmendCollectAndGenMutations(c *C) {
@@ -350,7 +350,7 @@ func (s *testSchemaAmenderSuite) TestAmendCollectAndGenMutations(c *C) {
 				}
 			}
 			// Generated test data.
-			mutations := tikv.NewCommiterMutations(8)
+			mutations := tikv.NewPlainMutations(8)
 			newData, oldData, expectedMutations := prepareTestData(se, &mutations, oldTbInfo, newTblInfo, expectedAmendOps, c)
 			// Prepare old data in table.
 			txnPrepare, err := se.store.Begin()
@@ -390,8 +390,7 @@ func (s *testSchemaAmenderSuite) TestAmendCollectAndGenMutations(c *C) {
 			curVer, err := se.store.CurrentVersion()
 			c.Assert(err, IsNil)
 			se.sessionVars.TxnCtx.SetForUpdateTS(curVer.Ver + 1)
-			snap, err := se.store.GetSnapshot(kv.Version{Ver: se.sessionVars.TxnCtx.GetForUpdateTS()})
-			c.Assert(err, IsNil)
+			snap := se.store.GetSnapshot(kv.Version{Ver: se.sessionVars.TxnCtx.GetForUpdateTS()})
 			oldVals, err := snap.BatchGet(ctx, oldKeys)
 			c.Assert(err, IsNil)
 			c.Assert(len(oldVals), Equals, len(oldKeys))
@@ -406,14 +405,10 @@ func (s *testSchemaAmenderSuite) TestAmendCollectAndGenMutations(c *C) {
 				mutations.Push(kvrpcpb.Op_Put, idxKey, idxValue, false)
 			}
 
-			res, err := schemaAmender.genAllAmendMutations(ctx, mutations, collector)
+			res, err := schemaAmender.genAllAmendMutations(ctx, &mutations, collector)
 			c.Assert(err, IsNil)
 
-			// Validate generated results.
-			c.Assert(len(res.GetKeys()), Equals, len(res.GetOps()))
-			c.Assert(len(res.GetValues()), Equals, len(res.GetOps()))
-			c.Assert(len(res.GetPessimisticFlags()), Equals, len(res.GetOps()))
-			mutationsEqual(res, &expectedMutations, c)
+			mutationsEqual(res, expectedMutations, c)
 			err = txn.Rollback()
 			c.Assert(err, IsNil)
 		}

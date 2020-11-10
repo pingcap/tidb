@@ -177,7 +177,7 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if !plannercore.PreparedPlanCacheEnabled() {
 		prepared.UseCache = false
 	} else {
-		if tryOldPartitionImplementation(e.ctx) {
+		if !e.ctx.GetSessionVars().UseDynamicPartitionPrune() {
 			prepared.UseCache = plannercore.Cacheable(stmt, e.is)
 		} else {
 			prepared.UseCache = plannercore.Cacheable(stmt, nil)

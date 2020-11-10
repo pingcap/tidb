@@ -148,29 +148,7 @@ type innerWorker struct {
 
 // Open implements the Executor interface.
 func (e *IndexLookUpJoin) Open(ctx context.Context) error {
-	// Be careful, very dirty hack in this line!!!
-	// IndexLookUpJoin need to rebuild executor (the dataReaderBuilder) during
-	// executing. However `executor.Next()` is lazy evaluation when the RecordSet
-	// result is drained.
-	// Lazy evaluation means the saved session context may change during executor's
-	// building and its running.
-	// A specific sequence for example:
-	//
-	// e := buildExecutor()   // txn at build time
-	// recordSet := runStmt(e)
-	// session.CommitTxn()    // txn closed
-	// recordSet.Next()
-	// e.dataReaderBuilder.Build() // txn is used again, which is already closed
-	//
-	// The trick here is `getSnapshotTS` will cache snapshot ts in the dataReaderBuilder,
-	// so even txn is destroyed later, the dataReaderBuilder could still use the
-	// cached snapshot ts to construct DAG.
-	_, err := e.innerCtx.readerBuilder.getSnapshotTS()
-	if err != nil {
-		return err
-	}
-
-	err = e.children[0].Open(ctx)
+	err := e.children[0].Open(ctx)
 	if err != nil {
 		return err
 	}
@@ -178,9 +156,7 @@ func (e *IndexLookUpJoin) Open(ctx context.Context) error {
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 	e.innerPtrBytes = make([][]byte, 0, 8)
 	if e.runtimeStats != nil {
-		e.stats = &indexLookUpJoinRuntimeStats{
-			BasicRuntimeStats: e.runtimeStats,
-		}
+		e.stats = &indexLookUpJoinRuntimeStats{}
 		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
 	}
 	e.startWorkers(ctx)
@@ -494,8 +470,9 @@ func (iw *innerWorker) run(ctx context.Context, wg *sync.WaitGroup) {
 }
 
 type indexJoinLookUpContent struct {
-	keys []types.Datum
-	row  chunk.Row
+	keys    []types.Datum
+	row     chunk.Row
+	keyCols []int
 }
 
 func (iw *innerWorker) handleTask(ctx context.Context, task *lookUpJoinTask) error {
@@ -560,7 +537,7 @@ func (iw *innerWorker) constructLookupContent(task *lookUpJoinTask) ([]*indexJoi
 				// dLookUpKey is sorted and deduplicated at sortAndDedupLookUpContents.
 				// So we don't need to do it here.
 			}
-			lookUpContents = append(lookUpContents, &indexJoinLookUpContent{keys: dLookUpKey, row: chk.GetRow(rowIdx)})
+			lookUpContents = append(lookUpContents, &indexJoinLookUpContent{keys: dLookUpKey, row: chk.GetRow(rowIdx), keyCols: iw.keyCols})
 		}
 	}
 
@@ -655,11 +632,14 @@ func (iw *innerWorker) fetchInnerResults(ctx context.Context, task *lookUpJoinTa
 			atomic.AddInt64(&iw.stats.fetch, int64(time.Since(start)))
 		}()
 	}
-	innerExec, err := iw.readerBuilder.buildExecutorForIndexJoin(ctx, lookUpContent, iw.indexRanges, iw.keyOff2IdxOff, iw.nextColCompareFilters)
+	innerExec, err := iw.readerBuilder.buildExecutorForIndexJoin(ctx, lookUpContent, iw.indexRanges, iw.keyOff2IdxOff, iw.nextColCompareFilters, true)
+	if innerExec != nil {
+		defer terror.Call(innerExec.Close)
+	}
 	if err != nil {
 		return err
 	}
-	defer terror.Call(innerExec.Close)
+
 	innerResult := chunk.NewList(retTypes(innerExec), iw.ctx.GetSessionVars().MaxChunkSize, iw.ctx.GetSessionVars().MaxChunkSize)
 	innerResult.GetMemTracker().SetLabel(memory.LabelForBuildSideResult)
 	innerResult.GetMemTracker().AttachTo(task.memTracker)
@@ -738,7 +718,6 @@ func (e *IndexLookUpJoin) Close() error {
 }
 
 type indexLookUpJoinRuntimeStats struct {
-	*execdetails.BasicRuntimeStats
 	concurrency int
 	probe       int64
 	innerWorker innerWorkerRuntimeStats
@@ -755,11 +734,8 @@ type innerWorkerRuntimeStats struct {
 
 func (e *indexLookUpJoinRuntimeStats) String() string {
 	buf := bytes.NewBuffer(make([]byte, 0, 16))
-	if e.BasicRuntimeStats != nil {
-		buf.WriteString(e.BasicRuntimeStats.String())
-	}
 	if e.innerWorker.totalTime > 0 {
-		buf.WriteString(", inner:{total:")
+		buf.WriteString("inner:{total:")
 		buf.WriteString(time.Duration(e.innerWorker.totalTime).String())
 		buf.WriteString(", concurrency:")
 		if e.concurrency > 0 {
@@ -786,4 +762,31 @@ func (e *indexLookUpJoinRuntimeStats) String() string {
 		buf.WriteString(time.Duration(e.probe).String())
 	}
 	return buf.String()
+}
+
+func (e *indexLookUpJoinRuntimeStats) Clone() execdetails.RuntimeStats {
+	return &indexLookUpJoinRuntimeStats{
+		concurrency: e.concurrency,
+		probe:       e.probe,
+		innerWorker: e.innerWorker,
+	}
+}
+
+func (e *indexLookUpJoinRuntimeStats) Merge(rs execdetails.RuntimeStats) {
+	tmp, ok := rs.(*indexLookUpJoinRuntimeStats)
+	if !ok {
+		return
+	}
+	e.probe += tmp.probe
+	e.innerWorker.totalTime += tmp.innerWorker.totalTime
+	e.innerWorker.task += tmp.innerWorker.task
+	e.innerWorker.construct += tmp.innerWorker.construct
+	e.innerWorker.fetch += tmp.innerWorker.fetch
+	e.innerWorker.build += tmp.innerWorker.build
+	e.innerWorker.join += tmp.innerWorker.join
+}
+
+// Tp implements the RuntimeStats interface.
+func (e *indexLookUpJoinRuntimeStats) Tp() int {
+	return execdetails.TpIndexLookUpJoinRuntimeStats
 }

@@ -31,13 +31,11 @@ func TestT(t *testing.T) {
 
 func TestString(t *testing.T) {
 	detail := &ExecDetails{
-		CopTime:       time.Second + 3*time.Millisecond,
-		ProcessTime:   2*time.Second + 5*time.Millisecond,
-		WaitTime:      time.Second,
-		BackoffTime:   time.Second,
-		RequestCount:  1,
-		TotalKeys:     100,
-		ProcessedKeys: 10,
+		CopTime:      time.Second + 3*time.Millisecond,
+		ProcessTime:  2*time.Second + 5*time.Millisecond,
+		WaitTime:     time.Second,
+		BackoffTime:  time.Second,
+		RequestCount: 1,
 		CommitDetail: &CommitDetails{
 			GetCommitTsTime:   time.Second,
 			PrewriteTime:      time.Second,
@@ -61,9 +59,19 @@ func TestString(t *testing.T) {
 			PrewriteRegionNum: 1,
 			TxnRetry:          1,
 		},
+		CopDetail: &CopDetails{
+			ProcessedKeys:             10,
+			TotalKeys:                 100,
+			RocksdbDeleteSkippedCount: 1,
+			RocksdbKeySkippedCount:    1,
+			RocksdbBlockCacheHitCount: 1,
+			RocksdbBlockReadCount:     1,
+			RocksdbBlockReadByte:      100,
+		},
 	}
-	expected := "Cop_time: 1.003 Process_time: 2.005 Wait_time: 1 Backoff_time: 1 Request_count: 1 Total_keys: 100 Process_keys: 10 Prewrite_time: 1 Commit_time: 1 " +
-		"Get_commit_ts_time: 1 Commit_backoff_time: 1 Backoff_types: [backoff1 backoff2] Resolve_lock_time: 1 Local_latch_wait_time: 1 Write_keys: 1 Write_size: 1 Prewrite_region: 1 Txn_retry: 1"
+	expected := "Cop_time: 1.003 Process_time: 2.005 Wait_time: 1 Backoff_time: 1 Request_count: 1 Prewrite_time: 1 Commit_time: 1 " +
+		"Get_commit_ts_time: 1 Commit_backoff_time: 1 Backoff_types: [backoff1 backoff2] Resolve_lock_time: 1 Local_latch_wait_time: 1 Write_keys: 1 Write_size: 1 Prewrite_region: 1 Txn_retry: 1 " +
+		"Process_keys: 10 Total_keys: 100 Rocksdb_delete_skipped_count: 1 Rocksdb_key_skipped_count: 1 Rocksdb_block_cache_hit_count: 1 Rocksdb_block_read_count: 1 Rocksdb_block_read_byte: 100"
 	if str := detail.String(); str != expected {
 		t.Errorf("got:\n%s\nexpected:\n%s", str, expected)
 	}
@@ -92,11 +100,22 @@ func TestCopRuntimeStats(t *testing.T) {
 	stats.RecordOneCopTask(tableScanID, "8.8.8.9", mockExecutorExecutionSummary(2, 2, 2))
 	stats.RecordOneCopTask(aggID, "8.8.8.8", mockExecutorExecutionSummary(3, 3, 3))
 	stats.RecordOneCopTask(aggID, "8.8.8.9", mockExecutorExecutionSummary(4, 4, 4))
+	copDetails := &CopDetails{
+		TotalKeys:                 10,
+		ProcessedKeys:             10,
+		RocksdbDeleteSkippedCount: 10,
+		RocksdbKeySkippedCount:    1,
+		RocksdbBlockCacheHitCount: 10,
+		RocksdbBlockReadCount:     10,
+		RocksdbBlockReadByte:      100,
+	}
+	stats.RecordCopDetail(tableScanID, copDetails)
 	if stats.ExistsCopStats(tableScanID) != true {
 		t.Fatal("exist")
 	}
 	cop := stats.GetCopStats(tableScanID)
-	if cop.String() != "proc max:2ns, min:1ns, p80:2ns, p95:2ns, iters:3, tasks:2" {
+	if cop.String() != "tikv_task:{proc max:2ns, min:1ns, p80:2ns, p95:2ns, iters:3, tasks:2}"+
+		", total_keys:10, processed_keys:10, rocksdb:{delete_skipped_count:10, key_skipped_count:1, block_cache_hit_count:10, block_read_count:10, block_read_byte:100}" {
 		t.Fatal("table_scan")
 	}
 	copStats := cop.stats["8.8.8.8"]
@@ -109,7 +128,7 @@ func TestCopRuntimeStats(t *testing.T) {
 		t.Fatalf("cop stats string is not expect, got: %v", copStats[0].String())
 	}
 
-	if stats.GetCopStats(aggID).String() != "proc max:4ns, min:3ns, p80:4ns, p95:4ns, iters:7, tasks:2" {
+	if stats.GetCopStats(aggID).String() != "tikv_task:{proc max:4ns, min:3ns, p80:4ns, p95:4ns, iters:7, tasks:2}" {
 		t.Fatal("agg")
 	}
 	rootStats := stats.GetRootStats(tableReaderID)
@@ -130,11 +149,22 @@ func TestCopRuntimeStatsForTiFlash(t *testing.T) {
 	stats.RecordOneCopTask(aggID, "8.8.8.9", mockExecutorExecutionSummaryForTiFlash(2, 2, 2, "tablescan_"+strconv.Itoa(tableScanID)))
 	stats.RecordOneCopTask(tableScanID, "8.8.8.8", mockExecutorExecutionSummaryForTiFlash(3, 3, 3, "aggregation_"+strconv.Itoa(aggID)))
 	stats.RecordOneCopTask(tableScanID, "8.8.8.9", mockExecutorExecutionSummaryForTiFlash(4, 4, 4, "aggregation_"+strconv.Itoa(aggID)))
+	copDetails := &CopDetails{
+		TotalKeys:                 10,
+		ProcessedKeys:             10,
+		RocksdbDeleteSkippedCount: 10,
+		RocksdbKeySkippedCount:    1,
+		RocksdbBlockCacheHitCount: 10,
+		RocksdbBlockReadCount:     10,
+		RocksdbBlockReadByte:      100,
+	}
+	stats.RecordCopDetail(tableScanID, copDetails)
 	if stats.ExistsCopStats(tableScanID) != true {
 		t.Fatal("exist")
 	}
 	cop := stats.GetCopStats(tableScanID)
-	if cop.String() != "proc max:2ns, min:1ns, p80:2ns, p95:2ns, iters:3, tasks:2" {
+	if cop.String() != "tikv_task:{proc max:2ns, min:1ns, p80:2ns, p95:2ns, iters:3, tasks:2}"+
+		", total_keys:10, processed_keys:10, rocksdb:{delete_skipped_count:10, key_skipped_count:1, block_cache_hit_count:10, block_read_count:10, block_read_byte:100}" {
 		t.Fatal("table_scan")
 	}
 	copStats := cop.stats["8.8.8.8"]
@@ -147,7 +177,7 @@ func TestCopRuntimeStatsForTiFlash(t *testing.T) {
 		t.Fatalf("cop stats string is not expect, got: %v", copStats[0].String())
 	}
 
-	if stats.GetCopStats(aggID).String() != "proc max:4ns, min:3ns, p80:4ns, p95:4ns, iters:7, tasks:2" {
+	if stats.GetCopStats(aggID).String() != "tikv_task:{proc max:4ns, min:3ns, p80:4ns, p95:4ns, iters:7, tasks:2}" {
 		t.Fatal("agg")
 	}
 	rootStats := stats.GetRootStats(tableReaderID)
@@ -159,10 +189,6 @@ func TestCopRuntimeStatsForTiFlash(t *testing.T) {
 	}
 }
 func TestRuntimeStatsWithCommit(t *testing.T) {
-	basicStats := &BasicRuntimeStats{
-		loop:    1,
-		consume: int64(time.Second),
-	}
 	commitDetail := &CommitDetails{
 		GetCommitTsTime:   time.Second,
 		PrewriteTime:      time.Second,
@@ -189,10 +215,9 @@ func TestRuntimeStatsWithCommit(t *testing.T) {
 		TxnRetry:          2,
 	}
 	stats := &RuntimeStatsWithCommit{
-		RuntimeStats: basicStats,
-		Commit:       commitDetail,
+		Commit: commitDetail,
 	}
-	expect := "time:1s, loops:1, commit_txn: {prewrite:1s, get_commit_ts:1s, commit:1s, backoff: {time: 1s, type: [backoff1 backoff2]}, resolve_lock: 1s, region_num:5, write_keys:3, write_byte:66, txn_retry:2}"
+	expect := "commit_txn: {prewrite:1s, get_commit_ts:1s, commit:1s, backoff: {time: 1s, type: [backoff1 backoff2]}, resolve_lock: 1s, region_num:5, write_keys:3, write_byte:66, txn_retry:2}"
 	if stats.String() != expect {
 		t.Fatalf("%v != %v", stats.String(), expect)
 	}
@@ -221,10 +246,43 @@ func TestRuntimeStatsWithCommit(t *testing.T) {
 		RetryCount:   2,
 	}
 	stats = &RuntimeStatsWithCommit{
-		RuntimeStats: basicStats,
-		LockKeys:     lockDetail,
+		LockKeys: lockDetail,
 	}
-	expect = "time:1s, loops:1, lock_keys: {time:1s, region:2, keys:10, resolve_lock:2s, backoff: {time: 3s, type: [backoff4 backoff5]}, lock_rpc:5s, rpc_count:50, retry_count:2}"
+	expect = "lock_keys: {time:1s, region:2, keys:10, resolve_lock:2s, backoff: {time: 3s, type: [backoff4 backoff5]}, lock_rpc:5s, rpc_count:50, retry_count:2}"
+	if stats.String() != expect {
+		t.Fatalf("%v != %v", stats.String(), expect)
+	}
+}
+
+func TestRootRuntimeStats(t *testing.T) {
+	basic1 := &BasicRuntimeStats{}
+	basic2 := &BasicRuntimeStats{}
+	basic1.Record(time.Second, 20)
+	basic2.Record(time.Second*2, 30)
+	pid := 1
+	stmtStats := NewRuntimeStatsColl()
+	stmtStats.RegisterStats(pid, basic1)
+	stmtStats.RegisterStats(pid, basic2)
+	concurrency := &RuntimeStatsWithConcurrencyInfo{}
+	concurrency.SetConcurrencyInfo(NewConcurrencyInfo("worker", 15))
+	stmtStats.RegisterStats(pid, concurrency)
+	commitDetail := &CommitDetails{
+		GetCommitTsTime:   time.Second,
+		PrewriteTime:      time.Second,
+		CommitTime:        time.Second,
+		WriteKeys:         3,
+		WriteSize:         66,
+		PrewriteRegionNum: 5,
+		TxnRetry:          2,
+	}
+	stmtStats.RegisterStats(pid, &RuntimeStatsWithCommit{
+		Commit: commitDetail,
+	})
+	concurrency = &RuntimeStatsWithConcurrencyInfo{}
+	concurrency.SetConcurrencyInfo(NewConcurrencyInfo("concurrent", 0))
+	stmtStats.RegisterStats(pid, concurrency)
+	stats := stmtStats.GetRootStats(1)
+	expect := "time:3s, loops:2, worker:15, concurrent:OFF, commit_txn: {prewrite:1s, get_commit_ts:1s, commit:1s, region_num:5, write_keys:3, write_byte:66, txn_retry:2}"
 	if stats.String() != expect {
 		t.Fatalf("%v != %v", stats.String(), expect)
 	}

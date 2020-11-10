@@ -6,7 +6,7 @@
         "SQL": "select * from t where t.a in ('1','2','4') and t.a+1=2 order by t.a desc",
         "Plan": [
           "Selection_12 2.40 root  eq(plus(cast(test.t.a), 1), 2)",
-          "└─Batch_Point_Get_11 2.40 root table:t, index:PRIMARY(a) keep order:true, desc:true"
+          "└─Batch_Point_Get_11 3.00 root table:t, index:PRIMARY(a) keep order:true, desc:true"
         ],
         "Res": [
           "1 4 4 1"
@@ -36,7 +36,7 @@
         "SQL": "select * from t where t.a in ('1','3') and t.d = 3",
         "Plan": [
           "Selection_6 0.00 root  eq(test.t.d, 3)",
-          "└─Batch_Point_Get_5 0.00 root table:t, index:PRIMARY(a) keep order:false, desc:false"
+          "└─Batch_Point_Get_5 2.00 root table:t, index:PRIMARY(a) keep order:false, desc:false"
         ],
         "Res": [
           "3 2 2 3"

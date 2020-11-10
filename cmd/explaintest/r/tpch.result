@@ -594,25 +594,25 @@ id	estRows	task	access object	operator info
 Sort_25	2406.00	root		tpch.nation.n_name, Column#53:desc
 └─Projection_27	2406.00	root		tpch.nation.n_name, Column#53, Column#55
   └─HashAgg_30	2406.00	root		group by:Column#53, tpch.nation.n_name, funcs:sum(Column#54)->Column#55, funcs:firstrow(tpch.nation.n_name)->tpch.nation.n_name, funcs:firstrow(Column#53)->Column#53
-    └─Projection_31	971049283.51	root		tpch.nation.n_name, extract(YEAR, tpch.orders.o_orderdate)->Column#53, minus(mul(tpch.lineitem.l_extendedprice, minus(1, tpch.lineitem.l_discount)), mul(tpch.partsupp.ps_supplycost, tpch.lineitem.l_quantity))->Column#54
-      └─HashJoin_44	971049283.51	root		inner join, equal:[eq(tpch.lineitem.l_suppkey, tpch.partsupp.ps_suppkey) eq(tpch.lineitem.l_partkey, tpch.partsupp.ps_partkey)]
-        ├─TableReader_106(Build)	40000000.00	root		data:TableFullScan_105
-        │ └─TableFullScan_105	40000000.00	cop[tikv]	table:partsupp	keep order:false
-        └─HashJoin_56(Probe)	241379546.70	root		inner join, equal:[eq(tpch.lineitem.l_orderkey, tpch.orders.o_orderkey)]
-          ├─TableReader_104(Build)	75000000.00	root		data:TableFullScan_103
-          │ └─TableFullScan_103	75000000.00	cop[tikv]	table:orders	keep order:false
-          └─HashJoin_79(Probe)	241379546.70	root		inner join, equal:[eq(tpch.lineitem.l_partkey, tpch.part.p_partkey)]
-            ├─TableReader_102(Build)	8000000.00	root		data:Selection_101
-            │ └─Selection_101	8000000.00	cop[tikv]		like(tpch.part.p_name, "%dim%", 92)
-            │   └─TableFullScan_100	10000000.00	cop[tikv]	table:part	keep order:false
-            └─HashJoin_82(Probe)	300005811.00	root		inner join, equal:[eq(tpch.supplier.s_suppkey, tpch.lineitem.l_suppkey)]
-              ├─HashJoin_93(Build)	500000.00	root		inner join, equal:[eq(tpch.nation.n_nationkey, tpch.supplier.s_nationkey)]
-              │ ├─TableReader_97(Build)	25.00	root		data:TableFullScan_96
-              │ │ └─TableFullScan_96	25.00	cop[tikv]	table:nation	keep order:false
-              │ └─TableReader_95(Probe)	500000.00	root		data:TableFullScan_94
-              │   └─TableFullScan_94	500000.00	cop[tikv]	table:supplier	keep order:false
-              └─TableReader_99(Probe)	300005811.00	root		data:TableFullScan_98
-                └─TableFullScan_98	300005811.00	cop[tikv]	table:lineitem	keep order:false
+    └─Projection_31	241379546.70	root		tpch.nation.n_name, extract(YEAR, tpch.orders.o_orderdate)->Column#53, minus(mul(tpch.lineitem.l_extendedprice, minus(1, tpch.lineitem.l_discount)), mul(tpch.partsupp.ps_supplycost, tpch.lineitem.l_quantity))->Column#54
+      └─HashJoin_42	241379546.70	root		inner join, equal:[eq(tpch.lineitem.l_orderkey, tpch.orders.o_orderkey)]
+        ├─TableReader_117(Build)	75000000.00	root		data:TableFullScan_116
+        │ └─TableFullScan_116	75000000.00	cop[tikv]	table:orders	keep order:false
+        └─HashJoin_77(Probe)	241379546.70	root		inner join, equal:[eq(tpch.lineitem.l_suppkey, tpch.partsupp.ps_suppkey) eq(tpch.lineitem.l_partkey, tpch.partsupp.ps_partkey)]
+          ├─TableReader_115(Build)	40000000.00	root		data:TableFullScan_114
+          │ └─TableFullScan_114	40000000.00	cop[tikv]	table:partsupp	keep order:false
+          └─HashJoin_90(Probe)	241379546.70	root		inner join, equal:[eq(tpch.lineitem.l_partkey, tpch.part.p_partkey)]
+            ├─TableReader_113(Build)	8000000.00	root		data:Selection_112
+            │ └─Selection_112	8000000.00	cop[tikv]		like(tpch.part.p_name, "%dim%", 92)
+            │   └─TableFullScan_111	10000000.00	cop[tikv]	table:part	keep order:false
+            └─HashJoin_93(Probe)	300005811.00	root		inner join, equal:[eq(tpch.supplier.s_suppkey, tpch.lineitem.l_suppkey)]
+              ├─HashJoin_104(Build)	500000.00	root		inner join, equal:[eq(tpch.nation.n_nationkey, tpch.supplier.s_nationkey)]
+              │ ├─TableReader_108(Build)	25.00	root		data:TableFullScan_107
+              │ │ └─TableFullScan_107	25.00	cop[tikv]	table:nation	keep order:false
+              │ └─TableReader_106(Probe)	500000.00	root		data:TableFullScan_105
+              │   └─TableFullScan_105	500000.00	cop[tikv]	table:supplier	keep order:false
+              └─TableReader_110(Probe)	300005811.00	root		data:TableFullScan_109
+                └─TableFullScan_109	300005811.00	cop[tikv]	table:lineitem	keep order:false
 /*
 Q10 Returned Item Reporting Query
 The query identifies customers who might be having problems with the parts that are shipped to them.

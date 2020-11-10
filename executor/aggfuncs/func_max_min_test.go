@@ -20,10 +20,77 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/executor/aggfuncs"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/testkit"
 )
+
+func maxMinUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType, isMax bool) (memDeltas []int64, err error) {
+	memDeltas = make([]int64, srcChk.NumRows())
+	var (
+		preStringVal string
+		preJSONVal   string
+		preEnumVal   types.Enum
+		preSetVal    types.Set
+	)
+
+	for i := 0; i < srcChk.NumRows(); i++ {
+		row := srcChk.GetRow(i)
+		if row.IsNull(0) {
+			continue
+		}
+		switch dataType.Tp {
+		case mysql.TypeString:
+			curVal := row.GetString(0)
+			if i == 0 {
+				memDeltas[i] = int64(len(curVal))
+				preStringVal = curVal
+			} else if isMax && curVal > preStringVal || !isMax && curVal < preStringVal {
+				memDeltas[i] = int64(len(curVal)) - int64(len(preStringVal))
+				preStringVal = curVal
+			}
+		case mysql.TypeJSON:
+			curVal := row.GetJSON(0)
+			curStringVal := string(curVal.Value)
+			if i == 0 {
+				memDeltas[i] = int64(len(curStringVal))
+				preJSONVal = curStringVal
+			} else if isMax && curStringVal > preJSONVal || !isMax && curStringVal < preJSONVal {
+				memDeltas[i] = int64(len(curStringVal)) - int64(len(preJSONVal))
+				preJSONVal = curStringVal
+			}
+		case mysql.TypeEnum:
+			curVal := row.GetEnum(0)
+			if i == 0 {
+				memDeltas[i] = int64(len(curVal.Name))
+				preEnumVal = curVal
+			} else if isMax && curVal.Value > preEnumVal.Value || !isMax && curVal.Value < preEnumVal.Value {
+				memDeltas[i] = int64(len(curVal.Name)) - int64(len(preEnumVal.Name))
+				preEnumVal = curVal
+			}
+		case mysql.TypeSet:
+			curVal := row.GetSet(0)
+			if i == 0 {
+				memDeltas[i] = int64(len(curVal.Name))
+				preSetVal = curVal
+			} else if isMax && curVal.Value > preSetVal.Value || !isMax && curVal.Value < preSetVal.Value {
+				memDeltas[i] = int64(len(curVal.Name)) - int64(len(preSetVal.Name))
+				preSetVal = curVal
+			}
+		}
+	}
+	return memDeltas, nil
+}
+
+func maxUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) (memDeltas []int64, err error) {
+	return maxMinUpdateMemDeltaGens(srcChk, dataType, true)
+}
+
+func minUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) (memDeltas []int64, err error) {
+	return maxMinUpdateMemDeltaGens(srcChk, dataType, false)
+}
 
 func (s *testSuite) TestMergePartialResult4MaxMin(c *C) {
 	elems := []string{"a", "b", "c", "d", "e"}
@@ -93,6 +160,59 @@ func (s *testSuite) TestMaxMin(c *C) {
 	}
 	for _, test := range tests {
 		s.testAggFunc(c, test)
+	}
+}
+
+func (s *testSuite) TestMemMaxMin(c *C) {
+	tests := []aggMemTest{
+		buildAggMemTester(ast.AggFuncMax, mysql.TypeLonglong, 5,
+			aggfuncs.DefPartialResult4MaxMinIntSize, defaultUpdateMemDeltaGens, false),
+		buildAggMemTester(ast.AggFuncMax, mysql.TypeLonglong, 5,
+			aggfuncs.DefPartialResult4MaxMinUintSize, defaultUpdateMemDeltaGens, false),
+		buildAggMemTester(ast.AggFuncMax, mysql.TypeNewDecimal, 5,
+			aggfuncs.DefPartialResult4MaxMinDecimalSize, defaultUpdateMemDeltaGens, false),
+		buildAggMemTester(ast.AggFuncMax, mysql.TypeFloat, 5,
+			aggfuncs.DefPartialResult4MaxMinFloat32Size, defaultUpdateMemDeltaGens, false),
+		buildAggMemTester(ast.AggFuncMax, mysql.TypeDouble, 5,
+			aggfuncs.DefPartialResult4MaxMinFloat64Size, defaultUpdateMemDeltaGens, false),
+		buildAggMemTester(ast.AggFuncMax, mysql.TypeDate, 5,
+			aggfuncs.DefPartialResult4TimeSize, defaultUpdateMemDeltaGens, false),
+		buildAggMemTester(ast.AggFuncMax, mysql.TypeDuration, 5,
+			aggfuncs.DefPartialResult4MaxMinDurationSize, defaultUpdateMemDeltaGens, false),
+		buildAggMemTester(ast.AggFuncMax, mysql.TypeString, 99,
+			aggfuncs.DefPartialResult4MaxMinStringSize, maxUpdateMemDeltaGens, false),
+		buildAggMemTester(ast.AggFuncMax, mysql.TypeJSON, 99,
+			aggfuncs.DefPartialResult4MaxMinJSONSize, maxUpdateMemDeltaGens, false),
+		buildAggMemTester(ast.AggFuncMax, mysql.TypeEnum, 99,
+			aggfuncs.DefPartialResult4MaxMinEnumSize, maxUpdateMemDeltaGens, false),
+		buildAggMemTester(ast.AggFuncMax, mysql.TypeSet, 99,
+			aggfuncs.DefPartialResult4MaxMinSetSize, maxUpdateMemDeltaGens, false),
+
+		buildAggMemTester(ast.AggFuncMin, mysql.TypeLonglong, 5,
+			aggfuncs.DefPartialResult4MaxMinIntSize, defaultUpdateMemDeltaGens, false),
+		buildAggMemTester(ast.AggFuncMin, mysql.TypeLonglong, 5,
+			aggfuncs.DefPartialResult4MaxMinUintSize, defaultUpdateMemDeltaGens, false),
+		buildAggMemTester(ast.AggFuncMin, mysql.TypeNewDecimal, 5,
+			aggfuncs.DefPartialResult4MaxMinDecimalSize, defaultUpdateMemDeltaGens, false),
+		buildAggMemTester(ast.AggFuncMin, mysql.TypeFloat, 5,
+			aggfuncs.DefPartialResult4MaxMinFloat32Size, defaultUpdateMemDeltaGens, false),
+		buildAggMemTester(ast.AggFuncMin, mysql.TypeDouble, 5,
+			aggfuncs.DefPartialResult4MaxMinFloat64Size, defaultUpdateMemDeltaGens, false),
+		buildAggMemTester(ast.AggFuncMin, mysql.TypeDate, 5,
+			aggfuncs.DefPartialResult4TimeSize, defaultUpdateMemDeltaGens, false),
+		buildAggMemTester(ast.AggFuncMin, mysql.TypeDuration, 5,
+			aggfuncs.DefPartialResult4MaxMinDurationSize, defaultUpdateMemDeltaGens, false),
+		buildAggMemTester(ast.AggFuncMin, mysql.TypeString, 99,
+			aggfuncs.DefPartialResult4MaxMinStringSize, minUpdateMemDeltaGens, false),
+		buildAggMemTester(ast.AggFuncMin, mysql.TypeJSON, 99,
+			aggfuncs.DefPartialResult4MaxMinJSONSize, minUpdateMemDeltaGens, false),
+		buildAggMemTester(ast.AggFuncMin, mysql.TypeEnum, 99,
+			aggfuncs.DefPartialResult4MaxMinEnumSize, minUpdateMemDeltaGens, false),
+		buildAggMemTester(ast.AggFuncMin, mysql.TypeSet, 99,
+			aggfuncs.DefPartialResult4MaxMinSetSize, minUpdateMemDeltaGens, false),
+	}
+	for _, test := range tests {
+		s.testAggMemFunc(c, test)
 	}
 }
 
