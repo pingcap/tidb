@@ -5777,7 +5777,7 @@ func buildPlacementSpecReplicasAndConstraint(replicas uint64, cnstr string) ([]*
 		}
 
 		constraints := []string{}
-		byteArr := bytes.Split([]byte(cnstr[0:]), []byte(","))
+		byteArr := bytes.Split([]byte(cnstr), []byte(","))
 		var leftIndex, rightIndex int
 		for i := 0; i < len(byteArr); i++ {
 			switch i {
