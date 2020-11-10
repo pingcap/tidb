@@ -62,6 +62,7 @@ const (
 	flagOutputFilenameTemplate  = "output-filename-template"
 	flagCompleteInsert          = "complete-insert"
 	flagParams                  = "params"
+	FlagHelp                    = "help"
 )
 
 type Config struct {
@@ -220,6 +221,7 @@ func (conf *Config) DefineFlags(flags *pflag.FlagSet) {
 	flags.String(flagOutputFilenameTemplate, "", "The output filename template (without file extension)")
 	flags.Bool(flagCompleteInsert, false, "Use complete INSERT statements that include column names")
 	flags.StringToString(flagParams, nil, `Extra session variables used while dumping, accepted format: --params "character_set_client=latin1,character_set_connection=latin1"`)
+	flags.Bool(FlagHelp, false, "Print help message and quit")
 }
 
 // GetDSN generates DSN from Config
