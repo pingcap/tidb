@@ -29,8 +29,13 @@ var (
 	// ErrTxnRetryable is used when KV store occurs retryable error which SQL layer can safely retry the transaction.
 	// When using TiKV as the storage node, the error is returned ONLY when lock not found (txnLockNotFound) in Commit,
 	// subject to change it in the future.
+<<<<<<< HEAD
 	ErrTxnRetryable = terror.ClassKV.New(mysql.ErrTxnRetryable,
 		mysql.MySQLErrName[mysql.ErrTxnRetryable]+TxnRetryableMark)
+=======
+	ErrTxnRetryable = dbterror.ClassKV.NewStdErr(mysql.ErrTxnRetryable,
+		pmysql.Message(mysql.MySQLErrName[mysql.ErrTxnRetryable].Raw+TxnRetryableMark, nil))
+>>>>>>> 8d35f17c1... Update the errors dependence to the latest version (#20917)
 	// ErrCannotSetNilValue is the error when sets an empty value.
 	ErrCannotSetNilValue = terror.ClassKV.New(mysql.ErrCannotSetNilValue, mysql.MySQLErrName[mysql.ErrCannotSetNilValue])
 	// ErrInvalidTxn is the error when commits or rollbacks in an invalid transaction.
@@ -44,11 +49,19 @@ var (
 	// ErrNotImplemented returns when a function is not implemented yet.
 	ErrNotImplemented = terror.ClassKV.New(mysql.ErrNotImplemented, mysql.MySQLErrName[mysql.ErrNotImplemented])
 	// ErrWriteConflict is the error when the commit meets an write conflict error.
+<<<<<<< HEAD
 	ErrWriteConflict = terror.ClassKV.New(mysql.ErrWriteConflict,
 		mysql.MySQLErrName[mysql.ErrWriteConflict]+" "+TxnRetryableMark)
 	// ErrWriteConflictInTiDB is the error when the commit meets an write conflict error when local latch is enabled.
 	ErrWriteConflictInTiDB = terror.ClassKV.New(mysql.ErrWriteConflictInTiDB,
 		mysql.MySQLErrName[mysql.ErrWriteConflictInTiDB]+" "+TxnRetryableMark)
+=======
+	ErrWriteConflict = dbterror.ClassKV.NewStdErr(mysql.ErrWriteConflict,
+		pmysql.Message(mysql.MySQLErrName[mysql.ErrWriteConflict].Raw+" "+TxnRetryableMark, nil))
+	// ErrWriteConflictInTiDB is the error when the commit meets an write conflict error when local latch is enabled.
+	ErrWriteConflictInTiDB = dbterror.ClassKV.NewStdErr(mysql.ErrWriteConflictInTiDB,
+		pmysql.Message(mysql.MySQLErrName[mysql.ErrWriteConflictInTiDB].Raw+" "+TxnRetryableMark, nil))
+>>>>>>> 8d35f17c1... Update the errors dependence to the latest version (#20917)
 )
 
 // IsTxnRetryableError checks if the error could safely retry the transaction.

@@ -81,5 +81,9 @@ var (
 	ErrStmtNotFound                    = terror.ClassOptimizer.New(mysql.ErrPreparedStmtNotFound, mysql.MySQLErrName[mysql.ErrPreparedStmtNotFound])
 	ErrAmbiguous                       = terror.ClassOptimizer.New(mysql.ErrNonUniq, mysql.MySQLErrName[mysql.ErrNonUniq])
 	// Since we cannot know if user logged in with a password, use message of ErrAccessDeniedNoPassword instead
+<<<<<<< HEAD
 	ErrAccessDenied = terror.ClassOptimizer.New(mysql.ErrAccessDenied, mysql.MySQLErrName[mysql.ErrAccessDeniedNoPassword])
+=======
+	ErrAccessDenied = dbterror.ClassOptimizer.NewStdErr(mysql.ErrAccessDenied, mysql.MySQLErrName[mysql.ErrAccessDeniedNoPassword])
+>>>>>>> 8d35f17c1... Update the errors dependence to the latest version (#20917)
 )

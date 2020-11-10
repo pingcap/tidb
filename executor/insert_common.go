@@ -292,6 +292,18 @@ func (e *InsertValues) handleErr(col *table.Column, val *types.Datum, rowIdx int
 		err = types.ErrWarnDataOutOfRange.GenWithStackByArgs(colName, rowIdx+1)
 	} else if types.ErrTruncated.Equal(err) {
 		err = types.ErrTruncated.GenWithStackByArgs(colName, rowIdx+1)
+<<<<<<< HEAD
+=======
+	} else if types.ErrTruncatedWrongVal.Equal(err) && (colTp == mysql.TypeDuration || colTp == mysql.TypeDatetime || colTp == mysql.TypeDate || colTp == mysql.TypeTimestamp) {
+		valStr, err1 := val.ToString()
+		if err1 != nil {
+			// do nothing
+		}
+		err = dbterror.ClassTable.NewStdErr(
+			errno.ErrTruncatedWrongValue,
+			mysql.Message("Incorrect %-.32s value: '%-.128s' for column '%.192s' at row %d", nil),
+		).GenWithStackByArgs(types.TypeStr(colTp), valStr, colName, rowIdx+1)
+>>>>>>> 8d35f17c1... Update the errors dependence to the latest version (#20917)
 	} else if types.ErrTruncatedWrongVal.Equal(err) || types.ErrWrongValue.Equal(err) {
 		valStr, err1 := val.ToString()
 		if err1 != nil {
