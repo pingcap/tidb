@@ -260,3 +260,45 @@ func (s *testExpressionRewriterSuite) TestPatternLikeToExpression(c *C) {
 	tk.MustQuery("select 0 like '0';").Check(testkit.Rows("1"))
 	tk.MustQuery("select 0.00 like '0.00';").Check(testkit.Rows("1"))
 }
+
+// https://github.com/pingcap/tidb/issues/8733#issuecomment-700572764
+func (s *testExpressionRewriterSuite) TestExplainWhenUserVariableFold(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a bigint, b bigint, index idx(a));")
+	tk.MustExec("insert into `test`.`t`(`a`, `b`) values (1, 1);")
+	tk.MustExec("insert into `test`.`t`(`a`, `b`) values (2, 2);")
+	tk.MustExec("insert into `test`.`t`(`a`, `b`) values (3, 3);")
+	tk.MustExec("insert into `test`.`t`(`a`, `b`) values (4, 4);")
+	tk.MustExec("insert into `test`.`t`(`a`, `b`) values (5, 5);")
+	tk.MustExec("insert into `test`.`t`(`a`, `b`) values (6, 6);")
+	tk.MustExec("insert into `test`.`t`(`a`, `b`) values (7, 7);")
+	tk.MustExec("insert into `test`.`t`(`a`, `b`) values (8, 8);")
+	tk.MustExec("insert into `test`.`t`(`a`, `b`) values (9, 9);")
+	tk.MustExec("insert into `test`.`t`(`a`, `b`) values (10, 10);")
+
+	// check row result
+	rs := tk.MustQuery("select * from t where a > 1 and a < 6;").Rows()
+	tk.MustExec("set @a = 1;")
+	tk.MustExec("set @b = 6;")
+	rs2 := tk.MustQuery("select * from t where a > @a and a < @b;").Rows()
+	for i := range rs {
+		c.Assert(rs[i], DeepEquals, rs2[i])
+	}
+
+	// check explain
+	tk.MustQuery("desc select * from t where a > @a and a < @b;").Check(testkit.Rows(
+		`IndexLookUp_10 250.00 root  `,
+		`├─IndexRangeScan_8(Build) 250.00 cop[tikv] table:t, index:idx(a) range:(1,6), keep order:false, stats:pseudo`,
+		`└─TableRowIDScan_9(Probe) 250.00 cop[tikv] table:t keep order:false, stats:pseudo`,
+	))
+}
