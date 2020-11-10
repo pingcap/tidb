@@ -1085,12 +1085,10 @@ func benchmarkChunkGrow(t benchChunkGrowCase) func(b *testing.B) {
 }
 
 func (s *testChunkSuite) TestAppendRows(c *check.C) {
-
 	numCols := 6
 	numRows := 10
 	chk := newChunk(8, 8, 0, 0, 40, 0)
 	strFmt := "%d.12345"
-
 	for i := 0; i < numRows; i++ {
 		chk.AppendNull(0)
 		chk.AppendInt64(1, int64(i))
@@ -1104,43 +1102,69 @@ func (s *testChunkSuite) TestAppendRows(c *check.C) {
 	c.Assert(chk.NumRows(), check.Equals, numRows)
 
 	chk2 := newChunk(8, 8, 0, 0, 40, 0)
-	for i := 0; i < numRows; i++ {
-		row := chk.GetRow(i)
-		rows := make([]Row, 0)
-		rows = append(rows, row)
-		chk2.AppendRows(rows)
-	}
-
-	chk3 := newChunk(8, 8, 0, 0, 40, 0)
 	c.Assert(chk.NumCols(), check.Equals, numCols)
 	rows := make([]Row, numRows)
 	for i := 0; i < numRows; i++ {
 		rows[i] = chk.GetRow(i)
 
 	}
-	c.Assert(len(rows), check.Equals, numRows)
-	chk3.AppendRows(rows)
-
+	chk2.AppendRows(rows)
+	for i := 0; i < numRows; i++ {
+		row := chk2.GetRow(i)
+		c.Assert(row.GetInt64(0), check.Equals, int64(0))
+		c.Assert(row.IsNull(0), check.IsTrue)
+		c.Assert(row.GetInt64(1), check.Equals, int64(i))
+		str := fmt.Sprintf(strFmt, i)
+		c.Assert(row.IsNull(2), check.IsFalse)
+		c.Assert(row.GetString(2), check.Equals, str)
+		c.Assert(row.IsNull(3), check.IsFalse)
+		c.Assert(row.GetBytes(3), check.BytesEquals, []byte(str))
+		c.Assert(row.IsNull(4), check.IsFalse)
+		c.Assert(row.GetMyDecimal(4).String(), check.Equals, str)
+		c.Assert(row.IsNull(5), check.IsFalse)
+		c.Assert(string(row.GetJSON(5).GetString()), check.Equals, str)
+	}
 }
-
-/**
-func BenchmarkAppendRow(b *testing.B) {
+func BenchmarkBatchAppendRows(b *testing.B) {
 	b.ReportAllocs()
+	numRows := 1000
 	rowChk := newChunk(8, 8, 0, 0)
-	rowChk.AppendNull(0)
-	rowChk.AppendInt64(1, 1)
-	rowChk.AppendString(2, "abcd")
-	rowChk.AppendBytes(3, []byte("abcd"))
-
+	for i := 0; i < numRows; i++ {
+		rowChk.AppendNull(0)
+		rowChk.AppendInt64(1, 1)
+		rowChk.AppendString(2, "abcd")
+		rowChk.AppendBytes(3, []byte("abcd"))
+	}
+	rows := make([]Row, numRows)
+	for i := 0; i < numRows; i++ {
+		rows[i] = rowChk.GetRow(i)
+	}
 	chk := newChunk(8, 8, 0, 0)
 	for i := 0; i < b.N; i++ {
-		appendRow(chk, rowChk.GetRow(0))
+		chk.Reset()
+		chk.AppendRows(rows)
 	}
 }
 
-func appendRow(chk *Chunk, row Row) {
-	chk.Reset()
-	for i := 0; i < 1000; i++ {
-		chk.AppendRow(row)
+func BenchmarkBatchAppendRow(b *testing.B) {
+	b.ReportAllocs()
+	numRows := 1000
+	rowChk := newChunk(8, 8, 0, 0)
+	for i := 0; i < numRows; i++ {
+		rowChk.AppendNull(0)
+		rowChk.AppendInt64(1, 1)
+		rowChk.AppendString(2, "abcd")
+		rowChk.AppendBytes(3, []byte("abcd"))
 	}
-}**/
+	rows := make([]Row, numRows)
+	for i := 0; i < numRows; i++ {
+		rows[i] = rowChk.GetRow(0)
+	}
+	chk := newChunk(8, 8, 0, 0)
+	for i := 0; i < b.N; i++ {
+		chk.Reset()
+		for i := 0; i < 1000; i++ {
+			chk.AppendRow(rowChk.GetRow(0))
+		}
+	}
+}
