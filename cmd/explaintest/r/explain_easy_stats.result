@@ -80,10 +80,10 @@ TopN_7	1.00	root		test.t2.c2, offset:0, count:1
     └─TableFullScan_13	1985.00	cop[tikv]	table:t2	keep order:false
 explain select * from t1 where c1 > 1 and c2 = 1 and c3 < 1;
 id	estRows	task	access object	operator info
-IndexLookUp_11	0.00	root		
-├─IndexRangeScan_8(Build)	0.00	cop[tikv]	table:t1, index:c2(c2)	range:(1 1,1 +inf], keep order:false
-└─Selection_10(Probe)	0.00	cop[tikv]		lt(test.t1.c3, 1)
-  └─TableRowIDScan_9	0.00	cop[tikv]	table:t1	keep order:false
+IndexLookUp_11	0.51	root		
+├─IndexRangeScan_8(Build)	1.00	cop[tikv]	table:t1, index:c2(c2)	range:(1 1,1 +inf], keep order:false
+└─Selection_10(Probe)	0.51	cop[tikv]		lt(test.t1.c3, 1)
+  └─TableRowIDScan_9	1.00	cop[tikv]	table:t1	keep order:false
 explain select * from t1 where c1 = 1 and c2 > 1;
 id	estRows	task	access object	operator info
 Selection_6	0.50	root		gt(test.t1.c2, 1)

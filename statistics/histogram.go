@@ -956,7 +956,10 @@ func (idx *Index) String() string {
 }
 
 func (idx *Index) TotalRowCount() float64 {
-	return idx.Histogram.TotalRowCount() + float64(idx.CMSketch.TotalCount())
+	if idx.StatsVer == CurStatsVersion {
+		return idx.Histogram.TotalRowCount() + float64(idx.TopN.TotalCount())
+	}
+	return idx.Histogram.TotalRowCount()
 }
 
 // HistogramNeededIndices stores the Index whose Histograms need to be loaded from physical kv layer.

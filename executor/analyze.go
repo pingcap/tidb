@@ -112,7 +112,7 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			continue
 		}
 		for i, hg := range result.Hist {
-			err1 := statsHandle.SaveStatsToStorage(result.TableID.PersistID, result.Count, result.IsIndex, hg, result.Cms[i], result.TopNs[i], 1)
+			err1 := statsHandle.SaveStatsToStorage(result.TableID.PersistID, result.Count, result.IsIndex, hg, result.Cms[i], result.TopNs[i], statistics.CurStatsVersion, 1)
 			if err1 != nil {
 				err = err1
 				logutil.Logger(ctx).Error("save stats to storage failed", zap.Error(err))

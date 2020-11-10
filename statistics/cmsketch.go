@@ -386,10 +386,12 @@ func (c *CMSketch) MergeCMSketch4IncrementalAnalyze(rc *CMSketch, numTopN uint32
 // CMSketchToProto converts CMSketch to its protobuf representation.
 func CMSketchToProto(c *CMSketch, topn *TopN) *tipb.CMSketch {
 	protoSketch := &tipb.CMSketch{Rows: make([]*tipb.CMSketchRow, c.depth)}
-	for i := range c.table {
-		protoSketch.Rows[i] = &tipb.CMSketchRow{Counters: make([]uint32, c.width)}
-		for j := range c.table[i] {
-			protoSketch.Rows[i].Counters[j] = c.table[i][j]
+	if c != nil {
+		for i := range c.table {
+			protoSketch.Rows[i] = &tipb.CMSketchRow{Counters: make([]uint32, c.width)}
+			for j := range c.table[i] {
+				protoSketch.Rows[i].Counters[j] = c.table[i][j]
+			}
 		}
 	}
 	if topn != nil {

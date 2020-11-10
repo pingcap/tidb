@@ -98,7 +98,7 @@ type jsonColumn struct {
 	Correlation       float64         `json:"correlation"`
 }
 
-func dumpJSONCol(hist *statistics.Histogram, CMSketch *statistics.CMSketch) *jsonColumn {
+func dumpJSONCol(hist *statistics.Histogram, CMSketch *statistics.CMSketch, topn *statistics.TopN) *jsonColumn {
 	jsonCol := &jsonColumn{
 		Histogram:         statistics.HistogramToProto(hist),
 		NullCount:         hist.NullCount,
@@ -106,8 +106,8 @@ func dumpJSONCol(hist *statistics.Histogram, CMSketch *statistics.CMSketch) *jso
 		LastUpdateVersion: hist.LastUpdateVersion,
 		Correlation:       hist.Correlation,
 	}
-	if CMSketch != nil {
-		jsonCol.CMSketch = statistics.CMSketchToProto(CMSketch, nil)
+	if CMSketch != nil || topn != nil {
+		jsonCol.CMSketch = statistics.CMSketchToProto(CMSketch, topn)
 	}
 	return jsonCol
 }
@@ -160,11 +160,11 @@ func (h *Handle) tableStatsToJSON(dbName string, tableInfo *model.TableInfo, phy
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		jsonTbl.Columns[col.Info.Name.L] = dumpJSONCol(hist, col.CMSketch)
+		jsonTbl.Columns[col.Info.Name.L] = dumpJSONCol(hist, col.CMSketch, col.TopN)
 	}
 
 	for _, idx := range tbl.Indices {
-		jsonTbl.Indices[idx.Info.Name.L] = dumpJSONCol(&idx.Histogram, idx.CMSketch)
+		jsonTbl.Indices[idx.Info.Name.L] = dumpJSONCol(&idx.Histogram, idx.CMSketch, idx.TopN)
 	}
 	jsonTbl.ExtStats = dumpJSONExtendedStats(tbl.ExtendedStats)
 	return jsonTbl, nil
@@ -205,13 +205,13 @@ func (h *Handle) loadStatsFromJSON(tableInfo *model.TableInfo, physicalID int64,
 	}
 
 	for _, col := range tbl.Columns {
-		err = h.SaveStatsToStorage(tbl.PhysicalID, tbl.Count, 0, &col.Histogram, col.CMSketch, col.TopN, 1)
+		err = h.SaveStatsToStorage(tbl.PhysicalID, tbl.Count, 0, &col.Histogram, col.CMSketch, col.TopN, 0, 1)
 		if err != nil {
 			return errors.Trace(err)
 		}
 	}
 	for _, idx := range tbl.Indices {
-		err = h.SaveStatsToStorage(tbl.PhysicalID, tbl.Count, 1, &idx.Histogram, idx.CMSketch, idx.TopN, 1)
+		err = h.SaveStatsToStorage(tbl.PhysicalID, tbl.Count, 1, &idx.Histogram, idx.CMSketch, idx.TopN, int(idx.StatsVer), 1)
 		if err != nil {
 			return errors.Trace(err)
 		}
