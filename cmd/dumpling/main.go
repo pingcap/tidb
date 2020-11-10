@@ -15,7 +15,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	_ "net/http/pprof"
 	"os"
@@ -33,14 +32,19 @@ func main() {
 		fmt.Fprint(os.Stderr, "Dumpling is a CLI tool that helps you dump MySQL/TiDB data\n\nUsage:\n  dumpling [flags]\n\nFlags:\n")
 		pflag.PrintDefaults()
 	}
-	pflag.ErrHelp = errors.New("")
-
 	printVersion := pflag.BoolP("version", "V", false, "Print Dumpling version")
 
 	conf := export.DefaultConfig()
 	conf.DefineFlags(pflag.CommandLine)
 
 	pflag.Parse()
+	if printHelp, err := pflag.CommandLine.GetBool(export.FlagHelp); printHelp || err != nil {
+		if err != nil {
+			fmt.Printf("\nGet help flag error: %s\n", err)
+		}
+		pflag.Usage()
+		return
+	}
 	println(cli.LongVersion())
 	if *printVersion {
 		return
