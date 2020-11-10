@@ -2543,3 +2543,21 @@ func (s *testIntegrationSuite3) TestIssue20741(c *C) {
 	tk.MustQuery("select * from issue20741 where cc = 0").Check(testkit.Rows())
 	tk.MustQuery("select * from issue20741 where cc = 1").Check(testkit.Rows("1 2 a", "2 2 a"))
 }
+
+// TestDefaultValueIsLatin1 for issue #18977
+func (s *testIntegrationSuite3) TestEnumAndSetDefaultValue(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	defer tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a enum(0x61, 'b') not null default 0x61, b set(0x61, 'b') not null default 0x61) character set latin1")
+	tbl := testGetTableByName(c, s.ctx, "test", "t")
+	c.Assert(tbl.Meta().Columns[0].DefaultValue, Equals, "a")
+	c.Assert(tbl.Meta().Columns[1].DefaultValue, Equals, "a")
+
+	tk.MustExec("drop table t")
+	tk.MustExec("create table t (a enum(0x61, 'b') not null default 0x61, b set(0x61, 'b') not null default 0x61) character set utf8mb4")
+	tbl = testGetTableByName(c, s.ctx, "test", "t")
+	c.Assert(tbl.Meta().Columns[0].DefaultValue, Equals, "a")
+	c.Assert(tbl.Meta().Columns[1].DefaultValue, Equals, "a")
+}
