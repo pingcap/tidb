@@ -57,7 +57,7 @@ var (
 func maxlen(lhsFlen, rhsFlen int) int {
 	// -1 indicates that the length is unknown, such as the case for expressions.
 	if lhsFlen < 0 || rhsFlen < 0 {
-		return 21
+		return mysql.MaxRealWidth
 	}
 	return mathutil.Max(lhsFlen, rhsFlen)
 }
