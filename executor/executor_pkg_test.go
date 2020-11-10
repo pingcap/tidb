@@ -52,7 +52,8 @@ type testExecSerialSuite struct {
 
 // mockSessionManager is a mocked session manager which is used for test.
 type mockSessionManager struct {
-	PS []*util.ProcessInfo
+	PS       []*util.ProcessInfo
+	serverID uint64
 }
 
 // ShowProcessList implements the SessionManager.ShowProcessList interface.
@@ -75,10 +76,20 @@ func (msm *mockSessionManager) GetProcessInfo(id uint64) (*util.ProcessInfo, boo
 
 // Kill implements the SessionManager.Kill interface.
 func (msm *mockSessionManager) Kill(cid uint64, query bool) {
+}
 
+func (msm *mockSessionManager) KillAllConnections() {
 }
 
 func (msm *mockSessionManager) UpdateTLSConfig(cfg *tls.Config) {
+}
+
+func (msm *mockSessionManager) ServerID() uint64 {
+	return msm.serverID
+}
+
+func (msm *mockSessionManager) SetServerID(serverID uint64) {
+	msm.serverID = serverID
 }
 
 func (s *testExecSuite) TestShowProcessList(c *C) {
