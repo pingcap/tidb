@@ -237,7 +237,7 @@ func (e *ReplaceExec) setMessage() {
 	if e.SelectExec != nil || numRecords > 1 {
 		numWarnings := stmtCtx.WarningCount()
 		numDuplicates := stmtCtx.AffectedRows() - numRecords
-		msg := fmt.Sprintf(mysql.MySQLErrName[mysql.ErrInsertInfo], numRecords, numDuplicates, numWarnings)
+		msg := fmt.Sprintf(mysql.MySQLErrName[mysql.ErrInsertInfo].Raw, numRecords, numDuplicates, numWarnings)
 		stmtCtx.SetMessage(msg)
 	}
 }

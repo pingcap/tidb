@@ -437,7 +437,7 @@ func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) 
 	case model.ActionModifyColumn:
 		ver, err = rollingbackModifyColumn(t, job)
 	case model.ActionRebaseAutoID, model.ActionShardRowID, model.ActionAddForeignKey,
-		model.ActionDropForeignKey, model.ActionRenameTable,
+		model.ActionDropForeignKey, model.ActionRenameTable, model.ActionRenameTables,
 		model.ActionModifyTableCharsetAndCollate, model.ActionTruncateTablePartition,
 		model.ActionModifySchemaCharsetAndCollate, model.ActionRepairTable,
 		model.ActionModifyTableAutoIdCache, model.ActionAlterIndexVisibility,

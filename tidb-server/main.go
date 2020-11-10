@@ -527,6 +527,8 @@ func setGlobalVars() {
 	runtime.GOMAXPROCS(int(cfg.Performance.MaxProcs))
 	metrics.MaxProcs.Set(float64(runtime.GOMAXPROCS(0)))
 
+	util.SetGOGC(cfg.Performance.GOGC)
+
 	ddlLeaseDuration := parseDuration(cfg.Lease)
 	session.SetSchemaLease(ddlLeaseDuration)
 	statsLeaseDuration := parseDuration(cfg.Performance.StatsLease)
@@ -556,6 +558,7 @@ func setGlobalVars() {
 	variable.SetSysVar(variable.TiDBForcePriority, mysql.Priority2Str[priority])
 	variable.SetSysVar(variable.TiDBOptDistinctAggPushDown, variable.BoolToIntStr(cfg.Performance.DistinctAggPushDown))
 	variable.SetSysVar(variable.TIDBMemQuotaQuery, strconv.FormatInt(cfg.MemQuotaQuery, 10))
+	variable.SetSysVar(variable.TIDBMemQuotaStatistics, strconv.FormatInt(cfg.MemQuotaStatistics, 10))
 	variable.SetSysVar("lower_case_table_names", strconv.Itoa(cfg.LowerCaseTableNames))
 	variable.SetSysVar(variable.LogBin, variable.BoolToIntStr(config.GetGlobalConfig().Binlog.Enable))
 	variable.SetSysVar(variable.Port, fmt.Sprintf("%d", cfg.Port))
@@ -636,6 +639,7 @@ func createServer() {
 	// Both domain and storage have started, so we have to clean them before exiting.
 	terror.MustNil(err, closeDomainAndStorage)
 	svr.SetDomain(dom)
+	svr.InitGlobalConnID(dom.ServerID)
 	go dom.ExpensiveQueryHandle().SetSessionManager(svr).Run()
 	dom.InfoSyncer().SetSessionManager(svr)
 }

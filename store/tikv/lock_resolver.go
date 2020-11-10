@@ -807,8 +807,6 @@ func (lr *LockResolver) checkAllSecondaries(bo *Backoffer, l *Lock, status *TxnS
 		return nil, errors.Errorf("async commit recovery (sending CheckSecondaryLocks) finished with errors: %v", errs)
 	}
 
-	// TODO(nrc, cfzjywxk) schema lease check
-
 	return &shared, nil
 }
 
