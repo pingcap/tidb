@@ -42,6 +42,9 @@ type Context interface {
 	// GetClient gets a kv.Client.
 	GetClient() kv.Client
 
+	// GetClient gets a kv.Client.
+	GetMPPClient() kv.MPPClient
+
 	// SetValue saves a value associated with this context for key.
 	SetValue(key fmt.Stringer, value interface{})
 
