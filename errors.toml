@@ -311,6 +311,11 @@ error = '''
 Generated column '%s' cannot refer to auto-increment column.
 '''
 
+["ddl:3505"]
+error = '''
+Too long enumeration/set value for column %s.
+'''
+
 ["ddl:3522"]
 error = '''
 A primary key index cannot be invisible
@@ -1524,11 +1529,6 @@ variable '%s' does not yet support value: %s
 ["variable:8048"]
 error = '''
 The isolation level '%s' is not supported. Set tidb_skip_isolation_level_check=1 to skip this error
-'''
-
-["variable:8054"]
-error = '''
-cannot set variable to null
 '''
 
 ["variable:8055"]
