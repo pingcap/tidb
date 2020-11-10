@@ -43,9 +43,8 @@ var (
 	ErrDeadlock                    = dbterror.ClassExecutor.NewStd(mysql.ErrLockDeadlock)
 	ErrQueryInterrupted            = dbterror.ClassExecutor.NewStd(mysql.ErrQueryInterrupted)
 
-	ErrBRIEBackupFailed   = dbterror.ClassExecutor.NewStd(mysql.ErrBRIEBackupFailed)
-	ErrBRIERestoreFailed  = dbterror.ClassExecutor.NewStd(mysql.ErrBRIERestoreFailed)
-	ErrBRIEImportFailed   = dbterror.ClassExecutor.NewStd(mysql.ErrBRIEImportFailed)
-	ErrBRIEExportFailed   = dbterror.ClassExecutor.NewStd(mysql.ErrBRIEExportFailed)
-	ErrInvalidTableSample = dbterror.ClassExecutor.NewStd(mysql.ErrInvalidTableSample)
+	ErrBRIEBackupFailed  = dbterror.ClassExecutor.NewStd(mysql.ErrBRIEBackupFailed)
+	ErrBRIERestoreFailed = dbterror.ClassExecutor.NewStd(mysql.ErrBRIERestoreFailed)
+	ErrBRIEImportFailed  = dbterror.ClassExecutor.NewStd(mysql.ErrBRIEImportFailed)
+	ErrBRIEExportFailed  = dbterror.ClassExecutor.NewStd(mysql.ErrBRIEExportFailed)
 )

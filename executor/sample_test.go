@@ -125,6 +125,13 @@ func (s *testTableSampleSuite) TestTableSampleSchema(c *C) {
 	tk.MustQuery("split table t between (1) and (100000) regions 4;").Check(testkit.Rows("3 1"))
 	tk.MustExec("insert into t(a) values (200), (25600), (50300), (99900), (99901)")
 	tk.MustQuery("select a from t tablesample regions();").Check(testkit.Rows("200", "25600", "50300", "99900"))
+
+	// _tidb_rowid
+	tk.MustExec("drop table t;")
+	tk.MustExec("create table t (a bigint, b int default 10);")
+	tk.MustQuery("split table t between (0) and (100000) regions 4;").Check(testkit.Rows("3 1"))
+	tk.MustExec("insert into t(a) values (1), (2), (3);")
+	tk.MustQuery("select a from t tablesample regions();").Check(testkit.Rows("1"))
 }
 
 func (s *testTableSampleSuite) TestTableSampleInvalid(c *C) {
@@ -140,6 +147,16 @@ func (s *testTableSampleSuite) TestTableSampleInvalid(c *C) {
 	tk.MustGetErrCode("select a from t as t1 tablesample regions(), t as t2 tablesample system();", errno.ErrInvalidTableSample)
 }
 
+func (s *testTableSampleSuite) TestTableSampleWithTiDBRowID(c *C) {
+	tk := s.initSampleTest(c)
+	tk.MustExec("create table t (a int, b varchar(255));")
+	tk.MustExec("insert into t values (1, 'abc');")
+	tk.MustQuery("select _tidb_rowid from t tablesample regions();").Check(testkit.Rows("1"))
+	tk.MustQuery("select a, _tidb_rowid from t tablesample regions();").Check(testkit.Rows("1 1"))
+	tk.MustQuery("select _tidb_rowid, b from t tablesample regions();").Check(testkit.Rows("1 abc"))
+	tk.MustQuery("select b, _tidb_rowid, a from t tablesample regions();").Check(testkit.Rows("abc 1 1"))
+}
+
 func (s *testTableSampleSuite) TestTableSampleWithPartition(c *C) {
 	tk := s.initSampleTest(c)
 	tk.MustExec("create table t (a int, b varchar(255), primary key (a)) partition by hash(a) partitions 2;")
@@ -153,6 +170,21 @@ func (s *testTableSampleSuite) TestTableSampleWithPartition(c *C) {
 	c.Assert(len(rows), Equals, 0)
 	rows = tk.MustQuery("select * from t partition (p1) tablesample regions();").Rows()
 	c.Assert(len(rows), Equals, 1)
+}
+
+func (s *testTableSampleSuite) TestTableSampleGeneratedColumns(c *C) {
+	tk := s.initSampleTest(c)
+	tk.MustExec("create table t (a int primary key, b int as (a + 1), c int as (b + 1), d int as (c + 1));")
+	tk.MustQuery("split table t between (0) and (10000) regions 4;").Check(testkit.Rows("3 1"))
+	tk.MustExec("insert into t(a) values (1), (2), (2999), (4999), (9999);")
+	tk.MustQuery("select a from t tablesample regions()").Check(testkit.Rows("1", "2999", "9999"))
+	tk.MustQuery("select c from t tablesample regions()").Check(testkit.Rows("3", "3001", "10001"))
+	tk.MustQuery("select a, b from t tablesample regions()").Check(
+		testkit.Rows("1 2", "2999 3000", "9999 10000"))
+	tk.MustQuery("select d, c from t tablesample regions()").Check(
+		testkit.Rows("4 3", "3002 3001", "10002 10001"))
+	tk.MustQuery("select a, d from t tablesample regions()").Check(
+		testkit.Rows("1 4", "2999 3002", "9999 10002"))
 }
 
 func (s *testTableSampleSuite) TestTableSampleNotSupportedPlanWarning(c *C) {

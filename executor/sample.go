@@ -92,10 +92,6 @@ type tableRegionSampler struct {
 
 func newTableRegionSampler(ctx sessionctx.Context, t table.Table, startTs uint64, partTables []table.PartitionedTable,
 	schema *expression.Schema, fullSchema *expression.Schema, retTypes []*types.FieldType, desc bool) *tableRegionSampler {
-	schemaFts := make(map[int64]*types.FieldType, len(schema.Columns))
-	for _, c := range schema.Columns {
-		schemaFts[c.ID] = c.RetType
-	}
 	return &tableRegionSampler{
 		ctx:        ctx,
 		table:      t,
@@ -109,53 +105,47 @@ func newTableRegionSampler(ctx sessionctx.Context, t table.Table, startTs uint64
 	}
 }
 
-func (ts *tableRegionSampler) writeChunk(req *chunk.Chunk) error {
-	regionKeyRanges, err := ts.splitTableRanges()
+func (s *tableRegionSampler) writeChunk(req *chunk.Chunk) error {
+	regionKeyRanges, err := s.splitTableRanges()
 	if err != nil {
 		return err
 	}
-	sort.Slice(regionKeyRanges, func(i, j int) bool {
-		ir, jr := regionKeyRanges[i].StartKey, regionKeyRanges[j].StartKey
-		if !ts.isDesc {
-			return ir.Cmp(jr) < 0
-		}
-		return ir.Cmp(jr) > 0
-	})
+	sortRanges(regionKeyRanges, s.isDesc)
 
-	decLoc, sysLoc := ts.ctx.GetSessionVars().TimeZone, time.UTC
-	cols, decColMap, err := ts.buildSampleColAndDecodeColMap()
+	decLoc, sysLoc := s.ctx.GetSessionVars().TimeZone, time.UTC
+	cols, decColMap, err := s.buildSampleColAndDecodeColMap()
 	if err != nil {
 		return err
 	}
-	rowDecoder := decoder.NewRowDecoder(ts.table, cols, decColMap)
-	err = ts.scanFirstKVForEachRange(regionKeyRanges, func(handle kv.Handle, value []byte) error {
-		_, err := rowDecoder.DecodeAndEvalRowWithMap(ts.ctx, handle, value, decLoc, sysLoc, ts.rowMap)
+	rowDecoder := decoder.NewRowDecoder(s.table, cols, decColMap)
+	err = s.scanFirstKVForEachRange(regionKeyRanges, func(handle kv.Handle, value []byte) error {
+		_, err := rowDecoder.DecodeAndEvalRowWithMap(s.ctx, handle, value, decLoc, sysLoc, s.rowMap)
 		if err != nil {
 			return err
 		}
 		currentRow := rowDecoder.CurrentRowWithDefaultVal()
-		mutRow := chunk.MutRowFromTypes(ts.retTypes)
-		for i, col := range ts.schema.Columns {
+		mutRow := chunk.MutRowFromTypes(s.retTypes)
+		for i, col := range s.schema.Columns {
 			offset := decColMap[col.ID].Col.Offset
-			target := currentRow.GetDatum(offset, ts.retTypes[i])
+			target := currentRow.GetDatum(offset, s.retTypes[i])
 			mutRow.SetDatum(i, target)
 		}
 		req.AppendRow(mutRow.ToRow())
-		ts.resetRowMap()
+		s.resetRowMap()
 		return nil
 	})
-	ts.isFinished = true
+	s.isFinished = true
 	return err
 }
 
-func (ts *tableRegionSampler) splitTableRanges() ([]kv.KeyRange, error) {
-	if len(ts.partTables) != 0 {
+func (s *tableRegionSampler) splitTableRanges() ([]kv.KeyRange, error) {
+	if len(s.partTables) != 0 {
 		var ranges []kv.KeyRange
-		for _, t := range ts.partTables {
+		for _, t := range s.partTables {
 			for _, pid := range t.GetAllPartitionIDs() {
 				start := tablecodec.GenTableRecordPrefix(pid)
 				end := start.PrefixNext()
-				rs, err := splitTableRanges(ts.ctx.GetStore(), start, end)
+				rs, err := splitIntoMultiRanges(s.ctx.GetStore(), start, end)
 				if err != nil {
 					return nil, err
 				}
@@ -164,11 +154,11 @@ func (ts *tableRegionSampler) splitTableRanges() ([]kv.KeyRange, error) {
 		}
 		return ranges, nil
 	}
-	startKey, endKey := ts.table.RecordPrefix(), ts.table.RecordPrefix().PrefixNext()
-	return splitTableRanges(ts.ctx.GetStore(), startKey, endKey)
+	startKey, endKey := s.table.RecordPrefix(), s.table.RecordPrefix().PrefixNext()
+	return splitIntoMultiRanges(s.ctx.GetStore(), startKey, endKey)
 }
 
-func splitTableRanges(store kv.Storage, startKey, endKey kv.Key) ([]kv.KeyRange, error) {
+func splitIntoMultiRanges(store kv.Storage, startKey, endKey kv.Key) ([]kv.KeyRange, error) {
 	kvRange := kv.KeyRange{StartKey: startKey, EndKey: endKey}
 
 	s, ok := store.(tikv.Storage)
@@ -192,20 +182,33 @@ func splitTableRanges(store kv.Storage, startKey, endKey kv.Key) ([]kv.KeyRange,
 	return ranges, nil
 }
 
-func (ts *tableRegionSampler) buildSampleColAndDecodeColMap() ([]*table.Column, map[int64]decoder.Column, error) {
-	schema := ts.schema
-	cols := make([]*table.Column, 0, len(schema.Columns))
-	colMap := make(map[int64]decoder.Column, len(schema.Columns))
-	tableCols := ts.table.Cols()
+func sortRanges(ranges []kv.KeyRange, isDesc bool) {
+	sort.Slice(ranges, func(i, j int) bool {
+		ir, jr := ranges[i].StartKey, ranges[j].StartKey
+		if !isDesc {
+			return ir.Cmp(jr) < 0
+		}
+		return ir.Cmp(jr) > 0
+	})
+}
 
-	for offset, schemaCol := range schema.Columns {
+func (s *tableRegionSampler) buildSampleColAndDecodeColMap() ([]*table.Column, map[int64]decoder.Column, error) {
+	schemaCols := s.schema.Columns
+	cols := make([]*table.Column, 0, len(schemaCols))
+	colMap := make(map[int64]decoder.Column, len(schemaCols))
+	tableCols := s.table.Cols()
+
+	for _, schemaCol := range schemaCols {
 		for _, tableCol := range tableCols {
 			if tableCol.ID != schemaCol.ID {
 				continue
 			}
+			// The `MutRow` produced by `DecodeAndEvalRowWithMap` used `ColumnInfo.Offset` as indices.
+			// To evaluate the columns in virtual generated expression properly,
+			// indices of column(Column.Index) needs to be resolved against full column's schema.
 			if schemaCol.VirtualExpr != nil {
 				var err error
-				schemaCol.VirtualExpr, err = schemaCol.VirtualExpr.ResolveIndices(ts.fullSchema)
+				schemaCol.VirtualExpr, err = schemaCol.VirtualExpr.ResolveIndices(s.fullSchema)
 				if err != nil {
 					return nil, nil, err
 				}
@@ -216,23 +219,24 @@ func (ts *tableRegionSampler) buildSampleColAndDecodeColMap() ([]*table.Column, 
 			}
 			cols = append(cols, tableCol)
 		}
-		if schemaCol.ID == model.ExtraHandleID {
-			extraHandle := model.NewExtraHandleColInfo()
-			extraHandle.Offset = offset
-			tableCol := &table.Column{ColumnInfo: extraHandle}
-			colMap[schemaCol.ID] = decoder.Column{
-				Col: tableCol,
-			}
-			cols = append(cols, tableCol)
+	}
+	// Schema columns contain _tidb_rowid, append extra handle column info.
+	if len(cols) < len(schemaCols) && schemaCols[len(schemaCols)-1].ID == model.ExtraHandleID {
+		extraHandle := model.NewExtraHandleColInfo()
+		extraHandle.Offset = len(cols)
+		tableCol := &table.Column{ColumnInfo: extraHandle}
+		colMap[model.ExtraHandleID] = decoder.Column{
+			Col: tableCol,
 		}
+		cols = append(cols, tableCol)
 	}
 	return cols, colMap, nil
 }
 
-func (ts *tableRegionSampler) scanFirstKVForEachRange(
+func (s *tableRegionSampler) scanFirstKVForEachRange(
 	ranges []kv.KeyRange, fn func(handle kv.Handle, value []byte) error) error {
-	ver := kv.Version{Ver: ts.startTS}
-	snap := ts.ctx.GetStore().GetSnapshot(ver)
+	ver := kv.Version{Ver: s.startTS}
+	snap := s.ctx.GetStore().GetSnapshot(ver)
 	for _, r := range ranges {
 		it, err := snap.Iter(r.StartKey, r.EndKey)
 		if err != nil {
@@ -261,17 +265,17 @@ func (ts *tableRegionSampler) scanFirstKVForEachRange(
 	return nil
 }
 
-func (ts *tableRegionSampler) resetRowMap() {
-	if ts.rowMap == nil {
-		colLen := len(ts.schema.Columns)
-		ts.rowMap = make(map[int64]types.Datum, colLen)
+func (s *tableRegionSampler) resetRowMap() {
+	if s.rowMap == nil {
+		colLen := len(s.schema.Columns)
+		s.rowMap = make(map[int64]types.Datum, colLen)
 		return
 	}
-	for id := range ts.rowMap {
-		delete(ts.rowMap, id)
+	for id := range s.rowMap {
+		delete(s.rowMap, id)
 	}
 }
 
-func (ts *tableRegionSampler) finished() bool {
-	return ts.isFinished
+func (s *tableRegionSampler) finished() bool {
+	return s.isFinished
 }
