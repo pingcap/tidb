@@ -835,6 +835,7 @@ type PhysicalMergeJoin struct {
 // PhysicalBroadCastJoin only works for TiFlash Engine, which broadcast the small table to every replica of probe side of tables.
 type PhysicalBroadCastJoin struct {
 	basePhysicalJoin
+	EqualConditions  []*expression.ScalarFunction
 	globalChildIndex int
 }
 
