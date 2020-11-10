@@ -84,6 +84,10 @@ func (s *testDumpSuite) TestBuildSelectAllQuery(c *C) {
 	mock.ExpectExec("SELECT _tidb_rowid from `test`.`t`").
 		WillReturnError(errors.New(`1054, "Unknown column '_tidb_rowid' in 'field list'"`))
 
+	mock.ExpectQuery("SELECT column_name FROM information_schema.KEY_COLUMN_USAGE").
+		WithArgs("test", "t").
+		WillReturnRows(sqlmock.NewRows([]string{"column_name"}).AddRow("id"))
+
 	orderByClause, err = buildOrderByClause(mockConf, conn, "test", "t")
 	c.Assert(err, IsNil)
 
@@ -94,7 +98,7 @@ func (s *testDumpSuite) TestBuildSelectAllQuery(c *C) {
 	selectedField, err = buildSelectField(conn, "test", "t", false)
 	c.Assert(err, IsNil)
 	q = buildSelectQuery("test", "t", selectedField, "", orderByClause)
-	c.Assert(q, Equals, "SELECT * FROM `test`.`t`")
+	c.Assert(q, Equals, "SELECT * FROM `test`.`t` ORDER BY `id`")
 	c.Assert(mock.ExpectationsWereMet(), IsNil)
 
 	// Test other servers.
@@ -104,7 +108,7 @@ func (s *testDumpSuite) TestBuildSelectAllQuery(c *C) {
 	for _, serverTp := range otherServers {
 		mockConf.ServerInfo.ServerType = serverTp
 		cmt := Commentf("server type: %s", serverTp)
-		mock.ExpectQuery("SELECT column_name FROM information_schema.columns").
+		mock.ExpectQuery("SELECT column_name FROM information_schema.KEY_COLUMN_USAGE").
 			WithArgs("test", "t").
 			WillReturnRows(sqlmock.NewRows([]string{"column_name"}).AddRow("id"))
 		orderByClause, err := buildOrderByClause(mockConf, conn, "test", "t")
@@ -127,7 +131,7 @@ func (s *testDumpSuite) TestBuildSelectAllQuery(c *C) {
 	for _, serverTp := range otherServers {
 		mockConf.ServerInfo.ServerType = serverTp
 		cmt := Commentf("server type: %s", serverTp)
-		mock.ExpectQuery("SELECT column_name FROM information_schema.columns").
+		mock.ExpectQuery("SELECT column_name FROM information_schema.KEY_COLUMN_USAGE").
 			WithArgs("test", "t").
 			WillReturnRows(sqlmock.NewRows([]string{"column_name"}))
 
@@ -162,6 +166,91 @@ func (s *testDumpSuite) TestBuildSelectAllQuery(c *C) {
 		q := buildSelectQuery("test", "t", selectedField, "", "")
 		c.Assert(q, Equals, "SELECT * FROM `test`.`t`", cmt)
 		c.Assert(mock.ExpectationsWereMet(), IsNil, cmt)
+	}
+}
+
+func (s *testDumpSuite) TestBuildOrderByClause(c *C) {
+	db, mock, err := sqlmock.New()
+	c.Assert(err, IsNil)
+	defer db.Close()
+	conn, err := db.Conn(context.Background())
+	c.Assert(err, IsNil)
+
+	mockConf := DefaultConfig()
+	mockConf.SortByPk = true
+
+	// Test TiDB server.
+	mockConf.ServerInfo.ServerType = ServerTypeTiDB
+
+	// _tidb_rowid is available.
+	mock.ExpectExec("SELECT _tidb_rowid from `test`.`t`").
+		WillReturnResult(sqlmock.NewResult(0, 0))
+
+	orderByClause, err := buildOrderByClause(mockConf, conn, "test", "t")
+	c.Assert(err, IsNil)
+	c.Assert(orderByClause, Equals, "ORDER BY _tidb_rowid")
+
+	// _tidb_rowid is unavailable, or PKIsHandle.
+	mock.ExpectExec("SELECT _tidb_rowid from `test`.`t`").
+		WillReturnError(errors.New(`1054, "Unknown column '_tidb_rowid' in 'field list'"`))
+
+	mock.ExpectQuery("SELECT column_name FROM information_schema.KEY_COLUMN_USAGE").
+		WithArgs("test", "t").
+		WillReturnRows(sqlmock.NewRows([]string{"column_name"}).AddRow("id"))
+
+	orderByClause, err = buildOrderByClause(mockConf, conn, "test", "t")
+	c.Assert(err, IsNil)
+	c.Assert(orderByClause, Equals, "ORDER BY `id`")
+
+	// Test other servers.
+	otherServers := []ServerType{ServerTypeUnknown, ServerTypeMySQL, ServerTypeMariaDB}
+
+	// Test table with primary key.
+	for _, serverTp := range otherServers {
+		mockConf.ServerInfo.ServerType = serverTp
+		cmt := Commentf("server type: %s", serverTp)
+		mock.ExpectQuery("SELECT column_name FROM information_schema.KEY_COLUMN_USAGE").
+			WithArgs("test", "t").
+			WillReturnRows(sqlmock.NewRows([]string{"column_name"}).AddRow("id"))
+		orderByClause, err := buildOrderByClause(mockConf, conn, "test", "t")
+		c.Assert(err, IsNil, cmt)
+		c.Assert(orderByClause, Equals, "ORDER BY `id`", cmt)
+	}
+
+	// Test table with joint primary key.
+	for _, serverTp := range otherServers {
+		mockConf.ServerInfo.ServerType = serverTp
+		cmt := Commentf("server type: %s", serverTp)
+		mock.ExpectQuery("SELECT column_name FROM information_schema.KEY_COLUMN_USAGE").
+			WithArgs("test", "t").
+			WillReturnRows(sqlmock.NewRows([]string{"column_name"}).AddRow("id").AddRow("name"))
+		orderByClause, err := buildOrderByClause(mockConf, conn, "test", "t")
+		c.Assert(err, IsNil, cmt)
+		c.Assert(orderByClause, Equals, "ORDER BY `id`, `name`", cmt)
+	}
+
+	// Test table without primary key.
+	for _, serverTp := range otherServers {
+		mockConf.ServerInfo.ServerType = serverTp
+		cmt := Commentf("server type: %s", serverTp)
+		mock.ExpectQuery("SELECT column_name FROM information_schema.KEY_COLUMN_USAGE").
+			WithArgs("test", "t").
+			WillReturnRows(sqlmock.NewRows([]string{"column_name"}))
+
+		orderByClause, err := buildOrderByClause(mockConf, conn, "test", "t")
+		c.Assert(err, IsNil, cmt)
+		c.Assert(orderByClause, Equals, "", cmt)
+	}
+
+	// Test when config.SortByPk is disabled.
+	mockConf.SortByPk = false
+	for tp := ServerTypeUnknown; tp < ServerTypeAll; tp += 1 {
+		mockConf.ServerInfo.ServerType = ServerType(tp)
+		cmt := Commentf("current server type: ", tp)
+
+		orderByClause, err := buildOrderByClause(mockConf, conn, "test", "t")
+		c.Assert(err, IsNil, cmt)
+		c.Assert(orderByClause, Equals, "", cmt)
 	}
 }
 
