@@ -644,6 +644,12 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 			t = enforceProperty(prop, t, ds.basePlan.ctx)
 		}
 		ds.storeTask(prop, t)
+		if ds.SampleInfo != nil && !t.invalid() {
+			if _, ok := t.plan().(*PhysicalTableSample); !ok {
+				warning := expression.ErrInvalidTableSample.GenWithStackByArgs("plan not supported")
+				ds.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
+			}
+		}
 	}()
 
 	t, err = ds.tryToGetDualTask()
@@ -737,7 +743,7 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 				continue
 			}
 			var tblTask task
-			if path.IsSampling {
+			if ds.SampleInfo != nil {
 				tblTask, err = ds.convertToSampleTable(prop, candidate)
 			} else {
 				tblTask, err = ds.convertToTableScan(prop, candidate)

@@ -154,3 +154,17 @@ func (s *testTableSampleSuite) TestTableSampleWithPartition(c *C) {
 	rows = tk.MustQuery("select * from t partition (p1) tablesample regions();").Rows()
 	c.Assert(len(rows), Equals, 1)
 }
+
+func (s *testTableSampleSuite) TestTableSampleNotSupportedPlanWarning(c *C) {
+	tk := s.initSampleTest(c)
+	tk.MustExec("create table t (a int primary key, b int, c varchar(255));")
+	tk.MustQuery("split table t between (0) and (10000) regions 5;").Check(testkit.Rows("4 1"))
+	tk.MustExec("insert into t values (1000, 1, '1'), (1001, 1, '1'), (2100, 2, '2'), (4500, 3, '3');")
+
+	tk.MustExec("create index idx_0 on t (b);")
+	tk.MustQuery("select a from t tablesample regions() order by a;").Check(
+		testkit.Rows("1000", "2100", "4500"))
+	tk.MustQuery("select a from t use index (idx_0) tablesample regions() order by a;").Check(
+		testkit.Rows("1000", "1001", "2100", "4500"))
+	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 8128 Invalid TABLESAMPLE: plan not supported"))
+}

@@ -2938,7 +2938,6 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	if err != nil {
 		return nil, err
 	}
-	possiblePaths = tagAccessPathWithSample(possiblePaths, tn)
 
 	// Try to substitute generate column only if there is an index on generate column.
 	for _, index := range tableInfo.Indices {

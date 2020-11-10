@@ -977,16 +977,6 @@ func filterPathByIsolationRead(ctx sessionctx.Context, paths []*util.AccessPath,
 	return paths, err
 }
 
-func tagAccessPathWithSample(paths []*util.AccessPath, tn *ast.TableName) []*util.AccessPath {
-	if tn.TableSample == nil {
-		return paths
-	}
-	for i := range paths {
-		paths[i].IsSampling = true
-	}
-	return paths
-}
-
 func removeIgnoredPaths(paths, ignoredPaths []*util.AccessPath, tblInfo *model.TableInfo) []*util.AccessPath {
 	if len(ignoredPaths) == 0 {
 		return paths
