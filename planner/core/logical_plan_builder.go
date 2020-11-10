@@ -3227,7 +3227,8 @@ func (b *PlanBuilder) buildMemTable(_ context.Context, dbName model.CIStr, table
 func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName model.CIStr, tableInfo *model.TableInfo) (LogicalPlan, error) {
 	charset, collation := b.ctx.GetSessionVars().GetCharsetInfo()
 	viewParser := parser.New()
-	viewParser.EnableWindowFunc(b.ctx.GetSessionVars().EnableWindowFunction)
+	viewParser.SetParserConfig(b.ctx.GetSessionVars().BuildParserConfig())
+	// viewParser.EnableWindowFunc(b.ctx.GetSessionVars().EnableWindowFunction)
 	selectNode, err := viewParser.ParseOneStmt(tableInfo.View.SelectStmt, charset, collation)
 	if err != nil {
 		return nil, err
