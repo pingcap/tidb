@@ -688,13 +688,13 @@ func needChangeColumnData(oldCol, newCol *model.ColumnInfo) bool {
 	toUnsigned := mysql.HasUnsignedFlag(newCol.Flag)
 	originUnsigned := mysql.HasUnsignedFlag(oldCol.Flag)
 	needTruncationOrToggleSign := func() bool {
-		return newCol.Flen > 0 && newCol.Flen < oldCol.Flen || toUnsigned != originUnsigned
+		return (newCol.Flen > 0 && newCol.Flen < oldCol.Flen) || (toUnsigned != originUnsigned)
 	}
-	// Ignore the potential max display length represented by integer's flen.
+	// Ignore the potential max display length represented by integer's flen, use default flen instead.
 	oldColFlen, _ := mysql.GetDefaultFieldLengthAndDecimal(oldCol.Tp)
 	newColFlen, _ := mysql.GetDefaultFieldLengthAndDecimal(newCol.Tp)
 	needTruncationOrToggleSignForInteger := func() bool {
-		return newColFlen > 0 && newColFlen < oldColFlen || toUnsigned != originUnsigned
+		return (newColFlen > 0 && newColFlen < oldColFlen) || (toUnsigned != originUnsigned)
 	}
 
 	// Deal with the same type.
