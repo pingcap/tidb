@@ -2731,6 +2731,32 @@ func (s *testSuite7) TestDeferConstraintCheckForInsert(c *C) {
 	c.Assert(err, NotNil)
 }
 
+func (s *testSuite7) TestConstraintCheckForUniqueIndex(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set tidb_constraint_check_in_place = 0")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(id int(11) NOT NULL AUTO_INCREMENT,k int(11) NOT NULL DEFAULT '0',c char(120) NOT NULL DEFAULT '',PRIMARY KEY (id),UNIQUE KEY k_1 (k,c))")
+	tk.MustExec("insert into t(k,c) values(1, 'tidb')")
+	tk.MustExec("insert into t(k,c) values(2, 'tidb')")
+	tk.MustExec("begin")
+	tk.MustExec("update t set k=1 where id=2")
+	_, err := tk.Exec("commit")
+	c.Assert(err.Error(), Equals, "previous statement: update t set k=1 where id=2: [kv:1062]Duplicate entry '1-tidb' for key 'k_1'")
+	tk.MustExec("rollback")
+
+	tk.MustExec("set tidb_constraint_check_in_place = 1")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(id int(11) NOT NULL AUTO_INCREMENT,k int(11) NOT NULL DEFAULT '0',c char(120) NOT NULL DEFAULT '',PRIMARY KEY (id),UNIQUE KEY k_1 (k,c))")
+	tk.MustExec("insert into t(k,c) values(1, 'tidb')")
+	tk.MustExec("insert into t(k,c) values(2, 'tidb')")
+	tk.MustExec("begin")
+	_, err = tk.Exec("update t set k=1 where id=2")
+	c.Assert(err.Error(), Equals, "[kv:1062]Duplicate entry '1-tidb' for key 'k_1'")
+	tk.MustExec("rollback")
+}
+
 func (s *testSuite7) TestPessimisticDeleteYourWrites(c *C) {
 	session1 := testkit.NewTestKitWithInit(c, s.store)
 	session2 := testkit.NewTestKitWithInit(c, s.store)
