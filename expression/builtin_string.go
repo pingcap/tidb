@@ -3549,7 +3549,7 @@ func (b *builtinToBase64Sig) evalString(row chunk.Row) (d string, isNull bool, e
 		return "", true, nil
 	}
 	if b.tp.Flen == -1 || b.tp.Flen > mysql.MaxBlobWidth {
-		return "", true, nil
+		b.tp.Flen = mysql.MaxBlobWidth
 	}
 
 	//encode
