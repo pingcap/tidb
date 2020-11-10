@@ -20,9 +20,7 @@ import (
 
 // Error instances.
 var (
-	errCantGetValidID              = dbterror.ClassVariable.NewStd(mysql.ErrCantGetValidID)
 	errWarnDeprecatedSyntax        = dbterror.ClassVariable.NewStd(mysql.ErrWarnDeprecatedSyntax)
-	ErrCantSetToNull               = dbterror.ClassVariable.NewStd(mysql.ErrCantSetToNull)
 	ErrSnapshotTooOld              = dbterror.ClassVariable.NewStd(mysql.ErrSnapshotTooOld)
 	ErrUnsupportedValueForVar      = dbterror.ClassVariable.NewStd(mysql.ErrUnsupportedValueForVar)
 	ErrUnknownSystemVar            = dbterror.ClassVariable.NewStd(mysql.ErrUnknownSystemVariable)
