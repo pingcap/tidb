@@ -1780,10 +1780,25 @@ func (s *testPessimisticSuite) TestAmendForUniqueIndex(c *C) {
 	tk2.MustExec("insert into t (id, c) values (1, 2), (3, 4);")
 	tk.MustExec("begin pessimistic")
 	tk.MustExec("insert into t values (3, 2) on duplicate key update id = values(id) and c = values(c)")
+	finishCh := make(chan error)
 	go func() {
-		tk2.MustExec("alter table t add unique index uk(c);")
+		err := tk2.ExecToErr("alter table t add unique index uk(c);")
+		finishCh <- err
 	}()
 	time.Sleep(100 * time.Millisecond)
+	tk.MustExec("commit")
+	err = <-finishCh
+	c.Assert(err, IsNil)
+	tk2.MustExec("admin check table t")
+
+	// Update the old value with same unique key, but the row key has changed.
+	tk2.MustExec("drop table if exists t;")
+	tk2.MustExec("create table t (id int auto_increment primary key, c int);")
+	tk2.MustExec("insert into t (id, c) values (1, 2), (3, 4);")
+	tk.MustExec("begin pessimistic")
+	err = tk2.ExecToErr("alter table t add unique index uk(c);")
+	c.Assert(err, IsNil)
+	tk.MustExec("insert into t values (3, 2) on duplicate key update id = values(id) and c = values(c)")
 	tk.MustExec("commit")
 	tk2.MustExec("admin check table t")
 }

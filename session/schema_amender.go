@@ -491,6 +491,7 @@ func (a *amendOperationAddIndex) genOldIdxKey(ctx context.Context, sctx sessionc
 		if a.info.indexInfoAtCommit.Meta().Unique {
 			isPessimisticLock = true
 		}
+		a.deletedOldIndexKeys[string(newIdxKey)] = struct{}{}
 		resAddMutations.Push(pb.Op_Del, newIdxKey, emptyVal, isPessimisticLock)
 	}
 	return nil
