@@ -119,3 +119,92 @@ func (t *testUtilsSuite) TestObjectIDFromGroupID(c *C) {
 		}
 	}
 }
+
+func (t *testUtilsSuite) TestGetLeaderDCByBundle(c *C) {
+	testcases := []struct {
+		name       string
+		bundle     *Bundle
+		expectedDC string
+	}{
+		{
+			name: "only leader",
+			bundle: &Bundle{
+				ID: GroupID(1),
+				Rules: []*Rule{
+					{
+						ID:   "12",
+						Role: Leader,
+						LabelConstraints: []LabelConstraint{
+							{
+								Key:    "zone",
+								Op:     "in",
+								Values: []string{"bj"},
+							},
+						},
+						Count: 1,
+					},
+				},
+			},
+			expectedDC: "bj",
+		},
+		{
+			name: "only voter",
+			bundle: &Bundle{
+				ID: GroupID(1),
+				Rules: []*Rule{
+					{
+						ID:   "12",
+						Role: Voter,
+						LabelConstraints: []LabelConstraint{
+							{
+								Key:    "zone",
+								Op:     "in",
+								Values: []string{"bj"},
+							},
+						},
+						Count: 3,
+					},
+				},
+			},
+			expectedDC: "bj",
+		},
+		{
+			name: "voter and leader",
+			bundle: &Bundle{
+				ID: GroupID(1),
+				Rules: []*Rule{
+					{
+						ID:   "11",
+						Role: Leader,
+						LabelConstraints: []LabelConstraint{
+							{
+								Key:    "zone",
+								Op:     "in",
+								Values: []string{"sh"},
+							},
+						},
+						Count: 1,
+					},
+					{
+						ID:   "12",
+						Role: Voter,
+						LabelConstraints: []LabelConstraint{
+							{
+								Key:    "zone",
+								Op:     "in",
+								Values: []string{"bj"},
+							},
+						},
+						Count: 3,
+					},
+				},
+			},
+			expectedDC: "sh",
+		},
+	}
+	for _, testcase := range testcases {
+		c.Log(testcase.name)
+		result := GetLeaderDCByBundle(testcase.bundle, "zone")
+		c.Check(testcase.expectedDC, DeepEquals, result)
+	}
+}

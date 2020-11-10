@@ -14,17 +14,14 @@
 package placement
 
 import (
-	"context"
 	"encoding/hex"
 	"fmt"
 	"strconv"
 	"strings"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
-	pd "github.com/tikv/pd/client"
 )
 
 func checkLabelConstraint(label string) (LabelConstraint, error) {
@@ -135,63 +132,25 @@ func BuildPlacementCopyBundle(oldBundle *Bundle, newID int64) *Bundle {
 	return newBundle
 }
 
-// GetLeaderDCByBundle return the leaders' dc by Bundle
-func GetLeaderDCByBundle(ctx context.Context, bundle *Bundle, pdClient pd.Client, dcLabelKey string) (map[string]struct{}, error) {
-	bundleDCDistributions := make(map[string]struct{}, 1)
-	for _, rule := range bundle.Rules {
-		if rule.Role != Leader {
-			continue
-		}
-		//TODO: we can execute these in parallel
-		ruleDCDistributions, err := getLeaderDCByRule(ctx, rule, pdClient, dcLabelKey)
-		if err != nil {
-			return nil, err
-		}
-		for dc := range ruleDCDistributions {
-			bundleDCDistributions[dc] = struct{}{}
-		}
+// GetLeaderDCByBundle return the leader's dc by Bundle
+func GetLeaderDCByBundle(bundle *Bundle, dcLabelKey string) string {
+	dc := getRoleDCByBundle(bundle, dcLabelKey, Leader)
+	if len(dc) > 0 {
+		return dc
 	}
-	return bundleDCDistributions, nil
+	// If there is placement policy for leader, fallback to search voter
+	return getRoleDCByBundle(bundle, dcLabelKey, Voter)
 }
 
-func getLeaderDCByRule(parCtx context.Context, rule *Rule, pdClient pd.Client, dcLabelKey string) (map[string]struct{}, error) {
-	getLabelValueByKey := func(labels []*metapb.StoreLabel, key string) string {
-		for _, label := range labels {
-			if label.Key == key {
-				return label.Value
+func getRoleDCByBundle(bundle *Bundle, dcLabelKey string, role PeerRoleType) string {
+	for _, rule := range bundle.Rules {
+		if rule.Role == role {
+			for _, cons := range rule.LabelConstraints {
+				if cons.Key == dcLabelKey && len(cons.Values) > 0 {
+					return cons.Values[0]
+				}
 			}
 		}
-		return ""
 	}
-	dcLocations := make(map[string]struct{}, 1)
-	startKey, err := hex.DecodeString(rule.StartKeyHex)
-	if err != nil {
-		return nil, fmt.Errorf("failed to decode rule[%v,%v]'s startkey, err: %v", rule.GroupID, rule.ID, err)
-	}
-	endKey, err := hex.DecodeString(rule.EndKeyHex)
-	if err != nil {
-		return nil, fmt.Errorf("failed to decode rule[%v,%v]'s endKey, err: %v", rule.GroupID, rule.ID, err)
-	}
-	ctx, cancel := context.WithCancel(parCtx)
-	defer cancel()
-	regions, err := pdClient.ScanRegions(ctx, startKey, endKey, -1)
-	if err != nil {
-		return nil, fmt.Errorf("failed to scan regions, err: %v", err)
-	}
-	for _, region := range regions {
-		if region.Leader == nil {
-			return nil, fmt.Errorf("region %v have no leader", region.Meta.GetId())
-		}
-		// TODO: we can cache the storeInfo to reduce the query
-		storeInfo, err := pdClient.GetStore(ctx, region.Leader.StoreId)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get store %v information, err: %v", region.Leader.StoreId, err)
-		}
-		value := getLabelValueByKey(storeInfo.GetLabels(), dcLabelKey)
-		if len(value) < 1 {
-			return nil, fmt.Errorf("store %v have no dc %v label key", storeInfo.GetId(), dcLabelKey)
-		}
-		dcLocations[value] = struct{}{}
-	}
-	return dcLocations, nil
+	return ""
 }
