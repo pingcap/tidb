@@ -187,6 +187,39 @@ func (s *testTableSampleSuite) TestTableSampleGeneratedColumns(c *C) {
 		testkit.Rows("1 4", "2999 3002", "9999 10002"))
 }
 
+func (s *testTableSampleSuite) TestTableSampleUnionScanIgnorePendingKV(c *C) {
+	tk := s.initSampleTest(c)
+	tk.MustExec("create table t (a int primary key);")
+	tk.MustQuery("split table t between (0) and (40000) regions 4;").Check(testkit.Rows("3 1"))
+	tk.MustExec("insert into t values (1), (1000), (10002);")
+	tk.MustQuery("select * from t tablesample regions();").Check(testkit.Rows("1", "10002"))
+
+	tk.MustExec("begin;")
+	tk.MustExec("insert into t values (20006), (50000);")
+	// The memory DB values in transactions are ignored.
+	tk.MustQuery("select * from t tablesample regions();").Check(testkit.Rows("1", "10002"))
+	tk.MustExec("delete from t where a = 1;")
+	// The memory DB values in transactions are ignored.
+	tk.MustQuery("select * from t tablesample regions();").Check(testkit.Rows("1", "10002"))
+	tk.MustExec("commit;")
+	tk.MustQuery("select * from t tablesample regions();").Check(testkit.Rows("1000", "10002", "20006", "50000"))
+}
+
+func (s *testTableSampleSuite) TestTableSampleTransactionConsistency(c *C) {
+	tk := s.initSampleTest(c)
+	tk2 := s.initSampleTest(c)
+	tk.MustExec("create table t (a int primary key);")
+	tk.MustQuery("split table t between (0) and (40000) regions 4;").Check(testkit.Rows("3 1"))
+	tk.MustExec("insert into t values (1), (1000), (10002);")
+
+	tk.MustExec("begin;")
+	tk.MustQuery("select * from t tablesample regions();").Check(testkit.Rows("1", "10002"))
+	tk2.MustExec("insert into t values (20006), (50000);")
+	tk.MustQuery("select * from t tablesample regions();").Check(testkit.Rows("1", "10002"))
+	tk.MustExec("commit;")
+	tk.MustQuery("select * from t tablesample regions();").Check(testkit.Rows("1", "10002", "20006", "50000"))
+}
+
 func (s *testTableSampleSuite) TestTableSampleNotSupportedPlanWarning(c *C) {
 	tk := s.initSampleTest(c)
 	tk.MustExec("create table t (a int primary key, b int, c varchar(255));")
