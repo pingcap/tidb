@@ -919,7 +919,7 @@ func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *
 			Key: m.keys[i],
 		}
 		existErr := c.txn.us.GetKeyExistErrInfo(m.keys[i])
-		if existErr != nil || c.doingAmend {
+		if existErr != nil || (c.doingAmend && m.GetOps()[i] == pb.Op_Insert) {
 			mut.Assertion = pb.Assertion_NotExist
 		}
 		mutations[i] = mut

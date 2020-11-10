@@ -324,8 +324,9 @@ func (s *testSchemaAmenderSuite) TestAmendCollectAndGenMutations(c *C) {
 			}
 			if addIndexNeedRemoveOp(addIndexOpInfo.AmendOpType) || addIndexNeedAddOp(addIndexOpInfo.AmendOpType) {
 				expectedAmendOps = append(expectedAmendOps, &amendOperationAddIndex{
-					info:                  addIndexOpInfo,
-					processedNewIndexKeys: make(map[string]struct{}),
+					info:                 addIndexOpInfo,
+					insertedNewIndexKeys: make(map[string]struct{}),
+					deletedOldIndexKeys:  make(map[string]struct{}),
 				})
 			}
 
@@ -340,8 +341,9 @@ func (s *testSchemaAmenderSuite) TestAmendCollectAndGenMutations(c *C) {
 			}
 			if addIndexNeedRemoveOp(addIndexOpInfo.AmendOpType) || addIndexNeedAddOp(addIndexOpInfo.AmendOpType) {
 				expectedAmendOps = append(expectedAmendOps, &amendOperationAddIndex{
-					info:                  addIndexOpInfo1,
-					processedNewIndexKeys: make(map[string]struct{}),
+					info:                 addIndexOpInfo1,
+					insertedNewIndexKeys: make(map[string]struct{}),
+					deletedOldIndexKeys:  make(map[string]struct{}),
 				})
 			}
 
@@ -356,8 +358,9 @@ func (s *testSchemaAmenderSuite) TestAmendCollectAndGenMutations(c *C) {
 			}
 			if addIndexNeedRemoveOp(addIndexOpInfo.AmendOpType) || addIndexNeedAddOp(addIndexOpInfo.AmendOpType) {
 				expectedAmendOps = append(expectedAmendOps, &amendOperationAddIndex{
-					info:                  addIndexOpInfo2,
-					processedNewIndexKeys: make(map[string]struct{}),
+					info:                 addIndexOpInfo2,
+					insertedNewIndexKeys: make(map[string]struct{}),
+					deletedOldIndexKeys:  make(map[string]struct{}),
 				})
 			}
 
