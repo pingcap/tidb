@@ -432,13 +432,13 @@ func (s *testIntegrationSuite1) TestIssue5092(c *C) {
 	tk.MustExec("alter table t_issue_5092 add column d int default 4 after c1, add column aa int default 0 first")
 	tk.MustQuery("select * from t_issue_5092").Check(testkit.Rows("0 1 2 22 3 33 4"))
 	tk.MustQuery("show create table t_issue_5092").Check(testkit.Rows("t_issue_5092 CREATE TABLE `t_issue_5092` (\n" +
-		"  `aa` int(11) DEFAULT 0,\n" +
-		"  `a` int(11) DEFAULT 1,\n" +
-		"  `b` int(11) DEFAULT 2,\n" +
-		"  `b1` int(11) DEFAULT 22,\n" +
-		"  `c` int(11) DEFAULT 3,\n" +
-		"  `c1` int(11) DEFAULT 33,\n" +
-		"  `d` int(11) DEFAULT 4\n" +
+		"  `aa` int(11) DEFAULT '0',\n" +
+		"  `a` int(11) DEFAULT '1',\n" +
+		"  `b` int(11) DEFAULT '2',\n" +
+		"  `b1` int(11) DEFAULT '22',\n" +
+		"  `c` int(11) DEFAULT '3',\n" +
+		"  `c1` int(11) DEFAULT '33',\n" +
+		"  `d` int(11) DEFAULT '4'\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 	tk.MustExec("drop table t_issue_5092")
 
@@ -957,7 +957,7 @@ func (s *testIntegrationSuite5) TestModifyColumnOption(c *C) {
 	_, err = tk.Exec("alter table t1 change a a int(11) unsigned")
 	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify column: can't change unsigned integer to signed or vice versa, and tidb_enable_change_column_type is false")
 	_, err = tk.Exec("alter table t2 change b b int(11) unsigned")
-	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify column: type int(11) not match origin char(1)")
+	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify column: type int(11) not match origin char(1), and tidb_enable_change_column_type is false")
 }
 
 func (s *testIntegrationSuite4) TestIndexOnMultipleGeneratedColumn(c *C) {
@@ -2474,6 +2474,26 @@ func (s *testIntegrationSuite5) TestDropColumnsWithMultiIndex(c *C) {
 	tk.MustQuery(query).Check(testkit.Rows())
 }
 
+func (s *testIntegrationSuite5) TestDropLastVisibleColumn(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test_db")
+	tk.MustExec("create table t_drop_last_column(x int, key((1+1)))")
+	defer tk.MustExec("drop table if exists t_drop_last_column")
+	_, err := tk.Exec("alter table t_drop_last_column drop column x")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:1113]A table must have at least 1 column")
+}
+
+func (s *testIntegrationSuite5) TestDropLastVisibleColumns(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test_db")
+	tk.MustExec("create table t_drop_last_columns(x int, y int, key((1+1)))")
+	defer tk.MustExec("drop table if exists t_drop_last_columns")
+	_, err := tk.Exec("alter table t_drop_last_columns drop column x, drop column y")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:1113]A table must have at least 1 column")
+}
+
 func (s *testIntegrationSuite7) TestAutoIncrementTableOption(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	defer config.RestoreFunc()()
@@ -2509,4 +2529,22 @@ func (s *testIntegrationSuite3) TestIssue20490(c *C) {
 	tk.MustExec("insert into issue20490(a) values(3);")
 
 	tk.MustQuery("select b from issue20490 order by a;").Check(testkit.Rows("1", "1", "<nil>"))
+}
+
+// TestDefaultValueIsLatin1 for issue #18977
+func (s *testIntegrationSuite3) TestEnumAndSetDefaultValue(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	defer tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a enum(0x61, 'b') not null default 0x61, b set(0x61, 'b') not null default 0x61) character set latin1")
+	tbl := testGetTableByName(c, s.ctx, "test", "t")
+	c.Assert(tbl.Meta().Columns[0].DefaultValue, Equals, "a")
+	c.Assert(tbl.Meta().Columns[1].DefaultValue, Equals, "a")
+
+	tk.MustExec("drop table t")
+	tk.MustExec("create table t (a enum(0x61, 'b') not null default 0x61, b set(0x61, 'b') not null default 0x61) character set utf8mb4")
+	tbl = testGetTableByName(c, s.ctx, "test", "t")
+	c.Assert(tbl.Meta().Columns[0].DefaultValue, Equals, "a")
+	c.Assert(tbl.Meta().Columns[1].DefaultValue, Equals, "a")
 }

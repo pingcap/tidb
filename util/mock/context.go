@@ -114,6 +114,14 @@ func (c *Context) GetClient() kv.Client {
 	return c.Store.GetClient()
 }
 
+// GetMPPClient implements sessionctx.Context GetMPPClient interface.
+func (c *Context) GetMPPClient() kv.MPPClient {
+	if c.Store == nil {
+		return nil
+	}
+	return c.Store.GetMPPClient()
+}
+
 // GetGlobalSysVar implements GlobalVarAccessor GetGlobalSysVar interface.
 func (c *Context) GetGlobalSysVar(ctx sessionctx.Context, name string) (string, error) {
 	v := variable.GetSysVar(name)

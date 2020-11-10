@@ -53,5 +53,38 @@
       // DataSource -> Window -> Aggregation.
       "select count(tmp.a_sum) from (select t1.a as a, t1.b as b, sum(a) over() as a_sum from t1) tmp group by tmp.a, tmp.b"
     ]
+  },
+  {
+    "name": "TestCardinalityGroupCols",
+    "cases": [
+      // DataSource -> Aggregation.
+      "select count(1) from t1 group by a, b",
+      // DataSource -> Join.
+      "select * from t1, t2 where t1.a = t2.a and t1.b = t2.b",
+      // DataSource(Range) -> Aggregation.
+      "select count(1) from t1 where a > 0 group by a, b",
+      // DataSource(Selection) -> Aggregation.
+      "select count(1) from t1 where b > 0 group by a, b",
+      // DataSource -> Projection -> Aggregation.
+      "select count(c3) from (select a as c1, b as c2, a+1 as c3 from t1) as tmp group by c2, c1",
+      // DataSource -> Apply(LeftOuterJoin) -> Aggregation.
+      "select count(tmp.cmp) from (select t1.a as a, t1.b as b, (t1.b > (select t2.b from t2 where t2.a = t1.a)) as cmp from t1) tmp group by tmp.a, tmp.b",
+      // DataSource -> Apply(LeftOuterSemiJoin) -> Aggregation.
+      "select count(tmp.cmp) from (select t1.a as a, t1.b as b, (t1.b in (select t2.b from t2 where t2.a = t1.a limit 3)) as cmp from t1) tmp group by tmp.a, tmp.b",
+      // DataSource -> Apply(AntiLeftOuterSemiJoin) -> Aggregation.
+      "select count(tmp.cmp) from (select t1.a as a, t1.b as b, (t1.b not in (select t2.b from t2 where t2.a = t1.a limit 3)) as cmp from t1) tmp group by tmp.a, tmp.b",
+      // DataSource -> LeftOuterJoin -> Aggregation.
+      "select count(1) from t1 left join t2 on t1.a = t2.a group by t1.a, t1.b",
+      // DataSource -> RightOuterJoin -> Aggregation.
+      "select count(1) from t1 right join t2 on t1.a = t2.a group by t2.a, t2.b",
+      // DataSource -> LeftOuterSemiJoin -> Aggregation.
+      "select count(tmp.cmp) from (select t1.a as a, t1.b as b, (t1.b in (select t2.b from t2 where t2.a > t1.a)) as cmp from t1) tmp group by tmp.a, tmp.b",
+      // DataSource -> AntiLeftOuterSemiJoin -> Aggregation.
+      "select count(tmp.cmp) from (select t1.a as a, t1.b as b, (t1.b not in (select t2.b from t2 where t2.a > t1.a)) as cmp from t1) tmp group by tmp.a, tmp.b",
+      // DataSource -> Aggregation -> Join.
+      "select * from t1 left join (select t2.a as a, t2.b as b, count(1) as cnt from t2 group by t2.a, t2.b) as tmp on t1.a = tmp.a and t1.b = tmp.b",
+      // DataSource -> Window -> Aggregation.
+      "select count(tmp.a_sum) from (select t1.a as a, t1.b as b, sum(a) over() as a_sum from t1) tmp group by tmp.a, tmp.b"
+    ]
   }
 ]

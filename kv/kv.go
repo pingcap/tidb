@@ -195,6 +195,8 @@ type MemBuffer interface {
 	SetWithFlags(Key, []byte, ...FlagsOp) error
 	// UpdateFlags update the flags associated with key.
 	UpdateFlags(Key, ...FlagsOp)
+	// DeleteWithFlags delete key with the given KeyFlags
+	DeleteWithFlags(Key, ...FlagsOp) error
 
 	GetKeyByHandle(MemKeyHandle) []byte
 	GetValueByHandle(MemKeyHandle) ([]byte, bool)
@@ -394,6 +396,8 @@ type Request struct {
 	BatchCop bool
 	// TaskID is an unique ID for an execution of a statement
 	TaskID uint64
+	// TiDBServerID is the specified TiDB serverID to execute request. `0` means all TiDB instances.
+	TiDBServerID uint64
 }
 
 // ResultSubset represents a result subset from a single storage unit.
@@ -455,6 +459,8 @@ type Storage interface {
 	GetSnapshot(ver Version) Snapshot
 	// GetClient gets a client instance.
 	GetClient() Client
+	// GetClient gets a mpp client instance.
+	GetMPPClient() MPPClient
 	// Close store
 	Close() error
 	// UUID return a unique ID which represents a Storage.

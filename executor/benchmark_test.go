@@ -86,6 +86,10 @@ func (mp *mockDataPhysicalPlan) ExplainID() fmt.Stringer {
 	})
 }
 
+func (mp *mockDataPhysicalPlan) ID() int {
+	return 0
+}
+
 func (mp *mockDataPhysicalPlan) Stats() *property.StatsInfo {
 	return nil
 }
@@ -463,7 +467,7 @@ func buildWindowExecutor(ctx sessionctx.Context, windowFunc string, funcs int, f
 		})
 	}
 	for _, col := range partitionBy {
-		win.PartitionBy = append(win.PartitionBy, property.Item{Col: col})
+		win.PartitionBy = append(win.PartitionBy, property.SortItem{Col: col})
 	}
 	win.Frame = frame
 	win.OrderBy = nil

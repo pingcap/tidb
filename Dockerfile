@@ -40,6 +40,9 @@ RUN make
 # Executable image
 FROM alpine
 
+RUN apk add --no-cache \
+    curl
+
 COPY --from=builder /go/src/github.com/pingcap/tidb/bin/tidb-server /tidb-server
 COPY --from=builder /usr/local/bin/dumb-init /usr/local/bin/dumb-init
 

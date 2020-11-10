@@ -1797,7 +1797,7 @@ func (h dbTableHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	// The physicalID maybe a partition ID of the partition-table.
-	tbl, dbInfo := schema.FindTableByPartitionID(int64(physicalID))
+	tbl, dbInfo, _ := schema.FindTableByPartitionID(int64(physicalID))
 	if tbl == nil {
 		writeError(w, infoschema.ErrTableNotExists.GenWithStack("Table which ID = %s does not exist.", tableID))
 		return

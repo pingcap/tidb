@@ -394,6 +394,8 @@ func (s *testIntegrationSerialSuite) TestBroadcastJoin(c *C) {
 	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash'")
 	tk.MustExec("set @@session.tidb_allow_batch_cop = 1")
 	tk.MustExec("set @@session.tidb_opt_broadcast_join = 1")
+	// make cbo force choose broadcast join since sql hint does not work for semi/anti-semi join
+	tk.MustExec("set @@session.tidb_opt_cpu_factor=10000000;")
 	var input []string
 	var output []struct {
 		SQL  string
@@ -413,8 +415,12 @@ func (s *testIntegrationSerialSuite) TestBroadcastJoin(c *C) {
 	_, err := tk.Exec("explain select /*+ broadcast_join(fact_t, d1_t), broadcast_join_local(d1_t) */ count(*) from fact_t left join d1_t on fact_t.d1_k = d1_t.d1_k")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[planner:1815]Internal : Can't find a proper physical plan for this query")
-	// join with non-equal condition not supported
-	_, err = tk.Exec("explain select /*+ broadcast_join(fact_t, d1_t) */ count(*) from fact_t join d1_t on fact_t.d1_k = d1_t.d1_k and fact_t.col1 > d1_t.value")
+	// nullEQ not supported
+	_, err = tk.Exec("explain select /*+ broadcast_join(fact_t, d1_t) */ count(*) from fact_t join d1_t on fact_t.d1_k <=> d1_t.d1_k")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[planner:1815]Internal : Can't find a proper physical plan for this query")
+	// not supported if join condition has unsupported expr
+	_, err = tk.Exec("explain select /*+ broadcast_join(fact_t, d1_t) */ count(*) from fact_t left join d1_t on fact_t.d1_k = d1_t.d1_k and sqrt(fact_t.col1) > 2")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[planner:1815]Internal : Can't find a proper physical plan for this query")
 	// cartsian join not supported
@@ -1526,6 +1532,17 @@ func (s *testIntegrationSerialSuite) TestIssue18984(c *C) {
 		"2 2 2 <nil> <nil> <nil> <nil>",
 		"3 3 3 1 2 3 4",
 		"3 3 3 2 4 3 5"))
+}
+
+func (s *testIntegrationSuite) TestDistinctScalarFunctionPushDown(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int not null, b int not null, c int not null, primary key (a,c)) partition by range (c) (partition p0 values less than (5), partition p1 values less than (10))")
+	tk.MustExec("insert into t values(1,1,1),(2,2,2),(3,1,3),(7,1,7),(8,2,8),(9,2,9)")
+	tk.MustQuery("select count(distinct b+1) as col from t").Check(testkit.Rows(
+		"2",
+	))
 }
 
 func (s *testIntegrationSerialSuite) TestExplainAnalyzePointGet(c *C) {
