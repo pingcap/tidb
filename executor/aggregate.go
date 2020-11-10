@@ -895,7 +895,7 @@ func (e *StreamAggExec) consumeOneGroup(ctx context.Context, chk *chunk.Chunk) (
 			start = time.Now()
 			_, err := e.groupChecker.splitIntoGroups(e.childResult)
 			if e.stats != nil {
-				e.stats.Split += time.Since(start)
+				e.stats.SplitTime += time.Since(start)
 			}
 			if err != nil {
 				return err
@@ -917,7 +917,7 @@ func (e *StreamAggExec) consumeOneGroup(ctx context.Context, chk *chunk.Chunk) (
 		start = time.Now()
 		isFirstGroupSameAsPrev, err := e.groupChecker.splitIntoGroups(e.childResult)
 		if e.stats != nil {
-			e.stats.Split += time.Since(start)
+			e.stats.SplitTime += time.Since(start)
 		}
 		if err != nil {
 			return err
@@ -985,7 +985,7 @@ func (e *StreamAggExec) consumeCurGroupRowsAndFetchChild(ctx context.Context, ch
 	e.isChildReturnEmpty = false
 	e.inputRow = e.inputIter.Begin()
 	if e.stats != nil {
-		e.stats.Allocate += time.Since(start)
+		e.stats.AllocateTime += time.Since(start)
 	}
 	return nil
 }
@@ -1010,8 +1010,8 @@ func (e *StreamAggExec) initRuntimeStat() {
 	if e.runtimeStats != nil {
 		if e.stats == nil {
 			e.stats = &StreamAggRuntimeStat{
-				Allocate: 0,
-				Split:    0,
+				AllocateTime: 0,
+				SplitTime:    0,
 			}
 			e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
 		}
@@ -1020,31 +1020,28 @@ func (e *StreamAggExec) initRuntimeStat() {
 
 // StreamAggRuntimeStat record the StreamAgg runtime stat
 type StreamAggRuntimeStat struct {
-	Allocate time.Duration
-	Split    time.Duration
+	AllocateTime time.Duration
+	SplitTime    time.Duration
 }
 
 func (e *StreamAggRuntimeStat) String() string {
 	var result bytes.Buffer
-	if e.Allocate != 0 {
-		result.WriteString(fmt.Sprintf("allocate_time:%v", e.Allocate))
+	if e.AllocateTime != 0 {
+		result.WriteString(fmt.Sprintf("allocate_time:%v", e.AllocateTime))
 	}
-	if e.Split != 0 {
+	if e.SplitTime != 0 {
 		if result.Len() > 0 {
 			result.WriteByte(',')
 		}
-		result.WriteString(fmt.Sprintf("split_time:%v", e.Split))
+		result.WriteString(fmt.Sprintf(" split_time:%v", e.SplitTime))
 	}
 	return result.String()
 }
 
 // Clone implements the RuntimeStats interface.
 func (e *StreamAggRuntimeStat) Clone() execdetails.RuntimeStats {
-	newRs := &StreamAggRuntimeStat{
-		Allocate: 0,
-		Split:    0,
-	}
-	return newRs
+	newRs := *e
+	return &newRs
 }
 
 // Merge implements the RuntimeStats interface.
@@ -1053,8 +1050,8 @@ func (e *StreamAggRuntimeStat) Merge(other execdetails.RuntimeStats) {
 	if !ok {
 		return
 	}
-	e.Allocate += tmp.Allocate
-	e.Split += tmp.Split
+	e.AllocateTime += tmp.AllocateTime
+	e.SplitTime += tmp.SplitTime
 }
 
 // Tp implements the RuntimeStats interface.
