@@ -33,7 +33,6 @@ func interestingGoroutines() (gs []string) {
 	buf = buf[:runtime.Stack(buf, true)]
 	ignoreList := []string{
 		"created by github.com/pingcap/tidb.init",
-		"gopkg.in/natefinch/lumberjack%2ev2.(*Logger).millRun",
 		"testing.RunTests",
 		"check.(*resultTracker).start",
 		"check.(*suiteRunner).runFunc",
