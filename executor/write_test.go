@@ -264,7 +264,7 @@ func (s *testSuite) TestInsert(c *C) {
 	r.Check(testkit.Rows("0", "0", "18446744073709551615", "0", "0"))
 	tk.MustExec("set @@sql_mode = @orig_sql_mode;")
 
-	// issue 6424
+	// issue 6424 & issue 20207
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a time(6))")
 	tk.MustExec("insert into t value('20070219173709.055870'), ('20070219173709.055'), ('20070219173709.055870123')")
@@ -273,7 +273,7 @@ func (s *testSuite) TestInsert(c *C) {
 	tk.MustExec("insert into t value(20070219173709.055870), (20070219173709.055), (20070219173709.055870123)")
 	tk.MustQuery("select * from t").Check(testkit.Rows("17:37:09.055870", "17:37:09.055000", "17:37:09.055870"))
 	_, err = tk.Exec("insert into t value(-20070219173709.055870)")
-	c.Assert(err.Error(), Equals, "[table:1366]Incorrect time value: '-20070219173709.055870' for column 'a' at row 1")
+	c.Assert(err.Error(), Equals, "[table:1292]Incorrect time value: '-20070219173709.055870' for column 'a' at row 1")
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("set @@sql_mode=''")
@@ -1482,7 +1482,7 @@ func (s *testSuite8) TestUpdate(c *C) {
 	tk.MustExec("drop table t")
 	tk.MustExec("CREATE TABLE `t` (	`c1` year DEFAULT NULL, `c2` year DEFAULT NULL, `c3` date DEFAULT NULL, `c4` datetime DEFAULT NULL,	KEY `idx` (`c1`,`c2`))")
 	_, err = tk.Exec("UPDATE t SET c2=16777215 WHERE c1>= -8388608 AND c1 < -9 ORDER BY c1 LIMIT 2")
-	c.Assert(err.Error(), Equals, "[types:1690]DECIMAL value is out of range in '(4, 0)'")
+	c.Assert(err, IsNil)
 
 	tk.MustExec("update (select * from t) t set c1 = 1111111")
 
