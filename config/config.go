@@ -164,7 +164,7 @@ type Config struct {
 	EnableGlobalIndex bool `toml:"enable-global-index" json:"enable-global-index"`
 	// DeprecateIntegerDisplayWidth indicates whether deprecating the max display length for integer.
 	DeprecateIntegerDisplayWidth bool `toml:"deprecate-integer-display-length" json:"deprecate-integer-display-length"`
-	// TxnScope indicates the default value for session variable tidb_txn_scope
+	// TxnScope indicates the default value for session variable txn_scope
 	TxnScope string `toml:"txn-scope" json:"txn-scope"`
 	// EnableEnumLengthLimit indicates whether the enum/set element length is limited.
 	// According to MySQL 8.0 Refman:

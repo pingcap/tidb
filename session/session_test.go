@@ -3240,19 +3240,19 @@ func (s *testSessionSuite2) TestPerStmtTaskID(c *C) {
 func (s *testSessionSuite2) TestSetTxnScope(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	// assert default value
-	result := tk.MustQuery("select @@tidb_txn_scope;")
+	result := tk.MustQuery("select @@txn_scope;")
 	result.Check(testkit.Rows(config.DefTxnScope))
 
 	// assert set sys variable
-	tk.MustExec("set @@session.tidb_txn_scope = 'dc-1';")
-	result = tk.MustQuery("select @@tidb_txn_scope;")
+	tk.MustExec("set @@session.txn_scope = 'dc-1';")
+	result = tk.MustQuery("select @@txn_scope;")
 	result.Check(testkit.Rows("dc-1"))
 
 	// assert session scope
 	se, err := session.CreateSession4Test(s.store)
 	c.Check(err, IsNil)
 	tk.Se = se
-	result = tk.MustQuery("select @@tidb_txn_scope;")
+	result = tk.MustQuery("select @@txn_scope;")
 	result.Check(testkit.Rows(config.DefTxnScope))
 }
 

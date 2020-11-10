@@ -181,6 +181,9 @@ const (
 
 	// TiDBAllowAutoRandExplicitInsert indicates whether explicit insertion on auto_random column is allowed.
 	TiDBAllowAutoRandExplicitInsert = "allow_auto_random_explicit_insert"
+
+	// TiDBTxnScope indicates whether using global transactions or local transactions.
+	TiDBTxnScope = "txn_scope"
 )
 
 // TiDB system variable names that both in session and global scope.
@@ -453,9 +456,6 @@ const (
 
 	// TiDBEnableAmendPessimisticTxn indicates if amend pessimistic transactions is enabled.
 	TiDBEnableAmendPessimisticTxn = "tidb_enable_amend_pessimistic_txn"
-
-	// TiDBTxnScope indicates whether using global transactions or local transactions.
-	TiDBTxnScope = "tidb_txn_scope"
 )
 
 // Default TiDB system variable values.

@@ -299,7 +299,7 @@ func setSSLVariable(ca, key, cert string) {
 }
 
 func setTxnScope() {
-	variable.SetSysVar("tidb_txn_scope", config.GetGlobalConfig().TxnScope)
+	variable.SetSysVar("txn_scope", config.GetGlobalConfig().TxnScope)
 }
 
 // Run runs the server.
