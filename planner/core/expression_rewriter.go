@@ -416,6 +416,7 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 		if _, ok := expression.TryFoldFunctions[v.FnName.L]; ok {
 			er.tryFoldCounter++
 		}
+		er.asScalar = true
 	case *ast.CaseExpr:
 		if _, ok := expression.DisableFoldFunctions["case"]; ok {
 			er.disableFoldCounter++
@@ -423,6 +424,7 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 		if _, ok := expression.TryFoldFunctions["case"]; ok {
 			er.tryFoldCounter++
 		}
+		er.asScalar = true
 	case *ast.SetCollationExpr:
 		// Do nothing
 	default:

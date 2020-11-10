@@ -307,3 +307,22 @@ func (s *testExpressionRewriterSuite) TestIssue20007(c *C) {
 			testkit.Rows("2 epic wiles 2020-01-02 23:29:51", "3 silly burnell 2020-02-25 07:43:07"))
 	}
 }
+
+func (s *testExpressionRewriterSuite) TestIssue20552(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t1, t2;")
+	tk.MustExec("CREATE TABLE t1(a INT, b INT);")
+	tk.MustExec("INSERT INTO t1 VALUES(1,1),(2,2),(3,3);")
+	tk.MustExec("ANALYZE TABLE t1;")
+	tk.MustExec("SELECT * FROM t1 WHERE ISNULL(t1.a IN (SELECT t3.a FROM t1 t3));")
+	tk.MustExec("SELECT * FROM t1 WHERE CASE (1 IN (SELECT a FROM t1)) WHEN 0 THEN 0 END;")
+}
