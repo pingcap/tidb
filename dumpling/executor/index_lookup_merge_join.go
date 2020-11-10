@@ -569,6 +569,9 @@ func (imw *innerMergeWorker) doMergeJoin(ctx context.Context, task *lookUpMergeJ
 	for _, outerIdx := range task.outerOrderIdx {
 		outerRow := task.outerResult.GetRow(outerIdx)
 		hasMatch, hasNull, cmpResult := false, false, initCmpResult
+		if task.outerMatch != nil && !task.outerMatch[outerIdx.ChkIdx][outerIdx.RowIdx] {
+			goto missMatch
+		}
 		// If it has iterated out all inner rows and the inner rows with same key is empty,
 		// that means the outer row needn't match any inner rows.
 		if noneInnerRowsRemain && len(task.sameKeyInnerRows) == 0 {
