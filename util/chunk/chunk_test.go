@@ -1096,27 +1096,72 @@ func (s *testChunkSuite) TestAppendRows(c *check.C) {
 	}
 	c.Assert(len(rows), check.Equals, numRows)
 	chk3.AppendRows(rows)
+	for i := 0; i < numRows; i++ {
+		row := chk3.GetRow(i)
+		c.Assert(row.GetInt64(0), check.Equals, int64(0))
+		c.Assert(row.IsNull(0), check.IsTrue)
+		c.Assert(row.GetInt64(1), check.Equals, int64(i))
+		str := fmt.Sprintf(strFmt, i)
+		c.Assert(row.IsNull(2), check.IsFalse)
+		c.Assert(row.GetString(2), check.Equals, str)
+		c.Assert(row.IsNull(3), check.IsFalse)
+		c.Assert(row.GetBytes(3), check.BytesEquals, []byte(str))
+		c.Assert(row.IsNull(4), check.IsFalse)
+		c.Assert(row.GetMyDecimal(4).String(), check.Equals, str)
+		c.Assert(row.IsNull(5), check.IsFalse)
+		c.Assert(string(row.GetJSON(5).GetString()), check.Equals, str)
+	}
+
+	//check data
 
 }
 
-/**
-func BenchmarkAppendRow(b *testing.B) {
+func BenchmarkAppendRows(b *testing.B) {
 	b.ReportAllocs()
+	numRows := 4000
 	rowChk := newChunk(8, 8, 0, 0)
-	rowChk.AppendNull(0)
-	rowChk.AppendInt64(1, 1)
-	rowChk.AppendString(2, "abcd")
-	rowChk.AppendBytes(3, []byte("abcd"))
+	for i := 0; i < numRows; i++ {
+		rowChk.AppendNull(0)
+		rowChk.AppendInt64(1, 1)
+		rowChk.AppendString(2, "abcd")
+		rowChk.AppendBytes(3, []byte("abcd"))
+	}
 
+	//chk := newChunk(8, 8, 0, 0)
+	//for i := 0; i < b.N; i++ {
+	//	chk.AppendRows(rows)
+	//}
+
+	type testCaseConf struct {
+		batchSize int
+	}
+	testCaseConfs := []testCaseConf{
+		{batchSize: 10},
+		{batchSize: 100},
+		{batchSize: 1000},
+		{batchSize: 4000},
+	}
 	chk := newChunk(8, 8, 0, 0)
-	for i := 0; i < b.N; i++ {
-		appendRow(chk, rowChk.GetRow(0))
+	for _, conf := range testCaseConfs {
+		b.Run(fmt.Sprintf("row-%d", conf.batchSize), func(b *testing.B) {
+			for i := 0; i < b.N; i++ {
+				chk.Reset()
+				for j := 0; j < conf.batchSize; j++ {
+					chk.AppendRow(rowChk.GetRow(j))
+				}
+			}
+		})
+		b.ResetTimer()
+		b.Run(fmt.Sprintf("column-%d", conf.batchSize), func(b *testing.B) {
+			for i := 0; i < b.N; i++ {
+				chk.Reset()
+				rows := make([]Row, conf.batchSize)
+				for i := 0; i < conf.batchSize; i++ {
+					rows[i] = rowChk.GetRow(i)
+
+				}
+				chk.AppendRows(rows)
+			}
+		})
 	}
 }
-
-func appendRow(chk *Chunk, row Row) {
-	chk.Reset()
-	for i := 0; i < 1000; i++ {
-		chk.AppendRow(row)
-	}
-}**/
