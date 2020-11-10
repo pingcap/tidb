@@ -226,6 +226,10 @@ type expressionRewriter struct {
 	// leaving the scope(enable again), the counter will -1.
 	// NOTE: This value can be changed during expression rewritten.
 	disableFoldCounter int
+
+	// https://github.com/pingcap/tidb/issues/8733#issuecomment-700572764
+	// remember SetVar name, check should we fold GetVar to constant or not
+	setVariableMap map[string]int
 }
 
 func (er *expressionRewriter) ctxStackLen() int {
@@ -1078,12 +1082,34 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
 				expression.DatumToConstant(types.NewDatum(name), mysql.TypeString),
 				er.ctxStack[stkLen-1])
 			er.ctxNameStk[stkLen-1] = types.EmptyName
+
+			if er.setVariableMap == nil { // init when nil
+				er.setVariableMap = make(map[string]int)
+			}
+
+			er.setVariableMap[name] = 1
 			return
 		}
+
+		// We can only fold the GetVar into a constant if the query contains no SetVar for the same user variable.
+		disableFoldForGetVar := false
+		if er.setVariableMap != nil {
+			disableFoldForGetVar = er.setVariableMap[name] > 0
+		} // else setVariableMap is nil, no need to disable fold
+
+		if disableFoldForGetVar {
+			er.disableFoldCounter++ // scope disable fold enter
+		}
+
 		f, err := er.newFunction(ast.GetVar,
 			// TODO: Here is wrong, the sessionVars should store a name -> Datum map. Will fix it later.
 			types.NewFieldType(mysql.TypeString),
 			expression.DatumToConstant(types.NewStringDatum(name), mysql.TypeString))
+
+		if disableFoldForGetVar { // scope disable fold leave
+			er.disableFoldCounter--
+		}
+
 		if err != nil {
 			er.err = err
 			return
