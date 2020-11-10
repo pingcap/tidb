@@ -895,7 +895,7 @@ func (e *StreamAggExec) consumeOneGroup(ctx context.Context, chk *chunk.Chunk) (
 			start = time.Now()
 			_, err := e.groupChecker.splitIntoGroups(e.childResult)
 			if e.stats != nil {
-				e.stats.Split += int64(time.Since(start))
+				e.stats.Split += time.Since(start)
 			}
 			if err != nil {
 				return err
@@ -917,7 +917,7 @@ func (e *StreamAggExec) consumeOneGroup(ctx context.Context, chk *chunk.Chunk) (
 		start = time.Now()
 		isFirstGroupSameAsPrev, err := e.groupChecker.splitIntoGroups(e.childResult)
 		if e.stats != nil {
-			e.stats.Split += int64(time.Since(start))
+			e.stats.Split += time.Since(start)
 		}
 		if err != nil {
 			return err
@@ -985,7 +985,7 @@ func (e *StreamAggExec) consumeCurGroupRowsAndFetchChild(ctx context.Context, ch
 	e.isChildReturnEmpty = false
 	e.inputRow = e.inputIter.Begin()
 	if e.stats != nil {
-		e.stats.Allocate += int64(time.Since(start))
+		e.stats.Allocate += time.Since(start)
 	}
 	return nil
 }
@@ -1020,20 +1020,20 @@ func (e *StreamAggExec) initRuntimeStat() {
 
 // StreamAggRuntimeStat record the StreamAgg runtime stat
 type StreamAggRuntimeStat struct {
-	Allocate int64
-	Split    int64
+	Allocate time.Duration
+	Split    time.Duration
 }
 
 func (e *StreamAggRuntimeStat) String() string {
 	var result bytes.Buffer
 	if e.Allocate != 0 {
-		result.WriteString(fmt.Sprintf("Allocate_time:%v", time.Duration(e.Allocate)))
+		result.WriteString(fmt.Sprintf("allocate_time:%v", e.Allocate))
 	}
 	if e.Split != 0 {
 		if result.Len() > 0 {
 			result.WriteByte(',')
 		}
-		result.WriteString(fmt.Sprintf("Split_time:%v", time.Duration(e.Split)))
+		result.WriteString(fmt.Sprintf("split_time:%v", e.Split))
 	}
 	return result.String()
 }
