@@ -1344,6 +1344,13 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (Plan, 
 		case ast.ShowCreateView:
 			err := ErrSpecificAccessDenied.GenWithStackByArgs("SHOW VIEW")
 			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.ShowViewPriv, show.Table.Schema.L, show.Table.Name.L, "", err)
+		case ast.ShowStatsBuckets, ast.ShowStatsHistograms, ast.ShowStatsMeta, ast.ShowStatsHealthy:
+			user := b.ctx.GetSessionVars().User
+			var err error
+			if user != nil {
+				err = ErrDBaccessDenied.GenWithStackByArgs(user.AuthUsername, user.AuthHostname, mysql.SystemDB)
+			}
+			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, mysql.SystemDB, "", "", err)
 		}
 		p.SetSchema(buildShowSchema(show, isView))
 	}

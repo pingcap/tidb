@@ -1295,6 +1295,7 @@ func (b *executorBuilder) buildUnionAll(v *plannercore.PhysicalUnionAll) Executo
 	}
 	e := &UnionExec{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), childExecs...),
+		concurrency:  b.ctx.GetSessionVars().Concurrency.UnionConcurrency,
 	}
 	return e
 }

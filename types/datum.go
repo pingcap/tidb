@@ -839,7 +839,7 @@ func ProduceFloatWithSpecifiedTp(f float64, target *FieldType, sc *stmtctx.State
 			return f, errors.Trace(err)
 		}
 	}
-	if mysql.HasUnsignedFlag(target.Flag) && f < 0 {
+	if (mysql.HasUnsignedFlag(target.Flag) && f < 0) || (target.Tp == mysql.TypeFloat && (f > math.MaxFloat32 || f < -math.MaxFloat32)) {
 		return 0, overflow(f, target.Tp)
 	}
 	return f, nil
@@ -1287,8 +1287,13 @@ func (d *Datum) convertToMysqlBit(sc *stmtctx.StatementContext, target *FieldTyp
 		uintDatum, err1 := d.convertToUint(sc, target)
 		uintValue, err = uintDatum.GetUint64(), err1
 	}
-	if target.Flen < 64 && uintValue >= 1<<(uint64(target.Flen)) {
+	// Avoid byte size panic, never goto this branch.
+	if target.Flen <= 0 || target.Flen >= 128 {
 		return Datum{}, errors.Trace(ErrDataTooLong.GenWithStack("Data Too Long, field len %d", target.Flen))
+	}
+	if target.Flen < 64 && uintValue >= 1<<(uint64(target.Flen)) {
+		uintValue &= (1 << (uint64(target.Flen))) - 1
+		err = ErrDataTooLong.GenWithStack("Data Too Long, field len %d", target.Flen)
 	}
 	byteSize := (target.Flen + 7) >> 3
 	ret.SetMysqlBit(NewBinaryLiteralFromUint(uintValue, byteSize))

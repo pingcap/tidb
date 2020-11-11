@@ -19,8 +19,10 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"fmt"
+	"github.com/pingcap/tidb/metrics"
 	"io/ioutil"
 	"net/http"
+	"os"
 	"runtime"
 	"strconv"
 	"strings"
@@ -92,6 +94,34 @@ func WithRecovery(exec func(), recoverFn func(r interface{})) {
 	exec()
 }
 
+// Recover includes operations such as recovering, clearing，and printing information.
+// It will dump current goroutine stack into log if catch any recover result.
+//   metricsLabel: The label of PanicCounter metrics.
+//   funcInfo:     Some information for the panic function.
+//   recoverFn:    Handler will be called after recover and before dump stack, passing `nil` means noop.
+//   quit:         If this value is true, the current program exits after recovery.
+func Recover(metricsLabel, funcInfo string, recoverFn func(), quit bool) {
+	r := recover()
+	if r == nil {
+		return
+	}
+
+	if recoverFn != nil {
+		recoverFn()
+	}
+	logutil.Logger(context.Background()).Error("panic in the recoverable goroutine",
+		zap.String("label", metricsLabel),
+		zap.String("funcInfo", funcInfo),
+		zap.Reflect("r", r),
+		zap.String("stack", string(GetStack())))
+	metrics.PanicCounter.WithLabelValues(metricsLabel).Inc()
+	if quit {
+		// Wait for metrics to be pushed.
+		time.Sleep(time.Second * 15)
+		os.Exit(1)
+	}
+}
+
 // CompatibleParseGCTime parses a string with `GCTimeFormat` and returns a time.Time. If `value` can't be parsed as that
 // format, truncate to last space and try again. This function is only useful when loading times that saved by
 // gc_worker. We have changed the format that gc_worker saves time (removed the last field), but when loading times it
@@ -110,6 +140,16 @@ func CompatibleParseGCTime(value string) (time.Time, error) {
 		err = errors.Errorf("string \"%v\" doesn't has a prefix that matches format \"%v\"", value, GCTimeFormat)
 	}
 	return t, err
+}
+
+// HasCancelled checks whether context has be cancelled.
+func HasCancelled(ctx context.Context) (cancel bool) {
+	select {
+	case <-ctx.Done():
+		cancel = true
+	default:
+	}
+	return
 }
 
 const (

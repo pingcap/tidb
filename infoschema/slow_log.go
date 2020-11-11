@@ -92,6 +92,9 @@ func dataForSlowLog(ctx sessionctx.Context) ([][]types.Datum, error) {
 func parseSlowLogFile(tz *time.Location, filePath string) ([][]types.Datum, error) {
 	file, err := os.Open(filePath)
 	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
 		return nil, errors.Trace(err)
 	}
 	defer func() {
