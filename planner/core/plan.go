@@ -106,15 +106,35 @@ func optimizeByShuffle4StreamAgg(pp *PhysicalStreamAgg, ctx sessionctx.Context) 
 		return nil
 	}
 
-	childExec, _ := pp.Children()[0].(*PhysicalSort)
+	var splitter PartitionSplitterType
+	childExec, ok := pp.Children()[0].(*PhysicalSort)
+	if !ok {
+		splitter = PartitionRangeSplitterType
+	} else {
+		splitter = PartitionHashSplitterType
+	}
 
 	tail, dataSource := childExec, childExec.Children()[0]
+
+	partitionBy := make([]*expression.Column, 0, len(pp.GroupByItems))
+	for _, item := range pp.GroupByItems {
+		if col, ok := item.(*expression.Column); ok {
+			partitionBy = append(partitionBy, col)
+		}
+	}
+	NDV := int(getCardinality(partitionBy, dataSource.Schema(), dataSource.statsInfo()))
+	if NDV <= 1 {
+		return nil
+	}
+
+	concurrency = mathutil.Min(concurrency, NDV)
 	reqProp := &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64}
 	shuffle := PhysicalShuffle{
-		Concurrency:  concurrency,
-		Tail:         tail,
-		DataSource:   dataSource,
-		SplitterType: PartitionHashSplitterType,
+		Concurrency: concurrency,
+		Tail:        tail,
+		DataSource:  dataSource,
+		// SplitterType: PartitionHashSplitterType,
+		SplitterType: splitter,
 		ByItems:      cloneExprs(pp.GroupByItems),
 	}.Init(ctx, pp.statsInfo(), pp.SelectBlockOffset(), reqProp)
 	return shuffle
