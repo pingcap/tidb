@@ -938,7 +938,11 @@ func (s *testColumnSuite) TestModifyColumn(c *C) {
 		err    error
 	}{
 		{"int", "bigint", nil},
+<<<<<<< HEAD
 		{"int", "int unsigned", errUnsupportedModifyColumn.GenWithStackByArgs("length 10 is less than origin 11")},
+=======
+		{"int", "int unsigned", errUnsupportedModifyColumn.GenWithStackByArgs("can't change unsigned integer to signed or vice versa, and tidb_enable_change_column_type is false")},
+>>>>>>> 38f876044... ddl: ignore integer zerofill size attribute when changing the column types (#20862)
 		{"varchar(10)", "text", nil},
 		{"varbinary(10)", "blob", nil},
 		{"text", "blob", errUnsupportedModifyCharset.GenWithStackByArgs("charset from utf8mb4 to binary")},

@@ -352,6 +352,7 @@ func onSetDefaultValue(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	return updateColumnDefaultValue(t, job, newCol, &newCol.Name)
 }
 
+<<<<<<< HEAD
 func (w *worker) onModifyColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	newCol := &model.ColumnInfo{}
 	oldColName := &model.CIStr{}
@@ -359,6 +360,85 @@ func (w *worker) onModifyColumn(t *meta.Meta, job *model.Job) (ver int64, _ erro
 	var modifyColumnTp byte
 	var updatedAutoRandomBits uint64
 	err := job.DecodeArgs(newCol, oldColName, pos, &modifyColumnTp, &updatedAutoRandomBits)
+=======
+func needChangeColumnData(oldCol, newCol *model.ColumnInfo) bool {
+	toUnsigned := mysql.HasUnsignedFlag(newCol.Flag)
+	originUnsigned := mysql.HasUnsignedFlag(oldCol.Flag)
+	needTruncationOrToggleSign := func() bool {
+		return (newCol.Flen > 0 && newCol.Flen < oldCol.Flen) || (toUnsigned != originUnsigned)
+	}
+	// Ignore the potential max display length represented by integer's flen, use default flen instead.
+	oldColFlen, _ := mysql.GetDefaultFieldLengthAndDecimal(oldCol.Tp)
+	newColFlen, _ := mysql.GetDefaultFieldLengthAndDecimal(newCol.Tp)
+	needTruncationOrToggleSignForInteger := func() bool {
+		return (newColFlen > 0 && newColFlen < oldColFlen) || (toUnsigned != originUnsigned)
+	}
+
+	// Deal with the same type.
+	if oldCol.Tp == newCol.Tp {
+		switch oldCol.Tp {
+		case mysql.TypeNewDecimal:
+			// Since type decimal will encode the precision, frac, negative(signed) and wordBuf into storage together, there is no short
+			// cut to eliminate data reorg change for column type change between decimal.
+			return oldCol.Flen != newCol.Flen || oldCol.Decimal != newCol.Decimal || toUnsigned != originUnsigned
+		case mysql.TypeEnum, mysql.TypeSet:
+			return isElemsChangedToModifyColumn(oldCol.Elems, newCol.Elems)
+		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
+			return toUnsigned != originUnsigned
+		}
+
+		return needTruncationOrToggleSign()
+	}
+
+	// Deal with the different type.
+	switch oldCol.Tp {
+	case mysql.TypeVarchar, mysql.TypeString, mysql.TypeVarString, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
+		switch newCol.Tp {
+		case mysql.TypeVarchar, mysql.TypeString, mysql.TypeVarString, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
+			return needTruncationOrToggleSign()
+		}
+	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
+		switch newCol.Tp {
+		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
+			return needTruncationOrToggleSignForInteger()
+		}
+	case mysql.TypeFloat, mysql.TypeDouble:
+		switch newCol.Tp {
+		case mysql.TypeFloat, mysql.TypeDouble:
+			return needTruncationOrToggleSign()
+		}
+	}
+
+	return true
+}
+
+func isElemsChangedToModifyColumn(oldElems, newElems []string) bool {
+	if len(newElems) < len(oldElems) {
+		return true
+	}
+	for index, oldElem := range oldElems {
+		newElem := newElems[index]
+		if oldElem != newElem {
+			return true
+		}
+	}
+	return false
+}
+
+type modifyColumnJobParameter struct {
+	newCol                *model.ColumnInfo
+	oldColName            *model.CIStr
+	modifyColumnTp        byte
+	updatedAutoRandomBits uint64
+	changingCol           *model.ColumnInfo
+	changingIdxs          []*model.IndexInfo
+	pos                   *ast.ColumnPosition
+}
+
+func getModifyColumnInfo(t *meta.Meta, job *model.Job) (*model.DBInfo, *model.TableInfo, *model.ColumnInfo, *modifyColumnJobParameter, error) {
+	jobParam := &modifyColumnJobParameter{pos: &ast.ColumnPosition{}}
+	err := job.DecodeArgs(&jobParam.newCol, &jobParam.oldColName, jobParam.pos, &jobParam.modifyColumnTp, &jobParam.updatedAutoRandomBits, &jobParam.changingCol, &jobParam.changingIdxs)
+>>>>>>> 38f876044... ddl: ignore integer zerofill size attribute when changing the column types (#20862)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)

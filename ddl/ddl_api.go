@@ -2704,7 +2704,15 @@ func checkModifyCharsetAndCollation(toCharset, toCollate, origCharset, origColla
 
 // CheckModifyTypeCompatible checks whether changes column type to another is compatible considering
 // field length and precision.
+<<<<<<< HEAD
 func CheckModifyTypeCompatible(origin *types.FieldType, to *types.FieldType) error {
+=======
+func CheckModifyTypeCompatible(origin *types.FieldType, to *types.FieldType) (allowedChangeColumnValueMsg string, err error) {
+	var (
+		toFlen     = to.Flen
+		originFlen = origin.Flen
+	)
+>>>>>>> 38f876044... ddl: ignore integer zerofill size attribute when changing the column types (#20862)
 	unsupportedMsg := fmt.Sprintf("type %v not match origin %v", to.CompactStr(), origin.CompactStr())
 	switch origin.Tp {
 	case mysql.TypeVarchar, mysql.TypeString, mysql.TypeVarString,
@@ -2718,6 +2726,16 @@ func CheckModifyTypeCompatible(origin *types.FieldType, to *types.FieldType) err
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
 		switch to.Tp {
 		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
+<<<<<<< HEAD
+=======
+			// For integers, we should ignore the potential display length represented by flen, using
+			// the default flen of the type.
+			originFlen, _ = mysql.GetDefaultFieldLengthAndDecimal(origin.Tp)
+			toFlen, _ = mysql.GetDefaultFieldLengthAndDecimal(to.Tp)
+			// Changing integer to integer, whether reorg is necessary is depend on the flen/decimal/signed.
+			skipSignCheck = true
+			skipLenCheck = true
+>>>>>>> 38f876044... ddl: ignore integer zerofill size attribute when changing the column types (#20862)
 		default:
 			return errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
 		}
@@ -2757,9 +2775,18 @@ func CheckModifyTypeCompatible(origin *types.FieldType, to *types.FieldType) err
 		}
 	}
 
+<<<<<<< HEAD
 	if to.Flen > 0 && to.Flen < origin.Flen {
 		msg := fmt.Sprintf("length %d is less than origin %d", to.Flen, origin.Flen)
 		return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
+=======
+	if toFlen > 0 && toFlen < originFlen {
+		msg := fmt.Sprintf("length %d is less than origin %d", toFlen, originFlen)
+		if skipLenCheck {
+			return msg, errUnsupportedModifyColumn.GenWithStackByArgs(msg)
+		}
+		return "", errUnsupportedModifyColumn.GenWithStackByArgs(msg)
+>>>>>>> 38f876044... ddl: ignore integer zerofill size attribute when changing the column types (#20862)
 	}
 	if to.Decimal > 0 && to.Decimal < origin.Decimal {
 		msg := fmt.Sprintf("decimal %d is less than origin %d", to.Decimal, origin.Decimal)

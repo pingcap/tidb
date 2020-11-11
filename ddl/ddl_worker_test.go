@@ -439,6 +439,7 @@ func buildCancelJobTests(firstID int64) []testCancelJob {
 		{act: model.ActionShardRowID, jobIDs: []int64{firstID + 17}, cancelRetErrs: noErrs, cancelState: model.StateNone},
 
 		{act: model.ActionModifyColumn, jobIDs: []int64{firstID + 18}, cancelRetErrs: noErrs, cancelState: model.StateNone},
+<<<<<<< HEAD
 		{act: model.ActionAddForeignKey, jobIDs: []int64{firstID + 19}, cancelRetErrs: noErrs, cancelState: model.StateNone},
 		{act: model.ActionAddForeignKey, jobIDs: []int64{firstID + 20}, cancelRetErrs: []error{admin.ErrCancelFinishedDDLJob.GenWithStackByArgs(firstID + 20)}, cancelState: model.StatePublic},
 		{act: model.ActionDropForeignKey, jobIDs: []int64{firstID + 21}, cancelRetErrs: noErrs, cancelState: model.StateNone},
@@ -464,6 +465,57 @@ func buildCancelJobTests(firstID int64) []testCancelJob {
 		{act: model.ActionAddTablePartition, jobIDs: []int64{firstID + 42}, cancelRetErrs: noErrs, cancelState: model.StateNone},
 		{act: model.ActionAddTablePartition, jobIDs: []int64{firstID + 43}, cancelRetErrs: noErrs, cancelState: model.StateReplicaOnly},
 		{act: model.ActionAddTablePartition, jobIDs: []int64{firstID + 44}, cancelRetErrs: []error{admin.ErrCancelFinishedDDLJob}, cancelState: model.StatePublic},
+=======
+		{act: model.ActionModifyColumn, jobIDs: []int64{firstID + 19}, cancelRetErrs: noErrs, cancelState: model.StateDeleteOnly},
+
+		{act: model.ActionAddForeignKey, jobIDs: []int64{firstID + 20}, cancelRetErrs: noErrs, cancelState: model.StateNone},
+		{act: model.ActionAddForeignKey, jobIDs: []int64{firstID + 21}, cancelRetErrs: []error{admin.ErrCancelFinishedDDLJob.GenWithStackByArgs(firstID + 21)}, cancelState: model.StatePublic},
+		{act: model.ActionDropForeignKey, jobIDs: []int64{firstID + 22}, cancelRetErrs: noErrs, cancelState: model.StateNone},
+		{act: model.ActionDropForeignKey, jobIDs: []int64{firstID + 23}, cancelRetErrs: []error{admin.ErrCancelFinishedDDLJob.GenWithStackByArgs(firstID + 23)}, cancelState: model.StatePublic},
+
+		{act: model.ActionRenameTable, jobIDs: []int64{firstID + 24}, cancelRetErrs: noErrs, cancelState: model.StateNone},
+		{act: model.ActionRenameTable, jobIDs: []int64{firstID + 25}, cancelRetErrs: []error{admin.ErrCancelFinishedDDLJob.GenWithStackByArgs(firstID + 25)}, cancelState: model.StatePublic},
+
+		{act: model.ActionModifyTableCharsetAndCollate, jobIDs: []int64{firstID + 26}, cancelRetErrs: noErrs, cancelState: model.StateNone},
+		{act: model.ActionModifyTableCharsetAndCollate, jobIDs: []int64{firstID + 27}, cancelRetErrs: []error{admin.ErrCancelFinishedDDLJob.GenWithStackByArgs(firstID + 27)}, cancelState: model.StatePublic},
+		{act: model.ActionTruncateTablePartition, jobIDs: []int64{firstID + 28}, cancelRetErrs: noErrs, cancelState: model.StateNone},
+		{act: model.ActionTruncateTablePartition, jobIDs: []int64{firstID + 29}, cancelRetErrs: []error{admin.ErrCancelFinishedDDLJob.GenWithStackByArgs(firstID + 29)}, cancelState: model.StatePublic},
+		{act: model.ActionModifySchemaCharsetAndCollate, jobIDs: []int64{firstID + 31}, cancelRetErrs: noErrs, cancelState: model.StateNone},
+		{act: model.ActionModifySchemaCharsetAndCollate, jobIDs: []int64{firstID + 32}, cancelRetErrs: []error{admin.ErrCancelFinishedDDLJob.GenWithStackByArgs(firstID + 32)}, cancelState: model.StatePublic},
+
+		{act: model.ActionAddPrimaryKey, jobIDs: []int64{firstID + 33}, cancelRetErrs: noErrs, cancelState: model.StateDeleteOnly},
+		{act: model.ActionAddPrimaryKey, jobIDs: []int64{firstID + 34}, cancelRetErrs: noErrs, cancelState: model.StateWriteOnly},
+		{act: model.ActionAddPrimaryKey, jobIDs: []int64{firstID + 35}, cancelRetErrs: noErrs, cancelState: model.StateWriteReorganization},
+		{act: model.ActionAddPrimaryKey, jobIDs: []int64{firstID + 36}, cancelRetErrs: []error{admin.ErrCancelFinishedDDLJob.GenWithStackByArgs(firstID + 36)}, cancelState: model.StatePublic},
+		{act: model.ActionDropPrimaryKey, jobIDs: []int64{firstID + 37}, cancelRetErrs: noErrs, cancelState: model.StateWriteOnly},
+		{act: model.ActionDropPrimaryKey, jobIDs: []int64{firstID + 38}, cancelRetErrs: []error{admin.ErrCannotCancelDDLJob.GenWithStackByArgs(firstID + 38)}, cancelState: model.StateDeleteOnly},
+
+		{act: model.ActionAddColumns, jobIDs: []int64{firstID + 39}, cancelRetErrs: noErrs, cancelState: model.StateDeleteOnly},
+		{act: model.ActionAddColumns, jobIDs: []int64{firstID + 40}, cancelRetErrs: noErrs, cancelState: model.StateWriteOnly},
+		{act: model.ActionAddColumns, jobIDs: []int64{firstID + 41}, cancelRetErrs: noErrs, cancelState: model.StateWriteReorganization},
+		{act: model.ActionAddColumns, jobIDs: []int64{firstID + 42}, cancelRetErrs: []error{admin.ErrCancelFinishedDDLJob.GenWithStackByArgs(firstID + 42)}, cancelState: model.StatePublic},
+
+		{act: model.ActionDropColumns, jobIDs: []int64{firstID + 43}, cancelRetErrs: []error{admin.ErrCannotCancelDDLJob.GenWithStackByArgs(firstID + 43)}, cancelState: model.StateDeleteOnly},
+		{act: model.ActionDropColumns, jobIDs: []int64{firstID + 44}, cancelRetErrs: []error{admin.ErrCannotCancelDDLJob.GenWithStackByArgs(firstID + 44)}, cancelState: model.StateWriteOnly},
+		{act: model.ActionDropColumns, jobIDs: []int64{firstID + 45}, cancelRetErrs: []error{admin.ErrCannotCancelDDLJob.GenWithStackByArgs(firstID + 45)}, cancelState: model.StateWriteReorganization},
+
+		{act: model.ActionAlterIndexVisibility, jobIDs: []int64{firstID + 47}, cancelRetErrs: noErrs, cancelState: model.StateNone},
+		{act: model.ActionAlterIndexVisibility, jobIDs: []int64{firstID + 48}, cancelRetErrs: []error{admin.ErrCancelFinishedDDLJob.GenWithStackByArgs(firstID + 48)}, cancelState: model.StatePublic},
+
+		{act: model.ActionExchangeTablePartition, jobIDs: []int64{firstID + 54}, cancelRetErrs: noErrs, cancelState: model.StateNone},
+		{act: model.ActionExchangeTablePartition, jobIDs: []int64{firstID + 55}, cancelRetErrs: []error{admin.ErrCancelFinishedDDLJob.GenWithStackByArgs(firstID + 55)}, cancelState: model.StatePublic},
+
+		{act: model.ActionAddTablePartition, jobIDs: []int64{firstID + 60}, cancelRetErrs: noErrs, cancelState: model.StateNone},
+		{act: model.ActionAddTablePartition, jobIDs: []int64{firstID + 61}, cancelRetErrs: noErrs, cancelState: model.StateReplicaOnly},
+		{act: model.ActionAddTablePartition, jobIDs: []int64{firstID + 62}, cancelRetErrs: []error{admin.ErrCancelFinishedDDLJob}, cancelState: model.StatePublic},
+
+		// modify column has two different types, normal-type and reorg-type. The latter has 5 states and it can be cancelled except the public state.
+		{act: model.ActionModifyColumn, jobIDs: []int64{firstID + 65}, cancelRetErrs: noErrs, cancelState: model.StateNone},
+		{act: model.ActionModifyColumn, jobIDs: []int64{firstID + 66}, cancelRetErrs: noErrs, cancelState: model.StateDeleteOnly},
+		{act: model.ActionModifyColumn, jobIDs: []int64{firstID + 67}, cancelRetErrs: noErrs, cancelState: model.StateWriteOnly},
+		{act: model.ActionModifyColumn, jobIDs: []int64{firstID + 68}, cancelRetErrs: noErrs, cancelState: model.StateWriteReorganization},
+		{act: model.ActionModifyColumn, jobIDs: []int64{firstID + 69}, cancelRetErrs: []error{admin.ErrCancelFinishedDDLJob}, cancelState: model.StatePublic},
+>>>>>>> 38f876044... ddl: ignore integer zerofill size attribute when changing the column types (#20862)
 	}
 
 	return tests
@@ -723,13 +775,30 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 	// modify column
 	col.DefaultValue = "1"
 	updateTest(&tests[15])
-	modifyColumnArgs := []interface{}{col, col.Name, &ast.ColumnPosition{}, byte(0)}
+	modifyColumnArgs := []interface{}{col, col.Name, &ast.ColumnPosition{}, byte(0), uint64(0)}
 	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, tblInfo.ID, test.act, modifyColumnArgs, &test.cancelState)
 	c.Check(checkErr, IsNil)
 	changedTable = testGetTable(c, d, dbInfo.ID, tblInfo.ID)
 	changedCol := model.FindColumnInfo(changedTable.Meta().Columns, col.Name.L)
 	c.Assert(changedCol.DefaultValue, IsNil)
 
+<<<<<<< HEAD
+=======
+	// modify delete-only-state column,
+	col.FieldType.Tp = mysql.TypeTiny
+	col.FieldType.Flen = col.FieldType.Flen - 1
+	updateTest(&tests[16])
+	modifyColumnArgs = []interface{}{col, col.Name, &ast.ColumnPosition{}, byte(0), uint64(0)}
+	cancelState = model.StateNone
+	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, tblInfo.ID, test.act, modifyColumnArgs, &cancelState)
+	c.Check(checkErr, IsNil)
+	changedTable = testGetTable(c, d, dbInfo.ID, tblInfo.ID)
+	changedCol = model.FindColumnInfo(changedTable.Meta().Columns, col.Name.L)
+	c.Assert(changedCol.FieldType.Tp, Equals, mysql.TypeLonglong)
+	c.Assert(changedCol.FieldType.Flen, Equals, col.FieldType.Flen+1)
+	col.FieldType.Flen++
+
+>>>>>>> 38f876044... ddl: ignore integer zerofill size attribute when changing the column types (#20862)
 	// Test add foreign key failed cause by canceled.
 	updateTest(&tests[16])
 	addForeignKeyArgs := []interface{}{model.FKInfo{Name: model.NewCIStr("fk1")}}
