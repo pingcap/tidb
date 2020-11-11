@@ -353,7 +353,7 @@ func (s *testSerialDBSuite) TestAddExpressionIndexRollback(c *C) {
 	txn, err := ctx.Txn(true)
 	c.Assert(err, IsNil)
 	m := meta.NewMeta(txn)
-	element, start, end, physicalID, err := m.GetDDLReorgHandle(currJob, false)
+	element, start, end, physicalID, err := m.GetDDLReorgHandle(currJob)
 	c.Assert(meta.ErrDDLReorgElementNotExist.Equal(err), IsTrue)
 	c.Assert(element, IsNil)
 	c.Assert(start, IsNil)
@@ -3958,7 +3958,7 @@ func (s *testSerialDBSuite) TestModifyColumnnReorgInfo(c *C) {
 		txn, err := ctx.Txn(true)
 		c.Assert(err, IsNil)
 		m := meta.NewMeta(txn)
-		e, start, end, physicalID, err := m.GetDDLReorgHandle(currJob, false)
+		e, start, end, physicalID, err := m.GetDDLReorgHandle(currJob)
 		c.Assert(meta.ErrDDLReorgElementNotExist.Equal(err), IsTrue)
 		c.Assert(e, IsNil)
 		c.Assert(start, IsNil)
@@ -6389,4 +6389,12 @@ func (s *testSerialDBSuite) TestModifyColumnTypeWhenInterception(c *C) {
 	c.Assert(checkMiddleAddedCount, Equals, true)
 	res := tk.MustQuery("show warnings")
 	c.Assert(len(res.Rows()), Equals, count)
+}
+
+func (s *testDBSuite4) TestGeneratedColumnWindowFunction(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test_db")
+	tk.MustExec("DROP TABLE IF EXISTS t")
+	tk.MustGetErrCode("CREATE TABLE t (a INT , b INT as (ROW_NUMBER() OVER (ORDER BY a)))", errno.ErrWindowInvalidWindowFuncUse)
+	tk.MustGetErrCode("CREATE TABLE t (a INT , index idx ((ROW_NUMBER() OVER (ORDER BY a))))", errno.ErrWindowInvalidWindowFuncUse)
 }

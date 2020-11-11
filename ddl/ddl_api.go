@@ -3396,6 +3396,10 @@ func checkModifyCharsetAndCollation(toCharset, toCollate, origCharset, origColla
 // CheckModifyTypeCompatible checks whether changes column type to another is compatible considering
 // field length and precision.
 func CheckModifyTypeCompatible(origin *types.FieldType, to *types.FieldType) (allowedChangeColumnValueMsg string, err error) {
+	var (
+		toFlen     = to.Flen
+		originFlen = origin.Flen
+	)
 	unsupportedMsg := fmt.Sprintf("type %v not match origin %v", to.CompactStr(), origin.CompactStr())
 	var skipSignCheck bool
 	var skipLenCheck bool
@@ -3416,6 +3420,10 @@ func CheckModifyTypeCompatible(origin *types.FieldType, to *types.FieldType) (al
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
 		switch to.Tp {
 		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
+			// For integers, we should ignore the potential display length represented by flen, using
+			// the default flen of the type.
+			originFlen, _ = mysql.GetDefaultFieldLengthAndDecimal(origin.Tp)
+			toFlen, _ = mysql.GetDefaultFieldLengthAndDecimal(to.Tp)
 			// Changing integer to integer, whether reorg is necessary is depend on the flen/decimal/signed.
 			skipSignCheck = true
 			skipLenCheck = true
@@ -3538,8 +3546,8 @@ func CheckModifyTypeCompatible(origin *types.FieldType, to *types.FieldType) (al
 		}
 	}
 
-	if to.Flen > 0 && to.Flen < origin.Flen {
-		msg := fmt.Sprintf("length %d is less than origin %d", to.Flen, origin.Flen)
+	if toFlen > 0 && toFlen < originFlen {
+		msg := fmt.Sprintf("length %d is less than origin %d", toFlen, originFlen)
 		if skipLenCheck {
 			return msg, errUnsupportedModifyColumn.GenWithStackByArgs(msg)
 		}
@@ -5459,6 +5467,7 @@ func (d *ddl) UnlockTables(ctx sessionctx.Context, unlockTables []model.TableLoc
 	err := d.doDDLJob(ctx, job)
 	if err == nil {
 		ctx.ReleaseAllTableLocks()
+		ctx.GetStore().GetMemCache().Release()
 	}
 	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
@@ -5857,6 +5866,12 @@ func buildPlacementSpecs(bundle *placement.Bundle, specs []*ast.PlacementSpec) (
 		case ast.PlacementRoleFollower:
 			role = placement.Follower
 		case ast.PlacementRoleLeader:
+			if spec.Replicas == 0 {
+				spec.Replicas = 1
+			}
+			if spec.Replicas > 1 {
+				err = errors.Errorf("replicas can only be 1 when the role is leader")
+			}
 			role = placement.Leader
 		case ast.PlacementRoleLearner:
 			role = placement.Learner
