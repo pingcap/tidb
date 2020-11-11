@@ -92,8 +92,8 @@ const (
 	TypeWindow = "Window"
 	// TypeShuffle is the type of Shuffle.
 	TypeShuffle = "Shuffle"
-	// TypeShuffleReceiverStub is the type of Shuffle.
-	TypeShuffleReceiverStub = "ShuffleReceiverStub"
+	// TypeShuffleReceiver is the type of Shuffle.
+	TypeShuffleReceiver = "ShuffleReceiver"
 	// TypeTiKVSingleGather is the type of TiKVSingleGather.
 	TypeTiKVSingleGather = "TiKVSingleGather"
 	// TypeIndexMerge is the type of IndexMergeReader
