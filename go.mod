@@ -102,3 +102,5 @@ require (
 )
 
 go 1.13
+
+replace github.com/pingcap/tidb-lightning v4.0.9-0.20201106041742-a1ac97827a27+incompatible => github.com/lance6716/tidb-lightning v4.0.9-0.20201111020708-8cf3e5e4ec2f+incompatible
