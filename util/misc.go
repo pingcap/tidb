@@ -142,6 +142,16 @@ func CompatibleParseGCTime(value string) (time.Time, error) {
 	return t, err
 }
 
+// HasCancelled checks whether context has be cancelled.
+func HasCancelled(ctx context.Context) (cancel bool) {
+	select {
+	case <-ctx.Done():
+		cancel = true
+	default:
+	}
+	return
+}
+
 const (
 	// syntaxErrorPrefix is the common prefix for SQL syntax error in TiDB.
 	syntaxErrorPrefix = "You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use"
