@@ -1169,3 +1169,24 @@ func (s *testSuite5) TestShowVar(c *C) {
 		}
 	}
 }
+
+func (s *testSuite5) TestIssue19507(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE t2(a int primary key, b int unique, c int not null, unique index (c));")
+	tk.MustQuery("SHOW INDEX IN t2;").Check(
+		testutil.RowsWithSep("|", "t2|0|PRIMARY|1|a|A|0|<nil>|<nil>||BTREE|||YES|NULL",
+			"t2|0|c|1|c|A|0|<nil>|<nil>||BTREE|||YES|NULL",
+			"t2|0|b|1|b|A|0|<nil>|<nil>|YES|BTREE|||YES|NULL"))
+
+	tk.MustExec("CREATE INDEX t2_b_c_index ON t2 (b, c);")
+	tk.MustExec("CREATE INDEX t2_c_b_index ON t2 (c, b);")
+	tk.MustQuery("SHOW INDEX IN t2;").Check(
+		testutil.RowsWithSep("|", "t2|0|PRIMARY|1|a|A|0|<nil>|<nil>||BTREE|||YES|NULL",
+			"t2|0|c|1|c|A|0|<nil>|<nil>||BTREE|||YES|NULL",
+			"t2|0|b|1|b|A|0|<nil>|<nil>|YES|BTREE|||YES|NULL",
+			"t2|1|t2_b_c_index|1|b|A|0|<nil>|<nil>|YES|BTREE|||YES|NULL",
+			"t2|1|t2_b_c_index|2|c|A|0|<nil>|<nil>||BTREE|||YES|NULL",
+			"t2|1|t2_c_b_index|1|c|A|0|<nil>|<nil>||BTREE|||YES|NULL",
+			"t2|1|t2_c_b_index|2|b|A|0|<nil>|<nil>|YES|BTREE|||YES|NULL"))
+}
