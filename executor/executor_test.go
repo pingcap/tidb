@@ -4588,3 +4588,12 @@ func (s *testSuite) TestIssue19100(c *C) {
 	tk.MustQuery("select count(*) from t1 where c;").Check(testkit.Rows("0"))
 	tk.MustQuery("select count(*) from t2 where c;").Check(testkit.Rows("0"))
 }
+
+func (s *testSuite) TestIssue19667(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("CREATE TABLE t (a DATETIME)")
+	tk.MustExec("INSERT INTO t VALUES('1988-04-17 01:59:59')")
+	tk.MustQuery(`SELECT DATE_ADD(a, INTERVAL 1 SECOND) FROM t`).Check(testkit.Rows("1988-04-17 02:00:00"))
+}

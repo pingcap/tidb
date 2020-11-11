@@ -238,6 +238,15 @@ func (s *testIntegrationSuite) TestConvertToBit(c *C) {
 	tk.MustExec(`insert t1 value ('09-01-01')`)
 	tk.MustExec(`insert t select a from t1`)
 	tk.MustQuery("select a+0 from t").Check(testkit.Rows("20090101000000"))
+
+	// For issue 20118
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a tinyint, b bit(63));")
+	tk.MustExec("insert ignore  into t values(599999999, -1);")
+	tk.MustQuery("show warnings;").Check(testkit.Rows(
+		"Warning 1690 constant 599999999 overflows tinyint",
+		"Warning 1406 Data Too Long, field len 63"))
+	tk.MustQuery("select * from t;").Check(testkit.Rows("127 \u007f\xff\xff\xff\xff\xff\xff\xff"))
 }
 
 func (s *testIntegrationSuite) TestMathBuiltin(c *C) {
@@ -5184,4 +5193,23 @@ func (s *testIntegrationSuite) TestIssue17476(c *C) {
  IS NULL WHERE col_int_6=0;`).Check(testkit.Rows("14"))
 	tk.MustQuery(`SELECT count(*) FROM (table_float JOIN table_int_float_varchar AS tmp3 ON (tmp3.col_varchar_6 AND NULL) IS NULL);`).Check(testkit.Rows("154"))
 	tk.MustQuery(`SELECT * FROM (table_int_float_varchar AS tmp3) WHERE (col_varchar_6 AND NULL) IS NULL AND col_int_6=0;`).Check(testkit.Rows("13 0 -0.1 <nil>"))
+}
+
+func (s *testIntegrationSuite) TestIssue20180(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t(a enum('a', 'b'), b tinyint);")
+	tk.MustExec("create table t1(c varchar(20));")
+	tk.MustExec("insert into t values('b', 0);")
+	tk.MustExec("insert into t1 values('b');")
+	tk.MustQuery("select * from t, t1 where t.a= t1.c;").Check(testkit.Rows("b 0 b"))
+	tk.MustQuery("select * from t, t1 where t.b= t1.c;").Check(testkit.Rows("b 0 b"))
+	tk.MustQuery("select * from t, t1 where t.a = t1.c and t.b= t1.c;").Check(testkit.Rows("b 0 b"))
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a enum('a','b'));")
+	tk.MustExec("insert into t values('b');")
+	tk.MustQuery("select * from t where a > 1  and a = \"b\";").Check(testkit.Rows("b"))
 }
