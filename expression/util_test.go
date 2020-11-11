@@ -371,7 +371,7 @@ func (s *testUtilSuite) TestHashGroupKey(c *check.C) {
 			bufs[j] = bufs[j][:0]
 		}
 		var err error
-		err = EvalExpr(ctx, colExpr, input, colBuf)
+		err = EvalExpr(ctx, colExpr, colExpr.GetType().EvalType(), input, colBuf)
 		if err != nil {
 			c.Fatal(err)
 		}

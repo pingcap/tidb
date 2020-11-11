@@ -97,6 +97,7 @@ var (
 	errAccessDenied            = terror.ClassServer.New(errno.ErrAccessDenied, errno.MySQLErrName[errno.ErrAccessDenied])
 	errConCount                = terror.ClassServer.New(errno.ErrConCount, errno.MySQLErrName[errno.ErrConCount])
 	errSecureTransportRequired = terror.ClassServer.New(errno.ErrSecureTransportRequired, errno.MySQLErrName[errno.ErrSecureTransportRequired])
+	errMultiStatementDisabled  = terror.ClassServer.New(errno.ErrUnknown, "client has multi-statement capability disabled") // MySQL returns a parse error
 )
 
 // DefaultCapability is the capability of the server when it is created using the default configuration.
@@ -391,10 +392,10 @@ func (s *Server) onConn(conn *clientConn) {
 		return
 	}
 
-	logutil.Logger(ctx).Info("new connection", zap.String("remoteAddr", conn.bufReadConn.RemoteAddr().String()))
+	logutil.Logger(ctx).Debug("new connection", zap.String("remoteAddr", conn.bufReadConn.RemoteAddr().String()))
 
 	defer func() {
-		logutil.Logger(ctx).Info("connection closed")
+		logutil.Logger(ctx).Debug("connection closed")
 	}()
 	s.rwlock.Lock()
 	s.clients[conn.connectionID] = conn
@@ -539,6 +540,12 @@ func (s *Server) getTLSConfig() *tls.Config {
 func killConn(conn *clientConn) {
 	sessVars := conn.ctx.GetSessionVars()
 	atomic.StoreUint32(&sessVars.Killed, 1)
+	conn.mu.RLock()
+	cancelFunc := conn.mu.cancelFunc
+	conn.mu.RUnlock()
+	if cancelFunc != nil {
+		cancelFunc()
+	}
 }
 
 // KillAllConnections kills all connections when server is not gracefully shutdown.

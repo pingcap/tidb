@@ -218,11 +218,6 @@ func (a *amendCollector) collectIndexAmendOps(sctx sessionctx.Context, tblAtStar
 			amendOpType = ConstOpAddIndex[idxInfoAtStart.Meta().State][idxInfoAtCommit.Meta().State]
 		}
 		if amendOpType != AmendNone {
-			// TODO unique index amend is not supported by now.
-			if idxInfoAtCommit.Meta().Unique {
-				return nil, errors.Trace(errors.Errorf("amend unique index=%v for table=%v is not supported now",
-					idxInfoAtCommit.Meta().Name, tblAtCommit.Meta().Name))
-			}
 			opInfo := &amendOperationAddIndexInfo{}
 			opInfo.AmendOpType = amendOpType
 			opInfo.tblInfoAtStart = tblAtStart
@@ -253,7 +248,8 @@ func (a *amendCollector) collectIndexAmendOps(sctx sessionctx.Context, tblAtStar
 			}
 			if addIndexNeedAddOp(amendOpType) {
 				addNewIndexOp := &amendOperationAddNewIndex{
-					info: opInfo,
+					info:                  opInfo,
+					processedNewIndexKeys: make(map[string]struct{}),
 				}
 				res = append(res, addNewIndexOp)
 			}
@@ -319,7 +315,8 @@ type amendOperationDeleteOldIndex struct {
 
 // amendOperationAddNewIndex represents the add operation will be performed on new key values for add index amend.
 type amendOperationAddNewIndex struct {
-	info *amendOperationAddIndexInfo
+	info                  *amendOperationAddIndexInfo
+	processedNewIndexKeys map[string]struct{}
 }
 
 func (a *amendOperationAddIndexInfo) String() string {
@@ -426,7 +423,18 @@ func (a *amendOperationAddNewIndex) processRowKey(ctx context.Context, sctx sess
 	if err != nil {
 		return errors.Trace(err)
 	}
-	resAddMutations.Push(pb.Op_Put, newIdxKey, newIdxValue, false)
+	newIndexOp := pb.Op_Put
+	isPessimisticLock := false
+	if a.info.indexInfoAtCommit.Meta().Unique {
+		if _, ok := a.processedNewIndexKeys[string(newIdxKey)]; ok {
+			return errors.Trace(errors.Errorf("amend process key same key=%v found for unique index=%v in table=%v",
+				newIdxKey, a.info.indexInfoAtCommit.Meta().Name, a.info.tblInfoAtCommit.Meta().Name))
+		}
+		newIndexOp = pb.Op_Insert
+		isPessimisticLock = true
+	}
+	a.processedNewIndexKeys[string(newIdxKey)] = struct{}{}
+	resAddMutations.Push(newIndexOp, newIdxKey, newIdxValue, isPessimisticLock)
 	return nil
 }
 

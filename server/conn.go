@@ -50,6 +50,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unsafe"
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
@@ -162,6 +163,12 @@ type clientConn struct {
 	status       int32             // dispatching/reading/shutdown/waitshutdown
 	lastCode     uint16            // last error code
 	collation    uint8             // collation used by client, may be different from the collation used by database.
+
+	// mu is used for cancelling the execution of current transaction.
+	mu struct {
+		sync.RWMutex
+		cancelFunc context.CancelFunc
+	}
 }
 
 func (cc *clientConn) String() string {
@@ -897,6 +904,12 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 	}()
 	span := opentracing.StartSpan("server.dispatch")
 
+	var cancelFunc context.CancelFunc
+	ctx, cancelFunc = context.WithCancel(ctx)
+	cc.mu.Lock()
+	cc.mu.cancelFunc = cancelFunc
+	cc.mu.Unlock()
+
 	t := time.Now()
 	cc.lastPacket = data
 	cmd := data[0]
@@ -915,8 +928,14 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 		if len(sqlType) > 0 {
 			var task *trace.Task
 			ctx, task = trace.NewTask(ctx, sqlType)
-			trace.Log(ctx, "sql", lc.String())
 			defer task.End()
+
+			trace.Log(ctx, "sql", lc.String())
+			ctx = logutil.WithTraceLogger(ctx, cc.connectionID)
+
+			taskID := *(*uint64)(unsafe.Pointer(task))
+			ctx = pprof.WithLabels(ctx, pprof.Labels("trace", strconv.FormatUint(taskID, 10)))
+			pprof.SetGoroutineLabels(ctx)
 		}
 	}
 	token := cc.server.getToken()
@@ -1348,6 +1367,16 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 		if len(rss) == 1 {
 			err = cc.writeResultset(ctx, rss[0], false, 0, 0)
 		} else {
+			// The client gets to choose if it allows multi-statements, and
+			// probably defaults OFF. This helps prevent against SQL injection attacks
+			// by early terminating the first statement, and then running an entirely
+			// new statement.
+
+			capabilities := cc.ctx.GetSessionVars().ClientCapability
+			if capabilities&mysql.ClientMultiStatements < 1 {
+				return errMultiStatementDisabled
+			}
+
 			err = cc.writeMultiResultset(ctx, rss, false)
 		}
 	} else {

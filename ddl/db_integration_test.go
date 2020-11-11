@@ -1012,6 +1012,18 @@ func (s *testIntegrationSuite5) TestBitDefaultValue(c *C) {
 	tk.MustQuery("select c from t_bit").Check(testkit.Rows("\x19\xb9"))
 	tk.MustExec("update t_bit set c = b'11100000000111'")
 	tk.MustQuery("select c from t_bit").Check(testkit.Rows("\x38\x07"))
+	tk.MustExec("drop table t_bit")
+
+	tk.MustExec("create table t_bit (a int)")
+	tk.MustExec("insert into t_bit value (1)")
+	tk.MustExec("alter table t_bit add column b bit(1) default b'0';")
+	tk.MustExec("alter table t_bit modify column b bit(1) default b'1';")
+	tk.MustQuery("select b from t_bit").Check(testkit.Rows("\x00"))
+	tk.MustExec("drop table t_bit")
+
+	tk.MustExec("create table t_bit (a bit);")
+	tk.MustExec("insert into t_bit values (null);")
+	tk.MustQuery("select count(*) from t_bit where a is null;").Check(testkit.Rows("1"))
 
 	tk.MustExec(`create table testalltypes1 (
     field_1 bit default 1,
@@ -2229,4 +2241,17 @@ func (s *testIntegrationSuite7) TestAutoIncrementTableOption(c *C) {
 	tk.MustExec("alter table t auto_increment = 12345678901234567890;")
 	tk.MustExec("insert into t values ();")
 	tk.MustQuery("select * from t;").Check(testkit.Rows("12345678901234567890"))
+}
+
+func (s *testIntegrationSuite3) TestIssue20490(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("create table issue20490 (a int);")
+	tk.MustExec("insert into issue20490(a) values(1);")
+	tk.MustExec("alter table issue20490 add b int not null default 1;")
+	tk.MustExec("insert into issue20490(a) values(2);")
+	tk.MustExec("alter table issue20490 modify b int null;")
+	tk.MustExec("insert into issue20490(a) values(3);")
+
+	tk.MustQuery("select b from issue20490 order by a;").Check(testkit.Rows("1", "1", "<nil>"))
 }

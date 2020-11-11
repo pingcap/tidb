@@ -210,6 +210,17 @@ max-procs = 0
 # Max memory size to use, 0 use the total usable memory in the machine.
 max-memory = 0
 
+# Memory size quota for tidb server, 0 means unlimited
+server-memory-quota = 0
+
+# The alarm threshold when memory usage of the tidb-server exceeds. The valid value range is greater than or equal to 0
+# and less than or equal to 1. The default value is 0.8.
+# If this configuration is set to 0 or 1, it'll disable the alarm.
+# Otherwise, related information will be recorded in the directory `tmp-storage-path/record`.
+# Note: If the configuration `server-memory-quota` is set and larger than 0, the alarm threshold will be
+# `memory-usage-alarm-ratio * server-memory-quota`; otherwise, it'll be `memory-usage-alarm-ratio * system memory size`.
+memory-usage-alarm-ratio = 0.8
+
 # StmtCountLimit limits the max count of statement inside a transaction.
 stmt-count-limit = 5000
 
@@ -226,7 +237,7 @@ stats-lease = "3s"
 run-auto-analyze = true
 
 # Probability to use the query feedback to update stats, 0.0 or 1.0 for always false/true.
-feedback-probability = 0.05
+feedback-probability = 0.0
 
 # The max number of query feedback that cache in memory.
 query-feedback-limit = 512
@@ -257,6 +268,11 @@ committer-concurrency = 16
 
 # max lifetime of transaction ttl manager.
 max-txn-ttl = 600000
+
+# The Go GC trigger factor, you can get more information about it at https://golang.org/pkg/runtime.
+# If you encounter OOM when executing large query, you can decrease this value to trigger GC earlier.
+# If you find the CPU used by GC is too high or GC is too frequent and impact your business you can increase this value.
+gogc = 100
 
 [proxy-protocol]
 # PROXY protocol acceptable client networks.

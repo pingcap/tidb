@@ -228,7 +228,7 @@ func ValidateGetSystemVar(name string, isGlobal bool) error {
 		return ErrUnknownSystemVar.GenWithStackByArgs(name)
 	}
 	switch sysVar.Scope {
-	case ScopeGlobal, ScopeNone:
+	case ScopeGlobal:
 		if !isGlobal {
 			return ErrIncorrectScope.GenWithStackByArgs(name, "GLOBAL")
 		}
@@ -526,7 +526,26 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string, scope Sc
 		if err != nil {
 			return value, ErrWrongTypeForVar.GenWithStackByArgs(name)
 		}
-		if v <= 0 {
+		if v == -1 {
+			// These code are for compatibility of future v5.0.0 version.
+			// When rollback from master(future v5.0.0) version, the default value of these variables are -1
+			switch name {
+			case TiDBIndexLookupConcurrency:
+				value = strconv.FormatInt(DefIndexLookupConcurrency, 10)
+			case TiDBIndexLookupJoinConcurrency:
+				value = strconv.FormatInt(DefIndexLookupJoinConcurrency, 10)
+			case TiDBHashJoinConcurrency:
+				value = strconv.FormatInt(DefTiDBHashJoinConcurrency, 10)
+			case TiDBHashAggPartialConcurrency:
+				value = strconv.FormatInt(DefTiDBHashAggPartialConcurrency, 10)
+			case TiDBHashAggFinalConcurrency:
+				value = strconv.FormatInt(DefTiDBHashAggFinalConcurrency, 10)
+			case TiDBWindowConcurrency:
+				value = strconv.FormatInt(DefTiDBWindowConcurrency, 10)
+			default:
+				return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
+			}
+		} else if v <= 0 {
 			return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
 		}
 		return value, nil
@@ -591,9 +610,14 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string, scope Sc
 		TiDBSlowLogThreshold,
 		TiDBQueryLogMaxLen,
 		TiDBEvolvePlanTaskMaxTime:
-		_, err := strconv.ParseInt(value, 10, 64)
+		v, err := strconv.ParseInt(value, 10, 64)
 		if err != nil {
 			return value, ErrWrongValueForVar.GenWithStackByArgs(name)
+		}
+		// These code are for compatibility of future v5.0.0 version.
+		// When rollback from master(future v5.0.0) version, the default value of these variables are -1
+		if v == -1 && name == TiDBProjectionConcurrency {
+			value = strconv.FormatInt(DefTiDBProjectionConcurrency, 10)
 		}
 		return value, nil
 	case TiDBAutoAnalyzeStartTime, TiDBAutoAnalyzeEndTime, TiDBEvolvePlanTaskStartTime, TiDBEvolvePlanTaskEndTime:

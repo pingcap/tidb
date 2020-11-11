@@ -646,10 +646,21 @@ func (s *testInfoschemaClusterTableSuite) setUpMockPDHTTPServer() (*httptest.Ser
 		}
 		return configuration, nil
 	}
-	// pd config
+	// PD config.
 	router.Handle(pdapi.Config, fn.Wrap(mockConfig))
-	// TiDB/TiKV config
+	// TiDB/TiKV config.
 	router.Handle("/config", fn.Wrap(mockConfig))
+	// PD region.
+	router.Handle("/pd/api/v1/stats/region", fn.Wrap(func() (*helper.PDRegionStats, error) {
+		return &helper.PDRegionStats{
+			Count:            1,
+			EmptyCount:       1,
+			StorageSize:      1,
+			StorageKeys:      1,
+			StoreLeaderCount: map[uint64]int{1: 1},
+			StorePeerCount:   map[uint64]int{1: 1},
+		}, nil
+	}))
 	return server, mockAddr
 }
 
@@ -752,6 +763,45 @@ func (s *testInfoschemaClusterTableSuite) TestTiDBClusterInfo(c *C) {
 		"pd key3.key4.nest4 n-value5",
 		"tidb key3.key4.nest4 n-value5",
 		"tikv key3.key4.nest4 n-value5",
+	))
+}
+
+func (s *testInfoschemaClusterTableSuite) TestTableStorageStats(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	err := tk.QueryToErr("select * from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'test'")
+	c.Assert(err.Error(), Equals, "pd unavailable")
+	mockAddr := s.mockAddr
+	store := &mockStore{
+		s.store.(tikv.Storage),
+		mockAddr,
+	}
+
+	// Test information_schema.TABLE_STORAGE_STATS.
+	tk = testkit.NewTestKit(c, store)
+
+	// Test not set the schema.
+	err = tk.QueryToErr("select * from information_schema.TABLE_STORAGE_STATS")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "Please specify the 'table_schema'")
+
+	// Test it would get null set when get the sys schema.
+	tk.MustQuery("select TABLE_NAME from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'information_schema';").Check([][]interface{}{})
+	tk.MustQuery("select TABLE_NAME from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'mysql';").Check([][]interface{}{})
+	tk.MustQuery("select TABLE_NAME from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA in ('mysql', 'metrics_schema');").Check([][]interface{}{})
+	tk.MustQuery("select TABLE_NAME from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'information_schema' and TABLE_NAME='schemata';").Check([][]interface{}{})
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int, index idx(a))")
+	tk.MustQuery("select TABLE_NAME, TABLE_SIZE from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'test' and TABLE_NAME='t';").Check(testkit.Rows("t 1"))
+
+	tk.MustExec("create table t1 (a int, b int, index idx(a))")
+	tk.MustQuery("select TABLE_NAME, sum(TABLE_SIZE) from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'test' group by TABLE_NAME;").Sort().Check(testkit.Rows(
+		"t 1",
+		"t1 1",
+	))
+	tk.MustQuery("select TABLE_SCHEMA, sum(TABLE_SIZE) from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'test' group by TABLE_SCHEMA;").Check(testkit.Rows(
+		"test 2",
 	))
 }
 

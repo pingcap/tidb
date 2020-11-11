@@ -45,8 +45,11 @@ import (
 	"go.uber.org/zap"
 )
 
-var tikvTxnRegionsNumHistogramWithCoprocessor = metrics.TiKVTxnRegionsNumHistogram.WithLabelValues("coprocessor")
-var tikvTxnRegionsNumHistogramWithBatchCoprocessor = metrics.TiKVTxnRegionsNumHistogram.WithLabelValues("batch_coprocessor")
+var (
+	tikvTxnRegionsNumHistogramWithCoprocessor      = metrics.TiKVTxnRegionsNumHistogram.WithLabelValues("coprocessor")
+	tikvTxnRegionsNumHistogramWithBatchCoprocessor = metrics.TiKVTxnRegionsNumHistogram.WithLabelValues("batch_coprocessor")
+	coprCacheHistogramEvict                        = metrics.DistSQLCoprCacheHistogram.WithLabelValues("evict")
+)
 
 // CopClient is coprocessor client.
 type CopClient struct {
@@ -719,6 +722,9 @@ func (worker *copIteratorWorker) handleTask(ctx context.Context, task *copTask, 
 			remainTasks = remainTasks[1:]
 		}
 	}
+	if worker.store.coprCache != nil && worker.store.coprCache.cache.Metrics != nil {
+		coprCacheHistogramEvict.Observe(float64(worker.store.coprCache.cache.Metrics.KeysEvicted()))
+	}
 }
 
 // handleTaskOnce handles single copTask, successful results are send to channel.
@@ -772,7 +778,9 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 	})
 	req.StoreTp = task.storeType
 	startTime := time.Now()
-	worker.Stats = make(map[tikvrpc.CmdType]*RPCRuntimeStats)
+	if worker.Stats == nil {
+		worker.Stats = make(map[tikvrpc.CmdType]*RPCRuntimeStats)
+	}
 	resp, rpcCtx, storeAddr, err := worker.SendReqCtx(bo, req, task.region, ReadTimeoutMedium, task.storeType, task.storeAddr)
 	if err != nil {
 		if task.storeType == kv.TiDB {
@@ -1024,6 +1032,7 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *RPCCon
 		resp.detail = new(CopRuntimeStats)
 	}
 	resp.detail.Stats = worker.Stats
+	worker.Stats = nil
 	resp.detail.BackoffTime = time.Duration(bo.totalSleep) * time.Millisecond
 	resp.detail.BackoffSleep = make(map[string]time.Duration, len(bo.backoffTimes))
 	resp.detail.BackoffTimes = make(map[string]int, len(bo.backoffTimes))
