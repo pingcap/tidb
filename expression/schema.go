@@ -33,6 +33,9 @@ func (ki KeyInfo) Clone() KeyInfo {
 type Schema struct {
 	Columns []*Column
 	Keys    []KeyInfo
+	// UniqueKeys stores those unique indexes that allow null values, but Keys does not allow null values.
+	// since equivalence conditions can filter out null values, in this case a unique index with null values can be a Key.
+	UniqueKeys []KeyInfo
 }
 
 // String implements fmt.Stringer interface.
@@ -97,6 +100,16 @@ func (s *Schema) RetrieveColumn(col *Column) *Column {
 // IsUniqueKey checks if this column is a unique key.
 func (s *Schema) IsUniqueKey(col *Column) bool {
 	for _, key := range s.Keys {
+		if len(key) == 1 && key[0].Equal(nil, col) {
+			return true
+		}
+	}
+	return false
+}
+
+// IsUnique checks if this column is a unique key which may contain duplicate nulls .
+func (s *Schema) IsUnique(col *Column) bool {
+	for _, key := range s.UniqueKeys {
 		if len(key) == 1 && key[0].Equal(nil, col) {
 			return true
 		}
