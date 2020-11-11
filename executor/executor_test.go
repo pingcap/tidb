@@ -6491,7 +6491,7 @@ func (s *testSerialSuite1) TestHashAggRuntimeStats(c *C) {
 	rows := tk.MustQuery(sql).Rows()
 	c.Assert(len(rows), Equals, 5)
 	explain := fmt.Sprintf("%v", rows[0])
-	c.Assert(explain, Matches, ".*time:.*loops:.*partial_worker:.*final_worker:.*")
+	c.Assert(explain, Matches, ".*time:.*loops:.*partial_worker:{wall_time:.*concurrency:.*task_num:.*tot_wait:.*tot_exec:.*tot_time:.*max:.*p95:.*}.*final_worker:{wall_time:.*concurrency:.*task_num:.*max:.*p95:.*}.*")
 }
 
 func (s *testSerialSuite1) TestIndexlookupRuntimeStats(c *C) {

@@ -373,10 +373,17 @@ func (w *HashAggPartialWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitG
 		w.memTracker.Consume(-w.chk.MemoryUsage())
 		waitGroup.Done()
 		w.aggWorkerStats = time.Since(start)
+		if w.stats != nil {
+			atomic.AddInt64(&w.stats.PartialTotalTime, int64(time.Since(start)))
+		}
 	}()
 	for {
+		waitStart := time.Now()
 		if !w.getChildInput() {
 			return
+		}
+		if w.stats != nil {
+			atomic.AddInt64(&w.stats.PartialWaitTime, int64(time.Since(waitStart)))
 		}
 		if err := w.updatePartialResult(ctx, sc, w.chk, len(w.partialResultsMap)); err != nil {
 			w.globalOutputCh <- &AfFinalResult{err: err}
@@ -392,6 +399,7 @@ func (w *HashAggPartialWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitG
 }
 
 func (w *HashAggPartialWorker) updatePartialResult(ctx sessionctx.Context, sc *stmtctx.StatementContext, chk *chunk.Chunk, finalConcurrency int) (err error) {
+	start := time.Now()
 	w.groupKey, err = getGroupKey(w.ctx, chk, w.groupKey, w.groupByItems)
 	if err != nil {
 		return err
@@ -407,6 +415,9 @@ func (w *HashAggPartialWorker) updatePartialResult(ctx sessionctx.Context, sc *s
 				return err
 			}
 		}
+	}
+	if w.stats != nil {
+		atomic.AddInt64(&w.stats.PartialExecTime, int64(time.Since(start)))
 	}
 	return nil
 }
@@ -866,18 +877,22 @@ type HashAggRuntimeStats struct {
 
 	PartialWorkerTime []time.Duration
 	FinalWorkerTime   []time.Duration
+
+	PartialWaitTime  int64
+	PartialExecTime  int64
+	PartialTotalTime int64
 }
 
 func (e *HashAggRuntimeStats) String() string {
 	var result string
 	if e.PartialWallTime != 0 {
-		result += fmt.Sprintf("partial_worker:{wall_time:%s, concurrency:%d, task_num:%d", e.PartialWallTime, e.PartialNum, e.PartialTaskNum)
+		result += fmt.Sprintf("partial_worker:{wall_time:%s, concurrency:%d, task_num:%d, tot_wait:%s, tot_exec:%s, tot_time:%s", e.PartialWallTime, e.PartialNum, e.PartialTaskNum, time.Duration(e.PartialWaitTime), time.Duration(e.PartialExecTime), time.Duration(e.PartialTotalTime))
 	}
 	if e.PartialWorkerTime != nil {
 		sort.Slice(e.PartialWorkerTime, func(i, j int) bool { return e.PartialWorkerTime[i] < e.PartialWorkerTime[j] })
 		n := len(e.PartialWorkerTime)
 		if n != 0 {
-			result += fmt.Sprintf(", partial_max:%v, p95:%v", e.PartialWorkerTime[n-1], e.PartialWorkerTime[n*19/20])
+			result += fmt.Sprintf(", max:%v, p95:%v", e.PartialWorkerTime[n-1], e.PartialWorkerTime[n*19/20])
 		}
 	}
 	if len(result) > 0 {
@@ -890,7 +905,7 @@ func (e *HashAggRuntimeStats) String() string {
 		sort.Slice(e.FinalWorkerTime, func(i, j int) bool { return e.FinalWorkerTime[i] < e.FinalWorkerTime[j] })
 		m := len(e.FinalWorkerTime)
 		if m != 0 {
-			result += fmt.Sprintf(", final_max:%v, p95:%v", e.FinalWorkerTime[m-1], e.FinalWorkerTime[m*19/20])
+			result += fmt.Sprintf(", max:%v, p95:%v", e.FinalWorkerTime[m-1], e.FinalWorkerTime[m*19/20])
 		}
 	}
 	if len(result) > 0 {
