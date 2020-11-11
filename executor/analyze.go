@@ -240,6 +240,7 @@ func analyzeIndexPushdown(idxExec *AnalyzeIndexExec) analyzeResult {
 		TopNs:   []*statistics.TopN{topN},
 		IsIndex: 1,
 		job:     idxExec.job,
+		StatsVer: statistics.Version2,
 	}
 	result.Count = hist.NullCount
 	if hist.Len() > 0 {
@@ -356,17 +357,19 @@ func (e *AnalyzeIndexExec) buildStatsFromResult(result distsql.SelectResult, nee
 					return nil, nil, nil, err
 				}
 				poped = statistics.MergeTopN(topn, tmpTopN, cms, uint32(e.opts[ast.AnalyzeOptNumTopN]), false)
-
+				for _, pop := range poped {
+					cms.InsertBytesByCount(pop.Encoded, pop.Count)
+				}
 			}
-			hist.RemoveIdxVals(poped)
 		}
 	}
-	topN := statistics.NewTopN(int(e.opts[ast.AnalyzeOptNumTopN]))
-	err := hist.ExtractTopN(cms, topN, len(e.idxInfo.Columns), uint32(e.opts[ast.AnalyzeOptNumTopN]))
+	if topn.TotalCount() > 0 {
+		hist.RemoveIdxVals(topn.TopN)
+	}
 	if needCMS && cms != nil {
 		cms.CalcDefaultValForAnalyze(uint64(hist.NDV))
 	}
-	return hist, cms, topN, err
+	return hist, cms, topn, nil
 }
 
 func (e *AnalyzeIndexExec) buildStats(ranges []*ranger.Range, considerNull bool) (hist *statistics.Histogram, cms *statistics.CMSketch, topN *statistics.TopN, err error) {
@@ -418,6 +421,7 @@ func analyzeColumnsPushdown(colExec *AnalyzeColumnsExec) analyzeResult {
 		TopNs:    topNs,
 		ExtStats: extStats,
 		job:      colExec.job,
+		StatsVer: statistics.Version2,
 	}
 	hist := hists[0]
 	result.Count = hist.NullCount
@@ -619,6 +623,7 @@ func analyzeFastExec(exec *AnalyzeFastExec) []analyzeResult {
 				IsIndex: 1,
 				Count:   hists[i].NullCount,
 				job:     exec.job,
+				StatsVer: statistics.Version1,
 			}
 			if hists[i].Len() > 0 {
 				idxResult.Count += hists[i].Buckets[hists[i].Len()-1].Count
@@ -637,6 +642,7 @@ func analyzeFastExec(exec *AnalyzeFastExec) []analyzeResult {
 		TopNs:   topNs[:pkColCount+len(exec.colsInfo)],
 		Count:   hist.NullCount,
 		job:     exec.job,
+		StatsVer: statistics.Version0,
 	}
 	if hist.Len() > 0 {
 		colResult.Count += hist.Buckets[hist.Len()-1].Count
@@ -1218,6 +1224,7 @@ func analyzeIndexIncremental(idxExec *analyzeIndexIncrementalExec) analyzeResult
 		TopNs:   []*statistics.TopN{topN},
 		IsIndex: 1,
 		job:     idxExec.job,
+		StatsVer: statistics.Version2,
 	}
 	result.Count = hist.NullCount
 	if hist.Len() > 0 {
@@ -1256,6 +1263,7 @@ func analyzePKIncremental(colExec *analyzePKIncrementalExec) analyzeResult {
 		Cms:     []*statistics.CMSketch{nil},
 		TopNs:   []*statistics.TopN{nil},
 		job:     colExec.job,
+		StatsVer: statistics.Version0,
 	}
 	if hist.Len() > 0 {
 		result.Count += hist.Buckets[hist.Len()-1].Count
@@ -1274,4 +1282,5 @@ type analyzeResult struct {
 	IsIndex  int
 	Err      error
 	job      *statistics.AnalyzeJob
+	StatsVer int
 }

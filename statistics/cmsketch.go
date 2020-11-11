@@ -145,7 +145,7 @@ func buildCMSAndTopN(helper *topNHelper, d, w int32, scaleRatio uint64, defaultV
 		if cnt > 1 {
 			rowCount = cnt * scaleRatio
 		}
-		c.insertBytesByCount(data, rowCount)
+		c.InsertBytesByCount(data, rowCount)
 	}
 	return
 }
@@ -188,11 +188,11 @@ func (c *TopN) updateTopNWithDelta(d []byte, delta uint64, increase bool) bool {
 
 // InsertBytes inserts the bytes value into the CM Sketch.
 func (c *CMSketch) InsertBytes(bytes []byte) {
-	c.insertBytesByCount(bytes, 1)
+	c.InsertBytesByCount(bytes, 1)
 }
 
 // InsertBytesByCount adds the bytes value into the TopN (if value already in TopN) or CM Sketch by delta, this does not updates c.defaultValue.
-func (c *CMSketch) insertBytesByCount(bytes []byte, count uint64) {
+func (c *CMSketch) InsertBytesByCount(bytes []byte, count uint64) {
 	h1, h2 := murmur3.Sum128(bytes)
 	c.count += count
 	for i := range c.table {
@@ -306,7 +306,7 @@ func (c *CMSketch) queryHashValue(h1, h2 uint64) uint64 {
 
 // MergeTopN merges the src TopN into the dst, and spilled values will be inserted into the CMSketch.
 func MergeTopN(dst, src *TopN, c *CMSketch, numTop uint32, usingMax bool) []TopNMeta {
-	if dst.TotalCount() == 0 || src.TotalCount() == 0 {
+	if dst.TotalCount() + src.TotalCount() == 0 {
 		return nil
 	}
 	popedTopNPair := make([]TopNMeta, 0, 4)
@@ -337,7 +337,7 @@ func MergeTopN(dst, src *TopN, c *CMSketch, numTop uint32, usingMax bool) []TopN
 			dst.AppendTopN(data, cnt)
 		} else {
 			popedTopNPair = append(popedTopNPair, TopNMeta{Encoded: data, Count: cnt})
-			c.insertBytesByCount(data, cnt)
+			c.InsertBytesByCount(data, cnt)
 		}
 	}
 	dst.Sort()
@@ -572,17 +572,15 @@ func (c *TopN) lowerBound(d []byte) (idx int, match bool) {
 	return idx, match
 }
 
+// BetweenRowCount estimates the row count for interval [l, r).
 func (c *TopN) BetweenCount(l, r []byte) uint64 {
 	if c == nil {
 		return 0
 	}
 	lIdx, _ := c.lowerBound(l)
-	rIdx, rMatch := c.lowerBound(r)
-	if !rMatch {
-		rIdx--
-	}
+	rIdx, _ := c.lowerBound(r)
 	ret := uint64(0)
-	for i := lIdx; i <= rIdx; i++ {
+	for i := lIdx; i < rIdx; i++ {
 		ret += c.TopN[i].Count
 	}
 	return ret

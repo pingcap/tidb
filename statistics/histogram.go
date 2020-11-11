@@ -268,6 +268,7 @@ func HistogramEqual(a, b *Histogram, ignoreID bool) bool {
 // constants for stats version. These const can be used for solving compatibility issue.
 const (
 	CurStatsVersion = Version2
+	Version0        = 0
 	Version1        = 1
 	Version2        = 2
 )
@@ -466,10 +467,10 @@ func (idx *Index) GetIncreaseFactor(totalCount int64) float64 {
 	if columnCount == 0 {
 		return 1.0
 	}
-	log.Warn("ppp", zap.Int64("coll's count", totalCount), zap.Float64("index's count", columnCount))
 	return float64(totalCount) / columnCount
 }
 
+// BetweenRowCount estimates the row count for interval [l, r).
 func (idx *Index) BetweenRowCount(l, r types.Datum) float64 {
 	histBetweenCnt := idx.Histogram.BetweenRowCount(l, r)
 	if idx.StatsVer == Version1 {
@@ -1050,6 +1051,7 @@ func (idx *Index) GetRowCount(sc *stmtctx.StatementContext, indexRanges []*range
 				continue
 			}
 		}
+		// The final interval is [low, high)
 		if indexRange.LowExclude {
 			lb = kv.Key(lb).PrefixNext()
 		}

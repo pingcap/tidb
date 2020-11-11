@@ -353,13 +353,13 @@ Projection_11	5.00	root		Column#11
   ├─TableReader_15(Build)	5.00	root		data:TableFullScan_14
   │ └─TableFullScan_14	5.00	cop[tikv]	table:t	keep order:false
   └─StreamAgg_20(Probe)	1.00	root		funcs:count(1)->Column#10
-    └─MergeJoin_62	1.50	root		inner join, left key:test.t.a, right key:test.t.a
+    └─MergeJoin_62	2.40	root		inner join, left key:test.t.a, right key:test.t.a
       ├─TableReader_52(Build)	4.00	root		data:Selection_51
       │ └─Selection_51	4.00	cop[tikv]		eq(3, test.t.a)
       │   └─TableFullScan_50	5.00	cop[tikv]	table:t1	keep order:true
-      └─IndexReader_49(Probe)	1.50	root		index:Selection_48
-        └─Selection_48	1.50	cop[tikv]		eq(3, test.t.a)
-          └─IndexRangeScan_47	1.88	cop[tikv]	table:s, index:idx(b)	range:[3,3], keep order:true
+      └─IndexReader_49(Probe)	2.40	root		index:Selection_48
+        └─Selection_48	2.40	cop[tikv]		eq(3, test.t.a)
+          └─IndexRangeScan_47	3.00	cop[tikv]	table:s, index:idx(b)	range:[3,3], keep order:true
 explain select t.c in (select count(*) from t s left join t t1 on s.a = t1.a where 3 = t.a and s.b = 3) from t;
 id	estRows	task	access object	operator info
 Projection_10	5.00	root		Column#11
@@ -367,13 +367,13 @@ Projection_10	5.00	root		Column#11
   ├─TableReader_14(Build)	5.00	root		data:TableFullScan_13
   │ └─TableFullScan_13	5.00	cop[tikv]	table:t	keep order:false
   └─StreamAgg_19(Probe)	1.00	root		funcs:count(1)->Column#10
-    └─MergeJoin_50	1.50	root		left outer join, left key:test.t.a, right key:test.t.a
+    └─MergeJoin_50	2.40	root		left outer join, left key:test.t.a, right key:test.t.a
       ├─TableReader_40(Build)	4.00	root		data:Selection_39
       │ └─Selection_39	4.00	cop[tikv]		eq(3, test.t.a)
       │   └─TableFullScan_38	5.00	cop[tikv]	table:t1	keep order:true
-      └─IndexReader_37(Probe)	1.50	root		index:Selection_36
-        └─Selection_36	1.50	cop[tikv]		eq(3, test.t.a)
-          └─IndexRangeScan_35	1.88	cop[tikv]	table:s, index:idx(b)	range:[3,3], keep order:true
+      └─IndexReader_37(Probe)	2.40	root		index:Selection_36
+        └─Selection_36	2.40	cop[tikv]		eq(3, test.t.a)
+          └─IndexRangeScan_35	3.00	cop[tikv]	table:s, index:idx(b)	range:[3,3], keep order:true
 explain select t.c in (select count(*) from t s right join t t1 on s.a = t1.a where 3 = t.a and t1.b = 3) from t;
 id	estRows	task	access object	operator info
 Projection_10	5.00	root		Column#11
@@ -381,13 +381,13 @@ Projection_10	5.00	root		Column#11
   ├─TableReader_14(Build)	5.00	root		data:TableFullScan_13
   │ └─TableFullScan_13	5.00	cop[tikv]	table:t	keep order:false
   └─StreamAgg_19(Probe)	1.00	root		funcs:count(1)->Column#10
-    └─MergeJoin_49	1.50	root		right outer join, left key:test.t.a, right key:test.t.a
+    └─MergeJoin_49	2.40	root		right outer join, left key:test.t.a, right key:test.t.a
       ├─TableReader_36(Build)	4.00	root		data:Selection_35
       │ └─Selection_35	4.00	cop[tikv]		eq(3, test.t.a)
       │   └─TableFullScan_34	5.00	cop[tikv]	table:s	keep order:true
-      └─IndexReader_39(Probe)	1.50	root		index:Selection_38
-        └─Selection_38	1.50	cop[tikv]		eq(3, test.t.a)
-          └─IndexRangeScan_37	1.88	cop[tikv]	table:t1, index:idx(b)	range:[3,3], keep order:true
+      └─IndexReader_39(Probe)	2.40	root		index:Selection_38
+        └─Selection_38	2.40	cop[tikv]		eq(3, test.t.a)
+          └─IndexRangeScan_37	3.00	cop[tikv]	table:t1, index:idx(b)	range:[3,3], keep order:true
 drop table if exists t;
 create table t(a int unsigned);
 explain select t.a = '123455' from t;

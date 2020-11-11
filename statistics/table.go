@@ -23,7 +23,6 @@ import (
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/log"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -37,7 +36,6 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/ranger"
 	"go.uber.org/atomic"
-	"go.uber.org/zap"
 )
 
 const (
@@ -430,13 +428,12 @@ func (coll *HistColl) GetRowCountByIndexRanges(sc *stmtctx.StatementContext, idx
 	}
 	var result float64
 	var err error
-	if idx.CMSketch != nil && idx.StatsVer == Version1 {
+	if idx.CMSketch != nil && idx.StatsVer != Version0 {
 		result, err = coll.getIndexRowCount(sc, idxID, indexRanges)
 	} else {
 		result, err = idx.GetRowCount(sc, indexRanges, coll.ModifyCount)
 	}
 	result *= idx.GetIncreaseFactor(coll.Count)
-	log.Warn("wtf", zap.Float64("?? count", result))
 	return result, errors.Trace(err)
 }
 

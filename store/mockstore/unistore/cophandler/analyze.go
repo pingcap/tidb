@@ -107,7 +107,6 @@ func handleAnalyzeIndexReq(dbReader *dbreader.DBReader, rans []kv.KeyRange, anal
 	if len(processor.topNValuePairs) > int(processor.topNCount) {
 		processor.topNValuePairs = processor.topNValuePairs[:processor.topNCount]
 	}
-	processor.statsBuilder.Hist().RemoveIdxVals(processor.topNValuePairs)
 	hg := statistics.HistogramToProto(processor.statsBuilder.Hist())
 	var cm *tipb.CMSketch
 	if processor.cms != nil {

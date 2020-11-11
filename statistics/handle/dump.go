@@ -96,15 +96,17 @@ type jsonColumn struct {
 	TotColSize        int64           `json:"tot_col_size"`
 	LastUpdateVersion uint64          `json:"last_update_version"`
 	Correlation       float64         `json:"correlation"`
+	StatsVer          *int64            `json:"stats_ver"`
 }
 
-func dumpJSONCol(hist *statistics.Histogram, CMSketch *statistics.CMSketch, topn *statistics.TopN) *jsonColumn {
+func dumpJSONCol(hist *statistics.Histogram, CMSketch *statistics.CMSketch, topn *statistics.TopN, statsVer *int64) *jsonColumn {
 	jsonCol := &jsonColumn{
 		Histogram:         statistics.HistogramToProto(hist),
 		NullCount:         hist.NullCount,
 		TotColSize:        hist.TotColSize,
 		LastUpdateVersion: hist.LastUpdateVersion,
 		Correlation:       hist.Correlation,
+		StatsVer:          statsVer,
 	}
 	if CMSketch != nil || topn != nil {
 		jsonCol.CMSketch = statistics.CMSketchToProto(CMSketch, topn)
@@ -160,11 +162,11 @@ func (h *Handle) tableStatsToJSON(dbName string, tableInfo *model.TableInfo, phy
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		jsonTbl.Columns[col.Info.Name.L] = dumpJSONCol(hist, col.CMSketch, col.TopN)
+		jsonTbl.Columns[col.Info.Name.L] = dumpJSONCol(hist, col.CMSketch, col.TopN, nil)
 	}
 
 	for _, idx := range tbl.Indices {
-		jsonTbl.Indices[idx.Info.Name.L] = dumpJSONCol(&idx.Histogram, idx.CMSketch, idx.TopN)
+		jsonTbl.Indices[idx.Info.Name.L] = dumpJSONCol(&idx.Histogram, idx.CMSketch, idx.TopN, &idx.StatsVer)
 	}
 	jsonTbl.ExtStats = dumpJSONExtendedStats(tbl.ExtendedStats)
 	return jsonTbl, nil
@@ -244,11 +246,18 @@ func TableStatsFromJSON(tableInfo *model.TableInfo, physicalID int64, jsonTbl *J
 			hist := statistics.HistogramFromProto(jsonIdx.Histogram)
 			hist.ID, hist.NullCount, hist.LastUpdateVersion, hist.Correlation = idxInfo.ID, jsonIdx.NullCount, jsonIdx.LastUpdateVersion, jsonIdx.Correlation
 			cm, topN := statistics.CMSketchAndTopNFromProto(jsonIdx.CMSketch)
+			// If the statistics is loaded from a JSON without stats version,
+			// we set it to 1.
+			statsVer := int64(statistics.Version1)
+			if jsonIdx.StatsVer != nil {
+				statsVer = *jsonIdx.StatsVer
+			}
 			idx := &statistics.Index{
 				Histogram: *hist,
 				CMSketch:  cm,
 				TopN:      topN,
 				Info:      idxInfo,
+				StatsVer:  statsVer,
 			}
 			tbl.Indices[idx.ID] = idx
 		}
