@@ -756,6 +756,10 @@ const (
 	// acceptFactor is the factor to decide should we accept the pending verified plan.
 	// A pending verified plan will be accepted if it performs at least `acceptFactor` times better than the accepted plans.
 	acceptFactor = 1.5
+	// verifyTimeoutFactor is how long to wait to verify the pending plan.
+	// For debugging purposes it is useful to wait a few times longer than the current execution time so that
+	// an informative error can be written to the log.
+	verifyTimeoutFactor = 2.0
 	// nextVerifyDuration is the duration that we will retry the rejected plans.
 	nextVerifyDuration = 7 * 24 * time.Hour
 )
@@ -808,6 +812,7 @@ func (h *BindHandle) getRunningDuration(sctx sessionctx.Context, db, sql string,
 		return time.Since(startTime), nil
 	case <-timer.C:
 		cancelFunc()
+		logutil.BgLogger().Warn("plan verification timed out", zap.Duration("timeElapsed", time.Since(startTime)))
 	}
 	<-resultChan
 	return -1, nil
@@ -857,7 +862,7 @@ func (h *BindHandle) HandleEvolvePlanTask(sctx sessionctx.Context, adminEvolve b
 		return nil
 	}
 	sctx.GetSessionVars().UsePlanBaselines = true
-	acceptedPlanTime, err := h.getRunningDuration(sctx, db, binding.BindSQL, maxTime)
+	currentPlanTime, err := h.getRunningDuration(sctx, db, binding.BindSQL, maxTime)
 	// If we just return the error to the caller, this job will be retried again and again and cause endless logs,
 	// since it is still in the bind record. Now we just drop it and if it is actually retryable,
 	// we will hope for that we can capture this evolve task again.
@@ -866,16 +871,22 @@ func (h *BindHandle) HandleEvolvePlanTask(sctx sessionctx.Context, adminEvolve b
 	}
 	// If the accepted plan timeouts, it is hard to decide the timeout for verify plan.
 	// Currently we simply mark the verify plan as `using` if it could run successfully within maxTime.
-	if acceptedPlanTime > 0 {
-		maxTime = time.Duration(float64(acceptedPlanTime) / acceptFactor)
+	if currentPlanTime > 0 {
+		maxTime = time.Duration(float64(currentPlanTime) * verifyTimeoutFactor)
 	}
 	sctx.GetSessionVars().UsePlanBaselines = false
 	verifyPlanTime, err := h.getRunningDuration(sctx, db, binding.BindSQL, maxTime)
 	if err != nil {
 		return h.DropBindRecord(originalSQL, db, &binding)
 	}
-	if verifyPlanTime < 0 {
+	if verifyPlanTime == -1 || (float64(verifyPlanTime)*acceptFactor > float64(currentPlanTime)) {
 		binding.Status = Rejected
+		digestText, _ := parser.NormalizeDigest(binding.BindSQL) // for log desensitization
+		logutil.BgLogger().Warn("new plan rejected",
+			zap.Duration("currentPlanTime", currentPlanTime),
+			zap.Duration("verifyPlanTime", verifyPlanTime),
+			zap.String("digestText", digestText),
+		)
 	} else {
 		binding.Status = Using
 	}

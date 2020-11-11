@@ -496,10 +496,12 @@ func (imw *innerMergeWorker) handleTask(ctx context.Context, task *lookUpMergeJo
 		}
 	}
 	imw.innerExec, err = imw.readerBuilder.buildExecutorForIndexJoin(ctx, dLookUpKeys, imw.indexRanges, imw.keyOff2IdxOff, imw.nextColCompareFilters, false)
+	if imw.innerExec != nil {
+		defer terror.Call(imw.innerExec.Close)
+	}
 	if err != nil {
 		return err
 	}
-	defer terror.Call(imw.innerExec.Close)
 	_, err = imw.fetchNextInnerResult(ctx, task)
 	if err != nil {
 		return err
@@ -736,7 +738,7 @@ func (e *IndexLookUpMergeJoin) Close() error {
 	e.memTracker = nil
 	if e.runtimeStats != nil {
 		concurrency := cap(e.resultCh)
-		runtimeStats := &execdetails.RuntimeStatsWithConcurrencyInfo{BasicRuntimeStats: e.runtimeStats}
+		runtimeStats := &execdetails.RuntimeStatsWithConcurrencyInfo{}
 		runtimeStats.SetConcurrencyInfo(execdetails.NewConcurrencyInfo("Concurrency", concurrency))
 		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, runtimeStats)
 	}
