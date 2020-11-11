@@ -111,7 +111,7 @@ type Context interface {
 	// StoreIndexUsage stores the index usage information.
 	StoreIndexUsage(tblID int64, idxID int64, rowsSelected int64)
 	// RecordIndexUsageFromStatement record the index usage information in statement.
-	RecordIndexUsageFromStatement(mapper stmtctx.StatementIndexUsageMap)
+	RecordIndexUsageFromStatement()
 	// IndexUsageCollectorActivated checks if it can be collected.
 	IndexUsageCollectorActivated() bool
 }

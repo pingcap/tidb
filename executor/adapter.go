@@ -842,7 +842,7 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, succ bool, hasMoreResults boo
 	}
 
 	// The statement here is over, we don’t need to get the lock anymore.
-	a.Ctx.RecordIndexUsageFromStatement(sessVars.StmtCtx.IdxUsageCollector.Map)
+	a.Ctx.RecordIndexUsageFromStatement()
 }
 
 // CloseRecordSet will finish the execution of current statement and do some record work

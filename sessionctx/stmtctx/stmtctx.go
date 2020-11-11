@@ -52,15 +52,15 @@ type SQLWarn struct {
 	Err   error
 }
 
-// GlobalIndexID is the key type for indexUsageMap.
-type GlobalIndexID struct {
+// IndexUsageID is the key type for indexUsageMap.
+type IndexUsageID struct {
 	TableID int64
 	IndexID int64
 }
 
 // StatementIndexUsageMap is used to collect index usage information in statement-level.
 // The value of it is row counts.
-type StatementIndexUsageMap map[GlobalIndexID]int64
+type StatementIndexUsageMap map[IndexUsageID]int64
 
 // StatementContext contains variables for a statement.
 // It should be reset before executing a statement.
@@ -713,7 +713,7 @@ func (sc *StatementContext) InitIndexUsage() {
 
 // RecordIndexUsage records the index usage information in statement-level
 func (sc *StatementContext) RecordIndexUsage(tblID int64, idxID int64, rows int64) {
-	id := GlobalIndexID{TableID: tblID, IndexID: idxID}
+	id := IndexUsageID{TableID: tblID, IndexID: idxID}
 	sc.IdxUsageCollector.Lock()
 	defer sc.IdxUsageCollector.Unlock()
 	value := sc.IdxUsageCollector.Map[id]

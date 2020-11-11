@@ -224,7 +224,7 @@ func (c *Context) StoreQueryFeedback(_ interface{}) {}
 func (c *Context) StoreIndexUsage(_ int64, _ int64, _ int64) {}
 
 // RecordIndexUsageFromStatement record the index usage information in statement.
-func (c *Context) RecordIndexUsageFromStatement(_ stmtctx.StatementIndexUsageMap) {}
+func (c *Context) RecordIndexUsageFromStatement() {}
 
 // IndexUsageCollectorActivated checks if it can be collected.
 func (c *Context) IndexUsageCollectorActivated() bool {

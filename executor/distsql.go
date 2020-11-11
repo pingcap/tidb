@@ -257,15 +257,16 @@ func (e *IndexReaderExecutor) Close() error {
 
 func (e *IndexReaderExecutor) collectIndexUsage() {
 	if e.ctx.IndexUsageCollectorActivated() {
-		for _, plan := range e.plans {
-			rsc := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl
-			if !rsc.ExistsCopStats(plan.ID()) {
-				continue
-			}
-			copStats := rsc.GetCopStats(plan.ID())
-			if indexScan, ok := plan.(*plannercore.PhysicalIndexScan); ok && !indexScan.IsFullScan() {
-				e.ctx.GetSessionVars().StmtCtx.RecordIndexUsage(indexScan.Table.ID, indexScan.Index.ID, copStats.GetActRows())
-			}
+		return
+	}
+	for _, plan := range e.plans {
+		rsc := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl
+		if !rsc.ExistsCopStats(plan.ID()) {
+			continue
+		}
+		copStats := rsc.GetCopStats(plan.ID())
+		if indexScan, ok := plan.(*plannercore.PhysicalIndexScan); ok && !indexScan.IsFullScan() {
+			e.ctx.GetSessionVars().StmtCtx.RecordIndexUsage(indexScan.Table.ID, indexScan.Index.ID, copStats.GetActRows())
 		}
 	}
 }

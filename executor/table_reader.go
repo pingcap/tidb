@@ -211,15 +211,16 @@ func (e *TableReaderExecutor) Close() error {
 
 func (e *TableReaderExecutor) collectIndexUsage() {
 	if e.ctx.IndexUsageCollectorActivated() {
-		for _, plan := range e.plans {
-			rsc := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl
-			if !rsc.ExistsCopStats(plan.ID()) {
-				continue
-			}
-			copStats := rsc.GetCopStats(plan.ID())
-			if tableScan, ok := plan.(*plannercore.PhysicalTableScan); ok && !tableScan.IsFullScan() {
-				e.ctx.GetSessionVars().StmtCtx.RecordIndexUsage(tableScan.Table.ID, tableScan.IdxID, copStats.GetActRows())
-			}
+		return
+	}
+	for _, plan := range e.plans {
+		rsc := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl
+		if !rsc.ExistsCopStats(plan.ID()) {
+			continue
+		}
+		copStats := rsc.GetCopStats(plan.ID())
+		if tableScan, ok := plan.(*plannercore.PhysicalTableScan); ok && !tableScan.IsFullScan() {
+			e.ctx.GetSessionVars().StmtCtx.RecordIndexUsage(tableScan.Table.ID, tableScan.IdxID, copStats.GetActRows())
 		}
 	}
 }
