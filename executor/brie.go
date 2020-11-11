@@ -551,8 +551,14 @@ func (e *BRIEExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			e.info.lock.Lock()
 			e.info.message = err2.Error()
 			e.info.lock.Unlock()
+			item.progress.lock.Lock()
+			item.progress.cmd = "Stop"
+			item.progress.lock.Unlock()
+		} else {
+			item.progress.lock.Lock()
+			item.progress.cmd = "Finish"
+			item.progress.lock.Unlock()
 		}
-		// TODO(lance6716): change cmd to Finish or Stop
 	default:
 		return errors.Errorf("unsupported BRIE statement kind: %s", e.info.kind)
 	}
@@ -561,7 +567,7 @@ func (e *BRIEExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	e.info.lock.Unlock()
 	glue.Flush(ctx, taskID)
 	taskExecuted = true
-	// TODO(lance6716): for import, should not return err here, instead, return a row containing error message
+	// TODO(lance6716): for import, return a row containing error message
 	if err != nil {
 		return err
 	}
