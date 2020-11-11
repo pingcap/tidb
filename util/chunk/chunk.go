@@ -706,8 +706,8 @@ func (c *Chunk) AppendRows(rows []Row) {
 // AppendPartialRows appends multiple row to the chunk.
 func (c *Chunk) AppendPartialRows(rows []Row) {
 	for i, dstCol := range c.columns {
-		for _, row := range rows {
-			appendCellByCell(dstCol, row.c.columns[i], row.idx)
+		for _, srcRow := range rows {
+			appendCellByCell(dstCol, srcRow.c.columns[i], srcRow.idx)
 		}
 	}
 }
