@@ -141,6 +141,13 @@ func (e *BatchPointGetExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		}
 	}
 
+	if e.lock {
+		e.updateDeltaForTableID(e.tblInfo.ID)
+		for _, pid := range e.physIDs {
+			e.updateDeltaForTableID(pid)
+		}
+	}
+
 	if e.index >= len(e.values) {
 		return nil
 	}
