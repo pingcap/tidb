@@ -1061,7 +1061,6 @@ func benchmarkChunkGrow(t benchChunkGrowCase) func(b *testing.B) {
 }
 
 func (s *testChunkSuite) TestAppendRows(c *check.C) {
-
 	numCols := 6
 	numRows := 10
 	chk := newChunk(8, 8, 0, 0, 40, 0)
@@ -1080,24 +1079,15 @@ func (s *testChunkSuite) TestAppendRows(c *check.C) {
 	c.Assert(chk.NumRows(), check.Equals, numRows)
 
 	chk2 := newChunk(8, 8, 0, 0, 40, 0)
-	for i := 0; i < numRows; i++ {
-		row := chk.GetRow(i)
-		rows := make([]Row, 0)
-		rows = append(rows, row)
-		chk2.AppendRows(rows)
-	}
-
-	chk3 := newChunk(8, 8, 0, 0, 40, 0)
 	c.Assert(chk.NumCols(), check.Equals, numCols)
 	rows := make([]Row, numRows)
 	for i := 0; i < numRows; i++ {
 		rows[i] = chk.GetRow(i)
 
 	}
-	c.Assert(len(rows), check.Equals, numRows)
-	chk3.AppendRows(rows)
+	chk2.AppendRows(rows)
 	for i := 0; i < numRows; i++ {
-		row := chk3.GetRow(i)
+		row := chk2.GetRow(i)
 		c.Assert(row.GetInt64(0), check.Equals, int64(0))
 		c.Assert(row.IsNull(0), check.IsTrue)
 		c.Assert(row.GetInt64(1), check.Equals, int64(i))
@@ -1118,7 +1108,7 @@ func (s *testChunkSuite) TestAppendRows(c *check.C) {
 
 func BenchmarkAppendRows(b *testing.B) {
 	b.ReportAllocs()
-	numRows := 4000
+	numRows := 1000
 	rowChk := newChunk(8, 8, 0, 0)
 	for i := 0; i < numRows; i++ {
 		rowChk.AppendNull(0)
@@ -1127,41 +1117,15 @@ func BenchmarkAppendRows(b *testing.B) {
 		rowChk.AppendBytes(3, []byte("abcd"))
 	}
 
-	//chk := newChunk(8, 8, 0, 0)
-	//for i := 0; i < b.N; i++ {
-	//	chk.AppendRows(rows)
-	//}
+	rows := make([]Row, numRows)
+	for i := 0; i < numRows; i++ {
+		rows[i] = rowChk.GetRow(i)
 
-	type testCaseConf struct {
-		batchSize int
 	}
-	testCaseConfs := []testCaseConf{
-		{batchSize: 10},
-		{batchSize: 100},
-		{batchSize: 1000},
-		{batchSize: 4000},
-	}
+
 	chk := newChunk(8, 8, 0, 0)
-	for _, conf := range testCaseConfs {
-		b.Run(fmt.Sprintf("row-%d", conf.batchSize), func(b *testing.B) {
-			for i := 0; i < b.N; i++ {
-				chk.Reset()
-				for j := 0; j < conf.batchSize; j++ {
-					chk.AppendRow(rowChk.GetRow(j))
-				}
-			}
-		})
-		b.ResetTimer()
-		rows := make([]Row, conf.batchSize)
-		for i := 0; i < conf.batchSize; i++ {
-			rows[i] = rowChk.GetRow(i)
-
-		}
-		b.Run(fmt.Sprintf("column-%d", conf.batchSize), func(b *testing.B) {
-			for i := 0; i < b.N; i++ {
-				chk.Reset()
-				chk.AppendRows(rows)
-			}
-		})
+	for i := 0; i < b.N; i++ {
+		chk.Reset()
+		chk.AppendRows(rows)
 	}
 }
