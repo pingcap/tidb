@@ -2423,9 +2423,12 @@ func (b *PlanBuilder) unfoldWildStar(p LogicalPlan, selectFields []*ast.SelectFi
 		}
 
 		if join, ok := p.(*LogicalJoin); ok {
-			if join.redundantNames != nil {
+			if join.redundantSchema != nil && join.redundantNames != nil {
 				for j, name := range join.redundantNames {
 					col := join.redundantSchema.Columns[j]
+					if col.IsHidden {
+						continue
+					}
 					if (dbName.L == "" || dbName.L == name.DBName.L) &&
 						tblName.L == name.TblName.L && col.ID != model.ExtraHandleID {
 						colName := &ast.ColumnNameExpr{
