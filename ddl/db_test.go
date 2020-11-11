@@ -4787,7 +4787,6 @@ func (s *testSerialDBSuite) TestCommitTxnWithIndexChange(c *C) {
 			false,
 			model.StateNone},
 		// Test unique index
-		/* TODO unique index is not supported now.
 		{[]string{"insert into t1 values(3, 30, 300)",
 			"insert into t1 values(4, 40, 400)",
 			"insert into t2 values(11, 11, 11)",
@@ -4831,7 +4830,6 @@ func (s *testSerialDBSuite) TestCommitTxnWithIndexChange(c *C) {
 				{"1 10 100", "2 20 200"}},
 			true,
 			model.StateWriteOnly},
-		*/
 	}
 	tk.MustQuery("select * from t1;").Check(testkit.Rows("1 10 100", "2 20 200"))
 
@@ -4903,6 +4901,28 @@ func (s *testSerialDBSuite) TestCommitTxnWithIndexChange(c *C) {
 		}
 	}
 	tk.MustExec("admin check table t1")
+}
+
+func (s *testDBSuite5) TestChangeColumnShouldKeepFlagWhenTypeIsTimestamp(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use " + s.schemaName)
+	s.mustExec(c, "drop table if exists tt")
+	s.mustExec(c, "create table tt(id int auto_increment primary key, c timestamp)")
+	ctx := s.tk.Se.(sessionctx.Context)
+	is := domain.GetDomain(ctx).InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr(s.schemaName), model.NewCIStr("tt"))
+	c.Assert(err, IsNil)
+	colC := tbl.Meta().Columns[1]
+	originFlag := colC.Flag
+	c.Assert(originFlag > 0, IsTrue)
+	c.Assert(colC.Name.L, Equals, "c")
+	s.mustExec(c, "alter table tt change column c cc timestamp")
+	is = domain.GetDomain(ctx).InfoSchema()
+	tbl, err = is.TableByName(model.NewCIStr(s.schemaName), model.NewCIStr("tt"))
+	c.Assert(err, IsNil)
+	colCC := tbl.Meta().Columns[1]
+	c.Assert(colCC.Name.L, Equals, "cc")
+	c.Assert(originFlag, Equals, colCC.Flag)
 }
 
 func init() {

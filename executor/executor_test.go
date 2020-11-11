@@ -6192,3 +6192,12 @@ func (s *testSuite) TestIssue20237(c *C) {
 	tk.MustExec(`insert into s values(-37),(105),(-22),(-56),(124),(105),(111),(-5);`)
 	tk.MustQuery(`select count(distinct t.a, t.b) from t join s on t.b= s.b;`).Check(testkit.Rows("4"))
 }
+
+func (s *testSuite) TestIssue19667(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("CREATE TABLE t (a DATETIME)")
+	tk.MustExec("INSERT INTO t VALUES('1988-04-17 01:59:59')")
+	tk.MustQuery(`SELECT DATE_ADD(a, INTERVAL 1 SECOND) FROM t`).Check(testkit.Rows("1988-04-17 02:00:00"))
+}
