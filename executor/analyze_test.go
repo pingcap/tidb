@@ -260,13 +260,14 @@ func (s *testSuite1) TestAnalyzeIndexExtractTopN(c *C) {
 
 	// Construct TopN, should be (1, 1) -> 2 and (1, 2) -> 2
 	cms := statistics.NewCMSketch(5, 10)
+	topn := statistics.NewTopN(2)
 	{
 		key1, err := codec.EncodeKey(tk.Se.GetSessionVars().StmtCtx, nil, types.NewIntDatum(1), types.NewIntDatum(1))
 		c.Assert(err, IsNil)
-		cms.AppendTopN(key1, 2)
+		topn.AppendTopN(key1, 2)
 		key2, err := codec.EncodeKey(tk.Se.GetSessionVars().StmtCtx, nil, types.NewIntDatum(1), types.NewIntDatum(2))
 		c.Assert(err, IsNil)
-		cms.AppendTopN(key2, 2)
+		topn.AppendTopN(key2, 2)
 		prefixKey, err := codec.EncodeKey(tk.Se.GetSessionVars().StmtCtx, nil, types.NewIntDatum(1))
 		c.Assert(err, IsNil)
 		cms.InsertBytes(prefixKey)
@@ -279,6 +280,7 @@ func (s *testSuite1) TestAnalyzeIndexExtractTopN(c *C) {
 		c.Assert(err, IsNil)
 		c.Assert(ok, IsTrue)
 		c.Assert(idx.CMSketch.Equal(cms), IsTrue)
+		c.Assert(idx.TopN.Equal(topn), IsTrue)
 	}
 }
 

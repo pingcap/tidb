@@ -606,6 +606,26 @@ func (c *TopN) TotalCount() uint64 {
 	return total
 }
 
+func (c *TopN) Equal(cc *TopN) bool {
+	if c == nil && cc == nil {
+		return true
+	} else if c == nil || cc == nil {
+		return false
+	}
+	if len(c.TopN) != len(cc.TopN) {
+		return false
+	}
+	for i := range c.TopN {
+		if bytes.Compare(c.TopN[i].Encoded, cc.TopN[i].Encoded) != 0 {
+			return false
+		}
+		if c.TopN[i].Count != cc.TopN[i].Count {
+			return false
+		}
+	}
+	return true
+}
+
 // NewTopN creates the new TopN struct by the given size.
 func NewTopN(n int) *TopN {
 	return &TopN{TopN: make([]TopNMeta, 0, n)}
