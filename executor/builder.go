@@ -3666,10 +3666,12 @@ func (b *executorBuilder) buildShuffle(v *plannercore.PhysicalShuffle) *ShuffleE
 	case plannercore.PartitionHashSplitterType:
 		splitters := make([]partitionSplitter, len(v.HashByItemArrays))
 		for i, hashByItemArray := range v.HashByItemArrays {
-			splitters[i] = &partitionHashSplitter{
+			hashSplitter := &partitionHashSplitter{
 				byItems:    hashByItemArray,
 				numWorkers: shuffle.concurrency,
 			}
+			copy(hashSplitter.byItems, hashByItemArray)
+			splitters[i] = hashSplitter
 		}
 		shuffle.splitters = splitters
 	default:

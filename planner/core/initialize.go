@@ -218,7 +218,7 @@ func (p PhysicalShuffle) Init(ctx sessionctx.Context, stats *property.StatsInfo,
 
 // Init initializes PhysicalShuffleReceiverStub.
 func (p PhysicalShuffleReceiverStub) Init(ctx sessionctx.Context, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PhysicalShuffleReceiverStub {
-	p.basePhysicalPlan = newBasePhysicalPlan(ctx, plancodec.TypeShuffleReceiverStub, &p, offset)
+	p.basePhysicalPlan = newBasePhysicalPlan(ctx, plancodec.TypeShuffleReceiver, &p, offset)
 	p.childrenReqProps = props
 	p.stats = stats
 	return &p
