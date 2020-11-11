@@ -46,14 +46,16 @@ type aggPartialResultMapper map[string][]aggfuncs.PartialResult
 
 // baseHashAggWorker stores the common attributes of HashAggFinalWorker and HashAggPartialWorker.
 type baseHashAggWorker struct {
+	stats        *HashAggRuntimeStats
 	ctx          sessionctx.Context
 	finishCh     <-chan struct{}
 	aggFuncs     []aggfuncs.AggFunc
 	maxChunkSize int
 }
 
-func newBaseHashAggWorker(ctx sessionctx.Context, finishCh <-chan struct{}, aggFuncs []aggfuncs.AggFunc, maxChunkSize int) baseHashAggWorker {
+func newBaseHashAggWorker(ctx sessionctx.Context, finishCh <-chan struct{}, aggFuncs []aggfuncs.AggFunc, maxChunkSize int, stat *HashAggRuntimeStats) baseHashAggWorker {
 	return baseHashAggWorker{
+		stats:        stat,
 		ctx:          ctx,
 		finishCh:     finishCh,
 		aggFuncs:     aggFuncs,
@@ -66,7 +68,6 @@ func newBaseHashAggWorker(ctx sessionctx.Context, finishCh <-chan struct{}, aggF
 type HashAggPartialWorker struct {
 	baseHashAggWorker
 
-	stats             *HashAggRuntimeStats
 	inputCh           chan *chunk.Chunk
 	outputChs         []chan *HashAggIntermData
 	globalOutputCh    chan *AfFinalResult
@@ -85,7 +86,6 @@ type HashAggPartialWorker struct {
 type HashAggFinalWorker struct {
 	baseHashAggWorker
 
-	stats               *HashAggRuntimeStats
 	rowBuffer           []types.Datum
 	mutableRow          chunk.MutRow
 	partialResultMap    aggPartialResultMapper
@@ -291,14 +291,12 @@ func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) {
 	e.partialWorkers = make([]HashAggPartialWorker, partialConcurrency)
 	e.finalWorkers = make([]HashAggFinalWorker, finalConcurrency)
 
-	// Init RuntimeStats.
 	e.initRuntimeStats()
 
 	// Init partial workers.
 	for i := 0; i < partialConcurrency; i++ {
 		w := HashAggPartialWorker{
-			baseHashAggWorker: newBaseHashAggWorker(e.ctx, e.finishCh, e.PartialAggFuncs, e.maxChunkSize),
-			stats:             e.stats,
+			baseHashAggWorker: newBaseHashAggWorker(e.ctx, e.finishCh, e.PartialAggFuncs, e.maxChunkSize, e.stats),
 			inputCh:           e.partialInputChs[i],
 			outputChs:         e.partialOutputChs,
 			giveBackCh:        e.inputCh,
@@ -323,8 +321,7 @@ func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) {
 	// Init final workers.
 	for i := 0; i < finalConcurrency; i++ {
 		e.finalWorkers[i] = HashAggFinalWorker{
-			baseHashAggWorker:   newBaseHashAggWorker(e.ctx, e.finishCh, e.FinalAggFuncs, e.maxChunkSize),
-			stats:               e.stats,
+			baseHashAggWorker:   newBaseHashAggWorker(e.ctx, e.finishCh, e.FinalAggFuncs, e.maxChunkSize, e.stats),
 			partialResultMap:    make(aggPartialResultMapper),
 			groupSet:            set.NewStringSet(),
 			inputCh:             e.partialOutputChs[i],
@@ -378,15 +375,15 @@ func (w *HashAggPartialWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitG
 		}
 	}()
 	for {
-		if w.stats != nil {
-			atomic.AddInt64(&w.stats.PartialTaskNum, 1)
-		}
 		if !w.getChildInput() {
 			return
 		}
 		if err := w.updatePartialResult(ctx, sc, w.chk, len(w.partialResultsMap)); err != nil {
 			w.globalOutputCh <- &AfFinalResult{err: err}
 			return
+		}
+		if w.stats != nil {
+			atomic.AddInt64(&w.stats.PartialTaskNum, 1)
 		}
 		// The intermData can be promised to be not empty if reaching here,
 		// so we set needShuffle to be true.
@@ -513,11 +510,11 @@ func (w *HashAggFinalWorker) consumeIntermData(sctx sessionctx.Context) (err err
 		sc               = sctx.GetSessionVars().StmtCtx
 	)
 	for {
-		if w.stats != nil {
-			atomic.AddInt64(&w.stats.FinalTaskNum, 1)
-		}
 		if input, ok = w.getPartialInput(); !ok {
 			return nil
+		}
+		if w.stats != nil {
+			atomic.AddInt64(&w.stats.FinalTaskNum, 1)
 		}
 		if intermDataBuffer == nil {
 			intermDataBuffer = make([][]aggfuncs.PartialResult, 0, w.maxChunkSize)
