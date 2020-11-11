@@ -456,7 +456,7 @@ func buildCancelJobTests(firstID int64) []testCancelJob {
 		{act: model.ActionShardRowID, jobIDs: []int64{firstID + 17}, cancelRetErrs: noErrs, cancelState: model.StateNone},
 
 		{act: model.ActionModifyColumn, jobIDs: []int64{firstID + 18}, cancelRetErrs: noErrs, cancelState: model.StateNone},
-		{act: model.ActionModifyColumn, jobIDs: []int64{firstID + 19}, cancelRetErrs: []error{admin.ErrCancelFinishedDDLJob.GenWithStackByArgs(firstID + 19)}, cancelState: model.StateDeleteOnly},
+		{act: model.ActionModifyColumn, jobIDs: []int64{firstID + 19}, cancelRetErrs: noErrs, cancelState: model.StateDeleteOnly},
 
 		{act: model.ActionAddForeignKey, jobIDs: []int64{firstID + 20}, cancelRetErrs: noErrs, cancelState: model.StateNone},
 		{act: model.ActionAddForeignKey, jobIDs: []int64{firstID + 21}, cancelRetErrs: []error{admin.ErrCancelFinishedDDLJob.GenWithStackByArgs(firstID + 21)}, cancelState: model.StatePublic},
@@ -773,7 +773,7 @@ func (s *testDDLSerialSuite) TestCancelJob(c *C) {
 	// modify none-state column
 	col.DefaultValue = "1"
 	updateTest(&tests[15])
-	modifyColumnArgs := []interface{}{col, col.Name, &ast.ColumnPosition{}, byte(0)}
+	modifyColumnArgs := []interface{}{col, col.Name, &ast.ColumnPosition{}, byte(0), uint64(0)}
 	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, tblInfo.ID, test.act, modifyColumnArgs, &test.cancelState)
 	c.Check(checkErr, IsNil)
 	changedTable = testGetTable(c, d, dbInfo.ID, tblInfo.ID)
@@ -784,13 +784,14 @@ func (s *testDDLSerialSuite) TestCancelJob(c *C) {
 	col.FieldType.Tp = mysql.TypeTiny
 	col.FieldType.Flen = col.FieldType.Flen - 1
 	updateTest(&tests[16])
-	modifyColumnArgs = []interface{}{col, col.Name, &ast.ColumnPosition{}, byte(0)}
-	doDDLJobSuccess(ctx, d, c, dbInfo.ID, tblInfo.ID, test.act, modifyColumnArgs)
+	modifyColumnArgs = []interface{}{col, col.Name, &ast.ColumnPosition{}, byte(0), uint64(0)}
+	cancelState = model.StateNone
+	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, tblInfo.ID, test.act, modifyColumnArgs, &cancelState)
 	c.Check(checkErr, IsNil)
 	changedTable = testGetTable(c, d, dbInfo.ID, tblInfo.ID)
 	changedCol = model.FindColumnInfo(changedTable.Meta().Columns, col.Name.L)
-	c.Assert(changedCol.FieldType.Tp, Equals, mysql.TypeTiny)
-	c.Assert(changedCol.FieldType.Flen, Equals, col.FieldType.Flen)
+	c.Assert(changedCol.FieldType.Tp, Equals, mysql.TypeLonglong)
+	c.Assert(changedCol.FieldType.Flen, Equals, col.FieldType.Flen+1)
 	col.FieldType.Flen++
 
 	// Test add foreign key failed cause by canceled.
