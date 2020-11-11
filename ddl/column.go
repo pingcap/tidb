@@ -707,7 +707,7 @@ func needChangeColumnData(oldCol, newCol *model.ColumnInfo) bool {
 		case mysql.TypeEnum, mysql.TypeSet:
 			return isElemsChangedToModifyColumn(oldCol.Elems, newCol.Elems)
 		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
-			return needTruncationOrToggleSignForInteger()
+			return toUnsigned != originUnsigned
 		}
 
 		return needTruncationOrToggleSign()
