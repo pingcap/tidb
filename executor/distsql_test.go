@@ -22,6 +22,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/model"
+
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
@@ -254,4 +255,20 @@ func (s *testSuite3) TestPushLimitDownIndexLookUpReader(c *C) {
 	tk.MustQuery("select * from tbl use index(idx_b_c) where b > 1 limit 1").Check(testkit.Rows("2 2 2"))
 	tk.MustQuery("select * from tbl use index(idx_b_c) where b > 1 order by b desc limit 2,1").Check(testkit.Rows("3 3 3"))
 	tk.MustQuery("select * from tbl use index(idx_b_c) where b > 1 and c > 1 limit 2,1").Check(testkit.Rows("4 4 4"))
+}
+
+func (s *testSuite3) BenchmarkIndexLookUpGetResultChunk(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists tbl")
+	tk.MustExec("create table tbl(a int, b int, c int, d text, key idx_b_c(b,c))")
+	for i := 0; i < 1000; i ++ {
+		tk.MustExec("insert into tbl values(1,1,1,'11111 11111'),(2,2,2,'22222 22222'),(3,3,3,'33333 33333'),(4,4,4,'444444 44444'),(5,5,5,'55555 55555')")
+	}
+	c.ResetTimer()
+	for i := 0; i < c.N; i++ {
+		tk.MustQuery("select * from tbl use index(idx_b_c) where b = 1")
+		tk.MustQuery("select * from tbl use index(idx_b_c) where b > 2")
+		tk.MustQuery("select * from tbl use index(idx_b_c) where b = 3 limit 10")
+	}
 }
