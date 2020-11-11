@@ -14,7 +14,6 @@
 package executor
 
 import (
-	"bytes"
 	"context"
 	"encoding/base64"
 	"fmt"
@@ -25,22 +24,26 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/BurntSushi/toml"
 	"github.com/pingcap/br/pkg/glue"
 	"github.com/pingcap/br/pkg/storage"
 	"github.com/pingcap/br/pkg/task"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb-lightning/lightning"
+	"github.com/pingcap/tidb-lightning/lightning/checkpoints"
+	"github.com/pingcap/tidb-lightning/lightning/common"
 	importcfg "github.com/pingcap/tidb-lightning/lightning/config"
+	importglue "github.com/pingcap/tidb-lightning/lightning/glue"
 	filter "github.com/pingcap/tidb-tools/pkg/table-filter"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -55,6 +58,10 @@ import (
 
 const (
 	defaultImportID = "tidb_import_"
+)
+
+var (
+	CreateSessionForBRIEFunc func(kv.Storage) (checkpoints.Session, error)
 )
 
 // brieTaskProgress tracks a task's current progress.
@@ -284,18 +291,15 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 		importGlobalCfg = importcfg.NewGlobalConfig()
 		importCfg = importcfg.NewConfig()
 
-		// TODO: remove this if implement glue interface, which means lightning could use host TiDB's connection
-		importGlobalCfg.TiDB.Port = 4000
-
-		importGlobalCfg.TiDB.StatusPort = int(tidbCfg.Status.StatusPort)
 		importGlobalCfg.App.StatusAddr = ":8289"
 		importGlobalCfg.App.Level = tidbCfg.Log.Level
 		importGlobalCfg.Security.CAPath = tidbCfg.Security.ClusterSSLCA
 		importGlobalCfg.Security.CertPath = tidbCfg.Security.ClusterSSLCert
 		importGlobalCfg.Security.KeyPath = tidbCfg.Security.ClusterSSLKey
-		importGlobalCfg.TikvImporter.Backend = importcfg.BackendLocal
-		importGlobalCfg.TikvImporter.SortedKVDir = filepath.Join(tidbCfg.TempStoragePath, defaultImportID)
 
+		importCfg.TiDB.StatusPort = int(tidbCfg.Status.StatusPort)
+		importCfg.TikvImporter.Backend = importcfg.BackendLocal
+		importCfg.TikvImporter.SortedKVDir = filepath.Join(tidbCfg.TempStoragePath, defaultImportID)
 		importCfg.Checkpoint.Schema = defaultImportID
 		importCfg.Checkpoint.Driver = importcfg.CheckpointDriverMySQL
 		importCfg.Mydumper.CSV.Header = false // TODO(lance6716): address this behaviour to user
@@ -323,7 +327,7 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 		}
 		brCfg.Storage = storageURL.String()
 	case ast.BRIEKindImport:
-		importGlobalCfg.Mydumper.SourceDir = storageURL.String()
+		importCfg.Mydumper.SourceDir = storageURL.String()
 	}
 
 	e.info.storage = storageURL.String()
@@ -372,13 +376,13 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 				}
 				tbls = append(tbls, fmt.Sprintf("%s.%s", tbl.Schema, tbl.Name))
 			}
-			importGlobalCfg.Mydumper.Filter = tbls
+			importCfg.Mydumper.Filter = tbls
 		case len(s.Schemas) != 0:
 			dbs := make([]string, 0, len(s.Schemas))
 			for _, db := range s.Schemas {
 				dbs = append(dbs, fmt.Sprintf("%s.*", db))
 			}
-			importGlobalCfg.Mydumper.Filter = dbs
+			importCfg.Mydumper.Filter = dbs
 		}
 	}
 
@@ -424,7 +428,7 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 		for _, opt := range s.Options {
 			switch opt.Tp {
 			case ast.BRIEOptionSkipSchemaFiles:
-				importGlobalCfg.Mydumper.NoSchema = opt.UintValue != 0
+				importCfg.Mydumper.NoSchema = opt.UintValue != 0
 			case ast.BRIEOptionStrictFormat:
 				importCfg.Mydumper.StrictFormat = opt.UintValue != 0
 			case ast.BRIEOptionCSVSeparator:
@@ -458,16 +462,8 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 			}
 		}
 
-		var buf bytes.Buffer
-		err := toml.NewEncoder(&buf).Encode(importCfg)
-
-		if err != nil {
-			b.err = errors.Errorf("error build IMPORT config: %v", err)
-			return nil
-		}
-
-		importGlobalCfg.ConfigFileContent = buf.Bytes()
-		e.importCfg = importGlobalCfg
+		e.importTaskCfg = importCfg
+		e.importGlobalCfg = importGlobalCfg
 	}
 
 	return e
@@ -477,10 +473,11 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 type BRIEExec struct {
 	baseExecutor
 
-	backupCfg  *task.BackupConfig
-	restoreCfg *task.RestoreConfig
-	importCfg  *importcfg.GlobalConfig
-	info       *brieTaskInfo
+	backupCfg       *task.BackupConfig
+	restoreCfg      *task.RestoreConfig
+	importGlobalCfg *importcfg.GlobalConfig
+	importTaskCfg   *importcfg.Config
+	info            *brieTaskInfo
 }
 
 // Next implements the Executor Next interface.
@@ -545,8 +542,8 @@ func (e *BRIEExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		err = handleBRIEError(task.RunRestore(taskCtx, glue, "Restore", e.restoreCfg), ErrBRIERestoreFailed)
 	case ast.BRIEKindImport:
 		// TODO(lance6716): use taskID to build a unique checkpoint/sort-kv-dir, and pass taskCtx
-		l := lightning.New(e.importCfg)
-		err2 := handleBRIEError(l.RunOnce(), ErrBRIEImportFailed)
+		l := lightning.New(e.importGlobalCfg)
+		err2 := handleBRIEError(l.RunEmbeddedOnce(taskCtx, e.importTaskCfg, logutil.Logger(ctx), glue), ErrBRIEImportFailed)
 		if err2 != nil {
 			e.info.lock.Lock()
 			e.info.message = err2.Error()
@@ -655,6 +652,36 @@ func (gs *tidbGlueSession) Execute(ctx context.Context, sql string) error {
 	return err
 }
 
+func (gs *tidbGlueSession) ExecuteWithLog(ctx context.Context, sql string, purpose string, logger *zap.Logger) error {
+	return common.Retry(purpose, logger, func() error {
+		return gs.Execute(ctx, sql)
+	})
+}
+
+func (gs *tidbGlueSession) ObtainStringWithLog(ctx context.Context, sql string, purpose string, logger *zap.Logger) (string, error) {
+	var result string
+	err := common.Retry(purpose, logger, func() error {
+		rs, err := gs.se.(sqlexec.SQLExecutor).Execute(ctx, sql)
+		if err != nil {
+			return err
+		}
+		r := rs[0]
+		defer r.Close()
+		req := r.NewChunk()
+		err = r.Next(ctx, req)
+		if err != nil {
+			return err
+		}
+		if req.NumRows() == 0 {
+			return errors.Errorf("empty result while expecting a string, purpose: %s, sql: %s", purpose, sql)
+		}
+		row := req.GetRow(0)
+		result = row.GetString(0)
+		return nil
+	})
+	return result, err
+}
+
 // CreateDatabase implements glue.Session
 func (gs *tidbGlueSession) CreateDatabase(ctx context.Context, schema *model.DBInfo) error {
 	d := domain.GetDomain(gs.se).DDL()
@@ -713,8 +740,11 @@ func (gs *tidbGlueSession) Record(name string, value uint64) {
 		gs.info.backupTS = value
 	case "Size":
 		gs.info.archiveSize = value
+	case "Stage":
+		gs.progress.cmd = importglue.ImportStage(value).String()
+	case "ProgressPermillage":
+		gs.progress.importProgressPermillage = value
 	}
-	// TODO(lance6716): save Stage to cmd, ProgressPermillage
 }
 
 func (gs *tidbGlueSession) Flush(ctx context.Context, taskID uint64) {
@@ -745,4 +775,45 @@ func (gs *tidbGlueSession) Flush(ctx context.Context, taskID uint64) {
 			zap.Uint64("taskID", taskID),
 			zap.Error(err))
 	}
+}
+
+func (gs *tidbGlueSession) OwnsSQLExecutor() bool {
+	return false
+}
+
+func (gs *tidbGlueSession) GetSQLExecutor() importglue.SQLExecutor {
+	return gs
+}
+
+func (gs *tidbGlueSession) GetParser() *parser.Parser {
+	p := parser.New()
+	p.SetSQLMode(gs.se.(sessionctx.Context).GetSessionVars().SQLMode)
+	return p
+}
+
+func (gs *tidbGlueSession) GetTables(ctx context.Context, schemaName string) ([]*model.TableInfo, error) {
+	is := infoschema.GetInfoSchema(gs.se.(sessionctx.Context))
+	tables := is.SchemaTables(model.NewCIStr(schemaName))
+	tbsInfo := make([]*model.TableInfo, len(tables))
+	for i := range tbsInfo {
+		tbsInfo[i] = tables[i].Meta()
+	}
+	return tbsInfo, nil
+}
+
+func (gs *tidbGlueSession) GetSession() (checkpoints.Session, error) {
+	sctx, ok := gs.se.(sessionctx.Context)
+	if !ok {
+		return nil, errors.New("can't recover sessionctx.Context from glue")
+	}
+	s, err := CreateSessionForBRIEFunc(sctx.GetStore())
+	if err != nil {
+		return nil, errors.Annotate(err, "create new session in GlueCheckpointsDB")
+	}
+	return s, nil
+}
+
+func (gs *tidbGlueSession) OpenCheckpointsDB(ctx context.Context, c *importcfg.Config) (checkpoints.CheckpointsDB, error) {
+	// TODO(lance6716): since there's c.TaskID, it's better to change taskID to brieTaskID
+	return checkpoints.NewGlueCheckpointsDB(ctx, gs.se.(checkpoints.Session), gs.GetSession, c.Checkpoint.Schema, c.TaskID)
 }

@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb-lightning/lightning/checkpoints"
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
@@ -139,6 +140,16 @@ type stmtRecord struct {
 // StmtHistory holds all histories of statements in a txn.
 type StmtHistory struct {
 	history []*stmtRecord
+}
+
+func init() {
+	executor.CreateSessionForBRIEFunc = func(store kv.Storage) (checkpoints.Session, error) {
+		s, err := CreateSession(store)
+		if err != nil {
+			return nil, err
+		}
+		return s.(checkpoints.Session), nil
+	}
 }
 
 // Add appends a stmt to history list.
