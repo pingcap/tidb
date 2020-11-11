@@ -14,8 +14,13 @@
 package aggfuncs
 
 import (
+<<<<<<< HEAD
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/parser/mysql"
+=======
+	"unsafe"
+
+>>>>>>> a3facd0f7... expression, planner: fix decimal results for aggregate functions (#20017)
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -60,15 +65,7 @@ func (e *baseAvgDecimal) AppendFinalResult2Chunk(sctx sessionctx.Context, pr Par
 	if err != nil {
 		return err
 	}
-	// Make the decimal be the result of type inferring.
-	frac := e.args[0].GetType().Decimal
-	if len(e.args) == 2 {
-		frac = e.args[1].GetType().Decimal
-	}
-	if frac == -1 {
-		frac = mysql.MaxDecimalScale
-	}
-	err = finalResult.Round(finalResult, mathutil.Min(frac, mysql.MaxDecimalScale), types.ModeHalfEven)
+	err = finalResult.Round(finalResult, e.frac, types.ModeHalfEven)
 	if err != nil {
 		return err
 	}
@@ -216,12 +213,7 @@ func (e *avgOriginal4DistinctDecimal) AppendFinalResult2Chunk(sctx sessionctx.Co
 	if err != nil {
 		return err
 	}
-	// Make the decimal be the result of type inferring.
-	frac := e.args[0].GetType().Decimal
-	if frac == -1 {
-		frac = mysql.MaxDecimalScale
-	}
-	err = finalResult.Round(finalResult, mathutil.Min(frac, mysql.MaxDecimalScale), types.ModeHalfEven)
+	err = finalResult.Round(finalResult, e.frac, types.ModeHalfEven)
 	if err != nil {
 		return err
 	}
