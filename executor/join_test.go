@@ -587,8 +587,8 @@ func (s *testSuiteJoin1) TestUsing(c *C) {
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1(a int)")
 	tk.MustExec("insert into t1 (a) values(1)")
-	tk.MustExec("select t1.*, t2.* from t1 join t1 t2 using(a)").Check(testkit.Rows("1 1"))
-	tk.MustExec("select * from t1 join t1 t2 using(a)").Check(testkit.Rows("1"))
+	tk.MustQuery("select t1.*, t2.* from t1 join t1 t2 using(a)").Check(testkit.Rows("1 1"))
+	tk.MustQuery("select * from t1 join t1 t2 using(a)").Check(testkit.Rows("1"))
 }
 
 func (s *testSuiteJoin1) TestNaturalJoin(c *C) {
