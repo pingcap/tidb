@@ -896,20 +896,6 @@ func (e *SelectLockExec) Open(ctx context.Context) error {
 		}
 	}
 
-	txnCtx := e.ctx.GetSessionVars().TxnCtx
-	udpp := e.ctx.GetSessionVars().UseDynamicPartitionPrune()
-	if len(e.tblID2Handle) > 0 {
-		for id := range e.tblID2Handle {
-			txnCtx.UpdateDeltaForTable(id, id, 0, 0, nil, udpp)
-		}
-	}
-	if len(e.partitionedTable) > 0 {
-		for _, p := range e.partitionedTable {
-			pid := p.Meta().ID
-			txnCtx.UpdateDeltaForTable(pid, pid, 0, 0, nil, udpp)
-		}
-	}
-
 	return nil
 }
 
@@ -955,6 +941,20 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		lockWaitTime = kv.LockNoWait
 	} else if e.Lock.LockType == ast.SelectLockForUpdateWaitN {
 		lockWaitTime = int64(e.Lock.WaitSec) * 1000
+	}
+
+	txnCtx := e.ctx.GetSessionVars().TxnCtx
+	udpp := e.ctx.GetSessionVars().UseDynamicPartitionPrune()
+	if len(e.tblID2Handle) > 0 {
+		for id := range e.tblID2Handle {
+			txnCtx.UpdateDeltaForTable(id, id, 0, 0, nil, udpp)
+		}
+	}
+	if len(e.partitionedTable) > 0 {
+		for _, p := range e.partitionedTable {
+			pid := p.Meta().ID
+			txnCtx.UpdateDeltaForTable(pid, pid, 0, 0, nil, udpp)
+		}
 	}
 
 	return doLockKeys(ctx, e.ctx, newLockCtx(e.ctx.GetSessionVars(), lockWaitTime), e.keys...)
