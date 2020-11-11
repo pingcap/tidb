@@ -35,6 +35,8 @@ import (
 
 var _ Executor = &TableSampleExecutor{}
 
+const SampleMethodRegionConcurrency = 5
+
 // TableSampleExecutor fetches a few rows through kv.Scan
 // according to the specific sample method.
 type TableSampleExecutor struct {
@@ -84,8 +86,8 @@ type tableRegionSampler struct {
 	schema     *expression.Schema
 	fullSchema *expression.Schema
 	isDesc     bool
-
 	retTypes   []*types.FieldType
+
 	rowMap     map[int64]types.Datum
 	isFinished bool
 }
@@ -233,36 +235,32 @@ func (s *tableRegionSampler) buildSampleColAndDecodeColMap() ([]*table.Column, m
 	return cols, colMap, nil
 }
 
-func (s *tableRegionSampler) scanFirstKVForEachRange(
-	ranges []kv.KeyRange, fn func(handle kv.Handle, value []byte) error) error {
+func (s *tableRegionSampler) scanFirstKVForEachRange(ranges []kv.KeyRange,
+	fn func(handle kv.Handle, value []byte) error) error {
 	ver := kv.Version{Ver: s.startTS}
 	snap := s.ctx.GetStore().GetSnapshot(ver)
-	for _, r := range ranges {
-		it, err := snap.Iter(r.StartKey, r.EndKey)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		for it.Valid() {
-			if !tablecodec.IsRecordKey(it.Key()) {
-				if err := it.Next(); err != nil {
-					return err
-				}
-				continue
-			}
-			var handle kv.Handle
-			handle, err = tablecodec.DecodeRowKey(it.Key())
-			if err != nil {
-				return errors.Trace(err)
-			}
-
-			if err = fn(handle, it.Value()); err != nil {
-				return errors.Trace(err)
-			}
-			break
-		}
-		it.Close()
+	concurrency := SampleMethodRegionConcurrency
+	if len(ranges) < concurrency {
+		concurrency = len(ranges)
 	}
-	return nil
+
+	fetchers := make([]*sampleFetcher, concurrency)
+	for i := 0; i < len(ranges); i++ {
+		fetchers[i] = &sampleFetcher{
+			workerID: i,
+			concurrency: concurrency,
+			kvChan:  make(chan sampleKV),
+			snapshot: snap,
+			ranges: ranges,
+		}
+		go fetchers[i].run()
+	}
+	syncer := sampleSyncer{
+		fetchers:   fetchers,
+		totalCount: len(ranges),
+		consumeFn:    fn,
+	}
+	return syncer.sync()
 }
 
 func (s *tableRegionSampler) resetRowMap() {
@@ -278,4 +276,80 @@ func (s *tableRegionSampler) resetRowMap() {
 
 func (s *tableRegionSampler) finished() bool {
 	return s.isFinished
+}
+
+type sampleKV struct {
+	handle kv.Handle
+	value []byte
+}
+
+type sampleFetcher struct {
+	workerID int
+	concurrency int
+	kvChan chan sampleKV
+	err error
+	snapshot kv.Snapshot
+	ranges []kv.KeyRange
+}
+
+func (s *sampleFetcher) run() {
+	defer close(s.kvChan)
+	for i, r := range s.ranges {
+		if i%s.concurrency != s.workerID {
+			continue
+		}
+		it, err := s.snapshot.Iter(r.StartKey, r.EndKey)
+		if err != nil {
+			s.err = err
+			return
+		}
+		for it.Valid() {
+			if !tablecodec.IsRecordKey(it.Key()) {
+				if err = it.Next(); err != nil {
+					s.err = err
+					return
+				}
+				continue
+			}
+			handle, err := tablecodec.DecodeRowKey(it.Key())
+			if err != nil {
+				s.err = err
+				return
+			}
+			s.kvChan<-sampleKV{handle: handle, value: it.Value()}
+			break
+		}
+	}
+}
+
+type sampleSyncer struct {
+	fetchers []*sampleFetcher
+	totalCount int
+	consumeFn func(handle kv.Handle, value []byte) error
+}
+
+func (s *sampleSyncer) sync() error {
+	defer func() {
+		for _, f := range s.fetchers {
+			// Cleanup channels to terminate fetcher goroutines.
+			for _, ok := <-f.kvChan; ok; {
+			}
+		}
+	}()
+	for i := 0; i < s.totalCount; i++ {
+		f := s.fetchers[i%len(s.fetchers)]
+		select {
+		case v, ok := <-f.kvChan:
+			if ok {
+				err := s.consumeFn(v.handle, v.value)
+				if err != nil {
+					return err
+				}
+			}
+			if f.err != nil {
+				return f.err
+			}
+		}
+	}
+	return nil
 }
