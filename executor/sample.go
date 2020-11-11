@@ -35,7 +35,7 @@ import (
 
 var _ Executor = &TableSampleExecutor{}
 
-const SampleMethodRegionConcurrency = 5
+const sampleMethodRegionConcurrency = 5
 
 // TableSampleExecutor fetches a few rows through kv.Scan
 // according to the specific sample method.
@@ -239,7 +239,7 @@ func (s *tableRegionSampler) scanFirstKVForEachRange(ranges []kv.KeyRange,
 	fn func(handle kv.Handle, value []byte) error) error {
 	ver := kv.Version{Ver: s.startTS}
 	snap := s.ctx.GetStore().GetSnapshot(ver)
-	concurrency := SampleMethodRegionConcurrency
+	concurrency := sampleMethodRegionConcurrency
 	if len(ranges) < concurrency {
 		concurrency = len(ranges)
 	}
@@ -247,18 +247,18 @@ func (s *tableRegionSampler) scanFirstKVForEachRange(ranges []kv.KeyRange,
 	fetchers := make([]*sampleFetcher, concurrency)
 	for i := 0; i < len(ranges); i++ {
 		fetchers[i] = &sampleFetcher{
-			workerID: i,
+			workerID:    i,
 			concurrency: concurrency,
-			kvChan:  make(chan sampleKV),
-			snapshot: snap,
-			ranges: ranges,
+			kvChan:      make(chan sampleKV),
+			snapshot:    snap,
+			ranges:      ranges,
 		}
 		go fetchers[i].run()
 	}
 	syncer := sampleSyncer{
 		fetchers:   fetchers,
 		totalCount: len(ranges),
-		consumeFn:    fn,
+		consumeFn:  fn,
 	}
 	return syncer.sync()
 }
@@ -280,16 +280,16 @@ func (s *tableRegionSampler) finished() bool {
 
 type sampleKV struct {
 	handle kv.Handle
-	value []byte
+	value  []byte
 }
 
 type sampleFetcher struct {
-	workerID int
+	workerID    int
 	concurrency int
-	kvChan chan sampleKV
-	err error
-	snapshot kv.Snapshot
-	ranges []kv.KeyRange
+	kvChan      chan sampleKV
+	err         error
+	snapshot    kv.Snapshot
+	ranges      []kv.KeyRange
 }
 
 func (s *sampleFetcher) run() {
@@ -316,16 +316,16 @@ func (s *sampleFetcher) run() {
 				s.err = err
 				return
 			}
-			s.kvChan<-sampleKV{handle: handle, value: it.Value()}
+			s.kvChan <- sampleKV{handle: handle, value: it.Value()}
 			break
 		}
 	}
 }
 
 type sampleSyncer struct {
-	fetchers []*sampleFetcher
+	fetchers   []*sampleFetcher
 	totalCount int
-	consumeFn func(handle kv.Handle, value []byte) error
+	consumeFn  func(handle kv.Handle, value []byte) error
 }
 
 func (s *sampleSyncer) sync() error {
