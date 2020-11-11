@@ -169,19 +169,19 @@ func updateRecord(ctx context.Context, sctx sessionctx.Context, h kv.Handle, old
 		txnCtx := sctx.GetSessionVars().TxnCtx
 		if txnCtx.IsPessimistic {
 			txnCtx.AddUnchangedRowKey(unchangedRowKey)
-		}
-		// Update DeltaForTable
-		colSize := make(map[int64]int64, len(newData))
-		for id, col := range t.Cols() {
-			_, err := codec.EstimateValueSize(sc, newData[id])
-			if err != nil {
-				continue
+			// Update DeltaForTable
+			colSize := make(map[int64]int64, len(newData))
+			for id, col := range t.Cols() {
+				_, err := codec.EstimateValueSize(sc, newData[id])
+				if err != nil {
+					continue
+				}
+				// Nothing changed so size should be 0
+				colSize[col.ID] = 0
 			}
-			// Nothing changed so size should be 0
-			colSize[col.ID] = 0
+			udpp := sctx.GetSessionVars().UseDynamicPartitionPrune()
+			txnCtx.UpdateDeltaForTable(t.Meta().ID, physicalID, 0, 1, colSize, udpp)
 		}
-		udpp := sctx.GetSessionVars().UseDynamicPartitionPrune()
-		txnCtx.UpdateDeltaForTable(t.Meta().ID, physicalID, 0, 1, colSize, udpp)
 		return false, nil
 	}
 
