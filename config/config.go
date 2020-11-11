@@ -628,7 +628,7 @@ var defaultConf = Config{
 		DistinctAggPushDown:   false,
 		CommitterConcurrency:  16,
 		MaxTxnTTL:             10 * 60 * 1000, // 10min
-    GOGC:                  100,
+		GOGC:                  100,
 	},
 	ProxyProtocol: ProxyProtocol{
 		Networks:      "",
