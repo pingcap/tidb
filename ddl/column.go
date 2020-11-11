@@ -16,7 +16,6 @@ package ddl
 import (
 	"bytes"
 	"fmt"
-	"math"
 	"math/bits"
 	"strings"
 	"sync/atomic"
@@ -1115,15 +1114,18 @@ func (w *worker) updateColumnAndIndexes(t table.Table, oldCol, col *model.Column
 		// This backfill job has been exited during processing. At that time, the element is reorgInfo.elements[i+1] and handle range is [reorgInfo.StartHandle, reorgInfo.EndHandle].
 		// Then the handle range of the rest elements' is [originalStartHandle, originalEndHandle].
 		if i == startElementOffsetToResetHandle+1 {
-			reorgInfo.StartHandle, reorgInfo.EndHandle = originalStartHandle, originalEndHandle
+			reorgInfo.StartKey, reorgInfo.EndKey = originalStartHandle, originalEndHandle
 		}
 
 		reorgInfo.currElement = reorgInfo.elements[i+1]
 		// Write the reorg info to store so the whole reorganize process can recover from panic.
-		err := reorgInfo.UpdateReorgMeta(reorgInfo.StartHandle)
-		logutil.BgLogger().Info("[ddl] update column and indexes", zap.Int64("jobID", reorgInfo.Job.ID),
-			zap.ByteString("elementType", reorgInfo.currElement.TypeKey), zap.Int64("elementID", reorgInfo.currElement.ID),
-			zap.String("startHandle", toString(reorgInfo.StartHandle)), zap.String("endHandle", toString(reorgInfo.EndHandle)))
+		err := reorgInfo.UpdateReorgMeta(reorgInfo.StartKey)
+		logutil.BgLogger().Info("[ddl] update column and indexes",
+			zap.Int64("jobID", reorgInfo.Job.ID),
+			zap.ByteString("elementType", reorgInfo.currElement.TypeKey),
+			zap.Int64("elementID", reorgInfo.currElement.ID),
+			zap.String("startHandle", tryDecodeToHandleString(reorgInfo.StartKey)),
+			zap.String("endHandle", tryDecodeToHandleString(reorgInfo.EndKey)))
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1174,43 +1176,32 @@ type rowRecord struct {
 	warning *terror.Error // It's used to record the cast warning of a record.
 }
 
-// getNextHandle gets next handle of entry that we are going to process.
-func (w *updateColumnWorker) getNextHandle(taskRange reorgBackfillTask, taskDone bool, lastAccessedHandle kv.Handle) (nextHandle kv.Handle) {
+// getNextKey gets next handle of entry that we are going to process.
+func (w *updateColumnWorker) getNextKey(taskRange reorgBackfillTask,
+	taskDone bool, lastAccessedHandle kv.Key) (nextHandle kv.Key) {
 	if !taskDone {
 		// The task is not done. So we need to pick the last processed entry's handle and add one.
 		return lastAccessedHandle.Next()
 	}
 
-	// The task is done. So we need to choose a handle outside this range.
-	// Some corner cases should be considered:
-	// - The end of task range is MaxInt64.
-	// - The end of the task is excluded in the range.
-	if (taskRange.endHandle.IsInt() && taskRange.endHandle.IntValue() == math.MaxInt64) || !taskRange.endIncluded {
-		return taskRange.endHandle
-	}
-
-	return taskRange.endHandle.Next()
+	return taskRange.endKey.Next()
 }
 
-func (w *updateColumnWorker) fetchRowColVals(txn kv.Transaction, taskRange reorgBackfillTask) ([]*rowRecord, kv.Handle, bool, error) {
+func (w *updateColumnWorker) fetchRowColVals(txn kv.Transaction, taskRange reorgBackfillTask) ([]*rowRecord, kv.Key, bool, error) {
 	w.rowRecords = w.rowRecords[:0]
 	startTime := time.Now()
 
 	// taskDone means that the added handle is out of taskRange.endHandle.
 	taskDone := false
-	var lastAccessedHandle kv.Handle
+	var lastAccessedHandle kv.Key
 	oprStartTime := startTime
-	err := iterateSnapshotRows(w.sessCtx.GetStore(), w.priority, w.table, txn.StartTS(), taskRange.startHandle, taskRange.endHandle, taskRange.endIncluded,
+	err := iterateSnapshotRows(w.sessCtx.GetStore(), w.priority, w.table, txn.StartTS(), taskRange.startKey, taskRange.endKey,
 		func(handle kv.Handle, recordKey kv.Key, rawRow []byte) (bool, error) {
 			oprEndTime := time.Now()
 			logSlowOperations(oprEndTime.Sub(oprStartTime), "iterateSnapshotRows in updateColumnWorker fetchRowColVals", 0)
 			oprStartTime = oprEndTime
 
-			if !taskRange.endIncluded {
-				taskDone = handle.Compare(taskRange.endHandle) >= 0
-			} else {
-				taskDone = handle.Compare(taskRange.endHandle) > 0
-			}
+			taskDone = recordKey.Cmp(taskRange.endKey) > 0
 
 			if taskDone || len(w.rowRecords) >= w.batchCnt {
 				return false, nil
@@ -1219,8 +1210,8 @@ func (w *updateColumnWorker) fetchRowColVals(txn kv.Transaction, taskRange reorg
 			if err1 := w.getRowRecord(handle, recordKey, rawRow); err1 != nil {
 				return false, errors.Trace(err1)
 			}
-			lastAccessedHandle = handle
-			if handle.Equal(taskRange.endHandle) {
+			lastAccessedHandle = recordKey
+			if recordKey.Cmp(taskRange.endKey) == 0 {
 				// If taskRange.endIncluded == false, we will not reach here when handle == taskRange.endHandle.
 				taskDone = true
 				return false, nil
@@ -1233,7 +1224,7 @@ func (w *updateColumnWorker) fetchRowColVals(txn kv.Transaction, taskRange reorg
 	}
 
 	logutil.BgLogger().Debug("[ddl] txn fetches handle info", zap.Uint64("txnStartTS", txn.StartTS()), zap.String("taskRange", taskRange.String()), zap.Duration("takeTime", time.Since(startTime)))
-	return w.rowRecords, w.getNextHandle(taskRange, taskDone, lastAccessedHandle), taskDone, errors.Trace(err)
+	return w.rowRecords, w.getNextKey(taskRange, taskDone, lastAccessedHandle), taskDone, errors.Trace(err)
 }
 
 func (w *updateColumnWorker) getRowRecord(handle kv.Handle, recordKey []byte, rawRow []byte) error {
@@ -1315,11 +1306,11 @@ func (w *updateColumnWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (t
 		taskCtx.scanCount = 0
 		txn.SetOption(kv.Priority, w.priority)
 
-		rowRecords, nextHandle, taskDone, err := w.fetchRowColVals(txn, handleRange)
+		rowRecords, nextKey, taskDone, err := w.fetchRowColVals(txn, handleRange)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		taskCtx.nextHandle = nextHandle
+		taskCtx.nextKey = nextKey
 		taskCtx.done = taskDone
 
 		warningsMap := make(map[errors.ErrorID]*terror.Error, len(rowRecords))
