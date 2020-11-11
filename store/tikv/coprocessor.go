@@ -511,6 +511,7 @@ func (rs *copResponse) RespTime() time.Duration {
 }
 
 const minLogCopTaskTime = 300 * time.Millisecond
+const occupiedMem = int64(96 * 1024 * 1024)
 
 // run is a worker function that get a copTask from channel, handle it and
 // send the result back.
@@ -532,6 +533,8 @@ func (worker *copIteratorWorker) run(ctx context.Context) {
 		if respCh == nil {
 			respCh = task.respChan
 		}
+		worker.memTracker.Consume(occupiedMem)
+		needReturnToken := worker.actionOnExceed.destroyTokenIfNeeded()
 		worker.handleTask(ctx, task, respCh)
 		failpoint.Inject("testRateLimitActionMockOtherExecutorConsume", func(val failpoint.Value) {
 			if val.(bool) {
@@ -543,9 +546,11 @@ func (worker *copIteratorWorker) run(ctx context.Context) {
 		})
 		close(task.respChan)
 		worker.maxID.setMaxIDIfLarger(task.id)
-		worker.actionOnExceed.destroyTokenIfNeeded(func() {
+		if needReturnToken {
 			worker.sendRate.putToken()
-		})
+		} else {
+			worker.actionOnExceed.updateTokenStatus()
+		}
 		if worker.vars != nil && worker.vars.Killed != nil && atomic.LoadUint32(worker.vars.Killed) == 1 {
 			return
 		}
@@ -679,7 +684,7 @@ func (worker *copIteratorWorker) sendToRespCh(resp *copResponse, respCh chan<- *
 				consumed = MockCoprocessorResponseSize
 			}
 		})
-		worker.memTracker.Consume(consumed)
+		worker.memTracker.Consume(consumed - occupiedMem)
 	}
 	select {
 	case respCh <- resp:
@@ -1432,23 +1437,18 @@ func (e *rateLimitAction) broadcastIfNeeded(needed bool) {
 // destroyTokenIfNeeded will check the `exceed` flag after copWorker finished one task.
 // If the exceed flag is true and there is no token been destroyed before, one token will be destroyed,
 // or the token would be return back.
-func (e *rateLimitAction) destroyTokenIfNeeded(returnToken func()) {
+func (e *rateLimitAction) destroyTokenIfNeeded() bool {
 	e.conditionLock()
 	defer e.conditionUnlock()
 	if !e.cond.exceeded {
-		returnToken()
-		return
+		return true
 	}
 	// If actionOnExceed has been triggered and there is no token have been destroyed before,
 	// destroy one token.
 	if !e.cond.isTokenDestroyed {
-		e.cond.remainingTokenNum = e.cond.remainingTokenNum - 1
-		e.cond.isTokenDestroyed = true
-		e.cond.Broadcast()
-		return
+		return false
 	}
 
-	returnToken()
 	// we suspend worker when `exceeded` is true until being notified by `broadcastIfNeeded`
 	for e.cond.exceeded {
 		e.cond.waitingWorkerCnt++
@@ -1456,6 +1456,15 @@ func (e *rateLimitAction) destroyTokenIfNeeded(returnToken func()) {
 		e.cond.waitingWorkerCnt--
 	}
 	e.unsafeInitOnce()
+	return true
+}
+
+func (e *rateLimitAction) updateTokenStatus() {
+	e.conditionLock()
+	defer e.conditionUnlock()
+	e.cond.remainingTokenNum = e.cond.remainingTokenNum - 1
+	e.cond.isTokenDestroyed = true
+	e.cond.Broadcast()
 }
 
 // unsafeInitOnce would init once if the condition is meet. This should be used under condition's lock.
