@@ -925,6 +925,9 @@ func (e *HashAggRuntimeStats) Clone() execdetails.RuntimeStats {
 		FinalNum:          e.FinalNum,
 		PartialWorkerTime: e.PartialWorkerTime,
 		FinalWorkerTime:   e.FinalWorkerTime,
+		PartialExecTime:   e.PartialExecTime,
+		PartialTotalTime:  e.PartialTotalTime,
+		PartialWaitTime:   e.PartialWaitTime,
 	}
 	return newRs
 }
@@ -941,6 +944,9 @@ func (e *HashAggRuntimeStats) Merge(other execdetails.RuntimeStats) {
 	e.FinalTaskNum += tmp.FinalTaskNum
 	e.PartialNum += tmp.PartialNum
 	e.FinalNum += tmp.FinalNum
+	e.PartialWaitTime += tmp.PartialWaitTime
+	e.PartialTotalTime += tmp.PartialTotalTime
+	e.PartialExecTime += tmp.PartialExecTime
 	e.FinalWorkerTime = append(e.FinalWorkerTime, tmp.FinalWorkerTime...)
 	e.PartialWorkerTime = append(e.PartialWorkerTime, tmp.PartialWorkerTime...)
 }
