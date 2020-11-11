@@ -53,6 +53,7 @@ func (s *testSuite) TestLogFormat(c *C) {
 		StmtCtx: &stmtctx.StatementContext{
 			MemTracker: mem,
 		},
+		RedactSQL: false,
 	}
 	costTime := time.Second * 233
 	logFields := genLogFields(costTime, info)
@@ -71,4 +72,8 @@ func (s *testSuite) TestLogFormat(c *C) {
 	c.Assert(logFields[5].String, Equals, "2013265920 Bytes (1.875 GB)")
 	c.Assert(logFields[6].Key, Equals, "sql")
 	c.Assert(logFields[6].String, Equals, "select * from table where a > 1")
+
+	info.RedactSQL = true
+	logFields = genLogFields(costTime, info)
+	c.Assert(logFields[6].String, Equals, "select * from table where a > ?")
 }
