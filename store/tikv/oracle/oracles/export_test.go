@@ -50,14 +50,16 @@ func NewEmptyPDOracle() oracle.Oracle {
 func SetEmptyPDOracleLastTs(oc oracle.Oracle, ts uint64) {
 	switch o := oc.(type) {
 	case *pdOracle:
-		if o.lastTSMap == nil {
-			o.lastTSMap = make(map[string]*uint64)
+		o.mu.Lock()
+		defer o.mu.Unlock()
+		if o.mu.lastTSMap == nil {
+			o.mu.lastTSMap = make(map[string]*uint64)
 		}
 		// Todo: replace "global" with config.DefTxnScope
-		_, exist := o.lastTSMap["global"]
+		_, exist := o.mu.lastTSMap["global"]
 		if !exist {
-			o.lastTSMap["global"] = new(uint64)
+			o.mu.lastTSMap["global"] = new(uint64)
 		}
-		atomic.StoreUint64(o.lastTSMap["global"], ts)
+		atomic.StoreUint64(o.mu.lastTSMap["global"], ts)
 	}
 }
