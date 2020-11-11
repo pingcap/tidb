@@ -285,12 +285,24 @@ func (p *PhysicalBroadCastJoin) ToPB(ctx sessionctx.Context, storeType kv.StoreT
 	case AntiLeftOuterSemiJoin:
 		pbJoinType = tipb.JoinType_TypeAntiLeftOuterSemiJoin
 	}
+	probeFiledTypes := make([]*tipb.FieldType, 0, len(p.EqualConditions))
+	buildFiledTypes := make([]*tipb.FieldType, 0, len(p.EqualConditions))
+	for _, equalCondition := range p.EqualConditions {
+		retType := equalCondition.RetType.Clone()
+		chs, coll := equalCondition.CharsetAndCollation(ctx)
+		retType.Charset = chs
+		retType.Collate = coll
+		probeFiledTypes = append(probeFiledTypes, expression.ToPBFieldType(retType))
+		buildFiledTypes = append(buildFiledTypes, expression.ToPBFieldType(retType))
+	}
 	join := &tipb.Join{
 		JoinType:        pbJoinType,
 		JoinExecType:    tipb.JoinExecType_TypeHashJoin,
 		InnerIdx:        int64(p.InnerChildIdx),
 		LeftJoinKeys:    left,
 		RightJoinKeys:   right,
+		ProbeTypes:      probeFiledTypes,
+		BuildTypes:      buildFiledTypes,
 		LeftConditions:  leftConditions,
 		RightConditions: rightConditions,
 		OtherConditions: otherConditions,
