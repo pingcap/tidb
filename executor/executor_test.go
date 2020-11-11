@@ -87,6 +87,8 @@ func TestT(t *testing.T) {
 
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.Log.SlowThreshold = 30000 // 30s
+		conf.TiKVClient.AsyncCommit.SafeWindow = 0
+		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
 	})
 	tmpDir := config.GetGlobalConfig().TempStoragePath
 	_ = os.RemoveAll(tmpDir) // clean the uncleared temp file during the last run.
@@ -3584,9 +3586,9 @@ func (s *testSuite) TestCheckIndex(c *C) {
 	// table     data (handle, data): (1, 10), (2, 20), (4, 40)
 	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
-	err = idx.Delete(sc, txn, types.MakeDatums(int64(30)), kv.IntHandle(3))
+	err = idx.Delete(sc, txn.GetUnionStore(), types.MakeDatums(int64(30)), kv.IntHandle(3))
 	c.Assert(err, IsNil)
-	err = idx.Delete(sc, txn, types.MakeDatums(int64(20)), kv.IntHandle(2))
+	err = idx.Delete(sc, txn.GetUnionStore(), types.MakeDatums(int64(20)), kv.IntHandle(2))
 	c.Assert(err, IsNil)
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
@@ -4476,6 +4478,14 @@ func (s *testSuiteP2) TestStrToDateBuiltin(c *C) {
 	tk.MustQuery(`SELECT STR_TO_DATE('2020-07-04 12:22:33 AM', '%Y-%m-%d %r')`).Check(testkit.Rows("2020-07-04 00:22:33"))
 	tk.MustQuery(`SELECT STR_TO_DATE('2020-07-04 12:22:33', '%Y-%m-%d %T')`).Check(testkit.Rows("2020-07-04 12:22:33"))
 	tk.MustQuery(`SELECT STR_TO_DATE('2020-07-04 00:22:33', '%Y-%m-%d %T')`).Check(testkit.Rows("2020-07-04 00:22:33"))
+}
+
+func (s *testSuiteP2) TestStrToDateBuiltinWithWarnings(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set @@sql_mode='NO_ZERO_DATE'")
+	tk.MustExec("use test")
+	tk.MustQuery(`SELECT STR_TO_DATE('0000-1-01', '%Y-%m-%d');`).Check(testkit.Rows("<nil>"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1411 Incorrect datetime value: '0000-1-01' for function str_to_date"))
 }
 
 func (s *testSuiteP2) TestReadPartitionedTable(c *C) {
@@ -6437,6 +6447,7 @@ func (s *testSerialSuite) TestPrevStmtDesensitization(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test;")
 	tk.MustExec(fmt.Sprintf("set @@session.%v=1", variable.TiDBRedactLog))
+	defer tk.MustExec(fmt.Sprintf("set @@session.%v=0", variable.TiDBRedactLog))
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int, unique key (a))")
 	tk.MustExec("begin")
@@ -6468,6 +6479,23 @@ func (s *testSerialSuite1) TestCollectCopRuntimeStats(c *C) {
 	explain := fmt.Sprintf("%v", rows[0])
 	c.Assert(explain, Matches, ".*rpc_num: 2, .*regionMiss:.*")
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/tikvStoreRespResult"), IsNil)
+}
+
+func (s *testSerialSuite1) TestIndexlookupRuntimeStats(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (a int, b int, index(a))")
+	tk.MustExec("insert into t1 values (1,2),(2,3),(3,4)")
+	sql := "explain analyze select * from t1 use index(a) where a > 1;"
+	rows := tk.MustQuery(sql).Rows()
+	c.Assert(len(rows), Equals, 3)
+	explain := fmt.Sprintf("%v", rows[0])
+	c.Assert(explain, Matches, ".*time:.*loops:.*index_task:.*table_task:{num.*concurrency.*time.*}.*")
+	indexExplain := fmt.Sprintf("%v", rows[1])
+	tableExplain := fmt.Sprintf("%v", rows[2])
+	c.Assert(indexExplain, Matches, ".*time:.*loops:.*cop_task:.*")
+	c.Assert(tableExplain, Matches, ".*time:.*loops:.*cop_task:.*")
 }
 
 func (s *testSuite) TestCollectDMLRuntimeStats(c *C) {
@@ -6642,18 +6670,20 @@ func (s *testSerialSuite) TestCoprocessorOOMAction(c *C) {
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.OOMAction = config.OOMActionCancel
 	})
-	failpoint.Enable("github.com/pingcap/tidb/store/tikv/testRateLimitActionMockConsume", `return(true)`)
-	defer failpoint.Disable("github.com/pingcap/tidb/store/tikv/testRateLimitActionMockConsume")
+	failpoint.Enable("github.com/pingcap/tidb/store/tikv/testRateLimitActionMockConsumeAndAssert", `return(true)`)
+	defer failpoint.Disable("github.com/pingcap/tidb/store/tikv/testRateLimitActionMockConsumeAndAssert")
+
+	failpoint.Enable("github.com/pingcap/tidb/store/tikv/testRateLimitActionMockWaitMax", `return(true)`)
 	// assert oom action
 	for _, testcase := range testcases {
 		c.Log(testcase.name)
-		// larger than one copResponse, smaller than 2 copResponse
-		quota := 199
+		// larger than 4 copResponse, smaller than 5 copResponse
+		quota := 499
 		se, err := session.CreateSession4Test(s.store)
 		c.Check(err, IsNil)
 		tk.Se = se
 		tk.MustExec("use test")
-		tk.MustExec("set @@tidb_distsql_scan_concurrency = 30")
+		tk.MustExec("set @@tidb_distsql_scan_concurrency = 4")
 		tk.MustExec(fmt.Sprintf("set @@tidb_mem_quota_query=%v;", quota))
 		var expect []string
 		for i := 0; i < count; i++ {
@@ -6664,6 +6694,7 @@ func (s *testSerialSuite) TestCoprocessorOOMAction(c *C) {
 		c.Assert(tk.Se.GetSessionVars().StmtCtx.MemTracker.MaxConsumed(), Greater, int64(quota))
 		se.Close()
 	}
+	failpoint.Disable("github.com/pingcap/tidb/store/tikv/testRateLimitActionMockWaitMax")
 
 	// assert oom fallback
 	for _, testcase := range testcases {
@@ -6672,7 +6703,7 @@ func (s *testSerialSuite) TestCoprocessorOOMAction(c *C) {
 		c.Check(err, IsNil)
 		tk.Se = se
 		tk.MustExec("use test")
-		tk.MustExec("set tidb_distsql_scan_concurrency = 2")
+		tk.MustExec("set tidb_distsql_scan_concurrency = 1")
 		tk.MustExec("set @@tidb_mem_quota_query=1;")
 		err = tk.QueryToErr(testcase.sql)
 		c.Assert(err, NotNil)
@@ -6694,6 +6725,60 @@ func (s *testSerialSuite) TestCoprocessorOOMAction(c *C) {
 		err = tk.QueryToErr(testcase.sql)
 		c.Assert(err, NotNil)
 		c.Assert(err.Error(), Matches, "Out Of Memory Quota.*")
+		se.Close()
+	}
+}
+
+func (s *testSerialSuite) TestIssue20454(c *C) {
+	// Assert Coprocessor OOMAction
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec(`set @@tidb_wait_split_region_finish=1`)
+	// create table for non keep-order case
+	tk.MustExec("drop table if exists t5")
+	tk.MustExec("create table t5(id int)")
+	tk.MustQuery(`split table t5 between (0) and (10000) regions 10`).Check(testkit.Rows("9 1"))
+	count := 10
+	for i := 0; i < count; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t5 (id) values (%v)", i))
+	}
+
+	testcases := []struct {
+		name string
+		sql  string
+	}{
+		{
+			name: "non keep Order",
+			sql:  "select id from t5",
+		},
+	}
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.OOMAction = config.OOMActionLog
+	})
+
+	failpoint.Enable("github.com/pingcap/tidb/store/tikv/testRateLimitActionMockConsumeAndAssert", `return(true)`)
+	defer failpoint.Disable("github.com/pingcap/tidb/store/tikv/testRateLimitActionMockConsumeAndAssert")
+	failpoint.Enable("github.com/pingcap/tidb/store/tikv/testRateLimitActionMockOtherExecutorConsume", `return(true)`)
+	defer failpoint.Disable("github.com/pingcap/tidb/store/tikv/testRateLimitActionMockOtherExecutorConsume")
+	// assert oom action
+	for _, testcase := range testcases {
+		c.Log(testcase.name)
+		// must oom
+		quota := 90000
+		se, err := session.CreateSession4Test(s.store)
+		c.Check(err, IsNil)
+		tk.Se = se
+		tk.MustExec("use test")
+		tk.MustExec("set @@tidb_distsql_scan_concurrency = 30")
+		tk.MustExec(fmt.Sprintf("set @@tidb_mem_quota_query=%v;", quota))
+		var expect []string
+		for i := 0; i < count; i++ {
+			expect = append(expect, fmt.Sprintf("%v", i))
+		}
+		tk.MustQuery(testcase.sql).Sort().Check(testkit.Rows(expect...))
+		// assert oom action worked by max consumed > memory quota
+		c.Assert(tk.Se.GetSessionVars().StmtCtx.MemTracker.MaxConsumed(), Greater, int64(quota))
 		se.Close()
 	}
 }
@@ -6720,4 +6805,13 @@ func (s *testSerialSuite) TestIssue19148(c *C) {
 	tblInfo, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	c.Assert(int(tblInfo.Meta().Columns[0].Flag), Equals, 0)
+}
+
+func (s *testSuite) TestIssue19667(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("CREATE TABLE t (a DATETIME)")
+	tk.MustExec("INSERT INTO t VALUES('1988-04-17 01:59:59')")
+	tk.MustQuery(`SELECT DATE_ADD(a, INTERVAL 1 SECOND) FROM t`).Check(testkit.Rows("1988-04-17 02:00:00"))
 }

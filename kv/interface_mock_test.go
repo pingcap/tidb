@@ -181,6 +181,10 @@ func (s *mockStorage) GetClient() Client {
 	return nil
 }
 
+func (s *mockStorage) GetMPPClient() MPPClient {
+	return nil
+}
+
 func (s *mockStorage) GetOracle() oracle.Oracle {
 	return nil
 }
@@ -199,6 +203,10 @@ func (s *mockStorage) Describe() string {
 
 func (s *mockStorage) ShowStatus(ctx context.Context, key string) (interface{}, error) {
 	return nil, nil
+}
+
+func (s *mockStorage) GetMemCache() MemManager {
+	return nil
 }
 
 // newMockStorage creates a new mockStorage.
