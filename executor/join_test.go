@@ -582,6 +582,19 @@ func (s *testSuiteJoin1) TestUsing(c *C) {
 	tk.MustExec("create table tt(b bigint, a int)")
 	// Check whether this sql can execute successfully.
 	tk.MustExec("select * from t join tt using(a)")
+
+	tk.MustExec("drop table if exists t, s")
+	tk.MustExec("create table t(a int, b int)")
+	tk.MustExec("create table s(b int, a int)")
+	tk.MustExec("insert into t values(1,1), (2,2), (3,3), (null,null)")
+	tk.MustExec("insert into s values(1,1), (3,3), (null,null)")
+
+	tk.MustQuery("select t.*, s.* from t join s using(a)").Check(testkit.Rows("1 1 1", "3 3 3"))
+	tk.MustQuery("select s.a from t join s using(a)").Check(testkit.Rows("1", "3"))
+	tk.MustQuery("select s.a from t join s using(a) where s.a > 1").Check(testkit.Rows("3"))
+	tk.MustQuery("select s.a from t join s using(a) order by s.a").Check(testkit.Rows("1", "3"))
+	tk.MustQuery("select s.a from t join s using(a) where s.a > 1 order by s.a").Check(testkit.Rows("3"))
+	tk.MustQuery("select s.a from t join s using(a) where s.a > 1 order by s.a limit 2").Check(testkit.Rows("3"))
 }
 
 func (s *testSuiteJoin1) TestNaturalJoin(c *C) {
