@@ -589,7 +589,7 @@ func (s *testSuiteJoin1) TestUsing(c *C) {
 	tk.MustExec("insert into t values(1,1), (2,2), (3,3), (null,null)")
 	tk.MustExec("insert into s values(1,1), (3,3), (null,null)")
 
-	tk.MustQuery("select t.*, s.* from t join s using(a)").Check(testkit.Rows("1 1 1", "3 3 3"))
+	tk.MustQuery("select t.*, s.* from t join s using(a)").Check(testkit.Rows("1 1 1 1", "3 3 3 3"))
 	tk.MustQuery("select s.a from t join s using(a)").Check(testkit.Rows("1", "3"))
 	tk.MustQuery("select s.a from t join s using(a) where s.a > 1").Check(testkit.Rows("3"))
 	tk.MustQuery("select s.a from t join s using(a) order by s.a").Check(testkit.Rows("1", "3"))
