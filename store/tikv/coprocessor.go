@@ -538,7 +538,7 @@ func (worker *copIteratorWorker) run(ctx context.Context) {
 				// wait action being enabled and response channel become empty
 				time.Sleep(20 * time.Millisecond)
 				// simulate other executor consume and trigger oom action
-				worker.memTracker.Consume(99999)
+				worker.memTracker.Consume(MockCoprocessorResponseSize * 15)
 			}
 		})
 		close(task.respChan)
@@ -636,7 +636,7 @@ func (it *copIterator) recvFromRespCh(ctx context.Context, respCh <-chan *copRes
 				consumed := resp.MemSize()
 				failpoint.Inject("testRateLimitActionMockConsumeAndAssert", func(val failpoint.Value) {
 					if val.(bool) {
-						consumed = 100
+						consumed = MockCoprocessorResponseSize
 					}
 				})
 				it.memTracker.Consume(-consumed)
@@ -676,7 +676,7 @@ func (worker *copIteratorWorker) sendToRespCh(resp *copResponse, respCh chan<- *
 		consumed := resp.MemSize()
 		failpoint.Inject("testRateLimitActionMockConsumeAndAssert", func(val failpoint.Value) {
 			if val.(bool) {
-				consumed = 100
+				consumed = MockCoprocessorResponseSize
 			}
 		})
 		worker.memTracker.Consume(consumed)
@@ -702,7 +702,7 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 		if val.(bool) {
 			// we only need to trigger oom at least once.
 			if len(it.tasks) > 9 {
-				for it.memTracker.MaxConsumed() < 500 {
+				for it.memTracker.MaxConsumed() < 5*MockCoprocessorResponseSize {
 					time.Sleep(10 * time.Millisecond)
 				}
 			}
@@ -1301,6 +1301,8 @@ func (it copErrorResponse) Next(ctx context.Context) (kv.ResultSubset, error) {
 func (it copErrorResponse) Close() error {
 	return nil
 }
+
+const MockCoprocessorResponseSize = int64(90 * 1024 * 1024)
 
 // rateLimitAction an OOM Action which is used to control the token if OOM triggered. The token number should be
 // set on initial. Each time the Action is triggered, one token would be destroyed. If the count of the token is less

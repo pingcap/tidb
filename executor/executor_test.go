@@ -6678,7 +6678,7 @@ func (s *testSerialSuite) TestCoprocessorOOMAction(c *C) {
 	for _, testcase := range testcases {
 		c.Log(testcase.name)
 		// larger than 4 copResponse, smaller than 5 copResponse
-		quota := 499
+		quota := 5*tikv.MockCoprocessorResponseSize - 10
 		se, err := session.CreateSession4Test(s.store)
 		c.Check(err, IsNil)
 		tk.Se = se
@@ -6765,7 +6765,7 @@ func (s *testSerialSuite) TestIssue20454(c *C) {
 	for _, testcase := range testcases {
 		c.Log(testcase.name)
 		// must oom
-		quota := 90000
+		quota := 11 * tikv.MockCoprocessorResponseSize
 		se, err := session.CreateSession4Test(s.store)
 		c.Check(err, IsNil)
 		tk.Se = se
