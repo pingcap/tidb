@@ -1505,7 +1505,7 @@ func (s *testSuite9) TestIssue10402(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("create table vctt (v varchar(4), c char(4))")
 	tk.MustExec("insert into vctt values ('ab  ', 'ab   ')")
-	tk.MustQuery("select * from vctt").Check(testkit.Rows("ab ab"))
+	tk.MustQuery("select * from vctt").Check(testkit.Rows("ab   ab"))
 	tk.MustExec("delete from vctt")
 	tk.Se.GetSessionVars().StmtCtx.SetWarnings(nil)
 	tk.MustExec("insert into vctt values ('ab\\n\\n\\n', 'ab\\n\\n\\n'), ('ab\\t\\t\\t', 'ab\\t\\t\\t'), ('ab    ', 'ab    '), ('ab\\r\\r\\r', 'ab\\r\\r\\r')")
