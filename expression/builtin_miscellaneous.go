@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/vitess"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -51,6 +52,7 @@ var (
 	_ functionClass = &releaseAllLocksFunctionClass{}
 	_ functionClass = &uuidFunctionClass{}
 	_ functionClass = &uuidShortFunctionClass{}
+	_ functionClass = &vitessHashFunctionClass{}
 )
 
 var (
@@ -73,6 +75,7 @@ var (
 	_ builtinFunc = &builtinIsIPv4MappedSig{}
 	_ builtinFunc = &builtinIsIPv6Sig{}
 	_ builtinFunc = &builtinUUIDSig{}
+	_ builtinFunc = &builtinVitessHashSig{}
 
 	_ builtinFunc = &builtinNameConstIntSig{}
 	_ builtinFunc = &builtinNameConstRealSig{}
@@ -1044,4 +1047,79 @@ type uuidShortFunctionClass struct {
 
 func (c *uuidShortFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
 	return nil, errFunctionNotExists.GenWithStackByArgs("FUNCTION", "UUID_SHORT")
+}
+
+type vitessHashFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *vitessHashFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	argTp := args[0].GetType().EvalType()
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, argTp)
+	if err != nil {
+		return nil, err
+	}
+
+	bf.tp.Flen = 8
+	types.SetBinChsClnFlag(bf.tp)
+
+	sig := &builtinVitessHashSig{bf}
+	sig.setPbCode(tipb.ScalarFuncSig_VitessHash)
+	return sig, nil
+}
+
+type builtinVitessHashSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinVitessHashSig) Clone() builtinFunc {
+	newSig := &builtinVitessHashSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+// evalString evals VITESS_HASH(int64|string|decimal).
+func (b *builtinVitessHashSig) evalString(row chunk.Row) (string, bool, error) {
+	argTp := b.args[0].GetType().EvalType()
+	switch argTp {
+	case types.ETDecimal:
+		shardKeyDec, isNull, err := b.args[0].EvalDecimal(b.ctx, row)
+		if isNull || err != nil {
+			return "", true, err
+		}
+		shardKeyUint, err := shardKeyDec.ToUint()
+		if err != nil {
+			return "", true, err
+		}
+		hashed, err := vitess.VitessHashUint64(shardKeyUint)
+		if err != nil {
+			return "", true, err
+		}
+		return string(hashed), false, nil
+	case types.ETString:
+		shardKeyStr, isNull, err := b.args[0].EvalString(b.ctx, row)
+		if isNull || err != nil {
+			return "", true, err
+		}
+		hashed, err := vitess.VitessHash([]byte(shardKeyStr))
+		if err != nil {
+			return "", true, err
+		}
+		return string(hashed), false, nil
+	case types.ETInt:
+		shardKeyInt, isNull, err := b.args[0].EvalInt(b.ctx, row)
+		if isNull || err != nil {
+			return "", true, err
+		}
+		hashed, err := vitess.VitessHashUint64(uint64(shardKeyInt))
+		if err != nil {
+			return "", true, err
+		}
+		return string(hashed), false, nil
+	default:
+		return "", true, errIncorrectArgs.GenWithStackByArgs("VITESS_HASH")
+	}
 }

@@ -7656,3 +7656,16 @@ func (s *testIntegrationSerialSuite) TestIssue20608(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustQuery("select '䇇Հ' collate utf8mb4_bin like '___Հ';").Check(testkit.Rows("0"))
 }
+
+func (s *testIntegrationSuite) TestVitessHash(c *C) {
+	defer s.cleanEnv(c)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustQuery("select vitess_hash(30375298039) from t").Check(testkit.Rows("\x03\x12\x65\x66\x1E\x5F\x11\x33"))
+	// Same as previous but passed as a binary string
+	tk.MustQuery("select vitess_hash(x'00000007128243F7') from t").Check(testkit.Rows("\x03\x12\x65\x66\x1E\x5F\x11\x33"))
+	tk.MustQuery("select vitess_hash(1123) from t").Check(testkit.Rows("\x03\x1B\x56\x5D\x41\xBD\xF8\xCA"))
+	tk.MustQuery("select vitess_hash(30573721600) from t").Check(testkit.Rows("\x1E\xFD\x64\x39\xF2\x05\x0F\xFD"))
+	tk.MustQuery("select vitess_hash(convert(116, decimal(8,4))) from t").Check(testkit.Rows("\x1E\x17\x88\xFF\x0F\xDE\x09\x3C"))
+	tk.MustQuery(fmt.Sprintf("select vitess_hash(%d) from t", uint64(math.MaxUint64))).Check(testkit.Rows("\x35\x55\x50\xB2\x15\x0E\x24\x51"))
+}
