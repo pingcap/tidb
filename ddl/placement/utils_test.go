@@ -166,7 +166,7 @@ func (t *testUtilsSuite) TestGetLeaderDCByBundle(c *C) {
 					},
 				},
 			},
-			expectedDC: "bj",
+			expectedDC: "",
 		},
 		{
 			name: "voter and leader",
@@ -201,10 +201,49 @@ func (t *testUtilsSuite) TestGetLeaderDCByBundle(c *C) {
 			},
 			expectedDC: "sh",
 		},
+		{
+			name: "voter and leader",
+			bundle: &Bundle{
+				ID: GroupID(1),
+				Rules: []*Rule{
+					{
+						ID:   "11",
+						Role: Leader,
+						LabelConstraints: []LabelConstraint{
+							{
+								Key:    "zone",
+								Op:     "in",
+								Values: []string{"sh"},
+							},
+						},
+						Count: 1,
+					},
+					{
+						ID:   "12",
+						Role: Leader,
+						LabelConstraints: []LabelConstraint{
+							{
+								Key:    "zone",
+								Op:     "in",
+								Values: []string{"bj"},
+							},
+						},
+						Count: 1,
+					},
+				},
+			},
+			expectedDC: "",
+		},
 	}
 	for _, testcase := range testcases {
 		c.Log(testcase.name)
-		result := GetLeaderDCByBundle(testcase.bundle, "zone")
-		c.Check(testcase.expectedDC, DeepEquals, result)
+		result, ok := GetLeaderDCByBundle(testcase.bundle, "zone")
+		if len(testcase.expectedDC) > 0 {
+			c.Assert(ok, Equals, true)
+		} else {
+			c.Assert(ok, Equals, false)
+		}
+		c.Assert(result, Equals, testcase.expectedDC)
+
 	}
 }

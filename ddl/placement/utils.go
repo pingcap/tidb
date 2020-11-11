@@ -22,6 +22,8 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
 
 func checkLabelConstraint(label string) (LabelConstraint, error) {
@@ -132,25 +134,31 @@ func BuildPlacementCopyBundle(oldBundle *Bundle, newID int64) *Bundle {
 	return newBundle
 }
 
-// GetLeaderDCByBundle return the leader's dc by Bundle
-func GetLeaderDCByBundle(bundle *Bundle, dcLabelKey string) string {
-	dc := getRoleDCByBundle(bundle, dcLabelKey, Leader)
-	if len(dc) > 0 {
-		return dc
-	}
-	// If there is placement policy for leader, fallback to search voter
-	return getRoleDCByBundle(bundle, dcLabelKey, Voter)
-}
-
-func getRoleDCByBundle(bundle *Bundle, dcLabelKey string, role PeerRoleType) string {
+// GetLeaderDCByBundle return the leader's dc by Bundle if founded
+func GetLeaderDCByBundle(bundle *Bundle, dcLabelKey string) (string, bool) {
+	validRulesCount := 0
+	dc := ""
 	for _, rule := range bundle.Rules {
-		if rule.Role == role {
-			for _, cons := range rule.LabelConstraints {
-				if cons.Key == dcLabelKey && len(cons.Values) > 0 {
-					return cons.Values[0]
-				}
-			}
+		if isValidLeaderRule(rule, dcLabelKey) {
+			validRulesCount++
+			dc = rule.LabelConstraints[0].Values[0]
 		}
 	}
-	return ""
+	if validRulesCount != 1 {
+		if validRulesCount > 1 {
+			logutil.BgLogger().Warn("rule bundle have multi leader rules", zap.String("bundle-ID", bundle.ID))
+		}
+		return "", false
+	}
+	return dc, true
+}
+
+func isValidLeaderRule(rule *Rule, dcLabelKey string) bool {
+	if rule.Role == Leader && rule.Count == 1 && len(rule.LabelConstraints) == 1 {
+		cons := rule.LabelConstraints[0]
+		if cons.Op == In && cons.Key == dcLabelKey && len(cons.Values) == 1 {
+			return true
+		}
+	}
+	return false
 }
