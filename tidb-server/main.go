@@ -527,6 +527,8 @@ func setGlobalVars() {
 	runtime.GOMAXPROCS(int(cfg.Performance.MaxProcs))
 	metrics.MaxProcs.Set(float64(runtime.GOMAXPROCS(0)))
 
+	util.SetGOGC(cfg.Performance.GOGC)
+
 	ddlLeaseDuration := parseDuration(cfg.Lease)
 	session.SetSchemaLease(ddlLeaseDuration)
 	statsLeaseDuration := parseDuration(cfg.Performance.StatsLease)
