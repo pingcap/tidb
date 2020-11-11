@@ -1117,8 +1117,6 @@ func (s *testSuiteAgg) TestIssue15958(c *C) {
 	tk.MustQuery(`select sum(y) from t`).Check(testkit.Rows("6070"))
 	tk.MustQuery(`select avg(y) from t`).Check(testkit.Rows("2023.3333"))
 }
-<<<<<<< HEAD
-=======
 
 func (s *testSuiteAgg) TestIssue17216(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
@@ -1157,4 +1155,3 @@ func (s *testSuiteAgg) TestIssue19426(c *C) {
 	tk.MustQuery("select a, b, sum(case when a < 1000 then b else 0.0 end) over (order by a) from t").
 		Check(testkit.Rows("1 11 11.0", "2 22 33.0", "3 33 66.0", "4 44 110.0"))
 }
->>>>>>> a3facd0f7... expression, planner: fix decimal results for aggregate functions (#20017)

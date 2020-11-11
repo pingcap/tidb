@@ -14,13 +14,6 @@
 package aggfuncs
 
 import (
-<<<<<<< HEAD
-	"github.com/cznic/mathutil"
-	"github.com/pingcap/parser/mysql"
-=======
-	"unsafe"
-
->>>>>>> a3facd0f7... expression, planner: fix decimal results for aggregate functions (#20017)
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
