@@ -263,7 +263,6 @@ spilled-file-encryption-method = "plaintext"
 	c.Assert(conf.MaxServerConnections, Equals, uint32(200))
 	c.Assert(conf.MemQuotaQuery, Equals, int64(10000))
 	c.Assert(conf.MemQuotaStatistics, Equals, int64(10000))
-	c.Assert(conf.NestedLoopJoinCacheCapacity, Equals, int64(100))
 	c.Assert(conf.IsolationRead.Engines, DeepEquals, []string{"tiflash"})
 	c.Assert(conf.MaxIndexLength, Equals, 3080)
 	c.Assert(conf.SkipRegisterToDashboard, Equals, true)
