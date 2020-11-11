@@ -40,7 +40,15 @@ func newPDClient(pd *us.MockPD) *pdClient {
 	}
 }
 
+func (c *pdClient) GetLocalTS(ctx context.Context, dcLocation string) (int64, int64, error) {
+	return c.GetTS(ctx)
+}
+
 func (c *pdClient) GetTSAsync(ctx context.Context) pd.TSFuture {
+	return &mockTSFuture{c, ctx, false}
+}
+
+func (c *pdClient) GetLocalTSAsync(ctx context.Context, dcLocation string) pd.TSFuture {
 	return &mockTSFuture{c, ctx, false}
 }
 
@@ -97,6 +105,10 @@ func (c *pdClient) ScatterRegionWithOption(ctx context.Context, regionID uint64,
 	return nil
 }
 
-func (c *pdClient) GetMemberInfo(ctx context.Context) ([]*pdpb.Member, error) {
+func (c *pdClient) GetAllMembers(ctx context.Context) ([]*pdpb.Member, error) {
+	return nil, nil
+}
+
+func (c *pdClient) GetRegionFromMember(ctx context.Context, key []byte, memberURLs []string) (*pd.Region, error) {
 	return nil, nil
 }

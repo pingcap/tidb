@@ -45,10 +45,11 @@ func NewEmptyPDOracle() oracle.Oracle {
 	return &pdOracle{}
 }
 
-// SetEmptyPDOracleLastTs exports PD oracle's last ts to test.
+// SetEmptyPDOracleLastTs exports PD oracle's global last ts to test.
 func SetEmptyPDOracleLastTs(oc oracle.Oracle, ts uint64) {
 	switch o := oc.(type) {
 	case *pdOracle:
-		o.lastTS = ts
+		// Todo: replace "global" with config.DefTxnScope
+		o.lastTSMap["global"] = ts
 	}
 }

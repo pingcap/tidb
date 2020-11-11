@@ -22,14 +22,30 @@ import (
 	"go.uber.org/zap"
 )
 
+// Option represents available options for the oracle.Oracle.
+type Option struct {
+	TxnScope string
+}
+
+// NewDefaultOption will returns a default oracle.Oracle option.
+func NewDefaultOption() *Option {
+	return &Option{
+		// Todo: replace "global" with config.DefTxnScope
+		TxnScope: "global",
+	}
+}
+
+// OptionFunc configures the methods of oracle.Oracle.
+type OptionFunc func(*Option)
+
 // Oracle is the interface that provides strictly ascending timestamps.
 type Oracle interface {
-	GetTimestamp(ctx context.Context) (uint64, error)
-	GetTimestampAsync(ctx context.Context) Future
-	GetLowResolutionTimestamp(ctx context.Context) (uint64, error)
-	GetLowResolutionTimestampAsync(ctx context.Context) Future
-	IsExpired(lockTimestamp uint64, TTL uint64) bool
-	UntilExpired(lockTimeStamp uint64, TTL uint64) int64
+	GetTimestamp(ctx context.Context, opts ...OptionFunc) (uint64, error)
+	GetTimestampAsync(ctx context.Context, opts ...OptionFunc) Future
+	GetLowResolutionTimestamp(ctx context.Context, opts ...OptionFunc) (uint64, error)
+	GetLowResolutionTimestampAsync(ctx context.Context, opts ...OptionFunc) Future
+	IsExpired(lockTimestamp uint64, TTL uint64, opts ...OptionFunc) bool
+	UntilExpired(lockTimeStamp uint64, TTL uint64, opts ...OptionFunc) int64
 	Close()
 }
 

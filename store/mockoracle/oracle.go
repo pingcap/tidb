@@ -55,7 +55,7 @@ func (o *MockOracle) AddOffset(d time.Duration) {
 }
 
 // GetTimestamp implements oracle.Oracle interface.
-func (o *MockOracle) GetTimestamp(context.Context) (uint64, error) {
+func (o *MockOracle) GetTimestamp(ctx context.Context, opts ...oracle.OptionFunc) (uint64, error) {
 	o.Lock()
 	defer o.Unlock()
 
@@ -81,22 +81,22 @@ func (m *mockOracleFuture) Wait() (uint64, error) {
 }
 
 // GetTimestampAsync implements oracle.Oracle interface.
-func (o *MockOracle) GetTimestampAsync(ctx context.Context) oracle.Future {
+func (o *MockOracle) GetTimestampAsync(ctx context.Context, opts ...oracle.OptionFunc) oracle.Future {
 	return &mockOracleFuture{o, ctx}
 }
 
 // GetLowResolutionTimestamp implements oracle.Oracle interface.
-func (o *MockOracle) GetLowResolutionTimestamp(ctx context.Context) (uint64, error) {
+func (o *MockOracle) GetLowResolutionTimestamp(ctx context.Context, opts ...oracle.OptionFunc) (uint64, error) {
 	return o.GetTimestamp(ctx)
 }
 
 // GetLowResolutionTimestampAsync implements oracle.Oracle interface.
-func (o *MockOracle) GetLowResolutionTimestampAsync(ctx context.Context) oracle.Future {
+func (o *MockOracle) GetLowResolutionTimestampAsync(ctx context.Context, opts ...oracle.OptionFunc) oracle.Future {
 	return o.GetTimestampAsync(ctx)
 }
 
 // IsExpired implements oracle.Oracle interface.
-func (o *MockOracle) IsExpired(lockTimestamp uint64, TTL uint64) bool {
+func (o *MockOracle) IsExpired(lockTimestamp, TTL uint64, opts ...oracle.OptionFunc) bool {
 	o.RLock()
 	defer o.RUnlock()
 
@@ -104,7 +104,7 @@ func (o *MockOracle) IsExpired(lockTimestamp uint64, TTL uint64) bool {
 }
 
 // UntilExpired implement oracle.Oracle interface.
-func (o *MockOracle) UntilExpired(lockTimeStamp uint64, TTL uint64) int64 {
+func (o *MockOracle) UntilExpired(lockTimeStamp, TTL uint64, opts ...oracle.OptionFunc) int64 {
 	o.RLock()
 	defer o.RUnlock()
 	return oracle.ExtractPhysical(lockTimeStamp) + int64(TTL) - oracle.GetPhysical(time.Now().Add(o.offset))

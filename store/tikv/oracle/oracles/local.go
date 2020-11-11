@@ -37,7 +37,7 @@ func NewLocalOracle() oracle.Oracle {
 	return &localOracle{}
 }
 
-func (l *localOracle) IsExpired(lockTS uint64, TTL uint64) bool {
+func (l *localOracle) IsExpired(lockTS, TTL uint64, opts ...oracle.OptionFunc) bool {
 	now := time.Now()
 	if l.hook != nil {
 		now = l.hook.currentTime
@@ -45,7 +45,7 @@ func (l *localOracle) IsExpired(lockTS uint64, TTL uint64) bool {
 	return oracle.GetPhysical(now) >= oracle.ExtractPhysical(lockTS)+int64(TTL)
 }
 
-func (l *localOracle) GetTimestamp(context.Context) (uint64, error) {
+func (l *localOracle) GetTimestamp(ctx context.Context, opts ...oracle.OptionFunc) (uint64, error) {
 	l.Lock()
 	defer l.Unlock()
 	now := time.Now()
@@ -63,18 +63,18 @@ func (l *localOracle) GetTimestamp(context.Context) (uint64, error) {
 	return ts, nil
 }
 
-func (l *localOracle) GetTimestampAsync(ctx context.Context) oracle.Future {
+func (l *localOracle) GetTimestampAsync(ctx context.Context, opts ...oracle.OptionFunc) oracle.Future {
 	return &future{
 		ctx: ctx,
 		l:   l,
 	}
 }
 
-func (l *localOracle) GetLowResolutionTimestamp(ctx context.Context) (uint64, error) {
+func (l *localOracle) GetLowResolutionTimestamp(ctx context.Context, opts ...oracle.OptionFunc) (uint64, error) {
 	return l.GetTimestamp(ctx)
 }
 
-func (l *localOracle) GetLowResolutionTimestampAsync(ctx context.Context) oracle.Future {
+func (l *localOracle) GetLowResolutionTimestampAsync(ctx context.Context, opts ...oracle.OptionFunc) oracle.Future {
 	return l.GetTimestampAsync(ctx)
 }
 
@@ -88,7 +88,7 @@ func (f *future) Wait() (uint64, error) {
 }
 
 // UntilExpired implement oracle.Oracle interface.
-func (l *localOracle) UntilExpired(lockTimeStamp uint64, TTL uint64) int64 {
+func (l *localOracle) UntilExpired(lockTimeStamp, TTL uint64, opts ...oracle.OptionFunc) int64 {
 	now := time.Now()
 	if l.hook != nil {
 		now = l.hook.currentTime
