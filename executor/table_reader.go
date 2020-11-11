@@ -210,7 +210,7 @@ func (e *TableReaderExecutor) Close() error {
 }
 
 func (e *TableReaderExecutor) collectIndexUsage() {
-	if e.ctx.IndexUsageCollectorActivated() {
+	if !e.ctx.IndexUsageCollectorActivated() {
 		return
 	}
 	for _, plan := range e.plans {
