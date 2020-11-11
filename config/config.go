@@ -389,7 +389,7 @@ type Performance struct {
 	DistinctAggPushDown   bool    `toml:"distinct-agg-push-down" json:"agg-push-down-join"`
 	CommitterConcurrency  int     `toml:"committer-concurrency" json:"committer-concurrency"`
 	MaxTxnTTL             uint64  `toml:"max-txn-ttl" json:"max-txn-ttl"`
-  GOGC                  int     `toml:"gogc" json:"gogc"`
+	GOGC                  int     `toml:"gogc" json:"gogc"`
 }
 
 // PlanCache is the PlanCache section of the config.
