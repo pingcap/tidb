@@ -153,6 +153,9 @@ func (e *ShuffleExec) Close() error {
 			for range r.inputCh {
 			}
 		}
+		if err := w.childExec.Close(); err != nil {
+			return errors.Trace(err)
+		}
 	}
 	for range e.outputCh { // workers exit before `e.outputCh` is closed.
 	}
