@@ -27,13 +27,13 @@ var MemTotal func() (uint64, error)
 // MemUsed returns the total used amount of RAM on this system
 var MemUsed func() (uint64, error)
 
-// MemTotalNormal returns the total amount of RAM on this system in normal environment.
+// MemTotalNormal returns the total amount of RAM on this system in non-container environment.
 func MemTotalNormal() (uint64, error) {
 	v, err := mem.VirtualMemory()
 	return v.Total, err
 }
 
-// MemUsedNormal returns the total used amount of RAM on this system in normal environment.
+// MemUsedNormal returns the total used amount of RAM on this system in non-container environment.
 func MemUsedNormal() (uint64, error) {
 	v, err := mem.VirtualMemory()
 	return v.Total - (v.Free + v.Buffers + v.Cached), err
