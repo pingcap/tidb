@@ -173,7 +173,6 @@ func Parse(ctx sessionctx.Context, src string) ([]ast.StmtNode, error) {
 	charset, collation := ctx.GetSessionVars().GetCharsetInfo()
 	p := parser.New()
 	p.SetParserConfig(ctx.GetSessionVars().BuildParserConfig())
-	// p.EnableWindowFunc(ctx.GetSessionVars().EnableWindowFunction)
 	p.SetSQLMode(ctx.GetSessionVars().SQLMode)
 	stmts, warns, err := p.Parse(src, charset, collation)
 	for _, warn := range warns {

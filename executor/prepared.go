@@ -120,7 +120,6 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	} else {
 		p := parser.New()
 		p.SetParserConfig(vars.BuildParserConfig())
-		// p.EnableWindowFunc(vars.EnableWindowFunction)
 		var warns []error
 		stmts, warns, err = p.Parse(e.sqlText, charset, collation)
 		for _, warn := range warns {

@@ -3228,7 +3228,6 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName model.
 	charset, collation := b.ctx.GetSessionVars().GetCharsetInfo()
 	viewParser := parser.New()
 	viewParser.SetParserConfig(b.ctx.GetSessionVars().BuildParserConfig())
-	// viewParser.EnableWindowFunc(b.ctx.GetSessionVars().EnableWindowFunction)
 	selectNode, err := viewParser.ParseOneStmt(tableInfo.View.SelectStmt, charset, collation)
 	if err != nil {
 		return nil, err

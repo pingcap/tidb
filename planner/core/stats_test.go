@@ -35,7 +35,6 @@ type testStatsSuite struct {
 func (s *testStatsSuite) SetUpSuite(c *C) {
 	s.Parser = parser.New()
 	s.Parser.SetParserConfig(parser.ParserConfig{EnableWindowFunction: true, StrictDoubleTypeCheck: true})
-	// s.Parser.EnableWindowFunc(true)
 
 	var err error
 	s.testData, err = testutil.LoadTestSuiteData("testdata", "stats_suite")

@@ -45,7 +45,6 @@ func (s *testTransformationRuleSuite) SetUpSuite(c *C) {
 	s.testData, err = testutil.LoadTestSuiteData("testdata", "transformation_rules_suite")
 	c.Assert(err, IsNil)
 	s.Parser.SetParserConfig(parser.ParserConfig{EnableWindowFunction: true, StrictDoubleTypeCheck: true})
-	// s.Parser.EnableWindowFunc(true)
 }
 
 func (s *testTransformationRuleSuite) TearDownSuite(c *C) {

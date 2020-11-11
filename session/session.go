@@ -1078,7 +1078,6 @@ func (s *session) ParseSQL(ctx context.Context, sql, charset, collation string) 
 	defer trace.StartRegion(ctx, "ParseSQL").End()
 	s.parser.SetSQLMode(s.sessionVars.SQLMode)
 	s.parser.SetParserConfig(s.sessionVars.BuildParserConfig())
-	// s.parser.EnableWindowFunc(s.sessionVars.EnableWindowFunction)
 	return s.parser.Parse(sql, charset, collation)
 }
 

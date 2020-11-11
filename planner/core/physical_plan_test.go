@@ -49,7 +49,6 @@ func (s *testPlanSuiteBase) SetUpSuite(c *C) {
 	s.is = infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable(), core.MockUnsignedTable()})
 	s.Parser = parser.New()
 	s.Parser.SetParserConfig(parser.ParserConfig{EnableWindowFunction: true, StrictDoubleTypeCheck: true})
-	// s.Parser.EnableWindowFunc(true)
 }
 
 type testPlanSerialSuite struct {

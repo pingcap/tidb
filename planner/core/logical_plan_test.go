@@ -62,7 +62,6 @@ func (s *testPlanSuite) SetUpSuite(c *C) {
 	s.ctx.GetSessionVars().EnableWindowFunction = true
 	s.Parser = parser.New()
 	s.Parser.SetParserConfig(parser.ParserConfig{EnableWindowFunction: true, StrictDoubleTypeCheck: true})
-	// s.Parser.EnableWindowFunc(true)
 
 	var err error
 	s.testData, err = testutil.LoadTestSuiteData("testdata", "plan_suite_unexported")
