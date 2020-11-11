@@ -1502,30 +1502,17 @@ func (n *CreateBindingStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*CreateBindingStmt)
-	selnode, ok := n.OriginNode.Accept(v)
+	origNode, ok := n.OriginNode.Accept(v)
 	if !ok {
 		return n, false
 	}
-	switch node := selnode.(type) {
-	case *SelectStmt:
-		n.OriginNode = node
-		hintedSelnode, ok := n.HintedNode.Accept(v)
-		if !ok {
-			return n, false
-		}
-		n.HintedNode = hintedSelnode.(*SelectStmt)
-		return v.Leave(n)
-	case *SetOprStmt:
-		n.OriginNode = node
-		hintedSetOprNode, ok := n.HintedNode.Accept(v)
-		if !ok {
-			return n, false
-		}
-		n.HintedNode = hintedSetOprNode.(*SetOprStmt)
-		return v.Leave(n)
-	default:
+	n.OriginNode = origNode.(StmtNode)
+	hintedNode, ok := n.HintedNode.Accept(v)
+	if !ok {
 		return n, false
 	}
+	n.HintedNode = hintedNode.(StmtNode)
+	return v.Leave(n)
 }
 
 // DropBindingStmt deletes sql binding hint.
@@ -1563,34 +1550,19 @@ func (n *DropBindingStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*DropBindingStmt)
-	selnode, ok := n.OriginNode.Accept(v)
+	origNode, ok := n.OriginNode.Accept(v)
 	if !ok {
 		return n, false
 	}
-	switch node := selnode.(type) {
-	case *SelectStmt:
-		n.OriginNode = node
-		if n.HintedNode != nil {
-			selnode, ok = n.HintedNode.Accept(v)
-			if !ok {
-				return n, false
-			}
-			n.HintedNode = selnode.(*SelectStmt)
+	n.OriginNode = origNode.(StmtNode)
+	if n.HintedNode != nil {
+		hintedNode, ok := n.HintedNode.Accept(v)
+		if !ok {
+			return n, false
 		}
-		return v.Leave(n)
-	case *SetOprStmt:
-		n.OriginNode = node
-		if n.HintedNode != nil {
-			selnode, ok = n.HintedNode.Accept(v)
-			if !ok {
-				return n, false
-			}
-			n.HintedNode = selnode.(*SetOprStmt)
-		}
-		return v.Leave(n)
-	default:
-		return n, false
+		n.HintedNode = hintedNode.(StmtNode)
 	}
+	return v.Leave(n)
 }
 
 // Extended statistics types.
