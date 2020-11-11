@@ -137,7 +137,7 @@ func (t *testUtilsSuite) TestGetLeaderDCByBundle(c *C) {
 						LabelConstraints: []LabelConstraint{
 							{
 								Key:    "zone",
-								Op:     "in",
+								Op:     In,
 								Values: []string{"bj"},
 							},
 						},
@@ -148,7 +148,7 @@ func (t *testUtilsSuite) TestGetLeaderDCByBundle(c *C) {
 			expectedDC: "bj",
 		},
 		{
-			name: "only voter",
+			name: "no leader",
 			bundle: &Bundle{
 				ID: GroupID(1),
 				Rules: []*Rule{
@@ -158,7 +158,7 @@ func (t *testUtilsSuite) TestGetLeaderDCByBundle(c *C) {
 						LabelConstraints: []LabelConstraint{
 							{
 								Key:    "zone",
-								Op:     "in",
+								Op:     In,
 								Values: []string{"bj"},
 							},
 						},
@@ -179,7 +179,7 @@ func (t *testUtilsSuite) TestGetLeaderDCByBundle(c *C) {
 						LabelConstraints: []LabelConstraint{
 							{
 								Key:    "zone",
-								Op:     "in",
+								Op:     In,
 								Values: []string{"sh"},
 							},
 						},
@@ -191,7 +191,7 @@ func (t *testUtilsSuite) TestGetLeaderDCByBundle(c *C) {
 						LabelConstraints: []LabelConstraint{
 							{
 								Key:    "zone",
-								Op:     "in",
+								Op:     In,
 								Values: []string{"bj"},
 							},
 						},
@@ -202,7 +202,28 @@ func (t *testUtilsSuite) TestGetLeaderDCByBundle(c *C) {
 			expectedDC: "sh",
 		},
 		{
-			name: "voter and leader",
+			name: "wrong label key",
+			bundle: &Bundle{
+				ID: GroupID(1),
+				Rules: []*Rule{
+					{
+						ID:   "11",
+						Role: Leader,
+						LabelConstraints: []LabelConstraint{
+							{
+								Key:    "fake",
+								Op:     In,
+								Values: []string{"sh"},
+							},
+						},
+						Count: 1,
+					},
+				},
+			},
+			expectedDC: "",
+		},
+		{
+			name: "wrong operator",
 			bundle: &Bundle{
 				ID: GroupID(1),
 				Rules: []*Rule{
@@ -212,20 +233,29 @@ func (t *testUtilsSuite) TestGetLeaderDCByBundle(c *C) {
 						LabelConstraints: []LabelConstraint{
 							{
 								Key:    "zone",
-								Op:     "in",
+								Op:     NotIn,
 								Values: []string{"sh"},
 							},
 						},
 						Count: 1,
 					},
+				},
+			},
+			expectedDC: "",
+		},
+		{
+			name: "leader have multi values",
+			bundle: &Bundle{
+				ID: GroupID(1),
+				Rules: []*Rule{
 					{
-						ID:   "12",
+						ID:   "11",
 						Role: Leader,
 						LabelConstraints: []LabelConstraint{
 							{
 								Key:    "zone",
-								Op:     "in",
-								Values: []string{"bj"},
+								Op:     In,
+								Values: []string{"sh", "bj"},
 							},
 						},
 						Count: 1,
