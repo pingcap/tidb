@@ -1962,29 +1962,6 @@ func MaxValueDatum() Datum {
 	return Datum{k: KindMaxValue}
 }
 
-// EqualDatums compare if a and b contains the same datum values.
-func EqualDatums(sc *stmtctx.StatementContext, a []Datum, b []Datum) (bool, error) {
-	if len(a) != len(b) {
-		return false, nil
-	}
-	if a == nil && b == nil {
-		return true, nil
-	}
-	if a == nil || b == nil {
-		return false, nil
-	}
-	for i, ai := range a {
-		v, err := ai.CompareDatum(sc, &b[i])
-		if err != nil {
-			return false, errors.Trace(err)
-		}
-		if v != 0 {
-			return false, nil
-		}
-	}
-	return true, nil
-}
-
 // SortDatums sorts a slice of datum.
 func SortDatums(sc *stmtctx.StatementContext, datums []Datum) error {
 	sorter := datumsSorter{datums: datums, sc: sc}
