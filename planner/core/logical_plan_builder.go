@@ -2426,7 +2426,7 @@ func (b *PlanBuilder) unfoldWildStar(p LogicalPlan, selectFields []*ast.SelectFi
 			return nil, ErrInvalidWildCard
 		}
 		list := unfoldWildStar(field, p.OutputNames(), p.Schema().Columns)
-		if isJoin && field.WildCard.Table.L != "" {
+		if isJoin && join.redundantSchema != nil && field.WildCard.Table.L != "" {
 			redundantList := unfoldWildStar(field, join.redundantNames, join.redundantSchema.Columns)
 			if len(redundantList) > len(list) {
 				list = redundantList
