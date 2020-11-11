@@ -742,7 +742,7 @@ func getDefaultValue(ctx sessionctx.Context, col *table.Column, c *ast.ColumnOpt
 		if tp == mysql.TypeBit ||
 			tp == mysql.TypeString || tp == mysql.TypeVarchar || tp == mysql.TypeVarString ||
 			tp == mysql.TypeBlob || tp == mysql.TypeLongBlob || tp == mysql.TypeMediumBlob || tp == mysql.TypeTinyBlob ||
-			tp == mysql.TypeJSON {
+			tp == mysql.TypeJSON || tp == mysql.TypeEnum || tp == mysql.TypeSet {
 			// For BinaryLiteral / string fields, when getting default value we cast the value into BinaryLiteral{}, thus we return
 			// its raw string content here.
 			return v.GetBinaryLiteral().ToString(), false, nil
@@ -962,8 +962,20 @@ func checkColumnValueConstraint(col *table.Column, collation string) error {
 	}
 	valueMap := make(map[string]bool, len(col.Elems))
 	ctor := collate.GetCollator(collation)
+	enumLengthLimit := config.GetGlobalConfig().EnableEnumLengthLimit
+	desc, err := charset.GetCharsetDesc(col.Charset)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	for i := range col.Elems {
 		val := string(ctor.Key(col.Elems[i]))
+		// According to MySQL 8.0 Refman:
+		// The maximum supported length of an individual ENUM element is M <= 255 and (M x w) <= 1020,
+		// where M is the element literal length and w is the number of bytes required for the maximum-length character in the character set.
+		// See https://dev.mysql.com/doc/refman/8.0/en/string-type-syntax.html for more details.
+		if enumLengthLimit && (len(val) > 255 || len(val)*desc.Maxlen > 1020) {
+			return ErrTooLongValueForType.GenWithStackByArgs(col.Name)
+		}
 		if _, ok := valueMap[val]; ok {
 			tpStr := "ENUM"
 			if col.Tp == mysql.TypeSet {
@@ -3373,6 +3385,10 @@ func checkModifyCharsetAndCollation(toCharset, toCollate, origCharset, origColla
 // CheckModifyTypeCompatible checks whether changes column type to another is compatible considering
 // field length and precision.
 func CheckModifyTypeCompatible(origin *types.FieldType, to *types.FieldType) (allowedChangeColumnValueMsg string, err error) {
+	var (
+		toFlen     = to.Flen
+		originFlen = origin.Flen
+	)
 	unsupportedMsg := fmt.Sprintf("type %v not match origin %v", to.CompactStr(), origin.CompactStr())
 	var skipSignCheck bool
 	var skipLenCheck bool
@@ -3393,11 +3409,35 @@ func CheckModifyTypeCompatible(origin *types.FieldType, to *types.FieldType) (al
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
 		switch to.Tp {
 		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
+			// For integers, we should ignore the potential display length represented by flen, using
+			// the default flen of the type.
+			originFlen, _ = mysql.GetDefaultFieldLengthAndDecimal(origin.Tp)
+			toFlen, _ = mysql.GetDefaultFieldLengthAndDecimal(to.Tp)
 			// Changing integer to integer, whether reorg is necessary is depend on the flen/decimal/signed.
 			skipSignCheck = true
 			skipLenCheck = true
 		default:
 			// Changing integer to other types, reorg is absolutely necessary.
+			return unsupportedMsg, errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
+		}
+	case mysql.TypeFloat, mysql.TypeDouble:
+		switch to.Tp {
+		case mysql.TypeFloat, mysql.TypeDouble:
+			skipSignCheck = true
+			skipLenCheck = true
+		case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp, mysql.TypeEnum, mysql.TypeSet:
+			// TODO: Currently float/double cast to date/datetime/timestamp/enum/set are all not support yet, should fix here after supported.
+			return "", errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
+		default:
+			return unsupportedMsg, errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
+		}
+	case mysql.TypeBit:
+		switch to.Tp {
+		case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp, mysql.TypeDuration, mysql.TypeEnum, mysql.TypeSet:
+			// TODO: Currently bit cast to date/datetime/timestamp/time/enum/set are all not support yet, should fix here after supported.
+			return "", errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
+		case mysql.TypeBit:
+		default:
 			return unsupportedMsg, errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
 		}
 	case mysql.TypeEnum, mysql.TypeSet:
@@ -3432,7 +3472,11 @@ func CheckModifyTypeCompatible(origin *types.FieldType, to *types.FieldType) (al
 		}
 	case mysql.TypeNewDecimal:
 		if origin.Tp != to.Tp {
-			return "", errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
+			switch to.Tp {
+			case mysql.TypeEnum, mysql.TypeSet:
+				return "", errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
+			}
+			return unsupportedMsg, errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
 		}
 		// Floating-point and fixed-point types also can be UNSIGNED. As with integer types, this attribute prevents
 		// negative values from being stored in the column. Unlike the integer types, the upper range of column values
@@ -3491,8 +3535,8 @@ func CheckModifyTypeCompatible(origin *types.FieldType, to *types.FieldType) (al
 		}
 	}
 
-	if to.Flen > 0 && to.Flen < origin.Flen {
-		msg := fmt.Sprintf("length %d is less than origin %d", to.Flen, origin.Flen)
+	if toFlen > 0 && toFlen < originFlen {
+		msg := fmt.Sprintf("length %d is less than origin %d", toFlen, originFlen)
 		if skipLenCheck {
 			return msg, errUnsupportedModifyColumn.GenWithStackByArgs(msg)
 		}
@@ -4657,7 +4701,8 @@ func getAnonymousIndex(t table.Table, colName model.CIStr) model.CIStr {
 func (d *ddl) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexName model.CIStr,
 	indexPartSpecifications []*ast.IndexPartSpecification, indexOption *ast.IndexOption) error {
 	if !config.GetGlobalConfig().AlterPrimaryKey {
-		return ErrUnsupportedModifyPrimaryKey.GenWithStack("Unsupported add primary key, alter-primary-key is false")
+		return ErrUnsupportedModifyPrimaryKey.GenWithStack("Unsupported add primary key, alter-primary-key is false. " +
+			"Please check the documentation for the tidb-server configuration files")
 	}
 
 	schema, t, err := d.getSchemaAndTableByIdent(ctx, ti)
@@ -5411,6 +5456,7 @@ func (d *ddl) UnlockTables(ctx sessionctx.Context, unlockTables []model.TableLoc
 	err := d.doDDLJob(ctx, job)
 	if err == nil {
 		ctx.ReleaseAllTableLocks()
+		ctx.GetStore().GetMemCache().Release()
 	}
 	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
@@ -5809,6 +5855,12 @@ func buildPlacementSpecs(bundle *placement.Bundle, specs []*ast.PlacementSpec) (
 		case ast.PlacementRoleFollower:
 			role = placement.Follower
 		case ast.PlacementRoleLeader:
+			if spec.Replicas == 0 {
+				spec.Replicas = 1
+			}
+			if spec.Replicas > 1 {
+				err = errors.Errorf("replicas can only be 1 when the role is leader")
+			}
 			role = placement.Leader
 		case ast.PlacementRoleLearner:
 			role = placement.Learner

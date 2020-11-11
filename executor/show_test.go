@@ -540,7 +540,7 @@ func (s *testSuite5) TestShowCreateTable(c *C) {
 
 	tk.MustExec("drop view if exists v")
 	tk.MustExec("create or replace definer=`root`@`127.0.0.1` view v as select JSON_MERGE('{}', '{}') as col;")
-	tk.MustQuery("show create view v").Check(testutil.RowsWithSep("|", "v|CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`127.0.0.1` SQL SECURITY DEFINER VIEW `v` (`col`) AS SELECT JSON_MERGE('{}', '{}') AS `col`  "))
+	tk.MustQuery("show create view v").Check(testutil.RowsWithSep("|", "v|CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`127.0.0.1` SQL SECURITY DEFINER VIEW `v` (`col`) AS SELECT JSON_MERGE(_UTF8MB4'{}', _UTF8MB4'{}') AS `col`  "))
 	tk.MustExec("drop view if exists v")
 
 	tk.MustExec("drop table if exists t1")
@@ -807,6 +807,16 @@ func (s *testSuite5) TestShowCreateTable(c *C) {
 			"  CONSTRAINT `child_ibfk_1` FOREIGN KEY (`parent_id`) REFERENCES `parent` (`id`) ON DELETE SET NULL ON UPDATE CASCADE\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
 	))
+
+	// Test issue #20327
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a int, b char(10) as ('a'));")
+	result := tk.MustQuery("show create table t;").Rows()[0][1]
+	c.Assert(result, Matches, `(?s).*GENERATED ALWAYS AS \(_utf8mb4'a'\).*`)
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a int, b char(10) as (_utf8'a'));")
+	result = tk.MustQuery("show create table t;").Rows()[0][1]
+	c.Assert(result, Matches, `(?s).*GENERATED ALWAYS AS \(_utf8'a'\).*`)
 
 	// Test show list partition table
 	tk.MustExec(`DROP TABLE IF EXISTS t`)
@@ -1158,4 +1168,25 @@ func (s *testSuite5) TestShowVar(c *C) {
 			c.Check(res.Rows(), HasLen, 1)
 		}
 	}
+}
+
+func (s *testSuite5) TestIssue19507(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE t2(a int primary key, b int unique, c int not null, unique index (c));")
+	tk.MustQuery("SHOW INDEX IN t2;").Check(
+		testutil.RowsWithSep("|", "t2|0|PRIMARY|1|a|A|0|<nil>|<nil>||BTREE|||YES|NULL",
+			"t2|0|c|1|c|A|0|<nil>|<nil>||BTREE|||YES|NULL",
+			"t2|0|b|1|b|A|0|<nil>|<nil>|YES|BTREE|||YES|NULL"))
+
+	tk.MustExec("CREATE INDEX t2_b_c_index ON t2 (b, c);")
+	tk.MustExec("CREATE INDEX t2_c_b_index ON t2 (c, b);")
+	tk.MustQuery("SHOW INDEX IN t2;").Check(
+		testutil.RowsWithSep("|", "t2|0|PRIMARY|1|a|A|0|<nil>|<nil>||BTREE|||YES|NULL",
+			"t2|0|c|1|c|A|0|<nil>|<nil>||BTREE|||YES|NULL",
+			"t2|0|b|1|b|A|0|<nil>|<nil>|YES|BTREE|||YES|NULL",
+			"t2|1|t2_b_c_index|1|b|A|0|<nil>|<nil>|YES|BTREE|||YES|NULL",
+			"t2|1|t2_b_c_index|2|c|A|0|<nil>|<nil>||BTREE|||YES|NULL",
+			"t2|1|t2_c_b_index|1|c|A|0|<nil>|<nil>||BTREE|||YES|NULL",
+			"t2|1|t2_c_b_index|2|b|A|0|<nil>|<nil>|YES|BTREE|||YES|NULL"))
 }
