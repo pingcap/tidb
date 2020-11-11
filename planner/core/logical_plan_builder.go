@@ -2409,16 +2409,7 @@ func (b *PlanBuilder) unfoldWildStar(p LogicalPlan, selectFields []*ast.SelectFi
 				(tblName.L == "" || tblName.L == name.TblName.L) &&
 				col.ID != model.ExtraHandleID {
 				findTblNameInSchema = true
-				colName := &ast.ColumnNameExpr{
-					Name: &ast.ColumnName{
-						Schema: name.DBName,
-						Table:  name.TblName,
-						Name:   name.ColName,
-					}}
-				colName.SetType(col.GetType())
-				field := &ast.SelectField{Expr: colName}
-				field.SetText(name.ColName.O)
-				resultList = append(resultList, field)
+				resultList = appendResultList(resultList, col, name)
 			}
 		}
 
@@ -2431,17 +2422,8 @@ func (b *PlanBuilder) unfoldWildStar(p LogicalPlan, selectFields []*ast.SelectFi
 					}
 					if (dbName.L == "" || dbName.L == name.DBName.L) &&
 						tblName.L == name.TblName.L && col.ID != model.ExtraHandleID {
-						colName := &ast.ColumnNameExpr{
-							Name: &ast.ColumnName{
-								Schema: name.DBName,
-								Table:  name.TblName,
-								Name:   name.ColName,
-							}}
-						colName.SetType(col.GetType())
-						field := &ast.SelectField{Expr: colName}
-						field.SetText(name.ColName.O)
-						resultList = append(resultList, field)
 						findTblNameInSchema = true
+						resultList = appendResultList(resultList, col, name)
 					}
 				}
 			}
@@ -2451,6 +2433,20 @@ func (b *PlanBuilder) unfoldWildStar(p LogicalPlan, selectFields []*ast.SelectFi
 		}
 	}
 	return resultList, nil
+}
+
+func appendResultList(resultList []*ast.SelectField, col *expression.Column, name *types.FieldName) []*ast.SelectField {
+	colName := &ast.ColumnNameExpr{
+		Name: &ast.ColumnName{
+			Schema: name.DBName,
+			Table:  name.TblName,
+			Name:   name.ColName,
+		}}
+	colName.SetType(col.GetType())
+	field := &ast.SelectField{Expr: colName}
+	field.SetText(name.ColName.O)
+	resultList = append(resultList, field)
+	return resultList
 }
 
 func (b *PlanBuilder) pushHintWithoutTableWarning(hint *ast.TableOptimizerHint) {
