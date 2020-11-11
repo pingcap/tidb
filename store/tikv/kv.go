@@ -164,7 +164,8 @@ type tikvStore struct {
 	spMutex   sync.RWMutex  // this is used to update safePoint and spTime
 	closed    chan struct{} // this is used to nofity when the store is closed
 
-	replicaReadSeed uint32 // this is used to load balance followers / learners when replica read is enabled
+	replicaReadSeed uint32        // this is used to load balance followers / learners when replica read is enabled
+	memCache        kv.MemManager // this is used to query from memory
 }
 
 func (s *tikvStore) UpdateSPCache(cachedSP uint64, cachedTime time.Time) {
@@ -212,6 +213,7 @@ func newTikvStore(uuid string, pdClient pd.Client, spkv SafePointKV, client Clie
 		spTime:          time.Now(),
 		closed:          make(chan struct{}),
 		replicaReadSeed: fastrand.Uint32(),
+		memCache:        kv.NewCacheDB(),
 	}
 	store.lockResolver = newLockResolver(store)
 	store.enableGC = enableGC
@@ -488,6 +490,10 @@ func (s *tikvStore) SetTiKVClient(client Client) {
 
 func (s *tikvStore) GetTiKVClient() (client Client) {
 	return s.client
+}
+
+func (s *tikvStore) GetMemCache() kv.MemManager {
+	return s.memCache
 }
 
 func init() {
