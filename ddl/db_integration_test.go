@@ -2255,3 +2255,53 @@ func (s *testIntegrationSuite3) TestIssue20490(c *C) {
 
 	tk.MustQuery("select b from issue20490 order by a;").Check(testkit.Rows("1", "1", "<nil>"))
 }
+<<<<<<< HEAD
+=======
+
+func (s *testIntegrationSuite3) TestIssue20741WithEnumField(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists issue20741")
+	tk.MustExec("create table issue20741(id int primary key, c int)")
+	tk.MustExec("insert into issue20741(id, c) values(1, 2), (2, 2)")
+	tk.MustExec("alter table issue20741 add column cc enum('a', 'b', 'c', 'd') not null")
+	tk.MustExec("update issue20741 set c=2 where id=1")
+	tk.MustQuery("select * from issue20741").Check(testkit.Rows("1 2 a", "2 2 a"))
+	tk.MustQuery("select * from issue20741 where cc = 0").Check(testkit.Rows())
+	tk.MustQuery("select * from issue20741 where cc = 1").Check(testkit.Rows("1 2 a", "2 2 a"))
+}
+
+func (s *testIntegrationSuite3) TestIssue20741WithSetField(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists issue20741_2")
+	tk.MustExec("create table issue20741_2(id int primary key, c int)")
+	tk.MustExec("insert into issue20741_2(id, c) values(1, 2), (2, 2)")
+	tk.MustExec("alter table issue20741_2 add column cc set('a', 'b', 'c', 'd') not null")
+	tk.MustExec("update issue20741_2 set c=2 where id=1")
+	tk.MustQuery("select * from issue20741_2").Check(testkit.Rows("1 2 ", "2 2 "))
+	tk.MustQuery("select * from issue20741_2 where cc = 0").Check(testkit.Rows("1 2 ", "2 2 "))
+	tk.MustQuery("select * from issue20741_2 where cc = 1").Check(testkit.Rows())
+	_, err := tk.Exec("insert into issue20741_2(id, c) values (3, 3)")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[table:1364]Field 'cc' doesn't have a default value")
+}
+
+// TestDefaultValueIsLatin1 for issue #18977
+func (s *testIntegrationSuite3) TestEnumAndSetDefaultValue(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	defer tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a enum(0x61, 'b') not null default 0x61, b set(0x61, 'b') not null default 0x61) character set latin1")
+	tbl := testGetTableByName(c, s.ctx, "test", "t")
+	c.Assert(tbl.Meta().Columns[0].DefaultValue, Equals, "a")
+	c.Assert(tbl.Meta().Columns[1].DefaultValue, Equals, "a")
+
+	tk.MustExec("drop table t")
+	tk.MustExec("create table t (a enum(0x61, 'b') not null default 0x61, b set(0x61, 'b') not null default 0x61) character set utf8mb4")
+	tbl = testGetTableByName(c, s.ctx, "test", "t")
+	c.Assert(tbl.Meta().Columns[0].DefaultValue, Equals, "a")
+	c.Assert(tbl.Meta().Columns[1].DefaultValue, Equals, "a")
+}
+>>>>>>> dd32482f1... ddl: Fix default value of a newly added enum column (#20798)
