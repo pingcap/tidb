@@ -309,6 +309,9 @@ const (
 	// tidb_window_concurrency is deprecated, use tidb_executor_concurrency instead.
 	TiDBWindowConcurrency = "tidb_window_concurrency"
 
+	// tidb_merge_join_concurrency is used for merge join parallel executor.
+	TiDBMergeJoinConcurrency = "tidb_merge_join_concurrency"
+
 	// tidb_enable_parallel_apply is used for parallel apply.
 	TiDBEnableParallelApply = "tidb_enable_parallel_apply"
 
@@ -528,6 +531,7 @@ const (
 	DefTiDBHashAggPartialConcurrency   = ConcurrencyUnset
 	DefTiDBHashAggFinalConcurrency     = ConcurrencyUnset
 	DefTiDBWindowConcurrency           = ConcurrencyUnset
+	DefTiDBMergeJoinConcurrency        = ConcurrencyUnset
 	DefTiDBForcePriority               = mysql.NoPriority
 	DefTiDBUseRadixJoin                = false
 	DefEnableWindowFunction            = true

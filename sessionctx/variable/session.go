@@ -869,6 +869,7 @@ func NewSessionVars() *SessionVars {
 		hashAggPartialConcurrency:  DefTiDBHashAggPartialConcurrency,
 		hashAggFinalConcurrency:    DefTiDBHashAggFinalConcurrency,
 		windowConcurrency:          DefTiDBWindowConcurrency,
+		mergeJoinConcurrency:       DefTiDBMergeJoinConcurrency,
 		ExecutorConcurrency:        DefExecutorConcurrency,
 	}
 	vars.MemQuota = MemQuota{
@@ -1323,6 +1324,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.hashAggFinalConcurrency = tidbOptPositiveInt32(val, ConcurrencyUnset)
 	case TiDBWindowConcurrency:
 		s.windowConcurrency = tidbOptPositiveInt32(val, ConcurrencyUnset)
+	case TiDBMergeJoinConcurrency:
+		s.mergeJoinConcurrency = tidbOptPositiveInt32(val, ConcurrencyUnset)
 	case TiDBDistSQLScanConcurrency:
 		s.distSQLScanConcurrency = tidbOptPositiveInt32(val, DefDistSQLScanConcurrency)
 	case TiDBIndexSerialScanConcurrency:
@@ -1654,6 +1657,9 @@ type Concurrency struct {
 	// windowConcurrency is deprecated, use ExecutorConcurrency instead.
 	windowConcurrency int
 
+	// mergeJoinConcurrency is the number of concurrent merge join worker.
+	mergeJoinConcurrency int
+
 	// indexSerialScanConcurrency is the number of concurrent index serial scan worker.
 	indexSerialScanConcurrency int
 
@@ -1702,6 +1708,11 @@ func (c *Concurrency) SetHashAggFinalConcurrency(n int) {
 // SetWindowConcurrency set the number of concurrent window worker.
 func (c *Concurrency) SetWindowConcurrency(n int) {
 	c.windowConcurrency = n
+}
+
+// SetMergeJoinConcurrency set the number of concurrent merge join worker.
+func (c *Concurrency) SetMergeJoinConcurrency(n int) {
+	c.mergeJoinConcurrency = n
 }
 
 // SetIndexSerialScanConcurrency set the number of concurrent index serial scan worker.
@@ -1766,6 +1777,14 @@ func (c *Concurrency) HashAggFinalConcurrency() int {
 func (c *Concurrency) WindowConcurrency() int {
 	if c.windowConcurrency != ConcurrencyUnset {
 		return c.windowConcurrency
+	}
+	return c.ExecutorConcurrency
+}
+
+// MergeJoinConcurrency return the number of concurrent merge join worker
+func (c *Concurrency) MergeJoinConcurrency() int {
+	if c.mergeJoinConcurrency != ConcurrencyUnset {
+		return c.mergeJoinConcurrency
 	}
 	return c.ExecutorConcurrency
 }

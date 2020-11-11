@@ -141,11 +141,10 @@ func optimizeByShuffle4Window(pp *PhysicalWindow, ctx sessionctx.Context) *Physi
 }
 
 func optimizeByShuffle4MergeJoin(pp *PhysicalMergeJoin, ctx sessionctx.Context) *PhysicalShuffle {
-	concurrency := 4
-	// concurrency := ctx.GetSessionVars().WindowConcurrency()
-	// if concurrency <= 1 {
-	// 	return nil
-	// }
+	concurrency := ctx.GetSessionVars().MergeJoinConcurrency()
+	if concurrency <= 1 {
+		return nil
+	}
 
 	children := pp.Children()
 	dataSources := make([]PhysicalPlan, len(children))
