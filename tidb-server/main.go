@@ -527,6 +527,8 @@ func setGlobalVars() {
 	runtime.GOMAXPROCS(int(cfg.Performance.MaxProcs))
 	metrics.MaxProcs.Set(float64(runtime.GOMAXPROCS(0)))
 
+	util.SetGOGC(cfg.Performance.GOGC)
+
 	ddlLeaseDuration := parseDuration(cfg.Lease)
 	session.SetSchemaLease(ddlLeaseDuration)
 	statsLeaseDuration := parseDuration(cfg.Performance.StatsLease)
@@ -637,6 +639,7 @@ func createServer() {
 	// Both domain and storage have started, so we have to clean them before exiting.
 	terror.MustNil(err, closeDomainAndStorage)
 	svr.SetDomain(dom)
+	svr.InitGlobalConnID(dom.ServerID)
 	go dom.ExpensiveQueryHandle().SetSessionManager(svr).Run()
 	dom.InfoSyncer().SetSessionManager(svr)
 }

@@ -2172,5 +2172,52 @@
         ]
       }
     ]
+  },
+  {
+    "Name": "TestEliminateMaxOneRow",
+    "Cases": [
+      {
+        "SQL": "select a from t2 where t2.a < (select t1.a from t1 where t1.a = t2.a);",
+        "Plan": [
+          "HashJoin_21 9990.00 root  inner join, equal:[eq(test.t2.a, test.t1.a)], other cond:lt(test.t2.a, test.t1.a)",
+          "├─IndexReader_28(Build) 7992.00 root  index:Selection_27",
+          "│ └─Selection_27 7992.00 cop[tikv]  lt(test.t1.a, test.t1.a)",
+          "│   └─IndexFullScan_26 9990.00 cop[tikv] table:t1, index:idx_a(a) keep order:false, stats:pseudo",
+          "└─TableReader_25(Probe) 7992.00 root  data:Selection_24",
+          "  └─Selection_24 7992.00 cop[tikv]  lt(test.t2.a, test.t2.a), not(isnull(test.t2.a))",
+          "    └─TableFullScan_23 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select a from t2 where t2.a < (select t1.a from t1 where t1.b = t2.b and t1.a is null);",
+        "Plan": [
+          "Projection_10 9990.00 root  test.t2.a",
+          "└─Apply_12 9990.00 root  CARTESIAN inner join, other cond:lt(test.t2.a, test.t1.a)",
+          "  ├─TableReader_15(Build) 9990.00 root  data:Selection_14",
+          "  │ └─Selection_14 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "  │   └─TableFullScan_13 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "  └─Selection_16(Probe) 0.80 root  not(isnull(test.t1.a))",
+          "    └─MaxOneRow_17 1.00 root  ",
+          "      └─IndexLookUp_24 0.00 root  ",
+          "        ├─IndexRangeScan_21(Build) 1.00 cop[tikv] table:t1, index:idx_a(a) range:[NULL,NULL], keep order:false, stats:pseudo",
+          "        └─Selection_23(Probe) 0.00 cop[tikv]  eq(test.t1.b, test.t2.b)",
+          "          └─TableRowIDScan_22 1.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select a from t2 where t2.a < (select t3.a from t3 where t3.a = t2.a);",
+        "Plan": [
+          "Projection_10 9990.00 root  test.t2.a",
+          "└─Apply_12 9990.00 root  CARTESIAN inner join, other cond:lt(test.t2.a, test.t3.a)",
+          "  ├─TableReader_15(Build) 9990.00 root  data:Selection_14",
+          "  │ └─Selection_14 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "  │   └─TableFullScan_13 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "  └─Selection_16(Probe) 0.80 root  not(isnull(test.t3.a))",
+          "    └─MaxOneRow_17 1.00 root  ",
+          "      └─IndexReader_19 2.00 root  index:IndexRangeScan_18",
+          "        └─IndexRangeScan_18 2.00 cop[tikv] table:t3, index:idx_abc(a, b, c) range: decided by [eq(test.t3.a, test.t2.a)], keep order:false, stats:pseudo"
+        ]
+      }
+    ]
   }
 ]

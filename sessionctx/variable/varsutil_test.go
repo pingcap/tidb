@@ -426,6 +426,12 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, "ON")
 
+	err = SetSessionSystemVar(v, TiDBRedactLog, types.NewStringDatum("ON"))
+	c.Assert(err, IsNil)
+	val, err = GetSessionSystemVar(v, TiDBRedactLog)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "ON")
+
 	err = SetSessionSystemVar(v, TiDBStmtSummaryRefreshInterval, types.NewStringDatum("10"))
 	c.Assert(err, IsNil)
 	val, err = GetSessionSystemVar(v, TiDBStmtSummaryRefreshInterval)

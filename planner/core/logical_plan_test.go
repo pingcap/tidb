@@ -1437,7 +1437,7 @@ func (s *testPlanSuite) optimize(ctx context.Context, sql string) (PhysicalPlan,
 func byItemsToProperty(byItems []*util.ByItems) *property.PhysicalProperty {
 	pp := &property.PhysicalProperty{}
 	for _, item := range byItems {
-		pp.Items = append(pp.Items, property.Item{Col: item.Expr.(*expression.Column), Desc: item.Desc})
+		pp.SortItems = append(pp.SortItems, property.SortItem{Col: item.Expr.(*expression.Column), Desc: item.Desc})
 	}
 	return pp
 }
