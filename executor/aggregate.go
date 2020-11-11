@@ -46,20 +46,22 @@ type aggPartialResultMapper map[string][]aggfuncs.PartialResult
 
 // baseHashAggWorker stores the common attributes of HashAggFinalWorker and HashAggPartialWorker.
 type baseHashAggWorker struct {
-	stats        *HashAggRuntimeStats
-	ctx          sessionctx.Context
-	finishCh     <-chan struct{}
-	aggFuncs     []aggfuncs.AggFunc
-	maxChunkSize int
+	stats          *HashAggRuntimeStats
+	ctx            sessionctx.Context
+	finishCh       <-chan struct{}
+	aggFuncs       []aggfuncs.AggFunc
+	maxChunkSize   int
+	aggWorkerStats time.Duration
 }
 
 func newBaseHashAggWorker(ctx sessionctx.Context, finishCh <-chan struct{}, aggFuncs []aggfuncs.AggFunc, maxChunkSize int, stat *HashAggRuntimeStats) baseHashAggWorker {
 	return baseHashAggWorker{
-		stats:        stat,
-		ctx:          ctx,
-		finishCh:     finishCh,
-		aggFuncs:     aggFuncs,
-		maxChunkSize: maxChunkSize,
+		stats:          stat,
+		ctx:            ctx,
+		finishCh:       finishCh,
+		aggFuncs:       aggFuncs,
+		maxChunkSize:   maxChunkSize,
+		aggWorkerStats: 0,
 	}
 }
 
@@ -358,7 +360,7 @@ func recoveryHashAgg(output chan *AfFinalResult, r interface{}) {
 	logutil.BgLogger().Error("parallel hash aggregation panicked", zap.Error(err), zap.Stack("stack"))
 }
 
-func (w *HashAggPartialWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitGroup, finalConcurrency int, index int) {
+func (w *HashAggPartialWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitGroup, finalConcurrency int) {
 	start := time.Now()
 	needShuffle, sc := false, ctx.GetSessionVars().StmtCtx
 	defer func() {
@@ -370,9 +372,7 @@ func (w *HashAggPartialWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitG
 		}
 		w.memTracker.Consume(-w.chk.MemoryUsage())
 		waitGroup.Done()
-		if w.stats != nil {
-			w.stats.PartialWorkerTime[index] = time.Since(start)
-		}
+		w.aggWorkerStats = time.Since(start)
 	}()
 	for {
 		if !w.getChildInput() {
@@ -582,16 +582,14 @@ func (w *HashAggFinalWorker) receiveFinalResultHolder() (*chunk.Chunk, bool) {
 	}
 }
 
-func (w *HashAggFinalWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitGroup, index int) {
+func (w *HashAggFinalWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitGroup) {
 	start := time.Now()
 	defer func() {
 		if r := recover(); r != nil {
 			recoveryHashAgg(w.outputCh, r)
 		}
 		waitGroup.Done()
-		if w.stats != nil {
-			w.stats.FinalWorkerTime[index] = time.Since(start)
-		}
+		w.aggWorkerStats = time.Since(start)
 	}()
 	if err := w.consumeIntermData(ctx); err != nil {
 		w.outputCh <- &AfFinalResult{err: err}
@@ -671,24 +669,30 @@ func (e *HashAggExec) prepare4ParallelExec(ctx context.Context) {
 	partialWorkerWaitGroup.Add(len(e.partialWorkers))
 	partialStart := time.Now()
 	for i := range e.partialWorkers {
-		go e.partialWorkers[i].run(e.ctx, partialWorkerWaitGroup, len(e.finalWorkers), i)
+		go e.partialWorkers[i].run(e.ctx, partialWorkerWaitGroup, len(e.finalWorkers))
 	}
 	go func() {
 		e.waitPartialWorkerAndCloseOutputChs(partialWorkerWaitGroup)
 		if e.stats != nil {
 			e.stats.PartialWallTime = time.Since(partialStart)
+			for i, worker := range e.partialWorkers {
+				e.stats.PartialWorkerTime[i] = worker.aggWorkerStats
+			}
 		}
 	}()
 	finalWorkerWaitGroup := &sync.WaitGroup{}
 	finalWorkerWaitGroup.Add(len(e.finalWorkers))
 	finalStart := time.Now()
 	for i := range e.finalWorkers {
-		go e.finalWorkers[i].run(e.ctx, finalWorkerWaitGroup, i)
+		go e.finalWorkers[i].run(e.ctx, finalWorkerWaitGroup)
 	}
 	go func() {
 		e.waitFinalWorkerAndCloseFinalOutput(finalWorkerWaitGroup)
 		if e.stats != nil {
 			e.stats.FinalWallTime = time.Since(finalStart)
+			for i, worker := range e.finalWorkers {
+				e.stats.FinalWorkerTime[i] = worker.aggWorkerStats
+			}
 		}
 	}()
 }
