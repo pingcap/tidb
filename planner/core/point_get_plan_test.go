@@ -18,7 +18,6 @@ import (
 	"fmt"
 	"math"
 	"strings"
-	"sync"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -497,23 +496,25 @@ func (s *testPointGetSuite) TestIssue20692(c *C) {
 	tk3.MustExec("begin pessimistic;")
 	tk3.MustExec("use test")
 	tk1.MustExec("delete from t where id = 1 and v = 1 and vv = 1;")
-	var stop1 sync.WaitGroup
-	stop1.Add(1)
+	stop1, stop2 := make(chan struct{}), make(chan struct{})
 	go func() {
 		tk2.MustExec("insert into t values(1, 2, 3, 4);")
-		stop1.Done()
-	}()
-	time.Sleep(50 * time.Millisecond)
-	var stop2 sync.WaitGroup
-	stop2.Add(1)
-	go func() {
+		stop1 <- struct{}{}
 		tk3.MustExec("update t set id = 10, v = 20, vv = 30, vvv = 40 where id = 1 and v = 2 and vv = 3;")
-		stop2.Done()
+		stop2 <- struct{}{}
 	}()
 	tk1.MustExec("commit;")
-	stop1.Wait()
+	<-stop1
+
+	// wait 50ms to ensure tk3 is blocked by tk2
+	select {
+	case <-stop2:
+		c.Fail()
+	case <-time.After(50 * time.Millisecond):
+	}
+
 	tk2.MustExec("commit;")
-	stop2.Wait()
+	<-stop2
 	tk3.MustExec("commit;")
 	tk3.MustQuery("select * from t;").Check(testkit.Rows("10 20 30 40"))
 }
