@@ -709,41 +709,20 @@ func (c *Chunk) ToString(ft []*types.FieldType) string {
 
 // AppendRows appends multiple rows  to the chunk.
 func (c *Chunk) AppendRows(rows []Row) {
-	if rows == nil {
+	if rows == nil || len(c.columns) != len(rows[0].c.columns) {
 		return
 	}
-	if len(c.columns) != len(rows[0].c.columns) {
-		return
-	}
-	c.AppendPartialRows(0, rows)
+	c.AppendPartialRows(rows)
 	c.numVirtualRows += len(rows)
 
 }
 
-/* // AppendPartialRows1 appends multiple row to the chunk.
-func (c *Chunk) AppendPartialRows1(colOff int, rows []Row) {
-	columns := rows[0].c.columns //use rows 0 as standard
-	for j, rowCol := range columns {
-		chkCol := c.columns[colOff+j]
-		for _, row := range rows {
-			if j == 0 {
-				c.appendSel(colOff)
-			}
-			appendCellByCell(chkCol, rowCol, row.idx)
-		}
-	}
-} */
-
 // AppendPartialRows appends multiple row to the chunk.
-func (c *Chunk) AppendPartialRows(colOff int, rows []Row) {
-	for j, chkCol := range c.columns {
+func (c *Chunk) AppendPartialRows(rows []Row) {
+	numCols := len(c.columns)
+	for i := 0; i < numCols; i++ {
 		for _, row := range rows {
-			if j == 0 {
-				c.appendSel(colOff)
-			}
-			appendCellByCell(chkCol, row.c.columns[j], row.idx)
+			appendCellByCell(c.columns[i], row.c.columns[i], row.idx)
 		}
 	}
-
-	//跟rows大小无关，跟rows.rowid有序无关。
 }
