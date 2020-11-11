@@ -3497,7 +3497,7 @@ SubPartitionMethod:
 			ColumnNames: $5.([]*ast.ColumnName),
 		}
 	}
-|	LinearOpt "HASH" '(' Expression ')'
+|	LinearOpt "HASH" '(' BitExpr ')'
 	{
 		$$ = &ast.PartitionMethod{
 			Tp:     model.PartitionTypeHash,
@@ -3514,7 +3514,7 @@ PartitionKeyAlgorithmOpt:
 
 PartitionMethod:
 	SubPartitionMethod
-|	"RANGE" '(' Expression ')'
+|	"RANGE" '(' BitExpr ')'
 	{
 		$$ = &ast.PartitionMethod{
 			Tp:   model.PartitionTypeRange,
@@ -3528,7 +3528,7 @@ PartitionMethod:
 			ColumnNames: $4.([]*ast.ColumnName),
 		}
 	}
-|	"LIST" '(' Expression ')'
+|	"LIST" '(' BitExpr ')'
 	{
 		$$ = &ast.PartitionMethod{
 			Tp:   model.PartitionTypeList,
@@ -4595,7 +4595,7 @@ MaxValueOrExpression:
 	{
 		$$ = &ast.MaxValueExpr{}
 	}
-|	Expression
+|	BitExpr
 
 FulltextSearchModifierOpt:
 	/* empty */
