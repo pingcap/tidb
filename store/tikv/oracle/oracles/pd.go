@@ -16,7 +16,6 @@ package oracles
 import (
 	"context"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -36,7 +35,7 @@ type pdOracle struct {
 	c  pd.Client
 	mu struct {
 		sync.RWMutex
-		lastTSMap map[string]*uint64
+		lastTSMap map[string]uint64
 	}
 	quit chan struct{}
 }
@@ -51,7 +50,7 @@ func NewPdOracle(pdClient pd.Client, updateInterval time.Duration) (oracle.Oracl
 		c:    pdClient,
 		quit: make(chan struct{}),
 	}
-	o.mu.lastTSMap = make(map[string]*uint64)
+	o.mu.lastTSMap = make(map[string]uint64)
 	ctx := context.TODO()
 	go o.updateTS(ctx, updateInterval)
 	// Initialize the timestamp of the global txnScope by Get.
@@ -155,37 +154,34 @@ func (o *pdOracle) getTimestamp(ctx context.Context, txnScope string) (uint64, e
 }
 
 func (o *pdOracle) setLastTS(ts uint64, txnScope string) {
-	_, exist := o.getLastTS(txnScope)
-	if !exist {
-		o.mu.Lock()
-		o.mu.lastTSMap[txnScope] = new(uint64)
-		o.mu.Unlock()
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if txnScope == "" {
+		// Todo: replace "global" with config.DefTxnScope
+		txnScope = "global"
 	}
-	lastTSPointer, _ := o.getLastTSPointer(txnScope)
-	lastTS := atomic.LoadUint64(lastTSPointer)
+	lastTS, exist := o.mu.lastTSMap[txnScope]
+	if !exist {
+		o.mu.lastTSMap[txnScope] = ts
+		return
+	}
 	if ts > lastTS {
-		atomic.CompareAndSwapUint64(lastTSPointer, lastTS, ts)
+		o.mu.lastTSMap[txnScope] = ts
 	}
 }
 
 func (o *pdOracle) getLastTS(txnScope string) (uint64, bool) {
 	o.mu.RLock()
-	lastTSPointer, exist := o.mu.lastTSMap[txnScope]
-	o.mu.RUnlock()
+	defer o.mu.RUnlock()
+	if txnScope == "" {
+		// Todo: replace "global" with config.DefTxnScope
+		txnScope = "global"
+	}
+	lastTS, exist := o.mu.lastTSMap[txnScope]
 	if !exist {
 		return 0, false
 	}
-	return atomic.LoadUint64(lastTSPointer), true
-}
-
-func (o *pdOracle) getLastTSPointer(txnScope string) (*uint64, bool) {
-	o.mu.RLock()
-	lastTSPointer, exist := o.mu.lastTSMap[txnScope]
-	o.mu.RUnlock()
-	if !exist {
-		return nil, false
-	}
-	return lastTSPointer, true
+	return lastTS, true
 }
 
 func (o *pdOracle) updateTS(ctx context.Context, interval time.Duration) {
@@ -195,8 +191,13 @@ func (o *pdOracle) updateTS(ctx context.Context, interval time.Duration) {
 		select {
 		case <-ticker.C:
 			o.mu.RLock()
-			// Update the timestamp for each txnScope
+			txnScopes := make([]string, 0, len(o.mu.lastTSMap))
 			for txnScope := range o.mu.lastTSMap {
+				txnScopes = append(txnScopes, txnScope)
+			}
+			o.mu.RUnlock()
+			// Update the timestamp for each txnScope
+			for _, txnScope := range txnScopes {
 				ts, err := o.getTimestamp(ctx, txnScope)
 				if err != nil {
 					logutil.Logger(ctx).Error("updateTS error", zap.String("txnScope", txnScope), zap.Error(err))
@@ -204,7 +205,6 @@ func (o *pdOracle) updateTS(ctx context.Context, interval time.Duration) {
 				}
 				o.setLastTS(ts, txnScope)
 			}
-			o.mu.RUnlock()
 		case <-o.quit:
 			return
 		}
@@ -267,7 +267,7 @@ func (o *pdOracle) GetLowResolutionTimestampAsync(ctx context.Context, opts ...o
 	if !exist {
 		return lowResolutionTsFuture{
 			ts:  0,
-			err: errors.Errorf("get low resolution timestamp fail, invalid txnScope = %s", option.TxnScope),
+			err: errors.Errorf("get low resolution timestamp async fail, invalid txnScope = %s", option.TxnScope),
 		}
 	}
 	return lowResolutionTsFuture{
