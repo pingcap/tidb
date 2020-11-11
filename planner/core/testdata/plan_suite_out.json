@@ -1590,9 +1590,8 @@
       {
         "SQL": "select /*+ HASH_AGG(), AGG_TO_COP() */ sum(distinct b) from pt;",
         "Plan": [
-<<<<<<< HEAD
           "HashAgg_11 1.00 root  funcs:sum(distinct Column#9)->Column#4",
-          "└─Projection_23 16000.00 root  cast(test.pt.b, decimal(65,0) BINARY)->Column#9",
+          "└─Projection_23 16000.00 root  cast(test.pt.b, decimal(32,0) BINARY)->Column#9",
           "  └─PartitionUnion_12 16000.00 root  ",
           "    ├─HashAgg_16 8000.00 root  group by:test.pt.b, funcs:firstrow(test.pt.b)->test.pt.b, funcs:firstrow(test.pt.b)->test.pt.b",
           "    │ └─TableReader_17 8000.00 root  data:HashAgg_13",
@@ -1602,19 +1601,6 @@
           "      └─TableReader_22 8000.00 root  data:HashAgg_18",
           "        └─HashAgg_18 8000.00 cop[tikv]  group by:test.pt.b, ",
           "          └─TableFullScan_20 10000.00 cop[tikv] table:pt, partition:p1 keep order:false, stats:pseudo"
-=======
-          "HashAgg_12 1.00 root  funcs:sum(distinct Column#9)->Column#4",
-          "└─Projection_24 16000.00 root  cast(test.pt.b, decimal(32,0) BINARY)->Column#9",
-          "  └─PartitionUnion_13 16000.00 root  ",
-          "    ├─HashAgg_17 8000.00 root  group by:test.pt.b, funcs:firstrow(test.pt.b)->test.pt.b, funcs:firstrow(test.pt.b)->test.pt.b",
-          "    │ └─TableReader_18 8000.00 root  data:HashAgg_14",
-          "    │   └─HashAgg_14 8000.00 cop[tikv]  group by:test.pt.b, ",
-          "    │     └─TableFullScan_16 10000.00 cop[tikv] table:pt, partition:p0 keep order:false, stats:pseudo",
-          "    └─HashAgg_22 8000.00 root  group by:test.pt.b, funcs:firstrow(test.pt.b)->test.pt.b, funcs:firstrow(test.pt.b)->test.pt.b",
-          "      └─TableReader_23 8000.00 root  data:HashAgg_19",
-          "        └─HashAgg_19 8000.00 cop[tikv]  group by:test.pt.b, ",
-          "          └─TableFullScan_21 10000.00 cop[tikv] table:pt, partition:p1 keep order:false, stats:pseudo"
->>>>>>> a338e3593... expression: fix wrong inferred type for sum and avg (#20926)
         ],
         "Result": [
           "<nil>"
@@ -1733,9 +1719,8 @@
       {
         "SQL": "select /*+ HASH_AGG(), AGG_TO_COP() */ sum(distinct b) from pt;",
         "Plan": [
-<<<<<<< HEAD
           "HashAgg_11 1.00 root  funcs:sum(distinct Column#9)->Column#4",
-          "└─Projection_23 16000.00 root  cast(test.pt.b, decimal(65,0) BINARY)->Column#9",
+          "└─Projection_23 16000.00 root  cast(test.pt.b, decimal(32,0) BINARY)->Column#9",
           "  └─PartitionUnion_12 16000.00 root  ",
           "    ├─HashAgg_16 8000.00 root  group by:test.pt.b, funcs:firstrow(test.pt.b)->test.pt.b, funcs:firstrow(test.pt.b)->test.pt.b",
           "    │ └─TableReader_17 8000.00 root  data:HashAgg_13",
@@ -1745,19 +1730,6 @@
           "      └─TableReader_22 8000.00 root  data:HashAgg_18",
           "        └─HashAgg_18 8000.00 cop[tikv]  group by:test.pt.b, ",
           "          └─TableFullScan_20 10000.00 cop[tikv] table:pt, partition:p1 keep order:false, stats:pseudo"
-=======
-          "HashAgg_12 1.00 root  funcs:sum(distinct Column#9)->Column#4",
-          "└─Projection_24 16000.00 root  cast(test.pt.b, decimal(32,0) BINARY)->Column#9",
-          "  └─PartitionUnion_13 16000.00 root  ",
-          "    ├─HashAgg_17 8000.00 root  group by:test.pt.b, funcs:firstrow(test.pt.b)->test.pt.b, funcs:firstrow(test.pt.b)->test.pt.b",
-          "    │ └─TableReader_18 8000.00 root  data:HashAgg_14",
-          "    │   └─HashAgg_14 8000.00 cop[tikv]  group by:test.pt.b, ",
-          "    │     └─TableFullScan_16 10000.00 cop[tikv] table:pt, partition:p0 keep order:false, stats:pseudo",
-          "    └─HashAgg_22 8000.00 root  group by:test.pt.b, funcs:firstrow(test.pt.b)->test.pt.b, funcs:firstrow(test.pt.b)->test.pt.b",
-          "      └─TableReader_23 8000.00 root  data:HashAgg_19",
-          "        └─HashAgg_19 8000.00 cop[tikv]  group by:test.pt.b, ",
-          "          └─TableFullScan_21 10000.00 cop[tikv] table:pt, partition:p1 keep order:false, stats:pseudo"
->>>>>>> a338e3593... expression: fix wrong inferred type for sum and avg (#20926)
         ],
         "Result": [
           "<nil>"
@@ -1789,9 +1761,8 @@
       {
         "SQL": "select /*+ HASH_AGG(), AGG_TO_COP() */ sum(distinct b) from pt;",
         "Plan": [
-<<<<<<< HEAD
           "HashAgg_11 1.00 root  funcs:sum(distinct Column#9)->Column#4",
-          "└─Projection_23 16000.00 root  cast(test.pt.b, decimal(65,0) BINARY)->Column#9",
+          "└─Projection_23 16000.00 root  cast(test.pt.b, decimal(32,0) BINARY)->Column#9",
           "  └─PartitionUnion_12 16000.00 root  ",
           "    ├─HashAgg_16 8000.00 root  group by:test.pt.b, funcs:firstrow(test.pt.b)->test.pt.b, funcs:firstrow(test.pt.b)->test.pt.b",
           "    │ └─TableReader_17 8000.00 root  data:HashAgg_13",
@@ -1801,19 +1772,6 @@
           "      └─TableReader_22 8000.00 root  data:HashAgg_18",
           "        └─HashAgg_18 8000.00 cop[tikv]  group by:test.pt.b, ",
           "          └─TableFullScan_20 10000.00 cop[tikv] table:pt, partition:p1 keep order:false, stats:pseudo"
-=======
-          "HashAgg_12 1.00 root  funcs:sum(distinct Column#9)->Column#4",
-          "└─Projection_24 16000.00 root  cast(test.pt.b, decimal(32,0) BINARY)->Column#9",
-          "  └─PartitionUnion_13 16000.00 root  ",
-          "    ├─HashAgg_17 8000.00 root  group by:test.pt.b, funcs:firstrow(test.pt.b)->test.pt.b, funcs:firstrow(test.pt.b)->test.pt.b",
-          "    │ └─TableReader_18 8000.00 root  data:HashAgg_14",
-          "    │   └─HashAgg_14 8000.00 cop[tikv]  group by:test.pt.b, ",
-          "    │     └─TableFullScan_16 10000.00 cop[tikv] table:pt, partition:p0 keep order:false, stats:pseudo",
-          "    └─HashAgg_22 8000.00 root  group by:test.pt.b, funcs:firstrow(test.pt.b)->test.pt.b, funcs:firstrow(test.pt.b)->test.pt.b",
-          "      └─TableReader_23 8000.00 root  data:HashAgg_19",
-          "        └─HashAgg_19 8000.00 cop[tikv]  group by:test.pt.b, ",
-          "          └─TableFullScan_21 10000.00 cop[tikv] table:pt, partition:p1 keep order:false, stats:pseudo"
->>>>>>> a338e3593... expression: fix wrong inferred type for sum and avg (#20926)
         ],
         "Result": [
           "<nil>"
@@ -2158,107 +2116,5 @@
         "Plan": "IndexHashJoin{IndexReader(Index(t2.idx_a)[[-inf,+inf]])->IndexReader(Index(t1.idx_a)[[NULL,+inf]]->Sel([not(isnull(test.t1.a))]))}(test.t2.a,test.t1.a)"
       }
     ]
-<<<<<<< HEAD
-=======
-  },
-  {
-    "Name": "TestNthPlanHintWithExplain",
-    "Cases": [
-      {
-        "SQL": "select /*+nth_plan(1)*/ * from test.tt where a=1 and b=1",
-        "Plan": [
-          "TableReader_7 0.01 root  data:Selection_6",
-          "└─Selection_6 0.01 cop[tikv]  eq(test.tt.a, 1), eq(test.tt.b, 1)",
-          "  └─TableFullScan_5 10000.00 cop[tikv] table:tt keep order:false, stats:pseudo"
-        ]
-      },
-      {
-        "SQL": "select /*+nth_plan(2)*/ * from test.tt where a=1 and b=1;",
-        "Plan": [
-          "IndexLookUp_11 0.01 root  ",
-          "├─IndexRangeScan_8(Build) 10.00 cop[tikv] table:tt, index:a(a) range:[1,1], keep order:false, stats:pseudo",
-          "└─Selection_10(Probe) 0.01 cop[tikv]  eq(test.tt.b, 1)",
-          "  └─TableRowIDScan_9 10.00 cop[tikv] table:tt keep order:false, stats:pseudo"
-        ]
-      },
-      {
-        "SQL": "select /*+nth_plan(3)*/ * from test.tt where a=1 and b=1;",
-        "Plan": [
-          "IndexLookUp_15 0.01 root  ",
-          "├─IndexRangeScan_12(Build) 10.00 cop[tikv] table:tt, index:b(b) range:[1,1], keep order:false, stats:pseudo",
-          "└─Selection_14(Probe) 0.01 cop[tikv]  eq(test.tt.a, 1)",
-          "  └─TableRowIDScan_13 10.00 cop[tikv] table:tt keep order:false, stats:pseudo"
-        ]
-      },
-      {
-        "SQL": "select /*+nth_plan(2)*/ * from test.tt where a=1 and b=1;",
-        "Plan": [
-          "IndexLookUp_11 0.01 root  ",
-          "├─IndexRangeScan_8(Build) 10.00 cop[tikv] table:tt, index:a(a) range:[1,1], keep order:false, stats:pseudo",
-          "└─Selection_10(Probe) 0.01 cop[tikv]  eq(test.tt.b, 1)",
-          "  └─TableRowIDScan_9 10.00 cop[tikv] table:tt keep order:false, stats:pseudo"
-        ]
-      },
-      {
-        "SQL": "select * from test.tt where a=1 and b=1",
-        "Plan": [
-          "IndexLookUp_11 0.01 root  ",
-          "├─IndexRangeScan_8(Build) 10.00 cop[tikv] table:tt, index:a(a) range:[1,1], keep order:false, stats:pseudo",
-          "└─Selection_10(Probe) 0.01 cop[tikv]  eq(test.tt.b, 1)",
-          "  └─TableRowIDScan_9 10.00 cop[tikv] table:tt keep order:false, stats:pseudo"
-        ]
-      }
-    ]
-  },
-  {
-    "Name": "TestEliminateMaxOneRow",
-    "Cases": [
-      {
-        "SQL": "select a from t2 where t2.a < (select t1.a from t1 where t1.a = t2.a);",
-        "Plan": [
-          "HashJoin_21 9990.00 root  inner join, equal:[eq(test.t2.a, test.t1.a)], other cond:lt(test.t2.a, test.t1.a)",
-          "├─IndexReader_28(Build) 7992.00 root  index:Selection_27",
-          "│ └─Selection_27 7992.00 cop[tikv]  lt(test.t1.a, test.t1.a)",
-          "│   └─IndexFullScan_26 9990.00 cop[tikv] table:t1, index:idx_a(a) keep order:false, stats:pseudo",
-          "└─TableReader_25(Probe) 7992.00 root  data:Selection_24",
-          "  └─Selection_24 7992.00 cop[tikv]  lt(test.t2.a, test.t2.a), not(isnull(test.t2.a))",
-          "    └─TableFullScan_23 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
-        ],
-        "Result": null
-      },
-      {
-        "SQL": "select a from t2 where t2.a < (select t1.a from t1 where t1.b = t2.b and t1.a is null);",
-        "Plan": [
-          "Projection_10 9990.00 root  test.t2.a",
-          "└─Apply_12 9990.00 root  CARTESIAN inner join, other cond:lt(test.t2.a, test.t1.a)",
-          "  ├─TableReader_15(Build) 9990.00 root  data:Selection_14",
-          "  │ └─Selection_14 9990.00 cop[tikv]  not(isnull(test.t2.a))",
-          "  │   └─TableFullScan_13 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
-          "  └─Selection_16(Probe) 0.80 root  not(isnull(test.t1.a))",
-          "    └─MaxOneRow_17 1.00 root  ",
-          "      └─IndexLookUp_24 0.00 root  ",
-          "        ├─IndexRangeScan_21(Build) 1.00 cop[tikv] table:t1, index:idx_a(a) range:[NULL,NULL], keep order:false, stats:pseudo",
-          "        └─Selection_23(Probe) 0.00 cop[tikv]  eq(test.t1.b, test.t2.b)",
-          "          └─TableRowIDScan_22 1.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
-        ],
-        "Result": null
-      },
-      {
-        "SQL": "select a from t2 where t2.a < (select t3.a from t3 where t3.a = t2.a);",
-        "Plan": [
-          "Projection_10 9990.00 root  test.t2.a",
-          "└─Apply_12 9990.00 root  CARTESIAN inner join, other cond:lt(test.t2.a, test.t3.a)",
-          "  ├─TableReader_15(Build) 9990.00 root  data:Selection_14",
-          "  │ └─Selection_14 9990.00 cop[tikv]  not(isnull(test.t2.a))",
-          "  │   └─TableFullScan_13 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
-          "  └─Selection_16(Probe) 0.80 root  not(isnull(test.t3.a))",
-          "    └─MaxOneRow_17 1.00 root  ",
-          "      └─IndexReader_19 2.00 root  index:IndexRangeScan_18",
-          "        └─IndexRangeScan_18 2.00 cop[tikv] table:t3, index:idx_abc(a, b, c) range: decided by [eq(test.t3.a, test.t2.a)], keep order:false, stats:pseudo"
-        ],
-        "Result": null
-      }
-    ]
->>>>>>> a338e3593... expression: fix wrong inferred type for sum and avg (#20926)
   }
 ]
