@@ -939,3 +939,51 @@ func (s *testColumnTypeChangeSuite) TestColumnTypeChangeFromNumericToOthers(c *C
 	tk.MustExec("alter table t modify b json")
 	tk.MustQuery("select * from t").Check(testkit.Rows("-258.12345 333.33 2000000.20000002 323232323.32323235 -111.11111450195312 -222222222222.22223 \"\\u0015\""))
 }
+
+// Test issue #20529.
+func (s *testColumnTypeChangeSuite) TestColumnTypeChangeIgnoreDisplayLength(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.Se.GetSessionVars().EnableChangeColumnType = true
+	defer func() {
+		tk.Se.GetSessionVars().EnableChangeColumnType = false
+	}()
+
+	originalHook := s.dom.DDL().GetHook()
+	defer s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
+
+	var assertResult bool
+	assertHasAlterWriteReorg := func(tbl table.Table) {
+		// Restore the assert result to false.
+		assertResult = false
+		hook := &ddl.TestDDLCallback{}
+		hook.OnJobRunBeforeExported = func(job *model.Job) {
+			if tbl.Meta().ID != job.TableID {
+				return
+			}
+			if job.SchemaState == model.StateWriteReorganization {
+				assertResult = true
+			}
+		}
+		s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
+	}
+
+	// Change int to tinyint.
+	// Although display length is increased, the default flen is decreased, reorg is needed.
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int(1))")
+	tbl := testGetTableByName(c, tk.Se, "test", "t")
+	assertHasAlterWriteReorg(tbl)
+	tk.MustExec("alter table t modify column a tinyint(3)")
+	c.Assert(assertResult, Equals, true)
+
+	// Change tinyint to tinyint
+	// Although display length is decreased, default flen is the same, reorg is not needed.
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a tinyint(3))")
+	tbl = testGetTableByName(c, tk.Se, "test", "t")
+	assertHasAlterWriteReorg(tbl)
+	tk.MustExec("alter table t modify column a tinyint(1)")
+	c.Assert(assertResult, Equals, false)
+	tk.MustExec("drop table if exists t")
+}
