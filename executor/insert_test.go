@@ -1500,6 +1500,20 @@ func (s *testSerialSuite) TestIssue20768(c *C) {
 	tk.MustQuery("select /*+ merge_join(t1) */ * from t1 join t2 on t1.a = t2.a").Check(testkit.Rows("0 0"))
 }
 
+func (s *testSuite9) TestIssue10402(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table vctt (v varchar(4), c char(4))")
+	tk.MustExec("insert into vctt values ('ab  ', 'ab   ')")
+	tk.MustQuery("select * from vctt").Check(testkit.Rows("ab ab"))
+	tk.MustExec("delete from vctt")
+	tk.Se.GetSessionVars().StmtCtx.SetWarnings(nil)
+	tk.MustExec("insert into vctt values ('ab\t\t\t', 'ab   ')")
+	c.Check(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, 1)
+	tk.MustQuery("select * from vctt").Check(testkit.Rows("ab\t\t ab"))
+	tk.MustQuery("select length(v), length(c) from vctt").Check(testkit.Rows("4 2"))
+}
+
 func combination(items []string) func() []string {
 	current := 1
 	buf := make([]string, len(items))
