@@ -14,6 +14,7 @@
 package oracles
 
 import (
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/tidb/store/tikv/oracle"
@@ -49,7 +50,14 @@ func NewEmptyPDOracle() oracle.Oracle {
 func SetEmptyPDOracleLastTs(oc oracle.Oracle, ts uint64) {
 	switch o := oc.(type) {
 	case *pdOracle:
+		if o.lastTSMap == nil {
+			o.lastTSMap = make(map[string]*uint64)
+		}
 		// Todo: replace "global" with config.DefTxnScope
-		o.lastTSMap["global"] = ts
+		_, exist := o.lastTSMap["global"]
+		if !exist {
+			o.lastTSMap["global"] = new(uint64)
+		}
+		atomic.StoreUint64(o.lastTSMap["global"], ts)
 	}
 }

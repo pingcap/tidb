@@ -33,7 +33,7 @@ const slowDist = 30 * time.Millisecond
 // pdOracle is an Oracle that uses a placement driver client as source.
 type pdOracle struct {
 	c         pd.Client
-	lastTSMap map[string]uint64
+	lastTSMap map[string]*uint64
 	quit      chan struct{}
 }
 
@@ -44,12 +44,13 @@ type pdOracle struct {
 // itself to keep up with the timestamp on PD server.
 func NewPdOracle(pdClient pd.Client, updateInterval time.Duration) (oracle.Oracle, error) {
 	o := &pdOracle{
-		c:    pdClient,
-		quit: make(chan struct{}),
+		c:         pdClient,
+		lastTSMap: make(map[string]*uint64),
+		quit:      make(chan struct{}),
 	}
 	ctx := context.TODO()
 	go o.updateTS(ctx, updateInterval)
-	// Initialize lastTS by Get.
+	// Initialize the timestamp of the global txnScope by Get.
 	_, err := o.GetTimestamp(ctx)
 	if err != nil {
 		o.Close()
@@ -67,11 +68,11 @@ func (o *pdOracle) IsExpired(lockTS, TTL uint64, opts ...oracle.OptionFunc) bool
 		opt(option)
 	}
 
-	lastTS, exist := o.lastTSMap[option.TxnScope]
+	lastTS, exist := o.getLastTS(option.TxnScope)
 	if !exist {
 		return true
 	}
-	return oracle.ExtractPhysical(atomic.LoadUint64(&lastTS)) >= oracle.ExtractPhysical(lockTS)+int64(TTL)
+	return oracle.ExtractPhysical(lastTS) >= oracle.ExtractPhysical(lockTS)+int64(TTL)
 }
 
 // GetTimestamp gets a new increasing time.
@@ -150,15 +151,23 @@ func (o *pdOracle) getTimestamp(ctx context.Context, txnScope string) (uint64, e
 }
 
 func (o *pdOracle) setLastTS(ts uint64, txnScope string) {
-	lastTS, exist := o.lastTSMap[txnScope]
+	_, exist := o.lastTSMap[txnScope]
 	if !exist {
-		o.lastTSMap[txnScope] = 0
+		o.lastTSMap[txnScope] = new(uint64)
 	}
-	lastTS = o.lastTSMap[txnScope]
-	lastTSValue := atomic.LoadUint64(&lastTS)
-	if ts > lastTSValue {
-		atomic.CompareAndSwapUint64(&lastTS, lastTSValue, ts)
+	lastTSPointer := o.lastTSMap[txnScope]
+	lastTS := atomic.LoadUint64(lastTSPointer)
+	if ts > lastTS {
+		atomic.CompareAndSwapUint64(lastTSPointer, lastTS, ts)
 	}
+}
+
+func (o *pdOracle) getLastTS(txnScope string) (uint64, bool) {
+	lastTSPointer, exist := o.lastTSMap[txnScope]
+	if !exist {
+		return 0, false
+	}
+	return atomic.LoadUint64(lastTSPointer), true
 }
 
 func (o *pdOracle) updateTS(ctx context.Context, interval time.Duration) {
@@ -190,11 +199,11 @@ func (o *pdOracle) UntilExpired(lockTS uint64, TTL uint64, opts ...oracle.Option
 		opt(option)
 	}
 
-	lastTS, exist := o.lastTSMap[option.TxnScope]
+	lastTS, exist := o.getLastTS(option.TxnScope)
 	if !exist {
 		return 0
 	}
-	return oracle.ExtractPhysical(lockTS) + int64(TTL) - oracle.ExtractPhysical(atomic.LoadUint64(&lastTS))
+	return oracle.ExtractPhysical(lockTS) + int64(TTL) - oracle.ExtractPhysical(lastTS)
 }
 
 func (o *pdOracle) Close() {
@@ -220,11 +229,11 @@ func (o *pdOracle) GetLowResolutionTimestamp(ctx context.Context, opts ...oracle
 		opt(option)
 	}
 
-	lastTS, exist := o.lastTSMap[option.TxnScope]
+	lastTS, exist := o.getLastTS(option.TxnScope)
 	if !exist {
 		return 0, errors.Errorf("get low resolution timestamp fail, invalid txnScope = %s", option.TxnScope)
 	}
-	return atomic.LoadUint64(&lastTS), nil
+	return lastTS, nil
 }
 
 func (o *pdOracle) GetLowResolutionTimestampAsync(ctx context.Context, opts ...oracle.OptionFunc) oracle.Future {
@@ -234,7 +243,7 @@ func (o *pdOracle) GetLowResolutionTimestampAsync(ctx context.Context, opts ...o
 		opt(option)
 	}
 
-	lastTS, exist := o.lastTSMap[option.TxnScope]
+	lastTS, exist := o.getLastTS(option.TxnScope)
 	if !exist {
 		return lowResolutionTsFuture{
 			ts:  0,
@@ -242,7 +251,7 @@ func (o *pdOracle) GetLowResolutionTimestampAsync(ctx context.Context, opts ...o
 		}
 	}
 	return lowResolutionTsFuture{
-		ts:  atomic.LoadUint64(&lastTS),
+		ts:  lastTS,
 		err: nil,
 	}
 }
