@@ -780,12 +780,12 @@ func (b *PlanBuilder) coalesceCommonColumns(p *LogicalJoin, leftPlan, rightPlan 
 		}
 	}
 
-	schemaCols := make([]*expression.Column, len(lColumns)+len(rColumns))
+	schemaCols := make([]*expression.Column, len(lColumns)+len(rColumns)-commonLen)
 	copy(schemaCols[:len(lColumns)], lColumns)
-	copy(schemaCols[len(lColumns):], rColumns)
+	copy(schemaCols[len(lColumns):], rColumns[commonLen:])
 	names := make(types.NameSlice, len(schemaCols))
 	copy(names, lNames)
-	copy(names[len(lNames):], rNames)
+	copy(names[len(lNames):], rNames[commonLen:])
 
 	conds := make([]expression.Expression, 0, commonLen)
 	for i := 0; i < commonLen; i++ {
@@ -2400,8 +2400,8 @@ func (b *PlanBuilder) unfoldWildStar(p LogicalPlan, selectFields []*ast.SelectFi
 		dbName := field.WildCard.Schema
 		tblName := field.WildCard.Table
 		findTblNameInSchema := false
-		for i, name := range p.OutputNames() {
-			col := p.Schema().Columns[i]
+		for j, name := range p.OutputNames() {
+			col := p.Schema().Columns[j]
 			if col.IsHidden {
 				continue
 			}
@@ -2419,6 +2419,28 @@ func (b *PlanBuilder) unfoldWildStar(p LogicalPlan, selectFields []*ast.SelectFi
 				field := &ast.SelectField{Expr: colName}
 				field.SetText(name.ColName.O)
 				resultList = append(resultList, field)
+			}
+		}
+
+		if join, ok := p.(*LogicalJoin); ok {
+			if join.redundantNames != nil {
+				for j, name := range join.redundantNames {
+					col := join.redundantSchema.Columns[j]
+					if (dbName.L == "" || dbName.L == name.DBName.L) &&
+						tblName.L == name.TblName.L && col.ID != model.ExtraHandleID {
+						colName := &ast.ColumnNameExpr{
+							Name: &ast.ColumnName{
+								Schema: name.DBName,
+								Table:  name.TblName,
+								Name:   name.ColName,
+							}}
+						colName.SetType(col.GetType())
+						field := &ast.SelectField{Expr: colName}
+						field.SetText(name.ColName.O)
+						resultList = append(resultList, field)
+						findTblNameInSchema = true
+					}
+				}
 			}
 		}
 		if !findTblNameInSchema {
