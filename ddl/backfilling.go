@@ -323,29 +323,32 @@ func (w *worker) handleReorgTasks(reorgInfo *reorgInfo, totalAddedCount *int64, 
 	return nil
 }
 
-func (w *worker) handleSubReorgTasks(subTaskReorgInfo *subTaskReorgInfo, totalAddedCount *int64, workers []*backfillWorker, batchTasks []*reorgBackfillTask) error {
+func (w *worker) handleSubReorgTasks(subTaskReorgInfo *subTaskReorgInfo, addedCount *int64, workers []*backfillWorker, batchTasks []*reorgBackfillTask) error {
 	for i, task := range batchTasks {
 		workers[i].taskCh <- task
 	}
 	startHandle := batchTasks[0].startHandle
 	taskCnt := len(batchTasks)
 	startTime := time.Now()
-	nextHandle, taskAddedCount, err := w.waitTaskResults(workers, taskCnt, totalAddedCount, startHandle)
+	nextHandle, taskAddedCount, err := w.waitTaskResults(workers, taskCnt, addedCount, startHandle)
 	elapsedTime := time.Since(startTime)
 	if err != nil {
 		// Update the reorg handle that has been processed.
 		err1 := kv.RunInNewTxn(subTaskReorgInfo.d.store, true, func(txn kv.Transaction) error {
 			t := newMetaWithQueueTp(txn, subTaskTypeStr)
-			return errors.Trace(t.UpdateDDLSubTaskReorgInfo(subTaskReorgInfo.jobID, subTaskReorgInfo.taskID, subTaskReorgInfo.StartHandle, subTaskReorgInfo.EndHandle, subTaskReorgInfo.PhysicalTableID, subTaskReorgInfo.Runner, Failed))
+			return errors.Trace(t.UpdateDDLSubTaskReorgInfo(subTaskReorgInfo.jobID, subTaskReorgInfo.taskID, subTaskReorgInfo.StartHandle, subTaskReorgInfo.EndHandle, subTaskReorgInfo.PhysicalTableID, subTaskReorgInfo.Runner, Failed, taskAddedCount))
 		})
 		metrics.BatchAddIdxHistogram.WithLabelValues(metrics.LblError).Observe(elapsedTime.Seconds())
 		logutil.BgLogger().Warn("[ddl] backfill worker handle sub tasks failed",
-			zap.Int64("totalAddedCount", *totalAddedCount), zap.String("startHandle", toString(startHandle)),
+			zap.Int64("taskAddedCount", taskAddedCount), zap.String("startHandle", toString(startHandle)),
 			zap.String("nextHandle", toString(nextHandle)), zap.Int64("batchAddedCount", taskAddedCount),
 			zap.String("taskFailedError", err.Error()), zap.String("takeTime", elapsedTime.String()),
 			zap.NamedError("updateHandleError", err1))
 		return errors.Trace(err)
 	}
+
+	logutil.BgLogger().Info("[ddl] backfill worker handle batch tasks successful", zap.Int64("taskAddedCount", *addedCount), zap.String("startHandle", toString(startHandle)),
+		zap.String("nextHandle", toString(nextHandle)), zap.Int64("batchAddedCount", taskAddedCount), zap.String("takeTime", elapsedTime.String()))
 	return nil
 }
 

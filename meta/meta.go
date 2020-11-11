@@ -785,7 +785,7 @@ func (m *Meta) GetAllDDLSubTaskInQueue(jobListKeys ...JobListKeyType) ([]*ddl.Su
 }
 
 func (m *Meta) reorgSubTaskStartHandle(jobId int64, subTaskId int64) []byte {
-	b := make([]byte, 16, 20)
+	b := make([]byte, 8, 14)
 	binary.BigEndian.PutUint64(b, uint64(jobId))
 	binary.BigEndian.PutUint64(b, uint64(subTaskId))
 	b = append(b, "_start"...)
@@ -793,7 +793,7 @@ func (m *Meta) reorgSubTaskStartHandle(jobId int64, subTaskId int64) []byte {
 }
 
 func (m *Meta) reorgSubTaskEndHandle(jobId int64, subTaskId int64) []byte {
-	b := make([]byte, 16, 20)
+	b := make([]byte, 8, 12)
 	binary.BigEndian.PutUint64(b, uint64(jobId))
 	binary.BigEndian.PutUint64(b, uint64(subTaskId))
 	b = append(b, "_end"...)
@@ -801,7 +801,7 @@ func (m *Meta) reorgSubTaskEndHandle(jobId int64, subTaskId int64) []byte {
 }
 
 func (m *Meta) reorgSubTaskPhysicalTableID(jobId int64, subTaskId int64) []byte {
-	b := make([]byte, 16, 20)
+	b := make([]byte, 8, 12)
 	binary.BigEndian.PutUint64(b, uint64(jobId))
 	binary.BigEndian.PutUint64(b, uint64(subTaskId))
 	b = append(b, "_pid"...)
@@ -809,7 +809,7 @@ func (m *Meta) reorgSubTaskPhysicalTableID(jobId int64, subTaskId int64) []byte 
 }
 
 func (m *Meta) reorgSubTaskRunner(jobId int64, subTaskId int64) []byte {
-	b := make([]byte, 16, 22)
+	b := make([]byte, 8, 15)
 	binary.BigEndian.PutUint64(b, uint64(jobId))
 	binary.BigEndian.PutUint64(b, uint64(subTaskId))
 	b = append(b, "_runner"...)
@@ -817,10 +817,18 @@ func (m *Meta) reorgSubTaskRunner(jobId int64, subTaskId int64) []byte {
 }
 
 func (m *Meta) reorgSubTaskStatus(jobId int64, subTaskId int64) []byte {
-	b := make([]byte, 16, 21)
+	b := make([]byte, 8, 13)
 	binary.BigEndian.PutUint64(b, uint64(jobId))
 	binary.BigEndian.PutUint64(b, uint64(subTaskId))
 	b = append(b, "_stat"...)
+	return b
+}
+
+func (m *Meta) reorgSubTaskRowCount(jobID int64, subTaskID int64) []byte {
+	b := make([]byte, 8, 14)
+	binary.BigEndian.PutUint64(b, uint64(jobID))
+	binary.BigEndian.PutUint64(b, uint64(subTaskID))
+	b = append(b, "_count"...)
 	return b
 }
 
@@ -1006,7 +1014,7 @@ func (m *Meta) UpdateDDLReorgHandle(job *model.Job, startHandle, endHandle kv.Ha
 	return errors.Trace(err)
 }
 
-func (m *Meta) UpdateDDLSubTaskReorgInfo(jobID int64, subTaskID int64, startHandle, endHandle kv.Handle, physicalTableID int64, runner string, status ddl.SubTaskStatus) error {
+func (m *Meta) UpdateDDLSubTaskReorgInfo(jobID int64, subTaskID int64, startHandle, endHandle kv.Handle, physicalTableID int64, runner string, status ddl.SubTaskStatus, count int64) error {
 	err := SetReorgSubTaskFiledHandle(m.txn, m.reorgSubTaskStartHandle(jobID, subTaskID), startHandle)
 	if err != nil {
 		return errors.Trace(err)
@@ -1027,6 +1035,10 @@ func (m *Meta) UpdateDDLSubTaskReorgInfo(jobID int64, subTaskID int64, startHand
 	if err != nil {
 		return errors.Trace(err)
 	}
+	err = m.SetReorgSubTaskRowCount(jobID, subTaskID, count)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	return errors.Trace(err)
 }
 
@@ -1043,7 +1055,18 @@ func (m *Meta) SetReorgSubTaskFiledStatus(jobID int64, subTaskID int64, status d
 		err = m.txn.HSet(mDDLSubTaskReorgKey, m.reorgSubTaskStatus(jobID, subTaskID), []byte(strconv.FormatInt(1, 10)))
 	case ddl.Failed:
 		err = m.txn.HSet(mDDLSubTaskReorgKey, m.reorgSubTaskStatus(jobID, subTaskID), []byte(strconv.FormatInt(2, 10)))
+	case ddl.Success:
+		err = m.txn.HSet(mDDLSubTaskReorgKey, m.reorgSubTaskStatus(jobID, subTaskID), []byte(strconv.FormatInt(3, 10)))
+	case ddl.Recorganized:
+		err = m.txn.HSet(mDDLSubTaskReorgKey, m.reorgSubTaskStatus(jobID, subTaskID), []byte(strconv.FormatInt(4, 10)))
+	case ddl.UNKOWN:
+		err = m.txn.HSet(mDDLSubTaskReorgKey, m.reorgSubTaskStatus(jobID, subTaskID), []byte(strconv.FormatInt(10, 10)))
 	}
+	return errors.Trace(err)
+}
+
+func (m *Meta) SetReorgSubTaskRowCount(jobID int64, subTaskID int64, count int64) (err error) {
+	err = m.txn.HSet(mDDLSubTaskReorgKey, m.reorgSubTaskRowCount(jobID, subTaskID), []byte(strconv.FormatInt(count, 10)))
 	return errors.Trace(err)
 }
 
@@ -1106,17 +1129,20 @@ func (m *Meta) RemoveDDLSubTaskReorgHandle(jobID int64, subTaskID int64) error {
 	if err = m.txn.HDel(mDDLSubTaskReorgKey, m.reorgSubTaskStatus(jobID, subTaskID)); err != nil {
 		logutil.BgLogger().Warn("remove SubTask DDL reorg status", zap.Error(err))
 	}
+	if err = m.txn.HDel(mDDLSubTaskReorgKey, m.reorgSubTaskRowCount(jobID, subTaskID)); err != nil {
+		logutil.BgLogger().Warn("remove SubTask DDL reorg count", zap.Error(err))
+	}
 	return nil
 }
 
-func (m *Meta) GetDDLSubTaskReorgInfo(jobID int64, subTaskID int64, isCommonHandle bool) (startHandle, endHandle kv.Handle, physicalTableID int64, runner string, status ddl.SubTaskStatus, err error) {
+func (m *Meta) GetDDLSubTaskReorgInfo(jobID int64, subTaskID int64, isCommonHandle bool) (startHandle, endHandle kv.Handle, physicalTableID int64, runner string, status ddl.SubTaskStatus, count int64, err error) {
 	startHandle, err = getReorgSubTaskFieldHandle(m.txn, m.reorgSubTaskStartHandle(jobID, subTaskID), isCommonHandle)
 	if err != nil {
-		return nil, nil, 0, RunnerErrStr, ddl.UNKOWN, errors.Trace(err)
+		return nil, nil, 0, RunnerErrStr, ddl.UNKOWN, 0, errors.Trace(err)
 	}
 	endHandle, err = getReorgSubTaskFieldHandle(m.txn, m.reorgSubTaskEndHandle(jobID, subTaskID), isCommonHandle)
 	if err != nil {
-		return nil, nil, 0, RunnerErrStr, ddl.UNKOWN, errors.Trace(err)
+		return nil, nil, 0, RunnerErrStr, ddl.UNKOWN, 0, errors.Trace(err)
 	}
 	physicalTableID, err = m.GetReorgSubTaskPhysicalTableId(jobID, subTaskID)
 	if err != nil {
@@ -1125,13 +1151,17 @@ func (m *Meta) GetDDLSubTaskReorgInfo(jobID int64, subTaskID int64, isCommonHand
 	}
 	runner, err = m.GetReorgSubTaskRunner(jobID, subTaskID)
 	if err != nil {
-		return nil, nil, 0, RunnerErrStr, ddl.UNKOWN, errors.Trace(err)
+		return nil, nil, 0, RunnerErrStr, ddl.UNKOWN, 0, errors.Trace(err)
 	}
 	status, err = m.GetReorgSubTaskStatus(jobID, subTaskID)
 	if err != nil {
-		return nil, nil, 0, RunnerErrStr, ddl.UNKOWN, errors.Trace(err)
+		return nil, nil, 0, RunnerErrStr, ddl.UNKOWN, 0, errors.Trace(err)
 	}
-	return startHandle, endHandle, physicalTableID, runner, status, errors.Trace(err)
+	count, err = m.GetRorgSubTaskRowCount(jobID, subTaskID)
+	if err != nil {
+		return nil, nil, 0, RunnerErrStr, ddl.UNKOWN, 0, errors.Trace(err)
+	}
+	return startHandle, endHandle, physicalTableID, runner, status, count, errors.Trace(err)
 }
 
 // GetDDLReorgHandle gets the latest processed DDL reorganize position.
@@ -1192,7 +1222,19 @@ func (m *Meta) GetReorgSubTaskRunner(jobId int64, taskID int64) (runner string, 
 	return string(bs[:]), errors.Trace(err)
 }
 
-func (m *Meta) GetReorgSubTaskStatus(jobId int64, taskID int64) (stauts ddl.SubTaskStatus, err error) {
+func (m *Meta) GetRorgSubTaskRowCount(jobID int64, taskID int64) (rowCount int64, err error) {
+	bs, err := m.txn.HGet(mDDLSubTaskReorgKey, m.reorgSubTaskRowCount(jobID, taskID))
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	count, err := strconv.ParseInt(string(bs), 10, 64)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	return count, errors.Trace(err)
+}
+
+func (m *Meta) GetReorgSubTaskStatus(jobId int64, taskID int64) (status ddl.SubTaskStatus, err error) {
 	bs, err := m.txn.HGet(mDDLSubTaskReorgKey, m.reorgSubTaskStatus(jobId, taskID))
 	var n int64
 	n, err = strconv.ParseInt(string(bs), 10, 64)
@@ -1205,6 +1247,8 @@ func (m *Meta) GetReorgSubTaskStatus(jobId int64, taskID int64) (stauts ddl.SubT
 		return ddl.Failed, errors.Trace(err)
 	case 3:
 		return ddl.Success, errors.Trace(err)
+	case 4:
+		return ddl.Recorganized, errors.Trace(err)
 	default:
 		return ddl.UNKOWN, errors.Trace(err)
 	}
