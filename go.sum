@@ -421,6 +421,8 @@ github.com/pingcap/errors v0.11.5-0.20190809092503-95897b64e011/go.mod h1:Oi8TUi
 github.com/pingcap/errors v0.11.5-0.20200902104258-eba4f1d8f6de/go.mod h1:g4vx//d6VakjJ0mk7iLBlKA8LFavV/sAVINT/1PFxeQ=
 github.com/pingcap/errors v0.11.5-0.20200917111840-a15ef68f753d h1:TH18wFO5Nq/zUQuWu9ms2urgZnLP69XJYiI2JZAkUGc=
 github.com/pingcap/errors v0.11.5-0.20200917111840-a15ef68f753d/go.mod h1:g4vx//d6VakjJ0mk7iLBlKA8LFavV/sAVINT/1PFxeQ=
+github.com/pingcap/errors v0.11.5-0.20201029093017-5a7df2af2ac7 h1:wQKuKP2HUtej2gSvx1cZmY4DENUH6tlOxRkfvPT8EBU=
+github.com/pingcap/errors v0.11.5-0.20201029093017-5a7df2af2ac7/go.mod h1:G7x87le1poQzLB/TqvTJI2ILrSgobnq4Ut7luOwvfvI=
 github.com/pingcap/failpoint v0.0.0-20191029060244-12f4ac2fd11d/go.mod h1:DNS3Qg7bEDhU6EXNHF+XSv/PGznQaMJ5FWvctpm6pQI=
 github.com/pingcap/failpoint v0.0.0-20200210140405-f8f9fb234798/go.mod h1:DNS3Qg7bEDhU6EXNHF+XSv/PGznQaMJ5FWvctpm6pQI=
 github.com/pingcap/failpoint v0.0.0-20200506114213-c17f16071c53/go.mod h1:w4PEZ5y16LeofeeGwdgZB4ddv9bLyDuIX+ljstgKZyk=
@@ -459,6 +461,8 @@ github.com/pingcap/parser v0.0.0-20200921063432-e220cfcfd026 h1:i+r4P7hb4KpW74nP
 github.com/pingcap/parser v0.0.0-20200921063432-e220cfcfd026/go.mod h1:dMMvhqeowLnAsDWspyalgxXoRUnP09cZ7wAnpt2e/S8=
 github.com/pingcap/parser v0.0.0-20201104074312-b05b93d3a011 h1:OK7jx9L6bgzfreJDSfmn5DE5xfPT+T7WClGunIvg4Qo=
 github.com/pingcap/parser v0.0.0-20201104074312-b05b93d3a011/go.mod h1:dMMvhqeowLnAsDWspyalgxXoRUnP09cZ7wAnpt2e/S8=
+github.com/pingcap/parser v0.0.0-20201110035125-75bba1b6372d h1:EnSBPqZ/lmytzSJq9Ih2oyPun7uCSZVS+F6htYqut5I=
+github.com/pingcap/parser v0.0.0-20201110035125-75bba1b6372d/go.mod h1:GbEr2PgY72/4XqPZzmzstlOU/+il/wrjeTNFs6ihsSE=
 github.com/pingcap/pd/v4 v4.0.0-rc.1.0.20200422143320-428acd53eba2/go.mod h1:s+utZtXDznOiL24VK0qGmtoHjjXNsscJx3m1n8cC56s=
 github.com/pingcap/pd/v4 v4.0.0-rc.2.0.20200520083007-2c251bd8f181/go.mod h1:q4HTx/bA8aKBa4S7L+SQKHvjRPXCRV0tA0yRw0qkZSA=
 github.com/pingcap/pd/v4 v4.0.5-0.20200817114353-e465cafe8a91/go.mod h1:m9OEkKoPMQWjrbJ9pqjjeCqzqxraZrPEuWa1OI6Wcek=
