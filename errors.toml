@@ -251,6 +251,11 @@ error = '''
 Generated column '%s' cannot refer to auto-increment column.
 '''
 
+["ddl:3754"]
+error = '''
+Functional index '%s' cannot refer to an auto-increment column
+'''
+
 ["ddl:3756"]
 error = '''
 The primary key cannot be a functional index
