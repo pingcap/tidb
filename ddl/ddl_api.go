@@ -2173,41 +2173,9 @@ func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTab
 		}
 	}
 
-<<<<<<< HEAD
 	if len(colName) > mysql.MaxColumnNameLength {
 		return ErrTooLongIdent.GenWithStackByArgs(colName)
 	}
-=======
-	tableCharset, tableCollate, err := ResolveCharsetCollation(
-		ast.CharsetOpt{Chs: t.Meta().Charset, Col: t.Meta().Collate},
-		ast.CharsetOpt{Chs: schema.Charset, Col: schema.Collate},
-	)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	// Ignore table constraints now, they will be checked later.
-	// We use length(t.Cols()) as the default offset firstly, we will change the column's offset later.
-	col, _, err = buildColumnAndConstraint(
-		ctx,
-		len(t.Cols()),
-		specNewColumn,
-		nil,
-		tableCharset,
-		tableCollate,
-	)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	originDefVal, err := generateOriginDefaultValue(col.ToInfo())
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	err = col.SetOriginDefaultValue(originDefVal)
-	return col, err
-}
->>>>>>> 6342fa6a5... ddl: fix corrupted default value for bit type column (#18036)
 
 	// Ignore table constraints now, maybe return error later.
 	// We use length(t.Cols()) as the default offset firstly, we will change the
