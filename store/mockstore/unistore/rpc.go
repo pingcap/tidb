@@ -91,11 +91,17 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 		resp.Resp, err = c.usSvr.KvScan(ctx, req.Scan())
 	case tikvrpc.CmdPrewrite:
 		failpoint.Inject("rpcPrewriteResult", func(val failpoint.Value) {
-			switch val.(string) {
-			case "notLeader":
-				failpoint.Return(&tikvrpc.Response{
-					Resp: &kvrpcpb.PrewriteResponse{RegionError: &errorpb.Error{NotLeader: &errorpb.NotLeader{}}},
-				}, nil)
+			if val != nil {
+				switch val.(string) {
+				case "notLeader":
+					failpoint.Return(&tikvrpc.Response{
+						Resp: &kvrpcpb.PrewriteResponse{RegionError: &errorpb.Error{NotLeader: &errorpb.NotLeader{}}},
+					}, nil)
+				case "writeConflict":
+					failpoint.Return(&tikvrpc.Response{
+						Resp: &kvrpcpb.PrewriteResponse{Errors: []*kvrpcpb.KeyError{{Conflict: &kvrpcpb.WriteConflict{}}}},
+					}, nil)
+				}
 			}
 		})
 

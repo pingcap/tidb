@@ -113,12 +113,13 @@ type twoPhaseCommitter struct {
 		noFallBack           bool
 	}
 
-	useAsyncCommit  uint32
-	minCommitTS     uint64
-	maxCommitTS     uint64
-	prewriteStarted bool
-	useOnePC        uint32
-	onePCCommitTS   uint64
+	useAsyncCommit    uint32
+	minCommitTS       uint64
+	maxCommitTS       uint64
+	prewriteStarted   bool
+	prewriteCancelled uint32
+	useOnePC          uint32
+	onePCCommitTS     uint64
 }
 
 type memBufferMutations struct {
@@ -1599,6 +1600,7 @@ func (batchExe *batchExecutor) process(batches []batchMutations) error {
 					zap.Uint64("conn", batchExe.committer.connID),
 					zap.Stringer("action type", batchExe.action),
 					zap.Uint64("txnStartTS", batchExe.committer.startTS))
+				atomic.StoreUint32(&batchExe.committer.prewriteCancelled, 1)
 				cancel()
 			}
 			if err == nil {
