@@ -25,6 +25,7 @@ import (
 const (
 	flagPresumeKNE KeyFlags = 1 << iota
 	flagKeyLocked
+	flagNeedLocked
 	flagKeyLockedValExist
 	flagNeedCheckExists
 	flagPrewriteOnly
@@ -47,6 +48,11 @@ func (f KeyFlags) HasPresumeKeyNotExists() bool {
 // HasLocked returns whether the associated key has acquired pessimistic lock.
 func (f KeyFlags) HasLocked() bool {
 	return f&flagKeyLocked != 0
+}
+
+// HasNeedLocked return whether the key needed to be locked
+func (f KeyFlags) HasNeedLocked() bool {
+	return f&flagNeedLocked != 0
 }
 
 // HasLockedValueExists returns whether the value exists when key locked.
@@ -82,6 +88,10 @@ const (
 	SetKeyLocked
 	// DelKeyLocked reverts SetKeyLocked.
 	DelKeyLocked
+	// SetNeedLocked marks the associated key need to be acquired lock.
+	SetNeedLocked
+	// DelNeedLocked reverts SetKeyNeedLocked.
+	DelNeedLocked
 	// SetKeyLockedValueExists marks the value exists when key has been locked in Transaction.LockKeys.
 	SetKeyLockedValueExists
 	// SetKeyLockedValueNotExists marks the value doesn't exists when key has been locked in Transaction.LockKeys.
@@ -105,6 +115,10 @@ func applyFlagsOps(origin KeyFlags, ops ...FlagsOp) KeyFlags {
 			origin |= flagKeyLocked
 		case DelKeyLocked:
 			origin &= ^flagKeyLocked
+		case SetNeedLocked:
+			origin |= flagNeedLocked
+		case DelNeedLocked:
+			origin &= ^flagNeedLocked
 		case SetKeyLockedValueExists:
 			origin |= flagKeyLockedValExist
 		case DelNeedCheckExists:
@@ -309,6 +323,10 @@ func (db *memdb) SetWithFlags(key Key, value []byte, ops ...FlagsOp) error {
 
 func (db *memdb) Delete(key Key) error {
 	return db.set(key, tombstone)
+}
+
+func (db *memdb) DeleteWithFlags(key Key, ops ...FlagsOp) error {
+	return db.set(key, tombstone, ops...)
 }
 
 func (db *memdb) GetKeyByHandle(handle MemKeyHandle) []byte {

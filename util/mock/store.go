@@ -28,6 +28,9 @@ type Store struct {
 // GetClient implements kv.Storage interface.
 func (s *Store) GetClient() kv.Client { return s.Client }
 
+// GetMPPClient implements kv.Storage interface.
+func (s *Store) GetMPPClient() kv.MPPClient { return nil }
+
 // GetOracle implements kv.Storage interface.
 func (s *Store) GetOracle() oracle.Oracle { return nil }
 
@@ -58,6 +61,11 @@ func (s *Store) Name() string { return "UtilMockStorage" }
 // Describe implements kv.Storage interface.
 func (s *Store) Describe() string {
 	return "UtilMockStorage is a mock Store implementation, only for unittests in util package"
+}
+
+// GetMemCache implements kv.Storage interface
+func (s *Store) GetMemCache() kv.MemManager {
+	return nil
 }
 
 // ShowStatus implements kv.Storage interface.
