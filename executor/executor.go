@@ -896,6 +896,20 @@ func (e *SelectLockExec) Open(ctx context.Context) error {
 		}
 	}
 
+	txnCtx := e.ctx.GetSessionVars().TxnCtx
+	udpp := e.ctx.GetSessionVars().UseDynamicPartitionPrune()
+	if len(e.tblID2Handle) > 0 {
+		for id := range e.tblID2Handle {
+			txnCtx.UpdateDeltaForTable(id, id, 0, 0, nil, udpp)
+		}
+	}
+	if len(e.partitionedTable) > 0 {
+		for _, p := range e.partitionedTable {
+			pid := p.Meta().ID
+			txnCtx.UpdateDeltaForTable(pid, pid, 0, 0, nil, udpp)
+		}
+	}
+
 	return nil
 }
 

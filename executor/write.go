@@ -180,7 +180,7 @@ func updateRecord(ctx context.Context, sctx sessionctx.Context, h kv.Handle, old
 				colSize[col.ID] = 0
 			}
 			udpp := sctx.GetSessionVars().UseDynamicPartitionPrune()
-			txnCtx.UpdateDeltaForTable(t.Meta().ID, physicalID, 0, 1, colSize, udpp)
+			txnCtx.UpdateDeltaForTable(t.Meta().ID, physicalID, 0, 0, colSize, udpp)
 		}
 		return false, nil
 	}
