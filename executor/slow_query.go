@@ -393,13 +393,13 @@ func combineLogs(logs []slowLogs, num int) [][]string {
 	}
 
 	i := 0
-	for i + num < len(logs) {
+	for i+num < len(logs) {
 		log := make([]string, 0)
-		for j := i; j < i + num; j++ {
+		for j := i; j < i+num; j++ {
 			log = append(log, logs[j].log...)
 		}
 		combinedLogs = append(combinedLogs, log)
-		if i + num <= len(logs) {
+		if i+num <= len(logs) {
 			i += num
 		} else {
 			break
@@ -1025,7 +1025,6 @@ func (e *slowQueryRetriever) getAllFiles(sctx sessionctx.Context, logFilePath st
 		if err != nil {
 			return handleErr(err)
 		}
-		inTimeRanges = true
 		end := types.NewTime(types.FromGoTime(fileEndTime), mysql.TypeDatetime, types.MaxFsp)
 		inTimeRanges = false
 		for _, tr := range e.checker.timeRanges {

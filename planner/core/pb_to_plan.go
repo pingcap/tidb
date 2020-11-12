@@ -14,7 +14,6 @@
 package core
 
 import (
-	"math"
 	"strings"
 	"time"
 
@@ -31,10 +30,10 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tipb/go-tipb"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/rowcodec"
+	"github.com/pingcap/tipb/go-tipb"
 )
 
 // PBPlanBuilder uses to build physical plan from dag protocol buffers.
@@ -46,7 +45,7 @@ type PBPlanBuilder struct {
 }
 
 // NewPBPlanBuilder creates a new pb plan builder.
-func NewPBPlanBuilder(sctx sessionctx.Context, is infoschema.InfoSchema, ranges[] *coprocessor.KeyRange) *PBPlanBuilder {
+func NewPBPlanBuilder(sctx sessionctx.Context, is infoschema.InfoSchema, ranges []*coprocessor.KeyRange) *PBPlanBuilder {
 	return &PBPlanBuilder{sctx: sctx, is: is, ranges: ranges}
 }
 
@@ -147,7 +146,7 @@ func (b *PBPlanBuilder) decodeTimeRanges(keyRanges []*coprocessor.KeyRange) ([][
 			end, err := tablecodec.DecodeRowKey(kr.End)
 			var endTime int64
 			if err != nil {
-				endTime = math.MaxInt64
+				endTime = 0
 			} else {
 				endTime, err = b.decodeToTime(end)
 				if err != nil {
@@ -163,7 +162,7 @@ func (b *PBPlanBuilder) decodeTimeRanges(keyRanges []*coprocessor.KeyRange) ([][
 
 func (b *PBPlanBuilder) decodeToTime(handle kv.Handle) (int64, error) {
 	tp := types.NewFieldType(mysql.TypeDatetime)
-	col := rowcodec.ColInfo{ID:0, Ft: tp}
+	col := rowcodec.ColInfo{ID: 0, Ft: tp}
 	chk := chunk.NewChunkWithCapacity([]*types.FieldType{tp}, 1)
 	coder := codec.NewDecoder(chk, nil)
 	_, err := coder.DecodeOne(handle.EncodedCol(0), 0, col.Ft)

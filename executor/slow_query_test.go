@@ -274,8 +274,8 @@ select * from t;`)
 	slowLog = bytes.NewBufferString(
 		`# Time: 2019-05-12-11:23:29.614327491 +0800
 # Txn_start_ts: 405888132465033227#
+select * from t;
 `)
-
 	scanner = bufio.NewReader(slowLog)
 	_, err = parseSlowLog(ctx, scanner)
 	c.Assert(err, IsNil)
