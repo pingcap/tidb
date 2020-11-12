@@ -650,7 +650,7 @@ var MetricTableMap = map[string]MetricTableDef{
 		Labels:  []string{"instance", "store"},
 	},
 	"tidb_batch_client_wait_duration": {
-		Comment:  "The quantile of kv storage batch processing durations",
+		Comment:  "The quantile of kv storage batch processing durations, the unit is nanosecond",
 		PromQL:   "histogram_quantile($QUANTILE, sum(rate(tidb_tikvclient_batch_wait_duration_bucket{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (le, instance))",
 		Labels:   []string{"instance"},
 		Quantile: 0.95,
@@ -2413,7 +2413,7 @@ var MetricTableMap = map[string]MetricTableDef{
 	"tidb_batch_client_wait_total_time": {
 		PromQL:  "sum(increase(tidb_tikvclient_batch_wait_duration_sum{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (instance)",
 		Labels:  []string{"instance"},
-		Comment: "The total time of kv storage batch processing durations",
+		Comment: "The total time of kv storage batch processing durations, the unit is nanosecond",
 	},
 	"tidb_compile_total_count": {
 		PromQL:  "sum(increase(tidb_session_compile_duration_seconds_count{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (instance,sql_type)",
