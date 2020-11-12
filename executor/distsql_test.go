@@ -255,3 +255,14 @@ func (s *testSuite3) TestPushLimitDownIndexLookUpReader(c *C) {
 	tk.MustQuery("select * from tbl use index(idx_b_c) where b > 1 order by b desc limit 2,1").Check(testkit.Rows("3 3 3"))
 	tk.MustQuery("select * from tbl use index(idx_b_c) where b > 1 and c > 1 limit 2,1").Check(testkit.Rows("4 4 4"))
 }
+func (s *testSuite3) TestIndexLookUpGetResultChunk(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists tbl")
+	tk.MustExec("create table tbl(a int, b int, c int, key(a))")
+	for i := 0; i < 101; i++ {
+		tk.MustExec(fmt.Sprintf("insert into tbl values(%d,%d,%d)", i, i, i))
+	}
+	tk.MustQuery("select * from tbl  where a >99 limit 1").Check(testkit.Rows("100 100 100"))
+	tk.MustQuery("select * from tbl  where a >10 limit 4,1").Check(testkit.Rows("15 15 15"))
+}
