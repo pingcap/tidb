@@ -16,7 +16,6 @@ package session
 import (
 	"bytes"
 	"context"
-	"go.uber.org/zap"
 	"sort"
 	"strconv"
 
@@ -34,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/rowcodec"
+	"go.uber.org/zap"
 )
 
 var _ = SerialSuites(&testSchemaAmenderSuite{})
