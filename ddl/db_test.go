@@ -353,7 +353,7 @@ func (s *testSerialDBSuite) TestAddExpressionIndexRollback(c *C) {
 	txn, err := ctx.Txn(true)
 	c.Assert(err, IsNil)
 	m := meta.NewMeta(txn)
-	element, start, end, physicalID, err := m.GetDDLReorgHandle(currJob, false)
+	element, start, end, physicalID, err := m.GetDDLReorgHandle(currJob)
 	c.Assert(meta.ErrDDLReorgElementNotExist.Equal(err), IsTrue)
 	c.Assert(element, IsNil)
 	c.Assert(start, IsNil)
@@ -3133,6 +3133,35 @@ func (s *testDBSuite2) TestCreateTableWithSetCol(c *C) {
 	tk.MustQuery("select * from t_set").Check(testkit.Rows("1,4,10,21"))
 }
 
+func (s *testDBSuite2) TestCreateTableWithEnumCol(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	// It's for failure cases.
+	// The type of default value is string.
+	tk.MustExec("drop table if exists t_enum")
+	failedSQL := "create table t_enum (a enum('1', '4', '10') default '3');"
+	tk.MustGetErrCode(failedSQL, errno.ErrInvalidDefault)
+	failedSQL = "create table t_enum (a enum('1', '4', '10') default '');"
+	tk.MustGetErrCode(failedSQL, errno.ErrInvalidDefault)
+	// The type of default value is int.
+	failedSQL = "create table t_enum (a enum('1', '4', '10') default 0);"
+	tk.MustGetErrCode(failedSQL, errno.ErrInvalidDefault)
+	failedSQL = "create table t_enum (a enum('1', '4', '10') default 8);"
+	tk.MustGetErrCode(failedSQL, errno.ErrInvalidDefault)
+
+	// The type of default value is int.
+	// It's for successful cases
+	tk.MustExec("drop table if exists t_enum")
+	tk.MustExec("create table t_enum (a enum('2', '3', '4') default 2);")
+	ret := tk.MustQuery("show create table t_enum").Rows()[0][1]
+	c.Assert(strings.Contains(ret.(string), "`a` enum('2','3','4') DEFAULT '3'"), IsTrue)
+	tk.MustExec("drop table t_enum")
+	tk.MustExec("create table t_enum (a enum('a', 'c', 'd') default 2);")
+	ret = tk.MustQuery("show create table t_enum").Rows()[0][1]
+	c.Assert(strings.Contains(ret.(string), "`a` enum('a','c','d') DEFAULT 'c'"), IsTrue)
+	tk.MustExec("insert into t_enum value()")
+	tk.MustQuery("select * from t_enum").Check(testkit.Rows("c"))
+}
+
 func (s *testDBSuite2) TestTableForeignKey(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -4118,7 +4147,7 @@ func (s *testSerialDBSuite) TestModifyColumnnReorgInfo(c *C) {
 		txn, err := ctx.Txn(true)
 		c.Assert(err, IsNil)
 		m := meta.NewMeta(txn)
-		e, start, end, physicalID, err := m.GetDDLReorgHandle(currJob, false)
+		e, start, end, physicalID, err := m.GetDDLReorgHandle(currJob)
 		c.Assert(meta.ErrDDLReorgElementNotExist.Equal(err), IsTrue)
 		c.Assert(e, IsNil)
 		c.Assert(start, IsNil)
@@ -6553,4 +6582,12 @@ func (s *testSerialDBSuite) TestModifyColumnTypeWhenInterception(c *C) {
 	c.Assert(checkMiddleAddedCount, Equals, true)
 	res := tk.MustQuery("show warnings")
 	c.Assert(len(res.Rows()), Equals, count)
+}
+
+func (s *testDBSuite4) TestGeneratedColumnWindowFunction(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test_db")
+	tk.MustExec("DROP TABLE IF EXISTS t")
+	tk.MustGetErrCode("CREATE TABLE t (a INT , b INT as (ROW_NUMBER() OVER (ORDER BY a)))", errno.ErrWindowInvalidWindowFuncUse)
+	tk.MustGetErrCode("CREATE TABLE t (a INT , index idx ((ROW_NUMBER() OVER (ORDER BY a))))", errno.ErrWindowInvalidWindowFuncUse)
 }
