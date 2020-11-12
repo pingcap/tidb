@@ -56,6 +56,7 @@ func interestingGoroutines() (gs []string) {
 			strings.Contains(stack, "created by runtime.gc") ||
 			strings.Contains(stack, "interestingGoroutines") ||
 			strings.Contains(stack, "runtime.MHeap_Scavenger") ||
+			strings.Contains(stack, "gopkg.in/natefinch/lumberjack%2ev2.(*Logger).millRun") ||
 			// these go routines are async terminated, so they may still alive after test end, thus cause
 			// false positive leak failures
 			strings.Contains(stack, "google.golang.org/grpc.(*addrConn).resetTransport") ||
