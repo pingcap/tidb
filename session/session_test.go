@@ -3516,3 +3516,12 @@ func (s *testBackupRestoreSuite) TestBackupAndRestore(c *C) {
 		tk.MustExec("drop database br02")
 	}
 }
+
+func (s *testSessionSuite2) TestIssue19127(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists issue19127")
+	tk.MustExec("create table issue19127 (c_int int, c_str varchar(40), primary key (c_int, c_str) ) partition by hash (c_int) partitions 4;")
+	tk.MustExec("insert into issue19127 values (9, 'angry williams'), (10, 'thirsty hugle');")
+	tk.Exec("update issue19127 set c_int = c_int + 10, c_str = 'adoring stonebraker' where c_int in (10, 9);")
+	c.Assert(tk.Se.AffectedRows(), Equals, 2)
+}
