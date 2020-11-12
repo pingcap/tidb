@@ -213,15 +213,18 @@ func (e *TableReaderExecutor) collectIndexUsage() {
 	if !e.ctx.IndexUsageCollectorActivated() {
 		return
 	}
-	for _, plan := range e.plans {
-		rsc := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl
-		if !rsc.ExistsCopStats(plan.ID()) {
-			continue
-		}
-		copStats := rsc.GetCopStats(plan.ID())
-		if tableScan, ok := plan.(*plannercore.PhysicalTableScan); ok && !tableScan.IsFullScan() {
-			e.ctx.GetSessionVars().StmtCtx.RecordIndexUsage(tableScan.Table.ID, tableScan.IdxID, copStats.GetActRows())
-		}
+	if e.plans == nil {
+		return
+	}
+	// tableScan will always be located on e.plans[0]
+	plan := e.plans[0]
+	rsc := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl
+	if !rsc.ExistsCopStats(plan.ID()) {
+		return
+	}
+	copStats := rsc.GetCopStats(plan.ID())
+	if tableScan, ok := plan.(*plannercore.PhysicalTableScan); ok && !tableScan.IsFullScan() {
+		e.ctx.GetSessionVars().StmtCtx.RecordIndexUsage(tableScan.Table.ID, tableScan.PrimaryIdxID, copStats.GetActRows())
 	}
 }
 

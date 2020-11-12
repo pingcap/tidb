@@ -259,15 +259,18 @@ func (e *IndexReaderExecutor) collectIndexUsage() {
 	if !e.ctx.IndexUsageCollectorActivated() {
 		return
 	}
-	for _, plan := range e.plans {
-		rsc := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl
-		if !rsc.ExistsCopStats(plan.ID()) {
-			continue
-		}
-		copStats := rsc.GetCopStats(plan.ID())
-		if indexScan, ok := plan.(*plannercore.PhysicalIndexScan); ok && !indexScan.IsFullScan() {
-			e.ctx.GetSessionVars().StmtCtx.RecordIndexUsage(indexScan.Table.ID, indexScan.Index.ID, copStats.GetActRows())
-		}
+	if e.plans == nil {
+		return
+	}
+	// indexScan will always be located on e.plans[0]
+	plan := e.plans[0]
+	rsc := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl
+	if !rsc.ExistsCopStats(plan.ID()) {
+		return
+	}
+	copStats := rsc.GetCopStats(plan.ID())
+	if indexScan, ok := plan.(*plannercore.PhysicalIndexScan); ok && !indexScan.IsFullScan() {
+		e.ctx.GetSessionVars().StmtCtx.RecordIndexUsage(indexScan.Table.ID, indexScan.Index.ID, copStats.GetActRows())
 	}
 }
 
@@ -658,17 +661,21 @@ func (e *IndexLookUpExecutor) Close() error {
 }
 
 func (e *IndexLookUpExecutor) collectIndexUsage() {
-	if e.ctx.IndexUsageCollectorActivated() {
-		for _, plan := range e.idxPlans {
-			rsc := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl
-			if !rsc.ExistsCopStats(plan.ID()) {
-				continue
-			}
-			copStats := rsc.GetCopStats(plan.ID())
-			if indexScan, ok := plan.(*plannercore.PhysicalIndexScan); ok && !indexScan.IsFullScan() {
-				e.ctx.GetSessionVars().StmtCtx.RecordIndexUsage(indexScan.Table.ID, indexScan.Index.ID, copStats.GetActRows())
-			}
-		}
+	if !e.ctx.IndexUsageCollectorActivated() {
+		return
+	}
+	if e.idxPlans == nil {
+		return
+	}
+	// indexScan will always be located on e.idxPlans[0]
+	plan := e.idxPlans[0]
+	rsc := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl
+	if !rsc.ExistsCopStats(plan.ID()) {
+		return
+	}
+	copStats := rsc.GetCopStats(plan.ID())
+	if indexScan, ok := plan.(*plannercore.PhysicalIndexScan); ok && !indexScan.IsFullScan() {
+		e.ctx.GetSessionVars().StmtCtx.RecordIndexUsage(indexScan.Table.ID, indexScan.Index.ID, copStats.GetActRows())
 	}
 }
 

@@ -506,17 +506,19 @@ func (e *IndexMergeReaderExecutor) Close() error {
 }
 
 func (e *IndexMergeReaderExecutor) collectIndexUsage() {
-	if e.ctx.IndexUsageCollectorActivated() {
-		for _, plan := range e.partialPlans {
-			scanPlan := plan[0]
-			rsc := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl
-			if !rsc.ExistsCopStats(scanPlan.ID()) {
-				continue
-			}
-			copStats := rsc.GetCopStats(scanPlan.ID())
-			if indexScan, ok := scanPlan.(*plannercore.PhysicalIndexScan); ok && !indexScan.IsFullScan() {
-				e.ctx.GetSessionVars().StmtCtx.RecordIndexUsage(indexScan.Table.ID, indexScan.Index.ID, copStats.GetActRows())
-			}
+	if !e.ctx.IndexUsageCollectorActivated() {
+		return
+	}
+	for _, plan := range e.partialPlans {
+		// The Scan plan will be always in plan[0].
+		scanPlan := plan[0]
+		rsc := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl
+		if !rsc.ExistsCopStats(scanPlan.ID()) {
+			continue
+		}
+		copStats := rsc.GetCopStats(scanPlan.ID())
+		if indexScan, ok := scanPlan.(*plannercore.PhysicalIndexScan); ok && !indexScan.IsFullScan() {
+			e.ctx.GetSessionVars().StmtCtx.RecordIndexUsage(indexScan.Table.ID, indexScan.Index.ID, copStats.GetActRows())
 		}
 	}
 }

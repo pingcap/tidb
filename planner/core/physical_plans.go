@@ -470,7 +470,7 @@ type PhysicalTableScan struct {
 
 	PartitionInfo PartitionInfo
 
-	IdxID int64
+	PrimaryIdxID int64
 }
 
 // Clone implements PhysicalPlan interface.

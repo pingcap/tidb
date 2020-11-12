@@ -1730,7 +1730,7 @@ func (ds *DataSource) getOriginalPhysicalTableScan(prop *property.PhysicalProper
 		cost += float64(len(ts.Ranges)) * float64(len(ts.Columns)) * sessVars.SeekFactor
 	}
 	if path.Index != nil {
-		ts.IdxID = path.Index.ID
+		ts.PrimaryIdxID = path.Index.ID
 	}
 	return ts, cost, rowCount
 }
