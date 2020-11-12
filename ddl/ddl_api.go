@@ -5235,15 +5235,16 @@ func (d *ddl) DropIndexes(ctx sessionctx.Context, ti ast.Ident, specs []*ast.Alt
 			indexName = model.NewCIStr(spec.Name)
 		}
 		_, ok := indexesIfExists[indexName.L]
-		if !ok {
-			indexesIfExists[indexName.L] = spec.IfExists
-			droppingIndex = append(droppingIndex, indexName)
-		} else {
+		if ok {
+			err := ErrCantDropFieldOrKey.GenWithStack("index %s doesn't exist", indexName)
 			if spec.IfExists {
+				ctx.GetSessionVars().StmtCtx.AppendNote(err)
 				continue
 			}
-			return ErrCantDropFieldOrKey.GenWithStack("index %s doesn't exist", indexName)
+			return err
 		}
+		indexesIfExists[indexName.L] = spec.IfExists
+		droppingIndex = append(droppingIndex, indexName)
 	}
 
 	// Check the index is droppable.

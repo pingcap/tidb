@@ -1586,16 +1586,35 @@ LOOP:
 	tk.MustExec("drop table test_drop_index")
 }
 
-func (s *testDBSuite2) TestDropIndexes(c *C) {
-	idxNames := []string{"c2_index", "c3_index"}
-	createSQL := "create table test_drop_indexes (c1 int, c2 int, c3 int, primary key(c1), key c2_index(c2), key c3_index(c3))"
-	dropIdxSQL := "alter table test_drop_indexes drop index c2_index, drop index c3_index;"
-	testDropIndexes(c, s.store, s.lease, createSQL, dropIdxSQL, idxNames)
+func (s *testDBSuite2) TestDropDuplicateIndexes(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("use test_db")
+	tk.MustExec("drop table if exists test_drop_duplicate_indexes;")
+	tk.MustExec("create table test_drop_duplicate_indexes (id int, c1 int, c2 int, primary key(id), key i1(c1), key i2(c2));")
 
+	if _, err := tk.Exec("alter table test_drop_duplicate_indexes drop index i1, drop index i1;"); true {
+		c.Assert(err.Error(), Equals, "[ddl:1091]index i1 doesn't exist")
+	}
+
+	tk.MustExec("alter table test_drop_duplicate_indexes drop index i1, drop index if exists i1;")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Note|1091|index i1 doesn't exist"))
+
+	if _, err := tk.Exec("alter table test_drop_duplicate_indexes drop index if exists i2, drop index i2;"); true {
+		c.Assert(err.Error(), Equals, "[ddl:1091]index i2 doesn't exist")
+	}
+
+	tk.MustExec("drop table if exists test_drop_duplicate_indexes")
+}
+
+func (s *testDBSuite2) TestDropIndexes(c *C) {
+	// drop multiple indexes
+	createSQL := "create table test_drop_indexes (id int, c1 int, c2 int, primary key(id), key i1(c1), key i2(c2))"
+	dropIdxSQL := "alter table test_drop_indexes drop index i1, drop index i2;"
+	idxNames := []string{"i1", "i2"}
+	testDropIndexes(c, s.store, s.lease, createSQL, dropIdxSQL, idxNames)
 	// test drop primary key and index
-	idxNames = []string{"primary", "c2_index"}
-	createSQL = "create table test_drop_indexes (c1 int, c2 int, c3 int, primary key(c1), key c2_index(c2), key c3_index(c3))"
-	dropIdxSQL = "alter table test_drop_indexes drop primary key, drop index c2_index;"
+	dropIdxSQL = "alter table test_drop_indexes drop primary key, drop index i1;"
+	idxNames = []string{"primary", "i1"}
 	testDropIndexes(c, s.store, s.lease, createSQL, dropIdxSQL, idxNames)
 }
 
