@@ -25,6 +25,8 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
 
 // Build is used to build a specific AggFunc implementation according to the
@@ -53,12 +55,14 @@ func Build(ctx sessionctx.Context, aggFuncDesc *aggregation.AggFuncDesc, ordinal
 		return buildBitAnd(aggFuncDesc, ordinal)
 	case ast.AggFuncVarPop:
 		return buildVarPop(aggFuncDesc, ordinal)
+	case ast.AggFuncStddevPop:
+		return buildStdDevPop(aggFuncDesc, ordinal)
 	case ast.AggFuncJsonObjectAgg:
 		return buildJSONObjectAgg(aggFuncDesc, ordinal)
 	case ast.AggFuncApproxCountDistinct:
 		return buildApproxCountDistinct(aggFuncDesc, ordinal)
-	case ast.AggFuncStddevPop:
-		return buildStdDevPop(aggFuncDesc, ordinal)
+	case ast.AggFuncApproxPercentile:
+		return buildApproxPercentile(ctx, aggFuncDesc, ordinal)
 	case ast.AggFuncVarSamp:
 		return buildVarSamp(aggFuncDesc, ordinal)
 	case ast.AggFuncStddevSamp:
@@ -124,6 +128,43 @@ func buildApproxCountDistinct(aggFuncDesc *aggregation.AggFuncDesc, ordinal int)
 			return &approxCountDistinctPartial1{approxCountDistinctOriginal{base}}
 		case aggregation.Partial2Mode, aggregation.FinalMode:
 			return &approxCountDistinctPartial2{approxCountDistinctPartial1{approxCountDistinctOriginal{base}}}
+		}
+	}
+
+	return nil
+}
+
+func buildApproxPercentile(sctx sessionctx.Context, aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
+	if aggFuncDesc.Mode == aggregation.DedupMode {
+		return nil
+	}
+
+	// Checked while building descriptor
+	percent, _, err := aggFuncDesc.Args[1].EvalInt(sctx, chunk.Row{})
+	if err != nil {
+		// Should not reach here
+		logutil.BgLogger().Error("Error happened when buildApproxPercentile", zap.Error(err))
+		return nil
+	}
+
+	base := basePercentile{percent: int(percent), baseAggFunc: baseAggFunc{args: aggFuncDesc.Args, ordinal: ordinal}}
+
+	switch aggFuncDesc.Mode {
+	case aggregation.CompleteMode, aggregation.Partial1Mode, aggregation.FinalMode:
+		switch aggFuncDesc.Args[0].GetType().EvalType() {
+		case types.ETInt:
+			return &percentileOriginal4Int{base}
+		case types.ETReal:
+			return &percentileOriginal4Real{base}
+		case types.ETDecimal:
+			return &percentileOriginal4Decimal{base}
+		case types.ETDatetime, types.ETTimestamp:
+			return &percentileOriginal4Time{base}
+		case types.ETDuration:
+			return &percentileOriginal4Duration{base}
+		default:
+			// Return NULL in any case
+			return &base
 		}
 	}
 
