@@ -2903,7 +2903,7 @@ func (s *testIntegrationSuite2) TestBuiltin(c *C) {
 	tk.MustQuery("show warnings").Check(testkit.Rows())
 	tk.MustQuery("select 0 and 1/0")
 	tk.MustQuery("show warnings").Check(testkit.Rows())
-	tk.MustQuery("select select COALESCE(1, 1/0)")
+	tk.MustQuery("select COALESCE(1, 1/0)")
 	tk.MustQuery("show warnings").Check(testkit.Rows())
 	tk.MustQuery("select interval(1,0,1,2,1/0)")
 	tk.MustQuery("show warnings").Check(testkit.Rows())
