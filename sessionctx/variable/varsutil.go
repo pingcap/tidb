@@ -117,7 +117,7 @@ func GetSessionOnlySysVars(s *SessionVars, key string) (string, bool, error) {
 		}
 		return string(info), true, nil
 	case TiDBGeneralLog:
-		return fmt.Sprintf("%d", atomic.LoadUint32(&ProcessGeneralLog)), true, nil
+		return BoolToOnOff(ProcessGeneralLog.Load()), true, nil
 	case TiDBPProfSQLCPU:
 		val := "0"
 		if EnablePProfSQLCPU.Load() {
