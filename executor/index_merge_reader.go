@@ -584,7 +584,7 @@ func (w *indexMergeProcessWorker) fetchLoop(ctx context.Context, fetchCh <-chan 
 			doneCh:  make(chan error, 1),
 		}
 		if w.stats != nil {
-			w.stats.IndexMergeProcess = time.Since(start)
+			w.stats.IndexMergeProcess += time.Since(start)
 		}
 		select {
 		case <-ctx.Done():
@@ -808,9 +808,9 @@ func (e *IndexMergeRuntimeStat) String() string {
 	tableTaskNum := atomic.LoadInt64(&e.TableTaskNum)
 	concurrency := e.Concurrency
 	if indexScan != 0 {
-		buf.WriteString(fmt.Sprintf("index_task:{scan_time:%s", time.Duration(indexScan)))
+		buf.WriteString(fmt.Sprintf("index_task:{scan:%s", time.Duration(indexScan)))
 		if e.IndexMergeProcess != 0 {
-			buf.WriteString(fmt.Sprintf(", merge_time:%s", e.IndexMergeProcess))
+			buf.WriteString(fmt.Sprintf(", merge:%s", e.IndexMergeProcess))
 		}
 		buf.WriteByte('}')
 	}
