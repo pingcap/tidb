@@ -84,14 +84,7 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variable
 	it.maxID.maxID = 0
 	it.minCommitTSPushed.data = make(map[uint64]struct{}, 5)
 	it.tasks = tasks
-	if it.concurrency > len(tasks) {
-		it.concurrency = len(tasks)
-	}
-	if it.concurrency < 1 {
-		// Make sure that there is at least one worker.
-		it.concurrency = 1
-	}
-
+	it.adaptiveConcurrency()
 	if it.req.KeepOrder {
 		it.sendRate = newRateLimit(2 * it.concurrency)
 	} else {
@@ -511,7 +504,6 @@ func (rs *copResponse) RespTime() time.Duration {
 }
 
 const minLogCopTaskTime = 300 * time.Millisecond
-const occupiedMem = int64(96 * 1024 * 1024)
 
 // run is a worker function that get a copTask from channel, handle it and
 // send the result back.
@@ -555,6 +547,29 @@ func (worker *copIteratorWorker) run(ctx context.Context) {
 			return
 		default:
 		}
+	}
+}
+
+const occupiedMem = int64(144 * 1024 * 1024)
+
+func (it *copIterator) adaptiveConcurrency() {
+	if it.concurrency > len(it.tasks) {
+		it.concurrency = len(it.tasks)
+	}
+	adaptiveConcurrency := 0
+	for i := 0; i < it.concurrency; i++ {
+		if it.memTracker.Peak(occupiedMem) {
+			adaptiveConcurrency++
+			it.memTracker.Consume(occupiedMem)
+		} else {
+			break
+		}
+	}
+	it.memTracker.Consume(-occupiedMem * int64(adaptiveConcurrency))
+	it.concurrency = adaptiveConcurrency
+	if it.concurrency < 1 {
+		// Make sure that there is at least one worker.
+		it.concurrency = 1
 	}
 }
 
