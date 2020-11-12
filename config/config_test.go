@@ -193,6 +193,7 @@ nested-loop-join-cache-capacity = 100
 max-index-length = 3080
 skip-register-to-dashboard = true
 deprecate-integer-display-length = true
+txn-scope = "dc-1"
 enable-enum-length-limit = false
 [performance]
 txn-total-size-limit=2000
@@ -272,6 +273,7 @@ spilled-file-encryption-method = "plaintext"
 	c.Assert(conf.Labels["group"], Equals, "abc")
 	c.Assert(conf.Security.SpilledFileEncryptionMethod, Equals, SpilledFileEncryptionMethodPlaintext)
 	c.Assert(conf.DeprecateIntegerDisplayWidth, Equals, true)
+	c.Assert(conf.TxnScope, Equals, "dc-1")
 	c.Assert(conf.EnableEnumLengthLimit, Equals, false)
 
 	_, err = f.WriteString(`
