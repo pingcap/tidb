@@ -24,7 +24,8 @@ func (s *testDumpSuite) TestDetectServerInfo(c *C) {
 		{2, "10.4.10-MariaDB-1:10.4.10+maria~bionic", ServerTypeMariaDB, mkVer(10, 4, 10, "MariaDB-1")},
 		{3, "5.7.25-TiDB-v4.0.0-alpha-1263-g635f2e1af", ServerTypeTiDB, mkVer(4, 0, 0, "alpha-1263-g635f2e1af")},
 		{4, "5.7.25-TiDB-v3.0.7-58-g6adce2367", ServerTypeTiDB, mkVer(3, 0, 7, "58-g6adce2367")},
-		{5, "invalid version", ServerTypeUnknown, (*semver.Version)(nil)},
+		{5, "5.7.25-TiDB-3.0.6", ServerTypeTiDB, mkVer(3, 0, 6, "")},
+		{6, "invalid version", ServerTypeUnknown, (*semver.Version)(nil)},
 	}
 	dec := func(d []interface{}) (tag int, verStr string, tp ServerType, v *semver.Version) {
 		return d[0].(int), d[1].(string), ServerType(d[2].(int)), d[3].(*semver.Version)
