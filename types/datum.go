@@ -1357,11 +1357,8 @@ func (d *Datum) convertToMysqlYear(sc *stmtctx.StatementContext, target *FieldTy
 		y = ret.GetInt64()
 	}
 	y, err = AdjustYear(y, adjust)
-	if err != nil {
-		err = ErrOverflow.GenWithStackByArgs("DECIMAL", fmt.Sprintf("(%d, %d)", target.Flen, target.Decimal))
-	}
 	ret.SetInt64(y)
-	return ret, err
+	return ret, errors.Trace(err)
 }
 
 // ConvertDatumToFloatYear converts datum into MySQL year with float type
