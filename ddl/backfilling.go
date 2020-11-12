@@ -15,6 +15,7 @@ package ddl
 
 import (
 	"context"
+	"github.com/pingcap/tidb/meta"
 	"math"
 	"strconv"
 	"sync/atomic"
@@ -335,8 +336,8 @@ func (w *worker) handleSubReorgTasks(subTaskReorgInfo *subTaskReorgInfo, addedCo
 	if err != nil {
 		// Update the reorg handle that has been processed.
 		err1 := kv.RunInNewTxn(subTaskReorgInfo.d.store, true, func(txn kv.Transaction) error {
-			t := newMetaWithQueueTp(txn, subTaskTypeStr)
-			return errors.Trace(t.UpdateDDLSubTaskReorgInfo(subTaskReorgInfo.jobID, subTaskReorgInfo.taskID, subTaskReorgInfo.StartHandle, subTaskReorgInfo.EndHandle, subTaskReorgInfo.PhysicalTableID, subTaskReorgInfo.Runner, Failed, taskAddedCount))
+			t := newMetaWithQueueTp(txn, meta.SubTaskTypeStr)
+			return errors.Trace(t.UpdateDDLSubTaskReorgInfo(subTaskReorgInfo.JobID, subTaskReorgInfo.TaskID, subTaskReorgInfo.StartHandle, subTaskReorgInfo.EndHandle, subTaskReorgInfo.PhysicalTableID, subTaskReorgInfo.Runner, meta.Failed, taskAddedCount))
 		})
 		metrics.BatchAddIdxHistogram.WithLabelValues(metrics.LblError).Observe(elapsedTime.Seconds())
 		logutil.BgLogger().Warn("[ddl] backfill worker handle sub tasks failed",

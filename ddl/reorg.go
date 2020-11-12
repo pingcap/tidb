@@ -237,7 +237,7 @@ func (w *worker) isReorgRunnable(d *ddlCtx) error {
 	}
 
 	if !d.isOwner() {
-		if w.typeStr() == subTaskTypeStr {
+		if w.typeStr() == meta.SubTaskTypeStr {
 			return nil
 		}
 		// If it's not the owner, we will try later, so here just returns an error.
@@ -264,14 +264,14 @@ type reorgInfo struct {
 }
 
 type subTaskReorgInfo struct {
-	*SubTask
+	*meta.SubTask
 	StartHandle kv.Handle
 	// EndHandle is the last handle of the adding indices table.
 	EndHandle       kv.Handle
 	d               *ddlCtx
 	PhysicalTableID int64
 
-	Status SubTaskStatus
+	Status meta.SubTaskStatus
 
 	Runner string
 }
