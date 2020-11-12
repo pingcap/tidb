@@ -601,10 +601,12 @@ func compareRow(sc *stmtctx.StatementContext, left, right []types.Datum) int {
 
 func (iw *innerWorker) fetchInnerResults(ctx context.Context, task *lookUpJoinTask, lookUpContent []*indexJoinLookUpContent) error {
 	innerExec, err := iw.readerBuilder.buildExecutorForIndexJoin(ctx, lookUpContent, iw.indexRanges, iw.keyOff2IdxOff, iw.nextColCompareFilters)
+	if innerExec != nil {
+		defer terror.Call(innerExec.Close)
+	}
 	if err != nil {
 		return err
 	}
-	defer terror.Call(innerExec.Close)
 	innerResult := chunk.NewList(retTypes(innerExec), iw.ctx.GetSessionVars().MaxChunkSize, iw.ctx.GetSessionVars().MaxChunkSize)
 	innerResult.GetMemTracker().SetLabel(innerResultLabel)
 	innerResult.GetMemTracker().AttachTo(task.memTracker)
