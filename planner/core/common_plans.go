@@ -1076,22 +1076,26 @@ func getRuntimeInfo(ctx sessionctx.Context, p Plan, runtimeStatsColl *execdetail
 	explainID := p.ID()
 
 	// There maybe some mock information for cop task to let runtimeStatsColl.Exists(p.ExplainID()) is true.
-	// So check copTaskEkxecDetail first and print the real cop task information if it's not empty.
+	// So check copTaskExecDetail first and print the real cop task information if it's not empty.
+	isZero := false
 	if runtimeStatsColl.ExistsRootStats(explainID) {
 		rootstats := runtimeStatsColl.GetRootStats(explainID)
 		analyzeInfo = rootstats.String()
 		actRows = fmt.Sprint(rootstats.GetActRows())
 	} else {
+		isZero = true
 		analyzeInfo = "time:0ns, loops:0"
 		actRows = "0"
 	}
 	if runtimeStatsColl.ExistsCopStats(explainID) {
-		copstats := runtimeStatsColl.GetCopStats(explainID)
-		if len(analyzeInfo) > 0 {
+		if isZero {
+			analyzeInfo = ""
+		} else if len(analyzeInfo) > 0 {
 			analyzeInfo += ", "
 		}
-		analyzeInfo += copstats.String()
-		actRows = fmt.Sprint(copstats.GetActRows())
+		copStats := runtimeStatsColl.GetCopStats(explainID)
+		analyzeInfo += copStats.String()
+		actRows = fmt.Sprint(copStats.GetActRows())
 	}
 	memoryInfo = "N/A"
 	memTracker := ctx.GetSessionVars().StmtCtx.MemTracker.SearchTrackerWithoutLock(p.ID())
