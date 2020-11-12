@@ -86,6 +86,10 @@ func (mp *mockDataPhysicalPlan) ExplainID() fmt.Stringer {
 	})
 }
 
+func (mp *mockDataPhysicalPlan) ID() int {
+	return 0
+}
+
 func (mp *mockDataPhysicalPlan) Stats() *property.StatsInfo {
 	return nil
 }
