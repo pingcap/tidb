@@ -6491,7 +6491,7 @@ func (s *testSerialSuite1) TestStreamAggRuntimeStats(c *C) {
 	rows := tk.MustQuery(sql).Rows()
 	c.Assert(len(rows), Equals, 5)
 	explain := fmt.Sprintf("%v", rows[0])
-	c.Assert(explain, Matches, ".*time:.*loops:.*,allocate_time:.*,split_time:.*")
+	c.Assert(explain, Matches, ".*time:.*loops:.*allocate_time:.*split_time:.*")
 }
 
 func (s *testSerialSuite1) TestIndexlookupRuntimeStats(c *C) {
