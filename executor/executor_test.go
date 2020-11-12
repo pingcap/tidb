@@ -6673,17 +6673,17 @@ func (s *testSerialSuite) TestCoprocessorOOMAction(c *C) {
 	failpoint.Enable("github.com/pingcap/tidb/store/tikv/testRateLimitActionMockConsumeAndAssert", `return(true)`)
 	defer failpoint.Disable("github.com/pingcap/tidb/store/tikv/testRateLimitActionMockConsumeAndAssert")
 
-	failpoint.Enable("github.com/pingcap/tidb/store/tikv/testRateLimitActionMockWaitMax", `return(true)`)
+	failpoint.Enable("github.com/pingcap/tidb/store/tikv/testRateLimitActionMockTrigger", `return(true)`)
 	// assert oom action
 	for _, testcase := range testcases {
 		c.Log(testcase.name)
-		// larger than 4 copResponse, smaller than 5 copResponse
-		quota := 499
+		// 4 token
+		quota := tikv.OccupiedMem*4 + 100
 		se, err := session.CreateSession4Test(s.store)
 		c.Check(err, IsNil)
 		tk.Se = se
 		tk.MustExec("use test")
-		tk.MustExec("set @@tidb_distsql_scan_concurrency = 4")
+		tk.MustExec("set @@tidb_distsql_scan_concurrency = 15")
 		tk.MustExec(fmt.Sprintf("set @@tidb_mem_quota_query=%v;", quota))
 		var expect []string
 		for i := 0; i < count; i++ {
@@ -6694,7 +6694,7 @@ func (s *testSerialSuite) TestCoprocessorOOMAction(c *C) {
 		c.Assert(tk.Se.GetSessionVars().StmtCtx.MemTracker.MaxConsumed(), Greater, int64(quota))
 		se.Close()
 	}
-	failpoint.Disable("github.com/pingcap/tidb/store/tikv/testRateLimitActionMockWaitMax")
+	failpoint.Disable("github.com/pingcap/tidb/store/tikv/testRateLimitActionMockTrigger")
 
 	// assert oom fallback
 	for _, testcase := range testcases {

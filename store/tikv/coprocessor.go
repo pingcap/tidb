@@ -58,6 +58,8 @@ type CopClient struct {
 	replicaReadSeed uint32
 }
 
+const OccupiedMem = 96 * 1024 * 1024
+
 // Send builds the request and gets the coprocessor iterator response.
 func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variables, sessionMemTracker *memory.Tracker) kv.Response {
 	if req.StoreType == kv.TiFlash && req.BatchCop {
@@ -92,11 +94,25 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variable
 		it.concurrency = 1
 	}
 
+	tokenCount := 0
+	tokenLimit := it.concurrency
 	if it.req.KeepOrder {
-		it.sendRate = newRateLimit(2 * it.concurrency)
-	} else {
+		tokenLimit = 2 * it.concurrency
+	}
+	for i := 0; i < tokenLimit; i++ {
+		if sessionMemTracker.Peak(OccupiedMem) {
+			it.memTracker.Consume(OccupiedMem)
+			tokenCount++
+		} else {
+			break
+		}
+	}
+	if tokenCount < 1 {
+		tokenCount = 1
+	}
+	it.sendRate = newRateLimit(tokenCount)
+	if !it.req.KeepOrder {
 		it.respChan = make(chan *copResponse, it.concurrency)
-		it.sendRate = newRateLimit(it.concurrency)
 	}
 	it.actionOnExceed = newRateLimitAction(uint(cap(it.sendRate.token)), sync.NewCond(&sync.Mutex{}))
 	if sessionMemTracker != nil {
@@ -517,14 +533,6 @@ const minLogCopTaskTime = 300 * time.Millisecond
 func (worker *copIteratorWorker) run(ctx context.Context) {
 	defer func() {
 		worker.wg.Done()
-		failpoint.Inject("testRateLimitActionMockWaitMax", func(val failpoint.Value) {
-			if val.(bool) {
-				// we need to prevent action from being closed before triggering action yet
-				for worker.actionOnExceed.isEnabled() {
-					time.Sleep(10 * time.Millisecond)
-				}
-			}
-		})
 		worker.actionOnExceed.close()
 	}()
 	for task := range worker.taskCh {
@@ -545,6 +553,8 @@ func (worker *copIteratorWorker) run(ctx context.Context) {
 		worker.maxID.setMaxIDIfLarger(task.id)
 		worker.actionOnExceed.destroyTokenIfNeeded(func() {
 			worker.sendRate.putToken()
+		}, func() {
+			worker.memTracker.Consume(-OccupiedMem)
 		})
 		if worker.vars != nil && worker.vars.Killed != nil && atomic.LoadUint32(worker.vars.Killed) == 1 {
 			return
@@ -596,6 +606,15 @@ func (it *copIterator) open(ctx context.Context) {
 	}
 	taskSender.respChan = it.respChan
 	it.actionOnExceed.setEnabled(true)
+	failpoint.Inject("testRateLimitActionMockTrigger", func(val failpoint.Value) {
+		if val.(bool) {
+			if len(it.tasks) > 9 {
+				// trigger oom once
+				it.memTracker.Consume(OccupiedMem * 11)
+				it.memTracker.Consume(-OccupiedMem * 11)
+			}
+		}
+	})
 	go taskSender.run()
 }
 
@@ -633,13 +652,9 @@ func (it *copIterator) recvFromRespCh(ctx context.Context, respCh <-chan *copRes
 		select {
 		case resp, ok = <-respCh:
 			if it.memTracker != nil && resp != nil {
-				consumed := resp.MemSize()
-				failpoint.Inject("testRateLimitActionMockConsume", func(val failpoint.Value) {
-					if val.(bool) {
-						consumed = 100
-					}
-				})
-				it.memTracker.Consume(-consumed)
+				// TODO: when ratelimitAction'swtich is enabled, the consumed memory size should be computed again.
+				//consumed := resp.MemSize()
+				//it.memTracker.Consume(consumed)
 			}
 			return
 		case <-it.finishCh:
@@ -673,13 +688,9 @@ func (sender *copIteratorTaskSender) sendToTaskCh(t *copTask) (exit bool) {
 
 func (worker *copIteratorWorker) sendToRespCh(resp *copResponse, respCh chan<- *copResponse, checkOOM bool) (exit bool) {
 	if worker.memTracker != nil && checkOOM {
-		consumed := resp.MemSize()
-		failpoint.Inject("testRateLimitActionMockConsume", func(val failpoint.Value) {
-			if val.(bool) {
-				consumed = 100
-			}
-		})
-		worker.memTracker.Consume(consumed)
+		// TODO: when ratelimitAction'swtich is enabled, the consumed memory size should be computed again.
+		//consumed := resp.MemSize()
+		//worker.memTracker.Consume(consumed)
 	}
 	select {
 	case respCh <- resp:
@@ -697,17 +708,6 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 		ok     bool
 		closed bool
 	)
-	// wait unit at least 5 copResponse received.
-	failpoint.Inject("testRateLimitActionMockWaitMax", func(val failpoint.Value) {
-		if val.(bool) {
-			// we only need to trigger oom at least once.
-			if len(it.tasks) > 9 {
-				for it.memTracker.MaxConsumed() < 500 {
-					time.Sleep(10 * time.Millisecond)
-				}
-			}
-		}
-	})
 
 	// If data order matters, response should be returned in the same order as copTask slice.
 	// Otherwise all responses are returned from a single channel.
@@ -1260,7 +1260,15 @@ func (it *copIterator) Close() error {
 	}
 	it.rpcCancel.CancelAll()
 	it.actionOnExceed.close()
+	it.memTracker.Consume(-int64(it.actionOnExceed.getRemainingTokenCount()) * OccupiedMem)
 	it.wg.Wait()
+	failpoint.Inject("testRateLimitActionMockConsumeAndAssert", func(val failpoint.Value) {
+		if val.(bool) {
+			if it.memTracker.BytesConsumed() != 0 {
+				panic("consuming is not 0 after copIterator closed")
+			}
+		}
+	})
 	return nil
 }
 
@@ -1408,6 +1416,12 @@ func (e *rateLimitAction) SetFallback(a memory.ActionOnExceed) {
 	e.fallbackAction = a
 }
 
+func (e *rateLimitAction) getRemainingTokenCount() uint {
+	e.conditionLock()
+	defer e.conditionUnlock()
+	return e.cond.remainingTokenNum
+}
+
 // broadcastIfNeeded will broadcast the condition to recover all suspended workers when exceeded is enabled
 // and one token have already been destroyed.
 func (e *rateLimitAction) broadcastIfNeeded(needed bool) {
@@ -1430,7 +1444,7 @@ func (e *rateLimitAction) broadcastIfNeeded(needed bool) {
 // destroyTokenIfNeeded will check the `exceed` flag after copWorker finished one task.
 // If the exceed flag is true and there is no token been destroyed before, one token will be destroyed,
 // or the token would be return back.
-func (e *rateLimitAction) destroyTokenIfNeeded(returnToken func()) {
+func (e *rateLimitAction) destroyTokenIfNeeded(returnToken, destroyToken func()) {
 	e.conditionLock()
 	defer e.conditionUnlock()
 	if !e.cond.exceeded {
@@ -1442,6 +1456,7 @@ func (e *rateLimitAction) destroyTokenIfNeeded(returnToken func()) {
 	if !e.cond.isTokenDestroyed {
 		e.cond.remainingTokenNum = e.cond.remainingTokenNum - 1
 		e.cond.isTokenDestroyed = true
+		destroyToken()
 		e.cond.Broadcast()
 		return
 	}
