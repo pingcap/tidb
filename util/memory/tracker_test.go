@@ -327,6 +327,17 @@ func (s *testSuite) TestGlobalTracker(c *C) {
 
 }
 
+func (s *testSuite) TestPeak(c *C) {
+	c1 := NewTracker(2, 100)
+	c1.Consume(50)
+	c.Assert(c1.Peak(40), Equals, true)
+	c.Assert(c1.Peak(60), Equals, false)
+	c2 := NewTracker(3, -1)
+	c2.AttachTo(c1)
+	c.Assert(c2.Peak(40), Equals, true)
+	c.Assert(c2.Peak(60), Equals, false)
+}
+
 func BenchmarkConsume(b *testing.B) {
 	tracker := NewTracker(1, -1)
 	b.RunParallel(func(pb *testing.PB) {
