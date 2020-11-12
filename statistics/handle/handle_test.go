@@ -839,3 +839,21 @@ func (s *testStatsSuite) TestIndexUsageInformation(c *C) {
 		"test t_idx idx_b 2 2",
 	))
 }
+
+func (s *testStatsSuite) TestGCIndexUsageInformation(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t_idx")
+	tk.MustExec("create table t_idx(a int, b int)")
+	tk.MustExec("create unique index idx_a on t_idx(a)")
+	tk.MustQuery("select a from t_idx where a=1")
+	do := s.do
+	err := do.StatsHandle().DumpIndexUsageToKV()
+	c.Assert(err, IsNil)
+	tk.MustQuery("select count(*) from mysql.schema_index_usage as stats, information_schema.tidb_indexes as idx where idx.table_name='t_idx' and idx.index_id=stats.index_id").Check(testkit.Rows("1"))
+	tk.MustExec("drop index `idx_a` on t_idx")
+	err = do.StatsHandle().GCIndexUsage()
+	c.Assert(err, IsNil)
+	tk.MustQuery("select count(*) from mysql.schema_index_usage as stats, information_schema.tidb_indexes as idx where idx.table_name='t_idx' and idx.index_id=stats.index_id").Check(testkit.Rows("0"))
+}

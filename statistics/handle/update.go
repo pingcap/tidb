@@ -320,6 +320,12 @@ func (h *Handle) DumpIndexUsageToKV() error {
 	return nil
 }
 
+func (h *Handle) GCIndexUsage() error {
+	sql := `delete from mysql.SCHEMA_INDEX_USAGE as stats where (select count(*) from information_schema.tidb_indexes as idx where idx.index_id = stats.index_id)=0`
+	_, _, err := h.restrictedExec.ExecRestrictedSQL(sql)
+	return err
+}
+
 var (
 	// DumpStatsDeltaRatio is the lower bound of `Modify Count / Table Count` for stats delta to be dumped.
 	DumpStatsDeltaRatio = 1 / 10000.0
