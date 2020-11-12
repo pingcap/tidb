@@ -183,6 +183,11 @@ func (c *Chunk) IsFull() bool {
 	return c.NumRows() >= c.requiredRows
 }
 
+// LeftRequiredRows returns the left length .
+func (c *Chunk) LeftRequiredRows() int {
+	return c.requiredRows - c.NumRows()
+}
+
 // Prune creates a new Chunk according to `c` and prunes the columns
 // whose index is not in `usedColIdxs`
 func (c *Chunk) Prune(usedColIdxs []int) *Chunk {
