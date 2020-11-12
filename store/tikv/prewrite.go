@@ -56,7 +56,9 @@ func (c *twoPhaseCommitter) buildPrewriteRequest(batch batchMutations, txnSize u
 		}
 		isPessimisticLock[i] = m.IsPessimisticLock(i)
 	}
-	var minCommitTS = c.minCommitTS
+	c.mu.Lock()
+	minCommitTS := c.minCommitTS
+	c.mu.Unlock()
 	if c.forUpdateTS > 0 && c.forUpdateTS >= minCommitTS {
 		minCommitTS = c.forUpdateTS + 1
 	} else if c.startTS >= minCommitTS {
