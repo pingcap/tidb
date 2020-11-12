@@ -281,7 +281,7 @@ func (a *AggFuncDesc) UpdateNotNullFlag4RetType(hasGroupBy, allAggsFirstRow bool
 	case ast.AggFuncCount, ast.AggFuncApproxCountDistinct, ast.AggFuncBitAnd, ast.AggFuncBitOr, ast.AggFuncBitXor,
 		ast.WindowFuncFirstValue, ast.WindowFuncLastValue, ast.WindowFuncNthValue, ast.WindowFuncRowNumber,
 		ast.WindowFuncRank, ast.WindowFuncDenseRank, ast.WindowFuncCumeDist, ast.WindowFuncNtile, ast.WindowFuncPercentRank,
-		ast.WindowFuncLead, ast.WindowFuncLag, ast.AggFuncVarPop, ast.AggFuncStddevPop, ast.AggFuncJsonObjectAgg:
+		ast.WindowFuncLead, ast.WindowFuncLag, ast.AggFuncVarPop, ast.AggFuncStddevPop, ast.AggFuncJsonObjectAgg, ast.AggFuncApproxPercentile:
 		removeNotNull = false
 	case ast.AggFuncSum, ast.AggFuncAvg, ast.AggFuncGroupConcat:
 		if !hasGroupBy {
