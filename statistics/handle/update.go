@@ -321,7 +321,7 @@ func (h *Handle) DumpIndexUsageToKV() error {
 }
 
 func (h *Handle) GCIndexUsage() error {
-	sql := `delete from mysql.SCHEMA_INDEX_USAGE as stats where (select count(*) from information_schema.tidb_indexes as idx where idx.index_id = stats.index_id)=0`
+	sql := `delete from mysql.SCHEMA_INDEX_USAGE as stats where stats.index_id not in (select idx.index_id from information_schema.tidb_indexes as idx)`
 	_, _, err := h.restrictedExec.ExecRestrictedSQL(sql)
 	return err
 }
