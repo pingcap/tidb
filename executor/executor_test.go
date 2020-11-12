@@ -6651,7 +6651,7 @@ func (s *testCoprCache) TestIntegrationCopCache(c *C) {
 	rows := tk.MustQuery("explain analyze select * from t where t.a < 10").Rows()
 	c.Assert(rows[0][2], Equals, "9")
 	c.Assert(strings.Contains(rows[0][5].(string), "cop_task: {num: 5"), Equals, true)
-	c.Assert(strings.Contains(rows[0][5].(string), "copr_cache_hit_ratio: 0.00"), Equals, true)
+	c.Assert(strings.Contains(rows[0][5].(string), "copr_cache_hit_ratio"), Equals, false)
 
 	rows = tk.MustQuery("explain analyze select * from t").Rows()
 	c.Assert(rows[0][2], Equals, "12")
