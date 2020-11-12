@@ -1505,7 +1505,7 @@
         "SQL": "select /*+ HASH_AGG() */ avg(distinct a) from t;",
         "Plan": [
           "HashAgg_8 1.00 root  funcs:avg(distinct Column#6)->Column#5",
-          "└─Projection_10 1.00 root  cast(test.t.a, decimal(65,4) BINARY)->Column#6",
+          "└─Projection_10 1.00 root  cast(test.t.a, decimal(15,4) BINARY)->Column#6",
           "  └─TableReader_9 1.00 root  data:HashAgg_5",
           "    └─HashAgg_5 1.00 cop[tikv]  group by:test.t.a, ",
           "      └─TableFullScan_7 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
@@ -1609,7 +1609,7 @@
         "SQL": "select /*+ HASH_AGG(), AGG_TO_COP() */ sum(distinct b) from pt;",
         "Plan": [
           "HashAgg_12 1.00 root  funcs:sum(distinct Column#9)->Column#4",
-          "└─Projection_24 16000.00 root  cast(test.pt.b, decimal(65,0) BINARY)->Column#9",
+          "└─Projection_24 16000.00 root  cast(test.pt.b, decimal(32,0) BINARY)->Column#9",
           "  └─PartitionUnion_13 16000.00 root  ",
           "    ├─HashAgg_17 8000.00 root  group by:test.pt.b, funcs:firstrow(test.pt.b)->test.pt.b, funcs:firstrow(test.pt.b)->test.pt.b",
           "    │ └─TableReader_18 8000.00 root  data:HashAgg_14",
@@ -1651,7 +1651,7 @@
         "SQL": "select /*+ HASH_AGG(), AGG_TO_COP() */ avg(distinct a) from t;",
         "Plan": [
           "HashAgg_5 1.00 root  funcs:avg(distinct Column#6)->Column#5",
-          "└─Projection_8 10000.00 root  cast(test.t.a, decimal(65,4) BINARY)->Column#6",
+          "└─Projection_8 10000.00 root  cast(test.t.a, decimal(15,4) BINARY)->Column#6",
           "  └─TableReader_7 10000.00 root  data:TableFullScan_6",
           "    └─TableFullScan_6 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
@@ -1676,7 +1676,7 @@
         "Plan": [
           "Projection_4 8000.00 root  Column#5, test.t.c, Column#5, Column#6, Column#7, Column#8, Column#9",
           "└─HashAgg_5 8000.00 root  group by:Column#17, funcs:avg(Column#10)->Column#5, funcs:count(distinct Column#11, Column#12)->Column#6, funcs:count(distinct Column#13)->Column#7, funcs:count(distinct Column#14)->Column#8, funcs:sum(Column#15)->Column#9, funcs:firstrow(Column#16)->test.t.c",
-          "  └─Projection_8 10000.00 root  cast(test.t.b, decimal(65,4) BINARY)->Column#10, test.t.a, test.t.b, test.t.a, test.t.c, cast(test.t.b, decimal(65,0) BINARY)->Column#15, test.t.c, test.t.c",
+          "  └─Projection_8 10000.00 root  cast(test.t.b, decimal(15,4) BINARY)->Column#10, test.t.a, test.t.b, test.t.a, test.t.c, cast(test.t.b, decimal(32,0) BINARY)->Column#15, test.t.c, test.t.c",
           "    └─TableReader_7 10000.00 root  data:TableFullScan_6",
           "      └─TableFullScan_6 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
@@ -1738,7 +1738,7 @@
         "SQL": "select /*+ HASH_AGG(), AGG_TO_COP() */ sum(distinct b) from pt;",
         "Plan": [
           "HashAgg_12 1.00 root  funcs:sum(distinct Column#9)->Column#4",
-          "└─Projection_24 16000.00 root  cast(test.pt.b, decimal(65,0) BINARY)->Column#9",
+          "└─Projection_24 16000.00 root  cast(test.pt.b, decimal(32,0) BINARY)->Column#9",
           "  └─PartitionUnion_13 16000.00 root  ",
           "    ├─HashAgg_17 8000.00 root  group by:test.pt.b, funcs:firstrow(test.pt.b)->test.pt.b, funcs:firstrow(test.pt.b)->test.pt.b",
           "    │ └─TableReader_18 8000.00 root  data:HashAgg_14",
@@ -1780,7 +1780,7 @@
         "SQL": "select /*+ HASH_AGG(), AGG_TO_COP() */ sum(distinct b) from pt;",
         "Plan": [
           "HashAgg_12 1.00 root  funcs:sum(distinct Column#9)->Column#4",
-          "└─Projection_24 16000.00 root  cast(test.pt.b, decimal(65,0) BINARY)->Column#9",
+          "└─Projection_24 16000.00 root  cast(test.pt.b, decimal(32,0) BINARY)->Column#9",
           "  └─PartitionUnion_13 16000.00 root  ",
           "    ├─HashAgg_17 8000.00 root  group by:test.pt.b, funcs:firstrow(test.pt.b)->test.pt.b, funcs:firstrow(test.pt.b)->test.pt.b",
           "    │ └─TableReader_18 8000.00 root  data:HashAgg_14",
@@ -2186,7 +2186,8 @@
           "└─TableReader_25(Probe) 7992.00 root  data:Selection_24",
           "  └─Selection_24 7992.00 cop[tikv]  lt(test.t2.a, test.t2.a), not(isnull(test.t2.a))",
           "    └─TableFullScan_23 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
-        ]
+        ],
+        "Result": null
       },
       {
         "SQL": "select a from t2 where t2.a < (select t1.a from t1 where t1.b = t2.b and t1.a is null);",
@@ -2202,7 +2203,8 @@
           "        ├─IndexRangeScan_21(Build) 1.00 cop[tikv] table:t1, index:idx_a(a) range:[NULL,NULL], keep order:false, stats:pseudo",
           "        └─Selection_23(Probe) 0.00 cop[tikv]  eq(test.t1.b, test.t2.b)",
           "          └─TableRowIDScan_22 1.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
-        ]
+        ],
+        "Result": null
       },
       {
         "SQL": "select a from t2 where t2.a < (select t3.a from t3 where t3.a = t2.a);",
@@ -2216,7 +2218,8 @@
           "    └─MaxOneRow_17 1.00 root  ",
           "      └─IndexReader_19 2.00 root  index:IndexRangeScan_18",
           "        └─IndexRangeScan_18 2.00 cop[tikv] table:t3, index:idx_abc(a, b, c) range: decided by [eq(test.t3.a, test.t2.a)], keep order:false, stats:pseudo"
-        ]
+        ],
+        "Result": null
       }
     ]
   }
