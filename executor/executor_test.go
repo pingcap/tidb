@@ -6692,7 +6692,7 @@ func (s *testSerialSuite) TestCoprocessorOOMAction(c *C) {
 		}
 		tk.MustQuery(testcase.sql).Sort().Check(testkit.Rows(expect...))
 		// assert oom action worked by max consumed > memory quota
-		c.Assert(tk.Se.GetSessionVars().StmtCtx.MemTracker.MaxConsumed(), Greater, int64(quota))
+		c.Assert(tk.Se.GetSessionVars().StmtCtx.MemTracker.MaxConsumed(), Greater, quota)
 		se.Close()
 	}
 	failpoint.Disable("github.com/pingcap/tidb/store/tikv/testRateLimitActionAdaptiveConcurrency")
@@ -6780,7 +6780,7 @@ func (s *testSerialSuite) TestIssue20454(c *C) {
 		}
 		tk.MustQuery(testcase.sql).Sort().Check(testkit.Rows(expect...))
 		// assert oom action worked by max consumed > memory quota
-		c.Assert(tk.Se.GetSessionVars().StmtCtx.MemTracker.MaxConsumed(), Greater, int64(quota))
+		c.Assert(tk.Se.GetSessionVars().StmtCtx.MemTracker.MaxConsumed(), Greater, quota)
 		se.Close()
 	}
 }
