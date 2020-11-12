@@ -407,7 +407,24 @@ func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, rpcCtx *RPCContext,
 			}
 		})
 	}
+
+	failpoint.Inject("rpcContextCancelErr", func(val failpoint.Value) {
+		if val.(bool) {
+			ctx1, cancel := context.WithCancel(context.Background())
+			cancel()
+			select {
+			case <-ctx1.Done():
+			}
+
+			ctx = ctx1
+			err = ctx.Err()
+			resp = nil
+		}
+	})
+
 	if err != nil {
+		s.rpcError = err
+
 		// Because in rpc logic, context.Cancel() will be transferred to rpcContext.Cancel error. For rpcContext cancel,
 		// we need to retry the request. But for context cancel active, for example, limitExec gets the required rows,
 		// we shouldn't retry the request, it will go to backoff and hang in retry logic.
@@ -415,7 +432,6 @@ func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, rpcCtx *RPCContext,
 			return nil, false, errors.Trace(ctx.Err())
 		}
 
-		s.rpcError = err
 		if e := s.onSendFail(bo, rpcCtx, err); e != nil {
 			return nil, false, errors.Trace(e)
 		}

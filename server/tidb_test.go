@@ -314,6 +314,7 @@ func newTLSHttpClient(c *C, caFile, certFile, keyFile string) *http.Client {
 
 func (ts *tidbTestSuite) TestMultiStatements(c *C) {
 	c.Parallel()
+	ts.runFailedTestMultiStatements(c)
 	ts.runTestMultiStatements(c)
 }
 
@@ -957,5 +958,26 @@ func (ts *tidbTestSuite) TestGracefulShutdown(c *C) {
 	time.Sleep(time.Second * 2)
 
 	_, err = cli.fetchStatus("/status") // status is gone
-	c.Assert(err, ErrorMatches, ".*connect: connection refused")
+  c.Assert(err, ErrorMatches, ".*connect: connection refused")
+}
+
+func (ts *tidbTestSuite) TestPessimisticInsertSelectForUpdate(c *C) {
+	qctx, err := ts.tidbdrv.OpenCtx(uint64(0), 0, uint8(tmysql.DefaultCollationID), "test", nil)
+	c.Assert(err, IsNil)
+	ctx := context.Background()
+	_, err = qctx.Execute(ctx, "use test;")
+	c.Assert(err, IsNil)
+	_, err = qctx.Execute(ctx, "drop table if exists t1, t2")
+	c.Assert(err, IsNil)
+	_, err = qctx.Execute(ctx, "create table t1 (id int)")
+	c.Assert(err, IsNil)
+	_, err = qctx.Execute(ctx, "create table t2 (id int)")
+	c.Assert(err, IsNil)
+	_, err = qctx.Execute(ctx, "insert into t1 select 1")
+	c.Assert(err, IsNil)
+	_, err = qctx.Execute(ctx, "begin pessimistic")
+	c.Assert(err, IsNil)
+	rs, err := qctx.Execute(ctx, "INSERT INTO t2 (id) select id from t1 where id = 1 for update")
+	c.Assert(err, IsNil)
+	c.Assert(rs, IsNil) // should be no delay
 }
