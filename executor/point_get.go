@@ -318,10 +318,16 @@ func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) ([]byte, error) 
 	if len(key) == 0 {
 		return nil, kv.ErrNotExist
 	}
+
+	var (
+		val []byte
+		err error
+	)
+
 	if e.txn.Valid() && !e.txn.IsReadOnly() {
 		// We cannot use txn.Get directly here because the snapshot in txn and the snapshot of e.snapshot may be
 		// different for pessimistic transaction.
-		val, err := e.txn.GetMemBuffer().Get(ctx, key)
+		val, err = e.txn.GetMemBuffer().Get(ctx, key)
 		if err == nil {
 			return val, err
 		}
@@ -336,7 +342,27 @@ func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) ([]byte, error) 
 		}
 		// fallthrough to snapshot get.
 	}
-	return e.snapshot.Get(ctx, key)
+
+	isLocked := e.tblInfo.IsLocked()
+	if !isLocked || e.tblInfo.Lock.Tp != model.TableLockRead { // if not read lock or table was unlock then snapshot get
+		return e.snapshot.Get(ctx, key)
+	}
+
+	cacheDB := e.ctx.GetStore().GetMemCache()
+	val = cacheDB.Get(ctx, e.tblInfo.ID, key)
+	// key does not exist then get from snapshot and set to cache
+	if val == nil {
+		val, err = e.snapshot.Get(ctx, key)
+		if err != nil {
+			return nil, err
+		}
+
+		err := cacheDB.Set(e.tblInfo.ID, key, val)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return val, nil
 }
 
 // EncodeUniqueIndexKey encodes a unique index key.

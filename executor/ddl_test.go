@@ -279,6 +279,19 @@ func (s *testSuite6) TestCreateView(c *C) {
 	tk.MustExec("drop view v_nested, v_nested2")
 }
 
+func (s *testSuite6) TestViewRecursion(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table if not exists t(a int)")
+	tk.MustExec("create definer='root'@'localhost' view recursive_view1 as select * from t")
+	tk.MustExec("create definer='root'@'localhost' view recursive_view2 as select * from recursive_view1")
+	tk.MustExec("drop table t")
+	tk.MustExec("rename table recursive_view2 to t")
+	_, err := tk.Exec("select * from recursive_view1")
+	c.Assert(terror.ErrorEqual(err, plannercore.ErrViewRecursive), IsTrue)
+	tk.MustExec("drop view recursive_view1, t")
+}
+
 func (s *testSuite6) TestIssue16250(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
