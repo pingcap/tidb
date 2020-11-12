@@ -879,6 +879,7 @@ type HashAggRuntimeStats struct {
 	FinalWorkerTime   []time.Duration
 }
 
+// AggWorkerStat record the AggWorker runtime stat
 type AggWorkerStat struct {
 	TaskNum  int64
 	WallTime time.Duration
