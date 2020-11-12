@@ -274,6 +274,5 @@ func (t *testUtilsSuite) TestGetLeaderDCByBundle(c *C) {
 			c.Assert(ok, Equals, false)
 		}
 		c.Assert(result, Equals, testcase.expectedDC)
-
 	}
 }

@@ -22,8 +22,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/logutil"
-	"go.uber.org/zap"
 )
 
 func checkLabelConstraint(label string) (LabelConstraint, error) {
@@ -134,23 +132,14 @@ func BuildPlacementCopyBundle(oldBundle *Bundle, newID int64) *Bundle {
 	return newBundle
 }
 
-// GetLeaderDCByBundle return the leader's dc by Bundle if founded
+// GetLeaderDCByBundle returns the leader's DC by Bundle if found
 func GetLeaderDCByBundle(bundle *Bundle, dcLabelKey string) (string, bool) {
-	validRulesCount := 0
-	dc := ""
 	for _, rule := range bundle.Rules {
 		if isValidLeaderRule(rule, dcLabelKey) {
-			validRulesCount++
-			dc = rule.LabelConstraints[0].Values[0]
+			return rule.LabelConstraints[0].Values[0], true
 		}
 	}
-	if validRulesCount != 1 {
-		if validRulesCount > 1 {
-			logutil.BgLogger().Warn("rule bundle have multi leader rules", zap.String("bundle-ID", bundle.ID))
-		}
-		return "", false
-	}
-	return dc, true
+	return "", false
 }
 
 func isValidLeaderRule(rule *Rule, dcLabelKey string) bool {
