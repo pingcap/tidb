@@ -1724,7 +1724,7 @@ func BenchmarkSortExec(b *testing.B) {
 	for _, with := range withInlineProjection {
 		cas.withInlineProjection = with
 		for _, ndv := range ndvs {
-			cas.ndvs = cas.ndvs[len(cas.ndvs):]
+			cas.ndvs = cas.ndvs[:0]
 			for i := 0; i < len(cas.columns()); i++ {
 				cas.ndvs = append(cas.ndvs, ndv)
 			}

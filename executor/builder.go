@@ -1576,9 +1576,10 @@ func (b *executorBuilder) buildSort(v *plannercore.PhysicalSort) Executor {
 	if b.err != nil {
 		return nil
 	}
-	var columnIdxsUsedByChild []int
-	if v.DoInlineProjection() {
-		columnIdxsUsedByChild, _ = retrieveColumnIdxsUsedByChild(v.Schema(), v.Children()[0].Schema())
+	columnIdxsUsedByChild, columnMissing := retrieveColumnIdxsUsedByChild(v.Schema(), v.Children()[0].Schema())
+	if columnMissing {
+		b.err = errors.Annotate(ErrBuildExecutor, "Inline projection occurs when `buildSort` exectutor, columns should not missing in the child schema")
+		return nil
 	}
 	sortExec := SortExec{
 		baseExecutor:          newBaseExecutor(b.ctx, v.Schema(), v.ID(), childExec),
@@ -1595,9 +1596,10 @@ func (b *executorBuilder) buildTopN(v *plannercore.PhysicalTopN) Executor {
 	if b.err != nil {
 		return nil
 	}
-	var columnIdxsUsedByChild []int
-	if v.DoInlineProjection() {
-		columnIdxsUsedByChild, _ = retrieveColumnIdxsUsedByChild(v.Schema(), v.Children()[0].Schema())
+	columnIdxsUsedByChild, columnMissing := retrieveColumnIdxsUsedByChild(v.Schema(), v.Children()[0].Schema())
+	if columnMissing {
+		b.err = errors.Annotate(ErrBuildExecutor, "Inline projection occurs when `buildTopN` exectutor, columns should not missing in the child schema")
+		return nil
 	}
 	sortExec := SortExec{
 		baseExecutor:          newBaseExecutor(b.ctx, v.Schema(), v.ID(), childExec),
@@ -2195,19 +2197,15 @@ func markChildrenUsedCols(outputSchema *expression.Schema, childSchema ...*expre
 	return
 }
 
-// retrieveColumnIdxsUsedByChild retrieve column indices map from child physical plan schema columns
+// retrieveColumnIdxsUsedByChild retrieve column indices map from child physical plan schema columns.
+//   E.g. columnIdxsUsedByChild = [2, 3, 1] means child[col2, col3, col1] -> parent[col0, col1, col2].
+//   `columnMissing` indicates whether one or more columns in `selfSchema` are not found in `childSchema`.
+//   And `-1` in `columnIdxsUsedByChild` indicates the very column not found.
 func retrieveColumnIdxsUsedByChild(selfSchema *expression.Schema, childSchema *expression.Schema) ([]int, bool) {
 	equalSchema := (selfSchema.Len() == childSchema.Len())
-	// columnMissing presents `false` when its own schema has any column that cannot be found in child schema.
-	// sometimes it's impossible column missing in child schema,
-	// which means if columnMissing presents `true` that the program is incorrect.
-	// sometimes it is possible, eg. cases of under the semantics of `group by`,
-	// specific validation needs to be performed when methods of `buildX` call.
 	columnMissing := false
 	columnIdxsUsedByChild := make([]int, 0, selfSchema.Len())
 	for selfIdx, selfCol := range selfSchema.Columns {
-		// colIdxInChild means the index of child executor schema column map to parent executor schema column
-		// eg. columnIdxsUsedByChild = [2, 3, 1] means child[col2, col3, col1] -> parent[col0, col1, col2]
 		colIdxInChild := childSchema.ColumnIndex(selfCol)
 		if !columnMissing && colIdxInChild == -1 {
 			columnMissing = true
