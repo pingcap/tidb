@@ -80,6 +80,11 @@ func (s *testAsyncCommitFailSuite) TestFailAsyncCommitPrewriteRpcErrors(c *C) {
 }
 
 func (s *testAsyncCommitFailSuite) TestAsyncCommitPrewriteCancelled(c *C) {
+	// This test doesn't support tikv mode because it needs setting failpoint in unistore.
+	if *WithTiKV {
+		return
+	}
+
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.TiKVClient.AsyncCommit.Enable = true
