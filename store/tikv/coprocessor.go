@@ -573,6 +573,13 @@ func (it *copIterator) adaptiveConcurrency() {
 		// Make sure that there is at least one worker.
 		it.concurrency = 1
 	}
+	failpoint.Inject("testRateLimitActionAdaptiveConcurrency", func(val failpoint.Value) {
+		if val.(bool) {
+			if it.concurrency != 3 {
+				panic("concurrency should be modified to 3")
+			}
+		}
+	})
 }
 
 // open starts workers and sender goroutines.
