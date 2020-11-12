@@ -225,7 +225,7 @@ explain select * from t1 where t1.a in (select t2.a as a from t2 where t2.b > t1
 drop table t;
 CREATE TABLE t (id int(10) unsigned NOT NULL AUTO_INCREMENT,
     i int(10) unsigned DEFAULT NULL,
-    x int(10) unsigned DEFAULT 0,
+    x int(10) unsigned DEFAULT '0',
     PRIMARY KEY (`id`)
 );
 explain select row_number() over( partition by i ) - x as rnk from t;
