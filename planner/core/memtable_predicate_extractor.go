@@ -936,8 +936,6 @@ type SlowQueryExtractor struct {
 	extractHelper
 
 	SkipRequest bool
-	StartTime   time.Time
-	EndTime     time.Time
 	TimeRanges  []*TimeRange
 	// Enable is true means the executor should use the time range to locate the slow-log file that need to be parsed.
 	// Enable is false, means the executor should keep the behavior compatible with before, which is only parse the
@@ -961,7 +959,7 @@ func (e *SlowQueryExtractor) Extract(
 ) []expression.Expression {
 	remained, startTime, endTime := e.extractTimeRange(ctx, schema, names, predicates, "time", ctx.GetSessionVars().StmtCtx.TimeZone)
 	e.setTimeRange(startTime, endTime)
-	e.SkipRequest = e.Enable && e.StartTime.After(e.EndTime)
+	e.SkipRequest = e.Enable && e.TimeRanges[0].StartTime.After(e.TimeRanges[0].EndTime)
 	if e.SkipRequest {
 		return nil
 	}
@@ -986,7 +984,6 @@ func (e *SlowQueryExtractor) setTimeRange(start, end int64) {
 	if end == 0 {
 		endTime = startTime.Add(defaultSlowQueryDuration)
 	}
-	//e.StartTime, e.EndTime = startTime, endTime
 	timeRange := &TimeRange{
 		StartTime: startTime,
 		EndTime:   endTime,
@@ -1053,8 +1050,8 @@ func (e *SlowQueryExtractor) explainInfo(p *PhysicalMemTable) string {
 	if !e.Enable {
 		return fmt.Sprintf("only search in the current '%v' file", p.ctx.GetSessionVars().SlowQueryFile)
 	}
-	startTime := e.StartTime.In(p.ctx.GetSessionVars().StmtCtx.TimeZone)
-	endTime := e.EndTime.In(p.ctx.GetSessionVars().StmtCtx.TimeZone)
+	startTime := e.TimeRanges[0].StartTime.In(p.ctx.GetSessionVars().StmtCtx.TimeZone)
+	endTime := e.TimeRanges[0].EndTime.In(p.ctx.GetSessionVars().StmtCtx.TimeZone)
 	return fmt.Sprintf("start_time:%v, end_time:%v",
 		types.NewTime(types.FromGoTime(startTime), mysql.TypeDatetime, types.MaxFsp).String(),
 		types.NewTime(types.FromGoTime(endTime), mysql.TypeDatetime, types.MaxFsp).String())

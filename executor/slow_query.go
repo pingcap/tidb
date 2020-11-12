@@ -117,14 +117,14 @@ func (e *slowQueryRetriever) initialize(sctx sessionctx.Context) error {
 			}
 			e.checker.timeRanges = append(e.checker.timeRanges, timeRange)
 		}
-		//e.checker.startTime = types.NewTime(types.FromGoTime(e.extractor.StartTime), mysql.TypeDatetime, types.MaxFsp)
-		//e.checker.endTime = types.NewTime(types.FromGoTime(e.extractor.EndTime), mysql.TypeDatetime, types.MaxFsp)
+	} else {
+		e.extractor = &plannercore.SlowQueryExtractor{}
 	}
-	e.initialized = true
-	e.files, err = e.getAllFiles(sctx, sctx.GetSessionVars().SlowQueryFile)
 	if e.extractor.Desc {
 		e.reverseLogFiles(e.files)
 	}
+	e.initialized = true
+	e.files, err = e.getAllFiles(sctx, sctx.GetSessionVars().SlowQueryFile)
 	return err
 }
 
@@ -168,13 +168,12 @@ func (e *slowQueryRetriever) getNextFile() *os.File {
 }
 
 func (e *slowQueryRetriever) getPreviousFile() *os.File {
-	e.fileIdx++
-	if e.fileIdx >= len(e.files) {
-		e.fileIdx--
+	fileIdx := e.fileIdx
+	fileIdx++
+	if fileIdx >= len(e.files) {
 		return nil
 	}
-	file := e.files[e.fileIdx].file
-	e.fileIdx--
+	file := e.files[fileIdx].file
 	return file
 }
 
@@ -185,7 +184,7 @@ func (e *slowQueryRetriever) parseDataForSlowLog(ctx context.Context, sctx sessi
 		return
 	}
 	reader := bufio.NewReader(file)
-	e.parseSlowLog(ctx, sctx, reader, ParseSlowLogBatchSize, e.extractor.Desc)
+	e.parseSlowLog(ctx, sctx, reader, ParseSlowLogBatchSize)
 }
 
 func (e *slowQueryRetriever) dataForSlowLog(ctx context.Context) ([][]types.Datum, bool, error) {
@@ -202,13 +201,10 @@ func (e *slowQueryRetriever) dataForSlowLog(ctx context.Context) ([][]types.Datu
 		if !ok {
 			return nil, true, nil
 		}
-		result := <-task.result
+		result := <-task.resultCh
 		rows, err := result.rows, result.err
 		if err != nil {
 			return nil, false, err
-		}
-		if e.extractor.Desc {
-			fmt.Printf("len of rows%d\n", len(rows))
 		}
 		if len(rows) == 0 {
 			continue
@@ -227,8 +223,6 @@ type slowLogChecker struct {
 	user           *auth.UserIdentity
 	// Below fields is used to check slow log time valid.
 	enableTimeCheck bool
-	startTime       types.Time
-	endTime         types.Time
 	timeRanges      []*timeRange
 }
 
@@ -247,9 +241,6 @@ func (sc *slowLogChecker) isTimeValid(t types.Time) bool {
 			return true
 		}
 	}
-	//if sc.enableTimeCheck && (t.Compare(sc.startTime) < 0 || t.Compare(sc.endTime) > 0) {
-	//	return false
-	//}
 	return !sc.enableTimeCheck
 }
 
@@ -289,15 +280,16 @@ type offset struct {
 }
 
 type slowLogTask struct {
-	result chan parsedSlowLog
+	resultCh chan parsedSlowLog
 }
 
 type slowLogs struct {
 	log []string
 }
 
-func (e *slowQueryRetriever) getBatchLog(reader *bufio.Reader, offset *offset, num int) ([]string, error) {
+func (e *slowQueryRetriever) getBatchLog(reader *bufio.Reader, offset *offset, num int) ([][]string, error) {
 	var line string
+	var logs []slowLogs
 	log := make([]string, 0, num)
 	var err error
 	for i := 0; i < num; i++ {
@@ -309,33 +301,34 @@ func (e *slowQueryRetriever) getBatchLog(reader *bufio.Reader, offset *offset, n
 					e.fileLine = 0
 					file := e.getNextFile()
 					if file == nil {
-						return log, nil
+						return combineLogs(logs, num), nil
 					}
 					offset.length = len(log)
 					reader.Reset(file)
 					continue
 				}
-				return log, err
+				return combineLogs(logs, num), err
 			}
 			line = string(hack.String(lineByte))
 			log = append(log, line)
 			if strings.HasSuffix(line, variable.SlowLogSQLSuffixStr) {
-				if strings.HasPrefix(line, "use") {
+				if strings.HasPrefix(line, "use") || strings.HasPrefix(line, variable.SlowLogRowPrefixStr) {
 					continue
 				}
+				logs = append(logs, slowLogs{log: log})
+				log = make([]string, 0, 8)
 				break
 			}
 		}
 	}
-	return log, err
+	return combineLogs(logs, num), err
 }
 
-func (e *slowQueryRetriever) getBatchLogForReversedScan(reader *bufio.Reader, offset *offset) ([]string, error) {
+func (e *slowQueryRetriever) getBatchLogForReversedScan(reader *bufio.Reader, offset *offset, num int) ([][]string, error) {
 	var line string
 	var logs []slowLogs
 	var log []string
 	var err error
-	reachSlowLogSuffix := false
 	hasStartFlag := false
 	scanPreviousFile := false
 	for {
@@ -343,16 +336,17 @@ func (e *slowQueryRetriever) getBatchLogForReversedScan(reader *bufio.Reader, of
 		lineByte, err := getOneLine(reader)
 		if err != nil {
 			if err == io.EOF {
-				if reachSlowLogSuffix {
-					offset.length = len(combineLogs(logs))
+				if len(log) > 0 {
 					reverse(logs)
-					return combineLogs(logs), nil
+					combinedLogs := combineLogs(logs, num)
+					offset.length = len(combinedLogs)
+					return combinedLogs, nil
 				} else {
 					e.fileLine = 0
 					file := e.getPreviousFile()
 					if file == nil {
 						reverse(logs)
-						return combineLogs(logs), nil
+						return combineLogs(logs, num), nil
 					}
 					reader.Reset(file)
 					scanPreviousFile = true
@@ -360,50 +354,69 @@ func (e *slowQueryRetriever) getBatchLogForReversedScan(reader *bufio.Reader, of
 				}
 			}
 			reverse(logs)
-			return combineLogs(logs), err
+			return combineLogs(logs, num), err
 		}
 		line = string(hack.String(lineByte))
-		log = append(log, line)
-		if strings.HasPrefix(line, variable.SlowLogStartPrefixStr) {
+		if !hasStartFlag && strings.HasPrefix(line, variable.SlowLogStartPrefixStr) {
 			hasStartFlag = true
 		}
-		if strings.HasSuffix(line, variable.SlowLogSQLSuffixStr) {
-			if strings.HasPrefix(line, "use") || strings.HasPrefix(line, variable.SlowLogRowPrefixStr) {
-				continue
-			}
-			if hasStartFlag {
+		if hasStartFlag {
+			log = append(log, line)
+			if strings.HasSuffix(line, variable.SlowLogSQLSuffixStr) {
+				if strings.HasPrefix(line, "use") || strings.HasPrefix(line, variable.SlowLogRowPrefixStr) {
+					continue
+				}
 				logs = append(logs, slowLogs{log: log})
+				if scanPreviousFile {
+					break
+				}
+				log = make([]string, 0, 8)
+				hasStartFlag = false
 			}
-			if scanPreviousFile {
-				break
-			}
-			log = make([]string, 0)
-			reachSlowLogSuffix = true
-			hasStartFlag = false
-		} else {
-			reachSlowLogSuffix = false
 		}
 	}
 	reverse(logs)
-	return combineLogs(logs), err
+	return combineLogs(logs, num), err
 }
 
-func combineLogs(logs []slowLogs) []string {
-	combinedLogs := make([]string, 0)
-	for _, log := range logs {
-		combinedLogs = append(combinedLogs, log.log...)
+func reverse(logs []slowLogs) {
+	last := len(logs) - 1
+	for i := 0; i < len(logs)/2; i++ {
+		logs[i], logs[last-i] = logs[last-i], logs[i]
+	}
+}
+
+func combineLogs(logs []slowLogs, num int) [][]string {
+	combinedLogs := make([][]string, 0)
+	if len(logs) == 0 {
+		return combinedLogs
+	}
+
+	i := 0
+	for i + num < len(logs) {
+		log := make([]string, 0)
+		for j := i; j < i + num; j++ {
+			log = append(log, logs[j].log...)
+		}
+		combinedLogs = append(combinedLogs, log)
+		if i + num <= len(logs) {
+			i += num
+		} else {
+			break
+		}
+	}
+
+	if i < len(logs) {
+		log := make([]string, 0)
+		for j := i; j < len(logs); j++ {
+			log = append(log, logs[j].log...)
+		}
+		combinedLogs = append(combinedLogs, log)
 	}
 	return combinedLogs
 }
 
-func reverse(ss []slowLogs) {
-	last := len(ss) - 1
-	for i := 0; i < len(ss)/2; i++ {
-		ss[i], ss[last-i] = ss[last-i], ss[i]
-	}
-}
-
-func (e *slowQueryRetriever) parseSlowLog(ctx context.Context, sctx sessionctx.Context, reader *bufio.Reader, logNum int, desc bool) {
+func (e *slowQueryRetriever) parseSlowLog(ctx context.Context, sctx sessionctx.Context, reader *bufio.Reader, logNum int) {
 	defer close(e.taskList)
 	var wg sync.WaitGroup
 	offset := offset{offset: 0, length: 0}
@@ -416,44 +429,46 @@ func (e *slowQueryRetriever) parseSlowLog(ctx context.Context, sctx sessionctx.C
 	defer close(ch)
 	for {
 		startTime := time.Now()
-		var log []string
+		var logs [][]string
 		var err error
-		if !desc {
-			log, err = e.getBatchLog(reader, &offset, logNum)
-			fmt.Printf("clog %v\n", log)
+		if !e.extractor.Desc {
+			logs, err = e.getBatchLog(reader, &offset, logNum)
 		} else {
-			log, err = e.getBatchLogForReversedScan(reader, &offset)
-			fmt.Printf("dlog %v\n", log)
+			logs, err = e.getBatchLogForReversedScan(reader, &offset, logNum)
 		}
-		t := &slowLogTask{}
-		t.result = make(chan parsedSlowLog, 1)
 		if err != nil {
+			t := &slowLogTask{}
+			t.resultCh = make(chan parsedSlowLog, 1)
 			e.taskList <- t
-			t.result <- parsedSlowLog{nil, err}
+			t.resultCh <- parsedSlowLog{nil, err}
 			break
 		}
-		if len(log) == 0 {
+		if len(logs) == 0 {
 			break
 		}
-		if e.stats != nil {
-			e.stats.readFile += time.Since(startTime)
-		}
-		start := offset
-		wg.Add(1)
-		ch <- 1
-		e.taskList <- t
-		go func() {
-			defer wg.Done()
-			result, err := e.parseLog(sctx, log, start)
-			t.result <- parsedSlowLog{result, err}
-			<-ch
-		}()
-		offset.offset = e.fileLine
-		offset.length = 0
-		select {
-		case <-ctx.Done():
-			break
-		default:
+		for _, log := range logs {
+			t := &slowLogTask{}
+			t.resultCh = make(chan parsedSlowLog, 1)
+			if e.stats != nil {
+				e.stats.readFile += time.Since(startTime)
+			}
+			start := offset
+			wg.Add(1)
+			ch <- 1
+			e.taskList <- t
+			go func() {
+				defer wg.Done()
+				result, err := e.parseLog(sctx, log, start)
+				t.resultCh <- parsedSlowLog{result, err}
+				<-ch
+			}()
+			offset.offset = e.fileLine
+			offset.length = 0
+			select {
+			case <-ctx.Done():
+				break
+			default:
+			}
 		}
 	}
 	wg.Wait()
@@ -994,22 +1009,27 @@ func (e *slowQueryRetriever) getAllFiles(sctx sessionctx.Context, logFilePath st
 			return handleErr(err)
 		}
 		start := types.NewTime(types.FromGoTime(fileStartTime), mysql.TypeDatetime, types.MaxFsp)
-		//if start.Compare(e.checker.endTime) > 0 {
-		//	return nil
-		//}
+		inTimeRanges := true
+		for _, tr := range e.checker.timeRanges {
+			if start.Compare(tr.endTime) <= 0 {
+				inTimeRanges = false
+				break
+			}
+		}
+		if inTimeRanges {
+			return nil
+		}
 
 		// Get the file end time.
 		fileEndTime, err := e.getFileEndTime(file)
 		if err != nil {
 			return handleErr(err)
 		}
+		inTimeRanges = true
 		end := types.NewTime(types.FromGoTime(fileEndTime), mysql.TypeDatetime, types.MaxFsp)
-		//if end.Compare(e.checker.startTime) < 0 {
-		//	return nil
-		//}
-		inTimeRanges := false
+		inTimeRanges = false
 		for _, tr := range e.checker.timeRanges {
-			if start.Compare(tr.startTime) >= 0 && end.Compare(tr.endTime) <= 0 {
+			if !(start.Compare(tr.endTime) > 0 || end.Compare(tr.startTime) < 0) {
 				inTimeRanges = true
 				break
 			}

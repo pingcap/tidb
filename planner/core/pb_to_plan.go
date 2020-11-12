@@ -14,7 +14,6 @@
 package core
 
 import (
-	"fmt"
 	"math"
 	"strings"
 	"time"
@@ -47,8 +46,8 @@ type PBPlanBuilder struct {
 }
 
 // NewPBPlanBuilder creates a new pb plan builder.
-func NewPBPlanBuilder(sctx sessionctx.Context, is infoschema.InfoSchema, req *coprocessor.Request) *PBPlanBuilder {
-	return &PBPlanBuilder{sctx: sctx, is: is, ranges: req.Ranges}
+func NewPBPlanBuilder(sctx sessionctx.Context, is infoschema.InfoSchema, ranges[] *coprocessor.KeyRange) *PBPlanBuilder {
+	return &PBPlanBuilder{sctx: sctx, is: is, ranges: ranges}
 }
 
 // Build builds physical plan from dag protocol buffers.
@@ -116,12 +115,12 @@ func (b *PBPlanBuilder) pbToTableScan(e *tipb.Executor) (PhysicalPlan, error) {
 	p.SetSchema(schema)
 	if strings.ToUpper(p.Table.Name.O) == infoschema.ClusterTableSlowLog {
 		extractor := &SlowQueryExtractor{}
+		extractor.Desc = tblScan.Desc
 		if b.ranges != nil {
 			trs, err := b.decodeTimeRanges(b.ranges)
 			if err != nil {
 				return nil, err
 			}
-			extractor.Desc = tblScan.Desc
 			for _, tr := range trs {
 				extractor.setTimeRange(tr[0], tr[1])
 			}
@@ -156,7 +155,6 @@ func (b *PBPlanBuilder) decodeTimeRanges(keyRanges []*coprocessor.KeyRange) ([][
 				}
 			}
 			kr := []int64{startTime, endTime}
-			fmt.Printf("kr %v\n", kr)
 			krs = append(krs, kr)
 		}
 	}

@@ -25,7 +25,6 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/terror"
-
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -37,12 +36,12 @@ import (
 func parseLog(retriever *slowQueryRetriever, sctx sessionctx.Context, reader *bufio.Reader) ([][]types.Datum, error) {
 	retriever.taskList = make(chan *slowLogTask, 100)
 	ctx := context.Background()
-	retriever.parseSlowLog(ctx, sctx, reader, 64, false)
+	retriever.parseSlowLog(ctx, sctx, reader, 64)
 	task := <-retriever.taskList
 	var rows [][]types.Datum
 	var err error
 	if task != nil {
-		result := <-task.result
+		result := <-task.resultCh
 		rows, err = result.rows, result.err
 	}
 	if err == io.EOF {
@@ -426,9 +425,7 @@ select 7;`
 			c.Assert(err, IsNil)
 			endTime, err := ParseTime(cas.endTime)
 			c.Assert(err, IsNil)
-			extractor.StartTime = startTime
-			extractor.EndTime = endTime
-
+			extractor.TimeRanges = []*plannercore.TimeRange{{StartTime: startTime, EndTime: endTime}}
 		}
 		retriever := &slowQueryRetriever{extractor: extractor}
 		err := retriever.initialize(sctx)

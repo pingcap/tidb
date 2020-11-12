@@ -270,9 +270,11 @@ func buildTableMeta(tableName string, cs []columnInfo) *model.TableInfo {
 	}
 	for offset, c := range cs {
 		if mysql.HasPriKeyFlag(c.flag) {
-			if c.tp == mysql.TypeInt24 {
+			switch c.tp {
+			case mysql.TypeLong, mysql.TypeLonglong,
+				mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24:
 				tblInfo.PKIsHandle = true
-			} else {
+			default:
 				tblInfo.IsCommonHandle = true
 				index := &model.IndexInfo{
 					Name:    model.NewCIStr("primary"),
