@@ -449,6 +449,10 @@ github.com/pingcap/log v0.0.0-20200828042413-fce0951f1463 h1:Jboj+s4jSCp5E1WDgmR
 github.com/pingcap/log v0.0.0-20200828042413-fce0951f1463/go.mod h1:4rbK1p9ILyIfb6hU7OG2CiWSqMXnp3JMbiaVJ6mvoY8=
 github.com/pingcap/parser v0.0.0-20201109022253-d384bee1451e h1:7AXo1anjf9UqG0dvCy9+onp3bQDJjaN8IkSrKErTv3k=
 github.com/pingcap/parser v0.0.0-20201109022253-d384bee1451e/go.mod h1:GbEr2PgY72/4XqPZzmzstlOU/+il/wrjeTNFs6ihsSE=
+github.com/pingcap/parser v0.0.0-20201112064145-e7d98eaf2976 h1:zWWOkTD93B1usOfYDCFHde9+Iq+Z5gVrhMtdl2AJiZ4=
+github.com/pingcap/parser v0.0.0-20201112064145-e7d98eaf2976/go.mod h1:GbEr2PgY72/4XqPZzmzstlOU/+il/wrjeTNFs6ihsSE=
+github.com/pingcap/parser v0.0.0-20201112070629-d3b266979d72 h1:sDREqTpQprXYJTMRVj/bZYZcrg6i/dMA02zPOTDl+ww=
+github.com/pingcap/parser v0.0.0-20201112070629-d3b266979d72/go.mod h1:GbEr2PgY72/4XqPZzmzstlOU/+il/wrjeTNFs6ihsSE=
 github.com/pingcap/sysutil v0.0.0-20200206130906-2bfa6dc40bcd/go.mod h1:EB/852NMQ+aRKioCpToQ94Wl7fktV+FNnxf3CX/TTXI=
 github.com/pingcap/sysutil v0.0.0-20200715082929-4c47bcac246a/go.mod h1:EB/852NMQ+aRKioCpToQ94Wl7fktV+FNnxf3CX/TTXI=
 github.com/pingcap/sysutil v0.0.0-20201021075216-f93ced2829e2 h1:b2G/eqDeywtdJF3w9nIUdqMmXChsmpLvf4FzUxJ9Vmk=
