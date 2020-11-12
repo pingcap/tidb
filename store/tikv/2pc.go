@@ -1488,12 +1488,34 @@ func (c *twoPhaseCommitter) tryAmendTxn(ctx context.Context, startInfoSchema Sch
 	}
 	// Prewrite new mutations.
 	if addMutations != nil && len(addMutations.keys) > 0 {
+		var keysNeedToLock CommitterMutations
+		for i := 0; i < addMutations.len(); i++ {
+			if addMutations.isPessimisticLock[i] {
+				keysNeedToLock.Push(addMutations.ops[i], addMutations.keys[i], addMutations.values[i], addMutations.isPessimisticLock[i])
+			}
+		}
+		// For unique index amend, we need to pessimistic lock the generated new index keys first.
+		if keysNeedToLock.len() > 0 {
+			pessimisticLockBo := NewBackofferWithVars(ctx, pessimisticLockMaxBackoff, c.txn.vars)
+			lCtx := &kv.LockCtx{
+				ForUpdateTS:  c.forUpdateTS,
+				LockWaitTime: kv.LockNoWait,
+			}
+			err = c.pessimisticLockMutations(pessimisticLockBo, lCtx, keysNeedToLock)
+			if err != nil {
+				logutil.Logger(ctx).Warn("amend pessimistic lock has failed", zap.Error(err), zap.Uint64("txnStartTS", c.startTS))
+				return false, err
+			}
+			logutil.Logger(ctx).Info("amend pessimistic lock", zap.Uint64("startTS", c.startTS), zap.Uint64("forUpdateTS", c.forUpdateTS))
+		}
 		prewriteBo := NewBackofferWithVars(ctx, PrewriteMaxBackoff, c.txn.vars)
 		err = c.prewriteMutations(prewriteBo, *addMutations)
 		if err != nil {
 			logutil.Logger(ctx).Warn("amend prewrite has failed", zap.Error(err), zap.Uint64("txnStartTS", c.startTS))
 			return false, err
 		}
+		// Commit the amended secondary keys in the commit phase.
+		c.mutations.MergeMutations(*addMutations)
 		logutil.Logger(ctx).Info("amend prewrite finished", zap.Uint64("txnStartTS", c.startTS))
 		return true, nil
 	}
