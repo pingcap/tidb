@@ -745,8 +745,8 @@ func (s *SessionVars) UseDynamicPartitionPrune() bool {
 // BuildParserConfig generate parser.ParserConfig for initial parser
 func (s *SessionVars) BuildParserConfig() parser.ParserConfig {
 	return parser.ParserConfig{
-		EnableWindowFunction:  s.EnableWindowFunction,
-		StrictDoubleTypeCheck: s.EnableStrictDoubleTypeCheck,
+		EnableWindowFunction:        s.EnableWindowFunction,
+		EnableStrictDoubleTypeCheck: s.EnableStrictDoubleTypeCheck,
 	}
 }
 
