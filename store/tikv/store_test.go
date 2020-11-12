@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/pdpb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockoracle"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	pd "github.com/tikv/pd/client"
 )
@@ -67,14 +68,14 @@ func (s *testStoreSuite) TestOracle(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(t1, Less, t2)
 
-	t1, err = o.GetLowResolutionTimestamp(ctx)
+	t1, err = o.GetLowResolutionTimestamp(ctx, &oracle.Option{})
 	c.Assert(err, IsNil)
-	t2, err = o.GetLowResolutionTimestamp(ctx)
+	t2, err = o.GetLowResolutionTimestamp(ctx, &oracle.Option{})
 	c.Assert(err, IsNil)
 	c.Assert(t1, Less, t2)
-	f := o.GetLowResolutionTimestampAsync(ctx)
+	f := o.GetLowResolutionTimestampAsync(ctx, &oracle.Option{})
 	c.Assert(f, NotNil)
-	_ = o.UntilExpired(0, 0)
+	_ = o.UntilExpired(0, 0, &oracle.Option{})
 
 	// Check retry.
 	var wg sync.WaitGroup
@@ -92,7 +93,7 @@ func (s *testStoreSuite) TestOracle(c *C) {
 		t3, err := s.store.getTimestampWithRetry(NewBackofferWithVars(ctx, tsoMaxBackoff, nil))
 		c.Assert(err, IsNil)
 		c.Assert(t2, Less, t3)
-		expired := s.store.oracle.IsExpired(t2, 50)
+		expired := s.store.oracle.IsExpired(t2, 50, &oracle.Option{})
 		c.Assert(expired, IsTrue)
 	}()
 

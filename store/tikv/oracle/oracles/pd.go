@@ -16,9 +16,11 @@ package oracles
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/util/logutil"
@@ -32,12 +34,10 @@ const slowDist = 30 * time.Millisecond
 
 // pdOracle is an Oracle that uses a placement driver client as source.
 type pdOracle struct {
-	c  pd.Client
-	mu struct {
-		sync.RWMutex
-		lastTSMap map[string]uint64
-	}
-	quit chan struct{}
+	c pd.Client
+	// txn_scope (string) -> lastTSPointer (*uint64)
+	lastTSMap sync.Map
+	quit      chan struct{}
 }
 
 // NewPdOracle create an Oracle that uses a pd client source.
@@ -50,11 +50,10 @@ func NewPdOracle(pdClient pd.Client, updateInterval time.Duration) (oracle.Oracl
 		c:    pdClient,
 		quit: make(chan struct{}),
 	}
-	o.mu.lastTSMap = make(map[string]uint64)
 	ctx := context.TODO()
 	go o.updateTS(ctx, updateInterval)
 	// Initialize the timestamp of the global txnScope by Get.
-	_, err := o.GetTimestamp(ctx)
+	_, err := o.GetTimestamp(ctx, &oracle.Option{TxnScope: config.DefTxnScope})
 	if err != nil {
 		o.Close()
 		return nil, errors.Trace(err)
@@ -64,14 +63,8 @@ func NewPdOracle(pdClient pd.Client, updateInterval time.Duration) (oracle.Oracl
 
 // IsExpired returns whether lockTS+TTL is expired, both are ms. It uses `lastTS`
 // to compare, may return false negative result temporarily.
-func (o *pdOracle) IsExpired(lockTS, TTL uint64, opts ...oracle.OptionFunc) bool {
-	// Applies options
-	option := oracle.NewDefaultOption()
-	for _, opt := range opts {
-		opt(option)
-	}
-
-	lastTS, exist := o.getLastTS(option.TxnScope)
+func (o *pdOracle) IsExpired(lockTS, TTL uint64, opt *oracle.Option) bool {
+	lastTS, exist := o.getLastTS(opt.TxnScope)
 	if !exist {
 		return true
 	}
@@ -79,18 +72,12 @@ func (o *pdOracle) IsExpired(lockTS, TTL uint64, opts ...oracle.OptionFunc) bool
 }
 
 // GetTimestamp gets a new increasing time.
-func (o *pdOracle) GetTimestamp(ctx context.Context, opts ...oracle.OptionFunc) (uint64, error) {
-	// Applies options
-	option := oracle.NewDefaultOption()
-	for _, opt := range opts {
-		opt(option)
-	}
-
-	ts, err := o.getTimestamp(ctx, option.TxnScope)
+func (o *pdOracle) GetTimestamp(ctx context.Context, opt *oracle.Option) (uint64, error) {
+	ts, err := o.getTimestamp(ctx, opt.TxnScope)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-	o.setLastTS(ts, option.TxnScope)
+	o.setLastTS(ts, opt.TxnScope)
 	return ts, nil
 }
 
@@ -113,21 +100,14 @@ func (f *tsFuture) Wait() (uint64, error) {
 	return ts, nil
 }
 
-func (o *pdOracle) GetTimestampAsync(ctx context.Context, opts ...oracle.OptionFunc) oracle.Future {
-	// Applies options
-	option := oracle.NewDefaultOption()
-	for _, opt := range opts {
-		opt(option)
-	}
-
+func (o *pdOracle) GetTimestampAsync(ctx context.Context, opt *oracle.Option) oracle.Future {
 	var ts pd.TSFuture
-	// Todo: replace "global" with config.DefTxnScope
-	if option.TxnScope == "global" || option.TxnScope == "" {
+	if opt.TxnScope == config.DefTxnScope || opt.TxnScope == "" {
 		ts = o.c.GetTSAsync(ctx)
 	} else {
-		ts = o.c.GetLocalTSAsync(ctx, option.TxnScope)
+		ts = o.c.GetLocalTSAsync(ctx, opt.TxnScope)
 	}
-	return &tsFuture{ts, o, option.TxnScope}
+	return &tsFuture{ts, o, opt.TxnScope}
 }
 
 func (o *pdOracle) getTimestamp(ctx context.Context, txnScope string) (uint64, error) {
@@ -136,8 +116,7 @@ func (o *pdOracle) getTimestamp(ctx context.Context, txnScope string) (uint64, e
 		physical, logical int64
 		err               error
 	)
-	// Todo: replace "global" with config.DefTxnScope
-	if txnScope == "global" || txnScope == "" {
+	if txnScope == config.DefTxnScope || txnScope == "" {
 		physical, logical, err = o.c.GetTS(ctx)
 	} else {
 		physical, logical, err = o.c.GetLocalTS(ctx, txnScope)
@@ -154,34 +133,34 @@ func (o *pdOracle) getTimestamp(ctx context.Context, txnScope string) (uint64, e
 }
 
 func (o *pdOracle) setLastTS(ts uint64, txnScope string) {
-	o.mu.Lock()
-	defer o.mu.Unlock()
 	if txnScope == "" {
-		// Todo: replace "global" with config.DefTxnScope
-		txnScope = "global"
+		txnScope = config.DefTxnScope
 	}
-	lastTS, exist := o.mu.lastTSMap[txnScope]
-	if !exist {
-		o.mu.lastTSMap[txnScope] = ts
-		return
+	lastTSInterface, ok := o.lastTSMap.Load(txnScope)
+	if !ok {
+		lastTSInterface, _ = o.lastTSMap.LoadOrStore(txnScope, new(uint64))
 	}
-	if ts > lastTS {
-		o.mu.lastTSMap[txnScope] = ts
+	lastTSPointer := lastTSInterface.(*uint64)
+	for {
+		lastTS := atomic.LoadUint64(lastTSPointer)
+		if ts <= lastTS {
+			return
+		}
+		if atomic.CompareAndSwapUint64(lastTSPointer, lastTS, ts) {
+			return
+		}
 	}
 }
 
 func (o *pdOracle) getLastTS(txnScope string) (uint64, bool) {
-	o.mu.RLock()
-	defer o.mu.RUnlock()
 	if txnScope == "" {
-		// Todo: replace "global" with config.DefTxnScope
-		txnScope = "global"
+		txnScope = config.DefTxnScope
 	}
-	lastTS, exist := o.mu.lastTSMap[txnScope]
-	if !exist {
+	lastTSInterface, ok := o.lastTSMap.Load(txnScope)
+	if !ok {
 		return 0, false
 	}
-	return lastTS, true
+	return atomic.LoadUint64(lastTSInterface.(*uint64)), true
 }
 
 func (o *pdOracle) updateTS(ctx context.Context, interval time.Duration) {
@@ -190,21 +169,17 @@ func (o *pdOracle) updateTS(ctx context.Context, interval time.Duration) {
 	for {
 		select {
 		case <-ticker.C:
-			o.mu.RLock()
-			txnScopes := make([]string, 0, len(o.mu.lastTSMap))
-			for txnScope := range o.mu.lastTSMap {
-				txnScopes = append(txnScopes, txnScope)
-			}
-			o.mu.RUnlock()
 			// Update the timestamp for each txnScope
-			for _, txnScope := range txnScopes {
+			o.lastTSMap.Range(func(key, _ interface{}) bool {
+				txnScope := key.(string)
 				ts, err := o.getTimestamp(ctx, txnScope)
 				if err != nil {
 					logutil.Logger(ctx).Error("updateTS error", zap.String("txnScope", txnScope), zap.Error(err))
-					break
+					return true
 				}
 				o.setLastTS(ts, txnScope)
-			}
+				return true
+			})
 		case <-o.quit:
 			return
 		}
@@ -212,15 +187,9 @@ func (o *pdOracle) updateTS(ctx context.Context, interval time.Duration) {
 }
 
 // UntilExpired implement oracle.Oracle interface.
-func (o *pdOracle) UntilExpired(lockTS uint64, TTL uint64, opts ...oracle.OptionFunc) int64 {
-	// Applies options
-	option := oracle.NewDefaultOption()
-	for _, opt := range opts {
-		opt(option)
-	}
-
-	lastTS, exist := o.getLastTS(option.TxnScope)
-	if !exist {
+func (o *pdOracle) UntilExpired(lockTS uint64, TTL uint64, opt *oracle.Option) int64 {
+	lastTS, ok := o.getLastTS(opt.TxnScope)
+	if !ok {
 		return 0
 	}
 	return oracle.ExtractPhysical(lockTS) + int64(TTL) - oracle.ExtractPhysical(lastTS)
@@ -242,32 +211,20 @@ func (f lowResolutionTsFuture) Wait() (uint64, error) {
 }
 
 // GetLowResolutionTimestamp gets a new increasing time.
-func (o *pdOracle) GetLowResolutionTimestamp(ctx context.Context, opts ...oracle.OptionFunc) (uint64, error) {
-	// Applies options
-	option := oracle.NewDefaultOption()
-	for _, opt := range opts {
-		opt(option)
-	}
-
-	lastTS, exist := o.getLastTS(option.TxnScope)
-	if !exist {
-		return 0, errors.Errorf("get low resolution timestamp fail, invalid txnScope = %s", option.TxnScope)
+func (o *pdOracle) GetLowResolutionTimestamp(ctx context.Context, opt *oracle.Option) (uint64, error) {
+	lastTS, ok := o.getLastTS(opt.TxnScope)
+	if !ok {
+		return 0, errors.Errorf("get low resolution timestamp fail, invalid txnScope = %s", opt.TxnScope)
 	}
 	return lastTS, nil
 }
 
-func (o *pdOracle) GetLowResolutionTimestampAsync(ctx context.Context, opts ...oracle.OptionFunc) oracle.Future {
-	// Applies options
-	option := oracle.NewDefaultOption()
-	for _, opt := range opts {
-		opt(option)
-	}
-
-	lastTS, exist := o.getLastTS(option.TxnScope)
-	if !exist {
+func (o *pdOracle) GetLowResolutionTimestampAsync(ctx context.Context, opt *oracle.Option) oracle.Future {
+	lastTS, ok := o.getLastTS(opt.TxnScope)
+	if !ok {
 		return lowResolutionTsFuture{
 			ts:  0,
-			err: errors.Errorf("get low resolution timestamp async fail, invalid txnScope = %s", option.TxnScope),
+			err: errors.Errorf("get low resolution timestamp async fail, invalid txnScope = %s", opt.TxnScope),
 		}
 	}
 	return lowResolutionTsFuture{

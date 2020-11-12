@@ -798,7 +798,7 @@ func (tm *ttlManager) keepAlive(c *twoPhaseCommitter) {
 				return
 			}
 			bo := NewBackofferWithVars(context.Background(), pessimisticLockMaxBackoff, c.txn.vars)
-			now, err := c.store.GetOracle().GetTimestamp(bo.ctx)
+			now, err := c.store.GetOracle().GetTimestamp(bo.ctx, &oracle.Option{TxnScope: config.DefTxnScope})
 			if err != nil {
 				err1 := bo.Backoff(BoPDRPC, err)
 				if err1 != nil {
@@ -1143,7 +1143,7 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 	}
 	c.commitTS = commitTS
 
-	if c.store.oracle.IsExpired(c.startTS, kv.MaxTxnTimeUse) {
+	if c.store.oracle.IsExpired(c.startTS, kv.MaxTxnTimeUse, &oracle.Option{TxnScope: config.DefTxnScope}) {
 		err = errors.Errorf("conn %d txn takes too much time, txnStartTS: %d, comm: %d",
 			c.connID, c.startTS, c.commitTS)
 		return err
