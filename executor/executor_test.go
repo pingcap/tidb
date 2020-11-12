@@ -6705,7 +6705,7 @@ func (s *testSerialSuite) TestCoprocessorOOMAction(c *C) {
 		tk.MustExec("use test")
 		tk.MustExec("set tidb_distsql_scan_concurrency = 1")
 		tk.MustExec("set @@tidb_mem_quota_query=1;")
-		err = tk.QueryToErr(testcase.sql)
+		err = tk.ExecToErr(testcase.sql)
 		c.Assert(err, NotNil)
 		c.Assert(err.Error(), Matches, "Out Of Memory Quota.*")
 		se.Close()
@@ -6722,7 +6722,7 @@ func (s *testSerialSuite) TestCoprocessorOOMAction(c *C) {
 		tk.MustExec("use test")
 		tk.MustExec("set @@tidb_distsql_scan_concurrency = 30")
 		tk.MustExec("set @@tidb_mem_quota_query=1")
-		err = tk.QueryToErr(testcase.sql)
+		err = tk.ExecToErr(testcase.sql)
 		c.Assert(err, NotNil)
 		c.Assert(err.Error(), Matches, "Out Of Memory Quota.*")
 		se.Close()
@@ -6765,7 +6765,7 @@ func (s *testSerialSuite) TestIssue20454(c *C) {
 	for _, testcase := range testcases {
 		c.Log(testcase.name)
 		// must oom
-		quota := 90000
+		quota := tikv.OccupiedMem*4 + 100
 		se, err := session.CreateSession4Test(s.store)
 		c.Check(err, IsNil)
 		tk.Se = se

@@ -108,7 +108,9 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variable
 		}
 	}
 	if tokenCount < 1 {
-		tokenCount = 1
+		tokenCount++
+		// This might trigger oom action
+		sessionMemTracker.Consume(OccupiedMem)
 	}
 	it.sendRate = newRateLimit(tokenCount)
 	if !it.req.KeepOrder {
@@ -546,7 +548,8 @@ func (worker *copIteratorWorker) run(ctx context.Context) {
 				// wait action being enabled and response channel become empty
 				time.Sleep(20 * time.Millisecond)
 				// simulate other executor consume and trigger oom action
-				worker.memTracker.Consume(99999)
+				worker.memTracker.Consume(7 * OccupiedMem)
+				worker.memTracker.Consume(-7 * OccupiedMem)
 			}
 		})
 		close(task.respChan)
@@ -1265,7 +1268,7 @@ func (it *copIterator) Close() error {
 	failpoint.Inject("testRateLimitActionMockConsumeAndAssert", func(val failpoint.Value) {
 		if val.(bool) {
 			if it.memTracker.BytesConsumed() != 0 {
-				panic("consuming is not 0 after copIterator closed")
+				panic(fmt.Sprintf("consuming is not 0 after copIterator closed %v", it.memTracker.BytesConsumed()))
 			}
 		}
 	})
