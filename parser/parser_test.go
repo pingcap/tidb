@@ -4644,6 +4644,19 @@ func (s *testParserSuite) TestDDLStatements(c *C) {
 		c_json json collate utf8_bin)`
 	stmts, _, err = parser.Parse(createTableStr, "", "")
 	c.Assert(err, IsNil)
+
+	createTableStr = `CREATE TABLE t (c_double double(10))`
+	_, _, err = parser.Parse(createTableStr, "", "")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[parser:1149]You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use")
+	parser.SetStrictDoubleTypeCheck(false)
+	_, _, err = parser.Parse(createTableStr, "", "")
+	c.Assert(err, IsNil)
+	parser.SetStrictDoubleTypeCheck(true)
+
+	createTableStr = `CREATE TABLE t (c_double double(10, 2))`
+	_, _, err = parser.Parse(createTableStr, "", "")
+	c.Assert(err, IsNil)
 }
 
 func (s *testParserSuite) TestAnalyze(c *C) {
