@@ -111,8 +111,17 @@ func newBenchDB() *benchDB {
 
 func (ut *benchDB) mustExec(sql string) {
 	rss, err := ut.session.Execute(context.Background(), sql)
+	defer func() {
+		for _, rs := range rss {
+			err = rs.Close()
+			if err != nil {
+				log.Fatal(err.Error())
+			}
+		}
+	}()
 	if err != nil {
 		log.Fatal(err.Error())
+		return
 	}
 	if len(rss) > 0 {
 		ctx := context.Background()
