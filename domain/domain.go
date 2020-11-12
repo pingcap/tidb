@@ -1198,7 +1198,7 @@ func (do *Domain) syncIndexUsageWorker(owner owner.Manager) {
 				continue
 			}
 			if err := handle.GCIndexUsage(); err != nil {
-				logutil.BgLogger().Debug("gc index usage failed", zap.Error(err))
+				logutil.BgLogger().Error("[stats] gc index usage failed", zap.Error(err))
 			}
 		}
 	}
