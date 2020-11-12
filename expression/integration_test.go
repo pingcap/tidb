@@ -7650,6 +7650,37 @@ func (s *testIntegrationSuite) TestIssue20180(c *C) {
 	tk.MustQuery("select * from t where a > 1  and a = \"b\";").Check(testkit.Rows("b"))
 }
 
+func (s *testIntegrationSerialSuite) TestClusteredIndexAndNewCollation(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("set @@tidb_enable_clustered_index = 1;")
+	tk.MustExec("CREATE TABLE `t` (" +
+		"`a` char(10) COLLATE utf8mb4_unicode_ci NOT NULL," +
+		"`b` char(20) COLLATE utf8mb4_general_ci NOT NULL," +
+		"`c` int(11) NOT NULL," +
+		"PRIMARY KEY (`a`,`b`,`c`)," +
+		"KEY `idx` (`a`))")
+
+	tk.MustExec("begin")
+	tk.MustExec("insert into t values ('a6', 'b6', 3)")
+	tk.MustQuery("select * from t").Check(testkit.Rows("a6 b6 3"))
+	tk.MustQuery("select * from t where a='a6'").Check(testkit.Rows("a6 b6 3"))
+	tk.MustExec("delete from t")
+	tk.MustQuery("select * from t").Check(testkit.Rows())
+	tk.MustExec("commit")
+	tk.MustQuery("select * from t").Check(testkit.Rows())
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(`a` char(10) COLLATE utf8mb4_unicode_ci NOT NULL key)")
+	tk.MustExec("insert into t values ('&');")
+	tk.MustExec("replace into t values ('&');")
+	tk.MustQuery("select * from t").Check(testkit.Rows("&"))
+}
+
 func (s *testIntegrationSerialSuite) TestIssue20608(c *C) {
 	collate.SetNewCollationEnabledForTest(true)
 	defer collate.SetNewCollationEnabledForTest(false)

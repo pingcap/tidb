@@ -533,6 +533,9 @@ type TiKVClient struct {
 	CoprCache            CoprocessorCache `toml:"copr-cache" json:"copr-cache"`
 	// TTLRefreshedTxnSize controls whether a transaction should update its TTL or not.
 	TTLRefreshedTxnSize int64 `toml:"ttl-refreshed-txn-size" json:"ttl-refreshed-txn-size"`
+	// Ensure external consistency when async commit or 1PC is enabled. When this option is enabled,
+	// TiDB needs to get a timestamp from PD before committing a transaction and thus latency is increased.
+	ExternalConsistency bool `toml:"external-consistency" json:"external-consistency"`
 }
 
 // AsyncCommit is the config for the async commit feature.
@@ -733,7 +736,8 @@ var defaultConf = Config{
 			SafeWindow:        2 * time.Second,
 			AllowedClockDrift: 500 * time.Millisecond,
 		},
-		EnableOnePC: false,
+		EnableOnePC:         false,
+		ExternalConsistency: false,
 
 		MaxBatchSize:      128,
 		OverloadThreshold: 200,
