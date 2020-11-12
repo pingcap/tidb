@@ -757,7 +757,10 @@ func getDefaultValue(ctx sessionctx.Context, col *table.Column, c *ast.ColumnOpt
 
 	switch tp {
 	case mysql.TypeSet:
-		val, err := setSetDefaultValue(v, col)
+		val, err := getSetDefaultValue(v, col)
+		return val, false, err
+	case mysql.TypeEnum:
+		val, err := getEnumDefaultValue(v, col)
 		return val, false, err
 	case mysql.TypeDuration:
 		if v, err = v.ConvertTo(ctx.GetSessionVars().StmtCtx, &col.FieldType); err != nil {
@@ -788,8 +791,8 @@ func tryToGetSequenceDefaultValue(c *ast.ColumnOption) (expr string, isExpr bool
 	return "", false, nil
 }
 
-// setSetDefaultValue sets the default value for the set type. See https://dev.mysql.com/doc/refman/5.7/en/set.html.
-func setSetDefaultValue(v types.Datum, col *table.Column) (string, error) {
+// getSetDefaultValue gets the default value for the set type. See https://dev.mysql.com/doc/refman/5.7/en/set.html.
+func getSetDefaultValue(v types.Datum, col *table.Column) (string, error) {
 	if v.Kind() == types.KindInt64 {
 		setCnt := len(col.Elems)
 		maxLimit := int64(1<<uint(setCnt) - 1)
@@ -812,31 +815,39 @@ func setSetDefaultValue(v types.Datum, col *table.Column) (string, error) {
 	if str == "" {
 		return str, nil
 	}
-
-	ctor := collate.GetCollator(col.Collate)
-	valMap := make(map[string]struct{}, len(col.Elems))
-	dVals := strings.Split(str, ",")
-	for _, dv := range dVals {
-		valMap[string(ctor.Key(dv))] = struct{}{}
-	}
-	var existCnt int
-	for dv := range valMap {
-		for i := range col.Elems {
-			e := string(ctor.Key(col.Elems[i]))
-			if e == dv {
-				existCnt++
-				break
-			}
-		}
-	}
-	if existCnt != len(valMap) {
-		return "", ErrInvalidDefaultValue.GenWithStackByArgs(col.Name.O)
-	}
 	setVal, err := types.ParseSetName(col.Elems, str, col.Collate)
 	if err != nil {
 		return "", ErrInvalidDefaultValue.GenWithStackByArgs(col.Name.O)
 	}
 	v.SetMysqlSet(setVal, col.Collate)
+
+	return v.ToString()
+}
+
+// getEnumDefaultValue gets the default value for the enum type. See https://dev.mysql.com/doc/refman/5.7/en/enum.html.
+func getEnumDefaultValue(v types.Datum, col *table.Column) (string, error) {
+	if v.Kind() == types.KindInt64 {
+		val := v.GetInt64()
+		if val < 1 || val > int64(len(col.Elems)) {
+			return "", ErrInvalidDefaultValue.GenWithStackByArgs(col.Name.O)
+		}
+		enumVal, err := types.ParseEnumValue(col.Elems, uint64(val))
+		if err != nil {
+			return "", errors.Trace(err)
+		}
+		v.SetMysqlEnum(enumVal, col.Collate)
+		return v.ToString()
+	}
+
+	str, err := v.ToString()
+	if err != nil {
+		return "", errors.Trace(err)
+	}
+	enumVal, err := types.ParseEnumName(col.Elems, str, col.Collate)
+	if err != nil {
+		return "", ErrInvalidDefaultValue.GenWithStackByArgs(col.Name.O)
+	}
+	v.SetMysqlEnum(enumVal, col.Collate)
 
 	return v.ToString()
 }
@@ -3385,6 +3396,10 @@ func checkModifyCharsetAndCollation(toCharset, toCollate, origCharset, origColla
 // CheckModifyTypeCompatible checks whether changes column type to another is compatible considering
 // field length and precision.
 func CheckModifyTypeCompatible(origin *types.FieldType, to *types.FieldType) (allowedChangeColumnValueMsg string, err error) {
+	var (
+		toFlen     = to.Flen
+		originFlen = origin.Flen
+	)
 	unsupportedMsg := fmt.Sprintf("type %v not match origin %v", to.CompactStr(), origin.CompactStr())
 	var skipSignCheck bool
 	var skipLenCheck bool
@@ -3405,6 +3420,10 @@ func CheckModifyTypeCompatible(origin *types.FieldType, to *types.FieldType) (al
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
 		switch to.Tp {
 		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
+			// For integers, we should ignore the potential display length represented by flen, using
+			// the default flen of the type.
+			originFlen, _ = mysql.GetDefaultFieldLengthAndDecimal(origin.Tp)
+			toFlen, _ = mysql.GetDefaultFieldLengthAndDecimal(to.Tp)
 			// Changing integer to integer, whether reorg is necessary is depend on the flen/decimal/signed.
 			skipSignCheck = true
 			skipLenCheck = true
@@ -3527,8 +3546,8 @@ func CheckModifyTypeCompatible(origin *types.FieldType, to *types.FieldType) (al
 		}
 	}
 
-	if to.Flen > 0 && to.Flen < origin.Flen {
-		msg := fmt.Sprintf("length %d is less than origin %d", to.Flen, origin.Flen)
+	if toFlen > 0 && toFlen < originFlen {
+		msg := fmt.Sprintf("length %d is less than origin %d", toFlen, originFlen)
 		if skipLenCheck {
 			return msg, errUnsupportedModifyColumn.GenWithStackByArgs(msg)
 		}
@@ -5448,6 +5467,7 @@ func (d *ddl) UnlockTables(ctx sessionctx.Context, unlockTables []model.TableLoc
 	err := d.doDDLJob(ctx, job)
 	if err == nil {
 		ctx.ReleaseAllTableLocks()
+		ctx.GetStore().GetMemCache().Release()
 	}
 	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
