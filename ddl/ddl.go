@@ -327,6 +327,7 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 	logutil.BgLogger().Info("[ddl] start DDL", zap.String("ID", d.uuid), zap.Bool("runWorker", RunWorker))
 	d.ctx, d.cancel = context.WithCancel(d.ctx)
 
+	d.wg.Add(1)
 	go d.limitDDLJobs()
 
 	// If RunWorker is true, we need campaign owner and do DDL job.
