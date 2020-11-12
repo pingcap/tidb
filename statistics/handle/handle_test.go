@@ -800,7 +800,13 @@ func (s *testStatsSuite) TestCorrelationStatsCompute(c *C) {
 	c.Assert(foundS1 && foundS2, IsTrue)
 }
 
-func (s *testStatsSuite) TestIndexUsageInformation(c *C) {
+var _ = SerialSuites(&statsSerialSuite{&testStatsSuite{}})
+
+type statsSerialSuite struct {
+	*testStatsSuite
+}
+
+func (s *statsSerialSuite) TestIndexUsageInformation(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -840,7 +846,7 @@ func (s *testStatsSuite) TestIndexUsageInformation(c *C) {
 	))
 }
 
-func (s *testStatsSuite) TestGCIndexUsageInformation(c *C) {
+func (s *statsSerialSuite) TestGCIndexUsageInformation(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")

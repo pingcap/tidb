@@ -320,7 +320,7 @@ func (h *Handle) DumpIndexUsageToKV() error {
 	return nil
 }
 
-// GGCIndexUsage will delete the usage information of those indexes that do not exist.
+// GCIndexUsage will delete the usage information of those indexes that do not exist.
 func (h *Handle) GCIndexUsage() error {
 	sql := `delete from mysql.SCHEMA_INDEX_USAGE as stats where stats.index_id not in (select idx.index_id from information_schema.tidb_indexes as idx)`
 	_, _, err := h.restrictedExec.ExecRestrictedSQL(sql)
