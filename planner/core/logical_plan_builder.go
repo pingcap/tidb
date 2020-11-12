@@ -18,7 +18,6 @@ import (
 	"fmt"
 	"math"
 	"math/bits"
-	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -33,6 +32,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/opcode"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
@@ -52,6 +52,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	utilhint "github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/plancodec"
+	"github.com/pingcap/tidb/util/set"
 )
 
 const (
@@ -112,15 +113,6 @@ const (
 	// ErrExprInOrderBy  is in order by items for the error of ErrFieldNotInGroupBy
 	ErrExprInOrderBy = "ORDER BY"
 )
-
-func (la *LogicalAggregation) collectGroupByColumns() {
-	la.groupByCols = la.groupByCols[:0]
-	for _, item := range la.GroupByItems {
-		if col, ok := item.(*expression.Column); ok {
-			la.groupByCols = append(la.groupByCols, col)
-		}
-	}
-}
 
 // aggOrderByResolver is currently resolving expressions of order by clause
 // in aggregate function GROUP_CONCAT.
@@ -260,7 +252,6 @@ func (b *PlanBuilder) buildAggregation(ctx context.Context, p LogicalPlan, aggFu
 	plan4Agg.SetChildren(p)
 	plan4Agg.GroupByItems = gbyItems
 	plan4Agg.SetSchema(schema4Agg)
-	plan4Agg.collectGroupByColumns()
 	return plan4Agg, aggIndexMap, nil
 }
 
@@ -1083,7 +1074,6 @@ func (b *PlanBuilder) buildDistinct(child LogicalPlan, length int) (*LogicalAggr
 	if hint := b.TableHints(); hint != nil {
 		plan4Agg.aggHints = hint.aggHints
 	}
-	plan4Agg.collectGroupByColumns()
 	for _, col := range child.Schema().Columns {
 		aggDesc, err := aggregation.NewAggFuncDesc(b.ctx, ast.AggFuncFirstRow, []expression.Expression{col}, false)
 		if err != nil {
@@ -1967,12 +1957,12 @@ func (g *gbyResolver) Leave(inNode ast.Node) (ast.Node, bool) {
 		}
 		ret := g.fields[pos-1].Expr
 		ret.Accept(extractor)
-		if len(extractor.AggFuncs) != 0 {
-			g.err = ErrWrongGroupField.GenWithStackByArgs(g.fields[pos-1].Text())
-			return inNode, false
-		}
-		if _, ok := ret.(*ast.WindowFuncExpr); ok {
-			g.err = ErrWrongGroupField.GenWithStackByArgs(g.fields[pos-1].Text())
+		if len(extractor.AggFuncs) != 0 || ast.HasWindowFlag(ret) {
+			fieldName := g.fields[pos-1].AsName.String()
+			if fieldName == "" {
+				fieldName = g.fields[pos-1].Text()
+			}
+			g.err = ErrWrongGroupField.GenWithStackByArgs(fieldName)
 			return inNode, false
 		}
 		return ret, true
@@ -2181,7 +2171,7 @@ func checkExprInGroupBy(
 	}
 	if _, ok := expr.(*ast.ColumnNameExpr); !ok {
 		for _, gbyExpr := range gbyExprs {
-			if reflect.DeepEqual(gbyExpr, expr) {
+			if ast.ExpressionDeepEqual(gbyExpr, expr) {
 				return
 			}
 		}
@@ -2857,10 +2847,10 @@ func getStatsTable(ctx sessionctx.Context, tblInfo *model.TableInfo, pid int64) 
 	}
 
 	var statsTbl *statistics.Table
-	if pid != tblInfo.ID {
-		statsTbl = statsHandle.GetPartitionStats(tblInfo, pid)
-	} else {
+	if pid == tblInfo.ID || ctx.GetSessionVars().UseDynamicPartitionPrune() {
 		statsTbl = statsHandle.GetTableStats(tblInfo)
+	} else {
+		statsTbl = statsHandle.GetPartitionStats(tblInfo, pid)
 	}
 
 	// 2. table row count from statistics is zero.
@@ -2902,9 +2892,6 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	}
 
 	if tableInfo.IsView() {
-		if b.capFlag&collectUnderlyingViewName != 0 {
-			b.underlyingViewNames.Insert(dbName.L + "." + tn.Name.L)
-		}
 		return b.BuildDataSourceFromView(ctx, dbName, tableInfo)
 	}
 
@@ -2976,7 +2963,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		columns = tbl.Cols()
 	}
 	var statisticTable *statistics.Table
-	if _, ok := tbl.(table.PartitionedTable); !ok {
+	if _, ok := tbl.(table.PartitionedTable); !ok || b.ctx.GetSessionVars().UseDynamicPartitionPrune() {
 		statisticTable = getStatsTable(b.ctx, tbl.Meta(), tbl.Meta().ID)
 	}
 
@@ -3235,8 +3222,33 @@ func (b *PlanBuilder) buildMemTable(_ context.Context, dbName model.CIStr, table
 	return p, nil
 }
 
+// checkRecursiveView checks whether this view is recursively defined.
+func (b *PlanBuilder) checkRecursiveView(dbName model.CIStr, tableName model.CIStr) (func(), error) {
+	viewFullName := dbName.L + "." + tableName.L
+	if b.buildingViewStack == nil {
+		b.buildingViewStack = set.NewStringSet()
+	}
+	// If this view has already been on the building stack, it means
+	// this view contains a recursive definition.
+	if b.buildingViewStack.Exist(viewFullName) {
+		return nil, ErrViewRecursive.GenWithStackByArgs(dbName.O, tableName.O)
+	}
+	// If the view is being renamed, we return the mysql compatible error message.
+	if b.capFlag&renameView != 0 && viewFullName == b.renamingViewName {
+		return nil, ErrNoSuchTable.GenWithStackByArgs(dbName.O, tableName.O)
+	}
+	b.buildingViewStack.Insert(viewFullName)
+	return func() { delete(b.buildingViewStack, viewFullName) }, nil
+}
+
 // BuildDataSourceFromView is used to build LogicalPlan from view
 func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName model.CIStr, tableInfo *model.TableInfo) (LogicalPlan, error) {
+	deferFunc, err := b.checkRecursiveView(dbName, tableInfo.Name)
+	if err != nil {
+		return nil, err
+	}
+	defer deferFunc()
+
 	charset, collation := b.ctx.GetSessionVars().GetCharsetInfo()
 	viewParser := parser.New()
 	viewParser.EnableWindowFunc(b.ctx.GetSessionVars().EnableWindowFunction)
@@ -3248,7 +3260,10 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName model.
 	b.visitInfo = make([]visitInfo, 0)
 	selectLogicalPlan, err := b.Build(ctx, selectNode)
 	if err != nil {
-		err = ErrViewInvalid.GenWithStackByArgs(dbName.O, tableInfo.Name.O)
+		if terror.ErrorNotEqual(err, ErrViewRecursive) &&
+			terror.ErrorNotEqual(err, ErrNoSuchTable) {
+			err = ErrViewInvalid.GenWithStackByArgs(dbName.O, tableInfo.Name.O)
+		}
 		return nil, err
 	}
 
@@ -4040,7 +4055,7 @@ func getWindowName(name string) string {
 
 // buildProjectionForWindow builds the projection for expressions in the window specification that is not an column,
 // so after the projection, window functions only needs to deal with columns.
-func (b *PlanBuilder) buildProjectionForWindow(ctx context.Context, p LogicalPlan, spec *ast.WindowSpec, args []ast.ExprNode, aggMap map[*ast.AggregateFuncExpr]int) (LogicalPlan, []property.Item, []property.Item, []expression.Expression, error) {
+func (b *PlanBuilder) buildProjectionForWindow(ctx context.Context, p LogicalPlan, spec *ast.WindowSpec, args []ast.ExprNode, aggMap map[*ast.AggregateFuncExpr]int) (LogicalPlan, []property.SortItem, []property.SortItem, []expression.Expression, error) {
 	b.optFlag |= flagEliminateProjection
 
 	var partitionItems, orderItems []*ast.ByItem
@@ -4061,7 +4076,7 @@ func (b *PlanBuilder) buildProjectionForWindow(ctx context.Context, p LogicalPla
 	}
 	copy(proj.names, p.OutputNames())
 
-	propertyItems := make([]property.Item, 0, len(partitionItems)+len(orderItems))
+	propertyItems := make([]property.SortItem, 0, len(partitionItems)+len(orderItems))
 	var err error
 	p, propertyItems, err = b.buildByItemsForWindow(ctx, p, proj, partitionItems, propertyItems, aggMap)
 	if err != nil {
@@ -4132,9 +4147,9 @@ func (b *PlanBuilder) buildByItemsForWindow(
 	p LogicalPlan,
 	proj *LogicalProjection,
 	items []*ast.ByItem,
-	retItems []property.Item,
+	retItems []property.SortItem,
 	aggMap map[*ast.AggregateFuncExpr]int,
-) (LogicalPlan, []property.Item, error) {
+) (LogicalPlan, []property.SortItem, error) {
 	transformer := &itemTransformer{}
 	for _, item := range items {
 		newExpr, _ := item.Expr.Accept(transformer)
@@ -4148,7 +4163,7 @@ func (b *PlanBuilder) buildByItemsForWindow(
 			continue
 		}
 		if col, ok := it.(*expression.Column); ok {
-			retItems = append(retItems, property.Item{Col: col, Desc: item.Desc})
+			retItems = append(retItems, property.SortItem{Col: col, Desc: item.Desc})
 			continue
 		}
 		proj.Exprs = append(proj.Exprs, it)
@@ -4158,7 +4173,7 @@ func (b *PlanBuilder) buildByItemsForWindow(
 			RetType:  it.GetType(),
 		}
 		proj.schema.Append(col)
-		retItems = append(retItems, property.Item{Col: col, Desc: item.Desc})
+		retItems = append(retItems, property.SortItem{Col: col, Desc: item.Desc})
 	}
 	return p, retItems, nil
 }
@@ -4166,7 +4181,7 @@ func (b *PlanBuilder) buildByItemsForWindow(
 // buildWindowFunctionFrameBound builds the bounds of window function frames.
 // For type `Rows`, the bound expr must be an unsigned integer.
 // For type `Range`, the bound expr must be temporal or numeric types.
-func (b *PlanBuilder) buildWindowFunctionFrameBound(ctx context.Context, spec *ast.WindowSpec, orderByItems []property.Item, boundClause *ast.FrameBound) (*FrameBound, error) {
+func (b *PlanBuilder) buildWindowFunctionFrameBound(ctx context.Context, spec *ast.WindowSpec, orderByItems []property.SortItem, boundClause *ast.FrameBound) (*FrameBound, error) {
 	frameType := spec.Frame.Type
 	bound := &FrameBound{Type: boundClause.Type, UnBounded: boundClause.UnBounded}
 	if bound.UnBounded {
@@ -4276,7 +4291,7 @@ func (pc *paramMarkerInPrepareChecker) Leave(in ast.Node) (out ast.Node, ok bool
 
 // buildWindowFunctionFrame builds the window function frames.
 // See https://dev.mysql.com/doc/refman/8.0/en/window-functions-frames.html
-func (b *PlanBuilder) buildWindowFunctionFrame(ctx context.Context, spec *ast.WindowSpec, orderByItems []property.Item) (*WindowFrame, error) {
+func (b *PlanBuilder) buildWindowFunctionFrame(ctx context.Context, spec *ast.WindowSpec, orderByItems []property.SortItem) (*WindowFrame, error) {
 	frameClause := spec.Frame
 	if frameClause == nil {
 		return nil, nil
@@ -4429,7 +4444,7 @@ func (b *PlanBuilder) buildWindowFunctions(ctx context.Context, p LogicalPlan, g
 
 // checkOriginWindowSpecs checks the validation for origin window specifications for a group of functions.
 // Because of the grouped specification is different from it, we should especially check them before build window frame.
-func (b *PlanBuilder) checkOriginWindowSpecs(funcs []*ast.WindowFuncExpr, orderByItems []property.Item) error {
+func (b *PlanBuilder) checkOriginWindowSpecs(funcs []*ast.WindowFuncExpr, orderByItems []property.SortItem) error {
 	for _, f := range funcs {
 		if f.IgnoreNull {
 			return ErrNotSupportedYet.GenWithStackByArgs("IGNORE NULLS")
@@ -4476,7 +4491,7 @@ func (b *PlanBuilder) checkOriginWindowSpecs(funcs []*ast.WindowFuncExpr, orderB
 	return nil
 }
 
-func (b *PlanBuilder) checkOriginWindowFrameBound(bound *ast.FrameBound, spec *ast.WindowSpec, orderByItems []property.Item) error {
+func (b *PlanBuilder) checkOriginWindowFrameBound(bound *ast.FrameBound, spec *ast.WindowSpec, orderByItems []property.SortItem) error {
 	if bound.Type == ast.CurrentRow || bound.UnBounded {
 		return nil
 	}

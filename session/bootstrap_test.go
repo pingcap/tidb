@@ -104,7 +104,7 @@ func (s *testBootstrapSuite) TestBootstrap(c *C) {
 
 func globalVarsCount() int64 {
 	var count int64
-	for _, v := range variable.SysVars {
+	for _, v := range variable.GetSysVars() {
 		if v.Scope != variable.ScopeSession {
 			count++
 		}
@@ -333,6 +333,6 @@ func (s *testBootstrapSuite) TestStmtSummary(c *C) {
 	req := r.NewChunk()
 	c.Assert(r.Next(ctx, req), IsNil)
 	row := req.GetRow(0)
-	c.Assert(row.GetBytes(0), BytesEquals, []byte("1"))
+	c.Assert(row.GetBytes(0), BytesEquals, []byte("ON"))
 	c.Assert(r.Close(), IsNil)
 }

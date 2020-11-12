@@ -15,6 +15,7 @@ package planner
 
 import (
 	"context"
+	"fmt"
 	"math"
 	"runtime/trace"
 	"strings"
@@ -111,6 +112,13 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 		sctx.GetSessionVars().StmtCtx.AppendWarning(warn)
 	}
 	warns = warns[:0]
+	for name, val := range stmtHints.SetVars {
+		err := variable.SetStmtVar(sessVars, name, val)
+		if err != nil {
+			sctx.GetSessionVars().StmtCtx.AppendWarning(err)
+		}
+	}
+
 	bestPlan, names, _, err := optimize(ctx, sctx, node, is)
 	if err != nil {
 		return nil, nil, err
@@ -259,7 +267,7 @@ func optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	return finalPlan, names, cost, err
 }
 
-func extractSelectAndNormalizeDigest(stmtNode ast.StmtNode) (*ast.SelectStmt, string, string) {
+func extractSelectAndNormalizeDigest(stmtNode ast.StmtNode) (ast.StmtNode, string, string) {
 	switch x := stmtNode.(type) {
 	case *ast.ExplainStmt:
 		switch x.Stmt.(type) {
@@ -269,9 +277,20 @@ func extractSelectAndNormalizeDigest(stmtNode ast.StmtNode) (*ast.SelectStmt, st
 			idx := strings.Index(normalizeExplainSQL, "select")
 			normalizeSQL := normalizeExplainSQL[idx:]
 			hash := parser.DigestNormalized(normalizeSQL)
-			return x.Stmt.(*ast.SelectStmt), normalizeSQL, hash
+			return x.Stmt, normalizeSQL, hash
+		case *ast.SetOprStmt:
+			plannercore.EraseLastSemicolon(x)
+			normalizeExplainSQL := parser.Normalize(x.Text())
+			idx := strings.Index(normalizeExplainSQL, "select")
+			parenthesesIdx := strings.Index(normalizeExplainSQL, "(")
+			if parenthesesIdx != -1 && parenthesesIdx < idx {
+				idx = parenthesesIdx
+			}
+			normalizeSQL := normalizeExplainSQL[idx:]
+			hash := parser.DigestNormalized(normalizeSQL)
+			return x.Stmt, normalizeSQL, hash
 		}
-	case *ast.SelectStmt:
+	case *ast.SelectStmt, *ast.SetOprStmt:
 		plannercore.EraseLastSemicolon(x)
 		normalizedSQL, hash := parser.NormalizeDigest(x.Text())
 		return x, normalizedSQL, hash
@@ -284,8 +303,8 @@ func getBindRecord(ctx sessionctx.Context, stmt ast.StmtNode) (*bindinfo.BindRec
 	if ctx.Value(bindinfo.SessionBindInfoKeyType) == nil {
 		return nil, ""
 	}
-	selectStmt, normalizedSQL, hash := extractSelectAndNormalizeDigest(stmt)
-	if selectStmt == nil {
+	stmtNode, normalizedSQL, hash := extractSelectAndNormalizeDigest(stmt)
+	if stmtNode == nil {
 		return nil, ""
 	}
 	sessionHandle := ctx.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
@@ -379,6 +398,7 @@ func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints stmtctx.StmtHin
 	}
 	var memoryQuotaHint, useToJAHint, useCascadesHint, maxExecutionTime, forceNthPlan *ast.TableOptimizerHint
 	var memoryQuotaHintCnt, useToJAHintCnt, useCascadesHintCnt, noIndexMergeHintCnt, readReplicaHintCnt, maxExecutionTimeCnt, forceNthPlanCnt int
+	setVars := make(map[string]string)
 	for _, hint := range hints {
 		switch hint.HintName.L {
 		case "memory_quota":
@@ -400,8 +420,30 @@ func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints stmtctx.StmtHin
 		case "nth_plan":
 			forceNthPlanCnt++
 			forceNthPlan = hint
+		case "set_var":
+			setVarHint := hint.HintData.(ast.HintSetVar)
+
+			// Not all session variables are permitted for use with SET_VAR
+			sysVar := variable.GetSysVar(setVarHint.VarName)
+			if sysVar == nil {
+				warns = append(warns, plannercore.ErrUnresolvedHintName.GenWithStackByArgs(setVarHint.VarName, hint.HintName.String()))
+				continue
+			}
+			if !sysVar.IsHintUpdatable {
+				warns = append(warns, plannercore.ErrNotHintUpdatable.GenWithStackByArgs(setVarHint.VarName))
+				continue
+			}
+			// If several hints with the same variable name appear in the same statement, the first one is applied and the others are ignored with a warning
+			if _, ok := setVars[setVarHint.VarName]; ok {
+				msg := fmt.Sprintf("%s(%s=%s)", hint.HintName.String(), setVarHint.VarName, setVarHint.Value)
+				warns = append(warns, plannercore.ErrWarnConflictingHint.GenWithStackByArgs(msg))
+				continue
+			}
+			setVars[setVarHint.VarName] = setVarHint.Value
 		}
 	}
+	stmtHints.SetVars = setVars
+
 	// Handle MEMORY_QUOTA
 	if memoryQuotaHintCnt != 0 {
 		if memoryQuotaHintCnt > 1 {

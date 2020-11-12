@@ -28,6 +28,23 @@ var _ = Suite(&testRuleSuite{})
 
 type testBundleSuite struct{}
 
+func (t *testBundleSuite) TestEmpty(c *C) {
+	bundle := &Bundle{ID: GroupID(1)}
+	c.Assert(bundle.IsEmpty(), IsTrue)
+
+	bundle = &Bundle{ID: GroupID(1), Index: 1}
+	c.Assert(bundle.IsEmpty(), IsFalse)
+
+	bundle = &Bundle{ID: GroupID(1), Override: true}
+	c.Assert(bundle.IsEmpty(), IsFalse)
+
+	bundle = &Bundle{ID: GroupID(1), Rules: []*Rule{{ID: "434"}}}
+	c.Assert(bundle.IsEmpty(), IsFalse)
+
+	bundle = &Bundle{ID: GroupID(1), Index: 1, Override: true}
+	c.Assert(bundle.IsEmpty(), IsFalse)
+}
+
 func (t *testBundleSuite) TestClone(c *C) {
 	bundle := &Bundle{ID: GroupID(1), Rules: []*Rule{{ID: "434"}}}
 

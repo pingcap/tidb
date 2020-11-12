@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	util2 "github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/pdapi"
@@ -79,7 +80,7 @@ const (
 )
 
 // ErrPrometheusAddrIsNotSet is the error that Prometheus address is not set in PD and etcd
-var ErrPrometheusAddrIsNotSet = terror.ClassDomain.New(errno.ErrPrometheusAddrIsNotSet, errno.MySQLErrName[errno.ErrPrometheusAddrIsNotSet])
+var ErrPrometheusAddrIsNotSet = dbterror.ClassDomain.NewStd(errno.ErrPrometheusAddrIsNotSet)
 
 // errPlacementRulesDisabled is exported for internal usage, indicating PD rejected the request due to disabled placement feature.
 var errPlacementRulesDisabled = errors.New("placement rules feature is disabled")
@@ -110,6 +111,33 @@ type ServerInfo struct {
 	BinlogStatus   string            `json:"binlog_status"`
 	StartTimestamp int64             `json:"start_timestamp"`
 	Labels         map[string]string `json:"labels"`
+	// ServerID is a function, to always retrieve latest serverID from `Domain`,
+	//   which will be changed on occasions such as connection to PD is restored after broken.
+	ServerIDGetter func() uint64 `json:"-"`
+
+	// JSONServerID is `serverID` for json marshal/unmarshal ONLY.
+	JSONServerID uint64 `json:"server_id"`
+}
+
+// Marshal `ServerInfo` into bytes.
+func (info *ServerInfo) Marshal() ([]byte, error) {
+	info.JSONServerID = info.ServerIDGetter()
+	infoBuf, err := json.Marshal(info)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return infoBuf, nil
+}
+
+// Unmarshal `ServerInfo` from bytes.
+func (info *ServerInfo) Unmarshal(v []byte) error {
+	if err := json.Unmarshal(v, info); err != nil {
+		return err
+	}
+	info.ServerIDGetter = func() uint64 {
+		return info.JSONServerID
+	}
+	return nil
 }
 
 // ServerVersionInfo is the server version and git_hash.
@@ -136,10 +164,10 @@ func setGlobalInfoSyncer(is *InfoSyncer) {
 }
 
 // GlobalInfoSyncerInit return a new InfoSyncer. It is exported for testing.
-func GlobalInfoSyncerInit(ctx context.Context, id string, etcdCli *clientv3.Client, skipRegisterToDashBoard bool) (*InfoSyncer, error) {
+func GlobalInfoSyncerInit(ctx context.Context, id string, serverIDGetter func() uint64, etcdCli *clientv3.Client, skipRegisterToDashBoard bool) (*InfoSyncer, error) {
 	is := &InfoSyncer{
 		etcdCli:        etcdCli,
-		info:           getServerInfo(id),
+		info:           getServerInfo(id, serverIDGetter),
 		serverInfoPath: fmt.Sprintf("%s/%s", ServerInformationPath, id),
 		minStartTSPath: fmt.Sprintf("%s/%s", ServerMinStartTSPath, id),
 	}
@@ -166,6 +194,11 @@ func (is *InfoSyncer) init(ctx context.Context, skipRegisterToDashboard bool) er
 // SetSessionManager set the session manager for InfoSyncer.
 func (is *InfoSyncer) SetSessionManager(manager util2.SessionManager) {
 	is.manager = manager
+}
+
+// GetSessionManager get the session manager.
+func (is *InfoSyncer) GetSessionManager() util2.SessionManager {
+	return is.manager
 }
 
 // GetServerInfo gets self server static information.
@@ -317,61 +350,6 @@ func doRequest(ctx context.Context, addrs []string, route, method string, body i
 	return nil, err
 }
 
-// GetPlacementRules is used to retrieve placement rules from PD.
-func GetPlacementRules(ctx context.Context) ([]*placement.RuleOp, error) {
-	is, err := getGlobalInfoSyncer()
-	if err != nil {
-		return nil, err
-	}
-
-	if is.etcdCli == nil {
-		return nil, nil
-	}
-
-	addrs := is.etcdCli.Endpoints()
-
-	if len(addrs) == 0 {
-		return nil, errors.Errorf("pd unavailable")
-	}
-
-	rules := []*placement.RuleOp{}
-	res, err := doRequest(ctx, addrs, path.Join(pdapi.Config, "rules"), http.MethodGet, nil)
-	if err == nil && res != nil {
-		err = json.Unmarshal(res, &rules)
-	}
-	return rules, err
-}
-
-// UpdatePlacementRules is used to notify PD changes of placement rules.
-func UpdatePlacementRules(ctx context.Context, rules []*placement.RuleOp) error {
-	if len(rules) == 0 {
-		return nil
-	}
-
-	is, err := getGlobalInfoSyncer()
-	if err != nil {
-		return err
-	}
-
-	if is.etcdCli == nil {
-		return nil
-	}
-
-	addrs := is.etcdCli.Endpoints()
-
-	if len(addrs) == 0 {
-		return errors.Errorf("pd unavailable")
-	}
-
-	b, err := json.Marshal(rules)
-	if err != nil {
-		return err
-	}
-
-	_, err = doRequest(ctx, addrs, path.Join(pdapi.Config, "rules/batch"), http.MethodPost, bytes.NewReader(b))
-	return err
-}
-
 // GetAllRuleBundles is used to get all rule bundles from PD. It is used to load full rules from PD while fullload infoschema.
 func GetAllRuleBundles(ctx context.Context) ([]*placement.Bundle, error) {
 	is, err := getGlobalInfoSyncer()
@@ -423,8 +401,12 @@ func GetRuleBundle(ctx context.Context, name string) (*placement.Bundle, error) 
 	return bundle, err
 }
 
-// PutRuleBundle is used to post one specific rule bundle to PD.
-func PutRuleBundle(ctx context.Context, bundle *placement.Bundle) error {
+// PutRuleBundles is used to post specific rule bundles to PD.
+func PutRuleBundles(ctx context.Context, bundles []*placement.Bundle) error {
+	if len(bundles) == 0 {
+		return nil
+	}
+
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
 		return err
@@ -440,19 +422,19 @@ func PutRuleBundle(ctx context.Context, bundle *placement.Bundle) error {
 		return errors.Errorf("pd unavailable")
 	}
 
-	b, err := json.Marshal(bundle)
+	b, err := json.Marshal(bundles)
 	if err != nil {
 		return err
 	}
 
-	_, err = doRequest(ctx, addrs, path.Join(pdapi.Config, "placement-rule", bundle.ID), "POST", bytes.NewReader(b))
+	_, err = doRequest(ctx, addrs, path.Join(pdapi.Config, "placement-rule")+"?partial=true", "POST", bytes.NewReader(b))
 	return err
 }
 
 func (is *InfoSyncer) getAllServerInfo(ctx context.Context) (map[string]*ServerInfo, error) {
 	allInfo := make(map[string]*ServerInfo)
 	if is.etcdCli == nil {
-		allInfo[is.info.ID] = getServerInfo(is.info.ID)
+		allInfo[is.info.ID] = getServerInfo(is.info.ID, is.info.ServerIDGetter)
 		return allInfo, nil
 	}
 	allInfo, err := getInfo(ctx, is.etcdCli, ServerInformationPath, keyOpDefaultRetryCnt, keyOpDefaultTimeout, clientv3.WithPrefix())
@@ -462,12 +444,12 @@ func (is *InfoSyncer) getAllServerInfo(ctx context.Context) (map[string]*ServerI
 	return allInfo, nil
 }
 
-// storeServerInfo stores self server static information to etcd.
-func (is *InfoSyncer) storeServerInfo(ctx context.Context) error {
+// StoreServerInfo stores self server static information to etcd.
+func (is *InfoSyncer) StoreServerInfo(ctx context.Context) error {
 	if is.etcdCli == nil {
 		return nil
 	}
-	infoBuf, err := json.Marshal(is.info)
+	infoBuf, err := is.info.Marshal()
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -631,10 +613,10 @@ func (is *InfoSyncer) newSessionAndStoreServerInfo(ctx context.Context, retryCnt
 	is.session = session
 	binloginfo.RegisterStatusListener(func(status binloginfo.BinlogStatus) error {
 		is.info.BinlogStatus = status.String()
-		err := is.storeServerInfo(ctx)
+		err := is.StoreServerInfo(ctx)
 		return errors.Trace(err)
 	})
-	return is.storeServerInfo(ctx)
+	return is.StoreServerInfo(ctx)
 }
 
 // newTopologySessionAndStoreServerInfo creates a new etcd session and stores server info to etcd.
@@ -691,8 +673,12 @@ type metricStorage struct {
 
 func (is *InfoSyncer) getPrometheusAddr() (string, error) {
 	// Get PD servers info.
-	pdAddrs := is.etcdCli.Endpoints()
-	if len(pdAddrs) == 0 {
+	clientAvailable := is.etcdCli != nil
+	var pdAddrs []string
+	if clientAvailable {
+		pdAddrs = is.etcdCli.Endpoints()
+	}
+	if !clientAvailable || len(pdAddrs) == 0 {
 		return "", errors.Errorf("pd unavailable")
 	}
 
@@ -774,7 +760,7 @@ func getInfo(ctx context.Context, etcdCli *clientv3.Client, key string, retryCnt
 			info := &ServerInfo{
 				BinlogStatus: binloginfo.BinlogStatusUnknown.String(),
 			}
-			err = json.Unmarshal(kv.Value, info)
+			err = info.Unmarshal(kv.Value)
 			if err != nil {
 				logutil.BgLogger().Info("get key failed", zap.String("key", string(kv.Key)), zap.ByteString("value", kv.Value),
 					zap.Error(err))
@@ -788,7 +774,7 @@ func getInfo(ctx context.Context, etcdCli *clientv3.Client, key string, retryCnt
 }
 
 // getServerInfo gets self tidb server information.
-func getServerInfo(id string) *ServerInfo {
+func getServerInfo(id string, serverIDGetter func() uint64) *ServerInfo {
 	cfg := config.GetGlobalConfig()
 	info := &ServerInfo{
 		ID:             id,
@@ -799,6 +785,7 @@ func getServerInfo(id string) *ServerInfo {
 		BinlogStatus:   binloginfo.GetStatus().String(),
 		StartTimestamp: time.Now().Unix(),
 		Labels:         cfg.Labels,
+		ServerIDGetter: serverIDGetter,
 	}
 	info.Version = mysql.ServerVersion
 	info.GitHash = versioninfo.TiDBGitHash
