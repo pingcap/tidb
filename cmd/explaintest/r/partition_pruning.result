@@ -2333,8 +2333,8 @@ TableReader_7	250.00	root	partition:all	data:Selection_6
   └─TableFullScan_5	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain select * from t1 where a>=0 and a <= 0xFFFFFFFFFFFFFFFF;
 id	estRows	task	access object	operator info
-TableReader_7	250.00	root	partition:all	data:Selection_6
-└─Selection_6	250.00	cop[tikv]		ge(test.t1.a, 0), le(test.t1.a, 18446744073709551615)
+TableReader_7	3323.33	root	partition:all	data:Selection_6
+└─Selection_6	3323.33	cop[tikv]		le(test.t1.a, 18446744073709551615)
   └─TableFullScan_5	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 drop table t1;
 create table t1 (a bigint) partition by range(a+0) (

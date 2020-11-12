@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -114,7 +115,7 @@ func dumpJSONCol(hist *statistics.Histogram, CMSketch *statistics.CMSketch) *jso
 // DumpStatsToJSON dumps statistic to json.
 func (h *Handle) DumpStatsToJSON(dbName string, tableInfo *model.TableInfo, historyStatsExec sqlexec.RestrictedSQLExecutor) (*JSONTable, error) {
 	pi := tableInfo.GetPartitionInfo()
-	if pi == nil {
+	if pi == nil || h.CurrentPruneMode() == variable.DynamicOnly {
 		return h.tableStatsToJSON(dbName, tableInfo, tableInfo.ID, historyStatsExec)
 	}
 	jsonTbl := &JSONTable{
@@ -177,15 +178,12 @@ func (h *Handle) LoadStatsFromJSON(is infoschema.InfoSchema, jsonTbl *JSONTable)
 	}
 	tableInfo := table.Meta()
 	pi := tableInfo.GetPartitionInfo()
-	if pi == nil {
+	if pi == nil || jsonTbl.Partitions == nil {
 		err := h.loadStatsFromJSON(tableInfo, tableInfo.ID, jsonTbl)
 		if err != nil {
 			return errors.Trace(err)
 		}
 	} else {
-		if jsonTbl.Partitions == nil {
-			return errors.New("No partition statistics")
-		}
 		for _, def := range pi.Definitions {
 			tbl := jsonTbl.Partitions[def.Name.L]
 			if tbl == nil {
@@ -207,13 +205,13 @@ func (h *Handle) loadStatsFromJSON(tableInfo *model.TableInfo, physicalID int64,
 	}
 
 	for _, col := range tbl.Columns {
-		err = h.SaveStatsToStorage(tbl.PhysicalID, tbl.Count, 0, &col.Histogram, col.CMSketch, 1)
+		err = h.SaveStatsToStorage(tbl.PhysicalID, tbl.Count, 0, &col.Histogram, col.CMSketch, col.TopN, 1)
 		if err != nil {
 			return errors.Trace(err)
 		}
 	}
 	for _, idx := range tbl.Indices {
-		err = h.SaveStatsToStorage(tbl.PhysicalID, tbl.Count, 1, &idx.Histogram, idx.CMSketch, 1)
+		err = h.SaveStatsToStorage(tbl.PhysicalID, tbl.Count, 1, &idx.Histogram, idx.CMSketch, idx.TopN, 1)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -245,9 +243,11 @@ func TableStatsFromJSON(tableInfo *model.TableInfo, physicalID int64, jsonTbl *J
 			}
 			hist := statistics.HistogramFromProto(jsonIdx.Histogram)
 			hist.ID, hist.NullCount, hist.LastUpdateVersion, hist.Correlation = idxInfo.ID, jsonIdx.NullCount, jsonIdx.LastUpdateVersion, jsonIdx.Correlation
+			cm, topN := statistics.CMSketchAndTopNFromProto(jsonIdx.CMSketch)
 			idx := &statistics.Index{
 				Histogram: *hist,
-				CMSketch:  statistics.CMSketchFromProto(jsonIdx.CMSketch),
+				CMSketch:  cm,
+				TopN:      topN,
 				Info:      idxInfo,
 			}
 			tbl.Indices[idx.ID] = idx
@@ -266,11 +266,13 @@ func TableStatsFromJSON(tableInfo *model.TableInfo, physicalID int64, jsonTbl *J
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
+			cm, topN := statistics.CMSketchAndTopNFromProto(jsonCol.CMSketch)
 			hist.ID, hist.NullCount, hist.LastUpdateVersion, hist.TotColSize, hist.Correlation = colInfo.ID, jsonCol.NullCount, jsonCol.LastUpdateVersion, jsonCol.TotColSize, jsonCol.Correlation
 			col := &statistics.Column{
 				PhysicalID: physicalID,
 				Histogram:  *hist,
-				CMSketch:   statistics.CMSketchFromProto(jsonCol.CMSketch),
+				CMSketch:   cm,
+				TopN:       topN,
 				Info:       colInfo,
 				Count:      count,
 				IsHandle:   tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.Flag),
