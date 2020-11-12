@@ -320,15 +320,15 @@ func (s *seqTestSuite) TestShow(c *C) {
 	tk.MustQuery(testSQL).Check(testutil.RowsWithSep("|",
 		"show_index|0|PRIMARY|1|id|A|0|<nil>|<nil>||BTREE| |YES|NULL",
 		"show_index|1|cIdx|1|c|A|0|<nil>|<nil>|YES|HASH||index_comment_for_cIdx|YES|NULL",
-		"show_index|1|idx1|1|id|A|0|<nil>|<nil>|YES|HASH| |YES|NULL",
-		"show_index|1|idx2|1|id|A|0|<nil>|<nil>|YES|BTREE||idx|YES|NULL",
-		"show_index|1|idx3|1|id|A|0|<nil>|<nil>|YES|HASH||idx|YES|NULL",
-		"show_index|1|idx4|1|id|A|0|<nil>|<nil>|YES|BTREE||idx|YES|NULL",
-		"show_index|1|idx5|1|id|A|0|<nil>|<nil>|YES|BTREE||idx|YES|NULL",
-		"show_index|1|idx6|1|id|A|0|<nil>|<nil>|YES|HASH| |YES|NULL",
-		"show_index|1|idx7|1|id|A|0|<nil>|<nil>|YES|BTREE| |YES|NULL",
-		"show_index|1|idx8|1|id|A|0|<nil>|<nil>|YES|BTREE| |YES|NULL",
-		"show_index|1|idx9|1|id|A|0|<nil>|<nil>|YES|BTREE| |NO|NULL",
+		"show_index|1|idx1|1|id|A|0|<nil>|<nil>||HASH| |YES|NULL",
+		"show_index|1|idx2|1|id|A|0|<nil>|<nil>||BTREE||idx|YES|NULL",
+		"show_index|1|idx3|1|id|A|0|<nil>|<nil>||HASH||idx|YES|NULL",
+		"show_index|1|idx4|1|id|A|0|<nil>|<nil>||BTREE||idx|YES|NULL",
+		"show_index|1|idx5|1|id|A|0|<nil>|<nil>||BTREE||idx|YES|NULL",
+		"show_index|1|idx6|1|id|A|0|<nil>|<nil>||HASH| |YES|NULL",
+		"show_index|1|idx7|1|id|A|0|<nil>|<nil>||BTREE| |YES|NULL",
+		"show_index|1|idx8|1|id|A|0|<nil>|<nil>||BTREE| |YES|NULL",
+		"show_index|1|idx9|1|id|A|0|<nil>|<nil>||BTREE| |NO|NULL",
 		"show_index|1|expr_idx|1|NULL|A|0|<nil>|<nil>|YES|BTREE| |YES|(`id` * 2 + 1)",
 	))
 
@@ -616,7 +616,8 @@ func (s *seqTestSuite) TestShow(c *C) {
 		c6 enum('s', 'm', 'l', 'xl') default 'xl',
 		c7 set('a', 'b', 'c', 'd') default 'a,c,c',
 		c8 datetime default current_timestamp on update current_timestamp,
-		c9 year default '2014'
+		c9 year default '2014',
+		c10 enum('2', '3', '4') default 2
 	);`)
 	tk.MustQuery(`show columns from t`).Check(testutil.RowsWithSep("|",
 		"c0|int(11)|YES||1|",
@@ -629,6 +630,7 @@ func (s *seqTestSuite) TestShow(c *C) {
 		"c7|set('a','b','c','d')|YES||a,c|",
 		"c8|datetime|YES||CURRENT_TIMESTAMP|DEFAULT_GENERATED on update CURRENT_TIMESTAMP",
 		"c9|year(4)|YES||2014|",
+		"c10|enum('2','3','4')|YES||3|",
 	))
 
 	// Test if 'show [status|variables]' is sorted by Variable_name (#14542)
