@@ -123,11 +123,7 @@ func GetSessionOnlySysVars(s *SessionVars, key string) (string, bool, error) {
 		}
 		return string(info), true, nil
 	case TiDBGeneralLog:
-		val := "OFF"
-		if ProcessGeneralLog.Load() {
-			val = "ON"
-		}
-		return val, true, nil
+		return BoolToOnOff(ProcessGeneralLog.Load()), true, nil
 	case TiDBPProfSQLCPU:
 		val := "0"
 		if EnablePProfSQLCPU.Load() {
