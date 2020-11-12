@@ -720,6 +720,29 @@ func parseDatetime(sc *stmtctx.StatementContext, str string, fsp int, isFloat bo
 	switch len(seps) {
 	case 1:
 		l := len(seps[0])
+		// Values specified as numbers
+		if isFloat {
+			numOfTime, err := StrToInt(sc, seps[0])
+			if err != nil {
+				return ZeroDatetime, errors.Trace(ErrInvalidTimeFormat.GenWithStackByArgs(str))
+			}
+
+			dateTime, err := ParseDatetimeFromNum(sc, numOfTime)
+			if err != nil {
+				return ZeroDatetime, errors.Trace(ErrInvalidTimeFormat.GenWithStackByArgs(str))
+			}
+
+			year, month, day, hour, minute, second =
+				dateTime.Time.Year(), dateTime.Time.Month(), dateTime.Time.Day(),
+				dateTime.Time.Hour(), dateTime.Time.Minute(), dateTime.Time.Second()
+			if l >= 9 && l <= 14 {
+				hhmmss = true
+			}
+
+			break
+		}
+
+		// Values specified as strings
 		switch l {
 		case 14: // No delimiter.
 			// YYYYMMDDHHMMSS
@@ -1320,11 +1343,6 @@ func parseDateTimeFromNum(sc *stmtctx.StatementContext, num int64) (Time, error)
 	if num <= 991231 {
 		num = (num + 19000000) * 1000000
 		return getTime(sc, num, t.Type)
-	}
-
-	// Check YYYYMMDD.
-	if num < 10000101 {
-		return t, errors.Trace(ErrInvalidTimeFormat.GenWithStackByArgs(num))
 	}
 
 	// Adjust hour/min/second.
