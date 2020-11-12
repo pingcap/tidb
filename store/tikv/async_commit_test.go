@@ -38,8 +38,8 @@ type testAsyncCommitCommon struct {
 	store   *tikvStore
 }
 
-func (s *testAsyncCommitCommon) setUpTest(c *C, useTiKV bool) {
-	if *WithTiKV && useTiKV {
+func (s *testAsyncCommitCommon) setUpTest(c *C) {
+	if *WithTiKV {
 		s.store = NewTestStore(c).(*tikvStore)
 		return
 	}
@@ -131,7 +131,7 @@ type testAsyncCommitSuite struct {
 var _ = SerialSuites(&testAsyncCommitSuite{})
 
 func (s *testAsyncCommitSuite) SetUpTest(c *C) {
-	s.testAsyncCommitCommon.setUpTest(c, false)
+	s.testAsyncCommitCommon.setUpTest(c)
 	s.bo = NewBackofferWithVars(context.Background(), 5000, nil)
 }
 
@@ -170,6 +170,11 @@ func (s *testAsyncCommitSuite) lockKeys(c *C, keys, values [][]byte, primaryKey,
 }
 
 func (s *testAsyncCommitSuite) TestCheckSecondaries(c *C) {
+	// This test doesn't support tikv mode.
+	if *WithTiKV {
+		return
+	}
+
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.TiKVClient.AsyncCommit.Enable = true

@@ -64,6 +64,8 @@ const (
 	DefStatusHost = "0.0.0.0"
 	// DefStoreLivenessTimeout is the default value for store liveness timeout.
 	DefStoreLivenessTimeout = "5s"
+	// DefTxnScope is the default value for TxnScope
+	DefTxnScope = "global"
 )
 
 // Valid config maps
@@ -162,6 +164,8 @@ type Config struct {
 	EnableGlobalIndex bool `toml:"enable-global-index" json:"enable-global-index"`
 	// DeprecateIntegerDisplayWidth indicates whether deprecating the max display length for integer.
 	DeprecateIntegerDisplayWidth bool `toml:"deprecate-integer-display-length" json:"deprecate-integer-display-length"`
+	// TxnScope indicates the default value for session variable txn_scope
+	TxnScope string `toml:"txn-scope" json:"txn-scope"`
 	// EnableEnumLengthLimit indicates whether the enum/set element length is limited.
 	// According to MySQL 8.0 Refman:
 	// The maximum supported length of an individual SET element is M <= 255 and (M x w) <= 1020,
@@ -778,6 +782,7 @@ var defaultConf = Config{
 		SpilledFileEncryptionMethod: SpilledFileEncryptionMethodPlaintext,
 	},
 	DeprecateIntegerDisplayWidth: false,
+	TxnScope:                     DefTxnScope,
 	EnableEnumLengthLimit:        true,
 }
 
