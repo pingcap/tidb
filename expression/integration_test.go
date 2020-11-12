@@ -7675,7 +7675,7 @@ func (s *testIntegrationSerialSuite) TestClusteredIndexAndNewCollation(c *C) {
 	tk.MustQuery("select * from t").Check(testkit.Rows())
 
 	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(`a` char(10) COLLATE utf8mb4_unicode_ci NOT NULL key')")
+	tk.MustExec("create table t(`a` char(10) COLLATE utf8mb4_unicode_ci NOT NULL key)")
 	tk.MustExec("insert into t values ('&');")
 	tk.MustExec("replace into t values ('&');")
 	tk.MustQuery("select * from t").Check(testkit.Rows("&"))
