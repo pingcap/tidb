@@ -3579,10 +3579,10 @@ func CheckModifyTypeCompatible(origin *types.FieldType, to *types.FieldType) (al
 		}
 	}
 
-	if to.Flen > 0 && to.Flen < origin.Flen &&
+	if toFlen > 0 && toFlen < originFlen &&
 		!(to.Tp == mysql.TypeBlob &&
-			checkConvertedBlobFlenSame(origin.Flen, to.Flen)) {
-		msg := fmt.Sprintf("length %d is less than origin %d", to.Flen, origin.Flen)
+			checkConvertedBlobFlenSame(originFlen, toFlen)) {
+		msg := fmt.Sprintf("length %d is less than origin %d", toFlen, originFlen)
 		if skipLenCheck {
 			return msg, errUnsupportedModifyColumn.GenWithStackByArgs(msg)
 		}
