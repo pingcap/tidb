@@ -449,28 +449,6 @@ func (s *testPointGetSuite) TestIssue19141(c *C) {
 	tk.MustExec("delete from t19141 partition (p0) where c_int in (2,3)") // No data changed
 	tk.MustQuery("select * from t19141 order by c_int").Check(testkit.Rows("1", "2", "3", "4"))
 }
-<<<<<<< HEAD
-=======
-
-func (s *testPointGetSuite) TestSelectInMultiColumns(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t2(a int, b int, c int, primary key(a, b, c));")
-	tk.MustExec("insert into t2 values (1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4)")
-	tk.MustQuery("select * from t2 where (a, b, c) in ((1, 1, 1));").Check(testkit.Rows("1 1 1"))
-
-	_, err := tk.Exec("select * from t2 where (a, b, c) in ((1, 1, 1, 1));")
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[expression:1241]Operand should contain 3 column(s)")
-
-	_, err = tk.Exec("select * from t2 where (a, b, c) in ((1, 1, 1), (2, 2, 2, 2));")
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[expression:1241]Operand should contain 3 column(s)")
-
-	_, err = tk.Exec("select * from t2 where (a, b, c) in ((1, 1), (2, 2, 2));")
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[expression:1241]Operand should contain 3 column(s)")
-}
 
 func (s *testPointGetSuite) TestUpdateWithTableReadLockWillFail(c *C) {
 	gcfg := config.GetGlobalConfig()
@@ -488,49 +466,3 @@ func (s *testPointGetSuite) TestUpdateWithTableReadLockWillFail(c *C) {
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[schema:1099]Table 'tbllock' was locked with a READ lock and can't be updated")
 }
-
-func (s *testPointGetSuite) TestIssue20692(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t (id int primary key, v int, vv int, vvv int, unique key u0(id, v, vv));")
-	tk.MustExec("insert into t values(1, 1, 1, 1);")
-	se1, err := session.CreateSession(s.store)
-	c.Assert(err, IsNil)
-	tk1 := testkit.NewTestKitWithSession(c, s.store, se1)
-	se2, err := session.CreateSession(s.store)
-	c.Assert(err, IsNil)
-	tk2 := testkit.NewTestKitWithSession(c, s.store, se2)
-	se3, err := session.CreateSession(s.store)
-	c.Assert(err, IsNil)
-	tk3 := testkit.NewTestKitWithSession(c, s.store, se3)
-	tk1.MustExec("begin pessimistic;")
-	tk1.MustExec("use test")
-	tk2.MustExec("begin pessimistic;")
-	tk2.MustExec("use test")
-	tk3.MustExec("begin pessimistic;")
-	tk3.MustExec("use test")
-	tk1.MustExec("delete from t where id = 1 and v = 1 and vv = 1;")
-	stop1, stop2 := make(chan struct{}), make(chan struct{})
-	go func() {
-		tk2.MustExec("insert into t values(1, 2, 3, 4);")
-		stop1 <- struct{}{}
-		tk3.MustExec("update t set id = 10, v = 20, vv = 30, vvv = 40 where id = 1 and v = 2 and vv = 3;")
-		stop2 <- struct{}{}
-	}()
-	tk1.MustExec("commit;")
-	<-stop1
-
-	// wait 50ms to ensure tk3 is blocked by tk2
-	select {
-	case <-stop2:
-		c.Fail()
-	case <-time.After(50 * time.Millisecond):
-	}
-
-	tk2.MustExec("commit;")
-	<-stop2
-	tk3.MustExec("commit;")
-	tk3.MustQuery("select * from t;").Check(testkit.Rows("10 20 30 40"))
-}
->>>>>>> 52f696f7e... planner: add missing table lock check for fast plan (#20948)
