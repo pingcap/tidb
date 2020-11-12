@@ -444,19 +444,11 @@ type PlanBuilder struct {
 
 	// SelectLock need this information to locate the lock on partitions.
 	partitionedTable []table.PartitionedTable
-<<<<<<< HEAD
-	// CreateView needs this information to check whether exists nested view.
-	underlyingViewNames set.StringSet
-=======
+
 	// buildingViewStack is used to check whether there is a recursive view.
 	buildingViewStack set.StringSet
 	// renamingViewName is the name of the view which is being renamed.
 	renamingViewName string
-
-	// evalDefaultExpr needs this information to find the corresponding column.
-	// It stores the OutputNames before buildProjection.
-	allNames [][]*types.FieldName
->>>>>>> f81a5d131... planner: check view recursion when building source from view (#20398)
 }
 
 type handleColHelper struct {
