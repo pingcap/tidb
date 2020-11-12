@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
@@ -2977,4 +2978,56 @@ func (s *testSerialSuite) TestIssue20724(c *C) {
 	tk.MustExec("update t1 set a = 'A'")
 	tk.MustQuery("select * from t1").Check(testkit.Rows("A"))
 	tk.MustExec("drop table t1")
+}
+
+func (s *testSerialSuite) TestIssue20840(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("set tidb_enable_clustered_index = 0")
+	tk.MustExec("create table t1 (i varchar(20) unique key) collate=utf8mb4_general_ci")
+	tk.MustExec("insert into t1 values ('a')")
+	tk.MustExec("replace into t1 values ('A')")
+	tk.MustQuery("select * from t1").Check(testkit.Rows("A"))
+	tk.MustExec("drop table t1")
+}
+
+func (s *testSuite) TestEqualDatumsAsBinary(c *C) {
+	tests := []struct {
+		a    []interface{}
+		b    []interface{}
+		same bool
+	}{
+		// Positive cases
+		{[]interface{}{1}, []interface{}{1}, true},
+		{[]interface{}{1, "aa"}, []interface{}{1, "aa"}, true},
+		{[]interface{}{1, "aa", 1}, []interface{}{1, "aa", 1}, true},
+
+		// negative cases
+		{[]interface{}{1}, []interface{}{2}, false},
+		{[]interface{}{1, "a"}, []interface{}{1, "aaaaaa"}, false},
+		{[]interface{}{1, "aa", 3}, []interface{}{1, "aa", 2}, false},
+
+		// Corner cases
+		{[]interface{}{}, []interface{}{}, true},
+		{[]interface{}{nil}, []interface{}{nil}, true},
+		{[]interface{}{}, []interface{}{1}, false},
+		{[]interface{}{1}, []interface{}{1, 1}, false},
+		{[]interface{}{nil}, []interface{}{1}, false},
+	}
+	for _, tt := range tests {
+		testEqualDatumsAsBinary(c, tt.a, tt.b, tt.same)
+	}
+}
+
+func testEqualDatumsAsBinary(c *C, a []interface{}, b []interface{}, same bool) {
+	sc := new(stmtctx.StatementContext)
+	re := new(executor.ReplaceExec)
+	sc.IgnoreTruncate = true
+	res, err := re.EqualDatumsAsBinary(sc, types.MakeDatums(a...), types.MakeDatums(b...))
+	c.Assert(err, IsNil)
+	c.Assert(res, Equals, same, Commentf("a: %v, b: %v", a, b))
 }
