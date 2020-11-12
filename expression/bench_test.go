@@ -1094,9 +1094,6 @@ func genVecExprBenchCase(ctx sessionctx.Context, funcName string, testCase vecEx
 // expression is evaluated correctly during projection
 func testVectorizedEvalOneVec(c *C, vecExprCases vecExprBenchCases) {
 	ctx := mock.NewContext()
-	if err := ctx.GetSessionVars().SetSystemVar(variable.SQLModeVar, "NO_ZERO_DATE"); err != nil {
-		return
-	}
 	for funcName, testCases := range vecExprCases {
 		for _, testCase := range testCases {
 			expr, fts, input, output := genVecExprBenchCase(ctx, funcName, testCase)
