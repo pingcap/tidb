@@ -621,6 +621,13 @@ func (s *testSuiteJoin1) TestUsing(c *C) {
 	tk.MustExec(`insert into t2 values(1,'HangZhou');`)
 	tk.MustQuery(`select t2.* from t1 inner join t2 using (id) limit 1;`).Check(testkit.Rows("1 HangZhou"))
 	tk.MustQuery(`select t2.* from t1 inner join t2 on t1.id = t2.id  limit 1;`).Check(testkit.Rows("1 HangZhou"))
+
+	// For issue 20476
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1(a int)")
+	tk.MustExec("insert into t1 (a) values(1)")
+	tk.MustQuery("select t1.*, t2.* from t1 join t1 t2 using(a)").Check(testkit.Rows("1 1"))
+	tk.MustQuery("select * from t1 join t1 t2 using(a)").Check(testkit.Rows("1"))
 }
 
 func (s *testSuiteJoin1) TestNaturalJoin(c *C) {
