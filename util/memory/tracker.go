@@ -262,6 +262,8 @@ func (t *Tracker) Consume(bytes int64) {
 	}
 }
 
+// Peak is used to check whether the bytes would trigger oom. If it won't trigger oom, the return value will be true,
+// otherwise, it will be false.
 func (t *Tracker) Peak(bytes int64) bool {
 	if bytes == 0 {
 		return true

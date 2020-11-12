@@ -566,7 +566,9 @@ func (it *copIterator) adaptiveConcurrency() {
 		}
 	}
 	it.memTracker.Consume(-occupiedMem * int64(adaptiveConcurrency))
-	it.concurrency = adaptiveConcurrency
+	if it.concurrency > adaptiveConcurrency {
+		it.concurrency = adaptiveConcurrency
+	}
 	if it.concurrency < 1 {
 		// Make sure that there is at least one worker.
 		it.concurrency = 1
