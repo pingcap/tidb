@@ -612,6 +612,15 @@ func (s *testSuiteJoin1) TestUsing(c *C) {
 	tk.MustExec(`CREATE TABLE t0(c0 INT)`)
 	tk.MustExec(`CREATE TABLE t1(c0 INT)`)
 	tk.MustExec(`SELECT t0.c0 FROM t0 NATURAL RIGHT JOIN t1 WHERE t1.c0`)
+
+	// For issue 20958
+	tk.MustExec(`DROP TABLE if exists t1, t2`)
+	tk.MustExec(`create table t1(id int, name varchar(20));`)
+	tk.MustExec(`create table t2(id int, address varchar(30));`)
+	tk.MustExec(`insert into t1 values(1,'gangshen');`)
+	tk.MustExec(`insert into t2 values(1,'HangZhou');`)
+	tk.MustQuery(`select t2.* from t1 inner join t2 using (id) limit 1;`).Check(testkit.Rows("1 HangZhou"))
+	tk.MustQuery(`select t2.* from t1 inner join t2 on t1.id = t2.id  limit 1;`).Check(testkit.Rows("1 HangZhou"))
 }
 
 func (s *testSuiteJoin1) TestNaturalJoin(c *C) {

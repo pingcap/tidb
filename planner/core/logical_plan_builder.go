@@ -802,6 +802,11 @@ func (b *PlanBuilder) coalesceCommonColumns(p *LogicalJoin, leftPlan, rightPlan 
 	if joinTp == ast.RightJoin {
 		leftPlan, rightPlan = rightPlan, leftPlan
 	}
+	// We record the full `rightPlan.Schema` as `redundantSchema` in order to
+	// record the redundant column in `rightPlan` and the output columns order
+	// of the `rightPlan`.
+	// For SQL like `select t1.*, t2.* from t1 left join t2 using(a)`, we can
+	// retrieve the column order of `t2.*` from the `redundantSchema`.
 	p.redundantSchema = expression.MergeSchema(p.redundantSchema, expression.NewSchema(rightPlan.Schema().Clone().Columns...))
 	p.redundantNames = append(p.redundantNames.Shallow(), rightPlan.OutputNames().Shallow()...)
 	if joinTp == ast.RightJoin || joinTp == ast.LeftJoin {
@@ -980,6 +985,12 @@ func (b *PlanBuilder) buildProjectionField(ctx context.Context, p LogicalPlan, f
 	return newCol, name, nil
 }
 
+// findColFromNaturalUsingJoin is used to recursively find the column from the
+// underlying natural-using-join.
+// e.g. For SQL like `select t2.a from t1 join t2 using(a) where t2.a > 0`, the
+// plan will be `join->selection->projection`. The schema of the `selection`
+// will be `[t1.a]`, thus we need to recursively retrieve the `t2.a` from the
+// underlying join.
 func findColFromNaturalUsingJoin(p LogicalPlan, col *expression.Column) (name *types.FieldName) {
 	switch x := p.(type) {
 	case *LogicalLimit, *LogicalSelection, *LogicalTopN, *LogicalSort, *LogicalMaxOneRow:
@@ -1651,6 +1662,10 @@ func (a *havingWindowAndOrderbyExprResolver) resolveFromPlan(v *ast.ColumnNameEx
 	}
 	schemaCols, outputNames := p.Schema().Columns, p.OutputNames()
 	if idx < 0 {
+		// For SQL like `select t2.a from t1 join t2 using(a) where t2.a > 0
+		// order by t2.a`, the query plan will be `join->selection->sort`. The
+		// schema of selection will be `[t1.a]`, thus we need to recursively
+		// retrieve the `t2.a` from the underlying join.
 		switch x := p.(type) {
 		case *LogicalLimit, *LogicalSelection, *LogicalTopN, *LogicalSort, *LogicalMaxOneRow:
 			return a.resolveFromPlan(v, p.Children()[0])
@@ -2426,6 +2441,9 @@ func (b *PlanBuilder) unfoldWildStar(p LogicalPlan, selectFields []*ast.SelectFi
 			return nil, ErrInvalidWildCard
 		}
 		list := unfoldWildStar(field, p.OutputNames(), p.Schema().Columns)
+		// For sql like `select t1.*, t2.* from t1 join t2 using(a)`, we should
+		// not coalesce the `t2.a` in the output result. Thus we need to unfold
+		// the wildstar from the underlying join.redundantSchema.
 		if isJoin && join.redundantSchema != nil && field.WildCard.Table.L != "" {
 			redundantList := unfoldWildStar(field, join.redundantNames, join.redundantSchema.Columns)
 			if len(redundantList) > len(list) {
