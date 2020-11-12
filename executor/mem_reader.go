@@ -279,7 +279,7 @@ func (m *memTableReader) getRowData(handle kv.Handle, value []byte) ([][]byte, e
 		offset := colIDs[id]
 		if m.table.IsCommonHandle {
 			for i, colID := range m.pkColIDs {
-				if colID == col.ID {
+				if colID == col.ID && !types.CommonHandleNeedRestoredData(&col.FieldType) {
 					values[offset] = handle.EncodedCol(i)
 					break
 				}
