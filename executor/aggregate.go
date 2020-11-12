@@ -858,8 +858,8 @@ func (e *HashAggExec) initRuntimeStats() {
 		e.stats = &HashAggRuntimeStats{
 			PartialNum:        e.ctx.GetSessionVars().HashAggPartialConcurrency(),
 			FinalNum:          e.ctx.GetSessionVars().HashAggFinalConcurrency(),
-			PartialStats:      &aggWorkerStats{},
-			FinalStats:        &aggWorkerStats{},
+			PartialStats:      &AggWorkerStat{},
+			FinalStats:        &AggWorkerStat{},
 			PartialWorkerTime: make([]time.Duration, e.ctx.GetSessionVars().HashAggPartialConcurrency()),
 			FinalWorkerTime:   make([]time.Duration, e.ctx.GetSessionVars().HashAggFinalConcurrency()),
 		}
@@ -872,14 +872,14 @@ type HashAggRuntimeStats struct {
 	PartialNum int
 	FinalNum   int
 
-	PartialStats *aggWorkerStats
-	FinalStats   *aggWorkerStats
+	PartialStats *AggWorkerStat
+	FinalStats   *AggWorkerStat
 
 	PartialWorkerTime []time.Duration
 	FinalWorkerTime   []time.Duration
 }
 
-type aggWorkerStats struct {
+type AggWorkerStat struct {
 	TaskNum  int64
 	WallTime time.Duration
 	WaitTime int64
@@ -927,9 +927,13 @@ func (e *HashAggRuntimeStats) String() string {
 
 // Clone implements the RuntimeStats interface.
 func (e *HashAggRuntimeStats) Clone() execdetails.RuntimeStats {
+	newPartialStat := *e.FinalStats
+	newFinalStat := *e.FinalStats
 	newRs := &HashAggRuntimeStats{
 		PartialNum:        e.PartialNum,
 		FinalNum:          e.FinalNum,
+		PartialStats:      &newPartialStat,
+		FinalStats:        &newFinalStat,
 		PartialWorkerTime: e.PartialWorkerTime,
 		FinalWorkerTime:   e.FinalWorkerTime,
 	}

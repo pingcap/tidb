@@ -1146,21 +1146,28 @@ func (s *testSuiteAgg) TestIssue17216(c *C) {
 }
 
 func (s *testSuiteAgg) TestHashAggRuntimeStat(c *C) {
+	partialStat := executor.AggWorkerStat{
+		TaskNum:  5,
+		WallTime: 1 * time.Second,
+		WaitTime: int64(2 * time.Second),
+		ExecTime: int64(2 * time.Second),
+	}
+	finalStat := executor.AggWorkerStat{
+		TaskNum:  5,
+		WallTime: 1 * time.Second,
+		WaitTime: int64(2 * time.Second),
+		ExecTime: int64(2 * time.Second),
+	}
 	stats := &executor.HashAggRuntimeStats{
 		PartialNum:        5,
 		FinalNum:          5,
-		PartialTaskNum:    5,
-		PartialWallTime:   1 * time.Second,
-		FinalTaskNum:      5,
-		FinalWallTime:     2 * time.Second,
+		PartialStats:      &partialStat,
+		FinalStats:        &finalStat,
 		PartialWorkerTime: []time.Duration{1 * time.Second, 1 * time.Second, 1 * time.Second, 2 * time.Second, 3 * time.Second},
 		FinalWorkerTime:   []time.Duration{1 * time.Second, 1 * time.Second, 1 * time.Second, 2 * time.Second, 4 * time.Second},
-		PartialWaitTime:   int64(2 * time.Second),
-		PartialTotalTime:  int64(2 * time.Second),
-		PartialExecTime:   int64(2 * time.Second),
 	}
-	c.Assert(stats.String(), Equals, "partial_worker:{wall_time:1s, concurrency:5, task_num:5, tot_wait:2s, tot_exec:2s, tot_time:2s, max:3s, p95:3s}, final_worker:{wall_time:2s, concurrency:5, task_num:5, max:4s, p95:4s}")
+	c.Assert(stats.String(), Equals, "partial_worker:{wall_time:1s, concurrency:5, task_num:5, tot_wait:2s, tot_exec:2s, tot_time:8s, max:3s, p95:3s}, final_worker:{wall_time:1s, concurrency:5, task_num:5, tot_wait:2s, tot_exec:2s, tot_time:9s, max:4s, p95:4s}")
 	c.Assert(stats.String(), Equals, stats.Clone().String())
 	stats.Merge(stats.Clone())
-	c.Assert(stats.String(), Equals, "partial_worker:{wall_time:2s, concurrency:10, task_num:10, tot_wait:4s, tot_exec:4s, tot_time:4s, max:3s, p95:3s}, final_worker:{wall_time:4s, concurrency:10, task_num:10, max:4s, p95:4s}")
+	c.Assert(stats.String(), Equals, "partial_worker:{wall_time:2s, concurrency:10, task_num:10, tot_wait:4s, tot_exec:4s, tot_time:16s, max:3s, p95:3s}, final_worker:{wall_time:2s, concurrency:10, task_num:10, tot_wait:4s, tot_exec:4s, tot_time:18s, max:4s, p95:4s}")
 }
