@@ -58,7 +58,7 @@ type CopClient struct {
 	replicaReadSeed uint32
 }
 
-const OccupiedMem = 96 * 1024 * 1024
+const OccupiedMem = 96 * 1024 * 1024 *2
 
 // Send builds the request and gets the coprocessor iterator response.
 func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variables, sessionMemTracker *memory.Tracker) kv.Response {
@@ -114,7 +114,7 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variable
 	}
 	it.sendRate = newRateLimit(tokenCount)
 	if !it.req.KeepOrder {
-		it.respChan = make(chan *copResponse, it.concurrency)
+		it.respChan = make(chan *copResponse, tokenCount)
 	}
 	it.actionOnExceed = newRateLimitAction(uint(cap(it.sendRate.token)), sync.NewCond(&sync.Mutex{}))
 	if sessionMemTracker != nil {
