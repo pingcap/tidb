@@ -102,10 +102,8 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 		e.memTracker.Consume(memUsageOfChk)
 		for chunkRow := iter.Begin(); chunkRow != iter.End(); chunkRow = iter.Next() {
 			if batchDelete && rowCount >= batchDMLSize {
-				e.ctx.StmtCommit()
-				if err = e.ctx.NewTxn(ctx); err != nil {
-					// We should return a special error for batch insert.
-					return ErrBatchInsertFail.GenWithStack("BatchDelete failed with error: %v", err)
+				if err := e.doBatchDelete(ctx); err != nil {
+					return err
 				}
 				rowCount = 0
 			}
@@ -120,6 +118,20 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 		chk = chunk.Renew(chk, e.maxChunkSize)
 	}
 
+	return nil
+}
+
+func (e *DeleteExec) doBatchDelete(ctx context.Context) error {
+	txn, err := e.ctx.Txn(false)
+	if err != nil {
+		return ErrBatchInsertFail.GenWithStack("BatchDelete failed with error: %v", err)
+	}
+	e.memTracker.Consume(-int64(txn.Size()))
+	e.ctx.StmtCommit()
+	if err := e.ctx.NewTxn(ctx); err != nil {
+		// We should return a special error for batch insert.
+		return ErrBatchInsertFail.GenWithStack("BatchDelete failed with error: %v", err)
+	}
 	return nil
 }
 

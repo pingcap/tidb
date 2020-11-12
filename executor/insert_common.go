@@ -300,8 +300,6 @@ func (e *InsertValues) handleErr(col *table.Column, val *types.Datum, rowIdx int
 		err = dbterror.ClassTable.NewStdErr(
 			errno.ErrTruncatedWrongValue,
 			mysql.Message("Incorrect %-.32s value: '%-.128s' for column '%.192s' at row %d", nil),
-			"",
-			"",
 		).GenWithStackByArgs(types.TypeStr(colTp), valStr, colName, rowIdx+1)
 	} else if types.ErrTruncatedWrongVal.Equal(err) || types.ErrWrongValue.Equal(err) {
 		valStr, err1 := val.ToString()
@@ -478,6 +476,11 @@ func insertRowsFromSelect(ctx context.Context, base insertCommon) error {
 }
 
 func (e *InsertValues) doBatchInsert(ctx context.Context) error {
+	txn, err := e.ctx.Txn(false)
+	if err != nil {
+		return ErrBatchInsertFail.GenWithStack("BatchInsert failed with error: %v", err)
+	}
+	e.memTracker.Consume(-int64(txn.Size()))
 	e.ctx.StmtCommit()
 	if err := e.ctx.NewTxn(ctx); err != nil {
 		// We should return a special error for batch insert.

@@ -747,7 +747,7 @@ explain select a, b from (select a, b, avg(b) over (partition by a)as avg_b from
 id	estRows	task	access object	operator info
 Projection_8	2666.67	root		test.t.a, test.t.b
 └─Selection_9	2666.67	root		gt(cast(test.t.a), Column#5), lt(test.t.b, 10)
-  └─Window_10	3333.33	root		avg(cast(test.t.b, decimal(65,4) BINARY))->Column#5 over(partition by test.t.a)
+  └─Window_10	3333.33	root		avg(cast(test.t.b, decimal(15,4) BINARY))->Column#5 over(partition by test.t.a)
     └─Sort_14	3333.33	root		test.t.a
       └─TableReader_13	3333.33	root		data:Selection_12
         └─Selection_12	3333.33	cop[tikv]		gt(test.t.a, 10)
