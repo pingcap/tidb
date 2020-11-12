@@ -655,10 +655,8 @@ func (e *IndexLookUpExecutor) Next(ctx context.Context, req *chunk.Chunk) error 
 		if resultTask == nil {
 			return nil
 		}
-
 		numRows := len(resultTask.rows)
 		MaxRows := req.LeftRequiredRows()
-
 		if numRows > MaxRows {
 			numRows = MaxRows
 		}
@@ -666,7 +664,6 @@ func (e *IndexLookUpExecutor) Next(ctx context.Context, req *chunk.Chunk) error 
 			req.AppendRows(resultTask.rows[resultTask.cursor:numRows])
 			resultTask.cursor += numRows
 		}
-
 		/**
 		for resultTask.cursor < numRows {
 			req.AppendRow(resultTask.rows[resultTask.cursor])
