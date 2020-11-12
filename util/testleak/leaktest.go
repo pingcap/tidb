@@ -31,56 +31,6 @@ import (
 func interestingGoroutines() (gs []string) {
 	buf := make([]byte, 2<<20)
 	buf = buf[:runtime.Stack(buf, true)]
-<<<<<<< HEAD
-=======
-	ignoreList := []string{
-		"created by github.com/pingcap/tidb.init",
-		"testing.RunTests",
-		"check.(*resultTracker).start",
-		"check.(*suiteRunner).runFunc",
-		"check.(*suiteRunner).parallelRun",
-		"localstore.(*dbStore).scheduler",
-		"tikv.(*noGCHandler).Start",
-		"ddl.(*ddl).start",
-		"ddl.(*delRange).startEmulator",
-		"domain.NewDomain",
-		"testing.(*T).Run",
-		"domain.(*Domain).LoadPrivilegeLoop",
-		"domain.(*Domain).UpdateTableStatsLoop",
-		"testing.Main(",
-		"runtime.goexit",
-		"created by runtime.gc",
-		"interestingGoroutines",
-		"runtime.MHeap_Scavenger",
-		"created by os/signal.init",
-		"gopkg.in/natefinch/lumberjack%2ev2.(*Logger).millRun",
-		// these go routines are async terminated, so they may still alive after test end, thus cause
-		// false positive leak failures
-		"google.golang.org/grpc.(*addrConn).resetTransport",
-		"google.golang.org/grpc.(*ccBalancerWrapper).watcher",
-		"github.com/pingcap/goleveldb/leveldb/util.(*BufferPool).drain",
-		"github.com/pingcap/goleveldb/leveldb.(*DB).compactionError",
-		"github.com/pingcap/goleveldb/leveldb.(*DB).mpoolDrain",
-		"go.etcd.io/etcd/pkg/logutil.(*MergeLogger).outputLoop",
-		"go.etcd.io/etcd/v3/pkg/logutil.(*MergeLogger).outputLoop",
-		"oracles.(*pdOracle).updateTS",
-		"tikv.(*tikvStore).runSafePointChecker",
-		"tikv.(*RegionCache).asyncCheckAndResolveLoop",
-		"github.com/pingcap/badger",
-		"github.com/ngaut/unistore/tikv.(*MVCCStore).runUpdateSafePointLoop",
-	}
-	shouldIgnore := func(stack string) bool {
-		if stack == "" {
-			return true
-		}
-		for _, ident := range ignoreList {
-			if strings.Contains(stack, ident) {
-				return true
-			}
-		}
-		return false
-	}
->>>>>>> 1702608a6... test: ignore lumberjack.v2.(*Logger).millRun in leaktest (#20935)
 	for _, g := range strings.Split(string(buf), "\n\n") {
 		sl := strings.SplitN(g, "\n", 2)
 		if len(sl) != 2 {
@@ -106,6 +56,7 @@ func interestingGoroutines() (gs []string) {
 			strings.Contains(stack, "created by runtime.gc") ||
 			strings.Contains(stack, "interestingGoroutines") ||
 			strings.Contains(stack, "runtime.MHeap_Scavenger") ||
+			strings.Contains(stack, "gopkg.in/natefinch/lumberjack%2ev2.(*Logger).millRun") ||
 			// these go routines are async terminated, so they may still alive after test end, thus cause
 			// false positive leak failures
 			strings.Contains(stack, "google.golang.org/grpc.(*addrConn).resetTransport") ||
