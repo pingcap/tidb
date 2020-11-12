@@ -336,22 +336,21 @@ func (e *slowQueryRetriever) getBatchLogForReversedScan(reader *bufio.Reader, of
 		lineByte, err := getOneLine(reader)
 		if err != nil {
 			if err == io.EOF {
-				if len(log) > 0 {
+				if len(log) == 0 {
 					reverse(logs)
 					combinedLogs := combineLogs(logs, num)
 					offset.length = len(combinedLogs)
 					return combinedLogs, nil
-				} else {
-					e.fileLine = 0
-					file := e.getPreviousFile()
-					if file == nil {
-						reverse(logs)
-						return combineLogs(logs, num), nil
-					}
-					reader.Reset(file)
-					scanPreviousFile = true
-					continue
 				}
+				e.fileLine = 0
+				file := e.getPreviousFile()
+				if file == nil {
+					reverse(logs)
+					return combineLogs(logs, num), nil
+				}
+				reader.Reset(file)
+				scanPreviousFile = true
+				continue
 			}
 			reverse(logs)
 			return combineLogs(logs, num), err
