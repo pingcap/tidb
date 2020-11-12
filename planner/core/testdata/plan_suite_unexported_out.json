@@ -136,6 +136,7 @@
       "Join{DataScan(t)->Limit->DataScan(s)}(test.t.a,test.t.a)->Limit->Projection",
       "Join{DataScan(t)->TopN([test.t.a],0,5)->DataScan(s)}(test.t.a,test.t.a)->TopN([test.t.a],0,5)->Projection",
       "Join{DataScan(t)->TopN([test.t.a],0,5)->DataScan(s)}(test.t.a,test.t.a)->TopN([test.t.a],0,5)->Projection",
+      "Join{DataScan(t)->DataScan(s)}(test.t.a,test.t.a)->TopN([Column#25],0,5)->Projection",
       "Join{DataScan(t)->DataScan(s)}(test.t.a,test.t.a)->TopN([test.t.a],0,5)->Projection",
       "Join{DataScan(t)->DataScan(s)->TopN([test.t.a],0,5)}(test.t.a,test.t.a)->TopN([test.t.a],0,5)->Projection",
       "Join{DataScan(t)->DataScan(s)}(test.t.a,test.t.a)->TopN([test.t.a test.t.b],0,5)->Projection",
@@ -737,6 +738,24 @@
           "test.t.c"
         ]
       }
+    ]
+  },
+  {
+    "Name": "TestSortByItemsPruning",
+    "Cases": [
+      [
+        "test.t.a"
+      ],
+      [
+        "test.t.a",
+        "test.t.b",
+        "test.t.c"
+      ],
+      [
+        "pow(cast(test.t.a, double BINARY), 2)",
+        "test.t.b",
+        "test.t.c"
+      ]
     ]
   },
   {

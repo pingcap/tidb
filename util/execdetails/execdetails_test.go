@@ -95,7 +95,7 @@ func TestCopRuntimeStats(t *testing.T) {
 		t.Fatal("exist")
 	}
 	cop := stats.GetCopStats(tableScanID)
-	if cop.String() != "proc max:2ns, min:1ns, p80:2ns, p95:2ns, iters:3, tasks:2" {
+	if cop.String() != "tikv_task:{proc max:2ns, min:1ns, p80:2ns, p95:2ns, iters:3, tasks:2}" {
 		t.Fatal("table_scan")
 	}
 	copStats := cop.stats["8.8.8.8"]
@@ -108,7 +108,7 @@ func TestCopRuntimeStats(t *testing.T) {
 		t.Fatalf("cop stats string is not expect, got: %v", copStats[0].String())
 	}
 
-	if stats.GetCopStats(aggID).String() != "proc max:4ns, min:3ns, p80:4ns, p95:4ns, iters:7, tasks:2" {
+	if stats.GetCopStats(aggID).String() != "tikv_task:{proc max:4ns, min:3ns, p80:4ns, p95:4ns, iters:7, tasks:2}" {
 		t.Fatal("agg")
 	}
 	rootStats := stats.GetRootStats(tableReaderID)
@@ -121,10 +121,6 @@ func TestCopRuntimeStats(t *testing.T) {
 }
 
 func TestRuntimeStatsWithCommit(t *testing.T) {
-	basicStats := &BasicRuntimeStats{
-		loop:    1,
-		consume: int64(time.Second),
-	}
 	commitDetail := &CommitDetails{
 		GetCommitTsTime:   time.Second,
 		PrewriteTime:      time.Second,
@@ -151,10 +147,74 @@ func TestRuntimeStatsWithCommit(t *testing.T) {
 		TxnRetry:          2,
 	}
 	stats := &RuntimeStatsWithCommit{
-		RuntimeStats: basicStats,
-		Commit:       commitDetail,
+		Commit: commitDetail,
 	}
-	expect := "time:1s, loops:1, prewrite:1s, get_commit_ts:1s, commit:1s, commit_backoff: {time: 1s, type: [backoff1 backoff2]}, resolve_lock: 1s, region_num:5, write_keys:3, write_byte:66, txn_retry:2"
+	expect := "commit_txn: {prewrite:1s, get_commit_ts:1s, commit:1s, backoff: {time: 1s, type: [backoff1 backoff2]}, resolve_lock: 1s, region_num:5, write_keys:3, write_byte:66, txn_retry:2}"
+	if stats.String() != expect {
+		t.Fatalf("%v != %v", stats.String(), expect)
+	}
+	lockDetail := &LockKeysDetails{
+		TotalTime:       time.Second,
+		RegionNum:       2,
+		LockKeys:        10,
+		ResolveLockTime: int64(time.Second * 2),
+		BackoffTime:     int64(time.Second * 3),
+		Mu: struct {
+			sync.Mutex
+			BackoffTypes []fmt.Stringer
+		}{BackoffTypes: []fmt.Stringer{
+			stringutil.MemoizeStr(func() string {
+				return "backoff4"
+			}),
+			stringutil.MemoizeStr(func() string {
+				return "backoff5"
+			}),
+			stringutil.MemoizeStr(func() string {
+				return "backoff5"
+			}),
+		}},
+		LockRPCTime:  int64(time.Second * 5),
+		LockRPCCount: 50,
+		RetryCount:   2,
+	}
+	stats = &RuntimeStatsWithCommit{
+		LockKeys: lockDetail,
+	}
+	expect = "lock_keys: {time:1s, region:2, keys:10, resolve_lock:2s, backoff: {time: 3s, type: [backoff4 backoff5]}, lock_rpc:5s, rpc_count:50, retry_count:2}"
+	if stats.String() != expect {
+		t.Fatalf("%v != %v", stats.String(), expect)
+	}
+}
+
+func TestRootRuntimeStats(t *testing.T) {
+	basic1 := &BasicRuntimeStats{}
+	basic2 := &BasicRuntimeStats{}
+	basic1.Record(time.Second, 20)
+	basic2.Record(time.Second*2, 30)
+	pid := 1
+	stmtStats := NewRuntimeStatsColl()
+	stmtStats.RegisterStats(pid, basic1)
+	stmtStats.RegisterStats(pid, basic2)
+	concurrency := &RuntimeStatsWithConcurrencyInfo{}
+	concurrency.SetConcurrencyInfo(NewConcurrencyInfo("worker", 15))
+	stmtStats.RegisterStats(pid, concurrency)
+	commitDetail := &CommitDetails{
+		GetCommitTsTime:   time.Second,
+		PrewriteTime:      time.Second,
+		CommitTime:        time.Second,
+		WriteKeys:         3,
+		WriteSize:         66,
+		PrewriteRegionNum: 5,
+		TxnRetry:          2,
+	}
+	stmtStats.RegisterStats(pid, &RuntimeStatsWithCommit{
+		Commit: commitDetail,
+	})
+	concurrency = &RuntimeStatsWithConcurrencyInfo{}
+	concurrency.SetConcurrencyInfo(NewConcurrencyInfo("concurrent", 0))
+	stmtStats.RegisterStats(pid, concurrency)
+	stats := stmtStats.GetRootStats(1)
+	expect := "time:3s, loops:2, worker:15, concurrent:OFF, commit_txn: {prewrite:1s, get_commit_ts:1s, commit:1s, region_num:5, write_keys:3, write_byte:66, txn_retry:2}"
 	if stats.String() != expect {
 		t.Fatalf("%v != %v", stats.String(), expect)
 	}
