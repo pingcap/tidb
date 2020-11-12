@@ -10274,6 +10274,13 @@ NumericType:
 	{
 		fopt := $2.(*ast.FloatOpt)
 		x := types.NewFieldType($1.(byte))
+		// check for a double(10) for syntax error
+		if x.Tp == mysql.TypeDouble && parser.strictDoubleFieldType {
+			if fopt.Flen != types.UnspecifiedLength && fopt.Decimal == types.UnspecifiedLength {
+				yylex.AppendError(ErrSyntax)
+				return 1
+			}
+		}
 		x.Flen = fopt.Flen
 		if x.Tp == mysql.TypeFloat && fopt.Decimal == types.UnspecifiedLength && x.Flen <= mysql.MaxDoublePrecisionLength {
 			if x.Flen > mysql.MaxFloatPrecisionLength {
