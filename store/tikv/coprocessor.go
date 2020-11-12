@@ -1433,9 +1433,6 @@ func (e *rateLimitAction) broadcastIfNeeded(needed bool) {
 // destroyTokenIfNeeded will check the `exceed` flag after copWorker finished one task.
 // If the exceed flag is true and there is no token been destroyed before, one token will be destroyed,
 // or the token would be return back.
-// destroyTokenIfNeeded will check the `exceed` flag after copWorker finished one task.
-// If the exceed flag is true and there is no token been destroyed before, one token will be destroyed,
-// or the token would be return back.
 func (e *rateLimitAction) destroyTokenIfNeeded(returnToken func()) {
 	e.conditionLock()
 	defer e.conditionUnlock()
