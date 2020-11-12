@@ -59,7 +59,6 @@ func buildMemIndexReader(us *UnionScanExec, idxReader *IndexReaderExecutor) *mem
 		kvRanges:        kvRanges,
 		desc:            us.desc,
 		conditions:      us.conditions,
-		addedRows:       make([][]types.Datum, 0, us.dirty.addedRows.Len()),
 		retFieldTypes:   retTypes(us),
 		outputOffset:    outputOffset,
 		belowHandleCols: us.belowHandleCols,
@@ -194,7 +193,6 @@ func buildMemTableReader(us *UnionScanExec, tblReader *TableReaderExecutor) *mem
 		kvRanges:      tblReader.kvRanges,
 		desc:          us.desc,
 		conditions:    us.conditions,
-		addedRows:     make([][]types.Datum, 0, us.dirty.addedRows.Len()),
 		retFieldTypes: retTypes(us),
 		colIDs:        colIDs,
 		buffer: allocBuf{
@@ -329,10 +327,7 @@ func iterTxnMemBuffer(ctx sessionctx.Context, kvRanges []kv.KeyRange, fn process
 		return err
 	}
 	for _, rg := range kvRanges {
-		iter, err := txn.GetMemBuffer().Iter(rg.StartKey, rg.EndKey)
-		if err != nil {
-			return err
-		}
+		iter := txn.GetMemBuffer().SnapshotIter(rg.StartKey, rg.EndKey)
 		for ; iter.Valid(); err = iter.Next() {
 			if err != nil {
 				return err
@@ -399,7 +394,6 @@ func buildMemIndexLookUpReader(us *UnionScanExec, idxLookUpReader *IndexLookUpEx
 		table:           idxLookUpReader.table.Meta(),
 		kvRanges:        kvRanges,
 		desc:            idxLookUpReader.desc,
-		addedRowsLen:    us.dirty.addedRows.Len(),
 		retFieldTypes:   retTypes(us),
 		outputOffset:    outputOffset,
 		belowHandleCols: us.belowHandleCols,

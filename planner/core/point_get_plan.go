@@ -97,7 +97,7 @@ func (p *PointGetPlan) Clone() (PhysicalPlan, error) {
 
 // ExplainInfo implements Plan interface.
 func (p *PointGetPlan) ExplainInfo() string {
-	accessObject, operatorInfo := p.AccessObject(), p.OperatorInfo(false)
+	accessObject, operatorInfo := p.AccessObject(false), p.OperatorInfo(false)
 	if len(operatorInfo) == 0 {
 		return accessObject
 	}
@@ -106,7 +106,7 @@ func (p *PointGetPlan) ExplainInfo() string {
 
 // ExplainNormalizedInfo implements Plan interface.
 func (p *PointGetPlan) ExplainNormalizedInfo() string {
-	accessObject, operatorInfo := p.AccessObject(), p.OperatorInfo(true)
+	accessObject, operatorInfo := p.AccessObject(true), p.OperatorInfo(true)
 	if len(operatorInfo) == 0 {
 		return accessObject
 	}
@@ -114,17 +114,29 @@ func (p *PointGetPlan) ExplainNormalizedInfo() string {
 }
 
 // AccessObject implements dataAccesser interface.
-func (p *PointGetPlan) AccessObject() string {
+func (p *PointGetPlan) AccessObject(normalized bool) string {
 	buffer := bytes.NewBufferString("")
 	tblName := p.TblInfo.Name.O
 	fmt.Fprintf(buffer, "table:%s", tblName)
 	if p.PartitionInfo != nil {
-		fmt.Fprintf(buffer, ", partition:%s", p.PartitionInfo.Name.L)
+		if normalized {
+			fmt.Fprintf(buffer, ", partition:?")
+		} else {
+			fmt.Fprintf(buffer, ", partition:%s", p.PartitionInfo.Name.L)
+		}
 	}
 	if p.IndexInfo != nil {
-		buffer.WriteString(", index:" + p.IndexInfo.Name.O + "(")
+		if p.IndexInfo.Primary && p.TblInfo.IsCommonHandle {
+			buffer.WriteString(", clustered index:" + p.IndexInfo.Name.O + "(")
+		} else {
+			buffer.WriteString(", index:" + p.IndexInfo.Name.O + "(")
+		}
 		for i, idxCol := range p.IndexInfo.Columns {
-			buffer.WriteString(idxCol.Name.O)
+			if tblCol := p.TblInfo.Columns[idxCol.Offset]; tblCol.Hidden {
+				buffer.WriteString(tblCol.GeneratedExprString)
+			} else {
+				buffer.WriteString(idxCol.Name.O)
+			}
 			if i+1 < len(p.IndexInfo.Columns) {
 				buffer.WriteString(", ")
 			}
@@ -137,7 +149,7 @@ func (p *PointGetPlan) AccessObject() string {
 // OperatorInfo implements dataAccesser interface.
 func (p *PointGetPlan) OperatorInfo(normalized bool) string {
 	buffer := bytes.NewBufferString("")
-	if p.IndexInfo == nil {
+	if p.Handle != nil {
 		if normalized {
 			fmt.Fprintf(buffer, "handle:?, ")
 		} else {
@@ -270,23 +282,31 @@ func (p *BatchPointGetPlan) ToPB(ctx sessionctx.Context, _ kv.StoreType) (*tipb.
 
 // ExplainInfo implements Plan interface.
 func (p *BatchPointGetPlan) ExplainInfo() string {
-	return p.AccessObject() + ", " + p.OperatorInfo(false)
+	return p.AccessObject(false) + ", " + p.OperatorInfo(false)
 }
 
 // ExplainNormalizedInfo implements Plan interface.
 func (p *BatchPointGetPlan) ExplainNormalizedInfo() string {
-	return p.AccessObject() + ", " + p.OperatorInfo(true)
+	return p.AccessObject(true) + ", " + p.OperatorInfo(true)
 }
 
 // AccessObject implements physicalScan interface.
-func (p *BatchPointGetPlan) AccessObject() string {
+func (p *BatchPointGetPlan) AccessObject(_ bool) string {
 	buffer := bytes.NewBufferString("")
 	tblName := p.TblInfo.Name.O
 	fmt.Fprintf(buffer, "table:%s", tblName)
 	if p.IndexInfo != nil {
-		buffer.WriteString(", index:" + p.IndexInfo.Name.O + "(")
+		if p.IndexInfo.Primary && p.TblInfo.IsCommonHandle {
+			buffer.WriteString(", clustered index:" + p.IndexInfo.Name.O + "(")
+		} else {
+			buffer.WriteString(", index:" + p.IndexInfo.Name.O + "(")
+		}
 		for i, idxCol := range p.IndexInfo.Columns {
-			buffer.WriteString(idxCol.Name.O)
+			if tblCol := p.TblInfo.Columns[idxCol.Offset]; tblCol.Hidden {
+				buffer.WriteString(tblCol.GeneratedExprString)
+			} else {
+				buffer.WriteString(idxCol.Name.O)
+			}
 			if i+1 < len(p.IndexInfo.Columns) {
 				buffer.WriteString(", ")
 			}
@@ -403,7 +423,7 @@ func TryFastPlan(ctx sessionctx.Context, node ast.Node) (p Plan) {
 			if checkFastPlanPrivilege(ctx, fp.dbName, fp.TblInfo.Name.L, mysql.SelectPriv) != nil {
 				return
 			}
-			fp.Lock, fp.LockWaitTime = getLockWaitTime(ctx, x.LockTp)
+			fp.Lock, fp.LockWaitTime = getLockWaitTime(ctx, x.LockInfo)
 			p = fp
 			return
 		}
@@ -418,7 +438,7 @@ func TryFastPlan(ctx sessionctx.Context, node ast.Node) (p Plan) {
 				p = tableDual.Init(ctx, &property.StatsInfo{}, 0)
 				return
 			}
-			fp.Lock, fp.LockWaitTime = getLockWaitTime(ctx, x.LockTp)
+			fp.Lock, fp.LockWaitTime = getLockWaitTime(ctx, x.LockInfo)
 			p = fp
 			return
 		}
@@ -430,18 +450,32 @@ func TryFastPlan(ctx sessionctx.Context, node ast.Node) (p Plan) {
 	return nil
 }
 
-func getLockWaitTime(ctx sessionctx.Context, lockTp ast.SelectLockType) (lock bool, waitTime int64) {
-	if lockTp == ast.SelectLockForUpdate || lockTp == ast.SelectLockForUpdateNoWait {
-		// Locking of rows for update using SELECT FOR UPDATE only applies when autocommit
-		// is disabled (either by beginning transaction with START TRANSACTION or by setting
-		// autocommit to 0. If autocommit is enabled, the rows matching the specification are not locked.
-		// See https://dev.mysql.com/doc/refman/5.7/en/innodb-locking-reads.html
-		sessVars := ctx.GetSessionVars()
-		if !sessVars.IsAutocommit() || sessVars.InTxn() {
-			lock = true
-			waitTime = sessVars.LockWaitTimeout
-			if lockTp == ast.SelectLockForUpdateNoWait {
-				waitTime = kv.LockNoWait
+// IsSelectForUpdateLockType checks if the select lock type is for update type.
+func IsSelectForUpdateLockType(lockType ast.SelectLockType) bool {
+	if lockType == ast.SelectLockForUpdate ||
+		lockType == ast.SelectLockForUpdateNoWait ||
+		lockType == ast.SelectLockForUpdateWaitN {
+		return true
+	}
+	return true
+}
+
+func getLockWaitTime(ctx sessionctx.Context, lockInfo *ast.SelectLockInfo) (lock bool, waitTime int64) {
+	if lockInfo != nil {
+		if IsSelectForUpdateLockType(lockInfo.LockType) {
+			// Locking of rows for update using SELECT FOR UPDATE only applies when autocommit
+			// is disabled (either by beginning transaction with START TRANSACTION or by setting
+			// autocommit to 0. If autocommit is enabled, the rows matching the specification are not locked.
+			// See https://dev.mysql.com/doc/refman/5.7/en/innodb-locking-reads.html
+			sessVars := ctx.GetSessionVars()
+			if !sessVars.IsAutocommit() || sessVars.InTxn() {
+				lock = true
+				waitTime = sessVars.LockWaitTimeout
+				if lockInfo.LockType == ast.SelectLockForUpdateWaitN {
+					waitTime = int64(lockInfo.WaitSec * 1000)
+				} else if lockInfo.LockType == ast.SelectLockForUpdateNoWait {
+					waitTime = kv.LockNoWait
+				}
 			}
 		}
 	}
@@ -548,6 +582,9 @@ func newBatchPointGetPlan(
 		switch x := item.(type) {
 		case *ast.RowExpr:
 			// The `len(values) == len(valuesParams)` should be satisfied in this mode
+			if len(x.Values) != len(whereColNames) {
+				return nil
+			}
 			values = make([]types.Datum, len(x.Values))
 			valuesParams = make([]*driver.ParamMarkerExpr, len(x.Values))
 			for index, inner := range x.Values {
@@ -757,6 +794,8 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointGetP
 		p.HandleParam = handlePair.param
 		p.PartitionInfo = partitionInfo
 		return p
+	} else if handlePair.value.Kind() != types.KindNull {
+		return nil
 	}
 
 	for _, idxInfo := range tbl.Indices {
@@ -814,15 +853,24 @@ func newPointGetPlan(ctx sessionctx.Context, dbName string, schema *expression.S
 
 func checkFastPlanPrivilege(ctx sessionctx.Context, dbName, tableName string, checkTypes ...mysql.PrivilegeType) error {
 	pm := privilege.GetPrivilegeManager(ctx)
-	if pm == nil {
-		return nil
-	}
+	visitInfos := []visitInfo{}
 	for _, checkType := range checkTypes {
-		if !pm.RequestVerification(ctx.GetSessionVars().ActiveRoles, dbName, tableName, "", checkType) {
+		if pm != nil && !pm.RequestVerification(ctx.GetSessionVars().ActiveRoles, dbName, tableName, "", checkType) {
 			return errors.New("privilege check fail")
 		}
+		// This visitInfo is only for table lock check, so we do not need column field,
+		// just fill it empty string.
+		visitInfos = append(visitInfos, visitInfo{
+			privilege: checkType,
+			db:        dbName,
+			table:     tableName,
+			column:    "",
+			err:       nil,
+		})
 	}
-	return nil
+
+	infoSchema := infoschema.GetInfoSchema(ctx)
+	return CheckTableLock(ctx, infoSchema, visitInfos)
 }
 
 func buildSchemaFromFields(
@@ -1062,14 +1110,14 @@ func tryUpdatePointPlan(ctx sessionctx.Context, updateStmt *ast.UpdateStmt) Plan
 			}.Init(ctx, &property.StatsInfo{}, 0)
 		}
 		if ctx.GetSessionVars().TxnCtx.IsPessimistic {
-			pointGet.Lock, pointGet.LockWaitTime = getLockWaitTime(ctx, ast.SelectLockForUpdate)
+			pointGet.Lock, pointGet.LockWaitTime = getLockWaitTime(ctx, &ast.SelectLockInfo{LockType: ast.SelectLockForUpdate})
 		}
 		return buildPointUpdatePlan(ctx, pointGet, pointGet.dbName, pointGet.TblInfo, updateStmt)
 	}
 	batchPointGet := tryWhereIn2BatchPointGet(ctx, selStmt)
 	if batchPointGet != nil {
 		if ctx.GetSessionVars().TxnCtx.IsPessimistic {
-			batchPointGet.Lock, batchPointGet.LockWaitTime = getLockWaitTime(ctx, ast.SelectLockForUpdate)
+			batchPointGet.Lock, batchPointGet.LockWaitTime = getLockWaitTime(ctx, &ast.SelectLockInfo{LockType: ast.SelectLockForUpdate})
 		}
 		return buildPointUpdatePlan(ctx, batchPointGet, batchPointGet.dbName, batchPointGet.TblInfo, updateStmt)
 	}
@@ -1154,13 +1202,13 @@ func tryDeletePointPlan(ctx sessionctx.Context, delStmt *ast.DeleteStmt) Plan {
 			}.Init(ctx, &property.StatsInfo{}, 0)
 		}
 		if ctx.GetSessionVars().TxnCtx.IsPessimistic {
-			pointGet.Lock, pointGet.LockWaitTime = getLockWaitTime(ctx, ast.SelectLockForUpdate)
+			pointGet.Lock, pointGet.LockWaitTime = getLockWaitTime(ctx, &ast.SelectLockInfo{LockType: ast.SelectLockForUpdate})
 		}
 		return buildPointDeletePlan(ctx, pointGet, pointGet.dbName, pointGet.TblInfo)
 	}
 	if batchPointGet := tryWhereIn2BatchPointGet(ctx, selStmt); batchPointGet != nil {
 		if ctx.GetSessionVars().TxnCtx.IsPessimistic {
-			batchPointGet.Lock, batchPointGet.LockWaitTime = getLockWaitTime(ctx, ast.SelectLockForUpdate)
+			batchPointGet.Lock, batchPointGet.LockWaitTime = getLockWaitTime(ctx, &ast.SelectLockInfo{LockType: ast.SelectLockForUpdate})
 		}
 		return buildPointDeletePlan(ctx, batchPointGet, batchPointGet.dbName, batchPointGet.TblInfo)
 	}

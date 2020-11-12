@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/testutil"
@@ -116,6 +117,15 @@ func NewTestKit(c *check.C, store kv.Storage) *TestKit {
 	return &TestKit{
 		c:     c,
 		store: store,
+	}
+}
+
+// NewTestKitWithSession returns a new *TestKit with a session.
+func NewTestKitWithSession(c *check.C, store kv.Storage, se session.Session) *TestKit {
+	return &TestKit{
+		c:     c,
+		store: store,
+		Se:    se,
 	}
 }
 
@@ -296,7 +306,7 @@ func (tk *TestKit) MustGetErrCode(sql string, errCode int) {
 	originErr := errors.Cause(err)
 	tErr, ok := originErr.(*terror.Error)
 	tk.c.Assert(ok, check.IsTrue, check.Commentf("expect type 'terror.Error', but obtain '%T'", originErr))
-	sqlErr := tErr.ToSQLError()
+	sqlErr := terror.ToSQLError(tErr)
 	tk.c.Assert(int(sqlErr.Code), check.Equals, errCode, check.Commentf("Assertion failed, origin err:\n  %v", sqlErr))
 }
 
@@ -325,4 +335,11 @@ func (tk *TestKit) GetTableID(tableName string) int64 {
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr(tableName))
 	tk.c.Assert(err, check.IsNil)
 	return tbl.Meta().ID
+}
+
+// WithPruneMode run test case under prune mode.
+func WithPruneMode(tk *TestKit, mode variable.PartitionPruneMode, f func()) {
+	tk.MustExec("set @@tidb_partition_prune_mode=`" + string(mode) + "`")
+	tk.MustExec("set global tidb_partition_prune_mode=`" + string(mode) + "`")
+	f()
 }

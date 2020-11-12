@@ -137,7 +137,7 @@ func (a *AggFuncDesc) Split(ordinal []int) (partialAggDesc, finalAggDesc *AggFun
 			RetType: a.RetTp,
 		})
 		finalAggDesc.Args = args
-		if finalAggDesc.Name == ast.AggFuncGroupConcat {
+		if finalAggDesc.Name == ast.AggFuncGroupConcat || finalAggDesc.Name == ast.AggFuncApproxPercentile {
 			finalAggDesc.Args = append(finalAggDesc.Args, a.Args[len(a.Args)-1]) // separator
 		}
 	}

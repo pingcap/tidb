@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
@@ -29,12 +28,12 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
-	"github.com/pingcap/tipb/go-tipb"
+	"github.com/pingcap/tidb/util/dbterror"
 )
 
 // Error instances.
 var (
-	ErrUnsupportedType = terror.ClassOptimizer.New(errno.ErrUnsupportedType, errno.MySQLErrName[errno.ErrUnsupportedType])
+	ErrUnsupportedType = dbterror.ClassOptimizer.NewStd(errno.ErrUnsupportedType)
 )
 
 // RangeType is alias for int.
@@ -211,11 +210,17 @@ func (r *builder) buildFormBinOp(expr *expression.ScalarFunction) []point {
 		ft    *types.FieldType
 	)
 
-	// refineValue refines the constant datum for string type since we may eval the constant to another collation instead of its own collation.
-	refineValue := func(col *expression.Column, value *types.Datum) {
+	// refineValue refines the constant datum:
+	// 1. for string type since we may eval the constant to another collation instead of its own collation.
+	// 2. for year type since 2-digit year value need adjustment, see https://dev.mysql.com/doc/refman/5.6/en/year.html
+	refineValue := func(col *expression.Column, value *types.Datum) (err error) {
 		if col.RetType.EvalType() == types.ETString && value.Kind() == types.KindString {
 			value.SetString(value.GetString(), col.RetType.Collate)
 		}
+		if col.GetType().Tp == mysql.TypeYear {
+			*value, err = types.ConvertDatumToFloatYear(r.sc, *value)
+		}
+		return
 	}
 	if col, ok := expr.GetArgs()[0].(*expression.Column); ok {
 		ft = col.RetType
@@ -223,7 +228,10 @@ func (r *builder) buildFormBinOp(expr *expression.ScalarFunction) []point {
 		if err != nil {
 			return nil
 		}
-		refineValue(col, &value)
+		err = refineValue(col, &value)
+		if err != nil {
+			return nil
+		}
 		op = expr.FuncName.L
 	} else {
 		col, ok := expr.GetArgs()[1].(*expression.Column)
@@ -235,7 +243,10 @@ func (r *builder) buildFormBinOp(expr *expression.ScalarFunction) []point {
 		if err != nil {
 			return nil
 		}
-		refineValue(col, &value)
+		err = refineValue(col, &value)
+		if err != nil {
+			return nil
+		}
 
 		switch expr.FuncName.L {
 		case ast.GE:
@@ -389,6 +400,13 @@ func (r *builder) buildFromIn(expr *expression.ScalarFunction) ([]point, bool) {
 		if dt.Kind() == types.KindString {
 			dt.SetString(dt.GetString(), colCollate)
 		}
+		if expr.GetArgs()[0].GetType().Tp == mysql.TypeYear {
+			dt, err = types.ConvertDatumToFloatYear(r.sc, dt)
+			if err != nil {
+				r.err = ErrUnsupportedType.GenWithStack("expr:%v is not converted to year", e)
+				return fullRange, hasNull
+			}
+		}
 		var startValue, endValue types.Datum
 		dt.Copy(&startValue)
 		dt.Copy(&endValue)
@@ -503,9 +521,10 @@ func (r *builder) newBuildFromPatternLike(expr *expression.ScalarFunction) []poi
 
 func (r *builder) buildFromNot(expr *expression.ScalarFunction) []point {
 	switch n := expr.FuncName.L; n {
-	case ast.IsTruth:
-		keepNull := r.isTrueKeepNull(expr)
-		return r.buildFromIsTrue(expr, 1, keepNull)
+	case ast.IsTruthWithoutNull:
+		return r.buildFromIsTrue(expr, 1, false)
+	case ast.IsTruthWithNull:
+		return r.buildFromIsTrue(expr, 1, true)
 	case ast.IsFalsity:
 		return r.buildFromIsFalse(expr, 1)
 	case ast.In:
@@ -560,9 +579,10 @@ func (r *builder) buildFromScalarFunc(expr *expression.ScalarFunction) []point {
 		return r.intersection(r.build(expr.GetArgs()[0]), r.build(expr.GetArgs()[1]))
 	case ast.LogicOr:
 		return r.union(r.build(expr.GetArgs()[0]), r.build(expr.GetArgs()[1]))
-	case ast.IsTruth:
-		keepNull := r.isTrueKeepNull(expr)
-		return r.buildFromIsTrue(expr, 0, keepNull)
+	case ast.IsTruthWithoutNull:
+		return r.buildFromIsTrue(expr, 0, false)
+	case ast.IsTruthWithNull:
+		return r.buildFromIsTrue(expr, 0, true)
 	case ast.IsFalsity:
 		return r.buildFromIsFalse(expr, 0)
 	case ast.In:
@@ -648,12 +668,4 @@ func (r *builder) merge(a, b []point, union bool) []point {
 		}
 	}
 	return mergedPoints[:curTail]
-}
-
-func (r *builder) isTrueKeepNull(expr *expression.ScalarFunction) bool {
-	switch expr.Function.PbCode() {
-	case tipb.ScalarFuncSig_DecimalIsTrueWithNull, tipb.ScalarFuncSig_RealIsTrueWithNull, tipb.ScalarFuncSig_IntIsTrueWithNull:
-		return true
-	}
-	return false
 }

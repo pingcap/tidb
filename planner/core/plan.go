@@ -71,9 +71,9 @@ func enforceProperty(p *property.PhysicalProperty, tsk task, ctx sessionctx.Cont
 		return tsk
 	}
 	tsk = finishCopTask(ctx, tsk)
-	sortReqProp := &property.PhysicalProperty{TaskTp: property.RootTaskType, Items: p.Items, ExpectedCnt: math.MaxFloat64}
-	sort := PhysicalSort{ByItems: make([]*util.ByItems, 0, len(p.Items))}.Init(ctx, tsk.plan().statsInfo(), tsk.plan().SelectBlockOffset(), sortReqProp)
-	for _, col := range p.Items {
+	sortReqProp := &property.PhysicalProperty{TaskTp: property.RootTaskType, SortItems: p.SortItems, ExpectedCnt: math.MaxFloat64}
+	sort := PhysicalSort{ByItems: make([]*util.ByItems, 0, len(p.SortItems))}.Init(ctx, tsk.plan().statsInfo(), tsk.plan().SelectBlockOffset(), sortReqProp)
+	for _, col := range p.SortItems {
 		sort.ByItems = append(sort.ByItems, &util.ByItems{Expr: col.Col, Desc: col.Desc})
 	}
 	return sort.attach2Task(tsk)
@@ -417,6 +417,22 @@ func (p *baseLogicalPlan) BuildKeyInfo(selfSchema *expression.Schema, childSchem
 func (p *logicalSchemaProducer) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
 	selfSchema.Keys = nil
 	p.baseLogicalPlan.BuildKeyInfo(selfSchema, childSchema)
+
+	// default implementation for plans has only one child: proprgate child keys
+	// multi-children plans are likely to have particular implementation.
+	if len(childSchema) == 1 {
+		for _, key := range childSchema[0].Keys {
+			indices := selfSchema.ColumnsIndices(key)
+			if indices == nil {
+				continue
+			}
+			newKey := make([]*expression.Column, 0, len(key))
+			for _, i := range indices {
+				newKey = append(newKey, selfSchema.Columns[i])
+			}
+			selfSchema.Keys = append(selfSchema.Keys, newKey)
+		}
+	}
 }
 
 func newBasePlan(ctx sessionctx.Context, tp string, offset int) basePlan {

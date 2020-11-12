@@ -21,6 +21,7 @@ import (
 
 	"github.com/cznic/mathutil"
 	. "github.com/pingcap/check"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/testleak"
@@ -142,7 +143,7 @@ func (s *testSuite) TestAttachTo(c *C) {
 	c.Assert(oldParent.BytesConsumed(), Equals, int64(100))
 	c.Assert(child.getParent(), DeepEquals, oldParent)
 	c.Assert(len(oldParent.mu.children), Equals, 1)
-	c.Assert(oldParent.mu.children[0], DeepEquals, child)
+	c.Assert(oldParent.mu.children[child.label][0], DeepEquals, child)
 
 	child.AttachTo(newParent)
 	c.Assert(child.BytesConsumed(), Equals, int64(100))
@@ -150,7 +151,7 @@ func (s *testSuite) TestAttachTo(c *C) {
 	c.Assert(newParent.BytesConsumed(), Equals, int64(100))
 	c.Assert(child.getParent(), DeepEquals, newParent)
 	c.Assert(len(newParent.mu.children), Equals, 1)
-	c.Assert(newParent.mu.children[0], DeepEquals, child)
+	c.Assert(newParent.mu.children[child.label][0], DeepEquals, child)
 	c.Assert(len(oldParent.mu.children), Equals, 0)
 }
 
@@ -162,7 +163,7 @@ func (s *testSuite) TestDetach(c *C) {
 	c.Assert(child.BytesConsumed(), Equals, int64(100))
 	c.Assert(parent.BytesConsumed(), Equals, int64(100))
 	c.Assert(len(parent.mu.children), Equals, 1)
-	c.Assert(parent.mu.children[0], DeepEquals, child)
+	c.Assert(parent.mu.children[child.label][0], DeepEquals, child)
 
 	child.Detach()
 	c.Assert(child.BytesConsumed(), Equals, int64(100))
@@ -184,14 +185,14 @@ func (s *testSuite) TestReplaceChild(c *C) {
 	parent.ReplaceChild(oldChild, newChild)
 	c.Assert(parent.BytesConsumed(), Equals, int64(500))
 	c.Assert(len(parent.mu.children), Equals, 1)
-	c.Assert(parent.mu.children[0], DeepEquals, newChild)
+	c.Assert(parent.mu.children[newChild.label][0], DeepEquals, newChild)
 	c.Assert(newChild.getParent(), DeepEquals, parent)
 	c.Assert(oldChild.getParent(), IsNil)
 
 	parent.ReplaceChild(oldChild, nil)
 	c.Assert(parent.BytesConsumed(), Equals, int64(500))
 	c.Assert(len(parent.mu.children), Equals, 1)
-	c.Assert(parent.mu.children[0], DeepEquals, newChild)
+	c.Assert(parent.mu.children[newChild.label][0], DeepEquals, newChild)
 	c.Assert(newChild.getParent(), DeepEquals, parent)
 	c.Assert(oldChild.getParent(), IsNil)
 
@@ -338,5 +339,5 @@ func BenchmarkConsume(b *testing.B) {
 }
 
 func (s *testSuite) TestErrorCode(c *C) {
-	c.Assert(int(errMemExceedThreshold.ToSQLError().Code), Equals, errno.ErrMemExceedThreshold)
+	c.Assert(int(terror.ToSQLError(errMemExceedThreshold).Code), Equals, errno.ErrMemExceedThreshold)
 }
