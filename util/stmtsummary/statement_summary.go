@@ -35,9 +35,6 @@ import (
 	"go.uber.org/zap"
 )
 
-// There're many types of statement summary tables in MySQL, but we have
-// only implemented events_statements_summary_by_digest for now.
-
 // stmtSummaryByDigestKey defines key for stmtSummaryByDigestMap.summaryMap.
 type stmtSummaryByDigestKey struct {
 	// Same statements may appear in different schema, but they refer to different tables.
@@ -106,11 +103,13 @@ type stmtSummaryByDigestElement struct {
 	beginTime int64
 	endTime   int64
 	// basic
-	sampleSQL  string
-	prevSQL    string
-	samplePlan string
-	indexNames []string
-	execCount  int64
+	sampleSQL   string
+	prevSQL     string
+	samplePlan  string
+	indexNames  []string
+	execCount   int64
+	sumErrors   int
+	sumWarnings int
 	// latency
 	sumLatency        time.Duration
 	maxLatency        time.Duration
@@ -120,24 +119,32 @@ type stmtSummaryByDigestElement struct {
 	sumCompileLatency time.Duration
 	maxCompileLatency time.Duration
 	// coprocessor
-	numCopTasks          int64
-	sumCopProcessTime    int64
+	sumNumCopTasks       int64
 	maxCopProcessTime    time.Duration
 	maxCopProcessAddress string
-	sumCopWaitTime       int64
 	maxCopWaitTime       time.Duration
 	maxCopWaitAddress    string
 	// TiKV
-	sumProcessTime   time.Duration
-	maxProcessTime   time.Duration
-	sumWaitTime      time.Duration
-	maxWaitTime      time.Duration
-	sumBackoffTime   time.Duration
-	maxBackoffTime   time.Duration
-	sumTotalKeys     int64
-	maxTotalKeys     int64
-	sumProcessedKeys int64
-	maxProcessedKeys int64
+	sumProcessTime               time.Duration
+	maxProcessTime               time.Duration
+	sumWaitTime                  time.Duration
+	maxWaitTime                  time.Duration
+	sumBackoffTime               time.Duration
+	maxBackoffTime               time.Duration
+	sumTotalKeys                 int64
+	maxTotalKeys                 int64
+	sumProcessedKeys             int64
+	maxProcessedKeys             int64
+	sumRocksdbDeleteSkippedCount uint64
+	maxRocksdbDeleteSkippedCount uint64
+	sumRocksdbKeySkippedCount    uint64
+	maxRocksdbKeySkippedCount    uint64
+	sumRocksdbBlockCacheHitCount uint64
+	maxRocksdbBlockCacheHitCount uint64
+	sumRocksdbBlockReadCount     uint64
+	maxRocksdbBlockReadCount     uint64
+	sumRocksdbBlockReadByte      uint64
+	maxRocksdbBlockReadByte      uint64
 	// txn
 	commitCount          int64
 	sumGetCommitTsTime   time.Duration
@@ -160,17 +167,32 @@ type stmtSummaryByDigestElement struct {
 	maxPrewriteRegionNum int32
 	sumTxnRetry          int64
 	maxTxnRetry          int
+	sumExecRetryCount    int64
+	sumExecRetryTime     time.Duration
 	sumBackoffTimes      int64
 	backoffTypes         map[fmt.Stringer]int
 	authUsers            map[string]struct{}
 	// other
-	sumMem          int64
-	maxMem          int64
-	sumAffectedRows uint64
+	sumMem               int64
+	maxMem               int64
+	sumDisk              int64
+	maxDisk              int64
+	sumAffectedRows      uint64
+	sumKVTotal           time.Duration
+	sumPDTotal           time.Duration
+	sumBackoffTotal      time.Duration
+	sumWriteSQLRespTotal time.Duration
+	prepared             bool
 	// The first time this type of SQL executes.
 	firstSeen time.Time
 	// The last time this type of SQL executes.
 	lastSeen time.Time
+	// plan cache
+	planInCache   bool
+	planCacheHits int64
+	// pessimistic execution retry information.
+	execRetryCount uint
+	execRetryTime  time.Duration
 }
 
 // StmtExecInfo records execution information of each statement.
@@ -192,8 +214,15 @@ type StmtExecInfo struct {
 	CopTasks       *stmtctx.CopTasksDetails
 	ExecDetail     *execdetails.ExecDetails
 	MemMax         int64
+	DiskMax        int64
 	StartTime      time.Time
 	IsInternal     bool
+	Succeed        bool
+	PlanInCache    bool
+	ExecRetryCount uint
+	ExecRetryTime  time.Duration
+	execdetails.StmtExecDetails
+	Prepared bool
 }
 
 // newStmtSummaryByDigestMap creates an empty stmtSummaryByDigestMap.
@@ -332,7 +361,7 @@ func (ssMap *stmtSummaryByDigestMap) GetMoreThanOnceSelect() ([]string, []string
 		func() {
 			ssbd.Lock()
 			defer ssbd.Unlock()
-			if ssbd.initialized && ssbd.stmtType == "select" {
+			if ssbd.initialized && ssbd.stmtType == "Select" {
 				if ssbd.history.Len() > 0 {
 					ssElement := ssbd.history.Back().Value.(*stmtSummaryByDigestElement)
 					ssElement.Lock()
@@ -457,7 +486,7 @@ func (ssbd *stmtSummaryByDigest) init(sei *StmtExecInfo, beginTime int64, interv
 	ssbd.schemaName = sei.SchemaName
 	ssbd.digest = sei.Digest
 	ssbd.planDigest = planDigest
-	ssbd.stmtType = strings.ToLower(sei.StmtCtx.StmtType)
+	ssbd.stmtType = sei.StmtCtx.StmtType
 	ssbd.normalizedSQL = formatSQL(sei.NormalizedSQL)
 	ssbd.tableNames = tableNames
 	ssbd.history = list.New()
@@ -570,13 +599,16 @@ func newStmtSummaryByDigestElement(sei *StmtExecInfo, beginTime int64, intervalS
 		// PrevSQL is already truncated to cfg.Log.QueryLogMaxLen.
 		prevSQL: sei.PrevSQL,
 		// samplePlan needs to be decoded so it can't be truncated.
-		samplePlan:   sei.PlanGenerator(),
-		indexNames:   sei.StmtCtx.IndexNames,
-		minLatency:   sei.TotalLatency,
-		firstSeen:    sei.StartTime,
-		lastSeen:     sei.StartTime,
-		backoffTypes: make(map[fmt.Stringer]int),
-		authUsers:    make(map[string]struct{}),
+		samplePlan:    sei.PlanGenerator(),
+		indexNames:    sei.StmtCtx.IndexNames,
+		minLatency:    sei.TotalLatency,
+		firstSeen:     sei.StartTime,
+		lastSeen:      sei.StartTime,
+		backoffTypes:  make(map[fmt.Stringer]int),
+		authUsers:     make(map[string]struct{}),
+		planInCache:   false,
+		planCacheHits: 0,
+		prepared:      sei.Prepared,
 	}
 	ssElement.add(sei, intervalSeconds)
 	return ssElement
@@ -612,6 +644,10 @@ func (ssElement *stmtSummaryByDigestElement) add(sei *StmtExecInfo, intervalSeco
 	// refreshInterval may change anytime, update endTime ASAP.
 	ssElement.endTime = ssElement.beginTime + intervalSeconds
 	ssElement.execCount++
+	if !sei.Succeed {
+		ssElement.sumErrors += 1
+	}
+	ssElement.sumWarnings += int(sei.StmtCtx.WarningCount())
 
 	// latency
 	ssElement.sumLatency += sei.TotalLatency
@@ -632,13 +668,11 @@ func (ssElement *stmtSummaryByDigestElement) add(sei *StmtExecInfo, intervalSeco
 
 	// coprocessor
 	numCopTasks := int64(sei.CopTasks.NumCopTasks)
-	ssElement.numCopTasks += numCopTasks
-	ssElement.sumCopProcessTime += sei.CopTasks.AvgProcessTime.Nanoseconds() * numCopTasks
+	ssElement.sumNumCopTasks += numCopTasks
 	if sei.CopTasks.MaxProcessTime > ssElement.maxCopProcessTime {
 		ssElement.maxCopProcessTime = sei.CopTasks.MaxProcessTime
 		ssElement.maxCopProcessAddress = sei.CopTasks.MaxProcessAddress
 	}
-	ssElement.sumCopWaitTime += sei.CopTasks.AvgWaitTime.Nanoseconds() * numCopTasks
 	if sei.CopTasks.MaxWaitTime > ssElement.maxCopWaitTime {
 		ssElement.maxCopWaitTime = sei.CopTasks.MaxWaitTime
 		ssElement.maxCopWaitAddress = sei.CopTasks.MaxWaitAddress
@@ -657,13 +691,36 @@ func (ssElement *stmtSummaryByDigestElement) add(sei *StmtExecInfo, intervalSeco
 	if sei.ExecDetail.BackoffTime > ssElement.maxBackoffTime {
 		ssElement.maxBackoffTime = sei.ExecDetail.BackoffTime
 	}
-	ssElement.sumTotalKeys += sei.ExecDetail.TotalKeys
-	if sei.ExecDetail.TotalKeys > ssElement.maxTotalKeys {
-		ssElement.maxTotalKeys = sei.ExecDetail.TotalKeys
-	}
-	ssElement.sumProcessedKeys += sei.ExecDetail.ProcessedKeys
-	if sei.ExecDetail.ProcessedKeys > ssElement.maxProcessedKeys {
-		ssElement.maxProcessedKeys = sei.ExecDetail.ProcessedKeys
+
+	if sei.ExecDetail.CopDetail != nil {
+		ssElement.sumTotalKeys += sei.ExecDetail.CopDetail.TotalKeys
+		if sei.ExecDetail.CopDetail.TotalKeys > ssElement.maxTotalKeys {
+			ssElement.maxTotalKeys = sei.ExecDetail.CopDetail.TotalKeys
+		}
+		ssElement.sumProcessedKeys += sei.ExecDetail.CopDetail.ProcessedKeys
+		if sei.ExecDetail.CopDetail.ProcessedKeys > ssElement.maxProcessedKeys {
+			ssElement.maxProcessedKeys = sei.ExecDetail.CopDetail.ProcessedKeys
+		}
+		ssElement.sumRocksdbDeleteSkippedCount += sei.ExecDetail.CopDetail.RocksdbDeleteSkippedCount
+		if sei.ExecDetail.CopDetail.RocksdbDeleteSkippedCount > ssElement.maxRocksdbDeleteSkippedCount {
+			ssElement.maxRocksdbDeleteSkippedCount = sei.ExecDetail.CopDetail.RocksdbDeleteSkippedCount
+		}
+		ssElement.sumRocksdbKeySkippedCount += sei.ExecDetail.CopDetail.RocksdbKeySkippedCount
+		if sei.ExecDetail.CopDetail.RocksdbKeySkippedCount > ssElement.maxRocksdbKeySkippedCount {
+			ssElement.maxRocksdbKeySkippedCount = sei.ExecDetail.CopDetail.RocksdbKeySkippedCount
+		}
+		ssElement.sumRocksdbBlockCacheHitCount += sei.ExecDetail.CopDetail.RocksdbBlockCacheHitCount
+		if sei.ExecDetail.CopDetail.RocksdbBlockCacheHitCount > ssElement.maxRocksdbBlockCacheHitCount {
+			ssElement.maxRocksdbBlockCacheHitCount = sei.ExecDetail.CopDetail.RocksdbBlockCacheHitCount
+		}
+		ssElement.sumRocksdbBlockReadCount += sei.ExecDetail.CopDetail.RocksdbBlockReadCount
+		if sei.ExecDetail.CopDetail.RocksdbBlockReadCount > ssElement.maxRocksdbBlockReadCount {
+			ssElement.maxRocksdbBlockReadCount = sei.ExecDetail.CopDetail.RocksdbBlockReadCount
+		}
+		ssElement.sumRocksdbBlockReadByte += sei.ExecDetail.CopDetail.RocksdbBlockReadByte
+		if sei.ExecDetail.CopDetail.RocksdbBlockReadByte > ssElement.maxRocksdbBlockReadByte {
+			ssElement.maxRocksdbBlockReadByte = sei.ExecDetail.CopDetail.RocksdbBlockReadByte
+		}
 	}
 
 	// txn
@@ -721,11 +778,23 @@ func (ssElement *stmtSummaryByDigestElement) add(sei *StmtExecInfo, intervalSeco
 		commitDetails.Mu.Unlock()
 	}
 
+	//plan cache
+	if sei.PlanInCache {
+		ssElement.planInCache = true
+		ssElement.planCacheHits += 1
+	} else {
+		ssElement.planInCache = false
+	}
+
 	// other
 	ssElement.sumAffectedRows += sei.StmtCtx.AffectedRows()
 	ssElement.sumMem += sei.MemMax
 	if sei.MemMax > ssElement.maxMem {
 		ssElement.maxMem = sei.MemMax
+	}
+	ssElement.sumDisk += sei.DiskMax
+	if sei.DiskMax > ssElement.maxDisk {
+		ssElement.maxDisk = sei.DiskMax
 	}
 	if sei.StartTime.Before(ssElement.firstSeen) {
 		ssElement.firstSeen = sei.StartTime
@@ -733,6 +802,14 @@ func (ssElement *stmtSummaryByDigestElement) add(sei *StmtExecInfo, intervalSeco
 	if ssElement.lastSeen.Before(sei.StartTime) {
 		ssElement.lastSeen = sei.StartTime
 	}
+	if sei.ExecRetryCount > 0 {
+		ssElement.execRetryCount += sei.ExecRetryCount
+		ssElement.execRetryTime += sei.ExecRetryTime
+	}
+	ssElement.sumKVTotal += time.Duration(atomic.LoadInt64(&sei.StmtExecDetails.WaitKVRespDuration))
+	ssElement.sumPDTotal += time.Duration(atomic.LoadInt64(&sei.StmtExecDetails.WaitPDRespDuration))
+	ssElement.sumBackoffTotal += time.Duration(atomic.LoadInt64(&sei.StmtExecDetails.BackoffDuration))
+	ssElement.sumWriteSQLRespTotal += sei.StmtExecDetails.WriteSQLRespDuration
 }
 
 func (ssElement *stmtSummaryByDigestElement) toDatum(ssbd *stmtSummaryByDigest) []types.Datum {
@@ -763,6 +840,8 @@ func (ssElement *stmtSummaryByDigestElement) toDatum(ssbd *stmtSummaryByDigest) 
 		convertEmptyToNil(strings.Join(ssElement.indexNames, ",")),
 		convertEmptyToNil(sampleUser),
 		ssElement.execCount,
+		ssElement.sumErrors,
+		ssElement.sumWarnings,
 		int64(ssElement.sumLatency),
 		int64(ssElement.maxLatency),
 		int64(ssElement.minLatency),
@@ -771,11 +850,9 @@ func (ssElement *stmtSummaryByDigestElement) toDatum(ssbd *stmtSummaryByDigest) 
 		int64(ssElement.maxParseLatency),
 		avgInt(int64(ssElement.sumCompileLatency), ssElement.execCount),
 		int64(ssElement.maxCompileLatency),
-		ssElement.numCopTasks,
-		avgInt(ssElement.sumCopProcessTime, ssElement.numCopTasks),
+		ssElement.sumNumCopTasks,
 		int64(ssElement.maxCopProcessTime),
 		convertEmptyToNil(ssElement.maxCopProcessAddress),
-		avgInt(ssElement.sumCopWaitTime, ssElement.numCopTasks),
 		int64(ssElement.maxCopWaitTime),
 		convertEmptyToNil(ssElement.maxCopWaitAddress),
 		avgInt(int64(ssElement.sumProcessTime), ssElement.execCount),
@@ -788,6 +865,16 @@ func (ssElement *stmtSummaryByDigestElement) toDatum(ssbd *stmtSummaryByDigest) 
 		ssElement.maxTotalKeys,
 		avgInt(ssElement.sumProcessedKeys, ssElement.execCount),
 		ssElement.maxProcessedKeys,
+		avgInt(int64(ssElement.sumRocksdbDeleteSkippedCount), ssElement.execCount),
+		ssElement.maxRocksdbDeleteSkippedCount,
+		avgInt(int64(ssElement.sumRocksdbKeySkippedCount), ssElement.execCount),
+		ssElement.maxRocksdbKeySkippedCount,
+		avgInt(int64(ssElement.sumRocksdbBlockCacheHitCount), ssElement.execCount),
+		ssElement.maxRocksdbBlockCacheHitCount,
+		avgInt(int64(ssElement.sumRocksdbBlockReadCount), ssElement.execCount),
+		ssElement.maxRocksdbBlockReadCount,
+		avgInt(int64(ssElement.sumRocksdbBlockReadByte), ssElement.execCount),
+		ssElement.maxRocksdbBlockReadByte,
 		avgInt(int64(ssElement.sumPrewriteTime), ssElement.commitCount),
 		int64(ssElement.maxPrewriteTime),
 		avgInt(int64(ssElement.sumCommitTime), ssElement.commitCount),
@@ -808,13 +895,24 @@ func (ssElement *stmtSummaryByDigestElement) toDatum(ssbd *stmtSummaryByDigest) 
 		int(ssElement.maxPrewriteRegionNum),
 		avgFloat(ssElement.sumTxnRetry, ssElement.commitCount),
 		ssElement.maxTxnRetry,
+		int(ssElement.execRetryCount),
+		int64(ssElement.execRetryTime),
 		ssElement.sumBackoffTimes,
 		formatBackoffTypes(ssElement.backoffTypes),
 		avgInt(ssElement.sumMem, ssElement.execCount),
 		ssElement.maxMem,
+		avgInt(ssElement.sumDisk, ssElement.execCount),
+		ssElement.maxDisk,
+		avgInt(int64(ssElement.sumKVTotal), ssElement.commitCount),
+		avgInt(int64(ssElement.sumPDTotal), ssElement.commitCount),
+		avgInt(int64(ssElement.sumBackoffTotal), ssElement.commitCount),
+		avgInt(int64(ssElement.sumWriteSQLRespTotal), ssElement.commitCount),
+		ssElement.prepared,
 		avgFloat(int64(ssElement.sumAffectedRows), ssElement.execCount),
 		types.NewTime(types.FromGoTime(ssElement.firstSeen), mysql.TypeTimestamp, 0),
 		types.NewTime(types.FromGoTime(ssElement.lastSeen), mysql.TypeTimestamp, 0),
+		ssElement.planInCache,
+		ssElement.planCacheHits,
 		ssElement.sampleSQL,
 		ssElement.prevSQL,
 		ssbd.planDigest,

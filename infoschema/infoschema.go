@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/sessionctx"
@@ -50,7 +51,15 @@ type InfoSchema interface {
 	SchemaMetaVersion() int64
 	// TableIsView indicates whether the schema.table is a view.
 	TableIsView(schema, table model.CIStr) bool
-	FindTableByPartitionID(partitionID int64) (table.Table, *model.DBInfo)
+	// TableIsSequence indicates whether the schema.table is a sequence.
+	TableIsSequence(schema, table model.CIStr) bool
+	FindTableByPartitionID(partitionID int64) (table.Table, *model.DBInfo, *model.PartitionDefinition)
+	// BundleByName is used to get a rule bundle.
+	BundleByName(name string) (*placement.Bundle, bool)
+	// RuleBundles returns all placement rule bundles.
+	RuleBundles() map[string]*placement.Bundle
+	// MockBundles is only used for TEST.
+	MockBundles(map[string]*placement.Bundle)
 }
 
 type sortedTables []table.Table
@@ -85,6 +94,9 @@ type schemaTables struct {
 const bucketCount = 512
 
 type infoSchema struct {
+	// ruleBundleMap stores all placement rules
+	ruleBundleMap map[string]*placement.Bundle
+
 	schemaMap map[string]*schemaTables
 
 	// sortedTablesBuckets is a slice of sortedTables, a table's bucket index is (tableID % bucketCount).
@@ -178,6 +190,15 @@ func (is *infoSchema) TableIsView(schema, table model.CIStr) bool {
 	return false
 }
 
+func (is *infoSchema) TableIsSequence(schema, table model.CIStr) bool {
+	if tbNames, ok := is.schemaMap[schema.L]; ok {
+		if t, ok := tbNames.tables[table.L]; ok {
+			return t.Meta().IsSequence()
+		}
+	}
+	return false
+}
+
 func (is *infoSchema) TableExists(schema, table model.CIStr) bool {
 	if tbNames, ok := is.schemaMap[schema.L]; ok {
 		if _, ok = tbNames.tables[table.L]; ok {
@@ -254,7 +275,7 @@ func (is *infoSchema) SchemaTables(schema model.CIStr) (tables []table.Table) {
 
 // FindTableByPartitionID finds the partition-table info by the partitionID.
 // FindTableByPartitionID will traverse all the tables to find the partitionID partition in which partition-table.
-func (is *infoSchema) FindTableByPartitionID(partitionID int64) (table.Table, *model.DBInfo) {
+func (is *infoSchema) FindTableByPartitionID(partitionID int64) (table.Table, *model.DBInfo, *model.PartitionDefinition) {
 	for _, v := range is.schemaMap {
 		for _, tbl := range v.tables {
 			pi := tbl.Meta().GetPartitionInfo()
@@ -263,12 +284,12 @@ func (is *infoSchema) FindTableByPartitionID(partitionID int64) (table.Table, *m
 			}
 			for _, p := range pi.Definitions {
 				if p.ID == partitionID {
-					return tbl, v.dbInfo
+					return tbl, v.dbInfo, &p
 				}
 			}
 		}
 	}
-	return nil, nil
+	return nil, nil, nil
 }
 
 func (is *infoSchema) Clone() (result []*model.DBInfo) {
@@ -378,4 +399,17 @@ func GetInfoSchemaBySessionVars(sessVar *variable.SessionVars) InfoSchema {
 		is = sessVar.TxnCtx.InfoSchema.(InfoSchema)
 	}
 	return is
+}
+
+func (is *infoSchema) BundleByName(name string) (*placement.Bundle, bool) {
+	t, r := is.ruleBundleMap[name]
+	return t, r
+}
+
+func (is *infoSchema) RuleBundles() map[string]*placement.Bundle {
+	return is.ruleBundleMap
+}
+
+func (is *infoSchema) MockBundles(ruleBundleMap map[string]*placement.Bundle) {
+	is.ruleBundleMap = ruleBundleMap
 }

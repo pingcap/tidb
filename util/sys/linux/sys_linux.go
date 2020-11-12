@@ -15,8 +15,9 @@
 package linux
 
 import (
-	"golang.org/x/sys/unix"
 	"syscall"
+
+	"golang.org/x/sys/unix"
 )
 
 // OSVersion returns version info of operation system.

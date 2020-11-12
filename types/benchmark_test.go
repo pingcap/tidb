@@ -37,7 +37,7 @@ func BenchmarkDefaultTypeForValue(b *testing.B) {
 		b.StartTimer()
 		var ft FieldType
 		for i := 0; i < b.N; i++ {
-			DefaultTypeForValue(numsFull[int(i)%lenNums], &ft, mysql.DefaultCharset, mysql.DefaultCollationName)
+			DefaultTypeForValue(numsFull[i%lenNums], &ft, mysql.DefaultCharset, mysql.DefaultCollationName)
 		}
 	})
 
@@ -45,7 +45,7 @@ func BenchmarkDefaultTypeForValue(b *testing.B) {
 		b.StartTimer()
 		var ft FieldType
 		for i := 0; i < b.N; i++ {
-			DefaultTypeForValue(nums64k[int(i)%lenNums], &ft, mysql.DefaultCharset, mysql.DefaultCollationName)
+			DefaultTypeForValue(nums64k[i%lenNums], &ft, mysql.DefaultCharset, mysql.DefaultCollationName)
 		}
 	})
 
@@ -53,7 +53,7 @@ func BenchmarkDefaultTypeForValue(b *testing.B) {
 		b.StartTimer()
 		var ft FieldType
 		for i := 0; i < b.N; i++ {
-			DefaultTypeForValue(nums512[int(i)%lenNums], &ft, mysql.DefaultCharset, mysql.DefaultCollationName)
+			DefaultTypeForValue(nums512[i%lenNums], &ft, mysql.DefaultCharset, mysql.DefaultCollationName)
 		}
 	})
 }

@@ -23,7 +23,7 @@ var (
 			Subsystem: "bindinfo",
 			Name:      "bind_usage_counter",
 			Help:      "Counter of query using sql bind",
-		}, []string{LableScope})
+		}, []string{LabelScope})
 
 	BindTotalGauge = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
@@ -31,7 +31,7 @@ var (
 			Subsystem: "bindinfo",
 			Name:      "bind_total_gauge",
 			Help:      "Total number of sql bind",
-		}, []string{LableScope, LblType})
+		}, []string{LabelScope, LblType})
 
 	BindMemoryUsage = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
@@ -39,5 +39,5 @@ var (
 			Subsystem: "bindinfo",
 			Name:      "bind_memory_usage",
 			Help:      "Memory usage of sql bind",
-		}, []string{LableScope, LblType})
+		}, []string{LabelScope, LblType})
 )

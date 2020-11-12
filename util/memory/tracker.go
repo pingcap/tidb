@@ -16,6 +16,7 @@ package memory
 import (
 	"bytes"
 	"fmt"
+	"sort"
 	"sync"
 	"sync/atomic"
 )
@@ -40,29 +41,48 @@ import (
 type Tracker struct {
 	mu struct {
 		sync.Mutex
-		children []*Tracker // The children memory trackers
+		// The children memory trackers. If the Tracker is the Global Tracker, like executor.GlobalDiskUsageTracker,
+		// we wouldn't maintain its children in order to avoiding mutex contention.
+		children map[int][]*Tracker
 	}
 	actionMu struct {
 		sync.Mutex
 		actionOnExceed ActionOnExceed
 	}
+	parMu struct {
+		sync.Mutex
+		parent *Tracker // The parent memory tracker.
+	}
 
-	label         fmt.Stringer // Label of this "Tracker".
-	bytesConsumed int64        // Consumed bytes.
-	bytesLimit    int64        // bytesLimit <= 0 means no limit.
-	maxConsumed   int64        // max number of bytes consumed during execution.
-	parent        *Tracker     // The parent memory tracker.
+	label         int   // Label of this "Tracker".
+	bytesConsumed int64 // Consumed bytes.
+	bytesLimit    int64 // bytesLimit <= 0 means no limit.
+	maxConsumed   int64 // max number of bytes consumed during execution.
+	isGlobal      bool  // isGlobal indicates whether this tracker is global tracker
 }
 
 // NewTracker creates a memory tracker.
 //	1. "label" is the label used in the usage string.
 //	2. "bytesLimit <= 0" means no limit.
-func NewTracker(label fmt.Stringer, bytesLimit int64) *Tracker {
+// For the common tracker, isGlobal is default as false
+func NewTracker(label int, bytesLimit int64) *Tracker {
 	t := &Tracker{
 		label:      label,
 		bytesLimit: bytesLimit,
 	}
 	t.actionMu.actionOnExceed = &LogOnExceed{}
+	t.isGlobal = false
+	return t
+}
+
+// NewGlobalTracker creates a global tracker, its isGlobal is default as true
+func NewGlobalTracker(label int, bytesLimit int64) *Tracker {
+	t := &Tracker{
+		label:      label,
+		bytesLimit: bytesLimit,
+	}
+	t.actionMu.actionOnExceed = &LogOnExceed{}
+	t.isGlobal = true
 	return t
 }
 
@@ -84,6 +104,11 @@ func (t *Tracker) GetBytesLimit() int64 {
 	return t.bytesLimit
 }
 
+// CheckExceed checks whether the consumed bytes is exceed for this tracker.
+func (t *Tracker) CheckExceed() bool {
+	return atomic.LoadInt64(&t.bytesConsumed) >= t.bytesLimit && t.bytesLimit > 0
+}
+
 // SetActionOnExceed sets the action when memory usage exceeds bytesLimit.
 func (t *Tracker) SetActionOnExceed(a ActionOnExceed) {
 	t.actionMu.Lock()
@@ -101,12 +126,12 @@ func (t *Tracker) FallbackOldAndSetNewAction(a ActionOnExceed) {
 }
 
 // SetLabel sets the label of a Tracker.
-func (t *Tracker) SetLabel(label fmt.Stringer) {
+func (t *Tracker) SetLabel(label int) {
 	t.label = label
 }
 
 // Label gets the label of a Tracker.
-func (t *Tracker) Label() fmt.Stringer {
+func (t *Tracker) Label() int {
 	return t.label
 }
 
@@ -114,29 +139,56 @@ func (t *Tracker) Label() fmt.Stringer {
 // already has a parent, this function will remove it from the old parent.
 // Its consumed memory usage is used to update all its ancestors.
 func (t *Tracker) AttachTo(parent *Tracker) {
-	if t.parent != nil {
-		t.parent.remove(t)
+	oldParent := t.getParent()
+	if oldParent != nil {
+		oldParent.remove(t)
 	}
 	parent.mu.Lock()
-	parent.mu.children = append(parent.mu.children, t)
+	if parent.mu.children == nil {
+		parent.mu.children = make(map[int][]*Tracker)
+	}
+	parent.mu.children[t.label] = append(parent.mu.children[t.label], t)
 	parent.mu.Unlock()
 
-	t.parent = parent
-	t.parent.Consume(t.BytesConsumed())
+	t.setParent(parent)
+	parent.Consume(t.BytesConsumed())
+}
+
+// Detach de-attach the tracker child from its parent, then set its parent property as nil
+func (t *Tracker) Detach() {
+	parent := t.getParent()
+	if parent == nil {
+		return
+	}
+	parent.remove(t)
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.setParent(nil)
 }
 
 func (t *Tracker) remove(oldChild *Tracker) {
+	found := false
+	label := oldChild.label
 	t.mu.Lock()
-	defer t.mu.Unlock()
-	for i, child := range t.mu.children {
-		if child != oldChild {
-			continue
+	if t.mu.children != nil {
+		children := t.mu.children[label]
+		for i, child := range children {
+			if child == oldChild {
+				children = append(children[:i], children[i+1:]...)
+				if len(children) > 0 {
+					t.mu.children[label] = children
+				} else {
+					delete(t.mu.children, label)
+				}
+				found = true
+				break
+			}
 		}
-
+	}
+	t.mu.Unlock()
+	if found {
+		oldChild.setParent(nil)
 		t.Consume(-oldChild.BytesConsumed())
-		oldChild.parent = nil
-		t.mu.children = append(t.mu.children[:i], t.mu.children[i+1:]...)
-		break
 	}
 }
 
@@ -149,19 +201,30 @@ func (t *Tracker) ReplaceChild(oldChild, newChild *Tracker) {
 		return
 	}
 
+	if oldChild.label != newChild.label {
+		t.remove(oldChild)
+		newChild.AttachTo(t)
+		return
+	}
+
 	newConsumed := newChild.BytesConsumed()
-	newChild.parent = t
+	newChild.setParent(t)
 
+	label := oldChild.label
 	t.mu.Lock()
-	for i, child := range t.mu.children {
-		if child != oldChild {
-			continue
-		}
+	if t.mu.children != nil {
+		children := t.mu.children[label]
+		for i, child := range children {
+			if child != oldChild {
+				continue
+			}
 
-		newConsumed -= oldChild.BytesConsumed()
-		oldChild.parent = nil
-		t.mu.children[i] = newChild
-		break
+			newConsumed -= oldChild.BytesConsumed()
+			oldChild.setParent(nil)
+			children[i] = newChild
+			t.mu.children[label] = children
+			break
+		}
 	}
 	t.mu.Unlock()
 
@@ -172,8 +235,11 @@ func (t *Tracker) ReplaceChild(oldChild, newChild *Tracker) {
 // which means this is a memory release operation. When memory usage of a tracker
 // exceeds its bytesLimit, the tracker calls its action, so does each of its ancestors.
 func (t *Tracker) Consume(bytes int64) {
+	if bytes == 0 {
+		return
+	}
 	var rootExceed *Tracker
-	for tracker := t; tracker != nil; tracker = tracker.parent {
+	for tracker := t; tracker != nil; tracker = tracker.getParent() {
 		if atomic.AddInt64(&tracker.bytesConsumed, bytes) >= tracker.bytesLimit && tracker.bytesLimit > 0 {
 			rootExceed = tracker
 		}
@@ -187,7 +253,7 @@ func (t *Tracker) Consume(bytes int64) {
 			break
 		}
 	}
-	if rootExceed != nil {
+	if bytes > 0 && rootExceed != nil {
 		rootExceed.actionMu.Lock()
 		defer rootExceed.actionMu.Unlock()
 		if rootExceed.actionMu.actionOnExceed != nil {
@@ -206,17 +272,14 @@ func (t *Tracker) MaxConsumed() int64 {
 	return atomic.LoadInt64(&t.maxConsumed)
 }
 
-// SearchTracker searches the specific tracker under this tracker.
-func (t *Tracker) SearchTracker(label string) *Tracker {
-	if t.label.String() == label {
+// SearchTrackerWithoutLock searches the specific tracker under this tracker without lock.
+func (t *Tracker) SearchTrackerWithoutLock(label int) *Tracker {
+	if t.label == label {
 		return t
 	}
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	for _, child := range t.mu.children {
-		if result := child.SearchTracker(label); result != nil {
-			return result
-		}
+	children := t.mu.children[label]
+	if len(children) > 0 {
+		return children[0]
 	}
 	return nil
 }
@@ -229,16 +292,22 @@ func (t *Tracker) String() string {
 }
 
 func (t *Tracker) toString(indent string, buffer *bytes.Buffer) {
-	fmt.Fprintf(buffer, "%s\"%s\"{\n", indent, t.label)
+	fmt.Fprintf(buffer, "%s\"%d\"{\n", indent, t.label)
 	if t.bytesLimit > 0 {
 		fmt.Fprintf(buffer, "%s  \"quota\": %s\n", indent, t.BytesToString(t.bytesLimit))
 	}
 	fmt.Fprintf(buffer, "%s  \"consumed\": %s\n", indent, t.BytesToString(t.BytesConsumed()))
 
 	t.mu.Lock()
-	for i := range t.mu.children {
-		if t.mu.children[i] != nil {
-			t.mu.children[i].toString(indent+"  ", buffer)
+	labels := make([]int, 0, len(t.mu.children))
+	for label := range t.mu.children {
+		labels = append(labels, label)
+	}
+	sort.Ints(labels)
+	for _, label := range labels {
+		children := t.mu.children[label]
+		for _, child := range children {
+			child.toString(indent+"  ", buffer)
 		}
 	}
 	t.mu.Unlock()
@@ -247,6 +316,11 @@ func (t *Tracker) toString(indent string, buffer *bytes.Buffer) {
 
 // BytesToString converts the memory consumption to a readable string.
 func (t *Tracker) BytesToString(numBytes int64) string {
+	return BytesToString(numBytes)
+}
+
+// BytesToString converts the memory consumption to a readable string.
+func BytesToString(numBytes int64) string {
 	GB := float64(numBytes) / float64(1<<30)
 	if GB > 1 {
 		return fmt.Sprintf("%v GB", GB)
@@ -264,3 +338,96 @@ func (t *Tracker) BytesToString(numBytes int64) string {
 
 	return fmt.Sprintf("%v Bytes", numBytes)
 }
+
+// AttachToGlobalTracker attach the tracker to the global tracker
+// AttachToGlobalTracker should be called at the initialization for the session executor's tracker
+func (t *Tracker) AttachToGlobalTracker(globalTracker *Tracker) {
+	if globalTracker == nil {
+		return
+	}
+	if !globalTracker.isGlobal {
+		panic("Attach to a non-GlobalTracker")
+	}
+	parent := t.getParent()
+	if parent != nil {
+		if parent.isGlobal {
+			parent.Consume(-t.BytesConsumed())
+		} else {
+			parent.remove(t)
+		}
+	}
+	t.setParent(globalTracker)
+	globalTracker.Consume(t.BytesConsumed())
+}
+
+// DetachFromGlobalTracker detach itself from its parent
+// Note that only the parent of this tracker is Global Tracker could call this function
+// Otherwise it should use Detach
+func (t *Tracker) DetachFromGlobalTracker() {
+	parent := t.getParent()
+	if parent == nil {
+		return
+	}
+	if !parent.isGlobal {
+		panic("Detach from a non-GlobalTracker")
+	}
+	parent.Consume(-t.BytesConsumed())
+	t.setParent(nil)
+}
+
+// ReplaceBytesUsed replace bytesConsume for the tracker
+func (t *Tracker) ReplaceBytesUsed(bytes int64) {
+	t.Consume(-t.BytesConsumed())
+	t.Consume(bytes)
+}
+
+func (t *Tracker) getParent() *Tracker {
+	t.parMu.Lock()
+	defer t.parMu.Unlock()
+	return t.parMu.parent
+}
+
+func (t *Tracker) setParent(parent *Tracker) {
+	t.parMu.Lock()
+	defer t.parMu.Unlock()
+	t.parMu.parent = parent
+}
+
+const (
+	// LabelForSQLText represents the label of the SQL Text
+	LabelForSQLText int = -1
+	// LabelForIndexWorker represents the label of the index worker
+	LabelForIndexWorker int = -2
+	// LabelForInnerList represents the label of the inner list
+	LabelForInnerList int = -3
+	// LabelForInnerTable represents the label of the inner table
+	LabelForInnerTable int = -4
+	// LabelForOuterTable represents the label of the outer table
+	LabelForOuterTable int = -5
+	// LabelForCoprocessor represents the label of the coprocessor
+	LabelForCoprocessor int = -6
+	// LabelForChunkList represents the label of the chunk list
+	LabelForChunkList int = -7
+	// LabelForGlobalSimpleLRUCache represents the label of the Global SimpleLRUCache
+	LabelForGlobalSimpleLRUCache int = -8
+	// LabelForChunkListInDisk represents the label of the chunk list in disk
+	LabelForChunkListInDisk int = -9
+	// LabelForRowContainer represents the label of the row container
+	LabelForRowContainer int = -10
+	// LabelForGlobalStorage represents the label of the Global Storage
+	LabelForGlobalStorage int = -11
+	// LabelForGlobalMemory represents the label of the Global Memory
+	LabelForGlobalMemory int = -12
+	// LabelForBuildSideResult represents the label of the BuildSideResult
+	LabelForBuildSideResult int = -13
+	// LabelForRowChunks represents the label of the row chunks
+	LabelForRowChunks int = -14
+	// LabelForStatsCache represents the label of the stats cache
+	LabelForStatsCache int = -15
+	// LabelForOuterList represents the label of the outer list
+	LabelForOuterList int = -16
+	// LabelForApplyCache represents the label of the apply cache
+	LabelForApplyCache int = -17
+	// LabelForSimpleTask represents the label of the simple task
+	LabelForSimpleTask int = -18
+)

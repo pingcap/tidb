@@ -117,6 +117,12 @@
     ]
   },
   {
+    "name": "TestLowSelIndexGreedySearch",
+    "cases": [
+      "explain select max(e) from t where a='T3382' and b='ECO' and c='TOPIC' and d='23660fa1ace9455cb7f3ee831e14a342'"
+    ]
+  },
+  {
     "name": "TestEmptyTable",
     "cases": [
       "select * from t where t.c1 <= 50",
@@ -175,6 +181,26 @@
       "select * from t4 where t4.a = 1 and t4.b <= 2"
       // TODO: Refine these tests in the future.
       // "select * from t2 where t2.a = 1 and t2.b <= 2",
+    ]
+  },
+  {
+    "name": "TestIndexEqualUnknown",
+    "cases": [
+      // 7639902 is out of range for the analyzed histogram, and we know from the data writer that for each value
+      // of `a` in the table, there are 6 rows in average. Before this PR, the row count estimation is 150k, which is
+      // far from the real value.
+      "explain select * from t where a = 7639902",
+      // Should choose `primary` index instead of index `b`.
+      "explain select c, b from t where a = 7639902 order by b asc limit 6"
+    ]
+  },
+  {
+    "name": "TestLimitIndexEstimation",
+    "cases": [
+      // Should choose idx_a instead of idx_b, because idx_b would scan 990001 rows.
+      "explain select * from t where a <= 10000 order by b limit 1",
+      // Should choose idx_b instead of idx_a, because idx_b would scan only 1 row.
+      "explain select * from t where a >= 999900 order by b limit 1"
     ]
   }
 ]

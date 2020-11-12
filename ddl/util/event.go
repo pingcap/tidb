@@ -21,11 +21,11 @@ import (
 
 // Event is an event that a ddl operation happened.
 type Event struct {
-	Tp         model.ActionType
-	TableInfo  *model.TableInfo
-	PartInfo   *model.PartitionInfo
-	ColumnInfo *model.ColumnInfo
-	IndexInfo  *model.IndexInfo
+	Tp          model.ActionType
+	TableInfo   *model.TableInfo
+	PartInfo    *model.PartitionInfo
+	ColumnInfos []*model.ColumnInfo
+	IndexInfo   *model.IndexInfo
 }
 
 // String implements fmt.Stringer interface.
@@ -41,8 +41,8 @@ func (e *Event) String() string {
 		}
 		ret += fmt.Sprintf(", Partition IDs: %v", ids)
 	}
-	if e.ColumnInfo != nil {
-		ret += fmt.Sprintf(", Column ID: %d, Column Name %s", e.ColumnInfo.ID, e.ColumnInfo.Name)
+	for _, columnInfo := range e.ColumnInfos {
+		ret += fmt.Sprintf(", Column ID: %d, Column Name %s", columnInfo.ID, columnInfo.Name)
 	}
 	if e.IndexInfo != nil {
 		ret += fmt.Sprintf(", Index ID: %d, Index Name %s", e.IndexInfo.ID, e.IndexInfo.Name)

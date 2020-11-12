@@ -66,11 +66,10 @@ func (s *testEvaluatorSuite) TestCompareFunctionWithRefine(c *C) {
 		{"-123456789123456789123456789.12345 > a", "0"},
 		{"123456789123456789123456789.12345 < a", "0"},
 		{"-123456789123456789123456789.12345 < a", "1"},
-		// This cast can not be eliminated,
-		// since converting "aaaa" to an int will cause DataTruncate error.
-		{"'aaaa'=a", "eq(cast(aaaa, double BINARY), cast(a, double BINARY))"},
+		{"'aaaa'=a", "eq(0, a)"},
 	}
-	cols, names := ColumnInfos2ColumnsAndNames(s.ctx, model.NewCIStr(""), tblInfo.Name, tblInfo.Columns)
+	cols, names, err := ColumnInfos2ColumnsAndNames(s.ctx, model.NewCIStr(""), tblInfo.Name, tblInfo.Cols(), tblInfo)
+	c.Assert(err, IsNil)
 	schema := NewSchema(cols...)
 	for _, t := range tests {
 		f, err := ParseSimpleExprsWithNames(s.ctx, t.exprStr, schema, names)
@@ -82,7 +81,7 @@ func (s *testEvaluatorSuite) TestCompareFunctionWithRefine(c *C) {
 func (s *testEvaluatorSuite) TestCompare(c *C) {
 	intVal, uintVal, realVal, stringVal, decimalVal := 1, uint64(1), 1.1, "123", types.NewDecFromFloatForTest(123.123)
 	timeVal := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeDatetime, 6)
-	durationVal := types.Duration{Duration: time.Duration(12*time.Hour + 1*time.Minute + 1*time.Second)}
+	durationVal := types.Duration{Duration: 12*time.Hour + 1*time.Minute + 1*time.Second}
 	jsonVal := json.CreateBinary("123")
 	// test cases for generating function signatures.
 	tests := []struct {
@@ -201,7 +200,7 @@ func (s *testEvaluatorSuite) TestCoalesce(c *C) {
 		}
 	}
 
-	_, err := funcs[ast.Length].getFunction(s.ctx, []Expression{Zero})
+	_, err := funcs[ast.Length].getFunction(s.ctx, []Expression{NewZero()})
 	c.Assert(err, IsNil)
 }
 
@@ -234,6 +233,10 @@ func (s *testEvaluatorSuite) TestIntervalFunc(c *C) {
 		{types.MakeDatums(uint64(9223372036854775806), -9223372036854775807), 1, false},
 		{types.MakeDatums("9007199254740991", "9007199254740992"), 0, false},
 		{types.MakeDatums(1, uint32(1), uint32(1)), 0, true},
+		{types.MakeDatums(-1, 2333, nil), 0, false},
+		{types.MakeDatums(1, nil, nil, nil), 3, false},
+		{types.MakeDatums(1, nil, nil, nil, 2), 3, false},
+		{types.MakeDatums(uint64(9223372036854775808), nil, nil, nil, 4), 4, false},
 
 		// tests for appropriate precision loss
 		{types.MakeDatums(9007199254740992, "9007199254740993"), 1, false},
@@ -291,6 +294,18 @@ func (s *testEvaluatorSuite) TestGreatestLeastFuncs(c *C) {
 			curTimeInt, int64(123), false, false,
 		},
 		{
+			[]interface{}{tm, "invalid_time_1", "invalid_time_2", tmWithFsp},
+			curTimeWithFspString, "invalid_time_1", false, false,
+		},
+		{
+			[]interface{}{tm, "invalid_time_2", "invalid_time_1", tmWithFsp},
+			curTimeWithFspString, "invalid_time_2", false, false,
+		},
+		{
+			[]interface{}{tm, "invalid_time", nil, tmWithFsp},
+			nil, nil, true, false,
+		},
+		{
 			[]interface{}{duration, "123"},
 			"12:59:59", "123", false, false,
 		},
@@ -331,8 +346,8 @@ func (s *testEvaluatorSuite) TestGreatestLeastFuncs(c *C) {
 			}
 		}
 	}
-	_, err := funcs[ast.Greatest].getFunction(s.ctx, []Expression{Zero, One})
+	_, err := funcs[ast.Greatest].getFunction(s.ctx, []Expression{NewZero(), NewOne()})
 	c.Assert(err, IsNil)
-	_, err = funcs[ast.Least].getFunction(s.ctx, []Expression{Zero, One})
+	_, err = funcs[ast.Least].getFunction(s.ctx, []Expression{NewZero(), NewOne()})
 	c.Assert(err, IsNil)
 }

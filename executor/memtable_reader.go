@@ -25,7 +25,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/jeremywohl/flatten"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/diagnosticspb"
@@ -41,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/pdapi"
 	"github.com/pingcap/tidb/util/set"
 	"go.uber.org/zap"
@@ -54,9 +54,12 @@ type dummyCloser struct{}
 
 func (dummyCloser) close() error { return nil }
 
+func (dummyCloser) getRuntimeStats() execdetails.RuntimeStats { return nil }
+
 type memTableRetriever interface {
 	retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error)
 	close() error
+	getRuntimeStats() execdetails.RuntimeStats
 }
 
 // MemTableReaderExec executes memTable information retrieving from the MemTable components
@@ -128,6 +131,9 @@ func (e *MemTableReaderExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 // Close implements the Executor Close interface.
 func (e *MemTableReaderExec) Close() error {
+	if stats := e.retriever.getRuntimeStats(); stats != nil && e.runtimeStats != nil {
+		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, stats)
+	}
 	return e.retriever.close()
 }
 
@@ -143,7 +149,10 @@ func (e *clusterConfigRetriever) retrieve(_ context.Context, sctx sessionctx.Con
 		return nil, nil
 	}
 	e.retrieved = true
+	return fetchClusterConfig(sctx, e.extractor.NodeTypes, e.extractor.Instances)
+}
 
+func fetchClusterConfig(sctx sessionctx.Context, nodeTypes, nodeAddrs set.StringSet) ([][]types.Datum, error) {
 	type result struct {
 		idx  int
 		rows [][]types.Datum
@@ -159,7 +168,7 @@ func (e *clusterConfigRetriever) retrieve(_ context.Context, sctx sessionctx.Con
 	if err != nil {
 		return nil, err
 	}
-	serversInfo = filterClusterServerInfo(serversInfo, e.extractor.NodeTypes, e.extractor.Instances)
+	serversInfo = filterClusterServerInfo(serversInfo, nodeTypes, nodeAddrs)
 
 	var finalRows [][]types.Datum
 	wg := sync.WaitGroup{}
@@ -210,19 +219,26 @@ func (e *clusterConfigRetriever) retrieve(_ context.Context, sctx sessionctx.Con
 					ch <- result{err: errors.Trace(err)}
 					return
 				}
-				data, err := flatten.Flatten(nested, "", flatten.DotStyle)
-				if err != nil {
-					ch <- result{err: errors.Trace(err)}
-					return
-				}
-				// Sorts by keys and make the result stable
+				data := config.FlattenConfigItems(nested)
 				type item struct {
 					key string
 					val string
 				}
 				var items []item
 				for key, val := range data {
-					items = append(items, item{key: key, val: fmt.Sprintf("%v", val)})
+					var str string
+					switch val.(type) {
+					case string: // remove quotes
+						str = val.(string)
+					default:
+						tmp, err := json.Marshal(val)
+						if err != nil {
+							ch <- result{err: errors.Trace(err)}
+							return
+						}
+						str = string(tmp)
+					}
+					items = append(items, item{key: key, val: str})
 				}
 				sort.Slice(items, func(i, j int) bool { return items[i].key < items[j].key })
 				var rows [][]types.Datum
@@ -458,16 +474,12 @@ func (h *logResponseHeap) Pop() interface{} {
 }
 
 func (e *clusterLogRetriever) initialize(ctx context.Context, sctx sessionctx.Context) ([]chan logStreamResult, error) {
-	isFailpointTestModeSkipCheck := false
 	serversInfo, err := infoschema.GetClusterServerInfo(sctx)
 	failpoint.Inject("mockClusterLogServerInfo", func(val failpoint.Value) {
 		// erase the error
 		err = nil
 		if s := val.(string); len(s) > 0 {
 			serversInfo = parseFailpointServerInfo(s)
-			isFailpointTestModeSkipCheck = true
-		} else {
-			isFailpointTestModeSkipCheck = false
 		}
 	})
 	if err != nil {
@@ -483,22 +495,22 @@ func (e *clusterLogRetriever) initialize(ctx context.Context, sctx sessionctx.Co
 		levels = append(levels, sysutil.ParseLogLevel(l))
 	}
 
-	startTime, endTime := e.extractor.GetTimeRange(isFailpointTestModeSkipCheck)
+	// To avoid search log interface overload, the user should specify the time range, and at least one pattern
+	// in normally SQL.
+	if e.extractor.StartTime == 0 {
+		return nil, errors.New("denied to scan logs, please specified the start time, such as `time > '2020-01-01 00:00:00'`")
+	}
+	if e.extractor.EndTime == 0 {
+		return nil, errors.New("denied to scan logs, please specified the end time, such as `time < '2020-01-01 00:00:00'`")
+	}
 	patterns := e.extractor.Patterns
-
-	// There is no performance issue to check this variable because it will
-	// be eliminated in non-failpoint mode.
-	if !isFailpointTestModeSkipCheck {
-		// To avoid search log interface overload, the user should specify at least one pattern
-		// in normally SQL. (But in test mode we should relax this limitation)
-		if len(patterns) == 0 && len(levels) == 0 && len(instances) == 0 && len(nodeTypes) == 0 {
-			return nil, errors.New("denied to scan full logs (use `SELECT * FROM cluster_log WHERE message LIKE '%'` explicitly if intentionally)")
-		}
+	if len(patterns) == 0 && len(levels) == 0 && len(instances) == 0 && len(nodeTypes) == 0 {
+		return nil, errors.New("denied to scan full logs (use `SELECT * FROM cluster_log WHERE message LIKE '%'` explicitly if intentionally)")
 	}
 
 	req := &diagnosticspb.SearchLogRequest{
-		StartTime: startTime,
-		EndTime:   endTime,
+		StartTime: e.extractor.StartTime,
+		EndTime:   e.extractor.EndTime,
 		Levels:    levels,
 		Patterns:  patterns,
 	}
@@ -654,5 +666,9 @@ func (e *clusterLogRetriever) close() error {
 	if e.cancel != nil {
 		e.cancel()
 	}
+	return nil
+}
+
+func (e *clusterLogRetriever) getRuntimeStats() execdetails.RuntimeStats {
 	return nil
 }

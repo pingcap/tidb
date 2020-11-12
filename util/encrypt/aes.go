@@ -214,7 +214,7 @@ func AESDecryptWithCFB(cryptStr, key []byte, iv []byte) ([]byte, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	cfb := cipher.NewCFBDecrypter(cb, []byte(iv))
+	cfb := cipher.NewCFBDecrypter(cb, iv)
 	dst := make([]byte, len(cryptStr))
 	cfb.XORKeyStream(dst, cryptStr)
 	return dst, nil

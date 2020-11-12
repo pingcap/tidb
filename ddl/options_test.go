@@ -16,7 +16,6 @@ package ddl_test
 import (
 	"time"
 
-	"github.com/ngaut/pools"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/infoschema"
@@ -35,7 +34,6 @@ func (s *ddlOptionsSuite) TestOptions(c *C) {
 	lease := time.Second * 3
 	store := &mock.Store{}
 	infoHandle := infoschema.NewHandle(store)
-	pools := &pools.ResourcePool{}
 
 	options := []ddl.Option{
 		ddl.WithEtcdClient(client),
@@ -43,7 +41,6 @@ func (s *ddlOptionsSuite) TestOptions(c *C) {
 		ddl.WithLease(lease),
 		ddl.WithStore(store),
 		ddl.WithInfoHandle(infoHandle),
-		ddl.WithResourcePool(pools),
 	}
 
 	opt := &ddl.Options{}
@@ -56,5 +53,4 @@ func (s *ddlOptionsSuite) TestOptions(c *C) {
 	c.Assert(opt.Lease, Equals, lease)
 	c.Assert(opt.Store, Equals, store)
 	c.Assert(opt.InfoHandle, Equals, infoHandle)
-	c.Assert(opt.ResourcePool, Equals, pools)
 }

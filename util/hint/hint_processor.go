@@ -23,10 +23,18 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/format"
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
+
+var supportedHintNameForInsertStmt = map[string]struct{}{}
+
+func init() {
+	supportedHintNameForInsertStmt["memory_quota"] = struct{}{}
+}
 
 // HintsSet contains all hints of a query.
 type HintsSet struct {
@@ -55,7 +63,7 @@ func (hs *HintsSet) ContainTableHint(hint string) bool {
 }
 
 // ExtractTableHintsFromStmtNode extracts table hints from this node.
-func ExtractTableHintsFromStmtNode(node ast.Node) []*ast.TableOptimizerHint {
+func ExtractTableHintsFromStmtNode(node ast.Node, sctx sessionctx.Context) []*ast.TableOptimizerHint {
 	switch x := node.(type) {
 	case *ast.SelectStmt:
 		return x.TableHints
@@ -63,11 +71,47 @@ func ExtractTableHintsFromStmtNode(node ast.Node) []*ast.TableOptimizerHint {
 		return x.TableHints
 	case *ast.DeleteStmt:
 		return x.TableHints
-	// TODO: support hint for InsertStmt
+	case *ast.InsertStmt:
+		//check duplicated hints
+		checkInsertStmtHintDuplicated(node, sctx)
+		return x.TableHints
 	case *ast.ExplainStmt:
-		return ExtractTableHintsFromStmtNode(x.Stmt)
+		return ExtractTableHintsFromStmtNode(x.Stmt, sctx)
 	default:
 		return nil
+	}
+}
+
+// checkInsertStmtHintDuplicated check whether existed the duplicated hints in both insertStmt and its selectStmt.
+// If existed, it would send a warning message.
+func checkInsertStmtHintDuplicated(node ast.Node, sctx sessionctx.Context) {
+	switch x := node.(type) {
+	case *ast.InsertStmt:
+		if len(x.TableHints) > 0 {
+			var supportedHint *ast.TableOptimizerHint
+			for _, hint := range x.TableHints {
+				if _, ok := supportedHintNameForInsertStmt[hint.HintName.L]; ok {
+					supportedHint = hint
+					break
+				}
+			}
+			if supportedHint != nil {
+				var duplicatedHint *ast.TableOptimizerHint
+				for _, hint := range ExtractTableHintsFromStmtNode(x.Select, nil) {
+					if hint.HintName.L == supportedHint.HintName.L {
+						duplicatedHint = hint
+						break
+					}
+				}
+				if duplicatedHint != nil {
+					hint := fmt.Sprintf("%s(`%v`)", duplicatedHint.HintName.O, duplicatedHint.HintData)
+					err := dbterror.ClassUtil.NewStd(errno.ErrWarnConflictingHint).FastGenByArgs(hint)
+					sctx.GetSessionVars().StmtCtx.AppendWarning(err)
+				}
+			}
+		}
+	default:
+		return
 	}
 }
 
@@ -185,14 +229,17 @@ func BindHint(stmt ast.StmtNode, hintsSet *HintsSet) ast.StmtNode {
 }
 
 // ParseHintsSet parses a SQL string, then collects and normalizes the HintsSet.
-func ParseHintsSet(p *parser.Parser, sql, charset, collation, db string) (*HintsSet, error) {
-	stmtNode, err := p.ParseOneStmt(sql, charset, collation)
+func ParseHintsSet(p *parser.Parser, sql, charset, collation, db string) (*HintsSet, []error, error) {
+	stmtNodes, warns, err := p.Parse(sql, charset, collation)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	hs := CollectHint(stmtNode)
+	if len(stmtNodes) != 1 {
+		return nil, nil, errors.New(fmt.Sprintf("bind_sql must be a single statement: %s", sql))
+	}
+	hs := CollectHint(stmtNodes[0])
 	processor := &BlockHintProcessor{}
-	stmtNode.Accept(processor)
+	stmtNodes[0].Accept(processor)
 	for i, tblHints := range hs.tableHints {
 		newHints := make([]*ast.TableOptimizerHint, 0, len(tblHints))
 		for _, tblHint := range tblHints {
@@ -202,7 +249,7 @@ func ParseHintsSet(p *parser.Parser, sql, charset, collation, db string) (*Hints
 			offset := processor.GetHintOffset(tblHint.QBName, TypeSelect, i+1)
 			if offset < 0 || !processor.checkTableQBName(tblHint.Tables, TypeSelect) {
 				hintStr := RestoreTableOptimizerHint(tblHint)
-				return nil, errors.New(fmt.Sprintf("Unknown query block name in hint %s", hintStr))
+				return nil, nil, errors.New(fmt.Sprintf("Unknown query block name in hint %s", hintStr))
 			}
 			tblHint.QBName = GenerateQBName(TypeSelect, offset)
 			for i, tbl := range tblHint.Tables {
@@ -214,7 +261,22 @@ func ParseHintsSet(p *parser.Parser, sql, charset, collation, db string) (*Hints
 		}
 		hs.tableHints[i] = newHints
 	}
-	return hs, nil
+	return hs, extractHintWarns(warns), nil
+}
+
+func extractHintWarns(warns []error) []error {
+	for _, w := range warns {
+		if parser.ErrWarnOptimizerHintUnsupportedHint.Equal(w) ||
+			parser.ErrWarnOptimizerHintInvalidToken.Equal(w) ||
+			parser.ErrWarnMemoryQuotaOverflow.Equal(w) ||
+			parser.ErrWarnOptimizerHintParseError.Equal(w) ||
+			parser.ErrWarnOptimizerHintInvalidInteger.Equal(w) {
+			// Just one warning is enough, however we use a slice here to stop golint complaining
+			// "error should be the last type when returning multiple items" for `ParseHintsSet`.
+			return []error{w}
+		}
+	}
+	return nil
 }
 
 // BlockHintProcessor processes hints at different level of sql statement.

@@ -145,7 +145,7 @@ func getStmtTimestamp(ctx sessionctx.Context) (time.Time, error) {
 	}
 
 	if timestampStr != "" {
-		timestamp, err := types.StrToInt(sessionVars.StmtCtx, timestampStr)
+		timestamp, err := types.StrToInt(sessionVars.StmtCtx, timestampStr, false)
 		if err != nil {
 			return time.Time{}, err
 		}

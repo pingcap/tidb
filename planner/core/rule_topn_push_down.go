@@ -18,6 +18,7 @@ import (
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/planner/util"
 )
 
 // pushDownTopNOptimizer pushes down the topN or limit. In the future we will remove the limit from `requiredProperty` in CBO phase.
@@ -55,8 +56,9 @@ func (lt *LogicalTopN) setChild(p LogicalPlan) LogicalPlan {
 
 	if lt.isLimit() {
 		limit := LogicalLimit{
-			Count:  lt.Count,
-			Offset: lt.Offset,
+			Count:      lt.Count,
+			Offset:     lt.Offset,
+			limitHints: lt.limitHints,
 		}.Init(lt.ctx, lt.blockOffset)
 		limit.SetChildren(p)
 		return limit
@@ -78,7 +80,7 @@ func (ls *LogicalSort) pushDownTopN(topN *LogicalTopN) LogicalPlan {
 }
 
 func (p *LogicalLimit) convertToTopN() *LogicalTopN {
-	return LogicalTopN{Offset: p.Offset, Count: p.Count}.Init(p.ctx, p.blockOffset)
+	return LogicalTopN{Offset: p.Offset, Count: p.Count, limitHints: p.limitHints}.Init(p.ctx, p.blockOffset)
 }
 
 func (p *LogicalLimit) pushDownTopN(topN *LogicalTopN) LogicalPlan {
@@ -93,9 +95,9 @@ func (p *LogicalUnionAll) pushDownTopN(topN *LogicalTopN) LogicalPlan {
 	for i, child := range p.children {
 		var newTopN *LogicalTopN
 		if topN != nil {
-			newTopN = LogicalTopN{Count: topN.Count + topN.Offset}.Init(p.ctx, topN.blockOffset)
+			newTopN = LogicalTopN{Count: topN.Count + topN.Offset, limitHints: topN.limitHints}.Init(p.ctx, topN.blockOffset)
 			for _, by := range topN.ByItems {
-				newTopN.ByItems = append(newTopN.ByItems, &ByItems{by.Expr, by.Desc})
+				newTopN.ByItems = append(newTopN.ByItems, &util.ByItems{Expr: by.Expr, Desc: by.Desc})
 			}
 		}
 		p.children[i] = child.pushDownTopN(newTopN)
@@ -145,15 +147,16 @@ func (p *LogicalJoin) pushDownTopNToChild(topN *LogicalTopN, idx int) LogicalPla
 	for _, by := range topN.ByItems {
 		cols := expression.ExtractColumns(by.Expr)
 		for _, col := range cols {
-			if p.children[1-idx].Schema().Contains(col) {
+			if !p.children[idx].Schema().Contains(col) {
 				return p.children[idx].pushDownTopN(nil)
 			}
 		}
 	}
 
 	newTopN := LogicalTopN{
-		Count:   topN.Count + topN.Offset,
-		ByItems: make([]*ByItems, len(topN.ByItems)),
+		Count:      topN.Count + topN.Offset,
+		ByItems:    make([]*util.ByItems, len(topN.ByItems)),
+		limitHints: topN.limitHints,
 	}.Init(topN.ctx, topN.blockOffset)
 	for i := range topN.ByItems {
 		newTopN.ByItems[i] = topN.ByItems[i].Clone()

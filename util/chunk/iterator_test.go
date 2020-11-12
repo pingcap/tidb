@@ -76,12 +76,16 @@ func (s *testChunkSuite) TestMultiIterator(c *check.C) {
 
 	checkEqual(NewMultiIterator(NewIterator4Chunk(chk), NewIterator4Chunk(chk2)), expected, c)
 	checkEqual(NewMultiIterator(NewIterator4Chunk(chk), NewIterator4List(li)), expected, c)
-	checkEqual(NewMultiIterator(NewIterator4Chunk(chk), NewIterator4RowContainer(&RowContainer{records: li})), expected, c)
+	rc := &RowContainer{}
+	rc.m.records = li
+	checkEqual(NewMultiIterator(NewIterator4Chunk(chk), NewIterator4RowContainer(rc)), expected, c)
 
 	li.Clear()
 	li.Add(chk)
 	checkEqual(NewMultiIterator(NewIterator4List(li), NewIterator4Chunk(chk2)), expected, c)
-	checkEqual(NewMultiIterator(NewIterator4RowContainer(&RowContainer{records: new(List)}), NewIterator4List(li), NewIterator4Chunk(chk2)), expected, c)
+	rc = &RowContainer{}
+	rc.m.records = new(List)
+	checkEqual(NewMultiIterator(NewIterator4RowContainer(rc), NewIterator4List(li), NewIterator4Chunk(chk2)), expected, c)
 }
 
 func (s *testChunkSuite) TestIterator(c *check.C) {
@@ -161,9 +165,8 @@ func (s *testChunkSuite) TestIterator(c *check.C) {
 	c.Assert(it.Current(), check.Equals, it.End())
 	c.Assert(it.Begin(), check.Equals, li2.GetRow(ptrs2[0]))
 
-	rc := &RowContainer{
-		records: li,
-	}
+	rc := &RowContainer{}
+	rc.m.records = li
 	it = NewIterator4RowContainer(rc)
 	checkIterator(c, it, expected)
 	it.Begin()
@@ -183,9 +186,8 @@ func (s *testChunkSuite) TestIterator(c *check.C) {
 	c.Assert(it.Begin(), check.Equals, it.End())
 	it = NewIterator4RowPtr(li, nil)
 	c.Assert(it.Begin(), check.Equals, it.End())
-	rc = &RowContainer{
-		records: NewList(fields, 1, 1),
-	}
+	rc = &RowContainer{}
+	rc.m.records = NewList(fields, 1, 1)
 	it = NewIterator4RowContainer(rc)
 	c.Assert(it.Begin(), check.Equals, it.End())
 }

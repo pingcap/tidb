@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -37,8 +38,13 @@ var _ = Suite(&testVectorizeSuite1{})
 var _ = Suite(&testVectorizeSuite2{})
 
 func TestT(t *testing.T) {
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TiKVClient.AsyncCommit.SafeWindow = 0
+		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
+	})
+
 	testleak.BeforeTest()
-	defer testleak.AfterTestT(t)
+	defer testleak.AfterTestT(t)()
 
 	CustomVerboseFlag = true
 	*CustomParallelSuiteFlag = true
@@ -68,15 +74,17 @@ type testEvaluatorSerialSuites struct {
 
 func (s *testEvaluatorSuiteBase) SetUpSuite(c *C) {
 	s.Parser = parser.New()
-	s.ctx = mock.NewContext()
-	s.ctx.GetSessionVars().StmtCtx.TimeZone = time.Local
-	s.ctx.GetSessionVars().SetSystemVar("max_allowed_packet", "67108864")
 }
 
 func (s *testEvaluatorSuiteBase) TearDownSuite(c *C) {
 }
 
 func (s *testEvaluatorSuiteBase) SetUpTest(c *C) {
+	s.ctx = mock.NewContext()
+	s.ctx.GetSessionVars().StmtCtx.TimeZone = time.Local
+	sc := s.ctx.GetSessionVars().StmtCtx
+	sc.TruncateAsWarning = true
+	s.ctx.GetSessionVars().SetSystemVar("max_allowed_packet", "67108864")
 	s.ctx.GetSessionVars().PlanColumnID = 0
 }
 

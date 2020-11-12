@@ -23,7 +23,6 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
 )
 
@@ -72,7 +71,6 @@ func (s *testIsolationSuite) SetWithRetry(c *C, k, v []byte) writeRecord {
 				commitTS: txn.(*tikvTxn).commitTS,
 			}
 		}
-		c.Assert(kv.IsTxnRetryableError(err) || terror.ErrorEqual(err, terror.ErrResultUndetermined), IsTrue)
 	}
 }
 

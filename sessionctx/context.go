@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/kvcache"
-	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tipb/go-binlog"
 )
 
@@ -43,6 +42,9 @@ type Context interface {
 	// GetClient gets a kv.Client.
 	GetClient() kv.Client
 
+	// GetClient gets a kv.Client.
+	GetMPPClient() kv.MPPClient
+
 	// SetValue saves a value associated with this context for key.
 	SetValue(key fmt.Stringer, value interface{})
 
@@ -61,6 +63,10 @@ type Context interface {
 	// now just for load data and batch insert.
 	RefreshTxnCtx(context.Context) error
 
+	// RefreshVars refreshes modified global variable to current session.
+	// only used to daemon session like `statsHandle` to detect global variable change.
+	RefreshVars(context.Context) error
+
 	// InitTxnWithStartTS initializes a transaction with startTS.
 	// It should be called right before we builds an executor.
 	InitTxnWithStartTS(startTS uint64) error
@@ -78,13 +84,11 @@ type Context interface {
 	HasDirtyContent(tid int64) bool
 
 	// StmtCommit flush all changes by the statement to the underlying transaction.
-	StmtCommit(tracker *memory.Tracker) error
+	StmtCommit()
 	// StmtRollback provides statement level rollback.
 	StmtRollback()
 	// StmtGetMutation gets the binlog mutation for current statement.
 	StmtGetMutation(int64) *binlog.TableMutation
-	// StmtAddDirtyTableOP adds the dirty table operation for current statement.
-	StmtAddDirtyTableOP(op int, physicalID int64, handle int64)
 	// DDLOwnerChecker returns owner.DDLOwnerChecker.
 	DDLOwnerChecker() owner.DDLOwnerChecker
 	// AddTableLock adds table lock to the session lock map.
@@ -103,6 +107,8 @@ type Context interface {
 	HasLockedTables() bool
 	// PrepareTSFuture uses to prepare timestamp by future.
 	PrepareTSFuture(ctx context.Context)
+	// StoreIndexUsage stores the index usage information.
+	StoreIndexUsage(tblID int64, idxID int64, rowsSelected int64)
 }
 
 type basicCtxType int

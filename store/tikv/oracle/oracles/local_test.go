@@ -45,11 +45,11 @@ func TestIsExpired(t *testing.T) {
 	oracles.SetOracleHookCurrentTime(o, start)
 	ts, _ := o.GetTimestamp(context.Background())
 	oracles.SetOracleHookCurrentTime(o, start.Add(10*time.Millisecond))
-	expire := o.IsExpired(uint64(ts), 5)
+	expire := o.IsExpired(ts, 5)
 	if !expire {
 		t.Error("should expired")
 	}
-	expire = o.IsExpired(uint64(ts), 200)
+	expire = o.IsExpired(ts, 200)
 	if expire {
 		t.Error("should not expired")
 	}
@@ -62,7 +62,7 @@ func TestLocalOracle_UntilExpired(t *testing.T) {
 	oracles.SetOracleHookCurrentTime(o, start)
 	ts, _ := o.GetTimestamp(context.Background())
 	oracles.SetOracleHookCurrentTime(o, start.Add(10*time.Millisecond))
-	if o.UntilExpired(uint64(ts), 5) != -5 || o.UntilExpired(uint64(ts), 15) != 5 {
+	if o.UntilExpired(ts, 5) != -5 || o.UntilExpired(ts, 15) != 5 {
 		t.Error("until expired should be +-5")
 	}
 }

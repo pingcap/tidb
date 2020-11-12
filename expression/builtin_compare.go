@@ -125,7 +125,10 @@ func (c *coalesceFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 		fieldEvalTps = append(fieldEvalTps, retEvalTp)
 	}
 
-	bf := newBaseBuiltinFuncWithTp(ctx, args, retEvalTp, fieldEvalTps...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, retEvalTp, fieldEvalTps...)
+	if err != nil {
+		return nil, err
+	}
 
 	bf.tp.Flag |= resultFieldType.Flag
 	resultFieldType.Flen, resultFieldType.Decimal = 0, types.UnspecifiedLength
@@ -430,7 +433,10 @@ func (c *greatestFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	for i := range args {
 		argTps[i] = tp
 	}
-	bf := newBaseBuiltinFuncWithTp(ctx, args, tp, argTps...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, tp, argTps...)
+	if err != nil {
+		return nil, err
+	}
 	if cmpAsDatetime {
 		tp = types.ETDatetime
 	}
@@ -629,7 +635,10 @@ func (c *leastFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 	for i := range args {
 		argTps[i] = tp
 	}
-	bf := newBaseBuiltinFuncWithTp(ctx, args, tp, argTps...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, tp, argTps...)
+	if err != nil {
+		return nil, err
+	}
 	if cmpAsDatetime {
 		tp = types.ETDatetime
 	}
@@ -827,9 +836,18 @@ func (c *intervalFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	}
 
 	allInt := true
+	hasNullable := false
+	// if we have nullable columns in the argument list, we won't do a binary search, instead we will linearly scan the arguments.
+	// this behavior is in line with MySQL's, see MySQL's source code here:
+	// https://github.com/mysql/mysql-server/blob/f8cdce86448a211511e8a039c62580ae16cb96f5/sql/item_cmpfunc.cc#L2713-L2788
+	// https://github.com/mysql/mysql-server/blob/f8cdce86448a211511e8a039c62580ae16cb96f5/sql/item_cmpfunc.cc#L2632-L2686
 	for i := range args {
-		if args[i].GetType().EvalType() != types.ETInt {
+		tp := args[i].GetType()
+		if tp.EvalType() != types.ETInt {
 			allInt = false
+		}
+		if !mysql.HasNotNullFlag(tp.Flag) {
+			hasNullable = true
 		}
 	}
 
@@ -840,13 +858,16 @@ func (c *intervalFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	for range args {
 		argTps = append(argTps, argTp)
 	}
-	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, argTps...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, argTps...)
+	if err != nil {
+		return nil, err
+	}
 	var sig builtinFunc
 	if allInt {
-		sig = &builtinIntervalIntSig{bf}
+		sig = &builtinIntervalIntSig{bf, hasNullable}
 		sig.setPbCode(tipb.ScalarFuncSig_IntervalInt)
 	} else {
-		sig = &builtinIntervalRealSig{bf}
+		sig = &builtinIntervalRealSig{bf, hasNullable}
 		sig.setPbCode(tipb.ScalarFuncSig_IntervalReal)
 	}
 	return sig, nil
@@ -854,6 +875,7 @@ func (c *intervalFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 
 type builtinIntervalIntSig struct {
 	baseBuiltinFunc
+	hasNullable bool
 }
 
 func (b *builtinIntervalIntSig) Clone() builtinFunc {
@@ -865,15 +887,50 @@ func (b *builtinIntervalIntSig) Clone() builtinFunc {
 // evalInt evals a builtinIntervalIntSig.
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_interval
 func (b *builtinIntervalIntSig) evalInt(row chunk.Row) (int64, bool, error) {
-	args0, isNull, err := b.args[0].EvalInt(b.ctx, row)
+	arg0, isNull, err := b.args[0].EvalInt(b.ctx, row)
 	if err != nil {
 		return 0, true, err
 	}
 	if isNull {
 		return -1, false, nil
 	}
-	idx, err := b.binSearch(args0, mysql.HasUnsignedFlag(b.args[0].GetType().Flag), b.args[1:], row)
+	isUint1 := mysql.HasUnsignedFlag(b.args[0].GetType().Flag)
+	var idx int
+	if b.hasNullable {
+		idx, err = b.linearSearch(arg0, isUint1, b.args[1:], row)
+	} else {
+		idx, err = b.binSearch(arg0, isUint1, b.args[1:], row)
+	}
 	return int64(idx), err != nil, err
+}
+
+// linearSearch linearly scans the argument least to find the position of the first value that is larger than the given target.
+func (b *builtinIntervalIntSig) linearSearch(target int64, isUint1 bool, args []Expression, row chunk.Row) (i int, err error) {
+	i = 0
+	for ; i < len(args); i++ {
+		isUint2 := mysql.HasUnsignedFlag(args[i].GetType().Flag)
+		arg, isNull, err := args[i].EvalInt(b.ctx, row)
+		if err != nil {
+			return 0, err
+		}
+		var less bool
+		if !isNull {
+			switch {
+			case !isUint1 && !isUint2:
+				less = target < arg
+			case isUint1 && isUint2:
+				less = uint64(target) < uint64(arg)
+			case !isUint1 && isUint2:
+				less = target < 0 || uint64(target) < uint64(arg)
+			case isUint1 && !isUint2:
+				less = arg > 0 && uint64(target) < uint64(arg)
+			}
+		}
+		if less {
+			break
+		}
+	}
+	return i, nil
 }
 
 // binSearch is a binary search method.
@@ -914,26 +971,47 @@ func (b *builtinIntervalIntSig) binSearch(target int64, isUint1 bool, args []Exp
 
 type builtinIntervalRealSig struct {
 	baseBuiltinFunc
+	hasNullable bool
 }
 
 func (b *builtinIntervalRealSig) Clone() builtinFunc {
 	newSig := &builtinIntervalRealSig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.hasNullable = b.hasNullable
 	return newSig
 }
 
 // evalInt evals a builtinIntervalRealSig.
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_interval
 func (b *builtinIntervalRealSig) evalInt(row chunk.Row) (int64, bool, error) {
-	args0, isNull, err := b.args[0].EvalReal(b.ctx, row)
+	arg0, isNull, err := b.args[0].EvalReal(b.ctx, row)
 	if err != nil {
 		return 0, true, err
 	}
 	if isNull {
 		return -1, false, nil
 	}
-	idx, err := b.binSearch(args0, b.args[1:], row)
+	var idx int
+	if b.hasNullable {
+		idx, err = b.linearSearch(arg0, b.args[1:], row)
+	} else {
+		idx, err = b.binSearch(arg0, b.args[1:], row)
+	}
 	return int64(idx), err != nil, err
+}
+
+func (b *builtinIntervalRealSig) linearSearch(target float64, args []Expression, row chunk.Row) (i int, err error) {
+	i = 0
+	for ; i < len(args); i++ {
+		arg, isNull, err := args[i].EvalReal(b.ctx, row)
+		if err != nil {
+			return 0, err
+		}
+		if !isNull && target < arg {
+			break
+		}
+	}
+	return i, nil
 }
 
 func (b *builtinIntervalRealSig) binSearch(target float64, args []Expression, row chunk.Row) (_ int, err error) {
@@ -1053,8 +1131,8 @@ func GetCmpFunction(ctx sessionctx.Context, lhs, rhs Expression) CompareFunc {
 	case types.ETDecimal:
 		return CompareDecimal
 	case types.ETString:
-		_, dstCollation, dstFlen := DeriveCollationFromExprs(ctx, lhs, rhs)
-		return genCompareString(dstCollation, dstFlen)
+		_, dstCollation := DeriveCollationFromExprs(ctx, lhs, rhs)
+		return genCompareString(dstCollation)
 	case types.ETDuration:
 		return CompareDuration
 	case types.ETDatetime, types.ETTimestamp:
@@ -1227,7 +1305,7 @@ func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Express
 			//		   -inf:  10000000 & 1 == 0
 			// For uint:
 			//			inf:  11111111 & 1 == 1
-			//		   -inf:  00000000 & 0 == 0
+			//		   -inf:  00000000 & 1 == 0
 			if arg1.Value.GetInt64()&1 == 1 {
 				isPositiveInfinite = true
 			} else {
@@ -1249,24 +1327,72 @@ func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Express
 	}
 	if isExceptional && (c.op == opcode.EQ || c.op == opcode.NullEQ) {
 		// This will always be false.
-		return []Expression{Zero, One}
+		return []Expression{NewZero(), NewOne()}
 	}
 	if isPositiveInfinite {
 		// If the op is opcode.LT, opcode.LE
 		// This will always be true.
 		// If the op is opcode.GT, opcode.GE
 		// This will always be false.
-		return []Expression{Zero, One}
+		return []Expression{NewZero(), NewOne()}
 	}
 	if isNegativeInfinite {
 		// If the op is opcode.GT, opcode.GE
 		// This will always be true.
 		// If the op is opcode.LT, opcode.LE
 		// This will always be false.
-		return []Expression{One, Zero}
+		return []Expression{NewOne(), NewZero()}
 	}
 
-	return []Expression{finalArg0, finalArg1}
+	return c.refineArgsByUnsignedFlag(ctx, []Expression{finalArg0, finalArg1})
+}
+
+func (c *compareFunctionClass) refineArgsByUnsignedFlag(ctx sessionctx.Context, args []Expression) []Expression {
+	// Only handle int cases, cause MySQL declares that `UNSIGNED` is deprecated for FLOAT, DOUBLE and DECIMAL types,
+	// and support for it would be removed in a future version.
+	if args[0].GetType().EvalType() != types.ETInt || args[1].GetType().EvalType() != types.ETInt {
+		return args
+	}
+	colArgs := make([]*Column, 2)
+	constArgs := make([]*Constant, 2)
+	for i, arg := range args {
+		switch x := arg.(type) {
+		case *Constant:
+			constArgs[i] = x
+		case *Column:
+			colArgs[i] = x
+		case *CorrelatedColumn:
+			colArgs[i] = &x.Column
+		}
+	}
+	for i := 0; i < 2; i++ {
+		if con, col := constArgs[1-i], colArgs[i]; con != nil && col != nil {
+			v, isNull, err := con.EvalInt(ctx, chunk.Row{})
+			if err != nil || isNull || v > 0 {
+				return args
+			}
+			if mysql.HasUnsignedFlag(col.RetType.Flag) && mysql.HasNotNullFlag(col.RetType.Flag) && !mysql.HasUnsignedFlag(con.RetType.Flag) {
+				op := c.op
+				if i == 1 {
+					op = symmetricOp[c.op]
+				}
+				if v == 0 && (op == opcode.LE || op == opcode.GT || op == opcode.NullEQ || op == opcode.EQ || op == opcode.NE) {
+					return args
+				}
+				// `unsigned_col < 0` equals to `1 < 0`,
+				// `unsigned_col > -1` equals to `1 > 0`,
+				// `unsigned_col <= -1` equals to `1 <= 0`,
+				// `unsigned_col >= 0` equals to `1 >= 0`,
+				// `unsigned_col == -1` equals to `1 == 0`,
+				// `unsigned_col != -1` equals to `1 != 0`,
+				// `unsigned_col <=> -1` equals to `1 <=> 0`,
+				// so we can replace the column argument with `1`, and the other constant argument with `0`.
+				args[i], args[1-i] = NewOne(), NewZero()
+				return args
+			}
+		}
+	}
+	return args
 }
 
 // getFunction sets compare built-in function signatures for various types.
@@ -1282,7 +1408,10 @@ func (c *compareFunctionClass) getFunction(ctx sessionctx.Context, rawArgs []Exp
 
 // generateCmpSigs generates compare function signatures.
 func (c *compareFunctionClass) generateCmpSigs(ctx sessionctx.Context, args []Expression, tp types.EvalType) (sig builtinFunc, err error) {
-	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, tp, tp)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, tp, tp)
+	if err != nil {
+		return nil, err
+	}
 	if tp == types.ETJson {
 		// In compare, if we cast string to JSON, we shouldn't parse it.
 		for i := range args {
@@ -2086,14 +2215,14 @@ func (b *builtinNullEQIntSig) evalInt(row chunk.Row) (val int64, isNull bool, er
 	case !isUnsigned0 && !isUnsigned1 && types.CompareInt64(arg0, arg1) == 0:
 		res = 1
 	case isUnsigned0 && !isUnsigned1:
-		if arg1 < 0 || arg0 > math.MaxInt64 {
+		if arg1 < 0 {
 			break
 		}
 		if types.CompareInt64(arg0, arg1) == 0 {
 			res = 1
 		}
 	case !isUnsigned0 && isUnsigned1:
-		if arg0 < 0 || arg1 > math.MaxInt64 {
+		if arg0 < 0 {
 			break
 		}
 		if types.CompareInt64(arg0, arg1) == 0 {
@@ -2421,7 +2550,7 @@ func CompareInt(sctx sessionctx.Context, lhsArg, rhsArg Expression, lhsRow, rhsR
 	return int64(res), false, nil
 }
 
-func genCompareString(collation string, flen int) func(sctx sessionctx.Context, lhsArg, rhsArg Expression, lhsRow, rhsRow chunk.Row) (int64, bool, error) {
+func genCompareString(collation string) func(sctx sessionctx.Context, lhsArg Expression, rhsArg Expression, lhsRow chunk.Row, rhsRow chunk.Row) (int64, bool, error) {
 	return func(sctx sessionctx.Context, lhsArg, rhsArg Expression, lhsRow, rhsRow chunk.Row) (int64, bool, error) {
 		return CompareStringWithCollationInfo(sctx, lhsArg, rhsArg, lhsRow, rhsRow, collation)
 	}

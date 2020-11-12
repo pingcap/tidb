@@ -1162,9 +1162,15 @@ func (mvcc *MVCCLevelDB) CheckTxnStatus(primaryKey []byte, lockTS, callerStartTS
 				return 0, 0, kvrpcpb.Action_TTLExpireRollback, nil
 			}
 
-			// If this is a large transaction and the lock is active, push forward the minCommitTS.
-			// lock.minCommitTS == 0 may be a secondary lock, or not a large transaction (old version TiDB).
-			if lock.minCommitTS > 0 {
+			// If the caller_start_ts is MaxUint64, it's a point get in the autocommit transaction.
+			// Even though the MinCommitTs is not pushed, the point get can ingore the lock
+			// next time because it's not committed. So we pretend it has been pushed.
+			if callerStartTS == math.MaxUint64 {
+				action = kvrpcpb.Action_MinCommitTSPushed
+
+				// If this is a large transaction and the lock is active, push forward the minCommitTS.
+				// lock.minCommitTS == 0 may be a secondary lock, or not a large transaction (old version TiDB).
+			} else if lock.minCommitTS > 0 {
 				action = kvrpcpb.Action_MinCommitTSPushed
 				// We *must* guarantee the invariance lock.minCommitTS >= callerStartTS + 1
 				if lock.minCommitTS < callerStartTS+1 {

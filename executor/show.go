@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb-tools/tidb-binlog/node"
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
@@ -51,13 +52,16 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/format"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/hint"
+	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stringutil"
 )
@@ -127,6 +131,8 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 		return e.fetchShowCollation()
 	case ast.ShowColumns:
 		return e.fetchShowColumns(ctx)
+	case ast.ShowConfig:
+		return e.fetchShowClusterConfigs(ctx)
 	case ast.ShowCreateTable:
 		return e.fetchShowCreateTable()
 	case ast.ShowCreateSequence:
@@ -197,6 +203,10 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 		return e.fetchShowTableRegions()
 	case ast.ShowBuiltins:
 		return e.fetchShowBuiltins()
+	case ast.ShowBackups:
+		return e.fetchShowBRIE(ast.BRIEKindBackup)
+	case ast.ShowRestores:
+		return e.fetchShowBRIE(ast.BRIEKindRestore)
 	}
 	return nil
 }
@@ -268,6 +278,7 @@ func (e *ShowExec) fetchShowBind() error {
 				hint.UpdateTime,
 				hint.Charset,
 				hint.Collation,
+				hint.Source,
 			})
 		}
 	}
@@ -375,6 +386,8 @@ func (e *ShowExec) fetchShowTables() error {
 			tableTypes[v.Meta().Name.O] = "VIEW"
 		} else if v.Meta().IsSequence() {
 			tableTypes[v.Meta().Name.O] = "SEQUENCE"
+		} else if util.IsSystemView(e.DBName.L) {
+			tableTypes[v.Meta().Name.O] = "SYSTEM VIEW"
 		} else {
 			tableTypes[v.Meta().Name.O] = "BASE TABLE"
 		}
@@ -460,6 +473,9 @@ func (e *ShowExec) fetchShowColumns(ctx context.Context) error {
 			idx := expression.FindFieldNameIdxByColName(viewOutputNames, col.Name.L)
 			if idx >= 0 {
 				col.FieldType = *viewSchema.Columns[idx].GetType()
+			}
+			if col.Tp == mysql.TypeVarString {
+				col.Tp = mysql.TypeVarchar
 			}
 		}
 	}
@@ -571,8 +587,9 @@ func (e *ShowExec) fetchShowIndex() error {
 				subPart = col.Length
 			}
 
+			tblCol := tb.Meta().Columns[col.Offset]
 			nullVal := "YES"
-			if idx.Meta().Name.O == mysql.PrimaryKeyName {
+			if mysql.HasNotNullFlag(tblCol.Flag) {
 				nullVal = ""
 			}
 
@@ -583,7 +600,6 @@ func (e *ShowExec) fetchShowIndex() error {
 
 			colName := col.Name.O
 			expression := "NULL"
-			tblCol := tb.Meta().Columns[col.Offset]
 			if tblCol.Hidden {
 				colName = "NULL"
 				expression = fmt.Sprintf("(%s)", tblCol.GeneratedExprString)
@@ -634,45 +650,35 @@ func (e *ShowExec) fetchShowMasterStatus() error {
 
 func (e *ShowExec) fetchShowVariables() (err error) {
 	var (
-		value         string
-		ok            bool
-		sessionVars   = e.ctx.GetSessionVars()
-		unreachedVars = make([]string, 0, len(variable.SysVars))
+		value       string
+		sessionVars = e.ctx.GetSessionVars()
 	)
-	for _, v := range variable.SysVars {
-		if !e.GlobalScope {
-			// For a session scope variable,
-			// 1. try to fetch value from SessionVars.Systems;
-			// 2. if this variable is session-only, fetch value from SysVars
-			//		otherwise, fetch the value from table `mysql.Global_Variables`.
-			value, ok, err = variable.GetSessionOnlySysVars(sessionVars, v.Name)
-		} else {
-			// If the scope of a system variable is ScopeNone,
-			// it's a read-only variable, so we return the default value of it.
-			// Otherwise, we have to fetch the values from table `mysql.Global_Variables` for global variable names.
-			value, ok, err = variable.GetScopeNoneSystemVar(v.Name)
+	if e.GlobalScope {
+		// Collect global scope variables,
+		// 1. Exclude the variables of ScopeSession in variable.SysVars;
+		// 2. If the variable is ScopeNone, it's a read-only variable, return the default value of it,
+		// 		otherwise, fetch the value from table `mysql.Global_Variables`.
+		for _, v := range variable.GetSysVars() {
+			if v.Scope != variable.ScopeSession {
+				value, err = variable.GetGlobalSystemVar(sessionVars, v.Name)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				e.appendRow([]interface{}{v.Name, value})
+			}
 		}
+		return nil
+	}
+
+	// Collect session scope variables,
+	// If it is a session only variable, use the default value defined in code,
+	//   otherwise, fetch the value from table `mysql.Global_Variables`.
+	for _, v := range variable.GetSysVars() {
+		value, err = variable.GetSessionSystemVar(sessionVars, v.Name)
 		if err != nil {
 			return errors.Trace(err)
-		}
-		if !ok {
-			unreachedVars = append(unreachedVars, v.Name)
-			continue
 		}
 		e.appendRow([]interface{}{v.Name, value})
-	}
-	if len(unreachedVars) != 0 {
-		systemVars, err := sessionVars.GlobalVarsAccessor.GetAllSysVars()
-		if err != nil {
-			return errors.Trace(err)
-		}
-		for _, varName := range unreachedVars {
-			varValue, ok := systemVars[varName]
-			if !ok {
-				varValue = variable.SysVars[varName].Value
-			}
-			e.appendRow([]interface{}{varName, varValue})
-		}
 	}
 	return nil
 }
@@ -710,7 +716,7 @@ func getDefaultCollate(charsetName string) string {
 }
 
 // ConstructResultOfShowCreateTable constructs the result for show create table.
-func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.TableInfo, allocator autoid.Allocator, buf *bytes.Buffer) (err error) {
+func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.TableInfo, allocators autoid.Allocators, buf *bytes.Buffer) (err error) {
 	if tableInfo.IsView() {
 		fetchShowCreateTable4View(ctx, tableInfo, buf)
 		return nil
@@ -802,6 +808,8 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 					if col.Tp == mysql.TypeBit {
 						defaultValBinaryLiteral := types.BinaryLiteral(defaultValStr)
 						fmt.Fprintf(buf, " DEFAULT %s", defaultValBinaryLiteral.ToBitLiteralString(true))
+					} else if col.DefaultIsExpr {
+						fmt.Fprintf(buf, " DEFAULT %s", format.OutputFormat(defaultValStr))
 					} else {
 						fmt.Fprintf(buf, " DEFAULT '%s'", format.OutputFormat(defaultValStr))
 					}
@@ -812,7 +820,7 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 				buf.WriteString(table.OptionalFsp(&col.FieldType))
 			}
 		}
-		if tableInfo.PKIsHandle && tableInfo.ContainsAutoRandomBits() && tableInfo.GetPkName().L == col.Name.L {
+		if ddl.IsAutoRandomColumnID(tableInfo, col.ID) {
 			buf.WriteString(fmt.Sprintf(" /*T![auto_rand] AUTO_RANDOM(%d) */", tableInfo.AutoRandomBits))
 		}
 		if len(col.Comment) > 0 {
@@ -873,13 +881,37 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 		}
 	}
 
+	// Foreign Keys are supported by data dictionary even though
+	// they are not enforced by DDL. This is still helpful to applications.
+	for _, fk := range tableInfo.ForeignKeys {
+		buf.WriteString(fmt.Sprintf(",\n  CONSTRAINT %s FOREIGN KEY ", stringutil.Escape(fk.Name.O, sqlMode)))
+		colNames := make([]string, 0, len(fk.Cols))
+		for _, col := range fk.Cols {
+			colNames = append(colNames, stringutil.Escape(col.O, sqlMode))
+		}
+		buf.WriteString(fmt.Sprintf("(%s)", strings.Join(colNames, ",")))
+		buf.WriteString(fmt.Sprintf(" REFERENCES %s ", stringutil.Escape(fk.RefTable.O, sqlMode)))
+		refColNames := make([]string, 0, len(fk.Cols))
+		for _, refCol := range fk.RefCols {
+			refColNames = append(refColNames, stringutil.Escape(refCol.O, sqlMode))
+		}
+		buf.WriteString(fmt.Sprintf("(%s)", strings.Join(refColNames, ",")))
+		if ast.ReferOptionType(fk.OnDelete) != 0 {
+			buf.WriteString(fmt.Sprintf(" ON DELETE %s", ast.ReferOptionType(fk.OnDelete).String()))
+		}
+		if ast.ReferOptionType(fk.OnUpdate) != 0 {
+			buf.WriteString(fmt.Sprintf(" ON UPDATE %s", ast.ReferOptionType(fk.OnUpdate).String()))
+		}
+	}
+
 	buf.WriteString("\n")
 
 	buf.WriteString(") ENGINE=InnoDB")
-	// Because we only support case sensitive utf8_bin collate, we need to explicitly set the default charset and collation
+	// We need to explicitly set the default charset and collation
 	// to make it work on MySQL server which has default collate utf8_general_ci.
-	if len(tblCollate) == 0 {
+	if len(tblCollate) == 0 || tblCollate == "binary" {
 		// If we can not find default collate for the given charset,
+		// or the collate is 'binary'(MySQL-5.7 compatibility, see #15633 for details),
 		// do not show the collate part.
 		fmt.Fprintf(buf, " DEFAULT CHARSET=%s", tblCharset)
 	} else {
@@ -891,14 +923,32 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 		fmt.Fprintf(buf, " COMPRESSION='%s'", tableInfo.Compression)
 	}
 
-	if hasAutoIncID {
-		autoIncID, err := allocator.NextGlobalAutoID(tableInfo.ID)
+	incrementAllocator := allocators.Get(autoid.RowIDAllocType)
+	if hasAutoIncID && incrementAllocator != nil {
+		autoIncID, err := incrementAllocator.NextGlobalAutoID(tableInfo.ID)
 		if err != nil {
 			return errors.Trace(err)
 		}
+
 		// It's compatible with MySQL.
 		if autoIncID > 1 {
 			fmt.Fprintf(buf, " AUTO_INCREMENT=%d", autoIncID)
+		}
+	}
+
+	if tableInfo.AutoIdCache != 0 {
+		fmt.Fprintf(buf, " /*T![auto_id_cache] AUTO_ID_CACHE=%d */", tableInfo.AutoIdCache)
+	}
+
+	randomAllocator := allocators.Get(autoid.AutoRandomType)
+	if randomAllocator != nil {
+		autoRandID, err := randomAllocator.NextGlobalAutoID(tableInfo.ID)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		if autoRandID > 1 {
+			fmt.Fprintf(buf, " /*T![auto_rand_base] AUTO_RANDOM_BASE=%d */", autoRandID)
 		}
 	}
 
@@ -958,6 +1008,34 @@ func (e *ShowExec) fetchShowCreateSequence() error {
 	return nil
 }
 
+// TestShowClusterConfigKey is the key used to store TestShowClusterConfigFunc.
+var TestShowClusterConfigKey stringutil.StringerStr = "TestShowClusterConfigKey"
+
+// TestShowClusterConfigFunc is used to test 'show config ...'.
+type TestShowClusterConfigFunc func() ([][]types.Datum, error)
+
+func (e *ShowExec) fetchShowClusterConfigs(ctx context.Context) error {
+	emptySet := set.NewStringSet()
+	var confItems [][]types.Datum
+	var err error
+	if f := e.ctx.Value(TestShowClusterConfigKey); f != nil {
+		confItems, err = f.(TestShowClusterConfigFunc)()
+	} else {
+		confItems, err = fetchClusterConfig(e.ctx, emptySet, emptySet)
+	}
+	if err != nil {
+		return err
+	}
+	for _, items := range confItems {
+		row := make([]interface{}, 0, 4)
+		for _, item := range items {
+			row = append(row, item.GetString())
+		}
+		e.appendRow(row)
+	}
+	return nil
+}
+
 func (e *ShowExec) fetchShowCreateTable() error {
 	tb, err := e.getTable()
 	if err != nil {
@@ -965,10 +1043,9 @@ func (e *ShowExec) fetchShowCreateTable() error {
 	}
 
 	tableInfo := tb.Meta()
-	allocator := tb.Allocators(e.ctx).Get(autoid.RowIDAllocType)
 	var buf bytes.Buffer
 	// TODO: let the result more like MySQL.
-	if err = ConstructResultOfShowCreateTable(e.ctx, tableInfo, allocator, &buf); err != nil {
+	if err = ConstructResultOfShowCreateTable(e.ctx, tableInfo, tb.Allocators(e.ctx), &buf); err != nil {
 		return err
 	}
 	if tableInfo.IsView() {
@@ -1036,19 +1113,57 @@ func appendPartitionInfo(partitionInfo *model.PartitionInfo, buf *bytes.Buffer) 
 			}
 		}
 		buf.WriteString(") (\n")
+	} else if partitionInfo.Type == model.PartitionTypeList {
+		if len(partitionInfo.Columns) == 0 {
+			fmt.Fprintf(buf, "\nPARTITION BY %s (%s) (\n", partitionInfo.Type.String(), partitionInfo.Expr)
+		} else {
+			colsName := ""
+			for _, col := range partitionInfo.Columns {
+				if len(colsName) > 0 {
+					colsName += ","
+				}
+				colsName += col.L
+			}
+			fmt.Fprintf(buf, "\nPARTITION BY LIST COLUMNS(%s) (\n", colsName)
+		}
 	} else {
 		fmt.Fprintf(buf, "\nPARTITION BY %s ( %s ) (\n", partitionInfo.Type.String(), partitionInfo.Expr)
 	}
-	for i, def := range partitionInfo.Definitions {
-		lessThans := strings.Join(def.LessThan, ",")
-		fmt.Fprintf(buf, "  PARTITION `%s` VALUES LESS THAN (%s)", def.Name, lessThans)
-		if i < len(partitionInfo.Definitions)-1 {
-			buf.WriteString(",\n")
-		} else {
-			buf.WriteString("\n")
+	if partitionInfo.Type == model.PartitionTypeRange {
+		for i, def := range partitionInfo.Definitions {
+			lessThans := strings.Join(def.LessThan, ",")
+			fmt.Fprintf(buf, "  PARTITION `%s` VALUES LESS THAN (%s)", def.Name, lessThans)
+			if i < len(partitionInfo.Definitions)-1 {
+				buf.WriteString(",\n")
+			} else {
+				buf.WriteString("\n")
+			}
 		}
+		buf.WriteString(")")
+	} else if partitionInfo.Type == model.PartitionTypeList {
+		for i, def := range partitionInfo.Definitions {
+			values := bytes.NewBuffer(nil)
+			for j, inValues := range def.InValues {
+				if j > 0 {
+					values.WriteString(",")
+				}
+				if len(inValues) > 1 {
+					values.WriteString("(")
+					values.WriteString(strings.Join(inValues, ","))
+					values.WriteString(")")
+				} else {
+					values.WriteString(strings.Join(inValues, ","))
+				}
+			}
+			fmt.Fprintf(buf, "  PARTITION `%s` VALUES IN (%s)", def.Name, values.String())
+			if i < len(partitionInfo.Definitions)-1 {
+				buf.WriteString(",\n")
+			} else {
+				buf.WriteString("\n")
+			}
+		}
+		buf.WriteString(")")
 	}
-	buf.WriteString(")")
 }
 
 // ConstructResultOfShowCreateDatabase constructs the result for show create database.
@@ -1059,9 +1174,32 @@ func ConstructResultOfShowCreateDatabase(ctx sessionctx.Context, dbInfo *model.D
 		ifNotExistsStr = "/*!32312 IF NOT EXISTS*/ "
 	}
 	fmt.Fprintf(buf, "CREATE DATABASE %s%s", ifNotExistsStr, stringutil.Escape(dbInfo.Name.O, sqlMode))
-	if s := dbInfo.Charset; len(s) > 0 {
-		fmt.Fprintf(buf, " /*!40100 DEFAULT CHARACTER SET %s */", s)
+	if dbInfo.Charset != "" {
+		fmt.Fprintf(buf, " /*!40100 DEFAULT CHARACTER SET %s ", dbInfo.Charset)
+		defaultCollate, err := charset.GetDefaultCollation(dbInfo.Charset)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if dbInfo.Collate != "" && dbInfo.Collate != defaultCollate {
+			fmt.Fprintf(buf, "COLLATE %s ", dbInfo.Collate)
+		}
+		fmt.Fprint(buf, "*/")
+		return nil
 	}
+	if dbInfo.Collate != "" {
+		collInfo, err := collate.GetCollationByName(dbInfo.Collate)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		fmt.Fprintf(buf, " /*!40100 DEFAULT CHARACTER SET %s ", collInfo.CharsetName)
+		if !collInfo.IsDefault {
+			fmt.Fprintf(buf, "COLLATE %s ", dbInfo.Collate)
+		}
+		fmt.Fprint(buf, "*/")
+		return nil
+	}
+	// MySQL 5.7 always show the charset info but TiDB may ignore it, which makes a slight difference. We keep this
+	// behavior unchanged because it is trivial enough.
 	return nil
 }
 
@@ -1259,7 +1397,7 @@ func (e *ShowExec) fetchShowWarnings(errOnly bool) error {
 		warn := errors.Cause(w.Err)
 		switch x := warn.(type) {
 		case *terror.Error:
-			sqlErr := x.ToSQLError()
+			sqlErr := terror.ToSQLError(x)
 			e.appendRow([]interface{}{w.Level, int64(sqlErr.Code), sqlErr.Message})
 		default:
 			e.appendRow([]interface{}{w.Level, int64(mysql.ErrUnknown), warn.Error()})
@@ -1400,6 +1538,27 @@ func (e *ShowExec) fetchShowTableRegions() error {
 		return errors.Trace(err)
 	}
 
+	physicalIDs := []int64{}
+	if pi := tb.Meta().GetPartitionInfo(); pi != nil {
+		for _, name := range e.Table.PartitionNames {
+			pid, err := tables.FindPartitionByName(tb.Meta(), name.L)
+			if err != nil {
+				return err
+			}
+			physicalIDs = append(physicalIDs, pid)
+		}
+		if len(physicalIDs) == 0 {
+			for _, p := range pi.Definitions {
+				physicalIDs = append(physicalIDs, p.ID)
+			}
+		}
+	} else {
+		if len(e.Table.PartitionNames) != 0 {
+			return plannercore.ErrPartitionClauseOnNonpartitioned
+		}
+		physicalIDs = append(physicalIDs, tb.Meta().ID)
+	}
+
 	// Get table regions from from pd, not from regionCache, because the region cache maybe outdated.
 	var regions []regionMeta
 	if len(e.IndexName.L) != 0 {
@@ -1407,9 +1566,9 @@ func (e *ShowExec) fetchShowTableRegions() error {
 		if indexInfo == nil {
 			return plannercore.ErrKeyDoesNotExist.GenWithStackByArgs(e.IndexName, tb.Meta().Name)
 		}
-		regions, err = getTableIndexRegions(tb, indexInfo, tikvStore, splitStore)
+		regions, err = getTableIndexRegions(indexInfo, physicalIDs, tikvStore, splitStore)
 	} else {
-		regions, err = getTableRegions(tb, tikvStore, splitStore)
+		regions, err = getTableRegions(tb, physicalIDs, tikvStore, splitStore)
 	}
 
 	if err != nil {
@@ -1419,48 +1578,28 @@ func (e *ShowExec) fetchShowTableRegions() error {
 	return nil
 }
 
-func getTableRegions(tb table.Table, tikvStore tikv.Storage, splitStore kv.SplittableStore) ([]regionMeta, error) {
-	if info := tb.Meta().GetPartitionInfo(); info != nil {
-		return getPartitionTableRegions(info, tb.(table.PartitionedTable), tikvStore, splitStore)
-	}
-	return getPhysicalTableRegions(tb.Meta().ID, tb.Meta(), tikvStore, splitStore, nil)
-}
-
-func getTableIndexRegions(tb table.Table, indexInfo *model.IndexInfo, tikvStore tikv.Storage, splitStore kv.SplittableStore) ([]regionMeta, error) {
-	if info := tb.Meta().GetPartitionInfo(); info != nil {
-		return getPartitionIndexRegions(info, tb.(table.PartitionedTable), indexInfo, tikvStore, splitStore)
-	}
-	return getPhysicalIndexRegions(tb.Meta().ID, indexInfo, tikvStore, splitStore, nil)
-}
-
-func getPartitionTableRegions(info *model.PartitionInfo, tbl table.PartitionedTable, tikvStore tikv.Storage, splitStore kv.SplittableStore) ([]regionMeta, error) {
-	regions := make([]regionMeta, 0, len(info.Definitions))
+func getTableRegions(tb table.Table, physicalIDs []int64, tikvStore tikv.Storage, splitStore kv.SplittableStore) ([]regionMeta, error) {
+	regions := make([]regionMeta, 0, len(physicalIDs))
 	uniqueRegionMap := make(map[uint64]struct{})
-	for _, def := range info.Definitions {
-		pid := def.ID
-		partition := tbl.GetPartition(pid)
-		partition.GetPhysicalID()
-		partitionRegions, err := getPhysicalTableRegions(partition.GetPhysicalID(), tbl.Meta(), tikvStore, splitStore, uniqueRegionMap)
+	for _, id := range physicalIDs {
+		rs, err := getPhysicalTableRegions(id, tb.Meta(), tikvStore, splitStore, uniqueRegionMap)
 		if err != nil {
 			return nil, err
 		}
-		regions = append(regions, partitionRegions...)
+		regions = append(regions, rs...)
 	}
 	return regions, nil
 }
 
-func getPartitionIndexRegions(info *model.PartitionInfo, tbl table.PartitionedTable, indexInfo *model.IndexInfo, tikvStore tikv.Storage, splitStore kv.SplittableStore) ([]regionMeta, error) {
-	var regions []regionMeta
+func getTableIndexRegions(indexInfo *model.IndexInfo, physicalIDs []int64, tikvStore tikv.Storage, splitStore kv.SplittableStore) ([]regionMeta, error) {
+	regions := make([]regionMeta, 0, len(physicalIDs))
 	uniqueRegionMap := make(map[uint64]struct{})
-	for _, def := range info.Definitions {
-		pid := def.ID
-		partition := tbl.GetPartition(pid)
-		partition.GetPhysicalID()
-		partitionRegions, err := getPhysicalIndexRegions(partition.GetPhysicalID(), indexInfo, tikvStore, splitStore, uniqueRegionMap)
+	for _, id := range physicalIDs {
+		rs, err := getPhysicalIndexRegions(id, indexInfo, tikvStore, splitStore, uniqueRegionMap)
 		if err != nil {
 			return nil, err
 		}
-		regions = append(regions, partitionRegions...)
+		regions = append(regions, rs...)
 	}
 	return regions, nil
 }

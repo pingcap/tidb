@@ -35,6 +35,20 @@ type cacheEntry struct {
 	value Value
 }
 
+var (
+	// GlobalLRUMemUsageTracker tracks all the memory usage of SimpleLRUCache
+	GlobalLRUMemUsageTracker *memory.Tracker
+)
+
+const (
+	// ProfileName is the function name in heap profile
+	ProfileName = "github.com/pingcap/tidb/util/kvcache.(*SimpleLRUCache).Put"
+)
+
+func init() {
+	GlobalLRUMemUsageTracker = memory.NewTracker(memory.LabelForGlobalSimpleLRUCache, -1)
+}
+
 // SimpleLRUCache is a simple least recently used cache, not thread-safe, use it carefully.
 type SimpleLRUCache struct {
 	capacity uint
@@ -60,6 +74,17 @@ func NewSimpleLRUCache(capacity uint, guard float64, quota uint64) *SimpleLRUCac
 		elements: make(map[string]*list.Element),
 		cache:    list.New(),
 	}
+}
+
+// GetAll try to get all value.
+func (l *SimpleLRUCache) GetAll() []interface{} {
+	values := make([]interface{}, 0)
+	for _, v := range l.elements {
+		if nv, ok := v.Value.(*cacheEntry); ok {
+			values = append(values, nv.value)
+		}
+	}
+	return values
 }
 
 // Get tries to find the corresponding value according to the given key.
@@ -89,7 +114,6 @@ func (l *SimpleLRUCache) Put(key Key, value Value) {
 	element = l.cache.PushFront(newCacheEntry)
 	l.elements[hash] = element
 	l.size++
-
 	// Getting used memory is expensive and can be avoided by setting quota to 0.
 	if l.quota == 0 {
 		if l.size > l.capacity {
@@ -184,4 +208,16 @@ func (l *SimpleLRUCache) SetCapacity(capacity uint) error {
 		l.size--
 	}
 	return nil
+}
+
+// RemoveOldest removes the oldest element from the cache.
+func (l *SimpleLRUCache) RemoveOldest() (key Key, value Value, ok bool) {
+	if l.size > 0 {
+		ele := l.cache.Back()
+		l.cache.Remove(ele)
+		delete(l.elements, string(ele.Value.(*cacheEntry).key.Hash()))
+		l.size--
+		return ele.Value.(*cacheEntry).key, ele.Value.(*cacheEntry).value, true
+	}
+	return nil, nil, false
 }

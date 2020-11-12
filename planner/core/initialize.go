@@ -103,6 +103,12 @@ func (p LogicalUnionAll) Init(ctx sessionctx.Context, offset int) *LogicalUnionA
 	return &p
 }
 
+// Init initializes LogicalPartitionUnionAll.
+func (p LogicalPartitionUnionAll) Init(ctx sessionctx.Context, offset int) *LogicalPartitionUnionAll {
+	p.baseLogicalPlan = newBaseLogicalPlan(ctx, plancodec.TypePartitionUnion, &p, offset)
+	return &p
+}
+
 // Init initializes PhysicalUnionAll.
 func (p PhysicalUnionAll) Init(ctx sessionctx.Context, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PhysicalUnionAll {
 	p.basePhysicalPlan = newBasePhysicalPlan(ctx, plancodec.TypeUnion, &p, offset)
@@ -236,6 +242,12 @@ func (p Insert) Init(ctx sessionctx.Context) *Insert {
 	return &p
 }
 
+// Init initializes LoadData.
+func (p LoadData) Init(ctx sessionctx.Context) *LoadData {
+	p.basePlan = newBasePlan(ctx, plancodec.TypeLoadData, 0)
+	return &p
+}
+
 // Init initializes LogicalShow.
 func (p LogicalShow) Init(ctx sessionctx.Context) *LogicalShow {
 	p.baseLogicalPlan = newBaseLogicalPlan(ctx, plancodec.TypeShow, &p, 0)
@@ -312,6 +324,16 @@ func (p PhysicalHashJoin) Init(ctx sessionctx.Context, stats *property.StatsInfo
 	return &p
 }
 
+// Init initializes BatchPointGetPlan.
+func (p PhysicalBroadCastJoin) Init(ctx sessionctx.Context, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PhysicalBroadCastJoin {
+	tp := plancodec.TypeBroadcastJoin
+	p.basePhysicalPlan = newBasePhysicalPlan(ctx, tp, &p, offset)
+	p.childrenReqProps = props
+	p.stats = stats
+	return &p
+
+}
+
 // Init initializes PhysicalMergeJoin.
 func (p PhysicalMergeJoin) Init(ctx sessionctx.Context, stats *property.StatsInfo, offset int) *PhysicalMergeJoin {
 	p.basePhysicalPlan = newBasePhysicalPlan(ctx, plancodec.TypeMergeJoin, &p, offset)
@@ -377,8 +399,8 @@ func (p PhysicalIndexMergeReader) Init(ctx sessionctx.Context, offset int) *Phys
 		for _, partPlan := range p.partialPlans {
 			totalRowCount += partPlan.StatsCount()
 		}
-		p.stats.StatsVersion = p.partialPlans[0].statsInfo().StatsVersion
 		p.stats = p.partialPlans[0].statsInfo().ScaleByExpectCnt(totalRowCount)
+		p.stats.StatsVersion = p.partialPlans[0].statsInfo().StatsVersion
 	}
 	p.PartialPlans = make([][]PhysicalPlan, 0, len(p.partialPlans))
 	for _, partialPlan := range p.partialPlans {
@@ -453,16 +475,31 @@ func (p BatchPointGetPlan) Init(ctx sessionctx.Context, stats *property.StatsInf
 	return &p
 }
 
+// Init initializes PointGetPlan.
+func (p PointGetPlan) Init(ctx sessionctx.Context, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PointGetPlan {
+	p.basePlan = newBasePlan(ctx, plancodec.TypePointGet, offset)
+	p.stats = stats
+	p.Columns = ExpandVirtualColumn(p.Columns, p.schema, p.TblInfo.Columns)
+	return &p
+}
+
+// InitBasePlan only assigns type and context.
+func (p *PhysicalExchangerBase) InitBasePlan(ctx sessionctx.Context, tp string) {
+	p.basePlan = newBasePlan(ctx, tp, 0)
+}
+
+func flattenTreePlan(plan PhysicalPlan, plans []PhysicalPlan) []PhysicalPlan {
+	plans = append(plans, plan)
+	for _, child := range plan.Children() {
+		plans = flattenTreePlan(child, plans)
+	}
+	return plans
+}
+
 // flattenPushDownPlan converts a plan tree to a list, whose head is the leaf node like table scan.
 func flattenPushDownPlan(p PhysicalPlan) []PhysicalPlan {
 	plans := make([]PhysicalPlan, 0, 5)
-	for {
-		plans = append(plans, p)
-		if len(p.Children()) == 0 {
-			break
-		}
-		p = p.Children()[0]
-	}
+	plans = flattenTreePlan(p, plans)
 	for i := 0; i < len(plans)/2; i++ {
 		j := len(plans) - i - 1
 		plans[i], plans[j] = plans[j], plans[i]

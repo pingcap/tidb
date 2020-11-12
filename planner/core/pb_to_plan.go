@@ -17,10 +17,12 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tipb/go-tipb"
@@ -67,6 +69,8 @@ func (b *PBPlanBuilder) pbToPhysicalPlan(e *tipb.Executor) (p PhysicalPlan, err 
 		p, err = b.pbToAgg(e, false)
 	case tipb.ExecType_TypeStreamAgg:
 		p, err = b.pbToAgg(e, true)
+	case tipb.ExecType_TypeKill:
+		p, err = b.pbToKill(e)
 	default:
 		// TODO: Support other types.
 		err = errors.Errorf("this exec type %v doesn't support yet.", e.GetTp())
@@ -137,13 +141,13 @@ func (b *PBPlanBuilder) pbToSelection(e *tipb.Executor) (PhysicalPlan, error) {
 func (b *PBPlanBuilder) pbToTopN(e *tipb.Executor) (PhysicalPlan, error) {
 	topN := e.TopN
 	sc := b.sctx.GetSessionVars().StmtCtx
-	byItems := make([]*ByItems, 0, len(topN.OrderBy))
+	byItems := make([]*util.ByItems, 0, len(topN.OrderBy))
 	for _, item := range topN.OrderBy {
 		expr, err := expression.PBToExpr(item.Expr, b.tps, sc)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		byItems = append(byItems, &ByItems{Expr: expr, Desc: item.Desc})
+		byItems = append(byItems, &util.ByItems{Expr: expr, Desc: item.Desc})
 	}
 	p := PhysicalTopN{
 		ByItems: byItems,
@@ -227,6 +231,15 @@ func (b *PBPlanBuilder) convertColumnInfo(tblInfo *model.TableInfo, pbColumns []
 	}
 	b.tps = tps
 	return columns, nil
+}
+
+func (b *PBPlanBuilder) pbToKill(e *tipb.Executor) (PhysicalPlan, error) {
+	node := &ast.KillStmt{
+		ConnectionID: e.Kill.ConnID,
+		Query:        e.Kill.Query,
+	}
+	simple := Simple{Statement: node, IsFromRemote: true}
+	return &PhysicalSimpleWrapper{Inner: simple}, nil
 }
 
 func (b *PBPlanBuilder) predicatePushDown(p PhysicalPlan, predicates []expression.Expression) ([]expression.Expression, PhysicalPlan) {
