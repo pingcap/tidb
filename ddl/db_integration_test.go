@@ -2088,21 +2088,3 @@ func (s *testIntegrationSuite3) TestIssue20741WithSetField(c *C) {
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[table:1364]Field 'cc' doesn't have a default value")
 }
-
-// TestDefaultValueIsLatin1 for issue #18977
-func (s *testIntegrationSuite3) TestEnumAndSetDefaultValue(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	defer tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t (a enum(0x61, 'b') not null default 0x61, b set(0x61, 'b') not null default 0x61) character set latin1")
-	tbl := testGetTableByName(c, s.ctx, "test", "t")
-	c.Assert(tbl.Meta().Columns[0].DefaultValue, Equals, "a")
-	c.Assert(tbl.Meta().Columns[1].DefaultValue, Equals, "a")
-
-	tk.MustExec("drop table t")
-	tk.MustExec("create table t (a enum(0x61, 'b') not null default 0x61, b set(0x61, 'b') not null default 0x61) character set utf8mb4")
-	tbl = testGetTableByName(c, s.ctx, "test", "t")
-	c.Assert(tbl.Meta().Columns[0].DefaultValue, Equals, "a")
-	c.Assert(tbl.Meta().Columns[1].DefaultValue, Equals, "a")
-}
