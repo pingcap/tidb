@@ -43,6 +43,7 @@ const (
 type SafePointKV interface {
 	Put(k string, v string) error
 	Get(k string) (string, error)
+	Close() error
 }
 
 // MockSafePointKV implements SafePointKV at mock test
@@ -72,6 +73,11 @@ func (w *MockSafePointKV) Get(k string) (string, error) {
 	defer w.mockLock.RUnlock()
 	elem := w.store[k]
 	return elem, nil
+}
+
+// Close implements the Close method for SafePointKV
+func (w *MockSafePointKV) Close() error {
+	return nil
 }
 
 // EtcdSafePointKV implements SafePointKV at runtime
@@ -111,6 +117,11 @@ func (w *EtcdSafePointKV) Get(k string) (string, error) {
 		return string(resp.Kvs[0].Value), nil
 	}
 	return "", nil
+}
+
+// Close implements the Close for SafePointKV
+func (w *EtcdSafePointKV) Close() error {
+	return errors.Trace(w.cli.Close())
 }
 
 func saveSafePoint(kv SafePointKV, key string, t uint64) error {
