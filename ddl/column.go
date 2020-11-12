@@ -609,7 +609,7 @@ func generateOriginDefaultValue(col *model.ColumnInfo) (interface{}, error) {
 			if verr != nil {
 				return nil, errors.Trace(verr)
 			}
-			defVal := types.NewCollateMysqlEnumDatum(defEnum, col.Collate)
+			defVal := types.NewMysqlEnumDatum(defEnum)
 			return defVal.ToString()
 		default:
 			zeroVal := table.GetZeroValue(col)
