@@ -532,7 +532,7 @@ func preSplitAndScatterIn2PC(ctx context.Context, store *tikvStore, group groupe
 		return false
 	}
 
-	regionIDs, err := store.SplitRegions(ctx, splitKeys, true)
+	regionIDs, err := store.SplitRegions(ctx, splitKeys, true, nil)
 	if err != nil {
 		logutil.BgLogger().Warn("2PC split regions failed", zap.Uint64("regionID", group.region.id),
 			zap.Int("keys count", keysLength), zap.Int("values count", valsLength), zap.Error(err))
@@ -1488,12 +1488,34 @@ func (c *twoPhaseCommitter) tryAmendTxn(ctx context.Context, startInfoSchema Sch
 	}
 	// Prewrite new mutations.
 	if addMutations != nil && len(addMutations.keys) > 0 {
+		var keysNeedToLock CommitterMutations
+		for i := 0; i < addMutations.len(); i++ {
+			if addMutations.isPessimisticLock[i] {
+				keysNeedToLock.Push(addMutations.ops[i], addMutations.keys[i], addMutations.values[i], addMutations.isPessimisticLock[i])
+			}
+		}
+		// For unique index amend, we need to pessimistic lock the generated new index keys first.
+		if keysNeedToLock.len() > 0 {
+			pessimisticLockBo := NewBackofferWithVars(ctx, pessimisticLockMaxBackoff, c.txn.vars)
+			lCtx := &kv.LockCtx{
+				ForUpdateTS:  c.forUpdateTS,
+				LockWaitTime: kv.LockNoWait,
+			}
+			err = c.pessimisticLockMutations(pessimisticLockBo, lCtx, keysNeedToLock)
+			if err != nil {
+				logutil.Logger(ctx).Warn("amend pessimistic lock has failed", zap.Error(err), zap.Uint64("txnStartTS", c.startTS))
+				return false, err
+			}
+			logutil.Logger(ctx).Info("amend pessimistic lock", zap.Uint64("startTS", c.startTS), zap.Uint64("forUpdateTS", c.forUpdateTS))
+		}
 		prewriteBo := NewBackofferWithVars(ctx, PrewriteMaxBackoff, c.txn.vars)
 		err = c.prewriteMutations(prewriteBo, *addMutations)
 		if err != nil {
 			logutil.Logger(ctx).Warn("amend prewrite has failed", zap.Error(err), zap.Uint64("txnStartTS", c.startTS))
 			return false, err
 		}
+		// Commit the amended secondary keys in the commit phase.
+		c.mutations.MergeMutations(*addMutations)
 		logutil.Logger(ctx).Info("amend prewrite finished", zap.Uint64("txnStartTS", c.startTS))
 		return true, nil
 	}
@@ -1723,10 +1745,9 @@ func (batchExe *batchExecutor) process(batches []batchMutations) error {
 	}
 
 	// For prewrite, stop sending other requests after receiving first error.
-	backoffer := batchExe.backoffer
 	var cancel context.CancelFunc
 	if _, ok := batchExe.action.(actionPrewrite); ok {
-		backoffer, cancel = batchExe.backoffer.Fork()
+		batchExe.backoffer, cancel = batchExe.backoffer.Fork()
 		defer cancel()
 	}
 	// concurrently do the work for each batch.
@@ -1736,14 +1757,14 @@ func (batchExe *batchExecutor) process(batches []batchMutations) error {
 	// check results
 	for i := 0; i < len(batches); i++ {
 		if e := <-ch; e != nil {
-			logutil.Logger(backoffer.ctx).Debug("2PC doActionOnBatch failed",
+			logutil.Logger(batchExe.backoffer.ctx).Debug("2PC doActionOnBatch failed",
 				zap.Uint64("conn", batchExe.committer.connID),
 				zap.Stringer("action type", batchExe.action),
 				zap.Error(e),
 				zap.Uint64("txnStartTS", batchExe.committer.startTS))
 			// Cancel other requests and return the first error.
 			if cancel != nil {
-				logutil.Logger(backoffer.ctx).Debug("2PC doActionOnBatch to cancel other actions",
+				logutil.Logger(batchExe.backoffer.ctx).Debug("2PC doActionOnBatch to cancel other actions",
 					zap.Uint64("conn", batchExe.committer.connID),
 					zap.Stringer("action type", batchExe.action),
 					zap.Uint64("txnStartTS", batchExe.committer.startTS))

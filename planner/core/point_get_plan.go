@@ -91,7 +91,7 @@ func (p *PointGetPlan) ToPB(ctx sessionctx.Context, _ kv.StoreType) (*tipb.Execu
 
 // ExplainInfo implements Plan interface.
 func (p *PointGetPlan) ExplainInfo() string {
-	accessObject, operatorInfo := p.AccessObject(), p.OperatorInfo(false)
+	accessObject, operatorInfo := p.AccessObject(false), p.OperatorInfo(false)
 	if len(operatorInfo) == 0 {
 		return accessObject
 	}
@@ -100,7 +100,7 @@ func (p *PointGetPlan) ExplainInfo() string {
 
 // ExplainNormalizedInfo implements Plan interface.
 func (p *PointGetPlan) ExplainNormalizedInfo() string {
-	accessObject, operatorInfo := p.AccessObject(), p.OperatorInfo(true)
+	accessObject, operatorInfo := p.AccessObject(true), p.OperatorInfo(true)
 	if len(operatorInfo) == 0 {
 		return accessObject
 	}
@@ -108,12 +108,16 @@ func (p *PointGetPlan) ExplainNormalizedInfo() string {
 }
 
 // AccessObject implements dataAccesser interface.
-func (p *PointGetPlan) AccessObject() string {
+func (p *PointGetPlan) AccessObject(normalized bool) string {
 	buffer := bytes.NewBufferString("")
 	tblName := p.TblInfo.Name.O
 	fmt.Fprintf(buffer, "table:%s", tblName)
 	if p.PartitionInfo != nil {
-		fmt.Fprintf(buffer, ", partition:%s", p.PartitionInfo.Name.L)
+		if normalized {
+			fmt.Fprintf(buffer, ", partition:?")
+		} else {
+			fmt.Fprintf(buffer, ", partition:%s", p.PartitionInfo.Name.L)
+		}
 	}
 	if p.IndexInfo != nil {
 		buffer.WriteString(", index:" + p.IndexInfo.Name.O + "(")
@@ -248,16 +252,16 @@ func (p *BatchPointGetPlan) ToPB(ctx sessionctx.Context, _ kv.StoreType) (*tipb.
 
 // ExplainInfo implements Plan interface.
 func (p *BatchPointGetPlan) ExplainInfo() string {
-	return p.AccessObject() + ", " + p.OperatorInfo(false)
+	return p.AccessObject(false) + ", " + p.OperatorInfo(false)
 }
 
 // ExplainNormalizedInfo implements Plan interface.
 func (p *BatchPointGetPlan) ExplainNormalizedInfo() string {
-	return p.AccessObject() + ", " + p.OperatorInfo(true)
+	return p.AccessObject(true) + ", " + p.OperatorInfo(true)
 }
 
 // AccessObject implements physicalScan interface.
-func (p *BatchPointGetPlan) AccessObject() string {
+func (p *BatchPointGetPlan) AccessObject(_ bool) string {
 	buffer := bytes.NewBufferString("")
 	tblName := p.TblInfo.Name.O
 	fmt.Fprintf(buffer, "table:%s", tblName)

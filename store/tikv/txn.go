@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/kv/memdb"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/execdetails"
@@ -45,6 +46,7 @@ var (
 	tikvTxnCmdHistogramWithRollback = metrics.TiKVTxnCmdHistogram.WithLabelValues(metrics.LblRollback)
 	tikvTxnCmdHistogramWithBatchGet = metrics.TiKVTxnCmdHistogram.WithLabelValues(metrics.LblBatchGet)
 	tikvTxnCmdHistogramWithGet      = metrics.TiKVTxnCmdHistogram.WithLabelValues(metrics.LblGet)
+	tikvTxnCmdHistogramWithLockKeys = metrics.TiKVTxnCmdHistogram.WithLabelValues(metrics.LblLockKeys)
 )
 
 // SchemaAmender is used by pessimistic transactions to amend commit mutations for schema change during 2pc.
@@ -213,6 +215,15 @@ func (txn *tikvTxn) Delete(k kv.Key) error {
 	return txn.us.Delete(k)
 }
 
+func (txn *tikvTxn) DeleteWithNeedLock(k kv.Key) error {
+	txn.dirty = true
+	return txn.us.DeleteWithNeedLock(k)
+}
+
+func (txn *tikvTxn) GetFlags(ctx context.Context, k kv.Key) memdb.KeyFlags {
+	return txn.us.GetFlags(ctx, k)
+}
+
 func (txn *tikvTxn) SetOption(opt kv.Option, val interface{}) {
 	txn.us.SetOption(opt, val)
 	switch opt {
@@ -369,6 +380,7 @@ func (txn *tikvTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput
 	keys := make([][]byte, 0, len(keysInput))
 	startTime := time.Now()
 	defer func() {
+		tikvTxnCmdHistogramWithLockKeys.Observe(time.Since(startTime).Seconds())
 		if err == nil {
 			if lockCtx.PessimisticLockWaited != nil {
 				if atomic.LoadInt32(lockCtx.PessimisticLockWaited) > 0 {
