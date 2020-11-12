@@ -6720,21 +6720,24 @@ func (s *testSuite) TestInlineProjectionForSortAndTopN(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t1 (a int(11) not null,b int(11) not null,c int(11) not null, PRIMARY KEY (a))")
 	tk.MustExec("insert into t1 values (3, 1, 2),(4, 2, 3),(5, 3, 4)")
-	tk.MustQuery("select * from t1").Check(testkit.Rows("3 1 2", "4 2 3", "5 3 4"))
+	tk.MustQuery("select * from t1 order by a").Check(testkit.Rows("3 1 2", "4 2 3", "5 3 4"))
 	tk.MustQuery("select * from t1 order by a desc").Check(testkit.Rows("5 3 4", "4 2 3", "3 1 2"))
-	tk.MustQuery("select b from t1 order by a").Check(testkit.Rows("1", "2", "3"))
-	// for _, row := range tk.MustQuery("desc select b from t1 order by c").Rows() {
-	// 	fmt.Println(row)
-	// }
-	tk.MustQuery("select ta.a, ta.b from t1 ta left join t1 tb on ta.a = tb.a order by tb.a").Check(
-		testkit.Rows("3 1", "4 2", "5 3"))
+	tk.MustQuery("select c,b from t1 order by a").Check(testkit.Rows("2 1", "3 2", "4 3"))
 	tk.MustQuery("select c,b from t1 order by a desc").Check(testkit.Rows("4 3", "3 2", "2 1"))
-	tk.MustQuery("select a from t1 order by a, b, c").Check(testkit.Rows("3", "4", "5"))
-	tk.MustQuery("select b from t1 order by a, b, c").Check(testkit.Rows("1", "2", "3"))
-	tk.MustQuery("select c from t1 order by a, b, c").Check(testkit.Rows("2", "3", "4"))
-	tk.MustQuery("select sum(c) from t1 order by a, b, c").Check(testkit.Rows("9"))
-	tk.MustQuery("select max(c) from t1 order by a, b, c").Check(testkit.Rows("4"))
+	tk.MustQuery("select a from t1 order by b, c").Check(testkit.Rows("3", "4", "5"))
+	tk.MustQuery("select a from t1 order by b desc, c").Check(testkit.Rows("5", "4", "3"))
+	tk.MustQuery("select sum(c) from t1 order by a").Check(testkit.Rows("9"))
+	tk.MustQuery("select max(c) from t1 order by a, b").Check(testkit.Rows("4"))
 	tk.MustQuery("select c from t1 order by a limit 1").Check(testkit.Rows("2"))
+	tk.MustQuery("select c from t1 order by a desc limit 1").Check(testkit.Rows("4"))
+	tk.MustQuery("select ta.a, ta.b from t1 ta left join t1 tb on ta.a = tb.a order by ta.a").Check(
+		testkit.Rows("3 1", "4 2", "5 3"))
+	tk.MustQuery("select ta.c, ta.b from t1 ta left join t1 tb on ta.a = tb.a order by ta.a").Check(
+		testkit.Rows("2 1", "3 2", "4 3"))
+	tk.MustQuery("select b from t1 order by 1").Check(testkit.Rows("1", "2", "3"))
+	tk.MustQuery("select b from t1 order by a+1").Check(testkit.Rows("1", "2", "3"))
+	tk.MustQuery("select ta.a from t1 ta, t1 tb where ta.b = tb.a order by 3*ta.a").Check(
+		testkit.Rows("5"))
 }
 
 func (s *testSuite) TestIssue20237(c *C) {
