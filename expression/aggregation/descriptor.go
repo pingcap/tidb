@@ -278,10 +278,11 @@ func (a *AggFuncDesc) evalNullValueInOuterJoin4BitOr(ctx sessionctx.Context, sch
 func (a *AggFuncDesc) UpdateNotNullFlag4RetType(hasGroupBy, allAggsFirstRow bool) error {
 	var removeNotNull bool
 	switch a.Name {
-	case ast.AggFuncCount, ast.AggFuncApproxCountDistinct, ast.AggFuncBitAnd, ast.AggFuncBitOr, ast.AggFuncBitXor,
+	case ast.AggFuncCount, ast.AggFuncApproxCountDistinct, ast.AggFuncApproxPercentile,
+		ast.AggFuncBitAnd, ast.AggFuncBitOr, ast.AggFuncBitXor,
 		ast.WindowFuncFirstValue, ast.WindowFuncLastValue, ast.WindowFuncNthValue, ast.WindowFuncRowNumber,
 		ast.WindowFuncRank, ast.WindowFuncDenseRank, ast.WindowFuncCumeDist, ast.WindowFuncNtile, ast.WindowFuncPercentRank,
-		ast.WindowFuncLead, ast.WindowFuncLag, ast.AggFuncVarPop, ast.AggFuncStddevPop, ast.AggFuncJsonObjectAgg, ast.AggFuncApproxPercentile:
+		ast.WindowFuncLead, ast.WindowFuncLag, ast.AggFuncJsonObjectAgg, ast.AggFuncVarPop, ast.AggFuncStddevPop, ast.AggFuncStddevSamp:
 		removeNotNull = false
 	case ast.AggFuncSum, ast.AggFuncAvg, ast.AggFuncGroupConcat:
 		if !hasGroupBy {
