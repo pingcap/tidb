@@ -181,6 +181,9 @@ const (
 
 	// TiDBAllowAutoRandExplicitInsert indicates whether explicit insertion on auto_random column is allowed.
 	TiDBAllowAutoRandExplicitInsert = "allow_auto_random_explicit_insert"
+
+	// TiDBTxnScope indicates whether using global transactions or local transactions.
+	TiDBTxnScope = "txn_scope"
 )
 
 // TiDB system variable names that both in session and global scope.
@@ -510,7 +513,7 @@ const (
 	DefTiDBMemQuotaIndexLookupJoin     = 32 << 30 // 32GB.
 	DefTiDBMemQuotaNestedLoopApply     = 32 << 30 // 32GB.
 	DefTiDBMemQuotaDistSQL             = 32 << 30 // 32GB.
-	DefTiDBGeneralLog                  = 0
+	DefTiDBGeneralLog                  = false
 	DefTiDBPProfSQLCPU                 = 0
 	DefTiDBRetryLimit                  = 10
 	DefTiDBDisableTxnAutoRetry         = true
@@ -569,7 +572,7 @@ const (
 
 // Process global variables.
 var (
-	ProcessGeneralLog      uint32
+	ProcessGeneralLog            = atomic.NewBool(false)
 	EnablePProfSQLCPU            = atomic.NewBool(false)
 	ddlReorgWorkerCounter  int32 = DefTiDBDDLReorgWorkerCount
 	maxDDLReorgWorkerCount int32 = 128

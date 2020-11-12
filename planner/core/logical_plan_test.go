@@ -1568,6 +1568,7 @@ func (s *testPlanSuite) TestFastPlanContextTables(c *C) {
 			false,
 		},
 	}
+	s.ctx.GetSessionVars().SnapshotInfoschema = s.is
 	for _, tt := range tests {
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil)
