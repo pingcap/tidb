@@ -958,7 +958,7 @@ func (ts *tidbTestSuite) TestGracefulShutdown(c *C) {
 	time.Sleep(time.Second * 2)
 
 	_, err = cli.fetchStatus("/status") // status is gone
-  c.Assert(err, ErrorMatches, ".*connect: connection refused")
+	c.Assert(err, ErrorMatches, ".*connect: connection refused")
 }
 
 func (ts *tidbTestSuite) TestPessimisticInsertSelectForUpdate(c *C) {
