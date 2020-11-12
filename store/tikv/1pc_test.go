@@ -30,7 +30,7 @@ type testOnePCSuite struct {
 var _ = SerialSuites(&testOnePCSuite{})
 
 func (s *testOnePCSuite) SetUpTest(c *C) {
-	s.testAsyncCommitCommon.setUpTest(c, true)
+	s.testAsyncCommitCommon.setUpTest(c)
 	s.bo = NewBackofferWithVars(context.Background(), 5000, nil)
 }
 
