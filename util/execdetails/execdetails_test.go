@@ -101,12 +101,12 @@ func TestCopRuntimeStats(t *testing.T) {
 	stats.RecordOneCopTask(aggID, "8.8.8.8", mockExecutorExecutionSummary(3, 3, 3))
 	stats.RecordOneCopTask(aggID, "8.8.8.9", mockExecutorExecutionSummary(4, 4, 4))
 	copDetails := &CopDetails{
-		TotalKeys:                 10,
+		TotalKeys:                 15,
 		ProcessedKeys:             10,
-		RocksdbDeleteSkippedCount: 10,
+		RocksdbDeleteSkippedCount: 5,
 		RocksdbKeySkippedCount:    1,
 		RocksdbBlockCacheHitCount: 10,
-		RocksdbBlockReadCount:     10,
+		RocksdbBlockReadCount:     20,
 		RocksdbBlockReadByte:      100,
 	}
 	stats.RecordCopDetail(tableScanID, copDetails)
@@ -115,8 +115,8 @@ func TestCopRuntimeStats(t *testing.T) {
 	}
 	cop := stats.GetCopStats(tableScanID)
 	if cop.String() != "tikv_task:{proc max:2ns, min:1ns, p80:2ns, p95:2ns, iters:3, tasks:2}"+
-		", total_keys:10, processed_keys:10, rocksdb:{delete_skipped_count:10, key_skipped_count:1, block_cache_hit_count:10, block_read_count:10, block_read_byte:100}" {
-		t.Fatal("table_scan")
+		", total_keys:15, processed_keys:10, rocksdb:{delete_skipped_count:5, key_skipped_count:1, block_cache_hit_count:10, block_read_count:20, block_read_byte:100}" {
+		t.Fatalf(cop.String())
 	}
 	copStats := cop.stats["8.8.8.8"]
 	if copStats == nil {
@@ -137,6 +137,14 @@ func TestCopRuntimeStats(t *testing.T) {
 	}
 	if stats.ExistsRootStats(tableReaderID) == false {
 		t.Fatal("table_reader not exists")
+	}
+
+	cop.copDetails.ProcessedKeys = 0
+	cop.copDetails.RocksdbKeySkippedCount = 0
+	cop.copDetails.RocksdbBlockReadCount = 0
+	if cop.String() != "tikv_task:{proc max:1.000000001s, min:2ns, p80:1.000000001s, p95:1.000000001s, iters:4, tasks:2}, "+
+		"total_keys:15, rocksdb:{delete_skipped_count:5, block_cache_hit_count:10, block_read_byte:100}" {
+		t.Fatalf(cop.String())
 	}
 }
 

@@ -435,6 +435,16 @@ func (crs *CopRuntimeStats) GetActRows() (totalRows int64) {
 	return totalRows
 }
 
+func (crs *CopRuntimeStats) writeField(buf *bytes.Buffer, field string, value int64) {
+	bs := buf.Bytes()
+	if l := len(bs); l > 0 && bs[l-1] != '{' {
+		buf.WriteString(", ")
+	}
+	buf.WriteString(field)
+	buf.WriteByte(':')
+	buf.WriteString(strconv.FormatInt(value, 10))
+}
+
 func (crs *CopRuntimeStats) String() string {
 	if len(crs.stats) == 0 {
 		return ""
@@ -451,23 +461,45 @@ func (crs *CopRuntimeStats) String() string {
 		}
 	}
 
-	var result string
+	buf := bytes.NewBuffer(make([]byte, 0, 16))
 	if totalTasks == 1 {
-		result += fmt.Sprintf("tikv_task:{time:%v, loops:%d}", procTimes[0], totalIters)
+		buf.WriteString(fmt.Sprintf("tikv_task:{time:%v, loops:%d}", procTimes[0], totalIters))
 	} else {
 		n := len(procTimes)
 		sort.Slice(procTimes, func(i, j int) bool { return procTimes[i] < procTimes[j] })
-		result += fmt.Sprintf("tikv_task:{proc max:%v, min:%v, p80:%v, p95:%v, iters:%v, tasks:%v}",
-			procTimes[n-1], procTimes[0], procTimes[n*4/5], procTimes[n*19/20], totalIters, totalTasks)
+		buf.WriteString(fmt.Sprintf("tikv_task:{proc max:%v, min:%v, p80:%v, p95:%v, iters:%v, tasks:%v}",
+			procTimes[n-1], procTimes[0], procTimes[n*4/5], procTimes[n*19/20], totalIters, totalTasks))
 	}
-	if crs.copDetails != nil {
-		result += fmt.Sprintf(", total_keys:%v, processed_keys:%v, rocksdb:{delete_skipped_count:%v, "+
-			"key_skipped_count:%v, block_cache_hit_count:%v, block_read_count:%v, block_read_byte:%v}",
-			crs.copDetails.TotalKeys, crs.copDetails.ProcessedKeys,
-			crs.copDetails.RocksdbDeleteSkippedCount, crs.copDetails.RocksdbKeySkippedCount, crs.copDetails.RocksdbBlockCacheHitCount,
-			crs.copDetails.RocksdbBlockReadCount, crs.copDetails.RocksdbBlockReadByte)
+	if detail := crs.copDetails; detail != nil {
+		if detail.TotalKeys > 0 {
+			crs.writeField(buf, "total_keys", detail.TotalKeys)
+		}
+		if detail.ProcessedKeys > 0 {
+			crs.writeField(buf, "processed_keys", detail.ProcessedKeys)
+		}
+		if detail.RocksdbDeleteSkippedCount > 0 || detail.RocksdbKeySkippedCount > 0 ||
+			detail.RocksdbBlockCacheHitCount > 0 || detail.RocksdbBlockReadCount > 0 ||
+			detail.RocksdbBlockReadByte > 0 {
+			buf.WriteString(", rocksdb:{")
+			if detail.RocksdbDeleteSkippedCount > 0 {
+				crs.writeField(buf, "delete_skipped_count", int64(detail.RocksdbDeleteSkippedCount))
+			}
+			if detail.RocksdbKeySkippedCount > 0 {
+				crs.writeField(buf, "key_skipped_count", int64(detail.RocksdbKeySkippedCount))
+			}
+			if detail.RocksdbBlockCacheHitCount > 0 {
+				crs.writeField(buf, "block_cache_hit_count", int64(detail.RocksdbBlockCacheHitCount))
+			}
+			if detail.RocksdbBlockReadCount > 0 {
+				crs.writeField(buf, "block_read_count", int64(detail.RocksdbBlockReadCount))
+			}
+			if detail.RocksdbBlockReadByte > 0 {
+				crs.writeField(buf, "block_read_byte", int64(detail.RocksdbBlockReadByte))
+			}
+			buf.WriteByte('}')
+		}
 	}
-	return result
+	return buf.String()
 }
 
 const (
