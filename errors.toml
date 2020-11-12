@@ -881,6 +881,11 @@ error = '''
 View '%-.192s.%-.192s' references invalid table(s) or column(s) or function(s) or definer/invoker of view lack rights to use them
 '''
 
+["planner:1462"]
+error = '''
+`%-.192s`.`%-.192s` contains view recursion
+'''
+
 ["planner:1747"]
 error = '''
 PARTITION () clause on non partitioned table
@@ -1529,11 +1534,6 @@ variable '%s' does not yet support value: %s
 ["variable:8048"]
 error = '''
 The isolation level '%s' is not supported. Set tidb_skip_isolation_level_check=1 to skip this error
-'''
-
-["variable:8054"]
-error = '''
-cannot set variable to null
 '''
 
 ["variable:8055"]

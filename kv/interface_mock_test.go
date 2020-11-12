@@ -205,6 +205,10 @@ func (s *mockStorage) ShowStatus(ctx context.Context, key string) (interface{}, 
 	return nil, nil
 }
 
+func (s *mockStorage) GetMemCache() MemManager {
+	return nil
+}
+
 // newMockStorage creates a new mockStorage.
 func newMockStorage() Storage {
 	return &mockStorage{}
