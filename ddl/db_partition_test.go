@@ -2898,4 +2898,12 @@ func (s *testIntegrationSuite7) TestCreatePartitionTableWithWrongType(c *C) {
 	)`)
 	c.Assert(err, NotNil)
 	c.Assert(ddl.ErrWrongTypeColumnValue.Equal(err), IsTrue)
+
+	_, err = tk.Exec(`create table t(
+	b datetime
+	) partition by range columns (b) (
+		partition p0 values less than ('g'),
+		partition p3 values less than ('m')
+	)`)
+	c.Assert(err, NotNil)
 }
