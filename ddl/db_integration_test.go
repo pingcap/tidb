@@ -2059,8 +2059,6 @@ func (s *testIntegrationSuite3) TestIssue20490(c *C) {
 
 	tk.MustQuery("select b from issue20490 order by a;").Check(testkit.Rows("1", "1", "<nil>"))
 }
-<<<<<<< HEAD
-=======
 
 func (s *testIntegrationSuite3) TestIssue20741WithEnumField(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
@@ -2108,4 +2106,3 @@ func (s *testIntegrationSuite3) TestEnumAndSetDefaultValue(c *C) {
 	c.Assert(tbl.Meta().Columns[0].DefaultValue, Equals, "a")
 	c.Assert(tbl.Meta().Columns[1].DefaultValue, Equals, "a")
 }
->>>>>>> dd32482f1... ddl: Fix default value of a newly added enum column (#20798)
