@@ -139,10 +139,9 @@ func (e *BatchPointGetExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		if err := e.initialize(ctx); err != nil {
 			return err
 		}
-	}
-
-	if e.lock {
-		e.updateDeltaForTableID(e.tblInfo.ID)
+		if e.lock {
+			e.updateDeltaForTableID(e.tblInfo.ID)
+		}
 	}
 
 	if e.index >= len(e.values) {
