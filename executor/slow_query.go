@@ -832,6 +832,9 @@ func (e *slowQueryRetriever) getAllFiles(sctx sessionctx.Context, logFilePath st
 	}
 	var wg sync.WaitGroup
 	walkFn := func(path string, info os.FileInfo) {
+		defer func() {
+			wg.Done()
+		}()
 		if info.IsDir() {
 			return
 		}
@@ -849,7 +852,6 @@ func (e *slowQueryRetriever) getAllFiles(sctx sessionctx.Context, logFilePath st
 			if !skip {
 				terror.Log(file.Close())
 			}
-			wg.Done()
 		}()
 		// Get the file start time.
 		fileStartTime, err := e.getFileStartTime(file)
