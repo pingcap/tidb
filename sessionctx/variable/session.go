@@ -639,6 +639,9 @@ type SessionVars struct {
 
 	// EnableAmendPessimisticTxn indicates if schema change amend is enabled for pessimistic transactions.
 	EnableAmendPessimisticTxn bool
+
+	// LastTxnInfo keeps track the info of last committed transaction
+	LastTxnInfo kv.TxnInfo
 }
 
 // PreparedParams contains the parameters of the current prepared statement when executing it.
@@ -1181,7 +1184,7 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.BatchCommit = TiDBOptOn(val)
 	case TiDBDMLBatchSize:
 		s.DMLBatchSize = tidbOptPositiveInt32(val, DefDMLBatchSize)
-	case TiDBCurrentTS, TiDBConfig:
+	case TiDBCurrentTS, TiDBLastTxnInfo, TiDBConfig:
 		return ErrReadOnly
 	case TiDBMaxChunkSize:
 		s.MaxChunkSize = tidbOptPositiveInt32(val, DefMaxChunkSize)
