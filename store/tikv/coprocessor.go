@@ -84,7 +84,7 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variable
 	it.maxID.maxID = 0
 	it.minCommitTSPushed.data = make(map[uint64]struct{}, 5)
 	it.tasks = tasks
-	it.adaptiveConcurrency()
+	it.adaptiveConcurrency(sessionMemTracker)
 	if it.req.KeepOrder {
 		it.sendRate = newRateLimit(2 * it.concurrency)
 	} else {
@@ -550,22 +550,13 @@ func (worker *copIteratorWorker) run(ctx context.Context) {
 	}
 }
 
-const occupiedMem = int64(144 * 1024 * 1024)
+const occupiedMem = int64(96 * 1024 * 1024 * 2)
 
-func (it *copIterator) adaptiveConcurrency() {
+func (it *copIterator) adaptiveConcurrency(sessionMemTracker *memory.Tracker) {
 	if it.concurrency > len(it.tasks) {
 		it.concurrency = len(it.tasks)
 	}
-	adaptiveConcurrency := 0
-	for i := 0; i < it.concurrency; i++ {
-		if it.memTracker.Peak(occupiedMem) {
-			adaptiveConcurrency++
-			it.memTracker.Consume(occupiedMem)
-		} else {
-			break
-		}
-	}
-	it.memTracker.Consume(-occupiedMem * int64(adaptiveConcurrency))
+	adaptiveConcurrency := int((sessionMemTracker.GetBytesLimit() - sessionMemTracker.BytesConsumed()) / occupiedMem)
 	if it.concurrency > adaptiveConcurrency {
 		it.concurrency = adaptiveConcurrency
 	}
