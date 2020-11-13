@@ -16,6 +16,7 @@ package tikv
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"math"
 	"strings"
 	"sync"
@@ -874,7 +875,7 @@ func sendTxnHeartBeat(bo *Backoffer, store *tikvStore, primary []byte, startTS, 
 		}
 		cmdResp := resp.Resp.(*pb.TxnHeartBeatResponse)
 		if keyErr := cmdResp.GetError(); keyErr != nil {
-			return 0, errors.Errorf("txn %d heartbeat fail, primary key = %v, err = %s", startTS, primary, keyErr.Abort)
+			return 0, errors.Errorf("txn %d heartbeat fail, primary key = %v, err = %s", startTS, hex.EncodeToString(primary), extractKeyErr(keyErr))
 		}
 		return cmdResp.GetLockTtl(), nil
 	}
