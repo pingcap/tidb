@@ -985,7 +985,7 @@ func ProduceStrWithSpecifiedTp(s string, tp *FieldType, sc *stmtctx.StatementCon
 
 		if len(overflowed) != 0 {
 			trimed := strings.TrimRight(overflowed, " \t\n\r")
-			if len(trimed) == 0 && (tp.Tp == mysql.TypeVarchar || tp.Tp == mysql.TypeString) {
+			if len(trimed) == 0 && ((tp.Tp == mysql.TypeVarchar && !IsBinaryStr(tp)) || (tp.Tp == mysql.TypeString && !IsBinaryStr(tp))) {
 				if tp.Tp == mysql.TypeVarchar {
 					sc.AppendWarning(ErrTruncated.GenWithStack("Data truncated, field len %d, data len %d", flen, characterLen))
 				}
