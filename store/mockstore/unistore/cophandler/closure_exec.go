@@ -62,6 +62,39 @@ func mapPkStatusToHandleStatus(pkStatus int) tablecodec.HandleStatus {
 	return tablecodec.HandleDefault
 }
 
+func getExecutorList(dagReq *tipb.DAGRequest) ([]*tipb.Executor, error) {
+	if len(dagReq.Executors) > 0 {
+		return dagReq.Executors, nil
+	}
+	// convert TiFlash executors tree to executor list
+	executors := make([]*tipb.Executor, 0, 3)
+	currentExec := dagReq.RootExecutor
+	for currentExec.Tp != tipb.ExecType_TypeTableScan {
+		executors = append(executors, currentExec)
+		switch currentExec.Tp {
+		case tipb.ExecType_TypeTopN:
+			currentExec = currentExec.TopN.Child
+		case tipb.ExecType_TypeStreamAgg, tipb.ExecType_TypeAggregation:
+			currentExec = currentExec.Aggregation.Child
+		case tipb.ExecType_TypeLimit:
+			currentExec = currentExec.Limit.Child
+		default:
+			return nil, errors.New("unknown supported executor type " + currentExec.Tp.String())
+		}
+	}
+	executors = append(executors, currentExec)
+	i := 0
+	j := len(executors) - 1
+	for i < j {
+		e := executors[i]
+		executors[i] = executors[j]
+		executors[j] = e
+		i++
+		j--
+	}
+	return executors, nil
+}
+
 // buildClosureExecutor build a closureExecutor for the DAGRequest.
 // Currently the composition of executors are:
 // 	tableScan|indexScan [selection] [topN | limit | agg]
@@ -70,7 +103,10 @@ func buildClosureExecutor(dagCtx *dagContext, dagReq *tipb.DAGRequest) (*closure
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	executors := dagReq.Executors
+	executors, err1 := getExecutorList(dagReq)
+	if err1 != nil {
+		return nil, err1
+	}
 	scanExec := executors[0]
 	if scanExec.Tp == tipb.ExecType_TypeTableScan {
 		ce.processor = &tableScanProcessor{closureExecutor: ce}
@@ -121,6 +157,28 @@ func convertToExprs(sc *stmtctx.StatementContext, fieldTps []*types.FieldType, p
 	return exprs, nil
 }
 
+func getScanExec(dagReq *tipb.DAGRequest) (*tipb.Executor, error) {
+	if len(dagReq.Executors) > 0 {
+		return dagReq.Executors[0], nil
+	}
+	currentExec := dagReq.RootExecutor
+	for currentExec.Tp != tipb.ExecType_TypeTableScan {
+		switch currentExec.Tp {
+		case tipb.ExecType_TypeAggregation, tipb.ExecType_TypeStreamAgg:
+			currentExec = currentExec.Aggregation.Child
+		case tipb.ExecType_TypeLimit:
+			currentExec = currentExec.Limit.Child
+		case tipb.ExecType_TypeSelection:
+			currentExec = currentExec.Selection.Child
+		case tipb.ExecType_TypeTopN:
+			currentExec = currentExec.TopN.Child
+		default:
+			return nil, errors.New("Unsupported DAG request")
+		}
+	}
+	return currentExec, nil
+}
+
 func newClosureExecutor(dagCtx *dagContext, dagReq *tipb.DAGRequest) (*closureExecutor, error) {
 	e := &closureExecutor{
 		dagContext: dagCtx,
@@ -131,20 +189,22 @@ func newClosureExecutor(dagCtx *dagContext, dagReq *tipb.DAGRequest) (*closureEx
 	seCtx := mockpkg.NewContext()
 	seCtx.GetSessionVars().StmtCtx = e.sc
 	e.seCtx = seCtx
-	executors := dagReq.Executors
-	scanExec := executors[0]
+	scanExec, err := getScanExec(dagReq)
+	if err != nil {
+		return nil, err
+	}
 	switch scanExec.Tp {
 	case tipb.ExecType_TypeTableScan:
-		tblScan := executors[0].TblScan
+		tblScan := scanExec.TblScan
 		e.unique = true
 		e.scanCtx.desc = tblScan.Desc
 	case tipb.ExecType_TypeIndexScan:
-		idxScan := executors[0].IdxScan
+		idxScan := scanExec.IdxScan
 		e.unique = idxScan.GetUnique()
 		e.scanCtx.desc = idxScan.Desc
 		e.initIdxScanCtx(idxScan)
 	default:
-		panic(fmt.Sprintf("unknown first executor type %s", executors[0].Tp))
+		panic(fmt.Sprintf("unknown first executor type %s", scanExec.Tp))
 	}
 	ranges, err := extractKVRanges(dagCtx.dbReader.StartKey, dagCtx.dbReader.EndKey, dagCtx.keyRanges, e.scanCtx.desc)
 	if err != nil {

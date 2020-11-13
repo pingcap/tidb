@@ -37,7 +37,7 @@ require (
 	github.com/montanaflynn/stats v0.5.0 // indirect
 	github.com/ngaut/pools v0.0.0-20180318154953-b7bc8c42aac7
 	github.com/ngaut/sync2 v0.0.0-20141008032647-7a24ed77b2ef
-	github.com/ngaut/unistore v0.0.0-20201026053041-4333e8d852f1
+	github.com/ngaut/unistore v0.0.0-20201113064408-907e3fcf8e7d
 	github.com/onsi/ginkgo v1.9.0 // indirect
 	github.com/onsi/gomega v1.6.0 // indirect
 	github.com/opentracing/basictracer-go v1.0.0
