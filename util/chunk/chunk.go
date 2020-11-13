@@ -183,9 +183,13 @@ func (c *Chunk) IsFull() bool {
 	return c.NumRows() >= c.requiredRows
 }
 
-// LeftRequiredRows returns the left length .
-func (c *Chunk) LeftRequiredRows() int {
-	return c.requiredRows - c.NumRows()
+// LeftRequiredRows if this chunk is considered full.
+func (c *Chunk) LeftRequiredRows(numRows int) int {
+	leftRows := c.requiredRows - c.NumRows()
+	if numRows > leftRows {
+		numRows = leftRows
+	}
+	return numRows
 }
 
 // Prune creates a new Chunk according to `c` and prunes the columns
