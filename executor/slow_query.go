@@ -820,58 +820,59 @@ func (e *slowQueryRetriever) getAllFiles(sctx sessionctx.Context, logFilePath st
 	logDir := filepath.Dir(logFilePath)
 	ext := filepath.Ext(logFilePath)
 	prefix := logFilePath[:len(logFilePath)-len(ext)]
-	handleErr := func(err error) error {
+	handleErr := func(err error) {
 		// Ignore the error and append warning for usability.
 		if err != io.EOF {
 			sctx.GetSessionVars().StmtCtx.AppendWarning(err)
 		}
-		return nil
 	}
 	files, err := ioutil.ReadDir(logDir)
 	if err != nil {
 		return nil, err
 	}
-	walkFn := func(path string, info os.FileInfo) error {
+	var wg sync.WaitGroup
+	walkFn := func(path string, info os.FileInfo) {
 		if info.IsDir() {
-			return nil
+			return
 		}
 		// All rotated log files have the same prefix with the original file.
 		if !strings.HasPrefix(path, prefix) {
-			return nil
+			return
 		}
 		totalFileNum++
 		file, err := os.OpenFile(path, os.O_RDONLY, os.ModePerm)
 		if err != nil {
-			return handleErr(err)
+			handleErr(err)
 		}
 		skip := false
 		defer func() {
 			if !skip {
 				terror.Log(file.Close())
 			}
+			wg.Done()
 		}()
 		// Get the file start time.
 		fileStartTime, err := e.getFileStartTime(file)
 		if err != nil {
-			return handleErr(err)
+			handleErr(err)
 		}
 		start := types.NewTime(types.FromGoTime(fileStartTime), mysql.TypeDatetime, types.MaxFsp)
 		if start.Compare(e.checker.endTime) > 0 {
-			return nil
+			return
 		}
 
 		// Get the file end time.
 		fileEndTime, err := e.getFileEndTime(file)
 		if err != nil {
-			return handleErr(err)
+			handleErr(err)
 		}
 		end := types.NewTime(types.FromGoTime(fileEndTime), mysql.TypeDatetime, types.MaxFsp)
 		if end.Compare(e.checker.startTime) < 0 {
-			return nil
+			return
 		}
 		_, err = file.Seek(0, io.SeekStart)
 		if err != nil {
-			return handleErr(err)
+			handleErr(err)
 		}
 		logFiles = append(logFiles, logFile{
 			file:  file,
@@ -879,14 +880,12 @@ func (e *slowQueryRetriever) getAllFiles(sctx sessionctx.Context, logFilePath st
 			end:   fileEndTime,
 		})
 		skip = true
-		return nil
 	}
+	wg.Add(len(files))
 	for _, file := range files {
-		err := walkFn(filepath.Join(logDir, file.Name()), file)
-		if err != nil {
-			return nil, err
-		}
+		go walkFn(filepath.Join(logDir, file.Name()), file)
 	}
+	wg.Wait()
 	// Sort by start time
 	sort.Slice(logFiles, func(i, j int) bool {
 		return logFiles[i].start.Before(logFiles[j].start)
