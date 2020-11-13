@@ -542,6 +542,15 @@ func extractKeyErr(keyErr *pb.KeyError) error {
 		logutil.BgLogger().Warn("2PC failed", zap.Error(err))
 		return errors.Trace(err)
 	}
+	if keyErr.CommitTsTooLarge != nil {
+		err := errors.Errorf("commit TS %v is too large", keyErr.CommitTsTooLarge.CommitTs)
+		logutil.BgLogger().Warn("2PC failed", zap.Error(err))
+		return errors.Trace(err)
+	}
+	if keyErr.TxnNotFound != nil {
+		err := errors.Errorf("txn %d not found", keyErr.TxnNotFound.StartTs)
+		return errors.Trace(err)
+	}
 	return errors.Errorf("unexpected KeyError: %s", keyErr.String())
 }
 

@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/pingcap/log"
+	"github.com/pingcap/parser"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
@@ -159,6 +160,9 @@ func genLogFields(costTime time.Duration, info *util.ProcessInfo) []zap.Field {
 	var sql string
 	if len(info.Info) > 0 {
 		sql = info.Info
+		if info.RedactSQL {
+			sql = parser.Normalize(sql)
+		}
 	}
 	if len(sql) > logSQLLen {
 		sql = fmt.Sprintf("%s len(%d)", sql[:logSQLLen], len(sql))

@@ -114,42 +114,6 @@ func (ts *testDatumSuite) TestToBool(c *C) {
 	c.Assert(err, NotNil)
 }
 
-func (ts *testDatumSuite) TestEqualDatums(c *C) {
-	tests := []struct {
-		a    []interface{}
-		b    []interface{}
-		same bool
-	}{
-		// Positive cases
-		{[]interface{}{1}, []interface{}{1}, true},
-		{[]interface{}{1, "aa"}, []interface{}{1, "aa"}, true},
-		{[]interface{}{1, "aa", 1}, []interface{}{1, "aa", 1}, true},
-
-		// negative cases
-		{[]interface{}{1}, []interface{}{2}, false},
-		{[]interface{}{1, "a"}, []interface{}{1, "aaaaaa"}, false},
-		{[]interface{}{1, "aa", 3}, []interface{}{1, "aa", 2}, false},
-
-		// Corner cases
-		{[]interface{}{}, []interface{}{}, true},
-		{[]interface{}{nil}, []interface{}{nil}, true},
-		{[]interface{}{}, []interface{}{1}, false},
-		{[]interface{}{1}, []interface{}{1, 1}, false},
-		{[]interface{}{nil}, []interface{}{1}, false},
-	}
-	for _, tt := range tests {
-		testEqualDatums(c, tt.a, tt.b, tt.same)
-	}
-}
-
-func testEqualDatums(c *C, a []interface{}, b []interface{}, same bool) {
-	sc := new(stmtctx.StatementContext)
-	sc.IgnoreTruncate = true
-	res, err := EqualDatums(sc, MakeDatums(a...), MakeDatums(b...))
-	c.Assert(err, IsNil)
-	c.Assert(res, Equals, same, Commentf("a: %v, b: %v", a, b))
-}
-
 func testDatumToInt64(c *C, val interface{}, expect int64) {
 	d := NewDatum(val)
 	sc := new(stmtctx.StatementContext)

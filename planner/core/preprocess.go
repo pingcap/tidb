@@ -491,6 +491,10 @@ func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 				p.err = err
 				return
 			}
+			if constraint.IsEmptyIndex {
+				p.err = ddl.ErrWrongNameForIndex.GenWithStackByArgs(constraint.Name)
+				return
+			}
 		case ast.ConstraintPrimaryKey:
 			if countPrimaryKey > 0 {
 				p.err = infoschema.ErrMultiplePriKey
@@ -646,6 +650,10 @@ func (p *preprocessor) checkCreateIndexGrammar(stmt *ast.CreateIndexStmt) {
 		p.err = ddl.ErrWrongTableName.GenWithStackByArgs(tName)
 		return
 	}
+	if stmt.IndexName == "" {
+		p.err = ddl.ErrWrongNameForIndex.GenWithStackByArgs(stmt.IndexName)
+		return
+	}
 	p.err = checkIndexInfo(stmt.IndexName, stmt.IndexPartSpecifications)
 }
 
@@ -665,8 +673,8 @@ func (p *preprocessor) checkStatisticsOpGrammar(node ast.Node) {
 }
 
 func (p *preprocessor) checkRenameTableGrammar(stmt *ast.RenameTableStmt) {
-	oldTable := stmt.OldTable.Name.String()
-	newTable := stmt.NewTable.Name.String()
+	oldTable := stmt.TableToTables[0].OldTable.Name.String()
+	newTable := stmt.TableToTables[0].NewTable.Name.String()
 
 	p.checkRenameTable(oldTable, newTable)
 }
@@ -819,11 +827,25 @@ func checkColumn(colDef *ast.ColumnDef) error {
 			return err
 		}
 	case mysql.TypeFloat, mysql.TypeDouble:
-		if tp.Decimal > mysql.MaxFloatingTypeScale {
-			return types.ErrTooBigScale.GenWithStackByArgs(tp.Decimal, colDef.Name.Name.O, mysql.MaxFloatingTypeScale)
-		}
-		if tp.Flen > mysql.MaxFloatingTypeWidth {
-			return types.ErrTooBigPrecision.GenWithStackByArgs(tp.Flen, colDef.Name.Name.O, mysql.MaxFloatingTypeWidth)
+		// For FLOAT, the SQL standard permits an optional specification of the precision.
+		// https://dev.mysql.com/doc/refman/8.0/en/floating-point-types.html
+		if tp.Decimal == -1 {
+			if tp.Tp == mysql.TypeDouble {
+				if tp.Flen != -1 {
+					return types.ErrSyntax.GenWithStackByArgs()
+				}
+			} else {
+				if tp.Flen > mysql.MaxDoublePrecisionLength {
+					return types.ErrWrongFieldSpec.GenWithStackByArgs(colDef.Name.Name.O)
+				}
+			}
+		} else {
+			if tp.Decimal > mysql.MaxFloatingTypeScale {
+				return types.ErrTooBigScale.GenWithStackByArgs(tp.Decimal, colDef.Name.Name.O, mysql.MaxFloatingTypeScale)
+			}
+			if tp.Flen > mysql.MaxFloatingTypeWidth {
+				return types.ErrTooBigDisplayWidth.GenWithStackByArgs(colDef.Name.Name.O, mysql.MaxFloatingTypeWidth)
+			}
 		}
 	case mysql.TypeSet:
 		if len(tp.Elems) > mysql.MaxTypeSetMembers {

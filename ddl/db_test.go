@@ -353,7 +353,7 @@ func (s *testSerialDBSuite) TestAddExpressionIndexRollback(c *C) {
 	txn, err := ctx.Txn(true)
 	c.Assert(err, IsNil)
 	m := meta.NewMeta(txn)
-	element, start, end, physicalID, err := m.GetDDLReorgHandle(currJob, false)
+	element, start, end, physicalID, err := m.GetDDLReorgHandle(currJob)
 	c.Assert(meta.ErrDDLReorgElementNotExist.Equal(err), IsTrue)
 	c.Assert(element, IsNil)
 	c.Assert(start, IsNil)
@@ -2074,6 +2074,7 @@ LOOP:
 		case <-ticker.C:
 			// delete some rows, and add some data
 			for i := num; i < num+step; i++ {
+				forceReloadDomain(tk.Se)
 				n := rand.Intn(num)
 				tk.MustExec("begin")
 				tk.MustExec("delete from t2 where c1 = ?", n)
@@ -2943,6 +2944,35 @@ func (s *testDBSuite2) TestCreateTableWithSetCol(c *C) {
 	tk.MustQuery("select * from t_set").Check(testkit.Rows("1,4,10,21"))
 }
 
+func (s *testDBSuite2) TestCreateTableWithEnumCol(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	// It's for failure cases.
+	// The type of default value is string.
+	tk.MustExec("drop table if exists t_enum")
+	failedSQL := "create table t_enum (a enum('1', '4', '10') default '3');"
+	tk.MustGetErrCode(failedSQL, errno.ErrInvalidDefault)
+	failedSQL = "create table t_enum (a enum('1', '4', '10') default '');"
+	tk.MustGetErrCode(failedSQL, errno.ErrInvalidDefault)
+	// The type of default value is int.
+	failedSQL = "create table t_enum (a enum('1', '4', '10') default 0);"
+	tk.MustGetErrCode(failedSQL, errno.ErrInvalidDefault)
+	failedSQL = "create table t_enum (a enum('1', '4', '10') default 8);"
+	tk.MustGetErrCode(failedSQL, errno.ErrInvalidDefault)
+
+	// The type of default value is int.
+	// It's for successful cases
+	tk.MustExec("drop table if exists t_enum")
+	tk.MustExec("create table t_enum (a enum('2', '3', '4') default 2);")
+	ret := tk.MustQuery("show create table t_enum").Rows()[0][1]
+	c.Assert(strings.Contains(ret.(string), "`a` enum('2','3','4') DEFAULT '3'"), IsTrue)
+	tk.MustExec("drop table t_enum")
+	tk.MustExec("create table t_enum (a enum('a', 'c', 'd') default 2);")
+	ret = tk.MustQuery("show create table t_enum").Rows()[0][1]
+	c.Assert(strings.Contains(ret.(string), "`a` enum('a','c','d') DEFAULT 'c'"), IsTrue)
+	tk.MustExec("insert into t_enum value()")
+	tk.MustQuery("select * from t_enum").Check(testkit.Rows("c"))
+}
+
 func (s *testDBSuite2) TestTableForeignKey(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -3299,14 +3329,108 @@ func (s *testDBSuite1) TestRenameMultiTables(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t1(id int)")
 	tk.MustExec("create table t2(id int)")
-	// Currently it will fail only.
 	sql := fmt.Sprintf("rename table t1 to t3, t2 to t4")
 	_, err := tk.Exec(sql)
-	c.Assert(err, NotNil)
-	originErr := errors.Cause(err)
-	c.Assert(originErr.Error(), Equals, "can't run multi schema change")
+	c.Assert(err, IsNil)
 
-	tk.MustExec("drop table t1, t2")
+	tk.MustExec("drop table t3, t4")
+
+	tk.MustExec("create table t1 (c1 int, c2 int)")
+	tk.MustExec("create table t2 (c1 int, c2 int)")
+	tk.MustExec("insert t1 values (1, 1), (2, 2)")
+	tk.MustExec("insert t2 values (1, 1), (2, 2)")
+	ctx := tk.Se.(sessionctx.Context)
+	is := domain.GetDomain(ctx).InfoSchema()
+	oldTblInfo1, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	c.Assert(err, IsNil)
+	oldTblID1 := oldTblInfo1.Meta().ID
+	oldTblInfo2, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
+	c.Assert(err, IsNil)
+	oldTblID2 := oldTblInfo2.Meta().ID
+	tk.MustExec("create database test1")
+	tk.MustExec("use test1")
+	tk.MustExec("rename table test.t1 to test1.t1, test.t2 to test1.t2")
+	is = domain.GetDomain(ctx).InfoSchema()
+	newTblInfo1, err := is.TableByName(model.NewCIStr("test1"), model.NewCIStr("t1"))
+	c.Assert(err, IsNil)
+	c.Assert(newTblInfo1.Meta().ID, Equals, oldTblID1)
+	newTblInfo2, err := is.TableByName(model.NewCIStr("test1"), model.NewCIStr("t2"))
+	c.Assert(err, IsNil)
+	c.Assert(newTblInfo2.Meta().ID, Equals, oldTblID2)
+	tk.MustQuery("select * from t1").Check(testkit.Rows("1 1", "2 2"))
+	tk.MustQuery("select * from t2").Check(testkit.Rows("1 1", "2 2"))
+
+	// Make sure t1,t2 doesn't exist.
+	isExist := is.TableExists(model.NewCIStr("test"), model.NewCIStr("t1"))
+	c.Assert(isExist, IsFalse)
+	isExist = is.TableExists(model.NewCIStr("test"), model.NewCIStr("t2"))
+	c.Assert(isExist, IsFalse)
+
+	// for the same database
+	tk.MustExec("use test1")
+	tk.MustExec("rename table test1.t1 to test1.t3, test1.t2 to test1.t4")
+	is = domain.GetDomain(ctx).InfoSchema()
+	newTblInfo1, err = is.TableByName(model.NewCIStr("test1"), model.NewCIStr("t3"))
+	c.Assert(err, IsNil)
+	c.Assert(newTblInfo1.Meta().ID, Equals, oldTblID1)
+	newTblInfo2, err = is.TableByName(model.NewCIStr("test1"), model.NewCIStr("t4"))
+	c.Assert(err, IsNil)
+	c.Assert(newTblInfo2.Meta().ID, Equals, oldTblID2)
+	tk.MustQuery("select * from t3").Check(testkit.Rows("1 1", "2 2"))
+	isExist = is.TableExists(model.NewCIStr("test1"), model.NewCIStr("t1"))
+	c.Assert(isExist, IsFalse)
+	tk.MustQuery("select * from t4").Check(testkit.Rows("1 1", "2 2"))
+	isExist = is.TableExists(model.NewCIStr("test1"), model.NewCIStr("t2"))
+	c.Assert(isExist, IsFalse)
+	tk.MustQuery("show tables").Check(testkit.Rows("t3", "t4"))
+
+	// for multi tables same database
+	tk.MustExec("create table t5 (c1 int, c2 int)")
+	tk.MustExec("insert t5 values (1, 1), (2, 2)")
+	is = domain.GetDomain(ctx).InfoSchema()
+	oldTblInfo3, err := is.TableByName(model.NewCIStr("test1"), model.NewCIStr("t5"))
+	c.Assert(err, IsNil)
+	oldTblID3 := oldTblInfo3.Meta().ID
+	tk.MustExec("rename table test1.t3 to test1.t1, test1.t4 to test1.t2, test1.t5 to test1.t3")
+	is = domain.GetDomain(ctx).InfoSchema()
+	newTblInfo1, err = is.TableByName(model.NewCIStr("test1"), model.NewCIStr("t1"))
+	c.Assert(err, IsNil)
+	c.Assert(newTblInfo1.Meta().ID, Equals, oldTblID1)
+	newTblInfo2, err = is.TableByName(model.NewCIStr("test1"), model.NewCIStr("t2"))
+	c.Assert(err, IsNil)
+	c.Assert(newTblInfo2.Meta().ID, Equals, oldTblID2)
+	newTblInfo3, err := is.TableByName(model.NewCIStr("test1"), model.NewCIStr("t3"))
+	c.Assert(err, IsNil)
+	c.Assert(newTblInfo3.Meta().ID, Equals, oldTblID3)
+	tk.MustQuery("show tables").Check(testkit.Rows("t1", "t2", "t3"))
+
+	// for multi tables different databases
+	tk.MustExec("use test")
+	tk.MustExec("rename table test1.t1 to test.t2, test1.t2 to test.t3, test1.t3 to test.t4")
+	is = domain.GetDomain(ctx).InfoSchema()
+	newTblInfo1, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
+	c.Assert(err, IsNil)
+	c.Assert(newTblInfo1.Meta().ID, Equals, oldTblID1)
+	newTblInfo2, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t3"))
+	c.Assert(err, IsNil)
+	c.Assert(newTblInfo2.Meta().ID, Equals, oldTblID2)
+	newTblInfo3, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t4"))
+	c.Assert(err, IsNil)
+	c.Assert(newTblInfo3.Meta().ID, Equals, oldTblID3)
+	tk.MustQuery("show tables").Check(testkit.Rows("t2", "t3", "t4"))
+
+	// for failure case
+	failSQL := "rename table test_not_exist.t to test_not_exist.t, test_not_exist.t to test_not_exist.t"
+	tk.MustGetErrCode(failSQL, errno.ErrFileNotFound)
+	failSQL = "rename table test.test_not_exist to test.test_not_exist, test.test_not_exist to test.test_not_exist"
+	tk.MustGetErrCode(failSQL, errno.ErrFileNotFound)
+	failSQL = "rename table test.t_not_exist to test_not_exist.t, test.t_not_exist to test_not_exist.t"
+	tk.MustGetErrCode(failSQL, errno.ErrFileNotFound)
+	failSQL = "rename table test1.t2 to test_not_exist.t, test1.t2 to test_not_exist.t"
+	tk.MustGetErrCode(failSQL, errno.ErrFileNotFound)
+
+	tk.MustExec("drop database test1")
+	tk.MustExec("drop database test")
 }
 
 func (s *testDBSuite2) TestAddNotNullColumn(c *C) {
@@ -3376,7 +3500,7 @@ func (s *testDBSuite3) TestGeneratedColumnDDL(c *C) {
 	result.Check(testkit.Rows("table_with_gen_col_string CREATE TABLE `table_with_gen_col_string` (\n" +
 		"  `first_name` varchar(10) DEFAULT NULL,\n" +
 		"  `last_name` varchar(10) DEFAULT NULL,\n" +
-		"  `full_name` varchar(255) GENERATED ALWAYS AS (concat(`first_name`, ' ', `last_name`)) VIRTUAL\n" +
+		"  `full_name` varchar(255) GENERATED ALWAYS AS (concat(`first_name`, _utf8mb4' ', `last_name`)) VIRTUAL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 
 	tk.MustExec("alter table table_with_gen_col_string modify column full_name varchar(255) GENERATED ALWAYS AS (CONCAT(last_name,' ' ,first_name) ) VIRTUAL")
@@ -3384,7 +3508,7 @@ func (s *testDBSuite3) TestGeneratedColumnDDL(c *C) {
 	result.Check(testkit.Rows("table_with_gen_col_string CREATE TABLE `table_with_gen_col_string` (\n" +
 		"  `first_name` varchar(10) DEFAULT NULL,\n" +
 		"  `last_name` varchar(10) DEFAULT NULL,\n" +
-		"  `full_name` varchar(255) GENERATED ALWAYS AS (concat(`last_name`, ' ', `first_name`)) VIRTUAL\n" +
+		"  `full_name` varchar(255) GENERATED ALWAYS AS (concat(`last_name`, _utf8mb4' ', `first_name`)) VIRTUAL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 
 	genExprTests := []struct {
@@ -3834,7 +3958,7 @@ func (s *testSerialDBSuite) TestModifyColumnnReorgInfo(c *C) {
 		txn, err := ctx.Txn(true)
 		c.Assert(err, IsNil)
 		m := meta.NewMeta(txn)
-		e, start, end, physicalID, err := m.GetDDLReorgHandle(currJob, false)
+		e, start, end, physicalID, err := m.GetDDLReorgHandle(currJob)
 		c.Assert(meta.ErrDDLReorgElementNotExist.Equal(err), IsTrue)
 		c.Assert(e, IsNil)
 		c.Assert(start, IsNil)
@@ -4579,6 +4703,7 @@ func (s *testSerialDBSuite) TestModifyColumnCharset(c *C) {
 	tk.MustExec("create table t_mcc(a varchar(8) charset utf8, b varchar(8) charset utf8)")
 	defer s.mustExec(tk, c, "drop table t_mcc;")
 
+	forceReloadDomain(tk.Se)
 	result := tk.MustQuery(`show create table t_mcc`)
 	result.Check(testkit.Rows(
 		"t_mcc CREATE TABLE `t_mcc` (\n" +
@@ -4633,6 +4758,7 @@ func (s *testDBSuite1) TestModifyColumnTime(c *C) {
 	//timeToTimestamp3 := now.Add(12 * time.Second).Format("2006-01-02 15:04:05")
 	//timeToTimestamp4 := now.AddDate(0, 0, 30).Add(20 * time.Hour).Add(12 * time.Second).Format("2006-01-02 15:04:05")
 	//timeToTimestamp5 := now.AddDate(0, 0, 30).Add(20 * time.Hour).Format("2006-01-02 15:04:05")
+	currentYear := strconv.Itoa(time.Now().Year())
 
 	// TESTED UNDER UTC+8
 	// 1. In conversion between date/time, fraction parts are taken into account
@@ -4645,22 +4771,21 @@ func (s *testDBSuite1) TestModifyColumnTime(c *C) {
 		expect string
 		err    uint16
 	}{
-		// time to year
-		// TODO: ban conversion that must fail without returning accurate error
-		{"time", `"30 20:00:12"`, "year", "", errno.ErrWarnDataOutOfRange},
-		{"time", `"30 20:00"`, "year", "", errno.ErrWarnDataOutOfRange},
-		{"time", `"30 20"`, "year", "", errno.ErrWarnDataOutOfRange},
-		{"time", `"20:00:12"`, "year", "", errno.ErrWarnDataOutOfRange},
-		{"time", `"20:00"`, "year", "", errno.ErrWarnDataOutOfRange},
-		{"time", `"12"`, "year", "", errno.ErrWarnDataOutOfRange},
-		{"time", `"200012"`, "year", "", errno.ErrWarnDataOutOfRange},
-		{"time", `200012`, "year", "", errno.ErrWarnDataOutOfRange},
-		{"time", `0012`, "year", "", errno.ErrWarnDataOutOfRange},
-		{"time", `12`, "year", "", errno.ErrWarnDataOutOfRange},
-		{"time", `"30 20:00:12.498"`, "year", "", errno.ErrWarnDataOutOfRange},
-		{"time", `"20:00:12.498"`, "year", "", errno.ErrWarnDataOutOfRange},
-		{"time", `"200012.498"`, "year", "", errno.ErrWarnDataOutOfRange},
-		{"time", `200012.498`, "year", "", errno.ErrWarnDataOutOfRange},
+		// time to year, it's reasonable to return current year and discard the time (even if MySQL may get data out of range error).
+		{"time", `"30 20:00:12"`, "year", currentYear, 0},
+		{"time", `"30 20:00"`, "year", currentYear, 0},
+		{"time", `"30 20"`, "year", currentYear, 0},
+		{"time", `"20:00:12"`, "year", currentYear, 0},
+		{"time", `"20:00"`, "year", currentYear, 0},
+		{"time", `"12"`, "year", currentYear, 0},
+		{"time", `"200012"`, "year", currentYear, 0},
+		{"time", `200012`, "year", currentYear, 0},
+		{"time", `0012`, "year", currentYear, 0},
+		{"time", `12`, "year", currentYear, 0},
+		{"time", `"30 20:00:12.498"`, "year", currentYear, 0},
+		{"time", `"20:00:12.498"`, "year", currentYear, 0},
+		{"time", `"200012.498"`, "year", currentYear, 0},
+		{"time", `200012.498`, "year", currentYear, 0},
 
 		// time to date
 		// TODO: somewhat got one day earlier than expected
@@ -4722,13 +4847,12 @@ func (s *testDBSuite1) TestModifyColumnTime(c *C) {
 		{"date", `190102`, "time", "00:00:00", 0},
 
 		// date to year
-		// TODO: ban conversion that must fail without returning accurate error
-		{"date", `"2019-01-02"`, "year", "", errno.ErrWarnDataOutOfRange},
-		{"date", `"19-01-02"`, "year", "", errno.ErrWarnDataOutOfRange},
-		{"date", `"20190102"`, "year", "", errno.ErrWarnDataOutOfRange},
-		{"date", `"190102"`, "year", "", errno.ErrWarnDataOutOfRange},
-		{"date", `20190102`, "year", "", errno.ErrWarnDataOutOfRange},
-		{"date", `190102`, "year", "", errno.ErrWarnDataOutOfRange},
+		{"date", `"2019-01-02"`, "year", "2019", 0},
+		{"date", `"19-01-02"`, "year", "2019", 0},
+		{"date", `"20190102"`, "year", "2019", 0},
+		{"date", `"190102"`, "year", "2019", 0},
+		{"date", `20190102`, "year", "2019", 0},
+		{"date", `190102`, "year", "2019", 0},
 
 		// date to datetime
 		// TODO: looks like 8hrs later than expected
@@ -4749,14 +4873,13 @@ func (s *testDBSuite1) TestModifyColumnTime(c *C) {
 		//{"date", `190102`, "timestamp", "2019-01-02 00:00:00", 0},
 
 		// timestamp to year
-		// TODO: ban conversion that must fail without returning accurate error
-		{"timestamp", `"2006-01-02 15:04:05"`, "year", "", errno.ErrWarnDataOutOfRange},
-		{"timestamp", `"06-01-02 15:04:05"`, "year", "", errno.ErrWarnDataOutOfRange},
-		{"timestamp", `"20060102150405"`, "year", "", errno.ErrWarnDataOutOfRange},
-		{"timestamp", `"060102150405"`, "year", "", errno.ErrWarnDataOutOfRange},
-		{"timestamp", `20060102150405`, "year", "", errno.ErrWarnDataOutOfRange},
-		{"timestamp", `060102150405`, "year", "", errno.ErrWarnDataOutOfRange},
-		{"timestamp", `"2006-01-02 23:59:59.506"`, "year", "", errno.ErrWarnDataOutOfRange},
+		{"timestamp", `"2006-01-02 15:04:05"`, "year", "2006", 0},
+		{"timestamp", `"06-01-02 15:04:05"`, "year", "2006", 0},
+		{"timestamp", `"20060102150405"`, "year", "2006", 0},
+		{"timestamp", `"060102150405"`, "year", "2006", 0},
+		{"timestamp", `20060102150405`, "year", "2006", 0},
+		{"timestamp", `060102150405`, "year", "2006", 0},
+		{"timestamp", `"2006-01-02 23:59:59.506"`, "year", "2006", 0},
 
 		// timestamp to time
 		// TODO: looks like 8hrs earlier than expected
@@ -4795,16 +4918,16 @@ func (s *testDBSuite1) TestModifyColumnTime(c *C) {
 		//{"timestamp", `"2006-01-02 23:59:59.506"`, "datetime", "2006-01-03 00:00:00", 0},
 
 		// datetime to year
-		// TODO: ban conversion that must fail without returning accurate error
-		{"datetime", `"2006-01-02 15:04:05"`, "year", "", errno.ErrWarnDataOutOfRange},
-		{"datetime", `"06-01-02 15:04:05"`, "year", "", errno.ErrWarnDataOutOfRange},
-		{"datetime", `"20060102150405"`, "year", "", errno.ErrWarnDataOutOfRange},
-		{"datetime", `"060102150405"`, "year", "", errno.ErrWarnDataOutOfRange},
-		{"datetime", `20060102150405`, "year", "", errno.ErrWarnDataOutOfRange},
-		{"datetime", `060102150405`, "year", "", errno.ErrWarnDataOutOfRange},
-		{"datetime", `"2006-01-02 23:59:59.506"`, "year", "", errno.ErrWarnDataOutOfRange},
-		{"datetime", `"1000-01-02 23:59:59"`, "year", "", errno.ErrWarnDataOutOfRange},
-		{"datetime", `"9999-01-02 23:59:59"`, "year", "", errno.ErrWarnDataOutOfRange},
+		{"datetime", `"2006-01-02 15:04:05"`, "year", "2006", 0},
+		{"datetime", `"06-01-02 15:04:05"`, "year", "2006", 0},
+		{"datetime", `"20060102150405"`, "year", "2006", 0},
+		{"datetime", `"060102150405"`, "year", "2006", 0},
+		{"datetime", `20060102150405`, "year", "2006", 0},
+		{"datetime", `060102150405`, "year", "2006", 0},
+		{"datetime", `"2006-01-02 23:59:59.506"`, "year", "2006", 0},
+		// MySQL will get "Data truncation: Out of range value for column 'a' at row 1.
+		{"datetime", `"1000-01-02 23:59:59"`, "year", "", errno.ErrInvalidYear},
+		{"datetime", `"9999-01-02 23:59:59"`, "year", "", errno.ErrInvalidYear},
 
 		// datetime to time
 		{"datetime", `"2006-01-02 15:04:05"`, "time", "15:04:05", 0},
@@ -4861,7 +4984,8 @@ func (s *testDBSuite1) TestModifyColumnTime(c *C) {
 		{"year", `"69"`, "date", "", errno.ErrTruncatedWrongValue},
 		{"year", `"70"`, "date", "", errno.ErrTruncatedWrongValue},
 		{"year", `"99"`, "date", "", errno.ErrTruncatedWrongValue},
-		{"year", `00`, "date", "", errno.ErrTruncatedWrongValue},
+		// MySQL will get "Data truncation: Incorrect date value: '0000'", but TiDB treat 00 as valid datetime.
+		{"year", `00`, "date", "0000-00-00", 0},
 		{"year", `69`, "date", "", errno.ErrTruncatedWrongValue},
 		{"year", `70`, "date", "", errno.ErrTruncatedWrongValue},
 		{"year", `99`, "date", "", errno.ErrTruncatedWrongValue},
@@ -4873,7 +4997,8 @@ func (s *testDBSuite1) TestModifyColumnTime(c *C) {
 		{"year", `"69"`, "datetime", "", errno.ErrTruncatedWrongValue},
 		{"year", `"70"`, "datetime", "", errno.ErrTruncatedWrongValue},
 		{"year", `"99"`, "datetime", "", errno.ErrTruncatedWrongValue},
-		{"year", `00`, "datetime", "", errno.ErrTruncatedWrongValue},
+		// MySQL will get "Data truncation: Incorrect date value: '0000'", but TiDB treat 00 as valid datetime.
+		{"year", `00`, "datetime", "0000-00-00 00:00:00", 0},
 		{"year", `69`, "datetime", "", errno.ErrTruncatedWrongValue},
 		{"year", `70`, "datetime", "", errno.ErrTruncatedWrongValue},
 		{"year", `99`, "datetime", "", errno.ErrTruncatedWrongValue},
@@ -4885,7 +5010,8 @@ func (s *testDBSuite1) TestModifyColumnTime(c *C) {
 		{"year", `"69"`, "timestamp", "", errno.ErrTruncatedWrongValue},
 		{"year", `"70"`, "timestamp", "", errno.ErrTruncatedWrongValue},
 		{"year", `"99"`, "timestamp", "", errno.ErrTruncatedWrongValue},
-		{"year", `00`, "timestamp", "", errno.ErrTruncatedWrongValue},
+		// MySQL will get "Data truncation: Incorrect date value: '0000'", but TiDB treat 00 as valid datetime.
+		{"year", `00`, "timestamp", "0000-00-00 00:00:00", 0},
 		{"year", `69`, "timestamp", "", errno.ErrTruncatedWrongValue},
 		{"year", `70`, "timestamp", "", errno.ErrTruncatedWrongValue},
 		{"year", `99`, "timestamp", "", errno.ErrTruncatedWrongValue},
@@ -5577,6 +5703,7 @@ func (s *testDBSuite4) testParallelExecSQL(c *C, sql1, sql2 string, se1, se2 ses
 func checkTableLock(c *C, se session.Session, dbName, tableName string, lockTp model.TableLockType) {
 	tb := testGetTableByName(c, se, dbName, tableName)
 	dom := domain.GetDomain(se)
+	dom.Reload()
 	if lockTp != model.TableLockNone {
 		c.Assert(tb.Meta().Lock, NotNil)
 		c.Assert(tb.Meta().Lock.Tp, Equals, lockTp)
@@ -6263,4 +6390,12 @@ func (s *testSerialDBSuite) TestModifyColumnTypeWhenInterception(c *C) {
 	c.Assert(checkMiddleAddedCount, Equals, true)
 	res := tk.MustQuery("show warnings")
 	c.Assert(len(res.Rows()), Equals, count)
+}
+
+func (s *testDBSuite4) TestGeneratedColumnWindowFunction(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test_db")
+	tk.MustExec("DROP TABLE IF EXISTS t")
+	tk.MustGetErrCode("CREATE TABLE t (a INT , b INT as (ROW_NUMBER() OVER (ORDER BY a)))", errno.ErrWindowInvalidWindowFuncUse)
+	tk.MustGetErrCode("CREATE TABLE t (a INT , index idx ((ROW_NUMBER() OVER (ORDER BY a))))", errno.ErrWindowInvalidWindowFuncUse)
 }
