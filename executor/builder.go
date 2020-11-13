@@ -1581,9 +1581,11 @@ func (b *executorBuilder) buildSort(v *plannercore.PhysicalSort) Executor {
 		return nil
 	}
 	columnIdxsUsedByChild, columnMissing := retrieveColumnIdxsUsedByChild(v.Schema(), v.Children()[0].Schema())
-	if columnMissing {
-		b.err = errors.Annotate(ErrBuildExecutor, "Inline projection occurs when `buildSort` exectutor, columns should not missing in the child schema")
-		return nil
+	if columnIdxsUsedByChild != nil && columnMissing {
+		columnIdxsUsedByChild = nil
+		// TODO: If there is valid verification logic, please uncomment the following code
+		// b.err = errors.Annotate(ErrBuildExecutor, "Inline projection occurs when `buildSort` exectutor, columns should not missing in the child schema")
+		// return nil
 	}
 	sortExec := SortExec{
 		baseExecutor:          newBaseExecutor(b.ctx, v.Schema(), v.ID(), childExec),
@@ -1601,9 +1603,11 @@ func (b *executorBuilder) buildTopN(v *plannercore.PhysicalTopN) Executor {
 		return nil
 	}
 	columnIdxsUsedByChild, columnMissing := retrieveColumnIdxsUsedByChild(v.Schema(), v.Children()[0].Schema())
-	if columnMissing {
-		b.err = errors.Annotate(ErrBuildExecutor, "Inline projection occurs when `buildTopN` exectutor, columns should not missing in the child schema")
-		return nil
+	if columnIdxsUsedByChild != nil && columnMissing {
+		columnIdxsUsedByChild = nil
+		// TODO: If there is valid verification logic, please uncomment the following code
+		// b.err = errors.Annotate(ErrBuildExecutor, "Inline projection occurs when `buildTopN` exectutor, columns should not missing in the child schema")
+		// return nil
 	}
 	sortExec := SortExec{
 		baseExecutor:          newBaseExecutor(b.ctx, v.Schema(), v.ID(), childExec),
