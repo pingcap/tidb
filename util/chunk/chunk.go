@@ -731,15 +731,3 @@ func (c *Chunk) AppendPartialRows(rows []Row) {
 		}
 	}
 }
-
-/*
-// AppendPartialRows appends multiple row to the chunk.
-func (c *Chunk) AppendPartialRows(rows []Row) {
-	numCols := len(c.columns)
-	for i := 0; i < numCols; i++ {
-		dstCol := c.columns[i]
-		for _, row := range rows {
-			appendCellByCell(dstCol, row.c.columns[i], row.idx)
-		}
-	}
-}**/
