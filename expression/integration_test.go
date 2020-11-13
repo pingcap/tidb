@@ -2387,7 +2387,7 @@ func (s *testIntegrationSuite2) TestBuiltin(c *C) {
 	tk.MustExec(`insert into tb5 (a, b) select * from (select cast(a as json) as a1, b from tb5) as t where t.a1 = t.b;`)
 	tk.MustExec(`drop table tb5;`)
 
-	tk.MustExec(`create table tb5(a float(64));`)
+	tk.MustExec(`create table tb5(a float(53));`)
 	tk.MustExec(`insert into tb5(a) values (13835058055282163712);`)
 	tk.MustQuery(`select convert(t.a1, signed int) from (select convert(a, json) as a1 from tb5) as t`)
 	tk.MustExec(`drop table tb5;`)
@@ -2897,6 +2897,15 @@ func (s *testIntegrationSuite2) TestBuiltin(c *C) {
 	tk.MustQuery("select 0 and b/0 from t")
 	tk.MustQuery("show warnings").Check(testkit.Rows())
 	tk.MustQuery("select 1 or b/0 from t")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+
+	tk.MustQuery("select 1 or 1/0")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustQuery("select 0 and 1/0")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustQuery("select COALESCE(1, 1/0)")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustQuery("select interval(1,0,1,2,1/0)")
 	tk.MustQuery("show warnings").Check(testkit.Rows())
 
 	tk.MustQuery("select case 2.0 when 2.0 then 3.0 when 3.0 then 2.0 end").Check(testkit.Rows("3.0"))
