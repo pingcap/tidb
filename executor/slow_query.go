@@ -797,7 +797,7 @@ type logFile struct {
 
 // getAllFiles is used to get all slow-log needed to parse, it is exported for test.
 func (e *slowQueryRetriever) getAllFiles(sctx sessionctx.Context, logFilePath string) ([]logFile, error) {
-	totalFileNum := 0
+	var totalFileNum uint32 = 0
 	if e.stats != nil {
 		startTime := time.Now()
 		defer func() {
@@ -831,18 +831,19 @@ func (e *slowQueryRetriever) getAllFiles(sctx sessionctx.Context, logFilePath st
 		return nil, err
 	}
 	var wg sync.WaitGroup
+	var lock sync.Mutex
 	walkFn := func(path string, info os.FileInfo) {
+		hasDone := false
 		defer func() {
-			wg.Done()
+			if !hasDone {
+				wg.Done()
+			}
 		}()
-		if info.IsDir() {
-			return
-		}
 		// All rotated log files have the same prefix with the original file.
-		if !strings.HasPrefix(path, prefix) {
+		if info.IsDir() || !strings.HasPrefix(path, prefix) {
 			return
 		}
-		totalFileNum++
+		atomic.AddUint32(&totalFileNum, 1)
 		file, err := os.OpenFile(path, os.O_RDONLY, os.ModePerm)
 		if err != nil {
 			handleErr(err)
@@ -852,6 +853,8 @@ func (e *slowQueryRetriever) getAllFiles(sctx sessionctx.Context, logFilePath st
 			if !skip {
 				terror.Log(file.Close())
 			}
+			wg.Done()
+			hasDone = true
 		}()
 		// Get the file start time.
 		fileStartTime, err := e.getFileStartTime(file)
@@ -876,6 +879,8 @@ func (e *slowQueryRetriever) getAllFiles(sctx sessionctx.Context, logFilePath st
 		if err != nil {
 			handleErr(err)
 		}
+		lock.Lock()
+		defer lock.Unlock()
 		logFiles = append(logFiles, logFile{
 			file:  file,
 			start: fileStartTime,
@@ -925,7 +930,7 @@ func (e *slowQueryRetriever) getRuntimeStats() execdetails.RuntimeStats {
 }
 
 type slowQueryRuntimeStats struct {
-	totalFileNum int
+	totalFileNum uint32
 	readFileNum  int
 	readFile     time.Duration
 	initialize   time.Duration
