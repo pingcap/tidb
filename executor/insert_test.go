@@ -1040,8 +1040,9 @@ func (s *testSuite3) TestInsertFloatOverflow(c *C) {
 	c.Assert(err.Error(), Equals, "[types:1264]Out of range value for column 'col2' at row 1")
 	tk.Exec("create table t1(id1 float,id2 float)")
 	tk.Exec("insert ignore into t1 values(999999999999999999999999999999999999999,-999999999999999999999999999999999999999)")
-	tk.MustQuery(`select convert(id1,decimal(65)),convert(id2,decimal(65)) from t1`).Check(testkit.Rows("340282346638528860000000000000000000000 -340282346638528860000000000000000000000"))
-	tk.MustExec(`drop table if exists t,t1`)
+	tk.MustQuery("select @@warning_count").Check(testutil.RowsWithSep("|", "2"))
+	tk.MustQuery("select convert(id1,decimal(65)),convert(id2,decimal(65)) from t1").Check(testkit.Rows("340282346638528860000000000000000000000 -340282346638528860000000000000000000000"))
+	tk.MustExec("drop table if exists t,t1")
 }
 
 // There is a potential issue in MySQL: when the value of auto_increment_offset is greater
