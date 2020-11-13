@@ -1164,15 +1164,15 @@ func initSynonymsSysVariables() {
 
 // SetNamesVariables is the system variable names related to set names statements.
 var SetNamesVariables = []string{
-	"character_set_client",
-	"character_set_connection",
-	"character_set_results",
+	CharacterSetClient,
+	CharacterSetConnection,
+	CharacterSetResults,
 }
 
 // SetCharsetVariables is the system variable names related to set charset statements.
 var SetCharsetVariables = []string{
-	"character_set_client",
-	"character_set_results",
+	CharacterSetClient,
+	CharacterSetResults,
 }
 
 const (
@@ -1184,6 +1184,12 @@ const (
 	CharsetDatabase = "character_set_database"
 	// CollationDatabase is the name for collation_database system variable.
 	CollationDatabase = "collation_database"
+	// CharacterSetFilesystem is the name for character_set_system system variable.
+	CharacterSetFilesystem = "character_set_system"
+	// CharacterSetClient is the name for character_set_client system variable.
+	CharacterSetClient = "character_set_client"
+	// CharacterSetSystem is the name for character_set_system system variable.
+	CharacterSetSystem = "character_set_system"
 	// GeneralLog is the name for 'general_log' system variable.
 	GeneralLog = "general_log"
 	// AvoidTemporalUpgrade is the name for 'avoid_temporal_upgrade' system variable.

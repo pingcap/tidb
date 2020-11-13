@@ -7567,6 +7567,17 @@ func (s *testIntegrationSerialSuite) TestIssue18949(c *C) {
 	c.Assert(result, Matches, `(?s).*enum\('a','b	',' c'\).*set\('a','b	',' c'\).*`)
 }
 
+func (s *testIntegrationSerialSuite) TestIssue20209(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test;`)
+	tk.MustExec(`set @@character_set_client=utf8mb4;`)
+	tk.MustExec(`set @@collation_connection=utf8_bin;`)
+	tk.MustExec("CREATE VIEW tview_1 AS SELECT 'a' AS `id`;")
+}
+
 func (s *testIntegrationSuite) TestIssue17767(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
