@@ -9127,7 +9127,7 @@
           "dashLength": 10,
           "dashes": false,
           "datasource": "${DS_TEST-CLUSTER}",
-          "description": "TiDB DDL add index progress in percentage. The value is [0,100]",
+          "description": "TiDB DDL backfill progress in percentage. The value is [0,100]",
           "fill": 1,
           "gridPos": {
             "h": 8,
@@ -9162,18 +9162,25 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "tidb_ddl_add_index_percentage_progress",
+              "expr": "irate(tidb_ddl_add_index_percentage_progress{type=\"add_index\"}[1m])",
               "format": "time_series",
               "intervalFactor": 1,
               "legendFormat": "{{instance}}",
               "refId": "A"
+            },
+            {
+              "expr": "irate(tidb_ddl_add_index_percentage_progress{type=\"modify_column\"}[1m])",
+              "format": "time_series",
+              "intervalFactor": 1,
+              "legendFormat": "{{instance}}",
+              "refId": "B"
             }
           ],
           "thresholds": [],
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "DDL add index progress in percentage",
+          "title": "DDL backfill progress in percentage",
           "tooltip": {
             "shared": true,
             "sort": 0,
