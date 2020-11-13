@@ -692,7 +692,7 @@ func (e *HashAggExec) prepare4ParallelExec(ctx context.Context) {
 		if e.stats != nil {
 			e.stats.PartialStats.WallTime = time.Since(partialStart)
 			for i, worker := range e.partialWorkers {
-				e.stats.PartialWorkerTime[i] = worker.aggWorkerStats
+				e.stats.PartialStats.WorkerTime[i] = worker.aggWorkerStats
 			}
 		}
 	}()
@@ -707,7 +707,7 @@ func (e *HashAggExec) prepare4ParallelExec(ctx context.Context) {
 		if e.stats != nil {
 			e.stats.FinalStats.WallTime = time.Since(finalStart)
 			for i, worker := range e.finalWorkers {
-				e.stats.FinalWorkerTime[i] = worker.aggWorkerStats
+				e.stats.FinalStats.WorkerTime[i] = worker.aggWorkerStats
 			}
 		}
 	}()
@@ -855,13 +855,17 @@ func (e *HashAggExec) getPartialResults(groupKey string) []aggfuncs.PartialResul
 
 func (e *HashAggExec) initRuntimeStats() {
 	if e.runtimeStats != nil && e.stats == nil {
+		partialStats := AggWorkerStat{
+			Concurrency: e.ctx.GetSessionVars().HashAggPartialConcurrency(),
+			WorkerTime:  make([]time.Duration, e.ctx.GetSessionVars().HashAggPartialConcurrency()),
+		}
+		finalStats := AggWorkerStat{
+			Concurrency: e.ctx.GetSessionVars().HashAggFinalConcurrency(),
+			WorkerTime:  make([]time.Duration, e.ctx.GetSessionVars().HashAggFinalConcurrency()),
+		}
 		e.stats = &HashAggRuntimeStats{
-			PartialNum:        e.ctx.GetSessionVars().HashAggPartialConcurrency(),
-			FinalNum:          e.ctx.GetSessionVars().HashAggFinalConcurrency(),
-			PartialStats:      &AggWorkerStat{},
-			FinalStats:        &AggWorkerStat{},
-			PartialWorkerTime: make([]time.Duration, e.ctx.GetSessionVars().HashAggPartialConcurrency()),
-			FinalWorkerTime:   make([]time.Duration, e.ctx.GetSessionVars().HashAggFinalConcurrency()),
+			PartialStats: partialStats,
+			FinalStats:   finalStats,
 		}
 		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
 	}
@@ -869,74 +873,70 @@ func (e *HashAggExec) initRuntimeStats() {
 
 // HashAggRuntimeStats record the HashAggExec runtime stat
 type HashAggRuntimeStats struct {
-	PartialNum int
-	FinalNum   int
-
-	PartialStats *AggWorkerStat
-	FinalStats   *AggWorkerStat
-
-	PartialWorkerTime []time.Duration
-	FinalWorkerTime   []time.Duration
+	PartialStats AggWorkerStat
+	FinalStats   AggWorkerStat
 }
 
 // AggWorkerStat record the AggWorker runtime stat
 type AggWorkerStat struct {
-	TaskNum  int64
-	WallTime time.Duration
-	WaitTime int64
-	ExecTime int64
+	Concurrency int
+	TaskNum     int64
+	WallTime    time.Duration
+	WaitTime    int64
+	ExecTime    int64
+	WorkerTime  []time.Duration
+}
+
+func (e *AggWorkerStat) String() string {
+	var result string
+	var totalTime time.Duration = 0
+	if e.WorkerTime != nil {
+		for _, v := range e.WorkerTime {
+			totalTime += v
+		}
+		result += fmt.Sprintf("{wall_time:%s, concurrency:%d, task_num:%d, tot_wait:%s, tot_exec:%s, tot_time:%s", e.WallTime, e.Concurrency, e.TaskNum, time.Duration(e.WaitTime), time.Duration(e.ExecTime), totalTime)
+		n := len(e.WorkerTime)
+		if n != 0 {
+			sort.Slice(e.WorkerTime, func(i, j int) bool { return e.WorkerTime[i] < e.WorkerTime[j] })
+			result += fmt.Sprintf(", max:%v, p95:%v", e.WorkerTime[n-1], e.WorkerTime[n*19/20])
+		}
+	}
+	if len(result) > 0 {
+		result += "}"
+	}
+	return result
+}
+
+func (e *AggWorkerStat) Merge(tmp AggWorkerStat) {
+	e.WallTime += tmp.WallTime
+	e.TaskNum += tmp.TaskNum
+	e.Concurrency += tmp.Concurrency
+	e.WaitTime += tmp.WaitTime
+	e.ExecTime += tmp.ExecTime
+	e.WorkerTime = append(e.WorkerTime, tmp.WorkerTime...)
 }
 
 func (e *HashAggRuntimeStats) String() string {
 	var result string
-	if e.PartialStats.WallTime != 0 {
-		var totalTime time.Duration = 0
-		for _, v := range e.PartialWorkerTime {
-			totalTime += v
-		}
-		result += fmt.Sprintf("partial_worker:{wall_time:%s, concurrency:%d, task_num:%d, tot_wait:%s, tot_exec:%s, tot_time:%s", e.PartialStats.WallTime, e.PartialNum, e.PartialStats.TaskNum, time.Duration(e.PartialStats.WaitTime), time.Duration(e.PartialStats.ExecTime), totalTime)
-	}
-	if e.PartialWorkerTime != nil {
-		sort.Slice(e.PartialWorkerTime, func(i, j int) bool { return e.PartialWorkerTime[i] < e.PartialWorkerTime[j] })
-		n := len(e.PartialWorkerTime)
-		if n != 0 {
-			result += fmt.Sprintf(", max:%v, p95:%v", e.PartialWorkerTime[n-1], e.PartialWorkerTime[n*19/20])
-		}
+	if partialResult := e.PartialStats.String(); len(partialResult) > 0 {
+		result += "partial_worker:" + partialResult
 	}
 	if len(result) > 0 {
-		result += "}, "
+		result += ", "
 	}
-	if e.FinalStats.WallTime != 0 {
-		var finalTotal time.Duration = 0
-		for _, v := range e.FinalWorkerTime {
-			finalTotal += v
-		}
-		result += fmt.Sprintf("final_worker:{wall_time:%s, concurrency:%d, task_num:%d, tot_wait:%s, tot_exec:%s, tot_time:%s", e.FinalStats.WallTime, e.FinalNum, e.FinalStats.TaskNum, time.Duration(e.PartialStats.WaitTime), time.Duration(e.PartialStats.ExecTime), finalTotal)
-	}
-	if e.FinalWorkerTime != nil {
-		sort.Slice(e.FinalWorkerTime, func(i, j int) bool { return e.FinalWorkerTime[i] < e.FinalWorkerTime[j] })
-		m := len(e.FinalWorkerTime)
-		if m != 0 {
-			result += fmt.Sprintf(", max:%v, p95:%v", e.FinalWorkerTime[m-1], e.FinalWorkerTime[m*19/20])
-		}
-	}
-	if len(result) > 0 {
-		return result + "}"
+	if finalResult := e.FinalStats.String(); len(finalResult) > 0 {
+		result += "final_worker:" + finalResult
 	}
 	return result
 }
 
 // Clone implements the RuntimeStats interface.
 func (e *HashAggRuntimeStats) Clone() execdetails.RuntimeStats {
-	newPartialStat := *e.FinalStats
-	newFinalStat := *e.FinalStats
+	newPartialStat := e.PartialStats
+	newFinalStat := e.FinalStats
 	newRs := &HashAggRuntimeStats{
-		PartialNum:        e.PartialNum,
-		FinalNum:          e.FinalNum,
-		PartialStats:      &newPartialStat,
-		FinalStats:        &newFinalStat,
-		PartialWorkerTime: e.PartialWorkerTime,
-		FinalWorkerTime:   e.FinalWorkerTime,
+		PartialStats: newPartialStat,
+		FinalStats:   newFinalStat,
 	}
 	return newRs
 }
@@ -947,16 +947,8 @@ func (e *HashAggRuntimeStats) Merge(other execdetails.RuntimeStats) {
 	if !ok {
 		return
 	}
-	e.PartialStats.WallTime += tmp.PartialStats.WallTime
-	e.FinalStats.WallTime += tmp.FinalStats.WallTime
-	e.PartialStats.TaskNum += tmp.PartialStats.TaskNum
-	e.FinalStats.TaskNum += tmp.FinalStats.TaskNum
-	e.PartialNum += tmp.PartialNum
-	e.FinalNum += tmp.FinalNum
-	e.PartialStats.WaitTime += tmp.PartialStats.WaitTime
-	e.PartialStats.ExecTime += tmp.PartialStats.ExecTime
-	e.FinalWorkerTime = append(e.FinalWorkerTime, tmp.FinalWorkerTime...)
-	e.PartialWorkerTime = append(e.PartialWorkerTime, tmp.PartialWorkerTime...)
+	e.PartialStats.Merge(tmp.PartialStats)
+	e.FinalStats.Merge(tmp.FinalStats)
 }
 
 // Tp implements the RuntimeStats interface.

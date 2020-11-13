@@ -1147,24 +1147,24 @@ func (s *testSuiteAgg) TestIssue17216(c *C) {
 
 func (s *testSuiteAgg) TestHashAggRuntimeStat(c *C) {
 	partialStat := executor.AggWorkerStat{
-		TaskNum:  5,
-		WallTime: 1 * time.Second,
-		WaitTime: int64(2 * time.Second),
-		ExecTime: int64(2 * time.Second),
+		Concurrency: 5,
+		TaskNum:     5,
+		WallTime:    1 * time.Second,
+		WaitTime:    int64(2 * time.Second),
+		ExecTime:    int64(2 * time.Second),
+		WorkerTime:  []time.Duration{1 * time.Second, 1 * time.Second, 1 * time.Second, 2 * time.Second, 3 * time.Second},
 	}
 	finalStat := executor.AggWorkerStat{
-		TaskNum:  5,
-		WallTime: 1 * time.Second,
-		WaitTime: int64(2 * time.Second),
-		ExecTime: int64(2 * time.Second),
+		Concurrency: 5,
+		TaskNum:     5,
+		WallTime:    1 * time.Second,
+		WaitTime:    int64(2 * time.Second),
+		ExecTime:    int64(2 * time.Second),
+		WorkerTime:  []time.Duration{1 * time.Second, 1 * time.Second, 1 * time.Second, 2 * time.Second, 4 * time.Second},
 	}
 	stats := &executor.HashAggRuntimeStats{
-		PartialNum:        5,
-		FinalNum:          5,
-		PartialStats:      &partialStat,
-		FinalStats:        &finalStat,
-		PartialWorkerTime: []time.Duration{1 * time.Second, 1 * time.Second, 1 * time.Second, 2 * time.Second, 3 * time.Second},
-		FinalWorkerTime:   []time.Duration{1 * time.Second, 1 * time.Second, 1 * time.Second, 2 * time.Second, 4 * time.Second},
+		PartialStats: partialStat,
+		FinalStats:   finalStat,
 	}
 	c.Assert(stats.String(), Equals, "partial_worker:{wall_time:1s, concurrency:5, task_num:5, tot_wait:2s, tot_exec:2s, tot_time:8s, max:3s, p95:3s}, final_worker:{wall_time:1s, concurrency:5, task_num:5, tot_wait:2s, tot_exec:2s, tot_time:9s, max:4s, p95:4s}")
 	c.Assert(stats.String(), Equals, stats.Clone().String())
