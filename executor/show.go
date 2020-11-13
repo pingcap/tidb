@@ -587,8 +587,9 @@ func (e *ShowExec) fetchShowIndex() error {
 				subPart = col.Length
 			}
 
+			tblCol := tb.Meta().Columns[col.Offset]
 			nullVal := "YES"
-			if idx.Meta().Name.O == mysql.PrimaryKeyName {
+			if mysql.HasNotNullFlag(tblCol.Flag) {
 				nullVal = ""
 			}
 
@@ -599,7 +600,6 @@ func (e *ShowExec) fetchShowIndex() error {
 
 			colName := col.Name.O
 			expression := "NULL"
-			tblCol := tb.Meta().Columns[col.Offset]
 			if tblCol.Hidden {
 				colName = "NULL"
 				expression = fmt.Sprintf("(%s)", tblCol.GeneratedExprString)
@@ -650,45 +650,35 @@ func (e *ShowExec) fetchShowMasterStatus() error {
 
 func (e *ShowExec) fetchShowVariables() (err error) {
 	var (
-		value         string
-		ok            bool
-		sessionVars   = e.ctx.GetSessionVars()
-		unreachedVars = make([]string, 0, len(variable.GetSysVars()))
+		value       string
+		sessionVars = e.ctx.GetSessionVars()
 	)
-	for _, v := range variable.GetSysVars() {
-		if !e.GlobalScope {
-			// For a session scope variable,
-			// 1. try to fetch value from SessionVars.Systems;
-			// 2. if this variable is session-only, fetch value from SysVars
-			//		otherwise, fetch the value from table `mysql.Global_Variables`.
-			value, ok, err = variable.GetSessionOnlySysVars(sessionVars, v.Name)
-		} else {
-			// If the scope of a system variable is ScopeNone,
-			// it's a read-only variable, so we return the default value of it.
-			// Otherwise, we have to fetch the values from table `mysql.Global_Variables` for global variable names.
-			value, ok, err = variable.GetScopeNoneSystemVar(v.Name)
+	if e.GlobalScope {
+		// Collect global scope variables,
+		// 1. Exclude the variables of ScopeSession in variable.SysVars;
+		// 2. If the variable is ScopeNone, it's a read-only variable, return the default value of it,
+		// 		otherwise, fetch the value from table `mysql.Global_Variables`.
+		for _, v := range variable.GetSysVars() {
+			if v.Scope != variable.ScopeSession {
+				value, err = variable.GetGlobalSystemVar(sessionVars, v.Name)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				e.appendRow([]interface{}{v.Name, value})
+			}
 		}
+		return nil
+	}
+
+	// Collect session scope variables,
+	// If it is a session only variable, use the default value defined in code,
+	//   otherwise, fetch the value from table `mysql.Global_Variables`.
+	for _, v := range variable.GetSysVars() {
+		value, err = variable.GetSessionSystemVar(sessionVars, v.Name)
 		if err != nil {
 			return errors.Trace(err)
-		}
-		if !ok {
-			unreachedVars = append(unreachedVars, v.Name)
-			continue
 		}
 		e.appendRow([]interface{}{v.Name, value})
-	}
-	if len(unreachedVars) != 0 {
-		systemVars, err := sessionVars.GlobalVarsAccessor.GetAllSysVars()
-		if err != nil {
-			return errors.Trace(err)
-		}
-		for _, varName := range unreachedVars {
-			varValue, ok := systemVars[varName]
-			if !ok {
-				varValue = variable.GetSysVar(varName).Value
-			}
-			e.appendRow([]interface{}{varName, varValue})
-		}
 	}
 	return nil
 }
