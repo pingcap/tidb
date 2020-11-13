@@ -780,10 +780,10 @@ func (g *dateStrGener) gen() interface{} {
 		g.Year = 1970 + g.randGen.Intn(100)
 	}
 	if g.Month == 0 {
-		g.Month = g.randGen.Intn(10) + 1
+		g.Month = g.randGen.Intn(10)
 	}
 	if g.Day == 0 {
-		g.Day = g.randGen.Intn(20) + 1
+		g.Day = g.randGen.Intn(20)
 	}
 
 	return fmt.Sprintf("%d-%d-%d", g.Year, g.Month, g.Day)

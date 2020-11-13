@@ -685,9 +685,9 @@ func (h settingsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		if generalLog := req.Form.Get("tidb_general_log"); generalLog != "" {
 			switch generalLog {
 			case "0":
-				atomic.StoreUint32(&variable.ProcessGeneralLog, 0)
+				variable.ProcessGeneralLog.Store(false)
 			case "1":
-				atomic.StoreUint32(&variable.ProcessGeneralLog, 1)
+				variable.ProcessGeneralLog.Store(true)
 			default:
 				writeError(w, errors.New("illegal argument"))
 				return
