@@ -1295,9 +1295,7 @@ func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Express
 	isExceptional, finalArg0, finalArg1 := false, args[0], args[1]
 	isPositiveInfinite, isNegativeInfinite := false, false
 	// int non-constant [cmp] non-int constant
-	if arg0IsInt && !arg0IsCon && !arg1IsInt && arg1IsCon ||
-		// int non-constant [cmp] different unsigned flag int constant
-		arg0IsInt && !arg0IsCon && arg1IsInt && arg1IsCon && mysql.HasUnsignedFlag(arg0Type.Flag) != mysql.HasUnsignedFlag(arg1Type.Flag) {
+	if arg0IsInt && !arg0IsCon && !arg1IsInt && arg1IsCon {
 		arg1, isExceptional = RefineComparedConstant(ctx, *arg0Type, arg1, c.op)
 		finalArg1 = arg1
 		if isExceptional && arg1.GetType().EvalType() == types.ETInt {
@@ -1316,9 +1314,7 @@ func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Express
 		}
 	}
 	// non-int constant [cmp] int non-constant
-	if arg1IsInt && !arg1IsCon && !arg0IsInt && arg0IsCon ||
-		// int constant [cmp] different unsigned flag int non-constant
-		arg1IsInt && !arg1IsCon && arg0IsInt && arg0IsCon && mysql.HasUnsignedFlag(arg0Type.Flag) != mysql.HasUnsignedFlag(arg1Type.Flag) {
+	if arg1IsInt && !arg1IsCon && !arg0IsInt && arg0IsCon {
 		arg0, isExceptional = RefineComparedConstant(ctx, *arg1Type, arg0, symmetricOp[c.op])
 		finalArg0 = arg0
 		if isExceptional && arg0.GetType().EvalType() == types.ETInt {
@@ -1374,6 +1370,18 @@ func (c *compareFunctionClass) refineArgsByUnsignedFlag(ctx sessionctx.Context, 
 			v, isNull, err := con.EvalInt(ctx, chunk.Row{})
 			if err != nil || isNull || v > 0 {
 				return args
+			}
+			if mysql.HasUnsignedFlag(con.RetType.Flag) && !mysql.HasUnsignedFlag(col.RetType.Flag) {
+				op := c.op
+				if i == 1 {
+					op = symmetricOp[c.op]
+				}
+				if op == opcode.EQ || op == opcode.NullEQ {
+					if _, err := types.ConvertUintToInt(uint64(v), types.IntergerSignedUpperBound(col.RetType.Tp), col.RetType.Tp); err != nil {
+						args[i], args[1-i] = NewOne(), NewZero()
+						return args
+					}
+				}
 			}
 			if mysql.HasUnsignedFlag(col.RetType.Flag) && mysql.HasNotNullFlag(col.RetType.Flag) && !mysql.HasUnsignedFlag(con.RetType.Flag) {
 				op := c.op
