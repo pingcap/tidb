@@ -16,10 +16,12 @@ package executor_test
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
@@ -593,4 +595,64 @@ func (s *testPointGetSuite) TestClusterIndexCBOPointGet(c *C) {
 		plan.Check(testkit.Rows(output[i].Plan...))
 		res.Check(testkit.Rows(output[i].Res...))
 	}
+}
+
+func (s *testPointGetSuite) TestPointGetReadLock(c *C) {
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.EnableTableLock = true
+	})
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table point (id int primary key, c int, d varchar(10), unique c_d (c, d))")
+	tk.MustExec("insert point values (1, 1, 'a')")
+	tk.MustExec("insert point values (2, 2, 'b')")
+	tk.MustExec("lock tables point read")
+
+	rows := tk.MustQuery("explain analyze select * from point where id = 1").Rows()
+	c.Assert(len(rows), Equals, 1)
+	explain := fmt.Sprintf("%v", rows[0])
+	c.Assert(explain, Matches, ".*num_rpc.*")
+
+	rows = tk.MustQuery("explain analyze select * from point where id = 1").Rows()
+	c.Assert(len(rows), Equals, 1)
+	explain = fmt.Sprintf("%v", rows[0])
+	ok := strings.Contains(explain, "num_rpc")
+	c.Assert(ok, IsFalse)
+	tk.MustExec("unlock tables")
+
+	rows = tk.MustQuery("explain analyze select * from point where id = 1").Rows()
+	c.Assert(len(rows), Equals, 1)
+	explain = fmt.Sprintf("%v", rows[0])
+	c.Assert(explain, Matches, ".*num_rpc.*")
+}
+
+func (s *testPointGetSuite) TestPointGetWriteLock(c *C) {
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.EnableTableLock = true
+	})
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table point (id int primary key, c int, d varchar(10), unique c_d (c, d))")
+	tk.MustExec("insert point values (1, 1, 'a')")
+	tk.MustExec("insert point values (2, 2, 'b')")
+	tk.MustExec("lock tables point write")
+	tk.MustQuery(`select * from point where id = 1;`).Check(testkit.Rows(
+		`1 1 a`,
+	))
+	rows := tk.MustQuery("explain analyze select * from point where id = 1").Rows()
+	c.Assert(len(rows), Equals, 1)
+	explain := fmt.Sprintf("%v", rows[0])
+	c.Assert(explain, Matches, ".*num_rpc.*")
+	tk.MustExec("unlock tables")
+
+	tk.MustExec("update point set c = 3 where id = 1")
+	tk.MustExec("lock tables point write")
+	tk.MustQuery(`select * from point where id = 1;`).Check(testkit.Rows(
+		`1 3 a`,
+	))
+	rows = tk.MustQuery("explain analyze select * from point where id = 1").Rows()
+	c.Assert(len(rows), Equals, 1)
+	explain = fmt.Sprintf("%v", rows[0])
+	c.Assert(explain, Matches, ".*num_rpc.*")
+	tk.MustExec("unlock tables")
 }
