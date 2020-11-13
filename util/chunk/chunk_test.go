@@ -1101,9 +1101,6 @@ func (s *testChunkSuite) TestAppendRows(c *check.C) {
 		c.Assert(row.IsNull(5), check.IsFalse)
 		c.Assert(string(row.GetJSON(5).GetString()), check.Equals, str)
 	}
-
-	//check data
-
 }
 
 func BenchmarkBatchAppendRows(b *testing.B) {
@@ -1116,13 +1113,11 @@ func BenchmarkBatchAppendRows(b *testing.B) {
 		rowChk.AppendString(2, "abcd")
 		rowChk.AppendBytes(3, []byte("abcd"))
 	}
-
 	rows := make([]Row, numRows)
 	for i := 0; i < numRows; i++ {
 		rows[i] = rowChk.GetRow(i)
 
 	}
-
 	chk := newChunk(8, 8, 0, 0)
 	for i := 0; i < b.N; i++ {
 		chk.Reset()
@@ -1140,12 +1135,10 @@ func BenchmarkBatchAppendRow(b *testing.B) {
 		rowChk.AppendString(2, "abcd")
 		rowChk.AppendBytes(3, []byte("abcd"))
 	}
-
 	rows := make([]Row, numRows)
 	for i := 0; i < numRows; i++ {
 		rows[i] = rowChk.GetRow(0)
 	}
-
 	chk := newChunk(8, 8, 0, 0)
 	for i := 0; i < b.N; i++ {
 		chk.Reset()

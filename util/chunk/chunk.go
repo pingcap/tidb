@@ -709,7 +709,6 @@ func (c *Chunk) Reconstruct() {
 func (c *Chunk) AppendRows(rows []Row) {
 	c.AppendPartialRows(rows)
 	c.numVirtualRows += len(rows)
-
 }
 
 // AppendPartialRows appends multiple row to the chunk.
