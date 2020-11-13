@@ -936,6 +936,7 @@ func (w *worker) doModifyColumnTypeWithData(
 		// Make sure job args change after `updateVersionAndTableInfoWithCheck`, otherwise, the job args will
 		// be updated in `updateDDLJob` even if it meets an error in `updateVersionAndTableInfoWithCheck`.
 		job.SchemaState = model.StateDeleteOnly
+		metrics.GetBackfillProgressByLabel(metrics.LblModifyColumn).Set(0)
 		job.Args = append(job.Args, changingCol, changingIdxs)
 	case model.StateDeleteOnly:
 		// Column from null to not null.
@@ -1059,7 +1060,8 @@ func (w *worker) doModifyColumnTypeWithData(
 func needRollbackData(err error) bool {
 	return kv.ErrKeyExists.Equal(err) || errCancelledDDLJob.Equal(err) || errCantDecodeRecord.Equal(err) ||
 		types.ErrOverflow.Equal(err) || types.ErrDataTooLong.Equal(err) || types.ErrTruncated.Equal(err) ||
-		json.ErrInvalidJSONText.Equal(err) || types.ErrBadNumber.Equal(err) || types.ErrWrongValue.Equal(err)
+		json.ErrInvalidJSONText.Equal(err) || types.ErrBadNumber.Equal(err) || types.ErrInvalidYear.Equal(err) ||
+		types.ErrWrongValue.Equal(err)
 }
 
 // BuildElements is exported for testing.
@@ -1288,6 +1290,10 @@ func (w *updateColumnWorker) reformatErrors(err error) error {
 	// Since row count is not precious in concurrent reorganization, here we substitute row count with datum value.
 	if types.ErrTruncated.Equal(err) {
 		err = types.ErrTruncated.GenWithStack("Data truncated for column '%s', value is '%s'", w.oldColInfo.Name, w.rowMap[w.oldColInfo.ID])
+	}
+
+	if types.ErrInvalidYear.Equal(err) {
+		err = types.ErrInvalidYear.GenWithStack("Invalid year value for column '%s', value is '%s'", w.oldColInfo.Name, w.rowMap[w.oldColInfo.ID])
 	}
 	return err
 }

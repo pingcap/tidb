@@ -204,6 +204,7 @@ region-cache-ttl=6000
 store-limit=0
 ttl-refreshed-txn-size=8192
 enable-one-pc=true
+external-consistency=true
 [tikv-client.async-commit]
 enable=true
 keys-limit=123
@@ -249,6 +250,7 @@ spilled-file-encryption-method = "plaintext"
 	c.Assert(conf.TiKVClient.RegionCacheTTL, Equals, uint(6000))
 	c.Assert(conf.TiKVClient.StoreLimit, Equals, int64(0))
 	c.Assert(conf.TiKVClient.TTLRefreshedTxnSize, Equals, int64(8192))
+	c.Assert(conf.TiKVClient.ExternalConsistency, Equals, true)
 	c.Assert(conf.TokenLimit, Equals, uint(1000))
 	c.Assert(conf.EnableTableLock, IsTrue)
 	c.Assert(conf.DelayCleanTableLock, Equals, uint64(5))
