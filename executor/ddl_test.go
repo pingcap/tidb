@@ -287,10 +287,7 @@ func (s *testSuite3) TestCreateView(c *C) {
 	c.Assert(err.Error(), Equals, "update view v_issue_16253 is not supported now.")
 }
 
-<<<<<<< HEAD
-func (s *testSuite3) TestIssue16250(c *C) {
-=======
-func (s *testSuite6) TestViewRecursion(c *C) {
+func (s *testSuite3) TestViewRecursion(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table if not exists t(a int)")
@@ -303,8 +300,7 @@ func (s *testSuite6) TestViewRecursion(c *C) {
 	tk.MustExec("drop view recursive_view1, t")
 }
 
-func (s *testSuite6) TestIssue16250(c *C) {
->>>>>>> f81a5d131... planner: check view recursion when building source from view (#20398)
+func (s *testSuite3) TestIssue16250(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table if not exists t(a int)")
