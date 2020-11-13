@@ -1479,7 +1479,7 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 			s.systems[CollationDatabase] = coll.Name
 			s.systems[CharsetDatabase] = coll.CharsetName
 		case CollationServer:
-			s.systems[CollationDatabase] = coll.Name
+			s.systems[CollationServer] = coll.Name
 			s.systems[CharacterSetServer] = coll.CharsetName
 		}
 	case CharacterSetSystem, CharacterSetConnection, CharacterSetClient, CharacterSetResults,
