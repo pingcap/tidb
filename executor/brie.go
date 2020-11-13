@@ -543,7 +543,7 @@ func (e *BRIEExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	case ast.BRIEKindImport:
 		// TODO(lance6716): use taskID to build a unique checkpoint/sort-kv-dir, and pass taskCtx
 		l := lightning.New(e.importGlobalCfg)
-		err2 := handleBRIEError(l.RunEmbeddedOnce(taskCtx, e.importTaskCfg, logutil.Logger(ctx), glue), ErrBRIEImportFailed)
+		err2 := handleBRIEError(l.RunOnce(taskCtx, e.importTaskCfg, glue, logutil.Logger(ctx)), ErrBRIEImportFailed)
 		if err2 != nil {
 			e.info.lock.Lock()
 			e.info.message = err2.Error()
