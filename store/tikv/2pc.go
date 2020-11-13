@@ -177,6 +177,14 @@ type CommitterMutations struct {
 	isPessimisticLock []bool
 }
 
+// Mutation represents a single transaction operation.
+type Mutation struct {
+	KeyOp             pb.Op
+	Key               []byte
+	Value             []byte
+	IsPessimisticLock bool
+}
+
 // NewCommiterMutations creates a CommitterMutations object with sizeHint reserved.
 func NewCommiterMutations(sizeHint int) CommitterMutations {
 	return CommitterMutations{
@@ -258,6 +266,14 @@ func (c *CommitterMutations) MergeMutations(mutations CommitterMutations) {
 	c.keys = append(c.keys, mutations.keys...)
 	c.values = append(c.values, mutations.values...)
 	c.isPessimisticLock = append(c.isPessimisticLock, mutations.isPessimisticLock...)
+}
+
+// MergeMutation merges a single Mutation into the current mutations.
+func (c *CommitterMutations) MergeMutation(mutation Mutation) {
+	c.ops = append(c.ops, mutation.KeyOp)
+	c.keys = append(c.keys, mutation.Key)
+	c.values = append(c.values, mutation.Value)
+	c.isPessimisticLock = append(c.isPessimisticLock, mutation.IsPessimisticLock)
 }
 
 // newTwoPhaseCommitter creates a twoPhaseCommitter.

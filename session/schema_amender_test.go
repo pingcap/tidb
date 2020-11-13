@@ -205,7 +205,7 @@ func prepareTestData(se *session, mutations *tikv.CommitterMutations, oldTblInfo
 			newIdxKeyMutation := tikv.CommitterMutations{}
 			key := mutations.GetKeys()[i]
 			keyOp := mutations.GetOps()[i]
-			if addIndexNeedRemoveOp(info.AmendOpType) && isDeleteOp(keyOp) {
+			if addIndexNeedRemoveOp(info.AmendOpType) && mayGenDelIndexRowKeyOp(keyOp) {
 				thisRowValue := oldRowKvMap[string(key)]
 				if len(thisRowValue) > 0 {
 					idxKey, _ := genIndexKV(thisRowValue)
@@ -216,7 +216,7 @@ func prepareTestData(se *session, mutations *tikv.CommitterMutations, oldTblInfo
 					oldIdxKeyMutation.Push(kvrpcpb.Op_Del, idxKey, []byte{}, isPessimisticLock)
 				}
 			}
-			if addIndexNeedAddOp(info.AmendOpType) && isInsertOp(keyOp) {
+			if addIndexNeedAddOp(info.AmendOpType) && mayGenPutIndexRowKeyOp(keyOp) {
 				thisRowValue := newRowKvMap[string(key)]
 				idxKey, idxVal := genIndexKV(thisRowValue)
 				mutOp := kvrpcpb.Op_Put
@@ -417,7 +417,7 @@ func (s *testSchemaAmenderSuite) TestAmendCollectAndGenMutations(c *C) {
 			for i, key := range mutations.GetKeys() {
 				val := mutations.GetValues()[i]
 				keyOp := mutations.GetOps()[i]
-				if isInsertOp(keyOp) {
+				if mayGenPutIndexRowKeyOp(keyOp) {
 					err = txn.Set(key, val)
 					checkKeys = append(checkKeys, key)
 				} else if keyOp == kvrpcpb.Op_Del {
