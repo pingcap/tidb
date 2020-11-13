@@ -1711,6 +1711,7 @@ func (c *Concurrency) SetWindowConcurrency(n int) {
 	c.windowConcurrency = n
 }
 
+// SetStreamAggConcurrency set the number of concurrent stream aggregation worker.
 func (c *Concurrency) SetStreamAggConcurrency(n int) {
 	c.streamAggConcurrency = n
 }
