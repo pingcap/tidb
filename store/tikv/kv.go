@@ -255,7 +255,7 @@ func (s *tikvStore) EtcdAddrs() ([]string, error) {
 	}
 
 	ctx := context.Background()
-	bo := NewBackoffer(ctx, GetMemberInfoBackoff)
+	bo := NewBackoffer(ctx, GetAllMembersBackoff)
 	etcdAddrs := make([]string, 0)
 	pdClient := s.pdClient
 	if pdClient == nil {
