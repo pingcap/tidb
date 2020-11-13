@@ -80,20 +80,6 @@ func InitializeTempDir() error {
 		}
 		return err
 	}
-	keepFileNum := 1
-
-	// Create dir for MemoryUsageAlarmRecord.
-	memUsageAlarmRatio := config.GetGlobalConfig().Performance.MemoryUsageAlarmRatio
-	if memUsageAlarmRatio > 0 && memUsageAlarmRatio < 1 {
-		_, err = os.Stat(filepath.Join(tempDir, "record"))
-		if err != nil && !os.IsExist(err) {
-			err = os.MkdirAll(filepath.Join(tempDir, "record"), 0755)
-			if err != nil {
-				return err
-			}
-		}
-		keepFileNum++
-	}
 
 	subDirs, err := ioutil.ReadDir(tempDir)
 	if err != nil {
@@ -101,7 +87,7 @@ func InitializeTempDir() error {
 	}
 
 	// If it exists others files except lock file, creates another goroutine to clean them.
-	if len(subDirs) > keepFileNum {
+	if len(subDirs) > 2 {
 		go func() {
 			for _, subDir := range subDirs {
 				// Do not remove the lock file.
@@ -126,4 +112,16 @@ func CleanUp() {
 		err := tempDirLock.Unlock()
 		terror.Log(errors.Trace(err))
 	}
+}
+
+// CheckAndCreateDir check whether the directory is existed. If not, then create it.
+func CheckAndCreateDir(path string) error {
+	_, err := os.Stat(path)
+	if err != nil && !os.IsExist(err) {
+		err = os.MkdirAll(path, 0755)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }

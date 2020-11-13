@@ -65,6 +65,10 @@ func initMemoryUsageAlarmRecord() (record *memoryUsageAlarm) {
 	}
 	record.lastCheckTime = time.Time{}
 	record.tmpDir = filepath.Join(config.GetGlobalConfig().TempStoragePath, "record")
+	if err := disk.CheckAndCreateDir(record.tmpDir); err != nil {
+		record.err = err
+		return
+	}
 	record.lastProfileFileName = make([][]string, 2)
 	// Read last records
 	files, err := ioutil.ReadDir(record.tmpDir)
