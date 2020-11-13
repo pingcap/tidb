@@ -252,7 +252,7 @@ func (s *testIntegrationSuite3) TestCreateTableWithPartition(c *C) {
 	tk.MustGetErrCode(`CREATE TABLE t34 (c0 INT) PARTITION BY HASH((CASE WHEN 0 THEN 0 ELSE c0 END )) PARTITIONS 1;`, tmysql.ErrPartitionFunctionIsNotAllowed)
 	tk.MustGetErrCode(`CREATE TABLE t0(c0 INT) PARTITION BY HASH((c0<CURRENT_USER())) PARTITIONS 1;`, tmysql.ErrPartitionFunctionIsNotAllowed)
 	// TODO: fix this one
-	// tk.MustGetErrCode(`create table t33 (a timestamp, b int) partition by hash(unix_timestamp(a)) partitions 30;`, tmysql.ErrPartitionFuncNotAllowed)
+	tk.MustExec(`create table t33 (a timestamp, b int) partition by hash(unix_timestamp(a)) partitions 30;`)
 
 	// Fix issue 8647
 	tk.MustGetErrCode(`CREATE TABLE trb8 (
@@ -298,6 +298,11 @@ partition by range (a)
     partition p0 values less than (200),
     partition p1 values less than (300),
     partition p2 values less than maxvalue)`)
+
+	tk.MustGetErrCode(`create table t(col char(10)) partition by range columns (col) (PARTITION p0 VALUES less than (avg(col)));`, tmysql.ErrPartitionFunctionIsNotAllowed)
+	tk.MustGetErrCode(`create table t(col char(10)) partition by range columns (col) (PARTITION p0 VALUES less than ('a' collate utf8mb4_unicode_ci));`, tmysql.ErrPartitionFunctionIsNotAllowed)
+	tk.MustGetErrCode(`create table t(col char(10)) partition by range columns (col) (PARTITION p0 VALUES less than (weight_string('a')));`, tmysql.ErrPartitionFunctionIsNotAllowed)
+	tk.MustGetErrCode(`create table t(b char(10) collate utf8mb4_unicode_ci) partition by range columns (b) (partition p2 values less than (lead(1) over ()));`, tmysql.ErrPartitionFunctionIsNotAllowed)
 }
 
 func (s *testIntegrationSuite2) TestCreateTableWithHashPartition(c *C) {

@@ -389,8 +389,10 @@ func buildListPartitionDefinitions(s *ast.CreateTableStmt, pi *model.PartitionIn
 		for _, vs := range def.Clause.(*ast.PartitionDefinitionClauseIn).Values {
 			inValue := make([]string, 0, len(vs))
 			for i := range vs {
-				buf.Reset()
-				vs[i].Format(buf)
+				restoreCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, buf)
+				if err := vs[i].Restore(restoreCtx); err != nil {
+					return err
+				}
 				inValue = append(inValue, buf.String())
 			}
 			piDef.InValues = append(piDef.InValues, inValue)
@@ -416,7 +418,10 @@ func buildRangePartitionDefinitions(ctx sessionctx.Context, s *ast.CreateTableSt
 		buf := new(bytes.Buffer)
 		// Range columns partitions support multi-column partitions.
 		for _, expr := range def.Clause.(*ast.PartitionDefinitionClauseLessThan).Exprs {
-			expr.Format(buf)
+			restoreCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, buf)
+			if err := expr.Restore(restoreCtx); err != nil {
+				return err
+			}
 			piDef.LessThan = append(piDef.LessThan, buf.String())
 			buf.Reset()
 		}
@@ -633,7 +638,8 @@ func checkPartitionFuncCallValid(ctx sessionctx.Context, tblInfo *model.TableInf
 // checkPartitionExprValid checks partition expression validly.
 func checkPartitionExprValid(ctx sessionctx.Context, tblInfo *model.TableInfo, expr ast.ExprNode) error {
 	switch v := expr.(type) {
-	case *ast.FuncCastExpr, *ast.CaseExpr, *ast.SubqueryExpr, *ast.WindowFuncExpr, *ast.RowExpr, *ast.DefaultExpr, *ast.ValuesExpr:
+	case *ast.FuncCastExpr, *ast.CaseExpr, *ast.SubqueryExpr, *ast.WindowFuncExpr, *ast.RowExpr, *ast.DefaultExpr,
+		*ast.ValuesExpr, *ast.SetCollationExpr, *ast.AggregateFuncExpr:
 		return errors.Trace(ErrPartitionFunctionIsNotAllowed)
 	case *ast.FuncCallExpr:
 		return checkPartitionFuncCallValid(ctx, tblInfo, v)
