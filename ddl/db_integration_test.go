@@ -2243,6 +2243,7 @@ func (s *testIntegrationSuite7) TestAutoIncrementTableOption(c *C) {
 	tk.MustQuery("select * from t;").Check(testkit.Rows("12345678901234567890"))
 }
 
+
 // TestDefaultValueIsLatin1 for issue #18977
 func (s *testIntegrationSuite3) TestEnumAndSetDefaultValue(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
@@ -2259,4 +2260,17 @@ func (s *testIntegrationSuite3) TestEnumAndSetDefaultValue(c *C) {
 	tbl = testGetTableByName(c, s.ctx, "test", "t")
 	c.Assert(tbl.Meta().Columns[0].DefaultValue, Equals, "a")
 	c.Assert(tbl.Meta().Columns[1].DefaultValue, Equals, "a")
+}
+
+func (s *testIntegrationSuite3) TestIssue20490(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("create table issue20490 (a int);")
+	tk.MustExec("insert into issue20490(a) values(1);")
+	tk.MustExec("alter table issue20490 add b int not null default 1;")
+	tk.MustExec("insert into issue20490(a) values(2);")
+	tk.MustExec("alter table issue20490 modify b int null;")
+	tk.MustExec("insert into issue20490(a) values(3);")
+
+	tk.MustQuery("select b from issue20490 order by a;").Check(testkit.Rows("1", "1", "<nil>"))
 }
