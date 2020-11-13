@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/ranger"
@@ -1625,10 +1624,6 @@ func (p *LogicalJoin) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]P
 }
 
 func (p *LogicalJoin) tryToGetMppHashJoin(prop *property.PhysicalProperty, useBCJ bool) []PhysicalPlan {
-	/// todo remove this restriction after join on new collation is supported in TiFlash
-	if collate.NewCollationEnabled() {
-		return nil
-	}
 	if !prop.IsEmpty() {
 		return nil
 	}
@@ -1678,14 +1673,14 @@ func (p *LogicalJoin) tryToGetMppHashJoin(prop *property.PhysicalProperty, useBC
 }
 
 func (p *LogicalJoin) tryToGetBroadCastJoin(prop *property.PhysicalProperty) []PhysicalPlan {
-	/// todo remove this restriction after join on new collation is supported in TiFlash
-	if collate.NewCollationEnabled() {
-		return nil
-	}
 	if !prop.IsEmpty() {
 		return nil
 	}
 	if prop.TaskTp != property.RootTaskType && !prop.IsFlashProp() {
+		return nil
+	}
+	_, _, _, hasNullEQ := p.GetJoinKeys()
+	if hasNullEQ {
 		return nil
 	}
 
@@ -1698,13 +1693,23 @@ func (p *LogicalJoin) tryToGetBroadCastJoin(prop *property.PhysicalProperty) []P
 		}
 	}
 
-	// for left join the global idx must be 1, and for right join the global idx must be 0
-	if (p.JoinType != InnerJoin && p.JoinType != LeftOuterJoin && p.JoinType != RightOuterJoin) || len(p.LeftConditions) != 0 || len(p.RightConditions) != 0 || len(p.OtherConditions) != 0 || len(p.EqualConditions) == 0 {
+	if (p.JoinType != InnerJoin && p.JoinType != LeftOuterJoin && p.JoinType != RightOuterJoin && p.JoinType != SemiJoin && p.JoinType != AntiSemiJoin) || len(p.EqualConditions) == 0 {
 		return nil
 	}
 
+	if !expression.CanExprsPushDown(p.ctx.GetSessionVars().StmtCtx, p.LeftConditions, p.ctx.GetClient(), kv.TiFlash) {
+		return nil
+	}
+	if !expression.CanExprsPushDown(p.ctx.GetSessionVars().StmtCtx, p.RightConditions, p.ctx.GetClient(), kv.TiFlash) {
+		return nil
+	}
+	if !expression.CanExprsPushDown(p.ctx.GetSessionVars().StmtCtx, p.OtherConditions, p.ctx.GetClient(), kv.TiFlash) {
+		return nil
+	}
+
+	// for left/semi/anti-semi join the global idx must be 1, and for right join the global idx must be 0
 	if hasPrefer, idx := p.getPreferredBCJLocalIndex(); hasPrefer {
-		if (idx == 0 && p.JoinType == RightOuterJoin) || (idx == 1 && p.JoinType == LeftOuterJoin) {
+		if (idx == 0 && p.JoinType == RightOuterJoin) || (idx == 1 && (p.JoinType == LeftOuterJoin || p.JoinType == SemiJoin || p.JoinType == AntiSemiJoin)) {
 			return nil
 		}
 		return p.tryToGetBroadCastJoinByPreferGlobalIdx(prop, 1-idx)
@@ -1713,7 +1718,7 @@ func (p *LogicalJoin) tryToGetBroadCastJoin(prop *property.PhysicalProperty) []P
 		results := p.tryToGetBroadCastJoinByPreferGlobalIdx(prop, 0)
 		results = append(results, p.tryToGetBroadCastJoinByPreferGlobalIdx(prop, 1)...)
 		return results
-	} else if p.JoinType == LeftOuterJoin {
+	} else if p.JoinType == LeftOuterJoin || p.JoinType == SemiJoin || p.JoinType == AntiSemiJoin {
 		return p.tryToGetBroadCastJoinByPreferGlobalIdx(prop, 1)
 	}
 	return p.tryToGetBroadCastJoinByPreferGlobalIdx(prop, 0)
@@ -1725,6 +1730,7 @@ func (p *LogicalJoin) tryToGetBroadCastJoinByPreferGlobalIdx(prop *property.Phys
 		JoinType:        p.JoinType,
 		LeftConditions:  p.LeftConditions,
 		RightConditions: p.RightConditions,
+		OtherConditions: p.OtherConditions,
 		DefaultValues:   p.DefaultValues,
 		LeftJoinKeys:    lkeys,
 		RightJoinKeys:   rkeys,
@@ -1733,6 +1739,19 @@ func (p *LogicalJoin) tryToGetBroadCastJoinByPreferGlobalIdx(prop *property.Phys
 	preferredBuildIndex := 0
 	if p.children[0].statsInfo().Count() > p.children[1].statsInfo().Count() {
 		preferredBuildIndex = 1
+	}
+	if p.JoinType == SemiJoin || p.JoinType == AntiSemiJoin {
+		preferredBuildIndex = 1
+	}
+	// TiFlash does not support Right out join with other conditions, if the join
+	// has other conditions, need to set the build side to make sure it will be
+	// executed as left join in TiFlash(In TiFlash the build side is always the right side)
+	if len(p.OtherConditions) != 0 {
+		if p.JoinType == RightOuterJoin {
+			preferredBuildIndex = 0
+		} else if p.JoinType == LeftOuterJoin {
+			preferredBuildIndex = 1
+		}
 	}
 	baseJoin.InnerChildIdx = preferredBuildIndex
 	childrenReqProps := make([]*property.PhysicalProperty, 2)

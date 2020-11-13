@@ -472,15 +472,16 @@ func (d *ddl) asyncNotifyWorker(jobTp model.ActionType) {
 	}
 }
 
+// doDDLJob will return
+// - nil: found in history DDL job and no job error
+// - context.Cancel: job has been sent to worker, but not found in history DDL job before cancel
+// - other: found in history DDL job and return that job error
 func (d *ddl) doDDLJob(ctx sessionctx.Context, job *model.Job) error {
-	if isChanClosed(d.ctx.Done()) {
-		return d.ctx.Err()
-	}
-
 	// Get a global job ID and put the DDL job in the queue.
 	job.Query, _ = ctx.Value(sessionctx.QueryString).(string)
 	task := &limitJobTask{job, make(chan error)}
 	d.limitJobCh <- task
+	// worker should restart to continue handling tasks in limitJobCh, and send back through task.err
 	err := <-task.err
 
 	ctx.GetSessionVars().StmtCtx.IsDDLJobInQueue = true
@@ -512,7 +513,7 @@ func (d *ddl) doDDLJob(ctx sessionctx.Context, job *model.Job) error {
 		case <-ticker.C:
 		case <-d.ctx.Done():
 			logutil.BgLogger().Error("[ddl] doDDLJob will quit because context done", zap.Error(d.ctx.Err()))
-			err := d.ctx.Err()
+			err = d.ctx.Err()
 			return err
 		}
 

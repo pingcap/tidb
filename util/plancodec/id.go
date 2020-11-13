@@ -106,6 +106,8 @@ const (
 	TypeClusterMemTableReader = "ClusterMemTableReader"
 	// TypeDataSource is the type of DataSource.
 	TypeDataSource = "DataSource"
+	// TypeLoadData is the type of LoadData.
+	TypeLoadData = "LoadData"
 )
 
 // plan id.
@@ -151,6 +153,7 @@ const (
 	typeBatchPointGet         int = 38
 	typeClusterMemTableReader int = 39
 	typeDataSourceID          int = 40
+	typeLoadDataID            int = 41
 )
 
 // TypeStringToPhysicalID converts the plan type string to plan id.
@@ -236,6 +239,8 @@ func TypeStringToPhysicalID(tp string) int {
 		return typeClusterMemTableReader
 	case TypeDataSource:
 		return typeDataSourceID
+	case TypeLoadData:
+		return typeLoadDataID
 	}
 	// Should never reach here.
 	return 0
@@ -322,6 +327,8 @@ func PhysicalIDToTypeString(id int) string {
 		return TypeBatchPointGet
 	case typeClusterMemTableReader:
 		return TypeClusterMemTableReader
+	case typeLoadDataID:
+		return TypeLoadData
 	}
 
 	// Should never reach here.

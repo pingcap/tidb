@@ -179,6 +179,7 @@ func (p *PhysicalProperty) Clone() *PhysicalProperty {
 		SortItems:     p.SortItems,
 		TaskTp:        p.TaskTp,
 		ExpectedCnt:   p.ExpectedCnt,
+		Enforced:      p.Enforced,
 		PartitionTp:   p.PartitionTp,
 		PartitionCols: p.PartitionCols,
 	}

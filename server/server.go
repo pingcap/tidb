@@ -98,7 +98,7 @@ var (
 	errAccessDenied            = dbterror.ClassServer.NewStd(errno.ErrAccessDenied)
 	errConCount                = dbterror.ClassServer.NewStd(errno.ErrConCount)
 	errSecureTransportRequired = dbterror.ClassServer.NewStd(errno.ErrSecureTransportRequired)
-	errMultiStatementDisabled  = dbterror.ClassServer.NewStdErr(errno.ErrUnknown, mysql.Message("client has multi-statement capability disabled", nil), "", "") // MySQL returns a parse error
+	errMultiStatementDisabled  = dbterror.ClassServer.NewStdErr(errno.ErrUnknown, mysql.Message("client has multi-statement capability disabled", nil)) // MySQL returns a parse error
 )
 
 // DefaultCapability is the capability of the server when it is created using the default configuration.
@@ -127,6 +127,7 @@ type Server struct {
 	statusListener net.Listener
 	statusServer   *http.Server
 	grpcServer     *grpc.Server
+	inShutdownMode bool
 }
 
 // ConnectionCount gets current connection count.
@@ -224,7 +225,7 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 		clients:           make(map[uint64]*clientConn),
 		globalConnID:      util.GlobalConnID{ServerID: 0, Is64bits: true},
 	}
-
+	setTxnScope()
 	tlsConfig, err := util.LoadTLSCertificates(s.cfg.Security.SSLCA, s.cfg.Security.SSLKey, s.cfg.Security.SSLCert)
 	if err != nil {
 		logutil.BgLogger().Error("secure connection cert/key/ca load fail", zap.Error(err))
@@ -297,6 +298,10 @@ func setSSLVariable(ca, key, cert string) {
 	variable.SetSysVar("ssl_ca", ca)
 }
 
+func setTxnScope() {
+	variable.SetSysVar("txn_scope", config.GetGlobalConfig().TxnScope)
+}
+
 // Run runs the server.
 func (s *Server) Run() error {
 	metrics.ServerEventCounter.WithLabelValues(metrics.EventStart).Inc()
@@ -358,9 +363,24 @@ func (s *Server) Run() error {
 	}
 }
 
+func (s *Server) startShutdown() {
+	s.rwlock.RLock()
+	logutil.BgLogger().Info("setting tidb-server to report unhealthy (shutting-down)")
+	s.inShutdownMode = true
+	s.rwlock.RUnlock()
+	// give the load balancer a chance to receive a few unhealthy health reports
+	// before acquiring the s.rwlock and blocking connections.
+	waitTime := time.Duration(s.cfg.GracefulWaitBeforeShutdown) * time.Second
+	if waitTime > 0 {
+		logutil.BgLogger().Info("waiting for stray connections before starting shutdown process", zap.Duration("waitTime", waitTime))
+		time.Sleep(waitTime)
+	}
+}
+
 // Close closes the server.
 func (s *Server) Close() {
-	s.rwlock.Lock()
+	s.startShutdown()
+	s.rwlock.Lock() // prevent new connections
 	defer s.rwlock.Unlock()
 
 	if s.listener != nil {
