@@ -425,6 +425,7 @@ func (s *session) doCommit(ctx context.Context) error {
 	// Set this option for 2 phase commit to validate schema lease.
 	s.txn.SetOption(kv.SchemaChecker, domain.NewSchemaChecker(domain.GetDomain(s), s.sessionVars.TxnCtx.SchemaVersion, physicalTableIDs))
 	s.txn.SetOption(kv.InfoSchema, s.sessionVars.TxnCtx.InfoSchema)
+	s.txn.SetOption(kv.CommitHook, func(info kv.TxnInfo, _ error) { s.sessionVars.LastTxnInfo = info })
 	if s.GetSessionVars().EnableAmendPessimisticTxn {
 		s.txn.SetOption(kv.SchemaAmender, NewSchemaAmenderForTikvTxn(s))
 	}
@@ -2106,7 +2107,13 @@ func (s *session) PrepareTSFuture(ctx context.Context) {
 
 // RefreshTxnCtx implements context.RefreshTxnCtx interface.
 func (s *session) RefreshTxnCtx(ctx context.Context) error {
-	if err := s.doCommit(ctx); err != nil {
+	var commitDetail *execdetails.CommitDetails
+	ctx = context.WithValue(ctx, execdetails.CommitDetailCtxKey, &commitDetail)
+	err := s.doCommit(ctx)
+	if commitDetail != nil {
+		s.GetSessionVars().StmtCtx.MergeExecDetails(nil, commitDetail)
+	}
+	if err != nil {
 		return err
 	}
 
