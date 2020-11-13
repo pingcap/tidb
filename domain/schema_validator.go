@@ -155,7 +155,8 @@ func (s *schemaValidator) Update(leaseGrantTS uint64, oldVer, currVer int64, cha
 			actionTypes = change.ActionTypes
 		}
 		for _, ac := range actionTypes {
-			if ac == uint64(model.ActionUnlockTable) {
+			// NOTE: ac is not an action type, it is (1 << action type).
+			if ac == 1<<model.ActionUnlockTable {
 				// TODO: If we could unlock only one table, we should release parts of the cache.
 				s.do.Store().GetMemCache().Release()
 			}
