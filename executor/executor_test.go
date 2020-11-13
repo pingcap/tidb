@@ -5992,6 +5992,27 @@ select 7;`
 			sql:        "select time from %s where time = '2020-05-14 19:03:54.314615'",
 			result:     []string{"2020-05-14 19:03:54.314615"},
 		},
+		// Test for issue 20236
+		{
+			prepareSQL: "set @@time_zone = '+08:00'",
+			sql:        "select time from %s where time > '2020-02-17 12:00:05.000000' and time < '2020-05-14 20:00:00.000000' order by time desc",
+			result:     []string{"2020-05-14 19:03:54.314615", "2020-02-17 18:00:05.000000"},
+		},
+		{
+			prepareSQL: "set @@time_zone = '+08:00'",
+			sql:        "select count(*) from %s where time > '2020-02-15 18:00:00.000000' and time < '2020-05-14 20:00:00.000000' order by time desc",
+			result:     []string{"7"},
+		},
+		{
+			prepareSQL: "set @@time_zone = '+08:00'",
+			sql:        "select count(*) from %s where time > '2020-02-16 18:00:00.000000' and time < '2020-02-17 20:00:00.000000' order by time desc",
+			result:     []string{"4"},
+		},
+		{
+			prepareSQL: "set @@time_zone = '+08:00'",
+			sql:        "select time from %s where time > '2020-02-16 18:00:00.000000' and time < '2020-05-14 20:00:00.000000' order by time desc limit 2",
+			result:     []string{"2020-05-14 19:03:54.314615", "2020-02-17 18:00:05.000000"},
+		},
 	}
 	for _, cas := range cases {
 		if len(cas.prepareSQL) > 0 {

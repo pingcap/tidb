@@ -120,11 +120,11 @@ func (e *slowQueryRetriever) initialize(sctx sessionctx.Context) error {
 	} else {
 		e.extractor = &plannercore.SlowQueryExtractor{}
 	}
+	e.initialized = true
+	e.files, err = e.getAllFiles(sctx, sctx.GetSessionVars().SlowQueryFile)
 	if e.extractor.Desc {
 		e.reverseLogFiles(e.files)
 	}
-	e.initialized = true
-	e.files, err = e.getAllFiles(sctx, sctx.GetSessionVars().SlowQueryFile)
 	return err
 }
 
@@ -434,6 +434,10 @@ func (e *slowQueryRetriever) parseSlowLog(ctx context.Context, sctx sessionctx.C
 			logs, err = e.getBatchLog(reader, &offset, logNum)
 		} else {
 			logs, err = e.getBatchLogForReversedScan(reader, &offset, logNum)
+			file := e.getNextFile()
+			if file != nil {
+				reader.Reset(file)
+			}
 		}
 		if err != nil {
 			t := &slowLogTask{}
