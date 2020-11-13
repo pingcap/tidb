@@ -94,7 +94,7 @@ func convertPoint(sc *stmtctx.StatementContext, point point, tp *types.FieldType
 	casted, err := point.value.ConvertTo(sc, tp)
 	if err != nil {
 		// see issue #20101: overflow when converting integer to year
-		if tp.Tp != mysql.TypeYear || !terror.ErrorEqual(err, types.ErrOverflow) {
+		if tp.Tp != mysql.TypeYear || !terror.ErrorEqual(err, types.ErrInvalidYear) {
 			return point, errors.Trace(err)
 		}
 	}
