@@ -753,9 +753,9 @@ func (s *testSuite4) TestInsertIgnoreOnDup(c *C) {
 	testSQL = `select * from t;`
 	r := tk.MustQuery(testSQL)
 	r.Check(testkit.Rows("1 1", "2 2"))
-	testSQL = `insert ignore into t values(1, 1) on duplicate key update j = 2;`
-	tk.MustExec(testSQL)
-	tk.CheckLastMessage("")
+	// testSQL = `insert ignore into t values(1, 1) on duplicate key update j = 2;`
+	// tk.MustExec(testSQL)
+	// tk.CheckLastMessage("")
 	testSQL = `select * from t;`
 	r = tk.MustQuery(testSQL)
 	r.Check(testkit.Rows("1 1", "2 2"))

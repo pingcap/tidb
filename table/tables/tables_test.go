@@ -17,6 +17,7 @@ import (
 	"context"
 	"strconv"
 	"testing"
+	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
@@ -632,13 +633,34 @@ func (ts *testSuite) TestConstraintCheckForUniqueIndex(c *C) {
 	tk.MustExec("rollback")
 
 	tk.MustExec("set @@tidb_constraint_check_in_place = 1")
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(id int(11) NOT NULL AUTO_INCREMENT,k int(11) NOT NULL DEFAULT '0',c char(120) NOT NULL DEFAULT '',PRIMARY KEY (id),UNIQUE KEY k_1 (k,c))")
-	tk.MustExec("insert into t(k,c) values(1, 'tidb')")
-	tk.MustExec("insert into t(k,c) values(2, 'tidb')")
 	tk.MustExec("begin")
 	_, err = tk.Exec("update t set k=1 where id=2")
 	c.Assert(err.Error(), Equals, "[kv:1062]Duplicate entry '1-tidb' for key 'k_1'")
 	tk.MustExec("rollback")
+
+	tk1 := testkit.NewTestKit(c, ts.store)
+	tk2 := testkit.NewTestKit(c, ts.store)
+	tk1.MustExec("set @@tidb_txn_mode = 'pessimistic'")
+	tk1.MustExec("set @@tidb_constraint_check_in_place = 0")
+	tk2.MustExec("set @@tidb_txn_mode = 'pessimistic'")
+	tk1.MustExec("use test")
+	tk1.MustExec("begin")
+	tk1.MustExec("update t set k=3 where id=2")
+
+	ch := make(chan int, 2)
+	go func() {
+		tk2.MustExec("use test")
+		tk2.Exec("insert into t(k,c) values(3, 'tidb')")
+		ch <- 2
+	}()
+	time.Sleep(100000000)
+	ch <- 1
+	tk1.Exec("commit")
+	var isSession1 string
+	if 1 == <-ch {
+		isSession1 = "true"
+	}
+	c.Assert(isSession1, Equals, "true")
+	tk1.MustExec("rollback")
+	tk2.MustExec("rollback")
 }
