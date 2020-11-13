@@ -1469,7 +1469,7 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		coll, err := collate.GetCollationByName(val)
 		if err != nil {
 			logutil.BgLogger().Warn(err.Error())
-			coll, _ = collate.GetCollationByName(charset.CollationUTF8MB4)
+			coll, err = collate.GetCollationByName(charset.CollationUTF8MB4)
 		}
 		switch name {
 		case CollationConnection:
