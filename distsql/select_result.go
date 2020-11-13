@@ -24,6 +24,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
@@ -448,7 +449,7 @@ func (s *selectResultRuntimeStats) String() string {
 			buf.WriteString(", rpc_time: ")
 			buf.WriteString(time.Duration(copRPC.Consume).String())
 		}
-		if s.CoprCacheHitNum > 0 {
+		if config.GetGlobalConfig().TiKVClient.CoprCache.Enable {
 			buf.WriteString(fmt.Sprintf(", copr_cache_hit_ratio: %v",
 				strconv.FormatFloat(float64(s.CoprCacheHitNum)/float64(len(s.copRespTime)), 'f', 2, 64)))
 		}

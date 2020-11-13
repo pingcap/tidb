@@ -471,9 +471,7 @@ func (crs *CopRuntimeStats) String() string {
 			procTimes[n-1], procTimes[0], procTimes[n*4/5], procTimes[n*19/20], totalIters, totalTasks))
 	}
 	if detail := crs.copDetails; detail != nil {
-		if detail.TotalKeys > 0 {
-			crs.writeField(buf, "total_keys", detail.TotalKeys)
-		}
+		crs.writeField(buf, "total_keys", detail.TotalKeys)
 		if detail.ProcessedKeys > 0 {
 			crs.writeField(buf, "processed_keys", detail.ProcessedKeys)
 		}
