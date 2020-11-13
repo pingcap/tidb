@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/sirupsen/logrus"
 )
 
 var (
@@ -1211,6 +1212,7 @@ func RefineComparedConstant(ctx sessionctx.Context, targetFieldType types.FieldT
 		targetFieldType = *types.NewFieldType(mysql.TypeLonglong)
 	}
 	var intDatum types.Datum
+	logrus.Warning()
 	intDatum, err = dt.ConvertTo(sc, &targetFieldType)
 	if err != nil {
 		if terror.ErrorEqual(err, types.ErrOverflow) {
@@ -1295,7 +1297,9 @@ func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Express
 	isExceptional, finalArg0, finalArg1 := false, args[0], args[1]
 	isPositiveInfinite, isNegativeInfinite := false, false
 	// int non-constant [cmp] non-int constant
-	if arg0IsInt && !arg0IsCon && !arg1IsInt && arg1IsCon {
+	if arg0IsInt && !arg0IsCon && !arg1IsInt && arg1IsCon ||
+		// int non-constant [cmp] different unsigned flag int constant
+		arg0IsInt && !arg0IsCon && arg1IsInt && arg1IsCon && mysql.HasUnsignedFlag(arg0Type.Flag) != mysql.HasUnsignedFlag(arg1Type.Flag) {
 		arg1, isExceptional = RefineComparedConstant(ctx, *arg0Type, arg1, c.op)
 		finalArg1 = arg1
 		if isExceptional && arg1.GetType().EvalType() == types.ETInt {
@@ -1314,7 +1318,9 @@ func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Express
 		}
 	}
 	// non-int constant [cmp] int non-constant
-	if arg1IsInt && !arg1IsCon && !arg0IsInt && arg0IsCon {
+	if arg1IsInt && !arg1IsCon && !arg0IsInt && arg0IsCon ||
+		// int constant [cmp] different unsigned flag int non-constant
+		arg1IsInt && !arg1IsCon && arg0IsInt && arg0IsCon && mysql.HasUnsignedFlag(arg0Type.Flag) != mysql.HasUnsignedFlag(arg1Type.Flag) {
 		arg0, isExceptional = RefineComparedConstant(ctx, *arg1Type, arg0, symmetricOp[c.op])
 		finalArg0 = arg0
 		if isExceptional && arg0.GetType().EvalType() == types.ETInt {
