@@ -1208,22 +1208,26 @@ func (s *testSuiteAgg) TestIssue20658(c *C) {
 
 	aggFuncs := []string{"sum(a)", "count(a)", "avg(a)", "max(a)", "min(a)", "bit_or(a)", "bit_xor(a)", "bit_and(a)"}
 	aggFuncs2 := []string{"var_pop(a)", "var_samp(a)", "stddev_pop(a)", "stddev_samp(a)", "approx_count_distinct(a)", "approx_percentile(a, 7)"}
-	sqlFormat := "select /*+ stream_agg() */ %s from t group by b;"
+	sqlFormats := []string{"select /*+ stream_agg() */ %s from t use index(b) group by b;", "select /*+ stream_agg() */ %s from t group by b;"}
 	castFormat := "cast(%s as decimal(32, 4))"
 
-	sqls := make([]string, 0, len(aggFuncs)+len(aggFuncs2))
-	for _, af := range aggFuncs {
-		sql := fmt.Sprintf(sqlFormat, af)
-		sqls = append(sqls, sql)
+	sqls := make([]string, 0)
+	for _, format := range sqlFormats {
+		for _, af := range aggFuncs {
+			sql := fmt.Sprintf(format, af)
+			sqls = append(sqls, sql)
+		}
 	}
 
-	for _, af := range aggFuncs2 {
-		sql := fmt.Sprintf(sqlFormat, fmt.Sprintf(castFormat, af))
-		sqls = append(sqls, sql)
+	for _, format := range sqlFormats {
+		for _, af := range aggFuncs2 {
+			sql := fmt.Sprintf(format, fmt.Sprintf(castFormat, af))
+			sqls = append(sqls, sql)
+		}
 	}
 
 	tk.MustExec("drop table if exists t;")
-	tk.MustExec("CREATE TABLE t(a bigint, b bigint);")
+	tk.MustExec("CREATE TABLE t(a bigint, b bigint，key b(b));")
 	for i := 0; i < 10000; i++ {
 		tk.MustExec("insert into t values (?, ?);", rand.Intn(100), rand.Intn(100))
 	}

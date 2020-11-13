@@ -106,15 +106,28 @@ func optimizeByShuffle4StreamAgg(pp *PhysicalStreamAgg, ctx sessionctx.Context) 
 		return nil
 	}
 
-	var splitter PartitionSplitterType
-	childExec, ok := pp.Children()[0].(*PhysicalSort)
-	if !ok {
-		splitter = PartitionRangeSplitterType
-	} else {
-		splitter = PartitionHashSplitterType
-	}
+	var (
+		splitter         PartitionSplitterType
+		tail, dataSource PhysicalPlan
+	)
 
-	tail, dataSource := childExec, childExec.Children()[0]
+	switch childExec := pp.Children()[0].(type) {
+	case *PhysicalSort:
+		splitter = PartitionHashSplitterType
+		tail, dataSource = childExec, childExec.Children()[0]
+	case *PhysicalIndexLookUpReader:
+		splitter = PartitionRangeSplitterType
+		tail, dataSource = pp, childExec
+	case *PhysicalProjection:
+		if exec, ok := childExec.Children()[0].(*PhysicalIndexLookUpReader); ok {
+			splitter = PartitionRangeSplitterType
+			tail, dataSource = pp, exec
+			break
+		}
+		return nil
+	default:
+		return nil
+	}
 
 	partitionBy := make([]*expression.Column, 0, len(pp.GroupByItems))
 	for _, item := range pp.GroupByItems {
