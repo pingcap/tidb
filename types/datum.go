@@ -1357,11 +1357,8 @@ func (d *Datum) convertToMysqlYear(sc *stmtctx.StatementContext, target *FieldTy
 		y = ret.GetInt64()
 	}
 	y, err = AdjustYear(y, adjust)
-	if err != nil {
-		err = ErrOverflow.GenWithStackByArgs("DECIMAL", fmt.Sprintf("(%d, %d)", target.Flen, target.Decimal))
-	}
 	ret.SetInt64(y)
-	return ret, err
+	return ret, errors.Trace(err)
 }
 
 // ConvertDatumToFloatYear converts datum into MySQL year with float type
@@ -1444,11 +1441,11 @@ func (d *Datum) convertToMysqlEnum(sc *stmtctx.StatementContext, target *FieldTy
 	)
 	switch d.k {
 	case KindString, KindBytes, KindBinaryLiteral:
-		e, err = ParseEnumName(target.Elems, d.GetString(), target.Collate)
+		e, err = ParseEnum(target.Elems, d.GetString(), target.Collate)
 	case KindMysqlEnum:
-		e, err = ParseEnumName(target.Elems, d.GetMysqlEnum().Name, target.Collate)
+		e, err = ParseEnum(target.Elems, d.GetMysqlEnum().Name, target.Collate)
 	case KindMysqlSet:
-		e, err = ParseEnumName(target.Elems, d.GetMysqlSet().Name, target.Collate)
+		e, err = ParseEnum(target.Elems, d.GetMysqlSet().Name, target.Collate)
 	default:
 		var uintDatum Datum
 		uintDatum, err = d.convertToUint(sc, target)
@@ -1471,11 +1468,11 @@ func (d *Datum) convertToMysqlSet(sc *stmtctx.StatementContext, target *FieldTyp
 	)
 	switch d.k {
 	case KindString, KindBytes, KindBinaryLiteral:
-		s, err = ParseSetName(target.Elems, d.GetString(), target.Collate)
+		s, err = ParseSet(target.Elems, d.GetString(), target.Collate)
 	case KindMysqlEnum:
-		s, err = ParseSetName(target.Elems, d.GetMysqlEnum().Name, target.Collate)
+		s, err = ParseSet(target.Elems, d.GetMysqlEnum().Name, target.Collate)
 	case KindMysqlSet:
-		s, err = ParseSetName(target.Elems, d.GetMysqlSet().Name, target.Collate)
+		s, err = ParseSet(target.Elems, d.GetMysqlSet().Name, target.Collate)
 	default:
 		var uintDatum Datum
 		uintDatum, err = d.convertToUint(sc, target)
@@ -1960,29 +1957,6 @@ func MinNotNullDatum() Datum {
 // MaxValueDatum returns a datum represents max value.
 func MaxValueDatum() Datum {
 	return Datum{k: KindMaxValue}
-}
-
-// EqualDatums compare if a and b contains the same datum values.
-func EqualDatums(sc *stmtctx.StatementContext, a []Datum, b []Datum) (bool, error) {
-	if len(a) != len(b) {
-		return false, nil
-	}
-	if a == nil && b == nil {
-		return true, nil
-	}
-	if a == nil || b == nil {
-		return false, nil
-	}
-	for i, ai := range a {
-		v, err := ai.CompareDatum(sc, &b[i])
-		if err != nil {
-			return false, errors.Trace(err)
-		}
-		if v != 0 {
-			return false, nil
-		}
-	}
-	return true, nil
 }
 
 // SortDatums sorts a slice of datum.
