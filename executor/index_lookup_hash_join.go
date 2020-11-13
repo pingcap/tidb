@@ -536,14 +536,14 @@ func (iw *indexHashJoinInnerWorker) buildHashTableForOuterResult(ctx context.Con
 				continue
 			}
 			row := chk.GetRow(rowIdx)
-			keyColIdx := iw.outerCtx.hashCols
-			for _, i := range keyColIdx {
+			hashColIdx := iw.outerCtx.hashCols
+			for _, i := range hashColIdx {
 				if row.IsNull(i) {
 					continue OUTER
 				}
 			}
 			h.Reset()
-			err := codec.HashChunkRow(iw.ctx.GetSessionVars().StmtCtx, h, row, iw.outerCtx.rowTypes, keyColIdx, buf)
+			err := codec.HashChunkRow(iw.ctx.GetSessionVars().StmtCtx, h, row, iw.outerCtx.rowTypes, hashColIdx, buf)
 			failpoint.Inject("testIndexHashJoinBuildErr", func() {
 				err = errors.New("mockIndexHashJoinBuildErr")
 			})
