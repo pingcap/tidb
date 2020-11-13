@@ -389,13 +389,13 @@ func buildInterceptFileWriter(s storage.ExternalStorage, path string) (storage.W
 			log.Error("open file failed",
 				zap.String("path", fullPath),
 				zap.Error(err))
-			return err
+			return newWriterError(err)
 		}
 		w := storage.NewUploaderWriter(uploader, hardcodedS3ChunkSize)
 		writer = w
 		log.Debug("opened file", zap.String("path", fullPath))
 		fileWriter.Writer = writer
-		return err
+		return nil
 	}
 	fileWriter.initRoutine = initRoutine
 
@@ -427,6 +427,21 @@ func (l *LazyStringWriter) WriteString(str string) (int, error) {
 	return l.StringWriter.WriteString(str)
 }
 
+type writerError struct {
+	error
+}
+
+func (e *writerError) Error() string {
+	return e.error.Error()
+}
+
+func newWriterError(err error) error {
+	if err == nil {
+		return nil
+	}
+	return &writerError{error: err}
+}
+
 // InterceptFileWriter is an interceptor of os.File,
 // tracking whether a StringWriter has written something.
 type InterceptFileWriter struct {
@@ -446,7 +461,8 @@ func (w *InterceptFileWriter) Write(ctx context.Context, p []byte) (int, error) 
 	if w.err != nil {
 		return 0, errors.Annotate(w.err, "open file error")
 	}
-	return w.Writer.Write(ctx, p)
+	n, err := w.Writer.Write(ctx, p)
+	return n, newWriterError(err)
 }
 
 func (w *InterceptFileWriter) Close(ctx context.Context) error {
