@@ -131,7 +131,11 @@ func Dump(pCtx context.Context, conf *Config) (err error) {
 
 	m := newGlobalMetadata(conf.ExternalStorage)
 	// write metadata even if dump failed
-	defer m.writeGlobalMetaData(ctx)
+	defer func() {
+		if err == nil {
+			m.writeGlobalMetaData(ctx)
+		}
+	}()
 
 	// for consistency lock, we should lock tables at first to get the tables we want to lock & dump
 	// for consistency lock, record meta pos before lock tables because other tables may still be modified while locking tables
@@ -184,22 +188,17 @@ func Dump(pCtx context.Context, conf *Config) (err error) {
 	defer connectPool.Close()
 
 	if conf.PosAfterConnect {
-		conn := connectPool.getConn()
 		// record again, to provide a location to exit safe mode for DM
-		err = m.recordGlobalMetaData(conn, conf.ServerInfo.ServerType, true, snapshot)
+		err = m.recordGlobalMetaData(connectPool.extraConn(), conf.ServerInfo.ServerType, true, snapshot)
 		if err != nil {
 			log.Info("get global metadata (after connection pool established) failed", zap.Error(err))
 		}
-		connectPool.releaseConn(conn)
 	}
 
 	if conf.Consistency != "lock" {
-		conn := connectPool.getConn()
-		if err = prepareTableListToDump(conf, conn); err != nil {
-			connectPool.releaseConn(conn)
+		if err = prepareTableListToDump(conf, connectPool.extraConn()); err != nil {
 			return err
 		}
-		connectPool.releaseConn(conn)
 	}
 
 	if err = conCtrl.TearDown(ctx); err != nil {
@@ -240,9 +239,7 @@ func dumpDatabases(pCtx context.Context, conf *Config, connectPool *connectionsP
 	allTables := conf.Tables
 	g, ctx := errgroup.WithContext(pCtx)
 	for dbName, tables := range allTables {
-		conn := connectPool.getConn()
-		createDatabaseSQL, err := ShowCreateDatabase(conn, dbName)
-		connectPool.releaseConn(conn)
+		createDatabaseSQL, err := ShowCreateDatabase(connectPool.extraConn(), dbName)
 		if err != nil {
 			return err
 		}
@@ -255,21 +252,19 @@ func dumpDatabases(pCtx context.Context, conf *Config, connectPool *connectionsP
 		}
 		for _, table := range tables {
 			table := table
-			conn := connectPool.getConn()
-			tableDataIRArray, err := dumpTable(ctx, conf, conn, dbName, table, writer)
-			connectPool.releaseConn(conn)
+			tableDataIRArray, err := dumpTable(ctx, conf, connectPool.extraConn(), dbName, table, writer)
 			if err != nil {
 				return err
 			}
 			for _, tableIR := range tableDataIRArray {
 				tableIR := tableIR
 				g.Go(func() error {
+					conn := connectPool.getConn()
+					defer connectPool.releaseConn(conn)
 					retryTime := 1
 					return utils.WithRetry(ctx, func() error {
 						log.Debug("trying to dump table chunk", zap.Int("retryTime", retryTime), zap.String("db", tableIR.DatabaseName()),
 							zap.String("table", tableIR.TableName()), zap.Int("chunkIndex", tableIR.ChunkIndex()))
-						conn := connectPool.getConn()
-						defer connectPool.releaseConn(conn)
 						retryTime += 1
 						err := tableIR.Start(ctx, conn)
 						if err != nil {
@@ -308,9 +303,7 @@ func prepareTableListToDump(conf *Config, pool *sql.Conn) error {
 }
 
 func dumpSql(ctx context.Context, conf *Config, connectPool *connectionsPool, writer Writer) error {
-	conn := connectPool.getConn()
-	tableIR, err := SelectFromSql(conf, conn)
-	connectPool.releaseConn(conn)
+	tableIR, err := SelectFromSql(conf, connectPool.extraConn())
 	if err != nil {
 		return err
 	}

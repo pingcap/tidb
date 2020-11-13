@@ -146,6 +146,10 @@ func (m *mockTableIR) Rows() SQLRowIter {
 	return m.SQLRowIter
 }
 
+func (m *mockTableIR) Close() error {
+	return nil
+}
+
 func (m *mockTableIR) EscapeBackSlash() bool {
 	return m.escapeBackSlash
 }
