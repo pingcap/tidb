@@ -85,10 +85,13 @@ type tableData struct {
 	selectedField   string
 	specCmts        []string
 	escapeBackslash bool
+	cancel          context.CancelFunc
 	SQLRowIter
 }
 
-func (td *tableData) Start(ctx context.Context, conn *sql.Conn) error {
+func (td *tableData) Start(pCtx context.Context, conn *sql.Conn) error {
+	var ctx context.Context
+	ctx, td.cancel = context.WithCancel(pCtx)
 	rows, err := conn.QueryContext(ctx, td.query)
 	if err != nil {
 		return err
@@ -135,6 +138,13 @@ func (td *tableData) Rows() SQLRowIter {
 		td.SQLRowIter = newRowIter(td.rows, len(td.colTypes))
 	}
 	return td.SQLRowIter
+}
+
+func (td *tableData) Close() error {
+	if td.cancel != nil {
+		td.cancel()
+	}
+	return td.Rows().Close()
 }
 
 func (td *tableData) SelectedField() string {
@@ -187,7 +197,7 @@ func splitTableDataIntoChunks(
 		return
 	}
 	if !smax.Valid || !smin.Valid {
-		// smax and smin are not valid, but there can also be data to dump, so just skip split chunk logic. 
+		// smax and smin are not valid, but there can also be data to dump, so just skip split chunk logic.
 		log.Debug("skip concurrent dump due to no valid smax or smin", zap.String("schema", dbName), zap.String("table", tableName))
 		linear <- struct{}{}
 		return

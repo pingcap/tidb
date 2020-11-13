@@ -13,15 +13,17 @@ type connectionsPool struct {
 func newConnectionsPool(ctx context.Context, n int, pool *sql.DB) (*connectionsPool, error) {
 	connectPool := &connectionsPool{
 		conns:        make(chan *sql.Conn, n),
-		createdConns: make([]*sql.Conn, 0, n),
+		createdConns: make([]*sql.Conn, 0, n+1),
 	}
-	for i := 0; i < n; i++ {
+	for i := 0; i < n+1; i++ {
 		conn, err := createConnWithConsistency(ctx, pool)
 		if err != nil {
 			connectPool.Close()
 			return connectPool, err
 		}
-		connectPool.releaseConn(conn)
+		if i != n {
+			connectPool.releaseConn(conn)
+		}
 		connectPool.createdConns = append(connectPool.createdConns, conn)
 	}
 	return connectPool, nil
@@ -29,6 +31,10 @@ func newConnectionsPool(ctx context.Context, n int, pool *sql.DB) (*connectionsP
 
 func (r *connectionsPool) getConn() *sql.Conn {
 	return <-r.conns
+}
+
+func (r *connectionsPool) extraConn() *sql.Conn {
+	return r.createdConns[len(r.createdConns)-1]
 }
 
 func (r *connectionsPool) Close() error {

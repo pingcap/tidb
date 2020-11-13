@@ -36,6 +36,7 @@ func newMockConnectPool(c *C, db *sql.DB) *connectionsPool {
 	c.Assert(err, IsNil)
 	connectPool := &connectionsPool{conns: make(chan *sql.Conn, 1)}
 	connectPool.releaseConn(conn)
+	connectPool.createdConns = []*sql.Conn{conn}
 	return connectPool
 }
 
