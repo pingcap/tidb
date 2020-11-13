@@ -89,8 +89,6 @@ func (c *twoPhaseCommitter) buildPrewriteRequest(batch batchMutations, txnSize u
 			req.Secondaries = c.asyncSecondaries()
 		}
 		req.UseAsyncCommit = true
-		// The async commit can not be used for large transactions, and the commit ts can't be pushed.
-		req.MinCommitTs = 0
 	}
 
 	if c.isOnePC() {
