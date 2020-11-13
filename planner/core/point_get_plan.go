@@ -1246,7 +1246,7 @@ func findCol(tbl *model.TableInfo, colName *ast.ColumnName) *model.ColumnInfo {
 
 func colInfoToColumn(col *model.ColumnInfo, idx int) *expression.Column {
 	return &expression.Column{
-		RetType:  &col.FieldType,
+		RetType:  col.FieldType.Clone(),
 		ID:       col.ID,
 		UniqueID: int64(col.Offset),
 		Index:    idx,
