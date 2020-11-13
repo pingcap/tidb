@@ -96,7 +96,7 @@ var (
 	errUnsupportedCreatePartition         = terror.ClassDDL.New(mysql.ErrUnsupportedDDLOperation, fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation], "partition type, treat as normal table"))
 	errTablePartitionDisabled             = terror.ClassDDL.New(mysql.ErrUnsupportedDDLOperation, "Partitions are ignored because Table Partition is disabled, please set 'tidb_enable_table_partition' if you need to need to enable it")
 	errUnsupportedIndexType               = terror.ClassDDL.New(mysql.ErrUnsupportedDDLOperation, fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation], "index type"))
-	errWindowInvalidWindowFuncUse          = terror.ClassDDL.New(mysql.ErrWindowInvalidWindowFuncUse, fmt.Sprintf(mysql.MySQLErrName[mysql.ErrWindowInvalidWindowFuncUse]))
+	errWindowInvalidWindowFuncUse         = terror.ClassDDL.New(mysql.ErrWindowInvalidWindowFuncUse, fmt.Sprintf(mysql.MySQLErrName[mysql.ErrWindowInvalidWindowFuncUse]))
 
 	// ErrDupKeyName returns for duplicated key name
 	ErrDupKeyName = terror.ClassDDL.New(mysql.ErrDupKeyName, mysql.MySQLErrName[mysql.ErrDupKeyName])
