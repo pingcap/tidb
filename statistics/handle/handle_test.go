@@ -849,9 +849,9 @@ func (s *statsSerialSuite) TestGCIndexUsageInformation(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-//	tk.MustExec("create table t_idx(a int, b int)")
+	tk.MustExec("create table t_idx(a int, b int)")
 //	tk.MustExec("create unique index idx_a on t_idx(a)")
-//	tk.MustQuery("select a from t_idx where a=1")
+	tk.MustQuery("select a from t_idx where a=1")
 	do := s.do
 	err := do.StatsHandle().DumpIndexUsageToKV()
 	c.Assert(err, IsNil)
