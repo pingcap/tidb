@@ -855,7 +855,14 @@ func (s *statsSerialSuite) TestGCIndexUsageInformation(c *C) {
 	do := s.do
 	err := do.StatsHandle().DumpIndexUsageToKV()
 	c.Assert(err, IsNil)
-	tk.MustQuery("select * from mysql.schema_index_usage as stats left join information_schema.tidb_indexes as idx on idx.index_id=stats.index_id where idx.table_name='t_idx'").Check(testkit.Rows("1"))
+	querySQL := `select idx.table_schema, idx.table_name, idx.key_name, stats.query_count, stats.rows_selected 
+					from mysql.schema_index_usage as stats, information_schema.tidb_indexes as idx, information_schema.tables as tables
+					where tables.table_schema = idx.table_schema
+						AND tables.table_name = idx.table_name
+						AND tables.tidb_table_id = stats.table_id
+						AND idx.index_id = stats.index_id
+						AND idx.table_name = "t_idx"`
+	tk.MustQuery(querySQL).Check(testkit.Rows("1"))
 //	tk.MustExec("drop index `idx_a` on t_idx")
 //	err = do.StatsHandle().GCIndexUsage()
 //	c.Assert(err, IsNil)
