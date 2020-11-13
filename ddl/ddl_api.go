@@ -5420,7 +5420,6 @@ func (d *ddl) UnlockTables(ctx sessionctx.Context, unlockTables []model.TableLoc
 	err := d.doDDLJob(ctx, job)
 	if err == nil {
 		ctx.ReleaseAllTableLocks()
-		ctx.GetStore().GetMemCache().Release()
 	}
 	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
