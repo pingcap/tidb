@@ -907,6 +907,7 @@ func (e *AggWorkerStat) String() string {
 	return result
 }
 
+// Merge is used to avoid duplicate code
 func (e *AggWorkerStat) Merge(tmp AggWorkerStat) {
 	e.WallTime += tmp.WallTime
 	e.TaskNum += tmp.TaskNum
