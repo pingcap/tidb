@@ -807,6 +807,8 @@ func (s *testStateChangeSuiteBase) runTestInSchemaState(c *C, state model.Schema
 	 	unique key idx2 (c2))`)
 	c.Assert(err, IsNil)
 	defer s.se.Execute(context.Background(), "drop table t")
+	_, err = s.se.Execute(context.Background(), "set @@tidb_constraint_check_in_place = 1")
+	c.Assert(err, IsNil)
 	_, err = s.se.Execute(context.Background(), "insert into t values('a', 'N', '2017-07-01', 8)")
 	c.Assert(err, IsNil)
 	// Make sure these sqls use the the plan of index scan.
