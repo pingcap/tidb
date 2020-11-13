@@ -688,7 +688,13 @@ func needChangeColumnData(oldCol, newCol *model.ColumnInfo) bool {
 	toUnsigned := mysql.HasUnsignedFlag(newCol.Flag)
 	originUnsigned := mysql.HasUnsignedFlag(oldCol.Flag)
 	needTruncationOrToggleSign := func() bool {
-		return newCol.Flen > 0 && newCol.Flen < oldCol.Flen || toUnsigned != originUnsigned
+		return (newCol.Flen > 0 && newCol.Flen < oldCol.Flen) || (toUnsigned != originUnsigned)
+	}
+	// Ignore the potential max display length represented by integer's flen, use default flen instead.
+	oldColFlen, _ := mysql.GetDefaultFieldLengthAndDecimal(oldCol.Tp)
+	newColFlen, _ := mysql.GetDefaultFieldLengthAndDecimal(newCol.Tp)
+	needTruncationOrToggleSignForInteger := func() bool {
+		return (newColFlen > 0 && newColFlen < oldColFlen) || (toUnsigned != originUnsigned)
 	}
 
 	// Deal with the same type.
@@ -700,6 +706,8 @@ func needChangeColumnData(oldCol, newCol *model.ColumnInfo) bool {
 			return oldCol.Flen != newCol.Flen || oldCol.Decimal != newCol.Decimal || toUnsigned != originUnsigned
 		case mysql.TypeEnum, mysql.TypeSet:
 			return isElemsChangedToModifyColumn(oldCol.Elems, newCol.Elems)
+		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
+			return toUnsigned != originUnsigned
 		}
 
 		return needTruncationOrToggleSign()
@@ -715,7 +723,7 @@ func needChangeColumnData(oldCol, newCol *model.ColumnInfo) bool {
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
 		switch newCol.Tp {
 		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
-			return needTruncationOrToggleSign()
+			return needTruncationOrToggleSignForInteger()
 		}
 	case mysql.TypeFloat, mysql.TypeDouble:
 		switch newCol.Tp {
