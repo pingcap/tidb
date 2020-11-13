@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"math"
 	"math/rand"
+	"net"
 	"sort"
 	"strconv"
 	"strings"
@@ -86,7 +87,7 @@ func (r *RetryInfo) AddAutoIncrementID(id int64) {
 }
 
 // GetCurrAutoIncrementID gets current autoIncrementID.
-func (r *RetryInfo) GetCurrAutoIncrementID() (int64, error) {
+func (r *RetryInfo) GetCurrAutoIncrementID() (int64, bool) {
 	return r.autoIncrementIDs.getCurrent()
 }
 
@@ -96,7 +97,7 @@ func (r *RetryInfo) AddAutoRandomID(id int64) {
 }
 
 // GetCurrAutoRandomID gets current AutoRandomID.
-func (r *RetryInfo) GetCurrAutoRandomID() (int64, error) {
+func (r *RetryInfo) GetCurrAutoRandomID() (int64, bool) {
 	return r.autoRandomIDs.getCurrent()
 }
 
@@ -116,13 +117,13 @@ func (r *retryInfoAutoIDs) clean() {
 	}
 }
 
-func (r *retryInfoAutoIDs) getCurrent() (int64, error) {
+func (r *retryInfoAutoIDs) getCurrent() (int64, bool) {
 	if r.currentOffset >= len(r.autoIDs) {
-		return 0, errCantGetValidID
+		return 0, false
 	}
 	id := r.autoIDs[r.currentOffset]
 	r.currentOffset++
-	return id, nil
+	return id, true
 }
 
 // stmtFuture is used to async get timestamp for statement.
@@ -367,6 +368,9 @@ type SessionVars struct {
 	Users map[string]types.Datum
 	// systems variables, don't modify it directly, use GetSystemVar/SetSystemVar method.
 	systems map[string]string
+	// stmtVars variables are temporarily set by SET_VAR hint
+	// It only take effect for the duration of a single statement
+	stmtVars map[string]string
 	// SysWarningCount is the system variable "warning_count", because it is on the hot path, so we extract it from the systems
 	SysWarningCount int
 	// SysErrorCount is the system variable "error_count", because it is on the hot path, so we extract it from the systems
@@ -653,6 +657,9 @@ type SessionVars struct {
 	// allowInSubqToJoinAndAgg can be set to false to forbid rewriting the semi join to inner join with agg.
 	allowInSubqToJoinAndAgg bool
 
+	// preferRangeScan allows optimizer to always prefer range scan over table scan.
+	preferRangeScan bool
+
 	// EnableIndexMerge enables the generation of IndexMergePath.
 	enableIndexMerge bool
 
@@ -724,6 +731,9 @@ type SessionVars struct {
 
 	// PartitionPruneMode indicates how and when to prune partitions.
 	PartitionPruneMode atomic2.String
+
+	// TxnScope indicates the scope of the transactions. It should be `global` or equal to `dc-location` in configuration.
+	TxnScope string
 }
 
 // UseDynamicPartitionPrune indicates whether use new dynamic partition prune.
@@ -765,7 +775,7 @@ func (pps PreparedParams) String() string {
 
 // ConnectionInfo present connection used by audit.
 type ConnectionInfo struct {
-	ConnectionID      uint32
+	ConnectionID      uint64
 	ConnectionType    string
 	Host              string
 	ClientIP          string
@@ -788,6 +798,7 @@ func NewSessionVars() *SessionVars {
 	vars := &SessionVars{
 		Users:                       make(map[string]types.Datum),
 		systems:                     make(map[string]string),
+		stmtVars:                    make(map[string]string),
 		PreparedStmts:               make(map[uint32]interface{}),
 		PreparedStmtNameToID:        make(map[string]uint32),
 		PreparedParams:              make([]types.Datum, 0, 10),
@@ -806,6 +817,7 @@ func NewSessionVars() *SessionVars {
 		DisableTxnAutoRetry:         DefTiDBDisableTxnAutoRetry,
 		DDLReorgPriority:            kv.PriorityLow,
 		allowInSubqToJoinAndAgg:     DefOptInSubqToJoinAndAgg,
+		preferRangeScan:             DefOptPreferRangeScan,
 		CorrelationThreshold:        DefOptCorrelationThreshold,
 		CorrelationExpFactor:        DefOptCorrelationExpFactor,
 		CPUFactor:                   DefOptCPUFactor,
@@ -848,6 +860,7 @@ func NewSessionVars() *SessionVars {
 		EnableChangeColumnType:      DefTiDBChangeColumnType,
 		EnableAmendPessimisticTxn:   DefTiDBEnableAmendPessimisticTxn,
 		PartitionPruneMode:          *atomic2.NewString(DefTiDBPartitionPruneMode),
+		TxnScope:                    config.GetGlobalConfig().TxnScope,
 	}
 	vars.KVVars = kv.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{
@@ -927,6 +940,16 @@ func (s *SessionVars) GetAllowInSubqToJoinAndAgg() bool {
 // SetAllowInSubqToJoinAndAgg set SessionVars.allowInSubqToJoinAndAgg.
 func (s *SessionVars) SetAllowInSubqToJoinAndAgg(val bool) {
 	s.allowInSubqToJoinAndAgg = val
+}
+
+// GetAllowPreferRangeScan get preferRangeScan from SessionVars.preferRangeScan.
+func (s *SessionVars) GetAllowPreferRangeScan() bool {
+	return s.preferRangeScan
+}
+
+// SetAllowPreferRangeScan set SessionVars.preferRangeScan.
+func (s *SessionVars) SetAllowPreferRangeScan(val bool) {
+	s.preferRangeScan = val
 }
 
 // GetEnableCascadesPlanner get EnableCascadesPlanner from sql hints and SessionVars.EnableCascadesPlanner.
@@ -1105,6 +1128,9 @@ func (s *SessionVars) GetSystemVar(name string) (string, bool) {
 	if name == TiDBSlowLogMasking {
 		name = TiDBRedactLog
 	}
+	if val, ok := s.stmtVars[name]; ok {
+		return val, ok
+	}
 	val, ok := s.systems[name]
 	return val, ok
 }
@@ -1161,6 +1187,17 @@ func (s *SessionVars) WithdrawAllPreparedStmt() {
 	}
 	afterMinus := atomic.AddInt64(&preparedStmtCount, -int64(psCount))
 	metrics.PreparedStmtGauge.Set(float64(afterMinus))
+}
+
+// SetStmtVar sets the value of a system variable temporarily
+func (s *SessionVars) SetStmtVar(name string, val string) error {
+	s.stmtVars[name] = val
+	return nil
+}
+
+// ClearStmtVars clear temporarily system variables.
+func (s *SessionVars) ClearStmtVars() {
+	s.stmtVars = make(map[string]string)
 }
 
 // SetSystemVar sets the value of a system variable.
@@ -1242,6 +1279,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.AllowWriteRowID = TiDBOptOn(val)
 	case TiDBOptInSubqToJoinAndAgg:
 		s.SetAllowInSubqToJoinAndAgg(TiDBOptOn(val))
+	case TiDBOptPreferRangeScan:
+		s.SetAllowPreferRangeScan(TiDBOptOn(val))
 	case TiDBOptCorrelationThreshold:
 		s.CorrelationThreshold = tidbOptFloat64(val, DefOptCorrelationThreshold)
 	case TiDBOptCorrelationExpFactor:
@@ -1335,7 +1374,7 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	case TIDBMemQuotaNestedLoopApply:
 		s.MemQuotaNestedLoopApply = tidbOptInt64(val, DefTiDBMemQuotaNestedLoopApply)
 	case TiDBGeneralLog:
-		atomic.StoreUint32(&ProcessGeneralLog, uint32(tidbOptPositiveInt32(val, DefTiDBGeneralLog)))
+		ProcessGeneralLog.Store(TiDBOptOn(val))
 	case TiDBPProfSQLCPU:
 		EnablePProfSQLCPU.Store(uint32(tidbOptPositiveInt32(val, DefTiDBPProfSQLCPU)) > 0)
 	case TiDBDDLSlowOprThreshold:
@@ -1488,6 +1527,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.EnableChangeColumnType = TiDBOptOn(val)
 	case TiDBEnableAmendPessimisticTxn:
 		s.EnableAmendPessimisticTxn = TiDBOptOn(val)
+	case TiDBTxnScope:
+		s.TxnScope = val
 	}
 	s.systems[name] = val
 	return nil
@@ -1624,6 +1665,9 @@ type Concurrency struct {
 
 	// ExecutorConcurrency is the number of concurrent worker for all executors.
 	ExecutorConcurrency int
+
+	// SourceAddr is the source address of request. Available in coprocessor ONLY.
+	SourceAddr net.TCPAddr
 }
 
 // SetIndexLookupConcurrency set the number of concurrent index lookup worker.

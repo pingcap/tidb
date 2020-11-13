@@ -181,6 +181,9 @@ const (
 
 	// TiDBAllowAutoRandExplicitInsert indicates whether explicit insertion on auto_random column is allowed.
 	TiDBAllowAutoRandExplicitInsert = "allow_auto_random_explicit_insert"
+
+	// TiDBTxnScope indicates whether using global transactions or local transactions.
+	TiDBTxnScope = "txn_scope"
 )
 
 // TiDB system variable names that both in session and global scope.
@@ -198,6 +201,9 @@ const (
 
 	// tidb_opt_insubquery_to_join_and_agg is used to enable/disable the optimizer rule of rewriting IN subquery.
 	TiDBOptInSubqToJoinAndAgg = "tidb_opt_insubq_to_join_and_agg"
+
+	// tidb_opt_prefer_range_scan is used to enable/disable the optimizer to always prefer range scan over table scan, ignoring their costs.
+	TiDBOptPreferRangeScan = "tidb_opt_prefer_range_scan"
 
 	// tidb_opt_correlation_threshold is a guard to enable row count estimation using column order correlation.
 	TiDBOptCorrelationThreshold = "tidb_opt_correlation_threshold"
@@ -486,6 +492,7 @@ const (
 	DefOptDiskFactor                   = 1.5
 	DefOptConcurrencyFactor            = 3.0
 	DefOptInSubqToJoinAndAgg           = true
+	DefOptPreferRangeScan              = false
 	DefBatchInsert                     = false
 	DefBatchDelete                     = false
 	DefBatchCommit                     = false
@@ -503,7 +510,7 @@ const (
 	DefTiDBMemQuotaIndexLookupJoin     = 32 << 30 // 32GB.
 	DefTiDBMemQuotaNestedLoopApply     = 32 << 30 // 32GB.
 	DefTiDBMemQuotaDistSQL             = 32 << 30 // 32GB.
-	DefTiDBGeneralLog                  = 0
+	DefTiDBGeneralLog                  = false
 	DefTiDBPProfSQLCPU                 = 0
 	DefTiDBRetryLimit                  = 10
 	DefTiDBDisableTxnAutoRetry         = true
@@ -561,7 +568,7 @@ const (
 
 // Process global variables.
 var (
-	ProcessGeneralLog      uint32
+	ProcessGeneralLog            = atomic.NewBool(false)
 	EnablePProfSQLCPU            = atomic.NewBool(false)
 	ddlReorgWorkerCounter  int32 = DefTiDBDDLReorgWorkerCount
 	maxDDLReorgWorkerCount int32 = 128

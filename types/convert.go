@@ -264,7 +264,7 @@ func convertDecimalStrToUint(sc *stmtctx.StatementContext, str string, upperBoun
 
 	val, err := strconv.ParseUint(intStr, 10, 64)
 	if err != nil {
-		return val, errors.Trace(err)
+		return val, overflow(str, tp)
 	}
 	return val + round, nil
 }
