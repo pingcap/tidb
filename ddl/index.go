@@ -625,25 +625,34 @@ func onDropIndexes(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	switch idxInfos[0].State {
 	case model.StatePublic:
 		// public -> write only
-		job.SchemaState = model.StateWriteOnly
 		setIndicesState(idxInfos, model.StateWriteOnly)
 		setColumnsState(dependentHiddenCols, model.StateWriteOnly)
 		for _, colInfo := range dependentHiddenCols {
 			adjustColumnInfoInDropColumn(tblInfo, colInfo.Offset)
 		}
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != idxInfos[0].State)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		job.SchemaState = model.StateWriteOnly
 	case model.StateWriteOnly:
 		// write only -> delete only
-		job.SchemaState = model.StateDeleteOnly
 		setIndicesState(idxInfos, model.StateDeleteOnly)
 		setColumnsState(dependentHiddenCols, model.StateDeleteOnly)
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != idxInfos[0].State)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		job.SchemaState = model.StateDeleteOnly
 	case model.StateDeleteOnly:
 		// delete only -> reorganization
-		job.SchemaState = model.StateDeleteReorganization
 		setIndicesState(idxInfos, model.StateDeleteReorganization)
 		setColumnsState(dependentHiddenCols, model.StateDeleteReorganization)
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != idxInfos[0].State)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		job.SchemaState = model.StateDeleteReorganization
 	case model.StateDeleteReorganization:
 		// reorganization -> absent
 		indexesIDs := make([]int64, 0, len(idxInfos))
