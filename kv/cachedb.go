@@ -42,7 +42,7 @@ func (c *cachedb) Set(tableID int64, key Key, value []byte) error {
 		c.memTables[tableID] = table
 	}
 	err := table.Set(key, value)
-	if ErrTxnTooLarge.Equal(err) {
+	if err != nil && ErrTxnTooLarge.Equal(err) {
 		// If it reaches the upper limit, refresh a new memory buffer.
 		c.memTables[tableID] = newMemDB()
 		return nil
