@@ -46,14 +46,14 @@
           "EXPLAIN SELECT *, t1.a IN (SELECT t2.b FROM t t2) FROM t t1 WHERE t1.b <= 6 ORDER BY t1.a limit 1"
         ],
         "Plan": [
-          "TopN_14 1.00 root test.t1.a:asc, offset:0, count:1",
-          "└─HashLeftJoin_18 1.00 root CARTESIAN left outer semi join, inner:IndexReader_38, other cond:eq(test.t1.a, test.t2.b)",
-          "  ├─TopN_19 1.00 root test.t1.a:asc, offset:0, count:1",
-          "  │ └─IndexReader_27 1.00 root index:TopN_26",
-          "  │   └─TopN_26 1.00 cop test.t1.a:asc, offset:0, count:1",
-          "  │     └─IndexScan_25 6.00 cop table:t1, index:b, c, range:[-inf,6], keep order:false",
-          "  └─IndexReader_38 25.00 root index:IndexScan_37",
-          "    └─IndexScan_37 25.00 cop table:t2, index:b, c, range:[NULL,+inf], keep order:false"
+          "Limit_17 1.00 root offset:0, count:1",
+          "└─IndexJoin_58 1.00 root left outer semi join, inner:IndexReader_57, outer key:test.t1.a, inner key:test.t2.b",
+          "  ├─TopN_23 1.00 root test.t1.a:asc, offset:0, count:1",
+          "  │ └─IndexReader_31 1.00 root index:TopN_30",
+          "  │   └─TopN_30 1.00 cop test.t1.a:asc, offset:0, count:1",
+          "  │     └─IndexScan_29 6.00 cop table:t1, index:b, c, range:[-inf,6], keep order:false",
+          "  └─IndexReader_57 1.04 root index:IndexScan_56",
+          "    └─IndexScan_56 1.04 cop table:t2, index:b, c, range: decided by [eq(test.t2.b, test.t1.a)], keep order:false"
         ]
       },
       {

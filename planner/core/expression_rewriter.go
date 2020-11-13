@@ -748,7 +748,6 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, v *ast.Patte
 		// For AntiSemiJoin/LeftOuterSemiJoin/AntiLeftOuterSemiJoin, we cannot treat `in` expression as
 		// normal column equal condition, so we specially mark the inner operand here.
 		if v.Not || asScalar {
-			rCol.InOperand = true
 			// If both input columns of `in` expression are not null, we can treat the expression
 			// as normal column equal condition instead.
 			if !expression.ExprNotNull(lexpr) || !expression.ExprNotNull(rCol) {
