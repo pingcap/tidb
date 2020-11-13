@@ -1378,6 +1378,11 @@ func (s *testTimeSuite) TestExtractDurationValue(c *C) {
 			failed: true,
 		},
 		{
+			unit:   "SECOND",
+			format: "50.-2",
+			ans:    "00:00:50",
+		},
+		{
 			unit:   "MONTH",
 			format: "1",
 			ans:    "720:00:00",
@@ -1703,6 +1708,11 @@ func (s *testTimeSuite) TestTimeOverflow(c *C) {
 		{"2018.01.01", false},
 		{"2018.01.01 00:00:00", false},
 		{"2018/01/01-00:00:00", false},
+		{"0999-12-31 22:00:00", false},
+		{"9999-12-31 23:59:59", false},
+		{"0001-01-01 00:00:00", false},
+		{"0001-01-01 23:59:59", false},
+		{"0000-01-01 00:00:00", true},
 	}
 
 	for _, test := range table {

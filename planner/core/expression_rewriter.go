@@ -400,6 +400,7 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 		er.ctxStackAppend(er.schema.Columns[index], er.names[index])
 		return inNode, true
 	case *ast.FuncCallExpr:
+		er.asScalar = true
 		if _, ok := expression.DisableFoldFunctions[v.FnName.L]; ok {
 			er.disableFoldCounter++
 		}
@@ -407,10 +408,16 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 			er.tryFoldCounter++
 		}
 	case *ast.CaseExpr:
+		er.asScalar = true
 		if _, ok := expression.DisableFoldFunctions["case"]; ok {
 			er.disableFoldCounter++
 		}
 		if _, ok := expression.TryFoldFunctions["case"]; ok {
+			er.tryFoldCounter++
+		}
+	case *ast.BinaryOperationExpr:
+		er.asScalar = true
+		if v.Op == opcode.LogicAnd || v.Op == opcode.LogicOr {
 			er.tryFoldCounter++
 		}
 	case *ast.SetCollationExpr:
@@ -972,6 +979,9 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 	case *ast.UnaryOperationExpr:
 		er.unaryOpToExpression(v)
 	case *ast.BinaryOperationExpr:
+		if v.Op == opcode.LogicAnd || v.Op == opcode.LogicOr {
+			er.tryFoldCounter--
+		}
 		er.binaryOpToExpression(v)
 	case *ast.BetweenExpr:
 		er.betweenToExpression(v)
@@ -1158,7 +1168,7 @@ func (er *expressionRewriter) unaryOpToExpression(v *ast.UnaryOperationExpr) {
 		op = ast.UnaryMinus
 	case opcode.BitNeg:
 		op = ast.BitNeg
-	case opcode.Not:
+	case opcode.Not, opcode.Not2:
 		op = ast.UnaryNot
 	default:
 		er.err = errors.Errorf("Unknown Unary Op %T", v.Op)
