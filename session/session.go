@@ -43,6 +43,7 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/infoschema"
@@ -540,6 +541,22 @@ func (s *session) CommitTxn(ctx context.Context) error {
 
 	var commitDetail *execdetails.CommitDetails
 	ctx = context.WithValue(ctx, execdetails.CommitDetailCtxKey, &commitDetail)
+	is := infoschema.GetInfoSchema(s)
+	txnScope := s.GetSessionVars().TxnScope
+	for physicalTableID := range s.sessionVars.TxnCtx.TableDeltaMap {
+		bundle, ok := is.RuleBundles()[placement.GroupID(physicalTableID)]
+		if !ok {
+			continue
+		}
+		// FIXME: currently we assumes "zone" is the dcLabel key in Store
+		dcLocation, ok := placement.GetLeaderDCByBundle(bundle, "zone")
+		if !ok {
+			continue
+		}
+		if dcLocation != txnScope {
+			return fmt.Errorf("table %v 's leader location %v is out of txn_scope %v", physicalTableID, dcLocation, txnScope)
+		}
+	}
 	err := s.doCommitWithRetry(ctx)
 	if commitDetail != nil {
 		s.sessionVars.StmtCtx.MergeExecDetails(nil, commitDetail)
@@ -550,7 +567,6 @@ func (s *session) CommitTxn(ctx context.Context) error {
 			failpoint.Return(err)
 		}
 	})
-
 	s.sessionVars.TxnCtx.Cleanup()
 	return err
 }
