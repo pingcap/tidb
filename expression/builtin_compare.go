@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tipb/go-tipb"
-	"github.com/sirupsen/logrus"
 )
 
 var (
@@ -1212,7 +1211,6 @@ func RefineComparedConstant(ctx sessionctx.Context, targetFieldType types.FieldT
 		targetFieldType = *types.NewFieldType(mysql.TypeLonglong)
 	}
 	var intDatum types.Datum
-	logrus.Warning()
 	intDatum, err = dt.ConvertTo(sc, &targetFieldType)
 	if err != nil {
 		if terror.ErrorEqual(err, types.ErrOverflow) {
