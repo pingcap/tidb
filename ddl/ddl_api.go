@@ -3487,6 +3487,17 @@ func CheckModifyTypeCompatible(origin *types.FieldType, to *types.FieldType) (ca
 	return true, notCompatibleMsg, errUnsupportedModifyColumn.GenWithStackByArgs(notCompatibleMsg)
 }
 
+// checkConvertedBlobFlenSame is used for situation where the new Flen is less than the old one
+// but will be same after db automatically converts the Flen
+func checkConvertedBlobFlenSame(originFlen int, toFlen int) bool {
+	if (toFlen <= tinyBlobMaxLength && originFlen > tinyBlobMaxLength) ||
+		(toFlen <= blobMaxLength && originFlen > blobMaxLength) ||
+		(toFlen <= mediumBlobMaxLength && originFlen > mediumBlobMaxLength) {
+		return false
+	}
+	return true
+}
+
 func needReorgToChange(origin *types.FieldType, to *types.FieldType) (needOreg bool, reasonMsg string) {
 	toFlen := to.Flen
 	originFlen := origin.Flen
@@ -3497,7 +3508,9 @@ func needReorgToChange(origin *types.FieldType, to *types.FieldType) (needOreg b
 		toFlen, _ = mysql.GetDefaultFieldLengthAndDecimal(to.Tp)
 	}
 
-	if toFlen > 0 && toFlen < originFlen {
+	if toFlen > 0 && toFlen < originFlen &&
+		!(to.Tp == mysql.TypeBlob &&
+			checkConvertedBlobFlenSame(origin.Flen, to.Flen)) {
 		return true, fmt.Sprintf("length %d is less than origin %d", to.Flen, origin.Flen)
 	}
 	if to.Decimal > 0 && to.Decimal < origin.Decimal {
