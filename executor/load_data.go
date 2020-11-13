@@ -750,7 +750,18 @@ func (w *fieldWriter) GetField() (bool, field) {
 			flag, ch = w.getChar()
 			if flag {
 				w.OutputBuf = append(w.OutputBuf, '\\')
-				w.OutputBuf = append(w.OutputBuf, ch)
+				if ch == w.enclosedChar {
+					flag, ch = w.getChar()
+					w.OutputBuf = append(w.OutputBuf, '\\')
+					if ch == w.enclosedChar {
+						w.OutputBuf = append(w.OutputBuf, w.enclosedChar)
+					} else {
+						w.putback()
+						w.putback()
+					}
+				} else {
+					w.OutputBuf = append(w.OutputBuf, ch)
+				}
 			}
 		} else {
 			w.OutputBuf = append(w.OutputBuf, ch)
