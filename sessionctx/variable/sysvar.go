@@ -1184,8 +1184,8 @@ const (
 	CharsetDatabase = "character_set_database"
 	// CollationDatabase is the name for collation_database system variable.
 	CollationDatabase = "collation_database"
-	// CharacterSetFilesystem is the name for character_set_system system variable.
-	CharacterSetFilesystem = "character_set_system"
+	// CharacterSetFilesystem is the name for character_set_filesystem system variable.
+	CharacterSetFilesystem = "character_set_filesystem"
 	// CharacterSetClient is the name for character_set_client system variable.
 	CharacterSetClient = "character_set_client"
 	// CharacterSetSystem is the name for character_set_system system variable.
