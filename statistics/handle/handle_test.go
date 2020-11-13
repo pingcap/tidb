@@ -852,9 +852,9 @@ func (s *statsSerialSuite) TestGCIndexUsageInformation(c *C) {
 //	tk.MustExec("create table t_idx(a int, b int)")
 //	tk.MustExec("create unique index idx_a on t_idx(a)")
 //	tk.MustQuery("select a from t_idx where a=1")
-//	do := s.do
-//	err := do.StatsHandle().DumpIndexUsageToKV()
-//	c.Assert(err, IsNil)
+	do := s.do
+	err := do.StatsHandle().DumpIndexUsageToKV()
+	c.Assert(err, IsNil)
 	tk.MustQuery("select * from mysql.schema_index_usage as stats left join information_schema.tidb_indexes as idx on idx.index_id=stats.index_id where idx.table_name='t_idx'").Check(testkit.Rows("1"))
 //	tk.MustExec("drop index `idx_a` on t_idx")
 //	err = do.StatsHandle().GCIndexUsage()
