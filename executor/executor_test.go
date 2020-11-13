@@ -6726,16 +6726,18 @@ func (s *testSuite) TestInlineProjectionForSortAndTopN(c *C) {
 	tk.MustQuery("select c,b from t1 order by a desc").Check(testkit.Rows("4 3", "3 2", "2 1"))
 	tk.MustQuery("select a from t1 order by b, c").Check(testkit.Rows("3", "4", "5"))
 	tk.MustQuery("select a from t1 order by b desc, c").Check(testkit.Rows("5", "4", "3"))
+	tk.MustQuery("select b from t1 group by a order by a").Check(testkit.Rows("1", "2", "3"))
 	tk.MustQuery("select sum(c) from t1 order by a").Check(testkit.Rows("9"))
-	tk.MustQuery("select max(c) from t1 order by a, b").Check(testkit.Rows("4"))
+	tk.MustQuery("select min(c) from t1 order by a limit 1").Check(testkit.Rows("2"))
+	tk.MustQuery("select max(c) from t1 order by a limit 1").Check(testkit.Rows("4"))
 	tk.MustQuery("select c from t1 order by a limit 1").Check(testkit.Rows("2"))
 	tk.MustQuery("select c from t1 order by a desc limit 1").Check(testkit.Rows("4"))
-	tk.MustQuery("select ta.a, ta.b from t1 ta left join t1 tb on ta.a = tb.a order by ta.a").Check(
+	tk.MustQuery("select ta.a, ta.b from t1 ta left join t1 tb on ta.a = tb.a order by tb.a").Check(
 		testkit.Rows("3 1", "4 2", "5 3"))
-	tk.MustQuery("select ta.c, ta.b from t1 ta left join t1 tb on ta.a = tb.a order by ta.a").Check(
+	tk.MustQuery("select ta.c, ta.b from t1 ta left join t1 tb on ta.a = tb.a order by tb.a").Check(
 		testkit.Rows("2 1", "3 2", "4 3"))
 	tk.MustQuery("select b from t1 order by 1").Check(testkit.Rows("1", "2", "3"))
-	tk.MustQuery("select b from t1 order by a+1").Check(testkit.Rows("1", "2", "3"))
+	tk.MustQuery("select b from t1 order by c+1").Check(testkit.Rows("1", "2", "3"))
 	tk.MustQuery("select ta.a from t1 ta, t1 tb where ta.b = tb.a order by 3*ta.a").Check(
 		testkit.Rows("5"))
 }

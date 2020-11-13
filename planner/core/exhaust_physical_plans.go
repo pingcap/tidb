@@ -2195,11 +2195,11 @@ func (ls *LogicalSort) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]
 	if MatchItems(prop, ls.ByItems) {
 		ret := make([]PhysicalPlan, 0, 2)
 		ps := ls.getPhysicalSort(prop)
-		ps.SetSchema(ls.Schema().Clone())
+		ps.SetSchema(ls.Schema())
 		ret = append(ret, ps)
 		ns := ls.getNominalSort(prop)
 		if ns != nil {
-			ns.SetSchema(ls.Schema().Clone())
+			ns.SetSchema(ls.Schema())
 			ret = append(ret, ns)
 		}
 		return ret, true
