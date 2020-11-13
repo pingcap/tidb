@@ -53,7 +53,7 @@ require (
 	github.com/pingcap/goleveldb v0.0.0-20191226122134-f82aafb29989
 	github.com/pingcap/kvproto v0.0.0-20201023092649-e6d6090277c9
 	github.com/pingcap/log v0.0.0-20200828042413-fce0951f1463
-	github.com/pingcap/parser v0.0.0-20201112065012-c9380f220ff9
+	github.com/pingcap/parser v0.0.0-20201112105242-773b8b74f44e
 	github.com/pingcap/sysutil v0.0.0-20201021075216-f93ced2829e2
 	github.com/pingcap/tidb-tools v4.0.5-0.20200820092506-34ea90c93237+incompatible
 	github.com/pingcap/tipb v0.0.0-20201026044621-45e60c77588f
@@ -98,7 +98,5 @@ require (
 	sourcegraph.com/sourcegraph/appdash v0.0.0-20190731080439-ebfcffb1b5c0
 	sourcegraph.com/sourcegraph/appdash-data v0.0.0-20151005221446-73f23eafcf67
 )
-
-replace github.com/pingcap/parser v0.0.0-20201109022253-d384bee1451e => github.com/blacktear23/parser v0.0.0-20201112082329-4caea48bf325
 
 go 1.13
