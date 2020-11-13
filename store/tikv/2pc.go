@@ -195,14 +195,6 @@ func NewCommiterMutations(sizeHint int) CommitterMutations {
 	}
 }
 
-// Reset the CommitterMutations contents.
-func (c *CommitterMutations) Reset() {
-	c.ops = c.ops[:0]
-	c.keys = c.keys[:0]
-	c.values = c.values[:0]
-	c.isPessimisticLock = c.isPessimisticLock[:0]
-}
-
 func (c *CommitterMutations) subRange(from, to int) CommitterMutations {
 	var res CommitterMutations
 	res.keys = c.keys[from:to]
@@ -268,8 +260,8 @@ func (c *CommitterMutations) MergeMutations(mutations CommitterMutations) {
 	c.isPessimisticLock = append(c.isPessimisticLock, mutations.isPessimisticLock...)
 }
 
-// MergeMutation merges a single Mutation into the current mutations.
-func (c *CommitterMutations) MergeMutation(mutation Mutation) {
+// AppendMutation merges a single Mutation into the current mutations.
+func (c *CommitterMutations) AppendMutation(mutation Mutation) {
 	c.ops = append(c.ops, mutation.KeyOp)
 	c.keys = append(c.keys, mutation.Key)
 	c.values = append(c.values, mutation.Value)

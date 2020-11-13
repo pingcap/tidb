@@ -366,10 +366,10 @@ func (a *amendOperationAddIndex) genMutations(ctx context.Context, sctx sessionc
 		}
 		if !skipMerge {
 			if oldIdxMutation != nil {
-				deletedMutations.MergeMutation(*oldIdxMutation)
+				deletedMutations.AppendMutation(*oldIdxMutation)
 			}
 			if newIdxMutation != nil {
-				insertedMutations.MergeMutation(*newIdxMutation)
+				insertedMutations.AppendMutation(*newIdxMutation)
 			}
 		}
 	}
