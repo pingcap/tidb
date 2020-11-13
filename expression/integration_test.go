@@ -2387,7 +2387,7 @@ func (s *testIntegrationSuite2) TestBuiltin(c *C) {
 	tk.MustExec(`insert into tb5 (a, b) select * from (select cast(a as json) as a1, b from tb5) as t where t.a1 = t.b;`)
 	tk.MustExec(`drop table tb5;`)
 
-	tk.MustExec(`create table tb5(a float(64));`)
+	tk.MustExec(`create table tb5(a float(53));`)
 	tk.MustExec(`insert into tb5(a) values (13835058055282163712);`)
 	tk.MustQuery(`select convert(t.a1, signed int) from (select convert(a, json) as a1 from tb5) as t`)
 	tk.MustExec(`drop table tb5;`)
@@ -2897,6 +2897,15 @@ func (s *testIntegrationSuite2) TestBuiltin(c *C) {
 	tk.MustQuery("select 0 and b/0 from t")
 	tk.MustQuery("show warnings").Check(testkit.Rows())
 	tk.MustQuery("select 1 or b/0 from t")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+
+	tk.MustQuery("select 1 or 1/0")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustQuery("select 0 and 1/0")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustQuery("select COALESCE(1, 1/0)")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustQuery("select interval(1,0,1,2,1/0)")
 	tk.MustQuery("show warnings").Check(testkit.Rows())
 
 	tk.MustQuery("select case 2.0 when 2.0 then 3.0 when 3.0 then 2.0 end").Check(testkit.Rows("3.0"))
@@ -4746,7 +4755,7 @@ func (s *testIntegrationSuite) TestForeignKeyVar(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
 	tk.MustExec("SET FOREIGN_KEY_CHECKS=1")
-	tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 8047 variable 'foreign_key_checks' does not yet support value: ON"))
+	tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 8047 variable 'foreign_key_checks' does not yet support value: 1"))
 }
 
 func (s *testIntegrationSuite) TestUserVarMockWindFunc(c *C) {
@@ -5235,8 +5244,7 @@ func (s *testIntegrationSuite) TestIssue16973(c *C) {
 func (s *testIntegrationSuite) TestExprPushdownBlacklist(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustQuery(`select * from mysql.expr_pushdown_blacklist`).Check(testkit.Rows(
-		"date_add tiflash DST(daylight saving time) does not take effect in TiFlash date_add",
-		"cast tiflash Behavior of some corner cases(overflow, truncate etc) is different in TiFlash and TiDB"))
+		"date_add tiflash DST(daylight saving time) does not take effect in TiFlash date_add"))
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -5257,7 +5265,7 @@ func (s *testIntegrationSuite) TestExprPushdownBlacklist(c *C) {
 	}
 
 	tk.MustExec("insert into mysql.expr_pushdown_blacklist " +
-		"values('<', 'tikv,tiflash,tidb', 'for test'),('date_format', 'tikv', 'for test')")
+		"values('<', 'tikv,tiflash,tidb', 'for test'),('cast', 'tiflash', 'for test'),('date_format', 'tikv', 'for test')")
 	tk.MustExec("admin reload expr_pushdown_blacklist")
 
 	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash'")
@@ -6039,6 +6047,15 @@ func (s *testIntegrationSerialSuite) TestCacheConstEval(c *C) {
 	tk.Se.GetSessionVars().EnableVectorizedExpression = true
 	tk.MustExec("delete from mysql.expr_pushdown_blacklist where name = 'cast' and store_type = 'tikv,tiflash,tidb' and reason = 'for test'")
 	tk.MustExec("admin reload expr_pushdown_blacklist")
+}
+
+func (s *testSuite) TestVirtualGeneratedColumnAndLimit(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int, b int as (a + 1));")
+	tk.MustExec("insert into t(a) values (1);")
+	tk.MustQuery("select /*+ LIMIT_TO_COP() */ b from t limit 1;").Check(testkit.Rows("2"))
+	tk.MustQuery("select /*+ LIMIT_TO_COP() */ b from t order by b limit 1;").Check(testkit.Rows("2"))
 }
 
 func (s *testIntegrationSerialSuite) TestCollationBasic(c *C) {
@@ -7640,4 +7657,42 @@ func (s *testIntegrationSuite) TestIssue20180(c *C) {
 	tk.MustExec("create table t(a enum('a','b'));")
 	tk.MustExec("insert into t values('b');")
 	tk.MustQuery("select * from t where a > 1  and a = \"b\";").Check(testkit.Rows("b"))
+}
+
+func (s *testIntegrationSerialSuite) TestClusteredIndexAndNewCollation(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("set @@tidb_enable_clustered_index = 1;")
+	tk.MustExec("CREATE TABLE `t` (" +
+		"`a` char(10) COLLATE utf8mb4_unicode_ci NOT NULL," +
+		"`b` char(20) COLLATE utf8mb4_general_ci NOT NULL," +
+		"`c` int(11) NOT NULL," +
+		"PRIMARY KEY (`a`,`b`,`c`)," +
+		"KEY `idx` (`a`))")
+
+	tk.MustExec("begin")
+	tk.MustExec("insert into t values ('a6', 'b6', 3)")
+	tk.MustQuery("select * from t").Check(testkit.Rows("a6 b6 3"))
+	tk.MustQuery("select * from t where a='a6'").Check(testkit.Rows("a6 b6 3"))
+	tk.MustExec("delete from t")
+	tk.MustQuery("select * from t").Check(testkit.Rows())
+	tk.MustExec("commit")
+	tk.MustQuery("select * from t").Check(testkit.Rows())
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(`a` char(10) COLLATE utf8mb4_unicode_ci NOT NULL key)")
+	tk.MustExec("insert into t values ('&');")
+	tk.MustExec("replace into t values ('&');")
+	tk.MustQuery("select * from t").Check(testkit.Rows("&"))
+}
+
+func (s *testIntegrationSerialSuite) TestIssue20608(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustQuery("select '䇇Հ' collate utf8mb4_bin like '___Հ';").Check(testkit.Rows("0"))
 }
