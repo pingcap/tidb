@@ -1156,7 +1156,6 @@ func BenchmarkBatchAppendRow(b *testing.B) {
 		rowChk.AppendString(2, "abcd")
 		rowChk.AppendBytes(3, []byte("abcd"))
 	}
-
 	rows := make([]Row, numRows)
 	for i := 0; i < numRows; i++ {
 		rows[i] = rowChk.GetRow(0)
