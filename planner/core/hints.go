@@ -45,6 +45,11 @@ func getTableName(tblName model.CIStr, asName *model.CIStr) model.CIStr {
 }
 
 func extractTableAsName(p PhysicalPlan) (*model.CIStr, *model.CIStr) {
+	_, isProj := p.(*PhysicalProjection)
+	_, isUnionScan := p.(*PhysicalUnionScan)
+	if isProj || isUnionScan {
+		return extractTableAsName(p.Children()[0])
+	}
 	if len(p.Children()) > 1 {
 		return nil, nil
 	}

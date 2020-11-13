@@ -582,6 +582,52 @@ func (s *testSuiteJoin1) TestUsing(c *C) {
 	tk.MustExec("create table tt(b bigint, a int)")
 	// Check whether this sql can execute successfully.
 	tk.MustExec("select * from t join tt using(a)")
+
+	tk.MustExec("drop table if exists t, s")
+	tk.MustExec("create table t(a int, b int)")
+	tk.MustExec("create table s(b int, a int)")
+	tk.MustExec("insert into t values(1,1), (2,2), (3,3), (null,null)")
+	tk.MustExec("insert into s values(1,1), (3,3), (null,null)")
+
+	// For issue 20477
+	tk.MustQuery("select t.*, s.* from t join s using(a)").Check(testkit.Rows("1 1 1 1", "3 3 3 3"))
+	tk.MustQuery("select s.a from t join s using(a)").Check(testkit.Rows("1", "3"))
+	tk.MustQuery("select s.a from t join s using(a) where s.a > 1").Check(testkit.Rows("3"))
+	tk.MustQuery("select s.a from t join s using(a) order by s.a").Check(testkit.Rows("1", "3"))
+	tk.MustQuery("select s.a from t join s using(a) where s.a > 1 order by s.a").Check(testkit.Rows("3"))
+	tk.MustQuery("select s.a from t join s using(a) where s.a > 1 order by s.a limit 2").Check(testkit.Rows("3"))
+
+	// For issue 20441
+	tk.MustExec(`DROP TABLE if exists t1, t2, t3`)
+	tk.MustExec(`create table t1 (i int)`)
+	tk.MustExec(`create table t2 (i int)`)
+	tk.MustExec(`create table t3 (i int)`)
+	tk.MustExec(`select * from t1,t2 natural left join t3 order by t1.i,t2.i,t3.i`)
+	tk.MustExec(`select t1.i,t2.i,t3.i from t2 natural left join t3,t1 order by t1.i,t2.i,t3.i`)
+	tk.MustExec(`select * from t1,t2 natural right join t3 order by t1.i,t2.i,t3.i`)
+	tk.MustExec(`select t1.i,t2.i,t3.i from t2 natural right join t3,t1 order by t1.i,t2.i,t3.i`)
+
+	// For issue 15844
+	tk.MustExec(`DROP TABLE if exists t0, t1`)
+	tk.MustExec(`CREATE TABLE t0(c0 INT)`)
+	tk.MustExec(`CREATE TABLE t1(c0 INT)`)
+	tk.MustExec(`SELECT t0.c0 FROM t0 NATURAL RIGHT JOIN t1 WHERE t1.c0`)
+
+	// For issue 20958
+	tk.MustExec(`DROP TABLE if exists t1, t2`)
+	tk.MustExec(`create table t1(id int, name varchar(20));`)
+	tk.MustExec(`create table t2(id int, address varchar(30));`)
+	tk.MustExec(`insert into t1 values(1,'gangshen');`)
+	tk.MustExec(`insert into t2 values(1,'HangZhou');`)
+	tk.MustQuery(`select t2.* from t1 inner join t2 using (id) limit 1;`).Check(testkit.Rows("1 HangZhou"))
+	tk.MustQuery(`select t2.* from t1 inner join t2 on t1.id = t2.id  limit 1;`).Check(testkit.Rows("1 HangZhou"))
+
+	// For issue 20476
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1(a int)")
+	tk.MustExec("insert into t1 (a) values(1)")
+	tk.MustQuery("select t1.*, t2.* from t1 join t1 t2 using(a)").Check(testkit.Rows("1 1"))
+	tk.MustQuery("select * from t1 join t1 t2 using(a)").Check(testkit.Rows("1"))
 }
 
 func (s *testSuiteJoin1) TestNaturalJoin(c *C) {
@@ -879,6 +925,65 @@ func (s *testSuiteJoin3) TestSubquery(c *C) {
 	tk.MustExec("insert into t1 values(1)")
 	tk.MustExec("insert into t2 values(1)")
 	tk.MustQuery("select * from t1 where a in (select a from t2)").Check(testkit.Rows("1"))
+
+	tk.MustExec("insert into t2 value(null)")
+	tk.MustQuery("select * from t1 where 1 in (select b from t2)").Check(testkit.Rows("1"))
+	tk.MustQuery("select * from t1 where 1 not in (select b from t2)").Check(testkit.Rows())
+	tk.MustQuery("select * from t1 where 2 not in (select b from t2)").Check(testkit.Rows())
+	tk.MustQuery("select * from t1 where 2 in (select b from t2)").Check(testkit.Rows())
+	tk.MustQuery("select 1 in (select b from t2) from t1").Check(testkit.Rows("1"))
+	tk.MustQuery("select 1 in (select 1 from t2) from t1").Check(testkit.Rows("1"))
+	tk.MustQuery("select 1 not in (select b from t2) from t1").Check(testkit.Rows("0"))
+	tk.MustQuery("select 1 not in (select 1 from t2) from t1").Check(testkit.Rows("0"))
+
+	tk.MustExec("delete from t2 where b=1")
+	tk.MustQuery("select 1 in (select b from t2) from t1").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("select 1 not in (select b from t2) from t1").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("select 1 not in (select 1 from t2) from t1").Check(testkit.Rows("0"))
+	tk.MustQuery("select 1 in (select 1 from t2) from t1").Check(testkit.Rows("1"))
+	tk.MustQuery("select 1 not in (select null from t1) from t2").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("select 1 in (select null from t1) from t2").Check(testkit.Rows("<nil>"))
+
+	tk.MustExec("drop table if exists s")
+	tk.MustExec("create table s(a int not null, b int)")
+	tk.MustExec("set sql_mode = ''")
+	tk.MustQuery("select (2,0) in (select s.a, min(s.b) from s) as f").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("select (2,0) not in (select s.a, min(s.b) from s) as f").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("select (2,0) = any (select s.a, min(s.b) from s) as f").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("select (2,0) != all (select s.a, min(s.b) from s) as f").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("select (2,0) in (select s.b, min(s.b) from s) as f").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("select (2,0) not in (select s.b, min(s.b) from s) as f").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("select (2,0) = any (select s.b, min(s.b) from s) as f").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("select (2,0) != all (select s.b, min(s.b) from s) as f").Check(testkit.Rows("<nil>"))
+	tk.MustExec("insert into s values(1,null)")
+	tk.MustQuery("select 1 in (select b from s)").Check(testkit.Rows("<nil>"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("insert into t values(1),(null)")
+	tk.MustQuery("select a not in (select 1) from t").Sort().Check(testkit.Rows(
+		"0",
+		"<nil>",
+	))
+	tk.MustQuery("select 1 not in (select null from t t1) from t").Check(testkit.Rows(
+		"<nil>",
+		"<nil>",
+	))
+	tk.MustQuery("select 1 in (select null from t t1) from t").Check(testkit.Rows(
+		"<nil>",
+		"<nil>",
+	))
+	tk.MustQuery("select a in (select 0) xx from (select null as a) x").Check(testkit.Rows("<nil>"))
+
+	tk.MustExec("drop table t")
+	tk.MustExec("create table t(a int, b int)")
+	tk.MustExec("insert into t values(1,null),(null, null),(null, 2)")
+	tk.MustQuery("select * from t t1 where (2 in (select a from t t2 where (t2.b=t1.b) is null))").Check(testkit.Rows())
+	tk.MustQuery("select (t2.a in (select t1.a from t t1)) is true from t t2").Sort().Check(testkit.Rows(
+		"0",
+		"0",
+		"1",
+	))
 
 	tk.MustExec("set @@tidb_hash_join_concurrency=5")
 }
@@ -2322,6 +2427,11 @@ func (s *testSuiteJoinSerial) TestExplainAnalyzeJoin(c *C) {
 	c.Assert(len(rows), Equals, 7)
 	c.Assert(rows[0][0], Matches, "HashJoin.*")
 	c.Assert(rows[0][5], Matches, "time:.*, loops:.*, build_hash_table:{total:.*, fetch:.*, build:.*}, probe:{concurrency:5, total:.*, max:.*, probe:.*, fetch:.*}")
+	// Test for index merge join.
+	rows = tk.MustQuery("explain analyze select /*+ INL_MERGE_JOIN(t1, t2) */ * from t1,t2 where t1.a=t2.a;").Rows()
+	c.Assert(len(rows), Equals, 9)
+	c.Assert(rows[0][0], Matches, "IndexMergeJoin_.*")
+	c.Assert(rows[0][5], Matches, fmt.Sprintf(".*Concurrency:%v.*", tk.Se.GetSessionVars().IndexLookupJoinConcurrency()))
 }
 
 func (s *testSuiteJoinSerial) TestIssue20270(c *C) {
@@ -2426,4 +2536,22 @@ func (s *testSuiteJoinSerial) TestIssue20710(c *C) {
 		"    └─TableRowIDScan_7 1.25 cop[tikv] table:s keep order:false, stats:pseudo"))
 	tk.MustQuery("select /*+ inl_join(s) */ * from t join s on t.a=s.a and t.a = s.b").Sort().Check(testkit.Rows("1 1 1 1", "1 2 1 1", "2 2 2 2"))
 	tk.MustQuery("show warnings").Check(testkit.Rows())
+}
+
+func (s *testSuiteJoinSerial) TestIssue20779(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1(a int, b int, index idx(b));")
+	tk.MustExec("insert into t1 values(1, 1);")
+	tk.MustExec("insert into t1 select * from t1;")
+
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/testIssue20779", "return"), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/testIssue20779"), IsNil)
+	}()
+
+	rs, err := tk.Exec("select /*+ inl_hash_join(t2) */ t1.b from t1 left join t1 t2 on t1.b=t2.b order by t1.b;")
+	c.Assert(err, IsNil)
+	_, err = session.GetRows4Test(context.Background(), nil, rs)
+	c.Assert(err.Error(), Matches, "testIssue20779")
 }
