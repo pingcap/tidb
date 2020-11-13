@@ -50,6 +50,7 @@ func (c *MPPClient) selectAllTiFlashStore() []kv.MPPTaskMeta {
 			resultTasks = append(resultTasks, task)
 		}
 	}
+	c.store.regionCache.storeMu.RUnlock()
 	return resultTasks
 }
 
