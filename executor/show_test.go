@@ -1018,7 +1018,6 @@ func (s *testSerialSuite) TestAutoRandomWithLargeSignedShowTableRegions(c *C) {
 	tk.MustExec("use auto_random_db;")
 	tk.MustExec("drop table if exists t;")
 
-
 	testutil.ConfigTestUtils.SetupAutoRandomTestConfig()
 	defer testutil.ConfigTestUtils.RestoreAutoRandomTestConfig()
 	tk.MustExec("create table t (a bigint unsigned auto_random primary key);")
