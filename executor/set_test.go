@@ -260,8 +260,12 @@ func (s *testSuite5) TestSetVar(c *C) {
 	tk.MustExec("set @@sql_log_bin = on")
 	tk.MustQuery(`select @@session.sql_log_bin;`).Check(testkit.Rows("1"))
 
-	tk.MustQuery(`select @@global.log_bin;`).Check(testkit.Rows(variable.BoolToIntStr(config.GetGlobalConfig().Binlog.Enable)))
-	tk.MustQuery(`select @@log_bin;`).Check(testkit.Rows(variable.BoolToIntStr(config.GetGlobalConfig().Binlog.Enable)))
+	binlogValue := "0"
+	if config.GetGlobalConfig().Binlog.Enable {
+		binlogValue = "1"
+	}
+	tk.MustQuery(`select @@global.log_bin;`).Check(testkit.Rows(binlogValue))
+	tk.MustQuery(`select @@log_bin;`).Check(testkit.Rows(binlogValue))
 
 	tk.MustExec("set @@tidb_general_log = 1")
 	tk.MustExec("set @@tidb_general_log = 0")
@@ -444,6 +448,23 @@ func (s *testSuite5) TestSetVar(c *C) {
 
 	_, err = tk.Exec("set tidb_enable_parallel_apply=-1")
 	c.Assert(terror.ErrorEqual(err, variable.ErrWrongValueForVar), IsTrue)
+
+	tk.MustQuery(`select @@session.tidb_general_log;`).Check(testkit.Rows("0"))
+	tk.MustQuery(`show variables like 'tidb_general_log';`).Check(testkit.Rows("tidb_general_log OFF"))
+	tk.MustExec("set tidb_general_log = 1")
+	tk.MustQuery(`select @@session.tidb_general_log;`).Check(testkit.Rows("1"))
+	tk.MustQuery(`show variables like 'tidb_general_log';`).Check(testkit.Rows("tidb_general_log ON"))
+	tk.MustExec("set tidb_general_log = 0")
+	tk.MustQuery(`select @@session.tidb_general_log;`).Check(testkit.Rows("0"))
+	tk.MustQuery(`show variables like 'tidb_general_log';`).Check(testkit.Rows("tidb_general_log OFF"))
+	tk.MustExec("set tidb_general_log = on")
+	tk.MustQuery(`select @@session.tidb_general_log;`).Check(testkit.Rows("1"))
+	tk.MustQuery(`show variables like 'tidb_general_log';`).Check(testkit.Rows("tidb_general_log ON"))
+	tk.MustExec("set tidb_general_log = off")
+	tk.MustQuery(`select @@session.tidb_general_log;`).Check(testkit.Rows("0"))
+	tk.MustQuery(`show variables like 'tidb_general_log';`).Check(testkit.Rows("tidb_general_log OFF"))
+	c.Assert(tk.ExecToErr("set tidb_general_log = abc"), NotNil)
+	c.Assert(tk.ExecToErr("set tidb_general_log = 123"), NotNil)
 }
 
 func (s *testSuite5) TestTruncateIncorrectIntSessionVar(c *C) {
