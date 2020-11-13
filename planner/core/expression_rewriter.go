@@ -417,6 +417,7 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 			er.tryFoldCounter++
 		}
 	case *ast.CaseExpr:
+		er.asScalar = true
 		if _, ok := expression.DisableFoldFunctions["case"]; ok {
 			er.disableFoldCounter++
 		}
@@ -424,6 +425,7 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 			er.tryFoldCounter++
 		}
 	case *ast.BinaryOperationExpr:
+		er.asScalar = true
 		if v.Op == opcode.LogicAnd || v.Op == opcode.LogicOr {
 			er.tryFoldCounter++
 		}
