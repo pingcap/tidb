@@ -1662,7 +1662,7 @@ func (ts *PhysicalTableScan) addPushedDownSelectionToMppTask(mpp *mppTask, stats
 	var newRootConds []expression.Expression
 	filterCondition, newRootConds = expression.PushDownExprs(ts.ctx.GetSessionVars().StmtCtx, filterCondition, ts.ctx.GetClient(), ts.StoreType)
 	rootTaskConds = append(rootTaskConds, newRootConds...)
-	if len(newRootConds) > 0 {
+	if len(rootTaskConds) > 0 {
 		return &mppTask{}
 	}
 	ts.filterCondition = filterCondition

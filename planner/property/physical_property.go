@@ -30,11 +30,15 @@ type SortItem struct {
 	Desc bool
 }
 
+// PartitionType is the way to partition during mpp data exchanging.
 type PartitionType int
 
 const (
+	// AnyType will not require any special partition types.
 	AnyType PartitionType = iota
+	// BroadcastType requires current task to broadcast its data.
 	BroadcastType
+	// HashType requires current task to shuffle its data according to some columns.
 	HashType
 )
 

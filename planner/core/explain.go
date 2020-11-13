@@ -16,7 +16,6 @@ package core
 import (
 	"bytes"
 	"fmt"
-	"github.com/pingcap/tipb/go-tipb"
 	"strconv"
 	"strings"
 
@@ -30,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/stringutil"
+	"github.com/pingcap/tipb/go-tipb"
 )
 
 // A plan is dataAccesser means it can access underlying data.
@@ -812,6 +812,7 @@ func (p *DataSource) ExplainInfo() string {
 	return buffer.String()
 }
 
+// ExplainInfo implements Plan interface.
 func (p *PhysicalExchangeSender) ExplainInfo() string {
 	buffer := bytes.NewBufferString("ExchangeType: ")
 	switch p.ExchangeType {

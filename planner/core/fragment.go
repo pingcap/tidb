@@ -37,18 +37,19 @@ type Fragment struct {
 	ExchangeSender *PhysicalExchangeSender // data exporter
 }
 
-type MppTaskGenerator struct {
+type mppTaskGenerator struct {
 	ctx         sessionctx.Context
 	startTS     uint64
 	allocTaskID int64
 }
 
+// GenerateRootMPPTasks generate all mpp tasks and return root ones.
 func GenerateRootMPPTasks(ctx sessionctx.Context, startTs uint64, sender *PhysicalExchangeSender) ([]*kv.MPPTask, error) {
-	g := &MppTaskGenerator{ctx: ctx, startTS: startTs}
+	g := &mppTaskGenerator{ctx: ctx, startTS: startTs}
 	return g.generateMPPTasks(sender)
 }
 
-func (e *MppTaskGenerator) generateMPPTasks(s *PhysicalExchangeSender) ([]*kv.MPPTask, error) {
+func (e *mppTaskGenerator) generateMPPTasks(s *PhysicalExchangeSender) ([]*kv.MPPTask, error) {
 	logutil.BgLogger().Info("Mpp will generate tasks", zap.String("plan", ToString(s)))
 	tidbTask := &kv.MPPTask{
 		StartTs: e.startTS,
@@ -62,7 +63,7 @@ func (e *MppTaskGenerator) generateMPPTasks(s *PhysicalExchangeSender) ([]*kv.MP
 	return rootTasks, nil
 }
 
-func (e *MppTaskGenerator) generateMPPTasksForFragment(f *Fragment) (tasks []*kv.MPPTask, err error) {
+func (e *mppTaskGenerator) generateMPPTasksForFragment(f *Fragment) (tasks []*kv.MPPTask, err error) {
 	if f.TableScan != nil {
 		tasks, err = e.constructSinglePhysicalTable(context.Background(), f.TableScan.Table.ID, f.TableScan.Ranges)
 	} else {
@@ -77,7 +78,7 @@ func (e *MppTaskGenerator) generateMPPTasksForFragment(f *Fragment) (tasks []*kv
 }
 
 // single physical table means a table without partitions or a single partition in a partition table.
-func (e *MppTaskGenerator) constructSinglePhysicalTable(ctx context.Context, tableID int64, ranges []*ranger.Range) ([]*kv.MPPTask, error) {
+func (e *mppTaskGenerator) constructSinglePhysicalTable(ctx context.Context, tableID int64, ranges []*ranger.Range) ([]*kv.MPPTask, error) {
 	var kvRanges []kv.KeyRange
 	if tableID != -1 {
 		kvRanges = distsql.TableRangesToKVRanges(tableID, ranges, nil)
