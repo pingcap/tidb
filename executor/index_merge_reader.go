@@ -319,11 +319,7 @@ func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, 
 func (e *IndexMergeReaderExecutor) initRuntimeStats() {
 	if e.runtimeStats != nil && e.stats == nil {
 		e.stats = &IndexMergeRuntimeStat{
-			IndexMergeProcess: 0,
-			IndexScan:         0,
-			TableRowScan:      0,
-			TableTaskNum:      0,
-			Concurrency:       e.ctx.GetSessionVars().IndexLookupConcurrency(),
+			Concurrency: e.ctx.GetSessionVars().IndexLookupConcurrency(),
 		}
 		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
 	}
@@ -373,7 +369,7 @@ func (w *partialTableWorker) fetchHandles(ctx context.Context, exitCh <-chan str
 		count += int64(len(handles))
 		task := w.buildTableTask(handles, retChunk)
 		if w.stats != nil {
-			atomic.AddInt64(&w.stats.TableRowScan, int64(time.Since(start)))
+			atomic.AddInt64(&w.stats.FetchHandle, int64(time.Since(start)))
 		}
 		select {
 		case <-ctx.Done():
@@ -443,14 +439,10 @@ func (e *IndexMergeReaderExecutor) startIndexMergeTableScanWorker(ctx context.Co
 		go func() {
 			defer trace.StartRegion(ctx, "IndexMergeTableScanWorker").End()
 			var task *lookupTableTask
-			startTime := time.Now()
 			util.WithRecovery(
 				func() { task = worker.pickAndExecTask(ctx1) },
 				worker.handlePickAndExecTaskPanic(ctx1, task),
 			)
-			if e.stats != nil {
-				atomic.AddInt64(&e.stats.TableRowScan, int64(time.Since(startTime)))
-			}
 			cancel()
 			e.tblWorkerWg.Done()
 		}()
@@ -655,7 +647,7 @@ func (w *partialIndexWorker) fetchHandles(
 		count += int64(len(handles))
 		task := w.buildTableTask(handles, retChunk)
 		if w.stats != nil {
-			atomic.AddInt64(&w.stats.IndexScan, int64(time.Since(start)))
+			atomic.AddInt64(&w.stats.FetchHandle, int64(time.Since(start)))
 		}
 		select {
 		case <-ctx.Done():
@@ -723,6 +715,7 @@ type indexMergeTableScanWorker struct {
 func (w *indexMergeTableScanWorker) pickAndExecTask(ctx context.Context) (task *lookupTableTask) {
 	var ok bool
 	for {
+		waitStart := time.Now()
 		select {
 		case task, ok = <-w.workCh:
 			if !ok {
@@ -731,8 +724,11 @@ func (w *indexMergeTableScanWorker) pickAndExecTask(ctx context.Context) (task *
 		case <-w.finished:
 			return
 		}
+		atomic.AddInt64(&w.stats.WaitTime, int64(time.Since(waitStart)))
+		execStart := time.Now()
 		err := w.executeTask(ctx, task)
 		if w.stats != nil {
+			atomic.AddInt64(&w.stats.FetchRow, int64(time.Since(execStart)))
 			atomic.AddInt64(&w.stats.TableTaskNum, 1)
 		}
 		task.doneCh <- err
@@ -795,30 +791,27 @@ func (w *indexMergeTableScanWorker) executeTask(ctx context.Context, task *looku
 // IndexMergeRuntimeStat record the indexMerge runtime stat
 type IndexMergeRuntimeStat struct {
 	IndexMergeProcess time.Duration
-	IndexScan         int64
-	TableRowScan      int64
+	FetchHandle       int64
+	WaitTime          int64
+	FetchRow          int64
 	TableTaskNum      int64
 	Concurrency       int
 }
 
 func (e *IndexMergeRuntimeStat) String() string {
 	var buf bytes.Buffer
-	indexScan := atomic.LoadInt64(&e.IndexScan)
-	tableScan := atomic.LoadInt64(&e.TableRowScan)
-	tableTaskNum := atomic.LoadInt64(&e.TableTaskNum)
-	concurrency := e.Concurrency
-	if indexScan != 0 {
-		buf.WriteString(fmt.Sprintf("index_task:{scan:%s", time.Duration(indexScan)))
+	if e.FetchHandle != 0 {
+		buf.WriteString(fmt.Sprintf("index_task:{fetch_handle:%s", time.Duration(e.FetchHandle)))
 		if e.IndexMergeProcess != 0 {
 			buf.WriteString(fmt.Sprintf(", merge:%s", e.IndexMergeProcess))
 		}
 		buf.WriteByte('}')
 	}
-	if tableScan != 0 {
+	if e.FetchRow != 0 {
 		if buf.Len() > 0 {
 			buf.WriteByte(',')
 		}
-		buf.WriteString(fmt.Sprintf(" table_task:{num:%d, concurrency:%d, time:%s}", tableTaskNum, concurrency, time.Duration(tableScan)))
+		buf.WriteString(fmt.Sprintf(" table_task:{num:%d, concurrency:%d, fetch_row:%s, wait_time:%s}", e.TableTaskNum, e.Concurrency, time.Duration(e.FetchRow), time.Duration(e.WaitTime)))
 	}
 	return buf.String()
 }
@@ -836,8 +829,9 @@ func (e *IndexMergeRuntimeStat) Merge(other execdetails.RuntimeStats) {
 		return
 	}
 	e.IndexMergeProcess += tmp.IndexMergeProcess
-	e.IndexScan += tmp.IndexScan
-	e.TableRowScan += tmp.TableRowScan
+	e.FetchHandle += tmp.FetchHandle
+	e.FetchRow += tmp.FetchRow
+	e.WaitTime += e.WaitTime
 	e.TableTaskNum += tmp.TableTaskNum
 	e.Concurrency += tmp.Concurrency
 }
