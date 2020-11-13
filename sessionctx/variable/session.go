@@ -1504,7 +1504,7 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 			s.systems[CollationDatabase] = coll
 			s.systems[CharsetDatabase] = cht
 		case CharacterSetServer:
-			s.systems[CollationDatabase] = coll
+			s.systems[CollationServer] = coll
 			s.systems[CharacterSetServer] = cht
 		default:
 			s.systems[name] = cht
