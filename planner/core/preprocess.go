@@ -831,9 +831,11 @@ func checkColumn(colDef *ast.ColumnDef) error {
 		// https://dev.mysql.com/doc/refman/8.0/en/floating-point-types.html
 		if tp.Decimal == -1 {
 			if tp.Tp == mysql.TypeDouble {
-				if tp.Flen != -1 {
-					return types.ErrSyntax.GenWithStackByArgs()
-				}
+				/*
+					if tp.Flen != -1 {
+						return types.ErrSyntax.GenWithStackByArgs()
+					}
+				*/
 			} else {
 				if tp.Flen > mysql.MaxDoublePrecisionLength {
 					return types.ErrWrongFieldSpec.GenWithStackByArgs(colDef.Name.Name.O)
