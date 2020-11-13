@@ -60,9 +60,13 @@ var DisableFoldFunctions = map[string]struct{}{
 // otherwise, the child functions do not fold constant.
 // Note: the function itself should fold constant.
 var TryFoldFunctions = map[string]struct{}{
-	ast.If:     {},
-	ast.Ifnull: {},
-	ast.Case:   {},
+	ast.If:       {},
+	ast.Ifnull:   {},
+	ast.Case:     {},
+	ast.LogicAnd: {},
+	ast.LogicOr:  {},
+	ast.Coalesce: {},
+	ast.Interval: {},
 }
 
 // IllegalFunctions4GeneratedColumns stores functions that is illegal for generated columns.
