@@ -286,23 +286,32 @@ func (c *CMSketch) QueryBytes(d []byte) uint64 {
 func (c *CMSketch) queryHashValue(h1, h2 uint64) uint64 {
 	vals := make([]uint32, c.depth)
 	min := uint32(math.MaxUint32)
+	// We want that when res is 0 before the noise is eliminated, the default value is not used.
+	// So we need a temp value to distinguish before and after eliminating noise.
+	temp := uint32(1)
 	for i := range c.table {
 		j := (h1 + h2*uint64(i)) % uint64(c.width)
 		if min > c.table[i][j] {
 			min = c.table[i][j]
 		}
 		noise := (c.count - uint64(c.table[i][j])) / (uint64(c.width) - 1)
-		if uint64(c.table[i][j]) < noise {
+		if uint64(c.table[i][j]) == 0 {
 			vals[i] = 0
+		} else if uint64(c.table[i][j]) < noise {
+			vals[i] = temp
 		} else {
-			vals[i] = c.table[i][j] - uint32(noise)
+			vals[i] = c.table[i][j] - uint32(noise) + temp
 		}
 	}
 	sort.Sort(sortutil.Uint32Slice(vals))
 	res := vals[(c.depth-1)/2] + (vals[c.depth/2]-vals[(c.depth-1)/2])/2
-	if res > min {
-		res = min
+	if res > min+temp {
+		res = min + temp
 	}
+	if res == 0 {
+		return uint64(0)
+	}
+	res = res - temp
 	if c.considerDefVal(uint64(res)) {
 		return c.defaultValue
 	}
@@ -557,4 +566,17 @@ func (c *CMSketch) AppendTopN(data []byte, count uint64) {
 // GetWidthAndDepth returns the width and depth of CM Sketch.
 func (c *CMSketch) GetWidthAndDepth() (int32, int32) {
 	return c.width, c.depth
+}
+
+// CalcDefaultValForAnalyze calculate the default value for Analyze.
+// The value of it is count / NDV in CMSketch. This means count and NDV are not include topN.
+func (c *CMSketch) CalcDefaultValForAnalyze(NDV uint64) {
+	// If NDV <= TopN, all values should be in TopN.
+	// So we set c.defaultValue to 0 and return immediately.
+	if NDV <= uint64(len(c.topN)) {
+		c.defaultValue = 0
+		return
+	}
+	remainNDV := NDV - uint64(len(c.topN))
+	c.defaultValue = c.count / mathutil.MaxUint64(1, remainNDV)
 }
