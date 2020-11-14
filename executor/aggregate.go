@@ -376,11 +376,12 @@ func (w *HashAggPartialWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitG
 	}()
 	for {
 		waitStart := time.Now()
-		if !w.getChildInput() {
-			return
-		}
+		ok := w.getChildInput()
 		if w.stats != nil {
 			atomic.AddInt64(&w.stats.PartialStats.WaitTime, int64(time.Since(waitStart)))
+		}
+		if !ok {
+			return
 		}
 		if err := w.updatePartialResult(ctx, sc, w.chk, len(w.partialResultsMap)); err != nil {
 			w.globalOutputCh <- &AfFinalResult{err: err}
@@ -518,15 +519,19 @@ func (w *HashAggFinalWorker) consumeIntermData(sctx sessionctx.Context) (err err
 		sc               = sctx.GetSessionVars().StmtCtx
 	)
 	for {
-		if input, ok = w.getPartialInput(); !ok {
-			return nil
-		}
+		waitStart := time.Now()
+		input, ok = w.getPartialInput()
 		if w.stats != nil {
+			atomic.AddInt64(&w.stats.FinalStats.WaitTime, int64(time.Since(waitStart)))
 			atomic.AddInt64(&w.stats.FinalStats.TaskNum, 1)
+		}
+		if !ok {
+			return nil
 		}
 		if intermDataBuffer == nil {
 			intermDataBuffer = make([][]aggfuncs.PartialResult, 0, w.maxChunkSize)
 		}
+		execStart := time.Now()
 		// Consume input in batches, size of every batch is less than w.maxChunkSize.
 		for reachEnd := false; !reachEnd; {
 			intermDataBuffer, groupKeys, reachEnd = input.getPartialResultBatch(sc, intermDataBuffer[:0], w.aggFuncs, w.maxChunkSize)
@@ -548,17 +553,20 @@ func (w *HashAggFinalWorker) consumeIntermData(sctx sessionctx.Context) (err err
 				}
 			}
 		}
+		if w.stats != nil {
+			atomic.AddInt64(&w.stats.FinalStats.ExecTime, int64(time.Since(execStart)))
+		}
 	}
 }
 
 func (w *HashAggFinalWorker) getFinalResult(sctx sessionctx.Context) {
 	waitStart := time.Now()
 	result, finished := w.receiveFinalResultHolder()
-	if finished {
-		return
-	}
 	if w.stats != nil {
 		atomic.AddInt64(&w.stats.FinalStats.WaitTime, int64(time.Since(waitStart)))
+	}
+	if finished {
+		return
 	}
 	w.groupKeys = w.groupKeys[:0]
 	for groupKey := range w.groupSet {
@@ -583,10 +591,10 @@ func (w *HashAggFinalWorker) getFinalResult(sctx sessionctx.Context) {
 			}
 		}
 	}
+	w.outputCh <- &AfFinalResult{chk: result, giveBackCh: w.finalResultHolderCh}
 	if w.stats != nil {
 		atomic.AddInt64(&w.stats.FinalStats.ExecTime, int64(time.Since(execStart)))
 	}
-	w.outputCh <- &AfFinalResult{chk: result, giveBackCh: w.finalResultHolderCh}
 }
 
 func (w *HashAggFinalWorker) receiveFinalResultHolder() (*chunk.Chunk, bool) {
