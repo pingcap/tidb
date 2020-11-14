@@ -1083,7 +1083,6 @@ func benchmarkChunkGrow(t benchChunkGrowCase) func(b *testing.B) {
 		}
 	}
 }
-
 func (s *testChunkSuite) TestAppendRows(c *check.C) {
 	numCols := 6
 	numRows := 10
@@ -1145,7 +1144,6 @@ func BenchmarkBatchAppendRows(b *testing.B) {
 		chk.AppendRows(rows)
 	}
 }
-
 func BenchmarkBatchAppendRow(b *testing.B) {
 	b.ReportAllocs()
 	numRows := 1000
@@ -1160,11 +1158,12 @@ func BenchmarkBatchAppendRow(b *testing.B) {
 	for i := 0; i < numRows; i++ {
 		rows[i] = rowChk.GetRow(0)
 	}
+	row := rowChk.GetRow(0)
 	chk := newChunk(8, 8, 0, 0)
 	for i := 0; i < b.N; i++ {
 		chk.Reset()
 		for i := 0; i < 1000; i++ {
-			chk.AppendRow(rowChk.GetRow(0))
+			chk.AppendRow(row)
 		}
 	}
 }
