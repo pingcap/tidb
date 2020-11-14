@@ -1822,3 +1822,38 @@ func (s *testIntegrationSuite) TestPartitionUnionWithPPruningColumn(c *C) {
 			"3290 LE1327_r5"))
 
 }
+
+func (s *testIntegrationSuite) TestUpdateMultiUpdatePK(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int not null primary key)")
+	tk.MustExec("insert into t values (1)")
+	tk.MustGetErrMsg(`UPDATE t m, t n SET m.a = m.a + 10, n.a = n.a + 10`,
+		`[planner:1706]Primary key/partition key update is not allowed since the table is updated both as 'm' and 'n'.`)
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a varchar(10) not null primary key)")
+	tk.MustExec("insert into t values ('abc')")
+	tk.MustGetErrMsg(`UPDATE t m, t n SET m.a = 'def', n.a = 'xyz'`,
+		`[planner:1706]Primary key/partition key update is not allowed since the table is updated both as 'm' and 'n'.`)
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int, primary key (a, b))")
+	tk.MustExec("insert into t values (1, 2)")
+	tk.MustGetErrMsg(`UPDATE t m, t n SET m.a = m.a + 10, n.b = n.b + 10`,
+		`[planner:1706]Primary key/partition key update is not allowed since the table is updated both as 'm' and 'n'.`)
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int primary key, b int)")
+	tk.MustExec("insert into t values (1, 2)")
+	tk.MustGetErrMsg(`UPDATE t m, t n SET m.a = m.a + 10, n.a = n.a + 10`,
+		`[planner:1706]Primary key/partition key update is not allowed since the table is updated both as 'm' and 'n'.`)
+
+	tk.MustExec(`UPDATE t m, t n SET m.b = m.b + 10, n.b = n.b + 10`)
+	tk.MustQuery("SELECT * FROM t").Check(testkit.Rows("1 12"))
+
+	tk.MustExec(`UPDATE t m, t n SET m.a = m.a + 1, n.b = n.b + 10`)
+	tk.MustQuery("SELECT * FROM t").Check(testkit.Rows("2 12"))
+}

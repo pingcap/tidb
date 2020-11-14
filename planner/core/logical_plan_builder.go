@@ -3734,12 +3734,18 @@ func checkUpdateList(ctx sessionctx.Context, tblID2table map[int64]table.Table, 
 	if err != nil {
 		return err
 	}
-	pkUpdated := make(map[int64]model.CIStr)
+	isPKUpdated := make(map[int64]model.CIStr)
 	for _, content := range updt.TblColPosInfos {
 		tbl := tblID2table[content.TblID]
 		pk := tables.FindPrimaryIndex(tbl.Meta())
+		isPKColumn := make(map[int64]bool)
+		if pk != nil {
+			for _, pkCol := range pk.Columns {
+				isPKColumn[tbl.Cols()[pkCol.Offset].ID] = true
+			}
+		}
 		flags := assignFlags[content.Start:content.End]
-		var hasPKCol bool
+		var updatePK bool
 		for i, col := range tbl.WritableCols() {
 			if flags[i] && col.State != model.StatePublic {
 				return ErrUnknownColumn.GenWithStackByArgs(col.Name, clauseMsg[fieldList])
@@ -3749,22 +3755,17 @@ func checkUpdateList(ctx sessionctx.Context, tblID2table map[int64]table.Table, 
 			if !flags[i] {
 				continue
 			}
-			if pk != nil {
-				for _, pkCol := range pk.Columns {
-					if col.ID == tbl.Cols()[pkCol.Offset].ID {
-						hasPKCol = true
-						break
-					}
-				}
+			if pk != nil && isPKColumn[col.ID] {
+				updatePK = true
 			} else if col.IsPKHandleColumn(tbl.Meta()) || col.IsCommonHandleColumn(tbl.Meta()) {
-				hasPKCol = true
+				updatePK = true
 			}
 		}
-		if hasPKCol {
-			if tblName, ok := pkUpdated[tbl.Meta().ID]; ok {
-				return ErrMultiUpdateKeyConflict.GenWithStackByArgs(tblName.O, updt.names[content.Start].TblName.O)
+		if updatePK {
+			if otherTblName, ok := isPKUpdated[tbl.Meta().ID]; ok {
+				return ErrMultiUpdateKeyConflict.GenWithStackByArgs(otherTblName.O, updt.names[content.Start].TblName.O)
 			}
-			pkUpdated[tbl.Meta().ID] = updt.names[content.Start].TblName
+			isPKUpdated[tbl.Meta().ID] = updt.names[content.Start].TblName
 		}
 	}
 	return nil
