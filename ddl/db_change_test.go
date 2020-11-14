@@ -630,13 +630,10 @@ func (s *serialTestStateChangeSuite) TestDeleteOnlyForModifyColumnWithoutDefault
 
 func (s *serialTestStateChangeSuite) testModifyColumn(c *C, state model.SchemaState, modifyColumnSQL string, idx idxType) {
 	enableChangeColumnType := s.se.GetSessionVars().EnableChangeColumnType
-	saveConstraintCheckInPlace := s.se.GetSessionVars().ConstraintCheckInPlace
 
 	s.se.GetSessionVars().EnableChangeColumnType = true
-	s.se.GetSessionVars().ConstraintCheckInPlace = true
 	defer func() {
 		s.se.GetSessionVars().EnableChangeColumnType = enableChangeColumnType
-		s.se.GetSessionVars().ConstraintCheckInPlace = saveConstraintCheckInPlace
 	}()
 
 	_, err := s.se.Execute(context.Background(), "use test_db_state")
@@ -834,6 +831,11 @@ func (s *testStateChangeSuiteBase) runTestInSchemaState(c *C, state model.Schema
 			return
 		}
 		forceReloadDomain(se)
+		saveConstraintCheckInPlace := se.GetSessionVars().ConstraintCheckInPlace
+		se.GetSessionVars().ConstraintCheckInPlace = true
+		defer func() {
+			se.GetSessionVars().ConstraintCheckInPlace = saveConstraintCheckInPlace
+		}()
 		for _, sqlWithErr := range sqlWithErrs {
 			_, err = se.Execute(context.Background(), sqlWithErr.sql)
 			if !terror.ErrorEqual(err, sqlWithErr.expectErr) {
