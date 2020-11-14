@@ -1124,10 +1124,6 @@ func (s *testChunkSuite) TestAppendRows(c *check.C) {
 		c.Assert(string(row.GetJSON(5).GetString()), check.Equals, str)
 	}
 }
-<<<<<<< HEAD
-=======
-
->>>>>>> 31c9176845fa375d007c60756db1765db519ee03
 func BenchmarkBatchAppendRows(b *testing.B) {
 	b.ReportAllocs()
 	numRows := 1000
