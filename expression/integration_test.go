@@ -6777,9 +6777,6 @@ func (s *testIntegrationSerialSuite) TestIssue17989(c *C) {
 	tk.MustExec("admin check table t")
 }
 
-<<<<<<< HEAD
-func (s *testIntegrationSerialSuite) TestIssue18702(c *C) {
-=======
 func (s *testIntegrationSuite2) TestSchemaDMLNotChange(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk2 := testkit.NewTestKit(c, s.store)
@@ -6794,8 +6791,7 @@ func (s *testIntegrationSuite2) TestSchemaDMLNotChange(c *C) {
 	tk.MustExec("commit")
 }
 
-func (s *testIntegrationSerialSuite) TestIssue18638(c *C) {
->>>>>>> d084651fa... planner, expression: fix a bug causes schema change after DML (#21027)
+func (s *testIntegrationSerialSuite) TestIssue18702(c *C) {
 	collate.SetNewCollationEnabledForTest(true)
 	defer collate.SetNewCollationEnabledForTest(false)
 	tk := testkit.NewTestKit(c, s.store)
