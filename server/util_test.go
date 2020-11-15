@@ -14,6 +14,7 @@
 package server
 
 import (
+	"strconv"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -251,6 +252,7 @@ func mustDecodeStr(c *C, b []byte) string {
 }
 
 func (s *testUtilSuite) TestAppendFormatFloat(c *C) {
+	infVal,_ := strconv.ParseFloat("+Inf",64)
 	tests := []struct {
 		fVal    float64
 		out     string
@@ -400,6 +402,18 @@ func (s *testUtilSuite) TestAppendFormatFloat(c *C) {
 			"1e15",
 			-1,
 			32,
+		},
+		{
+			infVal,
+			"0",
+			-1,
+			64,
+		},
+		{
+			-infVal,
+			"0",
+			-1,
+			64,
 		},
 	}
 	for _, t := range tests {
