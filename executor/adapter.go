@@ -256,7 +256,7 @@ func (a *ExecStmt) IsReadOnly(vars *variable.SessionVars) bool {
 func (a *ExecStmt) RebuildPlan(ctx context.Context) (int64, error) {
 	is := infoschema.GetInfoSchema(a.Ctx)
 	a.InfoSchema = is
-	if err := plannercore.Preprocess(a.Ctx, a.StmtNode, is, plannercore.InTxnRetry); err != nil {
+	if err := plannercore.Preprocess(a.Ctx, a.StmtNode, a.StmtNode.Text(), is, plannercore.InTxnRetry); err != nil {
 		return 0, err
 	}
 	p, names, err := planner.Optimize(ctx, a.Ctx, a.StmtNode, is)

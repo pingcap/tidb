@@ -140,7 +140,7 @@ func (s *testInferTypeSuite) TestInferType(c *C) {
 		c.Assert(err, IsNil)
 
 		is := domain.GetDomain(sctx).InfoSchema()
-		err = plannercore.Preprocess(sctx, stmt, is)
+		err = plannercore.Preprocess(sctx, stmt, stmt.Text(), is)
 		c.Assert(err, IsNil, comment)
 		p, _, err := plannercore.BuildLogicalPlan(ctx, sctx, stmt, is)
 		c.Assert(err, IsNil, comment)

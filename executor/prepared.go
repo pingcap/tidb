@@ -153,7 +153,7 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		return ErrPsManyParam
 	}
 
-	err = plannercore.Preprocess(e.ctx, stmt, e.is, plannercore.InPrepare)
+	err = plannercore.Preprocess(e.ctx, stmt, stmt.Text(), e.is, plannercore.InPrepare)
 	if err != nil {
 		return err
 	}

@@ -78,8 +78,8 @@ func TryAddExtraLimit(ctx sessionctx.Context, node ast.StmtNode) ast.StmtNode {
 }
 
 // Preprocess resolves table names of the node, and checks some statements validation.
-func Preprocess(ctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema, preprocessOpt ...PreprocessOpt) error {
-	v := preprocessor{is: is, ctx: ctx, tableAliasInJoin: make([]map[string]interface{}, 0)}
+func Preprocess(ctx sessionctx.Context, node ast.Node, sql string, is infoschema.InfoSchema, preprocessOpt ...PreprocessOpt) error {
+	v := preprocessor{is: is, ctx: ctx, sql: sql, tableAliasInJoin: make([]map[string]interface{}, 0)}
 	for _, optFn := range preprocessOpt {
 		optFn(&v)
 	}
@@ -108,6 +108,7 @@ const (
 // preprocessor is an ast.Visitor that preprocess
 // ast Nodes parsed from parser.
 type preprocessor struct {
+	sql  string
 	is   infoschema.InfoSchema
 	ctx  sessionctx.Context
 	err  error
@@ -195,6 +196,8 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		}
 	case *ast.CreateStatisticsStmt, *ast.DropStatisticsStmt:
 		p.checkStatisticsOpGrammar(in)
+	case *ast.FuncCastExpr:
+		p.checkCastGrammar(node)
 	default:
 		p.flag &= ^parentIsJoin
 	}
@@ -802,18 +805,21 @@ func checkColumn(colDef *ast.ColumnDef) error {
 	}
 
 	// Check column type.
-	tp := colDef.Tp
+	return checkTp(colDef.Tp, colDef.Name.Name.O, "")
+}
+
+func checkTp(tp *types.FieldType, colName, val string) error {
 	if tp == nil {
 		return nil
 	}
 	if tp.Flen > math.MaxUint32 {
-		return types.ErrTooBigDisplayWidth.GenWithStack("Display width out of range for column '%s' (max = %d)", colDef.Name.Name.O, math.MaxUint32)
+		return types.ErrTooBigDisplayWidth.GenWithStack("Display width out of range for column '%s' (max = %d)", colName, math.MaxUint32)
 	}
 
 	switch tp.Tp {
 	case mysql.TypeString:
 		if tp.Flen != types.UnspecifiedLength && tp.Flen > mysql.MaxFieldCharLength {
-			return types.ErrTooBigFieldLength.GenWithStack("Column length too big for column '%s' (max = %d); use BLOB or TEXT instead", colDef.Name.Name.O, mysql.MaxFieldCharLength)
+			return types.ErrTooBigFieldLength.GenWithStack("Column length too big for column '%s' (max = %d); use BLOB or TEXT instead", colName, mysql.MaxFieldCharLength)
 		}
 	case mysql.TypeVarchar:
 		if len(tp.Charset) == 0 {
@@ -822,7 +828,7 @@ func checkColumn(colDef *ast.ColumnDef) error {
 			// return nil, to make the check in the ddl.CreateTable.
 			return nil
 		}
-		err := ddl.IsTooBigFieldLength(colDef.Tp.Flen, colDef.Name.Name.O, tp.Charset)
+		err := ddl.IsTooBigFieldLength(tp.Flen, colName, tp.Charset)
 		if err != nil {
 			return err
 		}
@@ -831,46 +837,54 @@ func checkColumn(colDef *ast.ColumnDef) error {
 		// https://dev.mysql.com/doc/refman/8.0/en/floating-point-types.html
 		if tp.Decimal == -1 {
 			if tp.Tp == mysql.TypeDouble {
-				if tp.Flen != -1 {
+				if tp.Flen != -1 && colName != "" {
 					return types.ErrSyntax.GenWithStackByArgs()
 				}
 			} else {
 				if tp.Flen > mysql.MaxDoublePrecisionLength {
-					return types.ErrWrongFieldSpec.GenWithStackByArgs(colDef.Name.Name.O)
+					return types.ErrWrongFieldSpec.GenWithStackByArgs(colName)
 				}
 			}
 		} else {
 			if tp.Decimal > mysql.MaxFloatingTypeScale {
-				return types.ErrTooBigScale.GenWithStackByArgs(tp.Decimal, colDef.Name.Name.O, mysql.MaxFloatingTypeScale)
+				return types.ErrTooBigScale.GenWithStackByArgs(tp.Decimal, colName, mysql.MaxFloatingTypeScale)
 			}
 			if tp.Flen > mysql.MaxFloatingTypeWidth {
-				return types.ErrTooBigDisplayWidth.GenWithStackByArgs(colDef.Name.Name.O, mysql.MaxFloatingTypeWidth)
+				return types.ErrTooBigDisplayWidth.GenWithStackByArgs(colName, mysql.MaxFloatingTypeWidth)
 			}
 		}
 	case mysql.TypeSet:
 		if len(tp.Elems) > mysql.MaxTypeSetMembers {
-			return types.ErrTooBigSet.GenWithStack("Too many strings for column %s and SET", colDef.Name.Name.O)
+			return types.ErrTooBigSet.GenWithStack("Too many strings for column %s and SET", colName)
 		}
 		// Check set elements. See https://dev.mysql.com/doc/refman/5.7/en/set.html.
-		for _, str := range colDef.Tp.Elems {
+		for _, str := range tp.Elems {
 			if strings.Contains(str, ",") {
 				return types.ErrIllegalValueForType.GenWithStackByArgs(types.TypeStr(tp.Tp), str)
 			}
 		}
 	case mysql.TypeNewDecimal:
 		if tp.Decimal > mysql.MaxDecimalScale {
-			return types.ErrTooBigScale.GenWithStackByArgs(tp.Decimal, colDef.Name.Name.O, mysql.MaxDecimalScale)
+			return types.ErrTooBigScale.GenWithStackByArgs(tp.Decimal, colName, mysql.MaxDecimalScale)
 		}
 
 		if tp.Flen > mysql.MaxDecimalWidth {
-			return types.ErrTooBigPrecision.GenWithStackByArgs(tp.Flen, colDef.Name.Name.O, mysql.MaxDecimalWidth)
+			if colName == "" {
+				return types.ErrTooBigPrecision.GenWithStackByArgs(tp.Flen, val, mysql.MaxDecimalWidth)
+			} else {
+				return types.ErrTooBigPrecision.GenWithStackByArgs(tp.Flen, colName, mysql.MaxDecimalWidth)
+			}
+		}
+
+		if tp.Flen < tp.Decimal {
+			return types.ErrMBiggerThanD.GenWithStackByArgs(colName)
 		}
 	case mysql.TypeBit:
 		if tp.Flen <= 0 {
-			return types.ErrInvalidFieldSize.GenWithStackByArgs(colDef.Name.Name.O)
+			return types.ErrInvalidFieldSize.GenWithStackByArgs(colName)
 		}
 		if tp.Flen > mysql.MaxBitDisplayWidth {
-			return types.ErrTooBigDisplayWidth.GenWithStackByArgs(colDef.Name.Name.O, mysql.MaxBitDisplayWidth)
+			return types.ErrTooBigDisplayWidth.GenWithStackByArgs(colName, mysql.MaxBitDisplayWidth)
 		}
 	default:
 		// TODO: Add more types.
@@ -1061,6 +1075,27 @@ func (p *preprocessor) resolveCreateSequenceStmt(stmt *ast.CreateSequenceStmt) {
 	sName := stmt.Name.Name.String()
 	if isIncorrectName(sName) {
 		p.err = ddl.ErrWrongTableName.GenWithStackByArgs(sName)
+		return
+	}
+}
+
+func (p *preprocessor) checkCastGrammar(node *ast.FuncCastExpr) {
+	var val string
+	switch x := node.Expr.(type) {
+	case ast.ValueExpr:
+		val = x.GetDatumString()
+		if val == "" {
+			val = fmt.Sprintf("%v", x.GetValue())
+		} else {
+			wrapChar := p.sql[x.OriginTextPosition() : x.OriginTextPosition()+1]
+			val = wrapChar + val + wrapChar
+		}
+	case *ast.ColumnNameExpr:
+		val = x.Name.Name.O
+	default:
+	}
+	if err := checkTp(node.Tp, "", val); err != nil {
+		p.err = err
 		return
 	}
 }

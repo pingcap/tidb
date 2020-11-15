@@ -17,6 +17,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"github.com/pingcap/tidb/errno"
 	"io/ioutil"
 	"math"
 	"net"
@@ -2259,7 +2260,7 @@ func (s *testSuiteP2) TestIsPointGet(c *C) {
 	for sqlStr, result := range tests {
 		stmtNode, err := s.ParseOneStmt(sqlStr, "", "")
 		c.Check(err, IsNil)
-		err = plannercore.Preprocess(ctx, stmtNode, infoSchema)
+		err = plannercore.Preprocess(ctx, stmtNode, stmtNode.Text(), infoSchema)
 		c.Check(err, IsNil)
 		p, _, err := planner.Optimize(context.TODO(), ctx, stmtNode, infoSchema)
 		c.Check(err, IsNil)
@@ -2290,7 +2291,7 @@ func (s *testSuiteP2) TestClusteredIndexIsPointGet(c *C) {
 	for sqlStr, result := range tests {
 		stmtNode, err := s.ParseOneStmt(sqlStr, "", "")
 		c.Check(err, IsNil)
-		err = plannercore.Preprocess(ctx, stmtNode, infoSchema)
+		err = plannercore.Preprocess(ctx, stmtNode, stmtNode.Text(), infoSchema)
 		c.Check(err, IsNil)
 		p, _, err := planner.Optimize(context.TODO(), ctx, stmtNode, infoSchema)
 		c.Check(err, IsNil)
@@ -6848,4 +6849,23 @@ func (s *testSuite) TestIssue19667(c *C) {
 	tk.MustExec("CREATE TABLE t (a DATETIME)")
 	tk.MustExec("INSERT INTO t VALUES('1988-04-17 01:59:59')")
 	tk.MustQuery(`SELECT DATE_ADD(a, INTERVAL 1 SECOND) FROM t`).Check(testkit.Rows("1988-04-17 02:00:00"))
+}
+
+// TestSelectWithCast for issue #21063
+func (s *testSuite) TestSelectWithCast(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`drop table if exists t`)
+	defer tk.MustExec(`drop table if exists t`)
+	tk.MustExec(`create table t(d decimal(10, 5))`)
+	tk.MustGetErrCode(`select * from t where d = cast(d as decimal(10,20))`, errno.ErrMBiggerThanD)
+	tk.MustGetErrCode(`select cast(111 as decimal(1,20)) from t`, errno.ErrMBiggerThanD)
+	tk.MustGetErrCode(`select * from t where d = cast(111 as decimal(1000,20))`, errno.ErrTooBigPrecision)
+	tk.MustGetErrCode(`select cast(111 as decimal(1000,20)) from t`, errno.ErrTooBigPrecision)
+	tk.MustGetErrMsg(`select * from t where d = cast(d as decimal(10,20))`, `[types:1427]For float(M,D), double(M,D) or decimal(M,D), M must be >= D (column '').`)
+	tk.MustGetErrMsg(`select * from t where d = cast("d" as decimal(10,20))`, `[types:1427]For float(M,D), double(M,D) or decimal(M,D), M must be >= D (column '').`)
+	tk.MustGetErrMsg(`select * from t where d = cast(111 as decimal(1000,20))`, `[types:1426]Too big precision 1000 specified for column '111'. Maximum is 65.`)
+	tk.MustGetErrMsg(`select * from t where d = cast("abc" as decimal(1000,20))`, `[types:1426]Too big precision 1000 specified for column '"abc"'. Maximum is 65.`)
+	tk.MustGetErrMsg(`select * from t where d = cast(d as decimal(1000,20))`, `[types:1426]Too big precision 1000 specified for column 'd'. Maximum is 65.`)
+	tk.MustGetErrMsg(`select * from t where d = cast('d' as decimal(1000,20))`, `[types:1426]Too big precision 1000 specified for column ''d''. Maximum is 65.`)
 }
