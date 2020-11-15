@@ -439,7 +439,7 @@ func (a *aggregationPushDownSolver) aggPushDown(p LogicalPlan) (_ LogicalPlan, e
 				}
 				projChild := proj.children[0]
 				agg.SetChildren(projChild)
-				// When the origin plan tree is `Aggregation->Projection->Union All->X`, we need merge 'Aggregation' and 'Projection' first.
+				// When the origin plan tree is `Aggregation->Projection->Union All->X`, we need to merge 'Aggregation' and 'Projection' first.
 				// And then push the new 'Aggregation' below the 'Union All' .
 				// The final plan tree should be 'Aggregation->Union All->Aggregation->X'.
 				child = projChild
