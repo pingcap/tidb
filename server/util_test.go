@@ -252,7 +252,7 @@ func mustDecodeStr(c *C, b []byte) string {
 }
 
 func (s *testUtilSuite) TestAppendFormatFloat(c *C) {
-	infVal,_ := strconv.ParseFloat("+Inf",64)
+	infVal, _ := strconv.ParseFloat("+Inf", 64)
 	tests := []struct {
 		fVal    float64
 		out     string
