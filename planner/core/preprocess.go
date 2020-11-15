@@ -869,11 +869,13 @@ func checkTp(tp *types.FieldType, colName, val string) error {
 		}
 
 		if tp.Flen > mysql.MaxDecimalWidth {
+			var arg string
 			if colName == "" {
-				return types.ErrTooBigPrecision.GenWithStackByArgs(tp.Flen, val, mysql.MaxDecimalWidth)
+				arg = val
 			} else {
-				return types.ErrTooBigPrecision.GenWithStackByArgs(tp.Flen, colName, mysql.MaxDecimalWidth)
+				arg = colName
 			}
+			return types.ErrTooBigPrecision.GenWithStackByArgs(tp.Flen, arg, mysql.MaxDecimalWidth)
 		}
 
 		if tp.Flen < tp.Decimal {
