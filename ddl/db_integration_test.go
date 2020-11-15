@@ -2579,7 +2579,7 @@ func (s *testIntegrationSuite3) TestEnumAndSetDefaultValue(c *C) {
 }
 
 // TestSelectWithCast for issue #21063
-func (s *testIntegrationSuite) TestSelectWithCast(c *C) {
+func (s *testIntegrationSuite3) TestSelectWithCast(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test`)
 	tk.MustExec(`drop table if exists t`)
