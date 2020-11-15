@@ -234,6 +234,8 @@ func (s *partitionProcessor) pruneListPartition(tbl table.Table, partitionNames 
 }
 
 func (s *partitionProcessor) prune(ds *DataSource) (LogicalPlan, error) {
+	ds.allConds = expression.PropagateConstant(ds.ctx, ds.allConds)
+
 	pi := ds.tableInfo.GetPartitionInfo()
 	if pi == nil {
 		return ds, nil
