@@ -307,7 +307,7 @@ func (s *testPointGetSuite) TestPointGetId(c *C) {
 		c.Assert(stmts, HasLen, 1)
 		stmt := stmts[0]
 		is := domain.GetDomain(ctx).InfoSchema()
-		err = core.Preprocess(ctx, stmt, is)
+		err = core.Preprocess(ctx, stmt, stmt.Text(), is)
 		c.Assert(err, IsNil)
 		p, _, err := planner.Optimize(context.TODO(), ctx, stmt, is)
 		c.Assert(err, IsNil)
