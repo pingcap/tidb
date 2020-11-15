@@ -2577,3 +2577,22 @@ func (s *testIntegrationSuite3) TestEnumAndSetDefaultValue(c *C) {
 	c.Assert(tbl.Meta().Columns[0].DefaultValue, Equals, "a")
 	c.Assert(tbl.Meta().Columns[1].DefaultValue, Equals, "a")
 }
+
+// TestSelectWithCast for issue #21063
+func (s *testIntegrationSuite) TestSelectWithCast(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`drop table if exists t`)
+	defer tk.MustExec(`drop table if exists t`)
+	tk.MustExec(`create table t(d decimal(10, 5))`)
+	tk.MustGetErrCode(`select * from t where d = cast(d as decimal(10,20))`, errno.ErrMBiggerThanD)
+	tk.MustGetErrCode(`select cast(111 as decimal(1,20)) from t`, errno.ErrMBiggerThanD)
+	tk.MustGetErrCode(`select * from t where d = cast(111 as decimal(1000,20))`, errno.ErrTooBigPrecision)
+	tk.MustGetErrCode(`select cast(111 as decimal(1000,20)) from t`, errno.ErrTooBigPrecision)
+	tk.MustGetErrMsg(`select * from t where d = cast(d as decimal(10,20))`, `[types:1427]For float(M,D), double(M,D) or decimal(M,D), M must be >= D (column '').`)
+	tk.MustGetErrMsg(`select * from t where d = cast("d" as decimal(10,20))`, `[types:1427]For float(M,D), double(M,D) or decimal(M,D), M must be >= D (column '').`)
+	tk.MustGetErrMsg(`select * from t where d = cast(111 as decimal(1000,20))`, `[types:1426]Too big precision 1000 specified for column '111'. Maximum is 65.`)
+	tk.MustGetErrMsg(`select * from t where d = cast("abc" as decimal(1000,20))`, `[types:1426]Too big precision 1000 specified for column '"abc"'. Maximum is 65.`)
+	tk.MustGetErrMsg(`select * from t where d = cast(d as decimal(1000,20))`, `[types:1426]Too big precision 1000 specified for column 'd'. Maximum is 65.`)
+	tk.MustGetErrMsg(`select * from t where d = cast('d' as decimal(1000,20))`, `[types:1426]Too big precision 1000 specified for column ''d''. Maximum is 65.`)
+}
