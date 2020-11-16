@@ -742,7 +742,7 @@ func getDefaultValue(ctx sessionctx.Context, col *table.Column, c *ast.ColumnOpt
 		if tp == mysql.TypeBit ||
 			tp == mysql.TypeString || tp == mysql.TypeVarchar || tp == mysql.TypeVarString ||
 			tp == mysql.TypeBlob || tp == mysql.TypeLongBlob || tp == mysql.TypeMediumBlob || tp == mysql.TypeTinyBlob ||
-			tp == mysql.TypeJSON {
+			tp == mysql.TypeJSON || tp == mysql.TypeEnum || tp == mysql.TypeSet {
 			// For BinaryLiteral / string fields, when getting default value we cast the value into BinaryLiteral{}, thus we return
 			// its raw string content here.
 			return v.GetBinaryLiteral().ToString(), false, nil
@@ -757,7 +757,10 @@ func getDefaultValue(ctx sessionctx.Context, col *table.Column, c *ast.ColumnOpt
 
 	switch tp {
 	case mysql.TypeSet:
-		val, err := setSetDefaultValue(v, col)
+		val, err := getSetDefaultValue(v, col)
+		return val, false, err
+	case mysql.TypeEnum:
+		val, err := getEnumDefaultValue(v, col)
 		return val, false, err
 	case mysql.TypeDuration:
 		if v, err = v.ConvertTo(ctx.GetSessionVars().StmtCtx, &col.FieldType); err != nil {
@@ -788,8 +791,8 @@ func tryToGetSequenceDefaultValue(c *ast.ColumnOption) (expr string, isExpr bool
 	return "", false, nil
 }
 
-// setSetDefaultValue sets the default value for the set type. See https://dev.mysql.com/doc/refman/5.7/en/set.html.
-func setSetDefaultValue(v types.Datum, col *table.Column) (string, error) {
+// getSetDefaultValue gets the default value for the set type. See https://dev.mysql.com/doc/refman/5.7/en/set.html.
+func getSetDefaultValue(v types.Datum, col *table.Column) (string, error) {
 	if v.Kind() == types.KindInt64 {
 		setCnt := len(col.Elems)
 		maxLimit := int64(1<<uint(setCnt) - 1)
@@ -812,31 +815,39 @@ func setSetDefaultValue(v types.Datum, col *table.Column) (string, error) {
 	if str == "" {
 		return str, nil
 	}
-
-	ctor := collate.GetCollator(col.Collate)
-	valMap := make(map[string]struct{}, len(col.Elems))
-	dVals := strings.Split(str, ",")
-	for _, dv := range dVals {
-		valMap[string(ctor.Key(dv))] = struct{}{}
-	}
-	var existCnt int
-	for dv := range valMap {
-		for i := range col.Elems {
-			e := string(ctor.Key(col.Elems[i]))
-			if e == dv {
-				existCnt++
-				break
-			}
-		}
-	}
-	if existCnt != len(valMap) {
-		return "", ErrInvalidDefaultValue.GenWithStackByArgs(col.Name.O)
-	}
 	setVal, err := types.ParseSetName(col.Elems, str, col.Collate)
 	if err != nil {
 		return "", ErrInvalidDefaultValue.GenWithStackByArgs(col.Name.O)
 	}
 	v.SetMysqlSet(setVal, col.Collate)
+
+	return v.ToString()
+}
+
+// getEnumDefaultValue gets the default value for the enum type. See https://dev.mysql.com/doc/refman/5.7/en/enum.html.
+func getEnumDefaultValue(v types.Datum, col *table.Column) (string, error) {
+	if v.Kind() == types.KindInt64 {
+		val := v.GetInt64()
+		if val < 1 || val > int64(len(col.Elems)) {
+			return "", ErrInvalidDefaultValue.GenWithStackByArgs(col.Name.O)
+		}
+		enumVal, err := types.ParseEnumValue(col.Elems, uint64(val))
+		if err != nil {
+			return "", errors.Trace(err)
+		}
+		v.SetMysqlEnum(enumVal, col.Collate)
+		return v.ToString()
+	}
+
+	str, err := v.ToString()
+	if err != nil {
+		return "", errors.Trace(err)
+	}
+	enumVal, err := types.ParseEnumName(col.Elems, str, col.Collate)
+	if err != nil {
+		return "", ErrInvalidDefaultValue.GenWithStackByArgs(col.Name.O)
+	}
+	v.SetMysqlEnum(enumVal, col.Collate)
 
 	return v.ToString()
 }
@@ -962,8 +973,20 @@ func checkColumnValueConstraint(col *table.Column, collation string) error {
 	}
 	valueMap := make(map[string]bool, len(col.Elems))
 	ctor := collate.GetCollator(collation)
+	enumLengthLimit := config.GetGlobalConfig().EnableEnumLengthLimit
+	desc, err := charset.GetCharsetDesc(col.Charset)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	for i := range col.Elems {
 		val := string(ctor.Key(col.Elems[i]))
+		// According to MySQL 8.0 Refman:
+		// The maximum supported length of an individual ENUM element is M <= 255 and (M x w) <= 1020,
+		// where M is the element literal length and w is the number of bytes required for the maximum-length character in the character set.
+		// See https://dev.mysql.com/doc/refman/8.0/en/string-type-syntax.html for more details.
+		if enumLengthLimit && (len(val) > 255 || len(val)*desc.Maxlen > 1020) {
+			return ErrTooLongValueForType.GenWithStackByArgs(col.Name)
+		}
 		if _, ok := valueMap[val]; ok {
 			tpStr := "ENUM"
 			if col.Tp == mysql.TypeSet {
@@ -2180,10 +2203,18 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) err
 			// We don't handle charset and collate here since they're handled in `getCharsetAndCollateInTableOption`.
 		}
 	}
-	if tbInfo.PreSplitRegions > tbInfo.ShardRowIDBits {
-		tbInfo.PreSplitRegions = tbInfo.ShardRowIDBits
+	shardingBits := shardingBits(tbInfo)
+	if tbInfo.PreSplitRegions > shardingBits {
+		tbInfo.PreSplitRegions = shardingBits
 	}
 	return nil
+}
+
+func shardingBits(tblInfo *model.TableInfo) uint64 {
+	if tblInfo.ShardRowIDBits > 0 {
+		return tblInfo.ShardRowIDBits
+	}
+	return tblInfo.AutoRandomBits
 }
 
 // isIgnorableSpec checks if the spec type is ignorable.
@@ -3370,177 +3401,154 @@ func checkModifyCharsetAndCollation(toCharset, toCollate, origCharset, origColla
 	return nil
 }
 
-// CheckModifyTypeCompatible checks whether changes column type to another is compatible considering
-// field length and precision.
-func CheckModifyTypeCompatible(origin *types.FieldType, to *types.FieldType) (allowedChangeColumnValueMsg string, err error) {
-	unsupportedMsg := fmt.Sprintf("type %v not match origin %v", to.CompactStr(), origin.CompactStr())
-	var skipSignCheck bool
-	var skipLenCheck bool
-	switch origin.Tp {
-	case mysql.TypeVarchar, mysql.TypeString, mysql.TypeVarString, mysql.TypeBlob,
-		mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
-		switch to.Tp {
-		case mysql.TypeVarchar, mysql.TypeString, mysql.TypeVarString,
-			mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
-			skipSignCheck = true
-			skipLenCheck = true
-		case mysql.TypeBit:
-			// TODO: Currently string data type cast to bit are not compatible with mysql, should fix here after compatible.
-			return "", errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
-		default:
-			return unsupportedMsg, errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
-		}
-	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
-		switch to.Tp {
-		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
-			// Changing integer to integer, whether reorg is necessary is depend on the flen/decimal/signed.
-			skipSignCheck = true
-			skipLenCheck = true
-		default:
-			// Changing integer to other types, reorg is absolutely necessary.
-			return unsupportedMsg, errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
-		}
-	case mysql.TypeEnum, mysql.TypeSet:
-		var typeVar string
-		if origin.Tp == mysql.TypeEnum {
-			typeVar = "enum"
-		} else {
-			typeVar = "set"
-		}
-		switch to.Tp {
-		case mysql.TypeEnum, mysql.TypeSet:
+// CheckModifyTypeCompatible checks whether changes column type to another is compatible and can be changed.
+// If types are compatible and can be directly changed, nil err will be returned; otherwise the types are incompatible.
+// There are two cases when types incompatible:
+// 1. returned canReorg == true: types can be changed by reorg
+// 2. returned canReorg == false: type change not supported yet
+func CheckModifyTypeCompatible(origin *types.FieldType, to *types.FieldType) (canReorg bool, errMsg string, err error) {
+	// Deal with the same type.
+	if origin.Tp == to.Tp {
+		if origin.Tp == mysql.TypeEnum || origin.Tp == mysql.TypeSet {
+			typeVar := "set"
+			if origin.Tp == mysql.TypeEnum {
+				typeVar = "enum"
+			}
 			if len(to.Elems) < len(origin.Elems) {
 				msg := fmt.Sprintf("the number of %s column's elements is less than the original: %d", typeVar, len(origin.Elems))
-				return msg, errUnsupportedModifyColumn.GenWithStackByArgs(msg)
+				return true, msg, errUnsupportedModifyColumn.GenWithStackByArgs(msg)
 			}
 			for index, originElem := range origin.Elems {
 				toElem := to.Elems[index]
 				if originElem != toElem {
 					msg := fmt.Sprintf("cannot modify %s column value %s to %s", typeVar, originElem, toElem)
-					return msg, errUnsupportedModifyColumn.GenWithStackByArgs(msg)
+					return true, msg, errUnsupportedModifyColumn.GenWithStackByArgs(msg)
 				}
 			}
-		case mysql.TypeVarchar, mysql.TypeString, mysql.TypeVarString,
-			mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
-			msg := fmt.Sprintf("cannot modify %s type column's to type %s", typeVar, to.String())
-			return msg, errUnsupportedModifyColumn.GenWithStackByArgs(msg)
-		case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp, mysql.TypeDuration:
-			// TODO: Currently enum/set cast to date and time are not support yet(expect year), should fix here after supported.
-			return "", errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
-		default:
-			return unsupportedMsg, errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
 		}
-	case mysql.TypeNewDecimal:
-		if origin.Tp != to.Tp {
-			return "", errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
-		}
-		// Floating-point and fixed-point types also can be UNSIGNED. As with integer types, this attribute prevents
-		// negative values from being stored in the column. Unlike the integer types, the upper range of column values
-		// remains the same.
-		if to.Flen != origin.Flen || to.Decimal != origin.Decimal || mysql.HasUnsignedFlag(to.Flag) != mysql.HasUnsignedFlag(origin.Flag) {
-			msg := fmt.Sprintf("decimal change from decimal(%d, %d) to decimal(%d, %d)", origin.Flen, origin.Decimal, to.Flen, to.Decimal)
-			return msg, errUnsupportedModifyColumn.GenWithStackByArgs(msg)
-		}
-	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp, mysql.TypeDuration, mysql.TypeYear:
-		switch origin.Tp {
-		case mysql.TypeDuration:
-			switch to.Tp {
-			case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
-				return "", errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
-			}
-		case mysql.TypeDate:
-			switch to.Tp {
-			case mysql.TypeDatetime, mysql.TypeTimestamp:
-				return "", errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
-			}
-		case mysql.TypeTimestamp:
-			switch to.Tp {
-			case mysql.TypeDuration, mysql.TypeDatetime:
-				return "", errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
-			}
-		case mysql.TypeDatetime:
-			switch to.Tp {
-			case mysql.TypeTimestamp:
-				return "", errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
-			}
-		case mysql.TypeYear:
-			switch to.Tp {
-			case mysql.TypeDuration:
-				return "", errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
-			case mysql.TypeYear:
-			default:
-				return "", ErrTruncatedWrongValue.GenWithStack("banned conversion that must fail")
+
+		if origin.Tp == mysql.TypeNewDecimal {
+			// Floating-point and fixed-point types also can be UNSIGNED. As with integer types, this attribute prevents
+			// negative values from being stored in the column. Unlike the integer types, the upper range of column values
+			// remains the same.
+			if to.Flen != origin.Flen || to.Decimal != origin.Decimal || mysql.HasUnsignedFlag(to.Flag) != mysql.HasUnsignedFlag(origin.Flag) {
+				msg := fmt.Sprintf("decimal change from decimal(%d, %d) to decimal(%d, %d)", origin.Flen, origin.Decimal, to.Flen, to.Decimal)
+				return true, msg, errUnsupportedModifyColumn.GenWithStackByArgs(msg)
 			}
 		}
-		switch to.Tp {
-		case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp, mysql.TypeDuration:
-			skipSignCheck = true
-			skipLenCheck = true
-		case mysql.TypeYear:
-			if origin.Tp != mysql.TypeYear {
-				return "", ErrWarnDataOutOfRange.GenWithStack("banned conversion that must fail")
-			}
-			skipSignCheck = true
-			skipLenCheck = true
-		default:
-			return "", errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
+
+		needReorg, reason := needReorgToChange(origin, to)
+		if !needReorg {
+			return false, "", nil
 		}
-	default:
-		if origin.Tp != to.Tp {
-			return "", errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
-		}
+		return true, reason, errUnsupportedModifyColumn.GenWithStackByArgs(reason)
 	}
 
-	if to.Flen > 0 && to.Flen < origin.Flen {
-		msg := fmt.Sprintf("length %d is less than origin %d", to.Flen, origin.Flen)
-		if skipLenCheck {
-			return msg, errUnsupportedModifyColumn.GenWithStackByArgs(msg)
-		}
-		return "", errUnsupportedModifyColumn.GenWithStackByArgs(msg)
-	}
-	if to.Decimal > 0 && to.Decimal < origin.Decimal {
-		msg := fmt.Sprintf("decimal %d is less than origin %d", to.Decimal, origin.Decimal)
-		return "", errUnsupportedModifyColumn.GenWithStackByArgs(msg)
+	// Deal with the different type.
+	if !checkTypeChangeSupported(origin, to) {
+		unsupportedMsg := fmt.Sprintf("change from original type %v to %v is currently unsupported yet", to.CompactStr(), origin.CompactStr())
+		return false, unsupportedMsg, errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
 	}
 
-	toUnsigned := mysql.HasUnsignedFlag(to.Flag)
-	originUnsigned := mysql.HasUnsignedFlag(origin.Flag)
-	if originUnsigned != toUnsigned {
-		msg := fmt.Sprintf("can't change unsigned integer to signed or vice versa")
-		if skipSignCheck {
-			return msg, errUnsupportedModifyColumn.GenWithStackByArgs(msg)
+	// Check if different type can directly convert and no need to reorg.
+	stringToString := types.IsString(origin.Tp) && types.IsString(to.Tp)
+	integerToInteger := mysql.IsIntegerType(origin.Tp) && mysql.IsIntegerType(to.Tp)
+	if stringToString || integerToInteger {
+		needReorg, reason := needReorgToChange(origin, to)
+		if !needReorg {
+			return false, "", nil
 		}
-		return "", errUnsupportedModifyColumn.GenWithStackByArgs(msg)
+		return true, reason, errUnsupportedModifyColumn.GenWithStackByArgs(reason)
 	}
-	return "", nil
+
+	notCompatibleMsg := fmt.Sprintf("type %v not match origin %v", to.CompactStr(), origin.CompactStr())
+	return true, notCompatibleMsg, errUnsupportedModifyColumn.GenWithStackByArgs(notCompatibleMsg)
 }
 
-// checkModifyTypes checks if the 'origin' type can be modified to 'to' type without the need to
-// change or check existing data in the table.
-// It returns error if the two types has incompatible charset and collation, different sign, different
-// digital/string types, or length of new Flen and Decimal is less than origin.
+func needReorgToChange(origin *types.FieldType, to *types.FieldType) (needOreg bool, reasonMsg string) {
+	toFlen := to.Flen
+	originFlen := origin.Flen
+	if mysql.IsIntegerType(to.Tp) && mysql.IsIntegerType(origin.Tp) {
+		// For integers, we should ignore the potential display length represented by flen, using
+		// the default flen of the type.
+		originFlen, _ = mysql.GetDefaultFieldLengthAndDecimal(origin.Tp)
+		toFlen, _ = mysql.GetDefaultFieldLengthAndDecimal(to.Tp)
+	}
+
+	if toFlen > 0 && toFlen < originFlen {
+		return true, fmt.Sprintf("length %d is less than origin %d", to.Flen, origin.Flen)
+	}
+	if to.Decimal > 0 && to.Decimal < origin.Decimal {
+		return true, fmt.Sprintf("decimal %d is less than origin %d", to.Decimal, origin.Decimal)
+	}
+	if mysql.HasUnsignedFlag(origin.Flag) != mysql.HasUnsignedFlag(to.Flag) {
+		return true, fmt.Sprintf("can't change unsigned integer to signed or vice versa")
+	}
+	return false, ""
+}
+
+func checkTypeChangeSupported(origin *types.FieldType, to *types.FieldType) bool {
+	if types.IsString(origin.Tp) && to.Tp == mysql.TypeBit {
+		// TODO: Currently string data type cast to bit are not compatible with mysql, should fix here after compatible.
+		return false
+	}
+
+	if (origin.Tp == mysql.TypeEnum || origin.Tp == mysql.TypeSet) &&
+		(types.IsTypeTime(to.Tp) || to.Tp == mysql.TypeDuration) {
+		// TODO: Currently enum/set cast to date/datetime/timestamp/time/bit are not support yet, should fix here after supported.
+		return false
+	}
+
+	if (types.IsTypeTime(origin.Tp) || origin.Tp == mysql.TypeDuration || origin.Tp == mysql.TypeYear) &&
+		(to.Tp == mysql.TypeEnum || to.Tp == mysql.TypeSet || to.Tp == mysql.TypeBit) {
+		// TODO: Currently date and time cast to enum/set/bit are not support yet, should fix here after supported.
+		return false
+	}
+
+	if (origin.Tp == mysql.TypeFloat || origin.Tp == mysql.TypeDouble) &&
+		(types.IsTypeTime(to.Tp) || to.Tp == mysql.TypeEnum || to.Tp == mysql.TypeSet) {
+		// TODO: Currently float/double cast to date/datetime/timestamp/enum/set type are not support yet, should fix here after supported.
+		return false
+	}
+
+	if origin.Tp == mysql.TypeBit &&
+		(types.IsTypeTime(to.Tp) || to.Tp == mysql.TypeDuration || to.Tp == mysql.TypeEnum || to.Tp == mysql.TypeSet) {
+		// TODO: Currently bit cast to date/datetime/timestamp/time/enum/set are not support yet, should fix here after supported.
+		return false
+	}
+
+	if origin.Tp == mysql.TypeNewDecimal && (to.Tp == mysql.TypeEnum || to.Tp == mysql.TypeSet) {
+		// TODO: Currently decimal cast to enum/set are not support yet, should fix here after supported.
+		return false
+	}
+
+	return true
+}
+
+// checkModifyTypes checks if the 'origin' type can be modified to 'to' type no matter directly change
+// or change by reorg. It returns error if the two types are incompatible and correlated change are not
+// supported. However, even the two types can be change, if the flag "tidb_enable_change_column_type" not
+// set, or the "origin" type contains primary key, error will be returned.
 func checkModifyTypes(ctx sessionctx.Context, origin *types.FieldType, to *types.FieldType, needRewriteCollationData bool) error {
-	var needReorg bool
-	changeColumnValueMsg, err := CheckModifyTypeCompatible(origin, to)
+	canReorg, changeColumnErrMsg, err := CheckModifyTypeCompatible(origin, to)
 	if err != nil {
 		enableChangeColumnType := ctx.GetSessionVars().EnableChangeColumnType
-		if len(changeColumnValueMsg) == 0 {
+		if !canReorg {
 			return errors.Trace(err)
 		}
 
 		if !enableChangeColumnType {
-			msg := fmt.Sprintf("%s, and tidb_enable_change_column_type is false", changeColumnValueMsg)
+			msg := fmt.Sprintf("%s, and tidb_enable_change_column_type is false", changeColumnErrMsg)
 			return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
 		} else if mysql.HasPriKeyFlag(origin.Flag) {
 			msg := "tidb_enable_change_column_type is true and this column has primary key flag"
 			return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
 		}
-		needReorg = true
 	}
 
 	err = checkModifyCharsetAndCollation(to.Charset, to.Collate, origin.Charset, origin.Collate, needRewriteCollationData)
 	// column type change can handle the charset change between these two types in the process of the reorg.
-	if err != nil && errUnsupportedModifyCharset.Equal(err) && needReorg {
+	if err != nil && errUnsupportedModifyCharset.Equal(err) && canReorg {
 		return nil
 	}
 	return errors.Trace(err)
@@ -5810,6 +5818,12 @@ func buildPlacementSpecs(bundle *placement.Bundle, specs []*ast.PlacementSpec) (
 		case ast.PlacementRoleFollower:
 			role = placement.Follower
 		case ast.PlacementRoleLeader:
+			if spec.Replicas == 0 {
+				spec.Replicas = 1
+			}
+			if spec.Replicas > 1 {
+				err = errors.Errorf("replicas can only be 1 when the role is leader")
+			}
 			role = placement.Leader
 		case ast.PlacementRoleLearner:
 			role = placement.Learner

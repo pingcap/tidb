@@ -1048,8 +1048,7 @@ func upgradeToVer41(s Session, ver int64) {
 // writeDefaultExprPushDownBlacklist writes default expr pushdown blacklist into mysql.expr_pushdown_blacklist
 func writeDefaultExprPushDownBlacklist(s Session) {
 	mustExecute(s, "INSERT HIGH_PRIORITY INTO mysql.expr_pushdown_blacklist VALUES"+
-		"('date_add','tiflash', 'DST(daylight saving time) does not take effect in TiFlash date_add'),"+
-		"('cast','tiflash', 'Behavior of some corner cases(overflow, truncate etc) is different in TiFlash and TiDB')")
+		"('date_add','tiflash', 'DST(daylight saving time) does not take effect in TiFlash date_add')")
 }
 
 func upgradeToVer42(s Session, ver int64) {
@@ -1065,8 +1064,8 @@ func upgradeToVer42(s Session, ver int64) {
 func writeStmtSummaryVars(s Session) {
 	sql := fmt.Sprintf("UPDATE %s.%s SET variable_value='%%s' WHERE variable_name='%%s' AND variable_value=''", mysql.SystemDB, mysql.GlobalVariablesTable)
 	stmtSummaryConfig := config.GetGlobalConfig().StmtSummary
-	mustExecute(s, fmt.Sprintf(sql, variable.BoolToIntStr(stmtSummaryConfig.Enable), variable.TiDBEnableStmtSummary))
-	mustExecute(s, fmt.Sprintf(sql, variable.BoolToIntStr(stmtSummaryConfig.EnableInternalQuery), variable.TiDBStmtSummaryInternalQuery))
+	mustExecute(s, fmt.Sprintf(sql, variable.BoolToOnOff(stmtSummaryConfig.Enable), variable.TiDBEnableStmtSummary))
+	mustExecute(s, fmt.Sprintf(sql, variable.BoolToOnOff(stmtSummaryConfig.EnableInternalQuery), variable.TiDBStmtSummaryInternalQuery))
 	mustExecute(s, fmt.Sprintf(sql, strconv.Itoa(stmtSummaryConfig.RefreshInterval), variable.TiDBStmtSummaryRefreshInterval))
 	mustExecute(s, fmt.Sprintf(sql, strconv.Itoa(stmtSummaryConfig.HistorySize), variable.TiDBStmtSummaryHistorySize))
 	mustExecute(s, fmt.Sprintf(sql, strconv.FormatUint(uint64(stmtSummaryConfig.MaxStmtCount), 10), variable.TiDBStmtSummaryMaxStmtCount))
