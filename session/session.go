@@ -2452,14 +2452,14 @@ func (s *session) checkPlacementPolicyBeforeCommit() error {
 			bundle, ok := is.BundleByName(placement.GroupID(physicalTableID))
 			if !ok {
 				err = ddl.ErrInvalidPlacementPolicyCheck.GenWithStackByArgs(
-					fmt.Sprintf("table or partition %v don't have rule bundle with txnScope %v",
+					fmt.Sprintf("table or partition %v don't have placement policies with txn_scope %v",
 						physicalTableID, txnScope))
 				break
 			}
 			dcLocation, ok := placement.GetLeaderDCByBundle(bundle, placement.DCLabelKey)
 			if !ok {
 				err = ddl.ErrInvalidPlacementPolicyCheck.GenWithStackByArgs(
-					fmt.Sprintf("bundle %v's leader placement policy is not defined", bundle.ID))
+					fmt.Sprintf("table or partition %v's leader placement policy is not defined", physicalTableID))
 				break
 			}
 			if dcLocation != txnScope {
