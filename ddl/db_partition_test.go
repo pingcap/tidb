@@ -252,7 +252,7 @@ func (s *testIntegrationSuite3) TestCreateTableWithPartition(c *C) {
 	tk.MustGetErrCode(`CREATE TABLE t34 (c0 INT) PARTITION BY HASH((CASE WHEN 0 THEN 0 ELSE c0 END )) PARTITIONS 1;`, tmysql.ErrPartitionFunctionIsNotAllowed)
 	tk.MustGetErrCode(`CREATE TABLE t0(c0 INT) PARTITION BY HASH((c0<CURRENT_USER())) PARTITIONS 1;`, tmysql.ErrPartitionFunctionIsNotAllowed)
 	// TODO: fix this one
-	tk.MustExec(`create table t33 (a timestamp, b int) partition by hash(unix_timestamp(a)) partitions 30;`)
+	// tk.MustGetErrCode(`create table t33 (a timestamp, b int) partition by hash(unix_timestamp(a)) partitions 30;`, tmysql.ErrPartitionFuncNotAllowed)
 
 	// Fix issue 8647
 	tk.MustGetErrCode(`CREATE TABLE trb8 (
