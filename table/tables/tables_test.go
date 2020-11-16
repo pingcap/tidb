@@ -643,6 +643,7 @@ func (ts *testSuite) TestConstraintCheckForUniqueIndex(c *C) {
 	c.Assert(err.Error(), Equals, "[kv:1062]Duplicate entry '1-tidb' for key 'k_1'")
 	tk.MustExec("rollback")
 
+	// This test check that with @@tidb_constraint_check_in_place = 0, although there is not KV request for the unique index, the pessimistic lock should still be written.
 	tk1 := testkit.NewTestKit(c, ts.store)
 	tk2 := testkit.NewTestKit(c, ts.store)
 	tk1.MustExec("set @@tidb_txn_mode = 'pessimistic'")
@@ -658,7 +659,7 @@ func (ts *testSuite) TestConstraintCheckForUniqueIndex(c *C) {
 		tk2.Exec("insert into t(k,c) values(3, 'tidb')")
 		ch <- 2
 	}()
-	time.Sleep(100000000)
+	time.Sleep(100 * time.Millisecond)
 	ch <- 1
 	tk1.Exec("commit")
 	var isSession1 string
