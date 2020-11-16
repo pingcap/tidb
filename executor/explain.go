@@ -71,7 +71,6 @@ func (e *ExplainExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	return nil
 }
 
-<<<<<<< HEAD
 func (e *ExplainExec) generateExplainInfo(ctx context.Context) (rows [][]string, err error) {
 	closed := false
 	defer func() {
@@ -81,35 +80,28 @@ func (e *ExplainExec) generateExplainInfo(ctx context.Context) (rows [][]string,
 		}
 	}()
 	if e.analyzeExec != nil {
-=======
-func (e *ExplainExec) executeAnalyzeExec(ctx context.Context) (err error) {
-	if e.analyzeExec != nil && !e.executed {
-		defer func() {
-			err1 := e.analyzeExec.Close()
-			if err1 != nil {
-				if err != nil {
-					err = errors.New(err.Error() + ", " + err1.Error())
-				} else {
-					err = err1
-				}
-			}
-		}()
-		e.executed = true
->>>>>>> 875cf6dfb... executor: fix analyze update panic cause by duplicate call analyze executor Close method (#20390)
 		chk := newFirstChunk(e.analyzeExec)
+		var nextErr, closeErr error
 		for {
-			err = Next(ctx, e.analyzeExec, chk)
-			if err != nil || chk.NumRows() == 0 {
+			nextErr = Next(ctx, e.analyzeExec, chk)
+			if nextErr != nil || chk.NumRows() == 0 {
 				break
 			}
 		}
-	}
-	return err
-}
-
-func (e *ExplainExec) generateExplainInfo(ctx context.Context) (rows [][]string, err error) {
-	if err = e.executeAnalyzeExec(ctx); err != nil {
-		return nil, err
+		closeErr = e.analyzeExec.Close()
+		closed = true
+		if nextErr != nil {
+			if closeErr != nil {
+				err = errors.New(nextErr.Error() + ", " + closeErr.Error())
+			} else {
+				err = nextErr
+			}
+		} else if closeErr != nil {
+			err = closeErr
+		}
+		if err != nil {
+			return nil, err
+		}
 	}
 	if err = e.explain.RenderResult(); err != nil {
 		return nil, err

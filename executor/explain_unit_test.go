@@ -81,10 +81,6 @@ func TestExplainAnalyzeInvokeNextAndClose(t *testing.T) {
 		t.Errorf(err.Error())
 	}
 	// mockErrorOperator panic
-	explainExec = &ExplainExec{
-		baseExecutor: baseExec,
-		explain:      nil,
-	}
 	mockOpr = mockErrorOperator{baseExec, true, false}
 	explainExec.analyzeExec = &mockOpr
 	defer func() {
