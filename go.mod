@@ -9,7 +9,7 @@ require (
 	github.com/blacktear23/go-proxyprotocol v0.0.0-20180807104634-af7a81e8dd0d
 	github.com/carlmjohnson/flagext v0.20.2 // indirect
 	github.com/cheggaaa/pb/v3 v3.0.4 // indirect
-	github.com/cockroachdb/pebble v0.0.0-20201113231719-11399317ed18 // indirect
+	github.com/cockroachdb/pebble v0.0.0-20200617141519-3b241b76ed3b // indirect
 	github.com/codahale/hdrhistogram v0.9.0 // indirect
 	github.com/coreos/go-semver v0.3.0 // indirect
 	github.com/coreos/go-systemd v0.0.0-20190719114852-fd7a80b32e1f // indirect
@@ -22,7 +22,7 @@ require (
 	github.com/fsouza/fake-gcs-server v1.17.0 // indirect
 	github.com/go-sql-driver/mysql v1.5.0
 	github.com/gogo/protobuf v1.3.1
-	github.com/golang/protobuf v1.4.2
+	github.com/golang/protobuf v1.3.4
 	github.com/golang/snappy v0.0.2-0.20190904063534-ff6b7dc882cf
 	github.com/google/btree v1.0.0
 	github.com/google/pprof v0.0.0-20200407044318-7d83b28da2e9
@@ -34,11 +34,15 @@ require (
 	github.com/iancoleman/strcase v0.0.0-20191112232945-16388991a334
 	github.com/joho/sqltocsv v0.0.0-20190824231449-5650f27fd5b6 // indirect
 	github.com/klauspost/cpuid v1.2.1
+	github.com/kr/text v0.2.0 // indirect
 	github.com/mattn/go-colorable v0.1.6 // indirect
 	github.com/montanaflynn/stats v0.5.0 // indirect
 	github.com/ngaut/pools v0.0.0-20180318154953-b7bc8c42aac7
 	github.com/ngaut/sync2 v0.0.0-20141008032647-7a24ed77b2ef
 	github.com/ngaut/unistore v0.0.0-20201026053041-4333e8d852f1
+	github.com/niemeyer/pretty v0.0.0-20200227124842-a10e7caefd8e // indirect
+	github.com/onsi/ginkgo v1.9.0 // indirect
+	github.com/onsi/gomega v1.6.0 // indirect
 	github.com/opentracing/basictracer-go v1.0.0
 	github.com/opentracing/opentracing-go v1.1.0
 	github.com/phayes/freeport v0.0.0-20180830031419-95f893ade6f2
@@ -54,7 +58,7 @@ require (
 	github.com/pingcap/log v0.0.0-20200828042413-fce0951f1463
 	github.com/pingcap/parser v0.0.0-20201112065012-c9380f220ff9
 	github.com/pingcap/sysutil v0.0.0-20201021075216-f93ced2829e2
-	github.com/pingcap/tidb-lightning v4.0.9-0.20201116021828-7e17f97a2079+incompatible
+	github.com/pingcap/tidb-lightning v4.0.9-0.20201106041742-a1ac97827a27+incompatible
 	github.com/pingcap/tidb-tools v4.0.5-0.20200820092506-34ea90c93237+incompatible
 	github.com/pingcap/tipb v0.0.0-20201026044621-45e60c77588f
 	github.com/prometheus/client_golang v1.5.1
@@ -66,6 +70,7 @@ require (
 	github.com/spaolacci/murmur3 v1.1.0 // indirect
 	github.com/spf13/cobra v1.0.0 // indirect
 	github.com/spf13/pflag v1.0.5 // indirect
+	github.com/stretchr/testify v1.6.1 // indirect
 	github.com/syndtr/goleveldb v1.0.1-0.20190318030020-c3a204f8e965 // indirect
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
 	github.com/tikv/pd v1.1.0-beta.0.20200910042021-254d1345be09
@@ -81,14 +86,17 @@ require (
 	go.uber.org/automaxprocs v1.2.0
 	go.uber.org/multierr v1.6.0 // indirect
 	go.uber.org/zap v1.16.0
+	golang.org/x/crypto v0.0.0-20200820211705-5c72a883971a // indirect
 	golang.org/x/lint v0.0.0-20200302205851-738671d3881b // indirect
 	golang.org/x/net v0.0.0-20200904194848-62affa334b73
 	golang.org/x/sync v0.0.0-20201020160332-67f06af15bc9
 	golang.org/x/sys v0.0.0-20200819171115-d785dc25833f
 	golang.org/x/text v0.3.4
 	golang.org/x/tools v0.0.0-20200820010801-b793a1359eac
-	google.golang.org/grpc v1.29.1
+	google.golang.org/grpc v1.27.1
+	gopkg.in/check.v1 v1.0.0-20200902074654-038fdea0a05b // indirect
 	gopkg.in/natefinch/lumberjack.v2 v2.0.0
+	gopkg.in/yaml.v2 v2.3.0 // indirect
 	honnef.co/go/tools v0.0.1-2020.1.6 // indirect
 	modernc.org/mathutil v1.1.1 // indirect
 	sigs.k8s.io/yaml v1.2.0 // indirect
