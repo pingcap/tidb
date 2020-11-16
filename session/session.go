@@ -1181,24 +1181,7 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 		if recordSets, err = s.executeStatement(ctx, stmt, recordSets, multiQuery); err != nil {
 			return nil, err
 		}
-		err = finishStmt(ctx, se, err, s)
 	}
-<<<<<<< HEAD
-=======
-	if rs != nil {
-		return &execStmtResult{
-			RecordSet: rs,
-			sql:       s,
-			se:        se,
-		}, err
-	}
-
-	// If it is not a select statement, we record its slow log here,
-	// then it could include the transaction commit time.
-	s.(*executor.ExecStmt).FinishExecuteStmt(origTxnCtx.StartTS, err == nil, false)
-	return nil, err
-}
->>>>>>> c704b9756... executor: add runtime information for DML statement in explain analyze (#19106)
 
 	if s.sessionVars.ClientCapability&mysql.ClientMultiResults == 0 && len(recordSets) > 1 {
 		// return the first recordset if client doesn't support ClientMultiResults.

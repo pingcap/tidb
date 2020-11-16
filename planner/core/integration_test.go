@@ -1365,8 +1365,6 @@ func (s *testIntegrationSerialSuite) TestExplainAnalyzePointGet(c *C) {
 	checkExplain("BatchGet")
 }
 
-<<<<<<< HEAD
-=======
 func (s *testIntegrationSerialSuite) TestExplainAnalyzeDML(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -1389,32 +1387,6 @@ func (s *testIntegrationSerialSuite) TestExplainAnalyzeDML(c *C) {
 	checkExplain("BatchGet")
 }
 
-func (s *testIntegrationSuite) TestPartitionExplain(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec(`create table pt (id int, c int, key i_id(id), key i_c(c)) partition by range (c) (
-partition p0 values less than (4),
-partition p1 values less than (7),
-partition p2 values less than (10))`)
-
-	tk.MustExec("set @@tidb_enable_index_merge = 1;")
-
-	var input []string
-	var output []struct {
-		SQL  string
-		Plan []string
-	}
-	s.testData.GetTestCases(c, &input, &output)
-	for i, tt := range input {
-		s.testData.OnRecord(func() {
-			output[i].SQL = tt
-			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain " + tt).Rows())
-		})
-		tk.MustQuery("explain " + tt).Check(testkit.Rows(output[i].Plan...))
-	}
-}
-
->>>>>>> c704b9756... executor: add runtime information for DML statement in explain analyze (#19106)
 func (s *testIntegrationSuite) TestPartialBatchPointGet(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
