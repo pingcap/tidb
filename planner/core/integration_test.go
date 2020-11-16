@@ -1832,3 +1832,14 @@ func (s *testIntegrationSuite) TestIssue10448(c *C) {
 	tk.MustExec("insert into t values(1),(2),(3)")
 	tk.MustQuery("select a from (select pk as a from t) t1 where a = 18446744073709551615").Check(testkit.Rows())
 }
+
+func (s *testIntegrationSuite) TestInvalidNamedWindowSpec(c *C) {
+	// #12356
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("DROP TABLE IF EXISTS temptest")
+	tk.MustExec("create table temptest (val int, val1 int)")
+	tk.MustQuery("SELECT val FROM temptest WINDOW w AS (ORDER BY val RANGE 1 PRECEDING)").Check(testkit.Rows())
+	tk.MustGetErrMsg("SELECT val FROM temptest WINDOW w AS (ORDER BY val, val1 RANGE 1 PRECEDING)",
+		"[planner:3587]Window 'w' with RANGE N PRECEDING/FOLLOWING frame requires exactly one ORDER BY expression, of numeric or temporal type")
+}

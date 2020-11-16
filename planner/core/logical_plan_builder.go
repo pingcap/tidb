@@ -2757,6 +2757,10 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 		}
 	}
 
+	err = b.checkNamedWindowSpecs(ctx, p, sel.WindowSpecs)
+	if err != nil {
+		return nil, err
+	}
 	hasWindowFuncField := b.detectSelectWindow(sel)
 	if hasWindowFuncField {
 		windowAggMap, err = b.resolveWindowFunction(sel, p)
@@ -4531,34 +4535,56 @@ func (b *PlanBuilder) checkOriginWindowSpecs(funcs []*ast.WindowFuncExpr, orderB
 		if f.Spec.Name.L != "" {
 			spec = b.windowSpecs[f.Spec.Name.L]
 		}
-		if spec.Frame == nil {
-			continue
+		if err := b.checkOriginWindowSpec(spec, orderByItems); err != nil {
+			return err
 		}
-		if spec.Frame.Type == ast.Groups {
-			return ErrNotSupportedYet.GenWithStackByArgs("GROUPS")
-		}
-		start, end := spec.Frame.Extent.Start, spec.Frame.Extent.End
-		if start.Type == ast.Following && start.UnBounded {
-			return ErrWindowFrameStartIllegal.GenWithStackByArgs(getWindowName(spec.Name.O))
-		}
-		if end.Type == ast.Preceding && end.UnBounded {
-			return ErrWindowFrameEndIllegal.GenWithStackByArgs(getWindowName(spec.Name.O))
-		}
-		if start.Type == ast.Following && (end.Type == ast.Preceding || end.Type == ast.CurrentRow) {
-			return ErrWindowFrameIllegal.GenWithStackByArgs(getWindowName(spec.Name.O))
-		}
-		if (start.Type == ast.Following || start.Type == ast.CurrentRow) && end.Type == ast.Preceding {
-			return ErrWindowFrameIllegal.GenWithStackByArgs(getWindowName(spec.Name.O))
-		}
+	}
+	return nil
+}
 
-		err := b.checkOriginWindowFrameBound(&start, spec, orderByItems)
+// checkNamedWindowSpecs checks the validation for named window specifications.
+func (b *PlanBuilder) checkNamedWindowSpecs(ctx context.Context, p LogicalPlan, specs []ast.WindowSpec) error {
+	for _, spec := range specs {
+		_, _, orderBy, _, err := b.buildProjectionForWindow(ctx, p, &spec, nil, nil)
 		if err != nil {
 			return err
 		}
-		err = b.checkOriginWindowFrameBound(&end, spec, orderByItems)
-		if err != nil {
+		if err := b.checkOriginWindowSpec(&spec, orderBy); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+// checkOriginWindowSpec checks the validation for an origin window specification.
+func (b *PlanBuilder) checkOriginWindowSpec(spec *ast.WindowSpec, orderByItems []property.SortItem) error {
+	if spec.Frame == nil {
+		return nil
+	}
+	if spec.Frame.Type == ast.Groups {
+		return ErrNotSupportedYet.GenWithStackByArgs("GROUPS")
+	}
+	start, end := spec.Frame.Extent.Start, spec.Frame.Extent.End
+	if start.Type == ast.Following && start.UnBounded {
+		return ErrWindowFrameStartIllegal.GenWithStackByArgs(getWindowName(spec.Name.O))
+	}
+	if end.Type == ast.Preceding && end.UnBounded {
+		return ErrWindowFrameEndIllegal.GenWithStackByArgs(getWindowName(spec.Name.O))
+	}
+	if start.Type == ast.Following && (end.Type == ast.Preceding || end.Type == ast.CurrentRow) {
+		return ErrWindowFrameIllegal.GenWithStackByArgs(getWindowName(spec.Name.O))
+	}
+	if (start.Type == ast.Following || start.Type == ast.CurrentRow) && end.Type == ast.Preceding {
+		return ErrWindowFrameIllegal.GenWithStackByArgs(getWindowName(spec.Name.O))
+	}
+
+	err := b.checkOriginWindowFrameBound(&start, spec, orderByItems)
+	if err != nil {
+		return err
+	}
+	err = b.checkOriginWindowFrameBound(&end, spec, orderByItems)
+	if err != nil {
+		return err
 	}
 	return nil
 }
