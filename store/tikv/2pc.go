@@ -1582,9 +1582,7 @@ func (batchExe *batchExecutor) startWorker(exitCh chan struct{}, ch chan error, 
 					// in concurrent goroutines.
 					singleBatchBackoffer = batchExe.backoffer.Clone()
 				} else {
-					var singleBatchCancel context.CancelFunc
-					singleBatchBackoffer, singleBatchCancel = batchExe.backoffer.Fork()
-					defer singleBatchCancel()
+					singleBatchBackoffer, _ = batchExe.backoffer.Fork()
 				}
 				beforeSleep := singleBatchBackoffer.totalSleep
 				ch <- batchExe.action.handleSingleBatch(batchExe.committer, singleBatchBackoffer, batch)
@@ -1620,7 +1618,6 @@ func (batchExe *batchExecutor) process(batches []batchMutations) error {
 	var cancel context.CancelFunc
 	if _, ok := batchExe.action.(actionPrewrite); ok {
 		batchExe.backoffer, cancel = batchExe.backoffer.Fork()
-		defer cancel()
 	}
 	// concurrently do the work for each batch.
 	ch := make(chan error, len(batches))

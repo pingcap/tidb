@@ -363,6 +363,11 @@ func (lr *LockResolver) resolveLocks(bo *Backoffer, callerStartTS uint64, locks 
 
 			if status.primaryLock != nil && status.primaryLock.UseAsyncCommit && !exists {
 				err = lr.resolveLockAsync(bo, l, status)
+				// Treat nonAsyncCommitLock error as a soft error. It happens when a transaction
+				// just fallbacks from async commit, so a simple retry will work.
+				if _, ok := err.(*nonAsyncCommitLock); ok {
+					msBeforeTxnExpired.update(0)
+				}
 			} else if l.LockType == kvrpcpb.Op_PessimisticLock {
 				err = lr.resolvePessimisticLock(bo, l, cleanRegions)
 			} else {
@@ -628,6 +633,12 @@ type asyncResolveData struct {
 	missingLock bool
 }
 
+type nonAsyncCommitLock struct{}
+
+func (*nonAsyncCommitLock) Error() string {
+	return "CheckSecondaryLocks receives a non-async-commit lock"
+}
+
 // addKeys adds the keys from locks to data, keeping other fields up to date. startTS and commitTS are for the
 // transaction being resolved.
 //
@@ -670,6 +681,9 @@ func (data *asyncResolveData) addKeys(locks []*kvrpcpb.LockInfo, expected int, s
 			err := errors.Errorf("unexpected timestamp, expected: %v, found: %v", startTS, lockInfo.LockVersion)
 			logutil.BgLogger().Error("addLocks error", zap.Error(err))
 			return err
+		}
+		if !lockInfo.UseAsyncCommit {
+			return &nonAsyncCommitLock{}
 		}
 
 		if !data.missingLock && lockInfo.MinCommitTs > data.commitTs {

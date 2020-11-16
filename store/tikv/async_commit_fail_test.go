@@ -162,30 +162,7 @@ func (s *testAsyncCommitFailSuite) TestSecondaryListInPrimaryLock(c *C) {
 		conf.TiKVClient.AsyncCommit.Enable = true
 	})
 
-	s.putAlphabets(c)
-
-	// Split into several regions.
-	for _, splitKey := range []string{"h", "o", "u"} {
-		bo := NewBackofferWithVars(context.Background(), 5000, nil)
-		loc, err := s.store.GetRegionCache().LocateKey(bo, []byte(splitKey))
-		c.Assert(err, IsNil)
-		newRegionID := s.cluster.AllocID()
-		newPeerID := s.cluster.AllocID()
-		s.cluster.Split(loc.Region.GetID(), newRegionID, []byte(splitKey), []uint64{newPeerID}, newPeerID)
-		s.store.GetRegionCache().InvalidateCachedRegion(loc.Region)
-	}
-
-	// Ensure the region has been split
-	bo := NewBackofferWithVars(context.Background(), 5000, nil)
-	loc, err := s.store.GetRegionCache().LocateKey(bo, []byte("i"))
-	c.Assert(err, IsNil)
-	c.Assert([]byte(loc.StartKey), BytesEquals, []byte("h"))
-	c.Assert([]byte(loc.EndKey), BytesEquals, []byte("o"))
-
-	loc, err = s.store.GetRegionCache().LocateKey(bo, []byte("p"))
-	c.Assert(err, IsNil)
-	c.Assert([]byte(loc.StartKey), BytesEquals, []byte("o"))
-	c.Assert([]byte(loc.EndKey), BytesEquals, []byte("u"))
+	s.preSplitRegions(c)
 
 	var connID uint64 = 0
 	test := func(keys []string, values []string) {
@@ -260,4 +237,114 @@ func (s *testAsyncCommitFailSuite) TestAsyncCommitContextCancelCausingUndetermin
 	err = txn.Commit(ctx)
 	c.Assert(err, NotNil)
 	c.Assert(txn.committer.mu.undeterminedErr, NotNil)
+}
+
+func (s *testAsyncCommitFailSuite) TestAsyncCommitExceedingMaxCommitTSMultiReq(c *C) {
+	// This test doesn't support tikv mode.
+	if *WithTiKV {
+		return
+	}
+
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TiKVClient.AsyncCommit.Enable = true
+		conf.TiKVClient.AsyncCommit.SafeWindow = 0
+		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
+	})
+
+	s.preSplitRegions(c)
+
+	// Case 1: Both requests return CommitTsTooLarge
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/rpcPrewriteResult", `return("commitTsTooLarge")`), IsNil)
+	txn, err := s.store.Begin()
+	c.Assert(err, IsNil)
+	err = txn.Set([]byte("k"), []byte("k"))
+	c.Assert(err, IsNil)
+	err = txn.Set([]byte("t"), []byte("t"))
+	c.Assert(err, IsNil)
+	ctx := context.WithValue(context.Background(), sessionctx.ConnID, uint64(1))
+	err = txn.Commit(ctx)
+	c.Assert(err, IsNil)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/rpcPrewriteResult"), IsNil)
+	txn, err = s.store.Begin()
+	c.Assert(err, IsNil)
+	v, err := txn.Get(context.Background(), []byte("k"))
+	c.Assert(err, IsNil)
+	c.Assert(v, DeepEquals, []byte("k"))
+	v, err = txn.Get(context.Background(), []byte("t"))
+	c.Assert(err, IsNil)
+	c.Assert(v, DeepEquals, []byte("t"))
+
+	// Case 2: Primary request return CommitTsTooLarge
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/rpcPrewriteResult", `1*return("commitTsTooLarge")`), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/handlePrewriteBatch", `return("delayPrimary")`), IsNil)
+	txn, err = s.store.Begin()
+	c.Assert(err, IsNil)
+	err = txn.Set([]byte("k"), []byte("k2"))
+	c.Assert(err, IsNil)
+	err = txn.Set([]byte("t"), []byte("t2"))
+	c.Assert(err, IsNil)
+	ctx = context.WithValue(context.Background(), sessionctx.ConnID, uint64(2))
+	err = txn.Commit(ctx)
+	c.Assert(err, IsNil)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/rpcPrewriteResult"), IsNil)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/handlePrewriteBatch"), IsNil)
+	txn, err = s.store.Begin()
+	c.Assert(err, IsNil)
+	v, err = txn.Get(context.Background(), []byte("k"))
+	c.Assert(err, IsNil)
+	c.Assert(v, DeepEquals, []byte("k2"))
+	v, err = txn.Get(context.Background(), []byte("t"))
+	c.Assert(err, IsNil)
+	c.Assert(v, DeepEquals, []byte("t2"))
+
+	// Case 3: Secondary request return CommitTsTooLarge
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/rpcPrewriteResult", `1*return("commitTsTooLarge")`), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/handlePrewriteBatch", `return("delaySecondary")`), IsNil)
+	txn, err = s.store.Begin()
+	c.Assert(err, IsNil)
+	err = txn.Set([]byte("k"), []byte("k3"))
+	c.Assert(err, IsNil)
+	err = txn.Set([]byte("t"), []byte("t3"))
+	c.Assert(err, IsNil)
+	ctx = context.WithValue(context.Background(), sessionctx.ConnID, uint64(2))
+	err = txn.Commit(ctx)
+	c.Assert(err, IsNil)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/rpcPrewriteResult"), IsNil)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/handlePrewriteBatch"), IsNil)
+	txn, err = s.store.Begin()
+	c.Assert(err, IsNil)
+	v, err = txn.Get(context.Background(), []byte("k"))
+	c.Assert(err, IsNil)
+	c.Assert(v, DeepEquals, []byte("k3"))
+	v, err = txn.Get(context.Background(), []byte("t"))
+	c.Assert(err, IsNil)
+	c.Assert(v, DeepEquals, []byte("t3"))
+}
+
+func (s *testAsyncCommitFailSuite) preSplitRegions(c *C) {
+	s.putAlphabets(c)
+
+	// Split into several regions.
+	for _, splitKey := range []string{"h", "o", "u"} {
+		bo := NewBackofferWithVars(context.Background(), 5000, nil)
+		loc, err := s.store.GetRegionCache().LocateKey(bo, []byte(splitKey))
+		c.Assert(err, IsNil)
+		newRegionID := s.cluster.AllocID()
+		newPeerID := s.cluster.AllocID()
+		s.cluster.Split(loc.Region.GetID(), newRegionID, []byte(splitKey), []uint64{newPeerID}, newPeerID)
+		s.store.GetRegionCache().InvalidateCachedRegion(loc.Region)
+	}
+
+	// Ensure the region has been split
+	bo := NewBackofferWithVars(context.Background(), 5000, nil)
+	loc, err := s.store.GetRegionCache().LocateKey(bo, []byte("i"))
+	c.Assert(err, IsNil)
+	c.Assert([]byte(loc.StartKey), BytesEquals, []byte("h"))
+	c.Assert([]byte(loc.EndKey), BytesEquals, []byte("o"))
+
+	loc, err = s.store.GetRegionCache().LocateKey(bo, []byte("p"))
+	c.Assert(err, IsNil)
+	c.Assert([]byte(loc.StartKey), BytesEquals, []byte("o"))
+	c.Assert([]byte(loc.EndKey), BytesEquals, []byte("u"))
 }
