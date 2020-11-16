@@ -78,8 +78,8 @@ func TryAddExtraLimit(ctx sessionctx.Context, node ast.StmtNode) ast.StmtNode {
 }
 
 // Preprocess resolves table names of the node, and checks some statements validation.
-func Preprocess(ctx sessionctx.Context, node ast.Node, sql string, is infoschema.InfoSchema, preprocessOpt ...PreprocessOpt) error {
-	v := preprocessor{is: is, ctx: ctx, sql: sql, tableAliasInJoin: make([]map[string]interface{}, 0)}
+func Preprocess(ctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema, preprocessOpt ...PreprocessOpt) error {
+	v := preprocessor{is: is, ctx: ctx, sql: node.Text(), tableAliasInJoin: make([]map[string]interface{}, 0)}
 	for _, optFn := range preprocessOpt {
 		optFn(&v)
 	}

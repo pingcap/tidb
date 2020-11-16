@@ -293,7 +293,7 @@ func (s *testStatsSuite) TestSelectivity(c *C) {
 		c.Assert(err, IsNil, Commentf("error %v, for expr %s", err, tt.exprs))
 		c.Assert(stmts, HasLen, 1)
 
-		err = plannercore.Preprocess(sctx, stmts[0], stmts[0].Text(), is)
+		err = plannercore.Preprocess(sctx, stmts[0], is)
 		c.Assert(err, IsNil, comment)
 		p, _, err := plannercore.BuildLogicalPlan(ctx, sctx, stmts[0], is)
 		c.Assert(err, IsNil, Commentf("error %v, for building plan, expr %s", err, tt.exprs))
@@ -549,7 +549,7 @@ func BenchmarkSelectivity(b *testing.B) {
 	stmts, err := session.Parse(sctx, sql)
 	c.Assert(err, IsNil, Commentf("error %v, for expr %s", err, exprs))
 	c.Assert(stmts, HasLen, 1)
-	err = plannercore.Preprocess(sctx, stmts[0], stmts[0].Text(), is)
+	err = plannercore.Preprocess(sctx, stmts[0], is)
 	c.Assert(err, IsNil, comment)
 	p, _, err := plannercore.BuildLogicalPlan(context.Background(), sctx, stmts[0], is)
 	c.Assert(err, IsNil, Commentf("error %v, for building plan, expr %s", err, exprs))
@@ -705,7 +705,7 @@ func (s *testStatsSuite) TestDNFCondSelectivity(c *C) {
 		c.Assert(err, IsNil, Commentf("error %v, for sql %s", err, tt))
 		c.Assert(stmts, HasLen, 1)
 
-		err = plannercore.Preprocess(sctx, stmts[0], stmts[0].Text(), is)
+		err = plannercore.Preprocess(sctx, stmts[0], is)
 		c.Assert(err, IsNil, Commentf("error %v, for sql %s", err, tt))
 		p, _, err := plannercore.BuildLogicalPlan(ctx, sctx, stmts[0], is)
 		c.Assert(err, IsNil, Commentf("error %v, for building plan, sql %s", err, tt))
