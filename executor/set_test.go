@@ -260,8 +260,12 @@ func (s *testSuite5) TestSetVar(c *C) {
 	tk.MustExec("set @@sql_log_bin = on")
 	tk.MustQuery(`select @@session.sql_log_bin;`).Check(testkit.Rows("1"))
 
-	tk.MustQuery(`select @@global.log_bin;`).Check(testkit.Rows(variable.BoolToIntStr(config.GetGlobalConfig().Binlog.Enable)))
-	tk.MustQuery(`select @@log_bin;`).Check(testkit.Rows(variable.BoolToIntStr(config.GetGlobalConfig().Binlog.Enable)))
+	binlogValue := "0"
+	if config.GetGlobalConfig().Binlog.Enable {
+		binlogValue = "1"
+	}
+	tk.MustQuery(`select @@global.log_bin;`).Check(testkit.Rows(binlogValue))
+	tk.MustQuery(`select @@log_bin;`).Check(testkit.Rows(binlogValue))
 
 	tk.MustExec("set @@tidb_general_log = 1")
 	tk.MustExec("set @@tidb_general_log = 0")
@@ -444,6 +448,23 @@ func (s *testSuite5) TestSetVar(c *C) {
 
 	_, err = tk.Exec("set tidb_enable_parallel_apply=-1")
 	c.Assert(terror.ErrorEqual(err, variable.ErrWrongValueForVar), IsTrue)
+
+	tk.MustQuery(`select @@session.tidb_general_log;`).Check(testkit.Rows("0"))
+	tk.MustQuery(`show variables like 'tidb_general_log';`).Check(testkit.Rows("tidb_general_log OFF"))
+	tk.MustExec("set tidb_general_log = 1")
+	tk.MustQuery(`select @@session.tidb_general_log;`).Check(testkit.Rows("1"))
+	tk.MustQuery(`show variables like 'tidb_general_log';`).Check(testkit.Rows("tidb_general_log ON"))
+	tk.MustExec("set tidb_general_log = 0")
+	tk.MustQuery(`select @@session.tidb_general_log;`).Check(testkit.Rows("0"))
+	tk.MustQuery(`show variables like 'tidb_general_log';`).Check(testkit.Rows("tidb_general_log OFF"))
+	tk.MustExec("set tidb_general_log = on")
+	tk.MustQuery(`select @@session.tidb_general_log;`).Check(testkit.Rows("1"))
+	tk.MustQuery(`show variables like 'tidb_general_log';`).Check(testkit.Rows("tidb_general_log ON"))
+	tk.MustExec("set tidb_general_log = off")
+	tk.MustQuery(`select @@session.tidb_general_log;`).Check(testkit.Rows("0"))
+	tk.MustQuery(`show variables like 'tidb_general_log';`).Check(testkit.Rows("tidb_general_log OFF"))
+	c.Assert(tk.ExecToErr("set tidb_general_log = abc"), NotNil)
+	c.Assert(tk.ExecToErr("set tidb_general_log = 123"), NotNil)
 }
 
 func (s *testSuite5) TestTruncateIncorrectIntSessionVar(c *C) {
@@ -968,6 +989,7 @@ func (s *testSuite5) TestSetConcurrency(c *C) {
 	tk.MustQuery("select @@tidb_hashagg_partial_concurrency;").Check(testkit.Rows(strconv.Itoa(variable.ConcurrencyUnset)))
 	tk.MustQuery("select @@tidb_hashagg_final_concurrency;").Check(testkit.Rows(strconv.Itoa(variable.ConcurrencyUnset)))
 	tk.MustQuery("select @@tidb_window_concurrency;").Check(testkit.Rows(strconv.Itoa(variable.ConcurrencyUnset)))
+	tk.MustQuery("select @@tidb_streamagg_concurrency;").Check(testkit.Rows(strconv.Itoa(variable.DefTiDBStreamAggConcurrency)))
 	tk.MustQuery("select @@tidb_projection_concurrency;").Check(testkit.Rows(strconv.Itoa(variable.ConcurrencyUnset)))
 	tk.MustQuery("select @@tidb_distsql_scan_concurrency;").Check(testkit.Rows(strconv.Itoa(variable.DefDistSQLScanConcurrency)))
 
@@ -981,6 +1003,7 @@ func (s *testSuite5) TestSetConcurrency(c *C) {
 	c.Assert(vars.HashAggPartialConcurrency(), Equals, variable.DefExecutorConcurrency)
 	c.Assert(vars.HashAggFinalConcurrency(), Equals, variable.DefExecutorConcurrency)
 	c.Assert(vars.WindowConcurrency(), Equals, variable.DefExecutorConcurrency)
+	c.Assert(vars.StreamAggConcurrency(), Equals, variable.DefTiDBStreamAggConcurrency)
 	c.Assert(vars.ProjectionConcurrency(), Equals, variable.DefExecutorConcurrency)
 	c.Assert(vars.DistSQLScanConcurrency(), Equals, variable.DefDistSQLScanConcurrency)
 
@@ -1016,6 +1039,9 @@ func (s *testSuite5) TestSetConcurrency(c *C) {
 	checkSet(variable.TiDBWindowConcurrency)
 	c.Assert(vars.WindowConcurrency(), Equals, 1)
 
+	checkSet(variable.TiDBStreamAggConcurrency)
+	c.Assert(vars.StreamAggConcurrency(), Equals, 1)
+
 	tk.MustExec(fmt.Sprintf("set @@%s=1;", variable.TiDBDistSQLScanConcurrency))
 	tk.MustQuery(fmt.Sprintf("select @@%s;", variable.TiDBDistSQLScanConcurrency)).Check(testkit.Rows("1"))
 	c.Assert(vars.DistSQLScanConcurrency(), Equals, 1)
@@ -1032,6 +1058,7 @@ func (s *testSuite5) TestSetConcurrency(c *C) {
 	tk.MustExec("set @@tidb_hashagg_partial_concurrency=-1;")
 	tk.MustExec("set @@tidb_hashagg_final_concurrency=-1;")
 	tk.MustExec("set @@tidb_window_concurrency=-1;")
+	tk.MustExec("set @@tidb_streamagg_concurrency=-1;")
 	tk.MustExec("set @@tidb_projection_concurrency=-1;")
 
 	c.Assert(vars.IndexLookupConcurrency(), Equals, variable.DefExecutorConcurrency)
@@ -1040,6 +1067,7 @@ func (s *testSuite5) TestSetConcurrency(c *C) {
 	c.Assert(vars.HashAggPartialConcurrency(), Equals, variable.DefExecutorConcurrency)
 	c.Assert(vars.HashAggFinalConcurrency(), Equals, variable.DefExecutorConcurrency)
 	c.Assert(vars.WindowConcurrency(), Equals, variable.DefExecutorConcurrency)
+	c.Assert(vars.StreamAggConcurrency(), Equals, variable.DefExecutorConcurrency)
 	c.Assert(vars.ProjectionConcurrency(), Equals, variable.DefExecutorConcurrency)
 
 	_, err := tk.Exec("set @@tidb_executor_concurrency=-1;")

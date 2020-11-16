@@ -40,7 +40,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/generatedexpr"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/stringutil"
@@ -880,7 +879,7 @@ func DecodeRawRowData(ctx sessionctx.Context, meta *model.TableInfo, h kv.Handle
 			}
 			continue
 		}
-		if col.IsCommonHandleColumn(meta) {
+		if col.IsCommonHandleColumn(meta) && !types.CommonHandleNeedRestoredData(&col.FieldType) {
 			pkIdx := FindPrimaryIndex(meta)
 			var idxOfIdx int
 			for i, idxCol := range pkIdx.Columns {
@@ -912,7 +911,7 @@ func DecodeRawRowData(ctx sessionctx.Context, meta *model.TableInfo, h kv.Handle
 		if col == nil {
 			continue
 		}
-		if col.IsPKHandleColumn(meta) || col.IsCommonHandleColumn(meta) {
+		if col.IsPKHandleColumn(meta) || (col.IsCommonHandleColumn(meta) && !types.CommonHandleNeedRestoredData(&col.FieldType)) {
 			continue
 		}
 		ri, ok := rowMap[col.ID]
@@ -1411,10 +1410,7 @@ func CanSkip(info *model.TableInfo, col *table.Column, value *types.Datum) bool 
 				continue
 			}
 			canSkip := idxCol.Length == types.UnspecifiedLength
-			isNewCollation := collate.NewCollationEnabled() &&
-				col.EvalType() == types.ETString &&
-				!mysql.HasBinaryFlag(col.Flag)
-			canSkip = canSkip && !isNewCollation
+			canSkip = canSkip && !types.CommonHandleNeedRestoredData(&col.FieldType)
 			return canSkip
 		}
 	}

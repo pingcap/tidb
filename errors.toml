@@ -886,6 +886,11 @@ error = '''
 View '%-.192s.%-.192s' references invalid table(s) or column(s) or function(s) or definer/invoker of view lack rights to use them
 '''
 
+["planner:1462"]
+error = '''
+`%-.192s`.`%-.192s` contains view recursion
+'''
+
 ["planner:1747"]
 error = '''
 PARTITION () clause on non partitioned table
@@ -1369,6 +1374,16 @@ TiKV server reports stale command
 ["tikv:9011"]
 error = '''
 TiKV max timestamp is not synced
+'''
+
+["types:1063"]
+error = '''
+Incorrect column specifier for column '%-.192s'
+'''
+
+["types:1064"]
+error = '''
+You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use
 '''
 
 ["types:1074"]

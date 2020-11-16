@@ -144,7 +144,7 @@ type LogicalJoin struct {
 	DefaultValues []types.Datum
 
 	// redundantSchema contains columns which are eliminated in join.
-	// For select * from a join b using (c); a.c will in output schema, and b.c will in redundantSchema.
+	// For select * from a join b using (c); a.c will in output schema, and b.c will only in redundantSchema.
 	redundantSchema *expression.Schema
 	redundantNames  types.NameSlice
 
