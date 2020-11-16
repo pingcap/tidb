@@ -82,7 +82,7 @@ func (record *memoryUsageAlarm) initMemoryUsageAlarmRecord() {
 			record.lastProfileFileName[1] = append(record.lastProfileFileName[1], name)
 		}
 	}
-
+	record.initialized = true
 	return
 }
 
@@ -93,7 +93,10 @@ func (record *memoryUsageAlarm) alarm4ExcessiveMemUsage(sm util.SessionManager) 
 		return
 	}
 	if !record.initialized {
-
+		record.initMemoryUsageAlarmRecord()
+		if record.err != nil {
+			return
+		}
 	}
 
 	var memoryUsage uint64
