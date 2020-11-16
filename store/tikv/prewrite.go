@@ -15,7 +15,6 @@ package tikv
 
 import (
 	"bytes"
-	"context"
 	"math"
 	"sync/atomic"
 	"time"
@@ -106,6 +105,19 @@ func (action actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoff
 	// regionErr, it's uncertain if the request will be splitted into multiple and sent to multiple
 	// regions. It invokes `prewriteMutations` recursively here, and the number of batches will be
 	// checked there.
+
+	failpoint.Inject("handlePrewriteBatch", func(val failpoint.Value) {
+		switch val.(string) {
+		case "delayPrimary":
+			if batch.isPrimary {
+				time.Sleep(250 * time.Millisecond)
+			}
+		case "delaySecondary":
+			if !batch.isPrimary {
+				time.Sleep(250 * time.Millisecond)
+			}
+		}
+	})
 
 	txnSize := uint64(c.regionTxnSize[batch.region.id])
 	// When we retry because of a region miss, we don't know the transaction size. We set the transaction size here
@@ -223,8 +235,9 @@ func (action actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoff
 				prewriteReq.LockTtl = newLockTTL
 				// if this is not a primary batch, we also need to overwrite the primary lock
 				if !batch.isPrimary {
-					c.reprewritePrimary(bo.ctx)
+					c.reprewritePrimary(bo)
 				}
+				continue
 			}
 
 			// Extract lock from key error
@@ -264,7 +277,7 @@ func (c *twoPhaseCommitter) prewriteMutations(bo *Backoffer, mutations Committer
 }
 
 // Reprewrite the primary lock to fallback from async commit or 1PC
-func (c *twoPhaseCommitter) reprewritePrimary(ctx context.Context) {
+func (c *twoPhaseCommitter) reprewritePrimary(bo *Backoffer) {
 	c.reprewrite.Add(1)
 	if !atomic.CompareAndSwapUint32(&c.reprewrite.started, 0, 1) {
 		return
@@ -280,7 +293,6 @@ func (c *twoPhaseCommitter) reprewritePrimary(ctx context.Context) {
 				break
 			}
 		}
-		bo := NewBackofferWithVars(ctx, PrewriteMaxBackoff, c.txn.vars)
 		c.reprewrite.err = errors.Trace(c.prewriteMutations(bo, mutation))
 		c.reprewrite.Done()
 	}()

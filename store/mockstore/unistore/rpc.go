@@ -90,16 +90,23 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 	case tikvrpc.CmdScan:
 		resp.Resp, err = c.usSvr.KvScan(ctx, req.Scan())
 	case tikvrpc.CmdPrewrite:
+		r := req.Prewrite()
+
 		failpoint.Inject("rpcPrewriteResult", func(val failpoint.Value) {
 			switch val.(string) {
 			case "notLeader":
 				failpoint.Return(&tikvrpc.Response{
 					Resp: &kvrpcpb.PrewriteResponse{RegionError: &errorpb.Error{NotLeader: &errorpb.NotLeader{}}},
 				}, nil)
+			case "commitTsTooLarge":
+				if r.UseAsyncCommit || r.TryOnePc {
+					failpoint.Return(&tikvrpc.Response{
+						Resp: &kvrpcpb.PrewriteResponse{Errors: []*kvrpcpb.KeyError{{CommitTsTooLarge: &kvrpcpb.CommitTsTooLarge{CommitTs: 1 << 63}}}},
+					}, nil)
+				}
 			}
 		})
 
-		r := req.Prewrite()
 		c.cluster.handleDelay(r.StartVersion, r.Context.RegionId)
 		resp.Resp, err = c.usSvr.KvPrewrite(ctx, r)
 
