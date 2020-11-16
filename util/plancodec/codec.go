@@ -320,7 +320,7 @@ func EncodePlanNode(depth, pid int, planType string, rowCount float64,
 	buf.WriteByte(separator)
 	buf.WriteString(taskTypeInfo)
 	buf.WriteByte(separator)
-	buf.WriteString(strconv.FormatFloat(rowCount, 'f', -1, 64))
+	buf.WriteString(strconv.FormatFloat(rowCount, 'f', 2, 64))
 	buf.WriteByte(separator)
 	buf.WriteString(explainInfo)
 	// Check whether has runtime info.
