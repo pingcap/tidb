@@ -826,13 +826,17 @@ func checkColumn(colDef *ast.ColumnDef) error {
 		if err != nil {
 			return err
 		}
-	case mysql.TypeFloat:
+	case mysql.TypeFloat, mysql.TypeDouble:
 		// For FLOAT, the SQL standard permits an optional specification of the precision.
 		// https://dev.mysql.com/doc/refman/8.0/en/floating-point-types.html
-		// For Double type Flen and Decimal check is moved to parser component
 		if tp.Decimal == -1 {
-			if tp.Flen > mysql.MaxDoublePrecisionLength {
-				return types.ErrWrongFieldSpec.GenWithStackByArgs(colDef.Name.Name.O)
+			switch tp.Tp {
+			case mysql.TypeDouble:
+				// For Double type Flen and Decimal check is moved to parser component
+			default:
+				if tp.Flen > mysql.MaxDoublePrecisionLength {
+					return types.ErrWrongFieldSpec.GenWithStackByArgs(colDef.Name.Name.O)
+				}
 			}
 		} else {
 			if tp.Decimal > mysql.MaxFloatingTypeScale {
