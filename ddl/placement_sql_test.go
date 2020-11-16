@@ -394,10 +394,11 @@ PARTITION BY RANGE (c) (
 	}
 
 	testCases := []struct {
-		name     string
-		sql      string
-		txnScope string
-		err      error
+		name              string
+		sql               string
+		txnScope          string
+		disableAutoCommit bool
+		err               error
 	}{
 		{
 			name:     "Insert into PARTITION p0 with global txnScope",
@@ -415,7 +416,7 @@ PARTITION BY RANGE (c) (
 			name:     "insert into PARTITION p1 with local txnScope",
 			sql:      "insert into t1 (c) values (10)",
 			txnScope: "bj",
-			err:      fmt.Errorf(".*don't have rule bundle with txnScope.*"),
+			err:      fmt.Errorf(".*don't have placement policies with txn_scope.*"),
 		},
 		{
 			name:     "insert into PARTITION p1 with global txnScope",
@@ -435,6 +436,13 @@ PARTITION BY RANGE (c) (
 			txnScope: "global",
 			err:      nil,
 		},
+		{
+			name:              "insert into PARTITION p0 with wrong txnScope and autocommit off",
+			sql:               "insert into t1 (c) values (1)",
+			txnScope:          "bj",
+			disableAutoCommit: true,
+			err:               fmt.Errorf(".*out of txn_scope.*"),
+		},
 	}
 
 	for _, testcase := range testCases {
@@ -444,7 +452,13 @@ PARTITION BY RANGE (c) (
 		tk.Se = se
 		tk.MustExec("use test")
 		tk.MustExec(fmt.Sprintf("set @@txn_scope = %v", testcase.txnScope))
-		_, err = tk.Exec(testcase.sql)
+		if testcase.disableAutoCommit {
+			tk.MustExec("set @@autocommit = 0")
+			tk.MustExec(testcase.sql)
+			_, err = tk.Exec("commit")
+		} else {
+			_, err = tk.Exec(testcase.sql)
+		}
 		if testcase.err == nil {
 			c.Assert(err, IsNil)
 		} else {

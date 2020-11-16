@@ -170,6 +170,7 @@ type TransactionContext struct {
 	LockExpire     uint32
 	ForUpdate      uint32
 
+	// TxnScope stores the value of 'txn_scope'.
 	TxnScope string
 }
 
