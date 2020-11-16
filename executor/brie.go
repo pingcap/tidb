@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb-lightning/lightning/common"
 	importcfg "github.com/pingcap/tidb-lightning/lightning/config"
 	importglue "github.com/pingcap/tidb-lightning/lightning/glue"
+	importlog "github.com/pingcap/tidb-lightning/lightning/log"
 	filter "github.com/pingcap/tidb-tools/pkg/table-filter"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
@@ -666,14 +667,14 @@ func (gs *tidbGlueSession) Execute(ctx context.Context, sql string) error {
 }
 
 func (gs *tidbGlueSession) ExecuteWithLog(ctx context.Context, sql string, purpose string, logger *zap.Logger) error {
-	return common.Retry(purpose, logger, func() error {
+	return common.Retry(purpose, importlog.Logger{Logger: logger}, func() error {
 		return gs.Execute(ctx, sql)
 	})
 }
 
 func (gs *tidbGlueSession) ObtainStringWithLog(ctx context.Context, sql string, purpose string, logger *zap.Logger) (string, error) {
 	var result string
-	err := common.Retry(purpose, logger, func() error {
+	err := common.Retry(purpose, importlog.Logger{Logger: logger}, func() error {
 		rs, err := gs.se.(sqlexec.SQLExecutor).Execute(ctx, sql)
 		if err != nil {
 			return err
