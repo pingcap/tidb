@@ -906,7 +906,7 @@ func (e *AggWorkerStat) String() string {
 		n := len(e.WorkerTime)
 		if n != 0 {
 			sort.Slice(e.WorkerTime, func(i, j int) bool { return e.WorkerTime[i] < e.WorkerTime[j] })
-			result += fmt.Sprintf(", max:%v, p95:%v", e.WorkerTime[n-1], e.WorkerTime[n*19/20])
+			result += fmt.Sprintf(", max:%v, p95:%v", time.Duration(e.WorkerTime[n-1]), time.Duration(e.WorkerTime[n*19/20]))
 		}
 	}
 	if len(result) > 0 {
