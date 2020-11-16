@@ -466,3 +466,23 @@ func (s *testPointGetSuite) TestUpdateWithTableReadLockWillFail(c *C) {
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[schema:1099]Table 'tbllock' was locked with a READ lock and can't be updated")
 }
+
+func (s *testPointGetSuite) TestSelectInMultiColumns(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t2(a int, b int, c int, primary key(a, b, c));")
+	tk.MustExec("insert into t2 values (1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4)")
+	tk.MustQuery("select * from t2 where (a, b, c) in ((1, 1, 1));").Check(testkit.Rows("1 1 1"))
+
+	_, err := tk.Exec("select * from t2 where (a, b, c) in ((1, 1, 1, 1));")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[expression:1241]Operand should contain 3 column(s)")
+
+	_, err = tk.Exec("select * from t2 where (a, b, c) in ((1, 1, 1), (2, 2, 2, 2));")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[expression:1241]Operand should contain 3 column(s)")
+
+	_, err = tk.Exec("select * from t2 where (a, b, c) in ((1, 1), (2, 2, 2));")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[expression:1241]Operand should contain 3 column(s)")
+}
