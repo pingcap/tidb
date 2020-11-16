@@ -870,8 +870,8 @@ func (s *testSuite5) TestShowCreateTable(c *C) {
 			"  UNIQUE KEY `idx` (`id`,`name`)\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n"+
 			"PARTITION BY LIST COLUMNS(id,name) (\n"+
-			"  PARTITION `p0` VALUES IN ((3,\"1\"),(5,\"5\")),\n"+
-			"  PARTITION `p1` VALUES IN ((1,\"1\"))\n"+
+			"  PARTITION `p0` VALUES IN ((3,_UTF8MB4'1'),(5,_UTF8MB4'5')),\n"+
+			"  PARTITION `p1` VALUES IN ((1,_UTF8MB4'1'))\n"+
 			")"))
 }
 

@@ -298,8 +298,6 @@ partition by range (a)
     partition p0 values less than (200),
     partition p1 values less than (300),
     partition p2 values less than maxvalue)`)
-
-	tk.MustGetErrCode(`create table t(col int) partition by range (col) (PARTITION p0 VALUES less than (avg(col)));`, tmysql.ErrPartitionFunctionIsNotAllowed)
 }
 
 func (s *testIntegrationSuite2) TestCreateTableWithHashPartition(c *C) {
@@ -479,10 +477,6 @@ create table log_message_1 (
 			ddl.ErrWrongTypeColumnValue,
 		},
 		{
-			"create table t(col char(10)) partition by range columns (col) (PARTITION p0 VALUES less than (avg(col)));",
-			ddl.ErrPartitionFunctionIsNotAllowed,
-		},
-		{
 			"create table t(col char(10)) partition by range columns (col) (PARTITION p0 VALUES less than ('a' collate utf8mb4_unicode_ci));",
 			ddl.ErrPartitionFunctionIsNotAllowed,
 		},
@@ -553,18 +547,6 @@ func (s *testIntegrationSuite1) TestCreateTableWithListPartition(c *C) {
 		{
 			"create table t (a int) partition by list (a) (partition p0 values in (null), partition p1 values in (NULL));",
 			ddl.ErrMultipleDefConstInListPart,
-		},
-		{
-			"create table t (a char(10)) collate utf8mb4_unicode_ci partition by list (a) (partition p0 values in ('a' collate utf8mb4_bin), partition p1 values in ('c'));",
-			ddl.ErrPartitionFunctionIsNotAllowed,
-		},
-		{
-			"create table t (a char(10)) partition by list (a) (partition p0 values in (weight_string('a')), partition p1 values in ('c'));",
-			ddl.ErrPartitionFunctionIsNotAllowed,
-		},
-		{
-			"create table t (a char(10)) partition by list (a) (partition p0 values in (avg(a)), partition p1 values in ('c'));",
-			ddl.ErrPartitionFunctionIsNotAllowed,
 		},
 		{
 			`create table t1 (id int key, name varchar(10), unique index idx(name)) partition by list  (id) (
@@ -698,10 +680,6 @@ func (s *testIntegrationSuite1) TestCreateTableWithListColumnsPartition(c *C) {
 		{
 			"create table t (a int, b datetime) partition by list columns (a,b) (partition p0 values in ((1)));",
 			ast.ErrPartitionColumnList,
-		},
-		{
-			"create table t (a int) partition by list columns (a) (partition p0 values in (avg(a)));",
-			ddl.ErrPartitionFunctionIsNotAllowed,
 		},
 	}
 	for i, t := range cases {
@@ -920,9 +898,9 @@ func (s *testIntegrationSuite5) TestAlterTableDropPartitionByListColumns(c *C) {
 	c.Assert(part.Columns[0].O, Equals, "id")
 	c.Assert(part.Columns[1].O, Equals, "name")
 	c.Assert(part.Definitions, HasLen, 2)
-	c.Assert(part.Definitions[0].InValues, DeepEquals, [][]string{{"1", `"a"`}, {"2", `"b"`}})
+	c.Assert(part.Definitions[0].InValues, DeepEquals, [][]string{{"1", `_UTF8MB4'a'`}, {"2", `_UTF8MB4'b'`}})
 	c.Assert(part.Definitions[0].Name, Equals, model.NewCIStr("p0"))
-	c.Assert(part.Definitions[1].InValues, DeepEquals, [][]string{{"5", `"a"`}, {"NULL", "NULL"}})
+	c.Assert(part.Definitions[1].InValues, DeepEquals, [][]string{{"5", `_UTF8MB4'a'`}, {"NULL", "NULL"}})
 	c.Assert(part.Definitions[1].Name, Equals, model.NewCIStr("p3"))
 
 	sql := "alter table t drop partition p10;"
