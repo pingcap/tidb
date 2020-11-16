@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/ranger"
@@ -392,6 +391,7 @@ func (p *LogicalJoin) getHashJoin(prop *property.PhysicalProperty, innerIdx int,
 // When inner plan is TableReader, the parameter `ranges` will be nil. Because pk only have one column. So all of its range
 // is generated during execution time.
 func (p *LogicalJoin) constructIndexJoin(
+	joinTP string,
 	prop *property.PhysicalProperty,
 	outerIdx int,
 	innerTask task,
@@ -438,6 +438,38 @@ func (p *LogicalJoin) constructIndexJoin(
 		newIsNullEQ = append(newIsNullEQ, isNullEQ[keyOff])
 		newKeyOff = append(newKeyOff, idxOff)
 	}
+
+	var outerHashKeys, innerHashKeys []*expression.Column
+	// HashKey is only used for IndexJoin and IndexHashJoin since they need to
+	// build hash tables.
+	if joinTP != plancodec.TypeIndexMergeJoin {
+		outerHashKeys, innerHashKeys = make([]*expression.Column, len(newOuterKeys)), make([]*expression.Column, len(newInnerKeys))
+		copy(outerHashKeys, newOuterKeys)
+		copy(innerHashKeys, newInnerKeys)
+		// we can use the `col <eq> col` in `OtherCondition` to build the hashtable to avoid the unnecessary calculating.
+		for i := len(newOtherConds) - 1; i >= 0; i = i - 1 {
+			switch c := newOtherConds[i].(type) {
+			case *expression.ScalarFunction:
+				if c.FuncName.L == ast.EQ {
+					lhs, ok1 := c.GetArgs()[0].(*expression.Column)
+					rhs, ok2 := c.GetArgs()[1].(*expression.Column)
+					if ok1 && ok2 {
+						outerSchema, innerSchema := p.Children()[outerIdx].Schema(), p.Children()[1-outerIdx].Schema()
+						if outerSchema.Contains(lhs) && innerSchema.Contains(rhs) {
+							outerHashKeys = append(outerHashKeys, lhs)
+							innerHashKeys = append(innerHashKeys, rhs)
+						} else if innerSchema.Contains(lhs) && outerSchema.Contains(rhs) {
+							outerHashKeys = append(outerHashKeys, rhs)
+							innerHashKeys = append(innerHashKeys, lhs)
+						}
+						newOtherConds = append(newOtherConds[:i], newOtherConds[i+1:]...)
+					}
+				}
+			default:
+				continue
+			}
+		}
+	}
 	baseJoin := basePhysicalJoin{
 		InnerChildIdx:   1 - outerIdx,
 		LeftConditions:  p.LeftConditions,
@@ -455,6 +487,8 @@ func (p *LogicalJoin) constructIndexJoin(
 		KeyOff2IdxOff:    newKeyOff,
 		Ranges:           ranges,
 		CompareFilters:   compareFilters,
+		OuterHashKeys:    outerHashKeys,
+		InnerHashKeys:    innerHashKeys,
 	}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), p.blockOffset, chReqProps...)
 	if path != nil {
 		join.IdxColLens = path.IdxColLens
@@ -472,7 +506,7 @@ func (p *LogicalJoin) constructIndexMergeJoin(
 	path *util.AccessPath,
 	compareFilters *ColWithCmpFuncManager,
 ) []PhysicalPlan {
-	indexJoins := p.constructIndexJoin(prop, outerIdx, innerTask, ranges, keyOff2IdxOff, path, compareFilters)
+	indexJoins := p.constructIndexJoin(plancodec.TypeIndexMergeJoin, prop, outerIdx, innerTask, ranges, keyOff2IdxOff, path, compareFilters)
 	indexMergeJoins := make([]PhysicalPlan, 0, len(indexJoins))
 	for _, plan := range indexJoins {
 		join := plan.(*PhysicalIndexJoin)
@@ -557,7 +591,7 @@ func (p *LogicalJoin) constructIndexHashJoin(
 	path *util.AccessPath,
 	compareFilters *ColWithCmpFuncManager,
 ) []PhysicalPlan {
-	indexJoins := p.constructIndexJoin(prop, outerIdx, innerTask, ranges, keyOff2IdxOff, path, compareFilters)
+	indexJoins := p.constructIndexJoin(plancodec.TypeIndexHashJoin, prop, outerIdx, innerTask, ranges, keyOff2IdxOff, path, compareFilters)
 	indexHashJoins := make([]PhysicalPlan, 0, len(indexJoins))
 	for _, plan := range indexJoins {
 		join := plan.(*PhysicalIndexJoin)
@@ -725,7 +759,7 @@ func (p *LogicalJoin) buildIndexJoinInner2TableScan(
 			failpoint.Return(p.constructIndexHashJoin(prop, outerIdx, innerTask, nil, keyOff2IdxOff, nil, nil))
 		}
 	})
-	joins = append(joins, p.constructIndexJoin(prop, outerIdx, innerTask, ranges, keyOff2IdxOff, nil, nil)...)
+	joins = append(joins, p.constructIndexJoin(plancodec.TypeIndexJoin, prop, outerIdx, innerTask, ranges, keyOff2IdxOff, nil, nil)...)
 	// We can reuse the `innerTask` here since index nested loop hash join
 	// do not need the inner child to promise the order.
 	joins = append(joins, p.constructIndexHashJoin(prop, outerIdx, innerTask, ranges, keyOff2IdxOff, nil, nil)...)
@@ -760,7 +794,7 @@ func (p *LogicalJoin) buildIndexJoinInner2IndexScan(
 			failpoint.Return(p.constructIndexHashJoin(prop, outerIdx, innerTask, helper.chosenRanges, keyOff2IdxOff, helper.chosenPath, helper.lastColManager))
 		}
 	})
-	joins = append(joins, p.constructIndexJoin(prop, outerIdx, innerTask, helper.chosenRanges, keyOff2IdxOff, helper.chosenPath, helper.lastColManager)...)
+	joins = append(joins, p.constructIndexJoin(plancodec.TypeIndexJoin, prop, outerIdx, innerTask, helper.chosenRanges, keyOff2IdxOff, helper.chosenPath, helper.lastColManager)...)
 	// We can reuse the `innerTask` here since index nested loop hash join
 	// do not need the inner child to promise the order.
 	joins = append(joins, p.constructIndexHashJoin(prop, outerIdx, innerTask, helper.chosenRanges, keyOff2IdxOff, helper.chosenPath, helper.lastColManager)...)
@@ -1614,14 +1648,14 @@ func (p *LogicalJoin) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]P
 }
 
 func (p *LogicalJoin) tryToGetBroadCastJoin(prop *property.PhysicalProperty) []PhysicalPlan {
-	/// todo remove this restriction after join on new collation is supported in TiFlash
-	if collate.NewCollationEnabled() {
-		return nil
-	}
 	if !prop.IsEmpty() {
 		return nil
 	}
 	if prop.TaskTp != property.RootTaskType && !prop.IsFlashProp() {
+		return nil
+	}
+	_, _, _, hasNullEQ := p.GetJoinKeys()
+	if hasNullEQ {
 		return nil
 	}
 
@@ -1634,13 +1668,23 @@ func (p *LogicalJoin) tryToGetBroadCastJoin(prop *property.PhysicalProperty) []P
 		}
 	}
 
-	// for left join the global idx must be 1, and for right join the global idx must be 0
-	if (p.JoinType != InnerJoin && p.JoinType != LeftOuterJoin && p.JoinType != RightOuterJoin) || len(p.LeftConditions) != 0 || len(p.RightConditions) != 0 || len(p.OtherConditions) != 0 || len(p.EqualConditions) == 0 {
+	if (p.JoinType != InnerJoin && p.JoinType != LeftOuterJoin && p.JoinType != RightOuterJoin && p.JoinType != SemiJoin && p.JoinType != AntiSemiJoin) || len(p.EqualConditions) == 0 {
 		return nil
 	}
 
+	if !expression.CanExprsPushDown(p.ctx.GetSessionVars().StmtCtx, p.LeftConditions, p.ctx.GetClient(), kv.TiFlash) {
+		return nil
+	}
+	if !expression.CanExprsPushDown(p.ctx.GetSessionVars().StmtCtx, p.RightConditions, p.ctx.GetClient(), kv.TiFlash) {
+		return nil
+	}
+	if !expression.CanExprsPushDown(p.ctx.GetSessionVars().StmtCtx, p.OtherConditions, p.ctx.GetClient(), kv.TiFlash) {
+		return nil
+	}
+
+	// for left/semi/anti-semi join the global idx must be 1, and for right join the global idx must be 0
 	if hasPrefer, idx := p.getPreferredBCJLocalIndex(); hasPrefer {
-		if (idx == 0 && p.JoinType == RightOuterJoin) || (idx == 1 && p.JoinType == LeftOuterJoin) {
+		if (idx == 0 && p.JoinType == RightOuterJoin) || (idx == 1 && (p.JoinType == LeftOuterJoin || p.JoinType == SemiJoin || p.JoinType == AntiSemiJoin)) {
 			return nil
 		}
 		return p.tryToGetBroadCastJoinByPreferGlobalIdx(prop, 1-idx)
@@ -1649,7 +1693,7 @@ func (p *LogicalJoin) tryToGetBroadCastJoin(prop *property.PhysicalProperty) []P
 		results := p.tryToGetBroadCastJoinByPreferGlobalIdx(prop, 0)
 		results = append(results, p.tryToGetBroadCastJoinByPreferGlobalIdx(prop, 1)...)
 		return results
-	} else if p.JoinType == LeftOuterJoin {
+	} else if p.JoinType == LeftOuterJoin || p.JoinType == SemiJoin || p.JoinType == AntiSemiJoin {
 		return p.tryToGetBroadCastJoinByPreferGlobalIdx(prop, 1)
 	}
 	return p.tryToGetBroadCastJoinByPreferGlobalIdx(prop, 0)
@@ -1661,6 +1705,7 @@ func (p *LogicalJoin) tryToGetBroadCastJoinByPreferGlobalIdx(prop *property.Phys
 		JoinType:        p.JoinType,
 		LeftConditions:  p.LeftConditions,
 		RightConditions: p.RightConditions,
+		OtherConditions: p.OtherConditions,
 		DefaultValues:   p.DefaultValues,
 		LeftJoinKeys:    lkeys,
 		RightJoinKeys:   rkeys,
@@ -1669,6 +1714,19 @@ func (p *LogicalJoin) tryToGetBroadCastJoinByPreferGlobalIdx(prop *property.Phys
 	preferredBuildIndex := 0
 	if p.children[0].statsInfo().Count() > p.children[1].statsInfo().Count() {
 		preferredBuildIndex = 1
+	}
+	if p.JoinType == SemiJoin || p.JoinType == AntiSemiJoin {
+		preferredBuildIndex = 1
+	}
+	// TiFlash does not support Right out join with other conditions, if the join
+	// has other conditions, need to set the build side to make sure it will be
+	// executed as left join in TiFlash(In TiFlash the build side is always the right side)
+	if len(p.OtherConditions) != 0 {
+		if p.JoinType == RightOuterJoin {
+			preferredBuildIndex = 0
+		} else if p.JoinType == LeftOuterJoin {
+			preferredBuildIndex = 1
+		}
 	}
 	baseJoin.InnerChildIdx = preferredBuildIndex
 	childrenReqProps := make([]*property.PhysicalProperty, 2)
@@ -1685,6 +1743,7 @@ func (p *LogicalJoin) tryToGetBroadCastJoinByPreferGlobalIdx(prop *property.Phys
 
 	join := PhysicalBroadCastJoin{
 		basePhysicalJoin: baseJoin,
+		EqualConditions:  p.EqualConditions,
 		globalChildIndex: preferredGlobalIndex,
 	}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), p.blockOffset, childrenReqProps...)
 	return []PhysicalPlan{join}

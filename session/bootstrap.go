@@ -427,6 +427,8 @@ const (
 	version51 = 51
 	// version52 change mysql.stats_histograms cm_sketch column from blob to blob(6291456)
 	version52 = 52
+	// version53 introduce Global variable tidb_enable_strict_double_type_check
+	version53 = 53
 )
 
 var (
@@ -482,6 +484,7 @@ var (
 		upgradeToVer50,
 		upgradeToVer51,
 		upgradeToVer52,
+		upgradeToVer53,
 	}
 )
 
@@ -1048,8 +1051,7 @@ func upgradeToVer41(s Session, ver int64) {
 // writeDefaultExprPushDownBlacklist writes default expr pushdown blacklist into mysql.expr_pushdown_blacklist
 func writeDefaultExprPushDownBlacklist(s Session) {
 	mustExecute(s, "INSERT HIGH_PRIORITY INTO mysql.expr_pushdown_blacklist VALUES"+
-		"('date_add','tiflash', 'DST(daylight saving time) does not take effect in TiFlash date_add'),"+
-		"('cast','tiflash', 'Behavior of some corner cases(overflow, truncate etc) is different in TiFlash and TiDB')")
+		"('date_add','tiflash', 'DST(daylight saving time) does not take effect in TiFlash date_add')")
 }
 
 func upgradeToVer42(s Session, ver int64) {
@@ -1065,8 +1067,8 @@ func upgradeToVer42(s Session, ver int64) {
 func writeStmtSummaryVars(s Session) {
 	sql := fmt.Sprintf("UPDATE %s.%s SET variable_value='%%s' WHERE variable_name='%%s' AND variable_value=''", mysql.SystemDB, mysql.GlobalVariablesTable)
 	stmtSummaryConfig := config.GetGlobalConfig().StmtSummary
-	mustExecute(s, fmt.Sprintf(sql, variable.BoolToIntStr(stmtSummaryConfig.Enable), variable.TiDBEnableStmtSummary))
-	mustExecute(s, fmt.Sprintf(sql, variable.BoolToIntStr(stmtSummaryConfig.EnableInternalQuery), variable.TiDBStmtSummaryInternalQuery))
+	mustExecute(s, fmt.Sprintf(sql, variable.BoolToOnOff(stmtSummaryConfig.Enable), variable.TiDBEnableStmtSummary))
+	mustExecute(s, fmt.Sprintf(sql, variable.BoolToOnOff(stmtSummaryConfig.EnableInternalQuery), variable.TiDBStmtSummaryInternalQuery))
 	mustExecute(s, fmt.Sprintf(sql, strconv.Itoa(stmtSummaryConfig.RefreshInterval), variable.TiDBStmtSummaryRefreshInterval))
 	mustExecute(s, fmt.Sprintf(sql, strconv.Itoa(stmtSummaryConfig.HistorySize), variable.TiDBStmtSummaryHistorySize))
 	mustExecute(s, fmt.Sprintf(sql, strconv.FormatUint(uint64(stmtSummaryConfig.MaxStmtCount), 10), variable.TiDBStmtSummaryMaxStmtCount))
@@ -1189,6 +1191,16 @@ func upgradeToVer52(s Session, ver int64) {
 		return
 	}
 	doReentrantDDL(s, "ALTER TABLE mysql.stats_histograms MODIFY cm_sketch BLOB(6291456)")
+}
+
+func upgradeToVer53(s Session, ver int64) {
+	if ver >= version53 {
+		return
+	}
+	// when upgrade from old tidb and no `tidb_enable_strict_double_type_check` in GLOBAL_VARIABLES, init it with 1`
+	sql := fmt.Sprintf("INSERT IGNORE INTO %s.%s (`VARIABLE_NAME`, `VARIABLE_VALUE`) VALUES ('%s', '%d')",
+		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBEnableStrictDoubleTypeCheck, 0)
+	mustExecute(s, sql)
 }
 
 // updateBootstrapVer updates bootstrap version variable in mysql.TiDB table.

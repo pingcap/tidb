@@ -740,8 +740,8 @@ func UpdateHistogram(h *Histogram, feedback *QueryFeedback) *Histogram {
 	return hist
 }
 
-// UpdateCMSketch updates the CMSketch by feedback.
-func UpdateCMSketch(c *CMSketch, t *TopN, eqFeedbacks []Feedback) (*CMSketch, *TopN) {
+// UpdateCMSketchAndTopN updates the CMSketch and TopN by feedback.
+func UpdateCMSketchAndTopN(c *CMSketch, t *TopN, eqFeedbacks []Feedback) (*CMSketch, *TopN) {
 	if c == nil || len(eqFeedbacks) == 0 {
 		return c, t
 	}
