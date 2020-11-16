@@ -556,9 +556,11 @@ func (it *copIterator) adaptiveConcurrency(sessionMemTracker *memory.Tracker) {
 	if it.concurrency > len(it.tasks) {
 		it.concurrency = len(it.tasks)
 	}
-	adaptiveConcurrency := int((sessionMemTracker.GetBytesLimit() - sessionMemTracker.BytesConsumed()) / occupiedMem)
-	if it.concurrency > adaptiveConcurrency {
-		it.concurrency = adaptiveConcurrency
+	if sessionMemTracker != nil {
+		adaptiveConcurrency := int((sessionMemTracker.GetBytesLimit() - sessionMemTracker.BytesConsumed()) / occupiedMem)
+		if it.concurrency > adaptiveConcurrency {
+			it.concurrency = adaptiveConcurrency
+		}
 	}
 	if it.concurrency < 1 {
 		// Make sure that there is at least one worker.
@@ -1318,6 +1320,7 @@ func (it copErrorResponse) Close() error {
 	return nil
 }
 
+// MockCoprocessorResponseSize is a mock value for response size. It is only used for unit test.
 const MockCoprocessorResponseSize = int64(90 * 1024 * 1024)
 
 // rateLimitAction an OOM Action which is used to control the token if OOM triggered. The token number should be
