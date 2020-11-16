@@ -99,18 +99,6 @@ func (r *RegionRequestRuntimeStats) String() string {
 	return buf.String()
 }
 
-// Clone returns a copy of itself.
-func (r *RegionRequestRuntimeStats) Clone() RegionRequestRuntimeStats {
-	newRs := NewRegionRequestRuntimeStats()
-	for cmd, v := range r.Stats {
-		newRs.Stats[cmd] = &RPCRuntimeStats{
-			Count:   v.Count,
-			Consume: v.Consume,
-		}
-	}
-	return newRs
-}
-
 // Merge merges other RegionRequestRuntimeStats.
 func (r *RegionRequestRuntimeStats) Merge(rs RegionRequestRuntimeStats) {
 	for cmd, v := range rs.Stats {
