@@ -51,7 +51,7 @@ type baseHashAggWorker struct {
 	finishCh       <-chan struct{}
 	aggFuncs       []aggfuncs.AggFunc
 	maxChunkSize   int
-	aggWorkerStats time.Duration
+	aggWorkerStats int64
 }
 
 func newBaseHashAggWorker(ctx sessionctx.Context, finishCh <-chan struct{}, aggFuncs []aggfuncs.AggFunc, maxChunkSize int, stat *HashAggRuntimeStats) baseHashAggWorker {
@@ -371,7 +371,7 @@ func (w *HashAggPartialWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitG
 			w.shuffleIntermData(sc, finalConcurrency)
 		}
 		w.memTracker.Consume(-w.chk.MemoryUsage())
-		w.aggWorkerStats = time.Since(start)
+		atomic.AddInt64(&w.aggWorkerStats, int64(time.Since(start)))
 		waitGroup.Done()
 	}()
 	for {
@@ -612,7 +612,7 @@ func (w *HashAggFinalWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitGro
 		if r := recover(); r != nil {
 			recoveryHashAgg(w.outputCh, r)
 		}
-		w.aggWorkerStats = time.Since(start)
+		atomic.AddInt64(&w.aggWorkerStats, int64(time.Since(start)))
 		waitGroup.Done()
 	}()
 	if err := w.consumeIntermData(ctx); err != nil {
@@ -700,7 +700,7 @@ func (e *HashAggExec) prepare4ParallelExec(ctx context.Context) {
 		if e.stats != nil {
 			atomic.AddInt64(&e.stats.PartialStats.WallTime, int64(time.Since(partialStart)))
 			for i := range e.partialWorkers {
-				atomic.StoreInt64(&e.stats.PartialStats.WorkerTime[i], int64(e.partialWorkers[i].aggWorkerStats))
+				atomic.AddInt64(&e.stats.PartialStats.WorkerTime[i], atomic.LoadInt64(&e.partialWorkers[i].aggWorkerStats))
 			}
 		}
 	}()
@@ -715,7 +715,7 @@ func (e *HashAggExec) prepare4ParallelExec(ctx context.Context) {
 		if e.stats != nil {
 			atomic.AddInt64(&e.stats.FinalStats.WallTime, int64(time.Since(finalStart)))
 			for i := range e.finalWorkers {
-				atomic.StoreInt64(&e.stats.FinalStats.WorkerTime[i], int64(e.finalWorkers[i].aggWorkerStats))
+				atomic.AddInt64(&e.stats.FinalStats.WorkerTime[i], atomic.LoadInt64(&e.finalWorkers[i].aggWorkerStats))
 			}
 		}
 	}()
