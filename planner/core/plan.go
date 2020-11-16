@@ -92,6 +92,10 @@ func optimizeByShuffle(pp PhysicalPlan, tsk task, ctx sessionctx.Context) task {
 		if shuffle := optimizeByShuffle4Window(p, ctx); shuffle != nil {
 			return shuffle.attach2Task(tsk)
 		}
+	case *PhysicalStreamAgg:
+		if shuffle := optimizeByShuffle4StreamAgg(p, ctx); shuffle != nil {
+			return shuffle.attach2Task(tsk)
+		}
 	}
 	return tsk
 }
@@ -130,7 +134,27 @@ func optimizeByShuffle4Window(pp *PhysicalWindow, ctx sessionctx.Context) *Physi
 		Tail:         tail,
 		DataSource:   dataSource,
 		SplitterType: PartitionHashSplitterType,
-		HashByItems:  byItems,
+		ByItems:      byItems,
+	}.Init(ctx, pp.statsInfo(), pp.SelectBlockOffset(), reqProp)
+	return shuffle
+}
+
+func optimizeByShuffle4StreamAgg(pp *PhysicalStreamAgg, ctx sessionctx.Context) *PhysicalShuffle {
+	concurrency := ctx.GetSessionVars().StreamAggConcurrency()
+	if concurrency <= 1 {
+		return nil
+	}
+
+	childExec, _ := pp.Children()[0].(*PhysicalSort)
+
+	tail, dataSource := childExec, childExec.Children()[0]
+	reqProp := &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64}
+	shuffle := PhysicalShuffle{
+		Concurrency:  concurrency,
+		Tail:         tail,
+		DataSource:   dataSource,
+		SplitterType: PartitionHashSplitterType,
+		ByItems:      cloneExprs(pp.GroupByItems),
 	}.Init(ctx, pp.statsInfo(), pp.SelectBlockOffset(), reqProp)
 	return shuffle
 }

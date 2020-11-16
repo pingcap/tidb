@@ -3666,7 +3666,7 @@ func (b *executorBuilder) buildShuffle(v *plannercore.PhysicalShuffle) *ShuffleE
 	switch v.SplitterType {
 	case plannercore.PartitionHashSplitterType:
 		shuffle.splitter = &partitionHashSplitter{
-			byItems:    v.HashByItems,
+			byItems:    v.ByItems,
 			numWorkers: shuffle.concurrency,
 		}
 	default:
