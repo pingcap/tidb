@@ -183,15 +183,6 @@ func (c *Chunk) IsFull() bool {
 	return c.NumRows() >= c.requiredRows
 }
 
-// LeftRequiredRows if this chunk is considered full.
-func (c *Chunk) LeftRequiredRows(numRows int) int {
-	leftRows := c.requiredRows - c.NumRows()
-	if numRows > leftRows {
-		numRows = leftRows
-	}
-	return numRows
-}
-
 // Prune creates a new Chunk according to `c` and prunes the columns
 // whose index is not in `usedColIdxs`
 func (c *Chunk) Prune(usedColIdxs []int) *Chunk {
@@ -729,4 +720,12 @@ func (c *Chunk) AppendPartialRows(rows []Row) {
 			appendCellByCell(dstCol, srcRow.c.columns[i], srcRow.idx)
 		}
 	}
+}
+
+// LeftRequiredRows  chunk may append the number of rows
+func (c *Chunk) LeftRequiredRows(offset int) int {
+	if (c.requiredRows >= c.NumRows()+offset) || (c.requiredRows-c.NumRows() >= offset) {
+		return offset
+	}
+	return c.requiredRows - c.NumRows()
 }

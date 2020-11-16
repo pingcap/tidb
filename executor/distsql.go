@@ -655,10 +655,23 @@ func (e *IndexLookUpExecutor) Next(ctx context.Context, req *chunk.Chunk) error 
 		if resultTask == nil {
 			return nil
 		}
-		numRows := req.LeftRequiredRows(len(resultTask.rows))
-		if resultTask.cursor < numRows {
-			req.AppendRows(resultTask.rows[resultTask.cursor:numRows])
-			resultTask.cursor += numRows
+		/**
+		for resultTask.cursor < len(resultTask.rows) {
+			req.AppendRow(resultTask.rows[resultTask.cursor])
+			resultTask.cursor++
+			if req.IsFull() {
+				return nil
+			}
+		}**/
+
+		if resultTask.cursor < len(resultTask.rows) {
+			offset := len(resultTask.rows) - resultTask.cursor
+			offset = req.LeftRequiredRows(offset)
+			req.AppendRows(resultTask.rows[resultTask.cursor : resultTask.cursor+offset])
+			resultTask.cursor += offset
+			if req.IsFull() {
+				return nil
+			}
 		}
 	}
 }
