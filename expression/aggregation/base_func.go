@@ -186,7 +186,7 @@ func (a *baseFuncDesc) typeInfer4Sum(ctx sessionctx.Context) {
 		}
 	case mysql.TypeNewDecimal:
 		a.RetTp = types.NewFieldType(mysql.TypeNewDecimal)
-		a.RetTp.Flen, a.RetTp.Decimal = utils.MinInt(a.Args[0].GetType().Flen+22), a.Args[0].GetType().Decimal
+		a.RetTp.Flen, a.RetTp.Decimal = utils.MinInt(a.Args[0].GetType().Flen+22, mysql.MaxDecimalWidth), a.Args[0].GetType().Decimal
 		if a.Args[0].GetType().Flen < 0 {
 			a.RetTp.Flen = mysql.MaxDecimalWidth
 		}
