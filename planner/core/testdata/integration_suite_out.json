@@ -63,25 +63,6 @@
     ]
   },
   {
-<<<<<<< HEAD
-=======
-    "Name": "TestIndexJoinInnerIndexNDV",
-    "Cases": [
-      {
-        "SQL": "explain select /*+ inl_join(t2) */ * from t1, t2 where t1.a = t2.a and t1.b = t2.b and t1.c = t2.c",
-        "Plan": [
-          "IndexJoin_10 3.00 root  inner join, inner:IndexLookUp_9, outer key:test.t1.c, inner key:test.t2.c, equal cond:eq(test.t1.a, test.t2.a), eq(test.t1.b, test.t2.b), eq(test.t1.c, test.t2.c)",
-          "├─TableReader_20(Build) 3.00 root  data:TableFullScan_19",
-          "│ └─TableFullScan_19 3.00 cop[tikv] table:t1 keep order:false",
-          "└─IndexLookUp_9(Probe) 1.00 root  ",
-          "  ├─IndexRangeScan_7(Build) 1.00 cop[tikv] table:t2, index:idx2(c) range: decided by [eq(test.t2.c, test.t1.c)], keep order:false",
-          "  └─TableRowIDScan_8(Probe) 1.00 cop[tikv] table:t2 keep order:false"
-        ]
-      }
-    ]
-  },
-  {
->>>>>>> 41786cb97... *: seperate hash keys from join keys in IndexJoin (#20761)
     "Name": "TestSimplifyOuterJoinWithCast",
     "Cases": [
       {
@@ -125,15 +106,9 @@
       {
         "SQL": "explain select /*+ TIDB_INLJ(t2) */ * from t1 join t2 on t1.a = t2.a and t1.c = t2.c",
         "Plan": [
-<<<<<<< HEAD
-          "IndexJoin_9 2.00 root  inner join, inner:IndexLookUp_8, outer key:test.t1.a, inner key:test.t2.a, other cond:eq(test.t1.c, test.t2.c)",
-          "├─TableReader_13(Build) 1.00 root  data:TableFullScan_12",
-          "│ └─TableFullScan_12 1.00 cop[tikv] table:t1 keep order:false",
-=======
           "IndexJoin_9 2.00 root  inner join, inner:IndexLookUp_8, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a), eq(test.t1.c, test.t2.c)",
-          "├─TableReader_19(Build) 1.00 root  data:TableFullScan_18",
-          "│ └─TableFullScan_18 1.00 cop[tikv] table:t1 keep order:false",
->>>>>>> 41786cb97... *: seperate hash keys from join keys in IndexJoin (#20761)
+          "├─TableReader_15(Build) 1.00 root  data:TableFullScan_14",
+          "│ └─TableFullScan_14 1.00 cop[tikv] table:t1 keep order:false",
           "└─IndexLookUp_8(Probe) 2.00 root  ",
           "  ├─IndexRangeScan_6(Build) 2.00 cop[tikv] table:t2, index:PRIMARY(a, b) range: decided by [eq(test.t2.a, test.t1.a)], keep order:false",
           "  └─TableRowIDScan_7(Probe) 2.00 cop[tikv] table:t2 keep order:false"
@@ -142,15 +117,9 @@
       {
         "SQL": "explain select /*+ TIDB_INLJ(t2) */ * from t1 join t2 on t1.a = t2.a and t1.c <= t2.b",
         "Plan": [
-<<<<<<< HEAD
-          "IndexJoin_9 2.00 root  inner join, inner:IndexLookUp_8, outer key:test.t1.a, inner key:test.t2.a, other cond:le(test.t1.c, test.t2.b)",
-          "├─TableReader_13(Build) 1.00 root  data:TableFullScan_12",
-          "│ └─TableFullScan_12 1.00 cop[tikv] table:t1 keep order:false",
-=======
           "IndexJoin_9 2.00 root  inner join, inner:IndexLookUp_8, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a), other cond:le(test.t1.c, test.t2.b)",
-          "├─TableReader_19(Build) 1.00 root  data:TableFullScan_18",
-          "│ └─TableFullScan_18 1.00 cop[tikv] table:t1 keep order:false",
->>>>>>> 41786cb97... *: seperate hash keys from join keys in IndexJoin (#20761)
+          "├─TableReader_15(Build) 1.00 root  data:TableFullScan_14",
+          "│ └─TableFullScan_14 1.00 cop[tikv] table:t1 keep order:false",
           "└─IndexLookUp_8(Probe) 2.00 root  ",
           "  ├─IndexRangeScan_6(Build) 2.00 cop[tikv] table:t2, index:PRIMARY(a, b) range: decided by [eq(test.t2.a, test.t1.a) le(test.t1.c, test.t2.b)], keep order:false",
           "  └─TableRowIDScan_7(Probe) 2.00 cop[tikv] table:t2 keep order:false"
@@ -159,15 +128,9 @@
       {
         "SQL": "explain select /*+ TIDB_INLJ(t2) */ * from t1 join t2 on t1.a = t2.a and t2.b = 1",
         "Plan": [
-<<<<<<< HEAD
-          "IndexJoin_9 1.00 root  inner join, inner:IndexLookUp_8, outer key:test.t1.a, inner key:test.t2.a",
-          "├─TableReader_13(Build) 1.00 root  data:TableFullScan_12",
-          "│ └─TableFullScan_12 1.00 cop[tikv] table:t1 keep order:false",
-=======
           "IndexJoin_9 1.00 root  inner join, inner:IndexLookUp_8, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a)",
-          "├─TableReader_19(Build) 1.00 root  data:TableFullScan_18",
-          "│ └─TableFullScan_18 1.00 cop[tikv] table:t1 keep order:false",
->>>>>>> 41786cb97... *: seperate hash keys from join keys in IndexJoin (#20761)
+          "├─TableReader_15(Build) 1.00 root  data:TableFullScan_14",
+          "│ └─TableFullScan_14 1.00 cop[tikv] table:t1 keep order:false",
           "└─IndexLookUp_8(Probe) 1.00 root  ",
           "  ├─IndexRangeScan_6(Build) 1.00 cop[tikv] table:t2, index:PRIMARY(a, b) range: decided by [eq(test.t2.a, test.t1.a) eq(test.t2.b, 1)], keep order:false",
           "  └─TableRowIDScan_7(Probe) 1.00 cop[tikv] table:t2 keep order:false"
@@ -317,15 +280,9 @@
       {
         "SQL": "desc select /*+ TIDB_INLJ(t2)*/ * from t1, t2 where t1.a = t2.a and t1.b = t2.b",
         "Plan": [
-<<<<<<< HEAD
-          "IndexJoin_12 12487.50 root  inner join, inner:TableReader_11, outer key:test.t1.a, inner key:test.t2.a, other cond:eq(test.t1.b, test.t2.b)",
+          "IndexJoin_12 12487.50 root  inner join, inner:TableReader_11, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a), eq(test.t1.b, test.t2.b)",
           "├─IndexReader_16(Build) 9990.00 root  index:IndexFullScan_15",
           "│ └─IndexFullScan_15 9990.00 cop[tikv] table:t1, index:idx_t1_b(b) keep order:false, stats:pseudo",
-=======
-          "IndexJoin_15 12487.50 root  inner join, inner:TableReader_11, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a), eq(test.t1.b, test.t2.b)",
-          "├─IndexReader_21(Build) 9990.00 root  index:IndexFullScan_20",
-          "│ └─IndexFullScan_20 9990.00 cop[tikv] table:t1, index:idx_t1_b(b) keep order:false, stats:pseudo",
->>>>>>> 41786cb97... *: seperate hash keys from join keys in IndexJoin (#20761)
           "└─TableReader_11(Probe) 1.00 root  data:Selection_10",
           "  └─Selection_10 1.00 cop[tikv]  not(isnull(test.t2.b))",
           "    └─TableRangeScan_9 1.00 cop[tikv] table:t2 range: decided by [test.t1.a], keep order:false, stats:pseudo"
@@ -334,15 +291,9 @@
       {
         "SQL": "desc select /*+ TIDB_INLJ(t2)*/ * from t1, t2 where t1.a = t2.a and t1.b = t2.a and t1.b = t2.b",
         "Plan": [
-<<<<<<< HEAD
-          "IndexJoin_12 12487.50 root  inner join, inner:TableReader_11, outer key:test.t1.a, test.t1.b, inner key:test.t2.a, test.t2.a, other cond:eq(test.t1.b, test.t2.b)",
+          "IndexJoin_12 12487.50 root  inner join, inner:TableReader_11, outer key:test.t1.a, test.t1.b, inner key:test.t2.a, test.t2.a, equal cond:eq(test.t1.a, test.t2.a), eq(test.t1.b, test.t2.a), eq(test.t1.b, test.t2.b)",
           "├─IndexReader_16(Build) 9990.00 root  index:IndexFullScan_15",
           "│ └─IndexFullScan_15 9990.00 cop[tikv] table:t1, index:idx_t1_b(b) keep order:false, stats:pseudo",
-=======
-          "IndexJoin_15 12487.50 root  inner join, inner:TableReader_11, outer key:test.t1.a, test.t1.b, inner key:test.t2.a, test.t2.a, equal cond:eq(test.t1.a, test.t2.a), eq(test.t1.b, test.t2.a), eq(test.t1.b, test.t2.b)",
-          "├─IndexReader_20(Build) 9990.00 root  index:IndexFullScan_19",
-          "│ └─IndexFullScan_19 9990.00 cop[tikv] table:t1, index:idx_t1_b(b) keep order:false, stats:pseudo",
->>>>>>> 41786cb97... *: seperate hash keys from join keys in IndexJoin (#20761)
           "└─TableReader_11(Probe) 1.00 root  data:Selection_10",
           "  └─Selection_10 1.00 cop[tikv]  not(isnull(test.t2.b))",
           "    └─TableRangeScan_9 1.00 cop[tikv] table:t2 range: decided by [test.t1.a test.t1.b], keep order:false, stats:pseudo"
@@ -356,17 +307,10 @@
       {
         "SQL": "desc select /*+ INL_JOIN(t2) */ * from t t1, t t2 where t1.a = t2.b order by t2.a",
         "Plan": [
-<<<<<<< HEAD
           "Sort_7 12487.50 root  test.t.a:asc",
-          "└─IndexJoin_15 12487.50 root  inner join, inner:IndexLookUp_14, outer key:test.t.a, inner key:test.t.b",
-          "  ├─TableReader_19(Build) 10000.00 root  data:TableFullScan_18",
-          "  │ └─TableFullScan_18 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-=======
-          "Sort_7 12487.50 root  test.t.a",
           "└─IndexJoin_15 12487.50 root  inner join, inner:IndexLookUp_14, outer key:test.t.a, inner key:test.t.b, equal cond:eq(test.t.a, test.t.b)",
-          "  ├─TableReader_25(Build) 10000.00 root  data:TableFullScan_24",
-          "  │ └─TableFullScan_24 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
->>>>>>> 41786cb97... *: seperate hash keys from join keys in IndexJoin (#20761)
+          "  ├─TableReader_21(Build) 10000.00 root  data:TableFullScan_20",
+          "  │ └─TableFullScan_20 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
           "  └─IndexLookUp_14(Probe) 1.25 root  ",
           "    ├─Selection_13(Build) 1.25 cop[tikv]  not(isnull(test.t.b))",
           "    │ └─IndexRangeScan_11 1.25 cop[tikv] table:t2, index:b(b) range: decided by [eq(test.t.b, test.t.a)], keep order:false, stats:pseudo",
@@ -377,17 +321,10 @@
       {
         "SQL": "desc select /*+ INL_HASH_JOIN(t2) */ * from t t1, t t2 where t1.a = t2.b order by t2.a",
         "Plan": [
-<<<<<<< HEAD
           "Sort_7 12487.50 root  test.t.a:asc",
-          "└─IndexHashJoin_17 12487.50 root  inner join, inner:IndexLookUp_14, outer key:test.t.a, inner key:test.t.b",
-          "  ├─TableReader_19(Build) 10000.00 root  data:TableFullScan_18",
-          "  │ └─TableFullScan_18 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-=======
-          "Sort_7 12487.50 root  test.t.a",
           "└─IndexHashJoin_17 12487.50 root  inner join, inner:IndexLookUp_14, outer key:test.t.a, inner key:test.t.b, equal cond:eq(test.t.a, test.t.b)",
-          "  ├─TableReader_25(Build) 10000.00 root  data:TableFullScan_24",
-          "  │ └─TableFullScan_24 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
->>>>>>> 41786cb97... *: seperate hash keys from join keys in IndexJoin (#20761)
+          "  ├─TableReader_21(Build) 10000.00 root  data:TableFullScan_20",
+          "  │ └─TableFullScan_20 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
           "  └─IndexLookUp_14(Probe) 1.25 root  ",
           "    ├─Selection_13(Build) 1.25 cop[tikv]  not(isnull(test.t.b))",
           "    │ └─IndexRangeScan_11 1.25 cop[tikv] table:t2, index:b(b) range: decided by [eq(test.t.b, test.t.a)], keep order:false, stats:pseudo",
@@ -401,7 +338,7 @@
           "HashJoin_17 15625.00 root  inner join, equal:[eq(test.t.a, test.t.a)]",
           "├─TableReader_44(Build) 10000.00 root  data:TableFullScan_43",
           "│ └─TableFullScan_43 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
-          "└─IndexJoin_40(Probe) 12500.00 root  inner join, inner:TableReader_39, outer key:test.t.a, inner key:test.t.a",
+          "└─IndexJoin_40(Probe) 12500.00 root  inner join, inner:TableReader_39, outer key:test.t.a, inner key:test.t.a, equal cond:eq(test.t.a, test.t.a)",
           "  ├─TableReader_33(Build) 10000.00 root  data:TableFullScan_32",
           "  │ └─TableFullScan_32 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
           "  └─TableReader_39(Probe) 1.00 root  data:TableRangeScan_38",
@@ -414,29 +351,23 @@
         "Plan": [
           "Sort_10 9990.00 root  test.t.b:asc",
           "└─Projection_12 9990.00 root  test.t.a, test.t.b, test.t.c, test.t.b, Column#7",
-          "  └─HashJoin_21 9990.00 root  inner join, equal:[eq(test.t.b, test.t.b)]",
-          "    ├─HashAgg_41(Build) 7992.00 root  group by:test.t.b, funcs:max(Column#10)->Column#7, funcs:firstrow(test.t.b)->test.t.b",
-          "    │ └─IndexReader_42 7992.00 root  index:HashAgg_38",
-          "    │   └─HashAgg_38 7992.00 cop[tikv]  group by:test.t.b, funcs:max(test.t.a)->Column#10",
-          "    │     └─IndexFullScan_31 9990.00 cop[tikv] table:t2, index:b(b) keep order:false, stats:pseudo",
-          "    └─TableReader_45(Probe) 9990.00 root  data:Selection_44",
-          "      └─Selection_44 9990.00 cop[tikv]  not(isnull(test.t.b))",
-          "        └─TableFullScan_43 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+          "  └─HashJoin_23 9990.00 root  inner join, equal:[eq(test.t.b, test.t.b)]",
+          "    ├─HashAgg_43(Build) 7992.00 root  group by:test.t.b, funcs:max(Column#10)->Column#7, funcs:firstrow(test.t.b)->test.t.b",
+          "    │ └─IndexReader_44 7992.00 root  index:HashAgg_40",
+          "    │   └─HashAgg_40 7992.00 cop[tikv]  group by:test.t.b, funcs:max(test.t.a)->Column#10",
+          "    │     └─IndexFullScan_33 9990.00 cop[tikv] table:t2, index:b(b) keep order:false, stats:pseudo",
+          "    └─TableReader_47(Probe) 9990.00 root  data:Selection_46",
+          "      └─Selection_46 9990.00 cop[tikv]  not(isnull(test.t.b))",
+          "        └─TableFullScan_45 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "Warnings": []
       },
       {
         "SQL": "desc select /*+ INL_HASH_JOIN(t2) */ distinct t2.a from t t1 join t t2 on t1.a = t2.a",
         "Plan": [
-<<<<<<< HEAD
-          "IndexHashJoin_13 12500.00 root  inner join, inner:TableReader_10, outer key:test.t.a, inner key:test.t.a",
+          "IndexHashJoin_13 12500.00 root  inner join, inner:TableReader_10, outer key:test.t.a, inner key:test.t.a, equal cond:eq(test.t.a, test.t.a)",
           "├─TableReader_15(Build) 10000.00 root  data:TableFullScan_14",
           "│ └─TableFullScan_14 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-=======
-          "IndexHashJoin_15 12500.00 root  inner join, inner:TableReader_10, outer key:test.t.a, inner key:test.t.a, equal cond:eq(test.t.a, test.t.a)",
-          "├─TableReader_19(Build) 10000.00 root  data:TableFullScan_18",
-          "│ └─TableFullScan_18 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
->>>>>>> 41786cb97... *: seperate hash keys from join keys in IndexJoin (#20761)
           "└─TableReader_10(Probe) 1.00 root  data:TableRangeScan_9",
           "  └─TableRangeScan_9 1.00 cop[tikv] table:t2 range: decided by [test.t.a], keep order:false, stats:pseudo"
         ],
@@ -897,362 +828,6 @@
     ]
   },
   {
-<<<<<<< HEAD
-=======
-    "Name": "TestAccessPathOnClusterIndex",
-    "Cases": [
-      {
-        "SQL": "select * from t1",
-        "Plan": [
-          "TableReader_5 3.00 root  data:TableFullScan_4",
-          "└─TableFullScan_4 3.00 cop[tikv] table:t1 keep order:false"
-        ],
-        "Res": [
-          "1 111 1.1000000000 11",
-          "2 222 2.2000000000 12",
-          "3 333 3.3000000000 13"
-        ]
-      },
-      {
-        "SQL": "select * from t1 where t1.a >= 1 and t1.a < 4",
-        "Plan": [
-          "TableReader_6 3.00 root  data:TableRangeScan_5",
-          "└─TableRangeScan_5 3.00 cop[tikv] table:t1 range:[1,4), keep order:false"
-        ],
-        "Res": [
-          "1 111 1.1000000000 11",
-          "2 222 2.2000000000 12",
-          "3 333 3.3000000000 13"
-        ]
-      },
-      {
-        "SQL": "select * from t1 where t1.a = 1 and t1.b < \"333\"",
-        "Plan": [
-          "TableReader_6 0.67 root  data:TableRangeScan_5",
-          "└─TableRangeScan_5 0.67 cop[tikv] table:t1 range:[1 -inf,1 \"333\"), keep order:false"
-        ],
-        "Res": [
-          "1 111 1.1000000000 11"
-        ]
-      },
-      {
-        "SQL": "select t1.a, t1.b, t1.c from t1 where t1.c = 3.3",
-        "Plan": [
-          "IndexReader_6 1.00 root  index:IndexRangeScan_5",
-          "└─IndexRangeScan_5 1.00 cop[tikv] table:t1, index:c(c) range:[3.3000000000,3.3000000000], keep order:false"
-        ],
-        "Res": [
-          "3 333 3.3000000000"
-        ]
-      },
-      {
-        "SQL": "select t1.b, t1.c from t1 where t1.c = 2.2",
-        "Plan": [
-          "Projection_4 1.00 root  test.t1.b, test.t1.c",
-          "└─IndexReader_6 1.00 root  index:IndexRangeScan_5",
-          "  └─IndexRangeScan_5 1.00 cop[tikv] table:t1, index:c(c) range:[2.2000000000,2.2000000000], keep order:false"
-        ],
-        "Res": [
-          "222 2.2000000000"
-        ]
-      },
-      {
-        "SQL": "select /*+ use_index(t1, c) */ * from t1",
-        "Plan": [
-          "IndexLookUp_6 3.00 root  ",
-          "├─IndexFullScan_4(Build) 3.00 cop[tikv] table:t1, index:c(c) keep order:false",
-          "└─TableRowIDScan_5(Probe) 3.00 cop[tikv] table:t1 keep order:false"
-        ],
-        "Res": [
-          "1 111 1.1000000000 11",
-          "2 222 2.2000000000 12",
-          "3 333 3.3000000000 13"
-        ]
-      },
-      {
-        "SQL": "select * from t1 use index(c) where t1.c in (2.2, 3.3)",
-        "Plan": [
-          "IndexLookUp_7 2.00 root  ",
-          "├─IndexRangeScan_5(Build) 2.00 cop[tikv] table:t1, index:c(c) range:[2.2000000000,2.2000000000], [3.3000000000,3.3000000000], keep order:false",
-          "└─TableRowIDScan_6(Probe) 2.00 cop[tikv] table:t1 keep order:false"
-        ],
-        "Res": [
-          "2 222 2.2000000000 12",
-          "3 333 3.3000000000 13"
-        ]
-      },
-      {
-        "SQL": "select * from t1 where t1.a = 1 order by b",
-        "Plan": [
-          "TableReader_12 1.00 root  data:TableRangeScan_11",
-          "└─TableRangeScan_11 1.00 cop[tikv] table:t1 range:[1,1], keep order:true"
-        ],
-        "Res": [
-          "1 111 1.1000000000 11"
-        ]
-      },
-      {
-        "SQL": "select * from t1 order by a, b limit 1",
-        "Plan": [
-          "Limit_10 1.00 root  offset:0, count:1",
-          "└─TableReader_20 1.00 root  data:Limit_19",
-          "  └─Limit_19 1.00 cop[tikv]  offset:0, count:1",
-          "    └─TableFullScan_18 1.00 cop[tikv] table:t1 keep order:true"
-        ],
-        "Res": [
-          "1 111 1.1000000000 11"
-        ]
-      },
-      {
-        "SQL": "select /*+ use_index_merge(t1 primary, c) */ * from t1 where t1.a >= 1 or t1.c = 2.2",
-        "Plan": [
-          "IndexMerge_8 3.00 root  ",
-          "├─TableRangeScan_5(Build) 3.00 cop[tikv] table:t1 range:[1,+inf], keep order:false",
-          "├─IndexRangeScan_6(Build) 1.00 cop[tikv] table:t1, index:c(c) range:[2.2000000000,2.2000000000], keep order:false",
-          "└─TableRowIDScan_7(Probe) 3.00 cop[tikv] table:t1 keep order:false"
-        ],
-        "Res": [
-          "1 111 1.1000000000 11",
-          "2 222 2.2000000000 12",
-          "3 333 3.3000000000 13"
-        ]
-      },
-      {
-        "SQL": "select /*+ use_index_merge(t1 primary, c) */ * from t1 where t1.a = 1 and t1.b = '111' or t1.c = 3.3",
-        "Plan": [
-          "IndexMerge_8 2.11 root  ",
-          "├─TableRangeScan_5(Build) 1.00 cop[tikv] table:t1 range:[1 \"111\",1 \"111\"], keep order:false",
-          "├─IndexRangeScan_6(Build) 1.00 cop[tikv] table:t1, index:c(c) range:[3.3000000000,3.3000000000], keep order:false",
-          "└─TableRowIDScan_7(Probe) 2.11 cop[tikv] table:t1 keep order:false"
-        ],
-        "Res": [
-          "1 111 1.1000000000 11",
-          "3 333 3.3000000000 13"
-        ]
-      }
-    ]
-  },
-  {
-    "Name": "TestIndexJoinOnClusteredIndex",
-    "Cases": [
-      {
-        "SQL": "select /*+ inl_join(t1, t2) */ * from t t1 join t t2 on t1.a = t2.a",
-        "Plan": [
-          "IndexJoin_11 3.00 root  inner join, inner:TableReader_8, outer key:test.t.a, inner key:test.t.a, equal cond:eq(test.t.a, test.t.a)",
-          "├─TableReader_26(Build) 3.00 root  data:TableFullScan_25",
-          "│ └─TableFullScan_25 3.00 cop[tikv] table:t1 keep order:false",
-          "└─TableReader_8(Probe) 1.00 root  data:TableRangeScan_7",
-          "  └─TableRangeScan_7 1.00 cop[tikv] table:t2 range: decided by [test.t.a], keep order:false"
-        ],
-        "Res": [
-          "1 111 1.1000000000 11 1 111 1.1000000000 11",
-          "2 222 2.2000000000 12 2 222 2.2000000000 12",
-          "3 333 3.3000000000 13 3 333 3.3000000000 13"
-        ]
-      },
-      {
-        "SQL": "select /*+ inl_merge_join(t1, t2) */ * from t t1 join t t2 on t1.a = t2.a",
-        "Plan": [
-          "IndexMergeJoin_15 3.00 root  inner join, inner:TableReader_10, outer key:test.t.a, inner key:test.t.a",
-          "├─TableReader_26(Build) 3.00 root  data:TableFullScan_25",
-          "│ └─TableFullScan_25 3.00 cop[tikv] table:t1 keep order:false",
-          "└─TableReader_10(Probe) 1.00 root  data:TableRangeScan_9",
-          "  └─TableRangeScan_9 1.00 cop[tikv] table:t2 range: decided by [test.t.a], keep order:true"
-        ],
-        "Res": [
-          "1 111 1.1000000000 11 1 111 1.1000000000 11",
-          "2 222 2.2000000000 12 2 222 2.2000000000 12",
-          "3 333 3.3000000000 13 3 333 3.3000000000 13"
-        ]
-      },
-      {
-        "SQL": "select /*+ inl_hash_join(t1, t2) */ * from t t1 join t t2 on t1.a = t2.a",
-        "Plan": [
-          "IndexHashJoin_13 3.00 root  inner join, inner:TableReader_8, outer key:test.t.a, inner key:test.t.a, equal cond:eq(test.t.a, test.t.a)",
-          "├─TableReader_26(Build) 3.00 root  data:TableFullScan_25",
-          "│ └─TableFullScan_25 3.00 cop[tikv] table:t1 keep order:false",
-          "└─TableReader_8(Probe) 1.00 root  data:TableRangeScan_7",
-          "  └─TableRangeScan_7 1.00 cop[tikv] table:t2 range: decided by [test.t.a], keep order:false"
-        ],
-        "Res": [
-          "1 111 1.1000000000 11 1 111 1.1000000000 11",
-          "2 222 2.2000000000 12 2 222 2.2000000000 12",
-          "3 333 3.3000000000 13 3 333 3.3000000000 13"
-        ]
-      },
-      {
-        "SQL": "select /*+ inl_join(t1, t2) */ * from t t1 join t t2 on t1.a = t2.a and t1.b = t2.b",
-        "Plan": [
-          "IndexJoin_11 3.00 root  inner join, inner:TableReader_8, outer key:test.t.a, test.t.b, inner key:test.t.a, test.t.b, equal cond:eq(test.t.a, test.t.a), eq(test.t.b, test.t.b)",
-          "├─TableReader_26(Build) 3.00 root  data:TableFullScan_25",
-          "│ └─TableFullScan_25 3.00 cop[tikv] table:t1 keep order:false",
-          "└─TableReader_8(Probe) 1.00 root  data:TableRangeScan_7",
-          "  └─TableRangeScan_7 1.00 cop[tikv] table:t2 range: decided by [test.t.a test.t.b], keep order:false"
-        ],
-        "Res": [
-          "1 111 1.1000000000 11 1 111 1.1000000000 11",
-          "2 222 2.2000000000 12 2 222 2.2000000000 12",
-          "3 333 3.3000000000 13 3 333 3.3000000000 13"
-        ]
-      },
-      {
-        "SQL": "select /*+ inl_join(t1, t2) */ * from t t1 join t t2 on t1.c = t2.c",
-        "Plan": [
-          "IndexJoin_11 3.00 root  inner join, inner:IndexLookUp_10, outer key:test.t.c, inner key:test.t.c, equal cond:eq(test.t.c, test.t.c)",
-          "├─TableReader_35(Build) 3.00 root  data:Selection_34",
-          "│ └─Selection_34 3.00 cop[tikv]  not(isnull(test.t.c))",
-          "│   └─TableFullScan_33 3.00 cop[tikv] table:t1 keep order:false",
-          "└─IndexLookUp_10(Probe) 1.00 root  ",
-          "  ├─Selection_9(Build) 1.00 cop[tikv]  not(isnull(test.t.c))",
-          "  │ └─IndexRangeScan_7 1.00 cop[tikv] table:t2, index:c(c) range: decided by [eq(test.t.c, test.t.c)], keep order:false",
-          "  └─TableRowIDScan_8(Probe) 1.00 cop[tikv] table:t2 keep order:false"
-        ],
-        "Res": [
-          "1 111 1.1000000000 11 1 111 1.1000000000 11",
-          "2 222 2.2000000000 12 2 222 2.2000000000 12",
-          "3 333 3.3000000000 13 3 333 3.3000000000 13"
-        ]
-      }
-    ]
-  },
-  {
-    "Name": "TestPartitionExplain",
-    "Cases": [
-      {
-        "SQL": "select * from pt where c > 10",
-        "Plan": [
-          "TableReader_7 3333.33 root partition:dual data:Selection_6",
-          "└─Selection_6 3333.33 cop[tikv]  gt(test.pt.c, 10)",
-          "  └─TableFullScan_5 10000.00 cop[tikv] table:pt keep order:false, stats:pseudo"
-        ]
-      },
-      {
-        "SQL": "select * from pt where c > 8",
-        "Plan": [
-          "TableReader_7 3333.33 root partition:p2 data:Selection_6",
-          "└─Selection_6 3333.33 cop[tikv]  gt(test.pt.c, 8)",
-          "  └─TableFullScan_5 10000.00 cop[tikv] table:pt keep order:false, stats:pseudo"
-        ]
-      },
-      {
-        "SQL": "select * from pt where c < 2 or c >= 9",
-        "Plan": [
-          "TableReader_7 6656.67 root partition:p0,p2 data:Selection_6",
-          "└─Selection_6 6656.67 cop[tikv]  or(lt(test.pt.c, 2), ge(test.pt.c, 9))",
-          "  └─TableFullScan_5 10000.00 cop[tikv] table:pt keep order:false, stats:pseudo"
-        ]
-      },
-      {
-        "SQL": "select c from pt",
-        "Plan": [
-          "IndexReader_7 10000.00 root partition:all index:IndexFullScan_6",
-          "└─IndexFullScan_6 10000.00 cop[tikv] table:pt, index:i_c(c) keep order:false, stats:pseudo"
-        ]
-      },
-      {
-        "SQL": "select c from pt where c > 10",
-        "Plan": [
-          "IndexReader_6 3333.33 root partition:dual index:IndexRangeScan_5",
-          "└─IndexRangeScan_5 3333.33 cop[tikv] table:pt, index:i_c(c) range:(10,+inf], keep order:false, stats:pseudo"
-        ]
-      },
-      {
-        "SQL": "select c from pt where c > 8",
-        "Plan": [
-          "IndexReader_6 3333.33 root partition:p2 index:IndexRangeScan_5",
-          "└─IndexRangeScan_5 3333.33 cop[tikv] table:pt, index:i_c(c) range:(8,+inf], keep order:false, stats:pseudo"
-        ]
-      },
-      {
-        "SQL": "select c from pt where c < 2 or c >= 9",
-        "Plan": [
-          "IndexReader_6 6656.67 root partition:p0,p2 index:IndexRangeScan_5",
-          "└─IndexRangeScan_5 6656.67 cop[tikv] table:pt, index:i_c(c) range:[-inf,2), [9,+inf], keep order:false, stats:pseudo"
-        ]
-      },
-      {
-        "SQL": "select /*+ use_index(pt, i_id) */ * from pt",
-        "Plan": [
-          "IndexLookUp_6 10000.00 root partition:all ",
-          "├─IndexFullScan_4(Build) 10000.00 cop[tikv] table:pt, index:i_id(id) keep order:false, stats:pseudo",
-          "└─TableRowIDScan_5(Probe) 10000.00 cop[tikv] table:pt keep order:false, stats:pseudo"
-        ]
-      },
-      {
-        "SQL": "select /*+ use_index(pt, i_id) */ * from pt where id < 4 and c > 10",
-        "Plan": [
-          "IndexLookUp_8 1107.78 root partition:dual ",
-          "├─IndexRangeScan_5(Build) 3323.33 cop[tikv] table:pt, index:i_id(id) range:[-inf,4), keep order:false, stats:pseudo",
-          "└─Selection_7(Probe) 1107.78 cop[tikv]  gt(test.pt.c, 10)",
-          "  └─TableRowIDScan_6 3323.33 cop[tikv] table:pt keep order:false, stats:pseudo"
-        ]
-      },
-      {
-        "SQL": "select /*+ use_index(pt, i_id) */ * from pt where id < 10 and c > 8",
-        "Plan": [
-          "IndexLookUp_8 1107.78 root partition:p2 ",
-          "├─IndexRangeScan_5(Build) 3323.33 cop[tikv] table:pt, index:i_id(id) range:[-inf,10), keep order:false, stats:pseudo",
-          "└─Selection_7(Probe) 1107.78 cop[tikv]  gt(test.pt.c, 8)",
-          "  └─TableRowIDScan_6 3323.33 cop[tikv] table:pt keep order:false, stats:pseudo"
-        ]
-      },
-      {
-        "SQL": "select /*+ use_index(pt, i_id) */ * from pt where id < 10 and c < 2 or c >= 9",
-        "Plan": [
-          "IndexLookUp_8 5325.33 root partition:p0,p2 ",
-          "├─IndexFullScan_5(Build) 10000.00 cop[tikv] table:pt, index:i_id(id) keep order:false, stats:pseudo",
-          "└─Selection_7(Probe) 5325.33 cop[tikv]  or(and(lt(test.pt.id, 10), lt(test.pt.c, 2)), ge(test.pt.c, 9))",
-          "  └─TableRowIDScan_6 10000.00 cop[tikv] table:pt keep order:false, stats:pseudo"
-        ]
-      },
-      {
-        "SQL": "select * from pt partition (p0) where c > 8",
-        "Plan": [
-          "TableReader_7 3333.33 root partition:dual data:Selection_6",
-          "└─Selection_6 3333.33 cop[tikv]  gt(test.pt.c, 8)",
-          "  └─TableFullScan_5 10000.00 cop[tikv] table:pt keep order:false, stats:pseudo"
-        ]
-      },
-      {
-        "SQL": "select c from pt partition (p0, p2) where c > 8",
-        "Plan": [
-          "IndexReader_6 3333.33 root partition:p2 index:IndexRangeScan_5",
-          "└─IndexRangeScan_5 3333.33 cop[tikv] table:pt, index:i_c(c) range:(8,+inf], keep order:false, stats:pseudo"
-        ]
-      },
-      {
-        "SQL": "select /*+ use_index(pt, i_id) */ * from pt partition (p1, p2) where c < 3 and id = 5",
-        "Plan": [
-          "IndexLookUp_8 3.32 root partition:dual ",
-          "├─IndexRangeScan_5(Build) 10.00 cop[tikv] table:pt, index:i_id(id) range:[5,5], keep order:false, stats:pseudo",
-          "└─Selection_7(Probe) 3.32 cop[tikv]  lt(test.pt.c, 3)",
-          "  └─TableRowIDScan_6 10.00 cop[tikv] table:pt keep order:false, stats:pseudo"
-        ]
-      },
-      {
-        "SQL": "select * from pt where id = 4 or c < 7",
-        "Plan": [
-          "Projection_4 3330.01 root  test.pt.id, test.pt.c",
-          "└─IndexMerge_11 3330.01 root partition:all ",
-          "  ├─IndexRangeScan_8(Build) 10.00 cop[tikv] table:pt, index:i_id(id) range:[4,4], keep order:false, stats:pseudo",
-          "  ├─IndexRangeScan_9(Build) 3323.33 cop[tikv] table:pt, index:i_c(c) range:[-inf,7), keep order:false, stats:pseudo",
-          "  └─TableRowIDScan_10(Probe) 3330.01 cop[tikv] table:pt keep order:false, stats:pseudo"
-        ]
-      },
-      {
-        "SQL": "select * from pt where id > 4 or c = 7",
-        "Plan": [
-          "Projection_4 3340.00 root  test.pt.id, test.pt.c",
-          "└─IndexMerge_11 3340.00 root partition:all ",
-          "  ├─IndexRangeScan_8(Build) 3333.33 cop[tikv] table:pt, index:i_id(id) range:(4,+inf], keep order:false, stats:pseudo",
-          "  ├─IndexRangeScan_9(Build) 10.00 cop[tikv] table:pt, index:i_c(c) range:[7,7], keep order:false, stats:pseudo",
-          "  └─TableRowIDScan_10(Probe) 3340.00 cop[tikv] table:pt keep order:false, stats:pseudo"
-        ]
-      }
-    ]
-  },
-  {
->>>>>>> 41786cb97... *: seperate hash keys from join keys in IndexJoin (#20761)
     "Name": "TestApproxPercentile",
     "Cases": [
       {

@@ -1452,8 +1452,6 @@ func (s *testIntegrationSuite) TestPartitionUnionWithPPruningColumn(c *C) {
 			"3290 LE1327_r5"))
 
 }
-<<<<<<< HEAD
-=======
 
 func (s *testIntegrationSerialSuite) TestIssue20710(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
@@ -1489,4 +1487,3 @@ func (s *testIntegrationSuite) TestIssue10448(c *C) {
 	tk.MustExec("insert into t values(1),(2),(3)")
 	tk.MustQuery("select a from (select pk as a from t) t1 where a = 18446744073709551615").Check(testkit.Rows())
 }
->>>>>>> 41786cb97... *: seperate hash keys from join keys in IndexJoin (#20761)

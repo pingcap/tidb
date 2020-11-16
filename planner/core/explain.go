@@ -20,20 +20,12 @@ import (
 	"strings"
 
 	"github.com/pingcap/parser/ast"
-<<<<<<< HEAD
-=======
-	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
->>>>>>> 41786cb97... *: seperate hash keys from join keys in IndexJoin (#20761)
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/statistics"
-<<<<<<< HEAD
-=======
-	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
->>>>>>> 41786cb97... *: seperate hash keys from join keys in IndexJoin (#20761)
 	"github.com/pingcap/tidb/util/stringutil"
 )
 
