@@ -541,24 +541,31 @@ func (s *session) CommitTxn(ctx context.Context) error {
 
 	var commitDetail *execdetails.CommitDetails
 	ctx = context.WithValue(ctx, execdetails.CommitDetailCtxKey, &commitDetail)
+	var err error
 	txnScope := s.GetSessionVars().TxnCtx.TxnScope
-	is := infoschema.GetInfoSchema(s)
 	if txnScope != config.DefTxnScope {
-		for physicalTableID := range s.sessionVars.TxnCtx.TableDeltaMap {
+		is := infoschema.GetInfoSchema(s)
+		for physicalTableID := range s.GetSessionVars().TxnCtx.TableDeltaMap {
 			bundle, ok := is.BundleByName(placement.GroupID(physicalTableID))
 			if !ok {
-				continue
+				err = fmt.Errorf("table or partition %v don't have rule bundle with non-global txnScope %v changing", physicalTableID, txnScope)
+				break
 			}
 			dcLocation, ok := placement.GetLeaderDCByBundle(bundle, placement.DCLabelKey)
 			if !ok {
-				return fmt.Errorf("bundle %v 's leader placement policy is not clear", bundle.ID)
+				err = fmt.Errorf("bundle %v 's leader placement policy is not clear", bundle.ID)
+				break
 			}
 			if dcLocation != txnScope {
-				return fmt.Errorf("table or partition %v 's leader location %v is out of txn_scope %v", physicalTableID, dcLocation, txnScope)
+				err = fmt.Errorf("table or partition %v's leader location %v is out of txn_scope %v", physicalTableID, dcLocation, txnScope)
+				break
 			}
 		}
+		if err != nil {
+			goto EXIT
+		}
 	}
-	err := s.doCommitWithRetry(ctx)
+	err = s.doCommitWithRetry(ctx)
 	if commitDetail != nil {
 		s.sessionVars.StmtCtx.MergeExecDetails(nil, commitDetail)
 	}
@@ -568,6 +575,8 @@ func (s *session) CommitTxn(ctx context.Context) error {
 			failpoint.Return(err)
 		}
 	})
+
+EXIT:
 	s.sessionVars.TxnCtx.Cleanup()
 	return err
 }
