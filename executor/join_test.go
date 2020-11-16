@@ -2473,3 +2473,16 @@ func (s *testSuiteJoinSerial) TestIssue20779(c *C) {
 	_, err = session.GetRows4Test(context.Background(), nil, rs)
 	c.Assert(err.Error(), Matches, "testIssue20779")
 }
+
+func (s *testSuiteJoinSerial) TestIssue20219(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists t,s ")
+	tk.MustExec("CREATE TABLE `t` (   `a` set('a','b','c','d','e','f','g','h','i','j') DEFAULT NULL );")
+	tk.MustExec("insert into t values('i'), ('j');")
+	tk.MustExec("CREATE TABLE `s` (   `a` char(1) DEFAULT NULL,   KEY `a` (`a`) )")
+	tk.MustExec("insert into s values('i'), ('j');")
+	tk.MustQuery("select /*+ inl_hash_join(s)*/ t.a from t left join s on t.a = s.a;").Check(testkit.Rows("i", "j"))
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustQuery("select /*+ inl_join(s)*/ t.a from t left join s on t.a = s.a;").Check(testkit.Rows("i", "j"))
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+}
