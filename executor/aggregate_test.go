@@ -1205,7 +1205,7 @@ func (s *testSuiteAgg) TestParallelStreamAggGroupConcat(c *C) {
 	concurrencies := []int{1, 2, 4, 8}
 	var expected []string
 	for _, con := range concurrencies {
-		tk.MustExec(fmt.Sprintf("set @@tidb_stream_agg_concurrency=%d", con))
+		tk.MustExec(fmt.Sprintf("set @@tidb_streamagg_concurrency=%d", con))
 		if con == 1 {
 			expected = reconstructParallelGroupConcatResult(tk.MustQuery(sql).Rows())
 		} else {
@@ -1258,7 +1258,7 @@ func (s *testSuiteAgg) TestIssue20658(c *C) {
 	for _, sql := range sqls {
 		var expected *testkit.Result
 		for _, con := range concurrencies {
-			tk.MustExec(fmt.Sprintf("set @@tidb_stream_agg_concurrency=%d;", con))
+			tk.MustExec(fmt.Sprintf("set @@tidb_streamagg_concurrency=%d;", con))
 			if con == 1 {
 				expected = tk.MustQuery(sql).Sort()
 			} else {
