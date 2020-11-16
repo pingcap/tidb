@@ -2101,17 +2101,17 @@
       {
         "SQL": "select /*+ INL_HASH_JOIN(t1) */ t1.b, t2.b from t1 inner join t2 on t1.a = t2.a;",
         "Plan": "IndexHashJoin{IndexLookUp(Index(t1.idx_a)[[NULL,+inf]]->Sel([not(isnull(test.t1.a))]), Table(t1))->TableReader(Table(t2)->Sel([not(isnull(test.t2.a))]))}(test.t2.a,test.t1.a)",
-        "Hints": "use_index(@`sel_1` `test`.`t1` `idx_a`), use_index(@`sel_1` `test`.`t2` ), inl_hash_join(@`sel_1` )"
+        "Hints": "use_index(@`sel_1` `test`.`t1` `idx_a`), use_index(@`sel_1` `test`.`t2` ), inl_hash_join(@`sel_1` `test`.`t1`)"
       },
       {
         "SQL": "select /*+ INL_MERGE_JOIN(t1) */ t1.b, t2.b from t1 inner join t2 on t1.a = t2.a;",
         "Plan": "IndexMergeJoin{IndexLookUp(Index(t1.idx_a)[[NULL,+inf]]->Sel([not(isnull(test.t1.a))]), Table(t1))->Projection->TableReader(Table(t2)->Sel([not(isnull(test.t2.a))]))}(test.t2.a,test.t1.a)",
-        "Hints": "use_index(@`sel_1` `test`.`t1` `idx_a`), use_index(@`sel_1` `test`.`t2` )"
+        "Hints": "use_index(@`sel_1` `test`.`t1` `idx_a`), use_index(@`sel_1` `test`.`t2` ), inl_merge_join(@`sel_1` `test`.`t1`)"
       },
       {
         "SQL": "select /*+ MERGE_JOIN(t1) */ t1.b, t2.b from t1 inner join t2 on t1.a = t2.a;",
         "Plan": "MergeInnerJoin{IndexLookUp(Index(t1.idx_a)[[-inf,+inf]], Table(t1))->Projection->IndexLookUp(Index(t2.idx_a)[[-inf,+inf]], Table(t2))->Projection}(test.t1.a,test.t2.a)",
-        "Hints": "use_index(@`sel_1` `test`.`t1` `idx_a`), use_index(@`sel_1` `test`.`t2` `idx_a`)"
+        "Hints": "use_index(@`sel_1` `test`.`t1` `idx_a`), use_index(@`sel_1` `test`.`t2` `idx_a`), merge_join(@`sel_1` `test`.`t1`)"
       }
     ]
   },
@@ -2220,6 +2220,32 @@
           "        └─IndexRangeScan_18 2.00 cop[tikv] table:t3, index:idx_abc(a, b, c) range: decided by [eq(test.t3.a, test.t2.a)], keep order:false, stats:pseudo"
         ],
         "Result": null
+      }
+    ]
+  },
+  {
+    "Name": "TestPreferRangeScanOff",
+    "Cases": [
+      {
+        "SQL": "select * from test where age=5;",
+        "Plan": [
+          "TableReader_7 2048.00 root  data:Selection_6",
+          "└─Selection_6 2048.00 cop[tikv]  eq(test.test.age, 5)",
+          "  └─TableFullScan_5 2048.00 cop[tikv] table:test keep order:false"
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestPreferRangeScanOn",
+    "Cases": [
+      {
+        "SQL": "select * from test where age=5;",
+        "Plan": [
+          "IndexLookUp_7 2048.00 root  ",
+          "├─IndexRangeScan_5(Build) 2048.00 cop[tikv] table:test, index:idx_age(age) range:[5,5], keep order:false",
+          "└─TableRowIDScan_6(Probe) 2048.00 cop[tikv] table:test keep order:false"
+        ]
       }
     ]
   }
