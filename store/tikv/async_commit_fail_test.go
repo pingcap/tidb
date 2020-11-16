@@ -36,12 +36,17 @@ type testAsyncCommitFailSuite struct {
 var _ = SerialSuites(&testAsyncCommitFailSuite{})
 
 func (s *testAsyncCommitFailSuite) SetUpTest(c *C) {
-	s.testAsyncCommitCommon.setUpTest(c, false)
+	s.testAsyncCommitCommon.setUpTest(c)
 }
 
 // TestFailCommitPrimaryRpcErrors tests rpc errors are handled properly when
 // committing primary region task.
 func (s *testAsyncCommitFailSuite) TestFailAsyncCommitPrewriteRpcErrors(c *C) {
+	// This test doesn't support tikv mode because it needs setting failpoint in unistore.
+	if *WithTiKV {
+		return
+	}
+
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.TiKVClient.AsyncCommit.Enable = true
@@ -109,6 +114,11 @@ func (s *testAsyncCommitFailSuite) TestPointGetWithAsyncCommit(c *C) {
 }
 
 func (s *testAsyncCommitFailSuite) TestSecondaryListInPrimaryLock(c *C) {
+	// This test doesn't support tikv mode.
+	if *WithTiKV {
+		return
+	}
+
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.TiKVClient.AsyncCommit.Enable = true
@@ -189,4 +199,27 @@ func (s *testAsyncCommitFailSuite) TestSecondaryListInPrimaryLock(c *C) {
 	test([]string{"a", "b", "d"}, []string{"a3", "b3", "d3"})
 	test([]string{"a", "b", "h", "i", "u"}, []string{"a4", "b4", "h4", "i4", "u4"})
 	test([]string{"i", "a", "z", "u", "b"}, []string{"i5", "a5", "z5", "u5", "b5"})
+}
+
+func (s *testAsyncCommitFailSuite) TestAsyncCommitContextCancelCausingUndetermined(c *C) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TiKVClient.AsyncCommit.Enable = true
+	})
+
+	// For an async commit transaction, if RPC returns context.Canceled error when prewriting, the
+	// transaction should go to undetermined state.
+	txn := s.begin(c)
+	err := txn.Set([]byte("a"), []byte("va"))
+	c.Assert(err, IsNil)
+
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/rpcContextCancelErr", `return(true)`), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/rpcContextCancelErr"), IsNil)
+	}()
+
+	ctx := context.WithValue(context.Background(), sessionctx.ConnID, uint64(1))
+	err = txn.Commit(ctx)
+	c.Assert(err, NotNil)
+	c.Assert(txn.committer.mu.undeterminedErr, NotNil)
 }

@@ -181,6 +181,9 @@ const (
 
 	// TiDBAllowAutoRandExplicitInsert indicates whether explicit insertion on auto_random column is allowed.
 	TiDBAllowAutoRandExplicitInsert = "allow_auto_random_explicit_insert"
+
+	// TiDBTxnScope indicates whether using global transactions or local transactions.
+	TiDBTxnScope = "txn_scope"
 )
 
 // TiDB system variable names that both in session and global scope.
@@ -308,6 +311,10 @@ const (
 	// tidb_window_concurrency is used for window parallel executor.
 	// tidb_window_concurrency is deprecated, use tidb_executor_concurrency instead.
 	TiDBWindowConcurrency = "tidb_window_concurrency"
+
+	// tidb_stream_agg_concurrency is used for stream aggregation parallel executor.
+	// tidb_stream_agg_concurrency is deprecated, use tidb_executor_concurrency instead.
+	TiDBStreamAggConcurrency = "tidb_streamagg_concurrency"
 
 	// tidb_enable_parallel_apply is used for parallel apply.
 	TiDBEnableParallelApply = "tidb_enable_parallel_apply"
@@ -507,7 +514,7 @@ const (
 	DefTiDBMemQuotaIndexLookupJoin     = 32 << 30 // 32GB.
 	DefTiDBMemQuotaNestedLoopApply     = 32 << 30 // 32GB.
 	DefTiDBMemQuotaDistSQL             = 32 << 30 // 32GB.
-	DefTiDBGeneralLog                  = 0
+	DefTiDBGeneralLog                  = false
 	DefTiDBPProfSQLCPU                 = 0
 	DefTiDBRetryLimit                  = 10
 	DefTiDBDisableTxnAutoRetry         = true
@@ -528,6 +535,7 @@ const (
 	DefTiDBHashAggPartialConcurrency   = ConcurrencyUnset
 	DefTiDBHashAggFinalConcurrency     = ConcurrencyUnset
 	DefTiDBWindowConcurrency           = ConcurrencyUnset
+	DefTiDBStreamAggConcurrency        = 1
 	DefTiDBForcePriority               = mysql.NoPriority
 	DefTiDBUseRadixJoin                = false
 	DefEnableWindowFunction            = true
@@ -565,7 +573,7 @@ const (
 
 // Process global variables.
 var (
-	ProcessGeneralLog      uint32
+	ProcessGeneralLog            = atomic.NewBool(false)
 	EnablePProfSQLCPU            = atomic.NewBool(false)
 	ddlReorgWorkerCounter  int32 = DefTiDBDDLReorgWorkerCount
 	maxDDLReorgWorkerCount int32 = 128

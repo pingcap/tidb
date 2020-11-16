@@ -1106,6 +1106,7 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 		StmtCtx:          s.sessionVars.StmtCtx,
 		StatsInfo:        plannercore.GetStatsInfo,
 		MaxExecutionTime: maxExecutionTime,
+		RedactSQL:        s.sessionVars.EnableRedactLog,
 	}
 	_, pi.Digest = s.sessionVars.StmtCtx.SQLDigest()
 	s.currentPlan = nil
@@ -1238,6 +1239,27 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	return recordSet, nil
 }
 
+// querySpecialKeys contains the keys of special query, the special query will handled by handleQuerySpecial method.
+var querySpecialKeys = []fmt.Stringer{
+	executor.LoadDataVarKey,
+	executor.LoadStatsVarKey,
+	executor.IndexAdviseVarKey,
+}
+
+func (s *session) hasQuerySpecial() bool {
+	found := false
+	s.mu.RLock()
+	for _, k := range querySpecialKeys {
+		v := s.mu.values[k]
+		if v != nil {
+			found = true
+			break
+		}
+	}
+	s.mu.RUnlock()
+	return found
+}
+
 // runStmt executes the sqlexec.Statement and commit or rollback the current transaction.
 func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.RecordSet, err error) {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
@@ -1286,11 +1308,28 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 		}, err
 	}
 
-	// If it is not a select statement, we record its slow log here,
-	// then it could include the transaction commit time.
-	s.(*executor.ExecStmt).FinishExecuteStmt(origTxnCtx.StartTS, err == nil, false)
+	if se.hasQuerySpecial() {
+		// The special query will be handled later in handleQuerySpecial,
+		// then should call the ExecStmt.FinishExecuteStmt to finish this statement.
+		se.SetValue(ExecStmtVarKey, s.(*executor.ExecStmt))
+	} else {
+		// If it is not a select statement or special query, we record its slow log here,
+		// then it could include the transaction commit time.
+		s.(*executor.ExecStmt).FinishExecuteStmt(origTxnCtx.StartTS, err == nil, false)
+	}
 	return nil, err
 }
+
+// ExecStmtVarKeyType is a dummy type to avoid naming collision in context.
+type ExecStmtVarKeyType int
+
+// String defines a Stringer function for debugging and pretty printing.
+func (k ExecStmtVarKeyType) String() string {
+	return "exec_stmt_var_key"
+}
+
+// ExecStmtVarKey is a variable key for ExecStmt.
+const ExecStmtVarKey ExecStmtVarKeyType = 0
 
 // execStmtResult is the return value of ExecuteStmt and it implements the sqlexec.RecordSet interface.
 // Why we need a struct to wrap a RecordSet and provide another RecordSet?
@@ -2118,6 +2157,7 @@ var builtinGlobalVariable = []string{
 	variable.TiDBHashAggPartialConcurrency,
 	variable.TiDBHashAggFinalConcurrency,
 	variable.TiDBWindowConcurrency,
+	variable.TiDBStreamAggConcurrency,
 	variable.TiDBExecutorConcurrency,
 	variable.TiDBBackoffLockFast,
 	variable.TiDBBackOffWeight,
@@ -2279,7 +2319,13 @@ func (s *session) PrepareTSFuture(ctx context.Context) {
 
 // RefreshTxnCtx implements context.RefreshTxnCtx interface.
 func (s *session) RefreshTxnCtx(ctx context.Context) error {
-	if err := s.doCommit(ctx); err != nil {
+	var commitDetail *execdetails.CommitDetails
+	ctx = context.WithValue(ctx, execdetails.CommitDetailCtxKey, &commitDetail)
+	err := s.doCommit(ctx)
+	if commitDetail != nil {
+		s.GetSessionVars().StmtCtx.MergeExecDetails(nil, commitDetail)
+	}
+	if err != nil {
 		return err
 	}
 
@@ -2349,7 +2395,7 @@ func logStmt(execStmt *executor.ExecStmt, vars *variable.SessionVars) {
 }
 
 func logQuery(query string, vars *variable.SessionVars) {
-	if atomic.LoadUint32(&variable.ProcessGeneralLog) != 0 && !vars.InRestrictedSQL {
+	if variable.ProcessGeneralLog.Load() && !vars.InRestrictedSQL {
 		query = executor.QueryReplacer.Replace(query)
 		if !vars.EnableRedactLog {
 			query = query + vars.PreparedParams.String()
