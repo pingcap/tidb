@@ -79,18 +79,12 @@ func getExecutorList(dagReq *tipb.DAGRequest) ([]*tipb.Executor, error) {
 		case tipb.ExecType_TypeLimit:
 			currentExec = currentExec.Limit.Child
 		default:
-			return nil, errors.New("unknown supported executor type " + currentExec.Tp.String())
+			return nil, errors.New("unsupported executor type " + currentExec.Tp.String())
 		}
 	}
 	executors = append(executors, currentExec)
-	i := 0
-	j := len(executors) - 1
-	for i < j {
-		e := executors[i]
-		executors[i] = executors[j]
-		executors[j] = e
-		i++
-		j--
+	for i, j := 0, len(executors)-1; i < j; i, j = i+1, j-1 {
+		executors[i], executors[j] = executors[j], executors[i]
 	}
 	return executors, nil
 }
