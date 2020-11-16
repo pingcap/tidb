@@ -5901,20 +5901,22 @@ func (s *testClusterTableSuite) TestSlowQuery(c *C) {
 # Time: 2020-02-15T18:00:01.000000+08:00
 select 1;
 # Time: 2020-02-15T19:00:05.000000+08:00
-select 2;`
-	logData2 := `
+select 2;
+# Time: 2020-02-15T20:00:05.000000+08:00`
+	logData2 := `select 3;
 # Time: 2020-02-16T18:00:01.000000+08:00
-select 3;
+select 4;
 # Time: 2020-02-16T18:00:05.000000+08:00
-select 4;`
+select 5;`
 	logData3 := `
 # Time: 2020-02-16T19:00:00.000000+08:00
-select 5;
+select 6;
 # Time: 2020-02-17T18:00:05.000000+08:00
-select 6;`
-	logData4 := `
+select 7;
+# Time: 2020-02-17T19:00:00.000000+08:00`
+	logData4 := `select 8;
 # Time: 2020-05-14T19:03:54.314615176+08:00
-select 7;`
+select 9;`
 
 	fileName0 := "tidb-slow-2020-02-14T19-04-05.01.log"
 	fileName1 := "tidb-slow-2020-02-15T19-04-05.01.log"
@@ -5945,11 +5947,11 @@ select 7;`
 	}{
 		{
 			sql:    "select count(*),min(time),max(time) from %s where time > '2019-01-26 21:51:00' and time < now()",
-			result: []string{"7|2020-02-15 18:00:01.000000|2020-05-14 19:03:54.314615"},
+			result: []string{"9|2020-02-15 18:00:01.000000|2020-05-14 19:03:54.314615"},
 		},
 		{
 			sql:    "select count(*),min(time),max(time) from %s where time > '2020-02-15 19:00:00' and time < '2020-02-16 18:00:02'",
-			result: []string{"2|2020-02-15 19:00:05.000000|2020-02-16 18:00:01.000000"},
+			result: []string{"3|2020-02-15 19:00:05.000000|2020-02-16 18:00:01.000000"},
 		},
 		{
 			sql:    "select count(*),min(time),max(time) from %s where time > '2020-02-16 18:00:02' and time < '2020-02-17 17:00:00'",
@@ -5973,7 +5975,7 @@ select 7;`
 		},
 		{
 			sql:    "select query from %s where time > '2019-01-26 21:51:00' and time < now()",
-			result: []string{"select 1;", "select 2;", "select 3;", "select 4;", "select 5;", "select 6;", "select 7;"},
+			result: []string{"select 1;", "select 2;", "select 3;", "select 4;", "select 5;", "select 6;", "select 7;", "select 8;", "select 9;"},
 		},
 		// Test for different timezone.
 		{
@@ -5996,22 +5998,22 @@ select 7;`
 		{
 			prepareSQL: "set @@time_zone = '+08:00'",
 			sql:        "select time from %s where time > '2020-02-17 12:00:05.000000' and time < '2020-05-14 20:00:00.000000' order by time desc",
-			result:     []string{"2020-05-14 19:03:54.314615", "2020-02-17 18:00:05.000000"},
+			result:     []string{"2020-05-14 19:03:54.314615", "2020-02-17 19:00:00.000000", "2020-02-17 18:00:05.000000"},
 		},
 		{
 			prepareSQL: "set @@time_zone = '+08:00'",
 			sql:        "select count(*) from %s where time > '2020-02-15 18:00:00.000000' and time < '2020-05-14 20:00:00.000000' order by time desc",
-			result:     []string{"7"},
+			result:     []string{"9"},
 		},
 		{
 			prepareSQL: "set @@time_zone = '+08:00'",
 			sql:        "select count(*) from %s where time > '2020-02-16 18:00:00.000000' and time < '2020-02-17 20:00:00.000000' order by time desc",
-			result:     []string{"4"},
+			result:     []string{"5"},
 		},
 		{
 			prepareSQL: "set @@time_zone = '+08:00'",
-			sql:        "select time from %s where time > '2020-02-16 18:00:00.000000' and time < '2020-05-14 20:00:00.000000' order by time desc limit 2",
-			result:     []string{"2020-05-14 19:03:54.314615", "2020-02-17 18:00:05.000000"},
+			sql:        "select time from %s where time > '2020-02-16 18:00:00.000000' and time < '2020-05-14 20:00:00.000000' order by time desc limit 3",
+			result:     []string{"2020-05-14 19:03:54.314615", "2020-02-17 19:00:00.000000", "2020-02-17 18:00:05.000000"},
 		},
 	}
 	for _, cas := range cases {
