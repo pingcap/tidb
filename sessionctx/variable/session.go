@@ -857,8 +857,8 @@ func NewSessionVars() *SessionVars {
 		WindowingUseHighPrecision:   true,
 		PrevFoundInPlanCache:        DefTiDBFoundInPlanCache,
 		FoundInPlanCache:            DefTiDBFoundInPlanCache,
-		PrevFoundInSPM:              DefTiDBFoundInSPM,
-		FoundInSPM:                  DefTiDBFoundInSPM,
+		PrevFoundInBinding:          DefTiDBFoundInBinding,
+		FoundInBinding:              DefTiDBFoundInBinding,
 		SelectLimit:                 math.MaxUint64,
 		AllowAutoRandExplicitInsert: DefTiDBAllowAutoRandExplicitInsert,
 		EnableClusteredIndex:        DefTiDBEnableClusteredIndex,
@@ -1509,8 +1509,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		config.GetGlobalConfig().CheckMb4ValueInUTF8 = TiDBOptOn(val)
 	case TiDBFoundInPlanCache:
 		s.FoundInPlanCache = TiDBOptOn(val)
-	case TiDBFoundInSPM:
-		s.FoundInSPM = TiDBOptOn(val)
+	case TiDBFoundInBinding:
+		s.FoundInBinding = TiDBOptOn(val)
 	case TiDBEnableCollectExecutionInfo:
 		config.GetGlobalConfig().EnableCollectExecutionInfo = TiDBOptOn(val)
 	case SQLSelectLimit:
@@ -1937,8 +1937,8 @@ const (
 	SlowLogPrepared = "Prepared"
 	// SlowLogPlanFromCache is used to indicate whether this plan is from plan cache.
 	SlowLogPlanFromCache = "Plan_from_cache"
-	// SlowLogPlanFromSPM is used to indicate whether this plan is matched with the hints in the binding.
-	SlowLogPlanFromSPM = "Plan_from_binding"
+	// SlowLogPlanFromBinding is used to indicate whether this plan is matched with the hints in the binding.
+	SlowLogPlanFromBinding = "Plan_from_binding"
 	// SlowLogHasMoreResults is used to indicate whether this sql has more following results.
 	SlowLogHasMoreResults = "Has_more_results"
 	// SlowLogSucc is used to indicate whether this sql execute successfully.
@@ -1991,7 +1991,7 @@ type SlowQueryLogItems struct {
 	Succ              bool
 	Prepared          bool
 	PlanFromCache     bool
-	PlanFromSPM       bool
+	PlanFromBinding   bool
 	HasMoreResults    bool
 	PrevStmt          string
 	Plan              string
@@ -2159,7 +2159,7 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 
 	writeSlowLogItem(&buf, SlowLogPrepared, strconv.FormatBool(logItems.Prepared))
 	writeSlowLogItem(&buf, SlowLogPlanFromCache, strconv.FormatBool(logItems.PlanFromCache))
-	writeSlowLogItem(&buf, SlowLogPlanFromSPM, strconv.FormatBool(logItems.PlanFromSPM))
+	writeSlowLogItem(&buf, SlowLogPlanFromBinding, strconv.FormatBool(logItems.PlanFromBinding))
 	writeSlowLogItem(&buf, SlowLogHasMoreResults, strconv.FormatBool(logItems.HasMoreResults))
 	writeSlowLogItem(&buf, SlowLogKVTotal, strconv.FormatFloat(logItems.KVTotal.Seconds(), 'f', -1, 64))
 	writeSlowLogItem(&buf, SlowLogPDTotal, strconv.FormatFloat(logItems.PDTotal.Seconds(), 'f', -1, 64))
