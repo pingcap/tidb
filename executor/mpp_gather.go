@@ -98,6 +98,9 @@ func (e *MPPGather) Open(ctx context.Context) (err error) {
 	// TODO: Move the construct tasks logic to planner, so we can see the explain results.
 	sender := e.originalPlan.(*plannercore.PhysicalExchangeSender)
 	rootTasks, err := plannercore.GenerateRootMPPTasks(e.ctx, e.startTS, sender)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	err = e.appendMPPDispatchReq(sender.Fragment, rootTasks, true)
 	if err != nil {
 		return errors.Trace(err)
