@@ -6674,12 +6674,10 @@ func (s *testSerialSuite) TestCoprocessorOOMAction(c *C) {
 	defer failpoint.Disable("github.com/pingcap/tidb/store/tikv/testRateLimitActionMockConsumeAndAssert")
 
 	failpoint.Enable("github.com/pingcap/tidb/store/tikv/testRateLimitActionMockWaitMax", `return(true)`)
-	failpoint.Enable("github.com/pingcap/tidb/store/tikv/testRateLimitActionAdaptiveConcurrency", `return(true)`)
 	// assert oom action
 	for _, testcase := range testcases {
 		c.Log(testcase.name)
-		// larger than 4 copResponse, smaller than 5 copResponse
-		quota := 5*tikv.MockCoprocessorResponseSize - 10
+		quota := 5 * tikv.MockCoprocessorResponseSize
 		se, err := session.CreateSession4Test(s.store)
 		c.Check(err, IsNil)
 		tk.Se = se
@@ -6695,7 +6693,6 @@ func (s *testSerialSuite) TestCoprocessorOOMAction(c *C) {
 		c.Assert(tk.Se.GetSessionVars().StmtCtx.MemTracker.MaxConsumed(), Greater, quota)
 		se.Close()
 	}
-	failpoint.Disable("github.com/pingcap/tidb/store/tikv/testRateLimitActionAdaptiveConcurrency")
 	failpoint.Disable("github.com/pingcap/tidb/store/tikv/testRateLimitActionMockWaitMax")
 
 	// assert oom fallback

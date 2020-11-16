@@ -566,13 +566,6 @@ func (it *copIterator) adaptiveConcurrency(sessionMemTracker *memory.Tracker) {
 		// Make sure that there is at least one worker.
 		it.concurrency = 1
 	}
-	failpoint.Inject("testRateLimitActionAdaptiveConcurrency", func(val failpoint.Value) {
-		if val.(bool) {
-			if it.concurrency != 3 {
-				panic("concurrency should be modified to 3")
-			}
-		}
-	})
 }
 
 // open starts workers and sender goroutines.
@@ -719,10 +712,15 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 	failpoint.Inject("testRateLimitActionMockWaitMax", func(val failpoint.Value) {
 		if val.(bool) {
 			// we only need to trigger oom at least once.
-			if len(it.tasks) > 9 {
-				for it.memTracker.MaxConsumed() < 5*MockCoprocessorResponseSize {
+			it.actionOnExceed.conditionLock()
+			remainTokenNum := it.actionOnExceed.cond.remainingTokenNum
+			it.actionOnExceed.conditionUnlock()
+			if len(it.tasks) > 9 && it.actionOnExceed.totalTokenNum == remainTokenNum {
+				for it.memTracker.MaxConsumed() < int64(it.concurrency)*MockCoprocessorResponseSize {
 					time.Sleep(10 * time.Millisecond)
 				}
+				it.memTracker.Consume(5 * MockCoprocessorResponseSize)
+				it.memTracker.Consume(-5 * MockCoprocessorResponseSize)
 			}
 		}
 	})
