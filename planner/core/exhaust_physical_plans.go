@@ -440,6 +440,8 @@ func (p *LogicalJoin) constructIndexJoin(
 	}
 
 	var outerHashKeys, innerHashKeys []*expression.Column
+	// HashKey is only used for IndexJoin and IndexHashJoin since they need to
+	// build hash tables.
 	if joinTP != plancodec.TypeIndexMergeJoin {
 		outerHashKeys, innerHashKeys = make([]*expression.Column, len(newOuterKeys)), make([]*expression.Column, len(newInnerKeys))
 		copy(outerHashKeys, newOuterKeys)
