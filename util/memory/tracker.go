@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"fmt"
 	"sort"
+	"strconv"
 	"sync"
 	"sync/atomic"
 )
@@ -321,22 +322,64 @@ func (t *Tracker) BytesToString(numBytes int64) string {
 
 // BytesToString converts the memory consumption to a readable string.
 func BytesToString(numBytes int64) string {
-	GB := float64(numBytes) / float64(1<<30)
+	GB := float64(numBytes) / float64(byteSizeGB)
 	if GB > 1 {
 		return fmt.Sprintf("%v GB", GB)
 	}
 
-	MB := float64(numBytes) / float64(1<<20)
+	MB := float64(numBytes) / float64(byteSizeMB)
 	if MB > 1 {
 		return fmt.Sprintf("%v MB", MB)
 	}
 
-	KB := float64(numBytes) / float64(1<<10)
+	KB := float64(numBytes) / float64(byteSizeKB)
 	if KB > 1 {
 		return fmt.Sprintf("%v KB", KB)
 	}
 
 	return fmt.Sprintf("%v Bytes", numBytes)
+}
+
+const (
+	byteSizeGB = int64(1 << 30)
+	byteSizeMB = int64(1 << 20)
+	byteSizeKB = int64(1 << 10)
+	byteSizeBB = int64(1)
+)
+
+// FormatBytesWithPrune uses to format bytes, this function will prune precision before format bytes.
+func (t *Tracker) FormatBytesWithPrune(numBytes int64) string {
+	return FormatBytesWithPrune(numBytes)
+}
+
+// FormatBytesWithPrune uses to format bytes, this function will prune precision before format bytes.
+func FormatBytesWithPrune(numBytes int64) string {
+	if numBytes <= byteSizeKB {
+		return BytesToString(numBytes)
+	}
+	unit, unitStr := getByteUnit(numBytes)
+	if unit == byteSizeBB {
+		return BytesToString(numBytes)
+	}
+	v := float64(numBytes) / float64(unit)
+	decimal := 1
+	if numBytes%unit == 0 {
+		decimal = 0
+	} else if v < 10 {
+		decimal = 2
+	}
+	return fmt.Sprintf("%v %s", strconv.FormatFloat(v, 'f', decimal, 64), unitStr)
+}
+
+func getByteUnit(b int64) (int64, string) {
+	if b > byteSizeGB {
+		return byteSizeGB, "GB"
+	} else if b > byteSizeMB {
+		return byteSizeMB, "MB"
+	} else if b > byteSizeKB {
+		return byteSizeKB, "KB"
+	}
+	return byteSizeBB, "Bytes"
 }
 
 // AttachToGlobalTracker attach the tracker to the global tracker

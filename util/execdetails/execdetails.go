@@ -24,6 +24,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 )
@@ -437,13 +438,17 @@ func (crs *CopRuntimeStats) GetActRows() (totalRows int64) {
 }
 
 func (crs *CopRuntimeStats) writeField(buf *bytes.Buffer, field string, value int64) {
+	crs.writeFieldValue(buf, field, strconv.FormatInt(value, 10))
+}
+
+func (crs *CopRuntimeStats) writeFieldValue(buf *bytes.Buffer, field string, value string) {
 	bs := buf.Bytes()
 	if l := len(bs); l > 0 && bs[l-1] != '{' {
 		buf.WriteString(", ")
 	}
 	buf.WriteString(field)
-	buf.WriteByte(':')
-	buf.WriteString(strconv.FormatInt(value, 10))
+	buf.WriteString(": ")
+	buf.WriteString(value)
 }
 
 func (crs *CopRuntimeStats) String() string {
@@ -480,7 +485,7 @@ func (crs *CopRuntimeStats) String() string {
 		if detail.RocksdbDeleteSkippedCount > 0 || detail.RocksdbKeySkippedCount > 0 ||
 			detail.RocksdbBlockCacheHitCount > 0 || detail.RocksdbBlockReadCount > 0 ||
 			detail.RocksdbBlockReadByte > 0 {
-			buf.WriteString(", rocksdb:{")
+			buf.WriteString(", rocksdb: {")
 			if detail.RocksdbDeleteSkippedCount > 0 {
 				crs.writeField(buf, "delete_skipped_count", int64(detail.RocksdbDeleteSkippedCount))
 			}
@@ -494,7 +499,7 @@ func (crs *CopRuntimeStats) String() string {
 				crs.writeField(buf, "block_read_count", int64(detail.RocksdbBlockReadCount))
 			}
 			if detail.RocksdbBlockReadByte > 0 {
-				crs.writeField(buf, "block_read_byte", int64(detail.RocksdbBlockReadByte))
+				crs.writeFieldValue(buf, "block_read", memory.FormatBytesWithPrune(int64(detail.RocksdbBlockReadByte)))
 			}
 			buf.WriteByte('}')
 		}
