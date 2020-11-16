@@ -371,8 +371,8 @@ func (w *HashAggPartialWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitG
 			w.shuffleIntermData(sc, finalConcurrency)
 		}
 		w.memTracker.Consume(-w.chk.MemoryUsage())
-		waitGroup.Done()
 		w.aggWorkerStats = time.Since(start)
+		waitGroup.Done()
 	}()
 	for {
 		waitStart := time.Now()
@@ -612,8 +612,8 @@ func (w *HashAggFinalWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitGro
 		if r := recover(); r != nil {
 			recoveryHashAgg(w.outputCh, r)
 		}
-		waitGroup.Done()
 		w.aggWorkerStats = time.Since(start)
+		waitGroup.Done()
 	}()
 	if err := w.consumeIntermData(ctx); err != nil {
 		w.outputCh <- &AfFinalResult{err: err}
