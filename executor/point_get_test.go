@@ -624,6 +624,29 @@ func (s *testPointGetSuite) TestPointGetReadLock(c *C) {
 	c.Assert(len(rows), Equals, 1)
 	explain = fmt.Sprintf("%v", rows[0])
 	c.Assert(explain, Matches, ".*num_rpc.*")
+
+	// Test cache release after unlocking tables.
+	tk.MustExec("lock tables point read")
+	rows = tk.MustQuery("explain analyze select * from point where id = 1").Rows()
+	c.Assert(len(rows), Equals, 1)
+	explain = fmt.Sprintf("%v", rows[0])
+	c.Assert(explain, Matches, ".*num_rpc.*")
+
+	rows = tk.MustQuery("explain analyze select * from point where id = 1").Rows()
+	c.Assert(len(rows), Equals, 1)
+	explain = fmt.Sprintf("%v", rows[0])
+	ok = strings.Contains(explain, "num_rpc")
+	c.Assert(ok, IsFalse)
+
+	tk.MustExec("unlock tables")
+	tk.MustExec("lock tables point read")
+
+	rows = tk.MustQuery("explain analyze select * from point where id = 1").Rows()
+	c.Assert(len(rows), Equals, 1)
+	explain = fmt.Sprintf("%v", rows[0])
+	c.Assert(explain, Matches, ".*num_rpc.*")
+
+	tk.MustExec("unlock tables")
 }
 
 func (s *testPointGetSuite) TestPointGetWriteLock(c *C) {
