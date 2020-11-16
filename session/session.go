@@ -1077,7 +1077,7 @@ func (s *session) ParseSQL(ctx context.Context, sql, charset, collation string) 
 	}
 	defer trace.StartRegion(ctx, "ParseSQL").End()
 	s.parser.SetSQLMode(s.sessionVars.SQLMode)
-	s.parser.EnableWindowFunc(s.sessionVars.EnableWindowFunction)
+	s.parser.SetParserConfig(s.sessionVars.BuildParserConfig())
 	return s.parser.Parse(sql, charset, collation)
 }
 
@@ -2067,7 +2067,7 @@ func CreateSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 
 const (
 	notBootstrapped         = 0
-	currentBootstrapVersion = version52
+	currentBootstrapVersion = version53
 )
 
 func getStoreBootstrapVersion(store kv.Storage) int64 {
@@ -2184,6 +2184,7 @@ var builtinGlobalVariable = []string{
 	variable.TiDBRetryLimit,
 	variable.TiDBDisableTxnAutoRetry,
 	variable.TiDBEnableWindowFunction,
+	variable.TiDBEnableStrictDoubleTypeCheck,
 	variable.TiDBEnableTablePartition,
 	variable.TiDBEnableVectorizedExpression,
 	variable.TiDBEnableFastAnalyze,
