@@ -1149,18 +1149,18 @@ func (s *testSuiteAgg) TestHashAggRuntimeStat(c *C) {
 	partialStat := executor.AggWorkerStat{
 		Concurrency: 5,
 		TaskNum:     5,
-		WallTime:    1 * time.Second,
+		WallTime:    int64(1 * time.Second),
 		WaitTime:    int64(2 * time.Second),
 		ExecTime:    int64(2 * time.Second),
-		WorkerTime:  []time.Duration{1 * time.Second, 1 * time.Second, 1 * time.Second, 2 * time.Second, 3 * time.Second},
+		WorkerTime:  []int64{int64(1 * time.Second), int64(1 * time.Second), int64(1 * time.Second), int64(2 * time.Second), int64(3 * time.Second)},
 	}
 	finalStat := executor.AggWorkerStat{
 		Concurrency: 5,
 		TaskNum:     5,
-		WallTime:    1 * time.Second,
+		WallTime:    int64(1 * time.Second),
 		WaitTime:    int64(2 * time.Second),
 		ExecTime:    int64(2 * time.Second),
-		WorkerTime:  []time.Duration{1 * time.Second, 1 * time.Second, 1 * time.Second, 2 * time.Second, 4 * time.Second},
+		WorkerTime:  []int64{int64(1 * time.Second), int64(1 * time.Second), int64(1 * time.Second), int64(2 * time.Second), int64(4 * time.Second)},
 	}
 	stats := &executor.HashAggRuntimeStats{
 		PartialStats: partialStat,
