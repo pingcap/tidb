@@ -20,7 +20,6 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/util/logutil"
@@ -53,7 +52,7 @@ func NewPdOracle(pdClient pd.Client, updateInterval time.Duration) (oracle.Oracl
 	ctx := context.TODO()
 	go o.updateTS(ctx, updateInterval)
 	// Initialize the timestamp of the global txnScope by Get.
-	_, err := o.GetTimestamp(ctx, &oracle.Option{TxnScope: config.DefTxnScope})
+	_, err := o.GetTimestamp(ctx, &oracle.Option{TxnScope: oracle.GlobalTxnScope})
 	if err != nil {
 		o.Close()
 		return nil, errors.Trace(err)
@@ -102,7 +101,7 @@ func (f *tsFuture) Wait() (uint64, error) {
 
 func (o *pdOracle) GetTimestampAsync(ctx context.Context, opt *oracle.Option) oracle.Future {
 	var ts pd.TSFuture
-	if opt.TxnScope == config.DefTxnScope || opt.TxnScope == "" {
+	if opt.TxnScope == oracle.GlobalTxnScope || opt.TxnScope == "" {
 		ts = o.c.GetTSAsync(ctx)
 	} else {
 		ts = o.c.GetLocalTSAsync(ctx, opt.TxnScope)
@@ -116,7 +115,7 @@ func (o *pdOracle) getTimestamp(ctx context.Context, txnScope string) (uint64, e
 		physical, logical int64
 		err               error
 	)
-	if txnScope == config.DefTxnScope || txnScope == "" {
+	if txnScope == oracle.GlobalTxnScope || txnScope == "" {
 		physical, logical, err = o.c.GetTS(ctx)
 	} else {
 		physical, logical, err = o.c.GetLocalTS(ctx, txnScope)
@@ -134,7 +133,7 @@ func (o *pdOracle) getTimestamp(ctx context.Context, txnScope string) (uint64, e
 
 func (o *pdOracle) setLastTS(ts uint64, txnScope string) {
 	if txnScope == "" {
-		txnScope = config.DefTxnScope
+		txnScope = oracle.GlobalTxnScope
 	}
 	lastTSInterface, ok := o.lastTSMap.Load(txnScope)
 	if !ok {
@@ -154,7 +153,7 @@ func (o *pdOracle) setLastTS(ts uint64, txnScope string) {
 
 func (o *pdOracle) getLastTS(txnScope string) (uint64, bool) {
 	if txnScope == "" {
-		txnScope = config.DefTxnScope
+		txnScope = oracle.GlobalTxnScope
 	}
 	lastTSInterface, ok := o.lastTSMap.Load(txnScope)
 	if !ok {

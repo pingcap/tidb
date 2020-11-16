@@ -43,7 +43,11 @@ type Future interface {
 	Wait() (uint64, error)
 }
 
-const physicalShiftBits = 18
+const (
+	physicalShiftBits = 18
+	// GlobalTxnScope is the default transaction scope for a Oracle service.
+	GlobalTxnScope = "global"
+)
 
 // ComposeTS creates a ts from physical and logical parts.
 func ComposeTS(physical, logical int64) uint64 {

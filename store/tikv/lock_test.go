@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
@@ -74,7 +73,7 @@ func (s *testLockSuite) lockKey(c *C, key, value, primaryKey, primaryValue []byt
 	c.Assert(err, IsNil)
 
 	if commitPrimary {
-		tpc.commitTS, err = s.store.oracle.GetTimestamp(ctx, &oracle.Option{TxnScope: config.DefTxnScope})
+		tpc.commitTS, err = s.store.oracle.GetTimestamp(ctx, &oracle.Option{TxnScope: oracle.GlobalTxnScope})
 		c.Assert(err, IsNil)
 		err = tpc.commitMutations(NewBackofferWithVars(ctx, int(atomic.LoadUint64(&CommitMaxBackoff)), nil), tpc.mutationsOfKeys([][]byte{primaryKey}))
 		c.Assert(err, IsNil)
@@ -216,7 +215,7 @@ func (s *testLockSuite) TestCheckTxnStatusTTL(c *C) {
 
 	bo := NewBackofferWithVars(context.Background(), PrewriteMaxBackoff, nil)
 	lr := newLockResolver(s.store)
-	callerStartTS, err := lr.store.GetOracle().GetTimestamp(bo.ctx, &oracle.Option{TxnScope: config.DefTxnScope})
+	callerStartTS, err := lr.store.GetOracle().GetTimestamp(bo.ctx, &oracle.Option{TxnScope: oracle.GlobalTxnScope})
 	c.Assert(err, IsNil)
 
 	// Check the lock TTL of a transaction.
@@ -282,7 +281,7 @@ func (s *testLockSuite) TestCheckTxnStatus(c *C) {
 	s.prewriteTxnWithTTL(c, txn.(*tikvTxn), 1000)
 
 	o := s.store.GetOracle()
-	currentTS, err := o.GetTimestamp(context.Background(), &oracle.Option{TxnScope: config.DefTxnScope})
+	currentTS, err := o.GetTimestamp(context.Background(), &oracle.Option{TxnScope: oracle.GlobalTxnScope})
 	c.Assert(err, IsNil)
 	c.Assert(currentTS, Greater, txn.StartTS())
 
@@ -309,7 +308,7 @@ func (s *testLockSuite) TestCheckTxnStatus(c *C) {
 	c.Assert(timeBeforeExpire, Equals, int64(0))
 
 	// Then call getTxnStatus again and check the lock status.
-	currentTS, err = o.GetTimestamp(context.Background(), &oracle.Option{TxnScope: config.DefTxnScope})
+	currentTS, err = o.GetTimestamp(context.Background(), &oracle.Option{TxnScope: oracle.GlobalTxnScope})
 	c.Assert(err, IsNil)
 	status, err = newLockResolver(s.store).getTxnStatus(bo, txn.StartTS(), []byte("key"), currentTS, 0, true)
 	c.Assert(err, IsNil)
@@ -341,7 +340,7 @@ func (s *testLockSuite) TestCheckTxnStatusNoWait(c *C) {
 	c.Assert(err, IsNil)
 
 	o := s.store.GetOracle()
-	currentTS, err := o.GetTimestamp(context.Background(), &oracle.Option{TxnScope: config.DefTxnScope})
+	currentTS, err := o.GetTimestamp(context.Background(), &oracle.Option{TxnScope: oracle.GlobalTxnScope})
 	c.Assert(err, IsNil)
 	bo := NewBackofferWithVars(context.Background(), PrewriteMaxBackoff, nil)
 	resolver := newLockResolver(s.store)
@@ -371,7 +370,7 @@ func (s *testLockSuite) TestCheckTxnStatusNoWait(c *C) {
 	c.Assert(committer.cleanupMutations(bo, committer.mutations), IsNil)
 
 	// Call getTxnStatusFromLock to cover TxnNotFound and retry timeout.
-	startTS, err := o.GetTimestamp(context.Background(), &oracle.Option{TxnScope: config.DefTxnScope})
+	startTS, err := o.GetTimestamp(context.Background(), &oracle.Option{TxnScope: oracle.GlobalTxnScope})
 	c.Assert(err, IsNil)
 	lock = &Lock{
 		Key:     []byte("second"),
@@ -493,9 +492,9 @@ func (s *testLockSuite) TestBatchResolveLocks(c *C) {
 	}
 
 	// Locks may not expired
-	msBeforeLockExpired := s.store.GetOracle().UntilExpired(locks[0].TxnID, locks[1].TTL, &oracle.Option{TxnScope: config.DefTxnScope})
+	msBeforeLockExpired := s.store.GetOracle().UntilExpired(locks[0].TxnID, locks[1].TTL, &oracle.Option{TxnScope: oracle.GlobalTxnScope})
 	c.Assert(msBeforeLockExpired, Greater, int64(0))
-	msBeforeLockExpired = s.store.GetOracle().UntilExpired(locks[3].TxnID, locks[3].TTL, &oracle.Option{TxnScope: config.DefTxnScope})
+	msBeforeLockExpired = s.store.GetOracle().UntilExpired(locks[3].TxnID, locks[3].TTL, &oracle.Option{TxnScope: oracle.GlobalTxnScope})
 	c.Assert(msBeforeLockExpired, Greater, int64(0))
 
 	lr := newLockResolver(s.store)

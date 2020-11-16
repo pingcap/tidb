@@ -26,8 +26,6 @@ require (
 	github.com/gorilla/mux v1.7.4
 	github.com/grpc-ecosystem/go-grpc-middleware v1.1.0
 	github.com/iancoleman/strcase v0.0.0-20191112232945-16388991a334
-	github.com/juju/errors v0.0.0-20200330140219-3fe23663418f
-	github.com/juju/testing v0.0.0-20200923013621-75df6121fbb0 // indirect
 	github.com/klauspost/cpuid v1.2.1
 	github.com/ngaut/pools v0.0.0-20180318154953-b7bc8c42aac7
 	github.com/ngaut/sync2 v0.0.0-20141008032647-7a24ed77b2ef

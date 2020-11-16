@@ -358,9 +358,9 @@ func (s *session) getTxnFuture(ctx context.Context) *txnFuture {
 	oracleStore := s.store.GetOracle()
 	var tsFuture oracle.Future
 	if s.sessionVars.LowResolutionTSO {
-		tsFuture = oracleStore.GetLowResolutionTimestampAsync(ctx, &oracle.Option{TxnScope: config.DefTxnScope})
+		tsFuture = oracleStore.GetLowResolutionTimestampAsync(ctx, &oracle.Option{TxnScope: oracle.GlobalTxnScope})
 	} else {
-		tsFuture = oracleStore.GetTimestampAsync(ctx, &oracle.Option{TxnScope: config.DefTxnScope})
+		tsFuture = oracleStore.GetTimestampAsync(ctx, &oracle.Option{TxnScope: oracle.GlobalTxnScope})
 	}
 	ret := &txnFuture{future: tsFuture, store: s.store}
 	failpoint.InjectContext(ctx, "mockGetTSFail", func() {

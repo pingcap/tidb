@@ -1371,6 +1371,18 @@ func (c *compareFunctionClass) refineArgsByUnsignedFlag(ctx sessionctx.Context, 
 			if err != nil || isNull || v > 0 {
 				return args
 			}
+			if mysql.HasUnsignedFlag(con.RetType.Flag) && !mysql.HasUnsignedFlag(col.RetType.Flag) {
+				op := c.op
+				if i == 1 {
+					op = symmetricOp[c.op]
+				}
+				if op == opcode.EQ || op == opcode.NullEQ {
+					if _, err := types.ConvertUintToInt(uint64(v), types.IntergerSignedUpperBound(col.RetType.Tp), col.RetType.Tp); err != nil {
+						args[i], args[1-i] = NewOne(), NewZero()
+						return args
+					}
+				}
+			}
 			if mysql.HasUnsignedFlag(col.RetType.Flag) && mysql.HasNotNullFlag(col.RetType.Flag) && !mysql.HasUnsignedFlag(con.RetType.Flag) {
 				op := c.op
 				if i == 1 {

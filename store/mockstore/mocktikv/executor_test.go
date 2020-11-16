@@ -20,7 +20,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/parser/model"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
@@ -75,7 +74,7 @@ func (s *testExecutorSuite) TestResolvedLargeTxnLocks(c *C) {
 	tk.MustExec("insert into t values (1, 1)")
 
 	o := s.store.GetOracle()
-	tso, err := o.GetTimestamp(context.Background(), &oracle.Option{TxnScope: config.DefTxnScope})
+	tso, err := o.GetTimestamp(context.Background(), &oracle.Option{TxnScope: oracle.GlobalTxnScope})
 	c.Assert(err, IsNil)
 
 	key := tablecodec.EncodeRowKeyWithHandle(tbl.Meta().ID, kv.IntHandle(1))

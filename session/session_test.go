@@ -47,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/store/mockstore/cluster"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -3241,7 +3242,7 @@ func (s *testSessionSuite2) TestSetTxnScope(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	// assert default value
 	result := tk.MustQuery("select @@txn_scope;")
-	result.Check(testkit.Rows(config.DefTxnScope))
+	result.Check(testkit.Rows(oracle.GlobalTxnScope))
 
 	// assert set sys variable
 	tk.MustExec("set @@session.txn_scope = 'dc-1';")
@@ -3253,7 +3254,7 @@ func (s *testSessionSuite2) TestSetTxnScope(c *C) {
 	c.Check(err, IsNil)
 	tk.Se = se
 	result = tk.MustQuery("select @@txn_scope;")
-	result.Check(testkit.Rows(config.DefTxnScope))
+	result.Check(testkit.Rows(oracle.GlobalTxnScope))
 }
 
 func (s *testSessionSuite3) TestSetVarHint(c *C) {
