@@ -474,7 +474,7 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	c.Assert(err, IsNil)
 	val, err = GetSessionSystemVar(v, TiDBFoundInBinding)
 	c.Assert(err, IsNil)
-	c.Assert(val, Equals, "0")
+	c.Assert(val, Equals, "OFF")
 	c.Assert(v.systems[TiDBFoundInBinding], Equals, "ON")
 
 	err = SetSessionSystemVar(v, TiDBEnableChangeColumnType, types.NewStringDatum("ON"))
