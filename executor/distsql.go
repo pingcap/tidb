@@ -1016,7 +1016,7 @@ func (e *IndexLookUpRunTimeStats) String() string {
 		if buf.Len() > 0 {
 			buf.WriteByte(',')
 		}
-		buf.WriteString(fmt.Sprintf(" table_task:{num:%d, concurrency:%d, time:%s}", tableTaskNum, concurrency, execdetails.FormatDurationForExplain(time.Duration(tableScan))))
+		buf.WriteString(fmt.Sprintf(" table_task: {num: %d, concurrency: %d, time: %s}", tableTaskNum, concurrency, execdetails.FormatDurationForExplain(time.Duration(tableScan))))
 	}
 	return buf.String()
 }
