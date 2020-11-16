@@ -3737,27 +3737,18 @@ func checkUpdateList(ctx sessionctx.Context, tblID2table map[int64]table.Table, 
 	isPKUpdated := make(map[int64]model.CIStr)
 	for _, content := range updt.TblColPosInfos {
 		tbl := tblID2table[content.TblID]
-		pk := tables.FindPrimaryIndex(tbl.Meta())
-		isPKColumn := make(map[int64]bool)
-		if pk != nil {
-			for _, pkCol := range pk.Columns {
-				isPKColumn[tbl.Cols()[pkCol.Offset].ID] = true
-			}
-		}
 		flags := assignFlags[content.Start:content.End]
 		var updatePK bool
 		for i, col := range tbl.WritableCols() {
 			if flags[i] && col.State != model.StatePublic {
 				return ErrUnknownColumn.GenWithStackByArgs(col.Name, clauseMsg[fieldList])
 			}
-			// Check multi-updates for primary key,
+			// Check for multi-updates on primary key,
 			// see https://dev.mysql.com/doc/mysql-errors/5.7/en/server-error-reference.html#error_er_multi_update_key_conflict
 			if !flags[i] {
 				continue
 			}
-			if pk != nil && isPKColumn[col.ID] {
-				updatePK = true
-			} else if col.IsPKHandleColumn(tbl.Meta()) || col.IsCommonHandleColumn(tbl.Meta()) {
+			if col.IsPKHandleColumn(tbl.Meta()) || col.IsCommonHandleColumn(tbl.Meta()) {
 				updatePK = true
 			}
 		}
