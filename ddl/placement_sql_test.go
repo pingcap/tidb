@@ -328,7 +328,7 @@ func (s *testDBSuite1) TestPlacementPolicyCache(c *C) {
 	tk.MustQuery("select * from information_schema.placement_policy").Check(testkit.Rows())
 }
 
-func (s *testDBSuite1) TestTxnScopeConstraint(c *C) {
+func (s *testSerialDBSuite) TestTxnScopeConstraint(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
