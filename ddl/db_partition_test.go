@@ -299,10 +299,7 @@ partition by range (a)
     partition p1 values less than (300),
     partition p2 values less than maxvalue)`)
 
-	tk.MustGetErrCode(`create table t(col char(10)) partition by range columns (col) (PARTITION p0 VALUES less than (avg(col)));`, tmysql.ErrPartitionFunctionIsNotAllowed)
-	tk.MustGetErrCode(`create table t(col char(10)) partition by range columns (col) (PARTITION p0 VALUES less than ('a' collate utf8mb4_unicode_ci));`, tmysql.ErrPartitionFunctionIsNotAllowed)
-	tk.MustGetErrCode(`create table t(col char(10)) partition by range columns (col) (PARTITION p0 VALUES less than (weight_string('a')));`, tmysql.ErrPartitionFunctionIsNotAllowed)
-	tk.MustGetErrCode(`create table t(b char(10) collate utf8mb4_unicode_ci) partition by range columns (b) (partition p2 values less than (lead(1) over ()));`, tmysql.ErrPartitionFunctionIsNotAllowed)
+	tk.MustGetErrCode(`create table t(col int) partition by range (col) (PARTITION p0 VALUES less than (avg(col)));`, tmysql.ErrPartitionFunctionIsNotAllowed)
 }
 
 func (s *testIntegrationSuite2) TestCreateTableWithHashPartition(c *C) {
@@ -481,6 +478,18 @@ create table log_message_1 (
 				"PARTITION p1 VALUES LESS THAN (20190906));",
 			ddl.ErrWrongTypeColumnValue,
 		},
+		{
+			"create table t(col char(10)) partition by range columns (col) (PARTITION p0 VALUES less than (avg(col)));",
+			ddl.ErrPartitionFunctionIsNotAllowed,
+		},
+		{
+			"create table t(col char(10)) partition by range columns (col) (PARTITION p0 VALUES less than ('a' collate utf8mb4_unicode_ci));",
+			ddl.ErrPartitionFunctionIsNotAllowed,
+		},
+		{
+			"create table t(col char(10)) partition by range columns (col) (PARTITION p0 VALUES less than (weight_string('a')));",
+			ddl.ErrPartitionFunctionIsNotAllowed,
+		},
 	}
 	for i, t := range cases {
 		_, err := tk.Exec(t.sql)
@@ -544,6 +553,18 @@ func (s *testIntegrationSuite1) TestCreateTableWithListPartition(c *C) {
 		{
 			"create table t (a int) partition by list (a) (partition p0 values in (null), partition p1 values in (NULL));",
 			ddl.ErrMultipleDefConstInListPart,
+		},
+		{
+			"create table t (a char(10)) collate utf8mb4_unicode_ci partition by list (a) (partition p0 values in ('a' collate utf8mb4_bin), partition p1 values in ('c'));",
+			ddl.ErrPartitionFunctionIsNotAllowed,
+		},
+		{
+			"create table t (a char(10)) partition by list (a) (partition p0 values in (weight_string('a')), partition p1 values in ('c'));",
+			ddl.ErrPartitionFunctionIsNotAllowed,
+		},
+		{
+			"create table t (a char(10)) partition by list (a) (partition p0 values in (avg(a)), partition p1 values in ('c'));",
+			ddl.ErrPartitionFunctionIsNotAllowed,
 		},
 		{
 			`create table t1 (id int key, name varchar(10), unique index idx(name)) partition by list  (id) (
@@ -677,6 +698,10 @@ func (s *testIntegrationSuite1) TestCreateTableWithListColumnsPartition(c *C) {
 		{
 			"create table t (a int, b datetime) partition by list columns (a,b) (partition p0 values in ((1)));",
 			ast.ErrPartitionColumnList,
+		},
+		{
+			"create table t (a int) partition by list columns (a) (partition p0 values in (avg(a)));",
+			ddl.ErrPartitionFunctionIsNotAllowed,
 		},
 	}
 	for i, t := range cases {
@@ -919,6 +944,37 @@ func (s *testIntegrationSuite3) TestCreateTableWithKeyPartition(c *C) {
 
 	tk.MustExec(`drop table if exists tm2`)
 	tk.MustExec(`create table tm2 (a char(5), unique key(a(5))) partition by key() partitions 5;`)
+}
+
+func (s *testIntegrationSuite5) TestAlterTableAddPartitionByRangeColumns(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec(`create table t(col char(10)) partition by range columns (col) (PARTITION p0 VALUES less than ('a'));`)
+	tk.MustExec(`alter table t add partition (partition p1 VALUES less than ('c'));`)
+
+	errorCases := []struct {
+		sql string
+		err *terror.Error
+	}{
+		{"alter table t add partition (partition p2 VALUES less than ('c'));",
+			ddl.ErrRangeNotIncreasing,
+		},
+		{"alter table t add partition (partition p3 VALUES less than ('d' collate utf8mb4_general_ci));",
+			ddl.ErrPartitionFunctionIsNotAllowed,
+		},
+		{"alter table t add partition (partition p4 VALUES less than (weight_string('c')));",
+			ddl.ErrPartitionFunctionIsNotAllowed,
+		},
+	}
+
+	for i, t := range errorCases {
+		_, err := tk.Exec(t.sql)
+		c.Assert(t.err.Equal(err), IsTrue, Commentf(
+			"case %d fail, sql = `%s`\nexpected error = `%v`\n  actual error = `%v`",
+			i, t.sql, t.err, err,
+		))
+	}
 }
 
 func (s *testIntegrationSuite5) TestAlterTableAddPartition(c *C) {

@@ -386,10 +386,11 @@ func buildListPartitionDefinitions(s *ast.CreateTableStmt, pi *model.PartitionIn
 		}
 
 		buf := new(bytes.Buffer)
+		restoreCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, buf)
 		for _, vs := range def.Clause.(*ast.PartitionDefinitionClauseIn).Values {
 			inValue := make([]string, 0, len(vs))
 			for i := range vs {
-				restoreCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, buf)
+				buf.Reset()
 				if err := vs[i].Restore(restoreCtx); err != nil {
 					return err
 				}
@@ -416,14 +417,14 @@ func buildRangePartitionDefinitions(ctx sessionctx.Context, s *ast.CreateTableSt
 		}
 
 		buf := new(bytes.Buffer)
+		restoreCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, buf)
 		// Range columns partitions support multi-column partitions.
 		for _, expr := range def.Clause.(*ast.PartitionDefinitionClauseLessThan).Exprs {
-			restoreCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, buf)
+			buf.Reset()
 			if err := expr.Restore(restoreCtx); err != nil {
 				return err
 			}
 			piDef.LessThan = append(piDef.LessThan, buf.String())
-			buf.Reset()
 		}
 		pi.Definitions = append(pi.Definitions, piDef)
 	}

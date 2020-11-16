@@ -1995,14 +1995,6 @@ func checkPartitionByRange(ctx sessionctx.Context, tbInfo *model.TableInfo, s *a
 		return err
 	}
 
-	for _, definition := range s.Partition.Definitions {
-		for _, expr := range definition.Clause.(*ast.PartitionDefinitionClauseLessThan).Exprs {
-			if err := checkPartitionExprValid(ctx, tbInfo, expr); err != nil {
-				return err
-			}
-		}
-	}
-
 	if s != nil {
 		for _, def := range s.Partition.Definitions {
 			exprs := def.Clause.(*ast.PartitionDefinitionClauseLessThan).Exprs
@@ -5250,12 +5242,18 @@ func buildRangePartitionInfo(ctx sessionctx.Context, meta *model.TableInfo, part
 			return err
 		}
 	}
-	buf := new(bytes.Buffer)
 	for _, expr := range clause.Exprs {
-		restoreCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, buf)
+		if err := checkPartitionExprValid(ctx, meta, expr); err != nil {
+			return err
+		}
+	}
+	buf := new(bytes.Buffer)
+	restoreCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, buf)
+	for _, expr := range clause.Exprs {
 		if err := expr.Restore(restoreCtx); err != nil {
 			return err
 		}
+		piDef.LessThan = append(piDef.LessThan, buf.String())
 		buf.Reset()
 	}
 	return nil
@@ -5271,11 +5269,18 @@ func buildListPartitionInfo(ctx sessionctx.Context, meta *model.TableInfo, part 
 			}
 		}
 	}
+	for _, values := range clause.Values {
+		for _, expr := range values{
+			if err := checkPartitionExprValid(ctx, meta, expr); err != nil {
+				return err
+			}
+		}
+	}
 	buf := new(bytes.Buffer)
+	restoreCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, buf)
 	for _, vs := range clause.Values {
 		inValue := make([]string, 0, len(vs))
 		for i := range vs {
-			restoreCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, buf)
 			if err := vs[i].Restore(restoreCtx); err != nil {
 				return err
 			}
