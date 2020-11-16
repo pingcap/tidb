@@ -14,6 +14,8 @@
 package tikv
 
 import (
+	"bytes"
+	"context"
 	"math"
 	"sync/atomic"
 	"time"
@@ -74,7 +76,7 @@ func (c *twoPhaseCommitter) buildPrewriteRequest(batch batchMutations, txnSize u
 		Mutations:         mutations,
 		PrimaryLock:       c.primary(),
 		StartVersion:      c.startTS,
-		LockTtl:           c.lockTTL,
+		LockTtl:           c.getLockTTL(),
 		IsPessimisticLock: isPessimisticLock,
 		ForUpdateTs:       c.forUpdateTS,
 		TxnSize:           txnSize,
@@ -202,6 +204,28 @@ func (action actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoff
 				key := alreadyExist.GetKey()
 				return c.extractKeyExistsErr(key)
 			}
+			// Handles CommitTsTooLarge error in async commit or 1PC
+			if tooLarge := keyErr.GetCommitTsTooLarge(); tooLarge != nil {
+				logutil.BgLogger().Info("calculated commit TS is too large, fallback to traditional 2PC",
+					zap.Uint64("conn", c.connID),
+					zap.Uint64("txnStartTS", c.startTS),
+					zap.Uint64("allowedMaxCommitTS", c.maxCommitTS),
+					zap.Uint64("calculatedCommitTS", tooLarge.CommitTs))
+				c.setAsyncCommit(false)
+				c.setOnePC(false)
+				newLockTTL := c.refreshLockTTL()
+				// Rewrite the request
+				prewriteReq := req.Req.(*pb.PrewriteRequest)
+				prewriteReq.UseAsyncCommit = false
+				prewriteReq.TryOnePc = false
+				prewriteReq.Secondaries = nil
+				prewriteReq.MaxCommitTs = 0
+				prewriteReq.LockTtl = newLockTTL
+				// if this is not a primary batch, we also need to overwrite the primary lock
+				if !batch.isPrimary {
+					c.reprewritePrimary(bo.ctx)
+				}
+			}
 
 			// Extract lock from key error
 			lock, err1 := extractLockFromKeyErr(keyErr)
@@ -237,4 +261,27 @@ func (c *twoPhaseCommitter) prewriteMutations(bo *Backoffer, mutations Committer
 
 	// `doActionOnMutations` will unset `useOnePC` if the mutations is splitted into multiple batches.
 	return c.doActionOnMutations(bo, actionPrewrite{}, mutations)
+}
+
+// Reprewrite the primary lock to fallback from async commit or 1PC
+func (c *twoPhaseCommitter) reprewritePrimary(ctx context.Context) {
+	c.reprewrite.Add(1)
+	if !atomic.CompareAndSwapUint32(&c.reprewrite.started, 0, 1) {
+		return
+	}
+	go func() {
+		// It is slow to find the primary mutation by iterating the mutations.
+		// But it is not a big problem because fallback happens rarely and the number of mutations are
+		// small in async commit or 1PC.
+		var mutation CommitterMutations
+		for i := 0; i < c.mutations.Len(); i++ {
+			if bytes.Equal(c.primary(), c.mutations.GetKey(i)) {
+				mutation = c.mutations.Slice(i, i+1)
+				break
+			}
+		}
+		bo := NewBackofferWithVars(ctx, PrewriteMaxBackoff, c.txn.vars)
+		c.reprewrite.err = errors.Trace(c.prewriteMutations(bo, mutation))
+		c.reprewrite.Done()
+	}()
 }

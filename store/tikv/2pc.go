@@ -120,6 +120,14 @@ type twoPhaseCommitter struct {
 	prewriteStarted bool
 	useOnePC        uint32
 	onePCCommitTS   uint64
+
+	// reprewrite information for fallback from async commit or 1PC
+	reprewrite struct {
+		sync.WaitGroup
+		primaryMutation CommitterMutations
+		started         uint32
+		err             error
+	}
 }
 
 type memBufferMutations struct {
@@ -533,6 +541,16 @@ func (c *twoPhaseCommitter) asyncSecondaries() [][]byte {
 		secondaries = append(secondaries, k)
 	}
 	return secondaries
+}
+
+func (c *twoPhaseCommitter) refreshLockTTL() uint64 {
+	newLockTTL := txnLockTTL(c.txn.startTime, c.txnSize)
+	atomic.StoreUint64(&c.lockTTL, newLockTTL)
+	return newLockTTL
+}
+
+func (c *twoPhaseCommitter) getLockTTL() uint64 {
+	return atomic.LoadUint64(&c.lockTTL)
 }
 
 const bytesPerMiB = 1024 * 1024
@@ -1050,6 +1068,13 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 				zap.Uint64("txnStartTS", c.startTS))
 			return errors.Trace(terror.ErrResultUndetermined)
 		}
+	}
+
+	if err == nil {
+		// Fallback from async commit or 1PC may happen. Wait until reprewriting the primary
+		// lock finishes and report error if it fails.
+		c.reprewrite.Wait()
+		err = c.reprewrite.err
 	}
 
 	commitDetail := c.getDetail()
