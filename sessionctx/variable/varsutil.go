@@ -267,7 +267,7 @@ func CheckDeprecationSetSystemVar(s *SessionVars, name string) {
 	switch name {
 	case TiDBIndexLookupConcurrency, TiDBIndexLookupJoinConcurrency,
 		TiDBHashJoinConcurrency, TiDBHashAggPartialConcurrency, TiDBHashAggFinalConcurrency,
-		TiDBProjectionConcurrency, TiDBWindowConcurrency:
+		TiDBProjectionConcurrency, TiDBWindowConcurrency, TiDBStreamAggConcurrency:
 		s.StmtCtx.AppendWarning(errWarnDeprecatedSyntax.FastGenByArgs(name, TiDBExecutorConcurrency))
 	case TIDBMemQuotaHashJoin, TIDBMemQuotaMergeJoin,
 		TIDBMemQuotaSort, TIDBMemQuotaTopn,

@@ -3109,7 +3109,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		newCol := &expression.Column{
 			UniqueID: sessionVars.AllocPlanColumnID(),
 			ID:       col.ID,
-			RetType:  &col.FieldType,
+			RetType:  col.FieldType.Clone(),
 			OrigName: names[i].String(),
 			IsHidden: col.Hidden,
 		}

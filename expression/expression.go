@@ -799,7 +799,7 @@ func ColumnInfos2ColumnsAndNames(ctx sessionctx.Context, dbName, tblName model.C
 			ColName:     col.Name,
 		})
 		newCol := &Column{
-			RetType:  &col.FieldType,
+			RetType:  col.FieldType.Clone(),
 			ID:       col.ID,
 			UniqueID: ctx.GetSessionVars().AllocPlanColumnID(),
 			Index:    col.Offset,
