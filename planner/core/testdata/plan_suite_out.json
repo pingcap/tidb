@@ -1327,7 +1327,7 @@
           "explain select /*+ TIDB_INLJ(t2) */ * from t t1, t t2 where t1.a = t2.a"
         ],
         "Plan": [
-          "IndexJoin_12 12500.00 root  inner join, inner:UnionScan_11, outer key:test.t.a, inner key:test.t.a",
+          "IndexJoin_12 12500.00 root  inner join, inner:UnionScan_11, outer key:test.t.a, inner key:test.t.a, equal cond:eq(test.t.a, test.t.a)",
           "├─UnionScan_15(Build) 10000.00 root  ",
           "│ └─TableReader_17 10000.00 root  data:TableFullScan_16",
           "│   └─TableFullScan_16 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
