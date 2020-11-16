@@ -698,9 +698,9 @@ func (e *HashAggExec) prepare4ParallelExec(ctx context.Context) {
 	go func() {
 		e.waitPartialWorkerAndCloseOutputChs(partialWorkerWaitGroup)
 		if e.stats != nil {
-			e.stats.PartialStats.WallTime = time.Since(partialStart)
+			atomic.AddInt64(&e.stats.PartialStats.WallTime, int64(time.Since(partialStart)))
 			for i, worker := range e.partialWorkers {
-				e.stats.PartialStats.WorkerTime[i] = worker.aggWorkerStats
+				atomic.AddInt64(&e.stats.PartialStats.WorkerTime[i], int64(worker.aggWorkerStats))
 			}
 		}
 	}()
@@ -713,9 +713,9 @@ func (e *HashAggExec) prepare4ParallelExec(ctx context.Context) {
 	go func() {
 		e.waitFinalWorkerAndCloseFinalOutput(finalWorkerWaitGroup)
 		if e.stats != nil {
-			e.stats.FinalStats.WallTime = time.Since(finalStart)
+			atomic.AddInt64(&e.stats.FinalStats.WallTime, int64(time.Since(finalStart)))
 			for i, worker := range e.finalWorkers {
-				e.stats.FinalStats.WorkerTime[i] = worker.aggWorkerStats
+				atomic.AddInt64(&e.stats.FinalStats.WorkerTime[i], int64(worker.aggWorkerStats))
 			}
 		}
 	}()
@@ -865,11 +865,11 @@ func (e *HashAggExec) initRuntimeStats() {
 	if e.runtimeStats != nil && e.stats == nil {
 		partialStats := AggWorkerStat{
 			Concurrency: e.ctx.GetSessionVars().HashAggPartialConcurrency(),
-			WorkerTime:  make([]time.Duration, e.ctx.GetSessionVars().HashAggPartialConcurrency()),
+			WorkerTime:  make([]int64, e.ctx.GetSessionVars().HashAggPartialConcurrency()),
 		}
 		finalStats := AggWorkerStat{
 			Concurrency: e.ctx.GetSessionVars().HashAggFinalConcurrency(),
-			WorkerTime:  make([]time.Duration, e.ctx.GetSessionVars().HashAggFinalConcurrency()),
+			WorkerTime:  make([]int64, e.ctx.GetSessionVars().HashAggFinalConcurrency()),
 		}
 		e.stats = &HashAggRuntimeStats{
 			PartialStats: partialStats,
@@ -889,20 +889,20 @@ type HashAggRuntimeStats struct {
 type AggWorkerStat struct {
 	Concurrency int
 	TaskNum     int64
-	WallTime    time.Duration
+	WallTime    int64
 	WaitTime    int64
 	ExecTime    int64
-	WorkerTime  []time.Duration
+	WorkerTime  []int64
 }
 
 func (e *AggWorkerStat) String() string {
 	var result string
-	var totalTime time.Duration = 0
+	var totalTime int64 = 0
 	if e.WorkerTime != nil {
 		for _, v := range e.WorkerTime {
 			totalTime += v
 		}
-		result += fmt.Sprintf("{wall_time:%s, concurrency:%d, task_num:%d, tot_wait:%s, tot_exec:%s, tot_time:%s", e.WallTime, e.Concurrency, e.TaskNum, time.Duration(e.WaitTime), time.Duration(e.ExecTime), totalTime)
+		result += fmt.Sprintf("{wall_time:%s, concurrency:%d, task_num:%d, tot_wait:%s, tot_exec:%s, tot_time:%s", time.Duration(e.WallTime), e.Concurrency, e.TaskNum, time.Duration(e.WaitTime), time.Duration(e.ExecTime), time.Duration(totalTime))
 		n := len(e.WorkerTime)
 		if n != 0 {
 			sort.Slice(e.WorkerTime, func(i, j int) bool { return e.WorkerTime[i] < e.WorkerTime[j] })
