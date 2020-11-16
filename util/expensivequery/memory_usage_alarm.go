@@ -24,7 +24,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/disk"
@@ -36,6 +35,7 @@ import (
 
 type memoryUsageAlarm struct {
 	err                    error
+	initialized            bool
 	isServerMemoryQuotaSet bool
 	serverMemoryQuota      uint64
 	serverMemoryQuotaRatio float64
@@ -46,19 +46,11 @@ type memoryUsageAlarm struct {
 	lastProfileFileName [][]string // heap, goroutine
 }
 
-func initMemoryUsageAlarmRecord() (record *memoryUsageAlarm) {
-	record = &memoryUsageAlarm{}
-	var alert float64
-	if alert = config.GetGlobalConfig().Performance.MemoryUsageAlarmRatio; alert == 0 || alert == 1 {
-		record.err = errors.New("close memory usage alarm recorder")
-		return
-	}
-	record.serverMemoryQuotaRatio = alert
+func (record *memoryUsageAlarm) initMemoryUsageAlarmRecord() {
 	if quota := config.GetGlobalConfig().Performance.ServerMemoryQuota; quota != 0 {
 		record.serverMemoryQuota = quota
 		record.isServerMemoryQuotaSet = true
 	} else {
-		// TODO: Get the memory info in container directly.
 		record.serverMemoryQuota, record.err = memory.MemTotal()
 		if record.err != nil {
 			logutil.BgLogger().Error("get system total memory fail", zap.Error(record.err))
@@ -68,11 +60,14 @@ func initMemoryUsageAlarmRecord() (record *memoryUsageAlarm) {
 	}
 	record.lastCheckTime = time.Time{}
 	record.tmpDir = filepath.Join(config.GetGlobalConfig().TempStoragePath, "record")
+	// check and create dir
+
 	record.lastProfileFileName = make([][]string, 2)
 	// Read last records
 	files, err := ioutil.ReadDir(record.tmpDir)
 	if err != nil {
-		return record
+		record.err = err
+		return
 	}
 	for _, f := range files {
 		name := filepath.Join(record.tmpDir, f.Name())
@@ -87,12 +82,19 @@ func initMemoryUsageAlarmRecord() (record *memoryUsageAlarm) {
 		}
 	}
 
-	return record
+	return
 }
 
 // If Performance.ServerMemoryQuota is set, use `ServerMemoryQuota * MemoryUsageAlarmRatio` to check oom risk.
 // If Performance.ServerMemoryQuota is not set, use `system total memory size * MemoryUsageAlarmRatio` to check oom risk.
 func (record *memoryUsageAlarm) alarm4ExcessiveMemUsage(sm util.SessionManager) {
+	if record.serverMemoryQuotaRatio <= 0.0 || record.serverMemoryQuotaRatio >= 1 {
+		return
+	}
+	if !record.initialized {
+
+	}
+
 	var memoryUsage uint64
 	instanceStats := &runtime.MemStats{}
 	runtime.ReadMemStats(instanceStats)
@@ -137,6 +139,7 @@ func (record *memoryUsageAlarm) doRecord(memUsage uint64, instanceMemoryUsage ui
 	if record.err = disk.CheckAndInitTempDir(); record.err != nil {
 		return
 	}
+
 	record.recordSQL(sm)
 	record.recordProfile()
 
