@@ -699,8 +699,8 @@ func (e *HashAggExec) prepare4ParallelExec(ctx context.Context) {
 		e.waitPartialWorkerAndCloseOutputChs(partialWorkerWaitGroup)
 		if e.stats != nil {
 			atomic.AddInt64(&e.stats.PartialStats.WallTime, int64(time.Since(partialStart)))
-			for i, worker := range e.partialWorkers {
-				atomic.AddInt64(&e.stats.PartialStats.WorkerTime[i], int64(worker.aggWorkerStats))
+			for i := range e.partialWorkers {
+				atomic.StoreInt64(&e.stats.PartialStats.WorkerTime[i], int64(e.partialWorkers[i].aggWorkerStats))
 			}
 		}
 	}()
@@ -714,8 +714,8 @@ func (e *HashAggExec) prepare4ParallelExec(ctx context.Context) {
 		e.waitFinalWorkerAndCloseFinalOutput(finalWorkerWaitGroup)
 		if e.stats != nil {
 			atomic.AddInt64(&e.stats.FinalStats.WallTime, int64(time.Since(finalStart)))
-			for i, worker := range e.finalWorkers {
-				atomic.AddInt64(&e.stats.FinalStats.WorkerTime[i], int64(worker.aggWorkerStats))
+			for i := range e.finalWorkers {
+				atomic.StoreInt64(&e.stats.FinalStats.WorkerTime[i], int64(e.finalWorkers[i].aggWorkerStats))
 			}
 		}
 	}()
