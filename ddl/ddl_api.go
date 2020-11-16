@@ -5270,7 +5270,7 @@ func buildListPartitionInfo(ctx sessionctx.Context, meta *model.TableInfo, part 
 		}
 	}
 	for _, values := range clause.Values {
-		for _, expr := range values{
+		for _, expr := range values {
 			if err := checkPartitionExprValid(ctx, meta, expr); err != nil {
 				return err
 			}
