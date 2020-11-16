@@ -1054,7 +1054,7 @@ func (e *InsertRuntimeStat) String() string {
 	buf := bytes.NewBuffer(make([]byte, 0, 32))
 	buf.WriteString(fmt.Sprintf("prepare:%v, ", execdetails.FormatDurationForExplain(time.Duration(e.BasicRuntimeStats.GetTime())-e.CheckInsertTime)))
 	if e.Prefetch > 0 {
-		buf.WriteString(fmt.Sprintf("check_insert:{total_time:%v, mem_insert_time:%v, prefetch:%v",
+		buf.WriteString(fmt.Sprintf("check_insert: {total_time: %v, mem_insert_time: %v, prefetch: %v",
 			execdetails.FormatDurationForExplain(e.CheckInsertTime),
 			execdetails.FormatDurationForExplain(e.CheckInsertTime-e.Prefetch),
 			execdetails.FormatDurationForExplain(e.Prefetch)))
