@@ -41,7 +41,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/parser_driver"
+	driver "github.com/pingcap/tidb/types/parser_driver"
 	util2 "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/execdetails"
@@ -371,6 +371,7 @@ const (
 	showStatement
 	globalOrderByClause
 	expressionClause
+	windowOrderByClause
 )
 
 var clauseMsg = map[clauseCode]string{
@@ -384,6 +385,7 @@ var clauseMsg = map[clauseCode]string{
 	showStatement:       "show statement",
 	globalOrderByClause: "global ORDER clause",
 	expressionClause:    "expression",
+	windowOrderByClause: "window order by",
 }
 
 type capFlagType = uint64
@@ -789,6 +791,9 @@ func (b *PlanBuilder) detectSelectWindow(sel *ast.SelectStmt) bool {
 				return true
 			}
 		}
+	}
+	if sel.WindowSpecs != nil {
+		return true
 	}
 	return false
 }

@@ -1798,7 +1798,7 @@ func (a *havingWindowAndOrderbyExprResolver) Leave(n ast.Node) (node ast.Node, o
 			var err error
 			index, err = a.resolveFromPlan(v, a.p)
 			_ = err
-			if index == -1 && a.curClause != fieldList {
+			if index == -1 && a.curClause != fieldList && a.curClause != windowOrderByClause {
 				index, a.err = resolveFromSelectFields(v, a.selectFields, false)
 				if index != -1 && a.curClause == havingClause && ast.HasWindowFlag(a.selectFields[index].Expr) {
 					a.err = ErrWindowInvalidWindowFuncAliasUse.GenWithStackByArgs(v.Name.Name.O)
@@ -1915,6 +1915,7 @@ func (b *PlanBuilder) resolveWindowFunction(sel *ast.SelectStmt, p LogicalPlan) 
 		}
 		field.Expr = n.(ast.ExprNode)
 	}
+	extractor.curClause = windowOrderByClause
 	for _, spec := range sel.WindowSpecs {
 		_, ok := spec.Accept(extractor)
 		if !ok {
@@ -2757,10 +2758,6 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 		}
 	}
 
-	err = b.checkNamedWindowSpecs(ctx, p, sel.WindowSpecs)
-	if err != nil {
-		return nil, err
-	}
 	hasWindowFuncField := b.detectSelectWindow(sel)
 	if hasWindowFuncField {
 		windowAggMap, err = b.resolveWindowFunction(sel, p)
@@ -2830,6 +2827,10 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 		}
 	}
 
+	err = b.checkNamedWindowSpecs(ctx, p, sel.WindowSpecs)
+	if err != nil {
+		return nil, err
+	}
 	b.windowSpecs, err = buildWindowSpecs(sel.WindowSpecs)
 	if err != nil {
 		return nil, err
