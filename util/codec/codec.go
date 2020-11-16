@@ -590,9 +590,11 @@ func HashChunkSelected(sc *stmtctx.StatementContext, h []hash.Hash64, chk *chunk
 				isNull[i] = !ignoreNull
 			} else {
 				buf[0] = compactBytesFlag
-				v := uint64(column.GetSet(i).ToNumber())
-				str := tp.Elems[v-1]
-				b = ConvertByCollation(hack.Slice(str), tp)
+				s, err := types.ParseSetValue(tp.Elems, column.GetSet(i).Value)
+				if err != nil {
+					return err
+				}
+				b = ConvertByCollation(hack.Slice(s.Name), tp)
 			}
 
 			// As the golang doc described, `Hash.Write` never returns an error.
