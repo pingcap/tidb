@@ -444,13 +444,22 @@ func (e *IndexMergeReaderExecutor) Next(ctx context.Context, req *chunk.Chunk) e
 		if resultTask == nil {
 			return nil
 		}
+		numRows := len(resultTask.rows)
+		if req.NumRows()+numRows > e.maxChunkSize {
+			numRows = e.maxChunkSize
+		}
+		if resultTask.cursor < numRows {
+			req.AppendRows(resultTask.rows[resultTask.cursor:numRows])
+			resultTask.cursor += numRows
+		}
+		/**
 		for resultTask.cursor < len(resultTask.rows) {
 			req.AppendRow(resultTask.rows[resultTask.cursor])
 			resultTask.cursor++
 			if req.NumRows() >= e.maxChunkSize {
 				return nil
 			}
-		}
+		}**/
 	}
 }
 
