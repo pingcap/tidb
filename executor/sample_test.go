@@ -233,3 +233,14 @@ func (s *testTableSampleSuite) TestTableSampleNotSupportedPlanWarning(c *C) {
 		testkit.Rows("1000", "1001", "2100", "4500"))
 	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 8128 Invalid TABLESAMPLE: plan not supported"))
 }
+
+func (s *testTableSampleSuite) TestMaxChunkSize(c *C) {
+	tk := s.initSampleTest(c)
+	tk.MustExec("create table t (a int) shard_row_id_bits = 2 pre_split_regions = 2;")
+	for i := 0; i < 100; i++ {
+		tk.MustExec("insert into t values (?);", i)
+	}
+	tk.Se.GetSessionVars().MaxChunkSize = 1
+	rows := tk.MustQuery("select * from t tablesample regions();").Rows()
+	c.Assert(len(rows), Equals, 4)
+}

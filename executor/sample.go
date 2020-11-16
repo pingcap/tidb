@@ -18,6 +18,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/cznic/mathutil"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
@@ -89,6 +90,7 @@ type tableRegionSampler struct {
 	retTypes   []*types.FieldType
 
 	rowMap     map[int64]types.Datum
+	restKVRanges []kv.KeyRange
 	isFinished bool
 }
 
@@ -108,11 +110,17 @@ func newTableRegionSampler(ctx sessionctx.Context, t table.Table, startTs uint64
 }
 
 func (s *tableRegionSampler) writeChunk(req *chunk.Chunk) error {
-	regionKeyRanges, err := s.splitTableRanges()
-	if err != nil {
-		return err
+	if s.restKVRanges == nil {
+		var err error
+		s.restKVRanges, err = s.splitTableRanges()
+		if err != nil {
+			return err
+		}
+		sortRanges(s.restKVRanges, s.isDesc)
 	}
-	sortRanges(regionKeyRanges, s.isDesc)
+	var regionKeyRanges []kv.KeyRange
+	cutPoint := mathutil.MinInt64(int64(req.RequiredRows()), int64(len(s.restKVRanges)))
+	regionKeyRanges, s.restKVRanges = s.restKVRanges[:cutPoint], s.restKVRanges[cutPoint:]
 
 	decLoc, sysLoc := s.ctx.GetSessionVars().TimeZone, time.UTC
 	cols, decColMap, err := s.buildSampleColAndDecodeColMap()
@@ -136,7 +144,9 @@ func (s *tableRegionSampler) writeChunk(req *chunk.Chunk) error {
 		s.resetRowMap()
 		return nil
 	})
-	s.isFinished = true
+	if len(s.restKVRanges) == 0 {
+		s.isFinished = true
+	}
 	return err
 }
 
