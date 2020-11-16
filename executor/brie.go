@@ -15,6 +15,7 @@ package executor
 
 import (
 	"context"
+	"database/sql"
 	"encoding/base64"
 	"fmt"
 	"net/url"
@@ -296,6 +297,9 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 		importGlobalCfg.Security.CAPath = tidbCfg.Security.ClusterSSLCA
 		importGlobalCfg.Security.CertPath = tidbCfg.Security.ClusterSSLCert
 		importGlobalCfg.Security.KeyPath = tidbCfg.Security.ClusterSSLKey
+		// set Port and PdAddr to avoid lightning query TiDB HTTP API
+		importGlobalCfg.TiDB.Port = int(tidbCfg.Port)
+		importGlobalCfg.TiDB.PdAddr = strings.Split(tidbCfg.Path, ",")[0]
 
 		importCfg.TiDB.StatusPort = int(tidbCfg.Status.StatusPort)
 		importCfg.TikvImporter.Backend = importcfg.BackendLocal
@@ -789,6 +793,10 @@ func (gs *tidbGlueSession) GetParser() *parser.Parser {
 	p := parser.New()
 	p.SetSQLMode(gs.se.(sessionctx.Context).GetSessionVars().SQLMode)
 	return p
+}
+
+func (gs *tidbGlueSession) GetDB() (*sql.DB, error) {
+	return nil, errors.New("tidbGlueSession can't perform GetDB")
 }
 
 func (gs *tidbGlueSession) GetTables(ctx context.Context, schemaName string) ([]*model.TableInfo, error) {
