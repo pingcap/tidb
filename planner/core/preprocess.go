@@ -195,7 +195,7 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		}
 		if v, ok := node.Source.(*ast.TableName); ok && v.TableSample != nil {
 			switch v.TableSample.SampleMethod {
-			case ast.SampleMethodTypeNone, ast.SampleMethodTypeTiDBRegion:
+			case ast.SampleMethodTypeTiDBRegion:
 			default:
 				p.err = expression.ErrInvalidTableSample.GenWithStackByArgs("Only supports REGIONS sampling method")
 			}

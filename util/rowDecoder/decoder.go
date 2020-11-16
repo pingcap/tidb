@@ -73,7 +73,7 @@ func NewRowDecoder(tbl table.Table, cols []*table.Column, decodeColMap map[int64
 		pkCols = tables.TryGetCommonPkColumnIds(tbl.Meta())
 	case tblInfo.PKIsHandle:
 		pkCols = []int64{tblInfo.GetPkColInfo().ID}
-	default:
+	default: // support decoding _tidb_rowid.
 		pkCols = []int64{model.ExtraHandleID}
 	}
 	return &RowDecoder{

@@ -145,6 +145,7 @@ func (s *testTableSampleSuite) TestTableSampleInvalid(c *C) {
 	tk.MustGetErrCode("select a from t tablesample system();", errno.ErrInvalidTableSample)
 	tk.MustGetErrCode("select a from t tablesample bernoulli(10 percent);", errno.ErrInvalidTableSample)
 	tk.MustGetErrCode("select a from t as t1 tablesample regions(), t as t2 tablesample system();", errno.ErrInvalidTableSample)
+	tk.MustGetErrCode("select a from t tablesample ();", errno.ErrInvalidTableSample)
 }
 
 func (s *testTableSampleSuite) TestTableSampleWithTiDBRowID(c *C) {

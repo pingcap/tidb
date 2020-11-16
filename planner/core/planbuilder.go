@@ -529,6 +529,8 @@ func (b *PlanBuilder) GetDBTableInfo() []stmtctx.TableEntry {
 // GetOptFlag gets the optFlag of the PlanBuilder.
 func (b *PlanBuilder) GetOptFlag() uint64 {
 	if b.isSampling {
+		// Disable logical optimization to avoid the optimizer
+		// push down/eliminate operands like Selection, Limit or Sort.
 		return 0
 	}
 	return b.optFlag
