@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+	_ "github.com/pingcap/tidb-lightning/lightning"
 	filter "github.com/pingcap/tidb-tools/pkg/table-filter"
 	pd "github.com/tikv/pd/client"
 
