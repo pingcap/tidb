@@ -700,7 +700,7 @@ func (e *HashAggExec) prepare4ParallelExec(ctx context.Context) {
 		if e.stats != nil {
 			atomic.AddInt64(&e.stats.PartialStats.WallTime, int64(time.Since(partialStart)))
 			for i := range e.partialWorkers {
-				atomic.AddInt64(&e.stats.PartialStats.WorkerTime[i], atomic.LoadInt64(&e.partialWorkers[i].aggWorkerStats))
+				atomic.AddInt64(&e.stats.PartialStats.WorkerTime[i], e.partialWorkers[i].aggWorkerStats)
 			}
 		}
 	}()
@@ -715,7 +715,7 @@ func (e *HashAggExec) prepare4ParallelExec(ctx context.Context) {
 		if e.stats != nil {
 			atomic.AddInt64(&e.stats.FinalStats.WallTime, int64(time.Since(finalStart)))
 			for i := range e.finalWorkers {
-				atomic.AddInt64(&e.stats.FinalStats.WorkerTime[i], atomic.LoadInt64(&e.finalWorkers[i].aggWorkerStats))
+				atomic.AddInt64(&e.stats.FinalStats.WorkerTime[i], e.finalWorkers[i].aggWorkerStats)
 			}
 		}
 	}()
@@ -923,7 +923,28 @@ func (e *AggWorkerStat) Merge(tmp AggWorkerStat) {
 	e.Concurrency += tmp.Concurrency
 	e.WaitTime += tmp.WaitTime
 	e.ExecTime += tmp.ExecTime
-	e.WorkerTime = append(e.WorkerTime, tmp.WorkerTime...)
+	workerTime := make([]int64, 0, len(e.WorkerTime)+len(tmp.WorkerTime))
+	for i := range e.WorkerTime {
+		workerTime = append(workerTime, atomic.LoadInt64(&e.WorkerTime[i]))
+	}
+	workerTime = append(workerTime, tmp.WorkerTime...)
+	e.WorkerTime = workerTime
+}
+
+func (e *AggWorkerStat) Clone() AggWorkerStat {
+	workerTime := make([]int64, e.Concurrency)
+	for i := range e.WorkerTime {
+		workerTime[i] = atomic.LoadInt64(&e.WorkerTime[i])
+	}
+	stat := AggWorkerStat{
+		WallTime:    atomic.LoadInt64(&e.WallTime),
+		TaskNum:     atomic.LoadInt64(&e.TaskNum),
+		Concurrency: e.Concurrency,
+		WaitTime:    atomic.LoadInt64(&e.WaitTime),
+		ExecTime:    atomic.LoadInt64(&e.ExecTime),
+		WorkerTime:  workerTime,
+	}
+	return stat
 }
 
 func (e *HashAggRuntimeStats) String() string {
@@ -942,8 +963,8 @@ func (e *HashAggRuntimeStats) String() string {
 
 // Clone implements the RuntimeStats interface.
 func (e *HashAggRuntimeStats) Clone() execdetails.RuntimeStats {
-	newPartialStat := e.PartialStats
-	newFinalStat := e.FinalStats
+	newPartialStat := e.PartialStats.Clone()
+	newFinalStat := e.FinalStats.Clone()
 	newRs := &HashAggRuntimeStats{
 		PartialStats: newPartialStat,
 		FinalStats:   newFinalStat,
