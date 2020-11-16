@@ -301,7 +301,8 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 		importGlobalCfg.TiDB.Port = int(tidbCfg.Port)
 		importGlobalCfg.TiDB.PdAddr = strings.Split(tidbCfg.Path, ",")[0]
 
-		importCfg.TiDB.StatusPort = int(tidbCfg.Status.StatusPort)
+		// TODO(lance6716):test StatusPort is not used
+		//importCfg.TiDB.StatusPort = int(tidbCfg.Status.StatusPort)
 		importCfg.TikvImporter.Backend = importcfg.BackendLocal
 		importCfg.TikvImporter.SortedKVDir = filepath.Join(tidbCfg.TempStoragePath, defaultImportID)
 		importCfg.Checkpoint.Schema = defaultImportID
