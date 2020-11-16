@@ -229,7 +229,7 @@ func (*testSessionSuite) TestSlowLogFormat(c *C) {
 		DiskMax:           diskMax,
 		Prepared:          true,
 		PlanFromCache:     true,
-		PlanFromSPM:       true,
+		PlanFromBinding:   true,
 		HasMoreResults:    true,
 		KVTotal:           10 * time.Second,
 		PDTotal:           11 * time.Second,

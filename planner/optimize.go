@@ -138,7 +138,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 		sctx.GetSessionVars().StmtCtx.AppendWarning(errors.New("sql_select_limit is set, so plan binding is not activated"))
 		return bestPlan, names, nil
 	}
-	err = setFoundInSPM(sctx, true)
+	err = setFoundInBinding(sctx, true)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -529,9 +529,9 @@ func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints stmtctx.StmtHin
 	return
 }
 
-func setFoundInSPM(sctx sessionctx.Context, opt bool) error {
+func setFoundInBinding(sctx sessionctx.Context, opt bool) error {
 	vars := sctx.GetSessionVars()
-	err := vars.SetSystemVar(variable.TiDBFoundInSPM, variable.BoolToIntStr(opt))
+	err := vars.SetSystemVar(variable.TiDBFoundInBinding, variable.BoolToIntStr(opt))
 	return err
 }
 
