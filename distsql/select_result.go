@@ -407,7 +407,7 @@ func (s *selectResultRuntimeStats) String() string {
 	if len(s.copRespTime) > 0 {
 		size := len(s.copRespTime)
 		if size == 1 {
-			buf.WriteString(fmt.Sprintf("cop_task: {num: 1, max:%v, proc_keys: %v", s.copRespTime[0], s.procKeys[0]))
+			buf.WriteString(fmt.Sprintf("cop_task: {num: 1, max:%v, proc_keys: %v", execdetails.FormatDurationForExplain(s.copRespTime[0]), s.procKeys[0]))
 		} else {
 			sort.Slice(s.copRespTime, func(i, j int) bool {
 				return s.copRespTime[i] < s.copRespTime[j]
@@ -425,7 +425,9 @@ func (s *selectResultRuntimeStats) String() string {
 			})
 			keyMax := s.procKeys[size-1]
 			keyP95 := s.procKeys[size*19/20]
-			buf.WriteString(fmt.Sprintf("cop_task: {num: %v, max: %v, min: %v, avg: %v, p95: %v", size, vMax, vMin, vAvg, vP95))
+			buf.WriteString(fmt.Sprintf("cop_task: {num: %v, max: %v, min: %v, avg: %v, p95: %v", size,
+				execdetails.FormatDurationForExplain(vMax), execdetails.FormatDurationForExplain(vMin),
+				execdetails.FormatDurationForExplain(vAvg), execdetails.FormatDurationForExplain(vP95)))
 			if keyMax > 0 {
 				buf.WriteString(", max_proc_keys: ")
 				buf.WriteString(strconv.FormatInt(keyMax, 10))
@@ -434,10 +436,10 @@ func (s *selectResultRuntimeStats) String() string {
 			}
 			if s.totalProcessTime > 0 {
 				buf.WriteString(", tot_proc: ")
-				buf.WriteString(s.totalProcessTime.String())
+				buf.WriteString(execdetails.FormatDurationForExplain(s.totalProcessTime))
 				if s.totalWaitTime > 0 {
 					buf.WriteString(", tot_wait: ")
-					buf.WriteString(s.totalWaitTime.String())
+					buf.WriteString(execdetails.FormatDurationForExplain(s.totalWaitTime))
 				}
 			}
 		}
@@ -447,7 +449,7 @@ func (s *selectResultRuntimeStats) String() string {
 			buf.WriteString(", rpc_num: ")
 			buf.WriteString(strconv.FormatInt(copRPC.Count, 10))
 			buf.WriteString(", rpc_time: ")
-			buf.WriteString(time.Duration(copRPC.Consume).String())
+			buf.WriteString(execdetails.FormatDurationForExplain(time.Duration(copRPC.Consume)))
 		}
 		if config.GetGlobalConfig().TiKVClient.CoprCache.Enable {
 			buf.WriteString(fmt.Sprintf(", copr_cache_hit_ratio: %v",
@@ -470,7 +472,7 @@ func (s *selectResultRuntimeStats) String() string {
 				buf.WriteString(", ")
 			}
 			idx++
-			buf.WriteString(fmt.Sprintf("%s: %s", k, d.String()))
+			buf.WriteString(fmt.Sprintf("%s: %s", k, execdetails.FormatDurationForExplain(d)))
 		}
 		buf.WriteString("}")
 	}
