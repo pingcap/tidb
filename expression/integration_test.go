@@ -2899,6 +2899,15 @@ func (s *testIntegrationSuite2) TestBuiltin(c *C) {
 	tk.MustQuery("select 1 or b/0 from t")
 	tk.MustQuery("show warnings").Check(testkit.Rows())
 
+	tk.MustQuery("select 1 or 1/0")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustQuery("select 0 and 1/0")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustQuery("select COALESCE(1, 1/0)")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustQuery("select interval(1,0,1,2,1/0)")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+
 	tk.MustQuery("select case 2.0 when 2.0 then 3.0 when 3.0 then 2.0 end").Check(testkit.Rows("3.0"))
 	tk.MustQuery("select case 2.0 when 3.0 then 2.0 when 4.0 then 3.0 else 5.0 end").Check(testkit.Rows("5.0"))
 	tk.MustQuery("select case cast('2011-01-01' as date) when cast('2011-01-01' as date) then cast('2011-02-02' as date) end").Check(testkit.Rows("2011-02-02"))
@@ -7335,6 +7344,20 @@ func (s *testIntegrationSerialSuite) TestIssue17989(c *C) {
 	tk.MustExec("create index idx on t(c);")
 	tk.MustQuery("select c from t;").Check(testkit.Rows("128"))
 	tk.MustExec("admin check table t")
+}
+
+func (s *testIntegrationSuite2) TestSchemaDMLNotChange(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk2 := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk2.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id int primary key, c_json json);")
+	tk.MustExec("insert into t values (1, '{\"k\": 1}');")
+	tk.MustExec("begin")
+	tk.MustExec("update t set c_json = '{\"k\": 2}' where id = 1;")
+	tk2.MustExec("alter table t rename column c_json to cc_json;")
+	tk.MustExec("commit")
 }
 
 func (s *testIntegrationSerialSuite) TestIssue18638(c *C) {
