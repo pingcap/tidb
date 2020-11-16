@@ -369,7 +369,7 @@ func (w *partialTableWorker) fetchHandles(ctx context.Context, exitCh <-chan str
 		count += int64(len(handles))
 		task := w.buildTableTask(handles, retChunk)
 		if w.stats != nil {
-			atomic.AddInt64(&w.stats.FetchHandle, int64(time.Since(start)))
+			atomic.AddInt64(&w.stats.FetchIdxTime, int64(time.Since(start)))
 		}
 		select {
 		case <-ctx.Done():
@@ -647,7 +647,7 @@ func (w *partialIndexWorker) fetchHandles(
 		count += int64(len(handles))
 		task := w.buildTableTask(handles, retChunk)
 		if w.stats != nil {
-			atomic.AddInt64(&w.stats.FetchHandle, int64(time.Since(start)))
+			atomic.AddInt64(&w.stats.FetchIdxTime, int64(time.Since(start)))
 		}
 		select {
 		case <-ctx.Done():
@@ -791,7 +791,7 @@ func (w *indexMergeTableScanWorker) executeTask(ctx context.Context, task *looku
 // IndexMergeRuntimeStat record the indexMerge runtime stat
 type IndexMergeRuntimeStat struct {
 	IndexMergeProcess time.Duration
-	FetchHandle       int64
+	FetchIdxTime      int64
 	WaitTime          int64
 	FetchRow          int64
 	TableTaskNum      int64
@@ -800,8 +800,8 @@ type IndexMergeRuntimeStat struct {
 
 func (e *IndexMergeRuntimeStat) String() string {
 	var buf bytes.Buffer
-	if e.FetchHandle != 0 {
-		buf.WriteString(fmt.Sprintf("index_task:{fetch_handle:%s", time.Duration(e.FetchHandle)))
+	if e.FetchIdxTime != 0 {
+		buf.WriteString(fmt.Sprintf("index_task:{fetch_handle:%s", time.Duration(e.FetchIdxTime)))
 		if e.IndexMergeProcess != 0 {
 			buf.WriteString(fmt.Sprintf(", merge:%s", e.IndexMergeProcess))
 		}
@@ -829,7 +829,7 @@ func (e *IndexMergeRuntimeStat) Merge(other execdetails.RuntimeStats) {
 		return
 	}
 	e.IndexMergeProcess += tmp.IndexMergeProcess
-	e.FetchHandle += tmp.FetchHandle
+	e.FetchIdxTime += tmp.FetchIdxTime
 	e.FetchRow += tmp.FetchRow
 	e.WaitTime += e.WaitTime
 	e.TableTaskNum += tmp.TableTaskNum
