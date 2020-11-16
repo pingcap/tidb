@@ -1850,6 +1850,7 @@ func buildCancelDDLJobsFields() (*expression.Schema, types.NameSlice) {
 }
 
 func buildBRIESchema(kind ast.BRIEKind) (*expression.Schema, types.NameSlice) {
+	longSize, _ := mysql.GetDefaultFieldLengthAndDecimal(mysql.TypeLong)
 	longlongSize, _ := mysql.GetDefaultFieldLengthAndDecimal(mysql.TypeLonglong)
 	datetimeSize, _ := mysql.GetDefaultFieldLengthAndDecimal(mysql.TypeDatetime)
 
@@ -1863,13 +1864,15 @@ func buildBRIESchema(kind ast.BRIEKind) (*expression.Schema, types.NameSlice) {
 		schema.Append(buildColumnWithName("", "Queue Time", mysql.TypeDatetime, datetimeSize))
 		schema.Append(buildColumnWithName("", "Execution Time", mysql.TypeDatetime, datetimeSize))
 	case ast.BRIEKindImport:
-		// TODO(lance6716): refine later
-		schema = newColumnsWithNames(5)
+		schema = newColumnsWithNames(8)
+		schema.Append(buildColumnWithName("", "Task ID", mysql.TypeLong, longSize))
+		schema.Append(buildColumnWithName("", "Status", mysql.TypeVarchar, 64))
 		schema.Append(buildColumnWithName("", "Data Source", mysql.TypeVarchar, 255))
 		schema.Append(buildColumnWithName("", "Size", mysql.TypeLonglong, longlongSize))
-		schema.Append(buildColumnWithName("", "CommitTS", mysql.TypeLonglong, longlongSize))
 		schema.Append(buildColumnWithName("", "Queue Time", mysql.TypeDatetime, datetimeSize))
 		schema.Append(buildColumnWithName("", "Execution Time", mysql.TypeDatetime, datetimeSize))
+		schema.Append(buildColumnWithName("", "Finish Time", mysql.TypeDatetime, datetimeSize))
+		schema.Append(buildColumnWithName("", "Message", mysql.TypeVarchar, 255))
 	}
 
 	return schema.col2Schema(), schema.names
@@ -3464,8 +3467,8 @@ func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *exp
 		names = []string{"Destination", "State", "Progress", "Queue_time", "Execution_time", "Finish_time", "Connection", "Message"}
 		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeFloat, mysql.TypeDatetime, mysql.TypeDatetime, mysql.TypeDatetime, mysql.TypeLonglong, mysql.TypeVarchar}
 	case ast.ShowImports:
-		names = []string{"Data_source", "State", "Progress", "Queue_time", "Execution_time", "Finish_time", "Connection", "Message"}
-		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeFloat, mysql.TypeDatetime, mysql.TypeDatetime, mysql.TypeDatetime, mysql.TypeLonglong, mysql.TypeVarchar}
+		names = []string{"Task_ID", "Data_source", "State", "Progress", "Queue_time", "Execution_time", "Finish_time", "Connection", "Message"}
+		ftypes = []byte{mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeFloat, mysql.TypeDatetime, mysql.TypeDatetime, mysql.TypeDatetime, mysql.TypeLonglong, mysql.TypeVarchar}
 	}
 
 	schema = expression.NewSchema(make([]*expression.Column, 0, len(names))...)

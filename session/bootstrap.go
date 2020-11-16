@@ -316,7 +316,7 @@ const (
 
 	// CreateBRIEJobTable stores BRIE job information and is periodically accessed by BRIE components
 	CreateBRIEJobTable = `CREATE TABLE IF NOT EXISTS mysql.brie_tasks (
-		id          INT AUTO_INCREMENT,
+		id          BIGINT(64) UNSIGNED AUTO_INCREMENT,
 		kind        ENUM('BACKUP', 'RESTORE', 'IMPORT', 'EXPORT') NOT NULL,
 		origin_sql  TEXT NOT NULL,
 		queue_time  DATETIME NOT NULL,
@@ -327,7 +327,7 @@ const (
 		ts			BIGINT(64) UNSIGNED NULL,
 		data_size	BIGINT(64) UNSIGNED NULL,
 		status		VARCHAR(64) NOT NULL,
-		progress	FLOAT NOT NULL,
+		progress	FLOAT(5,2) NOT NULL,
 		cancel		TINYINT(1) NOT NULL,
 		message     TEXT NULL,
 		last_update DATETIME NULL,

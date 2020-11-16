@@ -78,8 +78,6 @@ type brieTaskProgress struct {
 	// total is the total progress of the task.
 	// the percentage of completeness is `(100%) * current / total`.
 	total int64
-
-	importProgressPermillage uint64
 }
 
 // Inc implements glue.Progress
@@ -96,9 +94,6 @@ func (p *brieTaskProgress) Close() {
 
 // GetFraction returns a percentage whose range is [0, 1]
 func (p *brieTaskProgress) GetFraction() float64 {
-	if p.importProgressPermillage != 0 {
-		return float64(p.importProgressPermillage) / 1000
-	}
 	return float64(p.current) / float64(p.total)
 }
 
@@ -558,6 +553,7 @@ func (e *BRIEExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			item.progress.lock.Unlock()
 		} else {
 			item.progress.lock.Lock()
+			// TODO(lance6717): update progress
 			item.progress.cmd = "Finish"
 			item.progress.lock.Unlock()
 		}
@@ -569,16 +565,28 @@ func (e *BRIEExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	e.info.lock.Unlock()
 	glue.Flush(ctx, taskID)
 	taskExecuted = true
-	// TODO(lance6716): for import, return a row containing error message
 	if err != nil {
 		return err
 	}
 
-	req.AppendString(0, e.info.storage)
-	req.AppendUint64(1, e.info.archiveSize)
-	req.AppendUint64(2, e.info.backupTS)
-	req.AppendTime(3, e.info.queueTime)
-	req.AppendTime(4, e.info.execTime)
+	switch e.info.kind {
+	case ast.BRIEKindBackup, ast.BRIEKindRestore:
+		req.AppendString(0, e.info.storage)
+		req.AppendUint64(1, e.info.archiveSize)
+		req.AppendUint64(2, e.info.backupTS)
+		req.AppendTime(3, e.info.queueTime)
+		req.AppendTime(4, e.info.execTime)
+	case ast.BRIEKindImport:
+		req.AppendUint64(0, taskID)
+		req.AppendString(1, item.progress.cmd)
+		req.AppendString(2, e.info.storage)
+		req.AppendUint64(3, e.info.archiveSize)
+		req.AppendTime(4, e.info.queueTime)
+		req.AppendTime(5, e.info.execTime)
+		req.AppendTime(6, e.info.finishTime)
+		req.AppendString(7, e.info.message)
+	}
+
 	e.info = nil
 	return nil
 }
@@ -591,7 +599,7 @@ func handleBRIEError(err error, terror *terror.Error) error {
 }
 
 func (e *ShowExec) fetchShowBRIE(ctx context.Context, kind ast.BRIEKind) error {
-	sql := fmt.Sprintf(`SELECT data_path, status, progress, queue_time, exec_time, finish_time, conn_id, message
+	sql := fmt.Sprintf(`SELECT id, data_path, status, progress, queue_time, exec_time, finish_time, conn_id, message
 			FROM mysql.brie_tasks WHERE kind = '%s';`, kind.String())
 	rs, err := e.ctx.(sqlexec.SQLExecutor).Execute(ctx, sql)
 	if err != nil {
@@ -611,25 +619,25 @@ func (e *ShowExec) fetchShowBRIE(ctx context.Context, kind ast.BRIEKind) error {
 		}
 
 		for row := it.Begin(); row != it.End(); row = it.Next() {
-			dataPath, err := base64.StdEncoding.DecodeString(row.GetString(0))
+			e.result.AppendUint64(0, row.GetUint64(0))
+			dataPath, err := base64.StdEncoding.DecodeString(row.GetString(1))
 			if err != nil {
 				logutil.Logger(ctx).Error("failed to decode base64", zap.Error(err))
 				continue
 			}
-
-			e.result.AppendBytes(0, dataPath)
-			e.result.AppendString(1, row.GetString(1))
-			e.result.AppendFloat32(2, row.GetFloat32(2))
-			e.result.AppendTime(3, row.GetTime(3))
+			e.result.AppendBytes(1, dataPath)
+			e.result.AppendString(2, row.GetString(2))
+			e.result.AppendFloat32(3, row.GetFloat32(3))
 			e.result.AppendTime(4, row.GetTime(4))
 			e.result.AppendTime(5, row.GetTime(5))
-			e.result.AppendUint64(6, row.GetUint64(6))
-			msg, err := base64.StdEncoding.DecodeString(row.GetString(7))
+			e.result.AppendTime(6, row.GetTime(6))
+			e.result.AppendUint64(7, row.GetUint64(7))
+			msg, err := base64.StdEncoding.DecodeString(row.GetString(8))
 			if err != nil {
 				logutil.Logger(ctx).Error("failed to decode base64", zap.Error(err))
 				continue
 			}
-			e.result.AppendBytes(7, msg)
+			e.result.AppendBytes(8, msg)
 		}
 	}
 	return nil
@@ -745,10 +753,22 @@ func (gs *tidbGlueSession) Record(name string, value uint64) {
 		gs.info.backupTS = value
 	case "Size":
 		gs.info.archiveSize = value
-	case "Stage":
-		gs.progress.cmd = importglue.ImportStage(value).String()
-	case "ProgressPermillage":
-		gs.progress.importProgressPermillage = value
+	case importglue.RecordEstimatedChunk:
+		gs.progress.lock.Lock()
+		gs.progress.total = int64(value)
+		gs.progress.lock.Unlock()
+	case importglue.RecordFinishedChunk:
+		gs.progress.lock.Lock()
+		current := int64(value)
+		if current < gs.progress.total {
+			gs.progress.cmd = "Import"
+		} else {
+			current = gs.progress.total
+			// TODO(lance6717): for a exact stage, lightning should watch its post-processing and report
+			gs.progress.cmd = "Post-process"
+		}
+		gs.progress.current = current
+		gs.progress.lock.Unlock()
 	}
 }
 
