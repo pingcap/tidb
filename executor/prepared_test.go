@@ -323,15 +323,15 @@ func (s *testPrepareSuite) TestPlanCacheWithDifferentVariableTypes(c *C) {
 		PrepareStmt string
 		Executes    []struct {
 			Vars []struct {
-				Name   string
-				Value  string
+				Name  string
+				Value string
 			}
 			ExecuteSQL string
 		}
 	}
 	var output []struct {
 		PrepareStmt string
-		Executes []struct {
+		Executes    []struct {
 			SQL  string
 			Vars []struct {
 				Name  string

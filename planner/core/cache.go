@@ -146,8 +146,10 @@ func NewPSTMTPlanCacheKey(sessionVars *variable.SessionVars, pstmtID uint32, sch
 	return key
 }
 
+// FieldSlice is the slice of the types.FieldType
 type FieldSlice []types.FieldType
 
+// Equal compares FieldSlice with []*types.FieldType
 func (s FieldSlice) Equal(tps []*types.FieldType) bool {
 	if len(s) != len(tps) {
 		return false
