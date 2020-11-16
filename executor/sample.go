@@ -89,9 +89,9 @@ type tableRegionSampler struct {
 	isDesc     bool
 	retTypes   []*types.FieldType
 
-	rowMap     map[int64]types.Datum
+	rowMap       map[int64]types.Datum
 	restKVRanges []kv.KeyRange
-	isFinished bool
+	isFinished   bool
 }
 
 func newTableRegionSampler(ctx sessionctx.Context, t table.Table, startTs uint64, partTables []table.PartitionedTable,
