@@ -121,6 +121,11 @@ error = '''
 The used table type doesn't support FULLTEXT indexes
 '''
 
+["ddl:1248"]
+error = '''
+Every derived table must have its own alias
+'''
+
 ["ddl:1253"]
 error = '''
 COLLATION '%s' is not valid for CHARACTER SET '%s'
@@ -249,6 +254,11 @@ Expression of generated column '%s' contains a disallowed function.
 ["ddl:3109"]
 error = '''
 Generated column '%s' cannot refer to auto-increment column.
+'''
+
+["ddl:3754"]
+error = '''
+Functional index '%s' cannot refer to an auto-increment column
 '''
 
 ["ddl:3756"]

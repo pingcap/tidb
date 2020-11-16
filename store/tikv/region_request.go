@@ -203,6 +203,28 @@ func (s *RegionRequestSender) SendReq(bo *Backoffer, req *tikvrpc.Request, regio
 	return resp, err
 }
 
+func (s *RegionRequestSender) getRPCContext(
+	bo *Backoffer,
+	req *tikvrpc.Request,
+	regionID RegionVerID,
+	sType kv.StoreType,
+) (*RPCContext, error) {
+	switch sType {
+	case kv.TiKV:
+		var seed uint32
+		if req.ReplicaReadSeed != nil {
+			seed = *req.ReplicaReadSeed
+		}
+		return s.regionCache.GetTiKVRPCContext(bo, regionID, req.ReplicaReadType, seed)
+	case kv.TiFlash:
+		return s.regionCache.GetTiFlashRPCContext(bo, regionID)
+	case kv.TiDB:
+		return &RPCContext{Addr: s.storeAddr}, nil
+	default:
+		return nil, errors.Errorf("unsupported storage type: %v", sType)
+	}
+}
+
 // SendReqCtx sends a request to tikv server and return response and RPCCtx of this RPC.
 func (s *RegionRequestSender) SendReqCtx(
 	bo *Backoffer,
@@ -242,33 +264,17 @@ func (s *RegionRequestSender) SendReqCtx(
 		}
 	})
 
-	var replicaRead kv.ReplicaReadType
-	if req.ReplicaRead {
-		replicaRead = kv.ReplicaReadFollower
-	} else {
-		replicaRead = kv.ReplicaReadLeader
-	}
-	seed := req.ReplicaReadSeed
 	tryTimes := 0
 	for {
 		if (tryTimes > 0) && (tryTimes%100000 == 0) {
 			logutil.Logger(bo.ctx).Warn("retry get ", zap.Uint64("region = ", regionID.GetID()), zap.Int("times = ", tryTimes))
 		}
-		switch sType {
-		case kv.TiKV:
-			rpcCtx, err = s.regionCache.GetTiKVRPCContext(bo, regionID, replicaRead, seed)
-		case kv.TiFlash:
-			rpcCtx, err = s.regionCache.GetTiFlashRPCContext(bo, regionID)
-		case kv.TiDB:
-			rpcCtx = &RPCContext{
-				Addr: s.storeAddr,
-			}
-		default:
-			err = errors.Errorf("unsupported storage type: %v", sType)
-		}
+
+		rpcCtx, err = s.getRPCContext(bo, req, regionID, sType)
 		if err != nil {
 			return nil, nil, err
 		}
+
 		failpoint.Inject("invalidCacheAndRetry", func() {
 			// cooperate with github.com/pingcap/tidb/store/tikv/gcworker/setGcResolveMaxBackoff
 			if c := bo.ctx.Value("injectedBackoff"); c != nil {
@@ -315,7 +321,7 @@ func (s *RegionRequestSender) SendReqCtx(
 			return nil, nil, errors.Trace(err)
 		}
 		if regionErr != nil {
-			retry, err = s.onRegionError(bo, rpcCtx, &seed, regionErr)
+			retry, err = s.onRegionError(bo, rpcCtx, req.ReplicaReadSeed, regionErr)
 			if err != nil {
 				return nil, nil, errors.Trace(err)
 			}
@@ -407,7 +413,24 @@ func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, rpcCtx *RPCContext,
 			}
 		})
 	}
+
+	failpoint.Inject("rpcContextCancelErr", func(val failpoint.Value) {
+		if val.(bool) {
+			ctx1, cancel := context.WithCancel(context.Background())
+			cancel()
+			select {
+			case <-ctx1.Done():
+			}
+
+			ctx = ctx1
+			err = ctx.Err()
+			resp = nil
+		}
+	})
+
 	if err != nil {
+		s.rpcError = err
+
 		// Because in rpc logic, context.Cancel() will be transferred to rpcContext.Cancel error. For rpcContext cancel,
 		// we need to retry the request. But for context cancel active, for example, limitExec gets the required rows,
 		// we shouldn't retry the request, it will go to backoff and hang in retry logic.
@@ -415,7 +438,6 @@ func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, rpcCtx *RPCContext,
 			return nil, false, errors.Trace(ctx.Err())
 		}
 
-		s.rpcError = err
 		if e := s.onSendFail(bo, rpcCtx, err); e != nil {
 			return nil, false, errors.Trace(e)
 		}
@@ -575,6 +597,11 @@ func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, seed
 	if regionErr.GetRaftEntryTooLarge() != nil {
 		logutil.BgLogger().Warn("tikv reports `RaftEntryTooLarge`", zap.Stringer("ctx", ctx))
 		return false, errors.New(regionErr.String())
+	}
+	if regionErr.GetRegionNotFound() != nil && seed != nil {
+		logutil.BgLogger().Debug("tikv reports `RegionNotFound` in follow-reader",
+			zap.Stringer("ctx", ctx), zap.Uint32("seed", *seed))
+		*seed = *seed + 1
 	}
 	// For other errors, we only drop cache here.
 	// Because caller may need to re-split the request.
