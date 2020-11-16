@@ -76,7 +76,7 @@ func (eqh *Handle) Run() {
 			}
 			threshold = atomic.LoadUint64(&variable.ExpensiveQueryTimeThreshold)
 
-			record.serverMemoryQuotaRatio = variable.MemoryUsageAlarmRatio.Load()
+			record.memoryUsageAlarmRatio = variable.MemoryUsageAlarmRatio.Load()
 			if record.err == nil {
 				record.alarm4ExcessiveMemUsage(sm)
 			}

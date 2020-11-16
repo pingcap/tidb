@@ -38,7 +38,7 @@ type memoryUsageAlarm struct {
 	initialized            bool
 	isServerMemoryQuotaSet bool
 	serverMemoryQuota      uint64
-	serverMemoryQuotaRatio float64
+	memoryUsageAlarmRatio  float64
 	lastCheckTime          time.Time
 
 	tmpDir              string
@@ -89,7 +89,7 @@ func (record *memoryUsageAlarm) initMemoryUsageAlarmRecord() {
 // If Performance.ServerMemoryQuota is set, use `ServerMemoryQuota * MemoryUsageAlarmRatio` to check oom risk.
 // If Performance.ServerMemoryQuota is not set, use `system total memory size * MemoryUsageAlarmRatio` to check oom risk.
 func (record *memoryUsageAlarm) alarm4ExcessiveMemUsage(sm util.SessionManager) {
-	if record.serverMemoryQuotaRatio <= 0.0 || record.serverMemoryQuotaRatio >= 1.0 {
+	if record.memoryUsageAlarmRatio <= 0.0 || record.memoryUsageAlarmRatio >= 1.0 {
 		return
 	}
 	if !record.initialized {
@@ -113,7 +113,7 @@ func (record *memoryUsageAlarm) alarm4ExcessiveMemUsage(sm util.SessionManager) 
 	}
 
 	// TODO: Consider NextGC to record SQLs.
-	if float64(memoryUsage) > float64(record.serverMemoryQuota)*record.serverMemoryQuotaRatio {
+	if float64(memoryUsage) > float64(record.serverMemoryQuota)*record.memoryUsageAlarmRatio {
 		// At least ten seconds between two recordings that memory usage is less than threshold (default 80% system memory).
 		// If the memory is still exceeded, only records once.
 		interval := time.Since(record.lastCheckTime)
@@ -135,7 +135,7 @@ func (record *memoryUsageAlarm) doRecord(memUsage uint64, instanceMemoryUsage ui
 		fields = append(fields, zap.Any("system memory usage", memUsage))
 		fields = append(fields, zap.Any("tidb-server memory usage", instanceMemoryUsage))
 	}
-	fields = append(fields, zap.Any("memory-usage-alarm-ratio", record.serverMemoryQuotaRatio))
+	fields = append(fields, zap.Any("memory-usage-alarm-ratio", record.memoryUsageAlarmRatio))
 	fields = append(fields, zap.Any("record path", record.tmpDir))
 
 	logutil.BgLogger().Warn("tidb-server has the risk of OOM. Running SQLs and heap profile will be recorded in record path", fields...)
