@@ -220,7 +220,7 @@ type StmtExecInfo struct {
 	IsInternal     bool
 	Succeed        bool
 	PlanInCache    bool
-	planInBinding  bool
+	PlanInBinding  bool
 	ExecRetryCount uint
 	ExecRetryTime  time.Duration
 	execdetails.StmtExecDetails
@@ -790,7 +790,7 @@ func (ssElement *stmtSummaryByDigestElement) add(sei *StmtExecInfo, intervalSeco
 	}
 
 	// SPM
-	if sei.planInBinding {
+	if sei.PlanInBinding {
 		ssElement.planInBinding = true
 	} else {
 		ssElement.planInBinding = false
