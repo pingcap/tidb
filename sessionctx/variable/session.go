@@ -169,6 +169,8 @@ type TransactionContext struct {
 	Isolation      string
 	LockExpire     uint32
 	ForUpdate      uint32
+
+	TxnScope string
 }
 
 // GetShard returns the shard prefix for the next `count` rowids.

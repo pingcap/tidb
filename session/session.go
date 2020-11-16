@@ -541,20 +541,21 @@ func (s *session) CommitTxn(ctx context.Context) error {
 
 	var commitDetail *execdetails.CommitDetails
 	ctx = context.WithValue(ctx, execdetails.CommitDetailCtxKey, &commitDetail)
+	txnScope := s.GetSessionVars().TxnCtx.TxnScope
 	is := infoschema.GetInfoSchema(s)
-	txnScope := s.GetSessionVars().TxnScope
-	for physicalTableID := range s.sessionVars.TxnCtx.TableDeltaMap {
-		bundle, ok := is.RuleBundles()[placement.GroupID(physicalTableID)]
-		if !ok {
-			continue
-		}
-		// FIXME: currently we assumes "zone" is the dcLabel key in Store
-		dcLocation, ok := placement.GetLeaderDCByBundle(bundle, "zone")
-		if !ok {
-			continue
-		}
-		if dcLocation != txnScope {
-			return fmt.Errorf("table %v 's leader location %v is out of txn_scope %v", physicalTableID, dcLocation, txnScope)
+	if txnScope != config.DefTxnScope {
+		for physicalTableID := range s.sessionVars.TxnCtx.TableDeltaMap {
+			bundle, ok := is.BundleByName(placement.GroupID(physicalTableID))
+			if !ok {
+				continue
+			}
+			dcLocation, ok := placement.GetLeaderDCByBundle(bundle, placement.DCLabelKey)
+			if !ok {
+				return fmt.Errorf("bundle %v 's leader placement policy is not clear", bundle.ID)
+			}
+			if dcLocation != txnScope {
+				return fmt.Errorf("table or partition %v 's leader location %v is out of txn_scope %v", physicalTableID, dcLocation, txnScope)
+			}
 		}
 	}
 	err := s.doCommitWithRetry(ctx)
@@ -1640,6 +1641,7 @@ func (s *session) NewTxn(ctx context.Context) error {
 		CreateTime:    time.Now(),
 		StartTS:       txn.StartTS(),
 		ShardStep:     int(s.sessionVars.ShardAllocateStep),
+		TxnScope:      s.GetSessionVars().TxnScope,
 	}
 	return nil
 }
@@ -2312,6 +2314,7 @@ func (s *session) PrepareTxnCtx(ctx context.Context) {
 		SchemaVersion: is.SchemaMetaVersion(),
 		CreateTime:    time.Now(),
 		ShardStep:     int(s.sessionVars.ShardAllocateStep),
+		TxnScope:      s.GetSessionVars().TxnScope,
 	}
 	if !s.sessionVars.IsAutocommit() || s.sessionVars.RetryInfo.Retrying {
 		if s.sessionVars.TxnMode == ast.Pessimistic {
