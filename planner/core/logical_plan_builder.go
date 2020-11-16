@@ -2758,7 +2758,7 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 	}
 
 	hasWindowFuncField := b.detectSelectWindow(sel)
-	// Some sql statement define WINDOW but do not use them. But we also need to check the window specification list.
+	// Some SQL statements define WINDOW but do not use them. But we also need to check the window specification list.
 	// For example: select id from t group by id WINDOW w AS (ORDER BY uids DESC) ORDER BY id;
 	// We don't use the WINDOW w, but if the 'uids' column is not in the table t, we still need to report an error.
 	if hasWindowFuncField || sel.WindowSpecs != nil {
