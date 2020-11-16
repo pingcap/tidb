@@ -143,7 +143,6 @@ func (record *memoryUsageAlarm) doRecord(memUsage uint64, instanceMemoryUsage ui
 	if record.err = disk.CheckAndCreateDir(record.tmpDir); record.err != nil {
 		return
 	}
-
 	record.recordSQL(sm)
 	record.recordProfile()
 
