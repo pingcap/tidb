@@ -898,11 +898,12 @@ type AggWorkerStat struct {
 func (e *AggWorkerStat) String() string {
 	var result string
 	var totalTime int64 = 0
+	wallTime := time.Duration(atomic.LoadInt64(&e.WallTime))
 	if e.WorkerTime != nil {
-		for _, v := range e.WorkerTime {
-			totalTime += v
+		for i := range e.WorkerTime {
+			totalTime += atomic.LoadInt64(&e.WorkerTime[i])
 		}
-		result += fmt.Sprintf("{wall_time:%s, concurrency:%d, task_num:%d, tot_wait:%s, tot_exec:%s, tot_time:%s", time.Duration(e.WallTime), e.Concurrency, e.TaskNum, time.Duration(e.WaitTime), time.Duration(e.ExecTime), time.Duration(totalTime))
+		result += fmt.Sprintf("{wall_time:%s, concurrency:%d, task_num:%d, tot_wait:%s, tot_exec:%s, tot_time:%s", wallTime, e.Concurrency, e.TaskNum, time.Duration(e.WaitTime), time.Duration(e.ExecTime), time.Duration(totalTime))
 		n := len(e.WorkerTime)
 		if n != 0 {
 			sort.Slice(e.WorkerTime, func(i, j int) bool { return e.WorkerTime[i] < e.WorkerTime[j] })
