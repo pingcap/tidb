@@ -886,6 +886,11 @@ error = '''
 `%-.192s`.`%-.192s` contains view recursion
 '''
 
+["planner:1706"]
+error = '''
+Primary key/partition key update is not allowed since the table is updated both as '%-.192s' and '%-.192s'.
+'''
+
 ["planner:1747"]
 error = '''
 PARTITION () clause on non partitioned table
