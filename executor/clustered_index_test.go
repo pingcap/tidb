@@ -204,3 +204,15 @@ func (s *testClusteredSuite) TestIssue20002(c *C) {
 	tk.MustExec("commit;")
 	tk.MustExec("admin check index t `c_datetime`;")
 }
+
+// https://github.com/pingcap/tidb/issues/20727
+func (s *testClusteredSuite) TestClusteredIndexSplitAndAddIndex(c *C) {
+	tk := s.newTK(c)
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a varchar(255), b int, primary key(a));")
+	tk.MustExec("insert into t values ('a', 1), ('b', 2), ('c', 3), ('u', 1);")
+	tk.MustQuery("split table t between ('a') and ('z') regions 5;").Check(testkit.Rows("4 1"))
+	tk.MustExec("create index idx on t (b);")
+	tk.MustQuery("select a from t order by a;").Check(testkit.Rows("a", "b", "c", "u"))
+	tk.MustQuery("select a from t use index (idx) order by a;").Check(testkit.Rows("a", "b", "c", "u"))
+}

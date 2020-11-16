@@ -526,9 +526,12 @@ func (pb *profileBuilder) addNode(n *metricNode, selfCost, nodeTotal float64) er
 }
 
 func (pb *profileBuilder) addNodeDef(name, labelValue, comment string, fontWeight, colorWeight float64) {
-	baseFontSize, maxFontGrowth := 5, 18.0
+	baseFontSize, maxFontSize, maxFontGrowth := 5, 64, 18.0
 	fontSize := baseFontSize
 	fontSize += int(math.Ceil(maxFontGrowth * math.Sqrt(math.Abs(fontWeight)/pb.totalValue)))
+	if fontSize > maxFontSize {
+		fontSize = maxFontSize
+	}
 
 	pb.buf.WriteString(fmt.Sprintf(`N%d [label="%s" tooltip="%s" fontsize=%d shape=box color="%s" fillcolor="%s"]`,
 		pb.getNameID(name), labelValue, comment, fontSize,
@@ -654,6 +657,7 @@ func (pb *profileBuilder) genTiDBQueryTree() *metricNode {
 		children: []*metricNode{
 			{
 				table: "tidb_batch_client_wait",
+				unit:  int64(10e8),
 			},
 			{
 				table: "tidb_batch_client_wait_conn",

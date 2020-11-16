@@ -301,6 +301,10 @@ func buildTiDBMemCopTasks(ranges *copRanges, req *kv.Request) ([]*copTask, error
 	}
 	tasks := make([]*copTask, 0, len(servers))
 	for _, ser := range servers {
+		if req.TiDBServerID > 0 && req.TiDBServerID != ser.ServerIDGetter() {
+			continue
+		}
+
 		addr := ser.IP + ":" + strconv.FormatUint(uint64(ser.StatusPort), 10)
 		tasks = append(tasks, &copTask{
 			ranges:    ranges,
@@ -511,19 +515,37 @@ const minLogCopTaskTime = 300 * time.Millisecond
 // run is a worker function that get a copTask from channel, handle it and
 // send the result back.
 func (worker *copIteratorWorker) run(ctx context.Context) {
-	defer worker.wg.Done()
+	defer func() {
+		worker.wg.Done()
+		failpoint.Inject("testRateLimitActionMockWaitMax", func(val failpoint.Value) {
+			if val.(bool) {
+				// we need to prevent action from being closed before triggering action yet
+				for worker.actionOnExceed.isEnabled() {
+					time.Sleep(10 * time.Millisecond)
+				}
+			}
+		})
+		worker.actionOnExceed.close()
+	}()
 	for task := range worker.taskCh {
 		respCh := worker.respChan
 		if respCh == nil {
 			respCh = task.respChan
 		}
 		worker.handleTask(ctx, task, respCh)
+		failpoint.Inject("testRateLimitActionMockOtherExecutorConsume", func(val failpoint.Value) {
+			if val.(bool) {
+				// wait action being enabled and response channel become empty
+				time.Sleep(20 * time.Millisecond)
+				// simulate other executor consume and trigger oom action
+				worker.memTracker.Consume(99999)
+			}
+		})
 		close(task.respChan)
 		worker.maxID.setMaxIDIfLarger(task.id)
 		worker.actionOnExceed.destroyTokenIfNeeded(func() {
 			worker.sendRate.putToken()
 		})
-		worker.actionOnExceed.waitIfNeeded()
 		if worker.vars != nil && worker.vars.Killed != nil && atomic.LoadUint32(worker.vars.Killed) == 1 {
 			return
 		}
@@ -675,10 +697,14 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 		ok     bool
 		closed bool
 	)
-	// wait unit at least 2 copResponse received.
-	failpoint.Inject("testRateLimitActionMockConsume", func(val failpoint.Value) {
+	// wait unit at least 5 copResponse received.
+	failpoint.Inject("testRateLimitActionMockWaitMax", func(val failpoint.Value) {
 		if val.(bool) {
-			for it.memTracker.MaxConsumed() < 200 {
+			// we only need to trigger oom at least once.
+			if len(it.tasks) > 9 {
+				for it.memTracker.MaxConsumed() < 500 {
+					time.Sleep(10 * time.Millisecond)
+				}
 			}
 		}
 	})
@@ -981,6 +1007,15 @@ func (worker *copIteratorWorker) logTimeCopTask(costTime time.Duration, task *co
 				logStr = appendScanDetail(logStr, "data", detail.ScanDetail.Data)
 				logStr = appendScanDetail(logStr, "lock", detail.ScanDetail.Lock)
 			}
+			if detail.ScanDetailV2 != nil {
+				logStr += fmt.Sprintf(" processed versions: %d", detail.ScanDetailV2.ProcessedVersions)
+				logStr += fmt.Sprintf(" total versions: %d", detail.ScanDetailV2.TotalVersions)
+				logStr += fmt.Sprintf(" delete skipped count: %d", detail.ScanDetailV2.RocksdbDeleteSkippedCount)
+				logStr += fmt.Sprintf(" key skipped count: %d", detail.ScanDetailV2.RocksdbKeySkippedCount)
+				logStr += fmt.Sprintf(" cache hit count: %d", detail.ScanDetailV2.RocksdbBlockCacheHitCount)
+				logStr += fmt.Sprintf(" read count: %d", detail.ScanDetailV2.RocksdbBlockReadCount)
+				logStr += fmt.Sprintf(" read byte: %d", detail.ScanDetailV2.RocksdbBlockReadByte)
+			}
 		}
 		if waitMs > minLogKVWaitTime {
 			logStr += fmt.Sprintf(" kv_wait_ms:%d", waitMs)
@@ -1108,10 +1143,23 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *RPCCon
 			resp.detail.WaitTime = time.Duration(handleTime.WaitMs) * time.Millisecond
 			resp.detail.ProcessTime = time.Duration(handleTime.ProcessMs) * time.Millisecond
 		}
-		if scanDetail := pbDetails.ScanDetail; scanDetail != nil {
+		if scanDetailV2 := pbDetails.ScanDetailV2; scanDetailV2 != nil {
+			copDetail := &execdetails.CopDetails{
+				ProcessedKeys:             int64(scanDetailV2.ProcessedVersions),
+				TotalKeys:                 int64(scanDetailV2.TotalVersions),
+				RocksdbDeleteSkippedCount: scanDetailV2.RocksdbDeleteSkippedCount,
+				RocksdbKeySkippedCount:    scanDetailV2.RocksdbKeySkippedCount,
+				RocksdbBlockCacheHitCount: scanDetailV2.RocksdbBlockCacheHitCount,
+				RocksdbBlockReadCount:     scanDetailV2.RocksdbBlockReadCount,
+				RocksdbBlockReadByte:      scanDetailV2.RocksdbBlockReadByte,
+			}
+			resp.detail.CopDetail = copDetail
+		} else if scanDetail := pbDetails.ScanDetail; scanDetail != nil {
 			if scanDetail.Write != nil {
-				resp.detail.TotalKeys += scanDetail.Write.Total
-				resp.detail.ProcessedKeys += scanDetail.Write.Processed
+				resp.detail.CopDetail = &execdetails.CopDetails{
+					ProcessedKeys: scanDetail.Write.Processed,
+					TotalKeys:     scanDetail.Write.Total,
+				}
 			}
 		}
 	}
@@ -1272,6 +1320,12 @@ type rateLimitAction struct {
 		// isTokenDestroyed indicates whether there is one token has been isTokenDestroyed after Action been triggered
 		isTokenDestroyed bool
 		once             sync.Once
+		// triggered indicates whether the action is triggered
+		triggered bool
+		// waitingWorkerCnt indicates the total count of workers which is under condition.Waiting
+		waitingWorkerCnt uint
+		// triggerCountForTest indicates the total count of the rateLimitAction's Action being executed
+		triggerCountForTest uint
 	}
 }
 
@@ -1280,10 +1334,13 @@ func newRateLimitAction(totalTokenNumber uint, cond *sync.Cond) *rateLimitAction
 		totalTokenNum: totalTokenNumber,
 		cond: struct {
 			*sync.Cond
-			exceeded          bool
-			remainingTokenNum uint
-			isTokenDestroyed  bool
-			once              sync.Once
+			exceeded            bool
+			remainingTokenNum   uint
+			isTokenDestroyed    bool
+			once                sync.Once
+			triggered           bool
+			waitingWorkerCnt    uint
+			triggerCountForTest uint
 		}{
 			Cond:              cond,
 			exceeded:          false,
@@ -1319,6 +1376,16 @@ func (e *rateLimitAction) Action(t *memory.Tracker) {
 			}
 			return
 		}
+		failpoint.Inject("testRateLimitActionMockConsumeAndAssert", func(val failpoint.Value) {
+			if val.(bool) {
+				if e.cond.triggerCountForTest+e.cond.remainingTokenNum != e.totalTokenNum {
+					panic("triggerCount + remainingTokenNum not equal to totalTokenNum")
+				}
+				if e.cond.waitingWorkerCnt > 0 {
+					panic("waitingWorkerCnt not equal to 0")
+				}
+			}
+		})
 		logutil.BgLogger().Info("memory exceeds quota, destroy one token now.",
 			zap.Int64("consumed", t.BytesConsumed()),
 			zap.Int64("quota", t.GetBytesLimit()),
@@ -1326,6 +1393,8 @@ func (e *rateLimitAction) Action(t *memory.Tracker) {
 			zap.Uint("remaining token count", e.cond.remainingTokenNum))
 		e.cond.isTokenDestroyed = false
 		e.cond.exceeded = true
+		e.cond.triggerCountForTest++
+		e.cond.triggered = true
 	})
 }
 
@@ -1339,17 +1408,23 @@ func (e *rateLimitAction) SetFallback(a memory.ActionOnExceed) {
 	e.fallbackAction = a
 }
 
-// broadcastIfNeeded will check whether the copWorkers is under suspended status.
-// If they are, `broadcastIfNeeded` would try to recover them if there are no more
-// copResponse remained in the channel.
+// broadcastIfNeeded will broadcast the condition to recover all suspended workers when exceeded is enabled
+// and one token have already been destroyed.
 func (e *rateLimitAction) broadcastIfNeeded(needed bool) {
+	if !needed {
+		return
+	}
 	e.conditionLock()
 	defer e.conditionUnlock()
-	if e.cond.exceeded && needed {
-		e.cond.exceeded = false
-		e.cond.Broadcast()
-		e.cond.once = sync.Once{}
+	if !e.cond.exceeded {
+		return
 	}
+	for !e.cond.isTokenDestroyed {
+		e.cond.Wait()
+	}
+	e.cond.exceeded = false
+	e.cond.Broadcast()
+	e.unsafeInitOnce()
 }
 
 // destroyTokenIfNeeded will check the `exceed` flag after copWorker finished one task.
@@ -1358,21 +1433,35 @@ func (e *rateLimitAction) broadcastIfNeeded(needed bool) {
 func (e *rateLimitAction) destroyTokenIfNeeded(returnToken func()) {
 	e.conditionLock()
 	defer e.conditionUnlock()
+	if !e.cond.exceeded {
+		returnToken()
+		return
+	}
 	// If actionOnExceed has been triggered and there is no token have been destroyed before,
 	// destroy one token.
-	if e.cond.exceeded && !e.cond.isTokenDestroyed {
+	if !e.cond.isTokenDestroyed {
 		e.cond.remainingTokenNum = e.cond.remainingTokenNum - 1
 		e.cond.isTokenDestroyed = true
-	} else {
-		returnToken()
+		e.cond.Broadcast()
+		return
 	}
+
+	returnToken()
+	// we suspend worker when `exceeded` is true until being notified by `broadcastIfNeeded`
+	for e.cond.exceeded {
+		e.cond.waitingWorkerCnt++
+		e.cond.Wait()
+		e.cond.waitingWorkerCnt--
+	}
+	e.unsafeInitOnce()
 }
 
-func (e *rateLimitAction) waitIfNeeded() {
-	e.conditionLock()
-	defer e.conditionUnlock()
-	for e.cond.exceeded {
-		e.cond.Wait()
+// unsafeInitOnce would init once if the condition is meet. This should be used under condition's lock.
+func (e *rateLimitAction) unsafeInitOnce() {
+	// only when all the waiting workers have been resumed, the Action could be initialized again.
+	if e.cond.waitingWorkerCnt < 1 && e.cond.triggered {
+		e.cond.triggered = false
+		e.cond.once = sync.Once{}
 	}
 }
 
@@ -1385,11 +1474,15 @@ func (e *rateLimitAction) conditionUnlock() {
 }
 
 func (e *rateLimitAction) close() {
+	if !e.isEnabled() {
+		return
+	}
 	e.setEnabled(false)
 	e.conditionLock()
 	defer e.conditionUnlock()
 	e.cond.exceeded = false
-	e.cond.isTokenDestroyed = false
+	e.cond.isTokenDestroyed = true
+	e.cond.waitingWorkerCnt = 0
 	// broadcast the signal in order not to leak worker goroutine if it is being suspended
 	e.cond.Broadcast()
 }

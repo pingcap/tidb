@@ -220,6 +220,8 @@ func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) e
 		logutil.BgLogger().Debug(fmt.Sprintf("set %s var", scopeStr), zap.Uint64("conn", sessionVars.ConnectionID), zap.String("name", name), zap.String("val", valStr))
 	}
 
+	valStrToBoolStr := variable.BoolToOnOff(variable.TiDBOptOn(valStr))
+
 	switch name {
 	case variable.TiDBEnableStmtSummary:
 		return stmtsummary.StmtSummaryByDigestMap.SetEnabled(valStr, !v.IsGlobal)
@@ -234,7 +236,7 @@ func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) e
 	case variable.TiDBStmtSummaryMaxSQLLength:
 		return stmtsummary.StmtSummaryByDigestMap.SetMaxSQLLength(valStr, !v.IsGlobal)
 	case variable.TiDBCapturePlanBaseline:
-		variable.CapturePlanBaseline.Set(strings.ToLower(valStr), !v.IsGlobal)
+		variable.CapturePlanBaseline.Set(valStrToBoolStr, !v.IsGlobal)
 	}
 
 	return nil
