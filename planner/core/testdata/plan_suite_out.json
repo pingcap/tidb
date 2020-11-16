@@ -1327,7 +1327,7 @@
           "explain select /*+ TIDB_INLJ(t2) */ * from t t1, t t2 where t1.a = t2.a"
         ],
         "Plan": [
-          "IndexJoin_12 12500.00 root  inner join, inner:UnionScan_11, outer key:test.t.a, inner key:test.t.a",
+          "IndexJoin_12 12500.00 root  inner join, inner:UnionScan_11, outer key:test.t.a, inner key:test.t.a, equal cond:eq(test.t.a, test.t.a)",
           "├─UnionScan_15(Build) 10000.00 root  ",
           "│ └─TableReader_17 10000.00 root  data:TableFullScan_16",
           "│   └─TableFullScan_16 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
@@ -2220,6 +2220,32 @@
           "        └─IndexRangeScan_18 2.00 cop[tikv] table:t3, index:idx_abc(a, b, c) range: decided by [eq(test.t3.a, test.t2.a)], keep order:false, stats:pseudo"
         ],
         "Result": null
+      }
+    ]
+  },
+  {
+    "Name": "TestPreferRangeScanOff",
+    "Cases": [
+      {
+        "SQL": "select * from test where age=5;",
+        "Plan": [
+          "TableReader_7 2048.00 root  data:Selection_6",
+          "└─Selection_6 2048.00 cop[tikv]  eq(test.test.age, 5)",
+          "  └─TableFullScan_5 2048.00 cop[tikv] table:test keep order:false"
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestPreferRangeScanOn",
+    "Cases": [
+      {
+        "SQL": "select * from test where age=5;",
+        "Plan": [
+          "IndexLookUp_7 2048.00 root  ",
+          "├─IndexRangeScan_5(Build) 2048.00 cop[tikv] table:test, index:idx_age(age) range:[5,5], keep order:false",
+          "└─TableRowIDScan_6(Probe) 2048.00 cop[tikv] table:test keep order:false"
+        ]
       }
     ]
   }
