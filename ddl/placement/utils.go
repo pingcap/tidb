@@ -24,10 +24,6 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 )
 
-// DCLabelKey indicates the key of label which represents the dc for Store.
-// FIXME: currently we assumes "dc" is the dcLabel key in Store
-const DCLabelKey = "dc"
-
 func checkLabelConstraint(label string) (LabelConstraint, error) {
 	r := LabelConstraint{}
 

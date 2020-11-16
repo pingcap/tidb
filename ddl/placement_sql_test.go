@@ -415,7 +415,7 @@ PARTITION BY RANGE (c) (
 			name:     "insert into PARTITION p1 with local txnScope",
 			sql:      "insert into t1 (c) values (10)",
 			txnScope: "bj",
-			err:      fmt.Errorf(".*with non-global txnScope.*"),
+			err:      fmt.Errorf(".*don't have rule bundle with txnScope.*"),
 		},
 		{
 			name:     "insert into PARTITION p1 with global txnScope",
@@ -427,7 +427,7 @@ PARTITION BY RANGE (c) (
 			name:     "insert into PARTITION p2 with local txnScope",
 			sql:      "insert into t1 (c) values (15)",
 			txnScope: "bj",
-			err:      fmt.Errorf(".*leader placement policy is not clear.*"),
+			err:      fmt.Errorf(".*leader placement policy is not defined.*"),
 		},
 		{
 			name:     "insert into PARTITION p2 with global txnScope",
@@ -450,6 +450,7 @@ PARTITION BY RANGE (c) (
 		} else {
 			c.Assert(err, NotNil)
 			c.Assert(err.Error(), Matches, testcase.err.Error())
+			fmt.Println(err.Error())
 		}
 	}
 }

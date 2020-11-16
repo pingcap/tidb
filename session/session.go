@@ -43,6 +43,7 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
@@ -474,6 +475,11 @@ func (s *session) doCommitWithRetry(ctx context.Context) error {
 		// If the transaction is invalid, maybe it has already been rolled back by the client.
 		return nil
 	}
+	var err error
+	err = s.checkPlacementPolicyBeforeCommit()
+	if err != nil {
+		return err
+	}
 	txnSize := s.txn.Size()
 	isPessimistic := s.txn.IsPessimistic()
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
@@ -481,7 +487,7 @@ func (s *session) doCommitWithRetry(ctx context.Context) error {
 		defer span1.Finish()
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
-	err := s.doCommit(ctx)
+	err = s.doCommit(ctx)
 	if err != nil {
 		commitRetryLimit := s.sessionVars.RetryLimit
 		if !s.sessionVars.TxnCtx.CouldRetry {
@@ -541,31 +547,7 @@ func (s *session) CommitTxn(ctx context.Context) error {
 
 	var commitDetail *execdetails.CommitDetails
 	ctx = context.WithValue(ctx, execdetails.CommitDetailCtxKey, &commitDetail)
-	var err error
-	txnScope := s.GetSessionVars().TxnCtx.TxnScope
-	if txnScope != config.DefTxnScope {
-		is := infoschema.GetInfoSchema(s)
-		for physicalTableID := range s.GetSessionVars().TxnCtx.TableDeltaMap {
-			bundle, ok := is.BundleByName(placement.GroupID(physicalTableID))
-			if !ok {
-				err = fmt.Errorf("table or partition %v don't have rule bundle with non-global txnScope %v changing", physicalTableID, txnScope)
-				break
-			}
-			dcLocation, ok := placement.GetLeaderDCByBundle(bundle, placement.DCLabelKey)
-			if !ok {
-				err = fmt.Errorf("bundle %v 's leader placement policy is not clear", bundle.ID)
-				break
-			}
-			if dcLocation != txnScope {
-				err = fmt.Errorf("table or partition %v's leader location %v is out of txn_scope %v", physicalTableID, dcLocation, txnScope)
-				break
-			}
-		}
-		if err != nil {
-			goto EXIT
-		}
-	}
-	err = s.doCommitWithRetry(ctx)
+	err := s.doCommitWithRetry(ctx)
 	if commitDetail != nil {
 		s.sessionVars.StmtCtx.MergeExecDetails(nil, commitDetail)
 	}
@@ -575,8 +557,6 @@ func (s *session) CommitTxn(ctx context.Context) error {
 			failpoint.Return(err)
 		}
 	})
-
-EXIT:
 	s.sessionVars.TxnCtx.Cleanup()
 	return err
 }
@@ -2458,4 +2438,36 @@ func (s *session) recordOnTransactionExecution(err error, counter int, duration 
 			transactionDurationOptimisticCommit.Observe(duration)
 		}
 	}
+}
+
+func (s *session) checkPlacementPolicyBeforeCommit() error {
+	var err error
+	txnScope := s.GetSessionVars().TxnCtx.TxnScope
+	if txnScope == "" {
+		txnScope = config.DefTxnScope
+	}
+	if txnScope != config.DefTxnScope {
+		is := infoschema.GetInfoSchema(s)
+		for physicalTableID := range s.GetSessionVars().TxnCtx.TableDeltaMap {
+			bundle, ok := is.BundleByName(placement.GroupID(physicalTableID))
+			if !ok {
+				err = ddl.ErrInvalidPlacementPolicyCheck.GenWithStackByArgs(
+					fmt.Sprintf("table or partition %v don't have rule bundle with txnScope %v",
+						physicalTableID, txnScope))
+				break
+			}
+			dcLocation, ok := placement.GetLeaderDCByBundle(bundle, placement.DCLabelKey)
+			if !ok {
+				err = ddl.ErrInvalidPlacementPolicyCheck.GenWithStackByArgs(
+					fmt.Sprintf("bundle %v's leader placement policy is not defined", bundle.ID))
+				break
+			}
+			if dcLocation != txnScope {
+				err = ddl.ErrInvalidPlacementPolicyCheck.GenWithStackByArgs(
+					fmt.Sprintf("table or partition %v's leader location %v is out of txn_scope %v", physicalTableID, dcLocation, txnScope))
+				break
+			}
+		}
+	}
+	return err
 }
