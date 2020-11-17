@@ -126,23 +126,13 @@ Limit_10	1.00	root	offset:0, count:1
     └─TableScan_18	1.00	cop	table:t1, range:[-inf,+inf], keep order:true, desc
 set @@session.tidb_opt_insubq_to_join_and_agg=0;
 explain select 1 in (select c2 from t2) from t1;
-<<<<<<< HEAD
 id	count	task	operator info
 Projection_6	1999.00	root	5_aux_0
-└─HashLeftJoin_7	1999.00	root	CARTESIAN left outer semi join, inner:TableReader_12
+└─HashLeftJoin_7	1999.00	root	CARTESIAN left outer semi join, inner:TableReader_11, other cond:eq(1, test.t2.c2)
   ├─IndexReader_9	1999.00	root	index:IndexScan_8
   │ └─IndexScan_8	1999.00	cop	table:t1, index:c2, range:[NULL,+inf], keep order:false
-  └─TableReader_12	0.00	root	data:Selection_11
-    └─Selection_11	0.00	cop	eq(1, test.t2.c2)
-      └─TableScan_10	1985.00	cop	table:t2, range:[-inf,+inf], keep order:false
-=======
-id	estRows	task	access object	operator info
-HashJoin_7	1999.00	root		CARTESIAN left outer semi join, other cond:eq(1, test.t2.c2)
-├─TableReader_13(Build)	1985.00	root		data:TableFullScan_12
-│ └─TableFullScan_12	1985.00	cop[tikv]	table:t2	keep order:false
-└─TableReader_9(Probe)	1999.00	root		data:TableFullScan_8
-  └─TableFullScan_8	1999.00	cop[tikv]	table:t1	keep order:false
->>>>>>> 3ef3e54b5... planner: don't push down null sensitive join conditions (#19620)
+  └─TableReader_11	1985.00	root	data:TableScan_10
+    └─TableScan_10	1985.00	cop	table:t2, range:[-inf,+inf], keep order:false
 explain format="dot" select 1 in (select c2 from t2) from t1;
 dot contents
 
@@ -151,14 +141,9 @@ subgraph cluster6{
 node [style=filled, color=lightgrey]
 color=black
 label = "root"
-<<<<<<< HEAD
 "Projection_6" -> "HashLeftJoin_7"
 "HashLeftJoin_7" -> "IndexReader_9"
-"HashLeftJoin_7" -> "TableReader_12"
-=======
-"HashJoin_7" -> "TableReader_9"
-"HashJoin_7" -> "TableReader_13"
->>>>>>> 3ef3e54b5... planner: don't push down null sensitive join conditions (#19620)
+"HashLeftJoin_7" -> "TableReader_11"
 }
 subgraph cluster8{
 node [style=filled, color=lightgrey]
@@ -166,25 +151,14 @@ color=black
 label = "cop"
 "IndexScan_8"
 }
-<<<<<<< HEAD
-subgraph cluster11{
+subgraph cluster10{
 node [style=filled, color=lightgrey]
 color=black
 label = "cop"
-"Selection_11" -> "TableScan_10"
+"TableScan_10"
 }
 "IndexReader_9" -> "IndexScan_8"
-"TableReader_12" -> "Selection_11"
-=======
-subgraph cluster12{
-node [style=filled, color=lightgrey]
-color=black
-label = "cop"
-"TableFullScan_12"
-}
-"TableReader_9" -> "TableFullScan_8"
-"TableReader_13" -> "TableFullScan_12"
->>>>>>> 3ef3e54b5... planner: don't push down null sensitive join conditions (#19620)
+"TableReader_11" -> "TableScan_10"
 }
 
 explain select * from index_prune WHERE a = 1010010404050976781 AND b = 26467085526790 LIMIT 1;

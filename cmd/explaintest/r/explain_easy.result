@@ -233,42 +233,22 @@ StreamAgg_12	1.00	root	funcs:sum(col_0)
     └─IndexReader_17	10000.00	root	index:IndexScan_16
       └─IndexScan_16	10000.00	cop	table:t2, index:c1, range:[NULL,+inf], keep order:false, stats:pseudo
 explain select 1 in (select c2 from t2) from t1;
-<<<<<<< HEAD
 id	count	task	operator info
 Projection_6	10000.00	root	5_aux_0
-└─HashLeftJoin_7	10000.00	root	CARTESIAN left outer semi join, inner:TableReader_12
+└─HashLeftJoin_7	10000.00	root	CARTESIAN left outer semi join, inner:TableReader_11, other cond:eq(1, test.t2.c2)
   ├─IndexReader_9	10000.00	root	index:IndexScan_8
   │ └─IndexScan_8	10000.00	cop	table:t1, index:c2, range:[NULL,+inf], keep order:false, stats:pseudo
-  └─TableReader_12	10.00	root	data:Selection_11
-    └─Selection_11	10.00	cop	eq(1, test.t2.c2)
-      └─TableScan_10	10000.00	cop	table:t2, range:[-inf,+inf], keep order:false, stats:pseudo
+  └─TableReader_11	10000.00	root	data:TableScan_10
+    └─TableScan_10	10000.00	cop	table:t2, range:[-inf,+inf], keep order:false, stats:pseudo
 explain select sum(6 in (select c2 from t2)) from t1;
 id	count	task	operator info
 StreamAgg_12	1.00	root	funcs:sum(col_0)
-└─Projection_20	10000.00	root	cast(5_aux_0)
-  └─HashLeftJoin_19	10000.00	root	CARTESIAN left outer semi join, inner:TableReader_18
+└─Projection_19	10000.00	root	cast(5_aux_0)
+  └─HashLeftJoin_18	10000.00	root	CARTESIAN left outer semi join, inner:TableReader_17, other cond:eq(6, test.t2.c2)
     ├─IndexReader_15	10000.00	root	index:IndexScan_14
     │ └─IndexScan_14	10000.00	cop	table:t1, index:c2, range:[NULL,+inf], keep order:false, stats:pseudo
-    └─TableReader_18	10.00	root	data:Selection_17
-      └─Selection_17	10.00	cop	eq(6, test.t2.c2)
-        └─TableScan_16	10000.00	cop	table:t2, range:[-inf,+inf], keep order:false, stats:pseudo
-=======
-id	estRows	task	access object	operator info
-HashJoin_7	10000.00	root		CARTESIAN left outer semi join, other cond:eq(1, test.t2.c2)
-├─TableReader_13(Build)	10000.00	root		data:TableFullScan_12
-│ └─TableFullScan_12	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
-└─TableReader_9(Probe)	10000.00	root		data:TableFullScan_8
-  └─TableFullScan_8	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-explain select sum(6 in (select c2 from t2)) from t1;
-id	estRows	task	access object	operator info
-StreamAgg_12	1.00	root		funcs:sum(Column#10)->Column#8
-└─Projection_21	10000.00	root		cast(Column#7, decimal(65,0) BINARY)->Column#10
-  └─HashJoin_20	10000.00	root		CARTESIAN left outer semi join, other cond:eq(6, test.t2.c2)
-    ├─TableReader_19(Build)	10000.00	root		data:TableFullScan_18
-    │ └─TableFullScan_18	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
-    └─TableReader_15(Probe)	10000.00	root		data:TableFullScan_14
-      └─TableFullScan_14	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
->>>>>>> 3ef3e54b5... planner: don't push down null sensitive join conditions (#19620)
+    └─TableReader_17	10000.00	root	data:TableScan_16
+      └─TableScan_16	10000.00	cop	table:t2, range:[-inf,+inf], keep order:false, stats:pseudo
 explain format="dot" select sum(t1.c1 in (select c1 from t2)) from t1;
 dot contents
 
@@ -306,14 +286,9 @@ subgraph cluster6{
 node [style=filled, color=lightgrey]
 color=black
 label = "root"
-<<<<<<< HEAD
 "Projection_6" -> "HashLeftJoin_7"
 "HashLeftJoin_7" -> "IndexReader_9"
-"HashLeftJoin_7" -> "TableReader_12"
-=======
-"HashJoin_7" -> "TableReader_9"
-"HashJoin_7" -> "TableReader_13"
->>>>>>> 3ef3e54b5... planner: don't push down null sensitive join conditions (#19620)
+"HashLeftJoin_7" -> "TableReader_11"
 }
 subgraph cluster8{
 node [style=filled, color=lightgrey]
@@ -321,25 +296,14 @@ color=black
 label = "cop"
 "IndexScan_8"
 }
-<<<<<<< HEAD
-subgraph cluster11{
+subgraph cluster10{
 node [style=filled, color=lightgrey]
 color=black
 label = "cop"
-"Selection_11" -> "TableScan_10"
+"TableScan_10"
 }
 "IndexReader_9" -> "IndexScan_8"
-"TableReader_12" -> "Selection_11"
-=======
-subgraph cluster12{
-node [style=filled, color=lightgrey]
-color=black
-label = "cop"
-"TableFullScan_12"
-}
-"TableReader_9" -> "TableFullScan_8"
-"TableReader_13" -> "TableFullScan_12"
->>>>>>> 3ef3e54b5... planner: don't push down null sensitive join conditions (#19620)
+"TableReader_11" -> "TableScan_10"
 }
 
 drop table if exists t1, t2, t3, t4;

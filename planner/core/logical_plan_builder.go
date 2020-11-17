@@ -209,8 +209,6 @@ func (b *PlanBuilder) buildAggregation(ctx context.Context, p LogicalPlan, aggFu
 		newCol.RetType = newFunc.RetTp
 		schema4Agg.Append(newCol)
 	}
-<<<<<<< HEAD
-=======
 	hasGroupBy := len(gbyItems) > 0
 	for i, aggFunc := range plan4Agg.AggFuncs {
 		err := aggFunc.UpdateNotNullFlag4RetType(hasGroupBy, allAggsFirstRow)
@@ -219,8 +217,6 @@ func (b *PlanBuilder) buildAggregation(ctx context.Context, p LogicalPlan, aggFu
 		}
 		schema4Agg.Columns[i].RetType = aggFunc.RetTp
 	}
-	plan4Agg.names = names
->>>>>>> 3ef3e54b5... planner: don't push down null sensitive join conditions (#19620)
 	plan4Agg.SetChildren(p)
 	plan4Agg.GroupByItems = gbyItems
 	plan4Agg.SetSchema(schema4Agg)

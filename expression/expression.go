@@ -142,8 +142,6 @@ func IsEQCondFromIn(expr Expression) bool {
 	return len(cols) > 0
 }
 
-<<<<<<< HEAD
-=======
 // ExprNotNull checks if an expression is possible to be null.
 func ExprNotNull(expr Expression) bool {
 	if c, ok := expr.(*Constant); ok {
@@ -154,18 +152,6 @@ func ExprNotNull(expr Expression) bool {
 	return mysql.HasNotNullFlag(expr.GetType().Flag)
 }
 
-// HandleOverflowOnSelection handles Overflow errors when evaluating selection filters.
-// We should ignore overflow errors when evaluating selection conditions:
-//		INSERT INTO t VALUES ("999999999999999999");
-//		SELECT * FROM t WHERE v;
-func HandleOverflowOnSelection(sc *stmtctx.StatementContext, val int64, err error) (int64, error) {
-	if sc.InSelectStmt && err != nil && types.ErrOverflow.Equal(err) {
-		return -1, nil
-	}
-	return val, err
-}
-
->>>>>>> 3ef3e54b5... planner: don't push down null sensitive join conditions (#19620)
 // EvalBool evaluates expression list to a boolean value. The first returned value
 // indicates bool result of the expression list, the second returned value indicates
 // whether the result of the expression list is null, it can only be true when the
