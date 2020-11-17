@@ -628,6 +628,11 @@ func (s *testSuiteJoin1) TestUsing(c *C) {
 	tk.MustExec("insert into t1 (a) values(1)")
 	tk.MustQuery("select t1.*, t2.* from t1 join t1 t2 using(a)").Check(testkit.Rows("1 1"))
 	tk.MustQuery("select * from t1 join t1 t2 using(a)").Check(testkit.Rows("1"))
+
+	// For issue18992
+	tk.MustExec("drop table t")
+	tk.MustExec("CREATE TABLE t (   a varchar(55) NOT NULL,   b varchar(55) NOT NULL,   c int(11) DEFAULT NULL,   d int(11) DEFAULT NULL ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;")
+	tk.MustExec("update t t1 join t t2 using(a,b) set t1.c=t2.d;")
 }
 
 func (s *testSuiteJoin1) TestNaturalJoin(c *C) {
