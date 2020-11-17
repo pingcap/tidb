@@ -164,11 +164,13 @@ type HashAggExec struct {
 	partialOutputChs []chan *HashAggIntermData
 	inputCh          chan *HashAggInput
 	partialInputChs  []chan *chunk.Chunk
-	partialWorkers   []HashAggPartialWorker
-	finalWorkers     []HashAggFinalWorker
+	partialWorkers   []*HashAggPartialWorker
+	finalWorkers     []*HashAggFinalWorker
 	defaultVal       *chunk.Chunk
 	childResult      *chunk.Chunk
 
+	readPartialWorkers []*HashAggPartialWorker
+	readFinalWorkers   []*HashAggFinalWorker
 	// isChildReturnEmpty indicates whether the child executor only returns an empty input.
 	isChildReturnEmpty bool
 	// After we support parallel execution for aggregation functions with distinct,
@@ -290,14 +292,15 @@ func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) {
 		e.partialOutputChs[i] = make(chan *HashAggIntermData, partialConcurrency)
 	}
 
-	e.partialWorkers = make([]HashAggPartialWorker, partialConcurrency)
-	e.finalWorkers = make([]HashAggFinalWorker, finalConcurrency)
-
+	e.partialWorkers = make([]*HashAggPartialWorker, partialConcurrency)
+	e.finalWorkers = make([]*HashAggFinalWorker, finalConcurrency)
+	e.readPartialWorkers = make([]*HashAggPartialWorker, partialConcurrency)
+	e.readFinalWorkers = make([]*HashAggFinalWorker, finalConcurrency)
 	e.initRuntimeStats()
 
 	// Init partial workers.
 	for i := 0; i < partialConcurrency; i++ {
-		w := HashAggPartialWorker{
+		w := &HashAggPartialWorker{
 			baseHashAggWorker: newBaseHashAggWorker(e.ctx, e.finishCh, e.PartialAggFuncs, e.maxChunkSize, e.stats),
 			inputCh:           e.partialInputChs[i],
 			outputChs:         e.partialOutputChs,
@@ -311,7 +314,7 @@ func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) {
 		}
 		e.memTracker.Consume(w.chk.MemoryUsage())
 		e.partialWorkers[i] = w
-
+		e.readPartialWorkers[i] = w
 		input := &HashAggInput{
 			chk:        newFirstChunk(e.children[0]),
 			giveBackCh: w.inputCh,
@@ -322,7 +325,7 @@ func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) {
 
 	// Init final workers.
 	for i := 0; i < finalConcurrency; i++ {
-		e.finalWorkers[i] = HashAggFinalWorker{
+		w := &HashAggFinalWorker{
 			baseHashAggWorker:   newBaseHashAggWorker(e.ctx, e.finishCh, e.FinalAggFuncs, e.maxChunkSize, e.stats),
 			partialResultMap:    make(aggPartialResultMapper),
 			groupSet:            set.NewStringSet(),
@@ -333,6 +336,8 @@ func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) {
 			mutableRow:          chunk.MutRowFromTypes(retTypes(e)),
 			groupKeys:           make([][]byte, 0, 8),
 		}
+		e.finalWorkers[i] = w
+		e.readFinalWorkers[i] = w
 		e.finalWorkers[i].finalResultHolderCh <- newFirstChunk(e)
 	}
 }
@@ -699,8 +704,8 @@ func (e *HashAggExec) prepare4ParallelExec(ctx context.Context) {
 		e.waitPartialWorkerAndCloseOutputChs(partialWorkerWaitGroup)
 		if e.stats != nil {
 			atomic.AddInt64(&e.stats.PartialStats.WallTime, int64(time.Since(partialStart)))
-			for i := range e.partialWorkers {
-				atomic.AddInt64(&e.stats.PartialStats.WorkerTime[i], e.partialWorkers[i].aggWorkerStats)
+			for i := range e.readPartialWorkers {
+				atomic.AddInt64(&e.stats.PartialStats.WorkerTime[i], e.readPartialWorkers[i].aggWorkerStats)
 			}
 		}
 	}()
@@ -714,8 +719,8 @@ func (e *HashAggExec) prepare4ParallelExec(ctx context.Context) {
 		e.waitFinalWorkerAndCloseFinalOutput(finalWorkerWaitGroup)
 		if e.stats != nil {
 			atomic.AddInt64(&e.stats.FinalStats.WallTime, int64(time.Since(finalStart)))
-			for i := range e.finalWorkers {
-				atomic.AddInt64(&e.stats.FinalStats.WorkerTime[i], e.finalWorkers[i].aggWorkerStats)
+			for i := range e.readFinalWorkers {
+				atomic.AddInt64(&e.stats.FinalStats.WorkerTime[i], e.readFinalWorkers[i].aggWorkerStats)
 			}
 		}
 	}()

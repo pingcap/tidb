@@ -6521,7 +6521,7 @@ func (s *testSerialSuite1) TestHashAggRuntimeStats(c *C) {
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1 (a int, b int)")
 	tk.MustExec("insert into t1 values (1,2),(2,3),(3,4)")
-	sql := "explain analyze SELECT /*+ HASH_AGG() */ count(*) FROM t1 WHERE a > 10;"
+	sql := "explain analyze SELECT /*+ HASH_AGG() */ count(*) FROM t1 WHERE a < 10;"
 	rows := tk.MustQuery(sql).Rows()
 	c.Assert(len(rows), Equals, 5)
 	explain := fmt.Sprintf("%v", rows[0])
