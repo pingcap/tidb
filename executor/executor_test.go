@@ -77,6 +77,7 @@ import (
 	"github.com/pingcap/tidb/util/testutil"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
+	"go.uber.org/zap"
 	"google.golang.org/grpc"
 )
 
@@ -5555,16 +5556,16 @@ func (s *testSuite1) TestAlterDefaultValue(c *C) {
 
 type testClusterTableSuite struct {
 	testSuiteWithCliBase
-	rpcserver  *grpc.Server
-	listenAddr string
+	rpcserver *grpc.Server
+	port      uint
 }
 
 func (s *testClusterTableSuite) SetUpSuite(c *C) {
 	s.testSuiteWithCliBase.SetUpSuite(c)
-	s.rpcserver, s.listenAddr = s.setUpRPCService(c, ":0")
+	s.rpcserver, s.port = s.setUpRPCService(c, ":0")
 }
 
-func (s *testClusterTableSuite) setUpRPCService(c *C, addr string) (*grpc.Server, string) {
+func (s *testClusterTableSuite) setUpRPCService(c *C, addr string) (*grpc.Server, uint) {
 	sm := &mockSessionManager1{}
 	sm.PS = append(sm.PS, &util.ProcessInfo{
 		ID:      1,
@@ -5584,7 +5585,8 @@ func (s *testClusterTableSuite) setUpRPCService(c *C, addr string) (*grpc.Server
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.Status.StatusPort = uint(port)
 	})
-	return srv, addr
+	logutil.BgLogger().Info("[testClusterTableSuite] set up RPC service", zap.String("addr", addr), zap.Uint("port", config.GetGlobalConfig().Status.StatusPort))
+	return srv, uint(port)
 }
 func (s *testClusterTableSuite) TearDownSuite(c *C) {
 	if s.rpcserver != nil {
@@ -5706,6 +5708,9 @@ select 7;`
 		}
 		sql := fmt.Sprintf(cas.sql, "slow_query")
 		tk.MustQuery(sql).Check(testutil.RowsWithSep("|", cas.result...))
+		if config.GetGlobalConfig().Status.StatusPort != s.port {
+			logutil.BgLogger().Info("[testClusterTableSuite] the global config was changed, must be something wrong", zap.Uint("listen-port", s.port), zap.Uint("config-port", config.GetGlobalConfig().Status.StatusPort))
+		}
 		sql = fmt.Sprintf(cas.sql, "cluster_slow_query")
 		tk.MustQuery(sql).Check(testutil.RowsWithSep("|", cas.result...))
 	}
