@@ -444,7 +444,6 @@ type PlanBuilder struct {
 
 	// SelectLock need this information to locate the lock on partitions.
 	partitionedTable []table.PartitionedTable
-
 	// buildingViewStack is used to check whether there is a recursive view.
 	buildingViewStack set.StringSet
 	// renamingViewName is the name of the view which is being renamed.
