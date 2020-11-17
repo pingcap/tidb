@@ -632,32 +632,6 @@ func findAutoIncrementColumn(t table.Table) (col *table.Column, offsetInRow int,
 	return nil, -1, false
 }
 
-func (e *InsertValues) lazyAdjustAutoIncrementDatumInRetry(ctx context.Context, rows [][]types.Datum, colIdx int) ([][]types.Datum, error) {
-	// Get the autoIncrement column.
-	col := e.Table.Cols()[colIdx]
-	// Consider the colIdx of autoIncrement in row are the same.
-	length := len(rows)
-	for i := 0; i < length; i++ {
-		autoDatum := rows[i][colIdx]
-
-		// autoID can be found in RetryInfo.
-		retryInfo := e.ctx.GetSessionVars().RetryInfo
-		if retryInfo.Retrying {
-			id, err := retryInfo.GetCurrAutoIncrementID()
-			if err != nil {
-				return nil, err
-			}
-			autoDatum.SetAutoID(id, col.Flag)
-
-			if autoDatum, err = col.HandleBadNull(autoDatum, e.ctx.GetSessionVars().StmtCtx); err != nil {
-				return nil, err
-			}
-			rows[i][colIdx] = autoDatum
-		}
-	}
-	return rows, nil
-}
-
 func setDatumAutoIDAndCast(ctx sessionctx.Context, d *types.Datum, id int64, col *table.Column) error {
 	d.SetAutoID(id, col.Flag)
 	var err error
