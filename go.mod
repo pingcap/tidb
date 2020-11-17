@@ -8,6 +8,7 @@ require (
 	github.com/cznic/mathutil v0.0.0-20181122101859-297441e03548
 	github.com/cznic/sortutil v0.0.0-20181122101858-f5f958428db8
 	github.com/danjacques/gofslock v0.0.0-20191023191349-0a45f885bc37
+	github.com/dgraph-io/badger v1.6.2 // indirect
 	github.com/dgraph-io/ristretto v0.0.2
 	github.com/dgryski/go-farm v0.0.0-20190423205320-6a90982ecee2
 	github.com/go-sql-driver/mysql v1.5.0
@@ -24,8 +25,10 @@ require (
 	github.com/klauspost/cpuid v1.2.1
 	github.com/ngaut/pools v0.0.0-20180318154953-b7bc8c42aac7
 	github.com/ngaut/sync2 v0.0.0-20141008032647-7a24ed77b2ef
+	github.com/ngaut/unistore v0.0.0-20201113064408-907e3fcf8e7d
 	github.com/opentracing/basictracer-go v1.0.0
 	github.com/opentracing/opentracing-go v1.1.0
+	github.com/pingcap/badger v1.5.0 // indirect
 	github.com/pingcap/br v0.0.0-20200921112226-ee2e962f5e4b
 	github.com/pingcap/check v0.0.0-20200212061837-5e12011dc712
 	github.com/pingcap/errors v0.11.5-0.20200917111840-a15ef68f753d
