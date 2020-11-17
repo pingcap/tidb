@@ -1425,7 +1425,7 @@ func (s *testRangerSuite) TestIndexRangeForYear(c *C) {
 		},
 		{
 			exprStr:     "a >= 70 and a <= 69",
-			accessConds: "[ge(test.t.a, 1970) le(test.t.a, 1969)]",
+			accessConds: "[ge(test.t.a, 1970) le(test.t.a, 2069)]",
 			filterConds: "[]",
 			resultStr:   "[[1970,2069]]",
 		},
