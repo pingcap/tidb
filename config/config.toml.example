@@ -58,9 +58,6 @@ tmp-storage-quota = -1
 # Valid options: ["log", "cancel"]
 oom-action = "cancel"
 
-# Enable coprocessor streaming.
-enable-streaming = false
-
 # Enable batch commit for the DMLs.
 enable-batch-dml = false
 
