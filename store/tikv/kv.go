@@ -255,14 +255,14 @@ func (s *tikvStore) EtcdAddrs() ([]string, error) {
 	}
 
 	ctx := context.Background()
-	bo := NewBackoffer(ctx, GetMemberInfoBackoff)
+	bo := NewBackoffer(ctx, GetAllMembersBackoff)
 	etcdAddrs := make([]string, 0)
 	pdClient := s.pdClient
 	if pdClient == nil {
 		return nil, errors.New("Etcd client not found")
 	}
 	for {
-		members, err := pdClient.GetMemberInfo(ctx)
+		members, err := pdClient.GetAllMembers(ctx)
 		if err != nil {
 			err := bo.Backoff(BoRegionMiss, err)
 			if err != nil {
