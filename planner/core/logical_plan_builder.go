@@ -2827,7 +2827,7 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 		}
 	}
 
-	err = b.checkNamedWindowSpecs(ctx, p, sel.WindowSpecs)
+	err = b.checkNamedWindowSpecs(ctx, p, sel.WindowSpecs, windowAggMap)
 	if err != nil {
 		return nil, err
 	}
@@ -4544,9 +4544,9 @@ func (b *PlanBuilder) checkOriginWindowSpecs(funcs []*ast.WindowFuncExpr, orderB
 }
 
 // checkNamedWindowSpecs checks the validation for named window specifications.
-func (b *PlanBuilder) checkNamedWindowSpecs(ctx context.Context, p LogicalPlan, specs []ast.WindowSpec) error {
+func (b *PlanBuilder) checkNamedWindowSpecs(ctx context.Context, p LogicalPlan, specs []ast.WindowSpec, aggMap map[*ast.AggregateFuncExpr]int) error {
 	for _, spec := range specs {
-		_, _, orderBy, _, err := b.buildProjectionForWindow(ctx, p, &spec, nil, nil)
+		_, _, orderBy, _, err := b.buildProjectionForWindow(ctx, p, &spec, nil, aggMap)
 		if err != nil {
 			return err
 		}
