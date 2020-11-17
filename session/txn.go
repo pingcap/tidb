@@ -439,6 +439,10 @@ func (st *TxnState) KeysNeedToLock() ([]kv.Key, error) {
 		}
 		// If the key is already locked, it will be deduplicated in LockKeys method later.
 		// The statement MemBuffer will be reused, so we must copy the key here.
+		if st.stmtBuf.GetFlags(context.Background(), k).HasNeedLocked() {
+			logutil.BgLogger().Info("flagNeedLocked on",
+				zap.String("", k.String()))
+		}
 		keys = append(keys, append([]byte{}, k...))
 		return nil
 	}); err != nil {
