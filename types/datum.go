@@ -987,16 +987,16 @@ func ProduceStrWithSpecifiedTp(s string, tp *FieldType, sc *stmtctx.StatementCon
 			truncateLen := flen
 			for _, v := range s[truncateLen:] {
 				flen++
-				if v == '\r' || v == '\n' || v == '\t' || v == ' ' {
+				if (v == '\r' || v == '\n' || v == '\t' || v == ' ') && !IsBinaryStr(tp) {
 					if flen == len(s) && tp.Tp == mysql.TypeVarchar {
-						sc.AppendWarning(ErrDataTooLong.GenWithStack("Data Too Long, field len %d, data len %d", flen, len(s)))
+						sc.AppendWarning(ErrDataTooLong.GenWithStack("Data Too Long, field len %d, data len %d", truncateLen, len(s)))
 					}
 					continue
 				}
-				err = ErrDataTooLong.GenWithStack("Data Too Long, field len %d, data len %d", flen, len(s))
+				err = ErrDataTooLong.GenWithStack("Data Too Long, field len %d, data len %d", truncateLen, len(s))
 				break
 			}
-			s = truncateStr(s, truncateLen)
+			s = truncateStr(s, flen)
 		} else if tp.Tp == mysql.TypeString && IsBinaryStr(tp) && len(s) < flen && padZero {
 			padding := make([]byte, flen-len(s))
 			s = string(append([]byte(s), padding...))
