@@ -313,6 +313,7 @@ func WriteInsertInCsv(pCtx context.Context, tblIR TableDataIR, w storage.Writer,
 
 	log.Debug("dumping table",
 		zap.String("table", tblIR.TableName()),
+		zap.Int("chunkIndex", tblIR.ChunkIndex()),
 		zap.Int("record counts", counter))
 	if bf.Len() > 0 {
 		wp.input <- bf

@@ -84,7 +84,9 @@ func (s *testDumpSuite) TestDumpDatabase(c *C) {
 
 	mockWriter := newMockWriter()
 	connectPool := newMockConnectPool(c, db)
-	err = dumpDatabases(context.Background(), mockConfig, connectPool, mockWriter)
+	err = dumpDatabases(context.Background(), mockConfig, connectPool, mockWriter, func(conn *sql.Conn) (*sql.Conn, error) {
+		return conn, nil
+	})
 	c.Assert(err, IsNil)
 
 	c.Assert(len(mockWriter.databaseMeta), Equals, 1)
@@ -203,6 +205,7 @@ func (s *testDumpSuite) TestDumpDatabaseWithRetry(c *C) {
 	mockConfig.SortByPk = false
 	mockConfig.Databases = []string{"test"}
 	mockConfig.Tables = NewDatabaseTables().AppendTables("test", "t")
+	mockConfig.Consistency = consistencyTypeNone
 	db, mock, err := sqlmock.New()
 	c.Assert(err, IsNil)
 
@@ -222,7 +225,9 @@ func (s *testDumpSuite) TestDumpDatabaseWithRetry(c *C) {
 
 	mockWriter := newMockWriter()
 	connectPool := newMockConnectPool(c, db)
-	err = dumpDatabases(context.Background(), mockConfig, connectPool, mockWriter)
+	err = dumpDatabases(context.Background(), mockConfig, connectPool, mockWriter, func(conn *sql.Conn) (*sql.Conn, error) {
+		return conn, nil
+	})
 	c.Assert(err, IsNil)
 
 	c.Assert(len(mockWriter.databaseMeta), Equals, 1)

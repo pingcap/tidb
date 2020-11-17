@@ -33,13 +33,13 @@ func (s *testConsistencySuite) TestConsistencyController(c *C) {
 	conf := DefaultConfig()
 	resultOk := sqlmock.NewResult(0, 1)
 
-	conf.Consistency = "none"
+	conf.Consistency = consistencyTypeNone
 	ctrl, _ := NewConsistencyController(ctx, conf, db)
 	_, ok := ctrl.(*ConsistencyNone)
 	c.Assert(ok, IsTrue)
 	s.assertLifetimeErrNil(ctx, ctrl, c)
 
-	conf.Consistency = "flush"
+	conf.Consistency = consistencyTypeFlush
 	mock.ExpectExec("FLUSH TABLES WITH READ LOCK").WillReturnResult(resultOk)
 	mock.ExpectExec("UNLOCK TABLES").WillReturnResult(resultOk)
 	ctrl, _ = NewConsistencyController(ctx, conf, db)
@@ -50,14 +50,14 @@ func (s *testConsistencySuite) TestConsistencyController(c *C) {
 		c.Fatalf(err.Error())
 	}
 
-	conf.Consistency = "snapshot"
+	conf.Consistency = consistencyTypeSnapshot
 	conf.ServerInfo.ServerType = ServerTypeTiDB
 	ctrl, _ = NewConsistencyController(ctx, conf, db)
 	_, ok = ctrl.(*ConsistencyNone)
 	c.Assert(ok, IsTrue)
 	s.assertLifetimeErrNil(ctx, ctrl, c)
 
-	conf.Consistency = "lock"
+	conf.Consistency = consistencyTypeLock
 	conf.Tables = NewDatabaseTables().
 		AppendTables("db1", "t1", "t2", "t3").
 		AppendViews("db2", "t4")
@@ -80,14 +80,14 @@ func (s *testConsistencySuite) TestResolveAutoConsistency(c *C) {
 		serverTp            ServerType
 		resolvedConsistency string
 	}{
-		{ServerTypeTiDB, "snapshot"},
-		{ServerTypeMySQL, "flush"},
-		{ServerTypeMariaDB, "flush"},
-		{ServerTypeUnknown, "none"},
+		{ServerTypeTiDB, consistencyTypeSnapshot},
+		{ServerTypeMySQL, consistencyTypeFlush},
+		{ServerTypeMariaDB, consistencyTypeFlush},
+		{ServerTypeUnknown, consistencyTypeNone},
 	}
 
 	for _, x := range cases {
-		conf.Consistency = "auto"
+		conf.Consistency = consistencyTypeAuto
 		conf.ServerInfo.ServerType = x.serverTp
 		resolveAutoConsistency(conf)
 		cmt := Commentf("server type %s", x.serverTp.String())
@@ -109,20 +109,20 @@ func (s *testConsistencySuite) TestConsistencyControllerError(c *C) {
 	c.Assert(strings.Contains(err.Error(), "invalid consistency option"), IsTrue)
 
 	// snapshot consistency is only available in TiDB
-	conf.Consistency = "snapshot"
+	conf.Consistency = consistencyTypeSnapshot
 	conf.ServerInfo.ServerType = ServerTypeUnknown
 	_, err = NewConsistencyController(ctx, conf, db)
 	c.Assert(err, NotNil)
 
 	// flush consistency is unavailable in TiDB
-	conf.Consistency = "flush"
+	conf.Consistency = consistencyTypeFlush
 	conf.ServerInfo.ServerType = ServerTypeTiDB
 	ctrl, _ := NewConsistencyController(ctx, conf, db)
 	err = ctrl.Setup(ctx)
 	c.Assert(err, NotNil)
 
 	// lock table fail
-	conf.Consistency = "lock"
+	conf.Consistency = consistencyTypeLock
 	conf.Tables = NewDatabaseTables().AppendTables("db", "t")
 	mock.ExpectExec("LOCK TABLE").WillReturnError(errors.New(""))
 	ctrl, _ = NewConsistencyController(ctx, conf, db)
