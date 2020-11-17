@@ -2160,6 +2160,7 @@ const (
 	AlterTableRenameTable
 	AlterTableAlterColumn
 	AlterTableLock
+	AlterTableWriteable
 	AlterTableAlgorithm
 	AlterTableRenameIndex
 	AlterTableForce
@@ -2291,6 +2292,7 @@ type AlterTableSpec struct {
 	Visibility      IndexVisibility
 	TiFlashReplica  *TiFlashReplicaSpec
 	PlacementSpecs  []*PlacementSpec
+	Writeable       bool
 }
 
 type TiFlashReplicaSpec struct {
@@ -2497,6 +2499,13 @@ func (n *AlterTableSpec) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord("LOCK ")
 		ctx.WritePlain("= ")
 		ctx.WriteKeyWord(n.LockType.String())
+	case AlterTableWriteable:
+		ctx.WriteKeyWord("READ ")
+		if n.Writeable {
+			ctx.WriteKeyWord("WRITE")
+		} else {
+			ctx.WriteKeyWord("ONLY")
+		}
 	case AlterTableOrderByColumns:
 		ctx.WriteKeyWord("ORDER BY ")
 		for i, alterOrderItem := range n.OrderByList {
