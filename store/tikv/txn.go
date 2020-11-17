@@ -464,7 +464,7 @@ func (txn *tikvTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput
 				keysStr.WriteString(kv.Key(k).String())
 				keysStr.WriteString(", ")
 			}
-			logutil.BgLogger().Info("lock keys on TiKV",
+			logutil.Logger(ctx).Info("lock keys on TiKV",
 				zap.Uint64("txnStartTS", txn.startTS),
 				zap.String("", keysStr.String()))
 		}
