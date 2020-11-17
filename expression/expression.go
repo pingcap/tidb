@@ -1227,9 +1227,6 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 // The `wrapForInt` indicates whether we need to wrapIsTrue for non-logical Expression with int type.
 // TODO: remove this function. ScalarFunction should be newed in one place.
 func wrapWithIsTrue(ctx sessionctx.Context, keepNull bool, arg Expression, wrapForInt bool) (Expression, error) {
-	if arg.GetType().Tp == mysql.TypeNull {
-		return NewNull(), nil
-	}
 	if arg.GetType().EvalType() == types.ETInt {
 		if !wrapForInt {
 			return arg, nil
