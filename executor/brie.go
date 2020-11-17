@@ -93,9 +93,9 @@ func (p *brieTaskProgress) Close() {
 	p.lock.Unlock()
 }
 
-// GetFraction returns a percentage whose range is [0, 1]
+// GetFraction returns a real number whose range is [0, 100]
 func (p *brieTaskProgress) GetFraction() float64 {
-	return float64(p.current) / float64(p.total)
+	return float64(100*p.current) / float64(p.total)
 }
 
 type brieTaskInfo struct {
@@ -297,7 +297,7 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 		importGlobalCfg.TiDB.Port = int(tidbCfg.Port)
 		importGlobalCfg.TiDB.PdAddr = strings.Split(tidbCfg.Path, ",")[0]
 
-		// TODO(lance6716):test StatusPort is not used
+		// StatusPort is not used
 		//importCfg.TiDB.StatusPort = int(tidbCfg.Status.StatusPort)
 		importCfg.TikvImporter.Backend = importcfg.BackendLocal
 		importCfg.TikvImporter.SortedKVDir = filepath.Join(tidbCfg.TempStoragePath, defaultImportID)
@@ -542,8 +542,8 @@ func (e *BRIEExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	case ast.BRIEKindRestore:
 		err = handleBRIEError(task.RunRestore(taskCtx, glue, "Restore", e.restoreCfg), ErrBRIERestoreFailed)
 	case ast.BRIEKindImport:
-		// TODO(lance6716): use taskID to build a unique checkpoint/sort-kv-dir, and pass taskCtx
 		l := lightning.New(e.importGlobalCfg)
+		e.importTaskCfg.TikvImporter.SortedKVDir += string(taskID)
 		err2 := handleBRIEError(l.RunOnce(taskCtx, e.importTaskCfg, glue, logutil.Logger(ctx)), ErrBRIEImportFailed)
 		if err2 != nil {
 			e.info.lock.Lock()
@@ -554,8 +554,8 @@ func (e *BRIEExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			item.progress.lock.Unlock()
 		} else {
 			item.progress.lock.Lock()
-			// TODO(lance6717): update progress
 			item.progress.cmd = "Finish"
+			item.progress.current = item.progress.total
 			item.progress.lock.Unlock()
 		}
 	default:
@@ -666,15 +666,15 @@ func (gs *tidbGlueSession) Execute(ctx context.Context, sql string) error {
 	return err
 }
 
-func (gs *tidbGlueSession) ExecuteWithLog(ctx context.Context, sql string, purpose string, logger *zap.Logger) error {
-	return common.Retry(purpose, importlog.Logger{Logger: logger}, func() error {
+func (gs *tidbGlueSession) ExecuteWithLog(ctx context.Context, sql string, purpose string, logger importlog.Logger) error {
+	return common.Retry(purpose, logger, func() error {
 		return gs.Execute(ctx, sql)
 	})
 }
 
-func (gs *tidbGlueSession) ObtainStringWithLog(ctx context.Context, sql string, purpose string, logger *zap.Logger) (string, error) {
+func (gs *tidbGlueSession) ObtainStringWithLog(ctx context.Context, sql string, purpose string, logger importlog.Logger) (string, error) {
 	var result string
-	err := common.Retry(purpose, importlog.Logger{Logger: logger}, func() error {
+	err := common.Retry(purpose, logger, func() error {
 		rs, err := gs.se.(sqlexec.SQLExecutor).Execute(ctx, sql)
 		if err != nil {
 			return err
