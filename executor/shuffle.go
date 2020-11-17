@@ -164,11 +164,18 @@ func (e *ShuffleExec) Close() error {
 		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, runtimeStats)
 	}
 
-	for _, r := range e.dataSources {
-		if err := r.Close(); err != nil {
+	// close dataSources
+	errArr := make([]error, len(e.dataSources))
+	for i, dataSource := range e.dataSources {
+		errArr[i] = dataSource.Close()
+	}
+	// check close error
+	for _, err := range errArr {
+		if err != nil {
 			return errors.Trace(err)
 		}
 	}
+	// close baseExecutor
 	err := e.baseExecutor.Close()
 	return errors.Trace(err)
 }
