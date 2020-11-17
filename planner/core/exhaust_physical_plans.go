@@ -1781,6 +1781,7 @@ func (lt *LogicalTopN) getPhysTopN(prop *property.PhysicalProperty) []PhysicalPl
 			Count:   lt.Count,
 			Offset:  lt.Offset,
 		}.Init(lt.ctx, lt.stats, lt.blockOffset, resultProp)
+		topN.SetSchema(lt.Schema())
 		ret = append(ret, topN)
 	}
 	return ret
@@ -1812,6 +1813,7 @@ func (lt *LogicalTopN) getPhysLimits(prop *property.PhysicalProperty) []Physical
 			Count:  lt.Count,
 			Offset: lt.Offset,
 		}.Init(lt.ctx, lt.stats, lt.blockOffset, resultProp)
+		limit.SetSchema(lt.Schema())
 		ret = append(ret, limit)
 	}
 	return ret

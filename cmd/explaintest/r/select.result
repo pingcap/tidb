@@ -313,13 +313,12 @@ count(a)
 1
 explain select count(a) from t where b>0 group by a, b order by a limit 1;
 id	estRows	task	access object	operator info
-Projection_9	1.00	root		Column#5
-└─Limit_15	1.00	root		offset:0, count:1
-  └─StreamAgg_44	1.00	root		group by:test.t.a, test.t.b, funcs:count(Column#16)->Column#5, funcs:firstrow(test.t.a)->test.t.a
-    └─IndexReader_45	1.00	root		index:StreamAgg_40
-      └─StreamAgg_40	1.00	cop[tikv]		group by:test.t.a, test.t.b, funcs:count(test.t.a)->Column#16
-        └─Selection_43	1.25	cop[tikv]		gt(test.t.b, 0)
-          └─IndexFullScan_42	3.75	cop[tikv]	table:t, index:idx(a, b, c)	keep order:true, stats:pseudo
+Limit_15	1.00	root		offset:0, count:1
+└─StreamAgg_44	1.00	root		group by:test.t.a, test.t.b, funcs:count(Column#16)->Column#5, funcs:firstrow(test.t.a)->test.t.a
+  └─IndexReader_45	1.00	root		index:StreamAgg_40
+    └─StreamAgg_40	1.00	cop[tikv]		group by:test.t.a, test.t.b, funcs:count(test.t.a)->Column#16
+      └─Selection_43	1.25	cop[tikv]		gt(test.t.b, 0)
+        └─IndexFullScan_42	3.75	cop[tikv]	table:t, index:idx(a, b, c)	keep order:true, stats:pseudo
 select count(a) from t where b>0 group by a, b order by a limit 1;
 count(a)
 3

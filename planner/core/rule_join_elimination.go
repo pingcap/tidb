@@ -211,6 +211,11 @@ func (o *outerJoinEliminator) doOptimize(p LogicalPlan, aggCols []*expression.Co
 		for _, byItem := range x.ByItems {
 			parentCols = append(parentCols, expression.ExtractColumns(byItem.Expr)...)
 		}
+	case *LogicalTopN:
+		parentCols = append(parentCols[:0], p.Schema().Columns...)
+		for _, byItem := range x.ByItems {
+			parentCols = append(parentCols, expression.ExtractColumns(byItem.Expr)...)
+		}
 	default:
 		parentCols = append(parentCols[:0], p.Schema().Columns...)
 	}
