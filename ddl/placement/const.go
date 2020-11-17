@@ -30,5 +30,5 @@ const (
 )
 
 // DCLabelKey indicates the key of label which represents the dc for Store.
-// FIXME: currently we assumes "dc" is the dcLabel key in Store
-const DCLabelKey = "dc"
+// FIXME: currently we assumes "zone" is the dcLabel key in Store
+const DCLabelKey = "zone"
