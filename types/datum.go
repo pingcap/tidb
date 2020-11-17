@@ -966,11 +966,11 @@ func ProduceStrWithSpecifiedTp(s string, tp *FieldType, sc *stmtctx.StatementCon
 				var runeCount int
 				var truncateLen int
 				for i, v := range s {
-					if runeCount >= flen {
-						if runeCount == flen {
-							truncateLen = i
-						}
-						runeCount++
+					if runeCount == flen {
+						truncateLen = i
+					}
+					runeCount++
+					if runeCount > flen {
 						if v == '\r' || v == '\n' || v == '\t' || v == ' ' {
 							if runeCount == characterLen && tp.Tp == mysql.TypeVarchar {
 								sc.AppendWarning(ErrDataTooLong.GenWithStack("Data Too Long, field len %d, data len %d", flen, characterLen))
@@ -980,7 +980,6 @@ func ProduceStrWithSpecifiedTp(s string, tp *FieldType, sc *stmtctx.StatementCon
 						err = ErrDataTooLong.GenWithStack("Data Too Long, field len %d, data len %d", flen, characterLen)
 						break
 					}
-					runeCount++
 				}
 				s = truncateStr(s, truncateLen)
 			}
