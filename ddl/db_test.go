@@ -4939,5 +4939,6 @@ func (s *testDBSuite4) TestGeneratedColumnWindowFunction(c *C) {
 	tk.MustExec("use test_db")
 	tk.MustExec("DROP TABLE IF EXISTS t")
 	tk.MustGetErrCode("CREATE TABLE t (a INT , b INT as (ROW_NUMBER() OVER (ORDER BY a)))", errno.ErrWindowInvalidWindowFuncUse)
-	tk.MustGetErrCode("CREATE TABLE t (a INT , index idx ((ROW_NUMBER() OVER (ORDER BY a))))", errno.ErrWindowInvalidWindowFuncUse)
+	tk.MustExec("CREATE TABLE t (a INT)")
+	tk.MustGetErrCode("ALTER TABLE t ADD index idx ((ROW_NUMBER() OVER (ORDER BY a)))", errno.ErrWindowInvalidWindowFuncUse)
 }
