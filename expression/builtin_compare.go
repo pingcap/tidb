@@ -14,7 +14,6 @@
 package expression
 
 import (
-	"fmt"
 	"math"
 
 	"github.com/pingcap/parser/ast"
@@ -1427,12 +1426,6 @@ func (c *compareFunctionClass) refineArgsByUnsignedFlag(ctx sessionctx.Context, 
 
 // getFunction sets compare built-in function signatures for various types.
 func (c *compareFunctionClass) getFunction(ctx sessionctx.Context, rawArgs []Expression) (sig builtinFunc, err error) {
-	arg1Col, isArg1Col := rawArgs[0].(*Column)
-	fmt.Println(arg1Col.OrigName)
-	if isArg1Col && arg1Col.OrigName == "test.t2.a" {
-		fmt.Printf("mysql fuck you!")
-	}
-
 	if err = c.verifyArgs(rawArgs); err != nil {
 		return nil, err
 	}
