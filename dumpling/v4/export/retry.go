@@ -14,7 +14,12 @@ const (
 	dumpChunkMaxWaitInterval = 200 * time.Millisecond
 )
 
-func newDumpChunkBackoffer() *dumpChunkBackoffer {
+func newDumpChunkBackoffer(canRetry bool) *dumpChunkBackoffer {
+	if !canRetry {
+		return &dumpChunkBackoffer{
+			attempt: 1,
+		}
+	}
 	return &dumpChunkBackoffer{
 		attempt:      dumpChunkRetryTime,
 		delayTime:    dumpChunkWaitInterval,
