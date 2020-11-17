@@ -724,7 +724,16 @@ func (b *PlanBuilder) buildUsingClause(p *LogicalJoin, leftPlan, rightPlan Logic
 	for _, col := range join.Using {
 		filter[col.Name.L] = true
 	}
-	return b.coalesceCommonColumns(p, leftPlan, rightPlan, join.Tp, filter)
+	err := b.coalesceCommonColumns(p, leftPlan, rightPlan, join.Tp, filter)
+	if err != nil {
+		return err
+	}
+	// We do not need to coalesce columns for update and delete.
+	if b.inUpdateStmt || b.inDeleteStmt {
+		p.setSchemaAndNames(expression.MergeSchema(p.Children()[0].Schema(), p.Children()[1].Schema()),
+			append(p.Children()[0].OutputNames(), p.Children()[1].OutputNames()...))
+	}
+	return nil
 }
 
 // buildNaturalJoin builds natural join output schema. It finds out all the common columns
@@ -734,7 +743,16 @@ func (b *PlanBuilder) buildUsingClause(p *LogicalJoin, leftPlan, rightPlan Logic
 // 	Every column in the first (left) table that is not a common column
 // 	Every column in the second (right) table that is not a common column
 func (b *PlanBuilder) buildNaturalJoin(p *LogicalJoin, leftPlan, rightPlan LogicalPlan, join *ast.Join) error {
-	return b.coalesceCommonColumns(p, leftPlan, rightPlan, join.Tp, nil)
+	err := b.coalesceCommonColumns(p, leftPlan, rightPlan, join.Tp, nil)
+	if err != nil {
+		return err
+	}
+	// We do not need to coalesce columns for update and delete.
+	if b.inUpdateStmt || b.inDeleteStmt {
+		p.setSchemaAndNames(expression.MergeSchema(p.Children()[0].Schema(), p.Children()[1].Schema()),
+			append(p.Children()[0].OutputNames(), p.Children()[1].OutputNames()...))
+	}
+	return nil
 }
 
 // coalesceCommonColumns is used by buildUsingClause and buildNaturalJoin. The filter is used by buildUsingClause.
@@ -3323,7 +3341,7 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName model.
 
 	charset, collation := b.ctx.GetSessionVars().GetCharsetInfo()
 	viewParser := parser.New()
-	viewParser.EnableWindowFunc(b.ctx.GetSessionVars().EnableWindowFunction)
+	viewParser.SetParserConfig(b.ctx.GetSessionVars().BuildParserConfig())
 	selectNode, err := viewParser.ParseOneStmt(tableInfo.View.SelectStmt, charset, collation)
 	if err != nil {
 		return nil, err

@@ -712,7 +712,7 @@
       {
         "SQL": "insert into t select * from t where b < 1 order by d limit 1",
         "Best": "TableReader(Table(t)->Sel([lt(test.t.b, 1)])->TopN([test.t.d],0,1))->TopN([test.t.d],0,1)->Insert",
-        "Hints": ""
+        "Hints": "use_index(@`sel_1` `test`.`t` )"
       },
       {
         "SQL": "insert into t (a, b, c, e, f, g) values(0,0,0,0,0,0)",
@@ -1327,7 +1327,7 @@
           "explain select /*+ TIDB_INLJ(t2) */ * from t t1, t t2 where t1.a = t2.a"
         ],
         "Plan": [
-          "IndexJoin_12 12500.00 root  inner join, inner:UnionScan_11, outer key:test.t.a, inner key:test.t.a",
+          "IndexJoin_12 12500.00 root  inner join, inner:UnionScan_11, outer key:test.t.a, inner key:test.t.a, equal cond:eq(test.t.a, test.t.a)",
           "├─UnionScan_15(Build) 10000.00 root  ",
           "│ └─TableReader_17 10000.00 root  data:TableFullScan_16",
           "│   └─TableFullScan_16 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",

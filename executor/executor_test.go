@@ -6664,7 +6664,11 @@ func (s *testCoprCache) TestIntegrationCopCache(c *C) {
 	rows = tk.MustQuery("explain analyze select * from t").Rows()
 	c.Assert(rows[0][2], Equals, "12")
 	c.Assert(strings.Contains(rows[0][5].(string), "cop_task: {num: 6"), Equals, true)
-	c.Assert(strings.Contains(rows[0][5].(string), "copr_cache_hit_ratio: 0.67"), Equals, true)
+	hitRatioIdx := strings.Index(rows[0][5].(string), "copr_cache_hit_ratio:") + len("copr_cache_hit_ratio: ")
+	c.Assert(hitRatioIdx >= len("copr_cache_hit_ratio: "), Equals, true)
+	hitRatio, err := strconv.ParseFloat(rows[0][5].(string)[hitRatioIdx:hitRatioIdx+4], 64)
+	c.Assert(err, IsNil)
+	c.Assert(hitRatio > 0, Equals, true)
 }
 
 func (s *testSerialSuite) TestCoprocessorOOMAction(c *C) {
