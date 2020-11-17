@@ -312,6 +312,10 @@ const (
 	// tidb_window_concurrency is deprecated, use tidb_executor_concurrency instead.
 	TiDBWindowConcurrency = "tidb_window_concurrency"
 
+	// tidb_stream_agg_concurrency is used for stream aggregation parallel executor.
+	// tidb_stream_agg_concurrency is deprecated, use tidb_executor_concurrency instead.
+	TiDBStreamAggConcurrency = "tidb_streamagg_concurrency"
+
 	// tidb_enable_parallel_apply is used for parallel apply.
 	TiDBEnableParallelApply = "tidb_enable_parallel_apply"
 
@@ -367,6 +371,9 @@ const (
 
 	// tidb_enable_window_function is used to control whether to enable the window function.
 	TiDBEnableWindowFunction = "tidb_enable_window_function"
+
+	// tidb_enable_strict_double_type_check is used to control table field double type syntax check.
+	TiDBEnableStrictDoubleTypeCheck = "tidb_enable_strict_double_type_check"
 
 	// tidb_enable_vectorized_expression is used to control whether to enable the vectorized expression evaluation.
 	TiDBEnableVectorizedExpression = "tidb_enable_vectorized_expression"
@@ -531,9 +538,11 @@ const (
 	DefTiDBHashAggPartialConcurrency   = ConcurrencyUnset
 	DefTiDBHashAggFinalConcurrency     = ConcurrencyUnset
 	DefTiDBWindowConcurrency           = ConcurrencyUnset
+	DefTiDBStreamAggConcurrency        = 1
 	DefTiDBForcePriority               = mysql.NoPriority
 	DefTiDBUseRadixJoin                = false
 	DefEnableWindowFunction            = true
+	DefEnableStrictDoubleTypeCheck     = true
 	DefEnableVectorizedExpression      = true
 	DefTiDBOptJoinReorderThreshold     = 0
 	DefTiDBDDLSlowOprThreshold         = 300
