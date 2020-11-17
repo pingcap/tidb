@@ -275,6 +275,8 @@ func (s *testValidatorSuite) TestValidator(c *C) {
 		{"CREATE TABLE t (a int) ENGINE=Unknown;", false, ddl.ErrUnknownEngine},
 		{"CREATE TABLE t (a int) ENGINE=InnoDB;", false, nil},
 		{"CREATE TABLE t (a int);", false, nil},
+		{"ALTER TABLE t ENGINE=InnoDB;", false, nil},
+		{"ALTER TABLE t ENGINE=Unknown;", false, ddl.ErrUnknownEngine},
 	}
 
 	_, err := s.se.Execute(context.Background(), "use test")
