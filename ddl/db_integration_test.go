@@ -2243,7 +2243,6 @@ func (s *testIntegrationSuite7) TestAutoIncrementTableOption(c *C) {
 	tk.MustQuery("select * from t;").Check(testkit.Rows("12345678901234567890"))
 }
 
-
 // TestDefaultValueIsLatin1 for issue #18977
 func (s *testIntegrationSuite3) TestEnumAndSetDefaultValue(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
