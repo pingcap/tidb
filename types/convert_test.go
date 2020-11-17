@@ -235,7 +235,7 @@ func (s *testTypeConvertSuite) TestConvertType(c *C) {
 	c.Assert(err, IsNil, Commentf(errors.ErrorStack(err)))
 	c.Assert(v.(*MyDecimal).String(), Equals, "3.1416")
 	v, err = Convert("3.1415926", ft)
-	c.Assert(terror.ErrorEqual(err, ErrTruncatedWrongVal), IsTrue, Commentf("err %v", err))
+	c.Assert(err, IsNil)
 	c.Assert(v.(*MyDecimal).String(), Equals, "3.1416")
 	v, err = Convert("99999", ft)
 	c.Assert(terror.ErrorEqual(err, ErrOverflow), IsTrue, Commentf("err %v", err))
@@ -341,7 +341,7 @@ func (s *testTypeConvertSuite) TestConvertToString(c *C) {
 	ft.Flen = 10
 	ft.Decimal = 5
 	v, err := Convert(3.1415926, ft)
-	c.Assert(terror.ErrorEqual(err, ErrTruncatedWrongVal), IsTrue, Commentf("err %v", err))
+	c.Assert(err, IsNil)
 	testToString(c, v, "3.14159")
 
 	_, err = ToString(&invalidMockType{})
@@ -673,20 +673,20 @@ func (s *testTypeConvertSuite) TestConvert(c *C) {
 	signedAccept(c, mysql.TypeDouble, "1e+1", "10")
 
 	// year
-	signedDeny(c, mysql.TypeYear, 123, "0")
-	signedDeny(c, mysql.TypeYear, 3000, "0")
+	signedDeny(c, mysql.TypeYear, 123, "1901")
+	signedDeny(c, mysql.TypeYear, 3000, "2155")
 	signedAccept(c, mysql.TypeYear, "2000", "2000")
 	signedAccept(c, mysql.TypeYear, "abc", "0")
 	signedAccept(c, mysql.TypeYear, "00abc", "2000")
 	signedAccept(c, mysql.TypeYear, "0019", "2019")
 	signedAccept(c, mysql.TypeYear, 2155, "2155")
 	signedAccept(c, mysql.TypeYear, 2155.123, "2155")
-	signedDeny(c, mysql.TypeYear, 2156, "0")
-	signedDeny(c, mysql.TypeYear, 123.123, "0")
-	signedDeny(c, mysql.TypeYear, 1900, "0")
+	signedDeny(c, mysql.TypeYear, 2156, "2155")
+	signedDeny(c, mysql.TypeYear, 123.123, "1901")
+	signedDeny(c, mysql.TypeYear, 1900, "1901")
 	signedAccept(c, mysql.TypeYear, 1901, "1901")
 	signedAccept(c, mysql.TypeYear, 1900.567, "1901")
-	signedDeny(c, mysql.TypeYear, 1900.456, "0")
+	signedDeny(c, mysql.TypeYear, 1900.456, "1901")
 	signedAccept(c, mysql.TypeYear, 0, "0")
 	signedAccept(c, mysql.TypeYear, "0", "2000")
 	signedAccept(c, mysql.TypeYear, "00", "2000")
@@ -707,7 +707,7 @@ func (s *testTypeConvertSuite) TestConvert(c *C) {
 	signedAccept(c, mysql.TypeYear, "70", "1970")
 	signedAccept(c, mysql.TypeYear, 99, "1999")
 	signedAccept(c, mysql.TypeYear, "99", "1999")
-	signedDeny(c, mysql.TypeYear, 100, "0")
+	signedDeny(c, mysql.TypeYear, 100, "1901")
 	signedDeny(c, mysql.TypeYear, "99999999999999999999999999999999999", "0")
 
 	// time from string
@@ -1160,6 +1160,7 @@ func (s *testTypeConvertSuite) TestConvertDecimalStrToUint(c *C) {
 		{"18446744073709551614.55", 18446744073709551615, true},
 		{"18446744073709551615.344", 18446744073709551615, true},
 		{"18446744073709551615.544", 0, false},
+		{"-111.111", 0, false},
 	}
 	for _, ca := range cases {
 		result, err := convertDecimalStrToUint(&stmtctx.StatementContext{}, ca.input, math.MaxUint64, 0)

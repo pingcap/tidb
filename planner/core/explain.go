@@ -21,6 +21,7 @@ import (
 
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/infoschema"
@@ -28,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/stringutil"
 )
 
@@ -510,6 +512,18 @@ func (p *PhysicalIndexJoin) explainInfo(normalized bool) string {
 		fmt.Fprintf(buffer, ", inner key:%s",
 			expression.ExplainColumnList(p.InnerJoinKeys))
 	}
+
+	if len(p.OuterHashKeys) > 0 {
+		exprs := make([]expression.Expression, 0, len(p.OuterHashKeys))
+		for i := range p.OuterHashKeys {
+			expr, err := expression.NewFunctionBase(MockContext(), ast.EQ, types.NewFieldType(mysql.TypeLonglong), p.OuterHashKeys[i], p.InnerHashKeys[i])
+			if err != nil {
+			}
+			exprs = append(exprs, expr)
+		}
+		fmt.Fprintf(buffer, ", equal cond:%s",
+			sortedExplainExpressionList(exprs))
+	}
 	if len(p.LeftConditions) > 0 {
 		fmt.Fprintf(buffer, ", left cond:%s",
 			sortedExplainExpressionList(p.LeftConditions))
@@ -624,15 +638,20 @@ func (p *PhysicalMergeJoin) ExplainNormalizedInfo() string {
 
 // ExplainInfo implements Plan interface.
 func (p *PhysicalBroadCastJoin) ExplainInfo() string {
-	return p.explainInfo()
+	return p.explainInfo(false)
 }
 
 // ExplainNormalizedInfo implements Plan interface.
 func (p *PhysicalBroadCastJoin) ExplainNormalizedInfo() string {
-	return p.explainInfo()
+	return p.explainInfo(true)
 }
 
-func (p *PhysicalBroadCastJoin) explainInfo() string {
+func (p *PhysicalBroadCastJoin) explainInfo(normalized bool) string {
+	sortedExplainExpressionList := expression.SortedExplainExpressionList
+	if normalized {
+		sortedExplainExpressionList = expression.SortedExplainNormalizedExpressionList
+	}
+
 	buffer := new(bytes.Buffer)
 
 	buffer.WriteString(p.JoinType.String())
@@ -644,6 +663,21 @@ func (p *PhysicalBroadCastJoin) explainInfo() string {
 	if len(p.RightJoinKeys) > 0 {
 		fmt.Fprintf(buffer, ", right key:%s",
 			expression.ExplainColumnList(p.RightJoinKeys))
+	}
+	if len(p.LeftConditions) > 0 {
+		if normalized {
+			fmt.Fprintf(buffer, ", left cond:%s", expression.SortedExplainNormalizedExpressionList(p.LeftConditions))
+		} else {
+			fmt.Fprintf(buffer, ", left cond:%s", p.LeftConditions)
+		}
+	}
+	if len(p.RightConditions) > 0 {
+		fmt.Fprintf(buffer, ", right cond:%s",
+			sortedExplainExpressionList(p.RightConditions))
+	}
+	if len(p.OtherConditions) > 0 {
+		fmt.Fprintf(buffer, ", other cond:%s",
+			sortedExplainExpressionList(p.OtherConditions))
 	}
 	return buffer.String()
 }
