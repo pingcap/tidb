@@ -135,6 +135,7 @@ var _ = SerialSuites(&tiflashTestSuite{})
 var _ = SerialSuites(&globalIndexSuite{&baseTestSuite{}})
 var _ = SerialSuites(&testSerialSuite{&baseTestSuite{}})
 var _ = SerialSuites(&testCoprCache{})
+var _ = SerialSuites(&testPrepareSuite{})
 
 type testSuite struct{ *baseTestSuite }
 type testSuiteP1 struct{ *baseTestSuite }
@@ -153,6 +154,7 @@ type testCoprCache struct {
 	dom   *domain.Domain
 	cls   cluster.Cluster
 }
+type testPrepareSuite struct{ testData testutil.TestData }
 
 type baseTestSuite struct {
 	cluster cluster.Cluster
@@ -198,6 +200,16 @@ func (s *testSuiteWithData) SetUpSuite(c *C) {
 
 func (s *testSuiteWithData) TearDownSuite(c *C) {
 	s.baseTestSuite.TearDownSuite(c)
+	c.Assert(s.testData.GenerateOutputIfNeeded(), IsNil)
+}
+
+func (s *testPrepareSuite) SetUpSuite(c *C) {
+	var err error
+	s.testData, err = testutil.LoadTestSuiteData("testdata", "prepare_suite")
+	c.Assert(err, IsNil)
+}
+
+func (s *testPrepareSuite) TearDownSuite(c *C) {
 	c.Assert(s.testData.GenerateOutputIfNeeded(), IsNil)
 }
 
@@ -6664,7 +6676,11 @@ func (s *testCoprCache) TestIntegrationCopCache(c *C) {
 	rows = tk.MustQuery("explain analyze select * from t").Rows()
 	c.Assert(rows[0][2], Equals, "12")
 	c.Assert(strings.Contains(rows[0][5].(string), "cop_task: {num: 6"), Equals, true)
-	c.Assert(strings.Contains(rows[0][5].(string), "copr_cache_hit_ratio: 0.67"), Equals, true)
+	hitRatioIdx := strings.Index(rows[0][5].(string), "copr_cache_hit_ratio:") + len("copr_cache_hit_ratio: ")
+	c.Assert(hitRatioIdx >= len("copr_cache_hit_ratio: "), Equals, true)
+	hitRatio, err := strconv.ParseFloat(rows[0][5].(string)[hitRatioIdx:hitRatioIdx+4], 64)
+	c.Assert(err, IsNil)
+	c.Assert(hitRatio > 0, Equals, true)
 }
 
 func (s *testSerialSuite) TestCoprocessorOOMAction(c *C) {
