@@ -278,10 +278,10 @@ func (c *twoPhaseCommitter) prewriteMutations(bo *Backoffer, mutations Committer
 
 // Reprewrite the primary lock to fallback from async commit or 1PC
 func (c *twoPhaseCommitter) reprewritePrimary(bo *Backoffer) {
-	c.reprewrite.Add(1)
 	if !atomic.CompareAndSwapUint32(&c.reprewrite.started, 0, 1) {
 		return
 	}
+	c.reprewrite.Add(1)
 	go func() {
 		// It is slow to find the primary mutation by iterating the mutations.
 		// But it is not a big problem because fallback happens rarely and the number of mutations are
