@@ -3562,12 +3562,11 @@ func checkUpdateList(ctx sessionctx.Context, tblID2table map[int64]table.Table, 
 	// Collect primary keys
 	pkColumnsMap := make(map[int64]map[int64]bool)
 	for _, content := range updt.TblColPosInfos {
-		pkColumns, ok := pkColumnsMap[content.TblID]
-		if ok {
+		if _, ok := pkColumnsMap[content.TblID]; ok {
 			continue
 		}
 		tbl := tblID2table[content.TblID]
-		pkColumns = make(map[int64]bool)
+		pkColumns := make(map[int64]bool)
 		var pkIdx *model.IndexInfo
 		for _, idx := range tbl.Meta().Indices {
 			if idx.Primary {
