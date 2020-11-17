@@ -1,7 +1,5 @@
 module github.com/pingcap/tidb
 
-replace github.com/tikv/pd v1.1.0-beta.0.20201113054545-cbbb7946a0d4 => github.com/JmPotato/pd v1.1.0-beta.0.20201113072630-4aee146c375f
-
 require (
 	github.com/BurntSushi/toml v0.3.1
 	github.com/DATA-DOG/go-sqlmock v1.5.0 // indirect
@@ -47,7 +45,7 @@ require (
 	github.com/pingcap/failpoint v0.0.0-20200702092429-9f69995143ce
 	github.com/pingcap/fn v0.0.0-20200306044125-d5540d389059
 	github.com/pingcap/goleveldb v0.0.0-20191226122134-f82aafb29989
-	github.com/pingcap/kvproto v0.0.0-20201104042953-62eb316d5182
+	github.com/pingcap/kvproto v0.0.0-20201113092725-08f2872278eb
 	github.com/pingcap/log v0.0.0-20201112100606-8f1e84a3abc8
 	github.com/pingcap/parser v0.0.0-20201112105242-773b8b74f44e
 	github.com/pingcap/sysutil v0.0.0-20201021075216-f93ced2829e2
@@ -62,7 +60,7 @@ require (
 	github.com/soheilhy/cmux v0.1.4
 	github.com/stretchr/testify v1.6.1 // indirect
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
-	github.com/tikv/pd v1.1.0-beta.0.20201113054545-cbbb7946a0d4
+	github.com/tikv/pd v1.1.0-beta.0.20201117054852-32a106ba4fb1
 	github.com/twmb/murmur3 v1.1.3
 	github.com/uber-go/atomic v1.4.0
 	github.com/uber/jaeger-client-go v2.22.1+incompatible

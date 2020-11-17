@@ -222,8 +222,12 @@ func (c *mockPDClient) UpdateServiceGCSafePoint(ctx context.Context, serviceID s
 
 func (c *mockPDClient) Close() {}
 
-func (c *mockPDClient) ScatterRegion(ctx context.Context, regionID uint64) error {
-	return nil
+func (c *mockPDClient) ScatterRegions(ctx context.Context, regionsID []uint64, opts ...pd.RegionsOption) (*pdpb.ScatterRegionResponse, error) {
+	return nil, nil
+}
+
+func (c *mockPDClient) SplitRegions(ctx context.Context, splitKeys [][]byte, opts ...pd.RegionsOption) (*pdpb.SplitRegionsResponse, error) {
+	return nil, nil
 }
 
 func (c *mockPDClient) GetOperator(ctx context.Context, regionID uint64) (*pdpb.GetOperatorResponse, error) {
@@ -231,10 +235,6 @@ func (c *mockPDClient) GetOperator(ctx context.Context, regionID uint64) (*pdpb.
 }
 
 func (c *mockPDClient) GetLeaderAddr() string { return "mockpd" }
-
-func (c *mockPDClient) ScatterRegionWithOption(ctx context.Context, regionID uint64, opts ...pd.ScatterRegionOption) error {
-	return nil
-}
 
 type checkRequestClient struct {
 	Client

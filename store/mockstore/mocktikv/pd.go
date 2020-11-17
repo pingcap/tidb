@@ -175,12 +175,12 @@ func (c *pdClient) UpdateServiceGCSafePoint(ctx context.Context, serviceID strin
 func (c *pdClient) Close() {
 }
 
-func (c *pdClient) ScatterRegion(ctx context.Context, regionID uint64) error {
-	return nil
+func (c *pdClient) ScatterRegions(ctx context.Context, regionsID []uint64, opts ...pd.RegionsOption) (*pdpb.ScatterRegionResponse, error) {
+	return nil, nil
 }
 
-func (c *pdClient) ScatterRegionWithOption(ctx context.Context, regionID uint64, opts ...pd.ScatterRegionOption) error {
-	return nil
+func (c *pdClient) SplitRegions(ctx context.Context, splitKeys [][]byte, opts ...pd.RegionsOption) (*pdpb.SplitRegionsResponse, error) {
+	return nil, nil
 }
 
 func (c *pdClient) GetOperator(ctx context.Context, regionID uint64) (*pdpb.GetOperatorResponse, error) {
