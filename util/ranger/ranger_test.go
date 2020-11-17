@@ -1371,7 +1371,7 @@ func (s *testRangerSuite) TestIndexRangeForYear(c *C) {
 		{
 			indexPos:    0,
 			exprStr:     `a not in (1, 2, 70)`,
-			accessConds: "[not(in(test.t.a, 1, 2, 70))]",  // this is in accordance with MySQL, MySQL won't interpret 70 here as 1970
+			accessConds: "[not(in(test.t.a, 1, 2, 70))]", // this is in accordance with MySQL, MySQL won't interpret 70 here as 1970
 			filterConds: "[]",
 			resultStr:   `[(NULL,1970) (1970,2001) (2002,+inf]]`,
 		},
