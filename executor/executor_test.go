@@ -6007,6 +6007,11 @@ select 9;`
 		},
 		{
 			prepareSQL: "set @@time_zone = '+08:00'",
+			sql:        "select count(*) from %s where (time > '2020-02-16 18:00:00' and time < '2020-05-14 20:00:00') or (time > '2020-02-17 18:00:00' and time < '2020-05-17 20:00:00')",
+			result:     []string{"9"},
+		},
+		{
+			prepareSQL: "set @@time_zone = '+08:00'",
 			sql:        "select count(*) from %s where time > '2020-02-16 18:00:00.000000' and time < '2020-02-17 20:00:00.000000' order by time desc",
 			result:     []string{"5"},
 		},

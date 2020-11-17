@@ -410,9 +410,6 @@ type PointPlanVal struct {
 func TryFastPlan(ctx sessionctx.Context, node ast.Node) (p Plan) {
 	ctx.GetSessionVars().PlanID = 0
 	ctx.GetSessionVars().PlanColumnID = 0
-	if util.IsMemDB(ctx.GetSessionVars().CurrentDB) {
-		return nil
-	}
 	switch x := node.(type) {
 	case *ast.SelectStmt:
 		defer func() {
@@ -433,6 +430,9 @@ func TryFastPlan(ctx sessionctx.Context, node ast.Node) (p Plan) {
 		}
 		if fp := tryPointGetPlan(ctx, x); fp != nil {
 			if checkFastPlanPrivilege(ctx, fp.dbName, fp.TblInfo.Name.L, mysql.SelectPriv) != nil {
+				return nil
+			}
+			if util.IsMemDB(fp.dbName) {
 				return nil
 			}
 			if fp.IsTableDual {
