@@ -797,7 +797,7 @@ func finishCopTask(ctx sessionctx.Context, task task) task {
 		p.PartitionInfo = t.partitionInfo
 		p.stats = t.tablePlan.statsInfo()
 		if needExtraProj {
-			proj := PhysicalProjection{Exprs: expression.Column2Exprs(prevSchema.Columns)}.Init(ts.ctx, ts.stats,ts.SelectBlockOffset(), nil)
+			proj := PhysicalProjection{Exprs: expression.Column2Exprs(prevSchema.Columns)}.Init(ts.ctx, ts.stats, ts.SelectBlockOffset(), nil)
 			proj.SetSchema(prevSchema)
 			proj.SetChildren(p)
 			newTask.p = proj
