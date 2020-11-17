@@ -999,6 +999,8 @@ func (p *PhysicalTopN) attach2Task(tasks ...task) task {
 			pushedDownTopN = p.getPushedDownTopN(copTask.tablePlan)
 			copTask.tablePlan = pushedDownTopN
 		}
+		// Don't use clone() so that TopN and its children share the same schema. Otherwise the virtual generated column may not be resolved right.
+		pushedDownTopN.SetSchema(pushedDownTopN.children[0].Schema())
 		copTask.addCost(pushedDownTopN.GetCost(inputCount, false))
 	}
 	rootTask := finishCopTask(p.ctx, t)
