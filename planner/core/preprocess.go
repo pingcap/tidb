@@ -823,21 +823,27 @@ func checkUnsupportedTableOptions(options []*ast.TableOption) error {
 		case ast.TableOptionInsertMethod:
 			return ddl.ErrTableOptionInsertMethodUnsupported
 		case ast.TableOptionEngine:
-			return checkTableEngine(option.StrValue)
+			err := checkTableEngine(option.StrValue)
+			if err != nil {
+				return err
+			}
 		}
 	}
 	return nil
 }
 
 var mysqlValidTableEngineNames = map[string]string{
-	"myisam":     "MyISAM",
-	"innodb":     "InnoDB",
-	"federated":  "FEDERATED",
-	"mgr_myisam": "MRG_MYISAM",
+	"archive":    "ARCHIVE",
 	"blackhole":  "BLACKHOLE",
 	"csv":        "CSV",
+	"example":    "EXAMPLE",
+	"federated":  "FEDERATED",
+	"innodb":     "InnoDB",
 	"memory":     "MEMORY",
-	"archive":    "ARCHIVE",
+	"merge":      "MERGE",
+	"mgr_myisam": "MRG_MYISAM",
+	"myisam":     "MyISAM",
+	"ndb":        "NDB",
 }
 
 func checkTableEngine(engineName string) error {
