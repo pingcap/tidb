@@ -4932,6 +4932,9 @@ func init() {
 }
 
 func (s *testDBSuite4) TestGeneratedColumnWindowFunction(c *C) {
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Experimental.AllowsExpressionIndex = true
+	})
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test_db")
 	tk.MustExec("DROP TABLE IF EXISTS t")
