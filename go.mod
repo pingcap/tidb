@@ -1,5 +1,7 @@
 module github.com/pingcap/tidb
 
+replace github.com/tikv/pd v1.1.0-beta.0.20201117054852-32a106ba4fb1 => github.com/JmPotato/pd v1.1.0-beta.0.20201117135747-fb7deb3ab35f
+
 require (
 	github.com/BurntSushi/toml v0.3.1
 	github.com/DATA-DOG/go-sqlmock v1.5.0 // indirect

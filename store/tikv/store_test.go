@@ -222,6 +222,10 @@ func (c *mockPDClient) UpdateServiceGCSafePoint(ctx context.Context, serviceID s
 
 func (c *mockPDClient) Close() {}
 
+func (c *mockPDClient) ScatterRegion(ctx context.Context, regionID uint64) error {
+	return nil
+}
+
 func (c *mockPDClient) ScatterRegions(ctx context.Context, regionsID []uint64, opts ...pd.RegionsOption) (*pdpb.ScatterRegionResponse, error) {
 	return nil, nil
 }
