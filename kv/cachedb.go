@@ -41,13 +41,13 @@ func (c *cachedb) Set(tableID int64, key Key, value []byte) error {
 		table = newMemDB()
 		c.memTables[tableID] = table
 	}
-
 	err := table.Set(key, value)
-	if err != nil {
-		return err
+	if err != nil && ErrTxnTooLarge.Equal(err) {
+		// If it reaches the upper limit, refresh a new memory buffer.
+		c.memTables[tableID] = newMemDB()
+		return nil
 	}
-
-	return nil
+	return err
 }
 
 // Get gets value from memory
@@ -58,9 +58,7 @@ func (c *cachedb) Get(ctx context.Context, tableID int64, key Key) []byte {
 		if val, err := table.Get(ctx, key); err == nil {
 			return val
 		}
-		return nil
 	}
-
 	return nil
 }
 
