@@ -1371,14 +1371,14 @@ func (s *testRangerSuite) TestIndexRangeForYear(c *C) {
 		{
 			indexPos:    0,
 			exprStr:     `a not in (1, 2, 70)`,
-			accessConds: "[not(in(test.t.a, 1, 2, 70))]",
+			accessConds: "[not(in(test.t.a, 1, 2, 70))]",  // this is in accordance with MySQL, MySQL won't interpret 70 here as 1970
 			filterConds: "[]",
 			resultStr:   `[(NULL,1970) (1970,2001) (2002,+inf]]`,
 		},
 		{
 			indexPos:    0,
 			exprStr:     `a not in (99)`,
-			accessConds: "[ne(test.t.a, 99)]",
+			accessConds: "[ne(test.t.a, 1999)]", // this is in accordance with MySQL
 			filterConds: "[]",
 			resultStr:   `[[-inf,1999) (1999,+inf]]`,
 		},
@@ -1406,7 +1406,7 @@ func (s *testRangerSuite) TestIndexRangeForYear(c *C) {
 		{
 			indexPos:    0,
 			exprStr:     `a != 1`,
-			accessConds: "[ne(test.t.a, 1)]",
+			accessConds: "[ne(test.t.a, 2001)]",
 			filterConds: "[]",
 			resultStr:   `[[-inf,2001) (2001,+inf]]`,
 		},
@@ -1419,13 +1419,13 @@ func (s *testRangerSuite) TestIndexRangeForYear(c *C) {
 		},
 		{
 			exprStr:     "a < 99 or a > 01",
-			accessConds: "[or(lt(test.t.a, 99), gt(test.t.a, 1))]",
+			accessConds: "[or(lt(test.t.a, 1999), gt(test.t.a, 2001))]",
 			filterConds: "[]",
 			resultStr:   "[[-inf,1999) (2001,+inf]]",
 		},
 		{
 			exprStr:     "a >= 70 and a <= 69",
-			accessConds: "[ge(test.t.a, 70) le(test.t.a, 69)]",
+			accessConds: "[ge(test.t.a, 1970) le(test.t.a, 1969)]",
 			filterConds: "[]",
 			resultStr:   "[[1970,2069]]",
 		},
