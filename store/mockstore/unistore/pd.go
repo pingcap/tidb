@@ -97,6 +97,6 @@ func (c *pdClient) ScatterRegionWithOption(ctx context.Context, regionID uint64,
 	return nil
 }
 
-func (c *pdClient) GetMemberInfo(ctx context.Context) ([]*pdpb.Member, error) {
+func (c *pdClient) GetAllMembers(ctx context.Context) ([]*pdpb.Member, error) {
 	return nil, nil
 }
