@@ -270,6 +270,11 @@ func (s *testValidatorSuite) TestValidator(c *C) {
 		{"CREATE TABLE t (a int, index(a));", false, nil},
 		{"CREATE INDEX `` on t (a);", true, errors.New("[ddl:1280]Incorrect index name ''")},
 		{"CREATE INDEX `` on t ((lower(a)));", true, errors.New("[ddl:1280]Incorrect index name ''")},
+
+		// issue 21082
+		{"CREATE TABLE t (a int) ENGINE=Unknown;", false, ddl.ErrUnknownEngine},
+		{"CREATE TABLE t (a int) ENGINE=InnoDB;", false, nil},
+		{"CREATE TABLE t (a int);", false, nil},
 	}
 
 	_, err := s.se.Execute(context.Background(), "use test")

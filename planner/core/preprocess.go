@@ -783,7 +783,27 @@ func checkUnsupportedTableOptions(options []*ast.TableOption) error {
 			return ddl.ErrTableOptionUnionUnsupported
 		case ast.TableOptionInsertMethod:
 			return ddl.ErrTableOptionInsertMethodUnsupported
+		case ast.TableOptionEngine:
+			return checkTableEngine(option.StrValue)
 		}
+	}
+	return nil
+}
+
+var mysqlValidTableEngineNames = map[string]string{
+	"myisam":     "MyISAM",
+	"innodb":     "InnoDB",
+	"federated":  "FEDERATED",
+	"mgr_myisam": "MRG_MYISAM",
+	"blackhole":  "BLACKHOLE",
+	"csv":        "CSV",
+	"memory":     "MEMORY",
+	"archive":    "ARCHIVE",
+}
+
+func checkTableEngine(engineName string) error {
+	if _, have := mysqlValidTableEngineNames[strings.ToLower(engineName)]; !have {
+		return ddl.ErrUnknownEngine.GenWithStackByArgs(engineName)
 	}
 	return nil
 }
