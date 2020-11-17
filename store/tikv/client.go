@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"reflect"
 	"runtime/trace"
 	"strconv"
 	"sync"
@@ -30,6 +31,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/debugpb"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/mpp"
 	"github.com/pingcap/kvproto/pkg/tikvpb"
 	"github.com/pingcap/parser/terror"
@@ -37,9 +39,11 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	tidbtrace "github.com/pingcap/tidb/trace"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/tikv/minitrace-go"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/backoff"
 	"google.golang.org/grpc/connectivity"
@@ -335,6 +339,8 @@ func (c *rpcClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 		defer span1.Finish()
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
+	ctx, span := minitrace.StartSpanWithContext(ctx, fmt.Sprintf("rpcClient.SendRequest, region ID: %d, type: %s", req.RegionId, req.Type))
+	defer span.Finish()
 
 	start := time.Now()
 	defer func() {
@@ -366,7 +372,11 @@ func (c *rpcClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 	if config.GetGlobalConfig().TiKVClient.MaxBatchSize > 0 && enableBatch {
 		if batchReq := req.ToBatchCommandsRequest(); batchReq != nil {
 			defer trace.StartRegion(ctx, req.Type.String()).End()
-			return sendBatchRequest(ctx, addr, connArray.batchConn, batchReq, timeout)
+			resp, err := sendBatchRequest(ctx, addr, connArray.batchConn, batchReq, timeout)
+			if err == nil {
+				extractTraceDetail(ctx, resp.Resp)
+			}
+			return resp, err
 		}
 	}
 
@@ -396,7 +406,42 @@ func (c *rpcClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 	// Or else it's a unary call.
 	ctx1, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	return tikvrpc.CallRPC(ctx1, client, req)
+
+	resp, err := tikvrpc.CallRPC(ctx1, client, req)
+	if err == nil {
+		extractTraceDetail(ctx, resp.Resp)
+	}
+	return resp, err
+}
+
+func extractTraceDetail(ctx context.Context, resp interface{}) {
+	v := reflect.ValueOf(resp)
+	if v.IsZero() {
+		return
+	}
+
+	elem := v.Elem()
+	if elem.IsZero() {
+		return
+	}
+
+	field := elem.FieldByName("Meta")
+	if field.IsZero() {
+		return
+	}
+
+	meta, ok := field.Interface().(*kvrpcpb.Meta)
+	if !ok || meta == nil {
+		return
+	}
+
+	traceDetail := meta.TraceDetail
+	if traceDetail != nil {
+		minitrace.AccessAttachment(ctx, func(attachment interface{}) {
+			c := attachment.(*tidbtrace.Context)
+			c.TraceDetail.SpanSets = append(c.TraceDetail.SpanSets, traceDetail.SpanSets...)
+		})
+	}
 }
 
 func (c *rpcClient) getCopStreamResponse(ctx context.Context, client tikvpb.TikvClient, req *tikvrpc.Request, timeout time.Duration, connArray *connArray) (*tikvrpc.Response, error) {

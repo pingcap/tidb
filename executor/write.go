@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/memory"
+	"github.com/tikv/minitrace-go"
 )
 
 var (
@@ -57,6 +58,8 @@ func updateRecord(ctx context.Context, sctx sessionctx.Context, h kv.Handle, old
 		defer span1.Finish()
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
+	ctx, span := minitrace.StartSpanWithContext(ctx, "executor.updateRecord")
+	defer span.Finish()
 	txn, err := sctx.Txn(false)
 	if err != nil {
 		return false, err

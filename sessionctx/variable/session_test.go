@@ -211,7 +211,8 @@ func (*testSessionSuite) TestSlowLogFormat(c *C) {
 # PD_total: 11
 # Backoff_total: 12
 # Write_sql_response_total: 1
-# Succ: true`
+# Succ: true
+# Trace_ID: 42`
 	sql := "select * from t;"
 	_, digest := parser.NormalizeDigest(sql)
 	logItems := &variable.SlowQueryLogItems{
@@ -245,6 +246,7 @@ func (*testSessionSuite) TestSlowLogFormat(c *C) {
 		},
 		ExecRetryCount: 3,
 		ExecRetryTime:  5*time.Second + time.Millisecond*100,
+		TraceID:        42,
 	}
 	logString := seVar.SlowLogFormat(logItems)
 	c.Assert(logString, Equals, resultFields+"\n"+sql)

@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/tikv/minitrace-go"
 	"go.uber.org/zap"
 )
 
@@ -272,6 +273,9 @@ func (c *twoPhaseCommitter) prewriteMutations(bo *Backoffer, mutations Committer
 		bo.ctx = opentracing.ContextWithSpan(bo.ctx, span1)
 	}
 
+	var span minitrace.SpanHandle
+	bo.ctx, span = minitrace.StartSpanWithContext(bo.ctx, "twoPhaseCommitter.prewriteMutations")
+	defer span.Finish()
 	// `doActionOnMutations` will unset `useOnePC` if the mutations is splitted into multiple batches.
 	return c.doActionOnMutations(bo, actionPrewrite{}, mutations)
 }

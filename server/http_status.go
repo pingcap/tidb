@@ -176,6 +176,8 @@ func (s *Server) startHTTPServer() {
 		router.PathPrefix("/static/").Handler(http.StripPrefix("/static", http.FileServer(static.Data)))
 	}
 
+	router.Handle("/trace/{traceID}", traceHandler{})
+
 	serverMux := http.NewServeMux()
 	serverMux.Handle("/", router)
 

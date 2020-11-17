@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/tikv/minitrace-go"
 	"go.uber.org/zap"
 )
 
@@ -167,6 +168,8 @@ func (txn *tikvTxn) BatchGet(ctx context.Context, keys []kv.Key) (map[string][]b
 		defer span1.Finish()
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
+	ctx, span := minitrace.StartSpanWithContext(ctx, "tikvTxn.BatchGet")
+	defer span.Finish()
 	return kv.NewBufferBatchGetter(txn.GetMemBuffer(), nil, txn.snapshot).BatchGet(ctx, keys)
 }
 
@@ -219,6 +222,8 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 		defer span1.Finish()
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
+	ctx, span := minitrace.StartSpanWithContext(ctx, "tikvTxn.Commit")
+	defer span.Finish()
 	defer trace.StartRegion(ctx, "CommitTxn").End()
 
 	if !txn.valid {

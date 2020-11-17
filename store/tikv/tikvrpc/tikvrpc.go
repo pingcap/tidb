@@ -16,6 +16,7 @@ package tikvrpc
 import (
 	"context"
 	"fmt"
+	"math/rand"
 	"sync/atomic"
 	"time"
 
@@ -28,6 +29,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/mpp"
 	"github.com/pingcap/kvproto/pkg/tikvpb"
 	"github.com/pingcap/tidb/kv"
+	"github.com/tikv/minitrace-go"
 )
 
 // CmdType represents the concrete request type in Request or response type in Response.
@@ -551,89 +553,97 @@ type MPPStreamResponse struct {
 }
 
 // SetContext set the Context field for the given req to the specified ctx.
-func SetContext(req *Request, region *metapb.Region, peer *metapb.Peer) error {
-	ctx := &req.Context
+func SetContext(ctx context.Context, req *Request, region *metapb.Region, peer *metapb.Peer) error {
+	reqCtx := &req.Context
 	if region != nil {
-		ctx.RegionId = region.Id
-		ctx.RegionEpoch = region.RegionEpoch
+		reqCtx.RegionId = region.Id
+		reqCtx.RegionEpoch = region.RegionEpoch
 	}
-	ctx.Peer = peer
+	reqCtx.Peer = peer
+
+	spanID, traceID, Enable := minitrace.CurrentID(ctx)
+	reqCtx.TraceContext = &kvrpcpb.TraceContext{
+		Enable:           Enable,
+		TraceId:          traceID,
+		SpanIdPrefix:     rand.Uint32(),
+		RootParentSpanId: uint64(spanID),
+	}
 
 	switch req.Type {
 	case CmdGet:
-		req.Get().Context = ctx
+		req.Get().Context = reqCtx
 	case CmdScan:
-		req.Scan().Context = ctx
+		req.Scan().Context = reqCtx
 	case CmdPrewrite:
-		req.Prewrite().Context = ctx
+		req.Prewrite().Context = reqCtx
 	case CmdPessimisticLock:
-		req.PessimisticLock().Context = ctx
+		req.PessimisticLock().Context = reqCtx
 	case CmdPessimisticRollback:
-		req.PessimisticRollback().Context = ctx
+		req.PessimisticRollback().Context = reqCtx
 	case CmdCommit:
-		req.Commit().Context = ctx
+		req.Commit().Context = reqCtx
 	case CmdCleanup:
-		req.Cleanup().Context = ctx
+		req.Cleanup().Context = reqCtx
 	case CmdBatchGet:
-		req.BatchGet().Context = ctx
+		req.BatchGet().Context = reqCtx
 	case CmdBatchRollback:
-		req.BatchRollback().Context = ctx
+		req.BatchRollback().Context = reqCtx
 	case CmdScanLock:
-		req.ScanLock().Context = ctx
+		req.ScanLock().Context = reqCtx
 	case CmdResolveLock:
-		req.ResolveLock().Context = ctx
+		req.ResolveLock().Context = reqCtx
 	case CmdGC:
-		req.GC().Context = ctx
+		req.GC().Context = reqCtx
 	case CmdDeleteRange:
-		req.DeleteRange().Context = ctx
+		req.DeleteRange().Context = reqCtx
 	case CmdRawGet:
-		req.RawGet().Context = ctx
+		req.RawGet().Context = reqCtx
 	case CmdRawBatchGet:
-		req.RawBatchGet().Context = ctx
+		req.RawBatchGet().Context = reqCtx
 	case CmdRawPut:
-		req.RawPut().Context = ctx
+		req.RawPut().Context = reqCtx
 	case CmdRawBatchPut:
-		req.RawBatchPut().Context = ctx
+		req.RawBatchPut().Context = reqCtx
 	case CmdRawDelete:
-		req.RawDelete().Context = ctx
+		req.RawDelete().Context = reqCtx
 	case CmdRawBatchDelete:
-		req.RawBatchDelete().Context = ctx
+		req.RawBatchDelete().Context = reqCtx
 	case CmdRawDeleteRange:
-		req.RawDeleteRange().Context = ctx
+		req.RawDeleteRange().Context = reqCtx
 	case CmdRawScan:
-		req.RawScan().Context = ctx
+		req.RawScan().Context = reqCtx
 	case CmdUnsafeDestroyRange:
-		req.UnsafeDestroyRange().Context = ctx
+		req.UnsafeDestroyRange().Context = reqCtx
 	case CmdRegisterLockObserver:
-		req.RegisterLockObserver().Context = ctx
+		req.RegisterLockObserver().Context = reqCtx
 	case CmdCheckLockObserver:
-		req.CheckLockObserver().Context = ctx
+		req.CheckLockObserver().Context = reqCtx
 	case CmdRemoveLockObserver:
-		req.RemoveLockObserver().Context = ctx
+		req.RemoveLockObserver().Context = reqCtx
 	case CmdPhysicalScanLock:
-		req.PhysicalScanLock().Context = ctx
+		req.PhysicalScanLock().Context = reqCtx
 	case CmdCop:
-		req.Cop().Context = ctx
+		req.Cop().Context = reqCtx
 	case CmdCopStream:
-		req.Cop().Context = ctx
+		req.Cop().Context = reqCtx
 	case CmdBatchCop:
-		req.BatchCop().Context = ctx
+		req.BatchCop().Context = reqCtx
 	case CmdMPPTask:
 		// Dispatching MPP tasks don't need a region context, because it's a request for store but not region.
 	case CmdMvccGetByKey:
-		req.MvccGetByKey().Context = ctx
+		req.MvccGetByKey().Context = reqCtx
 	case CmdMvccGetByStartTs:
-		req.MvccGetByStartTs().Context = ctx
+		req.MvccGetByStartTs().Context = reqCtx
 	case CmdSplitRegion:
-		req.SplitRegion().Context = ctx
+		req.SplitRegion().Context = reqCtx
 	case CmdEmpty:
-		req.SplitRegion().Context = ctx
+		req.SplitRegion().Context = reqCtx
 	case CmdTxnHeartBeat:
-		req.TxnHeartBeat().Context = ctx
+		req.TxnHeartBeat().Context = reqCtx
 	case CmdCheckTxnStatus:
-		req.CheckTxnStatus().Context = ctx
+		req.CheckTxnStatus().Context = reqCtx
 	case CmdCheckSecondaryLocks:
-		req.CheckSecondaryLocks().Context = ctx
+		req.CheckSecondaryLocks().Context = reqCtx
 	default:
 		return fmt.Errorf("invalid request type %v", req.Type)
 	}

@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/stringutil"
+	"github.com/tikv/minitrace-go"
 	"go.uber.org/zap"
 )
 
@@ -116,7 +117,8 @@ func prefetchUniqueIndices(ctx context.Context, txn kv.Transaction, rows []toBeC
 		defer span1.Finish()
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
-
+	ctx, span := minitrace.StartSpanWithContext(ctx, "prefetchUniqueIndices")
+	defer span.Finish()
 	nKeys := 0
 	for _, r := range rows {
 		if r.ignored {
@@ -148,7 +150,8 @@ func prefetchConflictedOldRows(ctx context.Context, txn kv.Transaction, rows []t
 		defer span1.Finish()
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
-
+	ctx, span := minitrace.StartSpanWithContext(ctx, "prefetchConflictedOldRows")
+	defer span.Finish()
 	batchKeys := make([]kv.Key, 0, len(rows))
 	for _, r := range rows {
 		for _, uk := range r.uniqueKeys {
@@ -171,6 +174,8 @@ func prefetchDataCache(ctx context.Context, txn kv.Transaction, rows []toBeCheck
 		defer span1.Finish()
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
+	ctx, span := minitrace.StartSpanWithContext(ctx, "prefetchDataCache")
+	defer span.Finish()
 	values, err := prefetchUniqueIndices(ctx, txn, rows)
 	if err != nil {
 		return err

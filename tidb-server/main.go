@@ -51,6 +51,7 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/gcworker"
+	"github.com/pingcap/tidb/trace"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/domainutil"
@@ -609,6 +610,15 @@ func setGlobalVars() {
 	}
 	tikv.StoreLivenessTimeout = t
 	parsertypes.TiDBStrictIntegerDisplayWidth = config.GetGlobalConfig().DeprecateIntegerDisplayWidth
+
+	trace.Enable.Store(cfg.Trace.Enable)
+	trace.StorageDir.Store(cfg.Trace.StorageDir)
+	trace.JaegerAgent.Store(cfg.Trace.JaegerThriftCompactAgent)
+	trace.DatadogAgent.Store(cfg.Trace.DatadogAgent)
+	if cfg.Trace.MaxSpansLength <= 0 {
+		log.Fatal("max spans length should be larger than 0")
+	}
+	trace.MaxSpansLength.Store(uint64(cfg.Trace.MaxSpansLength))
 }
 
 func setupLog() {

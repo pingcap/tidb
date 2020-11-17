@@ -497,3 +497,19 @@ enable-global-kill = false
 [isolation-read]
 # engines means allow the tidb server read data from which types of engines. options: "tikv", "tiflash", "tidb".
 engines = ["tikv", "tiflash", "tidb"]
+
+[trace]
+# Enable timeline tracing
+enable = false
+
+# Directory to store tracing results
+storage-dir = "tidb.trace"
+
+# Jaeger agent to report trace results. Commonly, it's set to "127.0.0.1:6831".
+jaeger-thrift-compact-agent = ""
+
+# Datadog agent to report trace results. Commonly, it's set to "127.0.0.1:8126".
+datadog-agent = ""
+
+# The maximum length of spans to report for each SQL.
+max-spans-length = 2000

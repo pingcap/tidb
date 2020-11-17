@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/fastrand"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/tikv/minitrace-go"
 	pd "github.com/tikv/pd/client"
 	"go.etcd.io/etcd/clientv3"
 	"go.uber.org/zap"
@@ -408,6 +409,9 @@ func (s *tikvStore) getTimestampWithRetry(bo *Backoffer, txnScope string) (uint6
 		defer span1.Finish()
 		bo.ctx = opentracing.ContextWithSpan(bo.ctx, span1)
 	}
+	var span minitrace.SpanHandle
+	bo.ctx, span = minitrace.StartSpanWithContext(bo.ctx, "tikvStore.getTimestampWithRetry")
+	defer span.Finish()
 
 	for {
 		startTS, err := s.oracle.GetTimestamp(bo.ctx, &oracle.Option{TxnScope: txnScope})

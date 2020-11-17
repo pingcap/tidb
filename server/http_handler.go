@@ -55,6 +55,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/trace"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/admin"
@@ -81,6 +82,7 @@ const (
 	pColumnLen  = "colLen"
 	pRowBin     = "rowBin"
 	pSnapshot   = "snapshot"
+	pTraceID    = "traceID"
 )
 
 // For query string
@@ -435,6 +437,10 @@ const (
 	opMvccGetByIdx = "idx"
 	opMvccGetByTxn = "txn"
 )
+
+// traceHandler is the handler for fetching trace results.
+type traceHandler struct {
+}
 
 // ServeHTTP handles request of list a database or table's schemas.
 func (vh valueHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
@@ -1841,6 +1847,24 @@ func (h profileHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}
 	_, err = w.Write(pb.Build())
 	terror.Log(errors.Trace(err))
+}
+
+func (h traceHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	params := mux.Vars(req)
+	traceIDStr := params[pTraceID]
+	traceID, err := strconv.ParseUint(traceIDStr, 10, 64)
+	if err != nil {
+		writeError(w, errors.Errorf("Wrong traceID: %v", traceID))
+		return
+	}
+
+	res := trace.Retrieve(traceID)
+	if res == nil {
+		writeError(w, errors.Errorf("Trace %v not found", traceID))
+		return
+	}
+
+	writeData(w, res)
 }
 
 // testHandler is the handler for tests. It's convenient to provide some APIs for integration tests.

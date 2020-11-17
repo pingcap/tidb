@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/tikv/minitrace-go"
 )
 
 // DispatchMPPTasks dispathes all tasks and returns an iterator.
@@ -64,6 +65,9 @@ func Select(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request, fie
 		defer span1.Finish()
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
+
+	ctx, span := minitrace.StartSpanWithContext(ctx, "distsql.Select")
+	defer span.Finish()
 
 	// For testing purpose.
 	if hook := ctx.Value("CheckSelectRequestHook"); hook != nil {

@@ -2128,6 +2128,8 @@ const (
 	SlowLogExecRetryTime = "Exec_retry_time"
 	// SlowLogBackoffDetail is the detail of backoff.
 	SlowLogBackoffDetail = "Backoff_Detail"
+	// SlowLogTraceID is the trace ID of the timeline tracing.
+	SlowLogTraceID = "Trace_ID"
 )
 
 // SlowQueryLogItems is a collection of items that should be included in the
@@ -2162,6 +2164,7 @@ type SlowQueryLogItems struct {
 	WriteSQLRespTotal time.Duration
 	ExecRetryCount    uint
 	ExecRetryTime     time.Duration
+	TraceID           uint64
 }
 
 // SlowLogFormat uses for formatting slow log.
@@ -2330,6 +2333,10 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	}
 	if len(logItems.PlanDigest) != 0 {
 		writeSlowLogItem(&buf, SlowLogPlanDigest, logItems.PlanDigest)
+	}
+
+	if logItems.TraceID != 0 {
+		writeSlowLogItem(&buf, SlowLogTraceID, strconv.FormatUint(logItems.TraceID, 10))
 	}
 
 	if logItems.PrevStmt != "" {

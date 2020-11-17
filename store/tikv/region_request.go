@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/storeutil"
+	"github.com/tikv/minitrace-go"
 )
 
 // ShuttingDown is a flag to indicate tidb-server is exiting (Ctrl+C signal
@@ -143,7 +144,7 @@ func (ss *RegionBatchRequestSender) sendStreamReqToAddr(bo *Backoffer, ctxs []co
 	// use the first ctx to send request, because every ctx has same address.
 	cancel = func() {}
 	rpcCtx := ctxs[0].ctx
-	if e := tikvrpc.SetContext(req, rpcCtx.Meta, rpcCtx.Peer); e != nil {
+	if e := tikvrpc.SetContext(bo.ctx, req, rpcCtx.Meta, rpcCtx.Peer); e != nil {
 		return nil, false, cancel, errors.Trace(e)
 	}
 	ctx := bo.ctx
@@ -258,6 +259,9 @@ func (s *RegionRequestSender) SendReqCtx(
 		bo = bo.Clone()
 		bo.ctx = opentracing.ContextWithSpan(bo.ctx, span1)
 	}
+	var span minitrace.SpanHandle
+	bo.ctx, span = minitrace.StartSpanWithContext(bo.ctx, "regionRequest.SendReqCtx")
+	defer span.Finish()
 
 	failpoint.Inject("tikvStoreSendReqResult", func(val failpoint.Value) {
 		switch val.(string) {
@@ -404,7 +408,7 @@ func (h *RPCCanceller) CancelAll() {
 }
 
 func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, rpcCtx *RPCContext, req *tikvrpc.Request, timeout time.Duration) (resp *tikvrpc.Response, retry bool, err error) {
-	if e := tikvrpc.SetContext(req, rpcCtx.Meta, rpcCtx.Peer); e != nil {
+	if e := tikvrpc.SetContext(bo.ctx, req, rpcCtx.Meta, rpcCtx.Peer); e != nil {
 		return nil, false, errors.Trace(e)
 	}
 	// judge the store limit switch.
@@ -530,6 +534,9 @@ func (s *RegionRequestSender) onSendFail(bo *Backoffer, ctx *RPCContext, err err
 		bo = bo.Clone()
 		bo.ctx = opentracing.ContextWithSpan(bo.ctx, span1)
 	}
+	var span minitrace.SpanHandle
+	bo.ctx, span = minitrace.StartSpanWithContext(bo.ctx, "regionRequest.onSendFail")
+	defer span.Finish()
 	// If it failed because the context is cancelled by ourself, don't retry.
 	if errors.Cause(err) == context.Canceled {
 		return errors.Trace(err)
@@ -603,6 +610,9 @@ func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, seed
 		bo = bo.Clone()
 		bo.ctx = opentracing.ContextWithSpan(bo.ctx, span1)
 	}
+	var span minitrace.SpanHandle
+	bo.ctx, span = minitrace.StartSpanWithContext(bo.ctx, "tikv.onRegionError")
+	defer span.Finish()
 
 	metrics.TiKVRegionErrorCounter.WithLabelValues(regionErrorToLabel(regionErr)).Inc()
 	if notLeader := regionErr.GetNotLeader(); notLeader != nil {

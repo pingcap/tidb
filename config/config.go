@@ -186,6 +186,8 @@ type Config struct {
 	// EnableTCP4Only enables net.Listen("tcp4",...)
 	// Note that: it can make lvs with toa work and thus tidb can get real client ip.
 	EnableTCP4Only bool `toml:"enable-tcp4-only" json:"enable-tcp4-only"`
+	// Trace enables timeline tracing.
+	Trace Trace `toml:"trace" json:"trace"`
 }
 
 // UpdateTempStoragePath is to update the `TempStoragePath` if port/statusPort was changed
@@ -632,6 +634,20 @@ type IsolationRead struct {
 	Engines []string `toml:"engines" json:"engines"`
 }
 
+// Trace is the config for timeline tracing.
+type Trace struct {
+	// Enable timeline tracing or not.
+	Enable bool `toml:"enable" json:"enable"`
+	// Directory to store tracing results.
+	StorageDir string `toml:"storage-dir" json:"storage-dir"`
+	// Jaeger agent to report tracing results.
+	JaegerThriftCompactAgent string `toml:"jaeger-thrift-compact-agent" json:"jaeger-thrift-compact-agent"`
+	// Datadog agent to report tracing results.
+	DatadogAgent string `toml:"datadog-agent" json:"datadog-agent"`
+	// The maximum length of spans produced by TiDB to report per SQL.
+	MaxSpansLength int64 `toml:"max-spans-length" json:"max-spans-length"`
+}
+
 // Experimental controls the features that are still experimental: their semantics, interfaces are subject to change.
 // Using these features in the production environment is not recommended.
 type Experimental struct {
@@ -812,6 +828,13 @@ var defaultConf = Config{
 	TxnScope:                     DefTxnScope,
 	EnableEnumLengthLimit:        true,
 	StoresRefreshInterval:        DefStoresRefreshInterval,
+	Trace: Trace{
+		Enable:                   false,
+		StorageDir:               "tidb.trace",
+		JaegerThriftCompactAgent: "",
+		DatadogAgent:             "",
+		MaxSpansLength:           2000,
+	},
 }
 
 var (

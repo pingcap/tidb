@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/tikv/minitrace-go"
 	"go.uber.org/zap"
 )
 
@@ -405,6 +406,8 @@ func (s *tikvSnapshot) get(ctx context.Context, bo *Backoffer, k kv.Key) ([]byte
 		defer span1.Finish()
 		opentracing.ContextWithSpan(ctx, span1)
 	}
+	span := minitrace.StartSpan(ctx, "tikvSnapshot.get")
+	defer span.Finish()
 	failpoint.Inject("snapshot-get-cache-fail", func(_ failpoint.Value) {
 		if bo.ctx.Value("TestSnapshotCache") != nil {
 			panic("cache miss")

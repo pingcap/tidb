@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/tikv/minitrace-go"
 )
 
 // PartitionTableExecutor is a Executor for partitioned table.
@@ -145,6 +146,8 @@ func nextPartitionWithTrace(ctx context.Context, n nextPartition, tbl table.Phys
 		defer span1.Finish()
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
+	ctx, span := minitrace.StartSpanWithContext(ctx, fmt.Sprintf("nextPartition %d", tbl.GetPhysicalID()))
+	defer span.Finish()
 	return n.nextPartition(ctx, tbl)
 }
 

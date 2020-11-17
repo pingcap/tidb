@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/tikv/minitrace-go"
 	"go.uber.org/zap"
 )
 
@@ -157,6 +158,10 @@ func (c *twoPhaseCommitter) commitMutations(bo *Backoffer, mutations CommitterMu
 		defer span1.Finish()
 		bo.ctx = opentracing.ContextWithSpan(bo.ctx, span1)
 	}
+
+	var span minitrace.SpanHandle
+	bo.ctx, span = minitrace.StartSpanWithContext(bo.ctx, "twoPhaseCommitter.commitMutations")
+	defer span.Finish()
 
 	return c.doActionOnMutations(bo, actionCommit{}, mutations)
 }

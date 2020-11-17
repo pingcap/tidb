@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/util/fastrand"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/tikv/minitrace-go"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -314,6 +315,9 @@ func (b *Backoffer) Backoff(typ backoffType, err error) error {
 		defer span1.Finish()
 		opentracing.ContextWithSpan(b.ctx, span1)
 	}
+	var span minitrace.SpanHandle
+	b.ctx, span = minitrace.StartSpanWithContext(b.ctx, fmt.Sprintf("tikv.backoff.%s", typ))
+	defer span.Finish()
 	return b.BackoffWithMaxSleep(typ, -1, err)
 }
 

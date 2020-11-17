@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tipb/go-binlog"
+	"github.com/tikv/minitrace-go"
 	"go.uber.org/zap"
 )
 
@@ -355,6 +356,8 @@ func (s *session) getTxnFuture(ctx context.Context) *txnFuture {
 		defer span1.Finish()
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
+	ctx, span := minitrace.StartSpanWithContext(ctx, "session.getTxnFuture")
+	defer span.Finish()
 
 	oracleStore := s.store.GetOracle()
 	var tsFuture oracle.Future
