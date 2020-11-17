@@ -7710,3 +7710,11 @@ func (s *testIntegrationSerialSuite) TestIssue20608(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustQuery("select '䇇Հ' collate utf8mb4_bin like '___Հ';").Check(testkit.Rows("0"))
 }
+
+func (s *testIntegrationSuite2) TestIssue15847(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists v0")
+	tk.MustExec("CREATE VIEW v0(c0) AS SELECT NULL;")
+	tk.MustQuery("SELECT * FROM v0 WHERE (NOT (IF(v0.c0, NULL, NULL)));").Check(testkit.Rows())
+}
