@@ -2503,7 +2503,7 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 		// table hints are only visible in the current SELECT statement.
 		b.popTableHints()
 	}()
-
+	enableNoopFuncs := b.ctx.GetSessionVars().EnableNoopFuncs
 	if sel.SelectStmtOpts != nil {
 		origin := b.inStraightJoin
 		b.inStraightJoin = sel.SelectStmtOpts.StraightJoin
@@ -2572,6 +2572,10 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 	}
 
 	if sel.LockTp != ast.SelectLockNone {
+		if sel.LockTp == ast.SelectLockInShareMode && !enableNoopFuncs {
+			err = expression.ErrFunctionsNoopImpl.GenWithStackByArgs("LOCK IN SHARE MODE")
+			return nil, err
+		}
 		p = b.buildSelectLock(p, sel.LockTp)
 	}
 	b.handleHelper.popMap()
