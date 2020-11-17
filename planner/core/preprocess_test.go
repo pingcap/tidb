@@ -218,10 +218,16 @@ func (s *testValidatorSuite) TestValidator(c *C) {
 
 		{"CREATE TABLE t (a float(255, 30))", true, nil},
 		{"CREATE TABLE t (a double(255, 30))", true, nil},
-		{"CREATE TABLE t (a float(256, 30))", false, types.ErrTooBigPrecision},
+		{"CREATE TABLE t (a float(256, 30))", false, types.ErrTooBigDisplayWidth},
 		{"CREATE TABLE t (a float(255, 31))", false, types.ErrTooBigScale},
-		{"CREATE TABLE t (a double(256, 30))", false, types.ErrTooBigPrecision},
+		{"CREATE TABLE t (a double(256, 30))", false, types.ErrTooBigDisplayWidth},
 		{"CREATE TABLE t (a double(255, 31))", false, types.ErrTooBigScale},
+
+		// issue 20447
+		{"CREATE TABLE t (a float(53))", true, nil},
+		{"CREATE TABLE t (a float(54))", false, types.ErrWrongFieldSpec},
+		{"CREATE TABLE t (a double)", true, nil},
+		{"CREATE TABLE t (a double(54))", false, types.ErrSyntax},
 
 		// FIXME: temporary 'not implemented yet' test for 'CREATE TABLE ... SELECT' (issue 4754)
 		{"CREATE TABLE t SELECT * FROM u", false, errors.New("'CREATE TABLE ... SELECT' is not implemented yet")},
@@ -255,6 +261,15 @@ func (s *testValidatorSuite) TestValidator(c *C) {
 		{"CREATE TABLE origin (a int primary key auto_increment, b int);", false, nil},
 		{"CREATE TABLE origin (a int unique auto_increment, b int);", false, nil},
 		{"CREATE TABLE origin (a int key auto_increment, b int);", false, nil},
+
+		// issue 18149
+		{"CREATE TABLE t (a int, index ``(a));", true, errors.New("[ddl:1280]Incorrect index name ''")},
+		{"CREATE TABLE t (a int, b int, index ``((a+1), (b+1)));", true, errors.New("[ddl:1280]Incorrect index name ''")},
+		{"CREATE TABLE t (a int, key ``(a));", true, errors.New("[ddl:1280]Incorrect index name ''")},
+		{"CREATE TABLE t (a int, b int, key ``((a+1), (b+1)));", true, errors.New("[ddl:1280]Incorrect index name ''")},
+		{"CREATE TABLE t (a int, index(a));", false, nil},
+		{"CREATE INDEX `` on t (a);", true, errors.New("[ddl:1280]Incorrect index name ''")},
+		{"CREATE INDEX `` on t ((lower(a)));", true, errors.New("[ddl:1280]Incorrect index name ''")},
 	}
 
 	_, err := s.se.Execute(context.Background(), "use test")
