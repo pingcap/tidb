@@ -1376,6 +1376,16 @@ error = '''
 TiKV max timestamp is not synced
 '''
 
+["tikv:9012"]
+error = '''
+TiFlash server timeout
+'''
+
+["tikv:9013"]
+error = '''
+TiFlash server is busy
+'''
+
 ["types:1063"]
 error = '''
 Incorrect column specifier for column '%-.192s'
