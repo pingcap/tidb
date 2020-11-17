@@ -195,6 +195,8 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		}
 	case *ast.CreateStatisticsStmt, *ast.DropStatisticsStmt:
 		p.checkStatisticsOpGrammar(in)
+	case *ast.GroupByClause:
+		p.checkGroupBy(node)
 	default:
 		p.flag &= ^parentIsJoin
 	}
@@ -655,6 +657,17 @@ func (p *preprocessor) checkCreateIndexGrammar(stmt *ast.CreateIndexStmt) {
 		return
 	}
 	p.err = checkIndexInfo(stmt.IndexName, stmt.IndexPartSpecifications)
+}
+
+func (p *preprocessor) checkGroupBy(stmt *ast.GroupByClause) {
+
+	for _, item := range stmt.Items {
+
+		fmt.Printf("################# item: %#v ##############\n", item)
+
+
+	}
+
 }
 
 func (p *preprocessor) checkStatisticsOpGrammar(node ast.Node) {

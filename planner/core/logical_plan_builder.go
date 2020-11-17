@@ -174,6 +174,8 @@ func (b *PlanBuilder) buildAggregation(ctx context.Context, p LogicalPlan, aggFu
 	b.optFlag |= flagEliminateAgg
 	b.optFlag |= flagEliminateProjection
 
+//	fmt.Printf("#### %#v #####\n", gbyItems)
+
 	plan4Agg := LogicalAggregation{AggFuncs: make([]*aggregation.AggFuncDesc, 0, len(aggFuncList))}.Init(b.ctx, b.getSelectOffset())
 	if hint := b.TableHints(); hint != nil {
 		plan4Agg.aggHints = hint.aggHints
@@ -2425,6 +2427,7 @@ func (b *PlanBuilder) resolveGbyExprs(ctx context.Context, p LogicalPlan, gby *a
 		names:  p.OutputNames(),
 	}
 	for _, item := range gby.Items {
+//		fmt.Printf("### resolving: %#v\n", item)
 		resolver.inExpr = false
 		resolver.exprDepth = 0
 		resolver.isParam = false
