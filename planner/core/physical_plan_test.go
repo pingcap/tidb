@@ -505,7 +505,7 @@ func (s *testPlanSuite) TestDoSubquery(c *C) {
 	}{
 		{
 			sql:  "do 1 in (select a from t)",
-			best: "LeftHashJoin{Dual->TableReader(Table(t))}->Projection",
+			best: "LeftHashJoin{Dual->IndexReader(Index(t.c_d_e)[[NULL,+inf]])}->Projection",
 		},
 	}
 	for _, tt := range tests {
