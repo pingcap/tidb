@@ -28,6 +28,7 @@ type ExplainExec struct {
 
 	explain     *core.Explain
 	analyzeExec Executor
+	executed    bool
 	rows        [][]string
 	cursor      int
 }
@@ -79,7 +80,8 @@ func (e *ExplainExec) generateExplainInfo(ctx context.Context) (rows [][]string,
 			closed = true
 		}
 	}()
-	if e.analyzeExec != nil {
+	if e.analyzeExec != nil && !e.executed {
+		e.executed = true
 		chk := newFirstChunk(e.analyzeExec)
 		var nextErr, closeErr error
 		for {
@@ -110,4 +112,17 @@ func (e *ExplainExec) generateExplainInfo(ctx context.Context) (rows [][]string,
 		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl = nil
 	}
 	return e.explain.Rows, nil
+}
+
+// getAnalyzeExecToExecutedNoDelay gets the analyze DML executor to execute in handleNoDelay function.
+// For explain analyze insert/update/delete statement, the analyze executor should be executed in handleNoDelay
+// function and then commit transaction if needed.
+// Otherwise, in autocommit transaction, the table record change of analyze executor(insert/update/delete...)
+// will not be committed.
+func (e *ExplainExec) getAnalyzeExecToExecutedNoDelay() Executor {
+	if e.analyzeExec != nil && !e.executed && e.analyzeExec.Schema().Len() == 0 {
+		e.executed = true
+		return e.analyzeExec
+	}
+	return nil
 }
