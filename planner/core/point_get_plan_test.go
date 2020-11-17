@@ -21,6 +21,7 @@ import (
 	"strings"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
@@ -447,6 +448,23 @@ func (s *testPointGetSuite) TestIssue19141(c *C) {
 	tk.MustQuery("select * from t19141 order by c_int").Check(testkit.Rows("1", "2", "3", "4"))
 	tk.MustExec("delete from t19141 partition (p0) where c_int in (2,3)") // No data changed
 	tk.MustQuery("select * from t19141 order by c_int").Check(testkit.Rows("1", "2", "3", "4"))
+}
+
+func (s *testPointGetSuite) TestUpdateWithTableReadLockWillFail(c *C) {
+	gcfg := config.GetGlobalConfig()
+	etl := gcfg.EnableTableLock
+	gcfg.EnableTableLock = true
+	defer func() {
+		gcfg.EnableTableLock = etl
+	}()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table tbllock(id int, c int);")
+	tk.MustExec("insert into tbllock values(1, 2), (2, 2);")
+	tk.MustExec("lock table tbllock read;")
+	_, err := tk.Exec("update tbllock set c = 3 where id = 2;")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[schema:1099]Table 'tbllock' was locked with a READ lock and can't be updated")
 }
 
 func (s *testPointGetSuite) TestSelectInMultiColumns(c *C) {
