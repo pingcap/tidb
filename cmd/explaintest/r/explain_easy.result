@@ -427,7 +427,7 @@ IndexReader_6	10.00	root		index:IndexRangeScan_5
 └─IndexRangeScan_5	10.00	cop[tikv]	table:t, index:idx(a, b)	range:[1,1], keep order:false, stats:pseudo
 explain select * from t where a = 1 and a = 2;
 id	estRows	task	access object	operator info
-TableDual_5	0.00	root		rows:0
+TableDual_5	8000.00	root		rows:0
 explain select * from t where b = 1 and b = 2;
 id	estRows	task	access object	operator info
 TableDual_5	0.00	root		rows:0
@@ -452,7 +452,7 @@ drop table if exists t;
 create table t(a bigint primary key);
 explain select * from t where a = 1 and a = 2;
 id	estRows	task	access object	operator info
-TableDual_5	0.00	root		rows:0
+TableDual_5	8000.00	root		rows:0
 explain select null or a > 1 from t;
 id	estRows	task	access object	operator info
 Projection_3	10000.00	root		or(<nil>, gt(test.t.a, 1))->Column#2
