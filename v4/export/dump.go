@@ -76,7 +76,7 @@ func Dump(pCtx context.Context, conf *Config) (err error) {
 	}
 
 	snapshot := conf.Snapshot
-	if snapshot == "" && (doPdGC || conf.Consistency == "snapshot") {
+	if snapshot == "" && (doPdGC || conf.Consistency == consistencyTypeSnapshot) {
 		conn, err := pool.Conn(ctx)
 		if err != nil {
 			conn.Close()
@@ -97,7 +97,7 @@ func Dump(pCtx context.Context, conf *Config) (err error) {
 		if err != nil {
 			return err
 		}
-		if conf.Consistency == "snapshot" {
+		if conf.Consistency == consistencyTypeSnapshot {
 			hasTiKV, err := CheckTiDBWithTiKV(pool)
 			if err != nil {
 				return err
@@ -129,7 +129,7 @@ func Dump(pCtx context.Context, conf *Config) (err error) {
 		defer newPool.Close()
 	}
 
-	m := newGlobalMetadata(conf.ExternalStorage)
+	m := newGlobalMetadata(conf.ExternalStorage, snapshot)
 	// write metadata even if dump failed
 	defer func() {
 		if err == nil {
@@ -139,13 +139,13 @@ func Dump(pCtx context.Context, conf *Config) (err error) {
 
 	// for consistency lock, we should lock tables at first to get the tables we want to lock & dump
 	// for consistency lock, record meta pos before lock tables because other tables may still be modified while locking tables
-	if conf.Consistency == "lock" {
+	if conf.Consistency == consistencyTypeLock {
 		conn, err := createConnWithConsistency(ctx, pool)
 		if err != nil {
 			return errors.Trace(err)
 		}
 		m.recordStartTime(time.Now())
-		err = m.recordGlobalMetaData(conn, conf.ServerInfo.ServerType, false, snapshot)
+		err = m.recordGlobalMetaData(conn, conf.ServerInfo.ServerType, false)
 		if err != nil {
 			log.Info("get global metadata failed", zap.Error(err))
 		}
@@ -168,13 +168,13 @@ func Dump(pCtx context.Context, conf *Config) (err error) {
 
 	// for other consistencies, we should get table list after consistency is set up and GlobalMetaData is cached
 	// for other consistencies, record snapshot after whole tables are locked. The recorded meta info is exactly the locked snapshot.
-	if conf.Consistency != "lock" {
+	if conf.Consistency != consistencyTypeLock {
 		conn, err := pool.Conn(ctx)
 		if err != nil {
 			return errors.Trace(err)
 		}
 		m.recordStartTime(time.Now())
-		err = m.recordGlobalMetaData(conn, conf.ServerInfo.ServerType, false, snapshot)
+		err = m.recordGlobalMetaData(conn, conf.ServerInfo.ServerType, false)
 		if err != nil {
 			log.Info("get global metadata failed", zap.Error(err))
 		}
@@ -189,20 +189,25 @@ func Dump(pCtx context.Context, conf *Config) (err error) {
 
 	if conf.PosAfterConnect {
 		// record again, to provide a location to exit safe mode for DM
-		err = m.recordGlobalMetaData(connectPool.extraConn(), conf.ServerInfo.ServerType, true, snapshot)
+		err = m.recordGlobalMetaData(connectPool.extraConn(), conf.ServerInfo.ServerType, true)
 		if err != nil {
 			log.Info("get global metadata (after connection pool established) failed", zap.Error(err))
 		}
 	}
 
-	if conf.Consistency != "lock" {
+	if conf.Consistency != consistencyTypeLock {
 		if err = prepareTableListToDump(conf, connectPool.extraConn()); err != nil {
 			return err
 		}
 	}
 
-	if err = conCtrl.TearDown(ctx); err != nil {
-		return err
+	if conf.TransactionalConsistency {
+		if conf.Consistency == consistencyTypeFlush || conf.Consistency == consistencyTypeLock {
+			log.Info("All the dumping transactions have started. Start to unlock tables")
+		}
+		if err = conCtrl.TearDown(ctx); err != nil {
+			return err
+		}
 	}
 
 	failpoint.Inject("ConsistencyCheck", nil)
@@ -222,7 +227,28 @@ func Dump(pCtx context.Context, conf *Config) (err error) {
 	}
 
 	if conf.Sql == "" {
-		if err = dumpDatabases(ctx, conf, connectPool, writer); err != nil {
+		if err = dumpDatabases(ctx, conf, connectPool, writer, func(conn *sql.Conn) (*sql.Conn, error) {
+			// make sure that the lock connection is still alive
+			err := conCtrl.PingContext(ctx)
+			if err != nil {
+				return conn, err
+			}
+			// give up the last broken connection
+			conn.Close()
+			newConn, err := createConnWithConsistency(ctx, pool)
+			if err != nil {
+				return conn, err
+			}
+			conn = newConn
+			// renew the master status after connection. dm can't close safe-mode until dm reaches current pos
+			if conf.PosAfterConnect {
+				err = m.recordGlobalMetaData(conn, conf.ServerInfo.ServerType, true)
+				if err != nil {
+					return conn, err
+				}
+			}
+			return conn, nil
+		}); err != nil {
 			return err
 		}
 	} else {
@@ -235,7 +261,7 @@ func Dump(pCtx context.Context, conf *Config) (err error) {
 	return nil
 }
 
-func dumpDatabases(pCtx context.Context, conf *Config, connectPool *connectionsPool, writer Writer) error {
+func dumpDatabases(pCtx context.Context, conf *Config, connectPool *connectionsPool, writer Writer, rebuildConnFunc func(*sql.Conn) (*sql.Conn, error)) error {
 	allTables := conf.Tables
 	g, ctx := errgroup.WithContext(pCtx)
 	for dbName, tables := range allTables {
@@ -260,18 +286,30 @@ func dumpDatabases(pCtx context.Context, conf *Config, connectPool *connectionsP
 				tableIR := tableIR
 				g.Go(func() error {
 					conn := connectPool.getConn()
-					defer connectPool.releaseConn(conn)
-					retryTime := 1
-					return utils.WithRetry(ctx, func() error {
-						log.Debug("trying to dump table chunk", zap.Int("retryTime", retryTime), zap.String("db", tableIR.DatabaseName()),
-							zap.String("table", tableIR.TableName()), zap.Int("chunkIndex", tableIR.ChunkIndex()))
+					defer func() {
+						connectPool.releaseConn(conn)
+					}()
+					retryTime := 0
+					var lastErr error
+					return utils.WithRetry(ctx, func() (err error) {
+						defer func() {
+							lastErr = err
+						}()
 						retryTime += 1
-						err := tableIR.Start(ctx, conn)
+						log.Debug("trying to dump table chunk", zap.Int("retryTime", retryTime), zap.String("db", tableIR.DatabaseName()),
+							zap.String("table", tableIR.TableName()), zap.Int("chunkIndex", tableIR.ChunkIndex()), zap.NamedError("lastError", lastErr))
+						if retryTime > 1 {
+							conn, err = rebuildConnFunc(conn)
+							if err != nil {
+								return
+							}
+						}
+						err = tableIR.Start(ctx, conn)
 						if err != nil {
-							return err
+							return
 						}
 						return writer.WriteTableData(ctx, tableIR)
-					}, newDumpChunkBackoffer())
+					}, newDumpChunkBackoffer(canRebuildConn(conf.Consistency, conf.TransactionalConsistency)))
 				})
 			}
 		}
@@ -411,5 +449,16 @@ func updateServiceSafePoint(ctx context.Context, pdClient pd.Client, ttl int64, 
 			return
 		case <-tick.C:
 		}
+	}
+}
+
+func canRebuildConn(consistency string, trxConsistencyOnly bool) bool {
+	switch consistency {
+	case consistencyTypeLock, consistencyTypeFlush:
+		return !trxConsistencyOnly
+	case consistencyTypeSnapshot, consistencyTypeNone:
+		return true
+	default:
+		return false
 	}
 }

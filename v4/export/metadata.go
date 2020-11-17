@@ -15,7 +15,9 @@ import (
 )
 
 type globalMetadata struct {
-	buffer bytes.Buffer
+	buffer          bytes.Buffer
+	afterConnBuffer bytes.Buffer
+	snapshot        string
 
 	storage storage.ExternalStorage
 }
@@ -31,10 +33,11 @@ const (
 	mariadbShowMasterStatusFieldNum = 4
 )
 
-func newGlobalMetadata(s storage.ExternalStorage) *globalMetadata {
+func newGlobalMetadata(s storage.ExternalStorage, snapshot string) *globalMetadata {
 	return &globalMetadata{
-		storage: s,
-		buffer:  bytes.Buffer{},
+		storage:  s,
+		buffer:   bytes.Buffer{},
+		snapshot: snapshot,
 	}
 }
 
@@ -47,16 +50,25 @@ func (m *globalMetadata) recordStartTime(t time.Time) {
 }
 
 func (m *globalMetadata) recordFinishTime(t time.Time) {
+	m.buffer.Write(m.afterConnBuffer.Bytes())
 	m.buffer.WriteString("Finished dump at: " + t.Format(metadataTimeLayout) + "\n")
 }
 
-func (m *globalMetadata) recordGlobalMetaData(db *sql.Conn, serverType ServerType, afterConn bool, snapshot string) error {
-	// get master status info
-	m.buffer.WriteString("SHOW MASTER STATUS:")
+func (m *globalMetadata) recordGlobalMetaData(db *sql.Conn, serverType ServerType, afterConn bool) error {
 	if afterConn {
-		m.buffer.WriteString(" /* AFTER CONNECTION POOL ESTABLISHED */")
+		m.afterConnBuffer.Reset()
+		return recordGlobalMetaData(db, &m.afterConnBuffer, serverType, afterConn, m.snapshot)
 	}
-	m.buffer.WriteString("\n")
+	return recordGlobalMetaData(db, &m.buffer, serverType, afterConn, m.snapshot)
+}
+
+func recordGlobalMetaData(db *sql.Conn, buffer *bytes.Buffer, serverType ServerType, afterConn bool, snapshot string) error {
+	// get master status info
+	buffer.WriteString("SHOW MASTER STATUS:")
+	if afterConn {
+		buffer.WriteString(" /* AFTER CONNECTION POOL ESTABLISHED */")
+	}
+	buffer.WriteString("\n")
 	switch serverType {
 	// For MySQL:
 	// mysql 5.6+
@@ -92,7 +104,7 @@ func (m *globalMetadata) recordGlobalMetaData(db *sql.Conn, serverType ServerTyp
 		gtidSet := getValidStr(str, gtidSetFieldIndex)
 
 		if logFile != "" {
-			fmt.Fprintf(&m.buffer, "\tLog: %s\n\tPos: %s\n\tGTID:%s\n", logFile, pos, gtidSet)
+			fmt.Fprintf(buffer, "\tLog: %s\n\tPos: %s\n\tGTID:%s\n", logFile, pos, gtidSet)
 		}
 	// For MariaDB:
 	// SHOW MASTER STATUS;
@@ -122,12 +134,12 @@ func (m *globalMetadata) recordGlobalMetaData(db *sql.Conn, serverType ServerTyp
 		}
 
 		if logFile != "" {
-			fmt.Fprintf(&m.buffer, "\tLog: %s\n\tPos: %s\n\tGTID:%s\n", logFile, pos, gtidSet)
+			fmt.Fprintf(buffer, "\tLog: %s\n\tPos: %s\n\tGTID:%s\n", logFile, pos, gtidSet)
 		}
 	default:
 		return errors.New("unsupported serverType" + serverType.String() + "for recordGlobalMetaData")
 	}
-	m.buffer.WriteString("\n")
+	buffer.WriteString("\n")
 	if serverType == ServerTypeTiDB {
 		return nil
 	}
@@ -184,11 +196,11 @@ func (m *globalMetadata) recordGlobalMetaData(db *sql.Conn, serverType ServerTyp
 			}
 		}
 		if len(host) > 0 {
-			m.buffer.WriteString("SHOW SLAVE STATUS:\n")
+			buffer.WriteString("SHOW SLAVE STATUS:\n")
 			if isms {
-				m.buffer.WriteString("\tConnection name: " + connName + "\n")
+				buffer.WriteString("\tConnection name: " + connName + "\n")
 			}
-			fmt.Fprintf(&m.buffer, "\tHost: %s\n\tLog: %s\n\tPos: %s\n\tGTID:%s\n\n", host, logFile, pos, gtidSet)
+			fmt.Fprintf(buffer, "\tHost: %s\n\tLog: %s\n\tPos: %s\n\tGTID:%s\n\n", host, logFile, pos, gtidSet)
 		}
 		return nil
 	})
