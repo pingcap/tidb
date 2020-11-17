@@ -705,7 +705,7 @@ func (e *HashAggExec) prepare4ParallelExec(ctx context.Context) {
 		if e.stats != nil {
 			atomic.AddInt64(&e.stats.PartialStats.WallTime, int64(time.Since(partialStart)))
 			for i := range e.readPartialWorkers {
-				atomic.AddInt64(&e.stats.PartialStats.WorkerTime[i], e.readPartialWorkers[i].aggWorkerStats)
+				atomic.AddInt64(&e.stats.PartialStats.WorkerTime[i], atomic.LoadInt64(&e.readPartialWorkers[i].aggWorkerStats))
 			}
 		}
 	}()
@@ -720,7 +720,7 @@ func (e *HashAggExec) prepare4ParallelExec(ctx context.Context) {
 		if e.stats != nil {
 			atomic.AddInt64(&e.stats.FinalStats.WallTime, int64(time.Since(finalStart)))
 			for i := range e.readFinalWorkers {
-				atomic.AddInt64(&e.stats.FinalStats.WorkerTime[i], e.readFinalWorkers[i].aggWorkerStats)
+				atomic.AddInt64(&e.stats.FinalStats.WorkerTime[i], atomic.LoadInt64(&e.readFinalWorkers[i].aggWorkerStats))
 			}
 		}
 	}()
@@ -932,10 +932,13 @@ func (e *AggWorkerStat) Merge(tmp AggWorkerStat) {
 	for i := range e.WorkerTime {
 		workerTime = append(workerTime, atomic.LoadInt64(&e.WorkerTime[i]))
 	}
-	workerTime = append(workerTime, tmp.WorkerTime...)
+	for i := range tmp.WorkerTime {
+		workerTime = append(workerTime, atomic.LoadInt64(&tmp.WorkerTime[i]))
+	}
 	e.WorkerTime = workerTime
 }
 
+// Clone is used to clone AggWorkerStat
 func (e *AggWorkerStat) Clone() AggWorkerStat {
 	workerTime := make([]int64, e.Concurrency)
 	for i := range e.WorkerTime {
