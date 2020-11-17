@@ -1757,5 +1757,31 @@ func (s *testIntegrationSuite) TestPartitionUnionWithPPruningColumn(c *C) {
 			"2890 LE1300_r5",
 			"3150 LE1323_r5",
 			"3290 LE1327_r5"))
+}
 
+func (s *testIntegrationSuite) TestIssue20139(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id int, c int) partition by range (id) (partition p0 values less than (4), partition p1 values less than (7))")
+	tk.MustExec("insert into t values(3, 3), (5, 5)")
+	plan := tk.MustQuery("explain select * from t where c = 1 and id = c")
+	plan.Check(testkit.Rows(
+		"TableReader_7 0.01 root partition:p0 data:Selection_6",
+		"└─Selection_6 0.01 cop[tikv]  eq(test.t.c, 1), eq(test.t.id, 1)",
+		"  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+	))
+	tk.MustExec("drop table t")
+}
+
+func (s *testIntegrationSuite) TestIssue14481(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int default null, b int default null, c int default null)")
+	plan := tk.MustQuery("explain select * from t where a = 1 and a = 2")
+	plan.Check(testkit.Rows("TableDual_5 8000.00 root  rows:0"))
+	tk.MustExec("drop table t")
 }
