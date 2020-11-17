@@ -496,10 +496,12 @@ func (imw *innerMergeWorker) handleTask(ctx context.Context, task *lookUpMergeJo
 		}
 	}
 	imw.innerExec, err = imw.readerBuilder.buildExecutorForIndexJoin(ctx, dLookUpKeys, imw.indexRanges, imw.keyOff2IdxOff, imw.nextColCompareFilters, false)
+	if imw.innerExec != nil {
+		defer terror.Call(imw.innerExec.Close)
+	}
 	if err != nil {
 		return err
 	}
-	defer terror.Call(imw.innerExec.Close)
 	_, err = imw.fetchNextInnerResult(ctx, task)
 	if err != nil {
 		return err
@@ -531,7 +533,12 @@ func (imw *innerMergeWorker) fetchNewChunkWhenFull(ctx context.Context, task *lo
 }
 
 func (imw *innerMergeWorker) doMergeJoin(ctx context.Context, task *lookUpMergeJoinTask) (err error) {
-	chk := <-imw.joinChkResourceCh
+	var chk *chunk.Chunk
+	select {
+	case chk = <-imw.joinChkResourceCh:
+	case <-ctx.Done():
+		return
+	}
 	defer func() {
 		if chk == nil {
 			return
@@ -556,6 +563,9 @@ func (imw *innerMergeWorker) doMergeJoin(ctx context.Context, task *lookUpMergeJ
 	for _, outerIdx := range task.outerOrderIdx {
 		outerRow := task.outerResult.GetRow(outerIdx)
 		hasMatch, hasNull, cmpResult := false, false, initCmpResult
+		if task.outerMatch != nil && !task.outerMatch[outerIdx.ChkIdx][outerIdx.RowIdx] {
+			goto missMatch
+		}
 		// If it has iterated out all inner rows and the inner rows with same key is empty,
 		// that means the outer row needn't match any inner rows.
 		if noneInnerRowsRemain && len(task.sameKeyInnerRows) == 0 {

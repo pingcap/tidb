@@ -21,12 +21,13 @@
       {
         "SQL": "explain select * from t where b > 'a' order by convert(b, unsigned) limit 2",
         "Result": [
-          "Projection_17 2.00 root  test.t.a, test.t.b",
+          "Projection_18 2.00 root  test.t.a, test.t.b",
           "└─TopN_8 2.00 root  Column#3:asc, offset:0, count:2",
-          "  └─Projection_18 3333.33 root  test.t.a, test.t.b, cast(test.t.b, bigint(22) UNSIGNED BINARY)->Column#3",
-          "    └─TableReader_13 3333.33 root  data:Selection_12",
-          "      └─Selection_12 3333.33 cop[tiflash]  gt(test.t.b, \"a\")",
-          "        └─TableFullScan_11 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+          "  └─Projection_19 2.00 root  test.t.a, test.t.b, cast(test.t.b, bigint(22) UNSIGNED BINARY)->Column#3",
+          "    └─TableReader_14 2.00 root  data:TopN_13",
+          "      └─TopN_13 2.00 cop[tiflash]  cast(test.t.b):asc, offset:0, count:2",
+          "        └─Selection_12 3333.33 cop[tiflash]  gt(test.t.b, \"a\")",
+          "          └─TableFullScan_11 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
         ]
       },
       {
@@ -190,26 +191,26 @@
       {
         "SQL": "desc select /*+ READ_FROM_STORAGE(TIKV[t1], TIKV[t2]) */ * from t t1, t t2 where t1.a = t2.a",
         "Plan": [
-          "HashJoin_37 12487.50 root  inner join, equal:[eq(test.t.a, test.t.a)]",
-          "├─TableReader_55(Build) 9990.00 root  data:Selection_54",
-          "│ └─Selection_54 9990.00 cop[tikv]  not(isnull(test.t.a))",
-          "│   └─TableFullScan_53 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
-          "└─TableReader_49(Probe) 9990.00 root  data:Selection_48",
-          "  └─Selection_48 9990.00 cop[tikv]  not(isnull(test.t.a))",
-          "    └─TableFullScan_47 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+          "HashJoin_23 12487.50 root  inner join, equal:[eq(test.t.a, test.t.a)]",
+          "├─TableReader_41(Build) 9990.00 root  data:Selection_40",
+          "│ └─Selection_40 9990.00 cop[tikv]  not(isnull(test.t.a))",
+          "│   └─TableFullScan_39 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─TableReader_35(Probe) 9990.00 root  data:Selection_34",
+          "  └─Selection_34 9990.00 cop[tikv]  not(isnull(test.t.a))",
+          "    └─TableFullScan_33 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
         "SQL": "desc select /*+ READ_FROM_STORAGE(TIKV[t1], TIFLASH[t2]) */ * from t t1, t t2 where t1.a = t2.a",
         "Plan": [
-          "HashJoin_23 12487.50 root  inner join, equal:[eq(test.t.a, test.t.a)]",
-          "├─TableReader_31(Build) 9990.00 root  data:Selection_30",
-          "│ └─Selection_30 9990.00 cop[tiflash]  not(isnull(test.t.a))",
-          "│   └─TableFullScan_29 10000.00 cop[tiflash] table:t2 keep order:false, stats:pseudo",
-          "└─TableReader_34(Probe) 9990.00 root  data:Selection_33",
-          "  └─Selection_33 9990.00 cop[tikv]  not(isnull(test.t.a))",
-          "    └─TableFullScan_32 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+          "HashJoin_16 12487.50 root  inner join, equal:[eq(test.t.a, test.t.a)]",
+          "├─TableReader_24(Build) 9990.00 root  data:Selection_23",
+          "│ └─Selection_23 9990.00 cop[tiflash]  not(isnull(test.t.a))",
+          "│   └─TableFullScan_22 10000.00 cop[tiflash] table:t2 keep order:false, stats:pseudo",
+          "└─TableReader_27(Probe) 9990.00 root  data:Selection_26",
+          "  └─Selection_26 9990.00 cop[tikv]  not(isnull(test.t.a))",
+          "    └─TableFullScan_25 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "Warn": null
       },

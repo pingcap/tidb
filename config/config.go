@@ -101,22 +101,23 @@ type Config struct {
 	TxnLocalLatches  TxnLocalLatches `toml:"-" json:"-"`
 	// Set sys variable lower-case-table-names, ref: https://dev.mysql.com/doc/refman/5.7/en/identifier-case-sensitivity.html.
 	// TODO: We actually only support mode 2, which keeps the original case, but the comparison is case-insensitive.
-	LowerCaseTableNames int               `toml:"lower-case-table-names" json:"lower-case-table-names"`
-	ServerVersion       string            `toml:"server-version" json:"server-version"`
-	Log                 Log               `toml:"log" json:"log"`
-	Security            Security          `toml:"security" json:"security"`
-	Status              Status            `toml:"status" json:"status"`
-	Performance         Performance       `toml:"performance" json:"performance"`
-	PreparedPlanCache   PreparedPlanCache `toml:"prepared-plan-cache" json:"prepared-plan-cache"`
-	OpenTracing         OpenTracing       `toml:"opentracing" json:"opentracing"`
-	ProxyProtocol       ProxyProtocol     `toml:"proxy-protocol" json:"proxy-protocol"`
-	TiKVClient          TiKVClient        `toml:"tikv-client" json:"tikv-client"`
-	Binlog              Binlog            `toml:"binlog" json:"binlog"`
-	CompatibleKillQuery bool              `toml:"compatible-kill-query" json:"compatible-kill-query"`
-	Plugin              Plugin            `toml:"plugin" json:"plugin"`
-	PessimisticTxn      PessimisticTxn    `toml:"pessimistic-txn" json:"pessimistic-txn"`
-	CheckMb4ValueInUTF8 bool              `toml:"check-mb4-value-in-utf8" json:"check-mb4-value-in-utf8"`
-	MaxIndexLength      int               `toml:"max-index-length" json:"max-index-length"`
+	LowerCaseTableNames        int               `toml:"lower-case-table-names" json:"lower-case-table-names"`
+	ServerVersion              string            `toml:"server-version" json:"server-version"`
+	Log                        Log               `toml:"log" json:"log"`
+	Security                   Security          `toml:"security" json:"security"`
+	Status                     Status            `toml:"status" json:"status"`
+	Performance                Performance       `toml:"performance" json:"performance"`
+	PreparedPlanCache          PreparedPlanCache `toml:"prepared-plan-cache" json:"prepared-plan-cache"`
+	OpenTracing                OpenTracing       `toml:"opentracing" json:"opentracing"`
+	ProxyProtocol              ProxyProtocol     `toml:"proxy-protocol" json:"proxy-protocol"`
+	TiKVClient                 TiKVClient        `toml:"tikv-client" json:"tikv-client"`
+	Binlog                     Binlog            `toml:"binlog" json:"binlog"`
+	CompatibleKillQuery        bool              `toml:"compatible-kill-query" json:"compatible-kill-query"`
+	Plugin                     Plugin            `toml:"plugin" json:"plugin"`
+	PessimisticTxn             PessimisticTxn    `toml:"pessimistic-txn" json:"pessimistic-txn"`
+	CheckMb4ValueInUTF8        bool              `toml:"check-mb4-value-in-utf8" json:"check-mb4-value-in-utf8"`
+	MaxIndexLength             int               `toml:"max-index-length" json:"max-index-length"`
+	GracefulWaitBeforeShutdown int               `toml:"graceful-wait-before-shutdown" json:"graceful-wait-before-shutdown"`
 	// AlterPrimaryKey is used to control alter primary key feature.
 	AlterPrimaryKey bool `toml:"alter-primary-key" json:"alter-primary-key"`
 	// TreatOldVersionUTF8AsUTF8MB4 is use to treat old version table/column UTF8 charset as UTF8MB4. This is for compatibility.
@@ -371,22 +372,25 @@ type Status struct {
 
 // Performance is the performance section of the config.
 type Performance struct {
-	MaxProcs             uint    `toml:"max-procs" json:"max-procs"`
-	MaxMemory            uint64  `toml:"max-memory" json:"max-memory"`
-	StatsLease           string  `toml:"stats-lease" json:"stats-lease"`
-	StmtCountLimit       uint    `toml:"stmt-count-limit" json:"stmt-count-limit"`
-	FeedbackProbability  float64 `toml:"feedback-probability" json:"feedback-probability"`
-	QueryFeedbackLimit   uint    `toml:"query-feedback-limit" json:"query-feedback-limit"`
-	PseudoEstimateRatio  float64 `toml:"pseudo-estimate-ratio" json:"pseudo-estimate-ratio"`
-	ForcePriority        string  `toml:"force-priority" json:"force-priority"`
-	BindInfoLease        string  `toml:"bind-info-lease" json:"bind-info-lease"`
-	TxnTotalSizeLimit    uint64  `toml:"txn-total-size-limit" json:"txn-total-size-limit"`
-	TCPKeepAlive         bool    `toml:"tcp-keep-alive" json:"tcp-keep-alive"`
-	CrossJoin            bool    `toml:"cross-join" json:"cross-join"`
-	RunAutoAnalyze       bool    `toml:"run-auto-analyze" json:"run-auto-analyze"`
-	DistinctAggPushDown  bool    `toml:"distinct-agg-push-down" json:"agg-push-down-join"`
-	CommitterConcurrency int     `toml:"committer-concurrency" json:"committer-concurrency"`
-	MaxTxnTTL            uint64  `toml:"max-txn-ttl" json:"max-txn-ttl"`
+	MaxProcs              uint    `toml:"max-procs" json:"max-procs"`
+	MaxMemory             uint64  `toml:"max-memory" json:"max-memory"`
+	ServerMemoryQuota     uint64  `toml:"server-memory-quota" json:"server-memory-quota"`
+	MemoryUsageAlarmRatio float64 `toml:"memory-usage-alarm-ratio" json:"memory-usage-alarm-ratio"`
+	StatsLease            string  `toml:"stats-lease" json:"stats-lease"`
+	StmtCountLimit        uint    `toml:"stmt-count-limit" json:"stmt-count-limit"`
+	FeedbackProbability   float64 `toml:"feedback-probability" json:"feedback-probability"`
+	QueryFeedbackLimit    uint    `toml:"query-feedback-limit" json:"query-feedback-limit"`
+	PseudoEstimateRatio   float64 `toml:"pseudo-estimate-ratio" json:"pseudo-estimate-ratio"`
+	ForcePriority         string  `toml:"force-priority" json:"force-priority"`
+	BindInfoLease         string  `toml:"bind-info-lease" json:"bind-info-lease"`
+	TxnTotalSizeLimit     uint64  `toml:"txn-total-size-limit" json:"txn-total-size-limit"`
+	TCPKeepAlive          bool    `toml:"tcp-keep-alive" json:"tcp-keep-alive"`
+	CrossJoin             bool    `toml:"cross-join" json:"cross-join"`
+	RunAutoAnalyze        bool    `toml:"run-auto-analyze" json:"run-auto-analyze"`
+	DistinctAggPushDown   bool    `toml:"distinct-agg-push-down" json:"agg-push-down-join"`
+	CommitterConcurrency  int     `toml:"committer-concurrency" json:"committer-concurrency"`
+	MaxTxnTTL             uint64  `toml:"max-txn-ttl" json:"max-txn-ttl"`
+	GOGC                  int     `toml:"gogc" json:"gogc"`
 }
 
 // PlanCache is the PlanCache section of the config.
@@ -583,8 +587,9 @@ var defaultConf = Config{
 		Enabled:  false,
 		Capacity: 0,
 	},
-	LowerCaseTableNames: 2,
-	ServerVersion:       "",
+	LowerCaseTableNames:        2,
+	GracefulWaitBeforeShutdown: 0,
+	ServerVersion:              "",
 	Log: Log{
 		Level:               "info",
 		Format:              "text",
@@ -608,21 +613,24 @@ var defaultConf = Config{
 		RecordQPSbyDB:   false,
 	},
 	Performance: Performance{
-		MaxMemory:            0,
-		TCPKeepAlive:         true,
-		CrossJoin:            true,
-		StatsLease:           "3s",
-		RunAutoAnalyze:       true,
-		StmtCountLimit:       5000,
-		FeedbackProbability:  0.0,
-		QueryFeedbackLimit:   512,
-		PseudoEstimateRatio:  0.8,
-		ForcePriority:        "NO_PRIORITY",
-		BindInfoLease:        "3s",
-		TxnTotalSizeLimit:    DefTxnTotalSizeLimit,
-		DistinctAggPushDown:  false,
-		CommitterConcurrency: 16,
-		MaxTxnTTL:            10 * 60 * 1000, // 10min
+		MaxMemory:             0,
+		ServerMemoryQuota:     0,
+		MemoryUsageAlarmRatio: 0.8,
+		TCPKeepAlive:          true,
+		CrossJoin:             true,
+		StatsLease:            "3s",
+		RunAutoAnalyze:        true,
+		StmtCountLimit:        5000,
+		FeedbackProbability:   0.0,
+		QueryFeedbackLimit:    512,
+		PseudoEstimateRatio:   0.8,
+		ForcePriority:         "NO_PRIORITY",
+		BindInfoLease:         "3s",
+		TxnTotalSizeLimit:     DefTxnTotalSizeLimit,
+		DistinctAggPushDown:   false,
+		CommitterConcurrency:  16,
+		MaxTxnTTL:             10 * 60 * 1000, // 10min
+		GOGC:                  100,
 	},
 	ProxyProtocol: ProxyProtocol{
 		Networks:      "",
@@ -860,6 +868,10 @@ func (c *Config) Valid() error {
 
 	if c.Performance.TxnTotalSizeLimit > 10<<30 {
 		return fmt.Errorf("txn-total-size-limit should be less than %d", 10<<30)
+	}
+
+	if c.Performance.MemoryUsageAlarmRatio > 1 || c.Performance.MemoryUsageAlarmRatio < 0 {
+		return fmt.Errorf("memory-usage-alarm-ratio in [Performance] must be greater than or equal to 0 and less than or equal to 1")
 	}
 
 	if c.StmtSummary.MaxStmtCount <= 0 {

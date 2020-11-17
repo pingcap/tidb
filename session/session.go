@@ -425,6 +425,7 @@ func (s *session) doCommit(ctx context.Context) error {
 	// Set this option for 2 phase commit to validate schema lease.
 	s.txn.SetOption(kv.SchemaChecker, domain.NewSchemaChecker(domain.GetDomain(s), s.sessionVars.TxnCtx.SchemaVersion, physicalTableIDs))
 	s.txn.SetOption(kv.InfoSchema, s.sessionVars.TxnCtx.InfoSchema)
+	s.txn.SetOption(kv.CommitHook, func(info kv.TxnInfo, _ error) { s.sessionVars.LastTxnInfo = info })
 	if s.GetSessionVars().EnableAmendPessimisticTxn {
 		s.txn.SetOption(kv.SchemaAmender, NewSchemaAmenderForTikvTxn(s))
 	}
@@ -830,6 +831,14 @@ func execRestrictedSQL(ctx context.Context, se *session, sql string) ([]chunk.Ro
 	ctx = context.WithValue(ctx, execdetails.StmtExecDetailKey, &execdetails.StmtExecDetails{})
 	startTime := time.Now()
 	recordSets, err := se.Execute(ctx, sql)
+	defer func() {
+		for _, rs := range recordSets {
+			closeErr := rs.Close()
+			if closeErr != nil && err == nil {
+				err = closeErr
+			}
+		}
+	}()
 	if err != nil {
 		return nil, nil, err
 	}
@@ -844,9 +853,6 @@ func execRestrictedSQL(ctx context.Context, se *session, sql string) ([]chunk.Ro
 		if err != nil {
 			return nil, nil, err
 		}
-		if err = rs.Close(); err != nil {
-			return nil, nil, err
-		}
 
 		if i == 0 {
 			rows = tmp
@@ -854,7 +860,7 @@ func execRestrictedSQL(ctx context.Context, se *session, sql string) ([]chunk.Ro
 		}
 	}
 	metrics.QueryDurationHistogram.WithLabelValues(metrics.LblInternal).Observe(time.Since(startTime).Seconds())
-	return rows, fields, nil
+	return rows, fields, err
 }
 
 func createSessionFunc(store kv.Storage) pools.Factory {
@@ -1854,7 +1860,7 @@ func CreateSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 
 const (
 	notBootstrapped         = 0
-	currentBootstrapVersion = version47
+	currentBootstrapVersion = version48
 )
 
 func getStoreBootstrapVersion(store kv.Storage) int64 {
@@ -2101,7 +2107,13 @@ func (s *session) PrepareTSFuture(ctx context.Context) {
 
 // RefreshTxnCtx implements context.RefreshTxnCtx interface.
 func (s *session) RefreshTxnCtx(ctx context.Context) error {
-	if err := s.doCommit(ctx); err != nil {
+	var commitDetail *execdetails.CommitDetails
+	ctx = context.WithValue(ctx, execdetails.CommitDetailCtxKey, &commitDetail)
+	err := s.doCommit(ctx)
+	if commitDetail != nil {
+		s.GetSessionVars().StmtCtx.MergeExecDetails(nil, commitDetail)
+	}
+	if err != nil {
 		return err
 	}
 

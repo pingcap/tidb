@@ -1719,3 +1719,86 @@ func (s *testPessimisticSuite) TestAmendTxnVariable(c *C) {
 	tk4.MustExec("commit")
 	tk2.MustQuery("select * from t1").Check(testkit.Rows("1 1 1 <nil>", "2 2 2 <nil>", "4 4 4 <nil>", "5 5 5 <nil>"))
 }
+
+func (s *testPessimisticSuite) TestAmendForUniqueIndex(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk2 := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("set global tidb_enable_amend_pessimistic_txn = 1;")
+	tk.MustExec("set tidb_enable_amend_pessimistic_txn = 1;")
+	defer tk.MustExec("set global tidb_enable_amend_pessimistic_txn = 0;")
+	tk.MustExec("drop database if exists test_db")
+	tk.MustExec("create database test_db")
+	tk.MustExec("use test_db")
+	tk2.MustExec("use test_db")
+	tk2.MustExec("drop table if exists t1")
+	tk2.MustExec("create table t1(c1 int primary key, c2 int, c3 int, unique key uk(c2));")
+	tk2.MustExec("insert into t1 values(1, 1, 1);")
+	tk2.MustExec("insert into t1 values(2, 2, 2);")
+
+	// New value has duplicates.
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("insert into t1 values(3, 3, 3)")
+	tk.MustExec("insert into t1 values(4, 4, 3)")
+	tk2.MustExec("alter table t1 add unique index uk1(c3)")
+	err := tk.ExecToErr("commit")
+	c.Assert(err, NotNil)
+	tk2.MustExec("alter table t1 drop index uk1")
+	tk2.MustExec("admin check table t1")
+
+	// New values has duplicates with old values.
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("insert into t1 values(3, 3, 3)")
+	tk.MustExec("insert into t1 values(4, 4, 1)")
+	tk2.MustExec("alter table t1 add unique index uk1(c3)")
+	err = tk.ExecToErr("commit")
+	c.Assert(err, NotNil)
+	tk2.MustExec("admin check table t1")
+
+	// Put new values.
+	tk2.MustQuery("select * from t1 for update").Check(testkit.Rows("1 1 1", "2 2 2"))
+	tk2.MustExec("alter table t1 drop index uk1")
+	tk.MustExec("begin pessimistic")
+	tk2.MustExec("alter table t1 add unique index uk1(c3)")
+	tk.MustExec("insert into t1 values(5, 5, 5)")
+	tk.MustExec("commit")
+	tk2.MustExec("admin check table t1")
+
+	// Update the old value with same unique key value, should abort.
+	tk2.MustExec("drop table if exists t;")
+	tk2.MustExec("create table t (id int auto_increment primary key, c int);")
+	tk2.MustExec("insert into t (id, c) values (1, 2), (3, 4);")
+	tk.MustExec("begin pessimistic")
+	tk2.MustExec("alter table t add unique index uk(c);")
+	tk.MustExec("update t set c = 2 where id = 3;")
+	err = tk.ExecToErr("commit")
+	c.Assert(err, NotNil)
+	tk2.MustExec("admin check table t")
+
+	// Update the old value with same unique key, but the row key has changed.
+	tk2.MustExec("drop table if exists t;")
+	tk2.MustExec("create table t (id int auto_increment primary key, c int);")
+	tk2.MustExec("insert into t (id, c) values (1, 2), (3, 4);")
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("insert into t values (3, 2) on duplicate key update id = values(id) and c = values(c)")
+	finishCh := make(chan error)
+	go func() {
+		err := tk2.ExecToErr("alter table t add unique index uk(c);")
+		finishCh <- err
+	}()
+	time.Sleep(100 * time.Millisecond)
+	tk.MustExec("commit")
+	err = <-finishCh
+	c.Assert(err, IsNil)
+	tk2.MustExec("admin check table t")
+
+	// Update the old value with same unique key, but the row key has changed.
+	tk2.MustExec("drop table if exists t;")
+	tk2.MustExec("create table t (id int auto_increment primary key, c int);")
+	tk2.MustExec("insert into t (id, c) values (1, 2), (3, 4);")
+	tk.MustExec("begin pessimistic")
+	err = tk2.ExecToErr("alter table t add unique index uk(c);")
+	c.Assert(err, IsNil)
+	tk.MustExec("insert into t values (3, 2) on duplicate key update id = values(id) and c = values(c)")
+	tk.MustExec("commit")
+	tk2.MustExec("admin check table t")
+}

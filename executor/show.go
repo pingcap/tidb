@@ -470,6 +470,9 @@ func (e *ShowExec) fetchShowColumns(ctx context.Context) error {
 			if idx >= 0 {
 				col.FieldType = *viewSchema.Columns[idx].GetType()
 			}
+			if col.Tp == mysql.TypeVarString {
+				col.Tp = mysql.TypeVarchar
+			}
 		}
 	}
 	for _, col := range cols {
@@ -811,7 +814,7 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 					if col.Tp == mysql.TypeBit {
 						defaultValBinaryLiteral := types.BinaryLiteral(defaultValStr)
 						fmt.Fprintf(buf, " DEFAULT %s", defaultValBinaryLiteral.ToBitLiteralString(true))
-					} else if types.IsTypeNumeric(col.Tp) || col.DefaultIsExpr {
+					} else if col.DefaultIsExpr {
 						fmt.Fprintf(buf, " DEFAULT %s", format.OutputFormat(defaultValStr))
 					} else {
 						fmt.Fprintf(buf, " DEFAULT '%s'", format.OutputFormat(defaultValStr))

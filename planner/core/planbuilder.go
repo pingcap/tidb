@@ -1502,13 +1502,14 @@ func (b *PlanBuilder) buildAnalyzeAllIndex(as *ast.AnalyzeTableStmt, opts map[as
 	return p, nil
 }
 
-var cmSketchSizeLimit = kv.TxnEntrySizeLimit / binary.MaxVarintLen32
+// CMSketchSizeLimit indicates the max size(width * depth) of a CMSketch.
+var CMSketchSizeLimit = kv.TxnEntrySizeLimit / binary.MaxVarintLen32
 
 var analyzeOptionLimit = map[ast.AnalyzeOptionType]uint64{
 	ast.AnalyzeOptNumBuckets:    1024,
 	ast.AnalyzeOptNumTopN:       1024,
-	ast.AnalyzeOptCMSketchWidth: uint64(cmSketchSizeLimit),
-	ast.AnalyzeOptCMSketchDepth: uint64(cmSketchSizeLimit),
+	ast.AnalyzeOptCMSketchWidth: uint64(CMSketchSizeLimit),
+	ast.AnalyzeOptCMSketchDepth: uint64(CMSketchSizeLimit),
 	ast.AnalyzeOptNumSamples:    100000,
 }
 
@@ -1537,8 +1538,8 @@ func handleAnalyzeOptions(opts []ast.AnalyzeOpt) (map[ast.AnalyzeOptionType]uint
 		}
 		optMap[opt.Type] = opt.Value
 	}
-	if optMap[ast.AnalyzeOptCMSketchWidth]*optMap[ast.AnalyzeOptCMSketchDepth] > uint64(cmSketchSizeLimit) {
-		return nil, errors.Errorf("cm sketch size(depth * width) should not larger than %d", cmSketchSizeLimit)
+	if optMap[ast.AnalyzeOptCMSketchWidth]*optMap[ast.AnalyzeOptCMSketchDepth] > uint64(CMSketchSizeLimit) {
+		return nil, errors.Errorf("cm sketch size(depth * width) should not larger than %d", CMSketchSizeLimit)
 	}
 	return optMap, nil
 }
@@ -2456,7 +2457,7 @@ func (b *PlanBuilder) buildSelectPlanOfInsert(ctx context.Context, insert *ast.I
 }
 
 func (b *PlanBuilder) buildLoadData(ctx context.Context, ld *ast.LoadDataStmt) (Plan, error) {
-	p := &LoadData{
+	p := LoadData{
 		IsLocal:     ld.IsLocal,
 		OnDuplicate: ld.OnDuplicate,
 		Path:        ld.Path,
@@ -2465,7 +2466,7 @@ func (b *PlanBuilder) buildLoadData(ctx context.Context, ld *ast.LoadDataStmt) (
 		FieldsInfo:  ld.FieldsInfo,
 		LinesInfo:   ld.LinesInfo,
 		IgnoreLines: ld.IgnoreLines,
-	}
+	}.Init(b.ctx)
 	user := b.ctx.GetSessionVars().User
 	var insertErr error
 	if user != nil {
