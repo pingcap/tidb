@@ -231,20 +231,18 @@ StreamAgg_12	1.00	root		funcs:sum(Column#10)->Column#8
       └─TableFullScan_14	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain select 1 in (select c2 from t2) from t1;
 id	estRows	task	access object	operator info
-HashJoin_7	10000.00	root		CARTESIAN left outer semi join
-├─TableReader_14(Build)	10.00	root		data:Selection_13
-│ └─Selection_13	10.00	cop[tikv]		eq(1, test.t2.c2)
-│   └─TableFullScan_12	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+HashJoin_7	10000.00	root		CARTESIAN left outer semi join, other cond:eq(1, test.t2.c2)
+├─TableReader_13(Build)	10000.00	root		data:TableFullScan_12
+│ └─TableFullScan_12	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
 └─TableReader_9(Probe)	10000.00	root		data:TableFullScan_8
   └─TableFullScan_8	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain select sum(6 in (select c2 from t2)) from t1;
 id	estRows	task	access object	operator info
 StreamAgg_12	1.00	root		funcs:sum(Column#10)->Column#8
-└─Projection_22	10000.00	root		cast(Column#7, decimal(65,0) BINARY)->Column#10
-  └─HashJoin_21	10000.00	root		CARTESIAN left outer semi join
-    ├─TableReader_20(Build)	10.00	root		data:Selection_19
-    │ └─Selection_19	10.00	cop[tikv]		eq(6, test.t2.c2)
-    │   └─TableFullScan_18	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+└─Projection_21	10000.00	root		cast(Column#7, decimal(65,0) BINARY)->Column#10
+  └─HashJoin_20	10000.00	root		CARTESIAN left outer semi join, other cond:eq(6, test.t2.c2)
+    ├─TableReader_19(Build)	10000.00	root		data:TableFullScan_18
+    │ └─TableFullScan_18	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
     └─TableReader_15(Probe)	10000.00	root		data:TableFullScan_14
       └─TableFullScan_14	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format="dot" select sum(t1.c1 in (select c1 from t2)) from t1;
@@ -285,7 +283,7 @@ node [style=filled, color=lightgrey]
 color=black
 label = "root"
 "HashJoin_7" -> "TableReader_9"
-"HashJoin_7" -> "TableReader_14"
+"HashJoin_7" -> "TableReader_13"
 }
 subgraph cluster8{
 node [style=filled, color=lightgrey]
@@ -293,14 +291,14 @@ color=black
 label = "cop"
 "TableFullScan_8"
 }
-subgraph cluster13{
+subgraph cluster12{
 node [style=filled, color=lightgrey]
 color=black
 label = "cop"
-"Selection_13" -> "TableFullScan_12"
+"TableFullScan_12"
 }
 "TableReader_9" -> "TableFullScan_8"
-"TableReader_14" -> "Selection_13"
+"TableReader_13" -> "TableFullScan_12"
 }
 
 drop table if exists t1, t2, t3, t4;
@@ -688,8 +686,9 @@ begin;
 insert into t values (1, 1);
 explain update t set j = -j where i = 1 and j = 1;
 id	estRows	task	access object	operator info
-Update_3	N/A	root		N/A
-└─Point_Get_1	1.00	root	table:t, index:i(i, j)	
+Update_5	N/A	root		N/A
+└─Selection_9	1.00	root		eq(test.t.j, 1)
+  └─Point_Get_8	1.00	root	table:t	handle:1
 rollback;
 drop table if exists t;
 create table t(a int);
@@ -746,7 +745,7 @@ explain select a, b from (select a, b, avg(b) over (partition by a)as avg_b from
 id	estRows	task	access object	operator info
 Projection_8	2666.67	root		test.t.a, test.t.b
 └─Selection_9	2666.67	root		gt(cast(test.t.a), Column#5), lt(test.t.b, 10)
-  └─Window_10	3333.33	root		avg(cast(test.t.b, decimal(65,4) BINARY))->Column#5 over(partition by test.t.a)
+  └─Window_10	3333.33	root		avg(cast(test.t.b, decimal(15,4) BINARY))->Column#5 over(partition by test.t.a)
     └─Sort_14	3333.33	root		test.t.a
       └─TableReader_13	3333.33	root		data:Selection_12
         └─Selection_12	3333.33	cop[tikv]		gt(test.t.a, 10)
