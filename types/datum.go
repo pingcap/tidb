@@ -965,18 +965,36 @@ func ProduceStrWithSpecifiedTp(s string, tp *FieldType, sc *stmtctx.StatementCon
 				// So truncateLen is not a suitable variable to determine to do truncate or not.
 				var runeCount int
 				var truncateLen int
-				for i := range s {
-					if runeCount == flen {
-						truncateLen = i
-						break
-					}
+				for i, v := range s {
 					runeCount++
+					if runeCount <= flen {
+						truncateLen = i
+						continue
+					}
+					if v == '\r' || v == '\n' || v == '\t' || v == ' ' {
+						if runeCount == characterLen && tp.Tp == mysql.TypeVarchar {
+							sc.AppendWarning(ErrDataTooLong.GenWithStack("Data Too Long, field len %d, data len %d", flen, characterLen))
+						}
+						continue
+					}
+					err = ErrDataTooLong.GenWithStack("Data Too Long, field len %d, data len %d", flen, characterLen)
+					break
 				}
-				err = ErrDataTooLong.GenWithStack("Data Too Long, field len %d, data len %d", flen, characterLen)
 				s = truncateStr(s, truncateLen)
 			}
 		} else if len(s) > flen {
-			err = ErrDataTooLong.GenWithStack("Data Too Long, field len %d, data len %d", flen, len(s))
+			truncateLen := flen
+			for _, v := range s[truncateLen:] {
+				flen++
+				if v == '\r' || v == '\n' || v == '\t' || v == ' ' {
+					if flen == len(s) && tp.Tp == mysql.TypeVarchar {
+						sc.AppendWarning(ErrDataTooLong.GenWithStack("Data Too Long, field len %d, data len %d", flen, len(s)))
+					}
+					continue
+				}
+				err = ErrDataTooLong.GenWithStack("Data Too Long, field len %d, data len %d", flen, len(s))
+				break
+			}
 			s = truncateStr(s, flen)
 		} else if tp.Tp == mysql.TypeString && IsBinaryStr(tp) && len(s) < flen && padZero {
 			padding := make([]byte, flen-len(s))

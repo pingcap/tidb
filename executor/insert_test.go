@@ -1500,6 +1500,18 @@ func (s *testSerialSuite) TestIssue20768(c *C) {
 	tk.MustQuery("select /*+ merge_join(t1) */ * from t1 join t2 on t1.a = t2.a").Check(testkit.Rows("0 0"))
 }
 
+func (s *testSerialSuite) TestTruncateSuffixVarchar(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("CREATE TABLE t1 (c varchar(24) DEFAULT NULL)")
+	tk.Exec("INSERT INTO t1 VALUES ('name-rwmwt name-uzqka       ')")
+	tk.MustQuery("select @@warning_count").Check(testutil.RowsWithSep("|", "1"))
+	_, err := tk.Exec("INSERT INTO t1 VALUES ('name-rwmwt name-uzqka      A')")
+	c.Assert(err, NotNil)
+	tk.MustExec("drop table if exists t1")
+}
+
 func combination(items []string) func() []string {
 	current := 1
 	buf := make([]string, len(items))
