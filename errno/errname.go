@@ -1030,6 +1030,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrInvalidTableSample: mysql.Message("Invalid TABLESAMPLE: %s", nil),
 
 	ErrInvalidPlacementSpec: mysql.Message("Invalid placement policy '%s': %s", nil),
+	ErrPlacementPolicyCheck: mysql.Message("Placement policy didn't meet the constraint, reason: %s", nil),
 
 	// TiKV/PD errors.
 	ErrPDServerTimeout:           mysql.Message("PD server timeout", nil),
