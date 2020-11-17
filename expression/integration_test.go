@@ -6994,6 +6994,19 @@ func (s *testIntegrationSerialSuite) TestIssue19045(c *C) {
 	tk.MustQuery(`select  ( SELECT t1.a FROM  t1,  t2 WHERE t1.b = t2.a AND  t2.b = '03' AND t1.c = a.a) invode from t a ;`).Check(testkit.Rows("a011", "a011"))
 }
 
+func (s *testIntegrationSerialSuite) TestIssue19383(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("DROP TABLE IF EXISTS t1")
+	tk.MustExec("CREATE TABLE t1 (a INT NOT NULL PRIMARY KEY)")
+	tk.MustExec("INSERT INTO t1 VALUES (1),(2),(3)")
+	_, err := tk.Exec("SELECT * FROM t1 LOCK IN SHARE MODE")
+	message := `function LOCK IN SHARE MODE has only noop implementation in tidb now, use tidb_enable_noop_functions to enable these functions`
+	c.Assert(strings.Contains(err.Error(), message), IsTrue)
+	tk.MustExec("SET tidb_enable_noop_functions=1")
+	tk.MustExec("SELECT * FROM t1 LOCK IN SHARE MODE")
+}
+
 func (s *testIntegrationSerialSuite) TestIssue19315(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")

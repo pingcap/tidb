@@ -164,6 +164,9 @@ type twoPhaseCommitter struct {
 		acAfterCommitPrimary chan struct{}
 		bkAfterCommitPrimary chan struct{}
 	}
+
+	// doingAmend means the amend prewrite is ongoing.
+	doingAmend bool
 }
 
 // CommitterMutations contains transaction operations.
@@ -172,6 +175,14 @@ type CommitterMutations struct {
 	keys              [][]byte
 	values            [][]byte
 	isPessimisticLock []bool
+}
+
+// Mutation represents a single transaction operation.
+type Mutation struct {
+	KeyOp             pb.Op
+	Key               []byte
+	Value             []byte
+	IsPessimisticLock bool
 }
 
 // NewCommiterMutations creates a CommitterMutations object with sizeHint reserved.
@@ -247,6 +258,14 @@ func (c *CommitterMutations) MergeMutations(mutations CommitterMutations) {
 	c.keys = append(c.keys, mutations.keys...)
 	c.values = append(c.values, mutations.values...)
 	c.isPessimisticLock = append(c.isPessimisticLock, mutations.isPessimisticLock...)
+}
+
+// AppendMutation merges a single Mutation into the current mutations.
+func (c *CommitterMutations) AppendMutation(mutation Mutation) {
+	c.ops = append(c.ops, mutation.KeyOp)
+	c.keys = append(c.keys, mutation.Key)
+	c.values = append(c.values, mutation.Value)
+	c.isPessimisticLock = append(c.isPessimisticLock, mutation.IsPessimisticLock)
 }
 
 // newTwoPhaseCommitter creates a twoPhaseCommitter.
@@ -908,7 +927,7 @@ func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *
 			Key: m.keys[i],
 		}
 		existErr := c.txn.us.GetKeyExistErrInfo(m.keys[i])
-		if existErr != nil {
+		if existErr != nil || (c.doingAmend && m.GetOps()[i] == pb.Op_Insert) {
 			mut.Assertion = pb.Assertion_NotExist
 		}
 		mutations[i] = mut
@@ -1495,6 +1514,9 @@ func (c *twoPhaseCommitter) tryAmendTxn(ctx context.Context, startInfoSchema Sch
 			}
 		}
 		// For unique index amend, we need to pessimistic lock the generated new index keys first.
+		// Set doingAmend to true to force the pessimistic lock do the exist check for these keys.
+		c.doingAmend = true
+		defer func() { c.doingAmend = false }()
 		if keysNeedToLock.len() > 0 {
 			pessimisticLockBo := NewBackofferWithVars(ctx, pessimisticLockMaxBackoff, c.txn.vars)
 			lCtx := &kv.LockCtx{
