@@ -536,3 +536,29 @@ func (s *testPointGetSuite) TestIssue20692(c *C) {
 	tk3.MustExec("commit;")
 	tk3.MustQuery("select * from t;").Check(testkit.Rows("10 20 30 40"))
 }
+
+func (s *testPointGetSuite) TestPointGetWithInvisibleIndex(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (c1 int, unique(c1))")
+	tk.MustExec("alter table t alter index c1 invisible")
+	tk.MustQuery("explain select * from t where c1 = 10").Check(testkit.Rows(
+		"TableReader_7 1.00 root  data:Selection_6",
+		"└─Selection_6 1.00 cop[tikv]  eq(test.t.c1, 10)",
+		"  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+	))
+}
+
+func (s *testPointGetSuite) TestBatchPointGetWithInvisibleIndex(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (c1 int, unique(c1))")
+	tk.MustExec("alter table t alter index c1 invisible")
+	tk.MustQuery("explain select * from t where c1 in (10, 20)").Check(testkit.Rows(
+		"TableReader_7 2.00 root  data:Selection_6",
+		"└─Selection_6 2.00 cop[tikv]  in(test.t.c1, 10, 20)",
+		"  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+	))
+}
