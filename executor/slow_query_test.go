@@ -17,7 +17,6 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"io"
 	"os"
 	"strings"
 	"time"
@@ -25,6 +24,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/terror"
+
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -37,14 +37,14 @@ func parseLog(retriever *slowQueryRetriever, sctx sessionctx.Context, reader *bu
 	retriever.taskList = make(chan slowLogTask, 100)
 	ctx := context.Background()
 	retriever.parseSlowLog(ctx, sctx, reader, 64)
-	task := <-retriever.taskList
+	task, ok := <-retriever.taskList
+	if !ok {
+		return nil, nil
+	}
 	var rows [][]types.Datum
 	var err error
 	result := <-task.resultCh
 	rows, err = result.rows, result.err
-	if err == io.EOF {
-		err = nil
-	}
 	return rows, err
 }
 
