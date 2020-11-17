@@ -431,6 +431,11 @@ error = '''
 Invalid placement policy '%s': %s
 '''
 
+["ddl:8236"]
+error = '''
+Placement policy didn't meet the constraint, reason: %s
+'''
+
 ["domain:8027"]
 error = '''
 Information schema is out of date: schema failed to update in 1 lease, please make sure TiDB can connect to TiKV
