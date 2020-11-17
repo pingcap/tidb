@@ -386,6 +386,9 @@ const (
 	TableLockRead
 	// TableLockReadLocal is not supported.
 	TableLockReadLocal
+	// TableLockReadOnly is used to set a table into read-only status,
+	// when the session exits, it will not release its lock automatically.
+	TableLockReadOnly
 	// TableLockWrite means only the session with this lock has write/read permission.
 	// Only the session that holds the lock can access the table. No other session can access it until the lock is released.
 	TableLockWrite
@@ -401,6 +404,8 @@ func (t TableLockType) String() string {
 		return "READ"
 	case TableLockReadLocal:
 		return "READ LOCAL"
+	case TableLockReadOnly:
+		return "READ ONLY"
 	case TableLockWriteLocal:
 		return "WRITE LOCAL"
 	case TableLockWrite:
