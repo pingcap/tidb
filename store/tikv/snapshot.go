@@ -259,7 +259,7 @@ func (s *tikvSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, coll
 		req := tikvrpc.NewReplicaReadRequest(tikvrpc.CmdBatchGet, &pb.BatchGetRequest{
 			Keys:    pending,
 			Version: s.version.Ver,
-		}, s.replicaRead, s.replicaReadSeed, pb.Context{
+		}, s.replicaRead, &s.replicaReadSeed, pb.Context{
 			Priority:     s.priority,
 			NotFillCache: s.notFillCache,
 			TaskId:       s.taskID,
@@ -385,7 +385,7 @@ func (s *tikvSnapshot) get(ctx context.Context, bo *Backoffer, k kv.Key) ([]byte
 		&pb.GetRequest{
 			Key:     k,
 			Version: s.version.Ver,
-		}, s.replicaRead, s.replicaReadSeed, pb.Context{
+		}, s.replicaRead, &s.replicaReadSeed, pb.Context{
 			Priority:     s.priority,
 			NotFillCache: s.notFillCache,
 			TaskId:       s.taskID,
