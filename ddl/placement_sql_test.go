@@ -468,3 +468,39 @@ PARTITION BY RANGE (c) (
 		}
 	}
 }
+
+func (s *testDBSuite1) TestAbortTxnIfPlacementChanged(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists tp1")
+	defer tk.MustExec("drop table if exists tp1")
+
+	tk.MustExec(`create table tp1 (c int)
+PARTITION BY RANGE (c) (
+	PARTITION p0 VALUES LESS THAN (6),
+	PARTITION p1 VALUES LESS THAN (11)
+);`)
+	se1, err := session.CreateSession(s.store)
+	c.Assert(err, IsNil)
+	tk1 := testkit.NewTestKitWithSession(c, s.store, se1)
+	tk1.MustExec("use test")
+	_, err = tk.Exec(`alter table tp1 alter partition p0
+add placement policy
+	constraints='["+   zone   =   sh  "]'
+	role=leader
+	replicas=1;`)
+	c.Assert(err, IsNil)
+	_, err = tk.Exec("begin;")
+	c.Assert(err, IsNil)
+	_, err = tk1.Exec(`alter table tp1 alter partition p0
+add placement policy
+	constraints='["+   zone   =   sh  "]'
+	role=follower
+	replicas=3;`)
+	c.Assert(err, IsNil)
+	_, err = tk.Exec("insert into tp1 (c) values (1);")
+	c.Assert(err, IsNil)
+	_, err = tk.Exec("commit")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Matches, "*.[domain:8028]*.")
+}
