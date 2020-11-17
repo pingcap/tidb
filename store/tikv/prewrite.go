@@ -56,7 +56,9 @@ func (c *twoPhaseCommitter) buildPrewriteRequest(batch batchMutations, txnSize u
 		}
 		isPessimisticLock[i] = m.IsPessimisticLock(i)
 	}
-	var minCommitTS = c.minCommitTS
+	c.mu.Lock()
+	minCommitTS := c.minCommitTS
+	c.mu.Unlock()
 	if c.forUpdateTS > 0 && c.forUpdateTS >= minCommitTS {
 		minCommitTS = c.forUpdateTS + 1
 	} else if c.startTS >= minCommitTS {
@@ -87,8 +89,6 @@ func (c *twoPhaseCommitter) buildPrewriteRequest(batch batchMutations, txnSize u
 			req.Secondaries = c.asyncSecondaries()
 		}
 		req.UseAsyncCommit = true
-		// The async commit can not be used for large transactions, and the commit ts can't be pushed.
-		req.MinCommitTs = 0
 	}
 
 	if c.isOnePC() {
