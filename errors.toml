@@ -121,6 +121,11 @@ error = '''
 The used table type doesn't support FULLTEXT indexes
 '''
 
+["ddl:1248"]
+error = '''
+Every derived table must have its own alias
+'''
+
 ["ddl:1253"]
 error = '''
 COLLATION '%s' is not valid for CHARACTER SET '%s'
@@ -249,6 +254,11 @@ Expression of generated column '%s' contains a disallowed function.
 ["ddl:3109"]
 error = '''
 Generated column '%s' cannot refer to auto-increment column.
+'''
+
+["ddl:3754"]
+error = '''
+Functional index '%s' cannot refer to an auto-increment column
 '''
 
 ["ddl:3756"]
@@ -749,6 +759,11 @@ EXPLAIN/SHOW can not be issued; lacking privileges for underlying table
 ["planner:1356"]
 error = '''
 View '%-.192s.%-.192s' references invalid table(s) or column(s) or function(s) or definer/invoker of view lack rights to use them
+'''
+
+["planner:1462"]
+error = '''
+`%-.192s`.`%-.192s` contains view recursion
 '''
 
 ["planner:1747"]
