@@ -14,6 +14,7 @@
 package expression
 
 import (
+	"fmt"
 	"math"
 
 	"github.com/pingcap/parser/ast"
@@ -1282,7 +1283,8 @@ func RefineComparedConstant(ctx sessionctx.Context, targetFieldType types.FieldT
 }
 
 // refineArgs will rewrite the arguments if the compare expression is `int column <cmp> non-int constant` or
-// `non-int constant <cmp> int column`. E.g., `a < 1.1` will be rewritten to `a < 2`.
+// `non-int constant <cmp> int column`. E.g., `a < 1.1` will be rewritten to `a < 2`. It also handles comparing year type
+// with int constant if the int constant falls into a sensible year representation.
 func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Expression) []Expression {
 	if ContainMutableConst(ctx, args) {
 		return args
@@ -1323,6 +1325,22 @@ func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Express
 			} else {
 				isPositiveInfinite = true
 			}
+		}
+	}
+	// int constant [cmp] year type
+	if arg0IsCon && arg0IsInt && arg1Type.Tp == mysql.TypeYear {
+		adjusted, failed := types.AdjustYear(arg0.Value.GetInt64(), true)
+		if failed == nil {
+			arg0.Value.SetInt64(adjusted)
+			finalArg0 = arg0
+		}
+	}
+	// year type [cmp] int constant
+	if arg1IsCon && arg1IsInt && arg0Type.Tp == mysql.TypeYear {
+		adjusted, failed := types.AdjustYear(arg1.Value.GetInt64(), true)
+		if failed == nil {
+			arg1.Value.SetInt64(adjusted)
+			finalArg1 = arg1
 		}
 	}
 	if isExceptional && (c.op == opcode.EQ || c.op == opcode.NullEQ) {
@@ -1409,6 +1427,12 @@ func (c *compareFunctionClass) refineArgsByUnsignedFlag(ctx sessionctx.Context, 
 
 // getFunction sets compare built-in function signatures for various types.
 func (c *compareFunctionClass) getFunction(ctx sessionctx.Context, rawArgs []Expression) (sig builtinFunc, err error) {
+	arg1Col, isArg1Col := rawArgs[0].(*Column)
+	fmt.Println(arg1Col.OrigName)
+	if isArg1Col && arg1Col.OrigName == "test.t2.a" {
+		fmt.Printf("mysql fuck you!")
+	}
+
 	if err = c.verifyArgs(rawArgs); err != nil {
 		return nil, err
 	}
