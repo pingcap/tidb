@@ -30,6 +30,7 @@ import (
 
 	"github.com/klauspost/cpuid"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/charset"
@@ -87,7 +88,7 @@ func (r *RetryInfo) AddAutoIncrementID(id int64) {
 }
 
 // GetCurrAutoIncrementID gets current autoIncrementID.
-func (r *RetryInfo) GetCurrAutoIncrementID() (int64, error) {
+func (r *RetryInfo) GetCurrAutoIncrementID() (int64, bool) {
 	return r.autoIncrementIDs.getCurrent()
 }
 
@@ -97,7 +98,7 @@ func (r *RetryInfo) AddAutoRandomID(id int64) {
 }
 
 // GetCurrAutoRandomID gets current AutoRandomID.
-func (r *RetryInfo) GetCurrAutoRandomID() (int64, error) {
+func (r *RetryInfo) GetCurrAutoRandomID() (int64, bool) {
 	return r.autoRandomIDs.getCurrent()
 }
 
@@ -117,13 +118,13 @@ func (r *retryInfoAutoIDs) clean() {
 	}
 }
 
-func (r *retryInfoAutoIDs) getCurrent() (int64, error) {
+func (r *retryInfoAutoIDs) getCurrent() (int64, bool) {
 	if r.currentOffset >= len(r.autoIDs) {
-		return 0, errCantGetValidID
+		return 0, false
 	}
 	id := r.autoIDs[r.currentOffset]
 	r.currentOffset++
-	return id, nil
+	return id, true
 }
 
 // stmtFuture is used to async get timestamp for statement.
@@ -169,6 +170,9 @@ type TransactionContext struct {
 	Isolation      string
 	LockExpire     uint32
 	ForUpdate      uint32
+
+	// TxnScope stores the value of 'txn_scope'.
+	TxnScope string
 }
 
 // GetShard returns the shard prefix for the next `count` rowids.
@@ -366,6 +370,9 @@ type SessionVars struct {
 	UsersLock sync.RWMutex
 	// Users are user defined variables.
 	Users map[string]types.Datum
+	// UserVarTypes stores the FieldType for user variables, it cannot be inferred from Users when Users have not been set yet.
+	// It is read/write protected by UsersLock.
+	UserVarTypes map[string]*types.FieldType
 	// systems variables, don't modify it directly, use GetSystemVar/SetSystemVar method.
 	systems map[string]string
 	// stmtVars variables are temporarily set by SET_VAR hint
@@ -552,6 +559,9 @@ type SessionVars struct {
 	// EnableWindowFunction enables the window function.
 	EnableWindowFunction bool
 
+	// EnableStrictDoubleTypeCheck enables table field double type check.
+	EnableStrictDoubleTypeCheck bool
+
 	// EnableVectorizedExpression  enables the vectorized expression evaluation.
 	EnableVectorizedExpression bool
 
@@ -731,11 +741,22 @@ type SessionVars struct {
 
 	// PartitionPruneMode indicates how and when to prune partitions.
 	PartitionPruneMode atomic2.String
+
+	// TxnScope indicates the scope of the transactions. It should be `global` or equal to `dc-location` in configuration.
+	TxnScope string
 }
 
 // UseDynamicPartitionPrune indicates whether use new dynamic partition prune.
 func (s *SessionVars) UseDynamicPartitionPrune() bool {
 	return PartitionPruneMode(s.PartitionPruneMode.Load()) == DynamicOnly
+}
+
+// BuildParserConfig generate parser.ParserConfig for initial parser
+func (s *SessionVars) BuildParserConfig() parser.ParserConfig {
+	return parser.ParserConfig{
+		EnableWindowFunction:        s.EnableWindowFunction,
+		EnableStrictDoubleTypeCheck: s.EnableStrictDoubleTypeCheck,
+	}
 }
 
 // PartitionPruneMode presents the prune mode used.
@@ -794,6 +815,7 @@ type ConnectionInfo struct {
 func NewSessionVars() *SessionVars {
 	vars := &SessionVars{
 		Users:                       make(map[string]types.Datum),
+		UserVarTypes:                make(map[string]*types.FieldType),
 		systems:                     make(map[string]string),
 		stmtVars:                    make(map[string]string),
 		PreparedStmts:               make(map[uint32]interface{}),
@@ -857,6 +879,7 @@ func NewSessionVars() *SessionVars {
 		EnableChangeColumnType:      DefTiDBChangeColumnType,
 		EnableAmendPessimisticTxn:   DefTiDBEnableAmendPessimisticTxn,
 		PartitionPruneMode:          *atomic2.NewString(DefTiDBPartitionPruneMode),
+		TxnScope:                    config.GetGlobalConfig().TxnScope,
 	}
 	vars.KVVars = kv.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{
@@ -869,6 +892,7 @@ func NewSessionVars() *SessionVars {
 		hashAggPartialConcurrency:  DefTiDBHashAggPartialConcurrency,
 		hashAggFinalConcurrency:    DefTiDBHashAggFinalConcurrency,
 		windowConcurrency:          DefTiDBWindowConcurrency,
+		streamAggConcurrency:       DefTiDBStreamAggConcurrency,
 		ExecutorConcurrency:        DefExecutorConcurrency,
 	}
 	vars.MemQuota = MemQuota{
@@ -1323,6 +1347,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.hashAggFinalConcurrency = tidbOptPositiveInt32(val, ConcurrencyUnset)
 	case TiDBWindowConcurrency:
 		s.windowConcurrency = tidbOptPositiveInt32(val, ConcurrencyUnset)
+	case TiDBStreamAggConcurrency:
+		s.streamAggConcurrency = tidbOptPositiveInt32(val, ConcurrencyUnset)
 	case TiDBDistSQLScanConcurrency:
 		s.distSQLScanConcurrency = tidbOptPositiveInt32(val, DefDistSQLScanConcurrency)
 	case TiDBIndexSerialScanConcurrency:
@@ -1370,7 +1396,7 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	case TIDBMemQuotaNestedLoopApply:
 		s.MemQuotaNestedLoopApply = tidbOptInt64(val, DefTiDBMemQuotaNestedLoopApply)
 	case TiDBGeneralLog:
-		atomic.StoreUint32(&ProcessGeneralLog, uint32(tidbOptPositiveInt32(val, DefTiDBGeneralLog)))
+		ProcessGeneralLog.Store(TiDBOptOn(val))
 	case TiDBPProfSQLCPU:
 		EnablePProfSQLCPU.Store(uint32(tidbOptPositiveInt32(val, DefTiDBPProfSQLCPU)) > 0)
 	case TiDBDDLSlowOprThreshold:
@@ -1397,6 +1423,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.EnableRadixJoin = TiDBOptOn(val)
 	case TiDBEnableWindowFunction:
 		s.EnableWindowFunction = TiDBOptOn(val)
+	case TiDBEnableStrictDoubleTypeCheck:
+		s.EnableStrictDoubleTypeCheck = TiDBOptOn(val)
 	case TiDBEnableVectorizedExpression:
 		s.EnableVectorizedExpression = TiDBOptOn(val)
 	case TiDBOptJoinReorderThreshold:
@@ -1462,26 +1490,48 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	case TiDBMetricSchemaRangeDuration:
 		s.MetricSchemaRangeDuration = tidbOptInt64(val, DefTiDBMetricSchemaRangeDuration)
 	case CollationConnection, CollationDatabase, CollationServer:
-		if _, err := collate.GetCollationByName(val); err != nil {
-			var ok bool
-			var charsetVal string
-			var err2 error
-			if name == CollationConnection {
-				charsetVal, ok = s.systems[CharacterSetConnection]
-			} else if name == CollationDatabase {
-				charsetVal, ok = s.systems[CharsetDatabase]
-			} else {
-				// CollationServer
-				charsetVal, ok = s.systems[CharacterSetServer]
-			}
-			if !ok {
-				return err
-			}
-			val, err2 = charset.GetDefaultCollation(charsetVal)
-			if err2 != nil {
-				return err2
-			}
+		coll, err := collate.GetCollationByName(val)
+		if err != nil {
 			logutil.BgLogger().Warn(err.Error())
+			coll, err = collate.GetCollationByName(charset.CollationUTF8MB4)
+		}
+		switch name {
+		case CollationConnection:
+			s.systems[CollationConnection] = coll.Name
+			s.systems[CharacterSetConnection] = coll.CharsetName
+		case CollationDatabase:
+			s.systems[CollationDatabase] = coll.Name
+			s.systems[CharsetDatabase] = coll.CharsetName
+		case CollationServer:
+			s.systems[CollationServer] = coll.Name
+			s.systems[CharacterSetServer] = coll.CharsetName
+		}
+	case CharacterSetSystem, CharacterSetConnection, CharacterSetClient, CharacterSetResults,
+		CharacterSetServer, CharsetDatabase, CharacterSetFilesystem:
+		if val == "" {
+			if name == CharacterSetResults {
+				s.systems[CharacterSetResults] = ""
+				return nil
+			}
+			return ErrWrongValueForVar.GenWithStackByArgs(name, "NULL")
+		}
+		cht, coll, err := charset.GetCharsetInfo(val)
+		if err != nil {
+			logutil.BgLogger().Warn(err.Error())
+			cht, coll = charset.GetDefaultCharsetAndCollate()
+		}
+		switch name {
+		case CharacterSetConnection:
+			s.systems[CollationConnection] = coll
+			s.systems[CharacterSetConnection] = cht
+		case CharsetDatabase:
+			s.systems[CollationDatabase] = coll
+			s.systems[CharsetDatabase] = cht
+		case CharacterSetServer:
+			s.systems[CollationServer] = coll
+			s.systems[CharacterSetServer] = cht
+		default:
+			s.systems[name] = cht
 		}
 	case TiDBSlowLogThreshold:
 		atomic.StoreUint64(&config.GetGlobalConfig().Log.SlowThreshold, uint64(tidbOptInt64(val, logutil.DefaultSlowThreshold)))
@@ -1523,6 +1573,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.EnableChangeColumnType = TiDBOptOn(val)
 	case TiDBEnableAmendPessimisticTxn:
 		s.EnableAmendPessimisticTxn = TiDBOptOn(val)
+	case TiDBTxnScope:
+		s.TxnScope = val
 	}
 	s.systems[name] = val
 	return nil
@@ -1654,6 +1706,10 @@ type Concurrency struct {
 	// windowConcurrency is deprecated, use ExecutorConcurrency instead.
 	windowConcurrency int
 
+	// streamAggConcurrency is the number of concurrent stream aggregation worker.
+	// streamAggConcurrency is deprecated, use ExecutorConcurrency instead.
+	streamAggConcurrency int
+
 	// indexSerialScanConcurrency is the number of concurrent index serial scan worker.
 	indexSerialScanConcurrency int
 
@@ -1702,6 +1758,11 @@ func (c *Concurrency) SetHashAggFinalConcurrency(n int) {
 // SetWindowConcurrency set the number of concurrent window worker.
 func (c *Concurrency) SetWindowConcurrency(n int) {
 	c.windowConcurrency = n
+}
+
+// SetStreamAggConcurrency set the number of concurrent stream aggregation worker.
+func (c *Concurrency) SetStreamAggConcurrency(n int) {
+	c.streamAggConcurrency = n
 }
 
 // SetIndexSerialScanConcurrency set the number of concurrent index serial scan worker.
@@ -1766,6 +1827,14 @@ func (c *Concurrency) HashAggFinalConcurrency() int {
 func (c *Concurrency) WindowConcurrency() int {
 	if c.windowConcurrency != ConcurrencyUnset {
 		return c.windowConcurrency
+	}
+	return c.ExecutorConcurrency
+}
+
+// StreamAggConcurrency return the number of concurrent stream aggregation worker.
+func (c *Concurrency) StreamAggConcurrency() int {
+	if c.streamAggConcurrency != ConcurrencyUnset {
+		return c.streamAggConcurrency
 	}
 	return c.ExecutorConcurrency
 }

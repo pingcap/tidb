@@ -86,6 +86,10 @@ func (mp *mockDataPhysicalPlan) ExplainID() fmt.Stringer {
 	})
 }
 
+func (mp *mockDataPhysicalPlan) ID() int {
+	return 0
+}
+
 func (mp *mockDataPhysicalPlan) Stats() *property.StatsInfo {
 	return nil
 }
@@ -463,7 +467,7 @@ func buildWindowExecutor(ctx sessionctx.Context, windowFunc string, funcs int, f
 		})
 	}
 	for _, col := range partitionBy {
-		win.PartitionBy = append(win.PartitionBy, property.Item{Col: col})
+		win.PartitionBy = append(win.PartitionBy, property.SortItem{Col: col})
 	}
 	win.Frame = frame
 	win.OrderBy = nil
@@ -1136,6 +1140,8 @@ type indexJoinTestCase struct {
 	ctx             sessionctx.Context
 	outerJoinKeyIdx []int
 	innerJoinKeyIdx []int
+	outerHashKeyIdx []int
+	innerHashKeyIdx []int
 	innerIdx        []int
 	needOuterSort   bool
 	rawData         string
@@ -1163,6 +1169,8 @@ func defaultIndexJoinTestCase() *indexJoinTestCase {
 		ctx:             ctx,
 		outerJoinKeyIdx: []int{0, 1},
 		innerJoinKeyIdx: []int{0, 1},
+		outerHashKeyIdx: []int{0, 1},
+		innerHashKeyIdx: []int{0, 1},
 		innerIdx:        []int{0, 1},
 		rawData:         wideString,
 	}
@@ -1212,12 +1220,14 @@ func prepare4IndexInnerHashJoin(tc *indexJoinTestCase, outerDS *mockDataSource, 
 		outerCtx: outerCtx{
 			rowTypes: leftTypes,
 			keyCols:  tc.outerJoinKeyIdx,
+			hashCols: tc.outerHashKeyIdx,
 		},
 		innerCtx: innerCtx{
 			readerBuilder: &dataReaderBuilder{Plan: &mockPhysicalIndexReader{e: innerDS}, executorBuilder: newExecutorBuilder(tc.ctx, nil)},
 			rowTypes:      rightTypes,
 			colLens:       colLens,
 			keyCols:       tc.innerJoinKeyIdx,
+			hashCols:      tc.innerHashKeyIdx,
 		},
 		workerWg:      new(sync.WaitGroup),
 		joiner:        newJoiner(tc.ctx, 0, false, defaultValues, nil, leftTypes, rightTypes, nil),
@@ -1480,6 +1490,8 @@ func newMergeJoinBenchmark(numOuterRows, numInnerDup, numInnerRedundant int) (tc
 		ctx:             ctx,
 		outerJoinKeyIdx: []int{0, 1},
 		innerJoinKeyIdx: []int{0, 1},
+		outerHashKeyIdx: []int{0, 1},
+		innerHashKeyIdx: []int{0, 1},
 		innerIdx:        []int{0, 1},
 		rawData:         wideString,
 	}
