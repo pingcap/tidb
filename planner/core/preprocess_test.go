@@ -15,6 +15,7 @@ package core_test
 
 import (
 	"context"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser"
@@ -270,29 +271,29 @@ func (s *testValidatorSuite) TestValidator(c *C) {
 		{"CREATE INDEX `` on t ((lower(a)));", true, errors.New("[ddl:1280]Incorrect index name ''")},
 
 		// for ErrTooBigScale
-		{`select convert('0.0', Decimal(41, 40))`, false, errors.New(`[types:1425]Too big scale 40 specified for column ''0.0''. Maximum is 30.`)},
+		{`select convert('0.0', Decimal(41, 40))`, false, errors.New(`[types:1425]Too big scale 40 specified for column ''0.0''. Maximum is 30` + ".")},
 		// for cast decimal ErrTooBigPrecision
-		{`select * from t where d = cast(d as decimal(1000,20))`, false, errors.New(`[types:1426]Too big precision 1000 specified for column 'd'. Maximum is 65.`)},
-		{`select * from t where d = cast(111 as decimal(1000,20))`, false, errors.New(`[types:1426]Too big precision 1000 specified for column '111'. Maximum is 65.`)},
-		{`select * from t where d = cast("abc" as decimal(1000,20))`, false, errors.New(`[types:1426]Too big precision 1000 specified for column '"abc"'. Maximum is 65.`)},
-		{`select * from t where d = cast('d' as decimal(1000,20))`, false, errors.New(`[types:1426]Too big precision 1000 specified for column ''d''. Maximum is 65.`)},
-		{`select cast(d as decimal(1000,20))`, false, errors.New(`[types:1426]Too big precision 1000 specified for column 'd'. Maximum is 65.`)},
-		{`select cast(111 as decimal(1000,20))`, false, errors.New(`[types:1426]Too big precision 1000 specified for column '111'. Maximum is 65.`)},
-		{`select cast("abc" as decimal(1000,20))`, false, errors.New(`[types:1426]Too big precision 1000 specified for column '"abc"'. Maximum is 65.`)},
-		{`select cast("'d'" as decimal(1000,20))`, false, errors.New(`[types:1426]Too big precision 1000 specified for column '"'d'"'. Maximum is 65.`)},
+		{`select * from t where d = cast(d as decimal(1000,20))`, false, errors.New(`[types:1426]Too big precision 1000 specified for column 'd'. Maximum is 65` + ".")},
+		{`select * from t where d = cast(111 as decimal(1000,20))`, false, errors.New(`[types:1426]Too big precision 1000 specified for column '111'. Maximum is 65` + ".")},
+		{`select * from t where d = cast("abc" as decimal(1000,20))`, false, errors.New(`[types:1426]Too big precision 1000 specified for column '"abc"'. Maximum is 65` + ".")},
+		{`select * from t where d = cast('d' as decimal(1000,20))`, false, errors.New(`[types:1426]Too big precision 1000 specified for column ''d''. Maximum is 65` + ".")},
+		{`select cast(d as decimal(1000,20))`, false, errors.New(`[types:1426]Too big precision 1000 specified for column 'd'. Maximum is 65` + ".")},
+		{`select cast(111 as decimal(1000,20))`, false, errors.New(`[types:1426]Too big precision 1000 specified for column '111'. Maximum is 65` + ".")},
+		{`select cast("abc" as decimal(1000,20))`, false, errors.New(`[types:1426]Too big precision 1000 specified for column '"abc"'. Maximum is 65` + ".")},
+		{`select cast("'d'" as decimal(1000,20))`, false, errors.New(`[types:1426]Too big precision 1000 specified for column '"'d'"'. Maximum is 65` + ".")},
 		// for cast decimal ErrMBiggerThanD
-		{`select * from t where d = cast(d as decimal(10,20))`, false, errors.New(`[types:1427]For float(M,D), double(M,D) or decimal(M,D), M must be >= D (column '').`)},
-		{`select * from t where d = cast("d" as decimal(10,20))`, false, errors.New(`[types:1427]For float(M,D), double(M,D) or decimal(M,D), M must be >= D (column '').`)},
-		{`select * from t where d = cast("'d'" as decimal(10,20))`, false, errors.New(`[types:1427]For float(M,D), double(M,D) or decimal(M,D), M must be >= D (column '').`)},
+		{`select * from t where d = cast(d as decimal(10,20))`, false, errors.New(`[types:1427]For float(M,D), double(M,D) or decimal(M,D), M must be >= D (column '')` + ".")},
+		{`select * from t where d = cast("d" as decimal(10,20))`, false, errors.New(`[types:1427]For float(M,D), double(M,D) or decimal(M,D), M must be >= D (column '')` + ".")},
+		{`select * from t where d = cast("'d'" as decimal(10,20))`, false, errors.New(`[types:1427]For float(M,D), double(M,D) or decimal(M,D), M must be >= D (column '')` + ".")},
 		// for convert decimal ErrTooBigPrecision
-		{`select * from t where d = convert(d, decimal(1000,20))`, false, errors.New(`[types:1426]Too big precision 1000 specified for column 'd'. Maximum is 65.`)},
-		{`select * from t where d = convert(111, decimal(1000,20))`, false, errors.New(`[types:1426]Too big precision 1000 specified for column '111'. Maximum is 65.`)},
-		{`select * from t where d = convert("abc", decimal(1000,20))`, false, errors.New(`[types:1426]Too big precision 1000 specified for column '"abc"'. Maximum is 65.`)},
-		{`select * from t where d = convert('d', decimal(1000,20))`, false, errors.New(`[types:1426]Too big precision 1000 specified for column ''d''. Maximum is 65.`)},
+		{`select * from t where d = convert(d, decimal(1000,20))`, false, errors.New(`[types:1426]Too big precision 1000 specified for column 'd'. Maximum is 65` + ".")},
+		{`select * from t where d = convert(111, decimal(1000,20))`, false, errors.New(`[types:1426]Too big precision 1000 specified for column '111'. Maximum is 65` + ".")},
+		{`select * from t where d = convert("abc", decimal(1000,20))`, false, errors.New(`[types:1426]Too big precision 1000 specified for column '"abc"'. Maximum is 65` + ".")},
+		{`select * from t where d = convert('d', decimal(1000,20))`, false, errors.New(`[types:1426]Too big precision 1000 specified for column ''d''. Maximum is 65` + ".")},
 		// for convert decimal ErrMBiggerThanD
-		{`select * from t where d = convert(d , decimal(10,20))`, false, errors.New(`[types:1427]For float(M,D), double(M,D) or decimal(M,D), M must be >= D (column '').`)},
-		{`select * from t where d = convert("d", decimal(10,20))`, false, errors.New(`[types:1427]For float(M,D), double(M,D) or decimal(M,D), M must be >= D (column '').`)},
-		{`select * from t where d = convert("'d'", decimal(10,20))`, false, errors.New(`[types:1427]For float(M,D), double(M,D) or decimal(M,D), M must be >= D (column '').`)},
+		{`select * from t where d = convert(d , decimal(10,20))`, false, errors.New(`[types:1427]For float(M,D), double(M,D) or decimal(M,D), M must be >= D (column '')` + ".")},
+		{`select * from t where d = convert("d", decimal(10,20))`, false, errors.New(`[types:1427]For float(M,D), double(M,D) or decimal(M,D), M must be >= D (column '')` + ".")},
+		{`select * from t where d = convert("'d'", decimal(10,20))`, false, errors.New(`[types:1427]For float(M,D), double(M,D) or decimal(M,D), M must be >= D (column '')` + ".")},
 	}
 
 	_, err := s.se.Execute(context.Background(), "use test")
