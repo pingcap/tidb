@@ -65,6 +65,9 @@ func initMemoryUsageAlarmRecord() (record *memoryUsageAlarm) {
 	}
 	record.lastCheckTime = time.Time{}
 	record.tmpDir = filepath.Join(config.GetGlobalConfig().TempStoragePath, "record")
+	if record.err = disk.CheckAndCreateDir(record.tmpDir); record.err != nil {
+		return
+	}
 	record.lastProfileFileName = make([][]string, 2)
 	// Read last records
 	files, err := ioutil.ReadDir(record.tmpDir)
@@ -131,7 +134,7 @@ func (record *memoryUsageAlarm) doRecord(memUsage uint64, instanceMemoryUsage ui
 
 	logutil.BgLogger().Warn("tidb-server has the risk of OOM. Running SQLs and heap profile will be recorded in record path", fields...)
 
-	if record.err = disk.CheckAndInitTempDir(); record.err != nil {
+	if record.err = disk.CheckAndCreateDir(record.tmpDir); record.err != nil {
 		return
 	}
 	record.recordSQL(sm)
@@ -143,7 +146,6 @@ func (record *memoryUsageAlarm) doRecord(memUsage uint64, instanceMemoryUsage ui
 			err := os.Remove((*filename)[0])
 			if err != nil {
 				logutil.BgLogger().Error("remove temp files failed", zap.Error(err))
-				return
 			}
 			*filename = (*filename)[1:]
 		}

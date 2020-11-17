@@ -1028,6 +1028,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrBRIEExportFailed:  mysql.Message("Export failed: %s", nil),
 
 	ErrInvalidPlacementSpec: mysql.Message("Invalid placement policy '%s': %s", nil),
+	ErrPlacementPolicyCheck: mysql.Message("Placement policy didn't meet the constraint, reason: %s", nil),
 
 	// TiKV/PD errors.
 	ErrPDServerTimeout:           mysql.Message("PD server timeout", nil),
