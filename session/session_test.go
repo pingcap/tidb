@@ -1780,12 +1780,12 @@ func (s *testSessionSuite3) TestUnique(c *C) {
 	c.Assert(err, NotNil)
 	// Check error type and error message
 	c.Assert(terror.ErrorEqual(err, kv.ErrKeyExists), IsTrue, Commentf("err %v", err))
-	c.Assert(err.Error(), Equals, "previous statement: insert into test(id, val) values(1, 1);: [kv:1062]Duplicate entry '1' for key 'PRIMARY'")
+	c.Assert(err.Error(), Equals, "previous statement: insert into test(id, val) values(1, 1): [kv:1062]Duplicate entry '1' for key 'PRIMARY'")
 
 	_, err = tk1.Exec("commit")
 	c.Assert(err, NotNil)
 	c.Assert(terror.ErrorEqual(err, kv.ErrKeyExists), IsTrue, Commentf("err %v", err))
-	c.Assert(err.Error(), Equals, "previous statement: insert into test(id, val) values(2, 2);: [kv:1062]Duplicate entry '2' for key 'val'")
+	c.Assert(err.Error(), Equals, "previous statement: insert into test(id, val) values(2, 2): [kv:1062]Duplicate entry '2' for key 'val'")
 
 	// Test for https://github.com/pingcap/tidb/issues/463
 	tk.MustExec("drop table test;")
@@ -3235,6 +3235,25 @@ func (s *testSessionSuite2) TestPerStmtTaskID(c *C) {
 	tk.MustExec("commit")
 
 	c.Assert(taskID1 != taskID2, IsTrue)
+}
+
+func (s *testSessionSuite2) TestSetTxnScope(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	// assert default value
+	result := tk.MustQuery("select @@txn_scope;")
+	result.Check(testkit.Rows(config.DefTxnScope))
+
+	// assert set sys variable
+	tk.MustExec("set @@session.txn_scope = 'dc-1';")
+	result = tk.MustQuery("select @@txn_scope;")
+	result.Check(testkit.Rows("dc-1"))
+
+	// assert session scope
+	se, err := session.CreateSession4Test(s.store)
+	c.Check(err, IsNil)
+	tk.Se = se
+	result = tk.MustQuery("select @@txn_scope;")
+	result.Check(testkit.Rows(config.DefTxnScope))
 }
 
 func (s *testSessionSuite3) TestSetVarHint(c *C) {
