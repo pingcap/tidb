@@ -431,6 +431,11 @@ error = '''
 Invalid placement policy '%s': %s
 '''
 
+["ddl:8236"]
+error = '''
+Placement policy didn't meet the constraint, reason: %s
+'''
+
 ["domain:8027"]
 error = '''
 Information schema is out of date: schema failed to update in 1 lease, please make sure TiDB can connect to TiKV
@@ -879,6 +884,16 @@ EXPLAIN/SHOW can not be issued; lacking privileges for underlying table
 ["planner:1356"]
 error = '''
 View '%-.192s.%-.192s' references invalid table(s) or column(s) or function(s) or definer/invoker of view lack rights to use them
+'''
+
+["planner:1462"]
+error = '''
+`%-.192s`.`%-.192s` contains view recursion
+'''
+
+["planner:1706"]
+error = '''
+Primary key/partition key update is not allowed since the table is updated both as '%-.192s' and '%-.192s'.
 '''
 
 ["planner:1747"]
@@ -1366,6 +1381,16 @@ error = '''
 TiKV max timestamp is not synced
 '''
 
+["types:1063"]
+error = '''
+Incorrect column specifier for column '%-.192s'
+'''
+
+["types:1064"]
+error = '''
+You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use
+'''
+
 ["types:1074"]
 error = '''
 Column length too big for column '%-.192s' (max = %d); use BLOB or TEXT instead
@@ -1529,11 +1554,6 @@ variable '%s' does not yet support value: %s
 ["variable:8048"]
 error = '''
 The isolation level '%s' is not supported. Set tidb_skip_isolation_level_check=1 to skip this error
-'''
-
-["variable:8054"]
-error = '''
-cannot set variable to null
 '''
 
 ["variable:8055"]
