@@ -186,7 +186,14 @@ func splitIntoMultiRanges(store kv.Storage, startKey, endKey kv.Key) ([]kv.KeyRa
 		return nil, errors.Trace(err)
 	}
 	for _, r := range regions {
-		ranges = append(ranges, kv.KeyRange{StartKey: r.StartKey(), EndKey: r.EndKey()})
+		start, end := r.StartKey(), r.EndKey()
+		if kv.Key(start).Cmp(startKey) < 0 {
+			start = startKey
+		}
+		if kv.Key(end).Cmp(endKey) > 0 {
+			end = endKey
+		}
+		ranges = append(ranges, kv.KeyRange{StartKey: start, EndKey: end})
 	}
 	if len(ranges) == 0 {
 		return nil, errors.Trace(errors.Errorf("no regions found"))
