@@ -326,10 +326,12 @@ func (e *slowQueryRetriever) getBatchLog(reader *bufio.Reader, offset *offset, n
 }
 
 func (e *slowQueryRetriever) getBatchLogForReversedScan(reader *bufio.Reader, offset *offset, num int) ([][]string, error) {
+	// reader maybe change when read previous file.
+	inputReader := reader
 	defer func() {
 		file := e.getNextFile()
 		if file != nil {
-			reader.Reset(file)
+			inputReader.Reset(file)
 		}
 	}()
 	var line string
