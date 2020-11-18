@@ -1856,8 +1856,8 @@ func (a ApplyTestCase) columns() []*expression.Column {
 	return ret
 }
 
-func (tc ApplyTestCase) String() string {
-	return fmt.Sprintf("(rows:%v, cols:%v)", tc.rows, tc.cols)
+func (a ApplyTestCase) String() string {
+	return fmt.Sprintf("(rows:%v, cols:%v)", a.rows, a.cols)
 }
 
 func defaultApplyTestCase() *ApplyTestCase {
@@ -1866,7 +1866,7 @@ func defaultApplyTestCase() *ApplyTestCase {
 	ctx.GetSessionVars().MaxChunkSize = variable.DefMaxChunkSize
 	tc := &ApplyTestCase{
 		rows: 3000,
-		ctx: ctx,
+		ctx:  ctx,
 		cols: []*types.FieldType{
 			types.NewFieldType(mysql.TypeLonglong),
 			types.NewFieldType(mysql.TypeLonglong),
@@ -1879,8 +1879,8 @@ func benchmarkApplyExec(b *testing.B, testCase *ApplyTestCase) {
 	col := testCase.columns()
 	opt1 := mockDataSourceParameters{
 		schema: expression.NewSchema(col...),
-		rows: testCase.rows,
-		ctx:  testCase.ctx,
+		rows:   testCase.rows,
+		ctx:    testCase.ctx,
 		genDataFunc: func(row int, typ *types.FieldType) interface{} {
 			return int64(row + 1)
 		},
@@ -1919,7 +1919,7 @@ func benchmarkApplyExec(b *testing.B, testCase *ApplyTestCase) {
 	joiner := newJoiner(testCase.ctx, core.InnerJoin, false,
 		make([]types.Datum, innerExec.Schema().Len()), []expression.Expression{otherFilter},
 		retTypes(outerExec), retTypes(innerExec), childrenUsedSchema)
-	apply := &NestedLoopApplyExec {
+	apply := &NestedLoopApplyExec{
 		baseExecutor: newBaseExecutor(testCase.ctx, joinSchema, 4, outerExec, innerExec),
 		outerExec:    outerExec,
 		innerExec:    innerExec,
