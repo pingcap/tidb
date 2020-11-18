@@ -215,7 +215,10 @@ func optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	sctx.GetSessionVars().PlanColumnID = 0
 	hintProcessor := &hint.BlockHintProcessor{Ctx: sctx}
 	node.Accept(hintProcessor)
-	builder := plannercore.NewPlanBuilder(sctx, is, hintProcessor)
+
+	setVarCollectProcessor := plannercore.NewSetVarCollectProcessor()
+	node.Accept(setVarCollectProcessor) // collect SetVar first
+	builder := plannercore.NewPlanBuilderWithSetVarCollect(sctx, is, hintProcessor, setVarCollectProcessor)
 
 	// reset fields about rewrite
 	sctx.GetSessionVars().RewritePhaseInfo.Reset()

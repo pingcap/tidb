@@ -453,6 +453,12 @@ type PlanBuilder struct {
 	// evalDefaultExpr needs this information to find the corresponding column.
 	// It stores the OutputNames before buildProjection.
 	allNames [][]*types.FieldName
+
+	// https://github.com/pingcap/tidb/issues/8733#issuecomment-700572764
+	// remember SetVar name, check should we fold GetVar to constant or not
+	// NOTE: assign to `expressionRewriter.SetVarCollectProcessor`
+	//       when `PlanBuilder.getExpressionRewriter` invoke
+	setVarCollectProcessor *SetVarCollectProcessor
 }
 
 type handleColHelper struct {
@@ -544,19 +550,24 @@ func (b *PlanBuilder) popSelectOffset() {
 }
 
 // NewPlanBuilder creates a new PlanBuilder.
-func NewPlanBuilder(sctx sessionctx.Context, is infoschema.InfoSchema, processor *hint.BlockHintProcessor) *PlanBuilder {
+func NewPlanBuilderWithSetVarCollect(sctx sessionctx.Context, is infoschema.InfoSchema, processor *hint.BlockHintProcessor, setVarCollectProcessor *SetVarCollectProcessor) *PlanBuilder {
 	if processor == nil {
 		sctx.GetSessionVars().PlannerSelectBlockAsName = nil
 	} else {
 		sctx.GetSessionVars().PlannerSelectBlockAsName = make([]ast.HintTable, processor.MaxSelectStmtOffset()+1)
 	}
 	return &PlanBuilder{
-		ctx:           sctx,
-		is:            is,
-		colMapper:     make(map[*ast.ColumnNameExpr]int),
-		handleHelper:  &handleColHelper{id2HandleMapStack: make([]map[int64][]HandleCols, 0)},
-		hintProcessor: processor,
+		ctx:                    sctx,
+		is:                     is,
+		colMapper:              make(map[*ast.ColumnNameExpr]int),
+		handleHelper:           &handleColHelper{id2HandleMapStack: make([]map[int64][]HandleCols, 0)},
+		hintProcessor:          processor,
+		setVarCollectProcessor: setVarCollectProcessor,
 	}
+}
+
+func NewPlanBuilder(sctx sessionctx.Context, is infoschema.InfoSchema, processor *hint.BlockHintProcessor) *PlanBuilder {
+	return NewPlanBuilderWithSetVarCollect(sctx, is, processor, nil)
 }
 
 // Build builds the ast node to a Plan.

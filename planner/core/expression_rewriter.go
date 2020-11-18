@@ -153,6 +153,7 @@ func (b *PlanBuilder) getExpressionRewriter(ctx context.Context, p LogicalPlan) 
 	if len(b.rewriterPool) < b.rewriterCounter {
 		rewriter = &expressionRewriter{p: p, b: b, sctx: b.ctx, ctx: ctx}
 		rewriter.sctx.SetValue(expression.TiDBDecodeKeyFunctionKey, decodeKeyFromString)
+		rewriter.setVarCollectProcessor = b.setVarCollectProcessor
 		b.rewriterPool = append(b.rewriterPool, rewriter)
 		return
 	}
@@ -168,6 +169,7 @@ func (b *PlanBuilder) getExpressionRewriter(ctx context.Context, p LogicalPlan) 
 	rewriter.ctxStack = rewriter.ctxStack[:0]
 	rewriter.ctxNameStk = rewriter.ctxNameStk[:0]
 	rewriter.ctx = ctx
+	rewriter.setVarCollectProcessor = b.setVarCollectProcessor
 	return
 }
 
@@ -191,6 +193,7 @@ func (b *PlanBuilder) rewriteExprNode(rewriter *expressionRewriter, exprNode ast
 			rewriter.p.SetOutputNames(names)
 		}()
 	}
+	//exprNode.Accept(rewriter.setVarCollectProcessor)
 	exprNode.Accept(rewriter)
 	if rewriter.err != nil {
 		return nil, nil, errors.Trace(rewriter.err)
@@ -241,7 +244,7 @@ type expressionRewriter struct {
 
 	// https://github.com/pingcap/tidb/issues/8733#issuecomment-700572764
 	// remember SetVar name, check should we fold GetVar to constant or not
-	setVariableMap map[string]int
+	setVarCollectProcessor *SetVarCollectProcessor
 }
 
 func (er *expressionRewriter) ctxStackLen() int {
@@ -1157,23 +1160,21 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
 				expression.DatumToConstant(types.NewDatum(name), mysql.TypeString),
 				er.ctxStack[stkLen-1])
 			er.ctxNameStk[stkLen-1] = types.EmptyName
-
-			if er.setVariableMap == nil { // init when nil
-				er.setVariableMap = make(map[string]int)
-			}
-
-			er.setVariableMap[name] = 1
 			return
 		}
 
+		svv := er.setVarCollectProcessor
+
 		// We can only fold the GetVar into a constant if the query contains no SetVar for the same user variable.
 		disableFoldForGetVar := false
-		if er.setVariableMap != nil {
-			disableFoldForGetVar = er.setVariableMap[name] > 0
-		} // else setVariableMap is nil, no need to disable fold
+		if svv != nil {
+			disableFoldForGetVar = svv.SetVarMap[name]
+		} // else setVarCollectProcessor is nil, no need to disable fold
 
 		if disableFoldForGetVar {
 			er.disableFoldCounter++ // scope disable fold enter
+		} else {
+			er.tryFoldCounter++
 		}
 
 		f, err := er.newFunction(ast.GetVar,
