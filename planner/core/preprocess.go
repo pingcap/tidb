@@ -834,17 +834,17 @@ func checkUnsupportedTableOptions(options []*ast.TableOption) error {
 }
 
 var mysqlValidTableEngineNames = map[string]struct{}{
-	"archive":    struct{}{},
-	"blackhole":  struct{}{},
-	"csv":        struct{}{},
-	"example":    struct{}{},
-	"federated":  struct{}{},
-	"innodb":     struct{}{},
-	"memory":     struct{}{},
-	"merge":      struct{}{},
-	"mgr_myisam": struct{}{},
-	"myisam":     struct{}{},
-	"ndb":        struct{}{},
+	"archive":    {},
+	"blackhole":  {},
+	"csv":        {},
+	"example":    {},
+	"federated":  {},
+	"innodb":     {},
+	"memory":     {},
+	"merge":      {},
+	"mgr_myisam": {},
+	"myisam":     {},
+	"ndb":        {},
 }
 
 func checkTableEngine(engineName string) error {
