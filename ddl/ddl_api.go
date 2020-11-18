@@ -2706,6 +2706,10 @@ func checkModifyCharsetAndCollation(toCharset, toCollate, origCharset, origColla
 // field length and precision.
 func CheckModifyTypeCompatible(origin *types.FieldType, to *types.FieldType) error {
 	unsupportedMsg := fmt.Sprintf("type %v not match origin %v", to.CompactStr(), origin.CompactStr())
+	var (
+		toFlen     = to.Flen
+		originFlen = origin.Flen
+	)
 	switch origin.Tp {
 	case mysql.TypeVarchar, mysql.TypeString, mysql.TypeVarString,
 		mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
@@ -2718,6 +2722,10 @@ func CheckModifyTypeCompatible(origin *types.FieldType, to *types.FieldType) err
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
 		switch to.Tp {
 		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
+			// For integers, we should ignore the potential display length represented by flen, using
+			// the default flen of the type.
+			originFlen, _ = mysql.GetDefaultFieldLengthAndDecimal(origin.Tp)
+			toFlen, _ = mysql.GetDefaultFieldLengthAndDecimal(to.Tp)
 		default:
 			return errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
 		}
@@ -2756,9 +2764,8 @@ func CheckModifyTypeCompatible(origin *types.FieldType, to *types.FieldType) err
 			return errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
 		}
 	}
-
-	if to.Flen > 0 && to.Flen < origin.Flen {
-		msg := fmt.Sprintf("length %d is less than origin %d", to.Flen, origin.Flen)
+	if toFlen > 0 && toFlen < originFlen {
+		msg := fmt.Sprintf("length %d is less than origin %d", toFlen, originFlen)
 		return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
 	}
 	if to.Decimal > 0 && to.Decimal < origin.Decimal {
