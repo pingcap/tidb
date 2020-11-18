@@ -562,3 +562,18 @@ func (s *testPointGetSuite) TestBatchPointGetWithInvisibleIndex(c *C) {
 		"  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
 	))
 }
+
+func (s *testPointGetSuite) TestIssue20756(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(id varchar(20) primary key, name varchar(20))")
+	tk.MustExec("insert into t values('1', 'test')")
+	tk.MustQuery("explain select * from t where 1=0 or id=1").Check(testkit.Rows(
+		"Point_Get_5 1.00 root table:t, clustered index:PRIMARY(id) ",
+	))
+
+	tk.MustQuery("explain select * from t where 1=0 or id in (1, 2)").Check(testkit.Rows(
+		"Batch_Point_Get_5 2.00 root table:t, clustered index:PRIMARY(id) keep order:false, desc:false",
+	))
+}

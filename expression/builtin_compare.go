@@ -1116,6 +1116,18 @@ func GetAccurateCmpType(lhs, rhs Expression) types.EvalType {
 			} else {
 				cmpType = types.ETDatetime
 			}
+		} else if cmpType == types.ETReal && ((lhsEvalType == types.ETString && !isLHSConst && rhsEvalType == types.ETInt && isRHSConst) ||
+			(lhsEvalType == types.ETInt && isLHSConst && rhsEvalType == types.ETString && !isRHSConst)) {
+			/*
+				cmpType is ETReal and
+
+				<non-const string expression> <cmp> <const int expression>
+				or
+				<const int expression> <cmp> <non-const string expression>
+
+				Do comparison as string rather than real
+			*/
+			cmpType = types.ETString
 		}
 	}
 	return cmpType
