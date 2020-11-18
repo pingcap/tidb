@@ -996,7 +996,7 @@ func ProduceStrWithSpecifiedTp(s string, tp *FieldType, sc *stmtctx.StatementCon
 				err = ErrDataTooLong.GenWithStack("Data Too Long, field len %d, data len %d", truncateLen, len(s))
 				break
 			}
-			s = truncateStr(s, flen)
+			s = truncateStr(s, truncateLen)
 		} else if tp.Tp == mysql.TypeString && IsBinaryStr(tp) && len(s) < flen && padZero {
 			padding := make([]byte, flen-len(s))
 			s = string(append([]byte(s), padding...))
