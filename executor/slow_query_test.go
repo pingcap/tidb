@@ -284,14 +284,6 @@ select * from t;
 }
 
 func (s *testExecSuite) TestSlowQueryRetriever(c *C) {
-	writeFile := func(file string, data string) {
-		f, err := os.OpenFile(file, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
-		c.Assert(err, IsNil)
-		_, err = f.Write([]byte(data))
-		c.Assert(f.Close(), IsNil)
-		c.Assert(err, IsNil)
-	}
-
 	logData0 := ""
 	logData1 := `
 # Time: 2020-02-15T18:00:01.000000+08:00
@@ -310,20 +302,16 @@ select 5;
 select 6;
 # Time: 2020-04-15T18:00:05.299063744+08:00
 select 7;`
+	logData := []string{logData0, logData1, logData2, logData3}
 
 	fileName0 := "tidb-slow-2020-02-14T19-04-05.01.log"
 	fileName1 := "tidb-slow-2020-02-15T19-04-05.01.log"
 	fileName2 := "tidb-slow-2020-02-16T19-04-05.01.log"
 	fileName3 := "tidb-slow.log"
-	writeFile(fileName0, logData0)
-	writeFile(fileName1, logData1)
-	writeFile(fileName2, logData2)
-	writeFile(fileName3, logData3)
+	fileNames := []string{fileName0, fileName1, fileName2, fileName3}
+	prepareLogs(c, logData, fileNames)
 	defer func() {
-		os.Remove(fileName0)
-		os.Remove(fileName1)
-		os.Remove(fileName2)
-		os.Remove(fileName3)
+		removeFiles(fileNames)
 	}()
 
 	cases := []struct {
@@ -449,14 +437,6 @@ select 7;`
 }
 
 func (s *testExecSuite) TestBatchLogForReversedScan(c *C) {
-	writeFile := func(file string, data string) {
-		f, err := os.OpenFile(file, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
-		c.Assert(err, IsNil)
-		_, err = f.Write([]byte(data))
-		c.Assert(f.Close(), IsNil)
-		c.Assert(err, IsNil)
-	}
-
 	logData0 := ""
 	logData1 := `
 # Time: 2020-02-15T18:00:01.000000+08:00
@@ -478,23 +458,17 @@ select 7;
 	logData4 := `select 8;
 # Time: 2020-04-15T19:00:05.299063744+08:00
 select 9;`
+	logData := []string{logData0, logData1, logData2, logData3, logData4}
 
 	fileName0 := "tidb-slow-2020-02-14T19-04-05.01.log"
 	fileName1 := "tidb-slow-2020-02-15T19-04-05.01.log"
 	fileName2 := "tidb-slow-2020-02-16T19-04-05.01.log"
 	fileName3 := "tidb-slow-2020-02-17T19-04-05.01.log"
 	fileName4 := "tidb-slow.log"
-	writeFile(fileName0, logData0)
-	writeFile(fileName1, logData1)
-	writeFile(fileName2, logData2)
-	writeFile(fileName3, logData3)
-	writeFile(fileName4, logData4)
+	fileNames := []string{fileName0, fileName1, fileName2, fileName3, fileName4}
+	prepareLogs(c, logData, fileNames)
 	defer func() {
-		os.Remove(fileName0)
-		os.Remove(fileName1)
-		os.Remove(fileName2)
-		os.Remove(fileName3)
-		os.Remove(fileName4)
+		removeFiles(fileNames)
 	}()
 
 	cases := []struct {
@@ -580,5 +554,25 @@ select 9;`
 			}
 		}
 		c.Assert(retriever.close(), IsNil)
+	}
+}
+
+func prepareLogs(c *C, logData []string, fileNames []string) {
+	writeFile := func(file string, data string) {
+		f, err := os.OpenFile(file, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+		c.Assert(err, IsNil)
+		_, err = f.Write([]byte(data))
+		c.Assert(f.Close(), IsNil)
+		c.Assert(err, IsNil)
+	}
+
+	for i, log := range logData {
+		writeFile(fileNames[i], log)
+	}
+}
+
+func removeFiles(fileNames []string) {
+	for _, fileName := range fileNames {
+		os.Remove(fileName)
 	}
 }

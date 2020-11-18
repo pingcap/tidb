@@ -6069,7 +6069,6 @@ select 10;`
 	fileName3 := "tidb-slow-2020-02-17T18-00-05.01.log"
 	fileName4 := "tidb-slow.log"
 	fileNames := []string{fileName0, fileName1, fileName2, fileName3, fileName4}
-
 	prepareLogs(c, logData, fileNames)
 	defer func() {
 		removeFiles(fileNames)
