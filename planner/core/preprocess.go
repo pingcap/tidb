@@ -816,34 +816,35 @@ func checkIndexInfo(indexName string, IndexPartSpecifications []*ast.IndexPartSp
 
 // checkUnsupportedTableOptions checks if there exists unsupported table options
 func checkUnsupportedTableOptions(options []*ast.TableOption) error {
+	var err error = nil
 	for _, option := range options {
 		switch option.Tp {
 		case ast.TableOptionUnion:
-			return ddl.ErrTableOptionUnionUnsupported
+			err = ddl.ErrTableOptionUnionUnsupported
 		case ast.TableOptionInsertMethod:
-			return ddl.ErrTableOptionInsertMethodUnsupported
+			err = ddl.ErrTableOptionInsertMethodUnsupported
 		case ast.TableOptionEngine:
-			err := checkTableEngine(option.StrValue)
-			if err != nil {
-				return err
-			}
+			err = checkTableEngine(option.StrValue)
+		}
+		if err != nil {
+			return err
 		}
 	}
 	return nil
 }
 
-var mysqlValidTableEngineNames = map[string]string{
-	"archive":    "ARCHIVE",
-	"blackhole":  "BLACKHOLE",
-	"csv":        "CSV",
-	"example":    "EXAMPLE",
-	"federated":  "FEDERATED",
-	"innodb":     "InnoDB",
-	"memory":     "MEMORY",
-	"merge":      "MERGE",
-	"mgr_myisam": "MRG_MYISAM",
-	"myisam":     "MyISAM",
-	"ndb":        "NDB",
+var mysqlValidTableEngineNames = map[string]struct{}{
+	"archive":    struct{}{},
+	"blackhole":  struct{}{},
+	"csv":        struct{}{},
+	"example":    struct{}{},
+	"federated":  struct{}{},
+	"innodb":     struct{}{},
+	"memory":     struct{}{},
+	"merge":      struct{}{},
+	"mgr_myisam": struct{}{},
+	"myisam":     struct{}{},
+	"ndb":        struct{}{},
 }
 
 func checkTableEngine(engineName string) error {
