@@ -330,7 +330,7 @@
         ],
         "Plan": [
           "TableReader_7 0.00 root partition:p0 data:Selection_6",
-          "└─Selection_6 0.00 cop[tikv]  or(and(and(eq(test_partition.t2.id, 1), eq(test_partition.t2.a, 1)), eq(test_partition.t2.b, 1)), and(and(eq(test_partition.t2.a, 1), eq(test_partition.t2.id, 1)), eq(test_partition.t2.b, 1)))",
+          "└─Selection_6 0.00 cop[tikv]  or(and(eq(test_partition.t2.id, 1), and(eq(test_partition.t2.a, 1), eq(test_partition.t2.b, 1))), and(eq(test_partition.t2.a, 1), and(eq(test_partition.t2.id, 1), eq(test_partition.t2.b, 1))))",
           "  └─TableFullScan_5 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
         ]
       },
