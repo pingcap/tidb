@@ -1116,18 +1116,6 @@ func GetAccurateCmpType(lhs, rhs Expression) types.EvalType {
 			} else {
 				cmpType = types.ETDatetime
 			}
-		} else if cmpType == types.ETReal && ((lhsEvalType == types.ETString && !isLHSConst && rhsEvalType == types.ETInt && isRHSConst) ||
-			(lhsEvalType == types.ETInt && isLHSConst && rhsEvalType == types.ETString && !isRHSConst)) {
-			/*
-				cmpType is ETReal and
-
-				<non-const string expression> <cmp> <const int expression>
-				or
-				<const int expression> <cmp> <non-const string expression>
-
-				Do comparison as string rather than real
-			*/
-			cmpType = types.ETString
 		}
 	}
 	return cmpType
@@ -1426,8 +1414,48 @@ func (c *compareFunctionClass) getFunction(ctx sessionctx.Context, rawArgs []Exp
 	}
 	args := c.refineArgs(ctx, rawArgs)
 	cmpType := GetAccurateCmpType(args[0], args[1])
+	if c.funcName == ast.EQ {
+		// Optimize for Equal compare
+		cmpType = c.optimizeForEqualCompare(cmpType, args[0], args[1])
+	}
 	sig, err = c.generateCmpSigs(ctx, args, cmpType)
 	return sig, err
+}
+
+func (c *compareFunctionClass) optimizeForEqualCompare(cmpType types.EvalType, lhs, rhs Expression) types.EvalType {
+	if cmpType != types.ETReal {
+		return cmpType
+	}
+	/*
+		cmpType is ETReal and const int expression value is not ZERO
+
+		<non-const string column> eq <const int expression>
+		or
+		<const int expression> eq <non-const string column>
+
+		Do comparison as string rather than real
+	*/
+
+	lhsFieldType, rhsFieldType := lhs.GetType(), rhs.GetType()
+	lhsEvalType, rhsEvalType := lhsFieldType.EvalType(), rhsFieldType.EvalType()
+	var constExpr *Constant
+	lval, isLHSConst := lhs.(*Constant)
+	if isLHSConst {
+		constExpr = lval
+	}
+	rval, isRHSConst := rhs.(*Constant)
+	if isRHSConst {
+		constExpr = rval
+	}
+	_, lhsIsColumn := lhs.(*Column)
+	_, rhsIsColumn := rhs.(*Column)
+	if (lhsEvalType == types.ETString && !isLHSConst && rhsEvalType == types.ETInt && isRHSConst) ||
+		(lhsEvalType == types.ETInt && isLHSConst && rhsEvalType == types.ETString && !isRHSConst) {
+		if (lhsIsColumn || rhsIsColumn) && constExpr.Value.GetInt64() != 0 {
+			cmpType = types.ETString
+		}
+	}
+	return cmpType
 }
 
 // generateCmpSigs generates compare function signatures.
