@@ -702,6 +702,92 @@ func (s *testSuiteJoin3) TestSubquerySameTable(c *C) {
 	result = tk.MustQuery("select a from t where not exists(select 1 from t as x where x.a < t.a)")
 	result.Check(testkit.Rows("1"))
 }
+func (s *testSuiteJoin3) TestInlineSubquery(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set @@tidb_hash_join_concurrency=1")
+	tk.MustExec("set @@tidb_hashagg_partial_concurrency=1")
+	tk.MustExec("set @@tidb_hashagg_final_concurrency=1")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t1 (m1 int, n1 char(1))")
+	tk.MustExec("create table t2 (m2 int, n2 char(1))")
+	tk.MustExec("insert t1 values (1, 'a'),(2, 'b'),(3, 'c')")
+	tk.MustExec("insert t2 values (2, 'b'),(3, 'c'),(4, 'd')")
+	tk.MustExec("commit")
+
+	tk.MustExec("set sql_mode = 'STRICT_TRANS_TABLES'")
+
+	result := tk.MustQuery("select (select m1 from t1 limit 1)")
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery("select m1 from t1 where m1 < (select min(m2) from t2)")
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery("select m1 from t1 where m1 > any(select m2 from t2)")
+	result.Check(testkit.Rows("3"))
+	result = tk.MustQuery("select m1 from t1 where m1 > all(select m2 from t2)")
+	result.Check(testkit.Rows())
+	result = tk.MustQuery("select m1 from t1 where exists(select 2 from t2)")
+	result.Check(testkit.Rows("1", "2", "3"))
+
+	result = tk.MustQuery("select n1 from t1 where m1 in (select m2 from t2)")
+	result.Check(testkit.Rows("b", "c"))
+	result = tk.MustQuery("select m1 from t1 where (m1,n1) in (select m2, n2 from t2)")
+	result.Check(testkit.Rows("2", "3"))
+	result = tk.MustQuery("select n1 from t1 where m1 in (select m2 from t2 where n1 = n2)")
+	result.Check(testkit.Rows("b", "c"))
+
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("drop table if exists t2")
+
+	tk.MustExec(`
+	CREATE TABLE t1 (
+  		id int NOT NULL primary key,
+  		key1 varchar(100),
+  		key2 int,
+		key3 varchar(100),
+  		common varchar(100),
+  		KEY idx_key1 (key1),
+  		UNIQUE KEY uk_key2 (key2)
+	)`)
+	tk.MustExec(`
+	CREATE TABLE t2 (
+  		id int NOT NULL primary key,
+  		key1 varchar(100),
+  		key2 int,
+		key3 varchar(100),
+  		common varchar(100),
+  		KEY idx_key1 (key1),
+  		UNIQUE KEY uk_key2 (key2)
+	)`)
+
+	tk.MustExec("insert t1 values (1, 'a', 100, 'c', 'dd'),(2, 'cc', 25, 'a', 'f'),(3, 'e', 1, 'b', 'c')")
+	tk.MustExec("insert t2 values (1, 'b', 100, 'a', 'e'),(2, 'cc', 34, 'a', 'g'),(3, 'e', 1, 'b', 'z'),(4, 'e', 4, 'c', 'a')")
+
+	// non-correlated subquery
+	result = tk.MustQuery("select id, key1 from t1 where key1 = (select common from t2 where key3 = 'a' limit 1)")
+	result.Check(testkit.Rows("3 e"))
+	// correlated subquery
+	result = tk.MustQuery("select key1, common from t1 where 100 < (select sum(key2) from t2 where t1.key3=t2.key3)")
+	result.Check(testkit.Rows("cc f"))
+	// correlated subquery, can't convert Apply operator to join operator
+	result = tk.MustQuery("select key2 from t1 where key1 = (select common from t2 where t1.key3 = t2.key3 limit 1)")
+	result.Check(testkit.Rows("100"))
+
+	// anti semi join
+	result = tk.MustQuery("select key2 from t1 where key1 not in (select common from t2 where key3 = 'a')")
+	result.Check(testkit.Rows("100", "25"))
+	// inner join
+	result = tk.MustQuery("select key2, key3 from t1 where key3 in (select key1 from t2 where key1 > 'a' and key1 < 'c')")
+	result.Check(testkit.Rows("1 b"))
+	// semi join
+	result = tk.MustQuery("select key2 from t1 where key1 in (select common from t2 where t1.key3 = t2.key3)")
+	result.Check(testkit.Rows("100"))
+	// left outer semi join
+	result = tk.MustQuery("select key3 from t1 where key1 in (select key3 from t2 where t1.common=t2.common) or key2 > 10")
+	result.Check(testkit.Rows("c", "a"))
+	// left outer join
+	result = tk.MustQuery("select common, (select count(*) from t2 where t2.key3=t1.key3) as d from t1")
+	result.Check(testkit.Rows("dd 1", "f 2", "c 1"))
+}
 
 func (s *testSuiteJoin3) TestSubquery(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
@@ -720,8 +806,12 @@ func (s *testSuiteJoin3) TestSubquery(c *C) {
 
 	result := tk.MustQuery("select * from t where exists(select * from t k where t.c = k.c having sum(c) = 1)")
 	result.Check(testkit.Rows("1 1"))
+	result = tk.MustQuery("select d from t where exists(select * from t k where t.c = k.c having sum(c) = 1)")
+	result.Check(testkit.Rows("1"))
 	result = tk.MustQuery("select * from t where exists(select k.c, k.d from t k, t p where t.c = k.d)")
 	result.Check(testkit.Rows("1 1", "2 2"))
+	result = tk.MustQuery("select d from t where exists(select k.c, k.d from t k, t p where t.c = k.d)")
+	result.Check(testkit.Rows("1", "2"))
 	result = tk.MustQuery("select 1 = (select count(*) from t where t.c = k.d) from t k")
 	result.Check(testkit.Rows("1", "1", "0"))
 	result = tk.MustQuery("select 1 = (select count(*) from t where exists( select * from t m where t.c = k.d)) from t k")
@@ -766,6 +856,8 @@ func (s *testSuiteJoin3) TestSubquery(c *C) {
 
 	result = tk.MustQuery("select * from a b where c = (select d from b a where a.c = 2 and b.c = 1)")
 	result.Check(testkit.Rows("1 2"))
+	result = tk.MustQuery("select d from a b where c = (select d from b a where a.c = 2 and b.c = 1)")
+	result.Check(testkit.Rows("2"))
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(c int)")

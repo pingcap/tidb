@@ -1831,7 +1831,6 @@ type ApplyTestCase struct {
 	rows               int
 	cols               []*types.FieldType
 	ctx                sessionctx.Context
-	disk               bool
 	childrenUsedSchema [][]bool
 	isInlineProjection bool
 }
@@ -1846,8 +1845,7 @@ func (a ApplyTestCase) columns() []*expression.Column {
 }
 
 func (tc ApplyTestCase) String() string {
-	return fmt.Sprintf("(rows:%v, cols:%v, disk:%v)",
-		tc.rows, tc.cols, tc.disk)
+	return fmt.Sprintf("(rows:%v, cols:%v)", tc.rows, tc.cols)
 }
 
 func defaultApplyTestCase() *ApplyTestCase {
@@ -1855,7 +1853,7 @@ func defaultApplyTestCase() *ApplyTestCase {
 	ctx.GetSessionVars().InitChunkSize = variable.DefInitChunkSize
 	ctx.GetSessionVars().MaxChunkSize = variable.DefMaxChunkSize
 	tc := &ApplyTestCase{
-		rows: 300000,
+		rows: 3000,
 		ctx: ctx,
 		cols: []*types.FieldType{
 			types.NewFieldType(mysql.TypeLonglong),
@@ -1986,8 +1984,8 @@ func BenchmarkApplyInlineProjection(b *testing.B) {
 	b.ReportAllocs()
 	cas := defaultApplyTestCase()
 	cas.childrenUsedSchema = [][]bool{
-		{false, true},
-		{false, false},
+		{false, true, false},
+		{false, false, false},
 	}
 
 	{
