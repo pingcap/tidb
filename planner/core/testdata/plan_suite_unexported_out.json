@@ -44,7 +44,7 @@
       "*core.Explain",
       "*core.Explain",
       "TableReader(Table(t))->Insert",
-      "Show->Sel([eq(Column#4, 0)])->Projection",
+      "Show->Sel([eq(cast(Column#4, double BINARY), 0)])->Projection",
       "Dual->Projection",
       "Dual->Projection",
       "Dual->Projection",
