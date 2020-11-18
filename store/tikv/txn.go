@@ -426,6 +426,11 @@ func (txn *tikvTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput
 			lockCtx.Values[string(key)] = kv.ReturnedValue{AlreadyLocked: true}
 		}
 	}
+	logutil.Logger(ctx).Info("[for debug] tikvTxn.LockKeys",
+		zap.Int("need to lock len", len(keys)),
+		zap.Uint64("startTS", txn.startTS),
+		zap.Uint64("forUpdateTS", lockCtx.ForUpdateTS),
+		zap.Bool("pessimistic", txn.IsPessimistic()))
 	if len(keys) == 0 {
 		return nil
 	}

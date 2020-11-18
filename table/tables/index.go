@@ -200,7 +200,7 @@ func (c *index) Create(sctx sessionctx.Context, rm kv.RetrieverMutator, indexedV
 	skipCheck := vars.StmtCtx.BatchCheck
 	key, distinct, err := c.GenIndexKey(vars.StmtCtx, indexedValues, h, writeBufs.IndexKeyBuf)
 	if err != nil {
-		return 0, err
+		return 0, errors.Trace(err)
 	}
 
 	ctx := opt.Ctx
@@ -224,12 +224,12 @@ func (c *index) Create(sctx sessionctx.Context, rm kv.RetrieverMutator, indexedV
 	idxVal, err = tablecodec.GenIndexValue(sctx.GetSessionVars().StmtCtx, c.tblInfo, c.idxInfo,
 		c.containNonBinaryString, distinct, opt.Untouched, indexedValues, h)
 	if err != nil {
-		return 0, err
+		return 0, errors.Trace(err)
 	}
 
 	if !distinct || skipCheck || opt.Untouched {
 		err = rm.Set(key, idxVal)
-		return 0, err
+		return 0, errors.Trace(err)
 	}
 
 	if ctx != nil {
@@ -246,16 +246,16 @@ func (c *index) Create(sctx sessionctx.Context, rm kv.RetrieverMutator, indexedV
 	if err != nil {
 		if kv.IsErrNotFound(err) {
 			err = rm.Set(key, idxVal)
-			return 0, err
+			return 0, errors.Trace(err)
 		}
-		return 0, err
+		return 0, errors.Trace(err)
 	}
 
 	handle, err := tablecodec.DecodeHandle(value)
 	if err != nil {
 		return 0, err
 	}
-	return handle, kv.ErrKeyExists
+	return handle, errors.Trace(kv.ErrKeyExists)
 }
 
 // Delete removes the entry for handle h and indexedValues from KV index.
