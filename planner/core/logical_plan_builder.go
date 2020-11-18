@@ -3559,29 +3559,6 @@ func checkUpdateList(ctx sessionctx.Context, tblID2table map[int64]table.Table, 
 	if err != nil {
 		return err
 	}
-	// Collect primary keys
-	pkColumnsMap := make(map[int64]map[int64]bool)
-	for _, content := range updt.TblColPosInfos {
-		if _, ok := pkColumnsMap[content.TblID]; ok {
-			continue
-		}
-		tbl := tblID2table[content.TblID]
-		pkColumns := make(map[int64]bool)
-		var pkIdx *model.IndexInfo
-		for _, idx := range tbl.Meta().Indices {
-			if idx.Primary {
-				pkIdx = idx
-				break
-			}
-		}
-		if pkIdx == nil {
-			continue
-		}
-		for _, pkCol := range pkIdx.Columns {
-			pkColumns[tbl.Cols()[pkCol.Offset].ID] = true
-		}
-		pkColumnsMap[content.TblID] = pkColumns
-	}
 	isPKUpdated := make(map[int64]model.CIStr)
 	for _, content := range updt.TblColPosInfos {
 		tbl := tblID2table[content.TblID]
@@ -3596,7 +3573,7 @@ func checkUpdateList(ctx sessionctx.Context, tblID2table map[int64]table.Table, 
 			if !flags[i] {
 				continue
 			}
-			if col.IsPKHandleColumn(tbl.Meta()) || pkColumnsMap[content.TblID][col.ID] {
+			if mysql.HasPriKeyFlag(col.Flag) {
 				updatePK = true
 			}
 		}
