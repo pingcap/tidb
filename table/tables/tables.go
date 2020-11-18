@@ -527,6 +527,11 @@ func (t *TableCommon) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ..
 		}
 	}
 	// Insert new entries into indices.
+	if ctx.GetSessionVars().ConnectionID > 0 {
+		logutil.BgLogger().Info("[for debug] execBuf before addIndices",
+			zap.Uint64("connID", ctx.GetSessionVars().ConnectionID),
+			zap.Int("buf len", execBuf.Len()))
+	}
 	h, err := t.addIndices(ctx, recordID, r, execBuf, createIdxOpts)
 	if err != nil {
 		return h, err
@@ -645,6 +650,12 @@ func (t *TableCommon) addIndices(sctx sessionctx.Context, recordID int64, r []ty
 	skipCheck := sctx.GetSessionVars().StmtCtx.BatchCheck
 	if t.meta.PKIsHandle && !skipCheck && !opt.SkipHandleCheck {
 		if err := CheckHandleExists(ctx, sctx, t, recordID, nil); err != nil {
+			if sctx.GetSessionVars().ConnectionID > 0 {
+				logutil.BgLogger().Error("addIndices error CheckHandleExists",
+					zap.Uint64("connID", sctx.GetSessionVars().ConnectionID),
+					zap.Int64("recordID", recordID),
+					zap.Error(err))
+			}
 			return recordID, errors.Trace(err)
 		}
 	}
@@ -660,6 +671,10 @@ func (t *TableCommon) addIndices(sctx sessionctx.Context, recordID int64, r []ty
 		if !skipCheck && v.Meta().Unique {
 			entryKey, err := t.genIndexKeyStr(indexVals)
 			if err != nil {
+				logutil.BgLogger().Error("[for debug] genIndexKeyStr error",
+					zap.Uint64("connID", sctx.GetSessionVars().ConnectionID),
+					zap.Int64("recordID", recordID),
+					zap.Error(err))
 				return 0, errors.Trace(err)
 			}
 			existErrInfo := kv.NewExistErrInfo(v.Meta().Name.String(), entryKey)
@@ -669,7 +684,7 @@ func (t *TableCommon) addIndices(sctx sessionctx.Context, recordID int64, r []ty
 		}
 		if dupHandle, err := v.Create(sctx, rm, indexVals, recordID, opts...); err != nil {
 			if kv.ErrKeyExists.Equal(err) {
-				logutil.Logger(ctx).Error("[for debug] insertExec.exec addIndices failed", zap.Error(err))
+				logutil.Logger(ctx).Error("[for debug] index.Create failed", zap.Error(err))
 				return dupHandle, errors.Trace(dupErr)
 			}
 			return 0, err

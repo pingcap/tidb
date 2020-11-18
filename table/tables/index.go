@@ -15,6 +15,8 @@ package tables
 
 import (
 	"context"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 	"io"
 
 	"github.com/opentracing/opentracing-go"
@@ -200,6 +202,9 @@ func (c *index) Create(sctx sessionctx.Context, rm kv.RetrieverMutator, indexedV
 	skipCheck := vars.StmtCtx.BatchCheck
 	key, distinct, err := c.GenIndexKey(vars.StmtCtx, indexedValues, h, writeBufs.IndexKeyBuf)
 	if err != nil {
+		logutil.BgLogger().Error("[for debug] index.Create GenIndexKey failed",
+			zap.Uint64("conn", sctx.GetSessionVars().ConnectionID),
+			zap.Error(err))
 		return 0, errors.Trace(err)
 	}
 
@@ -224,12 +229,25 @@ func (c *index) Create(sctx sessionctx.Context, rm kv.RetrieverMutator, indexedV
 	idxVal, err = tablecodec.GenIndexValue(sctx.GetSessionVars().StmtCtx, c.tblInfo, c.idxInfo,
 		c.containNonBinaryString, distinct, opt.Untouched, indexedValues, h)
 	if err != nil {
+		logutil.BgLogger().Error("[for debug] index.Create GetnIndexValue failed",
+			zap.Uint64("conn", sctx.GetSessionVars().ConnectionID),
+			zap.Error(err))
 		return 0, errors.Trace(err)
 	}
 
 	if !distinct || skipCheck || opt.Untouched {
 		err = rm.Set(key, idxVal)
+		logutil.BgLogger().Info("[for debug] index.Create rm.Set failed in uncheck branch",
+			zap.Uint64("conn", sctx.GetSessionVars().ConnectionID),
+			zap.Error(err))
 		return 0, errors.Trace(err)
+	}
+
+	if sctx.GetSessionVars().ConnectionID > 0 {
+		logutil.BgLogger().Info("[for debug] index.Create ongoing, next doing rm.Get",
+			zap.Uint64("conn", sctx.GetSessionVars().ConnectionID),
+			zap.Stringer("indexKey", kv.Key(key)),
+			zap.Stringer("indexValue", kv.Key(idxVal)))
 	}
 
 	if ctx != nil {
@@ -243,18 +261,38 @@ func (c *index) Create(sctx sessionctx.Context, rm kv.RetrieverMutator, indexedV
 	}
 
 	value, err := rm.Get(ctx, key)
+	if sctx.GetSessionVars().ConnectionID > 0 {
+		logutil.BgLogger().Info("[for debug] index.Create ongoing, next doing rm.Get",
+			zap.Uint64("conn", sctx.GetSessionVars().ConnectionID),
+			zap.Stringer("indexKey", kv.Key(key)),
+			zap.Stringer("rm.Get value", kv.Key(value)),
+			zap.Error(err))
+	}
 	if err != nil {
 		if kv.IsErrNotFound(err) {
 			err = rm.Set(key, idxVal)
+			logutil.BgLogger().Info("[for debug] index.Create return after not found, set result error",
+				zap.Stringer("indexKey", kv.Key(key)),
+				zap.Error(err))
 			return 0, errors.Trace(err)
 		}
+		logutil.BgLogger().Info("[for debug] index.Create return err, it's not notfound error",
+			zap.Stringer("indexKey", kv.Key(key)),
+			zap.Error(err))
 		return 0, errors.Trace(err)
 	}
 
 	handle, err := tablecodec.DecodeHandle(value)
 	if err != nil {
+		logutil.BgLogger().Error("[for debug] index.Create return decode error",
+			zap.Stringer("indexKey", kv.Key(key)),
+			zap.Error(err))
 		return 0, err
 	}
+	logutil.BgLogger().Info("[for debug] index.Create return dup err at last",
+		zap.Stringer("indexKey", kv.Key(key)),
+		zap.Int64("handle", handle),
+		zap.Error(err))
 	return handle, errors.Trace(kv.ErrKeyExists)
 }
 
