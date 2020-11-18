@@ -1074,6 +1074,9 @@ func checkCanUseConvertTo(col *model.ColumnInfo, d types.Datum) bool {
 		case types.KindInt64, types.KindUint64:
 			// column type is String and constant type is int or uint
 			return false
+		case types.KindFloat32, types.KindFloat64, types.KindMysqlDecimal:
+			// column type is String and constant type is float or double
+			return false
 		}
 	}
 	return true
