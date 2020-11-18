@@ -1262,7 +1262,7 @@ func (s *testIntegrationSerialSuite) TestIndexMerge(c *C) {
 		"Projection_4 1.80 root  test.t.a, test.t.b",
 		"└─IndexMerge_9 2.00 root  ",
 		"  ├─IndexRangeScan_5(Build) 1.00 cop[tikv] table:t, index:a(a) range:[1,1], keep order:false, stats:pseudo",
-		"  ├─Selection_7(Build) 0.80 cop[tikv]  eq(length(cast(test.t.b)), 1)",
+		"  ├─Selection_7(Build) 0.80 cop[tikv]  eq(length(cast(1)), 1)",
 		"  │ └─IndexRangeScan_6 1.00 cop[tikv] table:t, index:b(b) range:[1,1], keep order:false, stats:pseudo",
 		"  └─TableRowIDScan_8(Probe) 2.00 cop[tikv] table:t keep order:false, stats:pseudo"))
 	tk.MustQuery("show warnings").Check(testkit.Rows())

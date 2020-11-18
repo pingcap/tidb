@@ -382,8 +382,8 @@
         "SQL": "select * from t1 where a=id and id >10",
         "Result": null,
         "Plan": [
-          "TableReader_7 2666.67 root partition:all data:Selection_6",
-          "└─Selection_6 2666.67 cop[tikv]  eq(test_partition.t1.a, test_partition.t1.id), gt(test_partition.t1.id, 10)",
+          "TableReader_7 888.89 root partition:all data:Selection_6",
+          "└─Selection_6 888.89 cop[tikv]  eq(test_partition.t1.a, test_partition.t1.id), gt(test_partition.t1.a, 10), gt(test_partition.t1.id, 10)",
           "  └─TableFullScan_5 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ]
       },
