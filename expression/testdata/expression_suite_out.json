@@ -121,7 +121,7 @@
         "Result": [
           "HashJoin_6 100000.00 root  CARTESIAN right outer join, other cond:gt(test.t1.a, test.t2.a)",
           "├─TableReader_10(Build) 10.00 root  data:Selection_9",
-          "│ └─Selection_9 10.00 cop[tikv]  eq(test.t1.a, 1), not(isnull(test.t1.a))",
+          "│ └─Selection_9 10.00 cop[tikv]  eq(test.t1.a, 1)",
           "│   └─TableFullScan_8 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
           "└─TableReader_12(Probe) 10000.00 root  data:TableFullScan_11",
           "  └─TableFullScan_11 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
