@@ -411,7 +411,7 @@ func (e *TopNExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 	for !req.IsFull() && e.Idx < len(e.rowPtrs) {
 		row := e.rowChunks.GetRow(e.rowPtrs[e.Idx])
-		req.AppendRow(row)
+		req.AppendRowByColIdxs(row, e.columnIdxsUsedByChild)
 		e.Idx++
 	}
 	return nil
@@ -432,9 +432,6 @@ func (e *TopNExec) loadChunksUntilTotalLimit(ctx context.Context) error {
 		}
 		if srcChk.NumRows() == 0 {
 			break
-		}
-		if e.columnIdxsUsedByChild != nil {
-			srcChk = srcChk.Prune(e.columnIdxsUsedByChild)
 		}
 		e.rowChunks.Add(srcChk)
 	}
@@ -460,9 +457,6 @@ func (e *TopNExec) executeTopN(ctx context.Context) error {
 		}
 		if childRowChk.NumRows() == 0 {
 			break
-		}
-		if e.columnIdxsUsedByChild != nil {
-			childRowChk = childRowChk.Prune(e.columnIdxsUsedByChild)
 		}
 		err = e.processChildChk(childRowChk)
 		if err != nil {
