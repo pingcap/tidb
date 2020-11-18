@@ -100,6 +100,8 @@ func optimizeByShuffle(pp PhysicalPlan, tsk task, ctx sessionctx.Context) task {
 	return tsk
 }
 
+// todo: final plan is not optimized by shuffle, find the reason.
+// select /*+ stream_agg() */ grade, count(*) from takes group by grade order by grade;
 func optimizeByShuffle4StreamAgg(pp *PhysicalStreamAgg, ctx sessionctx.Context) *PhysicalShuffle {
 	concurrency := ctx.GetSessionVars().StreamAggConcurrency()
 	if concurrency <= 1 {
@@ -115,16 +117,16 @@ func optimizeByShuffle4StreamAgg(pp *PhysicalStreamAgg, ctx sessionctx.Context) 
 	case *PhysicalSort:
 		splitter = PartitionHashSplitterType
 		tail, dataSource = childExec, childExec.Children()[0]
-	case *PhysicalIndexLookUpReader:
+	case *PhysicalIndexScan, *PhysicalIndexReader:
 		splitter = PartitionRangeSplitterType
 		tail, dataSource = pp, childExec
-	case *PhysicalProjection:
-		if exec, ok := childExec.Children()[0].(*PhysicalIndexLookUpReader); ok {
-			splitter = PartitionRangeSplitterType
-			tail, dataSource = pp, exec
-			break
-		}
-		return nil
+	// case *PhysicalProjection:
+	// 	if exec, ok := childExec.Children()[0].(*PhysicalIndexLookUpReader); ok {
+	// 		splitter = PartitionRangeSplitterType
+	// 		tail, dataSource = pp, exec
+	// 		break
+	// 	}
+	// 	return nil
 	default:
 		return nil
 	}
@@ -135,6 +137,7 @@ func optimizeByShuffle4StreamAgg(pp *PhysicalStreamAgg, ctx sessionctx.Context) 
 			partitionBy = append(partitionBy, col)
 		}
 	}
+
 	NDV := int(getCardinality(partitionBy, dataSource.Schema(), dataSource.statsInfo()))
 	if NDV <= 1 {
 		return nil
