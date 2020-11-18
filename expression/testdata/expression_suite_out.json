@@ -151,9 +151,9 @@
       {
         "SQL": "explain select * from t1 left join t2 on t2.a = t2.b and t2.a > 1",
         "Result": [
-          "HashJoin_6 26666666.67 root  CARTESIAN left outer join",
-          "├─TableReader_12(Build) 2666.67 root  data:Selection_11",
-          "│ └─Selection_11 2666.67 cop[tikv]  eq(test.t2.a, test.t2.b), gt(test.t2.a, 1)",
+          "HashJoin_6 8888888.89 root  CARTESIAN left outer join",
+          "├─TableReader_12(Build) 888.89 root  data:Selection_11",
+          "│ └─Selection_11 888.89 cop[tikv]  eq(test.t2.a, test.t2.b), gt(test.t2.a, 1), gt(test.t2.b, 1)",
           "│   └─TableFullScan_10 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
           "└─TableReader_9(Probe) 10000.00 root  data:TableFullScan_8",
           "  └─TableFullScan_8 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
