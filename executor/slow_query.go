@@ -48,6 +48,9 @@ import (
 	"go.uber.org/zap"
 )
 
+// ParseSlowLogBatchSize is the batch size of slow-log lines for a worker to parse, exported for testing.
+var ParseSlowLogBatchSize = 64
+
 //slowQueryRetriever is used to read slow log data.
 type slowQueryRetriever struct {
 	table       *model.TableInfo
@@ -146,13 +149,13 @@ func (e *slowQueryRetriever) getNextFile() *os.File {
 }
 
 func (e *slowQueryRetriever) parseDataForSlowLog(ctx context.Context, sctx sessionctx.Context) {
-	defer close(e.parsedSlowLogCh)
 	file := e.getNextFile()
 	if file == nil {
+		close(e.parsedSlowLogCh)
 		return
 	}
 	reader := bufio.NewReader(file)
-	e.parseSlowLog(ctx, sctx, reader, 64)
+	e.parseSlowLog(ctx, sctx, reader, ParseSlowLogBatchSize)
 }
 
 func (e *slowQueryRetriever) dataForSlowLog(ctx context.Context) ([][]types.Datum, bool, error) {
@@ -275,6 +278,7 @@ func (e *slowQueryRetriever) getBatchLog(reader *bufio.Reader, offset *offset, n
 }
 
 func (e *slowQueryRetriever) parseSlowLog(ctx context.Context, sctx sessionctx.Context, reader *bufio.Reader, logNum int) {
+	defer close(e.parsedSlowLogCh)
 	var wg sync.WaitGroup
 	offset := offset{offset: 0, length: 0}
 	// To limit the num of go routine
@@ -287,8 +291,11 @@ func (e *slowQueryRetriever) parseSlowLog(ctx context.Context, sctx sessionctx.C
 	for {
 		startTime := time.Now()
 		log, err := e.getBatchLog(reader, &offset, logNum)
-		if err != nil || len(log) == 0 {
+		if err != nil {
 			e.parsedSlowLogCh <- parsedSlowLog{nil, err}
+			break
+		}
+		if len(log) == 0 {
 			break
 		}
 		if e.stats != nil {
@@ -300,17 +307,9 @@ func (e *slowQueryRetriever) parseSlowLog(ctx context.Context, sctx sessionctx.C
 		go func() {
 			defer wg.Done()
 			result, err := e.parseLog(sctx, log, start)
-			if err != nil {
-				e.parsedSlowLogCh <- parsedSlowLog{nil, err}
-			} else {
-				e.parsedSlowLogCh <- parsedSlowLog{result, err}
-			}
+			e.parsedSlowLogCh <- parsedSlowLog{result, err}
 			<-ch
 		}()
-		// Read the next file, offset = 0
-		if e.fileIdx >= len(e.files) {
-			break
-		}
 		offset.offset = e.fileLine
 		offset.length = 0
 		select {

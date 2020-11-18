@@ -70,11 +70,6 @@ func (*testSysVarSuite) TestTxnMode(c *C) {
 	c.Assert(err, NotNil)
 }
 
-func (*testSysVarSuite) TestBoolToInt32(c *C) {
-	c.Assert(BoolToInt32(true), Equals, int32(1))
-	c.Assert(BoolToInt32(false), Equals, int32(0))
-}
-
 func (*testSysVarSuite) TestError(c *C) {
 	kvErrs := []*terror.Error{
 		ErrUnsupportedValueForVar,
