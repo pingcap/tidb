@@ -87,6 +87,8 @@ func optimizeByShuffle(pp PhysicalPlan, tsk task, ctx sessionctx.Context) task {
 
 	// Don't use `tsk.plan()` here, which will probably be different from `pp`.
 	// Eg., when `pp` is `NominalSort`, `tsk.plan()` would be its child.
+	// todo: we should use tsk.plan() instead of pp, it keep the `DataSource` the same
+	// the above issue need to be fixed in a specific way
 	switch p := pp.(type) {
 	case *PhysicalWindow:
 		if shuffle := optimizeByShuffle4Window(p, ctx); shuffle != nil {
@@ -94,6 +96,7 @@ func optimizeByShuffle(pp PhysicalPlan, tsk task, ctx sessionctx.Context) task {
 		}
 	case *PhysicalStreamAgg:
 		if shuffle := optimizeByShuffle4StreamAgg(p, ctx); shuffle != nil {
+			shuffle = shuffle.BuildByTaskPlan(tsk, ctx)
 			return shuffle.attach2Task(tsk)
 		}
 	}
@@ -117,17 +120,9 @@ func optimizeByShuffle4StreamAgg(pp *PhysicalStreamAgg, ctx sessionctx.Context) 
 	case *PhysicalSort:
 		splitter = PartitionHashSplitterType
 		tail, dataSource = childExec, childExec.Children()[0]
-	// case *PhysicalIndexScan, *PhysicalIndexReader:
 	case *PhysicalIndexScan, *PhysicalIndexReader:
 		splitter = PartitionRangeSplitterType
 		tail, dataSource = pp, childExec
-	// case *PhysicalProjection:
-	// 	if exec, ok := childExec.Children()[0].(*PhysicalIndexLookUpReader); ok {
-	// 		splitter = PartitionRangeSplitterType
-	// 		tail, dataSource = pp, exec
-	// 		break
-	// 	}
-	// 	return nil
 	default:
 		return nil
 	}
@@ -147,10 +142,9 @@ func optimizeByShuffle4StreamAgg(pp *PhysicalStreamAgg, ctx sessionctx.Context) 
 	concurrency = mathutil.Min(concurrency, NDV)
 	reqProp := &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64}
 	shuffle := PhysicalShuffle{
-		Concurrency: concurrency,
-		Tail:        tail,
-		DataSource:  dataSource,
-		// SplitterType: PartitionHashSplitterType,
+		Concurrency:  concurrency,
+		Tail:         tail,
+		DataSource:   dataSource,
 		SplitterType: splitter,
 		ByItems:      cloneExprs(pp.GroupByItems),
 	}.Init(ctx, pp.statsInfo(), pp.SelectBlockOffset(), reqProp)

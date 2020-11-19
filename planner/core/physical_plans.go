@@ -14,6 +14,7 @@
 package core
 
 import (
+	"math"
 	"unsafe"
 
 	"github.com/pingcap/errors"
@@ -1169,6 +1170,33 @@ type PhysicalShuffle struct {
 
 	SplitterType PartitionSplitterType
 	ByItems      []expression.Expression
+}
+
+// BuildByTaskPlan adjust the `DataSource` field by tsk.
+// since in some situation, it may different, and the one belong to tsk is preferred.
+// eg, original p.DataSource is PhysicalIndexScan, which would be pushed down to tikv,
+// but tsk have PhysicalIndexReader, and it is preferred, so we change it.
+func (p *PhysicalShuffle) BuildByTaskPlan(tsk task, ctx sessionctx.Context) *PhysicalShuffle {
+	if p == nil {
+		return p
+	}
+
+	_, ok1 := p.DataSource.(*PhysicalIndexScan)
+	_, ok2 := tsk.plan().Children()[0].(*PhysicalIndexReader)
+	if !ok1 || !ok2 {
+		return p
+	}
+
+	reqProp := &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64}
+	shuffle := PhysicalShuffle{
+		Concurrency:  p.Concurrency,
+		Tail:         p.Tail,
+		DataSource:   tsk.plan().Children()[0],
+		SplitterType: p.SplitterType,
+		ByItems:      p.ByItems,
+	}.Init(ctx, tsk.plan().statsInfo(), tsk.plan().SelectBlockOffset(), reqProp)
+
+	return shuffle
 }
 
 // PartitionSplitterType is the type of `Shuffle` executor splitter, which splits data source into partitions.
