@@ -7013,5 +7013,13 @@ func (s *testSuite) TestIssue20975SelectForUpdateBatchPointGetWithPartitionTable
 	tk1.MustExec("select * from t1 where id in (1, 11) for update")
 	tk2.MustExec("drop table t2")
 	tk1.MustExec("commit")
+}
 
+func (s *testSuite) TestIssue20305(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t2 (a year(4))")
+	tk.MustExec("insert into t2 values(69)")
+	tk.MustQuery("select * from t2 where a <= 69").Check(testkit.Rows("2069"))
 }
