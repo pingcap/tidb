@@ -75,9 +75,10 @@ type tikvSnapshot struct {
 	// It's OK as long as there are no zero-byte values in the protocol.
 	mu struct {
 		sync.RWMutex
-		hitCnt int64
-		cached map[string][]byte
-		stats  *SnapshotRuntimeStats
+		hitCnt     int64
+		cached     map[string][]byte
+		cachedSize int
+		stats      *SnapshotRuntimeStats
 	}
 	sampleStep uint32
 }
@@ -174,7 +175,23 @@ func (s *tikvSnapshot) BatchGet(ctx context.Context, keys []kv.Key) (map[string]
 		s.mu.cached = make(map[string][]byte, len(m))
 	}
 	for _, key := range keys {
-		s.mu.cached[string(key)] = m[string(key)]
+		val := m[string(key)]
+		s.mu.cachedSize += len(key) + len(val)
+		s.mu.cached[string(key)] = val
+	}
+
+	const cachedSizeLimit = 10 << 30
+	if s.mu.cachedSize >= cachedSizeLimit {
+		for k, v := range s.mu.cached {
+			if _, needed := m[k]; needed {
+				continue
+			}
+			delete(s.mu.cached, k)
+			s.mu.cachedSize -= len(k) + len(v)
+			if s.mu.cachedSize < cachedSizeLimit {
+				break
+			}
+		}
 	}
 	s.mu.Unlock()
 
