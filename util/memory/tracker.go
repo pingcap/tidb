@@ -263,13 +263,18 @@ func (t *Tracker) Consume(bytes int64) {
 }
 
 func (t *Tracker) Peak(bytes int64) bool {
-	if t.GetBytesLimit() < 0 {
-		return true
-	}
-	if t.BytesConsumed()+bytes > t.GetBytesLimit() {
+	if bytes == 0 {
 		return false
 	}
-	return true
+	exceed := false
+	for tracker := t; tracker != nil; tracker = tracker.getParent() {
+		if tracker.BytesConsumed()+bytes > tracker.GetBytesLimit() {
+			if !exceed {
+				exceed = true
+			}
+		}
+	}
+	return exceed
 }
 
 // BytesConsumed returns the consumed memory usage value in bytes.
@@ -389,6 +394,22 @@ func (t *Tracker) DetachFromGlobalTracker() {
 func (t *Tracker) ReplaceBytesUsed(bytes int64) {
 	t.Consume(-t.BytesConsumed())
 	t.Consume(bytes)
+}
+
+// ConsumeWithoutAction won't execute action
+func (t *Tracker) ConsumeWithoutAction(bytes int64) bool {
+	if bytes == 0 {
+		return false
+	}
+	exceed := false
+	for tracker := t; tracker != nil; tracker = tracker.getParent() {
+		if atomic.AddInt64(&tracker.bytesConsumed, bytes) >= tracker.bytesLimit && tracker.bytesLimit > 0 {
+			if !exceed {
+				exceed = true
+			}
+		}
+	}
+	return exceed
 }
 
 func (t *Tracker) getParent() *Tracker {

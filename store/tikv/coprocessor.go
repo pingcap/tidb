@@ -93,25 +93,7 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variable
 		// Make sure that there is at least one worker.
 		it.concurrency = 1
 	}
-
-	tokenCount := 0
-	tokenLimit := it.concurrency
-	if it.req.KeepOrder {
-		tokenLimit = 2 * it.concurrency
-	}
-	for i := 0; i < tokenLimit; i++ {
-		if sessionMemTracker.Peak(OccupiedMem) {
-			it.memTracker.Consume(OccupiedMem)
-			tokenCount++
-		} else {
-			break
-		}
-	}
-	if tokenCount < 1 {
-		tokenCount++
-		// This might trigger oom action
-		sessionMemTracker.Consume(OccupiedMem)
-	}
+	tokenCount := it.adaptiveTokenCount()
 	it.sendRate = newRateLimit(tokenCount)
 	if !it.req.KeepOrder {
 		it.respChan = make(chan *copResponse, tokenCount)
@@ -568,6 +550,33 @@ func (worker *copIteratorWorker) run(ctx context.Context) {
 		default:
 		}
 	}
+}
+
+func (it *copIterator) adaptiveTokenCount() int {
+	tokenCount := 0
+	tokenLimit := it.concurrency
+	if it.req.KeepOrder {
+		tokenLimit = 2 * it.concurrency
+	}
+	for i := 0; i < tokenLimit; i++ {
+		if it.memTracker.Peak(OccupiedMem) {
+			exceed := it.memTracker.ConsumeWithoutAction(OccupiedMem)
+			tokenCount++
+			if exceed {
+				break
+			}
+		} else {
+			break
+		}
+	}
+	if tokenCount > 1 {
+		tokenCount--
+		it.memTracker.ConsumeWithoutAction(-OccupiedMem)
+	} else if tokenCount < 1 {
+		tokenCount = 1
+		it.memTracker.ConsumeWithoutAction(OccupiedMem)
+	}
+	return tokenCount
 }
 
 // open starts workers and sender goroutines.
