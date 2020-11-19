@@ -146,7 +146,7 @@ func DoOptimize(ctx context.Context, sctx sessionctx.Context, flag uint64, logic
 
 func postOptimize(sctx sessionctx.Context, plan PhysicalPlan) PhysicalPlan {
 	plan = eliminatePhysicalProjection(plan)
-	plan = injectExtraProjection(plan)
+	plan = InjectExtraProjection(plan)
 	plan = eliminateUnionScanAndLock(sctx, plan)
 	plan = enableParallelApply(sctx, plan)
 	return plan
