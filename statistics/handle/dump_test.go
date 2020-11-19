@@ -98,7 +98,7 @@ PARTITION BY RANGE ( a ) (
 	tk.MustExec("delete from mysql.stats_meta")
 	tk.MustExec("delete from mysql.stats_histograms")
 	tk.MustExec("delete from mysql.stats_buckets")
-	h.Clear()
+	h.Clear4Test()
 
 	err = h.LoadStatsFromJSON(s.do.InfoSchema(), jsonTbl)
 	c.Assert(err, IsNil)

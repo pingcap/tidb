@@ -63,6 +63,22 @@
     ]
   },
   {
+    "Name": "TestIndexJoinInnerIndexNDV",
+    "Cases": [
+      {
+        "SQL": "explain select /*+ inl_join(t2) */ * from t1, t2 where t1.a = t2.a and t1.b = t2.b and t1.c = t2.c",
+        "Plan": [
+          "IndexJoin_10 3.00 root  inner join, inner:IndexLookUp_9, outer key:test.t1.c, inner key:test.t2.c, other cond:eq(test.t1.a, test.t2.a), eq(test.t1.b, test.t2.b)",
+          "├─TableReader_20(Build) 3.00 root  data:TableFullScan_19",
+          "│ └─TableFullScan_19 3.00 cop[tikv] table:t1 keep order:false",
+          "└─IndexLookUp_9(Probe) 1.00 root  ",
+          "  ├─IndexRangeScan_7(Build) 1.00 cop[tikv] table:t2, index:idx2(c) range: decided by [eq(test.t2.c, test.t1.c)], keep order:false",
+          "  └─TableRowIDScan_8(Probe) 1.00 cop[tikv] table:t2 keep order:false"
+        ]
+      }
+    ]
+  },
+  {
     "Name": "TestSimplifyOuterJoinWithCast",
     "Cases": [
       {

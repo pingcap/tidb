@@ -807,7 +807,15 @@ func (lr *LockResolver) checkAllSecondaries(bo *Backoffer, l *Lock, status *TxnS
 		return nil, errors.Errorf("async commit recovery (sending CheckSecondaryLocks) finished with errors: %v", errs)
 	}
 
-	// TODO(nrc, cfzjywxk) schema lease check
+	if shared.commitTs > 0 {
+		schemaVerIsTheSame, err := checkSchemaVersionForAsyncCommit(bo.ctx, l.TxnID, shared.commitTs, lr.store)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if !schemaVerIsTheSame {
+			shared.commitTs = 0
+		}
+	}
 
 	return &shared, nil
 }

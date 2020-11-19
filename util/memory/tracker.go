@@ -302,6 +302,11 @@ func (t *Tracker) toString(indent string, buffer *bytes.Buffer) {
 
 // BytesToString converts the memory consumption to a readable string.
 func (t *Tracker) BytesToString(numBytes int64) string {
+	return BytesToString(numBytes)
+}
+
+// BytesToString converts the memory consumption to a readable string.
+func BytesToString(numBytes int64) string {
 	GB := float64(numBytes) / float64(1<<30)
 	if GB > 1 {
 		return fmt.Sprintf("%v GB", GB)

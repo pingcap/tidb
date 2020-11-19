@@ -44,6 +44,7 @@ type backfillWorkerType byte
 const (
 	typeAddIndexWorker     backfillWorkerType = 0
 	typeUpdateColumnWorker backfillWorkerType = 1
+	typeCleanUpIndexWorker backfillWorkerType = 2
 )
 
 func (bWT backfillWorkerType) String() string {
@@ -52,6 +53,8 @@ func (bWT backfillWorkerType) String() string {
 		return "add index"
 	case typeUpdateColumnWorker:
 		return "update column"
+	case typeCleanUpIndexWorker:
+		return "clean up index"
 	default:
 		return "unknown"
 	}
@@ -512,16 +515,24 @@ func (w *worker) writePhysicalTableRecord(t table.PhysicalTable, bfWorkerType ba
 			sessCtx := newContext(reorgInfo.d.store)
 			sessCtx.GetSessionVars().StmtCtx.IsDDLJobInQueue = true
 
-			if bfWorkerType == typeAddIndexWorker {
+			switch bfWorkerType {
+			case typeAddIndexWorker:
 				idxWorker := newAddIndexWorker(sessCtx, w, i, t, indexInfo, decodeColMap, reorgInfo.ReorgMeta.SQLMode)
 				idxWorker.priority = job.Priority
 				backfillWorkers = append(backfillWorkers, idxWorker.backfillWorker)
 				go idxWorker.backfillWorker.run(reorgInfo.d, idxWorker)
-			} else {
+			case typeUpdateColumnWorker:
 				updateWorker := newUpdateColumnWorker(sessCtx, w, i, t, oldColInfo, colInfo, decodeColMap, reorgInfo.ReorgMeta.SQLMode)
 				updateWorker.priority = job.Priority
 				backfillWorkers = append(backfillWorkers, updateWorker.backfillWorker)
 				go updateWorker.backfillWorker.run(reorgInfo.d, updateWorker)
+			case typeCleanUpIndexWorker:
+				idxWorker := newCleanUpIndexWorker(sessCtx, w, i, t, decodeColMap, reorgInfo.ReorgMeta.SQLMode)
+				idxWorker.priority = job.Priority
+				backfillWorkers = append(backfillWorkers, idxWorker.backfillWorker)
+				go idxWorker.backfillWorker.run(reorgInfo.d, idxWorker)
+			default:
+				return errors.New("unknow backfill type")
 			}
 		}
 		// Shrink the worker size.
@@ -592,11 +603,8 @@ func iterateSnapshotRows(store kv.Storage, priority int, t table.Table, version 
 	}
 
 	ver := kv.Version{Ver: version}
-	snap, err := store.GetSnapshot(ver)
+	snap := store.GetSnapshot(ver)
 	snap.SetOption(kv.Priority, priority)
-	if err != nil {
-		return errors.Trace(err)
-	}
 
 	it, err := snap.Iter(firstKey, upperBound)
 	if err != nil {
