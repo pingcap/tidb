@@ -1377,6 +1377,13 @@ func (s *testRangerSuite) TestIndexRangeForYear(c *C) {
 		},
 		{
 			indexPos:    0,
+			exprStr:     `a = 1 or a = 2 or a = 70`,
+			accessConds: "[or(eq(test.t.a, 2001), or(eq(test.t.a, 2002), eq(test.t.a, 1970)))]", // this is in accordance with MySQL, MySQL won't interpret 70 here as 1970
+			filterConds: "[]",
+			resultStr:   `[[1970,1970] [2001,2002]]`,
+		},
+		{
+			indexPos:    0,
 			exprStr:     `a not in (99)`,
 			accessConds: "[ne(test.t.a, 1999)]", // this is in accordance with MySQL
 			filterConds: "[]",

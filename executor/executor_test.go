@@ -7022,4 +7022,9 @@ func (s *testSuite) TestIssue20305(c *C) {
 	tk.MustExec("create table t2 (a year(4))")
 	tk.MustExec("insert into t2 values(69)")
 	tk.MustQuery("select * from t2 where a <= 69").Check(testkit.Rows("2069"))
+	// the following test is a regression test that matches MySQL's behavior.
+	tk.MustExec("drop table if exists t3")
+	tk.MustExec("CREATE TABLE `t3` (`y` year DEFAULT NULL, `a` int DEFAULT NULL)")
+	tk.MustExec("INSERT INTO `t3` VALUES (2069, 70), (2010, 11), (2155, 2156), (2069, 69)")
+	tk.MustQuery("SELECT * FROM `t3` where y <= a").Check(testkit.Rows("2155 2156"))
 }
