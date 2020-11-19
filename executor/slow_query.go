@@ -347,15 +347,15 @@ func (e *slowQueryRetriever) getBatchLogForReversedScan(reader *bufio.Reader, of
 			if err == io.EOF {
 				if len(log) == 0 {
 					reverse(logs)
-					combinedLogs := combineLogs(logs, num)
-					offset.length = len(combinedLogs)
-					return combinedLogs, nil
+					decomposedSlowLogTasks := decomposeToSlowLogTasks(logs, num)
+					offset.length = len(decomposedSlowLogTasks)
+					return decomposedSlowLogTasks, nil
 				}
 				e.fileLine = 0
 				file := e.getPreviousFile()
 				if file == nil {
 					reverse(logs)
-					return combineLogs(logs, num), nil
+					return decomposeToSlowLogTasks(logs, num), nil
 				}
 				reader = bufio.NewReader(file)
 				scanPreviousFile = true
@@ -383,7 +383,7 @@ func (e *slowQueryRetriever) getBatchLogForReversedScan(reader *bufio.Reader, of
 		}
 	}
 	reverse(logs)
-	return combineLogs(logs, num), err
+	return decomposeToSlowLogTasks(logs, num), err
 }
 
 func reverse(logs []slowLogBlock) {
@@ -393,24 +393,24 @@ func reverse(logs []slowLogBlock) {
 	}
 }
 
-func combineLogs(logs []slowLogBlock, num int) [][]string {
+func decomposeToSlowLogTasks(logs []slowLogBlock, num int) [][]string {
 	if len(logs) == 0 {
 		return nil
 	}
 
-	combinedLogs := make([][]string, 0)
+	decomposedSlowLogTasks := make([][]string, 0)
 	log := make([]string, 0, num*len(logs[0]))
 	for i := range logs {
 		log = append(log, logs[i]...)
 		if i > 0 && i%num == 0 {
-			combinedLogs = append(combinedLogs, log)
+			decomposedSlowLogTasks = append(decomposedSlowLogTasks, log)
 			log = make([]string, 0, len(log))
 		}
 	}
 	if len(log) > 0 {
-		combinedLogs = append(combinedLogs, log)
+		decomposedSlowLogTasks = append(decomposedSlowLogTasks, log)
 	}
-	return combinedLogs
+	return decomposedSlowLogTasks
 }
 
 func (e *slowQueryRetriever) parseSlowLog(ctx context.Context, sctx sessionctx.Context, reader *bufio.Reader, logNum int) {
