@@ -634,30 +634,30 @@ func (b *builtinGreatestTimeSig) Clone() builtinFunc {
 
 // evalString evals a builtinGreatestTimeSig.
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_greatest
-func (b *builtinGreatestTimeSig) evalString(row chunk.Row) (_ string, isNull bool, err error) {
+func (b *builtinGreatestTimeSig) evalString(row chunk.Row) (res string, isNull bool, err error) {
 	var (
 		v string
 		t types.Time
 	)
-	max := types.ZeroDatetime
 	sc := b.ctx.GetSessionVars().StmtCtx
 	for i := 0; i < len(b.args); i++ {
 		v, isNull, err = b.args[i].EvalString(b.ctx, row)
 		if isNull || err != nil {
 			return "", true, err
 		}
-		t, err = types.ParseDatetime(sc, v)
+		t, err = types.ParseTime(sc, v, mysql.TypeDatetime, types.MaxFsp)
 		if err != nil {
 			if err = handleInvalidTimeError(b.ctx, err); err != nil {
 				return v, true, err
 			}
-			continue
+		} else {
+			v = t.String()
 		}
-		if t.Compare(max) > 0 {
-			max = t
+		if i == 0 || strings.Compare(v, res) > 0 {
+			res = v
 		}
 	}
-	return max.String(), false, nil
+	return res, false, nil
 }
 
 type leastFunctionClass struct {
@@ -841,7 +841,6 @@ func (b *builtinLeastTimeSig) evalString(row chunk.Row) (res string, isNull bool
 	var (
 		v string
 	)
-	var min *string
 	sc := b.ctx.GetSessionVars().StmtCtx
 	for i := 0; i < len(b.args); i++ {
 		v, isNull, err = b.args[i].EvalString(b.ctx, row)
@@ -853,13 +852,13 @@ func (b *builtinLeastTimeSig) evalString(row chunk.Row) (res string, isNull bool
 			if err = handleInvalidTimeError(b.ctx, err); err != nil {
 				return v, true, err
 			}
+		} else {
 			v = t.String()
 		}
-		if min == nil || strings.Compare(*min, v) < 0 {
-			min = &v
+		if i == 0 || strings.Compare(v, res) < 0 {
+			res = v
 		}
 	}
-	res = *min
 	return res, false, nil
 }
 
