@@ -278,6 +278,19 @@ func (s *testSuite6) TestCreateView(c *C) {
 	tk.MustExec("drop view v_nested, v_nested2")
 }
 
+func (s *testSuite6) TestViewRecursion(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table if not exists t(a int)")
+	tk.MustExec("create definer='root'@'localhost' view recursive_view1 as select * from t")
+	tk.MustExec("create definer='root'@'localhost' view recursive_view2 as select * from recursive_view1")
+	tk.MustExec("drop table t")
+	tk.MustExec("rename table recursive_view2 to t")
+	_, err := tk.Exec("select * from recursive_view1")
+	c.Assert(terror.ErrorEqual(err, plannercore.ErrViewRecursive), IsTrue)
+	tk.MustExec("drop view recursive_view1, t")
+}
+
 func (s *testSuite6) TestIssue16250(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -1403,4 +1416,17 @@ func (s *testRecoverTable) TestRenameTable(c *C) {
 	c.Assert(err, NotNil)
 	tk.MustExec("drop database rename1")
 	tk.MustExec("drop database rename2")
+}
+
+func (s *testSuite6) TestAutoIncrementColumnErrorMessage(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	// Test create an exist database
+	_, err := tk.Exec("CREATE database test")
+	c.Assert(err, NotNil)
+
+	tk.MustExec("CREATE TABLE t1 (t1_id INT NOT NULL AUTO_INCREMENT PRIMARY KEY);")
+
+	_, err = tk.Exec("CREATE INDEX idx1 ON t1 ((t1_id + t1_id));")
+	c.Assert(err.Error(), Equals, ddl.ErrExpressionIndexCanNotRefer.GenWithStackByArgs("idx1").Error())
 }

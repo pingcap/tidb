@@ -91,7 +91,7 @@ func (p *PointGetPlan) ToPB(ctx sessionctx.Context, _ kv.StoreType) (*tipb.Execu
 
 // ExplainInfo implements Plan interface.
 func (p *PointGetPlan) ExplainInfo() string {
-	accessObject, operatorInfo := p.AccessObject(), p.OperatorInfo(false)
+	accessObject, operatorInfo := p.AccessObject(false), p.OperatorInfo(false)
 	if len(operatorInfo) == 0 {
 		return accessObject
 	}
@@ -100,7 +100,7 @@ func (p *PointGetPlan) ExplainInfo() string {
 
 // ExplainNormalizedInfo implements Plan interface.
 func (p *PointGetPlan) ExplainNormalizedInfo() string {
-	accessObject, operatorInfo := p.AccessObject(), p.OperatorInfo(true)
+	accessObject, operatorInfo := p.AccessObject(true), p.OperatorInfo(true)
 	if len(operatorInfo) == 0 {
 		return accessObject
 	}
@@ -108,12 +108,16 @@ func (p *PointGetPlan) ExplainNormalizedInfo() string {
 }
 
 // AccessObject implements dataAccesser interface.
-func (p *PointGetPlan) AccessObject() string {
+func (p *PointGetPlan) AccessObject(normalized bool) string {
 	buffer := bytes.NewBufferString("")
 	tblName := p.TblInfo.Name.O
 	fmt.Fprintf(buffer, "table:%s", tblName)
 	if p.PartitionInfo != nil {
-		fmt.Fprintf(buffer, ", partition:%s", p.PartitionInfo.Name.L)
+		if normalized {
+			fmt.Fprintf(buffer, ", partition:?")
+		} else {
+			fmt.Fprintf(buffer, ", partition:%s", p.PartitionInfo.Name.L)
+		}
 	}
 	if p.IndexInfo != nil {
 		buffer.WriteString(", index:" + p.IndexInfo.Name.O + "(")
@@ -248,16 +252,16 @@ func (p *BatchPointGetPlan) ToPB(ctx sessionctx.Context, _ kv.StoreType) (*tipb.
 
 // ExplainInfo implements Plan interface.
 func (p *BatchPointGetPlan) ExplainInfo() string {
-	return p.AccessObject() + ", " + p.OperatorInfo(false)
+	return p.AccessObject(false) + ", " + p.OperatorInfo(false)
 }
 
 // ExplainNormalizedInfo implements Plan interface.
 func (p *BatchPointGetPlan) ExplainNormalizedInfo() string {
-	return p.AccessObject() + ", " + p.OperatorInfo(true)
+	return p.AccessObject(true) + ", " + p.OperatorInfo(true)
 }
 
 // AccessObject implements physicalScan interface.
-func (p *BatchPointGetPlan) AccessObject() string {
+func (p *BatchPointGetPlan) AccessObject(_ bool) string {
 	buffer := bytes.NewBufferString("")
 	tblName := p.TblInfo.Name.O
 	fmt.Fprintf(buffer, "table:%s", tblName)
@@ -517,6 +521,9 @@ func newBatchPointGetPlan(
 		switch x := item.(type) {
 		case *ast.RowExpr:
 			// The `len(values) == len(valuesParams)` should be satisfied in this mode
+			if len(x.Values) != len(whereColNames) {
+				return nil
+			}
 			values = make([]types.Datum, len(x.Values))
 			valuesParams = make([]*driver.ParamMarkerExpr, len(x.Values))
 			for index, inner := range x.Values {
@@ -783,15 +790,24 @@ func newPointGetPlan(ctx sessionctx.Context, dbName string, schema *expression.S
 
 func checkFastPlanPrivilege(ctx sessionctx.Context, dbName, tableName string, checkTypes ...mysql.PrivilegeType) error {
 	pm := privilege.GetPrivilegeManager(ctx)
-	if pm == nil {
-		return nil
-	}
+	visitInfos := []visitInfo{}
 	for _, checkType := range checkTypes {
-		if !pm.RequestVerification(ctx.GetSessionVars().ActiveRoles, dbName, tableName, "", checkType) {
+		if pm != nil && !pm.RequestVerification(ctx.GetSessionVars().ActiveRoles, dbName, tableName, "", checkType) {
 			return errors.New("privilege check fail")
 		}
+		// This visitInfo is only for table lock check, so we do not need column field,
+		// just fill it empty string.
+		visitInfos = append(visitInfos, visitInfo{
+			privilege: checkType,
+			db:        dbName,
+			table:     tableName,
+			column:    "",
+			err:       nil,
+		})
 	}
-	return nil
+
+	infoSchema := infoschema.GetInfoSchema(ctx)
+	return CheckTableLock(ctx, infoSchema, visitInfos)
 }
 
 func buildSchemaFromFields(
@@ -1165,7 +1181,7 @@ func findCol(tbl *model.TableInfo, colName *ast.ColumnName) *model.ColumnInfo {
 
 func colInfoToColumn(col *model.ColumnInfo, idx int) *expression.Column {
 	return &expression.Column{
-		RetType:  &col.FieldType,
+		RetType:  col.FieldType.Clone(),
 		ID:       col.ID,
 		UniqueID: int64(col.Offset),
 		Index:    idx,

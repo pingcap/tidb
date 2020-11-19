@@ -501,12 +501,14 @@ func getColDefaultValueFromNil(ctx sessionctx.Context, col *model.ColumnInfo) (t
 func GetZeroValue(col *model.ColumnInfo) types.Datum {
 	var d types.Datum
 	switch col.Tp {
-	case mysql.TypeTiny, mysql.TypeInt24, mysql.TypeShort, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeYear:
+	case mysql.TypeTiny, mysql.TypeInt24, mysql.TypeShort, mysql.TypeLong, mysql.TypeLonglong:
 		if mysql.HasUnsignedFlag(col.Flag) {
 			d.SetUint64(0)
 		} else {
 			d.SetInt64(0)
 		}
+	case mysql.TypeYear:
+		d.SetInt64(0)
 	case mysql.TypeFloat:
 		d.SetFloat32(0)
 	case mysql.TypeDouble:
