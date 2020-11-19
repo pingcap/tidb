@@ -2243,9 +2243,9 @@
       {
         "SQL": "select * from test where age=5;",
         "Plan": [
-          "IndexLookUp_7 1106.87 root  ",
-          "├─IndexRangeScan_5(Build) 1106.87 cop[tikv] table:test, index:idx_age(age) range:[5,5], keep order:false",
-          "└─TableRowIDScan_6(Probe) 1106.87 cop[tikv] table:test keep order:false"
+          "IndexLookUp_7 2048.00 root  ",
+          "├─IndexRangeScan_5(Build) 2048.00 cop[tikv] table:test, index:idx_age(age) range:[5,5], keep order:false",
+          "└─TableRowIDScan_6(Probe) 2048.00 cop[tikv] table:test keep order:false"
         ],
         "Result": null
       }
