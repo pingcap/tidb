@@ -301,7 +301,8 @@ func (s *testSerialSuite) TestPlanCacheClusterIndex(c *C) {
 func (s *testPrepareSuite) TestPlanCacheWithDifferentVariableTypes(c *C) {
 	store, dom, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
-	se, err := session.CreateSession(store)
+	se, seErr := session.CreateSession(store)
+	c.Assert(seErr, IsNil)
 	// disable GetVar Fold
 	se.GetSessionVars().EnableGetVarFold = false
 	tk := testkit.NewTestKitWithSession(c, store, se)

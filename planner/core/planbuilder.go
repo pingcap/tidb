@@ -549,7 +549,7 @@ func (b *PlanBuilder) popSelectOffset() {
 	b.selectOffset = b.selectOffset[:len(b.selectOffset)-1]
 }
 
-// NewPlanBuilder creates a new PlanBuilder.
+// NewPlanBuilderWithSetVarCollect creates a new PlanBuilder with setVarCollectProcessor.
 func NewPlanBuilderWithSetVarCollect(sctx sessionctx.Context, is infoschema.InfoSchema, processor *hint.BlockHintProcessor, setVarCollectProcessor *SetVarCollectProcessor) *PlanBuilder {
 	if processor == nil {
 		sctx.GetSessionVars().PlannerSelectBlockAsName = nil
@@ -566,6 +566,7 @@ func NewPlanBuilderWithSetVarCollect(sctx sessionctx.Context, is infoschema.Info
 	}
 }
 
+// NewPlanBuilder creates a new PlanBuilder.
 func NewPlanBuilder(sctx sessionctx.Context, is infoschema.InfoSchema, processor *hint.BlockHintProcessor) *PlanBuilder {
 	return NewPlanBuilderWithSetVarCollect(sctx, is, processor, nil)
 }

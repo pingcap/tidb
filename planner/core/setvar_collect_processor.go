@@ -6,7 +6,7 @@ import (
 	"github.com/pingcap/parser/ast"
 )
 
-// SetVar expression collector
+// SetVarCollectProcessor a SetVar expression collector
 type SetVarCollectProcessor struct {
 	// key: SetVar name, value: true, exists; false, not exists
 	// in rewriteVariable.rewriteVariable(),
@@ -15,12 +15,14 @@ type SetVarCollectProcessor struct {
 	SetVarMap map[string]bool
 }
 
+// NewSetVarCollectProcessor creates a SetVars collector
 func NewSetVarCollectProcessor() *SetVarCollectProcessor {
 	return &SetVarCollectProcessor{
 		SetVarMap: make(map[string]bool),
 	}
 }
 
+// Enter implements Visitor interface. It collect SetVar names in the `SetVarMap`.
 func (svv *SetVarCollectProcessor) Enter(inNode ast.Node) (retNode ast.Node, skipChildren bool) {
 	switch v := inNode.(type) {
 	case *ast.VariableExpr:
@@ -68,6 +70,7 @@ func (svv *SetVarCollectProcessor) Enter(inNode ast.Node) (retNode ast.Node, ski
 	return inNode, false
 }
 
+// Leave implements Visitor interface. Nothing to do.
 func (svv *SetVarCollectProcessor) Leave(originInNode ast.Node) (retNode ast.Node, ok bool) {
 	return originInNode, true
 }
