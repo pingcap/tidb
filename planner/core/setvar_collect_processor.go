@@ -1,8 +1,9 @@
 package core
 
 import (
-	"github.com/pingcap/parser/ast"
 	"strings"
+
+	"github.com/pingcap/parser/ast"
 )
 
 // SetVar expression collector
