@@ -347,7 +347,7 @@ func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) ([]byte, error) 
 	}
 
 	isLocked := e.tblInfo.IsLocked()
-	if !isLocked || e.tblInfo.Lock.Tp != model.TableLockRead { // if not read lock or table was unlock then snapshot get
+	if !isLocked || !(e.tblInfo.Lock.Tp == model.TableLockRead || e.tblInfo.Lock.Tp == model.TableLockReadOnly) { // if not read lock or table was unlock then snapshot get
 		return e.snapshot.Get(ctx, key)
 	}
 

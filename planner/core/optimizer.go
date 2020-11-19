@@ -111,7 +111,7 @@ func CheckTableLock(ctx sessionctx.Context, is infoschema.InfoSchema, vs []visit
 	}
 	checker := lock.NewChecker(ctx, is)
 	for i := range vs {
-		err := checker.CheckTableLock(vs[i].db, vs[i].table, vs[i].privilege)
+		err := checker.CheckTableLock(vs[i].db, vs[i].table, vs[i].privilege, vs[i].readOnlyLock)
 		if err != nil {
 			return err
 		}
