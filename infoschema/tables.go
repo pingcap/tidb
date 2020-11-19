@@ -269,7 +269,7 @@ func buildTableMeta(tableName string, cs []columnInfo) *model.TableInfo {
 		Collate: mysql.DefaultCollationName,
 	}
 	for offset, c := range cs {
-		if mysql.HasPriKeyFlag(c.flag) {
+		if tblInfo.Name.O == ClusterTableSlowLog && mysql.HasPriKeyFlag(c.flag) {
 			switch c.tp {
 			case mysql.TypeLong, mysql.TypeLonglong,
 				mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24:
