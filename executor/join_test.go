@@ -2321,6 +2321,27 @@ func (s *testSuite9) TestIssue18572_3(c *C) {
 	c.Assert(strings.Contains(err.Error(), "mockIndexHashJoinBuildErr"), IsTrue)
 }
 
+func (s *testSuite9) TestApplyOuterAggEmptyInput(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(a int)")
+	tk.MustExec("create table t2(a int)")
+	tk.MustExec("insert into t1 values(1)")
+	tk.MustExec("insert into t2 values(1)")
+	tk.MustQuery("select count(1), (select count(1) from t2 where t2.a > t1.a) as field from t1 where t1.a = 100").Check(testkit.Rows(
+		"0 <nil>",
+	))
+	tk.MustQuery("select /*+ agg_to_cop() */ count(1), (select count(1) from t2 where t2.a > t1.a) as field from t1 where t1.a = 100").Check(testkit.Rows(
+		"0 <nil>",
+	))
+	tk.MustQuery("select count(1), (select count(1) from t2 where t2.a > t1.a) as field from t1 where t1.a = 1").Check(testkit.Rows(
+		"1 0",
+	))
+	tk.MustQuery("select /*+ agg_to_cop() */ count(1), (select count(1) from t2 where t2.a > t1.a) as field from t1 where t1.a = 1").Check(testkit.Rows(
+		"1 0",
+	))
+}
+
 func (s *testSuiteJoin3) TestIssue11896(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 
