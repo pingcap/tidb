@@ -6535,6 +6535,9 @@ func (s *testSerialSuite1) TestIndexMergeRuntimeStats(c *C) {
 	c.Assert(tableRangeExplain, Matches, ".*time:.*loops:.*cop_task:.*")
 	c.Assert(indexExplain, Matches, ".*time:.*loops:.*cop_task:.*")
 	c.Assert(tableExplain, Matches, ".*time:.*loops:.*cop_task:.*")
+	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
+	sql = "select /*+ use_index_merge(t1, primary, t1a) */ * from t1 where id < 2 or a > 4 order by a"
+	tk.MustQuery(sql).Check(testkit.Rows("1 1 1 1 1", "5 5 5 5 5"))
 }
 
 func (s *testSerialSuite1) TestIndexlookupRuntimeStats(c *C) {

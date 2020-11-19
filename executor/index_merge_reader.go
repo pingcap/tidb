@@ -352,6 +352,10 @@ type partialTableWorker struct {
 func (w *partialTableWorker) fetchHandles(ctx context.Context, exitCh <-chan struct{}, fetchCh chan<- *lookupTableTask, resultCh chan<- *lookupTableTask,
 	finished <-chan struct{}, handleCols plannercore.HandleCols) (count int64, err error) {
 	chk := chunk.NewChunkWithCapacity(retTypes(w.tableReader), w.maxChunkSize)
+	var basic *execdetails.BasicRuntimeStats
+	if be := w.tableReader.base(); be != nil && be.runtimeStats != nil {
+		basic = be.runtimeStats
+	}
 	for {
 		start := time.Now()
 		handles, retChunk, err := w.extractTaskHandles(ctx, chk, handleCols)
@@ -380,8 +384,8 @@ func (w *partialTableWorker) fetchHandles(ctx context.Context, exitCh <-chan str
 			return count, nil
 		case fetchCh <- task:
 		}
-		if basic := w.tableReader.base(); basic != nil {
-			basic.runtimeStats.Record(time.Since(start), chk.NumRows())
+		if basic != nil {
+			basic.Record(time.Since(start), chk.NumRows())
 		}
 	}
 }
