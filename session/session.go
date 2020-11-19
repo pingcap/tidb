@@ -43,6 +43,8 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/infoschema"
@@ -473,6 +475,11 @@ func (s *session) doCommitWithRetry(ctx context.Context) error {
 		// If the transaction is invalid, maybe it has already been rolled back by the client.
 		return nil
 	}
+	var err error
+	err = s.checkPlacementPolicyBeforeCommit()
+	if err != nil {
+		return err
+	}
 	txnSize := s.txn.Size()
 	isPessimistic := s.txn.IsPessimistic()
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
@@ -480,7 +487,7 @@ func (s *session) doCommitWithRetry(ctx context.Context) error {
 		defer span1.Finish()
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
-	err := s.doCommit(ctx)
+	err = s.doCommit(ctx)
 	if err != nil {
 		commitRetryLimit := s.sessionVars.RetryLimit
 		if !s.sessionVars.TxnCtx.CouldRetry {
@@ -550,7 +557,6 @@ func (s *session) CommitTxn(ctx context.Context) error {
 			failpoint.Return(err)
 		}
 	})
-
 	s.sessionVars.TxnCtx.Cleanup()
 	return err
 }
@@ -1624,6 +1630,7 @@ func (s *session) NewTxn(ctx context.Context) error {
 		CreateTime:    time.Now(),
 		StartTS:       txn.StartTS(),
 		ShardStep:     int(s.sessionVars.ShardAllocateStep),
+		TxnScope:      s.GetSessionVars().TxnScope,
 	}
 	return nil
 }
@@ -2298,6 +2305,7 @@ func (s *session) PrepareTxnCtx(ctx context.Context) {
 		SchemaVersion: is.SchemaMetaVersion(),
 		CreateTime:    time.Now(),
 		ShardStep:     int(s.sessionVars.ShardAllocateStep),
+		TxnScope:      s.GetSessionVars().TxnScope,
 	}
 	if !s.sessionVars.IsAutocommit() || s.sessionVars.RetryInfo.Retrying {
 		if s.sessionVars.TxnMode == ast.Pessimistic {
@@ -2432,4 +2440,36 @@ func (s *session) recordOnTransactionExecution(err error, counter int, duration 
 			transactionDurationOptimisticCommit.Observe(duration)
 		}
 	}
+}
+
+func (s *session) checkPlacementPolicyBeforeCommit() error {
+	var err error
+	txnScope := s.GetSessionVars().TxnCtx.TxnScope
+	if txnScope == "" {
+		txnScope = config.DefTxnScope
+	}
+	if txnScope != config.DefTxnScope {
+		is := infoschema.GetInfoSchema(s)
+		for physicalTableID := range s.GetSessionVars().TxnCtx.TableDeltaMap {
+			bundle, ok := is.BundleByName(placement.GroupID(physicalTableID))
+			if !ok {
+				err = ddl.ErrInvalidPlacementPolicyCheck.GenWithStackByArgs(
+					fmt.Sprintf("table or partition %v don't have placement policies with txn_scope %v",
+						physicalTableID, txnScope))
+				break
+			}
+			dcLocation, ok := placement.GetLeaderDCByBundle(bundle, placement.DCLabelKey)
+			if !ok {
+				err = ddl.ErrInvalidPlacementPolicyCheck.GenWithStackByArgs(
+					fmt.Sprintf("table or partition %v's leader placement policy is not defined", physicalTableID))
+				break
+			}
+			if dcLocation != txnScope {
+				err = ddl.ErrInvalidPlacementPolicyCheck.GenWithStackByArgs(
+					fmt.Sprintf("table or partition %v's leader location %v is out of txn_scope %v", physicalTableID, dcLocation, txnScope))
+				break
+			}
+		}
+	}
+	return err
 }
