@@ -1592,12 +1592,7 @@ func (er *expressionRewriter) rewriteFuncCall(v *ast.FuncCallExpr) bool {
 			return true
 		}
 		// NULL
-		nullTp := types.NewFieldType(mysql.TypeNull)
-		nullTp.Flen, nullTp.Decimal = mysql.GetDefaultFieldLengthAndDecimal(mysql.TypeNull)
-		paramNull := &expression.Constant{
-			Value:   types.NewDatum(nil),
-			RetType: nullTp,
-		}
+		paramNull := expression.NewNull()
 		// if(param1 = param2, NULL, param1)
 		funcIf, err := er.newFunction(ast.If, &v.Type, funcCompare, paramNull, param1)
 		if err != nil {
