@@ -124,7 +124,11 @@ func buildDAG(reader *dbreader.DBReader, lockStore *lockstore.MemStore, req *cop
 		startTS:       req.StartTs,
 		resolvedLocks: req.Context.ResolvedLocks,
 	}
-	scanExec := dagReq.Executors[0]
+	var scanExec *tipb.Executor = nil
+	scanExec, err = getScanExec(dagReq)
+	if err != nil {
+		return nil, nil, err
+	}
 	if scanExec.Tp == tipb.ExecType_TypeTableScan {
 		ctx.setColumnInfo(scanExec.TblScan.Columns)
 		ctx.primaryCols = scanExec.TblScan.PrimaryColumnIds
