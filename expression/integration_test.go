@@ -7722,7 +7722,8 @@ func (s *testIntegrationSerialSuite) TestIssue20608(c *C) {
 func (s *testIntegrationSuite2) TestIssue15847(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t15847")
+	tk.MustExec("drop view if exists t15847")
 	tk.MustExec("CREATE VIEW t15847(c0) AS SELECT NULL;")
 	tk.MustQuery("SELECT * FROM t15847 WHERE (NOT (IF(t15847.c0, NULL, NULL)));").Check(testkit.Rows())
+	tk.MustExec("drop view if exists t15847")
 }
