@@ -30,6 +30,7 @@ var (
 	ErrUnknown                         = terror.ClassOptimizer.New(mysql.ErrUnknown, mysql.MySQLErrName[mysql.ErrUnknown])
 	ErrUnknownTable                    = terror.ClassOptimizer.New(mysql.ErrUnknownTable, mysql.MySQLErrName[mysql.ErrUnknownTable])
 	ErrNoSuchTable                     = terror.ClassOptimizer.New(mysql.ErrNoSuchTable, mysql.MySQLErrName[mysql.ErrNoSuchTable])
+	ErrViewRecursive                   = terror.ClassOptimizer.New(mysql.ErrViewRecursive, mysql.MySQLErrName[mysql.ErrViewRecursive])
 	ErrWrongArguments                  = terror.ClassOptimizer.New(mysql.ErrWrongArguments, mysql.MySQLErrName[mysql.ErrWrongArguments])
 	ErrWrongNumberOfColumnsInSelect    = terror.ClassOptimizer.New(mysql.ErrWrongNumberOfColumnsInSelect, mysql.MySQLErrName[mysql.ErrWrongNumberOfColumnsInSelect])
 	ErrBadGeneratedColumn              = terror.ClassOptimizer.New(mysql.ErrBadGeneratedColumn, mysql.MySQLErrName[mysql.ErrBadGeneratedColumn])
