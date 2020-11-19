@@ -262,6 +262,7 @@ func (t *Tracker) Consume(bytes int64) {
 	}
 }
 
+// Peak check consume
 func (t *Tracker) Peak(bytes int64) bool {
 	if bytes == 0 {
 		return false
