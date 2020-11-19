@@ -1858,7 +1858,7 @@ func (s *testIntegrationSuite) TestIssue10448(c *C) {
 	tk.MustQuery("select a from (select pk as a from t) t1 where a = 18446744073709551615").Check(testkit.Rows())
 }
 
-func (s *testIntegrationSuite) TestUpdateMultiUpdatePK(c *C) {
+func (s *testIntegrationSuite) TestMultiUpdateOnPrimaryKey(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
@@ -1890,5 +1890,5 @@ func (s *testIntegrationSuite) TestUpdateMultiUpdatePK(c *C) {
 	tk.MustQuery("SELECT * FROM t").Check(testkit.Rows("1 12"))
 
 	tk.MustExec(`UPDATE t m, t n SET m.a = m.a + 1, n.b = n.b + 10`)
-	tk.MustQuery("SELECT * FROM t").Check(testkit.Rows("2 12"))
+	tk.MustQuery("SELECT * FROM t").Check(testkit.Rows("2 22"))
 }

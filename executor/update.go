@@ -105,7 +105,7 @@ func (e *UpdateExec) prepare(ctx context.Context, schema *expression.Schema, row
 	return nil
 }
 
-func (e *UpdateExec) merge(ctx context.Context, schema *expression.Schema, row, newData []types.Datum) error {
+func (e *UpdateExec) merge(ctx context.Context, row, newData []types.Datum, mergeGenerated bool) error {
 	if !e.multiUpdateOnSameTable {
 		return nil
 	}
@@ -113,7 +113,7 @@ func (e *UpdateExec) merge(ctx context.Context, schema *expression.Schema, row, 
 		e.mergedRowData = make(map[int64]*kv.HandleMap)
 	}
 	var mergedData []types.Datum
-	// write to mergedRowData
+	// merge updates from and into mergedRowData
 	for i, content := range e.tblColPosInfos {
 		if !e.updatable[i] {
 			// If there's nothing to update, we can just skip current row
@@ -129,44 +129,26 @@ func (e *UpdateExec) merge(ctx context.Context, schema *expression.Schema, row, 
 		if e.mergedRowData[content.TblID] == nil {
 			e.mergedRowData[content.TblID] = kv.NewHandleMap()
 		}
-		newTableData := newData[content.Start:content.End]
-		v, ok := e.mergedRowData[content.TblID].Get(handle)
-		if !ok {
-			mergedData = append([]types.Datum{}, newTableData...)
-		} else {
-			mergedData = v.([]types.Datum)
-			for i, flag := range flags {
-				if flag {
-					newTableData[i].Copy(&mergedData[i])
-				}
-			}
-		}
-		e.mergedRowData[content.TblID].Set(handle, mergedData)
-	}
-	// read from mergedRowData
-	for i, content := range e.tblColPosInfos {
-		if !e.updatable[i] {
-			// If there's nothing to update, we can just skip current row
-			continue
-		}
-		if e.changed[i] {
-			// Each matched row is updated once, even if it matches the conditions multiple times.
-			continue
-		}
-		handle := e.handles[i]
-		flags := e.assignFlag[content.Start:content.End]
-
+		tbl := e.tblID2table[content.TblID]
 		oldData := row[content.Start:content.End]
 		newTableData := newData[content.Start:content.End]
 		if v, ok := e.mergedRowData[content.TblID].Get(handle); ok {
 			mergedData = v.([]types.Datum)
 			for i, flag := range flags {
-				if !flag {
+				if tbl.WritableCols()[i].IsGenerated() != mergeGenerated {
+					continue
+				}
+				if flag {
+					newTableData[i].Copy(&mergedData[i])
+				} else {
 					mergedData[i].Copy(&oldData[i])
 					mergedData[i].Copy(&newTableData[i])
 				}
 			}
+		} else {
+			mergedData = append([]types.Datum{}, newTableData...)
 		}
+		e.mergedRowData[content.TblID].Set(handle, mergedData)
 	}
 	return nil
 }
@@ -181,7 +163,10 @@ func (e *UpdateExec) exec(ctx context.Context, schema *expression.Schema, row, n
 			continue
 		}
 
-		handle := e.handles[i]
+		handle, err := content.HandleCols.BuildHandleByDatums(row)
+		if err != nil {
+			return err
+		}
 		var changed bool
 		v, ok := e.updatedRowKeys[content.Start].Get(handle)
 		if !ok {
@@ -291,17 +276,17 @@ func (e *UpdateExec) updateRows(ctx context.Context) (int, error) {
 				return 0, err
 			}
 			// merge non-generated columns
-			if err := e.merge(ctx, e.children[0].Schema(), datumRow, newRow); err != nil {
+			if err := e.merge(ctx, datumRow, newRow, false); err != nil {
 				return 0, err
 			}
 			if e.virtualAssignmentsOffset < len(e.OrderedList) {
 				// compose generated columns
-				newRow, err = e.composeVirtualColumns(globalRowIdx, newRow, colsInfo)
+				newRow, err = e.composeGeneratedColumns(globalRowIdx, newRow, colsInfo)
 				if err != nil {
 					return 0, err
 				}
 				// merge generated columns
-				if err := e.merge(ctx, e.children[0].Schema(), datumRow, newRow); err != nil {
+				if err := e.merge(ctx, datumRow, newRow, true); err != nil {
 					return 0, err
 				}
 			}
@@ -387,7 +372,7 @@ func (e *UpdateExec) composeNewRow(rowIdx int, oldRow []types.Datum, cols []*tab
 	return newRowData, nil
 }
 
-func (e *UpdateExec) composeVirtualColumns(rowIdx int, newRowData []types.Datum, cols []*table.Column) ([]types.Datum, error) {
+func (e *UpdateExec) composeGeneratedColumns(rowIdx int, newRowData []types.Datum, cols []*table.Column) ([]types.Datum, error) {
 	if e.allAssignmentsAreConstant {
 		return newRowData, nil
 	}
