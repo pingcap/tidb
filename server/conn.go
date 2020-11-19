@@ -804,7 +804,7 @@ func (cc *clientConn) Run(ctx context.Context) {
 				zap.String("status", cc.SessionStatusToString()),
 				zap.Stringer("sql", getLastStmtInConn{cc}),
 				zap.String("txn_mode", txnMode),
-				zap.String("err", errStrForLog(err)),
+				zap.String("err", errStrForLog(err, cc.ctx.GetSessionVars().EnableRedactLog)),
 			)
 			err1 := cc.writeError(ctx, err)
 			terror.Log(err1)
@@ -838,7 +838,14 @@ func queryStrForLog(query string) string {
 	return query
 }
 
-func errStrForLog(err error) string {
+func errStrForLog(err error, enableRedactLog bool) string {
+	if enableRedactLog {
+		// currently, only ErrParse is considered when enableRedactLog because it may contain sensitive information like
+		// password or accesskey
+		if parser.ErrParse.Equal(err) {
+			return "fail to parse SQL and can't desensitize when enable log redaction"
+		}
+	}
 	if kv.ErrKeyExists.Equal(err) || parser.ErrParse.Equal(err) || infoschema.ErrTableNotExists.Equal(err) {
 		// Do not log stack for duplicated entry error.
 		return err.Error()
@@ -1971,10 +1978,24 @@ func (cc getLastStmtInConn) String() string {
 		return "ListFields " + string(data)
 	case mysql.ComQuery, mysql.ComStmtPrepare:
 		sql := string(hack.String(data))
+		toLog := sql
 		if cc.ctx.GetSessionVars().EnableRedactLog {
-			sql, _ = parser.NormalizeDigest(sql)
+			p := parser.New()
+			p.SetSQLMode(cc.ctx.GetSessionVars().SQLMode)
+			charset, collation := cc.ctx.GetSessionVars().GetCharsetInfo()
+			stmt, err := p.ParseOneStmt(sql, charset, collation)
+			if err != nil {
+				logutil.BgLogger().Debug("fail to parse", zap.String("sql", sql), zap.Error(err))
+				return "fail to parse SQL and can't desensitize when enable log redaction"
+			}
+			if s, ok := stmt.(ast.SensitiveStmtNode); ok {
+				toLog = s.SecureText()
+			} else {
+				toLog = stmt.Text()
+			}
+			toLog = parser.Normalize(toLog)
 		}
-		return queryStrForLog(sql)
+		return queryStrForLog(toLog)
 	case mysql.ComStmtExecute, mysql.ComStmtFetch:
 		stmtID := binary.LittleEndian.Uint32(data[0:4])
 		return queryStrForLog(cc.preparedStmt2String(stmtID))
