@@ -540,7 +540,7 @@ func newBatchPointGetPlan(
 	var matchIdxInfo *model.IndexInfo
 	permutations := make([]int, len(whereColNames))
 	for _, idxInfo := range tbl.Indices {
-		if !idxInfo.Unique || idxInfo.State != model.StatePublic {
+		if !idxInfo.Unique || idxInfo.State != model.StatePublic || idxInfo.Invisible {
 			continue
 		}
 		if len(idxInfo.Columns) != len(whereColNames) || idxInfo.HasPrefixIndex() {
@@ -799,10 +799,7 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointGetP
 	}
 
 	for _, idxInfo := range tbl.Indices {
-		if !idxInfo.Unique {
-			continue
-		}
-		if idxInfo.State != model.StatePublic {
+		if !idxInfo.Unique || idxInfo.State != model.StatePublic || idxInfo.Invisible {
 			continue
 		}
 		if isTableDual {
