@@ -339,7 +339,7 @@ func TestFormatDurationForExplain(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%v != %v", err, nil)
 		}
-		result := FormatDurationForExplain(d)
+		result := FormatDuration(d)
 		if result != ca.s {
 			t.Fatalf("%v != %v", result, ca.s)
 		}

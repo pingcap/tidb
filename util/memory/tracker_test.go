@@ -408,7 +408,7 @@ func (s *testSuite) TestFormatBytesWithPrune(c *C) {
 	for _, ca := range cases {
 		b, err := s.parseByte(ca.b)
 		c.Assert(err, IsNil)
-		result := FormatBytesWithPrune(b)
+		result := FormatBytes(b)
 		c.Assert(result, Equals, ca.s, Commentf("input: %v", ca.b))
 	}
 }

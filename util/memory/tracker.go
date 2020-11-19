@@ -347,13 +347,13 @@ const (
 	byteSizeBB = int64(1)
 )
 
-// FormatBytesWithPrune uses to format bytes, this function will prune precision before format bytes.
-func (t *Tracker) FormatBytesWithPrune(numBytes int64) string {
-	return FormatBytesWithPrune(numBytes)
+// FormatBytes uses to format bytes, this function will prune precision before format bytes.
+func (t *Tracker) FormatBytes(numBytes int64) string {
+	return FormatBytes(numBytes)
 }
 
-// FormatBytesWithPrune uses to format bytes, this function will prune precision before format bytes.
-func FormatBytesWithPrune(numBytes int64) string {
+// FormatBytes uses to format bytes, this function will prune precision before format bytes.
+func FormatBytes(numBytes int64) string {
 	if numBytes <= byteSizeKB {
 		return BytesToString(numBytes)
 	}

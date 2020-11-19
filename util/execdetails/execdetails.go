@@ -469,13 +469,13 @@ func (crs *CopRuntimeStats) String() string {
 
 	buf := bytes.NewBuffer(make([]byte, 0, 16))
 	if totalTasks == 1 {
-		buf.WriteString(fmt.Sprintf("tikv_task:{time:%v, loops:%d}", FormatDurationForExplain(procTimes[0]), totalIters))
+		buf.WriteString(fmt.Sprintf("tikv_task:{time:%v, loops:%d}", FormatDuration(procTimes[0]), totalIters))
 	} else {
 		n := len(procTimes)
 		sort.Slice(procTimes, func(i, j int) bool { return procTimes[i] < procTimes[j] })
 		buf.WriteString(fmt.Sprintf("tikv_task:{proc max:%v, min:%v, p80:%v, p95:%v, iters:%v, tasks:%v}",
-			FormatDurationForExplain(procTimes[n-1]), FormatDurationForExplain(procTimes[0]),
-			FormatDurationForExplain(procTimes[n*4/5]), FormatDurationForExplain(procTimes[n*19/20]), totalIters, totalTasks))
+			FormatDuration(procTimes[n-1]), FormatDuration(procTimes[0]),
+			FormatDuration(procTimes[n*4/5]), FormatDuration(procTimes[n*19/20]), totalIters, totalTasks))
 	}
 	if detail := crs.copDetails; detail != nil {
 		crs.writeField(buf, "total_keys", detail.TotalKeys)
@@ -499,7 +499,7 @@ func (crs *CopRuntimeStats) String() string {
 				crs.writeField(buf, "block_read_count", int64(detail.RocksdbBlockReadCount))
 			}
 			if detail.RocksdbBlockReadByte > 0 {
-				crs.writeFieldValue(buf, "block_read", memory.FormatBytesWithPrune(int64(detail.RocksdbBlockReadByte)))
+				crs.writeFieldValue(buf, "block_read", memory.FormatBytes(int64(detail.RocksdbBlockReadByte)))
 			}
 			buf.WriteByte('}')
 		}
@@ -647,7 +647,7 @@ func (e *BasicRuntimeStats) SetRowNum(rowNum int64) {
 
 // String implements the RuntimeStats interface.
 func (e *BasicRuntimeStats) String() string {
-	return fmt.Sprintf("time:%v, loops:%d", FormatDurationForExplain(time.Duration(e.consume)), e.loop)
+	return fmt.Sprintf("time:%v, loops:%d", FormatDuration(time.Duration(e.consume)), e.loop)
 }
 
 // GetTime get the int64 total time
@@ -891,24 +891,24 @@ func (e *RuntimeStatsWithCommit) String() string {
 		buf.WriteString("commit_txn: {")
 		if e.Commit.PrewriteTime > 0 {
 			buf.WriteString("prewrite:")
-			buf.WriteString(FormatDurationForExplain(e.Commit.PrewriteTime))
+			buf.WriteString(FormatDuration(e.Commit.PrewriteTime))
 		}
 		if e.Commit.WaitPrewriteBinlogTime > 0 {
 			buf.WriteString(", wait_prewrite_binlog:")
-			buf.WriteString(FormatDurationForExplain(e.Commit.WaitPrewriteBinlogTime))
+			buf.WriteString(FormatDuration(e.Commit.WaitPrewriteBinlogTime))
 		}
 		if e.Commit.GetCommitTsTime > 0 {
 			buf.WriteString(", get_commit_ts:")
-			buf.WriteString(FormatDurationForExplain(e.Commit.GetCommitTsTime))
+			buf.WriteString(FormatDuration(e.Commit.GetCommitTsTime))
 		}
 		if e.Commit.CommitTime > 0 {
 			buf.WriteString(", commit:")
-			buf.WriteString(FormatDurationForExplain(e.Commit.CommitTime))
+			buf.WriteString(FormatDuration(e.Commit.CommitTime))
 		}
 		commitBackoffTime := atomic.LoadInt64(&e.Commit.CommitBackoffTime)
 		if commitBackoffTime > 0 {
 			buf.WriteString(", backoff: {time: ")
-			buf.WriteString(FormatDurationForExplain(time.Duration(commitBackoffTime)))
+			buf.WriteString(FormatDuration(time.Duration(commitBackoffTime)))
 			e.Commit.Mu.Lock()
 			if len(e.Commit.Mu.BackoffTypes) > 0 {
 				buf.WriteString(", type: ")
@@ -919,7 +919,7 @@ func (e *RuntimeStatsWithCommit) String() string {
 		}
 		if e.Commit.ResolveLockTime > 0 {
 			buf.WriteString(", resolve_lock: ")
-			buf.WriteString(FormatDurationForExplain(time.Duration(e.Commit.ResolveLockTime)))
+			buf.WriteString(FormatDuration(time.Duration(e.Commit.ResolveLockTime)))
 		}
 
 		prewriteRegionNum := atomic.LoadInt32(&e.Commit.PrewriteRegionNum)
@@ -948,7 +948,7 @@ func (e *RuntimeStatsWithCommit) String() string {
 		buf.WriteString("lock_keys: {")
 		if e.LockKeys.TotalTime > 0 {
 			buf.WriteString("time:")
-			buf.WriteString(FormatDurationForExplain(e.LockKeys.TotalTime))
+			buf.WriteString(FormatDuration(e.LockKeys.TotalTime))
 		}
 		if e.LockKeys.RegionNum > 0 {
 			buf.WriteString(", region:")
@@ -960,11 +960,11 @@ func (e *RuntimeStatsWithCommit) String() string {
 		}
 		if e.LockKeys.ResolveLockTime > 0 {
 			buf.WriteString(", resolve_lock:")
-			buf.WriteString(FormatDurationForExplain(time.Duration(e.LockKeys.ResolveLockTime)))
+			buf.WriteString(FormatDuration(time.Duration(e.LockKeys.ResolveLockTime)))
 		}
 		if e.LockKeys.BackoffTime > 0 {
 			buf.WriteString(", backoff: {time: ")
-			buf.WriteString(FormatDurationForExplain(time.Duration(e.LockKeys.BackoffTime)))
+			buf.WriteString(FormatDuration(time.Duration(e.LockKeys.BackoffTime)))
 			e.LockKeys.Mu.Lock()
 			if len(e.LockKeys.Mu.BackoffTypes) > 0 {
 				buf.WriteString(", type: ")
@@ -1009,7 +1009,7 @@ func (e *RuntimeStatsWithCommit) formatBackoff(backoffTypes []fmt.Stringer) stri
 	return fmt.Sprintf("%v", tpArray)
 }
 
-// FormatDurationForExplain uses to format duration, this function will prune precision before format duration.
+// FormatDuration uses to format duration, this function will prune precision before format duration.
 // Pruning precision is for human readability. The prune rule is:
 // 1. if the duration was less than 1us, return the original string.
 // 2. readable value >=10, keep 1 decimal, otherwise, keep 2 decimal. such as:
@@ -1017,7 +1017,7 @@ func (e *RuntimeStatsWithCommit) formatBackoff(backoffTypes []fmt.Stringer) stri
 //    10.412345ms -> 10.4ms
 //    5.999s      -> 6s
 //    100.45µs    -> 100.5µs
-func FormatDurationForExplain(d time.Duration) string {
+func FormatDuration(d time.Duration) string {
 	if d <= time.Microsecond {
 		return d.String()
 	}

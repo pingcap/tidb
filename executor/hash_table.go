@@ -83,7 +83,7 @@ type hashStatistic struct {
 }
 
 func (s *hashStatistic) String() string {
-	return fmt.Sprintf("probe_collision:%v, build:%v", s.probeCollision, execdetails.FormatDurationForExplain(s.buildTableElapse))
+	return fmt.Sprintf("probe_collision:%v, build:%v", s.probeCollision, execdetails.FormatDuration(s.buildTableElapse))
 }
 
 // hashRowContainer handles the rows and the hash map of a table.
