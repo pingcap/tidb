@@ -51,7 +51,9 @@ import (
 	util2 "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	utilhint "github.com/pingcap/tidb/util/hint"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/plancodec"
+	"go.uber.org/zap"
 )
 
 const (
@@ -3692,6 +3694,10 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, delete *ast.DeleteStmt) (
 	}.Init(b.ctx)
 
 	del.names = p.OutputNames()
+	logutil.BgLogger().Warn("build delete",
+		zap.String("tblID to handle map before physical optimize", fmt.Sprintf("%v", b.handleHelper.tailMap())),
+		zap.String("logical plan", ToString(p)),
+	)
 	del.SelectPlan, _, err = DoOptimize(ctx, b.ctx, b.optFlag, p)
 	if err != nil {
 		return nil, err
@@ -3759,7 +3765,13 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, delete *ast.DeleteStmt) (
 		}
 	}
 
+	logutil.BgLogger().Warn("build delete",
+		zap.String("original tblID to handle map", fmt.Sprintf("%v", b.handleHelper.tailMap())),
+		zap.String("child plan", ToString(del.SelectPlan)),
+	)
+
 	tblID2Handle, err := resolveIndicesForTblID2Handle(b.handleHelper.tailMap(), del.SelectPlan.Schema())
+	logutil.BgLogger().Warn("build delete", zap.String("resolved tblID to handle map", fmt.Sprintf("%v", b.handleHelper.tailMap())))
 	if err != nil {
 		return nil, err
 	}
@@ -3774,6 +3786,7 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, delete *ast.DeleteStmt) (
 		}
 		tblID2Handle = del.cleanTblID2HandleMap(tblID2TableName, tblID2Handle, del.names)
 	}
+	logutil.BgLogger().Warn("build delete", zap.String("cleaned tblID to handle map", fmt.Sprintf("%v", b.handleHelper.tailMap())))
 	tblID2table := make(map[int64]table.Table, len(tblID2Handle))
 	for id := range tblID2Handle {
 		tblID2table[id], _ = b.is.TableByID(id)
