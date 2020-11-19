@@ -63,6 +63,25 @@
     ]
   },
   {
+<<<<<<< HEAD
+=======
+    "Name": "TestIndexJoinInnerIndexNDV",
+    "Cases": [
+      {
+        "SQL": "explain select /*+ inl_join(t2) */ * from t1, t2 where t1.a = t2.a and t1.b = t2.b and t1.c = t2.c",
+        "Plan": [
+          "IndexJoin_10 3.00 root  inner join, inner:IndexLookUp_9, outer key:test.t1.c, inner key:test.t2.c, equal cond:eq(test.t1.a, test.t2.a), eq(test.t1.b, test.t2.b), eq(test.t1.c, test.t2.c)",
+          "├─TableReader_19(Build) 3.00 root  data:TableFullScan_18",
+          "│ └─TableFullScan_18 3.00 cop[tikv] table:t1 keep order:false",
+          "└─IndexLookUp_9(Probe) 1.00 root  ",
+          "  ├─IndexRangeScan_7(Build) 1.00 cop[tikv] table:t2, index:idx2(c) range: decided by [eq(test.t2.c, test.t1.c)], keep order:false",
+          "  └─TableRowIDScan_8(Probe) 1.00 cop[tikv] table:t2 keep order:false"
+        ]
+      }
+    ]
+  },
+  {
+>>>>>>> 38bbb0dd2... planner: ban (index) merge join heuristically when convert eq cond to other cond (#21138)
     "Name": "TestSimplifyOuterJoinWithCast",
     "Cases": [
       {
@@ -106,9 +125,15 @@
       {
         "SQL": "explain select /*+ TIDB_INLJ(t2) */ * from t1 join t2 on t1.a = t2.a and t1.c = t2.c",
         "Plan": [
+<<<<<<< HEAD
           "IndexJoin_9 2.00 root  inner join, inner:IndexLookUp_8, outer key:test.t1.a, inner key:test.t2.a, other cond:eq(test.t1.c, test.t2.c)",
           "├─TableReader_13(Build) 1.00 root  data:TableFullScan_12",
           "│ └─TableFullScan_12 1.00 cop[tikv] table:t1 keep order:false",
+=======
+          "IndexJoin_9 2.00 root  inner join, inner:IndexLookUp_8, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a), eq(test.t1.c, test.t2.c)",
+          "├─TableReader_18(Build) 1.00 root  data:TableFullScan_17",
+          "│ └─TableFullScan_17 1.00 cop[tikv] table:t1 keep order:false",
+>>>>>>> 38bbb0dd2... planner: ban (index) merge join heuristically when convert eq cond to other cond (#21138)
           "└─IndexLookUp_8(Probe) 2.00 root  ",
           "  ├─IndexRangeScan_6(Build) 2.00 cop[tikv] table:t2, index:PRIMARY(a, b) range: decided by [eq(test.t2.a, test.t1.a)], keep order:false",
           "  └─TableRowIDScan_7(Probe) 2.00 cop[tikv] table:t2 keep order:false"
@@ -280,23 +305,41 @@
       {
         "SQL": "desc select /*+ TIDB_INLJ(t2)*/ * from t1, t2 where t1.a = t2.a and t1.b = t2.b",
         "Plan": [
+<<<<<<< HEAD
           "IndexJoin_12 12487.50 root  inner join, inner:TableReader_11, outer key:test.t1.a, inner key:test.t2.a, other cond:eq(test.t1.b, test.t2.b)",
           "├─IndexReader_16(Build) 9990.00 root  index:IndexFullScan_15",
           "│ └─IndexFullScan_15 9990.00 cop[tikv] table:t1, index:idx_t1_b(b) keep order:false, stats:pseudo",
           "└─TableReader_11(Probe) 1.00 root  data:Selection_10",
           "  └─Selection_10 1.00 cop[tikv]  not(isnull(test.t2.b))",
           "    └─TableRangeScan_9 1.00 cop[tikv] table:t2 range: decided by [test.t1.a], keep order:false, stats:pseudo"
+=======
+          "IndexJoin_14 12487.50 root  inner join, inner:TableReader_10, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a), eq(test.t1.b, test.t2.b)",
+          "├─IndexReader_19(Build) 9990.00 root  index:IndexFullScan_18",
+          "│ └─IndexFullScan_18 9990.00 cop[tikv] table:t1, index:idx_t1_b(b) keep order:false, stats:pseudo",
+          "└─TableReader_10(Probe) 1.00 root  data:Selection_9",
+          "  └─Selection_9 1.00 cop[tikv]  not(isnull(test.t2.b))",
+          "    └─TableRangeScan_8 1.00 cop[tikv] table:t2 range: decided by [test.t1.a], keep order:false, stats:pseudo"
+>>>>>>> 38bbb0dd2... planner: ban (index) merge join heuristically when convert eq cond to other cond (#21138)
         ]
       },
       {
         "SQL": "desc select /*+ TIDB_INLJ(t2)*/ * from t1, t2 where t1.a = t2.a and t1.b = t2.a and t1.b = t2.b",
         "Plan": [
+<<<<<<< HEAD
           "IndexJoin_12 12487.50 root  inner join, inner:TableReader_11, outer key:test.t1.a, test.t1.b, inner key:test.t2.a, test.t2.a, other cond:eq(test.t1.b, test.t2.b)",
           "├─IndexReader_16(Build) 9990.00 root  index:IndexFullScan_15",
           "│ └─IndexFullScan_15 9990.00 cop[tikv] table:t1, index:idx_t1_b(b) keep order:false, stats:pseudo",
           "└─TableReader_11(Probe) 1.00 root  data:Selection_10",
           "  └─Selection_10 1.00 cop[tikv]  not(isnull(test.t2.b))",
           "    └─TableRangeScan_9 1.00 cop[tikv] table:t2 range: decided by [test.t1.a test.t1.b], keep order:false, stats:pseudo"
+=======
+          "IndexJoin_13 12487.50 root  inner join, inner:TableReader_9, outer key:test.t1.a, test.t1.b, inner key:test.t2.a, test.t2.a, equal cond:eq(test.t1.a, test.t2.a), eq(test.t1.b, test.t2.a), eq(test.t1.b, test.t2.b)",
+          "├─IndexReader_18(Build) 9990.00 root  index:IndexFullScan_17",
+          "│ └─IndexFullScan_17 9990.00 cop[tikv] table:t1, index:idx_t1_b(b) keep order:false, stats:pseudo",
+          "└─TableReader_9(Probe) 1.00 root  data:Selection_8",
+          "  └─Selection_8 1.00 cop[tikv]  not(isnull(test.t2.b))",
+          "    └─TableRangeScan_7 1.00 cop[tikv] table:t2 range: decided by [test.t1.a test.t1.b], keep order:false, stats:pseudo"
+>>>>>>> 38bbb0dd2... planner: ban (index) merge join heuristically when convert eq cond to other cond (#21138)
         ]
       }
     ]

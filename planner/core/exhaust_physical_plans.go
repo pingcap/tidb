@@ -149,7 +149,9 @@ func (p *LogicalJoin) GetMergeJoin(prop *property.PhysicalProperty, schema *expr
 	leftJoinKeys, rightJoinKeys := p.GetJoinKeys()
 	for _, lhsChildProperty := range p.leftProperties {
 		offsets := getMaxSortPrefix(lhsChildProperty, leftJoinKeys)
-		if len(offsets) == 0 {
+		// If not all equal conditions hit properties. We ban merge join heuristically. Because in this case, merge join
+		// may get a very low performance. In executor, executes join results before other conditions filter it.
+		if len(offsets) < len(leftJoinKeys) {
 			continue
 		}
 
@@ -392,6 +394,38 @@ func (p *LogicalJoin) constructIndexJoin(
 		newOuterKeys = append(newOuterKeys, outerJoinKeys[keyOff])
 		newKeyOff = append(newKeyOff, idxOff)
 	}
+<<<<<<< HEAD
+=======
+
+	var outerHashKeys, innerHashKeys []*expression.Column
+	outerHashKeys, innerHashKeys = make([]*expression.Column, len(newOuterKeys)), make([]*expression.Column, len(newInnerKeys))
+	copy(outerHashKeys, newOuterKeys)
+	copy(innerHashKeys, newInnerKeys)
+	// we can use the `col <eq> col` in `OtherCondition` to build the hashtable to avoid the unnecessary calculating.
+	for i := len(newOtherConds) - 1; i >= 0; i = i - 1 {
+		switch c := newOtherConds[i].(type) {
+		case *expression.ScalarFunction:
+			if c.FuncName.L == ast.EQ {
+				lhs, ok1 := c.GetArgs()[0].(*expression.Column)
+				rhs, ok2 := c.GetArgs()[1].(*expression.Column)
+				if ok1 && ok2 {
+					outerSchema, innerSchema := p.Children()[outerIdx].Schema(), p.Children()[1-outerIdx].Schema()
+					if outerSchema.Contains(lhs) && innerSchema.Contains(rhs) {
+						outerHashKeys = append(outerHashKeys, lhs)
+						innerHashKeys = append(innerHashKeys, rhs)
+					} else if innerSchema.Contains(lhs) && outerSchema.Contains(rhs) {
+						outerHashKeys = append(outerHashKeys, rhs)
+						innerHashKeys = append(innerHashKeys, lhs)
+					}
+					newOtherConds = append(newOtherConds[:i], newOtherConds[i+1:]...)
+				}
+			}
+		default:
+			continue
+		}
+	}
+
+>>>>>>> 38bbb0dd2... planner: ban (index) merge join heuristically when convert eq cond to other cond (#21138)
 	baseJoin := basePhysicalJoin{
 		InnerChildIdx:   1 - outerIdx,
 		LeftConditions:  p.LeftConditions,
@@ -429,6 +463,10 @@ func (p *LogicalJoin) constructIndexMergeJoin(
 	indexMergeJoins := make([]PhysicalPlan, 0, len(indexJoins))
 	for _, plan := range indexJoins {
 		join := plan.(*PhysicalIndexJoin)
+		// Index merge join can't handle hash keys. So we ban it heuristically.
+		if len(join.InnerHashKeys) > len(join.InnerJoinKeys) {
+			return nil
+		}
 		hasPrefixCol := false
 		for _, l := range join.IdxColLens {
 			if l != types.UnspecifiedLength {
@@ -620,6 +658,7 @@ func (p *LogicalJoin) buildIndexJoinInner2TableScan(
 			failpoint.Return(p.constructIndexHashJoin(prop, outerIdx, innerTask, nil, keyOff2IdxOff, nil, nil))
 		}
 	})
+<<<<<<< HEAD
 	joins = append(joins, p.constructIndexJoin(prop, outerIdx, innerTask, nil, keyOff2IdxOff, nil, nil)...)
 	// The index merge join's inner plan is different from index join, so we
 	// should construct another inner plan for it.
@@ -633,6 +672,9 @@ func (p *LogicalJoin) buildIndexJoinInner2TableScan(
 	//	joins = append(joins, p.constructIndexMergeJoin(prop, outerIdx, innerTask2, nil, keyOff2IdxOff, nil, nil)...)
 	//}
 
+=======
+	joins = append(joins, p.constructIndexJoin(prop, outerIdx, innerTask, ranges, keyOff2IdxOff, nil, nil)...)
+>>>>>>> 38bbb0dd2... planner: ban (index) merge join heuristically when convert eq cond to other cond (#21138)
 	// We can reuse the `innerTask` here since index nested loop hash join
 	// do not need the inner child to promise the order.
 	joins = append(joins, p.constructIndexHashJoin(prop, outerIdx, innerTask, nil, keyOff2IdxOff, nil, nil)...)
@@ -686,6 +728,12 @@ func (p *LogicalJoin) buildIndexJoinInner2IndexScan(
 		}
 	})
 	joins = append(joins, p.constructIndexJoin(prop, outerIdx, innerTask, helper.chosenRanges, keyOff2IdxOff, helper.chosenPath, helper.lastColManager)...)
+<<<<<<< HEAD
+=======
+	// We can reuse the `innerTask` here since index nested loop hash join
+	// do not need the inner child to promise the order.
+	joins = append(joins, p.constructIndexHashJoin(prop, outerIdx, innerTask, helper.chosenRanges, keyOff2IdxOff, helper.chosenPath, helper.lastColManager)...)
+>>>>>>> 38bbb0dd2... planner: ban (index) merge join heuristically when convert eq cond to other cond (#21138)
 	// The index merge join's inner plan is different from index join, so we
 	// should construct another inner plan for it.
 	// Because we can't keep order for union scan, if there is a union scan in inner task,
