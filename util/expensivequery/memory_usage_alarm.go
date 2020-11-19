@@ -24,7 +24,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/disk"
@@ -36,8 +35,10 @@ import (
 
 type memoryUsageAlarm struct {
 	err                    error
+	initialized            bool
 	isServerMemoryQuotaSet bool
 	serverMemoryQuota      uint64
+	memoryUsageAlarmRatio  float64
 	lastCheckTime          time.Time
 
 	tmpDir              string
@@ -45,17 +46,11 @@ type memoryUsageAlarm struct {
 	lastProfileFileName [][]string // heap, goroutine
 }
 
-func initMemoryUsageAlarmRecord() (record *memoryUsageAlarm) {
-	record = &memoryUsageAlarm{}
-	if alert := config.GetGlobalConfig().Performance.MemoryUsageAlarmRatio; alert == 0 || alert == 1 {
-		record.err = errors.New("close memory usage alarm recorder")
-		return
-	}
+func (record *memoryUsageAlarm) initMemoryUsageAlarmRecord() {
 	if quota := config.GetGlobalConfig().Performance.ServerMemoryQuota; quota != 0 {
 		record.serverMemoryQuota = quota
 		record.isServerMemoryQuotaSet = true
 	} else {
-		// TODO: Get the memory info in container directly.
 		record.serverMemoryQuota, record.err = memory.MemTotal()
 		if record.err != nil {
 			logutil.BgLogger().Error("get system total memory fail", zap.Error(record.err))
@@ -72,7 +67,8 @@ func initMemoryUsageAlarmRecord() (record *memoryUsageAlarm) {
 	// Read last records
 	files, err := ioutil.ReadDir(record.tmpDir)
 	if err != nil {
-		return record
+		record.err = err
+		return
 	}
 	for _, f := range files {
 		name := filepath.Join(record.tmpDir, f.Name())
@@ -86,13 +82,23 @@ func initMemoryUsageAlarmRecord() (record *memoryUsageAlarm) {
 			record.lastProfileFileName[1] = append(record.lastProfileFileName[1], name)
 		}
 	}
-
-	return record
+	record.initialized = true
+	return
 }
 
 // If Performance.ServerMemoryQuota is set, use `ServerMemoryQuota * MemoryUsageAlarmRatio` to check oom risk.
 // If Performance.ServerMemoryQuota is not set, use `system total memory size * MemoryUsageAlarmRatio` to check oom risk.
 func (record *memoryUsageAlarm) alarm4ExcessiveMemUsage(sm util.SessionManager) {
+	if record.memoryUsageAlarmRatio <= 0.0 || record.memoryUsageAlarmRatio >= 1.0 {
+		return
+	}
+	if !record.initialized {
+		record.initMemoryUsageAlarmRecord()
+		if record.err != nil {
+			return
+		}
+	}
+
 	var memoryUsage uint64
 	instanceStats := &runtime.MemStats{}
 	runtime.ReadMemStats(instanceStats)
@@ -107,7 +113,7 @@ func (record *memoryUsageAlarm) alarm4ExcessiveMemUsage(sm util.SessionManager) 
 	}
 
 	// TODO: Consider NextGC to record SQLs.
-	if float64(memoryUsage) > float64(record.serverMemoryQuota)*config.GetGlobalConfig().Performance.MemoryUsageAlarmRatio {
+	if float64(memoryUsage) > float64(record.serverMemoryQuota)*record.memoryUsageAlarmRatio {
 		// At least ten seconds between two recordings that memory usage is less than threshold (default 80% system memory).
 		// If the memory is still exceeded, only records once.
 		interval := time.Since(record.lastCheckTime)
@@ -129,7 +135,7 @@ func (record *memoryUsageAlarm) doRecord(memUsage uint64, instanceMemoryUsage ui
 		fields = append(fields, zap.Any("system memory usage", memUsage))
 		fields = append(fields, zap.Any("tidb-server memory usage", instanceMemoryUsage))
 	}
-	fields = append(fields, zap.Any("memory-usage-alarm-ratio", config.GetGlobalConfig().Performance.MemoryUsageAlarmRatio))
+	fields = append(fields, zap.Any("memory-usage-alarm-ratio", record.memoryUsageAlarmRatio))
 	fields = append(fields, zap.Any("record path", record.tmpDir))
 
 	logutil.BgLogger().Warn("tidb-server has the risk of OOM. Running SQLs and heap profile will be recorded in record path", fields...)
