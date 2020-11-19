@@ -1978,24 +1978,10 @@ func (cc getLastStmtInConn) String() string {
 		return "ListFields " + string(data)
 	case mysql.ComQuery, mysql.ComStmtPrepare:
 		sql := string(hack.String(data))
-		toLog := sql
 		if cc.ctx.GetSessionVars().EnableRedactLog {
-			p := parser.New()
-			p.SetSQLMode(cc.ctx.GetSessionVars().SQLMode)
-			charset, collation := cc.ctx.GetSessionVars().GetCharsetInfo()
-			stmt, err := p.ParseOneStmt(sql, charset, collation)
-			if err != nil {
-				logutil.BgLogger().Debug("fail to parse", zap.String("sql", sql), zap.Error(err))
-				return "fail to parse SQL and can't desensitize when enable log redaction"
-			}
-			if s, ok := stmt.(ast.SensitiveStmtNode); ok {
-				toLog = s.SecureText()
-			} else {
-				toLog = stmt.Text()
-			}
-			toLog = parser.Normalize(toLog)
+			sql = parser.Normalize(sql)
 		}
-		return queryStrForLog(toLog)
+		return queryStrForLog(sql)
 	case mysql.ComStmtExecute, mysql.ComStmtFetch:
 		stmtID := binary.LittleEndian.Uint32(data[0:4])
 		return queryStrForLog(cc.preparedStmt2String(stmtID))

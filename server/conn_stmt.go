@@ -44,7 +44,6 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	plannercore "github.com/pingcap/tidb/planner/core"
@@ -660,8 +659,5 @@ func (cc *clientConn) preparedStmt2StringNoArgs(stmtID uint32) string {
 		return "invalidate CachedPrepareStmt type, ID: " + strconv.FormatUint(uint64(stmtID), 10)
 	}
 	preparedAst := preparedObj.PreparedAst
-	if s, ok := preparedAst.Stmt.(ast.SensitiveStmtNode); ok {
-		return s.SecureText()
-	}
 	return preparedAst.Stmt.Text()
 }
