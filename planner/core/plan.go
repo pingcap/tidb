@@ -117,6 +117,7 @@ func optimizeByShuffle4StreamAgg(pp *PhysicalStreamAgg, ctx sessionctx.Context) 
 	case *PhysicalSort:
 		splitter = PartitionHashSplitterType
 		tail, dataSource = childExec, childExec.Children()[0]
+	// case *PhysicalIndexScan, *PhysicalIndexReader:
 	case *PhysicalIndexScan, *PhysicalIndexReader:
 		splitter = PartitionRangeSplitterType
 		tail, dataSource = pp, childExec
