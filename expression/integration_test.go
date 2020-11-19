@@ -7664,6 +7664,8 @@ func (s *testIntegrationSuite) TestVitessHash(c *C) {
 	tk.MustQuery("select vitess_hash(30375298039) from t").Check(testkit.Rows("\x03\x12\x65\x66\x1E\x5F\x11\x33"))
 	// Same as previous but passed as a binary string
 	tk.MustQuery("select vitess_hash(x'00000007128243F7') from t").Check(testkit.Rows("\x03\x12\x65\x66\x1E\x5F\x11\x33"))
+	// Less bits, should be prefixed with zeroes
+	tk.MustQuery("select vitess_hash(x'07128243F7') from t").Check(testkit.Rows("\x03\x12\x65\x66\x1E\x5F\x11\x33"))
 	tk.MustQuery("select vitess_hash(1123) from t").Check(testkit.Rows("\x03\x1B\x56\x5D\x41\xBD\xF8\xCA"))
 	tk.MustQuery("select vitess_hash(30573721600) from t").Check(testkit.Rows("\x1E\xFD\x64\x39\xF2\x05\x0F\xFD"))
 	tk.MustQuery("select vitess_hash(convert(116, decimal(8,4))) from t").Check(testkit.Rows("\x1E\x17\x88\xFF\x0F\xDE\x09\x3C"))

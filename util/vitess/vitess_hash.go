@@ -44,8 +44,7 @@ func VitessHash(shardKey []byte) ([]byte, error) {
 		return hashed[:], nil
 	} else {
 		var keybytes, hashed [8]byte
-		numericValue := binary.BigEndian.Uint64(shardKey)
-		binary.BigEndian.PutUint64(keybytes[:], numericValue)
+		copy(keybytes[len(keybytes)-len(shardKey):], shardKey)
 		nullKeyBlock.Encrypt(hashed[:], keybytes[:])
 		return hashed[:], nil
 	}
