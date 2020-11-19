@@ -346,7 +346,6 @@ func (e *slowQueryRetriever) getBatchLogForReversedScan(reader *bufio.Reader, of
 		if err != nil {
 			if err == io.EOF {
 				if len(log) == 0 {
-					reverse(logs)
 					decomposedSlowLogTasks := decomposeToSlowLogTasks(logs, num)
 					offset.length = len(decomposedSlowLogTasks)
 					return decomposedSlowLogTasks, nil
@@ -354,7 +353,6 @@ func (e *slowQueryRetriever) getBatchLogForReversedScan(reader *bufio.Reader, of
 				e.fileLine = 0
 				file := e.getPreviousFile()
 				if file == nil {
-					reverse(logs)
 					return decomposeToSlowLogTasks(logs, num), nil
 				}
 				reader = bufio.NewReader(file)
@@ -382,20 +380,18 @@ func (e *slowQueryRetriever) getBatchLogForReversedScan(reader *bufio.Reader, of
 			}
 		}
 	}
-	reverse(logs)
 	return decomposeToSlowLogTasks(logs, num), err
-}
-
-func reverse(logs []slowLogBlock) {
-	last := len(logs) - 1
-	for i := 0; i < len(logs)/2; i++ {
-		logs[i], logs[last-i] = logs[last-i], logs[i]
-	}
 }
 
 func decomposeToSlowLogTasks(logs []slowLogBlock, num int) [][]string {
 	if len(logs) == 0 {
 		return nil
+	}
+
+	//In reversed scan, We should reverse the blocks.
+	last := len(logs) - 1
+	for i := 0; i < len(logs)/2; i++ {
+		logs[i], logs[last-i] = logs[last-i], logs[i]
 	}
 
 	decomposedSlowLogTasks := make([][]string, 0)
@@ -443,13 +439,13 @@ func (e *slowQueryRetriever) parseSlowLog(ctx context.Context, sctx sessionctx.C
 		if len(logs) == 0 || len(logs[0]) == 0 {
 			break
 		}
+		if e.stats != nil {
+			e.stats.readFile += time.Since(startTime)
+		}
 		for i := range logs {
 			log := logs[i]
 			t := slowLogTask{}
 			t.resultCh = make(chan parsedSlowLog, 1)
-			if e.stats != nil {
-				e.stats.readFile += time.Since(startTime)
-			}
 			start := offset
 			wg.Add(1)
 			ch <- 1

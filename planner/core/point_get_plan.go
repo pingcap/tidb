@@ -424,6 +424,9 @@ func TryFastPlan(ctx sessionctx.Context, node ast.Node) (p Plan) {
 			if checkFastPlanPrivilege(ctx, fp.dbName, fp.TblInfo.Name.L, mysql.SelectPriv) != nil {
 				return
 			}
+			if util.IsMemDB(fp.dbName) {
+				return nil
+			}
 			fp.Lock, fp.LockWaitTime = getLockWaitTime(ctx, x.LockInfo)
 			p = fp
 			return

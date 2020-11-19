@@ -15,25 +15,18 @@ package core
 
 import (
 	"strings"
-	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -119,71 +112,14 @@ func (b *PBPlanBuilder) pbToTableScan(e *tipb.Executor) (PhysicalPlan, error) {
 		extractor := &SlowQueryExtractor{}
 		extractor.Desc = tblScan.Desc
 		if b.ranges != nil {
-			trs, err := b.decodeTimeRanges(b.ranges)
+			err := extractor.buildTimeRangeFromKeyRange(b.ranges)
 			if err != nil {
 				return nil, err
-			}
-			for _, tr := range trs {
-				extractor.setTimeRange(tr[0], tr[1])
 			}
 		}
 		p.Extractor = extractor
 	}
 	return p, nil
-}
-
-func (b *PBPlanBuilder) decodeTimeRanges(keyRanges []*coprocessor.KeyRange) ([][]int64, error) {
-	var krs [][]int64
-	for _, kr := range keyRanges {
-		if len(kr.Start) >= tablecodec.RecordRowKeyLen && len(kr.Start) >= tablecodec.RecordRowKeyLen {
-			start, err := tablecodec.DecodeRowKey(kr.Start)
-			var startTime int64
-			if err != nil {
-				startTime = 0
-			} else {
-				startTime, err = b.decodeToTime(start)
-				if err != nil {
-					return nil, err
-				}
-			}
-			end, err := tablecodec.DecodeRowKey(kr.End)
-			var endTime int64
-			if err != nil {
-				endTime = 0
-			} else {
-				endTime, err = b.decodeToTime(end)
-				if err != nil {
-					return nil, err
-				}
-			}
-			kr := []int64{startTime, endTime}
-			krs = append(krs, kr)
-		}
-	}
-	return krs, nil
-}
-
-func (b *PBPlanBuilder) decodeToTime(handle kv.Handle) (int64, error) {
-	tp := types.NewFieldType(mysql.TypeDatetime)
-	col := rowcodec.ColInfo{ID: 0, Ft: tp}
-	chk := chunk.NewChunkWithCapacity([]*types.FieldType{tp}, 1)
-	coder := codec.NewDecoder(chk, nil)
-	_, err := coder.DecodeOne(handle.EncodedCol(0), 0, col.Ft)
-	if err != nil {
-		return 0, err
-	}
-	datum := chk.GetRow(0).GetDatum(0, tp)
-	mysqlTime := (&datum).GetMysqlTime()
-	timestampInNano := time.Date(mysqlTime.Year(),
-		time.Month(mysqlTime.Month()),
-		mysqlTime.Day(),
-		mysqlTime.Hour(),
-		mysqlTime.Minute(),
-		mysqlTime.Second(),
-		mysqlTime.Microsecond()*1000,
-		time.UTC,
-	).UnixNano()
-	return timestampInNano, err
 }
 
 func (b *PBPlanBuilder) buildTableScanSchema(tblInfo *model.TableInfo, columns []*model.ColumnInfo) *expression.Schema {
