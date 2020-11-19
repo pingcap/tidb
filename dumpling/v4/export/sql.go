@@ -342,31 +342,23 @@ func GetPrimaryKeyColumns(db *sql.Conn, database, table string) ([]string, error
 }
 
 func GetPrimaryKeyName(db *sql.Conn, database, table string) (string, error) {
-	priKeyQuery := "SELECT column_name FROM information_schema.columns " +
-		"WHERE table_schema = ? AND table_name = ? AND column_key = 'PRI';"
-	var colName string
-	row := db.QueryRowContext(context.Background(), priKeyQuery, database, table)
-	if err := row.Scan(&colName); err != nil {
-		if err == sql.ErrNoRows {
-			return "", nil
-		} else {
-			return "", errors.Annotatef(err, "sql: %s", priKeyQuery)
-		}
-	}
-	return colName, nil
+	return getNumericIndex(db, database, table, "PRI")
 }
 
 func GetUniqueIndexName(db *sql.Conn, database, table string) (string, error) {
-	uniKeyQuery := "SELECT column_name FROM information_schema.columns " +
-		"WHERE table_schema = ? AND table_name = ? AND column_key = 'UNI';"
+	return getNumericIndex(db, database, table, "UNI")
+}
+
+func getNumericIndex(db *sql.Conn, database, table, indexType string) (string, error) {
+	keyQuery := "SELECT column_name FROM information_schema.columns " +
+		"WHERE table_schema = ? AND table_name = ? AND column_key = ? AND data_type IN ('int', 'bigint');"
 	var colName string
-	row := db.QueryRowContext(context.Background(), uniKeyQuery, database, table)
-	if err := row.Scan(&colName); err != nil {
-		if err == sql.ErrNoRows {
-			return "", nil
-		} else {
-			return "", errors.Annotatef(err, "sql: %s", uniKeyQuery)
-		}
+	row := db.QueryRowContext(context.Background(), keyQuery, database, table, indexType)
+	err := row.Scan(&colName)
+	if err == sql.ErrNoRows {
+		return "", nil
+	} else if err != nil {
+		return "", errors.Annotatef(err, "sql: %s, indexType: %s", keyQuery, indexType)
 	}
 	return colName, nil
 }
@@ -633,28 +625,8 @@ func pickupPossibleField(dbName, tableName string, db *sql.Conn, conf *Config) (
 		}
 	}
 
-	// there is no proper index
-	if fieldName == "" {
-		return "", nil
-	}
-
-	query := "SELECT DATA_TYPE FROM INFORMATION_SCHEMA.COLUMNS " +
-		"WHERE TABLE_NAME = ? AND COLUMN_NAME = ?"
-	var fieldType string
-	row := db.QueryRowContext(context.Background(), query, tableName, fieldName)
-	err = row.Scan(&fieldType)
-	if err != nil {
-		if err == sql.ErrNoRows {
-			return "", nil
-		} else {
-			return "", errors.Annotatef(err, "sql: %s", query)
-		}
-	}
-	switch strings.ToLower(fieldType) {
-	case "int", "bigint":
-		return fieldName, nil
-	}
-	return "", nil
+	// if fieldName == "", there is no proper index
+	return fieldName, nil
 }
 
 func estimateCount(dbName, tableName string, db *sql.Conn, field string, conf *Config) uint64 {
