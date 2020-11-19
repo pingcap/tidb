@@ -255,7 +255,7 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 		baseExecutor: newBaseExecutor(b.ctx, schema, 0),
 		info: &brieTaskInfo{
 			kind:      s.Kind,
-			originSQL: s.Text(),
+			originSQL: s.SecureText(),
 		},
 	}
 
