@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"math/rand"
 	"net/url"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -163,7 +164,8 @@ type tikvStore struct {
 	spMutex   sync.RWMutex  // this is used to update safePoint and spTime
 	closed    chan struct{} // this is used to nofity when the store is closed
 
-	replicaReadSeed uint32 // this is used to load balance followers / learners when replica read is enabled
+	replicaReadSeed uint32        // this is used to load balance followers / learners when replica read is enabled
+	memCache        kv.MemManager // this is used to query from memory
 }
 
 func (s *tikvStore) UpdateSPCache(cachedSP uint64, cachedTime time.Time) {
@@ -211,6 +213,7 @@ func newTikvStore(uuid string, pdClient pd.Client, spkv SafePointKV, client Clie
 		spTime:          time.Now(),
 		closed:          make(chan struct{}),
 		replicaReadSeed: fastrand.Uint32(),
+		memCache:        kv.NewCacheDB(),
 	}
 	store.lockResolver = newLockResolver(store)
 	store.enableGC = enableGC
@@ -235,19 +238,31 @@ func (s *tikvStore) IsLatchEnabled() bool {
 	return s.txnLatches != nil
 }
 
+var (
+	ldflagGetEtcdAddrsFromConfig = "0" // 1:Yes, otherwise:No
+)
+
 func (s *tikvStore) EtcdAddrs() ([]string, error) {
 	if s.etcdAddrs == nil {
 		return nil, nil
 	}
+
+	if ldflagGetEtcdAddrsFromConfig == "1" {
+		// For automated test purpose.
+		// To manipulate connection to etcd by mandatorily setting path to a proxy.
+		cfg := config.GetGlobalConfig()
+		return strings.Split(cfg.Path, ","), nil
+	}
+
 	ctx := context.Background()
-	bo := NewBackoffer(ctx, GetMemberInfoBackoff)
+	bo := NewBackoffer(ctx, GetAllMembersBackoff)
 	etcdAddrs := make([]string, 0)
 	pdClient := s.pdClient
 	if pdClient == nil {
 		return nil, errors.New("Etcd client not found")
 	}
 	for {
-		members, err := pdClient.GetMemberInfo(ctx)
+		members, err := pdClient.GetAllMembers(ctx)
 		if err != nil {
 			err := bo.Backoff(BoRegionMiss, err)
 			if err != nil {
@@ -354,6 +369,10 @@ func (s *tikvStore) Close() error {
 	if s.coprCache != nil {
 		s.coprCache.cache.Close()
 	}
+
+	if err := s.kv.Close(); err != nil {
+		return errors.Trace(err)
+	}
 	return nil
 }
 
@@ -378,7 +397,7 @@ func (s *tikvStore) getTimestampWithRetry(bo *Backoffer) (uint64, error) {
 	}
 
 	for {
-		startTS, err := s.oracle.GetTimestamp(bo.ctx)
+		startTS, err := s.oracle.GetTimestamp(bo.ctx, &oracle.Option{TxnScope: oracle.GlobalTxnScope})
 		// mockGetTSErrorInRetry should wait MockCommitErrorOnce first, then will run into retry() logic.
 		// Then mockGetTSErrorInRetry will return retryable error when first retry.
 		// Before PR #8743, we don't cleanup txn after meet error such as error like: PD server timeout
@@ -407,6 +426,12 @@ func (s *tikvStore) GetClient() kv.Client {
 	return &CopClient{
 		store:           s,
 		replicaReadSeed: s.nextReplicaReadSeed(),
+	}
+}
+
+func (s *tikvStore) GetMPPClient() kv.MPPClient {
+	return &MPPClient{
+		store: s,
 	}
 }
 
@@ -465,6 +490,10 @@ func (s *tikvStore) SetTiKVClient(client Client) {
 
 func (s *tikvStore) GetTiKVClient() (client Client) {
 	return s.client
+}
+
+func (s *tikvStore) GetMemCache() kv.MemManager {
+	return s.memCache
 }
 
 func init() {

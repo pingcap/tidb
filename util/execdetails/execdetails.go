@@ -411,7 +411,8 @@ type CopRuntimeStats struct {
 	// have many region leaders, several coprocessor tasks can be sent to the
 	// same tikv-server instance. We have to use a list to maintain all tasks
 	// executed on each instance.
-	stats map[string][]*BasicRuntimeStats
+	stats      map[string][]*BasicRuntimeStats
+	copDetails *CopDetails
 }
 
 // RecordOneCopTask records a specific cop tasks's execution detail.
@@ -450,14 +451,23 @@ func (crs *CopRuntimeStats) String() string {
 		}
 	}
 
+	var result string
 	if totalTasks == 1 {
-		return fmt.Sprintf("time:%v, loops:%d", procTimes[0], totalIters)
+		result += fmt.Sprintf("tikv_task:{time:%v, loops:%d}", procTimes[0], totalIters)
+	} else {
+		n := len(procTimes)
+		sort.Slice(procTimes, func(i, j int) bool { return procTimes[i] < procTimes[j] })
+		result += fmt.Sprintf("tikv_task:{proc max:%v, min:%v, p80:%v, p95:%v, iters:%v, tasks:%v}",
+			procTimes[n-1], procTimes[0], procTimes[n*4/5], procTimes[n*19/20], totalIters, totalTasks)
 	}
-
-	n := len(procTimes)
-	sort.Slice(procTimes, func(i, j int) bool { return procTimes[i] < procTimes[j] })
-	return fmt.Sprintf("proc max:%v, min:%v, p80:%v, p95:%v, iters:%v, tasks:%v",
-		procTimes[n-1], procTimes[0], procTimes[n*4/5], procTimes[n*19/20], totalIters, totalTasks)
+	if crs.copDetails != nil {
+		result += fmt.Sprintf(", total_keys:%v, processed_keys:%v, rocksdb:{delete_skipped_count:%v, "+
+			"key_skipped_count:%v, block_cache_hit_count:%v, block_read_count:%v, block_read_byte:%v}",
+			crs.copDetails.TotalKeys, crs.copDetails.ProcessedKeys,
+			crs.copDetails.RocksdbDeleteSkippedCount, crs.copDetails.RocksdbKeySkippedCount, crs.copDetails.RocksdbBlockCacheHitCount,
+			crs.copDetails.RocksdbBlockReadCount, crs.copDetails.RocksdbBlockReadByte)
+	}
+	return result
 }
 
 const (
@@ -481,6 +491,8 @@ const (
 	TpSelectResultRuntimeStats
 	// TpInsertRuntimeStat is the tp for InsertRuntimeStat
 	TpInsertRuntimeStat
+	// TpIndexLookUpRunTimeStats is the tp for TpIndexLookUpRunTimeStats
+	TpIndexLookUpRunTimeStats
 	// TpSlowQueryRuntimeStat is the tp for TpSlowQueryRuntimeStat
 	TpSlowQueryRuntimeStat
 )
@@ -692,6 +704,15 @@ func (e *RuntimeStatsColl) RecordOneCopTask(planID int, address string, summary 
 	}
 	copStats := e.GetCopStats(planID)
 	copStats.RecordOneCopTask(address, summary)
+}
+
+// RecordCopDetail records a specific cop tasks's cop detail.
+func (e *RuntimeStatsColl) RecordCopDetail(planID int, detail *CopDetails) {
+	copStats := e.GetCopStats(planID)
+	if copStats.copDetails == nil {
+		copStats.copDetails = &CopDetails{}
+	}
+	copStats.copDetails.Merge(detail)
 }
 
 // ExistsRootStats checks if the planID exists in the rootStats collection.

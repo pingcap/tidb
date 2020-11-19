@@ -832,6 +832,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrDependentByGeneratedColumn:                            mysql.Message("Column '%s' has a generated column dependency.", nil),
 	ErrGeneratedColumnRefAutoInc:                             mysql.Message("Generated column '%s' cannot refer to auto-increment column.", nil),
 	ErrWarnConflictingHint:                                   mysql.Message("Hint %s is ignored as conflicting/duplicated.", nil),
+	ErrUnresolvedHintName:                                    mysql.Message("Unresolved name '%s' for %s hint", nil),
 	ErrInvalidFieldSize:                                      mysql.Message("Invalid size for column '%s'.", nil),
 	ErrInvalidArgumentForLogarithm:                           mysql.Message("Invalid argument for logarithm", nil),
 	ErrIncorrectType:                                         mysql.Message("Incorrect type for argument %s in function %s.", nil),
@@ -848,6 +849,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrUserAlreadyExists:                                     mysql.Message("User %s already exists.", nil),
 	ErrInvalidJSONPathArrayCell:                              mysql.Message("A path expression is not a path to a cell in an array.", nil),
 	ErrInvalidEncryptionOption:                               mysql.Message("Invalid encryption option.", nil),
+	ErrTooLongValueForType:                                   mysql.Message("Too long enumeration/set value for column %s.", nil),
 	ErrPKIndexCantBeInvisible:                                mysql.Message("A primary key index cannot be invisible", nil),
 	ErrWindowNoSuchWindow:                                    mysql.Message("Window name '%s' is not defined.", nil),
 	ErrWindowCircularityInWindowGraph:                        mysql.Message("There is a circularity in the window dependency graph.", nil),
@@ -873,6 +875,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrRoleNotGranted:                                        mysql.Message("%s is is not granted to %s", nil),
 	ErrMaxExecTimeExceeded:                                   mysql.Message("Query execution was interrupted, max_execution_time exceeded.", nil),
 	ErrLockAcquireFailAndNoWaitSet:                           mysql.Message("Statement aborted because lock(s) could not be acquired immediately and NOWAIT is set.", nil),
+	ErrNotHintUpdatable:                                      mysql.Message("Variable '%s' cannot be set using SET_VAR hint.", nil),
 	ErrDataTruncatedFunctionalIndex:                          mysql.Message("Data truncated for expression index '%s' at row %d", nil),
 	ErrDataOutOfRangeFunctionalIndex:                         mysql.Message("Value is out of range for expression index '%s' at row %d", nil),
 	ErrFunctionalIndexOnJSONOrGeometryFunction:               mysql.Message("Cannot create an expression index on a function that returns a JSON or GEOMETRY value", nil),
@@ -1025,6 +1028,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrBRIEExportFailed:  mysql.Message("Export failed: %s", nil),
 
 	ErrInvalidPlacementSpec: mysql.Message("Invalid placement policy '%s': %s", nil),
+	ErrPlacementPolicyCheck: mysql.Message("Placement policy didn't meet the constraint, reason: %s", nil),
 
 	// TiKV/PD errors.
 	ErrPDServerTimeout:           mysql.Message("PD server timeout", nil),
