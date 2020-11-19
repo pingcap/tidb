@@ -7228,10 +7228,6 @@ func (s *testIntegrationSuite) TestIssue20180(c *C) {
 	tk.MustQuery("select * from t where a > 1  and a = \"b\";").Check(testkit.Rows("b"))
 }
 
-<<<<<<< HEAD
-func (s *testIntegrationSuite) TestIssue11645(c *C) {
-	defer s.cleanEnv(c)
-=======
 func (s *testIntegrationSuite) TestIssue20730(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -7242,41 +7238,8 @@ func (s *testIntegrationSuite) TestIssue20730(c *C) {
 	tk.MustQuery("SELECT @sum := IF(@sum=20,4,@sum + tmp.value) sum FROM tmp ORDER BY tmp.id").Check(testkit.Rows("11", "13", "16", "20", "4"))
 }
 
-func (s *testIntegrationSerialSuite) TestClusteredIndexAndNewCollation(c *C) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
-
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("set @@tidb_enable_clustered_index = 1;")
-	tk.MustExec("CREATE TABLE `t` (" +
-		"`a` char(10) COLLATE utf8mb4_unicode_ci NOT NULL," +
-		"`b` char(20) COLLATE utf8mb4_general_ci NOT NULL," +
-		"`c` int(11) NOT NULL," +
-		"PRIMARY KEY (`a`,`b`,`c`)," +
-		"KEY `idx` (`a`))")
-
-	tk.MustExec("begin")
-	tk.MustExec("insert into t values ('a6', 'b6', 3)")
-	tk.MustQuery("select * from t").Check(testkit.Rows("a6 b6 3"))
-	tk.MustQuery("select * from t where a='a6'").Check(testkit.Rows("a6 b6 3"))
-	tk.MustExec("delete from t")
-	tk.MustQuery("select * from t").Check(testkit.Rows())
-	tk.MustExec("commit")
-	tk.MustQuery("select * from t").Check(testkit.Rows())
-
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(`a` char(10) COLLATE utf8mb4_unicode_ci NOT NULL key)")
-	tk.MustExec("insert into t values ('&');")
-	tk.MustExec("replace into t values ('&');")
-	tk.MustQuery("select * from t").Check(testkit.Rows("&"))
-}
-
-func (s *testIntegrationSerialSuite) TestIssue20608(c *C) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
->>>>>>> 42d020803... expression: fix builtin IF truncation of type len (#20743)
+func (s *testIntegrationSuite) TestIssue11645(c *C) {
+	defer s.cleanEnv(c)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustQuery(`SELECT DATE_ADD('1000-01-01 00:00:00', INTERVAL -2 HOUR);`).Check(testkit.Rows("0999-12-31 22:00:00"))
 	tk.MustQuery(`SELECT DATE_ADD('1000-01-01 00:00:00', INTERVAL -200 HOUR);`).Check(testkit.Rows("0999-12-23 16:00:00"))
