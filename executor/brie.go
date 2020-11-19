@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"net/url"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -63,7 +64,7 @@ const (
 )
 
 var (
-	CreateSessionForBRIEFunc func(kv.Storage) (checkpoints.Session, error)
+	CreateSessionForBRIEFunc func(sessionctx.Context) (checkpoints.Session, error)
 )
 
 // brieTaskProgress tracks a task's current progress.
@@ -135,9 +136,8 @@ var globalBRIEQueue = &brieQueue{
 func (bq *brieQueue) registerTask(
 	ctx context.Context,
 	info *brieTaskInfo,
-	se sessionctx.Context,
+	s *sessionWithLock,
 ) (context.Context, uint64, *brieQueueItem, error) {
-	s := se.(sqlexec.SQLExecutor)
 	taskCtx, taskCancel := context.WithCancel(ctx)
 	item := &brieQueueItem{
 		info:   info,
@@ -161,6 +161,8 @@ func (bq *brieQueue) registerTask(
 		item.progress.GetFraction(),
 		0,
 	)
+	s.Lock()
+	defer s.Unlock()
 	_, err := s.Execute(ctx, sql)
 	if err != nil {
 		return nil, 0, item, err
@@ -184,7 +186,7 @@ func (bq *brieQueue) registerTask(
 // executed at a time, and this function blocks until the task is ready.
 //
 // Returns an object to track the task's progress.
-func (bq *brieQueue) acquireTask(taskCtx context.Context, taskID uint64, se sessionctx.Context) (err error) {
+func (bq *brieQueue) acquireTask(taskCtx context.Context, taskID uint64, se *sessionWithLock) (err error) {
 	// wait until we are at the front of the queue.
 	select {
 	case bq.workerCh <- struct{}{}:
@@ -195,7 +197,10 @@ func (bq *brieQueue) acquireTask(taskCtx context.Context, taskID uint64, se sess
 		}()
 		sql := fmt.Sprintf("SELECT cancel FROM mysql.brie_tasks WHERE id = %d;", taskID)
 		var rs []sqlexec.RecordSet
-		rs, err = se.(sqlexec.SQLExecutor).Execute(taskCtx, sql)
+
+		se.Lock()
+		defer se.Unlock()
+		rs, err = se.Execute(taskCtx, sql)
 		if err != nil {
 			return err
 		}
@@ -222,14 +227,17 @@ func (bq *brieQueue) releaseTask() {
 	<-bq.workerCh
 }
 
-func (bq *brieQueue) cancelTask(ctx context.Context, taskID uint64, se sessionctx.Context, delete bool) {
+func (bq *brieQueue) cancelTask(ctx context.Context, taskID uint64, se *sessionWithLock, delete bool) {
 	var sql string
 	if delete {
 		sql = fmt.Sprintf("DELETE FROM mysql.brie_tasks WHERE id = %d;", taskID)
 	} else {
 		sql = fmt.Sprintf("UPDATE mysql.brie_tasks SET cancel = 1 WHERE id = %d;", taskID)
 	}
-	_, err := se.(sqlexec.SQLExecutor).Execute(ctx, sql)
+
+	se.Lock()
+	se.Unlock()
+	_, err := se.Execute(ctx, sql)
 	if err != nil {
 		logutil.Logger(ctx).Error("failed to update BRIE task table to cancel",
 			zap.Uint64("taskID", taskID),
@@ -481,6 +489,12 @@ type BRIEExec struct {
 	info            *brieTaskInfo
 }
 
+// sessionWithLock protects task session that may be concurrently used to change brie_tasks table
+type sessionWithLock struct {
+	sync.Mutex
+	checkpoints.Session
+}
+
 // Next implements the Executor Next interface.
 func (e *BRIEExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.Reset()
@@ -494,18 +508,38 @@ func (e *BRIEExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 	e.info.connID = e.ctx.GetSessionVars().ConnectionID
 	e.info.queueTime = types.CurrentTime(mysql.TypeDatetime)
-	taskCtx, taskID, item, err := bq.registerTask(ctx, e.info, e.ctx)
-	defer func() {
-		if !taskExecuted {
-			bq.cancelTask(ctx, taskID, e.ctx, e.info.kind != ast.BRIEKindImport)
-		}
-		item.cancel()
-	}()
+
+	// create new session so processInfo will not be overwritten
+	execSession, err := CreateSessionForBRIEFunc(e.ctx)
+	if err != nil {
+		return errors.Annotate(err, "create new session in BRIEExec")
+	}
+	defer execSession.Close()
+	s, err := CreateSessionForBRIEFunc(e.ctx)
+	if err != nil {
+		return errors.Annotate(err, "create new session in BRIEExec")
+	}
+	defer s.Close()
+	taskSession := &sessionWithLock{Session: s}
+
+	taskCtx, taskID, item, err := bq.registerTask(ctx, e.info, taskSession)
 	if err != nil {
 		return err
 	}
+	defer func() {
+		if !taskExecuted {
+			bq.cancelTask(ctx, taskID, taskSession, e.info.kind != ast.BRIEKindImport)
+		}
+		item.cancel()
+	}()
 
-	glue := &tidbGlueSession{se: e.ctx, progress: item.progress, info: e.info}
+	glue := &tidbGlueSession{
+		se:                e.ctx,
+		progress:          item.progress,
+		info:              e.info,
+		importExecSession: execSession,
+		importTaskSession: taskSession,
+	}
 
 	// manually monitor the Killed status...
 	go func() {
@@ -515,7 +549,7 @@ func (e *BRIEExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			select {
 			case <-ticker.C:
 				if atomic.LoadUint32(&e.ctx.GetSessionVars().Killed) == 1 {
-					bq.cancelTask(ctx, taskID, e.ctx, e.info.kind != ast.BRIEKindImport)
+					bq.cancelTask(ctx, taskID, taskSession, e.info.kind != ast.BRIEKindImport)
 					item.cancel()
 					return
 				}
@@ -526,7 +560,7 @@ func (e *BRIEExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		}
 	}()
 
-	err = bq.acquireTask(taskCtx, taskID, e.ctx)
+	err = bq.acquireTask(taskCtx, taskID, taskSession)
 	if err != nil {
 		return err
 	}
@@ -543,7 +577,8 @@ func (e *BRIEExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		err = handleBRIEError(task.RunRestore(taskCtx, glue, "Restore", e.restoreCfg), ErrBRIERestoreFailed)
 	case ast.BRIEKindImport:
 		l := lightning.New(e.importGlobalCfg)
-		e.importTaskCfg.TikvImporter.SortedKVDir += string(taskID)
+		e.importTaskCfg.Checkpoint.Schema += strconv.FormatUint(taskID, 10)
+		e.importTaskCfg.TikvImporter.SortedKVDir += strconv.FormatUint(taskID, 10)
 		err2 := handleBRIEError(l.RunOnce(taskCtx, e.importTaskCfg, glue, logutil.Logger(ctx)), ErrBRIEImportFailed)
 		if err2 != nil {
 			e.info.lock.Lock()
@@ -645,9 +680,11 @@ func (e *ShowExec) fetchShowBRIE(ctx context.Context, kind ast.BRIEKind) error {
 }
 
 type tidbGlueSession struct {
-	se       sessionctx.Context
-	progress *brieTaskProgress
-	info     *brieTaskInfo
+	se                sessionctx.Context
+	progress          *brieTaskProgress
+	info              *brieTaskInfo
+	importExecSession checkpoints.Session
+	importTaskSession *sessionWithLock
 }
 
 // GetDomain implements glue.Glue
@@ -668,14 +705,15 @@ func (gs *tidbGlueSession) Execute(ctx context.Context, sql string) error {
 
 func (gs *tidbGlueSession) ExecuteWithLog(ctx context.Context, sql string, purpose string, logger importlog.Logger) error {
 	return common.Retry(purpose, logger, func() error {
-		return gs.Execute(ctx, sql)
+		_, err := gs.importExecSession.Execute(ctx, sql)
+		return err
 	})
 }
 
 func (gs *tidbGlueSession) ObtainStringWithLog(ctx context.Context, sql string, purpose string, logger importlog.Logger) (string, error) {
 	var result string
 	err := common.Retry(purpose, logger, func() error {
-		rs, err := gs.se.(sqlexec.SQLExecutor).Execute(ctx, sql)
+		rs, err := gs.importExecSession.Execute(ctx, sql)
 		if err != nil {
 			return err
 		}
@@ -795,7 +833,10 @@ func (gs *tidbGlueSession) Flush(ctx context.Context, taskID uint64) {
 		taskID)
 	gs.progress.lock.Unlock()
 	gs.info.lock.RUnlock()
-	_, err := gs.se.(sqlexec.SQLExecutor).Execute(ctx, sql)
+
+	gs.importTaskSession.Lock()
+	defer gs.importTaskSession.Unlock()
+	_, err := gs.importTaskSession.Execute(ctx, sql)
 	if err != nil {
 		logutil.Logger(ctx).Error("failed to update BRIE task table",
 			zap.Uint64("taskID", taskID),
@@ -822,7 +863,7 @@ func (gs *tidbGlueSession) GetDB() (*sql.DB, error) {
 }
 
 func (gs *tidbGlueSession) GetTables(ctx context.Context, schemaName string) ([]*model.TableInfo, error) {
-	is := infoschema.GetInfoSchema(gs.se.(sessionctx.Context))
+	is := infoschema.GetInfoSchema(gs.importExecSession.(sessionctx.Context))
 	tables := is.SchemaTables(model.NewCIStr(schemaName))
 	tbsInfo := make([]*model.TableInfo, len(tables))
 	for i := range tbsInfo {
@@ -836,7 +877,7 @@ func (gs *tidbGlueSession) GetSession() (checkpoints.Session, error) {
 	if !ok {
 		return nil, errors.New("can't recover sessionctx.Context from glue")
 	}
-	s, err := CreateSessionForBRIEFunc(sctx.GetStore())
+	s, err := CreateSessionForBRIEFunc(sctx)
 	if err != nil {
 		return nil, errors.Annotate(err, "create new session in GlueCheckpointsDB")
 	}
@@ -845,5 +886,5 @@ func (gs *tidbGlueSession) GetSession() (checkpoints.Session, error) {
 
 func (gs *tidbGlueSession) OpenCheckpointsDB(ctx context.Context, c *importcfg.Config) (checkpoints.CheckpointsDB, error) {
 	// TODO(lance6716): since there's c.TaskID, it's better to change taskID to brieTaskID
-	return checkpoints.NewGlueCheckpointsDB(ctx, gs.se.(checkpoints.Session), gs.GetSession, c.Checkpoint.Schema, c.TaskID)
+	return checkpoints.NewGlueCheckpointsDB(ctx, gs.importExecSession, gs.GetSession, c.Checkpoint.Schema, c.TaskID)
 }

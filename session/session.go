@@ -143,12 +143,14 @@ type StmtHistory struct {
 }
 
 func init() {
-	executor.CreateSessionForBRIEFunc = func(store kv.Storage) (checkpoints.Session, error) {
-		s, err := CreateSession(store)
+	executor.CreateSessionForBRIEFunc = func(sctx sessionctx.Context) (checkpoints.Session, error) {
+		s, err := createSession(sctx.GetStore())
 		if err != nil {
 			return nil, err
 		}
-		return s.(checkpoints.Session), nil
+		// lightning will share user's SQL mode
+		s.sessionVars.SQLMode = sctx.GetSessionVars().SQLMode
+		return s, nil
 	}
 }
 
