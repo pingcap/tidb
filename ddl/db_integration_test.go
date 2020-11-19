@@ -2577,3 +2577,16 @@ func (s *testIntegrationSuite3) TestEnumAndSetDefaultValue(c *C) {
 	c.Assert(tbl.Meta().Columns[0].DefaultValue, Equals, "a")
 	c.Assert(tbl.Meta().Columns[1].DefaultValue, Equals, "a")
 }
+
+func (s *testIntegrationSuite3) TestStrictDoubleTypeCheck(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_strict_double_type_check = 'ON'")
+	sql := "create table double_type_check(id int, c double(10));"
+	_, err := tk.Exec(sql)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[parser:1149]You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use")
+	tk.MustExec("set @@tidb_enable_strict_double_type_check = 'OFF'")
+	defer tk.MustExec("set @@tidb_enable_strict_double_type_check = 'ON'")
+	tk.MustExec(sql)
+}
