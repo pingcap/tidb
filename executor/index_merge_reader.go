@@ -727,7 +727,7 @@ func (w *indexMergeTableScanWorker) pickAndExecTask(ctx context.Context) (task *
 		execStart := time.Now()
 		err := w.executeTask(ctx, task)
 		if w.stats != nil {
-			atomic.AddInt64(&w.stats.WaitTime, int64(time.Since(waitStart)))
+			atomic.AddInt64(&w.stats.WaitTime, int64(execStart.Sub(waitStart)))
 			atomic.AddInt64(&w.stats.FetchRow, int64(time.Since(execStart)))
 			atomic.AddInt64(&w.stats.TableTaskNum, 1)
 		}
