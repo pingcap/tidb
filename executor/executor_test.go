@@ -6696,7 +6696,9 @@ func (s *testSerialSuite) TestCoprocessorOOMAction(c *C) {
 	}
 	failpoint.Disable("github.com/pingcap/tidb/store/tikv/testRateLimitActionMockTrigger")
 
-	// assert oom fallback
+	failpoint.Enable("github.com/pingcap/tidb/store/tikv/testRateLimitActionToken", `return(true)`)
+	defer failpoint.Disable("github.com/pingcap/tidb/store/tikv/testRateLimitActionDisable")
+	// assert at least 1 token
 	for _, testcase := range testcases {
 		c.Log(testcase.name)
 		se, err := session.CreateSession4Test(s.store)
@@ -6705,26 +6707,8 @@ func (s *testSerialSuite) TestCoprocessorOOMAction(c *C) {
 		tk.MustExec("use test")
 		tk.MustExec("set tidb_distsql_scan_concurrency = 1")
 		tk.MustExec("set @@tidb_mem_quota_query=1;")
-		err = tk.ExecToErr(testcase.sql)
-		c.Assert(err, NotNil)
-		c.Assert(err.Error(), Matches, "Out Of Memory Quota.*")
-		se.Close()
-	}
-
-	// assert disable
-	failpoint.Enable("github.com/pingcap/tidb/store/tikv/testRateLimitActionDisable", `return(true)`)
-	defer failpoint.Disable("github.com/pingcap/tidb/store/tikv/testRateLimitActionDisable")
-	for _, testcase := range testcases {
-		c.Log(testcase.name)
-		se, err := session.CreateSession4Test(s.store)
-		c.Check(err, IsNil)
-		tk.Se = se
-		tk.MustExec("use test")
-		tk.MustExec("set @@tidb_distsql_scan_concurrency = 30")
-		tk.MustExec("set @@tidb_mem_quota_query=1")
-		err = tk.ExecToErr(testcase.sql)
-		c.Assert(err, NotNil)
-		c.Assert(err.Error(), Matches, "Out Of Memory Quota.*")
+		_, err = tk.Exec(testcase.sql)
+		c.Assert(err, IsNil)
 		se.Close()
 	}
 }

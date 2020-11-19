@@ -94,6 +94,13 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variable
 		it.concurrency = 1
 	}
 	tokenCount := it.adaptiveTokenCount()
+	failpoint.Inject("testRateLimitActionToken", func(val failpoint.Value) {
+		if val.(bool) {
+			if tokenCount != 1 {
+				panic("token count should be 1")
+			}
+		}
+	})
 	it.sendRate = newRateLimit(tokenCount)
 	if !it.req.KeepOrder {
 		it.respChan = make(chan *copResponse, tokenCount)
@@ -1375,11 +1382,6 @@ func newRateLimitAction(totalTokenNumber uint, cond *sync.Cond) *rateLimitAction
 
 // Action implements ActionOnExceed.Action
 func (e *rateLimitAction) Action(t *memory.Tracker) {
-	failpoint.Inject("testRateLimitActionDisable", func(val failpoint.Value) {
-		if val.(bool) {
-			e.setEnabled(false)
-		}
-	})
 	if !e.isEnabled() {
 		if e.fallbackAction != nil {
 			e.fallbackAction.Action(t)
