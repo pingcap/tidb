@@ -3815,7 +3815,7 @@ func checkUpdateList(ctx sessionctx.Context, tblID2table map[int64]table.Table, 
 			if !flags[i] {
 				continue
 			}
-			if col.IsPKHandleColumn(tbl.Meta()) || col.IsCommonHandleColumn(tbl.Meta()) {
+			if mysql.HasPriKeyFlag(col.Flag) {
 				updatePK = true
 			}
 		}
