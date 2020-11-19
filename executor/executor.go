@@ -188,6 +188,12 @@ func (e *baseExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 	return nil
 }
 
+func (e *baseExecutor) updateDeltaForTableID(id int64) {
+	txnCtx := e.ctx.GetSessionVars().TxnCtx
+	udpp := e.ctx.GetSessionVars().UseDynamicPartitionPrune()
+	txnCtx.UpdateDeltaForTable(id, id, 0, 0, map[int64]int64{}, udpp)
+}
+
 func newBaseExecutor(ctx sessionctx.Context, schema *expression.Schema, id int, children ...Executor) baseExecutor {
 	e := baseExecutor{
 		children:     children,
@@ -920,6 +926,18 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	lockWaitTime := e.ctx.GetSessionVars().LockWaitTimeout
 	if e.Lock == ast.SelectLockForUpdateNoWait {
 		lockWaitTime = kv.LockNoWait
+	}
+
+	if len(e.tblID2Handle) > 0 {
+		for id := range e.tblID2Handle {
+			e.updateDeltaForTableID(id)
+		}
+	}
+	if len(e.partitionedTable) > 0 {
+		for _, p := range e.partitionedTable {
+			pid := p.Meta().ID
+			e.updateDeltaForTableID(pid)
+		}
 	}
 
 	return doLockKeys(ctx, e.ctx, newLockCtx(e.ctx.GetSessionVars(), lockWaitTime), e.keys...)

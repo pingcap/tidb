@@ -98,7 +98,13 @@ func (e *BatchPointGetExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		if err := e.initialize(ctx); err != nil {
 			return err
 		}
+<<<<<<< HEAD
 		e.inited = true
+=======
+		if e.lock {
+			e.updateDeltaForTableID(e.tblInfo.ID)
+		}
+>>>>>>> e6e894dcc... executor: add missing update table delta for TxnCtx (#20982)
 	}
 	if e.index >= len(e.values) {
 		return nil
@@ -213,7 +219,11 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 			}
 			e.handles = append(e.handles, handle)
 			if e.tblInfo.Partition != nil {
-				e.physIDs = append(e.physIDs, tablecodec.DecodeTableID(key))
+				pid := tablecodec.DecodeTableID(key)
+				e.physIDs = append(e.physIDs, pid)
+				if e.lock {
+					e.updateDeltaForTableID(pid)
+				}
 			}
 		}
 

@@ -158,6 +158,42 @@ type TransactionContext struct {
 	Isolation      string
 	LockExpire     uint32
 	ForUpdate      uint32
+<<<<<<< HEAD
+=======
+
+	// TableDeltaMap lock to prevent potential data race
+	tdmLock sync.Mutex
+
+	// TxnScope stores the value of 'txn_scope'.
+	TxnScope string
+}
+
+// GetShard returns the shard prefix for the next `count` rowids.
+func (tc *TransactionContext) GetShard(shardRowIDBits uint64, typeBitsLength uint64, reserveSignBit bool, count int) int64 {
+	if shardRowIDBits == 0 {
+		return 0
+	}
+	if tc.shardRand == nil {
+		tc.shardRand = rand.New(rand.NewSource(int64(tc.StartTS)))
+	}
+	if tc.shardRemain <= 0 {
+		tc.updateShard()
+		tc.shardRemain = tc.ShardStep
+	}
+	tc.shardRemain -= count
+
+	var signBitLength uint64
+	if reserveSignBit {
+		signBitLength = 1
+	}
+	return (tc.currentShard & (1<<shardRowIDBits - 1)) << (typeBitsLength - shardRowIDBits - signBitLength)
+}
+
+func (tc *TransactionContext) updateShard() {
+	var buf [8]byte
+	binary.LittleEndian.PutUint64(buf[:], tc.shardRand.Uint64())
+	tc.currentShard = int64(murmur3.Sum32(buf[:]))
+>>>>>>> e6e894dcc... executor: add missing update table delta for TxnCtx (#20982)
 }
 
 // AddUnchangedRowKey adds an unchanged row key in update statement for pessimistic lock.
@@ -178,7 +214,13 @@ func (tc *TransactionContext) CollectUnchangedRowKeys(buf []kv.Key) []kv.Key {
 }
 
 // UpdateDeltaForTable updates the delta info for some table.
+<<<<<<< HEAD
 func (tc *TransactionContext) UpdateDeltaForTable(physicalTableID int64, delta int64, count int64, colSize map[int64]int64) {
+=======
+func (tc *TransactionContext) UpdateDeltaForTable(logicalTableID, physicalTableID int64, delta int64, count int64, colSize map[int64]int64, saveAsLogicalTblID bool) {
+	tc.tdmLock.Lock()
+	defer tc.tdmLock.Unlock()
+>>>>>>> e6e894dcc... executor: add missing update table delta for TxnCtx (#20982)
 	if tc.TableDeltaMap == nil {
 		tc.TableDeltaMap = make(map[int64]TableDelta)
 	}
@@ -217,13 +259,17 @@ func (tc *TransactionContext) Cleanup() {
 	tc.DirtyDB = nil
 	tc.Binlog = nil
 	tc.History = nil
+	tc.tdmLock.Lock()
 	tc.TableDeltaMap = nil
+	tc.tdmLock.Unlock()
 	tc.pessimisticLockCache = nil
 }
 
 // ClearDelta clears the delta map.
 func (tc *TransactionContext) ClearDelta() {
+	tc.tdmLock.Lock()
 	tc.TableDeltaMap = nil
+	tc.tdmLock.Unlock()
 }
 
 // GetForUpdateTS returns the ts for update.
