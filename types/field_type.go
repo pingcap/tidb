@@ -310,6 +310,10 @@ func MergeFieldType(a byte, b byte) byte {
 	return fieldTypeMergeRules[ia][ib]
 }
 
+func ResultMergeType(tp byte) byte {
+	return fieldTypesResultType[getFieldTypeIndex(tp)]
+}
+
 // mergeTypeFlag merges two MySQL type flag to a new one
 // currently only NotNullFlag is checked
 // todo more flag need to be checked, for example: UnsignedFlag
@@ -1256,6 +1260,49 @@ var fieldTypeMergeRules = [fieldTypeNum][fieldTypeNum]byte{
 		//mysql.TypeString       mysql.TypeGeometry
 		mysql.TypeString, mysql.TypeGeometry,
 	},
+}
+
+const (
+	InvalidResult byte = 0 /** not valid for UDFs */
+	StringResult  byte = 1 /** char * */
+	RealResult    byte = 2 /** double */
+	IntResult     byte = 3 /** long long */
+	RowResult     byte = 4 /** not valid for UDFs */
+	DecimalResult byte = 5 /** char *, to be converted to/from a decimal */
+)
+
+var fieldTypesResultType = []byte{
+	// mysql.TypeDecimal      mysql.TypeTiny
+	DecimalResult, IntResult,
+	// mysql.TypeShort        mysql.TypeLong
+	IntResult, IntResult,
+	// mysql.TypeFloat        mysql.TypeDouble
+	RealResult, RealResult,
+	// mysql.TypeNull         mysql.TypeTimestamp
+	StringResult, StringResult,
+	// mysql.TypeLonglong     mysql.TypeInt24
+	IntResult, IntResult,
+	// mysql.TypeDate         mysql.TypeTime
+	StringResult, StringResult,
+	// mysql.TypeDateTime     mysql.TypeYear
+	StringResult, IntResult,
+	// mysql.TypeNewDate      mysql.TypeVarchar
+	StringResult, StringResult,
+	// mysql.TypeBit          mysql.TypeInvalid
+	IntResult, InvalidResult,
+	// Unused entries: <17>-<242>
+	// mysql.TypeBool         mysql.TypeJson
+	IntResult, StringResult,
+	// mysql.TypeNewDecimal   mysql.TypeEnum
+	DecimalResult, StringResult,
+	// mysql.TypeSet          mysql.TypeTinyBlob
+	StringResult, StringResult,
+	// mysql.TypeMediumBlob  mysql.TypeLongBlob
+	StringResult, StringResult,
+	// mysql.TypeBlob         mysql.TypeVarString
+	StringResult, StringResult,
+	// mysql.TypeString       mysql.TypeGeometry
+	StringResult, StringResult,
 }
 
 // SetBinChsClnFlag sets charset, collation as 'binary' and adds binaryFlag to FieldType.

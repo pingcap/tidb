@@ -74,6 +74,14 @@ func IsTypeNumeric(tp byte) bool {
 	return false
 }
 
+func IsTypeInteger(tp byte) bool {
+	switch tp {
+	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeYear:
+		return true
+	}
+	return false
+}
+
 // IsTemporalWithDate returns a boolean indicating
 // whether the tp is time type with date.
 func IsTemporalWithDate(tp byte) bool {

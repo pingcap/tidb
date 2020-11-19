@@ -14,7 +14,9 @@
 package expression
 
 import (
+	"errors"
 	"math"
+	"strings"
 
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
@@ -382,38 +384,77 @@ func temporalWithDateAsNumEvalType(argTp *types.FieldType) (argEvalType types.Ev
 	return
 }
 
+func aggregateType(args []Expression) (*types.FieldType, error) {
+	if len(args) == 0 {
+		return nil, errors.New("arguments is too few")
+	}
+	aggType := *args[0].GetType()
+	var (
+		newUnsignedFlag   = mysql.HasUnsignedFlag(aggType.Flag)
+		mixedUnsignedFlag = false
+	)
+	for i := 1; i < len(args); i++ {
+		item := args[i].GetType()
+		mixedUnsignedFlag = mixedUnsignedFlag || (newUnsignedFlag != mysql.HasUnsignedFlag(item.Flag))
+		aggType.Tp = types.MergeFieldType(aggType.Tp, item.Tp)
+		aggType.Decimal = int(math.Max(float64(aggType.Decimal), float64(item.Decimal)))
+	}
+
+	if mixedUnsignedFlag && types.IsTypeInteger(aggType.Tp) {
+		bumpRange := false
+		for i := range args {
+			item := args[i].GetType()
+			bumpRange = bumpRange ||
+				(mysql.HasUnsignedFlag(item.Flag) &&
+					(item.Tp == aggType.Tp || item.Tp == mysql.TypeBit))
+		}
+		if bumpRange {
+			newType := mysql.TypeUnspecified
+			switch aggType.Tp {
+			case mysql.TypeTiny:
+				newType = mysql.TypeShort
+			case mysql.TypeShort:
+				newType = mysql.TypeInt24
+			case mysql.TypeInt24:
+				newType = mysql.TypeLong
+			case mysql.TypeLong:
+				newType = mysql.TypeLonglong
+			case mysql.TypeLonglong:
+				newType = mysql.TypeNewDecimal
+			}
+			aggType.Tp = newType
+		}
+	}
+
+	if mysql.HasUnsignedFlag(aggType.Flag) && !mixedUnsignedFlag {
+		aggType.Flag |= mysql.UnsignedFlag
+	}
+
+	return &aggType, nil
+}
+
 // GetCmpTp4MinMax gets compare type for GREATEST and LEAST and BETWEEN (mainly for datetime).
-func GetCmpTp4MinMax(args []Expression) (argTp types.EvalType) {
-	datetimeFound, isAllStr := false, true
-	cmpEvalType, isStr, isTemporalWithDate := temporalWithDateAsNumEvalType(args[0].GetType())
-	if !isStr {
-		isAllStr = false
+func GetCmpTp4MinMax(args []Expression) (types.EvalType, error) {
+	aggType, err := aggregateType(args)
+	if err != nil {
+		return types.ETInt, err
 	}
-	if isTemporalWithDate {
-		datetimeFound = true
-	}
-	lft := args[0].GetType()
-	for i := range args {
-		rft := args[i].GetType()
-		var tp types.EvalType
-		tp, isStr, isTemporalWithDate = temporalWithDateAsNumEvalType(rft)
-		if isTemporalWithDate {
-			datetimeFound = true
+
+	var temporalItem *types.FieldType
+	if types.ResultMergeType(aggType.Tp) == types.StringResult {
+		for i := range args {
+			item := args[i].GetType()
+			if types.IsTemporalWithDate(item.Tp) {
+				temporalItem = item
+			}
 		}
-		if !isStr {
-			isAllStr = false
+
+		if !types.IsTemporalWithDate(aggType.Tp) && temporalItem != nil {
+			aggType.Tp = temporalItem.Tp
 		}
-		cmpEvalType = getBaseCmpType(cmpEvalType, tp, lft, rft)
-		lft = rft
+		// TODO: String charset, collation checking are needed.
 	}
-	argTp = cmpEvalType
-	if cmpEvalType.IsStringKind() {
-		argTp = types.ETString
-	}
-	if isAllStr && datetimeFound {
-		argTp = types.ETDatetime
-	}
-	return argTp
+	return aggType.EvalType(), nil
 }
 
 type greatestFunctionClass struct {
@@ -424,7 +465,8 @@ func (c *greatestFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	if err = c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	tp, cmpAsDatetime := GetCmpTp4MinMax(args), false
+	tp, _ := GetCmpTp4MinMax(args)
+	cmpAsDatetime := false
 	if tp == types.ETDatetime {
 		cmpAsDatetime = true
 		tp = types.ETString
@@ -626,7 +668,8 @@ func (c *leastFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 	if err = c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	tp, cmpAsDatetime := GetCmpTp4MinMax(args), false
+	tp, _ := GetCmpTp4MinMax(args)
+	cmpAsDatetime := false
 	if tp == types.ETDatetime {
 		cmpAsDatetime = true
 		tp = types.ETString
@@ -797,32 +840,26 @@ func (b *builtinLeastTimeSig) Clone() builtinFunc {
 func (b *builtinLeastTimeSig) evalString(row chunk.Row) (res string, isNull bool, err error) {
 	var (
 		v string
-		t types.Time
 	)
-	min := types.NewTime(types.MaxDatetime, mysql.TypeDatetime, types.MaxFsp)
-	findInvalidTime := false
+	var min *string
 	sc := b.ctx.GetSessionVars().StmtCtx
 	for i := 0; i < len(b.args); i++ {
 		v, isNull, err = b.args[i].EvalString(b.ctx, row)
 		if isNull || err != nil {
 			return "", true, err
 		}
-		t, err = types.ParseDatetime(sc, v)
+		t, err := types.ParseTime(sc, v, mysql.TypeDatetime, types.MaxFsp)
 		if err != nil {
 			if err = handleInvalidTimeError(b.ctx, err); err != nil {
 				return v, true, err
-			} else if !findInvalidTime {
-				res = v
-				findInvalidTime = true
 			}
+			v = t.String()
 		}
-		if t.Compare(min) < 0 {
-			min = t
+		if min == nil || strings.Compare(*min, v) < 0 {
+			min = &v
 		}
 	}
-	if !findInvalidTime {
-		res = min.String()
-	}
+	res = *min
 	return res, false, nil
 }
 
