@@ -204,10 +204,33 @@ func dumpBinaryDateTime(data []byte, t types.Time) []byte {
 	year, mon, day := t.Time.Year(), t.Time.Month(), t.Time.Day()
 	switch t.Type {
 	case mysql.TypeTimestamp, mysql.TypeDatetime:
+<<<<<<< HEAD
 		data = append(data, 11)
 		data = dumpUint16(data, uint16(year))
 		data = append(data, byte(mon), byte(day), byte(t.Time.Hour()), byte(t.Time.Minute()), byte(t.Time.Second()))
 		data = dumpUint32(data, uint32(t.Time.Microsecond()))
+=======
+		if t.IsZero() {
+			// All zero.
+			data = append(data, 0)
+		} else if t.Microsecond() != 0 {
+			// Has micro seconds.
+			data = append(data, 11)
+			data = dumpUint16(data, uint16(year))
+			data = append(data, byte(mon), byte(day), byte(t.Hour()), byte(t.Minute()), byte(t.Second()))
+			data = dumpUint32(data, uint32(t.Microsecond()))
+		} else if t.Hour() != 0 || t.Minute() != 0 || t.Second() != 0 {
+			// Has HH:MM:SS
+			data = append(data, 7)
+			data = dumpUint16(data, uint16(year))
+			data = append(data, byte(mon), byte(day), byte(t.Hour()), byte(t.Minute()), byte(t.Second()))
+		} else {
+			// Only YY:MM:DD
+			data = append(data, 4)
+			data = dumpUint16(data, uint16(year))
+			data = append(data, byte(mon), byte(day))
+		}
+>>>>>>> 27c59c736... server: make dump binary time more compatible with MySQL (#21127)
 	case mysql.TypeDate:
 		data = append(data, 4)
 		data = dumpUint16(data, uint16(year)) //year
