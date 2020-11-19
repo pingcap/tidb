@@ -446,7 +446,7 @@
       },
       {
         "SQL": "select * from t where t.c in (select b from t s where s.a = t.a)",
-        "Best": "MergeSemiJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.a,test.t.a)"
+        "Best": "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.a,test.t.a)(test.t.c,test.t.b)"
       },
       {
         "SQL": "select t.c in (select b from t s where s.a = t.a) from t",
@@ -2232,7 +2232,8 @@
           "TableReader_7 2048.00 root  data:Selection_6",
           "└─Selection_6 2048.00 cop[tikv]  eq(test.test.age, 5)",
           "  └─TableFullScan_5 2048.00 cop[tikv] table:test keep order:false"
-        ]
+        ],
+        "Result": null
       }
     ]
   },
@@ -2242,10 +2243,11 @@
       {
         "SQL": "select * from test where age=5;",
         "Plan": [
-          "IndexLookUp_7 2048.00 root  ",
-          "├─IndexRangeScan_5(Build) 2048.00 cop[tikv] table:test, index:idx_age(age) range:[5,5], keep order:false",
-          "└─TableRowIDScan_6(Probe) 2048.00 cop[tikv] table:test keep order:false"
-        ]
+          "IndexLookUp_7 1106.87 root  ",
+          "├─IndexRangeScan_5(Build) 1106.87 cop[tikv] table:test, index:idx_age(age) range:[5,5], keep order:false",
+          "└─TableRowIDScan_6(Probe) 1106.87 cop[tikv] table:test keep order:false"
+        ],
+        "Result": null
       }
     ]
   }
