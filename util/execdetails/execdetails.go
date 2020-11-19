@@ -434,8 +434,13 @@ const (
 	TpIndexLookUpRunTimeStats
 	// TpSlowQueryRuntimeStat is the tp for TpSlowQueryRuntimeStat
 	TpSlowQueryRuntimeStat
+<<<<<<< HEAD
 	// TpInsertRuntimeStat is the tp for InsertRuntimeStat
 	TpInsertRuntimeStat
+=======
+	// TpIndexMergeRunTimeStats is the tp for TpIndexMergeRunTimeStats
+	TpIndexMergeRunTimeStats
+>>>>>>> 22feeb4ae... executor:Add runtime stat for IndexMergeReaderExecutor (#20653)
 )
 
 // RuntimeStats is used to express the executor runtime information.
