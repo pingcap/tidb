@@ -2429,6 +2429,10 @@ func backgroundExecOnJobUpdatedExported(c *C, store kv.Storage, ctx sessionctx.C
 }
 
 func (s *testIntegrationSuite5) TestPartitionAddPrimaryKey(c *C) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.MemQuotaQuery = 1 << 31
+	})
 	tk := testkit.NewTestKit(c, s.store)
 	testPartitionAddIndexOrPK(c, tk, "primary key")
 }

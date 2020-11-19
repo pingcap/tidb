@@ -105,11 +105,17 @@ func tearDownIntegrationSuite(s *testIntegrationSuite, c *C) {
 }
 
 func (s *testIntegrationSuite) SetUpSuite(c *C) {
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.MemQuotaQuery = 1 << 31
+	})
 	setupIntegrationSuite(s, c)
 }
 
 func (s *testIntegrationSuite) TearDownSuite(c *C) {
 	tearDownIntegrationSuite(s, c)
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.MemQuotaQuery = 1 << 30
+	})
 }
 
 type testIntegrationSuite1 struct{ *testIntegrationSuite }

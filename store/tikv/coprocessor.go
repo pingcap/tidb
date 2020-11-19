@@ -558,6 +558,9 @@ func (it *copIterator) adaptiveTokenCount() int {
 	if it.req.KeepOrder {
 		tokenLimit = 2 * it.concurrency
 	}
+	if it.memTracker == nil {
+		return tokenLimit
+	}
 	for i := 0; i < tokenLimit; i++ {
 		if it.memTracker.Peak(OccupiedMem) {
 			exceed := it.memTracker.ConsumeWithoutAction(OccupiedMem)
@@ -1377,7 +1380,6 @@ func (e *rateLimitAction) Action(t *memory.Tracker) {
 			e.setEnabled(false)
 		}
 	})
-
 	if !e.isEnabled() {
 		if e.fallbackAction != nil {
 			e.fallbackAction.Action(t)
