@@ -5688,6 +5688,7 @@ func (s *testDBSuite4) TestLockTableReadOnly(c *C) {
 	c.Assert(terror.ErrorEqual(tk.ExecToErr("lock tables t1 write local"), infoschema.ErrTableLocked), IsTrue)
 	c.Assert(terror.ErrorEqual(tk2.ExecToErr("lock tables t1 write local"), infoschema.ErrTableLocked), IsTrue)
 	tk.MustExec("admin cleanup table lock t1")
+	tk2.MustExec("insert into t1 set a=1")
 }
 
 func (s *testDBSuite4) testParallelExecSQL(c *C, sql1, sql2 string, se1, se2 session.Session, f checkRet) {
