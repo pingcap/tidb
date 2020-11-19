@@ -122,7 +122,8 @@ func InferType4ControlFuncs(lexp, rexp Expression) *types.FieldType {
 			if lhs.Decimal != types.UnspecifiedLength {
 				rhsFlen -= rhs.Decimal
 			}
-			resultFieldType.Flen = maxlen(lhsFlen, rhsFlen) + resultFieldType.Decimal + 1
+			flen := maxlen(lhsFlen, rhsFlen) + resultFieldType.Decimal + 1   // account for -1 len fields
+			resultFieldType.Flen = mathutil.Min(flen, mysql.MaxDecimalWidth) // make sure it doesn't overflow
 		} else {
 			resultFieldType.Flen = maxlen(lhs.Flen, rhs.Flen)
 		}
