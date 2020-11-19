@@ -201,7 +201,7 @@ func newFunctionImpl(ctx sessionctx.Context, fold int, funcName string, retType 
 	funcArgs := make([]Expression, len(args))
 	copy(funcArgs, args)
 	switch funcName {
-	case ast.If,ast.Ifnull,ast.Nullif:
+	case ast.If, ast.Ifnull, ast.Nullif:
 		// Do nothing. Because it will call InferType4ControlFuncs.
 	default:
 		typeInferForNull(funcArgs)
