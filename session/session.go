@@ -197,6 +197,7 @@ type session struct {
 // AddTableLock adds table lock to the session lock map.
 func (s *session) AddTableLock(locks []model.TableLockTpInfo) {
 	for _, l := range locks {
+		// read only lock is session unrelated, skip it when adding lock to session.
 		if l.Tp != model.TableLockReadOnly {
 			s.lockedTables[l.TableID] = l
 		}
