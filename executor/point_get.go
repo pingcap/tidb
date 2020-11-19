@@ -180,6 +180,9 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 	} else {
 		tblID = e.tblInfo.ID
 	}
+	if e.lock {
+		e.updateDeltaForTableID(tblID)
+	}
 	if e.idxInfo != nil {
 		if isCommonHandleRead(e.tblInfo, e.idxInfo) {
 			handleBytes, err := EncodeUniqueIndexValuesForKey(e.ctx, e.tblInfo, e.idxInfo, e.idxVals)
