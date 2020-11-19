@@ -490,6 +490,7 @@ add placement policy
 	role=leader
 	replicas=1;`)
 	c.Assert(err, IsNil)
+	// modify p0 when alter p0 placement policy, the txn should be failed
 	_, err = tk.Exec("begin;")
 	c.Assert(err, IsNil)
 	_, err = tk1.Exec(`alter table tp1 alter partition p0
@@ -503,4 +504,22 @@ add placement policy
 	_, err = tk.Exec("commit")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Matches, "*.[domain:8028]*.")
+
+	_, err = tk.Exec(`alter table tp1 alter partition p1
+add placement policy
+	constraints='["+   zone   =   sh  "]'
+	role=leader
+	replicas=1;`)
+	// modify p0 when alter p1 placement policy, the txn should be success.
+	_, err = tk.Exec("begin;")
+	c.Assert(err, IsNil)
+	_, err = tk1.Exec(`alter table tp1 alter partition p1
+add placement policy
+	constraints='["+   zone   =   sh  "]'
+	role=follower
+	replicas=3;`)
+	_, err = tk.Exec("insert into tp1 (c) values (1);")
+	c.Assert(err, IsNil)
+	_, err = tk.Exec("commit")
+	c.Assert(err, IsNil)
 }
