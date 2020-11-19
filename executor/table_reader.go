@@ -19,6 +19,7 @@ import (
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
@@ -103,6 +104,9 @@ type TableReaderExecutor struct {
 	virtualColumnRetFieldTypes []*types.FieldType
 	// batchCop indicates whether use super batch coprocessor request, only works for TiFlash engine.
 	batchCop bool
+
+	// extraPIDColumnIndex is used for partition reader to add an extra partition ID column, default -1
+	extraPIDColumnIndex int
 }
 
 // Open initialzes necessary variables for using this executor.
@@ -194,7 +198,24 @@ func (e *TableReaderExecutor) Next(ctx context.Context, req *chunk.Chunk) error 
 		return err
 	}
 
+	// When 'select ... for update' work on a partitioned table, the table reader should
+	// add the partition ID as an extra column. The SelectLockExec need this information
+	// to construct the lock key.
+	_, isPartition := e.table.(table.PartitionedTable)
+	if isPartition && e.extraPIDColumnIndex >= 0 {
+		fillExtraPIDColumn(req, e.extraPIDColumnIndex, getPhysicalTableID(e.table))
+	}
+
 	return nil
+}
+
+func fillExtraPIDColumn(req *chunk.Chunk, extraPIDColumnIndex int, physicalID int64) {
+	numRows := req.NumRows()
+	pidColumn := chunk.NewColumn(types.NewFieldType(mysql.TypeLonglong), numRows)
+	for i := 0; i < numRows; i++ {
+		pidColumn.AppendInt64(physicalID)
+	}
+	req.SetCol(extraPIDColumnIndex, pidColumn)
 }
 
 // Close implements the Executor Close interface.

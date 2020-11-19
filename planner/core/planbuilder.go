@@ -986,14 +986,43 @@ func removeIgnoredPaths(paths, ignoredPaths []*util.AccessPath, tblInfo *model.T
 	return remainedPaths
 }
 
-func (b *PlanBuilder) buildSelectLock(src LogicalPlan, lock *ast.SelectLockInfo) *LogicalLock {
+func (b *PlanBuilder) buildSelectLock(src LogicalPlan, lock *ast.SelectLockInfo) (*LogicalLock, error) {
 	selectLock := LogicalLock{
 		Lock:             lock,
 		tblID2Handle:     b.handleHelper.tailMap(),
 		partitionedTable: b.partitionedTable,
 	}.Init(b.ctx)
 	selectLock.SetChildren(src)
-	return selectLock
+
+	if len(b.partitionedTable) > 0 {
+		// If a chunk row is read from a partitioned table, which partition the row
+		// comes from is unknown. With the existence of Join, the situation could be
+		// even worse: SelectLock have to know the `pid` to construct the lock key.
+		// To solve the problem, an extra `pid` column is add to the schema, and the
+		// DataSource need to return the `pid` information in the chunk row.
+		err := addExtraPIDColumnToDataSource(src, &selectLock.extraPIDInfo)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return selectLock, nil
+}
+
+func addExtraPIDColumnToDataSource(p LogicalPlan, info *extraPIDInfo) error {
+	switch raw := p.(type) {
+	case *DataSource:
+		raw.addExtraPIDColumn(info)
+		return nil
+	default:
+		var err error
+		for _, child := range p.Children() {
+			err = addExtraPIDColumnToDataSource(child, info)
+			if err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func (b *PlanBuilder) buildPrepare(x *ast.PrepareStmt) Plan {

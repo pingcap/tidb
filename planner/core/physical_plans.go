@@ -947,6 +947,7 @@ type PhysicalLock struct {
 
 	TblID2Handle     map[int64][]HandleCols
 	PartitionedTable []table.PartitionedTable
+	ExtraPIDInfo     extraPIDInfo
 }
 
 // PhysicalLimit is the physical operator of Limit.

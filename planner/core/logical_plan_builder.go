@@ -2810,7 +2810,10 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 			err = expression.ErrFunctionsNoopImpl.GenWithStackByArgs("LOCK IN SHARE MODE")
 			return nil, err
 		}
-		p = b.buildSelectLock(p, sel.LockInfo)
+		p, err = b.buildSelectLock(p, sel.LockInfo)
+		if err != nil {
+			return nil, err
+		}
 	}
 	b.handleHelper.popMap()
 	b.handleHelper.pushMap(nil)
@@ -2921,6 +2924,33 @@ func (ds *DataSource) newExtraHandleSchemaCol() *expression.Column {
 		ID:       model.ExtraHandleID,
 		OrigName: fmt.Sprintf("%v.%v.%v", ds.DBName, ds.tableInfo.Name, model.ExtraHandleName),
 	}
+}
+
+// addExtraPIDColumn add an extra PID column for partition table.
+// 'select ... for update' on a partition table need to know the partition ID
+// to construct the lock key, so this column is added to the chunk row.
+func (ds *DataSource) addExtraPIDColumn(info *extraPIDInfo) {
+	pidCol := &expression.Column{
+		RetType:  types.NewFieldType(mysql.TypeLonglong),
+		UniqueID: ds.ctx.GetSessionVars().AllocPlanColumnID(),
+		ID:       model.ExtraPidColID,
+		OrigName: fmt.Sprintf("%v.%v.%v", ds.DBName, ds.tableInfo.Name, model.ExtraPartitionIdName),
+	}
+
+	ds.Columns = append(ds.Columns, model.NewExtraPartitionIDColInfo())
+	schema := ds.Schema()
+	schema.Append(pidCol)
+	ds.names = append(ds.names, &types.FieldName{
+		DBName:      ds.DBName,
+		TblName:     ds.TableInfo().Name,
+		ColName:     model.ExtraHandleName,
+		OrigColName: model.ExtraHandleName,
+	})
+	ds.TblCols = append(ds.TblCols, pidCol)
+
+	info.Columns = append(info.Columns, pidCol)
+	info.TblIDs = append(info.TblIDs, ds.TableInfo().ID)
+	return
 }
 
 // getStatsTable gets statistics information for a table specified by "tableID".
@@ -3667,9 +3697,12 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 			// buildSelectLock is an optimization that can reduce RPC call.
 			// We only need do this optimization for single table update which is the most common case.
 			// When TableRefs.Right is nil, it is single table update.
-			p = b.buildSelectLock(p, &ast.SelectLockInfo{
+			p, err = b.buildSelectLock(p, &ast.SelectLockInfo{
 				LockType: ast.SelectLockForUpdate,
 			})
+			if err != nil {
+				return nil, err
+			}
 		}
 	}
 
@@ -3943,9 +3976,12 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, delete *ast.DeleteStmt) (
 	}
 	if b.ctx.GetSessionVars().TxnCtx.IsPessimistic {
 		if !delete.IsMultiTable {
-			p = b.buildSelectLock(p, &ast.SelectLockInfo{
+			p, err = b.buildSelectLock(p, &ast.SelectLockInfo{
 				LockType: ast.SelectLockForUpdate,
 			})
+			if err != nil {
+				return nil, err
+			}
 		}
 	}
 

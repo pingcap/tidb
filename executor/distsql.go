@@ -600,15 +600,16 @@ func (e *IndexLookUpExecutor) startTableWorker(ctx context.Context, workCh <-cha
 
 func (e *IndexLookUpExecutor) buildTableReader(ctx context.Context, handles []kv.Handle) (Executor, error) {
 	tableReaderExec := &TableReaderExecutor{
-		baseExecutor:   newBaseExecutor(e.ctx, e.schema, e.getTableRootPlanID()),
-		table:          e.table,
-		dagPB:          e.tableRequest,
-		startTS:        e.startTS,
-		columns:        e.columns,
-		streaming:      e.tableStreaming,
-		feedback:       statistics.NewQueryFeedback(0, nil, 0, false),
-		corColInFilter: e.corColInTblSide,
-		plans:          e.tblPlans,
+		baseExecutor:        newBaseExecutor(e.ctx, e.schema, e.getTableRootPlanID()),
+		table:               e.table,
+		dagPB:               e.tableRequest,
+		startTS:             e.startTS,
+		columns:             e.columns,
+		streaming:           e.tableStreaming,
+		feedback:            statistics.NewQueryFeedback(0, nil, 0, false),
+		corColInFilter:      e.corColInTblSide,
+		plans:               e.tblPlans,
+		extraPIDColumnIndex: -1,
 	}
 	tableReaderExec.buildVirtualColumnInfo()
 	tableReader, err := e.dataReaderBuilder.buildTableReaderFromHandles(ctx, tableReaderExec, handles, true)

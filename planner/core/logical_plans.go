@@ -1014,6 +1014,11 @@ type LogicalLimit struct {
 	limitHints limitHintInfo
 }
 
+type extraPIDInfo struct {
+	Columns []*expression.Column
+	TblIDs  []int64
+}
+
 // LogicalLock represents a select lock plan.
 type LogicalLock struct {
 	baseLogicalPlan
@@ -1021,6 +1026,9 @@ type LogicalLock struct {
 	Lock             *ast.SelectLockInfo
 	tblID2Handle     map[int64][]HandleCols
 	partitionedTable []table.PartitionedTable
+	// extraPIDInfo is used when it works on partition table, the child executor
+	// need to return an extra partition ID column in the chunk row.
+	extraPIDInfo
 }
 
 // WindowFrame represents a window function frame.

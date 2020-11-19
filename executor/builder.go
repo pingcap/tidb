@@ -600,6 +600,16 @@ func (b *executorBuilder) buildSelectLock(v *plannercore.PhysicalLock) Executor 
 		tblID2Handle:     v.TblID2Handle,
 		partitionedTable: v.PartitionedTable,
 	}
+	if len(e.partitionedTable) > 0 {
+		schema := v.Schema()
+		e.tblID2PIDColumnIndex = make(map[int64]int)
+		for i := 0; i < len(v.ExtraPIDInfo.Columns); i++ {
+			col := v.ExtraPIDInfo.Columns[i]
+			tblID := v.ExtraPIDInfo.TblIDs[i]
+			offset := schema.ColumnIndex(col)
+			e.tblID2PIDColumnIndex[tblID] = offset
+		}
+	}
 	return e
 }
 
@@ -2482,21 +2492,26 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 		return nil, err
 	}
 	e := &TableReaderExecutor{
-		baseExecutor:   newBaseExecutor(b.ctx, v.Schema(), v.ID()),
-		dagPB:          dagReq,
-		startTS:        startTS,
-		table:          tbl,
-		keepOrder:      ts.KeepOrder,
-		desc:           ts.Desc,
-		columns:        ts.Columns,
-		streaming:      streaming,
-		corColInFilter: b.corColInDistPlan(v.TablePlans),
-		corColInAccess: b.corColInAccess(v.TablePlans[0]),
-		plans:          v.TablePlans,
-		tablePlan:      v.GetTablePlan(),
-		storeType:      v.StoreType,
+		baseExecutor:        newBaseExecutor(b.ctx, v.Schema(), v.ID()),
+		dagPB:               dagReq,
+		startTS:             startTS,
+		table:               tbl,
+		keepOrder:           ts.KeepOrder,
+		desc:                ts.Desc,
+		columns:             ts.Columns,
+		streaming:           streaming,
+		corColInFilter:      b.corColInDistPlan(v.TablePlans),
+		corColInAccess:      b.corColInAccess(v.TablePlans[0]),
+		plans:               v.TablePlans,
+		tablePlan:           v.GetTablePlan(),
+		storeType:           v.StoreType,
+		extraPIDColumnIndex: -1,
 	}
 	e.setBatchCop(v)
+
+	if isPartition {
+		e.extraPIDColumnIndex = extraPIDColumnIndex(v.Schema())
+	}
 	e.buildVirtualColumnInfo()
 	if containsLimit(dagReq.Executors) {
 		e.feedback = statistics.NewQueryFeedback(0, nil, 0, ts.Desc)
@@ -2521,6 +2536,15 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 	}
 
 	return e, nil
+}
+
+func extraPIDColumnIndex(schema *expression.Schema) int {
+	for idx, col := range schema.Columns {
+		if col.ID == model.ExtraPidColID {
+			return idx
+		}
+	}
+	return -1
 }
 
 func (b *executorBuilder) buildMPPGather(v *plannercore.PhysicalTableReader) Executor {
