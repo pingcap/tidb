@@ -562,3 +562,55 @@ func (s *testPointGetSuite) TestBatchPointGetWithInvisibleIndex(c *C) {
 		"  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
 	))
 }
+
+func (s *testPointGetSuite) TestShouldNotUsePointGetWithCharColumn(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop tables if exists t1, t2, t3, t4")
+	tk.MustExec("create table t1(id varchar(20) primary key)")
+	tk.MustExec("create table t2(id varchar(20), unique(id))")
+	tk.MustExec("create table t3(id varchar(20), d varchar(20), unique(id, d))")
+	tk.MustExec("create table t4(id int, d varchar(20), c varchar(20), unique(id, d))")
+
+	tk.MustQuery("explain select * from t1 where id = 0").Check(testkit.Rows(
+		"TableReader_7 8000.00 root  data:Selection_6",
+		"└─Selection_6 8000.00 cop[tikv]  eq(cast(test.t1.id), 0)",
+		"  └─TableFullScan_5 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+	))
+	tk.MustQuery("explain select * from t1 where id in (0, 1)").Check(testkit.Rows(
+		"TableReader_7 9600.00 root  data:Selection_6",
+		"└─Selection_6 9600.00 cop[tikv]  or(eq(cast(test.t1.id), 0), eq(cast(test.t1.id), 1))",
+		"  └─TableFullScan_5 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+	))
+
+	tk.MustQuery("explain select * from t2 where id = 0").Check(testkit.Rows(
+		"IndexReader_10 8000.00 root  index:Selection_9",
+		"└─Selection_9 8000.00 cop[tikv]  eq(cast(test.t2.id), 0)",
+		"  └─IndexFullScan_8 10000.00 cop[tikv] table:t2, index:id(id) keep order:false, stats:pseudo",
+	))
+
+	tk.MustQuery("explain select * from t2 where id in (0, 1)").Check(testkit.Rows(
+		"IndexReader_10 9600.00 root  index:Selection_9",
+		"└─Selection_9 9600.00 cop[tikv]  or(eq(cast(test.t2.id), 0), eq(cast(test.t2.id), 1))",
+		"  └─IndexFullScan_8 10000.00 cop[tikv] table:t2, index:id(id) keep order:false, stats:pseudo",
+	))
+
+	tk.MustQuery("explain select * from t3 where (id, d) in ((0, 't'), (1, 't'))").Check(testkit.Rows(
+		"IndexReader_10 15.99 root  index:Selection_9",
+		"└─Selection_9 15.99 cop[tikv]  or(and(eq(cast(test.t3.id), 0), eq(test.t3.d, \"t\")), and(eq(cast(test.t3.id), 1), eq(test.t3.d, \"t\")))",
+		"  └─IndexFullScan_8 10000.00 cop[tikv] table:t3, index:id(id, d) keep order:false, stats:pseudo",
+	))
+
+	tk.MustQuery("explain select * from t4 where (id, d, c) in ((1, 'b', 0))").Check(testkit.Rows(
+		"Selection_6 0.80 root  eq(cast(test.t4.c), 0)",
+		"└─Point_Get_5 1.00 root table:t4, index:id(id, d) ",
+	))
+
+	tk.MustQuery("explain select * from t4 where (id, d, c) in ((1, 0, 0))").Check(testkit.Rows(
+		"IndexLookUp_12 8.00 root  ",
+		"├─Selection_10(Build) 8.00 cop[tikv]  eq(cast(test.t4.d), 0)",
+		"│ └─IndexRangeScan_8 10.00 cop[tikv] table:t4, index:id(id, d) range:[1,1], keep order:false, stats:pseudo",
+		"└─Selection_11(Probe) 8.00 cop[tikv]  eq(cast(test.t4.c), 0)",
+		"  └─TableRowIDScan_9 8.00 cop[tikv] table:t4 keep order:false, stats:pseudo",
+	))
+}

@@ -518,7 +518,7 @@ func newBatchPointGetPlan(
 			if d.IsNull() {
 				return nil
 			}
-			if !checkCanUseConvertTo(handleCol, d) {
+			if !checkCanConvertInPointGet(handleCol, d) {
 				return nil
 			}
 			intDatum, err := d.ConvertTo(ctx.GetSessionVars().StmtCtx, &handleCol.FieldType)
@@ -603,12 +603,12 @@ func newBatchPointGetPlan(
 				permIndex := permutations[index]
 				switch innerX := inner.(type) {
 				case *driver.ValueExpr:
-					if !checkCanUseConvertTo(colInfos[index], innerX.Datum) {
+					if !checkCanConvertInPointGet(colInfos[index], innerX.Datum) {
 						return nil
 					}
 					values[permIndex] = innerX.Datum
 				case *driver.ParamMarkerExpr:
-					if !checkCanUseConvertTo(colInfos[index], innerX.Datum) {
+					if !checkCanConvertInPointGet(colInfos[index], innerX.Datum) {
 						return nil
 					}
 					values[permIndex] = innerX.Datum
@@ -618,12 +618,12 @@ func newBatchPointGetPlan(
 				}
 			}
 		case *driver.ValueExpr:
-			if !checkCanUseConvertTo(colInfos[0], x.Datum) {
+			if !checkCanConvertInPointGet(colInfos[0], x.Datum) {
 				return nil
 			}
 			values = []types.Datum{x.Datum}
 		case *driver.ParamMarkerExpr:
-			if !checkCanUseConvertTo(colInfos[0], x.Datum) {
+			if !checkCanConvertInPointGet(colInfos[0], x.Datum) {
 				return nil
 			}
 			values = []types.Datum{x.Datum}
@@ -1040,7 +1040,7 @@ func getNameValuePairs(stmtCtx *stmtctx.StatementContext, tbl *model.TableInfo, 
 			(col.Tp == mysql.TypeString && col.Collate == charset.CollationBin) { // This type we needn't to pad `\0` in here.
 			return append(nvPairs, nameValuePair{colName: colName.Name.Name.L, value: d, param: param}), false
 		}
-		if !checkCanUseConvertTo(col, d) {
+		if !checkCanConvertInPointGet(col, d) {
 			return nil, false
 		}
 		dVal, err := d.ConvertTo(stmtCtx, &col.FieldType)
@@ -1066,16 +1066,14 @@ func getNameValuePairs(stmtCtx *stmtctx.StatementContext, tbl *model.TableInfo, 
 	return nil, false
 }
 
-func checkCanUseConvertTo(col *model.ColumnInfo, d types.Datum) bool {
-	dKind := d.Kind()
+func checkCanConvertInPointGet(col *model.ColumnInfo, d types.Datum) bool {
+	kind := d.Kind()
 	switch col.FieldType.EvalType() {
 	case ptypes.ETString:
-		switch dKind {
-		case types.KindInt64, types.KindUint64:
-			// column type is String and constant type is int or uint
-			return false
-		case types.KindFloat32, types.KindFloat64, types.KindMysqlDecimal:
-			// column type is String and constant type is float or double
+		switch kind {
+		case types.KindInt64, types.KindUint64,
+			types.KindFloat32, types.KindFloat64, types.KindMysqlDecimal:
+			// column type is String and constant type is numeric
 			return false
 		}
 	}
