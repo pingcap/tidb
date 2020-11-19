@@ -19,7 +19,6 @@ import (
 	"fmt"
 	"runtime/trace"
 	"sort"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -458,14 +457,6 @@ func (txn *tikvTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput
 		// If the number of keys greater than 1, it can be on different region,
 		// concurrently execute on multiple regions may lead to deadlock.
 		txn.committer.isFirstLock = len(txn.lockKeys) == 0 && len(keys) == 1
-		var keysStr strings.Builder
-		for _, k := range keys {
-			keysStr.WriteString(kv.Key(k).String())
-			keysStr.WriteString(", ")
-		}
-		logutil.BgLogger().Info("lock keys on TiKV",
-			zap.Uint64("txnStartTS", txn.startTS),
-			zap.String("", keysStr.String()))
 		err = txn.committer.pessimisticLockMutations(bo, lockCtx, CommitterMutations{keys: keys})
 		if bo.totalSleep > 0 {
 			atomic.AddInt64(&lockCtx.Stats.BackoffTime, int64(bo.totalSleep)*int64(time.Millisecond))
