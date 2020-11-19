@@ -2014,6 +2014,7 @@ var builtinGlobalVariable = []string{
 	variable.TiDBEnableTelemetry,
 	variable.TiDBEnableAmendPessimisticTxn,
 	variable.TiDBEnableRateLimitAction,
+	variable.TiDBMemoryUsageAlarmRatio,
 }
 
 var (
