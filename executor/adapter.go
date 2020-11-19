@@ -529,12 +529,6 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) error {
 	if err != nil {
 		return err
 	}
-	defer func() {
-		if sctx.GetSessionVars().ConnectionID > 0 {
-			logutil.Logger(ctx).Info("[for debug] ExecStmt.handlePessimisticDML result", zap.Error(err),
-				zap.Bool("nil err", err == nil))
-		}
-	}()
 	txnCtx := sctx.GetSessionVars().TxnCtx
 	for {
 		startPointGetLocking := time.Now()
@@ -549,9 +543,6 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) error {
 				if ErrDeadlock.Equal(err) {
 					metrics.StatementDeadlockDetectDuration.Observe(time.Since(startPointGetLocking).Seconds())
 				}
-				if sctx.GetSessionVars().ConnectionID > 0 {
-					logutil.Logger(ctx).Error("[for debug] ExecStmt.handlePessimisticDML failed", zap.Error(err))
-				}
 				return err
 			}
 			continue
@@ -561,10 +552,6 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) error {
 			return err1
 		}
 		keys = txnCtx.CollectUnchangedRowKeys(keys)
-		if sctx.GetSessionVars().ConnectionID > 0 {
-			logutil.Logger(ctx).Info("[for debug] ExecStmt.handlePessimisticDML before lock keys",
-				zap.Int("need to lock len", len(keys)))
-		}
 		if len(keys) == 0 {
 			return nil
 		}

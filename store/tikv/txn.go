@@ -426,11 +426,6 @@ func (txn *tikvTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput
 			lockCtx.Values[string(key)] = kv.ReturnedValue{AlreadyLocked: true}
 		}
 	}
-	logutil.Logger(ctx).Info("[for debug] tikvTxn.LockKeys",
-		zap.Int("need to lock len", len(keys)),
-		zap.Uint64("startTS", txn.startTS),
-		zap.Uint64("forUpdateTS", lockCtx.ForUpdateTS),
-		zap.Bool("pessimistic", txn.IsPessimistic()))
 	if len(keys) == 0 {
 		return nil
 	}
@@ -463,16 +458,14 @@ func (txn *tikvTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput
 		// If the number of keys greater than 1, it can be on different region,
 		// concurrently execute on multiple regions may lead to deadlock.
 		txn.committer.isFirstLock = len(txn.lockKeys) == 0 && len(keys) == 1
-		if txn.committer.connID > 0 {
-			var keysStr strings.Builder
-			for _, k := range keys {
-				keysStr.WriteString(kv.Key(k).String())
-				keysStr.WriteString(", ")
-			}
-			logutil.Logger(ctx).Info("lock keys on TiKV",
-				zap.Uint64("txnStartTS", txn.startTS),
-				zap.String("", keysStr.String()))
+		var keysStr strings.Builder
+		for _, k := range keys {
+			keysStr.WriteString(kv.Key(k).String())
+			keysStr.WriteString(", ")
 		}
+		logutil.BgLogger().Info("lock keys on TiKV",
+			zap.Uint64("txnStartTS", txn.startTS),
+			zap.String("", keysStr.String()))
 		err = txn.committer.pessimisticLockMutations(bo, lockCtx, CommitterMutations{keys: keys})
 		if bo.totalSleep > 0 {
 			atomic.AddInt64(&lockCtx.Stats.BackoffTime, int64(bo.totalSleep)*int64(time.Millisecond))

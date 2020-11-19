@@ -264,7 +264,6 @@ func insertRows(ctx context.Context, base insertCommon) (err error) {
 	}
 	err = base.exec(ctx, rows)
 	if err != nil {
-		logutil.Logger(ctx).Error("insert rows failed", zap.Error(err))
 		return err
 	}
 	rows = rows[:0]
@@ -1055,7 +1054,6 @@ func (e *InsertValues) addRecordWithAutoIDHint(ctx context.Context, row []types.
 	}
 	txn.DelOption(kv.PresumeKeyNotExists)
 	if err != nil {
-		logutil.Logger(ctx).Error("[for debug] InsertValues.addRecordWithAutoIDHint has failed", zap.Error(err))
 		return 0, err
 	}
 	if e.lastInsertID != 0 {

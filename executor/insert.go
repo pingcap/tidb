@@ -65,18 +65,6 @@ func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) error {
 	}
 	txnSize := txn.Size()
 	sessVars.StmtCtx.AddRecordRows(uint64(len(rows)))
-	if sessVars.ConnectionID > 0 {
-		logutil.Logger(ctx).Info("[for debug] insertExec.exec before addRecord",
-			zap.Uint64("startTS", txn.StartTS()))
-		for i, row := range rows {
-			for j, datum := range row {
-				logutil.Logger(ctx).Info("[for debug] insertExec.exec before addRecord",
-					zap.Int("rowIdx", i),
-					zap.Int("colIdx", j),
-					zap.Stringer("datum", datum))
-			}
-		}
-	}
 	// If you use the IGNORE keyword, duplicate-key error that occurs while executing the INSERT statement are ignored.
 	// For example, without IGNORE, a row that duplicates an existing UNIQUE index or PRIMARY KEY value in
 	// the table causes a duplicate-key error and the statement is aborted. With IGNORE, the row is discarded and no error occurs.
@@ -105,7 +93,6 @@ func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) error {
 				_, err = e.addRecord(ctx, row)
 			}
 			if err != nil {
-				logutil.Logger(ctx).Error("[for debug] insertExec.exec after addRecord failed", zap.Error(err))
 				return err
 			}
 		}

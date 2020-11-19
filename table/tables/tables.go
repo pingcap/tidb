@@ -499,19 +499,19 @@ func (t *TableCommon) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ..
 			stmtCtx := ctx.GetSessionVars().StmtCtx
 			stmtCtx.BaseRowID, stmtCtx.MaxRowID, err = allocHandleIDs(ctx, t, uint64(opt.ReserveAutoID))
 			if err != nil {
-				return 0, errors.Trace(err)
+				return 0, err
 			}
 		}
 
 		recordID, err = AllocHandle(ctx, t)
 		if err != nil {
-			return 0, errors.Trace(err)
+			return 0, err
 		}
 	}
 
 	txn, err := ctx.Txn(true)
 	if err != nil {
-		return 0, errors.Trace(err)
+		return 0, err
 	}
 	execBuf := kv.NewStagingBufferStore(txn)
 	defer execBuf.Discard()
@@ -527,11 +527,6 @@ func (t *TableCommon) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ..
 		}
 	}
 	// Insert new entries into indices.
-	if ctx.GetSessionVars().ConnectionID > 0 {
-		logutil.BgLogger().Info("[for debug] execBuf before addIndices",
-			zap.Uint64("connID", ctx.GetSessionVars().ConnectionID),
-			zap.Int("buf len", execBuf.Len()))
-	}
 	h, err := t.addIndices(ctx, recordID, r, execBuf, createIdxOpts)
 	if err != nil {
 		return h, err
@@ -573,15 +568,15 @@ func (t *TableCommon) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ..
 	sc, rd := sessVars.StmtCtx, &sessVars.RowEncoder
 	writeBufs.RowValBuf, err = tablecodec.EncodeRow(sc, row, colIDs, writeBufs.RowValBuf, writeBufs.AddRowValues, rd)
 	if err != nil {
-		return 0, errors.Trace(err)
+		return 0, err
 	}
 	value := writeBufs.RowValBuf
 	if err = execBuf.Set(key, value); err != nil {
-		return 0, errors.Trace(err)
+		return 0, err
 	}
 
 	if _, err := execBuf.Flush(); err != nil {
-		return 0, errors.Trace(err)
+		return 0, err
 	}
 	ctx.StmtAddDirtyTableOP(table.DirtyTableAddRow, t.physicalTableID, recordID)
 
@@ -650,13 +645,7 @@ func (t *TableCommon) addIndices(sctx sessionctx.Context, recordID int64, r []ty
 	skipCheck := sctx.GetSessionVars().StmtCtx.BatchCheck
 	if t.meta.PKIsHandle && !skipCheck && !opt.SkipHandleCheck {
 		if err := CheckHandleExists(ctx, sctx, t, recordID, nil); err != nil {
-			if sctx.GetSessionVars().ConnectionID > 0 {
-				logutil.BgLogger().Error("addIndices error CheckHandleExists",
-					zap.Uint64("connID", sctx.GetSessionVars().ConnectionID),
-					zap.Int64("recordID", recordID),
-					zap.Error(err))
-			}
-			return recordID, errors.Trace(err)
+			return recordID, err
 		}
 	}
 
@@ -665,17 +654,13 @@ func (t *TableCommon) addIndices(sctx sessionctx.Context, recordID int64, r []ty
 	for _, v := range t.WritableIndices() {
 		indexVals, err = v.FetchValues(r, indexVals)
 		if err != nil {
-			return 0, errors.Trace(err)
+			return 0, err
 		}
 		var dupErr error
 		if !skipCheck && v.Meta().Unique {
 			entryKey, err := t.genIndexKeyStr(indexVals)
 			if err != nil {
-				logutil.BgLogger().Error("[for debug] genIndexKeyStr error",
-					zap.Uint64("connID", sctx.GetSessionVars().ConnectionID),
-					zap.Int64("recordID", recordID),
-					zap.Error(err))
-				return 0, errors.Trace(err)
+				return 0, err
 			}
 			existErrInfo := kv.NewExistErrInfo(v.Meta().Name.String(), entryKey)
 			txn.SetOption(kv.PresumeKeyNotExistsError, existErrInfo)
@@ -684,8 +669,7 @@ func (t *TableCommon) addIndices(sctx sessionctx.Context, recordID int64, r []ty
 		}
 		if dupHandle, err := v.Create(sctx, rm, indexVals, recordID, opts...); err != nil {
 			if kv.ErrKeyExists.Equal(err) {
-				logutil.Logger(ctx).Error("[for debug] index.Create failed", zap.Error(err))
-				return dupHandle, errors.Trace(dupErr)
+				return dupHandle, dupErr
 			}
 			return 0, err
 		}
