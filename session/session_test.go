@@ -3533,3 +3533,15 @@ func (s *testSessionSuite2) TestMemoryUsageAlarmVariable(c *C) {
 	err = tk.ExecToErr("set @@global.tidb_memory_usage_alarm_ratio=0.8")
 	c.Assert(err.Error(), Equals, "Variable 'tidb_memory_usage_alarm_ratio' is a SESSION variable and can't be used with SET GLOBAL")
 }
+
+func (s *testSessionSuite2) TestSelectLockInShare(c *C) {
+	tk1 := testkit.NewTestKitWithInit(c, s.store)
+	tk1.MustExec("DROP TABLE IF EXISTS t_sel_in_share")
+	tk1.MustExec("CREATE TABLE t_sel_in_share (id int DEFAULT NULL)")
+	tk1.MustExec("insert into t_sel_in_share values (11)")
+	err := tk1.ExecToErr("select * from t_sel_in_share lock in share mode")
+	c.Assert(err, NotNil)
+	tk1.MustExec("set @@tidb_enable_noop_functions = 1")
+	tk1.MustQuery("select * from t_sel_in_share lock in share mode").Check(testkit.Rows("11"))
+	tk1.MustExec("DROP TABLE t_sel_in_share")
+}
