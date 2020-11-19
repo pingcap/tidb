@@ -13,7 +13,7 @@ var _ = Suite(&testSQLSuite{})
 
 type testSQLSuite struct{}
 
-func (s *testDumpSuite) TestDetectServerInfo(c *C) {
+func (s *testSQLSuite) TestDetectServerInfo(c *C) {
 	db, mock, err := sqlmock.New()
 	c.Assert(err, IsNil)
 	defer db.Close()
@@ -52,7 +52,7 @@ func (s *testDumpSuite) TestDetectServerInfo(c *C) {
 	}
 }
 
-func (s *testDumpSuite) TestBuildSelectAllQuery(c *C) {
+func (s *testSQLSuite) TestBuildSelectAllQuery(c *C) {
 	db, mock, err := sqlmock.New()
 	c.Assert(err, IsNil)
 	defer db.Close()
@@ -170,7 +170,7 @@ func (s *testDumpSuite) TestBuildSelectAllQuery(c *C) {
 	}
 }
 
-func (s *testDumpSuite) TestBuildOrderByClause(c *C) {
+func (s *testSQLSuite) TestBuildOrderByClause(c *C) {
 	db, mock, err := sqlmock.New()
 	c.Assert(err, IsNil)
 	defer db.Close()
@@ -255,7 +255,7 @@ func (s *testDumpSuite) TestBuildOrderByClause(c *C) {
 	}
 }
 
-func (s *testDumpSuite) TestBuildSelectField(c *C) {
+func (s *testSQLSuite) TestBuildSelectField(c *C) {
 	db, mock, err := sqlmock.New()
 	c.Assert(err, IsNil)
 	defer db.Close()
@@ -295,7 +295,7 @@ func (s *testDumpSuite) TestBuildSelectField(c *C) {
 	c.Assert(mock.ExpectationsWereMet(), IsNil)
 }
 
-func (s *testDumpSuite) TestParseSnapshotToTSO(c *C) {
+func (s *testSQLSuite) TestParseSnapshotToTSO(c *C) {
 	db, mock, err := sqlmock.New()
 	c.Assert(err, IsNil)
 	defer db.Close()
@@ -321,7 +321,7 @@ func (s *testDumpSuite) TestParseSnapshotToTSO(c *C) {
 	c.Assert(mock.ExpectationsWereMet(), IsNil)
 }
 
-func (s *testDumpSuite) TestShowCreateView(c *C) {
+func (s *testSQLSuite) TestShowCreateView(c *C) {
 	db, mock, err := sqlmock.New()
 	c.Assert(err, IsNil)
 	defer db.Close()

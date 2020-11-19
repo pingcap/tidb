@@ -14,7 +14,7 @@ var _ = Suite(&testWriterSuite{})
 
 type testWriterSuite struct{}
 
-func (s *testDumpSuite) TestWriteDatabaseMeta(c *C) {
+func (s *testWriterSuite) TestWriteDatabaseMeta(c *C) {
 	dir := c.MkDir()
 	ctx := context.Background()
 
@@ -35,7 +35,7 @@ func (s *testDumpSuite) TestWriteDatabaseMeta(c *C) {
 	c.Assert(string(bytes), Equals, "/*!40101 SET NAMES binary*/;\nCREATE DATABASE `test`;\n")
 }
 
-func (s *testDumpSuite) TestWriteTableMeta(c *C) {
+func (s *testWriterSuite) TestWriteTableMeta(c *C) {
 	dir := c.MkDir()
 	ctx := context.Background()
 
@@ -56,7 +56,7 @@ func (s *testDumpSuite) TestWriteTableMeta(c *C) {
 	c.Assert(string(bytes), Equals, "/*!40101 SET NAMES binary*/;\nCREATE TABLE t (a INT);\n")
 }
 
-func (s *testDumpSuite) TestWriteViewMeta(c *C) {
+func (s *testWriterSuite) TestWriteViewMeta(c *C) {
 	dir := c.MkDir()
 	ctx := context.Background()
 
@@ -88,7 +88,7 @@ func (s *testDumpSuite) TestWriteViewMeta(c *C) {
 	c.Assert(string(bytes), Equals, specCmt+createViewSQL)
 }
 
-func (s *testDumpSuite) TestWriteTableData(c *C) {
+func (s *testWriterSuite) TestWriteTableData(c *C) {
 	dir := c.MkDir()
 
 	ctx := context.Background()
@@ -133,7 +133,7 @@ func (s *testDumpSuite) TestWriteTableData(c *C) {
 	c.Assert(string(bytes), Equals, expected)
 }
 
-func (s *testDumpSuite) TestWriteTableDataWithFileSize(c *C) {
+func (s *testWriterSuite) TestWriteTableDataWithFileSize(c *C) {
 	dir := c.MkDir()
 
 	ctx := context.Background()
@@ -189,7 +189,7 @@ func (s *testDumpSuite) TestWriteTableDataWithFileSize(c *C) {
 	}
 }
 
-func (s *testDumpSuite) TestWriteTableDataWithFileSizeAndRows(c *C) {
+func (s *testWriterSuite) TestWriteTableDataWithFileSizeAndRows(c *C) {
 	dir := c.MkDir()
 
 	ctx := context.Background()
@@ -246,7 +246,7 @@ func (s *testDumpSuite) TestWriteTableDataWithFileSizeAndRows(c *C) {
 	}
 }
 
-func (s *testDumpSuite) TestWriteTableDataWithStatementSize(c *C) {
+func (s *testWriterSuite) TestWriteTableDataWithStatementSize(c *C) {
 	dir := c.MkDir()
 
 	ctx := context.Background()
