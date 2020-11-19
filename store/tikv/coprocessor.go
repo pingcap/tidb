@@ -58,7 +58,7 @@ type CopClient struct {
 	replicaReadSeed uint32
 }
 
-const OccupiedMem = 96 * 1024 * 1024 *2
+const OccupiedMem = 96 * 1024 * 1024 * 2
 
 // Send builds the request and gets the coprocessor iterator response.
 func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variables, sessionMemTracker *memory.Tracker) kv.Response {
