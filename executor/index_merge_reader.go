@@ -26,15 +26,14 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	plannercore "github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/execdetails"
@@ -106,12 +105,9 @@ type IndexMergeReaderExecutor struct {
 	corColInAccess  bool
 	idxCols         [][]*expression.Column
 	colLens         [][]int
-<<<<<<< HEAD
-=======
 
 	handleCols plannercore.HandleCols
 	stats      *IndexMergeRuntimeStat
->>>>>>> 22feeb4ae... executor:Add runtime stat for IndexMergeReaderExecutor (#20653)
 }
 
 // Open implements the Executor Open interface
@@ -207,24 +203,16 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 	if err != nil {
 		return err
 	}
-<<<<<<< HEAD
-
-	result, err := distsql.SelectWithRuntimeStats(ctx, e.ctx, kvReq, []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}, e.feedbacks[workID], getPhysicalPlanIDs(e.partialPlans[workID]), e.id)
-=======
 	result, err := distsql.SelectWithRuntimeStats(ctx, e.ctx, kvReq, e.handleCols.GetFieldsTypes(), e.feedbacks[workID], getPhysicalPlanIDs(e.partialPlans[workID]), e.getPartitalPlanID(workID))
->>>>>>> 22feeb4ae... executor:Add runtime stat for IndexMergeReaderExecutor (#20653)
 	if err != nil {
 		return err
 	}
 
 	result.Fetch(ctx)
 	worker := &partialIndexWorker{
-<<<<<<< HEAD
-=======
 		stats:        e.stats,
 		idxID:        e.getPartitalPlanID(workID),
 		sc:           e.ctx,
->>>>>>> 22feeb4ae... executor:Add runtime stat for IndexMergeReaderExecutor (#20653)
 		batchSize:    e.maxChunkSize,
 		maxBatchSize: e.ctx.GetSessionVars().IndexLookupSize,
 		maxChunkSize: e.maxChunkSize,
@@ -286,11 +274,8 @@ func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, 
 	}
 	tableInfo := e.partialPlans[workID][0].(*plannercore.PhysicalTableScan).Table
 	worker := &partialTableWorker{
-<<<<<<< HEAD
-=======
 		stats:        e.stats,
 		sc:           e.ctx,
->>>>>>> 22feeb4ae... executor:Add runtime stat for IndexMergeReaderExecutor (#20653)
 		batchSize:    e.maxChunkSize,
 		maxBatchSize: e.ctx.GetSessionVars().IndexLookupSize,
 		maxChunkSize: e.maxChunkSize,
@@ -348,11 +333,8 @@ func (e *IndexMergeReaderExecutor) getTablePlanRootID() int {
 }
 
 type partialTableWorker struct {
-<<<<<<< HEAD
-=======
 	stats        *IndexMergeRuntimeStat
 	sc           sessionctx.Context
->>>>>>> 22feeb4ae... executor:Add runtime stat for IndexMergeReaderExecutor (#20653)
 	batchSize    int
 	maxBatchSize int
 	maxChunkSize int
@@ -361,27 +343,6 @@ type partialTableWorker struct {
 }
 
 func (w *partialTableWorker) fetchHandles(ctx context.Context, exitCh <-chan struct{}, fetchCh chan<- *lookupTableTask, resultCh chan<- *lookupTableTask,
-<<<<<<< HEAD
-	finished <-chan struct{}) (count int64, err error) {
-	var chk *chunk.Chunk
-	handleOffset := -1
-	if w.tableInfo.PKIsHandle {
-		handleCol := w.tableInfo.GetPkColInfo()
-		columns := w.tableInfo.Columns
-		for i := 0; i < len(columns); i++ {
-			if columns[i].Name.L == handleCol.Name.L {
-				handleOffset = i
-				break
-			}
-		}
-	} else {
-		return 0, errors.Errorf("cannot find the column for handle")
-	}
-
-	chk = chunk.NewChunkWithCapacity(retTypes(w.tableReader), w.maxChunkSize)
-	for {
-		handles, retChunk, err := w.extractTaskHandles(ctx, chk, handleOffset)
-=======
 	finished <-chan struct{}, handleCols plannercore.HandleCols) (count int64, err error) {
 	chk := chunk.NewChunkWithCapacity(retTypes(w.tableReader), w.maxChunkSize)
 	var basic *execdetails.BasicRuntimeStats
@@ -391,7 +352,6 @@ func (w *partialTableWorker) fetchHandles(ctx context.Context, exitCh <-chan str
 	for {
 		start := time.Now()
 		handles, retChunk, err := w.extractTaskHandles(ctx, chk, handleCols)
->>>>>>> 22feeb4ae... executor:Add runtime stat for IndexMergeReaderExecutor (#20653)
 		if err != nil {
 			doneCh := make(chan error, 1)
 			doneCh <- err
@@ -595,12 +555,8 @@ func (w *indexMergeProcessWorker) fetchLoop(ctx context.Context, fetchCh <-chan 
 		close(resultCh)
 	}()
 
-<<<<<<< HEAD
 	distinctHandles := set.NewInt64Set()
 
-=======
-	distinctHandles := kv.NewHandleMap()
->>>>>>> 22feeb4ae... executor:Add runtime stat for IndexMergeReaderExecutor (#20653)
 	for task := range fetchCh {
 		start := time.Now()
 		handles := task.handles
@@ -649,23 +605,14 @@ func (w *indexMergeProcessWorker) handleLoopFetcherPanic(ctx context.Context, re
 }
 
 type partialIndexWorker struct {
-<<<<<<< HEAD
-=======
 	stats        *IndexMergeRuntimeStat
 	sc           sessionctx.Context
 	idxID        int
->>>>>>> 22feeb4ae... executor:Add runtime stat for IndexMergeReaderExecutor (#20653)
 	batchSize    int
 	maxBatchSize int
 	maxChunkSize int
 }
 
-<<<<<<< HEAD
-func (w *partialIndexWorker) fetchHandles(ctx context.Context, result distsql.SelectResult, exitCh <-chan struct{}, fetchCh chan<- *lookupTableTask, resultCh chan<- *lookupTableTask, finished <-chan struct{}) (count int64, err error) {
-	chk := chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}, w.maxChunkSize)
-	for {
-		handles, retChunk, err := w.extractTaskHandles(ctx, chk, result)
-=======
 func (w *partialIndexWorker) fetchHandles(
 	ctx context.Context,
 	result distsql.SelectResult,
@@ -685,7 +632,6 @@ func (w *partialIndexWorker) fetchHandles(
 	for {
 		start := time.Now()
 		handles, retChunk, err := w.extractTaskHandles(ctx, chk, result, handleCols)
->>>>>>> 22feeb4ae... executor:Add runtime stat for IndexMergeReaderExecutor (#20653)
 		if err != nil {
 			doneCh := make(chan error, 1)
 			doneCh <- err
