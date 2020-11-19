@@ -6697,7 +6697,7 @@ func (s *testSerialSuite) TestCoprocessorOOMAction(c *C) {
 	failpoint.Disable("github.com/pingcap/tidb/store/tikv/testRateLimitActionMockTrigger")
 
 	failpoint.Enable("github.com/pingcap/tidb/store/tikv/testRateLimitActionToken", `return(true)`)
-	defer failpoint.Disable("github.com/pingcap/tidb/store/tikv/testRateLimitActionDisable")
+	defer failpoint.Disable("github.com/pingcap/tidb/store/tikv/testRateLimitActionToken")
 	// assert at least 1 token
 	for _, testcase := range testcases {
 		c.Log(testcase.name)
