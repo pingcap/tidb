@@ -372,6 +372,9 @@ const (
 	// tidb_enable_window_function is used to control whether to enable the window function.
 	TiDBEnableWindowFunction = "tidb_enable_window_function"
 
+	// tidb_enable_strict_double_type_check is used to control table field double type syntax check.
+	TiDBEnableStrictDoubleTypeCheck = "tidb_enable_strict_double_type_check"
+
 	// tidb_enable_vectorized_expression is used to control whether to enable the vectorized expression evaluation.
 	TiDBEnableVectorizedExpression = "tidb_enable_vectorized_expression"
 
@@ -539,6 +542,7 @@ const (
 	DefTiDBForcePriority               = mysql.NoPriority
 	DefTiDBUseRadixJoin                = false
 	DefEnableWindowFunction            = true
+	DefEnableStrictDoubleTypeCheck     = true
 	DefEnableVectorizedExpression      = true
 	DefTiDBOptJoinReorderThreshold     = 0
 	DefTiDBDDLSlowOprThreshold         = 300
