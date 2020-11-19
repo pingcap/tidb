@@ -830,7 +830,7 @@ func (b *builtinSetIntVarSig) evalInt(row chunk.Row) (int64, bool, error) {
 }
 
 // BuildGetVarFunction builds a GetVar ScalarFunction from the Expression.
-func BuildGetVarFunction(ctx sessionctx.Context, expr Expression, retType *types.FieldType) (Expression, error) {
+func BuildGetVarFunction(ctx sessionctx.Context, expr Expression, retType *types.FieldType) (*ScalarFunction, error) {
 	var fc functionClass
 	switch retType.EvalType() {
 	case types.ETInt:

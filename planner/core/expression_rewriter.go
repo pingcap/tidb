@@ -1185,24 +1185,9 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
 			tp.Flen = mysql.MaxFieldVarCharLength
 		}
 
-		svv := er.setVarCollectProcessor
-		// We can only fold the GetVar into a constant if the query contains no SetVar for the same user variable.
-		disableFoldForGetVar := false
-		if svv != nil {
-			disableFoldForGetVar = svv.SetVarMap[name]
-		} // else setVarCollectProcessor is nil, no need to disable fold
-
-		if disableFoldForGetVar {
-			er.disableFoldCounter++ // scope disable fold enter
-		} else {
-			er.tryFoldCounter++
-		}
-
+		tryFold := er.getVarTryFoldOrNotStart(er.sctx.GetSessionVars().EnableGetVarFold, name)
 		f, err := er.newFunction(ast.GetVar, tp, expression.DatumToConstant(types.NewStringDatum(name), mysql.TypeString))
-
-		if disableFoldForGetVar { // scope disable fold leave
-			er.disableFoldCounter--
-		}
+		er.getVarTryFoldOrNotEnd(tryFold)
 
 		if err != nil {
 			er.err = err
@@ -1837,6 +1822,38 @@ func (er *expressionRewriter) evalDefaultExpr(v *ast.DefaultExpr) {
 		return
 	}
 	er.ctxStackAppend(val, types.EmptyName)
+}
+
+// GetVar try fold scope start
+// used by `expressionRewriter.rewriteVariable`
+// name: GetVar lower name
+func (er *expressionRewriter) getVarTryFoldOrNotStart(enableGetVarFold bool, name string) bool {
+	tryFold := false
+	if enableGetVarFold {
+		svv := er.setVarCollectProcessor
+		// We can only fold the GetVar into a constant if the query contains no SetVar for the same user variable.
+		if svv != nil {
+			tryFold = !svv.SetVarMap[name]
+		} // else setVarCollectProcessor is nil, no need to disable fold
+	}
+
+	if tryFold {
+		er.tryFoldCounter++ // scope try fold enter
+	} else {
+		er.disableFoldCounter++ // scope disable fold enter
+	}
+
+	return tryFold
+}
+
+// GetVar try fold scope leave
+// used by `expressionRewriter.rewriteVariable`
+func (er *expressionRewriter) getVarTryFoldOrNotEnd(tryFold bool) {
+	if tryFold {
+		er.tryFoldCounter-- // scope try fold leave
+	} else {
+		er.disableFoldCounter--
+	}
 }
 
 // hasCurrentDatetimeDefault checks if column has current_timestamp default value

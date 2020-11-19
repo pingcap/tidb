@@ -565,6 +565,11 @@ type SessionVars struct {
 	// EnableVectorizedExpression  enables the vectorized expression evaluation.
 	EnableVectorizedExpression bool
 
+	// EnableGetVarFold  enables the GetVar expression fold to constant
+	// when `set @someVar := {value}` execute before query
+	// default: true
+	EnableGetVarFold bool
+
 	// DDLReorgPriority is the operation priority of adding indices.
 	DDLReorgPriority int
 
@@ -880,6 +885,7 @@ func NewSessionVars() *SessionVars {
 		EnableAmendPessimisticTxn:   DefTiDBEnableAmendPessimisticTxn,
 		PartitionPruneMode:          *atomic2.NewString(DefTiDBPartitionPruneMode),
 		TxnScope:                    config.GetGlobalConfig().TxnScope,
+		EnableGetVarFold:            true,
 	}
 	vars.KVVars = kv.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{

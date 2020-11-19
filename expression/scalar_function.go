@@ -185,7 +185,16 @@ func newFunctionImpl(ctx sessionctx.Context, fold int, funcName string, retType 
 	case ast.Cast:
 		return BuildCastFunction(ctx, args[0], retType), nil
 	case ast.GetVar:
-		return BuildGetVarFunction(ctx, args[0], retType)
+		sf, err := BuildGetVarFunction(ctx, args[0], retType)
+		if err != nil {
+			return nil, err
+		}
+		// GetVar try fold while fold = -1
+		if fold == -1 {
+			return tryFoldConstant(ctx, sf)
+		}
+		return sf, nil
+		//return BuildGetVarFunction(ctx, args[0], retType)
 	}
 	fc, ok := funcs[funcName]
 	if !ok {
@@ -219,18 +228,22 @@ func newFunctionImpl(ctx sessionctx.Context, fold int, funcName string, retType 
 	if fold == 1 {
 		return FoldConstant(sf), nil
 	} else if fold == -1 {
-		// try to fold constants, and return the original function if errors/warnings occur
-		sc := ctx.GetSessionVars().StmtCtx
-		beforeWarns := sc.WarningCount()
-		newSf := FoldConstant(sf)
-		afterWarns := sc.WarningCount()
-		if afterWarns > beforeWarns {
-			sc.TruncateWarnings(int(beforeWarns))
-			return sf, nil
-		}
-		return newSf, nil
+		return tryFoldConstant(ctx, sf)
 	}
 	return sf, nil
+}
+
+func tryFoldConstant(ctx sessionctx.Context, sf *ScalarFunction) (Expression, error) {
+	// try to fold constants, and return the original function if errors/warnings occur
+	sc := ctx.GetSessionVars().StmtCtx
+	beforeWarns := sc.WarningCount()
+	newSf := FoldConstant(sf)
+	afterWarns := sc.WarningCount()
+	if afterWarns > beforeWarns {
+		sc.TruncateWarnings(int(beforeWarns))
+		return sf, nil
+	}
+	return newSf, nil
 }
 
 // NewFunction creates a new scalar function or constant via a constant folding.
