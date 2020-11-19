@@ -17,9 +17,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"sync"
-	"time"
 
-	"github.com/pingcap/badger/cache"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/memory"
@@ -41,244 +39,23 @@ type StatsCache interface {
 	BytesConsumed() int64
 }
 
-const byteShards = 8
-const numShards = 1 << byteShards
-
-// statsCache caches Regions loaded from PD.
-type ristrettoStatsCache struct {
-	mu         sync.Mutex
-	cache      *cache.Cache
-	version    uint64
-	memTracker *memory.Tracker // track memory usage.
-	tablesMap
-}
-
-type tablesMap struct {
-	tablesShards [numShards]tableShard
-}
-
-// tableShard is a shard of table
-type tableShard struct {
-	data map[int64]*statistics.Table
-	sync.RWMutex
-}
-
-// Set set key with value
-func (ts *tablesMap) set(key int64, value *statistics.Table) {
-	shard := &ts.tablesShards[key&(numShards-1)]
-	shard.Lock()
-	defer shard.Unlock()
-	shard.data[key>>byteShards] = value
-}
-
-// Get get key with value table
-func (ts *tablesMap) get(key int64) (*statistics.Table, bool) {
-	shard := &ts.tablesShards[key&(numShards-1)]
-	shard.RLock()
-	defer shard.RUnlock()
-	data, ok := shard.data[key>>byteShards]
-	return data, ok
-}
-
-// Del delete key
-func (ts *tablesMap) del(key int64) {
-	shard := &ts.tablesShards[key&(numShards-1)]
-	shard.Lock()
-	defer shard.Unlock()
-	delete(shard.data, key>>byteShards)
-}
-
 type statsCacheType int8
 
 const (
-	//RistrettoStatsCacheType type
-	RistrettoStatsCacheType statsCacheType = iota
-	//SimpleStatsCacheType simple type
-	SimpleStatsCacheType
+	//SimpleLRUStatsCacheType simple type
+	SimpleLRUStatsCacheType statsCacheType = iota
 )
 
 // DefStatsCacheType defines statistic cache type
-var DefStatsCacheType = RistrettoStatsCacheType
+var DefStatsCacheType = SimpleLRUStatsCacheType
 
 // NewStatsCache returns a new statsCahce with capacity memoryLimit(initial 1G)
 func NewStatsCache(memoryLimit int64, tp statsCacheType) (StatsCache, error) {
 	switch tp {
-	case RistrettoStatsCacheType:
-		return newRistrettoStatsCache(memoryLimit)
-	case SimpleStatsCacheType:
+	case SimpleLRUStatsCacheType:
 		return newSimpleStatsCache(memoryLimit), nil
 	}
 	return nil, errors.New("wrong statsCache type")
-}
-
-// newRistrettoStatsCache returns a new statsCahce with capacity memoryLimit(initial 1G)
-func newRistrettoStatsCache(memoryLimit int64) (*ristrettoStatsCache, error) {
-	// since newRistrettoStatsCache controls the memory usage by itself, set the capacity of
-	// the underlying LRUCache to max to close its memory control
-	sc := &ristrettoStatsCache{
-		memTracker: memory.NewTracker(memory.LabelForStatsCache, -1),
-	}
-	for i := range sc.tablesShards {
-		sc.tablesShards[i].data = make(map[int64]*statistics.Table)
-	}
-	sc.version = 0
-	cache, err := cache.NewCache(&cache.Config{
-		NumCounters: 1e7,         // number of keys to track frequency of (10M).
-		MaxCost:     memoryLimit, // maximum cost of cache (1GB).
-		BufferItems: 64,          // number of keys per Get buffer.
-		Cost: func(value interface{}) int64 {
-			return (value.(*statistics.Table).MemUsage)
-		},
-		OnEvict: func(key uint64, value interface{}) {
-			if t, ok := sc.get(int64(key)); ok {
-				if value != nil {
-					sc.memTracker.Consume(-t.MemUsage)
-					sc.set(int64(key), t.CopyWithoutBucketsAndCMS())
-				}
-			}
-		},
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	sc.cache = cache
-	return sc, nil
-}
-
-// BytesConsumed returns the consumed memory usage value in bytes.
-// only used by test.
-func (sc *ristrettoStatsCache) BytesConsumed() int64 {
-	rndTbl := sc.GetAll()[0]
-	sc.Erase(rndTbl.PhysicalID)
-	// insert a table memory = 0 to make cache renew the memory
-	for i := 0; i < 10; i++ {
-		sc.Insert(rndTbl)
-		time.Sleep(10 * time.Millisecond)
-	}
-	return sc.memTracker.BytesConsumed()
-}
-
-// GetBytesLimit get the limits of memory.
-func (sc *ristrettoStatsCache) GetBytesLimit() int64 {
-	return sc.memTracker.GetBytesLimit()
-}
-
-// SetBytesLimit set new byteslimit
-func (sc *ristrettoStatsCache) SetBytesLimit(bytesLimit int64) {
-	sc.cache.SetNewMaxCost(bytesLimit)
-}
-
-// Close close the cache.
-func (sc *ristrettoStatsCache) Close() {
-	sc.cache.Clear()
-	sc.cache.Close()
-}
-
-// Clear clears the cache data.
-func (sc *ristrettoStatsCache) Clear() {
-	sc.cache.Clear()
-	sc.mu.Lock()
-	sc.version = 0
-	sc.mu.Unlock()
-	for i := range sc.tablesShards {
-		sc.tablesShards[i].Lock()
-		sc.tablesShards[i].data = make(map[int64]*statistics.Table)
-		sc.tablesShards[i].Unlock()
-	}
-	sc.memTracker = memory.NewTracker(memory.LabelForStatsCache, -1)
-}
-
-// GetAll get all the tables.
-func (sc *ristrettoStatsCache) GetAll() []*statistics.Table {
-	tables := make([]*statistics.Table, 0)
-	for i := range sc.tablesShards {
-		shard := &sc.tablesShards[i]
-		shard.RLock()
-		for _, tbl := range shard.data {
-			tables = append(tables, tbl)
-		}
-		shard.RUnlock()
-	}
-	return tables
-}
-
-// lookupUnsafe get table with id without Lock.
-func (sc *ristrettoStatsCache) lookupUnsafe(id int64) (*statistics.Table, bool) {
-	key := uint64(id)
-	value, hit := sc.cache.Get(key)
-	if !hit || value == nil {
-		if table, ok := sc.get(id); ok {
-			return table, true
-		}
-		return nil, false
-	}
-	table := value.(*statistics.Table)
-	return table, true
-}
-
-// Lookup get table with id.
-func (sc *ristrettoStatsCache) Lookup(id int64) (*statistics.Table, bool) {
-	return sc.lookupUnsafe(id)
-}
-
-// Insert insert a new table to tables and update the cache.
-func (sc *ristrettoStatsCache) Insert(table *statistics.Table) {
-	key := table.PhysicalID
-	// Calc memusage only on insert.
-	if oldTbl, ok := sc.get(key); ok {
-		sc.memTracker.Consume(-oldTbl.MemUsage)
-	}
-	mem := table.MemoryUsage()
-	table.MemUsage = mem
-	sc.cache.Set(uint64(key), table, mem)
-	sc.memTracker.Consume(mem)
-	sc.set(key, table)
-	return
-}
-
-// Erase Erase a stateCache with physical id
-func (sc *ristrettoStatsCache) Erase(deletedID int64) bool {
-	key := deletedID
-	sc.cache.Del(uint64(key))
-	if oldTbl, ok := sc.get(key); ok {
-		sc.memTracker.Consume(-oldTbl.MemUsage)
-	}
-	sc.del(deletedID)
-	return true
-}
-
-// Update updates the statistics table cache.
-func (sc *ristrettoStatsCache) Update(tables []*statistics.Table, deletedIDs []int64, newVersion uint64) {
-	sc.mu.Lock()
-	if sc.version <= newVersion {
-		sc.version = newVersion
-		for _, id := range deletedIDs {
-			sc.Erase(id)
-		}
-		for _, tbl := range tables {
-			sc.Insert(tbl)
-		}
-	}
-	sc.mu.Unlock()
-}
-
-func (sc *ristrettoStatsCache) GetVersion() uint64 {
-	sc.mu.Lock()
-	defer sc.mu.Unlock()
-	return sc.version
-}
-
-// InitStatsCache should be called after the tables and their stats are initilazed
-// using tables map and version to init statscache
-func (sc *ristrettoStatsCache) InitStatsCache(tables map[int64]*statistics.Table, version uint64) {
-	sc.mu.Lock()
-	defer sc.mu.Unlock()
-	for _, tbl := range tables {
-		sc.Insert(tbl)
-	}
-	sc.version = version
-	return
 }
 
 // simpleStatsCache caches Regions loaded from PD.

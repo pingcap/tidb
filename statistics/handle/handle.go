@@ -274,11 +274,6 @@ func (h *Handle) GetPartitionStats(tblInfo *model.TableInfo, pid int64) *statist
 	return tbl
 }
 
-// SetSimpleCache4Test change cache type to simplecache.
-func (h *Handle) SetSimpleCache4Test() {
-	h.statsCache = newSimpleStatsCache(h.mu.ctx.GetSessionVars().MemQuotaStatistics)
-}
-
 // SetBytesLimit4Test sets the bytes limit for this tracker. "bytesLimit <= 0" means no limit.
 // Only used for test.
 func (h *Handle) SetBytesLimit4Test(bytesLimit int64) {

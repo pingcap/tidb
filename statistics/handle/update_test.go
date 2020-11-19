@@ -73,8 +73,6 @@ func (s *testStatsSuite) registerHook() {
 
 func (s *testStatsSuite) TestSingleSessionInsert(c *C) {
 	defer cleanEnv(c, s.store, s.do)
-	clearRW.RLock()
-	defer clearRW.RUnlock()
 
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
@@ -205,8 +203,6 @@ func (s *testStatsSuite) TestSingleSessionInsert(c *C) {
 
 func (s *testStatsSuite) TestRollback(c *C) {
 	defer cleanEnv(c, s.store, s.do)
-	clearRW.RLock()
-	defer clearRW.RUnlock()
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t (a int, b int)")
@@ -230,8 +226,6 @@ func (s *testStatsSuite) TestRollback(c *C) {
 
 func (s *testStatsSuite) TestMultiSession(c *C) {
 	defer cleanEnv(c, s.store, s.do)
-	clearRW.RLock()
-	defer clearRW.RUnlock()
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t1 (c1 int, c2 int)")
@@ -291,8 +285,6 @@ func (s *testStatsSuite) TestMultiSession(c *C) {
 
 func (s *testStatsSuite) TestTxnWithFailure(c *C) {
 	defer cleanEnv(c, s.store, s.do)
-	clearRW.RLock()
-	defer clearRW.RUnlock()
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t1 (c1 int primary key, c2 int)")
@@ -343,8 +335,6 @@ func (s *testStatsSuite) TestTxnWithFailure(c *C) {
 
 func (s *testStatsSuite) TestUpdatePartition(c *C) {
 	defer cleanEnv(c, s.store, s.do)
-	clearRW.RLock()
-	defer clearRW.RUnlock()
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustQuery("select @@tidb_partition_prune_mode").Check(testkit.Rows(string(s.do.StatsHandle().CurrentPruneMode())))
 	testKit.MustExec("use test")
@@ -399,8 +389,6 @@ func (s *testStatsSuite) TestUpdatePartition(c *C) {
 
 func (s *testStatsSuite) TestAutoUpdate(c *C) {
 	defer cleanEnv(c, s.store, s.do)
-	clearRW.RLock()
-	defer clearRW.RUnlock()
 	testKit := testkit.NewTestKit(c, s.store)
 	testkit.WithPruneMode(testKit, variable.StaticOnly, func() {
 		testKit.MustExec("use test")
@@ -504,8 +492,6 @@ func (s *testStatsSuite) TestAutoUpdate(c *C) {
 
 func (s *testStatsSuite) TestAutoUpdatePartition(c *C) {
 	defer cleanEnv(c, s.store, s.do)
-	clearRW.RLock()
-	defer clearRW.RUnlock()
 	testKit := testkit.NewTestKit(c, s.store)
 	testkit.WithPruneMode(testKit, variable.StaticOnly, func() {
 		testKit.MustExec("use test")
@@ -547,8 +533,6 @@ func (s *testStatsSuite) TestAutoUpdatePartition(c *C) {
 
 func (s *testStatsSuite) TestTableAnalyzed(c *C) {
 	defer cleanEnv(c, s.store, s.do)
-	clearRW.RLock()
-	defer clearRW.RUnlock()
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t (a int)")
@@ -569,9 +553,7 @@ func (s *testStatsSuite) TestTableAnalyzed(c *C) {
 	statsTbl = h.GetTableStats(tableInfo)
 	c.Assert(handle.TableAnalyzed(statsTbl), IsTrue)
 
-	clearRW.RUnlock()
 	cleanHandle(c, s.do)
-	clearRW.RLock()
 
 	oriLease := h.Lease()
 	// set it to non-zero so we will use load by need strategy
@@ -587,8 +569,6 @@ func (s *testStatsSuite) TestTableAnalyzed(c *C) {
 
 func (s *testStatsSuite) TestUpdateErrorRate(c *C) {
 	defer cleanEnv(c, s.store, s.do)
-	clearRW.RLock()
-	defer clearRW.RUnlock()
 	h := s.do.StatsHandle()
 	is := s.do.InfoSchema()
 	h.SetLease(0)
@@ -664,8 +644,6 @@ func (s *testStatsSuite) TestUpdateErrorRate(c *C) {
 
 func (s *testStatsSuite) TestUpdatePartitionErrorRate(c *C) {
 	defer cleanEnv(c, s.store, s.do)
-	clearRW.RLock()
-	defer clearRW.RUnlock()
 	h := s.do.StatsHandle()
 	is := s.do.InfoSchema()
 	h.SetLease(0)
@@ -729,8 +707,6 @@ func appendBucket(h *statistics.Histogram, l, r int64) {
 }
 
 func (s *testStatsSuite) TestSplitRange(c *C) {
-	clearRW.RLock()
-	defer clearRW.RUnlock()
 	h := statistics.NewHistogram(0, 0, 0, 0, types.NewFieldType(mysql.TypeLong), 5, 0)
 	appendBucket(h, 1, 1)
 	appendBucket(h, 2, 5)
@@ -786,8 +762,6 @@ func (s *testStatsSuite) TestSplitRange(c *C) {
 
 func (s *testStatsSuite) TestQueryFeedback(c *C) {
 	defer cleanEnv(c, s.store, s.do)
-	clearRW.RLock()
-	defer clearRW.RUnlock()
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t (a bigint(64), b bigint(64), primary key(a), index idx(b))")
@@ -906,8 +880,6 @@ func (s *testStatsSuite) TestQueryFeedback(c *C) {
 
 func (s *testStatsSuite) TestQueryFeedbackForPartition(c *C) {
 	defer cleanEnv(c, s.store, s.do)
-	clearRW.RLock()
-	defer clearRW.RUnlock()
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
 	testKit.MustExec(`set @@tidb_partition_prune_mode='` + string(variable.StaticOnly) + `'`)
@@ -994,8 +966,6 @@ func (s *testStatsSuite) TestQueryFeedbackForPartition(c *C) {
 
 func (s *testStatsSuite) TestUpdateSystemTable(c *C) {
 	defer cleanEnv(c, s.store, s.do)
-	clearRW.RLock()
-	defer clearRW.RUnlock()
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t (a int, b int)")
@@ -1011,8 +981,6 @@ func (s *testStatsSuite) TestUpdateSystemTable(c *C) {
 
 func (s *testStatsSuite) TestOutOfOrderUpdate(c *C) {
 	defer cleanEnv(c, s.store, s.do)
-	clearRW.RLock()
-	defer clearRW.RUnlock()
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t (a int, b int)")
@@ -1044,8 +1012,6 @@ func (s *testStatsSuite) TestOutOfOrderUpdate(c *C) {
 
 func (s *testStatsSuite) TestUpdateStatsByLocalFeedback(c *C) {
 	defer cleanEnv(c, s.store, s.do)
-	clearRW.RLock()
-	defer clearRW.RUnlock()
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
 	testKit.MustExec(`set @@tidb_partition_prune_mode='` + string(variable.StaticOnly) + `'`)
@@ -1106,8 +1072,6 @@ func (s *testStatsSuite) TestUpdateStatsByLocalFeedback(c *C) {
 
 func (s *testStatsSuite) TestUpdatePartitionStatsByLocalFeedback(c *C) {
 	defer cleanEnv(c, s.store, s.do)
-	clearRW.RLock()
-	defer clearRW.RUnlock()
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
 	testKit.MustExec(`set @@tidb_partition_prune_mode='` + string(variable.StaticOnly) + `'`)
@@ -1185,8 +1149,6 @@ func (h *logHook) Check(e zapcore.Entry, ce *zapcore.CheckedEntry) *zapcore.Chec
 
 func (s *testStatsSuite) TestLogDetailedInfo(c *C) {
 	defer cleanEnv(c, s.store, s.do)
-	clearRW.RLock()
-	defer clearRW.RUnlock()
 	oriProbability := statistics.FeedbackProbability
 	oriMinLogCount := handle.MinLogScanCount
 	oriMinError := handle.MinLogErrorRate
@@ -1247,8 +1209,6 @@ func (s *testStatsSuite) TestLogDetailedInfo(c *C) {
 }
 
 func (s *testStatsSuite) TestNeedAnalyzeTable(c *C) {
-	clearRW.RLock()
-	defer clearRW.RUnlock()
 	columns := map[int64]*statistics.Column{}
 	columns[1] = &statistics.Column{Count: 1}
 	tests := []struct {
@@ -1366,8 +1326,6 @@ func (s *testStatsSuite) TestNeedAnalyzeTable(c *C) {
 func (s *testStatsSuite) TestIndexQueryFeedback(c *C) {
 	c.Skip("support update the topn of index equal conditions")
 	defer cleanEnv(c, s.store, s.do)
-	clearRW.RLock()
-	defer clearRW.RUnlock()
 	testKit := testkit.NewTestKit(c, s.store)
 
 	oriProbability := statistics.FeedbackProbability
@@ -1502,8 +1460,6 @@ func (s *testStatsSuite) TestIndexQueryFeedback(c *C) {
 
 func (s *testStatsSuite) TestIndexQueryFeedback4TopN(c *C) {
 	defer cleanEnv(c, s.store, s.do)
-	clearRW.RLock()
-	defer clearRW.RUnlock()
 	testKit := testkit.NewTestKit(c, s.store)
 
 	oriProbability := statistics.FeedbackProbability
@@ -1551,8 +1507,6 @@ func (s *testStatsSuite) TestIndexQueryFeedback4TopN(c *C) {
 
 func (s *testStatsSuite) TestAbnormalIndexFeedback(c *C) {
 	defer cleanEnv(c, s.store, s.do)
-	clearRW.RLock()
-	defer clearRW.RUnlock()
 	testKit := testkit.NewTestKit(c, s.store)
 
 	oriProbability := statistics.FeedbackProbability
@@ -1627,8 +1581,6 @@ func (s *testStatsSuite) TestAbnormalIndexFeedback(c *C) {
 
 func (s *testStatsSuite) TestFeedbackRanges(c *C) {
 	defer cleanEnv(c, s.store, s.do)
-	clearRW.RLock()
-	defer clearRW.RUnlock()
 	testKit := testkit.NewTestKit(c, s.store)
 	h := s.do.StatsHandle()
 	oriProbability := statistics.FeedbackProbability
@@ -1704,8 +1656,6 @@ func (s *testStatsSuite) TestFeedbackRanges(c *C) {
 
 func (s *testStatsSuite) TestUnsignedFeedbackRanges(c *C) {
 	defer cleanEnv(c, s.store, s.do)
-	clearRW.RLock()
-	defer clearRW.RUnlock()
 	testKit := testkit.NewTestKit(c, s.store)
 	h := s.do.StatsHandle()
 
@@ -1796,8 +1746,6 @@ func (s *testStatsSuite) TestUnsignedFeedbackRanges(c *C) {
 
 func (s *testStatsSuite) TestLoadHistCorrelation(c *C) {
 	defer cleanEnv(c, s.store, s.do)
-	clearRW.RLock()
-	defer clearRW.RUnlock()
 	testKit := testkit.NewTestKit(c, s.store)
 	h := s.do.StatsHandle()
 	origLease := h.Lease()
@@ -1808,9 +1756,7 @@ func (s *testStatsSuite) TestLoadHistCorrelation(c *C) {
 	testKit.MustExec("insert into t values(1),(2),(3),(4),(5)")
 	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 	testKit.MustExec("analyze table t")
-	clearRW.RUnlock()
 	cleanHandle(c, s.do)
-	clearRW.RLock()
 	c.Assert(h.Update(s.do.InfoSchema()), IsNil)
 	result := testKit.MustQuery("show stats_histograms where Table_name = 't'")
 	c.Assert(len(result.Rows()), Equals, 0)
@@ -1823,8 +1769,6 @@ func (s *testStatsSuite) TestLoadHistCorrelation(c *C) {
 
 func (s *testStatsSuite) TestDeleteUpdateFeedback(c *C) {
 	defer cleanEnv(c, s.store, s.do)
-	clearRW.RLock()
-	defer clearRW.RUnlock()
 	testKit := testkit.NewTestKit(c, s.store)
 
 	oriProbability := statistics.FeedbackProbability

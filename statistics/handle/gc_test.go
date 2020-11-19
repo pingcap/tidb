@@ -24,8 +24,6 @@ import (
 
 func (s *testStatsSuite) TestGCStats(c *C) {
 	defer cleanEnv(c, s.store, s.do)
-	clearRW.RLock()
-	defer clearRW.RUnlock()
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t(a int, b int, index idx(a, b), index idx_a(a))")
@@ -59,8 +57,6 @@ func (s *testStatsSuite) TestGCStats(c *C) {
 
 func (s *testStatsSuite) TestGCPartition(c *C) {
 	defer cleanEnv(c, s.store, s.do)
-	clearRW.RLock()
-	defer clearRW.RUnlock()
 	testKit := testkit.NewTestKit(c, s.store)
 	testkit.WithPruneMode(testKit, variable.StaticOnly, func() {
 		testKit.MustExec("use test")
