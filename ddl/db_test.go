@@ -5348,11 +5348,7 @@ func (s *testDBSuite2) TestLockTables(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1,t2")
-	defer func() {
-		tk.MustExec("alter table t1 read write")
-		tk.MustExec("alter table t2 read write")
-		tk.MustExec("drop table if exists t1,t2")
-	}()
+	defer tk.MustExec("drop table if exists t1,t2")
 	tk.MustExec("create table t1 (a int)")
 	tk.MustExec("create table t2 (a int)")
 
@@ -5363,8 +5359,6 @@ func (s *testDBSuite2) TestLockTables(c *C) {
 	checkTableLock(c, tk.Se, "test", "t1", model.TableLockRead)
 	tk.MustExec("lock tables t1 write")
 	checkTableLock(c, tk.Se, "test", "t1", model.TableLockWrite)
-	tk.MustExec("alter table t1 read only")
-	checkTableLock(c, tk.Se, "test", "t1", model.TableLockReadOnly)
 
 	// Test lock multi tables.
 	tk.MustExec("lock tables t1 write, t2 read")
