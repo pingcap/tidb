@@ -34,7 +34,7 @@ func NewChecker(ctx sessionctx.Context, is infoschema.InfoSchema) *Checker {
 }
 
 // CheckTableLock uses to check table lock.
-func (c *Checker) CheckTableLock(db, table string, privilege mysql.PrivilegeType, readOnlyLock bool) error {
+func (c *Checker) CheckTableLock(db, table string, privilege mysql.PrivilegeType, alterWriteable bool) error {
 	if db == "" && table == "" {
 		return nil
 	}
@@ -43,7 +43,7 @@ func (c *Checker) CheckTableLock(db, table string, privilege mysql.PrivilegeType
 		return nil
 	}
 	// check operation on database.
-	if !readOnlyLock && table == "" {
+	if !alterWriteable && table == "" {
 		return c.CheckLockInDB(db, privilege)
 	}
 	switch privilege {
@@ -67,7 +67,7 @@ func (c *Checker) CheckTableLock(db, table string, privilege mysql.PrivilegeType
 	if err != nil {
 		return err
 	}
-	if !readOnlyLock && c.ctx.HasLockedTables() {
+	if !alterWriteable && c.ctx.HasLockedTables() {
 		if locked, tp := c.ctx.CheckTableLocked(tb.Meta().ID); locked {
 			if checkLockTpMeetPrivilege(tp, privilege) {
 				return nil
@@ -87,7 +87,7 @@ func (c *Checker) CheckTableLock(db, table string, privilege mysql.PrivilegeType
 			return nil
 		}
 	}
-	if readOnlyLock && tb.Meta().Lock.Tp == model.TableLockReadOnly {
+	if alterWriteable && tb.Meta().Lock.Tp == model.TableLockReadOnly {
 		return nil
 	}
 
