@@ -426,6 +426,10 @@ func (ow *outerWorker) buildTask(ctx context.Context) (*lookUpJoinTask, error) {
 			break
 		}
 
+		for i := 0; i < chk.NumRows(); i++ {
+			s, _ := types.DatumsToString(chk.GetRow(i).GetDatumRow(ow.rowTypes), true)
+			logutil.BgLogger().Warn("index join exec", zap.String("outer row", s))
+		}
 		task.outerResult.Add(chk)
 	}
 	if task.outerResult.Len() == 0 {
@@ -673,6 +677,10 @@ func (iw *innerWorker) fetchInnerResults(ctx context.Context, task *lookUpJoinTa
 		}
 		if iw.executorChk.NumRows() == 0 {
 			break
+		}
+		for i := 0; i < iw.executorChk.NumRows(); i++ {
+			s, _ := types.DatumsToString(iw.executorChk.GetRow(i).GetDatumRow(iw.rowTypes), true)
+			logutil.BgLogger().Warn("index join exec", zap.String("inner row", s))
 		}
 		innerResult.Add(iw.executorChk)
 		iw.executorChk = newFirstChunk(innerExec)

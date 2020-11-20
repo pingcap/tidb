@@ -3792,6 +3792,7 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, delete *ast.DeleteStmt) (
 		tblID2table[id], _ = b.is.TableByID(id)
 	}
 	del.TblColPosInfos, err = buildColumns2Handle(del.names, tblID2Handle, tblID2table, false)
+	logutil.BgLogger().Warn("build delete", zap.String("col pos info", fmt.Sprintf("%v", del.TblColPosInfos)))
 	return del, err
 }
 

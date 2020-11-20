@@ -15,14 +15,18 @@ package executor
 
 import (
 	"context"
+	"fmt"
 
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/config"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
+	"go.uber.org/zap"
 )
 
 // DeleteExec represents a delete executor.
@@ -73,6 +77,11 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 		tbl = e.tblID2Table[info.TblID]
 		handleIndex = info.HandleOrdinal
 		isExtrahandle = handleIsExtra(e.children[0].Schema().Columns[info.HandleOrdinal])
+		logutil.BgLogger().Warn("deleteExec", zap.Int64("Table id", info.TblID),
+			zap.Int("handle postition", info.HandleOrdinal),
+			zap.Bool("handle is extra", isExtrahandle),
+			zap.String("row pos", fmt.Sprintf("[%v, %v]", info.Start, info.End)),
+		)
 	}
 
 	// If tidb_batch_delete is ON and not in a transaction, we could use BatchDelete mode.
@@ -106,6 +115,8 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 			}
 
 			datumRow := chunkRow.GetDatumRow(fields)
+			s, _ := types.DatumsToString(datumRow, true)
+			log.Warn("deleteExec", zap.String("row", s))
 			err = e.deleteOneRow(tbl, handleIndex, isExtrahandle, datumRow)
 			if err != nil {
 				return err
@@ -136,6 +147,12 @@ func (e *DeleteExec) deleteMultiTablesByChunk(ctx context.Context) error {
 	fields := retTypes(e.children[0])
 	chk := newFirstChunk(e.children[0])
 	memUsageOfChk := int64(0)
+	for _, info := range colPosInfos {
+		if tblRowMap[info.TblID] == nil {
+			tblRowMap[info.TblID] = make(map[int64][]types.Datum)
+		}
+		logutil.BgLogger().Warn("deleteExec", zap.Int64("Table id", info.TblID), zap.Int("handle postition", info.HandleOrdinal), zap.String("row pos", fmt.Sprintf("[%v, %v]", info.Start, info.End)))
+	}
 	for {
 		e.memTracker.Consume(-memUsageOfChk)
 		iter := chunk.NewIterator4Chunk(chk)
@@ -151,6 +168,8 @@ func (e *DeleteExec) deleteMultiTablesByChunk(ctx context.Context) error {
 
 		for joinedChunkRow := iter.Begin(); joinedChunkRow != iter.End(); joinedChunkRow = iter.Next() {
 			joinedDatumRow := joinedChunkRow.GetDatumRow(fields)
+			s, _ := types.DatumsToString(joinedDatumRow, true)
+			logutil.BgLogger().Warn("deleteExec", zap.String("row value", s))
 			e.composeTblRowMap(tblRowMap, colPosInfos, joinedDatumRow)
 		}
 		chk = chunk.Renew(chk, e.maxChunkSize)

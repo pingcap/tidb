@@ -16,6 +16,7 @@ package executor
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"math"
 	"sort"
 	"strings"
@@ -1695,6 +1696,9 @@ func (b *executorBuilder) buildDelete(v *plannercore.Delete) Executor {
 		IsMultiTable:   v.IsMultiTable,
 		tblColPosInfos: v.TblColPosInfos,
 	}
+	logutil.BgLogger().Warn("build delete exec", zap.Bool("IsMulti delete", v.IsMultiTable),
+		zap.String("tbl id 2 table", fmt.Sprintf("%v", tblID2table)),
+	)
 	return deleteExec
 }
 
