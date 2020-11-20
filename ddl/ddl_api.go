@@ -2413,6 +2413,9 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 		case ast.AlterTableTruncatePartition:
 			err = d.TruncateTablePartition(ctx, ident, spec)
 		case ast.AlterTableWriteable:
+			if !config.TableLockEnabled() {
+				return nil
+			}
 			tName := &ast.TableName{Schema: ident.Schema, Name: ident.Name}
 			if spec.Writeable {
 				err = d.CleanupTableLock(ctx, []*ast.TableName{tName})
