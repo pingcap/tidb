@@ -543,6 +543,9 @@ func (worker *copIteratorWorker) run(ctx context.Context) {
 		})
 		close(task.respChan)
 		worker.maxID.setMaxIDIfLarger(task.id)
+		worker.actionOnExceed.destroyTokenIfNeeded(func() {
+			worker.sendRate.putToken()
+		})
 		if worker.vars != nil && worker.vars.Killed != nil && atomic.LoadUint32(worker.vars.Killed) == 1 {
 			return
 		}
@@ -715,11 +718,8 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 			it.actionOnExceed.close()
 			return nil, nil
 		}
-		it.actionOnExceed.destroyTokenIfNeeded(func() {
-			it.sendRate.putToken()
-		})
 		// The respCh has been drained out
-		//it.actionOnExceed.broadcastIfNeeded(len(it.respChan) < 1)
+		it.actionOnExceed.broadcastIfNeeded(len(it.respChan) < 1)
 	} else {
 		for {
 			if it.curr >= len(it.tasks) {
@@ -1442,16 +1442,17 @@ func (e *rateLimitAction) destroyTokenIfNeeded(returnToken func()) {
 	if !e.cond.isTokenDestroyed {
 		e.cond.remainingTokenNum = e.cond.remainingTokenNum - 1
 		e.cond.isTokenDestroyed = true
+		e.cond.Broadcast()
 		return
 	}
 
 	returnToken()
 	// we suspend worker when `exceeded` is true until being notified by `broadcastIfNeeded`
-	//for e.cond.exceeded {
-	//	e.cond.waitingWorkerCnt++
-	//	e.cond.Wait()
-	//	e.cond.waitingWorkerCnt--
-	//}
+	for e.cond.exceeded {
+		e.cond.waitingWorkerCnt++
+		e.cond.Wait()
+		e.cond.waitingWorkerCnt--
+	}
 	e.unsafeInitOnce()
 }
 
