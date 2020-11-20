@@ -193,6 +193,7 @@ var (
 	PerformanceSchemaName = model.NewCIStr("PERFORMANCE_SCHEMA")
 	// MetricSchemaName is the `METRICS_SCHEMA` database name.
 	MetricSchemaName = model.NewCIStr("METRICS_SCHEMA")
+	SysSchemaName = model.NewCIStr("sys")
 )
 
 // IsMemOrSysDB uses to check whether dbLowerName is memory database or system database.

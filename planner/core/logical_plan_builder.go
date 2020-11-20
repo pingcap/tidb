@@ -3955,6 +3955,8 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName model.
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.ShowViewPriv, dbName.L, tableInfo.Name.L, "", ErrViewNoExplain)
 	}
 
+	fmt.Println("[]", tableInfo.ID, tableInfo.Name, tableInfo.Columns, tableInfo.IsView())
+	fmt.Println("[len]", len(tableInfo.Columns), selectLogicalPlan.Schema().Len())
 	if len(tableInfo.Columns) != selectLogicalPlan.Schema().Len() {
 		return nil, ErrViewInvalid.GenWithStackByArgs(dbName.O, tableInfo.Name.O)
 	}
