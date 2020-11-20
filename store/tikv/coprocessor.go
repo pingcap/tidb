@@ -602,9 +602,9 @@ func (it *copIterator) recvFromRespCh(ctx context.Context, respCh <-chan *copRes
 		case resp, ok = <-respCh:
 			if it.memTracker != nil && resp != nil {
 				consumed := resp.MemSize()
-				failpoint.Inject("testRateLimitActionMockConsume", func(val failpoint.Value) {
+				failpoint.Inject("testRateLimitActionMockConsumeAndAssert", func(val failpoint.Value) {
 					if val.(bool) {
-						consumed = 100
+						consumed = MockResponseSize
 					}
 				})
 				it.memTracker.Consume(-consumed)
@@ -667,9 +667,9 @@ func (it *copIterator) recvFromTasks(ctx context.Context) (resp *copResponse, ex
 				case resp, ok = <-task.respChan:
 					if it.memTracker != nil && resp != nil {
 						consumed := resp.MemSize()
-						failpoint.Inject("testRateLimitActionMockConsume", func(val failpoint.Value) {
+						failpoint.Inject("testRateLimitActionMockConsumeAndAssert", func(val failpoint.Value) {
 							if val.(bool) {
-								consumed = 100
+								consumed = MockResponseSize
 							}
 						})
 						it.memTracker.Consume(-consumed)
@@ -713,9 +713,9 @@ func (sender *copIteratorTaskSender) sendToTaskCh(t *copTask) (exit bool) {
 func (worker *copIteratorWorker) sendToRespCh(resp *copResponse, respCh chan<- *copResponse, checkOOM bool) (exit bool) {
 	if worker.memTracker != nil && checkOOM {
 		consumed := resp.MemSize()
-		failpoint.Inject("testRateLimitActionMockConsume", func(val failpoint.Value) {
+		failpoint.Inject("testRateLimitActionMockConsumeAndAssert", func(val failpoint.Value) {
 			if val.(bool) {
-				consumed = 100
+				consumed = MockResponseSize
 			}
 		})
 		worker.memTracker.Consume(consumed)
@@ -727,6 +727,9 @@ func (worker *copIteratorWorker) sendToRespCh(resp *copResponse, respCh chan<- *
 	}
 	return
 }
+
+// MockResponseSize mock the response size
+const MockResponseSize = 100 * 1024 * 1024
 
 // Next returns next coprocessor result.
 // NOTE: Use nil to indicate finish, so if the returned ResultSubset is not nil, reader should continue to call Next().
@@ -741,7 +744,7 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 		if val.(bool) {
 			// we only need to trigger oom at least once.
 			if len(it.tasks) > 9 {
-				for it.memTracker.MaxConsumed() < 500 {
+				for it.memTracker.MaxConsumed() < 5*MockResponseSize {
 					time.Sleep(10 * time.Millisecond)
 				}
 			}

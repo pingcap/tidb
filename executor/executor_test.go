@@ -6753,12 +6753,12 @@ func (s *testSerialSuite) TestCoprocessorOOMAction(c *C) {
 	for _, testcase := range testcases {
 		c.Log(testcase.name)
 		// larger than 4 copResponse, smaller than 5 copResponse
-		quota := 499
+		quota := 5*tikv.MockResponseSize - 100
 		se, err := session.CreateSession4Test(s.store)
 		c.Check(err, IsNil)
 		tk.Se = se
 		tk.MustExec("use test")
-		tk.MustExec("set @@tidb_distsql_scan_concurrency = 4")
+		tk.MustExec("set @@tidb_distsql_scan_concurrency = 10")
 		tk.MustExec(fmt.Sprintf("set @@tidb_mem_quota_query=%v;", quota))
 		var expect []string
 		for i := 0; i < count; i++ {
