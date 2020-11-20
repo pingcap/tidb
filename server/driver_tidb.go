@@ -156,7 +156,7 @@ func (ts *TiDBStatement) Reset() {
 func (ts *TiDBStatement) Close() error {
 	//TODO close at tidb level
 	if ts.ctx.GetSessionVars().TxnCtx != nil && ts.ctx.GetSessionVars().TxnCtx.CouldRetry {
-		err := ts.ctx.DropPreparedStmt(ts.id)
+		err := ts.ctx.session.DropPreparedStmt(ts.id)
 		if err != nil {
 			return err
 		}
@@ -167,7 +167,7 @@ func (ts *TiDBStatement) Close() error {
 			if !ok {
 				return errors.Errorf("invalid CachedPrepareStmt type")
 			}
-			ts.ctx.PreparedPlanCache().Delete(core.NewPSTMTPlanCacheKey(
+			ts.ctx.session.PreparedPlanCache().Delete(core.NewPSTMTPlanCacheKey(
 				ts.ctx.GetSessionVars(), ts.id, preparedObj.PreparedAst.SchemaVersion))
 		}
 		ts.ctx.GetSessionVars().RemovePreparedStmt(ts.id)
