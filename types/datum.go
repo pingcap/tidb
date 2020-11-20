@@ -1266,7 +1266,8 @@ func (d *Datum) convertToMysqlYear(sc *stmtctx.StatementContext, target *FieldTy
 	}
 	y, err = AdjustYear(y, adjust)
 	if err != nil {
-		err = ErrOverflow.GenWithStackByArgs("DECIMAL", fmt.Sprintf("(%d, %d)", target.Flen, target.Decimal))
+		_, err = invalidConv(d, target.Tp)
+		// err = ErrOverflow.GenWithStackByArgs("DECIMAL", fmt.Sprintf("(%d, %d)", target.Flen, target.Decimal))
 	}
 	ret.SetInt64(y)
 	return ret, err
