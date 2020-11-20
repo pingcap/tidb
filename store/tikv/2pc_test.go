@@ -226,7 +226,7 @@ func (s *testCommitterSuite) TestPrewriteRollback(c *C) {
 		err = committer.prewriteMutations(NewBackofferWithVars(ctx, PrewriteMaxBackoff, nil), committer.mutations)
 		c.Assert(err, IsNil)
 	}
-	committer.commitTS, err = s.store.oracle.GetTimestamp(ctx)
+	committer.commitTS, err = s.store.oracle.GetTimestamp(ctx, &oracle.Option{TxnScope: oracle.GlobalTxnScope})
 	c.Assert(err, IsNil)
 	err = committer.commitMutations(NewBackofferWithVars(ctx, int(atomic.LoadUint64(&CommitMaxBackoff)), nil), &PlainMutations{keys: [][]byte{[]byte("a")}})
 	c.Assert(err, IsNil)
@@ -677,7 +677,7 @@ func (s *testCommitterSuite) TestPessimisticTTL(c *C) {
 	err = txn.LockKeys(context.Background(), lockCtx, key2)
 	c.Assert(err, IsNil)
 	lockInfo := s.getLockInfo(c, key)
-	msBeforeLockExpired := s.store.GetOracle().UntilExpired(txn.StartTS(), lockInfo.LockTtl)
+	msBeforeLockExpired := s.store.GetOracle().UntilExpired(txn.StartTS(), lockInfo.LockTtl, &oracle.Option{TxnScope: oracle.GlobalTxnScope})
 	c.Assert(msBeforeLockExpired, GreaterEqual, int64(100))
 
 	lr := newLockResolver(s.store)
@@ -690,7 +690,7 @@ func (s *testCommitterSuite) TestPessimisticTTL(c *C) {
 	for i := 0; i < 50; i++ {
 		lockInfoNew := s.getLockInfo(c, key)
 		if lockInfoNew.LockTtl > lockInfo.LockTtl {
-			currentTS, err := lr.store.GetOracle().GetTimestamp(bo.ctx)
+			currentTS, err := lr.store.GetOracle().GetTimestamp(bo.ctx, &oracle.Option{TxnScope: oracle.GlobalTxnScope})
 			c.Assert(err, IsNil)
 			// Check that the TTL is update to a reasonable range.
 			expire := oracle.ExtractPhysical(txn.startTS) + int64(lockInfoNew.LockTtl)
