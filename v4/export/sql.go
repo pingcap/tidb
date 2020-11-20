@@ -630,7 +630,7 @@ func pickupPossibleField(dbName, tableName string, db *sql.Conn, conf *Config) (
 }
 
 func estimateCount(dbName, tableName string, db *sql.Conn, field string, conf *Config) uint64 {
-	query := fmt.Sprintf("EXPLAIN SELECT `%s` FROM `%s`.`%s`", field, escapeString(dbName), escapeString(tableName))
+	query := fmt.Sprintf("EXPLAIN SELECT `%s` FROM `%s`.`%s`", escapeString(field), escapeString(dbName), escapeString(tableName))
 
 	if conf.Where != "" {
 		query += " WHERE "

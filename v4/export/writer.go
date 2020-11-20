@@ -34,7 +34,7 @@ func (f SimpleWriter) WriteDatabaseMeta(ctx context.Context, db, createSQL strin
 	if err != nil {
 		return err
 	}
-	return writeMetaToFile(ctx, db, createSQL, f.cfg.ExternalStorage, fileName+".sql")
+	return writeMetaToFile(ctx, db, createSQL, f.cfg.ExternalStorage, fileName+".sql", f.cfg.CompressType)
 }
 
 func (f SimpleWriter) WriteTableMeta(ctx context.Context, db, table, createSQL string) error {
@@ -42,7 +42,7 @@ func (f SimpleWriter) WriteTableMeta(ctx context.Context, db, table, createSQL s
 	if err != nil {
 		return err
 	}
-	return writeMetaToFile(ctx, db, createSQL, f.cfg.ExternalStorage, fileName+".sql")
+	return writeMetaToFile(ctx, db, createSQL, f.cfg.ExternalStorage, fileName+".sql", f.cfg.CompressType)
 }
 
 func (f SimpleWriter) WriteViewMeta(ctx context.Context, db, view, createTableSQL, createViewSQL string) error {
@@ -54,11 +54,11 @@ func (f SimpleWriter) WriteViewMeta(ctx context.Context, db, view, createTableSQ
 	if err != nil {
 		return err
 	}
-	err = writeMetaToFile(ctx, db, createTableSQL, f.cfg.ExternalStorage, fileNameTable+".sql")
+	err = writeMetaToFile(ctx, db, createTableSQL, f.cfg.ExternalStorage, fileNameTable+".sql", f.cfg.CompressType)
 	if err != nil {
 		return err
 	}
-	return writeMetaToFile(ctx, db, createViewSQL, f.cfg.ExternalStorage, fileNameView+".sql")
+	return writeMetaToFile(ctx, db, createViewSQL, f.cfg.ExternalStorage, fileNameView+".sql", f.cfg.CompressType)
 }
 
 type SQLWriter struct{ SimpleWriter }
@@ -75,8 +75,8 @@ func (f SQLWriter) WriteTableData(ctx context.Context, ir TableDataIR) (err erro
 	}
 
 	for {
-		fileWriter, tearDown := buildInterceptFileWriter(f.cfg.ExternalStorage, fileName)
-		err = WriteInsert(ctx, ir, fileWriter, f.cfg.FileSize, f.cfg.StatementSize)
+		fileWriter, tearDown := buildInterceptFileWriter(f.cfg.ExternalStorage, fileName, f.cfg.CompressType)
+		err = WriteInsert(ctx, ir, fileWriter, f.cfg)
 		tearDown(ctx)
 		if err != nil {
 			return err
@@ -99,8 +99,8 @@ func (f SQLWriter) WriteTableData(ctx context.Context, ir TableDataIR) (err erro
 	return nil
 }
 
-func writeMetaToFile(ctx context.Context, target, metaSQL string, s storage.ExternalStorage, path string) error {
-	fileWriter, tearDown, err := buildFileWriter(ctx, s, path)
+func writeMetaToFile(ctx context.Context, target, metaSQL string, s storage.ExternalStorage, path string, compressType storage.CompressType) error {
+	fileWriter, tearDown, err := buildFileWriter(ctx, s, path, compressType)
 	if err != nil {
 		return err
 	}
@@ -177,15 +177,9 @@ func (f CSVWriter) WriteTableData(ctx context.Context, ir TableDataIR) (err erro
 		return err
 	}
 
-	opt := &csvOption{
-		nullValue: f.cfg.CsvNullValue,
-		separator: []byte(f.cfg.CsvSeparator),
-		delimiter: []byte(f.cfg.CsvDelimiter),
-	}
-
 	for {
-		fileWriter, tearDown := buildInterceptFileWriter(f.cfg.ExternalStorage, fileName)
-		err = WriteInsertInCsv(ctx, ir, fileWriter, f.cfg.NoHeader, opt, f.cfg.FileSize)
+		fileWriter, tearDown := buildInterceptFileWriter(f.cfg.ExternalStorage, fileName, f.cfg.CompressType)
+		err = WriteInsertInCsv(ctx, ir, fileWriter, f.cfg)
 		tearDown(ctx)
 		if err != nil {
 			return err
