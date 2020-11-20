@@ -843,7 +843,7 @@ func errStrForLog(err error, enableRedactLog bool) string {
 		// currently, only ErrParse is considered when enableRedactLog because it may contain sensitive information like
 		// password or accesskey
 		if parser.ErrParse.Equal(err) {
-			return "fail to parse SQL and can't desensitize when enable log redaction"
+			return "fail to parse SQL and can't redact when enable log redaction"
 		}
 	}
 	if kv.ErrKeyExists.Equal(err) || parser.ErrParse.Equal(err) || infoschema.ErrTableNotExists.Equal(err) {
