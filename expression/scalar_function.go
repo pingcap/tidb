@@ -194,7 +194,6 @@ func newFunctionImpl(ctx sessionctx.Context, fold int, funcName string, retType 
 			return tryFoldConstant(ctx, sf)
 		}
 		return sf, nil
-		//return BuildGetVarFunction(ctx, args[0], retType)
 	}
 	fc, ok := funcs[funcName]
 	if !ok {
