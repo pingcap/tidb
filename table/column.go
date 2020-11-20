@@ -186,21 +186,24 @@ func CastValue(ctx sessionctx.Context, val types.Datum, col *model.ColumnInfo, r
 		// in Mysql8.0+, the timestamp's case is special:
 		// no matter HasNoZeroDateMode or HasNoZeroInDateMode is enabled or not,
 		// if timestamp is invalid, an warning message whould be appended or error handling.
+		var (
+			zeroV types.Time
+			zeroT string
+		)
+		switch col.Tp {
+		case mysql.TypeDate:
+			zeroV, zeroT = types.ZeroDate, types.DateStr
+		case mysql.TypeDatetime:
+			zeroV, zeroT = types.ZeroDatetime, types.DateTimeStr
+		case mysql.TypeTimestamp:
+			zeroV, zeroT = types.ZeroTimestamp, types.TimestampStr
+		}
+
+		if (tm.IsZero() && !mode.HasNoZeroDateMode()) || (tm.InvalidZero() && !mode.HasNoZeroInDateMode()) {
+			return types.NewDatum(zeroV), nil
+		}
 		if (val.Kind() != types.KindMysqlTime || !val.GetMysqlTime().IsZero()) &&
 			((tm.IsZero() && mode.HasNoZeroDateMode()) || (tm.InvalidZero() && (mode.HasNoZeroInDateMode() || col.Tp == mysql.TypeTimestamp))) {
-			var (
-				zeroV types.Time
-				zeroT string
-			)
-			switch col.Tp {
-			case mysql.TypeDate:
-				zeroV, zeroT = types.ZeroDate, types.DateStr
-			case mysql.TypeDatetime:
-				zeroV, zeroT = types.ZeroDatetime, types.DateTimeStr
-			case mysql.TypeTimestamp:
-				zeroV, zeroT = types.ZeroTimestamp, types.TimestampStr
-			}
-
 			innerErr := types.ErrWrongValue.GenWithStackByArgs(zeroT, val.GetString())
 			ignoreErr := sc.DupKeyAsWarning
 			if mode.HasStrictMode() && !ignoreErr {
