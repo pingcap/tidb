@@ -2452,7 +2452,7 @@ func (s *session) recordOnTransactionExecution(err error, counter int, duration 
 
 func (s *session) checkAndGetTxnScope() string {
 	txnScope := s.GetSessionVars().TxnScope
-	// Internal SQLs should always run as the global transcations.
+	// Internal SQLs should always run as the global transactions.
 	if s.isInternal() {
 		txnScope = oracle.GlobalTxnScope
 	}
