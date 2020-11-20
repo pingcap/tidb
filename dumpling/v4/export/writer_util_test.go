@@ -61,7 +61,7 @@ func (s *testUtilSuite) TestWriteInsert(c *C) {
 	tableIR := newMockTableIR("test", "employee", data, specCmts, colTypes)
 	bf := storage.NewBufferWriter()
 
-	err := WriteInsert(context.Background(), tableIR, bf, UnspecifiedSize, UnspecifiedSize)
+	err := WriteInsert(context.Background(), tableIR, bf, configForWriteSQL(UnspecifiedSize, UnspecifiedSize))
 	c.Assert(err, IsNil)
 	expected := "/*!40101 SET NAMES binary*/;\n" +
 		"/*!40014 SET FOREIGN_KEY_CHECKS=0*/;\n" +
@@ -91,7 +91,7 @@ func (s *testUtilSuite) TestWriteInsertReturnsError(c *C) {
 	tableIR.rowErr = rowErr
 	bf := storage.NewBufferWriter()
 
-	err := WriteInsert(context.Background(), tableIR, bf, UnspecifiedSize, UnspecifiedSize)
+	err := WriteInsert(context.Background(), tableIR, bf, configForWriteSQL(UnspecifiedSize, UnspecifiedSize))
 	c.Assert(err, Equals, rowErr)
 	expected := "/*!40101 SET NAMES binary*/;\n" +
 		"/*!40014 SET FOREIGN_KEY_CHECKS=0*/;\n" +
@@ -115,7 +115,7 @@ func (s *testUtilSuite) TestWriteInsertInCsv(c *C) {
 
 	// test nullValue
 	opt := &csvOption{separator: []byte(","), delimiter: doubleQuotationMark, nullValue: "\\N"}
-	err := WriteInsertInCsv(context.Background(), tableIR, bf, true, opt, UnspecifiedSize)
+	err := WriteInsertInCsv(context.Background(), tableIR, bf, configForWriteCSV(true, opt, UnspecifiedSize))
 	c.Assert(err, IsNil)
 	expected := "1,\"male\",\"bob@mail.com\",\"020-1234\",\\N\n" +
 		"2,\"female\",\"sarah@mail.com\",\"020-1253\",\"healthy\"\n" +
@@ -127,7 +127,7 @@ func (s *testUtilSuite) TestWriteInsertInCsv(c *C) {
 	bf.Reset()
 	opt.delimiter = quotationMark
 	tableIR = newMockTableIR("test", "employee", data, nil, colTypes)
-	err = WriteInsertInCsv(context.Background(), tableIR, bf, true, opt, UnspecifiedSize)
+	err = WriteInsertInCsv(context.Background(), tableIR, bf, configForWriteCSV(true, opt, UnspecifiedSize))
 	c.Assert(err, IsNil)
 	expected = "1,'male','bob@mail.com','020-1234',\\N\n" +
 		"2,'female','sarah@mail.com','020-1253','healthy'\n" +
@@ -139,7 +139,7 @@ func (s *testUtilSuite) TestWriteInsertInCsv(c *C) {
 	bf.Reset()
 	opt.separator = []byte(";")
 	tableIR = newMockTableIR("test", "employee", data, nil, colTypes)
-	err = WriteInsertInCsv(context.Background(), tableIR, bf, true, opt, UnspecifiedSize)
+	err = WriteInsertInCsv(context.Background(), tableIR, bf, configForWriteCSV(true, opt, UnspecifiedSize))
 	c.Assert(err, IsNil)
 	expected = "1;'male';'bob@mail.com';'020-1234';\\N\n" +
 		"2;'female';'sarah@mail.com';'020-1253';'healthy'\n" +
@@ -153,7 +153,7 @@ func (s *testUtilSuite) TestWriteInsertInCsv(c *C) {
 	opt.delimiter = []byte("ma")
 	tableIR = newMockTableIR("test", "employee", data, nil, colTypes)
 	tableIR.colNames = []string{"id", "gender", "email", "phone_number", "status"}
-	err = WriteInsertInCsv(context.Background(), tableIR, bf, false, opt, UnspecifiedSize)
+	err = WriteInsertInCsv(context.Background(), tableIR, bf, configForWriteCSV(false, opt, UnspecifiedSize))
 	c.Assert(err, IsNil)
 	expected = "maidma&;,?magenderma&;,?maemamailma&;,?maphone_numberma&;,?mastatusma\n" +
 		"1&;,?mamamalema&;,?mabob@mamail.comma&;,?ma020-1234ma&;,?\\N\n" +
@@ -178,7 +178,7 @@ func (s *testUtilSuite) TestSQLDataTypes(c *C) {
 		tableIR := newMockTableIR("test", "t", tableData, nil, colType)
 		bf := storage.NewBufferWriter()
 
-		err := WriteInsert(context.Background(), tableIR, bf, UnspecifiedSize, UnspecifiedSize)
+		err := WriteInsert(context.Background(), tableIR, bf, configForWriteSQL(UnspecifiedSize, UnspecifiedSize))
 		c.Assert(err, IsNil)
 		lines := strings.Split(bf.String(), "\n")
 		c.Assert(len(lines), Equals, 3)
@@ -202,4 +202,18 @@ func (s *testUtilSuite) TestWrite(c *C) {
 	}
 	err := write(context.Background(), mocksw, "test")
 	c.Assert(err, IsNil)
+}
+
+func configForWriteSQL(fileSize, statementSize uint64) *Config {
+	return &Config{FileSize: fileSize, StatementSize: statementSize}
+}
+
+func configForWriteCSV(noHeader bool, opt *csvOption, fileSizeLimit uint64) *Config {
+	return &Config{
+		NoHeader:     noHeader,
+		CsvNullValue: opt.nullValue,
+		CsvDelimiter: string(opt.delimiter),
+		CsvSeparator: string(opt.separator),
+		FileSize:     fileSizeLimit,
+	}
 }
