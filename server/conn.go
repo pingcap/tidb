@@ -791,7 +791,7 @@ func (cc *clientConn) Run(ctx context.Context) {
 				zap.String("status", cc.SessionStatusToString()),
 				zap.Stringer("sql", getLastStmtInConn{cc}),
 				zap.String("txn_mode", txnMode),
-				zap.String("err", errStrForLog(err, cc.ctx.GetSessionVars().EnableRedactLog)),
+				zap.String("err", errStrForLog(err, config.RedactLogEnabled())),
 			)
 			err1 := cc.writeError(ctx, err)
 			terror.Log(err1)
@@ -825,10 +825,6 @@ func queryStrForLog(query string) string {
 	return query
 }
 
-<<<<<<< HEAD
-func errStrForLog(err error) string {
-	if kv.ErrKeyExists.Equal(err) || parser.ErrParse.Equal(err) {
-=======
 func errStrForLog(err error, enableRedactLog bool) string {
 	if enableRedactLog {
 		// currently, only ErrParse is considered when enableRedactLog because it may contain sensitive information like
@@ -837,8 +833,7 @@ func errStrForLog(err error, enableRedactLog bool) string {
 			return "fail to parse SQL and can't redact when enable log redaction"
 		}
 	}
-	if kv.ErrKeyExists.Equal(err) || parser.ErrParse.Equal(err) || infoschema.ErrTableNotExists.Equal(err) {
->>>>>>> 92c012c44... log: desensitize of dispatching error and parsing error (#21141)
+	if kv.ErrKeyExists.Equal(err) || parser.ErrParse.Equal(err) {
 		// Do not log stack for duplicated entry error.
 		return err.Error()
 	}
@@ -1757,13 +1752,8 @@ func (cc getLastStmtInConn) String() string {
 		return "ListFields " + string(data)
 	case mysql.ComQuery, mysql.ComStmtPrepare:
 		sql := string(hack.String(data))
-<<<<<<< HEAD
 		if config.RedactLogEnabled() {
-			sql, _ = parser.NormalizeDigest(sql)
-=======
-		if cc.ctx.GetSessionVars().EnableRedactLog {
 			sql = parser.Normalize(sql)
->>>>>>> 92c012c44... log: desensitize of dispatching error and parsing error (#21141)
 		}
 		return queryStrForLog(sql)
 	case mysql.ComStmtExecute, mysql.ComStmtFetch:
