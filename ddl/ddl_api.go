@@ -1909,10 +1909,10 @@ func (d *ddl) CreateView(ctx sessionctx.Context, s *ast.CreateViewStmt) (err err
 
 	tblCharset := ""
 	tblCollate := ""
-	if v, ok := ctx.GetSessionVars().GetSystemVar("character_set_client"); ok {
+	if v, ok := ctx.GetSessionVars().GetSystemVar(variable.CharacterSetConnection); ok {
 		tblCharset = v
 	}
-	if v, ok := ctx.GetSessionVars().GetSystemVar("collation_connection"); ok {
+	if v, ok := ctx.GetSessionVars().GetSystemVar(variable.CollationConnection); ok {
 		tblCollate = v
 	}
 
@@ -5288,10 +5288,32 @@ func checkColumnsTypeAndValuesMatch(ctx sessionctx.Context, meta *model.TableInf
 			return err
 		}
 		// Check val.ConvertTo(colType) doesn't work, so we need this case by case check.
+		vkind := val.Kind()
 		switch colType.Tp {
 		case mysql.TypeDate, mysql.TypeDatetime:
-			switch val.Kind() {
+			switch vkind {
 			case types.KindString, types.KindBytes:
+				if _, err := val.ConvertTo(ctx.GetSessionVars().StmtCtx, colType); err != nil {
+					return ErrWrongTypeColumnValue.GenWithStackByArgs()
+				}
+			default:
+				return ErrWrongTypeColumnValue.GenWithStackByArgs()
+			}
+		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
+			switch vkind {
+			case types.KindInt64, types.KindUint64, types.KindNull:
+			default:
+				return ErrWrongTypeColumnValue.GenWithStackByArgs()
+			}
+		case mysql.TypeFloat, mysql.TypeDouble:
+			switch vkind {
+			case types.KindFloat32, types.KindFloat64, types.KindNull:
+			default:
+				return ErrWrongTypeColumnValue.GenWithStackByArgs()
+			}
+		case mysql.TypeString, mysql.TypeVarString:
+			switch vkind {
+			case types.KindString, types.KindBytes, types.KindNull:
 			default:
 				return ErrWrongTypeColumnValue.GenWithStackByArgs()
 			}
@@ -5420,7 +5442,6 @@ func (d *ddl) UnlockTables(ctx sessionctx.Context, unlockTables []model.TableLoc
 	err := d.doDDLJob(ctx, job)
 	if err == nil {
 		ctx.ReleaseAllTableLocks()
-		ctx.GetStore().GetMemCache().Release()
 	}
 	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
