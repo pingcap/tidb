@@ -17,13 +17,17 @@ const (
 )
 
 const (
-	Running      SubTaskStatus = 0
-	Unclaimed    SubTaskStatus = 1
-	Failed       SubTaskStatus = 2
-	Success      SubTaskStatus = 3
-	Recorganized SubTaskStatus = 4
-	UNKOWN       SubTaskStatus = 10
+	Running     SubTaskStatus = 0
+	Unclaimed   SubTaskStatus = 1
+	Failed      SubTaskStatus = 2
+	Success     SubTaskStatus = 3
+	Reorganized SubTaskStatus = 4
+	UNKOWN      SubTaskStatus = 10
 )
+
+type ParentJob struct {
+	SubTaskNum int64 `json:"sub_task_num"`
+}
 
 type SubTask struct {
 	JobID    int64           `json:"jobId"`

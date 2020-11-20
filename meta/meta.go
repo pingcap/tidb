@@ -1071,7 +1071,7 @@ func (m *Meta) SetReorgSubTaskStatus(jobID int64, subTaskID int64, status SubTas
 		err = m.txn.HSet(mDDLSubTaskReorgKey, m.reorgSubTaskStatus(jobID, subTaskID), []byte(strconv.FormatInt(2, 10)))
 	case Success:
 		err = m.txn.HSet(mDDLSubTaskReorgKey, m.reorgSubTaskStatus(jobID, subTaskID), []byte(strconv.FormatInt(3, 10)))
-	case Recorganized:
+	case Reorganized:
 		err = m.txn.HSet(mDDLSubTaskReorgKey, m.reorgSubTaskStatus(jobID, subTaskID), []byte(strconv.FormatInt(4, 10)))
 	case UNKOWN:
 		err = m.txn.HSet(mDDLSubTaskReorgKey, m.reorgSubTaskStatus(jobID, subTaskID), []byte(strconv.FormatInt(10, 10)))
@@ -1281,7 +1281,7 @@ func (m *Meta) GetReorgSubTaskStatus(jobId int64, taskID int64) (status SubTaskS
 	case 3:
 		return Success, errors.Trace(err)
 	case 4:
-		return Recorganized, errors.Trace(err)
+		return Reorganized, errors.Trace(err)
 	default:
 		return UNKOWN, errors.Trace(err)
 	}

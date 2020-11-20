@@ -500,7 +500,7 @@ func (w *worker) tryToClaimSubTaskFromTheQueue(ticker *time.Ticker, handleSubTas
 					if err != nil {
 						return errors.Trace(err)
 					}
-					err = t.SetReorgSubTaskStartTime(currentTask.JobID, currentTask.TaskID, time.Now().Unix())
+					err = t.SetReorgSubTaskStartTime(currentTask.JobID, currentTask.TaskID, model.TSConvert2Time(txn.StartTS()).Unix())
 					if err != nil {
 						return errors.Trace(err)
 					}
@@ -746,7 +746,7 @@ func (w *worker) handelParentJob(d *ddlCtx, job *model.Job, tableInfo *model.Tab
 						startHandle, _, _, runner, status, subTaskProcessedCount, startTime, err := t.GetDDLSubTaskReorgInfo(job.ID, taskID, currentTable.Meta().IsCommonHandle)
 						costTime := time.Now().Unix() - startTime
 						switch status {
-						case meta.Recorganized:
+						case meta.Reorganized:
 							lastLinearTaskID = taskID
 							reorganizeTaskNum++
 							break
@@ -757,7 +757,7 @@ func (w *worker) handelParentJob(d *ddlCtx, job *model.Job, tableInfo *model.Tab
 							lastLinearTaskID = taskID
 							totalAddedCount = totalAddedCount + subTaskProcessedCount
 							job.SetRowCount(totalAddedCount)
-							err = t.SetReorgSubTaskStatus(job.ID, taskID, meta.Recorganized)
+							err = t.SetReorgSubTaskStatus(job.ID, taskID, meta.Reorganized)
 							logutil.Logger(w.logCtx).Info("[ddl] DDL subTask success", zap.String("job", job.String()),
 								zap.String("subTaskId", strconv.FormatInt(taskID, 10)),
 								zap.String("processedCount", strconv.FormatInt(subTaskProcessedCount, 10)),

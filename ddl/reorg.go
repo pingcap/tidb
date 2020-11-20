@@ -460,36 +460,6 @@ func getValidCurrentVersion(store kv.Storage) (ver kv.Version, err error) {
 	return ver, nil
 }
 
-func getParentJobReorgInfo(d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table) ([]reorgInfo, error) {
-	var (
-		reorgInfos  []reorgInfo
-		startHandle kv.Handle
-		endHandle   kv.Handle
-		err         error
-		version     kv.Version
-	)
-	if tbl, ok := tbl.(table.PartitionedTable); ok {
-		for _, partitionId := range getPartitionIDs(tbl.Meta()) {
-			version, err = getValidCurrentVersion(d.store)
-			if err != nil {
-				return reorgInfos, errors.Trace(err)
-			}
-			startHandle, endHandle, err = getTableRange(d, tbl.GetPartition(partitionId), version.Ver, job.Priority)
-			if err != nil {
-				return reorgInfos, errors.Trace(err)
-			}
-			reorgInfo := reorgInfo{job, startHandle, endHandle, d, true, partitionId}
-			reorgInfos = append(reorgInfos, reorgInfo)
-		}
-	} else {
-		version, err = getValidCurrentVersion(d.store)
-		startHandle, endHandle, err = getTableRange(d, tbl.(table.PhysicalTable), version.Ver, job.Priority)
-		reorgInfo := reorgInfo{job, startHandle, endHandle, d, true, tbl.(table.PhysicalTable).GetPhysicalID()}
-		reorgInfos = append(reorgInfos, reorgInfo)
-	}
-	return reorgInfos, err
-}
-
 func getReorgInfo(d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table) (*reorgInfo, error) {
 	var (
 		start kv.Handle

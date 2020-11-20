@@ -15,7 +15,6 @@ package ddl
 
 import (
 	"context"
-	"github.com/pingcap/tidb/meta"
 	"math"
 	"strconv"
 	"sync/atomic"
@@ -27,6 +26,7 @@ import (
 	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -231,7 +231,7 @@ func (w *backfillWorker) run(d *ddlCtx, bf backfiller) {
 // splitTableRanges uses PD region's key ranges to split the backfilling table key range space,
 // to speed up backfilling data in table with disperse handle.
 // The `t` should be a non-partitioned table or a partition.
-func SplitTableRanges(t table.PhysicalTable, store kv.Storage, startHandle, endHandle kv.Handle) ([]kv.KeyRange, error) {
+func splitTableRanges(t table.PhysicalTable, store kv.Storage, startHandle, endHandle kv.Handle) ([]kv.KeyRange, error) {
 	startRecordKey := t.RecordKey(startHandle)
 	endRecordKey := t.RecordKey(endHandle)
 
@@ -491,7 +491,7 @@ func (w *worker) writePhysicalTableRecord(t table.PhysicalTable, bfWorkerType ba
 	}()
 
 	for {
-		kvRanges, err := SplitTableRanges(t, reorgInfo.d.store, startHandle, endHandle)
+		kvRanges, err := splitTableRanges(t, reorgInfo.d.store, startHandle, endHandle)
 		if err != nil {
 			return errors.Trace(err)
 		}

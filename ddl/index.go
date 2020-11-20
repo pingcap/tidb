@@ -677,9 +677,9 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 }
 
 func getParentJobSubTaskNum(job *model.Job) (ver int64, err error) {
-	var parentJob parentJob
-	err = job.DecodeArgs(&parentJob.subTaskNum)
-	return parentJob.subTaskNum, errors.Trace(err)
+	var parentJob meta.ParentJob
+	err = job.DecodeArgs(&parentJob)
+	return parentJob.SubTaskNum, errors.Trace(err)
 }
 
 func onDropIndex(t *meta.Meta, job *model.Job) (ver int64, _ error) {
@@ -1173,10 +1173,6 @@ func (w *worker) addPhysicalTableIndex(t table.PhysicalTable, indexInfo *model.I
 	return w.writePhysicalTableRecord(t.(table.PhysicalTable), typeAddIndexWorker, indexInfo, nil, nil, reorgInfo)
 }
 
-type parentJob struct {
-	subTaskNum int64 `json:"sub_task_num"`
-}
-
 func (w *worker) dispatchAddIndexSubTasks(d *ddlCtx, tbl table.Table, tblInfo *model.TableInfo, idx *model.IndexInfo, job *model.Job) (err error) {
 	var (
 		allSubTasks []*meta.SubTask
@@ -1211,8 +1207,8 @@ func (w *worker) dispatchAddIndexSubTasks(d *ddlCtx, tbl table.Table, tblInfo *m
 		if err != nil {
 			return errors.Trace(err)
 		}
-		parentJob := parentJob{int64(len(allSubTasks))}
-		job.Args = append(job.Args, parentJob.subTaskNum)
+		parentJob := &meta.ParentJob{SubTaskNum: int64(len(allSubTasks))}
+		job.Args = append(job.Args, parentJob)
 		err = t.UpdateDDLJob(0, job, true)
 		if err != nil {
 			for i := int64(0); i < int64(len(allSubTasks)); i++ {
