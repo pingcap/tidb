@@ -678,7 +678,7 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 
 func getParentJobSubTaskNum(job *model.Job) (ver int64, err error) {
 	var parentJob meta.ParentJob
-	err = job.DecodeArgs(&parentJob)
+	err = job.DecodeArgs(&parentJob.SubTaskNum)
 	return parentJob.SubTaskNum, errors.Trace(err)
 }
 

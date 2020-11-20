@@ -744,7 +744,7 @@ func (w *worker) handelParentJob(d *ddlCtx, job *model.Job, tableInfo *model.Tab
 							currentTable = tbl.(table.PhysicalTable)
 						}
 						startHandle, _, _, runner, status, subTaskProcessedCount, startTime, err := t.GetDDLSubTaskReorgInfo(job.ID, taskID, currentTable.Meta().IsCommonHandle)
-						costTime := time.Now().Unix() - startTime
+						costTime := -startTime
 						switch status {
 						case meta.Reorganized:
 							lastLinearTaskID = taskID
