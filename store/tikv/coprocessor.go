@@ -79,26 +79,24 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variable
 		memTracker:      req.MemTracker,
 		replicaReadSeed: c.replicaReadSeed,
 		rpcCancel:       NewRPCanceller(),
-		maxID:           &maxIDHandler{},
 	}
-	it.maxID.maxID = 0
 	it.minCommitTSPushed.data = make(map[uint64]struct{}, 5)
 	it.tasks = tasks
 	if it.concurrency > len(tasks) {
 		it.concurrency = len(tasks)
 	}
+	it.taskStatus = make([]bool, len(it.tasks), len(it.tasks))
 	if it.concurrency < 1 {
 		// Make sure that there is at least one worker.
 		it.concurrency = 1
 	}
-
+	it.keepOrder = it.req.KeepOrder
 	if it.req.KeepOrder {
 		it.sendRate = newRateLimit(2 * it.concurrency)
 	} else {
-		it.respChan = make(chan *copResponse, it.concurrency)
 		it.sendRate = newRateLimit(it.concurrency)
 	}
-	it.actionOnExceed = newRateLimitAction(uint(cap(it.sendRate.token)), sync.NewCond(&sync.Mutex{}))
+	it.actionOnExceed = newRateLimitAction(uint(cap(it.sendRate.token)))
 	if sessionMemTracker != nil {
 		sessionMemTracker.FallbackOldAndSetNewAction(it.actionOnExceed)
 	}
@@ -400,14 +398,10 @@ type copIterator struct {
 	// curr indicates the curr id of the finished copTask
 	curr int
 
-	// maxID indicates the max id of the running copTask
-	maxID *maxIDHandler
-
 	// sendRate controls the sending rate of copIteratorTaskSender
 	sendRate *rateLimit
 
-	// Otherwise, results are stored in respChan.
-	respChan chan *copResponse
+	keepOrder bool
 
 	vars *kv.Variables
 
@@ -426,6 +420,8 @@ type copIterator struct {
 	minCommitTSPushed
 
 	actionOnExceed *rateLimitAction
+
+	taskStatus []bool
 }
 
 // copIteratorWorker receives tasks from copIteratorTaskSender, handles tasks and sends the copResponse to respChan.
@@ -434,7 +430,6 @@ type copIteratorWorker struct {
 	wg       *sync.WaitGroup
 	store    *tikvStore
 	req      *kv.Request
-	respChan chan<- *copResponse
 	finishCh <-chan struct{}
 	vars     *kv.Variables
 	clientHelper
@@ -446,8 +441,6 @@ type copIteratorWorker struct {
 	sendRate *rateLimit
 
 	actionOnExceed *rateLimitAction
-
-	maxID *maxIDHandler
 }
 
 // copIteratorTaskSender sends tasks to taskCh then wait for the workers to exit.
@@ -456,7 +449,6 @@ type copIteratorTaskSender struct {
 	wg       *sync.WaitGroup
 	tasks    []*copTask
 	finishCh <-chan struct{}
-	respChan chan<- *copResponse
 	sendRate *rateLimit
 }
 
@@ -528,24 +520,9 @@ func (worker *copIteratorWorker) run(ctx context.Context) {
 		worker.actionOnExceed.close()
 	}()
 	for task := range worker.taskCh {
-		respCh := worker.respChan
-		if respCh == nil {
-			respCh = task.respChan
-		}
+		respCh := task.respChan
 		worker.handleTask(ctx, task, respCh)
-		failpoint.Inject("testRateLimitActionMockOtherExecutorConsume", func(val failpoint.Value) {
-			if val.(bool) {
-				// wait action being enabled and response channel become empty
-				time.Sleep(20 * time.Millisecond)
-				// simulate other executor consume and trigger oom action
-				worker.memTracker.Consume(99999)
-			}
-		})
 		close(task.respChan)
-		worker.maxID.setMaxIDIfLarger(task.id)
-		worker.actionOnExceed.destroyTokenIfNeeded(func() {
-			worker.sendRate.putToken()
-		})
 		if worker.vars != nil && worker.vars.Killed != nil && atomic.LoadUint32(worker.vars.Killed) == 1 {
 			return
 		}
@@ -568,7 +545,6 @@ func (it *copIterator) open(ctx context.Context) {
 			wg:       &it.wg,
 			store:    it.store,
 			req:      it.req,
-			respChan: it.respChan,
 			finishCh: it.finishCh,
 			vars:     it.vars,
 			clientHelper: clientHelper{
@@ -583,7 +559,6 @@ func (it *copIterator) open(ctx context.Context) {
 			replicaReadSeed: it.replicaReadSeed,
 			sendRate:        it.sendRate,
 			actionOnExceed:  it.actionOnExceed,
-			maxID:           it.maxID,
 		}
 		go worker.run(ctx)
 	}
@@ -594,7 +569,6 @@ func (it *copIterator) open(ctx context.Context) {
 		finishCh: it.finishCh,
 		sendRate: it.sendRate,
 	}
-	taskSender.respChan = it.respChan
 	it.actionOnExceed.setEnabled(true)
 	go taskSender.run()
 }
@@ -621,15 +595,46 @@ func (sender *copIteratorTaskSender) run() {
 
 	// Wait for worker goroutines to exit.
 	sender.wg.Wait()
-	if sender.respChan != nil {
-		close(sender.respChan)
-	}
 }
 
-func (it *copIterator) recvFromRespCh(ctx context.Context, respCh <-chan *copResponse) (resp *copResponse, ok bool, exit bool) {
-	ticker := time.NewTicker(3 * time.Second)
-	defer ticker.Stop()
-	for {
+func (it *copIterator) recvFromRespCh(ctx context.Context, respCh <-chan *copResponse, waitUntil bool) (resp *copResponse, ok bool, exit bool, recv bool) {
+	if waitUntil {
+		ticker := time.NewTicker(3 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case resp, ok = <-respCh:
+				if it.memTracker != nil && resp != nil {
+					consumed := resp.MemSize()
+					failpoint.Inject("testRateLimitActionMockConsume", func(val failpoint.Value) {
+						if val.(bool) {
+							consumed = 100
+						}
+					})
+					it.memTracker.Consume(-consumed)
+				}
+				recv = true
+				return
+			case <-it.finishCh:
+				exit = true
+				return
+			case <-ticker.C:
+				if atomic.LoadUint32(it.vars.Killed) == 1 {
+					resp = &copResponse{err: ErrQueryInterrupted}
+					ok = true
+					return
+				}
+				recv = true
+			case <-ctx.Done():
+				// We select the ctx.Done() in the thread of `Next` instead of in the worker to avoid the cost of `WithCancel`.
+				if atomic.CompareAndSwapUint32(&it.closed, 0, 1) {
+					close(it.finishCh)
+				}
+				exit = true
+				return
+			}
+		}
+	} else {
 		select {
 		case resp, ok = <-respCh:
 			if it.memTracker != nil && resp != nil {
@@ -641,22 +646,20 @@ func (it *copIterator) recvFromRespCh(ctx context.Context, respCh <-chan *copRes
 				})
 				it.memTracker.Consume(-consumed)
 			}
+			recv = true
 			return
 		case <-it.finishCh:
 			exit = true
 			return
-		case <-ticker.C:
-			if atomic.LoadUint32(it.vars.Killed) == 1 {
-				resp = &copResponse{err: ErrQueryInterrupted}
-				ok = true
-				return
-			}
 		case <-ctx.Done():
 			// We select the ctx.Done() in the thread of `Next` instead of in the worker to avoid the cost of `WithCancel`.
 			if atomic.CompareAndSwapUint32(&it.closed, 0, 1) {
 				close(it.finishCh)
 			}
 			exit = true
+			return
+		default:
+			recv = false
 			return
 		}
 	}
@@ -696,6 +699,7 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 		resp   *copResponse
 		ok     bool
 		closed bool
+		recv   bool
 	)
 	// wait unit at least 5 copResponse received.
 	failpoint.Inject("testRateLimitActionMockWaitMax", func(val failpoint.Value) {
@@ -711,15 +715,28 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 
 	// If data order matters, response should be returned in the same order as copTask slice.
 	// Otherwise all responses are returned from a single channel.
-	if it.respChan != nil {
-		// Get next fetched resp from chan
-		resp, ok, closed = it.recvFromRespCh(ctx, it.respChan)
-		if !ok || closed {
-			it.actionOnExceed.close()
-			return nil, nil
+	if !it.keepOrder {
+		for i := 0; i < len(it.tasks); i++ {
+			if it.taskStatus[i] {
+				continue
+			}
+			task := it.tasks[i]
+			// Get next fetched resp from chan
+			resp, ok, closed, recv = it.recvFromRespCh(ctx, task.respChan, false)
+			if closed {
+				// Close() is already called, so Next() is invalid.
+				return nil, nil
+			}
+			if !recv {
+				continue
+			}
+			if !ok {
+				it.taskStatus[i] = true
+				it.actionOnExceed.destroyTokenIfNeeded(func() {
+					it.sendRate.putToken()
+				})
+			}
 		}
-		// The respCh has been drained out
-		it.actionOnExceed.broadcastIfNeeded(len(it.respChan) < 1)
 	} else {
 		for {
 			if it.curr >= len(it.tasks) {
@@ -728,7 +745,7 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 				return nil, nil
 			}
 			task := it.tasks[it.curr]
-			resp, ok, closed = it.recvFromRespCh(ctx, task.respChan)
+			resp, ok, closed, _ = it.recvFromRespCh(ctx, task.respChan, true)
 			if closed {
 				// Close() is already called, so Next() is invalid.
 				return nil, nil
@@ -736,15 +753,12 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 			if ok {
 				break
 			}
-			finishedTaskID := it.tasks[it.curr].id
+			it.actionOnExceed.destroyTokenIfNeeded(func() {
+				it.sendRate.putToken()
+			})
 			// Switch to next task.
 			it.tasks[it.curr] = nil
 			it.curr++
-			maxID := it.maxID.getMaxID()
-			// The tasks whose id is less than maxID are assumed that being sending to their task channel.
-			// So the response channel would be thought as drained out if the current taskID is greater or equal than
-			// the maxID as all the workers are being suspended at that time.
-			it.actionOnExceed.broadcastIfNeeded(finishedTaskID >= maxID)
 		}
 	}
 
@@ -1312,7 +1326,7 @@ type rateLimitAction struct {
 	// totalTokenNum indicates the total token at initial
 	totalTokenNum uint
 	cond          struct {
-		*sync.Cond
+		sync.Mutex
 		// exceeded indicates whether have encountered OOM situation.
 		exceeded bool
 		// remainingTokenNum indicates the count of tokens which still exists
@@ -1320,29 +1334,23 @@ type rateLimitAction struct {
 		// isTokenDestroyed indicates whether there is one token has been isTokenDestroyed after Action been triggered
 		isTokenDestroyed bool
 		once             sync.Once
-		// triggered indicates whether the action is triggered
-		triggered bool
-		// waitingWorkerCnt indicates the total count of workers which is under condition.Waiting
-		waitingWorkerCnt uint
 		// triggerCountForTest indicates the total count of the rateLimitAction's Action being executed
 		triggerCountForTest uint
 	}
 }
 
-func newRateLimitAction(totalTokenNumber uint, cond *sync.Cond) *rateLimitAction {
+func newRateLimitAction(totalTokenNumber uint) *rateLimitAction {
 	return &rateLimitAction{
 		totalTokenNum: totalTokenNumber,
 		cond: struct {
-			*sync.Cond
+			sync.Mutex
 			exceeded            bool
 			remainingTokenNum   uint
 			isTokenDestroyed    bool
 			once                sync.Once
-			triggered           bool
-			waitingWorkerCnt    uint
 			triggerCountForTest uint
 		}{
-			Cond:              cond,
+			Mutex:             sync.Mutex{},
 			exceeded:          false,
 			remainingTokenNum: totalTokenNumber,
 			once:              sync.Once{},
@@ -1381,9 +1389,6 @@ func (e *rateLimitAction) Action(t *memory.Tracker) {
 				if e.cond.triggerCountForTest+e.cond.remainingTokenNum != e.totalTokenNum {
 					panic("triggerCount + remainingTokenNum not equal to totalTokenNum")
 				}
-				if e.cond.waitingWorkerCnt > 0 {
-					panic("waitingWorkerCnt not equal to 0")
-				}
 			}
 		})
 		logutil.BgLogger().Info("memory exceeds quota, destroy one token now.",
@@ -1394,7 +1399,6 @@ func (e *rateLimitAction) Action(t *memory.Tracker) {
 		e.cond.isTokenDestroyed = false
 		e.cond.exceeded = true
 		e.cond.triggerCountForTest++
-		e.cond.triggered = true
 	})
 }
 
@@ -1406,25 +1410,6 @@ func (e *rateLimitAction) SetLogHook(hook func(uint64)) {
 // SetFallback implements ActionOnExceed.SetFallback
 func (e *rateLimitAction) SetFallback(a memory.ActionOnExceed) {
 	e.fallbackAction = a
-}
-
-// broadcastIfNeeded will broadcast the condition to recover all suspended workers when exceeded is enabled
-// and one token have already been destroyed.
-func (e *rateLimitAction) broadcastIfNeeded(needed bool) {
-	if !needed {
-		return
-	}
-	e.conditionLock()
-	defer e.conditionUnlock()
-	if !e.cond.exceeded {
-		return
-	}
-	for !e.cond.isTokenDestroyed {
-		e.cond.Wait()
-	}
-	e.cond.exceeded = false
-	e.cond.Broadcast()
-	e.unsafeInitOnce()
 }
 
 // destroyTokenIfNeeded will check the `exceed` flag after copWorker finished one task.
@@ -1442,35 +1427,18 @@ func (e *rateLimitAction) destroyTokenIfNeeded(returnToken func()) {
 	if !e.cond.isTokenDestroyed {
 		e.cond.remainingTokenNum = e.cond.remainingTokenNum - 1
 		e.cond.isTokenDestroyed = true
-		e.cond.Broadcast()
+		e.cond.once = sync.Once{}
 		return
 	}
-
 	returnToken()
-	// we suspend worker when `exceeded` is true until being notified by `broadcastIfNeeded`
-	for e.cond.exceeded {
-		e.cond.waitingWorkerCnt++
-		e.cond.Wait()
-		e.cond.waitingWorkerCnt--
-	}
-	e.unsafeInitOnce()
-}
-
-// unsafeInitOnce would init once if the condition is meet. This should be used under condition's lock.
-func (e *rateLimitAction) unsafeInitOnce() {
-	// only when all the waiting workers have been resumed, the Action could be initialized again.
-	if e.cond.waitingWorkerCnt < 1 && e.cond.triggered {
-		e.cond.triggered = false
-		e.cond.once = sync.Once{}
-	}
 }
 
 func (e *rateLimitAction) conditionLock() {
-	e.cond.L.Lock()
+	e.cond.Lock()
 }
 
 func (e *rateLimitAction) conditionUnlock() {
-	e.cond.L.Unlock()
+	e.cond.Unlock()
 }
 
 func (e *rateLimitAction) close() {
@@ -1478,13 +1446,6 @@ func (e *rateLimitAction) close() {
 		return
 	}
 	e.setEnabled(false)
-	e.conditionLock()
-	defer e.conditionUnlock()
-	e.cond.exceeded = false
-	e.cond.isTokenDestroyed = true
-	e.cond.waitingWorkerCnt = 0
-	// broadcast the signal in order not to leak worker goroutine if it is being suspended
-	e.cond.Broadcast()
 }
 
 func (e *rateLimitAction) setEnabled(enabled bool) {
@@ -1497,23 +1458,4 @@ func (e *rateLimitAction) setEnabled(enabled bool) {
 
 func (e *rateLimitAction) isEnabled() bool {
 	return atomic.LoadUint32(&e.enabled) > 0
-}
-
-type maxIDHandler struct {
-	sync.Mutex
-	maxID uint32
-}
-
-func (handler *maxIDHandler) getMaxID() uint32 {
-	handler.Lock()
-	defer handler.Unlock()
-	return handler.maxID
-}
-
-func (handler *maxIDHandler) setMaxIDIfLarger(newID uint32) {
-	handler.Lock()
-	defer handler.Unlock()
-	if newID > handler.maxID {
-		handler.maxID = newID
-	}
 }
