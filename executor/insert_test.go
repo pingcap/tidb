@@ -209,9 +209,9 @@ func (s *testSuite3) TestInsertWrongValueForField(c *C) {
 	_, err := tk.Exec(`insert into t1 values("asfasdfsajhlkhlksdaf");`)
 	c.Assert(terror.ErrorEqual(err, table.ErrTruncatedWrongValueForField), IsTrue)
 
-	tk.MustExec(`drop table if exists t;`)
-	tk.MustExec(`create table t (a year);`)
-	_, err = tk.Exec(`insert into t values(2156);`)
+	tk.MustExec(`drop table if exists t1;`)
+	tk.MustExec(`create table t1 (a year);`)
+	_, err = tk.Exec(`insert into t1 values(2156);`)
 	c.Assert(err.Error(), Equals, `[types:1264]Out of range value for column 'a' at row 1`)
 }
 
