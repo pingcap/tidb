@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/ddl/placement"
+	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
@@ -325,4 +326,145 @@ func (s *testDBSuite1) TestPlacementPolicyCache(c *C) {
 	tk.MustQuery("select * from information_schema.placement_policy order by REPLICAS").Check(testkit.Rows(rows...))
 	tk.MustExec("truncate table t1")
 	tk.MustQuery("select * from information_schema.placement_policy").Check(testkit.Rows())
+}
+
+func (s *testSerialDBSuite) TestTxnScopeConstraint(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	defer tk.MustExec("drop table if exists t1")
+
+	tk.MustExec(`create table t1 (c int)
+PARTITION BY RANGE (c) (
+	PARTITION p0 VALUES LESS THAN (6),
+	PARTITION p1 VALUES LESS THAN (11),
+	PARTITION p2 VALUES LESS THAN (16),
+	PARTITION p3 VALUES LESS THAN (21)
+);`)
+
+	bundles := make(map[string]*placement.Bundle)
+	is := s.dom.InfoSchema()
+	is.MockBundles(bundles)
+
+	tb, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	c.Assert(err, IsNil)
+	partDefs := tb.Meta().GetPartitionInfo().Definitions
+
+	for _, def := range partDefs {
+		if def.Name.String() == "p0" {
+			groupID := placement.GroupID(def.ID)
+			bundles[groupID] = &placement.Bundle{
+				ID: groupID,
+				Rules: []*placement.Rule{
+					{
+						GroupID: groupID,
+						Role:    placement.Leader,
+						Count:   1,
+						LabelConstraints: []placement.LabelConstraint{
+							{
+								Key:    placement.DCLabelKey,
+								Op:     placement.In,
+								Values: []string{"sh"},
+							},
+						},
+					},
+				},
+			}
+		} else if def.Name.String() == "p2" {
+			groupID := placement.GroupID(def.ID)
+			bundles[groupID] = &placement.Bundle{
+				ID: groupID,
+				Rules: []*placement.Rule{
+					{
+						GroupID: groupID,
+						Role:    placement.Follower,
+						Count:   3,
+						LabelConstraints: []placement.LabelConstraint{
+							{
+								Key:    placement.DCLabelKey,
+								Op:     placement.In,
+								Values: []string{"sh"},
+							},
+						},
+					},
+				},
+			}
+
+		}
+	}
+
+	testCases := []struct {
+		name              string
+		sql               string
+		txnScope          string
+		disableAutoCommit bool
+		err               error
+	}{
+		{
+			name:     "Insert into PARTITION p0 with global txnScope",
+			sql:      "insert into t1 (c) values (1)",
+			txnScope: "global",
+			err:      nil,
+		},
+		{
+			name:     "insert into PARTITION p0 with wrong txnScope",
+			sql:      "insert into t1 (c) values (1)",
+			txnScope: "bj",
+			err:      fmt.Errorf(".*out of txn_scope.*"),
+		},
+		{
+			name:     "insert into PARTITION p1 with local txnScope",
+			sql:      "insert into t1 (c) values (10)",
+			txnScope: "bj",
+			err:      fmt.Errorf(".*don't have placement policies with txn_scope.*"),
+		},
+		{
+			name:     "insert into PARTITION p1 with global txnScope",
+			sql:      "insert into t1 (c) values (10)",
+			txnScope: "global",
+			err:      nil,
+		},
+		{
+			name:     "insert into PARTITION p2 with local txnScope",
+			sql:      "insert into t1 (c) values (15)",
+			txnScope: "bj",
+			err:      fmt.Errorf(".*leader placement policy is not defined.*"),
+		},
+		{
+			name:     "insert into PARTITION p2 with global txnScope",
+			sql:      "insert into t1 (c) values (15)",
+			txnScope: "global",
+			err:      nil,
+		},
+		{
+			name:              "insert into PARTITION p0 with wrong txnScope and autocommit off",
+			sql:               "insert into t1 (c) values (1)",
+			txnScope:          "bj",
+			disableAutoCommit: true,
+			err:               fmt.Errorf(".*out of txn_scope.*"),
+		},
+	}
+
+	for _, testcase := range testCases {
+		c.Log(testcase.name)
+		se, err := session.CreateSession4Test(s.store)
+		c.Check(err, IsNil)
+		tk.Se = se
+		tk.MustExec("use test")
+		tk.MustExec(fmt.Sprintf("set @@txn_scope = %v", testcase.txnScope))
+		if testcase.disableAutoCommit {
+			tk.MustExec("set @@autocommit = 0")
+			tk.MustExec(testcase.sql)
+			_, err = tk.Exec("commit")
+		} else {
+			_, err = tk.Exec(testcase.sql)
+		}
+		if testcase.err == nil {
+			c.Assert(err, IsNil)
+		} else {
+			c.Assert(err, NotNil)
+			c.Assert(err.Error(), Matches, testcase.err.Error())
+			fmt.Println(err.Error())
+		}
+	}
 }
