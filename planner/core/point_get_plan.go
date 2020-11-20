@@ -453,11 +453,12 @@ func TryFastPlan(ctx sessionctx.Context, node ast.Node) (p Plan) {
 // IsSelectForUpdateLockType checks if the select lock type is for update type.
 func IsSelectForUpdateLockType(lockType ast.SelectLockType) bool {
 	if lockType == ast.SelectLockForUpdate ||
+		lockType == ast.SelectLockInShareMode ||
 		lockType == ast.SelectLockForUpdateNoWait ||
 		lockType == ast.SelectLockForUpdateWaitN {
 		return true
 	}
-	return true
+	return false
 }
 
 func getLockWaitTime(ctx sessionctx.Context, lockInfo *ast.SelectLockInfo) (lock bool, waitTime int64) {
@@ -540,7 +541,7 @@ func newBatchPointGetPlan(
 	var matchIdxInfo *model.IndexInfo
 	permutations := make([]int, len(whereColNames))
 	for _, idxInfo := range tbl.Indices {
-		if !idxInfo.Unique || idxInfo.State != model.StatePublic {
+		if !idxInfo.Unique || idxInfo.State != model.StatePublic || idxInfo.Invisible {
 			continue
 		}
 		if len(idxInfo.Columns) != len(whereColNames) || idxInfo.HasPrefixIndex() {
@@ -799,10 +800,7 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointGetP
 	}
 
 	for _, idxInfo := range tbl.Indices {
-		if !idxInfo.Unique {
-			continue
-		}
-		if idxInfo.State != model.StatePublic {
+		if !idxInfo.Unique || idxInfo.State != model.StatePublic || idxInfo.Invisible {
 			continue
 		}
 		if isTableDual {
@@ -1246,7 +1244,7 @@ func findCol(tbl *model.TableInfo, colName *ast.ColumnName) *model.ColumnInfo {
 
 func colInfoToColumn(col *model.ColumnInfo, idx int) *expression.Column {
 	return &expression.Column{
-		RetType:  &col.FieldType,
+		RetType:  col.FieldType.Clone(),
 		ID:       col.ID,
 		UniqueID: int64(col.Offset),
 		Index:    idx,
