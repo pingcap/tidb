@@ -2122,7 +2122,7 @@ func checkTwoRangeColumns(ctx sessionctx.Context, curr, prev *model.PartitionDef
 		// PARTITION p1 VALUES LESS THAN (10,20,'mmm')
 		// PARTITION p2 VALUES LESS THAN (15,30,'sss')
 		colInfo := findColumnByName(pi.Columns[i].L, tbInfo)
-		succ, err := parseAndEvalBoolExpr(ctx, fmt.Sprintf("(%s) > (%s)", curr.LessThan[i], prev.LessThan[i]), tbInfo, colInfo)
+		succ, err := parseAndEvalBoolExpr(ctx, curr.LessThan[i], prev.LessThan[i], colInfo.Collate, tbInfo)
 		if err != nil {
 			return false, err
 		}
@@ -2134,14 +2134,20 @@ func checkTwoRangeColumns(ctx sessionctx.Context, curr, prev *model.PartitionDef
 	return false, nil
 }
 
-func parseAndEvalBoolExpr(ctx sessionctx.Context, expr string, tbInfo *model.TableInfo, colInfo *model.ColumnInfo) (bool, error) {
-	e, err := expression.ParseSimpleExprWithTableInfo(ctx, expr, tbInfo)
+func parseAndEvalBoolExpr(ctx sessionctx.Context, l, r string, coll string, tbInfo *model.TableInfo) (bool, error) {
+	lexpr, err := expression.ParseSimpleExprWithTableInfo(ctx, l, tbInfo)
 	if err != nil {
 		return false, err
 	}
-	if colInfo.EvalType() == types.ETString {
-		e.SetCharsetAndCollation("", colInfo.Collate)
+	rexpr, err := expression.ParseSimpleExprWithTableInfo(ctx, r, tbInfo)
+	if err != nil {
+		return false, err
 	}
+	e, err := expression.NewFunctionBase(ctx, ast.GT, types.NewFieldType(mysql.TypeLonglong), lexpr, rexpr)
+	if err != nil {
+		return false, err
+	}
+	e.SetCharsetAndCollation("", coll)
 	res, _, err1 := e.EvalInt(ctx, chunk.Row{})
 	if err1 != nil {
 		return false, err1
