@@ -6538,6 +6538,7 @@ func (s *testSerialSuite1) TestHashAggRuntimeStats(c *C) {
 	c.Assert(len(rows), Equals, 5)
 	explain := fmt.Sprintf("%v", rows[0])
 	c.Assert(explain, Matches, ".*time:.*loops:.*partial_worker:{wall_time:.*concurrency:.*task_num:.*tot_wait:.*tot_exec:.*tot_time:.*max:.*p95:.*}.*final_worker:{wall_time:.*concurrency:.*task_num:.*tot_wait:.*tot_exec:.*tot_time:.*max:.*p95:.*}.*")
+}
 
 func (s *testSerialSuite1) TestIndexMergeRuntimeStats(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
