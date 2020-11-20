@@ -14,7 +14,6 @@
 package memory
 
 import (
-	"fmt"
 	"io/ioutil"
 	"strconv"
 	"strings"
