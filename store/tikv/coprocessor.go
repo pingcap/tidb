@@ -85,7 +85,6 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variable
 	if it.concurrency > len(tasks) {
 		it.concurrency = len(tasks)
 	}
-	it.taskStatus = make([]bool, len(it.tasks), len(it.tasks))
 	if it.concurrency < 1 {
 		// Make sure that there is at least one worker.
 		it.concurrency = 1
@@ -420,8 +419,6 @@ type copIterator struct {
 	minCommitTSPushed
 
 	actionOnExceed *rateLimitAction
-
-	taskStatus []bool
 }
 
 // copIteratorWorker receives tasks from copIteratorTaskSender, handles tasks and sends the copResponse to respChan.
@@ -633,7 +630,7 @@ func (it *copIterator) recvFromRespCh(ctx context.Context, respCh <-chan *copRes
 	}
 }
 
-func (it *copIterator) recvFromTasks(ctx context.Context) (resp *copResponse, ok bool, exit bool) {
+func (it *copIterator) recvFromTasks(ctx context.Context) (resp *copResponse, exit bool) {
 	ticker := time.NewTicker(3 * time.Second)
 	defer ticker.Stop()
 	for {
@@ -644,7 +641,6 @@ func (it *copIterator) recvFromTasks(ctx context.Context) (resp *copResponse, ok
 		case <-ticker.C:
 			if atomic.LoadUint32(it.vars.Killed) == 1 {
 				resp = &copResponse{err: ErrQueryInterrupted}
-				ok = true
 				return
 			}
 		case <-ctx.Done():
@@ -655,11 +651,18 @@ func (it *copIterator) recvFromTasks(ctx context.Context) (resp *copResponse, ok
 			exit = true
 			return
 		default:
+			// check whether this is any task needs to be recv
+			exit = it.isTaskAllFinished()
+			if exit {
+				return
+			}
+			// travel all the tasks to recv response
 			for i := 0; i < len(it.tasks); i++ {
-				if it.taskStatus[i] {
+				if it.tasks[i] == nil {
 					continue
 				}
 				task := it.tasks[i]
+				var ok bool
 				select {
 				case resp, ok = <-task.respChan:
 					if it.memTracker != nil && resp != nil {
@@ -671,13 +674,28 @@ func (it *copIterator) recvFromTasks(ctx context.Context) (resp *copResponse, ok
 						})
 						it.memTracker.Consume(-consumed)
 					}
+					// task[i] finished
+					if !ok && resp == nil {
+						it.tasks[i] = nil
+						continue
+					}
 					return
 				default:
-
 				}
 			}
 		}
 	}
+}
+
+func (it *copIterator) isTaskAllFinished() (exit bool) {
+	exit = true
+	for i := 0; i < len(it.tasks); i++ {
+		if it.tasks[i] != nil {
+			exit = false
+			break
+		}
+	}
+	return
 }
 
 func (sender *copIteratorTaskSender) sendToTaskCh(t *copTask) (exit bool) {
@@ -730,7 +748,11 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 	// If data order matters, response should be returned in the same order as copTask slice.
 	// Otherwise all responses are returned from a single channel.
 	if !it.keepOrder {
-		resp, ok, closed = it.recvFromTasks(ctx)
+		resp, closed = it.recvFromTasks(ctx)
+		if closed {
+			// Close() is already called, so Next() is invalid.
+			return nil, nil
+		}
 	} else {
 		for {
 			if it.curr >= len(it.tasks) {
