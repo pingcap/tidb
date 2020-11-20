@@ -363,6 +363,17 @@
         ]
       },
       {
+        "SQL": "select * from t where a = 0 or a = 4;",
+        "Plan": [
+          "Selection_5 3.20 root  or(eq(test.t.a, 0), eq(test.t.a, 4))",
+          "└─TableReader_7 4.00 root partition:p0 data:TableFullScan_6",
+          "  └─TableFullScan_6 4.00 cop[tikv] table:t keep order:false"
+        ],
+        "Result": [
+          "\u0000 0"
+        ]
+      },
+      {
         "SQL": "select * from t where a = 1;",
         "Plan": [
           "Selection_5 3.20 root  eq(test.t.a, 1)",
