@@ -458,6 +458,7 @@ func (s *testPointGetSuite) TestIssue19141(c *C) {
 func (s *testPointGetSuite) TestSelectInMultiColumns(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t2")
 	tk.MustExec("create table t2(a int, b int, c int, primary key(a, b, c));")
 	tk.MustExec("insert into t2 values (1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4)")
 	tk.MustQuery("select * from t2 where (a, b, c) in ((1, 1, 1));").Check(testkit.Rows("1 1 1"))
@@ -563,7 +564,7 @@ func (s *testPointGetSuite) TestBatchPointGetWithInvisibleIndex(c *C) {
 	))
 }
 
-func (s *testPointGetSuite) TestShouldNotUsePointGetWithCharColumn(c *C) {
+func (s *testPointGetSuite) TestCBOShouldNotUsePointGet(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop tables if exists t1, t2, t3, t4")
@@ -571,46 +572,27 @@ func (s *testPointGetSuite) TestShouldNotUsePointGetWithCharColumn(c *C) {
 	tk.MustExec("create table t2(id varchar(20), unique(id))")
 	tk.MustExec("create table t3(id varchar(20), d varchar(20), unique(id, d))")
 	tk.MustExec("create table t4(id int, d varchar(20), c varchar(20), unique(id, d))")
+	tk.MustExec("insert into t1 values('asdf'), ('1asdf')")
+	tk.MustExec("insert into t2 values('asdf'), ('1asdf')")
+	tk.MustExec("insert into t3 values('asdf', 't'), ('1asdf', 't')")
+	tk.MustExec("insert into t4 values(1, 'b', 'asdf'), (1, 'c', 'jkl'), (1, 'd', '1jkl')")
 
-	tk.MustQuery("explain select * from t1 where id = 0").Check(testkit.Rows(
-		"TableReader_7 8000.00 root  data:Selection_6",
-		"└─Selection_6 8000.00 cop[tikv]  eq(cast(test.t1.id), 0)",
-		"  └─TableFullScan_5 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-	))
-	tk.MustQuery("explain select * from t1 where id in (0, 1)").Check(testkit.Rows(
-		"TableReader_7 9600.00 root  data:Selection_6",
-		"└─Selection_6 9600.00 cop[tikv]  or(eq(cast(test.t1.id), 0), eq(cast(test.t1.id), 1))",
-		"  └─TableFullScan_5 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-	))
-
-	tk.MustQuery("explain select * from t2 where id = 0").Check(testkit.Rows(
-		"IndexReader_10 8000.00 root  index:Selection_9",
-		"└─Selection_9 8000.00 cop[tikv]  eq(cast(test.t2.id), 0)",
-		"  └─IndexFullScan_8 10000.00 cop[tikv] table:t2, index:id(id) keep order:false, stats:pseudo",
-	))
-
-	tk.MustQuery("explain select * from t2 where id in (0, 1)").Check(testkit.Rows(
-		"IndexReader_10 9600.00 root  index:Selection_9",
-		"└─Selection_9 9600.00 cop[tikv]  or(eq(cast(test.t2.id), 0), eq(cast(test.t2.id), 1))",
-		"  └─IndexFullScan_8 10000.00 cop[tikv] table:t2, index:id(id) keep order:false, stats:pseudo",
-	))
-
-	tk.MustQuery("explain select * from t3 where (id, d) in ((0, 't'), (1, 't'))").Check(testkit.Rows(
-		"IndexReader_10 15.99 root  index:Selection_9",
-		"└─Selection_9 15.99 cop[tikv]  or(and(eq(cast(test.t3.id), 0), eq(test.t3.d, \"t\")), and(eq(cast(test.t3.id), 1), eq(test.t3.d, \"t\")))",
-		"  └─IndexFullScan_8 10000.00 cop[tikv] table:t3, index:id(id, d) keep order:false, stats:pseudo",
-	))
-
-	tk.MustQuery("explain select * from t4 where (id, d, c) in ((1, 'b', 0))").Check(testkit.Rows(
-		"Selection_6 0.80 root  eq(cast(test.t4.c), 0)",
-		"└─Point_Get_5 1.00 root table:t4, index:id(id, d) ",
-	))
-
-	tk.MustQuery("explain select * from t4 where (id, d, c) in ((1, 0, 0))").Check(testkit.Rows(
-		"IndexLookUp_12 8.00 root  ",
-		"├─Selection_10(Build) 8.00 cop[tikv]  eq(cast(test.t4.d), 0)",
-		"│ └─IndexRangeScan_8 10.00 cop[tikv] table:t4, index:id(id, d) range:[1,1], keep order:false, stats:pseudo",
-		"└─Selection_11(Probe) 8.00 cop[tikv]  eq(cast(test.t4.c), 0)",
-		"  └─TableRowIDScan_9 8.00 cop[tikv] table:t4 keep order:false, stats:pseudo",
-	))
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+		Res  []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, sql := range input {
+		plan := tk.MustQuery("explain " + sql)
+		res := tk.MustQuery(sql)
+		s.testData.OnRecord(func() {
+			output[i].SQL = sql
+			output[i].Plan = s.testData.ConvertRowsToStrings(plan.Rows())
+			output[i].Res = s.testData.ConvertRowsToStrings(res.Rows())
+		})
+		plan.Check(testkit.Rows(output[i].Plan...))
+		res.Check(testkit.Rows(output[i].Res...))
+	}
 }
