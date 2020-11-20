@@ -599,6 +599,47 @@ func (s *testSuite5) TestSetCharset(c *C) {
 	)
 }
 
+func (s *testSuite5) TestSetCollationAndCharset(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	ctx := tk.Se.(sessionctx.Context)
+	sessionVars := ctx.GetSessionVars()
+
+	cases := []struct {
+		charset         string
+		collation       string
+		expectCharset   string
+		expectCollation string
+	}{
+		{variable.CharacterSetConnection, variable.CollationConnection, "utf8", "utf8_bin"},
+		{variable.CharsetDatabase, variable.CollationDatabase, "utf8", "utf8_bin"},
+		{variable.CharacterSetServer, variable.CollationServer, "utf8", "utf8_bin"},
+	}
+
+	for _, t := range cases {
+		tk.MustExec(fmt.Sprintf("set %s = %s;", t.charset, t.expectCharset))
+		sVar, ok := sessionVars.GetSystemVar(t.charset)
+		c.Assert(ok, IsTrue)
+		c.Assert(sVar, Equals, t.expectCharset)
+		sVar, ok = sessionVars.GetSystemVar(t.collation)
+		c.Assert(ok, IsTrue)
+		c.Assert(sVar, Equals, t.expectCollation)
+	}
+
+	tk = testkit.NewTestKitWithInit(c, s.store)
+	ctx = tk.Se.(sessionctx.Context)
+	sessionVars = ctx.GetSessionVars()
+
+	for _, t := range cases {
+		tk.MustExec(fmt.Sprintf("set %s = %s;", t.collation, t.expectCollation))
+		sVar, ok := sessionVars.GetSystemVar(t.charset)
+		c.Assert(ok, IsTrue)
+		c.Assert(sVar, Equals, t.expectCharset)
+		sVar, ok = sessionVars.GetSystemVar(t.collation)
+		c.Assert(ok, IsTrue)
+		c.Assert(sVar, Equals, t.expectCollation)
+	}
+}
+
 func (s *testSuite5) TestValidateSetVar(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
