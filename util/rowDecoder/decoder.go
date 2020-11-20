@@ -48,7 +48,9 @@ type RowDecoder struct {
 }
 
 // NewRowDecoder returns a new RowDecoder.
-func NewRowDecoder(tbl table.Table, cols []*table.Column, decodeColMap map[int64]Column) *RowDecoder {
+// referRelatedFieldType is used to indicate whether using related field type to substitute the target field type. It is used in
+// column type change, it necessary to decode the old row with the old field type rather than target field type.
+func NewRowDecoder(tbl table.Table, cols []*table.Column, decodeColMap map[int64]Column, referRelatedFieldType bool) *RowDecoder {
 	tblInfo := tbl.Meta()
 	colFieldMap := make(map[int64]*types.FieldType, len(decodeColMap))
 	for id, col := range decodeColMap {
@@ -57,7 +59,9 @@ func NewRowDecoder(tbl table.Table, cols []*table.Column, decodeColMap map[int64
 
 	tps := make([]*types.FieldType, len(cols))
 	for _, col := range cols {
-		if col.ChangeStateInfo == nil {
+		if !referRelatedFieldType {
+			tps[col.Offset] = &col.FieldType
+		} else if col.ChangeStateInfo == nil {
 			tps[col.Offset] = &col.FieldType
 		} else {
 			// Since changing column in the mutRow will be set with relative column's old value in the process of column-type-change,

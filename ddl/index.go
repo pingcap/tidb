@@ -560,7 +560,7 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 				func() {
 					addIndexErr = errCancelledDDLJob.GenWithStack("add table `%v` index `%v` panic", tblInfo.Name, indexInfo.Name)
 				}, false)
-			return w.addTableIndex(tbl, indexInfo, reorgInfo)
+			return w.addTableIndexes(tbl, []*model.IndexInfo{indexInfo}, reorgInfo)
 		})
 		if err != nil {
 			if errWaitReorgTimeout.Equal(err) {
@@ -826,16 +826,16 @@ type baseIndexWorker struct {
 
 	// The following attributes are used to reduce memory allocation.
 	defaultVals []types.Datum
-	idxRecords  []*indexRecord
-	rowMap      map[int64]types.Datum
-	rowDecoder  *decoder.RowDecoder
+	// idxRecords caches the index records for every index.
+	idxRecords map[int64][]*indexRecord
+	rowMap     map[int64]types.Datum
+	rowDecoder *decoder.RowDecoder
 
 	sqlMode mysql.SQLMode
 }
 
 type addIndexWorker struct {
 	baseIndexWorker
-	index table.Index
 
 	// The following attributes are used to reduce memory allocation.
 	idxKeyBufs         [][]byte
@@ -843,20 +843,23 @@ type addIndexWorker struct {
 	distinctCheckFlags []bool
 }
 
-func newAddIndexWorker(sessCtx sessionctx.Context, worker *worker, id int, t table.PhysicalTable, indexInfo *model.IndexInfo, decodeColMap map[int64]decoder.Column, sqlMode mysql.SQLMode) *addIndexWorker {
-	index := tables.NewIndex(t.GetPhysicalID(), t.Meta(), indexInfo)
-	rowDecoder := decoder.NewRowDecoder(t, t.WritableCols(), decodeColMap)
+func newAddIndexWorker(sessCtx sessionctx.Context, worker *worker, id int, t table.PhysicalTable, indexesInfo []*model.IndexInfo, decodeColMap map[int64]decoder.Column, sqlMode mysql.SQLMode) *addIndexWorker {
+	indexes := make([]table.Index, 0, len(indexesInfo))
+	for _, index := range indexesInfo {
+		indexes = append(indexes, tables.NewIndex(t.GetPhysicalID(), t.Meta(), index))
+	}
+	rowDecoder := decoder.NewRowDecoder(t, t.WritableCols(), decodeColMap, false)
 	return &addIndexWorker{
 		baseIndexWorker: baseIndexWorker{
 			backfillWorker: newBackfillWorker(sessCtx, worker, id, t),
-			indexes:        []table.Index{index},
+			indexes:        indexes,
 			rowDecoder:     rowDecoder,
 			defaultVals:    make([]types.Datum, len(t.WritableCols())),
+			idxRecords:     make(map[int64][]*indexRecord, len(indexes)),
 			rowMap:         make(map[int64]types.Datum, len(decodeColMap)),
 			metricCounter:  metrics.BackfillTotalCounter.WithLabelValues("add_idx_speed"),
 			sqlMode:        sqlMode,
 		},
-		index: index,
 	}
 }
 
@@ -930,7 +933,8 @@ func (w *baseIndexWorker) cleanRowMap() {
 func (w *baseIndexWorker) getNextKey(taskRange reorgBackfillTask, taskDone bool) (nextKey kv.Key) {
 	if !taskDone {
 		// The task is not done. So we need to pick the last processed entry's handle and add one.
-		lastHandle := w.idxRecords[len(w.idxRecords)-1].handle
+		theFirstIndexID := w.indexes[0].Meta().ID
+		lastHandle := w.idxRecords[theFirstIndexID][len(w.idxRecords)-1].handle
 		return w.table.RecordKey(lastHandle).Next()
 	}
 	return taskRange.endKey.Next()
@@ -951,9 +955,11 @@ func (w *baseIndexWorker) updateRowDecoder(handle kv.Handle, recordKey []byte, r
 // 2. Next handle of entry that we need to process.
 // 3. Boolean indicates whether the task is done.
 // 4. error occurs in fetchRowColVals. nil if no error occurs.
-func (w *baseIndexWorker) fetchRowColVals(txn kv.Transaction, taskRange reorgBackfillTask) ([]*indexRecord, kv.Key, bool, error) {
+func (w *baseIndexWorker) fetchRowColVals(txn kv.Transaction, taskRange reorgBackfillTask) (map[int64][]*indexRecord, kv.Key, bool, error) {
 	// TODO: use tableScan to prune columns.
-	w.idxRecords = w.idxRecords[:0]
+	for k := range w.idxRecords {
+		w.idxRecords[k] = w.idxRecords[k][:0]
+	}
 	startTime := time.Now()
 
 	// taskDone means that the reorged handle is out of taskRange.endHandle.
@@ -967,7 +973,7 @@ func (w *baseIndexWorker) fetchRowColVals(txn kv.Transaction, taskRange reorgBac
 
 			taskDone = recordKey.Cmp(taskRange.endKey) > 0
 
-			if taskDone || len(w.idxRecords) >= w.batchCnt {
+			if taskDone || len(w.idxRecords[w.indexes[0].Meta().ID]) >= w.batchCnt {
 				return false, nil
 			}
 
@@ -981,7 +987,8 @@ func (w *baseIndexWorker) fetchRowColVals(txn kv.Transaction, taskRange reorgBac
 				if err1 != nil {
 					return false, errors.Trace(err1)
 				}
-				w.idxRecords = append(w.idxRecords, idxRecord)
+				indexID := index.Meta().ID
+				w.idxRecords[indexID] = append(w.idxRecords[indexID], idxRecord)
 			}
 			// If there are generated column, rowDecoder will use column value that not in idxInfo.Columns to calculate
 			// the generated value, so we need to clear up the reusing map.
@@ -995,7 +1002,7 @@ func (w *baseIndexWorker) fetchRowColVals(txn kv.Transaction, taskRange reorgBac
 			return true, nil
 		})
 
-	if len(w.idxRecords) == 0 {
+	if len(w.idxRecords[w.indexes[0].Meta().ID]) == 0 {
 		taskDone = true
 	}
 
@@ -1013,54 +1020,58 @@ func (w *addIndexWorker) initBatchCheckBufs(batchCount int) {
 	w.distinctCheckFlags = w.distinctCheckFlags[:0]
 }
 
-func (w *addIndexWorker) batchCheckUniqueKey(txn kv.Transaction, idxRecords []*indexRecord) error {
-	idxInfo := w.index.Meta()
-	if !idxInfo.Unique {
-		// non-unique key need not to check, just overwrite it,
-		// because in most case, backfilling indices is not exists.
-		return nil
-	}
-
-	w.initBatchCheckBufs(len(idxRecords))
+func (w *addIndexWorker) batchCheckUniqueKey(txn kv.Transaction, idxRecords map[int64][]*indexRecord) error {
 	stmtCtx := w.sessCtx.GetSessionVars().StmtCtx
-	for i, record := range idxRecords {
-		idxKey, distinct, err := w.index.GenIndexKey(stmtCtx, record.vals, record.handle, w.idxKeyBufs[i])
+	for _, index := range w.indexes {
+		idxInfo := index.Meta()
+		if !idxInfo.Unique {
+			// non-unique key need not to check, just overwrite it,
+			// because in most case, backfilling indices is not exists.
+			continue
+		}
+		currentIndexID := index.Meta().ID
+
+		w.initBatchCheckBufs(len(idxRecords[currentIndexID]))
+		// For every index's idxRecords, check the uniqueness.
+		for i, record := range idxRecords[currentIndexID] {
+			idxKey, distinct, err := index.GenIndexKey(stmtCtx, record.vals, record.handle, w.idxKeyBufs[i])
+			if err != nil {
+				return errors.Trace(err)
+			}
+			// save the buffer to reduce memory allocations.
+			w.idxKeyBufs[i] = idxKey
+
+			w.batchCheckKeys = append(w.batchCheckKeys, idxKey)
+			w.distinctCheckFlags = append(w.distinctCheckFlags, distinct)
+		}
+
+		batchVals, err := txn.BatchGet(context.Background(), w.batchCheckKeys)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		// save the buffer to reduce memory allocations.
-		w.idxKeyBufs[i] = idxKey
 
-		w.batchCheckKeys = append(w.batchCheckKeys, idxKey)
-		w.distinctCheckFlags = append(w.distinctCheckFlags, distinct)
-	}
+		// 1. unique-key/primary-key is duplicate and the handle is equal, skip it.
+		// 2. unique-key/primary-key is duplicate and the handle is not equal, return duplicate error.
+		// 3. non-unique-key is duplicate, skip it.
+		for i, key := range w.batchCheckKeys {
+			if val, found := batchVals[string(key)]; found {
+				if w.distinctCheckFlags[i] {
+					handle, err1 := tablecodec.DecodeHandleInUniqueIndexValue(val, w.table.Meta().IsCommonHandle)
+					if err1 != nil {
+						return errors.Trace(err1)
+					}
 
-	batchVals, err := txn.BatchGet(context.Background(), w.batchCheckKeys)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	// 1. unique-key/primary-key is duplicate and the handle is equal, skip it.
-	// 2. unique-key/primary-key is duplicate and the handle is not equal, return duplicate error.
-	// 3. non-unique-key is duplicate, skip it.
-	for i, key := range w.batchCheckKeys {
-		if val, found := batchVals[string(key)]; found {
-			if w.distinctCheckFlags[i] {
-				handle, err1 := tablecodec.DecodeHandleInUniqueIndexValue(val, w.table.Meta().IsCommonHandle)
-				if err1 != nil {
-					return errors.Trace(err1)
+					if handle != idxRecords[currentIndexID][i].handle {
+						return errors.Trace(kv.ErrKeyExists)
+					}
 				}
-
-				if handle != idxRecords[i].handle {
-					return errors.Trace(kv.ErrKeyExists)
+				idxRecords[currentIndexID][i].skip = true
+			} else {
+				// The keys in w.batchCheckKeys also maybe duplicate,
+				// so we need to backfill the not found key into `batchVals` map.
+				if w.distinctCheckFlags[i] {
+					batchVals[string(key)] = tablecodec.EncodeHandleInUniqueIndexValue(idxRecords[currentIndexID][i].handle, false)
 				}
-			}
-			idxRecords[i].skip = true
-		} else {
-			// The keys in w.batchCheckKeys also maybe duplicate,
-			// so we need to backfill the not found key into `batchVals` map.
-			if w.distinctCheckFlags[i] {
-				batchVals[string(key)] = tablecodec.EncodeHandleInUniqueIndexValue(idxRecords[i].handle, false)
 			}
 		}
 	}
@@ -1098,30 +1109,43 @@ func (w *addIndexWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (taskC
 			return errors.Trace(err)
 		}
 
-		for _, idxRecord := range idxRecords {
+		// Since the indexRecords layout is like
+		// index1.ID -> [record1, record2 ...]
+		// index2.ID -> [record1, record2 ...]
+		//                  ^
+		//                  |
+		//            column scanning
+		// Here we use the `column scanning`, it here means to scan the every base row once, adding the multi index simultaneously.
+		// And this way is better for recording the scanned count and added count, which is compatible with adding single index before.
+
+		idxRecordsLength := len(w.idxRecords[w.indexes[0].Meta().ID])
+		for i := 0; i < idxRecordsLength; i++ {
 			taskCtx.scanCount++
-			// The index is already exists, we skip it, no needs to backfill it.
-			// The following update, delete, insert on these rows, TiDB can handle it correctly.
-			if idxRecord.skip {
-				continue
-			}
-
-			// Lock the row key to notify us that someone delete or update the row,
-			// then we should not backfill the index of it, otherwise the adding index is redundant.
-			err := txn.LockKeys(context.Background(), new(kv.LockCtx), idxRecord.key)
-			if err != nil {
-				return errors.Trace(err)
-			}
-
-			// Create the index.
-			handle, err := w.index.Create(w.sessCtx, txn.GetUnionStore(), idxRecord.vals, idxRecord.handle)
-			if err != nil {
-				if kv.ErrKeyExists.Equal(err) && idxRecord.handle.Equal(handle) {
-					// Index already exists, skip it.
+			for _, index := range w.indexes {
+				idxRecord := idxRecords[index.Meta().ID][i]
+				// The index is already exists, we skip it, no needs to backfill it.
+				// The following update, delete, insert on these rows, TiDB can handle it correctly.
+				if idxRecord.skip {
 					continue
 				}
 
-				return errors.Trace(err)
+				// Lock the row key to notify us that someone delete or update the row,
+				// then we should not backfill the index of it, otherwise the adding index is redundant.
+				err := txn.LockKeys(context.Background(), new(kv.LockCtx), idxRecord.key)
+				if err != nil {
+					return errors.Trace(err)
+				}
+
+				// Create the index.
+				handle, err := index.Create(w.sessCtx, txn.GetUnionStore(), idxRecord.vals, idxRecord.handle)
+				if err != nil {
+					if kv.ErrKeyExists.Equal(err) && idxRecord.handle.Equal(handle) {
+						// Index already exists, skip it.
+						continue
+					}
+
+					return errors.Trace(err)
+				}
 			}
 			taskCtx.addedCount++
 		}
@@ -1133,13 +1157,13 @@ func (w *addIndexWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (taskC
 	return
 }
 
-func (w *worker) addPhysicalTableIndex(t table.PhysicalTable, indexInfo *model.IndexInfo, reorgInfo *reorgInfo) error {
+func (w *worker) addPhysicalTableIndex(t table.PhysicalTable, indexesInfo []*model.IndexInfo, reorgInfo *reorgInfo) error {
 	logutil.BgLogger().Info("[ddl] start to add table index", zap.String("job", reorgInfo.Job.String()), zap.String("reorgInfo", reorgInfo.String()))
-	return w.writePhysicalTableRecord(t.(table.PhysicalTable), typeAddIndexWorker, indexInfo, nil, nil, reorgInfo)
+	return w.writePhysicalTableRecord(t.(table.PhysicalTable), typeAddIndexWorker, indexesInfo, nil, nil, reorgInfo)
 }
 
 // addTableIndex handles the add index reorganization state for a table.
-func (w *worker) addTableIndex(t table.Table, idx *model.IndexInfo, reorgInfo *reorgInfo) error {
+func (w *worker) addTableIndexes(t table.Table, idxes []*model.IndexInfo, reorgInfo *reorgInfo) error {
 	var err error
 	if tbl, ok := t.(table.PartitionedTable); ok {
 		var finish bool
@@ -1148,7 +1172,7 @@ func (w *worker) addTableIndex(t table.Table, idx *model.IndexInfo, reorgInfo *r
 			if p == nil {
 				return errCancelledDDLJob.GenWithStack("Can not find partition id %d for table %d", reorgInfo.PhysicalTableID, t.Meta().ID)
 			}
-			err = w.addPhysicalTableIndex(p, idx, reorgInfo)
+			err = w.addPhysicalTableIndex(p, idxes, reorgInfo)
 			if err != nil {
 				break
 			}
@@ -1158,7 +1182,7 @@ func (w *worker) addTableIndex(t table.Table, idx *model.IndexInfo, reorgInfo *r
 			}
 		}
 	} else {
-		err = w.addPhysicalTableIndex(t.(table.PhysicalTable), idx, reorgInfo)
+		err = w.addPhysicalTableIndex(t.(table.PhysicalTable), idxes, reorgInfo)
 	}
 	return errors.Trace(err)
 }
@@ -1266,7 +1290,7 @@ type cleanUpIndexWorker struct {
 
 func newCleanUpIndexWorker(sessCtx sessionctx.Context, worker *worker, id int, t table.PhysicalTable, decodeColMap map[int64]decoder.Column, sqlMode mysql.SQLMode) *cleanUpIndexWorker {
 	indexes := make([]table.Index, 0, len(t.Indices()))
-	rowDecoder := decoder.NewRowDecoder(t, t.WritableCols(), decodeColMap)
+	rowDecoder := decoder.NewRowDecoder(t, t.WritableCols(), decodeColMap, false)
 	for _, index := range t.Indices() {
 		if index.Meta().Global {
 			indexes = append(indexes, index)
@@ -1278,6 +1302,7 @@ func newCleanUpIndexWorker(sessCtx sessionctx.Context, worker *worker, id int, t
 			indexes:        indexes,
 			rowDecoder:     rowDecoder,
 			defaultVals:    make([]types.Datum, len(t.WritableCols())),
+			idxRecords:     make(map[int64][]*indexRecord, len(indexes)),
 			rowMap:         make(map[int64]types.Datum, len(decodeColMap)),
 			metricCounter:  metrics.BackfillTotalCounter.WithLabelValues("clean_up_idx_speed"),
 			sqlMode:        sqlMode,
@@ -1305,15 +1330,24 @@ func (w *cleanUpIndexWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (t
 		taskCtx.nextKey = nextKey
 		taskCtx.done = taskDone
 
-		n := len(w.indexes)
-		for i, idxRecord := range idxRecords {
+		// Since the indexRecords layout is like
+		// index1.ID -> [record1, record2 ...]
+		// index2.ID -> [record1, record2 ...]
+		//                  ^
+		//                  |
+		//            column scanning
+		// Here we use the `column scanning`, it here means to scan the every base row once, adding the multi index simultaneously.
+		// And this way is better for recording the scanned count and added count, which is compatible with adding single index before.
+
+		idxRecordsLength := len(idxRecords[w.indexes[0].Meta().ID])
+		for i := 0; i < idxRecordsLength; i++ {
 			taskCtx.scanCount++
-			// we fetch records row by row, so records will belong to
-			// index[0], index[1] ... index[n-1], index[0], index[1] ...
-			// respectively. So indexes[i%n] is the index of idxRecords[i].
-			err := w.indexes[i%n].Delete(w.sessCtx.GetSessionVars().StmtCtx, txn.GetUnionStore(), idxRecord.vals, idxRecord.handle)
-			if err != nil {
-				return errors.Trace(err)
+			for _, index := range w.indexes {
+				idxRecord := idxRecords[index.Meta().ID][i]
+				err := index.Delete(w.sessCtx.GetSessionVars().StmtCtx, txn.GetUnionStore(), idxRecord.vals, idxRecord.handle)
+				if err != nil {
+					return errors.Trace(err)
+				}
 			}
 			taskCtx.addedCount++
 		}

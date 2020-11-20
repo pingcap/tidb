@@ -402,7 +402,7 @@ func makeRowDecoder(t table.Table, sctx sessionctx.Context) (*decoder.RowDecoder
 	mockSchema := expression.NewSchema(exprCols...)
 	decodeColsMap := decoder.BuildFullDecodeColMap(t.Cols(), mockSchema)
 
-	return decoder.NewRowDecoder(t, t.Cols(), decodeColsMap), nil
+	return decoder.NewRowDecoder(t, t.Cols(), decodeColsMap, false), nil
 }
 
 func iterRecords(sessCtx sessionctx.Context, retriever kv.Retriever, t table.Table, startKey kv.Key, cols []*table.Column, fn table.RecordIterFunc) error {

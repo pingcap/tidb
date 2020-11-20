@@ -1131,7 +1131,7 @@ func (w *worker) updateColumnAndIndexes(t table.Table, oldCol, col *model.Column
 		if err != nil {
 			return errors.Trace(err)
 		}
-		err = w.addTableIndex(t, idxes[i], reorgInfo)
+		err = w.addTableIndexes(t, []*model.IndexInfo{idxes[i]}, reorgInfo)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1156,7 +1156,7 @@ type updateColumnWorker struct {
 }
 
 func newUpdateColumnWorker(sessCtx sessionctx.Context, worker *worker, id int, t table.PhysicalTable, oldCol, newCol *model.ColumnInfo, decodeColMap map[int64]decoder.Column, sqlMode mysql.SQLMode) *updateColumnWorker {
-	rowDecoder := decoder.NewRowDecoder(t, t.WritableCols(), decodeColMap)
+	rowDecoder := decoder.NewRowDecoder(t, t.WritableCols(), decodeColMap, true)
 	return &updateColumnWorker{
 		backfillWorker: newBackfillWorker(sessCtx, worker, id, t),
 		oldColInfo:     oldCol,
