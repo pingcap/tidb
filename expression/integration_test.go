@@ -1784,8 +1784,7 @@ func (s *testIntegrationSuite2) TestTimeBuiltin(c *C) {
 	_, err = tk.Exec(`delete from t where a = dayOfWeek(123)`)
 	c.Assert(err, IsNil)
 
-	_, err = tk.Exec("insert into t value(dayOfMonth('2017-00-00'))")
-	c.Assert(table.ErrTruncatedWrongValueForField.Equal(err), IsTrue)
+	tk.MustExec("insert into t value(dayOfMonth('2017-00-00'))")
 	tk.MustExec("insert into t value(dayOfMonth('0000-00-00'))")
 	tk.MustExec(`update t set a = dayOfMonth("0000-00-00")`)
 	tk.MustExec("set sql_mode = 'NO_ZERO_DATE';")
@@ -7938,10 +7937,41 @@ func (s *testIntegrationSuite) TestIssue19892(c *C) {
 		tk.MustQuery("SELECT b FROM dd").Check(testkit.Rows("0000-00-00 00:00:00"))
 
 		tk.MustExec("TRUNCATE TABLE dd")
+		tk.MustExec("INSERT INTO dd(c) values('0000-00-00 00:00:00')")
+		tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows())
+
+		tk.MustExec("TRUNCATE TABLE dd")
 		tk.MustExec("INSERT INTO dd(c) values('2000-10-01 10:00:00')")
 		tk.MustExec("UPDATE dd SET c = '0000-00-00 00:00:00'")
 		tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows())
 		tk.MustQuery("SELECT c FROM dd").Check(testkit.Rows("0000-00-00 00:00:00"))
+
+		tk.MustExec("TRUNCATE TABLE dd")
+		tk.MustGetErrMsg("INSERT INTO dd(b) VALUES ('2000-01-00')", "[table:1292]Incorrect datetime value: '2000-01-00' for column 'b' at row 1")
+		tk.MustExec("INSERT IGNORE INTO dd(b) VALUES ('2000-00-01')")
+		tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Incorrect datetime value: '2000-00-01'"))
+		tk.MustQuery("SELECT b FROM dd").Check(testkit.Rows("0000-00-00 00:00:00"))
+
+		tk.MustExec("TRUNCATE TABLE dd")
+		tk.MustExec("INSERT INTO dd(b) VALUES ('2000-01-02')")
+		tk.MustGetErrMsg("UPDATE dd SET b = '2000-01-00'", "[types:1292]Incorrect datetime value: '2000-01-00'")
+		tk.MustExec("UPDATE IGNORE dd SET b = '2000-01-0'")
+		tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Incorrect datetime value: '2000-01-0'"))
+		tk.MustQuery("SELECT b FROM dd").Check(testkit.Rows("0000-00-00 00:00:00"))
+		tk.MustExec("UPDATE dd SET b = '0000-1-2'")
+		tk.MustQuery("SELECT b FROM dd").Check(testkit.Rows("0000-01-02 00:00:00"))
+		tk.MustGetErrMsg("UPDATE dd SET c = '0000-01-05'", "[types:1292]Incorrect timestamp value: '0000-01-05'")
+		tk.MustExec("UPDATE IGNORE dd SET c = '0000-01-5'")
+		tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Incorrect timestamp value: '0000-01-5'"))
+		tk.MustQuery("SELECT c FROM dd").Check(testkit.Rows("0000-00-00 00:00:00"))
+
+		tk.MustExec("TRUNCATE TABLE dd")
+		tk.MustGetErrMsg("INSERT INTO dd(c) VALUES ('2000-01-00 20:00:00')", "[table:1292]Incorrect timestamp value: '2000-01-00 20:00:00' for column 'c' at row 1")
+		tk.MustExec("INSERT INTO dd(c) VALUES ('2000-01-02')")
+		tk.MustGetErrMsg("UPDATE dd SET c = '2000-01-00 20:00:00'", "[types:1292]Incorrect timestamp value: '2000-01-00 20:00:00'")
+		tk.MustExec("UPDATE IGNORE dd SET b = '2000-01-00'")
+		tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Incorrect datetime value: '2000-01-00'"))
+		tk.MustQuery("SELECT b FROM dd").Check(testkit.Rows("0000-00-00 00:00:00"))
 	}
 
 	// check !NO_ZERO_IN_DATE
@@ -7950,18 +7980,19 @@ func (s *testIntegrationSuite) TestIssue19892(c *C) {
 		tk.MustExec("TRUNCATE TABLE dd")
 		tk.MustExec("INSERT INTO dd(a) values('2000-00-10')")
 		tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows())
-		tk.MustQuery("SELECT a FROM dd").Check(testkit.Rows("0000-00-00"))
+		tk.MustQuery("SELECT a FROM dd").Check(testkit.Rows("2000-00-10"))
 
 		tk.MustExec("TRUNCATE TABLE dd")
 		tk.MustExec("INSERT INTO dd(b) values('2000-10-01')")
 		tk.MustExec("UPDATE dd SET b = '2000-00-10'")
 		tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows())
-		tk.MustQuery("SELECT b FROM dd").Check(testkit.Rows("0000-00-00 00:00:00"))
+		tk.MustQuery("SELECT b FROM dd").Check(testkit.Rows("2000-00-10 00:00:00"))
 
 		tk.MustExec("TRUNCATE TABLE dd")
 		tk.MustExec("INSERT INTO dd(c) values('2000-10-01 10:00:00')")
-		tk.MustExec("UPDATE dd SET c = '2000-00-10 00:00:00'")
-		tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows())
+		tk.MustGetErrMsg("UPDATE dd SET c = '2000-00-10 00:00:00'", "[types:1292]Incorrect timestamp value: '2000-00-10 00:00:00'")
+		tk.MustExec("UPDATE IGNORE dd SET c = '2000-01-00 00:00:00'")
+		tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Incorrect timestamp value: '2000-01-00 00:00:00'"))
 		tk.MustQuery("SELECT c FROM dd").Check(testkit.Rows("0000-00-00 00:00:00"))
 	}
 }
