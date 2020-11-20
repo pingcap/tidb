@@ -303,8 +303,6 @@ func (s *testPrepareSuite) TestPlanCacheWithDifferentVariableTypes(c *C) {
 	c.Assert(err, IsNil)
 	se, seErr := session.CreateSession(store)
 	c.Assert(seErr, IsNil)
-	// disable GetVar Fold
-	se.GetSessionVars().EnableGetVarFold = false
 	tk := testkit.NewTestKitWithSession(c, store, se)
 	defer func() {
 		dom.Close()

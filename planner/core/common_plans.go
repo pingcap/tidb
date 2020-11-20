@@ -282,15 +282,17 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 	if prepared.UseCache {
 		cacheKey = NewPSTMTPlanCacheKey(sctx.GetSessionVars(), e.ExecID, prepared.SchemaVersion)
 	}
-	tps := make([]*types.FieldType, 0)
+	tps := make([]*types.FieldType, len(e.UsingVars))
 	for i, param := range e.UsingVars {
-		fun, ok := param.(*expression.ScalarFunction)
-		if !ok { // GetVar folded by scalar_function.go:newFunctionImpl()
-			continue
+		switch f := param.(type) {
+		case *expression.ScalarFunction:
+			name := f.GetArgs()[0].String()
+			tps[i] = sctx.GetSessionVars().UserVarTypes[name]
+		case *expression.Constant:
+			// GetVar folded by scalar_function.go:newFunctionImpl()
+			c := param.(*expression.Constant)
+			tps[i] = c.GetType()
 		}
-		name := fun.GetArgs()[0].String()
-		userVarTps := sctx.GetSessionVars().UserVarTypes[name]
-		tps = append(tps, userVarTps)
 		if tps[i] == nil {
 			tps[i] = types.NewFieldType(mysql.TypeNull)
 		}

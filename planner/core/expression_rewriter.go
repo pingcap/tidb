@@ -1185,7 +1185,7 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
 			tp.Flen = mysql.MaxFieldVarCharLength
 		}
 
-		tryFold := er.getVarTryFoldOrNotStart(er.sctx.GetSessionVars().EnableGetVarFold, name)
+		tryFold := er.getVarTryFoldOrNotStart(name)
 		f, err := er.newFunction(ast.GetVar, tp, expression.DatumToConstant(types.NewStringDatum(name), mysql.TypeString))
 		er.getVarTryFoldOrNotEnd(tryFold)
 
@@ -1827,15 +1827,13 @@ func (er *expressionRewriter) evalDefaultExpr(v *ast.DefaultExpr) {
 // GetVar try fold scope start
 // used by `expressionRewriter.rewriteVariable`
 // name: GetVar lower name
-func (er *expressionRewriter) getVarTryFoldOrNotStart(enableGetVarFold bool, name string) bool {
+func (er *expressionRewriter) getVarTryFoldOrNotStart(name string) bool {
 	tryFold := false
-	if enableGetVarFold {
-		svv := er.setVarCollectProcessor
-		// We can only fold the GetVar into a constant if the query contains no SetVar for the same user variable.
-		if svv != nil {
-			tryFold = !svv.SetVarMap[name]
-		} // else setVarCollectProcessor is nil, no need to disable fold
-	}
+	svv := er.setVarCollectProcessor
+	// We can only fold the GetVar into a constant if the query contains no SetVar for the same user variable.
+	if svv != nil {
+		tryFold = !svv.SetVarMap[name]
+	} // else setVarCollectProcessor is nil, no need to disable fold
 
 	if tryFold {
 		er.tryFoldCounter++ // scope try fold enter
