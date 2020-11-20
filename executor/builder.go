@@ -542,7 +542,7 @@ func (b *executorBuilder) buildChecksumTable(v *plannercore.ChecksumTable) Execu
 		tables:       make(map[int64]*checksumContext),
 		done:         false,
 	}
-	startTs, err := b.getSnapshotTS()
+	startTs, err := b.getSnapshotTS(false)
 	if err != nil {
 		b.err = err
 		return nil
@@ -1355,10 +1355,18 @@ func (b *executorBuilder) buildTableDual(v *plannercore.PhysicalTableDual) Execu
 	return e
 }
 
-func (b *executorBuilder) getSnapshotTS() (uint64, error) {
+func (b *executorBuilder) getSnapshotTS(forTxnRead bool) (uint64, error) {
 	if b.snapshotTS != 0 {
 		// Return the cached value.
 		return b.snapshotTS, nil
+	}
+
+	// getSnapshotTS may be invoked after the txn being closed, but in this case the snapshot TS
+	// must have been cached. Refresh it after checking if the ts is already cached.
+	if forTxnRead && b.ctx.GetSessionVars().IsPessimisticReadConsistency() {
+		if err := b.refreshForUpdateTSForRC(); err != nil {
+			return 0, err
+		}
 	}
 
 	snapshotTS := b.ctx.GetSessionVars().SnapshotTS
@@ -2477,7 +2485,7 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 		pt := tbl.(table.PartitionedTable)
 		tbl = pt.GetPartition(physicalTableID)
 	}
-	startTS, err := b.getSnapshotTS()
+	startTS, err := b.getSnapshotTS(true)
 	if err != nil {
 		return nil, err
 	}
@@ -2524,7 +2532,7 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 }
 
 func (b *executorBuilder) buildMPPGather(v *plannercore.PhysicalTableReader) Executor {
-	startTs, err := b.getSnapshotTS()
+	startTs, err := b.getSnapshotTS(true)
 	if err != nil {
 		b.err = err
 		return nil
@@ -2541,12 +2549,6 @@ func (b *executorBuilder) buildMPPGather(v *plannercore.PhysicalTableReader) Exe
 // buildTableReader builds a table reader executor. It first build a no range table reader,
 // and then update it ranges from table scan plan.
 func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) Executor {
-	if b.ctx.GetSessionVars().IsPessimisticReadConsistency() {
-		if err := b.refreshForUpdateTSForRC(); err != nil {
-			b.err = err
-			return nil
-		}
-	}
 	if useMPPExecution(b.ctx, v) {
 		return b.buildMPPGather(v)
 	}
@@ -2738,7 +2740,7 @@ func buildNoRangeIndexReader(b *executorBuilder, v *plannercore.PhysicalIndexRea
 	} else {
 		physicalTableID = is.Table.ID
 	}
-	startTS, err := b.getSnapshotTS()
+	startTS, err := b.getSnapshotTS(true)
 	if err != nil {
 		return nil, err
 	}
@@ -2783,12 +2785,6 @@ func buildNoRangeIndexReader(b *executorBuilder, v *plannercore.PhysicalIndexRea
 }
 
 func (b *executorBuilder) buildIndexReader(v *plannercore.PhysicalIndexReader) Executor {
-	if b.ctx.GetSessionVars().IsPessimisticReadConsistency() {
-		if err := b.refreshForUpdateTSForRC(); err != nil {
-			b.err = err
-			return nil
-		}
-	}
 	ret, err := buildNoRangeIndexReader(b, v)
 	if err != nil {
 		b.err = err
@@ -2878,7 +2874,7 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 		return nil, err
 	}
 	ts := v.TablePlans[0].(*plannercore.PhysicalTableScan)
-	startTS, err := b.getSnapshotTS()
+	startTS, err := b.getSnapshotTS(true)
 	if err != nil {
 		return nil, err
 	}
@@ -2932,12 +2928,6 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 }
 
 func (b *executorBuilder) buildIndexLookUpReader(v *plannercore.PhysicalIndexLookUpReader) Executor {
-	if b.ctx.GetSessionVars().IsPessimisticReadConsistency() {
-		if err := b.refreshForUpdateTSForRC(); err != nil {
-			b.err = err
-			return nil
-		}
-	}
 	ret, err := buildNoRangeIndexLookUpReader(b, v)
 	if err != nil {
 		b.err = err
@@ -3017,7 +3007,7 @@ func buildNoRangeIndexMergeReader(b *executorBuilder, v *plannercore.PhysicalInd
 	if err != nil {
 		return nil, err
 	}
-	startTS, err := b.getSnapshotTS()
+	startTS, err := b.getSnapshotTS(true)
 	if err != nil {
 		return nil, err
 	}
@@ -3325,7 +3315,7 @@ func (h kvRangeBuilderFromRangeAndPartition) buildKeyRange(int64) ([]kv.KeyRange
 }
 
 func (builder *dataReaderBuilder) buildTableReaderBase(ctx context.Context, e *TableReaderExecutor, reqBuilderWithRange distsql.RequestBuilder) (*TableReaderExecutor, error) {
-	startTS, err := builder.getSnapshotTS()
+	startTS, err := builder.getSnapshotTS(true)
 	if err != nil {
 		return nil, err
 	}
@@ -3784,13 +3774,7 @@ func NewRowDecoder(ctx sessionctx.Context, schema *expression.Schema, tbl *model
 }
 
 func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan) Executor {
-	if b.ctx.GetSessionVars().IsPessimisticReadConsistency() {
-		if err := b.refreshForUpdateTSForRC(); err != nil {
-			b.err = err
-			return nil
-		}
-	}
-	startTS, err := b.getSnapshotTS()
+	startTS, err := b.getSnapshotTS(true)
 	if err != nil {
 		b.err = err
 		return nil

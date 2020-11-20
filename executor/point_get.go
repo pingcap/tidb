@@ -36,13 +36,7 @@ import (
 )
 
 func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) Executor {
-	if b.ctx.GetSessionVars().IsPessimisticReadConsistency() {
-		if err := b.refreshForUpdateTSForRC(); err != nil {
-			b.err = err
-			return nil
-		}
-	}
-	startTS, err := b.getSnapshotTS()
+	startTS, err := b.getSnapshotTS(true)
 	if err != nil {
 		b.err = err
 		return nil
