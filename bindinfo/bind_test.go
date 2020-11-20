@@ -159,6 +159,27 @@ func (s *testSuite) TestBindParse(c *C) {
 	tk.MustExec(`create binding for (select * from t) union all (select * from t) using (select * from t use index(index_t)) union all (select * from t use index())`)
 	tk.MustExec(`drop binding for (select * from t) union all (select * from t) using (select * from t use index(index_t)) union all (select * from t use index())`)
 
+	// Test Update / Delete.
+	tk.MustExec("create table t1(a int, b int, c int, key(b), key(c))")
+	tk.MustExec("create table t2(a int, b int, c int, key(b), key(c))")
+	tk.MustExec("create binding for delete from t1 where b = 1 and c > 1 using delete /*+ use_index(t1, c) */ from t1 where b = 1 and c > 1")
+	tk.MustExec("drop binding for delete from t1 where b = 1 and c > 1 using delete /*+ use_index(t1, c) */ from t1 where b = 1 and c > 1")
+	tk.MustExec("create binding for delete t1, t2 from t1 inner join t2 on t1.b = t2.b where t1.c = 1 using delete /*+ hash_join(t1, t2), use_index(t1, c) */ t1, t2 from t1 inner join t2 on t1.b = t2.b where t1.c = 1")
+	tk.MustExec("drop binding for delete t1, t2 from t1 inner join t2 on t1.b = t2.b where t1.c = 1 using delete /*+ hash_join(t1, t2), use_index(t1, c) */ t1, t2 from t1 inner join t2 on t1.b = t2.b where t1.c = 1")
+	tk.MustExec("create binding for update t1 set a = 1 where b = 1 and c > 1 using update /*+ use_index(t1, c) */ t1 set a = 1 where b = 1 and c > 1")
+	tk.MustExec("drop binding for update t1 set a = 1 where b = 1 and c > 1 using update /*+ use_index(t1, c) */ t1 set a = 1 where b = 1 and c > 1")
+	tk.MustExec("create binding for update t1, t2 set t1.a = 1 where t1.b = t2.b using update /*+ inl_join(t1) */ t1, t2 set t1.a = 1 where t1.b = t2.b")
+	tk.MustExec("drop binding for update t1, t2 set t1.a = 1 where t1.b = t2.b using update /*+ inl_join(t1) */ t1, t2 set t1.a = 1 where t1.b = t2.b")
+	// Test Insert / Replace.
+	tk.MustExec("create binding for insert into t1 select * from t2 where t2.b = 1 and t2.c > 1 using insert into t1 select /*+ use_index(t2,c) */ * from t2 where t2.b = 1 and t2.c > 1")
+	tk.MustExec("drop binding for insert into t1 select * from t2 where t2.b = 1 and t2.c > 1 using insert into t1 select /*+ use_index(t2,c) */ * from t2 where t2.b = 1 and t2.c > 1")
+	tk.MustExec("create binding for replace into t1 select * from t2 where t2.b = 1 and t2.c > 1 using replace into t1 select /*+ use_index(t2,c) */ * from t2 where t2.b = 1 and t2.c > 1")
+	tk.MustExec("drop binding for replace into t1 select * from t2 where t2.b = 1 and t2.c > 1 using replace into t1 select /*+ use_index(t2,c) */ * from t2 where t2.b = 1 and t2.c > 1")
+	err = tk.ExecToErr("create binding for insert into t1 values(1,1,1) using insert into t1 values(1,1,1)")
+	c.Assert(err.Error(), Equals, "create binding only supports INSERT / REPLACE INTO SELECT")
+	err = tk.ExecToErr("create binding for replace into t1 values(1,1,1) using replace into t1 values(1,1,1)")
+	c.Assert(err.Error(), Equals, "create binding only supports INSERT / REPLACE INTO SELECT")
+
 	// Test errors.
 	tk.MustExec(`drop table if exists t1`)
 	tk.MustExec("create table t1(i int, s varchar(20))")
@@ -219,6 +240,60 @@ var testSQLs = []struct {
 		bindSQL:     "select * from t use index(index_t) except select * from t use index()",
 		dropSQL:     "binding for select * from t except select * from t",
 		memoryUsage: float64(132),
+	},
+	{
+		createSQL:   "binding for delete from t where i = 1 using delete /*+ use_index(t,index_t) */ from t where i = 1",
+		overlaySQL:  "",
+		querySQL:    "delete    from t where   i = 2",
+		originSQL:   "delete from t where i = ?",
+		bindSQL:     "delete /*+ use_index(t,index_t) */ from t where i = 1",
+		dropSQL:     "binding for delete from t where i = 1",
+		memoryUsage: float64(103),
+	},
+	{
+		createSQL:   "binding for delete t, t1 from t inner join t1 on t.s = t1.s where t.i = 1 using delete /*+ use_index(t,index_t), hash_join(t,t1) */ t, t1 from t inner join t1 on t.s = t1.s where t.i = 1",
+		overlaySQL:  "",
+		querySQL:    "delete t,   t1 from t inner join t1 on t.s = t1.s  where   t.i = 2",
+		originSQL:   "delete t , t1 from t inner join t1 on t . s = t1 . s where t . i = ?",
+		bindSQL:     "delete /*+ use_index(t,index_t), hash_join(t,t1) */ t, t1 from t inner join t1 on t.s = t1.s where t.i = 1",
+		dropSQL:     "binding for delete t, t1 from t inner join t1 on t.s = t1.s where t.i = 1",
+		memoryUsage: float64(199),
+	},
+	{
+		createSQL:   "binding for update t set s = 'a' where i = 1 using update /*+ use_index(t,index_t) */ t set s = 'a' where i = 1",
+		overlaySQL:  "",
+		querySQL:    "update   t  set s='b' where i=2",
+		originSQL:   "update t set s = ? where i = ?",
+		bindSQL:     "update /*+ use_index(t,index_t) */ t set s = 'a' where i = 1",
+		dropSQL:     "binding for update t set s = 'a' where i = 1",
+		memoryUsage: float64(115),
+	},
+	{
+		createSQL:   "binding for update t, t1 set t.s = 'a' where t.i = t1.i using update /*+ inl_join(t1) */ t, t1 set t.s = 'a' where t.i = t1.i",
+		overlaySQL:  "",
+		querySQL:    "update   t  , t1 set t.s='b' where t.i=t1.i",
+		originSQL:   "update t , t1 set t . s = ? where t . i = t1 . i",
+		bindSQL:     "update /*+ inl_join(t1) */ t, t1 set t.s = 'a' where t.i = t1.i",
+		dropSQL:     "binding for update t, t1 set t.s = 'a' where t.i = t1.i",
+		memoryUsage: float64(136),
+	},
+	{
+		createSQL:   "binding for insert into t1 select * from t where t.i = 1 using insert into t1 select /*+ use_index(t,index_t) */ * from t where t.i = 1",
+		overlaySQL:  "",
+		querySQL:    "insert  into   t1 select * from t where t.i  = 2",
+		originSQL:   "insert into t1 select * from t where t . i = ?",
+		bindSQL:     "insert into t1 select /*+ use_index(t,index_t) */ * from t where t.i = 1",
+		dropSQL:     "binding for insert into t1 select * from t where t.i = 1",
+		memoryUsage: float64(143),
+	},
+	{
+		createSQL:   "binding for replace into t1 select * from t where t.i = 1 using replace into t1 select /*+ use_index(t,index_t) */ * from t where t.i = 1",
+		overlaySQL:  "",
+		querySQL:    "replace  into   t1 select * from t where t.i  = 2",
+		originSQL:   "replace into t1 select * from t where t . i = ?",
+		bindSQL:     "replace into t1 select /*+ use_index(t,index_t) */ * from t where t.i = 1",
+		dropSQL:     "binding for replace into t1 select * from t where t.i = 1",
+		memoryUsage: float64(145),
 	},
 }
 
@@ -523,6 +598,60 @@ func (s *testSuite) TestBindingSymbolList(c *C) {
 	c.Check(bind.UpdateTime, NotNil)
 }
 
+func (s *testSuite) TestDMLSQLBind(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	s.cleanBindingEnv(tk)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t1(a int, b int, c int, key idx_b(b), key idx_c(c))")
+	tk.MustExec("create table t2(a int, b int, c int, key idx_b(b), key idx_c(c))")
+
+	tk.MustExec("delete from t1 where b = 1 and c > 1")
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t1:idx_b")
+	c.Assert(tk.MustUseIndex("delete from t1 where b = 1 and c > 1", "idx_b(b)"), IsTrue)
+	tk.MustExec("create global binding for delete from t1 where b = 1 and c > 1 using delete /*+ use_index(t1,idx_c) */ from t1 where b = 1 and c > 1")
+	tk.MustExec("delete from t1 where b = 1 and c > 1")
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t1:idx_c")
+	c.Assert(tk.MustUseIndex("delete from t1 where b = 1 and c > 1", "idx_c(c)"), IsTrue)
+
+	c.Assert(tk.HasPlan("delete t1, t2 from t1 inner join t2 on t1.b = t2.b", "HashJoin"), IsTrue)
+	tk.MustExec("create global binding for delete t1, t2 from t1 inner join t2 on t1.b = t2.b using delete /*+ inl_join(t1) */ t1, t2 from t1 inner join t2 on t1.b = t2.b")
+	c.Assert(tk.HasPlan("delete t1, t2 from t1 inner join t2 on t1.b = t2.b", "IndexJoin"), IsTrue)
+
+	tk.MustExec("update t1 set a = 1 where b = 1 and c > 1")
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t1:idx_b")
+	c.Assert(tk.MustUseIndex("update t1 set a = 1 where b = 1 and c > 1", "idx_b(b)"), IsTrue)
+	tk.MustExec("create global binding for update t1 set a = 1 where b = 1 and c > 1 using update /*+ use_index(t1,idx_c) */ t1 set a = 1 where b = 1 and c > 1")
+	tk.MustExec("delete from t1 where b = 1 and c > 1")
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t1:idx_c")
+	c.Assert(tk.MustUseIndex("update t1 set a = 1 where b = 1 and c > 1", "idx_c(c)"), IsTrue)
+
+	c.Assert(tk.HasPlan("update t1, t2 set t1.a = 1 where t1.b = t2.b", "HashJoin"), IsTrue)
+	tk.MustExec("create global binding for update t1, t2 set t1.a = 1 where t1.b = t2.b using update /*+ inl_join(t1) */ t1, t2 set t1.a = 1 where t1.b = t2.b")
+	c.Assert(tk.HasPlan("update t1, t2 set t1.a = 1 where t1.b = t2.b", "IndexJoin"), IsTrue)
+
+	tk.MustExec("insert into t1 select * from t2 where t2.b = 2 and t2.c > 2")
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t2:idx_b")
+	c.Assert(tk.MustUseIndex("insert into t1 select * from t2 where t2.b = 2 and t2.c > 2", "idx_b(b)"), IsTrue)
+	tk.MustExec("create global binding for insert into t1 select * from t2 where t2.b = 1 and t2.c > 1 using insert /*+ use_index(t2,idx_c) */ into t1 select * from t2 where t2.b = 1 and t2.c > 1")
+	tk.MustExec("insert into t1 select * from t2 where t2.b = 2 and t2.c > 2")
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t2:idx_b")
+	c.Assert(tk.MustUseIndex("insert into t1 select * from t2 where t2.b = 2 and t2.c > 2", "idx_b(b)"), IsTrue)
+	tk.MustExec("drop global binding for insert into t1 select * from t2 where t2.b = 1 and t2.c > 1")
+	tk.MustExec("create global binding for insert into t1 select * from t2 where t2.b = 1 and t2.c > 1 using insert into t1 select /*+ use_index(t2,idx_c) */ * from t2 where t2.b = 1 and t2.c > 1")
+	tk.MustExec("insert into t1 select * from t2 where t2.b = 2 and t2.c > 2")
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t2:idx_c")
+	c.Assert(tk.MustUseIndex("insert into t1 select * from t2 where t2.b = 2 and t2.c > 2", "idx_c(c)"), IsTrue)
+
+	tk.MustExec("replace into t1 select * from t2 where t2.b = 2 and t2.c > 2")
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t2:idx_b")
+	c.Assert(tk.MustUseIndex("replace into t1 select * from t2 where t2.b = 2 and t2.c > 2", "idx_b(b)"), IsTrue)
+	tk.MustExec("create global binding for replace into t1 select * from t2 where t2.b = 1 and t2.c > 1 using replace into t1 select /*+ use_index(t2,idx_c) */ * from t2 where t2.b = 1 and t2.c > 1")
+	tk.MustExec("replace into t1 select * from t2 where t2.b = 2 and t2.c > 2")
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t2:idx_c")
+	c.Assert(tk.MustUseIndex("replace into t1 select * from t2 where t2.b = 2 and t2.c > 2", "idx_c(c)"), IsTrue)
+}
+
 func (s *testSuite) TestBestPlanInBaselines(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	s.cleanBindingEnv(tk)
@@ -627,6 +756,104 @@ func (s *testSuite) TestPreparedStmt(c *C) {
 	tk.MustExec("drop binding for select * from t")
 	tk.MustExec("execute stmt1")
 	c.Assert(len(tk.Se.GetSessionVars().StmtCtx.IndexNames), Equals, 0)
+
+	tk.MustExec("drop table t")
+	tk.MustExec("create table t(a int, b int, c int, index idx_b(b), index idx_c(c))")
+	tk.MustExec("set @p = 1")
+
+	tk.MustExec("prepare stmt from 'delete from t where b = ? and c > ?'")
+	tk.MustExec("execute stmt using @p,@p")
+	c.Assert(len(tk.Se.GetSessionVars().StmtCtx.IndexNames), Equals, 1)
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t:idx_b")
+	tk.MustExec("create binding for delete from t where b = 2 and c > 2 using delete /*+ use_index(t,idx_c) */ from t where b = 2 and c > 2")
+	tk.MustExec("execute stmt using @p,@p")
+	c.Assert(len(tk.Se.GetSessionVars().StmtCtx.IndexNames), Equals, 1)
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t:idx_c")
+
+	tk.MustExec("prepare stmt from 'update t set a = 1 where b = ? and c > ?'")
+	tk.MustExec("execute stmt using @p,@p")
+	c.Assert(len(tk.Se.GetSessionVars().StmtCtx.IndexNames), Equals, 1)
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t:idx_b")
+	tk.MustExec("create binding for update t set a = 2 where b = 2 and c > 2 using update /*+ use_index(t,idx_c) */ t set a = 2 where b = 2 and c > 2")
+	tk.MustExec("execute stmt using @p,@p")
+	c.Assert(len(tk.Se.GetSessionVars().StmtCtx.IndexNames), Equals, 1)
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t:idx_c")
+
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 like t")
+	tk.MustExec("prepare stmt from 'insert into t1 select * from t where t.b = ? and t.c > ?'")
+	tk.MustExec("execute stmt using @p,@p")
+	c.Assert(len(tk.Se.GetSessionVars().StmtCtx.IndexNames), Equals, 1)
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t:idx_b")
+	tk.MustExec("create binding for insert into t1 select * from t where t.b = 2 and t.c > 2 using insert into t1 select /*+ use_index(t,idx_c) */ * from t where t.b = 2 and t.c > 2")
+	tk.MustExec("execute stmt using @p,@p")
+	c.Assert(len(tk.Se.GetSessionVars().StmtCtx.IndexNames), Equals, 1)
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t:idx_c")
+
+	tk.MustExec("prepare stmt from 'replace into t1 select * from t where t.b = ? and t.c > ?'")
+	tk.MustExec("execute stmt using @p,@p")
+	c.Assert(len(tk.Se.GetSessionVars().StmtCtx.IndexNames), Equals, 1)
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t:idx_b")
+	tk.MustExec("create binding for replace into t1 select * from t where t.b = 2 and t.c > 2 using replace into t1 select /*+ use_index(t,idx_c) */ * from t where t.b = 2 and t.c > 2")
+	tk.MustExec("execute stmt using @p,@p")
+	c.Assert(len(tk.Se.GetSessionVars().StmtCtx.IndexNames), Equals, 1)
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t:idx_c")
+}
+
+func (s *testSuite) TestDMLCapturePlanBaseline(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	s.cleanBindingEnv(tk)
+	stmtsummary.StmtSummaryByDigestMap.Clear()
+	tk.MustExec(" set @@tidb_capture_plan_baselines = on")
+	defer func() {
+		tk.MustExec(" set @@tidb_capture_plan_baselines = off")
+	}()
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, c int, key idx_b(b), key idx_c(c))")
+	tk.MustExec("create table t1 like t")
+	s.domain.BindHandle().CaptureBaselines()
+	tk.MustQuery("show global bindings").Check(testkit.Rows())
+	tk.MustExec("delete from t where b = 1 and c > 1")
+	tk.MustExec("delete from t where b = 1 and c > 1")
+	tk.MustExec("update t set a = 1 where b = 1 and c > 1")
+	tk.MustExec("update t set a = 1 where b = 1 and c > 1")
+	tk.MustExec("insert into t1 select * from t where t.b = 1 and t.c > 1")
+	tk.MustExec("insert into t1 select * from t where t.b = 1 and t.c > 1")
+	tk.MustExec("replace into t1 select * from t where t.b = 1 and t.c > 1")
+	tk.MustExec("replace into t1 select * from t where t.b = 1 and t.c > 1")
+	tk.MustExec("insert into t1 values(1,1,1)")
+	tk.MustExec("insert into t1 values(1,1,1)")
+	tk.MustExec("replace into t1 values(1,1,1)")
+	tk.MustExec("replace into t1 values(1,1,1)")
+	tk.MustExec("admin capture bindings")
+	rows := tk.MustQuery("show global bindings").Rows()
+	c.Assert(len(rows), Equals, 0)
+
+	c.Assert(tk.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil), IsTrue)
+	tk.MustExec("delete from t where b = 1 and c > 1")
+	tk.MustExec("delete from t where b = 1 and c > 1")
+	tk.MustExec("update t set a = 1 where b = 1 and c > 1")
+	tk.MustExec("update t set a = 1 where b = 1 and c > 1")
+	tk.MustExec("insert into t1 select * from t where t.b = 1 and t.c > 1")
+	tk.MustExec("insert into t1 select * from t where t.b = 1 and t.c > 1")
+	tk.MustExec("replace into t1 select * from t where t.b = 1 and t.c > 1")
+	tk.MustExec("replace into t1 select * from t where t.b = 1 and t.c > 1")
+	tk.MustExec("insert into t1 values(1,1,1)")
+	tk.MustExec("insert into t1 values(1,1,1)")
+	tk.MustExec("replace into t1 values(1,1,1)")
+	tk.MustExec("replace into t1 values(1,1,1)")
+	tk.MustExec("admin capture bindings")
+	rows = tk.MustQuery("show global bindings").Sort().Rows()
+	c.Assert(len(rows), Equals, 4)
+	c.Assert(rows[0][0], Equals, "delete from t where b = ? and c > ?")
+	c.Assert(rows[0][1], Equals, "DELETE /*+ use_index(@`del_1` `test`.`t` `idx_b`)*/ FROM `t` WHERE `b`=1 AND `c`>1")
+	c.Assert(rows[1][0], Equals, "insert into t1 select * from t where t . b = ? and t . c > ?")
+	c.Assert(rows[1][1], Equals, "INSERT INTO `t1` SELECT /*+ use_index(@`sel_1` `test`.`t` `idx_b`)*/ * FROM `t` WHERE `t`.`b`=1 AND `t`.`c`>1")
+	c.Assert(rows[2][0], Equals, "replace into t1 select * from t where t . b = ? and t . c > ?")
+	c.Assert(rows[2][1], Equals, "REPLACE INTO `t1` SELECT /*+ use_index(@`sel_1` `test`.`t` `idx_b`)*/ * FROM `t` WHERE `t`.`b`=1 AND `t`.`c`>1")
+	c.Assert(rows[3][0], Equals, "update t set a = ? where b = ? and c > ?")
+	c.Assert(rows[3][1], Equals, "UPDATE /*+ use_index(@`upd_1` `test`.`t` `idx_b`)*/ `t` SET `a`=1 WHERE `b`=1 AND `c`>1")
 }
 
 func (s *testSuite) TestCapturePlanBaseline(c *C) {
@@ -638,7 +865,7 @@ func (s *testSuite) TestCapturePlanBaseline(c *C) {
 		tk.MustExec(" set @@tidb_capture_plan_baselines = off")
 	}()
 	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t, t1")
+	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int)")
 	s.domain.BindHandle().CaptureBaselines()
 	tk.MustQuery("show global bindings").Check(testkit.Rows())
@@ -726,6 +953,66 @@ func (s *testSuite) TestDropSingleBindings(c *C) {
 	tk.MustExec("drop global binding for select * from t using select * from t use index(idx_b)")
 	rows = tk.MustQuery("show global bindings").Rows()
 	c.Assert(len(rows), Equals, 0)
+}
+
+func (s *testSuite) TestDMLEvolveBaselines(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	s.cleanBindingEnv(tk)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, c int, index idx_b(b), index idx_c(c))")
+	tk.MustExec("insert into t values (1,1,1), (2,2,2), (3,3,3), (4,4,4), (5,5,5)")
+	tk.MustExec("analyze table t")
+	tk.MustExec("set @@tidb_evolve_plan_baselines=1")
+
+	tk.MustExec("create global binding for delete from t where b = 1 and c > 1 using delete /*+ use_index(t,idx_c) */ from t where b = 1 and c > 1")
+	rows := tk.MustQuery("show global bindings").Rows()
+	c.Assert(len(rows), Equals, 1)
+	tk.MustExec("delete /*+ use_index(t,idx_b) */ from t where b = 2 and c > 1")
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t:idx_c")
+	tk.MustExec("admin flush bindings")
+	rows = tk.MustQuery("show global bindings").Rows()
+	c.Assert(len(rows), Equals, 1)
+	tk.MustExec("admin evolve bindings")
+	rows = tk.MustQuery("show global bindings").Rows()
+	c.Assert(len(rows), Equals, 1)
+
+	tk.MustExec("create global binding for update t set a = 1 where b = 1 and c > 1 using update /*+ use_index(t,idx_c) */ t set a = 1 where b = 1 and c > 1")
+	rows = tk.MustQuery("show global bindings").Rows()
+	c.Assert(len(rows), Equals, 2)
+	tk.MustExec("update /*+ use_index(t,idx_b) */ t set a = 2 where b = 2 and c > 1")
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t:idx_c")
+	tk.MustExec("admin flush bindings")
+	rows = tk.MustQuery("show global bindings").Rows()
+	c.Assert(len(rows), Equals, 2)
+	tk.MustExec("admin evolve bindings")
+	rows = tk.MustQuery("show global bindings").Rows()
+	c.Assert(len(rows), Equals, 2)
+
+	tk.MustExec("create table t1 like t")
+	tk.MustExec("create global binding for insert into t1 select * from t where t.b = 1 and t.c > 1 using insert into t1 select /*+ use_index(t,idx_c) */ * from t where t.b = 1 and t.c > 1")
+	rows = tk.MustQuery("show global bindings").Rows()
+	c.Assert(len(rows), Equals, 3)
+	tk.MustExec("insert into t1 select /*+ use_index(t,idx_b) */ * from t where t.b = 2 and t.c > 2")
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t:idx_c")
+	tk.MustExec("admin flush bindings")
+	rows = tk.MustQuery("show global bindings").Rows()
+	c.Assert(len(rows), Equals, 3)
+	tk.MustExec("admin evolve bindings")
+	rows = tk.MustQuery("show global bindings").Rows()
+	c.Assert(len(rows), Equals, 3)
+
+	tk.MustExec("create global binding for replace into t1 select * from t where t.b = 1 and t.c > 1 using replace into t1 select /*+ use_index(t,idx_c) */ * from t where t.b = 1 and t.c > 1")
+	rows = tk.MustQuery("show global bindings").Rows()
+	c.Assert(len(rows), Equals, 4)
+	tk.MustExec("replace into t1 select /*+ use_index(t,idx_b) */ * from t where t.b = 2 and t.c > 2")
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t:idx_c")
+	tk.MustExec("admin flush bindings")
+	rows = tk.MustQuery("show global bindings").Rows()
+	c.Assert(len(rows), Equals, 4)
+	tk.MustExec("admin evolve bindings")
+	rows = tk.MustQuery("show global bindings").Rows()
+	c.Assert(len(rows), Equals, 4)
 }
 
 func (s *testSuite) TestAddEvolveTasks(c *C) {
@@ -1267,7 +1554,7 @@ func (s *testSuite) TestInvisibleIndex(c *C) {
 	tk.MustExec("drop binding for select * from t")
 }
 
-func (s *testSuite) TestbindingSource(c *C) {
+func (s *testSuite) TestBindingSource(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	s.cleanBindingEnv(tk)
 	tk.MustExec("use test")

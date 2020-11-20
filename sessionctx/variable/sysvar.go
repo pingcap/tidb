@@ -1028,6 +1028,7 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal, Name: TiDBRowFormatVersion, Value: strconv.Itoa(DefTiDBRowFormatV1), Type: TypeUnsigned, MinValue: 1, MaxValue: 2},
 	{Scope: ScopeSession, Name: TiDBOptimizerSelectivityLevel, Value: strconv.Itoa(DefTiDBOptimizerSelectivityLevel), Type: TypeUnsigned, MinValue: 1, MaxValue: math.MaxUint64},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableWindowFunction, Value: BoolToOnOff(DefEnableWindowFunction), Type: TypeBool},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableStrictDoubleTypeCheck, Value: BoolToOnOff(DefEnableStrictDoubleTypeCheck), Type: TypeBool},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableVectorizedExpression, Value: BoolToOnOff(DefEnableVectorizedExpression), Type: TypeBool},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableFastAnalyze, Value: BoolToOnOff(DefTiDBUseFastAnalyze), Type: TypeBool},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBSkipIsolationLevelCheck, Value: BoolToOnOff(DefTiDBSkipIsolationLevelCheck), Type: TypeBool},
@@ -1051,6 +1052,7 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeSession, Name: TiDBWaitSplitRegionTimeout, Value: strconv.Itoa(DefWaitSplitRegionTimeout), Type: TypeUnsigned, MinValue: 1, MaxValue: math.MaxInt64},
 	{Scope: ScopeSession, Name: TiDBLowResolutionTSO, Value: BoolOff, Type: TypeBool},
 	{Scope: ScopeSession, Name: TiDBExpensiveQueryTimeThreshold, Value: strconv.Itoa(DefTiDBExpensiveQueryTimeThreshold), Type: TypeUnsigned, MinValue: int64(MinExpensiveQueryTimeThreshold), MaxValue: uint64(math.MaxInt64), AutoConvertOutOfRange: true},
+	{Scope: ScopeSession, Name: TiDBMemoryUsageAlarmRatio, Value: strconv.FormatFloat(config.GetGlobalConfig().Performance.MemoryUsageAlarmRatio, 'f', -1, 64), Type: TypeFloat, MinValue: 0.0, MaxValue: 1.0},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableNoopFuncs, Value: BoolToOnOff(DefTiDBEnableNoopFuncs), Type: TypeBool},
 	{Scope: ScopeSession, Name: TiDBReplicaRead, Value: "leader", Type: TypeEnum, PossibleValues: []string{"leader", "follower", "leader-and-follower"}},
 	{Scope: ScopeSession, Name: TiDBAllowRemoveAutoInc, Value: BoolToOnOff(DefTiDBAllowRemoveAutoInc), Type: TypeBool},
@@ -1166,15 +1168,15 @@ func initSynonymsSysVariables() {
 
 // SetNamesVariables is the system variable names related to set names statements.
 var SetNamesVariables = []string{
-	"character_set_client",
-	"character_set_connection",
-	"character_set_results",
+	CharacterSetClient,
+	CharacterSetConnection,
+	CharacterSetResults,
 }
 
 // SetCharsetVariables is the system variable names related to set charset statements.
 var SetCharsetVariables = []string{
-	"character_set_client",
-	"character_set_results",
+	CharacterSetClient,
+	CharacterSetResults,
 }
 
 const (
@@ -1186,6 +1188,12 @@ const (
 	CharsetDatabase = "character_set_database"
 	// CollationDatabase is the name for collation_database system variable.
 	CollationDatabase = "collation_database"
+	// CharacterSetFilesystem is the name for character_set_filesystem system variable.
+	CharacterSetFilesystem = "character_set_filesystem"
+	// CharacterSetClient is the name for character_set_client system variable.
+	CharacterSetClient = "character_set_client"
+	// CharacterSetSystem is the name for character_set_system system variable.
+	CharacterSetSystem = "character_set_system"
 	// GeneralLog is the name for 'general_log' system variable.
 	GeneralLog = "general_log"
 	// AvoidTemporalUpgrade is the name for 'avoid_temporal_upgrade' system variable.
