@@ -372,6 +372,7 @@ const (
 	globalOrderByClause
 	expressionClause
 	windowOrderByClause
+	partitionByClause
 )
 
 var clauseMsg = map[clauseCode]string{
@@ -386,6 +387,7 @@ var clauseMsg = map[clauseCode]string{
 	globalOrderByClause: "global ORDER clause",
 	expressionClause:    "expression",
 	windowOrderByClause: "window order by",
+	partitionByClause:   "window partition by",
 }
 
 type capFlagType = uint64

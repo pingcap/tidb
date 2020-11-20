@@ -1717,6 +1717,7 @@ type havingWindowAndOrderbyExprResolver struct {
 	outerSchemas []*expression.Schema
 	outerNames   [][]*types.FieldName
 	curClause    clauseCode
+	prevClause   clauseCode
 }
 
 // Enter implements Visitor interface.
@@ -1733,6 +1734,14 @@ func (a *havingWindowAndOrderbyExprResolver) Enter(n ast.Node) (node ast.Node, s
 		// Enter a new context, skip it.
 		// For example: select sum(c) + c + exists(select c from t) from t;
 		return n, true
+	case *ast.PartitionByClause:
+		a.prevClause = a.curClause
+		a.curClause = partitionByClause
+	case *ast.OrderByClause:
+		a.prevClause = a.curClause
+		if a.inWindowSpec {
+			a.curClause = windowOrderByClause
+		}
 	default:
 		a.inExpr = true
 	}
@@ -1813,6 +1822,12 @@ func (a *havingWindowAndOrderbyExprResolver) Leave(n ast.Node) (node ast.Node, o
 		}
 	case *ast.WindowSpec:
 		a.inWindowSpec = false
+	case *ast.PartitionByClause:
+		a.curClause = a.prevClause
+	case *ast.OrderByClause:
+		if a.inWindowSpec {
+			a.curClause = a.prevClause
+		}
 	case *ast.ColumnNameExpr:
 		resolveFieldsFirst := true
 		if a.inAggFunc || a.inWindowFunc || a.inWindowSpec || (a.curClause == orderByClause && a.inExpr) || a.curClause == fieldList {
@@ -1864,7 +1879,8 @@ func (a *havingWindowAndOrderbyExprResolver) Leave(n ast.Node) (node ast.Node, o
 			var err error
 			index, err = a.resolveFromPlan(v, a.p)
 			_ = err
-			if index == -1 && a.curClause != fieldList && a.curClause != windowOrderByClause {
+			if index == -1 && a.curClause != fieldList &&
+				a.curClause != windowOrderByClause && a.curClause != partitionByClause {
 				index, a.err = resolveFromSelectFields(v, a.selectFields, false)
 				if index != -1 && a.curClause == havingClause && ast.HasWindowFlag(a.selectFields[index].Expr) {
 					a.err = ErrWindowInvalidWindowFuncAliasUse.GenWithStackByArgs(v.Name.Name.O)
@@ -1981,7 +1997,6 @@ func (b *PlanBuilder) resolveWindowFunction(sel *ast.SelectStmt, p LogicalPlan) 
 		}
 		field.Expr = n.(ast.ExprNode)
 	}
-	extractor.curClause = windowOrderByClause
 	for _, spec := range sel.WindowSpecs {
 		_, ok := spec.Accept(extractor)
 		if !ok {

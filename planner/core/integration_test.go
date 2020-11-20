@@ -1904,4 +1904,6 @@ func (s *testIntegrationSuite) TestInvalidNamedWindowSpec(c *C) {
 		"[planner:3587]Window 'w' with RANGE N PRECEDING/FOLLOWING frame requires exactly one ORDER BY expression, of numeric or temporal type")
 	tk.MustGetErrMsg("select val1, avg(val1) as a from temptest group by val1 window w as (order by a)",
 		"[planner:1054]Unknown column 'a' in 'window order by'")
+	tk.MustGetErrMsg("select val1, avg(val1) as a from temptest group by val1 window w as (partition by a)",
+		"[planner:1054]Unknown column 'a' in 'window partition by'")
 }
