@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
@@ -186,7 +187,7 @@ func (alloc *allocator) End() int64 {
 func (alloc *allocator) NextGlobalAutoID(tableID int64) (int64, error) {
 	var autoID int64
 	startTime := time.Now()
-	err := kv.RunInNewTxn(alloc.store, true, func(txn kv.Transaction) error {
+	err := kv.RunInNewTxn(alloc.store, oracle.GlobalTxnScope, true, func(txn kv.Transaction) error {
 		var err1 error
 		m := meta.NewMeta(txn)
 		autoID, err1 = getAutoIDByAllocType(m, alloc.dbID, tableID, alloc.allocType)
@@ -214,7 +215,7 @@ func (alloc *allocator) rebase4Unsigned(tableID int64, requiredBase uint64, allo
 	}
 	var newBase, newEnd uint64
 	startTime := time.Now()
-	err := kv.RunInNewTxn(alloc.store, true, func(txn kv.Transaction) error {
+	err := kv.RunInNewTxn(alloc.store, oracle.GlobalTxnScope, true, func(txn kv.Transaction) error {
 		m := meta.NewMeta(txn)
 		currentEnd, err1 := getAutoIDByAllocType(m, alloc.dbID, tableID, alloc.allocType)
 		if err1 != nil {
@@ -260,7 +261,7 @@ func (alloc *allocator) rebase4Signed(tableID, requiredBase int64, allocIDs bool
 	}
 	var newBase, newEnd int64
 	startTime := time.Now()
-	err := kv.RunInNewTxn(alloc.store, true, func(txn kv.Transaction) error {
+	err := kv.RunInNewTxn(alloc.store, oracle.GlobalTxnScope, true, func(txn kv.Transaction) error {
 		m := meta.NewMeta(txn)
 		currentEnd, err1 := getAutoIDByAllocType(m, alloc.dbID, tableID, alloc.allocType)
 		if err1 != nil {
@@ -297,7 +298,7 @@ func (alloc *allocator) rebase4Signed(tableID, requiredBase int64, allocIDs bool
 func (alloc *allocator) rebase4Sequence(tableID, requiredBase int64) (int64, bool, error) {
 	startTime := time.Now()
 	alreadySatisfied := false
-	err := kv.RunInNewTxn(alloc.store, true, func(txn kv.Transaction) error {
+	err := kv.RunInNewTxn(alloc.store, oracle.GlobalTxnScope, true, func(txn kv.Transaction) error {
 		m := meta.NewMeta(txn)
 		currentEnd, err := getAutoIDByAllocType(m, alloc.dbID, tableID, alloc.allocType)
 		if err != nil {
@@ -649,7 +650,7 @@ func (alloc *allocator) alloc4Signed(tableID int64, n uint64, increment, offset 
 			consumeDur := startTime.Sub(alloc.lastAllocTime)
 			nextStep = NextStep(alloc.step, consumeDur)
 		}
-		err := kv.RunInNewTxn(alloc.store, true, func(txn kv.Transaction) error {
+		err := kv.RunInNewTxn(alloc.store, oracle.GlobalTxnScope, true, func(txn kv.Transaction) error {
 			m := meta.NewMeta(txn)
 			var err1 error
 			newBase, err1 = getAutoIDByAllocType(m, alloc.dbID, tableID, alloc.allocType)
@@ -718,7 +719,7 @@ func (alloc *allocator) alloc4Unsigned(tableID int64, n uint64, increment, offse
 			consumeDur := startTime.Sub(alloc.lastAllocTime)
 			nextStep = NextStep(alloc.step, consumeDur)
 		}
-		err := kv.RunInNewTxn(alloc.store, true, func(txn kv.Transaction) error {
+		err := kv.RunInNewTxn(alloc.store, oracle.GlobalTxnScope, true, func(txn kv.Transaction) error {
 			m := meta.NewMeta(txn)
 			var err1 error
 			newBase, err1 = getAutoIDByAllocType(m, alloc.dbID, tableID, alloc.allocType)
@@ -782,7 +783,7 @@ func (alloc *allocator) alloc4Sequence(tableID int64) (min int64, max int64, rou
 
 	var newBase, newEnd int64
 	startTime := time.Now()
-	err = kv.RunInNewTxn(alloc.store, true, func(txn kv.Transaction) error {
+	err = kv.RunInNewTxn(alloc.store, oracle.GlobalTxnScope, true, func(txn kv.Transaction) error {
 		m := meta.NewMeta(txn)
 		var (
 			err1    error

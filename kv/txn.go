@@ -21,20 +21,19 @@ import (
 	"time"
 
 	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
 
 // RunInNewTxn will run the f in a new transaction environment.
-func RunInNewTxn(store Storage, retryable bool, f func(txn Transaction) error) error {
+func RunInNewTxn(store Storage, txnScope string, retryable bool, f func(txn Transaction) error) error {
 	var (
 		err           error
 		originalTxnTS uint64
 		txn           Transaction
 	)
 	for i := uint(0); i < maxRetryCnt; i++ {
-		txn, err = store.Begin(oracle.GlobalTxnScope)
+		txn, err = store.Begin(txnScope)
 		if err != nil {
 			logutil.BgLogger().Error("RunInNewTxn", zap.Error(err))
 			return err

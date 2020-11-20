@@ -1807,7 +1807,7 @@ func (w *GCWorker) doGCPlacementRules(dr util.DelRangeTask) (pid int64, err erro
 		}
 	})
 	if historyJob == nil {
-		err = kv.RunInNewTxn(w.store, false, func(txn kv.Transaction) error {
+		err = kv.RunInNewTxn(w.store, oracle.GlobalTxnScope, false, func(txn kv.Transaction) error {
 			var err1 error
 			t := meta.NewMeta(txn)
 			historyJob, err1 = t.GetHistoryDDLJob(dr.JobID)

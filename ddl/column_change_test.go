@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
@@ -49,7 +50,7 @@ func (s *testColumnChangeSuite) SetUpSuite(c *C) {
 		Name: model.NewCIStr("test_column_change"),
 		ID:   1,
 	}
-	err := kv.RunInNewTxn(s.store, true, func(txn kv.Transaction) error {
+	err := kv.RunInNewTxn(s.store, oracle.GlobalTxnScope, true, func(txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		return errors.Trace(t.CreateDatabase(s.dbInfo))
 	})
@@ -187,7 +188,7 @@ func (s *testColumnChangeSuite) TestModifyAutoRandColumnWithMetaKeyChanged(c *C)
 	tc.onJobRunBefore = func(job *model.Job) {
 		if atomic.LoadInt32(&errCount) > 0 && job.Type == model.ActionModifyColumn {
 			atomic.AddInt32(&errCount, -1)
-			genAutoRandErr = kv.RunInNewTxn(s.store, false, func(txn kv.Transaction) error {
+			genAutoRandErr = kv.RunInNewTxn(s.store, oracle.GlobalTxnScope, false, func(txn kv.Transaction) error {
 				t := meta.NewMeta(txn)
 				_, err1 := t.GenAutoRandomID(s.dbInfo.ID, tableID, 1)
 				return err1
@@ -210,7 +211,7 @@ func (s *testColumnChangeSuite) TestModifyAutoRandColumnWithMetaKeyChanged(c *C)
 	c.Assert(genAutoRandErr, IsNil)
 	testCheckJobDone(c, d, job, true)
 	var newTbInfo *model.TableInfo
-	err = kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
+	err = kv.RunInNewTxn(d.store, oracle.GlobalTxnScope, false, func(txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		var err error
 		newTbInfo, err = t.GetTable(s.dbInfo.ID, tableID)
@@ -413,7 +414,7 @@ func (s *testColumnChangeSuite) checkAddPublic(sctx sessionctx.Context, d *ddl, 
 
 func getCurrentTable(d *ddl, schemaID, tableID int64) (table.Table, error) {
 	var tblInfo *model.TableInfo
-	err := kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
+	err := kv.RunInNewTxn(d.store, oracle.GlobalTxnScope, false, func(txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		var err error
 		tblInfo, err = t.GetTable(schemaID, tableID)

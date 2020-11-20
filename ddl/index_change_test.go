@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 )
@@ -41,7 +42,7 @@ func (s *testIndexChangeSuite) SetUpSuite(c *C) {
 		Name: model.NewCIStr("test_index_change"),
 		ID:   1,
 	}
-	err := kv.RunInNewTxn(s.store, true, func(txn kv.Transaction) error {
+	err := kv.RunInNewTxn(s.store, oracle.GlobalTxnScope, true, func(txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		return errors.Trace(t.CreateDatabase(s.dbInfo))
 	})

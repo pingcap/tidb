@@ -27,6 +27,7 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
@@ -316,7 +317,7 @@ func (e *RecoverIndexExec) backfillIndex(ctx context.Context) (int64, int64, err
 		result        backfillResult
 	)
 	for {
-		errInTxn := kv.RunInNewTxn(e.ctx.GetStore(), true, func(txn kv.Transaction) error {
+		errInTxn := kv.RunInNewTxn(e.ctx.GetStore(), oracle.GlobalTxnScope, true, func(txn kv.Transaction) error {
 			var err error
 			result, err = e.backfillIndexInTxn(ctx, txn, currentHandle)
 			return err
@@ -687,7 +688,7 @@ func (e *CleanupIndexExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 func (e *CleanupIndexExec) cleanTableIndex(ctx context.Context) error {
 	for {
-		errInTxn := kv.RunInNewTxn(e.ctx.GetStore(), true, func(txn kv.Transaction) error {
+		errInTxn := kv.RunInNewTxn(e.ctx.GetStore(), oracle.GlobalTxnScope, true, func(txn kv.Transaction) error {
 			err := e.fetchIndex(ctx, txn)
 			if err != nil {
 				return err

@@ -39,7 +39,7 @@ func (s *Store) Begin(txnScope string) (kv.Transaction, error) { return nil, nil
 
 // BeginWithStartTS implements kv.Storage interface.
 func (s *Store) BeginWithStartTS(txnScope string, startTS uint64) (kv.Transaction, error) {
-	return s.Begin(oracle.GlobalTxnScope)
+	return s.Begin(txnScope)
 }
 
 // GetSnapshot implements kv.Storage interface.

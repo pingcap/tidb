@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
@@ -449,6 +450,11 @@ func (b *executorBuilder) buildRecoverIndex(v *plannercore.RecoverIndex) Executo
 	}
 	sessCtx := e.ctx.GetSessionVars().StmtCtx
 	e.handleCols = buildHandleColsForExec(sessCtx, tblInfo, index.Meta(), e.columns)
+	// Transactions that write metadata should be started as the global transactions.
+	if err := e.baseExecutor.ctx.GetSessionVars().SetSystemVar("txn_scope", oracle.GlobalTxnScope); err != nil {
+		b.err = err
+		return nil
+	}
 	return e
 }
 
@@ -510,6 +516,11 @@ func (b *executorBuilder) buildCleanupIndex(v *plannercore.CleanupIndex) Executo
 	}
 	sessCtx := e.ctx.GetSessionVars().StmtCtx
 	e.handleCols = buildHandleColsForExec(sessCtx, tblInfo, index.Meta(), e.columns)
+	// Transactions that write metadata should be started as the global transactions.
+	if err := e.baseExecutor.ctx.GetSessionVars().SetSystemVar("txn_scope", oracle.GlobalTxnScope); err != nil {
+		b.err = err
+		return nil
+	}
 	return e
 }
 
@@ -879,6 +890,11 @@ func (b *executorBuilder) buildDDL(v *plannercore.DDL) Executor {
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 		stmt:         v.Statement,
 		is:           b.is,
+	}
+	// Transactions that write metadata should be started as the global transactions.
+	if err := e.baseExecutor.ctx.GetSessionVars().SetSystemVar("txn_scope", oracle.GlobalTxnScope); err != nil {
+		b.err = err
+		return nil
 	}
 	return e
 }

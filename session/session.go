@@ -63,6 +63,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
@@ -1614,7 +1615,8 @@ func (s *session) NewTxn(ctx context.Context) error {
 			zap.Uint64("txnStartTS", txnID))
 	}
 
-	txn, err := s.store.Begin(s.GetSessionVars().TxnScope)
+	txnScope := s.checkAndGetTxnScope()
+	txn, err := s.store.Begin(txnScope)
 	if err != nil {
 		return err
 	}
@@ -1630,7 +1632,7 @@ func (s *session) NewTxn(ctx context.Context) error {
 		CreateTime:    time.Now(),
 		StartTS:       txn.StartTS(),
 		ShardStep:     int(s.sessionVars.ShardAllocateStep),
-		TxnScope:      s.GetSessionVars().TxnScope,
+		TxnScope:      txnScope,
 	}
 	return nil
 }
@@ -2088,7 +2090,7 @@ func getStoreBootstrapVersion(store kv.Storage) int64 {
 
 	var ver int64
 	// check in kv store
-	err := kv.RunInNewTxn(store, false, func(txn kv.Transaction) error {
+	err := kv.RunInNewTxn(store, oracle.GlobalTxnScope, false, func(txn kv.Transaction) error {
 		var err error
 		t := meta.NewMeta(txn)
 		ver, err = t.GetBootstrapVersion()
@@ -2111,7 +2113,7 @@ func getStoreBootstrapVersion(store kv.Storage) int64 {
 func finishBootstrap(store kv.Storage) {
 	setStoreBootstrapped(store.UUID())
 
-	err := kv.RunInNewTxn(store, true, func(txn kv.Transaction) error {
+	err := kv.RunInNewTxn(store, oracle.GlobalTxnScope, true, func(txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		err := t.FinishBootstrap(currentBootstrapVersion)
 		return err
@@ -2301,12 +2303,13 @@ func (s *session) PrepareTxnCtx(ctx context.Context) {
 	}
 
 	is := domain.GetDomain(s).InfoSchema()
+	txnScope := s.checkAndGetTxnScope()
 	s.sessionVars.TxnCtx = &variable.TransactionContext{
 		InfoSchema:    is,
 		SchemaVersion: is.SchemaMetaVersion(),
 		CreateTime:    time.Now(),
 		ShardStep:     int(s.sessionVars.ShardAllocateStep),
-		TxnScope:      s.GetSessionVars().TxnScope,
+		TxnScope:      txnScope,
 	}
 	if !s.sessionVars.IsAutocommit() || s.sessionVars.RetryInfo.Retrying {
 		if s.sessionVars.TxnMode == ast.Pessimistic {
@@ -2441,6 +2444,15 @@ func (s *session) recordOnTransactionExecution(err error, counter int, duration 
 			transactionDurationOptimisticCommit.Observe(duration)
 		}
 	}
+}
+
+func (s *session) checkAndGetTxnScope() string {
+	txnScope := s.GetSessionVars().TxnScope
+	// Internal SQLs should always run as the global transcations.
+	if s.isInternal() {
+		txnScope = oracle.GlobalTxnScope
+	}
+	return txnScope
 }
 
 func (s *session) checkPlacementPolicyBeforeCommit() error {
