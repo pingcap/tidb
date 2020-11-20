@@ -318,6 +318,7 @@ func (s *tikvSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, coll
 			if err != nil {
 				return errors.Trace(err)
 			}
+			lockedKeys = append(lockedKeys, lock.Key)
 			locks = append(locks, lock)
 		} else {
 			for _, pair := range batchGetResp.Pairs {
