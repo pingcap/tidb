@@ -676,6 +676,9 @@ func (it *copIterator) recvFromTasks(ctx context.Context) (resp *copResponse, ex
 					}
 					// task[i] finished
 					if !ok && resp == nil {
+						it.actionOnExceed.destroyTokenIfNeeded(func() {
+							it.sendRate.putToken()
+						})
 						it.tasks[i] = nil
 						continue
 					}
