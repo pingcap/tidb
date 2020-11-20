@@ -36,12 +36,17 @@ type testAsyncCommitFailSuite struct {
 var _ = SerialSuites(&testAsyncCommitFailSuite{})
 
 func (s *testAsyncCommitFailSuite) SetUpTest(c *C) {
-	s.testAsyncCommitCommon.setUpTest(c, false)
+	s.testAsyncCommitCommon.setUpTest(c)
 }
 
 // TestFailCommitPrimaryRpcErrors tests rpc errors are handled properly when
 // committing primary region task.
 func (s *testAsyncCommitFailSuite) TestFailAsyncCommitPrewriteRpcErrors(c *C) {
+	// This test doesn't support tikv mode because it needs setting failpoint in unistore.
+	if *WithTiKV {
+		return
+	}
+
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.TiKVClient.AsyncCommit.Enable = true
@@ -72,6 +77,44 @@ func (s *testAsyncCommitFailSuite) TestFailAsyncCommitPrewriteRpcErrors(c *C) {
 	res, err := t2.Get(context.Background(), []byte("a"))
 	c.Assert(err, IsNil)
 	c.Assert(bytes.Equal(res, []byte("a1")), IsTrue)
+}
+
+func (s *testAsyncCommitFailSuite) TestAsyncCommitPrewriteCancelled(c *C) {
+	// This test doesn't support tikv mode because it needs setting failpoint in unistore.
+	if *WithTiKV {
+		return
+	}
+
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TiKVClient.AsyncCommit.Enable = true
+	})
+
+	// Split into two regions.
+	splitKey := "s"
+	bo := NewBackofferWithVars(context.Background(), 5000, nil)
+	loc, err := s.store.GetRegionCache().LocateKey(bo, []byte(splitKey))
+	c.Assert(err, IsNil)
+	newRegionID := s.cluster.AllocID()
+	newPeerID := s.cluster.AllocID()
+	s.cluster.Split(loc.Region.GetID(), newRegionID, []byte(splitKey), []uint64{newPeerID}, newPeerID)
+	s.store.GetRegionCache().InvalidateCachedRegion(loc.Region)
+
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/rpcPrewriteResult", `1*return("writeConflict")->sleep(50)`), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/rpcPrewriteResult"), IsNil)
+	}()
+
+	t1, err := s.store.Begin()
+	c.Assert(err, IsNil)
+	err = t1.Set([]byte("a"), []byte("a"))
+	c.Assert(err, IsNil)
+	err = t1.Set([]byte("z"), []byte("z"))
+	c.Assert(err, IsNil)
+	ctx := context.WithValue(context.Background(), sessionctx.ConnID, uint64(1))
+	err = t1.Commit(ctx)
+	c.Assert(err, NotNil)
+	c.Assert(kv.ErrWriteConflict.Equal(err), IsTrue, Commentf("%s", errors.ErrorStack(err)))
 }
 
 func (s *testAsyncCommitFailSuite) TestPointGetWithAsyncCommit(c *C) {
@@ -109,6 +152,11 @@ func (s *testAsyncCommitFailSuite) TestPointGetWithAsyncCommit(c *C) {
 }
 
 func (s *testAsyncCommitFailSuite) TestSecondaryListInPrimaryLock(c *C) {
+	// This test doesn't support tikv mode.
+	if *WithTiKV {
+		return
+	}
+
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.TiKVClient.AsyncCommit.Enable = true
