@@ -145,6 +145,7 @@ func (a *globalPanicOnExceed) Action(t *memory.Tracker) {
 // SetFallback sets a fallback action.
 func (a *globalPanicOnExceed) SetFallback(memory.ActionOnExceed) {}
 
+// GetFallback get the fallback action of the Action.
 func (a *globalPanicOnExceed) GetFallback() memory.ActionOnExceed {
 	return nil
 }

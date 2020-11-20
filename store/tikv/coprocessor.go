@@ -1413,12 +1413,14 @@ func (e *rateLimitAction) SetFallback(a memory.ActionOnExceed) {
 	e.fallbackAction = a
 }
 
+// GetFallback get the fallback action of the Action.
 func (e *rateLimitAction) GetFallback() memory.ActionOnExceed {
 	e.m.Lock()
 	defer e.m.Unlock()
 	return e.fallbackAction
 }
 
+// GetPriority get the priority of the Action.
 func (e *rateLimitAction) GetPriority() int64 {
 	return memory.DefRateLimitPriority
 }
