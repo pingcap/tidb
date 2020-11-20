@@ -6629,6 +6629,31 @@ func (s *testSerialSuite1) TestCollectCopRuntimeStats(c *C) {
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/tikvStoreRespResult"), IsNil)
 }
 
+func (s *testSerialSuite1) TestIndexMergeRuntimeStats(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("set @@tidb_enable_index_merge = 1")
+	tk.MustExec("create table t1(id int primary key, a int, b int, c int, d int)")
+	tk.MustExec("create index t1a on t1(a)")
+	tk.MustExec("create index t1b on t1(b)")
+	tk.MustExec("insert into t1 values(1,1,1,1,1),(2,2,2,2,2),(3,3,3,3,3),(4,4,4,4,4),(5,5,5,5,5)")
+	sql := "explain analyze select /*+ use_index_merge(t1, primary, t1a) */ * from t1 where id < 2 or a > 4;"
+	rows := tk.MustQuery(sql).Rows()
+	c.Assert(len(rows), Equals, 4)
+	explain := fmt.Sprintf("%v", rows[0])
+	c.Assert(explain, Matches, ".*time:.*loops:.*index_task:{fetch_handle:.*, merge:.*}.*table_task:{num.*concurrency.*fetch_row.*wait_time.*}.*")
+	tableRangeExplain := fmt.Sprintf("%v", rows[1])
+	indexExplain := fmt.Sprintf("%v", rows[2])
+	tableExplain := fmt.Sprintf("%v", rows[3])
+	c.Assert(tableRangeExplain, Matches, ".*time:.*loops:.*cop_task:.*")
+	c.Assert(indexExplain, Matches, ".*time:.*loops:.*cop_task:.*")
+	c.Assert(tableExplain, Matches, ".*time:.*loops:.*cop_task:.*")
+	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
+	sql = "select /*+ use_index_merge(t1, primary, t1a) */ * from t1 where id < 2 or a > 4 order by a"
+	tk.MustQuery(sql).Check(testkit.Rows("1 1 1 1 1", "5 5 5 5 5"))
+}
+
 func (s *testSerialSuite1) TestIndexlookupRuntimeStats(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test;")
@@ -7115,5 +7140,18 @@ func (s *testSuite) TestIssue20975SelectForUpdateBatchPointGetWithPartitionTable
 	tk1.MustExec("select * from t1 where id in (1, 11) for update")
 	tk2.MustExec("drop table t2")
 	tk1.MustExec("commit")
+}
 
+func (s *testSuite) TestIssue20305(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t2 (a year(4))")
+	tk.MustExec("insert into t2 values(69)")
+	tk.MustQuery("select * from t2 where a <= 69").Check(testkit.Rows("2069"))
+	// the following test is a regression test that matches MySQL's behavior.
+	tk.MustExec("drop table if exists t3")
+	tk.MustExec("CREATE TABLE `t3` (`y` year DEFAULT NULL, `a` int DEFAULT NULL)")
+	tk.MustExec("INSERT INTO `t3` VALUES (2069, 70), (2010, 11), (2155, 2156), (2069, 69)")
+	tk.MustQuery("SELECT * FROM `t3` where y <= a").Check(testkit.Rows("2155 2156"))
 }
