@@ -1883,3 +1883,94 @@ func (s *testIntegrationSuite3) TestCommitWhenSchemaChange(c *C) {
 	tk.MustExec("admin check table schema_change")
 	tk.MustQuery("select * from schema_change").Check(testkit.Rows())
 }
+
+func (s *testIntegrationSuite7) TestCreatePartitionTableWithWrongType(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	var err error
+	_, err = tk.Exec(`create table t(
+	b int(10)
+	) partition by range columns (b) (
+		partition p0 values less than (0x10),
+		partition p3 values less than (0x20)
+	)`)
+	c.Assert(err, NotNil)
+	c.Assert(ddl.ErrWrongTypeColumnValue.Equal(err), IsTrue)
+
+	_, err = tk.Exec(`create table t(
+	b int(10)
+	) partition by range columns (b) (
+		partition p0 values less than ('g'),
+		partition p3 values less than ('k')
+	)`)
+	c.Assert(err, NotNil)
+	c.Assert(ddl.ErrWrongTypeColumnValue.Equal(err), IsTrue)
+
+	_, err = tk.Exec(`create table t(
+	b char(10)
+	) partition by range columns (b) (
+		partition p0 values less than (30),
+		partition p3 values less than (60)
+	)`)
+	c.Assert(err, NotNil)
+	c.Assert(ddl.ErrWrongTypeColumnValue.Equal(err), IsTrue)
+
+	_, err = tk.Exec(`create table t(
+	b datetime
+	) partition by range columns (b) (
+		partition p0 values less than ('g'),
+		partition p3 values less than ('m')
+	)`)
+	c.Assert(err, NotNil)
+}
+
+func (s *testIntegrationSuite7) TestAddPartitionForTableWithWrongType(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop tables if exists t_int, t_char, t_date")
+	tk.MustExec(`create table t_int(b int(10))
+	partition by range columns (b) (
+		partition p0 values less than (10)
+	)`)
+
+	tk.MustExec(`create table t_char(b char(10))
+	partition by range columns (b) (
+		partition p0 values less than ('a')
+	)`)
+
+	tk.MustExec(`create table t_date(b datetime)
+	partition by range columns (b) (
+		partition p0 values less than ('2020-09-01')
+	)`)
+
+	var err error
+
+	_, err = tk.Exec("alter table t_int add partition (partition p1 values less than ('g'))")
+	c.Assert(err, NotNil)
+	c.Assert(ddl.ErrWrongTypeColumnValue.Equal(err), IsTrue)
+
+	_, err = tk.Exec("alter table t_int add partition (partition p1 values less than (0x20))")
+	c.Assert(err, NotNil)
+	c.Assert(ddl.ErrWrongTypeColumnValue.Equal(err), IsTrue)
+
+	_, err = tk.Exec("alter table t_char add partition (partition p1 values less than (0x20))")
+	c.Assert(err, NotNil)
+	c.Assert(ddl.ErrWrongTypeColumnValue.Equal(err), IsTrue)
+
+	_, err = tk.Exec("alter table t_char add partition (partition p1 values less than (10))")
+	c.Assert(err, NotNil)
+	c.Assert(ddl.ErrWrongTypeColumnValue.Equal(err), IsTrue)
+
+	_, err = tk.Exec("alter table t_date add partition (partition p1 values less than ('m'))")
+	c.Assert(err, NotNil)
+	c.Assert(ddl.ErrWrongTypeColumnValue.Equal(err), IsTrue)
+
+	_, err = tk.Exec("alter table t_date add partition (partition p1 values less than (0x20))")
+	c.Assert(err, NotNil)
+	c.Assert(ddl.ErrWrongTypeColumnValue.Equal(err), IsTrue)
+
+	_, err = tk.Exec("alter table t_date add partition (partition p1 values less than (20))")
+	c.Assert(err, NotNil)
+	c.Assert(ddl.ErrWrongTypeColumnValue.Equal(err), IsTrue)
+}
