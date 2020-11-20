@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression"
@@ -34,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/execdetails"
@@ -106,8 +108,7 @@ type IndexMergeReaderExecutor struct {
 	idxCols         [][]*expression.Column
 	colLens         [][]int
 
-	handleCols plannercore.HandleCols
-	stats      *IndexMergeRuntimeStat
+	stats *IndexMergeRuntimeStat
 }
 
 // Open implements the Executor Open interface
@@ -203,7 +204,7 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 	if err != nil {
 		return err
 	}
-	result, err := distsql.SelectWithRuntimeStats(ctx, e.ctx, kvReq, e.handleCols.GetFieldsTypes(), e.feedbacks[workID], getPhysicalPlanIDs(e.partialPlans[workID]), e.getPartitalPlanID(workID))
+	result, err := distsql.SelectWithRuntimeStats(ctx, e.ctx, kvReq, []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}, e.feedbacks[workID], getPhysicalPlanIDs(e.partialPlans[workID]), e.getPartitalPlanID(workID))
 	if err != nil {
 		return err
 	}
@@ -312,7 +313,7 @@ func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, 
 func (e *IndexMergeReaderExecutor) initRuntimeStats() {
 	if e.runtimeStats != nil && e.stats == nil {
 		e.stats = &IndexMergeRuntimeStat{
-			Concurrency: e.ctx.GetSessionVars().IndexLookupConcurrency(),
+			Concurrency: e.ctx.GetSessionVars().IndexLookupConcurrency,
 		}
 		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
 	}
@@ -343,15 +344,30 @@ type partialTableWorker struct {
 }
 
 func (w *partialTableWorker) fetchHandles(ctx context.Context, exitCh <-chan struct{}, fetchCh chan<- *lookupTableTask, resultCh chan<- *lookupTableTask,
-	finished <-chan struct{}, handleCols plannercore.HandleCols) (count int64, err error) {
-	chk := chunk.NewChunkWithCapacity(retTypes(w.tableReader), w.maxChunkSize)
+	finished <-chan struct{}) (count int64, err error) {
+	var chk *chunk.Chunk
+	handleOffset := -1
+	if w.tableInfo.PKIsHandle {
+		handleCol := w.tableInfo.GetPkColInfo()
+		columns := w.tableInfo.Columns
+		for i := 0; i < len(columns); i++ {
+			if columns[i].Name.L == handleCol.Name.L {
+				handleOffset = i
+				break
+			}
+		}
+	} else {
+		return 0, errors.Errorf("cannot find the column for handle")
+	}
+
+	chk = chunk.NewChunkWithCapacity(retTypes(w.tableReader), w.maxChunkSize)
 	var basic *execdetails.BasicRuntimeStats
 	if be := w.tableReader.base(); be != nil && be.runtimeStats != nil {
 		basic = be.runtimeStats
 	}
 	for {
 		start := time.Now()
-		handles, retChunk, err := w.extractTaskHandles(ctx, chk, handleCols)
+		handles, retChunk, err := w.extractTaskHandles(ctx, chk, handleOffset)
 		if err != nil {
 			doneCh := make(chan error, 1)
 			doneCh <- err
@@ -613,15 +629,8 @@ type partialIndexWorker struct {
 	maxChunkSize int
 }
 
-func (w *partialIndexWorker) fetchHandles(
-	ctx context.Context,
-	result distsql.SelectResult,
-	exitCh <-chan struct{},
-	fetchCh chan<- *lookupTableTask,
-	resultCh chan<- *lookupTableTask,
-	finished <-chan struct{},
-	handleCols plannercore.HandleCols) (count int64, err error) {
-	chk := chunk.NewChunkWithCapacity(handleCols.GetFieldsTypes(), w.maxChunkSize)
+func (w *partialIndexWorker) fetchHandles(ctx context.Context, result distsql.SelectResult, exitCh <-chan struct{}, fetchCh chan<- *lookupTableTask, resultCh chan<- *lookupTableTask, finished <-chan struct{}) (count int64, err error) {
+	chk := chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}, w.maxChunkSize)
 	var basicStats *execdetails.BasicRuntimeStats
 	if w.stats != nil {
 		if w.idxID != 0 {
@@ -631,7 +640,7 @@ func (w *partialIndexWorker) fetchHandles(
 	}
 	for {
 		start := time.Now()
-		handles, retChunk, err := w.extractTaskHandles(ctx, chk, result, handleCols)
+		handles, retChunk, err := w.extractTaskHandles(ctx, chk, result)
 		if err != nil {
 			doneCh := make(chan error, 1)
 			doneCh <- err
