@@ -19,6 +19,7 @@ import (
 	_ "net/http/pprof"
 	"os"
 
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/spf13/pflag"
 	"go.uber.org/zap"
 
@@ -56,6 +57,11 @@ func main() {
 		os.Exit(1)
 	}
 
+	registry := prometheus.NewRegistry()
+	registry.MustRegister(prometheus.NewProcessCollector(prometheus.ProcessCollectorOpts{}))
+	registry.MustRegister(prometheus.NewGoCollector())
+	export.RegisterMetrics(registry)
+	prometheus.DefaultGatherer = registry
 	err = export.Dump(context.Background(), conf)
 	if err != nil {
 		log.Error("dump failed error stack info", zap.Error(err))

@@ -10,6 +10,7 @@ import (
 	"github.com/pingcap/dumpling/v4/log"
 
 	"github.com/pingcap/errors"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/soheilhy/cmux"
 	"go.uber.org/zap"
 )
@@ -20,6 +21,7 @@ var (
 
 func startHTTPServer(lis net.Listener) {
 	router := http.NewServeMux()
+	router.Handle("/metrics", promhttp.Handler())
 
 	router.HandleFunc("/debug/pprof/", pprof.Index)
 	router.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)

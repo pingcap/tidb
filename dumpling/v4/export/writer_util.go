@@ -7,10 +7,13 @@ import (
 	"io"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/pingcap/br/pkg/storage"
+	"github.com/pingcap/br/pkg/summary"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 
 	"github.com/pingcap/dumpling/v4/log"
@@ -29,7 +32,9 @@ type writerPipe struct {
 	input  chan *bytes.Buffer
 	closed chan struct{}
 	errCh  chan error
+	labels prometheus.Labels
 
+	finishedFileSize     uint64
 	currentFileSize      uint64
 	currentStatementSize uint64
 
@@ -39,12 +44,13 @@ type writerPipe struct {
 	w storage.Writer
 }
 
-func newWriterPipe(w storage.Writer, fileSizeLimit, statementSizeLimit uint64) *writerPipe {
+func newWriterPipe(w storage.Writer, fileSizeLimit, statementSizeLimit uint64, labels prometheus.Labels) *writerPipe {
 	return &writerPipe{
 		input:  make(chan *bytes.Buffer, 8),
 		closed: make(chan struct{}),
 		errCh:  make(chan error, 1),
 		w:      w,
+		labels: labels,
 
 		currentFileSize:      0,
 		currentStatementSize: 0,
@@ -56,6 +62,7 @@ func newWriterPipe(w storage.Writer, fileSizeLimit, statementSizeLimit uint64) *
 func (b *writerPipe) Run(ctx context.Context) {
 	defer close(b.closed)
 	var errOccurs bool
+	receiveChunkTime := time.Now()
 	for {
 		select {
 		case s, ok := <-b.input:
@@ -65,13 +72,19 @@ func (b *writerPipe) Run(ctx context.Context) {
 			if errOccurs {
 				continue
 			}
+			receiveWriteChunkTimeHistogram.With(b.labels).Observe(time.Since(receiveChunkTime).Seconds())
+			receiveChunkTime = time.Now()
 			err := writeBytes(ctx, b.w, s.Bytes())
+			writeTimeHistogram.With(b.labels).Observe(time.Since(receiveChunkTime).Seconds())
+			finishedSizeCounter.With(b.labels).Add(float64(s.Len()))
+			b.finishedFileSize += uint64(s.Len())
 			s.Reset()
 			pool.Put(s)
 			if err != nil {
 				errOccurs = true
 				b.errCh <- err
 			}
+			receiveChunkTime = time.Now()
 		case <-ctx.Done():
 			return
 		}
@@ -119,7 +132,7 @@ func WriteMeta(ctx context.Context, meta MetaIR, w storage.Writer) error {
 	return nil
 }
 
-func WriteInsert(pCtx context.Context, tblIR TableDataIR, w storage.Writer, fileSizeLimit, statementSizeLimit uint64) error {
+func WriteInsert(pCtx context.Context, tblIR TableDataIR, w storage.Writer, cfg *Config) error {
 	fileRowIter := tblIR.Rows()
 	if !fileRowIter.HasNext() {
 		return nil
@@ -130,7 +143,7 @@ func WriteInsert(pCtx context.Context, tblIR TableDataIR, w storage.Writer, file
 		bf.Grow(lengthLimit - bfCap)
 	}
 
-	wp := newWriterPipe(w, fileSizeLimit, statementSizeLimit)
+	wp := newWriterPipe(w, cfg.FileSize, cfg.StatementSize, cfg.Labels)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	var wg sync.WaitGroup
@@ -154,7 +167,8 @@ func WriteInsert(pCtx context.Context, tblIR TableDataIR, w storage.Writer, file
 	var (
 		insertStatementPrefix string
 		row                   = MakeRowReceiver(tblIR.ColumnTypes())
-		counter               = 0
+		counter               uint64
+		lastCounter           uint64
 		escapeBackSlash       = tblIR.EscapeBackSlash()
 		err                   error
 	)
@@ -213,6 +227,8 @@ func WriteInsert(pCtx context.Context, tblIR TableDataIR, w storage.Writer, file
 					if bfCap := bf.Cap(); bfCap < lengthLimit {
 						bf.Grow(lengthLimit - bfCap)
 					}
+					finishedRowsCounter.With(cfg.Labels).Add(float64(counter - lastCounter))
+					lastCounter = counter
 				}
 			}
 
@@ -226,19 +242,22 @@ func WriteInsert(pCtx context.Context, tblIR TableDataIR, w storage.Writer, file
 	}
 	log.Debug("dumping table",
 		zap.String("table", tblIR.TableName()),
-		zap.Int("record counts", counter))
+		zap.Uint64("record counts", counter))
 	if bf.Len() > 0 {
 		wp.input <- bf
 	}
 	close(wp.input)
 	<-wp.closed
+	summary.CollectSuccessUnit(summary.TotalBytes, 1, wp.finishedFileSize)
+	summary.CollectSuccessUnit("total rows", 1, counter)
+	finishedRowsCounter.With(cfg.Labels).Add(float64(counter - lastCounter))
 	if err = fileRowIter.Error(); err != nil {
 		return err
 	}
 	return wp.Error()
 }
 
-func WriteInsertInCsv(pCtx context.Context, tblIR TableDataIR, w storage.Writer, noHeader bool, opt *csvOption, fileSizeLimit uint64) error {
+func WriteInsertInCsv(pCtx context.Context, tblIR TableDataIR, w storage.Writer, cfg *Config) error {
 	fileRowIter := tblIR.Rows()
 	if !fileRowIter.HasNext() {
 		return nil
@@ -249,7 +268,12 @@ func WriteInsertInCsv(pCtx context.Context, tblIR TableDataIR, w storage.Writer,
 		bf.Grow(lengthLimit - bfCap)
 	}
 
-	wp := newWriterPipe(w, fileSizeLimit, UnspecifiedSize)
+	wp := newWriterPipe(w, cfg.FileSize, UnspecifiedSize, cfg.Labels)
+	opt := &csvOption{
+		nullValue: cfg.CsvNullValue,
+		separator: []byte(cfg.CsvSeparator),
+		delimiter: []byte(cfg.CsvDelimiter),
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	var wg sync.WaitGroup
@@ -265,12 +289,13 @@ func WriteInsertInCsv(pCtx context.Context, tblIR TableDataIR, w storage.Writer,
 
 	var (
 		row             = MakeRowReceiver(tblIR.ColumnTypes())
-		counter         = 0
+		counter         uint64
+		lastCounter     uint64
 		escapeBackSlash = tblIR.EscapeBackSlash()
 		err             error
 	)
 
-	if !noHeader && len(tblIR.ColumnNames()) != 0 && tblIR.SelectedField() != "" {
+	if !cfg.NoHeader && len(tblIR.ColumnNames()) != 0 && tblIR.SelectedField() != "" {
 		for i, col := range tblIR.ColumnNames() {
 			bf.Write(opt.delimiter)
 			escape([]byte(col), bf, getEscapeQuotation(escapeBackSlash, opt.delimiter))
@@ -307,6 +332,8 @@ func WriteInsertInCsv(pCtx context.Context, tblIR TableDataIR, w storage.Writer,
 				if bfCap := bf.Cap(); bfCap < lengthLimit {
 					bf.Grow(lengthLimit - bfCap)
 				}
+				finishedRowsCounter.With(cfg.Labels).Add(float64(counter - lastCounter))
+				lastCounter = counter
 			}
 		}
 
@@ -319,12 +346,15 @@ func WriteInsertInCsv(pCtx context.Context, tblIR TableDataIR, w storage.Writer,
 	log.Debug("dumping table",
 		zap.String("table", tblIR.TableName()),
 		zap.Int("chunkIndex", tblIR.ChunkIndex()),
-		zap.Int("record counts", counter))
+		zap.Uint64("record counts", counter))
 	if bf.Len() > 0 {
 		wp.input <- bf
 	}
 	close(wp.input)
 	<-wp.closed
+	summary.CollectSuccessUnit(summary.TotalBytes, 1, wp.finishedFileSize)
+	summary.CollectSuccessUnit("total rows", 1, counter)
+	finishedRowsCounter.With(cfg.Labels).Add(float64(counter - lastCounter))
 	if err = fileRowIter.Error(); err != nil {
 		return err
 	}
@@ -362,7 +392,8 @@ func writeBytes(ctx context.Context, writer storage.Writer, p []byte) error {
 	return err
 }
 
-func buildFileWriter(ctx context.Context, s storage.ExternalStorage, path string) (storage.Writer, func(ctx context.Context), error) {
+func buildFileWriter(ctx context.Context, s storage.ExternalStorage, path string, compressType storage.CompressType) (storage.Writer, func(ctx context.Context), error) {
+	path += compressFileSuffix(compressType)
 	fullPath := s.URI() + path
 	uploader, err := s.CreateUploader(ctx, path)
 	if err != nil {
@@ -371,7 +402,7 @@ func buildFileWriter(ctx context.Context, s storage.ExternalStorage, path string
 			zap.Error(err))
 		return nil, nil, err
 	}
-	writer := storage.NewUploaderWriter(uploader, hardcodedS3ChunkSize)
+	writer := storage.NewUploaderWriter(uploader, hardcodedS3ChunkSize, compressType)
 	log.Debug("opened file", zap.String("path", fullPath))
 	tearDownRoutine := func(ctx context.Context) {
 		err := writer.Close(ctx)
@@ -385,7 +416,8 @@ func buildFileWriter(ctx context.Context, s storage.ExternalStorage, path string
 	return writer, tearDownRoutine, nil
 }
 
-func buildInterceptFileWriter(s storage.ExternalStorage, path string) (storage.Writer, func(context.Context)) {
+func buildInterceptFileWriter(s storage.ExternalStorage, path string, compressType storage.CompressType) (storage.Writer, func(context.Context)) {
+	path += compressFileSuffix(compressType)
 	var writer storage.Writer
 	fullPath := s.URI() + path
 	fileWriter := &InterceptFileWriter{}
@@ -397,7 +429,7 @@ func buildInterceptFileWriter(s storage.ExternalStorage, path string) (storage.W
 				zap.Error(err))
 			return newWriterError(err)
 		}
-		w := storage.NewUploaderWriter(uploader, hardcodedS3ChunkSize)
+		w := storage.NewUploaderWriter(uploader, hardcodedS3ChunkSize, compressType)
 		writer = w
 		log.Debug("opened file", zap.String("path", fullPath))
 		fileWriter.Writer = writer
@@ -484,4 +516,15 @@ func wrapBackTicks(identifier string) string {
 
 func wrapStringWith(str string, wrapper string) string {
 	return fmt.Sprintf("%s%s%s", wrapper, str, wrapper)
+}
+
+func compressFileSuffix(compressType storage.CompressType) string {
+	switch compressType {
+	case storage.NoCompression:
+		return ""
+	case storage.Gzip:
+		return ".gz"
+	default:
+		return ""
+	}
 }
