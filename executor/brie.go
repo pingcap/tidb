@@ -46,7 +46,6 @@ import (
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -510,11 +509,6 @@ func (e *BRIEExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	e.info.queueTime = types.CurrentTime(mysql.TypeDatetime)
 
 	// create new session so processInfo will not be overwritten
-	execSession, err := CreateSessionForBRIEFunc(e.ctx)
-	if err != nil {
-		return errors.Annotate(err, "create new session in BRIEExec")
-	}
-	defer execSession.Close()
 	s, err := CreateSessionForBRIEFunc(e.ctx)
 	if err != nil {
 		return errors.Annotate(err, "create new session in BRIEExec")
@@ -537,7 +531,6 @@ func (e *BRIEExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		se:                e.ctx,
 		progress:          item.progress,
 		info:              e.info,
-		importExecSession: execSession,
 		importTaskSession: taskSession,
 	}
 
@@ -683,7 +676,6 @@ type tidbGlueSession struct {
 	se                sessionctx.Context
 	progress          *brieTaskProgress
 	info              *brieTaskInfo
-	importExecSession checkpoints.Session
 	importTaskSession *sessionWithLock
 }
 
@@ -704,16 +696,26 @@ func (gs *tidbGlueSession) Execute(ctx context.Context, sql string) error {
 }
 
 func (gs *tidbGlueSession) ExecuteWithLog(ctx context.Context, sql string, purpose string, logger importlog.Logger) error {
+	se, err := gs.GetSession()
+	if err != nil {
+		return err
+	}
+	defer se.Close()
 	return common.Retry(purpose, logger, func() error {
-		_, err := gs.importExecSession.Execute(ctx, sql)
+		_, err := se.Execute(ctx, sql)
 		return err
 	})
 }
 
 func (gs *tidbGlueSession) ObtainStringWithLog(ctx context.Context, sql string, purpose string, logger importlog.Logger) (string, error) {
+	se, err := gs.GetSession()
+	if err != nil {
+		return "", err
+	}
+	defer se.Close()
 	var result string
-	err := common.Retry(purpose, logger, func() error {
-		rs, err := gs.importExecSession.Execute(ctx, sql)
+	err = common.Retry(purpose, logger, func() error {
+		rs, err := se.Execute(ctx, sql)
 		if err != nil {
 			return err
 		}
@@ -863,7 +865,7 @@ func (gs *tidbGlueSession) GetDB() (*sql.DB, error) {
 }
 
 func (gs *tidbGlueSession) GetTables(ctx context.Context, schemaName string) ([]*model.TableInfo, error) {
-	is := infoschema.GetInfoSchema(gs.importExecSession.(sessionctx.Context))
+	is := domain.GetDomain(gs.se.(sessionctx.Context)).InfoSchema()
 	tables := is.SchemaTables(model.NewCIStr(schemaName))
 	tbsInfo := make([]*model.TableInfo, len(tables))
 	for i := range tbsInfo {
@@ -885,6 +887,10 @@ func (gs *tidbGlueSession) GetSession() (checkpoints.Session, error) {
 }
 
 func (gs *tidbGlueSession) OpenCheckpointsDB(ctx context.Context, c *importcfg.Config) (checkpoints.CheckpointsDB, error) {
-	// TODO(lance6716): since there's c.TaskID, it's better to change taskID to brieTaskID
-	return checkpoints.NewGlueCheckpointsDB(ctx, gs.importExecSession, gs.GetSession, c.Checkpoint.Schema, c.TaskID)
+	se, err := gs.GetSession()
+	if err != nil {
+		return nil, err
+	}
+	defer se.Close()
+	return checkpoints.NewGlueCheckpointsDB(ctx, se, gs.GetSession, c.Checkpoint.Schema)
 }
