@@ -49,7 +49,7 @@ func (s *testLockSuite) TearDownTest(c *C) {
 }
 
 func (s *testLockSuite) lockKey(c *C, key, value, primaryKey, primaryValue []byte, commitPrimary bool) (uint64, uint64) {
-	txn, err := newTiKVTxn(s.store)
+	txn, err := newTiKVTxn(s.store, oracle.GlobalTxnScope)
 	c.Assert(err, IsNil)
 	if len(value) > 0 {
 		err = txn.Set(key, value)
@@ -88,7 +88,7 @@ func (s *testLockSuite) putAlphabets(c *C) {
 }
 
 func (s *testLockSuite) putKV(c *C, key, value []byte) (uint64, uint64) {
-	txn, err := s.store.Begin()
+	txn, err := s.store.Begin(oracle.GlobalTxnScope)
 	c.Assert(err, IsNil)
 	err = txn.Set(key, value)
 	c.Assert(err, IsNil)
@@ -110,7 +110,7 @@ func (s *testLockSuite) TestScanLockResolveWithGet(c *C) {
 	s.putAlphabets(c)
 	s.prepareAlphabetLocks(c)
 
-	txn, err := s.store.Begin()
+	txn, err := s.store.Begin(oracle.GlobalTxnScope)
 	c.Assert(err, IsNil)
 	for ch := byte('a'); ch <= byte('z'); ch++ {
 		v, err := txn.Get(context.TODO(), []byte{ch})
@@ -123,7 +123,7 @@ func (s *testLockSuite) TestScanLockResolveWithSeek(c *C) {
 	s.putAlphabets(c)
 	s.prepareAlphabetLocks(c)
 
-	txn, err := s.store.Begin()
+	txn, err := s.store.Begin(oracle.GlobalTxnScope)
 	c.Assert(err, IsNil)
 	iter, err := txn.Iter([]byte("a"), nil)
 	c.Assert(err, IsNil)
@@ -139,7 +139,7 @@ func (s *testLockSuite) TestScanLockResolveWithSeekKeyOnly(c *C) {
 	s.putAlphabets(c)
 	s.prepareAlphabetLocks(c)
 
-	txn, err := s.store.Begin()
+	txn, err := s.store.Begin(oracle.GlobalTxnScope)
 	c.Assert(err, IsNil)
 	txn.SetOption(kv.KeyOnly, true)
 	iter, err := txn.Iter([]byte("a"), nil)
@@ -160,7 +160,7 @@ func (s *testLockSuite) TestScanLockResolveWithBatchGet(c *C) {
 		keys = append(keys, []byte{ch})
 	}
 
-	ver, err := s.store.CurrentVersion()
+	ver, err := s.store.CurrentVersion(oracle.GlobalTxnScope)
 	c.Assert(err, IsNil)
 	snapshot := newTiKVSnapshot(s.store, ver, 0)
 	m, err := snapshot.BatchGet(context.Background(), keys)
@@ -177,7 +177,7 @@ func (s *testLockSuite) TestCleanLock(c *C) {
 		k := []byte{ch}
 		s.lockKey(c, k, k, k, k, false)
 	}
-	txn, err := s.store.Begin()
+	txn, err := s.store.Begin(oracle.GlobalTxnScope)
 	c.Assert(err, IsNil)
 	for ch := byte('a'); ch <= byte('z'); ch++ {
 		err = txn.Set([]byte{ch}, []byte{ch + 1})
@@ -208,7 +208,7 @@ func (s *testLockSuite) TestGetTxnStatus(c *C) {
 }
 
 func (s *testLockSuite) TestCheckTxnStatusTTL(c *C) {
-	txn, err := s.store.Begin()
+	txn, err := s.store.Begin(oracle.GlobalTxnScope)
 	c.Assert(err, IsNil)
 	txn.Set(kv.Key("key"), []byte("value"))
 	s.prewriteTxnWithTTL(c, txn.(*tikvTxn), 1000)
@@ -248,7 +248,7 @@ func (s *testLockSuite) TestCheckTxnStatusTTL(c *C) {
 }
 
 func (s *testLockSuite) TestTxnHeartBeat(c *C) {
-	txn, err := s.store.Begin()
+	txn, err := s.store.Begin(oracle.GlobalTxnScope)
 	c.Assert(err, IsNil)
 	txn.Set(kv.Key("key"), []byte("value"))
 	s.prewriteTxn(c, txn.(*tikvTxn))
@@ -274,7 +274,7 @@ func (s *testLockSuite) TestTxnHeartBeat(c *C) {
 }
 
 func (s *testLockSuite) TestCheckTxnStatus(c *C) {
-	txn, err := s.store.Begin()
+	txn, err := s.store.Begin(oracle.GlobalTxnScope)
 	c.Assert(err, IsNil)
 	txn.Set(kv.Key("key"), []byte("value"))
 	txn.Set(kv.Key("second"), []byte("xxx"))
@@ -325,7 +325,7 @@ func (s *testLockSuite) TestCheckTxnStatus(c *C) {
 }
 
 func (s *testLockSuite) TestCheckTxnStatusNoWait(c *C) {
-	txn, err := s.store.Begin()
+	txn, err := s.store.Begin(oracle.GlobalTxnScope)
 	c.Assert(err, IsNil)
 	txn.Set(kv.Key("key"), []byte("value"))
 	txn.Set(kv.Key("second"), []byte("xxx"))
@@ -401,7 +401,7 @@ func (s *testLockSuite) prewriteTxnWithTTL(c *C, txn *tikvTxn, ttl uint64) {
 }
 
 func (s *testLockSuite) mustGetLock(c *C, key []byte) *Lock {
-	ver, err := s.store.CurrentVersion()
+	ver, err := s.store.CurrentVersion(oracle.GlobalTxnScope)
 	c.Assert(err, IsNil)
 	bo := NewBackofferWithVars(context.Background(), getMaxBackoff, nil)
 	req := tikvrpc.NewRequest(tikvrpc.CmdGet, &kvrpcpb.GetRequest{
@@ -432,7 +432,7 @@ func (s *testLockSuite) ttlEquals(c *C, x, y uint64) {
 }
 
 func (s *testLockSuite) TestLockTTL(c *C) {
-	txn, err := s.store.Begin()
+	txn, err := s.store.Begin(oracle.GlobalTxnScope)
 	c.Assert(err, IsNil)
 	txn.Set(kv.Key("key"), []byte("value"))
 	time.Sleep(time.Millisecond)
@@ -441,7 +441,7 @@ func (s *testLockSuite) TestLockTTL(c *C) {
 	c.Assert(l.TTL >= defaultLockTTL, IsTrue)
 
 	// Huge txn has a greater TTL.
-	txn, err = s.store.Begin()
+	txn, err = s.store.Begin(oracle.GlobalTxnScope)
 	start := time.Now()
 	c.Assert(err, IsNil)
 	txn.Set(kv.Key("key"), []byte("value"))
@@ -455,7 +455,7 @@ func (s *testLockSuite) TestLockTTL(c *C) {
 
 	// Txn with long read time.
 	start = time.Now()
-	txn, err = s.store.Begin()
+	txn, err = s.store.Begin(oracle.GlobalTxnScope)
 	c.Assert(err, IsNil)
 	time.Sleep(time.Millisecond * 50)
 	txn.Set(kv.Key("key"), []byte("value"))
@@ -466,14 +466,14 @@ func (s *testLockSuite) TestLockTTL(c *C) {
 
 func (s *testLockSuite) TestBatchResolveLocks(c *C) {
 	// The first transaction is a normal transaction with a long TTL
-	txn, err := s.store.Begin()
+	txn, err := s.store.Begin(oracle.GlobalTxnScope)
 	c.Assert(err, IsNil)
 	txn.Set(kv.Key("k1"), []byte("v1"))
 	txn.Set(kv.Key("k2"), []byte("v2"))
 	s.prewriteTxnWithTTL(c, txn.(*tikvTxn), 20000)
 
 	// The second transaction is an async commit transaction
-	txn, err = s.store.Begin()
+	txn, err = s.store.Begin(oracle.GlobalTxnScope)
 	c.Assert(err, IsNil)
 	txn.Set(kv.Key("k3"), []byte("v3"))
 	txn.Set(kv.Key("k4"), []byte("v4"))
@@ -506,7 +506,7 @@ func (s *testLockSuite) TestBatchResolveLocks(c *C) {
 	c.Assert(success, IsTrue)
 	c.Assert(err, IsNil)
 
-	txn, err = s.store.Begin()
+	txn, err = s.store.Begin(oracle.GlobalTxnScope)
 	c.Assert(err, IsNil)
 	// transaction 1 is rolled back
 	_, err = txn.Get(context.Background(), kv.Key("k1"))
@@ -533,7 +533,7 @@ func init() {
 }
 
 func (s *testLockSuite) TestZeroMinCommitTS(c *C) {
-	txn, err := s.store.Begin()
+	txn, err := s.store.Begin(oracle.GlobalTxnScope)
 	c.Assert(err, IsNil)
 	txn.Set(kv.Key("key"), []byte("value"))
 	bo := NewBackofferWithVars(context.Background(), PrewriteMaxBackoff, nil)

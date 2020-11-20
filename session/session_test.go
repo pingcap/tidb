@@ -103,7 +103,7 @@ type testBackupRestoreSuite struct {
 }
 
 func clearStorage(store kv.Storage) error {
-	txn, err := store.Begin()
+	txn, err := store.Begin(oracle.GlobalTxnScope)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -2028,7 +2028,7 @@ func (s *testSchemaSerialSuite) TestLoadSchemaFailed(c *C) {
 	_, err = tk1.Exec("commit")
 	c.Check(err, NotNil)
 
-	ver, err := s.store.CurrentVersion()
+	ver, err := s.store.CurrentVersion(oracle.GlobalTxnScope)
 	c.Assert(err, IsNil)
 	c.Assert(ver, NotNil)
 

@@ -1614,7 +1614,7 @@ func (s *session) NewTxn(ctx context.Context) error {
 			zap.Uint64("txnStartTS", txnID))
 	}
 
-	txn, err := s.store.Begin()
+	txn, err := s.store.Begin(s.GetSessionVars().TxnScope)
 	if err != nil {
 		return err
 	}
@@ -2349,7 +2349,7 @@ func (s *session) InitTxnWithStartTS(startTS uint64) error {
 	}
 
 	// no need to get txn from txnFutureCh since txn should init with startTs
-	txn, err := s.store.BeginWithStartTS(startTS)
+	txn, err := s.store.BeginWithStartTS(s.sessionVars.TxnScope, startTS)
 	if err != nil {
 		return err
 	}

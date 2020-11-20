@@ -41,6 +41,7 @@ type Oracle interface {
 // Future is a future which promises to return a timestamp.
 type Future interface {
 	Wait() (uint64, error)
+	GetTxnScope() string
 }
 
 const (

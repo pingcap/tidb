@@ -17,6 +17,7 @@ import (
 	"context"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 )
 
 var _ = Suite(testMockSuite{})
@@ -28,14 +29,14 @@ func (s testMockSuite) TestInterface(c *C) {
 	storage := newMockStorage()
 	storage.GetClient()
 	storage.UUID()
-	version, err := storage.CurrentVersion()
+	version, err := storage.CurrentVersion(oracle.GlobalTxnScope)
 	c.Check(err, IsNil)
 	snapshot := storage.GetSnapshot(version)
 	_, err = snapshot.BatchGet(context.Background(), []Key{Key("abc"), Key("def")})
 	c.Check(err, IsNil)
 	snapshot.SetOption(Priority, PriorityNormal)
 
-	transaction, err := storage.Begin()
+	transaction, err := storage.Begin(oracle.GlobalTxnScope)
 	c.Check(err, IsNil)
 	err = transaction.LockKeys(context.Background(), new(LockCtx), Key("lock"))
 	c.Check(err, IsNil)
@@ -57,7 +58,7 @@ func (s testMockSuite) TestInterface(c *C) {
 	}
 	transaction.Commit(context.Background())
 
-	transaction, err = storage.Begin()
+	transaction, err = storage.Begin(oracle.GlobalTxnScope)
 	c.Check(err, IsNil)
 
 	// Test for mockTxn interface.

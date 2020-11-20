@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/testleak"
@@ -113,7 +114,7 @@ func (*testSuite) TestT(c *C) {
 	builder, err := infoschema.NewBuilder(handle).InitWithDBInfos(dbInfos, nil, 1)
 	c.Assert(err, IsNil)
 
-	txn, err := store.Begin()
+	txn, err := store.Begin(oracle.GlobalTxnScope)
 	c.Assert(err, IsNil)
 	checkApplyCreateNonExistsSchemaDoesNotPanic(c, txn, builder)
 	checkApplyCreateNonExistsTableDoesNotPanic(c, txn, builder, dbID)
@@ -199,7 +200,7 @@ func (*testSuite) TestT(c *C) {
 		return errors.Trace(err)
 	})
 	c.Assert(err, IsNil)
-	txn, err = store.Begin()
+	txn, err = store.Begin(oracle.GlobalTxnScope)
 	c.Assert(err, IsNil)
 	_, err = builder.ApplyDiff(meta.NewMeta(txn), &model.SchemaDiff{Type: model.ActionRenameTable, SchemaID: dbID, TableID: tbID, OldSchemaID: dbID})
 	c.Assert(err, IsNil)

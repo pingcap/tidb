@@ -51,6 +51,7 @@ import (
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/gcworker"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
@@ -824,7 +825,7 @@ func (h flashReplicaHandler) getDropOrTruncateTableTiflash(currentSchema infosch
 	}
 
 	store := domain.GetDomain(s).Store()
-	txn, err := store.Begin()
+	txn, err := store.Begin(oracle.GlobalTxnScope)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1069,7 +1070,7 @@ func (h ddlHistoryJobHandler) getAllHistoryDDL() ([]*model.Job, error) {
 	}
 
 	store := domain.GetDomain(s.(sessionctx.Context)).Store()
-	txn, err := store.Begin()
+	txn, err := store.Begin(oracle.GlobalTxnScope)
 
 	if err != nil {
 		return nil, errors.Trace(err)

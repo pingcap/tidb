@@ -80,6 +80,10 @@ func (m *mockOracleFuture) Wait() (uint64, error) {
 	return m.o.GetTimestamp(m.ctx, &oracle.Option{})
 }
 
+func (m *mockOracleFuture) GetTxnScope() string {
+	return ""
+}
+
 // GetTimestampAsync implements oracle.Oracle interface.
 func (o *MockOracle) GetTimestampAsync(ctx context.Context, _ *oracle.Option) oracle.Future {
 	return &mockOracleFuture{o, ctx}

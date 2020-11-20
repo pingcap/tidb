@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/cluster"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/israce"
@@ -1217,7 +1218,7 @@ func (s *testIntegrationSuite5) TestBackwardCompatibility(c *C) {
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{unique, indexName, indexPartSpecifications, indexOption},
 	}
-	txn, err := s.store.Begin()
+	txn, err := s.store.Begin(oracle.GlobalTxnScope)
 	c.Assert(err, IsNil)
 	t := meta.NewMeta(txn)
 	job.ID, err = t.GenGlobalID()
@@ -1304,7 +1305,7 @@ func getMaxTableHandle(ctx *testMaxTableRowIDContext, store kv.Storage) (kv.Hand
 	c := ctx.c
 	d := ctx.d
 	tbl := ctx.tbl
-	curVer, err := store.CurrentVersion()
+	curVer, err := store.CurrentVersion(oracle.GlobalTxnScope)
 	c.Assert(err, IsNil)
 	maxHandle, emptyTable, err := d.GetTableMaxHandle(curVer.Ver, tbl.(table.PhysicalTable))
 	c.Assert(err, IsNil)

@@ -26,6 +26,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/testleak"
 )
@@ -168,7 +169,7 @@ func (s *testKVSuite) TestNew(c *C) {
 }
 
 func (s *testKVSuite) TestGetSet(c *C) {
-	txn, err := s.s.Begin()
+	txn, err := s.s.Begin(oracle.GlobalTxnScope)
 	c.Assert(err, IsNil)
 
 	insertData(c, txn)
@@ -179,7 +180,7 @@ func (s *testKVSuite) TestGetSet(c *C) {
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 
-	txn, err = s.s.Begin()
+	txn, err = s.s.Begin(oracle.GlobalTxnScope)
 	c.Assert(err, IsNil)
 	defer txn.Commit(context.Background())
 
@@ -188,7 +189,7 @@ func (s *testKVSuite) TestGetSet(c *C) {
 }
 
 func (s *testKVSuite) TestSeek(c *C) {
-	txn, err := s.s.Begin()
+	txn, err := s.s.Begin(oracle.GlobalTxnScope)
 	c.Assert(err, IsNil)
 
 	insertData(c, txn)
@@ -198,7 +199,7 @@ func (s *testKVSuite) TestSeek(c *C) {
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 
-	txn, err = s.s.Begin()
+	txn, err = s.s.Begin(oracle.GlobalTxnScope)
 	c.Assert(err, IsNil)
 	defer txn.Commit(context.Background())
 
@@ -207,7 +208,7 @@ func (s *testKVSuite) TestSeek(c *C) {
 }
 
 func (s *testKVSuite) TestInc(c *C) {
-	txn, err := s.s.Begin()
+	txn, err := s.s.Begin(oracle.GlobalTxnScope)
 	c.Assert(err, IsNil)
 
 	key := []byte("incKey")
@@ -219,7 +220,7 @@ func (s *testKVSuite) TestInc(c *C) {
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 
-	txn, err = s.s.Begin()
+	txn, err = s.s.Begin(oracle.GlobalTxnScope)
 	c.Assert(err, IsNil)
 
 	n, err = kv.IncInt64(txn, key, -200)
@@ -241,7 +242,7 @@ func (s *testKVSuite) TestInc(c *C) {
 }
 
 func (s *testKVSuite) TestDelete(c *C) {
-	txn, err := s.s.Begin()
+	txn, err := s.s.Begin(oracle.GlobalTxnScope)
 	c.Assert(err, IsNil)
 
 	insertData(c, txn)
@@ -253,7 +254,7 @@ func (s *testKVSuite) TestDelete(c *C) {
 	c.Assert(err, IsNil)
 
 	// Try get
-	txn, err = s.s.Begin()
+	txn, err = s.s.Begin(oracle.GlobalTxnScope)
 	c.Assert(err, IsNil)
 
 	mustNotGet(c, txn)
@@ -264,14 +265,14 @@ func (s *testKVSuite) TestDelete(c *C) {
 	c.Assert(err, IsNil)
 
 	// Delete all
-	txn, err = s.s.Begin()
+	txn, err = s.s.Begin(oracle.GlobalTxnScope)
 	c.Assert(err, IsNil)
 
 	mustDel(c, txn)
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 
-	txn, err = s.s.Begin()
+	txn, err = s.s.Begin(oracle.GlobalTxnScope)
 	c.Assert(err, IsNil)
 
 	mustNotGet(c, txn)
@@ -280,7 +281,7 @@ func (s *testKVSuite) TestDelete(c *C) {
 }
 
 func (s *testKVSuite) TestDelete2(c *C) {
-	txn, err := s.s.Begin()
+	txn, err := s.s.Begin(oracle.GlobalTxnScope)
 	c.Assert(err, IsNil)
 	val := []byte("test")
 	txn.Set([]byte("DATA_test_tbl_department_record__0000000001_0003"), val)
@@ -291,7 +292,7 @@ func (s *testKVSuite) TestDelete2(c *C) {
 	c.Assert(err, IsNil)
 
 	// Delete all
-	txn, err = s.s.Begin()
+	txn, err = s.s.Begin(oracle.GlobalTxnScope)
 	c.Assert(err, IsNil)
 
 	it, err := txn.Iter([]byte("DATA_test_tbl_department_record__0000000001_0003"), nil)
@@ -305,7 +306,7 @@ func (s *testKVSuite) TestDelete2(c *C) {
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 
-	txn, err = s.s.Begin()
+	txn, err = s.s.Begin(oracle.GlobalTxnScope)
 	c.Assert(err, IsNil)
 	it, _ = txn.Iter([]byte("DATA_test_tbl_department_record__000000000"), nil)
 	c.Assert(it.Valid(), IsFalse)
@@ -314,7 +315,7 @@ func (s *testKVSuite) TestDelete2(c *C) {
 }
 
 func (s *testKVSuite) TestSetNil(c *C) {
-	txn, err := s.s.Begin()
+	txn, err := s.s.Begin(oracle.GlobalTxnScope)
 	defer txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 	err = txn.Set([]byte("1"), nil)
@@ -322,12 +323,12 @@ func (s *testKVSuite) TestSetNil(c *C) {
 }
 
 func (s *testKVSuite) TestBasicSeek(c *C) {
-	txn, err := s.s.Begin()
+	txn, err := s.s.Begin(oracle.GlobalTxnScope)
 	c.Assert(err, IsNil)
 	txn.Set([]byte("1"), []byte("1"))
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
-	txn, err = s.s.Begin()
+	txn, err = s.s.Begin(oracle.GlobalTxnScope)
 	c.Assert(err, IsNil)
 	defer txn.Commit(context.Background())
 
@@ -338,7 +339,7 @@ func (s *testKVSuite) TestBasicSeek(c *C) {
 }
 
 func (s *testKVSuite) TestBasicTable(c *C) {
-	txn, err := s.s.Begin()
+	txn, err := s.s.Begin(oracle.GlobalTxnScope)
 	c.Assert(err, IsNil)
 	for i := 1; i < 5; i++ {
 		b := []byte(strconv.Itoa(i))
@@ -346,7 +347,7 @@ func (s *testKVSuite) TestBasicTable(c *C) {
 	}
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
-	txn, err = s.s.Begin()
+	txn, err = s.s.Begin(oracle.GlobalTxnScope)
 	c.Assert(err, IsNil)
 	defer txn.Commit(context.Background())
 
@@ -386,13 +387,13 @@ func (s *testKVSuite) TestBasicTable(c *C) {
 }
 
 func (s *testKVSuite) TestRollback(c *C) {
-	txn, err := s.s.Begin()
+	txn, err := s.s.Begin(oracle.GlobalTxnScope)
 	c.Assert(err, IsNil)
 
 	err = txn.Rollback()
 	c.Assert(err, IsNil)
 
-	txn, err = s.s.Begin()
+	txn, err = s.s.Begin(oracle.GlobalTxnScope)
 	c.Assert(err, IsNil)
 
 	insertData(c, txn)
@@ -402,7 +403,7 @@ func (s *testKVSuite) TestRollback(c *C) {
 	err = txn.Rollback()
 	c.Assert(err, IsNil)
 
-	txn, err = s.s.Begin()
+	txn, err = s.s.Begin(oracle.GlobalTxnScope)
 	c.Assert(err, IsNil)
 	defer txn.Commit(context.Background())
 
@@ -425,7 +426,7 @@ func (s *testKVSuite) TestSeekMin(c *C) {
 		{"DATA_test_main_db_tbl_tbl_test_record__00000000000000000002_0003", "hello"},
 	}
 
-	txn, err := s.s.Begin()
+	txn, err := s.s.Begin(oracle.GlobalTxnScope)
 	c.Assert(err, IsNil)
 	for _, row := range rows {
 		txn.Set([]byte(row.key), []byte(row.value))
@@ -455,7 +456,7 @@ func (s *testKVSuite) TestConditionIfNotExist(c *C) {
 	for i := 0; i < cnt; i++ {
 		go func() {
 			defer wg.Done()
-			txn, err := s.s.Begin()
+			txn, err := s.s.Begin(oracle.GlobalTxnScope)
 			c.Assert(err, IsNil)
 			err = txn.Set(b, b)
 			if err != nil {
@@ -472,7 +473,7 @@ func (s *testKVSuite) TestConditionIfNotExist(c *C) {
 	c.Assert(success, Greater, int64(0))
 
 	// Clean up
-	txn, err := s.s.Begin()
+	txn, err := s.s.Begin(oracle.GlobalTxnScope)
 	c.Assert(err, IsNil)
 	err = txn.Delete(b)
 	c.Assert(err, IsNil)
@@ -487,7 +488,7 @@ func (s *testKVSuite) TestConditionIfEqual(c *C) {
 	var wg sync.WaitGroup
 	wg.Add(cnt)
 
-	txn, err := s.s.Begin()
+	txn, err := s.s.Begin(oracle.GlobalTxnScope)
 	c.Assert(err, IsNil)
 	txn.Set(b, b)
 	err = txn.Commit(context.Background())
@@ -498,7 +499,7 @@ func (s *testKVSuite) TestConditionIfEqual(c *C) {
 			defer wg.Done()
 			// Use txn1/err1 instead of txn/err is
 			// to pass `go tool vet -shadow` check.
-			txn1, err1 := s.s.Begin()
+			txn1, err1 := s.s.Begin(oracle.GlobalTxnScope)
 			c.Assert(err1, IsNil)
 			txn1.Set(b, []byte("newValue"))
 			err1 = txn1.Commit(context.Background())
@@ -511,7 +512,7 @@ func (s *testKVSuite) TestConditionIfEqual(c *C) {
 	c.Assert(success, Greater, int64(0))
 
 	// Clean up
-	txn, err = s.s.Begin()
+	txn, err = s.s.Begin(oracle.GlobalTxnScope)
 	c.Assert(err, IsNil)
 	err = txn.Delete(b)
 	c.Assert(err, IsNil)
@@ -520,7 +521,7 @@ func (s *testKVSuite) TestConditionIfEqual(c *C) {
 }
 
 func (s *testKVSuite) TestConditionUpdate(c *C) {
-	txn, err := s.s.Begin()
+	txn, err := s.s.Begin(oracle.GlobalTxnScope)
 	c.Assert(err, IsNil)
 	txn.Delete([]byte("b"))
 	kv.IncInt64(txn, []byte("a"), 1)
@@ -533,7 +534,7 @@ func (s *testKVSuite) TestDBClose(c *C) {
 	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
 
-	txn, err := store.Begin()
+	txn, err := store.Begin(oracle.GlobalTxnScope)
 	c.Assert(err, IsNil)
 
 	err = txn.Set([]byte("a"), []byte("b"))
@@ -542,7 +543,7 @@ func (s *testKVSuite) TestDBClose(c *C) {
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 
-	ver, err := store.CurrentVersion()
+	ver, err := store.CurrentVersion(oracle.GlobalTxnScope)
 	c.Assert(err, IsNil)
 	c.Assert(kv.MaxVersion.Cmp(ver), Equals, 1)
 
@@ -551,13 +552,13 @@ func (s *testKVSuite) TestDBClose(c *C) {
 	_, err = snap.Get(context.TODO(), []byte("a"))
 	c.Assert(err, IsNil)
 
-	txn, err = store.Begin()
+	txn, err = store.Begin(oracle.GlobalTxnScope)
 	c.Assert(err, IsNil)
 
 	err = store.Close()
 	c.Assert(err, IsNil)
 
-	_, err = store.Begin()
+	_, err = store.Begin(oracle.GlobalTxnScope)
 	c.Assert(err, NotNil)
 
 	_ = store.GetSnapshot(kv.MaxVersion)
@@ -601,7 +602,7 @@ func (s *testKVSuite) TestIsolationInc(c *C) {
 	wg.Wait()
 
 	// delete
-	txn, err := s.s.Begin()
+	txn, err := s.s.Begin(oracle.GlobalTxnScope)
 	c.Assert(err, IsNil)
 	defer txn.Commit(context.Background())
 	txn.Delete([]byte("key"))

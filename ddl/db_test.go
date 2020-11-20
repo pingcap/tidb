@@ -48,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/cluster"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
@@ -5849,7 +5850,7 @@ func (s *testSerialDBSuite) TestDDLJobErrorCount(c *C) {
 		c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/mockErrEntrySizeTooLarge"), IsNil)
 	}()
 
-	txn, err := s.store.Begin()
+	txn, err := s.store.Begin(oracle.GlobalTxnScope)
 	c.Assert(err, IsNil)
 	t := meta.NewMeta(txn)
 	job.ID, err = t.GenGlobalID()

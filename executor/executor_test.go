@@ -371,7 +371,7 @@ func (s *testSuite3) TestAdmin(c *C) {
 	c.Assert(err, IsNil)
 	row = req.GetRow(0)
 	c.Assert(row.Len(), Equals, 6)
-	txn, err := s.store.Begin()
+	txn, err := s.store.Begin(oracle.GlobalTxnScope)
 	c.Assert(err, IsNil)
 	ddlInfo, err := admin.GetDDLInfo(txn)
 	c.Assert(err, IsNil)
@@ -400,7 +400,7 @@ func (s *testSuite3) TestAdmin(c *C) {
 	c.Assert(err, IsNil)
 	row = req.GetRow(0)
 	c.Assert(row.Len(), Equals, 11)
-	txn, err = s.store.Begin()
+	txn, err = s.store.Begin(oracle.GlobalTxnScope)
 	c.Assert(err, IsNil)
 	historyJobs, err := admin.GetHistoryDDLJobs(txn, admin.DefNumHistoryJobs)
 	c.Assert(len(historyJobs), Greater, 1)
@@ -492,7 +492,7 @@ func (s *testSuite3) TestAdmin(c *C) {
 	c.Assert(rows[0][2], Equals, "t1")
 
 	// Test for reverse scan get history ddl jobs when ddl history jobs queue has multiple regions.
-	txn, err = s.store.Begin()
+	txn, err = s.store.Begin(oracle.GlobalTxnScope)
 	c.Assert(err, IsNil)
 	historyJobs, err = admin.GetHistoryDDLJobs(txn, 20)
 	c.Assert(err, IsNil)
@@ -2610,11 +2610,11 @@ func (s *testSuiteP2) TestHistoryRead(c *C) {
 	// SnapshotTS Is not updated if check failed.
 	c.Assert(tk.Se.GetSessionVars().SnapshotTS, Equals, uint64(0))
 
-	curVer1, _ := s.store.CurrentVersion()
+	curVer1, _ := s.store.CurrentVersion(oracle.GlobalTxnScope)
 	time.Sleep(time.Millisecond)
 	snapshotTime := time.Now()
 	time.Sleep(time.Millisecond)
-	curVer2, _ := s.store.CurrentVersion()
+	curVer2, _ := s.store.CurrentVersion(oracle.GlobalTxnScope)
 	tk.MustExec("insert history_read values (2)")
 	tk.MustQuery("select * from history_read").Check(testkit.Rows("1", "2"))
 	tk.MustExec("set @@tidb_snapshot = '" + snapshotTime.Format("2006-01-02 15:04:05.999999") + "'")
@@ -3595,7 +3595,7 @@ func (s *testSuite) TestCheckIndex(c *C) {
 	// set data to:
 	// index     data (handle, data): (1, 10), (2, 20), (3, 30)
 	// table     data (handle, data): (1, 10), (2, 20), (4, 40)
-	txn, err = s.store.Begin()
+	txn, err = s.store.Begin(oracle.GlobalTxnScope)
 	c.Assert(err, IsNil)
 	_, err = idx.Create(mockCtx, txn.GetUnionStore(), types.MakeDatums(int64(30)), kv.IntHandle(3))
 	c.Assert(err, IsNil)
@@ -3610,7 +3610,7 @@ func (s *testSuite) TestCheckIndex(c *C) {
 	// set data to:
 	// index     data (handle, data): (1, 10), (2, 20), (3, 30), (4, 40)
 	// table     data (handle, data): (1, 10), (2, 20), (4, 40)
-	txn, err = s.store.Begin()
+	txn, err = s.store.Begin(oracle.GlobalTxnScope)
 	c.Assert(err, IsNil)
 	_, err = idx.Create(mockCtx, txn.GetUnionStore(), types.MakeDatums(int64(40)), kv.IntHandle(4))
 	c.Assert(err, IsNil)
@@ -3622,7 +3622,7 @@ func (s *testSuite) TestCheckIndex(c *C) {
 	// set data to:
 	// index     data (handle, data): (1, 10), (4, 40)
 	// table     data (handle, data): (1, 10), (2, 20), (4, 40)
-	txn, err = s.store.Begin()
+	txn, err = s.store.Begin(oracle.GlobalTxnScope)
 	c.Assert(err, IsNil)
 	err = idx.Delete(sc, txn.GetUnionStore(), types.MakeDatums(int64(30)), kv.IntHandle(3))
 	c.Assert(err, IsNil)

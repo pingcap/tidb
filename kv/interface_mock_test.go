@@ -145,7 +145,7 @@ func newMockTxn() Transaction {
 type mockStorage struct {
 }
 
-func (s *mockStorage) Begin() (Transaction, error) {
+func (s *mockStorage) Begin(txnScope string) (Transaction, error) {
 	return newMockTxn(), nil
 }
 
@@ -154,8 +154,8 @@ func (*mockTxn) IsPessimistic() bool {
 }
 
 // BeginWithStartTS begins a transaction with startTS.
-func (s *mockStorage) BeginWithStartTS(startTS uint64) (Transaction, error) {
-	return s.Begin()
+func (s *mockStorage) BeginWithStartTS(txnScope string, startTS uint64) (Transaction, error) {
+	return s.Begin(txnScope)
 }
 
 func (s *mockStorage) GetSnapshot(ver Version) Snapshot {
@@ -173,7 +173,7 @@ func (s *mockStorage) UUID() string {
 }
 
 // CurrentVersion returns current max committed version.
-func (s *mockStorage) CurrentVersion() (Version, error) {
+func (s *mockStorage) CurrentVersion(txnScope string) (Version, error) {
 	return NewVersion(1), nil
 }
 

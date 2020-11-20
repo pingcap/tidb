@@ -329,6 +329,10 @@ func (txnFailFuture) Wait() (uint64, error) {
 	return 0, errors.New("mock get timestamp fail")
 }
 
+func (txnFailFuture) GetTxnScope() string {
+	return ""
+}
+
 // txnFuture is a promise, which promises to return a txn in future.
 type txnFuture struct {
 	future oracle.Future
@@ -338,14 +342,14 @@ type txnFuture struct {
 func (tf *txnFuture) wait() (kv.Transaction, error) {
 	startTS, err := tf.future.Wait()
 	if err == nil {
-		return tf.store.BeginWithStartTS(startTS)
+		return tf.store.BeginWithStartTS(tf.future.GetTxnScope(), startTS)
 	} else if config.GetGlobalConfig().Store == "unistore" {
 		return nil, err
 	}
 
 	logutil.BgLogger().Warn("wait tso failed", zap.Error(err))
 	// It would retry get timestamp.
-	return tf.store.Begin()
+	return tf.store.Begin(tf.future.GetTxnScope())
 }
 
 func (s *session) getTxnFuture(ctx context.Context) *txnFuture {
@@ -358,9 +362,9 @@ func (s *session) getTxnFuture(ctx context.Context) *txnFuture {
 	oracleStore := s.store.GetOracle()
 	var tsFuture oracle.Future
 	if s.sessionVars.LowResolutionTSO {
-		tsFuture = oracleStore.GetLowResolutionTimestampAsync(ctx, &oracle.Option{TxnScope: oracle.GlobalTxnScope})
+		tsFuture = oracleStore.GetLowResolutionTimestampAsync(ctx, &oracle.Option{TxnScope: s.sessionVars.TxnScope})
 	} else {
-		tsFuture = oracleStore.GetTimestampAsync(ctx, &oracle.Option{TxnScope: oracle.GlobalTxnScope})
+		tsFuture = oracleStore.GetTimestampAsync(ctx, &oracle.Option{TxnScope: s.sessionVars.TxnScope})
 	}
 	ret := &txnFuture{future: tsFuture, store: s.store}
 	failpoint.InjectContext(ctx, "mockGetTSFail", func() {

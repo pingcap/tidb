@@ -62,7 +62,7 @@ func (s *testAsyncCommitCommon) putAlphabets(c *C) {
 }
 
 func (s *testAsyncCommitCommon) putKV(c *C, key, value []byte) (uint64, uint64) {
-	txn, err := s.store.Begin()
+	txn, err := s.store.Begin(oracle.GlobalTxnScope)
 	c.Assert(err, IsNil)
 	err = txn.Set(key, value)
 	c.Assert(err, IsNil)
@@ -78,7 +78,7 @@ func (s *testAsyncCommitCommon) mustGetFromTxn(c *C, txn kv.Transaction, key, ex
 }
 
 func (s *testAsyncCommitCommon) mustGetLock(c *C, key []byte) *Lock {
-	ver, err := s.store.CurrentVersion()
+	ver, err := s.store.CurrentVersion(oracle.GlobalTxnScope)
 	c.Assert(err, IsNil)
 	req := tikvrpc.NewRequest(tikvrpc.CmdGet, &kvrpcpb.GetRequest{
 		Key:     key,
@@ -118,7 +118,7 @@ func (s *testAsyncCommitCommon) mustGetNoneFromSnapshot(c *C, version uint64, ke
 }
 
 func (s *testAsyncCommitCommon) begin(c *C) *tikvTxn {
-	txn, err := s.store.Begin()
+	txn, err := s.store.Begin(oracle.GlobalTxnScope)
 	c.Assert(err, IsNil)
 	return txn.(*tikvTxn)
 }
@@ -137,7 +137,7 @@ func (s *testAsyncCommitSuite) SetUpTest(c *C) {
 }
 
 func (s *testAsyncCommitSuite) lockKeys(c *C, keys, values [][]byte, primaryKey, primaryValue []byte, commitPrimary bool) (uint64, uint64) {
-	txn, err := newTiKVTxn(s.store)
+	txn, err := newTiKVTxn(s.store, oracle.GlobalTxnScope)
 	c.Assert(err, IsNil)
 	for i, k := range keys {
 		if len(values[i]) > 0 {
@@ -274,7 +274,7 @@ func (s *testAsyncCommitSuite) TestCheckSecondaries(c *C) {
 		MinCommitTS:    ts + 5,
 	}
 
-	_, err = s.store.Begin()
+	_, err = s.store.Begin(oracle.GlobalTxnScope)
 	c.Assert(err, IsNil)
 
 	err = s.store.lockResolver.resolveLockAsync(s.bo, lock, status)
@@ -334,7 +334,7 @@ func (s *testAsyncCommitSuite) TestRepeatableRead(c *C) {
 
 		connID++
 		ctx := context.WithValue(context.Background(), sessionctx.ConnID, connID)
-		txn1, err := s.store.Begin()
+		txn1, err := s.store.Begin(oracle.GlobalTxnScope)
 		txn1.SetOption(kv.Pessimistic, isPessimistic)
 		c.Assert(err, IsNil)
 		s.mustGetFromTxn(c, txn1, []byte("k1"), []byte("v1"))
@@ -345,7 +345,7 @@ func (s *testAsyncCommitSuite) TestRepeatableRead(c *C) {
 			c.Assert(err, IsNil)
 		}
 
-		txn2, err := s.store.Begin()
+		txn2, err := s.store.Begin(oracle.GlobalTxnScope)
 		c.Assert(err, IsNil)
 		s.mustGetFromTxn(c, txn2, []byte("k1"), []byte("v1"))
 
@@ -357,7 +357,7 @@ func (s *testAsyncCommitSuite) TestRepeatableRead(c *C) {
 		err = txn2.Rollback()
 		c.Assert(err, IsNil)
 
-		txn3, err := s.store.Begin()
+		txn3, err := s.store.Begin(oracle.GlobalTxnScope)
 		c.Assert(err, IsNil)
 		s.mustGetFromTxn(c, txn3, []byte("k1"), []byte("v2"))
 		err = txn3.Rollback()
@@ -377,9 +377,9 @@ func (s *testAsyncCommitSuite) TestAsyncCommitExternalConsistency(c *C) {
 		conf.TiKVClient.ExternalConsistency = true
 	})
 
-	t1, err := s.store.Begin()
+	t1, err := s.store.Begin(oracle.GlobalTxnScope)
 	c.Assert(err, IsNil)
-	t2, err := s.store.Begin()
+	t2, err := s.store.Begin(oracle.GlobalTxnScope)
 	c.Assert(err, IsNil)
 	err = t1.Set([]byte("a"), []byte("a1"))
 	c.Assert(err, IsNil)

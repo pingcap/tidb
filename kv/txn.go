@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
@@ -33,7 +34,7 @@ func RunInNewTxn(store Storage, retryable bool, f func(txn Transaction) error) e
 		txn           Transaction
 	)
 	for i := uint(0); i < maxRetryCnt; i++ {
-		txn, err = store.Begin()
+		txn, err = store.Begin(oracle.GlobalTxnScope)
 		if err != nil {
 			logutil.BgLogger().Error("RunInNewTxn", zap.Error(err))
 			return err

@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
@@ -353,7 +354,7 @@ func (s *testSchemaAmenderSuite) TestAmendCollectAndGenMutations(c *C) {
 			mutations := tikv.NewPlainMutations(8)
 			newData, oldData, expectedMutations := prepareTestData(se, &mutations, oldTbInfo, newTblInfo, expectedAmendOps, c)
 			// Prepare old data in table.
-			txnPrepare, err := se.store.Begin()
+			txnPrepare, err := se.store.Begin(oracle.GlobalTxnScope)
 			c.Assert(err, IsNil)
 			for i, key := range oldData.keys {
 				err = txnPrepare.Set(key, oldData.values[i])
@@ -361,7 +362,7 @@ func (s *testSchemaAmenderSuite) TestAmendCollectAndGenMutations(c *C) {
 			}
 			err = txnPrepare.Commit(ctx)
 			c.Assert(err, IsNil)
-			txnCheck, err := se.store.Begin()
+			txnCheck, err := se.store.Begin(oracle.GlobalTxnScope)
 			c.Assert(err, IsNil)
 			snapData, err := txnCheck.GetSnapshot().Get(ctx, oldData.keys[0])
 			c.Assert(err, IsNil)
@@ -370,7 +371,7 @@ func (s *testSchemaAmenderSuite) TestAmendCollectAndGenMutations(c *C) {
 			c.Assert(err, IsNil)
 
 			// Write data for this new transaction, its memory buffer will be used by schema amender.
-			txn, err := se.store.Begin()
+			txn, err := se.store.Begin(oracle.GlobalTxnScope)
 			c.Assert(err, IsNil)
 			se.txn.changeInvalidToValid(txn)
 			txn, err = se.Txn(true)
@@ -387,7 +388,7 @@ func (s *testSchemaAmenderSuite) TestAmendCollectAndGenMutations(c *C) {
 				}
 				oldKeys = append(oldKeys, key)
 			}
-			curVer, err := se.store.CurrentVersion()
+			curVer, err := se.store.CurrentVersion(oracle.GlobalTxnScope)
 			c.Assert(err, IsNil)
 			se.sessionVars.TxnCtx.SetForUpdateTS(curVer.Ver + 1)
 			snap := se.store.GetSnapshot(kv.Version{Ver: se.sessionVars.TxnCtx.GetForUpdateTS()})

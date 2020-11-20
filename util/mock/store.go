@@ -35,10 +35,12 @@ func (s *Store) GetMPPClient() kv.MPPClient { return nil }
 func (s *Store) GetOracle() oracle.Oracle { return nil }
 
 // Begin implements kv.Storage interface.
-func (s *Store) Begin() (kv.Transaction, error) { return nil, nil }
+func (s *Store) Begin(txnScope string) (kv.Transaction, error) { return nil, nil }
 
 // BeginWithStartTS implements kv.Storage interface.
-func (s *Store) BeginWithStartTS(startTS uint64) (kv.Transaction, error) { return s.Begin() }
+func (s *Store) BeginWithStartTS(txnScope string, startTS uint64) (kv.Transaction, error) {
+	return s.Begin(oracle.GlobalTxnScope)
+}
 
 // GetSnapshot implements kv.Storage interface.
 func (s *Store) GetSnapshot(ver kv.Version) kv.Snapshot { return nil }
@@ -50,7 +52,7 @@ func (s *Store) Close() error { return nil }
 func (s *Store) UUID() string { return "mock" }
 
 // CurrentVersion implements kv.Storage interface.
-func (s *Store) CurrentVersion() (kv.Version, error) { return kv.Version{}, nil }
+func (s *Store) CurrentVersion(txnScope string) (kv.Version, error) { return kv.Version{}, nil }
 
 // SupportDeleteRange implements kv.Storage interface.
 func (s *Store) SupportDeleteRange() bool { return false }

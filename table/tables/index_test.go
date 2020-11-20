@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
@@ -85,7 +86,7 @@ func (s *testIndexSuite) TestIndex(c *C) {
 	index := tables.NewIndex(tblInfo.ID, tblInfo, tblInfo.Indices[0])
 
 	// Test ununiq index.
-	txn, err := s.s.Begin()
+	txn, err := s.s.Begin(oracle.GlobalTxnScope)
 	c.Assert(err, IsNil)
 
 	values := types.MakeDatums(1, 2)
@@ -174,7 +175,7 @@ func (s *testIndexSuite) TestIndex(c *C) {
 	index = tables.NewIndex(tblInfo.ID, tblInfo, tblInfo.Indices[0])
 
 	// Test uniq index.
-	txn, err = s.s.Begin()
+	txn, err = s.s.Begin(oracle.GlobalTxnScope)
 	c.Assert(err, IsNil)
 
 	_, err = index.Create(mockCtx, txn.GetUnionStore(), values, kv.IntHandle(1))
@@ -210,7 +211,7 @@ func (s *testIndexSuite) TestIndex(c *C) {
 	_, err = index.FetchValues(make([]types.Datum, 0), nil)
 	c.Assert(err, NotNil)
 
-	txn, err = s.s.Begin()
+	txn, err = s.s.Begin(oracle.GlobalTxnScope)
 	c.Assert(err, IsNil)
 
 	// Test the function of Next when the value of unique key is nil.
@@ -252,7 +253,7 @@ func (s *testIndexSuite) TestCombineIndexSeek(c *C) {
 	}
 	index := tables.NewIndex(tblInfo.ID, tblInfo, tblInfo.Indices[0])
 
-	txn, err := s.s.Begin()
+	txn, err := s.s.Begin(oracle.GlobalTxnScope)
 	c.Assert(err, IsNil)
 
 	mockCtx := mock.NewContext()
@@ -282,7 +283,7 @@ func (s *testIndexSuite) TestSingleColumnCommonHandle(c *C) {
 			idxNonUnique = idx
 		}
 	}
-	txn, err := s.s.Begin()
+	txn, err := s.s.Begin(oracle.GlobalTxnScope)
 	c.Assert(err, IsNil)
 
 	mockCtx := mock.NewContext()
@@ -339,7 +340,7 @@ func (s *testIndexSuite) TestMultiColumnCommonHandle(c *C) {
 		}
 	}
 
-	txn, err := s.s.Begin()
+	txn, err := s.s.Begin(oracle.GlobalTxnScope)
 	c.Assert(err, IsNil)
 	mockCtx := mock.NewContext()
 	sc := mockCtx.GetSessionVars().StmtCtx

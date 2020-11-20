@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 )
 
 type testSafePointSuite struct {
@@ -45,7 +46,7 @@ func (s *testSafePointSuite) TearDownSuite(c *C) {
 }
 
 func (s *testSafePointSuite) beginTxn(c *C) *tikvTxn {
-	txn, err := s.store.Begin()
+	txn, err := s.store.Begin(oracle.GlobalTxnScope)
 	c.Assert(err, IsNil)
 	return txn.(*tikvTxn)
 }

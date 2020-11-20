@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 )
 
 type testAsyncCommitFailSuite struct {
@@ -58,7 +59,7 @@ func (s *testAsyncCommitFailSuite) TestFailAsyncCommitPrewriteRpcErrors(c *C) {
 		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/noRetryOnRpcError"), IsNil)
 	}()
 	// The rpc error will be wrapped to ErrResultUndetermined.
-	t1, err := s.store.Begin()
+	t1, err := s.store.Begin(oracle.GlobalTxnScope)
 	c.Assert(err, IsNil)
 	err = t1.Set([]byte("a"), []byte("a1"))
 	c.Assert(err, IsNil)
@@ -72,7 +73,7 @@ func (s *testAsyncCommitFailSuite) TestFailAsyncCommitPrewriteRpcErrors(c *C) {
 	c.Assert(err, Equals, kv.ErrInvalidTxn)
 
 	// Create a new transaction to check. The previous transaction should actually commit.
-	t2, err := s.store.Begin()
+	t2, err := s.store.Begin(oracle.GlobalTxnScope)
 	c.Assert(err, IsNil)
 	res, err := t2.Get(context.Background(), []byte("a"))
 	c.Assert(err, IsNil)
@@ -105,7 +106,7 @@ func (s *testAsyncCommitFailSuite) TestAsyncCommitPrewriteCancelled(c *C) {
 		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/rpcPrewriteResult"), IsNil)
 	}()
 
-	t1, err := s.store.Begin()
+	t1, err := s.store.Begin(oracle.GlobalTxnScope)
 	c.Assert(err, IsNil)
 	err = t1.Set([]byte("a"), []byte("a"))
 	c.Assert(err, IsNil)
@@ -125,7 +126,7 @@ func (s *testAsyncCommitFailSuite) TestPointGetWithAsyncCommit(c *C) {
 
 	s.putAlphabets(c)
 
-	txn, err := s.store.Begin()
+	txn, err := s.store.Begin(oracle.GlobalTxnScope)
 	c.Assert(err, IsNil)
 	txn.Set([]byte("a"), []byte("v1"))
 	txn.Set([]byte("b"), []byte("v2"))
@@ -143,7 +144,7 @@ func (s *testAsyncCommitFailSuite) TestPointGetWithAsyncCommit(c *C) {
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/asyncCommitDoNothing"), IsNil)
 
 	// PointGet will not push the `max_ts` to its ts which is MaxUint64.
-	txn2, err := s.store.Begin()
+	txn2, err := s.store.Begin(oracle.GlobalTxnScope)
 	c.Assert(err, IsNil)
 	s.mustGetFromTxn(c, txn2, []byte("a"), []byte("v1"))
 	s.mustGetFromTxn(c, txn2, []byte("b"), []byte("v2"))
@@ -192,7 +193,7 @@ func (s *testAsyncCommitFailSuite) TestSecondaryListInPrimaryLock(c *C) {
 		connID++
 		ctx := context.WithValue(context.Background(), sessionctx.ConnID, connID)
 
-		txn, err := s.store.Begin()
+		txn, err := s.store.Begin(oracle.GlobalTxnScope)
 		c.Assert(err, IsNil)
 		for i := range keys {
 			txn.Set([]byte(keys[i]), []byte(values[i]))

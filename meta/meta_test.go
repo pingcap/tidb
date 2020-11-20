@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/testleak"
@@ -51,7 +52,7 @@ func (s *testSuite) TestMeta(c *C) {
 	c.Assert(err, IsNil)
 	defer store.Close()
 
-	txn, err := store.Begin()
+	txn, err := store.Begin(oracle.GlobalTxnScope)
 	c.Assert(err, IsNil)
 	defer txn.Rollback()
 
@@ -279,16 +280,16 @@ func (s *testSuite) TestSnapshot(c *C) {
 	c.Assert(err, IsNil)
 	defer store.Close()
 
-	txn, _ := store.Begin()
+	txn, _ := store.Begin(oracle.GlobalTxnScope)
 	m := meta.NewMeta(txn)
 	m.GenGlobalID()
 	n, _ := m.GetGlobalID()
 	c.Assert(n, Equals, int64(1))
 	txn.Commit(context.Background())
 
-	ver1, _ := store.CurrentVersion()
+	ver1, _ := store.CurrentVersion(oracle.GlobalTxnScope)
 	time.Sleep(time.Millisecond)
-	txn, _ = store.Begin()
+	txn, _ = store.Begin(oracle.GlobalTxnScope)
 	m = meta.NewMeta(txn)
 	m.GenGlobalID()
 	n, _ = m.GetGlobalID()
@@ -335,7 +336,7 @@ func (s *testSuite) TestDDL(c *C) {
 	c.Assert(err, IsNil)
 	defer store.Close()
 
-	txn, err := store.Begin()
+	txn, err := store.Begin(oracle.GlobalTxnScope)
 	c.Assert(err, IsNil)
 
 	defer txn.Rollback()
@@ -469,7 +470,7 @@ func (s *testSuite) TestDDL(c *C) {
 	c.Assert(err, IsNil)
 
 	// Test for add index job.
-	txn1, err := store.Begin()
+	txn1, err := store.Begin(oracle.GlobalTxnScope)
 	c.Assert(err, IsNil)
 	defer txn1.Rollback()
 
@@ -502,7 +503,7 @@ func (s *testSuite) BenchmarkGenGlobalIDs(c *C) {
 	c.Assert(err, IsNil)
 	defer store.Close()
 
-	txn, err := store.Begin()
+	txn, err := store.Begin(oracle.GlobalTxnScope)
 	c.Assert(err, IsNil)
 	defer txn.Rollback()
 
@@ -523,7 +524,7 @@ func (s *testSuite) BenchmarkGenGlobalIDOneByOne(c *C) {
 	c.Assert(err, IsNil)
 	defer store.Close()
 
-	txn, err := store.Begin()
+	txn, err := store.Begin(oracle.GlobalTxnScope)
 	c.Assert(err, IsNil)
 	defer txn.Rollback()
 

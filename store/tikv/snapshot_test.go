@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/failpoint"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
@@ -64,7 +65,7 @@ func (s *testSnapshotSuite) TearDownSuite(c *C) {
 }
 
 func (s *testSnapshotSuite) beginTxn(c *C) *tikvTxn {
-	txn, err := s.store.Begin()
+	txn, err := s.store.Begin(oracle.GlobalTxnScope)
 	c.Assert(err, IsNil)
 	return txn.(*tikvTxn)
 }

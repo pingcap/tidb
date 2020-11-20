@@ -87,7 +87,7 @@ func (s *testCommitterSuite) TearDownSuite(c *C) {
 }
 
 func (s *testCommitterSuite) begin(c *C) *tikvTxn {
-	txn, err := s.store.Begin()
+	txn, err := s.store.Begin(oracle.GlobalTxnScope)
 	c.Assert(err, IsNil)
 	return txn.(*tikvTxn)
 }
@@ -324,7 +324,7 @@ func (s *testCommitterSuite) mustGetRegionID(c *C, key []byte) uint64 {
 }
 
 func (s *testCommitterSuite) isKeyLocked(c *C, key []byte) bool {
-	ver, err := s.store.CurrentVersion()
+	ver, err := s.store.CurrentVersion(oracle.GlobalTxnScope)
 	c.Assert(err, IsNil)
 	bo := NewBackofferWithVars(context.Background(), getMaxBackoff, nil)
 	req := tikvrpc.NewRequest(tikvrpc.CmdGet, &kvrpcpb.GetRequest{
@@ -601,12 +601,12 @@ func (s *testCommitterSuite) TestRejectCommitTS(c *C) {
 	// Use max.Uint64 to read the data and success.
 	// That means the final commitTS > startTS+2, it's not the one we provide.
 	// So we cover the rety commitTS logic.
-	txn1, err := s.store.BeginWithStartTS(committer.startTS + 2)
+	txn1, err := s.store.BeginWithStartTS(oracle.GlobalTxnScope, committer.startTS+2)
 	c.Assert(err, IsNil)
 	_, err = txn1.Get(bo.ctx, []byte("x"))
 	c.Assert(kv.IsErrNotFound(err), IsTrue)
 
-	txn2, err := s.store.BeginWithStartTS(math.MaxUint64)
+	txn2, err := s.store.BeginWithStartTS(oracle.GlobalTxnScope, math.MaxUint64)
 	c.Assert(err, IsNil)
 	val, err := txn2.Get(bo.ctx, []byte("x"))
 	c.Assert(err, IsNil)

@@ -22,6 +22,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/store/mockstore/cluster"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 )
 
 type testDeleteRangeSuite struct {
@@ -59,7 +60,7 @@ func (s *testDeleteRangeSuite) TearDownTest(c *C) {
 }
 
 func (s *testDeleteRangeSuite) checkData(c *C, expectedData map[string]string) {
-	txn, err := s.store.Begin()
+	txn, err := s.store.Begin(oracle.GlobalTxnScope)
 	c.Assert(err, IsNil)
 	it, err := txn.Iter([]byte("a"), nil)
 	c.Assert(err, IsNil)
@@ -121,7 +122,7 @@ func (s *testDeleteRangeSuite) mustDeleteRange(c *C, startKey []byte, endKey []b
 
 func (s *testDeleteRangeSuite) TestDeleteRange(c *C) {
 	// Write some key-value pairs
-	txn, err := s.store.Begin()
+	txn, err := s.store.Begin(oracle.GlobalTxnScope)
 	c.Assert(err, IsNil)
 
 	testData := map[string]string{}

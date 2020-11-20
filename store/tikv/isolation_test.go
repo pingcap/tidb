@@ -24,6 +24,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 )
 
 // testIsolationSuite represents test isolation suite.
@@ -58,7 +59,7 @@ func (r writeRecords) Less(i, j int) bool { return r[i].startTS <= r[j].startTS 
 
 func (s *testIsolationSuite) SetWithRetry(c *C, k, v []byte) writeRecord {
 	for {
-		txn, err := s.store.Begin()
+		txn, err := s.store.Begin(oracle.GlobalTxnScope)
 		c.Assert(err, IsNil)
 
 		err = txn.Set(k, v)
@@ -87,7 +88,7 @@ func (r readRecords) Less(i, j int) bool { return r[i].startTS <= r[j].startTS }
 
 func (s *testIsolationSuite) GetWithRetry(c *C, k []byte) readRecord {
 	for {
-		txn, err := s.store.Begin()
+		txn, err := s.store.Begin(oracle.GlobalTxnScope)
 		c.Assert(err, IsNil)
 
 		val, err := txn.Get(context.TODO(), k)
