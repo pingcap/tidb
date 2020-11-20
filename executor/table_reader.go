@@ -201,9 +201,9 @@ func (e *TableReaderExecutor) Next(ctx context.Context, req *chunk.Chunk) error 
 	// When 'select ... for update' work on a partitioned table, the table reader should
 	// add the partition ID as an extra column. The SelectLockExec need this information
 	// to construct the lock key.
-	_, isPartition := e.table.(table.PartitionedTable)
-	if isPartition && e.extraPIDColumnIndex >= 0 {
-		fillExtraPIDColumn(req, e.extraPIDColumnIndex, getPhysicalTableID(e.table))
+	physicalID := getPhysicalTableID(e.table)
+	if physicalID != e.table.Meta().ID && e.extraPIDColumnIndex >= 0 {
+		fillExtraPIDColumn(req, e.extraPIDColumnIndex, physicalID)
 	}
 
 	return nil

@@ -2508,7 +2508,6 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 		extraPIDColumnIndex: -1,
 	}
 	e.setBatchCop(v)
-
 	if isPartition {
 		e.extraPIDColumnIndex = extraPIDColumnIndex(v.Schema())
 	}
@@ -2907,26 +2906,30 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 		return nil, err
 	}
 	e := &IndexLookUpExecutor{
-		baseExecutor:      newBaseExecutor(b.ctx, v.Schema(), v.ID()),
-		dagPB:             indexReq,
-		startTS:           startTS,
-		table:             tbl,
-		index:             is.Index,
-		keepOrder:         is.KeepOrder,
-		desc:              is.Desc,
-		tableRequest:      tableReq,
-		columns:           ts.Columns,
-		indexStreaming:    indexStreaming,
-		tableStreaming:    tableStreaming,
-		dataReaderBuilder: &dataReaderBuilder{executorBuilder: b},
-		corColInIdxSide:   b.corColInDistPlan(v.IndexPlans),
-		corColInTblSide:   b.corColInDistPlan(v.TablePlans),
-		corColInAccess:    b.corColInAccess(v.IndexPlans[0]),
-		idxCols:           is.IdxCols,
-		colLens:           is.IdxColLens,
-		idxPlans:          v.IndexPlans,
-		tblPlans:          v.TablePlans,
-		PushedLimit:       v.PushedLimit,
+		baseExecutor:        newBaseExecutor(b.ctx, v.Schema(), v.ID()),
+		dagPB:               indexReq,
+		startTS:             startTS,
+		table:               tbl,
+		index:               is.Index,
+		keepOrder:           is.KeepOrder,
+		desc:                is.Desc,
+		tableRequest:        tableReq,
+		columns:             ts.Columns,
+		indexStreaming:      indexStreaming,
+		tableStreaming:      tableStreaming,
+		dataReaderBuilder:   &dataReaderBuilder{executorBuilder: b},
+		corColInIdxSide:     b.corColInDistPlan(v.IndexPlans),
+		corColInTblSide:     b.corColInDistPlan(v.TablePlans),
+		corColInAccess:      b.corColInAccess(v.IndexPlans[0]),
+		idxCols:             is.IdxCols,
+		colLens:             is.IdxColLens,
+		idxPlans:            v.IndexPlans,
+		tblPlans:            v.TablePlans,
+		PushedLimit:         v.PushedLimit,
+		extraPIDColumnIndex: -1,
+	}
+	if ok, _ := ts.IsPartition(); ok {
+		e.extraPIDColumnIndex = extraPIDColumnIndex(v.Schema())
 	}
 
 	if containsLimit(indexReq.Executors) {

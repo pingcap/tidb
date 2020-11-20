@@ -7053,30 +7053,3 @@ func (s *testSuite) TestIssue20305(c *C) {
 	tk.MustExec("INSERT INTO `t3` VALUES (2069, 70), (2010, 11), (2155, 2156), (2069, 69)")
 	tk.MustQuery("SELECT * FROM `t3` where y <= a").Check(testkit.Rows("2155 2156"))
 }
-
-func (s *testSuite) TestIssue20028(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1, t2")
-	tk.MustExec("set @@tidb_partition_prune_mode='static-only'")
-	tk.MustExec(`create table t1 (c_datetime datetime, primary key (c_datetime))
-partition by range (to_days(c_datetime)) ( partition p0 values less than (to_days('2020-02-01')),
-partition p1 values less than (to_days('2020-04-01')),
-partition p2 values less than (to_days('2020-06-01')),
-partition p3 values less than maxvalue)`)
-	tk.MustExec("create table t2 (c_datetime datetime, unique key(c_datetime))")
-	tk.MustExec("insert into t1 values ('2020-06-26 03:24:00'), ('2020-02-21 07:15:33'), ('2020-04-27 13:50:58')")
-	tk.MustExec("insert into t2 values ('2020-01-10 09:36:00'), ('2020-02-04 06:00:00'), ('2020-06-12 03:45:18')")
-	tk.MustExec("begin")
-	tk.MustQuery("select * from t1 join t2 on t1.c_datetime >= t2.c_datetime for update").
-		Sort().
-		Check(testkit.Rows(
-			"2020-02-21 07:15:33 2020-01-10 09:36:00",
-			"2020-02-21 07:15:33 2020-02-04 06:00:00",
-			"2020-04-27 13:50:58 2020-01-10 09:36:00",
-			"2020-04-27 13:50:58 2020-02-04 06:00:00",
-			"2020-06-26 03:24:00 2020-01-10 09:36:00",
-			"2020-06-26 03:24:00 2020-02-04 06:00:00",
-			"2020-06-26 03:24:00 2020-06-12 03:45:18"))
-	tk.MustExec("rollback")
-}
