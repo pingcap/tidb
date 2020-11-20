@@ -1306,6 +1306,7 @@ func (it copErrorResponse) Close() error {
 // set on initial. Each time the Action is triggered, one token would be destroyed. If the count of the token is less
 // than 2, the action would be delegated to the fallback action.
 type rateLimitAction struct {
+	m sync.Mutex
 	// enabled indicates whether the rateLimitAction is permitted to Action. 1 means permitted, 0 denied.
 	enabled        uint32
 	fallbackAction memory.ActionOnExceed
@@ -1357,6 +1358,8 @@ func (e *rateLimitAction) Action(t *memory.Tracker) {
 			e.setEnabled(false)
 		}
 	})
+	e.m.Lock()
+	defer e.m.Unlock()
 
 	if !e.isEnabled() {
 		if e.fallbackAction != nil {
@@ -1405,7 +1408,19 @@ func (e *rateLimitAction) SetLogHook(hook func(uint64)) {
 
 // SetFallback implements ActionOnExceed.SetFallback
 func (e *rateLimitAction) SetFallback(a memory.ActionOnExceed) {
+	e.m.Lock()
+	defer e.m.Unlock()
 	e.fallbackAction = a
+}
+
+func (e *rateLimitAction) GetFallback() memory.ActionOnExceed {
+	e.m.Lock()
+	defer e.m.Unlock()
+	return e.fallbackAction
+}
+
+func (e *rateLimitAction) GetPriority() int64 {
+	return memory.DefRateLimitPriority
 }
 
 // broadcastIfNeeded will broadcast the condition to recover all suspended workers when exceeded is enabled

@@ -121,8 +121,21 @@ func (t *Tracker) SetActionOnExceed(a ActionOnExceed) {
 func (t *Tracker) FallbackOldAndSetNewAction(a ActionOnExceed) {
 	t.actionMu.Lock()
 	defer t.actionMu.Unlock()
-	a.SetFallback(t.actionMu.actionOnExceed)
-	t.actionMu.actionOnExceed = a
+	t.actionMu.actionOnExceed = mergeFallback(t.actionMu.actionOnExceed, a)
+}
+
+func mergeFallback(a ActionOnExceed, b ActionOnExceed) ActionOnExceed {
+	if a == nil {
+		return b
+	}
+	if b == nil {
+		return a
+	}
+	if a.GetPriority() < b.GetPriority() {
+		a, b = b, a
+	}
+	a.SetFallback(mergeFallback(a.GetFallback(), b))
+	return a
 }
 
 // SetLabel sets the label of a Tracker.

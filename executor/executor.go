@@ -145,6 +145,15 @@ func (a *globalPanicOnExceed) Action(t *memory.Tracker) {
 // SetFallback sets a fallback action.
 func (a *globalPanicOnExceed) SetFallback(memory.ActionOnExceed) {}
 
+func (a *globalPanicOnExceed) GetFallback() memory.ActionOnExceed {
+	return nil
+}
+
+// GetPriority get the priority of the Action
+func (a *globalPanicOnExceed) GetPriority() int64 {
+	return memory.DefPanicPriority
+}
+
 // base returns the baseExecutor of an executor, don't override this method!
 func (e *baseExecutor) base() *baseExecutor {
 	return e

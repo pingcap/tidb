@@ -35,7 +35,19 @@ type ActionOnExceed interface {
 	// SetFallback sets a fallback action which will be triggered if itself has
 	// already been triggered.
 	SetFallback(a ActionOnExceed)
+	// GetFallback get the fallback action of the Action.
+	GetFallback() ActionOnExceed
+	// GetPriority get the priority of the Action.
+	GetPriority() int64
 }
+
+// Default OOM Action priority.
+const (
+	DefPanicPriority = iota
+	DefLogPriority
+	DefSpillPriority
+	DefRateLimitPriority
+)
 
 // LogOnExceed logs a warning only once when memory usage exceeds memory quota.
 type LogOnExceed struct {
@@ -68,6 +80,16 @@ func (a *LogOnExceed) Action(t *Tracker) {
 // SetFallback sets a fallback action.
 func (a *LogOnExceed) SetFallback(ActionOnExceed) {}
 
+// GetFallback get the fallback action of the Action.
+func (a *LogOnExceed) GetFallback() ActionOnExceed {
+	return nil
+}
+
+// GetPriority get the priority of the Action
+func (a *LogOnExceed) GetPriority() int64 {
+	return DefLogPriority
+}
+
 // PanicOnExceed panics when memory usage exceeds memory quota.
 type PanicOnExceed struct {
 	mutex   sync.Mutex // For synchronization.
@@ -98,6 +120,16 @@ func (a *PanicOnExceed) Action(t *Tracker) {
 
 // SetFallback sets a fallback action.
 func (a *PanicOnExceed) SetFallback(ActionOnExceed) {}
+
+// GetFallback get the fallback action of the Action.
+func (a *PanicOnExceed) GetFallback() ActionOnExceed {
+	return nil
+}
+
+// GetPriority get the priority of the Action
+func (a *PanicOnExceed) GetPriority() int64 {
+	return DefPanicPriority
+}
 
 var (
 	errMemExceedThreshold = dbterror.ClassUtil.NewStd(errno.ErrMemExceedThreshold)

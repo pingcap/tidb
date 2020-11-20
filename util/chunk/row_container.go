@@ -348,11 +348,25 @@ func (a *SpillDiskAction) Reset() {
 
 // SetFallback sets the fallback action.
 func (a *SpillDiskAction) SetFallback(fallback memory.ActionOnExceed) {
+	a.m.Lock()
+	defer a.m.Unlock()
 	a.fallbackAction = fallback
 }
 
 // SetLogHook sets the hook, it does nothing just to form the memory.ActionOnExceed interface.
 func (a *SpillDiskAction) SetLogHook(hook func(uint64)) {}
+
+// GetFallback get the fallback action of the Action.
+func (a *SpillDiskAction) GetFallback() memory.ActionOnExceed {
+	a.m.Lock()
+	defer a.m.Unlock()
+	return a.fallbackAction
+}
+
+// GetPriority get the priority of the Action.
+func (a *SpillDiskAction) GetPriority() int64 {
+	return memory.DefSpillPriority
+}
 
 // WaitForTest waits all goroutine have gone.
 func (a *SpillDiskAction) WaitForTest() {
