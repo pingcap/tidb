@@ -331,7 +331,7 @@ func (d *sqlDigester) isStarParam() (starParam bool) {
 
 func (d *sqlDigester) isLit(t token) (beLit bool) {
 	tok := t.tok
-	if d.isNumLit(tok) || tok == stringLit || tok == bitLit {
+	if d.isNumLit(tok) || tok == stringLit || tok == bitLit || tok == paramMarker {
 		beLit = true
 	} else if t.lit == "*" {
 		beLit = true
