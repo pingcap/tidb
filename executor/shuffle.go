@@ -169,15 +169,15 @@ func (e *ShuffleExec) Close() error {
 	for i, dataSource := range e.dataSources {
 		errArr[i] = dataSource.Close()
 	}
+	// close baseExecutor
+	baseCloseErr := e.baseExecutor.Close()
 	// check close error
 	for _, err := range errArr {
 		if err != nil {
 			return errors.Trace(err)
 		}
 	}
-	// close baseExecutor
-	err := e.baseExecutor.Close()
-	return errors.Trace(err)
+	return errors.Trace(baseCloseErr)
 }
 
 func (e *ShuffleExec) prepare4ParallelExec(ctx context.Context) {
