@@ -145,7 +145,12 @@ func optimizeByShuffle4StreamAgg(pp *PhysicalStreamAgg, ctx sessionctx.Context) 
 		return nil
 	}
 
-	childExec, _ := pp.Children()[0].(*PhysicalSort)
+	childExec, ok := pp.Children()[0].(*PhysicalSort)
+	if !ok {
+		// Multi-thread executing on SORTED data source is not effective enough by current implementation.
+		// TODO: Implement a better one.
+		return nil
+	}
 
 	tail, dataSource := childExec, childExec.Children()[0]
 	reqProp := &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64}
