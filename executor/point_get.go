@@ -346,7 +346,6 @@ func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) ([]byte, error) 
 		// fallthrough to snapshot get.
 	}
 
-	// TODO: maybe lock.TS is not accurate enough.
 	lock := e.tblInfo.Lock
 	if lock != nil && (lock.Tp == model.TableLockRead || lock.Tp == model.TableLockReadOnly) {
 		cacheDB := e.ctx.GetStore().GetMemCache()
