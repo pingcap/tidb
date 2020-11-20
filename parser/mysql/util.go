@@ -29,7 +29,7 @@ var defaultLengthAndDecimal = map[byte]lengthAndDecimal{
 	TypeLonglong:   {20, 0},
 	TypeDouble:     {22, -1},
 	TypeFloat:      {12, -1},
-	TypeNewDecimal: {11, 0},
+	TypeNewDecimal: {10, 0},
 	TypeDuration:   {10, 0},
 	TypeDate:       {10, 0},
 	TypeTimestamp:  {19, 0},
