@@ -91,6 +91,7 @@ func newSimpleStatsCache(memoryLimit int64) *simpleStatsCache {
 // SetBytesLimit sets the bytes limit for this tracker.
 func (sc *simpleStatsCache) SetBytesLimit(BytesLimit int64) {
 	sc.memTracker.SetBytesLimit(BytesLimit)
+	sc.memCapacity = BytesLimit
 }
 
 // BytesConsumed returns the consumed memory usage value in bytes.
@@ -117,6 +118,7 @@ func (sc *simpleStatsCache) Close() {
 func (sc *simpleStatsCache) Clear() {
 	sc.mu.Lock()
 	defer sc.mu.Unlock()
+	sc.version = 0
 	sc.cache.DeleteAll()
 	sc.memTracker = memory.NewTracker(memory.LabelForStatsCache, sc.memCapacity)
 }
@@ -161,7 +163,6 @@ func (sc *simpleStatsCache) Erase(deletedID int64) bool {
 	if !hit {
 		return false
 	}
-
 	key := statsCacheKey(deletedID)
 	sc.cache.Delete(key)
 	sc.memTracker.Consume(-table.MemoryUsage())
