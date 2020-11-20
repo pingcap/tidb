@@ -1185,7 +1185,7 @@ func (w *worker) dispatchAddIndexSubTasks(d *ddlCtx, tbl table.Table, tblInfo *m
 		if tbl, ok := tbl.(table.PartitionedTable); ok {
 			for _, partitionId := range getPartitionIDs(tbl.Meta()) {
 				currentTable := tbl.GetPartition(partitionId)
-				subTasks, err := splitKVRangeSubTask(currentTable, job, t, d, idx, tblInfo)
+				subTasks, err := splitKVRangeToAddIndexSubTask(currentTable, job, t, d, idx, tblInfo, allSubTasks)
 				if err != nil {
 					return errors.Trace(err)
 				}
@@ -1195,7 +1195,7 @@ func (w *worker) dispatchAddIndexSubTasks(d *ddlCtx, tbl table.Table, tblInfo *m
 			}
 		} else {
 			currentTable := tbl.(table.PhysicalTable)
-			subTasks, err := splitKVRangeSubTask(currentTable, job, t, d, idx, tblInfo)
+			subTasks, err := splitKVRangeToAddIndexSubTask(currentTable, job, t, d, idx, tblInfo, allSubTasks)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -1208,32 +1208,26 @@ func (w *worker) dispatchAddIndexSubTasks(d *ddlCtx, tbl table.Table, tblInfo *m
 			return errors.Trace(err)
 		}
 		parentJob := &meta.ParentJob{SubTaskNum: int64(len(allSubTasks))}
-		job.Args = append(job.Args, parentJob)
+		job.Args = append(job.Args, &parentJob.SubTaskNum)
 		err = t.UpdateDDLJob(0, job, true)
-		if err != nil {
-			for i := int64(0); i < int64(len(allSubTasks)); i++ {
-				err = t.RemoveDDLSubTaskReorgHandle(job.ID, i)
-				_, err = t.DeQueueDDLSubTask()
-			}
-		}
 		return errors.Trace(err)
 	})
 	return errors.Trace(err)
 }
 
-func splitKVRangeSubTask(physicalTable table.PhysicalTable, job *model.Job, t *meta.Meta, d *ddlCtx, idx *model.IndexInfo, tbleInfo *model.TableInfo) (subTasks []*meta.SubTask, err error) {
+func splitKVRangeToAddIndexSubTask(physicalTable table.PhysicalTable, job *model.Job, t *meta.Meta, d *ddlCtx, idx *model.IndexInfo, tbleInfo *model.TableInfo, allSubTasks []*meta.SubTask) ([]*meta.SubTask, error) {
 	version, err := getValidCurrentVersion(d.store)
 	startHandle, endHandle, err := getTableRange(d, physicalTable, version.Ver, job.Priority)
 	if err != nil {
-		return subTasks, errors.Trace(err)
+		return allSubTasks, errors.Trace(err)
 	}
 	kvRanges, err := splitTableRanges(physicalTable, d.store, startHandle, endHandle)
 	if err != nil {
-		return subTasks, errors.Trace(err)
+		return allSubTasks, errors.Trace(err)
 	}
 	for _, kvRange := range kvRanges {
 		startHandle, endHandle, err = decodeHandleRange(kvRange)
-		tid := int64(len(subTasks))
+		tid := int64(len(allSubTasks))
 		subTask := meta.SubTask{
 			TaskID:   tid,
 			JobID:    job.ID,
@@ -1245,13 +1239,13 @@ func splitKVRangeSubTask(physicalTable table.PhysicalTable, job *model.Job, t *m
 			IndexInfo: idx,
 		}
 		subTask.Args = append(subTask.Args, &addIndexSubTaskArgs.IndexInfo, &addIndexSubTaskArgs.SchemaID, &addIndexSubTaskArgs.TableInfo)
-		subTasks = append(subTasks, &subTask)
+		allSubTasks = append(allSubTasks, &subTask)
 		err = t.UpdateDDLSubTaskReorgInfo(job.ID, tid, startHandle, endHandle, physicalTable.GetPhysicalID(), meta.RunnerEmptyStr, meta.Unclaimed, int64(0))
 		if err != nil {
-			return subTasks, errors.Trace(err)
+			return allSubTasks, errors.Trace(err)
 		}
 	}
-	return subTasks, errors.Trace(err)
+	return allSubTasks, errors.Trace(err)
 }
 
 // addTableIndex handles the add index reorganization state for a table.
