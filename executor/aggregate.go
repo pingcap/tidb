@@ -704,8 +704,10 @@ func (e *HashAggExec) prepare4ParallelExec(ctx context.Context) {
 		e.waitPartialWorkerAndCloseOutputChs(partialWorkerWaitGroup)
 		if e.stats != nil {
 			atomic.AddInt64(&e.stats.PartialStats.WallTime, int64(time.Since(partialStart)))
-			for i, worker := range e.readPartialWorkers {
-				atomic.AddInt64(&e.stats.PartialStats.WorkerTime[i], worker.aggWorkerStats)
+			if e.readPartialWorkers != nil {
+				for i := range e.readPartialWorkers {
+					atomic.AddInt64(&e.stats.PartialStats.WorkerTime[i], atomic.LoadInt64(&e.readPartialWorkers[i].aggWorkerStats))
+				}
 			}
 		}
 	}()
@@ -719,8 +721,8 @@ func (e *HashAggExec) prepare4ParallelExec(ctx context.Context) {
 		e.waitFinalWorkerAndCloseFinalOutput(finalWorkerWaitGroup)
 		if e.stats != nil {
 			atomic.AddInt64(&e.stats.FinalStats.WallTime, int64(time.Since(finalStart)))
-			for i, worker := range e.readFinalWorkers {
-				atomic.AddInt64(&e.stats.FinalStats.WorkerTime[i], worker.aggWorkerStats)
+			for i := range e.readFinalWorkers {
+				atomic.AddInt64(&e.stats.FinalStats.WorkerTime[i], atomic.LoadInt64(&e.readFinalWorkers[i].aggWorkerStats))
 			}
 		}
 	}()
@@ -923,7 +925,7 @@ func (e *AggWorkerStat) String() string {
 
 // Merge is used to avoid duplicate code
 func (e *AggWorkerStat) Merge(tmp AggWorkerStat) {
-	atomic.AddInt64(&e.WallTime, atomic.LoadInt64(&tmp.WallTime))
+	e.WallTime += tmp.WallTime
 	e.TaskNum += tmp.TaskNum
 	e.Concurrency += tmp.Concurrency
 	e.WaitTime += tmp.WaitTime
