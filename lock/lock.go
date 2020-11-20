@@ -69,7 +69,7 @@ func (c *Checker) CheckTableLock(db, table string, privilege mysql.PrivilegeType
 	}
 	if !readOnlyLock && c.ctx.HasLockedTables() {
 		if locked, tp := c.ctx.CheckTableLocked(tb.Meta().ID); locked {
-			if checkLockTpMeetPrivilege(tp, privilege, readOnlyLock) {
+			if checkLockTpMeetPrivilege(tp, privilege) {
 				return nil
 			}
 			return infoschema.ErrTableNotLockedForWrite.GenWithStackByArgs(tb.Meta().Name)
@@ -94,7 +94,8 @@ func (c *Checker) CheckTableLock(db, table string, privilege mysql.PrivilegeType
 	return infoschema.ErrTableLocked.GenWithStackByArgs(tb.Meta().Name.L, tb.Meta().Lock.Tp, tb.Meta().Lock.Sessions[0])
 }
 
-func checkLockTpMeetPrivilege(tp model.TableLockType, privilege mysql.PrivilegeType, readOnlyLock bool) bool {
+func checkLockTpMeetPrivilege(tp model.TableLockType, privilege mysql.PrivilegeType) bool {
+	// TableLockReadOnly doesn't need to check in this, because it is session unrelated.
 	switch tp {
 	case model.TableLockWrite, model.TableLockWriteLocal:
 		return true
@@ -102,10 +103,6 @@ func checkLockTpMeetPrivilege(tp model.TableLockType, privilege mysql.PrivilegeT
 		// ShowDBPriv, AllPrivMask, CreatePriv, CreateViewPriv already checked before.
 		// The other privilege in read lock was not allowed.
 		if privilege == mysql.SelectPriv {
-			return true
-		}
-	case model.TableLockReadOnly:
-		if privilege == mysql.SelectPriv || readOnlyLock {
 			return true
 		}
 	}
