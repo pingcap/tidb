@@ -504,7 +504,7 @@ func (ts *testSuite) TestHashPartitionAndConditionConflict(c *C) {
 }
 
 func (ts *testSuite) TestHashPartitionInsertValue(c *C) {
-	tk := testkit.NewTestKit(c, ts.store)
+	tk := testkit.NewTestKitWithInit(c, ts.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop tables if exists t")
 	tk.MustExec(`CREATE TABLE t(
