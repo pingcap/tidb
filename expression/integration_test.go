@@ -7722,6 +7722,15 @@ func (s *testIntegrationSerialSuite) TestClusteredIndexAndNewCollation(c *C) {
 	tk.MustQuery("select * from t").Check(testkit.Rows("&"))
 }
 
+func (s *testIntegrationSuite) TestIssue20860(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(id int primary key, c int, d timestamp null default null)")
+	tk.MustExec("insert into t values(1, 2, '2038-01-18 20:20:30')")
+	c.Assert(tk.ExecToErr("update t set d = adddate(d, interval 1 day) where id < 10"), NotNil)
+}
+
 func (s *testIntegrationSerialSuite) TestIssue20608(c *C) {
 	collate.SetNewCollationEnabledForTest(true)
 	defer collate.SetNewCollationEnabledForTest(false)
