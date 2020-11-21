@@ -26,7 +26,6 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
@@ -656,10 +655,9 @@ func (e *IndexLookUpExecutor) Next(ctx context.Context, req *chunk.Chunk) error 
 		if resultTask == nil {
 			return nil
 		}
-		if resultTask.cursor < len(resultTask.rows) {
-			numToAppend := mathutil.Min(len(resultTask.rows)-resultTask.cursor, req.RequiredRows()-req.NumRows())
-			req.AppendRows(resultTask.rows[resultTask.cursor : resultTask.cursor+numToAppend])
-			resultTask.cursor += numToAppend
+		for resultTask.cursor < len(resultTask.rows) {
+			req.AppendRow(resultTask.rows[resultTask.cursor])
+			resultTask.cursor++
 			if req.IsFull() {
 				return nil
 			}
