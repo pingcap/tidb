@@ -1354,7 +1354,9 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 		// Handle the stmt commit/rollback.
 		txn, ok := se.getCurrentScopeTxn()
 		if !ok {
-			err := se.NewTxn(ctx)
+			if err := se.NewTxn(ctx); err != nil {
+				return nil, err
+			}
 			txn, _ = se.getCurrentScopeTxn()
 		}
 		if txn.Valid() {
@@ -1708,7 +1710,6 @@ func (s *session) NewTxn(ctx context.Context) error {
 		ShardStep:     int(s.sessionVars.ShardAllocateStep),
 		TxnScope:      txnScope,
 	}
-	t, ok := s.getCurrentScopeTxn()
 	return nil
 }
 
