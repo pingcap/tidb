@@ -394,7 +394,7 @@ func (w *worker) onCreateIndexSubTask(d *ddlCtx, t *meta.Meta, subTask *meta.Sub
 	if err != nil {
 		return errors.Trace(err)
 	}
-	physicalTableID, err := t.GetReorgSubTaskPhysicalTableId(subTask.JobID, subTask.TaskID)
+	physicalTableID, err := t.GetReorgSubTaskPhysicalTableID(subTask.JobID, subTask.TaskID)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1181,8 +1181,8 @@ func (w *worker) dispatchAddIndexSubTasks(d *ddlCtx, tbl table.Table, tblInfo *m
 	err = kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
 		t := meta.NewMeta(txn, meta.SubTaskListKey)
 		if tbl, ok := tbl.(table.PartitionedTable); ok {
-			for _, partitionId := range getPartitionIDs(tbl.Meta()) {
-				currentTable := tbl.GetPartition(partitionId)
+			for _, partitionID := range getPartitionIDs(tbl.Meta()) {
+				currentTable := tbl.GetPartition(partitionID)
 				kvRanges, err := splitTableToKVRanges(currentTable, d, job)
 				if err != nil {
 					return errors.Trace(err)

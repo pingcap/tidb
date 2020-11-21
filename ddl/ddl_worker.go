@@ -733,13 +733,13 @@ func (w *worker) handelParentJob(d *ddlCtx, job *model.Job, tableInfo *model.Tab
 					isLinear := false
 					err = kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
 						t := meta.NewMeta(txn)
-						physicalId, err := t.GetReorgSubTaskPhysicalTableId(job.ID, taskID)
+						physicalID, err := t.GetReorgSubTaskPhysicalTableID(job.ID, taskID)
 						if err != nil {
 							return errors.Trace(err)
 						}
 						var currentTable table.PhysicalTable
 						if tbl, ok := tbl.(table.PartitionedTable); ok {
-							currentTable = tbl.GetPartition(physicalId)
+							currentTable = tbl.GetPartition(physicalID)
 						} else {
 							currentTable = tbl.(table.PhysicalTable)
 						}
@@ -797,7 +797,7 @@ func (w *worker) handelParentJob(d *ddlCtx, job *model.Job, tableInfo *model.Tab
 								if err != nil {
 									return errors.Trace(err)
 								}
-								err = t.UpdateDDLReorgHandle(job, startHandle, endHandle, physicalId)
+								err = t.UpdateDDLReorgHandle(job, startHandle, endHandle, physicalID)
 								if err != nil {
 									return errors.Trace(err)
 								}
