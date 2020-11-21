@@ -163,7 +163,7 @@ type session struct {
 	processInfo atomic.Value
 	// txns may have multiple txn scopes, which will be like:
 	// txn_scope -> TxnState
-	txns map[string]TxnState
+	txns map[string]*TxnState
 
 	mu struct {
 		sync.RWMutex
@@ -198,30 +198,30 @@ type session struct {
 }
 
 func (s *session) setTxn(txnScope string, txn TxnState) {
-	s.txns[txnScope] = txn
+	s.txns[txnScope] = &txn
 }
 
 func (s *session) initTxns() {
 	globalTxn := TxnState{}
 	globalTxn.init()
-	s.txns[oracle.GlobalTxnScope] = globalTxn
+	s.txns[oracle.GlobalTxnScope] = &globalTxn
 	currentTxnScope := s.checkAndGetTxnScope()
 	if currentTxnScope != oracle.GlobalTxnScope {
 		txn := TxnState{}
 		globalTxn.init()
-		s.txns[currentTxnScope] = txn
+		s.txns[currentTxnScope] = &txn
 	}
 }
 
-func (s *session) getTxn(txnScope string) (TxnState, bool) {
+func (s *session) getTxn(txnScope string) (*TxnState, bool) {
 	txn, exist := s.txns[txnScope]
 	if !exist {
-		return TxnState{}, false
+		return &TxnState{}, false
 	}
 	return txn, true
 }
 
-func (s *session) getCurrentScopeTxn() (TxnState, bool) {
+func (s *session) getCurrentScopeTxn() (*TxnState, bool) {
 	return s.getTxn(s.checkAndGetTxnScope())
 }
 
@@ -1586,10 +1586,10 @@ func (s *session) Txn(active bool) (kv.Transaction, error) {
 	// Check wehter we need a global transaction
 	txn, ok := s.getCurrentScopeTxn()
 	if !ok || !active {
-		return &txn, nil
+		return txn, nil
 	}
 	if !txn.validOrPending() {
-		return &txn, errors.AddStack(kv.ErrInvalidTxn)
+		return txn, errors.AddStack(kv.ErrInvalidTxn)
 	}
 	if txn.pending() {
 		defer func(begin time.Time) {
@@ -1603,7 +1603,7 @@ func (s *session) Txn(active bool) (kv.Transaction, error) {
 				zap.Error(err))
 			txn.cleanup()
 			s.sessionVars.TxnCtx.StartTS = 0
-			return &txn, err
+			return txn, err
 		}
 		s.sessionVars.TxnCtx.StartTS = txn.StartTS()
 		if s.sessionVars.TxnCtx.IsPessimistic {
@@ -1618,7 +1618,7 @@ func (s *session) Txn(active bool) (kv.Transaction, error) {
 			txn.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
 		}
 	}
-	return &txn, nil
+	return txn, nil
 }
 
 // isTxnRetryable (if returns true) means the transaction could retry.
@@ -2078,7 +2078,7 @@ func createSessionWithOpt(store kv.Storage, opt *Opt) (*session, error) {
 		return nil, err
 	}
 	s := &session{
-		txns:            make(map[string]TxnState),
+		txns:            make(map[string]*TxnState),
 		store:           store,
 		parser:          parser.New(),
 		sessionVars:     variable.NewSessionVars(),
@@ -2113,7 +2113,7 @@ func createSessionWithOpt(store kv.Storage, opt *Opt) (*session, error) {
 // a lock context, which cause we can't call createSesion directly.
 func CreateSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, error) {
 	s := &session{
-		txns:        make(map[string]TxnState),
+		txns:        make(map[string]*TxnState),
 		store:       store,
 		parser:      parser.New(),
 		sessionVars: variable.NewSessionVars(),
@@ -2424,7 +2424,7 @@ func (s *session) InitTxnWithStartTS(startTS uint64) error {
 	if err != nil {
 		return err
 	}
-	curTxn.SetVars(s.sessionVars.KVVars)
+	newTxn.SetVars(s.sessionVars.KVVars)
 	curTxn.changeInvalidToValid(newTxn)
 	err = s.loadCommonGlobalVariablesIfNeeded()
 	if err != nil {

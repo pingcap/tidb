@@ -392,12 +392,9 @@ func (s *session) StmtCommit() {
 	defer func() {
 		txn.cleanup()
 	}()
-
-	st := &txn
-	st.flushStmtBuf()
-
+	txn.flushStmtBuf()
 	// Need to flush binlog.
-	for tableID, delta := range st.mutations {
+	for tableID, delta := range txn.mutations {
 		mutation := getBinlogMutation(s, tableID)
 		mergeToMutation(mutation, delta)
 	}
@@ -412,9 +409,8 @@ func (s *session) StmtRollback() {
 // StmtGetMutation implements the sessionctx.Context interface.
 func (s *session) StmtGetMutation(tableID int64) *binlog.TableMutation {
 	txn, _ := s.getCurrentScopeTxn()
-	st := &txn
-	if _, ok := st.mutations[tableID]; !ok {
-		st.mutations[tableID] = &binlog.TableMutation{TableId: tableID}
+	if _, ok := txn.mutations[tableID]; !ok {
+		txn.mutations[tableID] = &binlog.TableMutation{TableId: tableID}
 	}
-	return st.mutations[tableID]
+	return txn.mutations[tableID]
 }
