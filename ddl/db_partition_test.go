@@ -2957,3 +2957,18 @@ func (s *testIntegrationSuite7) TestAddPartitionForTableWithWrongType(c *C) {
 	c.Assert(err, NotNil)
 	c.Assert(ddl.ErrWrongTypeColumnValue.Equal(err), IsTrue)
 }
+
+func (s *testIntegrationSuite7) TestInsertIntoPartitionTable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop tables if exists t")
+	tk.MustExec(`CREATE TABLE t(
+	a bit(1) DEFAULT NULL,
+	b int(11) DEFAULT NULL
+	) PARTITION BY HASH(a)
+	PARTITIONS 3`)
+	tk.MustExec("INSERT INTO t VALUES(0, 0)")
+	tk.MustExec("INSERT INTO t VALUES(1, 1)")
+	result := tk.MustQuery("SELECT * FROM t WHERE a = 1")
+	result.Check(testkit.Rows("\x01 1"))
+}
