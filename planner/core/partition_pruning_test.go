@@ -319,7 +319,7 @@ func (s *testPartitionPruningSuite) TestPartitionRangePrunner2CharWithCollation(
 	collate.SetNewCollationEnabledForTest(true)
 	defer collate.SetNewCollationEnabledForTest(false)
 	tc := prepareTestCtx(c,
-		"create table t (a char(32) collate utf8mb4_unicode_ci)",
+		"create table t (a char(32) collate utf8mb4_general_ci)",
 		"a",
 	)
 	lessThanDataInt := []string{"'c'", "'F'", "'h'", "'L'", "'t'"}

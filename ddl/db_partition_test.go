@@ -486,7 +486,7 @@ create table log_message_1 (
 		"partition p1 values less than (maxvalue))")
 
 	tk.MustExec("drop table if exists t;")
-	tk.MustExec(`create table t(a char(10) collate utf8mb4_unicode_ci) partition by range columns (a) (
+	tk.MustExec(`create table t(a char(10) collate utf8mb4_general_ci) partition by range columns (a) (
     	partition p0 values less than ('a'),
     	partition p1 values less than ('G'));`)
 
