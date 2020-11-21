@@ -997,6 +997,9 @@ func (w *worker) doModifyColumnTypeWithData(
 				// If timeout, we should return, check for the owner and re-wait job done.
 				return ver, nil
 			}
+			if terror.ErrorEqual(err, errNotOwner) {
+				fmt.Println(1)
+			}
 			if needRollbackData(err) {
 				if err1 := t.RemoveDDLReorgHandle(job, reorgInfo.elements); err1 != nil {
 					logutil.BgLogger().Warn("[ddl] run modify column job failed, RemoveDDLReorgHandle failed, can't convert job to rollback",

@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/table"
@@ -855,12 +856,20 @@ func newAddIndexWorker(sessCtx sessionctx.Context, worker *worker, id int, t tab
 			indexes:        indexes,
 			rowDecoder:     rowDecoder,
 			defaultVals:    make([]types.Datum, len(t.WritableCols())),
-			idxRecords:     make(map[int64][]*indexRecord, len(indexes)),
+			idxRecords:     newIndexRecords(indexes),
 			rowMap:         make(map[int64]types.Datum, len(decodeColMap)),
 			metricCounter:  metrics.BackfillTotalCounter.WithLabelValues("add_idx_speed"),
 			sqlMode:        sqlMode,
 		},
 	}
+}
+
+func newIndexRecords(indexes []table.Index) map[int64][]*indexRecord {
+	indexRecords := make(map[int64][]*indexRecord, len(indexes))
+	for _, idx := range indexes {
+		indexRecords[idx.Meta().ID] = make([]*indexRecord, 0, int(variable.GetDDLReorgBatchSize()))
+	}
+	return indexRecords
 }
 
 func (w *baseIndexWorker) AddMetricInfo(cnt float64) {
@@ -881,7 +890,7 @@ func (w *baseIndexWorker) getIndexRecord(idxInfo *model.IndexInfo, handle kv.Han
 				failpoint.Return(nil, errors.Trace(errCantDecodeRecord.GenWithStackByArgs("index",
 					errors.New("mock can't decode record error"))))
 			case "modifyColumnNotOwnerErr":
-				if idxInfo.Name.O == "_Idx$_idx" && handle.IntValue() == 7168 && atomic.CompareAndSwapUint32(&mockNotOwnerErrOnce, 0, 1) {
+				if idxInfo.Name.O == "_Idx$_idx_0" && handle.IntValue() == 7168 && atomic.CompareAndSwapUint32(&mockNotOwnerErrOnce, 0, 1) {
 					failpoint.Return(nil, errors.Trace(errNotOwner))
 				}
 			case "addIdxNotOwnerErr":
@@ -934,7 +943,8 @@ func (w *baseIndexWorker) getNextKey(taskRange reorgBackfillTask, taskDone bool)
 	if !taskDone {
 		// The task is not done. So we need to pick the last processed entry's handle and add one.
 		theFirstIndexID := w.indexes[0].Meta().ID
-		lastHandle := w.idxRecords[theFirstIndexID][len(w.idxRecords)-1].handle
+		indexRecordsLength := len(w.idxRecords[theFirstIndexID])
+		lastHandle := w.idxRecords[theFirstIndexID][indexRecordsLength-1].handle
 		return w.table.RecordKey(lastHandle).Next()
 	}
 	return taskRange.endKey.Next()
@@ -1001,6 +1011,11 @@ func (w *baseIndexWorker) fetchRowColVals(txn kv.Transaction, taskRange reorgBac
 			}
 			return true, nil
 		})
+
+	// Once the err is not nil, we don't need to calculate the nextKey.
+	if err != nil {
+		return w.idxRecords, kv.Key{}, taskDone, errors.Trace(err)
+	}
 
 	if len(w.idxRecords[w.indexes[0].Meta().ID]) == 0 {
 		taskDone = true
@@ -1147,6 +1162,7 @@ func (w *addIndexWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (taskC
 					return errors.Trace(err)
 				}
 			}
+			// The skipped row should also be counted, although these row has been added in write-only state.
 			taskCtx.addedCount++
 		}
 

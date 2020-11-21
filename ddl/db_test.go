@@ -3976,6 +3976,7 @@ func (s *testSerialDBSuite) TestModifyColumnnReorgInfo(c *C) {
 	// Check whether the reorg information is cleaned up when executing "modify column" successfully.
 	// Test encountering a "notOwnerErr" error which caused the processing backfill job to exit halfway.
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/MockGetIndexRecordErr", `return("modifyColumnNotOwnerErr")`), IsNil)
+	fmt.Println("准备...")
 	tk.MustExec(sql)
 	expectedEles = []*meta.Element{
 		{ID: 5, TypeKey: meta.ColumnElementKey},

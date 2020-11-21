@@ -228,6 +228,12 @@ func (w *backfillWorker) handleBackfillTask(d *ddlCtx, task *reorgBackfillTask, 
 	lastLogTime := time.Now()
 	startTime := lastLogTime
 
+	if tryDecodeToHandleString(task.startKey) == "7168" {
+		if _, ok := bf.(*addIndexWorker); ok {
+			fmt.Println(7168)
+		}
+	}
+
 	for {
 		// Give job chance to be canceled, if we not check it here,
 		// if there is panic in bf.BackfillDataInTxn we will never cancel the job.
@@ -560,6 +566,10 @@ func (w *worker) writePhysicalTableRecord(t table.PhysicalTable, bfWorkerType ba
 
 	for {
 		kvRanges, err := splitTableRanges(t, reorgInfo.d.store, startKey, endKey)
+		fmt.Println("kv range 个数", len(kvRanges))
+		for _, one := range kvRanges {
+			fmt.Println("start->", tryDecodeToHandleString(one.StartKey), "end->", tryDecodeToHandleString(one.EndKey))
+		}
 		if err != nil {
 			return errors.Trace(err)
 		}
