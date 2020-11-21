@@ -158,6 +158,80 @@ func handleWrongUtf8Value(ctx sessionctx.Context, col *model.ColumnInfo, casted 
 	return truncateVal, err
 }
 
+func handleZeroDatetime(ctx sessionctx.Context, col *model.ColumnInfo, casted types.Datum, str string, tmIsInvalid bool) (types.Datum, bool, error) {
+	sc := ctx.GetSessionVars().StmtCtx
+	tm := casted.GetMysqlTime()
+	mode := ctx.GetSessionVars().SQLMode
+
+	var (
+		zeroV types.Time
+		zeroT string
+	)
+	switch col.Tp {
+	case mysql.TypeDate:
+		zeroV, zeroT = types.ZeroDate, types.DateStr
+	case mysql.TypeDatetime:
+		zeroV, zeroT = types.ZeroDatetime, types.DateTimeStr
+	case mysql.TypeTimestamp:
+		zeroV, zeroT = types.ZeroTimestamp, types.TimestampStr
+	}
+
+	// ref https://dev.mysql.com/doc/refman/8.0/en/sql-mode.html#sqlmode_no_zero_date
+	// if NO_ZERO_DATE is not enabled, '0000-00-00' is permitted and inserts produce no warning
+	// if NO_ZERO_DATE is enabled, '0000-00-00' is permitted and inserts produce a warning
+	// If NO_ZERO_DATE mode and strict mode are enabled, '0000-00-00' is not permitted and inserts produce an error, unless IGNORE is given as well. For INSERT IGNORE and UPDATE IGNORE, '0000-00-00' is permitted and inserts produce a warning.
+	// if NO_ZERO_IN_DATE is not enabled, dates with zero parts are permitted and inserts produce no warning
+	// if NO_ZERO_IN_DATE is enabled, dates with zero parts are inserted as '0000-00-00' and produce a warning
+	// If NO_ZERO_IN_DATE mode and strict mode are enabled, dates with zero parts are not permitted and inserts produce an error, unless IGNORE is given as well. For INSERT IGNORE and UPDATE IGNORE, dates with zero parts are inserted as '0000-00-00' and produce a warning.
+
+	ignoreErr := sc.DupKeyAsWarning
+
+	// in MySQL 8.0, the Timestamp's case is different to Datetime/Date, as shown below:
+	//
+	// |              | NZD               | NZD|ST  | ELSE              | ELSE|ST  |
+	// | ------------ | ----------------- | ------- | ----------------- | -------- |
+	// | `0000-00-01` | Success + Warning | Error   | Success + Warning | Error    |
+	// | `0000-00-00` | Success + Warning | Error   | Success           | Success  |
+	//
+	// * **NZD**: NO_ZERO_DATE_MODE
+	// * **ST**: STRICT_TRANS_TABLES
+	// * **ELSE**: empty or NO_ZERO_IN_DATE_MODE
+	if tm.IsZero() && col.Tp == mysql.TypeTimestamp {
+		innerErr := types.ErrWrongValue.GenWithStackByArgs(zeroT, str)
+		if mode.HasStrictMode() && !ignoreErr && (tmIsInvalid || mode.HasNoZeroDateMode()) {
+			return types.NewDatum(zeroV), true, innerErr
+		}
+
+		if tmIsInvalid || mode.HasNoZeroDateMode() {
+			sc.AppendWarning(innerErr)
+		}
+		return types.NewDatum(zeroV), true, nil
+	} else if tm.IsZero() || tm.InvalidZero() {
+		if tm.IsZero() {
+			if !mode.HasNoZeroDateMode() {
+				return types.NewDatum(zeroV), true, nil
+			}
+		} else if tm.InvalidZero() {
+			if !mode.HasNoZeroInDateMode() {
+				return casted, true, nil
+			}
+		}
+
+		innerErr := types.ErrWrongValue.GenWithStackByArgs(zeroT, str)
+		if mode.HasStrictMode() && !ignoreErr {
+			return types.NewDatum(zeroV), true, innerErr
+		}
+
+		// TODO: as in MySQL 8.0's implement, warning message is `types.ErrWarnDataOutOfRange`,
+		// but this error message need a `rowIdx` argument, in this context, the `rowIdx` is missing.
+		// And refactor this function seems too complicated, so we set the warning message the same to error's.
+		sc.AppendWarning(innerErr)
+		return types.NewDatum(zeroV), true, nil
+	}
+
+	return casted, false, nil
+}
+
 // CastValue casts a value based on column type.
 // If forceIgnoreTruncate is true, truncated errors will be ignored.
 // If returnOverflow is true, don't handle overflow errors in this function.
@@ -181,75 +255,8 @@ func CastValue(ctx sessionctx.Context, val types.Datum, col *model.ColumnInfo, r
 	} else if (sc.InInsertStmt || sc.InUpdateStmt) && !casted.IsNull() &&
 		(val.Kind() != types.KindMysqlTime || !val.GetMysqlTime().IsZero()) &&
 		(col.Tp == mysql.TypeDate || col.Tp == mysql.TypeDatetime || col.Tp == mysql.TypeTimestamp) {
-		tm := casted.GetMysqlTime()
-		mode := ctx.GetSessionVars().SQLMode
-
-		var (
-			zeroV types.Time
-			zeroT string
-		)
-		switch col.Tp {
-		case mysql.TypeDate:
-			zeroV, zeroT = types.ZeroDate, types.DateStr
-		case mysql.TypeDatetime:
-			zeroV, zeroT = types.ZeroDatetime, types.DateTimeStr
-		case mysql.TypeTimestamp:
-			zeroV, zeroT = types.ZeroTimestamp, types.TimestampStr
-		}
-
-		// ref https://dev.mysql.com/doc/refman/8.0/en/sql-mode.html#sqlmode_no_zero_date
-		// if NO_ZERO_DATE is not enabled, '0000-00-00' is permitted and inserts produce no warning
-		// if NO_ZERO_DATE is enabled, '0000-00-00' is permitted and inserts produce a warning
-		// If NO_ZERO_DATE mode and strict mode are enabled, '0000-00-00' is not permitted and inserts produce an error, unless IGNORE is given as well. For INSERT IGNORE and UPDATE IGNORE, '0000-00-00' is permitted and inserts produce a warning.
-		// if NO_ZERO_IN_DATE is not enabled, dates with zero parts are permitted and inserts produce no warning
-		// if NO_ZERO_IN_DATE is enabled, dates with zero parts are inserted as '0000-00-00' and produce a warning
-		// If NO_ZERO_IN_DATE mode and strict mode are enabled, dates with zero parts are not permitted and inserts produce an error, unless IGNORE is given as well. For INSERT IGNORE and UPDATE IGNORE, dates with zero parts are inserted as '0000-00-00' and produce a warning.
-
-		ignoreErr := sc.DupKeyAsWarning
-
-		// in MySQL 8.0, the Timestamp's case is different to Datetime/Date, as shown below:
-		//
-		// |              | NZD               | NZD|ST  | ELSE              | ELSE|ST  |
-		// | ------------ | ----------------- | ------- | ----------------- | -------- |
-		// | `0000-00-01` | Success + Warning | Error   | Success + Warning | Error    |
-		// | `0000-00-00` | Success + Warning | Error   | Success           | Success  |
-		//
-		// * **NZD**: NO_ZERO_DATE_MODE
-		// * **ST**: STRICT_TRANS_TABLES
-		// * **ELSE**: empty or NO_ZERO_IN_DATE_MODE
-		if tm.IsZero() && col.Tp == mysql.TypeTimestamp {
-			isInZero := types.ErrWrongValue.Equal(err)
-
-			innerErr := types.ErrWrongValue.GenWithStackByArgs(zeroT, val.GetString())
-			if mode.HasStrictMode() && !ignoreErr && (isInZero || mode.HasNoZeroDateMode()) {
-				return types.NewDatum(zeroV), innerErr
-			}
-
-			if isInZero || mode.HasNoZeroDateMode() {
-				sc.AppendWarning(innerErr)
-			}
-			return types.NewDatum(zeroV), nil
-		} else if tm.IsZero() || tm.InvalidZero() {
-			if tm.IsZero() {
-				if !mode.HasNoZeroDateMode() {
-					return types.NewDatum(zeroV), nil
-				}
-			} else if tm.InvalidZero() {
-				if !mode.HasNoZeroInDateMode() {
-					return casted, nil
-				}
-			}
-
-			innerErr := types.ErrWrongValue.GenWithStackByArgs(zeroT, val.GetString())
-			if mode.HasStrictMode() && !ignoreErr {
-				return types.NewDatum(zeroV), innerErr
-			}
-
-			// TODO: as in MySQL 8.0's implement, warning message is `types.ErrWarnDataOutOfRange`,
-			// but this error message need a `rowIdx` argument, in this context, the `rowIdx` is missing.
-			// And refactor this function seems too complicated, so we set the warning message the same to error's.
-			sc.AppendWarning(innerErr)
-			return types.NewDatum(zeroV), nil
+		if innCasted, exit, innErr := handleZeroDatetime(ctx, col, casted, val.GetString(), types.ErrWrongValue.Equal(err)); exit {
+			return innCasted, innErr
 		}
 	}
 
