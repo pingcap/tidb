@@ -198,6 +198,9 @@ type session struct {
 }
 
 func (s *session) setTxn(txnScope string, txn *TxnState) {
+	if s.txns == nil {
+		s.txns = make(map[string]*TxnState)
+	}
 	s.txns[txnScope] = txn
 }
 
