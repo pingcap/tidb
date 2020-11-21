@@ -27,6 +27,7 @@ import (
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/log"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/format"
@@ -3765,16 +3766,37 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, delete *ast.DeleteStmt) (
 		}
 	}
 
+	uids := make([]int64, 0, 4)
+	for _, cols := range b.handleHelper.tailMap() {
+		for _, col := range cols {
+			uids = append(uids, col.UniqueID)
+		}
+	}
+	uidsInDel := make([]int64, 0, del.SelectPlan.Schema().Len())
+	for _, col := range del.SelectPlan.Schema().Columns {
+		uidsInDel = append(uidsInDel, col.UniqueID)
+	}
 	logutil.BgLogger().Warn("build delete",
 		zap.String("original tblID to handle map", fmt.Sprintf("%v", b.handleHelper.tailMap())),
+		zap.Int64s("unique id in handle map", uids),
+		zap.Int64s("unique id in delete", uidsInDel),
+		zap.String("del's names", fmt.Sprintf("%v", fmt.Sprintf("%v", del.names))),
 		zap.String("child plan", ToString(del.SelectPlan)),
 	)
 
 	tblID2Handle, err := resolveIndicesForTblID2Handle(b.handleHelper.tailMap(), del.SelectPlan.Schema())
-	logutil.BgLogger().Warn("build delete", zap.String("resolved tblID to handle map", fmt.Sprintf("%v", b.handleHelper.tailMap())))
 	if err != nil {
 		return nil, err
 	}
+	handlePos := make([]int, 0, 4)
+	for _, cols := range tblID2Handle {
+		for _, col := range cols {
+			handlePos = append(handlePos, col.Index)
+		}
+	}
+	logutil.BgLogger().Warn("build delete", zap.String("resolved tblID to handle map", fmt.Sprintf("%v", tblID2Handle)),
+		zap.Ints("handle col positions", handlePos),
+	)
 	if del.IsMultiTable {
 		// tblID2TableName is the table map value is an array which contains table aliases.
 		// Table ID may not be unique for deleting multiple tables, for statements like
@@ -3783,10 +3805,11 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, delete *ast.DeleteStmt) (
 		tblID2TableName := make(map[int64][]*ast.TableName, len(delete.Tables.Tables))
 		for _, tn := range delete.Tables.Tables {
 			tblID2TableName[tn.TableInfo.ID] = append(tblID2TableName[tn.TableInfo.ID], tn)
+			log.Warn("build delete", zap.Int64("tbl id", tn.TableInfo.ID), zap.String("name", fmt.Sprintf("%v.%v", tn.Schema.L, tn.Name.L)))
 		}
 		tblID2Handle = del.cleanTblID2HandleMap(tblID2TableName, tblID2Handle, del.names)
 	}
-	logutil.BgLogger().Warn("build delete", zap.String("cleaned tblID to handle map", fmt.Sprintf("%v", b.handleHelper.tailMap())))
+	logutil.BgLogger().Warn("build delete", zap.String("cleaned tblID to handle map", fmt.Sprintf("%v", tblID2Handle)))
 	tblID2table := make(map[int64]table.Table, len(tblID2Handle))
 	for id := range tblID2Handle {
 		tblID2table[id], _ = b.is.TableByID(id)
