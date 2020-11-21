@@ -2,6 +2,7 @@ package meta
 
 import (
 	"encoding/json"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 )
