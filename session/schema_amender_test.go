@@ -374,7 +374,7 @@ func (s *testSchemaAmenderSuite) TestAmendCollectAndGenMutations(c *C) {
 			txn, err := se.store.Begin(oracle.GlobalTxnScope)
 			c.Assert(err, IsNil)
 			curTxn, ok := se.getCurrentScopeTxn()
-			c.Assert(ok, IsTrue)
+			c.Assert(ok, IsFalse)
 			curTxn.changeInvalidToValid(txn)
 			txn, err = se.Txn(true)
 			c.Assert(err, IsNil)

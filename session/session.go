@@ -197,19 +197,22 @@ type session struct {
 	idxUsageCollector *handle.SessionIndexUsageCollector
 }
 
-func (s *session) setTxn(txnScope string, txn TxnState) {
-	s.txns[txnScope] = &txn
+func (s *session) setTxn(txnScope string, txn *TxnState) {
+	s.txns[txnScope] = txn
 }
 
 func (s *session) initTxns() {
-	globalTxn := TxnState{}
+	if s.txns == nil {
+		s.txns = make(map[string]*TxnState)
+	}
+	globalTxn := new(TxnState)
 	globalTxn.init()
-	s.txns[oracle.GlobalTxnScope] = &globalTxn
+	s.txns[oracle.GlobalTxnScope] = globalTxn
 	currentTxnScope := s.checkAndGetTxnScope()
 	if currentTxnScope != oracle.GlobalTxnScope {
-		txn := TxnState{}
+		txn := new(TxnState)
 		globalTxn.init()
-		s.txns[currentTxnScope] = &txn
+		s.txns[currentTxnScope] = txn
 	}
 }
 
@@ -1350,7 +1353,11 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 
 		// Handle the stmt commit/rollback.
 		txn, ok := se.getCurrentScopeTxn()
-		if ok && txn.Valid() {
+		if !ok {
+			err := se.NewTxn(ctx)
+			txn, _ = se.getCurrentScopeTxn()
+		}
+		if txn.Valid() {
 			if err != nil {
 				se.StmtRollback()
 			} else {
@@ -1585,7 +1592,16 @@ func (s *session) DropPreparedStmt(stmtID uint32) error {
 func (s *session) Txn(active bool) (kv.Transaction, error) {
 	// Check wehter we need a global transaction
 	txn, ok := s.getCurrentScopeTxn()
-	if !ok || !active {
+	if !ok {
+		// Create a new one if there is no txn for the current txn scope
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		if err := s.NewTxn(ctx); err != nil {
+			return txn, err
+		}
+		txn, _ = s.getCurrentScopeTxn()
+	}
+	if !active {
 		return txn, nil
 	}
 	if !txn.validOrPending() {
@@ -1682,6 +1698,7 @@ func (s *session) NewTxn(ctx context.Context) error {
 		newTxn.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
 	}
 	txn.changeInvalidToValid(newTxn)
+	s.setTxn(txnScope, txn)
 	is := domain.GetDomain(s).InfoSchema()
 	s.sessionVars.TxnCtx = &variable.TransactionContext{
 		InfoSchema:    is,
@@ -1691,6 +1708,7 @@ func (s *session) NewTxn(ctx context.Context) error {
 		ShardStep:     int(s.sessionVars.ShardAllocateStep),
 		TxnScope:      txnScope,
 	}
+	t, ok := s.getCurrentScopeTxn()
 	return nil
 }
 

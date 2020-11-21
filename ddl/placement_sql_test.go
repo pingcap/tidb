@@ -464,7 +464,6 @@ PARTITION BY RANGE (c) (
 		} else {
 			c.Assert(err, NotNil)
 			c.Assert(err.Error(), Matches, testcase.err.Error())
-			fmt.Println(err.Error())
 		}
 	}
 }
