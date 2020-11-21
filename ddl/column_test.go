@@ -938,7 +938,7 @@ func (s *testColumnSuite) TestModifyColumn(c *C) {
 		err    error
 	}{
 		{"int", "bigint", nil},
-		{"int", "int unsigned", errUnsupportedModifyColumn.GenWithStackByArgs("length 10 is less than origin 11")},
+		{"int", "int unsigned", errUnsupportedModifyColumn.GenWithStackByArgs("can't change unsigned integer to signed or vice versa")},
 		{"varchar(10)", "text", nil},
 		{"varbinary(10)", "blob", nil},
 		{"text", "blob", errUnsupportedModifyCharset.GenWithStackByArgs("charset from utf8mb4 to binary")},
