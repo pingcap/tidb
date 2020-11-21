@@ -1597,7 +1597,7 @@ func (s *session) DropPreparedStmt(stmtID uint32) error {
 func (s *session) Txn(active bool) (kv.Transaction, error) {
 	// Check wehter we need a global transaction
 	txn, ok := s.getCurrentScopeTxn()
-	if !ok {
+	if !ok && s.checkAndGetTxnScope() != oracle.GlobalTxnScope {
 		// Create a new one if there is no txn for the current txn scope
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
