@@ -352,7 +352,7 @@ func (tf *txnFuture) wait() (kv.Transaction, error) {
 	return tf.store.Begin(tf.future.GetTxnScope())
 }
 
-func (s *session) getTxnFuture(ctx context.Context) *txnFuture {
+func (s *session) getTxnFuture(ctx context.Context, txnScope string) *txnFuture {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("session.getTxnFuture", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
@@ -362,9 +362,9 @@ func (s *session) getTxnFuture(ctx context.Context) *txnFuture {
 	oracleStore := s.store.GetOracle()
 	var tsFuture oracle.Future
 	if s.sessionVars.LowResolutionTSO {
-		tsFuture = oracleStore.GetLowResolutionTimestampAsync(ctx, &oracle.Option{TxnScope: s.sessionVars.TxnScope})
+		tsFuture = oracleStore.GetLowResolutionTimestampAsync(ctx, &oracle.Option{TxnScope: txnScope})
 	} else {
-		tsFuture = oracleStore.GetTimestampAsync(ctx, &oracle.Option{TxnScope: s.sessionVars.TxnScope})
+		tsFuture = oracleStore.GetTimestampAsync(ctx, &oracle.Option{TxnScope: txnScope})
 	}
 	ret := &txnFuture{future: tsFuture, store: s.store}
 	failpoint.InjectContext(ctx, "mockGetTSFail", func() {
@@ -376,22 +376,24 @@ func (s *session) getTxnFuture(ctx context.Context) *txnFuture {
 // HasDirtyContent checks whether there's dirty update on the given table.
 // Put this function here is to avoid cycle import.
 func (s *session) HasDirtyContent(tid int64) bool {
-	if s.txn.Transaction == nil {
+	txn, ok := s.getCurrentScopeTxn()
+	if !ok || txn.Transaction == nil {
 		return false
 	}
 	seekKey := tablecodec.EncodeTablePrefix(tid)
-	it, err := s.txn.GetMemBuffer().Iter(seekKey, nil)
+	it, err := txn.GetMemBuffer().Iter(seekKey, nil)
 	terror.Log(err)
 	return it.Valid() && bytes.HasPrefix(it.Key(), seekKey)
 }
 
 // StmtCommit implements the sessionctx.Context interface.
 func (s *session) StmtCommit() {
+	txn, _ := s.getCurrentScopeTxn()
 	defer func() {
-		s.txn.cleanup()
+		txn.cleanup()
 	}()
 
-	st := &s.txn
+	st := &txn
 	st.flushStmtBuf()
 
 	// Need to flush binlog.
@@ -403,12 +405,14 @@ func (s *session) StmtCommit() {
 
 // StmtRollback implements the sessionctx.Context interface.
 func (s *session) StmtRollback() {
-	s.txn.cleanup()
+	txn, _ := s.getCurrentScopeTxn()
+	txn.cleanup()
 }
 
 // StmtGetMutation implements the sessionctx.Context interface.
 func (s *session) StmtGetMutation(tableID int64) *binlog.TableMutation {
-	st := &s.txn
+	txn, _ := s.getCurrentScopeTxn()
+	st := &txn
 	if _, ok := st.mutations[tableID]; !ok {
 		st.mutations[tableID] = &binlog.TableMutation{TableId: tableID}
 	}

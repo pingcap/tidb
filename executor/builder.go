@@ -246,6 +246,10 @@ func (b *executorBuilder) buildCancelDDLJobs(v *plannercore.CancelDDLJobs) Execu
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 		jobIDs:       v.JobIDs,
 	}
+	// DDL should be started as a global transaction
+	originTxnScope := e.ctx.GetSessionVars().TxnScope
+	e.ctx.GetSessionVars().TxnScope = oracle.GlobalTxnScope
+	defer e.ctx.GetSessionVars().SetTxnScope(originTxnScope)
 	txn, err := e.ctx.Txn(true)
 	if err != nil {
 		b.err = err
@@ -291,6 +295,11 @@ func (b *executorBuilder) buildShowDDL(v *plannercore.ShowDDL) Executor {
 		b.err = err
 		return nil
 	}
+
+	// DDL should be started as a global transaction
+	originTxnScope := e.ctx.GetSessionVars().TxnScope
+	e.ctx.GetSessionVars().TxnScope = oracle.GlobalTxnScope
+	defer e.ctx.GetSessionVars().SetTxnScope(originTxnScope)
 	txn, err := e.ctx.Txn(true)
 	if err != nil {
 		b.err = err
@@ -450,11 +459,6 @@ func (b *executorBuilder) buildRecoverIndex(v *plannercore.RecoverIndex) Executo
 	}
 	sessCtx := e.ctx.GetSessionVars().StmtCtx
 	e.handleCols = buildHandleColsForExec(sessCtx, tblInfo, index.Meta(), e.columns)
-	// Transactions that write metadata should be started as the global transactions.
-	if err := e.baseExecutor.ctx.GetSessionVars().SetSystemVar("txn_scope", oracle.GlobalTxnScope); err != nil {
-		b.err = err
-		return nil
-	}
 	return e
 }
 
@@ -516,11 +520,6 @@ func (b *executorBuilder) buildCleanupIndex(v *plannercore.CleanupIndex) Executo
 	}
 	sessCtx := e.ctx.GetSessionVars().StmtCtx
 	e.handleCols = buildHandleColsForExec(sessCtx, tblInfo, index.Meta(), e.columns)
-	// Transactions that write metadata should be started as the global transactions.
-	if err := e.baseExecutor.ctx.GetSessionVars().SetSystemVar("txn_scope", oracle.GlobalTxnScope); err != nil {
-		b.err = err
-		return nil
-	}
 	return e
 }
 
@@ -890,11 +889,6 @@ func (b *executorBuilder) buildDDL(v *plannercore.DDL) Executor {
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 		stmt:         v.Statement,
 		is:           b.is,
-	}
-	// Transactions that write metadata should be started as the global transactions.
-	if err := e.baseExecutor.ctx.GetSessionVars().SetSystemVar("txn_scope", oracle.GlobalTxnScope); err != nil {
-		b.err = err
-		return nil
 	}
 	return e
 }

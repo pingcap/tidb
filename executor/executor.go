@@ -47,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
@@ -520,6 +521,10 @@ func (e *ShowDDLJobQueriesExec) Open(ctx context.Context) error {
 	if err := e.baseExecutor.Open(ctx); err != nil {
 		return err
 	}
+	// DDL should be started as a global transaction
+	originTxnScope := e.ctx.GetSessionVars().TxnScope
+	e.ctx.GetSessionVars().TxnScope = oracle.GlobalTxnScope
+	defer e.ctx.GetSessionVars().SetTxnScope(originTxnScope)
 	txn, err := e.ctx.Txn(true)
 	if err != nil {
 		return err
@@ -565,6 +570,10 @@ func (e *ShowDDLJobsExec) Open(ctx context.Context) error {
 	if err := e.baseExecutor.Open(ctx); err != nil {
 		return err
 	}
+	// DDL should be started as a global transaction
+	originTxnScope := e.ctx.GetSessionVars().TxnScope
+	e.ctx.GetSessionVars().TxnScope = oracle.GlobalTxnScope
+	defer e.ctx.GetSessionVars().SetTxnScope(originTxnScope)
 	txn, err := e.ctx.Txn(true)
 	if err != nil {
 		return err

@@ -1624,6 +1624,11 @@ func (s *SessionVars) setTxnMode(val string) error {
 	return nil
 }
 
+// SetTxnScope sets the transaction scope for the current session.
+func (s *SessionVars) SetTxnScope(txnScope string) {
+	s.TxnScope = txnScope
+}
+
 // SetPrevStmtDigest sets the digest of the previous statement.
 func (s *SessionVars) SetPrevStmtDigest(prevStmtDigest string) {
 	s.prevStmtDigest = prevStmtDigest
