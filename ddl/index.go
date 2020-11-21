@@ -15,7 +15,6 @@ package ddl
 
 import (
 	"context"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"math"
 	"strings"
 	"time"
@@ -33,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/table"
