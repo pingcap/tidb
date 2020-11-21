@@ -153,7 +153,9 @@ func (p *LogicalJoin) GetMergeJoin(prop *property.PhysicalProperty, schema *expr
 	}
 	for _, lhsChildProperty := range p.leftProperties {
 		offsets := getMaxSortPrefix(lhsChildProperty, leftJoinKeys)
-		if len(offsets) == 0 {
+		// If not all equal conditions hit properties. We ban merge join heuristically. Because in this case, merge join
+		// may get a very low performance. In executor, executes join results before other conditions filter it.
+		if len(offsets) < len(leftJoinKeys) {
 			continue
 		}
 
@@ -391,7 +393,6 @@ func (p *LogicalJoin) getHashJoin(prop *property.PhysicalProperty, innerIdx int,
 // When inner plan is TableReader, the parameter `ranges` will be nil. Because pk only have one column. So all of its range
 // is generated during execution time.
 func (p *LogicalJoin) constructIndexJoin(
-	joinTP string,
 	prop *property.PhysicalProperty,
 	outerIdx int,
 	innerTask task,
@@ -440,36 +441,33 @@ func (p *LogicalJoin) constructIndexJoin(
 	}
 
 	var outerHashKeys, innerHashKeys []*expression.Column
-	// HashKey is only used for IndexJoin and IndexHashJoin since they need to
-	// build hash tables.
-	if joinTP != plancodec.TypeIndexMergeJoin {
-		outerHashKeys, innerHashKeys = make([]*expression.Column, len(newOuterKeys)), make([]*expression.Column, len(newInnerKeys))
-		copy(outerHashKeys, newOuterKeys)
-		copy(innerHashKeys, newInnerKeys)
-		// we can use the `col <eq> col` in `OtherCondition` to build the hashtable to avoid the unnecessary calculating.
-		for i := len(newOtherConds) - 1; i >= 0; i = i - 1 {
-			switch c := newOtherConds[i].(type) {
-			case *expression.ScalarFunction:
-				if c.FuncName.L == ast.EQ {
-					lhs, ok1 := c.GetArgs()[0].(*expression.Column)
-					rhs, ok2 := c.GetArgs()[1].(*expression.Column)
-					if ok1 && ok2 {
-						outerSchema, innerSchema := p.Children()[outerIdx].Schema(), p.Children()[1-outerIdx].Schema()
-						if outerSchema.Contains(lhs) && innerSchema.Contains(rhs) {
-							outerHashKeys = append(outerHashKeys, lhs)
-							innerHashKeys = append(innerHashKeys, rhs)
-						} else if innerSchema.Contains(lhs) && outerSchema.Contains(rhs) {
-							outerHashKeys = append(outerHashKeys, rhs)
-							innerHashKeys = append(innerHashKeys, lhs)
-						}
-						newOtherConds = append(newOtherConds[:i], newOtherConds[i+1:]...)
+	outerHashKeys, innerHashKeys = make([]*expression.Column, len(newOuterKeys)), make([]*expression.Column, len(newInnerKeys))
+	copy(outerHashKeys, newOuterKeys)
+	copy(innerHashKeys, newInnerKeys)
+	// we can use the `col <eq> col` in `OtherCondition` to build the hashtable to avoid the unnecessary calculating.
+	for i := len(newOtherConds) - 1; i >= 0; i = i - 1 {
+		switch c := newOtherConds[i].(type) {
+		case *expression.ScalarFunction:
+			if c.FuncName.L == ast.EQ {
+				lhs, ok1 := c.GetArgs()[0].(*expression.Column)
+				rhs, ok2 := c.GetArgs()[1].(*expression.Column)
+				if ok1 && ok2 {
+					outerSchema, innerSchema := p.Children()[outerIdx].Schema(), p.Children()[1-outerIdx].Schema()
+					if outerSchema.Contains(lhs) && innerSchema.Contains(rhs) {
+						outerHashKeys = append(outerHashKeys, lhs)
+						innerHashKeys = append(innerHashKeys, rhs)
+					} else if innerSchema.Contains(lhs) && outerSchema.Contains(rhs) {
+						outerHashKeys = append(outerHashKeys, rhs)
+						innerHashKeys = append(innerHashKeys, lhs)
 					}
+					newOtherConds = append(newOtherConds[:i], newOtherConds[i+1:]...)
 				}
-			default:
-				continue
 			}
+		default:
+			continue
 		}
 	}
+
 	baseJoin := basePhysicalJoin{
 		InnerChildIdx:   1 - outerIdx,
 		LeftConditions:  p.LeftConditions,
@@ -506,10 +504,14 @@ func (p *LogicalJoin) constructIndexMergeJoin(
 	path *util.AccessPath,
 	compareFilters *ColWithCmpFuncManager,
 ) []PhysicalPlan {
-	indexJoins := p.constructIndexJoin(plancodec.TypeIndexMergeJoin, prop, outerIdx, innerTask, ranges, keyOff2IdxOff, path, compareFilters)
+	indexJoins := p.constructIndexJoin(prop, outerIdx, innerTask, ranges, keyOff2IdxOff, path, compareFilters)
 	indexMergeJoins := make([]PhysicalPlan, 0, len(indexJoins))
 	for _, plan := range indexJoins {
 		join := plan.(*PhysicalIndexJoin)
+		// Index merge join can't handle hash keys. So we ban it heuristically.
+		if len(join.InnerHashKeys) > len(join.InnerJoinKeys) {
+			return nil
+		}
 		hasPrefixCol := false
 		for _, l := range join.IdxColLens {
 			if l != types.UnspecifiedLength {
@@ -591,7 +593,7 @@ func (p *LogicalJoin) constructIndexHashJoin(
 	path *util.AccessPath,
 	compareFilters *ColWithCmpFuncManager,
 ) []PhysicalPlan {
-	indexJoins := p.constructIndexJoin(plancodec.TypeIndexHashJoin, prop, outerIdx, innerTask, ranges, keyOff2IdxOff, path, compareFilters)
+	indexJoins := p.constructIndexJoin(prop, outerIdx, innerTask, ranges, keyOff2IdxOff, path, compareFilters)
 	indexHashJoins := make([]PhysicalPlan, 0, len(indexJoins))
 	for _, plan := range indexJoins {
 		join := plan.(*PhysicalIndexJoin)
@@ -759,7 +761,7 @@ func (p *LogicalJoin) buildIndexJoinInner2TableScan(
 			failpoint.Return(p.constructIndexHashJoin(prop, outerIdx, innerTask, nil, keyOff2IdxOff, nil, nil))
 		}
 	})
-	joins = append(joins, p.constructIndexJoin(plancodec.TypeIndexJoin, prop, outerIdx, innerTask, ranges, keyOff2IdxOff, nil, nil)...)
+	joins = append(joins, p.constructIndexJoin(prop, outerIdx, innerTask, ranges, keyOff2IdxOff, nil, nil)...)
 	// We can reuse the `innerTask` here since index nested loop hash join
 	// do not need the inner child to promise the order.
 	joins = append(joins, p.constructIndexHashJoin(prop, outerIdx, innerTask, ranges, keyOff2IdxOff, nil, nil)...)
@@ -794,7 +796,7 @@ func (p *LogicalJoin) buildIndexJoinInner2IndexScan(
 			failpoint.Return(p.constructIndexHashJoin(prop, outerIdx, innerTask, helper.chosenRanges, keyOff2IdxOff, helper.chosenPath, helper.lastColManager))
 		}
 	})
-	joins = append(joins, p.constructIndexJoin(plancodec.TypeIndexJoin, prop, outerIdx, innerTask, helper.chosenRanges, keyOff2IdxOff, helper.chosenPath, helper.lastColManager)...)
+	joins = append(joins, p.constructIndexJoin(prop, outerIdx, innerTask, helper.chosenRanges, keyOff2IdxOff, helper.chosenPath, helper.lastColManager)...)
 	// We can reuse the `innerTask` here since index nested loop hash join
 	// do not need the inner child to promise the order.
 	joins = append(joins, p.constructIndexHashJoin(prop, outerIdx, innerTask, helper.chosenRanges, keyOff2IdxOff, helper.chosenPath, helper.lastColManager)...)

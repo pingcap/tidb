@@ -172,7 +172,7 @@ func Parse(ctx sessionctx.Context, src string) ([]ast.StmtNode, error) {
 	logutil.BgLogger().Debug("compiling", zap.String("source", src))
 	charset, collation := ctx.GetSessionVars().GetCharsetInfo()
 	p := parser.New()
-	p.EnableWindowFunc(ctx.GetSessionVars().EnableWindowFunction)
+	p.SetParserConfig(ctx.GetSessionVars().BuildParserConfig())
 	p.SetSQLMode(ctx.GetSessionVars().SQLMode)
 	stmts, warns, err := p.Parse(src, charset, collation)
 	for _, warn := range warns {
