@@ -44,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/admin"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
 )
@@ -356,7 +357,9 @@ func (s *testIntegrationSuite2) TestCreateTableWithHashPartition(c *C) {
 	tk.MustExec("create table t2 (a date, b datetime) partition by hash (EXTRACT(YEAR_MONTH FROM a)) partitions 7")
 }
 
-func (s *testIntegrationSuite1) TestCreateTableWithRangeColumnPartition(c *C) {
+func (s *testIntegrationSuite7) TestCreateTableWithRangeColumnPartition(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists log_message_1;")
@@ -477,6 +480,13 @@ create table log_message_1 (
 				"PARTITION p1 VALUES LESS THAN (20190906));",
 			ddl.ErrWrongTypeColumnValue,
 		},
+		{
+			"create table t(a char(10) collate utf8mb4_bin) " +
+				"partition by range columns (a) (" +
+				"partition p0 values less than ('a'), " +
+				"partition p1 values less than ('G'));",
+			ddl.ErrRangeNotIncreasing,
+		},
 	}
 	for i, t := range cases {
 		_, err := tk.Exec(t.sql)
@@ -486,13 +496,25 @@ create table log_message_1 (
 		))
 	}
 
+	tk.MustExec("drop table if exists t1;")
 	tk.MustExec("create table t1 (a int, b char(3)) partition by range columns (a, b) (" +
 		"partition p0 values less than (1, 'a')," +
 		"partition p1 values less than (2, maxvalue))")
 
+	tk.MustExec("drop table if exists t2;")
 	tk.MustExec("create table t2 (a int, b char(3)) partition by range columns (b) (" +
 		"partition p0 values less than ( 'a')," +
 		"partition p1 values less than (maxvalue))")
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec(`create table t(a char(10) collate utf8mb4_unicode_ci) partition by range columns (a) (
+    	partition p0 values less than ('a'),
+    	partition p1 values less than ('G'));`)
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec(`create table t(a int) partition by range columns (a) (
+    	partition p0 values less than (10),
+    	partition p1 values less than (20));`)
 }
 
 func (s *testIntegrationSuite1) TestCreateTableWithListPartition(c *C) {
