@@ -1891,4 +1891,7 @@ func (s *testIntegrationSuite) TestMultiUpdateOnPrimaryKey(c *C) {
 
 	tk.MustExec(`UPDATE t m, t n SET m.a = m.a + 1, n.b = n.b + 10`)
 	tk.MustQuery("SELECT * FROM t").Check(testkit.Rows("2 22"))
+
+	tk.MustExec(`UPDATE t m, t n, t q SET m.a = m.a + 1, n.b = n.b + 10, q.b = q.b - 10`)
+	tk.MustQuery("SELECT * FROM t").Check(testkit.Rows("3 12"))
 }

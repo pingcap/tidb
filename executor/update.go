@@ -107,8 +107,10 @@ func (e *UpdateExec) prepare(ctx context.Context, schema *expression.Schema, row
 
 func (e *UpdateExec) merge(ctx context.Context, row, newData []types.Datum, mergeGenerated bool) error {
 	if !e.multiUpdateOnSameTable {
+		// merge is not needed if there is no multi-update on the same table
 		return nil
 	}
+
 	if e.mergedRowData == nil {
 		e.mergedRowData = make(map[int64]*kv.HandleMap)
 	}

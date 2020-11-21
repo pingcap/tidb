@@ -279,10 +279,10 @@ func (s *testUpdateSuite) TestMultiUpdateOnSameTable(c *C) {
 	tk.MustExec("insert into t values()")
 	tk.MustExec("update t t1, t t2 set t2.y=1, t1.x=2")
 	tk.MustQuery("select * from t").Check(testkit.Rows("2 1"))
-
 	tk.MustExec("update t t1, t t2 set t1.x=t2.y, t2.y=t1.x")
 	tk.MustQuery("select * from t").Check(testkit.Rows("1 2"))
 
+	// Update generated columns
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(x int, y int, z int as (x+10) stored, w int as (y-10) virtual)")
 	tk.MustExec("insert into t(x, y) values(1, 2), (3, 4)")
@@ -300,6 +300,32 @@ func (s *testUpdateSuite) TestMultiUpdateOnSameTable(c *C) {
 
 	tk.MustExec("update t t1, t t2 set t1.a=4, t2.b=5")
 	tk.MustQuery("select * from t").Check(testkit.Rows("4 5 9"))
+
+	// Update primary keys
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int primary key)")
+	tk.MustExec("insert into t values (1), (2)")
+	tk.MustExec("update t set a=a+2")
+	tk.MustQuery("select * from t").Check(testkit.Rows("3", "4"))
+	tk.MustExec("update t m, t n set m.a = n.a+10 where m.a=n.a")
+	tk.MustQuery("select * from t").Check(testkit.Rows("13", "14"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int primary key, b int)")
+	tk.MustExec("insert into t values (1,3), (2,4)")
+	tk.MustExec("update t m, t n set m.a = n.a+10, n.b = m.b+1 where m.a=n.a")
+	tk.MustQuery("select * from t").Check(testkit.Rows("11 4", "12 5"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int, c int, primary key(a, b))")
+	tk.MustExec("insert into t values (1,3,5), (2,4,6)")
+	tk.MustExec("update t m, t n set m.a = n.a+10 where m.a=n.a")
+	tk.MustQuery("select * from t").Check(testkit.Rows("11 3 5", "12 4 6"))
+	tk.MustExec("update t m, t n set n.b = m.a+1, m.c = m.a+m.b where m.b=n.b")
+	tk.MustQuery("select * from t").Check(testkit.Rows("11 12 14", "12 13 16"))
+	tk.MustExec("update t m, t n, t q set m.a = m.a+1, n.c = n.c-1, q.c = q.a+q.b where m.b=n.b and n.b=q.b")
+	tk.MustQuery("select * from t").Check(testkit.Rows("12 12 23", "13 13 25"))
 }
 
 var _ = SerialSuites(&testSuite11{&baseTestSuite{}})
