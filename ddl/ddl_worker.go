@@ -729,7 +729,7 @@ func (w *worker) handelParentJob(d *ddlCtx, job *model.Job, tableInfo *model.Tab
 			case <-ticker.C:
 				reorganizeTaskNum := int64(0)
 				lastLinearTaskID := int64(0)
-				for taskID := int64(0); taskID < subTaskNum; taskID++ {
+				for taskID := int64(1); taskID <= subTaskNum; taskID++ {
 					isLinear := false
 					err = kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
 						t := meta.NewMeta(txn)
@@ -744,7 +744,7 @@ func (w *worker) handelParentJob(d *ddlCtx, job *model.Job, tableInfo *model.Tab
 							currentTable = tbl.(table.PhysicalTable)
 						}
 						startHandle, _, _, runner, status, subTaskProcessedCount, startTime, err := t.GetDDLSubTaskReorgInfo(job.ID, taskID, currentTable.Meta().IsCommonHandle)
-						costTime := -startTime
+						costTime := model.TSConvert2Time(txn.StartTS()).Unix() - startTime
 						switch status {
 						case meta.Reorganized:
 							lastLinearTaskID = taskID

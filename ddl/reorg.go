@@ -274,6 +274,8 @@ type subTaskReorgInfo struct {
 	Status meta.SubTaskStatus
 
 	Runner string
+
+	StartTime int64
 }
 
 func (r *reorgInfo) String() string {

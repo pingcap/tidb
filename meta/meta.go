@@ -1178,7 +1178,7 @@ func (m *Meta) GetDDLSubTaskReorgInfo(jobID int64, subTaskID int64, isCommonHand
 	if err != nil {
 		return nil, nil, 0, RunnerErrStr, UNKOWN, 0, 0, errors.Trace(err)
 	}
-	startTime, err = m.GetRorgSubTaskStartTime(jobID, subTaskID)
+	startTime, err = m.GetReorgSubTaskStartTime(jobID, subTaskID)
 	if err != nil {
 		return nil, nil, 0, RunnerErrStr, UNKOWN, 0, 0, errors.Trace(err)
 	}
@@ -1255,7 +1255,7 @@ func (m *Meta) GetRorgSubTaskRowCount(jobID int64, taskID int64) (rowCount int64
 	return count, errors.Trace(err)
 }
 
-func (m *Meta) GetRorgSubTaskStartTime(jobID int64, taskID int64) (int64, error) {
+func (m *Meta) GetReorgSubTaskStartTime(jobID int64, taskID int64) (int64, error) {
 	bs, err := m.txn.HGet(mDDLSubTaskReorgKey, m.reorgSubTaskStartTime(jobID, taskID))
 	if err != nil {
 		return 0, errors.Trace(err)
