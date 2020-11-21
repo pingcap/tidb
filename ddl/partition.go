@@ -317,14 +317,6 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.CreateTableStmt) (*m
 		}
 		pi.Expr = buf.String()
 	} else if s.Partition.ColumnNames != nil {
-<<<<<<< HEAD
-		// TODO: Support multiple columns for 'PARTITION BY RANGE COLUMNS'.
-		if len(s.Partition.ColumnNames) != 1 {
-			pi.Enable = false
-			ctx.GetSessionVars().StmtCtx.AppendWarning(ErrUnsupportedPartitionByRangeColumns)
-		}
-=======
->>>>>>> fbaab3ecb... ddl, planner: make partition table consider collation in create table and select sentence (#20937)
 		pi.Columns = make([]model.CIStr, 0, len(s.Partition.ColumnNames))
 		for _, cn := range s.Partition.ColumnNames {
 			pi.Columns = append(pi.Columns, cn.Name)
