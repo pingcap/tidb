@@ -16,7 +16,6 @@ package ddl
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/table"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -34,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/table"
 	tidbutil "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/logutil"
