@@ -7,23 +7,24 @@ import (
 	"github.com/pingcap/parser/model"
 )
 
-// ActionType of SubTask
+//SubTaskType: the ActionType of SubTask
 type SubTaskType byte
 
+//SubTaskStatus: status of  SubTask execution
 type SubTaskStatus byte
 
 const (
-	// addIndexSubTaskType
+	//AddIndexSubTaskType: subTaskActionType of addIndex
 	AddIndexSubTaskType SubTaskType = 1
 
-	//When the subTask status is not executed or empty
+	//RunnerEmptyStr: When the subTask status is not executed or empty
 	RunnerEmptyStr = ""
 
-	//SubTask worker type
+	//SubTaskTypeStr: SubTask worker type str
 	SubTaskTypeStr = "subTask"
 )
 
-// the status of execution SubTask
+// the status of  SubTask execution
 const (
 	Running     SubTaskStatus = 0
 	Unclaimed   SubTaskStatus = 1
@@ -33,12 +34,12 @@ const (
 	UNKNOWN     SubTaskStatus = 10
 )
 
-// extra attribute for the job that has been split
+//ParentJob extra attribute for the job that has been split
 type ParentJob struct {
 	SubTaskNum int64 `json:"sub_task_num"`
 }
 
-//  the definition of the  SubTask
+//SubTask  the definition of the  SubTask
 type SubTask struct {
 	JobID    int64           `json:"jobId"`
 	TaskID   int64           `json:"taskID"`
@@ -48,13 +49,14 @@ type SubTask struct {
 	StartTS  uint64          `json:"start_ts"`
 }
 
-//  the definition of the addIndex subTask
+//AddIndexSubTask  the definition of the addIndex subTask
 type AddIndexSubTask struct {
 	TableInfo *model.TableInfo `json:"tbl_info"`
 	IndexInfo *model.IndexInfo `json:"index_info"`
 	SchemaID  int64            `json:"schema_id"`
 }
 
+//Decode decode subTask by value
 func (task *SubTask) Decode(b []byte) error {
 	err := json.Unmarshal(b, task)
 	return errors.Trace(err)
@@ -73,7 +75,7 @@ func (task *SubTask) encode(updateRawArgs bool) ([]byte, error) {
 	return b, errors.Trace(err)
 }
 
-// decode specific json args for a SubTask
+//DecodeArgs decode specific json args for a SubTask
 func (task *SubTask) DecodeArgs(args ...interface{}) error {
 	var rawArgs []json.RawMessage
 	if err := json.Unmarshal(task.RawArgs, &rawArgs); err != nil {
