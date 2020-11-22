@@ -373,9 +373,7 @@ func (s *testSchemaAmenderSuite) TestAmendCollectAndGenMutations(c *C) {
 			// Write data for this new transaction, its memory buffer will be used by schema amender.
 			txn, err := se.store.Begin(oracle.GlobalTxnScope)
 			c.Assert(err, IsNil)
-			curTxn, _ := se.getCurrentScopeTxn()
-			curTxn.changeInvalidToValid(txn)
-			se.setTxn(se.checkAndGetTxnScope(), curTxn)
+			se.updateTxn(se.checkAndGetTxnScope(), txn)
 			txn, err = se.Txn(true)
 			c.Assert(err, IsNil)
 			for i, key := range newData.keys {

@@ -161,7 +161,7 @@ func (h *StmtHistory) Count() int {
 type session struct {
 	// processInfo is used by ShowProcess(), and should be modified atomically.
 	processInfo atomic.Value
-	// txns may have multiple txn scopes, which will be like:
+	// txns holds multiple txns for different txn scopes, which will be like:
 	// txn_scope -> TxnState
 	txns map[string]*TxnState
 
@@ -208,15 +208,27 @@ func (s *session) initTxns() {
 	if s.txns == nil {
 		s.txns = make(map[string]*TxnState)
 	}
+	// Always prepare a global transaction
 	globalTxn := new(TxnState)
 	globalTxn.init()
 	s.txns[oracle.GlobalTxnScope] = globalTxn
+	// Check whether we have to prepare the local transaction
 	currentTxnScope := s.checkAndGetTxnScope()
 	if currentTxnScope != oracle.GlobalTxnScope {
 		txn := new(TxnState)
-		globalTxn.init()
+		txn.init()
 		s.txns[currentTxnScope] = txn
 	}
+}
+
+func (s *session) updateTxn(txnScope string, newTxn kv.Transaction) {
+	curTxn, ok := s.getTxn(txnScope)
+	if !ok {
+		s.setTxn(txnScope, new(TxnState))
+		curTxn, _ = s.getTxn(txnScope)
+	}
+	curTxn.changeInvalidToValid(newTxn)
+	s.setTxn(txnScope, curTxn)
 }
 
 func (s *session) getTxn(txnScope string) (*TxnState, bool) {
@@ -1702,8 +1714,7 @@ func (s *session) NewTxn(ctx context.Context) error {
 	if s.GetSessionVars().GetReplicaRead().IsFollowerRead() {
 		newTxn.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
 	}
-	txn.changeInvalidToValid(newTxn)
-	s.setTxn(txnScope, txn)
+	s.updateTxn(txnScope, newTxn)
 	is := domain.GetDomain(s).InfoSchema()
 	s.sessionVars.TxnCtx = &variable.TransactionContext{
 		InfoSchema:    is,
@@ -2404,13 +2415,17 @@ func (s *session) PrepareTxnCtx(ctx context.Context) {
 func (s *session) PrepareTSFuture(ctx context.Context) {
 	// Prepare TSFuture for each transaction scope
 	for txnScope, txn := range s.txns {
+		// Only prepare for the global scope and the current local scope
+		if txnScope != s.checkAndGetTxnScope() && txnScope != oracle.GlobalTxnScope {
+			continue
+		}
 		if !txn.validOrPending() {
 			// Prepare the transaction future if the transaction is invalid (at the beginning of the transaction).
 			txnFuture := s.getTxnFuture(ctx, txnScope)
 			txn.changeInvalidToPending(txnFuture)
 		}
 	}
-	// Check current scope's transaction
+	// Check the transaction of the current scope
 	curScope := s.checkAndGetTxnScope()
 	curTxn, ok := s.getTxn(curScope)
 	if ok && curTxn.Valid() && s.GetSessionVars().IsPessimisticReadConsistency() {
