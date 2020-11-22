@@ -264,7 +264,7 @@ func convertDecimalStrToUint(sc *stmtctx.StatementContext, str string, upperBoun
 
 	val, err := strconv.ParseUint(intStr, 10, 64)
 	if err != nil {
-		return val, errors.Trace(err)
+		return val, overflow(str, tp)
 	}
 	return val + round, nil
 }
@@ -654,6 +654,9 @@ func getValidFloatPrefix(sc *stmtctx.StatementContext, s string, isFuncCast bool
 				break
 			}
 			eIdx = i
+		} else if c == '\u0000' {
+			s = s[:validLen]
+			break
 		} else if c < '0' || c > '9' {
 			break
 		} else {

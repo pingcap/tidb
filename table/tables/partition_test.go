@@ -278,7 +278,7 @@ func (ts *testSuite) TestGeneratePartitionExpr(c *C) {
 	}
 }
 
-func (ts *testSuite) TestLocateRangePartitionErr(c *C) {
+func (ts *testSuite) TestLocateRangeColumnPartitionErr(c *C) {
 	tk := testkit.NewTestKitWithInit(c, ts.store)
 	tk.MustExec("use test")
 	tk.MustExec(`CREATE TABLE t_month_data_monitor (
@@ -291,6 +291,88 @@ func (ts *testSuite) TestLocateRangePartitionErr(c *C) {
 	)`)
 
 	_, err := tk.Exec("INSERT INTO t_month_data_monitor VALUES (4, '2019-04-04')")
+	c.Assert(table.ErrNoPartitionForGivenValue.Equal(err), IsTrue)
+}
+
+func (ts *testSuite) TestLocateRangePartitionErr(c *C) {
+	tk := testkit.NewTestKitWithInit(c, ts.store)
+	tk.MustExec("use test")
+	tk.MustExec(`CREATE TABLE t_range_locate (
+		id int(20) NOT NULL AUTO_INCREMENT,
+		data_date date NOT NULL,
+		PRIMARY KEY (id, data_date)
+	) PARTITION BY RANGE(id) (
+		PARTITION p0 VALUES LESS THAN (1024),
+		PARTITION p1 VALUES LESS THAN (4096)
+	)`)
+
+	_, err := tk.Exec("INSERT INTO t_range_locate VALUES (5000, '2019-04-04')")
+	c.Assert(table.ErrNoPartitionForGivenValue.Equal(err), IsTrue)
+}
+
+func (ts *testSuite) TestLocatePartitionWithExtraHandle(c *C) {
+	tk := testkit.NewTestKitWithInit(c, ts.store)
+	tk.MustExec("use test")
+	tk.MustExec(`CREATE TABLE t_extra (
+		id int(20) NOT NULL AUTO_INCREMENT,
+		x int(10) not null,
+		PRIMARY KEY (id, x)
+	) PARTITION BY RANGE(id) (
+		PARTITION p0 VALUES LESS THAN (1024),
+		PARTITION p1 VALUES LESS THAN (4096)
+	)`)
+	tk.MustExec("INSERT INTO t_extra VALUES (1000, 1000), (2000, 2000)")
+	tk.MustExec("set autocommit=0;")
+	tk.MustQuery("select * from t_extra where id = 1000 for update").Check(testkit.Rows("1000 1000"))
+	tk.MustExec("commit")
+}
+
+func (ts *testSuite) TestMultiTableUpdate(c *C) {
+	tk := testkit.NewTestKitWithInit(c, ts.store)
+	tk.MustExec("use test")
+	tk.MustExec(`CREATE TABLE t_a (
+		id int(20),
+		data_date date
+	) partition by hash(id) partitions 10`)
+	tk.MustExec(`CREATE TABLE t_b (
+		id int(20),
+		data_date date
+	) PARTITION BY RANGE(id) (
+		PARTITION p0 VALUES LESS THAN (2),
+		PARTITION p1 VALUES LESS THAN (4),
+		PARTITION p2 VALUES LESS THAN (6)
+	)`)
+	tk.MustExec("INSERT INTO t_a VALUES (1, '2020-08-25'), (2, '2020-08-25'), (3, '2020-08-25'), (4, '2020-08-25'), (5, '2020-08-25')")
+	tk.MustExec("INSERT INTO t_b VALUES (1, '2020-08-25'), (2, '2020-08-25'), (3, '2020-08-25'), (4, '2020-08-25'), (5, '2020-08-25')")
+	tk.MustExec("update t_a, t_b set t_a.data_date = '2020-08-24',  t_a.data_date = '2020-08-23', t_a.id = t_a.id + t_b.id where t_a.id = t_b.id")
+	tk.MustQuery("select id from t_a order by id").Check(testkit.Rows("2", "4", "6", "8", "10"))
+}
+
+func (ts *testSuite) TestLocatePartitionSingleColumn(c *C) {
+	tk := testkit.NewTestKitWithInit(c, ts.store)
+	tk.MustExec("use test")
+	tk.MustExec(`CREATE TABLE t_hash_locate (
+		id int(20),
+		data_date date
+	) partition by hash(id) partitions 10`)
+
+	tk.MustExec(`CREATE TABLE t_range (
+		id int(10) NOT NULL,
+		data_date date,
+		PRIMARY KEY (id)
+	) PARTITION BY RANGE(id) (
+		PARTITION p0 VALUES LESS THAN (1),
+		PARTITION p1 VALUES LESS THAN (2),
+		PARTITION p2 VALUES LESS THAN (4)
+	)`)
+
+	tk.MustExec("INSERT INTO t_hash_locate VALUES (), (), (), ()")
+	tk.MustQuery("SELECT count(*) FROM t_hash_locate PARTITION (p0)").Check(testkit.Rows("4"))
+	tk.MustExec("INSERT INTO t_range VALUES (-1, NULL), (1, NULL), (2, NULL), (3, NULL)")
+	tk.MustQuery("SELECT count(*) FROM t_range PARTITION (p0)").Check(testkit.Rows("1"))
+	tk.MustQuery("SELECT count(*) FROM t_range PARTITION (p1)").Check(testkit.Rows("1"))
+	tk.MustQuery("SELECT count(*) FROM t_range PARTITION (p2)").Check(testkit.Rows("2"))
+	_, err := tk.Exec("INSERT INTO t_range VALUES (4, NULL)")
 	c.Assert(table.ErrNoPartitionForGivenValue.Equal(err), IsTrue)
 }
 

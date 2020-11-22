@@ -366,7 +366,7 @@ func (t *TestData) ConvertRowsToStrings(rows [][]interface{}) (rs []string) {
 // ConvertSQLWarnToStrings converts []SQLWarn to []string.
 func (t *TestData) ConvertSQLWarnToStrings(warns []stmtctx.SQLWarn) (rs []string) {
 	for _, warn := range warns {
-		rs = append(rs, fmt.Sprintf(warn.Err.Error()))
+		rs = append(rs, fmt.Sprint(warn.Err.Error()))
 	}
 	return rs
 }

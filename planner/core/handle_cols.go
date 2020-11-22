@@ -17,6 +17,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -32,6 +33,8 @@ type HandleCols interface {
 	BuildHandle(row chunk.Row) (kv.Handle, error)
 	// BuildHandleByDatums builds a Handle from a datum slice.
 	BuildHandleByDatums(row []types.Datum) (kv.Handle, error)
+	// BuildHandleFromIndexRow builds a Handle from index row data.
+	BuildHandleFromIndexRow(row chunk.Row) (kv.Handle, error)
 	// ResolveIndices resolves handle column indices.
 	ResolveIndices(schema *expression.Schema) (HandleCols, error)
 	// IsInt returns if the HandleCols is a single tnt column.
@@ -44,6 +47,8 @@ type HandleCols interface {
 	NumCols() int
 	// Compare compares two datum rows by handle order.
 	Compare(a, b []types.Datum) (int, error)
+	// GetFieldTypes return field types of columns
+	GetFieldsTypes() []*types.FieldType
 }
 
 // CommonHandleCols implements the kv.HandleCols interface.
@@ -54,18 +59,31 @@ type CommonHandleCols struct {
 	sc      *stmtctx.StatementContext
 }
 
+func (cb *CommonHandleCols) buildHandleByDatumsBuffer(datumBuf []types.Datum) (kv.Handle, error) {
+	tablecodec.TruncateIndexValues(cb.tblInfo, cb.idxInfo, datumBuf)
+	handleBytes, err := codec.EncodeKey(cb.sc, nil, datumBuf...)
+	if err != nil {
+		return nil, err
+	}
+	return kv.NewCommonHandle(handleBytes)
+}
+
 // BuildHandle implements the kv.HandleCols interface.
 func (cb *CommonHandleCols) BuildHandle(row chunk.Row) (kv.Handle, error) {
 	datumBuf := make([]types.Datum, 0, 4)
 	for _, col := range cb.columns {
 		datumBuf = append(datumBuf, row.GetDatum(col.Index, col.RetType))
 	}
-	datumBuf = tablecodec.TruncateIndexValuesIfNeeded(cb.tblInfo, cb.idxInfo, datumBuf)
-	handleBytes, err := codec.EncodeKey(cb.sc, nil, datumBuf...)
-	if err != nil {
-		return nil, err
+	return cb.buildHandleByDatumsBuffer(datumBuf)
+}
+
+// BuildHandleFromIndexRow implements the kv.HandleCols interface.
+func (cb *CommonHandleCols) BuildHandleFromIndexRow(row chunk.Row) (kv.Handle, error) {
+	datumBuf := make([]types.Datum, 0, 4)
+	for i := 0; i < cb.NumCols(); i++ {
+		datumBuf = append(datumBuf, row.GetDatum(row.Len()-cb.NumCols()+i, cb.columns[i].RetType))
 	}
-	return kv.NewCommonHandle(handleBytes)
+	return cb.buildHandleByDatumsBuffer(datumBuf)
 }
 
 // BuildHandleByDatums implements the kv.HandleCols interface.
@@ -74,12 +92,7 @@ func (cb *CommonHandleCols) BuildHandleByDatums(row []types.Datum) (kv.Handle, e
 	for _, col := range cb.columns {
 		datumBuf = append(datumBuf, row[col.Index])
 	}
-	datumBuf = tablecodec.TruncateIndexValuesIfNeeded(cb.tblInfo, cb.idxInfo, datumBuf)
-	handleBytes, err := codec.EncodeKey(cb.sc, nil, datumBuf...)
-	if err != nil {
-		return nil, err
-	}
-	return kv.NewCommonHandle(handleBytes)
+	return cb.buildHandleByDatumsBuffer(datumBuf)
 }
 
 // ResolveIndices implements the kv.HandleCols interface.
@@ -145,6 +158,15 @@ func (cb *CommonHandleCols) Compare(a, b []types.Datum) (int, error) {
 	return 0, nil
 }
 
+// GetFieldsTypes implements the kv.HandleCols interface.
+func (cb *CommonHandleCols) GetFieldsTypes() []*types.FieldType {
+	fieldTps := make([]*types.FieldType, 0, len(cb.columns))
+	for _, col := range cb.columns {
+		fieldTps = append(fieldTps, col.RetType)
+	}
+	return fieldTps
+}
+
 // NewCommonHandleCols creates a new CommonHandleCols.
 func NewCommonHandleCols(sc *stmtctx.StatementContext, tblInfo *model.TableInfo, idxInfo *model.IndexInfo,
 	tableColumns []*expression.Column) *CommonHandleCols {
@@ -168,6 +190,11 @@ type IntHandleCols struct {
 // BuildHandle implements the kv.HandleCols interface.
 func (ib *IntHandleCols) BuildHandle(row chunk.Row) (kv.Handle, error) {
 	return kv.IntHandle(row.GetInt64(ib.col.Index)), nil
+}
+
+// BuildHandleFromIndexRow implements the kv.HandleCols interface.
+func (ib *IntHandleCols) BuildHandleFromIndexRow(row chunk.Row) (kv.Handle, error) {
+	return kv.IntHandle(row.GetInt64(row.Len() - 1)), nil
 }
 
 // BuildHandleByDatums implements the kv.HandleCols interface.
@@ -218,6 +245,11 @@ func (ib *IntHandleCols) Compare(a, b []types.Datum) (int, error) {
 		return -1, nil
 	}
 	return 1, nil
+}
+
+// GetFieldsTypes implements the kv.HandleCols interface.
+func (ib *IntHandleCols) GetFieldsTypes() []*types.FieldType {
+	return []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}
 }
 
 // NewIntHandleCols creates a new IntHandleCols.

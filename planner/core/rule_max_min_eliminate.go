@@ -74,7 +74,7 @@ func (a *maxMinEliminator) checkColCanUseIndex(plan LogicalPlan, col *expression
 			} else {
 				indexCols, indexColLen := path.FullIdxCols, path.FullIdxColLens
 				if path.IsCommonHandlePath {
-					indexCols, indexColLen = commonHandleIndexColAndLength(p.handleCols)
+					indexCols, indexColLen = p.commonHandleCols, p.commonHandleLens
 				}
 				// 1. whether all of the conditions can be pushed down as accessConds.
 				// 2. whether the AccessPath can satisfy the order property of `col` with these accessConds.
@@ -93,17 +93,6 @@ func (a *maxMinEliminator) checkColCanUseIndex(plan LogicalPlan, col *expression
 	default:
 		return false
 	}
-}
-
-func commonHandleIndexColAndLength(handleCols HandleCols) ([]*expression.Column, []int) {
-	handleLen := handleCols.NumCols()
-	indexCols := make([]*expression.Column, 0, handleLen)
-	indexColLen := make([]int, 0, handleLen)
-	for i := 0; i < handleLen; i++ {
-		indexCols = append(indexCols, handleCols.GetCol(i))
-		indexColLen = append(indexColLen, types.UnspecifiedLength)
-	}
-	return indexCols, indexColLen
 }
 
 // cloneSubPlans shallow clones the subPlan. We only consider `Selection` and `DataSource` here,

@@ -16,6 +16,7 @@ package memory
 import (
 	"bytes"
 	"fmt"
+	"sort"
 	"sync"
 	"sync/atomic"
 )
@@ -42,7 +43,7 @@ type Tracker struct {
 		sync.Mutex
 		// The children memory trackers. If the Tracker is the Global Tracker, like executor.GlobalDiskUsageTracker,
 		// we wouldn't maintain its children in order to avoiding mutex contention.
-		children []*Tracker
+		children map[int][]*Tracker
 	}
 	actionMu struct {
 		sync.Mutex
@@ -53,18 +54,18 @@ type Tracker struct {
 		parent *Tracker // The parent memory tracker.
 	}
 
-	label         fmt.Stringer // Label of this "Tracker".
-	bytesConsumed int64        // Consumed bytes.
-	bytesLimit    int64        // bytesLimit <= 0 means no limit.
-	maxConsumed   int64        // max number of bytes consumed during execution.
-	isGlobal      bool         // isGlobal indicates whether this tracker is global tracker
+	label         int   // Label of this "Tracker".
+	bytesConsumed int64 // Consumed bytes.
+	bytesLimit    int64 // bytesLimit <= 0 means no limit.
+	maxConsumed   int64 // max number of bytes consumed during execution.
+	isGlobal      bool  // isGlobal indicates whether this tracker is global tracker
 }
 
 // NewTracker creates a memory tracker.
 //	1. "label" is the label used in the usage string.
 //	2. "bytesLimit <= 0" means no limit.
 // For the common tracker, isGlobal is default as false
-func NewTracker(label fmt.Stringer, bytesLimit int64) *Tracker {
+func NewTracker(label int, bytesLimit int64) *Tracker {
 	t := &Tracker{
 		label:      label,
 		bytesLimit: bytesLimit,
@@ -75,7 +76,7 @@ func NewTracker(label fmt.Stringer, bytesLimit int64) *Tracker {
 }
 
 // NewGlobalTracker creates a global tracker, its isGlobal is default as true
-func NewGlobalTracker(label fmt.Stringer, bytesLimit int64) *Tracker {
+func NewGlobalTracker(label int, bytesLimit int64) *Tracker {
 	t := &Tracker{
 		label:      label,
 		bytesLimit: bytesLimit,
@@ -125,12 +126,12 @@ func (t *Tracker) FallbackOldAndSetNewAction(a ActionOnExceed) {
 }
 
 // SetLabel sets the label of a Tracker.
-func (t *Tracker) SetLabel(label fmt.Stringer) {
+func (t *Tracker) SetLabel(label int) {
 	t.label = label
 }
 
 // Label gets the label of a Tracker.
-func (t *Tracker) Label() fmt.Stringer {
+func (t *Tracker) Label() int {
 	return t.label
 }
 
@@ -143,7 +144,10 @@ func (t *Tracker) AttachTo(parent *Tracker) {
 		oldParent.remove(t)
 	}
 	parent.mu.Lock()
-	parent.mu.children = append(parent.mu.children, t)
+	if parent.mu.children == nil {
+		parent.mu.children = make(map[int][]*Tracker)
+	}
+	parent.mu.children[t.label] = append(parent.mu.children[t.label], t)
 	parent.mu.Unlock()
 
 	t.setParent(parent)
@@ -164,12 +168,21 @@ func (t *Tracker) Detach() {
 
 func (t *Tracker) remove(oldChild *Tracker) {
 	found := false
+	label := oldChild.label
 	t.mu.Lock()
-	for i, child := range t.mu.children {
-		if child == oldChild {
-			t.mu.children = append(t.mu.children[:i], t.mu.children[i+1:]...)
-			found = true
-			break
+	if t.mu.children != nil {
+		children := t.mu.children[label]
+		for i, child := range children {
+			if child == oldChild {
+				children = append(children[:i], children[i+1:]...)
+				if len(children) > 0 {
+					t.mu.children[label] = children
+				} else {
+					delete(t.mu.children, label)
+				}
+				found = true
+				break
+			}
 		}
 	}
 	t.mu.Unlock()
@@ -188,19 +201,30 @@ func (t *Tracker) ReplaceChild(oldChild, newChild *Tracker) {
 		return
 	}
 
+	if oldChild.label != newChild.label {
+		t.remove(oldChild)
+		newChild.AttachTo(t)
+		return
+	}
+
 	newConsumed := newChild.BytesConsumed()
 	newChild.setParent(t)
 
+	label := oldChild.label
 	t.mu.Lock()
-	for i, child := range t.mu.children {
-		if child != oldChild {
-			continue
-		}
+	if t.mu.children != nil {
+		children := t.mu.children[label]
+		for i, child := range children {
+			if child != oldChild {
+				continue
+			}
 
-		newConsumed -= oldChild.BytesConsumed()
-		oldChild.setParent(nil)
-		t.mu.children[i] = newChild
-		break
+			newConsumed -= oldChild.BytesConsumed()
+			oldChild.setParent(nil)
+			children[i] = newChild
+			t.mu.children[label] = children
+			break
+		}
 	}
 	t.mu.Unlock()
 
@@ -248,17 +272,14 @@ func (t *Tracker) MaxConsumed() int64 {
 	return atomic.LoadInt64(&t.maxConsumed)
 }
 
-// SearchTracker searches the specific tracker under this tracker.
-func (t *Tracker) SearchTracker(label string) *Tracker {
-	if t.label.String() == label {
+// SearchTrackerWithoutLock searches the specific tracker under this tracker without lock.
+func (t *Tracker) SearchTrackerWithoutLock(label int) *Tracker {
+	if t.label == label {
 		return t
 	}
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	for _, child := range t.mu.children {
-		if result := child.SearchTracker(label); result != nil {
-			return result
-		}
+	children := t.mu.children[label]
+	if len(children) > 0 {
+		return children[0]
 	}
 	return nil
 }
@@ -271,16 +292,22 @@ func (t *Tracker) String() string {
 }
 
 func (t *Tracker) toString(indent string, buffer *bytes.Buffer) {
-	fmt.Fprintf(buffer, "%s\"%s\"{\n", indent, t.label)
+	fmt.Fprintf(buffer, "%s\"%d\"{\n", indent, t.label)
 	if t.bytesLimit > 0 {
 		fmt.Fprintf(buffer, "%s  \"quota\": %s\n", indent, t.BytesToString(t.bytesLimit))
 	}
 	fmt.Fprintf(buffer, "%s  \"consumed\": %s\n", indent, t.BytesToString(t.BytesConsumed()))
 
 	t.mu.Lock()
-	for i := range t.mu.children {
-		if t.mu.children[i] != nil {
-			t.mu.children[i].toString(indent+"  ", buffer)
+	labels := make([]int, 0, len(t.mu.children))
+	for label := range t.mu.children {
+		labels = append(labels, label)
+	}
+	sort.Ints(labels)
+	for _, label := range labels {
+		children := t.mu.children[label]
+		for _, child := range children {
+			child.toString(indent+"  ", buffer)
 		}
 	}
 	t.mu.Unlock()
@@ -289,6 +316,11 @@ func (t *Tracker) toString(indent string, buffer *bytes.Buffer) {
 
 // BytesToString converts the memory consumption to a readable string.
 func (t *Tracker) BytesToString(numBytes int64) string {
+	return BytesToString(numBytes)
+}
+
+// BytesToString converts the memory consumption to a readable string.
+func BytesToString(numBytes int64) string {
 	GB := float64(numBytes) / float64(1<<30)
 	if GB > 1 {
 		return fmt.Sprintf("%v GB", GB)
@@ -360,3 +392,42 @@ func (t *Tracker) setParent(parent *Tracker) {
 	defer t.parMu.Unlock()
 	t.parMu.parent = parent
 }
+
+const (
+	// LabelForSQLText represents the label of the SQL Text
+	LabelForSQLText int = -1
+	// LabelForIndexWorker represents the label of the index worker
+	LabelForIndexWorker int = -2
+	// LabelForInnerList represents the label of the inner list
+	LabelForInnerList int = -3
+	// LabelForInnerTable represents the label of the inner table
+	LabelForInnerTable int = -4
+	// LabelForOuterTable represents the label of the outer table
+	LabelForOuterTable int = -5
+	// LabelForCoprocessor represents the label of the coprocessor
+	LabelForCoprocessor int = -6
+	// LabelForChunkList represents the label of the chunk list
+	LabelForChunkList int = -7
+	// LabelForGlobalSimpleLRUCache represents the label of the Global SimpleLRUCache
+	LabelForGlobalSimpleLRUCache int = -8
+	// LabelForChunkListInDisk represents the label of the chunk list in disk
+	LabelForChunkListInDisk int = -9
+	// LabelForRowContainer represents the label of the row container
+	LabelForRowContainer int = -10
+	// LabelForGlobalStorage represents the label of the Global Storage
+	LabelForGlobalStorage int = -11
+	// LabelForGlobalMemory represents the label of the Global Memory
+	LabelForGlobalMemory int = -12
+	// LabelForBuildSideResult represents the label of the BuildSideResult
+	LabelForBuildSideResult int = -13
+	// LabelForRowChunks represents the label of the row chunks
+	LabelForRowChunks int = -14
+	// LabelForStatsCache represents the label of the stats cache
+	LabelForStatsCache int = -15
+	// LabelForOuterList represents the label of the outer list
+	LabelForOuterList int = -16
+	// LabelForApplyCache represents the label of the apply cache
+	LabelForApplyCache int = -17
+	// LabelForSimpleTask represents the label of the simple task
+	LabelForSimpleTask int = -18
+)

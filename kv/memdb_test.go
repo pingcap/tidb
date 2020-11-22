@@ -1,4 +1,4 @@
-// Copyright 2015 PingCAP, Inc.
+// Copyright 2020 PingCAP, Inc.
 //
 // Copyright 2015 Wenbin Xiao
 //
@@ -17,26 +17,577 @@ package kv
 
 import (
 	"context"
+	"encoding/binary"
 	"fmt"
-	"math/rand"
+	"math"
 	"testing"
 
 	. "github.com/pingcap/check"
+	leveldb "github.com/pingcap/goleveldb/leveldb/memdb"
 	"github.com/pingcap/tidb/util/testleak"
 )
 
-const (
-	startIndex = 0
-	testCount  = 2
-	indexStep  = 2
-)
+func init() {
+	testMode = true
+}
 
 func TestT(t *testing.T) {
 	CustomVerboseFlag = true
 	TestingT(t)
 }
 
-var _ = Suite(&testKVSuite{})
+var (
+	_ = Suite(&testKVSuite{})
+	_ = Suite(&testMemDBSuite{})
+)
+
+type testMemDBSuite struct{}
+
+// DeleteKey is used in test to verify the `deleteNode` used in `vlog.revertToCheckpoint`.
+func (db *memdb) DeleteKey(key []byte) {
+	x := db.traverse(key, false)
+	if x.isNull() {
+		return
+	}
+	db.size -= len(db.vlog.getValue(x.vptr))
+	db.deleteNode(x)
+}
+
+func (s *testMemDBSuite) TestGetSet(c *C) {
+	const cnt = 10000
+	p := s.fillDB(cnt)
+
+	var buf [4]byte
+	for i := 0; i < cnt; i++ {
+		binary.BigEndian.PutUint32(buf[:], uint32(i))
+		v, err := p.Get(context.TODO(), buf[:])
+		c.Assert(err, IsNil)
+		c.Assert(v, BytesEquals, buf[:])
+	}
+}
+
+func (s *testMemDBSuite) TestBigKV(c *C) {
+	db := newMemDB()
+	db.entrySizeLimit = math.MaxUint64
+	db.bufferSizeLimit = math.MaxUint64
+	db.Set([]byte{1}, make([]byte, 80<<20))
+	c.Assert(db.vlog.blockSize, Equals, maxBlockSize)
+	c.Assert(len(db.vlog.blocks), Equals, 1)
+	h := db.Staging()
+	db.Set([]byte{2}, make([]byte, 127<<20))
+	db.Release(h)
+	c.Assert(db.vlog.blockSize, Equals, maxBlockSize)
+	c.Assert(len(db.vlog.blocks), Equals, 2)
+	c.Assert(func() { db.Set([]byte{3}, make([]byte, maxBlockSize+1)) }, Panics, "alloc size is larger than max block size")
+}
+
+func (s *testMemDBSuite) TestIterator(c *C) {
+	const cnt = 10000
+	db := s.fillDB(cnt)
+
+	var buf [4]byte
+	var i int
+
+	for it, _ := db.Iter(nil, nil); it.Valid(); it.Next() {
+		binary.BigEndian.PutUint32(buf[:], uint32(i))
+		c.Assert([]byte(it.Key()), BytesEquals, buf[:])
+		c.Assert(it.Value(), BytesEquals, buf[:])
+		i++
+	}
+	c.Assert(i, Equals, cnt)
+
+	i--
+	for it, _ := db.IterReverse(nil); it.Valid(); it.Next() {
+		binary.BigEndian.PutUint32(buf[:], uint32(i))
+		c.Assert([]byte(it.Key()), BytesEquals, buf[:])
+		c.Assert(it.Value(), BytesEquals, buf[:])
+		i--
+	}
+	c.Assert(i, Equals, -1)
+}
+
+func (s *testMemDBSuite) TestDiscard(c *C) {
+	const cnt = 10000
+	db := newMemDB()
+	base := s.deriveAndFill(0, cnt, 0, db)
+	sz := db.Size()
+
+	db.Cleanup(s.deriveAndFill(0, cnt, 1, db))
+	c.Assert(db.Len(), Equals, cnt)
+	c.Assert(db.Size(), Equals, sz)
+
+	var buf [4]byte
+
+	for i := 0; i < cnt; i++ {
+		binary.BigEndian.PutUint32(buf[:], uint32(i))
+		v, err := db.Get(context.TODO(), buf[:])
+		c.Assert(err, IsNil)
+		c.Assert(v, BytesEquals, buf[:])
+	}
+
+	var i int
+	for it, _ := db.Iter(nil, nil); it.Valid(); it.Next() {
+		binary.BigEndian.PutUint32(buf[:], uint32(i))
+		c.Assert([]byte(it.Key()), BytesEquals, buf[:])
+		c.Assert(it.Value(), BytesEquals, buf[:])
+		i++
+	}
+	c.Assert(i, Equals, cnt)
+
+	i--
+	for it, _ := db.IterReverse(nil); it.Valid(); it.Next() {
+		binary.BigEndian.PutUint32(buf[:], uint32(i))
+		c.Assert([]byte(it.Key()), BytesEquals, buf[:])
+		c.Assert(it.Value(), BytesEquals, buf[:])
+		i--
+	}
+	c.Assert(i, Equals, -1)
+
+	db.Cleanup(base)
+	for i := 0; i < cnt; i++ {
+		binary.BigEndian.PutUint32(buf[:], uint32(i))
+		_, err := db.Get(context.TODO(), buf[:])
+		c.Assert(err, NotNil)
+	}
+	it1, _ := db.Iter(nil, nil)
+	it := it1.(*memdbIterator)
+	it.seekToFirst()
+	c.Assert(it.Valid(), IsFalse)
+	it.seekToLast()
+	c.Assert(it.Valid(), IsFalse)
+	it.seek([]byte{0xff})
+	c.Assert(it.Valid(), IsFalse)
+}
+
+func (s *testMemDBSuite) TestFlushOverwrite(c *C) {
+	const cnt = 10000
+	db := newMemDB()
+	db.Release(s.deriveAndFill(0, cnt, 0, db))
+	sz := db.Size()
+
+	db.Release(s.deriveAndFill(0, cnt, 1, db))
+
+	c.Assert(db.Len(), Equals, cnt)
+	c.Assert(db.Size(), Equals, sz)
+
+	var kbuf, vbuf [4]byte
+
+	for i := 0; i < cnt; i++ {
+		binary.BigEndian.PutUint32(kbuf[:], uint32(i))
+		binary.BigEndian.PutUint32(vbuf[:], uint32(i+1))
+		v, err := db.Get(context.TODO(), kbuf[:])
+		c.Assert(err, IsNil)
+		c.Assert(v, DeepEquals, vbuf[:])
+	}
+
+	var i int
+	for it, _ := db.Iter(nil, nil); it.Valid(); it.Next() {
+		binary.BigEndian.PutUint32(kbuf[:], uint32(i))
+		binary.BigEndian.PutUint32(vbuf[:], uint32(i+1))
+		c.Assert([]byte(it.Key()), BytesEquals, kbuf[:])
+		c.Assert(it.Value(), BytesEquals, vbuf[:])
+		i++
+	}
+	c.Assert(i, Equals, cnt)
+
+	i--
+	for it, _ := db.IterReverse(nil); it.Valid(); it.Next() {
+		binary.BigEndian.PutUint32(kbuf[:], uint32(i))
+		binary.BigEndian.PutUint32(vbuf[:], uint32(i+1))
+		c.Assert([]byte(it.Key()), BytesEquals, kbuf[:])
+		c.Assert(it.Value(), BytesEquals, vbuf[:])
+		i--
+	}
+	c.Assert(i, Equals, -1)
+}
+
+func (s *testMemDBSuite) TestComplexUpdate(c *C) {
+	const (
+		keep      = 3000
+		overwrite = 6000
+		insert    = 9000
+	)
+
+	db := newMemDB()
+	db.Release(s.deriveAndFill(0, overwrite, 0, db))
+	c.Assert(db.Len(), Equals, overwrite)
+	db.Release(s.deriveAndFill(keep, insert, 1, db))
+	c.Assert(db.Len(), Equals, insert)
+
+	var kbuf, vbuf [4]byte
+
+	for i := 0; i < insert; i++ {
+		binary.BigEndian.PutUint32(kbuf[:], uint32(i))
+		binary.BigEndian.PutUint32(vbuf[:], uint32(i))
+		if i >= keep {
+			binary.BigEndian.PutUint32(vbuf[:], uint32(i+1))
+		}
+		v, err := db.Get(context.TODO(), kbuf[:])
+		c.Assert(err, IsNil)
+		c.Assert(v, BytesEquals, vbuf[:])
+	}
+}
+
+func (s *testMemDBSuite) TestNestedSandbox(c *C) {
+	db := newMemDB()
+	h0 := s.deriveAndFill(0, 200, 0, db)
+	h1 := s.deriveAndFill(0, 100, 1, db)
+	h2 := s.deriveAndFill(50, 150, 2, db)
+	h3 := s.deriveAndFill(100, 120, 3, db)
+	h4 := s.deriveAndFill(0, 150, 4, db)
+	db.Cleanup(h4) // Discard (0..150 -> 4)
+	db.Release(h3) // Flush (100..120 -> 3)
+	db.Cleanup(h2) // Discard (100..120 -> 3) & (50..150 -> 2)
+	db.Release(h1) // Flush (0..100 -> 1)
+	db.Release(h0) // Flush (0..100 -> 1) & (0..200 -> 0)
+	// The final result should be (0..100 -> 1) & (101..200 -> 0)
+
+	var kbuf, vbuf [4]byte
+
+	for i := 0; i < 200; i++ {
+		binary.BigEndian.PutUint32(kbuf[:], uint32(i))
+		binary.BigEndian.PutUint32(vbuf[:], uint32(i))
+		if i < 100 {
+			binary.BigEndian.PutUint32(vbuf[:], uint32(i+1))
+		}
+		v, err := db.Get(context.TODO(), kbuf[:])
+		c.Assert(err, IsNil)
+		c.Assert(v, BytesEquals, vbuf[:])
+	}
+
+	var i int
+
+	for it, _ := db.Iter(nil, nil); it.Valid(); it.Next() {
+		binary.BigEndian.PutUint32(kbuf[:], uint32(i))
+		binary.BigEndian.PutUint32(vbuf[:], uint32(i))
+		if i < 100 {
+			binary.BigEndian.PutUint32(vbuf[:], uint32(i+1))
+		}
+		c.Assert([]byte(it.Key()), BytesEquals, kbuf[:])
+		c.Assert(it.Value(), BytesEquals, vbuf[:])
+		i++
+	}
+	c.Assert(i, Equals, 200)
+
+	i--
+	for it, _ := db.IterReverse(nil); it.Valid(); it.Next() {
+		binary.BigEndian.PutUint32(kbuf[:], uint32(i))
+		binary.BigEndian.PutUint32(vbuf[:], uint32(i))
+		if i < 100 {
+			binary.BigEndian.PutUint32(vbuf[:], uint32(i+1))
+		}
+		c.Assert([]byte(it.Key()), BytesEquals, kbuf[:])
+		c.Assert(it.Value(), BytesEquals, vbuf[:])
+		i--
+	}
+	c.Assert(i, Equals, -1)
+}
+
+func (s *testMemDBSuite) TestOverwrite(c *C) {
+	const cnt = 10000
+	db := s.fillDB(cnt)
+	var buf [4]byte
+
+	sz := db.Size()
+	for i := 0; i < cnt; i += 3 {
+		var newBuf [4]byte
+		binary.BigEndian.PutUint32(buf[:], uint32(i))
+		binary.BigEndian.PutUint32(newBuf[:], uint32(i*10))
+		db.Set(buf[:], newBuf[:])
+	}
+	c.Assert(db.Len(), Equals, cnt)
+	c.Assert(db.Size(), Equals, sz)
+
+	for i := 0; i < cnt; i++ {
+		binary.BigEndian.PutUint32(buf[:], uint32(i))
+		val, _ := db.Get(context.TODO(), buf[:])
+		v := binary.BigEndian.Uint32(val)
+		if i%3 == 0 {
+			c.Assert(v, Equals, uint32(i*10))
+		} else {
+			c.Assert(v, Equals, uint32(i))
+		}
+	}
+
+	var i int
+
+	for it, _ := db.Iter(nil, nil); it.Valid(); it.Next() {
+		binary.BigEndian.PutUint32(buf[:], uint32(i))
+		c.Assert([]byte(it.Key()), BytesEquals, buf[:])
+		v := binary.BigEndian.Uint32(it.Value())
+		if i%3 == 0 {
+			c.Assert(v, Equals, uint32(i*10))
+		} else {
+			c.Assert(v, Equals, uint32(i))
+		}
+		i++
+	}
+	c.Assert(i, Equals, cnt)
+
+	i--
+	for it, _ := db.IterReverse(nil); it.Valid(); it.Next() {
+		binary.BigEndian.PutUint32(buf[:], uint32(i))
+		c.Assert([]byte(it.Key()), BytesEquals, buf[:])
+		v := binary.BigEndian.Uint32(it.Value())
+		if i%3 == 0 {
+			c.Assert(v, Equals, uint32(i*10))
+		} else {
+			c.Assert(v, Equals, uint32(i))
+		}
+		i--
+	}
+	c.Assert(i, Equals, -1)
+}
+
+func (s *testMemDBSuite) TestKVLargeThanBlock(c *C) {
+	db := newMemDB()
+	db.Set([]byte{1}, make([]byte, 1))
+	db.Set([]byte{2}, make([]byte, 4096))
+	c.Assert(len(db.vlog.blocks), Equals, 2)
+	db.Set([]byte{3}, make([]byte, 3000))
+	c.Assert(len(db.vlog.blocks), Equals, 2)
+	val, err := db.Get(context.TODO(), []byte{3})
+	c.Assert(err, IsNil)
+	c.Assert(len(val), Equals, 3000)
+}
+
+func (s *testMemDBSuite) TestEmptyDB(c *C) {
+	db := newMemDB()
+	_, err := db.Get(context.TODO(), []byte{0})
+	c.Assert(err, NotNil)
+	it1, _ := db.Iter(nil, nil)
+	it := it1.(*memdbIterator)
+	it.seekToFirst()
+	c.Assert(it.Valid(), IsFalse)
+	it.seekToLast()
+	c.Assert(it.Valid(), IsFalse)
+	it.seek([]byte{0xff})
+	c.Assert(it.Valid(), IsFalse)
+}
+
+func (s *testMemDBSuite) TestReset(c *C) {
+	db := s.fillDB(1000)
+	db.Reset()
+	_, err := db.Get(context.TODO(), []byte{0, 0, 0, 0})
+	c.Assert(err, NotNil)
+	it1, _ := db.Iter(nil, nil)
+	it := it1.(*memdbIterator)
+	it.seekToFirst()
+	c.Assert(it.Valid(), IsFalse)
+	it.seekToLast()
+	c.Assert(it.Valid(), IsFalse)
+	it.seek([]byte{0xff})
+	c.Assert(it.Valid(), IsFalse)
+}
+
+func (s *testMemDBSuite) TestInspectStage(c *C) {
+	db := newMemDB()
+	h1 := s.deriveAndFill(0, 1000, 0, db)
+	h2 := s.deriveAndFill(500, 1000, 1, db)
+	for i := 500; i < 1500; i++ {
+		var kbuf [4]byte
+		// don't update in place
+		var vbuf [5]byte
+		binary.BigEndian.PutUint32(kbuf[:], uint32(i))
+		binary.BigEndian.PutUint32(vbuf[:], uint32(i+2))
+		db.Set(kbuf[:], vbuf[:])
+	}
+	h3 := s.deriveAndFill(1000, 2000, 3, db)
+
+	db.InspectStage(h3, func(key Key, _ KeyFlags, val []byte) {
+		k := int(binary.BigEndian.Uint32(key))
+		v := int(binary.BigEndian.Uint32(val))
+
+		c.Assert(k >= 1000 && k < 2000, IsTrue)
+		c.Assert(v-k, DeepEquals, 3)
+	})
+
+	db.InspectStage(h2, func(key Key, _ KeyFlags, val []byte) {
+		k := int(binary.BigEndian.Uint32(key))
+		v := int(binary.BigEndian.Uint32(val))
+
+		c.Assert(k >= 500 && k < 2000, IsTrue)
+		if k < 1000 {
+			c.Assert(v-k, Equals, 2)
+		} else {
+			c.Assert(v-k, Equals, 3)
+		}
+	})
+
+	db.Cleanup(h3)
+	db.Release(h2)
+
+	db.InspectStage(h1, func(key Key, _ KeyFlags, val []byte) {
+		k := int(binary.BigEndian.Uint32(key))
+		v := int(binary.BigEndian.Uint32(val))
+
+		c.Assert(k >= 0 && k < 1500, IsTrue)
+		if k < 500 {
+			c.Assert(v-k, Equals, 0)
+		} else {
+			c.Assert(v-k, Equals, 2)
+		}
+	})
+
+	db.Release(h1)
+}
+
+func (s *testMemDBSuite) TestDirty(c *C) {
+	db := newMemDB()
+	db.Set([]byte{1}, []byte{1})
+	c.Assert(db.Dirty(), IsTrue)
+
+	db = newMemDB()
+	h := db.Staging()
+	db.Set([]byte{1}, []byte{1})
+	db.Cleanup(h)
+	c.Assert(db.Dirty(), IsFalse)
+
+	h = db.Staging()
+	db.Set([]byte{1}, []byte{1})
+	db.Release(h)
+	c.Assert(db.Dirty(), IsTrue)
+
+	// persistent flags will make memdb dirty.
+	db = newMemDB()
+	h = db.Staging()
+	db.SetWithFlags([]byte{1}, []byte{1}, SetKeyLocked)
+	db.Cleanup(h)
+	c.Assert(db.Dirty(), IsTrue)
+
+	// non-persistent flags will not make memdb dirty.
+	db = newMemDB()
+	h = db.Staging()
+	db.SetWithFlags([]byte{1}, []byte{1}, SetPresumeKeyNotExists)
+	db.Cleanup(h)
+	c.Assert(db.Dirty(), IsFalse)
+}
+
+func (s *testMemDBSuite) TestFlags(c *C) {
+	const cnt = 10000
+	db := newMemDB()
+	h := db.Staging()
+	for i := uint32(0); i < cnt; i++ {
+		var buf [4]byte
+		binary.BigEndian.PutUint32(buf[:], i)
+		if i%2 == 0 {
+			db.SetWithFlags(buf[:], buf[:], SetPresumeKeyNotExists, SetKeyLocked)
+		} else {
+			db.SetWithFlags(buf[:], buf[:], SetPresumeKeyNotExists)
+		}
+	}
+	db.Cleanup(h)
+
+	for i := uint32(0); i < cnt; i++ {
+		var buf [4]byte
+		binary.BigEndian.PutUint32(buf[:], i)
+		_, err := db.Get(context.TODO(), buf[:])
+		c.Assert(err, NotNil)
+		flags, err := db.GetFlags(buf[:])
+		if i%2 == 0 {
+			c.Assert(err, IsNil)
+			c.Assert(flags.HasLocked(), IsTrue)
+			c.Assert(flags.HasPresumeKeyNotExists(), IsFalse)
+		} else {
+			c.Assert(err, NotNil)
+		}
+	}
+
+	c.Assert(db.Len(), Equals, 5000)
+	c.Assert(db.Size(), Equals, 20000)
+
+	it1, _ := db.Iter(nil, nil)
+	it := it1.(*memdbIterator)
+	c.Assert(it.Valid(), IsFalse)
+
+	it.includeFlags = true
+	it.init()
+
+	for ; it.Valid(); it.Next() {
+		k := binary.BigEndian.Uint32(it.Key())
+		c.Assert(k%2 == 0, IsTrue)
+	}
+
+	for i := uint32(0); i < cnt; i++ {
+		var buf [4]byte
+		binary.BigEndian.PutUint32(buf[:], i)
+		db.UpdateFlags(buf[:], DelKeyLocked)
+	}
+	for i := uint32(0); i < cnt; i++ {
+		var buf [4]byte
+		binary.BigEndian.PutUint32(buf[:], i)
+		_, err := db.Get(context.TODO(), buf[:])
+		c.Assert(err, NotNil)
+
+		// UpdateFlags will create missing node.
+		flags, err := db.GetFlags(buf[:])
+		c.Assert(err, IsNil)
+		c.Assert(flags.HasLocked(), IsFalse)
+	}
+}
+
+func (s *testMemDBSuite) checkConsist(c *C, p1 *memdb, p2 *leveldb.DB) {
+	c.Assert(p1.Len(), Equals, p2.Len())
+	c.Assert(p1.Size(), Equals, p2.Size())
+
+	it1, _ := p1.Iter(nil, nil)
+	it2 := p2.NewIterator(nil)
+
+	var prevKey, prevVal []byte
+	for it2.First(); it2.Valid(); it2.Next() {
+		v, err := p1.Get(context.TODO(), it2.Key())
+		c.Assert(err, IsNil)
+		c.Assert(v, BytesEquals, it2.Value())
+
+		c.Assert([]byte(it1.Key()), BytesEquals, it2.Key())
+		c.Assert(it1.Value(), BytesEquals, it2.Value())
+
+		it, _ := p1.Iter(it2.Key(), nil)
+		c.Assert([]byte(it.Key()), BytesEquals, it2.Key())
+		c.Assert(it.Value(), BytesEquals, it2.Value())
+
+		if prevKey != nil {
+			it, _ = p1.IterReverse(it2.Key())
+			c.Assert([]byte(it.Key()), BytesEquals, prevKey)
+			c.Assert(it.Value(), BytesEquals, prevVal)
+		}
+
+		it1.Next()
+		prevKey = it2.Key()
+		prevVal = it2.Value()
+	}
+
+	it1, _ = p1.IterReverse(nil)
+	for it2.Last(); it2.Valid(); it2.Prev() {
+		c.Assert([]byte(it1.Key()), BytesEquals, it2.Key())
+		c.Assert(it1.Value(), BytesEquals, it2.Value())
+		it1.Next()
+	}
+}
+
+func (s *testMemDBSuite) fillDB(cnt int) *memdb {
+	db := newMemDB()
+	h := s.deriveAndFill(0, cnt, 0, db)
+	db.Release(h)
+	return db
+}
+
+func (s *testMemDBSuite) deriveAndFill(start, end, valueBase int, db *memdb) StagingHandle {
+	h := db.Staging()
+	var kbuf, vbuf [4]byte
+	for i := start; i < end; i++ {
+		binary.BigEndian.PutUint32(kbuf[:], uint32(i))
+		binary.BigEndian.PutUint32(vbuf[:], uint32(i+valueBase))
+		db.Set(kbuf[:], vbuf[:])
+	}
+	return h
+}
+
+const (
+	startIndex = 0
+	testCount  = 2
+	indexStep  = 2
+)
 
 type testKVSuite struct {
 	bs []MemBuffer
@@ -206,7 +757,7 @@ func (s *testKVSuite) TestNewIteratorMin(c *C) {
 
 		it, err = buffer.Iter([]byte("DATA_test_main_db_tbl_tbl_test_record__00000000000000000000"), nil)
 		c.Assert(err, IsNil)
-		c.Assert(string(it.Key()), Equals, "DATA_test_main_db_tbl_tbl_test_record__00000000000000000001")
+		c.Assert(string([]byte(it.Key())), Equals, "DATA_test_main_db_tbl_tbl_test_record__00000000000000000001")
 	}
 	s.ResetMembuffers()
 }
@@ -285,77 +836,4 @@ func (s *testKVSuite) TestBufferBatchGetter(c *C) {
 	c.Assert(string(result[string(ka)]), Equals, "a2")
 	c.Assert(string(result[string(kc)]), Equals, "c1")
 	c.Assert(string(result[string(kd)]), Equals, "d")
-}
-
-var opCnt = 100000
-
-func BenchmarkMemDbBufferSequential(b *testing.B) {
-	data := make([][]byte, opCnt)
-	for i := 0; i < opCnt; i++ {
-		data[i] = encodeInt(i)
-	}
-	buffer := newMemDB()
-	benchmarkSetGet(b, buffer, data)
-	b.ReportAllocs()
-}
-
-func BenchmarkMemDbBufferRandom(b *testing.B) {
-	data := make([][]byte, opCnt)
-	for i := 0; i < opCnt; i++ {
-		data[i] = encodeInt(i)
-	}
-	shuffle(data)
-	buffer := newMemDB()
-	benchmarkSetGet(b, buffer, data)
-	b.ReportAllocs()
-}
-
-func BenchmarkMemDbIter(b *testing.B) {
-	buffer := newMemDB()
-	benchIterator(b, buffer)
-	b.ReportAllocs()
-}
-
-func BenchmarkMemDbCreation(b *testing.B) {
-	for i := 0; i < b.N; i++ {
-		newMemDB()
-	}
-	b.ReportAllocs()
-}
-
-func shuffle(slc [][]byte) {
-	N := len(slc)
-	for i := 0; i < N; i++ {
-		// choose index uniformly in [i, N-1]
-		r := i + rand.Intn(N-i)
-		slc[r], slc[i] = slc[i], slc[r]
-	}
-}
-func benchmarkSetGet(b *testing.B, buffer MemBuffer, data [][]byte) {
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		for _, k := range data {
-			buffer.Set(k, k)
-		}
-		for _, k := range data {
-			buffer.Get(context.TODO(), k)
-		}
-	}
-}
-
-func benchIterator(b *testing.B, buffer MemBuffer) {
-	for k := 0; k < opCnt; k++ {
-		buffer.Set(encodeInt(k), encodeInt(k))
-	}
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		iter, err := buffer.Iter(nil, nil)
-		if err != nil {
-			b.Error(err)
-		}
-		for iter.Valid() {
-			iter.Next()
-		}
-		iter.Close()
-	}
 }

@@ -21,10 +21,11 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/mock"
 )
 
-var _ = Suite(&testPartitionPruningSuite{})
+var _ = SerialSuites(&testPartitionPruningSuite{})
 
 type testPartitionPruningSuite struct {
 	partitionProcessor
@@ -45,7 +46,7 @@ func (s *testPartitionPruningSuite) TestCanBePrune(c *C) {
 		"to_days(d)",
 	)
 	lessThan := lessThanDataInt{data: []int64{733108, 733132}, maxvalue: false}
-	prunner := &rangePruner{lessThan, tc.col, tc.fn}
+	prunner := &rangePruner{lessThan, tc.col, tc.fn, monotoneModeNonStrict}
 
 	queryExpr := tc.expr("d < '2000-03-08 00:00:00'")
 	result := partitionRangeForCNFExpr(tc.sctx, queryExpr, prunner, fullRange(len(lessThan.data)))
@@ -71,7 +72,7 @@ func (s *testPartitionPruningSuite) TestCanBePrune(c *C) {
 		"unix_timestamp(report_updated)",
 	)
 	lessThan = lessThanDataInt{data: []int64{1199145600, 1207008000, 1262304000, 0}, maxvalue: true}
-	prunner = &rangePruner{lessThan, tc.col, tc.fn}
+	prunner = &rangePruner{lessThan, tc.col, tc.fn, monotoneModeStrict}
 
 	queryExpr = tc.expr("report_updated > '2008-05-01 00:00:00'")
 	result = partitionRangeForCNFExpr(tc.sctx, queryExpr, prunner, fullRange(len(lessThan.data)))
@@ -142,10 +143,11 @@ func prepareTestCtx(c *C, createTable string, partitionExpr string) *testCtx {
 	sctx := mock.NewContext()
 	tblInfo, err := ddl.BuildTableInfoFromAST(stmt.(*ast.CreateTableStmt))
 	c.Assert(err, IsNil)
-	columns, names := expression.ColumnInfos2ColumnsAndNames(sctx, model.NewCIStr("t"), tblInfo.Name, tblInfo.Columns)
+	columns, names, err := expression.ColumnInfos2ColumnsAndNames(sctx, model.NewCIStr("t"), tblInfo.Name, tblInfo.Cols(), tblInfo)
+	c.Assert(err, IsNil)
 	schema := expression.NewSchema(columns...)
 
-	col, fn, err := makePartitionByFnCol(sctx, columns, names, partitionExpr)
+	col, fn, _, err := makePartitionByFnCol(sctx, columns, names, partitionExpr)
 	c.Assert(err, IsNil)
 	return &testCtx{
 		c:       c,
@@ -170,7 +172,7 @@ func (s *testPartitionPruningSuite) TestPartitionRangeForExpr(c *C) {
 		"a",
 	)
 	lessThan := lessThanDataInt{data: []int64{4, 7, 11, 14, 17, 0}, maxvalue: true}
-	prunner := &rangePruner{lessThan, tc.columns[0], nil}
+	prunner := &rangePruner{lessThan, tc.columns[0], nil, monotoneModeInvalid}
 	cases := []struct {
 		input  string
 		result partitionRangeOR
@@ -301,6 +303,52 @@ func (s *testPartitionPruningSuite) TestPartitionRangePrunner2VarChar(c *C) {
 		{"a < 'l' or a >= 'w'", partitionRangeOR{{0, 4}, {5, 6}}},
 		{"a is null", partitionRangeOR{{0, 1}}},
 		{"'mm' > a", partitionRangeOR{{0, 5}}},
+		{"'f' <= a", partitionRangeOR{{2, 6}}},
+		{"'f' >= a", partitionRangeOR{{0, 3}}},
+	}
+
+	for _, ca := range cases {
+		expr, err := expression.ParseSimpleExprsWithNames(tc.sctx, ca.input, tc.schema, tc.names)
+		c.Assert(err, IsNil)
+		result := fullRange(len(lessThan))
+		result = partitionRangeForExpr(tc.sctx, expr[0], prunner, result)
+		c.Assert(equalPartitionRangeOR(ca.result, result), IsTrue, Commentf("unexpected:", ca.input))
+	}
+}
+
+func (s *testPartitionPruningSuite) TestPartitionRangePrunner2CharWithCollation(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+	tc := prepareTestCtx(c,
+		"create table t (a char(32) collate utf8mb4_unicode_ci)",
+		"a",
+	)
+	lessThanDataInt := []string{"'c'", "'F'", "'h'", "'L'", "'t'"}
+	lessThan := make([]expression.Expression, len(lessThanDataInt)+1) // +1 for maxvalue
+	for i, str := range lessThanDataInt {
+		tmp, err := expression.ParseSimpleExprsWithNames(tc.sctx, str, tc.schema, tc.names)
+		c.Assert(err, IsNil)
+		lessThan[i] = tmp[0]
+	}
+
+	prunner := &rangeColumnsPruner{lessThan, tc.columns[0], true}
+	cases := []struct {
+		input  string
+		result partitionRangeOR
+	}{
+		{"a > 'G'", partitionRangeOR{{2, 6}}},
+		{"a > 'g'", partitionRangeOR{{2, 6}}},
+		{"a < 'h'", partitionRangeOR{{0, 3}}},
+		{"a >= 'M'", partitionRangeOR{{4, 6}}},
+		{"a > 'm'", partitionRangeOR{{4, 6}}},
+		{"a < 'F'", partitionRangeOR{{0, 2}}},
+		{"a = 'C'", partitionRangeOR{{1, 2}}},
+		{"a > 't'", partitionRangeOR{{5, 6}}},
+		{"a > 'C' and a < 'q'", partitionRangeOR{{1, 5}}},
+		{"a > 'c' and a < 'Q'", partitionRangeOR{{1, 5}}},
+		{"a < 'l' or a >= 'W'", partitionRangeOR{{0, 4}, {5, 6}}},
+		{"a is null", partitionRangeOR{{0, 1}}},
+		{"'Mm' > a", partitionRangeOR{{0, 5}}},
 		{"'f' <= a", partitionRangeOR{{2, 6}}},
 		{"'f' >= a", partitionRangeOR{{0, 3}}},
 	}

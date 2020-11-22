@@ -18,6 +18,7 @@ import (
 	"crypto/tls"
 	"sync/atomic"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
@@ -149,9 +150,22 @@ func (ts *TiDBStatement) Reset() {
 // Close implements PreparedStatement Close method.
 func (ts *TiDBStatement) Close() error {
 	//TODO close at tidb level
-	err := ts.ctx.DropPreparedStmt(ts.id)
-	if err != nil {
-		return err
+	if ts.ctx.GetSessionVars().TxnCtx != nil && ts.ctx.GetSessionVars().TxnCtx.CouldRetry {
+		err := ts.ctx.DropPreparedStmt(ts.id)
+		if err != nil {
+			return err
+		}
+	} else {
+		if core.PreparedPlanCacheEnabled() {
+			preparedPointer := ts.ctx.GetSessionVars().PreparedStmts[ts.id]
+			preparedObj, ok := preparedPointer.(*core.CachedPrepareStmt)
+			if !ok {
+				return errors.Errorf("invalid CachedPrepareStmt type")
+			}
+			ts.ctx.PreparedPlanCache().Delete(core.NewPSTMTPlanCacheKey(
+				ts.ctx.GetSessionVars(), ts.id, preparedObj.PreparedAst.SchemaVersion))
+		}
+		ts.ctx.GetSessionVars().RemovePreparedStmt(ts.id)
 	}
 	delete(ts.ctx.stmts, int(ts.id))
 
@@ -362,7 +376,8 @@ func convertColumnInfo(fld *ast.ResultField) (ci *ColumnInfo) {
 			// Consider the decimal point.
 			ci.ColumnLength++
 		}
-	} else if types.IsString(fld.Column.Tp) {
+	} else if types.IsString(fld.Column.Tp) ||
+		fld.Column.Tp == mysql.TypeEnum || fld.Column.Tp == mysql.TypeSet { // issue #18870
 		// Fix issue #4540.
 		// The flen is a hint, not a precise value, so most client will not use the value.
 		// But we found in rare MySQL client, like Navicat for MySQL(version before 12) will truncate

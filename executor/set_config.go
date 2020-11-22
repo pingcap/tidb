@@ -201,7 +201,7 @@ func ConvertConfigItem2JSON(ctx sessionctx.Context, key string, val expression.E
 			str = fmt.Sprintf("%v", f)
 		}
 	case types.ETDecimal:
-		d := new(types.MyDecimal)
+		var d *types.MyDecimal
 		d, isNull, err = val.EvalDecimal(ctx, chunk.Row{})
 		if err == nil && !isNull {
 			str = string(d.ToString())

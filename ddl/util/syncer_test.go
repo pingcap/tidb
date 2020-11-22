@@ -10,13 +10,13 @@
 // distributed under the License is distributed on an "AS IS" BASIS,
 // See the License for the specific language governing permissions and
 // limitations under the License.
-// +build !windows
 
 package util_test
 
 import (
 	"context"
 	"fmt"
+	"runtime"
 	"sync"
 	"testing"
 	"time"
@@ -44,6 +44,9 @@ func TestT(t *testing.T) {
 const minInterval = 10 * time.Nanosecond // It's used to test timeout.
 
 func TestSyncerSimple(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("integration.NewClusterV3 will create file contains a colon which is not allowed on Windows")
+	}
 	testLease := 5 * time.Millisecond
 	origin := CheckVersFirstWaitTime
 	CheckVersFirstWaitTime = 0
@@ -116,16 +119,19 @@ func TestSyncerSimple(t *testing.T) {
 	wg := sync.WaitGroup{}
 	wg.Add(1)
 	currentVer := int64(123)
+	var checkErr string
 	go func() {
 		defer wg.Done()
 		select {
 		case resp := <-d.SchemaSyncer().GlobalVersionCh():
 			if len(resp.Events) < 1 {
-				t.Fatalf("get chan events count less than 1")
+				checkErr = "get chan events count less than 1"
+				return
 			}
 			checkRespKV(t, 1, DDLGlobalSchemaVersion, fmt.Sprintf("%v", currentVer), resp.Events[0].Kv)
 		case <-time.After(3 * time.Second):
-			t.Fatalf("get udpate version failed")
+			checkErr = "get udpate version failed"
+			return
 		}
 	}()
 
@@ -136,6 +142,10 @@ func TestSyncerSimple(t *testing.T) {
 	}
 
 	wg.Wait()
+
+	if checkErr != "" {
+		t.Fatalf(checkErr)
+	}
 
 	// for CheckAllVersions
 	childCtx, cancel := goctx.WithTimeout(ctx, 200*time.Millisecond)

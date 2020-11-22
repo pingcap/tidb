@@ -114,6 +114,49 @@ func (p *PhysicalHashJoin) ResolveIndices() (err error) {
 }
 
 // ResolveIndices implements Plan interface.
+func (p *PhysicalBroadCastJoin) ResolveIndices() (err error) {
+	err = p.physicalSchemaProducer.ResolveIndices()
+	if err != nil {
+		return err
+	}
+	lSchema := p.children[0].Schema()
+	rSchema := p.children[1].Schema()
+	for i, col := range p.LeftJoinKeys {
+		newKey, err := col.ResolveIndices(lSchema)
+		if err != nil {
+			return err
+		}
+		p.LeftJoinKeys[i] = newKey.(*expression.Column)
+	}
+	for i, col := range p.RightJoinKeys {
+		newKey, err := col.ResolveIndices(rSchema)
+		if err != nil {
+			return err
+		}
+		p.RightJoinKeys[i] = newKey.(*expression.Column)
+	}
+	for i, expr := range p.LeftConditions {
+		p.LeftConditions[i], err = expr.ResolveIndices(lSchema)
+		if err != nil {
+			return err
+		}
+	}
+	for i, expr := range p.RightConditions {
+		p.RightConditions[i], err = expr.ResolveIndices(rSchema)
+		if err != nil {
+			return err
+		}
+	}
+	for i, expr := range p.OtherConditions {
+		p.OtherConditions[i], err = expr.ResolveIndices(expression.MergeSchema(lSchema, rSchema))
+		if err != nil {
+			return err
+		}
+	}
+	return
+}
+
+// ResolveIndices implements Plan interface.
 func (p *PhysicalMergeJoin) ResolveIndices() (err error) {
 	err = p.physicalSchemaProducer.ResolveIndices()
 	if err != nil {
@@ -208,6 +251,17 @@ func (p *PhysicalIndexJoin) ResolveIndices() (err error) {
 			p.CompareFilters.affectedColSchema.Columns[i] = resolvedCol.(*expression.Column)
 		}
 	}
+	for i := range p.OuterHashKeys {
+		outerKey, err := p.OuterHashKeys[i].ResolveIndices(p.children[1-p.InnerChildIdx].Schema())
+		if err != nil {
+			return err
+		}
+		innerKey, err := p.InnerHashKeys[i].ResolveIndices(p.children[p.InnerChildIdx].Schema())
+		if err != nil {
+			return err
+		}
+		p.OuterHashKeys[i], p.InnerHashKeys[i] = outerKey.(*expression.Column), innerKey.(*expression.Column)
+	}
 	return
 }
 
@@ -296,7 +350,7 @@ func (p *PhysicalIndexLookUpReader) ResolveIndices() (err error) {
 		p.ExtraHandleCol = newCol.(*expression.Column)
 	}
 	for i, commonHandleCol := range p.CommonHandleCols {
-		newCol, err := commonHandleCol.ResolveIndices(p.tablePlan.Schema())
+		newCol, err := commonHandleCol.ResolveIndices(p.TablePlans[0].Schema())
 		if err != nil {
 			return err
 		}

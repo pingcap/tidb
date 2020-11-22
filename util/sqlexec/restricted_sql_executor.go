@@ -71,6 +71,9 @@ type Statement interface {
 	// OriginText gets the origin SQL text.
 	OriginText() string
 
+	// GetTextToLog gets the desensitization SQL text for logging.
+	GetTextToLog() string
+
 	// Exec executes SQL and gets a Recordset.
 	Exec(ctx context.Context) (RecordSet, error)
 

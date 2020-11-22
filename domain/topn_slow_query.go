@@ -66,7 +66,7 @@ func (h *slowQueryHeap) Query(count int) []*SlowQueryInfo {
 	// The sorted array still maintains the heap property.
 	sort.Sort(h)
 
-	// The result shoud be in decrease order.
+	// The result should be in decrease order.
 	return takeLastN(h.data, count)
 }
 

@@ -50,7 +50,7 @@ func NewList(fieldTypes []*types.FieldType, initChunkSize, maxChunkSize int) *Li
 		fieldTypes:    fieldTypes,
 		initChunkSize: initChunkSize,
 		maxChunkSize:  maxChunkSize,
-		memTracker:    memory.NewTracker(chunkListLabel, -1),
+		memTracker:    memory.NewTracker(memory.LabelForChunkList, -1),
 		consumedIdx:   -1,
 	}
 	return l

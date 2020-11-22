@@ -228,7 +228,8 @@ func (s *propConstSolver) propagateColumnEQ() {
 		if fun, ok := s.conditions[i].(*ScalarFunction); ok && fun.FuncName.L == ast.EQ {
 			lCol, lOk := fun.GetArgs()[0].(*Column)
 			rCol, rOk := fun.GetArgs()[1].(*Column)
-			if lOk && rOk && lCol.GetType().Collate == rCol.GetType().Collate {
+			// TODO: Enable hybrid types in ConstantPropagate.
+			if lOk && rOk && lCol.GetType().Collate == rCol.GetType().Collate && !lCol.GetType().Hybrid() && !rCol.GetType().Hybrid() {
 				lID := s.getColID(lCol)
 				rID := s.getColID(rCol)
 				s.unionSet.Union(lID, rID)
@@ -299,6 +300,10 @@ func (s *propConstSolver) pickNewEQConds(visited []bool) (retMapper map[int]*Con
 				s.setConds2ConstFalse()
 				return nil
 			}
+			continue
+		}
+		// TODO: Enable hybrid types in ConstantPropagate.
+		if col.GetType().Hybrid() {
 			continue
 		}
 		visited[i] = true

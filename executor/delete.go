@@ -81,9 +81,10 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 		}
 	}
 
-	// If tidb_batch_delete is ON and not in a transaction, we could use BatchDelete mode.
-	batchDelete := e.ctx.GetSessionVars().BatchDelete && !e.ctx.GetSessionVars().InTxn() && config.GetGlobalConfig().EnableBatchDML
 	batchDMLSize := e.ctx.GetSessionVars().DMLBatchSize
+	// If tidb_batch_delete is ON and not in a transaction, we could use BatchDelete mode.
+	batchDelete := e.ctx.GetSessionVars().BatchDelete && !e.ctx.GetSessionVars().InTxn() &&
+		config.GetGlobalConfig().EnableBatchDML && batchDMLSize > 0
 	fields := retTypes(e.children[0])
 	chk := newFirstChunk(e.children[0])
 	memUsageOfChk := int64(0)
@@ -101,12 +102,8 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 		e.memTracker.Consume(memUsageOfChk)
 		for chunkRow := iter.Begin(); chunkRow != iter.End(); chunkRow = iter.Next() {
 			if batchDelete && rowCount >= batchDMLSize {
-				if err = e.ctx.StmtCommit(e.memTracker); err != nil {
+				if err := e.doBatchDelete(ctx); err != nil {
 					return err
-				}
-				if err = e.ctx.NewTxn(ctx); err != nil {
-					// We should return a special error for batch insert.
-					return ErrBatchInsertFail.GenWithStack("BatchDelete failed with error: %v", err)
 				}
 				rowCount = 0
 			}
@@ -121,6 +118,20 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 		chk = chunk.Renew(chk, e.maxChunkSize)
 	}
 
+	return nil
+}
+
+func (e *DeleteExec) doBatchDelete(ctx context.Context) error {
+	txn, err := e.ctx.Txn(false)
+	if err != nil {
+		return ErrBatchInsertFail.GenWithStack("BatchDelete failed with error: %v", err)
+	}
+	e.memTracker.Consume(-int64(txn.Size()))
+	e.ctx.StmtCommit()
+	if err := e.ctx.NewTxn(ctx); err != nil {
+		// We should return a special error for batch insert.
+		return ErrBatchInsertFail.GenWithStack("BatchDelete failed with error: %v", err)
+	}
 	return nil
 }
 
