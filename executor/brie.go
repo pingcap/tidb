@@ -856,7 +856,7 @@ func (gs *tidbGlueSession) GetSQLExecutor() importglue.SQLExecutor {
 
 func (gs *tidbGlueSession) GetParser() *parser.Parser {
 	p := parser.New()
-	p.SetSQLMode(gs.se.(sessionctx.Context).GetSessionVars().SQLMode)
+	p.SetSQLMode(gs.se.GetSessionVars().SQLMode)
 	return p
 }
 
@@ -865,7 +865,7 @@ func (gs *tidbGlueSession) GetDB() (*sql.DB, error) {
 }
 
 func (gs *tidbGlueSession) GetTables(ctx context.Context, schemaName string) ([]*model.TableInfo, error) {
-	is := domain.GetDomain(gs.se.(sessionctx.Context)).InfoSchema()
+	is := domain.GetDomain(gs.se).InfoSchema()
 	tables := is.SchemaTables(model.NewCIStr(schemaName))
 	tbsInfo := make([]*model.TableInfo, len(tables))
 	for i := range tbsInfo {
@@ -875,11 +875,7 @@ func (gs *tidbGlueSession) GetTables(ctx context.Context, schemaName string) ([]
 }
 
 func (gs *tidbGlueSession) GetSession() (checkpoints.Session, error) {
-	sctx, ok := gs.se.(sessionctx.Context)
-	if !ok {
-		return nil, errors.New("can't recover sessionctx.Context from glue")
-	}
-	s, err := CreateSessionForBRIEFunc(sctx)
+	s, err := CreateSessionForBRIEFunc(gs.se)
 	if err != nil {
 		return nil, errors.Annotate(err, "create new session in GlueCheckpointsDB")
 	}
