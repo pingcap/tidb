@@ -758,6 +758,9 @@ func (w *worker) handelParentJob(d *ddlCtx, job *model.Job, tableInfo *model.Tab
 							totalAddedCount = totalAddedCount + subTaskProcessedCount
 							job.SetRowCount(totalAddedCount)
 							err = t.SetReorgSubTaskStatus(job.ID, taskID, meta.Reorganized)
+							if err != nil {
+								return errors.Trace(err)
+							}
 							logutil.Logger(w.logCtx).Info("[ddl] DDL subTask success", zap.String("job", job.String()),
 								zap.String("subTaskId", strconv.FormatInt(taskID, 10)),
 								zap.String("processedCount", strconv.FormatInt(subTaskProcessedCount, 10)),
@@ -766,7 +769,13 @@ func (w *worker) handelParentJob(d *ddlCtx, job *model.Job, tableInfo *model.Tab
 							break
 						case meta.Failed:
 							err = t.SetReorgSubTaskStatus(job.ID, taskID, meta.Unclaimed)
+							if err != nil {
+								return errors.Trace(err)
+							}
 							err = t.SetReorgSubTaskRunner(job.ID, taskID, meta.RunnerEmptyStr)
+							if err != nil {
+								return errors.Trace(err)
+							}
 							logutil.Logger(w.logCtx).Info("[ddl] DDL subTask failed", zap.String("job", job.String()),
 								zap.String("subTaskId", strconv.FormatInt(taskID, 10)),
 								zap.String("processedCount", strconv.FormatInt(subTaskProcessedCount, 10)),

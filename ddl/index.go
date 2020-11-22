@@ -1237,6 +1237,9 @@ func splitTableToKVRanges(physicalTable table.PhysicalTable, d *ddlCtx, job *mod
 func convertFromKvRangeToAddIndexSubTasks(kvRanges []kv.KeyRange, physicalTable table.PhysicalTable, job *model.Job, t *meta.Meta, idx *model.IndexInfo, tbleInfo *model.TableInfo, allSubTasks []*meta.SubTask) (subTasks []*meta.SubTask, err error) {
 	for _, kvRange := range kvRanges {
 		startHandle, endHandle, err := decodeHandleRange(kvRange)
+		if err != nil {
+			return allSubTasks, errors.Trace(err)
+		}
 		taskID := int64(len(allSubTasks) + 1)
 		subTask := meta.SubTask{
 			TaskID:   taskID,
