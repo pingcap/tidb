@@ -241,7 +241,7 @@ func (d *ddlCtx) addBatchTaskToQueue(subTasks []*meta.SubTask, t *meta.Meta) (er
 		if err != nil {
 			return errors.Trace(err)
 		}
-		logutil.BgLogger().Info("[ddl] add DDL subTasks", zap.Int("batch count", len(subTasks)))
+		logutil.BgLogger().Info("[ddl] add batch DDL subTasks", zap.Int("batch count", len(subTasks)))
 	}
 	return errors.Trace(err)
 }
