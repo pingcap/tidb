@@ -607,7 +607,7 @@ func (m *Meta) dequeueDDLSubTask(key []byte) (*SubTask, error) {
 	}
 
 	subTask := &SubTask{}
-	err = subTask.decode(value)
+	err = subTask.Decode(value)
 	return subTask, errors.Trace(err)
 }
 
@@ -640,7 +640,7 @@ func (m *Meta) getDDLSubTask(key []byte, index int64) (*SubTask, error) {
 
 	subTask := &SubTask{}
 
-	err = subTask.decode(value)
+	err = subTask.Decode(value)
 	return subTask, errors.Trace(err)
 }
 
@@ -771,7 +771,7 @@ func (m *Meta) GetAllDDLSubTaskInQueue(jobListKeys ...JobListKeyType) ([]*SubTas
 	subTasks := make([]*SubTask, 0, len(values))
 	for _, val := range values {
 		subTask := &SubTask{}
-		err = subTask.decode(val)
+		err = subTask.Decode(val)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

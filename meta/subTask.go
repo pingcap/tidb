@@ -55,7 +55,7 @@ type AddIndexSubTask struct {
 	SchemaID  int64            `json:"schema_id"`
 }
 
-func (task *SubTask) decode(b []byte) error {
+func (task *SubTask) Decode(b []byte) error {
 	err := json.Unmarshal(b, task)
 	return errors.Trace(err)
 }
@@ -73,7 +73,8 @@ func (task *SubTask) encode(updateRawArgs bool) ([]byte, error) {
 	return b, errors.Trace(err)
 }
 
-func (task *SubTask) decodeArgs(args ...interface{}) error {
+// decode specific json args for a SubTask
+func (task *SubTask) DecodeArgs(args ...interface{}) error {
 	var rawArgs []json.RawMessage
 	if err := json.Unmarshal(task.RawArgs, &rawArgs); err != nil {
 		return errors.Trace(err)
