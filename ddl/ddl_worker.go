@@ -812,6 +812,9 @@ func (w *worker) handelParentJob(d *ddlCtx, job *model.Job, tableInfo *model.Tab
 								}
 								//update DDL Job modify row count
 								err = t.UpdateDDLJob(0, job, false)
+								if err != nil {
+									return errors.Trace(err)
+								}
 							}
 						}
 						return errors.Trace(err)
