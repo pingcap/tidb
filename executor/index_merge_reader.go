@@ -702,7 +702,7 @@ func (w *indexMergeTableScanWorker) executeTask(ctx context.Context, task *looku
 		task.memUsage += memUsage
 		task.memTracker.Consume(memUsage)
 		if task.chunk == nil {
-			task.chunk = chk
+			task.chunk = chunk.Renew(chk, chk.NumRows())
 		} else {
 			task.chunk.Append(chk, 0, chk.NumRows())
 		}
