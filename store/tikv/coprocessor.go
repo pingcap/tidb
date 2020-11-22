@@ -1448,7 +1448,8 @@ func (e *rateLimitAction) destroyTokenIfNeeded(returnToken func()) {
 
 	returnToken()
 	// we suspend worker when `exceeded` is true until being notified by `broadcastIfNeeded`
-	for e.cond.exceeded {
+	// If not enabled we should not let worker wait, it may cause a dead lock.
+	for e.cond.exceeded && e.isEnabled() {
 		e.cond.waitingWorkerCnt++
 		e.cond.Wait()
 		e.cond.waitingWorkerCnt--
