@@ -577,7 +577,7 @@ func (m *Meta) enQueueDDLSubTask(key []byte, task *SubTask) error {
 	return errors.Trace(err)
 }
 
-//EnQueueDDLSubTask: add one subTask to subTask queue
+//EnQueueDDLSubTask add one subTask to subTask queue
 func (m *Meta) EnQueueDDLSubTask(task *SubTask) error {
 	return m.enQueueDDLSubTask(SubTaskListKey, task)
 }
@@ -756,7 +756,7 @@ func (m *Meta) GetAllDDLJobsInQueue(jobListKeys ...JobListKeyType) ([]*model.Job
 	return jobs, nil
 }
 
-//GetAllDDLSubTaskInQueue: get all subTasks by from subTaskQueue
+//GetAllDDLSubTaskInQueue get all subTasks by from subTaskQueue
 func (m *Meta) GetAllDDLSubTaskInQueue(jobListKeys ...JobListKeyType) ([]*SubTask, error) {
 	listKey := m.jobListKey
 	if len(jobListKeys) != 0 {
@@ -1019,7 +1019,7 @@ func (m *Meta) UpdateDDLReorgHandle(job *model.Job, startHandle, endHandle kv.Ha
 	return errors.Trace(err)
 }
 
-//UpdateDDLSubTaskReorgInfo
+//UpdateDDLSubTaskReorgInfo update the reorg info of a subTask
 func (m *Meta) UpdateDDLSubTaskReorgInfo(jobID int64, subTaskID int64, startHandle, endHandle kv.Handle, physicalTableID int64, runner string, status SubTaskStatus, count int64) error {
 	err := SetReorgSubTaskFiledHandle(m.txn, m.reorgSubTaskStartHandle(jobID, subTaskID), startHandle)
 	if err != nil {
@@ -1243,7 +1243,7 @@ func getReorgSubTaskFieldHandle(t *structure.TxStructure, reorgSubTaskField []by
 	return kv.IntHandle(n), nil
 }
 
-//GetReorgSubTaskRunner: get the runner's ddl uuid
+//GetReorgSubTaskRunner get the runner's ddl uuid
 func (m *Meta) GetReorgSubTaskRunner(jobID int64, taskID int64) (runner string, err error) {
 	bs, err := m.txn.HGet(mDDLSubTaskReorgKey, m.reorgSubTaskRunner(jobID, taskID))
 	return string(bs[:]), errors.Trace(err)

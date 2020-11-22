@@ -1,3 +1,16 @@
+// Copyright 2015 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package meta
 
 import (
@@ -7,20 +20,20 @@ import (
 	"github.com/pingcap/parser/model"
 )
 
-//SubTaskType: the ActionType of SubTask
+//SubTaskType the ActionType of a SubTask
 type SubTaskType byte
 
-//SubTaskStatus: status of  SubTask execution
+//SubTaskStatus status of SubTask execution
 type SubTaskStatus byte
 
 const (
-	//AddIndexSubTaskType: subTaskActionType of addIndex
+	//AddIndexSubTaskType subTaskActionType of addIndex
 	AddIndexSubTaskType SubTaskType = 1
 
-	//RunnerEmptyStr: When the subTask status is not executed or empty
+	//RunnerEmptyStr When the subTask status is not executed or empty
 	RunnerEmptyStr = ""
 
-	//SubTaskTypeStr: SubTask worker type str
+	//SubTaskTypeStr SubTask worker type str
 	SubTaskTypeStr = "subTask"
 )
 
