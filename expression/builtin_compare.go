@@ -467,7 +467,7 @@ func (c *greatestFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	}
 	tp, _ := GetCmpTp4MinMax(args)
 	cmpAsDatetime := false
-	if tp == types.ETDatetime {
+	if tp == types.ETDatetime || tp == types.ETTimestamp {
 		cmpAsDatetime = true
 		tp = types.ETString
 	}
@@ -495,7 +495,7 @@ func (c *greatestFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	case types.ETString:
 		sig = &builtinGreatestStringSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_GreatestString)
-	case types.ETDatetime:
+	case types.ETDatetime, types.ETTimestamp:
 		sig = &builtinGreatestTimeSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_GreatestTime)
 	}
