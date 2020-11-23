@@ -73,11 +73,12 @@ var (
 // executorBuilder builds an Executor from a Plan.
 // The InfoSchema must not change during execution.
 type executorBuilder struct {
-	ctx        sessionctx.Context
-	is         infoschema.InfoSchema
-	snapshotTS uint64 // The consistent snapshot timestamp for the executor to read data.
-	err        error  // err is set when there is error happened during Executor building process.
-	hasLock    bool
+	ctx              sessionctx.Context
+	is               infoschema.InfoSchema
+	snapshotTS       uint64 // The consistent snapshot timestamp for the executor to read data.
+	snapshotTSCached bool
+	err              error // err is set when there is error happened during Executor building process.
+	hasLock          bool
 }
 
 func newExecutorBuilder(ctx sessionctx.Context, is infoschema.InfoSchema) *executorBuilder {
@@ -1355,18 +1356,29 @@ func (b *executorBuilder) buildTableDual(v *plannercore.PhysicalTableDual) Execu
 	return e
 }
 
+// `getSnapshotTS` returns the timestamp of the snapshot that a reader should read. If `forTxnRead`
+// is set, it returns the timestamp that matches the current transaction's isolation level. For most
+// cases, `forTxnRead` should be set.
 func (b *executorBuilder) getSnapshotTS(forTxnRead bool) (uint64, error) {
-	if b.snapshotTS != 0 {
-		// Return the cached value.
+	// `refreshForUpdateTSForRC` should always be invoked before returning the cached value to
+	// ensure the correct value is returned even the `snapshotTS` field is already set by other
+	// logics. However for `IndexLookUpMergeJoin` and `IndexLookUpHashJoin`, it requires caching the
+	// snapshotTS and and may even use it after the txn being destroyed. In this case, mark
+	// `snapshotTSCached` to skip `refreshForUpdateTSForRC`.
+	if b.snapshotTSCached {
 		return b.snapshotTS, nil
 	}
 
-	// getSnapshotTS may be invoked after the txn being closed, but in this case the snapshot TS
-	// must have been cached. Refresh it after checking if the ts is already cached.
 	if forTxnRead && b.ctx.GetSessionVars().IsPessimisticReadConsistency() {
 		if err := b.refreshForUpdateTSForRC(); err != nil {
 			return 0, err
 		}
+	}
+
+	if b.snapshotTS != 0 {
+		b.snapshotTSCached = true
+		// Return the cached value.
+		return b.snapshotTS, nil
 	}
 
 	snapshotTS := b.ctx.GetSessionVars().SnapshotTS
@@ -1381,6 +1393,7 @@ func (b *executorBuilder) getSnapshotTS(forTxnRead bool) (uint64, error) {
 	if b.snapshotTS == 0 {
 		return 0, errors.Trace(ErrGetStartTS)
 	}
+	b.snapshotTSCached = true
 	return snapshotTS, nil
 }
 
