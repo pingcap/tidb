@@ -1501,7 +1501,7 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	case CollationConnection, CollationDatabase, CollationServer:
 		var (
 			coll *charset.Collation
-			err error
+			err  error
 		)
 		if !collate.NewCollationEnabled() {
 			coll, err = collate.GetCollationByName(charset.CollationUTF8MB4)
