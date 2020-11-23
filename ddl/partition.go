@@ -1711,10 +1711,10 @@ func truncateTableByReassignPartitionIDs(t *meta.Meta, tblInfo *model.TableInfo)
 	return nil
 }
 
-func onAlterTablePartition(t *meta.Meta, job *model.Job) (int64, error) {
+func onAlterTablePartition(t *meta.Meta, job *model.Job) (ver int64, err error) {
 	var partitionID int64
 	bundle := &placement.Bundle{}
-	err := job.DecodeArgs(&partitionID, bundle)
+	err = job.DecodeArgs(&partitionID, bundle)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return 0, errors.Trace(err)
@@ -1731,19 +1731,30 @@ func onAlterTablePartition(t *meta.Meta, job *model.Job) (int64, error) {
 		return 0, errors.Trace(table.ErrUnknownPartition.GenWithStackByArgs("drop?", tblInfo.Name.O))
 	}
 
-	err = infosync.PutRuleBundles(nil, []*placement.Bundle{bundle})
-	if err != nil {
-		job.State = model.JobStateCancelled
-		return 0, errors.Wrapf(err, "failed to notify PD the placement rules")
+	switch job.SchemaState {
+	// none -> global txn write only
+	case model.StateNone:
+		err = infosync.PutRuleBundles(nil, []*placement.Bundle{bundle})
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return 0, errors.Wrapf(err, "failed to notify PD the placement rules")
+		}
+		// used by ApplyDiff in updateSchemaVersion
+		job.CtxVars = []interface{}{partitionID}
+		ver, err = updateSchemaVersion(t, job)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		job.SchemaState = model.StateGlobalTxnWriteOnly
+	// 	StateGlobalTxnWriteOnly -> public 
+	case model.StateGlobalTxnWriteOnly:
+		// used by ApplyDiff in updateSchemaVersion
+		job.CtxVars = []interface{}{partitionID}
+		ver, err = updateSchemaVersion(t, job)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 	}
-
-	// used by ApplyDiff in updateSchemaVersion
-	job.CtxVars = []interface{}{partitionID}
-	ver, err := updateSchemaVersion(t, job)
-	if err != nil {
-		return ver, errors.Trace(err)
-	}
-
-	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 	return ver, nil
 }
