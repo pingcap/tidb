@@ -184,8 +184,6 @@ func (bq *brieQueue) registerTask(
 
 // acquireTask prepares to execute a BRIE task. Only one BRIE task can be
 // executed at a time, and this function blocks until the task is ready.
-//
-// Returns an object to track the task's progress.
 func (bq *brieQueue) acquireTask(taskCtx context.Context, taskID uint64, se *sessionWithLock) (err error) {
 	// wait until we are at the front of the queue.
 	select {
@@ -721,7 +719,7 @@ func (gs *tidbGlueSession) ObtainStringWithLog(ctx context.Context, sql string, 
 			return err
 		}
 		r := rs[0]
-		defer terror.Log(r.Close())
+		defer terror.Call(r.Close)
 		req := r.NewChunk()
 		err = r.Next(ctx, req)
 		if err != nil {
