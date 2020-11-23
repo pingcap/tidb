@@ -1892,3 +1892,15 @@ func (s *testIntegrationSuite) TestUpdateMultiUpdatePK(c *C) {
 	tk.MustExec(`UPDATE t m, t n SET m.a = m.a + 1, n.b = n.b + 10`)
 	tk.MustQuery("SELECT * FROM t").Check(testkit.Rows("2 12"))
 }
+
+func (s *testIntegrationSuite) TestOrderByHavingNotInSelect(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists ttest")
+	tk.MustExec("create table ttest (v1 int, v2 int)")
+	tk.MustExec("insert into ttest values(1, 2), (4,6), (1, 7)")
+	tk.MustGetErrMsg("select v1 from ttest order by count(v2)",
+		"[planner:3029]Expression #1 of ORDER BY contains aggregate function and applies to the result of a non-aggregated query")
+	tk.MustGetErrMsg("select v1 from ttest having count(v2)",
+		"[planner:8123]In aggregated query without GROUP BY, expression #1 of SELECT list contains nonaggregated column 'v1'; this is incompatible with sql_mode=only_full_group_by")
+}
