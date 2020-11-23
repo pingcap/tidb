@@ -63,6 +63,7 @@ const (
 )
 
 var (
+	// CreateSessionForBRIEFunc is used to solve cycle import when use session.CreateSession
 	CreateSessionForBRIEFunc func(sessionctx.Context) (checkpoints.Session, error)
 )
 
