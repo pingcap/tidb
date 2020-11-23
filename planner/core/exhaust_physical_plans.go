@@ -402,16 +402,6 @@ func (p *LogicalJoin) constructIndexJoin(
 		InnerJoinKeys:   newInnerKeys,
 		DefaultValues:   p.DefaultValues,
 	}
-	// Correct the collation used by hash.
-	for i := range outerHashKeys {
-		// Make compiler happy.
-		if len(innerHashKeys) == 0 {
-			return nil
-		}
-		chs, coll := expression.DeriveCollationFromExprs(nil, outerHashKeys[i], innerHashKeys[i])
-		outerHashKeys[i].GetType().Charset, outerHashKeys[i].GetType().Collate = chs, coll
-		innerHashKeys[i].GetType().Charset, innerHashKeys[i].GetType().Collate = chs, coll
-	}
 	join := PhysicalIndexJoin{
 		basePhysicalJoin: baseJoin,
 		innerTask:        innerTask,
@@ -584,40 +574,6 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *property.PhysicalProperty, ou
 	return p.buildIndexJoinInner2IndexScan(prop, ds, innerJoinKeys, outerJoinKeys, outerIdx, us, avgInnerRowCnt)
 }
 
-<<<<<<< HEAD
-=======
-func (p *LogicalJoin) getIndexJoinBuildHelper(ds *DataSource, innerJoinKeys []*expression.Column, checkPathValid func(path *util.AccessPath) bool, outerJoinKeys []*expression.Column) (*indexJoinBuildHelper, []int) {
-	helper := &indexJoinBuildHelper{
-		join:      p,
-		innerPlan: ds,
-	}
-	for _, path := range ds.possibleAccessPaths {
-		if checkPathValid(path) {
-			emptyRange, err := helper.analyzeLookUpFilters(path, ds, innerJoinKeys, outerJoinKeys)
-			if emptyRange {
-				return nil, nil
-			}
-			if err != nil {
-				logutil.BgLogger().Warn("build index join failed", zap.Error(err))
-			}
-		}
-	}
-	if helper.chosenPath == nil {
-		return nil, nil
-	}
-	keyOff2IdxOff := make([]int, len(innerJoinKeys))
-	for i := range keyOff2IdxOff {
-		keyOff2IdxOff[i] = -1
-	}
-	for idxOff, keyOff := range helper.idxOff2KeyOff {
-		if keyOff != -1 {
-			keyOff2IdxOff[keyOff] = idxOff
-		}
-	}
-	return helper, keyOff2IdxOff
-}
-
->>>>>>> e6d7e7b89... planner: make index-hash-join and index-merge-join consider collation (#21201)
 // buildIndexJoinInner2TableScan builds a TableScan as the inner child for an
 // IndexJoin if possible.
 // If the inner side of a index join is a TableScan, only one tuple will be
@@ -642,58 +598,11 @@ func (p *LogicalJoin) buildIndexJoinInner2TableScan(
 	}
 	keyOff2IdxOff := make([]int, len(innerJoinKeys))
 	newOuterJoinKeys := make([]*expression.Column, 0)
-<<<<<<< HEAD
 	pkMatched := false
 	for i, key := range innerJoinKeys {
 		if !key.Equal(nil, pkCol) {
 			keyOff2IdxOff[i] = -1
 			continue
-=======
-	var ranges []*ranger.Range
-	var innerTask, innerTask2 task
-	var helper *indexJoinBuildHelper
-	if ds.tableInfo.IsCommonHandle {
-		helper, keyOff2IdxOff = p.getIndexJoinBuildHelper(ds, innerJoinKeys, func(path *util.AccessPath) bool { return path.IsCommonHandlePath }, outerJoinKeys)
-		if helper == nil {
-			return nil
-		}
-		innerTask = p.constructInnerTableScanTask(ds, nil, outerJoinKeys, us, false, false, avgInnerRowCnt)
-		// The index merge join's inner plan is different from index join, so we
-		// should construct another inner plan for it.
-		// Because we can't keep order for union scan, if there is a union scan in inner task,
-		// we can't construct index merge join.
-		if us == nil {
-			innerTask2 = p.constructInnerTableScanTask(ds, nil, outerJoinKeys, us, true, !prop.IsEmpty() && prop.SortItems[0].Desc, avgInnerRowCnt)
-		}
-		ranges = helper.chosenRanges
-	} else {
-		pkMatched := false
-		pkCol := ds.getPKIsHandleCol()
-		if pkCol == nil {
-			return nil
-		}
-		for i, key := range innerJoinKeys {
-			if !key.Equal(nil, pkCol) {
-				keyOff2IdxOff[i] = -1
-				continue
-			}
-			pkMatched = true
-			keyOff2IdxOff[i] = 0
-			// Add to newOuterJoinKeys only if conditions contain inner primary key. For issue #14822.
-			newOuterJoinKeys = append(newOuterJoinKeys, outerJoinKeys[i])
-		}
-		outerJoinKeys = newOuterJoinKeys
-		if !pkMatched {
-			return nil
-		}
-		innerTask = p.constructInnerTableScanTask(ds, pkCol, outerJoinKeys, us, false, false, avgInnerRowCnt)
-		// The index merge join's inner plan is different from index join, so we
-		// should construct another inner plan for it.
-		// Because we can't keep order for union scan, if there is a union scan in inner task,
-		// we can't construct index merge join.
-		if us == nil {
-			innerTask2 = p.constructInnerTableScanTask(ds, pkCol, outerJoinKeys, us, true, !prop.IsEmpty() && prop.SortItems[0].Desc, avgInnerRowCnt)
->>>>>>> e6d7e7b89... planner: make index-hash-join and index-merge-join consider collation (#21201)
 		}
 		pkMatched = true
 		keyOff2IdxOff[i] = 0
@@ -733,13 +642,12 @@ func (p *LogicalJoin) buildIndexJoinInner2TableScan(
 func (p *LogicalJoin) buildIndexJoinInner2IndexScan(
 	prop *property.PhysicalProperty, ds *DataSource, innerJoinKeys, outerJoinKeys []*expression.Column,
 	outerIdx int, us *LogicalUnionScan, avgInnerRowCnt float64) (joins []PhysicalPlan) {
-<<<<<<< HEAD
 	helper := &indexJoinBuildHelper{join: p}
 	for _, path := range ds.possibleAccessPaths {
 		if path.IsTablePath {
 			continue
 		}
-		emptyRange, err := helper.analyzeLookUpFilters(path, ds, innerJoinKeys)
+		emptyRange, err := helper.analyzeLookUpFilters(path, ds, innerJoinKeys, outerJoinKeys)
 		if emptyRange {
 			return nil
 		}
@@ -748,10 +656,6 @@ func (p *LogicalJoin) buildIndexJoinInner2IndexScan(
 		}
 	}
 	if helper.chosenPath == nil {
-=======
-	helper, keyOff2IdxOff := p.getIndexJoinBuildHelper(ds, innerJoinKeys, func(path *util.AccessPath) bool { return !path.IsTablePath() }, outerJoinKeys)
-	if helper == nil {
->>>>>>> e6d7e7b89... planner: make index-hash-join and index-merge-join consider collation (#21201)
 		return nil
 	}
 	keyOff2IdxOff := make([]int, len(innerJoinKeys))
