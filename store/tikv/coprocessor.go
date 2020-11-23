@@ -651,66 +651,6 @@ func (it *copIterator) recvFromRespCh(ctx context.Context, respCh <-chan *copRes
 	}
 }
 
-//func (it *copIterator) recvFromTasks(ctx context.Context) (resp *copResponse, exit bool) {
-//	ticker := time.NewTicker(3 * time.Second)
-//	defer ticker.Stop()
-//	for {
-//		select {
-//		case <-it.finishCh:
-//			exit = true
-//			return
-//		case <-ticker.C:
-//			if atomic.LoadUint32(it.vars.Killed) == 1 {
-//				resp = &copResponse{err: ErrQueryInterrupted}
-//				return
-//			}
-//		case <-ctx.Done():
-//			// We select the ctx.Done() in the thread of `Next` instead of in the worker to avoid the cost of `WithCancel`.
-//			if atomic.CompareAndSwapUint32(&it.closed, 0, 1) {
-//				close(it.finishCh)
-//			}
-//			exit = true
-//			return
-//		default:
-//			// check whether this is any task needs to be recv
-//			exit = it.isTaskAllFinished()
-//			if exit {
-//				return
-//			}
-//			// travel all the tasks to recv response
-//			for i := 0; i < len(it.tasks); i++ {
-//				if it.tasks[i] == nil {
-//					continue
-//				}
-//				task := it.tasks[i]
-//				var ok bool
-//				select {
-//				case resp, ok = <-task.respChan:
-//					if it.memTracker != nil && resp != nil {
-//						consumed := resp.MemSize()
-//						failpoint.Inject("testRateLimitActionMockConsumeAndAssert", func(val failpoint.Value) {
-//							if val.(bool) {
-//								consumed = MockResponseSize
-//							}
-//						})
-//						it.memTracker.Consume(-consumed)
-//					}
-//					// task[i] finished
-//					if !ok && resp == nil {
-//						it.actionOnExceed.destroyTokenIfNeeded(func() {
-//							it.sendRate.putToken()
-//						})
-//						it.tasks[i] = nil
-//						continue
-//					}
-//					return
-//				default:
-//				}
-//			}
-//		}
-//	}
-//}
-
 func (it *copIterator) isTaskAllFinished() (exit bool) {
 	exit = true
 	for i := 0; i < len(it.tasks); i++ {
