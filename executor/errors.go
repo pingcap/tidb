@@ -59,6 +59,7 @@ var (
 func init() {
 	// Map error codes to mysql error codes.
 	tableMySQLErrCodes := map[terror.ErrCode]uint16{
+		mysql.ErrUnsupportedPs:               mysql.ErrUnsupportedPs,
 		mysql.ErrPasswordNoMatch:             mysql.ErrPasswordNoMatch,
 		mysql.ErrCannotUser:                  mysql.ErrCannotUser,
 		mysql.ErrWrongValueCountOnRow:        mysql.ErrWrongValueCountOnRow,
