@@ -720,7 +720,7 @@ func (gs *tidbGlueSession) ObtainStringWithLog(ctx context.Context, sql string, 
 			return err
 		}
 		r := rs[0]
-		defer r.Close()
+		defer terror.Log(r.Close())
 		req := r.NewChunk()
 		err = r.Next(ctx, req)
 		if err != nil {
