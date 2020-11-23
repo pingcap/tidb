@@ -864,9 +864,14 @@ func (e *HashAggExec) getPartialResults(groupKey string) []aggfuncs.PartialResul
 
 func (e *HashAggExec) initRuntimeStats() {
 	if e.runtimeStats != nil && e.stats == nil {
-		stats := &HashAggRuntimeStats{}
-		stats.PartialInfo.Concurrency = e.ctx.GetSessionVars().HashAggPartialConcurrency()
-		stats.FinalInfo.Concurrency = e.ctx.GetSessionVars().HashAggFinalConcurrency()
+		stats := &HashAggRuntimeStats{
+			PartialInfo: &AggWorkerInfo{
+				Concurrency: e.ctx.GetSessionVars().HashAggPartialConcurrency(),
+			},
+			FinalInfo: &AggWorkerInfo{
+				Concurrency: e.ctx.GetSessionVars().HashAggFinalConcurrency(),
+			},
+		}
 		stats.PartialStats = make([]*AggWorkerStat, 0, stats.PartialInfo.Concurrency)
 		stats.FinalStats = make([]*AggWorkerStat, 0, stats.FinalInfo.Concurrency)
 		e.stats = stats
@@ -876,8 +881,8 @@ func (e *HashAggExec) initRuntimeStats() {
 
 // HashAggRuntimeStats record the HashAggExec runtime stat
 type HashAggRuntimeStats struct {
-	PartialInfo  AggWorkerInfo
-	FinalInfo    AggWorkerInfo
+	PartialInfo  *AggWorkerInfo
+	FinalInfo    *AggWorkerInfo
 	PartialStats []*AggWorkerStat
 	FinalStats   []*AggWorkerStat
 }
@@ -906,7 +911,7 @@ func (w *AggWorkerStat) Clone() *AggWorkerStat {
 	}
 }
 
-func (e *HashAggRuntimeStats) workerString(buf *bytes.Buffer, prefix string, info AggWorkerInfo, workerStats []*AggWorkerStat) {
+func (e *HashAggRuntimeStats) workerString(buf *bytes.Buffer, prefix string, info *AggWorkerInfo, workerStats []*AggWorkerStat) {
 	var totalTime, totalWait, totalExec, totalTaskNum int64
 	for _, w := range workerStats {
 		totalTime += w.WorkerTime
@@ -937,9 +942,11 @@ func (e *HashAggRuntimeStats) String() string {
 
 // Clone implements the RuntimeStats interface.
 func (e *HashAggRuntimeStats) Clone() execdetails.RuntimeStats {
+	partialInfo := *e.PartialInfo
+	finalInfo := *e.FinalInfo
 	newRs := &HashAggRuntimeStats{
-		PartialInfo: e.PartialInfo,
-		FinalInfo:   e.FinalInfo,
+		PartialInfo: &partialInfo,
+		FinalInfo:   &finalInfo,
 	}
 	for _, s := range e.PartialStats {
 		newRs.PartialStats = append(newRs.PartialStats, s.Clone())

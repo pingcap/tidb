@@ -1146,11 +1146,11 @@ func (s *testSuiteAgg) TestIssue17216(c *C) {
 }
 
 func (s *testSuiteAgg) TestHashAggRuntimeStat(c *C) {
-	partialInfo := executor.AggWorkerInfo{
+	partialInfo := &executor.AggWorkerInfo{
 		Concurrency: 5,
 		WallTime:    int64(time.Second * 20),
 	}
-	finalInfo := executor.AggWorkerInfo{
+	finalInfo := &executor.AggWorkerInfo{
 		Concurrency: 8,
 		WallTime:    int64(time.Second * 10),
 	}
