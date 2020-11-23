@@ -31,6 +31,7 @@ const (
 
 // Error instances.
 var (
+<<<<<<< HEAD
 	ErrGetStartTS    = terror.ClassExecutor.New(codeGetStartTS, "Can not get start ts")
 	ErrUnknownPlan   = terror.ClassExecutor.New(codeUnknownPlan, "Unknown plan")
 	ErrPrepareMulti  = terror.ClassExecutor.New(codePrepareMulti, "Can not prepare multiple statements")
@@ -38,6 +39,16 @@ var (
 	ErrResultIsEmpty = terror.ClassExecutor.New(codeResultIsEmpty, "result is empty")
 	ErrBuildExecutor = terror.ClassExecutor.New(codeErrBuildExec, "Failed to build executor")
 	ErrBatchDMLFail  = terror.ClassExecutor.New(codeBatchDMLFail, "Batch DML failed, please clean the table and try again. %s")
+=======
+	ErrGetStartTS      = dbterror.ClassExecutor.NewStd(mysql.ErrGetStartTS)
+	ErrUnknownPlan     = dbterror.ClassExecutor.NewStd(mysql.ErrUnknownPlan)
+	ErrPrepareMulti    = dbterror.ClassExecutor.NewStd(mysql.ErrPrepareMulti)
+	ErrPrepareDDL      = dbterror.ClassExecutor.NewStd(mysql.ErrPrepareDDL)
+	ErrResultIsEmpty   = dbterror.ClassExecutor.NewStd(mysql.ErrResultIsEmpty)
+	ErrBuildExecutor   = dbterror.ClassExecutor.NewStd(mysql.ErrBuildExecutor)
+	ErrBatchInsertFail = dbterror.ClassExecutor.NewStd(mysql.ErrBatchInsertFail)
+	ErrUnsupportedPs   = dbterror.ClassExecutor.NewStd(mysql.ErrUnsupportedPs)
+>>>>>>> 6910eae2a... executor: load data statement shoule not be prepared (#21188)
 
 	ErrCantCreateUserWithGrant     = terror.ClassExecutor.New(mysql.ErrCantCreateUserWithGrant, mysql.MySQLErrName[mysql.ErrCantCreateUserWithGrant])
 	ErrPasswordNoMatch             = terror.ClassExecutor.New(mysql.ErrPasswordNoMatch, mysql.MySQLErrName[mysql.ErrPasswordNoMatch])
