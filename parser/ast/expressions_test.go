@@ -164,8 +164,8 @@ func (tc *testExpressionsSuite) TestBetweenExprRestore(c *C) {
 		{"b between 1 and 2", "`b` BETWEEN 1 AND 2"},
 		{"b not between 1 and 2", "`b` NOT BETWEEN 1 AND 2"},
 		{"b between a and b", "`b` BETWEEN `a` AND `b`"},
-		{"b between '' and 'b'", "`b` BETWEEN '' AND 'b'"},
-		{"b between '2018-11-01' and '2018-11-02'", "`b` BETWEEN '2018-11-01' AND '2018-11-02'"},
+		{"b between '' and 'b'", "`b` BETWEEN _UTF8MB4'' AND _UTF8MB4'b'"},
+		{"b between '2018-11-01' and '2018-11-02'", "`b` BETWEEN _UTF8MB4'2018-11-01' AND _UTF8MB4'2018-11-02'"},
 	}
 	extractNodeFunc := func(node Node) Node {
 		return node.(*SelectStmt).Fields.Fields[0].Expr
@@ -176,10 +176,10 @@ func (tc *testExpressionsSuite) TestBetweenExprRestore(c *C) {
 func (tc *testExpressionsSuite) TestCaseExpr(c *C) {
 	testCases := []NodeRestoreTestCase{
 		{"case when 1 then 2 end", "CASE WHEN 1 THEN 2 END"},
-		{"case when 1 then 'a' when 2 then 'b' end", "CASE WHEN 1 THEN 'a' WHEN 2 THEN 'b' END"},
-		{"case when 1 then 'a' when 2 then 'b' else 'c' end", "CASE WHEN 1 THEN 'a' WHEN 2 THEN 'b' ELSE 'c' END"},
-		{"case when 'a'!=1 then true else false end", "CASE WHEN 'a'!=1 THEN TRUE ELSE FALSE END"},
-		{"case a when 'a' then true else false end", "CASE `a` WHEN 'a' THEN TRUE ELSE FALSE END"},
+		{"case when 1 then 'a' when 2 then 'b' end", "CASE WHEN 1 THEN _UTF8MB4'a' WHEN 2 THEN _UTF8MB4'b' END"},
+		{"case when 1 then 'a' when 2 then 'b' else 'c' end", "CASE WHEN 1 THEN _UTF8MB4'a' WHEN 2 THEN _UTF8MB4'b' ELSE _UTF8MB4'c' END"},
+		{"case when 'a'!=1 then true else false end", "CASE WHEN _UTF8MB4'a'!=1 THEN TRUE ELSE FALSE END"},
+		{"case a when 'a' then true else false end", "CASE `a` WHEN _UTF8MB4'a' THEN TRUE ELSE FALSE END"},
 	}
 	extractNodeFunc := func(node Node) Node {
 		return node.(*SelectStmt).Fields.Fields[0].Expr
@@ -189,7 +189,7 @@ func (tc *testExpressionsSuite) TestCaseExpr(c *C) {
 
 func (tc *testExpressionsSuite) TestBinaryOperationExpr(c *C) {
 	testCases := []NodeRestoreTestCase{
-		{"'a'!=1", "'a'!=1"},
+		{"'a'!=1", "_UTF8MB4'a'!=1"},
 		{"a!=1", "`a`!=1"},
 		{"3<5", "3<5"},
 		{"10>5", "10>5"},
@@ -216,7 +216,7 @@ func (tc *testExpressionsSuite) TestBinaryOperationExpr(c *C) {
 
 func (tc *testExpressionsSuite) TestBinaryOperationExprWithFlags(c *C) {
 	testCases := []NodeRestoreTestCase{
-		{"'a'!=1", "'a' != 1"},
+		{"'a'!=1", "_UTF8MB4'a' != 1"},
 		{"a!=1", "`a` != 1"},
 		{"3<5", "3 < 5"},
 		{"10>5", "10 > 5"},
@@ -246,8 +246,8 @@ func (tc *testExpressionsSuite) TestParenthesesExpr(c *C) {
 func (tc *testExpressionsSuite) TestWhenClause(c *C) {
 	testCases := []NodeRestoreTestCase{
 		{"when 1 then 2", "WHEN 1 THEN 2"},
-		{"when 1 then 'a'", "WHEN 1 THEN 'a'"},
-		{"when 'a'!=1 then true", "WHEN 'a'!=1 THEN TRUE"},
+		{"when 1 then 'a'", "WHEN 1 THEN _UTF8MB4'a'"},
+		{"when 'a'!=1 then true", "WHEN _UTF8MB4'a'!=1 THEN TRUE"},
 	}
 	extractNodeFunc := func(node Node) Node {
 		return node.(*SelectStmt).Fields.Fields[0].Expr.(*CaseExpr).WhenClauses[0]
@@ -268,7 +268,7 @@ func (tc *testExpressionsSuite) TestDefaultExpr(c *C) {
 
 func (tc *testExpressionsSuite) TestPatternInExprRestore(c *C) {
 	testCases := []NodeRestoreTestCase{
-		{"'a' in ('b')", "'a' IN ('b')"},
+		{"'a' in ('b')", "_UTF8MB4'a' IN (_UTF8MB4'b')"},
 		{"2 in (0,3,7)", "2 IN (0,3,7)"},
 		{"2 not in (0,3,7)", "2 NOT IN (0,3,7)"},
 		{"2 in (select 2)", "2 IN (SELECT 2)"},
@@ -282,14 +282,14 @@ func (tc *testExpressionsSuite) TestPatternInExprRestore(c *C) {
 
 func (tc *testExpressionsSuite) TestPatternLikeExprRestore(c *C) {
 	testCases := []NodeRestoreTestCase{
-		{"a like 't1'", "`a` LIKE 't1'"},
-		{"a like 't1%'", "`a` LIKE 't1%'"},
-		{"a like '%t1%'", "`a` LIKE '%t1%'"},
-		{"a like '%t1_|'", "`a` LIKE '%t1_|'"},
-		{"a not like 't1'", "`a` NOT LIKE 't1'"},
-		{"a not like 't1%'", "`a` NOT LIKE 't1%'"},
-		{"a not like '%D%v%'", "`a` NOT LIKE '%D%v%'"},
-		{"a not like '%t1_|'", "`a` NOT LIKE '%t1_|'"},
+		{"a like 't1'", "`a` LIKE _UTF8MB4't1'"},
+		{"a like 't1%'", "`a` LIKE _UTF8MB4't1%'"},
+		{"a like '%t1%'", "`a` LIKE _UTF8MB4'%t1%'"},
+		{"a like '%t1_|'", "`a` LIKE _UTF8MB4'%t1_|'"},
+		{"a not like 't1'", "`a` NOT LIKE _UTF8MB4't1'"},
+		{"a not like 't1%'", "`a` NOT LIKE _UTF8MB4't1%'"},
+		{"a not like '%D%v%'", "`a` NOT LIKE _UTF8MB4'%D%v%'"},
+		{"a not like '%t1_|'", "`a` NOT LIKE _UTF8MB4'%t1_|'"},
 	}
 	extractNodeFunc := func(node Node) Node {
 		return node.(*SelectStmt).Fields.Fields[0].Expr
@@ -310,14 +310,14 @@ func (tc *testExpressionsSuite) TestValuesExpr(c *C) {
 
 func (tc *testExpressionsSuite) TestPatternRegexpExprRestore(c *C) {
 	testCases := []NodeRestoreTestCase{
-		{"a regexp 't1'", "`a` REGEXP 't1'"},
-		{"a regexp '^[abc][0-9]{11}|ok$'", "`a` REGEXP '^[abc][0-9]{11}|ok$'"},
-		{"a rlike 't1'", "`a` REGEXP 't1'"},
-		{"a rlike '^[abc][0-9]{11}|ok$'", "`a` REGEXP '^[abc][0-9]{11}|ok$'"},
-		{"a not regexp 't1'", "`a` NOT REGEXP 't1'"},
-		{"a not regexp '^[abc][0-9]{11}|ok$'", "`a` NOT REGEXP '^[abc][0-9]{11}|ok$'"},
-		{"a not rlike 't1'", "`a` NOT REGEXP 't1'"},
-		{"a not rlike '^[abc][0-9]{11}|ok$'", "`a` NOT REGEXP '^[abc][0-9]{11}|ok$'"},
+		{"a regexp 't1'", "`a` REGEXP _UTF8MB4't1'"},
+		{"a regexp '^[abc][0-9]{11}|ok$'", "`a` REGEXP _UTF8MB4'^[abc][0-9]{11}|ok$'"},
+		{"a rlike 't1'", "`a` REGEXP _UTF8MB4't1'"},
+		{"a rlike '^[abc][0-9]{11}|ok$'", "`a` REGEXP _UTF8MB4'^[abc][0-9]{11}|ok$'"},
+		{"a not regexp 't1'", "`a` NOT REGEXP _UTF8MB4't1'"},
+		{"a not regexp '^[abc][0-9]{11}|ok$'", "`a` NOT REGEXP _UTF8MB4'^[abc][0-9]{11}|ok$'"},
+		{"a not rlike 't1'", "`a` NOT REGEXP _UTF8MB4't1'"},
+		{"a not rlike '^[abc][0-9]{11}|ok$'", "`a` NOT REGEXP _UTF8MB4'^[abc][0-9]{11}|ok$'"},
 	}
 	extractNodeFunc := func(node Node) Node {
 		return node.(*SelectStmt).Fields.Fields[0].Expr
@@ -383,7 +383,7 @@ func (tc *testExpressionsSuite) TestVariableExpr(c *C) {
 		{"@@``", "@@``"},
 		{"@@", "@@``"},
 		{"@@var", "@@`var`"},
-		{"@@global.b='foo'", "@@GLOBAL.`b`='foo'"},
+		{"@@global.b='foo'", "@@GLOBAL.`b`=_UTF8MB4'foo'"},
 		{"@@session.'C'", "@@SESSION.`c`"},
 		{`@@local."aBc"`, "@@SESSION.`abc`"},
 	}
@@ -395,12 +395,12 @@ func (tc *testExpressionsSuite) TestVariableExpr(c *C) {
 
 func (tc *testExpressionsSuite) TestMatchAgainstExpr(c *C) {
 	testCases := []NodeRestoreTestCase{
-		{`MATCH(content, title) AGAINST ('search for')`, "MATCH (`content`,`title`) AGAINST ('search for')"},
-		{`MATCH(content) AGAINST ('search for' IN BOOLEAN MODE)`, "MATCH (`content`) AGAINST ('search for' IN BOOLEAN MODE)"},
-		{`MATCH(content, title) AGAINST ('search for' WITH QUERY EXPANSION)`, "MATCH (`content`,`title`) AGAINST ('search for' WITH QUERY EXPANSION)"},
-		{`MATCH(content) AGAINST ('search for' IN NATURAL LANGUAGE MODE WITH QUERY EXPANSION)`, "MATCH (`content`) AGAINST ('search for' WITH QUERY EXPANSION)"},
-		{`MATCH(content) AGAINST ('search') AND id = 1`, "MATCH (`content`) AGAINST ('search') AND `id`=1"},
-		{`MATCH(content) AGAINST ('search') OR id = 1`, "MATCH (`content`) AGAINST ('search') OR `id`=1"},
+		{`MATCH(content, title) AGAINST ('search for')`, "MATCH (`content`,`title`) AGAINST (_UTF8MB4'search for')"},
+		{`MATCH(content) AGAINST ('search for' IN BOOLEAN MODE)`, "MATCH (`content`) AGAINST (_UTF8MB4'search for' IN BOOLEAN MODE)"},
+		{`MATCH(content, title) AGAINST ('search for' WITH QUERY EXPANSION)`, "MATCH (`content`,`title`) AGAINST (_UTF8MB4'search for' WITH QUERY EXPANSION)"},
+		{`MATCH(content) AGAINST ('search for' IN NATURAL LANGUAGE MODE WITH QUERY EXPANSION)`, "MATCH (`content`) AGAINST (_UTF8MB4'search for' WITH QUERY EXPANSION)"},
+		{`MATCH(content) AGAINST ('search') AND id = 1`, "MATCH (`content`) AGAINST (_UTF8MB4'search') AND `id`=1"},
+		{`MATCH(content) AGAINST ('search') OR id = 1`, "MATCH (`content`) AGAINST (_UTF8MB4'search') OR `id`=1"},
 		{`MATCH(content) AGAINST (X'40404040' | X'01020304') OR id = 1`, "MATCH (`content`) AGAINST (x'40404040'|x'01020304') OR `id`=1"},
 	}
 	extractNodeFunc := func(node Node) Node {

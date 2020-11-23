@@ -78,7 +78,7 @@ func (n *ValueExpr) Restore(ctx *format.RestoreCtx) error {
 	case KindFloat64:
 		ctx.WritePlain(strconv.FormatFloat(n.GetFloat64(), 'e', -1, 64))
 	case KindString:
-		if n.Type.Charset != "" && n.Type.Charset != mysql.DefaultCharset {
+		if n.Type.Charset != "" {
 			ctx.WritePlain("_")
 			ctx.WriteKeyWord(n.Type.Charset)
 		}
