@@ -452,7 +452,7 @@ type Driver interface {
 type Storage interface {
 	// Begin a global transaction
 	Begin() (Transaction, error)
-	// Begin transaction with the given TxnScope (local or global)
+	// Begin transaction with the given txn scope (local or global)
 	BeginWithTxnScope(txnScope string) (Transaction, error)
 	// BeginWithStartTS begins transaction with startTS.
 	BeginWithStartTS(txnScope string, startTS uint64) (Transaction, error)
@@ -469,7 +469,7 @@ type Storage interface {
 	UUID() string
 	// CurrentVersion returns current max committed version.
 	CurrentVersion() (Version, error)
-	// CurrentVersion returns current max committed version.
+	// CurrentVersionWithTxnScope returns current max committed version with the given txn scope.
 	CurrentVersionWithTxnScope(txnScope string) (Version, error)
 	// GetOracle gets a timestamp oracle client.
 	GetOracle() oracle.Oracle

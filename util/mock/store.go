@@ -55,7 +55,9 @@ func (s *Store) Close() error { return nil }
 func (s *Store) UUID() string { return "mock" }
 
 // CurrentVersion implements kv.Storage interface.
-func (s *Store) CurrentVersion() (kv.Version, error) { return kv.Version{}, nil }
+func (s *Store) CurrentVersion() (kv.Version, error) {
+	return s.CurrentVersionWithTxnScope(oracle.GlobalTxnScope)
+}
 
 // CurrentVersionWithTxnScope implements kv.Storage interface.
 func (s *Store) CurrentVersionWithTxnScope(txnScope string) (kv.Version, error) {
