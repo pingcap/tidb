@@ -60,6 +60,7 @@ type UpdateExec struct {
 	handles    []kv.Handle
 	updatable  []bool
 	changed    []bool
+	matches    []bool
 	assignFlag []bool
 }
 
@@ -75,6 +76,7 @@ func (e *UpdateExec) prepare(ctx context.Context, schema *expression.Schema, row
 	e.handles = e.handles[:0]
 	e.updatable = e.updatable[:0]
 	e.changed = e.changed[:0]
+	e.matches = e.matches[:0]
 	for _, content := range e.tblColPosInfos {
 		if e.updatedRowKeys[content.Start] == nil {
 			e.updatedRowKeys[content.Start] = kv.NewHandleMap()
@@ -95,12 +97,14 @@ func (e *UpdateExec) prepare(ctx context.Context, schema *expression.Schema, row
 		}
 		e.updatable = append(e.updatable, updatable)
 
-		var changed bool
-		v, ok := e.updatedRowKeys[content.Start].Get(handle)
+		changed, ok := e.updatedRowKeys[content.Start].Get(handle)
 		if ok {
-			changed = v.(bool)
+			e.changed = append(e.changed, changed.(bool))
+			e.matches = append(e.matches, false)
+		} else {
+			e.changed = append(e.changed, false)
+			e.matches = append(e.matches, true)
 		}
-		e.changed = append(e.changed, changed)
 	}
 	return nil
 }
@@ -158,29 +162,20 @@ func (e *UpdateExec) merge(ctx context.Context, row, newData []types.Datum, merg
 func (e *UpdateExec) exec(ctx context.Context, schema *expression.Schema, row, newData []types.Datum) error {
 	defer trace.StartRegion(ctx, "UpdateExec").End()
 	for i, content := range e.tblColPosInfos {
-		tbl := e.tblID2table[content.TblID]
-
 		if !e.updatable[i] {
 			// If there's nothing to update, we can just skip current row
 			continue
 		}
-
-		handle, err := content.HandleCols.BuildHandleByDatums(row)
-		if err != nil {
-			return err
-		}
-		var changed bool
-		v, ok := e.updatedRowKeys[content.Start].Get(handle)
-		if !ok {
-			// Row is matched for the first time, increment `matched` counter
-			e.matched++
-		} else {
-			changed = v.(bool)
-		}
-		if changed {
+		if e.changed[i] {
 			// Each matched row is updated once, even if it matches the conditions multiple times.
 			continue
 		}
+		if e.matches[i] {
+			// Row is matched for the first time, increment `matched` counter
+			e.matched++
+		}
+		tbl := e.tblID2table[content.TblID]
+		handle := e.handles[i]
 
 		oldData := row[content.Start:content.End]
 		newTableData := newData[content.Start:content.End]

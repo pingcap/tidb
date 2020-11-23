@@ -314,18 +314,18 @@ func (s *testUpdateSuite) TestMultiUpdateOnSameTable(c *C) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int primary key, b int)")
 	tk.MustExec("insert into t values (1,3), (2,4)")
-	tk.MustExec("update t m, t n set m.a = n.a+10, n.b = m.b+1 where m.a=n.a")
-	tk.MustQuery("select * from t").Check(testkit.Rows("11 4", "12 5"))
+	tk.MustGetErrMsg("update t m, t n set m.a = n.a+10, n.b = m.b+1 where m.a=n.a",
+		`[planner:1706]Primary key/partition key update is not allowed since the table is updated both as 'm' and 'n'.`)
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int, b int, c int, primary key(a, b))")
 	tk.MustExec("insert into t values (1,3,5), (2,4,6)")
-	tk.MustExec("update t m, t n set m.a = n.a+10 where m.a=n.a")
-	tk.MustQuery("select * from t").Check(testkit.Rows("11 3 5", "12 4 6"))
-	tk.MustExec("update t m, t n set n.b = m.a+1, m.c = m.a+m.b where m.b=n.b")
-	tk.MustQuery("select * from t").Check(testkit.Rows("11 12 14", "12 13 16"))
-	tk.MustExec("update t m, t n, t q set m.a = m.a+1, n.c = n.c-1, q.c = q.a+q.b where m.b=n.b and n.b=q.b")
-	tk.MustQuery("select * from t").Check(testkit.Rows("12 12 23", "13 13 25"))
+	tk.MustExec("update t m, t n set m.a = n.a+10, m.b = n.b+10 where m.a=n.a")
+	tk.MustQuery("select * from t").Check(testkit.Rows("11 13 5", "12 14 6"))
+	tk.MustExec("update t m, t n, t q set q.c=m.a+n.b, n.c = m.a+1, m.c = n.b+1 where m.b=n.b AND m.a=q.a")
+	tk.MustQuery("select * from t").Check(testkit.Rows("11 13 24", "12 14 26"))
+	tk.MustGetErrMsg("update t m, t n, t q set m.a = m.a+1, n.c = n.c-1, q.c = q.a+q.b where m.b=n.b and n.b=q.b",
+		`[planner:1706]Primary key/partition key update is not allowed since the table is updated both as 'm' and 'n'.`)
 }
 
 var _ = SerialSuites(&testSuite11{&baseTestSuite{}})
