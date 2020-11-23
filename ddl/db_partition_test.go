@@ -406,6 +406,18 @@ create table log_message_1 (
 			ast.ErrPartitionsMustBeDefined,
 		},
 		{
+			"create table t(a datetime) partition by range columns (a) (partition p1 values less than ('2000-02-01'), partition p2 values less than ('20000102'));",
+			ddl.ErrRangeNotIncreasing,
+		},
+		{
+			"create table t(a time) partition by range columns (a) (partition p1 values less than ('202020'), partition p2 values less than ('20:20:10'));",
+			ddl.ErrRangeNotIncreasing,
+		},
+		{
+			"create table t(a time) partition by range columns (a) (partition p1 values less than ('202090'));",
+			ddl.ErrWrongTypeColumnValue,
+		},
+		{
 			"create table t (id int) partition by range columns (id) (partition p0 values less than (1, 2));",
 			ast.ErrPartitionColumnList,
 		},
