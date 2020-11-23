@@ -992,6 +992,9 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 
 	// Test `create database`.
 	tk.MustExec("create database if not exists test")
+	// Test for Encode plan cache.
+	p2 := tk.Se.GetSessionVars().StmtCtx.GetEncodedPlan()
+	c.Assert(p2, Equals, "")
 	tk.MustQuery(`select table_names
 			from information_schema.statements_summary
 			where digest_text like 'create database%' and schema_name='test'`,
