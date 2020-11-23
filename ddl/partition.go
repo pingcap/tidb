@@ -1731,7 +1731,7 @@ func onAlterTablePartition(t *meta.Meta, job *model.Job) (ver int64, err error) 
 		return 0, errors.Trace(table.ErrUnknownPartition.GenWithStackByArgs("drop?", tblInfo.Name.O))
 	}
 
-	switch job.SchemaState {
+	switch tblInfo.State {
 	// none -> global txn write only
 	case model.StateNone:
 		err = infosync.PutRuleBundles(nil, []*placement.Bundle{bundle})
@@ -1746,7 +1746,7 @@ func onAlterTablePartition(t *meta.Meta, job *model.Job) (ver int64, err error) 
 			return ver, errors.Trace(err)
 		}
 		job.SchemaState = model.StateGlobalTxnWriteOnly
-	// 	StateGlobalTxnWriteOnly -> public 
+	// 	StateGlobalTxnWriteOnly -> public
 	case model.StateGlobalTxnWriteOnly:
 		// used by ApplyDiff in updateSchemaVersion
 		job.CtxVars = []interface{}{partitionID}
@@ -1755,6 +1755,8 @@ func onAlterTablePartition(t *meta.Meta, job *model.Job) (ver int64, err error) 
 			return ver, errors.Trace(err)
 		}
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
+	default:
+		err = ErrInvalidDDLState.GenWithStackByArgs("partition", tblInfo.State)
 	}
 	return ver, nil
 }
