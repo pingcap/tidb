@@ -401,7 +401,7 @@ type IndexLookUpExecutor struct {
 	stats *IndexLookUpRunTimeStats
 
 	// extraPIDColumnIndex is used for partition reader to add an extra partition ID column, default -1
-	extraPIDColumnIndex int
+	extraPIDColumnIndex offsetOptional
 }
 
 type getHandleType int8

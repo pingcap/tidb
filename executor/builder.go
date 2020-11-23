@@ -2492,20 +2492,19 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 		return nil, err
 	}
 	e := &TableReaderExecutor{
-		baseExecutor:        newBaseExecutor(b.ctx, v.Schema(), v.ID()),
-		dagPB:               dagReq,
-		startTS:             startTS,
-		table:               tbl,
-		keepOrder:           ts.KeepOrder,
-		desc:                ts.Desc,
-		columns:             ts.Columns,
-		streaming:           streaming,
-		corColInFilter:      b.corColInDistPlan(v.TablePlans),
-		corColInAccess:      b.corColInAccess(v.TablePlans[0]),
-		plans:               v.TablePlans,
-		tablePlan:           v.GetTablePlan(),
-		storeType:           v.StoreType,
-		extraPIDColumnIndex: -1,
+		baseExecutor:   newBaseExecutor(b.ctx, v.Schema(), v.ID()),
+		dagPB:          dagReq,
+		startTS:        startTS,
+		table:          tbl,
+		keepOrder:      ts.KeepOrder,
+		desc:           ts.Desc,
+		columns:        ts.Columns,
+		streaming:      streaming,
+		corColInFilter: b.corColInDistPlan(v.TablePlans),
+		corColInAccess: b.corColInAccess(v.TablePlans[0]),
+		plans:          v.TablePlans,
+		tablePlan:      v.GetTablePlan(),
+		storeType:      v.StoreType,
 	}
 	e.setBatchCop(v)
 	if isPartition {
@@ -2537,13 +2536,13 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 	return e, nil
 }
 
-func extraPIDColumnIndex(schema *expression.Schema) int {
+func extraPIDColumnIndex(schema *expression.Schema) offsetOptional {
 	for idx, col := range schema.Columns {
 		if col.ID == model.ExtraPidColID {
-			return idx
+			return newOffset(idx)
 		}
 	}
-	return -1
+	return 0
 }
 
 func (b *executorBuilder) buildMPPGather(v *plannercore.PhysicalTableReader) Executor {
@@ -2906,27 +2905,26 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 		return nil, err
 	}
 	e := &IndexLookUpExecutor{
-		baseExecutor:        newBaseExecutor(b.ctx, v.Schema(), v.ID()),
-		dagPB:               indexReq,
-		startTS:             startTS,
-		table:               tbl,
-		index:               is.Index,
-		keepOrder:           is.KeepOrder,
-		desc:                is.Desc,
-		tableRequest:        tableReq,
-		columns:             ts.Columns,
-		indexStreaming:      indexStreaming,
-		tableStreaming:      tableStreaming,
-		dataReaderBuilder:   &dataReaderBuilder{executorBuilder: b},
-		corColInIdxSide:     b.corColInDistPlan(v.IndexPlans),
-		corColInTblSide:     b.corColInDistPlan(v.TablePlans),
-		corColInAccess:      b.corColInAccess(v.IndexPlans[0]),
-		idxCols:             is.IdxCols,
-		colLens:             is.IdxColLens,
-		idxPlans:            v.IndexPlans,
-		tblPlans:            v.TablePlans,
-		PushedLimit:         v.PushedLimit,
-		extraPIDColumnIndex: -1,
+		baseExecutor:      newBaseExecutor(b.ctx, v.Schema(), v.ID()),
+		dagPB:             indexReq,
+		startTS:           startTS,
+		table:             tbl,
+		index:             is.Index,
+		keepOrder:         is.KeepOrder,
+		desc:              is.Desc,
+		tableRequest:      tableReq,
+		columns:           ts.Columns,
+		indexStreaming:    indexStreaming,
+		tableStreaming:    tableStreaming,
+		dataReaderBuilder: &dataReaderBuilder{executorBuilder: b},
+		corColInIdxSide:   b.corColInDistPlan(v.IndexPlans),
+		corColInTblSide:   b.corColInDistPlan(v.TablePlans),
+		corColInAccess:    b.corColInAccess(v.IndexPlans[0]),
+		idxCols:           is.IdxCols,
+		colLens:           is.IdxColLens,
+		idxPlans:          v.IndexPlans,
+		tblPlans:          v.TablePlans,
+		PushedLimit:       v.PushedLimit,
 	}
 	if ok, _ := ts.IsPartition(); ok {
 		e.extraPIDColumnIndex = extraPIDColumnIndex(v.Schema())
