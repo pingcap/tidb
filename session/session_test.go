@@ -3142,7 +3142,7 @@ func (s *testSessionSuite2) TestStmtHints(c *C) {
 
 	// Test MEMORY_QUOTA hint in POINT_GET/BATCH_POINT_GET
 	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1, t1")
+	tk.MustExec("drop table if exists t1, t1;")
 	tk.MustExec("create table t1(a int);")
 	tk.MustExec("insert /*+ MEMORY_QUOTA(1 GB) */ into t1 values (1);")
 	tk.MustExec("select /*+ MEMORY_QUOTA(0 GB) */ * from t1 where a = 1;")

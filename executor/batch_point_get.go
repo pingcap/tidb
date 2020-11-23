@@ -16,7 +16,6 @@ package executor
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/util/memory"
 	"sort"
 	"sync/atomic"
 
@@ -33,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/math"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/rowcodec"
 )
 
