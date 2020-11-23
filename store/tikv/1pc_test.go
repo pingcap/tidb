@@ -134,7 +134,7 @@ func (s *testOnePCSuite) Test1PC(c *C) {
 	// Check all keys
 	keys := [][]byte{k1, k2, k3, k4, k5, k6}
 	values := [][]byte{v1, v2, v3, v4, v5, v6New}
-	ver, err := s.store.CurrentVersion(oracle.GlobalTxnScope)
+	ver, err := s.store.CurrentVersion()
 	c.Assert(err, IsNil)
 	snap := s.store.GetSnapshot(ver)
 	for i, k := range keys {
@@ -228,7 +228,7 @@ func (s *testOnePCSuite) Test1PCDisallowMultiRegion(c *C) {
 	c.Assert(txn.committer.onePCCommitTS, Equals, uint64(0))
 	c.Assert(txn.committer.commitTS, Greater, txn.startTS)
 
-	ver, err := s.store.CurrentVersion(oracle.GlobalTxnScope)
+	ver, err := s.store.CurrentVersion()
 	c.Assert(err, IsNil)
 	snap := s.store.GetSnapshot(ver)
 	for i, k := range keys {

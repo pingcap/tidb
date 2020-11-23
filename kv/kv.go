@@ -468,7 +468,9 @@ type Storage interface {
 	// UUID return a unique ID which represents a Storage.
 	UUID() string
 	// CurrentVersion returns current max committed version.
-	CurrentVersion(txnScope string) (Version, error)
+	CurrentVersion() (Version, error)
+	// CurrentVersion returns current max committed version.
+	CurrentVersionWithTxnScope(txnScope string) (Version, error)
 	// GetOracle gets a timestamp oracle client.
 	GetOracle() oracle.Oracle
 	// SupportDeleteRange gets the storage support delete range or not.

@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/testleak"
@@ -287,7 +286,7 @@ func (s *testSuite) TestSnapshot(c *C) {
 	c.Assert(n, Equals, int64(1))
 	txn.Commit(context.Background())
 
-	ver1, _ := store.CurrentVersion(oracle.GlobalTxnScope)
+	ver1, _ := store.CurrentVersion()
 	time.Sleep(time.Millisecond)
 	txn, _ = store.Begin()
 	m = meta.NewMeta(txn)

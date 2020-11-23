@@ -78,7 +78,7 @@ func (s *testAsyncCommitCommon) mustGetFromTxn(c *C, txn kv.Transaction, key, ex
 }
 
 func (s *testAsyncCommitCommon) mustGetLock(c *C, key []byte) *Lock {
-	ver, err := s.store.CurrentVersion(oracle.GlobalTxnScope)
+	ver, err := s.store.CurrentVersion()
 	c.Assert(err, IsNil)
 	req := tikvrpc.NewRequest(tikvrpc.CmdGet, &kvrpcpb.GetRequest{
 		Key:     key,

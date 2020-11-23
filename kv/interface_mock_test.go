@@ -177,7 +177,12 @@ func (s *mockStorage) UUID() string {
 }
 
 // CurrentVersion returns current max committed version.
-func (s *mockStorage) CurrentVersion(txnScope string) (Version, error) {
+func (s *mockStorage) CurrentVersion() (Version, error) {
+	return s.CurrentVersionWithTxnScope(oracle.GlobalTxnScope)
+}
+
+// CurrentVersion returns current max committed version with the given txn scope.
+func (s *mockStorage) CurrentVersionWithTxnScope(txnScope string) (Version, error) {
 	return NewVersion(1), nil
 }
 
