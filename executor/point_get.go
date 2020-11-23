@@ -15,6 +15,7 @@ package executor
 
 import (
 	"context"
+	"github.com/pingcap/tidb/util/memory"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -87,6 +88,8 @@ type PointGetExecutor struct {
 	virtualColumnRetFieldTypes []*types.FieldType
 
 	stats *runtimeStatsWithSnapshot
+
+	memTracker *memory.Tracker
 }
 
 // Init set fields needed for PointGetExecutor reuse, this does NOT change baseExecutor field
@@ -146,6 +149,13 @@ func (e *PointGetExecutor) Open(context.Context) error {
 		e.snapshot.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
 	}
 	e.snapshot.SetOption(kv.TaskID, e.ctx.GetSessionVars().StmtCtx.TaskID)
+
+	if e.memTracker == nil {
+		e.memTracker = memory.NewTracker(e.id, -1)
+		e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
+		result := newFirstChunk(e)
+		e.memTracker.Consume(result.MemoryUsage())
+	}
 	return nil
 }
 

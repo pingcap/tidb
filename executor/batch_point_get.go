@@ -16,6 +16,7 @@ package executor
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/util/memory"
 	"sort"
 	"sync/atomic"
 
@@ -68,6 +69,8 @@ type BatchPointGetExec struct {
 
 	snapshot kv.Snapshot
 	stats    *runtimeStatsWithSnapshot
+
+	memTracker *memory.Tracker
 }
 
 // buildVirtualColumnInfo saves virtual column indices and sort them in definition order
@@ -119,6 +122,13 @@ func (e *BatchPointGetExec) Open(context.Context) error {
 	}
 	e.snapshot = snapshot
 	e.batchGetter = batchGetter
+
+	if e.memTracker == nil {
+		e.memTracker = memory.NewTracker(e.id, -1)
+		e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
+		result := newFirstChunk(e)
+		e.memTracker.Consume(result.MemoryUsage())
+	}
 	return nil
 }
 
