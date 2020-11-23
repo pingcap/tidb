@@ -485,7 +485,7 @@ func (rs *copResponse) MemSize() int64 {
 	if rs.respSize != 0 {
 		return rs.respSize
 	}
-	if rs == fin {
+	if rs == finCopResp {
 		return 0
 	}
 
@@ -507,10 +507,10 @@ func (rs *copResponse) RespTime() time.Duration {
 
 const minLogCopTaskTime = 300 * time.Millisecond
 
-var fin *copResponse
+var finCopResp *copResponse
 
 func init() {
-	fin = &copResponse{}
+	finCopResp = &copResponse{}
 }
 
 // run is a worker function that get a copTask from channel, handle it and
@@ -534,7 +534,9 @@ func (worker *copIteratorWorker) run(ctx context.Context) {
 			respCh = task.respChan
 		}
 		worker.handleTask(ctx, task, respCh)
-		worker.sendToRespCh(fin, respCh, false)
+		// When a task is finished by the worker, send a finCopResp into channel to notify the copIterator that
+		// there is a task finished.
+		worker.sendToRespCh(finCopResp, respCh, false)
 		close(task.respChan)
 		if worker.vars != nil && worker.vars.Killed != nil && atomic.LoadUint32(worker.vars.Killed) == 1 {
 			return
@@ -709,7 +711,7 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 			it.actionOnExceed.close()
 			return nil, nil
 		}
-		if resp == fin {
+		if resp == finCopResp {
 			it.actionOnExceed.destroyTokenIfNeeded(func() {
 				it.sendRate.putToken()
 			})
@@ -739,7 +741,7 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 		}
 	}
 
-	if resp == fin {
+	if resp == finCopResp {
 		return it.Next(ctx)
 	}
 
