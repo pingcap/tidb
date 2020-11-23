@@ -261,7 +261,7 @@ func (s *tableRegionSampler) scanFirstKVForEachRange(ranges []kv.KeyRange,
 		concurrency = len(ranges)
 	}
 
-	fetchers := make([]*sampleFetcher, concurrency)
+	fetchers := make([]*sampleFetcher, len(ranges))
 	for i := 0; i < len(ranges); i++ {
 		fetchers[i] = &sampleFetcher{
 			workerID:    i,
