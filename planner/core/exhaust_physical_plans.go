@@ -1266,8 +1266,7 @@ func (ijHelper *indexJoinBuildHelper) removeUselessEqAndInFunc(idxCols []*expres
 		if ijHelper.curIdxOff2KeyOff[idxColPos] != -1 {
 			// Check collation is the new collation is enabled.
 			tmpType := make([]expression.Expression, 0)
-			tmpType = append(tmpType, idxCols[idxColPos])
-			tmpType = append(tmpType, outerJoinKeys[ijHelper.curIdxOff2KeyOff[idxColPos]])
+			expression.DeriveCollationFromExprs(nil, idxCols[idxColPos], outerJoinKeys[ijHelper.curIdxOff2KeyOff[idxColPos]])
 			_, coll := expression.DeriveCollationFromExprs(nil, tmpType...)
 			if !collate.NewCollationEnabled() || collate.CompatibleCollate(idxCols[idxColPos].GetType().Collate, coll) {
 				ijHelper.curPossibleUsedKeys = append(ijHelper.curPossibleUsedKeys, idxCols[idxColPos])
