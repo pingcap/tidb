@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv"
-	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
@@ -217,7 +216,7 @@ func (s *testSuite3) TestInconsistentIndex(c *C) {
 	}
 
 	for i := 0; i < 10; i++ {
-		txn, err := s.store.Begin(oracle.GlobalTxnScope)
+		txn, err := s.store.Begin()
 		c.Assert(err, IsNil)
 		_, err = idxOp.Create(ctx, txn.GetUnionStore(), types.MakeDatums(i+10), kv.IntHandle(100+i))
 		c.Assert(err, IsNil)
@@ -234,7 +233,7 @@ func (s *testSuite3) TestInconsistentIndex(c *C) {
 
 	// fix inconsistent problem to pass CI
 	for i := 0; i < 10; i++ {
-		txn, err := s.store.Begin(oracle.GlobalTxnScope)
+		txn, err := s.store.Begin()
 		c.Assert(err, IsNil)
 		err = idxOp.Delete(ctx.GetSessionVars().StmtCtx, txn.GetUnionStore(), types.MakeDatums(i+10), kv.IntHandle(100+i))
 		c.Assert(err, IsNil)

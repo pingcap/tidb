@@ -35,11 +35,14 @@ func (s *Store) GetMPPClient() kv.MPPClient { return nil }
 func (s *Store) GetOracle() oracle.Oracle { return nil }
 
 // Begin implements kv.Storage interface.
-func (s *Store) Begin(txnScope string) (kv.Transaction, error) { return nil, nil }
+func (s *Store) Begin() (kv.Transaction, error) { return nil, nil }
+
+// BeginWithTxnScope implements kv.Storage interface.
+func (s *Store) BeginWithTxnScope(txnScope string) (kv.Transaction, error) { return nil, nil }
 
 // BeginWithStartTS implements kv.Storage interface.
 func (s *Store) BeginWithStartTS(txnScope string, startTS uint64) (kv.Transaction, error) {
-	return s.Begin(txnScope)
+	return s.BeginWithTxnScope(txnScope)
 }
 
 // GetSnapshot implements kv.Storage interface.

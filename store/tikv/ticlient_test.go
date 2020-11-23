@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockstore/unistore"
-	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/util/codec"
 )
 
@@ -57,7 +56,7 @@ func NewTestStore(c *C) kv.Storage {
 }
 
 func clearStorage(store kv.Storage) error {
-	txn, err := store.Begin(oracle.GlobalTxnScope)
+	txn, err := store.Begin()
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -110,7 +109,7 @@ func (s *testTiclientSuite) TearDownSuite(c *C) {
 }
 
 func (s *testTiclientSuite) beginTxn(c *C) *tikvTxn {
-	txn, err := s.store.Begin(oracle.GlobalTxnScope)
+	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 	return txn.(*tikvTxn)
 }

@@ -21,7 +21,6 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/rowcodec"
@@ -66,7 +65,7 @@ func (s *testScanSuite) TearDownSuite(c *C) {
 }
 
 func (s *testScanSuite) beginTxn(c *C) *tikvTxn {
-	txn, err := s.store.Begin(oracle.GlobalTxnScope)
+	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 	return txn.(*tikvTxn)
 }

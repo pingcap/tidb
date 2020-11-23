@@ -1218,7 +1218,7 @@ func (s *testIntegrationSuite5) TestBackwardCompatibility(c *C) {
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{unique, indexName, indexPartSpecifications, indexOption},
 	}
-	txn, err := s.store.Begin(oracle.GlobalTxnScope)
+	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 	t := meta.NewMeta(txn)
 	job.ID, err = t.GenGlobalID()

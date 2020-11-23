@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/store/tikv/oracle"
 	. "github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
@@ -62,7 +61,7 @@ func (s *testSuite) TearDownSuite(c *C) {
 }
 
 func (s *testSuite) TestGetDDLInfo(c *C) {
-	txn, err := s.store.Begin(oracle.GlobalTxnScope)
+	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 	t := meta.NewMeta(txn)
 
@@ -103,7 +102,7 @@ func (s *testSuite) TestGetDDLInfo(c *C) {
 }
 
 func (s *testSuite) TestGetDDLJobs(c *C) {
-	txn, err := s.store.Begin(oracle.GlobalTxnScope)
+	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 	t := meta.NewMeta(txn)
 	cnt := 10
@@ -173,7 +172,7 @@ func enQueueDDLJobs(c *C, t *meta.Meta, jobType model.ActionType, start, end int
 }
 
 func (s *testSuite) TestGetDDLJobsIsSort(c *C) {
-	txn, err := s.store.Begin(oracle.GlobalTxnScope)
+	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 
 	// insert 5 drop table jobs to DefaultJobListKey queue
@@ -199,7 +198,7 @@ func (s *testSuite) TestGetDDLJobsIsSort(c *C) {
 }
 
 func (s *testSuite) TestCancelJobs(c *C) {
-	txn, err := s.store.Begin(oracle.GlobalTxnScope)
+	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 	t := meta.NewMeta(txn)
 	cnt := 10
@@ -310,7 +309,7 @@ func (s *testSuite) TestCancelJobs(c *C) {
 }
 
 func (s *testSuite) TestGetHistoryDDLJobs(c *C) {
-	txn, err := s.store.Begin(oracle.GlobalTxnScope)
+	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 	t := meta.NewMeta(txn)
 	cnt := 11

@@ -145,7 +145,7 @@ func newMockTxn() Transaction {
 type mockStorage struct {
 }
 
-func (s *mockStorage) Begin(txnScope string) (Transaction, error) {
+func (s *mockStorage) Begin() (Transaction, error) {
 	return newMockTxn(), nil
 }
 
@@ -153,9 +153,13 @@ func (*mockTxn) IsPessimistic() bool {
 	return false
 }
 
+func (s *mockStorage) BeginWithTxnScope(txnScope string) (Transaction, error) {
+	return newMockTxn(), nil
+}
+
 // BeginWithStartTS begins a transaction with startTS.
 func (s *mockStorage) BeginWithStartTS(txnScope string, startTS uint64) (Transaction, error) {
-	return s.Begin(txnScope)
+	return s.BeginWithTxnScope(txnScope)
 }
 
 func (s *mockStorage) GetSnapshot(ver Version) Snapshot {

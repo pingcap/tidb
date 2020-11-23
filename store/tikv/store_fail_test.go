@@ -20,11 +20,10 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/store/tikv/oracle"
 )
 
 func (s *testStoreSerialSuite) TestFailBusyServerKV(c *C) {
-	txn, err := s.store.Begin(oracle.GlobalTxnScope)
+	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 	err = txn.Set([]byte("key"), []byte("value"))
 	c.Assert(err, IsNil)
@@ -43,7 +42,7 @@ func (s *testStoreSerialSuite) TestFailBusyServerKV(c *C) {
 
 	go func() {
 		defer wg.Done()
-		txn, err := s.store.Begin(oracle.GlobalTxnScope)
+		txn, err := s.store.Begin()
 		c.Assert(err, IsNil)
 		val, err := txn.Get(context.TODO(), []byte("key"))
 		c.Assert(err, IsNil)

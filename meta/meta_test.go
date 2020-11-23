@@ -52,7 +52,7 @@ func (s *testSuite) TestMeta(c *C) {
 	c.Assert(err, IsNil)
 	defer store.Close()
 
-	txn, err := store.Begin(oracle.GlobalTxnScope)
+	txn, err := store.Begin()
 	c.Assert(err, IsNil)
 	defer txn.Rollback()
 
@@ -280,7 +280,7 @@ func (s *testSuite) TestSnapshot(c *C) {
 	c.Assert(err, IsNil)
 	defer store.Close()
 
-	txn, _ := store.Begin(oracle.GlobalTxnScope)
+	txn, _ := store.Begin()
 	m := meta.NewMeta(txn)
 	m.GenGlobalID()
 	n, _ := m.GetGlobalID()
@@ -289,7 +289,7 @@ func (s *testSuite) TestSnapshot(c *C) {
 
 	ver1, _ := store.CurrentVersion(oracle.GlobalTxnScope)
 	time.Sleep(time.Millisecond)
-	txn, _ = store.Begin(oracle.GlobalTxnScope)
+	txn, _ = store.Begin()
 	m = meta.NewMeta(txn)
 	m.GenGlobalID()
 	n, _ = m.GetGlobalID()
@@ -336,7 +336,7 @@ func (s *testSuite) TestDDL(c *C) {
 	c.Assert(err, IsNil)
 	defer store.Close()
 
-	txn, err := store.Begin(oracle.GlobalTxnScope)
+	txn, err := store.Begin()
 	c.Assert(err, IsNil)
 
 	defer txn.Rollback()
@@ -470,7 +470,7 @@ func (s *testSuite) TestDDL(c *C) {
 	c.Assert(err, IsNil)
 
 	// Test for add index job.
-	txn1, err := store.Begin(oracle.GlobalTxnScope)
+	txn1, err := store.Begin()
 	c.Assert(err, IsNil)
 	defer txn1.Rollback()
 
@@ -503,7 +503,7 @@ func (s *testSuite) BenchmarkGenGlobalIDs(c *C) {
 	c.Assert(err, IsNil)
 	defer store.Close()
 
-	txn, err := store.Begin(oracle.GlobalTxnScope)
+	txn, err := store.Begin()
 	c.Assert(err, IsNil)
 	defer txn.Rollback()
 
@@ -524,7 +524,7 @@ func (s *testSuite) BenchmarkGenGlobalIDOneByOne(c *C) {
 	c.Assert(err, IsNil)
 	defer store.Close()
 
-	txn, err := store.Begin(oracle.GlobalTxnScope)
+	txn, err := store.Begin()
 	c.Assert(err, IsNil)
 	defer txn.Rollback()
 

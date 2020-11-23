@@ -266,7 +266,7 @@ func (s *testStoreSuite) TestRequestPriority(c *C) {
 	s.store.client = client
 
 	// Cover 2PC commit.
-	txn, err := s.store.Begin(oracle.GlobalTxnScope)
+	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 	client.priority = pb.CommandPri_High
 	txn.SetOption(kv.Priority, kv.PriorityHigh)
@@ -276,7 +276,7 @@ func (s *testStoreSuite) TestRequestPriority(c *C) {
 	c.Assert(err, IsNil)
 
 	// Cover the basic Get request.
-	txn, err = s.store.Begin(oracle.GlobalTxnScope)
+	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
 	client.priority = pb.CommandPri_Low
 	txn.SetOption(kv.Priority, kv.PriorityLow)

@@ -36,7 +36,7 @@ func (s testMockSuite) TestInterface(c *C) {
 	c.Check(err, IsNil)
 	snapshot.SetOption(Priority, PriorityNormal)
 
-	transaction, err := storage.Begin(oracle.GlobalTxnScope)
+	transaction, err := storage.Begin()
 	c.Check(err, IsNil)
 	err = transaction.LockKeys(context.Background(), new(LockCtx), Key("lock"))
 	c.Check(err, IsNil)
@@ -58,7 +58,7 @@ func (s testMockSuite) TestInterface(c *C) {
 	}
 	transaction.Commit(context.Background())
 
-	transaction, err = storage.Begin(oracle.GlobalTxnScope)
+	transaction, err = storage.Begin()
 	c.Check(err, IsNil)
 
 	// Test for mockTxn interface.

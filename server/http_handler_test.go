@@ -53,7 +53,6 @@ import (
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/tikv"
-	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
@@ -1075,7 +1074,7 @@ func (ts *HTTPHandlerTestSuite) TestAllHistory(c *C) {
 	s, _ := session.CreateSession(ts.server.newTikvHandlerTool().Store.(kv.Storage))
 	defer s.Close()
 	store := domain.GetDomain(s.(sessionctx.Context)).Store()
-	txn, _ := store.Begin(oracle.GlobalTxnScope)
+	txn, _ := store.Begin()
 	txnMeta := meta.NewMeta(txn)
 	txnMeta.GetAllHistoryDDLJobs()
 	data, _ := txnMeta.GetAllHistoryDDLJobs()

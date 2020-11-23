@@ -450,8 +450,10 @@ type Driver interface {
 // Storage defines the interface for storage.
 // Isolation should be at least SI(SNAPSHOT ISOLATION)
 type Storage interface {
+	// Begin a global transaction
+	Begin() (Transaction, error)
 	// Begin transaction with the given TxnScope (local or global)
-	Begin(txnScope string) (Transaction, error)
+	BeginWithTxnScope(txnScope string) (Transaction, error)
 	// BeginWithStartTS begins transaction with startTS.
 	BeginWithStartTS(txnScope string, startTS uint64) (Transaction, error)
 	// GetSnapshot gets a snapshot that is able to read any data which data is <= ver.

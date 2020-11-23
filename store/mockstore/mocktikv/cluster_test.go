@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv"
-	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
@@ -48,7 +47,7 @@ func (s *testClusterSuite) TestClusterSplit(c *C) {
 	c.Assert(err, IsNil)
 	s.store = store
 
-	txn, err := store.Begin(oracle.GlobalTxnScope)
+	txn, err := store.Begin()
 	c.Assert(err, IsNil)
 
 	// Mock inserting many rows in a table.

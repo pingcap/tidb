@@ -87,7 +87,7 @@ func (s *testCommitterSuite) TearDownSuite(c *C) {
 }
 
 func (s *testCommitterSuite) begin(c *C) *tikvTxn {
-	txn, err := s.store.Begin(oracle.GlobalTxnScope)
+	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 	return txn.(*tikvTxn)
 }

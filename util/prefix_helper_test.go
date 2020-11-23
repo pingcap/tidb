@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/testleak"
 )
@@ -84,7 +83,7 @@ func (c *MockContext) ClearValue(key fmt.Stringer) {
 
 func (c *MockContext) GetTxn(forceNew bool) (kv.Transaction, error) {
 	var err error
-	c.txn, err = c.Begin(oracle.GlobalTxnScope)
+	c.txn, err = c.Begin()
 	if err != nil {
 		return nil, err
 	}
@@ -126,7 +125,7 @@ func (s *testPrefixSuite) TestPrefix(c *C) {
 	err = ctx.CommitTxn()
 	c.Assert(err, IsNil)
 
-	txn, err = s.s.Begin(oracle.GlobalTxnScope)
+	txn, err = s.s.Begin()
 	c.Assert(err, IsNil)
 	k := []byte("key100jfowi878230")
 	err = txn.Set(k, []byte(`val32dfaskli384757^*&%^`))

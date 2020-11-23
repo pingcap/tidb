@@ -1706,7 +1706,7 @@ func (s *session) NewTxn(ctx context.Context) error {
 	}
 
 	txnScope := s.checkAndGetTxnScope()
-	newTxn, err := s.store.Begin(txnScope)
+	newTxn, err := s.store.BeginWithTxnScope(txnScope)
 	if err != nil {
 		return err
 	}

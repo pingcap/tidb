@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
-	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/util/testleak"
 )
 
@@ -219,7 +218,7 @@ func (s *testBootstrapSuite) TestUpgrade(c *C) {
 
 	// Do something to downgrade the store.
 	// downgrade meta bootstrap version
-	txn, err := store.Begin(oracle.GlobalTxnScope)
+	txn, err := store.Begin()
 	c.Assert(err, IsNil)
 	m := meta.NewMeta(txn)
 	err = m.FinishBootstrap(int64(1))

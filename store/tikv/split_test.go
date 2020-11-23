@@ -20,7 +20,6 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockstore/cluster"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
-	"github.com/pingcap/tidb/store/tikv/oracle"
 )
 
 type testSplitSuite struct {
@@ -53,7 +52,7 @@ func (s *testSplitSuite) SetUpTest(c *C) {
 }
 
 func (s *testSplitSuite) begin(c *C) *tikvTxn {
-	txn, err := s.store.Begin(oracle.GlobalTxnScope)
+	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 	return txn.(*tikvTxn)
 }

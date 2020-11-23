@@ -18,7 +18,6 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/store/tikv/oracle"
 )
 
 type testScanMockSuite struct {
@@ -31,7 +30,7 @@ func (s *testScanMockSuite) TestScanMultipleRegions(c *C) {
 	store := NewTestStore(c).(*tikvStore)
 	defer store.Close()
 
-	txn, err := store.Begin(oracle.GlobalTxnScope)
+	txn, err := store.Begin()
 	c.Assert(err, IsNil)
 	for ch := byte('a'); ch <= byte('z'); ch++ {
 		err = txn.Set([]byte{ch}, []byte{ch})
@@ -40,7 +39,7 @@ func (s *testScanMockSuite) TestScanMultipleRegions(c *C) {
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 
-	txn, err = store.Begin(oracle.GlobalTxnScope)
+	txn, err = store.Begin()
 	c.Assert(err, IsNil)
 	snapshot := newTiKVSnapshot(store, kv.Version{Ver: txn.StartTS()}, 0)
 	scanner, err := newScanner(snapshot, []byte("a"), nil, 10, false)
@@ -64,7 +63,7 @@ func (s *testScanMockSuite) TestReverseScan(c *C) {
 	store := NewTestStore(c).(*tikvStore)
 	defer store.Close()
 
-	txn, err := store.Begin(oracle.GlobalTxnScope)
+	txn, err := store.Begin()
 	c.Assert(err, IsNil)
 	for ch := byte('a'); ch <= byte('z'); ch++ {
 		err = txn.Set([]byte{ch}, []byte{ch})
@@ -73,7 +72,7 @@ func (s *testScanMockSuite) TestReverseScan(c *C) {
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 
-	txn, err = store.Begin(oracle.GlobalTxnScope)
+	txn, err = store.Begin()
 	c.Assert(err, IsNil)
 	snapshot := newTiKVSnapshot(store, kv.Version{Ver: txn.StartTS()}, 0)
 	scanner, err := newScanner(snapshot, nil, []byte("z"), 10, true)

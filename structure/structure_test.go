@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/structure"
 	"github.com/pingcap/tidb/util/testleak"
 )
@@ -52,7 +51,7 @@ func (s *testTxStructureSuite) TearDownSuite(c *C) {
 }
 
 func (s *testTxStructureSuite) TestString(c *C) {
-	txn, err := s.store.Begin(oracle.GlobalTxnScope)
+	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 	defer txn.Rollback()
 
@@ -101,7 +100,7 @@ func (s *testTxStructureSuite) TestString(c *C) {
 }
 
 func (s *testTxStructureSuite) TestList(c *C) {
-	txn, err := s.store.Begin(oracle.GlobalTxnScope)
+	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 	defer txn.Rollback()
 
@@ -209,7 +208,7 @@ func (s *testTxStructureSuite) TestList(c *C) {
 }
 
 func (s *testTxStructureSuite) TestHash(c *C) {
-	txn, err := s.store.Begin(oracle.GlobalTxnScope)
+	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 	defer txn.Rollback()
 

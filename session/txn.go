@@ -349,7 +349,7 @@ func (tf *txnFuture) wait() (kv.Transaction, error) {
 
 	logutil.BgLogger().Warn("wait tso failed", zap.Error(err))
 	// It would retry get timestamp.
-	return tf.store.Begin(tf.future.GetTxnScope())
+	return tf.store.BeginWithTxnScope(tf.future.GetTxnScope())
 }
 
 func (s *session) getTxnFuture(ctx context.Context, txnScope string) *txnFuture {

@@ -24,7 +24,6 @@ import (
 	mysql "github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
@@ -117,7 +116,7 @@ func (s *testSuite5) TestAdminRecoverIndex(c *C) {
 	idxInfo := tblInfo.FindIndexByName("c2")
 	indexOpr := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo)
 	sc := s.ctx.GetSessionVars().StmtCtx
-	txn, err := s.store.Begin(oracle.GlobalTxnScope)
+	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 	err = indexOpr.Delete(sc, txn.GetUnionStore(), types.MakeDatums(1), kv.IntHandle(1))
 	c.Assert(err, IsNil)
@@ -140,7 +139,7 @@ func (s *testSuite5) TestAdminRecoverIndex(c *C) {
 	tk.MustExec("admin check index admin_test c2")
 	tk.MustExec("admin check table admin_test")
 
-	txn, err = s.store.Begin(oracle.GlobalTxnScope)
+	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
 	err = indexOpr.Delete(sc, txn.GetUnionStore(), types.MakeDatums(10), kv.IntHandle(10))
 	c.Assert(err, IsNil)
@@ -154,7 +153,7 @@ func (s *testSuite5) TestAdminRecoverIndex(c *C) {
 	tk.MustExec("admin check index admin_test c2")
 	tk.MustExec("admin check table admin_test")
 
-	txn, err = s.store.Begin(oracle.GlobalTxnScope)
+	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
 	err = indexOpr.Delete(sc, txn.GetUnionStore(), types.MakeDatums(1), kv.IntHandle(1))
 	c.Assert(err, IsNil)
@@ -217,7 +216,7 @@ func (s *testSuite5) TestClusteredIndexAdminRecoverIndex(c *C) {
 	sc := s.ctx.GetSessionVars().StmtCtx
 
 	// Some index entries are missed.
-	txn, err := s.store.Begin(oracle.GlobalTxnScope)
+	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 	cHandle := testutil.MustNewCommonHandle(c, "1", "3")
 	err = indexOpr.Delete(sc, txn.GetUnionStore(), types.MakeDatums(2), cHandle)
@@ -251,7 +250,7 @@ func (s *testSuite5) TestAdminRecoverPartitionTableIndex(c *C) {
 		idxInfo := tbl.Meta().FindIndexByName("c2")
 		indexOpr := tables.NewIndex(pid, tbl.Meta(), idxInfo)
 		sc := s.ctx.GetSessionVars().StmtCtx
-		txn, err := s.store.Begin(oracle.GlobalTxnScope)
+		txn, err := s.store.Begin()
 		c.Assert(err, IsNil)
 		err = indexOpr.Delete(sc, txn.GetUnionStore(), types.MakeDatums(idxValue), kv.IntHandle(idxValue))
 		c.Assert(err, IsNil)
@@ -327,7 +326,7 @@ func (s *testSuite5) TestAdminRecoverIndex1(c *C) {
 	c.Assert(idxInfo, NotNil)
 	indexOpr := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo)
 
-	txn, err := s.store.Begin(oracle.GlobalTxnScope)
+	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 	err = indexOpr.Delete(sc, txn.GetUnionStore(), types.MakeDatums("1"), kv.IntHandle(1))
 	c.Assert(err, IsNil)
@@ -385,7 +384,7 @@ func (s *testSuite5) TestAdminCleanupIndex(c *C) {
 	idxInfo3 := tblInfo.FindIndexByName("c3")
 	indexOpr3 := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo3)
 
-	txn, err := s.store.Begin(oracle.GlobalTxnScope)
+	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 	_, err = indexOpr2.Create(s.ctx, txn.GetUnionStore(), types.MakeDatums(1), kv.IntHandle(-100))
 	c.Assert(err, IsNil)
@@ -454,7 +453,7 @@ func (s *testSuite5) TestAdminCleanupIndexForPartitionTable(c *C) {
 		idxInfo3 := tbl.Meta().FindIndexByName("c3")
 		indexOpr3 := tables.NewIndex(pid, tbl.Meta(), idxInfo3)
 
-		txn, err := s.store.Begin(oracle.GlobalTxnScope)
+		txn, err := s.store.Begin()
 		c.Assert(err, IsNil)
 		_, err = indexOpr2.Create(s.ctx, txn.GetUnionStore(), types.MakeDatums(idxValue), kv.IntHandle(handle))
 		c.Assert(err, IsNil)
@@ -536,7 +535,7 @@ func (s *testSuite5) TestAdminCleanupIndexPKNotHandle(c *C) {
 	idxInfo := tblInfo.FindIndexByName("primary")
 	indexOpr := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo)
 
-	txn, err := s.store.Begin(oracle.GlobalTxnScope)
+	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 	_, err = indexOpr.Create(s.ctx, txn.GetUnionStore(), types.MakeDatums(7, 10), kv.IntHandle(-100))
 	c.Assert(err, IsNil)
@@ -586,7 +585,7 @@ func (s *testSuite5) TestAdminCleanupIndexMore(c *C) {
 	idxInfo2 := tblInfo.FindIndexByName("c2")
 	indexOpr2 := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo2)
 
-	txn, err := s.store.Begin(oracle.GlobalTxnScope)
+	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 	for i := 0; i < 2000; i++ {
 		c1 := int64(2*i + 7)
@@ -667,7 +666,7 @@ func (s *testSuite5) TestClusteredAdminCleanupIndex(c *C) {
 		{testutil.MustNewCommonHandle(c, "c1_14", "c3_14"), types.MakeDatums("c3_14")},
 		{testutil.MustNewCommonHandle(c, "c1_15", "c3_15"), types.MakeDatums("c3_15")},
 	}
-	txn, err := s.store.Begin(oracle.GlobalTxnScope)
+	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 	for _, di := range c2DanglingIdx {
 		_, err := indexOpr2.Create(s.ctx, txn.GetUnionStore(), di.idxVal, di.handle)
@@ -727,7 +726,7 @@ func (s *testSuite3) TestAdminCheckPartitionTableFailed(c *C) {
 	for i := 0; i <= 5; i++ {
 		partitionIdx := i % len(tblInfo.GetPartitionInfo().Definitions)
 		indexOpr := tables.NewIndex(tblInfo.GetPartitionInfo().Definitions[partitionIdx].ID, tblInfo, idxInfo)
-		txn, err := s.store.Begin(oracle.GlobalTxnScope)
+		txn, err := s.store.Begin()
 		c.Assert(err, IsNil)
 		err = indexOpr.Delete(sc, txn.GetUnionStore(), types.MakeDatums(i), kv.IntHandle(i))
 		c.Assert(err, IsNil)
@@ -741,7 +740,7 @@ func (s *testSuite3) TestAdminCheckPartitionTableFailed(c *C) {
 		//r.Check(testkit.Rows("0 0"))
 		//tk.MustExec("admin check table admin_test_p")
 		// Manual recover index.
-		txn, err = s.store.Begin(oracle.GlobalTxnScope)
+		txn, err = s.store.Begin()
 		c.Assert(err, IsNil)
 		_, err = indexOpr.Create(s.ctx, txn.GetUnionStore(), types.MakeDatums(i), kv.IntHandle(i))
 		c.Assert(err, IsNil)
@@ -755,7 +754,7 @@ func (s *testSuite3) TestAdminCheckPartitionTableFailed(c *C) {
 	for i := 0; i <= 5; i++ {
 		partitionIdx := i % len(tblInfo.GetPartitionInfo().Definitions)
 		indexOpr := tables.NewIndex(tblInfo.GetPartitionInfo().Definitions[partitionIdx].ID, tblInfo, idxInfo)
-		txn, err := s.store.Begin(oracle.GlobalTxnScope)
+		txn, err := s.store.Begin()
 		c.Assert(err, IsNil)
 		_, err = indexOpr.Create(s.ctx, txn.GetUnionStore(), types.MakeDatums(i+8), kv.IntHandle(i+8))
 		c.Assert(err, IsNil)
@@ -765,7 +764,7 @@ func (s *testSuite3) TestAdminCheckPartitionTableFailed(c *C) {
 		c.Assert(err, NotNil)
 		c.Assert(err.Error(), Equals, fmt.Sprintf("handle %d, index:types.Datum{k:0x1, decimal:0x0, length:0x0, i:%d, collation:\"\", b:[]uint8(nil), x:interface {}(nil)} != record:<nil>", i+8, i+8))
 		// TODO: fix admin recover for partition table.
-		txn, err = s.store.Begin(oracle.GlobalTxnScope)
+		txn, err = s.store.Begin()
 		c.Assert(err, IsNil)
 		err = indexOpr.Delete(sc, txn.GetUnionStore(), types.MakeDatums(i+8), kv.IntHandle(i+8))
 		c.Assert(err, IsNil)
@@ -778,7 +777,7 @@ func (s *testSuite3) TestAdminCheckPartitionTableFailed(c *C) {
 	for i := 0; i <= 5; i++ {
 		partitionIdx := i % len(tblInfo.GetPartitionInfo().Definitions)
 		indexOpr := tables.NewIndex(tblInfo.GetPartitionInfo().Definitions[partitionIdx].ID, tblInfo, idxInfo)
-		txn, err := s.store.Begin(oracle.GlobalTxnScope)
+		txn, err := s.store.Begin()
 		c.Assert(err, IsNil)
 		_, err = indexOpr.Create(s.ctx, txn.GetUnionStore(), types.MakeDatums(i+8), kv.IntHandle(i))
 		c.Assert(err, IsNil)
@@ -788,7 +787,7 @@ func (s *testSuite3) TestAdminCheckPartitionTableFailed(c *C) {
 		c.Assert(err, NotNil)
 		c.Assert(err.Error(), Equals, fmt.Sprintf("col c2, handle %d, index:types.Datum{k:0x1, decimal:0x0, length:0x0, i:%d, collation:\"\", b:[]uint8(nil), x:interface {}(nil)} != record:types.Datum{k:0x1, decimal:0x0, length:0x0, i:%d, collation:\"\", b:[]uint8(nil), x:interface {}(nil)}", i, i+8, i))
 		// TODO: fix admin recover for partition table.
-		txn, err = s.store.Begin(oracle.GlobalTxnScope)
+		txn, err = s.store.Begin()
 		c.Assert(err, IsNil)
 		err = indexOpr.Delete(sc, txn.GetUnionStore(), types.MakeDatums(i+8), kv.IntHandle(i))
 		c.Assert(err, IsNil)
@@ -823,7 +822,7 @@ func (s *testSuite5) TestAdminCheckTableFailed(c *C) {
 	// Reduce one row of index.
 	// Table count > index count.
 	// Index c2 is missing 11.
-	txn, err := s.store.Begin(oracle.GlobalTxnScope)
+	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 	err = indexOpr.Delete(sc, txn.GetUnionStore(), types.MakeDatums(-10), kv.IntHandle(-1))
 	c.Assert(err, IsNil)
@@ -841,7 +840,7 @@ func (s *testSuite5) TestAdminCheckTableFailed(c *C) {
 	// Add one row of index.
 	// Table count < index count.
 	// Index c2 has one more values than table data: 0, and the handle 0 hasn't correlative record.
-	txn, err = s.store.Begin(oracle.GlobalTxnScope)
+	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
 	_, err = indexOpr.Create(s.ctx, txn.GetUnionStore(), types.MakeDatums(0), kv.IntHandle(0))
 	c.Assert(err, IsNil)
@@ -854,7 +853,7 @@ func (s *testSuite5) TestAdminCheckTableFailed(c *C) {
 	// Add one row of index.
 	// Table count < index count.
 	// Index c2 has two more values than table data: 10, 13, and these handles have correlative record.
-	txn, err = s.store.Begin(oracle.GlobalTxnScope)
+	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
 	err = indexOpr.Delete(sc, txn.GetUnionStore(), types.MakeDatums(0), kv.IntHandle(0))
 	c.Assert(err, IsNil)
@@ -871,7 +870,7 @@ func (s *testSuite5) TestAdminCheckTableFailed(c *C) {
 
 	// Table count = index count.
 	// Two indices have the same handle.
-	txn, err = s.store.Begin(oracle.GlobalTxnScope)
+	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
 	err = indexOpr.Delete(sc, txn.GetUnionStore(), types.MakeDatums(13), kv.IntHandle(2))
 	c.Assert(err, IsNil)
@@ -885,7 +884,7 @@ func (s *testSuite5) TestAdminCheckTableFailed(c *C) {
 
 	// Table count = index count.
 	// Index c2 has one line of data is 19, the corresponding table data is 20.
-	txn, err = s.store.Begin(oracle.GlobalTxnScope)
+	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
 	_, err = indexOpr.Create(s.ctx, txn.GetUnionStore(), types.MakeDatums(12), kv.IntHandle(2))
 	c.Assert(err, IsNil)
@@ -898,7 +897,7 @@ func (s *testSuite5) TestAdminCheckTableFailed(c *C) {
 	c.Assert(err.Error(), Equals, "col c2, handle 10, index:types.Datum{k:0x1, decimal:0x0, length:0x0, i:19, collation:\"\", b:[]uint8(nil), x:interface {}(nil)} != record:types.Datum{k:0x1, decimal:0x0, length:0x0, i:20, collation:\"\", b:[]uint8(nil), x:interface {}(nil)}")
 
 	// Recover records.
-	txn, err = s.store.Begin(oracle.GlobalTxnScope)
+	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
 	err = indexOpr.Delete(sc, txn.GetUnionStore(), types.MakeDatums(19), kv.IntHandle(10))
 	c.Assert(err, IsNil)
@@ -1057,7 +1056,7 @@ func (s *testSuite5) TestAdminCheckWithSnapshot(c *C) {
 	tblInfo := tbl.Meta()
 	idxInfo := tblInfo.FindIndexByName("a")
 	idxOpr := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo)
-	txn, err := s.store.Begin(oracle.GlobalTxnScope)
+	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 	_, err = idxOpr.Create(s.ctx, txn.GetUnionStore(), types.MakeDatums(2), kv.IntHandle(100))
 	c.Assert(err, IsNil)

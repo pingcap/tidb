@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv"
-	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"go.uber.org/zap"
@@ -98,7 +97,7 @@ func batchRW(value []byte) {
 				txnCounter.WithLabelValues("txn").Inc()
 				start := time.Now()
 				k := base*i + j
-				txn, err := store.Begin(oracle.GlobalTxnScope)
+				txn, err := store.Begin()
 				if err != nil {
 					log.Fatal(err.Error())
 				}

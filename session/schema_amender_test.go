@@ -354,7 +354,7 @@ func (s *testSchemaAmenderSuite) TestAmendCollectAndGenMutations(c *C) {
 			mutations := tikv.NewPlainMutations(8)
 			newData, oldData, expectedMutations := prepareTestData(se, &mutations, oldTbInfo, newTblInfo, expectedAmendOps, c)
 			// Prepare old data in table.
-			txnPrepare, err := se.store.Begin(oracle.GlobalTxnScope)
+			txnPrepare, err := se.store.Begin()
 			c.Assert(err, IsNil)
 			for i, key := range oldData.keys {
 				err = txnPrepare.Set(key, oldData.values[i])
@@ -362,7 +362,7 @@ func (s *testSchemaAmenderSuite) TestAmendCollectAndGenMutations(c *C) {
 			}
 			err = txnPrepare.Commit(ctx)
 			c.Assert(err, IsNil)
-			txnCheck, err := se.store.Begin(oracle.GlobalTxnScope)
+			txnCheck, err := se.store.Begin()
 			c.Assert(err, IsNil)
 			snapData, err := txnCheck.GetSnapshot().Get(ctx, oldData.keys[0])
 			c.Assert(err, IsNil)
@@ -371,7 +371,7 @@ func (s *testSchemaAmenderSuite) TestAmendCollectAndGenMutations(c *C) {
 			c.Assert(err, IsNil)
 
 			// Write data for this new transaction, its memory buffer will be used by schema amender.
-			txn, err := se.store.Begin(oracle.GlobalTxnScope)
+			txn, err := se.store.Begin()
 			c.Assert(err, IsNil)
 			se.updateTxn(se.checkAndGetTxnScope(), txn)
 			txn, err = se.Txn(true)

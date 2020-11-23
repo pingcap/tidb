@@ -159,7 +159,7 @@ func (c *Context) NewTxn(context.Context) error {
 		}
 	}
 
-	txn, err := c.Store.Begin(oracle.GlobalTxnScope)
+	txn, err := c.Store.Begin()
 	if err != nil {
 		return errors.Trace(err)
 	}

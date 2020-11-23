@@ -111,7 +111,7 @@ func (s *testGCWorkerSuite) timeEqual(c *C, t1, t2 time.Time, epsilon time.Durat
 }
 
 func (s *testGCWorkerSuite) mustPut(c *C, key, value string) {
-	txn, err := s.store.Begin(oracle.GlobalTxnScope)
+	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 	err = txn.Set([]byte(key), []byte(value))
 	c.Assert(err, IsNil)

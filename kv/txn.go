@@ -39,7 +39,7 @@ func RunInNewTxnWithTxnScope(store Storage, txnScope string, retryable bool, f f
 		txn           Transaction
 	)
 	for i := uint(0); i < maxRetryCnt; i++ {
-		txn, err = store.Begin(txnScope)
+		txn, err = store.BeginWithTxnScope(txnScope)
 		if err != nil {
 			logutil.BgLogger().Error("RunInNewTxn", zap.Error(err))
 			return err

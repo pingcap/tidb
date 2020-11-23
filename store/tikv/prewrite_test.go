@@ -17,7 +17,6 @@ import (
 	. "github.com/pingcap/check"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/store/mockstore/unistore"
-	"github.com/pingcap/tidb/store/tikv/oracle"
 )
 
 type testPrewriteSuite struct {
@@ -36,7 +35,7 @@ func (s *testPrewriteSuite) SetUpTest(c *C) {
 }
 
 func (s *testPrewriteSuite) TestSetMinCommitTSInAsyncCommit(c *C) {
-	t, err := s.store.Begin(oracle.GlobalTxnScope)
+	t, err := s.store.Begin()
 	c.Assert(err, IsNil)
 	txn := t.(*tikvTxn)
 	err = txn.Set([]byte("k"), []byte("v"))

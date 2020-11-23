@@ -247,9 +247,9 @@ func (s *testOnePCSuite) Test1PCExternalConsistency(c *C) {
 		conf.TiKVClient.ExternalConsistency = true
 	})
 
-	t1, err := s.store.Begin(oracle.GlobalTxnScope)
+	t1, err := s.store.Begin()
 	c.Assert(err, IsNil)
-	t2, err := s.store.Begin(oracle.GlobalTxnScope)
+	t2, err := s.store.Begin()
 	c.Assert(err, IsNil)
 	err = t1.Set([]byte("a"), []byte("a1"))
 	c.Assert(err, IsNil)

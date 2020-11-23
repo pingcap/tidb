@@ -324,7 +324,11 @@ func (s *tikvStore) runSafePointChecker() {
 	}
 }
 
-func (s *tikvStore) Begin(txnScope string) (kv.Transaction, error) {
+func (s *tikvStore) Begin() (kv.Transaction, error) {
+	return s.BeginWithTxnScope(oracle.GlobalTxnScope)
+}
+
+func (s *tikvStore) BeginWithTxnScope(txnScope string) (kv.Transaction, error) {
 	txn, err := newTiKVTxn(s, txnScope)
 	if err != nil {
 		return nil, errors.Trace(err)

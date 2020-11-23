@@ -103,7 +103,7 @@ type testBackupRestoreSuite struct {
 }
 
 func clearStorage(store kv.Storage) error {
-	txn, err := store.Begin(oracle.GlobalTxnScope)
+	txn, err := store.Begin()
 	if err != nil {
 		return errors.Trace(err)
 	}
