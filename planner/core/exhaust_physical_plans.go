@@ -1661,6 +1661,7 @@ func (p *LogicalJoin) tryToGetMppHashJoin(prop *property.PhysicalProperty, useBC
 		JoinType:        p.JoinType,
 		LeftConditions:  p.LeftConditions,
 		RightConditions: p.RightConditions,
+		OtherConditions: p.OtherConditions,
 		DefaultValues:   p.DefaultValues,
 		LeftJoinKeys:    lkeys,
 		RightJoinKeys:   rkeys,
@@ -1672,6 +1673,8 @@ func (p *LogicalJoin) tryToGetMppHashJoin(prop *property.PhysicalProperty, useBC
 			preferredBuildIndex = 1
 		}
 	} else if p.JoinType == LeftOuterJoin {
+		preferredBuildIndex = 1
+	} else if p.JoinType == SemiJoin || p.JoinType == AntiSemiJoin {
 		preferredBuildIndex = 1
 	}
 	baseJoin.InnerChildIdx = preferredBuildIndex
