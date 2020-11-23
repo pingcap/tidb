@@ -2257,7 +2257,10 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 	innerPlan := v.Children()[v.InnerChildIdx]
 	innerTypes := make([]*types.FieldType, innerPlan.Schema().Len())
 	for i, col := range innerPlan.Schema().Columns {
-		innerTypes[i] = col.RetType
+		innerTypes[i] = col.RetType.Clone()
+		if innerTypes[i].EvalType() == types.ETString {
+			innerTypes[i].Flen = types.UnspecifiedLength
+		}
 	}
 
 	var (
@@ -2346,7 +2349,10 @@ func (b *executorBuilder) buildIndexLookUpMergeJoin(v *plannercore.PhysicalIndex
 	innerPlan := v.Children()[v.InnerChildIdx]
 	innerTypes := make([]*types.FieldType, innerPlan.Schema().Len())
 	for i, col := range innerPlan.Schema().Columns {
-		innerTypes[i] = col.RetType
+		innerTypes[i] = col.RetType.Clone()
+		if innerTypes[i].EvalType() == types.ETString {
+			innerTypes[i].Flen = types.UnspecifiedLength
+		}
 	}
 	var (
 		outerFilter           []expression.Expression
