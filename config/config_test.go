@@ -189,7 +189,6 @@ repair-mode = true
 max-server-connections = 200
 mem-quota-query = 10000
 mem-quota-statistics = 10000
-nested-loop-join-cache-capacity = 100
 max-index-length = 3080
 skip-register-to-dashboard = true
 deprecate-integer-display-length = true
