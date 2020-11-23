@@ -680,7 +680,7 @@ func (s *testPointGetSuite) TestPointGetWriteLock(c *C) {
 	tk.MustExec("unlock tables")
 }
 
-func (s *testPointGetSuite) TestLockNonexistKey(c *C) {
+func (s *testPointGetSuite) TestLockNonExistKey(c *C) {
 	tk1 := testkit.NewTestKit(c, s.store)
 	tk2 := testkit.NewTestKit(c, s.store)
 	tk1.MustExec("use test")

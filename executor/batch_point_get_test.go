@@ -165,7 +165,7 @@ func (s *testBatchPointGetSuite) TestBatchPointGetUnsignedHandleWithSort(c *C) {
 	tk.MustQuery("select id from t2 where id in (8738875760185212610, 1, 9814441339970117597) order by id desc").Check(testkit.Rows("9814441339970117597", "8738875760185212610", "1"))
 }
 
-func (s *testBatchPointGetSuite) TestLockNonexistKey(c *C) {
+func (s *testBatchPointGetSuite) TestLockNonExistKey(c *C) {
 	tk1 := testkit.NewTestKit(c, s.store)
 	tk2 := testkit.NewTestKit(c, s.store)
 	tk1.MustExec("use test")
