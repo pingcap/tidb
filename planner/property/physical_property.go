@@ -95,6 +95,19 @@ func SortItemsFromCols(cols []*expression.Column, desc bool) []SortItem {
 	return items
 }
 
+// MatchPartCols check if the keys can match the needs of partition.
+func (p *PhysicalProperty) MatchPartCols(keys []*expression.Column) bool {
+	if len(p.PartitionCols)	> len(keys) {
+		return false
+	}
+	for i, partCol := range p.PartitionCols {
+		if !partCol.Equal(nil, keys[i]) {
+			return false
+		}
+	}
+	return true
+}
+
 // AllColsFromSchema checks whether all the columns needed by this physical
 // property can be found in the given schema.
 func (p *PhysicalProperty) AllColsFromSchema(schema *expression.Schema) bool {

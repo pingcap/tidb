@@ -1558,6 +1558,27 @@ func (p *LogicalJoin) tryToGetIndexJoin(prop *property.PhysicalProperty) (indexJ
 	return append(allLeftOuterJoins, allRightOuterJoins...), false
 }
 
+func (p *LogicalJoin) shouldUseMPPBCJ() bool {
+	if p.ctx.GetSessionVars().BroadcastJoinThreshold == 0 {
+		return p.ctx.GetSessionVars().AllowBCJ;
+	}
+	var lSize, rSize float64
+	if p.children[0].statsInfo().HistColl == nil {
+		lSize = math.MaxFloat64
+	} else {
+		lAvg := p.children[0].statsInfo().HistColl.GetAvgRowSize(p.ctx, p.schema.Columns, false, false)
+		lSize = float64(p.children[0].statsInfo().Count()) * lAvg
+	}
+	if p.children[1].statsInfo().HistColl == nil {
+		rSize = math.MaxFloat64
+	} else {
+		rAvg := p.children[1].statsInfo().HistColl.GetAvgRowSize(p.ctx, p.schema.Columns, false, false)
+		rSize = float64(p.children[1].statsInfo().Count()) * rAvg
+	}
+	minSize := math.Min(lSize, rSize)
+	return minSize <= float64(p.ctx.GetSessionVars().BroadcastJoinThreshold)
+}
+
 // LogicalJoin can generates hash join, index join and sort merge join.
 // Firstly we check the hint, if hint is figured by user, we force to choose the corresponding physical plan.
 // If the hint is not matched, it will get other candidates.
@@ -1573,9 +1594,12 @@ func (p *LogicalJoin) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]P
 	if prop.IsFlashProp() && ((p.preferJoinType&preferBCJoin) == 0 && p.preferJoinType > 0) {
 		return nil, false
 	}
+	if prop.PartitionTp == property.BroadcastType {
+		return nil, false
+	}
 	joins := make([]PhysicalPlan, 0, 8)
 	if p.ctx.GetSessionVars().AllowMPPExecution {
-		if p.ctx.GetSessionVars().AllowBCJ {
+		if p.shouldUseMPPBCJ() {
 			mppJoins := p.tryToGetMppHashJoin(prop, true)
 			if (p.preferJoinType & preferBCJoin) > 0 {
 				return mppJoins, true
@@ -1632,6 +1656,7 @@ func (p *LogicalJoin) tryToGetMppHashJoin(prop *property.PhysicalProperty, useBC
 	}
 
 	lkeys, rkeys, _, _ := p.GetJoinKeys()
+	// check match property
 	baseJoin := basePhysicalJoin{
 		JoinType:        p.JoinType,
 		LeftConditions:  p.LeftConditions,
@@ -1658,8 +1683,25 @@ func (p *LogicalJoin) tryToGetMppHashJoin(prop *property.PhysicalProperty, useBC
 			expCntScale := prop.ExpectedCnt / p.stats.RowCount
 			expCnt = p.children[1-preferredBuildIndex].statsInfo().RowCount * expCntScale
 		}
-		childrenProps[1-preferredBuildIndex] = &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: expCnt, PartitionTp: property.AnyType}
+		if prop.PartitionTp == property.HashType {
+			hashKeys := rkeys
+			if preferredBuildIndex == 0 {
+				hashKeys = lkeys
+			}
+			if prop.MatchPartCols(hashKeys) {
+				childrenProps[1-preferredBuildIndex] = &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: expCnt, PartitionTp: property.HashType, PartitionCols: hashKeys}
+			} else {
+				return nil
+			}
+		} else {
+			childrenProps[1-preferredBuildIndex] = &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: expCnt, PartitionTp: property.AnyType}
+		}
 	} else {
+		if prop.PartitionTp == property.HashType {
+			if !prop.MatchPartCols(lkeys) && !prop.MatchPartCols(rkeys) {
+				return nil
+			}
+		}
 		childrenProps[0] = &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, PartitionTp: property.HashType, PartitionCols: lkeys, Enforced: true}
 		childrenProps[1] = &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, PartitionTp: property.HashType, PartitionCols: rkeys, Enforced: true}
 	}
