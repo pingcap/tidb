@@ -1146,28 +1146,39 @@ func (s *testSuiteAgg) TestIssue17216(c *C) {
 }
 
 func (s *testSuiteAgg) TestHashAggRuntimeStat(c *C) {
-	partialStat := executor.AggWorkerStat{
+	partialInfo := executor.AggWorkerInfo{
 		Concurrency: 5,
-		TaskNum:     5,
-		WallTime:    int64(1 * time.Second),
-		WaitTime:    int64(2 * time.Second),
-		ExecTime:    int64(2 * time.Second),
-		WorkerTime:  []int64{int64(1 * time.Second), int64(1 * time.Second), int64(1 * time.Second), int64(2 * time.Second), int64(3 * time.Second)},
+		WallTime:    int64(time.Second * 20),
 	}
-	finalStat := executor.AggWorkerStat{
-		Concurrency: 5,
-		TaskNum:     5,
-		WallTime:    int64(1 * time.Second),
-		WaitTime:    int64(2 * time.Second),
-		ExecTime:    int64(2 * time.Second),
-		WorkerTime:  []int64{int64(1 * time.Second), int64(1 * time.Second), int64(1 * time.Second), int64(2 * time.Second), int64(4 * time.Second)},
+	finalInfo := executor.AggWorkerInfo{
+		Concurrency: 8,
+		WallTime:    int64(time.Second * 10),
 	}
 	stats := &executor.HashAggRuntimeStats{
-		PartialStats: partialStat,
-		FinalStats:   finalStat,
+		PartialInfo: partialInfo,
+		FinalInfo:   finalInfo,
 	}
-	c.Assert(stats.String(), Equals, "partial_worker:{wall_time:1s, concurrency:5, task_num:5, tot_wait:2s, tot_exec:2s, tot_time:8s, max:3s, p95:3s}, final_worker:{wall_time:1s, concurrency:5, task_num:5, tot_wait:2s, tot_exec:2s, tot_time:9s, max:4s, p95:4s}")
-	c.Assert(stats.String(), Equals, stats.Clone().String())
+	for i := 0; i < partialInfo.Concurrency; i++ {
+		stats.PartialStats = append(stats.PartialStats, &executor.AggWorkerStat{
+			TaskNum:    5,
+			WaitTime:   int64(2 * time.Second),
+			ExecTime:   int64(1 * time.Second),
+			WorkerTime: int64(i) * int64(time.Second),
+		})
+	}
+	for i := 0; i < finalInfo.Concurrency; i++ {
+		stats.FinalStats = append(stats.FinalStats, &executor.AggWorkerStat{
+			TaskNum:    5,
+			WaitTime:   int64(2 * time.Millisecond),
+			ExecTime:   int64(1 * time.Millisecond),
+			WorkerTime: int64(i) * int64(time.Millisecond),
+		})
+	}
+	expect := "partial_worker:{wall_time:20s, concurrency:5, task_num:25, tot_wait:10s, tot_exec:5s, tot_time:10s, max:4s, p95:4s}, final_worker:{wall_time:10s, concurrency:8, task_num:40, tot_wait:16ms, tot_exec:8ms, tot_time:28ms, max:7ms, p95:7ms}"
+	c.Assert(stats.String(), Equals, expect)
+	c.Assert(stats.String(), Equals, expect)
+	c.Assert(stats.Clone().String(), Equals, expect)
 	stats.Merge(stats.Clone())
-	c.Assert(stats.String(), Equals, "partial_worker:{wall_time:2s, concurrency:10, task_num:10, tot_wait:4s, tot_exec:4s, tot_time:16s, max:3s, p95:3s}, final_worker:{wall_time:2s, concurrency:10, task_num:10, tot_wait:4s, tot_exec:4s, tot_time:18s, max:4s, p95:4s}")
+	expect = "partial_worker:{wall_time:40s, concurrency:5, task_num:50, tot_wait:20s, tot_exec:10s, tot_time:20s, max:4s, p95:4s}, final_worker:{wall_time:20s, concurrency:8, task_num:80, tot_wait:32ms, tot_exec:16ms, tot_time:56ms, max:7ms, p95:7ms}"
+	c.Assert(stats.String(), Equals, expect)
 }
