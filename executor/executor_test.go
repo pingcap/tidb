@@ -7081,7 +7081,6 @@ func (s *testSuite) TestZeroDateTimeCompatibility(c *C) {
 	tk := testkit.NewTestKit(c, store)
 
 	for _, t := range SQLs {
-		fmt.Println(t)
 		tk.MustQuery(t).Check(testkit.Rows("0 <nil>"))
 		c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
 	}
