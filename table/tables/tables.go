@@ -399,16 +399,22 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx sessionctx.Context,
 		}
 	}
 	sessVars := sctx.GetSessionVars()
-
 	// rebuild index
-	savePresumeKeyNotExist := sessVars.PresumeKeyNotExists
-	if !sessVars.ConstraintCheckInPlace {
-		sessVars.PresumeKeyNotExists = true
-	}
-	err = t.rebuildIndices(sctx, txn, h, touched, oldData, newData, table.WithCtx(ctx))
-	sessVars.PresumeKeyNotExists = savePresumeKeyNotExist
-	if err != nil {
-		return err
+	if !sessVars.InTxn() {
+		savePresumeKeyNotExist := sessVars.PresumeKeyNotExists
+		if !sessVars.ConstraintCheckInPlace {
+			sessVars.PresumeKeyNotExists = true
+		}
+		err = t.rebuildIndices(sctx, txn, h, touched, oldData, newData, table.WithCtx(ctx))
+		sessVars.PresumeKeyNotExists = savePresumeKeyNotExist
+		if err != nil {
+			return err
+		}
+	} else {
+		err = t.rebuildIndices(sctx, txn, h, touched, oldData, newData, table.WithCtx(ctx))
+		if err != nil {
+			return err
+		}
 	}
 
 	key := t.RecordKey(h)
