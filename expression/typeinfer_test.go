@@ -213,8 +213,8 @@ func (s *testInferTypeSuite) createTestCase4Columns() []typeInferTestCase {
 		{"c_udouble_d  ", mysql.TypeDouble, charset.CharsetBin, mysql.UnsignedFlag, 22, types.UnspecifiedLength},
 		{"c_decimal    ", mysql.TypeNewDecimal, charset.CharsetBin, 0, 6, 3},                   // TODO: Flen should be 8
 		{"c_udecimal   ", mysql.TypeNewDecimal, charset.CharsetBin, mysql.UnsignedFlag, 10, 3}, // TODO: Flen should be 11
-		{"c_decimal_d  ", mysql.TypeNewDecimal, charset.CharsetBin, 0, 11, 0},
-		{"c_udecimal_d ", mysql.TypeNewDecimal, charset.CharsetBin, mysql.UnsignedFlag, 11, 0}, // TODO: Flen should be 10
+		{"c_decimal_d  ", mysql.TypeNewDecimal, charset.CharsetBin, 0, 10, 0},
+		{"c_udecimal_d ", mysql.TypeNewDecimal, charset.CharsetBin, mysql.UnsignedFlag, 10, 0},
 		{"c_datetime   ", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 22, 2},
 		{"c_datetime_d ", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 19, 0},
 		{"c_time       ", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, 14, 3},
