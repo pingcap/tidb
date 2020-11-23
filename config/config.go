@@ -55,7 +55,7 @@ const (
 	// DefIndexLimit is the limitation of index on a single table. This value is consistent with MySQL.
 	DefIndexLimit = 64
 	// DefMaxOfIndexLimit is the maximum limitation of index on a single table for TiDB.
-	DefMaxOfIndexLimit = 64 * 4
+	DefMaxOfIndexLimit = 64 * 8
 	// DefMinQuotaStatistics is the minimum statistic memory quota(in bytes).
 	DefMinQuotaStatistics = 32 << 30
 	// DefPort is the default port of TiDB
