@@ -2702,7 +2702,7 @@ func (b *builtinExtractDatetimeSig) evalInt(row chunk.Row) (int64, bool, error) 
 			if isOriginalIntOrDecimalZero && !isOriginalStringZero {
 				return 0, false, nil
 			}
-			return 0, true, handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, date.String()))
+			return 0, true, handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, dt.String()))
 		}
 		return 0, false, nil
 	}
