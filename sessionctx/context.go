@@ -33,11 +33,18 @@ type Context interface {
 	// It's used in BEGIN statement and DDL statements to commit old transaction.
 	NewTxn(context.Context) error
 
-	// Txn returns the current transaction which is created before executing a statement.
+	// Txn returns the current local/global transaction which is created before executing a statement
+	// according to the session variable txn_scope.
 	// The returned kv.Transaction is not nil, but it maybe pending or invalid.
 	// If the active parameter is true, call this function will wait for the pending txn
 	// to become valid.
 	Txn(active bool) (kv.Transaction, error)
+
+	// GlobalTxn returns the current global transaction which is created before executing a statement.
+	// The returned kv.Transaction is not nil, but it maybe pending or invalid.
+	// If the active parameter is true, call this function will wait for the pending txn
+	// to become valid.
+	GlobalTxn(active bool) (kv.Transaction, error)
 
 	// GetClient gets a kv.Client.
 	GetClient() kv.Client

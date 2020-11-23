@@ -1654,6 +1654,13 @@ func (s *session) Txn(active bool) (kv.Transaction, error) {
 	return txn, nil
 }
 
+func (s *session) GlobalTxn(active bool) (kv.Transaction, error) {
+	originTxnScope := s.GetSessionVars().TxnScope
+	s.GetSessionVars().TxnScope = oracle.GlobalTxnScope
+	defer s.GetSessionVars().SetTxnScope(originTxnScope)
+	return s.Txn(active)
+}
+
 // isTxnRetryable (if returns true) means the transaction could retry.
 // If the transaction is in pessimistic mode, do not retry.
 // If the session is already in transaction, enable retry or internal SQL could retry.

@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/chunk"
@@ -378,12 +377,7 @@ func (e *DDLExec) executeAlterTable(s *ast.AlterTableStmt) error {
 // It is built from "recover table" statement,
 // is used to recover the table that deleted by mistake.
 func (e *DDLExec) executeRecoverTable(s *ast.RecoverTableStmt) error {
-	// NewMeta should be started as a global transaction
-	originTxnScope := e.ctx.GetSessionVars().TxnScope
-	e.ctx.GetSessionVars().TxnScope = oracle.GlobalTxnScope
-	defer e.ctx.GetSessionVars().SetTxnScope(originTxnScope)
-
-	txn, err := e.ctx.Txn(true)
+	txn, err := e.ctx.GlobalTxn(true)
 	if err != nil {
 		return err
 	}
@@ -518,10 +512,7 @@ func GetDropOrTruncateTableInfoFromJobs(jobs []*model.Job, gcSafePoint uint64, d
 
 func (e *DDLExec) getRecoverTableByTableName(tableName *ast.TableName) (*model.Job, *model.TableInfo, error) {
 	// DDL should be started as a global transaction
-	originTxnScope := e.ctx.GetSessionVars().TxnScope
-	e.ctx.GetSessionVars().TxnScope = oracle.GlobalTxnScope
-	defer e.ctx.GetSessionVars().SetTxnScope(originTxnScope)
-	txn, err := e.ctx.Txn(true)
+	txn, err := e.ctx.GlobalTxn(true)
 	if err != nil {
 		return nil, nil, err
 	}

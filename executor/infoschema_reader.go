@@ -44,7 +44,6 @@ import (
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/store/tikv"
-	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	binaryJson "github.com/pingcap/tidb/types/json"
@@ -971,10 +970,7 @@ func (e *DDLJobsReaderExec) Open(ctx context.Context) error {
 		return err
 	}
 	// DDL should be started as a global transaction
-	originTxnScope := e.ctx.GetSessionVars().TxnScope
-	e.ctx.GetSessionVars().TxnScope = oracle.GlobalTxnScope
-	defer e.ctx.GetSessionVars().SetTxnScope(originTxnScope)
-	txn, err := e.ctx.Txn(true)
+	txn, err := e.ctx.GlobalTxn(true)
 	if err != nil {
 		return err
 	}

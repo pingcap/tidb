@@ -42,7 +42,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
-	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
@@ -247,10 +246,7 @@ func (b *executorBuilder) buildCancelDDLJobs(v *plannercore.CancelDDLJobs) Execu
 		jobIDs:       v.JobIDs,
 	}
 	// DDL should be started as a global transaction
-	originTxnScope := e.ctx.GetSessionVars().TxnScope
-	e.ctx.GetSessionVars().TxnScope = oracle.GlobalTxnScope
-	defer e.ctx.GetSessionVars().SetTxnScope(originTxnScope)
-	txn, err := e.ctx.Txn(true)
+	txn, err := e.ctx.GlobalTxn(true)
 	if err != nil {
 		b.err = err
 		return nil
@@ -295,12 +291,8 @@ func (b *executorBuilder) buildShowDDL(v *plannercore.ShowDDL) Executor {
 		b.err = err
 		return nil
 	}
-
 	// DDL should be started as a global transaction
-	originTxnScope := e.ctx.GetSessionVars().TxnScope
-	e.ctx.GetSessionVars().TxnScope = oracle.GlobalTxnScope
-	defer e.ctx.GetSessionVars().SetTxnScope(originTxnScope)
-	txn, err := e.ctx.Txn(true)
+	txn, err := e.ctx.GlobalTxn(true)
 	if err != nil {
 		b.err = err
 		return nil

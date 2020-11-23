@@ -107,6 +107,11 @@ func (c *Context) Txn(bool) (kv.Transaction, error) {
 	return &c.txn, nil
 }
 
+// GlobalTxn implements sessionctx.Context Txn interface.
+func (c *Context) GlobalTxn(bool) (kv.Transaction, error) {
+	return &c.txn, nil
+}
+
 // GetClient implements sessionctx.Context GetClient interface.
 func (c *Context) GetClient() kv.Client {
 	if c.Store == nil {
