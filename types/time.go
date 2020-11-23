@@ -1224,16 +1224,34 @@ func adjustYear(y int) int {
 }
 
 // AdjustYear is used for adjusting year and checking its validation.
-func AdjustYear(y int64, shouldAdjust bool) (int64, error) {
-	if y == 0 && !shouldAdjust {
+func AdjustYear(y int64, adjustZero bool) (int64, error) {
+	if y == 0 && !adjustZero {
 		return y, nil
 	}
 	y = int64(adjustYear(int(y)))
-	if y < int64(MinYear) || y > int64(MaxYear) {
+	if y < 0 {
 		return 0, errors.Trace(ErrInvalidYear)
+	}
+	if y < int64(MinYear) {
+		return int64(MinYear), errors.Trace(ErrInvalidYear)
+	}
+	if y > int64(MaxYear) {
+		return int64(MaxYear), errors.Trace(ErrInvalidYear)
 	}
 
 	return y, nil
+}
+
+func adjustYearForFloat(y float64, shouldAdjust bool) float64 {
+	if y == 0 && !shouldAdjust {
+		return y
+	}
+	if y >= 0 && y <= 69 {
+		y = 2000 + y
+	} else if y >= 70 && y <= 99 {
+		y = 1900 + y
+	}
+	return y
 }
 
 // NewDuration construct duration with time.

@@ -589,8 +589,9 @@ func (e *ShowExec) fetchShowIndex() error {
 				subPart = col.Length
 			}
 
+			tblCol := tb.Meta().Columns[col.Offset]
 			nullVal := "YES"
-			if idx.Meta().Name.O == mysql.PrimaryKeyName {
+			if mysql.HasNotNullFlag(tblCol.Flag) {
 				nullVal = ""
 			}
 
@@ -601,7 +602,6 @@ func (e *ShowExec) fetchShowIndex() error {
 
 			colName := col.Name.O
 			expression := "NULL"
-			tblCol := tb.Meta().Columns[col.Offset]
 			if tblCol.Hidden {
 				colName = "NULL"
 				expression = fmt.Sprintf("(%s)", tblCol.GeneratedExprString)
