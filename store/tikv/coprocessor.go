@@ -89,10 +89,10 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variable
 		// Make sure that there is at least one worker.
 		it.concurrency = 1
 	}
-	it.keepOrder = it.req.KeepOrder
 	if it.req.KeepOrder {
 		it.sendRate = newRateLimit(2 * it.concurrency)
 	} else {
+		it.respChan = make(chan *copResponse, it.concurrency)
 		it.sendRate = newRateLimit(it.concurrency)
 	}
 	it.actionOnExceed = newRateLimitAction(uint(cap(it.sendRate.token)))
@@ -400,7 +400,8 @@ type copIterator struct {
 	// sendRate controls the sending rate of copIteratorTaskSender
 	sendRate *rateLimit
 
-	keepOrder bool
+	// Otherwise, results are stored in respChan.
+	respChan chan *copResponse
 
 	vars *kv.Variables
 
@@ -427,6 +428,7 @@ type copIteratorWorker struct {
 	wg       *sync.WaitGroup
 	store    *tikvStore
 	req      *kv.Request
+	respChan chan<- *copResponse
 	finishCh <-chan struct{}
 	vars     *kv.Variables
 	clientHelper
@@ -446,6 +448,7 @@ type copIteratorTaskSender struct {
 	wg       *sync.WaitGroup
 	tasks    []*copTask
 	finishCh <-chan struct{}
+	respChan chan<- *copResponse
 	sendRate *rateLimit
 }
 
@@ -482,6 +485,9 @@ func (rs *copResponse) MemSize() int64 {
 	if rs.respSize != 0 {
 		return rs.respSize
 	}
+	if rs == fin {
+		return 0
+	}
 
 	// ignore rs.err
 	rs.respSize += int64(cap(rs.startKey))
@@ -501,6 +507,12 @@ func (rs *copResponse) RespTime() time.Duration {
 
 const minLogCopTaskTime = 300 * time.Millisecond
 
+var fin *copResponse
+
+func init() {
+	fin = &copResponse{}
+}
+
 // run is a worker function that get a copTask from channel, handle it and
 // send the result back.
 func (worker *copIteratorWorker) run(ctx context.Context) {
@@ -517,8 +529,12 @@ func (worker *copIteratorWorker) run(ctx context.Context) {
 		worker.actionOnExceed.close()
 	}()
 	for task := range worker.taskCh {
-		respCh := task.respChan
+		respCh := worker.respChan
+		if respCh == nil {
+			respCh = task.respChan
+		}
 		worker.handleTask(ctx, task, respCh)
+		worker.sendToRespCh(fin, respCh, false)
 		close(task.respChan)
 		if worker.vars != nil && worker.vars.Killed != nil && atomic.LoadUint32(worker.vars.Killed) == 1 {
 			return
@@ -542,6 +558,7 @@ func (it *copIterator) open(ctx context.Context) {
 			wg:       &it.wg,
 			store:    it.store,
 			req:      it.req,
+			respChan: it.respChan,
 			finishCh: it.finishCh,
 			vars:     it.vars,
 			clientHelper: clientHelper{
@@ -566,6 +583,7 @@ func (it *copIterator) open(ctx context.Context) {
 		finishCh: it.finishCh,
 		sendRate: it.sendRate,
 	}
+	taskSender.respChan = it.respChan
 	it.actionOnExceed.setEnabled(true)
 	go taskSender.run()
 }
@@ -592,6 +610,9 @@ func (sender *copIteratorTaskSender) run() {
 
 	// Wait for worker goroutines to exit.
 	sender.wg.Wait()
+	if sender.respChan != nil {
+		close(sender.respChan)
+	}
 }
 
 func (it *copIterator) recvFromRespCh(ctx context.Context, respCh <-chan *copResponse) (resp *copResponse, ok bool, exit bool) {
@@ -630,65 +651,65 @@ func (it *copIterator) recvFromRespCh(ctx context.Context, respCh <-chan *copRes
 	}
 }
 
-func (it *copIterator) recvFromTasks(ctx context.Context) (resp *copResponse, exit bool) {
-	ticker := time.NewTicker(3 * time.Second)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-it.finishCh:
-			exit = true
-			return
-		case <-ticker.C:
-			if atomic.LoadUint32(it.vars.Killed) == 1 {
-				resp = &copResponse{err: ErrQueryInterrupted}
-				return
-			}
-		case <-ctx.Done():
-			// We select the ctx.Done() in the thread of `Next` instead of in the worker to avoid the cost of `WithCancel`.
-			if atomic.CompareAndSwapUint32(&it.closed, 0, 1) {
-				close(it.finishCh)
-			}
-			exit = true
-			return
-		default:
-			// check whether this is any task needs to be recv
-			exit = it.isTaskAllFinished()
-			if exit {
-				return
-			}
-			// travel all the tasks to recv response
-			for i := 0; i < len(it.tasks); i++ {
-				if it.tasks[i] == nil {
-					continue
-				}
-				task := it.tasks[i]
-				var ok bool
-				select {
-				case resp, ok = <-task.respChan:
-					if it.memTracker != nil && resp != nil {
-						consumed := resp.MemSize()
-						failpoint.Inject("testRateLimitActionMockConsumeAndAssert", func(val failpoint.Value) {
-							if val.(bool) {
-								consumed = MockResponseSize
-							}
-						})
-						it.memTracker.Consume(-consumed)
-					}
-					// task[i] finished
-					if !ok && resp == nil {
-						it.actionOnExceed.destroyTokenIfNeeded(func() {
-							it.sendRate.putToken()
-						})
-						it.tasks[i] = nil
-						continue
-					}
-					return
-				default:
-				}
-			}
-		}
-	}
-}
+//func (it *copIterator) recvFromTasks(ctx context.Context) (resp *copResponse, exit bool) {
+//	ticker := time.NewTicker(3 * time.Second)
+//	defer ticker.Stop()
+//	for {
+//		select {
+//		case <-it.finishCh:
+//			exit = true
+//			return
+//		case <-ticker.C:
+//			if atomic.LoadUint32(it.vars.Killed) == 1 {
+//				resp = &copResponse{err: ErrQueryInterrupted}
+//				return
+//			}
+//		case <-ctx.Done():
+//			// We select the ctx.Done() in the thread of `Next` instead of in the worker to avoid the cost of `WithCancel`.
+//			if atomic.CompareAndSwapUint32(&it.closed, 0, 1) {
+//				close(it.finishCh)
+//			}
+//			exit = true
+//			return
+//		default:
+//			// check whether this is any task needs to be recv
+//			exit = it.isTaskAllFinished()
+//			if exit {
+//				return
+//			}
+//			// travel all the tasks to recv response
+//			for i := 0; i < len(it.tasks); i++ {
+//				if it.tasks[i] == nil {
+//					continue
+//				}
+//				task := it.tasks[i]
+//				var ok bool
+//				select {
+//				case resp, ok = <-task.respChan:
+//					if it.memTracker != nil && resp != nil {
+//						consumed := resp.MemSize()
+//						failpoint.Inject("testRateLimitActionMockConsumeAndAssert", func(val failpoint.Value) {
+//							if val.(bool) {
+//								consumed = MockResponseSize
+//							}
+//						})
+//						it.memTracker.Consume(-consumed)
+//					}
+//					// task[i] finished
+//					if !ok && resp == nil {
+//						it.actionOnExceed.destroyTokenIfNeeded(func() {
+//							it.sendRate.putToken()
+//						})
+//						it.tasks[i] = nil
+//						continue
+//					}
+//					return
+//				default:
+//				}
+//			}
+//		}
+//	}
+//}
 
 func (it *copIterator) isTaskAllFinished() (exit bool) {
 	exit = true
@@ -750,14 +771,18 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 			}
 		}
 	})
-
 	// If data order matters, response should be returned in the same order as copTask slice.
 	// Otherwise all responses are returned from a single channel.
-	if !it.keepOrder {
-		resp, closed = it.recvFromTasks(ctx)
-		if closed {
-			// Close() is already called, so Next() is invalid.
+	if it.respChan != nil {
+		resp, ok, closed = it.recvFromRespCh(ctx, it.respChan)
+		if !ok || closed {
+			it.actionOnExceed.close()
 			return nil, nil
+		}
+		if resp == fin {
+			it.actionOnExceed.destroyTokenIfNeeded(func() {
+				it.sendRate.putToken()
+			})
 		}
 	} else {
 		for {
@@ -782,6 +807,10 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 			it.tasks[it.curr] = nil
 			it.curr++
 		}
+	}
+
+	if resp == fin {
+		return it.Next(ctx)
 	}
 
 	if resp.err != nil {
