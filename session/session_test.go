@@ -3147,7 +3147,10 @@ func (s *testSessionSuite2) TestPointGetStmtHints(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1;")
 	tk.MustExec("create table t1(a int);")
-
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.OOMAction = config.OOMActionCancel
+	})
 	tk.MustExec("insert /*+ MEMORY_QUOTA(1 GB) */ into t1 values (1);")
 	tk.MustExec("select /*+ MEMORY_QUOTA(0 GB) */ * from t1 where a = 1;")
 	val := int64(0)
