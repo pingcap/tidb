@@ -651,17 +651,6 @@ func (it *copIterator) recvFromRespCh(ctx context.Context, respCh <-chan *copRes
 	}
 }
 
-func (it *copIterator) isTaskAllFinished() (exit bool) {
-	exit = true
-	for i := 0; i < len(it.tasks); i++ {
-		if it.tasks[i] != nil {
-			exit = false
-			break
-		}
-	}
-	return
-}
-
 func (sender *copIteratorTaskSender) sendToTaskCh(t *copTask) (exit bool) {
 	select {
 	case sender.taskCh <- t:
