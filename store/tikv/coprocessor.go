@@ -627,7 +627,9 @@ func (it *copIterator) recvFromRespCh(ctx context.Context, respCh <-chan *copRes
 				consumed := resp.MemSize()
 				failpoint.Inject("testRateLimitActionMockConsumeAndAssert", func(val failpoint.Value) {
 					if val.(bool) {
-						consumed = MockResponseSize
+						if resp != finCopResp {
+							consumed = MockResponseSize
+						}
 					}
 				})
 				it.memTracker.Consume(-consumed)
@@ -667,7 +669,9 @@ func (worker *copIteratorWorker) sendToRespCh(resp *copResponse, respCh chan<- *
 		consumed := resp.MemSize()
 		failpoint.Inject("testRateLimitActionMockConsumeAndAssert", func(val failpoint.Value) {
 			if val.(bool) {
-				consumed = MockResponseSize
+				if resp != finCopResp {
+					consumed = MockResponseSize
+				}
 			}
 		})
 		worker.memTracker.Consume(consumed)
