@@ -705,7 +705,7 @@ func (e *HashAggExec) prepare4ParallelExec(ctx context.Context) {
 	go func() {
 		e.waitPartialWorkerAndCloseOutputChs(partialWorkerWaitGroup)
 		if e.stats != nil {
-			atomic.AddInt64(&e.stats.PartialInfo.WallTime, int64(time.Since(partialStart)))
+			atomic.AddInt64(&e.stats.PartialWallTime, int64(time.Since(partialStart)))
 		}
 	}()
 	finalWorkerWaitGroup := &sync.WaitGroup{}
@@ -717,7 +717,7 @@ func (e *HashAggExec) prepare4ParallelExec(ctx context.Context) {
 	go func() {
 		e.waitFinalWorkerAndCloseFinalOutput(finalWorkerWaitGroup)
 		if e.stats != nil {
-			atomic.AddInt64(&e.stats.FinalInfo.WallTime, int64(time.Since(finalStart)))
+			atomic.AddInt64(&e.stats.FinalWallTime, int64(time.Since(finalStart)))
 		}
 	}()
 }
@@ -865,15 +865,11 @@ func (e *HashAggExec) getPartialResults(groupKey string) []aggfuncs.PartialResul
 func (e *HashAggExec) initRuntimeStats() {
 	if e.runtimeStats != nil && e.stats == nil {
 		stats := &HashAggRuntimeStats{
-			PartialInfo: &AggWorkerInfo{
-				Concurrency: e.ctx.GetSessionVars().HashAggPartialConcurrency(),
-			},
-			FinalInfo: &AggWorkerInfo{
-				Concurrency: e.ctx.GetSessionVars().HashAggFinalConcurrency(),
-			},
+			PartialConcurrency: e.ctx.GetSessionVars().HashAggPartialConcurrency(),
+			FinalConcurrency:   e.ctx.GetSessionVars().HashAggFinalConcurrency(),
 		}
-		stats.PartialStats = make([]*AggWorkerStat, 0, stats.PartialInfo.Concurrency)
-		stats.FinalStats = make([]*AggWorkerStat, 0, stats.FinalInfo.Concurrency)
+		stats.PartialStats = make([]*AggWorkerStat, 0, stats.PartialConcurrency)
+		stats.FinalStats = make([]*AggWorkerStat, 0, stats.FinalConcurrency)
 		e.stats = stats
 		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
 	}
@@ -881,10 +877,12 @@ func (e *HashAggExec) initRuntimeStats() {
 
 // HashAggRuntimeStats record the HashAggExec runtime stat
 type HashAggRuntimeStats struct {
-	PartialInfo  *AggWorkerInfo
-	FinalInfo    *AggWorkerInfo
-	PartialStats []*AggWorkerStat
-	FinalStats   []*AggWorkerStat
+	PartialConcurrency int
+	PartialWallTime    int64
+	FinalConcurrency   int
+	FinalWallTime      int64
+	PartialStats       []*AggWorkerStat
+	FinalStats         []*AggWorkerStat
 }
 
 // AggWorkerInfo contains the agg worker information.
@@ -911,7 +909,7 @@ func (w *AggWorkerStat) Clone() *AggWorkerStat {
 	}
 }
 
-func (e *HashAggRuntimeStats) workerString(buf *bytes.Buffer, prefix string, info *AggWorkerInfo, workerStats []*AggWorkerStat) {
+func (e *HashAggRuntimeStats) workerString(buf *bytes.Buffer, prefix string, concurrency int, wallTime int64, workerStats []*AggWorkerStat) {
 	var totalTime, totalWait, totalExec, totalTaskNum int64
 	for _, w := range workerStats {
 		totalTime += w.WorkerTime
@@ -921,7 +919,7 @@ func (e *HashAggRuntimeStats) workerString(buf *bytes.Buffer, prefix string, inf
 	}
 	buf.WriteString(prefix)
 	buf.WriteString(fmt.Sprintf("_worker:{wall_time:%s, concurrency:%d, task_num:%d, tot_wait:%s, tot_exec:%s, tot_time:%s",
-		time.Duration(atomic.LoadInt64(&info.WallTime)), info.Concurrency, totalTaskNum, time.Duration(totalWait), time.Duration(totalExec), time.Duration(totalTime)))
+		time.Duration(wallTime), concurrency, totalTaskNum, time.Duration(totalWait), time.Duration(totalExec), time.Duration(totalTime)))
 	n := len(workerStats)
 	if n > 0 {
 		sort.Slice(workerStats, func(i, j int) bool { return workerStats[i].WorkerTime < workerStats[j].WorkerTime })
@@ -934,19 +932,21 @@ func (e *HashAggRuntimeStats) workerString(buf *bytes.Buffer, prefix string, inf
 // String implements the RuntimeStats interface.
 func (e *HashAggRuntimeStats) String() string {
 	buf := bytes.NewBuffer(make([]byte, 0, 64))
-	e.workerString(buf, "partial", e.PartialInfo, e.PartialStats)
+	e.workerString(buf, "partial", e.PartialConcurrency, atomic.LoadInt64(&e.PartialWallTime), e.PartialStats)
 	buf.WriteString(", ")
-	e.workerString(buf, "final", e.FinalInfo, e.FinalStats)
+	e.workerString(buf, "final", e.FinalConcurrency, atomic.LoadInt64(&e.FinalWallTime), e.FinalStats)
 	return buf.String()
 }
 
 // Clone implements the RuntimeStats interface.
 func (e *HashAggRuntimeStats) Clone() execdetails.RuntimeStats {
-	partialInfo := *e.PartialInfo
-	finalInfo := *e.FinalInfo
 	newRs := &HashAggRuntimeStats{
-		PartialInfo: &partialInfo,
-		FinalInfo:   &finalInfo,
+		PartialConcurrency: e.PartialConcurrency,
+		PartialWallTime:    atomic.LoadInt64(&e.PartialWallTime),
+		FinalConcurrency:   e.FinalConcurrency,
+		FinalWallTime:      atomic.LoadInt64(&e.FinalWallTime),
+		PartialStats:       make([]*AggWorkerStat, 0, e.PartialConcurrency),
+		FinalStats:         make([]*AggWorkerStat, 0, e.FinalConcurrency),
 	}
 	for _, s := range e.PartialStats {
 		newRs.PartialStats = append(newRs.PartialStats, s.Clone())
@@ -963,8 +963,8 @@ func (e *HashAggRuntimeStats) Merge(other execdetails.RuntimeStats) {
 	if !ok {
 		return
 	}
-	e.PartialInfo.WallTime += tmp.PartialInfo.WallTime
-	e.FinalInfo.WallTime += tmp.FinalInfo.WallTime
+	e.PartialWallTime += tmp.PartialWallTime
+	e.FinalWallTime += tmp.FinalWallTime
 	e.PartialStats = append(e.PartialStats, tmp.PartialStats...)
 	e.FinalStats = append(e.FinalStats, tmp.FinalStats...)
 }

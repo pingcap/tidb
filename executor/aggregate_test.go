@@ -1155,8 +1155,10 @@ func (s *testSuiteAgg) TestHashAggRuntimeStat(c *C) {
 		WallTime:    int64(time.Second * 10),
 	}
 	stats := &executor.HashAggRuntimeStats{
-		PartialInfo: partialInfo,
-		FinalInfo:   finalInfo,
+		PartialConcurrency: 5,
+		PartialWallTime:    int64(time.Second * 20),
+		FinalConcurrency:   8,
+		FinalWallTime:      int64(time.Second * 10),
 	}
 	for i := 0; i < partialInfo.Concurrency; i++ {
 		stats.PartialStats = append(stats.PartialStats, &executor.AggWorkerStat{
