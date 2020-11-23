@@ -624,8 +624,9 @@ func (ts *testSuite) TestAddRecordWithCtx(c *C) {
 }
 
 func (ts *testSuite) TestConstraintCheckForUniqueIndex(c *C) {
+	// auto-commit
 	tk := testkit.NewTestKit(c, ts.store)
-	tk.MustExec("set @@tidb_constraint_check_in_place = 0")
+	tk.MustExec("set @@autocommit = 1")
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists ttt")
 	tk.MustExec("create table ttt(id int(11) NOT NULL AUTO_INCREMENT,k int(11) NOT NULL DEFAULT '0',c char(120) NOT NULL DEFAULT '',PRIMARY KEY (id),UNIQUE KEY k_1 (k,c))")
@@ -635,7 +636,16 @@ func (ts *testSuite) TestConstraintCheckForUniqueIndex(c *C) {
 	c.Assert(err.Error(), Equals, "[kv:1062]Duplicate entry '1-tidb' for key 'k_1'")
 	tk.MustExec("rollback")
 
+	// no auto-commit
+	tk.MustExec("set @@autocommit = 0")
+	tk.MustExec("set @@tidb_constraint_check_in_place = 0")
+	tk.MustExec("begin")
+	_, err = tk.Exec("update ttt set k=1 where id=2")
+	c.Assert(err.Error(), Equals, "[kv:1062]Duplicate entry '1-tidb' for key 'k_1'")
+	tk.MustExec("rollback")
+
 	tk.MustExec("set @@tidb_constraint_check_in_place = 1")
+	tk.MustExec("begin")
 	_, err = tk.Exec("update ttt set k=1 where id=2")
 	c.Assert(err.Error(), Equals, "[kv:1062]Duplicate entry '1-tidb' for key 'k_1'")
 	tk.MustExec("rollback")
