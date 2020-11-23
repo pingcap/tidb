@@ -204,6 +204,7 @@ type SlidingWindowAggFunc interface {
 	Slide(sctx sessionctx.Context, rows []chunk.Row, lastStart, lastEnd uint64, shiftStart, shiftEnd uint64, pr PartialResult) error
 }
 
+// FinishedRows is the interface the record whether the first row of the aggregate functions has got.
 type FinishedRows interface {
 	HasFinishedFirstRow(pr PartialResult) bool
 }
