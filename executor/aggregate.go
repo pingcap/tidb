@@ -722,7 +722,7 @@ func (e *HashAggExec) parallelExec(ctx context.Context, chk *chunk.Chunk) error 
 func (e *HashAggExec) unparallelExec(ctx context.Context, chk *chunk.Chunk) error {
 	// In this stage we consider all data from src as a single group.
 	if !e.prepared {
-		err := e.execute(ctx)
+		err := e.execute(ctx, chk.RequiredRows())
 		if err != nil {
 			return err
 		}
@@ -759,9 +759,13 @@ func (e *HashAggExec) unparallelExec(ctx context.Context, chk *chunk.Chunk) erro
 }
 
 // execute fetches Chunks from src and update each aggregate function for each row in Chunk.
-func (e *HashAggExec) execute(ctx context.Context) (err error) {
+func (e *HashAggExec) execute(ctx context.Context, requiredRows int) (err error) {
+	finishedDistinctRows := 0
+	fmt.Printf("required rows %d\n", requiredRows)
+	fetchAllDistinctRows := false
 	for {
 		mSize := e.childResult.MemoryUsage()
+		e.childResult.SetRequiredRows(requiredRows, requiredRows)
 		err := Next(ctx, e.children[0], e.childResult)
 		e.memTracker.Consume(e.childResult.MemoryUsage() - mSize)
 		if err != nil {
@@ -796,10 +800,23 @@ func (e *HashAggExec) execute(ctx context.Context) (err error) {
 				if err != nil {
 					return err
 				}
+				if a, ok := af.(aggfuncs.FinishedRows); ok {
+					if a.HasFinishedFirstRow(partialResults[i]) {
+						finishedDistinctRows++
+					}
+				}
 				e.memTracker.Consume(memDelta)
 			}
+			if finishedDistinctRows == requiredRows {
+				fetchAllDistinctRows = true
+				break
+			}
+		}
+		if fetchAllDistinctRows {
+			break
 		}
 	}
+	return nil
 }
 
 func (e *HashAggExec) getPartialResults(groupKey string) []aggfuncs.PartialResult {

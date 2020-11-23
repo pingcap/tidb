@@ -203,3 +203,7 @@ type SlidingWindowAggFunc interface {
 	// completely.
 	Slide(sctx sessionctx.Context, rows []chunk.Row, lastStart, lastEnd uint64, shiftStart, shiftEnd uint64, pr PartialResult) error
 }
+
+type FinishedRows interface {
+	HasFinishedFirstRow(pr PartialResult) bool
+}
