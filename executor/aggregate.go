@@ -396,11 +396,13 @@ func (w *HashAggPartialWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitG
 		if !ok {
 			return
 		}
+		execStart := time.Now()
 		if err := w.updatePartialResult(ctx, sc, w.chk, len(w.partialResultsMap)); err != nil {
 			w.globalOutputCh <- &AfFinalResult{err: err}
 			return
 		}
 		if w.stats != nil {
+			w.stats.ExecTime += int64(time.Since(execStart))
 			w.stats.TaskNum += 1
 		}
 		// The intermData can be promised to be not empty if reaching here,
@@ -410,7 +412,6 @@ func (w *HashAggPartialWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitG
 }
 
 func (w *HashAggPartialWorker) updatePartialResult(ctx sessionctx.Context, sc *stmtctx.StatementContext, chk *chunk.Chunk, finalConcurrency int) (err error) {
-	start := time.Now()
 	w.groupKey, err = getGroupKey(w.ctx, chk, w.groupKey, w.groupByItems)
 	if err != nil {
 		return err
@@ -426,9 +427,6 @@ func (w *HashAggPartialWorker) updatePartialResult(ctx sessionctx.Context, sc *s
 				return err
 			}
 		}
-	}
-	if w.stats != nil {
-		w.stats.ExecTime += int64(time.Since(start))
 	}
 	return nil
 }
