@@ -84,4 +84,4 @@ require (
 go 1.13
 
 //replace github.com/pingcap/tidb-lightning v4.0.9-0.20201106041742-a1ac97827a27+incompatible => github.com/lance6716/tidb-lightning v4.0.9-0.20201111083720-504408a860ec+incompatible
-replace github.com/pingcap/tidb-lightning v4.0.9-0.20201106041742-a1ac97827a27+incompatible => /Users/lance/Projects/tidb-lightning
+replace github.com/pingcap/tidb-lightning v4.0.9-0.20201106041742-a1ac97827a27+incompatible => github.com/lance6716/tidb-lightning v0.0.0-20201123023559-0cc328b3d9bd
