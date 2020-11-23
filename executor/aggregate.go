@@ -963,8 +963,8 @@ func (e *HashAggRuntimeStats) Merge(other execdetails.RuntimeStats) {
 	if !ok {
 		return
 	}
-	e.PartialWallTime += tmp.PartialWallTime
-	e.FinalWallTime += tmp.FinalWallTime
+	atomic.AddInt64(&e.PartialWallTime, atomic.LoadInt64(&tmp.PartialWallTime))
+	atomic.AddInt64(&e.FinalWallTime, atomic.LoadInt64(&tmp.FinalWallTime))
 	e.PartialStats = append(e.PartialStats, tmp.PartialStats...)
 	e.FinalStats = append(e.FinalStats, tmp.FinalStats...)
 }
