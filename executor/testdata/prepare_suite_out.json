@@ -140,17 +140,15 @@
               }
             ],
             "Plan": [
-              "MergeJoin_9 6387.21 root  inner join, left key:test.t1.a, right key:test.t2.a, other cond:eq(test.t1.b, test.t2.b)",
-              "├─Projection_59(Build) 99.80 root  test.t2.a, test.t2.b, test.t2.c",
-              "│ └─IndexLookUp_58 99.80 root  ",
-              "│   ├─Selection_57(Build) 99.80 cop[tikv]  not(isnull(test.t2.b))",
-              "│   │ └─IndexRangeScan_55 99.90 cop[tikv] table:t2, index:b(b, a) range:[1 -inf,1 +inf], keep order:true, stats:pseudo",
-              "│   └─TableRowIDScan_56(Probe) 99.80 cop[tikv] table:t2 keep order:false, stats:pseudo",
-              "└─Projection_54(Probe) 99.80 root  test.t1.a, test.t1.b, test.t1.c",
-              "  └─IndexLookUp_53 99.80 root  ",
-              "    ├─Selection_52(Build) 99.80 cop[tikv]  not(isnull(test.t1.b))",
-              "    │ └─IndexRangeScan_50 99.90 cop[tikv] table:t1, index:b(b, a) range:[1 -inf,1 +inf], keep order:true, stats:pseudo",
-              "    └─TableRowIDScan_51(Probe) 99.80 cop[tikv] table:t1 keep order:false, stats:pseudo"
+              "HashJoin_37 6387.21 root  inner join, equal:[eq(test.t1.b, test.t2.b) eq(test.t1.a, test.t2.a)]",
+              "├─IndexLookUp_62(Build) 99.80 root  ",
+              "│ ├─Selection_61(Build) 99.80 cop[tikv]  not(isnull(test.t2.b))",
+              "│ │ └─IndexRangeScan_59 99.90 cop[tikv] table:t2, index:b(b, a) range:[1 -inf,1 +inf], keep order:false, stats:pseudo",
+              "│ └─TableRowIDScan_60(Probe) 99.80 cop[tikv] table:t2 keep order:false, stats:pseudo",
+              "└─IndexLookUp_55(Probe) 99.80 root  ",
+              "  ├─Selection_54(Build) 99.80 cop[tikv]  not(isnull(test.t1.b))",
+              "  │ └─IndexRangeScan_52 99.90 cop[tikv] table:t1, index:b(b, a) range:[1 -inf,1 +inf], keep order:false, stats:pseudo",
+              "  └─TableRowIDScan_53(Probe) 99.80 cop[tikv] table:t1 keep order:false, stats:pseudo"
             ],
             "LastPlanUseCache": "0",
             "Result": null
@@ -164,17 +162,15 @@
               }
             ],
             "Plan": [
-              "MergeJoin_9 6387.21 root  inner join, left key:test.t1.a, right key:test.t2.a, other cond:eq(test.t1.b, test.t2.b)",
-              "├─Projection_59(Build) 99.80 root  test.t2.a, test.t2.b, test.t2.c",
-              "│ └─IndexLookUp_58 99.80 root  ",
-              "│   ├─Selection_57(Build) 99.80 cop[tikv]  not(isnull(test.t2.b))",
-              "│   │ └─IndexRangeScan_55 99.90 cop[tikv] table:t2, index:b(b, a) range:[2 -inf,2 +inf], keep order:true, stats:pseudo",
-              "│   └─TableRowIDScan_56(Probe) 99.80 cop[tikv] table:t2 keep order:false, stats:pseudo",
-              "└─Projection_54(Probe) 99.80 root  test.t1.a, test.t1.b, test.t1.c",
-              "  └─IndexLookUp_53 99.80 root  ",
-              "    ├─Selection_52(Build) 99.80 cop[tikv]  not(isnull(test.t1.b))",
-              "    │ └─IndexRangeScan_50 99.90 cop[tikv] table:t1, index:b(b, a) range:[2 -inf,2 +inf], keep order:true, stats:pseudo",
-              "    └─TableRowIDScan_51(Probe) 99.80 cop[tikv] table:t1 keep order:false, stats:pseudo"
+              "HashJoin_37 6387.21 root  inner join, equal:[eq(test.t1.b, test.t2.b) eq(test.t1.a, test.t2.a)]",
+              "├─IndexLookUp_62(Build) 99.80 root  ",
+              "│ ├─Selection_61(Build) 99.80 cop[tikv]  not(isnull(test.t2.b))",
+              "│ │ └─IndexRangeScan_59 99.90 cop[tikv] table:t2, index:b(b, a) range:[2 -inf,2 +inf], keep order:false, stats:pseudo",
+              "│ └─TableRowIDScan_60(Probe) 99.80 cop[tikv] table:t2 keep order:false, stats:pseudo",
+              "└─IndexLookUp_55(Probe) 99.80 root  ",
+              "  ├─Selection_54(Build) 99.80 cop[tikv]  not(isnull(test.t1.b))",
+              "  │ └─IndexRangeScan_52 99.90 cop[tikv] table:t1, index:b(b, a) range:[2 -inf,2 +inf], keep order:false, stats:pseudo",
+              "  └─TableRowIDScan_53(Probe) 99.80 cop[tikv] table:t1 keep order:false, stats:pseudo"
             ],
             "LastPlanUseCache": "1",
             "Result": [

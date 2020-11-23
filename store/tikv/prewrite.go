@@ -119,7 +119,9 @@ func (action actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoff
 
 		// If we fail to receive response for async commit prewrite, it will be undetermined whether this
 		// transaction has been successfully committed.
-		if (c.isAsyncCommit() || c.isOnePC()) && sender.rpcError != nil {
+		// If prewrite has been cancelled, all ongoing prewrite RPCs will become errors, we needn't set undetermined
+		// errors.
+		if (c.isAsyncCommit() || c.isOnePC()) && sender.rpcError != nil && atomic.LoadUint32(&c.prewriteCancelled) == 0 {
 			c.setUndeterminedErr(errors.Trace(sender.rpcError))
 		}
 
