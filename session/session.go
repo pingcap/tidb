@@ -1609,7 +1609,7 @@ func (s *session) DropPreparedStmt(stmtID uint32) error {
 func (s *session) Txn(active bool) (kv.Transaction, error) {
 	// Check wehter we need a global transaction
 	txn, ok := s.getCurrentScopeTxn()
-	if !ok && s.checkAndGetTxnScope() != oracle.GlobalTxnScope {
+	if !ok {
 		// Create a new one if there is no txn for the current txn scope
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
@@ -2430,14 +2430,10 @@ func (s *session) PrepareTSFuture(ctx context.Context) {
 			// Prepare the transaction future if the transaction is invalid (at the beginning of the transaction).
 			txnFuture := s.getTxnFuture(ctx, txnScope)
 			txn.changeInvalidToPending(txnFuture)
+		} else if txn.Valid() && s.GetSessionVars().IsPessimisticReadConsistency() {
+			// Prepare the statement future if the transaction is valid in RC transactions.
+			s.GetSessionVars().TxnCtx.SetStmtFutureForRC(s.getTxnFuture(ctx, txnScope).future)
 		}
-	}
-	// Check the transaction of the current scope
-	curScope := s.checkAndGetTxnScope()
-	curTxn, ok := s.getTxn(curScope)
-	if ok && curTxn.Valid() && s.GetSessionVars().IsPessimisticReadConsistency() {
-		// Prepare the statement future if the transaction is valid in RC transactions.
-		s.GetSessionVars().TxnCtx.SetStmtFutureForRC(s.getTxnFuture(ctx, curScope).future)
 	}
 }
 

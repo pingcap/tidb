@@ -377,6 +377,7 @@ func (e *DDLExec) executeAlterTable(s *ast.AlterTableStmt) error {
 // It is built from "recover table" statement,
 // is used to recover the table that deleted by mistake.
 func (e *DDLExec) executeRecoverTable(s *ast.RecoverTableStmt) error {
+	// DDL should be started as a global transaction
 	txn, err := e.ctx.GlobalTxn(true)
 	if err != nil {
 		return err
