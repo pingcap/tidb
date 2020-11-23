@@ -875,7 +875,7 @@ func (e *topNProcessor) Process(key, value []byte) (err error) {
 
 func (e *closureExecutor) newTopNSortRow() *sortRow {
 	return &sortRow{
-		key:  make([]types.Datum, len(e.evalContext.columnInfos)),
+		key:  make([]types.Datum, len(e.topNCtx.orderByExprs)),
 		data: make([][]byte, 2),
 	}
 }
