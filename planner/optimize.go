@@ -138,6 +138,10 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 		sctx.GetSessionVars().StmtCtx.AppendWarning(errors.New("sql_select_limit is set, so plan binding is not activated"))
 		return bestPlan, names, nil
 	}
+	err = setFoundInBinding(sctx, true)
+	if err != nil {
+		return nil, nil, err
+	}
 	bestPlanHint := plannercore.GenHintsFromPhysicalPlan(bestPlan)
 	if len(bindRecord.Bindings) > 0 {
 		orgBinding := bindRecord.Bindings[0] // the first is the original binding
@@ -539,6 +543,12 @@ func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints stmtctx.StmtHin
 		stmtHints.ForceNthPlan = -1
 	}
 	return
+}
+
+func setFoundInBinding(sctx sessionctx.Context, opt bool) error {
+	vars := sctx.GetSessionVars()
+	err := vars.SetSystemVar(variable.TiDBFoundInBinding, variable.BoolToOnOff(opt))
+	return err
 }
 
 func init() {

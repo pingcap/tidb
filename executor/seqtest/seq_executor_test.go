@@ -256,7 +256,7 @@ func (s *seqTestSuite) TestShow(c *C) {
 	row = result.Rows()[0]
 	expectedRow = []interface{}{
 		"decimalschema", "CREATE TABLE `decimalschema` (\n" +
-			"  `c1` decimal(11,0) DEFAULT NULL\n" +
+			"  `c1` decimal(10,0) DEFAULT NULL\n" +
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"}
 	for i, r := range row {
 		c.Check(r, Equals, expectedRow[i])
