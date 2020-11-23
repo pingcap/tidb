@@ -488,11 +488,9 @@ func (p *LogicalJoin) constructIndexJoin(
 		if len(innerHashKeys) == 0 {
 			return nil
 		}
-		tmpExprs := make([]expression.Expression, 0)
-		tmpExprs = append(tmpExprs, outerHashKeys[i], innerHashKeys[i])
-		chs, coll := expression.DeriveCollationFromExprs(nil, tmpExprs...)
-		tmpExprs[0].GetType().Charset, tmpExprs[0].GetType().Collate = chs, coll
-		tmpExprs[1].GetType().Charset, tmpExprs[1].GetType().Collate = chs, coll
+		chs, coll := expression.DeriveCollationFromExprs(nil, outerHashKeys[i], innerHashKeys[i])
+		outerHashKeys[i].GetType().Charset, outerHashKeys[i].GetType().Collate = chs, coll
+		innerHashKeys[i].GetType().Charset, innerHashKeys[i].GetType().Collate = chs, coll
 	}
 	join := PhysicalIndexJoin{
 		basePhysicalJoin: baseJoin,
