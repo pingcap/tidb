@@ -327,11 +327,6 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.PartitionOptions, tb
 		}
 		pi.Expr = buf.String()
 	} else if s.ColumnNames != nil {
-		// TODO: Support multiple columns for 'PARTITION BY RANGE COLUMNS'.
-		if s.Tp == model.PartitionTypeRange && len(s.ColumnNames) != 1 {
-			pi.Enable = false
-			ctx.GetSessionVars().StmtCtx.AppendWarning(ErrUnsupportedPartitionByRangeColumns)
-		}
 		pi.Columns = make([]model.CIStr, 0, len(s.ColumnNames))
 		for _, cn := range s.ColumnNames {
 			pi.Columns = append(pi.Columns, cn.Name)

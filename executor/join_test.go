@@ -628,6 +628,11 @@ func (s *testSuiteJoin1) TestUsing(c *C) {
 	tk.MustExec("insert into t1 (a) values(1)")
 	tk.MustQuery("select t1.*, t2.* from t1 join t1 t2 using(a)").Check(testkit.Rows("1 1"))
 	tk.MustQuery("select * from t1 join t1 t2 using(a)").Check(testkit.Rows("1"))
+
+	// For issue18992
+	tk.MustExec("drop table t")
+	tk.MustExec("CREATE TABLE t (   a varchar(55) NOT NULL,   b varchar(55) NOT NULL,   c int(11) DEFAULT NULL,   d int(11) DEFAULT NULL ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;")
+	tk.MustExec("update t t1 join t t2 using(a,b) set t1.c=t2.d;")
 }
 
 func (s *testSuiteJoin1) TestNaturalJoin(c *C) {
@@ -2292,6 +2297,27 @@ func (s *testSuite9) TestIssue18572_3(c *C) {
 	c.Assert(err, IsNil)
 	_, err = session.GetRows4Test(context.Background(), nil, rs)
 	c.Assert(strings.Contains(err.Error(), "mockIndexHashJoinBuildErr"), IsTrue)
+}
+
+func (s *testSuite9) TestApplyOuterAggEmptyInput(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(a int)")
+	tk.MustExec("create table t2(a int)")
+	tk.MustExec("insert into t1 values(1)")
+	tk.MustExec("insert into t2 values(1)")
+	tk.MustQuery("select count(1), (select count(1) from t2 where t2.a > t1.a) as field from t1 where t1.a = 100").Check(testkit.Rows(
+		"0 <nil>",
+	))
+	tk.MustQuery("select /*+ agg_to_cop() */ count(1), (select count(1) from t2 where t2.a > t1.a) as field from t1 where t1.a = 100").Check(testkit.Rows(
+		"0 <nil>",
+	))
+	tk.MustQuery("select count(1), (select count(1) from t2 where t2.a > t1.a) as field from t1 where t1.a = 1").Check(testkit.Rows(
+		"1 0",
+	))
+	tk.MustQuery("select /*+ agg_to_cop() */ count(1), (select count(1) from t2 where t2.a > t1.a) as field from t1 where t1.a = 1").Check(testkit.Rows(
+		"1 0",
+	))
 }
 
 func (s *testSuite9) TestIssue19112(c *C) {
