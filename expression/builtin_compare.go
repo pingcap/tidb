@@ -636,16 +636,16 @@ func (b *builtinGreatestTimeSig) Clone() builtinFunc {
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_greatest
 func (b *builtinGreatestTimeSig) evalString(row chunk.Row) (res string, isNull bool, err error) {
 	var (
-		v string
-		t types.Time
+		strRes  string
+		timeRes types.Time
 	)
 	sc := b.ctx.GetSessionVars().StmtCtx
 	for i := 0; i < len(b.args); i++ {
-		v, isNull, err = b.args[i].EvalString(b.ctx, row)
+		v, isNull, err := b.args[i].EvalString(b.ctx, row)
 		if isNull || err != nil {
 			return "", true, err
 		}
-		t, err = types.ParseTime(sc, v, mysql.TypeDatetime, types.MaxFsp)
+		t, err := types.ParseDatetime(sc, v)
 		if err != nil {
 			if err = handleInvalidTimeError(b.ctx, err); err != nil {
 				return v, true, err
@@ -653,9 +653,18 @@ func (b *builtinGreatestTimeSig) evalString(row chunk.Row) (res string, isNull b
 		} else {
 			v = t.String()
 		}
-		if i == 0 || strings.Compare(v, res) > 0 {
-			res = v
+		// In MySQL, if the compare result is zero, than we will try to use the string comparison result
+		if i == 0 || strings.Compare(v, strRes) > 0 {
+			strRes = v
 		}
+		if i == 0 || t.Compare(timeRes) > 0 {
+			timeRes = t
+		}
+	}
+	if timeRes.IsZero() {
+		res = strRes
+	} else {
+		res = timeRes.String()
 	}
 	return res, false, nil
 }
@@ -839,15 +848,16 @@ func (b *builtinLeastTimeSig) Clone() builtinFunc {
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#functionleast
 func (b *builtinLeastTimeSig) evalString(row chunk.Row) (res string, isNull bool, err error) {
 	var (
-		v string
+		strRes  string
+		timeRes types.Time
 	)
 	sc := b.ctx.GetSessionVars().StmtCtx
 	for i := 0; i < len(b.args); i++ {
-		v, isNull, err = b.args[i].EvalString(b.ctx, row)
+		v, isNull, err := b.args[i].EvalString(b.ctx, row)
 		if isNull || err != nil {
 			return "", true, err
 		}
-		t, err := types.ParseTime(sc, v, mysql.TypeDatetime, types.MaxFsp)
+		t, err := types.ParseDatetime(sc, v)
 		if err != nil {
 			if err = handleInvalidTimeError(b.ctx, err); err != nil {
 				return v, true, err
@@ -855,9 +865,18 @@ func (b *builtinLeastTimeSig) evalString(row chunk.Row) (res string, isNull bool
 		} else {
 			v = t.String()
 		}
-		if i == 0 || strings.Compare(v, res) < 0 {
-			res = v
+		if i == 0 || strings.Compare(v, strRes) < 0 {
+			strRes = v
 		}
+		if i == 0 || t.Compare(timeRes) < 0 {
+			timeRes = t
+		}
+	}
+
+	if timeRes.IsZero() {
+		res = strRes
+	} else {
+		res = timeRes.String()
 	}
 	return res, false, nil
 }

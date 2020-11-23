@@ -283,7 +283,7 @@ func (s *testEvaluatorSuite) TestGreatestLeastFuncs(c *C) {
 		},
 		{
 			[]interface{}{"123a", "b", "c", 12},
-			float64(123), float64(0), false, false,
+			"c", "12", false, false,
 		},
 		{
 			[]interface{}{tm, "123"},
@@ -291,15 +291,15 @@ func (s *testEvaluatorSuite) TestGreatestLeastFuncs(c *C) {
 		},
 		{
 			[]interface{}{tm, 123},
-			curTimeInt, int64(123), false, false,
+			curTimeString, "123", false, false,
 		},
 		{
 			[]interface{}{tm, "invalid_time_1", "invalid_time_2", tmWithFsp},
-			curTimeWithFspString, "invalid_time_1", false, false,
+			curTimeWithFspString, curTimeString, false, false,
 		},
 		{
 			[]interface{}{tm, "invalid_time_2", "invalid_time_1", tmWithFsp},
-			curTimeWithFspString, "invalid_time_2", false, false,
+			curTimeWithFspString, curTimeString, false, false,
 		},
 		{
 			[]interface{}{tm, "invalid_time", nil, tmWithFsp},
@@ -328,7 +328,9 @@ func (s *testEvaluatorSuite) TestGreatestLeastFuncs(c *C) {
 			if t.isNil {
 				c.Assert(d.Kind(), Equals, types.KindNull)
 			} else {
-				c.Assert(d.GetValue(), DeepEquals, t.expectedGreatest)
+				if !c.Check(d.GetValue(), DeepEquals, t.expectedGreatest) {
+					c.Log(t.args)
+				}
 			}
 		}
 
@@ -342,7 +344,9 @@ func (s *testEvaluatorSuite) TestGreatestLeastFuncs(c *C) {
 			if t.isNil {
 				c.Assert(d.Kind(), Equals, types.KindNull)
 			} else {
-				c.Assert(d.GetValue(), DeepEquals, t.expectedLeast)
+				if !c.Check(d.GetValue(), DeepEquals, t.expectedLeast) {
+					c.Log(t.args)
+				}
 			}
 		}
 	}
