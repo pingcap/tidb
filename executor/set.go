@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/stmtsummary"
-	"github.com/pingcap/tidb/util/stringutil"
 	"go.uber.org/zap"
 )
 
@@ -91,17 +90,15 @@ func (e *SetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 			if err != nil {
 				return err
 			}
-
+			sessionVars.UsersLock.Lock()
 			if value.IsNull() {
 				delete(sessionVars.Users, name)
+				delete(sessionVars.UserVarTypes, name)
 			} else {
-				svalue, err1 := value.ToString()
-				if err1 != nil {
-					return err1
-				}
-
-				sessionVars.SetUserVar(name, stringutil.Copy(svalue), value.Collation())
+				sessionVars.Users[name] = value
+				sessionVars.UserVarTypes[name] = v.Expr.GetType()
 			}
+			sessionVars.UsersLock.Unlock()
 			continue
 		}
 
@@ -185,6 +182,10 @@ func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) e
 		}
 		if name == variable.TiDBFoundInPlanCache {
 			sessionVars.StmtCtx.AppendWarning(fmt.Errorf("Set operation for '%s' will not take effect", variable.TiDBFoundInPlanCache))
+			return nil
+		}
+		if name == variable.TiDBFoundInBinding {
+			sessionVars.StmtCtx.AppendWarning(fmt.Errorf("Set operation for '%s' will not take effect", variable.TiDBFoundInBinding))
 			return nil
 		}
 		err = variable.SetSessionSystemVar(sessionVars, name, value)
