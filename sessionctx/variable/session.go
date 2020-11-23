@@ -1499,10 +1499,18 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	case TiDBMetricSchemaRangeDuration:
 		s.MetricSchemaRangeDuration = tidbOptInt64(val, DefTiDBMetricSchemaRangeDuration)
 	case CollationConnection, CollationDatabase, CollationServer:
-		coll, err := collate.GetCollationByName(val)
-		if err != nil {
-			logutil.BgLogger().Warn(err.Error())
+		var (
+			coll *charset.Collation
+			err error
+		)
+		if !collate.NewCollationEnabled() {
 			coll, err = collate.GetCollationByName(charset.CollationUTF8MB4)
+		} else {
+			coll, err = collate.GetCollationByName(val)
+			if err != nil {
+				logutil.BgLogger().Warn(err.Error())
+				coll, err = collate.GetCollationByName(charset.CollationUTF8MB4)
+			}
 		}
 		switch name {
 		case CollationConnection:

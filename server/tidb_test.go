@@ -22,6 +22,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	"github.com/pingcap/tidb/util/collate"
 	"io/ioutil"
 	"math/big"
 	"net/http"
@@ -993,4 +994,31 @@ func (ts *tidbTestSuite) TestPessimisticInsertSelectForUpdate(c *C) {
 	rs, err := Execute(ctx, qctx, "INSERT INTO t2 (id) select id from t1 where id = 1 for update")
 	c.Assert(err, IsNil)
 	c.Assert(rs, IsNil) // should be no delay
+}
+
+func (ts *tidbTestSerialSuite) TestDefaultCharacterAndCollation(c *C) {
+	// issue #21194
+	testFunction := func(newCollation bool) {
+		collate.SetNewCollationEnabledForTest(newCollation)
+		// 255 is the collation id of mysql client 8 default collation_connection
+		qctx, err := ts.tidbdrv.OpenCtx(uint64(0), 0, uint8(255), "test", nil)
+		c.Assert(err, IsNil)
+		testCase := []struct{
+			variable string
+			except string
+		} {
+			{"collation_connection", "utf8mb4_bin"},
+			{"character_set_connection", "utf8mb4"},
+			{"character_set_client", "utf8mb4"},
+		}
+
+		for _, t := range testCase {
+			sVars, b := qctx.GetSessionVars().GetSystemVar(t.variable)
+			c.Assert(b, IsTrue)
+			c.Assert(sVars,Equals ,t.except)
+		}
+	}
+
+	testFunction(true)
+	testFunction(false)
 }
