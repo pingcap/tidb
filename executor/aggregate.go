@@ -916,7 +916,7 @@ func (e *HashAggRuntimeStats) workerString(buf *bytes.Buffer, prefix string, inf
 	}
 	buf.WriteString(prefix)
 	buf.WriteString(fmt.Sprintf("_worker:{wall_time:%s, concurrency:%d, task_num:%d, tot_wait:%s, tot_exec:%s, tot_time:%s",
-		time.Duration(info.WallTime), info.Concurrency, totalTaskNum, time.Duration(totalWait), time.Duration(totalExec), time.Duration(totalTime)))
+		time.Duration(atomic.LoadInt64(&info.WallTime)), info.Concurrency, totalTaskNum, time.Duration(totalWait), time.Duration(totalExec), time.Duration(totalTime)))
 	n := len(workerStats)
 	if n > 0 {
 		sort.Slice(workerStats, func(i, j int) bool { return workerStats[i].WorkerTime < workerStats[j].WorkerTime })
