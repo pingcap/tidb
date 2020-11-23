@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/types"
 )
 
@@ -97,7 +96,7 @@ func testCheckSchemaState(c *C, d *ddl, dbInfo *model.DBInfo, state model.Schema
 	isDropped := true
 
 	for {
-		kv.RunInNewTxn(d.store, oracle.GlobalTxnScope, false, func(txn kv.Transaction) error {
+		kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
 			t := meta.NewMeta(txn)
 			info, err := t.GetDatabase(dbInfo.ID)
 			c.Assert(err, IsNil)
@@ -228,7 +227,7 @@ func (s *testSchemaSuite) TestSchemaWaitJob(c *C) {
 
 func testGetSchemaInfoWithError(d *ddl, schemaID int64) (*model.DBInfo, error) {
 	var dbInfo *model.DBInfo
-	err := kv.RunInNewTxn(d.store, oracle.GlobalTxnScope, false, func(txn kv.Transaction) error {
+	err := kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		var err1 error
 		dbInfo, err1 = t.GetDatabase(schemaID)

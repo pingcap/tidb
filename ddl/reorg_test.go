@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
-	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 )
@@ -141,7 +140,7 @@ func (s *testDDLSuite) TestReorg(c *C) {
 		EndKey:          s.NewHandle().Int(0).Common(101, "string").Encoded(),
 		PhysicalTableID: 456,
 	}
-	err = kv.RunInNewTxn(d.store, oracle.GlobalTxnScope, false, func(txn kv.Transaction) error {
+	err = kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		var err1 error
 		_, err1 = getReorgInfo(d.ddlCtx, t, job, mockTbl, []*meta.Element{element})
@@ -153,7 +152,7 @@ func (s *testDDLSuite) TestReorg(c *C) {
 	job.SnapshotVer = uint64(1)
 	err = info.UpdateReorgMeta(info.StartKey)
 	c.Assert(err, IsNil)
-	err = kv.RunInNewTxn(d.store, oracle.GlobalTxnScope, false, func(txn kv.Transaction) error {
+	err = kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		info1, err1 := getReorgInfo(d.ddlCtx, t, job, mockTbl, []*meta.Element{element})
 		c.Assert(err1, IsNil)
@@ -231,7 +230,7 @@ func (s *testDDLSuite) TestReorgOwner(c *C) {
 
 	testDropSchema(c, ctx, d1, dbInfo)
 
-	err = kv.RunInNewTxn(d1.store, oracle.GlobalTxnScope, false, func(txn kv.Transaction) error {
+	err = kv.RunInNewTxn(d1.store, false, func(txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		db, err1 := t.GetDatabase(dbInfo.ID)
 		c.Assert(err1, IsNil)

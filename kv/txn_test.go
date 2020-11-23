@@ -18,7 +18,6 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/util/testleak"
 )
 
@@ -52,17 +51,17 @@ func (s *testTxnSuite) TestRetryExceedCountError(c *C) {
 	}(maxRetryCnt)
 
 	maxRetryCnt = 5
-	err := RunInNewTxn(&mockStorage{}, oracle.GlobalTxnScope, true, func(txn Transaction) error {
+	err := RunInNewTxn(&mockStorage{}, true, func(txn Transaction) error {
 		return nil
 	})
 	c.Assert(err, NotNil)
 
-	err = RunInNewTxn(&mockStorage{}, oracle.GlobalTxnScope, true, func(txn Transaction) error {
+	err = RunInNewTxn(&mockStorage{}, true, func(txn Transaction) error {
 		return ErrTxnRetryable
 	})
 	c.Assert(err, NotNil)
 
-	err = RunInNewTxn(&mockStorage{}, oracle.GlobalTxnScope, true, func(txn Transaction) error {
+	err = RunInNewTxn(&mockStorage{}, true, func(txn Transaction) error {
 		return errors.New("do not retry")
 	})
 	c.Assert(err, NotNil)
@@ -72,7 +71,7 @@ func (s *testTxnSuite) TestRetryExceedCountError(c *C) {
 	cfg.SetGetError(err1)
 	cfg.SetCommitError(err1)
 	storage := NewInjectedStore(newMockStorage(), &cfg)
-	err = RunInNewTxn(storage, oracle.GlobalTxnScope, true, func(txn Transaction) error {
+	err = RunInNewTxn(storage, true, func(txn Transaction) error {
 		return nil
 	})
 	c.Assert(err, NotNil)

@@ -386,7 +386,7 @@ func (s *testTxStructureSuite) TestHash(c *C) {
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 
-	err = kv.RunInNewTxn(s.store, oracle.GlobalTxnScope, false, func(txn kv.Transaction) error {
+	err = kv.RunInNewTxn(s.store, false, func(txn kv.Transaction) error {
 		t := structure.NewStructure(txn, txn, []byte{0x00})
 		err = t.Set(key, []byte("abc"))
 		c.Assert(err, IsNil)

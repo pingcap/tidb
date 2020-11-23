@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/store/tikv/oracle"
 )
 
 func TestT(t *testing.T) {
@@ -52,7 +51,7 @@ func (*testSuite) TestT(c *C) {
 	c.Assert(err, IsNil)
 	defer store.Close()
 
-	err = kv.RunInNewTxn(store, oracle.GlobalTxnScope, false, func(txn kv.Transaction) error {
+	err = kv.RunInNewTxn(store, false, func(txn kv.Transaction) error {
 		m := meta.NewMeta(txn)
 		err = m.CreateDatabase(&model.DBInfo{ID: 1, Name: model.NewCIStr("a")})
 		c.Assert(err, IsNil)
@@ -255,7 +254,7 @@ func (*testSuite) TestUnsignedAutoid(c *C) {
 	c.Assert(err, IsNil)
 	defer store.Close()
 
-	err = kv.RunInNewTxn(store, oracle.GlobalTxnScope, false, func(txn kv.Transaction) error {
+	err = kv.RunInNewTxn(store, false, func(txn kv.Transaction) error {
 		m := meta.NewMeta(txn)
 		err = m.CreateDatabase(&model.DBInfo{ID: 1, Name: model.NewCIStr("a")})
 		c.Assert(err, IsNil)
@@ -418,7 +417,7 @@ func (*testSuite) TestConcurrentAlloc(c *C) {
 
 	dbID := int64(2)
 	tblID := int64(100)
-	err = kv.RunInNewTxn(store, oracle.GlobalTxnScope, false, func(txn kv.Transaction) error {
+	err = kv.RunInNewTxn(store, false, func(txn kv.Transaction) error {
 		m := meta.NewMeta(txn)
 		err = m.CreateDatabase(&model.DBInfo{ID: dbID, Name: model.NewCIStr("a")})
 		c.Assert(err, IsNil)
@@ -500,7 +499,7 @@ func (*testSuite) TestRollbackAlloc(c *C) {
 	defer store.Close()
 	dbID := int64(1)
 	tblID := int64(2)
-	err = kv.RunInNewTxn(store, oracle.GlobalTxnScope, false, func(txn kv.Transaction) error {
+	err = kv.RunInNewTxn(store, false, func(txn kv.Transaction) error {
 		m := meta.NewMeta(txn)
 		err = m.CreateDatabase(&model.DBInfo{ID: dbID, Name: model.NewCIStr("a")})
 		c.Assert(err, IsNil)
@@ -544,7 +543,7 @@ func BenchmarkAllocator_Alloc(b *testing.B) {
 	defer store.Close()
 	dbID := int64(1)
 	tblID := int64(2)
-	err = kv.RunInNewTxn(store, oracle.GlobalTxnScope, false, func(txn kv.Transaction) error {
+	err = kv.RunInNewTxn(store, false, func(txn kv.Transaction) error {
 		m := meta.NewMeta(txn)
 		err = m.CreateDatabase(&model.DBInfo{ID: dbID, Name: model.NewCIStr("a")})
 		if err != nil {
@@ -575,7 +574,7 @@ func BenchmarkAllocator_SequenceAlloc(b *testing.B) {
 	defer store.Close()
 	var seq *model.SequenceInfo
 	var sequenceBase int64
-	err = kv.RunInNewTxn(store, oracle.GlobalTxnScope, false, func(txn kv.Transaction) error {
+	err = kv.RunInNewTxn(store, false, func(txn kv.Transaction) error {
 		m := meta.NewMeta(txn)
 		err = m.CreateDatabase(&model.DBInfo{ID: 1, Name: model.NewCIStr("a")})
 		if err != nil {
@@ -629,7 +628,7 @@ func (*testSuite) TestSequenceAutoid(c *C) {
 
 	var seq *model.SequenceInfo
 	var sequenceBase int64
-	err = kv.RunInNewTxn(store, oracle.GlobalTxnScope, false, func(txn kv.Transaction) error {
+	err = kv.RunInNewTxn(store, false, func(txn kv.Transaction) error {
 		m := meta.NewMeta(txn)
 		err = m.CreateDatabase(&model.DBInfo{ID: 1, Name: model.NewCIStr("a")})
 		c.Assert(err, IsNil)
@@ -750,7 +749,7 @@ func (*testSuite) TestConcurrentAllocSequence(c *C) {
 
 	var seq *model.SequenceInfo
 	var sequenceBase int64
-	err = kv.RunInNewTxn(store, oracle.GlobalTxnScope, false, func(txn kv.Transaction) error {
+	err = kv.RunInNewTxn(store, false, func(txn kv.Transaction) error {
 		m := meta.NewMeta(txn)
 		err1 := m.CreateDatabase(&model.DBInfo{ID: 2, Name: model.NewCIStr("a")})
 		c.Assert(err1, IsNil)
@@ -838,7 +837,7 @@ func (*testSuite) TestAllocComputationIssue(c *C) {
 	c.Assert(err, IsNil)
 	defer store.Close()
 
-	err = kv.RunInNewTxn(store, oracle.GlobalTxnScope, false, func(txn kv.Transaction) error {
+	err = kv.RunInNewTxn(store, false, func(txn kv.Transaction) error {
 		m := meta.NewMeta(txn)
 		err = m.CreateDatabase(&model.DBInfo{ID: 1, Name: model.NewCIStr("a")})
 		c.Assert(err, IsNil)

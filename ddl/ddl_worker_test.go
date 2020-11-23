@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/admin"
@@ -143,7 +142,7 @@ func (s *testDDLSuite) TestTableError(c *C) {
 	// Table ID or schema ID is wrong, so getting table is failed.
 	tblInfo := testTableInfo(c, d, "t", 3)
 	testCreateTable(c, ctx, d, dbInfo, tblInfo)
-	err := kv.RunInNewTxn(store, oracle.GlobalTxnScope, false, func(txn kv.Transaction) error {
+	err := kv.RunInNewTxn(store, false, func(txn kv.Transaction) error {
 		job.SchemaID = -1
 		job.TableID = -1
 		t := meta.NewMeta(txn)
@@ -340,7 +339,7 @@ func testCheckOwner(c *C, d *ddl, expectedVal bool) {
 }
 
 func testCheckJobDone(c *C, d *ddl, job *model.Job, isAdd bool) {
-	kv.RunInNewTxn(d.store, oracle.GlobalTxnScope, false, func(txn kv.Transaction) error {
+	kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		historyJob, err := t.GetHistoryDDLJob(job.ID)
 		c.Assert(err, IsNil)
@@ -356,7 +355,7 @@ func testCheckJobDone(c *C, d *ddl, job *model.Job, isAdd bool) {
 }
 
 func testCheckJobCancelled(c *C, d *ddl, job *model.Job, state *model.SchemaState) {
-	kv.RunInNewTxn(d.store, oracle.GlobalTxnScope, false, func(txn kv.Transaction) error {
+	kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		historyJob, err := t.GetHistoryDDLJob(job.ID)
 		c.Assert(err, IsNil)
@@ -1165,7 +1164,7 @@ func (s *testDDLSuite) TestBuildJobDependence(c *C) {
 	job7 := &model.Job{ID: 7, TableID: 2, Type: model.ActionModifyColumn}
 	job9 := &model.Job{ID: 9, SchemaID: 111, Type: model.ActionDropSchema}
 	job11 := &model.Job{ID: 11, TableID: 2, Type: model.ActionRenameTable, Args: []interface{}{int64(111), "old db name"}}
-	kv.RunInNewTxn(store, oracle.GlobalTxnScope, false, func(txn kv.Transaction) error {
+	kv.RunInNewTxn(store, false, func(txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		err := t.EnQueueDDLJob(job1)
 		c.Assert(err, IsNil)
@@ -1184,7 +1183,7 @@ func (s *testDDLSuite) TestBuildJobDependence(c *C) {
 		return nil
 	})
 	job4 := &model.Job{ID: 4, TableID: 1, Type: model.ActionAddIndex}
-	kv.RunInNewTxn(store, oracle.GlobalTxnScope, false, func(txn kv.Transaction) error {
+	kv.RunInNewTxn(store, false, func(txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		err := buildJobDependence(t, job4)
 		c.Assert(err, IsNil)
@@ -1192,7 +1191,7 @@ func (s *testDDLSuite) TestBuildJobDependence(c *C) {
 		return nil
 	})
 	job5 := &model.Job{ID: 5, TableID: 2, Type: model.ActionAddIndex}
-	kv.RunInNewTxn(store, oracle.GlobalTxnScope, false, func(txn kv.Transaction) error {
+	kv.RunInNewTxn(store, false, func(txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		err := buildJobDependence(t, job5)
 		c.Assert(err, IsNil)
@@ -1200,7 +1199,7 @@ func (s *testDDLSuite) TestBuildJobDependence(c *C) {
 		return nil
 	})
 	job8 := &model.Job{ID: 8, TableID: 3, Type: model.ActionAddIndex}
-	kv.RunInNewTxn(store, oracle.GlobalTxnScope, false, func(txn kv.Transaction) error {
+	kv.RunInNewTxn(store, false, func(txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		err := buildJobDependence(t, job8)
 		c.Assert(err, IsNil)
@@ -1208,7 +1207,7 @@ func (s *testDDLSuite) TestBuildJobDependence(c *C) {
 		return nil
 	})
 	job10 := &model.Job{ID: 10, SchemaID: 111, TableID: 3, Type: model.ActionAddIndex}
-	kv.RunInNewTxn(store, oracle.GlobalTxnScope, false, func(txn kv.Transaction) error {
+	kv.RunInNewTxn(store, false, func(txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		err := buildJobDependence(t, job10)
 		c.Assert(err, IsNil)
@@ -1216,7 +1215,7 @@ func (s *testDDLSuite) TestBuildJobDependence(c *C) {
 		return nil
 	})
 	job12 := &model.Job{ID: 12, SchemaID: 112, TableID: 2, Type: model.ActionAddIndex}
-	kv.RunInNewTxn(store, oracle.GlobalTxnScope, false, func(txn kv.Transaction) error {
+	kv.RunInNewTxn(store, false, func(txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		err := buildJobDependence(t, job12)
 		c.Assert(err, IsNil)
@@ -1309,7 +1308,7 @@ func (s *testDDLSuite) TestParallelDDL(c *C) {
 			qLen1 := int64(0)
 			qLen2 := int64(0)
 			for {
-				checkErr = kv.RunInNewTxn(store, oracle.GlobalTxnScope, false, func(txn kv.Transaction) error {
+				checkErr = kv.RunInNewTxn(store, false, func(txn kv.Transaction) error {
 					m := meta.NewMeta(txn)
 					qLen1, err = m.DDLJobQueueLen()
 					if err != nil {
@@ -1379,7 +1378,7 @@ func (s *testDDLSuite) TestParallelDDL(c *C) {
 	// check results.
 	isChecked := false
 	for !isChecked {
-		kv.RunInNewTxn(store, oracle.GlobalTxnScope, false, func(txn kv.Transaction) error {
+		kv.RunInNewTxn(store, false, func(txn kv.Transaction) error {
 			m := meta.NewMeta(txn)
 			lastJob, err := m.GetHistoryDDLJob(job11.ID)
 			c.Assert(err, IsNil)
