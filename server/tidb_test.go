@@ -982,10 +982,10 @@ func (ts *tidbTestSerialSuite) TestDefaultCharacterAndCollation(c *C) {
 		// 255 is the collation id of mysql client 8 default collation_connection
 		qctx, err := ts.tidbdrv.OpenCtx(uint64(0), 0, uint8(255), "test", nil)
 		c.Assert(err, IsNil)
-		testCase := []struct{
+		testCase := []struct {
 			variable string
-			except string
-		} {
+			except   string
+		}{
 			{"collation_connection", "utf8mb4_bin"},
 			{"character_set_connection", "utf8mb4"},
 			{"character_set_client", "utf8mb4"},
@@ -994,7 +994,7 @@ func (ts *tidbTestSerialSuite) TestDefaultCharacterAndCollation(c *C) {
 		for _, t := range testCase {
 			sVars, b := qctx.GetSessionVars().GetSystemVar(t.variable)
 			c.Assert(b, IsTrue)
-			c.Assert(sVars,Equals ,t.except)
+			c.Assert(sVars, Equals, t.except)
 		}
 	}
 
