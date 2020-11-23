@@ -7242,3 +7242,21 @@ func (s *testIntegrationSuite) TestIssue11645(c *C) {
 	tk.MustQuery(`SELECT DATE_ADD('0001-01-02 00:00:00', INTERVAL -25 HOUR);`).Check(testkit.Rows("0000-00-00 23:00:00"))
 	tk.MustQuery(`SELECT DATE_ADD('0001-01-02 00:00:00', INTERVAL -8785 HOUR);`).Check(testkit.Rows("0000-00-00 23:00:00"))
 }
+
+func (s *testIntegrationSerialSuite) TestCollationIndexJoin(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(a int, b char(10), key(b)) collate utf8mb4_general_ci")
+	tk.MustExec("create table t2(a int, b char(10), key(b)) collate ascii_bin")
+	tk.MustExec("insert into t1 values (1, 'a')")
+	tk.MustExec("insert into t2 values (1, 'A')")
+
+	tk.MustQuery("select /*+ inl_join(t1) */ t1.b, t2.b from t1 join t2 where t1.b=t2.b").Check(testkit.Rows("a A"))
+	tk.MustQuery("select /*+ hash_join(t1) */ t1.b, t2.b from t1 join t2 where t1.b=t2.b").Check(testkit.Rows("a A"))
+	tk.MustQuery("select /*+ merge_join(t1) */ t1.b, t2.b from t1 join t2 where t1.b=t2.b").Check(testkit.Rows("a A"))
+	tk.MustQuery("select /*+ inl_hash_join(t1) */ t1.b, t2.b from t1 join t2 where t1.b=t2.b").Check(testkit.Rows("a A"))
+	tk.MustQuery("select /*+ inl_merge_join(t1) */ t1.b, t2.b from t1 join t2 where t1.b=t2.b").Check(testkit.Rows("a A"))
+}

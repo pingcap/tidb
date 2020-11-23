@@ -244,8 +244,13 @@ func (s *testUnitTestSuit) TestIndexJoinAnalyzeLookUpFilters(c *C) {
 		others, err := s.rewriteSimpleExpr(tt.otherConds, joinNode.schema, joinColNames)
 		c.Assert(err, IsNil)
 		joinNode.OtherConditions = others
+<<<<<<< HEAD
 		helper := &indexJoinBuildHelper{join: joinNode, lastColManager: nil}
 		_, err = helper.analyzeLookUpFilters(path, dataSourceNode, tt.innerKeys)
+=======
+		helper := &indexJoinBuildHelper{join: joinNode, lastColManager: nil, innerPlan: dataSourceNode}
+		_, err = helper.analyzeLookUpFilters(path, dataSourceNode, tt.innerKeys, tt.innerKeys)
+>>>>>>> e6d7e7b89... planner: make index-hash-join and index-merge-join consider collation (#21201)
 		c.Assert(err, IsNil)
 		c.Assert(fmt.Sprintf("%v", helper.chosenAccess), Equals, tt.accesses)
 		c.Assert(fmt.Sprintf("%v", helper.chosenRanges), Equals, tt.ranges, Commentf("test case: #%v", i))
