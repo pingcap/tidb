@@ -73,15 +73,9 @@ type tikvSnapshot struct {
 	// It's OK as long as there are no zero-byte values in the protocol.
 	mu struct {
 		sync.RWMutex
-<<<<<<< HEAD
-		cached map[string][]byte
-		stats  *SnapshotRuntimeStats
-=======
-		hitCnt     int64
 		cached     map[string][]byte
 		cachedSize int
 		stats      *SnapshotRuntimeStats
->>>>>>> c5caca14c... tikv: add size limit to batch get cache (#21015)
 	}
 }
 
