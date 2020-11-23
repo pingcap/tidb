@@ -567,15 +567,17 @@ func (s *testPointGetSuite) TestBatchPointGetWithInvisibleIndex(c *C) {
 func (s *testPointGetSuite) TestCBOShouldNotUsePointGet(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("drop tables if exists t1, t2, t3, t4")
+	tk.MustExec("drop tables if exists t1, t2, t3, t4, t5")
 	tk.MustExec("create table t1(id varchar(20) primary key)")
 	tk.MustExec("create table t2(id varchar(20), unique(id))")
 	tk.MustExec("create table t3(id varchar(20), d varchar(20), unique(id, d))")
 	tk.MustExec("create table t4(id int, d varchar(20), c varchar(20), unique(id, d))")
+	tk.MustExec("create table t5(id bit(64) primary key)")
 	tk.MustExec("insert into t1 values('asdf'), ('1asdf')")
 	tk.MustExec("insert into t2 values('asdf'), ('1asdf')")
 	tk.MustExec("insert into t3 values('asdf', 't'), ('1asdf', 't')")
 	tk.MustExec("insert into t4 values(1, 'b', 'asdf'), (1, 'c', 'jkl'), (1, 'd', '1jkl')")
+	tk.MustExec("insert into t5 values(48)")
 
 	var input []string
 	var output []struct {

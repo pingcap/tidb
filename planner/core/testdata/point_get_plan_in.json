@@ -23,7 +23,8 @@
       "select * from t2 where id in (0, 1)",
       "select * from t3 where (id, d) in ((0, 't'), (1, 't'))",
       "select * from t4 where (id, d, c) in ((1, 'b', 0))",
-      "select * from t4 where (id, d, c) in ((1, 0, 0))"
+      "select * from t4 where (id, d, c) in ((1, 0, 0))",
+      "select * from t5 where id in ('0')"
     ]
   }
 ]

@@ -188,6 +188,15 @@
           "1 b asdf",
           "1 c jkl"
         ]
+      },
+      {
+        "SQL": "select * from t5 where id in ('0')",
+        "Plan": [
+          "Selection_5 8000.00 root  eq(test.t5.id, 0)",
+          "└─TableReader_7 10000.00 root  data:TableFullScan_6",
+          "  └─TableFullScan_6 10000.00 cop[tikv] table:t5 keep order:false, stats:pseudo"
+        ],
+        "Res": []
       }
     ]
   }
