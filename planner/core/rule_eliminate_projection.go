@@ -83,15 +83,16 @@ func doPhysicalProjectionElimination(p PhysicalPlan) PhysicalPlan {
 	}
 
 	proj, isProj := p.(*PhysicalProjection)
-	if !isProj || !canProjectionBeEliminatedStrict(proj) {
-		if isProj {
-			if child, ok := p.Children()[0].(*PhysicalProjection); ok && !ExprsHasSideEffects(child.Exprs) {
-				for i := range proj.Exprs {
-					proj.Exprs[i] = expression.FoldConstant(ReplaceColumnOfExprInPhysicalProjection(proj.Exprs[i], child, child.Schema()))
-				}
-				p.Children()[0] = child.Children()[0]
+	if isProj && !canProjectionBeEliminatedStrict(proj) {
+		if child, ok := p.Children()[0].(*PhysicalProjection); ok && !ExprsHasSideEffects(child.Exprs) {
+			for i := range proj.Exprs {
+				proj.Exprs[i] = expression.FoldConstant(ReplaceColumnOfExprInPhysicalProjection(proj.Exprs[i], child, child.Schema()))
 			}
+			p.Children()[0] = child.Children()[0]
 		}
+		return p
+	}
+	if !isProj {
 		return p
 	}
 
@@ -126,6 +127,8 @@ func ReplaceColumnOfExprInPhysicalProjection(expr expression.Expression, proj *P
 		if idx != -1 && idx < len(proj.Exprs) {
 			return proj.Exprs[idx]
 		}
+	case *expression.CorrelatedColumn:
+		ReplaceColumnOfExprInPhysicalProjection(&v.Column, proj, schema)
 	case *expression.ScalarFunction:
 		for i := range v.GetArgs() {
 			v.GetArgs()[i] = ReplaceColumnOfExprInPhysicalProjection(v.GetArgs()[i], proj, schema)
