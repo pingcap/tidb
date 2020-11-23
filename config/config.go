@@ -64,6 +64,8 @@ const (
 	DefStatusHost = "0.0.0.0"
 	// DefStoreLivenessTimeout is the default value for store liveness timeout.
 	DefStoreLivenessTimeout = "5s"
+	// DefTxnScope is the default value for TxnScope
+	DefTxnScope = "global"
 )
 
 // Valid config maps
@@ -161,6 +163,8 @@ type Config struct {
 	EnableGlobalIndex bool `toml:"enable-global-index" json:"enable-global-index"`
 	// DeprecateIntegerDisplayWidth indicates whether deprecating the max display length for integer.
 	DeprecateIntegerDisplayWidth bool `toml:"deprecate-integer-display-length" json:"deprecate-integer-display-length"`
+	// TxnScope indicates the default value for session variable txn_scope
+	TxnScope string `toml:"txn-scope" json:"txn-scope"`
 	// EnableEnumLengthLimit indicates whether the enum/set element length is limited.
 	// According to MySQL 8.0 Refman:
 	// The maximum supported length of an individual SET element is M <= 255 and (M x w) <= 1020,
@@ -528,6 +532,9 @@ type TiKVClient struct {
 	CoprCache            CoprocessorCache `toml:"copr-cache" json:"copr-cache"`
 	// TTLRefreshedTxnSize controls whether a transaction should update its TTL or not.
 	TTLRefreshedTxnSize int64 `toml:"ttl-refreshed-txn-size" json:"ttl-refreshed-txn-size"`
+	// Ensure external consistency when async commit or 1PC is enabled. When this option is enabled,
+	// TiDB needs to get a timestamp from PD before committing a transaction and thus latency is increased.
+	ExternalConsistency bool `toml:"external-consistency" json:"external-consistency"`
 }
 
 // AsyncCommit is the config for the async commit feature.
@@ -727,7 +734,8 @@ var defaultConf = Config{
 			SafeWindow:        2 * time.Second,
 			AllowedClockDrift: 500 * time.Millisecond,
 		},
-		EnableOnePC: false,
+		EnableOnePC:         false,
+		ExternalConsistency: false,
 
 		MaxBatchSize:      128,
 		OverloadThreshold: 200,
@@ -776,6 +784,7 @@ var defaultConf = Config{
 		SpilledFileEncryptionMethod: SpilledFileEncryptionMethodPlaintext,
 	},
 	DeprecateIntegerDisplayWidth: false,
+	TxnScope:                     DefTxnScope,
 	EnableEnumLengthLimit:        true,
 }
 
