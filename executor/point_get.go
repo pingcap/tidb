@@ -36,7 +36,7 @@ import (
 )
 
 func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) Executor {
-	startTS, err := b.getSnapshotTS(true)
+	startTS, err := b.getSnapshotTS()
 	if err != nil {
 		b.err = err
 		return nil
