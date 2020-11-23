@@ -91,17 +91,29 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 		resp.Resp, err = c.usSvr.KvScan(ctx, req.Scan())
 	case tikvrpc.CmdPrewrite:
 		failpoint.Inject("rpcPrewriteResult", func(val failpoint.Value) {
-			switch val.(string) {
-			case "notLeader":
-				failpoint.Return(&tikvrpc.Response{
-					Resp: &kvrpcpb.PrewriteResponse{RegionError: &errorpb.Error{NotLeader: &errorpb.NotLeader{}}},
-				}, nil)
+			if val != nil {
+				switch val.(string) {
+				case "notLeader":
+					failpoint.Return(&tikvrpc.Response{
+						Resp: &kvrpcpb.PrewriteResponse{RegionError: &errorpb.Error{NotLeader: &errorpb.NotLeader{}}},
+					}, nil)
+				case "writeConflict":
+					failpoint.Return(&tikvrpc.Response{
+						Resp: &kvrpcpb.PrewriteResponse{Errors: []*kvrpcpb.KeyError{{Conflict: &kvrpcpb.WriteConflict{}}}},
+					}, nil)
+				}
 			}
 		})
 
 		r := req.Prewrite()
 		c.cluster.handleDelay(r.StartVersion, r.Context.RegionId)
 		resp.Resp, err = c.usSvr.KvPrewrite(ctx, r)
+
+		failpoint.Inject("rpcPrewriteTimeout", func(val failpoint.Value) {
+			if val.(bool) {
+				failpoint.Return(nil, undeterminedErr)
+			}
+		})
 	case tikvrpc.CmdPessimisticLock:
 		r := req.PessimisticLock()
 		c.cluster.handleDelay(r.StartVersion, r.Context.RegionId)
@@ -171,6 +183,19 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 		resp.Resp, err = c.usSvr.Coprocessor(ctx, req.Cop())
 	case tikvrpc.CmdCopStream:
 		resp.Resp, err = c.handleCopStream(ctx, req.Cop())
+	case tikvrpc.CmdBatchCop:
+		failpoint.Inject("BatchCopCancelled", func(value failpoint.Value) {
+			if value.(bool) {
+				failpoint.Return(nil, context.Canceled)
+			}
+		})
+
+		failpoint.Inject("BatchCopRpcErr"+addr, func(value failpoint.Value) {
+			if value.(string) == addr {
+				failpoint.Return(nil, errors.New("rpc error"))
+			}
+		})
+		resp.Resp, err = c.handleBatchCop(ctx, req.BatchCop(), timeout)
 	case tikvrpc.CmdMvccGetByKey:
 		resp.Resp, err = c.usSvr.MvccGetByKey(ctx, req.MvccGetByKey())
 	case tikvrpc.CmdMvccGetByStartTs:
@@ -186,7 +211,10 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 	if err != nil {
 		return nil, err
 	}
-	regErr, err := resp.GetRegionError()
+	var regErr *errorpb.Error = nil
+	if req.Type != tikvrpc.CmdBatchCop {
+		regErr, err = resp.GetRegionError()
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -209,6 +237,25 @@ func (c *RPCClient) handleCopStream(ctx context.Context, req *coprocessor.Reques
 		Tikv_CoprocessorStreamClient: new(mockCopStreamClient),
 		Response:                     copResp,
 	}, nil
+}
+
+func (c *RPCClient) handleBatchCop(ctx context.Context, r *coprocessor.BatchRequest, timeout time.Duration) (*tikvrpc.BatchCopStreamResponse, error) {
+	mockBatchCopServer := &mockBatchCoprocessorStreamServer{}
+	err := c.usSvr.BatchCoprocessor(r, mockBatchCopServer)
+	if err != nil {
+		return nil, err
+	}
+	var mockBatchCopClient = mockBatchCopClient{batchResponses: mockBatchCopServer.batchResponses, idx: 0}
+	batchResp := &tikvrpc.BatchCopStreamResponse{Tikv_BatchCoprocessorClient: &mockBatchCopClient}
+	_, cancel := context.WithCancel(ctx)
+	batchResp.Lease.Cancel = cancel
+	batchResp.Timeout = timeout
+	first, err := batchResp.Recv()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	batchResp.BatchResponse = first
+	return batchResp, nil
 }
 
 func (c *RPCClient) handleDebugGetRegionProperties(ctx context.Context, req *debugpb.GetRegionPropertiesRequest) (*debugpb.GetRegionPropertiesResponse, error) {
@@ -317,4 +364,43 @@ type mockCopStreamClient struct {
 
 func (mock *mockCopStreamClient) Recv() (*coprocessor.Response, error) {
 	return nil, io.EOF
+}
+
+type mockBatchCopClient struct {
+	mockClientStream
+	batchResponses []*coprocessor.BatchResponse
+	idx            int
+}
+
+func (mock *mockBatchCopClient) Recv() (*coprocessor.BatchResponse, error) {
+	if mock.idx < len(mock.batchResponses) {
+		ret := mock.batchResponses[mock.idx]
+		mock.idx++
+		var err error = nil
+		if len(ret.OtherError) > 0 {
+			err = errors.New(ret.OtherError)
+			ret = nil
+		}
+		return ret, err
+	}
+	return nil, io.EOF
+}
+
+type mockServerStream struct{}
+
+func (mockServerStream) SetHeader(metadata.MD) error  { return nil }
+func (mockServerStream) SendHeader(metadata.MD) error { return nil }
+func (mockServerStream) SetTrailer(metadata.MD)       {}
+func (mockServerStream) Context() context.Context     { return nil }
+func (mockServerStream) SendMsg(interface{}) error    { return nil }
+func (mockServerStream) RecvMsg(interface{}) error    { return nil }
+
+type mockBatchCoprocessorStreamServer struct {
+	mockServerStream
+	batchResponses []*coprocessor.BatchResponse
+}
+
+func (mockBatchCopServer *mockBatchCoprocessorStreamServer) Send(response *coprocessor.BatchResponse) error {
+	mockBatchCopServer.batchResponses = append(mockBatchCopServer.batchResponses, response)
+	return nil
 }

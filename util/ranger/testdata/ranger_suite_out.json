@@ -176,5 +176,163 @@
         "Result": null
       }
     ]
+  },
+  {
+    "Name": "TestCompIndexMultiColDNF1",
+    "Cases": [
+      {
+        "SQL": "select * from t where (a,b) in ((1,1),(2,2)) and c = 3;",
+        "Plan": [
+          "Selection_6 1.00 root  eq(test.t.c, 3)",
+          "└─Batch_Point_Get_5 2.00 root table:t, clustered index:PRIMARY(a, b) keep order:false, desc:false"
+        ],
+        "Result": [
+          "2 2 3"
+        ]
+      },
+      {
+        "SQL": "select * from t where ((a = 1 and b = 1) or (a = 2 and b = 2)) and c = 3;",
+        "Plan": [
+          "Selection_6 1.00 root  eq(test.t.c, 3)",
+          "└─Batch_Point_Get_5 2.00 root table:t, clustered index:PRIMARY(a, b) keep order:false, desc:false"
+        ],
+        "Result": [
+          "2 2 3"
+        ]
+      },
+      {
+        "SQL": "select * from t use index(primary) where ((a = 1) or (a = 2 and b = 2)) and c = 3;",
+        "Plan": [
+          "TableReader_7 0.75 root  data:Selection_6",
+          "└─Selection_6 0.75 cop[tikv]  eq(test.t.c, 3), or(eq(test.t.a, 1), and(eq(test.t.a, 2), eq(test.t.b, 2)))",
+          "  └─TableRangeScan_5 2.00 cop[tikv] table:t range:[1,1], [2,2], keep order:false"
+        ],
+        "Result": [
+          "2 2 3"
+        ]
+      },
+      {
+        "SQL": "select * from t where ((a = 1 and b = 1) or (a = 2 and b = 2)) and c = 3 and (a = 1 or a = 2);",
+        "Plan": [
+          "Selection_6 1.00 root  eq(test.t.c, 3), or(eq(test.t.a, 1), eq(test.t.a, 2))",
+          "└─Batch_Point_Get_5 2.00 root table:t, clustered index:PRIMARY(a, b) keep order:false, desc:false"
+        ],
+        "Result": [
+          "2 2 3"
+        ]
+      },
+      {
+        "SQL": "select * from t where (a,b) in ((1,1),(2,2)) and c > 2;",
+        "Plan": [
+          "Selection_6 1.00 root  gt(test.t.c, 2)",
+          "└─Batch_Point_Get_5 2.00 root table:t, clustered index:PRIMARY(a, b) keep order:false, desc:false"
+        ],
+        "Result": [
+          "2 2 3"
+        ]
+      },
+      {
+        "SQL": "select * from t where ((a = 1 and b = 1) or (a = 2 and b = 2)) and c > 2;",
+        "Plan": [
+          "Selection_6 1.00 root  gt(test.t.c, 2)",
+          "└─Batch_Point_Get_5 2.00 root table:t, clustered index:PRIMARY(a, b) keep order:false, desc:false"
+        ],
+        "Result": [
+          "2 2 3"
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestCompIndexMultiColDNF2",
+    "Cases": [
+      {
+        "SQL": "select * from t where a = 1 and (b,c) in ((1,1),(2,3));",
+        "Plan": [
+          "Batch_Point_Get_5 2.00 root table:t, clustered index:PRIMARY(a, b, c) keep order:false, desc:false"
+        ],
+        "Result": [
+          "1 1 1"
+        ]
+      },
+      {
+        "SQL": "select * from t where a = 1 and ((b = 1 and c = 1) or (b = 2 and c = 3));",
+        "Plan": [
+          "Batch_Point_Get_5 2.00 root table:t, clustered index:PRIMARY(a, b, c) keep order:false, desc:false"
+        ],
+        "Result": [
+          "1 1 1"
+        ]
+      },
+      {
+        "SQL": "select * from t where a = 1 and ((b = 1) or (b = 2 and c = 3));",
+        "Plan": [
+          "TableReader_6 2.00 root  data:TableRangeScan_5",
+          "└─TableRangeScan_5 2.00 cop[tikv] table:t range:[1 1,1 1], [1 2 3,1 2 3], keep order:false"
+        ],
+        "Result": [
+          "1 1 1"
+        ]
+      },
+      {
+        "SQL": "select * from t where (a,b) in ((1,1),(2,2)) and c = 3;",
+        "Plan": [
+          "Batch_Point_Get_5 2.00 root table:t, clustered index:PRIMARY(a, b, c) keep order:false, desc:false"
+        ],
+        "Result": [
+          "2 2 3"
+        ]
+      },
+      {
+        "SQL": "select * from t where ((a = 1 and b = 1) or (a = 2 and b = 2)) and c = 3;",
+        "Plan": [
+          "Batch_Point_Get_5 2.00 root table:t, clustered index:PRIMARY(a, b, c) keep order:false, desc:false"
+        ],
+        "Result": [
+          "2 2 3"
+        ]
+      },
+      {
+        "SQL": "select * from t use index(primary) where ((a = 1) or (a = 2 and b = 2)) and c = 3;",
+        "Plan": [
+          "TableReader_7 0.75 root  data:Selection_6",
+          "└─Selection_6 0.75 cop[tikv]  eq(test.t.c, 3), or(eq(test.t.a, 1), and(eq(test.t.a, 2), eq(test.t.b, 2)))",
+          "  └─TableRangeScan_5 2.00 cop[tikv] table:t range:[1,1], [2,2], keep order:false"
+        ],
+        "Result": [
+          "2 2 3"
+        ]
+      },
+      {
+        "SQL": "select * from t where (a,b) in ((1,1),(2,2)) and c > 2 and (a,b,c) in ((1,1,1),(2,2,3));",
+        "Plan": [
+          "Selection_6 0.75 root  gt(test.t.c, 2), or(and(eq(test.t.a, 1), eq(test.t.b, 1)), and(eq(test.t.a, 2), eq(test.t.b, 2)))",
+          "└─Batch_Point_Get_5 2.00 root table:t, clustered index:PRIMARY(a, b, c) keep order:false, desc:false"
+        ],
+        "Result": [
+          "2 2 3"
+        ]
+      },
+      {
+        "SQL": "select * from t where (a,b) in ((1,1),(2,2)) and c > 2;",
+        "Plan": [
+          "TableReader_6 1.00 root  data:TableRangeScan_5",
+          "└─TableRangeScan_5 1.00 cop[tikv] table:t range:(1 1 2,1 1 +inf], (2 2 2,2 2 +inf], keep order:false"
+        ],
+        "Result": [
+          "2 2 3"
+        ]
+      },
+      {
+        "SQL": "select * from t where ((a = 1 and b = 1) or (a = 2 and b = 2)) and c > 2;",
+        "Plan": [
+          "TableReader_6 1.00 root  data:TableRangeScan_5",
+          "└─TableRangeScan_5 1.00 cop[tikv] table:t range:(1 1 2,1 1 +inf], (2 2 2,2 2 +inf], keep order:false"
+        ],
+        "Result": [
+          "2 2 3"
+        ]
+      }
+    ]
   }
 ]

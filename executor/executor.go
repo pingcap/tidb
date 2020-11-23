@@ -203,6 +203,12 @@ func (e *baseExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 	return nil
 }
 
+func (e *baseExecutor) updateDeltaForTableID(id int64) {
+	txnCtx := e.ctx.GetSessionVars().TxnCtx
+	udpp := e.ctx.GetSessionVars().UseDynamicPartitionPrune()
+	txnCtx.UpdateDeltaForTable(id, id, 0, 0, map[int64]int64{}, udpp)
+}
+
 func newBaseExecutor(ctx sessionctx.Context, schema *expression.Schema, id int, children ...Executor) baseExecutor {
 	e := baseExecutor{
 		children:     children,
@@ -943,6 +949,18 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		lockWaitTime = int64(e.Lock.WaitSec) * 1000
 	}
 
+	if len(e.tblID2Handle) > 0 {
+		for id := range e.tblID2Handle {
+			e.updateDeltaForTableID(id)
+		}
+	}
+	if len(e.partitionedTable) > 0 {
+		for _, p := range e.partitionedTable {
+			pid := p.Meta().ID
+			e.updateDeltaForTableID(pid)
+		}
+	}
+
 	return doLockKeys(ctx, e.ctx, newLockCtx(e.ctx.GetSessionVars(), lockWaitTime), e.keys...)
 }
 
@@ -995,6 +1013,9 @@ type LimitExec struct {
 	meetFirstBatch bool
 
 	childResult *chunk.Chunk
+
+	// columnIdxsUsedByChild keep column indexes of child executor used for inline projection
+	columnIdxsUsedByChild []int
 }
 
 // Next implements the Executor Next interface.
@@ -1025,26 +1046,42 @@ func (e *LimitExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			if begin == end {
 				break
 			}
-			req.Append(e.childResult, int(begin), int(end))
+			if e.columnIdxsUsedByChild != nil {
+				req.Append(e.childResult.Prune(e.columnIdxsUsedByChild), int(begin), int(end))
+			} else {
+				req.Append(e.childResult, int(begin), int(end))
+			}
 			return nil
 		}
 		e.cursor += batchSize
 	}
-	e.adjustRequiredRows(req)
-	err := Next(ctx, e.children[0], req)
+	e.childResult.Reset()
+	e.childResult = e.childResult.SetRequiredRows(req.RequiredRows(), e.maxChunkSize)
+	e.adjustRequiredRows(e.childResult)
+	err := Next(ctx, e.children[0], e.childResult)
 	if err != nil {
 		return err
 	}
-	batchSize := uint64(req.NumRows())
+	batchSize := uint64(e.childResult.NumRows())
 	// no more data.
 	if batchSize == 0 {
 		return nil
 	}
 	if e.cursor+batchSize > e.end {
-		req.TruncateTo(int(e.end - e.cursor))
+		e.childResult.TruncateTo(int(e.end - e.cursor))
 		batchSize = e.end - e.cursor
 	}
 	e.cursor += batchSize
+
+	if e.columnIdxsUsedByChild != nil {
+		for i, childIdx := range e.columnIdxsUsedByChild {
+			if err = req.SwapColumn(i, e.childResult, childIdx); err != nil {
+				return err
+			}
+		}
+	} else {
+		req.SwapColumns(e.childResult)
+	}
 	return nil
 }
 
@@ -1673,6 +1710,9 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	vars.StmtCtx = sc
 	vars.PrevFoundInPlanCache = vars.FoundInPlanCache
 	vars.FoundInPlanCache = false
+	vars.ClearStmtVars()
+	vars.PrevFoundInBinding = vars.FoundInBinding
+	vars.FoundInBinding = false
 	return
 }
 
@@ -1705,6 +1745,10 @@ func FillVirtualColumnValue(virtualRetTypes []*types.FieldType, virtualColumnInd
 			castDatum, err := table.CastValue(sctx, datum, columns[idx], false, true)
 			if err != nil {
 				return err
+			}
+			// Handle the bad null error.
+			if (mysql.HasNotNullFlag(columns[idx].Flag) || mysql.HasPreventNullInsertFlag(columns[idx].Flag)) && castDatum.IsNull() {
+				castDatum = table.GetZeroValue(columns[idx])
 			}
 			virCols.AppendDatum(i, &castDatum)
 		}
