@@ -235,7 +235,7 @@ func (bq *brieQueue) cancelTask(ctx context.Context, taskID uint64, se *sessionW
 	}
 
 	se.Lock()
-	se.Unlock()
+	defer se.Unlock()
 	_, err := se.Execute(ctx, sql)
 	if err != nil {
 		logutil.Logger(ctx).Error("failed to update BRIE task table to cancel",
@@ -304,7 +304,7 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 		importGlobalCfg.TiDB.Port = int(tidbCfg.Port)
 		importGlobalCfg.TiDB.PdAddr = strings.Split(tidbCfg.Path, ",")[0]
 
-		// StatusPort is not used
+		// StatusPort is not used, but maybe we could pass it to improve robust?
 		//importCfg.TiDB.StatusPort = int(tidbCfg.Status.StatusPort)
 		importCfg.TikvImporter.Backend = importcfg.BackendLocal
 		importCfg.TikvImporter.SortedKVDir = filepath.Join(tidbCfg.TempStoragePath, defaultImportID)
@@ -805,7 +805,7 @@ func (gs *tidbGlueSession) Record(name string, value uint64) {
 			gs.progress.cmd = "Import"
 		} else {
 			current = gs.progress.total
-			// TODO(lance6717): for a exact stage, lightning should watch its post-processing and report
+			// TODO(lance6717): to be more exact, lightning could report status of restoring tables
 			gs.progress.cmd = "Post-process"
 		}
 		gs.progress.current = current

@@ -159,8 +159,6 @@ github.com/cockroachdb/errors v1.2.4 h1:Lap807SXTH5tri2TivECb/4abUkMZC9zRoLarvcK
 github.com/cockroachdb/errors v1.2.4/go.mod h1:rQD95gz6FARkaKkQXUksEje/d9a6wBJoCr5oaCLELYA=
 github.com/cockroachdb/logtags v0.0.0-20190617123548-eb05cc24525f h1:o/kfcElHqOiXqcou5a3rIlMc7oJbMQkeLk0VQJ7zgqY=
 github.com/cockroachdb/logtags v0.0.0-20190617123548-eb05cc24525f/go.mod h1:i/u985jwjWRlyHXQbwatDASoW0RMlZ/3i9yJHE2xLkI=
-github.com/cockroachdb/pebble v0.0.0-20200617141519-3b241b76ed3b h1:YHjo2xnqFCeFa0CdxEccHfUY1/DnXPAZdZt0+s/Mvdg=
-github.com/cockroachdb/pebble v0.0.0-20200617141519-3b241b76ed3b/go.mod h1:crLnbSFbwAcQNs9FPfI1avHb5BqVgqZcr4r+IzpJ5FM=
 github.com/cockroachdb/pebble v0.0.0-20201023120638-f1224da22976 h1:gGjhleKSWZCZFrhQSesjg8spRD+/p8vjwdNEGUv8Ovg=
 github.com/cockroachdb/pebble v0.0.0-20201023120638-f1224da22976/go.mod h1:BbtTitvfmE0eZNcncJgJw5BlQhskTzgZgoISnY+8s6k=
 github.com/cockroachdb/redact v0.0.0-20200622112456-cd282804bbd3 h1:2+dpIJzYMSbLi0587YXpi8tOJT52qCOI/1I0UNThc/I=
@@ -702,8 +700,6 @@ github.com/pingcap/sysutil v0.0.0-20201021075216-f93ced2829e2 h1:b2G/eqDeywtdJF3
 github.com/pingcap/sysutil v0.0.0-20201021075216-f93ced2829e2/go.mod h1:EB/852NMQ+aRKioCpToQ94Wl7fktV+FNnxf3CX/TTXI=
 github.com/pingcap/tidb v1.1.0-beta.0.20200423094549-0ad7ce6cdae6/go.mod h1:KJXj2xHYfl1x4zcusC2JEANzVci+ietFOMh/CAmrYdw=
 github.com/pingcap/tidb-insight v0.3.1/go.mod h1:HZ6cGBYxViftTKLbl/V4moRol79bifZzI9ImGavJms0=
-github.com/pingcap/tidb-lightning v4.0.9-0.20201106041742-a1ac97827a27+incompatible h1:y6cwuJJo8tLeHjgjODpwCSqNAv1g+9WUtcsFOHu/7ag=
-github.com/pingcap/tidb-lightning v4.0.9-0.20201106041742-a1ac97827a27+incompatible/go.mod h1:UrN2l06neiEfkass87Tjvv5JFIMsOMb2DT7P7s+fwMc=
 github.com/pingcap/tidb-lightning v4.0.9-0.20201123023740-da8b24e5b6c5+incompatible h1:zUGKe7wTj0+79doQwGH07Z/cp8hQbJo9A7kRaPZuZlM=
 github.com/pingcap/tidb-lightning v4.0.9-0.20201123023740-da8b24e5b6c5+incompatible/go.mod h1:UrN2l06neiEfkass87Tjvv5JFIMsOMb2DT7P7s+fwMc=
 github.com/pingcap/tidb-tools v3.0.13+incompatible/go.mod h1:XGdcy9+yqlDSEMTpOXnwf3hiTeqrV6MN/u1se9N8yIM=
