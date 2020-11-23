@@ -313,14 +313,15 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 	rc := e.ctx.GetSessionVars().IsPessimisticReadConsistency()
 	// Lock keys (include exists and non-exists keys) before fetch all values for Repeatable Read Isolation.
 	if e.lock && !rc {
-		lockKeys := make([]kv.Key, len(keys), len(keys)+len(indexKeys))
+		lockKeys := make([]kv.Key, len(keys)+len(indexKeys))
 		copy(lockKeys, keys)
-		for _, idxKey := range indexKeys {
-			// lock the non-exist index key, using len(val) in case BatchGet result contains some zero len entries
-			if val := handleVals[string(idxKey)]; len(val) == 0 {
-				lockKeys = append(lockKeys, idxKey)
-			}
-		}
+		copy(lockKeys[len(keys):], indexKeys)
+		// for _, idxKey := range indexKeys {
+		// 	// lock the non-exist index key, using len(val) in case BatchGet result contains some zero len entries
+		// 	if val := handleVals[string(idxKey)]; len(val) == 0 {
+		// 		lockKeys = append(lockKeys, idxKey)
+		// 	}
+		// }
 		err = LockKeys(ctx, e.ctx, e.waitTime, lockKeys...)
 		if err != nil {
 			return err

@@ -14,6 +14,8 @@
 package executor_test
 
 import (
+	"time"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/domain"
@@ -161,4 +163,37 @@ func (s *testBatchPointGetSuite) TestBatchPointGetUnsignedHandleWithSort(c *C) {
 	tk.MustExec("insert into t2 values (1)")
 	tk.MustQuery("select id from t2 where id in (8738875760185212610, 1, 9814441339970117597) order by id").Check(testkit.Rows("1", "8738875760185212610", "9814441339970117597"))
 	tk.MustQuery("select id from t2 where id in (8738875760185212610, 1, 9814441339970117597) order by id desc").Check(testkit.Rows("9814441339970117597", "8738875760185212610", "1"))
+}
+
+func (s *testBatchPointGetSuite) TestLockNonexistKey(c *C) {
+	tk1 := testkit.NewTestKit(c, s.store)
+	tk2 := testkit.NewTestKit(c, s.store)
+	tk1.MustExec("use test")
+	tk2.MustExec("use test")
+	tk1.MustExec("set session tidb_enable_clustered_index = 0")
+	tk1.MustExec("drop table if exists t")
+	tk1.MustExec("create table t(id int, v int, val int, primary key(id, v))")
+	tk1.MustExec("insert into t values(1, 1, 1), (2, 2, 2)")
+
+	tk1.MustExec("begin pessimistic")
+	tk2.MustExec("begin pessimistic")
+
+	tk1.MustExec("select * from t where (id, v) in ((1, 1), (2, 2)) for update")
+	doneCh := make(chan struct{}, 1)
+	go func() {
+		tk2.MustExec("insert into t values(1, 1, 3)")
+		doneCh <- struct{}{}
+	}()
+	time.Sleep(50 * time.Millisecond)
+	tk1.MustExec("update t set v = 2 where id = 1 and v = 1")
+
+	tk1.MustExec("commit")
+	<-doneCh
+	tk2.MustExec("commit")
+
+	tk1.MustQuery("select * from t").Check(testkit.Rows(
+		"1 2 1",
+		"2 2 2",
+		"1 1 3",
+	))
 }

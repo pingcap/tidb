@@ -205,13 +205,18 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 					return err
 				}
 			}
-			if len(e.handleVal) == 0 {
-				// handle is not found, try lock the index key if isolation level is not read consistency
-				if e.ctx.GetSessionVars().IsPessimisticReadConsistency() {
-					return nil
+
+			// try lock the index key if isolation level is not read consistency
+			if !e.ctx.GetSessionVars().IsPessimisticReadConsistency() {
+				err = e.lockKeyIfNeeded(ctx, e.idxKey)
+				if err != nil {
+					return err
 				}
-				return e.lockKeyIfNeeded(ctx, e.idxKey)
 			}
+			if len(e.handleVal) == 0 {
+				return nil
+			}
+
 			var iv kv.Handle
 			iv, err = tablecodec.DecodeHandleInUniqueIndexValue(e.handleVal, e.tblInfo.IsCommonHandle)
 			if err != nil {
