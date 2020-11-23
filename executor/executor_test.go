@@ -5889,8 +5889,7 @@ func (s *testClusterTableSuite) TearDownSuite(c *C) {
 
 func (s *testSuiteP1) TestPrepareLoadData(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec(`prepare stmt from "load data local infile '/tmp/load_data_test.csv' into table test";`)
-	tk.MustGetErrCode("execute stmt", mysql.ErrUnsupportedPs)
+	tk.MustGetErrCode(`prepare stmt from "load data local infile '/tmp/load_data_test.csv' into table test";`, mysql.ErrUnsupportedPs)
 }
 
 func (s *testClusterTableSuite) TestSlowQuery(c *C) {
