@@ -2828,6 +2828,13 @@ func (s *testIntegrationSuite2) TestBuiltin(c *C) {
 	result.Check(testkit.Rows("1"))
 	result = tk.MustQuery("select strcmp('abc', 'abc')")
 	result.Check(testkit.Rows("0"))
+	result = tk.MustQuery("select strcmp('a\\0', 'a');")
+	result.Check(testkit.Rows("0"))
+	result = tk.MustQuery("select strcmp('a\\0\\1\\0', 'a\\0\\1')")
+	result.Check(testkit.Rows("0"))
+	result = tk.MustQuery("select strcmp('a\\0', 'a\\1')")
+	result.Check(testkit.Rows("-1"))
+
 	result = tk.MustQuery("select substr(null, 1, 2)")
 	result.Check(testkit.Rows("<nil>"))
 	result = tk.MustQuery("select substr('123', null, 2)")

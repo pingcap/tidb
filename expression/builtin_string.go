@@ -956,7 +956,20 @@ func (b *builtinStrcmpSig) evalInt(row chunk.Row) (int64, bool, error) {
 		isNull      bool
 		err         error
 	)
-
+	for _, args := range b.getArgs() {
+		switch args.(type) {
+		case *Constant:
+			b := args.(*Constant).Value.GetBytes()
+			for i := len(b) - 1; i >= 0; i-- {
+				if b[i] == 0 {
+					b = append(b[:i], b[i+1:]...)
+				}
+			}
+			if b != nil {
+				args.(*Constant).Value.SetBytes(b)
+			}
+		}
+	}
 	left, isNull, err = b.args[0].EvalString(b.ctx, row)
 	if isNull || err != nil {
 		return 0, isNull, err
