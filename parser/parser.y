@@ -1237,6 +1237,7 @@ import (
 	RegexpSym         "REGEXP or RLIKE"
 	IntoOpt           "INTO or EmptyString"
 	ValueSym          "Value or Values"
+	NotSym            "Not token"
 	Char              "{CHAR|CHARACTER}"
 	NChar             "{NCHAR|NATIONAL CHARACTER|NATIONAL CHAR}"
 	Varchar           "{VARCHAR|VARCHARACTER|CHARACTER VARYING|CHAR VARYING}"
@@ -2700,12 +2701,19 @@ PrimaryOpt:
 	{}
 |	"PRIMARY"
 
+NotSym:
+	not
+|	not2
+	{
+		$$ = "NOT"
+	}
+
 EnforcedOrNot:
 	"ENFORCED"
 	{
 		$$ = true
 	}
-|	"NOT" "ENFORCED"
+|	NotSym "ENFORCED"
 	{
 		$$ = false
 	}
@@ -2721,7 +2729,7 @@ EnforcedOrNotOrNotNullOpt:
 	//	 This branch is needed to workaround the need of a lookahead of 2 for the grammar:
 	//
 	//	  { [NOT] NULL | CHECK(...) [NOT] ENFORCED } ...
-	"NOT" "NULL"
+	NotSym "NULL"
 	{
 		$$ = 0
 	}
@@ -2735,7 +2743,7 @@ EnforcedOrNotOrNotNullOpt:
 	}
 
 ColumnOption:
-	"NOT" "NULL"
+	NotSym "NULL"
 	{
 		$$ = &ast.ColumnOption{Tp: ast.ColumnOptionNotNull}
 	}
@@ -4752,7 +4760,7 @@ BetweenOrNotOp:
 	{
 		$$ = true
 	}
-|	"NOT" "BETWEEN"
+|	NotSym "BETWEEN"
 	{
 		$$ = false
 	}
@@ -4762,7 +4770,7 @@ IsOrNotOp:
 	{
 		$$ = true
 	}
-|	"IS" "NOT"
+|	"IS" NotSym
 	{
 		$$ = false
 	}
@@ -4772,7 +4780,7 @@ InOrNotOp:
 	{
 		$$ = true
 	}
-|	"NOT" "IN"
+|	NotSym "IN"
 	{
 		$$ = false
 	}
@@ -4782,7 +4790,7 @@ LikeOrNotOp:
 	{
 		$$ = true
 	}
-|	"NOT" "LIKE"
+|	NotSym "LIKE"
 	{
 		$$ = false
 	}
@@ -4792,7 +4800,7 @@ RegexpOrNotOp:
 	{
 		$$ = true
 	}
-|	"NOT" RegexpSym
+|	NotSym RegexpSym
 	{
 		$$ = false
 	}
@@ -4966,7 +4974,7 @@ IfNotExists:
 	{
 		$$ = false
 	}
-|	"IF" "NOT" "EXISTS"
+|	"IF" NotSym "EXISTS"
 	{
 		$$ = true
 	}
