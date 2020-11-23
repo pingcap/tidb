@@ -2482,7 +2482,7 @@ func (s *session) checkPlacementPolicyBeforeCommit() error {
 			}
 			if tbl.Meta().State == model.StateGlobalTxnWriteOnly {
 				err = ddl.ErrInvalidPlacementPolicyCheck.GenWithStackByArgs(
-					fmt.Sprintf("table or partition %v is updated by ilegal txn_scope %v during schem state %v",
+					fmt.Sprintf("table or partition %v is updated by ilegal txn_scope %v during schema state %v",
 						physicalTableID, txnScope, model.StateGlobalTxnWriteOnly))
 				break
 			}
