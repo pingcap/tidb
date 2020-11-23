@@ -563,6 +563,25 @@ func outOfRangeEQSelectivity(ndv, modifyRows, totalRows int64) float64 {
 	return selectivity
 }
 
+func outOfRangeIntervalSelectivity(idx *Index, ran *ranger.Range, modifyCount int64) float64 {
+	statWidth := idx.calcStatWidth(int(idx.ID)/2, &ran.LowVal[0])
+	lowVal := math.MaxFloat64
+	for _, val := range ran.LowVal {
+		if val.GetFloat64() < lowVal {
+			lowVal = val.GetFloat64()
+		}
+	}
+	highVal := math.SmallestNonzeroFloat64
+	for _, val := range ran.HighVal {
+		if val.GetFloat64() > highVal {
+			highVal = val.GetFloat64()
+		}
+	}
+	rangeWidth := highVal - lowVal
+	rangeCount := idx.TotalRowCount() * (rangeWidth / statWidth)
+	return math.Min(rangeCount, float64(modifyCount))
+}
+
 // crossValidationSelectivity gets the selectivity of multi-column equal conditions by cross validation.
 func (coll *HistColl) crossValidationSelectivity(sc *stmtctx.StatementContext, idx *Index, usedColsLen int, idxPointRange *ranger.Range) (float64, float64, error) {
 	minRowCount := math.MaxFloat64

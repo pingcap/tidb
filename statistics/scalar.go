@@ -288,3 +288,33 @@ func enumRangeValues(low, high types.Datum, lowExclude, highExclude bool) []type
 	}
 	return nil
 }
+
+// calcWidth is used to calculate the width of the interval [lower, upper] that lies within the [lower, value]
+// using the continuous-value assumption.
+func calcWidth(lower, upper float64) float64 {
+	if upper <= lower {
+		return 0.0
+	}
+	return upper - lower
+}
+
+func (hg *Histogram) calcStatWidth(index int, value *types.Datum) float64 {
+	lower, upper := hg.Bounds.GetRow(2*index), hg.Bounds.GetRow(2*index+1)
+	switch value.Kind() {
+	case types.KindFloat32:
+		return calcWidth(float64(lower.GetFloat32(0)), float64(upper.GetFloat32(0)))
+	case types.KindFloat64:
+		return calcWidth(lower.GetFloat64(0), upper.GetFloat64(0))
+	case types.KindInt64:
+		return calcWidth(float64(lower.GetInt64(0)), float64(upper.GetInt64(0)))
+	case types.KindUint64:
+		return calcWidth(float64(lower.GetUint64(0)), float64(upper.GetUint64(0)))
+	case types.KindMysqlDuration:
+		return calcWidth(float64(lower.GetDuration(0, 0).Duration), float64(upper.GetDuration(0, 0).Duration))
+	case types.KindMysqlDecimal, types.KindMysqlTime:
+		return calcWidth(hg.scalars[index].lower, hg.scalars[index].upper)
+	case types.KindBytes, types.KindString:
+		return calcWidth(hg.scalars[index].lower, hg.scalars[index].upper)
+	}
+	return 0.0
+}
