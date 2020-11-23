@@ -982,7 +982,7 @@ func (s *testTypeConvertSuite) TestConvertJSONToInt(c *C) {
 		j, err := json.ParseBinaryFromString(tt.In)
 		c.Assert(err, IsNil)
 
-		casted, _ := ConvertJSONToInt(new(stmtctx.StatementContext), j, false)
+		casted, _ := ConvertJSONToInt64(new(stmtctx.StatementContext), j, false)
 		c.Assert(casted, Equals, tt.Out)
 	}
 }
