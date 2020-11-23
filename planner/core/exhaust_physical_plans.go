@@ -1269,7 +1269,7 @@ func (ijHelper *indexJoinBuildHelper) removeUselessEqAndInFunc(idxCols []*expres
 			tmpType = append(tmpType, idxCols[idxColPos])
 			tmpType = append(tmpType, outerJoinKeys[ijHelper.curIdxOff2KeyOff[idxColPos]])
 			_, coll := expression.DeriveCollationFromExprs(nil, tmpType...)
-			if collate.NewCollationEnabled() && collate.CompatibleCollate(idxCols[idxColPos].GetType().Collate, coll) {
+			if !collate.NewCollationEnabled() || collate.CompatibleCollate(idxCols[idxColPos].GetType().Collate, coll) {
 				ijHelper.curPossibleUsedKeys = append(ijHelper.curPossibleUsedKeys, idxCols[idxColPos])
 				continue
 			}
