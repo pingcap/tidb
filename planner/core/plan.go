@@ -96,8 +96,9 @@ func optimizeByShuffle(pp PhysicalPlan, tsk task, ctx sessionctx.Context) task {
 		}
 	case *PhysicalStreamAgg:
 		if shuffle := optimizeByShuffle4StreamAgg(p, ctx); shuffle != nil {
-			shuffle = shuffle.BuildByTaskPlan(tsk, ctx)
-			return shuffle.attach2Task(tsk)
+			if shuffle = shuffle.BuildByTaskPlan(tsk, ctx); shuffle != nil {
+				return shuffle.attach2Task(tsk)
+			}
 		}
 	}
 	return tsk
