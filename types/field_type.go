@@ -1263,15 +1263,13 @@ var fieldTypeMergeRules = [fieldTypeNum][fieldTypeNum]byte{
 }
 
 const (
-	InvalidResult byte = 0 /** not valid for UDFs */
-	StringResult  byte = 1 /** char * */
-	RealResult    byte = 2 /** double */
-	IntResult     byte = 3 /** long long */
-	RowResult     byte = 4 /** not valid for UDFs */
-	DecimalResult byte = 5 /** char *, to be converted to/from a decimal */
+	StringResult = iota
+	RealResult
+	IntResult
+	DecimalResult
 )
 
-var fieldTypesResultType = []byte{
+var fieldTypesResultType = [fieldTypeNum]byte{
 	// mysql.TypeDecimal      mysql.TypeTiny
 	DecimalResult, IntResult,
 	// mysql.TypeShort        mysql.TypeLong
@@ -1288,11 +1286,11 @@ var fieldTypesResultType = []byte{
 	StringResult, IntResult,
 	// mysql.TypeNewDate      mysql.TypeVarchar
 	StringResult, StringResult,
-	// mysql.TypeBit          mysql.TypeInvalid
-	IntResult, InvalidResult,
-	// Unused entries: <17>-<242>
-	// mysql.TypeBool         mysql.TypeJson
-	IntResult, StringResult,
+	// mysql.TypeBit
+	IntResult,
+	// Unused entries: <16>-<244>
+	// mysql.TypeJson
+	StringResult,
 	// mysql.TypeNewDecimal   mysql.TypeEnum
 	DecimalResult, StringResult,
 	// mysql.TypeSet          mysql.TypeTinyBlob
