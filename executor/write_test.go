@@ -2872,3 +2872,77 @@ func (s *testSerialSuite1) TestIssue20724(c *C) {
 	tk.MustQuery("select * from t1").Check(testkit.Rows("A"))
 	tk.MustExec("drop table t1")
 }
+<<<<<<< HEAD
+=======
+
+func (s *testSerialSuite) TestIssue20840(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("set tidb_enable_clustered_index = 0")
+	tk.MustExec("create table t1 (i varchar(20) unique key) collate=utf8mb4_general_ci")
+	tk.MustExec("insert into t1 values ('a')")
+	tk.MustExec("replace into t1 values ('A')")
+	tk.MustQuery("select * from t1").Check(testkit.Rows("A"))
+	tk.MustExec("drop table t1")
+}
+
+func (s *testSuite) TestEqualDatumsAsBinary(c *C) {
+	tests := []struct {
+		a    []interface{}
+		b    []interface{}
+		same bool
+	}{
+		// Positive cases
+		{[]interface{}{1}, []interface{}{1}, true},
+		{[]interface{}{1, "aa"}, []interface{}{1, "aa"}, true},
+		{[]interface{}{1, "aa", 1}, []interface{}{1, "aa", 1}, true},
+
+		// negative cases
+		{[]interface{}{1}, []interface{}{2}, false},
+		{[]interface{}{1, "a"}, []interface{}{1, "aaaaaa"}, false},
+		{[]interface{}{1, "aa", 3}, []interface{}{1, "aa", 2}, false},
+
+		// Corner cases
+		{[]interface{}{}, []interface{}{}, true},
+		{[]interface{}{nil}, []interface{}{nil}, true},
+		{[]interface{}{}, []interface{}{1}, false},
+		{[]interface{}{1}, []interface{}{1, 1}, false},
+		{[]interface{}{nil}, []interface{}{1}, false},
+	}
+	for _, tt := range tests {
+		testEqualDatumsAsBinary(c, tt.a, tt.b, tt.same)
+	}
+}
+
+func (s *testSuite) TestIssue21232(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t, t1")
+	tk.MustExec("create table t(a varchar(1), index idx(a))")
+	tk.MustExec("create table t1(a varchar(5), index idx(a))")
+	tk.MustExec("insert into t values('a'), ('b')")
+	tk.MustExec("insert into t1 values('a'), ('bbbbb')")
+	tk.MustExec("update /*+ INL_JOIN(t) */ t, t1 set t.a='a' where t.a=t1.a")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustQuery("select * from t").Check(testkit.Rows("a", "b"))
+	tk.MustExec("update /*+ INL_HASH_JOIN(t) */ t, t1 set t.a='a' where t.a=t1.a")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustQuery("select * from t").Check(testkit.Rows("a", "b"))
+	tk.MustExec("update /*+ INL_MERGE_JOIN(t) */ t, t1 set t.a='a' where t.a=t1.a")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustQuery("select * from t").Check(testkit.Rows("a", "b"))
+}
+
+func testEqualDatumsAsBinary(c *C, a []interface{}, b []interface{}, same bool) {
+	sc := new(stmtctx.StatementContext)
+	re := new(executor.ReplaceExec)
+	sc.IgnoreTruncate = true
+	res, err := re.EqualDatumsAsBinary(sc, types.MakeDatums(a...), types.MakeDatums(b...))
+	c.Assert(err, IsNil)
+	c.Assert(res, Equals, same, Commentf("a: %v, b: %v", a, b))
+}
+>>>>>>> 115c7f88e... executor: set the inner join keys' field length to unspecified (#21233)
