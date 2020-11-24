@@ -97,7 +97,7 @@ type lookupTableTask struct {
 }
 
 func (task *lookupTableTask) Len() int {
-	return task.chunk.NumRows()
+	return task.chunk.GetNumRows()
 }
 
 func (task *lookupTableTask) Less(i, j int) bool {
@@ -1148,8 +1148,8 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 	}
 	task.memTracker.Consume(memUsage)
 	if w.keepOrder {
-		task.rowIdx = make([]int, 0, task.chunk.NumRows())
-		for i := 0; i < task.chunk.NumRows(); i++ {
+		task.rowIdx = make([]int, 0, task.chunk.GetNumRows())
+		for i := 0; i < task.chunk.GetNumRows(); i++ {
 			handle, err := w.idxLookup.getHandle(task.chunk.GetRow(i), w.handleIdx, w.idxLookup.isCommonHandle(), getHandleFromTable)
 			if err != nil {
 				return err
@@ -1163,10 +1163,10 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 		sort.Sort(task)
 	}
 
-	if handleCnt != task.chunk.NumRows() && !util.HasCancelled(ctx) {
+	if handleCnt != task.chunk.GetNumRows() && !util.HasCancelled(ctx) {
 		if len(w.idxLookup.tblPlans) == 1 {
 			obtainedHandlesMap := kv.NewHandleMap()
-			for i := 0; i < task.chunk.NumRows(); i++ {
+			for i := 0; i < task.chunk.GetNumRows(); i++ {
 				handle, err := w.idxLookup.getHandle(task.chunk.GetRow(i), w.handleIdx, w.idxLookup.isCommonHandle(), getHandleFromTable)
 				if err != nil {
 					return err
@@ -1175,14 +1175,14 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 			}
 
 			logutil.Logger(ctx).Error("inconsistent index handles", zap.String("index", w.idxLookup.index.Name.O),
-				zap.Int("index_cnt", handleCnt), zap.Int("table_cnt", task.chunk.NumRows()),
+				zap.Int("index_cnt", handleCnt), zap.Int("table_cnt", task.chunk.GetNumRows()),
 				zap.String("missing_handles", fmt.Sprint(GetLackHandles(task.handles, obtainedHandlesMap))),
 				zap.String("total_handles", fmt.Sprint(task.handles)))
 
 			// table scan in double read can never has conditions according to convertToIndexScan.
 			// if this table scan has no condition, the number of rows it returns must equal to the length of handles.
 			return errors.Errorf("inconsistent index %s handle count %d isn't equal to value count %d",
-				w.idxLookup.index.Name.O, handleCnt, task.chunk.NumRows())
+				w.idxLookup.index.Name.O, handleCnt, task.chunk.GetNumRows())
 		}
 	}
 

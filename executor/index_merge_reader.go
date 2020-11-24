@@ -500,7 +500,7 @@ func (e *IndexMergeReaderExecutor) Next(ctx context.Context, req *chunk.Chunk) e
 }
 
 func (e *IndexMergeReaderExecutor) getResultTask() (*lookupTableTask, error) {
-	if e.resultCurr != nil && e.resultCurr.cursor < e.resultCurr.chunk.NumRows() {
+	if e.resultCurr != nil && e.resultCurr.cursor < e.resultCurr.chunk.GetNumRows() {
 		return e.resultCurr, nil
 	}
 	task, ok := <-e.resultCh
@@ -784,8 +784,8 @@ func (w *indexMergeTableScanWorker) executeTask(ctx context.Context, task *looku
 	memUsage = task.memUsage
 	task.memUsage += memUsage
 	task.memTracker.Consume(memUsage)
-	if handleCnt != task.chunk.NumRows() && len(w.tblPlans) == 1 {
-		return errors.Errorf("handle count %d isn't equal to value count %d", handleCnt, task.chunk.NumRows())
+	if handleCnt != task.chunk.GetNumRows() && len(w.tblPlans) == 1 {
+		return errors.Errorf("handle count %d isn't equal to value count %d", handleCnt, task.chunk.GetNumRows())
 	}
 	return nil
 }
