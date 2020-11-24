@@ -523,11 +523,6 @@ func (worker *copIteratorWorker) run(ctx context.Context) {
 			respCh = task.respChan
 		}
 		worker.handleTask(ctx, task, respCh)
-		if worker.respChan != nil {
-			// When a task is finished by the worker, send a finCopResp into channel to notify the copIterator that
-			// there is a task finished.
-			worker.sendToRespCh(finCopResp, respCh, false)
-		}
 		close(task.respChan)
 		if worker.vars != nil && worker.vars.Killed != nil && atomic.LoadUint32(worker.vars.Killed) == 1 {
 			return
@@ -768,6 +763,11 @@ func (worker *copIteratorWorker) handleTask(ctx context.Context, task *copTask, 
 			resp := &copResponse{err: errors.Errorf("%v", r)}
 			// if panic has happened, set checkOOM to false to avoid another panic.
 			worker.sendToRespCh(resp, respCh, false)
+		}
+		if worker.respChan != nil {
+			// When a task is finished by the worker, send a finCopResp into channel to notify the copIterator that
+			// there is a task finished.
+			worker.sendToRespCh(finCopResp, worker.respChan, false)
 		}
 	}()
 	remainTasks := []*copTask{task}
