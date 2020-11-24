@@ -261,12 +261,12 @@ func (s *tableRegionSampler) scanFirstKVForEachRange(ranges []kv.KeyRange,
 		concurrency = len(ranges)
 	}
 
-	fetchers := make([]*sampleFetcher, len(ranges))
-	for i := 0; i < len(ranges); i++ {
+	fetchers := make([]*sampleFetcher, concurrency)
+	for i := 0; i < concurrency; i++ {
 		fetchers[i] = &sampleFetcher{
 			workerID:    i,
 			concurrency: concurrency,
-			kvChan:      make(chan sampleKV),
+			kvChan:      make(chan *sampleKV),
 			snapshot:    snap,
 			ranges:      ranges,
 		}
@@ -303,7 +303,7 @@ type sampleKV struct {
 type sampleFetcher struct {
 	workerID    int
 	concurrency int
-	kvChan      chan sampleKV
+	kvChan      chan *sampleKV
 	err         error
 	snapshot    kv.Snapshot
 	ranges      []kv.KeyRange
@@ -320,6 +320,7 @@ func (s *sampleFetcher) run() {
 			s.err = err
 			return
 		}
+		hasValue := false
 		for it.Valid() {
 			if !tablecodec.IsRecordKey(it.Key()) {
 				if err = it.Next(); err != nil {
@@ -333,8 +334,12 @@ func (s *sampleFetcher) run() {
 				s.err = err
 				return
 			}
-			s.kvChan <- sampleKV{handle: handle, value: it.Value()}
+			hasValue = true
+			s.kvChan <- &sampleKV{handle: handle, value: it.Value()}
 			break
+		}
+		if !hasValue {
+			s.kvChan <- nil
 		}
 	}
 }
@@ -355,17 +360,15 @@ func (s *sampleSyncer) sync() error {
 	}()
 	for i := 0; i < s.totalCount; i++ {
 		f := s.fetchers[i%len(s.fetchers)]
-		select {
-		case v, ok := <-f.kvChan:
-			if ok {
-				err := s.consumeFn(v.handle, v.value)
-				if err != nil {
-					return err
-				}
+		v, ok := <-f.kvChan
+		if ok && v != nil {
+			err := s.consumeFn(v.handle, v.value)
+			if err != nil {
+				return err
 			}
-			if f.err != nil {
-				return f.err
-			}
+		}
+		if f.err != nil {
+			return f.err
 		}
 	}
 	return nil

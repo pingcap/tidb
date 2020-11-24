@@ -84,8 +84,12 @@ func (s *testTableSampleSuite) TestTableSampleBasic(c *C) {
 	c.Assert(tk.HasPlan("select * from t tablesample regions();", "TableSample"), IsTrue)
 
 	tk.MustExec("drop table if exists t;")
-	tk.MustExec("create table t(a BIGINT PRIMARY KEY AUTO_RANDOM, b int auto_increment, key(b)) pre_split_regions=8;")
+	tk.MustExec("create table t(a BIGINT PRIMARY KEY AUTO_RANDOM(3), b int auto_increment, key(b)) pre_split_regions=8;")
 	tk.MustQuery("select * from t tablesample regions();").Check(testkit.Rows())
+	for i := 0; i < 1000; i++ {
+		tk.MustExec("insert into t values();")
+	}
+	tk.MustQuery("select count(*) from t tablesample regions();").Check(testkit.Rows("8"))
 }
 
 func (s *testTableSampleSuite) TestTableSampleMultiRegions(c *C) {
