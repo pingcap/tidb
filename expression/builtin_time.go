@@ -2757,11 +2757,9 @@ func (du *baseDateArithmitical) getDateFromDatetime(ctx sessionctx.Context, args
 		return types.ZeroTime, true, err
 	}
 
-	dateTp := mysql.TypeDate
-	if date.Type() == mysql.TypeDatetime || date.Type() == mysql.TypeTimestamp || types.IsClockUnit(unit) {
-		dateTp = mysql.TypeDatetime
+	if types.IsClockUnit(unit) {
+		date.SetType(mysql.TypeDatetime)
 	}
-	date.SetType(dateTp)
 	return date, false, nil
 }
 
@@ -3030,11 +3028,9 @@ func (du *baseDateArithmitical) vecGetDateFromDatetime(b *baseBuiltinFunc, input
 			continue
 		}
 
-		dateTp := mysql.TypeDate
-		if dates[i].Type() == mysql.TypeDatetime || dates[i].Type() == mysql.TypeTimestamp || isClockUnit {
-			dateTp = mysql.TypeDatetime
+		if isClockUnit {
+			dates[i].SetType(mysql.TypeDatetime)
 		}
-		dates[i].SetType(dateTp)
 	}
 	return nil
 }
