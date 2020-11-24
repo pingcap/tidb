@@ -656,7 +656,7 @@ func (e *IndexLookUpExecutor) Next(ctx context.Context, req *chunk.Chunk) error 
 		if resultTask == nil {
 			return nil
 		}
-		for resultTask.cursor < resultTask.chunk.NumRows() {
+		for resultTask.cursor < resultTask.chunk.GetNumRows() {
 			req.AppendRow(resultTask.chunk.GetRow(resultTask.cursor))
 			resultTask.cursor++
 			if req.IsFull() {
