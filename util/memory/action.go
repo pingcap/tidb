@@ -32,7 +32,7 @@ type ActionOnExceed interface {
 	// SetLogHook binds a log hook which will be triggered and log an detailed
 	// message for the out-of-memory sql.
 	SetLogHook(hook func(uint64))
-	// SetFallback sets a FallbackAction action which will be triggered if itself has
+	// SetFallback sets a fallback action which will be triggered if itself has
 	// already been triggered.
 	SetFallback(a ActionOnExceed)
 	// GetFallback get the FallbackAction action of the Action.

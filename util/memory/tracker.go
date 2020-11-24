@@ -117,7 +117,7 @@ func (t *Tracker) SetActionOnExceed(a ActionOnExceed) {
 }
 
 // FallbackOldAndSetNewAction sets the action when memory usage exceeds bytesLimit
-// and set the original action as its FallbackAction.
+// and set the original action as its fallback.
 func (t *Tracker) FallbackOldAndSetNewAction(a ActionOnExceed) {
 	t.actionMu.Lock()
 	defer t.actionMu.Unlock()
