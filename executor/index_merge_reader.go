@@ -489,7 +489,7 @@ func (e *IndexMergeReaderExecutor) Next(ctx context.Context, req *chunk.Chunk) e
 		if resultTask == nil {
 			return nil
 		}
-		for resultTask.cursor < resultTask.chunk.NumRows() {
+		for resultTask.cursor < resultTask.chunk.GetNumRows() {
 			req.AppendRow(resultTask.chunk.GetRow(resultTask.cursor))
 			resultTask.cursor++
 			if req.NumRows() >= e.maxChunkSize {
@@ -777,9 +777,8 @@ func (w *indexMergeTableScanWorker) executeTask(ctx context.Context, task *looku
 		task.memTracker.Consume(memUsage)
 		if task.chunk == nil {
 			task.chunk = chunk.Renew(chk, chk.NumRows())
-		} else {
-			task.chunk.Append(chk, 0, chk.NumRows())
 		}
+		task.chunk.Append(chk, 0, chk.NumRows())
 	}
 
 	memUsage = task.memUsage

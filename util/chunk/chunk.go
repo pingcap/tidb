@@ -340,6 +340,14 @@ func (c *Chunk) NumRows() int {
 	return c.columns[0].length
 }
 
+// GetNumRows encapsulate NumRows and avoid chunk is nil.
+func (c *Chunk) GetNumRows() int {
+	if c == nil {
+		return 0
+	}
+	return c.NumRows()
+}
+
 // GetRow gets the Row in the chunk with the row index.
 func (c *Chunk) GetRow(idx int) Row {
 	if c.sel != nil {

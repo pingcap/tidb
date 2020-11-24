@@ -667,7 +667,7 @@ func (e *IndexLookUpExecutor) Next(ctx context.Context, req *chunk.Chunk) error 
 }
 
 func (e *IndexLookUpExecutor) getResultTask() (*lookupTableTask, error) {
-	if e.resultCurr != nil && e.resultCurr.cursor < e.resultCurr.chunk.NumRows() {
+	if e.resultCurr != nil && e.resultCurr.cursor < e.resultCurr.chunk.GetNumRows() {
 		return e.resultCurr, nil
 	}
 	task, ok := <-e.resultCh
@@ -1137,9 +1137,8 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 		task.memTracker.Consume(memUsage)
 		if task.chunk == nil {
 			task.chunk = chunk.Renew(chk, chk.NumRows())
-		} else {
-			task.chunk.Append(chk, 0, chk.NumRows())
 		}
+		task.chunk.Append(chk, 0, chk.NumRows())
 	}
 
 	defer trace.StartRegion(ctx, "IndexLookUpTableCompute").End()
