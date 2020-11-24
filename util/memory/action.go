@@ -35,20 +35,24 @@ type ActionOnExceed interface {
 	// SetFallback sets a fallback action which will be triggered if itself has
 	// already been triggered.
 	SetFallback(a ActionOnExceed)
-	// GetFallback get the FallbackAction action of the Action.
+	// GetFallback get the fallback action of the Action.
 	GetFallback() ActionOnExceed
 	// GetPriority get the priority of the Action.
 	GetPriority() int64
 }
 
+// BaseOOMAction manages the fallback action for all Action.
 type BaseOOMAction struct {
 	fallbackAction ActionOnExceed
 }
 
+// SetFallback sets a fallback action which will be triggered if itself has
+// already been triggered.
 func (b *BaseOOMAction) SetFallback(a ActionOnExceed) {
 	b.fallbackAction = a
 }
 
+// GetFallback get the fallback action of the Action.
 func (b *BaseOOMAction) GetFallback() ActionOnExceed {
 	return b.fallbackAction
 }
