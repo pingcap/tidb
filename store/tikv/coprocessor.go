@@ -584,7 +584,7 @@ func (it *copIterator) open(ctx context.Context) {
 
 func (sender *copIteratorTaskSender) run() {
 	// Send tasks to feed the worker goroutines.
-	for i, t := range sender.tasks {
+	for _, t := range sender.tasks {
 		// we control the sending rate to prevent all tasks
 		// being done (aka. all of the responses are buffered) by copIteratorWorker.
 		// We keep the number of inflight tasks within the number of 2 * concurrency when Keep Order is true.
