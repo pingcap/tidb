@@ -521,15 +521,6 @@ func init() {
 func (worker *copIteratorWorker) run(ctx context.Context) {
 	defer func() {
 		worker.wg.Done()
-		failpoint.Inject("testRateLimitActionMockWaitMax", func(val failpoint.Value) {
-			if val.(bool) {
-				// we need to prevent action from being closed before triggering action yet
-				for worker.actionOnExceed.isEnabled() {
-					time.Sleep(10 * time.Millisecond)
-				}
-			}
-		})
-		worker.actionOnExceed.close()
 	}()
 	for task := range worker.taskCh {
 		respCh := worker.respChan
