@@ -112,7 +112,7 @@ const (
 
 // globalPanicOnExceed panics when GlobalDisTracker storage usage exceeds storage quota.
 type globalPanicOnExceed struct {
-	mutex sync.Mutex // For synchronization.
+	memory.BaseOOMAction
 }
 
 func init() {
@@ -128,8 +128,8 @@ func (a *globalPanicOnExceed) SetLogHook(hook func(uint64)) {}
 
 // Action panics when storage usage exceeds storage quota.
 func (a *globalPanicOnExceed) Action(t *memory.Tracker) {
-	a.mutex.Lock()
-	defer a.mutex.Unlock()
+	a.M.Lock()
+	defer a.M.Unlock()
 	msg := ""
 	switch t.Label() {
 	case memory.LabelForGlobalStorage:
@@ -140,14 +140,6 @@ func (a *globalPanicOnExceed) Action(t *memory.Tracker) {
 		msg = "Out of Unknown Resource Quota!"
 	}
 	panic(msg)
-}
-
-// SetFallback sets a fallback action.
-func (a *globalPanicOnExceed) SetFallback(memory.ActionOnExceed) {}
-
-// GetFallback get the fallback action of the Action.
-func (a *globalPanicOnExceed) GetFallback() memory.ActionOnExceed {
-	return nil
 }
 
 // GetPriority get the priority of the Action

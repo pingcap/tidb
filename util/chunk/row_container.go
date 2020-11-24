@@ -259,11 +259,10 @@ func (c *RowContainer) ActionSpillForTest() *SpillDiskAction {
 // the memory quota of a query is exceeded, SpillDiskAction.Action is
 // triggered.
 type SpillDiskAction struct {
-	c              *RowContainer
-	fallbackAction memory.ActionOnExceed
-	m              sync.Mutex
-	once           sync.Once
-	cond           spillStatusCond
+	memory.BaseOOMAction
+	c    *RowContainer
+	once sync.Once
+	cond spillStatusCond
 
 	// test function only used for test sync.
 	testSyncInputFunc  func()
@@ -303,8 +302,8 @@ func (a *SpillDiskAction) getStatus() spillStatus {
 // Action sends a signal to trigger spillToDisk method of RowContainer
 // and if it is already triggered before, call its fallbackAction.
 func (a *SpillDiskAction) Action(t *memory.Tracker) {
-	a.m.Lock()
-	defer a.m.Unlock()
+	a.M.Lock()
+	defer a.M.Unlock()
 
 	if a.getStatus() == notSpilled {
 		a.once.Do(func() {
@@ -333,35 +332,21 @@ func (a *SpillDiskAction) Action(t *memory.Tracker) {
 	if !t.CheckExceed() {
 		return
 	}
-	if a.fallbackAction != nil {
-		a.fallbackAction.Action(t)
+	if a.FallbackAction != nil {
+		a.FallbackAction.Action(t)
 	}
 }
 
 // Reset resets the status for SpillDiskAction.
 func (a *SpillDiskAction) Reset() {
-	a.m.Lock()
-	defer a.m.Unlock()
+	a.M.Lock()
+	defer a.M.Unlock()
 	a.setStatus(notSpilled)
 	a.once = sync.Once{}
 }
 
-// SetFallback sets the fallback action.
-func (a *SpillDiskAction) SetFallback(fallback memory.ActionOnExceed) {
-	a.m.Lock()
-	defer a.m.Unlock()
-	a.fallbackAction = fallback
-}
-
 // SetLogHook sets the hook, it does nothing just to form the memory.ActionOnExceed interface.
 func (a *SpillDiskAction) SetLogHook(hook func(uint64)) {}
-
-// GetFallback get the fallback action of the Action.
-func (a *SpillDiskAction) GetFallback() memory.ActionOnExceed {
-	a.m.Lock()
-	defer a.m.Unlock()
-	return a.fallbackAction
-}
 
 // GetPriority get the priority of the Action.
 func (a *SpillDiskAction) GetPriority() int64 {
@@ -512,8 +497,8 @@ type SortAndSpillDiskAction struct {
 // Action sends a signal to trigger sortAndSpillToDisk method of RowContainer
 // and if it is already triggered before, call its fallbackAction.
 func (a *SortAndSpillDiskAction) Action(t *memory.Tracker) {
-	a.m.Lock()
-	defer a.m.Unlock()
+	a.M.Lock()
+	defer a.M.Unlock()
 	// Guarantee that each partition size is at least 10% of the threshold, to avoid opening too many files.
 	if a.getStatus() == notSpilled && a.c.GetMemTracker().BytesConsumed() > t.GetBytesLimit()/10 {
 		a.once.Do(func() {
@@ -542,14 +527,9 @@ func (a *SortAndSpillDiskAction) Action(t *memory.Tracker) {
 	if !t.CheckExceed() {
 		return
 	}
-	if a.fallbackAction != nil {
-		a.fallbackAction.Action(t)
+	if a.FallbackAction != nil {
+		a.FallbackAction.Action(t)
 	}
-}
-
-// SetFallback sets the fallback action.
-func (a *SortAndSpillDiskAction) SetFallback(fallback memory.ActionOnExceed) {
-	a.fallbackAction = fallback
 }
 
 // SetLogHook sets the hook, it does nothing just to form the memory.ActionOnExceed interface.
