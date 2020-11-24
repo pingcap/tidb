@@ -330,6 +330,10 @@ func doRequest(ctx context.Context, addrs []string, route, method string, body i
 		}
 
 		res, err = util2.InternalHTTPClient().Do(req)
+
+		if strings.Contains(route, "placement-rule") && res.StatusCode == http.StatusNotFound {
+			return nil, nil
+		}
 		if err == nil {
 			bodyBytes, err := ioutil.ReadAll(res.Body)
 			if err != nil {
