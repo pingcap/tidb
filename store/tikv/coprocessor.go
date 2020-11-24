@@ -59,7 +59,7 @@ type CopClient struct {
 }
 
 // Send builds the request and gets the coprocessor iterator response.
-func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variables, sessionMemTracker *memory.Tracker) kv.Response {
+func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variables, sessionMemTracker *memory.Tracker, enabledRateLimitAction bool) kv.Response {
 	if req.StoreType == kv.TiFlash && req.BatchCop {
 		logutil.BgLogger().Debug("send batch requests")
 		return c.sendBatch(ctx, req, vars)
@@ -108,7 +108,7 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variable
 	if !it.req.Streaming {
 		ctx = context.WithValue(ctx, RPCCancellerCtxKey{}, it.rpcCancel)
 	}
-	it.open(ctx)
+	it.open(ctx, enabledRateLimitAction)
 	return it
 }
 
@@ -440,6 +440,8 @@ type copIteratorWorker struct {
 	memTracker *memory.Tracker
 
 	replicaReadSeed uint32
+
+	actionOnExceed *rateLimitAction
 }
 
 // copIteratorTaskSender sends tasks to taskCh then wait for the workers to exit.
@@ -528,7 +530,7 @@ func (worker *copIteratorWorker) run(ctx context.Context) {
 			respCh = task.respChan
 		}
 		worker.handleTask(ctx, task, respCh)
-		if worker.respChan != nil {
+		if worker.respChan != nil && worker.actionOnExceed.isEnabled() {
 			// When a task is finished by the worker, send a finCopResp into channel to notify the copIterator that
 			// there is a task finished.
 			worker.sendToRespCh(finCopResp, worker.respChan, false)
@@ -546,7 +548,7 @@ func (worker *copIteratorWorker) run(ctx context.Context) {
 }
 
 // open starts workers and sender goroutines.
-func (it *copIterator) open(ctx context.Context) {
+func (it *copIterator) open(ctx context.Context, enabledRateLimitAction bool) {
 	taskCh := make(chan *copTask, 1)
 	it.wg.Add(it.concurrency)
 	// Start it.concurrency number of workers to handle cop requests.
@@ -569,6 +571,8 @@ func (it *copIterator) open(ctx context.Context) {
 			memTracker: it.memTracker,
 
 			replicaReadSeed: it.replicaReadSeed,
+
+			actionOnExceed: it.actionOnExceed,
 		}
 		go worker.run(ctx)
 	}
@@ -580,8 +584,8 @@ func (it *copIterator) open(ctx context.Context) {
 		sendRate: it.sendRate,
 	}
 	taskSender.respChan = it.respChan
-	// If the ticket is less than 2, wo will directly disable the actionOnExceed
-	it.actionOnExceed.setEnabled(true)
+	// enabledRateLimit decides whether enabled ratelimit action
+	it.actionOnExceed.setEnabled(enabledRateLimitAction)
 	go taskSender.run()
 }
 
@@ -1335,13 +1339,9 @@ func newRateLimitAction(totalTokenNumber uint) *rateLimitAction {
 
 // Action implements ActionOnExceed.Action
 func (e *rateLimitAction) Action(t *memory.Tracker) {
-	failpoint.Inject("testRateLimitActionDisable", func(val failpoint.Value) {
-		if val.(bool) {
-			e.setEnabled(false)
-		}
-	})
-
 	if !e.isEnabled() {
+		logutil.BgLogger().Info("memory exceed quota, rateLimitAction delegate to fallback action",
+			zap.Bool("rateLimit action enabled", false))
 		if e.fallbackAction != nil {
 			e.fallbackAction.Action(t)
 		}

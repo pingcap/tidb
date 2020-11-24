@@ -759,6 +759,9 @@ type SessionVars struct {
 
 	// TxnScope indicates the scope of the transactions. It should be `global` or equal to `dc-location` in configuration.
 	TxnScope string
+
+	// EnabledRateLimitAction indicates whether enabled ratelimit action during coprocessor
+	EnabledRateLimitAction bool
 }
 
 // UseDynamicPartitionPrune indicates whether use new dynamic partition prune.
@@ -897,6 +900,7 @@ func NewSessionVars() *SessionVars {
 		EnableAmendPessimisticTxn:   DefTiDBEnableAmendPessimisticTxn,
 		PartitionPruneMode:          *atomic2.NewString(DefTiDBPartitionPruneMode),
 		TxnScope:                    config.GetGlobalConfig().TxnScope,
+		EnabledRateLimitAction:      DefTiDBEnableRateLimitAction,
 	}
 	vars.KVVars = kv.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{
@@ -1596,6 +1600,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.TxnScope = val
 	case TiDBMemoryUsageAlarmRatio:
 		MemoryUsageAlarmRatio.Store(tidbOptFloat64(val, 0.8))
+	case TiDBEnableRateLimitAction:
+		s.EnabledRateLimitAction = TiDBOptOn(val)
 	}
 	s.systems[name] = val
 	return nil

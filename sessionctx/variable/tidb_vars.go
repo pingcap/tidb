@@ -470,6 +470,9 @@ const (
 
 	// TiDBMemoryUsageAlarmRatio indicates the alarm threshold when memory usage of the tidb-server exceeds.
 	TiDBMemoryUsageAlarmRatio = "tidb_memory_usage_alarm_ratio"
+
+	// TiDBEnableRateLimitAction indicates whether enabled ratelimit action
+	TiDBEnableRateLimitAction = "tidb_enable_rate_limit_action"
 )
 
 // Default TiDB system variable values.
@@ -581,6 +584,7 @@ const (
 	DefTiDBEnableParallelApply         = false
 	DefTiDBEnableAmendPessimisticTxn   = true
 	DefTiDBPartitionPruneMode          = "static-only"
+	DefTiDBEnableRateLimitAction      = true
 )
 
 // Process global variables.
