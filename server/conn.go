@@ -140,6 +140,9 @@ var (
 	disconnectNormal            = metrics.DisconnectionCounter.WithLabelValues(metrics.LblOK)
 	disconnectByClientWithError = metrics.DisconnectionCounter.WithLabelValues(metrics.LblError)
 	disconnectErrorUndetermined = metrics.DisconnectionCounter.WithLabelValues("undetermined")
+
+	connIdleDurationHistogramStmt = metrics.ConnIdleDurationHistogram.WithLabelValues("stmt")
+	connIdleDurationHistogramTxn  = metrics.ConnIdleDurationHistogram.WithLabelValues("txn")
 )
 
 // newClientConn creates a *clientConn object.
@@ -150,6 +153,7 @@ func newClientConn(s *Server) *clientConn {
 		collation:    mysql.DefaultCollationID,
 		alloc:        arena.NewAllocator(32 * 1024),
 		status:       connStatusDispatching,
+		lastActive:   time.Now(),
 	}
 }
 
@@ -174,6 +178,7 @@ type clientConn struct {
 	status       int32             // dispatching/reading/shutdown/waitshutdown
 	lastCode     uint16            // last error code
 	collation    uint8             // collation used by client, may be different from the collation used by database.
+	lastActive   time.Time
 
 	// mu is used for cancelling the execution of current transaction.
 	mu struct {
@@ -923,6 +928,13 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 		// reset killed for each request
 		atomic.StoreUint32(&cc.ctx.GetSessionVars().Killed, 0)
 	}()
+	t := time.Now()
+	if (cc.ctx.Status() & mysql.ServerStatusInTrans) > 0 {
+		connIdleDurationHistogramTxn.Observe(t.Sub(cc.lastActive).Seconds())
+	} else {
+		connIdleDurationHistogramStmt.Observe(t.Sub(cc.lastActive).Seconds())
+	}
+
 	span := opentracing.StartSpan("server.dispatch")
 	ctx = opentracing.ContextWithSpan(ctx, span)
 
@@ -932,7 +944,6 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 	cc.mu.cancelFunc = cancelFunc
 	cc.mu.Unlock()
 
-	t := time.Now()
 	cc.lastPacket = data
 	cmd := data[0]
 	data = data[1:]
@@ -969,6 +980,7 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 
 		cc.server.releaseToken(token)
 		span.Finish()
+		cc.lastActive = time.Now()
 	}()
 
 	vars := cc.ctx.GetSessionVars()

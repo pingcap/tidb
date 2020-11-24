@@ -82,6 +82,22 @@ var MetricTableMap = map[string]MetricTableDef{
 		Labels:  []string{"instance"},
 		Comment: "TiDB current connection counts",
 	},
+	"tidb_connection_idle_duration": {
+		PromQL:   `histogram_quantile($QUANTILE, sum(rate(tidb_server_conn_idle_duration_seconds_bucket{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (le,type,instance))`,
+		Labels:   []string{"instance", "type"},
+		Quantile: 0.90,
+		Comment:  "The quantile of TiDB connection idle durations(second)",
+	},
+	"tidb_connection_idle_total_count": {
+		PromQL:  `sum(increase(tidb_server_conn_idle_duration_seconds_count{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (type,instance)`,
+		Labels:  []string{"instance", "type"},
+		Comment: "The total count of TiDB connection idle",
+	},
+	"tidb_connection_idle_total_time": {
+		PromQL:  `sum(increase(tidb_server_conn_idle_duration_seconds_sum{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (type,instance)`,
+		Labels:  []string{"instance", "type"},
+		Comment: "The total time of TiDB connection idle",
+	},
 	"node_process_open_fd_count": {
 		PromQL:  "process_open_fds{$LABEL_CONDITIONS}",
 		Labels:  []string{"instance", "job"},
