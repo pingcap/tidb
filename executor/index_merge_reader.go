@@ -762,6 +762,7 @@ func (w *indexMergeTableScanWorker) executeTask(ctx context.Context, task *looku
 	task.memUsage = memUsage
 	task.memTracker.Consume(memUsage)
 	handleCnt := len(task.handles)
+	task.rowIDs = make([]int, 0, handleCnt)
 	for {
 		chk := newFirstChunk(tableReader)
 		err = Next(ctx, tableReader, chk)
