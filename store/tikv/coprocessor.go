@@ -534,9 +534,11 @@ func (worker *copIteratorWorker) run(ctx context.Context) {
 			respCh = task.respChan
 		}
 		worker.handleTask(ctx, task, respCh)
-		// When a task is finished by the worker, send a finCopResp into channel to notify the copIterator that
-		// there is a task finished.
-		worker.sendToRespCh(finCopResp, respCh, false)
+		if worker.respChan != nil {
+			// When a task is finished by the worker, send a finCopResp into channel to notify the copIterator that
+			// there is a task finished.
+			worker.sendToRespCh(finCopResp, respCh, false)
+		}
 		close(task.respChan)
 		if worker.vars != nil && worker.vars.Killed != nil && atomic.LoadUint32(worker.vars.Killed) == 1 {
 			return
@@ -628,7 +630,7 @@ func (it *copIterator) recvFromRespCh(ctx context.Context, respCh <-chan *copRes
 				failpoint.Inject("testRateLimitActionMockConsumeAndAssert", func(val failpoint.Value) {
 					if val.(bool) {
 						if resp != finCopResp {
-							consumed = MockResponseSize
+							consumed = MockResponseSizeForTest
 						}
 					}
 				})
@@ -670,7 +672,7 @@ func (worker *copIteratorWorker) sendToRespCh(resp *copResponse, respCh chan<- *
 		failpoint.Inject("testRateLimitActionMockConsumeAndAssert", func(val failpoint.Value) {
 			if val.(bool) {
 				if resp != finCopResp {
-					consumed = MockResponseSize
+					consumed = MockResponseSizeForTest
 				}
 			}
 		})
@@ -684,8 +686,8 @@ func (worker *copIteratorWorker) sendToRespCh(resp *copResponse, respCh chan<- *
 	return
 }
 
-// MockResponseSize mock the response size
-const MockResponseSize = 100 * 1024 * 1024
+// MockResponseSizeForTest mock the response size
+const MockResponseSizeForTest = 100 * 1024 * 1024
 
 // Next returns next coprocessor result.
 // NOTE: Use nil to indicate finish, so if the returned ResultSubset is not nil, reader should continue to call Next().
@@ -700,7 +702,7 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 		if val.(bool) {
 			// we only need to trigger oom at least once.
 			if len(it.tasks) > 9 {
-				for it.memTracker.MaxConsumed() < 5*MockResponseSize {
+				for it.memTracker.MaxConsumed() < 5*MockResponseSizeForTest {
 					time.Sleep(10 * time.Millisecond)
 				}
 			}
@@ -719,6 +721,7 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 			it.actionOnExceed.destroyTokenIfNeeded(func() {
 				it.sendRate.putToken()
 			})
+			return it.Next(ctx)
 		}
 	} else {
 		for {
@@ -743,10 +746,6 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 			it.tasks[it.curr] = nil
 			it.curr++
 		}
-	}
-
-	if resp == finCopResp {
-		return it.Next(ctx)
 	}
 
 	if resp.err != nil {
@@ -1318,9 +1317,7 @@ type rateLimitAction struct {
 		exceeded bool
 		// remainingTokenNum indicates the count of tokens which still exists
 		remainingTokenNum uint
-		// isTokenDestroyed indicates whether there is one token has been isTokenDestroyed after Action been triggered
-		isTokenDestroyed bool
-		once             sync.Once
+		once              sync.Once
 		// triggerCountForTest indicates the total count of the rateLimitAction's Action being executed
 		triggerCountForTest uint
 	}
@@ -1333,7 +1330,6 @@ func newRateLimitAction(totalTokenNumber uint) *rateLimitAction {
 			sync.Mutex
 			exceeded            bool
 			remainingTokenNum   uint
-			isTokenDestroyed    bool
 			once                sync.Once
 			triggerCountForTest uint
 		}{
@@ -1383,7 +1379,6 @@ func (e *rateLimitAction) Action(t *memory.Tracker) {
 			zap.Int64("quota", t.GetBytesLimit()),
 			zap.Uint("total token count", e.totalTokenNum),
 			zap.Uint("remaining token count", e.cond.remainingTokenNum))
-		e.cond.isTokenDestroyed = false
 		e.cond.exceeded = true
 		e.cond.triggerCountForTest++
 	})
@@ -1405,19 +1400,15 @@ func (e *rateLimitAction) SetFallback(a memory.ActionOnExceed) {
 func (e *rateLimitAction) destroyTokenIfNeeded(returnToken func()) {
 	e.conditionLock()
 	defer e.conditionUnlock()
-	if !e.cond.exceeded {
+	if !e.cond.exceeded || !e.isEnabled() {
 		returnToken()
 		return
 	}
 	// If actionOnExceed has been triggered and there is no token have been destroyed before,
 	// destroy one token.
-	if !e.cond.isTokenDestroyed {
-		e.cond.remainingTokenNum = e.cond.remainingTokenNum - 1
-		e.cond.isTokenDestroyed = true
-		e.cond.once = sync.Once{}
-		return
-	}
-	returnToken()
+	e.cond.remainingTokenNum = e.cond.remainingTokenNum - 1
+	e.cond.exceeded = false
+	e.cond.once = sync.Once{}
 }
 
 func (e *rateLimitAction) conditionLock() {

@@ -6753,7 +6753,7 @@ func (s *testSerialSuite) TestCoprocessorOOMAction(c *C) {
 	for _, testcase := range testcases {
 		c.Log(testcase.name)
 		// larger than 4 copResponse, smaller than 5 copResponse
-		quota := 5*tikv.MockResponseSize - 100
+		quota := 5*tikv.MockResponseSizeForTest - 100
 		se, err := session.CreateSession4Test(s.store)
 		c.Check(err, IsNil)
 		tk.Se = se
