@@ -1063,7 +1063,6 @@ func (cli *testServerClient) runTestExplainForConn(c *C) {
 		dbt.mustExec("drop table if exists t")
 		dbt.mustExec("create table t (a int key, b int)")
 		dbt.mustExec("insert t values (1, 1)")
-		dbt.mustExec("set @@tidb_enable_collect_execution_info=0;")
 		rows := dbt.mustQuery("select connection_id();")
 		c.Assert(rows.Next(), IsTrue)
 		var connID int64
@@ -1073,10 +1072,10 @@ func (cli *testServerClient) runTestExplainForConn(c *C) {
 		dbt.mustQuery("select * from t where a=1")
 		rows = dbt.mustQuery("explain for connection " + strconv.Itoa(int(connID)))
 		c.Assert(rows.Next(), IsTrue)
-		row := make([]string, 5)
-		err = rows.Scan(&row[0], &row[1], &row[2], &row[3], &row[4])
+		row := make([]string, 9)
+		err = rows.Scan(&row[0], &row[1], &row[2], &row[3], &row[4], &row[5], &row[6], &row[7], &row[8])
 		c.Assert(err, IsNil)
-		c.Assert(strings.Join(row, ","), Equals, "Point_Get_1,1.00,root,table:t,handle:1")
+		c.Assert(strings.Join(row, ","), Matches, "Point_Get_1,1.00,1,root,table:t,time.*loop.*handle:1.*")
 		c.Assert(rows.Close(), IsNil)
 	})
 }
