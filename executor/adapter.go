@@ -327,7 +327,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 	cmd32 := atomic.LoadUint32(&sctx.GetSessionVars().CommandValue)
 	cmd := byte(cmd32)
 	var pi processinfoSetter
-	if raw, ok := a.Ctx.(processinfoSetter); ok {
+	if raw, ok := sctx.(processinfoSetter); ok {
 		pi = raw
 		sql := a.OriginText()
 		if simple, ok := a.Plan.(*plannercore.Simple); ok && simple.Statement != nil {
@@ -336,7 +336,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 				sql = ss.SecureText()
 			}
 		}
-		maxExecutionTime := getMaxExecutionTime(a.Ctx)
+		maxExecutionTime := getMaxExecutionTime(sctx)
 		// Update processinfo, ShowProcess() will use it.
 		pi.SetProcessInfo(sql, time.Now(), cmd, maxExecutionTime)
 		if a.Ctx.GetSessionVars().StmtCtx.StmtType == "" {
