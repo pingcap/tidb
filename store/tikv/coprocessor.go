@@ -507,7 +507,7 @@ func (rs *copResponse) RespTime() time.Duration {
 
 const minLogCopTaskTime = 300 * time.Millisecond
 
-// When the finished handleTask, we need to notify the copIterator that there is one task finished.
+// When the worker finished `handleTask`, we need to notify the copIterator that there is one task finished.
 // For the non-keep-order case, we send a finCopResp into the respCh after `handleTask`. When copIterator recv
 // finCopResp from the respCh, it will be aware that there is one task finished.
 var finCopResp *copResponse
