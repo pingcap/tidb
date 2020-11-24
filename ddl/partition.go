@@ -1740,6 +1740,7 @@ func onAlterTablePartition(t *meta.Meta, job *model.Job) (ver int64, err error) 
 			job.State = model.JobStateCancelled
 			return 0, errors.Wrapf(err, "failed to notify PD the placement rules")
 		}
+		tblInfo.State = model.StateGlobalTxnWriteOnly
 		ver, err = updateSchemaVersion(t, job)
 		if err != nil {
 			return ver, errors.Trace(err)
@@ -1747,6 +1748,7 @@ func onAlterTablePartition(t *meta.Meta, job *model.Job) (ver int64, err error) 
 		job.SchemaState = model.StateGlobalTxnWriteOnly
 	case model.StateGlobalTxnWriteOnly:
 		// 	global txn write only -> public
+		tblInfo.State = model.StatePublic
 		ver, err = updateSchemaVersion(t, job)
 		if err != nil {
 			return ver, errors.Trace(err)
