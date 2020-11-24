@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/planner/core"
+	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
@@ -497,11 +498,11 @@ func buildWindowExecutor(ctx sessionctx.Context, windowFunc string, funcs int, f
 		}
 
 		plan = core.PhysicalShuffle{
-			Concurrency:  concurrency,
-			Tail:         tail,
-			DataSource:   src,
-			SplitterType: core.PartitionHashSplitterType,
-			HashByItems:  byItems,
+			Concurrency:      concurrency,
+			Tails:            []plannercore.PhysicalPlan{tail},
+			DataSources:      []plannercore.PhysicalPlan{src},
+			SplitterType:     core.PartitionHashSplitterType,
+			HashByItemArrays: [][]expression.Expression{byItems},
 		}.Init(ctx, nil, 0)
 		plan.SetChildren(win)
 	} else {
@@ -1140,6 +1141,8 @@ type indexJoinTestCase struct {
 	ctx             sessionctx.Context
 	outerJoinKeyIdx []int
 	innerJoinKeyIdx []int
+	outerHashKeyIdx []int
+	innerHashKeyIdx []int
 	innerIdx        []int
 	needOuterSort   bool
 	rawData         string
@@ -1167,6 +1170,8 @@ func defaultIndexJoinTestCase() *indexJoinTestCase {
 		ctx:             ctx,
 		outerJoinKeyIdx: []int{0, 1},
 		innerJoinKeyIdx: []int{0, 1},
+		outerHashKeyIdx: []int{0, 1},
+		innerHashKeyIdx: []int{0, 1},
 		innerIdx:        []int{0, 1},
 		rawData:         wideString,
 	}
@@ -1216,12 +1221,14 @@ func prepare4IndexInnerHashJoin(tc *indexJoinTestCase, outerDS *mockDataSource, 
 		outerCtx: outerCtx{
 			rowTypes: leftTypes,
 			keyCols:  tc.outerJoinKeyIdx,
+			hashCols: tc.outerHashKeyIdx,
 		},
 		innerCtx: innerCtx{
 			readerBuilder: &dataReaderBuilder{Plan: &mockPhysicalIndexReader{e: innerDS}, executorBuilder: newExecutorBuilder(tc.ctx, nil)},
 			rowTypes:      rightTypes,
 			colLens:       colLens,
 			keyCols:       tc.innerJoinKeyIdx,
+			hashCols:      tc.innerHashKeyIdx,
 		},
 		workerWg:      new(sync.WaitGroup),
 		joiner:        newJoiner(tc.ctx, 0, false, defaultValues, nil, leftTypes, rightTypes, nil),
@@ -1484,6 +1491,8 @@ func newMergeJoinBenchmark(numOuterRows, numInnerDup, numInnerRedundant int) (tc
 		ctx:             ctx,
 		outerJoinKeyIdx: []int{0, 1},
 		innerJoinKeyIdx: []int{0, 1},
+		outerHashKeyIdx: []int{0, 1},
+		innerHashKeyIdx: []int{0, 1},
 		innerIdx:        []int{0, 1},
 		rawData:         wideString,
 	}

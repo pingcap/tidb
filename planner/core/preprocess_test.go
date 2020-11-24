@@ -58,7 +58,7 @@ func (s *testValidatorSuite) SetUpTest(c *C) {
 
 func (s *testValidatorSuite) runSQL(c *C, sql string, inPrepare bool, terr error) {
 	stmts, err1 := session.Parse(s.ctx, sql)
-	c.Assert(err1, IsNil)
+	c.Assert(err1, IsNil, Commentf("sql: %s", sql))
 	c.Assert(stmts, HasLen, 1)
 	stmt := stmts[0]
 	var opts []core.PreprocessOpt
@@ -218,10 +218,15 @@ func (s *testValidatorSuite) TestValidator(c *C) {
 
 		{"CREATE TABLE t (a float(255, 30))", true, nil},
 		{"CREATE TABLE t (a double(255, 30))", true, nil},
-		{"CREATE TABLE t (a float(256, 30))", false, types.ErrTooBigPrecision},
+		{"CREATE TABLE t (a float(256, 30))", false, types.ErrTooBigDisplayWidth},
 		{"CREATE TABLE t (a float(255, 31))", false, types.ErrTooBigScale},
-		{"CREATE TABLE t (a double(256, 30))", false, types.ErrTooBigPrecision},
+		{"CREATE TABLE t (a double(256, 30))", false, types.ErrTooBigDisplayWidth},
 		{"CREATE TABLE t (a double(255, 31))", false, types.ErrTooBigScale},
+
+		// issue 20447
+		{"CREATE TABLE t (a float(53))", true, nil},
+		{"CREATE TABLE t (a float(54))", false, types.ErrWrongFieldSpec},
+		{"CREATE TABLE t (a double)", true, nil},
 
 		// FIXME: temporary 'not implemented yet' test for 'CREATE TABLE ... SELECT' (issue 4754)
 		{"CREATE TABLE t SELECT * FROM u", false, errors.New("'CREATE TABLE ... SELECT' is not implemented yet")},

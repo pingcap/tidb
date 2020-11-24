@@ -216,8 +216,8 @@ func (b *executorBuilder) build(p plannercore.Plan) Executor {
 		return b.buildWindow(v)
 	case *plannercore.PhysicalShuffle:
 		return b.buildShuffle(v)
-	case *plannercore.PhysicalShuffleDataSourceStub:
-		return b.buildShuffleDataSourceStub(v)
+	case *plannercore.PhysicalShuffleReceiverStub:
+		return b.buildShuffleReceiverStub(v)
 	case *plannercore.SQLBindPlan:
 		return b.buildSQLBindExec(v)
 	case *plannercore.SplitRegion:
@@ -2315,12 +2315,23 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 	for i := 0; i < len(v.OuterJoinKeys); i++ {
 		outerKeyCols[i] = v.OuterJoinKeys[i].Index
 	}
-	e.outerCtx.keyCols = outerKeyCols
 	innerKeyCols := make([]int, len(v.InnerJoinKeys))
 	for i := 0; i < len(v.InnerJoinKeys); i++ {
 		innerKeyCols[i] = v.InnerJoinKeys[i].Index
 	}
+	e.outerCtx.keyCols = outerKeyCols
 	e.innerCtx.keyCols = innerKeyCols
+
+	outerHashCols, innerHashCols := make([]int, len(v.OuterHashKeys)), make([]int, len(v.InnerHashKeys))
+	for i := 0; i < len(v.OuterHashKeys); i++ {
+		outerHashCols[i] = v.OuterHashKeys[i].Index
+	}
+	for i := 0; i < len(v.InnerHashKeys); i++ {
+		innerHashCols[i] = v.InnerHashKeys[i].Index
+	}
+	e.outerCtx.hashCols = outerHashCols
+	e.innerCtx.hashCols = innerHashCols
+
 	e.joinResult = newFirstChunk(e)
 	executorCounterIndexLookUpJoin.Inc()
 	return e
@@ -3659,40 +3670,57 @@ func (b *executorBuilder) buildWindow(v *plannercore.PhysicalWindow) *WindowExec
 
 func (b *executorBuilder) buildShuffle(v *plannercore.PhysicalShuffle) *ShuffleExec {
 	base := newBaseExecutor(b.ctx, v.Schema(), v.ID())
-	shuffle := &ShuffleExec{baseExecutor: base,
-		concurrency: v.Concurrency,
+	shuffle := &ShuffleExec{
+		baseExecutor: base,
+		concurrency:  v.Concurrency,
 	}
 
 	switch v.SplitterType {
 	case plannercore.PartitionHashSplitterType:
-		shuffle.splitter = &partitionHashSplitter{
-			byItems:    v.HashByItems,
-			numWorkers: shuffle.concurrency,
+		splitters := make([]partitionSplitter, len(v.HashByItemArrays))
+		for i, hashByItemArray := range v.HashByItemArrays {
+			hashSplitter := &partitionHashSplitter{
+				byItems:    hashByItemArray,
+				numWorkers: shuffle.concurrency,
+			}
+			copy(hashSplitter.byItems, hashByItemArray)
+			splitters[i] = hashSplitter
 		}
+		shuffle.splitters = splitters
 	default:
 		panic("Not implemented. Should not reach here.")
 	}
 
-	shuffle.dataSource = b.build(v.DataSource)
-	if b.err != nil {
-		return nil
+	shuffle.dataSources = make([]Executor, len(v.DataSources))
+	for i, dataSource := range v.DataSources {
+		shuffle.dataSources[i] = b.build(dataSource)
+		if b.err != nil {
+			return nil
+		}
 	}
 
-	// head & tail of physical plans' chain within "partition".
-	var head, tail = v.Children()[0], v.Tail
-
+	head := v.Children()[0]
 	shuffle.workers = make([]*shuffleWorker, shuffle.concurrency)
 	for i := range shuffle.workers {
-		w := &shuffleWorker{
-			baseExecutor: newBaseExecutor(b.ctx, v.DataSource.Schema(), v.DataSource.ID()),
+		receivers := make([]*shuffleReceiver, len(v.DataSources))
+		for j, dataSource := range v.DataSources {
+			receivers[j] = &shuffleReceiver{
+				baseExecutor: newBaseExecutor(b.ctx, dataSource.Schema(), dataSource.ID()),
+			}
 		}
 
-		stub := plannercore.PhysicalShuffleDataSourceStub{
-			Worker: (unsafe.Pointer)(w),
-		}.Init(b.ctx, v.DataSource.Stats(), v.DataSource.SelectBlockOffset(), nil)
-		stub.SetSchema(v.DataSource.Schema())
+		w := &shuffleWorker{
+			receivers: receivers,
+		}
 
-		tail.SetChildren(stub)
+		for j, dataSource := range v.DataSources {
+			stub := plannercore.PhysicalShuffleReceiverStub{
+				Receiver: (unsafe.Pointer)(receivers[j]),
+			}.Init(b.ctx, dataSource.Stats(), dataSource.SelectBlockOffset(), nil)
+			stub.SetSchema(dataSource.Schema())
+			v.Tails[j].SetChildren(stub)
+		}
+
 		w.childExec = b.build(head)
 		if b.err != nil {
 			return nil
@@ -3704,8 +3732,8 @@ func (b *executorBuilder) buildShuffle(v *plannercore.PhysicalShuffle) *ShuffleE
 	return shuffle
 }
 
-func (b *executorBuilder) buildShuffleDataSourceStub(v *plannercore.PhysicalShuffleDataSourceStub) *shuffleWorker {
-	return (*shuffleWorker)(v.Worker)
+func (b *executorBuilder) buildShuffleReceiverStub(v *plannercore.PhysicalShuffleReceiverStub) *shuffleReceiver {
+	return (*shuffleReceiver)(v.Receiver)
 }
 
 func (b *executorBuilder) buildSQLBindExec(v *plannercore.SQLBindPlan) Executor {
