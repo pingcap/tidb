@@ -2593,9 +2593,7 @@ func (s *testIntegrationSuite3) TestStrictDoubleTypeCheck(c *C) {
 }
 
 func (s *testIntegrationSuite7) TestDuplicateErrorMessage(c *C) {
-	collate.SetNewCollationEnabledForTest(true)
 	defer collate.SetNewCollationEnabledForTest(false)
-
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
@@ -2611,37 +2609,40 @@ func (s *testIntegrationSuite7) TestDuplicateErrorMessage(c *C) {
 		{[]string{"int", "datetime", "varchar(10)", "enum('r', 'g', 'b')"}, []string{"1", "'2020-01-01 00:00:00'", "'qwe'", "'r'"}},
 	}
 
-	for _, globalIndex := range []bool{false, true} {
-		restoreConfig := config.RestoreFunc()
-		config.UpdateGlobal(func(conf *config.Config) {
-			conf.EnableGlobalIndex = globalIndex
-		})
-		for _, clusteredIndex := range []int{0, 1} {
-			tk.MustExec(fmt.Sprintf("set session tidb_enable_clustered_index=%d;", clusteredIndex))
-			for _, t := range tests {
-				tk.MustExec("drop table if exists t;")
-				fields := make([]string, len(t.types))
+	for _, newCollate := range []bool{false, true} {
+		collate.SetNewCollationEnabledForTest(newCollate)
+		for _, globalIndex := range []bool{false, true} {
+			restoreConfig := config.RestoreFunc()
+			config.UpdateGlobal(func(conf *config.Config) {
+				conf.EnableGlobalIndex = globalIndex
+			})
+			for _, clusteredIndex := range []int{0, 1} {
+				tk.MustExec(fmt.Sprintf("set session tidb_enable_clustered_index=%d;", clusteredIndex))
+				for _, t := range tests {
+					tk.MustExec("drop table if exists t;")
+					fields := make([]string, len(t.types))
 
-				for i, tp := range t.types {
-					fields[i] = fmt.Sprintf("a%d %s", i, tp)
-				}
-				tk.MustExec("create table t (id1 int, id2 varchar(10), " + strings.Join(fields, ",") + ",primary key(id1, id2)) " +
-					"collate utf8mb4_general_ci " +
-					"partition by range (id1) (partition p1 values less than (2), partition p2 values less than (maxvalue))")
+					for i, tp := range t.types {
+						fields[i] = fmt.Sprintf("a%d %s", i, tp)
+					}
+					tk.MustExec("create table t (id1 int, id2 varchar(10), " + strings.Join(fields, ",") + ",primary key(id1, id2)) " +
+						"collate utf8mb4_general_ci " +
+						"partition by range (id1) (partition p1 values less than (2), partition p2 values less than (maxvalue))")
 
-				vals := strings.Join(t.values, ",")
-				tk.MustExec(fmt.Sprintf("insert into t values (1, 'asd', %s), (1, 'dsa', %s)", vals, vals))
-				for i := range t.types {
-					fields[i] = fmt.Sprintf("a%d", i)
+					vals := strings.Join(t.values, ",")
+					tk.MustExec(fmt.Sprintf("insert into t values (1, 'asd', %s), (1, 'dsa', %s)", vals, vals))
+					for i := range t.types {
+						fields[i] = fmt.Sprintf("a%d", i)
+					}
+					index := strings.Join(fields, ",")
+					for i, val := range t.values {
+						fields[i] = strings.Replace(val, "'", "", -1)
+					}
+					tk.MustGetErrMsg("alter table t add unique index t_idx(id1,"+index+")",
+						fmt.Sprintf("[kv:1062]Duplicate entry '1-%s' for key 't_idx'", strings.Join(fields, "-")))
 				}
-				index := strings.Join(fields, ",")
-				for i, val := range t.values {
-					fields[i] = strings.Replace(val, "'", "", -1)
-				}
-				tk.MustGetErrMsg("alter table t add unique index t_idx(id1,"+index+")",
-					fmt.Sprintf("[kv:1062]Duplicate entry '1-%s' for key 't_idx'", strings.Join(fields, "-")))
 			}
+			restoreConfig()
 		}
-		restoreConfig()
 	}
 }
