@@ -45,6 +45,8 @@ import (
 	"github.com/pingcap/tidb/types"
 	tidbutil "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
@@ -801,39 +803,76 @@ func checkListPartitionValue(ctx sessionctx.Context, tblInfo *model.TableInfo) e
 	if len(pi.Definitions) == 0 {
 		return ast.ErrPartitionsMustBeDefined.GenWithStackByArgs("LIST")
 	}
-	if err := formatListPartitionValue(ctx, tblInfo); err != nil {
+	expStr, err := formatListPartitionValue(ctx, tblInfo)
+	if err != nil {
 		return err
 	}
 
-	var partitionsValuesMap []map[string]struct{}
-	partitionsValuesMap = append(partitionsValuesMap, make(map[string]struct{}))
-	for i := 1; i < len(pi.Columns); i++ {
-		partitionsValuesMap = append(partitionsValuesMap, make(map[string]struct{}))
-	}
-
-	checkUniqueValue := func(vs []string) error {
-		found := 0
-		for i, v := range vs {
-			m := partitionsValuesMap[i]
-			if _, ok := m[v]; ok {
-				found++
-			}
-			m[v] = struct{}{}
-		}
-		if found == len(vs) {
+	partitionsValuesMap := make(map[string]struct{})
+	for _, s := range expStr {
+		if _, ok := partitionsValuesMap[s]; ok {
 			return errors.Trace(ErrMultipleDefConstInListPart)
 		}
-		return nil
+		partitionsValuesMap[s] = struct{}{}
 	}
 
-	for _, def := range pi.Definitions {
-		for _, vs := range def.InValues {
-			if err := checkUniqueValue(vs); err != nil {
-				return err
+	return nil
+}
+
+func formatListPartitionValue(ctx sessionctx.Context, tblInfo *model.TableInfo) ([]string, error) {
+	defs := tblInfo.Partition.Definitions
+	pi := tblInfo.Partition
+	var colTps []*types.FieldType
+	cols := make([]*model.ColumnInfo, 0, len(pi.Columns))
+	if len(pi.Columns) == 0 {
+		tp := types.NewFieldType(mysql.TypeLonglong)
+		if isRangePartitionColUnsignedBigint(tblInfo.Columns, tblInfo.Partition) {
+			tp.Flag |= mysql.UnsignedFlag
+		}
+		colTps = []*types.FieldType{tp}
+	} else {
+		colTps = make([]*types.FieldType, 0, len(pi.Columns))
+		for _, colName := range pi.Columns {
+			colInfo := findColumnByName(colName.L, tblInfo)
+			if colInfo == nil {
+				return nil, errors.Trace(ErrFieldNotFoundPart)
 			}
+			colTps = append(colTps, &colInfo.FieldType)
+			cols = append(cols, colInfo)
 		}
 	}
-	return nil
+
+	exprStrs := make([]string, 0)
+	inValueStrs := make([]string, 0, mathutil.Max(len(pi.Columns), 1))
+	for i := range defs {
+		for j, vs := range defs[i].InValues {
+			inValueStrs = inValueStrs[:0]
+			for k, v := range vs {
+				expr, err := expression.ParseSimpleExprCastWithTableInfo(ctx, v, &model.TableInfo{}, colTps[k])
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
+				eval, err := expr.Eval(chunk.Row{})
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
+				s, err := eval.ToString()
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
+				if colTps[k].EvalType() == types.ETInt {
+					defs[i].InValues[j][k] = s
+				}
+				if colTps[k].EvalType() == types.ETString {
+					s = string(hack.String(collate.GetCollator(cols[k].Collate).Key(s)))
+				}
+				s = strings.ReplaceAll(s, ",", `\,`)
+				inValueStrs = append(inValueStrs, s)
+			}
+			exprStrs = append(exprStrs, strings.Join(inValueStrs, ","))
+		}
+	}
+	return exprStrs, nil
 }
 
 // getRangeValue gets an integer from the range value string.
@@ -868,43 +907,6 @@ func getRangeValue(ctx sessionctx.Context, str string, unsignedBigint bool) (int
 		res, isNull, err2 := e.EvalInt(ctx, chunk.Row{})
 		if err2 == nil && !isNull {
 			return res, true, nil
-		}
-	}
-	return 0, false, ErrNotAllowedTypeInPartition.GenWithStackByArgs(str)
-}
-
-// getListPartitionValue gets an integer/null from the string value.
-// The returned boolean value indicates whether the input string is a null.
-func getListPartitionValue(ctx sessionctx.Context, str string, unsignedBigint bool) (interface{}, bool, error) {
-	// The input value maybe an integer or constant expression or null.
-	// For example:
-	// PARTITION p0 VALUES IN (1)
-	// PARTITION p0 VALUES IN (TO_SECONDS('2004-01-01'))
-	// PARTITION p0 VALUES IN (NULL)
-	if unsignedBigint {
-		if value, err := strconv.ParseUint(str, 10, 64); err == nil {
-			return value, false, nil
-		}
-
-		e, err1 := expression.ParseSimpleExprWithTableInfo(ctx, str, &model.TableInfo{})
-		if err1 != nil {
-			return 0, false, err1
-		}
-		res, isNull, err2 := e.EvalInt(ctx, chunk.Row{})
-		if err2 == nil {
-			return uint64(res), isNull, nil
-		}
-	} else {
-		if value, err := strconv.ParseInt(str, 10, 64); err == nil {
-			return value, false, nil
-		}
-		e, err1 := expression.ParseSimpleExprWithTableInfo(ctx, str, &model.TableInfo{})
-		if err1 != nil {
-			return 0, false, err1
-		}
-		res, isNull, err2 := e.EvalInt(ctx, chunk.Row{})
-		if err2 == nil {
-			return res, isNull, nil
 		}
 	}
 	return 0, false, ErrNotAllowedTypeInPartition.GenWithStackByArgs(str)
