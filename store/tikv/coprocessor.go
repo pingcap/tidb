@@ -1007,17 +1007,10 @@ func (worker *copIteratorWorker) logTimeCopTask(costTime time.Duration, task *co
 		timeDetail = detail.TimeDetail
 	}
 	if timeDetail != nil {
-		processMs := timeDetail.ProcessWallTimeMs
-		if processMs > minLogKVProcessTime {
-			logStr += fmt.Sprintf(" kv_process_ms:%d", processMs)
-		}
-
-		waitMs := timeDetail.WaitWallTimeMs
-		if waitMs > minLogKVWaitTime {
-			logStr += fmt.Sprintf(" kv_wait_ms: %d", waitMs)
-			if processMs <= minLogKVProcessTime {
-				logStr = strings.Replace(logStr, "TIME_COP_PROCESS", "TIME_COP_WAIT", 1)
-			}
+		logStr += fmt.Sprintf(" kv_process_ms:%d", timeDetail.ProcessWallTimeMs)
+		logStr += fmt.Sprintf(" kv_wait_ms:%d", timeDetail.WaitWallTimeMs)
+		if processMs <= minLogKVProcessTime {
+			logStr = strings.Replace(logStr, "TIME_COP_PROCESS", "TIME_COP_WAIT", 1)
 		}
 	}
 
