@@ -435,8 +435,6 @@ type copIteratorWorker struct {
 	memTracker *memory.Tracker
 
 	replicaReadSeed uint32
-
-	sendRate *rateLimit
 }
 
 // copIteratorTaskSender sends tasks to taskCh then wait for the workers to exit.
@@ -566,7 +564,6 @@ func (it *copIterator) open(ctx context.Context) {
 			memTracker: it.memTracker,
 
 			replicaReadSeed: it.replicaReadSeed,
-			sendRate:        it.sendRate,
 		}
 		go worker.run(ctx)
 	}
