@@ -327,6 +327,44 @@ func (s *testFieldTypeSuite) TestAggFieldTypeForTypeFlag(c *C) {
 	c.Assert(aggTp.Flag, Equals, mysql.NotNullFlag)
 }
 
+func (s testFieldTypeSuite) TestAggFieldTypeForIntegralPromotion(c *C) {
+	fts := []*FieldType{
+		NewFieldType(mysql.TypeTiny),
+		NewFieldType(mysql.TypeShort),
+		NewFieldType(mysql.TypeInt24),
+		NewFieldType(mysql.TypeLong),
+		NewFieldType(mysql.TypeLonglong),
+		NewFieldType(mysql.TypeNewDecimal),
+	}
+
+	for i := 1; i < len(fts)-1; i++ {
+		tps := fts[i-1 : i+1]
+
+		tps[0].Flag = 0
+		tps[1].Flag = 0
+		aggTp := AggFieldType(tps)
+		c.Assert(aggTp.Tp, Equals, fts[i].Tp)
+		c.Assert(aggTp.Flag, Equals, uint(0))
+
+		tps[0].Flag = mysql.UnsignedFlag
+		aggTp = AggFieldType(tps)
+		c.Assert(aggTp.Tp, Equals, fts[i].Tp)
+		c.Assert(aggTp.Flag, Equals, uint(0))
+
+		tps[0].Flag = mysql.UnsignedFlag
+		tps[1].Flag = mysql.UnsignedFlag
+		aggTp = AggFieldType(tps)
+		c.Assert(aggTp.Tp, Equals, fts[i].Tp)
+		c.Assert(aggTp.Flag, Equals, mysql.UnsignedFlag)
+
+		tps[0].Flag = 0
+		tps[1].Flag = mysql.UnsignedFlag
+		aggTp = AggFieldType(tps)
+		c.Assert(aggTp.Tp, Equals, fts[i+1].Tp)
+		c.Assert(aggTp.Flag, Equals, uint(0))
+	}
+}
+
 func (s *testFieldTypeSuite) TestAggregateEvalType(c *C) {
 	defer testleak.AfterTest(c)()
 	fts := []*FieldType{
