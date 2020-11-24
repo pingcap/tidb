@@ -92,6 +92,11 @@ func (st *TxnState) cleanupStmtBuf() {
 	st.initCnt = buf.Len()
 }
 
+// Scope implements the MemBuffer interface.
+func (st *TxnState) Scope() string {
+	return st.Transaction.Scope()
+}
+
 // Size implements the MemBuffer interface.
 func (st *TxnState) Size() int {
 	if st.Transaction == nil {

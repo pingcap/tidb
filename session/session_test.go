@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
@@ -3255,6 +3256,75 @@ func (s *testSessionSuite2) TestSetTxnScope(c *C) {
 	tk.Se = se
 	result = tk.MustQuery("select @@txn_scope;")
 	result.Check(testkit.Rows(oracle.GlobalTxnScope))
+}
+
+func (s *testSessionSuite2) TestGlobalAndLocalTxn(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec(`create table t1 (c int)
+PARTITION BY RANGE (c) (
+	PARTITION p0 VALUES LESS THAN (100)
+);`)
+	bundles := make(map[string]*placement.Bundle)
+	is := s.dom.InfoSchema()
+	is.MockBundles(bundles)
+	tb, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	c.Assert(err, IsNil)
+	for _, def := range tb.Meta().GetPartitionInfo().Definitions {
+		if def.Name.String() == "p0" {
+			groupID := placement.GroupID(def.ID)
+			bundles[groupID] = &placement.Bundle{
+				ID: groupID,
+				Rules: []*placement.Rule{
+					{
+						GroupID: groupID,
+						Role:    placement.Leader,
+						Count:   1,
+						LabelConstraints: []placement.LabelConstraint{
+							{
+								Key:    placement.DCLabelKey,
+								Op:     placement.In,
+								Values: []string{"dc-1"},
+							},
+						},
+					},
+				},
+			}
+		}
+	}
+
+	// set txn_scope to global
+	tk.MustExec(fmt.Sprintf("set @@session.txn_scope = '%s';", oracle.GlobalTxnScope))
+	result := tk.MustQuery("select @@txn_scope;")
+	result.Check(testkit.Rows(oracle.GlobalTxnScope))
+	// test global txn
+	tk.MustExec("insert into t1 (c) values (1)")
+	tk.MustExec("begin")
+	txn, err := tk.Se.Txn(true)
+	c.Assert(err, IsNil)
+	c.Assert(txn.Scope(), Equals, oracle.GlobalTxnScope)
+	c.Assert(txn.Valid(), IsTrue)
+	tk.MustExec("insert into t1 (c) values (1)")
+	c.Assert(txn.Valid(), IsTrue)
+	tk.MustExec("commit")
+	tk.MustExec("insert into t1 (c) values (1)")
+
+	// set txn_scope to local
+	tk.MustExec("set @@session.txn_scope = 'dc-1';")
+	result = tk.MustQuery("select @@txn_scope;")
+	result.Check(testkit.Rows("dc-1"))
+	// test local txn
+	tk.MustExec("insert into t1 (c) values (1)")
+	tk.MustExec("begin")
+	txn, err = tk.Se.Txn(true)
+	c.Assert(err, IsNil)
+	c.Assert(txn.Scope(), Equals, "dc-1")
+	c.Assert(txn.Valid(), IsTrue)
+	tk.MustExec("insert into t1 (c) values (1)")
+	c.Assert(txn.Valid(), IsTrue)
+	tk.MustExec("commit")
+	tk.MustExec("insert into t1 (c) values (1)")
 }
 
 func (s *testSessionSuite3) TestSetVarHint(c *C) {
