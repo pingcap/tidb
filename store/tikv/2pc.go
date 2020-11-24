@@ -121,6 +121,9 @@ type twoPhaseCommitter struct {
 	prewriteCancelled uint32
 	useOnePC          uint32
 	onePCCommitTS     uint64
+
+	// doingAmend means the amend prewrite is ongoing.
+	doingAmend bool
 }
 
 type memBufferMutations struct {
@@ -248,6 +251,21 @@ func (c *PlainMutations) GetKeys() [][]byte {
 	return c.keys
 }
 
+// GetOps returns the key ops.
+func (c *PlainMutations) GetOps() []pb.Op {
+	return c.ops
+}
+
+// GetValues returns the key values.
+func (c *PlainMutations) GetValues() [][]byte {
+	return c.values
+}
+
+// GetPessimisticFlags returns the key pessimistic flags.
+func (c *PlainMutations) GetPessimisticFlags() []bool {
+	return c.isPessimisticLock
+}
+
 // GetOp returns the key op at index.
 func (c *PlainMutations) GetOp(i int) pb.Op {
 	return c.ops[i]
@@ -264,6 +282,30 @@ func (c *PlainMutations) GetValue(i int) []byte {
 // IsPessimisticLock returns the key pessimistic flag at index.
 func (c *PlainMutations) IsPessimisticLock(i int) bool {
 	return c.isPessimisticLock[i]
+}
+
+// PlainMutation represents a single transaction operation.
+type PlainMutation struct {
+	KeyOp             pb.Op
+	Key               []byte
+	Value             []byte
+	IsPessimisticLock bool
+}
+
+// MergeMutations append input mutations into current mutations.
+func (c *PlainMutations) MergeMutations(mutations PlainMutations) {
+	c.ops = append(c.ops, mutations.ops...)
+	c.keys = append(c.keys, mutations.keys...)
+	c.values = append(c.values, mutations.values...)
+	c.isPessimisticLock = append(c.isPessimisticLock, mutations.isPessimisticLock...)
+}
+
+// AppendMutation merges a single Mutation into the current mutations.
+func (c *PlainMutations) AppendMutation(mutation PlainMutation) {
+	c.ops = append(c.ops, mutation.KeyOp)
+	c.keys = append(c.keys, mutation.Key)
+	c.values = append(c.values, mutation.Value)
+	c.isPessimisticLock = append(c.isPessimisticLock, mutation.IsPessimisticLock)
 }
 
 // newTwoPhaseCommitter creates a twoPhaseCommitter.
@@ -1265,6 +1307,36 @@ type RelatedSchemaChange struct {
 	Amendable        bool
 }
 
+func (c *twoPhaseCommitter) amendPessimisticLock(ctx context.Context, addMutations CommitterMutations) error {
+	keysNeedToLock := NewPlainMutations(addMutations.Len())
+	for i := 0; i < addMutations.Len(); i++ {
+		if addMutations.IsPessimisticLock(i) {
+			keysNeedToLock.Push(addMutations.GetOp(i), addMutations.GetKey(i), addMutations.GetValue(i), addMutations.IsPessimisticLock(i))
+		}
+	}
+	// For unique index amend, we need to pessimistic lock the generated new index keys first.
+	// Set doingAmend to true to force the pessimistic lock do the exist check for these keys.
+	c.doingAmend = true
+	defer func() { c.doingAmend = false }()
+	if keysNeedToLock.Len() > 0 {
+		pessimisticLockBo := NewBackofferWithVars(ctx, pessimisticLockMaxBackoff, c.txn.vars)
+		lCtx := &kv.LockCtx{
+			ForUpdateTS:  c.forUpdateTS,
+			LockWaitTime: kv.LockNoWait,
+		}
+		logutil.Logger(ctx).Info("amendPessimisticLock",
+			zap.Uint64("startTs", c.startTS),
+			zap.Uint64("forUpdateTS", c.forUpdateTS))
+		err := c.pessimisticLockMutations(pessimisticLockBo, lCtx, &keysNeedToLock)
+		if err != nil {
+			logutil.Logger(ctx).Warn("amend pessimistic lock has failed", zap.Error(err), zap.Uint64("txnStartTS", c.startTS))
+			return err
+		}
+		logutil.Logger(ctx).Info("amend pessimistic lock", zap.Uint64("startTS", c.startTS), zap.Uint64("forUpdateTS", c.forUpdateTS))
+	}
+	return nil
+}
+
 func (c *twoPhaseCommitter) tryAmendTxn(ctx context.Context, startInfoSchema SchemaVer, change *RelatedSchemaChange) (bool, error) {
 	addMutations, err := c.txn.schemaAmender.AmendTxn(ctx, startInfoSchema, change, c.mutations)
 	if err != nil {
@@ -1272,6 +1344,11 @@ func (c *twoPhaseCommitter) tryAmendTxn(ctx context.Context, startInfoSchema Sch
 	}
 	// Add new mutations to the mutation list or prewrite them if prewrite already starts.
 	if addMutations != nil && addMutations.Len() > 0 {
+		err = c.amendPessimisticLock(ctx, addMutations)
+		if err != nil {
+			logutil.Logger(ctx).Info("amendPessimisticLock has failed", zap.Error(err))
+			return false, err
+		}
 		if c.prewriteStarted {
 			prewriteBo := NewBackofferWithVars(ctx, PrewriteMaxBackoff, c.txn.vars)
 			err = c.prewriteMutations(prewriteBo, addMutations)
