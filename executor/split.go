@@ -693,11 +693,6 @@ func (d *regionKeyDecoder) decodeRegionKey(key []byte) string {
 		if len(d.recordPrefix) == len(key) {
 			return fmt.Sprintf("t_%d_r", d.physicalTableID)
 		}
-<<<<<<< HEAD
-		_, handle, err := codec.DecodeInt(key[len(d.recordPrefix):])
-		if err == nil {
-			return fmt.Sprintf("t_%d_r_%d", d.physicalTableID, handle)
-=======
 		isIntHandle := len(key)-len(d.recordPrefix) == 8
 		if isIntHandle {
 			_, handle, err := codec.DecodeInt(key[len(d.recordPrefix):])
@@ -707,7 +702,6 @@ func (d *regionKeyDecoder) decodeRegionKey(key []byte) string {
 				}
 				return fmt.Sprintf("t_%d_r_%d", d.physicalTableID, handle)
 			}
->>>>>>> 508073071... executor: fix the display of large unsigned handle when show table regions (#21026)
 		}
 	}
 	if len(d.tablePrefix) > 0 && bytes.HasPrefix(key, d.tablePrefix) {

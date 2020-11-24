@@ -892,7 +892,7 @@ func (s *testAutoRandomSuite) TestAutoRandomBase(c *C) {
 	))
 }
 
-func (s *testSerialSuite) TestAutoRandomWithLargeSignedShowTableRegions(c *C) {
+func (s *testAutoRandomSuite) TestAutoRandomWithLargeSignedShowTableRegions(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("create database if not exists auto_random_db;")
 	defer tk.MustExec("drop database if exists auto_random_db;")
