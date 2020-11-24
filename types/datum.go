@@ -952,6 +952,8 @@ func (d *Datum) convertToString(sc *stmtctx.StatementContext, target *FieldType)
 func ProduceStrWithSpecifiedTp(s string, tp *FieldType, sc *stmtctx.StatementContext, padZero bool) (_ string, err error) {
 	flen, chs := tp.Flen, tp.Charset
 	if flen >= 0 {
+		// overflowed stores the part of the string that is out of the length contraint, it is later checked to see if the
+		// overflowed part is all whitespaces
 		var overflowed string
 		var characterLen int
 		// Flen is the rune length, not binary length, for UTF8 charset, we need to calculate the

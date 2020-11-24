@@ -1510,6 +1510,8 @@ func (s *testSuite9) TestIssue10402(c *C) {
 	tk.Se.GetSessionVars().StmtCtx.SetWarnings(nil)
 	tk.MustExec("insert into vctt values ('ab\\n\\n\\n', 'ab\\n\\n\\n'), ('ab\\t\\t\\t', 'ab\\t\\t\\t'), ('ab    ', 'ab    '), ('ab\\r\\r\\r', 'ab\\r\\r\\r')")
 	c.Check(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(4))
+	warns := tk.Se.GetSessionVars().StmtCtx.GetWarnings()
+	c.Check(fmt.Sprintf("%v", warns), Equals, "[{Warning [types:1265]Data truncated, field len 4, data len 5} {Warning [types:1265]Data truncated, field len 4, data len 5} {Warning [types:1265]Data truncated, field len 4, data len 6} {Warning [types:1265]Data truncated, field len 4, data len 5}]")
 	tk.MustQuery("select * from vctt").Check(testkit.Rows("ab\n\n ab\n\n", "ab\t\t ab\t\t", "ab   ab", "ab\r\r ab\r\r"))
 	tk.MustQuery("select length(v), length(c) from vctt").Check(testkit.Rows("4 4", "4 4", "4 2", "4 4"))
 }
