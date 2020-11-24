@@ -732,7 +732,7 @@ func (s *testIntegrationSerialSuite) TestPartitionPruningWithDateType(c *C) {
 	tk.MustExec("create table t(a datetime) partition by range columns (a) (partition p1 values less than ('20000101'), partition p2 values less than ('2000-10-01'));")
 	tk.MustExec("insert into t values ('20000201'), ('19000101');")
 
-	//
+	// cannot get the statistical information immediately
 	// tk.MustQuery(`SELECT PARTITION_NAME,TABLE_ROWS FROM INFORMATION_SCHEMA.PARTITIONS WHERE TABLE_NAME = 't';`).Check(testkit.Rows("p1 1", "p2 1"))
 	str := tk.MustQuery(`desc select * from t where a < '2000-01-01';`).Rows()[0][3].(string)
 	c.Assert(strings.Contains(str, "partition:p1"), IsTrue)
