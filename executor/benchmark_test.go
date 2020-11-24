@@ -318,10 +318,10 @@ func buildStreamAggExecutor(ctx sessionctx.Context, srcExec Executor, schema *ex
 	if concurrency > 1 {
 		plan = core.PhysicalShuffle{
 			Concurrency:  concurrency,
-			Tail:         tail,
-			DataSource:   src,
+			Tails:        []core.PhysicalPlan{tail},
+			DataSources:  []core.PhysicalPlan{src},
 			SplitterType: core.PartitionHashSplitterType,
-			ByItems:      sg.GroupByItems,
+			ByItemArrays: [][]expression.Expression{sg.GroupByItems},
 		}.Init(ctx, nil, 0)
 		plan.SetChildren(sg)
 	} else {
