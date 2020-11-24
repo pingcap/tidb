@@ -2601,6 +2601,23 @@ func (n *BRIEStmt) SecureText() string {
 	return sb.String()
 }
 
+type PurgeImportStmt struct {
+	stmtNode
+
+	TaskID uint64
+}
+
+func (n *PurgeImportStmt) Accept(v Visitor) (Node, bool) {
+	newNode, _ := v.Enter(n)
+	n = newNode.(*PurgeImportStmt)
+	return v.Leave(n)
+}
+
+func (n *PurgeImportStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WritePlainf("PURGE IMPORT %d", n.TaskID)
+	return nil
+}
+
 // Ident is the table identifier composed of schema name and table name.
 type Ident struct {
 	Schema model.CIStr
