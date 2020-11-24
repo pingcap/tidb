@@ -131,7 +131,8 @@ func mergeFallback(a ActionOnExceed, b ActionOnExceed) ActionOnExceed {
 	if b == nil {
 		return a
 	}
-	if a.GetPriority() < b.GetPriority() {
+	// The action registered later should be triggered first.
+	if a.GetPriority() <= b.GetPriority() {
 		a, b = b, a
 	}
 	a.SetFallback(mergeFallback(a.GetFallback(), b))
