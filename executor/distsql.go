@@ -67,6 +67,7 @@ type lookupTableTask struct {
 	handles []kv.Handle
 	rowIdx  []int // rowIdx represents the handle index for every row. Only used when keep order.
 	chunk   *chunk.Chunk
+	rowIDs  []int
 	idxRows *chunk.Chunk
 	cursor  int
 
@@ -106,9 +107,7 @@ func (task *lookupTableTask) Less(i, j int) bool {
 
 func (task *lookupTableTask) Swap(i, j int) {
 	task.rowIdx[i], task.rowIdx[j] = task.rowIdx[j], task.rowIdx[i]
-	rowi := task.chunk.GetRow(i)
-	rowj := task.chunk.GetRow(j)
-	rowi, rowj = rowj, rowi
+	task.rowIDs[i], task.rowIDs[j] = task.rowIDs[j], task.rowIDs[i]
 }
 
 // Closeable is a interface for closeable structures.
@@ -657,7 +656,7 @@ func (e *IndexLookUpExecutor) Next(ctx context.Context, req *chunk.Chunk) error 
 			return nil
 		}
 		for resultTask.cursor < resultTask.chunk.GetNumRows() {
-			req.AppendRow(resultTask.chunk.GetRow(resultTask.cursor))
+			req.AppendRow(resultTask.chunk.GetRow(resultTask.rowIDs[resultTask.cursor]))
 			resultTask.cursor++
 			if req.IsFull() {
 				return nil
@@ -1122,6 +1121,7 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 	task.memUsage = memUsage
 	task.memTracker.Consume(memUsage)
 	handleCnt := len(task.handles)
+	task.rowIDs = make([]int, 0, handleCnt)
 	for {
 		chk := newFirstChunk(tableReader)
 		err = Next(ctx, tableReader, chk)
@@ -1139,6 +1139,10 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 			task.chunk = chunk.Renew(chk, chk.NumRows())
 		}
 		task.chunk.Append(chk, 0, chk.NumRows())
+		iter := chunk.NewIterator4Chunk(chk)
+		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
+			task.rowIDs = append(task.rowIDs, row.Idx())
+		}
 	}
 
 	defer trace.StartRegion(ctx, "IndexLookUpTableCompute").End()
@@ -1150,7 +1154,7 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 	if w.keepOrder {
 		task.rowIdx = make([]int, 0, task.chunk.GetNumRows())
 		for i := 0; i < task.chunk.GetNumRows(); i++ {
-			handle, err := w.idxLookup.getHandle(task.chunk.GetRow(i), w.handleIdx, w.idxLookup.isCommonHandle(), getHandleFromTable)
+			handle, err := w.idxLookup.getHandle(task.chunk.GetRow(task.rowIDs[i]), w.handleIdx, w.idxLookup.isCommonHandle(), getHandleFromTable)
 			if err != nil {
 				return err
 			}
@@ -1167,7 +1171,7 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 		if len(w.idxLookup.tblPlans) == 1 {
 			obtainedHandlesMap := kv.NewHandleMap()
 			for i := 0; i < task.chunk.GetNumRows(); i++ {
-				handle, err := w.idxLookup.getHandle(task.chunk.GetRow(i), w.handleIdx, w.idxLookup.isCommonHandle(), getHandleFromTable)
+				handle, err := w.idxLookup.getHandle(task.chunk.GetRow(task.rowIDs[i]), w.handleIdx, w.idxLookup.isCommonHandle(), getHandleFromTable)
 				if err != nil {
 					return err
 				}
