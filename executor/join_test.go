@@ -1389,7 +1389,7 @@ func (s *testSuiteJoinSerial) TestIndexNestedLoopHashJoin(c *C) {
 	tk.Se.GetSessionVars().MaxChunkSize = 2
 	tk.MustExec("set @@tidb_index_join_batch_size=2")
 	tk.MustQuery("desc select * from t l1 where exists ( select * from t l2 where l2.l_orderkey = l1.l_orderkey and l2.l_suppkey <> l1.l_suppkey ) order by `l_orderkey`,`l_linenumber`;").Check(testkit.Rows(
-		"Sort_9 7.20 root  test.t.l_orderkey, test.t.l_linenumber",
+		"Sort_9 7.20 root  test.t.l_orderkey:asc, test.t.l_linenumber:asc",
 		"└─IndexHashJoin_17 7.20 root  semi join, inner:IndexLookUp_15, outer key:test.t.l_orderkey, inner key:test.t.l_orderkey, equal cond:eq(test.t.l_orderkey, test.t.l_orderkey), other cond:ne(test.t.l_suppkey, test.t.l_suppkey)",
 		"  ├─TableReader_20(Build) 9.00 root  data:Selection_19",
 		"  │ └─Selection_19 9.00 cop[tikv]  not(isnull(test.t.l_suppkey))",
