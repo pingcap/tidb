@@ -1058,6 +1058,29 @@ func (cli *testServerClient) runTestConcurrentUpdate(c *C) {
 	})
 }
 
+func (cli *testServerClient) runTestExplainForConn(c *C) {
+	cli.runTestsOnNewDB(c, nil, "explain_for_conn", func(dbt *DBTest) {
+		dbt.mustExec("drop table if exists t")
+		dbt.mustExec("create table t (a int key, b int)")
+		dbt.mustExec("insert t values (1, 1)")
+		dbt.mustExec("set @@tidb_enable_collect_execution_info=0;")
+		rows := dbt.mustQuery("select connection_id();")
+		c.Assert(rows.Next(), IsTrue)
+		var connID int64
+		err := rows.Scan(&connID)
+		c.Assert(err, IsNil)
+		c.Assert(rows.Close(), IsNil)
+		dbt.mustQuery("select * from t where a=1")
+		rows = dbt.mustQuery("explain for connection " + strconv.Itoa(int(connID)))
+		c.Assert(rows.Next(), IsTrue)
+		row := make([]string, 5)
+		err = rows.Scan(&row[0], &row[1], &row[2], &row[3], &row[4])
+		c.Assert(err, IsNil)
+		c.Assert(strings.Join(row, ","), Equals, "Point_Get_1,1.00,root,table:t,handle:1")
+		c.Assert(rows.Close(), IsNil)
+	})
+}
+
 func (cli *testServerClient) runTestErrorCode(c *C) {
 	cli.runTestsOnNewDB(c, nil, "ErrorCode", func(dbt *DBTest) {
 		dbt.mustExec("create table test (c int PRIMARY KEY);")
