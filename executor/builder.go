@@ -2356,19 +2356,7 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 
 // buildTableReader builds a table reader executor. It first build a no range table reader,
 // and then update it ranges from table scan plan.
-<<<<<<< HEAD
 func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) *TableReaderExecutor {
-	if b.ctx.GetSessionVars().IsPessimisticReadConsistency() {
-		if err := b.refreshForUpdateTSForRC(); err != nil {
-			b.err = err
-			return nil
-		}
-=======
-func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) Executor {
-	if useMPPExecution(b.ctx, v) {
-		return b.buildMPPGather(v)
->>>>>>> d12eb1b17... executor: Fix IndexMergeReader works incorrectly under RC isolation level (#21208)
-	}
 	ret, err := buildNoRangeTableReader(b, v)
 	if err != nil {
 		b.err = err
@@ -2436,17 +2424,7 @@ func buildNoRangeIndexReader(b *executorBuilder, v *plannercore.PhysicalIndexRea
 	return e, nil
 }
 
-<<<<<<< HEAD
 func (b *executorBuilder) buildIndexReader(v *plannercore.PhysicalIndexReader) *IndexReaderExecutor {
-	if b.ctx.GetSessionVars().IsPessimisticReadConsistency() {
-		if err := b.refreshForUpdateTSForRC(); err != nil {
-			b.err = err
-			return nil
-		}
-	}
-=======
-func (b *executorBuilder) buildIndexReader(v *plannercore.PhysicalIndexReader) Executor {
->>>>>>> d12eb1b17... executor: Fix IndexMergeReader works incorrectly under RC isolation level (#21208)
 	ret, err := buildNoRangeIndexReader(b, v)
 	if err != nil {
 		b.err = err
@@ -2544,17 +2522,7 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 	return e, nil
 }
 
-<<<<<<< HEAD
 func (b *executorBuilder) buildIndexLookUpReader(v *plannercore.PhysicalIndexLookUpReader) *IndexLookUpExecutor {
-	if b.ctx.GetSessionVars().IsPessimisticReadConsistency() {
-		if err := b.refreshForUpdateTSForRC(); err != nil {
-			b.err = err
-			return nil
-		}
-	}
-=======
-func (b *executorBuilder) buildIndexLookUpReader(v *plannercore.PhysicalIndexLookUpReader) Executor {
->>>>>>> d12eb1b17... executor: Fix IndexMergeReader works incorrectly under RC isolation level (#21208)
 	ret, err := buildNoRangeIndexLookUpReader(b, v)
 	if err != nil {
 		b.err = err
