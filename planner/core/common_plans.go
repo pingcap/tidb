@@ -937,11 +937,6 @@ func GetExplainRowsForPlan(plan Plan) (rows [][]string) {
 	return explain.Rows
 }
 
-// IsExplainFor returns true when plan is `explain for connection`
-func (e *Explain) IsExplainFor() bool {
-	return e.ExplainRows != nil
-}
-
 // prepareSchema prepares explain's result schema.
 func (e *Explain) prepareSchema() error {
 	var fieldNames []string
