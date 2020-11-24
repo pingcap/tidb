@@ -3800,13 +3800,29 @@ func checkUpdateList(ctx sessionctx.Context, tblID2table map[int64]table.Table, 
 	if err != nil {
 		return err
 	}
+	isPKUpdated := make(map[int64]model.CIStr)
 	for _, content := range updt.TblColPosInfos {
 		tbl := tblID2table[content.TblID]
 		flags := assignFlags[content.Start:content.End]
+		var updatePK bool
 		for i, col := range tbl.WritableCols() {
 			if flags[i] && col.State != model.StatePublic {
 				return ErrUnknownColumn.GenWithStackByArgs(col.Name, clauseMsg[fieldList])
 			}
+			// Check for multi-updates on primary key,
+			// see https://dev.mysql.com/doc/mysql-errors/5.7/en/server-error-reference.html#error_er_multi_update_key_conflict
+			if !flags[i] {
+				continue
+			}
+			if col.IsPKHandleColumn(tbl.Meta()) || col.IsCommonHandleColumn(tbl.Meta()) {
+				updatePK = true
+			}
+		}
+		if updatePK {
+			if otherTblName, ok := isPKUpdated[tbl.Meta().ID]; ok {
+				return ErrMultiUpdateKeyConflict.GenWithStackByArgs(otherTblName.O, updt.names[content.Start].TblName.O)
+			}
+			isPKUpdated[tbl.Meta().ID] = updt.names[content.Start].TblName
 		}
 	}
 	return nil
@@ -4056,12 +4072,12 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, delete *ast.DeleteStmt) (
 		for _, tn := range delete.Tables.Tables {
 			foundMatch := false
 			for _, v := range tableList {
-				dbName := v.Schema.L
-				if dbName == "" {
-					dbName = b.ctx.GetSessionVars().CurrentDB
+				dbName := v.Schema
+				if dbName.L == "" {
+					dbName = model.NewCIStr(b.ctx.GetSessionVars().CurrentDB)
 				}
-				if (tn.Schema.L == "" || tn.Schema.L == dbName) && tn.Name.L == v.Name.L {
-					tn.Schema.L = dbName
+				if (tn.Schema.L == "" || tn.Schema.L == dbName.L) && tn.Name.L == v.Name.L {
+					tn.Schema = dbName
 					tn.DBInfo = v.DBInfo
 					tn.TableInfo = v.TableInfo
 					foundMatch = true
