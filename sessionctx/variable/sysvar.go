@@ -726,8 +726,8 @@ var defaultSysVars = []*SysVar{
 	{ScopeSession, TiDBFoundInPlanCache, BoolToIntStr(DefTiDBFoundInPlanCache)},
 	{ScopeSession, TiDBEnableCollectExecutionInfo, BoolToIntStr(DefTiDBEnableCollectExecutionInfo)},
 	{ScopeGlobal | ScopeSession, TiDBAllowAutoRandExplicitInsert, boolToOnOff(DefTiDBAllowAutoRandExplicitInsert)},
-	{ScopeGlobal| ScopeSession, TiDBSlowLogMasking, BoolToIntStr(DefTiDBRedactLog)},
-	{ScopeGlobal| ScopeSession, TiDBRedactLog, BoolToIntStr(DefTiDBRedactLog)},
+	{ScopeGlobal | ScopeSession, TiDBSlowLogMasking, BoolToIntStr(DefTiDBRedactLog)},
+	{ScopeGlobal | ScopeSession, TiDBRedactLog, BoolToIntStr(DefTiDBRedactLog)},
 	{ScopeGlobal, TiDBEnableTelemetry, BoolToIntStr(DefTiDBEnableTelemetry)},
 	{ScopeGlobal | ScopeSession, TiDBEnableAmendPessimisticTxn, boolToOnOff(DefTiDBEnableAmendPessimisticTxn)},
 }
