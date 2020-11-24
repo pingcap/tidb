@@ -120,10 +120,9 @@ Limit_10	1.00	root		offset:0, count:1
 set @@session.tidb_opt_insubq_to_join_and_agg=0;
 explain select 1 in (select c2 from t2) from t1;
 id	estRows	task	access object	operator info
-HashJoin_7	1999.00	root		CARTESIAN left outer semi join
-├─TableReader_14(Build)	0.00	root		data:Selection_13
-│ └─Selection_13	0.00	cop[tikv]		eq(1, test.t2.c2)
-│   └─TableFullScan_12	1985.00	cop[tikv]	table:t2	keep order:false
+HashJoin_7	1999.00	root		CARTESIAN left outer semi join, other cond:eq(1, test.t2.c2)
+├─TableReader_13(Build)	1985.00	root		data:TableFullScan_12
+│ └─TableFullScan_12	1985.00	cop[tikv]	table:t2	keep order:false
 └─TableReader_9(Probe)	1999.00	root		data:TableFullScan_8
   └─TableFullScan_8	1999.00	cop[tikv]	table:t1	keep order:false
 explain format="dot" select 1 in (select c2 from t2) from t1;
@@ -135,7 +134,7 @@ node [style=filled, color=lightgrey]
 color=black
 label = "root"
 "HashJoin_7" -> "TableReader_9"
-"HashJoin_7" -> "TableReader_14"
+"HashJoin_7" -> "TableReader_13"
 }
 subgraph cluster8{
 node [style=filled, color=lightgrey]
@@ -143,14 +142,14 @@ color=black
 label = "cop"
 "TableFullScan_8"
 }
-subgraph cluster13{
+subgraph cluster12{
 node [style=filled, color=lightgrey]
 color=black
 label = "cop"
-"Selection_13" -> "TableFullScan_12"
+"TableFullScan_12"
 }
 "TableReader_9" -> "TableFullScan_8"
-"TableReader_14" -> "Selection_13"
+"TableReader_13" -> "TableFullScan_12"
 }
 
 explain select * from index_prune WHERE a = 1010010404050976781 AND b = 26467085526790 LIMIT 1;
