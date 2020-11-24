@@ -439,10 +439,9 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 				if tablecodec.IsUntouchedIndexKValue(key, value) {
 					if !flags.HasLocked() {
 						continue
-					} else {
-						op = pb.Op_Lock
-						lockCnt++
 					}
+					op = pb.Op_Lock
+					lockCnt++
 				} else {
 					op = pb.Op_Put
 					if flags.HasPresumeKeyNotExists() {
