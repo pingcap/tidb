@@ -1142,8 +1142,10 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 	}
 
 	defer trace.StartRegion(ctx, "IndexLookUpTableCompute").End()
-	memUsage = task.chunk.MemoryUsage()
-	task.memUsage += memUsage
+	memUsage = 0
+	if task.chunk != nil {
+		memUsage += task.chunk.MemoryUsage()
+	}
 	task.memTracker.Consume(memUsage)
 	if w.keepOrder {
 		task.rowIdx = make([]int, 0, task.chunk.NumRows())
