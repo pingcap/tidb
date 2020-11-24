@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/opcode"
 	"github.com/pingcap/parser/terror"
+	ptypes "github.com/pingcap/parser/types"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -456,6 +457,9 @@ func newBatchPointGetPlan(
 			if d.IsNull() {
 				return nil
 			}
+			if !checkCanConvertInPointGet(handleCol, d) {
+				return nil
+			}
 			intDatum, err := d.ConvertTo(ctx.GetSessionVars().StmtCtx, &handleCol.FieldType)
 			if err != nil {
 				return nil
@@ -478,6 +482,14 @@ func newBatchPointGetPlan(
 	// The columns in where clause should be covered by unique index
 	var matchIdxInfo *model.IndexInfo
 	permutations := make([]int, len(whereColNames))
+	colInfos := make([]*model.ColumnInfo, len(whereColNames))
+	for i, innerCol := range whereColNames {
+		for _, col := range tbl.Columns {
+			if col.Name.L == innerCol {
+				colInfos[i] = col
+			}
+		}
+	}
 	for _, idxInfo := range tbl.Indices {
 		if !idxInfo.Unique || idxInfo.State != model.StatePublic {
 			continue
@@ -530,8 +542,14 @@ func newBatchPointGetPlan(
 				permIndex := permutations[index]
 				switch innerX := inner.(type) {
 				case *driver.ValueExpr:
+					if !checkCanConvertInPointGet(colInfos[index], innerX.Datum) {
+						return nil
+					}
 					values[permIndex] = innerX.Datum
 				case *driver.ParamMarkerExpr:
+					if !checkCanConvertInPointGet(colInfos[index], innerX.Datum) {
+						return nil
+					}
 					values[permIndex] = innerX.Datum
 					valuesParams[permIndex] = innerX
 				default:
@@ -539,8 +557,14 @@ func newBatchPointGetPlan(
 				}
 			}
 		case *driver.ValueExpr:
+			if !checkCanConvertInPointGet(colInfos[0], x.Datum) {
+				return nil
+			}
 			values = []types.Datum{x.Datum}
 		case *driver.ParamMarkerExpr:
+			if !checkCanConvertInPointGet(colInfos[0], x.Datum) {
+				return nil
+			}
 			values = []types.Datum{x.Datum}
 			valuesParams = []*driver.ParamMarkerExpr{x}
 		default:
@@ -956,6 +980,9 @@ func getNameValuePairs(stmtCtx *stmtctx.StatementContext, tbl *model.TableInfo, 
 			(col.Tp == mysql.TypeString && col.Collate == charset.CollationBin) { // This type we needn't to pad `\0` in here.
 			return append(nvPairs, nameValuePair{colName: colName.Name.Name.L, value: d, param: param}), false
 		}
+		if !checkCanConvertInPointGet(col, d) {
+			return nil, false
+		}
 		dVal, err := d.ConvertTo(stmtCtx, &col.FieldType)
 		if err != nil {
 			if terror.ErrorEqual(types.ErrOverflow, err) {
@@ -977,6 +1004,28 @@ func getNameValuePairs(stmtCtx *stmtctx.StatementContext, tbl *model.TableInfo, 
 		return append(nvPairs, nameValuePair{colName: colName.Name.Name.L, value: dVal, param: param}), false
 	}
 	return nil, false
+}
+
+func checkCanConvertInPointGet(col *model.ColumnInfo, d types.Datum) bool {
+	kind := d.Kind()
+	switch col.FieldType.EvalType() {
+	case ptypes.ETString:
+		switch kind {
+		case types.KindInt64, types.KindUint64,
+			types.KindFloat32, types.KindFloat64, types.KindMysqlDecimal:
+			// column type is String and constant type is numeric
+			return false
+		}
+	}
+	switch col.FieldType.Tp {
+	case mysql.TypeBit:
+		switch kind {
+		case types.KindString:
+			// column type is Bit and constant type is string
+			return false
+		}
+	}
+	return true
 }
 
 func findPKHandle(tblInfo *model.TableInfo, pairs []nameValuePair) (handlePair nameValuePair, fieldType *types.FieldType) {
