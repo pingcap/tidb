@@ -1008,8 +1008,7 @@ func upgradeToVer41(s Session, ver int64) {
 // writeDefaultExprPushDownBlacklist writes default expr pushdown blacklist into mysql.expr_pushdown_blacklist
 func writeDefaultExprPushDownBlacklist(s Session) {
 	mustExecute(s, "INSERT HIGH_PRIORITY INTO mysql.expr_pushdown_blacklist VALUES"+
-		"('date_add','tiflash', 'DST(daylight saving time) does not take effect in TiFlash date_add'),"+
-		"('cast','tiflash', 'Behavior of some corner cases(overflow, truncate etc) is different in TiFlash and TiDB')")
+		"('date_add','tiflash', 'DST(daylight saving time) does not take effect in TiFlash date_add')")
 }
 
 func upgradeToVer42(s Session, ver int64) {

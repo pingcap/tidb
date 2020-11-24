@@ -22,6 +22,7 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
@@ -496,4 +497,41 @@ func (s *testPointGetSuite) TestIssue20692(c *C) {
 	<-stop2
 	tk3.MustExec("commit;")
 	tk3.MustQuery("select * from t;").Check(testkit.Rows("10 20 30 40"))
+}
+
+func (s *testPointGetSuite) TestUpdateWithTableReadLockWillFail(c *C) {
+	gcfg := config.GetGlobalConfig()
+	etl := gcfg.EnableTableLock
+	gcfg.EnableTableLock = true
+	defer func() {
+		gcfg.EnableTableLock = etl
+	}()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table tbllock(id int, c int);")
+	tk.MustExec("insert into tbllock values(1, 2), (2, 2);")
+	tk.MustExec("lock table tbllock read;")
+	_, err := tk.Exec("update tbllock set c = 3 where id = 2;")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[schema:1099]Table 'tbllock' was locked with a READ lock and can't be updated")
+}
+
+func (s *testPointGetSuite) TestSelectInMultiColumns(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t2(a int, b int, c int, primary key(a, b, c));")
+	tk.MustExec("insert into t2 values (1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4)")
+	tk.MustQuery("select * from t2 where (a, b, c) in ((1, 1, 1));").Check(testkit.Rows("1 1 1"))
+
+	_, err := tk.Exec("select * from t2 where (a, b, c) in ((1, 1, 1, 1));")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[expression:1241]Operand should contain 3 column(s)")
+
+	_, err = tk.Exec("select * from t2 where (a, b, c) in ((1, 1, 1), (2, 2, 2, 2));")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[expression:1241]Operand should contain 3 column(s)")
+
+	_, err = tk.Exec("select * from t2 where (a, b, c) in ((1, 1), (2, 2, 2));")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[expression:1241]Operand should contain 3 column(s)")
 }

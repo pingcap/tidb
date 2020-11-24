@@ -1047,6 +1047,10 @@ func (s *testRegionCacheSuite) TestFollowerMeetEpochNotMatch(c *C) {
 	regionErr := &errorpb.Error{EpochNotMatch: &errorpb.EpochNotMatch{}}
 	reqSend.onRegionError(s.bo, ctxFollower1, &followReqSeed, regionErr)
 	c.Assert(followReqSeed, Equals, uint32(1))
+
+	regionErr = &errorpb.Error{RegionNotFound: &errorpb.RegionNotFound{}}
+	reqSend.onRegionError(s.bo, ctxFollower1, &followReqSeed, regionErr)
+	c.Assert(followReqSeed, Equals, uint32(2))
 }
 
 func (s *testRegionCacheSuite) TestMixedMeetEpochNotMatch(c *C) {
@@ -1112,7 +1116,7 @@ func (s *testRegionCacheSuite) TestPeersLenChange(c *C) {
 	s.cache.OnSendFail(NewNoopBackoff(context.Background()), ctx, false, errors.New("send fail"))
 }
 
-func (s *testRegionRequestSuite) TestGetRegionByIDFromCache(c *C) {
+func (s *testRegionRequestToSingleStoreSuite) TestGetRegionByIDFromCache(c *C) {
 	region, err := s.cache.LocateRegionByID(s.bo, s.region)
 	c.Assert(err, IsNil)
 	c.Assert(region, NotNil)
