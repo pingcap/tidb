@@ -438,8 +438,6 @@ type copIteratorWorker struct {
 	replicaReadSeed uint32
 
 	sendRate *rateLimit
-
-	actionOnExceed *rateLimitAction
 }
 
 // copIteratorTaskSender sends tasks to taskCh then wait for the workers to exit.
@@ -570,7 +568,6 @@ func (it *copIterator) open(ctx context.Context) {
 
 			replicaReadSeed: it.replicaReadSeed,
 			sendRate:        it.sendRate,
-			actionOnExceed:  it.actionOnExceed,
 		}
 		go worker.run(ctx)
 	}
@@ -1392,9 +1389,13 @@ func (e *rateLimitAction) SetFallback(a memory.ActionOnExceed) {
 // If the exceed flag is true and there is no token been destroyed before, one token will be destroyed,
 // or the token would be return back.
 func (e *rateLimitAction) destroyTokenIfNeeded(returnToken func()) {
+	if !e.isEnabled() {
+		returnToken()
+		return
+	}
 	e.conditionLock()
 	defer e.conditionUnlock()
-	if !e.cond.exceeded || !e.isEnabled() {
+	if !e.cond.exceeded {
 		returnToken()
 		return
 	}
