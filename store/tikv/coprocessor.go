@@ -1427,6 +1427,9 @@ func (e *rateLimitAction) close() {
 		return
 	}
 	e.setEnabled(false)
+	e.conditionLock()
+	defer e.conditionUnlock()
+	e.cond.exceeded = false
 }
 
 func (e *rateLimitAction) setEnabled(enabled bool) {
