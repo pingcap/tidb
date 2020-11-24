@@ -139,6 +139,19 @@ func (s *testIntegrationSuite) Test19654(c *C) {
 	tk.MustQuery("select /*+ inl_join(t2)*/ * from t1, t2 where t1.b=t2.b;").Check(testkit.Rows("a a"))
 }
 
+func (s *testIntegrationSuite) Test19387(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("USE test;")
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a decimal(16, 2));")
+	tk.MustExec("select sum(case when 1 then a end) from t group by a;")
+	res := tk.MustQuery("show create table t")
+	c.Assert(len(res.Rows()), Equals, 1)
+	str := res.Rows()[0][1].(string)
+	c.Assert(strings.Contains(str, "decimal(16,2)"), IsTrue)
+}
+
 func (s *testIntegrationSuite) TestFuncREPEAT(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	defer s.cleanEnv(c)
@@ -3673,6 +3686,7 @@ func (s *testIntegrationSuite) TestAggregationBuiltin(c *C) {
 	defer s.cleanEnv(c)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a decimal(7, 6))")
 	tk.MustExec("insert into t values(1.123456), (1.123456)")
 	result := tk.MustQuery("select avg(a) from t")
