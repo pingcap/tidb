@@ -109,7 +109,6 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variable
 
 // copTask contains a related Region and KeyRange for a kv.Request.
 type copTask struct {
-	id     uint32
 	region RegionVerID
 	ranges *copRanges
 
@@ -595,7 +594,6 @@ func (sender *copIteratorTaskSender) run() {
 		if exit {
 			break
 		}
-		t.id = uint32(i)
 		exit = sender.sendToTaskCh(t)
 		if exit {
 			break
