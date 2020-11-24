@@ -66,6 +66,7 @@ func (e *TableSampleExecutor) Next(ctx context.Context, req *chunk.Chunk) error 
 	if e.sampler.finished() {
 		return nil
 	}
+	// TODO(tangenta): add runtime stat & memory tracing
 	return e.sampler.writeChunk(req)
 }
 
@@ -361,14 +362,14 @@ func (s *sampleSyncer) sync() error {
 	for i := 0; i < s.totalCount; i++ {
 		f := s.fetchers[i%len(s.fetchers)]
 		v, ok := <-f.kvChan
+		if f.err != nil {
+			return f.err
+		}
 		if ok && v != nil {
 			err := s.consumeFn(v.handle, v.value)
 			if err != nil {
 				return err
 			}
-		}
-		if f.err != nil {
-			return f.err
 		}
 	}
 	return nil
