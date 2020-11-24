@@ -558,6 +558,9 @@ func (e *AnalyzeColumnsExec) buildStats(ranges []*ranger.Range, needExtStats boo
 			if err != nil {
 				return nil, nil, nil, nil, err
 			}
+			if collectors[i].Samples[j].Value.Kind() == types.KindString {
+				collectors[i].Samples[j].Value.SetBytes(collectors[i].Samples[j].Value.GetBytes())
+			}
 		}
 		hg, err := statistics.BuildColumn(e.ctx, int64(e.opts[ast.AnalyzeOptNumBuckets]), col.ID, collectors[i], &col.FieldType)
 		if err != nil {
