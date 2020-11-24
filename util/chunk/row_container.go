@@ -261,6 +261,7 @@ func (c *RowContainer) ActionSpillForTest() *SpillDiskAction {
 type SpillDiskAction struct {
 	memory.BaseOOMAction
 	c    *RowContainer
+	m    sync.Mutex
 	once sync.Once
 	cond spillStatusCond
 
@@ -302,8 +303,8 @@ func (a *SpillDiskAction) getStatus() spillStatus {
 // Action sends a signal to trigger spillToDisk method of RowContainer
 // and if it is already triggered before, call its fallbackAction.
 func (a *SpillDiskAction) Action(t *memory.Tracker) {
-	a.M.Lock()
-	defer a.M.Unlock()
+	a.m.Lock()
+	defer a.m.Unlock()
 
 	if a.getStatus() == notSpilled {
 		a.once.Do(func() {
@@ -332,15 +333,15 @@ func (a *SpillDiskAction) Action(t *memory.Tracker) {
 	if !t.CheckExceed() {
 		return
 	}
-	if a.FallbackAction != nil {
-		a.FallbackAction.Action(t)
+	if fallback := a.GetFallback(); fallback != nil {
+		fallback.Action(t)
 	}
 }
 
 // Reset resets the status for SpillDiskAction.
 func (a *SpillDiskAction) Reset() {
-	a.M.Lock()
-	defer a.M.Unlock()
+	a.m.Lock()
+	defer a.m.Unlock()
 	a.setStatus(notSpilled)
 	a.once = sync.Once{}
 }
@@ -497,8 +498,8 @@ type SortAndSpillDiskAction struct {
 // Action sends a signal to trigger sortAndSpillToDisk method of RowContainer
 // and if it is already triggered before, call its fallbackAction.
 func (a *SortAndSpillDiskAction) Action(t *memory.Tracker) {
-	a.M.Lock()
-	defer a.M.Unlock()
+	a.m.Lock()
+	defer a.m.Unlock()
 	// Guarantee that each partition size is at least 10% of the threshold, to avoid opening too many files.
 	if a.getStatus() == notSpilled && a.c.GetMemTracker().BytesConsumed() > t.GetBytesLimit()/10 {
 		a.once.Do(func() {
@@ -527,8 +528,8 @@ func (a *SortAndSpillDiskAction) Action(t *memory.Tracker) {
 	if !t.CheckExceed() {
 		return
 	}
-	if a.FallbackAction != nil {
-		a.FallbackAction.Action(t)
+	if fallback := a.GetFallback(); fallback != nil {
+		fallback.Action(t)
 	}
 }
 

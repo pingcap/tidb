@@ -1340,12 +1340,10 @@ func (e *rateLimitAction) Action(t *memory.Tracker) {
 			e.setEnabled(false)
 		}
 	})
-	e.M.Lock()
-	defer e.M.Unlock()
 
 	if !e.isEnabled() {
-		if e.FallbackAction != nil {
-			e.FallbackAction.Action(t)
+		if fallback := e.GetFallback(); fallback != nil {
+			fallback.Action(t)
 		}
 		return
 	}
@@ -1356,8 +1354,8 @@ func (e *rateLimitAction) Action(t *memory.Tracker) {
 			e.setEnabled(false)
 			logutil.BgLogger().Info("memory exceed quota, rateLimitAction delegate to fallback action",
 				zap.Uint("total token count", e.totalTokenNum))
-			if e.FallbackAction != nil {
-				e.FallbackAction.Action(t)
+			if fallback := e.GetFallback(); fallback != nil {
+				fallback.Action(t)
 			}
 			return
 		}

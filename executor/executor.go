@@ -113,6 +113,7 @@ const (
 // globalPanicOnExceed panics when GlobalDisTracker storage usage exceeds storage quota.
 type globalPanicOnExceed struct {
 	memory.BaseOOMAction
+	mutex sync.Mutex // For synchronization.
 }
 
 func init() {
@@ -128,8 +129,8 @@ func (a *globalPanicOnExceed) SetLogHook(hook func(uint64)) {}
 
 // Action panics when storage usage exceeds storage quota.
 func (a *globalPanicOnExceed) Action(t *memory.Tracker) {
-	a.M.Lock()
-	defer a.M.Unlock()
+	a.mutex.Lock()
+	defer a.mutex.Unlock()
 	msg := ""
 	switch t.Label() {
 	case memory.LabelForGlobalStorage:

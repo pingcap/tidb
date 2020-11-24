@@ -42,20 +42,15 @@ type ActionOnExceed interface {
 }
 
 type BaseOOMAction struct {
-	M              sync.Mutex
-	FallbackAction ActionOnExceed
+	fallbackAction ActionOnExceed
 }
 
 func (b *BaseOOMAction) SetFallback(a ActionOnExceed) {
-	b.M.Lock()
-	defer b.M.Unlock()
-	b.FallbackAction = a
+	b.fallbackAction = a
 }
 
 func (b *BaseOOMAction) GetFallback() ActionOnExceed {
-	b.M.Lock()
-	defer b.M.Unlock()
-	return b.FallbackAction
+	return b.fallbackAction
 }
 
 // Default OOM Action priority.
@@ -69,6 +64,7 @@ const (
 // LogOnExceed logs a warning only once when memory usage exceeds memory quota.
 type LogOnExceed struct {
 	BaseOOMAction
+	mutex   sync.Mutex // For synchronization.
 	acted   bool
 	ConnID  uint64
 	logHook func(uint64)
@@ -81,8 +77,8 @@ func (a *LogOnExceed) SetLogHook(hook func(uint64)) {
 
 // Action logs a warning only once when memory usage exceeds memory quota.
 func (a *LogOnExceed) Action(t *Tracker) {
-	a.M.Lock()
-	defer a.M.Unlock()
+	a.mutex.Lock()
+	defer a.mutex.Unlock()
 	if !a.acted {
 		a.acted = true
 		if a.logHook == nil {
@@ -102,6 +98,7 @@ func (a *LogOnExceed) GetPriority() int64 {
 // PanicOnExceed panics when memory usage exceeds memory quota.
 type PanicOnExceed struct {
 	BaseOOMAction
+	mutex   sync.Mutex // For synchronization.
 	acted   bool
 	ConnID  uint64
 	logHook func(uint64)
@@ -114,13 +111,13 @@ func (a *PanicOnExceed) SetLogHook(hook func(uint64)) {
 
 // Action panics when memory usage exceeds memory quota.
 func (a *PanicOnExceed) Action(t *Tracker) {
-	a.M.Lock()
+	a.mutex.Lock()
 	if a.acted {
-		a.M.Unlock()
+		a.mutex.Unlock()
 		return
 	}
 	a.acted = true
-	a.M.Unlock()
+	a.mutex.Unlock()
 	if a.logHook != nil {
 		a.logHook(a.ConnID)
 	}
