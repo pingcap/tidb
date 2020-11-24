@@ -2258,6 +2258,9 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 	innerTypes := make([]*types.FieldType, innerPlan.Schema().Len())
 	for i, col := range innerPlan.Schema().Columns {
 		innerTypes[i] = col.RetType.Clone()
+		// The `innerTypes` would be called for `Datum.ConvertTo` when converting the columns from outer table
+		// to build hash map or construct lookup keys. So we need to modify its Flen otherwise there would be
+		// truncate error. See issue https://github.com/pingcap/tidb/issues/21232 for example.
 		if innerTypes[i].EvalType() == types.ETString {
 			innerTypes[i].Flen = types.UnspecifiedLength
 		}
@@ -2350,6 +2353,9 @@ func (b *executorBuilder) buildIndexLookUpMergeJoin(v *plannercore.PhysicalIndex
 	innerTypes := make([]*types.FieldType, innerPlan.Schema().Len())
 	for i, col := range innerPlan.Schema().Columns {
 		innerTypes[i] = col.RetType.Clone()
+		// The `innerTypes` would be called for `Datum.ConvertTo` when converting the columns from outer table
+		// to build hash map or construct lookup keys. So we need to modify its Flen otherwise there would be
+		// truncate error. See issue https://github.com/pingcap/tidb/issues/21232 for example.
 		if innerTypes[i].EvalType() == types.ETString {
 			innerTypes[i].Flen = types.UnspecifiedLength
 		}
