@@ -69,8 +69,6 @@
       "explain select * from t where t.a = 1",
       "explain select * from t where t.a in (1, 2)"
     ]
-<<<<<<< HEAD
-=======
   },
   {
     "name": "TestIsolationReadTiFlashUseIndexHint",
@@ -91,6 +89,5 @@
       "explain select /*+ inl_hash_join(s) */ * from t join s on t.a=s.a and t.b = s.a",
       "explain select /*+ inl_hash_join(s) */ * from t join s on t.a=s.a and t.a = s.b"
     ]
->>>>>>> 41786cb97... *: seperate hash keys from join keys in IndexJoin (#20761)
   }
 ]
