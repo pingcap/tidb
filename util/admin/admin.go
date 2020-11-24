@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
@@ -34,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/rowDecoder"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -354,7 +354,7 @@ func CheckRecordAndIndex(sessCtx sessionctx.Context, txn kv.Transaction, t table
 		for i, val := range vals1 {
 			col := cols[i]
 			if val.IsNull() {
-				if mysql.HasNotNullFlag(col.Flag) && col.ToInfo().OriginDefaultValue == nil {
+				if mysql.HasNotNullFlag(col.Flag) && col.ToInfo().GetOriginDefaultValue() == nil {
 					return false, errors.Errorf("Column %v define as not null, but can't find the value where handle is %v", col.Name, h1)
 				}
 				// NULL value is regarded as its default value.
@@ -459,11 +459,11 @@ func iterRecords(sessCtx sessionctx.Context, retriever kv.Retriever, t table.Tab
 
 var (
 	// ErrDataInConsistent indicate that meets inconsistent data.
-	ErrDataInConsistent = terror.ClassAdmin.New(errno.ErrDataInConsistent, errno.MySQLErrName[errno.ErrDataInConsistent])
+	ErrDataInConsistent = dbterror.ClassAdmin.NewStd(errno.ErrDataInConsistent)
 	// ErrDDLJobNotFound indicates the job id was not found.
-	ErrDDLJobNotFound = terror.ClassAdmin.New(errno.ErrDDLJobNotFound, errno.MySQLErrName[errno.ErrDDLJobNotFound])
+	ErrDDLJobNotFound = dbterror.ClassAdmin.NewStd(errno.ErrDDLJobNotFound)
 	// ErrCancelFinishedDDLJob returns when cancel a finished ddl job.
-	ErrCancelFinishedDDLJob = terror.ClassAdmin.New(errno.ErrCancelFinishedDDLJob, errno.MySQLErrName[errno.ErrCancelFinishedDDLJob])
+	ErrCancelFinishedDDLJob = dbterror.ClassAdmin.NewStd(errno.ErrCancelFinishedDDLJob)
 	// ErrCannotCancelDDLJob returns when cancel a almost finished ddl job, because cancel in now may cause data inconsistency.
-	ErrCannotCancelDDLJob = terror.ClassAdmin.New(errno.ErrCannotCancelDDLJob, errno.MySQLErrName[errno.ErrCannotCancelDDLJob])
+	ErrCannotCancelDDLJob = dbterror.ClassAdmin.NewStd(errno.ErrCannotCancelDDLJob)
 )

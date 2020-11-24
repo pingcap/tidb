@@ -45,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/types/parser_driver"
 	util2 "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/logutil"
 	utilparser "github.com/pingcap/tidb/util/parser"
@@ -391,9 +392,9 @@ const (
 	// canExpandAST indicates whether the origin AST can be expanded during plan
 	// building. ONLY used for `CreateViewStmt` now.
 	canExpandAST
-	// collectUnderlyingViewName indicates whether to collect the underlying
-	// view names of a CreateViewStmt during plan building.
-	collectUnderlyingViewName
+	// renameView indicates a view is being renamed, so we cannot use the origin
+	// definition of that view.
+	renameView
 )
 
 // PlanBuilder builds Plan from an ast.Node.
@@ -443,8 +444,10 @@ type PlanBuilder struct {
 
 	// SelectLock need this information to locate the lock on partitions.
 	partitionedTable []table.PartitionedTable
-	// CreateView needs this information to check whether exists nested view.
-	underlyingViewNames set.StringSet
+	// buildingViewStack is used to check whether there is a recursive view.
+	buildingViewStack set.StringSet
+	// renamingViewName is the name of the view which is being renamed.
+	renamingViewName string
 }
 
 type handleColHelper struct {
@@ -1501,13 +1504,14 @@ func (b *PlanBuilder) buildAnalyzeAllIndex(as *ast.AnalyzeTableStmt, opts map[as
 	return p, nil
 }
 
-var cmSketchSizeLimit = kv.TxnEntrySizeLimit / binary.MaxVarintLen32
+// CMSketchSizeLimit indicates the max size(width * depth) of a CMSketch.
+var CMSketchSizeLimit = kv.TxnEntrySizeLimit / binary.MaxVarintLen32
 
 var analyzeOptionLimit = map[ast.AnalyzeOptionType]uint64{
 	ast.AnalyzeOptNumBuckets:    1024,
 	ast.AnalyzeOptNumTopN:       1024,
-	ast.AnalyzeOptCMSketchWidth: uint64(cmSketchSizeLimit),
-	ast.AnalyzeOptCMSketchDepth: uint64(cmSketchSizeLimit),
+	ast.AnalyzeOptCMSketchWidth: uint64(CMSketchSizeLimit),
+	ast.AnalyzeOptCMSketchDepth: uint64(CMSketchSizeLimit),
 	ast.AnalyzeOptNumSamples:    100000,
 }
 
@@ -1536,8 +1540,8 @@ func handleAnalyzeOptions(opts []ast.AnalyzeOpt) (map[ast.AnalyzeOptionType]uint
 		}
 		optMap[opt.Type] = opt.Value
 	}
-	if optMap[ast.AnalyzeOptCMSketchWidth]*optMap[ast.AnalyzeOptCMSketchDepth] > uint64(cmSketchSizeLimit) {
-		return nil, errors.Errorf("cm sketch size(depth * width) should not larger than %d", cmSketchSizeLimit)
+	if optMap[ast.AnalyzeOptCMSketchWidth]*optMap[ast.AnalyzeOptCMSketchDepth] > uint64(CMSketchSizeLimit) {
+		return nil, errors.Errorf("cm sketch size(depth * width) should not larger than %d", CMSketchSizeLimit)
 	}
 	return optMap, nil
 }
@@ -2455,7 +2459,7 @@ func (b *PlanBuilder) buildSelectPlanOfInsert(ctx context.Context, insert *ast.I
 }
 
 func (b *PlanBuilder) buildLoadData(ctx context.Context, ld *ast.LoadDataStmt) (Plan, error) {
-	p := &LoadData{
+	p := LoadData{
 		IsLocal:     ld.IsLocal,
 		OnDuplicate: ld.OnDuplicate,
 		Path:        ld.Path,
@@ -2464,7 +2468,7 @@ func (b *PlanBuilder) buildLoadData(ctx context.Context, ld *ast.LoadDataStmt) (
 		FieldsInfo:  ld.FieldsInfo,
 		LinesInfo:   ld.LinesInfo,
 		IgnoreLines: ld.IgnoreLines,
-	}
+	}.Init(b.ctx)
 	user := b.ctx.GetSessionVars().User
 	var insertErr error
 	if user != nil {
@@ -2775,19 +2779,15 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (Plan, err
 				v.ReferTable.Name.L, "", authErr)
 		}
 	case *ast.CreateViewStmt:
-		b.capFlag |= canExpandAST
-		b.capFlag |= collectUnderlyingViewName
+		b.capFlag |= canExpandAST | renameView
+		b.renamingViewName = v.ViewName.Schema.L + "." + v.ViewName.Name.L
 		defer func() {
 			b.capFlag &= ^canExpandAST
-			b.capFlag &= ^collectUnderlyingViewName
+			b.capFlag &= ^renameView
 		}()
-		b.underlyingViewNames = set.NewStringSet()
 		plan, err := b.Build(ctx, v.Select)
 		if err != nil {
 			return nil, err
-		}
-		if b.underlyingViewNames.Exist(v.ViewName.Schema.L + "." + v.ViewName.Name.L) {
-			return nil, ErrNoSuchTable.GenWithStackByArgs(v.ViewName.Schema.O, v.ViewName.Name.O)
 		}
 		schema := plan.Schema()
 		names := plan.OutputNames()
@@ -2946,13 +2946,14 @@ func (b *PlanBuilder) buildTrace(trace *ast.TraceStmt) (Plan, error) {
 	return p, nil
 }
 
-func (b *PlanBuilder) buildExplainPlan(targetPlan Plan, format string, rows [][]string, analyze bool, execStmt ast.StmtNode) (Plan, error) {
+func (b *PlanBuilder) buildExplainPlan(targetPlan Plan, format string, explainRows [][]string, analyze bool, execStmt ast.StmtNode, runtimeStats *execdetails.RuntimeStatsColl) (Plan, error) {
 	p := &Explain{
-		TargetPlan: targetPlan,
-		Format:     format,
-		Analyze:    analyze,
-		ExecStmt:   execStmt,
-		Rows:       rows,
+		TargetPlan:       targetPlan,
+		Format:           format,
+		Analyze:          analyze,
+		ExecStmt:         execStmt,
+		ExplainRows:      explainRows,
+		RuntimeStatsColl: runtimeStats,
 	}
 	p.ctx = b.ctx
 	return p, p.prepareSchema()
@@ -2977,8 +2978,11 @@ func (b *PlanBuilder) buildExplainFor(explainFor *ast.ExplainForStmt) (Plan, err
 	if !ok || targetPlan == nil {
 		return &Explain{Format: explainFor.Format}, nil
 	}
-
-	return b.buildExplainPlan(targetPlan, explainFor.Format, processInfo.PlanExplainRows, false, nil)
+	var explainRows [][]string
+	if explainFor.Format == ast.ExplainFormatROW {
+		explainRows = processInfo.PlanExplainRows
+	}
+	return b.buildExplainPlan(targetPlan, explainFor.Format, explainRows, false, nil, processInfo.RuntimeStatsColl)
 }
 
 func (b *PlanBuilder) buildExplain(ctx context.Context, explain *ast.ExplainStmt) (Plan, error) {
@@ -2990,7 +2994,7 @@ func (b *PlanBuilder) buildExplain(ctx context.Context, explain *ast.ExplainStmt
 		return nil, err
 	}
 
-	return b.buildExplainPlan(targetPlan, explain.Format, nil, explain.Analyze, explain.Stmt)
+	return b.buildExplainPlan(targetPlan, explain.Format, nil, explain.Analyze, explain.Stmt, nil)
 }
 
 func (b *PlanBuilder) buildSelectInto(ctx context.Context, sel *ast.SelectStmt) (Plan, error) {

@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/kv/memdb"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/execdetails"
@@ -45,6 +46,7 @@ var (
 	tikvTxnCmdHistogramWithRollback = metrics.TiKVTxnCmdHistogram.WithLabelValues(metrics.LblRollback)
 	tikvTxnCmdHistogramWithBatchGet = metrics.TiKVTxnCmdHistogram.WithLabelValues(metrics.LblBatchGet)
 	tikvTxnCmdHistogramWithGet      = metrics.TiKVTxnCmdHistogram.WithLabelValues(metrics.LblGet)
+	tikvTxnCmdHistogramWithLockKeys = metrics.TiKVTxnCmdHistogram.WithLabelValues(metrics.LblLockKeys)
 )
 
 // SchemaAmender is used by pessimistic transactions to amend commit mutations for schema change during 2pc.
@@ -83,6 +85,8 @@ type tikvTxn struct {
 	txnInfoSchema SchemaVer
 	// SchemaAmender is used amend pessimistic txn commit mutations for schema change
 	schemaAmender SchemaAmender
+	// commitCallback is called after current transaction gets committed
+	commitCallback func(info kv.TxnInfo, err error)
 }
 
 func newTiKVTxn(store *tikvStore) (*tikvTxn, error) {
@@ -213,6 +217,15 @@ func (txn *tikvTxn) Delete(k kv.Key) error {
 	return txn.us.Delete(k)
 }
 
+func (txn *tikvTxn) DeleteWithNeedLock(k kv.Key) error {
+	txn.dirty = true
+	return txn.us.DeleteWithNeedLock(k)
+}
+
+func (txn *tikvTxn) GetFlags(ctx context.Context, k kv.Key) memdb.KeyFlags {
+	return txn.us.GetFlags(ctx, k)
+}
+
 func (txn *tikvTxn) SetOption(opt kv.Option, val interface{}) {
 	txn.us.SetOption(opt, val)
 	switch opt {
@@ -232,6 +245,8 @@ func (txn *tikvTxn) SetOption(opt kv.Option, val interface{}) {
 		txn.txnInfoSchema = val.(SchemaVer)
 	case kv.SchemaAmender:
 		txn.schemaAmender = val.(SchemaAmender)
+	case kv.CommitHook:
+		txn.commitCallback = val.(func(info kv.TxnInfo, err error))
 	}
 }
 
@@ -305,6 +320,9 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 	// pessimistic transaction should also bypass latch.
 	if txn.store.txnLatches == nil || txn.IsPessimistic() {
 		err = committer.execute(ctx)
+		if val == nil || connID > 0 {
+			txn.onCommitted(err)
+		}
 		logutil.Logger(ctx).Debug("[kv] txnLatches disabled, 2pc directly", zap.Error(err))
 		return errors.Trace(err)
 	}
@@ -323,6 +341,9 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 		return kv.ErrWriteConflictInTiDB.FastGenByArgs(txn.startTS)
 	}
 	err = committer.execute(ctx)
+	if val == nil || connID > 0 {
+		txn.onCommitted(err)
+	}
 	if err == nil {
 		lock.SetCommitTS(committer.commitTS)
 	}
@@ -360,6 +381,16 @@ func (txn *tikvTxn) rollbackPessimisticLocks() error {
 	return txn.committer.pessimisticRollbackMutations(NewBackofferWithVars(context.Background(), cleanupMaxBackoff, txn.vars), CommitterMutations{keys: txn.lockKeys})
 }
 
+func (txn *tikvTxn) onCommitted(err error) {
+	if txn.commitCallback != nil {
+		info := kv.TxnInfo{StartTS: txn.startTS, CommitTS: txn.commitTS}
+		if err != nil {
+			info.ErrMsg = err.Error()
+		}
+		txn.commitCallback(info, err)
+	}
+}
+
 // lockWaitTime in ms, except that kv.LockAlwaysWait(0) means always wait lock, kv.LockNowait(-1) means nowait lock
 func (txn *tikvTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput ...kv.Key) error {
 	txn.mu.Lock()
@@ -369,6 +400,7 @@ func (txn *tikvTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput
 	keys := make([][]byte, 0, len(keysInput))
 	startTime := time.Now()
 	defer func() {
+		tikvTxnCmdHistogramWithLockKeys.Observe(time.Since(startTime).Seconds())
 		if err == nil {
 			if lockCtx.PessimisticLockWaited != nil {
 				if atomic.LoadInt32(lockCtx.PessimisticLockWaited) > 0 {

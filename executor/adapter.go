@@ -179,6 +179,7 @@ type ExecStmt struct {
 	isPreparedStmt    bool
 	isSelectForUpdate bool
 	retryCount        uint
+	retryStartTime    time.Time
 
 	// OutputNames will be set if using cached plan
 	OutputNames []*types.FieldName
@@ -383,19 +384,22 @@ func (a *ExecStmt) handleNoDelay(ctx context.Context, e Executor, isPessimistic 
 	}()
 
 	toCheck := e
+	isExplainAnalyze := false
 	if explain, ok := e.(*ExplainExec); ok {
-		if explain.analyzeExec != nil {
-			toCheck = explain.analyzeExec
+		if analyze := explain.getAnalyzeExecToExecutedNoDelay(); analyze != nil {
+			toCheck = analyze
+			isExplainAnalyze = true
 		}
 	}
 
 	// If the executor doesn't return any result to the client, we execute it without delay.
 	if toCheck.Schema().Len() == 0 {
+		handled = !isExplainAnalyze
 		if isPessimistic {
-			return true, nil, a.handlePessimisticDML(ctx, e)
+			return handled, nil, a.handlePessimisticDML(ctx, toCheck)
 		}
-		r, err := a.handleNoDelayExecutor(ctx, e)
-		return true, r, err
+		r, err := a.handleNoDelayExecutor(ctx, toCheck)
+		return handled, r, err
 	} else if proj, ok := toCheck.(*ProjectionExec); ok && proj.calculateNoDelay {
 		// Currently this is only for the "DO" statement. Take "DO 1, @a=2;" as an example:
 		// the Projection has two expressions and two columns in the schema, but we should
@@ -641,6 +645,7 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, err error) (E
 		return nil, errors.New("pessimistic lock retry limit reached")
 	}
 	a.retryCount++
+	a.retryStartTime = time.Now()
 	err = UpdateForUpdateTS(a.Ctx, newForUpdateTS)
 	if err != nil {
 		return nil, err
@@ -741,7 +746,7 @@ func (a *ExecStmt) buildExecutor() (Executor, error) {
 		}
 		e = executorExec.stmtExec
 	}
-	a.isSelectForUpdate = b.hasLock && (!stmtCtx.InDeleteStmt && !stmtCtx.InUpdateStmt)
+	a.isSelectForUpdate = b.hasLock && (!stmtCtx.InDeleteStmt && !stmtCtx.InUpdateStmt && !stmtCtx.InInsertStmt)
 	return e, nil
 }
 
@@ -804,11 +809,9 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, succ bool, hasMoreResults boo
 	execDetail := sessVars.StmtCtx.GetExecDetails()
 	// Attach commit/lockKeys runtime stats to executor runtime stats.
 	if (execDetail.CommitDetail != nil || execDetail.LockKeysDetail != nil) && sessVars.StmtCtx.RuntimeStatsColl != nil {
-		stats := sessVars.StmtCtx.RuntimeStatsColl.GetRootStats(a.Plan.ID())
 		statsWithCommit := &execdetails.RuntimeStatsWithCommit{
-			RuntimeStats: stats,
-			Commit:       execDetail.CommitDetail,
-			LockKeys:     execDetail.LockKeysDetail,
+			Commit:   execDetail.CommitDetail,
+			LockKeys: execDetail.LockKeysDetail,
 		}
 		sessVars.StmtCtx.RuntimeStatsColl.RegisterStats(a.Plan.ID(), statsWithCommit)
 	}
@@ -816,7 +819,7 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, succ bool, hasMoreResults boo
 	a.LogSlowQuery(txnTS, succ, hasMoreResults)
 	a.SummaryStmt(succ)
 	prevStmt := a.GetTextToLog()
-	if config.RedactLogEnabled() {
+	if sessVars.EnableRedactLog {
 		sessVars.PrevStmt = FormatSQL(prevStmt, nil)
 	} else {
 		pps := types.CloneRow(sessVars.PreparedParams)
@@ -839,13 +842,14 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	costTime := time.Since(sessVars.StartTime) + sessVars.DurationParse
 	threshold := time.Duration(atomic.LoadUint64(&cfg.Log.SlowThreshold)) * time.Millisecond
 	enable := cfg.Log.EnableSlowLog
-	// if the level is Debug, print slow logs anyway
-	if (!enable || costTime < threshold) && level > zapcore.DebugLevel {
+	// if the level is Debug, or trace is enabled, print slow logs anyway
+	force := level <= zapcore.DebugLevel || trace.IsEnabled()
+	if (!enable || costTime < threshold) && !force {
 		return
 	}
 	var sql stringutil.StringerFunc
 	normalizedSQL, digest := sessVars.StmtCtx.SQLDigest()
-	if config.RedactLogEnabled() {
+	if sessVars.EnableRedactLog {
 		sql = FormatSQL(normalizedSQL, nil)
 	} else if sensitiveStmt, ok := a.StmtNode.(ast.SensitiveStmtNode); ok {
 		sql = FormatSQL(sensitiveStmt.SecureText(), nil)
@@ -895,6 +899,10 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		BackoffTotal:      time.Duration(atomic.LoadInt64(&stmtDetail.BackoffDuration)),
 		WriteSQLRespTotal: stmtDetail.WriteSQLRespDuration,
 		RewriteInfo:       sessVars.RewritePhaseInfo,
+		ExecRetryCount:    a.retryCount,
+	}
+	if a.retryCount > 0 {
+		slowItems.ExecRetryTime = costTime - sessVars.DurationParse - sessVars.DurationCompile - time.Since(a.retryStartTime)
 	}
 	if _, ok := a.StmtNode.(*ast.CommitStmt); ok {
 		slowItems.PrevStmt = sessVars.PrevStmt.String()
@@ -974,7 +982,7 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	}
 	stmtCtx := sessVars.StmtCtx
 	normalizedSQL, digest := stmtCtx.SQLDigest()
-	costTime := time.Since(sessVars.StartTime)
+	costTime := time.Since(sessVars.StartTime) + sessVars.DurationParse
 
 	var prevSQL, prevSQLDigest string
 	if _, ok := a.StmtNode.(*ast.CommitStmt); ok {
@@ -1010,36 +1018,48 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	memMax := stmtCtx.MemTracker.MaxConsumed()
 	diskMax := stmtCtx.DiskTracker.MaxConsumed()
 	sql := a.GetTextToLog()
-	stmtsummary.StmtSummaryByDigestMap.AddStatement(&stmtsummary.StmtExecInfo{
-		SchemaName:     strings.ToLower(sessVars.CurrentDB),
-		OriginalSQL:    sql,
-		NormalizedSQL:  normalizedSQL,
-		Digest:         digest,
-		PrevSQL:        prevSQL,
-		PrevSQLDigest:  prevSQLDigest,
-		PlanGenerator:  planGenerator,
-		PlanDigest:     planDigest,
-		PlanDigestGen:  planDigestGen,
-		User:           userString,
-		TotalLatency:   costTime,
-		ParseLatency:   sessVars.DurationParse,
-		CompileLatency: sessVars.DurationCompile,
-		StmtCtx:        stmtCtx,
-		CopTasks:       copTaskInfo,
-		ExecDetail:     &execDetail,
-		MemMax:         memMax,
-		DiskMax:        diskMax,
-		StartTime:      sessVars.StartTime,
-		IsInternal:     sessVars.InRestrictedSQL,
-		Succeed:        succ,
-		PlanInCache:    sessVars.FoundInPlanCache,
-	})
+	var stmtDetail execdetails.StmtExecDetails
+	stmtDetailRaw := a.GoCtx.Value(execdetails.StmtExecDetailKey)
+	if stmtDetailRaw != nil {
+		stmtDetail = *(stmtDetailRaw.(*execdetails.StmtExecDetails))
+	}
+	stmtExecInfo := &stmtsummary.StmtExecInfo{
+		SchemaName:      strings.ToLower(sessVars.CurrentDB),
+		OriginalSQL:     sql,
+		NormalizedSQL:   normalizedSQL,
+		Digest:          digest,
+		PrevSQL:         prevSQL,
+		PrevSQLDigest:   prevSQLDigest,
+		PlanGenerator:   planGenerator,
+		PlanDigest:      planDigest,
+		PlanDigestGen:   planDigestGen,
+		User:            userString,
+		TotalLatency:    costTime,
+		ParseLatency:    sessVars.DurationParse,
+		CompileLatency:  sessVars.DurationCompile,
+		StmtCtx:         stmtCtx,
+		CopTasks:        copTaskInfo,
+		ExecDetail:      &execDetail,
+		MemMax:          memMax,
+		DiskMax:         diskMax,
+		StartTime:       sessVars.StartTime,
+		IsInternal:      sessVars.InRestrictedSQL,
+		Succeed:         succ,
+		PlanInCache:     sessVars.FoundInPlanCache,
+		ExecRetryCount:  a.retryCount,
+		StmtExecDetails: stmtDetail,
+		Prepared:        a.isPreparedStmt,
+	}
+	if a.retryCount > 0 {
+		stmtExecInfo.ExecRetryTime = costTime - sessVars.DurationParse - sessVars.DurationCompile - time.Since(a.retryStartTime)
+	}
+	stmtsummary.StmtSummaryByDigestMap.AddStatement(stmtExecInfo)
 }
 
 // GetTextToLog return the query text to log.
 func (a *ExecStmt) GetTextToLog() string {
 	var sql string
-	if config.RedactLogEnabled() {
+	if a.Ctx.GetSessionVars().EnableRedactLog {
 		sql, _ = a.Ctx.GetSessionVars().StmtCtx.SQLDigest()
 	} else if sensitiveStmt, ok := a.StmtNode.(ast.SensitiveStmtNode); ok {
 		sql = sensitiveStmt.SecureText()

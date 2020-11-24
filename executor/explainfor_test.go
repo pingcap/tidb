@@ -14,6 +14,7 @@
 package executor_test
 
 import (
+	"bytes"
 	"crypto/tls"
 	"fmt"
 	"math"
@@ -25,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/israce"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/testkit"
 )
@@ -60,7 +62,7 @@ func (msm *mockSessionManager1) Kill(cid uint64, query bool) {
 func (msm *mockSessionManager1) UpdateTLSConfig(cfg *tls.Config) {
 }
 
-func (s *testSuite) TestExplainFor(c *C) {
+func (s *testSuite9) TestExplainFor(c *C) {
 	tkRoot := testkit.NewTestKitWithInit(c, s.store)
 	tkUser := testkit.NewTestKitWithInit(c, s.store)
 	tkRoot.MustExec("create table t1(c1 int, c2 int)")
@@ -69,6 +71,7 @@ func (s *testSuite) TestExplainFor(c *C) {
 	tkRoot.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost", CurrentUser: true, AuthUsername: "root", AuthHostname: "%"}, nil, []byte("012345678901234567890"))
 	tkUser.Se.Auth(&auth.UserIdentity{Username: "tu", Hostname: "localhost", CurrentUser: true, AuthUsername: "tu", AuthHostname: "%"}, nil, []byte("012345678901234567890"))
 
+	tkRoot.MustExec("set @@tidb_enable_collect_execution_info=0;")
 	tkRoot.MustQuery("select * from t1;")
 	tkRootProcess := tkRoot.Se.ShowProcess()
 	ps := []*util.ProcessInfo{tkRootProcess}
@@ -78,6 +81,30 @@ func (s *testSuite) TestExplainFor(c *C) {
 		"TableReader_5 10000.00 root  data:TableFullScan_4",
 		"└─TableFullScan_4 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
 	))
+	tkRoot.MustExec("set @@tidb_enable_collect_execution_info=1;")
+	tkRoot.MustQuery("select * from t1;")
+	tkRootProcess = tkRoot.Se.ShowProcess()
+	ps = []*util.ProcessInfo{tkRootProcess}
+	tkRoot.Se.SetSessionManager(&mockSessionManager1{PS: ps})
+	tkUser.Se.SetSessionManager(&mockSessionManager1{PS: ps})
+	rows := tkRoot.MustQuery(fmt.Sprintf("explain for connection %d", tkRootProcess.ID)).Rows()
+	c.Assert(len(rows), Equals, 2)
+	c.Assert(len(rows[0]), Equals, 9)
+	buf := bytes.NewBuffer(nil)
+	for i, row := range rows {
+		if i > 0 {
+			buf.WriteString("\n")
+		}
+		for j, v := range row {
+			if j > 0 {
+				buf.WriteString(" ")
+			}
+			buf.WriteString(fmt.Sprintf("%v", v))
+		}
+	}
+	c.Assert(buf.String(), Matches, ""+
+		"TableReader_5 10000.00 0 root  time:.*, loops:1, cop_task:.*num: 1, max:.*, proc_keys: 0, rpc_num: 1, rpc_time: .*data:TableFullScan_4 N/A N/A\n"+
+		"└─TableFullScan_4 10000.00 0 cop.* table:t1 time:.*, loops:.*keep order:false, stats:pseudo N/A N/A")
 	err := tkUser.ExecToErr(fmt.Sprintf("explain for connection %d", tkRootProcess.ID))
 	c.Check(core.ErrAccessDenied.Equal(err), IsTrue)
 	err = tkUser.ExecToErr("explain for connection 42")
@@ -89,9 +116,10 @@ func (s *testSuite) TestExplainFor(c *C) {
 	tkRoot.MustExec(fmt.Sprintf("explain for connection %d", tkRootProcess.ID))
 }
 
-func (s *testSuite) TestIssue11124(c *C) {
+func (s *testSuite9) TestIssue11124(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk2 := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
 	tk.MustExec("drop table if exists kankan1")
 	tk.MustExec("drop table if exists kankan2")
 	tk.MustExec("create table kankan1(id int, name text);")
@@ -111,11 +139,11 @@ func (s *testSuite) TestIssue11124(c *C) {
 	}
 }
 
-func (s *testSuite) TestExplainMetricTable(c *C) {
+func (s *testSuite) TestExplainMemTablePredicate(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk.MustQuery(fmt.Sprintf("desc select * from METRICS_SCHEMA.tidb_query_duration where time >= '2019-12-23 16:10:13' and time <= '2019-12-23 16:30:13' ")).Check(testkit.Rows(
+	tk.MustQuery("desc select * from METRICS_SCHEMA.tidb_query_duration where time >= '2019-12-23 16:10:13' and time <= '2019-12-23 16:30:13' ").Check(testkit.Rows(
 		"MemTableScan_5 10000.00 root table:tidb_query_duration PromQL:histogram_quantile(0.9, sum(rate(tidb_server_handle_query_duration_seconds_bucket{}[60s])) by (le,sql_type,instance)), start_time:2019-12-23 16:10:13, end_time:2019-12-23 16:30:13, step:1m0s"))
-	tk.MustQuery(fmt.Sprintf("desc select * from METRICS_SCHEMA.up where time >= '2019-12-23 16:10:13' and time <= '2019-12-23 16:30:13' ")).Check(testkit.Rows(
+	tk.MustQuery("desc select * from METRICS_SCHEMA.up where time >= '2019-12-23 16:10:13' and time <= '2019-12-23 16:30:13' ").Check(testkit.Rows(
 		"MemTableScan_5 10000.00 root table:up PromQL:up{}, start_time:2019-12-23 16:10:13, end_time:2019-12-23 16:30:13, step:1m0s"))
 	tk.MustQuery("desc select * from information_schema.cluster_log where time >= '2019-12-23 16:10:13' and time <= '2019-12-23 16:30:13'").Check(testkit.Rows(
 		"MemTableScan_5 10000.00 root table:CLUSTER_LOG start_time:2019-12-23 16:10:13, end_time:2019-12-23 16:30:13"))
@@ -123,6 +151,13 @@ func (s *testSuite) TestExplainMetricTable(c *C) {
 		`MemTableScan_5 10000.00 root table:CLUSTER_LOG start_time:2019-12-23 16:10:13, end_time:2019-12-23 16:30:13, log_levels:["error","warn"]`))
 	tk.MustQuery("desc select * from information_schema.cluster_log where type in ('high_cpu_1','high_memory_1') and time >= '2019-12-23 16:10:13' and time <= '2019-12-23 16:30:13'").Check(testkit.Rows(
 		`MemTableScan_5 10000.00 root table:CLUSTER_LOG start_time:2019-12-23 16:10:13, end_time:2019-12-23 16:30:13, node_types:["high_cpu_1","high_memory_1"]`))
+	tk.MustQuery("desc select * from information_schema.slow_query").Check(testkit.Rows(
+		"MemTableScan_4 10000.00 root table:SLOW_QUERY only search in the current 'tidb-slow.log' file"))
+	tk.MustQuery("desc select * from information_schema.slow_query where time >= '2019-12-23 16:10:13' and time <= '2019-12-23 16:30:13'").Check(testkit.Rows(
+		"MemTableScan_5 10000.00 root table:SLOW_QUERY start_time:2019-12-23 16:10:13.000000, end_time:2019-12-23 16:30:13.000000"))
+	tk.MustExec("set @@time_zone = '+00:00';")
+	tk.MustQuery("desc select * from information_schema.slow_query where time >= '2019-12-23 16:10:13' and time <= '2019-12-23 16:30:13'").Check(testkit.Rows(
+		"MemTableScan_5 10000.00 root table:SLOW_QUERY start_time:2019-12-23 16:10:13.000000, end_time:2019-12-23 16:30:13.000000"))
 }
 
 type testPrepareSerialSuite struct {
@@ -130,6 +165,9 @@ type testPrepareSerialSuite struct {
 }
 
 func (s *testPrepareSerialSuite) TestExplainForConnPlanCache(c *C) {
+	if israce.RaceEnabled {
+		c.Skip("skip race test")
+	}
 	orgEnable := core.PreparedPlanCacheEnabled()
 	defer func() {
 		core.SetPreparedPlanCache(orgEnable)
@@ -145,6 +183,7 @@ func (s *testPrepareSerialSuite) TestExplainForConnPlanCache(c *C) {
 	tk2 := testkit.NewTestKitWithInit(c, s.store)
 
 	tk1.MustExec("use test")
+	tk1.MustExec("set @@tidb_enable_collect_execution_info=0;")
 	tk1.MustExec("drop table if exists t")
 	tk1.MustExec("create table t(a int)")
 	tk1.MustExec("prepare stmt from 'select * from t where a = ?'")

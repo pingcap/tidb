@@ -425,6 +425,7 @@ func (s *session) doCommit(ctx context.Context) error {
 	// Set this option for 2 phase commit to validate schema lease.
 	s.txn.SetOption(kv.SchemaChecker, domain.NewSchemaChecker(domain.GetDomain(s), s.sessionVars.TxnCtx.SchemaVersion, physicalTableIDs))
 	s.txn.SetOption(kv.InfoSchema, s.sessionVars.TxnCtx.InfoSchema)
+	s.txn.SetOption(kv.CommitHook, func(info kv.TxnInfo, _ error) { s.sessionVars.LastTxnInfo = info })
 	if s.GetSessionVars().EnableAmendPessimisticTxn {
 		s.txn.SetOption(kv.SchemaAmender, NewSchemaAmenderForTikvTxn(s))
 	}
@@ -656,7 +657,7 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 				// We do not have to log the query every time.
 				// We print the queries at the first try only.
 				sql := sqlForLog(st.GetTextToLog())
-				if !config.RedactLogEnabled() {
+				if !sessVars.EnableRedactLog {
 					sql += sessVars.PreparedParams.String()
 				}
 				logutil.Logger(ctx).Warn("retrying",
@@ -830,6 +831,14 @@ func execRestrictedSQL(ctx context.Context, se *session, sql string) ([]chunk.Ro
 	ctx = context.WithValue(ctx, execdetails.StmtExecDetailKey, &execdetails.StmtExecDetails{})
 	startTime := time.Now()
 	recordSets, err := se.Execute(ctx, sql)
+	defer func() {
+		for _, rs := range recordSets {
+			closeErr := rs.Close()
+			if closeErr != nil && err == nil {
+				err = closeErr
+			}
+		}
+	}()
 	if err != nil {
 		return nil, nil, err
 	}
@@ -844,9 +853,6 @@ func execRestrictedSQL(ctx context.Context, se *session, sql string) ([]chunk.Ro
 		if err != nil {
 			return nil, nil, err
 		}
-		if err = rs.Close(); err != nil {
-			return nil, nil, err
-		}
 
 		if i == 0 {
 			rows = tmp
@@ -854,7 +860,7 @@ func execRestrictedSQL(ctx context.Context, se *session, sql string) ([]chunk.Ro
 		}
 	}
 	metrics.QueryDurationHistogram.WithLabelValues(metrics.LblInternal).Observe(time.Since(startTime).Seconds())
-	return rows, fields, nil
+	return rows, fields, err
 }
 
 func createSessionFunc(store kv.Storage) pools.Factory {
@@ -956,6 +962,9 @@ func (s *session) GetAllSysVars() (map[string]string, error) {
 
 // GetGlobalSysVar implements GlobalVarAccessor.GetGlobalSysVar interface.
 func (s *session) GetGlobalSysVar(name string) (string, error) {
+	if name == variable.TiDBSlowLogMasking {
+		name = variable.TiDBRedactLog
+	}
 	if s.Value(sessionctx.Initing) != nil {
 		// When running bootstrap or upgrade, we should not access global storage.
 		return "", nil
@@ -977,6 +986,9 @@ func (s *session) GetGlobalSysVar(name string) (string, error) {
 
 // SetGlobalSysVar implements GlobalVarAccessor.SetGlobalSysVar interface.
 func (s *session) SetGlobalSysVar(name, value string) error {
+	if name == variable.TiDBSlowLogMasking {
+		name = variable.TiDBRedactLog
+	}
 	if name == variable.SQLModeVar {
 		value = mysql.FormatSQLModeStr(value)
 		if _, err := mysql.GetSQLMode(value); err != nil {
@@ -1024,6 +1036,7 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 		Command:          command,
 		Plan:             s.currentPlan,
 		PlanExplainRows:  plannercore.GetExplainRowsForPlan(s.currentPlan),
+		RuntimeStatsColl: s.sessionVars.StmtCtx.RuntimeStatsColl,
 		Time:             t,
 		State:            s.Status(),
 		Info:             sql,
@@ -1853,7 +1866,7 @@ func CreateSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 
 const (
 	notBootstrapped         = 0
-	currentBootstrapVersion = version47
+	currentBootstrapVersion = version48
 )
 
 func getStoreBootstrapVersion(store kv.Storage) int64 {
@@ -1990,7 +2003,6 @@ var builtinGlobalVariable = []string{
 	variable.TiDBIsolationReadEngines,
 	variable.TiDBStoreLimit,
 	variable.TiDBAllowAutoRandExplicitInsert,
-	variable.TiDBSlowLogMasking,
 	variable.TiDBRedactLog,
 	variable.TiDBEnableTelemetry,
 	variable.TiDBEnableAmendPessimisticTxn,
@@ -2100,7 +2112,13 @@ func (s *session) PrepareTSFuture(ctx context.Context) {
 
 // RefreshTxnCtx implements context.RefreshTxnCtx interface.
 func (s *session) RefreshTxnCtx(ctx context.Context) error {
-	if err := s.doCommit(ctx); err != nil {
+	var commitDetail *execdetails.CommitDetails
+	ctx = context.WithValue(ctx, execdetails.CommitDetailCtxKey, &commitDetail)
+	err := s.doCommit(ctx)
+	if commitDetail != nil {
+		s.GetSessionVars().StmtCtx.MergeExecDetails(nil, commitDetail)
+	}
+	if err != nil {
 		return err
 	}
 
@@ -2172,7 +2190,7 @@ func logStmt(execStmt *executor.ExecStmt, vars *variable.SessionVars) {
 func logQuery(query string, vars *variable.SessionVars) {
 	if atomic.LoadUint32(&variable.ProcessGeneralLog) != 0 && !vars.InRestrictedSQL {
 		query = executor.QueryReplacer.Replace(query)
-		if !config.RedactLogEnabled() {
+		if !vars.EnableRedactLog {
 			query = query + vars.PreparedParams.String()
 		}
 		logutil.BgLogger().Info("GENERAL_LOG",

@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
@@ -627,6 +628,17 @@ func (s *testSuite5) TestShowCreateTable(c *C) {
 	))
 	tk.MustExec("drop table t")
 
+	// for issue #20446
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1(c int unsigned default 0);")
+	tk.MustQuery("show create table `t1`").Check(testutil.RowsWithSep("|",
+		""+
+			"t1 CREATE TABLE `t1` (\n"+
+			"  `c` int(10) unsigned DEFAULT '0'\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+	))
+	tk.MustExec("drop table t1")
+
 	tk.MustExec("CREATE TABLE `log` (" +
 		"`LOG_ID` bigint(20) UNSIGNED NOT NULL AUTO_INCREMENT," +
 		"`ROUND_ID` bigint(20) UNSIGNED NOT NULL," +
@@ -722,7 +734,7 @@ func (s *testSuite5) TestShowCreateTable(c *C) {
 	tk.MustQuery("show create table default_num").Check(testutil.RowsWithSep("|",
 		""+
 			"default_num CREATE TABLE `default_num` (\n"+
-			"  `a` int(11) DEFAULT 11\n"+
+			"  `a` int(11) DEFAULT '11'\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
 	))
 	tk.MustExec(`drop table if exists default_varchar`)
@@ -950,4 +962,27 @@ func (s *testSuite5) TestShowClusterConfig(c *C) {
 
 	confErr = fmt.Errorf("something unknown error")
 	c.Assert(tk.QueryToErr("show config"), ErrorMatches, confErr.Error())
+}
+
+func (s *testSuite5) TestShowVar(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	var showSQL string
+	for _, v := range variable.SysVars {
+		// When ScopeSession only. `show global variables` must return empty.
+		if v.Scope == variable.ScopeSession {
+			showSQL = "show variables like '" + v.Name + "'"
+			res := tk.MustQuery(showSQL)
+			c.Check(res.Rows(), HasLen, 1)
+			showSQL = "show global variables like '" + v.Name + "'"
+			res = tk.MustQuery(showSQL)
+			c.Check(res.Rows(), HasLen, 0)
+		} else {
+			showSQL = "show global variables like '" + v.Name + "'"
+			res := tk.MustQuery(showSQL)
+			c.Check(res.Rows(), HasLen, 1)
+			showSQL = "show variables like '" + v.Name + "'"
+			res = tk.MustQuery(showSQL)
+			c.Check(res.Rows(), HasLen, 1)
+		}
+	}
 }

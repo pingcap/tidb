@@ -637,8 +637,14 @@ type SessionVars struct {
 	// SelectLimit limits the max counts of select statement's output
 	SelectLimit uint64
 
+	// EnableRedactLog indicates that whether redact log.
+	EnableRedactLog bool
+
 	// EnableAmendPessimisticTxn indicates if schema change amend is enabled for pessimistic transactions.
 	EnableAmendPessimisticTxn bool
+
+	// LastTxnInfo keeps track the info of last committed transaction
+	LastTxnInfo kv.TxnInfo
 }
 
 // PreparedParams contains the parameters of the current prepared statement when executing it.
@@ -982,6 +988,9 @@ func (s *SessionVars) GetSystemVar(name string) (string, bool) {
 	} else if name == ErrorCount {
 		return strconv.Itoa(int(s.SysErrorCount)), true
 	}
+	if name == TiDBSlowLogMasking {
+		name = TiDBRedactLog
+	}
 	val, ok := s.systems[name]
 	return val, ok
 }
@@ -1181,7 +1190,7 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.BatchCommit = TiDBOptOn(val)
 	case TiDBDMLBatchSize:
 		s.DMLBatchSize = tidbOptPositiveInt32(val, DefDMLBatchSize)
-	case TiDBCurrentTS, TiDBConfig:
+	case TiDBCurrentTS, TiDBLastTxnInfo, TiDBConfig:
 		return ErrReadOnly
 	case TiDBMaxChunkSize:
 		s.MaxChunkSize = tidbOptPositiveInt32(val, DefMaxChunkSize)
@@ -1344,8 +1353,12 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		config.GetGlobalConfig().EnableCollectExecutionInfo = TiDBOptOn(val)
 	case TiDBAllowAutoRandExplicitInsert:
 		s.AllowAutoRandExplicitInsert = TiDBOptOn(val)
-	case TiDBSlowLogMasking, TiDBRedactLog:
-		config.SetRedactLog(TiDBOptOn(val))
+	case TiDBSlowLogMasking:
+		// TiDBSlowLogMasking is deprecated and a alias of TiDBRedactLog.
+		return s.SetSystemVar(TiDBRedactLog, val)
+	case TiDBRedactLog:
+		s.EnableRedactLog = TiDBOptOn(val)
+		errors.RedactLogEnabled.Store(s.EnableRedactLog)
 	case TiDBEnableAmendPessimisticTxn:
 		s.EnableAmendPessimisticTxn = TiDBOptOn(val)
 	}
@@ -1610,6 +1623,12 @@ const (
 	SlowLogBackoffTotal = "Backoff_total"
 	// SlowLogWriteSQLRespTotal is the total time used to write response to client.
 	SlowLogWriteSQLRespTotal = "Write_sql_response_total"
+	// SlowLogExecRetryCount is the execution retry count.
+	SlowLogExecRetryCount = "Exec_retry_count"
+	// SlowLogExecRetryTime is the execution retry time.
+	SlowLogExecRetryTime = "Exec_retry_time"
+	// SlowLogBackoffDetail is the detail of backoff.
+	SlowLogBackoffDetail = "Backoff_Detail"
 )
 
 // SlowQueryLogItems is a collection of items that should be included in the
@@ -1639,6 +1658,8 @@ type SlowQueryLogItems struct {
 	BackoffTotal      time.Duration
 	WriteSQLRespTotal time.Duration
 	RewriteInfo       RewritePhaseInfo
+	ExecRetryCount    uint
+	ExecRetryTime     time.Duration
 }
 
 // SlowLogFormat uses for formatting slow log.
@@ -1675,6 +1696,17 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	}
 	if s.ConnectionID != 0 {
 		writeSlowLogItem(&buf, SlowLogConnIDStr, strconv.FormatUint(s.ConnectionID, 10))
+	}
+	if logItems.ExecRetryCount > 0 {
+		buf.WriteString(SlowLogRowPrefixStr)
+		buf.WriteString(SlowLogExecRetryTime)
+		buf.WriteString(SlowLogSpaceMarkStr)
+		buf.WriteString(strconv.FormatFloat(logItems.ExecRetryTime.Seconds(), 'f', -1, 64))
+		buf.WriteString(" ")
+		buf.WriteString(SlowLogExecRetryCount)
+		buf.WriteString(SlowLogSpaceMarkStr)
+		buf.WriteString(strconv.Itoa(int(logItems.ExecRetryCount)))
+		buf.WriteString("\n")
 	}
 	writeSlowLogItem(&buf, SlowLogQueryTimeStr, strconv.FormatFloat(logItems.TimeTotal.Seconds(), 'f', -1, 64))
 	writeSlowLogItem(&buf, SlowLogParseTimeStr, strconv.FormatFloat(logItems.TimeParse.Seconds(), 'f', -1, 64))

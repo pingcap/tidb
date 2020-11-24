@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/kv/memdb"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/memory"
@@ -64,6 +65,8 @@ const (
 	InfoSchema
 	// SchemaAmender is used to amend mutations for pessimistic transactions
 	SchemaAmender
+	// CommitHook is a callback function called right after the transaction gets committed
+	CommitHook
 )
 
 // Priority value for transaction priority.
@@ -176,8 +179,12 @@ type MemBuffer interface {
 	NewStagingBuffer() MemBuffer
 	// Flush flushes all kvs in this buffer to parrent buffer.
 	Flush() (int, error)
-	// Discard discads all kvs in this buffer.
+	// Discard discards all kvs in this buffer.
 	Discard()
+	// GetFlag get KeyFlags by an exist key
+	GetFlags(ctx context.Context, k Key) memdb.KeyFlags
+	// DeleteWithNeedLock deletes key with a need lock mark
+	DeleteWithNeedLock(Key) error
 }
 
 // Transaction defines the interface for operations inside a Transaction.
