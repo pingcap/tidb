@@ -3259,6 +3259,23 @@ func (s *testSessionSuite2) TestSetTxnScope(c *C) {
 	result.Check(testkit.Rows(oracle.GlobalTxnScope))
 }
 
+func (s *testSessionSuite2) TestSetEnableRateLimitAction(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	// assert default value
+	result := tk.MustQuery("select @@tidb_enable_rate_limit_action;")
+	result.Check(testkit.Rows("1"))
+
+	// assert set sys variable
+	tk.MustExec("set global tidb_enable_rate_limit_action= '0';")
+	tk.Se.Close()
+
+	se, err := session.CreateSession4Test(s.store)
+	c.Check(err, IsNil)
+	tk.Se = se
+	result = tk.MustQuery("select @@tidb_enable_rate_limit_action;")
+	result.Check(testkit.Rows("0"))
+}
+
 func (s *testSessionSuite3) TestSetVarHint(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 
