@@ -131,10 +131,10 @@ func optimizeByShuffle4Window(pp *PhysicalWindow, ctx sessionctx.Context) *Physi
 	reqProp := &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64}
 	shuffle := PhysicalShuffle{
 		Concurrency:  concurrency,
-		Tail:         tail,
-		DataSource:   dataSource,
+		Tails:        []PhysicalPlan{tail},
+		DataSources:  []PhysicalPlan{dataSource},
 		SplitterType: PartitionHashSplitterType,
-		ByItems:      byItems,
+		ByItemArrays: [][]expression.Expression{byItems},
 	}.Init(ctx, pp.statsInfo(), pp.SelectBlockOffset(), reqProp)
 	return shuffle
 }
@@ -156,10 +156,10 @@ func optimizeByShuffle4StreamAgg(pp *PhysicalStreamAgg, ctx sessionctx.Context) 
 	reqProp := &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64}
 	shuffle := PhysicalShuffle{
 		Concurrency:  concurrency,
-		Tail:         tail,
-		DataSource:   dataSource,
+		Tails:        []PhysicalPlan{tail},
+		DataSources:  []PhysicalPlan{dataSource},
 		SplitterType: PartitionHashSplitterType,
-		ByItems:      cloneExprs(pp.GroupByItems),
+		ByItemArrays: [][]expression.Expression{cloneExprs(pp.GroupByItems)},
 	}.Init(ctx, pp.statsInfo(), pp.SelectBlockOffset(), reqProp)
 	return shuffle
 }
