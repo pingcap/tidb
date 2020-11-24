@@ -1280,7 +1280,7 @@ func (s *testSuiteJoin1) TestIndexLookupJoin(c *C) {
 
 	tk.MustQuery("desc select /*+ TIDB_INLJ(s) */ count(*) from t join s use index(idx) on s.a = t.a and s.b < t.b").Check(testkit.Rows(
 		"HashAgg_9 1.00 root  funcs:count(1)->Column#6",
-		"└─IndexHashJoin_18 64.00 root  inner join, inner:IndexReader_15, outer key:test.t.a, inner key:test.s.a, equal cond:eq(test.t.a, test.s.a), other cond:lt(test.s.b, test.t.b)",
+		"└─IndexJoin_16 64.00 root  inner join, inner:IndexReader_15, outer key:test.t.a, inner key:test.s.a, equal cond:eq(test.t.a, test.s.a), other cond:lt(test.s.b, test.t.b)",
 		"  ├─TableReader_23(Build) 64.00 root  data:Selection_22",
 		"  │ └─Selection_22 64.00 cop[tikv]  not(isnull(test.t.b))",
 		"  │   └─TableFullScan_21 64.00 cop[tikv] table:t keep order:false",
@@ -1310,9 +1310,9 @@ func (s *testSuiteJoin1) TestIndexLookupJoin(c *C) {
 	tk.MustQuery("desc select /*+ INL_HASH_JOIN(s) */ count(*) from t join s use index(idx) on s.a = t.a and s.b < t.b").Check(testkit.Rows(
 		"HashAgg_9 1.00 root  funcs:count(1)->Column#6",
 		"└─IndexHashJoin_18 64.00 root  inner join, inner:IndexReader_15, outer key:test.t.a, inner key:test.s.a, equal cond:eq(test.t.a, test.s.a), other cond:lt(test.s.b, test.t.b)",
-		"  ├─TableReader_26(Build) 64.00 root  data:Selection_25",
-		"  │ └─Selection_25 64.00 cop[tikv]  not(isnull(test.t.b))",
-		"  │   └─TableFullScan_24 64.00 cop[tikv] table:t keep order:false",
+		"  ├─TableReader_23(Build) 64.00 root  data:Selection_22",
+		"  │ └─Selection_22 64.00 cop[tikv]  not(isnull(test.t.b))",
+		"  │   └─TableFullScan_21 64.00 cop[tikv] table:t keep order:false",
 		"  └─IndexReader_15(Probe) 1.00 root  index:Selection_14",
 		"    └─Selection_14 1.00 cop[tikv]  not(isnull(test.s.a)), not(isnull(test.s.b))",
 		"      └─IndexRangeScan_13 1.00 cop[tikv] table:s, index:idx(a, b) range: decided by [eq(test.s.a, test.t.a) lt(test.s.b, test.t.b)], keep order:false",
