@@ -470,6 +470,7 @@ func (s *testPointGetSuite) TestUpdateWithTableReadLockWillFail(c *C) {
 func (s *testPointGetSuite) TestSelectInMultiColumns(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t2")
 	tk.MustExec("create table t2(a int, b int, c int, primary key(a, b, c));")
 	tk.MustExec("insert into t2 values (1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4)")
 	tk.MustQuery("select * from t2 where (a, b, c) in ((1, 1, 1));").Check(testkit.Rows("1 1 1"))
