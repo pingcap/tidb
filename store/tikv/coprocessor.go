@@ -89,11 +89,15 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variable
 		// Make sure that there is at least one worker.
 		it.concurrency = 1
 	}
+
 	if it.req.KeepOrder {
 		it.sendRate = newRateLimit(2 * it.concurrency)
 		it.respChan = nil
 	} else {
-		it.respChan = make(chan *copResponse, it.concurrency)
+		// The count of cached response in memory is controlled by the capacity of the it.sendRate, not capacity of the respChan.
+		// As the worker will send finCopResponse after each task being handled, we make the capacity of the respCh equals to
+		// 2*it.concurrency to avoid deadlock in the unit test caused by the `MustExec` or `Exec`
+		it.respChan = make(chan *copResponse, it.concurrency*2)
 		it.sendRate = newRateLimit(it.concurrency)
 	}
 	it.actionOnExceed = newRateLimitAction(uint(cap(it.sendRate.token)))
@@ -436,7 +440,6 @@ type copIteratorWorker struct {
 	memTracker *memory.Tracker
 
 	replicaReadSeed uint32
-	actionOnExceed  *rateLimitAction
 }
 
 // copIteratorTaskSender sends tasks to taskCh then wait for the workers to exit.
@@ -525,6 +528,11 @@ func (worker *copIteratorWorker) run(ctx context.Context) {
 			respCh = task.respChan
 		}
 		worker.handleTask(ctx, task, respCh)
+		if worker.respChan != nil {
+			// When a task is finished by the worker, send a finCopResp into channel to notify the copIterator that
+			// there is a task finished.
+			worker.sendToRespCh(finCopResp, worker.respChan, false)
+		}
 		close(task.respChan)
 		if worker.vars != nil && worker.vars.Killed != nil && atomic.LoadUint32(worker.vars.Killed) == 1 {
 			return
@@ -561,8 +569,6 @@ func (it *copIterator) open(ctx context.Context) {
 			memTracker: it.memTracker,
 
 			replicaReadSeed: it.replicaReadSeed,
-
-			actionOnExceed: it.actionOnExceed,
 		}
 		go worker.run(ctx)
 	}
@@ -575,7 +581,7 @@ func (it *copIterator) open(ctx context.Context) {
 	}
 	taskSender.respChan = it.respChan
 	// If the ticket is less than 2, wo will directly disable the actionOnExceed
-	it.actionOnExceed.setEnabled(cap(it.sendRate.token) >= 2)
+	it.actionOnExceed.setEnabled(true)
 	go taskSender.run()
 }
 
@@ -768,11 +774,6 @@ func (worker *copIteratorWorker) handleTask(ctx context.Context, task *copTask, 
 			resp := &copResponse{err: errors.Errorf("%v", r)}
 			// if panic has happened, set checkOOM to false to avoid another panic.
 			worker.sendToRespCh(resp, respCh, false)
-		}
-		if worker.respChan != nil && worker.actionOnExceed.isEnabled() {
-			// When a task is finished by the worker, send a finCopResp into channel to notify the copIterator that
-			// there is a task finished.
-			worker.sendToRespCh(finCopResp, worker.respChan, false)
 		}
 	}()
 	remainTasks := []*copTask{task}
