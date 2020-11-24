@@ -274,10 +274,10 @@ func (s *testSuite3) TestIndexLookUpGetResultChunk(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists tbl")
-	tk.MustExec("create table tbl(a int, b int, c int, key(a))")
+	tk.MustExec("create table tbl(a int, b int, c int, key idx_a(a))")
 	for i := 0; i < 101; i++ {
 		tk.MustExec(fmt.Sprintf("insert into tbl values(%d,%d,%d)", i, i, i))
 	}
-	tk.MustQuery("select * from tbl  where a >99 limit 1").Check(testkit.Rows("100 100 100"))
-	tk.MustQuery("select * from tbl  where a >10 limit 4,1").Check(testkit.Rows("15 15 15"))
+	tk.MustQuery("select * from tbl use index(idx_a) where a >99  order by a asc limit 1").Check(testkit.Rows("100 100 100"))
+	tk.MustQuery("select * from tbl use index(idx_a) where a >10  order by a asc limit 4,1").Check(testkit.Rows("15 15 15"))
 }

@@ -709,23 +709,19 @@ func (c *Chunk) ToString(ft []*types.FieldType) string {
 
 // AppendRows appends multiple rows  to the chunk.
 func (c *Chunk) AppendRows(rows []Row) {
-	c.AppendPartialRows(rows)
+	c.AppendPartialRows(0, rows)
 	c.numVirtualRows += len(rows)
 }
 
 // AppendPartialRows appends multiple row to the chunk.
-func (c *Chunk) AppendPartialRows(rows []Row) {
-	for i, dstCol := range c.columns {
+func (c *Chunk) AppendPartialRows(colOff int, rows []Row) {
+	columns := c.columns[colOff:]
+	for i, dstCol := range columns {
 		for _, srcRow := range rows {
+			if i == 0 {
+				c.appendSel(colOff)
+			}
 			appendCellByCell(dstCol, srcRow.c.columns[i], srcRow.idx)
 		}
 	}
-}
-
-// LeftRequiredRows  chunk may append the number of rows
-func (c *Chunk) LeftRequiredRows(offset int) int {
-	if (c.requiredRows >= c.NumRows()+offset) || (c.requiredRows-c.NumRows() >= offset) {
-		return offset
-	}
-	return c.requiredRows - c.NumRows()
 }

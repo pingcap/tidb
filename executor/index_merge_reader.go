@@ -492,6 +492,13 @@ func (e *IndexMergeReaderExecutor) Next(ctx context.Context, req *chunk.Chunk) e
 		}
 		if resultTask.cursor < len(resultTask.rows) {
 			offset := len(resultTask.rows) - resultTask.cursor
+			requiredRows := e.maxChunkSize - req.NumRows()
+			if requiredRows <= 0 {
+				return nil
+			}
+			if offset > requiredRows {
+				offset = requiredRows
+			}
 			req.AppendRows(resultTask.rows[resultTask.cursor : resultTask.cursor+offset])
 			resultTask.cursor += offset
 		}
