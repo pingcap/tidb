@@ -1623,7 +1623,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.TruncateAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
 		sc.DividedByZeroAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
 		sc.AllowInvalidDate = vars.SQLMode.HasAllowInvalidDatesMode()
-		sc.IgnoreZeroInDate = !vars.StrictSQLMode || stmt.IgnoreErr || sc.AllowInvalidDate
+		sc.IgnoreZeroInDate = !vars.SQLMode.HasNoZeroInDateMode() || !vars.SQLMode.HasNoZeroDateMode() || !vars.StrictSQLMode || stmt.IgnoreErr || sc.AllowInvalidDate
 		sc.Priority = stmt.Priority
 	case *ast.InsertStmt:
 		sc.InInsertStmt = true
@@ -1635,7 +1635,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.TruncateAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
 		sc.DividedByZeroAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
 		sc.AllowInvalidDate = vars.SQLMode.HasAllowInvalidDatesMode()
-		sc.IgnoreZeroInDate = !vars.StrictSQLMode || stmt.IgnoreErr || sc.AllowInvalidDate
+		sc.IgnoreZeroInDate = !vars.SQLMode.HasNoZeroInDateMode() || !vars.SQLMode.HasNoZeroDateMode() || !vars.StrictSQLMode || stmt.IgnoreErr || sc.AllowInvalidDate
 		sc.Priority = stmt.Priority
 	case *ast.CreateTableStmt, *ast.AlterTableStmt:
 		// Make sure the sql_mode is strict when checking column default value.
@@ -1724,7 +1724,7 @@ func ResetUpdateStmtCtx(sc *stmtctx.StatementContext, stmt *ast.UpdateStmt, vars
 	sc.TruncateAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
 	sc.DividedByZeroAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
 	sc.AllowInvalidDate = vars.SQLMode.HasAllowInvalidDatesMode()
-	sc.IgnoreZeroInDate = !vars.StrictSQLMode || stmt.IgnoreErr || sc.AllowInvalidDate
+	sc.IgnoreZeroInDate = !vars.SQLMode.HasNoZeroInDateMode() || !vars.SQLMode.HasNoZeroDateMode() || !vars.StrictSQLMode || stmt.IgnoreErr || sc.AllowInvalidDate
 	sc.Priority = stmt.Priority
 }
 
