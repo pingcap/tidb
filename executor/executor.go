@@ -1619,7 +1619,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.TruncateAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
 		sc.DividedByZeroAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
 		sc.AllowInvalidDate = vars.SQLMode.HasAllowInvalidDatesMode()
-		sc.IgnoreZeroInDate = !vars.StrictSQLMode || stmt.IgnoreErr || sc.AllowInvalidDate
+		sc.IgnoreZeroInDate = !vars.SQLMode.HasNoZeroInDateMode() || !vars.SQLMode.HasNoZeroDateMode() || !vars.StrictSQLMode || stmt.IgnoreErr || sc.AllowInvalidDate
 		sc.Priority = stmt.Priority
 	case *ast.InsertStmt:
 		sc.InInsertStmt = true
@@ -1631,7 +1631,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.TruncateAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
 		sc.DividedByZeroAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
 		sc.AllowInvalidDate = vars.SQLMode.HasAllowInvalidDatesMode()
-		sc.IgnoreZeroInDate = !vars.StrictSQLMode || stmt.IgnoreErr || sc.AllowInvalidDate
+		sc.IgnoreZeroInDate = !vars.SQLMode.HasNoZeroInDateMode() || !vars.SQLMode.HasNoZeroDateMode() || !vars.StrictSQLMode || stmt.IgnoreErr || sc.AllowInvalidDate
 		sc.Priority = stmt.Priority
 	case *ast.CreateTableStmt, *ast.AlterTableStmt:
 		// Make sure the sql_mode is strict when checking column default value.
@@ -1710,6 +1710,21 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	return
 }
 
+<<<<<<< HEAD
+=======
+// ResetUpdateStmtCtx resets statement context for UpdateStmt.
+func ResetUpdateStmtCtx(sc *stmtctx.StatementContext, stmt *ast.UpdateStmt, vars *variable.SessionVars) {
+	sc.InUpdateStmt = true
+	sc.DupKeyAsWarning = stmt.IgnoreErr
+	sc.BadNullAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
+	sc.TruncateAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
+	sc.DividedByZeroAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
+	sc.AllowInvalidDate = vars.SQLMode.HasAllowInvalidDatesMode()
+	sc.IgnoreZeroInDate = !vars.SQLMode.HasNoZeroInDateMode() || !vars.SQLMode.HasNoZeroDateMode() || !vars.StrictSQLMode || stmt.IgnoreErr || sc.AllowInvalidDate
+	sc.Priority = stmt.Priority
+}
+
+>>>>>>> afb2ab95f... table: fix zero date in different sqlmode (#20206)
 // FillVirtualColumnValue will calculate the virtual column value by evaluating generated
 // expression using rows from a chunk, and then fill this value into the chunk
 func FillVirtualColumnValue(virtualRetTypes []*types.FieldType, virtualColumnIndex []int,
