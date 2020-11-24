@@ -166,6 +166,8 @@ func (s *testBatchPointGetSuite) TestBatchPointGetUnsignedHandleWithSort(c *C) {
 }
 
 func (s *testBatchPointGetSuite) TestLockNonExistKey(c *C) {
+	doneCh := make(chan struct{}, 1)
+
 	tk1 := testkit.NewTestKit(c, s.store)
 	tk2 := testkit.NewTestKit(c, s.store)
 	tk1.MustExec("use test")
@@ -179,7 +181,6 @@ func (s *testBatchPointGetSuite) TestLockNonExistKey(c *C) {
 	tk2.MustExec("begin pessimistic")
 
 	tk1.MustExec("select * from t where (id, v) in ((1, 1), (2, 2)) for update")
-	doneCh := make(chan struct{}, 1)
 	go func() {
 		tk2.MustExec("insert into t values(1, 1, 3)")
 		doneCh <- struct{}{}
@@ -190,9 +191,36 @@ func (s *testBatchPointGetSuite) TestLockNonExistKey(c *C) {
 	tk1.MustExec("commit")
 	<-doneCh
 	tk2.MustExec("commit")
-
 	tk1.MustQuery("select * from t").Check(testkit.Rows(
 		"1 2 1",
+		"2 2 2",
+		"1 1 3",
+	))
+
+	tk1.MustExec("set tx_isolation = 'READ-COMMITTED'")
+	tk2.MustExec("set tx_isolation = 'READ-COMMITTED'")
+	tk1.MustExec("drop table if exists t")
+	tk1.MustExec("create table t(id int, v int, val int, primary key(id, v))")
+	tk1.MustExec("insert into t values(1, 1, 1), (3, 3, 3)")
+
+	tk1.MustExec("begin pessimistic")
+	tk2.MustExec("begin pessimistic")
+
+	tk1.MustExec("select * from t where (id, v) in ((1, 1), (2, 2), (3, 3)) for update")
+	tk2.MustExec("insert into t values(2, 2, 2)")
+	go func() {
+		tk2.MustExec("insert into t values(1, 1, 3)")
+		doneCh <- struct{}{}
+	}()
+	time.Sleep(50 * time.Millisecond)
+	tk1.MustExec("update t set v = 2 where id = 1 and v = 1")
+
+	tk1.MustExec("commit")
+	<-doneCh
+	tk2.MustExec("commit")
+	tk1.MustQuery("select * from t").Check(testkit.Rows(
+		"1 2 1",
+		"3 3 3",
 		"2 2 2",
 		"1 1 3",
 	))

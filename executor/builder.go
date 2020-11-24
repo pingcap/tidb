@@ -3819,6 +3819,7 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 	} else {
 		// `SELECT a FROM t WHERE a IN (1, 1, 2, 1, 2)` should not return duplicated rows
 		handles := make([]kv.Handle, 0, len(plan.Handles))
+		indexKeys := make([]kv.Key, 0, len(plan.Handles))
 		dedup := kv.NewHandleMap()
 		if plan.IndexInfo == nil {
 			for _, handle := range plan.Handles {
@@ -3830,6 +3831,13 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 			}
 		} else {
 			for _, value := range plan.IndexValues {
+				physID := getPhysID(e.tblInfo, value[plan.PartitionColPos].GetInt64())
+				idxKey, err1 := EncodeUniqueIndexKey(e.ctx, e.tblInfo, e.idxInfo, value, physID)
+				if err1 != nil {
+					b.err = err
+					return nil
+				}
+				indexKeys = append(indexKeys, idxKey)
 				handleBytes, err := EncodeUniqueIndexValuesForKey(e.ctx, e.tblInfo, plan.IndexInfo, value)
 				if err != nil {
 					b.err = err
@@ -3848,6 +3856,7 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 			}
 		}
 		e.handles = handles
+		e.indexKeys = indexKeys
 		capacity = len(e.handles)
 	}
 	e.base().initCap = capacity
