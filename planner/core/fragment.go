@@ -64,13 +64,24 @@ func (e *mppTaskGenerator) generateMPPTasks(s *PhysicalExchangeSender) ([]*kv.MP
 }
 
 func (e *mppTaskGenerator) generateMPPTasksForFragment(f *Fragment) (tasks []*kv.MPPTask, err error) {
+	for _, r := range f.ExchangeReceivers {
+		r.Tasks, err = e.generateMPPTasksForFragment(r.ChildPf)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
 	if f.TableScan != nil {
 		tasks, err = e.constructSinglePhysicalTable(context.Background(), f.TableScan.Table.ID, f.TableScan.Ranges)
 	} else {
 		tasks, err = e.constructSinglePhysicalTable(context.Background(), -1, nil)
 	}
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if len(tasks) == 0 {
+		return nil, errors.New("cannot find mpp task")
+	}
 	for _, r := range f.ExchangeReceivers {
-		r.Tasks, err = e.generateMPPTasksForFragment(r.ChildPf)
 		s := r.ChildPf.ExchangeSender
 		s.Tasks = tasks
 	}
