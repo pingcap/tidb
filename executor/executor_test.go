@@ -4487,7 +4487,6 @@ func (s *testSuite1) TestIssue16025(c *C) {
 	tk.MustExec("CREATE TABLE t0(c0 NUMERIC PRIMARY KEY);")
 	tk.MustExec("INSERT IGNORE INTO t0(c0) VALUES (NULL);")
 	tk.MustQuery("SELECT * FROM t0 WHERE c0;").Check(testkit.Rows())
-
 }
 
 func (s *testSuite1) TestIssue16854(c *C) {
@@ -4596,4 +4595,9 @@ func (s *testSuite) TestIssue19667(c *C) {
 	tk.MustExec("CREATE TABLE t (a DATETIME)")
 	tk.MustExec("INSERT INTO t VALUES('1988-04-17 01:59:59')")
 	tk.MustQuery(`SELECT DATE_ADD(a, INTERVAL 1 SECOND) FROM t`).Check(testkit.Rows("1988-04-17 02:00:00"))
+}
+
+func (s *testSuite) TestPrepareLoadData(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustGetErrCode(`prepare stmt from "load data local infile '/tmp/load_data_test.csv' into table test";`, mysql.ErrUnsupportedPs)
 }
