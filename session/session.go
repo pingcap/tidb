@@ -1114,8 +1114,8 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 		MaxExecutionTime: maxExecutionTime,
 		RedactSQL:        s.sessionVars.EnableRedactLog,
 	}
-	if command == mysql.ComSleep {
-		// Store the last valid plan when the session sleeping.
+	if explain, ok := s.currentPlan.(*plannercore.Explain); (command == mysql.ComSleep) || (ok && explain.IsExplainFor()) {
+		// Store the last valid plan when the session sleeping or the statement is `explain for connection`
 		// This is for `explain for connection` statement has the ability to query the last valid plan.
 		oldPi := s.ShowProcess()
 		if oldPi != nil && oldPi.Plan != nil && len(oldPi.PlanExplainRows) > 0 {
