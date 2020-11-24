@@ -325,24 +325,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 	}
 
 	cmd32 := atomic.LoadUint32(&sctx.GetSessionVars().CommandValue)
-	cmd := byte(cmd32)
-	var pi processinfoSetter
-	if raw, ok := sctx.(processinfoSetter); ok {
-		pi = raw
-		sql := a.OriginText()
-		if simple, ok := a.Plan.(*plannercore.Simple); ok && simple.Statement != nil {
-			if ss, ok := simple.Statement.(ast.SensitiveStmtNode); ok {
-				// Use SecureText to avoid leak password information.
-				sql = ss.SecureText()
-			}
-		}
-		maxExecutionTime := getMaxExecutionTime(sctx)
-		// Update processinfo, ShowProcess() will use it.
-		pi.SetProcessInfo(sql, time.Now(), cmd, maxExecutionTime)
-		if a.Ctx.GetSessionVars().StmtCtx.StmtType == "" {
-			a.Ctx.GetSessionVars().StmtCtx.StmtType = GetStmtLabel(a.StmtNode)
-		}
-	}
+	a.setProcessInfo(byte(cmd32))
 
 	isPessimistic := sctx.GetSessionVars().TxnCtx.IsPessimistic
 
@@ -368,6 +351,28 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 		stmt:       a,
 		txnStartTS: txnStartTS,
 	}, nil
+}
+
+func (a *ExecStmt) setProcessInfo(cmd byte) {
+	// Don't set process info for `explain for connection` statement.
+	if explain, ok := a.Plan.(*plannercore.Explain); ok && explain.IsExplainFor() {
+		return
+	}
+	if pi, ok := a.Ctx.(processinfoSetter); ok {
+		sql := a.OriginText()
+		if simple, ok := a.Plan.(*plannercore.Simple); ok && simple.Statement != nil {
+			if ss, ok := simple.Statement.(ast.SensitiveStmtNode); ok {
+				// Use SecureText to avoid leak password information.
+				sql = ss.SecureText()
+			}
+		}
+		maxExecutionTime := getMaxExecutionTime(a.Ctx)
+		// Update processinfo, ShowProcess() will use it.
+		pi.SetProcessInfo(sql, time.Now(), cmd, maxExecutionTime)
+		if a.Ctx.GetSessionVars().StmtCtx.StmtType == "" {
+			a.Ctx.GetSessionVars().StmtCtx.StmtType = GetStmtLabel(a.StmtNode)
+		}
+	}
 }
 
 func (a *ExecStmt) handleNoDelay(ctx context.Context, e Executor, isPessimistic bool) (handled bool, rs sqlexec.RecordSet, err error) {
