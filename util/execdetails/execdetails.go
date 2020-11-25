@@ -434,8 +434,15 @@ const (
 	TpIndexLookUpRunTimeStats
 	// TpSlowQueryRuntimeStat is the tp for TpSlowQueryRuntimeStat
 	TpSlowQueryRuntimeStat
+<<<<<<< HEAD
 	// TpInsertRuntimeStat is the tp for InsertRuntimeStat
 	TpInsertRuntimeStat
+=======
+	// TpHashAggRuntimeStat is the tp for HashAggRuntimeStat
+	TpHashAggRuntimeStat
+	// TpIndexMergeRunTimeStats is the tp for TpIndexMergeRunTimeStats
+	TpIndexMergeRunTimeStats
+>>>>>>> ceefbf159... executor: Add the HashAggExec runtime information (#20577)
 )
 
 // RuntimeStats is used to express the executor runtime information.
