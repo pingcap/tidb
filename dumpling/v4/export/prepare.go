@@ -1,17 +1,14 @@
 package export
 
 import (
-	"context"
 	"database/sql"
 	"fmt"
 	"regexp"
 	"strings"
 	"text/template"
 
-	"github.com/go-sql-driver/mysql"
 	"github.com/pingcap/dumpling/v4/log"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb-tools/pkg/utils"
 )
 
 const (
@@ -70,60 +67,6 @@ var DefaultOutputFileTemplate = template.Must(template.New("data").
 
 func ParseOutputFileTemplate(text string) (*template.Template, error) {
 	return template.Must(DefaultOutputFileTemplate.Clone()).Parse(text)
-}
-
-func adjustConfig(ctx context.Context, conf *Config) error {
-	// Init logger
-	if conf.Logger != nil {
-		log.SetAppLogger(conf.Logger)
-	} else {
-		err := log.InitAppLogger(&log.Config{
-			Level:  conf.LogLevel,
-			File:   conf.LogFile,
-			Format: conf.LogFormat,
-		})
-		if err != nil {
-			return err
-		}
-	}
-
-	// Register TLS config
-	if len(conf.Security.CAPath) > 0 {
-		tlsConfig, err := utils.ToTLSConfig(conf.Security.CAPath, conf.Security.CertPath, conf.Security.KeyPath)
-		if err != nil {
-			return err
-		}
-		err = mysql.RegisterTLSConfig("dumpling-tls-target", tlsConfig)
-		if err != nil {
-			return err
-		}
-	}
-
-	if conf.SessionParams == nil {
-		conf.SessionParams = make(map[string]interface{})
-	}
-	if conf.OutputFileTemplate == nil {
-		conf.OutputFileTemplate = DefaultOutputFileTemplate
-	}
-	if conf.Sql != "" && conf.Where != "" {
-		return errors.New("can't specify both --sql and --where at the same time. Please try to combine them into --sql")
-	}
-
-	s, err := conf.createExternalStorage(ctx)
-	if err != nil {
-		return err
-	}
-	conf.ExternalStorage = s
-
-	return nil
-}
-
-func detectServerInfo(db *sql.DB) (ServerInfo, error) {
-	versionStr, err := SelectVersion(db)
-	if err != nil {
-		return ServerInfoUnknown, err
-	}
-	return ParseServerInfo(versionStr), nil
 }
 
 func prepareDumpingDatabases(conf *Config, db *sql.Conn) ([]string, error) {

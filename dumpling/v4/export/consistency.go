@@ -16,7 +16,6 @@ const (
 )
 
 func NewConsistencyController(ctx context.Context, conf *Config, session *sql.DB) (ConsistencyController, error) {
-	resolveAutoConsistency(conf)
 	conn, err := session.Conn(ctx)
 	if err != nil {
 		return nil, err
@@ -130,17 +129,3 @@ func (c *ConsistencyLockDumpingTables) PingContext(ctx context.Context) error {
 }
 
 const snapshotFieldIndex = 1
-
-func resolveAutoConsistency(conf *Config) {
-	if conf.Consistency != consistencyTypeAuto {
-		return
-	}
-	switch conf.ServerInfo.ServerType {
-	case ServerTypeTiDB:
-		conf.Consistency = consistencyTypeSnapshot
-	case ServerTypeMySQL, ServerTypeMariaDB:
-		conf.Consistency = consistencyTypeFlush
-	default:
-		conf.Consistency = consistencyTypeNone
-	}
-}

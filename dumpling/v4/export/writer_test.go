@@ -3,6 +3,7 @@ package export
 import (
 	"context"
 	"database/sql/driver"
+	"github.com/pingcap/br/pkg/storage"
 	"io/ioutil"
 	"os"
 	"path"
@@ -14,16 +15,20 @@ var _ = Suite(&testWriterSuite{})
 
 type testWriterSuite struct{}
 
+func createExtStore(c *C, conf *Config) storage.ExternalStorage {
+	d := &Dumper{conf: conf}
+	c.Assert(createExternalStore(d), IsNil)
+	return d.extStore
+}
+
 func (s *testWriterSuite) TestWriteDatabaseMeta(c *C) {
 	dir := c.MkDir()
 	ctx := context.Background()
 
 	config := DefaultConfig()
 	config.OutputDirPath = dir
-	err := adjustConfig(ctx, config)
-	c.Assert(err, IsNil)
 
-	writer, err := NewSimpleWriter(config)
+	writer, err := NewSimpleWriter(config, createExtStore(c, config))
 	c.Assert(err, IsNil)
 	err = writer.WriteDatabaseMeta(ctx, "test", "CREATE DATABASE `test`")
 	c.Assert(err, IsNil)
@@ -41,10 +46,8 @@ func (s *testWriterSuite) TestWriteTableMeta(c *C) {
 
 	config := DefaultConfig()
 	config.OutputDirPath = dir
-	err := adjustConfig(ctx, config)
-	c.Assert(err, IsNil)
 
-	writer, err := NewSimpleWriter(config)
+	writer, err := NewSimpleWriter(config, createExtStore(c, config))
 	c.Assert(err, IsNil)
 	err = writer.WriteTableMeta(ctx, "test", "t", "CREATE TABLE t (a INT)")
 	c.Assert(err, IsNil)
@@ -62,10 +65,8 @@ func (s *testWriterSuite) TestWriteViewMeta(c *C) {
 
 	config := DefaultConfig()
 	config.OutputDirPath = dir
-	err := adjustConfig(ctx, config)
-	c.Assert(err, IsNil)
 
-	writer, err := NewSimpleWriter(config)
+	writer, err := NewSimpleWriter(config, createExtStore(c, config))
 	c.Assert(err, IsNil)
 	specCmt := "/*!40101 SET NAMES binary*/;\n"
 	createTableSQL := "CREATE TABLE `v`(\n`a` int\n)ENGINE=MyISAM;\n"
@@ -95,10 +96,8 @@ func (s *testWriterSuite) TestWriteTableData(c *C) {
 
 	config := DefaultConfig()
 	config.OutputDirPath = dir
-	err := adjustConfig(ctx, config)
-	c.Assert(err, IsNil)
 
-	simpleWriter, err := NewSimpleWriter(config)
+	simpleWriter, err := NewSimpleWriter(config, createExtStore(c, config))
 	c.Assert(err, IsNil)
 	writer := SQLWriter{SimpleWriter: simpleWriter}
 
@@ -141,8 +140,6 @@ func (s *testWriterSuite) TestWriteTableDataWithFileSize(c *C) {
 	config := DefaultConfig()
 	config.OutputDirPath = dir
 	config.FileSize = 50
-	err := adjustConfig(ctx, config)
-	c.Assert(err, IsNil)
 	specCmts := []string{
 		"/*!40101 SET NAMES binary*/;",
 		"/*!40014 SET FOREIGN_KEY_CHECKS=0*/;",
@@ -151,7 +148,7 @@ func (s *testWriterSuite) TestWriteTableDataWithFileSize(c *C) {
 	config.FileSize += uint64(len(specCmts[1]) + 1)
 	config.FileSize += uint64(len("INSERT INTO `employees` VALUES\n"))
 
-	simpleWriter, err := NewSimpleWriter(config)
+	simpleWriter, err := NewSimpleWriter(config, createExtStore(c, config))
 	c.Assert(err, IsNil)
 	writer := SQLWriter{SimpleWriter: simpleWriter}
 
@@ -198,8 +195,6 @@ func (s *testWriterSuite) TestWriteTableDataWithFileSizeAndRows(c *C) {
 	config.OutputDirPath = dir
 	config.FileSize = 50
 	config.Rows = 4
-	err := adjustConfig(ctx, config)
-	c.Assert(err, IsNil)
 	specCmts := []string{
 		"/*!40101 SET NAMES binary*/;",
 		"/*!40014 SET FOREIGN_KEY_CHECKS=0*/;",
@@ -208,7 +203,7 @@ func (s *testWriterSuite) TestWriteTableDataWithFileSizeAndRows(c *C) {
 	config.FileSize += uint64(len(specCmts[1]) + 1)
 	config.FileSize += uint64(len("INSERT INTO `employees` VALUES\n"))
 
-	simpleWriter, err := NewSimpleWriter(config)
+	simpleWriter, err := NewSimpleWriter(config, createExtStore(c, config))
 	c.Assert(err, IsNil)
 	writer := SQLWriter{SimpleWriter: simpleWriter}
 
@@ -258,10 +253,8 @@ func (s *testWriterSuite) TestWriteTableDataWithStatementSize(c *C) {
 	var err error
 	config.OutputFileTemplate, err = ParseOutputFileTemplate("specified-name")
 	c.Assert(err, IsNil)
-	err = adjustConfig(ctx, config)
-	c.Assert(err, IsNil)
 
-	simpleWriter, err := NewSimpleWriter(config)
+	simpleWriter, err := NewSimpleWriter(config, createExtStore(c, config))
 	c.Assert(err, IsNil)
 	writer := SQLWriter{SimpleWriter: simpleWriter}
 
@@ -310,11 +303,12 @@ func (s *testWriterSuite) TestWriteTableDataWithStatementSize(c *C) {
 	// test specifying filename format
 	config.OutputFileTemplate, err = ParseOutputFileTemplate("{{.Index}}-{{.Table}}-{{fn .DB}}")
 	c.Assert(err, IsNil)
-	os.RemoveAll(config.OutputDirPath)
-	config.OutputDirPath, err = ioutil.TempDir("", "dumpling")
-	newStorage, err := config.createExternalStorage(context.Background())
+	err = os.RemoveAll(config.OutputDirPath)
 	c.Assert(err, IsNil)
-	config.ExternalStorage = newStorage
+	config.OutputDirPath, err = ioutil.TempDir("", "dumpling")
+	simpleWriter, err = NewSimpleWriter(config, createExtStore(c, config))
+	c.Assert(err, IsNil)
+	writer = SQLWriter{SimpleWriter: simpleWriter}
 
 	cases = map[string]string{
 		"000000000-employee-te%25%2Fst.sql": "/*!40101 SET NAMES binary*/;\n" +

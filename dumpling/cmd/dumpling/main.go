@@ -62,7 +62,14 @@ func main() {
 	registry.MustRegister(prometheus.NewGoCollector())
 	export.RegisterMetrics(registry)
 	prometheus.DefaultGatherer = registry
-	err = export.Dump(context.Background(), conf)
+	dumper, err := export.NewDumper(context.Background(), conf)
+	if err != nil {
+		log.Error("dump failed error stack info", zap.Error(err))
+		fmt.Printf("\ncreate dumper failed: %s\n", err.Error())
+		os.Exit(1)
+	}
+	defer dumper.Close()
+	err = dumper.Dump()
 	if err != nil {
 		log.Error("dump failed error stack info", zap.Error(err))
 		fmt.Printf("\ndump failed: %s\n", err.Error())
