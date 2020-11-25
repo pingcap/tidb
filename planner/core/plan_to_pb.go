@@ -25,8 +25,10 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
+	"go.uber.org/zap"
 )
 
 // ToPB implements PhysicalPlan ToPB interface.
@@ -170,7 +172,29 @@ func (p *PhysicalTableScan) ToPB(ctx sessionctx.Context, storeType kv.StoreType)
 		executorID = p.ExplainID().String()
 	}
 	err := SetPBColumnsDefaultValue(ctx, tsExec.Columns, p.Columns)
-	return &tipb.Executor{Tp: tipb.ExecType_TypeTableScan, TblScan: tsExec, ExecutorId: &executorID}, err
+	tipbExec := &tipb.Executor{Tp: tipb.ExecType_TypeTableScan, TblScan: tsExec, ExecutorId: &executorID}
+	if err == nil {
+		if ctx.GetSessionVars().ConnectionID > 0 {
+			logutil.BgLogger().Info("[for debug] PhysicalTableScan.ToPB",
+				zap.Uint64("connID", ctx.GetSessionVars().ConnectionID),
+				zap.Stringer("tipbExec", tipbExec))
+			if tipbExec.TblScan != nil {
+				for _, col := range tipbExec.TblScan.Columns {
+					colInfo := findColumnInfoByID(p.Columns, col.ColumnId)
+					defValDatumInPB, decodeErr := tablecodec.DecodeColumnValue(col.DefaultVal, &colInfo.FieldType, ctx.GetSessionVars().Location())
+					defValInCol, err2 := table.GetColOriginDefaultValue(ctx, colInfo)
+					logutil.BgLogger().Info("[for debug] PhysicalTableScan.ToPB columns",
+						zap.Uint64("connID", ctx.GetSessionVars().ConnectionID),
+						zap.Error(decodeErr),
+						zap.Error(err2),
+						zap.Int64("colId", col.ColumnId),
+						zap.Stringer("defaultValueInPB", defValDatumInPB),
+						zap.Stringer("defaultValueInColumnModel", defValInCol))
+				}
+			}
+		}
+	}
+	return tipbExec, err
 }
 
 // checkCoverIndex checks whether we can pass unique info to TiKV. We should push it if and only if the length of

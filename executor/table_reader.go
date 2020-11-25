@@ -15,6 +15,7 @@ package executor
 
 import (
 	"context"
+	"go.uber.org/zap"
 	"sort"
 
 	"github.com/opentracing/opentracing-go"
@@ -174,6 +175,17 @@ func (e *TableReaderExecutor) Next(ctx context.Context, req *chunk.Chunk) error 
 	if err := e.resultHandler.nextChunk(ctx, req); err != nil {
 		e.feedback.Invalidate()
 		return err
+	}
+
+	if e.ctx.GetSessionVars().ConnectionID > 0 {
+		for i := 0; i < req.NumRows(); i++ {
+			for j := 0; j < req.GetRow(i).Len(); j++ {
+				logutil.BgLogger().Info("[for debug] TableReaderExecutor.Next",
+					zap.Int("rowIdx", i),
+					zap.Int("colIdx", j),
+					zap.Stringer("colContent", req.GetRow(i).GetDatum(j, &e.columns[j].FieldType)))
+			}
+		}
 	}
 
 	err := FillVirtualColumnValue(e.virtualColumnRetFieldTypes, e.virtualColumnIndex, e.schema, e.columns, e.ctx, req)
