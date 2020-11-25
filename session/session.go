@@ -1121,7 +1121,7 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 		MaxExecutionTime: maxExecutionTime,
 		RedactSQL:        s.sessionVars.EnableRedactLog,
 	}
-	if command == mysql.ComSleep {
+	if p == nil {
 		// Store the last valid plan when the session sleeping.
 		// This is for `explain for connection` statement has the ability to query the last valid plan.
 		oldPi := s.ShowProcess()
