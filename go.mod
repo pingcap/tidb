@@ -45,9 +45,9 @@ require (
 	github.com/pingcap/failpoint v0.0.0-20200702092429-9f69995143ce
 	github.com/pingcap/fn v0.0.0-20200306044125-d5540d389059
 	github.com/pingcap/goleveldb v0.0.0-20191226122134-f82aafb29989
-	github.com/pingcap/kvproto v0.0.0-20201113092725-08f2872278eb
+	github.com/pingcap/kvproto v0.0.0-20201120081251-756b1447ba12
 	github.com/pingcap/log v0.0.0-20201112100606-8f1e84a3abc8
-	github.com/pingcap/parser v0.0.0-20201123044711-f3f506acdab4
+	github.com/pingcap/parser v0.0.0-20201123080035-8f4c6ab94e11
 	github.com/pingcap/sysutil v0.0.0-20201021075216-f93ced2829e2
 	github.com/pingcap/tidb-lightning v4.0.9-0.20201106041742-a1ac97827a27+incompatible
 	github.com/pingcap/tidb-tools v4.0.5-0.20200820092506-34ea90c93237+incompatible
