@@ -1085,10 +1085,11 @@ func findColFromNaturalUsingJoin(p LogicalPlan, col *expression.Column) (name *t
 }
 
 // buildProjection returns a Projection plan and non-aux columns length.
-func (b *PlanBuilder) buildProjection(ctx context.Context, p LogicalPlan, fields []*ast.SelectField, mapper map[*ast.AggregateFuncExpr]int, windowMapper map[*ast.WindowFuncExpr]int, considerWindow bool, expandGenerateColumn bool) (LogicalPlan, int, error) {
+func (b *PlanBuilder) buildProjection(ctx context.Context, p LogicalPlan, fields []*ast.SelectField, mapper map[*ast.AggregateFuncExpr]int,
+	windowMapper map[*ast.WindowFuncExpr]int, considerWindow bool, expandGenerateColumn bool) (LogicalPlan, []expression.Expression, int, error) {
 	err := b.preprocessUserVarTypes(ctx, p, fields, mapper)
 	if err != nil {
-		return nil, 0, err
+		return nil, nil, 0, err
 	}
 	b.optFlag |= flagEliminateProjection
 	b.curClause = fieldList
@@ -1118,7 +1119,7 @@ func (b *PlanBuilder) buildProjection(ctx context.Context, p LogicalPlan, fields
 			proj.Exprs = append(proj.Exprs, expr)
 			col, name, err := b.buildProjectionField(ctx, p, field, expr)
 			if err != nil {
-				return nil, 0, err
+				return nil, nil, 0, err
 			}
 			schema.Append(col)
 			newNames = append(newNames, name)
@@ -1126,7 +1127,7 @@ func (b *PlanBuilder) buildProjection(ctx context.Context, p LogicalPlan, fields
 		}
 		newExpr, np, err := b.rewriteWithPreprocess(ctx, field.Expr, p, mapper, windowMapper, true, nil)
 		if err != nil {
-			return nil, 0, err
+			return nil, nil, 0, err
 		}
 
 		// For window functions in the order by clause, we will append an field for it.
@@ -1142,7 +1143,7 @@ func (b *PlanBuilder) buildProjection(ctx context.Context, p LogicalPlan, fields
 
 		col, name, err := b.buildProjectionField(ctx, p, field, newExpr)
 		if err != nil {
-			return nil, 0, err
+			return nil, nil, 0, err
 		}
 		schema.Append(col)
 		newNames = append(newNames, name)
@@ -1169,10 +1170,10 @@ func (b *PlanBuilder) buildProjection(ctx context.Context, p LogicalPlan, fields
 		}
 	}
 	proj.SetChildren(p)
-	return proj, oldLen, nil
+	return proj, proj.Exprs, oldLen, nil
 }
 
-func (b *PlanBuilder) checkDistinct(ctx context.Context, sel *ast.SelectStmt, p LogicalPlan, exprs []expression.Expression,
+func (b *PlanBuilder) checkDistinct(ctx context.Context, sel *ast.SelectStmt, p LogicalPlan, originalExprs []expression.Expression,
 	aggMapper map[*ast.AggregateFuncExpr]int, windowMapper map[*ast.WindowFuncExpr]int, length int) error {
 	if sel.OrderBy == nil {
 		return nil
@@ -1183,16 +1184,12 @@ func (b *PlanBuilder) checkDistinct(ctx context.Context, sel *ast.SelectStmt, p 
 		if err != nil {
 			return err
 		}
-		// skip constants
-		if _, ok := it.(*expression.Constant); ok {
-			continue
-		}
 
 		var ok bool
 		// check if expressions match
 		for j := 0; j < length; j++ {
 			// both check original expression & as name
-			if it.Equal(b.ctx, exprs[j]) || it.Equal(b.ctx, p.Schema().Columns[j]) {
+			if it.Equal(b.ctx, originalExprs[j]) || it.Equal(b.ctx, p.Schema().Columns[j]) {
 				ok = true
 				break
 			}
@@ -1204,7 +1201,7 @@ func (b *PlanBuilder) checkDistinct(ctx context.Context, sel *ast.SelectStmt, p 
 		cols := expression.ExtractDependentColumns(it)
 		for _, col := range cols {
 			for j := 0; j < length; j++ {
-				if col.Equal(b.ctx, exprs[j]) || col.Equal(b.ctx, p.Schema().Columns[j]) {
+				if col.Equal(b.ctx, originalExprs[j]) || col.Equal(b.ctx, p.Schema().Columns[j]) {
 					ok = true
 					break
 				}
@@ -2930,11 +2927,10 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 	var oldLen int
 	// According to https://dev.mysql.com/doc/refman/8.0/en/window-functions-usage.html,
 	// we can only process window functions after having clause, so `considerWindow` is false now.
-	p, oldLen, err = b.buildProjection(ctx, p, sel.Fields.Fields, totalMap, nil, false, sel.OrderBy != nil)
+	p, projExprs, oldLen, err = b.buildProjection(ctx, p, sel.Fields.Fields, totalMap, nil, false, sel.OrderBy != nil)
 	if err != nil {
 		return nil, err
 	}
-	projExprs = p.(*LogicalProjection).Exprs
 
 	if sel.Having != nil {
 		b.curClause = havingClause
@@ -2966,11 +2962,10 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 			return nil, err
 		}
 		// Now we build the window function fields.
-		p, oldLen, err = b.buildProjection(ctx, p, sel.Fields.Fields, windowAggMap, windowMapper, true, false)
+		p, projExprs, oldLen, err = b.buildProjection(ctx, p, sel.Fields.Fields, windowAggMap, windowMapper, true, false)
 		if err != nil {
 			return nil, err
 		}
-		projExprs = p.(*LogicalProjection).Exprs
 	}
 
 	if sel.Distinct {
