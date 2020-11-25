@@ -21,11 +21,15 @@ type Writer interface {
 }
 
 type SimpleWriter struct {
-	cfg *Config
+	cfg      *Config
+	extStore storage.ExternalStorage
 }
 
-func NewSimpleWriter(config *Config) (SimpleWriter, error) {
-	sw := SimpleWriter{cfg: config}
+func NewSimpleWriter(config *Config, externalStore storage.ExternalStorage) (SimpleWriter, error) {
+	sw := SimpleWriter{
+		cfg:      config,
+		extStore: externalStore,
+	}
 	return sw, nil
 }
 
@@ -34,7 +38,7 @@ func (f SimpleWriter) WriteDatabaseMeta(ctx context.Context, db, createSQL strin
 	if err != nil {
 		return err
 	}
-	return writeMetaToFile(ctx, db, createSQL, f.cfg.ExternalStorage, fileName+".sql", f.cfg.CompressType)
+	return writeMetaToFile(ctx, db, createSQL, f.extStore, fileName+".sql", f.cfg.CompressType)
 }
 
 func (f SimpleWriter) WriteTableMeta(ctx context.Context, db, table, createSQL string) error {
@@ -42,7 +46,7 @@ func (f SimpleWriter) WriteTableMeta(ctx context.Context, db, table, createSQL s
 	if err != nil {
 		return err
 	}
-	return writeMetaToFile(ctx, db, createSQL, f.cfg.ExternalStorage, fileName+".sql", f.cfg.CompressType)
+	return writeMetaToFile(ctx, db, createSQL, f.extStore, fileName+".sql", f.cfg.CompressType)
 }
 
 func (f SimpleWriter) WriteViewMeta(ctx context.Context, db, view, createTableSQL, createViewSQL string) error {
@@ -54,11 +58,11 @@ func (f SimpleWriter) WriteViewMeta(ctx context.Context, db, view, createTableSQ
 	if err != nil {
 		return err
 	}
-	err = writeMetaToFile(ctx, db, createTableSQL, f.cfg.ExternalStorage, fileNameTable+".sql", f.cfg.CompressType)
+	err = writeMetaToFile(ctx, db, createTableSQL, f.extStore, fileNameTable+".sql", f.cfg.CompressType)
 	if err != nil {
 		return err
 	}
-	return writeMetaToFile(ctx, db, createViewSQL, f.cfg.ExternalStorage, fileNameView+".sql", f.cfg.CompressType)
+	return writeMetaToFile(ctx, db, createViewSQL, f.extStore, fileNameView+".sql", f.cfg.CompressType)
 }
 
 type SQLWriter struct{ SimpleWriter }
@@ -75,7 +79,7 @@ func (f SQLWriter) WriteTableData(ctx context.Context, ir TableDataIR) (err erro
 	}
 
 	for {
-		fileWriter, tearDown := buildInterceptFileWriter(f.cfg.ExternalStorage, fileName, f.cfg.CompressType)
+		fileWriter, tearDown := buildInterceptFileWriter(f.extStore, fileName, f.cfg.CompressType)
 		err = WriteInsert(ctx, ir, fileWriter, f.cfg)
 		tearDown(ctx)
 		if err != nil {
@@ -178,7 +182,7 @@ func (f CSVWriter) WriteTableData(ctx context.Context, ir TableDataIR) (err erro
 	}
 
 	for {
-		fileWriter, tearDown := buildInterceptFileWriter(f.cfg.ExternalStorage, fileName, f.cfg.CompressType)
+		fileWriter, tearDown := buildInterceptFileWriter(f.extStore, fileName, f.cfg.CompressType)
 		err = WriteInsertInCsv(ctx, ir, fileWriter, f.cfg)
 		tearDown(ctx)
 		if err != nil {

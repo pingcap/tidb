@@ -89,7 +89,8 @@ func (s *testConsistencySuite) TestResolveAutoConsistency(c *C) {
 	for _, x := range cases {
 		conf.Consistency = consistencyTypeAuto
 		conf.ServerInfo.ServerType = x.serverTp
-		resolveAutoConsistency(conf)
+		d := &Dumper{conf: conf}
+		c.Assert(resolveAutoConsistency(d), IsNil)
 		cmt := Commentf("server type %s", x.serverTp.String())
 		c.Assert(conf.Consistency, Equals, x.resolvedConsistency, cmt)
 	}
