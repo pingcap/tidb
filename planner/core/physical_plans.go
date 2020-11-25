@@ -1259,6 +1259,7 @@ type PartitionSplitterType int
 const (
 	// PartitionHashSplitterType is the splitter splits by hash.
 	PartitionHashSplitterType = iota
+	PartitionRangeSplitterType
 )
 
 // PhysicalShuffleReceiverStub represents a receiver stub of `PhysicalShuffle`,
