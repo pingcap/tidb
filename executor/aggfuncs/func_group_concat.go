@@ -19,7 +19,6 @@ import (
 	"sort"
 	"sync/atomic"
 
-	"github.com/pingcap/parser/terror"
 	mysql "github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/planner/util"
@@ -27,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/set"
 )
@@ -409,7 +409,7 @@ func (e *groupConcatOrder) UpdatePartialResult(sctx sessionctx.Context, rowsInGr
 func (e *groupConcatOrder) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) error {
 	// If order by exists, the parallel hash aggregation is forbidden in executorBuilder.buildHashAgg.
 	// So MergePartialResult will not be called.
-	return terror.ClassOptimizer.New(mysql.ErrInternal, mysql.MySQLErrName[mysql.ErrInternal]).GenWithStack("groupConcatOrder.MergePartialResult should not be called")
+	return dbterror.ClassOptimizer.NewStd(mysql.ErrInternal).GenWithStack("groupConcatOrder.MergePartialResult should not be called")
 }
 
 // SetTruncated will be called in `executorBuilder#buildHashAgg` with duck-type.
@@ -518,5 +518,5 @@ func (e *groupConcatDistinctOrder) UpdatePartialResult(sctx sessionctx.Context, 
 func (e *groupConcatDistinctOrder) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) error {
 	// If order by exists, the parallel hash aggregation is forbidden in executorBuilder.buildHashAgg.
 	// So MergePartialResult will not be called.
-	return terror.ClassOptimizer.New(mysql.ErrInternal, mysql.MySQLErrName[mysql.ErrInternal]).GenWithStack("groupConcatDistinctOrder.MergePartialResult should not be called")
+	return dbterror.ClassOptimizer.NewStd(mysql.ErrInternal).GenWithStack("groupConcatDistinctOrder.MergePartialResult should not be called")
 }
