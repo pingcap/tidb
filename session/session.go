@@ -2228,6 +2228,7 @@ var builtinGlobalVariable = []string{
 	variable.TiDBEnableChangeColumnType,
 	variable.TiDBEnableAmendPessimisticTxn,
 	variable.TiDBMemoryUsageAlarmRatio,
+	variable.TiDBEnableRateLimitAction,
 }
 
 var (

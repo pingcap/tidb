@@ -6753,15 +6753,10 @@ func (s *testSerialSuite) TestCoprocessorOOMAction(c *C) {
 	failpoint.Enable("github.com/pingcap/tidb/store/tikv/testRateLimitActionMockConsumeAndAssert", `return(true)`)
 	defer failpoint.Disable("github.com/pingcap/tidb/store/tikv/testRateLimitActionMockConsumeAndAssert")
 
-	failpoint.Enable("github.com/pingcap/tidb/store/tikv/testRateLimitActionMockWaitMax", `return(true)`)
-	// assert oom action
-	for _, testcase := range testcases {
-		c.Log(testcase.name)
+	enableOOM := func(tk *testkit.TestKit, name, sql string) {
+		c.Logf("enable OOM, testcase: %v", name)
 		// larger than 4 copResponse, smaller than 5 copResponse
 		quota := 5*tikv.MockResponseSizeForTest - 100
-		se, err := session.CreateSession4Test(s.store)
-		c.Check(err, IsNil)
-		tk.Se = se
 		tk.MustExec("use test")
 		tk.MustExec("set @@tidb_distsql_scan_concurrency = 10")
 		tk.MustExec(fmt.Sprintf("set @@tidb_mem_quota_query=%v;", quota))
@@ -6769,26 +6764,33 @@ func (s *testSerialSuite) TestCoprocessorOOMAction(c *C) {
 		for i := 0; i < count; i++ {
 			expect = append(expect, fmt.Sprintf("%v", i))
 		}
-		tk.MustQuery(testcase.sql).Sort().Check(testkit.Rows(expect...))
+		tk.MustQuery(sql).Sort().Check(testkit.Rows(expect...))
 		// assert oom action worked by max consumed > memory quota
 		c.Assert(tk.Se.GetSessionVars().StmtCtx.MemTracker.MaxConsumed(), Greater, int64(quota))
-		se.Close()
 	}
 
-	// assert oom action is not enabled
-	for _, testcase := range testcases {
-		c.Log(testcase.name)
+	disableOOM := func(tk *testkit.TestKit, name, sql string) {
+		c.Logf("disable OOM, testcase: %v", name)
 		quota := 5*tikv.MockResponseSizeForTest - 100
-		se, err := session.CreateSession4Test(s.store)
-		c.Check(err, IsNil)
-		tk.Se = se
 		tk.MustExec("use test")
 		tk.MustExec("set @@tidb_distsql_scan_concurrency = 10")
 		tk.MustExec(fmt.Sprintf("set @@tidb_mem_quota_query=%v;", quota))
-		tk.MustExec("set @@tidb_enable_rate_limit_action = 0")
-		err = tk.QueryToErr(testcase.sql)
+		err := tk.QueryToErr(sql)
 		c.Assert(err, NotNil)
 		c.Assert(err.Error(), Matches, "Out Of Memory Quota.*")
+	}
+
+	failpoint.Enable("github.com/pingcap/tidb/store/tikv/testRateLimitActionMockWaitMax", `return(true)`)
+	// assert oom action and switch
+	for _, testcase := range testcases {
+		se, err := session.CreateSession4Test(s.store)
+		c.Check(err, IsNil)
+		tk.Se = se
+		enableOOM(tk, testcase.name, testcase.sql)
+		tk.MustExec("set @@tidb_enable_rate_limit_action = 0")
+		disableOOM(tk, testcase.name, testcase.sql)
+		tk.MustExec("set @@tidb_enable_rate_limit_action = 1")
+		enableOOM(tk, testcase.name, testcase.sql)
 		se.Close()
 	}
 

@@ -94,10 +94,14 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variable
 		it.sendRate = newRateLimit(2 * it.concurrency)
 		it.respChan = nil
 	} else {
-		// The count of cached response in memory is controlled by the capacity of the it.sendRate, not capacity of the respChan.
-		// As the worker will send finCopResponse after each task being handled, we make the capacity of the respCh equals to
-		// 2*it.concurrency to avoid deadlock in the unit test caused by the `MustExec` or `Exec`
-		it.respChan = make(chan *copResponse, it.concurrency*2)
+		capacity := it.concurrency
+		if enabledRateLimitAction {
+			// The count of cached response in memory is controlled by the capacity of the it.sendRate, not capacity of the respChan.
+			// As the worker will send finCopResponse after each task being handled, we make the capacity of the respCh equals to
+			// 2*it.concurrency to avoid deadlock in the unit test caused by the `MustExec` or `Exec`
+			capacity = it.concurrency * 2
+		}
+		it.respChan = make(chan *copResponse, capacity)
 		it.sendRate = newRateLimit(it.concurrency)
 	}
 	it.actionOnExceed = newRateLimitAction(uint(cap(it.sendRate.token)))
