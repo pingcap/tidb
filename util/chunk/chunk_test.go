@@ -1149,7 +1149,7 @@ func BenchmarkBatchAppendRows(b *testing.B) {
 	b.Run("BenchmarkBatchAppendRow", func(b *testing.B) {
 		for i := 0; i < b.N; i++ {
 			chk.Reset()
-			for i := 0; i < 1000; i++ {
+			for i := 0; i < numRows; i++ {
 				chk.AppendRow(row)
 			}
 		}
