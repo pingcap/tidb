@@ -171,7 +171,7 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 			}
 		})
 
-		resp.Resp, err = c.usSvr.KvBatchGet(ctx, req.BatchGet())
+		resp.Resp, err = c.usSvr.KvBatchGet(ctx, batchGetReq)
 	case tikvrpc.CmdBatchRollback:
 		resp.Resp, err = c.usSvr.KvBatchRollback(ctx, req.BatchRollback())
 	case tikvrpc.CmdScanLock:
