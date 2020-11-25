@@ -43,6 +43,7 @@ var (
 	ErrRoleNotGranted              = dbterror.ClassPrivilege.NewStd(mysql.ErrRoleNotGranted)
 	ErrDeadlock                    = dbterror.ClassExecutor.NewStd(mysql.ErrLockDeadlock)
 	ErrQueryInterrupted            = dbterror.ClassExecutor.NewStd(mysql.ErrQueryInterrupted)
+	ErrInvalidSplitRegionRanges    = dbterror.ClassExecutor.NewStd(mysql.ErrInvalidSplitRegionRanges)
 
 	ErrBRIEBackupFailed  = dbterror.ClassExecutor.NewStd(mysql.ErrBRIEBackupFailed)
 	ErrBRIERestoreFailed = dbterror.ClassExecutor.NewStd(mysql.ErrBRIERestoreFailed)

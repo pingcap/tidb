@@ -546,7 +546,8 @@ func (e *SplitTableRegionExec) calculateIntBoundValue() (lowerValue int64, step 
 		lowerRecordID := e.lower[0].GetUint64()
 		upperRecordID := e.upper[0].GetUint64()
 		if upperRecordID <= lowerRecordID {
-			return 0, 0, errors.Errorf("Split table `%s` region lower value %v should less than the upper value %v", e.tableInfo.Name, lowerRecordID, upperRecordID)
+			errMsg := fmt.Sprintf("lower value %v should less than the upper value %v", lowerRecordID, upperRecordID)
+			return 0, 0, ErrInvalidSplitRegionRanges.GenWithStackByArgs(errMsg)
 		}
 		step = int64((upperRecordID - lowerRecordID) / uint64(e.num))
 		lowerValue = int64(lowerRecordID)
@@ -554,13 +555,15 @@ func (e *SplitTableRegionExec) calculateIntBoundValue() (lowerValue int64, step 
 		lowerRecordID := e.lower[0].GetInt64()
 		upperRecordID := e.upper[0].GetInt64()
 		if upperRecordID <= lowerRecordID {
-			return 0, 0, errors.Errorf("Split table `%s` region lower value %v should less than the upper value %v", e.tableInfo.Name, lowerRecordID, upperRecordID)
+			errMsg := fmt.Sprintf("lower value %v should less than the upper value %v", lowerRecordID, upperRecordID)
+			return 0, 0, ErrInvalidSplitRegionRanges.GenWithStackByArgs(errMsg)
 		}
-		step = (upperRecordID - lowerRecordID) / int64(e.num)
+		step = int64(uint64(upperRecordID-lowerRecordID) / uint64(e.num))
 		lowerValue = lowerRecordID
 	}
 	if step < minRegionStepValue {
-		return 0, 0, errors.Errorf("Split table `%s` region step value should more than %v, step %v is invalid", e.tableInfo.Name, minRegionStepValue, step)
+		errMsg := fmt.Sprintf("the region size is too small, expected at least %d, but got %d", step, minRegionStepValue)
+		return 0, 0, ErrInvalidSplitRegionRanges.GenWithStackByArgs(errMsg)
 	}
 	return lowerValue, step, nil
 }

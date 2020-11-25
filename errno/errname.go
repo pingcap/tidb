@@ -962,7 +962,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrUnknownTypeLength:          mysql.Message("Unknown length for type %d", nil),
 	ErrUnknownFractionLength:      mysql.Message("Unknown length for type %d and fraction %d", nil),
 	ErrInvalidDDLJobVersion:       mysql.Message("Version %d of DDL job is greater than current one: %d", nil),
-	ErrInvalidSplitRegionRanges:   mysql.Message("Failed to split region ranges", nil),
+	ErrInvalidSplitRegionRanges:   mysql.Message("Failed to split region ranges: %s", nil),
 	ErrReorgPanic:                 mysql.Message("Reorg worker panic", nil),
 	ErrInvalidDDLState:            mysql.Message("Invalid %s state: %v", nil),
 	ErrCancelledDDLJob:            mysql.Message("Cancelled DDL job", nil),

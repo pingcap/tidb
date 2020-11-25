@@ -335,7 +335,8 @@ func splitTableRanges(t table.PhysicalTable, store kv.Storage, startKey, endKey 
 		return nil, errors.Trace(err)
 	}
 	if len(ranges) == 0 {
-		return nil, errors.Trace(errInvalidSplitRegionRanges)
+		errMsg := fmt.Sprintf("cannot find region in range [%s, %s]", startKey.String(), endKey.String())
+		return nil, errors.Trace(errInvalidSplitRegionRanges.GenWithStackByArgs(errMsg))
 	}
 	return ranges, nil
 }
