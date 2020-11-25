@@ -928,12 +928,14 @@ func explainNormalizedByItems(buffer *bytes.Buffer, byItems []*util.ByItems) *by
 // ExplainInfo implements Plan interface.
 func (p *LogicalSort) ExplainInfo() string {
 	buffer := bytes.NewBufferString("")
+	fmt.Fprintf(buffer, "schema:%v, items:", p.Schema().Columns)
 	return explainByItems(buffer, p.ByItems).String()
 }
 
 // ExplainInfo implements Plan interface.
 func (p *LogicalTopN) ExplainInfo() string {
 	buffer := bytes.NewBufferString("")
+	fmt.Fprintf(buffer, "schema:%v, items:", p.Schema().Columns)
 	buffer = explainByItems(buffer, p.ByItems)
 	fmt.Fprintf(buffer, ", offset:%v, count:%v", p.Offset, p.Count)
 	return buffer.String()
