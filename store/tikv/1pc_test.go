@@ -19,6 +19,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 )
 
 type testOnePCSuite struct {
@@ -30,7 +31,7 @@ type testOnePCSuite struct {
 var _ = SerialSuites(&testOnePCSuite{})
 
 func (s *testOnePCSuite) SetUpTest(c *C) {
-	s.testAsyncCommitCommon.setUpTest(c, true)
+	s.testAsyncCommitCommon.setUpTest(c)
 	s.bo = NewBackofferWithVars(context.Background(), 5000, nil)
 }
 
@@ -166,7 +167,7 @@ func (s *testOnePCSuite) Test1PCIsolation(c *C) {
 	// Make `txn`'s commitTs more likely to be less than `txn2`'s startTs if there's bug in commitTs
 	// calculation.
 	for i := 0; i < 10; i++ {
-		_, err := s.store.oracle.GetTimestamp(ctx)
+		_, err := s.store.oracle.GetTimestamp(ctx, &oracle.Option{TxnScope: oracle.GlobalTxnScope})
 		c.Assert(err, IsNil)
 	}
 
@@ -235,4 +236,32 @@ func (s *testOnePCSuite) Test1PCDisallowMultiRegion(c *C) {
 		c.Assert(err, IsNil)
 		c.Assert(v, BytesEquals, []byte(values[i]))
 	}
+}
+
+// It's just a simple validation of external consistency.
+// Extra tests are needed to test this feature with the control of the TiKV cluster.
+func (s *testOnePCSuite) Test1PCExternalConsistency(c *C) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TiKVClient.EnableOnePC = true
+		conf.TiKVClient.ExternalConsistency = true
+	})
+
+	t1, err := s.store.Begin()
+	c.Assert(err, IsNil)
+	t2, err := s.store.Begin()
+	c.Assert(err, IsNil)
+	err = t1.Set([]byte("a"), []byte("a1"))
+	c.Assert(err, IsNil)
+	err = t2.Set([]byte("b"), []byte("b1"))
+	c.Assert(err, IsNil)
+	ctx := context.WithValue(context.Background(), sessionctx.ConnID, uint64(1))
+	// t2 commits earlier than t1
+	err = t2.Commit(ctx)
+	c.Assert(err, IsNil)
+	err = t1.Commit(ctx)
+	c.Assert(err, IsNil)
+	commitTS1 := t1.(*tikvTxn).committer.commitTS
+	commitTS2 := t2.(*tikvTxn).committer.commitTS
+	c.Assert(commitTS2, Less, commitTS1)
 }

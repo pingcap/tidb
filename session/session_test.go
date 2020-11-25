@@ -47,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/store/mockstore/cluster"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -366,7 +367,7 @@ func (s *testSessionSuite) TestAffectedRows(c *C) {
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (id int, c1 timestamp);")
-	tk.MustExec(`insert t values(1, 0);`)
+	tk.MustExec(`insert t(id) values(1);`)
 	tk.MustExec(`UPDATE t set id = 1 where id = 1;`)
 	c.Assert(int(tk.Se.AffectedRows()), Equals, 0)
 
@@ -1021,8 +1022,10 @@ func (s *testSessionSuite) TestPrepareZero(c *C) {
 	_, rs := tk.Exec("execute s1 using @v1")
 	c.Assert(rs, NotNil)
 	tk.MustExec("set @v2='" + types.ZeroDatetimeStr + "'")
+	tk.MustExec("set @orig_sql_mode=@@sql_mode; set @@sql_mode='';")
 	tk.MustExec("execute s1 using @v2")
 	tk.MustQuery("select v from t").Check(testkit.Rows("0000-00-00 00:00:00"))
+	tk.MustExec("set @@sql_mode=@orig_sql_mode;")
 }
 
 func (s *testSessionSuite) TestPrimaryKeyAutoIncrement(c *C) {
@@ -1780,12 +1783,12 @@ func (s *testSessionSuite3) TestUnique(c *C) {
 	c.Assert(err, NotNil)
 	// Check error type and error message
 	c.Assert(terror.ErrorEqual(err, kv.ErrKeyExists), IsTrue, Commentf("err %v", err))
-	c.Assert(err.Error(), Equals, "previous statement: insert into test(id, val) values(1, 1);: [kv:1062]Duplicate entry '1' for key 'PRIMARY'")
+	c.Assert(err.Error(), Equals, "previous statement: insert into test(id, val) values(1, 1): [kv:1062]Duplicate entry '1' for key 'PRIMARY'")
 
 	_, err = tk1.Exec("commit")
 	c.Assert(err, NotNil)
 	c.Assert(terror.ErrorEqual(err, kv.ErrKeyExists), IsTrue, Commentf("err %v", err))
-	c.Assert(err.Error(), Equals, "previous statement: insert into test(id, val) values(2, 2);: [kv:1062]Duplicate entry '2' for key 'val'")
+	c.Assert(err.Error(), Equals, "previous statement: insert into test(id, val) values(2, 2): [kv:1062]Duplicate entry '2' for key 'val'")
 
 	// Test for https://github.com/pingcap/tidb/issues/463
 	tk.MustExec("drop table test;")
@@ -3237,6 +3240,25 @@ func (s *testSessionSuite2) TestPerStmtTaskID(c *C) {
 	c.Assert(taskID1 != taskID2, IsTrue)
 }
 
+func (s *testSessionSuite2) TestSetTxnScope(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	// assert default value
+	result := tk.MustQuery("select @@txn_scope;")
+	result.Check(testkit.Rows(oracle.GlobalTxnScope))
+
+	// assert set sys variable
+	tk.MustExec("set @@session.txn_scope = 'dc-1';")
+	result = tk.MustQuery("select @@txn_scope;")
+	result.Check(testkit.Rows("dc-1"))
+
+	// assert session scope
+	se, err := session.CreateSession4Test(s.store)
+	c.Check(err, IsNil)
+	tk.Se = se
+	result = tk.MustQuery("select @@txn_scope;")
+	result.Check(testkit.Rows(oracle.GlobalTxnScope))
+}
+
 func (s *testSessionSuite3) TestSetVarHint(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 
@@ -3411,7 +3433,8 @@ func (s *testSessionSuite3) TestSetVarHint(c *C) {
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings()[0].Err.Error(), Equals, "[planner:3126]Hint SET_VAR(group_concat_max_len=2048) is ignored as conflicting/duplicated.")
 }
 
-func (s *testSessionSuite2) TestDeprecateSlowLogMasking(c *C) {
+// TestDeprecateSlowLogMasking should be in serial suite because it changes a global variable.
+func (s *testSessionSerialSuite) TestDeprecateSlowLogMasking(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 
 	tk.MustExec("set @@global.tidb_redact_log=0")
@@ -3496,4 +3519,33 @@ func (s *testBackupRestoreSuite) TestBackupAndRestore(c *C) {
 		tk.MustExec("drop database br")
 		tk.MustExec("drop database br02")
 	}
+}
+
+func (s *testSessionSuite2) TestMemoryUsageAlarmVariable(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+
+	tk.MustExec("set @@session.tidb_memory_usage_alarm_ratio=1")
+	tk.MustQuery("select @@session.tidb_memory_usage_alarm_ratio").Check(testkit.Rows("1"))
+	tk.MustExec("set @@session.tidb_memory_usage_alarm_ratio=0")
+	tk.MustQuery("select @@session.tidb_memory_usage_alarm_ratio").Check(testkit.Rows("0"))
+	tk.MustExec("set @@session.tidb_memory_usage_alarm_ratio=0.7")
+	tk.MustQuery("select @@session.tidb_memory_usage_alarm_ratio").Check(testkit.Rows("0.7"))
+	err := tk.ExecToErr("set @@session.tidb_memory_usage_alarm_ratio=1.1")
+	c.Assert(err.Error(), Equals, "[variable:1231]Variable 'tidb_memory_usage_alarm_ratio' can't be set to the value of '1.1'")
+	err = tk.ExecToErr("set @@session.tidb_memory_usage_alarm_ratio=-1")
+	c.Assert(err.Error(), Equals, "[variable:1231]Variable 'tidb_memory_usage_alarm_ratio' can't be set to the value of '-1'")
+	err = tk.ExecToErr("set @@global.tidb_memory_usage_alarm_ratio=0.8")
+	c.Assert(err.Error(), Equals, "Variable 'tidb_memory_usage_alarm_ratio' is a SESSION variable and can't be used with SET GLOBAL")
+}
+
+func (s *testSessionSuite2) TestSelectLockInShare(c *C) {
+	tk1 := testkit.NewTestKitWithInit(c, s.store)
+	tk1.MustExec("DROP TABLE IF EXISTS t_sel_in_share")
+	tk1.MustExec("CREATE TABLE t_sel_in_share (id int DEFAULT NULL)")
+	tk1.MustExec("insert into t_sel_in_share values (11)")
+	err := tk1.ExecToErr("select * from t_sel_in_share lock in share mode")
+	c.Assert(err, NotNil)
+	tk1.MustExec("set @@tidb_enable_noop_functions = 1")
+	tk1.MustQuery("select * from t_sel_in_share lock in share mode").Check(testkit.Rows("11"))
+	tk1.MustExec("DROP TABLE t_sel_in_share")
 }
