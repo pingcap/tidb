@@ -348,6 +348,12 @@ func (ds *DataSource) generateIndexMergeOrPaths() {
 				logutil.BgLogger().Debug("something wrong happened, use the default selectivity", zap.Error(err))
 				sel = SelectionFactor
 			}
+			if err != nil {
+				logutil.BgLogger().Debug("something wrong happened, use the default selectivity", zap.Error(err))
+				sel = SelectionFactor
+			}
+			possiblePath.CountAfterAccess = sel * ds.tableStats.RowCount
+			ds.possibleAccessPaths = append(ds.possibleAccessPaths, possiblePath)
 		}
 	}
 }
