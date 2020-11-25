@@ -438,7 +438,7 @@
       },
       {
         "SQL": "select * from t where t.c in (select b from t s where s.a = t.a)",
-        "Best": "MergeSemiJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.a,test.t.a)"
+        "Best": "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.a,test.t.a)(test.t.c,test.t.b)"
       },
       {
         "SQL": "select t.c in (select b from t s where s.a = t.a) from t",
