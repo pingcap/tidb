@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"crypto/tls"
 	"fmt"
+	"github.com/pingcap/parser"
 	"math"
 	"sort"
 	"strconv"
@@ -645,6 +646,9 @@ type SessionVars struct {
 
 	// LastTxnInfo keeps track the info of last committed transaction
 	LastTxnInfo kv.TxnInfo
+
+	// EnabledRateLimitAction indicates whether enabled ratelimit action during coprocessor
+	EnabledRateLimitAction bool
 }
 
 // PreparedParams contains the parameters of the current prepared statement when executing it.
@@ -737,6 +741,7 @@ func NewSessionVars() *SessionVars {
 		SelectLimit:                 math.MaxUint64,
 		AllowAutoRandExplicitInsert: DefTiDBAllowAutoRandExplicitInsert,
 		EnableAmendPessimisticTxn:   DefTiDBEnableAmendPessimisticTxn,
+		EnabledRateLimitAction:      DefTiDBEnableRateLimitAction,
 	}
 	vars.KVVars = kv.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{
@@ -1361,6 +1366,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		errors.RedactLogEnabled.Store(s.EnableRedactLog)
 	case TiDBEnableAmendPessimisticTxn:
 		s.EnableAmendPessimisticTxn = TiDBOptOn(val)
+	case TiDBEnableRateLimitAction:
+		s.EnabledRateLimitAction = TiDBOptOn(val)
 	}
 	s.systems[name] = val
 	return nil

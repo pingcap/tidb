@@ -59,7 +59,7 @@ type CopClient struct {
 }
 
 // Send builds the request and gets the coprocessor iterator response.
-func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variables, sessionMemTracker *memory.Tracker) kv.Response {
+func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variables, sessionMemTracker *memory.Tracker, enabledRateLimitAction bool) kv.Response {
 	if req.StoreType == kv.TiFlash && req.BatchCop {
 		logutil.BgLogger().Debug("send batch requests")
 		return c.sendBatch(ctx, req, vars)
@@ -94,10 +94,14 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variable
 		it.sendRate = newRateLimit(2 * it.concurrency)
 		it.respChan = nil
 	} else {
-		// The count of cached response in memory is controlled by the capacity of the it.sendRate, not capacity of the respChan.
-		// As the worker will send finCopResponse after each task being handled, we make the capacity of the respCh equals to
-		// 2*it.concurrency to avoid deadlock in the unit test caused by the `MustExec` or `Exec`
-		it.respChan = make(chan *copResponse, it.concurrency*2)
+		capacity := it.concurrency
+		if enabledRateLimitAction {
+			// The count of cached response in memory is controlled by the capacity of the it.sendRate, not capacity of the respChan.
+			// As the worker will send finCopResponse after each task being handled, we make the capacity of the respCh equals to
+			// 2*it.concurrency to avoid deadlock in the unit test caused by the `MustExec` or `Exec`
+			capacity = it.concurrency * 2
+		}
+		it.respChan = make(chan *copResponse, capacity)
 		it.sendRate = newRateLimit(it.concurrency)
 	}
 	it.actionOnExceed = newRateLimitAction(uint(cap(it.sendRate.token)))
@@ -108,7 +112,7 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variable
 	if !it.req.Streaming {
 		ctx = context.WithValue(ctx, RPCCancellerCtxKey{}, it.rpcCancel)
 	}
-	it.open(ctx)
+	it.open(ctx, enabledRateLimitAction)
 	return it
 }
 
@@ -436,6 +440,8 @@ type copIteratorWorker struct {
 	memTracker *memory.Tracker
 
 	replicaReadSeed uint32
+
+	actionOnExceed *rateLimitAction
 }
 
 // copIteratorTaskSender sends tasks to taskCh then wait for the workers to exit.
@@ -542,7 +548,7 @@ func (worker *copIteratorWorker) run(ctx context.Context) {
 }
 
 // open starts workers and sender goroutines.
-func (it *copIterator) open(ctx context.Context) {
+func (it *copIterator) open(ctx context.Context, enabledRateLimitAction bool) {
 	taskCh := make(chan *copTask, 1)
 	it.wg.Add(it.concurrency)
 	// Start it.concurrency number of workers to handle cop requests.
@@ -561,10 +567,9 @@ func (it *copIterator) open(ctx context.Context) {
 				minCommitTSPushed: &it.minCommitTSPushed,
 				Client:            it.store.client,
 			},
-
-			memTracker: it.memTracker,
-
+			memTracker:      it.memTracker,
 			replicaReadSeed: it.replicaReadSeed,
+			actionOnExceed:  it.actionOnExceed,
 		}
 		go worker.run(ctx)
 	}
@@ -576,8 +581,8 @@ func (it *copIterator) open(ctx context.Context) {
 		sendRate: it.sendRate,
 	}
 	taskSender.respChan = it.respChan
-	// If the ticket is less than 2, wo will directly disable the actionOnExceed
-	it.actionOnExceed.setEnabled(true)
+	// enabledRateLimit decides whether enabled ratelimit action
+	it.actionOnExceed.setEnabled(enabledRateLimitAction)
 	go taskSender.run()
 }
 
@@ -1310,12 +1315,6 @@ func newRateLimitAction(totalTokenNumber uint) *rateLimitAction {
 
 // Action implements ActionOnExceed.Action
 func (e *rateLimitAction) Action(t *memory.Tracker) {
-	failpoint.Inject("testRateLimitActionDisable", func(val failpoint.Value) {
-		if val.(bool) {
-			e.setEnabled(false)
-		}
-	})
-
 	if !e.isEnabled() {
 		if e.fallbackAction != nil {
 			e.fallbackAction.Action(t)

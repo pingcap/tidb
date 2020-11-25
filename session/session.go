@@ -2006,6 +2006,7 @@ var builtinGlobalVariable = []string{
 	variable.TiDBRedactLog,
 	variable.TiDBEnableTelemetry,
 	variable.TiDBEnableAmendPessimisticTxn,
+	variable.TiDBEnableRateLimitAction,
 }
 
 var (
