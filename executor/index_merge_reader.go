@@ -21,6 +21,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unsafe"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -489,8 +490,8 @@ func (e *IndexMergeReaderExecutor) Next(ctx context.Context, req *chunk.Chunk) e
 		if resultTask == nil {
 			return nil
 		}
-		for resultTask.cursor < resultTask.chunk.GetNumRows() {
-			req.AppendRow(resultTask.chunk.GetRow(resultTask.cursor))
+		for resultTask.cursor < len(resultTask.rows) {
+			req.AppendRow(resultTask.rows[resultTask.cursor])
 			resultTask.cursor++
 			if req.NumRows() >= e.maxChunkSize {
 				return nil
@@ -500,7 +501,7 @@ func (e *IndexMergeReaderExecutor) Next(ctx context.Context, req *chunk.Chunk) e
 }
 
 func (e *IndexMergeReaderExecutor) getResultTask() (*lookupTableTask, error) {
-	if e.resultCurr != nil && e.resultCurr.cursor < e.resultCurr.chunk.GetNumRows() {
+	if e.resultCurr != nil && e.resultCurr.cursor < len(e.resultCurr.rows) {
 		return e.resultCurr, nil
 	}
 	task, ok := <-e.resultCh
@@ -762,6 +763,7 @@ func (w *indexMergeTableScanWorker) executeTask(ctx context.Context, task *looku
 	task.memUsage = memUsage
 	task.memTracker.Consume(memUsage)
 	handleCnt := len(task.handles)
+	task.rows = make([]chunk.Row, 0, handleCnt)
 	for {
 		chk := newFirstChunk(tableReader)
 		err = Next(ctx, tableReader, chk)
@@ -775,17 +777,17 @@ func (w *indexMergeTableScanWorker) executeTask(ctx context.Context, task *looku
 		memUsage = chk.MemoryUsage()
 		task.memUsage += memUsage
 		task.memTracker.Consume(memUsage)
-		if task.chunk == nil {
-			task.chunk = chunk.Renew(chk, chk.NumRows())
+		iter := chunk.NewIterator4Chunk(chk)
+		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
+			task.rows = append(task.rows, row)
 		}
-		task.chunk.Append(chk, 0, chk.NumRows())
 	}
 
-	memUsage = task.memUsage
+	memUsage = int64(cap(task.rows)) * int64(unsafe.Sizeof(chunk.Row{}))
 	task.memUsage += memUsage
 	task.memTracker.Consume(memUsage)
-	if handleCnt != task.chunk.GetNumRows() && len(w.tblPlans) == 1 {
-		return errors.Errorf("handle count %d isn't equal to value count %d", handleCnt, task.chunk.GetNumRows())
+	if handleCnt != len(task.rows) && len(w.tblPlans) == 1 {
+		return errors.Errorf("handle count %d isn't equal to value count %d", handleCnt, len(task.rows))
 	}
 	return nil
 }
