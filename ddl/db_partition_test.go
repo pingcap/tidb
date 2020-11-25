@@ -334,6 +334,7 @@ func (s *testIntegrationSuite2) TestCreateTableWithHashPartition(c *C) {
                                        PARTITION p1 VALUES LESS THAN (200),
                                        PARTITION p2 VALUES LESS THAN MAXVALUE)`)
 	tk.MustGetErrCode("select * from t_sub partition (p0)", tmysql.ErrPartitionClauseOnNonpartitioned)
+	tk.MustGetErrCode("create table t_hash(a int) partition by hash (a) partitions 3 (partition p1, partition p2, partition p2);", tmysql.ErrSameNamePartition)
 }
 
 func (s *testIntegrationSuite7) TestCreateTableWithRangeColumnPartition(c *C) {
