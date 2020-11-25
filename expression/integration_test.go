@@ -2170,6 +2170,44 @@ func (s *testIntegrationSuite2) TestTimeBuiltin(c *C) {
 	result = tk.MustQuery("select time(\"-- --1\");")
 	result.Check(testkit.Rows("00:00:00"))
 	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1292 Truncated incorrect time value: '-- --1'"))
+
+	// fix issue #15185
+	result = tk.MustQuery(`select timestamp(11111.1111)`)
+	result.Check(testkit.Rows("2001-11-11 00:00:00.0000"))
+	result = tk.MustQuery(`select timestamp(cast(11111.1111 as decimal(60, 5)))`)
+	result.Check(testkit.Rows("2001-11-11 00:00:00.00000"))
+	result = tk.MustQuery(`select timestamp(1021121141105.4324)`)
+	result.Check(testkit.Rows("0102-11-21 14:11:05.4324"))
+	result = tk.MustQuery(`select timestamp(cast(1021121141105.4324 as decimal(60, 5)))`)
+	result.Check(testkit.Rows("0102-11-21 14:11:05.43240"))
+	result = tk.MustQuery(`select timestamp(21121141105.101)`)
+	result.Check(testkit.Rows("2002-11-21 14:11:05.101"))
+	result = tk.MustQuery(`select timestamp(cast(21121141105.101 as decimal(60, 5)))`)
+	result.Check(testkit.Rows("2002-11-21 14:11:05.10100"))
+	result = tk.MustQuery(`select timestamp(1121141105.799055)`)
+	result.Check(testkit.Rows("2000-11-21 14:11:05.799055"))
+	result = tk.MustQuery(`select timestamp(cast(1121141105.799055 as decimal(60, 5)))`)
+	result.Check(testkit.Rows("2000-11-21 14:11:05.79906"))
+	result = tk.MustQuery(`select timestamp(121141105.123)`)
+	result.Check(testkit.Rows("2000-01-21 14:11:05.123"))
+	result = tk.MustQuery(`select timestamp(cast(121141105.123 as decimal(60, 5)))`)
+	result.Check(testkit.Rows("2000-01-21 14:11:05.12300"))
+	result = tk.MustQuery(`select timestamp(1141105)`)
+	result.Check(testkit.Rows("0114-11-05 00:00:00"))
+	result = tk.MustQuery(`select timestamp(cast(1141105 as decimal(60, 5)))`)
+	result.Check(testkit.Rows("0114-11-05 00:00:00.00000"))
+	result = tk.MustQuery(`select timestamp(41105.11)`)
+	result.Check(testkit.Rows("2004-11-05 00:00:00.00"))
+	result = tk.MustQuery(`select timestamp(cast(41105.11 as decimal(60, 5)))`)
+	result.Check(testkit.Rows("2004-11-05 00:00:00.00000"))
+	result = tk.MustQuery(`select timestamp(1105.3)`)
+	result.Check(testkit.Rows("2000-11-05 00:00:00.0"))
+	result = tk.MustQuery(`select timestamp(cast(1105.3 as decimal(60, 5)))`)
+	result.Check(testkit.Rows("2000-11-05 00:00:00.00000"))
+	result = tk.MustQuery(`select timestamp(105)`)
+	result.Check(testkit.Rows("2000-01-05 00:00:00"))
+	result = tk.MustQuery(`select timestamp(cast(105 as decimal(60, 5)))`)
+	result.Check(testkit.Rows("2000-01-05 00:00:00.00000"))
 }
 
 func (s *testIntegrationSuite) TestOpBuiltin(c *C) {
@@ -2836,6 +2874,15 @@ func (s *testIntegrationSuite2) TestBuiltin(c *C) {
 	tk.MustQuery("select 0 and b/0 from t")
 	tk.MustQuery("show warnings").Check(testkit.Rows())
 	tk.MustQuery("select 1 or b/0 from t")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+
+	tk.MustQuery("select 1 or 1/0")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustQuery("select 0 and 1/0")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustQuery("select COALESCE(1, 1/0)")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustQuery("select interval(1,0,1,2,1/0)")
 	tk.MustQuery("show warnings").Check(testkit.Rows())
 
 	tk.MustQuery("select case 2.0 when 2.0 then 3.0 when 3.0 then 2.0 end").Check(testkit.Rows("3.0"))
@@ -6768,6 +6815,20 @@ func (s *testIntegrationSerialSuite) TestIssue17989(c *C) {
 	tk.MustExec("admin check table t")
 }
 
+func (s *testIntegrationSuite2) TestSchemaDMLNotChange(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk2 := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk2.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id int primary key, c_json json);")
+	tk.MustExec("insert into t values (1, '{\"k\": 1}');")
+	tk.MustExec("begin")
+	tk.MustExec("update t set c_json = '{\"k\": 2}' where id = 1;")
+	tk2.MustExec("alter table t rename column c_json to cc_json;")
+	tk.MustExec("commit")
+}
+
 func (s *testIntegrationSerialSuite) TestIssue18702(c *C) {
 	collate.SetNewCollationEnabledForTest(true)
 	defer collate.SetNewCollationEnabledForTest(false)
@@ -6969,6 +7030,19 @@ func (s *testIntegrationSerialSuite) TestIssue19045(c *C) {
 	tk.MustExec(`insert into t2(a,b) values("02","03");`)
 	tk.MustExec(`insert into t(a) values('101'),('101');`)
 	tk.MustQuery(`select  ( SELECT t1.a FROM  t1,  t2 WHERE t1.b = t2.a AND  t2.b = '03' AND t1.c = a.a) invode from t a ;`).Check(testkit.Rows("a011", "a011"))
+}
+
+func (s *testIntegrationSerialSuite) TestIssue19383(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("DROP TABLE IF EXISTS t1")
+	tk.MustExec("CREATE TABLE t1 (a INT NOT NULL PRIMARY KEY)")
+	tk.MustExec("INSERT INTO t1 VALUES (1),(2),(3)")
+	_, err := tk.Exec("SELECT * FROM t1 LOCK IN SHARE MODE")
+	message := `function LOCK IN SHARE MODE has only noop implementation in tidb now, use tidb_enable_noop_functions to enable these functions`
+	c.Assert(strings.Contains(err.Error(), message), IsTrue)
+	tk.MustExec("SET tidb_enable_noop_functions=1")
+	tk.MustExec("SELECT * FROM t1 LOCK IN SHARE MODE")
 }
 
 func (s *testIntegrationSerialSuite) TestIssue19315(c *C) {

@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
@@ -42,8 +43,10 @@ import (
 )
 
 var (
-	errQueryInterrupted = terror.ClassExecutor.NewStd(errno.ErrQueryInterrupted)
+	errQueryInterrupted = dbterror.ClassExecutor.NewStd(errno.ErrQueryInterrupted)
+)
 
+var (
 	coprCacheHistogramHit  = metrics.DistSQLCoprCacheHistogram.WithLabelValues("hit")
 	coprCacheHistogramMiss = metrics.DistSQLCoprCacheHistogram.WithLabelValues("miss")
 )
@@ -130,7 +133,7 @@ func (r *selectResult) fetchResp(ctx context.Context) error {
 		r.selectRespSize = r.selectResp.Size()
 		r.memConsume(int64(r.selectRespSize))
 		if err := r.selectResp.Error; err != nil {
-			return terror.ClassTiKV.Synthesize(terror.ErrCode(err.Code), err.Msg)
+			return dbterror.ClassTiKV.Synthesize(terror.ErrCode(err.Code), err.Msg)
 		}
 		sessVars := r.ctx.GetSessionVars()
 		if atomic.LoadUint32(&sessVars.Killed) == 1 {
@@ -138,7 +141,7 @@ func (r *selectResult) fetchResp(ctx context.Context) error {
 		}
 		sc := sessVars.StmtCtx
 		for _, warning := range r.selectResp.Warnings {
-			sc.AppendWarning(terror.ClassTiKV.Synthesize(terror.ErrCode(warning.Code), warning.Msg))
+			sc.AppendWarning(dbterror.ClassTiKV.Synthesize(terror.ErrCode(warning.Code), warning.Msg))
 		}
 		r.feedback.Update(resultSubset.GetStartKey(), r.selectResp.OutputCounts)
 		r.partialCount++
@@ -387,6 +390,7 @@ func (s *selectResultRuntimeStats) Merge(rs execdetails.RuntimeStats) {
 
 func (s *selectResultRuntimeStats) String() string {
 	buf := bytes.NewBuffer(nil)
+	rpcStat := s.rpcStat
 	if len(s.copRespTime) > 0 {
 		size := len(s.copRespTime)
 		if size == 1 {
@@ -424,9 +428,10 @@ func (s *selectResultRuntimeStats) String() string {
 				}
 			}
 		}
-		copRPC := s.rpcStat.Stats[tikvrpc.CmdCop]
+		copRPC := rpcStat.Stats[tikvrpc.CmdCop]
 		if copRPC != nil && copRPC.Count > 0 {
-			delete(s.rpcStat.Stats, tikvrpc.CmdCop)
+			rpcStat = rpcStat.Clone()
+			delete(rpcStat.Stats, tikvrpc.CmdCop)
 			buf.WriteString(", rpc_num: ")
 			buf.WriteString(strconv.FormatInt(copRPC.Count, 10))
 			buf.WriteString(", rpc_time: ")
@@ -437,7 +442,7 @@ func (s *selectResultRuntimeStats) String() string {
 		buf.WriteString("}")
 	}
 
-	rpcStatsStr := s.rpcStat.String()
+	rpcStatsStr := rpcStat.String()
 	if len(rpcStatsStr) > 0 {
 		buf.WriteString(", ")
 		buf.WriteString(rpcStatsStr)
