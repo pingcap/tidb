@@ -310,6 +310,7 @@ func MergeFieldType(a byte, b byte) byte {
 	return fieldTypeMergeRules[ia][ib]
 }
 
+// ResultMergeType returns the EvalType type of a builtin mysql type
 func ResultMergeType(tp byte) EvalType {
 	return fieldTypesResultType[getFieldTypeIndex(tp)]
 }

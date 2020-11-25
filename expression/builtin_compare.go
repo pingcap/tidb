@@ -433,6 +433,7 @@ func aggregateType(args []Expression) (*types.FieldType, error) {
 	return &aggType, nil
 }
 
+// ResolveType4Between resolves eval type for between expression.
 func ResolveType4Between(args [3]Expression) types.EvalType {
 	cmpTp := args[0].GetType().EvalType()
 	for i := 1; i < 3; i++ {
