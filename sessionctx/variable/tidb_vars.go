@@ -584,7 +584,7 @@ const (
 	DefTiDBEnableParallelApply         = false
 	DefTiDBEnableAmendPessimisticTxn   = true
 	DefTiDBPartitionPruneMode          = "static-only"
-	DefTiDBEnableRateLimitAction       = false
+	DefTiDBEnableRateLimitAction       = true
 )
 
 // Process global variables.
