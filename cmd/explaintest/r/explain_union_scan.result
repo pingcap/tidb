@@ -15,7 +15,7 @@ id	estRows	task	access object	operator info
 Limit_20	10.00	root		offset:0, count:10
 └─HashJoin_22	10.00	root		left outer join, equal:[eq(test.city.province_id, test.city.province_id)]
   ├─Limit_25(Build)	10.00	root		offset:0, count:10
-  │ └─IndexJoin_38	10.00	root		inner join, inner:UnionScan_37, outer key:test.city.id, inner key:test.city.id
+  │ └─IndexJoin_38	10.00	root		inner join, inner:UnionScan_37, outer key:test.city.id, inner key:test.city.id, equal cond:eq(test.city.id, test.city.id)
   │   ├─UnionScan_47(Build)	10.00	root		
   │   │ └─TableReader_49	10.00	root		data:TableFullScan_48
   │   │   └─TableFullScan_48	10.00	cop[tikv]	table:t2	keep order:false
