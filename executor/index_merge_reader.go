@@ -491,19 +491,16 @@ func (e *IndexMergeReaderExecutor) Next(ctx context.Context, req *chunk.Chunk) e
 			return nil
 		}
 		if resultTask.cursor < len(resultTask.rows) {
-			offset := len(resultTask.rows) - resultTask.cursor
+			numToAppend := len(resultTask.rows) - resultTask.cursor
 			requiredRows := e.maxChunkSize - req.NumRows()
-			if requiredRows <= 0 {
+			if numToAppend > requiredRows {
+				numToAppend = requiredRows
+			}
+			req.AppendRows(resultTask.rows[resultTask.cursor : resultTask.cursor+numToAppend])
+			resultTask.cursor += numToAppend
+			if req.NumRows() >= e.maxChunkSize {
 				return nil
 			}
-			if offset > requiredRows {
-				offset = requiredRows
-			}
-			req.AppendRows(resultTask.rows[resultTask.cursor : resultTask.cursor+offset])
-			resultTask.cursor += offset
-		}
-		if req.NumRows() >= e.maxChunkSize {
-			return nil
 		}
 	}
 }

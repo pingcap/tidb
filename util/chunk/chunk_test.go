@@ -15,7 +15,6 @@ package chunk
 
 import (
 	"bytes"
-	"flag"
 	"fmt"
 	"io/ioutil"
 	"math"
@@ -1141,19 +1140,18 @@ func BenchmarkBatchAppendRows(b *testing.B) {
 	}
 	row := rowChk.GetRow(0)
 	chk := newChunk(8, 8, 0, 0)
-	tests := flag.Args()
-	// we will run default AppendRows
-	if len(tests) == 0 {
+	b.Run("BenchmarkBatchAppendRows", func(b *testing.B) {
 		for i := 0; i < b.N; i++ {
 			chk.Reset()
 			chk.AppendRows(rows)
 		}
-	} else {
+	})
+	b.Run("BenchmarkBatchAppendRow", func(b *testing.B) {
 		for i := 0; i < b.N; i++ {
 			chk.Reset()
 			for i := 0; i < 1000; i++ {
 				chk.AppendRow(row)
 			}
 		}
-	}
+	})
 }
