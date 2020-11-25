@@ -90,6 +90,12 @@ func (s *testTableSampleSuite) TestTableSampleBasic(c *C) {
 		tk.MustExec("insert into t values();")
 	}
 	tk.MustQuery("select count(*) from t tablesample regions();").Check(testkit.Rows("8"))
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a varchar(30) collate utf8mb4_general_ci primary key);")
+	tk.MustQuery("split table t between ('a') and ('z') regions 100;").Check(testkit.Rows("99 1"))
+	tk.MustExec("insert into t values ('a'), ('b'), ('c'), ('d'), ('e');")
+	tk.MustQuery("select a from t tablesample regions() limit 2;").Check(testkit.Rows("a", "b"))
 }
 
 func (s *testTableSampleSuite) TestTableSampleMultiRegions(c *C) {

@@ -18,7 +18,6 @@ import (
 	"sort"
 	"time"
 
-	"github.com/cznic/mathutil"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
@@ -111,6 +110,29 @@ func newTableRegionSampler(ctx sessionctx.Context, t table.Table, startTs uint64
 }
 
 func (s *tableRegionSampler) writeChunk(req *chunk.Chunk) error {
+	err := s.initRanges()
+	if err != nil {
+		return err
+	}
+	expectedRowCount := req.RequiredRows()
+	for expectedRowCount > 0 && len(s.restKVRanges) > 0 {
+		ranges, err := s.pickRanges(expectedRowCount)
+		if err != nil {
+			return err
+		}
+		err = s.writeChunkFromRanges(ranges, req)
+		if err != nil {
+			return err
+		}
+		expectedRowCount = req.RequiredRows() - req.NumRows()
+	}
+	if len(s.restKVRanges) == 0 {
+		s.isFinished = true
+	}
+	return nil
+}
+
+func (s *tableRegionSampler) initRanges() error {
 	if s.restKVRanges == nil {
 		var err error
 		s.restKVRanges, err = s.splitTableRanges()
@@ -119,17 +141,27 @@ func (s *tableRegionSampler) writeChunk(req *chunk.Chunk) error {
 		}
 		sortRanges(s.restKVRanges, s.isDesc)
 	}
-	var regionKeyRanges []kv.KeyRange
-	cutPoint := mathutil.MinInt64(int64(req.RequiredRows()), int64(len(s.restKVRanges)))
-	regionKeyRanges, s.restKVRanges = s.restKVRanges[:cutPoint], s.restKVRanges[cutPoint:]
+	return nil
+}
 
+func (s *tableRegionSampler) pickRanges(count int) ([]kv.KeyRange, error) {
+	var regionKeyRanges []kv.KeyRange
+	cutPoint := count
+	if len(s.restKVRanges) < cutPoint {
+		cutPoint = len(s.restKVRanges)
+	}
+	regionKeyRanges, s.restKVRanges = s.restKVRanges[:cutPoint], s.restKVRanges[cutPoint:]
+	return regionKeyRanges, nil
+}
+
+func (s *tableRegionSampler) writeChunkFromRanges(ranges []kv.KeyRange, req *chunk.Chunk) error {
 	decLoc, sysLoc := s.ctx.GetSessionVars().TimeZone, time.UTC
 	cols, decColMap, err := s.buildSampleColAndDecodeColMap()
 	if err != nil {
 		return err
 	}
 	rowDecoder := decoder.NewRowDecoder(s.table, cols, decColMap)
-	err = s.scanFirstKVForEachRange(regionKeyRanges, func(handle kv.Handle, value []byte) error {
+	err = s.scanFirstKVForEachRange(ranges, func(handle kv.Handle, value []byte) error {
 		_, err := rowDecoder.DecodeAndEvalRowWithMap(s.ctx, handle, value, decLoc, sysLoc, s.rowMap)
 		if err != nil {
 			return err
@@ -145,9 +177,6 @@ func (s *tableRegionSampler) writeChunk(req *chunk.Chunk) error {
 		s.resetRowMap()
 		return nil
 	})
-	if len(s.restKVRanges) == 0 {
-		s.isFinished = true
-	}
 	return err
 }
 
