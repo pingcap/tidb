@@ -460,15 +460,25 @@ func (s *session) FieldList(tableName string) ([]*ast.ResultField, error) {
 }
 
 func (s *session) doCommit(ctx context.Context) error {
-	txn, ok := s.getCurrentScopeTxn()
-	if !ok || !txn.Valid() {
+	var txnToCommit *TxnState
+	// There should be only one valid txn to commit, range to find it.
+	for txnScope, txn := range s.txns {
+		if txn.Valid() {
+			if txnToCommit != nil {
+				msg := fmt.Sprintf("transaction from scope [%s] is conflicted with scope [%s]", txnScope, txnToCommit.Scope())
+				return ErrFindMultipleValidTxn.GenWithStackByArgs(msg)
+			}
+			txnToCommit = txn
+		}
+	}
+	if txnToCommit == nil {
 		return nil
 	}
 	defer func() {
-		txn.changeToInvalid()
+		txnToCommit.changeToInvalid()
 		s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, false)
 	}()
-	if txn.IsReadOnly() {
+	if txnToCommit.IsReadOnly() {
 		return nil
 	}
 
@@ -494,7 +504,7 @@ func (s *session) doCommit(ctx context.Context) error {
 				},
 				Client: s.sessionVars.BinlogClient,
 			}
-			txn.SetOption(kv.BinlogInfo, info)
+			txnToCommit.SetOption(kv.BinlogInfo, info)
 		}
 	}
 
@@ -505,14 +515,14 @@ func (s *session) doCommit(ctx context.Context) error {
 		physicalTableIDs = append(physicalTableIDs, id)
 	}
 	// Set this option for 2 phase commit to validate schema lease.
-	txn.SetOption(kv.SchemaChecker, domain.NewSchemaChecker(domain.GetDomain(s), s.sessionVars.TxnCtx.SchemaVersion, physicalTableIDs))
-	txn.SetOption(kv.InfoSchema, s.sessionVars.TxnCtx.InfoSchema)
-	txn.SetOption(kv.CommitHook, func(info kv.TxnInfo, _ error) { s.sessionVars.LastTxnInfo = info })
+	txnToCommit.SetOption(kv.SchemaChecker, domain.NewSchemaChecker(domain.GetDomain(s), s.sessionVars.TxnCtx.SchemaVersion, physicalTableIDs))
+	txnToCommit.SetOption(kv.InfoSchema, s.sessionVars.TxnCtx.InfoSchema)
+	txnToCommit.SetOption(kv.CommitHook, func(info kv.TxnInfo, _ error) { s.sessionVars.LastTxnInfo = info })
 	if s.GetSessionVars().EnableAmendPessimisticTxn {
-		txn.SetOption(kv.SchemaAmender, NewSchemaAmenderForTikvTxn(s))
+		txnToCommit.SetOption(kv.SchemaAmender, NewSchemaAmenderForTikvTxn(s))
 	}
 
-	return txn.Commit(sessionctx.SetCommitCtx(ctx, s))
+	return txnToCommit.Commit(sessionctx.SetCommitCtx(ctx, s))
 }
 
 func (s *session) doCommitWithRetry(ctx context.Context) error {
@@ -902,7 +912,7 @@ func (s *session) ExecRestrictedSQLWithSnapshot(sql string) ([]chunk.Row, []*ast
 	defer s.sysSessionPool().Put(tmp)
 	metrics.SessionRestrictedSQLCounter.Inc()
 	var snapshot uint64
-	txn, err := s.Txn(false)
+	txn, err := s.GlobalTxn(false)
 	if err != nil {
 		return nil, nil, err
 	}

@@ -451,7 +451,7 @@ func (h *Handle) dumpTableStatCountToKV(id int64, delta variable.TableDelta) (up
 		err = finishTransaction(context.Background(), exec, err)
 	}()
 
-	txn, err := h.mu.ctx.Txn(true)
+	txn, err := h.mu.ctx.GlobalTxn(true)
 	if err != nil {
 		return false, errors.Trace(err)
 	}

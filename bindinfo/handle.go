@@ -213,7 +213,7 @@ func (h *BindHandle) CreateBindRecord(sctx sessionctx.Context, record *BindRecor
 		h.bindInfo.Unlock()
 	}()
 
-	txn, err1 := h.sctx.Context.Txn(true)
+	txn, err1 := h.sctx.Context.GlobalTxn(true)
 	if err1 != nil {
 		return err1
 	}
@@ -290,7 +290,7 @@ func (h *BindHandle) AddBindRecord(sctx sessionctx.Context, record *BindRecord) 
 		h.bindInfo.Unlock()
 	}()
 
-	txn, err1 := h.sctx.Context.Txn(true)
+	txn, err1 := h.sctx.Context.GlobalTxn(true)
 	if err1 != nil {
 		return err1
 	}
@@ -354,7 +354,7 @@ func (h *BindHandle) DropBindRecord(originalSQL, db string, binding *Binding) (e
 		h.bindInfo.Unlock()
 	}()
 
-	txn, err1 := h.sctx.Context.Txn(true)
+	txn, err1 := h.sctx.Context.GlobalTxn(true)
 	if err1 != nil {
 		return err1
 	}

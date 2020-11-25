@@ -194,7 +194,7 @@ func (c *index) Create(sctx sessionctx.Context, us kv.UnionStore, indexedValues 
 
 	ctx := opt.Ctx
 	if opt.Untouched {
-		txn, err1 := sctx.Txn(true)
+		txn, err1 := sctx.GlobalTxn(true)
 		if err1 != nil {
 			return nil, err1
 		}

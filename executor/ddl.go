@@ -54,7 +54,7 @@ func (e *DDLExec) toErr(err error) error {
 	// The err may be cause by schema changed, here we distinguish the ErrInfoSchemaChanged error from other errors.
 	dom := domain.GetDomain(e.ctx)
 	checker := domain.NewSchemaChecker(dom, e.is.SchemaMetaVersion(), nil)
-	txn, err1 := e.ctx.Txn(true)
+	txn, err1 := e.ctx.GlobalTxn(true)
 	if err1 != nil {
 		logutil.BgLogger().Error("active txn failed", zap.Error(err))
 		return err1

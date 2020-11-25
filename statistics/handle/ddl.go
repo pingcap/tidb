@@ -101,7 +101,7 @@ func (h *Handle) insertTableStats2KV(info *model.TableInfo, physicalID int64) (e
 	defer func() {
 		err = finishTransaction(context.Background(), exec, err)
 	}()
-	txn, err := h.mu.ctx.Txn(true)
+	txn, err := h.mu.ctx.GlobalTxn(true)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -131,7 +131,7 @@ func (h *Handle) insertColStats2KV(physicalID int64, colInfos []*model.ColumnInf
 	defer func() {
 		err = finishTransaction(context.Background(), exec, err)
 	}()
-	txn, err := h.mu.ctx.Txn(true)
+	txn, err := h.mu.ctx.GlobalTxn(true)
 	if err != nil {
 		return errors.Trace(err)
 	}

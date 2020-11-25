@@ -958,6 +958,7 @@ const (
 	ErrWarnOptimizerHintParseError         = 8064
 	ErrWarnOptimizerHintInvalidInteger     = 8065
 	ErrUnsupportedSecondArgumentType       = 8066
+	ErrFindMultipleValidTxn                = 8067
 	ErrInvalidPluginID                     = 8101
 	ErrInvalidPluginManifest               = 8102
 	ErrInvalidPluginName                   = 8103

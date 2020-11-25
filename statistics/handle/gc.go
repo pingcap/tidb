@@ -146,7 +146,7 @@ func (h *Handle) deleteHistStatsFromKV(physicalID int64, histID int64, isIndex i
 	defer func() {
 		err = finishTransaction(context.Background(), exec, err)
 	}()
-	txn, err := h.mu.ctx.Txn(true)
+	txn, err := h.mu.ctx.GlobalTxn(true)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -175,7 +175,7 @@ func (h *Handle) DeleteTableStatsFromKV(physicalID int64) (err error) {
 	defer func() {
 		err = finishTransaction(context.Background(), exec, err)
 	}()
-	txn, err := h.mu.ctx.Txn(true)
+	txn, err := h.mu.ctx.GlobalTxn(true)
 	if err != nil {
 		return errors.Trace(err)
 	}
