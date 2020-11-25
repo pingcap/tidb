@@ -2311,6 +2311,32 @@ func (s *testSuiteP2) TestRow(c *C) {
 	result.Check(testkit.Rows("0"))
 	result = tk.MustQuery("select (select 1)")
 	result.Check(testkit.Rows("1"))
+
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (a int, b int)")
+	tk.MustExec("insert t1 values (1,2),(1,null)")
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("create table t2 (c int, d int)")
+	tk.MustExec("insert t2 values (0,0)")
+
+	tk.MustQuery("select * from t2 where (1,2) in (select * from t1)").Check(testkit.Rows("0 0"))
+	tk.MustQuery("select * from t2 where (1,2) not in (select * from t1)").Check(testkit.Rows())
+	tk.MustQuery("select * from t2 where (1,1) not in (select * from t1)").Check(testkit.Rows())
+	tk.MustQuery("select * from t2 where (1,null) in (select * from t1)").Check(testkit.Rows())
+	tk.MustQuery("select * from t2 where (null,null) in (select * from t1)").Check(testkit.Rows())
+
+	tk.MustExec("delete from t1 where a=1 and b=2")
+	tk.MustQuery("select (1,1) in (select * from t2) from t1").Check(testkit.Rows("0"))
+	tk.MustQuery("select (1,1) not in (select * from t2) from t1").Check(testkit.Rows("1"))
+	tk.MustQuery("select (1,1) in (select 1,1 from t2) from t1").Check(testkit.Rows("1"))
+	tk.MustQuery("select (1,1) not in (select 1,1 from t2) from t1").Check(testkit.Rows("0"))
+
+	// MySQL 5.7 returns 1 for these 2 queries, which is wrong.
+	tk.MustQuery("select (1,null) not in (select 1,1 from t2) from t1").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("select (t1.a,null) not in (select 1,1 from t2) from t1").Check(testkit.Rows("<nil>"))
+
+	tk.MustQuery("select (1,null) in (select * from t1)").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("select (1,null) not in (select * from t1)").Check(testkit.Rows("<nil>"))
 }
 
 func (s *testSuiteP2) TestColumnName(c *C) {
@@ -5594,6 +5620,11 @@ func (s *testClusterTableSuite) TearDownSuite(c *C) {
 	s.testSuiteWithCliBase.TearDownSuite(c)
 }
 
+func (s *testSuiteP1) TestPrepareLoadData(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustGetErrCode(`prepare stmt from "load data local infile '/tmp/load_data_test.csv' into table test";`, mysql.ErrUnsupportedPs)
+}
+
 func (s *testClusterTableSuite) TestSlowQuery(c *C) {
 	writeFile := func(file string, data string) {
 		f, err := os.OpenFile(file, os.O_CREATE|os.O_WRONLY, 0644)
@@ -6105,16 +6136,14 @@ func (s *testSplitTable) TestKillTableReader(c *C) {
 func (s *testSerialSuite1) TestPrevStmtDesensitization(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test;")
-	oriCfg := config.GetGlobalConfig()
-	defer config.StoreGlobalConfig(oriCfg)
-	newCfg := *oriCfg
-	newCfg.EnableRedactLog = 1
-	config.StoreGlobalConfig(&newCfg)
+	tk.MustExec(fmt.Sprintf("set @@session.%v=1", variable.TiDBRedactLog))
+	defer tk.MustExec(fmt.Sprintf("set @@session.%v=0", variable.TiDBRedactLog))
 	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t (a int)")
+	tk.MustExec("create table t (a int, unique key (a))")
 	tk.MustExec("begin")
 	tk.MustExec("insert into t values (1),(2)")
 	c.Assert(tk.Se.GetSessionVars().PrevStmt.String(), Equals, "insert into t values ( ? ) , ( ? )")
+	c.Assert(tk.ExecToErr("insert into t values (1)").Error(), Equals, `[kv:1062]Duplicate entry '?' for key '?'`)
 }
 
 func (s *testSuite) TestIssue19372(c *C) {
