@@ -1172,6 +1172,45 @@ func (b *PlanBuilder) buildProjection(ctx context.Context, p LogicalPlan, fields
 	return proj, oldLen, nil
 }
 
+func (b *PlanBuilder) checkDistinct(ctx context.Context, sel *ast.SelectStmt, p LogicalPlan, exprs []expression.Expression,
+	aggMapper map[*ast.AggregateFuncExpr]int, windowMapper map[*ast.WindowFuncExpr]int) error {
+	if sel.OrderBy == nil {
+		return nil
+	}
+	for i, byItem := range sel.OrderBy.Items {
+		it, _, err := b.rewriteWithPreprocess(ctx, byItem.Expr, p, aggMapper, windowMapper, true, nil)
+		if err != nil {
+			return err
+		}
+		var ok bool
+		for _, expr := range exprs {
+			if it.Equal(b.ctx, expr) {
+				ok = true
+				break
+			}
+		}
+		if ok {
+			continue
+		}
+		cols := expression.ExtractDependentColumns(it)
+		for _, col := range cols {
+			for _, expr := range exprs {
+				if col.Equal(b.ctx, expr) {
+					ok = true
+					break
+				}
+			}
+			if !ok {
+				if _, ok := byItem.Expr.(*ast.AggregateFuncExpr); ok {
+					return ErrAggregateInOrderNotSelect.GenWithStackByArgs(i+1, "DISTINCT")
+				}
+				return ErrFieldInOrderNotSelect.GenWithStackByArgs(i+1, col.OrigName, "DISTINCT")
+			}
+		}
+	}
+	return nil
+}
+
 func (b *PlanBuilder) buildDistinct(child LogicalPlan, length int) (*LogicalAggregation, error) {
 	b.optFlag = b.optFlag | flagBuildKeyInfo
 	b.optFlag = b.optFlag | flagPushDownAgg
@@ -2789,6 +2828,7 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 		havingMap, orderMap, totalMap map[*ast.AggregateFuncExpr]int
 		windowAggMap                  map[*ast.AggregateFuncExpr]int
 		gbyCols                       []expression.Expression
+		projExprs                     []expression.Expression
 	)
 
 	if sel.From != nil {
@@ -2883,6 +2923,7 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 	if err != nil {
 		return nil, err
 	}
+	projExprs = p.(*LogicalProjection).Exprs[:oldLen]
 
 	if sel.Having != nil {
 		b.curClause = havingClause
@@ -2918,16 +2959,28 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 		if err != nil {
 			return nil, err
 		}
+		projExprs = p.(*LogicalProjection).Exprs[:oldLen]
+	}
+
+	var omitOrderBy bool
+	if hasAgg && sel.GroupBy == nil {
+		omitOrderBy = true
 	}
 
 	if sel.Distinct {
+		if !omitOrderBy {
+			err = b.checkDistinct(ctx, sel, p, projExprs, totalMap, windowMapper)
+			if err != nil {
+				return nil, err
+			}
+		}
 		p, err = b.buildDistinct(p, oldLen)
 		if err != nil {
 			return nil, err
 		}
 	}
 
-	if sel.OrderBy != nil {
+	if !omitOrderBy && sel.OrderBy != nil {
 		p, err = b.buildSort(ctx, p, sel.OrderBy.Items, orderMap, windowMapper)
 		if err != nil {
 			return nil, err
