@@ -65,6 +65,8 @@ const (
 	InfoSchema
 	// SchemaAmender is used to amend mutations for pessimistic transactions
 	SchemaAmender
+	// CommitHook is a callback function called right after the transaction gets committed
+	CommitHook
 )
 
 // Priority value for transaction priority.

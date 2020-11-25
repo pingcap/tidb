@@ -799,6 +799,7 @@ func (s *testClusterTableSuite) TestSelectClusterTable(c *C) {
 		tk.MustQuery("select query_time, conn_id from `CLUSTER_SLOW_QUERY` order by time limit 1").Check(testkit.Rows("4.895492 6"))
 		tk.MustQuery("select count(*) from `CLUSTER_SLOW_QUERY` group by digest").Check(testkit.Rows("1"))
 		tk.MustQuery("select digest, count(*) from `CLUSTER_SLOW_QUERY` group by digest").Check(testkit.Rows("42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772 1"))
+		tk.MustQuery(`select length(query) as l,time from information_schema.cluster_slow_query where time > "2019-02-12 19:33:56" order by abs(l) desc limit 10;`).Check(testkit.Rows("21 2019-02-12 19:33:56.571953"))
 		tk.MustQuery("select count(*) from `CLUSTER_SLOW_QUERY` where time > now() group by digest").Check(testkit.Rows())
 		re := tk.MustQuery("select * from `CLUSTER_statements_summary`")
 		c.Assert(re, NotNil)
@@ -1342,5 +1343,23 @@ func (s *testTableSuite) TestFormatVersion(c *C) {
 	for i, v := range versions {
 		version := infoschema.FormatVersion(v, false)
 		c.Assert(version, Equals, res[i])
+	}
+}
+
+func (s *testTableSuite) TestServerInfoResolveLoopBackAddr(c *C) {
+	nodes := []infoschema.ServerInfo{
+		{Address: "127.0.0.1:4000", StatusAddr: "192.168.130.22:10080"},
+		{Address: "0.0.0.0:4000", StatusAddr: "192.168.130.22:10080"},
+		{Address: "localhost:4000", StatusAddr: "192.168.130.22:10080"},
+		{Address: "192.168.130.22:4000", StatusAddr: "0.0.0.0:10080"},
+		{Address: "192.168.130.22:4000", StatusAddr: "127.0.0.1:10080"},
+		{Address: "192.168.130.22:4000", StatusAddr: "localhost:10080"},
+	}
+	for i := range nodes {
+		nodes[i].ResolveLoopBackAddr()
+	}
+	for _, n := range nodes {
+		c.Assert(n.Address, Equals, "192.168.130.22:4000")
+		c.Assert(n.StatusAddr, Equals, "192.168.130.22:10080")
 	}
 }
