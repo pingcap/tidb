@@ -88,6 +88,13 @@ func (l *List) GetChunk(chkIdx int) *Chunk {
 
 // AppendRow appends a row to the List, the row is copied to the List.
 func (l *List) AppendRow(row Row) RowPtr {
+	return l.AppendRowByColIdxs(row, nil)
+}
+
+// AppendRowByColIdxs appends a row by its colIdxs to the List, the row is copied to the List.
+// 1. every columns are used if colIdxs is nil.
+// 2. no columns are used if colIdxs is not nil but the size of colIdxs is 0.
+func (l *List) AppendRowByColIdxs(row Row, colIdxs []int) RowPtr {
 	chkIdx := len(l.chunks) - 1
 	if chkIdx == -1 || l.chunks[chkIdx].NumRows() >= l.chunks[chkIdx].Capacity() || chkIdx == l.consumedIdx {
 		newChk := l.allocChunk()
@@ -100,7 +107,7 @@ func (l *List) AppendRow(row Row) RowPtr {
 	}
 	chk := l.chunks[chkIdx]
 	rowIdx := chk.NumRows()
-	chk.AppendRow(row)
+	chk.AppendRowByColIdxs(row, colIdxs)
 	l.length++
 	return RowPtr{ChkIdx: uint32(chkIdx), RowIdx: uint32(rowIdx)}
 }
