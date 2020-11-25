@@ -960,8 +960,8 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 		max_total_keys, avg_processed_keys, max_processed_keys, avg_write_keys, max_write_keys, avg_prewrite_regions,
 		max_prewrite_regions, avg_affected_rows, query_sample_text
 		from information_schema.statements_summary
-		where digest_text like 'insert into t%'`,
-	).Check(testkit.Rows("Insert test test.t <nil> 4 0 0 0 0 0 2 2 1 1 1 insert into t values(1, 'a')"))
+		where digest_text like 'insert into test . t%'`,
+	).Check(testkit.Rows("Insert test test.t <nil> 4 0 0 0 0 0 2 2 1 1 1 INSERT INTO test.t VALUES (1,'a')"))
 
 	// Test point get.
 	tk.MustExec("drop table if exists p")
@@ -972,7 +972,7 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 		// Also make sure that the plan digest is not empty
 		tk.MustQuery(`select exec_count, plan, table_names
 			from information_schema.statements_summary
-			where digest_text like 'select b from p%' and plan_digest != ''`,
+			where digest_text like 'select b from test . p%' and plan_digest != ''`,
 		).Check(testkit.Rows(expectedResult))
 	}
 
@@ -1009,8 +1009,8 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 		max_total_keys, avg_processed_keys, max_processed_keys, avg_write_keys, max_write_keys, avg_prewrite_regions,
 		max_prewrite_regions, avg_affected_rows, query_sample_text, plan
 		from information_schema.statements_summary
-		where digest_text like 'select * from t%'`,
-	).Check(testkit.Rows("Select test test.t t:k 1 2 0 0 0 0 0 0 0 0 0 select * from t where a=2 \tid            \ttask     \testRows\toperator info\n" +
+		where digest_text like 'select * from test . t%'`,
+	).Check(testkit.Rows("Select test test.t t:k 1 2 0 0 0 0 0 0 0 0 0 SELECT * FROM test.t WHERE a = 2 \tid            \ttask     \testRows\toperator info\n" +
 		"\tIndexLookUp_10\troot     \t100    \t\n" +
 		"\t├─IndexScan_8 \tcop[tikv]\t100    \ttable:t, index:k(a), range:[2,2], keep order:false, stats:pseudo\n" +
 		"\t└─TableScan_9 \tcop[tikv]\t100    \ttable:t, keep order:false, stats:pseudo"))
@@ -1021,7 +1021,7 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 		max_prewrite_regions, avg_affected_rows, query_sample_text
 		from information_schema.statements_summary
 		order by exec_count desc limit 1`,
-	).Check(testkit.Rows("Insert test test.t <nil> 4 0 0 0 0 0 2 2 1 1 1 insert into t values(1, 'a')"))
+	).Check(testkit.Rows("Insert test test.t <nil> 4 0 0 0 0 0 2 2 1 1 1 INSERT INTO test.t VALUES (1,'a')"))
 
 	// Test different plans with same digest.
 	c.Assert(failpoint.Enable(failpointName, "return(1000)"), IsNil)
@@ -1030,8 +1030,8 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 		max_total_keys, avg_processed_keys, max_processed_keys, avg_write_keys, max_write_keys, avg_prewrite_regions,
 		max_prewrite_regions, avg_affected_rows, query_sample_text, plan
 		from information_schema.statements_summary
-		where digest_text like 'select * from t%'`,
-	).Check(testkit.Rows("Select test test.t t:k 2 4 0 0 0 0 0 0 0 0 0 select * from t where a=2 \tid            \ttask     \testRows\toperator info\n" +
+		where digest_text like 'select * from test . t%'`,
+	).Check(testkit.Rows("Select test test.t t:k 2 4 0 0 0 0 0 0 0 0 0 SELECT * FROM test.t WHERE a = 2 \tid            \ttask     \testRows\toperator info\n" +
 		"\tIndexLookUp_10\troot     \t100    \t\n" +
 		"\t├─IndexScan_8 \tcop[tikv]\t100    \ttable:t, index:k(a), range:[2,2], keep order:false, stats:pseudo\n" +
 		"\t└─TableScan_9 \tcop[tikv]\t100    \ttable:t, keep order:false, stats:pseudo"))
@@ -1066,22 +1066,22 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 		max_total_keys, avg_processed_keys, max_processed_keys, avg_write_keys, max_write_keys, avg_prewrite_regions,
 		max_prewrite_regions, avg_affected_rows, query_sample_text, prev_sample_text
 		from information_schema.statements_summary
-		where digest_text like 'insert into t%'`,
-	).Check(testkit.Rows("Insert test test.t <nil> 1 0 0 0 0 0 0 0 0 0 1 insert into t values(1, 'a') "))
+		where digest_text like 'insert into test . t%'`,
+	).Check(testkit.Rows("Insert test test.t <nil> 1 0 0 0 0 0 0 0 0 0 1 INSERT INTO test.t VALUES (1,'a') "))
 	tk.MustQuery(`select stmt_type, schema_name, table_names, index_names, exec_count, sum_cop_task_num, avg_total_keys,
 		max_total_keys, avg_processed_keys, max_processed_keys, avg_write_keys, max_write_keys, avg_prewrite_regions,
 		max_prewrite_regions, avg_affected_rows, query_sample_text, prev_sample_text
 		from information_schema.statements_summary
-		where digest_text='commit'`,
-	).Check(testkit.Rows("Commit test <nil> <nil> 1 0 0 0 0 0 2 2 1 1 0 commit insert into t values(1, 'a')"))
+		where digest_text='COMMIT'`,
+	).Check(testkit.Rows("Commit test <nil> <nil> 1 0 0 0 0 0 2 2 1 1 0 COMMIT INSERT INTO test.t VALUES (1,'a')"))
 
 	tk.MustQuery("select * from t where a=2")
 	tk.MustQuery(`select stmt_type, schema_name, table_names, index_names, exec_count, sum_cop_task_num, avg_total_keys,
 		max_total_keys, avg_processed_keys, max_processed_keys, avg_write_keys, max_write_keys, avg_prewrite_regions,
 		max_prewrite_regions, avg_affected_rows, query_sample_text, plan
 		from information_schema.statements_summary
-		where digest_text like 'select * from t%'`,
-	).Check(testkit.Rows("Select test test.t t:k 1 2 0 0 0 0 0 0 0 0 0 select * from t where a=2 \tid            \ttask     \testRows\toperator info\n" +
+		where digest_text like 'select * from test . t%'`,
+	).Check(testkit.Rows("Select test test.t t:k 1 2 0 0 0 0 0 0 0 0 0 SELECT * FROM test.t WHERE a = 2 \tid            \ttask     \testRows\toperator info\n" +
 		"\tIndexLookUp_10\troot     \t1000   \t\n" +
 		"\t├─IndexScan_8 \tcop[tikv]\t1000   \ttable:t, index:k(a), range:[2,2], keep order:false, stats:pseudo\n" +
 		"\t└─TableScan_9 \tcop[tikv]\t1000   \ttable:t, keep order:false, stats:pseudo"))
@@ -1099,8 +1099,8 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 		max_total_keys, avg_processed_keys, max_processed_keys, avg_write_keys, max_write_keys, avg_prewrite_regions,
 		max_prewrite_regions, avg_affected_rows, query_sample_text, plan
 		from information_schema.statements_summary
-		where digest_text like 'select * from t%'`,
-	).Check(testkit.Rows("Select test test.t t:k 2 4 0 0 0 0 0 0 0 0 0 select * from t where a=2 \tid            \ttask     \testRows\toperator info\n" +
+		where digest_text like 'select * from test . t%'`,
+	).Check(testkit.Rows("Select test test.t t:k 2 4 0 0 0 0 0 0 0 0 0 SELECT * FROM test.t WHERE a = 2 \tid            \ttask     \testRows\toperator info\n" +
 		"\tIndexLookUp_10\troot     \t1000   \t\n" +
 		"\t├─IndexScan_8 \tcop[tikv]\t1000   \ttable:t, index:k(a), range:[2,2], keep order:false, stats:pseudo\n" +
 		"\t└─TableScan_9 \tcop[tikv]\t1000   \ttable:t, keep order:false, stats:pseudo"))
@@ -1134,13 +1134,13 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 	tk.MustExec("select * from t where a=1")
 	result := tk.MustQuery(`select *
 		from information_schema.statements_summary
-		where digest_text like 'select * from t%'`,
+		where digest_text like 'select * from test . t%'`,
 	)
 	// Super user can query all records.
 	c.Assert(len(result.Rows()), Equals, 1)
 	result = tk.MustQuery(`select *
 		from information_schema.statements_summary_history
-		where digest_text like 'select * from t%'`,
+		where digest_text like 'select * from test . t%'`,
 	)
 	c.Assert(len(result.Rows()), Equals, 1)
 	tk.Se.Auth(&auth.UserIdentity{
@@ -1151,25 +1151,25 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 	}, nil, nil)
 	result = tk.MustQuery(`select *
 		from information_schema.statements_summary
-		where digest_text like 'select * from t%'`,
+		where digest_text like 'select * from test . t%'`,
 	)
 	// Ordinary users can not see others' records
 	c.Assert(len(result.Rows()), Equals, 0)
 	result = tk.MustQuery(`select *
 		from information_schema.statements_summary_history
-		where digest_text like 'select * from t%'`,
+		where digest_text like 'select * from test . t%'`,
 	)
 	c.Assert(len(result.Rows()), Equals, 0)
 	tk.MustExec("select * from t where a=1")
 	result = tk.MustQuery(`select *
 		from information_schema.statements_summary
-		where digest_text like 'select * from t%'`,
+		where digest_text like 'select * from test . t%'`,
 	)
 	c.Assert(len(result.Rows()), Equals, 1)
 	tk.MustExec("select * from t where a=1")
 	result = tk.MustQuery(`select *
 		from information_schema.statements_summary_history
-		where digest_text like 'select * from t%'`,
+		where digest_text like 'select * from test . t%'`,
 	)
 	c.Assert(len(result.Rows()), Equals, 1)
 	// use root user to set variables back
@@ -1220,8 +1220,8 @@ func (s *testTableSuite) TestStmtSummaryHistoryTable(c *C) {
 		max_total_keys, avg_processed_keys, max_processed_keys, avg_write_keys, max_write_keys, avg_prewrite_regions,
 		max_prewrite_regions, avg_affected_rows, query_sample_text
 		from information_schema.statements_summary_history
-		where digest_text like 'insert into test_summary%'`,
-	).Check(testkit.Rows("Insert test test.test_summary <nil> 4 0 0 0 0 0 2 2 1 1 1 insert into test_summary values(1, 'a')"))
+		where digest_text like 'insert into test . test_summary%'`,
+	).Check(testkit.Rows("Insert test test.test_summary <nil> 4 0 0 0 0 0 2 2 1 1 1 INSERT INTO test.test_summary VALUES (1,'a')"))
 
 	tk.MustExec("set global tidb_stmt_summary_history_size = 0")
 	tk.MustQuery(`select stmt_type, schema_name, table_names, index_names, exec_count, sum_cop_task_num, avg_total_keys,
@@ -1295,12 +1295,12 @@ func (s *testTableSuite) TestStmtSummaryErrorCount(c *C) {
 
 	tk.MustQuery(`select exec_count, sum_errors, sum_warnings
 		from information_schema.statements_summary
-		where digest_text like "insert into stmt_summary_test%"`).Check(testkit.Rows("2 1 0"))
+		where digest_text like "insert into test . stmt_summary_test%"`).Check(testkit.Rows("2 1 0"))
 
 	tk.MustExec("insert ignore into stmt_summary_test values(1)")
 	tk.MustQuery(`select exec_count, sum_errors, sum_warnings
 		from information_schema.statements_summary
-		where digest_text like "insert ignore into stmt_summary_test%"`).Check(testkit.Rows("1 0 1"))
+		where digest_text like "insert ignore into test . stmt_summary_test%"`).Check(testkit.Rows("1 0 1"))
 }
 
 func (s *testTableSuite) TestStmtSummaryPreparedStatements(c *C) {
@@ -1359,12 +1359,12 @@ func (s *testTableSuite) TestPerformanceSchemaforPlanCache(c *C) {
 	tk.MustExec("create table t(a int)")
 	tk.MustExec("prepare stmt from 'select * from t'")
 	tk.MustExec("execute stmt")
-	tk.MustQuery("select plan_cache_hits, plan_in_cache from information_schema.statements_summary where digest_text='select * from t'").Check(
+	tk.MustQuery("select plan_cache_hits, plan_in_cache from information_schema.statements_summary where digest_text='select * from test . t'").Check(
 		testkit.Rows("0 0"))
 	tk.MustExec("execute stmt")
 	tk.MustExec("execute stmt")
 	tk.MustExec("execute stmt")
-	tk.MustQuery("select plan_cache_hits, plan_in_cache from information_schema.statements_summary where digest_text='select * from t'").Check(
+	tk.MustQuery("select plan_cache_hits, plan_in_cache from information_schema.statements_summary where digest_text='select * from test . t'").Check(
 		testkit.Rows("3 1"))
 }
 

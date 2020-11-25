@@ -2650,7 +2650,7 @@ func (s *testSuite7) TestDeferConstraintCheckForDelete(c *C) {
 	tk.MustExec("insert into t1 values(1, 3)")
 	tk.MustExec("delete from t1 where j = 3")
 	_, err := tk.Exec("commit")
-	c.Assert(err.Error(), Equals, "previous statement: delete from t1 where j = 3: [kv:1062]Duplicate entry '1' for key 'PRIMARY'")
+	c.Assert(err.Error(), Equals, "previous statement: DELETE FROM test.t1 WHERE j = 3: [kv:1062]Duplicate entry '1' for key 'PRIMARY'")
 	tk.MustExec("rollback")
 
 	tk.MustExec("create table t2(i int, j int, unique index idx(i))")
@@ -2659,7 +2659,7 @@ func (s *testSuite7) TestDeferConstraintCheckForDelete(c *C) {
 	tk.MustExec("insert into t2 values(1, 3)")
 	tk.MustExec("delete from t2 where j = 3")
 	_, err = tk.Exec("commit")
-	c.Assert(err.Error(), Equals, "previous statement: delete from t2 where j = 3: [kv:1062]Duplicate entry '1' for key 'idx'")
+	c.Assert(err.Error(), Equals, "previous statement: DELETE FROM test.t2 WHERE j = 3: [kv:1062]Duplicate entry '1' for key 'idx'")
 	tk.MustExec("admin check table t2")
 
 	tk.MustExec("create table t3(i int, j int, primary key(i))")

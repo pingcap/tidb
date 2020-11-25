@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/hint"
+	utilparser "github.com/pingcap/tidb/util/parser"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
 )
@@ -212,7 +213,7 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		vars.PreparedStmtNameToID[e.name] = e.ID
 	}
 
-	normalized, digest := parser.NormalizeDigest(prepared.Stmt.Text())
+	normalized, digest := parser.NormalizeDigest(utilparser.RestoreWithDefaultDB(prepared.Stmt, vars.CurrentDB))
 	preparedObj := &plannercore.CachedPrepareStmt{
 		PreparedAst:   prepared,
 		VisitInfos:    destBuilder.GetVisitInfo(),
@@ -333,6 +334,7 @@ func CompileExecutePreparedStmt(ctx context.Context, sctx sessionctx.Context,
 		stmtCtx := sctx.GetSessionVars().StmtCtx
 		stmt.Text = preparedObj.PreparedAst.Stmt.Text()
 		stmtCtx.OriginalSQL = stmt.Text
+		stmtCtx.WithDefaultDBSQL = utilparser.RestoreWithDefaultDB(preparedObj.PreparedAst.Stmt, stmt.Ctx.GetSessionVars().CurrentDB)
 		stmtCtx.InitSQLDigest(preparedObj.NormalizedSQL, preparedObj.SQLDigest)
 	}
 	return stmt, nil

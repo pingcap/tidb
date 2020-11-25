@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/logutil"
+	utilparser "github.com/pingcap/tidb/util/parser"
 	"go.uber.org/zap"
 )
 
@@ -273,13 +274,16 @@ func optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	return finalPlan, names, cost, err
 }
 
-func extractSelectAndNormalizeDigest(stmtNode ast.StmtNode) (ast.StmtNode, string, string) {
+func extractSelectAndNormalizeDigest(stmtNode ast.StmtNode, defaultDB string) (ast.StmtNode, string, string) {
 	switch x := stmtNode.(type) {
 	case *ast.ExplainStmt:
+		if len(x.Text()) == 0 {
+			return x.Stmt, "", ""
+		}
 		switch x.Stmt.(type) {
 		case *ast.SelectStmt, *ast.DeleteStmt, *ast.UpdateStmt, *ast.InsertStmt:
 			plannercore.EraseLastSemicolon(x)
-			normalizeExplainSQL := parser.Normalize(x.Text())
+			normalizeExplainSQL := parser.Normalize(utilparser.RestoreWithDefaultDB(x, defaultDB))
 			idx := int(0)
 			switch n := x.Stmt.(type) {
 			case *ast.SelectStmt:
@@ -300,7 +304,7 @@ func extractSelectAndNormalizeDigest(stmtNode ast.StmtNode) (ast.StmtNode, strin
 			return x.Stmt, normalizeSQL, hash
 		case *ast.SetOprStmt:
 			plannercore.EraseLastSemicolon(x)
-			normalizeExplainSQL := parser.Normalize(x.Text())
+			normalizeExplainSQL := parser.Normalize(utilparser.RestoreWithDefaultDB(x, defaultDB))
 			idx := strings.Index(normalizeExplainSQL, "select")
 			parenthesesIdx := strings.Index(normalizeExplainSQL, "(")
 			if parenthesesIdx != -1 && parenthesesIdx < idx {
@@ -312,7 +316,10 @@ func extractSelectAndNormalizeDigest(stmtNode ast.StmtNode) (ast.StmtNode, strin
 		}
 	case *ast.SelectStmt, *ast.SetOprStmt, *ast.DeleteStmt, *ast.UpdateStmt, *ast.InsertStmt:
 		plannercore.EraseLastSemicolon(x)
-		normalizedSQL, hash := parser.NormalizeDigest(x.Text())
+		if len(x.Text()) == 0 {
+			return x, "", ""
+		}
+		normalizedSQL, hash := parser.NormalizeDigest(utilparser.RestoreWithDefaultDB(x, defaultDB))
 		return x, normalizedSQL, hash
 	}
 	return nil, "", ""
@@ -323,7 +330,7 @@ func getBindRecord(ctx sessionctx.Context, stmt ast.StmtNode) (*bindinfo.BindRec
 	if ctx.Value(bindinfo.SessionBindInfoKeyType) == nil {
 		return nil, ""
 	}
-	stmtNode, normalizedSQL, hash := extractSelectAndNormalizeDigest(stmt)
+	stmtNode, normalizedSQL, hash := extractSelectAndNormalizeDigest(stmt, ctx.GetSessionVars().CurrentDB)
 	if stmtNode == nil {
 		return nil, ""
 	}

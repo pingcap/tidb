@@ -110,7 +110,7 @@ func (s *testSerialSuite) TestPrepareStmtAfterIsolationReadChange(c *C) {
 	c.Assert(rows[len(rows)-1][2], Equals, "cop[tiflash]")
 
 	c.Assert(len(tk.Se.GetSessionVars().PreparedStmts), Equals, 1)
-	c.Assert(tk.Se.GetSessionVars().PreparedStmts[1].(*plannercore.CachedPrepareStmt).NormalizedSQL, Equals, "select * from t")
+	c.Assert(tk.Se.GetSessionVars().PreparedStmts[1].(*plannercore.CachedPrepareStmt).NormalizedSQL, Equals, "select * from test . t")
 	c.Assert(tk.Se.GetSessionVars().PreparedStmts[1].(*plannercore.CachedPrepareStmt).NormalizedPlan, Equals, "")
 }
 

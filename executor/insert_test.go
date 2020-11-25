@@ -1450,7 +1450,7 @@ func (s *testSerialSuite) TestDuplicateEntryMessage(c *C) {
 		tk.MustExec("begin optimistic;")
 		tk.MustExec("insert into t value (34, '12ak');")
 		tk.MustExec("delete from t where b = '12ak';")
-		tk.MustGetErrMsg("commit;", "previous statement: delete from t where b = '12ak';: [kv:1062]Duplicate entry '12ak' for key 'b'")
+		tk.MustGetErrMsg("commit;", "previous statement: DELETE FROM test.t WHERE b = '12ak': [kv:1062]Duplicate entry '12ak' for key 'b'")
 
 		tk.MustExec("drop table if exists t;")
 		tk.MustExec("create table t (a datetime primary key);")
@@ -1460,7 +1460,7 @@ func (s *testSerialSuite) TestDuplicateEntryMessage(c *C) {
 		tk.MustExec("begin optimistic;")
 		tk.MustExec("insert into t values ('2020-01-01');")
 		tk.MustExec("delete from t where a = '2020-01-01';")
-		tk.MustGetErrMsg("commit;", "previous statement: delete from t where a = '2020-01-01';: [kv:1062]Duplicate entry '2020-01-01 00:00:00' for key 'PRIMARY'")
+		tk.MustGetErrMsg("commit;", "previous statement: DELETE FROM test.t WHERE a = '2020-01-01': [kv:1062]Duplicate entry '2020-01-01 00:00:00' for key 'PRIMARY'")
 
 		tk.MustExec("drop table if exists t;")
 		tk.MustExec("create table t (a int primary key );")

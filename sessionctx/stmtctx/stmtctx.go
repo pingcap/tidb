@@ -137,6 +137,7 @@ type StatementContext struct {
 	stmtTimeCached   bool
 	StmtType         string
 	OriginalSQL      string
+	WithDefaultDBSQL string
 	digestMemo       struct {
 		sync.Once
 		normalized string
@@ -205,7 +206,7 @@ func (sc *StatementContext) ResetNowTs() {
 // it will cache result after first calling.
 func (sc *StatementContext) SQLDigest() (normalized, sqlDigest string) {
 	sc.digestMemo.Do(func() {
-		sc.digestMemo.normalized, sc.digestMemo.digest = parser.NormalizeDigest(sc.OriginalSQL)
+		sc.digestMemo.normalized, sc.digestMemo.digest = parser.NormalizeDigest(sc.WithDefaultDBSQL)
 	})
 	return sc.digestMemo.normalized, sc.digestMemo.digest
 }
