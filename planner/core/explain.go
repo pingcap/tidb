@@ -20,10 +20,12 @@ import (
 	"strings"
 
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/stringutil"
 )
 
@@ -388,6 +390,18 @@ func (p *PhysicalIndexJoin) explainInfo(normalized bool) string {
 	if len(p.InnerJoinKeys) > 0 {
 		fmt.Fprintf(buffer, ", inner key:%s",
 			expression.ExplainColumnList(p.InnerJoinKeys))
+	}
+
+	if len(p.OuterHashKeys) > 0 {
+		exprs := make([]expression.Expression, 0, len(p.OuterHashKeys))
+		for i := range p.OuterHashKeys {
+			expr, err := expression.NewFunctionBase(MockContext(), ast.EQ, types.NewFieldType(mysql.TypeLonglong), p.OuterHashKeys[i], p.InnerHashKeys[i])
+			if err != nil {
+			}
+			exprs = append(exprs, expr)
+		}
+		fmt.Fprintf(buffer, ", equal cond:%s",
+			sortedExplainExpressionList(exprs))
 	}
 	if len(p.LeftConditions) > 0 {
 		fmt.Fprintf(buffer, ", left cond:%s",

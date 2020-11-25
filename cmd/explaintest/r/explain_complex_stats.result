@@ -128,21 +128,21 @@ id	estRows	task	access object	operator info
 Projection_13	424.00	root		test.st.id, test.dd.id, test.st.aid, test.st.cm, test.dd.dic, test.dd.ip, test.dd.t, test.st.p1, test.st.p2, test.st.p3, test.st.p4, test.st.p5, test.st.p6_md5, test.st.p7_md5, test.st.ext, test.st.t
 └─Limit_16	424.00	root		offset:0, count:2500
   └─HashAgg_19	424.00	root		group by:test.dd.dic, test.st.aid, funcs:firstrow(test.st.id)->test.st.id, funcs:firstrow(test.st.aid)->test.st.aid, funcs:firstrow(test.st.cm)->test.st.cm, funcs:firstrow(test.st.p1)->test.st.p1, funcs:firstrow(test.st.p2)->test.st.p2, funcs:firstrow(test.st.p3)->test.st.p3, funcs:firstrow(test.st.p4)->test.st.p4, funcs:firstrow(test.st.p5)->test.st.p5, funcs:firstrow(test.st.p6_md5)->test.st.p6_md5, funcs:firstrow(test.st.p7_md5)->test.st.p7_md5, funcs:firstrow(test.st.ext)->test.st.ext, funcs:firstrow(test.st.t)->test.st.t, funcs:firstrow(test.dd.id)->test.dd.id, funcs:firstrow(test.dd.dic)->test.dd.dic, funcs:firstrow(test.dd.ip)->test.dd.ip, funcs:firstrow(test.dd.t)->test.dd.t
-    └─HashJoin_28	424.00	root		inner join, equal:[eq(test.st.aid, test.dd.aid) eq(test.st.ip, test.dd.ip)], other cond:gt(test.dd.t, test.st.t)
-      ├─TableReader_31(Build)	424.00	root		data:Selection_30
-      │ └─Selection_30	424.00	cop[tikv]		eq(test.st.bm, 0), eq(test.st.pt, "android"), gt(test.st.t, 1478143908), not(isnull(test.st.ip))
-      │   └─TableRangeScan_29	1999.00	cop[tikv]	table:gad	range:[0,+inf], keep order:false
-      └─TableReader_38(Probe)	455.80	root		data:Selection_37
-        └─Selection_37	455.80	cop[tikv]		eq(test.dd.bm, 0), eq(test.dd.pt, "android"), gt(test.dd.t, 1478143908), not(isnull(test.dd.ip)), not(isnull(test.dd.t))
-          └─TableRangeScan_36	2000.00	cop[tikv]	table:dd	range:[0,+inf], keep order:false
+    └─HashJoin_30	424.00	root		inner join, equal:[eq(test.st.aid, test.dd.aid) eq(test.st.ip, test.dd.ip)], other cond:gt(test.dd.t, test.st.t)
+      ├─TableReader_33(Build)	424.00	root		data:Selection_32
+      │ └─Selection_32	424.00	cop[tikv]		eq(test.st.bm, 0), eq(test.st.pt, "android"), gt(test.st.t, 1478143908), not(isnull(test.st.ip))
+      │   └─TableRangeScan_31	1999.00	cop[tikv]	table:gad	range:[0,+inf], keep order:false
+      └─TableReader_40(Probe)	455.80	root		data:Selection_39
+        └─Selection_39	455.80	cop[tikv]		eq(test.dd.bm, 0), eq(test.dd.pt, "android"), gt(test.dd.t, 1478143908), not(isnull(test.dd.ip)), not(isnull(test.dd.t))
+          └─TableRangeScan_38	2000.00	cop[tikv]	table:dd	range:[0,+inf], keep order:false
 explain select gad.id as gid,sdk.id as sid,gad.aid as aid,gad.cm as cm,sdk.dic as dic,sdk.ip as ip, sdk.t as t, gad.p1 as p1, gad.p2 as p2, gad.p3 as p3, gad.p4 as p4, gad.p5 as p5, gad.p6_md5 as p6, gad.p7_md5 as p7, gad.ext as ext from st gad join dd sdk on gad.aid = sdk.aid and gad.dic = sdk.mac and gad.t < sdk.t where gad.t > 1477971479 and gad.bm = 0 and gad.pt = 'ios' and gad.dit = 'mac' and sdk.t > 1477971479 and sdk.bm = 0 and sdk.pt = 'ios' limit 3000;
 id	estRows	task	access object	operator info
 Projection_10	170.34	root		test.st.id, test.dd.id, test.st.aid, test.st.cm, test.dd.dic, test.dd.ip, test.dd.t, test.st.p1, test.st.p2, test.st.p3, test.st.p4, test.st.p5, test.st.p6_md5, test.st.p7_md5, test.st.ext
 └─Limit_13	170.34	root		offset:0, count:3000
-  └─IndexJoin_18	170.34	root		inner join, inner:IndexLookUp_17, outer key:test.st.aid, inner key:test.dd.aid, other cond:eq(test.st.dic, test.dd.mac), lt(test.st.t, test.dd.t)
-    ├─TableReader_25(Build)	170.34	root		data:Selection_24
-    │ └─Selection_24	170.34	cop[tikv]		eq(test.st.bm, 0), eq(test.st.dit, "mac"), eq(test.st.pt, "ios"), gt(test.st.t, 1477971479), not(isnull(test.st.dic))
-    │   └─TableRangeScan_23	1999.00	cop[tikv]	table:gad	range:[0,+inf], keep order:false
+  └─IndexJoin_18	170.34	root		inner join, inner:IndexLookUp_17, outer key:test.st.aid, inner key:test.dd.aid, equal cond:eq(test.st.aid, test.dd.aid), eq(test.st.dic, test.dd.mac), other cond:lt(test.st.t, test.dd.t)
+    ├─TableReader_27(Build)	170.34	root		data:Selection_26
+    │ └─Selection_26	170.34	cop[tikv]		eq(test.st.bm, 0), eq(test.st.dit, "mac"), eq(test.st.pt, "ios"), gt(test.st.t, 1477971479), not(isnull(test.st.dic))
+    │   └─TableRangeScan_25	1999.00	cop[tikv]	table:gad	range:[0,+inf], keep order:false
     └─IndexLookUp_17(Probe)	1.00	root		
       ├─IndexRangeScan_14(Build)	3.93	cop[tikv]	table:sdk, index:aid(aid, dic)	range: decided by [eq(test.dd.aid, test.st.aid)], keep order:false
       └─Selection_16(Probe)	1.00	cop[tikv]		eq(test.dd.bm, 0), eq(test.dd.pt, "ios"), gt(test.dd.t, 1477971479), not(isnull(test.dd.mac)), not(isnull(test.dd.t))
@@ -159,10 +159,10 @@ explain select dt.id as id, dt.aid as aid, dt.pt as pt, dt.dic as dic, dt.cm as 
 id	estRows	task	access object	operator info
 Projection_10	428.32	root		test.dt.id, test.dt.aid, test.dt.pt, test.dt.dic, test.dt.cm, test.rr.gid, test.rr.acd, test.rr.t, test.dt.p1, test.dt.p2, test.dt.p3, test.dt.p4, test.dt.p5, test.dt.p6_md5, test.dt.p7_md5
 └─Limit_13	428.32	root		offset:0, count:2000
-  └─IndexJoin_19	428.32	root		inner join, inner:IndexLookUp_18, outer key:test.dt.aid, test.dt.dic, inner key:test.rr.aid, test.rr.dic
-    ├─TableReader_44(Build)	428.32	root		data:Selection_43
-    │ └─Selection_43	428.32	cop[tikv]		eq(test.dt.bm, 0), eq(test.dt.pt, "ios"), gt(test.dt.t, 1478185592), not(isnull(test.dt.dic))
-    │   └─TableRangeScan_42	2000.00	cop[tikv]	table:dt	range:[0,+inf], keep order:false
+  └─IndexJoin_19	428.32	root		inner join, inner:IndexLookUp_18, outer key:test.dt.aid, test.dt.dic, inner key:test.rr.aid, test.rr.dic, equal cond:eq(test.dt.aid, test.rr.aid), eq(test.dt.dic, test.rr.dic)
+    ├─TableReader_48(Build)	428.32	root		data:Selection_47
+    │ └─Selection_47	428.32	cop[tikv]		eq(test.dt.bm, 0), eq(test.dt.pt, "ios"), gt(test.dt.t, 1478185592), not(isnull(test.dt.dic))
+    │   └─TableRangeScan_46	2000.00	cop[tikv]	table:dt	range:[0,+inf], keep order:false
     └─IndexLookUp_18(Probe)	1.00	root		
       ├─IndexRangeScan_15(Build)	1.00	cop[tikv]	table:rr, index:PRIMARY(aid, dic)	range: decided by [eq(test.rr.aid, test.dt.aid) eq(test.rr.dic, test.dt.dic)], keep order:false
       └─Selection_17(Probe)	1.00	cop[tikv]		eq(test.rr.pt, "ios"), gt(test.rr.t, 1478185592)
