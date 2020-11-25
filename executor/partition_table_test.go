@@ -215,6 +215,7 @@ partition p3 values less than maxvalue)`)
 func (s *partitionTableSuite) TestSelectLockOnPartitionTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	tk.MustExec("drop table if exists pt")
 	tk.MustExec(`create table pt (id int primary key, k int, c int, index(k))
 partition by range (id) (
 partition p0 values less than (4),

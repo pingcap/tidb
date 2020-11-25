@@ -217,7 +217,7 @@ func (e *TableReaderExecutor) Next(ctx context.Context, req *chunk.Chunk) error 
 	// add the partition ID as an extra column. The SelectLockExec need this information
 	// to construct the lock key.
 	physicalID := getPhysicalTableID(e.table)
-	if physicalID != e.table.Meta().ID && e.extraPIDColumnIndex.valid() {
+	if e.extraPIDColumnIndex.valid() {
 		fillExtraPIDColumn(req, e.extraPIDColumnIndex.value(), physicalID)
 	}
 
