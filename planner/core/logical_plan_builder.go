@@ -2962,17 +2962,10 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 		projExprs = p.(*LogicalProjection).Exprs[:oldLen]
 	}
 
-	var omitOrderBy bool
-	if hasAgg && sel.GroupBy == nil {
-		omitOrderBy = true
-	}
-
 	if sel.Distinct {
-		if !omitOrderBy {
-			err = b.checkDistinct(ctx, sel, p, projExprs, totalMap, windowMapper)
-			if err != nil {
-				return nil, err
-			}
+		err = b.checkDistinct(ctx, sel, p, projExprs, totalMap, windowMapper)
+		if err != nil {
+			return nil, err
 		}
 		p, err = b.buildDistinct(p, oldLen)
 		if err != nil {
@@ -2980,7 +2973,7 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 		}
 	}
 
-	if !omitOrderBy && sel.OrderBy != nil {
+	if sel.OrderBy != nil {
 		p, err = b.buildSort(ctx, p, sel.OrderBy.Items, orderMap, windowMapper)
 		if err != nil {
 			return nil, err
