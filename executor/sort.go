@@ -393,6 +393,7 @@ func (e *TopNExec) Open(ctx context.Context) error {
 // Next implements the Executor Next interface.
 func (e *TopNExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.Reset()
+	var compacted bool
 	if !e.fetched {
 		e.totalLimit = e.limit.Offset + e.limit.Count
 		e.Idx = int(e.limit.Offset)
@@ -400,7 +401,7 @@ func (e *TopNExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		if err != nil {
 			return err
 		}
-		err = e.executeTopN(ctx)
+		compacted, err = e.executeTopN(ctx)
 		if err != nil {
 			return err
 		}
@@ -411,7 +412,17 @@ func (e *TopNExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 	for !req.IsFull() && e.Idx < len(e.rowPtrs) {
 		row := e.rowChunks.GetRow(e.rowPtrs[e.Idx])
-		req.AppendRowByColIdxs(row, e.columnIdxsUsedByChild)
+		// Be carefule, if inline projection occurs.
+		// TopN's schema may be not match child executor's output columns.
+		// We should extract only the required columns from child's executor.
+		// Why here condition is `!compacted`?
+		// Cause when `doCompaction` happend, inline projection do run once,
+		// then we should not run projection duplicated.
+		if !compacted {
+			req.AppendRowByColIdxs(row, e.columnIdxsUsedByChild)
+		} else {
+			req.AppendRow(row)
+		}
 		e.Idx++
 	}
 	return nil
@@ -419,7 +430,7 @@ func (e *TopNExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 func (e *TopNExec) loadChunksUntilTotalLimit(ctx context.Context) error {
 	e.chkHeap = &topNChunkHeap{e}
-	e.rowChunks = chunk.NewList(retTypes(e), e.initCap, e.maxChunkSize)
+	e.rowChunks = newList(e)
 	e.rowChunks.GetMemTracker().AttachTo(e.memTracker)
 	e.rowChunks.GetMemTracker().SetLabel(memory.LabelForRowChunks)
 	for uint64(e.rowChunks.Len()) < e.totalLimit {
@@ -443,7 +454,7 @@ func (e *TopNExec) loadChunksUntilTotalLimit(ctx context.Context) error {
 
 const topNCompactionFactor = 4
 
-func (e *TopNExec) executeTopN(ctx context.Context) error {
+func (e *TopNExec) executeTopN(ctx context.Context) (compacted bool, err error) {
 	heap.Init(e.chkHeap)
 	for uint64(len(e.rowPtrs)) > e.totalLimit {
 		// The number of rows we loaded may exceeds total limit, remove greatest rows by Pop.
@@ -453,24 +464,25 @@ func (e *TopNExec) executeTopN(ctx context.Context) error {
 	for {
 		err := Next(ctx, e.children[0], childRowChk)
 		if err != nil {
-			return err
+			return false, err
 		}
 		if childRowChk.NumRows() == 0 {
 			break
 		}
 		err = e.processChildChk(childRowChk)
 		if err != nil {
-			return err
+			return false, err
 		}
 		if e.rowChunks.Len() > len(e.rowPtrs)*topNCompactionFactor {
 			err = e.doCompaction()
 			if err != nil {
-				return err
+				return false, err
 			}
+			compacted = true
 		}
 	}
 	sort.Slice(e.rowPtrs, e.keyColumnsLess)
-	return nil
+	return compacted, err
 }
 
 func (e *TopNExec) processChildChk(childRowChk *chunk.Chunk) error {
@@ -481,7 +493,7 @@ func (e *TopNExec) processChildChk(childRowChk *chunk.Chunk) error {
 		next = childRowChk.GetRow(i)
 		if e.chkHeap.greaterRow(heapMax, next) {
 			// Evict heap max, keep the next row.
-			e.rowPtrs[0] = e.rowChunks.AppendRow(childRowChk.GetRow(i))
+			e.rowPtrs[0] = e.rowChunks.AppendRow(next)
 			heap.Fix(e.chkHeap, 0)
 		}
 	}
@@ -493,16 +505,21 @@ func (e *TopNExec) processChildChk(childRowChk *chunk.Chunk) error {
 // but we want descending top N, then we will keep all data in memory.
 // But if data is distributed randomly, this function will be called log(n) times.
 func (e *TopNExec) doCompaction() error {
-	newRowChunks := chunk.NewList(retTypes(e), e.initCap, e.maxChunkSize)
+	newRowChunks := newList(e)
 	newRowPtrs := make([]chunk.RowPtr, 0, e.rowChunks.Len())
 	for _, rowPtr := range e.rowPtrs {
-		newRowPtr := newRowChunks.AppendRow(e.rowChunks.GetRow(rowPtr))
+		// Be carefule, if inline projection occurs.
+		// TopN's schema may be not match child executor's output columns.
+		// We should extract only the required columns from child's executor.
+		// Do not let it fixed on `loadChunksUntilTotalLimit` or `processChildChk`,
+		// cauz it may destroy the correctness of executor's `keyColumns`.
+		originRow := e.rowChunks.GetRow(rowPtr)
+		newRowPtr := newRowChunks.AppendRowByColIdxs(originRow, e.columnIdxsUsedByChild)
 		newRowPtrs = append(newRowPtrs, newRowPtr)
 	}
 	newRowChunks.GetMemTracker().SetLabel(memory.LabelForRowChunks)
 	e.memTracker.ReplaceChild(e.rowChunks.GetMemTracker(), newRowChunks.GetMemTracker())
 	e.rowChunks = newRowChunks
-
 	e.memTracker.Consume(int64(-8 * len(e.rowPtrs)))
 	e.memTracker.Consume(int64(8 * len(newRowPtrs)))
 	e.rowPtrs = newRowPtrs
