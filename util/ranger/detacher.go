@@ -317,7 +317,15 @@ func detachDNFCondAndBuildRangeForIndex(sctx sessionctx.Context, condition *expr
 		}
 	}
 
+<<<<<<< HEAD
 	totalRanges, err := UnionRanges(sc, totalRanges)
+=======
+	// Take prefix index into consideration.
+	if hasPrefix(d.lengths) {
+		fixPrefixColRange(totalRanges, d.lengths, newTpSlice)
+	}
+	totalRanges, err := UnionRanges(sc, totalRanges, d.mergeConsecutive)
+>>>>>>> 06e99582d... planner: fix incorrect results when using a prefix index with OR condition (#21251)
 	if err != nil {
 		return nil, nil, false, errors.Trace(err)
 	}
