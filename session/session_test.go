@@ -3310,7 +3310,7 @@ func (s *testSessionSuite2) TestSetEnableRateLimitAction(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	// assert default value
 	result := tk.MustQuery("select @@tidb_enable_rate_limit_action;")
-	result.Check(testkit.Rows("1"))
+	result.Check(testkit.Rows("on"))
 
 	// assert set sys variable
 	tk.MustExec("set global tidb_enable_rate_limit_action= '0';")

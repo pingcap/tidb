@@ -17,7 +17,6 @@ import (
 	"bytes"
 	"crypto/tls"
 	"fmt"
-	"github.com/pingcap/parser"
 	"math"
 	"sort"
 	"strconv"
