@@ -109,31 +109,32 @@ func (s *testSuite) TestOOMAction(c *C) {
 	c.Assert(action1.called, IsFalse)
 	c.Assert(action2.called, IsFalse)
 	tracker.Consume(10000)
-	c.Assert(action1.called, IsFalse)
-	c.Assert(action2.called, IsTrue)
+	c.Assert(action1.called, IsTrue)
+	c.Assert(action2.called, IsFalse)
 	tracker.Consume(10000)
 	c.Assert(action1.called, IsTrue)
 	c.Assert(action2.called, IsTrue)
 }
 
 type mockAction struct {
+	BaseOOMAction
 	called   bool
-	fallback ActionOnExceed
+	priority int64
 }
 
 func (a *mockAction) SetLogHook(hook func(uint64)) {
 }
 
 func (a *mockAction) Action(t *Tracker) {
-	if a.called && a.fallback != nil {
-		a.fallback.Action(t)
+	if a.called && a.fallbackAction != nil {
+		a.fallbackAction.Action(t)
 		return
 	}
 	a.called = true
 }
 
-func (a *mockAction) SetFallback(fallback ActionOnExceed) {
-	a.fallback = fallback
+func (a *mockAction) GetPriority() int64 {
+	return a.priority
 }
 
 func (s *testSuite) TestAttachTo(c *C) {
@@ -426,4 +427,39 @@ func BenchmarkConsume(b *testing.B) {
 
 func (s *testSuite) TestErrorCode(c *C) {
 	c.Assert(int(terror.ToSQLError(errMemExceedThreshold).Code), Equals, errno.ErrMemExceedThreshold)
+}
+
+func (s *testSuite) TestOOMActionPriority(c *C) {
+	tracker := NewTracker(1, 100)
+	// make sure no panic here.
+	tracker.Consume(10000)
+
+	tracker = NewTracker(1, 1)
+	tracker.actionMu.actionOnExceed = nil
+	n := 100
+	actions := make([]*mockAction, n)
+	for i := 0; i < n; i++ {
+		actions[i] = &mockAction{priority: int64(i)}
+	}
+
+	randomSuffle := make([]int, n)
+	for i := 0; i < n; i++ {
+		randomSuffle[i] = i
+		pos := rand.Int() % (i + 1)
+		randomSuffle[i], randomSuffle[pos] = randomSuffle[pos], randomSuffle[i]
+	}
+
+	for i := 0; i < n; i++ {
+		tracker.FallbackOldAndSetNewAction(actions[randomSuffle[i]])
+	}
+	for i := n - 1; i >= 0; i-- {
+		tracker.Consume(100)
+		for j := n - 1; j >= 0; j-- {
+			if j >= i {
+				c.Assert(actions[j].called, IsTrue)
+			} else {
+				c.Assert(actions[j].called, IsFalse)
+			}
+		}
+	}
 }
