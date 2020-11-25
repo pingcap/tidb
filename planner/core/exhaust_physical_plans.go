@@ -724,7 +724,11 @@ func (p *LogicalJoin) buildIndexJoinInner2IndexScan(
 		}
 	})
 	joins = append(joins, p.constructIndexJoin(prop, outerIdx, innerTask, helper.chosenRanges, keyOff2IdxOff, helper.chosenPath, helper.lastColManager)...)
-
+	// The index merge join's inner plan is different from index join, so we
+	// should construct another inner plan for it.
+	// Because we can't keep order for union scan, if there is a union scan in inner task,
+	// we can't construct index merge join.
+	
 	// TODO: reopen the index merge join in future.
 
 	//if us == nil {
