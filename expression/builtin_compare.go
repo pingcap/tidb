@@ -433,15 +433,37 @@ func aggregateType(args []Expression) (*types.FieldType, error) {
 	return &aggType, nil
 }
 
-// GetCmpTp4MinMax gets compare type for GREATEST and LEAST and BETWEEN (mainly for datetime).
-func GetCmpTp4MinMax(args []Expression) (types.EvalType, error) {
+func ResolveType4Between(args [3]Expression) types.EvalType {
+	cmpTp := args[0].GetType().EvalType()
+	for i := 1; i < 3; i++ {
+		cmpTp = getBaseCmpType(cmpTp, args[i].GetType().EvalType(), nil, nil)
+	}
+
+	hasTemporal := false
+	if cmpTp == types.ETString {
+		for _, arg := range args {
+			if types.IsTypeTemporal(arg.GetType().Tp) {
+				hasTemporal = true
+				break
+			}
+		}
+		if hasTemporal {
+			cmpTp = types.ETDatetime
+		}
+	}
+
+	return cmpTp
+}
+
+// ResolveType4Extremum gets compare type for GREATEST and LEAST and BETWEEN (mainly for datetime).
+func ResolveType4Extremum(args []Expression) (types.EvalType, error) {
 	aggType, err := aggregateType(args)
 	if err != nil {
 		return types.ETInt, err
 	}
 
 	var temporalItem *types.FieldType
-	if types.ResultMergeType(aggType.Tp) == types.StringResult {
+	if types.ResultMergeType(aggType.Tp) == types.ETString {
 		for i := range args {
 			item := args[i].GetType()
 			if types.IsTemporalWithDate(item.Tp) {
@@ -465,7 +487,7 @@ func (c *greatestFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	if err = c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	tp, _ := GetCmpTp4MinMax(args)
+	tp, _ := ResolveType4Extremum(args)
 	cmpAsDatetime := false
 	if tp == types.ETDatetime || tp == types.ETTimestamp {
 		cmpAsDatetime = true
@@ -677,7 +699,7 @@ func (c *leastFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 	if err = c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	tp, _ := GetCmpTp4MinMax(args)
+	tp, _ := ResolveType4Extremum(args)
 	cmpAsDatetime := false
 	if tp == types.ETDatetime {
 		cmpAsDatetime = true
@@ -1097,7 +1119,7 @@ type compareFunctionClass struct {
 
 // getBaseCmpType gets the EvalType that the two args will be treated as when comparing.
 func getBaseCmpType(lhs, rhs types.EvalType, lft, rft *types.FieldType) types.EvalType {
-	if lft.Tp == mysql.TypeUnspecified || rft.Tp == mysql.TypeUnspecified {
+	if lft != nil && rft != nil && (lft.Tp == mysql.TypeUnspecified || rft.Tp == mysql.TypeUnspecified) {
 		if lft.Tp == rft.Tp {
 			return types.ETString
 		}
@@ -1109,10 +1131,10 @@ func getBaseCmpType(lhs, rhs types.EvalType, lft, rft *types.FieldType) types.Ev
 	}
 	if lhs.IsStringKind() && rhs.IsStringKind() {
 		return types.ETString
-	} else if (lhs == types.ETInt || lft.Hybrid()) && (rhs == types.ETInt || rft.Hybrid()) {
+	} else if (lhs == types.ETInt || (lft != nil && lft.Hybrid())) && (rhs == types.ETInt || (rft != nil && rft.Hybrid())) {
 		return types.ETInt
-	} else if ((lhs == types.ETInt || lft.Hybrid()) || lhs == types.ETDecimal) &&
-		((rhs == types.ETInt || rft.Hybrid()) || rhs == types.ETDecimal) {
+	} else if ((lhs == types.ETInt || (lft != nil && lft.Hybrid())) || lhs == types.ETDecimal) &&
+		((rhs == types.ETInt || (rft != nil && rft.Hybrid())) || rhs == types.ETDecimal) {
 		return types.ETDecimal
 	}
 	return types.ETReal

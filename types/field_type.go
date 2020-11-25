@@ -310,7 +310,7 @@ func MergeFieldType(a byte, b byte) byte {
 	return fieldTypeMergeRules[ia][ib]
 }
 
-func ResultMergeType(tp byte) byte {
+func ResultMergeType(tp byte) EvalType {
 	return fieldTypesResultType[getFieldTypeIndex(tp)]
 }
 
@@ -1262,45 +1262,38 @@ var fieldTypeMergeRules = [fieldTypeNum][fieldTypeNum]byte{
 	},
 }
 
-const (
-	StringResult = iota
-	RealResult
-	IntResult
-	DecimalResult
-)
-
-var fieldTypesResultType = [fieldTypeNum]byte{
+var fieldTypesResultType = [fieldTypeNum]EvalType{
 	// mysql.TypeDecimal      mysql.TypeTiny
-	DecimalResult, IntResult,
+	ETDecimal, ETInt,
 	// mysql.TypeShort        mysql.TypeLong
-	IntResult, IntResult,
+	ETInt, ETInt,
 	// mysql.TypeFloat        mysql.TypeDouble
-	RealResult, RealResult,
+	ETReal, ETReal,
 	// mysql.TypeNull         mysql.TypeTimestamp
-	StringResult, StringResult,
+	ETString, ETString,
 	// mysql.TypeLonglong     mysql.TypeInt24
-	IntResult, IntResult,
+	ETInt, ETInt,
 	// mysql.TypeDate         mysql.TypeTime
-	StringResult, StringResult,
+	ETString, ETString,
 	// mysql.TypeDateTime     mysql.TypeYear
-	StringResult, IntResult,
+	ETString, ETInt,
 	// mysql.TypeNewDate      mysql.TypeVarchar
-	StringResult, StringResult,
+	ETString, ETString,
 	// mysql.TypeBit
-	IntResult,
+	ETInt,
 	// Unused entries: <16>-<244>
 	// mysql.TypeJson
-	StringResult,
+	ETString,
 	// mysql.TypeNewDecimal   mysql.TypeEnum
-	DecimalResult, StringResult,
+	ETDecimal, ETString,
 	// mysql.TypeSet          mysql.TypeTinyBlob
-	StringResult, StringResult,
+	ETString, ETString,
 	// mysql.TypeMediumBlob  mysql.TypeLongBlob
-	StringResult, StringResult,
+	ETString, ETString,
 	// mysql.TypeBlob         mysql.TypeVarString
-	StringResult, StringResult,
+	ETString, ETString,
 	// mysql.TypeString       mysql.TypeGeometry
-	StringResult, StringResult,
+	ETString, ETString,
 }
 
 // SetBinChsClnFlag sets charset, collation as 'binary' and adds binaryFlag to FieldType.

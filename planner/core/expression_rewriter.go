@@ -1530,7 +1530,7 @@ func (er *expressionRewriter) betweenToExpression(v *ast.BetweenExpr) {
 
 	expr, lexp, rexp := er.ctxStack[stkLen-3], er.ctxStack[stkLen-2], er.ctxStack[stkLen-1]
 
-	tp, _ := expression.GetCmpTp4MinMax([]expression.Expression{expr, lexp, rexp})
+	tp := expression.ResolveType4Between([3]expression.Expression{expr, lexp, rexp})
 	if tp == types.ETDatetime {
 		expr = expression.WrapWithCastAsTime(er.sctx, expr, types.NewFieldType(mysql.TypeDatetime))
 		lexp = expression.WrapWithCastAsTime(er.sctx, lexp, types.NewFieldType(mysql.TypeDatetime))
