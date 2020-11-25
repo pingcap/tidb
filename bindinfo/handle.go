@@ -522,7 +522,7 @@ func (c cache) removeDeletedBindRecord(hash string, meta *BindRecord) {
 func (c cache) setBindRecord(hash string, meta *BindRecord) {
 	metas := c[hash]
 	for i := range metas {
-		if metas[i].Db == meta.Db && metas[i].OriginalSQL == meta.OriginalSQL {
+		if metas[i].OriginalSQL == meta.OriginalSQL {
 			metas[i] = meta
 			return
 		}

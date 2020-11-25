@@ -210,7 +210,7 @@ func (br *BindRecord) shallowCopy() *BindRecord {
 }
 
 func (br *BindRecord) isSame(other *BindRecord) bool {
-	return br.OriginalSQL == other.OriginalSQL && br.Db == other.Db
+	return br.OriginalSQL == other.OriginalSQL
 }
 
 var statusIndex = map[string]int{
