@@ -181,15 +181,18 @@ func (p *PhysicalTableScan) ToPB(ctx sessionctx.Context, storeType kv.StoreType)
 			if tipbExec.TblScan != nil {
 				for _, col := range tipbExec.TblScan.Columns {
 					colInfo := findColumnInfoByID(p.Columns, col.ColumnId)
-					defValDatumInPB, decodeErr := tablecodec.DecodeColumnValue(col.DefaultVal, &colInfo.FieldType, ctx.GetSessionVars().Location())
-					defValInCol, err2 := table.GetColOriginDefaultValue(ctx, colInfo)
-					logutil.BgLogger().Info("[for debug] PhysicalTableScan.ToPB columns",
-						zap.Uint64("connID", ctx.GetSessionVars().ConnectionID),
-						zap.Error(decodeErr),
-						zap.Error(err2),
-						zap.Int64("colId", col.ColumnId),
-						zap.Stringer("defaultValueInPB", defValDatumInPB),
-						zap.Stringer("defaultValueInColumnModel", defValInCol))
+					if len(col.DefaultVal) > 0 {
+						defValDatumInPB, decodeErr := tablecodec.DecodeColumnValue(col.DefaultVal, &colInfo.FieldType, ctx.GetSessionVars().Location())
+						defValInCol, err2 := table.GetColOriginDefaultValue(ctx, colInfo)
+						logutil.BgLogger().Info("[for debug] PhysicalTableScan.ToPB columns",
+							zap.Uint64("connID", ctx.GetSessionVars().ConnectionID),
+							zap.String("colName", colInfo.Name.L),
+							zap.Error(decodeErr),
+							zap.Error(err2),
+							zap.Int64("colId", col.ColumnId),
+							zap.Stringer("defaultValueInPB", defValDatumInPB),
+							zap.Stringer("defaultValueInColumnModel", defValInCol))
+					}
 				}
 			}
 		}
