@@ -14,7 +14,6 @@
 package expression
 
 import (
-	"errors"
 	"math"
 	"strings"
 
@@ -384,10 +383,7 @@ func temporalWithDateAsNumEvalType(argTp *types.FieldType) (argEvalType types.Ev
 	return
 }
 
-func aggregateType(args []Expression) (*types.FieldType, error) {
-	if len(args) == 0 {
-		return nil, errors.New("arguments is too few")
-	}
+func aggregateType(args []Expression) *types.FieldType {
 	aggType := *args[0].GetType()
 	var (
 		newUnsignedFlag   = mysql.HasUnsignedFlag(aggType.Flag)
@@ -430,7 +426,7 @@ func aggregateType(args []Expression) (*types.FieldType, error) {
 		aggType.Flag |= mysql.UnsignedFlag
 	}
 
-	return &aggType, nil
+	return &aggType
 }
 
 // ResolveType4Between resolves eval type for between expression.
@@ -457,11 +453,8 @@ func ResolveType4Between(args [3]Expression) types.EvalType {
 }
 
 // ResolveType4Extremum gets compare type for GREATEST and LEAST and BETWEEN (mainly for datetime).
-func ResolveType4Extremum(args []Expression) (types.EvalType, error) {
-	aggType, err := aggregateType(args)
-	if err != nil {
-		return types.ETInt, err
-	}
+func ResolveType4Extremum(args []Expression) types.EvalType {
+	aggType := aggregateType(args)
 
 	var temporalItem *types.FieldType
 	if types.ResultMergeType(aggType.Tp) == types.ETString {
@@ -477,7 +470,7 @@ func ResolveType4Extremum(args []Expression) (types.EvalType, error) {
 		}
 		// TODO: String charset, collation checking are needed.
 	}
-	return aggType.EvalType(), nil
+	return aggType.EvalType()
 }
 
 type greatestFunctionClass struct {
@@ -488,7 +481,7 @@ func (c *greatestFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	if err = c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	tp, _ := ResolveType4Extremum(args)
+	tp := ResolveType4Extremum(args)
 	cmpAsDatetime := false
 	if tp == types.ETDatetime || tp == types.ETTimestamp {
 		cmpAsDatetime = true
@@ -700,7 +693,7 @@ func (c *leastFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 	if err = c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	tp, _ := ResolveType4Extremum(args)
+	tp := ResolveType4Extremum(args)
 	cmpAsDatetime := false
 	if tp == types.ETDatetime {
 		cmpAsDatetime = true

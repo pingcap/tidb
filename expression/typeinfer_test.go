@@ -14,6 +14,8 @@
 package expression_test
 
 import (
+	"math"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/charset"
@@ -27,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/util/printer"
 	"github.com/pingcap/tidb/util/testkit"
 	"golang.org/x/net/context"
-	"math"
 )
 
 var _ = SerialSuites(&testInferTypeSuite{})
