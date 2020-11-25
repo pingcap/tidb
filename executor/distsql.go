@@ -666,7 +666,7 @@ func (e *IndexLookUpExecutor) Next(ctx context.Context, req *chunk.Chunk) error 
 			}
 		} else {
 			requiredRows := resultTask.chk.GetNumRows() - resultTask.cursor
-			if requiredRows < 0 {
+			if resultTask.chk == nil || requiredRows < 0 {
 				return nil
 			}
 			req.Append(resultTask.chk, resultTask.cursor, requiredRows)
