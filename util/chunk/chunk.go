@@ -713,7 +713,7 @@ func (c *Chunk) AppendRows(rows []Row) {
 	c.numVirtualRows += len(rows)
 }
 
-// AppendPartialRows appends multiple row to the chunk.
+// AppendPartialRows appends multiple rows to the chunk.
 func (c *Chunk) AppendPartialRows(colOff int, rows []Row) {
 	columns := c.columns[colOff:]
 	for i, dstCol := range columns {
