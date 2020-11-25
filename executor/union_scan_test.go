@@ -206,7 +206,6 @@ func (s *testSuite7) TestUnionScanForMemBufferReader(c *C) {
 	tk.MustExec("admin check table t")
 
 	// test for update unique index.
-	tk.MustExec("set @@tidb_constraint_check_in_place = 1")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int,b int, unique index idx(b))")
 	tk.MustExec("insert t values (1,1),(2,2)")

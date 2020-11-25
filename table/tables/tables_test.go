@@ -181,11 +181,6 @@ func countEntriesWithPrefix(ctx sessionctx.Context, prefix []byte) (int, error) 
 }
 
 func (ts *testSuite) TestTypes(c *C) {
-	saveConstraintCheckInPlace := ts.se.GetSessionVars().ConstraintCheckInPlace
-	ts.se.GetSessionVars().ConstraintCheckInPlace = true
-	defer func() {
-		ts.se.GetSessionVars().ConstraintCheckInPlace = saveConstraintCheckInPlace
-	}()
 	ctx := context.Background()
 	_, err := ts.se.Execute(context.Background(), "CREATE TABLE test.t (c1 tinyint, c2 smallint, c3 int, c4 bigint, c5 text, c6 blob, c7 varchar(64), c8 time, c9 timestamp null default CURRENT_TIMESTAMP, c10 decimal(10,1))")
 	c.Assert(err, IsNil)
