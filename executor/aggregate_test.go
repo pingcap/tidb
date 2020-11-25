@@ -15,6 +15,9 @@ package executor_test
 
 import (
 	"fmt"
+	"math/rand"
+	"sort"
+	"strings"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
@@ -1167,4 +1170,111 @@ func (s *testSuiteAgg) TestIssue19426(c *C) {
 		Check(testkit.Rows("11.0"))
 	tk.MustQuery("select a, b, sum(case when a < 1000 then b else 0.0 end) over (order by a) from t").
 		Check(testkit.Rows("1 11 11.0", "2 22 33.0", "3 33 66.0", "4 44 110.0"))
+}
+
+func reconstructParallelGroupConcatResult(rows [][]interface{}) []string {
+	data := make([]string, 0, len(rows))
+	for _, row := range rows {
+		if str, ok := row[0].(string); ok {
+			tokens := strings.Split(str, ",")
+			sort.Slice(tokens, func(i, j int) bool {
+				return tokens[i] < tokens[j]
+			})
+			data = append(data, strings.Join(tokens, ","))
+		}
+	}
+
+	sort.Slice(data, func(i, j int) bool {
+		return data[i] < data[j]
+	})
+
+	return data
+}
+
+func (s *testSuiteAgg) TestParallelStreamAggGroupConcat(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("CREATE TABLE t(a bigint, b bigint);")
+
+	for i := 0; i < 10000; i++ {
+		tk.MustExec("insert into t values(?, ?);", rand.Intn(100), rand.Intn(100))
+	}
+
+	sql := "select /*+ stream_agg() */ group_concat(a, b) from t group by b;"
+	concurrencies := []int{1, 2, 4, 8}
+	var expected []string
+	for _, con := range concurrencies {
+		tk.MustExec(fmt.Sprintf("set @@tidb_streamagg_concurrency=%d", con))
+		if con == 1 {
+			expected = reconstructParallelGroupConcatResult(tk.MustQuery(sql).Rows())
+		} else {
+			er := tk.MustQuery("explain " + sql).Rows()
+			ok := false
+			for _, l := range er {
+				str := fmt.Sprintf("%v", l)
+				if strings.Contains(str, "Shuffle") {
+					ok = true
+					break
+				}
+			}
+			c.Assert(ok, Equals, true)
+			obtained := reconstructParallelGroupConcatResult(tk.MustQuery(sql).Rows())
+			c.Assert(len(obtained), Equals, len(expected))
+			for i := 0; i < len(obtained); i++ {
+				c.Assert(obtained[i], Equals, expected[i])
+			}
+		}
+	}
+}
+
+func (s *testSuiteAgg) TestIssue20658(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("use test;")
+
+	aggFuncs := []string{"count(a)", "sum(a)", "avg(a)", "max(a)", "min(a)", "bit_or(a)", "bit_xor(a)", "bit_and(a)"}
+	aggFuncs2 := []string{"var_pop(a)", "var_samp(a)", "stddev_pop(a)", "stddev_samp(a)", "approx_count_distinct(a)", "approx_percentile(a, 7)"}
+	sqlFormat := "select /*+ stream_agg() */ %s from t group by b;"
+	castFormat := "cast(%s as decimal(32, 4))"
+
+	sqls := make([]string, 0, len(aggFuncs)+len(aggFuncs2))
+	for _, af := range aggFuncs {
+		sql := fmt.Sprintf(sqlFormat, af)
+		sqls = append(sqls, sql)
+	}
+
+	for _, af := range aggFuncs2 {
+		sql := fmt.Sprintf(sqlFormat, fmt.Sprintf(castFormat, af))
+		sqls = append(sqls, sql)
+	}
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("CREATE TABLE t(a bigint, b bigint);")
+	for i := 0; i < 10000; i++ {
+		tk.MustExec("insert into t values (?, ?);", rand.Intn(100), rand.Intn(100))
+	}
+
+	concurrencies := []int{1, 2, 4, 8}
+	for _, sql := range sqls {
+		var expected *testkit.Result
+		for _, con := range concurrencies {
+			tk.MustExec(fmt.Sprintf("set @@tidb_streamagg_concurrency=%d;", con))
+			if con == 1 {
+				expected = tk.MustQuery(sql).Sort()
+			} else {
+				er := tk.MustQuery("explain " + sql).Rows()
+				ok := false
+				for _, l := range er {
+					str := fmt.Sprintf("%v", l)
+					if strings.Contains(str, "Shuffle") {
+						ok = true
+						break
+					}
+				}
+				c.Assert(ok, Equals, true)
+				tk.MustQuery(sql).Sort().Check(expected.Rows())
+			}
+
+		}
+	}
 }
