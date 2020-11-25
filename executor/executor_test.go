@@ -6503,7 +6503,7 @@ func (s *testSerialSuite) TestPrevStmtDesensitization(c *C) {
 	tk.MustExec("create table t (a int, unique key (a))")
 	tk.MustExec("begin")
 	tk.MustExec("insert into t values (1),(2)")
-	c.Assert(tk.Se.GetSessionVars().PrevStmt.String(), Equals, "insert into test . t values ( ? ) , ( ? )")
+	c.Assert(tk.Se.GetSessionVars().PrevStmt.String(), Equals, "insert into t values ( ? ) , ( ? )")
 	c.Assert(tk.ExecToErr("insert into t values (1)").Error(), Equals, `[kv:1062]Duplicate entry '?' for key '?'`)
 }
 
