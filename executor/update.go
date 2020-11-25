@@ -42,7 +42,8 @@ type UpdateExec struct {
 	tblID2table    map[int64]table.Table
 	// mergedRowData is a map for unique (Table, handle) pair.
 	// The value is cached table row
-	mergedRowData map[int64]*kv.HandleMap
+	mergedRowData          map[int64]*kv.HandleMap
+	multiUpdateOnSameTable map[int64]bool
 
 	matched uint64 // a counter of matched rows during update
 	// tblColPosInfos stores relationship between column ordinal to its table handle.
@@ -51,7 +52,6 @@ type UpdateExec struct {
 	evalBuffer                chunk.MutRow
 	allAssignmentsAreConstant bool
 	virtualAssignmentsOffset  int
-	multiUpdateOnSameTable    bool
 	drained                   bool
 	memTracker                *memory.Tracker
 
@@ -110,17 +110,16 @@ func (e *UpdateExec) prepare(ctx context.Context, schema *expression.Schema, row
 }
 
 func (e *UpdateExec) merge(ctx context.Context, row, newData []types.Datum, mergeGenerated bool) error {
-	if !e.multiUpdateOnSameTable {
-		// merge is not needed if there is no multi-update on the same table
-		return nil
-	}
-
 	if e.mergedRowData == nil {
 		e.mergedRowData = make(map[int64]*kv.HandleMap)
 	}
 	var mergedData []types.Datum
 	// merge updates from and into mergedRowData
 	for i, content := range e.tblColPosInfos {
+		if !e.multiUpdateOnSameTable[content.TblID] {
+			// No need to merge if not multi-updated
+			continue
+		}
 		if !e.updatable[i] {
 			// If there's nothing to update, we can just skip current row
 			continue
@@ -144,10 +143,10 @@ func (e *UpdateExec) merge(ctx context.Context, row, newData []types.Datum, merg
 				if tbl.WritableCols()[i].IsGenerated() != mergeGenerated {
 					continue
 				}
+				mergedData[i].Copy(&oldData[i])
 				if flag {
 					newTableData[i].Copy(&mergedData[i])
 				} else {
-					mergedData[i].Copy(&oldData[i])
 					mergedData[i].Copy(&newTableData[i])
 				}
 			}

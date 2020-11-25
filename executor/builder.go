@@ -1803,11 +1803,11 @@ func (b *executorBuilder) buildSplitRegion(v *plannercore.SplitRegion) Executor 
 
 func (b *executorBuilder) buildUpdate(v *plannercore.Update) Executor {
 	tblID2table := make(map[int64]table.Table, len(v.TblColPosInfos))
-	multiUpdateOnSameTable := false
+	multiUpdateOnSameTable := make(map[int64]bool)
 	for _, info := range v.TblColPosInfos {
 		tbl, _ := b.is.TableByID(info.TblID)
 		if _, ok := tblID2table[info.TblID]; ok {
-			multiUpdateOnSameTable = true
+			multiUpdateOnSameTable[info.TblID] = true
 		}
 		tblID2table[info.TblID] = tbl
 		if len(v.PartitionedTable) > 0 {
