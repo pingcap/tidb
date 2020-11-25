@@ -1173,18 +1173,26 @@ func (b *PlanBuilder) buildProjection(ctx context.Context, p LogicalPlan, fields
 }
 
 func (b *PlanBuilder) checkDistinct(ctx context.Context, sel *ast.SelectStmt, p LogicalPlan, exprs []expression.Expression,
-	aggMapper map[*ast.AggregateFuncExpr]int, windowMapper map[*ast.WindowFuncExpr]int) error {
+	aggMapper map[*ast.AggregateFuncExpr]int, windowMapper map[*ast.WindowFuncExpr]int, length int) error {
 	if sel.OrderBy == nil {
 		return nil
 	}
+	// Check whether ORDER BY items show up in SELECT fields
 	for i, byItem := range sel.OrderBy.Items {
 		it, _, err := b.rewriteWithPreprocess(ctx, byItem.Expr, p, aggMapper, windowMapper, true, nil)
 		if err != nil {
 			return err
 		}
+		// skip constants
+		if _, ok := it.(*expression.Constant); ok {
+			continue
+		}
+
 		var ok bool
-		for _, expr := range exprs {
-			if it.Equal(b.ctx, expr) {
+		// check if expressions match
+		for j := 0; j < length; j++ {
+			// both check original expression & as name
+			if it.Equal(b.ctx, exprs[j]) || it.Equal(b.ctx, p.Schema().Columns[j]) {
 				ok = true
 				break
 			}
@@ -1192,20 +1200,23 @@ func (b *PlanBuilder) checkDistinct(ctx context.Context, sel *ast.SelectStmt, p 
 		if ok {
 			continue
 		}
+		// check if referenced columns match
 		cols := expression.ExtractDependentColumns(it)
 		for _, col := range cols {
-			for _, expr := range exprs {
-				if col.Equal(b.ctx, expr) {
+			for j := 0; j < length; j++ {
+				if col.Equal(b.ctx, exprs[j]) || col.Equal(b.ctx, p.Schema().Columns[j]) {
 					ok = true
 					break
 				}
 			}
-			if !ok {
-				if _, ok := byItem.Expr.(*ast.AggregateFuncExpr); ok {
-					return ErrAggregateInOrderNotSelect.GenWithStackByArgs(i+1, "DISTINCT")
-				}
-				return ErrFieldInOrderNotSelect.GenWithStackByArgs(i+1, col.OrigName, "DISTINCT")
+			if ok {
+				continue
 			}
+
+			if _, ok := byItem.Expr.(*ast.AggregateFuncExpr); ok {
+				return ErrAggregateInOrderNotSelect.GenWithStackByArgs(i+1, "DISTINCT")
+			}
+			return ErrFieldInOrderNotSelect.GenWithStackByArgs(i+1, col.OrigName, "DISTINCT")
 		}
 	}
 	return nil
@@ -2923,7 +2934,7 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 	if err != nil {
 		return nil, err
 	}
-	projExprs = p.(*LogicalProjection).Exprs[:oldLen]
+	projExprs = p.(*LogicalProjection).Exprs
 
 	if sel.Having != nil {
 		b.curClause = havingClause
@@ -2959,11 +2970,11 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 		if err != nil {
 			return nil, err
 		}
-		projExprs = p.(*LogicalProjection).Exprs[:oldLen]
+		projExprs = p.(*LogicalProjection).Exprs
 	}
 
 	if sel.Distinct {
-		err = b.checkDistinct(ctx, sel, p, projExprs, totalMap, windowMapper)
+		err = b.checkDistinct(ctx, sel, p, projExprs, totalMap, windowMapper, oldLen)
 		if err != nil {
 			return nil, err
 		}
