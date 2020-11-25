@@ -80,14 +80,14 @@ func enforceProperty(p *property.PhysicalProperty, tsk task, ctx sessionctx.Cont
 }
 
 // optimizeByShuffle insert `PhysicalShuffle` to optimize performance by running in a parallel manner.
-func optimizeByShuffle(pp PhysicalPlan, tsk task, ctx sessionctx.Context) task {
+func optimizeByShuffle(tsk task, ctx sessionctx.Context) task {
 	if tsk.plan() == nil {
 		return tsk
 	}
 
 	// Don't use `tsk.plan()` here, which will probably be different from `pp`.
 	// Eg., when `pp` is `NominalSort`, `tsk.plan()` would be its child.
-	switch p := pp.(type) {
+	switch p := tsk.plan().(type) {
 	case *PhysicalWindow:
 		if shuffle := optimizeByShuffle4Window(p, ctx); shuffle != nil {
 			return shuffle.attach2Task(tsk)
@@ -161,19 +161,20 @@ func optimizeByShuffle4StreamAgg(pp *PhysicalStreamAgg, ctx sessionctx.Context) 
 		return nil
 	}
 
-	partitionBy := make([]*expression.Column, 0, len(pp.GroupByItems))
-	for _, item := range pp.GroupByItems {
-		if col, ok := item.(*expression.Column); ok {
-			partitionBy = append(partitionBy, col)
-		}
-	}
+	// for test purpose, comment this out, ignore inaccurately estimated cardinality at the moment.
+	// partitionBy := make([]*expression.Column, 0, len(pp.GroupByItems))
+	// for _, item := range pp.GroupByItems {
+	// 	if col, ok := item.(*expression.Column); ok {
+	// 		partitionBy = append(partitionBy, col)
+	// 	}
+	// }
+	//
+	// NDV := int(getCardinality(partitionBy, dataSource.Schema(), dataSource.statsInfo()))
+	// if NDV <= 1 {
+	// 	return nil
+	// }
 
-	NDV := int(getCardinality(partitionBy, dataSource.Schema(), dataSource.statsInfo()))
-	if NDV <= 1 {
-		return nil
-	}
-
-	concurrency = mathutil.Min(concurrency, NDV)
+	// concurrency = mathutil.Min(concurrency, NDV)
 	reqProp := &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64}
 	shuffle := PhysicalShuffle{
 		Concurrency:  concurrency,
