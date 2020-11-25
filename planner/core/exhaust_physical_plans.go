@@ -728,7 +728,7 @@ func (p *LogicalJoin) buildIndexJoinInner2IndexScan(
 	// should construct another inner plan for it.
 	// Because we can't keep order for union scan, if there is a union scan in inner task,
 	// we can't construct index merge join.
-	
+
 	// TODO: reopen the index merge join in future.
 
 	//if us == nil {
