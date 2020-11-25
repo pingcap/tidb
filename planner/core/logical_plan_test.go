@@ -923,145 +923,145 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 		{
 			sql: "insert into t (a) values (1)",
 			ans: []visitInfo{
-				{mysql.InsertPriv, "test", "t", "", nil},
+				{mysql.InsertPriv, "test", "t", "", nil, false},
 			},
 		},
 		{
 			sql: "delete from t where a = 1",
 			ans: []visitInfo{
-				{mysql.DeletePriv, "test", "t", "", nil},
-				{mysql.SelectPriv, "test", "t", "", nil},
+				{mysql.DeletePriv, "test", "t", "", nil, false},
+				{mysql.SelectPriv, "test", "t", "", nil, false},
 			},
 		},
 		{
 			sql: "delete from a1 using t as a1 inner join t as a2 where a1.a = a2.a",
 			ans: []visitInfo{
-				{mysql.DeletePriv, "test", "t", "", nil},
-				{mysql.SelectPriv, "test", "t", "", nil},
+				{mysql.DeletePriv, "test", "t", "", nil, false},
+				{mysql.SelectPriv, "test", "t", "", nil, false},
 			},
 		},
 		{
 			sql: "update t set a = 7 where a = 1",
 			ans: []visitInfo{
-				{mysql.UpdatePriv, "test", "t", "", nil},
-				{mysql.SelectPriv, "test", "t", "", nil},
+				{mysql.UpdatePriv, "test", "t", "", nil, false},
+				{mysql.SelectPriv, "test", "t", "", nil, false},
 			},
 		},
 		{
 			sql: "update t, (select * from t) a1 set t.a = a1.a;",
 			ans: []visitInfo{
-				{mysql.UpdatePriv, "test", "t", "", nil},
-				{mysql.SelectPriv, "test", "t", "", nil},
+				{mysql.UpdatePriv, "test", "t", "", nil, false},
+				{mysql.SelectPriv, "test", "t", "", nil, false},
 			},
 		},
 		{
 			sql: "update t a1 set a1.a = a1.a + 1",
 			ans: []visitInfo{
-				{mysql.UpdatePriv, "test", "t", "", nil},
-				{mysql.SelectPriv, "test", "t", "", nil},
+				{mysql.UpdatePriv, "test", "t", "", nil, false},
+				{mysql.SelectPriv, "test", "t", "", nil, false},
 			},
 		},
 		{
 			sql: "select a, sum(e) from t group by a",
 			ans: []visitInfo{
-				{mysql.SelectPriv, "test", "t", "", nil},
+				{mysql.SelectPriv, "test", "t", "", nil, false},
 			},
 		},
 		{
 			sql: "truncate table t",
 			ans: []visitInfo{
-				{mysql.DropPriv, "test", "t", "", nil},
+				{mysql.DropPriv, "test", "t", "", nil, false},
 			},
 		},
 		{
 			sql: "drop table t",
 			ans: []visitInfo{
-				{mysql.DropPriv, "test", "t", "", nil},
+				{mysql.DropPriv, "test", "t", "", nil, false},
 			},
 		},
 		{
 			sql: "create table t (a int)",
 			ans: []visitInfo{
-				{mysql.CreatePriv, "test", "t", "", nil},
+				{mysql.CreatePriv, "test", "t", "", nil, false},
 			},
 		},
 		{
 			sql: "create table t1 like t",
 			ans: []visitInfo{
-				{mysql.CreatePriv, "test", "t1", "", nil},
-				{mysql.SelectPriv, "test", "t", "", nil},
+				{mysql.CreatePriv, "test", "t1", "", nil, false},
+				{mysql.SelectPriv, "test", "t", "", nil, false},
 			},
 		},
 		{
 			sql: "create database test",
 			ans: []visitInfo{
-				{mysql.CreatePriv, "test", "", "", nil},
+				{mysql.CreatePriv, "test", "", "", nil, false},
 			},
 		},
 		{
 			sql: "drop database test",
 			ans: []visitInfo{
-				{mysql.DropPriv, "test", "", "", nil},
+				{mysql.DropPriv, "test", "", "", nil, false},
 			},
 		},
 		{
 			sql: "create index t_1 on t (a)",
 			ans: []visitInfo{
-				{mysql.IndexPriv, "test", "t", "", nil},
+				{mysql.IndexPriv, "test", "t", "", nil, false},
 			},
 		},
 		{
 			sql: "drop index e on t",
 			ans: []visitInfo{
-				{mysql.IndexPriv, "test", "t", "", nil},
+				{mysql.IndexPriv, "test", "t", "", nil, false},
 			},
 		},
 		{
 			sql: `grant all privileges on test.* to 'test'@'%'`,
 			ans: []visitInfo{
-				{mysql.SelectPriv, "test", "", "", nil},
-				{mysql.InsertPriv, "test", "", "", nil},
-				{mysql.UpdatePriv, "test", "", "", nil},
-				{mysql.DeletePriv, "test", "", "", nil},
-				{mysql.CreatePriv, "test", "", "", nil},
-				{mysql.DropPriv, "test", "", "", nil},
-				{mysql.GrantPriv, "test", "", "", nil},
-				{mysql.AlterPriv, "test", "", "", nil},
-				{mysql.ExecutePriv, "test", "", "", nil},
-				{mysql.IndexPriv, "test", "", "", nil},
-				{mysql.CreateViewPriv, "test", "", "", nil},
-				{mysql.ShowViewPriv, "test", "", "", nil},
+				{mysql.SelectPriv, "test", "", "", nil, false},
+				{mysql.InsertPriv, "test", "", "", nil, false},
+				{mysql.UpdatePriv, "test", "", "", nil, false},
+				{mysql.DeletePriv, "test", "", "", nil, false},
+				{mysql.CreatePriv, "test", "", "", nil, false},
+				{mysql.DropPriv, "test", "", "", nil, false},
+				{mysql.GrantPriv, "test", "", "", nil, false},
+				{mysql.AlterPriv, "test", "", "", nil, false},
+				{mysql.ExecutePriv, "test", "", "", nil, false},
+				{mysql.IndexPriv, "test", "", "", nil, false},
+				{mysql.CreateViewPriv, "test", "", "", nil, false},
+				{mysql.ShowViewPriv, "test", "", "", nil, false},
 			},
 		},
 		{
 			sql: `grant select on test.ttt to 'test'@'%'`,
 			ans: []visitInfo{
-				{mysql.SelectPriv, "test", "ttt", "", nil},
-				{mysql.GrantPriv, "test", "ttt", "", nil},
+				{mysql.SelectPriv, "test", "ttt", "", nil, false},
+				{mysql.GrantPriv, "test", "ttt", "", nil, false},
 			},
 		},
 		{
 			sql: `grant select on ttt to 'test'@'%'`,
 			ans: []visitInfo{
-				{mysql.SelectPriv, "test", "ttt", "", nil},
-				{mysql.GrantPriv, "test", "ttt", "", nil},
+				{mysql.SelectPriv, "test", "ttt", "", nil, false},
+				{mysql.GrantPriv, "test", "ttt", "", nil, false},
 			},
 		},
 		{
 			sql: `revoke all privileges on test.* from 'test'@'%'`,
 			ans: []visitInfo{
-				{mysql.SelectPriv, "test", "", "", nil},
-				{mysql.InsertPriv, "test", "", "", nil},
-				{mysql.UpdatePriv, "test", "", "", nil},
-				{mysql.DeletePriv, "test", "", "", nil},
-				{mysql.CreatePriv, "test", "", "", nil},
-				{mysql.DropPriv, "test", "", "", nil},
-				{mysql.GrantPriv, "test", "", "", nil},
-				{mysql.AlterPriv, "test", "", "", nil},
-				{mysql.ExecutePriv, "test", "", "", nil},
-				{mysql.IndexPriv, "test", "", "", nil},
-				{mysql.CreateViewPriv, "test", "", "", nil},
-				{mysql.ShowViewPriv, "test", "", "", nil},
+				{mysql.SelectPriv, "test", "", "", nil, false},
+				{mysql.InsertPriv, "test", "", "", nil, false},
+				{mysql.UpdatePriv, "test", "", "", nil, false},
+				{mysql.DeletePriv, "test", "", "", nil, false},
+				{mysql.CreatePriv, "test", "", "", nil, false},
+				{mysql.DropPriv, "test", "", "", nil, false},
+				{mysql.GrantPriv, "test", "", "", nil, false},
+				{mysql.AlterPriv, "test", "", "", nil, false},
+				{mysql.ExecutePriv, "test", "", "", nil, false},
+				{mysql.IndexPriv, "test", "", "", nil, false},
+				{mysql.CreateViewPriv, "test", "", "", nil, false},
+				{mysql.ShowViewPriv, "test", "", "", nil, false},
 			},
 		},
 		{
@@ -1071,44 +1071,44 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 		{
 			sql: `show create table test.ttt`,
 			ans: []visitInfo{
-				{mysql.AllPrivMask, "test", "ttt", "", nil},
+				{mysql.AllPrivMask, "test", "ttt", "", nil, false},
 			},
 		},
 		{
 			sql: "alter table t add column a int(4)",
 			ans: []visitInfo{
-				{mysql.AlterPriv, "test", "t", "", nil},
+				{mysql.AlterPriv, "test", "t", "", nil, false},
 			},
 		},
 		{
 			sql: "rename table t_old to t_new",
 			ans: []visitInfo{
-				{mysql.AlterPriv, "test", "t_old", "", nil},
-				{mysql.DropPriv, "test", "t_old", "", nil},
-				{mysql.CreatePriv, "test", "t_new", "", nil},
-				{mysql.InsertPriv, "test", "t_new", "", nil},
+				{mysql.AlterPriv, "test", "t_old", "", nil, false},
+				{mysql.DropPriv, "test", "t_old", "", nil, false},
+				{mysql.CreatePriv, "test", "t_new", "", nil, false},
+				{mysql.InsertPriv, "test", "t_new", "", nil, false},
 			},
 		},
 		{
 			sql: "alter table t_old rename to t_new",
 			ans: []visitInfo{
-				{mysql.AlterPriv, "test", "t_old", "", nil},
-				{mysql.DropPriv, "test", "t_old", "", nil},
-				{mysql.CreatePriv, "test", "t_new", "", nil},
-				{mysql.InsertPriv, "test", "t_new", "", nil},
+				{mysql.AlterPriv, "test", "t_old", "", nil, false},
+				{mysql.DropPriv, "test", "t_old", "", nil, false},
+				{mysql.CreatePriv, "test", "t_new", "", nil, false},
+				{mysql.InsertPriv, "test", "t_new", "", nil, false},
 			},
 		},
 		{
 			sql: "alter table t drop partition p0;",
 			ans: []visitInfo{
-				{mysql.AlterPriv, "test", "t", "", nil},
-				{mysql.DropPriv, "test", "t", "", nil},
+				{mysql.AlterPriv, "test", "t", "", nil, false},
+				{mysql.DropPriv, "test", "t", "", nil, false},
 			},
 		},
 		{
 			sql: "flush privileges",
 			ans: []visitInfo{
-				{mysql.ReloadPriv, "", "", "", ErrSpecificAccessDenied},
+				{mysql.ReloadPriv, "", "", "", ErrSpecificAccessDenied, false},
 			},
 		},
 	}
