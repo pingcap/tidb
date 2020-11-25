@@ -734,24 +734,52 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "histogram_quantile(0.99, sum(rate(tidb_server_conn_idle_duration_seconds_bucket{}[1m])) by (le,type,instance))",
+              "expr": "histogram_quantile(0.99, sum(rate(tidb_server_conn_idle_duration_seconds_bucket{in_txn='1'}[1m])) by (le,in_txn,instance))",
               "format": "time_series",
               "interval": "",
               "intervalFactor": 2,
-              "legendFormat": "99-{{type}}",
+              "legendFormat": "99-in-txn",
               "refId": "A"
             },
             {
-              "expr": "histogram_quantile(0.9, sum(rate(tidb_server_conn_idle_duration_seconds_bucket{}[1m])) by (le,type,instance))",
+              "expr": "histogram_quantile(0.99, sum(rate(tidb_server_conn_idle_duration_seconds_bucket{in_txn='0'}[1m])) by (le,in_txn,instance))",
+              "format": "time_series",
               "interval": "",
-              "legendFormat": "90-{{type}}",
+              "intervalFactor": 2,
+              "legendFormat": "99-not-in-txn",
               "refId": "B"
             },
             {
-              "expr": "histogram_quantile(0.80, sum(rate(tidb_server_conn_idle_duration_seconds_bucket{}[1m])) by (le,type,instance))",
+              "expr": "histogram_quantile(0.90, sum(rate(tidb_server_conn_idle_duration_seconds_bucket{in_txn='1'}[1m])) by (le,in_txn,instance))",
+              "format": "time_series",
               "interval": "",
-              "legendFormat": "80-{{type}}",
+              "intervalFactor": 2,
+              "legendFormat": "90-in-txn",
               "refId": "C"
+            },
+            {
+              "expr": "histogram_quantile(0.90, sum(rate(tidb_server_conn_idle_duration_seconds_bucket{in_txn='0'}[1m])) by (le,in_txn,instance))",
+              "format": "time_series",
+              "interval": "",
+              "intervalFactor": 2,
+              "legendFormat": "90-not-in-txn",
+              "refId": "D"
+            },
+            {
+              "expr": "histogram_quantile(0.80, sum(rate(tidb_server_conn_idle_duration_seconds_bucket{in_txn='1'}[1m])) by (le,in_txn,instance))",
+              "format": "time_series",
+              "interval": "",
+              "intervalFactor": 2,
+              "legendFormat": "80-in-txn",
+              "refId": "E"
+            },
+            {
+              "expr": "histogram_quantile(0.80, sum(rate(tidb_server_conn_idle_duration_seconds_bucket{in_txn='0'}[1m])) by (le,in_txn,instance))",
+              "format": "time_series",
+              "interval": "",
+              "intervalFactor": 2,
+              "legendFormat": "80-not-in-txn",
+              "refId": "F"
             }
           ],
           "thresholds": [],

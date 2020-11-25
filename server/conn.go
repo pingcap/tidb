@@ -141,8 +141,8 @@ var (
 	disconnectByClientWithError = metrics.DisconnectionCounter.WithLabelValues(metrics.LblError)
 	disconnectErrorUndetermined = metrics.DisconnectionCounter.WithLabelValues("undetermined")
 
-	connIdleDurationHistogramStmt = metrics.ConnIdleDurationHistogram.WithLabelValues("stmt")
-	connIdleDurationHistogramTxn  = metrics.ConnIdleDurationHistogram.WithLabelValues("txn")
+	connIdleDurationHistogramNotInTxn = metrics.ConnIdleDurationHistogram.WithLabelValues("0")
+	connIdleDurationHistogramInTxn    = metrics.ConnIdleDurationHistogram.WithLabelValues("1")
 )
 
 // newClientConn creates a *clientConn object.
@@ -930,9 +930,9 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 	}()
 	t := time.Now()
 	if (cc.ctx.Status() & mysql.ServerStatusInTrans) > 0 {
-		connIdleDurationHistogramTxn.Observe(t.Sub(cc.lastActive).Seconds())
+		connIdleDurationHistogramInTxn.Observe(t.Sub(cc.lastActive).Seconds())
 	} else {
-		connIdleDurationHistogramStmt.Observe(t.Sub(cc.lastActive).Seconds())
+		connIdleDurationHistogramNotInTxn.Observe(t.Sub(cc.lastActive).Seconds())
 	}
 
 	span := opentracing.StartSpan("server.dispatch")

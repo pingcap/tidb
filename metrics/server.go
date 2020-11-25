@@ -194,7 +194,7 @@ var (
 			Name:      "conn_idle_duration_seconds",
 			Help:      "Bucketed histogram of connection idle time (s).",
 			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 29), // 0.5ms ~ 1.5days
-		}, []string{LblType})
+		}, []string{LblInTxn})
 )
 
 // ExecuteErrorToLabel converts an execute error to label.
