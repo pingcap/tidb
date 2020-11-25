@@ -6794,6 +6794,23 @@ func (s *testSerialSuite) TestCoprocessorOOMAction(c *C) {
 		se.Close()
 	}
 
+	// assert global oom switch
+	globalTK := testkit.NewTestKit(c, s.store)
+	for _, testcase := range testcases {
+		globalTK.MustExec("set @@tidb_enable_rate_limit_action = 0")
+		se, err := session.CreateSession4Test(s.store)
+		c.Check(err, IsNil)
+		tk.Se = se
+		disableOOM(tk, testcase.name, testcase.sql)
+		se.Close()
+		globalTK.MustExec("set @@tidb_enable_rate_limit_action = 1")
+		se, err = session.CreateSession4Test(s.store)
+		c.Check(err, IsNil)
+		tk.Se = se
+		enableOOM(tk, testcase.name, testcase.sql)
+		se.Close()
+	}
+
 	failpoint.Disable("github.com/pingcap/tidb/store/tikv/testRateLimitActionMockWaitMax")
 
 	// assert oom fallback
