@@ -1735,6 +1735,7 @@ func (s *testSuite) TestIssue20417(c *C) {
 
 	// Test for capture baseline
 	s.cleanBindingEnv(tk)
+	stmtsummary.StmtSummaryByDigestMap.Clear()
 	tk.MustExec("set @@tidb_capture_plan_baselines = on")
 	s.domain.BindHandle().CaptureBaselines()
 	c.Assert(tk.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil), IsTrue)
