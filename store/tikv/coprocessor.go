@@ -571,11 +571,8 @@ func (it *copIterator) open(ctx context.Context, enabledRateLimitAction bool) {
 				minCommitTSPushed: &it.minCommitTSPushed,
 				Client:            it.store.client,
 			},
-
 			memTracker: it.memTracker,
-
 			replicaReadSeed: it.replicaReadSeed,
-
 			actionOnExceed: it.actionOnExceed,
 		}
 		go worker.run(ctx)
