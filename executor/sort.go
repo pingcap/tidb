@@ -416,7 +416,7 @@ func (e *TopNExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		// TopN's schema may be not match child executor's output columns.
 		// We should extract only the required columns from child's executor.
 		// Why here condition is `!compacted`?
-		// Cause when `doCompaction` happend, inline projection do run once,
+		// Cause when `doCompaction` happened, inline projection do run once,
 		// then we should not run projection duplicated.
 		if !compacted {
 			req.AppendRowByColIdxs(row, e.columnIdxsUsedByChild)
