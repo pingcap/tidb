@@ -73,11 +73,12 @@ var (
 // executorBuilder builds an Executor from a Plan.
 // The InfoSchema must not change during execution.
 type executorBuilder struct {
-	ctx        sessionctx.Context
-	is         infoschema.InfoSchema
-	snapshotTS uint64 // The consistent snapshot timestamp for the executor to read data.
-	err        error  // err is set when there is error happened during Executor building process.
-	hasLock    bool
+	ctx              sessionctx.Context
+	is               infoschema.InfoSchema
+	snapshotTS       uint64 // The consistent snapshot timestamp for the executor to read data.
+	snapshotTSCached bool
+	err              error // err is set when there is error happened during Executor building process.
+	hasLock          bool
 }
 
 func newExecutorBuilder(ctx sessionctx.Context, is infoschema.InfoSchema) *executorBuilder {
@@ -1355,8 +1356,25 @@ func (b *executorBuilder) buildTableDual(v *plannercore.PhysicalTableDual) Execu
 	return e
 }
 
+// `getSnapshotTS` returns the timestamp of the snapshot that a reader should read.
 func (b *executorBuilder) getSnapshotTS() (uint64, error) {
+	// `refreshForUpdateTSForRC` should always be invoked before returning the cached value to
+	// ensure the correct value is returned even the `snapshotTS` field is already set by other
+	// logics. However for `IndexLookUpMergeJoin` and `IndexLookUpHashJoin`, it requires caching the
+	// snapshotTS and and may even use it after the txn being destroyed. In this case, mark
+	// `snapshotTSCached` to skip `refreshForUpdateTSForRC`.
+	if b.snapshotTSCached {
+		return b.snapshotTS, nil
+	}
+
+	if b.ctx.GetSessionVars().IsPessimisticReadConsistency() {
+		if err := b.refreshForUpdateTSForRC(); err != nil {
+			return 0, err
+		}
+	}
+
 	if b.snapshotTS != 0 {
+		b.snapshotTSCached = true
 		// Return the cached value.
 		return b.snapshotTS, nil
 	}
@@ -1373,6 +1391,7 @@ func (b *executorBuilder) getSnapshotTS() (uint64, error) {
 	if b.snapshotTS == 0 {
 		return 0, errors.Trace(ErrGetStartTS)
 	}
+	b.snapshotTSCached = true
 	return snapshotTS, nil
 }
 
@@ -2257,7 +2276,13 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 	innerPlan := v.Children()[v.InnerChildIdx]
 	innerTypes := make([]*types.FieldType, innerPlan.Schema().Len())
 	for i, col := range innerPlan.Schema().Columns {
-		innerTypes[i] = col.RetType
+		innerTypes[i] = col.RetType.Clone()
+		// The `innerTypes` would be called for `Datum.ConvertTo` when converting the columns from outer table
+		// to build hash map or construct lookup keys. So we need to modify its Flen otherwise there would be
+		// truncate error. See issue https://github.com/pingcap/tidb/issues/21232 for example.
+		if innerTypes[i].EvalType() == types.ETString {
+			innerTypes[i].Flen = types.UnspecifiedLength
+		}
 	}
 
 	var (
@@ -2346,7 +2371,13 @@ func (b *executorBuilder) buildIndexLookUpMergeJoin(v *plannercore.PhysicalIndex
 	innerPlan := v.Children()[v.InnerChildIdx]
 	innerTypes := make([]*types.FieldType, innerPlan.Schema().Len())
 	for i, col := range innerPlan.Schema().Columns {
-		innerTypes[i] = col.RetType
+		innerTypes[i] = col.RetType.Clone()
+		// The `innerTypes` would be called for `Datum.ConvertTo` when converting the columns from outer table
+		// to build hash map or construct lookup keys. So we need to modify its Flen otherwise there would be
+		// truncate error. See issue https://github.com/pingcap/tidb/issues/21232 for example.
+		if innerTypes[i].EvalType() == types.ETString {
+			innerTypes[i].Flen = types.UnspecifiedLength
+		}
 	}
 	var (
 		outerFilter           []expression.Expression
@@ -2541,12 +2572,6 @@ func (b *executorBuilder) buildMPPGather(v *plannercore.PhysicalTableReader) Exe
 // buildTableReader builds a table reader executor. It first build a no range table reader,
 // and then update it ranges from table scan plan.
 func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) Executor {
-	if b.ctx.GetSessionVars().IsPessimisticReadConsistency() {
-		if err := b.refreshForUpdateTSForRC(); err != nil {
-			b.err = err
-			return nil
-		}
-	}
 	if useMPPExecution(b.ctx, v) {
 		return b.buildMPPGather(v)
 	}
@@ -2783,12 +2808,6 @@ func buildNoRangeIndexReader(b *executorBuilder, v *plannercore.PhysicalIndexRea
 }
 
 func (b *executorBuilder) buildIndexReader(v *plannercore.PhysicalIndexReader) Executor {
-	if b.ctx.GetSessionVars().IsPessimisticReadConsistency() {
-		if err := b.refreshForUpdateTSForRC(); err != nil {
-			b.err = err
-			return nil
-		}
-	}
 	ret, err := buildNoRangeIndexReader(b, v)
 	if err != nil {
 		b.err = err
@@ -2932,12 +2951,6 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 }
 
 func (b *executorBuilder) buildIndexLookUpReader(v *plannercore.PhysicalIndexLookUpReader) Executor {
-	if b.ctx.GetSessionVars().IsPessimisticReadConsistency() {
-		if err := b.refreshForUpdateTSForRC(); err != nil {
-			b.err = err
-			return nil
-		}
-	}
 	ret, err := buildNoRangeIndexLookUpReader(b, v)
 	if err != nil {
 		b.err = err
@@ -3801,12 +3814,6 @@ func NewRowDecoder(ctx sessionctx.Context, schema *expression.Schema, tbl *model
 }
 
 func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan) Executor {
-	if b.ctx.GetSessionVars().IsPessimisticReadConsistency() {
-		if err := b.refreshForUpdateTSForRC(); err != nil {
-			b.err = err
-			return nil
-		}
-	}
 	startTS, err := b.getSnapshotTS()
 	if err != nil {
 		b.err = err
