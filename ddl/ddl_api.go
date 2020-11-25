@@ -1944,6 +1944,9 @@ func buildViewInfo(ctx sessionctx.Context, s *ast.CreateViewStmt) (*model.ViewIn
 
 func checkPartitionByHash(ctx sessionctx.Context, tbInfo *model.TableInfo, s *ast.CreateTableStmt) error {
 	pi := tbInfo.Partition
+	if err := checkPartitionNameUnique(pi); err != nil {
+		return err
+	}
 	if err := checkAddPartitionTooManyPartitions(pi.Num); err != nil {
 		return err
 	}
@@ -2422,6 +2425,24 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 			err = d.DropTablePartition(ctx, ident, spec)
 		case ast.AlterTableTruncatePartition:
 			err = d.TruncateTablePartition(ctx, ident, spec)
+		case ast.AlterTableWriteable:
+			if !config.TableLockEnabled() {
+				return nil
+			}
+			tName := &ast.TableName{Schema: ident.Schema, Name: ident.Name}
+			if spec.Writeable {
+				err = d.CleanupTableLock(ctx, []*ast.TableName{tName})
+			} else {
+				lockStmt := &ast.LockTablesStmt{
+					TableLocks: []ast.TableLock{
+						{
+							Table: tName,
+							Type:  model.TableLockReadOnly,
+						},
+					},
+				}
+				err = d.LockTables(ctx, lockStmt)
+			}
 		case ast.AlterTableExchangePartition:
 			err = d.ExchangeTablePartition(ctx, ident, spec)
 		case ast.AlterTableAddConstraint:

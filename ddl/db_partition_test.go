@@ -707,6 +707,10 @@ func (s *testIntegrationSuite1) TestCreateTableWithListColumnsPartition(c *C) {
 			"create table t (a int, b datetime) partition by list columns (a,b) (partition p0 values in ((1)));",
 			ast.ErrPartitionColumnList,
 		},
+		{
+			"create table t(b int) partition by hash ( b ) partitions 3 (partition p1, partition p2, partition p2);",
+			ddl.ErrSameNamePartition,
+		},
 	}
 	for i, t := range cases {
 		_, err := tk.Exec(t.sql)
