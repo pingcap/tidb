@@ -5933,6 +5933,11 @@ func (s *testClusterTableSuite) TearDownSuite(c *C) {
 	s.testSuiteWithCliBase.TearDownSuite(c)
 }
 
+func (s *testSuiteP1) TestPrepareLoadData(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustGetErrCode(`prepare stmt from "load data local infile '/tmp/load_data_test.csv' into table test";`, mysql.ErrUnsupportedPs)
+}
+
 func (s *testClusterTableSuite) TestSlowQuery(c *C) {
 	writeFile := func(file string, data string) {
 		f, err := os.OpenFile(file, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
@@ -6753,12 +6758,12 @@ func (s *testSerialSuite) TestCoprocessorOOMAction(c *C) {
 	for _, testcase := range testcases {
 		c.Log(testcase.name)
 		// larger than 4 copResponse, smaller than 5 copResponse
-		quota := 499
+		quota := 5*tikv.MockResponseSizeForTest - 100
 		se, err := session.CreateSession4Test(s.store)
 		c.Check(err, IsNil)
 		tk.Se = se
 		tk.MustExec("use test")
-		tk.MustExec("set @@tidb_distsql_scan_concurrency = 4")
+		tk.MustExec("set @@tidb_distsql_scan_concurrency = 10")
 		tk.MustExec(fmt.Sprintf("set @@tidb_mem_quota_query=%v;", quota))
 		var expect []string
 		for i := 0; i < count; i++ {
@@ -6800,60 +6805,6 @@ func (s *testSerialSuite) TestCoprocessorOOMAction(c *C) {
 		err = tk.QueryToErr(testcase.sql)
 		c.Assert(err, NotNil)
 		c.Assert(err.Error(), Matches, "Out Of Memory Quota.*")
-		se.Close()
-	}
-}
-
-func (s *testSerialSuite) TestIssue20454(c *C) {
-	// Assert Coprocessor OOMAction
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec(`set @@tidb_wait_split_region_finish=1`)
-	// create table for non keep-order case
-	tk.MustExec("drop table if exists t5")
-	tk.MustExec("create table t5(id int)")
-	tk.MustQuery(`split table t5 between (0) and (10000) regions 10`).Check(testkit.Rows("9 1"))
-	count := 10
-	for i := 0; i < count; i++ {
-		tk.MustExec(fmt.Sprintf("insert into t5 (id) values (%v)", i))
-	}
-
-	testcases := []struct {
-		name string
-		sql  string
-	}{
-		{
-			name: "non keep Order",
-			sql:  "select id from t5",
-		},
-	}
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.OOMAction = config.OOMActionLog
-	})
-
-	failpoint.Enable("github.com/pingcap/tidb/store/tikv/testRateLimitActionMockConsumeAndAssert", `return(true)`)
-	defer failpoint.Disable("github.com/pingcap/tidb/store/tikv/testRateLimitActionMockConsumeAndAssert")
-	failpoint.Enable("github.com/pingcap/tidb/store/tikv/testRateLimitActionMockOtherExecutorConsume", `return(true)`)
-	defer failpoint.Disable("github.com/pingcap/tidb/store/tikv/testRateLimitActionMockOtherExecutorConsume")
-	// assert oom action
-	for _, testcase := range testcases {
-		c.Log(testcase.name)
-		// must oom
-		quota := 90000
-		se, err := session.CreateSession4Test(s.store)
-		c.Check(err, IsNil)
-		tk.Se = se
-		tk.MustExec("use test")
-		tk.MustExec("set @@tidb_distsql_scan_concurrency = 30")
-		tk.MustExec(fmt.Sprintf("set @@tidb_mem_quota_query=%v;", quota))
-		var expect []string
-		for i := 0; i < count; i++ {
-			expect = append(expect, fmt.Sprintf("%v", i))
-		}
-		tk.MustQuery(testcase.sql).Sort().Check(testkit.Rows(expect...))
-		// assert oom action worked by max consumed > memory quota
-		c.Assert(tk.Se.GetSessionVars().StmtCtx.MemTracker.MaxConsumed(), Greater, int64(quota))
 		se.Close()
 	}
 }
