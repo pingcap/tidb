@@ -81,3 +81,17 @@ func handleDivisionByZeroError(ctx sessionctx.Context) error {
 	sc.AppendWarning(ErrDivisionByZero)
 	return nil
 }
+
+func unsupportedJsonComparison(ctx sessionctx.Context, args []Expression) {
+	for _, arg := range args {
+		tp := arg.GetType().Tp
+		if types.ResultMergeType(tp) == types.ETString && tp == pmysql.TypeJSON {
+			ctx.GetSessionVars().StmtCtx.AppendWarning(
+				dbterror.ClassExpression.NewStdErr(
+					mysql.ErrNotSupportedYet,
+					pmysql.Message("comparison of JSON in the LEAST and GREATEST operators", nil)),
+			)
+			break;
+		}
+	}
+}

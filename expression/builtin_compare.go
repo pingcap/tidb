@@ -486,6 +486,9 @@ func (c *greatestFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	if tp == types.ETDatetime || tp == types.ETTimestamp {
 		cmpAsDatetime = true
 		tp = types.ETString
+	} else if tp == types.ETJson {
+		unsupportedJsonComparison(ctx, args)
+		tp = types.ETString
 	}
 	argTps := make([]types.EvalType, len(args))
 	for i := range args {
@@ -697,6 +700,9 @@ func (c *leastFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 	cmpAsDatetime := false
 	if tp == types.ETDatetime {
 		cmpAsDatetime = true
+		tp = types.ETString
+	} else if tp == types.ETJson {
+		unsupportedJsonComparison(ctx, args)
 		tp = types.ETString
 	}
 	argTps := make([]types.EvalType, len(args))
