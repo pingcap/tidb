@@ -32,7 +32,7 @@ func TestPDOracle_UntilExpired(t *testing.T) {
 	start := time.Now()
 	oracles.SetEmptyPDOracleLastTs(o, oracle.ComposeTS(oracle.GetPhysical(start), 0))
 	lockTs := oracle.ComposeTS(oracle.GetPhysical(start.Add(time.Duration(lockAfter)*time.Millisecond)), 1)
-	waitTs := o.UntilExpired(lockTs, uint64(lockExp))
+	waitTs := o.UntilExpired(lockTs, uint64(lockExp), &oracle.Option{TxnScope: oracle.GlobalTxnScope})
 	if waitTs != int64(lockAfter+lockExp) {
 		t.Errorf("waitTs shoulb be %d but got %d", int64(lockAfter+lockExp), waitTs)
 	}
