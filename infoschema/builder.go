@@ -51,8 +51,8 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 	case model.ActionModifySchemaCharsetAndCollate:
 		return nil, b.applyModifySchemaCharsetAndCollate(m, diff)
 	case model.ActionAlterTableAlterPartition:
-		// there is no need to udpate table schema
-		return nil, b.applyPlacementUpdate(placement.GroupID(diff.TableID))
+		// TODO: enhancement: If the leader Placement Policy isn't updated, maybe we can omit the diff.
+		return []int64{diff.TableID}, b.applyPlacementUpdate(placement.GroupID(diff.TableID))
 	}
 	roDBInfo, ok := b.is.SchemaByID(diff.SchemaID)
 	if !ok {

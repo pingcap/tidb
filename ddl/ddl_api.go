@@ -1944,6 +1944,9 @@ func buildViewInfo(ctx sessionctx.Context, s *ast.CreateViewStmt) (*model.ViewIn
 
 func checkPartitionByHash(ctx sessionctx.Context, tbInfo *model.TableInfo, s *ast.CreateTableStmt) error {
 	pi := tbInfo.Partition
+	if err := checkPartitionNameUnique(pi); err != nil {
+		return err
+	}
 	if err := checkAddPartitionTooManyPartitions(pi.Num); err != nil {
 		return err
 	}
@@ -2121,7 +2124,8 @@ func checkTwoRangeColumns(ctx sessionctx.Context, curr, prev *model.PartitionDef
 		// PARTITION p0 VALUES LESS THAN (5,10,'ggg')
 		// PARTITION p1 VALUES LESS THAN (10,20,'mmm')
 		// PARTITION p2 VALUES LESS THAN (15,30,'sss')
-		succ, err := parseAndEvalBoolExpr(ctx, fmt.Sprintf("(%s) > (%s)", curr.LessThan[i], prev.LessThan[i]), tbInfo)
+		colInfo := findColumnByName(pi.Columns[i].L, tbInfo)
+		succ, err := parseAndEvalBoolExpr(ctx, curr.LessThan[i], prev.LessThan[i], colInfo, tbInfo)
 		if err != nil {
 			return false, err
 		}
@@ -2133,11 +2137,20 @@ func checkTwoRangeColumns(ctx sessionctx.Context, curr, prev *model.PartitionDef
 	return false, nil
 }
 
-func parseAndEvalBoolExpr(ctx sessionctx.Context, expr string, tbInfo *model.TableInfo) (bool, error) {
-	e, err := expression.ParseSimpleExprWithTableInfo(ctx, expr, tbInfo)
+func parseAndEvalBoolExpr(ctx sessionctx.Context, l, r string, colInfo *model.ColumnInfo, tbInfo *model.TableInfo) (bool, error) {
+	lexpr, err := expression.ParseSimpleExprWithTableInfo(ctx, l, tbInfo)
 	if err != nil {
 		return false, err
 	}
+	rexpr, err := expression.ParseSimpleExprWithTableInfo(ctx, r, tbInfo)
+	if err != nil {
+		return false, err
+	}
+	e, err := expression.NewFunctionBase(ctx, ast.GT, types.NewFieldType(mysql.TypeLonglong), lexpr, rexpr)
+	if err != nil {
+		return false, err
+	}
+	e.SetCharsetAndCollation(colInfo.Charset, colInfo.Collate)
 	res, _, err1 := e.EvalInt(ctx, chunk.Row{})
 	if err1 != nil {
 		return false, err1
@@ -2412,6 +2425,24 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 			err = d.DropTablePartition(ctx, ident, spec)
 		case ast.AlterTableTruncatePartition:
 			err = d.TruncateTablePartition(ctx, ident, spec)
+		case ast.AlterTableWriteable:
+			if !config.TableLockEnabled() {
+				return nil
+			}
+			tName := &ast.TableName{Schema: ident.Schema, Name: ident.Name}
+			if spec.Writeable {
+				err = d.CleanupTableLock(ctx, []*ast.TableName{tName})
+			} else {
+				lockStmt := &ast.LockTablesStmt{
+					TableLocks: []ast.TableLock{
+						{
+							Table: tName,
+							Type:  model.TableLockReadOnly,
+						},
+					},
+				}
+				err = d.LockTables(ctx, lockStmt)
+			}
 		case ast.AlterTableExchangePartition:
 			err = d.ExchangeTablePartition(ctx, ident, spec)
 		case ast.AlterTableAddConstraint:
