@@ -576,6 +576,11 @@ error = '''
 Export failed: %s
 '''
 
+["executor:8212"]
+error = '''
+Failed to split region ranges: %s
+'''
+
 ["expression:1139"]
 error = '''
 Got error '%-.64s' from regexp
