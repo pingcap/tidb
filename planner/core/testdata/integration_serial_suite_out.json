@@ -191,26 +191,26 @@
       {
         "SQL": "desc select /*+ READ_FROM_STORAGE(TIKV[t1], TIKV[t2]) */ * from t t1, t t2 where t1.a = t2.a",
         "Plan": [
-          "HashJoin_23 12487.50 root  inner join, equal:[eq(test.t.a, test.t.a)]",
-          "├─TableReader_41(Build) 9990.00 root  data:Selection_40",
-          "│ └─Selection_40 9990.00 cop[tikv]  not(isnull(test.t.a))",
-          "│   └─TableFullScan_39 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
-          "└─TableReader_35(Probe) 9990.00 root  data:Selection_34",
-          "  └─Selection_34 9990.00 cop[tikv]  not(isnull(test.t.a))",
-          "    └─TableFullScan_33 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+          "HashJoin_27 12487.50 root  inner join, equal:[eq(test.t.a, test.t.a)]",
+          "├─TableReader_45(Build) 9990.00 root  data:Selection_44",
+          "│ └─Selection_44 9990.00 cop[tikv]  not(isnull(test.t.a))",
+          "│   └─TableFullScan_43 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─TableReader_39(Probe) 9990.00 root  data:Selection_38",
+          "  └─Selection_38 9990.00 cop[tikv]  not(isnull(test.t.a))",
+          "    └─TableFullScan_37 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
         "SQL": "desc select /*+ READ_FROM_STORAGE(TIKV[t1], TIFLASH[t2]) */ * from t t1, t t2 where t1.a = t2.a",
         "Plan": [
-          "HashJoin_16 12487.50 root  inner join, equal:[eq(test.t.a, test.t.a)]",
-          "├─TableReader_24(Build) 9990.00 root  data:Selection_23",
-          "│ └─Selection_23 9990.00 cop[tiflash]  not(isnull(test.t.a))",
-          "│   └─TableFullScan_22 10000.00 cop[tiflash] table:t2 keep order:false, stats:pseudo",
-          "└─TableReader_27(Probe) 9990.00 root  data:Selection_26",
-          "  └─Selection_26 9990.00 cop[tikv]  not(isnull(test.t.a))",
-          "    └─TableFullScan_25 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+          "HashJoin_18 12487.50 root  inner join, equal:[eq(test.t.a, test.t.a)]",
+          "├─TableReader_26(Build) 9990.00 root  data:Selection_25",
+          "│ └─Selection_25 9990.00 cop[tiflash]  not(isnull(test.t.a))",
+          "│   └─TableFullScan_24 10000.00 cop[tiflash] table:t2 keep order:false, stats:pseudo",
+          "└─TableReader_29(Probe) 9990.00 root  data:Selection_28",
+          "  └─Selection_28 9990.00 cop[tikv]  not(isnull(test.t.a))",
+          "    └─TableFullScan_27 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -279,42 +279,7 @@
   },
   {
     "Name": "TestIsolationReadTiFlashUseIndexHint",
-    "Cases": [
-      {
-        "SQL": "explain select * from t",
-        "Plan": [
-          "TableReader_5 10000.00 root  data:TableFullScan_4",
-          "└─TableFullScan_4 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
-        ],
-        "Warn": null
-      },
-      {
-        "SQL": "explain select * from t use index();",
-        "Plan": [
-          "TableReader_5 10000.00 root  data:TableFullScan_4",
-          "└─TableFullScan_4 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
-        ],
-        "Warn": null
-      },
-      {
-        "SQL": "explain select /*+ use_index(t, idx)*/ * from t",
-        "Plan": [
-          "TableReader_5 10000.00 root  data:TableFullScan_4",
-          "└─TableFullScan_4 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
-        ],
-        "Warn": [
-          "TiDB doesn't support index in the isolation read engines(value: 'tiflash')"
-        ]
-      },
-      {
-        "SQL": "explain select /*+ use_index(t)*/ * from t",
-        "Plan": [
-          "TableReader_5 10000.00 root  data:TableFullScan_4",
-          "└─TableFullScan_4 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
-        ],
-        "Warn": null
-      }
-    ]
+    "Cases": null
   },
   {
     "Name": "TestReadFromStorageHintAndIsolationRead",
@@ -394,6 +359,132 @@
         "Result": [
           "TableReader_6 2.00 root  data:TableRangeScan_5",
           "└─TableRangeScan_5 2.00 cop[tiflash] table:t range:[1,1], [2,2], keep order:false, stats:pseudo"
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestIsolationReadTiFlashUseIndexHint",
+    "Cases": [
+      {
+        "SQL": "explain select * from t",
+        "Plan": [
+          "TableReader_5 10000.00 root  data:TableFullScan_4",
+          "└─TableFullScan_4 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain select * from t use index();",
+        "Plan": [
+          "TableReader_5 10000.00 root  data:TableFullScan_4",
+          "└─TableFullScan_4 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain select /*+ use_index(t, idx)*/ * from t",
+        "Plan": [
+          "TableReader_5 10000.00 root  data:TableFullScan_4",
+          "└─TableFullScan_4 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+        ],
+        "Warn": [
+          "TiDB doesn't support index in the isolation read engines(value: 'tiflash')"
+        ]
+      },
+      {
+        "SQL": "explain select /*+ use_index(t)*/ * from t",
+        "Plan": [
+          "TableReader_5 10000.00 root  data:TableFullScan_4",
+          "└─TableFullScan_4 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      }
+    ]
+  },
+  {
+    "Name": "TestIssue20710",
+    "Cases": [
+      {
+        "SQL": "explain select /*+ inl_join(s) */ * from t join s on t.a=s.a and t.b = s.b",
+        "Plan": [
+          "IndexJoin_11 12475.01 root  inner join, inner:IndexLookUp_10, outer key:test.t.a, inner key:test.s.a, equal cond:eq(test.t.a, test.s.a), eq(test.t.b, test.s.b)",
+          "├─TableReader_18(Build) 9980.01 root  data:Selection_17",
+          "│ └─Selection_17 9980.01 cop[tikv]  not(isnull(test.t.a)), not(isnull(test.t.b))",
+          "│   └─TableFullScan_16 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+          "└─IndexLookUp_10(Probe) 1.25 root  ",
+          "  ├─Selection_8(Build) 1.25 cop[tikv]  not(isnull(test.s.a))",
+          "  │ └─IndexRangeScan_6 1.25 cop[tikv] table:s, index:a(a) range: decided by [eq(test.s.a, test.t.a)], keep order:false, stats:pseudo",
+          "  └─Selection_9(Probe) 1.25 cop[tikv]  not(isnull(test.s.b))",
+          "    └─TableRowIDScan_7 1.25 cop[tikv] table:s keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain select /*+ inl_join(s) */ * from t join s on t.a=s.a and t.b = s.a",
+        "Plan": [
+          "IndexJoin_10 12475.01 root  inner join, inner:IndexLookUp_9, outer key:test.t.a, inner key:test.s.a, equal cond:eq(test.t.a, test.s.a), eq(test.t.b, test.s.a)",
+          "├─TableReader_17(Build) 9980.01 root  data:Selection_16",
+          "│ └─Selection_16 9980.01 cop[tikv]  not(isnull(test.t.a)), not(isnull(test.t.b))",
+          "│   └─TableFullScan_15 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+          "└─IndexLookUp_9(Probe) 1.25 root  ",
+          "  ├─Selection_8(Build) 1.25 cop[tikv]  not(isnull(test.s.a))",
+          "  │ └─IndexRangeScan_6 1.25 cop[tikv] table:s, index:a(a) range: decided by [eq(test.s.a, test.t.a)], keep order:false, stats:pseudo",
+          "  └─TableRowIDScan_7(Probe) 1.25 cop[tikv] table:s keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain select /*+ inl_join(s) */ * from t join s on t.a=s.a and t.a = s.b",
+        "Plan": [
+          "IndexJoin_11 12475.01 root  inner join, inner:IndexLookUp_10, outer key:test.t.a, inner key:test.s.a, equal cond:eq(test.t.a, test.s.a), eq(test.t.a, test.s.b)",
+          "├─TableReader_18(Build) 9990.00 root  data:Selection_17",
+          "│ └─Selection_17 9990.00 cop[tikv]  not(isnull(test.t.a))",
+          "│   └─TableFullScan_16 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+          "└─IndexLookUp_10(Probe) 1.25 root  ",
+          "  ├─Selection_8(Build) 1.25 cop[tikv]  not(isnull(test.s.a))",
+          "  │ └─IndexRangeScan_6 1.25 cop[tikv] table:s, index:a(a) range: decided by [eq(test.s.a, test.t.a)], keep order:false, stats:pseudo",
+          "  └─Selection_9(Probe) 1.25 cop[tikv]  not(isnull(test.s.b))",
+          "    └─TableRowIDScan_7 1.25 cop[tikv] table:s keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain select /*+ inl_hash_join(s) */ * from t join s on t.a=s.a and t.b = s.b",
+        "Plan": [
+          "IndexHashJoin_13 12475.01 root  inner join, inner:IndexLookUp_10, outer key:test.t.a, inner key:test.s.a, equal cond:eq(test.t.a, test.s.a), eq(test.t.b, test.s.b)",
+          "├─TableReader_18(Build) 9980.01 root  data:Selection_17",
+          "│ └─Selection_17 9980.01 cop[tikv]  not(isnull(test.t.a)), not(isnull(test.t.b))",
+          "│   └─TableFullScan_16 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+          "└─IndexLookUp_10(Probe) 1.25 root  ",
+          "  ├─Selection_8(Build) 1.25 cop[tikv]  not(isnull(test.s.a))",
+          "  │ └─IndexRangeScan_6 1.25 cop[tikv] table:s, index:a(a) range: decided by [eq(test.s.a, test.t.a)], keep order:false, stats:pseudo",
+          "  └─Selection_9(Probe) 1.25 cop[tikv]  not(isnull(test.s.b))",
+          "    └─TableRowIDScan_7 1.25 cop[tikv] table:s keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain select /*+ inl_hash_join(s) */ * from t join s on t.a=s.a and t.b = s.a",
+        "Plan": [
+          "IndexHashJoin_12 12475.01 root  inner join, inner:IndexLookUp_9, outer key:test.t.a, inner key:test.s.a, equal cond:eq(test.t.a, test.s.a), eq(test.t.b, test.s.a)",
+          "├─TableReader_17(Build) 9980.01 root  data:Selection_16",
+          "│ └─Selection_16 9980.01 cop[tikv]  not(isnull(test.t.a)), not(isnull(test.t.b))",
+          "│   └─TableFullScan_15 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+          "└─IndexLookUp_9(Probe) 1.25 root  ",
+          "  ├─Selection_8(Build) 1.25 cop[tikv]  not(isnull(test.s.a))",
+          "  │ └─IndexRangeScan_6 1.25 cop[tikv] table:s, index:a(a) range: decided by [eq(test.s.a, test.t.a)], keep order:false, stats:pseudo",
+          "  └─TableRowIDScan_7(Probe) 1.25 cop[tikv] table:s keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain select /*+ inl_hash_join(s) */ * from t join s on t.a=s.a and t.a = s.b",
+        "Plan": [
+          "IndexHashJoin_13 12475.01 root  inner join, inner:IndexLookUp_10, outer key:test.t.a, inner key:test.s.a, equal cond:eq(test.t.a, test.s.a), eq(test.t.a, test.s.b)",
+          "├─TableReader_18(Build) 9990.00 root  data:Selection_17",
+          "│ └─Selection_17 9990.00 cop[tikv]  not(isnull(test.t.a))",
+          "│   └─TableFullScan_16 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+          "└─IndexLookUp_10(Probe) 1.25 root  ",
+          "  ├─Selection_8(Build) 1.25 cop[tikv]  not(isnull(test.s.a))",
+          "  │ └─IndexRangeScan_6 1.25 cop[tikv] table:s, index:a(a) range: decided by [eq(test.s.a, test.t.a)], keep order:false, stats:pseudo",
+          "  └─Selection_9(Probe) 1.25 cop[tikv]  not(isnull(test.s.b))",
+          "    └─TableRowIDScan_7 1.25 cop[tikv] table:s keep order:false, stats:pseudo"
         ]
       }
     ]
