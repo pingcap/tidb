@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/planner/core"
+	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
@@ -497,11 +498,11 @@ func buildWindowExecutor(ctx sessionctx.Context, windowFunc string, funcs int, f
 		}
 
 		plan = core.PhysicalShuffle{
-			Concurrency:  concurrency,
-			Tail:         tail,
-			DataSource:   src,
-			SplitterType: core.PartitionHashSplitterType,
-			HashByItems:  byItems,
+			Concurrency:      concurrency,
+			Tails:            []plannercore.PhysicalPlan{tail},
+			DataSources:      []plannercore.PhysicalPlan{src},
+			SplitterType:     core.PartitionHashSplitterType,
+			HashByItemArrays: [][]expression.Expression{byItems},
 		}.Init(ctx, nil, 0)
 		plan.SetChildren(win)
 	} else {
