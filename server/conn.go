@@ -791,7 +791,7 @@ func (cc *clientConn) Run(ctx context.Context) {
 				zap.String("status", cc.SessionStatusToString()),
 				zap.Stringer("sql", getLastStmtInConn{cc}),
 				zap.String("txn_mode", txnMode),
-				zap.String("err", errStrForLog(err, config.RedactLogEnabled())),
+				zap.String("err", errStrForLog(err, cc.ctx.GetSessionVars().EnableRedactLog)),
 			)
 			err1 := cc.writeError(ctx, err)
 			terror.Log(err1)
