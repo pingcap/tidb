@@ -246,7 +246,10 @@ func (s *session) getCurrentScopeTxn() (*TxnState, bool) {
 // AddTableLock adds table lock to the session lock map.
 func (s *session) AddTableLock(locks []model.TableLockTpInfo) {
 	for _, l := range locks {
-		s.lockedTables[l.TableID] = l
+		// read only lock is session unrelated, skip it when adding lock to session.
+		if l.Tp != model.TableLockReadOnly {
+			s.lockedTables[l.TableID] = l
+		}
 	}
 }
 
