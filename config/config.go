@@ -36,8 +36,6 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/versioninfo"
 	tracing "github.com/uber/jaeger-client-go/config"
-
-	"github.com/sirupsen/logrus"
 	"go.uber.org/zap"
 	"google.golang.org/grpc/encoding/gzip"
 )
@@ -895,9 +893,7 @@ func (c *Config) Load(confFile string) error {
 	if c.TokenLimit == 0 {
 		c.TokenLimit = 1000
 	}
-	logrus.Warning(metaData.Keys())
 	if metaData.IsDefined("mem-quota-query") {
-		logrus.Warning("defined")
 		IsMemoryQuotaQuerySetByUser = true
 	}
 	if len(c.ServerVersion) > 0 {
