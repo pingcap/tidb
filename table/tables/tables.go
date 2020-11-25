@@ -402,7 +402,7 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx sessionctx.Context,
 	// rebuild index
 	if !sessVars.InTxn() {
 		savePresumeKeyNotExist := sessVars.PresumeKeyNotExists
-		if !sessVars.ConstraintCheckInPlace {
+		if !sessVars.ConstraintCheckInPlace && sessVars.TxnCtx.IsPessimistic {
 			sessVars.PresumeKeyNotExists = true
 		}
 		err = t.rebuildIndices(sctx, txn, h, touched, oldData, newData, table.WithCtx(ctx))
