@@ -3,13 +3,13 @@ package export
 import (
 	"context"
 	"database/sql"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/pingcap/dumpling/v4/log"
 
 	_ "github.com/go-sql-driver/mysql"
+	"github.com/pingcap/br/pkg/storage"
 	"github.com/pingcap/br/pkg/summary"
 	"github.com/pingcap/br/pkg/utils"
 	"github.com/pingcap/errors"
@@ -19,123 +19,52 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-func Dump(pCtx context.Context, conf *Config) (err error) {
-	if err = adjustConfig(pCtx, conf); err != nil {
-		return errors.Trace(err)
+type Dumper struct {
+	ctx       context.Context
+	conf      *Config
+	cancelCtx context.CancelFunc
+
+	extStore storage.ExternalStorage
+	dbHandle *sql.DB
+
+	tidbPDClientForGC pd.Client
+}
+
+func NewDumper(ctx context.Context, conf *Config) (*Dumper, error) {
+	ctx, cancelFn := context.WithCancel(ctx)
+	d := &Dumper{
+		ctx:       ctx,
+		conf:      conf,
+		cancelCtx: cancelFn,
 	}
-
-	go func() {
-		if conf.StatusAddr != "" {
-			err1 := startDumplingService(conf.StatusAddr)
-			if err1 != nil {
-				log.Error("dumpling stops to serving service", zap.Error(err1))
-			}
-		}
-	}()
-
-	pool, err := sql.Open("mysql", conf.GetDSN(""))
+	err := adjustConfig(conf,
+		initLogger,
+		registerTLSConfig,
+		validateSpecifiedSQL)
 	if err != nil {
-		return errors.Trace(err)
+		return nil, err
 	}
-	defer pool.Close()
+	err = runSteps(d,
+		createExternalStore,
+		startHttpService,
+		openSQLDB,
+		detectServerInfo,
+		resolveAutoConsistency,
 
-	conf.ServerInfo, err = detectServerInfo(pool)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	resolveAutoConsistency(conf)
-	log.Info("finish config adjustment", zap.String("config", conf.String()))
+		tidbSetPDClientForGC,
+		tidbGetSnapshot,
+		tidbStartGCSavepointUpdateService,
 
-	ctx, cancel := context.WithCancel(pCtx)
-	defer cancel()
+		setSessionParam)
+	return d, err
+}
 
-	var (
-		doPdGC     bool
-		pdClient   pd.Client
-		snapshotTS uint64
-	)
-	if conf.ServerInfo.ServerType == ServerTypeTiDB {
-		if conf.ServerInfo.ServerVersion.Compare(*gcSafePointVersion) >= 0 {
-			pdAddrs, err := GetPdAddrs(pool)
-			if err != nil {
-				return err
-			}
-			if len(pdAddrs) > 0 {
-				doPdGC, err = checkSameCluster(ctx, pool, pdAddrs)
-				if err != nil {
-					log.Warn("meet error while check whether fetched pd addr and TiDB belongs to one cluster", zap.Error(err), zap.Strings("pdAddrs", pdAddrs))
-				} else if doPdGC {
-					pdClient, err = pd.NewClientWithContext(ctx, pdAddrs, pd.SecurityOption{})
-					if err != nil {
-						log.Warn("create pd client to control GC failed", zap.Error(err), zap.Strings("pdAddrs", pdAddrs))
-						doPdGC = false
-					}
-				}
-			}
-		}
-	} else {
-		delete(conf.SessionParams, TiDBMemQuotaQueryName)
-	}
-
-	snapshot := conf.Snapshot
-	if snapshot == "" && (doPdGC || conf.Consistency == consistencyTypeSnapshot) {
-		conn, err := pool.Conn(ctx)
-		if err != nil {
-			conn.Close()
-			return errors.Trace(err)
-		}
-		snapshot, err = getSnapshot(conn)
-		conn.Close()
-		if err != nil {
-			return err
-		}
-	}
-
-	if snapshot != "" {
-		if conf.ServerInfo.ServerType != ServerTypeTiDB {
-			return errors.New("snapshot consistency is not supported for this server")
-		}
-		snapshotTS, err = parseSnapshotToTSO(pool, snapshot)
-		if err != nil {
-			return err
-		}
-		if conf.Consistency == consistencyTypeSnapshot {
-			hasTiKV, err := CheckTiDBWithTiKV(pool)
-			if err != nil {
-				return err
-			}
-			if hasTiKV {
-				conf.SessionParams["tidb_snapshot"] = snapshot
-			}
-			// convert yyyy:mm:ss type snapshot to TSO if consistency is snapshot
-			snapshot = strconv.FormatUint(snapshotTS, 10)
-		} else {
-			// clear snapshot to use current master status for metadata (consistency lock)
-			snapshot = ""
-		}
-	}
-
-	if doPdGC {
-		go updateServiceSafePoint(ctx, pdClient, defaultDumpGCSafePointTTL, snapshotTS)
-	} else if conf.ServerInfo.ServerType == ServerTypeTiDB {
-		log.Warn("If the amount of data to dump is large, criteria: (data more than 60GB or dumped time more than 10 minutes)\n" +
-			"you'd better adjust the tikv_gc_life_time to avoid export failure due to TiDB GC during the dump process.\n" +
-			"Before dumping: run sql `update mysql.tidb set VARIABLE_VALUE = '720h' where VARIABLE_NAME = 'tikv_gc_life_time';` in tidb.\n" +
-			"After dumping: run sql `update mysql.tidb set VARIABLE_VALUE = '10m' where VARIABLE_NAME = 'tikv_gc_life_time';` in tidb.\n")
-	}
-
-	if newPool, err := resetDBWithSessionParams(pool, conf.GetDSN(""), conf.SessionParams); err != nil {
-		return errors.Trace(err)
-	} else {
-		pool = newPool
-		defer newPool.Close()
-	}
-
-	m := newGlobalMetadata(conf.ExternalStorage, snapshot)
-	// write metadata even if dump failed
+func (d *Dumper) Dump() (err error) {
+	ctx, conf, pool := d.ctx, d.conf, d.dbHandle
+	m := newGlobalMetadata(d.extStore, conf.Snapshot)
 	defer func() {
 		if err == nil {
-			m.writeGlobalMetaData(ctx)
+			_ = m.writeGlobalMetaData(ctx)
 		}
 	}()
 
@@ -214,7 +143,7 @@ func Dump(pCtx context.Context, conf *Config) (err error) {
 
 	failpoint.Inject("ConsistencyCheck", nil)
 
-	simpleWriter, err := NewSimpleWriter(conf)
+	simpleWriter, err := NewSimpleWriter(conf, d.extStore)
 	if err != nil {
 		return err
 	}
@@ -456,6 +385,170 @@ Loop:
 	return true, chunksIterArray, nil
 }
 
+func canRebuildConn(consistency string, trxConsistencyOnly bool) bool {
+	switch consistency {
+	case consistencyTypeLock, consistencyTypeFlush:
+		return !trxConsistencyOnly
+	case consistencyTypeSnapshot, consistencyTypeNone:
+		return true
+	default:
+		return false
+	}
+}
+
+func (d *Dumper) Close() error {
+	d.cancelCtx()
+	return d.dbHandle.Close()
+}
+
+func runSteps(d *Dumper, steps ...func(*Dumper) error) error {
+	for _, st := range steps {
+		err := st(d)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// createExternalStore is an initialization step of Dumper.
+func createExternalStore(d *Dumper) error {
+	ctx, conf := d.ctx, d.conf
+	b, err := storage.ParseBackend(conf.OutputDirPath, &conf.BackendOptions)
+	if err != nil {
+		return err
+	}
+	extStore, err := storage.Create(ctx, b, false)
+	if err != nil {
+		return err
+	}
+	d.extStore = extStore
+	return nil
+}
+
+// startHttpService is an initialization step of Dumper.
+func startHttpService(d *Dumper) error {
+	conf := d.conf
+	if conf.StatusAddr != "" {
+		go func() {
+			err := startDumplingService(conf.StatusAddr)
+			if err != nil {
+				log.Error("dumpling stops to serving service", zap.Error(err))
+			}
+		}()
+	}
+	return nil
+}
+
+// openSQLDB is an initialization step of Dumper.
+func openSQLDB(d *Dumper) error {
+	conf := d.conf
+	pool, err := sql.Open("mysql", conf.GetDSN(""))
+	if err != nil {
+		return errors.Trace(err)
+	}
+	d.dbHandle = pool
+	return nil
+}
+
+// detectServerInfo is an initialization step of Dumper.
+func detectServerInfo(d *Dumper) error {
+	db, conf := d.dbHandle, d.conf
+	versionStr, err := SelectVersion(db)
+	if err != nil {
+		conf.ServerInfo = ServerInfoUnknown
+		return err
+	}
+	conf.ServerInfo = ParseServerInfo(versionStr)
+	return nil
+}
+
+// resolveAutoConsistency is an initialization step of Dumper.
+func resolveAutoConsistency(d *Dumper) error {
+	conf := d.conf
+	if conf.Consistency != "auto" {
+		return nil
+	}
+	switch conf.ServerInfo.ServerType {
+	case ServerTypeTiDB:
+		conf.Consistency = "snapshot"
+	case ServerTypeMySQL, ServerTypeMariaDB:
+		conf.Consistency = "flush"
+	default:
+		conf.Consistency = "none"
+	}
+	return nil
+}
+
+// tidbSetPDClientForGC is an initialization step of Dumper.
+func tidbSetPDClientForGC(d *Dumper) error {
+	ctx, si, pool := d.ctx, d.conf.ServerInfo, d.dbHandle
+	if si.ServerType != ServerTypeTiDB ||
+		si.ServerVersion == nil ||
+		si.ServerVersion.Compare(*gcSafePointVersion) < 0 {
+		return nil
+	}
+	pdAddrs, err := GetPdAddrs(pool)
+	if err != nil {
+		return err
+	}
+	if len(pdAddrs) > 0 {
+		doPdGC, err := checkSameCluster(ctx, pool, pdAddrs)
+		if err != nil {
+			log.Warn("meet error while check whether fetched pd addr and TiDB belongs to one cluster", zap.Error(err), zap.Strings("pdAddrs", pdAddrs))
+		} else if doPdGC {
+			pdClient, err := pd.NewClientWithContext(ctx, pdAddrs, pd.SecurityOption{})
+			if err != nil {
+				log.Warn("create pd client to control GC failed", zap.Error(err), zap.Strings("pdAddrs", pdAddrs))
+			}
+			d.tidbPDClientForGC = pdClient
+		}
+	}
+	return nil
+}
+
+// tidbGetSnapshot is an initialization step of Dumper.
+func tidbGetSnapshot(d *Dumper) error {
+	conf, doPdGC := d.conf, d.tidbPDClientForGC != nil
+	consistency := conf.Consistency
+	pool, ctx := d.dbHandle, d.ctx
+	if conf.Snapshot == "" && (doPdGC || consistency == "snapshot") {
+		conn, err := pool.Conn(ctx)
+		if err != nil {
+			log.Warn("cannot get snapshot from TiDB", zap.Error(err))
+			return nil
+		}
+		snapshot, err := getSnapshot(conn)
+		_ = conn.Close()
+		if err != nil {
+			log.Warn("cannot get snapshot from TiDB", zap.Error(err))
+			return nil
+		}
+		conf.Snapshot = snapshot
+		return nil
+	}
+	return nil
+}
+
+// tidbStartGCSavepointUpdateService is an initialization step of Dumper.
+func tidbStartGCSavepointUpdateService(d *Dumper) error {
+	ctx, pool, conf := d.ctx, d.dbHandle, d.conf
+	snapshot, si := conf.Snapshot, conf.ServerInfo
+	if d.tidbPDClientForGC != nil {
+		snapshotTS, err := parseSnapshotToTSO(pool, snapshot)
+		if err != nil {
+			return err
+		}
+		go updateServiceSafePoint(ctx, d.tidbPDClientForGC, defaultDumpGCSafePointTTL, snapshotTS)
+	} else if si.ServerType == ServerTypeTiDB {
+		log.Warn("If the amount of data to dump is large, criteria: (data more than 60GB or dumped time more than 10 minutes)\n" +
+			"you'd better adjust the tikv_gc_life_time to avoid export failure due to TiDB GC during the dump process.\n" +
+			"Before dumping: run sql `update mysql.tidb set VARIABLE_VALUE = '720h' where VARIABLE_NAME = 'tikv_gc_life_time';` in tidb.\n" +
+			"After dumping: run sql `update mysql.tidb set VARIABLE_VALUE = '10m' where VARIABLE_NAME = 'tikv_gc_life_time';` in tidb.\n")
+	}
+	return nil
+}
+
 func updateServiceSafePoint(ctx context.Context, pdClient pd.Client, ttl int64, snapshotTS uint64) {
 	updateInterval := time.Duration(ttl/2) * time.Second
 	tick := time.NewTicker(updateInterval)
@@ -484,15 +577,35 @@ func updateServiceSafePoint(ctx context.Context, pdClient pd.Client, ttl int64, 
 	}
 }
 
-func canRebuildConn(consistency string, trxConsistencyOnly bool) bool {
-	switch consistency {
-	case consistencyTypeLock, consistencyTypeFlush:
-		return !trxConsistencyOnly
-	case consistencyTypeSnapshot, consistencyTypeNone:
-		return true
-	default:
-		return false
+// setSessionParam is an initialization step of Dumper.
+func setSessionParam(d *Dumper) error {
+	conf, pool := d.conf, d.dbHandle
+	si := conf.ServerInfo
+	consistency, snapshot := conf.Consistency, conf.Snapshot
+	sessionParam := conf.SessionParams
+	if si.ServerType == ServerTypeTiDB {
+		sessionParam[TiDBMemQuotaQueryName] = conf.TiDBMemQuotaQuery
 	}
+	if snapshot != "" {
+		if si.ServerType != ServerTypeTiDB {
+			return errors.New("snapshot consistency is not supported for this server")
+		}
+		if consistency == consistencyTypeSnapshot {
+			hasTiKV, err := CheckTiDBWithTiKV(pool)
+			if err != nil {
+				return err
+			}
+			if hasTiKV {
+				sessionParam["tidb_snapshot"] = snapshot
+			}
+		}
+	}
+	if newPool, err := resetDBWithSessionParams(pool, conf.GetDSN(""), conf.SessionParams); err != nil {
+		return errors.Trace(err)
+	} else {
+		d.dbHandle = newPool
+	}
+	return nil
 }
 
 func shouldRedirectLog(conf *Config) bool {

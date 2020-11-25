@@ -13,9 +13,11 @@ import (
 
 	"github.com/coreos/go-semver/semver"
 	"github.com/docker/go-units"
+	"github.com/go-sql-driver/mysql"
 	"github.com/pingcap/br/pkg/storage"
 	"github.com/pingcap/errors"
 	filter "github.com/pingcap/tidb-tools/pkg/table-filter"
+	"github.com/pingcap/tidb-tools/pkg/utils"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/spf13/pflag"
 	"go.uber.org/zap"
@@ -121,12 +123,11 @@ type Config struct {
 	EscapeBackslash          bool
 	DumpEmptyDatabase        bool
 	OutputFileTemplate       *template.Template `json:"-"`
+	TiDBMemQuotaQuery        uint64
 	SessionParams            map[string]interface{}
 
 	PosAfterConnect bool
 	Labels          prometheus.Labels `json:"-"`
-
-	ExternalStorage storage.ExternalStorage `json:"-"`
 }
 
 func DefaultConfig() *Config {
@@ -379,6 +380,10 @@ func (conf *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+	conf.TiDBMemQuotaQuery, err = flags.GetUint64(flagTidbMemQuotaQuery)
+	if err != nil {
+		return errors.Trace(err)
+	}
 
 	if conf.Threads <= 0 {
 		return errors.Errorf("--threads is set to %d. It should be greater than 0", conf.Threads)
@@ -404,10 +409,6 @@ func (conf *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	tidbMemQuotaQuery, err := flags.GetUint64(flagTidbMemQuotaQuery)
-	if err != nil {
-		return errors.Trace(err)
-	}
 	outputFilenameFormat, err := flags.GetString(flagOutputFilenameTemplate)
 	if err != nil {
 		return errors.Trace(err)
@@ -430,8 +431,6 @@ func (conf *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-
-	conf.SessionParams[TiDBMemQuotaQueryName] = tidbMemQuotaQuery
 
 	if outputFilenameFormat == "" && conf.Sql != "" {
 		outputFilenameFormat = DefaultAnonymousOutputFileTemplateText
@@ -620,4 +619,51 @@ func init() {
 	serverTypeString[ServerTypeMySQL] = "MySQL"
 	serverTypeString[ServerTypeMariaDB] = "MariaDB"
 	serverTypeString[ServerTypeTiDB] = "TiDB"
+}
+
+func adjustConfig(conf *Config, fns ...func(*Config) error) error {
+	for _, f := range fns {
+		err := f(conf)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func initLogger(conf *Config) error {
+	if conf.Logger != nil {
+		log.SetAppLogger(conf.Logger)
+	} else {
+		err := log.InitAppLogger(&log.Config{
+			Level:  conf.LogLevel,
+			File:   conf.LogFile,
+			Format: conf.LogFormat,
+		})
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func registerTLSConfig(conf *Config) error {
+	if len(conf.Security.CAPath) > 0 {
+		tlsConfig, err := utils.ToTLSConfig(conf.Security.CAPath, conf.Security.CertPath, conf.Security.KeyPath)
+		if err != nil {
+			return err
+		}
+		err = mysql.RegisterTLSConfig("dumpling-tls-target", tlsConfig)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateSpecifiedSQL(conf *Config) error {
+	if conf.Sql != "" && conf.Where != "" {
+		return errors.New("can't specify both --sql and --where at the same time. Please try to combine them into --sql")
+	}
+	return nil
 }
