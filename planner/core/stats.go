@@ -338,11 +338,6 @@ func (ds *DataSource) generateIndexMergeOrPaths() {
 		}
 		if len(partialPaths) > 1 {
 			possiblePath := ds.buildIndexMergeOrPath(partialPaths, i)
-<<<<<<< HEAD
-			if possiblePath != nil {
-				ds.possibleAccessPaths = append(ds.possibleAccessPaths, possiblePath)
-=======
-
 			accessConds := make([]expression.Expression, 0, len(partialPaths))
 			for _, p := range partialPaths {
 				accessConds = append(accessConds, p.AccessConds...)
@@ -352,7 +347,6 @@ func (ds *DataSource) generateIndexMergeOrPaths() {
 			if err != nil {
 				logutil.BgLogger().Debug("something wrong happened, use the default selectivity", zap.Error(err))
 				sel = SelectionFactor
->>>>>>> 5a14eb592... planner: fix index merge doesn't take effect when using prefix key (#20425)
 			}
 		}
 	}
