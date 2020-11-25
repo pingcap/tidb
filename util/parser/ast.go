@@ -52,7 +52,7 @@ func (i *implicitDatabase) Leave(in ast.Node) (out ast.Node, ok bool) {
 // RestoreWithDefaultDB returns restore strings for StmtNode with defaultDB
 func RestoreWithDefaultDB(node ast.StmtNode, defaultDB string) string {
 	var sb strings.Builder
-	ctx := format.NewRestoreCtx(format.RestoreWithDefaultDB|format.RestoreStringSingleQuotes|format.RestoreSpacesAroundBinaryOperation|format.RestoreStringWithoutDefaultCharset, &sb)
+	ctx := format.NewRestoreCtx(format.RestoreStringSingleQuotes|format.RestoreSpacesAroundBinaryOperation|format.RestoreStringWithoutDefaultCharset, &sb)
 	ctx.DefaultDB = defaultDB
 	if err := node.Restore(ctx); err != nil {
 		return ""
