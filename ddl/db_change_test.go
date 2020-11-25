@@ -830,6 +830,11 @@ func (s *testStateChangeSuiteBase) runTestInSchemaState(c *C, state model.Schema
 			return
 		}
 		forceReloadDomain(se)
+		saveConstraintCheckInPlace := se.GetSessionVars().ConstraintCheckInPlace
+		se.GetSessionVars().ConstraintCheckInPlace = true
+		defer func() {
+			se.GetSessionVars().ConstraintCheckInPlace = saveConstraintCheckInPlace
+		}()
 		for _, sqlWithErr := range sqlWithErrs {
 			_, err = se.Execute(context.Background(), sqlWithErr.sql)
 			if !terror.ErrorEqual(err, sqlWithErr.expectErr) {
