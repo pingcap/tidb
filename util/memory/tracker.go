@@ -124,6 +124,13 @@ func (t *Tracker) FallbackOldAndSetNewAction(a ActionOnExceed) {
 	t.actionMu.actionOnExceed = reArrangeFallback(t.actionMu.actionOnExceed, a)
 }
 
+// GetFallbackForTest get the oom action used by test.
+func (t *Tracker) GetFallbackForTest() ActionOnExceed {
+	t.actionMu.Lock()
+	defer t.actionMu.Unlock()
+	return t.actionMu.actionOnExceed
+}
+
 // reArrangeFallback merge two action chains and rearrange them by priority in descending order.
 func reArrangeFallback(a ActionOnExceed, b ActionOnExceed) ActionOnExceed {
 	if a == nil {
@@ -134,8 +141,10 @@ func reArrangeFallback(a ActionOnExceed, b ActionOnExceed) ActionOnExceed {
 	}
 	if a.GetPriority() < b.GetPriority() {
 		a, b = b, a
+		a.SetFallback(b)
+	} else {
+		a.SetFallback(reArrangeFallback(a.GetFallback(), b))
 	}
-	a.SetFallback(reArrangeFallback(a.GetFallback(), b))
 	return a
 }
 
