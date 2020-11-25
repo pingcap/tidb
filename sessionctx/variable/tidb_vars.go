@@ -68,6 +68,9 @@ const (
 	// It is read-only.
 	TiDBCurrentTS = "tidb_current_ts"
 
+	// TiDBLastTxnInfo is used to get the last transaction info within the current session.
+	TiDBLastTxnInfo = "tidb_last_txn_info"
+
 	// tidb_config is a read-only variable that shows the config of the current server.
 	TiDBConfig = "tidb_config"
 
@@ -400,12 +403,12 @@ const (
 	// TiDBMetricSchemaRangeDuration indicates the range duration when query metric schema.
 	TiDBMetricSchemaRangeDuration = "tidb_metric_query_range_duration"
 
-	// TiDBSlowLogMasking indicates that whether masking the query data when log slow query.
-	// Deprecated: use TiDBRedactLog instead.
-	TiDBSlowLogMasking = "tidb_slow_log_masking"
-
 	// TiDBEnableCollectExecutionInfo indicates that whether execution info is collected.
 	TiDBEnableCollectExecutionInfo = "tidb_enable_collect_execution_info"
+
+	// TiDBSlowLogMasking is deprecated and a alias of TiDBRedactLog.
+	// Deprecated: use TiDBRedactLog instead.
+	TiDBSlowLogMasking = "tidb_slow_log_masking"
 
 	// TiDBRedactLog indicates that whether redact log.
 	TiDBRedactLog = "tidb_redact_log"
@@ -511,9 +514,9 @@ const (
 	DefTiDBMetricSchemaStep            = 60 // 60s
 	DefTiDBMetricSchemaRangeDuration   = 60 // 60s
 	DefTiDBFoundInPlanCache            = false
-	DefTiDBSlowLogMasking              = false
 	DefTiDBEnableCollectExecutionInfo  = true
 	DefTiDBAllowAutoRandExplicitInsert = false
+	DefTiDBRedactLog                   = false
 	DefTiDBEnableTelemetry             = true
 	DefTiDBEnableAmendPessimisticTxn   = false
 )

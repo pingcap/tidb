@@ -2311,6 +2311,32 @@ func (s *testSuiteP2) TestRow(c *C) {
 	result.Check(testkit.Rows("0"))
 	result = tk.MustQuery("select (select 1)")
 	result.Check(testkit.Rows("1"))
+
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (a int, b int)")
+	tk.MustExec("insert t1 values (1,2),(1,null)")
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("create table t2 (c int, d int)")
+	tk.MustExec("insert t2 values (0,0)")
+
+	tk.MustQuery("select * from t2 where (1,2) in (select * from t1)").Check(testkit.Rows("0 0"))
+	tk.MustQuery("select * from t2 where (1,2) not in (select * from t1)").Check(testkit.Rows())
+	tk.MustQuery("select * from t2 where (1,1) not in (select * from t1)").Check(testkit.Rows())
+	tk.MustQuery("select * from t2 where (1,null) in (select * from t1)").Check(testkit.Rows())
+	tk.MustQuery("select * from t2 where (null,null) in (select * from t1)").Check(testkit.Rows())
+
+	tk.MustExec("delete from t1 where a=1 and b=2")
+	tk.MustQuery("select (1,1) in (select * from t2) from t1").Check(testkit.Rows("0"))
+	tk.MustQuery("select (1,1) not in (select * from t2) from t1").Check(testkit.Rows("1"))
+	tk.MustQuery("select (1,1) in (select 1,1 from t2) from t1").Check(testkit.Rows("1"))
+	tk.MustQuery("select (1,1) not in (select 1,1 from t2) from t1").Check(testkit.Rows("0"))
+
+	// MySQL 5.7 returns 1 for these 2 queries, which is wrong.
+	tk.MustQuery("select (1,null) not in (select 1,1 from t2) from t1").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("select (t1.a,null) not in (select 1,1 from t2) from t1").Check(testkit.Rows("<nil>"))
+
+	tk.MustQuery("select (1,null) in (select * from t1)").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("select (1,null) not in (select * from t1)").Check(testkit.Rows("<nil>"))
 }
 
 func (s *testSuiteP2) TestColumnName(c *C) {
@@ -2716,6 +2742,60 @@ func (s *testSuite) TestTiDBCurrentTS(c *C) {
 	tk.MustQuery("select @@tidb_current_ts").Check(testkit.Rows("0"))
 
 	_, err = tk.Exec("set @@tidb_current_ts = '1'")
+	c.Assert(terror.ErrorEqual(err, variable.ErrReadOnly), IsTrue, Commentf("err %v", err))
+}
+
+func (s *testSuite) TestTiDBLastTxnInfo(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int primary key)")
+	tk.MustQuery("select json_extract(@@tidb_last_txn_info, '$.start_ts'), json_extract(@@tidb_last_txn_info, '$.commit_ts')").Check(testkit.Rows("0 0"))
+
+	tk.MustExec("insert into t values (1)")
+	rows1 := tk.MustQuery("select json_extract(@@tidb_last_txn_info, '$.start_ts'), json_extract(@@tidb_last_txn_info, '$.commit_ts')").Rows()
+	c.Assert(rows1[0][0].(string), Greater, "0")
+	c.Assert(rows1[0][0].(string), Less, rows1[0][1].(string))
+
+	tk.MustExec("begin")
+	tk.MustQuery("select a from t where a = 1").Check(testkit.Rows("1"))
+	rows2 := tk.MustQuery("select json_extract(@@tidb_last_txn_info, '$.start_ts'), json_extract(@@tidb_last_txn_info, '$.commit_ts'), @@tidb_current_ts").Rows()
+	tk.MustExec("commit")
+	rows3 := tk.MustQuery("select json_extract(@@tidb_last_txn_info, '$.start_ts'), json_extract(@@tidb_last_txn_info, '$.commit_ts')").Rows()
+	c.Assert(rows2[0][0], Equals, rows1[0][0])
+	c.Assert(rows2[0][1], Equals, rows1[0][1])
+	c.Assert(rows3[0][0], Equals, rows1[0][0])
+	c.Assert(rows3[0][1], Equals, rows1[0][1])
+	c.Assert(rows2[0][1], Less, rows2[0][2])
+
+	tk.MustExec("begin")
+	tk.MustExec("update t set a = a + 1 where a = 1")
+	rows4 := tk.MustQuery("select json_extract(@@tidb_last_txn_info, '$.start_ts'), json_extract(@@tidb_last_txn_info, '$.commit_ts'), @@tidb_current_ts").Rows()
+	tk.MustExec("commit")
+	rows5 := tk.MustQuery("select json_extract(@@tidb_last_txn_info, '$.start_ts'), json_extract(@@tidb_last_txn_info, '$.commit_ts')").Rows()
+	c.Assert(rows4[0][0], Equals, rows1[0][0])
+	c.Assert(rows4[0][1], Equals, rows1[0][1])
+	c.Assert(rows4[0][2], Equals, rows5[0][0])
+	c.Assert(rows4[0][1], Less, rows4[0][2])
+	c.Assert(rows4[0][2], Less, rows5[0][1])
+
+	tk.MustExec("begin")
+	tk.MustExec("update t set a = a + 1 where a = 2")
+	tk.MustExec("rollback")
+	rows6 := tk.MustQuery("select json_extract(@@tidb_last_txn_info, '$.start_ts'), json_extract(@@tidb_last_txn_info, '$.commit_ts')").Rows()
+	c.Assert(rows6[0][0], Equals, rows5[0][0])
+	c.Assert(rows6[0][1], Equals, rows5[0][1])
+
+	tk.MustExec("begin optimistic")
+	tk.MustExec("insert into t values (2)")
+	_, err := tk.Exec("commit")
+	c.Assert(err, NotNil)
+	rows7 := tk.MustQuery("select json_extract(@@tidb_last_txn_info, '$.start_ts'), json_extract(@@tidb_last_txn_info, '$.commit_ts'), json_extract(@@tidb_last_txn_info, '$.error')").Rows()
+	c.Assert(rows7[0][0], Greater, rows5[0][0])
+	c.Assert(rows7[0][1], Equals, "0")
+	c.Assert(strings.Contains(err.Error(), rows7[0][1].(string)), IsTrue)
+
+	_, err = tk.Exec("set @@tidb_last_txn_info = '{}'")
 	c.Assert(terror.ErrorEqual(err, variable.ErrReadOnly), IsTrue, Commentf("err %v", err))
 }
 
@@ -3862,7 +3942,33 @@ func (s *testSuite3) TestDoSubquery(c *C) {
 	c.Assert(r, IsNil, Commentf("result of Do not empty"))
 }
 
-func (s *testSuite3) TestTSOFail(c *C) {
+func (s *testSuite3) TestSubqueryTableAlias(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`drop table if exists t`)
+
+	tk.MustExec("set sql_mode = ''")
+	tk.MustGetErrCode("select a, b from (select 1 a) ``, (select 2 b) ``;", mysql.ErrDerivedMustHaveAlias)
+	tk.MustGetErrCode("select a, b from (select 1 a) `x`, (select 2 b) `x`;", mysql.ErrNonuniqTable)
+	tk.MustGetErrCode("select a, b from (select 1 a), (select 2 b);", mysql.ErrDerivedMustHaveAlias)
+	// ambiguous column name
+	tk.MustGetErrCode("select a from (select 1 a) ``, (select 2 a) ``;", mysql.ErrDerivedMustHaveAlias)
+	tk.MustGetErrCode("select a from (select 1 a) `x`, (select 2 a) `x`;", mysql.ErrNonuniqTable)
+	tk.MustGetErrCode("select x.a from (select 1 a) `x`, (select 2 a) `x`;", mysql.ErrNonuniqTable)
+	tk.MustGetErrCode("select a from (select 1 a), (select 2 a);", mysql.ErrDerivedMustHaveAlias)
+
+	tk.MustExec("set sql_mode = 'oracle';")
+	tk.MustQuery("select a, b from (select 1 a) ``, (select 2 b) ``;").Check(testkit.Rows("1 2"))
+	tk.MustQuery("select a, b from (select 1 a) `x`, (select 2 b) `x`;").Check(testkit.Rows("1 2"))
+	tk.MustQuery("select a, b from (select 1 a), (select 2 b);").Check(testkit.Rows("1 2"))
+	// ambiguous column name
+	tk.MustGetErrCode("select a from (select 1 a) ``, (select 2 a) ``;", mysql.ErrNonUniq)
+	tk.MustGetErrCode("select a from (select 1 a) `x`, (select 2 a) `x`;", mysql.ErrNonUniq)
+	tk.MustGetErrCode("select x.a from (select 1 a) `x`, (select 2 a) `x`;", mysql.ErrNonUniq)
+	tk.MustGetErrCode("select a from (select 1 a), (select 2 a);", mysql.ErrNonUniq)
+}
+
+func (s *testSerialSuite1) TestTSOFail(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test`)
 	tk.MustExec(`drop table if exists t`)
@@ -5514,6 +5620,11 @@ func (s *testClusterTableSuite) TearDownSuite(c *C) {
 	s.testSuiteWithCliBase.TearDownSuite(c)
 }
 
+func (s *testSuiteP1) TestPrepareLoadData(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustGetErrCode(`prepare stmt from "load data local infile '/tmp/load_data_test.csv' into table test";`, mysql.ErrUnsupportedPs)
+}
+
 func (s *testClusterTableSuite) TestSlowQuery(c *C) {
 	writeFile := func(file string, data string) {
 		f, err := os.OpenFile(file, os.O_CREATE|os.O_WRONLY, 0644)
@@ -6025,16 +6136,14 @@ func (s *testSplitTable) TestKillTableReader(c *C) {
 func (s *testSerialSuite1) TestPrevStmtDesensitization(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test;")
-	oriCfg := config.GetGlobalConfig()
-	defer config.StoreGlobalConfig(oriCfg)
-	newCfg := *oriCfg
-	newCfg.EnableRedactLog = 1
-	config.StoreGlobalConfig(&newCfg)
+	tk.MustExec(fmt.Sprintf("set @@session.%v=1", variable.TiDBRedactLog))
+	defer tk.MustExec(fmt.Sprintf("set @@session.%v=0", variable.TiDBRedactLog))
 	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t (a int)")
+	tk.MustExec("create table t (a int, unique key (a))")
 	tk.MustExec("begin")
 	tk.MustExec("insert into t values (1),(2)")
 	c.Assert(tk.Se.GetSessionVars().PrevStmt.String(), Equals, "insert into t values ( ? ) , ( ? )")
+	c.Assert(tk.ExecToErr("insert into t values (1)").Error(), Equals, `[kv:1062]Duplicate entry '?' for key '?'`)
 }
 
 func (s *testSuite) TestIssue19372(c *C) {
@@ -6165,4 +6274,13 @@ func (s *testSuite) TestIssue20237(c *C) {
 	tk.MustExec(`insert into t values(NULL,-37), ("2011-11-04",105), ("2013-03-02",-22), ("2006-07-02",-56), (NULL,124), (NULL,111), ("2018-03-03",-5);`)
 	tk.MustExec(`insert into s values(-37),(105),(-22),(-56),(124),(105),(111),(-5);`)
 	tk.MustQuery(`select count(distinct t.a, t.b) from t join s on t.b= s.b;`).Check(testkit.Rows("4"))
+}
+
+func (s *testSuite) TestIssue19667(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("CREATE TABLE t (a DATETIME)")
+	tk.MustExec("INSERT INTO t VALUES('1988-04-17 01:59:59')")
+	tk.MustQuery(`SELECT DATE_ADD(a, INTERVAL 1 SECOND) FROM t`).Check(testkit.Rows("1988-04-17 02:00:00"))
 }
