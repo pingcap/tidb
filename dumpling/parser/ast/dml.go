@@ -667,8 +667,9 @@ func (n *TableRefsClause) Accept(v Visitor) (Node, bool) {
 type ByItem struct {
 	node
 
-	Expr ExprNode
-	Desc bool
+	Expr      ExprNode
+	Desc      bool
+	NullOrder bool
 }
 
 // Restore implements Node interface.
