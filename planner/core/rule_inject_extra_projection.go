@@ -20,11 +20,15 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 )
 
-// injectExtraProjection is used to extract the expressions of specific
+// InjectExtraProjection is used to extract the expressions of specific
 // operators into a physical Projection operator and inject the Projection below
 // the operators. Thus we can accelerate the expression evaluation by eager
 // evaluation.
-func injectExtraProjection(plan PhysicalPlan) PhysicalPlan {
+// This function will be called in two situations:
+// 1. In postOptimize.
+// 2. TiDB can be used as a coprocessor, when a plan tree been pushed down to
+// TiDB, we need to inject extra projections for the plan tree as well.
+func InjectExtraProjection(plan PhysicalPlan) PhysicalPlan {
 	return NewProjInjector().inject(plan)
 }
 

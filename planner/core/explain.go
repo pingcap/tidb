@@ -20,10 +20,12 @@ import (
 	"strings"
 
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/stringutil"
 )
 
@@ -390,9 +392,6 @@ func (p *PhysicalIndexJoin) explainInfo(normalized bool, isIndexMergeJoin bool) 
 		fmt.Fprintf(buffer, ", inner key:%s",
 			expression.ExplainColumnList(p.InnerJoinKeys))
 	}
-<<<<<<< HEAD
-=======
-
 	if len(p.OuterHashKeys) > 0 && !isIndexMergeJoin {
 		exprs := make([]expression.Expression, 0, len(p.OuterHashKeys))
 		for i := range p.OuterHashKeys {
@@ -404,7 +403,6 @@ func (p *PhysicalIndexJoin) explainInfo(normalized bool, isIndexMergeJoin bool) 
 		fmt.Fprintf(buffer, ", equal cond:%s",
 			sortedExplainExpressionList(exprs))
 	}
->>>>>>> 38bbb0dd2... planner: ban (index) merge join heuristically when convert eq cond to other cond (#21138)
 	if len(p.LeftConditions) > 0 {
 		fmt.Fprintf(buffer, ", left cond:%s",
 			sortedExplainExpressionList(p.LeftConditions))

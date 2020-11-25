@@ -356,6 +356,7 @@ func (p *LogicalJoin) getHashJoin(prop *property.PhysicalProperty, innerIdx int,
 // When inner plan is TableReader, the parameter `ranges` will be nil. Because pk only have one column. So all of its range
 // is generated during execution time.
 func (p *LogicalJoin) constructIndexJoin(
+	joinTP string,
 	prop *property.PhysicalProperty,
 	outerIdx int,
 	innerTask task,
@@ -394,10 +395,10 @@ func (p *LogicalJoin) constructIndexJoin(
 		newOuterKeys = append(newOuterKeys, outerJoinKeys[keyOff])
 		newKeyOff = append(newKeyOff, idxOff)
 	}
-<<<<<<< HEAD
-=======
 
 	var outerHashKeys, innerHashKeys []*expression.Column
+	// HashKey is only used for IndexJoin and IndexHashJoin since they need to
+	// build hash tables.
 	outerHashKeys, innerHashKeys = make([]*expression.Column, len(newOuterKeys)), make([]*expression.Column, len(newInnerKeys))
 	copy(outerHashKeys, newOuterKeys)
 	copy(innerHashKeys, newInnerKeys)
@@ -424,8 +425,6 @@ func (p *LogicalJoin) constructIndexJoin(
 			continue
 		}
 	}
-
->>>>>>> 38bbb0dd2... planner: ban (index) merge join heuristically when convert eq cond to other cond (#21138)
 	baseJoin := basePhysicalJoin{
 		InnerChildIdx:   1 - outerIdx,
 		LeftConditions:  p.LeftConditions,
@@ -442,6 +441,8 @@ func (p *LogicalJoin) constructIndexJoin(
 		KeyOff2IdxOff:    newKeyOff,
 		Ranges:           ranges,
 		CompareFilters:   compareFilters,
+		OuterHashKeys:    outerHashKeys,
+		InnerHashKeys:    innerHashKeys,
 	}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), p.blockOffset, chReqProps...)
 	if path != nil {
 		join.IdxColLens = path.IdxColLens
@@ -459,7 +460,7 @@ func (p *LogicalJoin) constructIndexMergeJoin(
 	path *util.AccessPath,
 	compareFilters *ColWithCmpFuncManager,
 ) []PhysicalPlan {
-	indexJoins := p.constructIndexJoin(prop, outerIdx, innerTask, ranges, keyOff2IdxOff, path, compareFilters)
+	indexJoins := p.constructIndexJoin(plancodec.TypeIndexMergeJoin, prop, outerIdx, innerTask, ranges, keyOff2IdxOff, path, compareFilters)
 	indexMergeJoins := make([]PhysicalPlan, 0, len(indexJoins))
 	for _, plan := range indexJoins {
 		join := plan.(*PhysicalIndexJoin)
@@ -548,7 +549,7 @@ func (p *LogicalJoin) constructIndexHashJoin(
 	path *util.AccessPath,
 	compareFilters *ColWithCmpFuncManager,
 ) []PhysicalPlan {
-	indexJoins := p.constructIndexJoin(prop, outerIdx, innerTask, ranges, keyOff2IdxOff, path, compareFilters)
+	indexJoins := p.constructIndexJoin(plancodec.TypeIndexHashJoin, prop, outerIdx, innerTask, ranges, keyOff2IdxOff, path, compareFilters)
 	indexHashJoins := make([]PhysicalPlan, 0, len(indexJoins))
 	for _, plan := range indexJoins {
 		join := plan.(*PhysicalIndexJoin)
@@ -658,8 +659,7 @@ func (p *LogicalJoin) buildIndexJoinInner2TableScan(
 			failpoint.Return(p.constructIndexHashJoin(prop, outerIdx, innerTask, nil, keyOff2IdxOff, nil, nil))
 		}
 	})
-<<<<<<< HEAD
-	joins = append(joins, p.constructIndexJoin(prop, outerIdx, innerTask, nil, keyOff2IdxOff, nil, nil)...)
+	joins = append(joins, p.constructIndexJoin(plancodec.TypeIndexJoin, prop, outerIdx, innerTask, nil, keyOff2IdxOff, nil, nil)...)
 	// The index merge join's inner plan is different from index join, so we
 	// should construct another inner plan for it.
 	// Because we can't keep order for union scan, if there is a union scan in inner task,
@@ -672,9 +672,6 @@ func (p *LogicalJoin) buildIndexJoinInner2TableScan(
 	//	joins = append(joins, p.constructIndexMergeJoin(prop, outerIdx, innerTask2, nil, keyOff2IdxOff, nil, nil)...)
 	//}
 
-=======
-	joins = append(joins, p.constructIndexJoin(prop, outerIdx, innerTask, ranges, keyOff2IdxOff, nil, nil)...)
->>>>>>> 38bbb0dd2... planner: ban (index) merge join heuristically when convert eq cond to other cond (#21138)
 	// We can reuse the `innerTask` here since index nested loop hash join
 	// do not need the inner child to promise the order.
 	joins = append(joins, p.constructIndexHashJoin(prop, outerIdx, innerTask, nil, keyOff2IdxOff, nil, nil)...)
@@ -727,14 +724,10 @@ func (p *LogicalJoin) buildIndexJoinInner2IndexScan(
 			failpoint.Return(p.constructIndexHashJoin(prop, outerIdx, innerTask, helper.chosenRanges, keyOff2IdxOff, helper.chosenPath, helper.lastColManager))
 		}
 	})
-	joins = append(joins, p.constructIndexJoin(prop, outerIdx, innerTask, helper.chosenRanges, keyOff2IdxOff, helper.chosenPath, helper.lastColManager)...)
-<<<<<<< HEAD
-=======
+	joins = append(joins, p.constructIndexJoin(plancodec.TypeIndexJoin, prop, outerIdx, innerTask, helper.chosenRanges, keyOff2IdxOff, helper.chosenPath, helper.lastColManager)...)
 	// We can reuse the `innerTask` here since index nested loop hash join
 	// do not need the inner child to promise the order.
-	joins = append(joins, p.constructIndexHashJoin(prop, outerIdx, innerTask, helper.chosenRanges, keyOff2IdxOff, helper.chosenPath, helper.lastColManager)...)
->>>>>>> 38bbb0dd2... planner: ban (index) merge join heuristically when convert eq cond to other cond (#21138)
-	// The index merge join's inner plan is different from index join, so we
+	joins = append(joins, p.constructIndexHashJoin(prop, outerIdx, innerTask, helper.chosenRanges, keyOff2IdxOff, helper.chosenPath, helper.lastColManager)...) // The index merge join's inner plan is different from index join, so we
 	// should construct another inner plan for it.
 	// Because we can't keep order for union scan, if there is a union scan in inner task,
 	// we can't construct index merge join.

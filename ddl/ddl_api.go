@@ -1699,6 +1699,9 @@ func buildViewInfo(ctx sessionctx.Context, s *ast.CreateViewStmt) (*model.ViewIn
 
 func checkPartitionByHash(ctx sessionctx.Context, tbInfo *model.TableInfo, s *ast.CreateTableStmt) error {
 	pi := tbInfo.Partition
+	if err := checkPartitionNameUnique(pi); err != nil {
+		return err
+	}
 	if err := checkAddPartitionTooManyPartitions(pi.Num); err != nil {
 		return err
 	}
@@ -1831,7 +1834,8 @@ func checkTwoRangeColumns(ctx sessionctx.Context, curr, prev *model.PartitionDef
 		// PARTITION p0 VALUES LESS THAN (5,10,'ggg')
 		// PARTITION p1 VALUES LESS THAN (10,20,'mmm')
 		// PARTITION p2 VALUES LESS THAN (15,30,'sss')
-		succ, err := parseAndEvalBoolExpr(ctx, fmt.Sprintf("(%s) > (%s)", curr.LessThan[i], prev.LessThan[i]), tbInfo)
+		colInfo := findColumnByName(pi.Columns[i].L, tbInfo)
+		succ, err := parseAndEvalBoolExpr(ctx, curr.LessThan[i], prev.LessThan[i], colInfo, tbInfo)
 		if err != nil {
 			return false, err
 		}
@@ -1843,11 +1847,20 @@ func checkTwoRangeColumns(ctx sessionctx.Context, curr, prev *model.PartitionDef
 	return false, nil
 }
 
-func parseAndEvalBoolExpr(ctx sessionctx.Context, expr string, tbInfo *model.TableInfo) (bool, error) {
-	e, err := expression.ParseSimpleExprWithTableInfo(ctx, expr, tbInfo)
+func parseAndEvalBoolExpr(ctx sessionctx.Context, l, r string, colInfo *model.ColumnInfo, tbInfo *model.TableInfo) (bool, error) {
+	lexpr, err := expression.ParseSimpleExprWithTableInfo(ctx, l, tbInfo)
 	if err != nil {
 		return false, err
 	}
+	rexpr, err := expression.ParseSimpleExprWithTableInfo(ctx, r, tbInfo)
+	if err != nil {
+		return false, err
+	}
+	e, err := expression.NewFunctionBase(ctx, ast.GT, types.NewFieldType(mysql.TypeLonglong), lexpr, rexpr)
+	if err != nil {
+		return false, err
+	}
+	e.SetCharsetAndCollation(colInfo.Charset, colInfo.Collate)
 	res, _, err1 := e.EvalInt(ctx, chunk.Row{})
 	if err1 != nil {
 		return false, err1
@@ -4346,10 +4359,32 @@ func checkRangeColumnsTypeAndValuesMatch(ctx sessionctx.Context, meta *model.Tab
 		}
 
 		// Check val.ConvertTo(colType) doesn't work, so we need this case by case check.
+		vkind := val.Kind()
 		switch colType.Tp {
 		case mysql.TypeDate, mysql.TypeDatetime:
-			switch val.Kind() {
+			switch vkind {
 			case types.KindString, types.KindBytes:
+				if _, err := val.ConvertTo(ctx.GetSessionVars().StmtCtx, colType); err != nil {
+					return ErrWrongTypeColumnValue.GenWithStackByArgs()
+				}
+			default:
+				return ErrWrongTypeColumnValue.GenWithStackByArgs()
+			}
+		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
+			switch vkind {
+			case types.KindInt64, types.KindUint64, types.KindNull:
+			default:
+				return ErrWrongTypeColumnValue.GenWithStackByArgs()
+			}
+		case mysql.TypeFloat, mysql.TypeDouble:
+			switch vkind {
+			case types.KindFloat32, types.KindFloat64, types.KindNull:
+			default:
+				return ErrWrongTypeColumnValue.GenWithStackByArgs()
+			}
+		case mysql.TypeString, mysql.TypeVarString:
+			switch vkind {
+			case types.KindString, types.KindBytes, types.KindNull:
 			default:
 				return ErrWrongTypeColumnValue.GenWithStackByArgs()
 			}
