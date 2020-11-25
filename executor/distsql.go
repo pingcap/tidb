@@ -1183,26 +1183,48 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 		sort.Sort(task)
 	}
 
-	if w.keepOrder && handleCnt != len(task.rows) && !util.HasCancelled(ctx) {
+	numRows := len(task.rows)
+	if numRows == 0 {
+		numRows = task.chk.GetNumRows()
+	}
+	if handleCnt != numRows && !util.HasCancelled(ctx) {
 		if len(w.idxLookup.tblPlans) == 1 {
 			obtainedHandlesMap := kv.NewHandleMap()
-			for _, row := range task.rows {
-				handle, err := w.idxLookup.getHandle(row, w.handleIdx, w.idxLookup.isCommonHandle(), getHandleFromTable)
-				if err != nil {
-					return err
+			if w.keepOrder {
+				for _, row := range task.rows {
+					handle, err := w.idxLookup.getHandle(row, w.handleIdx, w.idxLookup.isCommonHandle(), getHandleFromTable)
+					if err != nil {
+						return err
+					}
+					obtainedHandlesMap.Set(handle, true)
 				}
-				obtainedHandlesMap.Set(handle, true)
+				logutil.Logger(ctx).Error("inconsistent index handles", zap.String("index", w.idxLookup.index.Name.O),
+					zap.Int("index_cnt", handleCnt), zap.Int("table_cnt", len(task.rows)),
+					zap.String("missing_handles", fmt.Sprint(GetLackHandles(task.handles, obtainedHandlesMap))),
+					zap.String("total_handles", fmt.Sprint(task.handles)))
+
+				// table scan in double read can never has conditions according to convertToIndexScan.
+				// if this table scan has no condition, the number of rows it returns must equal to the length of handles.
+				return errors.Errorf("inconsistent index %s handle count %d isn't equal to value count %d",
+					w.idxLookup.index.Name.O, handleCnt, len(task.rows))
+			} else {
+				for i := 0; i < task.chk.GetNumRows(); i++ {
+					handle, err := w.idxLookup.getHandle(task.chk.GetRow(i), w.handleIdx, w.idxLookup.isCommonHandle(), getHandleFromTable)
+					if err != nil {
+						return err
+					}
+					obtainedHandlesMap.Set(handle, true)
+				}
+				logutil.Logger(ctx).Error("inconsistent index handles", zap.String("index", w.idxLookup.index.Name.O),
+					zap.Int("index_cnt", handleCnt), zap.Int("table_cnt", task.chk.GetNumRows()),
+					zap.String("missing_handles", fmt.Sprint(GetLackHandles(task.handles, obtainedHandlesMap))),
+					zap.String("total_handles", fmt.Sprint(task.handles)))
+
+				// table scan in double read can never has conditions according to convertToIndexScan.
+				// if this table scan has no condition, the number of rows it returns must equal to the length of handles.
+				return errors.Errorf("inconsistent index %s handle count %d isn't equal to value count %d",
+					w.idxLookup.index.Name.O, handleCnt, task.chk.GetNumRows())
 			}
-
-			logutil.Logger(ctx).Error("inconsistent index handles", zap.String("index", w.idxLookup.index.Name.O),
-				zap.Int("index_cnt", handleCnt), zap.Int("table_cnt", len(task.rows)),
-				zap.String("missing_handles", fmt.Sprint(GetLackHandles(task.handles, obtainedHandlesMap))),
-				zap.String("total_handles", fmt.Sprint(task.handles)))
-
-			// table scan in double read can never has conditions according to convertToIndexScan.
-			// if this table scan has no condition, the number of rows it returns must equal to the length of handles.
-			return errors.Errorf("inconsistent index %s handle count %d isn't equal to value count %d",
-				w.idxLookup.index.Name.O, handleCnt, len(task.rows))
 		}
 	}
 
