@@ -753,7 +753,6 @@ func (s *testSuite4) TestInsertIgnoreOnDup(c *C) {
 	testSQL = `select * from t;`
 	r := tk.MustQuery(testSQL)
 	r.Check(testkit.Rows("1 1", "2 2"))
-	tk.MustExec("set @@tidb_constraint_check_in_place = 1")
 	testSQL = `insert ignore into t values(1, 1) on duplicate key update j = 2;`
 	tk.MustExec(testSQL)
 	tk.CheckLastMessage("")
@@ -1390,7 +1389,6 @@ func (s *testSuite8) TestUpdate(c *C) {
 
 	// Test that in a transaction, when a constraint failed in an update statement, the record is not inserted.
 	tk.MustExec("create table update_unique (id int primary key, name int unique)")
-	tk.MustExec("set @@tidb_constraint_check_in_place = 1")
 	tk.MustExec("insert update_unique values (1, 1), (2, 2);")
 	tk.MustExec("begin")
 	_, err = tk.Exec("update update_unique set name = 1 where id = 2")

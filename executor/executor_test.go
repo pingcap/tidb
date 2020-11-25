@@ -6553,7 +6553,11 @@ func (s *testSuite) TestCollectDMLRuntimeStats(c *C) {
 		stats := tk.Se.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootStats(p.ID())
 		return stats.String()
 	}
-	tk.MustExec("set @@tidb_constraint_check_in_place = 1")
+	saveConstraintCheckInPlace := tk.Se.GetSessionVars().ConstraintCheckInPlace
+	tk.Se.GetSessionVars().ConstraintCheckInPlace = true
+	defer func() {
+		tk.Se.GetSessionVars().ConstraintCheckInPlace = saveConstraintCheckInPlace
+	}()
 	for _, sql := range testSQLs {
 		tk.MustExec(sql)
 		c.Assert(getRootStats(), Matches, "time.*loops.*Get.*num_rpc.*total_time.*")
