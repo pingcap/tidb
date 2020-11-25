@@ -4942,3 +4942,22 @@ func (s *testDBSuite4) TestGeneratedColumnWindowFunction(c *C) {
 	tk.MustExec("CREATE TABLE t (a INT)")
 	tk.MustGetErrCode("ALTER TABLE t ADD index idx ((ROW_NUMBER() OVER (ORDER BY a)))", errno.ErrWindowInvalidWindowFuncUse)
 }
+
+// Test issue #20529.
+func (s *testSerialDBSuite) TestColumnTypeChangeIgnoreDisplayLength(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	// Change int to int(3).
+	// Although display length is increased, the default flen is decreased, reorg is needed.
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("alter table t modify column a int(3)")
+
+	// Change int to bigint(1)
+	// Although display length is decreased, default flen is the same, reorg is not needed.
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("alter table t modify column a bigint(1)")
+	tk.MustExec("drop table if exists t")
+}
