@@ -556,6 +556,11 @@ error = '''
 JSON_OBJECTAGG: unsupported second argument type %v
 '''
 
+["kv:1062"]
+error = '''
+Duplicate entry '%-.64s' for key '%-.192s'
+'''
+
 ["kv:8004"]
 error = '''
 Transaction is too large, size: %d
@@ -1394,11 +1399,6 @@ variable '%s' does not yet support value: %s
 ["variable:8048"]
 error = '''
 The isolation level '%s' is not supported. Set tidb_skip_isolation_level_check=1 to skip this error
-'''
-
-["variable:8054"]
-error = '''
-cannot set variable to null
 '''
 
 ["variable:8055"]

@@ -438,7 +438,7 @@
       },
       {
         "SQL": "select * from t where t.c in (select b from t s where s.a = t.a)",
-        "Best": "MergeSemiJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.a,test.t.a)"
+        "Best": "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.a,test.t.a)(test.t.c,test.t.b)"
       },
       {
         "SQL": "select t.c in (select b from t s where s.a = t.a) from t",
@@ -1319,7 +1319,7 @@
           "explain select /*+ TIDB_INLJ(t2) */ * from t t1, t t2 where t1.a = t2.a"
         ],
         "Plan": [
-          "IndexJoin_12 12500.00 root  inner join, inner:UnionScan_11, outer key:test.t.a, inner key:test.t.a",
+          "IndexJoin_12 12500.00 root  inner join, inner:UnionScan_11, outer key:test.t.a, inner key:test.t.a, equal cond:eq(test.t.a, test.t.a)",
           "├─UnionScan_15(Build) 10000.00 root  ",
           "│ └─TableReader_17 10000.00 root  data:TableFullScan_16",
           "│   └─TableFullScan_16 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
@@ -2099,7 +2099,7 @@
       {
         "SQL": "select /*+ INL_HASH_JOIN(t1) */ t1.b, t2.b from t1 inner join t2 on t1.a = t2.a;",
         "Plan": "IndexHashJoin{IndexLookUp(Index(t1.idx_a)[[NULL,+inf]]->Sel([not(isnull(test.t1.a))]), Table(t1))->TableReader(Table(t2)->Sel([not(isnull(test.t2.a))]))}(test.t2.a,test.t1.a)",
-        "Hints": "use_index(@`sel_1` `test`.`t1` `idx_a`), use_index(@`sel_1` `test`.`t2` ), inl_hash_join(@`sel_1` )"
+        "Hints": "use_index(@`sel_1` `test`.`t1` `idx_a`), use_index(@`sel_1` `test`.`t2` ), inl_hash_join(@`sel_1` `test`.`t1`)"
       },
       {
         "SQL": "select /*+ INL_MERGE_JOIN(t1) */ t1.b, t2.b from t1 inner join t2 on t1.a = t2.a;",

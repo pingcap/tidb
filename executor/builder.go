@@ -2099,7 +2099,13 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 	innerPlan := v.Children()[v.InnerChildIdx]
 	innerTypes := make([]*types.FieldType, innerPlan.Schema().Len())
 	for i, col := range innerPlan.Schema().Columns {
-		innerTypes[i] = col.RetType
+		innerTypes[i] = col.RetType.Clone()
+		// The `innerTypes` would be called for `Datum.ConvertTo` when converting the columns from outer table
+		// to build hash map or construct lookup keys. So we need to modify its Flen otherwise there would be
+		// truncate error. See issue https://github.com/pingcap/tidb/issues/21232 for example.
+		if innerTypes[i].EvalType() == types.ETString {
+			innerTypes[i].Flen = types.UnspecifiedLength
+		}
 	}
 
 	var (
@@ -2157,12 +2163,23 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 	for i := 0; i < len(v.OuterJoinKeys); i++ {
 		outerKeyCols[i] = v.OuterJoinKeys[i].Index
 	}
-	e.outerCtx.keyCols = outerKeyCols
 	innerKeyCols := make([]int, len(v.InnerJoinKeys))
 	for i := 0; i < len(v.InnerJoinKeys); i++ {
 		innerKeyCols[i] = v.InnerJoinKeys[i].Index
 	}
+	e.outerCtx.keyCols = outerKeyCols
 	e.innerCtx.keyCols = innerKeyCols
+
+	outerHashCols, innerHashCols := make([]int, len(v.OuterHashKeys)), make([]int, len(v.InnerHashKeys))
+	for i := 0; i < len(v.OuterHashKeys); i++ {
+		outerHashCols[i] = v.OuterHashKeys[i].Index
+	}
+	for i := 0; i < len(v.InnerHashKeys); i++ {
+		innerHashCols[i] = v.InnerHashKeys[i].Index
+	}
+	e.outerCtx.hashCols = outerHashCols
+	e.innerCtx.hashCols = innerHashCols
+
 	e.joinResult = newFirstChunk(e)
 	executorCounterIndexLookUpJoin.Inc()
 	return e
@@ -2177,7 +2194,13 @@ func (b *executorBuilder) buildIndexLookUpMergeJoin(v *plannercore.PhysicalIndex
 	innerPlan := v.Children()[v.InnerChildIdx]
 	innerTypes := make([]*types.FieldType, innerPlan.Schema().Len())
 	for i, col := range innerPlan.Schema().Columns {
-		innerTypes[i] = col.RetType
+		innerTypes[i] = col.RetType.Clone()
+		// The `innerTypes` would be called for `Datum.ConvertTo` when converting the columns from outer table
+		// to build hash map or construct lookup keys. So we need to modify its Flen otherwise there would be
+		// truncate error. See issue https://github.com/pingcap/tidb/issues/21232 for example.
+		if innerTypes[i].EvalType() == types.ETString {
+			innerTypes[i].Flen = types.UnspecifiedLength
+		}
 	}
 	var (
 		outerFilter           []expression.Expression
