@@ -1194,3 +1194,149 @@ func (it copErrorResponse) Next(ctx context.Context) (kv.ResultSubset, error) {
 func (it copErrorResponse) Close() error {
 	return nil
 }
+<<<<<<< HEAD
+=======
+
+// rateLimitAction an OOM Action which is used to control the token if OOM triggered. The token number should be
+// set on initial. Each time the Action is triggered, one token would be destroyed. If the count of the token is less
+// than 2, the action would be delegated to the fallback action.
+type rateLimitAction struct {
+	memory.BaseOOMAction
+	// enabled indicates whether the rateLimitAction is permitted to Action. 1 means permitted, 0 denied.
+	enabled uint32
+	// totalTokenNum indicates the total token at initial
+	totalTokenNum uint
+	cond          struct {
+		sync.Mutex
+		// exceeded indicates whether have encountered OOM situation.
+		exceeded bool
+		// remainingTokenNum indicates the count of tokens which still exists
+		remainingTokenNum uint
+		once              sync.Once
+		// triggerCountForTest indicates the total count of the rateLimitAction's Action being executed
+		triggerCountForTest uint
+	}
+}
+
+func newRateLimitAction(totalTokenNumber uint) *rateLimitAction {
+	return &rateLimitAction{
+		totalTokenNum: totalTokenNumber,
+		cond: struct {
+			sync.Mutex
+			exceeded            bool
+			remainingTokenNum   uint
+			once                sync.Once
+			triggerCountForTest uint
+		}{
+			Mutex:             sync.Mutex{},
+			exceeded:          false,
+			remainingTokenNum: totalTokenNumber,
+			once:              sync.Once{},
+		},
+	}
+}
+
+// Action implements ActionOnExceed.Action
+func (e *rateLimitAction) Action(t *memory.Tracker) {
+	failpoint.Inject("testRateLimitActionDisable", func(val failpoint.Value) {
+		if val.(bool) {
+			e.setEnabled(false)
+		}
+	})
+
+	if !e.isEnabled() {
+		if fallback := e.GetFallback(); fallback != nil {
+			fallback.Action(t)
+		}
+		return
+	}
+	e.conditionLock()
+	defer e.conditionUnlock()
+	e.cond.once.Do(func() {
+		if e.cond.remainingTokenNum < 2 {
+			e.setEnabled(false)
+			logutil.BgLogger().Info("memory exceed quota, rateLimitAction delegate to fallback action",
+				zap.Uint("total token count", e.totalTokenNum))
+			if fallback := e.GetFallback(); fallback != nil {
+				fallback.Action(t)
+			}
+			return
+		}
+		failpoint.Inject("testRateLimitActionMockConsumeAndAssert", func(val failpoint.Value) {
+			if val.(bool) {
+				if e.cond.triggerCountForTest+e.cond.remainingTokenNum != e.totalTokenNum {
+					panic("triggerCount + remainingTokenNum not equal to totalTokenNum")
+				}
+			}
+		})
+		logutil.BgLogger().Info("memory exceeds quota, destroy one token now.",
+			zap.Int64("consumed", t.BytesConsumed()),
+			zap.Int64("quota", t.GetBytesLimit()),
+			zap.Uint("total token count", e.totalTokenNum),
+			zap.Uint("remaining token count", e.cond.remainingTokenNum))
+		e.cond.exceeded = true
+		e.cond.triggerCountForTest++
+	})
+}
+
+// SetLogHook implements ActionOnExceed.SetLogHook
+func (e *rateLimitAction) SetLogHook(hook func(uint64)) {
+
+}
+
+// GetPriority get the priority of the Action.
+func (e *rateLimitAction) GetPriority() int64 {
+	return memory.DefRateLimitPriority
+}
+
+// destroyTokenIfNeeded will check the `exceed` flag after copWorker finished one task.
+// If the exceed flag is true and there is no token been destroyed before, one token will be destroyed,
+// or the token would be return back.
+func (e *rateLimitAction) destroyTokenIfNeeded(returnToken func()) {
+	if !e.isEnabled() {
+		returnToken()
+		return
+	}
+	e.conditionLock()
+	defer e.conditionUnlock()
+	if !e.cond.exceeded {
+		returnToken()
+		return
+	}
+	// If actionOnExceed has been triggered and there is no token have been destroyed before,
+	// destroy one token.
+	e.cond.remainingTokenNum = e.cond.remainingTokenNum - 1
+	e.cond.exceeded = false
+	e.cond.once = sync.Once{}
+}
+
+func (e *rateLimitAction) conditionLock() {
+	e.cond.Lock()
+}
+
+func (e *rateLimitAction) conditionUnlock() {
+	e.cond.Unlock()
+}
+
+func (e *rateLimitAction) close() {
+	if !e.isEnabled() {
+		return
+	}
+	e.setEnabled(false)
+	e.conditionLock()
+	defer e.conditionUnlock()
+	e.cond.exceeded = false
+}
+
+func (e *rateLimitAction) setEnabled(enabled bool) {
+	newValue := uint32(0)
+	if enabled {
+		newValue = uint32(1)
+	}
+	atomic.StoreUint32(&e.enabled, newValue)
+}
+
+func (e *rateLimitAction) isEnabled() bool {
+	return atomic.LoadUint32(&e.enabled) > 0
+}
+>>>>>>> af58658b6... *: implement priority control for OOM Action (#21170)
