@@ -2025,26 +2025,37 @@ func (s *testPessimisticSuite) TestAsyncCommitWithSchemaChange(c *C) {
 	tk3 := testkit.NewTestKitWithInit(c, s.store)
 
 	// The txn tk writes something but with failpoint the primary key is not committed.
-	tk.MustExec("begin optimistic")
+	tk.MustExec("begin pessimistic")
 	tk.MustExec("insert into tk values(2, 2, 2)")
-	// Add index for c2 before commit
-	tk2.MustExec("alter table tk add index k2(c2)")
+	tk.MustExec("update tk set c2 = 10 where c1 = 1")
+	ch := make(chan struct{})
+	go func() {
+		// Add index for c2 before commit
+		tk2.MustExec("alter table tk add index k2(c2)")
+		ch <- struct{}{}
+	}()
 	// key for c2 should be amended
 	tk.MustExec("commit")
+	<-ch
+	tk3.MustQuery("select * from tk where c2 = 1").Check(testkit.Rows())
 	tk3.MustQuery("select * from tk where c2 = 2").Check(testkit.Rows("2 2 2"))
+	tk3.MustQuery("select * from tk where c2 = 10").Check(testkit.Rows("1 10 1"))
 	tk3.MustExec("admin check table tk")
 
-	tk.MustExec("begin optimistic")
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("update tk set c3 = 20 where c1 = 2")
 	tk.MustExec("insert into tk values(3, 3, 3)")
 	tk.MustExec("commit")
 	// Add index for c3 after commit
 	tk2.MustExec("alter table tk add index k3(c3)")
+	tk3.MustQuery("select * from tk where c3 = 2").Check(testkit.Rows())
+	tk3.MustQuery("select * from tk where c3 = 20").Check(testkit.Rows("2 2 20"))
 	tk3.MustQuery("select * from tk where c3 = 3").Check(testkit.Rows("3 3 3"))
 	tk3.MustExec("admin check table tk")
 
 	tk.MustExec("drop table if exists tk")
 	tk.MustExec("create table tk (c1 int primary key, c2 int)")
-	tk.MustExec("begin optimistic")
+	tk.MustExec("begin pessimistic")
 	tk.MustExec("insert into tk values(1, 1)")
 	go func() {
 		time.Sleep(200 * time.Millisecond)
@@ -2077,19 +2088,28 @@ func (s *testPessimisticSuite) Test1PCWithSchemaChange(c *C) {
 
 	tk.MustExec("drop table if exists tk")
 	tk.MustExec("create table tk (c1 int primary key, c2 int)")
+	tk.MustExec("insert into tk values (1, 1)")
 
-	tk.MustExec("begin optimistic")
+	tk.MustExec("begin pessimistic")
 	tk.MustExec("insert into tk values(2, 2)")
-	// Add index for c2 before commit
-	tk2.MustExec("alter table tk add index k2(c2)")
+	tk.MustExec("update tk set c2 = 10 where c1 = 1")
+	ch := make(chan struct{})
+	go func() {
+		// Add index for c2 before commit
+		tk2.MustExec("alter table tk add index k2(c2)")
+		ch <- struct{}{}
+	}()
 	// key for c2 should be amended
 	tk.MustExec("commit")
+	<-ch
 	tk3.MustQuery("select * from tk where c2 = 2").Check(testkit.Rows("2 2"))
+	tk3.MustQuery("select * from tk where c2 = 1").Check(testkit.Rows())
+	tk3.MustQuery("select * from tk where c2 = 10").Check(testkit.Rows("1 10"))
 	tk3.MustExec("admin check table tk")
 
 	tk.MustExec("drop table if exists tk")
 	tk.MustExec("create table tk (c1 int primary key, c2 int)")
-	tk.MustExec("begin optimistic")
+	tk.MustExec("begin pessimistic")
 	tk.MustExec("insert into tk values(1, 1)")
 	go func() {
 		time.Sleep(200 * time.Millisecond)
