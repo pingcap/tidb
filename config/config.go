@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/util/versioninfo"
 	tracing "github.com/uber/jaeger-client-go/config"
 
+	"github.com/sirupsen/logrus"
 	"go.uber.org/zap"
 	"google.golang.org/grpc/encoding/gzip"
 )
@@ -835,6 +836,10 @@ func isAllDeprecatedConfigItems(items []string) bool {
 	return true
 }
 
+// IsMemoryQuotaQuerySetByUser indicates whether the config item mem-quota-query
+// is set by the user.
+var IsMemoryQuotaQuerySetByUser bool
+
 // InitializeConfig initialize the global config handler.
 // The function enforceCmdArgs is used to merge the config file with command arguments:
 // For example, if you start TiDB by the command "./tidb-server --port=3000", the port number should be
@@ -889,6 +894,11 @@ func (c *Config) Load(confFile string) error {
 	metaData, err := toml.DecodeFile(confFile, c)
 	if c.TokenLimit == 0 {
 		c.TokenLimit = 1000
+	}
+	logrus.Warning(metaData.Keys())
+	if metaData.IsDefined("mem-quota-query") {
+		logrus.Warning("defined")
+		IsMemoryQuotaQuerySetByUser = true
 	}
 	if len(c.ServerVersion) > 0 {
 		mysql.ServerVersion = c.ServerVersion
