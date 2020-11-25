@@ -1719,7 +1719,48 @@ func (s *testSuite) TestIssue20417(c *C) {
 		 INDEX idxb(b),
 		 INDEX idxc(c)
 		)`)
+
+	// Test for create binding
 	tk.MustExec("create global binding for select * from t WHERE b=2 AND c=3924541 using select /*+ use_index(@sel_1 test.t b) */ * from t WHERE b=2 AND c=3924541")
 	c.Assert(tk.MustUseIndex("SELECT /*+ use_index(@`sel_1` `test`.`t` `c`)*/ * FROM `test`.`t` WHERE `b`=2 AND `c`=3924541", "idxb(b)"), IsTrue)
 	c.Assert(tk.MustUseIndex("SELECT /*+ use_index(@`sel_1` `test`.`t` `c`)*/ * FROM `t` WHERE `b`=2 AND `c`=3924541", "idxb(b)"), IsTrue)
+
+	// Test for capture baseline
+	s.cleanBindingEnv(tk)
+	tk.MustExec("set @@tidb_capture_plan_baselines = on")
+	s.domain.BindHandle().CaptureBaselines()
+	c.Assert(tk.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil), IsTrue)
+	tk.MustExec("select * from t where b=2 and c=213124")
+	tk.MustExec("select * from t where b=2 and c=213124")
+	tk.MustExec("admin capture bindings")
+	rows := tk.MustQuery("show global bindings").Rows()
+	c.Assert(len(rows), Equals, 1)
+	c.Assert(rows[0][0], Equals, "select * from test . t where b = ? and c = ?")
+	c.Assert(rows[0][1], Equals, "SELECT /*+ use_index(@`sel_1` `test`.`t` `idxb`)*/ * FROM `test`.`t` WHERE `b`=2 AND `c`=213124")
+	tk.MustExec("set @@tidb_capture_plan_baselines = off")
+
+	// Test for evolve baseline
+	s.cleanBindingEnv(tk)
+	tk.MustExec("set @@tidb_evolve_plan_baselines=1")
+	tk.MustExec("create global binding for select * from t WHERE c=3924541 using select /*+ use_index(@sel_1 test.t b) */ * from t WHERE c=3924541")
+	rows = tk.MustQuery("show global bindings").Rows()
+	c.Assert(len(rows), Equals, 1)
+	c.Assert(rows[0][0], Equals, "select * from test . t where c = ?")
+	c.Assert(rows[0][1], Equals, "SELECT /*+ use_index(@sel_1 test.t b)*/ * FROM test.t WHERE c = 3924541")
+	tk.MustExec("select /*+ use_index(t c)*/ * from t where c=3924541")
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t:idxc")
+	tk.MustExec("admin flush bindings")
+	rows = tk.MustQuery("show global bindings").Rows()
+	c.Assert(len(rows), Equals, 2)
+	c.Assert(rows[1][0], Equals, "select * from test . t where c = ?")
+	c.Assert(rows[1][1], Equals, "SELECT /*+ use_index(@`sel_1` `test`.`t` `idxc`), use_index(`t` `c`)*/ * FROM `test`.`t` WHERE `c`=3924541")
+	c.Assert(rows[1][3], Equals, "pending verify")
+	tk.MustExec("admin evolve bindings")
+	rows = tk.MustQuery("show global bindings").Rows()
+	c.Assert(len(rows), Equals, 2)
+	c.Assert(rows[1][0], Equals, "select * from test . t where c = ?")
+	c.Assert(rows[1][1], Equals, "SELECT /*+ use_index(@`sel_1` `test`.`t` `idxc`), use_index(`t` `c`)*/ * FROM `test`.`t` WHERE `c`=3924541")
+	status := rows[1][3].(string)
+	c.Assert(status == "using" || status == "rejected", IsTrue)
+	tk.MustExec("set @@tidb_evolve_plan_baselines=0")
 }
