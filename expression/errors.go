@@ -82,7 +82,8 @@ func handleDivisionByZeroError(ctx sessionctx.Context) error {
 	return nil
 }
 
-func unsupportedJsonComparison(ctx sessionctx.Context, args []Expression) {
+// unsupportedJSONComparison reports warnings while there is a JSON type in least/greatest function's arguments
+func unsupportedJSONComparison(ctx sessionctx.Context, args []Expression) {
 	for _, arg := range args {
 		tp := arg.GetType().Tp
 		if types.ResultMergeType(tp) == types.ETString && tp == pmysql.TypeJSON {
@@ -91,7 +92,7 @@ func unsupportedJsonComparison(ctx sessionctx.Context, args []Expression) {
 					mysql.ErrNotSupportedYet,
 					pmysql.Message("comparison of JSON in the LEAST and GREATEST operators", nil)),
 			)
-			break;
+			break
 		}
 	}
 }
