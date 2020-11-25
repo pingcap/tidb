@@ -1324,15 +1324,15 @@ func (c *twoPhaseCommitter) amendPessimisticLock(ctx context.Context, addMutatio
 			ForUpdateTS:  c.forUpdateTS,
 			LockWaitTime: kv.LockNoWait,
 		}
-		logutil.Logger(ctx).Info("amendPessimisticLock",
-			zap.Uint64("startTs", c.startTS),
-			zap.Uint64("forUpdateTS", c.forUpdateTS))
 		err := c.pessimisticLockMutations(pessimisticLockBo, lCtx, &keysNeedToLock)
 		if err != nil {
 			logutil.Logger(ctx).Warn("amend pessimistic lock has failed", zap.Error(err), zap.Uint64("txnStartTS", c.startTS))
 			return err
 		}
-		logutil.Logger(ctx).Info("amend pessimistic lock", zap.Uint64("startTS", c.startTS), zap.Uint64("forUpdateTS", c.forUpdateTS))
+		logutil.Logger(ctx).Info("amendPessimisticLock finished",
+			zap.Uint64("startTs", c.startTS),
+			zap.Uint64("forUpdateTS", c.forUpdateTS),
+			zap.Int("keys", keysNeedToLock.Len()))
 	}
 	return nil
 }
