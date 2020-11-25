@@ -534,7 +534,7 @@ func (worker *copIteratorWorker) run(ctx context.Context) {
 			respCh = task.respChan
 		}
 		worker.handleTask(ctx, task, respCh)
-		if worker.respChan != nil && worker.actionOnExceed.isEnabled() {
+		if worker.respChan != nil {
 			// When a task is finished by the worker, send a finCopResp into channel to notify the copIterator that
 			// there is a task finished.
 			worker.sendToRespCh(finCopResp, worker.respChan, false)
@@ -1341,8 +1341,6 @@ func newRateLimitAction(totalTokenNumber uint) *rateLimitAction {
 // Action implements ActionOnExceed.Action
 func (e *rateLimitAction) Action(t *memory.Tracker) {
 	if !e.isEnabled() {
-		logutil.BgLogger().Info("memory exceed quota, rateLimitAction delegate to fallback action",
-			zap.Bool("rateLimit action enabled", false))
 		if e.fallbackAction != nil {
 			e.fallbackAction.Action(t)
 		}
