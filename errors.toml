@@ -371,6 +371,11 @@ error = '''
 Deadlock found when trying to get lock; try restarting transaction
 '''
 
+["executor:1295"]
+error = '''
+This command is not supported in the prepared statement protocol yet
+'''
+
 ["executor:1317"]
 error = '''
 Query execution was interrupted
@@ -549,6 +554,11 @@ A path expression is not a path to a cell in an array.
 ["json:8066"]
 error = '''
 JSON_OBJECTAGG: unsupported second argument type %v
+'''
+
+["kv:1062"]
+error = '''
+Duplicate entry '%-.64s' for key '%-.192s'
 '''
 
 ["kv:8004"]
@@ -759,6 +769,11 @@ EXPLAIN/SHOW can not be issued; lacking privileges for underlying table
 ["planner:1356"]
 error = '''
 View '%-.192s.%-.192s' references invalid table(s) or column(s) or function(s) or definer/invoker of view lack rights to use them
+'''
+
+["planner:1462"]
+error = '''
+`%-.192s`.`%-.192s` contains view recursion
 '''
 
 ["planner:1747"]
