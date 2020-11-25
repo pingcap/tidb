@@ -31,7 +31,7 @@ func splitPartitionTableRegion(ctx sessionctx.Context, store kv.SplittableStore,
 	regionIDs := make([]uint64, 0, len(pi.Definitions))
 	ctxWithTimeout, cancel := context.WithTimeout(context.Background(), ctx.GetSessionVars().GetSplitRegionTimeout())
 	defer cancel()
-	if tbInfo.ShardRowIDBits > 0 && tbInfo.PreSplitRegions > 0 {
+	if shardingBits(tbInfo) > 0 && tbInfo.PreSplitRegions > 0 {
 		for _, def := range pi.Definitions {
 			regionIDs = append(regionIDs, preSplitPhysicalTableByShardRowID(ctxWithTimeout, store, tbInfo, def.ID, scatter)...)
 		}
@@ -49,7 +49,7 @@ func splitTableRegion(ctx sessionctx.Context, store kv.SplittableStore, tbInfo *
 	ctxWithTimeout, cancel := context.WithTimeout(context.Background(), ctx.GetSessionVars().GetSplitRegionTimeout())
 	defer cancel()
 	var regionIDs []uint64
-	if tbInfo.ShardRowIDBits > 0 && tbInfo.PreSplitRegions > 0 {
+	if shardingBits(tbInfo) > 0 && tbInfo.PreSplitRegions > 0 {
 		regionIDs = preSplitPhysicalTableByShardRowID(ctxWithTimeout, store, tbInfo, tbInfo.ID, scatter)
 	} else {
 		regionIDs = append(regionIDs, splitRecordRegion(ctxWithTimeout, store, tbInfo.ID, scatter))
@@ -61,14 +61,14 @@ func splitTableRegion(ctx sessionctx.Context, store kv.SplittableStore, tbInfo *
 
 func preSplitPhysicalTableByShardRowID(ctx context.Context, store kv.SplittableStore, tbInfo *model.TableInfo, physicalID int64, scatter bool) []uint64 {
 	// Example:
-	// ShardRowIDBits = 4
+	// sharding_bits = 4
 	// PreSplitRegions = 2
 	//
 	// then will pre-split 2^2 = 4 regions.
 	//
 	// in this code:
-	// max   = 1 << tblInfo.ShardRowIDBits = 16
-	// step := int64(1 << (tblInfo.ShardRowIDBits - tblInfo.PreSplitRegions)) = 1 << (4-2) = 4;
+	// max   = 1 << sharding_bits = 16
+	// step := int64(1 << (sharding_bits - tblInfo.PreSplitRegions)) = 1 << (4-2) = 4;
 	//
 	// then split regionID is below:
 	// 4  << 59 = 2305843009213693952
@@ -84,12 +84,13 @@ func preSplitPhysicalTableByShardRowID(ctx context.Context, store kv.SplittableS
 	// And the max _tidb_rowid is 9223372036854775807, it won't be negative number.
 
 	// Split table region.
-	step := int64(1 << (tbInfo.ShardRowIDBits - tbInfo.PreSplitRegions))
-	max := int64(1 << tbInfo.ShardRowIDBits)
+	shardingBits := shardingBits(tbInfo)
+	step := int64(1 << (shardingBits - tbInfo.PreSplitRegions))
+	max := int64(1 << shardingBits)
 	splitTableKeys := make([][]byte, 0, 1<<(tbInfo.PreSplitRegions))
 	splitTableKeys = append(splitTableKeys, tablecodec.GenTablePrefix(physicalID))
 	for p := step; p < max; p += step {
-		recordID := p << (64 - tbInfo.ShardRowIDBits - 1)
+		recordID := p << (64 - shardingBits - 1)
 		recordPrefix := tablecodec.GenTableRecordPrefix(physicalID)
 		key := tablecodec.EncodeRecordKey(recordPrefix, kv.IntHandle(recordID))
 		splitTableKeys = append(splitTableKeys, key)

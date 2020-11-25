@@ -765,7 +765,7 @@
         ],
         "Plan": [
           "StreamAgg_12 1.00 root  funcs:count(1)->Column#9",
-          "└─IndexJoin_34 4.00 root  inner join, inner:IndexReader_33, outer key:test_partition.t6.b, inner key:test_partition.t5.b",
+          "└─IndexJoin_34 4.00 root  inner join, inner:IndexReader_33, outer key:test_partition.t6.b, inner key:test_partition.t5.b, equal cond:eq(test_partition.t6.b, test_partition.t5.b)",
           "  ├─IndexReader_27(Build) 4.00 root partition:p0 index:Selection_26",
           "  │ └─Selection_26 4.00 cop[tikv]  not(isnull(test_partition.t6.b))",
           "  │   └─IndexRangeScan_25 4.00 cop[tikv] table:t6, index:a(a, b) range:[1 1,1 1], [1 6,1 6], [2 1,2 1], [2 6,2 6], keep order:false, stats:pseudo",
@@ -781,7 +781,7 @@
         ],
         "Plan": [
           "StreamAgg_12 1.00 root  funcs:count(1)->Column#9",
-          "└─IndexHashJoin_36 4.00 root  inner join, inner:IndexReader_33, outer key:test_partition.t6.b, inner key:test_partition.t5.b",
+          "└─IndexHashJoin_36 4.00 root  inner join, inner:IndexReader_33, outer key:test_partition.t6.b, inner key:test_partition.t5.b, equal cond:eq(test_partition.t6.b, test_partition.t5.b)",
           "  ├─IndexReader_27(Build) 4.00 root partition:p0 index:Selection_26",
           "  │ └─Selection_26 4.00 cop[tikv]  not(isnull(test_partition.t6.b))",
           "  │   └─IndexRangeScan_25 4.00 cop[tikv] table:t6, index:a(a, b) range:[1 1,1 1], [1 6,1 6], [2 1,2 1], [2 6,2 6], keep order:false, stats:pseudo",
