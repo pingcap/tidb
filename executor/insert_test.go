@@ -1268,8 +1268,6 @@ func (s *testSuite9) TestIssue20768(c *C) {
 	tk.MustQuery("select /*+ inl_merge_join(t1) */ * from t1 join t2 on t1.a = t2.a").Check(testkit.Rows("0 0"))
 	tk.MustQuery("select /*+ merge_join(t1) */ * from t1 join t2 on t1.a = t2.a").Check(testkit.Rows("0 0"))
 }
-<<<<<<< HEAD
-=======
 
 func (s *testSuite9) TestIssue10402(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
@@ -1286,22 +1284,3 @@ func (s *testSuite9) TestIssue10402(c *C) {
 	tk.MustQuery("select * from vctt").Check(testkit.Rows("ab\n\n ab\n\n", "ab\t\t ab\t\t", "ab   ab", "ab\r\r ab\r\r"))
 	tk.MustQuery("select length(v), length(c) from vctt").Check(testkit.Rows("4 4", "4 4", "4 2", "4 4"))
 }
-
-func combination(items []string) func() []string {
-	current := 1
-	buf := make([]string, len(items))
-	return func() []string {
-		if current >= int(math.Pow(2, float64(len(items)))) {
-			return nil
-		}
-		buf = buf[:0]
-		for i, e := range items {
-			if (1<<i)&current != 0 {
-				buf = append(buf, e)
-			}
-		}
-		current++
-		return buf
-	}
-}
->>>>>>> 83c165263... expression, executor: allow insert strings with overflowed trailing spaces (#20987)
