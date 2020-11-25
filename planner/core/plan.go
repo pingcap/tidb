@@ -141,7 +141,7 @@ func optimizeByShuffle4Window(pp *PhysicalWindow, ctx sessionctx.Context) *Physi
 
 func optimizeByShuffle4MergeJoin(pp *PhysicalMergeJoin, ctx sessionctx.Context) *PhysicalShuffle {
 	// TODO: should be configured by a session variable
-	concurrency := 4
+	concurrency := 1 // disable by default
 	if concurrency <= 1 {
 		return nil
 	}
