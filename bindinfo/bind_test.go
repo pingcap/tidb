@@ -1721,6 +1721,14 @@ func (s *testSuite) TestIssue20417(c *C) {
 		)`)
 
 	// Test for create binding
+	tk.MustExec("create global binding for select * from t using select /*+ use_index(t, idxb) */ * from t")
+	rows := tk.MustQuery("show global bindings").Rows()
+	c.Assert(len(rows), Equals, 1)
+	c.Assert(rows[0][0], Equals, "select * from test . t")
+	c.Assert(rows[0][1], Equals, "SELECT /*+ use_index(t idxb)*/ * FROM test.t")
+	c.Assert(tk.MustUseIndex("select * from t", "idxb(b)"), IsTrue)
+	c.Assert(tk.MustUseIndex("select * from test.t", "idxb(b)"), IsTrue)
+
 	tk.MustExec("create global binding for select * from t WHERE b=2 AND c=3924541 using select /*+ use_index(@sel_1 test.t b) */ * from t WHERE b=2 AND c=3924541")
 	c.Assert(tk.MustUseIndex("SELECT /*+ use_index(@`sel_1` `test`.`t` `c`)*/ * FROM `test`.`t` WHERE `b`=2 AND `c`=3924541", "idxb(b)"), IsTrue)
 	c.Assert(tk.MustUseIndex("SELECT /*+ use_index(@`sel_1` `test`.`t` `c`)*/ * FROM `t` WHERE `b`=2 AND `c`=3924541", "idxb(b)"), IsTrue)
@@ -1733,7 +1741,7 @@ func (s *testSuite) TestIssue20417(c *C) {
 	tk.MustExec("select * from t where b=2 and c=213124")
 	tk.MustExec("select * from t where b=2 and c=213124")
 	tk.MustExec("admin capture bindings")
-	rows := tk.MustQuery("show global bindings").Rows()
+	rows = tk.MustQuery("show global bindings").Rows()
 	c.Assert(len(rows), Equals, 1)
 	c.Assert(rows[0][0], Equals, "select * from test . t where b = ? and c = ?")
 	c.Assert(rows[0][1], Equals, "SELECT /*+ use_index(@`sel_1` `test`.`t` `idxb`)*/ * FROM `test`.`t` WHERE `b`=2 AND `c`=213124")
