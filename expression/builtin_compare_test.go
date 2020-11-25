@@ -258,7 +258,7 @@ func (s *testEvaluatorSuite) TestIntervalFunc(c *C) {
 	}
 }
 
-func (s *testEvaluatorSuite) TestGreatestLeastFuncs(c *C) {
+func (s *testEvaluatorSuite) TestGreatestLeastFunc(c *C) {
 	sc := s.ctx.GetSessionVars().StmtCtx
 	originIgnoreTruncate := sc.IgnoreTruncate
 	sc.IgnoreTruncate = true
@@ -317,6 +317,14 @@ func (s *testEvaluatorSuite) TestGreatestLeastFuncs(c *C) {
 			[]interface{}{errors.New("must error"), 123},
 			nil, nil, false, true,
 		},
+		{
+			[]interface{}{794755072.0, 4556, "2000-01-09"},
+			"794755072", "2000-01-09", false, false,
+		},
+		{
+			[]interface{}{905969664.0, 4556, "1990-06-16 17:22:56.005534"},
+			"905969664", "1990-06-16 17:22:56.005534", false, false,
+		},
 	} {
 		f0, err := newFunctionForTest(s.ctx, ast.Greatest, s.primitiveValsToConstants(t.args)...)
 		c.Assert(err, IsNil)
@@ -328,9 +336,7 @@ func (s *testEvaluatorSuite) TestGreatestLeastFuncs(c *C) {
 			if t.isNil {
 				c.Assert(d.Kind(), Equals, types.KindNull)
 			} else {
-				if !c.Check(d.GetValue(), DeepEquals, t.expectedGreatest) {
-					c.Log(t.args)
-				}
+				c.Assert(d.GetValue(), DeepEquals, t.expectedGreatest)
 			}
 		}
 
@@ -344,9 +350,7 @@ func (s *testEvaluatorSuite) TestGreatestLeastFuncs(c *C) {
 			if t.isNil {
 				c.Assert(d.Kind(), Equals, types.KindNull)
 			} else {
-				if !c.Check(d.GetValue(), DeepEquals, t.expectedLeast) {
-					c.Log(t.args)
-				}
+				c.Assert(d.GetValue(), DeepEquals, t.expectedLeast)
 			}
 		}
 	}
