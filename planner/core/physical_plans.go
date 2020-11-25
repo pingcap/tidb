@@ -60,7 +60,7 @@ var (
 	_ PhysicalPlan = &PhysicalUnionScan{}
 	_ PhysicalPlan = &PhysicalWindow{}
 	_ PhysicalPlan = &PhysicalShuffle{}
-	_ PhysicalPlan = &PhysicalShuffleDataSourceStub{}
+	_ PhysicalPlan = &PhysicalShuffleReceiverStub{}
 	_ PhysicalPlan = &BatchPointGetPlan{}
 )
 
@@ -1236,7 +1236,7 @@ func (p *PhysicalWindow) ExtractCorrelatedCols() []*expression.CorrelatedColumn 
 }
 
 // PhysicalShuffle represents a shuffle plan.
-// `Tail` and `DataSource` are the last plan within and the first plan following the "shuffle", respectively,
+// `Tails` and `DataSources` are the last plan within and the first plan following the "shuffle", respectively,
 //  to build the child executors chain.
 // Take `Window` operator for example:
 //  Shuffle -> Window -> Sort -> DataSource, will be separated into:
@@ -1247,11 +1247,11 @@ type PhysicalShuffle struct {
 	basePhysicalPlan
 
 	Concurrency int
-	Tail        PhysicalPlan
-	DataSource  PhysicalPlan
+	Tails       []PhysicalPlan
+	DataSources []PhysicalPlan
 
 	SplitterType PartitionSplitterType
-	HashByItems  []expression.Expression
+	ByItemArrays [][]expression.Expression
 }
 
 // PartitionSplitterType is the type of `Shuffle` executor splitter, which splits data source into partitions.
@@ -1262,13 +1262,13 @@ const (
 	PartitionHashSplitterType = iota
 )
 
-// PhysicalShuffleDataSourceStub represents a data source stub of `PhysicalShuffle`,
+// PhysicalShuffleReceiverStub represents a receiver stub of `PhysicalShuffle`,
 // and actually, is executed by `executor.shuffleWorker`.
-type PhysicalShuffleDataSourceStub struct {
+type PhysicalShuffleReceiverStub struct {
 	physicalSchemaProducer
 
-	// Worker points to `executor.shuffleWorker`.
-	Worker unsafe.Pointer
+	// Worker points to `executor.shuffleReceiver`.
+	Receiver unsafe.Pointer
 }
 
 // CollectPlanStatsVersion uses to collect the statistics version of the plan.

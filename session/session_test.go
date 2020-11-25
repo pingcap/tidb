@@ -367,7 +367,7 @@ func (s *testSessionSuite) TestAffectedRows(c *C) {
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (id int, c1 timestamp);")
-	tk.MustExec(`insert t values(1, 0);`)
+	tk.MustExec(`insert t(id) values(1);`)
 	tk.MustExec(`UPDATE t set id = 1 where id = 1;`)
 	c.Assert(int(tk.Se.AffectedRows()), Equals, 0)
 
@@ -1022,8 +1022,10 @@ func (s *testSessionSuite) TestPrepareZero(c *C) {
 	_, rs := tk.Exec("execute s1 using @v1")
 	c.Assert(rs, NotNil)
 	tk.MustExec("set @v2='" + types.ZeroDatetimeStr + "'")
+	tk.MustExec("set @orig_sql_mode=@@sql_mode; set @@sql_mode='';")
 	tk.MustExec("execute s1 using @v2")
 	tk.MustQuery("select v from t").Check(testkit.Rows("0000-00-00 00:00:00"))
+	tk.MustExec("set @@sql_mode=@orig_sql_mode;")
 }
 
 func (s *testSessionSuite) TestPrimaryKeyAutoIncrement(c *C) {
@@ -3431,7 +3433,8 @@ func (s *testSessionSuite3) TestSetVarHint(c *C) {
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings()[0].Err.Error(), Equals, "[planner:3126]Hint SET_VAR(group_concat_max_len=2048) is ignored as conflicting/duplicated.")
 }
 
-func (s *testSessionSuite2) TestDeprecateSlowLogMasking(c *C) {
+// TestDeprecateSlowLogMasking should be in serial suite because it changes a global variable.
+func (s *testSessionSerialSuite) TestDeprecateSlowLogMasking(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 
 	tk.MustExec("set @@global.tidb_redact_log=0")
