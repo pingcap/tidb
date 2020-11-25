@@ -6284,3 +6284,22 @@ func (s *testSuite) TestIssue19667(c *C) {
 	tk.MustExec("INSERT INTO t VALUES('1988-04-17 01:59:59')")
 	tk.MustQuery(`SELECT DATE_ADD(a, INTERVAL 1 SECOND) FROM t`).Check(testkit.Rows("1988-04-17 02:00:00"))
 }
+
+func (s *testSuite) TestTxnRetry(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk2 := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk2.MustExec("use test;")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int);")
+	tk.MustExec("insert into t values (1)")
+	tk.MustExec("set @@tidb_disable_txn_auto_retry=0;")
+	tk.MustExec("set autocommit=0;")
+	tk.MustQuery("select * from t;").Check(testkit.Rows("1"))
+
+	tk2.MustExec("update t set a=2")
+
+	tk.MustExec("update t set a=3")
+	tk.MustExec("commit")
+	tk.MustQuery("select * from t").Check(testkit.Rows("3"))
+}
