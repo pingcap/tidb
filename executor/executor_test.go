@@ -7015,11 +7015,16 @@ func (s *testSuite) TestOOMActionPriority(c *C) {
 	tk.MustExec("drop table if exists t3")
 	tk.MustExec("drop table if exists t4")
 	tk.MustExec("create table t0(a int)")
+	tk.MustExec("insert into t0 values(1)")
 	tk.MustExec("create table t1(a int)")
+	tk.MustExec("insert into t1 values(1)")
 	tk.MustExec("create table t2(a int)")
+	tk.MustExec("insert into t2 values(1)")
 	tk.MustExec("create table t3(a int)")
+	tk.MustExec("insert into t3 values(1)")
 	tk.MustExec("create table t4(a int)")
-	tk.MustExec("select * from t0 join t1 join t2 join t3 join t4;")
+	tk.MustExec("insert into t4 values(1)")
+	tk.MustQuery("select * from t0 join t1 join t2 join t3 join t4 order by t0.a").Check(testkit.Rows("1 1 1 1 1"))
 	action := tk.Se.GetSessionVars().StmtCtx.MemTracker.GetFallbackForTest()
 	// check the first 5 actions is rate limit.
 	for i := 0; i < 5; i++ {
