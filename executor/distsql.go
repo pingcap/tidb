@@ -665,8 +665,15 @@ func (e *IndexLookUpExecutor) Next(ctx context.Context, req *chunk.Chunk) error 
 				}
 			}
 		} else {
-			req.Append(resultTask.chk, resultTask.cursor, resultTask.chk.GetNumRows())
-			resultTask.cursor += resultTask.chk.GetNumRows()
+			requiredRows := resultTask.chk.GetNumRows() - resultTask.cursor
+			if requiredRows < 0 {
+				return nil
+			}
+			req.Append(resultTask.chk, resultTask.cursor, requiredRows)
+			resultTask.cursor += requiredRows
+			if req.IsFull() {
+				return nil
+			}
 		}
 	}
 }
@@ -1149,7 +1156,10 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 				task.rows = append(task.rows, row)
 			}
 		} else {
-			task.chk = chk
+			if task.chk == nil {
+				task.chk = chunk.Renew(chk, chk.NumRows())
+			}
+			task.chk.Append(chk, 0, chk.NumRows())
 		}
 	}
 
