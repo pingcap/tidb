@@ -606,8 +606,8 @@ func (h *BindHandle) CaptureBaselines() {
 		if insertStmt, ok := stmt.(*ast.InsertStmt); ok && insertStmt.Select == nil {
 			continue
 		}
-		normalizedSQL, digest := parser.NormalizeDigest(sqls[i])
 		dbName := utilparser.GetDefaultDB(stmt, schemas[i])
+		normalizedSQL, digest := parser.NormalizeDigest(utilparser.RestoreWithDefaultDB(stmt, dbName))
 		if r := h.GetBindRecord(digest, normalizedSQL, dbName); r != nil && r.HasUsingBinding() {
 			continue
 		}
@@ -623,7 +623,7 @@ func (h *BindHandle) CaptureBaselines() {
 			logutil.BgLogger().Debug("generate hints failed", zap.String("SQL", sqls[i]), zap.Error(err))
 			continue
 		}
-		bindSQL := GenerateBindSQL(context.TODO(), stmt, hints)
+		bindSQL := GenerateBindSQL(context.TODO(), stmt, hints, dbName)
 		if bindSQL == "" {
 			continue
 		}
@@ -663,7 +663,7 @@ func getHintsForSQL(sctx sessionctx.Context, sql string) (string, error) {
 }
 
 // GenerateBindSQL generates binding sqls from stmt node and plan hints.
-func GenerateBindSQL(ctx context.Context, stmtNode ast.StmtNode, planHint string) string {
+func GenerateBindSQL(ctx context.Context, stmtNode ast.StmtNode, planHint string, defaultDB string) string {
 	// If would be nil for very simple cases such as point get, we do not need to evolve for them.
 	if planHint == "" {
 		return ""
@@ -680,6 +680,7 @@ func GenerateBindSQL(ctx context.Context, stmtNode ast.StmtNode, planHint string
 	hint.BindHint(stmtNode, &hint.HintsSet{})
 	var sb strings.Builder
 	restoreCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, &sb)
+	restoreCtx.DefaultDB = defaultDB
 	err := stmtNode.Restore(restoreCtx)
 	if err != nil {
 		logutil.Logger(ctx).Warn("Restore SQL failed", zap.Error(err))
