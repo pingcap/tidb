@@ -468,8 +468,7 @@ func (s *session) doCommit(ctx context.Context) error {
 	for txnScope, txn := range s.txns {
 		if txn.Valid() {
 			if txnToCommit != nil {
-				msg := fmt.Sprintf("transaction from scope [%s] is conflicted with scope [%s]", txnScope, txnToCommit.Scope())
-				return ErrFindMultipleValidTxn.GenWithStackByArgs(msg)
+				return fmt.Errorf("transaction from scope [%s] is conflicted with scope [%s]", txnScope, txnToCommit.Scope())
 			}
 			txnToCommit = txn
 		}
