@@ -331,17 +331,13 @@ func doRequest(ctx context.Context, addrs []string, route, method string, body i
 
 		res, err = util2.InternalHTTPClient().Do(req)
 		if err == nil {
-			if strings.Contains(route, "placement-rule") && res.StatusCode == http.StatusNotFound {
-				return nil, nil
-			}
 			bodyBytes, err := ioutil.ReadAll(res.Body)
 			if err != nil {
 				return nil, err
 			}
 			if res.StatusCode != http.StatusOK {
 				err = errors.Errorf("%s", bodyBytes)
-				// ignore if placement rules feature is not enabled
-				if strings.HasPrefix(err.Error(), `"placement rules feature is disabled"`) {
+				if res.StatusCode == http.StatusNotFound || res.StatusCode == http.StatusPreconditionFailed {
 					err = nil
 					bodyBytes = nil
 				}
