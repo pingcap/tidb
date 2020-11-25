@@ -436,16 +436,14 @@ func (c *chunkRowRecordSet) Fields() []*ast.ResultField {
 
 func (c *chunkRowRecordSet) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
-	/**
-	for !chk.IsFull() && c.idx < len(c.rows) {
-		chk.AppendRow(c.rows[c.idx])
-		c.idx++
-	}**/
 	if !chk.IsFull() && c.idx < len(c.rows) {
-		offset := len(c.rows) - c.idx
-		offset = chk.LeftRequiredRows(offset)
-		chk.AppendRows(c.rows[c.idx : c.idx+offset])
-		c.idx += offset
+		numToAppend := len(c.rows) - c.idx
+		requiredRows := chk.RequiredRows() - chk.NumRows()
+		if numToAppend > requiredRows {
+			numToAppend = requiredRows
+		}
+		chk.AppendRows(c.rows[c.idx : c.idx+numToAppend)
+		c.idx += numToAppend
 	}
 	return nil
 }

@@ -292,10 +292,6 @@ func (e *ShowExec) fetchShowEngines() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	/**
-	for _, row := range rows {
-		e.result.AppendRow(row)
-	}**/
 	e.result.AppendRows(rows)
 	return nil
 }
