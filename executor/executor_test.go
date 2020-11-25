@@ -6296,6 +6296,7 @@ func (s *testSuite) TestTxnRetry(c *C) {
 	tk.MustExec("set @@tidb_disable_txn_auto_retry=0;")
 	tk.MustExec("set autocommit=0;")
 	tk.MustQuery("select * from t;").Check(testkit.Rows("1"))
+	tk.MustExec("SET SQL_SELECT_LIMIT=DEFAULT;")
 
 	tk2.MustExec("update t set a=2")
 
