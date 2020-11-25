@@ -707,8 +707,6 @@ func (s *testIntegrationSuite) TestPartitionPruningForInExpr(c *C) {
 	}
 }
 
-<<<<<<< HEAD
-=======
 func (s *testIntegrationSerialSuite) TestPartitionPruningWithDateType(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
@@ -723,31 +721,6 @@ func (s *testIntegrationSerialSuite) TestPartitionPruningWithDateType(c *C) {
 	c.Assert(strings.Contains(str, "partition:p1"), IsTrue)
 }
 
-func (s *testIntegrationSuite) TestPartitionPruningForEQ(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a datetime, b int) partition by range(weekday(a)) (partition p0 values less than(10), partition p1 values less than (100))")
-
-	is := infoschema.GetInfoSchema(tk.Se)
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	c.Assert(err, IsNil)
-	pt := tbl.(table.PartitionedTable)
-	query, err := expression.ParseSimpleExprWithTableInfo(tk.Se, "a = '2020-01-01 00:00:00'", tbl.Meta())
-	c.Assert(err, IsNil)
-	dbName := model.NewCIStr(tk.Se.GetSessionVars().CurrentDB)
-	columns, names, err := expression.ColumnInfos2ColumnsAndNames(tk.Se, dbName, tbl.Meta().Name, tbl.Meta().Cols(), tbl.Meta())
-	c.Assert(err, IsNil)
-	// Even the partition is not monotonous, EQ condition should be prune!
-	// select * from t where a = '2020-01-01 00:00:00'
-	res, err := core.PartitionPruning(tk.Se, pt, []expression.Expression{query}, nil, columns, names)
-	c.Assert(err, IsNil)
-	c.Assert(res, HasLen, 1)
-	c.Assert(res[0], Equals, 0)
-}
-
->>>>>>> f4e58eeca... ddl: compare expression in check partition definition according to column type (#21226)
 func (s *testIntegrationSuite) TestErrNoDB(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("create user test")
