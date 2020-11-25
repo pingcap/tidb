@@ -1002,7 +1002,8 @@ import (
 	DuplicateOpt                           "[IGNORE|REPLACE] in CREATE TABLE ... SELECT statement or LOAD DATA statement"
 	OptFull                                "Full or empty"
 	OptTemporary                           "TEMPORARY or empty"
-	Order                                  "ORDER BY clause optional collation specification"
+	OptOrder                               "Optional ordering keyword: ASC/DESC. Default to ASC"
+	Order                                  "Ordering keyword: ASC or DESC"
 	OptionLevel                            "3 levels used by lightning config"
 	OrderBy                                "ORDER BY clause"
 	OrReplace                              "or replace"
@@ -3310,12 +3311,12 @@ IndexPartSpecificationList:
 	}
 
 IndexPartSpecification:
-	ColumnName OptFieldLen Order
+	ColumnName OptFieldLen OptOrder
 	{
 		// Order is parsed but just ignored as MySQL did.
 		$$ = &ast.IndexPartSpecification{Column: $1.(*ast.ColumnName), Length: $2.(int)}
 	}
-|	'(' Expression ')' Order
+|	'(' Expression ')' OptOrder
 	{
 		$$ = &ast.IndexPartSpecification{Expr: $2}
 	}
@@ -5951,7 +5952,7 @@ AlterOrderList:
 	}
 
 AlterOrderItem:
-	ColumnName Order
+	ColumnName OptOrder
 	{
 		$$ = &ast.AlterOrderItem{Column: $1.(*ast.ColumnName), Desc: $2.(bool)}
 	}
@@ -5973,7 +5974,19 @@ ByList:
 	}
 
 ByItem:
-	Expression Order
+	Expression
+	{
+		expr := $1
+		valueExpr, ok := expr.(ast.ValueExpr)
+		if ok {
+			position, isPosition := valueExpr.GetValue().(int64)
+			if isPosition {
+				expr = &ast.PositionExpr{N: int(position)}
+			}
+		}
+		$$ = &ast.ByItem{Expr: expr, NullOrder: true}
+	}
+|	Expression Order
 	{
 		expr := $1
 		valueExpr, ok := expr.(ast.ValueExpr)
@@ -5987,6 +6000,16 @@ ByItem:
 	}
 
 Order:
+	"ASC"
+	{
+		$$ = false
+	}
+|	"DESC"
+	{
+		$$ = true
+	}
+
+OptOrder:
 	/* EMPTY */
 	{
 		$$ = false // ASC by default
