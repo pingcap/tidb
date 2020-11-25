@@ -1882,7 +1882,7 @@
       },
       {
         "SQL": "select lead(a, 1) over (partition by b) as c from t",
-        "Best": "TableReader(Table(t))->Sort->Window(lead(test.t.a, 1)->Column#14 over(partition by test.t.b))->Partition(execution info: concurrency:4, data source:TableReader_10)->Projection"
+        "Best": "TableReader(Table(t))->Sort->Window(lead(test.t.a, 1)->Column#14 over(partition by test.t.b))->Partition(execution info: concurrency:4, data sources:[TableReader_10])->Projection"
       }
     ]
   },
@@ -2218,34 +2218,6 @@
           "    └─MaxOneRow_17 1.00 root  ",
           "      └─IndexReader_19 2.00 root  index:IndexRangeScan_18",
           "        └─IndexRangeScan_18 2.00 cop[tikv] table:t3, index:idx_abc(a, b, c) range: decided by [eq(test.t3.a, test.t2.a)], keep order:false, stats:pseudo"
-        ],
-        "Result": null
-      }
-    ]
-  },
-  {
-    "Name": "TestPreferRangeScanOff",
-    "Cases": [
-      {
-        "SQL": "select * from test where age=5;",
-        "Plan": [
-          "TableReader_7 2048.00 root  data:Selection_6",
-          "└─Selection_6 2048.00 cop[tikv]  eq(test.test.age, 5)",
-          "  └─TableFullScan_5 2048.00 cop[tikv] table:test keep order:false"
-        ],
-        "Result": null
-      }
-    ]
-  },
-  {
-    "Name": "TestPreferRangeScanOn",
-    "Cases": [
-      {
-        "SQL": "select * from test where age=5;",
-        "Plan": [
-          "IndexLookUp_7 2048.00 root  ",
-          "├─IndexRangeScan_5(Build) 2048.00 cop[tikv] table:test, index:idx_age(age) range:[5,5], keep order:false",
-          "└─TableRowIDScan_6(Probe) 2048.00 cop[tikv] table:test keep order:false"
         ],
         "Result": null
       }
