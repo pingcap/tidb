@@ -1374,7 +1374,7 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	case TiDBMemoryUsageAlarmRatio:
 		floatVal, err := strconv.ParseFloat(val, 64)
 		if err != nil {
-			return err
+			return ErrWrongTypeForVar.GenWithStackByArgs(TiDBMemoryUsageAlarmRatio)
 		}
 		if floatVal < 0 || floatVal > 1 {
 			return ErrWrongValueForVar.GenWithStackByArgs(TiDBMemoryUsageAlarmRatio, val)
