@@ -40,6 +40,8 @@ var (
 	ErrTiKVServerBusy              = dbterror.ClassTiKV.NewStd(mysql.ErrTiKVServerBusy)
 	ErrTiKVStaleCommand            = dbterror.ClassTiKV.NewStd(mysql.ErrTiKVStaleCommand)
 	ErrTiKVMaxTimestampNotSynced   = dbterror.ClassTiKV.NewStd(mysql.ErrTiKVMaxTimestampNotSynced)
+	ErrTiKVReadIndexNotReady       = dbterror.ClassTiKV.NewStd(mysql.ErrTiKVReadIndexNotReady)
+	ErrTiKVProposalInMergingMode   = dbterror.ClassTiKV.NewStd(mysql.ErrTiKVProposalInMergingMode)
 	ErrGCTooEarly                  = dbterror.ClassTiKV.NewStd(mysql.ErrGCTooEarly)
 	ErrQueryInterrupted            = dbterror.ClassTiKV.NewStd(mysql.ErrQueryInterrupted)
 	ErrLockAcquireFailAndNoWaitSet = dbterror.ClassTiKV.NewStd(mysql.ErrLockAcquireFailAndNoWaitSet)

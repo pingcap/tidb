@@ -1037,4 +1037,6 @@ const (
 	ErrPrometheusAddrIsNotSet    = 9009
 	ErrTiKVStaleCommand          = 9010
 	ErrTiKVMaxTimestampNotSynced = 9011
+	ErrTiKVReadIndexNotReady     = 9012
+	ErrTiKVProposalInMergingMode = 9013
 )

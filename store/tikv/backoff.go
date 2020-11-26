@@ -137,6 +137,8 @@ const (
 	boTxnNotFound
 	boStaleCmd
 	boMaxTsNotSynced
+	boReadIndexNotReady
+	boProposalInMergingMode
 )
 
 func (t backoffType) createFn(vars *kv.Variables) func(context.Context, int) int {
@@ -163,6 +165,10 @@ func (t backoffType) createFn(vars *kv.Variables) func(context.Context, int) int
 		return NewBackoffFn(2, 1000, NoJitter)
 	case boMaxTsNotSynced:
 		return NewBackoffFn(2, 500, NoJitter)
+	case boReadIndexNotReady:
+		return NewBackoffFn(2, 500, NoJitter)
+	case boProposalInMergingMode:
+		return NewBackoffFn(2, 500, NoJitter)
 	}
 	return nil
 }
@@ -187,6 +193,10 @@ func (t backoffType) String() string {
 		return "txnNotFound"
 	case boMaxTsNotSynced:
 		return "maxTsNotSynced"
+	case boReadIndexNotReady:
+		return "readIndexNotReady"
+	case boProposalInMergingMode:
+		return "proposalInMergingMode"
 	}
 	return ""
 }
@@ -207,6 +217,10 @@ func (t backoffType) TError() error {
 		return ErrTiKVStaleCommand
 	case boMaxTsNotSynced:
 		return ErrTiKVMaxTimestampNotSynced
+	case boReadIndexNotReady:
+		return ErrTiKVReadIndexNotReady
+	case boProposalInMergingMode:
+		return ErrTiKVProposalInMergingMode
 	}
 	return ErrUnknown
 }

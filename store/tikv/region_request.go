@@ -649,6 +649,22 @@ func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, seed
 		}
 		return true, nil
 	}
+	if regionErr.GetReadIndexNotReady() != nil {
+		logutil.BgLogger().Warn("tikv reports `ReadIndexNotReady`", zap.Stringer("ctx", ctx))
+		err = bo.Backoff(boReadIndexNotReady, errors.Errorf("read index not ready, ctx: %v", ctx))
+		if err != nil {
+			return false, errors.Trace(err)
+		}
+		return true, nil
+	}
+	if regionErr.GetProposalInMergingMode() != nil {
+		logutil.BgLogger().Warn("tikv reports `ProposalInMergingMode`", zap.Stringer("ctx", ctx))
+		err = bo.Backoff(boProposalInMergingMode, errors.Errorf("proposal in merging mode, ctx: %v", ctx))
+		if err != nil {
+			return false, errors.Trace(err)
+		}
+		return true, nil
+	}
 	// For other errors, we only drop cache here.
 	// Because caller may need to re-split the request.
 	logutil.BgLogger().Debug("tikv reports region failed",
