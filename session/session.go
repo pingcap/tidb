@@ -2222,6 +2222,7 @@ var builtinGlobalVariable = []string{
 	variable.TiDBHashAggPartialConcurrency,
 	variable.TiDBHashAggFinalConcurrency,
 	variable.TiDBWindowConcurrency,
+	variable.TiDBMergeJoinConcurrency,
 	variable.TiDBStreamAggConcurrency,
 	variable.TiDBExecutorConcurrency,
 	variable.TiDBBackoffLockFast,
