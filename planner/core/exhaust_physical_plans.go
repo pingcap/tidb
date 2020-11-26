@@ -424,6 +424,16 @@ func (p *LogicalJoin) constructIndexJoin(
 			continue
 		}
 	}
+	// Correct the collation used by hash.
+	for i := range outerHashKeys {
+		// Make compiler happy.
+		if len(innerHashKeys) == 0 {
+			return nil
+		}
+		chs, coll := expression.DeriveCollationFromExprs(nil, outerHashKeys[i], innerHashKeys[i])
+		outerHashKeys[i].GetType().Charset, outerHashKeys[i].GetType().Collate = chs, coll
+		innerHashKeys[i].GetType().Charset, innerHashKeys[i].GetType().Collate = chs, coll
+	}
 	baseJoin := basePhysicalJoin{
 		InnerChildIdx:   1 - outerIdx,
 		LeftConditions:  p.LeftConditions,
@@ -685,7 +695,7 @@ func (p *LogicalJoin) buildIndexJoinInner2IndexScan(
 		if path.IsTablePath {
 			continue
 		}
-		emptyRange, err := helper.analyzeLookUpFilters(path, ds, innerJoinKeys)
+		emptyRange, err := helper.analyzeLookUpFilters(path, ds, innerJoinKeys, outerJoinKeys)
 		if emptyRange {
 			return nil
 		}
@@ -1144,16 +1154,16 @@ loopOtherConds:
 //   It's clearly that the column c cannot be used to access data. So we need to remove it and reset the IdxOff2KeyOff to
 //   [0 -1 -1].
 //   So that we can use t1.a=t2.a and t1.b > t2.b-10 and t1.b < t2.b+10 to build ranges then access data.
-func (ijHelper *indexJoinBuildHelper) removeUselessEqAndInFunc(
-	idxCols []*expression.Column,
-	notKeyEqAndIn []expression.Expression) (
-	usefulEqAndIn, uselessOnes []expression.Expression,
-) {
+func (ijHelper *indexJoinBuildHelper) removeUselessEqAndInFunc(idxCols []*expression.Column, notKeyEqAndIn []expression.Expression, outerJoinKeys []*expression.Column) (usefulEqAndIn, uselessOnes []expression.Expression) {
 	ijHelper.curPossibleUsedKeys = make([]*expression.Column, 0, len(idxCols))
 	for idxColPos, notKeyColPos := 0, 0; idxColPos < len(idxCols); idxColPos++ {
 		if ijHelper.curIdxOff2KeyOff[idxColPos] != -1 {
-			ijHelper.curPossibleUsedKeys = append(ijHelper.curPossibleUsedKeys, idxCols[idxColPos])
-			continue
+			// Check collation is the new collation is enabled.
+			_, coll := expression.DeriveCollationFromExprs(nil, idxCols[idxColPos], outerJoinKeys[ijHelper.curIdxOff2KeyOff[idxColPos]])
+			if !collate.NewCollationEnabled() || collate.CompatibleCollate(idxCols[idxColPos].GetType().Collate, coll) {
+				ijHelper.curPossibleUsedKeys = append(ijHelper.curPossibleUsedKeys, idxCols[idxColPos])
+				continue
+			}
 		}
 		if notKeyColPos < len(notKeyEqAndIn) && ijHelper.curNotUsedIndexCols[notKeyColPos].Equal(nil, idxCols[idxColPos]) {
 			notKeyColPos++
@@ -1170,7 +1180,7 @@ func (ijHelper *indexJoinBuildHelper) removeUselessEqAndInFunc(
 	return notKeyEqAndIn, nil
 }
 
-func (ijHelper *indexJoinBuildHelper) analyzeLookUpFilters(path *util.AccessPath, innerPlan *DataSource, innerJoinKeys []*expression.Column) (emptyRange bool, err error) {
+func (ijHelper *indexJoinBuildHelper) analyzeLookUpFilters(path *util.AccessPath, innerPlan *DataSource, innerJoinKeys []*expression.Column, outerJoinKeys []*expression.Column) (emptyRange bool, err error) {
 	if len(path.IdxCols) == 0 {
 		return false, nil
 	}
@@ -1178,7 +1188,7 @@ func (ijHelper *indexJoinBuildHelper) analyzeLookUpFilters(path *util.AccessPath
 	ijHelper.resetContextForIndex(innerJoinKeys, path.IdxCols, path.IdxColLens)
 	notKeyEqAndIn, remained, rangeFilterCandidates := ijHelper.findUsefulEqAndInFilters(innerPlan)
 	var remainedEqAndIn []expression.Expression
-	notKeyEqAndIn, remainedEqAndIn = ijHelper.removeUselessEqAndInFunc(path.IdxCols, notKeyEqAndIn)
+	notKeyEqAndIn, remainedEqAndIn = ijHelper.removeUselessEqAndInFunc(path.IdxCols, notKeyEqAndIn, outerJoinKeys)
 	matchedKeyCnt := len(ijHelper.curPossibleUsedKeys)
 	// If no join key is matched while join keys actually are not empty. We don't choose index join for now.
 	if matchedKeyCnt <= 0 && len(innerJoinKeys) > 0 {
