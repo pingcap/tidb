@@ -1423,6 +1423,15 @@ func (d *Datum) convertToMysqlFloatYear(sc *stmtctx.StatementContext, target *Fi
 	return ret, err
 }
 
+func (d *Datum) convertStringToMysqlBit(sc *stmtctx.StatementContext) (uint64, error) {
+	bitStr, err := ParseBitStr(BinaryLiteral(d.b).ToString())
+	if err != nil {
+		// This is to be compatible with the previous processing method.
+		return BinaryLiteral(d.b).ToInt(sc)
+	}
+	return bitStr.ToInt(sc)
+}
+
 func (d *Datum) convertToMysqlBit(sc *stmtctx.StatementContext, target *FieldType) (Datum, error) {
 	var ret Datum
 	var uintValue uint64
@@ -1434,20 +1443,17 @@ func (d *Datum) convertToMysqlBit(sc *stmtctx.StatementContext, target *FieldTyp
 		// To solve issue #18681, we need consider true, false, 0, 1.
 		// More situations, we also consider b'0', b'1' and so on.
 		s := BinaryLiteral(d.b).ToString()
-		switch strings.ToLower(s) {
-		case "true", "1":
-			uintValue = 1
-		case "false", "0":
-			uintValue = 0
-		default:
-			var bitStr BinaryLiteral
-			bitStr, err = ParseBitStr(BinaryLiteral(d.b).ToString())
-			if err != nil {
-				// This is to be compatible with the previous processing method.
-				uintValue, err = BinaryLiteral(d.b).ToInt(sc)
-			} else {
-				uintValue, err = bitStr.ToInt(sc)
+		if target.Flen == 1 {
+			switch strings.ToLower(s) {
+			case "true", "1":
+				uintValue = 1
+			case "false", "0":
+				uintValue = 0
+			default:
+				uintValue, err = d.convertStringToMysqlBit(sc)
 			}
+		} else {
+			uintValue, err = d.convertStringToMysqlBit(sc)
 		}
 	case KindInt64:
 		// if input kind is int64 (signed), when trans to bit, we need to treat it as unsigned
