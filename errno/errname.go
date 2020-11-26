@@ -1042,4 +1042,6 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrPrometheusAddrIsNotSet:    mysql.Message("Prometheus address is not set in PD and etcd", nil),
 	ErrTiKVStaleCommand:          mysql.Message("TiKV server reports stale command", nil),
 	ErrTiKVMaxTimestampNotSynced: mysql.Message("TiKV max timestamp is not synced", nil),
+	ErrTiKVReadIndexNotReady:     mysql.Message("TiKV fail to read index because region is not ready", nil),
+	ErrTiKVProposalInMergingMode: mysql.Message("TiKV start a proposal when region is in merging mode", nil),
 }
