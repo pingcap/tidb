@@ -444,19 +444,16 @@ type PlanBuilder struct {
 
 	// SelectLock need this information to locate the lock on partitions.
 	partitionedTable []table.PartitionedTable
-<<<<<<< HEAD
 	// buildingViewStack is used to check whether there is a recursive view.
 	buildingViewStack set.StringSet
 	// renamingViewName is the name of the view which is being renamed.
 	renamingViewName string
-=======
 	// CreateView needs this information to check whether exists nested view.
 	underlyingViewNames set.StringSet
 
 	// evalDefaultExpr needs this information to find the corresponding column.
 	// It stores the OutputNames before buildProjection.
 	allNames [][]*types.FieldName
->>>>>>> e880cae49... planner: reimplement DEFAULT function to make the behavior consistent with MySQL when looking up the corresponding column (#19709)
 }
 
 type handleColHelper struct {
