@@ -71,6 +71,7 @@ type lookupTableTask struct {
 	chk     *chunk.Chunk
 	idxRows *chunk.Chunk
 	cursor  int
+	numRows int
 
 	doneCh chan error
 
@@ -679,16 +680,8 @@ func (e *IndexLookUpExecutor) Next(ctx context.Context, req *chunk.Chunk) error 
 }
 
 func (e *IndexLookUpExecutor) getResultTask() (*lookupTableTask, error) {
-	if e.resultCurr != nil {
-		numRows := 0
-		if e.keepOrder {
-			numRows = len(e.resultCurr.rows)
-		} else {
-			numRows = e.resultCurr.chk.GetNumRows()
-		}
-		if e.resultCurr.cursor < numRows {
-			return e.resultCurr, nil
-		}
+	if e.resultCurr != nil && e.resultCurr.cursor < e.resultCurr.numRows {
+		return e.resultCurr, nil
 	}
 	task, ok := <-e.resultCh
 	if !ok {
@@ -1145,6 +1138,7 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 	if w.keepOrder {
 		task.rows = make([]chunk.Row, 0, handleCnt)
 	}
+	task.numRows = 0
 	for {
 		chk := newFirstChunk(tableReader)
 		err = Next(ctx, tableReader, chk)
@@ -1162,12 +1156,14 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 			iter := chunk.NewIterator4Chunk(chk)
 			for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 				task.rows = append(task.rows, row)
+				task.numRows++
 			}
 		} else {
 			if task.chk == nil {
 				task.chk = chunk.Renew(chk, chk.NumRows())
 			}
 			task.chk.Append(chk, 0, chk.NumRows())
+			task.numRows += chk.NumRows()
 		}
 	}
 
@@ -1191,11 +1187,7 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 		sort.Sort(task)
 	}
 
-	numRows := len(task.rows)
-	if numRows == 0 {
-		numRows = task.chk.GetNumRows()
-	}
-	if handleCnt != numRows && !util.HasCancelled(ctx) {
+	if handleCnt != task.numRows && !util.HasCancelled(ctx) {
 		if len(w.idxLookup.tblPlans) == 1 {
 			obtainedHandlesMap := kv.NewHandleMap()
 			if w.keepOrder {
@@ -1208,7 +1200,7 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 				}
 
 			} else {
-				for i := 0; i < task.chk.GetNumRows(); i++ {
+				for i := 0; i < task.numRows; i++ {
 					handle, err := w.idxLookup.getHandle(task.chk.GetRow(i), w.handleIdx, w.idxLookup.isCommonHandle(), getHandleFromTable)
 					if err != nil {
 						return err
@@ -1217,14 +1209,14 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 				}
 			}
 			logutil.Logger(ctx).Error("inconsistent index handles", zap.String("index", w.idxLookup.index.Name.O),
-				zap.Int("index_cnt", handleCnt), zap.Int("table_cnt", numRows),
+				zap.Int("index_cnt", handleCnt), zap.Int("table_cnt", task.numRows),
 				zap.String("missing_handles", fmt.Sprint(GetLackHandles(task.handles, obtainedHandlesMap))),
 				zap.String("total_handles", fmt.Sprint(task.handles)))
 
 			// table scan in double read can never has conditions according to convertToIndexScan.
 			// if this table scan has no condition, the number of rows it returns must equal to the length of handles.
 			return errors.Errorf("inconsistent index %s handle count %d isn't equal to value count %d",
-				w.idxLookup.index.Name.O, handleCnt, numRows)
+				w.idxLookup.index.Name.O, handleCnt, task.numRows)
 		}
 	}
 
