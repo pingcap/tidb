@@ -160,7 +160,7 @@ func (s *testSuite) TestSelectWithRuntimeStats(c *C) {
 	c.Assert(err, IsNil)
 }
 
-func (s *testSuite) TestSelectResultRuntimeStats(c *C) {
+func (s *testSerialSuite) TestSelectResultRuntimeStats(c *C) {
 	originCfg := config.GetGlobalConfig()
 	defer config.StoreGlobalConfig(originCfg)
 	cfg := config.NewConfig()
