@@ -318,9 +318,9 @@ func (t *Tracker) String() string {
 func (t *Tracker) toString(indent string, buffer *bytes.Buffer) {
 	fmt.Fprintf(buffer, "%s\"%d\"{\n", indent, t.label)
 	if t.bytesLimit > 0 {
-		fmt.Fprintf(buffer, "%s  \"quota\": %s\n", indent, t.BytesToString(t.bytesLimit))
+		fmt.Fprintf(buffer, "%s  \"quota\": %s\n", indent, t.FormatBytes(t.bytesLimit))
 	}
-	fmt.Fprintf(buffer, "%s  \"consumed\": %s\n", indent, t.BytesToString(t.BytesConsumed()))
+	fmt.Fprintf(buffer, "%s  \"consumed\": %s\n", indent, t.FormatBytes(t.BytesConsumed()))
 
 	t.mu.Lock()
 	labels := make([]int, 0, len(t.mu.children))
@@ -338,9 +338,9 @@ func (t *Tracker) toString(indent string, buffer *bytes.Buffer) {
 	buffer.WriteString(indent + "}\n")
 }
 
-// BytesToString converts the memory consumption to a readable string.
-func (t *Tracker) BytesToString(numBytes int64) string {
-	return BytesToString(numBytes)
+// FormatBytes uses to format bytes, this function will prune precision before format bytes.
+func (t *Tracker) FormatBytes(numBytes int64) string {
+	return FormatBytes(numBytes)
 }
 
 // BytesToString converts the memory consumption to a readable string.
@@ -369,11 +369,6 @@ const (
 	byteSizeKB = int64(1 << 10)
 	byteSizeBB = int64(1)
 )
-
-// FormatBytes uses to format bytes, this function will prune precision before format bytes.
-func (t *Tracker) FormatBytes(numBytes int64) string {
-	return FormatBytes(numBytes)
-}
 
 // FormatBytes uses to format bytes, this function will prune precision before format bytes.
 func FormatBytes(numBytes int64) string {
