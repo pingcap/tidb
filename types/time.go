@@ -997,6 +997,28 @@ func parseDatetime(sc *stmtctx.StatementContext, str string, fsp int8, isFloat b
 	switch len(seps) {
 	case 1:
 		l := len(seps[0])
+		// Values specified as numbers
+		if isFloat {
+			numOfTime, err := StrToInt(sc, seps[0], false)
+			if err != nil {
+				return ZeroDatetime, errors.Trace(ErrWrongValue.GenWithStackByArgs(DateTimeStr, str))
+			}
+
+			dateTime, err := ParseDatetimeFromNum(sc, numOfTime)
+			if err != nil {
+				return ZeroDatetime, errors.Trace(ErrWrongValue.GenWithStackByArgs(DateTimeStr, str))
+			}
+
+			year, month, day, hour, minute, second =
+				dateTime.Year(), dateTime.Month(), dateTime.Day(), dateTime.Hour(), dateTime.Minute(), dateTime.Second()
+			if l >= 9 && l <= 14 {
+				hhmmss = true
+			}
+
+			break
+		}
+
+		// Values specified as strings
 		switch l {
 		case 14: // No delimiter.
 			// YYYYMMDDHHMMSS
@@ -1202,8 +1224,8 @@ func adjustYear(y int) int {
 }
 
 // AdjustYear is used for adjusting year and checking its validation.
-func AdjustYear(y int64, shouldAdjust bool) (int64, error) {
-	if y == 0 && !shouldAdjust {
+func AdjustYear(y int64, adjustZero bool) (int64, error) {
+	if y == 0 && !adjustZero {
 		return y, nil
 	}
 	y = int64(adjustYear(int(y)))
@@ -1832,11 +1854,6 @@ func parseDateTimeFromNum(sc *stmtctx.StatementContext, num int64) (Time, error)
 	if num <= 991231 {
 		num = (num + 19000000) * 1000000
 		return getTime(sc, num, t.Type())
-	}
-
-	// Check YYYYMMDD.
-	if num < 10000101 {
-		return t, errors.Trace(ErrWrongValue.GenWithStackByArgs(TimeStr, strconv.FormatInt(num, 10)))
 	}
 
 	// Adjust hour/min/second.
