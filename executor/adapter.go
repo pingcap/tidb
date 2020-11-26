@@ -442,7 +442,7 @@ func (c *chunkRowRecordSet) Next(ctx context.Context, chk *chunk.Chunk) error {
 		if numToAppend > requiredRows {
 			numToAppend = requiredRows
 		}
-		chk.AppendRows(c.rows[c.idx : c.idx+numToAppend)
+		chk.AppendRows(c.rows[c.idx : c.idx+numToAppend])
 		c.idx += numToAppend
 	}
 	return nil

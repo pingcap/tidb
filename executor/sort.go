@@ -407,10 +407,27 @@ func (e *TopNExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if e.Idx >= len(e.rowPtrs) {
 		return nil
 	}
+	/**
 	for !req.IsFull() && e.Idx < len(e.rowPtrs) {
 		row := e.rowChunks.GetRow(e.rowPtrs[e.Idx])
 		req.AppendRow(row)
 		e.Idx++
+	}**/
+	if !req.IsFull() && e.Idx < len(e.rowPtrs) {
+		numToAppend := len(e.rowPtrs) - e.Idx
+		requiredRows := req.RequiredRows() - req.NumRows()
+		if numToAppend > requiredRows {
+			numToAppend = requiredRows
+		}
+		rows := make([]chunk.Row, numToAppend)
+		index := 0
+		for index < numToAppend {
+			row := e.rowChunks.GetRow(e.rowPtrs[e.Idx])
+			rows[index] = row
+			e.Idx++
+			index++
+		}
+		req.AppendRows(rows)
 	}
 	return nil
 }

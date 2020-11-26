@@ -75,7 +75,9 @@ func (e *CheckIndexRangeExec) Next(ctx context.Context, req *chunk.Chunk) error 
 		if e.srcChunk.NumRows() == 0 {
 			return nil
 		}
+
 		iter := chunk.NewIterator4Chunk(e.srcChunk)
+		/**
 		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 			handle := row.GetInt64(handleIdx)
 			for _, hr := range e.handleRanges {
@@ -84,7 +86,19 @@ func (e *CheckIndexRangeExec) Next(ctx context.Context, req *chunk.Chunk) error 
 					break
 				}
 			}
+		}**/
+
+		appendRows := make([]chunk.Row, 0, e.srcChunk.NumRows())
+		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
+			handle := row.GetInt64(handleIdx)
+			for _, hr := range e.handleRanges {
+				if handle >= hr.Begin && handle < hr.End {
+					appendRows = append(appendRows, row)
+					break
+				}
+			}
 		}
+		req.AppendRows(appendRows)
 		if req.NumRows() > 0 {
 			return nil
 		}
