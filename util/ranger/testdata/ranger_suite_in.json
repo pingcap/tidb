@@ -60,6 +60,15 @@
     ]
   },
   {
+    "name": "TestPrefixIndexMultiColDNF",
+    "cases": [
+      "select * from t2 where t='aaaa';",
+      "select * from t2 where t='aaaa' or t = 'a';",
+      "select * from t2 where t='aaaa';",
+      "select * from t2 where t='aaaa' or t = 'a';"
+    ]
+  },
+  {
     "name": "TestIndexRangeForBit",
     "cases": [
       "select * from t;",
