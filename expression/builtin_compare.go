@@ -1361,10 +1361,10 @@ func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Express
 		return []Expression{NewOne(), NewZero()}
 	}
 
-	return c.refineArgsByUnsignedFlag(ctx, []Expression{finalArg0, finalArg1})
+	return c.refineArgsByTypeRange(ctx, []Expression{finalArg0, finalArg1})
 }
 
-func (c *compareFunctionClass) refineArgsByUnsignedFlag(ctx sessionctx.Context, args []Expression) []Expression {
+func (c *compareFunctionClass) refineArgsByTypeRange(ctx sessionctx.Context, args []Expression) []Expression {
 	// Only handle int cases, cause MySQL declares that `UNSIGNED` is deprecated for FLOAT, DOUBLE and DECIMAL types,
 	// and support for it would be removed in a future version.
 	if args[0].GetType().EvalType() != types.ETInt || args[1].GetType().EvalType() != types.ETInt {
@@ -1385,9 +1385,10 @@ func (c *compareFunctionClass) refineArgsByUnsignedFlag(ctx sessionctx.Context, 
 	for i := 0; i < 2; i++ {
 		if con, col := constArgs[1-i], colArgs[i]; con != nil && col != nil {
 			v, isNull, err := con.EvalInt(ctx, chunk.Row{})
-			if err != nil || isNull || v > 0 {
+			if err != nil || isNull {
 				return args
 			}
+			colHasNotNullFlag := mysql.HasNotNullFlag(col.RetType.Flag)
 			if mysql.HasUnsignedFlag(con.RetType.Flag) && !mysql.HasUnsignedFlag(col.RetType.Flag) {
 				op := c.op
 				if i == 1 {
@@ -1400,23 +1401,66 @@ func (c *compareFunctionClass) refineArgsByUnsignedFlag(ctx sessionctx.Context, 
 					}
 				}
 			}
-			if mysql.HasUnsignedFlag(col.RetType.Flag) && mysql.HasNotNullFlag(col.RetType.Flag) && !mysql.HasUnsignedFlag(con.RetType.Flag) {
+			if mysql.HasUnsignedFlag(col.RetType.Flag) && !mysql.HasUnsignedFlag(con.RetType.Flag) {
 				op := c.op
+				tp := col.RetType.Tp
+				upperBound := types.IntergerUnsignedUpperBound(tp)
 				if i == 1 {
 					op = symmetricOp[c.op]
 				}
 				if v == 0 && (op == opcode.LE || op == opcode.GT || op == opcode.NullEQ || op == opcode.EQ || op == opcode.NE) {
-					return args
+					// do nothing. In this situation, the args do not change.
+				} else if v <= 0 {
+					if colHasNotNullFlag { // Set the comparison result to true, need to consider the case of Null
+						// `unsigned_col < 0` equals to `1 < 0`,
+						// `unsigned_col > -1` equals to `1 > 0`,
+						// `unsigned_col <= -1` equals to `1 <= 0`,
+						// `unsigned_col >= 0` equals to `1 >= 0`,
+						// `unsigned_col == -1` equals to `1 == 0`,
+						// `unsigned_col != -1` equals to `1 != 0`,
+						// `unsigned_col <=> -1` equals to `1 <=> 0`,
+						// so we can replace the column argument with `1`, and the other constant argument with `0`.
+						args[i], args[1-i] = NewOne(), NewZero()
+					} else {
+						if op == opcode.LT || op == opcode.EQ { // Set the comparison result to false, need not to consider the case of Null
+							args[i], args[1-i] = NewOne(), NewZero()
+						}
+					}
+				} else if v > 0 && uint64(v) > upperBound {
+					if (op == opcode.NE || op == opcode.LE || op == opcode.LT) && colHasNotNullFlag {
+						args[i], args[1-i] = NewZero(), NewOne()
+					} else if op == opcode.EQ || op == opcode.GE || op == opcode.GT {
+						args[i], args[1-i] = NewZero(), NewOne()
+					}
 				}
-				// `unsigned_col < 0` equals to `1 < 0`,
-				// `unsigned_col > -1` equals to `1 > 0`,
-				// `unsigned_col <= -1` equals to `1 <= 0`,
-				// `unsigned_col >= 0` equals to `1 >= 0`,
-				// `unsigned_col == -1` equals to `1 == 0`,
-				// `unsigned_col != -1` equals to `1 != 0`,
-				// `unsigned_col <=> -1` equals to `1 <=> 0`,
-				// so we can replace the column argument with `1`, and the other constant argument with `0`.
-				args[i], args[1-i] = NewOne(), NewZero()
+				return args
+			}
+			if !mysql.HasUnsignedFlag(con.RetType.Flag) && !mysql.HasUnsignedFlag(col.RetType.Flag) {
+				tp := col.RetType.Tp
+				lowerBound, upperBound := types.IntergerSignedLowerBound(tp), types.IntergerSignedUpperBound(tp)
+				lowerOverflow, upperOverflow := v < lowerBound, v > upperBound
+				op := c.op
+				if i == 1 {
+					op = symmetricOp[c.op]
+				}
+				// Check whether the range of the column value matches the range corresponding to the column type
+				// for example: column a is tinyint type -> [-128, 127]
+				// when there have a selection 'a > 200', the constant 200 is always greater than the maximum value that tinyint can achieve.
+				// So, the selection `a > 200` always be flase.
+				// TODO: Consider the case where `v = upperbound || v = lowerBound`
+				if upperOverflow { // the constant value always greater than the column value
+					if op == opcode.EQ || op == opcode.GE || op == opcode.GT {
+						args[i], args[1-i] = NewZero(), NewOne()
+					} else if (op == opcode.LE || op == opcode.NE || op == opcode.LT) && colHasNotNullFlag {
+						args[i], args[1-i] = NewZero(), NewOne()
+					}
+				} else if lowerOverflow { // the constant value always less than the column value
+					if (op == opcode.EQ || op == opcode.GE || op == opcode.GT) && colHasNotNullFlag {
+						args[i], args[1-i] = NewOne(), NewZero()
+					} else if op == opcode.LE || op == opcode.NE || op == opcode.LT {
+						args[i], args[1-i] = NewOne(), NewZero()
+					}
+				}
 				return args
 			}
 		}

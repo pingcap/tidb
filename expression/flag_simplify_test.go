@@ -79,3 +79,46 @@ func (s *testFlagSimplifySuite) TestSimplifyExpressionByFlag(c *C) {
 		tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
 	}
 }
+
+func (s *testFlagSimplifySuite) TestIssue10497(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec(`drop table if exists t1;`)
+	tk.MustExec(`CREATE TABLE t1 (
+	 id BIGINT NOT NULL PRIMARY KEY auto_increment,
+	 col1 TINYINT,
+	 col2 TINYINT UNSIGNED,
+	 col3 SMALLINT,
+	 col4 SMALLINT UNSIGNED,
+	 col5 MEDIUMINT,
+	 col6 MEDIUMINT UNSIGNED,
+	 col7 INT,
+	 col8 INT UNSIGNED,
+	 col9 BIGINT,
+	 col10 BIGINT UNSIGNED,
+	 col11 TINYINT NOT NULL,
+	 col12 TINYINT UNSIGNED NOT NULL,
+	 col13 SMALLINT NOT NULL,
+	 col14 SMALLINT UNSIGNED NOT NULL,
+	 col15 MEDIUMINT NOT NULL,
+	 col16 MEDIUMINT UNSIGNED NOT NULL,
+	 col17 INT NOT NULL,
+	 col18 INT UNSIGNED NOT NULL,
+	 col19 BIGINT NOT NULL,
+	 col20 BIGINT UNSIGNED NOT NULL
+	);`)
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+		})
+		tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
+	}
+}
