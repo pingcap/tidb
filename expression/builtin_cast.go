@@ -603,6 +603,8 @@ func (b *builtinCastIntAsDurationSig) evalDuration(row chunk.Row) (res types.Dur
 	if err != nil {
 		if types.ErrOverflow.Equal(err) {
 			err = b.ctx.GetSessionVars().StmtCtx.HandleOverflow(err, err)
+		} else if types.ErrTruncatedWrongVal.Equal(err) {
+			err = b.ctx.GetSessionVars().StmtCtx.HandleTruncate(err)
 		}
 		return res, true, err
 	}

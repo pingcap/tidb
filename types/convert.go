@@ -353,7 +353,7 @@ func NumberToDuration(number int64, fsp int8) (Duration, error) {
 	}
 
 	if number/10000 > TimeMaxHour || number%100 >= 60 || (number/100)%100 >= 60 {
-		return ZeroDuration, ErrOverflow.GenWithStackByArgs("Duration", strconv.Itoa(int(number)))
+		return ZeroDuration, ErrTruncatedWrongVal.GenWithStackByArgs("Duration", strconv.Itoa(int(number)))
 	}
 	dur := NewDuration(int(number/10000), int((number/100)%100), int(number%100), 0, fsp)
 	if neg {
