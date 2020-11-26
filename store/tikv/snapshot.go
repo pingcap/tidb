@@ -312,18 +312,28 @@ func (s *tikvSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, coll
 			lockedKeys [][]byte
 			locks      []*Lock
 		)
-		for _, pair := range batchGetResp.Pairs {
-			keyErr := pair.GetError()
-			if keyErr == nil {
-				collectF(pair.GetKey(), pair.GetValue())
-				continue
-			}
+		if keyErr := batchGetResp.GetError(); keyErr != nil {
+			// If a response-level error happens, skip reading pairs.
 			lock, err := extractLockFromKeyErr(keyErr)
 			if err != nil {
 				return errors.Trace(err)
 			}
 			lockedKeys = append(lockedKeys, lock.Key)
 			locks = append(locks, lock)
+		} else {
+			for _, pair := range batchGetResp.Pairs {
+				keyErr := pair.GetError()
+				if keyErr == nil {
+					collectF(pair.GetKey(), pair.GetValue())
+					continue
+				}
+				lock, err := extractLockFromKeyErr(keyErr)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				lockedKeys = append(lockedKeys, lock.Key)
+				locks = append(locks, lock)
+			}
 		}
 		if len(lockedKeys) > 0 {
 			msBeforeExpired, err := cli.ResolveLocks(bo, s.version.Ver, locks)
@@ -336,7 +346,11 @@ func (s *tikvSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, coll
 					return errors.Trace(err)
 				}
 			}
-			pending = lockedKeys
+			// Only reduce pending keys when there is no response-level error. Otherwise,
+			// lockedKeys may be incomplete.
+			if batchGetResp.GetError() == nil {
+				pending = lockedKeys
+			}
 			continue
 		}
 		return nil
@@ -757,7 +771,8 @@ func (rs *SnapshotRuntimeStats) String() string {
 			buf.WriteByte(',')
 		}
 		ms := rs.backoffSleepMS[k]
-		buf.WriteString(fmt.Sprintf("%s_backoff:{num:%d, total_time:%d ms}", k.String(), v, ms))
+		d := time.Duration(ms) * time.Millisecond
+		buf.WriteString(fmt.Sprintf("%s_backoff:{num:%d, total_time:%s}", k.String(), v, execdetails.FormatDuration(d)))
 	}
 	return buf.String()
 }
