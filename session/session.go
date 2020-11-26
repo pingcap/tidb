@@ -1752,15 +1752,17 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 		collate.EnableNewCollations()
 	}
 
-	newMemoryQuotaQuery, err := loadDefMemQuotaQuery(se)
-	if err != nil {
-		return nil, err
-	}
-	if !config.IsMemoryQuotaQuerySetByUser && newMemoryQuotaQuery != cfg.MemQuotaQuery {
-		newCfg := *(config.GetGlobalConfig())
-		newCfg.MemQuotaQuery = newMemoryQuotaQuery
-		config.StoreGlobalConfig(&newCfg)
-		variable.SysVars[variable.TIDBMemQuotaQuery].Value = strconv.FormatInt(newCfg.MemQuotaQuery, 10)
+	if !config.IsMemoryQuotaQuerySetByUser {
+		newMemoryQuotaQuery, err := loadDefMemQuotaQuery(se)
+		if err != nil {
+			return nil, err
+		}
+		if newMemoryQuotaQuery != cfg.MemQuotaQuery {
+			newCfg := *(config.GetGlobalConfig())
+			newCfg.MemQuotaQuery = newMemoryQuotaQuery
+			config.StoreGlobalConfig(&newCfg)
+			variable.SysVars[variable.TIDBMemQuotaQuery].Value = strconv.FormatInt(newCfg.MemQuotaQuery, 10)
+		}
 	}
 
 	dom := domain.GetDomain(se)
