@@ -1523,10 +1523,6 @@ func checkTableInfoValidWithStmt(ctx sessionctx.Context, tbInfo *model.TableInfo
 		return errors.Trace(err)
 	}
 	if s.Partition != nil {
-		if err := checkPartitionFuncValid(ctx, tbInfo, s.Partition.Expr); err != nil {
-			return errors.Trace(err)
-		}
-
 		if err := checkPartitionDefinitionConstraints(ctx, tbInfo); err != nil {
 			return errors.Trace(err)
 		}
@@ -1541,12 +1537,12 @@ func checkTableInfoValidWithStmt(ctx sessionctx.Context, tbInfo *model.TableInfo
 }
 
 func checkPartitionDefinitionConstraints(ctx sessionctx.Context, tbInfo *model.TableInfo) error {
-	var err error = nil
-	if err := checkPartitionNameUnique(tbInfo.Partition); err != nil {
-		return err
+	var err error
+	if err = checkPartitionNameUnique(tbInfo.Partition); err != nil {
+		return errors.Trace(err)
 	}
-	if err := checkAddPartitionTooManyPartitions(uint64(len(tbInfo.Partition.Definitions))); err != nil {
-		return err
+	if err = checkAddPartitionTooManyPartitions(uint64(len(tbInfo.Partition.Definitions))); err != nil {
+		return errors.Trace(err)
 	}
 
 	switch tbInfo.Partition.Type {
@@ -1960,10 +1956,6 @@ func checkPartitionByRange(ctx sessionctx.Context, tbInfo *model.TableInfo) erro
 		panic("Out Of Memory Quota!")
 	})
 	pi := tbInfo.Partition
-
-	if err := checkNoRangePartitions(len(pi.Definitions)); err != nil {
-		return err
-	}
 
 	if len(pi.Columns) == 0 {
 		return checkRangePartitionValue(ctx, tbInfo)

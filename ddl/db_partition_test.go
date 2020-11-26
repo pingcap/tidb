@@ -430,6 +430,10 @@ create table log_message_1 (
 			ddl.ErrFieldNotFoundPart,
 		},
 		{
+			"create table t (a date) partition by range (to_days(to_days(a))) (partition p0 values less than (1));",
+			ddl.ErrWrongExprInPartitionFunc,
+		},
+		{
 			"create table t (id timestamp) partition by range columns (id) (partition p0 values less than ('2019-01-09 11:23:34'));",
 			ddl.ErrNotAllowedTypeInPartition,
 		},
@@ -561,6 +565,10 @@ func (s *testIntegrationSuite1) TestCreateTableWithListPartition(c *C) {
 		{
 			"create table t (a int) partition by list (a) (partition p0 values in (1), partition P0 values in (2));",
 			ddl.ErrSameNamePartition,
+		},
+		{
+			"create table t (a date) partition by list (to_days(to_days(a))) (partition p0 values in (1), partition P1 values in (2));",
+			ddl.ErrWrongExprInPartitionFunc,
 		},
 		{
 			"create table t (a int) partition by list (a) (partition p0 values in (1), partition p1 values in (1));",
