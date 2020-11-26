@@ -309,6 +309,7 @@ func (s *testBootstrapSuite) TestIssue20900_1(c *C) {
 	req = r.NewChunk()
 	r.Next(ctx, req)
 	c.Assert(req.GetRow(0).GetString(0), Equals, "34359738368")
+	c.Assert(seV4.GetSessionVars().MemQuotaQuery, Equals, int64(34359738368))
 }
 
 func (s *testBootstrapSuite) TestIssue20900_2(c *C) {
@@ -345,6 +346,7 @@ func (s *testBootstrapSuite) TestIssue20900_2(c *C) {
 	req := r.NewChunk()
 	r.Next(ctx, req)
 	c.Assert(req.GetRow(0).GetString(0), Equals, "1073741824")
+	c.Assert(seV4.GetSessionVars().MemQuotaQuery, Equals, int64(1073741824))
 	r = mustExecSQL(c, seV4, "select variable_value from mysql.tidb where variable_name='default_memory_quota_query'")
 	req = r.NewChunk()
 	r.Next(ctx, req)
