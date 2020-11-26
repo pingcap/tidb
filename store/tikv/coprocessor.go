@@ -1302,7 +1302,7 @@ func (it copErrorResponse) Close() error {
 type rateLimitAction struct {
 	memory.BaseOOMAction
 	// enabled indicates whether the rateLimitAction is permitted to Action. 1 means permitted, 0 denied.
-	enabled        uint32
+	enabled uint32
 	// totalTokenNum indicates the total token at initial
 	totalTokenNum uint
 	cond          struct {
