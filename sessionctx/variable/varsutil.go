@@ -126,6 +126,8 @@ func GetSessionOnlySysVars(s *SessionVars, key string) (string, bool, error) {
 		return val, true, nil
 	case TiDBExpensiveQueryTimeThreshold:
 		return fmt.Sprintf("%d", atomic.LoadUint64(&ExpensiveQueryTimeThreshold)), true, nil
+	case TiDBMemoryUsageAlarmRatio:
+		return fmt.Sprintf("%g", MemoryUsageAlarmRatio.Load()), true, nil
 	case TiDBConfig:
 		conf := config.GetGlobalConfig()
 		j, err := json.MarshalIndent(conf, "", "\t")
@@ -155,6 +157,8 @@ func GetSessionOnlySysVars(s *SessionVars, key string) (string, bool, error) {
 		return CapturePlanBaseline.GetVal(), true, nil
 	case TiDBFoundInPlanCache:
 		return BoolToOnOff(s.PrevFoundInPlanCache), true, nil
+	case TiDBFoundInBinding:
+		return BoolToOnOff(s.PrevFoundInBinding), true, nil
 	case TiDBEnableCollectExecutionInfo:
 		return BoolToOnOff(config.GetGlobalConfig().EnableCollectExecutionInfo), true, nil
 	}

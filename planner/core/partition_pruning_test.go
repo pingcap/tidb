@@ -21,10 +21,11 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/mock"
 )
 
-var _ = Suite(&testPartitionPruningSuite{})
+var _ = SerialSuites(&testPartitionPruningSuite{})
 
 type testPartitionPruningSuite struct {
 	partitionProcessor
@@ -315,17 +316,63 @@ func (s *testPartitionPruningSuite) TestPartitionRangePrunner2VarChar(c *C) {
 	}
 }
 
+func (s *testPartitionPruningSuite) TestPartitionRangePrunner2CharWithCollation(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+	tc := prepareTestCtx(c,
+		"create table t (a char(32) collate utf8mb4_unicode_ci)",
+		"a",
+	)
+	lessThanDataInt := []string{"'c'", "'F'", "'h'", "'L'", "'t'"}
+	lessThan := make([]expression.Expression, len(lessThanDataInt)+1) // +1 for maxvalue
+	for i, str := range lessThanDataInt {
+		tmp, err := expression.ParseSimpleExprsWithNames(tc.sctx, str, tc.schema, tc.names)
+		c.Assert(err, IsNil)
+		lessThan[i] = tmp[0]
+	}
+
+	prunner := &rangeColumnsPruner{lessThan, tc.columns[0], true}
+	cases := []struct {
+		input  string
+		result partitionRangeOR
+	}{
+		{"a > 'G'", partitionRangeOR{{2, 6}}},
+		{"a > 'g'", partitionRangeOR{{2, 6}}},
+		{"a < 'h'", partitionRangeOR{{0, 3}}},
+		{"a >= 'M'", partitionRangeOR{{4, 6}}},
+		{"a > 'm'", partitionRangeOR{{4, 6}}},
+		{"a < 'F'", partitionRangeOR{{0, 2}}},
+		{"a = 'C'", partitionRangeOR{{1, 2}}},
+		{"a > 't'", partitionRangeOR{{5, 6}}},
+		{"a > 'C' and a < 'q'", partitionRangeOR{{1, 5}}},
+		{"a > 'c' and a < 'Q'", partitionRangeOR{{1, 5}}},
+		{"a < 'l' or a >= 'W'", partitionRangeOR{{0, 4}, {5, 6}}},
+		{"a is null", partitionRangeOR{{0, 1}}},
+		{"'Mm' > a", partitionRangeOR{{0, 5}}},
+		{"'f' <= a", partitionRangeOR{{2, 6}}},
+		{"'f' >= a", partitionRangeOR{{0, 3}}},
+	}
+
+	for _, ca := range cases {
+		expr, err := expression.ParseSimpleExprsWithNames(tc.sctx, ca.input, tc.schema, tc.names)
+		c.Assert(err, IsNil)
+		result := fullRange(len(lessThan))
+		result = partitionRangeForExpr(tc.sctx, expr[0], prunner, result)
+		c.Assert(equalPartitionRangeOR(ca.result, result), IsTrue, Commentf("unexpected:", ca.input))
+	}
+}
+
 func (s *testPartitionPruningSuite) TestPartitionRangePrunner2Date(c *C) {
 	tc := prepareTestCtx(c,
 		"create table t (a date)",
 		"a",
 	)
 	lessThanDataInt := []string{
-		"'1999-06-01'",
+		"'19990601'",
 		"'2000-05-01'",
-		"'2008-04-01'",
+		"'20080401'",
 		"'2010-03-01'",
-		"'2016-02-01'",
+		"'20160201'",
 		"'2020-01-01'"}
 	lessThan := make([]expression.Expression, len(lessThanDataInt))
 	for i, str := range lessThanDataInt {
@@ -340,16 +387,16 @@ func (s *testPartitionPruningSuite) TestPartitionRangePrunner2Date(c *C) {
 		result partitionRangeOR
 	}{
 		{"a < '1943-02-12'", partitionRangeOR{{0, 1}}},
-		{"a >= '1969-02-13'", partitionRangeOR{{0, 6}}},
+		{"a >= '19690213'", partitionRangeOR{{0, 6}}},
 		{"a > '2003-03-13'", partitionRangeOR{{2, 6}}},
 		{"a < '2006-02-03'", partitionRangeOR{{0, 3}}},
-		{"a = '2007-07-07'", partitionRangeOR{{2, 3}}},
+		{"a = '20070707'", partitionRangeOR{{2, 3}}},
 		{"a > '1949-10-10'", partitionRangeOR{{0, 6}}},
-		{"a > '2016-02-01' and a < '2000-01-03'", partitionRangeOR{}},
-		{"a < '1969-11-12' or a >= '2019-09-18'", partitionRangeOR{{0, 1}, {5, 6}}},
+		{"a > '2016-02-01' and a < '20000103'", partitionRangeOR{}},
+		{"a < '19691112' or a >= '2019-09-18'", partitionRangeOR{{0, 1}, {5, 6}}},
 		{"a is null", partitionRangeOR{{0, 1}}},
 		{"'2003-02-27' >= a", partitionRangeOR{{0, 3}}},
-		{"'2014-10-24' < a", partitionRangeOR{{4, 6}}},
+		{"'20141024' < a", partitionRangeOR{{4, 6}}},
 		{"'2003-03-30' > a", partitionRangeOR{{0, 3}}},
 	}
 

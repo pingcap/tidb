@@ -18,6 +18,7 @@ import (
 	"os"
 
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/config"
 	"github.com/uber-go/atomic"
 )
 
@@ -178,6 +179,9 @@ const (
 
 	// TiDBFoundInPlanCache indicates whether the last statement was found in plan cache
 	TiDBFoundInPlanCache = "last_plan_from_cache"
+
+	// TiDBFoundInBinding indicates whether the last statement was matched with the hints in the binding.
+	TiDBFoundInBinding = "last_plan_from_binding"
 
 	// TiDBAllowAutoRandExplicitInsert indicates whether explicit insertion on auto_random column is allowed.
 	TiDBAllowAutoRandExplicitInsert = "allow_auto_random_explicit_insert"
@@ -463,6 +467,12 @@ const (
 
 	// TiDBEnableAmendPessimisticTxn indicates if amend pessimistic transactions is enabled.
 	TiDBEnableAmendPessimisticTxn = "tidb_enable_amend_pessimistic_txn"
+
+	// TiDBMemoryUsageAlarmRatio indicates the alarm threshold when memory usage of the tidb-server exceeds.
+	TiDBMemoryUsageAlarmRatio = "tidb_memory_usage_alarm_ratio"
+
+	// TiDBEnableRateLimitAction indicates whether enabled ratelimit action
+	TiDBEnableRateLimitAction = "tidb_enable_rate_limit_action"
 )
 
 // Default TiDB system variable values.
@@ -564,6 +574,7 @@ const (
 	DefTiDBMetricSchemaStep            = 60 // 60s
 	DefTiDBMetricSchemaRangeDuration   = 60 // 60s
 	DefTiDBFoundInPlanCache            = false
+	DefTiDBFoundInBinding              = false
 	DefTiDBEnableCollectExecutionInfo  = true
 	DefTiDBAllowAutoRandExplicitInsert = false
 	DefTiDBEnableClusteredIndex        = false
@@ -573,6 +584,7 @@ const (
 	DefTiDBEnableParallelApply         = false
 	DefTiDBEnableAmendPessimisticTxn   = true
 	DefTiDBPartitionPruneMode          = "static-only"
+	DefTiDBEnableRateLimitAction       = true
 )
 
 // Process global variables.
@@ -596,4 +608,5 @@ var (
 	MinExpensiveQueryTimeThreshold uint64 = 10 //10s
 	CapturePlanBaseline                   = serverGlobalVariable{globalVal: BoolOff}
 	DefExecutorConcurrency                = 5
+	MemoryUsageAlarmRatio                 = atomic.NewFloat64(config.GetGlobalConfig().Performance.MemoryUsageAlarmRatio)
 )

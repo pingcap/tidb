@@ -46,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -67,6 +68,7 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/logutil"
@@ -197,7 +199,10 @@ type session struct {
 // AddTableLock adds table lock to the session lock map.
 func (s *session) AddTableLock(locks []model.TableLockTpInfo) {
 	for _, l := range locks {
-		s.lockedTables[l.TableID] = l
+		// read only lock is session unrelated, skip it when adding lock to session.
+		if l.Tp != model.TableLockReadOnly {
+			s.lockedTables[l.TableID] = l
+		}
 	}
 }
 
@@ -1098,12 +1103,16 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 	if command != mysql.ComSleep || s.GetSessionVars().InTxn() {
 		curTxnStartTS = s.sessionVars.TxnCtx.StartTS
 	}
+	p := s.currentPlan
+	if explain, ok := p.(*plannercore.Explain); ok && explain.Analyze && explain.TargetPlan != nil {
+		p = explain.TargetPlan
+	}
 	pi := util.ProcessInfo{
 		ID:               s.sessionVars.ConnectionID,
 		DB:               s.sessionVars.CurrentDB,
 		Command:          command,
-		Plan:             s.currentPlan,
-		PlanExplainRows:  plannercore.GetExplainRowsForPlan(s.currentPlan),
+		Plan:             p,
+		PlanExplainRows:  plannercore.GetExplainRowsForPlan(p),
 		RuntimeStatsColl: s.sessionVars.StmtCtx.RuntimeStatsColl,
 		Time:             t,
 		State:            s.Status(),
@@ -1113,6 +1122,16 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 		StatsInfo:        plannercore.GetStatsInfo,
 		MaxExecutionTime: maxExecutionTime,
 		RedactSQL:        s.sessionVars.EnableRedactLog,
+	}
+	if p == nil {
+		// Store the last valid plan when the current plan is nil.
+		// This is for `explain for connection` statement has the ability to query the last valid plan.
+		oldPi := s.ShowProcess()
+		if oldPi != nil && oldPi.Plan != nil && len(oldPi.PlanExplainRows) > 0 {
+			pi.Plan = oldPi.Plan
+			pi.PlanExplainRows = oldPi.PlanExplainRows
+			pi.RuntimeStatsColl = oldPi.RuntimeStatsColl
+		}
 	}
 	_, pi.Digest = s.sessionVars.StmtCtx.SQLDigest()
 	s.currentPlan = nil
@@ -1169,7 +1188,11 @@ func (s *session) Parse(ctx context.Context, sql string) ([]ast.StmtNode, error)
 		// Only print log message when this SQL is from the user.
 		// Mute the warning for internal SQLs.
 		if !s.sessionVars.InRestrictedSQL {
-			logutil.Logger(ctx).Warn("parse SQL failed", zap.Error(err), zap.String("SQL", sql))
+			if s.sessionVars.EnableRedactLog {
+				logutil.Logger(ctx).Debug("parse SQL failed", zap.Error(err), zap.String("SQL", sql))
+			} else {
+				logutil.Logger(ctx).Warn("parse SQL failed", zap.Error(err), zap.String("SQL", sql))
+			}
 		}
 		return nil, util.SyntaxError(err)
 	}
@@ -1856,6 +1879,27 @@ func loadCollationParameter(se *session) (bool, error) {
 	return false, nil
 }
 
+// loadDefMemQuotaQuery loads the default value of mem-quota-query.
+// We'll read a tuple if the cluster is upgraded from v3.0.x to v4.0.9+.
+// An empty result will be returned if it's a newly deployed cluster whose
+// version is v4.0.9.
+// See the comment upon the function `upgradeToVer54` for details.
+func loadDefMemQuotaQuery(se *session) (int64, error) {
+	_, err := loadParameter(se, tidbDefMemoryQuotaQuery)
+	if err != nil {
+		if err == errResultIsEmpty {
+			return 1 << 30, nil
+		}
+		return 1 << 30, err
+	}
+	// If there is a tuple in mysql.tidb, the value must be 32 << 30.
+	return 32 << 30, nil
+}
+
+var (
+	errResultIsEmpty = dbterror.ClassExecutor.NewStd(errno.ErrResultIsEmpty)
+)
+
 // loadParameter loads read-only parameter from mysql.tidb
 func loadParameter(se *session, name string) (string, error) {
 	sql := "select variable_value from mysql.tidb where variable_name = '" + name + "'"
@@ -1872,6 +1916,9 @@ func loadParameter(se *session, name string) (string, error) {
 	req := rss[0].NewChunk()
 	if err := rss[0].Next(context.Background(), req); err != nil {
 		return "", err
+	}
+	if req.NumRows() == 0 {
+		return "", errResultIsEmpty
 	}
 	return req.GetRow(0).GetString(0), nil
 }
@@ -1918,6 +1965,17 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 
 	if newCollationEnabled {
 		collate.EnableNewCollations()
+	}
+
+	newMemoryQuotaQuery, err := loadDefMemQuotaQuery(se)
+	if err != nil {
+		return nil, err
+	}
+	if !config.IsMemoryQuotaQuerySetByUser {
+		newCfg := *(config.GetGlobalConfig())
+		newCfg.MemQuotaQuery = newMemoryQuotaQuery
+		config.StoreGlobalConfig(&newCfg)
+		variable.SetSysVar(variable.TIDBMemQuotaQuery, strconv.FormatInt(newCfg.MemQuotaQuery, 10))
 	}
 
 	dom := domain.GetDomain(se)
@@ -2074,7 +2132,7 @@ func CreateSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 
 const (
 	notBootstrapped         = 0
-	currentBootstrapVersion = version53
+	currentBootstrapVersion = version54
 )
 
 func getStoreBootstrapVersion(store kv.Storage) int64 {
@@ -2223,6 +2281,8 @@ var builtinGlobalVariable = []string{
 	variable.TiDBShardAllocateStep,
 	variable.TiDBEnableChangeColumnType,
 	variable.TiDBEnableAmendPessimisticTxn,
+	variable.TiDBMemoryUsageAlarmRatio,
+	variable.TiDBEnableRateLimitAction,
 }
 
 var (
