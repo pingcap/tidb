@@ -130,16 +130,9 @@ var (
 	queryDurationHistogramExecute  = metrics.QueryDurationHistogram.WithLabelValues("Execute")
 	queryDurationHistogramSet      = metrics.QueryDurationHistogram.WithLabelValues("Set")
 	queryDurationHistogramGeneral  = metrics.QueryDurationHistogram.WithLabelValues(metrics.LblGeneral)
-<<<<<<< HEAD
-=======
-
-	disconnectNormal            = metrics.DisconnectionCounter.WithLabelValues(metrics.LblOK)
-	disconnectByClientWithError = metrics.DisconnectionCounter.WithLabelValues(metrics.LblError)
-	disconnectErrorUndetermined = metrics.DisconnectionCounter.WithLabelValues("undetermined")
 
 	connIdleDurationHistogramNotInTxn = metrics.ConnIdleDurationHistogram.WithLabelValues("0")
 	connIdleDurationHistogramInTxn    = metrics.ConnIdleDurationHistogram.WithLabelValues("1")
->>>>>>> 727d8f195... server: add metric for connection idle time (#21265)
 )
 
 // newClientConn creates a *clientConn object.
