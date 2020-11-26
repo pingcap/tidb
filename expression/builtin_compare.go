@@ -1113,8 +1113,6 @@ func GetAccurateCmpType(lhs, rhs Expression) types.EvalType {
 			}
 			if col.GetType().Tp == mysql.TypeDuration {
 				cmpType = types.ETDuration
-			} else {
-				cmpType = types.ETDatetime
 			}
 		}
 	}
