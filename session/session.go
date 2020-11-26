@@ -2474,18 +2474,19 @@ func (s *session) checkPlacementPolicyBeforeCommit() error {
 					fmt.Sprintf("table or partition %v's leader location %v is out of txn_scope %v", physicalTableID, dcLocation, txnScope))
 				break
 			}
-			tbl, ok := is.TableByID(physicalTableID)
-			if !ok {
-				err = ddl.ErrInvalidPlacementPolicyCheck.GenWithStackByArgs(
-					fmt.Sprintf("table or partition %v is not found", physicalTableID))
-				break
-			}
-			if tbl.Meta().State == model.StateGlobalTxnWriteOnly {
-				err = ddl.ErrInvalidPlacementPolicyCheck.GenWithStackByArgs(
-					fmt.Sprintf("table or partition %v is updated by ilegal txn_scope %v during schema state %v",
-						physicalTableID, txnScope, model.StateGlobalTxnWriteOnly))
-				break
-			}
+			//tbl, ok := is.TableByID(physicalTableID)
+			//if !ok {
+			//	err = ddl.ErrInvalidPlacementPolicyCheck.GenWithStackByArgs(
+			//		fmt.Sprintf("table or partition %v is not found", physicalTableID))
+			//	break
+			//}
+
+			//if tbl.Meta().State == model.StateGlobalTxnWriteOnly {
+			//	err = ddl.ErrInvalidPlacementPolicyCheck.GenWithStackByArgs(
+			//		fmt.Sprintf("table or partition %v is updated by ilegal txn_scope %v during schema state %v",
+			//			physicalTableID, txnScope, model.StateGlobalTxnWriteOnly))
+			//	break
+			//}
 		}
 	}
 	return err

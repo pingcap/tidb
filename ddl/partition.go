@@ -1730,32 +1730,29 @@ func onAlterTablePartition(t *meta.Meta, job *model.Job) (ver int64, err error) 
 		job.State = model.JobStateCancelled
 		return 0, errors.Trace(table.ErrUnknownPartition.GenWithStackByArgs("drop?", tblInfo.Name.O))
 	}
+
+	ptTblInfo, err := getTableInfo(t, partitionID, job.SchemaID)
+	if err != nil {
+		if infoschema.ErrDatabaseNotExists.Equal(err) || infoschema.ErrTableNotExists.Equal(err) {
+			job.State = model.JobStateCancelled
+		}
+		return ver, errors.Trace(err)
+	}
+	logutil.BgLogger().Info("onAlterTablePartition", zap.Int64("ptTblInfo", ptTblInfo.ID))
+
+	err = infosync.PutRuleBundles(nil, []*placement.Bundle{bundle})
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return 0, errors.Wrapf(err, "failed to notify PD the placement rules")
+	}
+
 	// used by ApplyDiff in updateSchemaVersion
 	job.CtxVars = []interface{}{partitionID}
-	switch tblInfo.State {
-	case model.StateNone:
-		// none -> global txn write only
-		err = infosync.PutRuleBundles(nil, []*placement.Bundle{bundle})
-		if err != nil {
-			job.State = model.JobStateCancelled
-			return 0, errors.Wrapf(err, "failed to notify PD the placement rules")
-		}
-		tblInfo.State = model.StateGlobalTxnWriteOnly
-		ver, err = updateSchemaVersion(t, job)
-		if err != nil {
-			return ver, errors.Trace(err)
-		}
-		job.SchemaState = model.StateGlobalTxnWriteOnly
-	case model.StateGlobalTxnWriteOnly:
-		// 	global txn write only -> public
-		tblInfo.State = model.StatePublic
-		ver, err = updateSchemaVersion(t, job)
-		if err != nil {
-			return ver, errors.Trace(err)
-		}
-		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
-	default:
-		err = ErrInvalidDDLState.GenWithStackByArgs("partition", tblInfo.State)
+	ver, err = updateSchemaVersion(t, job)
+	if err != nil {
+		return ver, errors.Trace(err)
 	}
+
+	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 	return ver, nil
 }
