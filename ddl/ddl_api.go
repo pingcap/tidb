@@ -2045,11 +2045,8 @@ func checkPartitionByList(ctx sessionctx.Context, tbInfo *model.TableInfo, s *as
 		}
 		return checkPartitionFuncType(ctx, s, tbInfo)
 	}
-	if err := checkColumnsPartitionType(tbInfo); err != nil {
-		return err
-	}
 
-	return nil
+	return checkColumnsPartitionType(tbInfo)
 }
 
 func checkColumnsPartitionType(tbInfo *model.TableInfo) error {
