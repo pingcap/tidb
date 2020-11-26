@@ -92,6 +92,10 @@ func optimizeByShuffle(pp PhysicalPlan, tsk task, ctx sessionctx.Context) task {
 		if shuffle := optimizeByShuffle4Window(p, ctx); shuffle != nil {
 			return shuffle.attach2Task(tsk)
 		}
+	case *PhysicalMergeJoin:
+		if shuffle := optimizeByShuffle4MergeJoin(p, ctx); shuffle != nil {
+			return shuffle.attach2Task(tsk)
+		}
 	case *PhysicalStreamAgg:
 		if shuffle := optimizeByShuffle4StreamAgg(p, ctx); shuffle != nil {
 			return shuffle.attach2Task(tsk)
@@ -160,6 +164,46 @@ func optimizeByShuffle4StreamAgg(pp *PhysicalStreamAgg, ctx sessionctx.Context) 
 		DataSources:  []PhysicalPlan{dataSource},
 		SplitterType: PartitionHashSplitterType,
 		ByItemArrays: [][]expression.Expression{cloneExprs(pp.GroupByItems)},
+	}.Init(ctx, pp.statsInfo(), pp.SelectBlockOffset(), reqProp)
+	return shuffle
+}
+
+func optimizeByShuffle4MergeJoin(pp *PhysicalMergeJoin, ctx sessionctx.Context) *PhysicalShuffle {
+	// TODO: should be configured by a session variable
+	concurrency := 1 // disable by default
+	if concurrency <= 1 {
+		return nil
+	}
+
+	children := pp.Children()
+	dataSources := make([]PhysicalPlan, len(children))
+	tails := make([]PhysicalPlan, len(children))
+
+	for i := range children {
+		sort, ok := children[i].(*PhysicalSort)
+		if !ok {
+			// Multi-thread executing on SORTED data source is not effective enough by current implementation.
+			// TODO: Implement a better one.
+			return nil
+		}
+		tails[i], dataSources[i] = sort, sort.Children()[0]
+	}
+
+	leftByItemArray := make([]expression.Expression, 0, len(pp.LeftJoinKeys))
+	for _, col := range pp.LeftJoinKeys {
+		leftByItemArray = append(leftByItemArray, col.Clone())
+	}
+	rightByItemArray := make([]expression.Expression, 0, len(pp.RightJoinKeys))
+	for _, col := range pp.RightJoinKeys {
+		rightByItemArray = append(rightByItemArray, col.Clone())
+	}
+	reqProp := &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64}
+	shuffle := PhysicalShuffle{
+		Concurrency:  concurrency,
+		Tails:        tails,
+		DataSources:  dataSources,
+		SplitterType: PartitionHashSplitterType,
+		ByItemArrays: [][]expression.Expression{leftByItemArray, rightByItemArray},
 	}.Init(ctx, pp.statsInfo(), pp.SelectBlockOffset(), reqProp)
 	return shuffle
 }
