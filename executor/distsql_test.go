@@ -261,8 +261,8 @@ func (s *testSuite3) TestIndexLookUpStats(c *C) {
 		TableTaskNum: 2,
 		Concurrency:  1,
 	}
-	c.Assert(stats.String(), Equals, "index_task:2s, table_task:{num:2, concurrency:1, time:2s}")
+	c.Assert(stats.String(), Equals, "index_task: 2s, table_task: {num: 2, concurrency: 1, time: 2s}")
 	c.Assert(stats.String(), Equals, stats.Clone().String())
 	stats.Merge(stats.Clone())
-	c.Assert(stats.String(), Equals, "index_task:4s, table_task:{num:4, concurrency:2, time:4s}")
+	c.Assert(stats.String(), Equals, "index_task: 4s, table_task: {num: 4, concurrency: 2, time: 4s}")
 }

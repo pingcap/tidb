@@ -99,7 +99,7 @@ func (s *testAnalyzeSuite) TestExplainAnalyze(c *C) {
 		c.Assert(strings.Contains(execInfo, "time"), Equals, true)
 		c.Assert(strings.Contains(execInfo, "loops"), Equals, true)
 		if strings.Contains(row[0].(string), "Reader") || strings.Contains(row[0].(string), "IndexLookUp") {
-			c.Assert(strings.Contains(execInfo, "copr_cache_hit_ratio"), Equals, true)
+			c.Assert(strings.Contains(execInfo, "cop_task"), Equals, true)
 		}
 	}
 }
