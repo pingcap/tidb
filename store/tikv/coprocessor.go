@@ -705,6 +705,16 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 		ok     bool
 		closed bool
 	)
+	defer func() {
+		if resp == nil {
+			failpoint.Inject("ticase-4170", func(val failpoint.Value) {
+				if val.(bool) {
+					it.memTracker.Consume(10 * MockResponseSizeForTest)
+					it.memTracker.Consume(10 * MockResponseSizeForTest)
+				}
+			})
+		}
+	}()
 	// wait unit at least 5 copResponse received.
 	failpoint.Inject("testRateLimitActionMockWaitMax", func(val failpoint.Value) {
 		if val.(bool) {
@@ -1279,12 +1289,6 @@ func (it *copIterator) Close() error {
 	it.rpcCancel.CancelAll()
 	it.actionOnExceed.close()
 	it.wg.Wait()
-	failpoint.Inject("ticase-4170", func(val failpoint.Value) {
-		if val.(bool) {
-			it.memTracker.Consume(10 * MockResponseSizeForTest)
-			it.memTracker.Consume(10 * MockResponseSizeForTest)
-		}
-	})
 	return nil
 }
 
