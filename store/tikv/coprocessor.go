@@ -522,6 +522,12 @@ func init() {
 // send the result back.
 func (worker *copIteratorWorker) run(ctx context.Context) {
 	defer func() {
+		failpoint.Inject("ticase-4169", func(val failpoint.Value) {
+			if val.(bool) {
+				worker.memTracker.Consume(10 * MockResponseSizeForTest)
+				worker.memTracker.Consume(10 * MockResponseSizeForTest)
+			}
+		})
 		worker.wg.Done()
 	}()
 	for task := range worker.taskCh {
@@ -583,6 +589,12 @@ func (it *copIterator) open(ctx context.Context, enabledRateLimitAction bool) {
 	taskSender.respChan = it.respChan
 	// enabledRateLimit decides whether enabled ratelimit action
 	it.actionOnExceed.setEnabled(enabledRateLimitAction)
+	failpoint.Inject("ticase-4171", func(val failpoint.Value) {
+		if val.(bool) {
+			it.memTracker.Consume(10 * MockResponseSizeForTest)
+			it.memTracker.Consume(10 * MockResponseSizeForTest)
+		}
+	})
 	go taskSender.run()
 }
 
@@ -691,6 +703,16 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 		ok     bool
 		closed bool
 	)
+	defer func() {
+		if resp == nil {
+			failpoint.Inject("ticase-4170", func(val failpoint.Value) {
+				if val.(bool) {
+					it.memTracker.Consume(10 * MockResponseSizeForTest)
+					it.memTracker.Consume(10 * MockResponseSizeForTest)
+				}
+			})
+		}
+	}()
 	// wait unit at least 5 copResponse received.
 	failpoint.Inject("testRateLimitActionMockWaitMax", func(val failpoint.Value) {
 		if val.(bool) {
@@ -1326,7 +1348,7 @@ func (e *rateLimitAction) Action(t *memory.Tracker) {
 	e.cond.once.Do(func() {
 		if e.cond.remainingTokenNum < 2 {
 			e.setEnabled(false)
-			logutil.BgLogger().Info("memory exceed quota, rateLimitAction delegate to fallback action",
+			logutil.BgLogger().Info("memory exceeds quota, rateLimitAction delegate to fallback action",
 				zap.Uint("total token count", e.totalTokenNum))
 			if e.fallbackAction != nil {
 				e.fallbackAction.Action(t)
