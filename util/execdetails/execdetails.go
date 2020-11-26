@@ -171,13 +171,24 @@ func (ld *LockKeysDetails) Clone() *LockKeysDetails {
 
 // CopDetails contains coprocessor detail information.
 type CopDetails struct {
-	TotalKeys                 int64
-	ProcessedKeys             int64
+	// TotalKeys is the approximate number of MVCC keys meet during scanning. It includes
+	// deleted versions, but does not include RocksDB tombstone keys.
+	TotalKeys int64
+	// ProcessedKeys is the number of user keys scanned from the storage.
+	// It does not include deleted version or RocksDB tombstone keys.
+	// For Coprocessor requests, it includes keys that has been filtered out by Selection.
+	ProcessedKeys int64
+	// RocksdbDeleteSkippedCount is the total number of deletes and single deletes skipped over during
+	// iteration, i.e. how many RocksDB tombstones are skipped.
 	RocksdbDeleteSkippedCount uint64
-	RocksdbKeySkippedCount    uint64
+	// RocksdbKeySkippedCount it the total number of internal keys skipped over during iteration.
+	RocksdbKeySkippedCount uint64
+	// RocksdbBlockCacheHitCount is the total number of RocksDB block cache hits.
 	RocksdbBlockCacheHitCount uint64
-	RocksdbBlockReadCount     uint64
-	RocksdbBlockReadByte      uint64
+	// RocksdbBlockReadCount is the total number of block reads (with IO).
+	RocksdbBlockReadCount uint64
+	// RocksdbBlockReadByte is the total number of bytes from block reads.
+	RocksdbBlockReadByte uint64
 }
 
 // Merge merges lock keys execution details into self.
@@ -479,30 +490,14 @@ func (crs *CopRuntimeStats) String() string {
 	}
 	if detail := crs.copDetails; detail != nil {
 		crs.writeField(buf, "total_keys", detail.TotalKeys)
-		if detail.ProcessedKeys > 0 {
-			crs.writeField(buf, "processed_keys", detail.ProcessedKeys)
-		}
-		if detail.RocksdbDeleteSkippedCount > 0 || detail.RocksdbKeySkippedCount > 0 ||
-			detail.RocksdbBlockCacheHitCount > 0 || detail.RocksdbBlockReadCount > 0 ||
-			detail.RocksdbBlockReadByte > 0 {
-			buf.WriteString(", rocksdb: {")
-			if detail.RocksdbDeleteSkippedCount > 0 {
-				crs.writeField(buf, "delete_skipped_count", int64(detail.RocksdbDeleteSkippedCount))
-			}
-			if detail.RocksdbKeySkippedCount > 0 {
-				crs.writeField(buf, "key_skipped_count", int64(detail.RocksdbKeySkippedCount))
-			}
-			if detail.RocksdbBlockCacheHitCount > 0 {
-				crs.writeField(buf, "block_cache_hit_count", int64(detail.RocksdbBlockCacheHitCount))
-			}
-			if detail.RocksdbBlockReadCount > 0 {
-				crs.writeField(buf, "block_read_count", int64(detail.RocksdbBlockReadCount))
-			}
-			if detail.RocksdbBlockReadByte > 0 {
-				crs.writeFieldValue(buf, "block_read", memory.FormatBytes(int64(detail.RocksdbBlockReadByte)))
-			}
-			buf.WriteByte('}')
-		}
+		crs.writeField(buf, "processed_keys", detail.ProcessedKeys)
+		buf.WriteString(", rocksdb: {")
+		crs.writeField(buf, "delete_skipped_count", int64(detail.RocksdbDeleteSkippedCount))
+		crs.writeField(buf, "key_skipped_count", int64(detail.RocksdbKeySkippedCount))
+		crs.writeField(buf, "block_cache_hit_count", int64(detail.RocksdbBlockCacheHitCount))
+		crs.writeField(buf, "block_read_count", int64(detail.RocksdbBlockReadCount))
+		crs.writeFieldValue(buf, "block_read", memory.FormatBytes(int64(detail.RocksdbBlockReadByte)))
+		buf.WriteByte('}')
 	}
 	return buf.String()
 }
