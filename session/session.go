@@ -197,7 +197,10 @@ type session struct {
 // AddTableLock adds table lock to the session lock map.
 func (s *session) AddTableLock(locks []model.TableLockTpInfo) {
 	for _, l := range locks {
-		s.lockedTables[l.TableID] = l
+		// read only lock is session unrelated, skip it when adding lock to session.
+		if l.Tp != model.TableLockReadOnly {
+			s.lockedTables[l.TableID] = l
+		}
 	}
 }
 
@@ -1098,12 +1101,16 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 	if command != mysql.ComSleep || s.GetSessionVars().InTxn() {
 		curTxnStartTS = s.sessionVars.TxnCtx.StartTS
 	}
+	p := s.currentPlan
+	if explain, ok := p.(*plannercore.Explain); ok && explain.Analyze && explain.TargetPlan != nil {
+		p = explain.TargetPlan
+	}
 	pi := util.ProcessInfo{
 		ID:               s.sessionVars.ConnectionID,
 		DB:               s.sessionVars.CurrentDB,
 		Command:          command,
-		Plan:             s.currentPlan,
-		PlanExplainRows:  plannercore.GetExplainRowsForPlan(s.currentPlan),
+		Plan:             p,
+		PlanExplainRows:  plannercore.GetExplainRowsForPlan(p),
 		RuntimeStatsColl: s.sessionVars.StmtCtx.RuntimeStatsColl,
 		Time:             t,
 		State:            s.Status(),
@@ -2228,6 +2235,7 @@ var builtinGlobalVariable = []string{
 	variable.TiDBEnableChangeColumnType,
 	variable.TiDBEnableAmendPessimisticTxn,
 	variable.TiDBMemoryUsageAlarmRatio,
+	variable.TiDBEnableRateLimitAction,
 }
 
 var (
