@@ -70,7 +70,6 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/testkit"
@@ -6306,34 +6305,34 @@ func (s *testSuite) TestTxnRetry(c *C) {
 	tk.MustQuery("select * from t").Check(testkit.Rows("3"))
 }
 
-func (s *testSuite) TestOOMActionPriority(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t0")
-	tk.MustExec("drop table if exists t1")
-	tk.MustExec("drop table if exists t2")
-	tk.MustExec("drop table if exists t3")
-	tk.MustExec("drop table if exists t4")
-	tk.MustExec("create table t0(a int)")
-	tk.MustExec("insert into t0 values(1)")
-	tk.MustExec("create table t1(a int)")
-	tk.MustExec("insert into t1 values(1)")
-	tk.MustExec("create table t2(a int)")
-	tk.MustExec("insert into t2 values(1)")
-	tk.MustExec("create table t3(a int)")
-	tk.MustExec("insert into t3 values(1)")
-	tk.MustExec("create table t4(a int)")
-	tk.MustExec("insert into t4 values(1)")
-	tk.MustQuery("select * from t0 join t1 join t2 join t3 join t4 order by t0.a").Check(testkit.Rows("1 1 1 1 1"))
-	action := tk.Se.GetSessionVars().StmtCtx.MemTracker.GetFallbackForTest()
-	// check the first 5 actions is rate limit.
-	for i := 0; i < 5; i++ {
-		c.Assert(action.GetPriority(), Equals, int64(memory.DefRateLimitPriority))
-		action = action.GetFallback()
-	}
-	for action.GetFallback() != nil {
-		c.Assert(action.GetPriority(), Equals, int64(memory.DefSpillPriority))
-		action = action.GetFallback()
-	}
-	c.Assert(action.GetPriority(), Equals, int64(memory.DefLogPriority))
-}
+//func (s *testSuite) TestOOMActionPriority(c *C) {
+//	tk := testkit.NewTestKit(c, s.store)
+//	tk.MustExec("use test")
+//	tk.MustExec("drop table if exists t0")
+//	tk.MustExec("drop table if exists t1")
+//	tk.MustExec("drop table if exists t2")
+//	tk.MustExec("drop table if exists t3")
+//	tk.MustExec("drop table if exists t4")
+//	tk.MustExec("create table t0(a int)")
+//	tk.MustExec("insert into t0 values(1)")
+//	tk.MustExec("create table t1(a int)")
+//	tk.MustExec("insert into t1 values(1)")
+//	tk.MustExec("create table t2(a int)")
+//	tk.MustExec("insert into t2 values(1)")
+//	tk.MustExec("create table t3(a int)")
+//	tk.MustExec("insert into t3 values(1)")
+//	tk.MustExec("create table t4(a int)")
+//	tk.MustExec("insert into t4 values(1)")
+//	tk.MustQuery("select * from t0 join t1 join t2 join t3 join t4 order by t0.a").Check(testkit.Rows("1 1 1 1 1"))
+//	action := tk.Se.GetSessionVars().StmtCtx.MemTracker.GetFallbackForTest()
+//	// check the first 5 actions is rate limit.
+//	for i := 0; i < 5; i++ {
+//		c.Assert(action.GetPriority(), Equals, int64(memory.DefRateLimitPriority))
+//		action = action.GetFallback()
+//	}
+//	for action.GetFallback() != nil {
+//		c.Assert(action.GetPriority(), Equals, int64(memory.DefSpillPriority))
+//		action = action.GetFallback()
+//	}
+//	c.Assert(action.GetPriority(), Equals, int64(memory.DefLogPriority))
+//}
