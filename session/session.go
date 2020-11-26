@@ -1868,10 +1868,10 @@ func loadCollationParameter(se *session) (bool, error) {
 // loadDefMemQuotaQuery loads the default value of mem-quota-query.
 // We'll read a tuple if the cluster is upgraded from v3.0.x to v4.0.9+.
 // An empty result will be returned if it's a newly deployed cluster whose
-// version is v4.0.9.Í
+// version is v4.0.9.
 // See the comment upon the function `upgradeToVer54` for details.
 func loadDefMemQuotaQuery(se *session) (int64, error) {
-	_, err := loadParameter(se, tidbMemoryQuotaQuery)
+	_, err := loadParameter(se, tidbDefMemoryQuotaQuery)
 	if err != nil {
 		if err == errResultIsEmpty {
 			return 1 << 30, nil

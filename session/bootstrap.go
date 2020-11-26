@@ -363,8 +363,8 @@ const (
 	// The variable name in mysql.tidb table and it will indicate if the new collations are enabled in the TiDB cluster.
 	tidbNewCollationEnabled = "new_collation_enabled"
 	// The variable name in mysql.tidb table and it records the default value of
-	// mem-quota-query when upgrade from 3.0.x to 4.0.9+.
-	tidbMemoryQuotaQuery = "memory_quota_query"
+	// mem-quota-query when upgrade from v3.0.x to v4.0.9+.
+	tidbDefMemoryQuotaQuery = "default_memory_quota_query"
 	// Const for TiDB server version 2.
 	version2  = 2
 	version3  = 3
@@ -1213,8 +1213,8 @@ func upgradeToVer54(s Session, ver int64) {
 	if ver >= version54 {
 		return
 	}
-	// The mem-query-quota default value of the versions before version42 is
-	// 32GB.
+	// The mem-query-quota default value is 32GB by default in v3.0, and 1GB by
+	// default in v4.0.
 	// If a cluster is upgraded from v3.0.x (bootstrapVer <= version38) to
 	// v4.0.9+, we'll write the default value to mysql.tidb. Thus we can get the
 	// default value of mem-quota-query, and promise the compatibility even if
@@ -1229,7 +1229,7 @@ func upgradeToVer54(s Session, ver int64) {
 func writeMemoryQuotaQuery(s Session) {
 	comment := "memory_quota_query is 32GB by default in v3.0.x, 1GB by default in v4.0.x"
 	sql := fmt.Sprintf(`INSERT HIGH_PRIORITY INTO %s.%s VALUES ("%s", '%d', '%s') ON DUPLICATE KEY UPDATE VARIABLE_VALUE='%d'`,
-		mysql.SystemDB, mysql.TiDBTable, tidbMemoryQuotaQuery, 32<<30, comment, 32<<30)
+		mysql.SystemDB, mysql.TiDBTable, tidbDefMemoryQuotaQuery, 32<<30, comment, 32<<30)
 	mustExecute(s, sql)
 }
 
