@@ -464,7 +464,6 @@ func (s *session) doCommit(ctx context.Context) error {
 	if s.GetSessionVars().EnableAmendPessimisticTxn {
 		s.txn.SetOption(kv.SchemaAmender, NewSchemaAmenderForTikvTxn(s))
 	}
-
 	return s.txn.Commit(sessionctx.SetCommitCtx(ctx, s))
 }
 
@@ -561,6 +560,7 @@ func (s *session) CommitTxn(ctx context.Context) error {
 		}
 	})
 	s.sessionVars.TxnCtx.Cleanup()
+	s.sessionVars.Users.Commit()
 	return err
 }
 

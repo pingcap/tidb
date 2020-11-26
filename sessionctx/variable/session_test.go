@@ -266,3 +266,54 @@ func (*testSessionSuite) TestIsolationRead(c *C) {
 	_, ok = sessVars.IsolationReadEngines[kv.TiFlash]
 	c.Assert(ok, Equals, true)
 }
+
+func (*testSessionSuite) TestUserDefinedVars(c *C) {
+	v := variable.NewSessionVars()
+	udv := &v.Users
+	// Test read cached value.
+	udv.Set("x", types.NewIntDatum(3))
+	val, ok := udv.Get("x")
+	c.Assert(ok, IsTrue)
+	c.Assert(val.GetInt64(), Equals, int64(3))
+
+	// Test the order.
+	udv.Set("x", types.NewIntDatum(4))
+	val, ok = udv.Get("x")
+	c.Assert(ok, IsTrue)
+	c.Assert(val.GetInt64(), Equals, int64(4))
+
+	// Test rollback revert the cached data.
+	udv.Rollback()
+	_, ok = udv.Get("x")
+	c.Assert(ok, IsFalse)
+
+	// Test commit.
+	udv.Set("y", types.NewIntDatum(5))
+	udv.Commit()
+	val, ok = udv.Get("y")
+	c.Assert(ok, IsTrue)
+	c.Assert(val.GetInt64(), Equals, int64(5))
+
+	udv.Set("a", types.NewIntDatum(6))
+	udv.Set("y", types.Datum{})
+
+	val, ok = udv.Get("a")
+	c.Assert(ok, IsTrue)
+	c.Assert(val.GetInt64(), Equals, int64(6))
+
+	// Test NULL value.
+	_, ok = udv.Get("y")
+	c.Assert(ok, IsFalse)
+	udv.Commit()
+
+	// Test set NULL works the same as delete.
+	_, ok = udv.Get("y")
+	c.Assert(ok, IsFalse)
+
+	// Cover more code.
+	udv.Commit()
+	for i := 0; i <= 32; i++ {
+		udv.Set("tmp", types.Datum{})
+	}
+	udv.Commit()
+}

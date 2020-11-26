@@ -91,11 +91,10 @@ func (e *SetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 				return err
 			}
 			sessionVars.UsersLock.Lock()
+			sessionVars.Users.Set(name, value)
 			if value.IsNull() {
-				delete(sessionVars.Users, name)
 				delete(sessionVars.UserVarTypes, name)
 			} else {
-				sessionVars.Users[name] = value
 				sessionVars.UserVarTypes[name] = v.Expr.GetType()
 			}
 			sessionVars.UsersLock.Unlock()

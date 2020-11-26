@@ -189,7 +189,7 @@ func (b *builtinSetStringVarSig) vecEvalString(input *chunk.Chunk, result *chunk
 		}
 		varName := strings.ToLower(buf0.GetString(i))
 		res := buf1.GetString(i)
-		sessionVars.Users[varName] = types.NewCollationStringDatum(stringutil.Copy(res), collation, collate.DefaultLen)
+		sessionVars.Users.Set(varName, types.NewCollationStringDatum(stringutil.Copy(res), collation, collate.DefaultLen))
 		result.AppendString(res)
 	}
 	return nil
@@ -229,7 +229,7 @@ func (b *builtinSetIntVarSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 		}
 		varName := strings.ToLower(buf0.GetString(i))
 		res := buf1.GetInt64(i)
-		sessionVars.Users[varName] = types.NewIntDatum(res)
+		sessionVars.Users.Set(varName, types.NewIntDatum(res))
 		i64s[i] = res
 	}
 	return nil
@@ -269,7 +269,7 @@ func (b *builtinSetRealVarSig) vecEvalReal(input *chunk.Chunk, result *chunk.Col
 		}
 		varName := strings.ToLower(buf0.GetString(i))
 		res := buf1.GetFloat64(i)
-		sessionVars.Users[varName] = types.NewFloat64Datum(res)
+		sessionVars.Users.Set(varName, types.NewFloat64Datum(res))
 		f64s[i] = res
 	}
 	return nil
@@ -309,7 +309,7 @@ func (b *builtinSetDecimalVarSig) vecEvalDecimal(input *chunk.Chunk, result *chu
 		}
 		varName := strings.ToLower(buf0.GetString(i))
 		res := buf1.GetDecimal(i)
-		sessionVars.Users[varName] = types.NewDecimalDatum(res)
+		sessionVars.Users.Set(varName, types.NewDecimalDatum(res))
 		decs[i] = *res
 	}
 	return nil
@@ -347,7 +347,7 @@ func (b *builtinGetStringVarSig) vecEvalString(input *chunk.Chunk, result *chunk
 			continue
 		}
 		varName := strings.ToLower(buf0.GetString(i))
-		if v, ok := sessionVars.Users[varName]; ok {
+		if v, ok := sessionVars.Users.Get(varName); ok {
 			result.AppendString(v.GetString())
 			continue
 		}
@@ -381,7 +381,7 @@ func (b *builtinGetIntVarSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 			continue
 		}
 		varName := strings.ToLower(buf0.GetString(i))
-		if v, ok := sessionVars.Users[varName]; ok {
+		if v, ok := sessionVars.Users.Get(varName); ok {
 			i64s[i] = v.GetInt64()
 			continue
 		}
@@ -415,7 +415,7 @@ func (b *builtinGetRealVarSig) vecEvalReal(input *chunk.Chunk, result *chunk.Col
 			continue
 		}
 		varName := strings.ToLower(buf0.GetString(i))
-		if v, ok := sessionVars.Users[varName]; ok {
+		if v, ok := sessionVars.Users.Get(varName); ok {
 			f64s[i] = v.GetFloat64()
 			continue
 		}
@@ -449,7 +449,7 @@ func (b *builtinGetDecimalVarSig) vecEvalDecimal(input *chunk.Chunk, result *chu
 			continue
 		}
 		varName := strings.ToLower(buf0.GetString(i))
-		if v, ok := sessionVars.Users[varName]; ok {
+		if v, ok := sessionVars.Users.Get(varName); ok {
 			decs[i] = *v.GetMysqlDecimal()
 			continue
 		}

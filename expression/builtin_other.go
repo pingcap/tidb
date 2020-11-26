@@ -766,7 +766,7 @@ func (b *builtinSetRealVarSig) evalReal(row chunk.Row) (res float64, isNull bool
 	res = datum.GetFloat64()
 	varName = strings.ToLower(varName)
 	sessionVars.UsersLock.Lock()
-	sessionVars.Users[varName] = datum
+	sessionVars.Users.Set(varName, datum)
 	sessionVars.UsersLock.Unlock()
 	return res, false, nil
 }
@@ -795,7 +795,7 @@ func (b *builtinSetDecimalVarSig) evalDecimal(row chunk.Row) (*types.MyDecimal, 
 	res := datum.GetMysqlDecimal()
 	varName = strings.ToLower(varName)
 	sessionVars.UsersLock.Lock()
-	sessionVars.Users[varName] = datum
+	sessionVars.Users.Set(varName, datum)
 	sessionVars.UsersLock.Unlock()
 	return res, false, nil
 }
@@ -824,7 +824,7 @@ func (b *builtinSetIntVarSig) evalInt(row chunk.Row) (int64, bool, error) {
 	res := datum.GetInt64()
 	varName = strings.ToLower(varName)
 	sessionVars.UsersLock.Lock()
-	sessionVars.Users[varName] = datum
+	sessionVars.Users.Set(varName, datum)
 	sessionVars.UsersLock.Unlock()
 	return res, false, nil
 }
@@ -902,7 +902,7 @@ func (b *builtinGetStringVarSig) evalString(row chunk.Row) (string, bool, error)
 	varName = strings.ToLower(varName)
 	sessionVars.UsersLock.RLock()
 	defer sessionVars.UsersLock.RUnlock()
-	if v, ok := sessionVars.Users[varName]; ok {
+	if v, ok := sessionVars.Users.Get(varName); ok {
 		return v.GetString(), false, nil
 	}
 	return "", true, nil
@@ -945,7 +945,7 @@ func (b *builtinGetIntVarSig) evalInt(row chunk.Row) (int64, bool, error) {
 	varName = strings.ToLower(varName)
 	sessionVars.UsersLock.RLock()
 	defer sessionVars.UsersLock.RUnlock()
-	if v, ok := sessionVars.Users[varName]; ok {
+	if v, ok := sessionVars.Users.Get(varName); ok {
 		return v.GetInt64(), false, nil
 	}
 	return 0, true, nil
@@ -987,7 +987,7 @@ func (b *builtinGetRealVarSig) evalReal(row chunk.Row) (float64, bool, error) {
 	varName = strings.ToLower(varName)
 	sessionVars.UsersLock.RLock()
 	defer sessionVars.UsersLock.RUnlock()
-	if v, ok := sessionVars.Users[varName]; ok {
+	if v, ok := sessionVars.Users.Get(varName); ok {
 		return v.GetFloat64(), false, nil
 	}
 	return 0, true, nil
@@ -1029,7 +1029,7 @@ func (b *builtinGetDecimalVarSig) evalDecimal(row chunk.Row) (*types.MyDecimal, 
 	varName = strings.ToLower(varName)
 	sessionVars.UsersLock.RLock()
 	defer sessionVars.UsersLock.RUnlock()
-	if v, ok := sessionVars.Users[varName]; ok {
+	if v, ok := sessionVars.Users.Get(varName); ok {
 		return v.GetMysqlDecimal(), false, nil
 	}
 	return nil, true, nil

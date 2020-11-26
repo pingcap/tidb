@@ -360,6 +360,68 @@ const (
 	oneShotUse
 )
 
+type userDefinedVars struct {
+	names  []string
+	values []types.Datum
+	// There is no NULL Datum stored, NULL is translated to delete operation.
+	stored map[string]types.Datum
+}
+
+func (udv *userDefinedVars) Get(name string) (types.Datum, bool) {
+	// set @a = 3; set @a = 5; should get a = 5;
+	// So the order matters
+	for i := len(udv.names) - 1; i >= 0; i-- {
+		n := udv.names[i]
+		if n == name {
+			ret := udv.values[i]
+			return ret, !ret.IsNull()
+		}
+	}
+	ret, ok := udv.stored[name]
+	return ret, ok
+}
+
+func (udv *userDefinedVars) Set(name string, value types.Datum) {
+	// There is no Delete operation, delete is a special kind of Set with the value NULL.
+	udv.names = append(udv.names, name)
+	udv.values = append(udv.values, value)
+}
+
+func (udv *userDefinedVars) Rollback() {
+	udv.reset()
+}
+
+func (udv *userDefinedVars) Commit() {
+	if len(udv.names) == 0 {
+		return
+	}
+
+	if udv.stored == nil {
+		udv.stored = make(map[string]types.Datum, len(udv.names))
+	}
+	for i := 0; i < len(udv.names); i++ {
+		name := udv.names[i]
+		value := udv.values[i]
+		if value.IsNull() {
+			delete(udv.stored, name)
+		} else {
+			udv.stored[name] = value
+		}
+	}
+	udv.reset()
+}
+
+func (udv *userDefinedVars) reset() {
+	if cap(udv.names) > 32 {
+		// Avoid memory leak in each session.
+		udv.names = nil
+		udv.values = nil
+	} else {
+		udv.names = udv.names[:0]
+		udv.values = udv.values[:0]
+	}
+}
+
 // SessionVars is to handle user-defined or global variables in the current session.
 type SessionVars struct {
 	Concurrency
@@ -373,7 +435,7 @@ type SessionVars struct {
 	// UsersLock is a lock for user defined variables.
 	UsersLock sync.RWMutex
 	// Users are user defined variables.
-	Users map[string]types.Datum
+	Users userDefinedVars
 	// UserVarTypes stores the FieldType for user variables, it cannot be inferred from Users when Users have not been set yet.
 	// It is read/write protected by UsersLock.
 	UserVarTypes map[string]*types.FieldType
@@ -826,7 +888,6 @@ type ConnectionInfo struct {
 // NewSessionVars creates a session vars object.
 func NewSessionVars() *SessionVars {
 	vars := &SessionVars{
-		Users:                       make(map[string]types.Datum),
 		UserVarTypes:                make(map[string]*types.FieldType),
 		systems:                     make(map[string]string),
 		stmtVars:                    make(map[string]string),
@@ -1066,12 +1127,14 @@ func (s *SessionVars) GetCharsetInfo() (charset, collation string) {
 
 // SetUserVar set the value and collation for user defined variable.
 func (s *SessionVars) SetUserVar(varName string, svalue string, collation string) {
+	var val types.Datum
 	if len(collation) > 0 {
-		s.Users[varName] = types.NewCollationStringDatum(stringutil.Copy(svalue), collation, collate.DefaultLen)
+		val = types.NewCollationStringDatum(stringutil.Copy(svalue), collation, collate.DefaultLen)
 	} else {
 		_, collation = s.GetCharsetInfo()
-		s.Users[varName] = types.NewCollationStringDatum(stringutil.Copy(svalue), collation, collate.DefaultLen)
+		val = types.NewCollationStringDatum(stringutil.Copy(svalue), collation, collate.DefaultLen)
 	}
+	s.Users.Set(varName, val)
 }
 
 // SetLastInsertID saves the last insert id to the session context.

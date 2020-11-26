@@ -3682,3 +3682,23 @@ func (s *testSessionSerialSuite) TestCoprocessorOOMAction(c *C) {
 		se.Close()
 	}
 }
+
+func (s *testSessionSuite3) TestUserDefinedVariableRollback(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	// Default value is NULL if not exist.
+	tk.MustQuery("select @x").Check(testkit.Rows("<nil>"))
+
+	tk.MustExec("set @x = 3")
+	tk.MustQuery("select @x").Check(testkit.Rows("3"))
+
+	// Test rollback.
+	tk.MustExec("begin")
+	tk.MustExec("set @x = 5")
+	tk.MustQuery("select @x").Check(testkit.Rows("5"))
+	tk.MustExec("rollback")
+	tk.MustQuery("select @x").Check(testkit.Rows("3"))
+
+	// Set to NULL means delete.
+	tk.MustExec("set @x = null")
+	tk.MustQuery("select @x").Check(testkit.Rows("<nil>"))
+}
