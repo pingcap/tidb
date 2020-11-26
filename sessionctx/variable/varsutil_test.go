@@ -455,6 +455,9 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, "0")
 	c.Assert(v.systems[TiDBFoundInPlanCache], Equals, "1")
+
+	err = SetSessionSystemVar(v, "UnknownVariable", types.NewStringDatum("on"))
+	c.Assert(err, ErrorMatches, ".*]Unknown system variable 'UnknownVariable'")
 }
 
 func (s *testVarsutilSuite) TestSetOverflowBehave(c *C) {

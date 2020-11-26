@@ -1234,6 +1234,7 @@ func (s *testRangerSuite) TestIndexRangeForYear(c *C) {
 	testKit.MustExec("INSERT INTO t VALUES (1), (70), (99), (0), ('0')")
 	testKit.MustQuery("SELECT * FROM t WHERE a < 15698").Check(testkit.Rows("0", "1970", "1999", "2000", "2001"))
 	testKit.MustQuery("SELECT * FROM t WHERE a <= 0").Check(testkit.Rows("0"))
+	testKit.MustQuery("SELECT * FROM t WHERE a <= 1").Check(testkit.Rows("0", "1970", "1999", "2000", "2001"))
 	testKit.MustQuery("SELECT * FROM t WHERE a < 2000").Check(testkit.Rows("0", "1970", "1999"))
 	testKit.MustQuery("SELECT * FROM t WHERE a > -1").Check(testkit.Rows("0", "1970", "1999", "2000", "2001"))
 
@@ -1261,14 +1262,21 @@ func (s *testRangerSuite) TestIndexRangeForYear(c *C) {
 		{
 			indexPos:    0,
 			exprStr:     `a not in (1, 2, 70)`,
-			accessConds: "[not(in(test.t.a, 1, 2, 70))]",
+			accessConds: "[not(in(test.t.a, 1, 2, 70))]", // this is in accordance with MySQL, MySQL won't interpret 70 here as 1970
 			filterConds: "[]",
 			resultStr:   `[(NULL,1970) (1970,2001) (2002,+inf]]`,
 		},
 		{
 			indexPos:    0,
+			exprStr:     `a = 1 or a = 2 or a = 70`,
+			accessConds: "[or(eq(test.t.a, 2001), or(eq(test.t.a, 2002), eq(test.t.a, 1970)))]", // this is in accordance with MySQL, MySQL won't interpret 70 here as 1970
+			filterConds: "[]",
+			resultStr:   `[[1970,1970] [2001,2002]]`,
+		},
+		{
+			indexPos:    0,
 			exprStr:     `a not in (99)`,
-			accessConds: "[ne(test.t.a, 99)]",
+			accessConds: "[ne(test.t.a, 1999)]", // this is in accordance with MySQL
 			filterConds: "[]",
 			resultStr:   `[[-inf,1999) (1999,+inf]]`,
 		},
@@ -1296,7 +1304,7 @@ func (s *testRangerSuite) TestIndexRangeForYear(c *C) {
 		{
 			indexPos:    0,
 			exprStr:     `a != 1`,
-			accessConds: "[ne(test.t.a, 1)]",
+			accessConds: "[ne(test.t.a, 2001)]",
 			filterConds: "[]",
 			resultStr:   `[[-inf,2001) (2001,+inf]]`,
 		},
@@ -1309,13 +1317,13 @@ func (s *testRangerSuite) TestIndexRangeForYear(c *C) {
 		},
 		{
 			exprStr:     "a < 99 or a > 01",
-			accessConds: "[or(lt(test.t.a, 99), gt(test.t.a, 1))]",
+			accessConds: "[or(lt(test.t.a, 1999), gt(test.t.a, 2001))]",
 			filterConds: "[]",
 			resultStr:   "[[-inf,1999) (2001,+inf]]",
 		},
 		{
 			exprStr:     "a >= 70 and a <= 69",
-			accessConds: "[ge(test.t.a, 70) le(test.t.a, 69)]",
+			accessConds: "[ge(test.t.a, 1970) le(test.t.a, 2069)]",
 			filterConds: "[]",
 			resultStr:   "[[1970,2069]]",
 		},
