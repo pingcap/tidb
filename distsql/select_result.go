@@ -456,6 +456,8 @@ func (s *selectResultRuntimeStats) String() string {
 		if config.GetGlobalConfig().TiKVClient.CoprCache.Enable {
 			buf.WriteString(fmt.Sprintf(", copr_cache_hit_ratio: %v",
 				strconv.FormatFloat(float64(s.CoprCacheHitNum)/float64(len(s.copRespTime)), 'f', 2, 64)))
+		} else {
+			buf.WriteString(", copr_cache: disabled")
 		}
 		buf.WriteString("}")
 	}
