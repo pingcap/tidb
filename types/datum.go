@@ -952,10 +952,14 @@ func (d *Datum) convertToString(sc *stmtctx.StatementContext, target *FieldType)
 func ProduceStrWithSpecifiedTp(s string, tp *FieldType, sc *stmtctx.StatementContext, padZero bool) (_ string, err error) {
 	flen, chs := tp.Flen, tp.Charset
 	if flen >= 0 {
+		// overflowed stores the part of the string that is out of the length contraint, it is later checked to see if the
+		// overflowed part is all whitespaces
+		var overflowed string
+		var characterLen int
 		// Flen is the rune length, not binary length, for UTF8 charset, we need to calculate the
 		// rune count and truncate to Flen runes if it is too long.
 		if chs == charset.CharsetUTF8 || chs == charset.CharsetUTF8MB4 {
-			characterLen := utf8.RuneCountInString(s)
+			characterLen = utf8.RuneCountInString(s)
 			if characterLen > flen {
 				// 1. If len(s) is 0 and flen is 0, truncateLen will be 0, don't truncate s.
 				//    CREATE TABLE t (a char(0));
@@ -972,13 +976,27 @@ func ProduceStrWithSpecifiedTp(s string, tp *FieldType, sc *stmtctx.StatementCon
 					}
 					runeCount++
 				}
-				err = ErrDataTooLong.GenWithStack("Data Too Long, field len %d, data len %d", flen, characterLen)
+				overflowed = s[truncateLen:]
 				s = truncateStr(s, truncateLen)
 			}
 		} else if len(s) > flen {
-			err = ErrDataTooLong.GenWithStack("Data Too Long, field len %d, data len %d", flen, len(s))
+			characterLen = len(s)
+			overflowed = s[flen:]
 			s = truncateStr(s, flen)
-		} else if tp.Tp == mysql.TypeString && IsBinaryStr(tp) && len(s) < flen && padZero {
+		}
+
+		if len(overflowed) != 0 {
+			trimed := strings.TrimRight(overflowed, " \t\n\r")
+			if len(trimed) == 0 && !IsBinaryStr(tp) && IsTypeChar(tp.Tp) {
+				if tp.Tp == mysql.TypeVarchar {
+					sc.AppendWarning(ErrTruncated.GenWithStack("Data truncated, field len %d, data len %d", flen, characterLen))
+				}
+			} else {
+				err = ErrDataTooLong.GenWithStack("Data Too Long, field len %d, data len %d", flen, characterLen)
+			}
+		}
+
+		if tp.Tp == mysql.TypeString && IsBinaryStr(tp) && len(s) < flen && padZero {
 			padding := make([]byte, flen-len(s))
 			s = string(append([]byte(s), padding...))
 		}
