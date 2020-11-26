@@ -2034,6 +2034,8 @@ func (s *testPessimisticSuite) TestAsyncCommitWithSchemaChange(c *C) {
 		tk2.MustExec("alter table tk add index k2(c2)")
 		ch <- struct{}{}
 	}()
+	// sleep 100ms to let add index run first
+	time.Sleep(100 * time.Millisecond)
 	// key for c2 should be amended
 	tk.MustExec("commit")
 	<-ch
@@ -2099,6 +2101,8 @@ func (s *testPessimisticSuite) Test1PCWithSchemaChange(c *C) {
 		tk2.MustExec("alter table tk add index k2(c2)")
 		ch <- struct{}{}
 	}()
+	// sleep 100ms to let add index run first
+	time.Sleep(100 * time.Millisecond)
 	// key for c2 should be amended
 	tk.MustExec("commit")
 	<-ch
