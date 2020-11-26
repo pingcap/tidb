@@ -398,15 +398,26 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx sessionctx.Context,
 			binlogNewRow = append(binlogNewRow, value)
 		}
 	}
-
+	sessVars := sctx.GetSessionVars()
 	// rebuild index
-	err = t.rebuildIndices(sctx, txn, h, touched, oldData, newData, table.WithCtx(ctx))
-	if err != nil {
-		return err
+	if !sessVars.InTxn() {
+		savePresumeKeyNotExist := sessVars.PresumeKeyNotExists
+		if !sessVars.ConstraintCheckInPlace && sessVars.TxnCtx.IsPessimistic {
+			sessVars.PresumeKeyNotExists = true
+		}
+		err = t.rebuildIndices(sctx, txn, h, touched, oldData, newData, table.WithCtx(ctx))
+		sessVars.PresumeKeyNotExists = savePresumeKeyNotExist
+		if err != nil {
+			return err
+		}
+	} else {
+		err = t.rebuildIndices(sctx, txn, h, touched, oldData, newData, table.WithCtx(ctx))
+		if err != nil {
+			return err
+		}
 	}
 
 	key := t.RecordKey(h)
-	sessVars := sctx.GetSessionVars()
 	sc, rd := sessVars.StmtCtx, &sessVars.RowEncoder
 	value, err := tablecodec.EncodeRow(sc, row, colIDs, nil, nil, rd)
 	if err != nil {

@@ -74,7 +74,7 @@ func (e *DDLExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	e.done = true
 
 	// For each DDL, we should commit the previous transaction and create a new transaction.
-	if err = e.ctx.NewTxn(ctx); err != nil {
+	if err = e.ctx.NewGlobalTxn(ctx); err != nil {
 		return err
 	}
 	defer func() { e.ctx.GetSessionVars().StmtCtx.IsDDLJobInQueue = false }()

@@ -161,9 +161,13 @@ func (h *StmtHistory) Count() int {
 type session struct {
 	// processInfo is used by ShowProcess(), and should be modified atomically.
 	processInfo atomic.Value
-	// txns holds multiple txns for different txn scopes, which will be like:
-	// txn_scope -> TxnState
+
+	// txns holds multiple transaction state for different txn scopes, which will be like:
+	// txn_scope -> *TxnState.
 	txns map[string]*TxnState
+	// Though we may hold multiple transactions in each session, but each time only
+	// one transaction is used as the current transaction in a session.
+	curTxn *TxnState
 
 	mu struct {
 		sync.RWMutex
@@ -204,21 +208,29 @@ func (s *session) setTxn(txnScope string, txn *TxnState) {
 	s.txns[txnScope] = txn
 }
 
+func (s *session) createAndInitTxn(txnScope string) {
+	if s.txns == nil {
+		s.txns = make(map[string]*TxnState)
+	}
+	newTxn := new(TxnState)
+	newTxn.init()
+	s.txns[txnScope] = newTxn
+}
+
+// Create and initialize at lease one global transaction
+// and another local transaction if needed.
 func (s *session) initTxns() {
 	if s.txns == nil {
 		s.txns = make(map[string]*TxnState)
 	}
 	// Always prepare a global transaction
-	globalTxn := new(TxnState)
-	globalTxn.init()
-	s.txns[oracle.GlobalTxnScope] = globalTxn
-	// Check whether we have to prepare the local transaction
+	s.createAndInitTxn(oracle.GlobalTxnScope)
+	// Check whether we have to prepare a local transaction
 	currentTxnScope := s.checkAndGetTxnScope()
 	if currentTxnScope != oracle.GlobalTxnScope {
-		txn := new(TxnState)
-		txn.init()
-		s.txns[currentTxnScope] = txn
+		s.createAndInitTxn(currentTxnScope)
 	}
+	s.curTxn, _ = s.getCurrentScopeTxn()
 }
 
 func (s *session) updateTxn(txnScope string, newTxn kv.Transaction) {
@@ -239,6 +251,9 @@ func (s *session) getTxn(txnScope string) (*TxnState, bool) {
 	return txn, true
 }
 
+// getCurrentScopeTxn will return a transaction corresponding to
+// the current txn scope but may not be the transaction current
+// seesion is using.
 func (s *session) getCurrentScopeTxn() (*TxnState, bool) {
 	return s.getTxn(s.checkAndGetTxnScope())
 }
@@ -463,24 +478,14 @@ func (s *session) FieldList(tableName string) ([]*ast.ResultField, error) {
 }
 
 func (s *session) doCommit(ctx context.Context) error {
-	var txnToCommit *TxnState
-	// There should be only one valid txn to commit, range to find it.
-	for txnScope, txn := range s.txns {
-		if txn.Valid() {
-			if txnToCommit != nil {
-				return fmt.Errorf("transaction from scope [%s] is conflicted with scope [%s]", txnScope, txnToCommit.Scope())
-			}
-			txnToCommit = txn
-		}
-	}
-	if txnToCommit == nil {
+	if !s.curTxn.Valid() {
 		return nil
 	}
 	defer func() {
-		txnToCommit.changeToInvalid()
+		s.curTxn.changeToInvalid()
 		s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, false)
 	}()
-	if txnToCommit.IsReadOnly() {
+	if s.curTxn.IsReadOnly() {
 		return nil
 	}
 
@@ -506,7 +511,7 @@ func (s *session) doCommit(ctx context.Context) error {
 				},
 				Client: s.sessionVars.BinlogClient,
 			}
-			txnToCommit.SetOption(kv.BinlogInfo, info)
+			s.curTxn.SetOption(kv.BinlogInfo, info)
 		}
 	}
 
@@ -517,24 +522,23 @@ func (s *session) doCommit(ctx context.Context) error {
 		physicalTableIDs = append(physicalTableIDs, id)
 	}
 	// Set this option for 2 phase commit to validate schema lease.
-	txnToCommit.SetOption(kv.SchemaChecker, domain.NewSchemaChecker(domain.GetDomain(s), s.sessionVars.TxnCtx.SchemaVersion, physicalTableIDs))
-	txnToCommit.SetOption(kv.InfoSchema, s.sessionVars.TxnCtx.InfoSchema)
-	txnToCommit.SetOption(kv.CommitHook, func(info kv.TxnInfo, _ error) { s.sessionVars.LastTxnInfo = info })
+	s.curTxn.SetOption(kv.SchemaChecker, domain.NewSchemaChecker(domain.GetDomain(s), s.sessionVars.TxnCtx.SchemaVersion, physicalTableIDs))
+	s.curTxn.SetOption(kv.InfoSchema, s.sessionVars.TxnCtx.InfoSchema)
+	s.curTxn.SetOption(kv.CommitHook, func(info kv.TxnInfo, _ error) { s.sessionVars.LastTxnInfo = info })
 	if s.GetSessionVars().EnableAmendPessimisticTxn {
-		txnToCommit.SetOption(kv.SchemaAmender, NewSchemaAmenderForTikvTxn(s))
+		s.curTxn.SetOption(kv.SchemaAmender, NewSchemaAmenderForTikvTxn(s))
 	}
 
-	return txnToCommit.Commit(sessionctx.SetCommitCtx(ctx, s))
+	return s.curTxn.Commit(sessionctx.SetCommitCtx(ctx, s))
 }
 
 func (s *session) doCommitWithRetry(ctx context.Context) error {
-	txn, ok := s.getCurrentScopeTxn()
 	defer func() {
 		s.GetSessionVars().SetTxnIsolationLevelOneShotStateForNextTxn()
-		txn.changeToInvalid()
+		s.curTxn.changeToInvalid()
 		s.cleanRetryInfo()
 	}()
-	if !ok || !txn.Valid() {
+	if !s.curTxn.Valid() {
 		// If the transaction is invalid, maybe it has already been rolled back by the client.
 		return nil
 	}
@@ -543,8 +547,8 @@ func (s *session) doCommitWithRetry(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	txnSize := txn.Size()
-	isPessimistic := txn.IsPessimistic()
+	txnSize := s.curTxn.Size()
+	isPessimistic := s.curTxn.IsPessimistic()
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("session.doCommitWitRetry", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
@@ -563,7 +567,7 @@ func (s *session) doCommitWithRetry(ctx context.Context) error {
 			logutil.Logger(ctx).Warn("sql",
 				zap.String("label", s.getSQLLabel()),
 				zap.Error(err),
-				zap.String("txn", txn.GoString()))
+				zap.String("txn", s.curTxn.GoString()))
 			// Transactions will retry 2 ~ commitRetryLimit times.
 			// We make larger transactions retry less times to prevent cluster resource outage.
 			txnSizeRate := float64(txnSize) / float64(kv.TxnTotalSizeLimit)
@@ -586,7 +590,7 @@ func (s *session) doCommitWithRetry(ctx context.Context) error {
 
 	if err != nil {
 		logutil.Logger(ctx).Warn("commit failed",
-			zap.String("finished txn", txn.GoString()),
+			zap.String("finished txn", s.curTxn.GoString()),
 			zap.Error(err))
 		return err
 	}
@@ -629,18 +633,13 @@ func (s *session) RollbackTxn(ctx context.Context) {
 		span1 := span.Tracer().StartSpan("session.RollbackTxn", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
 	}
-
-	txn, ok := s.getCurrentScopeTxn()
-	if !ok {
-		return
-	}
-	if txn.Valid() {
-		terror.Log(txn.Rollback())
+	if s.curTxn.Valid() {
+		terror.Log(s.curTxn.Rollback())
 	}
 	if ctx.Value(inCloseSession{}) == nil {
 		s.cleanRetryInfo()
 	}
-	txn.changeToInvalid()
+	s.curTxn.changeToInvalid()
 	s.sessionVars.TxnCtx.Cleanup()
 	s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, false)
 }
@@ -729,7 +728,6 @@ func (s *session) checkTxnAborted(stmt sqlexec.Statement) error {
 }
 
 func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
-	txn, _ := s.getCurrentScopeTxn()
 	var retryCnt uint
 	defer func() {
 		s.sessionVars.RetryInfo.Retrying = false
@@ -739,7 +737,7 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 		if err != nil {
 			s.RollbackTxn(ctx)
 		}
-		txn.changeToInvalid()
+		s.curTxn.changeToInvalid()
 	}()
 
 	connID := s.sessionVars.ConnectionID
@@ -826,9 +824,9 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 		logutil.Logger(ctx).Warn("sql",
 			zap.String("label", label),
 			zap.Error(err),
-			zap.String("txn", txn.GoString()))
+			zap.String("txn", s.curTxn.GoString()))
 		kv.BackOff(retryCnt)
-		txn.changeToInvalid()
+		s.curTxn.changeToInvalid()
 		s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, false)
 	}
 	return err
@@ -1172,12 +1170,16 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 	if command != mysql.ComSleep || s.GetSessionVars().InTxn() {
 		curTxnStartTS = s.sessionVars.TxnCtx.StartTS
 	}
+	p := s.currentPlan
+	if explain, ok := p.(*plannercore.Explain); ok && explain.Analyze && explain.TargetPlan != nil {
+		p = explain.TargetPlan
+	}
 	pi := util.ProcessInfo{
 		ID:               s.sessionVars.ConnectionID,
 		DB:               s.sessionVars.CurrentDB,
 		Command:          command,
-		Plan:             s.currentPlan,
-		PlanExplainRows:  plannercore.GetExplainRowsForPlan(s.currentPlan),
+		Plan:             p,
+		PlanExplainRows:  plannercore.GetExplainRowsForPlan(p),
 		RuntimeStatsColl: s.sessionVars.StmtCtx.RuntimeStatsColl,
 		Time:             t,
 		State:            s.Status(),
@@ -1379,14 +1381,7 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 		}
 
 		// Handle the stmt commit/rollback.
-		txn, ok := se.getCurrentScopeTxn()
-		if !ok {
-			if err := se.NewTxn(ctx); err != nil {
-				return nil, err
-			}
-			txn, _ = se.getCurrentScopeTxn()
-		}
-		if txn.Valid() {
+		if se.curTxn.Valid() {
 			if err != nil {
 				se.StmtRollback()
 			} else {
@@ -1530,9 +1525,7 @@ func (s *session) cachedPlanExec(ctx context.Context,
 	switch prepared.CachedPlan.(type) {
 	case *plannercore.PointGetPlan:
 		resultSet, err = stmt.PointGet(ctx, is)
-		if txn, ok := s.getCurrentScopeTxn(); ok {
-			txn.changeToInvalid()
-		}
+		s.curTxn.changeToInvalid()
 	case *plannercore.Update:
 		s.PrepareTSFuture(ctx)
 		stmtCtx.Priority = kv.PriorityHigh
@@ -1619,56 +1612,70 @@ func (s *session) DropPreparedStmt(stmtID uint32) error {
 }
 
 func (s *session) Txn(active bool) (kv.Transaction, error) {
-	// Check whether we need a global transaction
-	txn, ok := s.getCurrentScopeTxn()
+	var (
+		nextTxn *TxnState
+		ok      bool
+	)
+	defer func() {
+		// After the calling of Txn(bool), we should set the s.curTxn
+		// for later committing or rollbacking to work on.
+		s.curTxn = nextTxn
+	}()
+	// Check whether we need a new transaction for the brand new txn scope
+	nextTxn, ok = s.getCurrentScopeTxn()
 	if !ok {
-		// Create a new one if there is no txn for the current txn scope
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-		if err := s.NewTxn(ctx); err != nil {
-			return txn, err
+		txnScope := s.checkAndGetTxnScope()
+		newTxn, err := s.store.BeginWithTxnScope(txnScope)
+		if err != nil {
+			return nextTxn, errors.AddStack(err)
 		}
-		txn, _ = s.getCurrentScopeTxn()
+		newTxn.SetVars(s.sessionVars.KVVars)
+		if s.GetSessionVars().GetReplicaRead().IsFollowerRead() {
+			newTxn.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
+		}
+		s.updateTxn(txnScope, newTxn)
+		nextTxn, _ = s.getTxn(txnScope)
 	}
 	if !active {
-		return txn, nil
+		return nextTxn, nil
 	}
-	if !txn.validOrPending() {
-		return txn, errors.AddStack(kv.ErrInvalidTxn)
+	if !nextTxn.validOrPending() {
+		return nextTxn, errors.AddStack(kv.ErrInvalidTxn)
 	}
-	if txn.pending() {
+	if nextTxn.pending() {
 		defer func(begin time.Time) {
 			s.sessionVars.DurationWaitTS = time.Since(begin)
 		}(time.Now())
 		// Transaction is lazy initialized.
 		// PrepareTxnCtx is called to get a tso future, makes txn a pending txn,
 		// If Txn() is called later, wait for the future to get a valid txn.
-		if err := txn.changePendingToValid(s.currentCtx); err != nil {
+		if err := nextTxn.changePendingToValid(s.currentCtx); err != nil {
 			logutil.BgLogger().Error("active transaction fail",
 				zap.Error(err))
-			txn.cleanup()
+			nextTxn.cleanup()
 			s.sessionVars.TxnCtx.StartTS = 0
-			return txn, err
+			return nextTxn, err
 		}
-		s.sessionVars.TxnCtx.StartTS = txn.StartTS()
+		s.sessionVars.TxnCtx.StartTS = nextTxn.StartTS()
 		if s.sessionVars.TxnCtx.IsPessimistic {
-			txn.SetOption(kv.Pessimistic, true)
+			nextTxn.SetOption(kv.Pessimistic, true)
 		}
 		if !s.sessionVars.IsAutocommit() {
 			s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, true)
 		}
 		s.sessionVars.TxnCtx.CouldRetry = s.isTxnRetryable()
-		txn.SetVars(s.sessionVars.KVVars)
+		nextTxn.SetVars(s.sessionVars.KVVars)
 		if s.sessionVars.GetReplicaRead().IsFollowerRead() {
-			txn.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
+			nextTxn.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
 		}
 	}
-	return txn, nil
+	return nextTxn, nil
 }
 
 func (s *session) GlobalTxn(active bool) (kv.Transaction, error) {
+	// Temporarily set the @@txn_scope to the global.
 	originTxnScope := s.GetSessionVars().TxnScope
-	s.GetSessionVars().TxnScope = oracle.GlobalTxnScope
+	s.GetSessionVars().SetTxnScope(oracle.GlobalTxnScope)
 	defer s.GetSessionVars().SetTxnScope(originTxnScope)
 	return s.Txn(active)
 }
@@ -1711,9 +1718,8 @@ func (s *session) isTxnRetryable() bool {
 }
 
 func (s *session) NewTxn(ctx context.Context) error {
-	txn, ok := s.getCurrentScopeTxn()
-	if ok && txn.Valid() {
-		txnID := txn.StartTS()
+	if s.curTxn.Valid() {
+		txnID := s.curTxn.StartTS()
 		err := s.CommitTxn(ctx)
 		if err != nil {
 			return err
@@ -1734,6 +1740,9 @@ func (s *session) NewTxn(ctx context.Context) error {
 		newTxn.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
 	}
 	s.updateTxn(txnScope, newTxn)
+	if txn, ok := s.getTxn(txnScope); ok {
+		s.curTxn = txn
+	}
 	is := domain.GetDomain(s).InfoSchema()
 	s.sessionVars.TxnCtx = &variable.TransactionContext{
 		InfoSchema:    is,
@@ -1744,6 +1753,14 @@ func (s *session) NewTxn(ctx context.Context) error {
 		TxnScope:      txnScope,
 	}
 	return nil
+}
+
+func (s *session) NewGlobalTxn(ctx context.Context) error {
+	// Temporarily set the @@txn_scope to the global.
+	originTxnScope := s.GetSessionVars().TxnScope
+	s.GetSessionVars().SetTxnScope(oracle.GlobalTxnScope)
+	defer s.GetSessionVars().SetTxnScope(originTxnScope)
+	return s.NewTxn(ctx)
 }
 
 func (s *session) SetValue(key fmt.Stringer, value interface{}) {
@@ -2337,6 +2354,7 @@ var builtinGlobalVariable = []string{
 	variable.TiDBEnableChangeColumnType,
 	variable.TiDBEnableAmendPessimisticTxn,
 	variable.TiDBMemoryUsageAlarmRatio,
+	variable.TiDBEnableRateLimitAction,
 }
 
 var (

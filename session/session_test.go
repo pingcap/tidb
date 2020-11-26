@@ -3266,7 +3266,8 @@ func (s *testSessionSuite2) TestGlobalAndLocalTxn(c *C) {
 	tk.MustExec("drop table if exists t1;")
 	tk.MustExec(`create table t1 (c int)
 PARTITION BY RANGE (c) (
-	PARTITION p0 VALUES LESS THAN (100)
+	PARTITION p0 VALUES LESS THAN (100),
+	PARTITION p1 VALUES LESS THAN (200)
 );`)
 	bundles := make(map[string]*placement.Bundle)
 	is := s.dom.InfoSchema()
@@ -3294,6 +3295,26 @@ PARTITION BY RANGE (c) (
 				},
 			}
 		}
+		if def.Name.String() == "p1" {
+			groupID := placement.GroupID(def.ID)
+			bundles[groupID] = &placement.Bundle{
+				ID: groupID,
+				Rules: []*placement.Rule{
+					{
+						GroupID: groupID,
+						Role:    placement.Leader,
+						Count:   1,
+						LabelConstraints: []placement.LabelConstraint{
+							{
+								Key:    placement.DCLabelKey,
+								Op:     placement.In,
+								Values: []string{"dc-2"},
+							},
+						},
+					},
+				},
+			}
+		}
 	}
 
 	// set txn_scope to global
@@ -3301,16 +3322,16 @@ PARTITION BY RANGE (c) (
 	result := tk.MustQuery("select @@txn_scope;")
 	result.Check(testkit.Rows(oracle.GlobalTxnScope))
 	// test global txn
-	tk.MustExec("insert into t1 (c) values (1)")
+	tk.MustExec("insert into t1 (c) values (1)") // in dc-1
 	tk.MustExec("begin")
 	txn, err := tk.Se.Txn(true)
 	c.Assert(err, IsNil)
 	c.Assert(txn.Scope(), Equals, oracle.GlobalTxnScope)
 	c.Assert(txn.Valid(), IsTrue)
-	tk.MustExec("insert into t1 (c) values (1)")
+	tk.MustExec("insert into t1 (c) values (1)") // in dc-1
 	c.Assert(txn.Valid(), IsTrue)
 	tk.MustExec("commit")
-	tk.MustExec("insert into t1 (c) values (1)")
+	tk.MustExec("insert into t1 (c) values (101)") // in dc-2
 
 	// set txn_scope to local
 	tk.MustExec("set @@session.txn_scope = 'dc-1';")
@@ -3326,7 +3347,35 @@ PARTITION BY RANGE (c) (
 	tk.MustExec("insert into t1 (c) values (1)")
 	c.Assert(txn.Valid(), IsTrue)
 	tk.MustExec("commit")
-	tk.MustExec("insert into t1 (c) values (1)")
+	// test wrong scope local txn
+	_, err = tk.Exec("insert into t1 (c) values (101)") // in dc-2
+	c.Assert(err.Error(), Matches, ".*out of txn_scope.*")
+	tk.MustExec("begin")
+	txn, err = tk.Se.Txn(true)
+	c.Assert(err, IsNil)
+	c.Assert(txn.Scope(), Equals, "dc-1")
+	c.Assert(txn.Valid(), IsTrue)
+	tk.MustExec("insert into t1 (c) values (101)") // in dc-2
+	c.Assert(txn.Valid(), IsTrue)
+	_, err = tk.Exec("commit")
+	c.Assert(err.Error(), Matches, ".*out of txn_scope.*")
+}
+
+func (s *testSessionSuite2) TestSetEnableRateLimitAction(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	// assert default value
+	result := tk.MustQuery("select @@tidb_enable_rate_limit_action;")
+	result.Check(testkit.Rows("1"))
+
+	// assert set sys variable
+	tk.MustExec("set global tidb_enable_rate_limit_action= '0';")
+	tk.Se.Close()
+
+	se, err := session.CreateSession4Test(s.store)
+	c.Check(err, IsNil)
+	tk.Se = se
+	result = tk.MustQuery("select @@tidb_enable_rate_limit_action;")
+	result.Check(testkit.Rows("0"))
 }
 
 func (s *testSessionSuite3) TestSetVarHint(c *C) {
@@ -3503,7 +3552,8 @@ func (s *testSessionSuite3) TestSetVarHint(c *C) {
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings()[0].Err.Error(), Equals, "[planner:3126]Hint SET_VAR(group_concat_max_len=2048) is ignored as conflicting/duplicated.")
 }
 
-func (s *testSessionSuite2) TestDeprecateSlowLogMasking(c *C) {
+// TestDeprecateSlowLogMasking should be in serial suite because it changes a global variable.
+func (s *testSessionSerialSuite) TestDeprecateSlowLogMasking(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 
 	tk.MustExec("set @@global.tidb_redact_log=0")
@@ -3617,4 +3667,120 @@ func (s *testSessionSuite2) TestSelectLockInShare(c *C) {
 	tk1.MustExec("set @@tidb_enable_noop_functions = 1")
 	tk1.MustQuery("select * from t_sel_in_share lock in share mode").Check(testkit.Rows("11"))
 	tk1.MustExec("DROP TABLE t_sel_in_share")
+}
+
+func (s *testSessionSerialSuite) TestCoprocessorOOMAction(c *C) {
+	//Assert Coprocessor OOMAction
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec(`set @@tidb_wait_split_region_finish=1`)
+	// create table for non keep-order case
+	tk.MustExec("drop table if exists t5")
+	tk.MustExec("create table t5(id int)")
+	tk.MustQuery(`split table t5 between (0) and (10000) regions 10`).Check(testkit.Rows("9 1"))
+	// create table for keep-order case
+	tk.MustExec("drop table if exists t6")
+	tk.MustExec("create table t6(id int, index(id))")
+	tk.MustQuery(`split table t6 between (0) and (10000) regions 10`).Check(testkit.Rows("10 1"))
+	tk.MustQuery("split table t6 INDEX id between (0) and (10000) regions 10;").Check(testkit.Rows("10 1"))
+	count := 10
+	for i := 0; i < count; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t5 (id) values (%v)", i))
+		tk.MustExec(fmt.Sprintf("insert into t6 (id) values (%v)", i))
+	}
+
+	testcases := []struct {
+		name string
+		sql  string
+	}{
+		{
+			name: "keep Order",
+			sql:  "select id from t6 order by id",
+		},
+		{
+			name: "non keep Order",
+			sql:  "select id from t5",
+		},
+	}
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.OOMAction = config.OOMActionCancel
+	})
+	failpoint.Enable("github.com/pingcap/tidb/store/tikv/testRateLimitActionMockConsumeAndAssert", `return(true)`)
+	defer failpoint.Disable("github.com/pingcap/tidb/store/tikv/testRateLimitActionMockConsumeAndAssert")
+
+	enableOOM := func(tk *testkit.TestKit, name, sql string) {
+		c.Logf("enable OOM, testcase: %v", name)
+		// larger than 4 copResponse, smaller than 5 copResponse
+		quota := 5*tikv.MockResponseSizeForTest - 100
+		tk.MustExec("use test")
+		tk.MustExec("set @@tidb_distsql_scan_concurrency = 10")
+		tk.MustExec(fmt.Sprintf("set @@tidb_mem_quota_query=%v;", quota))
+		var expect []string
+		for i := 0; i < count; i++ {
+			expect = append(expect, fmt.Sprintf("%v", i))
+		}
+		tk.MustQuery(sql).Sort().Check(testkit.Rows(expect...))
+		// assert oom action worked by max consumed > memory quota
+		c.Assert(tk.Se.GetSessionVars().StmtCtx.MemTracker.MaxConsumed(), Greater, int64(quota))
+	}
+
+	disableOOM := func(tk *testkit.TestKit, name, sql string) {
+		c.Logf("disable OOM, testcase: %v", name)
+		quota := 5*tikv.MockResponseSizeForTest - 100
+		tk.MustExec("use test")
+		tk.MustExec("set @@tidb_distsql_scan_concurrency = 10")
+		tk.MustExec(fmt.Sprintf("set @@tidb_mem_quota_query=%v;", quota))
+		err := tk.QueryToErr(sql)
+		c.Assert(err, NotNil)
+		c.Assert(err.Error(), Matches, "Out Of Memory Quota.*")
+	}
+
+	failpoint.Enable("github.com/pingcap/tidb/store/tikv/testRateLimitActionMockWaitMax", `return(true)`)
+	// assert oom action and switch
+	for _, testcase := range testcases {
+		se, err := session.CreateSession4Test(s.store)
+		c.Check(err, IsNil)
+		tk.Se = se
+		enableOOM(tk, testcase.name, testcase.sql)
+		tk.MustExec("set @@tidb_enable_rate_limit_action = 0")
+		disableOOM(tk, testcase.name, testcase.sql)
+		tk.MustExec("set @@tidb_enable_rate_limit_action = 1")
+		enableOOM(tk, testcase.name, testcase.sql)
+		se.Close()
+	}
+
+	globaltk := testkit.NewTestKitWithInit(c, s.store)
+	globaltk.MustExec("set global tidb_enable_rate_limit_action= 0")
+	for _, testcase := range testcases {
+		se, err := session.CreateSession4Test(s.store)
+		c.Check(err, IsNil)
+		tk.Se = se
+		disableOOM(tk, testcase.name, testcase.sql)
+		se.Close()
+	}
+	globaltk.MustExec("set global tidb_enable_rate_limit_action= 1")
+	for _, testcase := range testcases {
+		se, err := session.CreateSession4Test(s.store)
+		c.Check(err, IsNil)
+		tk.Se = se
+		enableOOM(tk, testcase.name, testcase.sql)
+		se.Close()
+	}
+	failpoint.Disable("github.com/pingcap/tidb/store/tikv/testRateLimitActionMockWaitMax")
+
+	// assert oom fallback
+	for _, testcase := range testcases {
+		c.Log(testcase.name)
+		se, err := session.CreateSession4Test(s.store)
+		c.Check(err, IsNil)
+		tk.Se = se
+		tk.MustExec("use test")
+		tk.MustExec("set tidb_distsql_scan_concurrency = 1")
+		tk.MustExec("set @@tidb_mem_quota_query=1;")
+		err = tk.QueryToErr(testcase.sql)
+		c.Assert(err, NotNil)
+		c.Assert(err.Error(), Matches, "Out Of Memory Quota.*")
+		se.Close()
+	}
 }

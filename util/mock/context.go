@@ -172,6 +172,11 @@ func (c *Context) NewTxn(context.Context) error {
 	return nil
 }
 
+// NewGlobalTxn implements the sessionctx.Context interface.
+func (c *Context) NewGlobalTxn(ctx context.Context) error {
+	return c.NewTxn(ctx)
+}
+
 // RefreshTxnCtx implements the sessionctx.Context interface.
 func (c *Context) RefreshTxnCtx(ctx context.Context) error {
 	return errors.Trace(c.NewTxn(ctx))

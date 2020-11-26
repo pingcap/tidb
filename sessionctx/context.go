@@ -33,6 +33,8 @@ type Context interface {
 	// It's used in BEGIN statement and DDL statements to commit old transaction.
 	NewTxn(context.Context) error
 
+	NewGlobalTxn(context.Context) error
+
 	// Txn returns the current local/global transaction which is created before executing a statement
 	// according to the session variable txn_scope.
 	// The returned kv.Transaction is not nil, but it maybe pending or invalid.
