@@ -665,13 +665,14 @@ func (e *IndexLookUpExecutor) Next(ctx context.Context, req *chunk.Chunk) error 
 					return nil
 				}
 			}
-		} else {
-			requiredRows := resultTask.numRows - resultTask.cursor
-			if requiredRows <= 0 {
-				return nil
+		} else if resultTask.cursor < resultTask.numRows {
+			numRowsToBeAppended := resultTask.numRows - resultTask.cursor
+			requiredRows := req.RequiredRows() - req.NumRows()
+			if numRowsToBeAppended > requiredRows {
+				numRowsToBeAppended = requiredRows
 			}
-			req.Append(resultTask.chk, resultTask.cursor, resultTask.numRows)
-			resultTask.cursor = resultTask.numRows
+			req.Append(resultTask.chk, resultTask.cursor, resultTask.cursor+numRowsToBeAppended)
+			resultTask.cursor += numRowsToBeAppended
 			if req.IsFull() {
 				return nil
 			}
