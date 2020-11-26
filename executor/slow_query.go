@@ -460,7 +460,7 @@ func (e *slowQueryRetriever) parseSlowLog(ctx context.Context, sctx sessionctx.C
 			offset.length = 0
 			select {
 			case <-ctx.Done():
-				break
+				return
 			default:
 			}
 		}
