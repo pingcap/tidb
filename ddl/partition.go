@@ -1783,7 +1783,6 @@ func onAlterTablePartition(t *meta.Meta, job *model.Job) (ver int64, err error) 
 		if !ok {
 			return 0, errors.Wrapf(err, "failed to set partition state")
 		}
-		ts, _ := ptInfo.GetStateByID(partitionID)
 		// used by ApplyDiff in updateSchemaVersion
 		job.CtxVars = []interface{}{partitionID}
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
@@ -1791,10 +1790,6 @@ func onAlterTablePartition(t *meta.Meta, job *model.Job) (ver int64, err error) 
 			return ver, errors.Trace(err)
 		}
 		job.SchemaState = model.StateGlobalTxnWriteOnly
-		logutil.BgLogger().Info("onAlterTablePartition",
-			zap.Int64("partitionID", partitionID),
-			zap.String("state", model.StatePublic.String()),
-			zap.Int64("ver", ver), zap.String("tState", ts.String()))
 		tblInfo.Partition = ptInfo
 	case model.StateGlobalTxnWriteOnly:
 		ok := ptInfo.SetStateByID(partitionID, model.StatePublic)
@@ -1808,10 +1803,6 @@ func onAlterTablePartition(t *meta.Meta, job *model.Job) (ver int64, err error) 
 			return ver, errors.Trace(err)
 		}
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
-		logutil.BgLogger().Info("onAlterTablePartition",
-			zap.Int64("partitionID", partitionID),
-			zap.String("state", model.StateGlobalTxnWriteOnly.String()),
-			zap.Int64("ver", ver))
 	}
 	return ver, nil
 }
