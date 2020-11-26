@@ -657,21 +657,17 @@ func (e *IndexLookUpExecutor) Next(ctx context.Context, req *chunk.Chunk) error 
 		if resultTask == nil {
 			return nil
 		}
+		chk := resultTask.chk
 		if e.keepOrder {
-			for resultTask.cursor < resultTask.numRows {
-				req.AppendRow(resultTask.rows[resultTask.cursor])
-				resultTask.cursor++
-				if req.IsFull() {
-					return nil
-				}
-			}
-		} else if resultTask.cursor < resultTask.numRows {
+			chk = e.buildResultChunk(resultTask)
+		}
+		if resultTask.cursor < resultTask.numRows {
 			numRowsToBeAppended := resultTask.numRows - resultTask.cursor
 			requiredRows := req.RequiredRows() - req.NumRows()
 			if numRowsToBeAppended > requiredRows {
 				numRowsToBeAppended = requiredRows
 			}
-			req.Append(resultTask.chk, resultTask.cursor, resultTask.cursor+numRowsToBeAppended)
+			req.Append(chk, resultTask.cursor, resultTask.cursor+numRowsToBeAppended)
 			resultTask.cursor += numRowsToBeAppended
 			if req.IsFull() {
 				return nil
@@ -698,6 +694,14 @@ func (e *IndexLookUpExecutor) getResultTask() (*lookupTableTask, error) {
 	}
 	e.resultCurr = task
 	return e.resultCurr, nil
+}
+
+func (e *IndexLookUpExecutor) buildResultChunk(resultTask *lookupTableTask) *chunk.Chunk {
+	resultChunk := chunk.Renew(resultTask.rows[0].Chunk(), resultTask.rows[0].Chunk().GetNumRows())
+	for _, row := range resultTask.rows {
+		resultChunk.Append(row.Chunk(), 0, row.Chunk().GetNumRows())
+	}
+	return resultChunk
 }
 
 func (e *IndexLookUpExecutor) initRuntimeStats() {
