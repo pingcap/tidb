@@ -72,6 +72,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/arena"
 	"github.com/pingcap/tidb/util/chunk"
@@ -1295,7 +1296,9 @@ func (cc *clientConn) handleLoadData(ctx context.Context, loadDataInfo *executor
 	loadDataInfo.StartStopWatcher()
 	// let stop watcher goroutine quit
 	defer loadDataInfo.ForceQuit()
-	err = loadDataInfo.Ctx.NewGlobalTxn(ctx)
+	err = loadDataInfo.Ctx.NewTxn(ctx, func(txnOpt *sessionctx.TxnOption) {
+		txnOpt.TxnScope = oracle.GlobalTxnScope
+	})
 	if err != nil {
 		return err
 	}

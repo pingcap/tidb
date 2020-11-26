@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
@@ -198,7 +199,9 @@ func (c *index) Create(sctx sessionctx.Context, us kv.UnionStore, indexedValues 
 
 	ctx := opt.Ctx
 	if opt.Untouched {
-		txn, err1 := sctx.GlobalTxn(true)
+		txn, err1 := sctx.Txn(true, func(txnOpt *sessionctx.TxnOption) {
+			txnOpt.TxnScope = oracle.GlobalTxnScope
+		})
 		if err1 != nil {
 			return nil, err1
 		}

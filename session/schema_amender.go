@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
@@ -496,7 +497,9 @@ func (s *SchemaAmender) prepareKvMap(ctx context.Context, commitMutations tikv.C
 	addKeys, removeKeys := s.getAmendableKeys(commitMutations, info)
 
 	// BatchGet the new key values, the Op_Put and Op_Insert type keys in memory buffer.
-	txn, err := s.sess.GlobalTxn(true)
+	txn, err := s.sess.Txn(true, func(txnOpt *sessionctx.TxnOption) {
+		txnOpt.TxnScope = oracle.GlobalTxnScope
+	})
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

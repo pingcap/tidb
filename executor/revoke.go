@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
@@ -60,7 +61,9 @@ func (e *RevokeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	e.done = true
 
 	// Commit the old transaction, like DDL.
-	if err := e.ctx.NewGlobalTxn(ctx); err != nil {
+	if err := e.ctx.NewTxn(ctx, func(txnOpt *sessionctx.TxnOption) {
+		txnOpt.TxnScope = oracle.GlobalTxnScope
+	}); err != nil {
 		return err
 	}
 	defer func() { e.ctx.GetSessionVars().SetStatusFlag(mysql.ServerStatusInTrans, false) }()

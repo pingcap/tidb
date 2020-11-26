@@ -201,20 +201,13 @@ type session struct {
 	idxUsageCollector *handle.SessionIndexUsageCollector
 }
 
-func (s *session) setTxn(txnScope string, txn *TxnState) {
-	if s.txns == nil {
-		s.txns = make(map[string]*TxnState)
+func (s *session) checkAndGetTxnScope() string {
+	txnScope := s.GetSessionVars().TxnScope
+	// Internal SQLs should always run as the global transactions.
+	if s.isInternal() {
+		txnScope = oracle.GlobalTxnScope
 	}
-	s.txns[txnScope] = txn
-}
-
-func (s *session) createAndInitTxn(txnScope string) {
-	if s.txns == nil {
-		s.txns = make(map[string]*TxnState)
-	}
-	newTxn := new(TxnState)
-	newTxn.init()
-	s.txns[txnScope] = newTxn
+	return txnScope
 }
 
 // Create and initialize at lease one global transaction
@@ -233,6 +226,15 @@ func (s *session) initTxns() {
 	s.curTxn, _ = s.getCurrentScopeTxn()
 }
 
+func (s *session) createAndInitTxn(txnScope string) {
+	if s.txns == nil {
+		s.txns = make(map[string]*TxnState)
+	}
+	newTxn := new(TxnState)
+	newTxn.init()
+	s.txns[txnScope] = newTxn
+}
+
 func (s *session) updateTxn(txnScope string, newTxn kv.Transaction) {
 	curTxn, ok := s.getTxn(txnScope)
 	if !ok {
@@ -249,6 +251,13 @@ func (s *session) getTxn(txnScope string) (*TxnState, bool) {
 		return &TxnState{}, false
 	}
 	return txn, true
+}
+
+func (s *session) setTxn(txnScope string, txn *TxnState) {
+	if s.txns == nil {
+		s.txns = make(map[string]*TxnState)
+	}
+	s.txns[txnScope] = txn
 }
 
 // getCurrentScopeTxn will return a transaction corresponding to
@@ -912,7 +921,9 @@ func (s *session) ExecRestrictedSQLWithSnapshot(sql string) ([]chunk.Row, []*ast
 	defer s.sysSessionPool().Put(tmp)
 	metrics.SessionRestrictedSQLCounter.Inc()
 	var snapshot uint64
-	txn, err := s.GlobalTxn(false)
+	txn, err := s.Txn(false, func(txnOpt *sessionctx.TxnOption) {
+		txnOpt.TxnScope = oracle.GlobalTxnScope
+	})
 	if err != nil {
 		return nil, nil, err
 	}
@@ -1611,7 +1622,8 @@ func (s *session) DropPreparedStmt(stmtID uint32) error {
 	return nil
 }
 
-func (s *session) Txn(active bool) (kv.Transaction, error) {
+func (s *session) Txn(active bool, ops ...sessionctx.TxnOptionFunc) (kv.Transaction, error) {
+	txnOption := &sessionctx.TxnOption{TxnScope: s.checkAndGetTxnScope()}
 	var (
 		nextTxn *TxnState
 		ok      bool
@@ -1622,10 +1634,9 @@ func (s *session) Txn(active bool) (kv.Transaction, error) {
 		s.curTxn = nextTxn
 	}()
 	// Check whether we need a new transaction for the brand new txn scope
-	nextTxn, ok = s.getCurrentScopeTxn()
+	nextTxn, ok = s.getTxn(txnOption.TxnScope)
 	if !ok {
-		txnScope := s.checkAndGetTxnScope()
-		newTxn, err := s.store.BeginWithTxnScope(txnScope)
+		newTxn, err := s.store.BeginWithTxnScope(txnOption.TxnScope)
 		if err != nil {
 			return nextTxn, errors.AddStack(err)
 		}
@@ -1633,8 +1644,8 @@ func (s *session) Txn(active bool) (kv.Transaction, error) {
 		if s.GetSessionVars().GetReplicaRead().IsFollowerRead() {
 			newTxn.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
 		}
-		s.updateTxn(txnScope, newTxn)
-		nextTxn, _ = s.getTxn(txnScope)
+		s.updateTxn(txnOption.TxnScope, newTxn)
+		nextTxn, _ = s.getTxn(txnOption.TxnScope)
 	}
 	if !active {
 		return nextTxn, nil
@@ -1670,14 +1681,6 @@ func (s *session) Txn(active bool) (kv.Transaction, error) {
 		}
 	}
 	return nextTxn, nil
-}
-
-func (s *session) GlobalTxn(active bool) (kv.Transaction, error) {
-	// Temporarily set the @@txn_scope to the global.
-	originTxnScope := s.GetSessionVars().TxnScope
-	s.GetSessionVars().SetTxnScope(oracle.GlobalTxnScope)
-	defer s.GetSessionVars().SetTxnScope(originTxnScope)
-	return s.Txn(active)
 }
 
 // isTxnRetryable (if returns true) means the transaction could retry.
@@ -1717,7 +1720,11 @@ func (s *session) isTxnRetryable() bool {
 	return false
 }
 
-func (s *session) NewTxn(ctx context.Context) error {
+func (s *session) NewTxn(ctx context.Context, ops ...sessionctx.TxnOptionFunc) error {
+	txnOption := &sessionctx.TxnOption{TxnScope: s.checkAndGetTxnScope()}
+	for _, op := range ops {
+		op(txnOption)
+	}
 	if s.curTxn.Valid() {
 		txnID := s.curTxn.StartTS()
 		err := s.CommitTxn(ctx)
@@ -1730,8 +1737,7 @@ func (s *session) NewTxn(ctx context.Context) error {
 			zap.Uint64("txnStartTS", txnID))
 	}
 
-	txnScope := s.checkAndGetTxnScope()
-	newTxn, err := s.store.BeginWithTxnScope(txnScope)
+	newTxn, err := s.store.BeginWithTxnScope(txnOption.TxnScope)
 	if err != nil {
 		return err
 	}
@@ -1739,8 +1745,8 @@ func (s *session) NewTxn(ctx context.Context) error {
 	if s.GetSessionVars().GetReplicaRead().IsFollowerRead() {
 		newTxn.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
 	}
-	s.updateTxn(txnScope, newTxn)
-	if txn, ok := s.getTxn(txnScope); ok {
+	s.updateTxn(txnOption.TxnScope, newTxn)
+	if txn, ok := s.getTxn(txnOption.TxnScope); ok {
 		s.curTxn = txn
 	}
 	is := domain.GetDomain(s).InfoSchema()
@@ -1750,17 +1756,9 @@ func (s *session) NewTxn(ctx context.Context) error {
 		CreateTime:    time.Now(),
 		StartTS:       newTxn.StartTS(),
 		ShardStep:     int(s.sessionVars.ShardAllocateStep),
-		TxnScope:      txnScope,
+		TxnScope:      txnOption.TxnScope,
 	}
 	return nil
-}
-
-func (s *session) NewGlobalTxn(ctx context.Context) error {
-	// Temporarily set the @@txn_scope to the global.
-	originTxnScope := s.GetSessionVars().TxnScope
-	s.GetSessionVars().SetTxnScope(oracle.GlobalTxnScope)
-	defer s.GetSessionVars().SetTxnScope(originTxnScope)
-	return s.NewTxn(ctx)
 }
 
 func (s *session) SetValue(key fmt.Stringer, value interface{}) {
@@ -2582,15 +2580,6 @@ func (s *session) recordOnTransactionExecution(err error, counter int, duration 
 			transactionDurationOptimisticCommit.Observe(duration)
 		}
 	}
-}
-
-func (s *session) checkAndGetTxnScope() string {
-	txnScope := s.GetSessionVars().TxnScope
-	// Internal SQLs should always run as the global transactions.
-	if s.isInternal() {
-		txnScope = oracle.GlobalTxnScope
-	}
-	return txnScope
 }
 
 func (s *session) checkPlacementPolicyBeforeCommit() error {

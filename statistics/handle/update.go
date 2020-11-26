@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
@@ -451,7 +452,9 @@ func (h *Handle) dumpTableStatCountToKV(id int64, delta variable.TableDelta) (up
 		err = finishTransaction(context.Background(), exec, err)
 	}()
 
-	txn, err := h.mu.ctx.GlobalTxn(true)
+	txn, err := h.mu.ctx.Txn(true, func(txnOpt *sessionctx.TxnOption) {
+		txnOpt.TxnScope = oracle.GlobalTxnScope
+	})
 	if err != nil {
 		return false, errors.Trace(err)
 	}

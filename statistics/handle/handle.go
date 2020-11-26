@@ -656,7 +656,9 @@ func (h *Handle) SaveStatsToStorage(tableID int64, count int64, isIndex int, hg 
 	defer func() {
 		err = finishTransaction(context.Background(), exec, err)
 	}()
-	txn, err := h.mu.ctx.GlobalTxn(true)
+	txn, err := h.mu.ctx.Txn(true, func(txnOpt *sessionctx.TxnOption) {
+		txnOpt.TxnScope = oracle.GlobalTxnScope
+	})
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -728,7 +730,9 @@ func (h *Handle) SaveMetaToStorage(tableID, count, modifyCount int64) (err error
 	defer func() {
 		err = finishTransaction(ctx, exec, err)
 	}()
-	txn, err := h.mu.ctx.GlobalTxn(true)
+	txn, err := h.mu.ctx.Txn(true, func(txnOpt *sessionctx.TxnOption) {
+		txnOpt.TxnScope = oracle.GlobalTxnScope
+	})
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -905,7 +909,9 @@ func (h *Handle) InsertExtendedStats(statsName, db string, colIDs []int64, tp in
 	defer func() {
 		err = finishTransaction(ctx, exec, err)
 	}()
-	txn, err := h.mu.ctx.GlobalTxn(true)
+	txn, err := h.mu.ctx.Txn(true, func(txnOpt *sessionctx.TxnOption) {
+		txnOpt.TxnScope = oracle.GlobalTxnScope
+	})
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -943,7 +949,9 @@ func (h *Handle) MarkExtendedStatsDeleted(statsName, db string, tableID int64) (
 	defer func() {
 		err = finishTransaction(ctx, exec, err)
 	}()
-	txn, err := h.mu.ctx.GlobalTxn(true)
+	txn, err := h.mu.ctx.Txn(true, func(txnOpt *sessionctx.TxnOption) {
+		txnOpt.TxnScope = oracle.GlobalTxnScope
+	})
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1100,7 +1108,9 @@ func (h *Handle) SaveExtendedStatsToStorage(tableID int64, extStats *statistics.
 	defer func() {
 		err = finishTransaction(ctx, exec, err)
 	}()
-	txn, err := h.mu.ctx.GlobalTxn(true)
+	txn, err := h.mu.ctx.Txn(true, func(txnOpt *sessionctx.TxnOption) {
+		txnOpt.TxnScope = oracle.GlobalTxnScope
+	})
 	if err != nil {
 		return errors.Trace(err)
 	}

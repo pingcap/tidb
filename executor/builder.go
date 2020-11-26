@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
@@ -247,7 +248,9 @@ func (b *executorBuilder) buildCancelDDLJobs(v *plannercore.CancelDDLJobs) Execu
 		jobIDs:       v.JobIDs,
 	}
 	// DDL should be started as a global transaction
-	txn, err := e.ctx.GlobalTxn(true)
+	txn, err := e.ctx.Txn(true, func(txnOpt *sessionctx.TxnOption) {
+		txnOpt.TxnScope = oracle.GlobalTxnScope
+	})
 	if err != nil {
 		b.err = err
 		return nil
@@ -293,7 +296,9 @@ func (b *executorBuilder) buildShowDDL(v *plannercore.ShowDDL) Executor {
 		return nil
 	}
 	// DDL should be started as a global transaction
-	txn, err := e.ctx.GlobalTxn(true)
+	txn, err := e.ctx.Txn(true, func(txnOpt *sessionctx.TxnOption) {
+		txnOpt.TxnScope = oracle.GlobalTxnScope
+	})
 	if err != nil {
 		b.err = err
 		return nil

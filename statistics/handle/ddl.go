@@ -22,7 +22,9 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/ddl/util"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/sqlexec"
 )
@@ -101,7 +103,9 @@ func (h *Handle) insertTableStats2KV(info *model.TableInfo, physicalID int64) (e
 	defer func() {
 		err = finishTransaction(context.Background(), exec, err)
 	}()
-	txn, err := h.mu.ctx.GlobalTxn(true)
+	txn, err := h.mu.ctx.Txn(true, func(txnOpt *sessionctx.TxnOption) {
+		txnOpt.TxnScope = oracle.GlobalTxnScope
+	})
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -131,7 +135,9 @@ func (h *Handle) insertColStats2KV(physicalID int64, colInfos []*model.ColumnInf
 	defer func() {
 		err = finishTransaction(context.Background(), exec, err)
 	}()
-	txn, err := h.mu.ctx.GlobalTxn(true)
+	txn, err := h.mu.ctx.Txn(true, func(txnOpt *sessionctx.TxnOption) {
+		txnOpt.TxnScope = oracle.GlobalTxnScope
+	})
 	if err != nil {
 		return errors.Trace(err)
 	}

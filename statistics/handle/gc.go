@@ -22,6 +22,8 @@ import (
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
@@ -146,7 +148,9 @@ func (h *Handle) deleteHistStatsFromKV(physicalID int64, histID int64, isIndex i
 	defer func() {
 		err = finishTransaction(context.Background(), exec, err)
 	}()
-	txn, err := h.mu.ctx.GlobalTxn(true)
+	txn, err := h.mu.ctx.Txn(true, func(txnOpt *sessionctx.TxnOption) {
+		txnOpt.TxnScope = oracle.GlobalTxnScope
+	})
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -175,7 +179,9 @@ func (h *Handle) DeleteTableStatsFromKV(physicalID int64) (err error) {
 	defer func() {
 		err = finishTransaction(context.Background(), exec, err)
 	}()
-	txn, err := h.mu.ctx.GlobalTxn(true)
+	txn, err := h.mu.ctx.Txn(true, func(txnOpt *sessionctx.TxnOption) {
+		txnOpt.TxnScope = oracle.GlobalTxnScope
+	})
 	if err != nil {
 		return errors.Trace(err)
 	}

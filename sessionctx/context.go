@@ -26,30 +26,26 @@ import (
 	"github.com/pingcap/tipb/go-binlog"
 )
 
+// TxnOption represents available options for the Context.NewTxn and Context.Txn.
+type TxnOption struct {
+	TxnScope string
+}
+
+// TxnOptionFunc configures the content of TxnOption.
+type TxnOptionFunc func(txnOption *TxnOption)
+
 // Context is an interface for transaction and executive args environment.
 type Context interface {
-	// NewTxn creates a new global/local transaction for further execution.
+	// NewTxn creates a new transaction for further execution.
 	// If old transaction is valid, it is committed first.
-	// It's used in BEGIN statement to commit old transaction.
-	NewTxn(context.Context) error
+	// It's used in BEGIN statement and DDL statements to commit old transaction.
+	NewTxn(ctx context.Context, ops ...TxnOptionFunc) error
 
-	// NewGlobalTxn creates a new global transaction for further execution.
-	// If old transaction is valid, it is committed first.
-	// It's used in DDL statements to commit old transaction.
-	NewGlobalTxn(context.Context) error
-
-	// Txn returns the current local/global transaction which is created before executing a statement
-	// according to the session variable txn_scope.
+	// Txn returns the current transaction which is created before executing a statement.
 	// The returned kv.Transaction is not nil, but it maybe pending or invalid.
 	// If the active parameter is true, call this function will wait for the pending txn
 	// to become valid.
-	Txn(active bool) (kv.Transaction, error)
-
-	// GlobalTxn returns the current global transaction which is created before executing a statement.
-	// The returned kv.Transaction is not nil, but it maybe pending or invalid.
-	// If the active parameter is true, call this function will wait for the pending txn
-	// to become valid.
-	GlobalTxn(active bool) (kv.Transaction, error)
+	Txn(active bool, ops ...TxnOptionFunc) (kv.Transaction, error)
 
 	// GetClient gets a kv.Client.
 	GetClient() kv.Client
