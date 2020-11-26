@@ -1560,7 +1560,7 @@ func (p *LogicalJoin) tryToGetIndexJoin(prop *property.PhysicalProperty) (indexJ
 
 func (p *LogicalJoin) shouldUseMPPBCJ() bool {
 	if p.ctx.GetSessionVars().BroadcastJoinThreshold == 0 {
-		return p.ctx.GetSessionVars().AllowBCJ;
+		return p.ctx.GetSessionVars().AllowBCJ
 	}
 	var lSize, rSize float64
 	if p.children[0].statsInfo().HistColl == nil {
