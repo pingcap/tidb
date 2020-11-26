@@ -1354,26 +1354,4 @@ func (s *testTableSuite) TestFormatVersion(c *C) {
 		version := infoschema.FormatVersion(v, false)
 		c.Assert(version, Equals, res[i])
 	}
-<<<<<<< HEAD
-=======
-	bundles[bundleID] = bundle
-	expected := fmt.Sprintf(`%s 3 0 test test_placement p0 <nil> voter 3 "+zone=bj"`, bundleID)
-	tk.MustQuery(`select group_id, group_index, rule_id, schema_name, table_name, partition_name, index_name,
-		role, replicas, constraints from information_schema.placement_policy`).Check(testkit.Rows(expected))
-
-	rule1 := bundle.Rules[0].Clone()
-	rule1.ID = "1"
-	bundle.Rules = append(bundle.Rules, rule1)
-	tk.MustQuery("select rule_id, schema_name, table_name, partition_name from information_schema.placement_policy order by rule_id").Check(testkit.Rows(
-		"0 test test_placement p0", "1 test test_placement p0"))
-
-	bundleID = fmt.Sprintf("%s%d", placement.BundleIDPrefix, partDefs[1].ID)
-	bundle1 := bundle.Clone()
-	bundle1.ID = bundleID
-	bundle1.Rules[0].GroupID = bundleID
-	bundle1.Rules[1].GroupID = bundleID
-	bundles[bundleID] = bundle1
-	tk.MustQuery("select rule_id, schema_name, table_name, partition_name from information_schema.placement_policy order by partition_name, rule_id").Check(testkit.Rows(
-		"0 test test_placement p0", "1 test test_placement p0", "0 test test_placement p1", "1 test test_placement p1"))
->>>>>>> 4caa23e8d... session: add encoded plan cache to avoid repeated encode plan when recording slow-log and statement (#21139)
 }
