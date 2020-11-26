@@ -24,7 +24,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 )
@@ -170,42 +169,6 @@ func (ld *LockKeysDetails) Clone() *LockKeysDetails {
 	return lock
 }
 
-<<<<<<< HEAD
-=======
-// CopDetails contains coprocessor detail information.
-type CopDetails struct {
-	// TotalKeys is the approximate number of MVCC keys meet during scanning. It includes
-	// deleted versions, but does not include RocksDB tombstone keys.
-	TotalKeys int64
-	// ProcessedKeys is the number of user keys scanned from the storage.
-	// It does not include deleted version or RocksDB tombstone keys.
-	// For Coprocessor requests, it includes keys that has been filtered out by Selection.
-	ProcessedKeys int64
-	// RocksdbDeleteSkippedCount is the total number of deletes and single deletes skipped over during
-	// iteration, i.e. how many RocksDB tombstones are skipped.
-	RocksdbDeleteSkippedCount uint64
-	// RocksdbKeySkippedCount it the total number of internal keys skipped over during iteration.
-	RocksdbKeySkippedCount uint64
-	// RocksdbBlockCacheHitCount is the total number of RocksDB block cache hits.
-	RocksdbBlockCacheHitCount uint64
-	// RocksdbBlockReadCount is the total number of block reads (with IO).
-	RocksdbBlockReadCount uint64
-	// RocksdbBlockReadByte is the total number of bytes from block reads.
-	RocksdbBlockReadByte uint64
-}
-
-// Merge merges lock keys execution details into self.
-func (cd *CopDetails) Merge(copDetails *CopDetails) {
-	cd.TotalKeys += copDetails.TotalKeys
-	cd.ProcessedKeys += copDetails.ProcessedKeys
-	cd.RocksdbDeleteSkippedCount += copDetails.RocksdbDeleteSkippedCount
-	cd.RocksdbKeySkippedCount += copDetails.RocksdbKeySkippedCount
-	cd.RocksdbBlockCacheHitCount += copDetails.RocksdbBlockCacheHitCount
-	cd.RocksdbBlockReadCount += copDetails.RocksdbBlockReadCount
-	cd.RocksdbBlockReadByte += copDetails.RocksdbBlockReadByte
-}
-
->>>>>>> 32d19b78e... *: refine runtime stats display and tiny bug fix for metrics (#21022)
 const (
 	// CopTimeStr represents the sum of cop-task time spend in TiDB distSQL.
 	CopTimeStr = "Cop_time"
@@ -453,16 +416,6 @@ func (crs *CopRuntimeStats) String() string {
 		}
 	}
 
-<<<<<<< HEAD
-	if totalTasks == 1 {
-		return fmt.Sprintf("tikv_task:{time:%v, loops:%d}", procTimes[0], totalIters)
-	}
-
-	n := len(procTimes)
-	sort.Slice(procTimes, func(i, j int) bool { return procTimes[i] < procTimes[j] })
-	return fmt.Sprintf("tikv_task:{proc max:%v, min:%v, p80:%v, p95:%v, iters:%v, tasks:%v}",
-		procTimes[n-1], procTimes[0], procTimes[n*4/5], procTimes[n*19/20], totalIters, totalTasks)
-=======
 	buf := bytes.NewBuffer(make([]byte, 0, 16))
 	if totalTasks == 1 {
 		buf.WriteString(fmt.Sprintf("tikv_task:{time:%v, loops:%d}", FormatDuration(procTimes[0]), totalIters))
@@ -473,19 +426,7 @@ func (crs *CopRuntimeStats) String() string {
 			FormatDuration(procTimes[n-1]), FormatDuration(procTimes[0]),
 			FormatDuration(procTimes[n*4/5]), FormatDuration(procTimes[n*19/20]), totalIters, totalTasks))
 	}
-	if detail := crs.copDetails; detail != nil {
-		crs.writeField(buf, "total_keys", detail.TotalKeys)
-		crs.writeField(buf, "processed_keys", detail.ProcessedKeys)
-		buf.WriteString(", rocksdb: {")
-		crs.writeField(buf, "delete_skipped_count", int64(detail.RocksdbDeleteSkippedCount))
-		crs.writeField(buf, "key_skipped_count", int64(detail.RocksdbKeySkippedCount))
-		crs.writeField(buf, "block_cache_hit_count", int64(detail.RocksdbBlockCacheHitCount))
-		crs.writeField(buf, "block_read_count", int64(detail.RocksdbBlockReadCount))
-		crs.writeFieldValue(buf, "block_read", memory.FormatBytes(int64(detail.RocksdbBlockReadByte)))
-		buf.WriteByte('}')
-	}
 	return buf.String()
->>>>>>> 32d19b78e... *: refine runtime stats display and tiny bug fix for metrics (#21022)
 }
 
 const (

@@ -91,91 +91,12 @@ func TestCopRuntimeStats(t *testing.T) {
 	stats.RecordOneCopTask(tableScanID, "8.8.8.9", mockExecutorExecutionSummary(2, 2, 2))
 	stats.RecordOneCopTask(aggID, "8.8.8.8", mockExecutorExecutionSummary(3, 3, 3))
 	stats.RecordOneCopTask(aggID, "8.8.8.9", mockExecutorExecutionSummary(4, 4, 4))
-<<<<<<< HEAD
-=======
-	copDetails := &CopDetails{
-		TotalKeys:                 15,
-		ProcessedKeys:             10,
-		RocksdbDeleteSkippedCount: 5,
-		RocksdbKeySkippedCount:    1,
-		RocksdbBlockCacheHitCount: 10,
-		RocksdbBlockReadCount:     20,
-		RocksdbBlockReadByte:      100,
-	}
-	stats.RecordCopDetail(tableScanID, copDetails)
->>>>>>> 32d19b78e... *: refine runtime stats display and tiny bug fix for metrics (#21022)
 	if stats.ExistsCopStats(tableScanID) != true {
 		t.Fatal("exist")
 	}
 	cop := stats.GetCopStats(tableScanID)
-<<<<<<< HEAD
 	if cop.String() != "tikv_task:{proc max:2ns, min:1ns, p80:2ns, p95:2ns, iters:3, tasks:2}" {
 		t.Fatal("table_scan")
-=======
-	if cop.String() != "tikv_task:{proc max:2ns, min:1ns, p80:2ns, p95:2ns, iters:3, tasks:2}, total_keys: 15, "+
-		"processed_keys: 10, rocksdb: {delete_skipped_count: 5, key_skipped_count: 1, block_cache_hit_count: 10, block_read_count: 20, block_read: 100 Bytes}" {
-		t.Fatalf(cop.String())
->>>>>>> 32d19b78e... *: refine runtime stats display and tiny bug fix for metrics (#21022)
-	}
-	copStats := cop.stats["8.8.8.8"]
-	if copStats == nil {
-		t.Fatal("cop stats is nil")
-	}
-	copStats[0].SetRowNum(10)
-	copStats[0].Record(time.Second, 10)
-	if copStats[0].String() != "time:1s, loops:2" {
-		t.Fatalf("cop stats string is not expect, got: %v", copStats[0].String())
-	}
-
-	if stats.GetCopStats(aggID).String() != "tikv_task:{proc max:4ns, min:3ns, p80:4ns, p95:4ns, iters:7, tasks:2}" {
-		t.Fatal("agg")
-	}
-	rootStats := stats.GetRootStats(tableReaderID)
-	if rootStats == nil {
-		t.Fatal("table_reader")
-	}
-	if stats.ExistsRootStats(tableReaderID) == false {
-		t.Fatal("table_reader not exists")
-	}
-
-	cop.copDetails.ProcessedKeys = 0
-	cop.copDetails.RocksdbKeySkippedCount = 0
-	cop.copDetails.RocksdbBlockReadCount = 0
-	// Print all fields even though the value of some fields is 0.
-	if cop.String() != "tikv_task:{proc max:1s, min:2ns, p80:1s, p95:1s, iters:4, tasks:2}, total_keys: 15, "+
-		"processed_keys: 0, rocksdb: {delete_skipped_count: 5, key_skipped_count: 0, block_cache_hit_count: 10, block_read_count: 0, block_read: 100 Bytes}" {
-		t.Fatalf(cop.String())
-	}
-}
-
-<<<<<<< HEAD
-=======
-func TestCopRuntimeStatsForTiFlash(t *testing.T) {
-	stats := NewRuntimeStatsColl()
-	tableScanID := 1
-	aggID := 2
-	tableReaderID := 3
-	stats.RecordOneCopTask(aggID, "8.8.8.8", mockExecutorExecutionSummaryForTiFlash(1, 1, 1, "tablescan_"+strconv.Itoa(tableScanID)))
-	stats.RecordOneCopTask(aggID, "8.8.8.9", mockExecutorExecutionSummaryForTiFlash(2, 2, 2, "tablescan_"+strconv.Itoa(tableScanID)))
-	stats.RecordOneCopTask(tableScanID, "8.8.8.8", mockExecutorExecutionSummaryForTiFlash(3, 3, 3, "aggregation_"+strconv.Itoa(aggID)))
-	stats.RecordOneCopTask(tableScanID, "8.8.8.9", mockExecutorExecutionSummaryForTiFlash(4, 4, 4, "aggregation_"+strconv.Itoa(aggID)))
-	copDetails := &CopDetails{
-		TotalKeys:                 10,
-		ProcessedKeys:             10,
-		RocksdbDeleteSkippedCount: 10,
-		RocksdbKeySkippedCount:    1,
-		RocksdbBlockCacheHitCount: 10,
-		RocksdbBlockReadCount:     10,
-		RocksdbBlockReadByte:      100,
-	}
-	stats.RecordCopDetail(tableScanID, copDetails)
-	if stats.ExistsCopStats(tableScanID) != true {
-		t.Fatal("exist")
-	}
-	cop := stats.GetCopStats(tableScanID)
-	if cop.String() != "tikv_task:{proc max:2ns, min:1ns, p80:2ns, p95:2ns, iters:3, tasks:2}"+
-		", total_keys: 10, processed_keys: 10, rocksdb: {delete_skipped_count: 10, key_skipped_count: 1, block_cache_hit_count: 10, block_read_count: 10, block_read: 100 Bytes}" {
-		t.Fatal(cop.String())
 	}
 	copStats := cop.stats["8.8.8.8"]
 	if copStats == nil {
@@ -198,7 +119,7 @@ func TestCopRuntimeStatsForTiFlash(t *testing.T) {
 		t.Fatal("table_reader not exists")
 	}
 }
->>>>>>> 32d19b78e... *: refine runtime stats display and tiny bug fix for metrics (#21022)
+
 func TestRuntimeStatsWithCommit(t *testing.T) {
 	commitDetail := &CommitDetails{
 		GetCommitTsTime:   time.Second,
