@@ -1666,7 +1666,7 @@ func loadCollationParameter(se *session) (bool, error) {
 // We'll read a tuple if the cluster is upgraded from v3.0.x to v4.0.9+.
 // An empty result will be returned if it's a newly deployed cluster whose
 // version is v4.0.9.
-// See the comment upon the function `upgradeToVer54` for details.
+// See the comment upon the function `upgradeToVer49` for details.
 func loadDefMemQuotaQuery(se *session) (int64, error) {
 	_, err := loadParameter(se, tidbDefMemoryQuotaQuery)
 	if err != nil {
@@ -1914,11 +1914,7 @@ func CreateSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 
 const (
 	notBootstrapped         = 0
-<<<<<<< HEAD
-	currentBootstrapVersion = version48
-=======
-	currentBootstrapVersion = version54
->>>>>>> c201eb733... config, session: keep the default value of mem-quota-query when upgrade from 3.0 to 4.0.9+ (#21305)
+	currentBootstrapVersion = version49
 )
 
 func getStoreBootstrapVersion(store kv.Storage) int64 {

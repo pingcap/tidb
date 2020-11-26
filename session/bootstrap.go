@@ -394,21 +394,8 @@ const (
 	version47 = 47
 	// version48 change mysql.stats_histograms cm_sketch column from blob to blob(6291456)
 	version48 = 48
-<<<<<<< HEAD
-=======
-	// version49 introduces mysql.stats_extended table.
+	// version49 writes a variable `mem_quota_query` to mysql.tidb if it's a cluster upgraded from v3.0.x to v4.0.9.
 	version49 = 49
-	// version50 add mysql.schema_index_usage table.
-	version50 = 50
-	// version51 introduces CreateTablespacePriv to mysql.user.
-	version51 = 51
-	// version52 change mysql.stats_histograms cm_sketch column from blob to blob(6291456)
-	version52 = 52
-	// version53 introduce Global variable tidb_enable_strict_double_type_check
-	version53 = 53
-	// version54 writes a variable `mem_quota_query` to mysql.tidb if it's a cluster upgraded from v3.0.x to v4.0.9.
-	version54 = 54
->>>>>>> c201eb733... config, session: keep the default value of mem-quota-query when upgrade from 3.0 to 4.0.9+ (#21305)
 )
 
 var (
@@ -460,15 +447,7 @@ var (
 		upgradeToVer46,
 		upgradeToVer47,
 		upgradeToVer48,
-<<<<<<< HEAD
-=======
 		upgradeToVer49,
-		upgradeToVer50,
-		upgradeToVer51,
-		upgradeToVer52,
-		upgradeToVer53,
-		upgradeToVer54,
->>>>>>> c201eb733... config, session: keep the default value of mem-quota-query when upgrade from 3.0 to 4.0.9+ (#21305)
 	}
 )
 
@@ -1107,20 +1086,8 @@ func upgradeToVer48(s Session, ver int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.stats_histograms MODIFY cm_sketch BLOB(6291456)")
 }
 
-<<<<<<< HEAD
-=======
-func upgradeToVer53(s Session, ver int64) {
-	if ver >= version53 {
-		return
-	}
-	// when upgrade from old tidb and no `tidb_enable_strict_double_type_check` in GLOBAL_VARIABLES, init it with 1`
-	sql := fmt.Sprintf("INSERT IGNORE INTO %s.%s (`VARIABLE_NAME`, `VARIABLE_VALUE`) VALUES ('%s', '%d')",
-		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBEnableStrictDoubleTypeCheck, 0)
-	mustExecute(s, sql)
-}
-
-func upgradeToVer54(s Session, ver int64) {
-	if ver >= version54 {
+func upgradeToVer49(s Session, ver int64) {
+	if ver >= version49 {
 		return
 	}
 	// The mem-query-quota default value is 32GB by default in v3.0, and 1GB by
@@ -1143,7 +1110,6 @@ func writeMemoryQuotaQuery(s Session) {
 	mustExecute(s, sql)
 }
 
->>>>>>> c201eb733... config, session: keep the default value of mem-quota-query when upgrade from 3.0 to 4.0.9+ (#21305)
 // updateBootstrapVer updates bootstrap version variable in mysql.TiDB table.
 func updateBootstrapVer(s Session) {
 	// Update bootstrap version.
