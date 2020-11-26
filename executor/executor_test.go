@@ -6754,7 +6754,7 @@ func (s *testSerialSuite) TestCoprocessorOOMTicase(c *C) {
 		for _, testcase := range testcases {
 			c.Log(testcase.name)
 			// larger than one copResponse, smaller than 2 copResponse
-			quota := 2*tikv.MockResponseSizeForTest-100
+			quota := 2*tikv.MockResponseSizeForTest - 100
 			se, err := session.CreateSession4Test(s.store)
 			c.Check(err, IsNil)
 			tk.Se = se
