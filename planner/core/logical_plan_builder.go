@@ -2991,8 +2991,8 @@ func (ds *DataSource) addExtraPIDColumn(info *extraPIDInfo) {
 	ds.names = append(ds.names, &types.FieldName{
 		DBName:      ds.DBName,
 		TblName:     ds.TableInfo().Name,
-		ColName:     model.ExtraHandleName,
-		OrigColName: model.ExtraHandleName,
+		ColName:     model.ExtraPartitionIdName,
+		OrigColName: model.ExtraPartitionIdName,
 	})
 	ds.TblCols = append(ds.TblCols, pidCol)
 
