@@ -229,5 +229,17 @@ func (s *testBatchPointGetSuite) TestBatchPointGetLockExistKey(c *C) {
 		tableName := fmt.Sprintf("t_%d", i)
 		go testLock(testkit.NewTestKit(c, s.store), testkit.NewTestKit(c, s.store), one.rc, one.key, tableName)
 	}
+
+	// should works for common handle in clustered index
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(id varchar(40) primary key)")
+	tk.MustExec("insert into t values('1'), ('2')")
+	tk.MustExec("set tx_isolation = 'READ-COMMITTED'")
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("select * from t where id in('1', '2') for update")
+	tk.MustExec("commit")
+
 	wg.Wait()
 }
