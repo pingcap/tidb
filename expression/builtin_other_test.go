@@ -174,7 +174,7 @@ func (s *testEvaluatorSuite) TestSetVar(c *C) {
 		if tc.args[1] != nil {
 			key, ok := tc.args[0].(string)
 			c.Assert(ok, Equals, true)
-			sessionVar, ok := s.ctx.GetSessionVars().Users[key]
+			sessionVar, ok := s.ctx.GetSessionVars().Users.Get(key)
 			c.Assert(ok, Equals, true)
 			c.Assert(sessionVar.GetValue(), Equals, tc.res)
 		}
@@ -195,7 +195,7 @@ func (s *testEvaluatorSuite) TestGetVar(c *C) {
 		{"g", dec},
 	}
 	for _, kv := range sessionVars {
-		s.ctx.GetSessionVars().Users[kv.key] = types.NewDatum(kv.val)
+		s.ctx.GetSessionVars().Users.Set(kv.key, types.NewDatum(kv.val))
 		tp := types.NewFieldType(mysql.TypeVarString)
 		types.DefaultParamTypeForValue(kv.val, tp)
 		s.ctx.GetSessionVars().UserVarTypes[kv.key] = tp
@@ -298,7 +298,7 @@ func (s *testEvaluatorSuite) TestSetVarFromColumn(c *C) {
 	sessionVars := s.ctx.GetSessionVars()
 	sessionVars.UsersLock.RLock()
 	defer sessionVars.UsersLock.RUnlock()
-	sessionVar, ok := sessionVars.Users["a"]
+	sessionVar, ok := sessionVars.Users.Get("a")
 	c.Assert(ok, Equals, true)
 	c.Assert(sessionVar.GetString(), Equals, "a")
 }
