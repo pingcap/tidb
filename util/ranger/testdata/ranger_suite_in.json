@@ -26,5 +26,5 @@
       "select * from t2 where t='aaaa';",
       "select * from t2 where t='aaaa' or t = 'a';"
     ]
- }
+  }
 ]
