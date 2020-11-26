@@ -667,11 +667,11 @@ func (e *IndexLookUpExecutor) Next(ctx context.Context, req *chunk.Chunk) error 
 			}
 		} else {
 			requiredRows := resultTask.numRows - resultTask.cursor
-			if resultTask.chk == nil || requiredRows <= 0 {
+			if requiredRows <= 0 {
 				return nil
 			}
-			req.Append(resultTask.chk, resultTask.cursor, resultTask.cursor+requiredRows)
-			resultTask.cursor += requiredRows
+			req.Append(resultTask.chk, resultTask.cursor, resultTask.numRows)
+			resultTask.cursor = resultTask.numRows
 			if req.IsFull() {
 				return nil
 			}
