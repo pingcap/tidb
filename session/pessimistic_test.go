@@ -2190,7 +2190,7 @@ func (s *testPessimisticSuite) TestAmendForUniqueIndex(c *C) {
 		err := tk2.ExecToErr("alter table t add unique index uk(c);")
 		finishCh <- err
 	}()
-	time.Sleep(100 * time.Millisecond)
+	time.Sleep(300 * time.Millisecond)
 	tk.MustExec("commit")
 	err = <-finishCh
 	c.Assert(err, IsNil)
