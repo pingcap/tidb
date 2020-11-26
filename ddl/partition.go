@@ -548,7 +548,7 @@ func checkPartitionFuncValid(ctx sessionctx.Context, tblInfo *model.TableInfo, e
 	if expr == nil {
 		return nil
 	}
-	exprChecker := newPartitionExprChecker(ctx, tblInfo, checkPartitionExprFuncAllowed, checkPartitionExprArgs, checkPartitionExprAllowed)
+	exprChecker := newPartitionExprChecker(ctx, tblInfo, checkPartitionExprArgs, checkPartitionExprAllowed, checkPartitionExprFuncAllowed)
 	expr.Accept(exprChecker)
 	if exprChecker.err != nil {
 		return errors.Trace(exprChecker.err)
@@ -575,45 +575,24 @@ func checkResultOK(ok bool, err error) error {
 }
 
 // checkPartitionFuncType checks partition function return type.
-func checkPartitionFuncType(ctx sessionctx.Context, s *ast.CreateTableStmt, tblInfo *model.TableInfo) error {
-	if s.Partition.Expr == nil {
+func checkPartitionFuncType(ctx sessionctx.Context, expr ast.ExprNode, tblInfo *model.TableInfo) error {
+	if expr == nil {
 		return nil
 	}
-	var buf strings.Builder
-	restoreCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, &buf)
-	if err := s.Partition.Expr.Restore(restoreCtx); err != nil {
-		return errors.Trace(err)
-	}
-	exprStr := buf.String()
-	if s.Partition.Tp == model.PartitionTypeRange ||
-		s.Partition.Tp == model.PartitionTypeHash ||
-		s.Partition.Tp == model.PartitionTypeList {
-		// if partition by columnExpr, check the column type
-		if _, ok := s.Partition.Expr.(*ast.ColumnNameExpr); ok {
-			for _, col := range tblInfo.Columns {
-				name := strings.Replace(col.Name.String(), ".", "`.`", -1)
-				// Range partitioning key supported types: tinyint, smallint, mediumint, int and bigint.
-				if !validRangePartitionType(col) && fmt.Sprintf("`%s`", name) == exprStr {
-					return errors.Trace(ErrNotAllowedTypeInPartition.GenWithStackByArgs(exprStr))
-				}
-			}
-		}
-	}
 
-	e, err := expression.ParseSimpleExprWithTableInfo(ctx, exprStr, tblInfo)
+	e, err := expression.RewriteSimpleExprWithTableInfo(ctx, tblInfo, expr)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	if e.GetType().EvalType() == types.ETInt {
 		return nil
 	}
-	if s.Partition.Tp == model.PartitionTypeHash {
-		if _, ok := s.Partition.Expr.(*ast.ColumnNameExpr); ok {
-			return ErrNotAllowedTypeInPartition.GenWithStackByArgs(exprStr)
-		}
+
+	if col, ok := expr.(*ast.ColumnNameExpr); ok {
+		return errors.Trace(ErrNotAllowedTypeInPartition.GenWithStackByArgs(col.Name.Name.L))
 	}
 
-	return ErrPartitionFuncNotAllowed.GenWithStackByArgs("PARTITION")
+	return errors.Trace(ErrPartitionFuncNotAllowed.GenWithStackByArgs("PARTITION"))
 }
 
 // checkRangePartitionValue checks whether `less than value` is strictly increasing for each partition.
@@ -1387,7 +1366,6 @@ func checkPartitioningKeysConstraints(sctx sessionctx.Context, s *ast.CreateTabl
 
 	var partCols stringSlice
 	if s.Partition.Expr != nil {
-		// Parse partitioning key, extract the column names in the partitioning key to slice.
 		extractCols := newPartitionExprChecker(sctx, tblInfo)
 		s.Partition.Expr.Accept(extractCols)
 		partColumns, err := extractCols.columns, extractCols.err
@@ -1481,6 +1459,9 @@ func (cne *columnNameExtractor) Leave(node ast.Node) (ast.Node, bool) {
 }
 
 func findColumnByName(colName string, tblInfo *model.TableInfo) *model.ColumnInfo {
+	if tblInfo == nil {
+		return nil
+	}
 	for _, info := range tblInfo.Columns {
 		if info.Name.L == colName {
 			return info
@@ -1660,7 +1641,7 @@ func (p *partitionExprChecker) extractColumns(_ sessionctx.Context, _ *model.Tab
 	}
 	colInfo := findColumnByName(columnNameExpr.Name.Name.L, p.tbInfo)
 	if colInfo == nil {
-		return ErrBadField
+		return errors.Trace(ErrBadField.GenWithStackByArgs(columnNameExpr.Name.Name.L, "partition function"))
 	}
 
 	p.columns = append(p.columns, colInfo)
@@ -1669,18 +1650,19 @@ func (p *partitionExprChecker) extractColumns(_ sessionctx.Context, _ *model.Tab
 
 func checkPartitionExprAllowed(_ sessionctx.Context, _ *model.TableInfo, e ast.ExprNode) error {
 	switch v := e.(type) {
-	case *ast.FuncCastExpr, *ast.CaseExpr, *ast.SubqueryExpr, *ast.WindowFuncExpr, *ast.RowExpr, *ast.DefaultExpr, *ast.ValuesExpr:
-		return ErrPartitionFunctionIsNotAllowed
+	case *ast.FuncCastExpr, *ast.CaseExpr, *ast.SubqueryExpr, *ast.WindowFuncExpr, *ast.RowExpr, *ast.DefaultExpr, *ast.ValuesExpr,
+		*ast.SetCollationExpr:
+		return errors.Trace(ErrPartitionFunctionIsNotAllowed)
 	case *ast.BinaryOperationExpr:
 		// The DIV operator (opcode.IntDiv) is also supported; the / operator ( opcode.Div ) is not permitted.
 		// see https://dev.mysql.com/doc/refman/5.7/en/partitioning-limitations.html
 		switch v.Op {
 		case opcode.Or, opcode.And, opcode.Xor, opcode.LeftShift, opcode.RightShift, opcode.BitNeg, opcode.Div:
-			return ErrPartitionFunctionIsNotAllowed
+			return errors.Trace(ErrPartitionFunctionIsNotAllowed)
 		}
 	case *ast.UnaryOperationExpr:
 		if v.Op == opcode.BitNeg {
-			return ErrPartitionFunctionIsNotAllowed
+			return errors.Trace(ErrPartitionFunctionIsNotAllowed)
 		}
 	}
 	return nil
@@ -1695,12 +1677,13 @@ func checkPartitionExprFuncAllowed(_ sessionctx.Context, _ *model.TableInfo, e a
 		ast.ToDays: {}, ast.ToSeconds: {}, ast.DayOfMonth: {}, ast.Month: {}, ast.DayOfYear: {},
 		ast.Quarter: {}, ast.YearWeek: {}, ast.Year: {}, ast.Weekday: {}, ast.DayOfWeek: {}, ast.Day: {},
 		ast.Hour: {}, ast.Minute: {}, ast.Second: {}, ast.TimeToSec: {}, ast.MicroSecond: {},
-		ast.UnixTimestamp: {}, ast.FromDays: {}, ast.Extract: {}, ast.Abs: {}, ast.Ceiling: {}, ast.DateDiff: {}, ast.Floor: {}, ast.Mod: {},
+		ast.UnixTimestamp: {}, ast.FromDays: {}, ast.Extract: {}, ast.Abs: {}, ast.Ceiling: {},
+		ast.DateDiff: {}, ast.Floor: {}, ast.Mod: {},
 	}
 	if _, ok := allowedFuncMap[expr.FnName.L]; ok {
 		return nil
 	}
-	return ErrPartitionFunctionIsNotAllowed
+	return errors.Trace(ErrPartitionFunctionIsNotAllowed)
 }
 
 func checkPartitionExprArgs(_ sessionctx.Context, tblInfo *model.TableInfo, e ast.ExprNode) error {
@@ -1709,52 +1692,73 @@ func checkPartitionExprArgs(_ sessionctx.Context, tblInfo *model.TableInfo, e as
 		return nil
 	}
 	switch expr.FnName.L {
-	case ast.ToDays, ast.ToSeconds, ast.DayOfMonth, ast.Month, ast.DayOfYear, ast.Quarter, ast.YearWeek, ast.Year, ast.Weekday, ast.DayOfWeek, ast.Day:
-		return checkResultOK(hasDateArgs(tblInfo, expr))
+	case ast.ToDays, ast.ToSeconds, ast.DayOfMonth, ast.Month, ast.DayOfYear, ast.Quarter, ast.YearWeek,
+		ast.Year, ast.Weekday, ast.DayOfWeek, ast.Day:
+		return errors.Trace(checkResultOK(hasDateArgs(tblInfo, expr)))
 	case ast.Hour, ast.Minute, ast.Second, ast.TimeToSec, ast.MicroSecond:
-		return checkResultOK(hasTimeArgs(tblInfo, expr))
+		return errors.Trace(checkResultOK(hasTimeArgs(tblInfo, expr)))
 	case ast.UnixTimestamp:
-		return checkResultOK(hasTimestampArgs(tblInfo, expr))
+		return errors.Trace(checkResultOK(hasTimestampArgs(tblInfo, expr)))
 	case ast.FromDays:
 		if err := checkResultOK(hasDateArgs(tblInfo, expr)); err != nil {
-			return err
+			return errors.Trace(err)
 		}
-		return checkResultOK(hasTimeArgs(tblInfo, expr))
+		return errors.Trace(checkResultOK(hasTimeArgs(tblInfo, expr)))
 	case ast.Extract:
-		// todo: extract function should also be support
+		switch expr.Args[0].(*ast.TimeUnitExpr).Unit {
+		case ast.TimeUnitYear, ast.TimeUnitYearMonth, ast.TimeUnitQuarter, ast.TimeUnitMonth, ast.TimeUnitDay:
+			return errors.Trace(checkResultOK(hasDateArgs(tblInfo, expr)))
+		case ast.TimeUnitDayMicrosecond, ast.TimeUnitDayHour, ast.TimeUnitDayMinute, ast.TimeUnitDaySecond:
+			return errors.Trace(checkResultOK(hasDatetimeArgs(tblInfo, expr)))
+		case ast.TimeUnitHour, ast.TimeUnitHourMinute, ast.TimeUnitHourSecond, ast.TimeUnitMinute, ast.TimeUnitMinuteSecond,
+			ast.TimeUnitSecond, ast.TimeUnitMicrosecond, ast.TimeUnitHourMicrosecond, ast.TimeUnitMinuteMicrosecond, ast.TimeUnitSecondMicrosecond:
+			return errors.Trace(checkResultOK(hasTimeArgs(tblInfo, expr)))
+		default:
+			return errors.Trace(ErrWrongExprInPartitionFunc)
+		}
+	case ast.Abs, ast.Ceiling, ast.DateDiff, ast.Floor, ast.Mod:
+		has, err := hasTimestampArgs(tblInfo, expr)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if has {
+			return errors.Trace(ErrWrongExprInPartitionFunc)
+		}
 	}
 	return nil
 }
 
-func hasDateArgs(tblInfo *model.TableInfo, expr ast.ExprNode) (bool, error) {
+func hasDateArgs(tblInfo *model.TableInfo, expr *ast.FuncCallExpr) (bool, error) {
 	return hasSpecifyArgs(tblInfo, expr, mysql.TypeDate, mysql.TypeDatetime)
 }
 
-func hasTimeArgs(tblInfo *model.TableInfo, expr ast.ExprNode) (bool, error) {
+func hasTimeArgs(tblInfo *model.TableInfo, expr *ast.FuncCallExpr) (bool, error) {
 	return hasSpecifyArgs(tblInfo, expr, mysql.TypeDuration, mysql.TypeDatetime)
 }
 
-func hasTimestampArgs(tblInfo *model.TableInfo, expr ast.ExprNode) (bool, error) {
+func hasTimestampArgs(tblInfo *model.TableInfo, expr *ast.FuncCallExpr) (bool, error) {
 	return hasSpecifyArgs(tblInfo, expr, mysql.TypeTimestamp)
 }
 
-func hasDatetimeArgs(tblInfo *model.TableInfo, expr ast.ExprNode) (bool, error) {
+func hasDatetimeArgs(tblInfo *model.TableInfo, expr *ast.FuncCallExpr) (bool, error) {
 	return hasSpecifyArgs(tblInfo, expr, mysql.TypeDatetime)
 }
 
-func hasSpecifyArgs(tblInfo *model.TableInfo, expr ast.ExprNode, ts ...byte) (bool, error) {
-	col, ok := expr.(*ast.ColumnNameExpr)
-	if !ok {
-		return false, ErrWrongExprInPartitionFunc
-	}
-	columnInfo := findColumnByName(col.Name.Name.L, tblInfo)
-	if columnInfo == nil {
-		return false, ErrBadField.GenWithStackByArgs(col.Name.Name.L, "partition function")
-	}
-	for _, t := range ts {
-		if columnInfo.Tp == t {
-			return true, nil
+func hasSpecifyArgs(tblInfo *model.TableInfo, expr *ast.FuncCallExpr, ts ...byte) (bool, error) {
+	for _, arg := range expr.Args {
+		col, ok := arg.(*ast.ColumnNameExpr)
+		if !ok {
+			continue
+		}
+		columnInfo := findColumnByName(col.Name.Name.L, tblInfo)
+		if columnInfo == nil {
+			return false, errors.Trace(ErrBadField.GenWithStackByArgs(col.Name.Name.L, "partition function"))
+		}
+		for _, t := range ts {
+			if columnInfo.Tp == t {
+				return true, nil
+			}
 		}
 	}
-	return false, ErrWrongExprInPartitionFunc
+	return false, nil
 }

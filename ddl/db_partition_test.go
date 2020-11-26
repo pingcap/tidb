@@ -567,6 +567,10 @@ func (s *testIntegrationSuite1) TestCreateTableWithListPartition(c *C) {
 			ddl.ErrSameNamePartition,
 		},
 		{
+			"create table t(b char(10)) partition by range columns (b) (partition p1 values less than ('G' collate utf8mb4_unicode_ci));",
+			ddl.ErrPartitionFunctionIsNotAllowed,
+		},
+		{
 			"create table t (a date) partition by list (to_days(to_days(a))) (partition p0 values in (1), partition P1 values in (2));",
 			ddl.ErrWrongExprInPartitionFunc,
 		},
@@ -2191,6 +2195,7 @@ func (s *testIntegrationSuite5) TestPartitionUniqueKeyNeedAllFieldsInPf(c *C) {
         )`
 	tk.MustGetErrCode(sql10, tmysql.ErrUniqueKeyNeedAllFieldsInPf)
 
+	// after we support multiple columns partition, this sql should fail. For now, it will be a normal table.
 	sql11 := `create table part9 (
                  a int not null,
                  b int not null,
@@ -2205,7 +2210,7 @@ func (s *testIntegrationSuite5) TestPartitionUniqueKeyNeedAllFieldsInPf(c *C) {
                partition p1 values less than (7, 9),
                partition p2 values less than (11, 22)
         )`
-	tk.MustGetErrCode(sql11, tmysql.ErrUniqueKeyNeedAllFieldsInPf)
+	tk.MustExec(sql11)
 
 	sql12 := `create table part12 (a varchar(20), b binary, unique index (a(5))) partition by range columns (a) (
 			partition p0 values less than ('aaaaa'),

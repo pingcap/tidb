@@ -185,7 +185,7 @@ var (
 	// ErrUniqueKeyNeedAllFieldsInPf returns must include all columns in the table's partitioning function.
 	ErrUniqueKeyNeedAllFieldsInPf = dbterror.ClassDDL.NewStd(mysql.ErrUniqueKeyNeedAllFieldsInPf)
 	// ErrWrongExprInPartitionFunc Constant, random or timezone-dependent expressions in (sub)partitioning function are not allowed.
-	ErrWrongExprInPartitionFunc   = dbterror.ClassDDL.NewStd(mysql.ErrWrongExprInPartitionFunc)
+	ErrWrongExprInPartitionFunc = dbterror.ClassDDL.NewStd(mysql.ErrWrongExprInPartitionFunc)
 	// ErrWarnDataTruncated returns data truncated error.
 	ErrWarnDataTruncated = dbterror.ClassDDL.NewStd(mysql.WarnDataTruncated)
 	// ErrCoalesceOnlyOnHashPartition returns coalesce partition can only be used on hash/key partitions.

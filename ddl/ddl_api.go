@@ -1522,11 +1522,11 @@ func checkTableInfoValidWithStmt(ctx sessionctx.Context, tbInfo *model.TableInfo
 	if err := checkGeneratedColumn(s.Cols); err != nil {
 		return errors.Trace(err)
 	}
-	if s.Partition != nil {
+	if tbInfo.Partition != nil && s.Partition != nil {
 		if err := checkPartitionDefinitionConstraints(ctx, tbInfo); err != nil {
 			return errors.Trace(err)
 		}
-		if err := checkPartitionFuncType(ctx, s, tbInfo); err != nil {
+		if err := checkPartitionFuncType(ctx, s.Partition.Expr, tbInfo); err != nil {
 			return errors.Trace(err)
 		}
 		if err := checkPartitioningKeysConstraints(ctx, s, tbInfo); err != nil {
@@ -2844,7 +2844,9 @@ func (d *ddl) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, spec *
 	// partInfo contains only the new added partition, we have to combine it with the
 	// old partitions to check all partitions is strictly increasing.
 	clonedMeta := meta.Clone()
-	clonedMeta.Partition.Definitions = append(clonedMeta.Partition.Definitions, partInfo.Definitions...)
+	tmp := *partInfo
+	tmp.Definitions = append(pi.Definitions, tmp.Definitions...)
+	clonedMeta.Partition = &tmp
 	if err := checkPartitionDefinitionConstraints(ctx, clonedMeta); err != nil {
 		if ErrSameNamePartition.Equal(err) && spec.IfNotExists {
 			ctx.GetSessionVars().StmtCtx.AppendNote(err)
