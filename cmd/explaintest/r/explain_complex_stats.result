@@ -139,7 +139,7 @@ explain select gad.id as gid,sdk.id as sid,gad.aid as aid,gad.cm as cm,sdk.dic a
 id	estRows	task	access object	operator info
 Projection_10	170.34	root		test.st.id, test.dd.id, test.st.aid, test.st.cm, test.dd.dic, test.dd.ip, test.dd.t, test.st.p1, test.st.p2, test.st.p3, test.st.p4, test.st.p5, test.st.p6_md5, test.st.p7_md5, test.st.ext
 └─Limit_13	170.34	root		offset:0, count:3000
-  └─IndexJoin_18	170.34	root		inner join, inner:IndexLookUp_17, outer key:test.st.aid, inner key:test.dd.aid, other cond:eq(test.st.dic, test.dd.mac), lt(test.st.t, test.dd.t)
+  └─IndexJoin_18	170.34	root		inner join, inner:IndexLookUp_17, outer key:test.st.aid, inner key:test.dd.aid, equal cond:eq(test.st.aid, test.dd.aid), eq(test.st.dic, test.dd.mac), other cond:lt(test.st.t, test.dd.t)
     ├─TableReader_25(Build)	170.34	root		data:Selection_24
     │ └─Selection_24	170.34	cop[tikv]		eq(test.st.bm, 0), eq(test.st.dit, "mac"), eq(test.st.pt, "ios"), gt(test.st.t, 1477971479), not(isnull(test.st.dic))
     │   └─TableRangeScan_23	1999.00	cop[tikv]	table:gad	range:[0,+inf], keep order:false
@@ -159,7 +159,7 @@ explain select dt.id as id, dt.aid as aid, dt.pt as pt, dt.dic as dic, dt.cm as 
 id	estRows	task	access object	operator info
 Projection_10	428.32	root		test.dt.id, test.dt.aid, test.dt.pt, test.dt.dic, test.dt.cm, test.rr.gid, test.rr.acd, test.rr.t, test.dt.p1, test.dt.p2, test.dt.p3, test.dt.p4, test.dt.p5, test.dt.p6_md5, test.dt.p7_md5
 └─Limit_13	428.32	root		offset:0, count:2000
-  └─IndexJoin_19	428.32	root		inner join, inner:IndexLookUp_18, outer key:test.dt.aid, test.dt.dic, inner key:test.rr.aid, test.rr.dic
+  └─IndexJoin_19	428.32	root		inner join, inner:IndexLookUp_18, outer key:test.dt.aid, test.dt.dic, inner key:test.rr.aid, test.rr.dic, equal cond:eq(test.dt.aid, test.rr.aid), eq(test.dt.dic, test.rr.dic)
     ├─TableReader_44(Build)	428.32	root		data:Selection_43
     │ └─Selection_43	428.32	cop[tikv]		eq(test.dt.bm, 0), eq(test.dt.pt, "ios"), gt(test.dt.t, 1478185592), not(isnull(test.dt.dic))
     │   └─TableRangeScan_42	2000.00	cop[tikv]	table:dt	range:[0,+inf], keep order:false

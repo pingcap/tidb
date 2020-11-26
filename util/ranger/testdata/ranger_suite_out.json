@@ -10,7 +10,7 @@
           "  ├─TableReader_15(Build) 2.00 root  data:TableFullScan_14",
           "  │ └─TableFullScan_14 2.00 cop[tikv] table:t keep order:false",
           "  └─StreamAgg_20(Probe) 1.00 root  funcs:count(1)->Column#16",
-          "    └─IndexJoin_36 2.00 root  inner join, inner:TableReader_35, outer key:test.t.a, inner key:test.t.a",
+          "    └─IndexJoin_36 2.00 root  inner join, inner:TableReader_35, outer key:test.t.a, inner key:test.t.a, equal cond:eq(test.t.a, test.t.a)",
           "      ├─IndexReader_29(Build) 2.00 root  index:IndexRangeScan_28",
           "      │ └─IndexRangeScan_28 2.00 cop[tikv] table:s, index:idx(b, c, d) range: decided by [eq(test.t.b, 1) in(test.t.c, 1, 2) eq(test.t.d, test.t.a)], keep order:false",
           "      └─TableReader_35(Probe) 1.00 root  data:TableRangeScan_34",
