@@ -310,6 +310,18 @@ func (s *testBootstrapSuite) TestIssue20900_1(c *C) {
 	r.Next(ctx, req)
 	c.Assert(req.GetRow(0).GetString(0), Equals, "34359738368")
 	c.Assert(seV4.GetSessionVars().MemQuotaQuery, Equals, int64(34359738368))
+
+	mustExecSQL(c, seV4, `update mysql.tidb set variable_value = '123' where variable_name='default_memory_quota_query'`)
+	r = mustExecSQL(c, seV4, "select variable_value from mysql.tidb where variable_name='default_memory_quota_query'")
+	req = r.NewChunk()
+	r.Next(ctx, req)
+	c.Assert(req.GetRow(0).GetString(0), Equals, "123")
+	se2 := newSession(c, store, s.dbName)
+	r = mustExecSQL(c, se2, "select @@tidb_mem_quota_query")
+	req = r.NewChunk()
+	r.Next(ctx, req)
+	c.Assert(req.GetRow(0).GetString(0), Equals, "34359738368")
+	c.Assert(se2.GetSessionVars().MemQuotaQuery, Equals, int64(34359738368))
 }
 
 func (s *testBootstrapSuite) TestIssue20900_2(c *C) {

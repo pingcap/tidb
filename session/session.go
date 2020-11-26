@@ -1669,14 +1669,17 @@ func loadCollationParameter(se *session) (bool, error) {
 // version is v4.0.9.
 // See the comment upon the function `upgradeToVer49` for details.
 func loadDefMemQuotaQuery(se *session) (int64, error) {
-	_, err := loadParameter(se, tidbDefMemoryQuotaQuery)
+	defMemQuotaQuery, err := loadParameter(se, tidbDefMemoryQuotaQuery)
 	if err != nil {
 		if err == errResultIsEmpty {
 			return 1 << 30, nil
 		}
 		return 1 << 30, err
 	}
-	// If there is a tuple in mysql.tidb, the value must be 32 << 30.
+	if quota, err := strconv.Atoi(defMemQuotaQuery); err != nil || quota != 32<<30 {
+		logutil.BgLogger().Warn("Unexpected value of 'default_memory_quota_query' in 'mysql.tidb', use '34359738368' instead",
+			zap.String("value", defMemQuotaQuery))
+	}
 	return 32 << 30, nil
 }
 
