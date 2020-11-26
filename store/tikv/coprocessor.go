@@ -526,7 +526,7 @@ func init() {
 // send the result back.
 func (worker *copIteratorWorker) run(ctx context.Context) {
 	defer func() {
-		failpoint.Inject("ticase-4170", func(val failpoint.Value) {
+		failpoint.Inject("ticase-4169", func(val failpoint.Value) {
 			if val.(bool) {
 				worker.memTracker.Consume(10 * MockResponseSizeForTest)
 				worker.memTracker.Consume(10 * MockResponseSizeForTest)
@@ -1279,9 +1279,8 @@ func (it *copIterator) Close() error {
 	it.rpcCancel.CancelAll()
 	it.actionOnExceed.close()
 	it.wg.Wait()
-	failpoint.Inject("ticase-4169", func(val failpoint.Value) {
+	failpoint.Inject("ticase-4170", func(val failpoint.Value) {
 		if val.(bool) {
-
 			it.memTracker.Consume(10 * MockResponseSizeForTest)
 			it.memTracker.Consume(10 * MockResponseSizeForTest)
 		}
@@ -1379,7 +1378,7 @@ func (e *rateLimitAction) Action(t *memory.Tracker) {
 	e.cond.once.Do(func() {
 		if e.cond.remainingTokenNum < 2 {
 			e.setEnabled(false)
-			logutil.BgLogger().Info("memory exceed quota, rateLimitAction delegate to fallback action",
+			logutil.BgLogger().Info("memory exceeds quota, rateLimitAction delegate to fallback action",
 				zap.Uint("total token count", e.totalTokenNum))
 			if fallback := e.GetFallback(); fallback != nil {
 				fallback.Action(t)
