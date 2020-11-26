@@ -1428,8 +1428,27 @@ func (d *Datum) convertToMysqlBit(sc *stmtctx.StatementContext, target *FieldTyp
 	var uintValue uint64
 	var err error
 	switch d.k {
-	case KindString, KindBytes:
+	case KindBytes:
 		uintValue, err = BinaryLiteral(d.b).ToInt(sc)
+	case KindString:
+		// To solve issue #18681, we need consider true, false, 0, 1.
+		// More situations, we also consider b'0', b'1' and so on.
+		s := BinaryLiteral(d.b).ToString()
+		switch strings.ToLower(s) {
+		case "true", "1":
+			uintValue = 1
+		case "false", "0":
+			uintValue = 0
+		default:
+			var bitStr BinaryLiteral
+			bitStr, err = ParseBitStr(BinaryLiteral(d.b).ToString())
+			if err != nil {
+				// This is to be compatible with the previous processing method.
+				uintValue, err = BinaryLiteral(d.b).ToInt(sc)
+			} else {
+				uintValue, err = bitStr.ToInt(sc)
+			}
+		}
 	case KindInt64:
 		// if input kind is int64 (signed), when trans to bit, we need to treat it as unsigned
 		d.k = KindUint64
