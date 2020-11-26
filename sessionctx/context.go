@@ -28,11 +28,14 @@ import (
 
 // Context is an interface for transaction and executive args environment.
 type Context interface {
-	// NewTxn creates a new transaction for further execution.
+	// NewTxn creates a new global/local transaction for further execution.
 	// If old transaction is valid, it is committed first.
-	// It's used in BEGIN statement and DDL statements to commit old transaction.
+	// It's used in BEGIN statement to commit old transaction.
 	NewTxn(context.Context) error
 
+	// NewGlobalTxn creates a new global transaction for further execution.
+	// If old transaction is valid, it is committed first.
+	// It's used in DDL statements to commit old transaction.
 	NewGlobalTxn(context.Context) error
 
 	// Txn returns the current local/global transaction which is created before executing a statement
