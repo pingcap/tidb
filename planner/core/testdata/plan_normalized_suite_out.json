@@ -90,7 +90,7 @@
       {
         "SQL": "SELECT /*+ TIDB_INLJ(t1, t2) */ * from t1, t2 where t1.a = t2.a and t1.c>1;",
         "Plan": [
-          " IndexJoin       root inner join, inner:TableReader, outer key:test.t1.a, inner key:test.t2.a",
+          " IndexJoin       root inner join, inner:TableReader, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a)",
           " ├─TableReader   root ",
           " │ └─Selection   cop  gt(test.t1.c, ?)",
           " │   └─TableScan cop  table:t1, range:[?,?], keep order:false",
@@ -123,7 +123,7 @@
       {
         "SQL": "SELECT /*+ TIDB_INLJ(t1, t2) */ * from t1, t2 where t1.a = t2.a and t1.c>1;",
         "Plan": [
-          " IndexJoin       root inner join, inner:TableReader, outer key:test.t1.a, inner key:test.t2.a",
+          " IndexJoin       root inner join, inner:TableReader, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a)",
           " ├─TableReader   root ",
           " │ └─Selection   cop  gt(test.t1.c, ?)",
           " │   └─TableScan cop  table:t1, range:[?,?], keep order:false",
@@ -196,6 +196,40 @@
         "SQL": "alter table t1_tmp add column c int",
         "Plan": [
           ""
+        ]
+      },
+      {
+        "SQL": "insert into t3 values (4,20),(30,30)",
+        "Plan": [
+          ""
+        ]
+      },
+      {
+        "SQL": "select * from t3 where a=4",
+        "Plan": [
+          " Point_Get root table:t3, partition:?, handle:?"
+        ]
+      },
+      {
+        "SQL": "select * from t3 where a=30",
+        "Plan": [
+          " Point_Get root table:t3, partition:?, handle:?"
+        ]
+      },
+      {
+        "SQL": "select * from t4 where a=10",
+        "Plan": [
+          " IndexLookUp root ",
+          " ├─IndexScan cop  table:t4, partition:?, index:a(a), range:[?,?], keep order:false",
+          " └─TableScan cop  table:t4, partition:?, keep order:false"
+        ]
+      },
+      {
+        "SQL": "select * from t4 where a=20",
+        "Plan": [
+          " IndexLookUp root ",
+          " ├─IndexScan cop  table:t4, partition:?, index:a(a), range:[?,?], keep order:false",
+          " └─TableScan cop  table:t4, partition:?, keep order:false"
         ]
       }
     ]

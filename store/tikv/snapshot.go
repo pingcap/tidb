@@ -73,8 +73,9 @@ type tikvSnapshot struct {
 	// It's OK as long as there are no zero-byte values in the protocol.
 	mu struct {
 		sync.RWMutex
-		cached map[string][]byte
-		stats  *SnapshotRuntimeStats
+		cached     map[string][]byte
+		cachedSize int
+		stats      *SnapshotRuntimeStats
 	}
 }
 
@@ -169,7 +170,23 @@ func (s *tikvSnapshot) BatchGet(ctx context.Context, keys []kv.Key) (map[string]
 		s.mu.cached = make(map[string][]byte, len(m))
 	}
 	for _, key := range keys {
-		s.mu.cached[string(key)] = m[string(key)]
+		val := m[string(key)]
+		s.mu.cachedSize += len(key) + len(val)
+		s.mu.cached[string(key)] = val
+	}
+
+	const cachedSizeLimit = 10 << 30
+	if s.mu.cachedSize >= cachedSizeLimit {
+		for k, v := range s.mu.cached {
+			if _, needed := m[k]; needed {
+				continue
+			}
+			delete(s.mu.cached, k)
+			s.mu.cachedSize -= len(k) + len(v)
+			if s.mu.cachedSize < cachedSizeLimit {
+				break
+			}
+		}
 	}
 	s.mu.Unlock()
 
@@ -259,7 +276,7 @@ func (s *tikvSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, coll
 		req := tikvrpc.NewReplicaReadRequest(tikvrpc.CmdBatchGet, &pb.BatchGetRequest{
 			Keys:    pending,
 			Version: s.version.Ver,
-		}, s.replicaRead, s.replicaReadSeed, pb.Context{
+		}, s.replicaRead, &s.replicaReadSeed, pb.Context{
 			Priority:     s.priority,
 			NotFillCache: s.notFillCache,
 			TaskId:       s.taskID,
@@ -385,7 +402,7 @@ func (s *tikvSnapshot) get(ctx context.Context, bo *Backoffer, k kv.Key) ([]byte
 		&pb.GetRequest{
 			Key:     k,
 			Version: s.version.Ver,
-		}, s.replicaRead, s.replicaReadSeed, pb.Context{
+		}, s.replicaRead, &s.replicaReadSeed, pb.Context{
 			Priority:     s.priority,
 			NotFillCache: s.notFillCache,
 			TaskId:       s.taskID,

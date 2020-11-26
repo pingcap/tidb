@@ -707,6 +707,20 @@ func (s *testIntegrationSuite) TestPartitionPruningForInExpr(c *C) {
 	}
 }
 
+func (s *testIntegrationSerialSuite) TestPartitionPruningWithDateType(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a datetime) partition by range columns (a) (partition p1 values less than ('20000101'), partition p2 values less than ('2000-10-01'));")
+	tk.MustExec("insert into t values ('20000201'), ('19000101');")
+
+	// cannot get the statistical information immediately
+	// tk.MustQuery(`SELECT PARTITION_NAME,TABLE_ROWS FROM INFORMATION_SCHEMA.PARTITIONS WHERE TABLE_NAME = 't';`).Check(testkit.Rows("p1 1", "p2 1"))
+	str := tk.MustQuery(`desc select * from t where a < '2000-01-01';`).Rows()[2][3].(string)
+	c.Assert(strings.Contains(str, "partition:p1"), IsTrue)
+}
+
 func (s *testIntegrationSuite) TestErrNoDB(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("create user test")
@@ -1332,6 +1346,17 @@ func (s *testIntegrationSuite) TestIssue16935(c *C) {
 	tk.MustQuery("SELECT * FROM t0 LEFT JOIN v0 ON TRUE WHERE v0.c0 IS NULL;")
 }
 
+func (s *testIntegrationSuite) TestDistinctScalarFunctionPushDown(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int not null, b int not null, c int not null, primary key (a,c)) partition by range (c) (partition p0 values less than (5), partition p1 values less than (10))")
+	tk.MustExec("insert into t values(1,1,1),(2,2,2),(3,1,3),(7,1,7),(8,2,8),(9,2,9)")
+	tk.MustQuery("select count(distinct b+1) as col from t").Check(testkit.Rows(
+		"2",
+	))
+}
+
 func (s *testIntegrationSerialSuite) TestExplainAnalyzePointGet(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -1351,6 +1376,28 @@ func (s *testIntegrationSerialSuite) TestExplainAnalyzePointGet(c *C) {
 	}
 	checkExplain("Get")
 	res = tk.MustQuery("explain analyze select * from t where a in (1,2,3);")
+	checkExplain("BatchGet")
+}
+
+func (s *testIntegrationSerialSuite) TestExplainAnalyzeDML(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec(" create table t (a int, b int, unique index (a));")
+	tk.MustExec("insert into t values (1,1)")
+
+	res := tk.MustQuery("explain analyze select * from t where a=1;")
+	checkExplain := func(rpc string) {
+		resBuff := bytes.NewBufferString("")
+		for _, row := range res.Rows() {
+			fmt.Fprintf(resBuff, "%s\n", row)
+		}
+		explain := resBuff.String()
+		c.Assert(strings.Contains(explain, rpc+":{num_rpc:"), IsTrue, Commentf("%s", explain))
+		c.Assert(strings.Contains(explain, "total_time:"), IsTrue, Commentf("%s", explain))
+	}
+	checkExplain("Get")
+	res = tk.MustQuery("explain analyze insert ignore into t values (1,1),(2,2),(3,3),(4,4);")
 	checkExplain("BatchGet")
 }
 
@@ -1440,4 +1487,39 @@ func (s *testIntegrationSuite) TestPartitionUnionWithPPruningColumn(c *C) {
 			"3150 LE1323_r5",
 			"3290 LE1327_r5"))
 
+}
+
+func (s *testIntegrationSerialSuite) TestIssue20710(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("drop table if exists s;")
+	tk.MustExec("create table t(a int, b int)")
+	tk.MustExec("create table s(a int, b int, index(a))")
+	tk.MustExec("insert into t values(1,1),(1,2),(2,2)")
+	tk.MustExec("insert into s values(1,1),(2,2),(2,1)")
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+		})
+		res := tk.MustQuery(tt)
+		res.Check(testkit.Rows(output[i].Plan...))
+	}
+}
+
+func (s *testIntegrationSuite) TestIssue10448(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+
+	tk.MustExec("create table t(pk int(11) primary key)")
+	tk.MustExec("insert into t values(1),(2),(3)")
+	tk.MustQuery("select a from (select pk as a from t) t1 where a = 18446744073709551615").Check(testkit.Rows())
 }

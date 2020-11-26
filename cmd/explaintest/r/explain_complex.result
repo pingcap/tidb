@@ -131,7 +131,7 @@ explain select gad.id as gid,sdk.id as sid,gad.aid as aid,gad.cm as cm,sdk.dic a
 id	estRows	task	access object	operator info
 Projection_10	0.00	root		test.st.id, test.dd.id, test.st.aid, test.st.cm, test.dd.dic, test.dd.ip, test.dd.t, test.st.p1, test.st.p2, test.st.p3, test.st.p4, test.st.p5, test.st.p6_md5, test.st.p7_md5, test.st.ext
 └─Limit_13	0.00	root		offset:0, count:3000
-  └─IndexJoin_18	0.00	root		inner join, inner:IndexLookUp_17, outer key:test.st.aid, inner key:test.dd.aid, other cond:eq(test.st.dic, test.dd.mac), lt(test.st.t, test.dd.t)
+  └─IndexJoin_18	0.00	root		inner join, inner:IndexLookUp_17, outer key:test.st.aid, inner key:test.dd.aid, equal cond:eq(test.st.aid, test.dd.aid), eq(test.st.dic, test.dd.mac), other cond:lt(test.st.t, test.dd.t)
     ├─IndexLookUp_29(Build)	0.00	root		
     │ ├─IndexRangeScan_26(Build)	3333.33	cop[tikv]	table:gad, index:t(t)	range:(1477971479,+inf], keep order:false, stats:pseudo
     │ └─Selection_28(Probe)	0.00	cop[tikv]		eq(test.st.bm, 0), eq(test.st.dit, "mac"), eq(test.st.pt, "ios"), not(isnull(test.st.dic))
@@ -152,7 +152,7 @@ explain select dt.id as id, dt.aid as aid, dt.pt as pt, dt.dic as dic, dt.cm as 
 id	estRows	task	access object	operator info
 Projection_10	0.00	root		test.dt.id, test.dt.aid, test.dt.pt, test.dt.dic, test.dt.cm, test.rr.gid, test.rr.acd, test.rr.t, test.dt.p1, test.dt.p2, test.dt.p3, test.dt.p4, test.dt.p5, test.dt.p6_md5, test.dt.p7_md5
 └─Limit_13	0.00	root		offset:0, count:2000
-  └─IndexJoin_27	0.00	root		inner join, inner:IndexLookUp_26, outer key:test.rr.aid, test.rr.dic, inner key:test.dt.aid, test.dt.dic
+  └─IndexJoin_27	0.00	root		inner join, inner:IndexLookUp_26, outer key:test.rr.aid, test.rr.dic, inner key:test.dt.aid, test.dt.dic, equal cond:eq(test.rr.aid, test.dt.aid), eq(test.rr.dic, test.dt.dic)
     ├─TableReader_47(Build)	3.33	root		data:Selection_46
     │ └─Selection_46	3.33	cop[tikv]		eq(test.rr.pt, "ios"), gt(test.rr.t, 1478185592)
     │   └─TableFullScan_45	10000.00	cop[tikv]	table:rr	keep order:false, stats:pseudo
@@ -247,7 +247,7 @@ Sort_10	1.00	root		test.org_department.left_value:asc
 └─HashAgg_15	1.00	root		group by:test.org_department.id, funcs:firstrow(test.org_department.id)->test.org_department.id, funcs:firstrow(test.org_department.ctx)->test.org_department.ctx, funcs:firstrow(test.org_department.name)->test.org_department.name, funcs:firstrow(test.org_department.left_value)->test.org_department.left_value, funcs:firstrow(test.org_department.right_value)->test.org_department.right_value, funcs:firstrow(test.org_department.depth)->test.org_department.depth, funcs:firstrow(test.org_department.leader_id)->test.org_department.leader_id, funcs:firstrow(test.org_department.status)->test.org_department.status, funcs:firstrow(test.org_department.created_on)->test.org_department.created_on, funcs:firstrow(test.org_department.updated_on)->test.org_department.updated_on
   └─Selection_22	0.01	root		or(eq(test.org_employee_position.user_id, 62), or(eq(test.org_department.id, 20), eq(test.org_department.id, 20)))
     └─HashJoin_24	0.02	root		left outer join, equal:[eq(test.org_position.id, test.org_employee_position.position_id)]
-      ├─IndexJoin_33(Build)	0.01	root		left outer join, inner:IndexLookUp_32, outer key:test.org_department.id, inner key:test.org_position.department_id
+      ├─IndexJoin_33(Build)	0.01	root		left outer join, inner:IndexLookUp_32, outer key:test.org_department.id, inner key:test.org_position.department_id, equal cond:eq(test.org_department.id, test.org_position.department_id)
       │ ├─IndexLookUp_55(Build)	0.01	root		
       │ │ ├─IndexRangeScan_52(Build)	10.00	cop[tikv]	table:d, index:org_department_ctx_index(ctx)	range:[1,1], keep order:false, stats:pseudo
       │ │ └─Selection_54(Probe)	0.01	cop[tikv]		eq(test.org_department.status, 1000)

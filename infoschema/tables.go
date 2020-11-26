@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
+	"net"
 	"net/http"
 	"sort"
 	"strconv"
@@ -761,6 +762,12 @@ var slowQueryCols = []columnInfo{
 	{name: variable.SlowLogCopWaitAddr, tp: mysql.TypeVarchar, size: 64},
 	{name: variable.SlowLogMemMax, tp: mysql.TypeLonglong, size: 20},
 	{name: variable.SlowLogDiskMax, tp: mysql.TypeLonglong, size: 20},
+	{name: variable.SlowLogKVTotal, tp: mysql.TypeDouble, size: 22},
+	{name: variable.SlowLogPDTotal, tp: mysql.TypeDouble, size: 22},
+	{name: variable.SlowLogBackoffTotal, tp: mysql.TypeDouble, size: 22},
+	{name: variable.SlowLogWriteSQLRespTotal, tp: mysql.TypeDouble, size: 22},
+	{name: variable.SlowLogBackoffDetail, tp: mysql.TypeVarchar, size: 4096},
+	{name: variable.SlowLogPrepared, tp: mysql.TypeTiny, size: 1},
 	{name: variable.SlowLogSucc, tp: mysql.TypeTiny, size: 1},
 	{name: variable.SlowLogPlanFromCache, tp: mysql.TypeTiny, size: 1},
 	{name: variable.SlowLogPlan, tp: mysql.TypeLongBlob, size: types.UnspecifiedLength},
@@ -1214,6 +1221,11 @@ var tableStatementsSummaryCols = []columnInfo{
 	{name: "MAX_MEM", tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Max memory(byte) used"},
 	{name: "AVG_DISK", tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Average disk space(byte) used"},
 	{name: "MAX_DISK", tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Max disk space(byte) used"},
+	{name: "AVG_KV_TIME", tp: mysql.TypeLonglong, size: 22, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Average time of TiKV used"},
+	{name: "AVG_PD_TIME", tp: mysql.TypeLonglong, size: 22, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Average time of PD used"},
+	{name: "AVG_BACKOFF_TOTAL_TIME", tp: mysql.TypeLonglong, size: 22, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Average time of Backoff used"},
+	{name: "AVG_WRITE_SQL_RESP_TIME", tp: mysql.TypeLonglong, size: 22, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Average time of write sql resp used"},
+	{name: "PREPARED", tp: mysql.TypeTiny, size: 1, flag: mysql.NotNullFlag, comment: "Whether prepared"},
 	{name: "AVG_AFFECTED_ROWS", tp: mysql.TypeDouble, size: 22, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Average number of rows affected"},
 	{name: "FIRST_SEEN", tp: mysql.TypeTimestamp, size: 26, flag: mysql.NotNullFlag, comment: "The time these statements are seen for the first time"},
 	{name: "LAST_SEEN", tp: mysql.TypeTimestamp, size: 26, flag: mysql.NotNullFlag, comment: "The time these statements are seen for the last time"},
@@ -1359,6 +1371,34 @@ type ServerInfo struct {
 	StartTimestamp int64
 }
 
+func (s *ServerInfo) isLoopBackOrUnspecifiedAddr(addr string) bool {
+	tcpAddr, err := net.ResolveTCPAddr("", addr)
+	if err != nil {
+		return false
+	}
+	ip := net.ParseIP(tcpAddr.IP.String())
+	return ip != nil && (ip.IsUnspecified() || ip.IsLoopback())
+}
+
+// ResolveLoopBackAddr exports for testing.
+func (s *ServerInfo) ResolveLoopBackAddr() {
+	if s.isLoopBackOrUnspecifiedAddr(s.Address) && !s.isLoopBackOrUnspecifiedAddr(s.StatusAddr) {
+		addr, err1 := net.ResolveTCPAddr("", s.Address)
+		statusAddr, err2 := net.ResolveTCPAddr("", s.StatusAddr)
+		if err1 == nil && err2 == nil {
+			addr.IP = statusAddr.IP
+			s.Address = addr.String()
+		}
+	} else if !s.isLoopBackOrUnspecifiedAddr(s.Address) && s.isLoopBackOrUnspecifiedAddr(s.StatusAddr) {
+		addr, err1 := net.ResolveTCPAddr("", s.Address)
+		statusAddr, err2 := net.ResolveTCPAddr("", s.StatusAddr)
+		if err1 == nil && err2 == nil {
+			statusAddr.IP = addr.IP
+			s.StatusAddr = statusAddr.String()
+		}
+	}
+}
+
 // GetClusterServerInfo returns all components information of cluster
 func GetClusterServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 	failpoint.Inject("mockClusterInfo", func(val failpoint.Value) {
@@ -1386,6 +1426,9 @@ func GetClusterServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 		nodes, err := r(ctx)
 		if err != nil {
 			return nil, err
+		}
+		for i := range nodes {
+			nodes[i].ResolveLoopBackAddr()
 		}
 		servers = append(servers, nodes...)
 	}

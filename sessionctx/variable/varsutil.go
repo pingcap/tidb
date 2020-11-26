@@ -116,6 +116,12 @@ func GetSessionOnlySysVars(s *SessionVars, key string) (string, bool, error) {
 	switch sysVar.Name {
 	case TiDBCurrentTS:
 		return fmt.Sprintf("%d", s.TxnCtx.StartTS), true, nil
+	case TiDBLastTxnInfo:
+		info, err := json.Marshal(s.LastTxnInfo)
+		if err != nil {
+			return "", true, err
+		}
+		return string(info), true, nil
 	case TiDBGeneralLog:
 		return fmt.Sprintf("%d", atomic.LoadUint32(&ProcessGeneralLog)), true, nil
 	case TiDBPProfSQLCPU:
@@ -201,10 +207,11 @@ const epochShiftBits = 18
 
 // SetSessionSystemVar sets system variable and updates SessionVars states.
 func SetSessionSystemVar(vars *SessionVars, name string, value types.Datum) error {
+	orgName := name
 	name = strings.ToLower(name)
 	sysVar := SysVars[name]
 	if sysVar == nil {
-		return ErrUnknownSystemVar
+		return ErrUnknownSystemVar.GenWithStackByArgs(orgName)
 	}
 	sVal := ""
 	var err error

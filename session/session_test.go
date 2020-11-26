@@ -3228,6 +3228,35 @@ func (s *testSessionSuite2) TestPerStmtTaskID(c *C) {
 	c.Assert(taskID1 != taskID2, IsTrue)
 }
 
+// TestDeprecateSlowLogMasking should be in serial suite because it changes a global variable.
+func (s *testSessionSerialSuite) TestDeprecateSlowLogMasking(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+
+	tk.MustExec("set @@global.tidb_redact_log=0")
+	tk.MustQuery("select @@global.tidb_redact_log").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@global.tidb_slow_log_masking").Check(testkit.Rows("0"))
+
+	tk.MustExec("set @@global.tidb_redact_log=1")
+	tk.MustQuery("select @@global.tidb_redact_log").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@global.tidb_slow_log_masking").Check(testkit.Rows("1"))
+
+	tk.MustExec("set @@global.tidb_slow_log_masking=0")
+	tk.MustQuery("select @@global.tidb_redact_log").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@global.tidb_slow_log_masking").Check(testkit.Rows("0"))
+
+	tk.MustExec("set @@session.tidb_redact_log=0")
+	tk.MustQuery("select @@session.tidb_redact_log").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@session.tidb_slow_log_masking").Check(testkit.Rows("0"))
+
+	tk.MustExec("set @@session.tidb_redact_log=1")
+	tk.MustQuery("select @@session.tidb_redact_log").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@session.tidb_slow_log_masking").Check(testkit.Rows("1"))
+
+	tk.MustExec("set @@session.tidb_slow_log_masking=0")
+	tk.MustQuery("select @@session.tidb_redact_log").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@session.tidb_slow_log_masking").Check(testkit.Rows("0"))
+}
+
 func (s *testBackupRestoreSuite) TestBackupAndRestore(c *C) {
 	// only run BR SQL integration test with tikv store.
 	if *withTiKV {
@@ -3264,4 +3293,16 @@ func (s *testBackupRestoreSuite) TestBackupAndRestore(c *C) {
 		tk.MustExec("drop database br")
 		tk.MustExec("drop database br02")
 	}
+}
+
+func (s *testSessionSuite2) TestSelectLockInShare(c *C) {
+	tk1 := testkit.NewTestKitWithInit(c, s.store)
+	tk1.MustExec("DROP TABLE IF EXISTS t_sel_in_share")
+	tk1.MustExec("CREATE TABLE t_sel_in_share (id int DEFAULT NULL)")
+	tk1.MustExec("insert into t_sel_in_share values (11)")
+	err := tk1.ExecToErr("select * from t_sel_in_share lock in share mode")
+	c.Assert(err, NotNil)
+	tk1.MustExec("set @@tidb_enable_noop_functions = 1")
+	tk1.MustQuery("select * from t_sel_in_share lock in share mode").Check(testkit.Rows("11"))
+	tk1.MustExec("DROP TABLE t_sel_in_share")
 }

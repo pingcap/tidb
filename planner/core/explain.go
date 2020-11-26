@@ -20,10 +20,12 @@ import (
 	"strings"
 
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/stringutil"
 )
 
@@ -33,7 +35,7 @@ import (
 type dataAccesser interface {
 
 	// AccessObject return plan's `table`, `partition` and `index`.
-	AccessObject() string
+	AccessObject(normalized bool) string
 
 	// OperatorInfo return other operator information to be explained.
 	OperatorInfo(normalized bool) string
@@ -56,16 +58,16 @@ func (p *PhysicalIndexScan) ExplainID() fmt.Stringer {
 
 // ExplainInfo implements Plan interface.
 func (p *PhysicalIndexScan) ExplainInfo() string {
-	return p.AccessObject() + ", " + p.OperatorInfo(false)
+	return p.AccessObject(false) + ", " + p.OperatorInfo(false)
 }
 
 // ExplainNormalizedInfo implements Plan interface.
 func (p *PhysicalIndexScan) ExplainNormalizedInfo() string {
-	return p.AccessObject() + ", " + p.OperatorInfo(true)
+	return p.AccessObject(true) + ", " + p.OperatorInfo(true)
 }
 
 // AccessObject implements dataAccesser interface.
-func (p *PhysicalIndexScan) AccessObject() string {
+func (p *PhysicalIndexScan) AccessObject(normalized bool) string {
 	buffer := bytes.NewBufferString("")
 	tblName := p.Table.Name.O
 	if p.TableAsName != nil && p.TableAsName.O != "" {
@@ -73,7 +75,9 @@ func (p *PhysicalIndexScan) AccessObject() string {
 	}
 	fmt.Fprintf(buffer, "table:%s", tblName)
 	if p.isPartition {
-		if pi := p.Table.GetPartitionInfo(); pi != nil {
+		if normalized {
+			fmt.Fprintf(buffer, ", partition:?")
+		} else if pi := p.Table.GetPartitionInfo(); pi != nil {
 			partitionName := pi.GetNameByID(p.physicalTableID)
 			fmt.Fprintf(buffer, ", partition:%s", partitionName)
 		}
@@ -81,7 +85,11 @@ func (p *PhysicalIndexScan) AccessObject() string {
 	if len(p.Index.Columns) > 0 {
 		buffer.WriteString(", index:" + p.Index.Name.O + "(")
 		for i, idxCol := range p.Index.Columns {
-			buffer.WriteString(idxCol.Name.O)
+			if tblCol := p.Table.Columns[idxCol.Offset]; tblCol.Hidden {
+				buffer.WriteString(tblCol.GeneratedExprString)
+			} else {
+				buffer.WriteString(idxCol.Name.O)
+			}
 			if i+1 < len(p.Index.Columns) {
 				buffer.WriteString(", ")
 			}
@@ -160,16 +168,16 @@ func (p *PhysicalTableScan) ExplainID() fmt.Stringer {
 
 // ExplainInfo implements Plan interface.
 func (p *PhysicalTableScan) ExplainInfo() string {
-	return p.AccessObject() + ", " + p.OperatorInfo(false)
+	return p.AccessObject(false) + ", " + p.OperatorInfo(false)
 }
 
 // ExplainNormalizedInfo implements Plan interface.
 func (p *PhysicalTableScan) ExplainNormalizedInfo() string {
-	return p.AccessObject() + ", " + p.OperatorInfo(true)
+	return p.AccessObject(true) + ", " + p.OperatorInfo(true)
 }
 
 // AccessObject implements dataAccesser interface.
-func (p *PhysicalTableScan) AccessObject() string {
+func (p *PhysicalTableScan) AccessObject(normalized bool) string {
 	buffer := bytes.NewBufferString("")
 	tblName := p.Table.Name.O
 	if p.TableAsName != nil && p.TableAsName.O != "" {
@@ -177,7 +185,9 @@ func (p *PhysicalTableScan) AccessObject() string {
 	}
 	fmt.Fprintf(buffer, "table:%s", tblName)
 	if p.isPartition {
-		if pi := p.Table.GetPartitionInfo(); pi != nil {
+		if normalized {
+			fmt.Fprintf(buffer, ", partition:?")
+		} else if pi := p.Table.GetPartitionInfo(); pi != nil {
 			partitionName := pi.GetNameByID(p.physicalTableID)
 			fmt.Fprintf(buffer, ", partition:%s", partitionName)
 		}
@@ -358,10 +368,15 @@ func (p *basePhysicalAgg) ExplainNormalizedInfo() string {
 
 // ExplainInfo implements Plan interface.
 func (p *PhysicalIndexJoin) ExplainInfo() string {
-	return p.explainInfo(false)
+	return p.explainInfo(false, false)
 }
 
-func (p *PhysicalIndexJoin) explainInfo(normalized bool) string {
+// ExplainInfo implements Plan interface.
+func (p *PhysicalIndexMergeJoin) ExplainInfo() string {
+	return p.explainInfo(false, true)
+}
+
+func (p *PhysicalIndexJoin) explainInfo(normalized bool, isIndexMergeJoin bool) string {
 	sortedExplainExpressionList := expression.SortedExplainExpressionList
 	if normalized {
 		sortedExplainExpressionList = expression.SortedExplainNormalizedExpressionList
@@ -381,6 +396,17 @@ func (p *PhysicalIndexJoin) explainInfo(normalized bool) string {
 		fmt.Fprintf(buffer, ", inner key:%s",
 			expression.ExplainColumnList(p.InnerJoinKeys))
 	}
+	if len(p.OuterHashKeys) > 0 && !isIndexMergeJoin {
+		exprs := make([]expression.Expression, 0, len(p.OuterHashKeys))
+		for i := range p.OuterHashKeys {
+			expr, err := expression.NewFunctionBase(MockContext(), ast.EQ, types.NewFieldType(mysql.TypeLonglong), p.OuterHashKeys[i], p.InnerHashKeys[i])
+			if err != nil {
+			}
+			exprs = append(exprs, expr)
+		}
+		fmt.Fprintf(buffer, ", equal cond:%s",
+			sortedExplainExpressionList(exprs))
+	}
 	if len(p.LeftConditions) > 0 {
 		fmt.Fprintf(buffer, ", left cond:%s",
 			sortedExplainExpressionList(p.LeftConditions))
@@ -398,7 +424,12 @@ func (p *PhysicalIndexJoin) explainInfo(normalized bool) string {
 
 // ExplainNormalizedInfo implements Plan interface.
 func (p *PhysicalIndexJoin) ExplainNormalizedInfo() string {
-	return p.explainInfo(true)
+	return p.explainInfo(true, false)
+}
+
+// ExplainNormalizedInfo implements Plan interface.
+func (p *PhysicalIndexMergeJoin) ExplainNormalizedInfo() string {
+	return p.explainInfo(true, true)
 }
 
 // ExplainInfo implements Plan interface.
@@ -782,7 +813,11 @@ func (p *LogicalIndexScan) ExplainInfo() string {
 	if len(index.Columns) > 0 {
 		buffer.WriteString(", index:")
 		for i, idxCol := range index.Columns {
-			buffer.WriteString(idxCol.Name.O)
+			if tblCol := p.Source.tableInfo.Columns[idxCol.Offset]; tblCol.Hidden {
+				buffer.WriteString(tblCol.GeneratedExprString)
+			} else {
+				buffer.WriteString(idxCol.Name.O)
+			}
 			if i+1 < len(index.Columns) {
 				buffer.WriteString(", ")
 			}
@@ -808,7 +843,7 @@ const MetricTableTimeFormat = "2006-01-02 15:04:05.999"
 
 // ExplainInfo implements Plan interface.
 func (p *PhysicalMemTable) ExplainInfo() string {
-	accessObject, operatorInfo := p.AccessObject(), p.OperatorInfo(false)
+	accessObject, operatorInfo := p.AccessObject(false), p.OperatorInfo(false)
 	if len(operatorInfo) == 0 {
 		return accessObject
 	}
@@ -816,7 +851,7 @@ func (p *PhysicalMemTable) ExplainInfo() string {
 }
 
 // AccessObject implements dataAccesser interface.
-func (p *PhysicalMemTable) AccessObject() string {
+func (p *PhysicalMemTable) AccessObject(_ bool) string {
 	return "table:" + p.Table.Name.O
 }
 
