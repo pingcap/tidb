@@ -1034,6 +1034,50 @@ func (b *PlanBuilder) buildProjectionField(ctx context.Context, p LogicalPlan, f
 	return newCol, name, nil
 }
 
+type userVarTypeProcessor struct {
+	ctx     context.Context
+	plan    LogicalPlan
+	builder *PlanBuilder
+	mapper  map[*ast.AggregateFuncExpr]int
+	err     error
+}
+
+func (p *userVarTypeProcessor) Enter(in ast.Node) (ast.Node, bool) {
+	v, ok := in.(*ast.VariableExpr)
+	if !ok {
+		return in, false
+	}
+	if v.IsSystem || v.Value == nil {
+		return in, true
+	}
+	_, p.plan, p.err = p.builder.rewrite(p.ctx, v, p.plan, p.mapper, true)
+	return in, true
+}
+
+func (p *userVarTypeProcessor) Leave(in ast.Node) (ast.Node, bool) {
+	return in, p.err == nil
+}
+
+func (b *PlanBuilder) preprocessUserVarTypes(ctx context.Context, p LogicalPlan, fields []*ast.SelectField, mapper map[*ast.AggregateFuncExpr]int) error {
+	aggMapper := make(map[*ast.AggregateFuncExpr]int)
+	for agg, i := range mapper {
+		aggMapper[agg] = i
+	}
+	processor := userVarTypeProcessor{
+		ctx:     ctx,
+		plan:    p,
+		builder: b,
+		mapper:  aggMapper,
+	}
+	for _, field := range fields {
+		field.Expr.Accept(&processor)
+		if processor.err != nil {
+			return processor.err
+		}
+	}
+	return nil
+}
+
 // findColFromNaturalUsingJoin is used to recursively find the column from the
 // underlying natural-using-join.
 // e.g. For SQL like `select t2.a from t1 join t2 using(a) where t2.a > 0`, the
@@ -1055,6 +1099,10 @@ func findColFromNaturalUsingJoin(p LogicalPlan, col *expression.Column) (name *t
 
 // buildProjection returns a Projection plan and non-aux columns length.
 func (b *PlanBuilder) buildProjection(ctx context.Context, p LogicalPlan, fields []*ast.SelectField, mapper map[*ast.AggregateFuncExpr]int, windowMapper map[*ast.WindowFuncExpr]int, considerWindow bool, expandGenerateColumn bool) (LogicalPlan, int, error) {
+	err := b.preprocessUserVarTypes(ctx, p, fields, mapper)
+	if err != nil {
+		return nil, 0, err
+	}
 	b.optFlag |= flagEliminateProjection
 	b.curClause = fieldList
 	proj := LogicalProjection{Exprs: make([]expression.Expression, 0, len(fields))}.Init(b.ctx, b.getSelectOffset())

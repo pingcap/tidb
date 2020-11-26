@@ -128,11 +128,13 @@ var _ = SerialSuites(&testClusterTableSuite{})
 var _ = SerialSuites(&testPrepareSerialSuite{&baseTestSuite{}})
 var _ = SerialSuites(&testSplitTable{&baseTestSuite{}})
 var _ = SerialSuites(&testSerialSuite1{&baseTestSuite{}})
+var _ = SerialSuites(&testPrepareSuite{})
 
 type testSuite struct{ *baseTestSuite }
 type testSuiteP1 struct{ *baseTestSuite }
 type testSuiteP2 struct{ *baseTestSuite }
 type testSplitTable struct{ *baseTestSuite }
+type testPrepareSuite struct{ testData testutil.TestData }
 
 type baseTestSuite struct {
 	cluster   *mocktikv.Cluster
@@ -169,6 +171,16 @@ func (s *baseTestSuite) SetUpSuite(c *C) {
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.OOMAction = config.OOMActionLog
 	})
+}
+
+func (s *testPrepareSuite) SetUpSuite(c *C) {
+	var err error
+	s.testData, err = testutil.LoadTestSuiteData("testdata", "prepare_suite")
+	c.Assert(err, IsNil)
+}
+
+func (s *testPrepareSuite) TearDownSuite(c *C) {
+	c.Assert(s.testData.GenerateOutputIfNeeded(), IsNil)
 }
 
 func (s *baseTestSuite) TearDownSuite(c *C) {
