@@ -138,6 +138,14 @@ func TestCopRuntimeStats(t *testing.T) {
 	if stats.ExistsRootStats(tableReaderID) == false {
 		t.Fatal("table_reader not exists")
 	}
+
+	cop.copDetails.ProcessedKeys = 0
+	cop.copDetails.RocksdbKeySkippedCount = 0
+	cop.copDetails.RocksdbBlockReadCount = 0
+	if cop.String() != "tikv_task:{proc max:1s, min:2ns, p80:1s, p95:1s, iters:4, tasks:2}, total_keys: 15, "+
+		"processed_keys: 0, rocksdb: {delete_skipped_count: 5, key_skipped_count: 0, block_cache_hit_count: 10, block_read_count: 0, block_read: 100 Bytes}" {
+		t.Fatalf(cop.String())
+	}
 }
 
 func TestCopRuntimeStatsForTiFlash(t *testing.T) {
