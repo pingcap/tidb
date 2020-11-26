@@ -418,6 +418,9 @@ const (
 
 	// TiDBEnableAmendPessimisticTxn indicates if amend pessimistic transactions is enabled.
 	TiDBEnableAmendPessimisticTxn = "tidb_enable_amend_pessimistic_txn"
+
+	// TiDBEnableRateLimitAction indicates whether enabled ratelimit action
+	TiDBEnableRateLimitAction = "tidb_enable_rate_limit_action"
 )
 
 // Default TiDB system variable values.
@@ -519,6 +522,7 @@ const (
 	DefTiDBRedactLog                   = false
 	DefTiDBEnableTelemetry             = true
 	DefTiDBEnableAmendPessimisticTxn   = false
+	DefTiDBEnableRateLimitAction       = true
 )
 
 // Process global variables.
