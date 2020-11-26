@@ -1755,7 +1755,7 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	if err != nil {
 		return nil, err
 	}
-	if !config.IsMemoryQuotaQuerySetByUser {
+	if !config.IsMemoryQuotaQuerySetByUser && newMemoryQuotaQuery != cfg.MemQuotaQuery {
 		newCfg := *(config.GetGlobalConfig())
 		newCfg.MemQuotaQuery = newMemoryQuotaQuery
 		config.StoreGlobalConfig(&newCfg)
