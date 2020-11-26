@@ -1372,7 +1372,14 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	case TiDBEnableRateLimitAction:
 		s.EnabledRateLimitAction = TiDBOptOn(val)
 	case TiDBMemoryUsageAlarmRatio:
-		MemoryUsageAlarmRatio.Store(tidbOptFloat64(val, 0.8))
+		floatVal, err := strconv.ParseFloat(val, 64)
+		if err != nil {
+			return err
+		}
+		if floatVal < 0 || floatVal > 1 {
+			return ErrWrongValueForVar.GenWithStackByArgs(TiDBMemoryUsageAlarmRatio, val)
+		}
+		MemoryUsageAlarmRatio.Store(floatVal)
 	}
 	s.systems[name] = val
 	return nil
