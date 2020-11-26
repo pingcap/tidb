@@ -112,6 +112,16 @@ func (task *lookupTableTask) Swap(i, j int) {
 	task.rows[i], task.rows[j] = task.rows[j], task.rows[i]
 }
 
+func (task *lookupTableTask) buildResultChunk() {
+	if task.numRows <= 0 {
+		return
+	}
+	task.chk = chunk.Renew(task.rows[0].Chunk(), task.rows[0].Chunk().GetNumRows())
+	for _, row := range task.rows {
+		task.chk.AppendRow(row)
+	}
+}
+
 // Closeable is a interface for closeable structures.
 type Closeable interface {
 	// Close closes the object.
@@ -657,17 +667,13 @@ func (e *IndexLookUpExecutor) Next(ctx context.Context, req *chunk.Chunk) error 
 		if resultTask == nil {
 			return nil
 		}
-		chk := resultTask.chk
-		if e.keepOrder {
-			chk = e.buildResultChunk(resultTask)
-		}
 		if resultTask.cursor < resultTask.numRows {
 			numRowsToBeAppended := resultTask.numRows - resultTask.cursor
 			requiredRows := req.RequiredRows() - req.NumRows()
 			if numRowsToBeAppended > requiredRows {
 				numRowsToBeAppended = requiredRows
 			}
-			req.Append(chk, resultTask.cursor, resultTask.cursor+numRowsToBeAppended)
+			req.Append(resultTask.chk, resultTask.cursor, resultTask.cursor+numRowsToBeAppended)
 			resultTask.cursor += numRowsToBeAppended
 			if req.IsFull() {
 				return nil
@@ -694,14 +700,6 @@ func (e *IndexLookUpExecutor) getResultTask() (*lookupTableTask, error) {
 	}
 	e.resultCurr = task
 	return e.resultCurr, nil
-}
-
-func (e *IndexLookUpExecutor) buildResultChunk(resultTask *lookupTableTask) *chunk.Chunk {
-	resultChunk := chunk.Renew(resultTask.rows[0].Chunk(), resultTask.rows[0].Chunk().GetNumRows())
-	for _, row := range resultTask.rows {
-		resultChunk.Append(row.Chunk(), 0, row.Chunk().GetNumRows())
-	}
-	return resultChunk
 }
 
 func (e *IndexLookUpExecutor) initRuntimeStats() {
@@ -1190,6 +1188,7 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 		task.memUsage += memUsage
 		task.memTracker.Consume(memUsage)
 		sort.Sort(task)
+		task.buildResultChunk()
 	}
 
 	if handleCnt != task.numRows && !util.HasCancelled(ctx) {
