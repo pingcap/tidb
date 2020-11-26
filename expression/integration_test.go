@@ -2019,6 +2019,11 @@ func (s *testIntegrationSuite2) TestTimeBuiltin(c *C) {
 	result = tk.MustQuery(`select extract(day from '800:12:12'), extract(hour from '800:12:12'), extract(month from 20170101), extract(day_second from '2017-01-01 12:12:12')`)
 	result.Check(testkit.Rows("12 800 1 1121212"))
 
+	// for convert
+	// Test issue #18669
+	tk.MustQuery(`select convert(19409, time);`).Check(testkit.Rows("<nil>"))
+	c.Assert(len(tk.MustQuery(`show warnings`).Rows()) == 1, Equals, true)
+
 	// for adddate, subdate
 	dateArithmeticalTests := []struct {
 		Date      string
