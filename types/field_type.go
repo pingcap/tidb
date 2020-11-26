@@ -65,14 +65,37 @@ func NewFieldTypeWithCollation(tp byte, collation string, length int) *FieldType
 // Aggregation is performed by MergeFieldType function.
 func AggFieldType(tps []*FieldType) *FieldType {
 	var currType FieldType
+	isMixedSign := false
 	for i, t := range tps {
 		if i == 0 && currType.Tp == mysql.TypeUnspecified {
 			currType = *t
 			continue
 		}
 		mtp := MergeFieldType(currType.Tp, t.Tp)
+		isMixedSign = isMixedSign || (mysql.HasUnsignedFlag(currType.Flag) != mysql.HasUnsignedFlag(t.Flag))
 		currType.Tp = mtp
 		currType.Flag = mergeTypeFlag(currType.Flag, t.Flag)
+	}
+	// integral promotion when tps contains signed and unsigned
+	if isMixedSign && IsTypeInteger(currType.Tp) {
+		bumpRange := false // indicate one of tps bump currType range
+		for _, t := range tps {
+			bumpRange = bumpRange || (mysql.HasUnsignedFlag(t.Flag) && (t.Tp == currType.Tp || t.Tp == mysql.TypeBit))
+		}
+		if bumpRange {
+			switch currType.Tp {
+			case mysql.TypeTiny:
+				currType.Tp = mysql.TypeShort
+			case mysql.TypeShort:
+				currType.Tp = mysql.TypeInt24
+			case mysql.TypeInt24:
+				currType.Tp = mysql.TypeLong
+			case mysql.TypeLong:
+				currType.Tp = mysql.TypeLonglong
+			case mysql.TypeLonglong:
+				currType.Tp = mysql.TypeNewDecimal
+			}
+		}
 	}
 
 	return &currType
@@ -310,10 +333,10 @@ func MergeFieldType(a byte, b byte) byte {
 }
 
 // mergeTypeFlag merges two MySQL type flag to a new one
-// currently only NotNullFlag is checked
-// todo more flag need to be checked, for example: UnsignedFlag
+// currently only NotNullFlag and UnsignedFlag is checked
+// todo more flag need to be checked
 func mergeTypeFlag(a, b uint) uint {
-	return a & (b&mysql.NotNullFlag | ^mysql.NotNullFlag)
+	return a & (b&mysql.NotNullFlag | ^mysql.NotNullFlag) & (b&mysql.UnsignedFlag | ^mysql.UnsignedFlag)
 }
 
 func getFieldTypeIndex(tp byte) int {

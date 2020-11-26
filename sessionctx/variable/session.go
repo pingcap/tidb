@@ -82,7 +82,7 @@ func (r *RetryInfo) AddAutoIncrementID(id int64) {
 }
 
 // GetCurrAutoIncrementID gets current autoIncrementID.
-func (r *RetryInfo) GetCurrAutoIncrementID() (int64, error) {
+func (r *RetryInfo) GetCurrAutoIncrementID() (int64, bool) {
 	return r.autoIncrementIDs.getCurrent()
 }
 
@@ -92,7 +92,7 @@ func (r *RetryInfo) AddAutoRandomID(id int64) {
 }
 
 // GetCurrAutoRandomID gets current AutoRandomID.
-func (r *RetryInfo) GetCurrAutoRandomID() (int64, error) {
+func (r *RetryInfo) GetCurrAutoRandomID() (int64, bool) {
 	return r.autoRandomIDs.getCurrent()
 }
 
@@ -112,13 +112,13 @@ func (r *retryInfoAutoIDs) clean() {
 	}
 }
 
-func (r *retryInfoAutoIDs) getCurrent() (int64, error) {
+func (r *retryInfoAutoIDs) getCurrent() (int64, bool) {
 	if r.currentOffset >= len(r.autoIDs) {
-		return 0, errCantGetValidID
+		return 0, false
 	}
 	id := r.autoIDs[r.currentOffset]
 	r.currentOffset++
-	return id, nil
+	return id, true
 }
 
 // stmtFuture is used to async get timestamp for statement.
@@ -319,6 +319,9 @@ type SessionVars struct {
 	UsersLock sync.RWMutex
 	// Users are user defined variables.
 	Users map[string]types.Datum
+	// UserVarTypes stores the FieldType for user variables, it cannot be inferred from Users when Users have not been set yet.
+	// It is read/write protected by UsersLock.
+	UserVarTypes map[string]*types.FieldType
 	// systems variables, don't modify it directly, use GetSystemVar/SetSystemVar method.
 	systems map[string]string
 	// SysWarningCount is the system variable "warning_count", because it is on the hot path, so we extract it from the systems
@@ -681,6 +684,7 @@ type ConnectionInfo struct {
 func NewSessionVars() *SessionVars {
 	vars := &SessionVars{
 		Users:                       make(map[string]types.Datum),
+		UserVarTypes:                make(map[string]*types.FieldType),
 		systems:                     make(map[string]string),
 		PreparedStmts:               make(map[uint32]interface{}),
 		PreparedStmtNameToID:        make(map[string]uint32),

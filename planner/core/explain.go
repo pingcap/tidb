@@ -368,10 +368,15 @@ func (p *basePhysicalAgg) ExplainNormalizedInfo() string {
 
 // ExplainInfo implements Plan interface.
 func (p *PhysicalIndexJoin) ExplainInfo() string {
-	return p.explainInfo(false)
+	return p.explainInfo(false, false)
 }
 
-func (p *PhysicalIndexJoin) explainInfo(normalized bool) string {
+// ExplainInfo implements Plan interface.
+func (p *PhysicalIndexMergeJoin) ExplainInfo() string {
+	return p.explainInfo(false, true)
+}
+
+func (p *PhysicalIndexJoin) explainInfo(normalized bool, isIndexMergeJoin bool) string {
 	sortedExplainExpressionList := expression.SortedExplainExpressionList
 	if normalized {
 		sortedExplainExpressionList = expression.SortedExplainNormalizedExpressionList
@@ -391,8 +396,7 @@ func (p *PhysicalIndexJoin) explainInfo(normalized bool) string {
 		fmt.Fprintf(buffer, ", inner key:%s",
 			expression.ExplainColumnList(p.InnerJoinKeys))
 	}
-
-	if len(p.OuterHashKeys) > 0 {
+	if len(p.OuterHashKeys) > 0 && !isIndexMergeJoin {
 		exprs := make([]expression.Expression, 0, len(p.OuterHashKeys))
 		for i := range p.OuterHashKeys {
 			expr, err := expression.NewFunctionBase(MockContext(), ast.EQ, types.NewFieldType(mysql.TypeLonglong), p.OuterHashKeys[i], p.InnerHashKeys[i])
@@ -420,7 +424,12 @@ func (p *PhysicalIndexJoin) explainInfo(normalized bool) string {
 
 // ExplainNormalizedInfo implements Plan interface.
 func (p *PhysicalIndexJoin) ExplainNormalizedInfo() string {
-	return p.explainInfo(true)
+	return p.explainInfo(true, false)
+}
+
+// ExplainNormalizedInfo implements Plan interface.
+func (p *PhysicalIndexMergeJoin) ExplainNormalizedInfo() string {
+	return p.explainInfo(true, true)
 }
 
 // ExplainInfo implements Plan interface.

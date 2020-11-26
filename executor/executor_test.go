@@ -128,11 +128,13 @@ var _ = SerialSuites(&testClusterTableSuite{})
 var _ = SerialSuites(&testPrepareSerialSuite{&baseTestSuite{}})
 var _ = SerialSuites(&testSplitTable{&baseTestSuite{}})
 var _ = SerialSuites(&testSerialSuite1{&baseTestSuite{}})
+var _ = SerialSuites(&testPrepareSuite{})
 
 type testSuite struct{ *baseTestSuite }
 type testSuiteP1 struct{ *baseTestSuite }
 type testSuiteP2 struct{ *baseTestSuite }
 type testSplitTable struct{ *baseTestSuite }
+type testPrepareSuite struct{ testData testutil.TestData }
 
 type baseTestSuite struct {
 	cluster   *mocktikv.Cluster
@@ -169,6 +171,16 @@ func (s *baseTestSuite) SetUpSuite(c *C) {
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.OOMAction = config.OOMActionLog
 	})
+}
+
+func (s *testPrepareSuite) SetUpSuite(c *C) {
+	var err error
+	s.testData, err = testutil.LoadTestSuiteData("testdata", "prepare_suite")
+	c.Assert(err, IsNil)
+}
+
+func (s *testPrepareSuite) TearDownSuite(c *C) {
+	c.Assert(s.testData.GenerateOutputIfNeeded(), IsNil)
 }
 
 func (s *baseTestSuite) TearDownSuite(c *C) {
@@ -1869,16 +1881,16 @@ func (s *testSuiteP1) TestGeneratedColumnRead(c *C) {
 	result.Check(testkit.Rows(`0 <nil> <nil> <nil>`, `1 3 2 6`, `3 7 12 14`, `8 16 64 32`))
 
 	// Test multi-update on generated columns.
-	tk.MustExec(`UPDATE test_gc_read m, test_gc_read n SET m.a = m.a + 10, n.a = n.a + 10`)
+	tk.MustExec(`UPDATE test_gc_read m, test_gc_read n SET m.b = m.b + 10, n.b = n.b + 10`)
 	result = tk.MustQuery(`SELECT * FROM test_gc_read ORDER BY a`)
-	result.Check(testkit.Rows(`10 <nil> <nil> <nil> <nil>`, `11 2 13 22 26`, `13 4 17 52 34`, `18 8 26 144 52`))
+	result.Check(testkit.Rows(`0 <nil> <nil> <nil> <nil>`, `1 12 13 12 26`, `3 14 17 42 34`, `8 18 26 144 52`))
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int)")
-	tk.MustExec("insert into t values(18)")
+	tk.MustExec("insert into t values(8)")
 	tk.MustExec("update test_gc_read set a = a+1 where a in (select a from t)")
 	result = tk.MustQuery("select * from test_gc_read order by a")
-	result.Check(testkit.Rows(`10 <nil> <nil> <nil> <nil>`, `11 2 13 22 26`, `13 4 17 52 34`, `19 8 27 152 54`))
+	result.Check(testkit.Rows(`0 <nil> <nil> <nil> <nil>`, `1 12 13 12 26`, `3 14 17 42 34`, `9 18 27 162 54`))
 
 	// Test different types between generation expression and generated column.
 	tk.MustExec(`CREATE TABLE test_gc_read_cast(a VARCHAR(255), b VARCHAR(255), c INT AS (JSON_EXTRACT(a, b)), d INT AS (JSON_EXTRACT(a, b)) STORED)`)
@@ -6283,4 +6295,18 @@ func (s *testSuite) TestIssue19667(c *C) {
 	tk.MustExec("CREATE TABLE t (a DATETIME)")
 	tk.MustExec("INSERT INTO t VALUES('1988-04-17 01:59:59')")
 	tk.MustQuery(`SELECT DATE_ADD(a, INTERVAL 1 SECOND) FROM t`).Check(testkit.Rows("1988-04-17 02:00:00"))
+}
+
+func (s *testSuite) TestIssue20305(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t2 (a year(4))")
+	tk.MustExec("insert into t2 values(69)")
+	tk.MustQuery("select * from t2 where a <= 69").Check(testkit.Rows("2069"))
+	// the following test is a regression test that matches MySQL's behavior.
+	tk.MustExec("drop table if exists t3")
+	tk.MustExec("CREATE TABLE `t3` (`y` year DEFAULT NULL, `a` int DEFAULT NULL)")
+	tk.MustExec("INSERT INTO `t3` VALUES (2069, 70), (2010, 11), (2155, 2156), (2069, 69)")
+	tk.MustQuery("SELECT * FROM `t3` where y <= a").Check(testkit.Rows("2155 2156"))
 }

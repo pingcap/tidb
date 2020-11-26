@@ -1224,8 +1224,8 @@ func adjustYear(y int) int {
 }
 
 // AdjustYear is used for adjusting year and checking its validation.
-func AdjustYear(y int64, shouldAdjust bool) (int64, error) {
-	if y == 0 && !shouldAdjust {
+func AdjustYear(y int64, adjustZero bool) (int64, error) {
+	if y == 0 && !adjustZero {
 		return y, nil
 	}
 	y = int64(adjustYear(int(y)))
