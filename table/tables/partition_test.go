@@ -527,3 +527,19 @@ func (ts *testSuite) TestPartitionListWithNewCollation(c *C) {
 	str := tk.MustQuery(`desc select * from t11 where a = 'b';`).Rows()[0][3].(string)
 	c.Assert(strings.Contains(str, "partition:p0"), IsTrue)
 }
+
+func (ts *testSuite) TestHashPartitionInsertValue(c *C) {
+	tk := testkit.NewTestKitWithInit(c, ts.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop tables if exists t4")
+	tk.MustExec(`CREATE TABLE t4(
+	a bit(1) DEFAULT NULL,
+	b int(11) DEFAULT NULL
+	) PARTITION BY HASH(a)
+	PARTITIONS 3`)
+	defer tk.MustExec("drop tables if exists t4")
+	tk.MustExec("INSERT INTO t4 VALUES(0, 0)")
+	tk.MustExec("INSERT INTO t4 VALUES(1, 1)")
+	result := tk.MustQuery("SELECT * FROM t4 WHERE a = 1")
+	result.Check(testkit.Rows("\x01 1"))
+}

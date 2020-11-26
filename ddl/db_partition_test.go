@@ -406,6 +406,18 @@ create table log_message_1 (
 			ast.ErrPartitionsMustBeDefined,
 		},
 		{
+			"create table t(a datetime) partition by range columns (a) (partition p1 values less than ('2000-02-01'), partition p2 values less than ('20000102'));",
+			ddl.ErrRangeNotIncreasing,
+		},
+		{
+			"create table t(a time) partition by range columns (a) (partition p1 values less than ('202020'), partition p2 values less than ('20:20:10'));",
+			ddl.ErrRangeNotIncreasing,
+		},
+		{
+			"create table t(a time) partition by range columns (a) (partition p1 values less than ('202090'));",
+			ddl.ErrWrongTypeColumnValue,
+		},
+		{
 			"create table t (id int) partition by range columns (id) (partition p0 values less than (1, 2));",
 			ast.ErrPartitionColumnList,
 		},
@@ -605,8 +617,6 @@ func (s *testIntegrationSuite1) TestCreateTableWithListPartition(c *C) {
 }
 
 func (s *testIntegrationSuite1) TestCreateTableWithListColumnsPartition(c *C) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test;")
 	tk.MustExec("set @@session.tidb_enable_table_partition = 1")
@@ -696,6 +706,10 @@ func (s *testIntegrationSuite1) TestCreateTableWithListColumnsPartition(c *C) {
 		{
 			"create table t (a int, b datetime) partition by list columns (a,b) (partition p0 values in ((1)));",
 			ast.ErrPartitionColumnList,
+		},
+		{
+			"create table t(b int) partition by hash ( b ) partitions 3 (partition p1, partition p2, partition p2);",
+			ddl.ErrSameNamePartition,
 		},
 		{
 			"create table t (a char(10) collate utf8mb4_general_ci) partition by list columns (a) (partition p0 values in ('a', 'A'));",
