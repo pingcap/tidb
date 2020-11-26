@@ -50,6 +50,7 @@ const (
 	// tidb_opt_distinct_agg_push_down is used to decide whether agg with distinct should be pushed to tikv/tiflash.
 	TiDBOptDistinctAggPushDown = "tidb_opt_distinct_agg_push_down"
 
+	// tidb_broadcast_join_threshold is used to limit the size of small table for mpp broadcast join.
 	TiDBBCJThreshold = "tidb_broadcast_join_threshold"
 
 	// tidb_opt_write_row_id is used to enable/disable the operations of insert、replace and update to _tidb_rowid.

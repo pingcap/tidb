@@ -463,9 +463,6 @@ type SessionVars struct {
 	// AllowDistinctAggPushDown can be set true to allow agg with distinct push down to tikv/tiflash.
 	AllowDistinctAggPushDown bool
 
-	BroadcastJoinThreshold int64
-
-	// AllowWriteRowID can be set to false to forbid write data to _tidb_rowid.
 	// This variable is currently not recommended to be turned on.
 	AllowWriteRowID bool
 
@@ -479,6 +476,10 @@ type SessionVars struct {
 	// TiDBAllowAutoRandExplicitInsert indicates whether explicit insertion on auto_random column is allowed.
 	AllowAutoRandExplicitInsert bool
 
+	// BroadcastJoinThreshold is used to limit the size of smaller table.
+	BroadcastJoinThreshold int64
+
+	// AllowWriteRowID can be set to false to forbid write data to _tidb_rowid.
 	// CorrelationThreshold is the guard to enable row count estimation using column order correlation.
 	CorrelationThreshold float64
 
