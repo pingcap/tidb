@@ -427,6 +427,7 @@ func (gs *tidbGlueSession) CreateTable(ctx context.Context, dbName model.CIStr, 
 	if table.Partition != nil {
 		newPartition := *table.Partition
 		newPartition.Definitions = append([]model.PartitionDefinition{}, table.Partition.Definitions...)
+		newPartition.PartitionStates = append([]model.PartitionState{}, table.Partition.PartitionStates...)
 		table.Partition = &newPartition
 	}
 

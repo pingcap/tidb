@@ -158,12 +158,14 @@ func (w *worker) onAddTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (v
 // updatePartitionInfo merge `addingDefinitions` into `Definitions` in the tableInfo.
 func updatePartitionInfo(tblInfo *model.TableInfo) {
 	parInfo := &model.PartitionInfo{}
-	oldDefs, newDefs := tblInfo.Partition.Definitions, tblInfo.Partition.AddingDefinitions
+	oldDefs, newDefs, oldStates := tblInfo.Partition.Definitions, tblInfo.Partition.AddingDefinitions, tblInfo.Partition.PartitionStates
 	parInfo.Definitions = make([]model.PartitionDefinition, 0, len(newDefs)+len(oldDefs))
 	parInfo.Definitions = append(parInfo.Definitions, oldDefs...)
 	parInfo.Definitions = append(parInfo.Definitions, newDefs...)
+	newStates := updatePartitionStates(oldStates, newDefs, nil)
 	tblInfo.Partition.Definitions = parInfo.Definitions
 	tblInfo.Partition.AddingDefinitions = nil
+	tblInfo.Partition.PartitionStates = newStates
 }
 
 // updateAddingPartitionInfo write adding partitions into `addingDefinitions` field in the tableInfo.
@@ -974,6 +976,37 @@ func updateDroppingPartitionInfo(tblInfo *model.TableInfo, partLowerNames []stri
 	return pids
 }
 
+func updatePartitionStates(oldStates []model.PartitionState, newDefs []model.PartitionDefinition, dropDefs []model.PartitionDefinition) []model.PartitionState {
+	oldLen, newLen, dropLen := 0, 0, 0
+	if oldStates != nil {
+		oldLen = len(oldStates)
+	}
+	if newDefs != nil {
+		newLen = len(newDefs)
+	}
+	if dropDefs != nil {
+		dropLen = len(dropDefs)
+	}
+	newStates := make([]model.PartitionState, 0, oldLen+newLen-dropLen)
+	for _, state := range oldStates {
+		dropped := false
+		for _, dropDef := range dropDefs {
+			if state.ID == dropDef.ID {
+				dropped = true
+				break
+			}
+		}
+		if dropped {
+			continue
+		}
+		newStates = append(newStates, state)
+	}
+	for _, newDef := range newDefs {
+		newStates = append(newStates, model.PartitionState{ID: newDef.ID, State: model.StatePublic})
+	}
+	return newStates
+}
+
 func getPartitionDef(tblInfo *model.TableInfo, partName string) (index int, def *model.PartitionDefinition, _ error) {
 	defs := tblInfo.Partition.Definitions
 	for i := 0; i < len(defs); i++ {
@@ -1130,7 +1163,10 @@ func (w *worker) onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (
 			// Clean up the channel of notifyCancelReorgJob. Make sure it can't affect other jobs.
 			w.reorgCtx.cleanNotifyReorgCancel()
 		}
+		oldStates := tblInfo.Partition.PartitionStates
+		newStates := updatePartitionStates(oldStates, nil, tblInfo.Partition.DroppingDefinitions)
 		tblInfo.Partition.DroppingDefinitions = nil
+		tblInfo.Partition.PartitionStates = newStates
 		// used by ApplyDiff in updateSchemaVersion
 		job.CtxVars = []interface{}{physicalTableIDs}
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
@@ -1730,29 +1766,52 @@ func onAlterTablePartition(t *meta.Meta, job *model.Job) (ver int64, err error) 
 		job.State = model.JobStateCancelled
 		return 0, errors.Trace(table.ErrUnknownPartition.GenWithStackByArgs("drop?", tblInfo.Name.O))
 	}
-
-	ptTblInfo, err := getTableInfo(t, partitionID, job.SchemaID)
-	if err != nil {
-		if infoschema.ErrDatabaseNotExists.Equal(err) || infoschema.ErrTableNotExists.Equal(err) {
-			job.State = model.JobStateCancelled
-		}
-		return ver, errors.Trace(err)
-	}
-	logutil.BgLogger().Info("onAlterTablePartition", zap.Int64("ptTblInfo", ptTblInfo.ID))
-
-	err = infosync.PutRuleBundles(nil, []*placement.Bundle{bundle})
-	if err != nil {
+	pstate, found := ptInfo.GetStateByID(partitionID)
+	if !found {
 		job.State = model.JobStateCancelled
-		return 0, errors.Wrapf(err, "failed to notify PD the placement rules")
+		return 0, errors.Trace(table.ErrUnknownPartition.GenWithStackByArgs("drop?", tblInfo.Name.O))
 	}
 
-	// used by ApplyDiff in updateSchemaVersion
-	job.CtxVars = []interface{}{partitionID}
-	ver, err = updateSchemaVersion(t, job)
-	if err != nil {
-		return ver, errors.Trace(err)
+	switch pstate {
+	case model.StatePublic:
+		err = infosync.PutRuleBundles(nil, []*placement.Bundle{bundle})
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return 0, errors.Wrapf(err, "failed to notify PD the placement rules")
+		}
+		ok := ptInfo.SetStateByID(partitionID, model.StateGlobalTxnWriteOnly)
+		if !ok {
+			return 0, errors.Wrapf(err, "failed to set partition state")
+		}
+		ts, _ := ptInfo.GetStateByID(partitionID)
+		// used by ApplyDiff in updateSchemaVersion
+		job.CtxVars = []interface{}{partitionID}
+		ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		job.SchemaState = model.StateGlobalTxnWriteOnly
+		logutil.BgLogger().Info("onAlterTablePartition",
+			zap.Int64("partitionID", partitionID),
+			zap.String("state", model.StatePublic.String()),
+			zap.Int64("ver", ver), zap.String("tState", ts.String()))
+		tblInfo.Partition = ptInfo
+	case model.StateGlobalTxnWriteOnly:
+		ok := ptInfo.SetStateByID(partitionID, model.StatePublic)
+		if !ok {
+			return 0, errors.Wrapf(err, "failed to set partition state")
+		}
+		// used by ApplyDiff in updateSchemaVersion
+		job.CtxVars = []interface{}{partitionID}
+		ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
+		logutil.BgLogger().Info("onAlterTablePartition",
+			zap.Int64("partitionID", partitionID),
+			zap.String("state", model.StateGlobalTxnWriteOnly.String()),
+			zap.Int64("ver", ver))
 	}
-
-	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 	return ver, nil
 }

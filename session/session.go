@@ -2474,19 +2474,29 @@ func (s *session) checkPlacementPolicyBeforeCommit() error {
 					fmt.Sprintf("table or partition %v's leader location %v is out of txn_scope %v", physicalTableID, dcLocation, txnScope))
 				break
 			}
-			//tbl, ok := is.TableByID(physicalTableID)
-			//if !ok {
-			//	err = ddl.ErrInvalidPlacementPolicyCheck.GenWithStackByArgs(
-			//		fmt.Sprintf("table or partition %v is not found", physicalTableID))
-			//	break
-			//}
-
-			//if tbl.Meta().State == model.StateGlobalTxnWriteOnly {
-			//	err = ddl.ErrInvalidPlacementPolicyCheck.GenWithStackByArgs(
-			//		fmt.Sprintf("table or partition %v is updated by ilegal txn_scope %v during schema state %v",
-			//			physicalTableID, txnScope, model.StateGlobalTxnWriteOnly))
-			//	break
-			//}
+			// FIXME: currently we assumes the physicalTableID is the partition ID. In future, we should consider the situation
+			// if the physicalTableID belongs to a Table.
+			if is.IsPartitionID(physicalTableID) {
+				partitionID := physicalTableID
+				tbl, _, _ := is.FindTableByPartitionID(partitionID)
+				if tbl == nil || tbl.Meta().Partition == nil {
+					err = ddl.ErrInvalidPlacementPolicyCheck.GenWithStackByArgs(
+						fmt.Sprintf("failed to find partition %v's information", partitionID))
+					break
+				}
+				tableID := tbl.Meta().ID
+				state, ok := tbl.Meta().Partition.GetStateByID(partitionID)
+				if !ok {
+					err = ddl.ErrInvalidPlacementPolicyCheck.GenWithStackByArgs(
+						fmt.Sprintf("failed to find table %v partition %v's SchemaState", tableID, partitionID))
+					break
+				}
+				if state == model.StateGlobalTxnWriteOnly {
+					err = ddl.ErrInvalidPlacementPolicyCheck.GenWithStackByArgs(
+						fmt.Sprintf("The SchemaState of table %v's partition %v is under StateGlobalTxnWriteOnly",
+							tableID, partitionID))
+				}
+			}
 		}
 	}
 	return err

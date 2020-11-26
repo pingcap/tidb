@@ -1690,6 +1690,17 @@ func (d *ddl) assignPartitionIDs(tbInfo *model.TableInfo) error {
 	return nil
 }
 
+func (d *ddl) resetPartitionState(tbInfo *model.TableInfo) {
+	if tbInfo.Partition == nil {
+		return
+	}
+	states := make([]model.PartitionState, 0, len(tbInfo.Partition.Definitions))
+	for _, def := range tbInfo.Partition.Definitions {
+		states = append(states, model.PartitionState{ID: def.ID, State: model.StatePublic})
+	}
+	tbInfo.Partition.PartitionStates = states
+}
+
 func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err error) {
 	ident := ast.Ident{Schema: s.Table.Schema, Name: s.Table.Name}
 	is := d.GetInfoSchemaWithInterceptor(ctx)
@@ -1777,6 +1788,7 @@ func (d *ddl) CreateTableWithInfo(
 	if err := d.assignPartitionIDs(tbInfo); err != nil {
 		return errors.Trace(err)
 	}
+	d.resetPartitionState(tbInfo)
 
 	if err := checkTableInfoValidExtra(tbInfo); err != nil {
 		return err
