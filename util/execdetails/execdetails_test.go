@@ -101,12 +101,12 @@ func TestCopRuntimeStats(t *testing.T) {
 	stats.RecordOneCopTask(aggID, "8.8.8.8", mockExecutorExecutionSummary(3, 3, 3))
 	stats.RecordOneCopTask(aggID, "8.8.8.9", mockExecutorExecutionSummary(4, 4, 4))
 	copDetails := &CopDetails{
-		TotalKeys:                 10,
+		TotalKeys:                 15,
 		ProcessedKeys:             10,
-		RocksdbDeleteSkippedCount: 10,
+		RocksdbDeleteSkippedCount: 5,
 		RocksdbKeySkippedCount:    1,
 		RocksdbBlockCacheHitCount: 10,
-		RocksdbBlockReadCount:     10,
+		RocksdbBlockReadCount:     20,
 		RocksdbBlockReadByte:      100,
 	}
 	stats.RecordCopDetail(tableScanID, copDetails)
@@ -114,9 +114,9 @@ func TestCopRuntimeStats(t *testing.T) {
 		t.Fatal("exist")
 	}
 	cop := stats.GetCopStats(tableScanID)
-	if cop.String() != "tikv_task:{proc max:2ns, min:1ns, p80:2ns, p95:2ns, iters:3, tasks:2}"+
-		", total_keys:10, processed_keys:10, rocksdb:{delete_skipped_count:10, key_skipped_count:1, block_cache_hit_count:10, block_read_count:10, block_read_byte:100}" {
-		t.Fatal("table_scan")
+	if cop.String() != "tikv_task:{proc max:2ns, min:1ns, p80:2ns, p95:2ns, iters:3, tasks:2}, total_keys: 15, "+
+		"processed_keys: 10, rocksdb: {delete_skipped_count: 5, key_skipped_count: 1, block_cache_hit_count: 10, block_read_count: 20, block_read: 100 Bytes}" {
+		t.Fatalf(cop.String())
 	}
 	copStats := cop.stats["8.8.8.8"]
 	if copStats == nil {
@@ -124,7 +124,7 @@ func TestCopRuntimeStats(t *testing.T) {
 	}
 	copStats[0].SetRowNum(10)
 	copStats[0].Record(time.Second, 10)
-	if copStats[0].String() != "time:1.000000001s, loops:2" {
+	if copStats[0].String() != "time:1s, loops:2" {
 		t.Fatalf("cop stats string is not expect, got: %v", copStats[0].String())
 	}
 
@@ -137,6 +137,15 @@ func TestCopRuntimeStats(t *testing.T) {
 	}
 	if stats.ExistsRootStats(tableReaderID) == false {
 		t.Fatal("table_reader not exists")
+	}
+
+	cop.copDetails.ProcessedKeys = 0
+	cop.copDetails.RocksdbKeySkippedCount = 0
+	cop.copDetails.RocksdbBlockReadCount = 0
+	// Print all fields even though the value of some fields is 0.
+	if cop.String() != "tikv_task:{proc max:1s, min:2ns, p80:1s, p95:1s, iters:4, tasks:2}, total_keys: 15, "+
+		"processed_keys: 0, rocksdb: {delete_skipped_count: 5, key_skipped_count: 0, block_cache_hit_count: 10, block_read_count: 0, block_read: 100 Bytes}" {
+		t.Fatalf(cop.String())
 	}
 }
 
@@ -164,8 +173,8 @@ func TestCopRuntimeStatsForTiFlash(t *testing.T) {
 	}
 	cop := stats.GetCopStats(tableScanID)
 	if cop.String() != "tikv_task:{proc max:2ns, min:1ns, p80:2ns, p95:2ns, iters:3, tasks:2}"+
-		", total_keys:10, processed_keys:10, rocksdb:{delete_skipped_count:10, key_skipped_count:1, block_cache_hit_count:10, block_read_count:10, block_read_byte:100}" {
-		t.Fatal("table_scan")
+		", total_keys: 10, processed_keys: 10, rocksdb: {delete_skipped_count: 10, key_skipped_count: 1, block_cache_hit_count: 10, block_read_count: 10, block_read: 100 Bytes}" {
+		t.Fatal(cop.String())
 	}
 	copStats := cop.stats["8.8.8.8"]
 	if copStats == nil {
@@ -173,7 +182,7 @@ func TestCopRuntimeStatsForTiFlash(t *testing.T) {
 	}
 	copStats[0].SetRowNum(10)
 	copStats[0].Record(time.Second, 10)
-	if copStats[0].String() != "time:1.000000001s, loops:2" {
+	if copStats[0].String() != "time:1s, loops:2" {
 		t.Fatalf("cop stats string is not expect, got: %v", copStats[0].String())
 	}
 
@@ -285,5 +294,55 @@ func TestRootRuntimeStats(t *testing.T) {
 	expect := "time:3s, loops:2, worker:15, concurrent:OFF, commit_txn: {prewrite:1s, get_commit_ts:1s, commit:1s, region_num:5, write_keys:3, write_byte:66, txn_retry:2}"
 	if stats.String() != expect {
 		t.Fatalf("%v != %v", stats.String(), expect)
+	}
+}
+
+func TestFormatDurationForExplain(t *testing.T) {
+	cases := []struct {
+		t string
+		s string
+	}{
+		{"0s", "0s"},
+		{"1ns", "1ns"},
+		{"9ns", "9ns"},
+		{"10ns", "10ns"},
+		{"999ns", "999ns"},
+		{"1µs", "1µs"},
+		{"1.123µs", "1.12µs"},
+		{"1.023µs", "1.02µs"},
+		{"1.003µs", "1µs"},
+		{"10.456µs", "10.5µs"},
+		{"10.956µs", "11µs"},
+		{"999.056µs", "999.1µs"},
+		{"999.988µs", "1ms"},
+		{"1.123ms", "1.12ms"},
+		{"1.023ms", "1.02ms"},
+		{"1.003ms", "1ms"},
+		{"10.456ms", "10.5ms"},
+		{"10.956ms", "11ms"},
+		{"999.056ms", "999.1ms"},
+		{"999.988ms", "1s"},
+		{"1.123s", "1.12s"},
+		{"1.023s", "1.02s"},
+		{"1.003s", "1s"},
+		{"10.456s", "10.5s"},
+		{"10.956s", "11s"},
+		{"16m39.056s", "16m39.1s"},
+		{"16m39.988s", "16m40s"},
+		{"24h16m39.388662s", "24h16m39.4s"},
+		{"9.412345ms", "9.41ms"},
+		{"10.412345ms", "10.4ms"},
+		{"5.999s", "6s"},
+		{"100.45µs", "100.5µs"},
+	}
+	for _, ca := range cases {
+		d, err := time.ParseDuration(ca.t)
+		if err != nil {
+			t.Fatalf("%v != %v", err, nil)
+		}
+		result := FormatDuration(d)
+		if result != ca.s {
+			t.Fatalf("%v != %v", result, ca.s)
+		}
 	}
 }
