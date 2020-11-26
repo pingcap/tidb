@@ -741,7 +741,7 @@ func (s *testIntegrationSuite1) TestCreateTableWithListColumnsPartition(c *C) {
 		"create table t (a date) partition by list columns (a) (partition p0 values in ('2020-09-28','2020-09-29'));",
 		"create table t (a bigint, b date) partition by list columns (a,b) (partition p0 values in ((1,'2020-09-28'),(1,'2020-09-29')));",
 		"create table t (a bigint)   partition by list columns (a) (partition p0 values in (to_seconds('2020-09-28 17:03:38'),to_seconds('2020-09-28 17:03:39')));",
-		"create table t(a int,b char(10)) partition by list columns (a, b) (partition p1 values in ((1, 'a'), (1, 'b')), partition p2 values in ((2, 'b')));",
+		"create table t(a int,b char(10)) partition by list columns (a, b) (partition p1 values in ((2, 'a'), (1, 'b')), partition p2 values in ((2, 'b')));",
 	}
 
 	for _, sql := range validCases {
