@@ -344,7 +344,6 @@ func (s *testExpressionRewriterSuite) TestIssue17652(c *C) {
 		testkit.Rows("9999999703771440633"))
 }
 
-
 // https://github.com/pingcap/tidb/issues/8733#issuecomment-700572764
 func (s *testExpressionRewriterSuite) TestExplainWhenUserVariableFold(c *C) {
 	defer testleak.AfterTest(c)()
