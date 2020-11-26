@@ -116,9 +116,11 @@ func (task *lookupTableTask) buildResultChunk() {
 	if task.numRows <= 0 {
 		return
 	}
-	task.chk = chunk.Renew(task.rows[0].Chunk(), task.rows[0].Chunk().GetNumRows())
-	for _, row := range task.rows {
-		task.chk.AppendRow(row)
+	if task.rows[0].Chunk() != nil {
+		task.chk = chunk.Renew(task.rows[0].Chunk(), task.rows[0].Chunk().NumRows())
+		for _, row := range task.rows {
+			task.chk.AppendRow(row)
+		}
 	}
 }
 
@@ -1194,23 +1196,12 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 	if handleCnt != task.numRows && !util.HasCancelled(ctx) {
 		if len(w.idxLookup.tblPlans) == 1 {
 			obtainedHandlesMap := kv.NewHandleMap()
-			if w.keepOrder {
-				for _, row := range task.rows {
-					handle, err := w.idxLookup.getHandle(row, w.handleIdx, w.idxLookup.isCommonHandle(), getHandleFromTable)
-					if err != nil {
-						return err
-					}
-					obtainedHandlesMap.Set(handle, true)
+			for i := 0; i < task.numRows; i++ {
+				handle, err := w.idxLookup.getHandle(task.chk.GetRow(i), w.handleIdx, w.idxLookup.isCommonHandle(), getHandleFromTable)
+				if err != nil {
+					return err
 				}
-
-			} else {
-				for i := 0; i < task.numRows; i++ {
-					handle, err := w.idxLookup.getHandle(task.chk.GetRow(i), w.handleIdx, w.idxLookup.isCommonHandle(), getHandleFromTable)
-					if err != nil {
-						return err
-					}
-					obtainedHandlesMap.Set(handle, true)
-				}
+				obtainedHandlesMap.Set(handle, true)
 			}
 			logutil.Logger(ctx).Error("inconsistent index handles", zap.String("index", w.idxLookup.index.Name.O),
 				zap.Int("index_cnt", handleCnt), zap.Int("table_cnt", task.numRows),
