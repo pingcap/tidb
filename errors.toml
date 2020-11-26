@@ -371,6 +371,11 @@ error = '''
 Deadlock found when trying to get lock; try restarting transaction
 '''
 
+["executor:1295"]
+error = '''
+This command is not supported in the prepared statement protocol yet
+'''
+
 ["executor:1317"]
 error = '''
 Query execution was interrupted
@@ -549,6 +554,11 @@ A path expression is not a path to a cell in an array.
 ["json:8066"]
 error = '''
 JSON_OBJECTAGG: unsupported second argument type %v
+'''
+
+["kv:1062"]
+error = '''
+Duplicate entry '%-.64s' for key '%-.192s'
 '''
 
 ["kv:8004"]
@@ -764,6 +774,11 @@ View '%-.192s.%-.192s' references invalid table(s) or column(s) or function(s) o
 ["planner:1462"]
 error = '''
 `%-.192s`.`%-.192s` contains view recursion
+'''
+
+["planner:1706"]
+error = '''
+Primary key/partition key update is not allowed since the table is updated both as '%-.192s' and '%-.192s'.
 '''
 
 ["planner:1747"]
@@ -1389,11 +1404,6 @@ variable '%s' does not yet support value: %s
 ["variable:8048"]
 error = '''
 The isolation level '%s' is not supported. Set tidb_skip_isolation_level_check=1 to skip this error
-'''
-
-["variable:8054"]
-error = '''
-cannot set variable to null
 '''
 
 ["variable:8055"]

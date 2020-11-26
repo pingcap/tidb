@@ -334,6 +334,7 @@ func (s *testIntegrationSuite2) TestCreateTableWithHashPartition(c *C) {
                                        PARTITION p1 VALUES LESS THAN (200),
                                        PARTITION p2 VALUES LESS THAN MAXVALUE)`)
 	tk.MustGetErrCode("select * from t_sub partition (p0)", tmysql.ErrPartitionClauseOnNonpartitioned)
+	tk.MustGetErrCode("create table t_hash(a int) partition by hash (a) partitions 3 (partition p1, partition p2, partition p2);", tmysql.ErrSameNamePartition)
 }
 
 func (s *testIntegrationSuite7) TestCreateTableWithRangeColumnPartition(c *C) {
@@ -384,6 +385,18 @@ create table log_message_1 (
 		{
 			"create table t (id int) partition by range columns (id);",
 			ast.ErrPartitionsMustBeDefined,
+		},
+		{
+			"create table t(a datetime) partition by range columns (a) (partition p1 values less than ('2000-02-01'), partition p2 values less than ('20000102'));",
+			ddl.ErrRangeNotIncreasing,
+		},
+		{
+			"create table t(a time) partition by range columns (a) (partition p1 values less than ('202020'), partition p2 values less than ('20:20:10'));",
+			ddl.ErrRangeNotIncreasing,
+		},
+		{
+			"create table t(a time) partition by range columns (a) (partition p1 values less than ('202090'));",
+			ddl.ErrWrongTypeColumnValue,
 		},
 		{
 			"create table t (id int) partition by range columns (id) (partition p0 values less than (1, 2));",
