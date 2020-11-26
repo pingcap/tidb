@@ -237,7 +237,7 @@ func (s *testSuite) TestToString(c *C) {
 
 	c.Assert(parent.String(), Equals, `
 "1"{
-  "consumed": 4.00293168798089 GB
+  "consumed": 4.00 GB
   "2"{
     "quota": 1000 Bytes
     "consumed": 100 Bytes
