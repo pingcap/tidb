@@ -18,7 +18,6 @@
 package ddl
 
 import (
-	"bytes"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -1524,26 +1523,29 @@ func checkTableInfoValidWithStmt(ctx sessionctx.Context, tbInfo *model.TableInfo
 		return errors.Trace(err)
 	}
 	if s.Partition != nil {
-		err := checkPartitionExprValid(ctx, tbInfo, s.Partition.Expr)
-		if err != nil {
+		if err := checkPartitionFuncValid(ctx, tbInfo, s.Partition.Expr); err != nil {
 			return errors.Trace(err)
 		}
 
+		var err error
 		pi := tbInfo.Partition
 		if pi != nil {
 			switch pi.Type {
 			case model.PartitionTypeRange:
-				err = checkPartitionByRange(ctx, tbInfo, s)
+				err = checkPartitionByRange(ctx, tbInfo)
 			case model.PartitionTypeHash:
-				err = checkPartitionByHash(ctx, tbInfo, s)
+				err = checkPartitionByHash(ctx, tbInfo)
 			case model.PartitionTypeList:
-				err = checkPartitionByList(ctx, tbInfo, s)
+				err = checkPartitionByList(ctx, tbInfo)
 			}
 			if err != nil {
 				return errors.Trace(err)
 			}
 		}
 
+		if err := checkPartitionFuncType(ctx, s, tbInfo); err != nil {
+			return errors.Trace(err)
+		}
 		if err = checkPartitioningKeysConstraints(ctx, s, tbInfo); err != nil {
 			return errors.Trace(err)
 		}
@@ -1655,7 +1657,7 @@ func buildTableInfoWithStmt(ctx sessionctx.Context, s *ast.CreateTableStmt, dbCh
 		return nil, errors.Trace(err)
 	}
 
-	tbInfo.Partition, err = buildTablePartitionInfo(ctx, s)
+	err = buildTablePartitionInfo(ctx, s.Partition, tbInfo)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1675,17 +1677,13 @@ func (d *ddl) assignTableID(tbInfo *model.TableInfo) error {
 	return nil
 }
 
-func (d *ddl) assignPartitionIDs(tbInfo *model.TableInfo) error {
-	if tbInfo.Partition == nil {
-		return nil
-	}
-	partitionDefs := tbInfo.Partition.Definitions
-	genIDs, err := d.genGlobalIDs(len(partitionDefs))
+func (d *ddl) assignPartitionIDs(defs []model.PartitionDefinition) error {
+	genIDs, err := d.genGlobalIDs(len(defs))
 	if err != nil {
 		return errors.Trace(err)
 	}
-	for i := range partitionDefs {
-		partitionDefs[i].ID = genIDs[i]
+	for i := range defs {
+		defs[i].ID = genIDs[i]
 	}
 	return nil
 }
@@ -1774,8 +1772,11 @@ func (d *ddl) CreateTableWithInfo(
 	if err := d.assignTableID(tbInfo); err != nil {
 		return errors.Trace(err)
 	}
-	if err := d.assignPartitionIDs(tbInfo); err != nil {
-		return errors.Trace(err)
+
+	if tbInfo.Partition != nil {
+		if err := d.assignPartitionIDs(tbInfo.Partition.Definitions); err != nil {
+			return errors.Trace(err)
+		}
 	}
 
 	if err := checkTableInfoValidExtra(tbInfo); err != nil {
@@ -1942,7 +1943,7 @@ func buildViewInfo(ctx sessionctx.Context, s *ast.CreateViewStmt) (*model.ViewIn
 		Security: s.Security, SelectStmt: sb.String(), CheckOption: s.CheckOption, Cols: nil}, nil
 }
 
-func checkPartitionByHash(ctx sessionctx.Context, tbInfo *model.TableInfo, s *ast.CreateTableStmt) error {
+func checkPartitionByHash(ctx sessionctx.Context, tbInfo *model.TableInfo) error {
 	pi := tbInfo.Partition
 	if err := checkPartitionNameUnique(pi); err != nil {
 		return err
@@ -1950,17 +1951,12 @@ func checkPartitionByHash(ctx sessionctx.Context, tbInfo *model.TableInfo, s *as
 	if err := checkAddPartitionTooManyPartitions(pi.Num); err != nil {
 		return err
 	}
-	if err := checkNoHashPartitions(ctx, pi.Num); err != nil {
-		return err
-	}
-	if err := checkPartitionFuncValid(ctx, tbInfo, s.Partition.Expr); err != nil {
-		return err
-	}
-	return checkPartitionFuncType(ctx, s, tbInfo)
+
+	return checkNoHashPartitions(ctx, pi.Num)
 }
 
 // checkPartitionByRange checks validity of a "BY RANGE" partition.
-func checkPartitionByRange(ctx sessionctx.Context, tbInfo *model.TableInfo, s *ast.CreateTableStmt) error {
+func checkPartitionByRange(ctx sessionctx.Context, tbInfo *model.TableInfo) error {
 	failpoint.Inject("CheckPartitionByRangeErr", func() {
 		panic("Out Of Memory Quota!")
 	})
@@ -1978,19 +1974,7 @@ func checkPartitionByRange(ctx sessionctx.Context, tbInfo *model.TableInfo, s *a
 	}
 
 	if len(pi.Columns) == 0 {
-		if err := checkCreatePartitionValue(ctx, tbInfo); err != nil {
-			return err
-		}
-
-		// s maybe nil when add partition.
-		if s == nil {
-			return nil
-		}
-
-		if err := checkPartitionFuncValid(ctx, tbInfo, s.Partition.Expr); err != nil {
-			return err
-		}
-		return checkPartitionFuncType(ctx, s, tbInfo)
+		return checkRangePartitionValue(ctx, tbInfo)
 	}
 
 	// Check for range columns partition.
@@ -1998,20 +1982,11 @@ func checkPartitionByRange(ctx sessionctx.Context, tbInfo *model.TableInfo, s *a
 		return err
 	}
 
-	if s != nil {
-		for _, def := range s.Partition.Definitions {
-			exprs := def.Clause.(*ast.PartitionDefinitionClauseLessThan).Exprs
-			if err := checkColumnsTypeAndValuesMatch(ctx, tbInfo, exprs); err != nil {
-				return err
-			}
-		}
-	}
-
 	return checkRangeColumnsPartitionValue(ctx, tbInfo)
 }
 
 // checkPartitionByList checks validity of a "BY LIST" partition.
-func checkPartitionByList(ctx sessionctx.Context, tbInfo *model.TableInfo, s *ast.CreateTableStmt) error {
+func checkPartitionByList(ctx sessionctx.Context, tbInfo *model.TableInfo) error {
 	pi := tbInfo.Partition
 	if err := checkPartitionNameUnique(pi); err != nil {
 		return err
@@ -2025,30 +2000,12 @@ func checkPartitionByList(ctx sessionctx.Context, tbInfo *model.TableInfo, s *as
 		return err
 	}
 
-	// s maybe nil when add partition.
-	if s == nil {
-		return nil
-	}
-	if len(pi.Columns) == 0 {
-		if err := checkPartitionFuncValid(ctx, tbInfo, s.Partition.Expr); err != nil {
+	if len(pi.Columns) != 0 {
+		if err := checkColumnsPartitionType(tbInfo); err != nil {
 			return err
 		}
-		return checkPartitionFuncType(ctx, s, tbInfo)
-	}
-	if err := checkColumnsPartitionType(tbInfo); err != nil {
-		return err
 	}
 
-	if len(pi.Columns) > 0 {
-		for _, def := range s.Partition.Definitions {
-			inValues := def.Clause.(*ast.PartitionDefinitionClauseIn).Values
-			for _, vs := range inValues {
-				if err := checkColumnsTypeAndValuesMatch(ctx, tbInfo, vs); err != nil {
-					return err
-				}
-			}
-		}
-	}
 	return nil
 }
 
@@ -2899,8 +2856,11 @@ func (d *ddl) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, spec *
 		return errors.Trace(ErrPartitionMgmtOnNonpartitioned)
 	}
 
-	partInfo, err := buildPartitionInfo(ctx, meta, d, spec)
+	partInfo, err := buildAddedPartitionInfo(ctx, meta, spec)
 	if err != nil {
+		return errors.Trace(err)
+	}
+	if err := d.assignPartitionIDs(partInfo.Definitions); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -2912,9 +2872,9 @@ func (d *ddl) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, spec *
 	clonedMeta.Partition = &tmp
 	switch pi.Type {
 	case model.PartitionTypeRange:
-		err = checkPartitionByRange(ctx, clonedMeta, nil)
+		err = checkPartitionByRange(ctx, clonedMeta)
 	case model.PartitionTypeList:
-		err = checkPartitionByList(ctx, clonedMeta, nil)
+		err = checkPartitionByList(ctx, clonedMeta)
 	}
 	if err != nil {
 		if ErrSameNamePartition.Equal(err) && spec.IfNotExists {
@@ -5204,7 +5164,8 @@ func validateCommentLength(vars *variable.SessionVars, indexName string, indexOp
 	return indexOption.Comment, nil
 }
 
-func buildPartitionInfo(ctx sessionctx.Context, meta *model.TableInfo, d *ddl, spec *ast.AlterTableSpec) (*model.PartitionInfo, error) {
+// buildAddedPartitionInfo build alter table add partition info
+func buildAddedPartitionInfo(ctx sessionctx.Context, meta *model.TableInfo, spec *ast.AlterTableSpec) (*model.PartitionInfo, error) {
 	switch meta.Partition.Type {
 	case model.PartitionTypeRange, model.PartitionTypeList:
 		if len(spec.PartDefinitions) == 0 {
@@ -5222,78 +5183,13 @@ func buildPartitionInfo(ctx sessionctx.Context, meta *model.TableInfo, d *ddl, s
 		Enable:  meta.Partition.Enable,
 	}
 
-	genIDs, err := d.genGlobalIDs(len(spec.PartDefinitions))
+	defs, err := buildPartitionDefinitionsInfo(ctx, spec.PartDefinitions, meta)
 	if err != nil {
 		return nil, err
 	}
-	for ith, def := range spec.PartDefinitions {
-		if err := def.Clause.Validate(part.Type, len(part.Columns)); err != nil {
-			return nil, errors.Trace(err)
-		}
-		if err := checkTooLongTable(def.Name); err != nil {
-			return nil, err
-		}
-		comment, _ := def.Comment()
-		piDef := model.PartitionDefinition{
-			Name:    def.Name,
-			ID:      genIDs[ith],
-			Comment: comment,
-		}
 
-		switch meta.Partition.Type {
-		case model.PartitionTypeRange:
-			err = buildRangePartitionInfo(ctx, meta, part, def, &piDef)
-		case model.PartitionTypeList:
-			err = buildListPartitionInfo(ctx, meta, part, def, &piDef)
-		}
-		if err != nil {
-			return nil, err
-		}
-
-		part.Definitions = append(part.Definitions, piDef)
-	}
+	part.Definitions = defs
 	return part, nil
-}
-
-func buildRangePartitionInfo(ctx sessionctx.Context, meta *model.TableInfo, part *model.PartitionInfo, def *ast.PartitionDefinition, piDef *model.PartitionDefinition) error {
-	// For RANGE partition only VALUES LESS THAN should be possible.
-	clause := def.Clause.(*ast.PartitionDefinitionClauseLessThan)
-	if len(part.Columns) > 0 {
-		if err := checkColumnsTypeAndValuesMatch(ctx, meta, clause.Exprs); err != nil {
-			return err
-		}
-	}
-	buf := new(bytes.Buffer)
-	for _, expr := range clause.Exprs {
-		expr.Format(buf)
-		piDef.LessThan = append(piDef.LessThan, buf.String())
-		buf.Reset()
-	}
-	return nil
-}
-
-func buildListPartitionInfo(ctx sessionctx.Context, meta *model.TableInfo, part *model.PartitionInfo, def *ast.PartitionDefinition, piDef *model.PartitionDefinition) error {
-	// For List partition only VALUES IN should be possible.
-	clause := def.Clause.(*ast.PartitionDefinitionClauseIn)
-	if len(part.Columns) > 0 {
-		for _, vs := range clause.Values {
-			if err := checkColumnsTypeAndValuesMatch(ctx, meta, vs); err != nil {
-				return err
-			}
-		}
-	}
-	buf := new(bytes.Buffer)
-	for _, vs := range clause.Values {
-		inValue := make([]string, 0, len(vs))
-		for i := range vs {
-			buf.Reset()
-			vs[i].Format(buf)
-			inValue = append(inValue, buf.String())
-		}
-		piDef.InValues = append(piDef.InValues, inValue)
-		buf.Reset()
-	}
-	return nil
 }
 
 func checkColumnsTypeAndValuesMatch(ctx sessionctx.Context, meta *model.TableInfo, exprs []ast.ExprNode) error {
