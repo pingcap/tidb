@@ -1759,7 +1759,7 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 		newCfg := *(config.GetGlobalConfig())
 		newCfg.MemQuotaQuery = newMemoryQuotaQuery
 		config.StoreGlobalConfig(&newCfg)
-		variable.SetSysVar(variable.TIDBMemQuotaQuery, strconv.FormatInt(newCfg.MemQuotaQuery, 10))
+		variable.SysVars[variable.TIDBMemQuotaQuery].Value = strconv.FormatInt(newCfg.MemQuotaQuery, 10)
 	}
 
 	dom := domain.GetDomain(se)
