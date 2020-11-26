@@ -658,7 +658,7 @@ func (e *IndexLookUpExecutor) Next(ctx context.Context, req *chunk.Chunk) error 
 			return nil
 		}
 		if e.keepOrder {
-			for resultTask.cursor < len(resultTask.rows) {
+			for resultTask.cursor < resultTask.numRows {
 				req.AppendRow(resultTask.rows[resultTask.cursor])
 				resultTask.cursor++
 				if req.IsFull() {
@@ -666,11 +666,11 @@ func (e *IndexLookUpExecutor) Next(ctx context.Context, req *chunk.Chunk) error 
 				}
 			}
 		} else {
-			requiredRows := resultTask.chk.GetNumRows() - resultTask.cursor
+			requiredRows := resultTask.numRows - resultTask.cursor
 			if resultTask.chk == nil || requiredRows < 0 {
 				return nil
 			}
-			req.Append(resultTask.chk, resultTask.cursor, requiredRows)
+			req.Append(resultTask.chk, resultTask.cursor, resultTask.cursor+requiredRows)
 			resultTask.cursor += requiredRows
 			if req.IsFull() {
 				return nil
