@@ -1367,7 +1367,9 @@ func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Express
 func (c *compareFunctionClass) refineArgsByTypeRange(ctx sessionctx.Context, args []Expression) []Expression {
 	// Only handle int cases, cause MySQL declares that `UNSIGNED` is deprecated for FLOAT, DOUBLE and DECIMAL types,
 	// and support for it would be removed in a future version.
-	if args[0].GetType().EvalType() != types.ETInt || args[1].GetType().EvalType() != types.ETInt {
+	arg0Tp, arg1Tp := args[0].GetType(), args[1].GetType()
+	if arg0Tp.EvalType() != types.ETInt || arg1Tp.EvalType() != types.ETInt ||
+		arg0Tp.Tp == mysql.TypeYear || arg1Tp.Tp == mysql.TypeYear {
 		return args
 	}
 	colArgs := make([]*Column, 2)
