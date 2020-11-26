@@ -1844,7 +1844,7 @@ func WrapWithCastAsDecimal(ctx sessionctx.Context, expr Expression) Expression {
 		return expr
 	}
 	tp := types.NewFieldType(mysql.TypeNewDecimal)
-	tp.Flen, tp.Decimal = expr.GetType().Flen, expr.GetType().Decimal
+	//tp.Flen, tp.Decimal = expr.GetType().Flen, expr.GetType().Decimal
 	if expr.GetType().EvalType() == types.ETInt {
 		tp.Flen = mysql.MaxIntWidth
 	}
