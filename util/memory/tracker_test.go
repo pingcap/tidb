@@ -356,15 +356,15 @@ func (s *testSuite) TestOOMActionPriority(c *C) {
 		actions[i] = &mockAction{priority: int64(i)}
 	}
 
-	randomSuffle := make([]int, n)
+	randomShuffle := make([]int, n)
 	for i := 0; i < n; i++ {
-		randomSuffle[i] = i
+		randomShuffle[i] = i
 		pos := rand.Int() % (i + 1)
-		randomSuffle[i], randomSuffle[pos] = randomSuffle[pos], randomSuffle[i]
+		randomShuffle[i], randomShuffle[pos] = randomShuffle[pos], randomShuffle[i]
 	}
 
 	for i := 0; i < n; i++ {
-		tracker.FallbackOldAndSetNewAction(actions[randomSuffle[i]])
+		tracker.FallbackOldAndSetNewAction(actions[randomShuffle[i]])
 	}
 	for i := n - 1; i >= 0; i-- {
 		tracker.Consume(100)
