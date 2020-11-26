@@ -701,7 +701,7 @@ func (s *testIntegrationSuite1) TestCreateTableWithListColumnsPartition(c *C) {
 		},
 		{
 			"create table t (a int, b varchar(10)) partition by list columns (a,b) (partition p0 values in (('ab','ab')));",
-			ddl.ErrNotAllowedTypeInPartition,
+			ddl.ErrWrongTypeColumnValue,
 		},
 		{
 			"create table t (a int, b datetime) partition by list columns (a,b) (partition p0 values in ((1)));",
