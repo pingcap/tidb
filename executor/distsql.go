@@ -680,8 +680,10 @@ func (e *IndexLookUpExecutor) Next(ctx context.Context, req *chunk.Chunk) error 
 
 func (e *IndexLookUpExecutor) getResultTask() (*lookupTableTask, error) {
 	if e.resultCurr != nil {
-		numRows := len(e.resultCurr.rows)
-		if numRows == 0 {
+		numRows := 0
+		if e.keepOrder {
+			numRows = len(e.resultCurr.rows)
+		} else {
 			numRows = e.resultCurr.chk.GetNumRows()
 		}
 		if e.resultCurr.cursor < numRows {
