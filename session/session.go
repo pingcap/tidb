@@ -1033,12 +1033,16 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 	if command != mysql.ComSleep || s.GetSessionVars().InTxn() {
 		curTxnStartTS = s.sessionVars.TxnCtx.StartTS
 	}
+	p := s.currentPlan
+	if explain, ok := p.(*plannercore.Explain); ok && explain.Analyze && explain.TargetPlan != nil {
+		p = explain.TargetPlan
+	}
 	pi := util.ProcessInfo{
 		ID:               s.sessionVars.ConnectionID,
 		DB:               s.sessionVars.CurrentDB,
 		Command:          command,
-		Plan:             s.currentPlan,
-		PlanExplainRows:  plannercore.GetExplainRowsForPlan(s.currentPlan),
+		Plan:             p,
+		PlanExplainRows:  plannercore.GetExplainRowsForPlan(p),
 		RuntimeStatsColl: s.sessionVars.StmtCtx.RuntimeStatsColl,
 		Time:             t,
 		State:            s.Status(),
@@ -2013,6 +2017,7 @@ var builtinGlobalVariable = []string{
 	variable.TiDBRedactLog,
 	variable.TiDBEnableTelemetry,
 	variable.TiDBEnableAmendPessimisticTxn,
+	variable.TiDBEnableRateLimitAction,
 }
 
 var (
