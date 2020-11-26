@@ -41,7 +41,6 @@ type BatchPointGetExec struct {
 
 	tblInfo     *model.TableInfo
 	idxInfo     *model.IndexInfo
-	indexKeys   []kv.Key
 	handles     []kv.Handle
 	physIDs     []int64
 	partPos     int
@@ -175,6 +174,7 @@ func datumsContainNull(vals []types.Datum) bool {
 
 func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 	var handleVals map[string][]byte
+	var indexKeys []kv.Key
 	var err error
 	batchGetter := e.batchGetter
 	rc := e.ctx.GetSessionVars().IsPessimisticReadConsistency()
@@ -213,9 +213,9 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 		// for read consistency, only lock exist keys,
 		// indexKeys will be generated after getting handles.
 		if !rc {
-			e.indexKeys = keys
+			indexKeys = keys
 		} else {
-			e.indexKeys = make([]kv.Key, 0, len(keys))
+			indexKeys = make([]kv.Key, 0, len(keys))
 		}
 
 		// SELECT * FROM t WHERE x IN (null), in this case there is no key.
@@ -243,7 +243,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 				return err1
 			}
 			e.handles = append(e.handles, handle)
-			e.indexKeys = append(e.indexKeys, key)
+			indexKeys = append(indexKeys, key)
 			if e.tblInfo.Partition != nil {
 				pid := tablecodec.DecodeTableID(key)
 				e.physIDs = append(e.physIDs, pid)
@@ -322,9 +322,9 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 	var values map[string][]byte
 	// Lock keys (include exists and non-exists keys) before fetch all values for Repeatable Read Isolation.
 	if e.lock && !rc {
-		lockKeys := make([]kv.Key, len(keys)+len(e.indexKeys))
+		lockKeys := make([]kv.Key, len(keys)+len(indexKeys))
 		copy(lockKeys, keys)
-		copy(lockKeys[len(keys):], e.indexKeys)
+		copy(lockKeys[len(keys):], indexKeys)
 		err = LockKeys(ctx, e.ctx, e.waitTime, lockKeys...)
 		if err != nil {
 			return err
@@ -354,7 +354,11 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 		handles = append(handles, e.handles[i])
 		if e.lock && rc {
 			existKeys = append(existKeys, key)
-			existKeys = append(existKeys, e.indexKeys[i])
+			// when e.handles is set in builder directly, index should be primary key and the plan is CommonHandleRead
+			// with clustered index enabled, lock primary key for clustered index table is redundant
+			if i < len(indexKeys) {
+				existKeys = append(existKeys, indexKeys[i])
+			}
 		}
 	}
 	// Lock exists keys only for Read Committed Isolation.

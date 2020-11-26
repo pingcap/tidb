@@ -14,6 +14,8 @@
 package executor_test
 
 import (
+	"fmt"
+	"sync"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -165,63 +167,67 @@ func (s *testBatchPointGetSuite) TestBatchPointGetUnsignedHandleWithSort(c *C) {
 	tk.MustQuery("select id from t2 where id in (8738875760185212610, 1, 9814441339970117597) order by id desc").Check(testkit.Rows("9814441339970117597", "8738875760185212610", "1"))
 }
 
-func (s *testBatchPointGetSuite) TestLockNonExistKey(c *C) {
-	doneCh := make(chan struct{}, 1)
+func (s *testBatchPointGetSuite) TestBatchPointGetLockExistKey(c *C) {
+	var wg sync.WaitGroup
+	testLock := func(tk1, tk2 *testkit.TestKit, rc bool, key string, tableName string) {
+		doneCh := make(chan struct{}, 1)
 
-	tk1 := testkit.NewTestKit(c, s.store)
-	tk2 := testkit.NewTestKit(c, s.store)
-	tk1.MustExec("use test")
-	tk2.MustExec("use test")
-	tk1.MustExec("set session tidb_enable_clustered_index = 0")
-	tk1.MustExec("drop table if exists t")
-	tk1.MustExec("create table t(id int, v int, val int, primary key(id, v))")
-	tk1.MustExec("insert into t values(1, 1, 1), (2, 2, 2)")
+		tk1.MustExec("use test")
+		tk2.MustExec("use test")
+		tk1.MustExec("set session tidb_enable_clustered_index = 0")
 
-	tk1.MustExec("begin pessimistic")
-	tk2.MustExec("begin pessimistic")
+		tk1.MustExec(fmt.Sprintf("drop table if exists %s", tableName))
+		tk1.MustExec(fmt.Sprintf("create table %s(id int, v int, k int, %s key0(id, v))", tableName, key))
+		tk1.MustExec(fmt.Sprintf("insert into %s values(1, 1, 1), (2, 2, 2)", tableName))
 
-	tk1.MustExec("select * from t where (id, v) in ((1, 1), (2, 2)) for update")
-	go func() {
-		tk2.MustExec("insert into t values(1, 1, 3)")
-		doneCh <- struct{}{}
-	}()
-	time.Sleep(50 * time.Millisecond)
-	tk1.MustExec("update t set v = 2 where id = 1 and v = 1")
+		if rc {
+			tk1.MustExec("set tx_isolation = 'READ-COMMITTED'")
+			tk2.MustExec("set tx_isolation = 'READ-COMMITTED'")
+		}
 
-	tk1.MustExec("commit")
-	<-doneCh
-	tk2.MustExec("commit")
-	tk1.MustQuery("select * from t").Check(testkit.Rows(
-		"1 2 1",
-		"2 2 2",
-		"1 1 3",
-	))
+		tk1.MustExec("begin pessimistic")
+		tk2.MustExec("begin pessimistic")
 
-	tk1.MustExec("set tx_isolation = 'READ-COMMITTED'")
-	tk2.MustExec("set tx_isolation = 'READ-COMMITTED'")
-	tk1.MustExec("drop table if exists t")
-	tk1.MustExec("create table t(id int, v int, val int, primary key(id, v))")
-	tk1.MustExec("insert into t values(1, 1, 1), (3, 3, 3)")
+		if !rc {
+			// lock exist key only for repeatable read
+			tk1.MustExec(fmt.Sprintf("select * from %s where (id, v) in ((1, 1), (2, 2)) for update", tableName))
+		} else {
+			// read committed will not lock non-exist key
+			tk1.MustExec(fmt.Sprintf("select * from %s where (id, v) in ((1, 1), (2, 2), (3, 3)) for update", tableName))
+		}
+		tk2.MustExec(fmt.Sprintf("insert into %s values(3, 3, 3)", tableName))
+		go func() {
+			tk2.MustExec(fmt.Sprintf("insert into %s values(1, 1, 3)", tableName))
+			doneCh <- struct{}{}
+		}()
+		time.Sleep(50 * time.Millisecond)
+		tk1.MustExec(fmt.Sprintf("update %s set v = 2 where id = 1 and v = 1", tableName))
 
-	tk1.MustExec("begin pessimistic")
-	tk2.MustExec("begin pessimistic")
+		tk1.MustExec("commit")
+		<-doneCh
+		tk2.MustExec("commit")
+		tk1.MustQuery(fmt.Sprintf("select * from %s", tableName)).Check(testkit.Rows(
+			"1 2 1",
+			"2 2 2",
+			"3 3 3",
+			"1 1 3",
+		))
 
-	tk1.MustExec("select * from t where (id, v) in ((1, 1), (2, 2), (3, 3)) for update")
-	tk2.MustExec("insert into t values(2, 2, 2)")
-	go func() {
-		tk2.MustExec("insert into t values(1, 1, 3)")
-		doneCh <- struct{}{}
-	}()
-	time.Sleep(50 * time.Millisecond)
-	tk1.MustExec("update t set v = 2 where id = 1 and v = 1")
+		wg.Done()
+	}
 
-	tk1.MustExec("commit")
-	<-doneCh
-	tk2.MustExec("commit")
-	tk1.MustQuery("select * from t").Check(testkit.Rows(
-		"1 2 1",
-		"3 3 3",
-		"2 2 2",
-		"1 1 3",
-	))
+	for i, one := range []struct {
+		rc  bool
+		key string
+	}{
+		{rc: false, key: "primary key"},
+		{rc: false, key: "unique key"},
+		{rc: true, key: "primary key"},
+		{rc: true, key: "unique key"},
+	} {
+		wg.Add(1)
+		tableName := fmt.Sprintf("t_%d", i)
+		go testLock(testkit.NewTestKit(c, s.store), testkit.NewTestKit(c, s.store), one.rc, one.key, tableName)
+	}
+	wg.Wait()
 }
