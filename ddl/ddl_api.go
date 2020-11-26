@@ -1527,30 +1527,37 @@ func checkTableInfoValidWithStmt(ctx sessionctx.Context, tbInfo *model.TableInfo
 			return errors.Trace(err)
 		}
 
-		var err error
-		pi := tbInfo.Partition
-		if pi != nil {
-			switch pi.Type {
-			case model.PartitionTypeRange:
-				err = checkPartitionByRange(ctx, tbInfo)
-			case model.PartitionTypeHash:
-				err = checkPartitionByHash(ctx, tbInfo)
-			case model.PartitionTypeList:
-				err = checkPartitionByList(ctx, tbInfo)
-			}
-			if err != nil {
-				return errors.Trace(err)
-			}
+		if err := checkPartitionDefinitionConstraints(ctx, tbInfo); err != nil {
+			return errors.Trace(err)
 		}
-
 		if err := checkPartitionFuncType(ctx, s, tbInfo); err != nil {
 			return errors.Trace(err)
 		}
-		if err = checkPartitioningKeysConstraints(ctx, s, tbInfo); err != nil {
+		if err := checkPartitioningKeysConstraints(ctx, s, tbInfo); err != nil {
 			return errors.Trace(err)
 		}
 	}
 	return nil
+}
+
+func checkPartitionDefinitionConstraints(ctx sessionctx.Context, tbInfo *model.TableInfo) error {
+	var err error = nil
+	if err := checkPartitionNameUnique(tbInfo.Partition); err != nil {
+		return err
+	}
+	if err := checkAddPartitionTooManyPartitions(uint64(len(tbInfo.Partition.Definitions))); err != nil {
+		return err
+	}
+
+	switch tbInfo.Partition.Type {
+	case model.PartitionTypeRange:
+		err = checkPartitionByRange(ctx, tbInfo)
+	case model.PartitionTypeHash:
+		err = checkPartitionByHash(ctx, tbInfo)
+	case model.PartitionTypeList:
+		err = checkPartitionByList(ctx, tbInfo)
+	}
+	return errors.Trace(err)
 }
 
 // checkTableInfoValid uses to check table info valid. This is used to validate table info.
@@ -1944,15 +1951,7 @@ func buildViewInfo(ctx sessionctx.Context, s *ast.CreateViewStmt) (*model.ViewIn
 }
 
 func checkPartitionByHash(ctx sessionctx.Context, tbInfo *model.TableInfo) error {
-	pi := tbInfo.Partition
-	if err := checkPartitionNameUnique(pi); err != nil {
-		return err
-	}
-	if err := checkAddPartitionTooManyPartitions(pi.Num); err != nil {
-		return err
-	}
-
-	return checkNoHashPartitions(ctx, pi.Num)
+	return checkNoHashPartitions(ctx, tbInfo.Partition.Num)
 }
 
 // checkPartitionByRange checks validity of a "BY RANGE" partition.
@@ -1961,13 +1960,6 @@ func checkPartitionByRange(ctx sessionctx.Context, tbInfo *model.TableInfo) erro
 		panic("Out Of Memory Quota!")
 	})
 	pi := tbInfo.Partition
-	if err := checkPartitionNameUnique(pi); err != nil {
-		return err
-	}
-
-	if err := checkAddPartitionTooManyPartitions(uint64(len(pi.Definitions))); err != nil {
-		return err
-	}
 
 	if err := checkNoRangePartitions(len(pi.Definitions)); err != nil {
 		return err
@@ -1988,13 +1980,6 @@ func checkPartitionByRange(ctx sessionctx.Context, tbInfo *model.TableInfo) erro
 // checkPartitionByList checks validity of a "BY LIST" partition.
 func checkPartitionByList(ctx sessionctx.Context, tbInfo *model.TableInfo) error {
 	pi := tbInfo.Partition
-	if err := checkPartitionNameUnique(pi); err != nil {
-		return err
-	}
-
-	if err := checkAddPartitionTooManyPartitions(uint64(len(pi.Definitions))); err != nil {
-		return err
-	}
 
 	if err := checkListPartitionValue(ctx, tbInfo); err != nil {
 		return err
@@ -2867,16 +2852,8 @@ func (d *ddl) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, spec *
 	// partInfo contains only the new added partition, we have to combine it with the
 	// old partitions to check all partitions is strictly increasing.
 	clonedMeta := meta.Clone()
-	tmp := *partInfo
-	tmp.Definitions = append(pi.Definitions, tmp.Definitions...)
-	clonedMeta.Partition = &tmp
-	switch pi.Type {
-	case model.PartitionTypeRange:
-		err = checkPartitionByRange(ctx, clonedMeta)
-	case model.PartitionTypeList:
-		err = checkPartitionByList(ctx, clonedMeta)
-	}
-	if err != nil {
+	clonedMeta.Partition.Definitions = append(clonedMeta.Partition.Definitions, partInfo.Definitions...)
+	if err := checkPartitionDefinitionConstraints(ctx, clonedMeta); err != nil {
 		if ErrSameNamePartition.Equal(err) && spec.IfNotExists {
 			ctx.GetSessionVars().StmtCtx.AppendNote(err)
 			return nil
