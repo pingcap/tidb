@@ -921,9 +921,7 @@ func (s *session) ExecRestrictedSQLWithSnapshot(sql string) ([]chunk.Row, []*ast
 	defer s.sysSessionPool().Put(tmp)
 	metrics.SessionRestrictedSQLCounter.Inc()
 	var snapshot uint64
-	txn, err := s.Txn(false, func(txnOpt *sessionctx.TxnOption) {
-		txnOpt.TxnScope = oracle.GlobalTxnScope
-	})
+	txn, err := s.Txn(false, sessionctx.WithGlobalTxn)
 	if err != nil {
 		return nil, nil, err
 	}

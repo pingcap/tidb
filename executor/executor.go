@@ -47,7 +47,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
@@ -525,9 +524,7 @@ func (e *ShowDDLJobQueriesExec) Open(ctx context.Context) error {
 		return err
 	}
 	// DDL should be started as a global transaction
-	txn, err := e.ctx.Txn(true, func(txnOpt *sessionctx.TxnOption) {
-		txnOpt.TxnScope = oracle.GlobalTxnScope
-	})
+	txn, err := e.ctx.Txn(true, sessionctx.WithGlobalTxn)
 	if err != nil {
 		return err
 	}
@@ -573,9 +570,7 @@ func (e *ShowDDLJobsExec) Open(ctx context.Context) error {
 		return err
 	}
 	// DDL should be started as a global transaction
-	txn, err := e.ctx.Txn(true, func(txnOpt *sessionctx.TxnOption) {
-		txnOpt.TxnScope = oracle.GlobalTxnScope
-	})
+	txn, err := e.ctx.Txn(true, sessionctx.WithGlobalTxn)
 	if err != nil {
 		return err
 	}

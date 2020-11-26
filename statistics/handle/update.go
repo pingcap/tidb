@@ -452,9 +452,7 @@ func (h *Handle) dumpTableStatCountToKV(id int64, delta variable.TableDelta) (up
 		err = finishTransaction(context.Background(), exec, err)
 	}()
 
-	txn, err := h.mu.ctx.Txn(true, func(txnOpt *sessionctx.TxnOption) {
-		txnOpt.TxnScope = oracle.GlobalTxnScope
-	})
+	txn, err := h.mu.ctx.Txn(true, sessionctx.WithGlobalTxn)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
