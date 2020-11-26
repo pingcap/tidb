@@ -7759,3 +7759,33 @@ func (s *testIntegrationSerialSuite) TestCollationIndexJoin(c *C) {
 	tk.MustQuery("select /*+ inl_merge_join(t2) */ t1.b, t2.b from t1 join t2 where t1.b=t2.b").Check(testkit.Rows("a A"))
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1815 Optimizer Hint /*+ INL_MERGE_JOIN(t2) */ is inapplicable"))
 }
+
+// for issue 20128
+func (s *testIntegrationSerialSuite) TestIssue20128(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(b enum('a','b','c','d','e','f','g','h','i','j','k','l','m','n','o','p','q','r','s','t','u','v','w','x','y','z') DEFAULT NULL, c decimal(40,20));")
+	tk.MustExec("insert into t values('z', 19.18040000000000000000);")
+	tk.MustExec("insert into t values('z', 26.18040000000000000000);")
+	tk.MustExec("insert into t values('z', 25.18040000000000000000);")
+	tk.MustQuery("select * from t where t.b > t.c;").Check(testkit.Rows("z 19.18040000000000000000", "z 25.18040000000000000000"))
+	tk.MustQuery("select * from t where t.b < t.c;").Check(testkit.Rows("z 26.18040000000000000000"))
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a bit(64), b double);")
+	tk.MustExec("insert into t values(-21172, -11623);")
+	tk.MustExec("insert into t values(0, 0);")
+	tk.MustExec("insert into t values(-1, -1);")
+	tk.MustExec("insert into t values(1, 1);")
+	tk.MustExec("insert into t (b)values(1);")
+	tk.MustQuery("select * from t order by a asc;").Check(
+		testkit.Rows(
+			"nil -11623",
+			"b'0' 0",
+			"b'1' 1",
+			"b'1111111111111111111111111111111111111111111111111010110101001100' -11623",
+			"b'1111111111111111111111111111111111111111111111111111111111111111' -1"))
+}
