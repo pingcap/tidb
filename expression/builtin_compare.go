@@ -1446,7 +1446,7 @@ func (c *compareFunctionClass) refineArgsByTypeRange(ctx sessionctx.Context, arg
 				// Check whether the range of the column value matches the range corresponding to the column type
 				// for example: column a is tinyint type -> [-128, 127]
 				// when there have a selection 'a > 200', the constant 200 is always greater than the maximum value that tinyint can achieve.
-				// So, the selection `a > 200` always be flase.
+				// So, the selection `a > 200` always be false.
 				// TODO: Consider the case where `v = upperbound || v = lowerBound`
 				if upperOverflow { // the constant value always greater than the column value
 					if op == opcode.EQ || op == opcode.GE || op == opcode.GT {
