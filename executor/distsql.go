@@ -51,6 +51,7 @@ import (
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
+	"modernc.org/mathutil"
 )
 
 var (
@@ -671,13 +672,9 @@ func (e *IndexLookUpExecutor) Next(ctx context.Context, req *chunk.Chunk) error 
 			return nil
 		}
 		if resultTask.cursor < resultTask.numRows {
-			numRowsToBeAppended := resultTask.numRows - resultTask.cursor
-			requiredRows := req.RequiredRows() - req.NumRows()
-			if numRowsToBeAppended > requiredRows {
-				numRowsToBeAppended = requiredRows
-			}
-			req.Append(resultTask.chk, resultTask.cursor, resultTask.cursor+numRowsToBeAppended)
-			resultTask.cursor += numRowsToBeAppended
+			numToAppend := mathutil.Min(resultTask.numRows-resultTask.cursor, req.RequiredRows()-req.NumRows())
+			req.Append(resultTask.chk, resultTask.cursor, resultTask.cursor+numToAppend)
+			resultTask.cursor += numToAppend
 			if req.IsFull() {
 				return nil
 			}
