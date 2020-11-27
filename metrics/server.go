@@ -186,6 +186,15 @@ var (
 			Name:      "gogc",
 			Help:      "The value of GOGC",
 		})
+
+	ConnIdleDurationHistogram = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "conn_idle_duration_seconds",
+			Help:      "Bucketed histogram of connection idle time (s).",
+			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 29), // 0.5ms ~ 1.5days
+		}, []string{LblInTxn})
 )
 
 // ExecuteErrorToLabel converts an execute error to label.
