@@ -7760,6 +7760,16 @@ func (s *testIntegrationSerialSuite) TestIssue21290(c *C) {
 	tk.MustQuery("select a in ('2020-02-02', 20100202) from t1;").Check(testkit.Rows("1"))
 }
 
+func (s *testIntegrationSuite) TestIssue17868(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t7")
+	tk.MustExec("create table t7 (col0 SMALLINT, col1 VARBINARY(1), col2 DATE, col3 BIGINT, col4 BINARY(166))")
+	tk.MustExec("insert into t7 values ('32767', '', '1000-01-03', '-0', '11101011')")
+	tk.MustQuery("select col2 = 1 from t7").Check(testkit.Rows("0"))
+	tk.MustQuery("select col2 != 1 from t7").Check(testkit.Rows("1"))
+}
+
 func (s *testIntegrationSerialSuite) TestCollationIndexJoin(c *C) {
 	collate.SetNewCollationEnabledForTest(true)
 	defer collate.SetNewCollationEnabledForTest(false)
