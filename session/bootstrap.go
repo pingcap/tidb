@@ -1333,6 +1333,9 @@ func doDMLWorks(s Session) {
 					vVal = string(variable.DynamicOnly)
 				}
 			}
+			if v.Name == variable.TiDBEnableAsyncCommit {
+				vVal = variable.BoolOn
+			}
 			value := fmt.Sprintf(`("%s", "%s")`, strings.ToLower(k), vVal)
 			values = append(values, value)
 		}

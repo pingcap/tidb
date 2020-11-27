@@ -476,6 +476,9 @@ const (
 
 	// TiDBEnableRateLimitAction indicates whether enabled ratelimit action
 	TiDBEnableRateLimitAction = "tidb_enable_rate_limit_action"
+
+	// TiDBEnableAsyncCommit indicates whether to enable the async commit feature.
+	TiDBEnableAsyncCommit = "tidb_enable_async_commit"
 )
 
 // Default TiDB system variable values.
@@ -589,6 +592,7 @@ const (
 	DefTiDBEnableAmendPessimisticTxn   = true
 	DefTiDBPartitionPruneMode          = "static-only"
 	DefTiDBEnableRateLimitAction       = true
+	DefTiDBEnableAsyncCommit           = false
 )
 
 // Process global variables.

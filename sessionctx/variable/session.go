@@ -756,6 +756,9 @@ type SessionVars struct {
 
 	// EnabledRateLimitAction indicates whether enabled ratelimit action during coprocessor
 	EnabledRateLimitAction bool
+
+	// EnableAsyncCommit indicates whether to enable the async commit feature.
+	EnableAsyncCommit bool
 }
 
 // UseDynamicPartitionPrune indicates whether use new dynamic partition prune.
@@ -895,6 +898,7 @@ func NewSessionVars() *SessionVars {
 		PartitionPruneMode:          *atomic2.NewString(DefTiDBPartitionPruneMode),
 		TxnScope:                    config.GetGlobalConfig().TxnScope,
 		EnabledRateLimitAction:      DefTiDBEnableRateLimitAction,
+		EnableAsyncCommit:           DefTiDBEnableAsyncCommit,
 	}
 	vars.KVVars = kv.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{
@@ -1599,6 +1603,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		MemoryUsageAlarmRatio.Store(tidbOptFloat64(val, 0.8))
 	case TiDBEnableRateLimitAction:
 		s.EnabledRateLimitAction = TiDBOptOn(val)
+	case TiDBEnableAsyncCommit:
+		s.EnableAsyncCommit = TiDBOptOn(val)
 	}
 	s.systems[name] = val
 	return nil
