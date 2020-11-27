@@ -1962,12 +1962,14 @@ func (s *testPessimisticSuite) TestSelectForUpdateWaitSeconds(c *C) {
 func (s *testPessimisticSuite) TestSelectForUpdateConflictRetry(c *C) {
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
-		conf.TiKVClient.AsyncCommit.Enable = true
 		conf.TiKVClient.AsyncCommit.SafeWindow = 500 * time.Millisecond
 		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
 	})
 
 	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("set @@tidb_enable_async_commit = 1")
+	defer tk.MustExec("set @@tidb_enable_async_commit = 0")
+
 	tk.MustExec("drop table if exists tk")
 	tk.MustExec("create table tk (c1 int primary key, c2 int)")
 	tk.MustExec("insert into tk values(1,1),(2,2)")
@@ -2008,7 +2010,6 @@ func (s *testPessimisticSuite) TestAsyncCommitWithSchemaChange(c *C) {
 
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
-		conf.TiKVClient.AsyncCommit.Enable = true
 		conf.TiKVClient.AsyncCommit.SafeWindow = time.Second
 		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
 	})
@@ -2018,6 +2019,9 @@ func (s *testPessimisticSuite) TestAsyncCommitWithSchemaChange(c *C) {
 	}()
 
 	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("set @@tidb_enable_async_commit = 1")
+	defer tk.MustExec("set @@tidb_enable_async_commit = 0")
+
 	tk.MustExec("drop table if exists tk")
 	tk.MustExec("create table tk (c1 int primary key, c2 int, c3 int)")
 	tk.MustExec("insert into tk values(1, 1, 1)")

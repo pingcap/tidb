@@ -58,6 +58,8 @@ const (
 	SampleStep
 	// CommitHook is a callback function called right after the transaction gets committed
 	CommitHook
+	// EnableAsyncCommit indicates whether async commit is enabled
+	EnableAsyncCommit
 )
 
 // Priority value for transaction priority.

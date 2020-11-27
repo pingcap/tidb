@@ -537,10 +537,8 @@ type TiKVClient struct {
 	ExternalConsistency bool `toml:"external-consistency" json:"external-consistency"`
 }
 
-// AsyncCommit is the config for the async commit feature.
+// AsyncCommit is the config for the async commit feature. The switch to enable it is a system variable.
 type AsyncCommit struct {
-	// Whether to enable the async commit feature.
-	Enable bool `toml:"enable" json:"enable"`
 	// Use async commit only if the number of keys does not exceed KeysLimit.
 	KeysLimit uint `toml:"keys-limit" json:"keys-limit"`
 	// Use async commit only if the total size of keys does not exceed TotalKeySizeLimit.
@@ -728,7 +726,6 @@ var defaultConf = Config{
 		GrpcCompressionType:  "none",
 		CommitTimeout:        "41s",
 		AsyncCommit: AsyncCommit{
-			Enable: false,
 			// FIXME: Find an appropriate default limit.
 			KeysLimit:         256,
 			TotalKeySizeLimit: 4 * 1024, // 4 KiB
