@@ -692,6 +692,7 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 	}
 
 	do.SchemaValidator = NewSchemaValidator(ddlLease, do)
+	do.expensiveQueryHandle = expensivequery.NewExpensiveQueryHandle(do.exit)
 	return do
 }
 
