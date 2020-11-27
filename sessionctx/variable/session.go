@@ -170,6 +170,7 @@ type TransactionContext struct {
 	tdmLock sync.Mutex
 
 	// TxnScope stores the value of 'txn_scope'.
+	// It is used to check the placement policy before we commit a transaction.
 	TxnScope string
 }
 

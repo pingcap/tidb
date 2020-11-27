@@ -238,6 +238,13 @@ func (s *session) updateTxn(txnScope string, newTxn kv.Transaction) {
 	s.setTxn(txnScope, curTxn)
 }
 
+func (s *session) updateCurTxn(txnScope string, nextTxn *TxnState) {
+	if s.curTxn != nextTxn {
+		s.curTxn = nextTxn
+		s.GetSessionVars().TxnCtx.TxnScope = txnScope
+	}
+}
+
 func (s *session) getTxn(txnScope string) (*TxnState, bool) {
 	txn, exist := s.txns[txnScope]
 	if !exist {
@@ -1635,9 +1642,7 @@ func (s *session) LocalTxn(active bool, txnScope string) (kv.Transaction, error)
 	defer func() {
 		// After the calling of Txn(bool), we should set the s.curTxn
 		// for later committing or rollbacking to work on.
-		if s.curTxn != nextTxn {
-			s.curTxn = nextTxn
-		}
+		s.updateCurTxn(txnScope, nextTxn)
 	}()
 	// Check whether we need a new transaction for the brand new txn scope
 	nextTxn, ok = s.getTxn(txnScope)
@@ -1753,7 +1758,7 @@ func (s *session) NewLocalTxn(ctx context.Context, txnScope string) error {
 	}
 	s.updateTxn(txnScope, newTxn)
 	if txn, ok := s.getTxn(txnScope); ok {
-		s.curTxn = txn
+		s.updateCurTxn(txnScope, txn)
 	}
 	is := domain.GetDomain(s).InfoSchema()
 	s.sessionVars.TxnCtx = &variable.TransactionContext{
@@ -2627,9 +2632,9 @@ func (s *session) checkPlacementPolicyBeforeCommit() error {
 	var err error
 	txnScope := s.GetSessionVars().TxnCtx.TxnScope
 	if txnScope == "" {
-		txnScope = config.DefTxnScope
+		txnScope = oracle.GlobalTxnScope
 	}
-	if txnScope != config.DefTxnScope {
+	if txnScope != oracle.GlobalTxnScope {
 		is := infoschema.GetInfoSchema(s)
 		for physicalTableID := range s.GetSessionVars().TxnCtx.TableDeltaMap {
 			bundle, ok := is.BundleByName(placement.GroupID(physicalTableID))
