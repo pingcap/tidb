@@ -716,11 +716,11 @@ func (c *Chunk) AppendRows(rows []Row) {
 // AppendPartialRows appends multiple rows to the chunk.
 func (c *Chunk) AppendPartialRows(colOff int, rows []Row) {
 	columns := c.columns[colOff:]
-	for index := 0; index < len(columns); index++ {
-		c.appendSel(colOff)
-	}
 	for i, dstCol := range columns {
 		for _, srcRow := range rows {
+			if i == 0 {
+				c.appendSel(colOff)
+			}
 			appendCellByCell(dstCol, srcRow.c.columns[i], srcRow.idx)
 		}
 	}

@@ -23,6 +23,7 @@ import (
 	"time"
 	"unsafe"
 
+	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/model"
@@ -491,11 +492,7 @@ func (e *IndexMergeReaderExecutor) Next(ctx context.Context, req *chunk.Chunk) e
 			return nil
 		}
 		if resultTask.cursor < len(resultTask.rows) {
-			numToAppend := len(resultTask.rows) - resultTask.cursor
-			requiredRows := e.maxChunkSize - req.NumRows()
-			if numToAppend > requiredRows {
-				numToAppend = requiredRows
-			}
+			numToAppend := mathutil.Min(len(resultTask.rows)-resultTask.cursor, e.maxChunkSize-req.NumRows())
 			req.AppendRows(resultTask.rows[resultTask.cursor : resultTask.cursor+numToAppend])
 			resultTask.cursor += numToAppend
 			if req.NumRows() >= e.maxChunkSize {
