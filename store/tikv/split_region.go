@@ -296,8 +296,7 @@ func (s *SplitRegionHelper) scatterRegion(bo *Backoffer, regionID uint64, tableI
 		if err == nil {
 			break
 		}
-		fmt.Printf("pd rpc error: %v  --\n\n", err.Error())
-		err = bo.Backoff(boWaitScatterRegion, errors.New(err.Error()))
+		err = bo.Backoff(boScatterRegion, errors.New(err.Error()))
 		if err != nil {
 			return errors.Trace(err)
 		}
