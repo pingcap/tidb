@@ -17,7 +17,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/util/execdetails"
 	"math"
 	"sync"
 	"sync/atomic"
@@ -31,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/stringutil"
 	pd "github.com/tikv/pd/client"
@@ -39,6 +39,7 @@ import (
 
 const splitBatchRegionLimit = 16
 
+// SplitRegionHelper uses to split regions.
 type SplitRegionHelper struct {
 	*tikvStore
 
@@ -46,42 +47,6 @@ type SplitRegionHelper struct {
 		sync.Mutex
 		stats *SnapshotRuntimeStats
 	}
-}
-
-func NewSplitRegionHelper(store kv.Storage, collectStats bool) *SplitRegionHelper {
-	s, ok := store.(*tikvStore)
-	if !ok {
-		return nil
-	}
-	helper := &SplitRegionHelper{tikvStore: s}
-	if collectStats {
-		helper.mu.stats = &SnapshotRuntimeStats{
-			rpcStats: NewRegionRequestRuntimeStats(),
-		}
-	}
-	return helper
-}
-
-func (s *SplitRegionHelper) GetRuntimeStats() execdetails.RuntimeStats {
-	return s.mu.stats
-}
-
-func (s *SplitRegionHelper) recordBackoffInfo(bo *Backoffer) {
-	if s.mu.stats == nil || bo.totalSleep == 0 {
-		return
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.mu.stats.recordBackoffInfo(bo)
-}
-
-func (s *SplitRegionHelper) mergeRegionRequestStats(stats map[tikvrpc.CmdType]*RPCRuntimeStats) {
-	if s.mu.stats == nil {
-		return
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.mu.stats.mergeRegionRequestStats(stats)
 }
 
 func equalRegionStartKey(key, regionStartKey []byte) bool {
@@ -120,7 +85,10 @@ func (s *SplitRegionHelper) splitBatchRegionsReq(bo *Backoffer, keys [][]byte, s
 	for _, batch1 := range batches {
 		go func(b batch) {
 			backoffer, cancel := bo.Fork()
-			defer cancel()
+			defer func() {
+				cancel()
+				s.recordBackoffInfo(bo)
+			}()
 
 			util.WithRecovery(func() {
 				select {
@@ -167,10 +135,7 @@ func (s *SplitRegionHelper) batchSendSingleRegion(bo *Backoffer, batch batch, sc
 	var rpcStats map[tikvrpc.CmdType]*RPCRuntimeStats
 	if s.mu.stats != nil {
 		rpcStats = make(map[tikvrpc.CmdType]*RPCRuntimeStats)
-		defer func() {
-			s.mergeRegionRequestStats(rpcStats)
-			s.recordBackoffInfo(bo)
-		}()
+		defer s.mergeRegionRequestStats(rpcStats)
 	}
 
 	req := tikvrpc.NewRequest(tikvrpc.CmdSplitRegion, &kvrpcpb.SplitRegionRequest{
@@ -179,7 +144,8 @@ func (s *SplitRegionHelper) batchSendSingleRegion(bo *Backoffer, batch batch, sc
 		Priority: kvrpcpb.CommandPri_Normal,
 	})
 
-	sender := NewRegionRequestSenderWithStats(s.regionCache, s.client, rpcStats)
+	sender := NewRegionRequestSender(s.regionCache, s.client)
+	sender.Stats = rpcStats
 	resp, err := sender.SendReq(bo, req, batch.regionID, readTimeoutShort)
 
 	batchResp := singleBatchResp{resp: resp}
@@ -259,6 +225,7 @@ func (s *tikvStore) SplitRegions(ctx context.Context, splitKeys [][]byte, scatte
 // SplitRegions splits regions by splitKeys.
 func (s *SplitRegionHelper) SplitRegions(ctx context.Context, splitKeys [][]byte, scatter bool, tableID *int64) (regionIDs []uint64, err error) {
 	bo := NewBackofferWithVars(ctx, int(math.Min(float64(len(splitKeys))*splitRegionBackoff, maxSplitRegionsBackoff)), nil)
+	defer s.recordBackoffInfo(bo)
 	resp, err := s.splitBatchRegionsReq(bo, splitKeys, scatter, tableID)
 	regionIDs = make([]uint64, 0, len(splitKeys))
 	if resp != nil && resp.Resp != nil {
@@ -361,11 +328,7 @@ func (s *SplitRegionHelper) WaitScatterRegionFinish(ctx context.Context, regionI
 		zap.Uint64("regionID", regionID), zap.Int("backoff(ms)", backOff))
 
 	bo := NewBackofferWithVars(ctx, backOff, nil)
-	if s.mu.stats != nil {
-		defer func() {
-			s.recordBackoffInfo(bo)
-		}()
-	}
+	defer s.recordBackoffInfo(bo)
 	logFreq := 0
 	for {
 		start := time.Now()
@@ -417,11 +380,7 @@ func (s *tikvStore) CheckRegionInScattering(regionID uint64) (bool, error) {
 // CheckRegionInScattering uses to check whether scatter region finished.
 func (s *SplitRegionHelper) CheckRegionInScattering(regionID uint64) (bool, error) {
 	bo := NewBackofferWithVars(context.Background(), locateRegionMaxBackoff, nil)
-	if s.mu.stats != nil {
-		defer func() {
-			s.mu.stats.recordBackoffInfo(bo)
-		}()
-	}
+	defer s.recordBackoffInfo(bo)
 	for {
 		start := time.Now()
 		resp, err := s.pdClient.GetOperator(context.Background(), regionID)
@@ -444,4 +403,45 @@ func (s *SplitRegionHelper) CheckRegionInScattering(regionID uint64) (bool, erro
 			return true, errors.Trace(err)
 		}
 	}
+}
+
+// NewSplitRegionHelper returns a new SplitRegionHelper.
+func NewSplitRegionHelper(store kv.Storage, collectStats bool) *SplitRegionHelper {
+	s, ok := store.(*tikvStore)
+	if !ok {
+		return nil
+	}
+	helper := &SplitRegionHelper{tikvStore: s}
+	if collectStats {
+		helper.mu.stats = &SnapshotRuntimeStats{
+			rpcStats: NewRegionRequestRuntimeStats(),
+		}
+	}
+	return helper
+}
+
+// GetRuntimeStats returns the runtime stats.
+func (s *SplitRegionHelper) GetRuntimeStats() execdetails.RuntimeStats {
+	if s.mu.stats == nil {
+		return nil
+	}
+	return s.mu.stats
+}
+
+func (s *SplitRegionHelper) recordBackoffInfo(bo *Backoffer) {
+	if s.mu.stats == nil || bo.totalSleep == 0 {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.mu.stats.recordBackoffInfo(bo)
+}
+
+func (s *SplitRegionHelper) mergeRegionRequestStats(stats map[tikvrpc.CmdType]*RPCRuntimeStats) {
+	if s.mu.stats == nil || len(stats) == 0 {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.mu.stats.mergeRegionRequestStats(stats)
 }

@@ -193,7 +193,7 @@ func (t backoffType) String() string {
 	case boMaxTsNotSynced:
 		return "maxTsNotSynced"
 	case boScatterRegion:
-		return "ScatterRegion"
+		return "scatterRegion"
 	case boWaitScatterRegion:
 		return "waitScatterRegion"
 	}

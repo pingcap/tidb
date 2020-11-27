@@ -215,15 +215,6 @@ func NewRegionRequestSender(regionCache *RegionCache, client Client) *RegionRequ
 	}
 }
 
-// NewRegionRequestSender creates a new sender with runtime stats
-func NewRegionRequestSenderWithStats(regionCache *RegionCache, client Client, stats map[tikvrpc.CmdType]*RPCRuntimeStats) *RegionRequestSender {
-	return &RegionRequestSender{
-		regionCache:               regionCache,
-		client:                    client,
-		RegionRequestRuntimeStats: RegionRequestRuntimeStats{stats},
-	}
-}
-
 // SendReq sends a request to tikv server.
 func (s *RegionRequestSender) SendReq(bo *Backoffer, req *tikvrpc.Request, regionID RegionVerID, timeout time.Duration) (*tikvrpc.Response, error) {
 	resp, _, err := s.SendReqCtx(bo, req, regionID, timeout, kv.TiKV)

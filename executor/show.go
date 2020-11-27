@@ -1531,7 +1531,7 @@ func (e *ShowExec) fetchShowTableRegions() error {
 	if splitHelper == nil {
 		return nil
 	}
-	if splitHelper.GetRuntimeStats() != nil {
+	if e.runtimeStats != nil && splitHelper.GetRuntimeStats() != nil {
 		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, splitHelper.GetRuntimeStats())
 	}
 

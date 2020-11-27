@@ -18,7 +18,6 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
-	"github.com/pingcap/tidb/util/execdetails"
 	"math"
 	"time"
 
@@ -37,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
@@ -105,17 +105,18 @@ const checkScatterRegionFinishBackOff = 50
 // splitIndexRegion is used to split index regions.
 func (e *SplitIndexRegionExec) splitIndexRegion(ctx context.Context) error {
 	store := e.ctx.GetStore()
-	s := tikv.NewSplitRegionHelper(store, e.runtimeStats != nil)
-	if s == nil {
+	splitHelper := tikv.NewSplitRegionHelper(store, e.stats != nil)
+	if splitHelper == nil {
 		return nil
 	}
-	if s.GetRuntimeStats() != nil {
-		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, s.GetRuntimeStats())
+	if e.stats != nil && splitHelper.GetRuntimeStats() != nil {
+		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, splitHelper.GetRuntimeStats())
 	}
+
 	start := time.Now()
 	ctxWithTimeout, cancel := context.WithTimeout(ctx, e.ctx.GetSessionVars().GetSplitRegionTimeout())
 	defer cancel()
-	regionIDs, err := s.SplitRegions(ctxWithTimeout, e.splitIdxKeys, true, &e.tableInfo.ID)
+	regionIDs, err := splitHelper.SplitRegions(ctxWithTimeout, e.splitIdxKeys, true, &e.tableInfo.ID)
 	if err != nil {
 		logutil.BgLogger().Warn("split table index region failed",
 			zap.String("table", e.tableInfo.Name.L),
@@ -134,7 +135,7 @@ func (e *SplitIndexRegionExec) splitIndexRegion(ctx context.Context) error {
 		return nil
 	}
 	scatterStart := time.Now()
-	e.finishScatterNum = waitScatterRegionFinish(ctxWithTimeout, e.ctx, start, s, regionIDs, e.tableInfo.Name.L, e.indexInfo.Name.L)
+	e.finishScatterNum = waitScatterRegionFinish(ctxWithTimeout, e.ctx, start, splitHelper, regionIDs, e.tableInfo.Name.L, e.indexInfo.Name.L)
 	if e.stats != nil {
 		e.stats.WaitScatterFinish = time.Since(scatterStart)
 	}
@@ -398,19 +399,19 @@ func (e *SplitTableRegionExec) Next(ctx context.Context, chk *chunk.Chunk) error
 
 func (e *SplitTableRegionExec) splitTableRegion(ctx context.Context) error {
 	store := e.ctx.GetStore()
-	s := tikv.NewSplitRegionHelper(store, e.runtimeStats != nil)
-	if s == nil {
+	splitHelper := tikv.NewSplitRegionHelper(store, e.stats != nil)
+	if splitHelper == nil {
 		return nil
 	}
-	if s.GetRuntimeStats() != nil {
-		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, s.GetRuntimeStats())
+	if e.stats != nil && splitHelper.GetRuntimeStats() != nil {
+		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, splitHelper.GetRuntimeStats())
 	}
 
 	start := time.Now()
 	ctxWithTimeout, cancel := context.WithTimeout(ctx, e.ctx.GetSessionVars().GetSplitRegionTimeout())
 	defer cancel()
 
-	regionIDs, err := s.SplitRegions(ctxWithTimeout, e.splitKeys, true, &e.tableInfo.ID)
+	regionIDs, err := splitHelper.SplitRegions(ctxWithTimeout, e.splitKeys, true, &e.tableInfo.ID)
 	if err != nil {
 		logutil.BgLogger().Warn("split table region failed",
 			zap.String("table", e.tableInfo.Name.L),
@@ -428,7 +429,7 @@ func (e *SplitTableRegionExec) splitTableRegion(ctx context.Context) error {
 		return nil
 	}
 	scatterStart := time.Now()
-	e.finishScatterNum = waitScatterRegionFinish(ctxWithTimeout, e.ctx, start, s, regionIDs, e.tableInfo.Name.L, "")
+	e.finishScatterNum = waitScatterRegionFinish(ctxWithTimeout, e.ctx, start, splitHelper, regionIDs, e.tableInfo.Name.L, "")
 	if e.stats != nil {
 		e.stats.WaitScatterFinish = time.Since(scatterStart)
 	}
@@ -877,7 +878,7 @@ func getRegionInfo(store tikv.Storage, regions []regionMeta) ([]regionMeta, erro
 	return regions, nil
 }
 
-// InsertRuntimeStat record the stat about insert and check
+// SplitRuntimeStat record the stats of split region.
 type SplitRuntimeStat struct {
 	SplitKeyNum       int
 	SplitRegionNum    int
@@ -885,6 +886,7 @@ type SplitRuntimeStat struct {
 	WaitScatterFinish time.Duration
 }
 
+// String implements the RuntimeStats interface.
 func (e *SplitRuntimeStat) String() string {
 	return fmt.Sprintf("split_and_scatter: %s, wait_scatter_finish: %s, split_keys: %v, split_regions: %v",
 		execdetails.FormatDuration(e.SplitAndScatter), execdetails.FormatDuration(e.WaitScatterFinish), e.SplitKeyNum, e.SplitRegionNum)

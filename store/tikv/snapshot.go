@@ -683,22 +683,22 @@ type SnapshotRuntimeStats struct {
 	backoffTimes   map[backoffType]int
 }
 
-func (s *SnapshotRuntimeStats) recordBackoffInfo(bo *Backoffer) {
-	if s.backoffSleepMS == nil {
-		s.backoffSleepMS = bo.backoffSleepMS
-		s.backoffTimes = bo.backoffTimes
+func (rs *SnapshotRuntimeStats) recordBackoffInfo(bo *Backoffer) {
+	if rs.backoffSleepMS == nil {
+		rs.backoffSleepMS = bo.backoffSleepMS
+		rs.backoffTimes = bo.backoffTimes
 		return
 	}
 	for k, v := range bo.backoffSleepMS {
-		s.backoffSleepMS[k] += v
+		rs.backoffSleepMS[k] += v
 	}
 	for k, v := range bo.backoffTimes {
-		s.backoffTimes[k] += v
+		rs.backoffTimes[k] += v
 	}
 }
 
 func (rs *SnapshotRuntimeStats) mergeRegionRequestStats(stats map[tikvrpc.CmdType]*RPCRuntimeStats) {
-	if rs == nil || len(stats) == 0 {
+	if len(stats) == 0 {
 		return
 	}
 	if rs.rpcStats.Stats == nil {
