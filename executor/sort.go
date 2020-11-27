@@ -19,6 +19,7 @@ import (
 	"errors"
 	"sort"
 
+	"github.com/cznic/mathutil"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
@@ -407,25 +408,13 @@ func (e *TopNExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if e.Idx >= len(e.rowPtrs) {
 		return nil
 	}
-	/**
-	for !req.IsFull() && e.Idx < len(e.rowPtrs) {
-		row := e.rowChunks.GetRow(e.rowPtrs[e.Idx])
-		req.AppendRow(row)
-		e.Idx++
-	}**/
 	if !req.IsFull() && e.Idx < len(e.rowPtrs) {
-		numToAppend := len(e.rowPtrs) - e.Idx
-		requiredRows := req.RequiredRows() - req.NumRows()
-		if numToAppend > requiredRows {
-			numToAppend = requiredRows
-		}
+		numToAppend := mathutil.Min(len(e.rowPtrs)-e.Idx, req.RequiredRows()-req.NumRows())
 		rows := make([]chunk.Row, numToAppend)
-		index := 0
-		for index < numToAppend {
+		for index := 0; index < numToAppend; index++ {
 			row := e.rowChunks.GetRow(e.rowPtrs[e.Idx])
 			rows[index] = row
 			e.Idx++
-			index++
 		}
 		req.AppendRows(rows)
 	}
