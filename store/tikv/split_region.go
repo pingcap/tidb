@@ -296,7 +296,8 @@ func (s *SplitRegionHelper) scatterRegion(bo *Backoffer, regionID uint64, tableI
 		if err == nil {
 			break
 		}
-		err = bo.Backoff(BoPDRPC, errors.New(err.Error()))
+		fmt.Printf("pd rpc error: %v  --\n\n", err.Error())
+		err = bo.Backoff(boWaitScatterRegion, errors.New(err.Error()))
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -361,6 +362,11 @@ func (s *SplitRegionHelper) WaitScatterRegionFinish(ctx context.Context, regionI
 		zap.Uint64("regionID", regionID), zap.Int("backoff(ms)", backOff))
 
 	bo := NewBackofferWithVars(ctx, backOff, nil)
+	if s.mu.stats != nil {
+		defer func() {
+			s.recordBackoffInfo(bo)
+		}()
+	}
 	logFreq := 0
 	for {
 		start := time.Now()
@@ -393,9 +399,9 @@ func (s *SplitRegionHelper) WaitScatterRegionFinish(ctx context.Context, regionI
 			logFreq++
 		}
 		if err != nil {
-			err = bo.Backoff(BoRegionMiss, errors.New(err.Error()))
+			err = bo.Backoff(BoPDRPC, errors.New(err.Error()))
 		} else {
-			err = bo.Backoff(BoRegionMiss, errors.New("wait scatter region timeout"))
+			err = bo.Backoff(boWaitScatterRegion, errors.New("wait scatter region timeout"))
 		}
 		if err != nil {
 			return errors.Trace(err)

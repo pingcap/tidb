@@ -66,7 +66,7 @@ func (t backoffType) metric() prometheus.Observer {
 		return tikvBackoffHistogramLockFast
 	case BoPDRPC:
 		return tikvBackoffHistogramPD
-	case BoRegionMiss:
+	case BoRegionMiss, boWaitScatterRegion:
 		return tikvBackoffHistogramRegionMiss
 	case boServerBusy:
 		return tikvBackoffHistogramServerBusy
@@ -137,6 +137,7 @@ const (
 	boTxnNotFound
 	boStaleCmd
 	boMaxTsNotSynced
+	boWaitScatterRegion
 )
 
 func (t backoffType) createFn(vars *kv.Variables) func(context.Context, int) int {
@@ -163,6 +164,9 @@ func (t backoffType) createFn(vars *kv.Variables) func(context.Context, int) int
 		return NewBackoffFn(2, 1000, NoJitter)
 	case boMaxTsNotSynced:
 		return NewBackoffFn(2, 500, NoJitter)
+	case boWaitScatterRegion:
+		// change base time to 2ms, because it may recover soon.
+		return NewBackoffFn(2, 100, NoJitter)
 	}
 	return nil
 }
@@ -187,6 +191,8 @@ func (t backoffType) String() string {
 		return "txnNotFound"
 	case boMaxTsNotSynced:
 		return "maxTsNotSynced"
+	case boWaitScatterRegion:
+		return "waitScatterRegion"
 	}
 	return ""
 }
@@ -199,7 +205,7 @@ func (t backoffType) TError() error {
 		return ErrResolveLockTimeout
 	case BoPDRPC:
 		return ErrPDServerTimeout
-	case BoRegionMiss:
+	case BoRegionMiss, boWaitScatterRegion:
 		return ErrRegionUnavailable
 	case boServerBusy:
 		return ErrTiKVServerBusy
