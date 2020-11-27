@@ -978,6 +978,13 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 
 	// Point get another database.
 	tk.MustQuery("select variable_value from mysql.tidb where variable_name = 'system_tz'")
+	// Test for Encode plan cache.
+	p1 := tk.Se.GetSessionVars().StmtCtx.GetEncodedPlan()
+	c.Assert(len(p1) > 0, IsTrue)
+	rows := tk.MustQuery("select tidb_decode_plan('" + p1 + "');").Rows()
+	c.Assert(len(rows), Equals, 1)
+	c.Assert(len(rows[0]), Equals, 1)
+	c.Assert(rows[0][0], Matches, ".*\n.*Point_Get.*table.tidb, index.PRIMARY.VARIABLE_NAME.*")
 	tk.MustQuery(`select table_names
 			from information_schema.statements_summary
 			where digest_text like 'select variable_value%' and schema_name='test'`,
@@ -985,6 +992,9 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 
 	// Test `create database`.
 	tk.MustExec("create database if not exists test")
+	// Test for Encode plan cache.
+	p2 := tk.Se.GetSessionVars().StmtCtx.GetEncodedPlan()
+	c.Assert(p2, Equals, "")
 	tk.MustQuery(`select table_names
 			from information_schema.statements_summary
 			where digest_text like 'create database%' and schema_name='test'`,
@@ -1428,7 +1438,7 @@ func (s *testTableSuite) TestPlacementPolicy(c *C) {
 	}
 	bundles[bundleID] = bundle
 	expected := fmt.Sprintf(`%s 3 0 test test_placement p0 <nil> voter 3 "+zone=bj"`, bundleID)
-	tk.MustQuery(`select group_id, group_index, rule_id, schema_name, table_name, partition_name, index_name, 
+	tk.MustQuery(`select group_id, group_index, rule_id, schema_name, table_name, partition_name, index_name,
 		role, replicas, constraints from information_schema.placement_policy`).Check(testkit.Rows(expected))
 
 	rule1 := bundle.Rules[0].Clone()
