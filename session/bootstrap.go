@@ -434,6 +434,10 @@ const (
 	version53 = 53
 	// version54 writes a variable `mem_quota_query` to mysql.tidb if it's a cluster upgraded from v3.0.x to v4.0.9.
 	version54 = 54
+	// version55 fixes the bug that upgradeToVer48 would be missed when upgrading from v4.0 to a new version
+	version55 = 55
+	// version56 fixes the bug that upgradeToVer49 would be missed when upgrading from v4.0 to a new version
+	version56 = 56
 )
 
 var (
@@ -491,6 +495,8 @@ var (
 		upgradeToVer52,
 		upgradeToVer53,
 		upgradeToVer54,
+		upgradeToVer55,
+		upgradeToVer56,
 	}
 )
 
@@ -1224,6 +1230,67 @@ func upgradeToVer54(s Session, ver int64) {
 	if ver <= version38 {
 		writeMemoryQuotaQuery(s)
 	}
+}
+
+// When cherry-pick upgradeToVer52 to v4.0, we wrongly name it upgradeToVer48.
+// If we upgrade from v4.0 to a newer version, the real upgradeToVer48 will be missed.
+// So we redo upgradeToVer48 here to make sure the upgrading from v4.0 succeed.
+func upgradeToVer55(s Session, ver int64) {
+	if ver >= version55 {
+		return
+	}
+	defValues := map[string]string{
+		variable.TiDBIndexLookupConcurrency:     "4",
+		variable.TiDBIndexLookupJoinConcurrency: "4",
+		variable.TiDBHashAggFinalConcurrency:    "4",
+		variable.TiDBHashAggPartialConcurrency:  "4",
+		variable.TiDBWindowConcurrency:          "4",
+		variable.TiDBProjectionConcurrency:      "4",
+		variable.TiDBHashJoinConcurrency:        "5",
+	}
+	names := make([]string, 0, len(defValues))
+	for n := range defValues {
+		names = append(names, n)
+	}
+
+	selectSQL := "select HIGH_PRIORITY * from mysql.global_variables where variable_name in ('" + strings.Join(names, quoteCommaQuote) + "')"
+	ctx := context.Background()
+	rs, err := s.Execute(ctx, selectSQL)
+	terror.MustNil(err)
+	r := rs[0]
+	defer terror.Call(r.Close)
+	req := r.NewChunk()
+	it := chunk.NewIterator4Chunk(req)
+	err = r.Next(ctx, req)
+	for err == nil && req.NumRows() != 0 {
+		for row := it.Begin(); row != it.End(); row = it.Next() {
+			n := strings.ToLower(row.GetString(0))
+			v := row.GetString(1)
+			if defValue, ok := defValues[n]; !ok || defValue != v {
+				return
+			}
+		}
+		err = r.Next(ctx, req)
+	}
+	terror.MustNil(err)
+
+	mustExecute(s, "BEGIN")
+	v := strconv.Itoa(variable.ConcurrencyUnset)
+	sql := fmt.Sprintf("UPDATE %s.%s SET variable_value='%%s' WHERE variable_name='%%s'", mysql.SystemDB, mysql.GlobalVariablesTable)
+	for _, name := range names {
+		mustExecute(s, fmt.Sprintf(sql, v, name))
+	}
+	mustExecute(s, "COMMIT")
+}
+
+// When cherry-pick upgradeToVer54 to v4.0, we wrongly name it upgradeToVer49.
+// If we upgrade from v4.0 to a newer version, the real upgradeToVer49 will be missed.
+// So we redo upgradeToVer49 here to make sure the upgrading from v4.0 succeed.
+func upgradeToVer56(s Session, ver int64) {
+	if ver >= version56 {
+		return
+	}
+	doReentrantDDL(s, CreateStatsExtended)
 }
 
 func writeMemoryQuotaQuery(s Session) {
