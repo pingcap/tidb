@@ -88,6 +88,10 @@ type RPCRuntimeStats struct {
 	Consume int64
 }
 
+func (r *RegionRequestRuntimeStats) record(cmd tikvrpc.CmdType, d time.Duration) {
+	recordRegionRequestRuntimeStats(r.Stats, cmd, d)
+}
+
 // String implements fmt.Stringer interface.
 func (r *RegionRequestRuntimeStats) String() string {
 	var buf bytes.Buffer
@@ -208,6 +212,15 @@ func NewRegionRequestSender(regionCache *RegionCache, client Client) *RegionRequ
 	return &RegionRequestSender{
 		regionCache: regionCache,
 		client:      client,
+	}
+}
+
+// NewRegionRequestSender creates a new sender with runtime stats
+func NewRegionRequestSenderWithStats(regionCache *RegionCache, client Client, stats map[tikvrpc.CmdType]*RPCRuntimeStats) *RegionRequestSender {
+	return &RegionRequestSender{
+		regionCache:               regionCache,
+		client:                    client,
+		RegionRequestRuntimeStats: RegionRequestRuntimeStats{stats},
 	}
 }
 

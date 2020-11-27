@@ -105,11 +105,13 @@ const checkScatterRegionFinishBackOff = 50
 // splitIndexRegion is used to split index regions.
 func (e *SplitIndexRegionExec) splitIndexRegion(ctx context.Context) error {
 	store := e.ctx.GetStore()
-	s, ok := store.(kv.SplittableStore)
-	if !ok {
+	s := tikv.NewSplitRegionHelper(store, e.runtimeStats != nil)
+	if s == nil {
 		return nil
 	}
-
+	if stats := s.GetRuntimeStats(); stats != nil {
+		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, stats)
+	}
 	start := time.Now()
 	ctxWithTimeout, cancel := context.WithTimeout(ctx, e.ctx.GetSessionVars().GetSplitRegionTimeout())
 	defer cancel()
@@ -396,9 +398,12 @@ func (e *SplitTableRegionExec) Next(ctx context.Context, chk *chunk.Chunk) error
 
 func (e *SplitTableRegionExec) splitTableRegion(ctx context.Context) error {
 	store := e.ctx.GetStore()
-	s, ok := store.(kv.SplittableStore)
-	if !ok {
+	s := tikv.NewSplitRegionHelper(store, e.runtimeStats != nil)
+	if s == nil {
 		return nil
+	}
+	if stats := s.GetRuntimeStats(); stats != nil {
+		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, stats)
 	}
 
 	start := time.Now()
@@ -430,7 +435,7 @@ func (e *SplitTableRegionExec) splitTableRegion(ctx context.Context) error {
 	return nil
 }
 
-func waitScatterRegionFinish(ctxWithTimeout context.Context, sctx sessionctx.Context, startTime time.Time, store kv.SplittableStore, regionIDs []uint64, tableName, indexName string) int {
+func waitScatterRegionFinish(ctxWithTimeout context.Context, sctx sessionctx.Context, startTime time.Time, s *tikv.SplitRegionHelper, regionIDs []uint64, tableName, indexName string) int {
 	remainMillisecond := 0
 	finishScatterNum := 0
 	for _, regionID := range regionIDs {
@@ -444,7 +449,7 @@ func waitScatterRegionFinish(ctxWithTimeout context.Context, sctx sessionctx.Con
 			remainMillisecond = int((sctx.GetSessionVars().GetSplitRegionTimeout().Seconds() - time.Since(startTime).Seconds()) * 1000)
 		}
 
-		err := store.WaitScatterRegionFinish(ctxWithTimeout, regionID, remainMillisecond)
+		err := s.WaitScatterRegionFinish(ctxWithTimeout, regionID, remainMillisecond)
 		if err == nil {
 			finishScatterNum++
 		} else {
@@ -666,7 +671,7 @@ type regionMeta struct {
 	approximateKeys int64
 }
 
-func getPhysicalTableRegions(physicalTableID int64, tableInfo *model.TableInfo, tikvStore tikv.Storage, s kv.SplittableStore, uniqueRegionMap map[uint64]struct{}) ([]regionMeta, error) {
+func getPhysicalTableRegions(physicalTableID int64, tableInfo *model.TableInfo, tikvStore tikv.Storage, splitHelper *tikv.SplitRegionHelper, uniqueRegionMap map[uint64]struct{}) ([]regionMeta, error) {
 	if uniqueRegionMap == nil {
 		uniqueRegionMap = make(map[uint64]struct{})
 	}
@@ -707,14 +712,14 @@ func getPhysicalTableRegions(physicalTableID int64, tableInfo *model.TableInfo, 
 		}
 		regions = append(regions, indexRegions...)
 	}
-	err = checkRegionsStatus(s, regions)
+	err = checkRegionsStatus(splitHelper, regions)
 	if err != nil {
 		return nil, err
 	}
 	return regions, nil
 }
 
-func getPhysicalIndexRegions(physicalTableID int64, indexInfo *model.IndexInfo, tikvStore tikv.Storage, s kv.SplittableStore, uniqueRegionMap map[uint64]struct{}) ([]regionMeta, error) {
+func getPhysicalIndexRegions(physicalTableID int64, indexInfo *model.IndexInfo, tikvStore tikv.Storage, splitHelper *tikv.SplitRegionHelper, uniqueRegionMap map[uint64]struct{}) ([]regionMeta, error) {
 	if uniqueRegionMap == nil {
 		uniqueRegionMap = make(map[uint64]struct{})
 	}
@@ -732,16 +737,16 @@ func getPhysicalIndexRegions(physicalTableID int64, indexInfo *model.IndexInfo, 
 	if err != nil {
 		return nil, err
 	}
-	err = checkRegionsStatus(s, indexRegions)
+	err = checkRegionsStatus(splitHelper, indexRegions)
 	if err != nil {
 		return nil, err
 	}
 	return indexRegions, nil
 }
 
-func checkRegionsStatus(store kv.SplittableStore, regions []regionMeta) error {
+func checkRegionsStatus(splitHelper *tikv.SplitRegionHelper, regions []regionMeta) error {
 	for i := range regions {
-		scattering, err := store.CheckRegionInScattering(regions[i].region.Id)
+		scattering, err := splitHelper.CheckRegionInScattering(regions[i].region.Id)
 		if err != nil {
 			return err
 		}

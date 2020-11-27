@@ -664,20 +664,7 @@ func (s *tikvSnapshot) recordBackoffInfo(bo *Backoffer) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.mu.stats == nil {
-		return
-	}
-	if s.mu.stats.backoffSleepMS == nil {
-		s.mu.stats.backoffSleepMS = bo.backoffSleepMS
-		s.mu.stats.backoffTimes = bo.backoffTimes
-		return
-	}
-	for k, v := range bo.backoffSleepMS {
-		s.mu.stats.backoffSleepMS[k] += v
-	}
-	for k, v := range bo.backoffTimes {
-		s.mu.stats.backoffTimes[k] += v
-	}
+	s.mu.stats.recordBackoffInfo(bo)
 }
 
 func (s *tikvSnapshot) mergeRegionRequestStats(stats map[tikvrpc.CmdType]*RPCRuntimeStats) {
@@ -686,19 +673,7 @@ func (s *tikvSnapshot) mergeRegionRequestStats(stats map[tikvrpc.CmdType]*RPCRun
 	if s.mu.stats == nil {
 		return
 	}
-	if s.mu.stats.rpcStats.Stats == nil {
-		s.mu.stats.rpcStats.Stats = stats
-		return
-	}
-	for k, v := range stats {
-		stat, ok := s.mu.stats.rpcStats.Stats[k]
-		if !ok {
-			s.mu.stats.rpcStats.Stats[k] = v
-			continue
-		}
-		stat.Count += v.Count
-		stat.Consume += v.Consume
-	}
+	s.mu.stats.mergeRegionRequestStats(stats)
 }
 
 // SnapshotRuntimeStats records the runtime stats of snapshot.
@@ -706,6 +681,31 @@ type SnapshotRuntimeStats struct {
 	rpcStats       RegionRequestRuntimeStats
 	backoffSleepMS map[backoffType]int
 	backoffTimes   map[backoffType]int
+}
+
+func (s *SnapshotRuntimeStats) recordBackoffInfo(bo *Backoffer) {
+	if s.backoffSleepMS == nil {
+		s.backoffSleepMS = bo.backoffSleepMS
+		s.backoffTimes = bo.backoffTimes
+		return
+	}
+	for k, v := range bo.backoffSleepMS {
+		s.backoffSleepMS[k] += v
+	}
+	for k, v := range bo.backoffTimes {
+		s.backoffTimes[k] += v
+	}
+}
+
+func (rs *SnapshotRuntimeStats) mergeRegionRequestStats(stats map[tikvrpc.CmdType]*RPCRuntimeStats) {
+	if rs == nil || len(stats) == 0 {
+		return
+	}
+	if rs.rpcStats.Stats == nil {
+		rs.rpcStats.Stats = stats
+		return
+	}
+	rs.rpcStats.Merge(RegionRequestRuntimeStats{Stats: stats})
 }
 
 // Tp implements the RuntimeStats interface.

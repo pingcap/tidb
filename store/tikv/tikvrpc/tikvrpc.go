@@ -81,6 +81,9 @@ const (
 	CmdDebugGetRegionProperties CmdType = 2048 + iota
 
 	CmdEmpty CmdType = 3072 + iota
+
+	CmdPDGetOperator CmdType = 4096 + iota
+	CmdPDScatterRegions
 )
 
 func (t CmdType) String() string {
@@ -161,6 +164,10 @@ func (t CmdType) String() string {
 		return "DebugGetRegionProperties"
 	case CmdTxnHeartBeat:
 		return "TxnHeartBeat"
+	case CmdPDGetOperator:
+		return "PDGetOperator"
+	case CmdPDScatterRegions:
+		return "PDScatterRegions"
 	}
 	return "Unknown"
 }

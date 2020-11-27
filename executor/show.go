@@ -41,7 +41,6 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/plugin"
@@ -1528,9 +1527,12 @@ func (e *ShowExec) fetchShowTableRegions() error {
 	if !ok {
 		return nil
 	}
-	splitStore, ok := store.(kv.SplittableStore)
-	if !ok {
+	splitHelper := tikv.NewSplitRegionHelper(store, e.runtimeStats != nil)
+	if splitHelper == nil {
 		return nil
+	}
+	if splitHelper.GetRuntimeStats() != nil {
+		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, splitHelper.GetRuntimeStats())
 	}
 
 	tb, err := e.getTable()
@@ -1566,9 +1568,9 @@ func (e *ShowExec) fetchShowTableRegions() error {
 		if indexInfo == nil {
 			return plannercore.ErrKeyDoesNotExist.GenWithStackByArgs(e.IndexName, tb.Meta().Name)
 		}
-		regions, err = getTableIndexRegions(indexInfo, physicalIDs, tikvStore, splitStore)
+		regions, err = getTableIndexRegions(indexInfo, physicalIDs, tikvStore, splitHelper)
 	} else {
-		regions, err = getTableRegions(tb, physicalIDs, tikvStore, splitStore)
+		regions, err = getTableRegions(tb, physicalIDs, tikvStore, splitHelper)
 	}
 
 	if err != nil {
@@ -1578,11 +1580,11 @@ func (e *ShowExec) fetchShowTableRegions() error {
 	return nil
 }
 
-func getTableRegions(tb table.Table, physicalIDs []int64, tikvStore tikv.Storage, splitStore kv.SplittableStore) ([]regionMeta, error) {
+func getTableRegions(tb table.Table, physicalIDs []int64, tikvStore tikv.Storage, splitHelper *tikv.SplitRegionHelper) ([]regionMeta, error) {
 	regions := make([]regionMeta, 0, len(physicalIDs))
 	uniqueRegionMap := make(map[uint64]struct{})
 	for _, id := range physicalIDs {
-		rs, err := getPhysicalTableRegions(id, tb.Meta(), tikvStore, splitStore, uniqueRegionMap)
+		rs, err := getPhysicalTableRegions(id, tb.Meta(), tikvStore, splitHelper, uniqueRegionMap)
 		if err != nil {
 			return nil, err
 		}
@@ -1591,11 +1593,11 @@ func getTableRegions(tb table.Table, physicalIDs []int64, tikvStore tikv.Storage
 	return regions, nil
 }
 
-func getTableIndexRegions(indexInfo *model.IndexInfo, physicalIDs []int64, tikvStore tikv.Storage, splitStore kv.SplittableStore) ([]regionMeta, error) {
+func getTableIndexRegions(indexInfo *model.IndexInfo, physicalIDs []int64, tikvStore tikv.Storage, splitHelper *tikv.SplitRegionHelper) ([]regionMeta, error) {
 	regions := make([]regionMeta, 0, len(physicalIDs))
 	uniqueRegionMap := make(map[uint64]struct{})
 	for _, id := range physicalIDs {
-		rs, err := getPhysicalIndexRegions(id, indexInfo, tikvStore, splitStore, uniqueRegionMap)
+		rs, err := getPhysicalIndexRegions(id, indexInfo, tikvStore, splitHelper, uniqueRegionMap)
 		if err != nil {
 			return nil, err
 		}
