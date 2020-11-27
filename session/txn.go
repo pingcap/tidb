@@ -329,6 +329,10 @@ func (txnFailFuture) Wait() (uint64, error) {
 	return 0, errors.New("mock get timestamp fail")
 }
 
+func (txnFailFuture) GetTxnScope() string {
+	return oracle.GlobalTxnScope
+}
+
 // txnFuture is a promise, which promises to return a txn in future.
 type txnFuture struct {
 	future oracle.Future
@@ -338,17 +342,17 @@ type txnFuture struct {
 func (tf *txnFuture) wait() (kv.Transaction, error) {
 	startTS, err := tf.future.Wait()
 	if err == nil {
-		return tf.store.BeginWithStartTS(startTS)
+		return tf.store.BeginWithStartTS(tf.future.GetTxnScope(), startTS)
 	} else if config.GetGlobalConfig().Store == "unistore" {
 		return nil, err
 	}
 
 	logutil.BgLogger().Warn("wait tso failed", zap.Error(err))
 	// It would retry get timestamp.
-	return tf.store.Begin()
+	return tf.store.BeginWithTxnScope(tf.future.GetTxnScope())
 }
 
-func (s *session) getTxnFuture(ctx context.Context) *txnFuture {
+func (s *session) getTxnFuture(ctx context.Context, txnScope string) *txnFuture {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("session.getTxnFuture", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
@@ -358,9 +362,9 @@ func (s *session) getTxnFuture(ctx context.Context) *txnFuture {
 	oracleStore := s.store.GetOracle()
 	var tsFuture oracle.Future
 	if s.sessionVars.LowResolutionTSO {
-		tsFuture = oracleStore.GetLowResolutionTimestampAsync(ctx, &oracle.Option{TxnScope: oracle.GlobalTxnScope})
+		tsFuture = oracleStore.GetLowResolutionTimestampAsync(ctx, &oracle.Option{TxnScope: txnScope})
 	} else {
-		tsFuture = oracleStore.GetTimestampAsync(ctx, &oracle.Option{TxnScope: oracle.GlobalTxnScope})
+		tsFuture = oracleStore.GetTimestampAsync(ctx, &oracle.Option{TxnScope: txnScope})
 	}
 	ret := &txnFuture{future: tsFuture, store: s.store}
 	failpoint.InjectContext(ctx, "mockGetTSFail", func() {
@@ -372,11 +376,11 @@ func (s *session) getTxnFuture(ctx context.Context) *txnFuture {
 // HasDirtyContent checks whether there's dirty update on the given table.
 // Put this function here is to avoid cycle import.
 func (s *session) HasDirtyContent(tid int64) bool {
-	if s.txn.Transaction == nil {
+	if s.curTxn.Transaction == nil {
 		return false
 	}
 	seekKey := tablecodec.EncodeTablePrefix(tid)
-	it, err := s.txn.GetMemBuffer().Iter(seekKey, nil)
+	it, err := s.curTxn.GetMemBuffer().Iter(seekKey, nil)
 	terror.Log(err)
 	return it.Valid() && bytes.HasPrefix(it.Key(), seekKey)
 }
@@ -384,14 +388,11 @@ func (s *session) HasDirtyContent(tid int64) bool {
 // StmtCommit implements the sessionctx.Context interface.
 func (s *session) StmtCommit() {
 	defer func() {
-		s.txn.cleanup()
+		s.curTxn.cleanup()
 	}()
-
-	st := &s.txn
-	st.flushStmtBuf()
-
+	s.curTxn.flushStmtBuf()
 	// Need to flush binlog.
-	for tableID, delta := range st.mutations {
+	for tableID, delta := range s.curTxn.mutations {
 		mutation := getBinlogMutation(s, tableID)
 		mergeToMutation(mutation, delta)
 	}
@@ -399,14 +400,13 @@ func (s *session) StmtCommit() {
 
 // StmtRollback implements the sessionctx.Context interface.
 func (s *session) StmtRollback() {
-	s.txn.cleanup()
+	s.curTxn.cleanup()
 }
 
 // StmtGetMutation implements the sessionctx.Context interface.
 func (s *session) StmtGetMutation(tableID int64) *binlog.TableMutation {
-	st := &s.txn
-	if _, ok := st.mutations[tableID]; !ok {
-		st.mutations[tableID] = &binlog.TableMutation{TableId: tableID}
+	if _, ok := s.curTxn.mutations[tableID]; !ok {
+		s.curTxn.mutations[tableID] = &binlog.TableMutation{TableId: tableID}
 	}
-	return st.mutations[tableID]
+	return s.curTxn.mutations[tableID]
 }

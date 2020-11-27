@@ -137,7 +137,7 @@ func (s *testAsyncCommitSuite) SetUpTest(c *C) {
 }
 
 func (s *testAsyncCommitSuite) lockKeys(c *C, keys, values [][]byte, primaryKey, primaryValue []byte, commitPrimary bool) (uint64, uint64) {
-	txn, err := newTiKVTxn(s.store)
+	txn, err := newTiKVTxn(s.store, oracle.GlobalTxnScope)
 	c.Assert(err, IsNil)
 	for i, k := range keys {
 		if len(values[i]) > 0 {

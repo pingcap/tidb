@@ -54,7 +54,7 @@ func NewInjectedStore(store Storage, cfg *InjectionConfig) Storage {
 	}
 }
 
-// Begin creates an injected Transaction.
+// Begin creates an injected global Transaction.
 func (s *InjectedStore) Begin() (Transaction, error) {
 	txn, err := s.Storage.Begin()
 	return &InjectedTransaction{
@@ -63,9 +63,18 @@ func (s *InjectedStore) Begin() (Transaction, error) {
 	}, err
 }
 
+// BeginWithTxnScope creates an injected Transaction with the given txn scope.
+func (s *InjectedStore) BeginWithTxnScope(txnScope string) (Transaction, error) {
+	txn, err := s.Storage.BeginWithTxnScope(txnScope)
+	return &InjectedTransaction{
+		Transaction: txn,
+		cfg:         s.cfg,
+	}, err
+}
+
 // BeginWithStartTS creates an injected Transaction with startTS.
-func (s *InjectedStore) BeginWithStartTS(startTS uint64) (Transaction, error) {
-	txn, err := s.Storage.BeginWithStartTS(startTS)
+func (s *InjectedStore) BeginWithStartTS(txnScope string, startTS uint64) (Transaction, error) {
+	txn, err := s.Storage.BeginWithStartTS(txnScope, startTS)
 	return &InjectedTransaction{
 		Transaction: txn,
 		cfg:         s.cfg,

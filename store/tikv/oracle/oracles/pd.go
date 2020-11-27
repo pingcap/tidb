@@ -99,6 +99,11 @@ func (f *tsFuture) Wait() (uint64, error) {
 	return ts, nil
 }
 
+// GetTxnScope implements the oracle.Future interface.
+func (f *tsFuture) GetTxnScope() string {
+	return f.txnScope
+}
+
 func (o *pdOracle) GetTimestampAsync(ctx context.Context, opt *oracle.Option) oracle.Future {
 	var ts pd.TSFuture
 	if opt.TxnScope == oracle.GlobalTxnScope || opt.TxnScope == "" {
@@ -200,13 +205,19 @@ func (o *pdOracle) Close() {
 
 // A future that resolves immediately to a low resolution timestamp.
 type lowResolutionTsFuture struct {
-	ts  uint64
-	err error
+	txnScope string
+	ts       uint64
+	err      error
 }
 
 // Wait implements the oracle.Future interface.
 func (f lowResolutionTsFuture) Wait() (uint64, error) {
 	return f.ts, f.err
+}
+
+// GetTxnScope implements the oracle.Future interface.
+func (f lowResolutionTsFuture) GetTxnScope() string {
+	return f.txnScope
 }
 
 // GetLowResolutionTimestamp gets a new increasing time.
@@ -222,12 +233,14 @@ func (o *pdOracle) GetLowResolutionTimestampAsync(ctx context.Context, opt *orac
 	lastTS, ok := o.getLastTS(opt.TxnScope)
 	if !ok {
 		return lowResolutionTsFuture{
-			ts:  0,
-			err: errors.Errorf("get low resolution timestamp async fail, invalid txnScope = %s", opt.TxnScope),
+			txnScope: opt.TxnScope,
+			ts:       0,
+			err:      errors.Errorf("get low resolution timestamp async fail, invalid txnScope = %s", opt.TxnScope),
 		}
 	}
 	return lowResolutionTsFuture{
-		ts:  lastTS,
-		err: nil,
+		txnScope: opt.TxnScope,
+		ts:       lastTS,
+		err:      nil,
 	}
 }

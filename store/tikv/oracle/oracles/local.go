@@ -87,6 +87,11 @@ func (f *future) Wait() (uint64, error) {
 	return f.l.GetTimestamp(f.ctx, &oracle.Option{})
 }
 
+// GetTxnScope implements the oracle.Future interface.
+func (f *future) GetTxnScope() string {
+	return ""
+}
+
 // UntilExpired implement oracle.Oracle interface.
 func (l *localOracle) UntilExpired(lockTimeStamp, TTL uint64, opt *oracle.Option) int64 {
 	now := time.Now()

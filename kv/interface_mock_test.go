@@ -153,9 +153,13 @@ func (*mockTxn) IsPessimistic() bool {
 	return false
 }
 
+func (s *mockStorage) BeginWithTxnScope(txnScope string) (Transaction, error) {
+	return newMockTxn(), nil
+}
+
 // BeginWithStartTS begins a transaction with startTS.
-func (s *mockStorage) BeginWithStartTS(startTS uint64) (Transaction, error) {
-	return s.Begin()
+func (s *mockStorage) BeginWithStartTS(txnScope string, startTS uint64) (Transaction, error) {
+	return s.BeginWithTxnScope(txnScope)
 }
 
 func (s *mockStorage) GetSnapshot(ver Version) Snapshot {
@@ -174,6 +178,11 @@ func (s *mockStorage) UUID() string {
 
 // CurrentVersion returns current max committed version.
 func (s *mockStorage) CurrentVersion() (Version, error) {
+	return s.CurrentVersionWithTxnScope(oracle.GlobalTxnScope)
+}
+
+// CurrentVersion returns current max committed version with the given txn scope.
+func (s *mockStorage) CurrentVersionWithTxnScope(txnScope string) (Version, error) {
 	return NewVersion(1), nil
 }
 

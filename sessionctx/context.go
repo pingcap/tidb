@@ -28,16 +28,25 @@ import (
 
 // Context is an interface for transaction and executive args environment.
 type Context interface {
-	// NewTxn creates a new transaction for further execution.
+	// NewTxn creates a new global transaction for further execution.
 	// If old transaction is valid, it is committed first.
 	// It's used in BEGIN statement and DDL statements to commit old transaction.
-	NewTxn(context.Context) error
+	NewTxn(ctx context.Context) error
+	// NewLocalTxn creates a new local transaction for further execution.
+	// If old transaction is valid, it is committed first.
+	// It's used in BEGIN statement and DDL statements to commit old transaction.
+	NewLocalTxn(ctx context.Context, txnScope string) error
 
-	// Txn returns the current transaction which is created before executing a statement.
+	// Txn returns the current global transaction which is created before executing a statement.
 	// The returned kv.Transaction is not nil, but it maybe pending or invalid.
 	// If the active parameter is true, call this function will wait for the pending txn
 	// to become valid.
 	Txn(active bool) (kv.Transaction, error)
+	// LocalTxn returns the current local transaction which is created before executing a statement.
+	// The returned kv.Transaction is not nil, but it maybe pending or invalid.
+	// If the active parameter is true, call this function will wait for the pending txn
+	// to become valid.
+	LocalTxn(active bool, txnScope string) (kv.Transaction, error)
 
 	// GetClient gets a kv.Client.
 	GetClient() kv.Client

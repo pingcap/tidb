@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/owner"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/kvcache"
@@ -102,8 +103,13 @@ func (c *Context) GetSessionVars() *variable.SessionVars {
 }
 
 // Txn implements sessionctx.Context Txn interface.
-func (c *Context) Txn(bool) (kv.Transaction, error) {
+func (c *Context) Txn(active bool) (kv.Transaction, error) {
 	return &c.txn, nil
+}
+
+// LocalTxn implements sessionctx.Context Txn interface.
+func (c *Context) LocalTxn(active bool, txnScope string) (kv.Transaction, error) {
+	return c.Txn(active)
 }
 
 // GetClient implements sessionctx.Context GetClient interface.
@@ -147,7 +153,7 @@ func (c *Context) PreparedPlanCache() *kvcache.SimpleLRUCache {
 }
 
 // NewTxn implements the sessionctx.Context interface.
-func (c *Context) NewTxn(context.Context) error {
+func (c *Context) NewTxn(ctx context.Context) error {
 	if c.Store == nil {
 		return errors.New("store is not set")
 	}
@@ -166,6 +172,11 @@ func (c *Context) NewTxn(context.Context) error {
 	return nil
 }
 
+// NewLocalTxn implements the sessionctx.Context interface.
+func (c *Context) NewLocalTxn(ctx context.Context, txnScope string) error {
+	return c.NewTxn(ctx)
+}
+
 // RefreshTxnCtx implements the sessionctx.Context interface.
 func (c *Context) RefreshTxnCtx(ctx context.Context) error {
 	return errors.Trace(c.NewTxn(ctx))
@@ -182,7 +193,7 @@ func (c *Context) InitTxnWithStartTS(startTS uint64) error {
 		return nil
 	}
 	if c.Store != nil {
-		txn, err := c.Store.BeginWithStartTS(startTS)
+		txn, err := c.Store.BeginWithStartTS(oracle.GlobalTxnScope, startTS)
 		if err != nil {
 			return errors.Trace(err)
 		}

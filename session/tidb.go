@@ -198,7 +198,7 @@ func recordAbortTxnDuration(sessVars *variable.SessionVars) {
 
 func finishStmt(ctx context.Context, se *session, meetsErr error, sql sqlexec.Statement) error {
 	err := autoCommitAfterStmt(ctx, se, meetsErr, sql)
-	if se.txn.pending() {
+	if se.curTxn.pending() {
 		// After run statement finish, txn state is still pending means the
 		// statement never need a Txn(), such as:
 		//
@@ -207,7 +207,7 @@ func finishStmt(ctx context.Context, se *session, meetsErr error, sql sqlexec.St
 		// select 1
 		//
 		// Reset txn state to invalid to dispose the pending start ts.
-		se.txn.changeToInvalid()
+		se.curTxn.changeToInvalid()
 	}
 	if err != nil {
 		return err
@@ -222,8 +222,8 @@ func autoCommitAfterStmt(ctx context.Context, se *session, meetsErr error, sql s
 			logutil.BgLogger().Info("rollbackTxn for ddl/autocommit failed")
 			se.RollbackTxn(ctx)
 			recordAbortTxnDuration(sessVars)
-		} else if se.txn.Valid() && se.txn.IsPessimistic() && executor.ErrDeadlock.Equal(meetsErr) {
-			logutil.BgLogger().Info("rollbackTxn for deadlock", zap.Uint64("txn", se.txn.StartTS()))
+		} else if se.curTxn.Valid() && se.curTxn.IsPessimistic() && executor.ErrDeadlock.Equal(meetsErr) {
+			logutil.BgLogger().Info("rollbackTxn for deadlock", zap.Uint64("txn", se.curTxn.StartTS()))
 			se.RollbackTxn(ctx)
 			recordAbortTxnDuration(sessVars)
 		}

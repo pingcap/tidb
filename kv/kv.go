@@ -450,10 +450,12 @@ type Driver interface {
 // Storage defines the interface for storage.
 // Isolation should be at least SI(SNAPSHOT ISOLATION)
 type Storage interface {
-	// Begin transaction
+	// Begin a global transaction
 	Begin() (Transaction, error)
+	// Begin transaction with the given txn scope (local or global)
+	BeginWithTxnScope(txnScope string) (Transaction, error)
 	// BeginWithStartTS begins transaction with startTS.
-	BeginWithStartTS(startTS uint64) (Transaction, error)
+	BeginWithStartTS(txnScope string, startTS uint64) (Transaction, error)
 	// GetSnapshot gets a snapshot that is able to read any data which data is <= ver.
 	// if ver is MaxVersion or > current max committed version, we will use current version for this snapshot.
 	GetSnapshot(ver Version) Snapshot
@@ -467,6 +469,8 @@ type Storage interface {
 	UUID() string
 	// CurrentVersion returns current max committed version.
 	CurrentVersion() (Version, error)
+	// CurrentVersionWithTxnScope returns current max committed version with the given txn scope.
+	CurrentVersionWithTxnScope(txnScope string) (Version, error)
 	// GetOracle gets a timestamp oracle client.
 	GetOracle() oracle.Oracle
 	// SupportDeleteRange gets the storage support delete range or not.
