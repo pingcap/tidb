@@ -36,6 +36,14 @@ import (
 
 const splitBatchRegionLimit = 16
 
+type SplitRegionHelper struct {
+	*tikvStore
+}
+
+type SplitRegionRuntimeStats struct {
+	*SnapshotRuntimeStats
+}
+
 func equalRegionStartKey(key, regionStartKey []byte) bool {
 	return bytes.Equal(key, regionStartKey)
 }

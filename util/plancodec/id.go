@@ -110,6 +110,8 @@ const (
 	TypeDataSource = "DataSource"
 	// TypeLoadData is the type of LoadData.
 	TypeLoadData = "LoadData"
+	// TypeSplitRegion is the type of SplitRegion.
+	TypeSplitRegion = "SplitRegion"
 )
 
 // plan id.
@@ -156,6 +158,7 @@ const (
 	typeClusterMemTableReader int = 39
 	typeDataSourceID          int = 40
 	typeLoadDataID            int = 41
+	typeSplitRegionID         int = 42
 )
 
 // TypeStringToPhysicalID converts the plan type string to plan id.
@@ -243,6 +246,8 @@ func TypeStringToPhysicalID(tp string) int {
 		return typeDataSourceID
 	case TypeLoadData:
 		return typeLoadDataID
+	case TypeSplitRegion:
+		return typeSplitRegionID
 	}
 	// Should never reach here.
 	return 0
@@ -331,6 +336,8 @@ func PhysicalIDToTypeString(id int) string {
 		return TypeClusterMemTableReader
 	case typeLoadDataID:
 		return TypeLoadData
+	case typeSplitRegionID:
+		return TypeSplitRegion
 	}
 
 	// Should never reach here.

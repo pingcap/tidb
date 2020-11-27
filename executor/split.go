@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
+	"github.com/pingcap/tidb/util/execdetails"
 	"math"
 	"time"
 
@@ -56,6 +57,8 @@ type SplitIndexRegionExec struct {
 
 	done bool
 	splitRegionResult
+
+	stats *SplitRuntimeStat
 }
 
 type splitRegionResult struct {
@@ -65,8 +68,16 @@ type splitRegionResult struct {
 
 // Open implements the Executor Open interface.
 func (e *SplitIndexRegionExec) Open(ctx context.Context) (err error) {
+	e.initRuntimeStats()
 	e.splitIdxKeys, err = e.getSplitIdxKeys()
 	return err
+}
+
+func (e *SplitIndexRegionExec) initRuntimeStats() {
+	if e.runtimeStats != nil && e.stats == nil {
+		e.stats = &SplitRuntimeStat{}
+		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
+	}
 }
 
 // Next implements the Executor Next interface.
@@ -76,10 +87,14 @@ func (e *SplitIndexRegionExec) Next(ctx context.Context, chk *chunk.Chunk) error
 		return nil
 	}
 	e.done = true
-	if err := e.splitIndexRegion(ctx); err != nil {
+	err := e.splitIndexRegion(ctx)
+	if e.stats != nil {
+		e.stats.SplitKeyNum = len(e.splitIdxKeys)
+		e.stats.SplitRegionNum = e.splitRegions
+	}
+	if err != nil {
 		return err
 	}
-
 	appendSplitRegionResultToChunk(chk, e.splitRegions, e.finishScatterNum)
 	return nil
 }
@@ -105,6 +120,9 @@ func (e *SplitIndexRegionExec) splitIndexRegion(ctx context.Context) error {
 			zap.String("index", e.indexInfo.Name.L),
 			zap.Error(err))
 	}
+	if e.stats != nil {
+		e.stats.Split = time.Since(start)
+	}
 	e.splitRegions = len(regionIDs)
 	if e.splitRegions == 0 {
 		return nil
@@ -113,7 +131,11 @@ func (e *SplitIndexRegionExec) splitIndexRegion(ctx context.Context) error {
 	if !e.ctx.GetSessionVars().WaitSplitRegionFinish {
 		return nil
 	}
+	scatterStart := time.Now()
 	e.finishScatterNum = waitScatterRegionFinish(ctxWithTimeout, e.ctx, start, s, regionIDs, e.tableInfo.Name.L, e.indexInfo.Name.L)
+	if e.stats != nil {
+		e.stats.Scatter = time.Since(scatterStart)
+	}
 	return nil
 }
 
@@ -334,12 +356,22 @@ type SplitTableRegionExec struct {
 
 	done bool
 	splitRegionResult
+
+	stats *SplitRuntimeStat
 }
 
 // Open implements the Executor Open interface.
 func (e *SplitTableRegionExec) Open(ctx context.Context) (err error) {
+	e.initRuntimeStats()
 	e.splitKeys, err = e.getSplitTableKeys()
 	return err
+}
+
+func (e *SplitTableRegionExec) initRuntimeStats() {
+	if e.runtimeStats != nil && e.stats == nil {
+		e.stats = &SplitRuntimeStat{}
+		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
+	}
 }
 
 // Next implements the Executor Next interface.
@@ -350,7 +382,12 @@ func (e *SplitTableRegionExec) Next(ctx context.Context, chk *chunk.Chunk) error
 	}
 	e.done = true
 
-	if err := e.splitTableRegion(ctx); err != nil {
+	err := e.splitTableRegion(ctx)
+	if e.stats != nil {
+		e.stats.SplitKeyNum = len(e.splitKeys)
+		e.stats.SplitRegionNum = e.splitRegions
+	}
+	if err != nil {
 		return err
 	}
 	appendSplitRegionResultToChunk(chk, e.splitRegions, e.finishScatterNum)
@@ -374,6 +411,9 @@ func (e *SplitTableRegionExec) splitTableRegion(ctx context.Context) error {
 			zap.String("table", e.tableInfo.Name.L),
 			zap.Error(err))
 	}
+	if e.stats != nil {
+		e.stats.Split = time.Since(start)
+	}
 	e.splitRegions = len(regionIDs)
 	if e.splitRegions == 0 {
 		return nil
@@ -382,8 +422,11 @@ func (e *SplitTableRegionExec) splitTableRegion(ctx context.Context) error {
 	if !e.ctx.GetSessionVars().WaitSplitRegionFinish {
 		return nil
 	}
-
+	scatterStart := time.Now()
 	e.finishScatterNum = waitScatterRegionFinish(ctxWithTimeout, e.ctx, start, s, regionIDs, e.tableInfo.Name.L, "")
+	if e.stats != nil {
+		e.stats.Scatter = time.Since(scatterStart)
+	}
 	return nil
 }
 
@@ -827,4 +870,44 @@ func getRegionInfo(store tikv.Storage, regions []regionMeta) ([]regionMeta, erro
 		regions[i].approximateKeys = regionInfo.ApproximateKeys
 	}
 	return regions, nil
+}
+
+// InsertRuntimeStat record the stat about insert and check
+type SplitRuntimeStat struct {
+	SplitKeyNum    int
+	SplitRegionNum int
+	Split          time.Duration
+	Scatter        time.Duration
+}
+
+func (e *SplitRuntimeStat) String() string {
+	return fmt.Sprintf("split: %s, scatter: %s, split_keys: %v, split_regions: %v",
+		execdetails.FormatDuration(e.Split), execdetails.FormatDuration(e.Scatter), e.SplitKeyNum, e.SplitRegionNum)
+}
+
+// Clone implements the RuntimeStats interface.
+func (e *SplitRuntimeStat) Clone() execdetails.RuntimeStats {
+	return &SplitRuntimeStat{
+		SplitKeyNum:    e.SplitKeyNum,
+		SplitRegionNum: e.SplitRegionNum,
+		Split:          e.Split,
+		Scatter:        e.Scatter,
+	}
+}
+
+// Merge implements the RuntimeStats interface.
+func (e *SplitRuntimeStat) Merge(other execdetails.RuntimeStats) {
+	tmp, ok := other.(*SplitRuntimeStat)
+	if !ok {
+		return
+	}
+	e.Split += tmp.Split
+	e.Scatter += tmp.Scatter
+	e.SplitKeyNum += tmp.SplitKeyNum
+	e.SplitRegionNum += tmp.SplitRegionNum
+}
+
+// Tp implements the RuntimeStats interface.
+func (e *SplitRuntimeStat) Tp() int {
+	return execdetails.TpSplitRuntimeStat
 }

@@ -2735,11 +2735,11 @@ func (b *PlanBuilder) buildSplitIndexRegion(node *ast.SplitRegionStmt) (Plan, er
 	mockTablePlan.SetSchema(schema)
 	mockTablePlan.names = names
 
-	p := &SplitRegion{
+	p := SplitRegion{
 		TableInfo:      tblInfo,
 		PartitionNames: node.PartitionNames,
 		IndexInfo:      indexInfo,
-	}
+	}.Init(b.ctx, b.getSelectOffset())
 	p.names = names
 	p.setSchemaAndNames(buildSplitRegionsSchema())
 	// Split index regions by user specified value lists.
@@ -2850,10 +2850,10 @@ func (b *PlanBuilder) buildSplitTableRegion(node *ast.SplitRegionStmt) (Plan, er
 	mockTablePlan.SetSchema(schema)
 	mockTablePlan.names = names
 
-	p := &SplitRegion{
+	p := SplitRegion{
 		TableInfo:      tblInfo,
 		PartitionNames: node.PartitionNames,
-	}
+	}.Init(b.ctx, b.getSelectOffset())
 	p.setSchemaAndNames(buildSplitRegionsSchema())
 	if len(node.SplitOpt.ValueLists) > 0 {
 		values := make([][]types.Datum, 0, len(node.SplitOpt.ValueLists))
