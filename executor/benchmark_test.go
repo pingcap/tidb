@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/planner/core"
+	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
@@ -96,6 +97,13 @@ func (mp *mockDataPhysicalPlan) Stats() *property.StatsInfo {
 
 func (mp *mockDataPhysicalPlan) SelectBlockOffset() int {
 	return 0
+}
+
+func buildMockDataPhysicalPlan(ctx sessionctx.Context, srcExec Executor) *mockDataPhysicalPlan {
+	return &mockDataPhysicalPlan{
+		schema: srcExec.Schema(),
+		exec:   srcExec,
+	}
 }
 
 func (mds *mockDataSource) genColDatums(col int) (results []interface{}) {
@@ -238,13 +246,14 @@ func buildMockDataSourceWithIndex(opt mockDataSourceParameters, index []int) *mo
 
 // aggTestCase has a fixed schema (aggCol Double, groupBy LongLong).
 type aggTestCase struct {
-	execType    string // "hash" or "stream"
-	aggFunc     string // sum, avg, count ....
-	groupByNDV  int    // the number of distinct group-by keys
-	hasDistinct bool
-	rows        int
-	concurrency int
-	ctx         sessionctx.Context
+	execType         string // "hash" or "stream"
+	aggFunc          string // sum, avg, count ....
+	groupByNDV       int    // the number of distinct group-by keys
+	hasDistinct      bool
+	rows             int
+	concurrency      int
+	dataSourceSorted bool
+	ctx              sessionctx.Context
 }
 
 func (a aggTestCase) columns() []*expression.Column {
@@ -255,15 +264,15 @@ func (a aggTestCase) columns() []*expression.Column {
 }
 
 func (a aggTestCase) String() string {
-	return fmt.Sprintf("(execType:%v, aggFunc:%v, ndv:%v, hasDistinct:%v, rows:%v, concurrency:%v)",
-		a.execType, a.aggFunc, a.groupByNDV, a.hasDistinct, a.rows, a.concurrency)
+	return fmt.Sprintf("(execType:%v, aggFunc:%v, ndv:%v, hasDistinct:%v, rows:%v, concurrency:%v, sorted:%v)",
+		a.execType, a.aggFunc, a.groupByNDV, a.hasDistinct, a.rows, a.concurrency, a.dataSourceSorted)
 }
 
 func defaultAggTestCase(exec string) *aggTestCase {
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().InitChunkSize = variable.DefInitChunkSize
 	ctx.GetSessionVars().MaxChunkSize = variable.DefMaxChunkSize
-	return &aggTestCase{exec, ast.AggFuncSum, 1000, false, 10000000, 4, ctx}
+	return &aggTestCase{exec, ast.AggFuncSum, 1000, false, 10000000, 4, true, ctx}
 }
 
 func buildHashAggExecutor(ctx sessionctx.Context, src Executor, schema *expression.Schema,
@@ -281,28 +290,61 @@ func buildHashAggExecutor(ctx sessionctx.Context, src Executor, schema *expressi
 	return exec
 }
 
-func buildStreamAggExecutor(ctx sessionctx.Context, src Executor, schema *expression.Schema,
-	aggFuncs []*aggregation.AggFuncDesc, groupItems []expression.Expression) Executor {
-	plan := new(core.PhysicalStreamAgg)
-	plan.AggFuncs = aggFuncs
-	plan.GroupByItems = groupItems
-	plan.SetSchema(schema)
-	plan.Init(ctx, nil, 0)
-	plan.SetChildren(nil)
+func buildStreamAggExecutor(ctx sessionctx.Context, srcExec Executor, schema *expression.Schema,
+	aggFuncs []*aggregation.AggFuncDesc, groupItems []expression.Expression, concurrency int, dataSourceSorted bool) Executor {
+	src := buildMockDataPhysicalPlan(ctx, srcExec)
+
+	sg := new(core.PhysicalStreamAgg)
+	sg.AggFuncs = aggFuncs
+	sg.GroupByItems = groupItems
+	sg.SetSchema(schema)
+	sg.Init(ctx, nil, 0)
+
+	var tail core.PhysicalPlan = sg
+	if !dataSourceSorted {
+		byItems := make([]*util.ByItems, 0, len(sg.GroupByItems))
+		for _, col := range sg.GroupByItems {
+			byItems = append(byItems, &util.ByItems{Expr: col, Desc: false})
+		}
+		sortPP := &core.PhysicalSort{ByItems: byItems}
+		sortPP.SetChildren(src)
+		sg.SetChildren(sortPP)
+		tail = sortPP
+	} else {
+		sg.SetChildren(src)
+	}
+
+	var plan core.PhysicalPlan
+	if concurrency > 1 {
+		plan = core.PhysicalShuffle{
+			Concurrency:  concurrency,
+			Tails:        []core.PhysicalPlan{tail},
+			DataSources:  []core.PhysicalPlan{src},
+			SplitterType: core.PartitionHashSplitterType,
+			ByItemArrays: [][]expression.Expression{sg.GroupByItems},
+		}.Init(ctx, nil, 0)
+		plan.SetChildren(sg)
+	} else {
+		plan = sg
+	}
+
 	b := newExecutorBuilder(ctx, nil)
-	exec := b.build(plan)
-	streamAgg := exec.(*StreamAggExec)
-	streamAgg.children[0] = src
-	return exec
+	return b.build(plan)
 }
 
 func buildAggExecutor(b *testing.B, testCase *aggTestCase, child Executor) Executor {
 	ctx := testCase.ctx
-	if err := ctx.GetSessionVars().SetSystemVar(variable.TiDBHashAggFinalConcurrency, fmt.Sprintf("%v", testCase.concurrency)); err != nil {
-		b.Fatal(err)
-	}
-	if err := ctx.GetSessionVars().SetSystemVar(variable.TiDBHashAggPartialConcurrency, fmt.Sprintf("%v", testCase.concurrency)); err != nil {
-		b.Fatal(err)
+	if testCase.execType == "stream" {
+		if err := ctx.GetSessionVars().SetSystemVar(variable.TiDBStreamAggConcurrency, fmt.Sprintf("%v", testCase.concurrency)); err != nil {
+			b.Fatal(err)
+		}
+	} else {
+		if err := ctx.GetSessionVars().SetSystemVar(variable.TiDBHashAggFinalConcurrency, fmt.Sprintf("%v", testCase.concurrency)); err != nil {
+			b.Fatal(err)
+		}
+		if err := ctx.GetSessionVars().SetSystemVar(variable.TiDBHashAggPartialConcurrency, fmt.Sprintf("%v", testCase.concurrency)); err != nil {
+			b.Fatal(err)
+		}
 	}
 
 	childCols := testCase.columns()
@@ -319,7 +361,7 @@ func buildAggExecutor(b *testing.B, testCase *aggTestCase, child Executor) Execu
 	case "hash":
 		aggExec = buildHashAggExecutor(testCase.ctx, child, schema, aggFuncs, groupBy)
 	case "stream":
-		aggExec = buildStreamAggExecutor(testCase.ctx, child, schema, aggFuncs, groupBy)
+		aggExec = buildStreamAggExecutor(testCase.ctx, child, schema, aggFuncs, groupBy, testCase.concurrency, testCase.dataSourceSorted)
 	default:
 		b.Fatal("not implement")
 	}
@@ -327,12 +369,15 @@ func buildAggExecutor(b *testing.B, testCase *aggTestCase, child Executor) Execu
 }
 
 func benchmarkAggExecWithCase(b *testing.B, casTest *aggTestCase) {
+	if err := casTest.ctx.GetSessionVars().SetSystemVar(variable.TiDBStreamAggConcurrency, fmt.Sprintf("%v", casTest.concurrency)); err != nil {
+		b.Fatal(err)
+	}
+
 	cols := casTest.columns()
-	orders := []bool{false, casTest.execType == "stream"}
 	dataSource := buildMockDataSource(mockDataSourceParameters{
 		schema: expression.NewSchema(cols...),
 		ndvs:   []int{0, casTest.groupByNDV},
-		orders: orders,
+		orders: []bool{false, casTest.dataSourceSorted},
 		rows:   casTest.rows,
 		ctx:    casTest.ctx,
 	})
@@ -365,22 +410,37 @@ func benchmarkAggExecWithCase(b *testing.B, casTest *aggTestCase) {
 	}
 }
 
-func BenchmarkAggRows(b *testing.B) {
-	rows := []int{100000, 1000000, 10000000}
-	concurrencies := []int{1, 4, 8, 15, 20, 30, 40}
+func BenchmarkShuffleStreamAggRows(b *testing.B) {
+	b.ReportAllocs()
+	sortTypes := []bool{true}
+	rows := []int{10000, 100000, 1000000, 10000000}
+	concurrencies := []int{1, 2, 4, 8}
 	for _, row := range rows {
 		for _, con := range concurrencies {
-			for _, exec := range []string{"hash", "stream"} {
-				if exec == "stream" && con > 1 {
-					continue
-				}
-				cas := defaultAggTestCase(exec)
+			for _, sorted := range sortTypes {
+				cas := defaultAggTestCase("stream")
 				cas.rows = row
+				cas.dataSourceSorted = sorted
 				cas.concurrency = con
 				b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
 					benchmarkAggExecWithCase(b, cas)
 				})
 			}
+		}
+	}
+}
+
+func BenchmarkHashAggRows(b *testing.B) {
+	rows := []int{100000, 1000000, 10000000}
+	concurrencies := []int{1, 4, 8, 15, 20, 30, 40}
+	for _, row := range rows {
+		for _, con := range concurrencies {
+			cas := defaultAggTestCase("hash")
+			cas.rows = row
+			cas.concurrency = con
+			b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
+				benchmarkAggExecWithCase(b, cas)
+			})
 		}
 	}
 }
@@ -402,9 +462,6 @@ func BenchmarkAggConcurrency(b *testing.B) {
 	concs := []int{1, 4, 8, 15, 20, 30, 40}
 	for _, con := range concs {
 		for _, exec := range []string{"hash", "stream"} {
-			if exec == "stream" && con > 1 {
-				continue
-			}
 			cas := defaultAggTestCase(exec)
 			cas.concurrency = con
 			b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
@@ -432,11 +489,7 @@ func BenchmarkAggDistinct(b *testing.B) {
 }
 
 func buildWindowExecutor(ctx sessionctx.Context, windowFunc string, funcs int, frame *core.WindowFrame, srcExec Executor, schema *expression.Schema, partitionBy []*expression.Column, concurrency int, dataSourceSorted bool) Executor {
-	src := &mockDataPhysicalPlan{
-		schema: srcExec.Schema(),
-		exec:   srcExec,
-	}
-
+	src := buildMockDataPhysicalPlan(ctx, srcExec)
 	win := new(core.PhysicalWindow)
 	win.WindowFuncDescs = make([]*aggregation.WindowFuncDesc, 0)
 	winSchema := schema.Clone()
@@ -498,10 +551,10 @@ func buildWindowExecutor(ctx sessionctx.Context, windowFunc string, funcs int, f
 
 		plan = core.PhysicalShuffle{
 			Concurrency:  concurrency,
-			Tail:         tail,
-			DataSource:   src,
+			Tails:        []plannercore.PhysicalPlan{tail},
+			DataSources:  []plannercore.PhysicalPlan{src},
 			SplitterType: core.PartitionHashSplitterType,
-			HashByItems:  byItems,
+			ByItemArrays: [][]expression.Expression{byItems},
 		}.Init(ctx, nil, 0)
 		plan.SetChildren(win)
 	} else {
@@ -1140,6 +1193,8 @@ type indexJoinTestCase struct {
 	ctx             sessionctx.Context
 	outerJoinKeyIdx []int
 	innerJoinKeyIdx []int
+	outerHashKeyIdx []int
+	innerHashKeyIdx []int
 	innerIdx        []int
 	needOuterSort   bool
 	rawData         string
@@ -1167,6 +1222,8 @@ func defaultIndexJoinTestCase() *indexJoinTestCase {
 		ctx:             ctx,
 		outerJoinKeyIdx: []int{0, 1},
 		innerJoinKeyIdx: []int{0, 1},
+		outerHashKeyIdx: []int{0, 1},
+		innerHashKeyIdx: []int{0, 1},
 		innerIdx:        []int{0, 1},
 		rawData:         wideString,
 	}
@@ -1216,12 +1273,14 @@ func prepare4IndexInnerHashJoin(tc *indexJoinTestCase, outerDS *mockDataSource, 
 		outerCtx: outerCtx{
 			rowTypes: leftTypes,
 			keyCols:  tc.outerJoinKeyIdx,
+			hashCols: tc.outerHashKeyIdx,
 		},
 		innerCtx: innerCtx{
 			readerBuilder: &dataReaderBuilder{Plan: &mockPhysicalIndexReader{e: innerDS}, executorBuilder: newExecutorBuilder(tc.ctx, nil)},
 			rowTypes:      rightTypes,
 			colLens:       colLens,
 			keyCols:       tc.innerJoinKeyIdx,
+			hashCols:      tc.innerHashKeyIdx,
 		},
 		workerWg:      new(sync.WaitGroup),
 		joiner:        newJoiner(tc.ctx, 0, false, defaultValues, nil, leftTypes, rightTypes, nil),
@@ -1484,6 +1543,8 @@ func newMergeJoinBenchmark(numOuterRows, numInnerDup, numInnerRedundant int) (tc
 		ctx:             ctx,
 		outerJoinKeyIdx: []int{0, 1},
 		innerJoinKeyIdx: []int{0, 1},
+		outerHashKeyIdx: []int{0, 1},
+		innerHashKeyIdx: []int{0, 1},
 		innerIdx:        []int{0, 1},
 		rawData:         wideString,
 	}

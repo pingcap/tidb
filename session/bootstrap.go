@@ -362,6 +362,9 @@ const (
 	tidbSystemTZ = "system_tz"
 	// The variable name in mysql.tidb table and it will indicate if the new collations are enabled in the TiDB cluster.
 	tidbNewCollationEnabled = "new_collation_enabled"
+	// The variable name in mysql.tidb table and it records the default value of
+	// mem-quota-query when upgrade from v3.0.x to v4.0.9+.
+	tidbDefMemoryQuotaQuery = "default_memory_quota_query"
 	// Const for TiDB server version 2.
 	version2  = 2
 	version3  = 3
@@ -427,6 +430,10 @@ const (
 	version51 = 51
 	// version52 change mysql.stats_histograms cm_sketch column from blob to blob(6291456)
 	version52 = 52
+	// version53 introduce Global variable tidb_enable_strict_double_type_check
+	version53 = 53
+	// version54 writes a variable `mem_quota_query` to mysql.tidb if it's a cluster upgraded from v3.0.x to v4.0.9.
+	version54 = 54
 )
 
 var (
@@ -482,6 +489,8 @@ var (
 		upgradeToVer50,
 		upgradeToVer51,
 		upgradeToVer52,
+		upgradeToVer53,
+		upgradeToVer54,
 	}
 )
 
@@ -1064,8 +1073,8 @@ func upgradeToVer42(s Session, ver int64) {
 func writeStmtSummaryVars(s Session) {
 	sql := fmt.Sprintf("UPDATE %s.%s SET variable_value='%%s' WHERE variable_name='%%s' AND variable_value=''", mysql.SystemDB, mysql.GlobalVariablesTable)
 	stmtSummaryConfig := config.GetGlobalConfig().StmtSummary
-	mustExecute(s, fmt.Sprintf(sql, variable.BoolToIntStr(stmtSummaryConfig.Enable), variable.TiDBEnableStmtSummary))
-	mustExecute(s, fmt.Sprintf(sql, variable.BoolToIntStr(stmtSummaryConfig.EnableInternalQuery), variable.TiDBStmtSummaryInternalQuery))
+	mustExecute(s, fmt.Sprintf(sql, variable.BoolToOnOff(stmtSummaryConfig.Enable), variable.TiDBEnableStmtSummary))
+	mustExecute(s, fmt.Sprintf(sql, variable.BoolToOnOff(stmtSummaryConfig.EnableInternalQuery), variable.TiDBStmtSummaryInternalQuery))
 	mustExecute(s, fmt.Sprintf(sql, strconv.Itoa(stmtSummaryConfig.RefreshInterval), variable.TiDBStmtSummaryRefreshInterval))
 	mustExecute(s, fmt.Sprintf(sql, strconv.Itoa(stmtSummaryConfig.HistorySize), variable.TiDBStmtSummaryHistorySize))
 	mustExecute(s, fmt.Sprintf(sql, strconv.FormatUint(uint64(stmtSummaryConfig.MaxStmtCount), 10), variable.TiDBStmtSummaryMaxStmtCount))
@@ -1188,6 +1197,40 @@ func upgradeToVer52(s Session, ver int64) {
 		return
 	}
 	doReentrantDDL(s, "ALTER TABLE mysql.stats_histograms MODIFY cm_sketch BLOB(6291456)")
+}
+
+func upgradeToVer53(s Session, ver int64) {
+	if ver >= version53 {
+		return
+	}
+	// when upgrade from old tidb and no `tidb_enable_strict_double_type_check` in GLOBAL_VARIABLES, init it with 1`
+	sql := fmt.Sprintf("INSERT IGNORE INTO %s.%s (`VARIABLE_NAME`, `VARIABLE_VALUE`) VALUES ('%s', '%d')",
+		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBEnableStrictDoubleTypeCheck, 0)
+	mustExecute(s, sql)
+}
+
+func upgradeToVer54(s Session, ver int64) {
+	if ver >= version54 {
+		return
+	}
+	// The mem-query-quota default value is 32GB by default in v3.0, and 1GB by
+	// default in v4.0.
+	// If a cluster is upgraded from v3.0.x (bootstrapVer <= version38) to
+	// v4.0.9+, we'll write the default value to mysql.tidb. Thus we can get the
+	// default value of mem-quota-query, and promise the compatibility even if
+	// the tidb-server restarts.
+	// If it's a newly deployed cluster, we do not need to write the value into
+	// mysql.tidb, since no compatibility problem will happen.
+	if ver <= version38 {
+		writeMemoryQuotaQuery(s)
+	}
+}
+
+func writeMemoryQuotaQuery(s Session) {
+	comment := "memory_quota_query is 32GB by default in v3.0.x, 1GB by default in v4.0.x"
+	sql := fmt.Sprintf(`INSERT HIGH_PRIORITY INTO %s.%s VALUES ("%s", '%d', '%s') ON DUPLICATE KEY UPDATE VARIABLE_VALUE='%d'`,
+		mysql.SystemDB, mysql.TiDBTable, tidbDefMemoryQuotaQuery, 32<<30, comment, 32<<30)
+	mustExecute(s, sql)
 }
 
 // updateBootstrapVer updates bootstrap version variable in mysql.TiDB table.

@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/mockstore/cluster"
 	"github.com/pingcap/tidb/store/mockstore/unistore"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 )
 
@@ -161,7 +162,7 @@ func (s *testAsyncCommitSuite) lockKeys(c *C, keys, values [][]byte, primaryKey,
 	c.Assert(err, IsNil)
 
 	if commitPrimary {
-		tpc.commitTS, err = s.store.oracle.GetTimestamp(ctx)
+		tpc.commitTS, err = s.store.oracle.GetTimestamp(ctx, &oracle.Option{TxnScope: oracle.GlobalTxnScope})
 		c.Assert(err, IsNil)
 		err = tpc.commitMutations(NewBackofferWithVars(ctx, int(atomic.LoadUint64(&CommitMaxBackoff)), nil), tpc.mutationsOfKeys([][]byte{primaryKey}))
 		c.Assert(err, IsNil)
@@ -192,13 +193,13 @@ func (s *testAsyncCommitSuite) TestCheckSecondaries(c *C) {
 	s.lockKeys(c, [][]byte{}, [][]byte{}, []byte("z"), []byte("z"), false)
 	lock := s.mustGetLock(c, []byte("z"))
 	lock.UseAsyncCommit = true
-	ts, err := s.store.oracle.GetTimestamp(context.Background())
+	ts, err := s.store.oracle.GetTimestamp(context.Background(), &oracle.Option{TxnScope: oracle.GlobalTxnScope})
 	c.Assert(err, IsNil)
 	status := TxnStatus{primaryLock: &kvrpcpb.LockInfo{Secondaries: [][]byte{}, UseAsyncCommit: true, MinCommitTs: ts}}
 
 	err = s.store.lockResolver.resolveLockAsync(s.bo, lock, status)
 	c.Assert(err, IsNil)
-	currentTS, err := s.store.oracle.GetTimestamp(context.Background())
+	currentTS, err := s.store.oracle.GetTimestamp(context.Background(), &oracle.Option{TxnScope: oracle.GlobalTxnScope})
 	c.Assert(err, IsNil)
 	status, err = s.store.lockResolver.getTxnStatus(s.bo, lock.TxnID, []byte("z"), currentTS, currentTS, true)
 	c.Assert(err, IsNil)
@@ -206,7 +207,7 @@ func (s *testAsyncCommitSuite) TestCheckSecondaries(c *C) {
 	c.Assert(status.CommitTS(), Equals, ts)
 
 	// One key is committed (i), one key is locked (a). Should get committed.
-	ts, err = s.store.oracle.GetTimestamp(context.Background())
+	ts, err = s.store.oracle.GetTimestamp(context.Background(), &oracle.Option{TxnScope: oracle.GlobalTxnScope})
 	c.Assert(err, IsNil)
 	commitTs := ts + 10
 
@@ -284,7 +285,7 @@ func (s *testAsyncCommitSuite) TestCheckSecondaries(c *C) {
 	c.Assert(gotResolve, Equals, int64(1))
 
 	// One key has been rolled back (b), one is locked (a). Should be rolled back.
-	ts, err = s.store.oracle.GetTimestamp(context.Background())
+	ts, err = s.store.oracle.GetTimestamp(context.Background(), &oracle.Option{TxnScope: oracle.GlobalTxnScope})
 	c.Assert(err, IsNil)
 	commitTs = ts + 10
 
@@ -340,7 +341,7 @@ func (s *testAsyncCommitSuite) TestRepeatableRead(c *C) {
 		txn1.Set([]byte("k1"), []byte("v2"))
 
 		for i := 0; i < 20; i++ {
-			_, err := s.store.GetOracle().GetTimestamp(ctx)
+			_, err := s.store.GetOracle().GetTimestamp(ctx, &oracle.Option{TxnScope: oracle.GlobalTxnScope})
 			c.Assert(err, IsNil)
 		}
 
@@ -365,6 +366,34 @@ func (s *testAsyncCommitSuite) TestRepeatableRead(c *C) {
 
 	test(false)
 	test(true)
+}
+
+// It's just a simple validation of external consistency.
+// Extra tests are needed to test this feature with the control of the TiKV cluster.
+func (s *testAsyncCommitSuite) TestAsyncCommitExternalConsistency(c *C) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TiKVClient.AsyncCommit.Enable = true
+		conf.TiKVClient.ExternalConsistency = true
+	})
+
+	t1, err := s.store.Begin()
+	c.Assert(err, IsNil)
+	t2, err := s.store.Begin()
+	c.Assert(err, IsNil)
+	err = t1.Set([]byte("a"), []byte("a1"))
+	c.Assert(err, IsNil)
+	err = t2.Set([]byte("b"), []byte("b1"))
+	c.Assert(err, IsNil)
+	ctx := context.WithValue(context.Background(), sessionctx.ConnID, uint64(1))
+	// t2 commits earlier than t1
+	err = t2.Commit(ctx)
+	c.Assert(err, IsNil)
+	err = t1.Commit(ctx)
+	c.Assert(err, IsNil)
+	commitTS1 := t1.(*tikvTxn).committer.commitTS
+	commitTS2 := t2.(*tikvTxn).committer.commitTS
+	c.Assert(commitTS2, Less, commitTS1)
 }
 
 type mockResolveClient struct {
