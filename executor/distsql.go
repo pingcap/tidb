@@ -122,6 +122,7 @@ func (task *lookupTableTask) buildResultChunk() {
 			task.chk.AppendRow(row)
 		}
 	}
+	task.rows = nil
 }
 
 // Closeable is a interface for closeable structures.
