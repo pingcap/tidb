@@ -890,7 +890,7 @@ type SelectLockExec struct {
 	// instead of table ID to calculate the lock KV. In that case, partition ID is store as an
 	// extra column in the chunk row.
 	// tblID2PIDColumnIndex stores the column index in the chunk row. The children may be join
-	// of multiple tables, so the map strcut is used.
+	// of multiple tables, so the map struct is used.
 	tblID2PIDColumnIndex map[int64]int
 }
 

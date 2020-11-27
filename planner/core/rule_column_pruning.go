@@ -372,7 +372,7 @@ func (p *LogicalLock) PruneColumns(parentUsedCols []*expression.Column) error {
 
 	if len(p.partitionedTable) > 0 {
 		// If the children include partitioned tables, there is an extra partition ID column.
-		parentUsedCols = append(parentUsedCols, p.Columns...)
+		parentUsedCols = append(parentUsedCols, p.extraPIDInfo.Columns...)
 	}
 
 	for _, cols := range p.tblID2Handle {
