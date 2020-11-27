@@ -51,6 +51,10 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 	case model.ActionModifySchemaCharsetAndCollate:
 		return nil, b.applyModifySchemaCharsetAndCollate(m, diff)
 	case model.ActionAlterTableAlterPartition:
+		if diff.State == model.StateGlobalTxnWriteOnly || diff.State == model.StatePublic {
+			t, _, _ := b.is.FindTableByPartitionID(diff.TableID)
+			t.Meta().Partition.SetStateByID(diff.TableID, model.StateGlobalTxnWriteOnly)
+		}
 		// TODO: enhancement: If the leader Placement Policy isn't updated, maybe we can omit the diff.
 		return []int64{diff.TableID}, b.applyPlacementUpdate(placement.GroupID(diff.TableID))
 	}

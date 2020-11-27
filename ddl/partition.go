@@ -344,7 +344,15 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.PartitionOptions, tb
 }
 
 // buildPartitionDefinitionsInfo build partition definitions info without assign partition id. tbInfo will be constant
-func buildPartitionDefinitionsInfo(ctx sessionctx.Context, defs []*ast.PartitionDefinition, tbInfo *model.TableInfo) ([]model.PartitionDefinition, error) {
+func buildPartitionDefinitionsInfo(ctx sessionctx.Context, defs []*ast.PartitionDefinition, tbInfo *model.TableInfo) (pdefs []model.PartitionDefinition, err error) {
+	defer func() {
+		if err == nil && len(pdefs) > 0 {
+			for i, pdef := range pdefs {
+				pdef.State = model.StatePublic
+				pdefs[i] = pdef
+			}
+		}
+	}()
 	switch tbInfo.Partition.Type {
 	case model.PartitionTypeRange:
 		return buildRangePartitionDefinitions(ctx, defs, tbInfo)
@@ -1742,16 +1750,16 @@ func truncateTableByReassignPartitionIDs(t *meta.Meta, tblInfo *model.TableInfo)
 	return nil
 }
 
-func onAlterTablePartition(t *meta.Meta, job *model.Job) (int64, error) {
+func onAlterTablePartition(t *meta.Meta, job *model.Job) (ver int64, err error) {
 	var partitionID int64
 	bundle := &placement.Bundle{}
-	err := job.DecodeArgs(&partitionID, bundle)
+	err = job.DecodeArgs(&partitionID, bundle)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return 0, errors.Trace(err)
 	}
 
-	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, job.SchemaID)
+	tblInfo, err := getTableInfo(t, job.TableID, job.SchemaID)
 	if err != nil {
 		return 0, err
 	}
@@ -1761,20 +1769,44 @@ func onAlterTablePartition(t *meta.Meta, job *model.Job) (int64, error) {
 		job.State = model.JobStateCancelled
 		return 0, errors.Trace(table.ErrUnknownPartition.GenWithStackByArgs("drop?", tblInfo.Name.O))
 	}
-
-	err = infosync.PutRuleBundles(nil, []*placement.Bundle{bundle})
-	if err != nil {
+	pstate, found := ptInfo.GetStateByID(partitionID)
+	if !found {
 		job.State = model.JobStateCancelled
-		return 0, errors.Wrapf(err, "failed to notify PD the placement rules")
+		return 0, errors.Trace(table.ErrUnknownPartition.GenWithStackByArgs("drop?", tblInfo.Name.O))
 	}
 
-	// used by ApplyDiff in updateSchemaVersion
-	job.CtxVars = []interface{}{partitionID}
-	ver, err := updateSchemaVersion(t, job)
-	if err != nil {
-		return ver, errors.Trace(err)
+	switch pstate {
+	case model.StatePublic:
+		err = infosync.PutRuleBundles(nil, []*placement.Bundle{bundle})
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return 0, errors.Wrapf(err, "failed to notify PD the placement rules")
+		}
+		ok := ptInfo.SetStateByID(partitionID, model.StateGlobalTxnWriteOnly)
+		if !ok {
+			return 0, errors.Wrapf(err, "failed to set partition state")
+		}
+		tblInfo.State = model.StateGlobalTxnWriteOnly
+		// used by ApplyDiff in updateSchemaVersion
+		job.CtxVars = []interface{}{partitionID, model.StateGlobalTxnWriteOnly}
+		ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		job.SchemaState = model.StateGlobalTxnWriteOnly
+	case model.StateGlobalTxnWriteOnly:
+		ok := ptInfo.SetStateByID(partitionID, model.StatePublic)
+		if !ok {
+			return 0, errors.Wrapf(err, "failed to set partition state")
+		}
+		tblInfo.State = model.StatePublic
+		// used by ApplyDiff in updateSchemaVersion
+		job.CtxVars = []interface{}{partitionID, model.StatePublic}
+		ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 	}
-
-	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 	return ver, nil
 }

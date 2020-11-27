@@ -2530,6 +2530,31 @@ func (s *session) checkPlacementPolicyBeforeCommit() error {
 					fmt.Sprintf("table or partition %v's leader location %v is out of txn_scope %v", physicalTableID, dcLocation, txnScope))
 				break
 			}
+			// FIXME: currently we assumes the physicalTableID is the partition ID. In future, we should consider the situation
+			// if the physicalTableID belongs to a Table.
+			if is.IsPartitionID(physicalTableID) {
+				partitionID := physicalTableID
+				tbl, _, _ := is.FindTableByPartitionID(partitionID)
+				if tbl == nil || tbl.Meta().Partition == nil {
+					err = ddl.ErrInvalidPlacementPolicyCheck.GenWithStackByArgs(
+						fmt.Sprintf("failed to find partition %v's information", partitionID))
+					break
+				}
+				tblInfo := tbl.Meta()
+				tableID := tblInfo.ID
+				state, ok := tblInfo.Partition.GetStateByID(partitionID)
+				if !ok {
+					err = ddl.ErrInvalidPlacementPolicyCheck.GenWithStackByArgs(
+						fmt.Sprintf("failed to find table %v partition %v's SchemaState", tableID, partitionID))
+					break
+				}
+				if state == model.StateGlobalTxnWriteOnly {
+					err = ddl.ErrInvalidPlacementPolicyCheck.GenWithStackByArgs(
+						fmt.Sprintf("The SchemaState of table %v's partition %v is under StateGlobalTxnWriteOnly",
+							tableID, partitionID))
+					break
+				}
+			}
 		}
 	}
 	return err

@@ -523,3 +523,79 @@ add placement policy
 	_, err = tk.Exec("commit")
 	c.Assert(err, IsNil)
 }
+
+func (s *testDBSuite1) TestGlobalTxnWriteStateHow(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	tk.MustExec(`create table t1 (c int)
+PARTITION BY RANGE (c) (
+	PARTITION p0 VALUES LESS THAN (6),
+	PARTITION p1 VALUES LESS THAN (11)
+);`)
+
+	// normal cases
+	_, err := tk.Exec(`alter table t1 alter partition p0
+add placement policy
+	constraints='["+zone=sh"]'
+	role=leader
+	replicas=1`)
+	c.Assert(err, IsNil)
+
+	bundles := make(map[string]*placement.Bundle)
+	is := s.dom.InfoSchema()
+	is.MockBundles(bundles)
+
+	tb, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	c.Assert(err, IsNil)
+	partDefs := tb.Meta().GetPartitionInfo().Definitions
+
+	for _, def := range partDefs {
+		if def.Name.String() == "p0" {
+			groupID := placement.GroupID(def.ID)
+			bundles[groupID] = &placement.Bundle{
+				ID: groupID,
+				Rules: []*placement.Rule{
+					{
+						GroupID: groupID,
+						Role:    placement.Leader,
+						Count:   1,
+						LabelConstraints: []placement.LabelConstraint{
+							{
+								Key:    placement.DCLabelKey,
+								Op:     placement.In,
+								Values: []string{"bj"},
+							},
+						},
+					},
+				},
+			}
+			break
+		}
+	}
+	dbInfo := testGetSchemaByName(c, tk.Se, "test")
+	hook := &ddl.TestDDLCallback{}
+	done := false
+	tk2 := testkit.NewTestKit(c, s.store)
+	var chkErr error
+	hook.OnJobUpdatedExported = func(job *model.Job) {
+		if job.Type == model.ActionAlterTableAlterPartition && job.State == model.JobStateRunning &&
+			job.SchemaState == model.StateGlobalTxnWriteOnly && job.SchemaID == dbInfo.ID && done == false {
+			done = true
+			tk2.MustExec("use test")
+			tk2.MustExec("set @@txn_scope=bj")
+			_, chkErr = tk2.Exec("insert into t1 (c) values (1);")
+		}
+	}
+	originalHook := s.dom.DDL().GetHook()
+	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
+	_, err = tk.Exec(`alter table t1 alter partition p0
+alter placement policy
+	constraints='["+zone=bj"]'
+	role=leader
+	replicas=1`)
+	c.Assert(err, IsNil)
+	s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
+	c.Assert(chkErr, NotNil)
+	c.Assert(chkErr.Error(),Matches,".*under StateGlobalTxnWriteOnly.*")
+}
