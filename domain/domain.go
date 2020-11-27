@@ -1297,11 +1297,6 @@ func (do *Domain) ExpensiveQueryHandle() *expensivequery.Handle {
 	return do.expensiveQueryHandle
 }
 
-// InitExpensiveQueryHandle init the expensive query handler.
-func (do *Domain) InitExpensiveQueryHandle() {
-	do.expensiveQueryHandle = expensivequery.NewExpensiveQueryHandle(do.exit)
-}
-
 const privilegeKey = "/tidb/privilege"
 
 // NotifyUpdatePrivilege updates privilege key in etcd, TiDB client that watches
