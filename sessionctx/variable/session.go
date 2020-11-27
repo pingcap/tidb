@@ -1628,11 +1628,6 @@ func (s *SessionVars) setTxnMode(val string) error {
 	return nil
 }
 
-// SetTxnScope sets the transaction scope for the current session.
-func (s *SessionVars) SetTxnScope(txnScope string) {
-	s.TxnScope = txnScope
-}
-
 // CheckAndGetTxnScope checks and returns the current txn scope we should use.
 func (s *SessionVars) CheckAndGetTxnScope() string {
 	// Internal SQLs should always run as the global transactions.
