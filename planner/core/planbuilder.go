@@ -57,11 +57,12 @@ import (
 )
 
 type visitInfo struct {
-	privilege mysql.PrivilegeType
-	db        string
-	table     string
-	column    string
-	err       error
+	privilege     mysql.PrivilegeType
+	db            string
+	table         string
+	column        string
+	err           error
+	alterWritable bool
 }
 
 type indexNestedLoopJoinTables struct {
@@ -3003,6 +3004,8 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (Plan, err
 				}
 				b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DropPriv, v.Table.Schema.L,
 					v.Table.Name.L, "", authErr)
+			} else if spec.Tp == ast.AlterTableWriteable {
+				b.visitInfo[0].alterWritable = true
 			}
 		}
 	case *ast.AlterSequenceStmt:

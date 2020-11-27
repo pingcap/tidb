@@ -330,6 +330,12 @@ func doRequest(ctx context.Context, addrs []string, route, method string, body i
 		}
 
 		res, err = util2.InternalHTTPClient().Do(req)
+		failpoint.Inject("FailPlacement", func(val failpoint.Value) {
+			if val.(bool) {
+				res = &http.Response{StatusCode: http.StatusNotFound, Body: http.NoBody}
+				err = nil
+			}
+		})
 		if err == nil {
 			bodyBytes, err := ioutil.ReadAll(res.Body)
 			if err != nil {
@@ -337,8 +343,7 @@ func doRequest(ctx context.Context, addrs []string, route, method string, body i
 			}
 			if res.StatusCode != http.StatusOK {
 				err = errors.Errorf("%s", bodyBytes)
-				// ignore if placement rules feature is not enabled
-				if strings.HasPrefix(err.Error(), `"placement rules feature is disabled"`) {
+				if res.StatusCode == http.StatusNotFound || res.StatusCode == http.StatusPreconditionFailed {
 					err = nil
 					bodyBytes = nil
 				}
