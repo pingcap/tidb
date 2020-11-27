@@ -203,7 +203,7 @@ type session struct {
 	idxUsageCollector *handle.SessionIndexUsageCollector
 }
 
-// Create and initialize at lease one global transaction
+// Create and initialize at least one global transaction
 // and another local transaction if needed.
 func (s *session) initTxns() {
 	if s.txns == nil {
@@ -228,21 +228,18 @@ func (s *session) createAndInitTxn(txnScope string) {
 	s.txns[txnScope] = newTxn
 }
 
-func (s *session) updateTxn(txnScope string, newTxn kv.Transaction) {
-	curTxn, ok := s.getTxn(txnScope)
-	if !ok {
-		s.setTxn(txnScope, new(TxnState))
-		curTxn, _ = s.getTxn(txnScope)
-	}
-	curTxn.changeInvalidToValid(newTxn)
-	s.setTxn(txnScope, curTxn)
-}
-
-func (s *session) updateCurTxn(txnScope string, nextTxn *TxnState) {
+func (s *session) setCurTxn(txnScope string, nextTxn *TxnState) {
 	if s.curTxn != nextTxn {
 		s.curTxn = nextTxn
 		s.GetSessionVars().TxnCtx.TxnScope = txnScope
 	}
+}
+
+func (s *session) setTxn(txnScope string, txn *TxnState) {
+	if s.txns == nil {
+		s.txns = make(map[string]*TxnState)
+	}
+	s.txns[txnScope] = txn
 }
 
 func (s *session) getTxn(txnScope string) (*TxnState, bool) {
@@ -253,11 +250,14 @@ func (s *session) getTxn(txnScope string) (*TxnState, bool) {
 	return txn, true
 }
 
-func (s *session) setTxn(txnScope string, txn *TxnState) {
-	if s.txns == nil {
-		s.txns = make(map[string]*TxnState)
+func (s *session) updateTxn(txnScope string, newTxn kv.Transaction) {
+	curTxn, ok := s.getTxn(txnScope)
+	if !ok {
+		s.setTxn(txnScope, new(TxnState))
+		curTxn, _ = s.getTxn(txnScope)
 	}
-	s.txns[txnScope] = txn
+	curTxn.changeInvalidToValid(newTxn)
+	s.setTxn(txnScope, curTxn)
 }
 
 // getCurrentScopeTxn will return a transaction corresponding to
@@ -1642,7 +1642,7 @@ func (s *session) LocalTxn(active bool, txnScope string) (kv.Transaction, error)
 	defer func() {
 		// After the calling of Txn(bool), we should set the s.curTxn
 		// for later committing or rollbacking to work on.
-		s.updateCurTxn(txnScope, nextTxn)
+		s.setCurTxn(txnScope, nextTxn)
 	}()
 	// Check whether we need a new transaction for the brand new txn scope
 	nextTxn, ok = s.getTxn(txnScope)
@@ -1758,7 +1758,7 @@ func (s *session) NewLocalTxn(ctx context.Context, txnScope string) error {
 	}
 	s.updateTxn(txnScope, newTxn)
 	if txn, ok := s.getTxn(txnScope); ok {
-		s.updateCurTxn(txnScope, txn)
+		s.setCurTxn(txnScope, txn)
 	}
 	is := domain.GetDomain(s).InfoSchema()
 	s.sessionVars.TxnCtx = &variable.TransactionContext{

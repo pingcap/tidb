@@ -338,7 +338,7 @@ func (s *tikvStore) BeginWithTxnScope(txnScope string) (kv.Transaction, error) {
 
 // BeginWithStartTS begins a transaction with startTS.
 func (s *tikvStore) BeginWithStartTS(txnScope string, startTS uint64) (kv.Transaction, error) {
-	txn, err := newTikvTxnWithStartTS(s, txnScope, startTS, s.nextReplicaReadSeed())
+	txn, err := newTiKVTxnWithStartTS(s, txnScope, startTS, s.nextReplicaReadSeed())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
