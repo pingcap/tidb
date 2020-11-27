@@ -1824,9 +1824,11 @@ func (er *expressionRewriter) evalDefaultExpr(v *ast.DefaultExpr) {
 	er.ctxStackAppend(val, types.EmptyName)
 }
 
-// GetVar try fold scope start
-// used by `expressionRewriter.rewriteVariable`
-// name: GetVar lower name
+// getVarTryFoldOrNotStart check if there can try fold or not
+// return true, if it will try to fold; return false, not to fold.
+// It used by `expressionRewriter.rewriteVariable`.
+// The `Start` suffix means GetVar try fold scope start, corresponds to `getVarTryFoldOrNotEnd`
+// `name` param is GetVar lower name
 func (er *expressionRewriter) getVarTryFoldOrNotStart(name string) bool {
 	tryFold := false
 	svv := er.setVarCollectProcessor
@@ -1844,8 +1846,10 @@ func (er *expressionRewriter) getVarTryFoldOrNotStart(name string) bool {
 	return tryFold
 }
 
-// GetVar try fold scope leave
-// used by `expressionRewriter.rewriteVariable`
+// getVarTryFoldOrNotEnd reset the `er.tryFoldCounter` or `er.disableFoldCounter`
+// when GetVar try fold scope leave. Corresponds to `getVarTryFoldOrNotStart`
+// It used by `expressionRewriter.rewriteVariable`
+// `tryFold` param is the return value of `getVarTryFoldOrNotStart`
 func (er *expressionRewriter) getVarTryFoldOrNotEnd(tryFold bool) {
 	if tryFold {
 		er.tryFoldCounter-- // scope try fold leave

@@ -344,7 +344,8 @@ func (s *testExpressionRewriterSuite) TestIssue17652(c *C) {
 		testkit.Rows("9999999703771440633"))
 }
 
-// https://github.com/pingcap/tidb/issues/8733#issuecomment-700572764
+// TestExplainWhenUserVariableFold tests the user variable fold work
+// See issue [https://github.com/pingcap/tidb/issues/8733#issuecomment-700572764] for more details
 func (s *testExpressionRewriterSuite) TestExplainWhenUserVariableFold(c *C) {
 	defer testleak.AfterTest(c)()
 	store, dom, err := newStoreWithBootstrap()
