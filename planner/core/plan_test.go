@@ -466,6 +466,7 @@ func (s *testPlanNormalize) TestDecodePlanPerformance(c *C) {
 }
 
 func (s *testPlanNormalize) TestEncodePlanPerformance(c *C) {
+	c.Skip("this test use a lot memory and run for too long")
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists th")
