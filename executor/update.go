@@ -174,7 +174,7 @@ func (e *UpdateExec) updateRows(ctx context.Context) (int, error) {
 		memUsageOfChk = chk.MemoryUsage()
 		e.memTracker.Consume(memUsageOfChk)
 		if e.collectRuntimeStatsEnabled() {
-			txn, err := e.ctx.Txn(false)
+			txn, err := e.ctx.LocalTxn(false, e.ctx.GetSessionVars().CheckAndGetTxnScope())
 			if err == nil && txn.GetSnapshot() != nil {
 				txn.GetSnapshot().SetOption(kv.CollectRuntimeStats, e.stats.SnapshotRuntimeStats)
 			}
@@ -272,7 +272,7 @@ func (e *UpdateExec) composeNewRow(rowIdx int, oldRow []types.Datum, cols []*tab
 func (e *UpdateExec) Close() error {
 	e.setMessage()
 	if e.runtimeStats != nil && e.stats != nil {
-		txn, err := e.ctx.Txn(false)
+		txn, err := e.ctx.LocalTxn(false, e.ctx.GetSessionVars().CheckAndGetTxnScope())
 		if err == nil && txn.GetSnapshot() != nil {
 			txn.GetSnapshot().DelOption(kv.CollectRuntimeStats)
 		}

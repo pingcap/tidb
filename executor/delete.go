@@ -122,13 +122,13 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 }
 
 func (e *DeleteExec) doBatchDelete(ctx context.Context) error {
-	txn, err := e.ctx.Txn(false)
+	txn, err := e.ctx.LocalTxn(false, e.ctx.GetSessionVars().CheckAndGetTxnScope())
 	if err != nil {
 		return ErrBatchInsertFail.GenWithStack("BatchDelete failed with error: %v", err)
 	}
 	e.memTracker.Consume(-int64(txn.Size()))
 	e.ctx.StmtCommit()
-	if err := e.ctx.NewTxn(ctx); err != nil {
+	if err := e.ctx.NewLocalTxn(ctx, e.ctx.GetSessionVars().CheckAndGetTxnScope()); err != nil {
 		// We should return a special error for batch insert.
 		return ErrBatchInsertFail.GenWithStack("BatchDelete failed with error: %v", err)
 	}
@@ -202,7 +202,7 @@ func (e *DeleteExec) removeRowsInTblRowMap(tblRowMap tableRowMapType) error {
 }
 
 func (e *DeleteExec) removeRow(ctx sessionctx.Context, t table.Table, h kv.Handle, data []types.Datum) error {
-	txnState, err := e.ctx.Txn(false)
+	txnState, err := e.ctx.LocalTxn(false, e.ctx.GetSessionVars().CheckAndGetTxnScope())
 	if err != nil {
 		return err
 	}

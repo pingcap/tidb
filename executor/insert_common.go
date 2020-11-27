@@ -476,13 +476,13 @@ func insertRowsFromSelect(ctx context.Context, base insertCommon) error {
 }
 
 func (e *InsertValues) doBatchInsert(ctx context.Context) error {
-	txn, err := e.ctx.Txn(false)
+	txn, err := e.ctx.LocalTxn(false, e.ctx.GetSessionVars().CheckAndGetTxnScope())
 	if err != nil {
 		return ErrBatchInsertFail.GenWithStack("BatchInsert failed with error: %v", err)
 	}
 	e.memTracker.Consume(-int64(txn.Size()))
 	e.ctx.StmtCommit()
-	if err := e.ctx.NewTxn(ctx); err != nil {
+	if err := e.ctx.NewLocalTxn(ctx, e.ctx.GetSessionVars().CheckAndGetTxnScope()); err != nil {
 		// We should return a special error for batch insert.
 		return ErrBatchInsertFail.GenWithStack("BatchInsert failed with error: %v", err)
 	}
@@ -855,7 +855,7 @@ func (e *InsertValues) adjustAutoRandomDatum(ctx context.Context, d types.Datum,
 	// Change NULL to auto id.
 	// Change value 0 to auto id, if NoAutoValueOnZero SQL mode is not set.
 	if d.IsNull() || e.ctx.GetSessionVars().SQLMode&mysql.ModeNoAutoValueOnZero == 0 {
-		_, err := e.ctx.Txn(true)
+		_, err := e.ctx.LocalTxn(true, e.ctx.GetSessionVars().CheckAndGetTxnScope())
 		if err != nil {
 			return types.Datum{}, errors.Trace(err)
 		}
@@ -949,7 +949,7 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 		return err
 	}
 
-	txn, err := e.ctx.Txn(true)
+	txn, err := e.ctx.LocalTxn(true, e.ctx.GetSessionVars().CheckAndGetTxnScope())
 	if err != nil {
 		return err
 	}

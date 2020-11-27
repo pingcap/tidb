@@ -104,7 +104,7 @@ func (e *SimpleExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 
 	if e.autoNewTxn() {
 		// Commit the old transaction, like DDL.
-		if err := e.ctx.NewTxn(ctx); err != nil {
+		if err := e.ctx.NewLocalTxn(ctx, e.ctx.GetSessionVars().CheckAndGetTxnScope()); err != nil {
 			return err
 		}
 		defer func() { e.ctx.GetSessionVars().SetStatusFlag(mysql.ServerStatusInTrans, false) }()
@@ -561,7 +561,7 @@ func (e *SimpleExec) executeBegin(ctx context.Context, s *ast.BeginStmt) error {
 	// need to call NewTxn, which commits the existing transaction and begins a new one.
 	txnCtx := e.ctx.GetSessionVars().TxnCtx
 	if txnCtx.History != nil {
-		err := e.ctx.NewTxn(ctx)
+		err := e.ctx.NewLocalTxn(ctx, e.ctx.GetSessionVars().CheckAndGetTxnScope())
 		if err != nil {
 			return err
 		}
@@ -570,7 +570,7 @@ func (e *SimpleExec) executeBegin(ctx context.Context, s *ast.BeginStmt) error {
 	// the transaction with COMMIT or ROLLBACK. The autocommit mode then
 	// reverts to its previous state.
 	e.ctx.GetSessionVars().SetStatusFlag(mysql.ServerStatusInTrans, true)
-	// Call ctx.Txn(true) to active pending txn.
+	// Call ctx.LocalTxn(true) to active pending txn.
 	txnMode := s.Mode
 	if txnMode == "" {
 		txnMode = e.ctx.GetSessionVars().TxnMode
@@ -578,7 +578,7 @@ func (e *SimpleExec) executeBegin(ctx context.Context, s *ast.BeginStmt) error {
 	if txnMode == ast.Pessimistic {
 		e.ctx.GetSessionVars().TxnCtx.IsPessimistic = true
 	}
-	txn, err := e.ctx.Txn(true)
+	txn, err := e.ctx.LocalTxn(true, e.ctx.GetSessionVars().CheckAndGetTxnScope())
 	if err != nil {
 		return err
 	}
@@ -656,7 +656,7 @@ func (e *SimpleExec) executeRollback(s *ast.RollbackStmt) error {
 	sessVars := e.ctx.GetSessionVars()
 	logutil.BgLogger().Debug("execute rollback statement", zap.Uint64("conn", sessVars.ConnectionID))
 	sessVars.SetStatusFlag(mysql.ServerStatusInTrans, false)
-	txn, err := e.ctx.Txn(false)
+	txn, err := e.ctx.LocalTxn(false, e.ctx.GetSessionVars().CheckAndGetTxnScope())
 	if err != nil {
 		return err
 	}
@@ -836,7 +836,7 @@ func (e *SimpleExec) executeAlterUser(s *ast.AlterUserStmt) error {
 	}
 	if len(failedUsers) > 0 {
 		// Commit the transaction even if we returns error
-		txn, err := e.ctx.Txn(true)
+		txn, err := e.ctx.LocalTxn(true, e.ctx.GetSessionVars().CheckAndGetTxnScope())
 		if err != nil {
 			return err
 		}

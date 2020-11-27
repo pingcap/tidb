@@ -21,37 +21,32 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/owner"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tipb/go-binlog"
 )
 
-// TxnOption represents available options for the Context.NewTxn and Context.Txn.
-type TxnOption struct {
-	TxnScope string
-}
-
-// TxnOptionFunc configures the content of TxnOption.
-type TxnOptionFunc func(txnOption *TxnOption)
-
-// WithGlobalTxn will set the txn scope to global.
-func WithGlobalTxn(txnOption *TxnOption) {
-	txnOption.TxnScope = oracle.GlobalTxnScope
-}
-
 // Context is an interface for transaction and executive args environment.
 type Context interface {
-	// NewTxn creates a new transaction for further execution.
+	// NewTxn creates a new global transaction for further execution.
 	// If old transaction is valid, it is committed first.
 	// It's used in BEGIN statement and DDL statements to commit old transaction.
-	NewTxn(ctx context.Context, ops ...TxnOptionFunc) error
+	NewTxn(ctx context.Context) error
+	// NewLocalTxn creates a new local transaction for further execution.
+	// If old transaction is valid, it is committed first.
+	// It's used in BEGIN statement and DDL statements to commit old transaction.
+	NewLocalTxn(ctx context.Context, txnScope string) error
 
-	// Txn returns the current transaction which is created before executing a statement.
+	// Txn returns the current global transaction which is created before executing a statement.
 	// The returned kv.Transaction is not nil, but it maybe pending or invalid.
 	// If the active parameter is true, call this function will wait for the pending txn
 	// to become valid.
-	Txn(active bool, ops ...TxnOptionFunc) (kv.Transaction, error)
+	Txn(active bool) (kv.Transaction, error)
+	// LocalTxn returns the current local transaction which is created before executing a statement.
+	// The returned kv.Transaction is not nil, but it maybe pending or invalid.
+	// If the active parameter is true, call this function will wait for the pending txn
+	// to become valid.
+	LocalTxn(active bool, txnScope string) (kv.Transaction, error)
 
 	// GetClient gets a kv.Client.
 	GetClient() kv.Client

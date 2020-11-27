@@ -735,7 +735,7 @@ func (e *AnalyzeFastExec) calculateEstimateSampleStep() (err error) {
 }
 
 func (e *AnalyzeFastExec) activateTxnForRowCount() (rollbackFn func() error, err error) {
-	txn, err := e.ctx.Txn(true)
+	txn, err := e.ctx.LocalTxn(true, e.ctx.GetSessionVars().CheckAndGetTxnScope())
 	if err != nil {
 		if kv.ErrInvalidTxn.Equal(err) {
 			_, err := e.ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), "begin")

@@ -1295,7 +1295,7 @@ func (cc *clientConn) handleLoadData(ctx context.Context, loadDataInfo *executor
 	loadDataInfo.StartStopWatcher()
 	// let stop watcher goroutine quit
 	defer loadDataInfo.ForceQuit()
-	err = loadDataInfo.Ctx.NewTxn(ctx, sessionctx.WithGlobalTxn)
+	err = loadDataInfo.Ctx.NewTxn(ctx)
 	if err != nil {
 		return err
 	}
@@ -1460,7 +1460,7 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 // use BatchGet to get the keys, so the values will be cached in the snapshot cache, save RPC call cost.
 // For pessimistic transaction, the keys will be batch locked.
 func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.StmtNode) ([]plannercore.Plan, error) {
-	txn, err := cc.ctx.Txn(false)
+	txn, err := cc.ctx.LocalTxn(false, cc.ctx.GetSessionVars().CheckAndGetTxnScope())
 	if err != nil {
 		return nil, err
 	}

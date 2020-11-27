@@ -54,7 +54,7 @@ func updateRecord(ctx context.Context, sctx sessionctx.Context, h kv.Handle, old
 		defer span1.Finish()
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
-	txn, err := sctx.Txn(false)
+	txn, err := sctx.LocalTxn(false, sctx.GetSessionVars().CheckAndGetTxnScope())
 	if err != nil {
 		return false, err
 	}

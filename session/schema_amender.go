@@ -496,7 +496,7 @@ func (s *SchemaAmender) prepareKvMap(ctx context.Context, commitMutations tikv.C
 	addKeys, removeKeys := s.getAmendableKeys(commitMutations, info)
 
 	// BatchGet the new key values, the Op_Put and Op_Insert type keys in memory buffer.
-	txn, err := s.sess.Txn(true, sessionctx.WithGlobalTxn)
+	txn, err := s.sess.Txn(true)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

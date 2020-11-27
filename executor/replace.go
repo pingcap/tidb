@@ -114,7 +114,7 @@ func (e *ReplaceExec) EqualDatumsAsBinary(sc *stmtctx.StatementContext, a []type
 
 // replaceRow removes all duplicate rows for one row, then inserts it.
 func (e *ReplaceExec) replaceRow(ctx context.Context, r toBeCheckedRow) error {
-	txn, err := e.ctx.Txn(true)
+	txn, err := e.ctx.LocalTxn(true, e.ctx.GetSessionVars().CheckAndGetTxnScope())
 	if err != nil {
 		return err
 	}
@@ -212,7 +212,7 @@ func (e *ReplaceExec) exec(ctx context.Context, newRows [][]types.Datum) error {
 		return err
 	}
 
-	txn, err := e.ctx.Txn(true)
+	txn, err := e.ctx.LocalTxn(true, e.ctx.GetSessionVars().CheckAndGetTxnScope())
 	if err != nil {
 		return err
 	}

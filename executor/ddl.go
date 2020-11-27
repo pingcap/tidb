@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/planner/core"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/admin"
@@ -55,7 +54,7 @@ func (e *DDLExec) toErr(err error) error {
 	// The err may be cause by schema changed, here we distinguish the ErrInfoSchemaChanged error from other errors.
 	dom := domain.GetDomain(e.ctx)
 	checker := domain.NewSchemaChecker(dom, e.is.SchemaMetaVersion(), nil)
-	txn, err1 := e.ctx.Txn(true, sessionctx.WithGlobalTxn)
+	txn, err1 := e.ctx.Txn(true)
 	if err1 != nil {
 		logutil.BgLogger().Error("active txn failed", zap.Error(err))
 		return err1
@@ -75,7 +74,7 @@ func (e *DDLExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	e.done = true
 
 	// For each DDL, we should commit the previous transaction and create a new transaction.
-	if err = e.ctx.NewTxn(ctx, sessionctx.WithGlobalTxn); err != nil {
+	if err = e.ctx.NewTxn(ctx); err != nil {
 		return err
 	}
 	defer func() { e.ctx.GetSessionVars().StmtCtx.IsDDLJobInQueue = false }()
@@ -379,7 +378,7 @@ func (e *DDLExec) executeAlterTable(s *ast.AlterTableStmt) error {
 // is used to recover the table that deleted by mistake.
 func (e *DDLExec) executeRecoverTable(s *ast.RecoverTableStmt) error {
 	// DDL should be started as a global transaction
-	txn, err := e.ctx.Txn(true, sessionctx.WithGlobalTxn)
+	txn, err := e.ctx.Txn(true)
 	if err != nil {
 		return err
 	}
@@ -514,7 +513,7 @@ func GetDropOrTruncateTableInfoFromJobs(jobs []*model.Job, gcSafePoint uint64, d
 
 func (e *DDLExec) getRecoverTableByTableName(tableName *ast.TableName) (*model.Job, *model.TableInfo, error) {
 	// DDL should be started as a global transaction
-	txn, err := e.ctx.Txn(true, sessionctx.WithGlobalTxn)
+	txn, err := e.ctx.Txn(true)
 	if err != nil {
 		return nil, nil, err
 	}

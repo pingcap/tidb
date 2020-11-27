@@ -970,7 +970,7 @@ func (e *DDLJobsReaderExec) Open(ctx context.Context) error {
 		return err
 	}
 	// DDL should be started as a global transaction
-	txn, err := e.ctx.Txn(true, sessionctx.WithGlobalTxn)
+	txn, err := e.ctx.Txn(true)
 	if err != nil {
 		return err
 	}

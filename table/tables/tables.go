@@ -336,7 +336,7 @@ func (t *TableCommon) FirstKey() kv.Key {
 // `touched` means which columns are really modified, used for secondary indices.
 // Length of `oldData` and `newData` equals to length of `t.WritableCols()`.
 func (t *TableCommon) UpdateRecord(ctx context.Context, sctx sessionctx.Context, h kv.Handle, oldData, newData []types.Datum, touched []bool) error {
-	txn, err := sctx.Txn(true, sessionctx.WithGlobalTxn)
+	txn, err := sctx.Txn(true)
 	if err != nil {
 		return err
 	}
@@ -591,7 +591,7 @@ func TryGetCommonPkColumns(tbl table.Table) []*table.Column {
 
 // AddRecord implements table.Table AddRecord interface.
 func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts ...table.AddRecordOption) (recordID kv.Handle, err error) {
-	txn, err := sctx.Txn(true, sessionctx.WithGlobalTxn)
+	txn, err := sctx.Txn(true)
 	if err != nil {
 		return nil, err
 	}
@@ -856,7 +856,7 @@ func (t *TableCommon) addIndices(sctx sessionctx.Context, recordID kv.Handle, r 
 func (t *TableCommon) RowWithCols(ctx sessionctx.Context, h kv.Handle, cols []*table.Column) ([]types.Datum, error) {
 	// Get raw row data from kv.
 	key := t.RecordKey(h)
-	txn, err := ctx.Txn(true, sessionctx.WithGlobalTxn)
+	txn, err := ctx.Txn(true)
 	if err != nil {
 		return nil, err
 	}
@@ -1097,7 +1097,7 @@ func writeSequenceUpdateValueBinlog(ctx sessionctx.Context, db, sequence string,
 
 func (t *TableCommon) removeRowData(ctx sessionctx.Context, h kv.Handle) error {
 	// Remove row data.
-	txn, err := ctx.Txn(true, sessionctx.WithGlobalTxn)
+	txn, err := ctx.Txn(true)
 	if err != nil {
 		return err
 	}
@@ -1108,7 +1108,7 @@ func (t *TableCommon) removeRowData(ctx sessionctx.Context, h kv.Handle) error {
 
 // removeRowIndices removes all the indices of a row.
 func (t *TableCommon) removeRowIndices(ctx sessionctx.Context, h kv.Handle, rec []types.Datum) error {
-	txn, err := ctx.Txn(true, sessionctx.WithGlobalTxn)
+	txn, err := ctx.Txn(true)
 	if err != nil {
 		return err
 	}
@@ -1163,7 +1163,7 @@ func (t *TableCommon) buildIndexForRow(ctx sessionctx.Context, h kv.Handle, vals
 func (t *TableCommon) IterRecords(ctx sessionctx.Context, startKey kv.Key, cols []*table.Column,
 	fn table.RecordIterFunc) error {
 	prefix := t.RecordPrefix()
-	txn, err := ctx.Txn(true, sessionctx.WithGlobalTxn)
+	txn, err := ctx.Txn(true)
 	if err != nil {
 		return err
 	}
@@ -1364,7 +1364,7 @@ func (t *TableCommon) RebaseAutoID(ctx sessionctx.Context, newBase int64, isSetS
 
 // Seek implements table.Table Seek interface.
 func (t *TableCommon) Seek(ctx sessionctx.Context, h kv.Handle) (kv.Handle, bool, error) {
-	txn, err := ctx.Txn(true, sessionctx.WithGlobalTxn)
+	txn, err := ctx.Txn(true)
 	if err != nil {
 		return nil, false, err
 	}
@@ -1466,7 +1466,7 @@ func CheckHandleExists(ctx context.Context, sctx sessionctx.Context, t table.Tab
 		}
 		t = pt.GetPartition(pid)
 	}
-	txn, err := sctx.Txn(true, sessionctx.WithGlobalTxn)
+	txn, err := sctx.Txn(true)
 	if err != nil {
 		return err
 	}

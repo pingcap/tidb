@@ -112,7 +112,7 @@ func (e *CheckIndexRangeExec) Open(ctx context.Context) error {
 		return err
 	}
 	sc := e.ctx.GetSessionVars().StmtCtx
-	txn, err := e.ctx.Txn(true)
+	txn, err := e.ctx.LocalTxn(true, e.ctx.GetSessionVars().CheckAndGetTxnScope())
 	if err != nil {
 		return nil
 	}

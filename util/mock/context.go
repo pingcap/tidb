@@ -103,8 +103,13 @@ func (c *Context) GetSessionVars() *variable.SessionVars {
 }
 
 // Txn implements sessionctx.Context Txn interface.
-func (c *Context) Txn(active bool, ops ...sessionctx.TxnOptionFunc) (kv.Transaction, error) {
+func (c *Context) Txn(active bool) (kv.Transaction, error) {
 	return &c.txn, nil
+}
+
+// LocalTxn implements sessionctx.Context Txn interface.
+func (c *Context) LocalTxn(active bool, txnScope string) (kv.Transaction, error) {
+	return c.Txn(active)
 }
 
 // GetClient implements sessionctx.Context GetClient interface.
@@ -148,7 +153,7 @@ func (c *Context) PreparedPlanCache() *kvcache.SimpleLRUCache {
 }
 
 // NewTxn implements the sessionctx.Context interface.
-func (c *Context) NewTxn(ctx context.Context, ops ...sessionctx.TxnOptionFunc) error {
+func (c *Context) NewTxn(ctx context.Context) error {
 	if c.Store == nil {
 		return errors.New("store is not set")
 	}
@@ -165,6 +170,11 @@ func (c *Context) NewTxn(ctx context.Context, ops ...sessionctx.TxnOptionFunc) e
 	}
 	c.txn.Transaction = txn
 	return nil
+}
+
+// NewLocalTxn implements the sessionctx.Context interface.
+func (c *Context) NewLocalTxn(ctx context.Context, txnScope string) error {
+	return c.NewTxn(ctx)
 }
 
 // RefreshTxnCtx implements the sessionctx.Context interface.

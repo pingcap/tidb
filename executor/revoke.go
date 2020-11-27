@@ -60,7 +60,7 @@ func (e *RevokeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	e.done = true
 
 	// Commit the old transaction, like DDL.
-	if err := e.ctx.NewTxn(ctx, sessionctx.WithGlobalTxn); err != nil {
+	if err := e.ctx.NewTxn(ctx); err != nil {
 		return err
 	}
 	defer func() { e.ctx.GetSessionVars().SetStatusFlag(mysql.ServerStatusInTrans, false) }()

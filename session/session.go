@@ -203,15 +203,6 @@ type session struct {
 	idxUsageCollector *handle.SessionIndexUsageCollector
 }
 
-func (s *session) checkAndGetTxnScope() string {
-	txnScope := s.GetSessionVars().TxnScope
-	// Internal SQLs should always run as the global transactions.
-	if s.isInternal() {
-		txnScope = oracle.GlobalTxnScope
-	}
-	return txnScope
-}
-
 // Create and initialize at lease one global transaction
 // and another local transaction if needed.
 func (s *session) initTxns() {
@@ -221,7 +212,7 @@ func (s *session) initTxns() {
 	// Always prepare a global transaction
 	s.createAndInitTxn(oracle.GlobalTxnScope)
 	// Check whether we have to prepare a local transaction
-	currentTxnScope := s.checkAndGetTxnScope()
+	currentTxnScope := s.sessionVars.CheckAndGetTxnScope()
 	if currentTxnScope != oracle.GlobalTxnScope {
 		s.createAndInitTxn(currentTxnScope)
 	}
@@ -266,7 +257,7 @@ func (s *session) setTxn(txnScope string, txn *TxnState) {
 // the current txn scope but may not be the transaction current
 // seesion is using.
 func (s *session) getCurrentScopeTxn() (*TxnState, bool) {
-	return s.getTxn(s.checkAndGetTxnScope())
+	return s.getTxn(s.sessionVars.CheckAndGetTxnScope())
 }
 
 // AddTableLock adds table lock to the session lock map.
@@ -923,7 +914,7 @@ func (s *session) ExecRestrictedSQLWithSnapshot(sql string) ([]chunk.Row, []*ast
 	defer s.sysSessionPool().Put(tmp)
 	metrics.SessionRestrictedSQLCounter.Inc()
 	var snapshot uint64
-	txn, err := s.Txn(false, sessionctx.WithGlobalTxn)
+	txn, err := s.Txn(false)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -1632,8 +1623,11 @@ func (s *session) DropPreparedStmt(stmtID uint32) error {
 	return nil
 }
 
-func (s *session) Txn(active bool, ops ...sessionctx.TxnOptionFunc) (kv.Transaction, error) {
-	txnOption := &sessionctx.TxnOption{TxnScope: s.checkAndGetTxnScope()}
+func (s *session) Txn(active bool) (kv.Transaction, error) {
+	return s.LocalTxn(active, oracle.GlobalTxnScope)
+}
+
+func (s *session) LocalTxn(active bool, txnScope string) (kv.Transaction, error) {
 	var (
 		nextTxn *TxnState
 		ok      bool
@@ -1644,9 +1638,9 @@ func (s *session) Txn(active bool, ops ...sessionctx.TxnOptionFunc) (kv.Transact
 		s.curTxn = nextTxn
 	}()
 	// Check whether we need a new transaction for the brand new txn scope
-	nextTxn, ok = s.getTxn(txnOption.TxnScope)
+	nextTxn, ok = s.getTxn(txnScope)
 	if !ok {
-		newTxn, err := s.store.BeginWithTxnScope(txnOption.TxnScope)
+		newTxn, err := s.store.BeginWithTxnScope(txnScope)
 		if err != nil {
 			return nextTxn, errors.AddStack(err)
 		}
@@ -1654,8 +1648,8 @@ func (s *session) Txn(active bool, ops ...sessionctx.TxnOptionFunc) (kv.Transact
 		if s.GetSessionVars().GetReplicaRead().IsFollowerRead() {
 			newTxn.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
 		}
-		s.updateTxn(txnOption.TxnScope, newTxn)
-		nextTxn, _ = s.getTxn(txnOption.TxnScope)
+		s.updateTxn(txnScope, newTxn)
+		nextTxn, _ = s.getTxn(txnScope)
 	}
 	if !active {
 		return nextTxn, nil
@@ -1730,11 +1724,11 @@ func (s *session) isTxnRetryable() bool {
 	return false
 }
 
-func (s *session) NewTxn(ctx context.Context, ops ...sessionctx.TxnOptionFunc) error {
-	txnOption := &sessionctx.TxnOption{TxnScope: s.checkAndGetTxnScope()}
-	for _, op := range ops {
-		op(txnOption)
-	}
+func (s *session) NewTxn(ctx context.Context) error {
+	return s.NewLocalTxn(ctx, oracle.GlobalTxnScope)
+}
+
+func (s *session) NewLocalTxn(ctx context.Context, txnScope string) error {
 	if s.curTxn.Valid() {
 		txnID := s.curTxn.StartTS()
 		err := s.CommitTxn(ctx)
@@ -1747,7 +1741,7 @@ func (s *session) NewTxn(ctx context.Context, ops ...sessionctx.TxnOptionFunc) e
 			zap.Uint64("txnStartTS", txnID))
 	}
 
-	newTxn, err := s.store.BeginWithTxnScope(txnOption.TxnScope)
+	newTxn, err := s.store.BeginWithTxnScope(txnScope)
 	if err != nil {
 		return err
 	}
@@ -1755,8 +1749,8 @@ func (s *session) NewTxn(ctx context.Context, ops ...sessionctx.TxnOptionFunc) e
 	if s.GetSessionVars().GetReplicaRead().IsFollowerRead() {
 		newTxn.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
 	}
-	s.updateTxn(txnOption.TxnScope, newTxn)
-	if txn, ok := s.getTxn(txnOption.TxnScope); ok {
+	s.updateTxn(txnScope, newTxn)
+	if txn, ok := s.getTxn(txnScope); ok {
 		s.curTxn = txn
 	}
 	is := domain.GetDomain(s).InfoSchema()
@@ -1766,7 +1760,7 @@ func (s *session) NewTxn(ctx context.Context, ops ...sessionctx.TxnOptionFunc) e
 		CreateTime:    time.Now(),
 		StartTS:       newTxn.StartTS(),
 		ShardStep:     int(s.sessionVars.ShardAllocateStep),
-		TxnScope:      txnOption.TxnScope,
+		TxnScope:      txnScope,
 	}
 	return nil
 }
@@ -2476,7 +2470,7 @@ func (s *session) PrepareTxnCtx(ctx context.Context) {
 	}
 
 	is := domain.GetDomain(s).InfoSchema()
-	txnScope := s.checkAndGetTxnScope()
+	txnScope := s.sessionVars.CheckAndGetTxnScope()
 	s.sessionVars.TxnCtx = &variable.TransactionContext{
 		InfoSchema:    is,
 		SchemaVersion: is.SchemaMetaVersion(),
@@ -2496,7 +2490,7 @@ func (s *session) PrepareTSFuture(ctx context.Context) {
 	// Prepare TSFuture for each transaction scope
 	for txnScope, txn := range s.txns {
 		// Only prepare for the global scope and the current local scope
-		if txnScope != s.checkAndGetTxnScope() && txnScope != oracle.GlobalTxnScope {
+		if txnScope != s.sessionVars.CheckAndGetTxnScope() && txnScope != oracle.GlobalTxnScope {
 			continue
 		}
 		if !txn.validOrPending() {
@@ -2522,7 +2516,7 @@ func (s *session) RefreshTxnCtx(ctx context.Context) error {
 		return err
 	}
 
-	return s.NewTxn(ctx)
+	return s.NewLocalTxn(ctx, s.sessionVars.CheckAndGetTxnScope())
 }
 
 // InitTxnWithStartTS create a transaction with startTS.

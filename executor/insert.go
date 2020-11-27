@@ -59,7 +59,7 @@ func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) error {
 	defer sessVars.CleanBuffers()
 	ignoreErr := sessVars.StmtCtx.DupKeyAsWarning
 
-	txn, err := e.ctx.Txn(true)
+	txn, err := e.ctx.LocalTxn(true, e.ctx.GetSessionVars().CheckAndGetTxnScope())
 	if err != nil {
 		return err
 	}
@@ -196,7 +196,7 @@ func (e *InsertExec) batchUpdateDupRows(ctx context.Context, newRows [][]types.D
 		return err
 	}
 
-	txn, err := e.ctx.Txn(true)
+	txn, err := e.ctx.LocalTxn(true, e.ctx.GetSessionVars().CheckAndGetTxnScope())
 	if err != nil {
 		return err
 	}

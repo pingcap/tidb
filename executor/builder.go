@@ -247,7 +247,7 @@ func (b *executorBuilder) buildCancelDDLJobs(v *plannercore.CancelDDLJobs) Execu
 		jobIDs:       v.JobIDs,
 	}
 	// DDL should be started as a global transaction
-	txn, err := e.ctx.Txn(true, sessionctx.WithGlobalTxn)
+	txn, err := e.ctx.Txn(true)
 	if err != nil {
 		b.err = err
 		return nil
@@ -293,7 +293,7 @@ func (b *executorBuilder) buildShowDDL(v *plannercore.ShowDDL) Executor {
 		return nil
 	}
 	// DDL should be started as a global transaction
-	txn, err := e.ctx.Txn(true, sessionctx.WithGlobalTxn)
+	txn, err := e.ctx.Txn(true)
 	if err != nil {
 		b.err = err
 		return nil
@@ -685,7 +685,7 @@ func (b *executorBuilder) buildShow(v *plannercore.PhysicalShow) Executor {
 	}
 	if e.Tp == ast.ShowMasterStatus {
 		// show master status need start ts.
-		if _, err := e.ctx.Txn(true); err != nil {
+		if _, err := e.ctx.LocalTxn(true, e.ctx.GetSessionVars().CheckAndGetTxnScope()); err != nil {
 			b.err = err
 		}
 	}
@@ -1382,7 +1382,7 @@ func (b *executorBuilder) getSnapshotTS() (uint64, error) {
 	}
 
 	snapshotTS := b.ctx.GetSessionVars().SnapshotTS
-	txn, err := b.ctx.Txn(true)
+	txn, err := b.ctx.LocalTxn(true, b.ctx.GetSessionVars().CheckAndGetTxnScope())
 	if err != nil {
 		return 0, err
 	}
@@ -1876,12 +1876,12 @@ func (b *executorBuilder) updateForUpdateTSIfNeeded(selectPlan plannercore.Physi
 		return nil
 	}
 	// Activate the invalid txn, use the txn startTS as newForUpdateTS
-	txn, err := b.ctx.Txn(false)
+	txn, err := b.ctx.LocalTxn(false, b.ctx.GetSessionVars().CheckAndGetTxnScope())
 	if err != nil {
 		return err
 	}
 	if !txn.Valid() {
-		_, err := b.ctx.Txn(true)
+		_, err := b.ctx.LocalTxn(true, b.ctx.GetSessionVars().CheckAndGetTxnScope())
 		if err != nil {
 			return err
 		}

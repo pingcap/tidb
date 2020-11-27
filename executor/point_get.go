@@ -119,7 +119,7 @@ func (e *PointGetExecutor) Open(context.Context) error {
 		snapshotTS = txnCtx.GetForUpdateTS()
 	}
 	var err error
-	e.txn, err = e.ctx.Txn(false)
+	e.txn, err = e.ctx.LocalTxn(false, e.ctx.GetSessionVars().CheckAndGetTxnScope())
 	if err != nil {
 		return err
 	}

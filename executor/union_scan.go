@@ -76,7 +76,7 @@ func (us *UnionScanExec) open(ctx context.Context) error {
 	}
 
 	defer trace.StartRegion(ctx, "UnionScanBuildRows").End()
-	txn, err := us.ctx.Txn(false)
+	txn, err := us.ctx.LocalTxn(false, us.ctx.GetSessionVars().CheckAndGetTxnScope())
 	if err != nil {
 		return err
 	}

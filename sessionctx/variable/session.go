@@ -1629,6 +1629,15 @@ func (s *SessionVars) SetTxnScope(txnScope string) {
 	s.TxnScope = txnScope
 }
 
+// CheckAndGetTxnScope checks and returns the current txn scope we should use.
+func (s *SessionVars) CheckAndGetTxnScope() string {
+	// Internal SQLs should always run as the global transactions.
+	if s.InRestrictedSQL {
+		return oracle.GlobalTxnScope
+	}
+	return s.TxnScope
+}
+
 // SetPrevStmtDigest sets the digest of the previous statement.
 func (s *SessionVars) SetPrevStmtDigest(prevStmtDigest string) {
 	s.prevStmtDigest = prevStmtDigest

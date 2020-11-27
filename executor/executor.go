@@ -524,7 +524,7 @@ func (e *ShowDDLJobQueriesExec) Open(ctx context.Context) error {
 		return err
 	}
 	// DDL should be started as a global transaction
-	txn, err := e.ctx.Txn(true, sessionctx.WithGlobalTxn)
+	txn, err := e.ctx.Txn(true)
 	if err != nil {
 		return err
 	}
@@ -570,7 +570,7 @@ func (e *ShowDDLJobsExec) Open(ctx context.Context) error {
 		return err
 	}
 	// DDL should be started as a global transaction
-	txn, err := e.ctx.Txn(true, sessionctx.WithGlobalTxn)
+	txn, err := e.ctx.Txn(true)
 	if err != nil {
 		return err
 	}
@@ -792,7 +792,7 @@ func (e *CheckTableExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 func (e *CheckTableExec) checkTableRecord(idxOffset int) error {
 	idxInfo := e.indexInfos[idxOffset]
-	txn, err := e.ctx.Txn(true)
+	txn, err := e.ctx.LocalTxn(true, e.ctx.GetSessionVars().CheckAndGetTxnScope())
 	if err != nil {
 		return err
 	}
@@ -992,7 +992,7 @@ func doLockKeys(ctx context.Context, se sessionctx.Context, lockCtx *kv.LockCtx,
 		atomic.StoreUint32(&se.GetSessionVars().TxnCtx.ForUpdate, 1)
 	}
 	// Lock keys only once when finished fetching all results.
-	txn, err := se.Txn(true)
+	txn, err := se.LocalTxn(true, se.GetSessionVars().CheckAndGetTxnScope())
 	if err != nil {
 		return err
 	}

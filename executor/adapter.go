@@ -356,7 +356,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 	}
 
 	var txnStartTS uint64
-	txn, err := sctx.Txn(false)
+	txn, err := sctx.LocalTxn(false, sctx.GetSessionVars().CheckAndGetTxnScope())
 	if err != nil {
 		return nil, err
 	}
@@ -531,7 +531,7 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) error {
 	// Do not active the transaction here.
 	// When autocommit = 0 and transaction in pessimistic mode,
 	// statements like set xxx = xxx; should not active the transaction.
-	txn, err := sctx.Txn(false)
+	txn, err := sctx.LocalTxn(false, sctx.GetSessionVars().CheckAndGetTxnScope())
 	if err != nil {
 		return err
 	}
@@ -585,7 +585,7 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) error {
 
 // UpdateForUpdateTS updates the ForUpdateTS, if newForUpdateTS is 0, it obtain a new TS from PD.
 func UpdateForUpdateTS(seCtx sessionctx.Context, newForUpdateTS uint64) error {
-	txn, err := seCtx.Txn(false)
+	txn, err := seCtx.LocalTxn(false, seCtx.GetSessionVars().CheckAndGetTxnScope())
 	if err != nil {
 		return err
 	}
