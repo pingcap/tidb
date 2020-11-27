@@ -102,6 +102,7 @@ func (s *testSuite5) TestSetVar(c *C) {
 	tk.MustQuery(`select @issue4302;`).Check(testkit.Rows("1"))
 
 	// Set default
+	tk.MustExec("set @@autocommit=1")
 	// {ScopeGlobal | ScopeSession, "low_priority_updates", "OFF"},
 	// For global var
 	tk.MustQuery(`select @@global.low_priority_updates;`).Check(testkit.Rows("0"))

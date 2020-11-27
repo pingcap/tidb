@@ -1020,18 +1020,20 @@ func (s *session) GetGlobalSysVar(name string) (string, error) {
 	}
 	sql := fmt.Sprintf(`SELECT VARIABLE_VALUE FROM %s.%s WHERE VARIABLE_NAME="%s";`,
 		mysql.SystemDB, mysql.GlobalVariablesTable, name)
-	sysVar, err := s.getExecRet(s, sql)
+	rows, fields, err := execRestrictedSQL(context.Background(), s, sql)
 	if err != nil {
-		if executor.ErrResultIsEmpty.Equal(err) {
-			sv := variable.GetSysVar(name)
-			if sv != nil {
-				return sv.Value, nil
-			}
-			return "", variable.ErrUnknownSystemVar.GenWithStackByArgs(name)
-		}
 		return "", err
 	}
-	return sysVar, nil
+	if len(rows) == 0 {
+		sv := variable.GetSysVar(name)
+		if sv != nil {
+			return sv.Value, nil
+		}
+		return "", variable.ErrUnknownSystemVar.GenWithStackByArgs(name)
+	}
+
+	d := rows[0].GetDatum(0, &fields[0].Column.FieldType)
+	return d.ToString()
 }
 
 // SetGlobalSysVar implements GlobalVarAccessor.SetGlobalSysVar interface.
@@ -1078,6 +1080,7 @@ func (s *session) SetGlobalSysVar(name, value string) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+	s.StmtCommit()
 	return err
 }
 
