@@ -316,6 +316,9 @@ const (
 	// tidb_window_concurrency is deprecated, use tidb_executor_concurrency instead.
 	TiDBWindowConcurrency = "tidb_window_concurrency"
 
+	// tidb_merge_join_concurrency is used for merge join parallel executor
+	TiDBMergeJoinConcurrency = "tidb_merge_join_concurrency"
+
 	// tidb_stream_agg_concurrency is used for stream aggregation parallel executor.
 	// tidb_stream_agg_concurrency is deprecated, use tidb_executor_concurrency instead.
 	TiDBStreamAggConcurrency = "tidb_streamagg_concurrency"
@@ -470,6 +473,9 @@ const (
 
 	// TiDBMemoryUsageAlarmRatio indicates the alarm threshold when memory usage of the tidb-server exceeds.
 	TiDBMemoryUsageAlarmRatio = "tidb_memory_usage_alarm_ratio"
+
+	// TiDBEnableRateLimitAction indicates whether enabled ratelimit action
+	TiDBEnableRateLimitAction = "tidb_enable_rate_limit_action"
 )
 
 // Default TiDB system variable values.
@@ -545,6 +551,7 @@ const (
 	DefTiDBHashAggPartialConcurrency   = ConcurrencyUnset
 	DefTiDBHashAggFinalConcurrency     = ConcurrencyUnset
 	DefTiDBWindowConcurrency           = ConcurrencyUnset
+	DefTiDBMergeJoinConcurrency        = 1 // disable optimization by default
 	DefTiDBStreamAggConcurrency        = 1
 	DefTiDBForcePriority               = mysql.NoPriority
 	DefTiDBUseRadixJoin                = false
@@ -581,6 +588,7 @@ const (
 	DefTiDBEnableParallelApply         = false
 	DefTiDBEnableAmendPessimisticTxn   = true
 	DefTiDBPartitionPruneMode          = "static-only"
+	DefTiDBEnableRateLimitAction       = true
 )
 
 // Process global variables.
