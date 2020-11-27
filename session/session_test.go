@@ -3682,3 +3682,24 @@ func (s *testSessionSerialSuite) TestCoprocessorOOMAction(c *C) {
 		se.Close()
 	}
 }
+
+func (s *testSessionSuite3) TestSetGlobalVariableRollback(c *C) {
+	// For https://github.com/pingcap/tidb/issues/8393
+	// Set global variable should not be write to TiKV immediately,
+	// and the operation can be rollbacked.
+	tk1 := testkit.NewTestKitWithInit(c, s.store)
+	tk1.MustQuery("select @@global.innodb_flushing_avg_loops").Check(testkit.Rows("30"))
+	tk1.MustExec("begin")
+	tk1.MustExec("set @@global.innodb_flushing_avg_loops = 90")
+
+	tk2 := testkit.NewTestKitWithInit(c, s.store)
+	tk2.MustQuery("select @@global.innodb_flushing_avg_loops").Check(testkit.Rows("30"))
+
+	tk1.MustExec("rollback")
+	tk3 := testkit.NewTestKitWithInit(c, s.store)
+	tk3.MustQuery("select @@global.innodb_flushing_avg_loops").Check(testkit.Rows("30"))
+
+	tk1.MustExec("set @@global.innodb_flushing_avg_loops = 90")
+	tk4 := testkit.NewTestKitWithInit(c, s.store)
+	tk4.MustQuery("select @@global.innodb_flushing_avg_loops").Check(testkit.Rows("90"))
+}

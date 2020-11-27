@@ -1059,9 +1059,25 @@ func (s *session) SetGlobalSysVar(name, value string) error {
 	}
 	name = strings.ToLower(name)
 	variable.CheckDeprecationSetSystemVar(s.sessionVars, name)
+
+	// For issue https://github.com/pingcap/tidb/issues/8393
+	// Use the current session instead of executing a restricted SQL, so the changes can be rollback.
 	sql := fmt.Sprintf(`REPLACE %s.%s VALUES ('%s', '%s');`,
 		mysql.SystemDB, mysql.GlobalVariablesTable, name, sVal)
-	_, _, err = s.ExecRestrictedSQL(sql)
+	stmtNode, err := Parse(s, sql)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	compiler := executor.Compiler{Ctx: s}
+	ctx := context.Background()
+	stmt, err := compiler.Compile(ctx, stmtNode[0])
+	if err != nil {
+		return errors.Trace(err)
+	}
+	_, err = stmt.Exec(ctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	return err
 }
 
