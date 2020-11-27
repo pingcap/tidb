@@ -334,6 +334,9 @@ const (
 	tidbSystemTZ = "system_tz"
 	// The variable name in mysql.tidb table and it will indicate if the new collations are enabled in the TiDB cluster.
 	tidbNewCollationEnabled = "new_collation_enabled"
+	// The variable name in mysql.tidb table and it records the default value of
+	// mem-quota-query when upgrade from v3.0.x to v4.0.9+.
+	tidbDefMemoryQuotaQuery = "default_memory_quota_query"
 	// Const for TiDB server version 2.
 	version2  = 2
 	version3  = 3
@@ -391,6 +394,8 @@ const (
 	version47 = 47
 	// version48 change mysql.stats_histograms cm_sketch column from blob to blob(6291456)
 	version48 = 48
+	// version49 writes a variable `mem_quota_query` to mysql.tidb if it's a cluster upgraded from v3.0.x to v4.0.9.
+	version49 = 49
 )
 
 var (
@@ -442,6 +447,7 @@ var (
 		upgradeToVer46,
 		upgradeToVer47,
 		upgradeToVer48,
+		upgradeToVer49,
 	}
 )
 
@@ -1078,6 +1084,30 @@ func upgradeToVer48(s Session, ver int64) {
 		return
 	}
 	doReentrantDDL(s, "ALTER TABLE mysql.stats_histograms MODIFY cm_sketch BLOB(6291456)")
+}
+
+func upgradeToVer49(s Session, ver int64) {
+	if ver >= version49 {
+		return
+	}
+	// The mem-query-quota default value is 32GB by default in v3.0, and 1GB by
+	// default in v4.0.
+	// If a cluster is upgraded from v3.0.x (bootstrapVer <= version38) to
+	// v4.0.9+, we'll write the default value to mysql.tidb. Thus we can get the
+	// default value of mem-quota-query, and promise the compatibility even if
+	// the tidb-server restarts.
+	// If it's a newly deployed cluster, we do not need to write the value into
+	// mysql.tidb, since no compatibility problem will happen.
+	if ver <= version38 {
+		writeMemoryQuotaQuery(s)
+	}
+}
+
+func writeMemoryQuotaQuery(s Session) {
+	comment := "memory_quota_query is 32GB by default in v3.0.x, 1GB by default in v4.0.x"
+	sql := fmt.Sprintf(`INSERT HIGH_PRIORITY INTO %s.%s VALUES ("%s", '%d', '%s') ON DUPLICATE KEY UPDATE VARIABLE_VALUE='%d'`,
+		mysql.SystemDB, mysql.TiDBTable, tidbDefMemoryQuotaQuery, 32<<30, comment, 32<<30)
+	mustExecute(s, sql)
 }
 
 // updateBootstrapVer updates bootstrap version variable in mysql.TiDB table.

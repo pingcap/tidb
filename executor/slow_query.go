@@ -267,7 +267,7 @@ func (e *slowQueryRetriever) getBatchLog(reader *bufio.Reader, offset *offset, n
 			line = string(hack.String(lineByte))
 			log = append(log, line)
 			if strings.HasSuffix(line, variable.SlowLogSQLSuffixStr) {
-				if strings.HasPrefix(line, "use") {
+				if strings.HasPrefix(line, "use") || strings.HasPrefix(line, variable.SlowLogRowPrefixStr) {
 					continue
 				}
 				break
