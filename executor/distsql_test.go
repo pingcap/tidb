@@ -278,6 +278,6 @@ func (s *testSuite3) TestIndexLookUpGetResultChunk(c *C) {
 	for i := 0; i < 101; i++ {
 		tk.MustExec(fmt.Sprintf("insert into tbl values(%d,%d,%d)", i, i, i))
 	}
-	tk.MustQuery("select * from tbl use index(idx_a) where a >99 order by a asc limit 1").Check(testkit.Rows("100 100 100"))
-	tk.MustQuery("select * from tbl use index(idx_a) where a >10 order by a asc limit 4,1").Check(testkit.Rows("15 15 15"))
+	tk.MustQuery("select * from tbl use index(idx_a) where a > 99 order by a asc limit 1").Check(testkit.Rows("100 100 100"))
+	tk.MustQuery("select * from tbl use index(idx_a) where a > 10 order by a asc limit 4,1").Check(testkit.Rows("15 15 15"))
 }
