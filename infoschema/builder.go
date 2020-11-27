@@ -52,7 +52,7 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 		return nil, b.applyModifySchemaCharsetAndCollate(m, diff)
 	case model.ActionAlterTableAlterPartition:
 		// there is no need to udpate table schema
-		return nil, b.applyPlacementUpdate(placement.GroupID(diff.TableID))
+		return []int64{diff.TableID}, b.applyPlacementUpdate(placement.GroupID(diff.TableID))
 	}
 	roDBInfo, ok := b.is.SchemaByID(diff.SchemaID)
 	if !ok {

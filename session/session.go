@@ -2454,6 +2454,7 @@ func (s *session) checkPlacementPolicyBeforeCommit() error {
 		txnScope = config.DefTxnScope
 	}
 	if txnScope != config.DefTxnScope {
+		fmt.Println("checkPlacementPolicyBeforeCommit")
 		is := infoschema.GetInfoSchema(s)
 		for physicalTableID := range s.GetSessionVars().TxnCtx.TableDeltaMap {
 			bundle, ok := is.BundleByName(placement.GroupID(physicalTableID))
@@ -2477,6 +2478,7 @@ func (s *session) checkPlacementPolicyBeforeCommit() error {
 			// FIXME: currently we assumes the physicalTableID is the partition ID. In future, we should consider the situation
 			// if the physicalTableID belongs to a Table.
 			if is.IsPartitionID(physicalTableID) {
+				fmt.Println("checkPlacementPolicyBeforeCommit part is true")
 				partitionID := physicalTableID
 				tbl, _, _ := is.FindTableByPartitionID(partitionID)
 				if tbl == nil || tbl.Meta().Partition == nil {
@@ -2484,18 +2486,22 @@ func (s *session) checkPlacementPolicyBeforeCommit() error {
 						fmt.Sprintf("failed to find partition %v's information", partitionID))
 					break
 				}
-				tableID := tbl.Meta().ID
-				state, ok := tbl.Meta().Partition.GetStateByID(partitionID)
+				tblInfo := tbl.Meta()
+				tableID := tblInfo.ID
+				state, ok := tblInfo.Partition.GetStateByID(partitionID)
 				if !ok {
 					err = ddl.ErrInvalidPlacementPolicyCheck.GenWithStackByArgs(
 						fmt.Sprintf("failed to find table %v partition %v's SchemaState", tableID, partitionID))
 					break
 				}
+				fmt.Println("checkPlacementPolicyBeforeCommit part is true", state.String(), tableID, partitionID)
 				if state == model.StateGlobalTxnWriteOnly {
 					err = ddl.ErrInvalidPlacementPolicyCheck.GenWithStackByArgs(
 						fmt.Sprintf("The SchemaState of table %v's partition %v is under StateGlobalTxnWriteOnly",
 							tableID, partitionID))
 				}
+			} else {
+				fmt.Println("checkPlacementPolicyBeforeCommit part is false")
 			}
 		}
 	}

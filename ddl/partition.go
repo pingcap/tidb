@@ -1783,6 +1783,7 @@ func onAlterTablePartition(t *meta.Meta, job *model.Job) (ver int64, err error) 
 		if !ok {
 			return 0, errors.Wrapf(err, "failed to set partition state")
 		}
+		fmt.Println("onAlterTablePartition,update StateGlobalTxnWriteOnly", tblInfo.ID, partitionID)
 		// used by ApplyDiff in updateSchemaVersion
 		job.CtxVars = []interface{}{partitionID}
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
@@ -1790,7 +1791,6 @@ func onAlterTablePartition(t *meta.Meta, job *model.Job) (ver int64, err error) 
 			return ver, errors.Trace(err)
 		}
 		job.SchemaState = model.StateGlobalTxnWriteOnly
-		tblInfo.Partition = ptInfo
 	case model.StateGlobalTxnWriteOnly:
 		ok := ptInfo.SetStateByID(partitionID, model.StatePublic)
 		if !ok {
@@ -1798,6 +1798,7 @@ func onAlterTablePartition(t *meta.Meta, job *model.Job) (ver int64, err error) 
 		}
 		// used by ApplyDiff in updateSchemaVersion
 		job.CtxVars = []interface{}{partitionID}
+		fmt.Println("onAlterTablePartition,update Public")
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
 		if err != nil {
 			return ver, errors.Trace(err)
