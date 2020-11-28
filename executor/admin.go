@@ -75,7 +75,6 @@ func (e *CheckIndexRangeExec) Next(ctx context.Context, req *chunk.Chunk) error 
 		if e.srcChunk.NumRows() == 0 {
 			return nil
 		}
-
 		iter := chunk.NewIterator4Chunk(e.srcChunk)
 		appendRows := make([]chunk.Row, 0, e.srcChunk.NumRows())
 		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
