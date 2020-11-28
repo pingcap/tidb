@@ -2222,33 +2222,5 @@
         "Result": null
       }
     ]
-  },
-  {
-    "Name": "TestPreferRangeScanOff",
-    "Cases": [
-      {
-        "SQL": "select * from test where age=5;",
-        "Plan": [
-          "TableReader_7 714.78 root  data:Selection_6",
-          "└─Selection_6 714.78 cop[tikv]  eq(test.test.age, 5)",
-          "  └─TableFullScan_5 1024.00 cop[tikv] table:test keep order:false"
-        ],
-        "Result": null
-      }
-    ]
-  },
-  {
-    "Name": "TestPreferRangeScanOn",
-    "Cases": [
-      {
-        "SQL": "select * from test where age=5;",
-        "Plan": [
-          "IndexLookUp_7 1441.12 root  ",
-          "├─IndexRangeScan_5(Build) 1441.12 cop[tikv] table:test, index:idx_age(age) range:[5,5], keep order:false",
-          "└─TableRowIDScan_6(Probe) 1441.12 cop[tikv] table:test keep order:false"
-        ],
-        "Result": null
-      }
-    ]
   }
 ]

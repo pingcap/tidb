@@ -3745,8 +3745,8 @@ func (b *executorBuilder) buildShuffle(v *plannercore.PhysicalShuffle) *ShuffleE
 
 	switch v.SplitterType {
 	case plannercore.PartitionHashSplitterType:
-		splitters := make([]partitionSplitter, len(v.HashByItemArrays))
-		for i, hashByItemArray := range v.HashByItemArrays {
+		splitters := make([]partitionSplitter, len(v.ByItemArrays))
+		for i, hashByItemArray := range v.ByItemArrays {
 			hashSplitter := &partitionHashSplitter{
 				byItems:    hashByItemArray,
 				numWorkers: shuffle.concurrency,
