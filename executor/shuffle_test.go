@@ -15,21 +15,50 @@ package executor
 
 import (
 	. "github.com/pingcap/check"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/mock"
 )
 
-func (s *testSuite) TestPartitionRangeSplitter(c *C) {
+var _ = SerialSuites(&testPartitionSuite{})
+
+type testPartitionSuite struct {
+}
+
+func (s *testPartitionSuite) TestPartitionRangeSplitter(c *C) {
 	ctx := mock.NewContext()
 	concurrency := 2
-	byItems := []expression.Expression{}
-	var input *chunk.Chunk
-	output := make([]int, 0)
 
-	splitter := executor.BuildPartitionRangeSplitter(ctx, concurrency, byItems)
-	output, err := splitter.Split(ctx, input, output)
-	if err != nil {
-
+	tp := &types.FieldType{Tp: mysql.TypeVarchar}
+	col0 := &expression.Column{
+		RetType: tp,
+		Index:   0,
 	}
+	byItems := []expression.Expression{col0}
+
+	input := chunk.New([]*types.FieldType{tp}, 1024, 1024)
+	input.Reset()
+	input.Column(0).AppendString("a")
+	input.Column(0).AppendString("a")
+	input.Column(0).AppendString("a")
+	input.Column(0).AppendString("a")
+	input.Column(0).AppendString("c")
+	input.Column(0).AppendString("c")
+	input.Column(0).AppendString("b")
+	input.Column(0).AppendString("b")
+	input.Column(0).AppendString("b")
+	input.Column(0).AppendString("q")
+	input.Column(0).AppendString("eee")
+	input.Column(0).AppendString("eee")
+	input.Column(0).AppendString("ddd")
+
+	expected := []int{0, 0, 0, 0, 1, 1, 0, 0, 0, 1, 0, 0, 1}
+	obtained := make([]int, 0)
+
+	splitter := buildPartitionRangeSplitter(ctx, concurrency, byItems)
+	obtained, err := splitter.split(ctx, input, obtained)
+	c.Assert(err, IsNil)
+	c.Assert(obtained, Equals, expected)
 }
