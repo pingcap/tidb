@@ -1275,12 +1275,12 @@ func (s *testColumnTypeChangeSuite) TestColumnTypeChangeFromJsonToOthers(c *C) {
 	// MySQL will get "ERROR 1366 (HY000) Incorrect integer value: 'false' for column 'f' at row 1".
 	tk.MustExec("alter table t modify f bigint unsigned")
 	// MySQL will get "ERROR 1264 (22003) Out of range value for column 'i' at row 1".
-	tk.MustExec("alter table t modify i bigint unsigned")
+	tk.MustGetErrCode("alter table t modify i bigint unsigned", mysql.ErrDataOutOfRange)
 	tk.MustExec("alter table t modify ui bigint unsigned")
 	tk.MustExec("alter table t modify f64 bigint unsigned")
 	// MySQL will get "ERROR 1366 (HY000) Incorrect integer value: '"json string"' for column 'str' at row 1".
 	tk.MustGetErrCode("alter table t modify str bigint unsigned", mysql.ErrTruncatedWrongValue)
-	tk.MustQuery("select * from t").Check(testkit.Rows("0 0 0 1 0 18446744073709551594 22 323232323 \"json string\""))
+	tk.MustQuery("select * from t").Check(testkit.Rows("0 0 0 1 0 -22 22 323232323 \"json string\""))
 
 	// bit
 	reset(tk)
