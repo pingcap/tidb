@@ -414,10 +414,25 @@ func (s *partitionHashSplitter) split(ctx sessionctx.Context, input *chunk.Chunk
 	return workerIndices, nil
 }
 
+func buildPartitionHashSplitter(concurrency int, byItems []expression.Expression) *partitionHashSplitter {
+	return &partitionHashSplitter{
+		byItems:    byItems,
+		numWorkers: concurrency,
+	}
+}
+
 type partitionRangeSplitter struct {
 	byItems      []expression.Expression
 	numWorkers   int
 	groupChecker *vecGroupChecker
+}
+
+func buildPartitionRangeSplitter(ctx sessionctx.Context, concurrency int, byItems []expression.Expression) *partitionRangeSplitter {
+	return &partitionRangeSplitter{
+		byItems:      byItems,
+		numWorkers:   concurrency,
+		groupChecker: newVecGroupChecker(ctx, byItems),
+	}
 }
 
 func (s *partitionRangeSplitter) split(ctx sessionctx.Context, input *chunk.Chunk, workerIndices []int) ([]int, error) {

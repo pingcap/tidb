@@ -3692,21 +3692,11 @@ func (b *executorBuilder) buildShuffle(v *plannercore.PhysicalShuffle) *ShuffleE
 	switch v.SplitterType {
 	case plannercore.PartitionHashSplitterType:
 		for i, byItems := range v.ByItemArrays {
-			hashSplitter := &partitionHashSplitter{
-				byItems:    byItems,
-				numWorkers: shuffle.concurrency,
-			}
-			copy(hashSplitter.byItems, byItems)
-			splitters[i] = hashSplitter
+			splitters[i] = buildPartitionHashSplitter(shuffle.concurrency, byItems)
 		}
 	case plannercore.PartitionRangeSplitterType:
 		for i, byItems := range v.ByItemArrays {
-			splitter := &partitionRangeSplitter{
-				byItems:      byItems,
-				numWorkers:   shuffle.concurrency,
-				groupChecker: newVecGroupChecker(b.ctx, byItems),
-			}
-			splitters[i] = splitter
+			splitters[i] = buildPartitionRangeSplitter(b.ctx, shuffle.concurrency, byItems)
 		}
 	default:
 		panic("Not implemented. Should not reach here.")
