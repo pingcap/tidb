@@ -2239,10 +2239,10 @@ func markChildrenUsedCols(outputSchema *expression.Schema, childSchema ...*expre
 }
 
 // retrieveColumnIdxsUsedByChild retrieve column indices map from child physical plan schema columns.
-//   E.g. columnIdxsUsedByChild = [2, 3, 1] means child[col2, col3, col1] -> parent[col0, col1, col2].
-//   `columnMissing` indicates whether one or more columns in `selfSchema` are not found in `childSchema`.
-//   And `-1` in `columnIdxsUsedByChild` indicates the very column not found.
-//	 If columnIdxsUsedByChild == nil, means selfSchema and childSchema is equality.
+//	 E.g. columnIdxsUsedByChild = [2, 3, 1] means child[col2, col3, col1] -> parent[col0, col1, col2].
+//	 `columnMissing` indicates whether one or more columns in `selfSchema` are not found in `childSchema`.
+//	 And `-1` in `columnIdxsUsedByChild` indicates the very column not found.
+//	 If columnIdxsUsedByChild == nil, means selfSchema and childSchema are equal.
 func retrieveColumnIdxsUsedByChild(selfSchema *expression.Schema, childSchema *expression.Schema) ([]int, bool) {
 	equalSchema := (selfSchema.Len() == childSchema.Len())
 	columnMissing := false
