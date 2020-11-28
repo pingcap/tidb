@@ -393,7 +393,6 @@ func (e *TopNExec) Open(ctx context.Context) error {
 // Next implements the Executor Next interface.
 func (e *TopNExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.Reset()
-	var compacted bool
 	if !e.fetched {
 		e.totalLimit = e.limit.Offset + e.limit.Count
 		e.Idx = int(e.limit.Offset)
@@ -401,7 +400,7 @@ func (e *TopNExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		if err != nil {
 			return err
 		}
-		compacted, err = e.executeTopN(ctx)
+		err = e.executeTopN(ctx)
 		if err != nil {
 			return err
 		}
@@ -415,14 +414,9 @@ func (e *TopNExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		// Be carefule, if inline projection occurs.
 		// TopN's schema may be not match child executor's output columns.
 		// We should extract only the required columns from child's executor.
-		// Why here condition is `!compacted`?
-		// Cause when `doCompaction` happened, inline projection do run once,
-		// then we should not run projection duplicated.
-		if !compacted {
-			req.AppendRowByColIdxs(row, e.columnIdxsUsedByChild)
-		} else {
-			req.AppendRow(row)
-		}
+		// Do not do it on `loadChunksUntilTotalLimit` or `processChildChk`,
+		// cauz it may destroy the correctness of executor's `keyColumns`.
+		req.AppendRowByColIdxs(row, e.columnIdxsUsedByChild)
 		e.Idx++
 	}
 	return nil
@@ -454,7 +448,7 @@ func (e *TopNExec) loadChunksUntilTotalLimit(ctx context.Context) error {
 
 const topNCompactionFactor = 4
 
-func (e *TopNExec) executeTopN(ctx context.Context) (compacted bool, err error) {
+func (e *TopNExec) executeTopN(ctx context.Context) error {
 	heap.Init(e.chkHeap)
 	for uint64(len(e.rowPtrs)) > e.totalLimit {
 		// The number of rows we loaded may exceeds total limit, remove greatest rows by Pop.
@@ -464,25 +458,24 @@ func (e *TopNExec) executeTopN(ctx context.Context) (compacted bool, err error) 
 	for {
 		err := Next(ctx, e.children[0], childRowChk)
 		if err != nil {
-			return false, err
+			return err
 		}
 		if childRowChk.NumRows() == 0 {
 			break
 		}
 		err = e.processChildChk(childRowChk)
 		if err != nil {
-			return false, err
+			return err
 		}
 		if e.rowChunks.Len() > len(e.rowPtrs)*topNCompactionFactor {
 			err = e.doCompaction()
 			if err != nil {
-				return false, err
+				return err
 			}
-			compacted = true
 		}
 	}
 	sort.Slice(e.rowPtrs, e.keyColumnsLess)
-	return compacted, err
+	return nil
 }
 
 func (e *TopNExec) processChildChk(childRowChk *chunk.Chunk) error {
@@ -505,16 +498,13 @@ func (e *TopNExec) processChildChk(childRowChk *chunk.Chunk) error {
 // but we want descending top N, then we will keep all data in memory.
 // But if data is distributed randomly, this function will be called log(n) times.
 func (e *TopNExec) doCompaction() error {
-	newRowChunks := newList(e)
+	// Row size of new chunk list may not be enough to hold the result set from child executor when inline projection occurs.
+	// To avoid this problem, we use child executor's schmea to build new chunk list by default.
+	newRowChunks := newList(e.children[0])
 	newRowPtrs := make([]chunk.RowPtr, 0, e.rowChunks.Len())
 	for _, rowPtr := range e.rowPtrs {
-		// Be carefule, if inline projection occurs.
-		// TopN's schema may be not match child executor's output columns.
-		// We should extract only the required columns from child's executor.
-		// Do not let it fixed on `loadChunksUntilTotalLimit` or `processChildChk`,
-		// cauz it may destroy the correctness of executor's `keyColumns`.
 		originRow := e.rowChunks.GetRow(rowPtr)
-		newRowPtr := newRowChunks.AppendRowByColIdxs(originRow, e.columnIdxsUsedByChild)
+		newRowPtr := newRowChunks.AppendRow(originRow)
 		newRowPtrs = append(newRowPtrs, newRowPtr)
 	}
 	newRowChunks.GetMemTracker().SetLabel(memory.LabelForRowChunks)
