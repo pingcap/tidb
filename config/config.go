@@ -36,7 +36,6 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/versioninfo"
 	tracing "github.com/uber/jaeger-client-go/config"
-
 	"go.uber.org/zap"
 	"google.golang.org/grpc/encoding/gzip"
 )
@@ -64,8 +63,8 @@ const (
 	DefStatusHost = "0.0.0.0"
 	// DefStoreLivenessTimeout is the default value for store liveness timeout.
 	DefStoreLivenessTimeout = "5s"
-	// DefTiDBRedactLog is the default value for redact log.
-	DefTiDBRedactLog = 0
+	// DefTxnScope is the default value for TxnScope
+	DefTxnScope = "global"
 )
 
 // Valid config maps
@@ -110,22 +109,22 @@ type Config struct {
 	TxnLocalLatches  TxnLocalLatches `toml:"-" json:"-"`
 	// Set sys variable lower-case-table-names, ref: https://dev.mysql.com/doc/refman/5.7/en/identifier-case-sensitivity.html.
 	// TODO: We actually only support mode 2, which keeps the original case, but the comparison is case-insensitive.
-	LowerCaseTableNames int               `toml:"lower-case-table-names" json:"lower-case-table-names"`
-	ServerVersion       string            `toml:"server-version" json:"server-version"`
-	Log                 Log               `toml:"log" json:"log"`
-	Security            Security          `toml:"security" json:"security"`
-	Status              Status            `toml:"status" json:"status"`
-	Performance         Performance       `toml:"performance" json:"performance"`
-	PreparedPlanCache   PreparedPlanCache `toml:"prepared-plan-cache" json:"prepared-plan-cache"`
-	OpenTracing         OpenTracing       `toml:"opentracing" json:"opentracing"`
-	ProxyProtocol       ProxyProtocol     `toml:"proxy-protocol" json:"proxy-protocol"`
-	TiKVClient          TiKVClient        `toml:"tikv-client" json:"tikv-client"`
-	Binlog              Binlog            `toml:"binlog" json:"binlog"`
-	CompatibleKillQuery bool              `toml:"compatible-kill-query" json:"compatible-kill-query"`
-	Plugin              Plugin            `toml:"plugin" json:"plugin"`
-	PessimisticTxn      PessimisticTxn    `toml:"pessimistic-txn" json:"pessimistic-txn"`
-	CheckMb4ValueInUTF8 bool              `toml:"check-mb4-value-in-utf8" json:"check-mb4-value-in-utf8"`
-	MaxIndexLength      int               `toml:"max-index-length" json:"max-index-length"`
+	LowerCaseTableNames        int               `toml:"lower-case-table-names" json:"lower-case-table-names"`
+	ServerVersion              string            `toml:"server-version" json:"server-version"`
+	Log                        Log               `toml:"log" json:"log"`
+	Security                   Security          `toml:"security" json:"security"`
+	Status                     Status            `toml:"status" json:"status"`
+	Performance                Performance       `toml:"performance" json:"performance"`
+	PreparedPlanCache          PreparedPlanCache `toml:"prepared-plan-cache" json:"prepared-plan-cache"`
+	OpenTracing                OpenTracing       `toml:"opentracing" json:"opentracing"`
+	ProxyProtocol              ProxyProtocol     `toml:"proxy-protocol" json:"proxy-protocol"`
+	TiKVClient                 TiKVClient        `toml:"tikv-client" json:"tikv-client"`
+	Binlog                     Binlog            `toml:"binlog" json:"binlog"`
+	Plugin                     Plugin            `toml:"plugin" json:"plugin"`
+	PessimisticTxn             PessimisticTxn    `toml:"pessimistic-txn" json:"pessimistic-txn"`
+	CheckMb4ValueInUTF8        bool              `toml:"check-mb4-value-in-utf8" json:"check-mb4-value-in-utf8"`
+	MaxIndexLength             int               `toml:"max-index-length" json:"max-index-length"`
+	GracefulWaitBeforeShutdown int               `toml:"graceful-wait-before-shutdown" json:"graceful-wait-before-shutdown"`
 	// AlterPrimaryKey is used to control alter primary key feature.
 	AlterPrimaryKey bool `toml:"alter-primary-key" json:"alter-primary-key"`
 	// TreatOldVersionUTF8AsUTF8MB4 is use to treat old version table/column UTF8 charset as UTF8MB4. This is for compatibility.
@@ -164,8 +163,14 @@ type Config struct {
 	EnableGlobalIndex bool `toml:"enable-global-index" json:"enable-global-index"`
 	// DeprecateIntegerDisplayWidth indicates whether deprecating the max display length for integer.
 	DeprecateIntegerDisplayWidth bool `toml:"deprecate-integer-display-length" json:"deprecate-integer-display-length"`
-	// EnableRedactLog indicates that whether redact log, 0 is disable. 1 is enable.
-	EnableRedactLog int32 `toml:"enable-redact-log" json:"enable-redact-log"`
+	// TxnScope indicates the default value for session variable txn_scope
+	TxnScope string `toml:"txn-scope" json:"txn-scope"`
+	// EnableEnumLengthLimit indicates whether the enum/set element length is limited.
+	// According to MySQL 8.0 Refman:
+	// The maximum supported length of an individual SET element is M <= 255 and (M x w) <= 1020,
+	// where M is the element literal length and w is the number of bytes required for the maximum-length character in the character set.
+	// See https://dev.mysql.com/doc/refman/8.0/en/string-type-syntax.html for more details.
+	EnableEnumLengthLimit bool `toml:"enable-enum-length-limit" json:"enable-enum-length-limit"`
 }
 
 // UpdateTempStoragePath is to update the `TempStoragePath` if port/statusPort was changed
@@ -428,6 +433,7 @@ type Performance struct {
 	MaxTxnTTL             uint64  `toml:"max-txn-ttl" json:"max-txn-ttl"`
 	MemProfileInterval    string  `toml:"mem-profile-interval" json:"mem-profile-interval"`
 	IndexUsageSyncLease   string  `toml:"index-usage-sync-lease" json:"index-usage-sync-lease"`
+	GOGC                  int     `toml:"gogc" json:"gogc"`
 }
 
 // PlanCache is the PlanCache section of the config.
@@ -503,6 +509,8 @@ type TiKVClient struct {
 	// CommitTimeout is the max time which command 'commit' will wait.
 	CommitTimeout string      `toml:"commit-timeout" json:"commit-timeout"`
 	AsyncCommit   AsyncCommit `toml:"async-commit" json:"async-commit"`
+	// Allow TiDB try to use 1PC protocol to commit transactions that involves only one region.
+	EnableOnePC bool `toml:"enable-one-pc" json:"enable-one-pc"`
 	// MaxBatchSize is the max batch size when calling batch commands API.
 	MaxBatchSize uint `toml:"max-batch-size" json:"max-batch-size"`
 	// If TiKV load is greater than this, TiDB will wait for a while to avoid little batch.
@@ -524,6 +532,9 @@ type TiKVClient struct {
 	CoprCache            CoprocessorCache `toml:"copr-cache" json:"copr-cache"`
 	// TTLRefreshedTxnSize controls whether a transaction should update its TTL or not.
 	TTLRefreshedTxnSize int64 `toml:"ttl-refreshed-txn-size" json:"ttl-refreshed-txn-size"`
+	// Ensure external consistency when async commit or 1PC is enabled. When this option is enabled,
+	// TiDB needs to get a timestamp from PD before committing a transaction and thus latency is increased.
+	ExternalConsistency bool `toml:"external-consistency" json:"external-consistency"`
 }
 
 // AsyncCommit is the config for the async commit feature.
@@ -534,6 +545,15 @@ type AsyncCommit struct {
 	KeysLimit uint `toml:"keys-limit" json:"keys-limit"`
 	// Use async commit only if the total size of keys does not exceed TotalKeySizeLimit.
 	TotalKeySizeLimit uint64 `toml:"total-key-size-limit" json:"total-key-size-limit"`
+	// The following two fields should never be modified by the user, so tags are not provided
+	// on purpose.
+	// The duration within which is safe for async commit or 1PC to commit with an old schema.
+	// It is only changed in tests.
+	// TODO: 1PC is not part of async commit. These two fields should be moved to a more suitable
+	// place.
+	SafeWindow time.Duration
+	// The duration in addition to SafeWindow to make DDL safe.
+	AllowedClockDrift time.Duration
 }
 
 // CoprocessorCache is the config for coprocessor cache.
@@ -635,8 +655,9 @@ var defaultConf = Config{
 		Enabled:  false,
 		Capacity: 0,
 	},
-	LowerCaseTableNames: 2,
-	ServerVersion:       "",
+	LowerCaseTableNames:        2,
+	GracefulWaitBeforeShutdown: 0,
+	ServerVersion:              "",
 	Log: Log{
 		Level:               "info",
 		Format:              "text",
@@ -679,14 +700,16 @@ var defaultConf = Config{
 		CommitterConcurrency:  16,
 		MaxTxnTTL:             60 * 60 * 1000, // 1hour
 		MemProfileInterval:    "1m",
-		IndexUsageSyncLease:   "60s",
+		// TODO: set indexUsageSyncLease to 60s.
+		IndexUsageSyncLease: "0s",
+		GOGC:                100,
 	},
 	ProxyProtocol: ProxyProtocol{
 		Networks:      "",
 		HeaderTimeout: 5,
 	},
 	PreparedPlanCache: PreparedPlanCache{
-		Enabled:          false,
+		Enabled:          true,
 		Capacity:         100,
 		MemoryGuardRatio: 0.1,
 	},
@@ -709,7 +732,11 @@ var defaultConf = Config{
 			// FIXME: Find an appropriate default limit.
 			KeysLimit:         256,
 			TotalKeySizeLimit: 4 * 1024, // 4 KiB
+			SafeWindow:        2 * time.Second,
+			AllowedClockDrift: 500 * time.Millisecond,
 		},
+		EnableOnePC:         false,
+		ExternalConsistency: false,
 
 		MaxBatchSize:      128,
 		OverloadThreshold: 200,
@@ -758,7 +785,8 @@ var defaultConf = Config{
 		SpilledFileEncryptionMethod: SpilledFileEncryptionMethodPlaintext,
 	},
 	DeprecateIntegerDisplayWidth: false,
-	EnableRedactLog:              DefTiDBRedactLog,
+	TxnScope:                     DefTxnScope,
+	EnableEnumLengthLimit:        true,
 }
 
 var (
@@ -794,6 +822,7 @@ var deprecatedConfig = map[string]struct{}{
 	"performance.max-memory":         {},
 	"max-txn-time-use":               {},
 	"experimental.allow-auto-random": {},
+	"enable-redact-log":              {}, // use variable tidb_redact_log instead
 }
 
 func isAllDeprecatedConfigItems(items []string) bool {
@@ -804,6 +833,10 @@ func isAllDeprecatedConfigItems(items []string) bool {
 	}
 	return true
 }
+
+// IsMemoryQuotaQuerySetByUser indicates whether the config item mem-quota-query
+// is set by the user.
+var IsMemoryQuotaQuerySetByUser bool
 
 // InitializeConfig initialize the global config handler.
 // The function enforceCmdArgs is used to merge the config file with command arguments:
@@ -859,6 +892,9 @@ func (c *Config) Load(confFile string) error {
 	metaData, err := toml.DecodeFile(confFile, c)
 	if c.TokenLimit == 0 {
 		c.TokenLimit = 1000
+	}
+	if metaData.IsDefined("mem-quota-query") {
+		IsMemoryQuotaQuerySetByUser = true
 	}
 	if len(c.ServerVersion) > 0 {
 		mysql.ServerVersion = c.ServerVersion
@@ -1010,23 +1046,6 @@ func TableLockEnabled() bool {
 // TableLockDelayClean uses to get the time of delay clean table lock.
 var TableLockDelayClean = func() uint64 {
 	return GetGlobalConfig().DelayCleanTableLock
-}
-
-// RedactLogEnabled uses to check whether enabled the log redact.
-func RedactLogEnabled() bool {
-	return atomic.LoadInt32(&GetGlobalConfig().EnableRedactLog) == 1
-}
-
-// SetRedactLog uses to set log redact status.
-func SetRedactLog(enable bool) {
-	value := int32(0)
-	if enable {
-		value = 1
-	}
-	g := GetGlobalConfig()
-	newConf := *g
-	newConf.EnableRedactLog = value
-	StoreGlobalConfig(&newConf)
 }
 
 // ToLogConfig converts *Log to *logutil.LogConfig.

@@ -213,11 +213,11 @@ func (s *tikvStore) scatterRegion(bo *Backoffer, regionID uint64, tableID *int64
 	logutil.BgLogger().Info("start scatter region",
 		zap.Uint64("regionID", regionID))
 	for {
-		opts := make([]pd.ScatterRegionOption, 0, 1)
+		opts := make([]pd.RegionsOption, 0, 1)
 		if tableID != nil {
 			opts = append(opts, pd.WithGroup(fmt.Sprintf("%v", *tableID)))
 		}
-		err := s.pdClient.ScatterRegionWithOption(bo.ctx, regionID, opts...)
+		_, err := s.pdClient.ScatterRegions(bo.ctx, []uint64{regionID}, opts...)
 
 		failpoint.Inject("MockScatterRegionTimeout", func(val failpoint.Value) {
 			if val.(bool) {
@@ -243,18 +243,14 @@ func (s *tikvStore) preSplitRegion(ctx context.Context, group groupedMutations) 
 
 	preSplitSizeThresholdVal := atomic.LoadUint32(&preSplitSizeThreshold)
 	regionSize := 0
-	keysLength := group.mutations.len()
-	valsLength := len(group.mutations.values)
+	keysLength := group.mutations.Len()
 	// The value length maybe zero for pessimistic lock keys
 	for i := 0; i < keysLength; i++ {
-		regionSize = regionSize + len(group.mutations.keys[i])
-		if i < valsLength {
-			regionSize = regionSize + len(group.mutations.values[i])
-		}
+		regionSize = regionSize + len(group.mutations.GetKey(i)) + len(group.mutations.GetValue(i))
 		// The second condition is used for testing.
 		if regionSize >= int(preSplitSizeThresholdVal) {
 			regionSize = 0
-			splitKeys = append(splitKeys, group.mutations.keys[i])
+			splitKeys = append(splitKeys, group.mutations.GetKey(i))
 		}
 	}
 	if len(splitKeys) == 0 {
@@ -264,7 +260,7 @@ func (s *tikvStore) preSplitRegion(ctx context.Context, group groupedMutations) 
 	regionIDs, err := s.SplitRegions(ctx, splitKeys, true, nil)
 	if err != nil {
 		logutil.BgLogger().Warn("2PC split regions failed", zap.Uint64("regionID", group.region.id),
-			zap.Int("keys count", keysLength), zap.Int("values count", valsLength), zap.Error(err))
+			zap.Int("keys count", keysLength), zap.Error(err))
 		return false
 	}
 

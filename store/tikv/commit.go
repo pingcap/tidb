@@ -42,9 +42,10 @@ func (actionCommit) tiKVTxnRegionsNumHistogram() prometheus.Observer {
 }
 
 func (actionCommit) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, batch batchMutations) error {
+	keys := batch.mutations.GetKeys()
 	req := tikvrpc.NewRequest(tikvrpc.CmdCommit, &pb.CommitRequest{
 		StartVersion:  c.startTS,
-		Keys:          batch.mutations.keys,
+		Keys:          keys,
 		CommitVersion: c.commitTS,
 	}, pb.Context{Priority: c.priority, SyncLog: c.syncLog})
 
@@ -131,7 +132,7 @@ func (actionCommit) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, batch
 				zap.Error(err),
 				zap.Uint64("txnStartTS", c.startTS),
 				zap.Uint64("commitTS", c.commitTS),
-				zap.Strings("keys", hexBatchKeys(batch.mutations.keys)))
+				zap.Strings("keys", hexBatchKeys(keys)))
 			return errors.Trace(err)
 		}
 		// The transaction maybe rolled back by concurrent transactions.

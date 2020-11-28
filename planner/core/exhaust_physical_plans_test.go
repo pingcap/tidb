@@ -200,7 +200,7 @@ func (s *testUnitTestSuit) TestIndexJoinAnalyzeLookUpFilters(c *C) {
 			innerKeys:       []*expression.Column{dsSchema.Columns[1]},
 			pushedDownConds: "a = 1 and c > 'a' and c < 'aaaaaa'",
 			otherConds:      "",
-			ranges:          "[(1 NULL \"a\",1 NULL \"[97 97]\"]]",
+			ranges:          "[(1 NULL \"a\",1 NULL 0x6161]]",
 			idxOff2KeyOff:   "[-1 0 -1 -1]",
 			accesses:        "[eq(Column#1, 1) gt(Column#3, a) lt(Column#3, aaaaaa)]",
 			remained:        "[gt(Column#3, a) lt(Column#3, aaaaaa)]",
@@ -248,7 +248,7 @@ func (s *testUnitTestSuit) TestIndexJoinAnalyzeLookUpFilters(c *C) {
 		c.Assert(err, IsNil)
 		joinNode.OtherConditions = others
 		helper := &indexJoinBuildHelper{join: joinNode, lastColManager: nil, innerPlan: dataSourceNode}
-		_, err = helper.analyzeLookUpFilters(path, dataSourceNode, tt.innerKeys)
+		_, err = helper.analyzeLookUpFilters(path, dataSourceNode, tt.innerKeys, tt.innerKeys)
 		c.Assert(err, IsNil)
 		c.Assert(fmt.Sprintf("%v", helper.chosenAccess), Equals, tt.accesses)
 		c.Assert(fmt.Sprintf("%v", helper.chosenRanges), Equals, tt.ranges, Commentf("test case: #%v", i))

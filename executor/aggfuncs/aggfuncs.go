@@ -196,6 +196,10 @@ type baseAggFunc struct {
 	// ordinal stores the ordinal of the columns in the output chunk, which is
 	// used to append the final result of this function.
 	ordinal int
+
+	// frac stores digits of the fractional part of decimals,
+	// which makes the decimal be the result of type inferring.
+	frac int
 }
 
 func (*baseAggFunc) SetPartialResultAsNeedSync(s set.SyncSet, pr PartialResult) {

@@ -52,6 +52,7 @@ func cleanEnv(c *C, store kv.Storage, do *domain.Domain) {
 	tk.MustExec("delete from mysql.stats_histograms")
 	tk.MustExec("delete from mysql.stats_buckets")
 	tk.MustExec("delete from mysql.stats_extended")
+	tk.MustExec("delete from mysql.schema_index_usage")
 	do.StatsHandle().Clear4Test()
 }
 
@@ -536,7 +537,8 @@ func (s *testStatsSuite) TestLoadStats(c *C) {
 	hg = stat.Indices[tableInfo.Indices[0].ID].Histogram
 	c.Assert(hg.Len(), Greater, 0)
 	cms = stat.Indices[tableInfo.Indices[0].ID].CMSketch
-	c.Assert(cms.TotalCount(), Greater, uint64(0))
+	topN := stat.Indices[tableInfo.Indices[0].ID].TopN
+	c.Assert(cms.TotalCount()+topN.TotalCount(), Greater, uint64(0))
 	hg = stat.Columns[tableInfo.Columns[2].ID].Histogram
 	c.Assert(hg.Len(), Equals, 0)
 	cms = stat.Columns[tableInfo.Columns[2].ID].CMSketch
@@ -796,4 +798,44 @@ func (s *testStatsSuite) TestCorrelationStatsCompute(c *C) {
 		}
 	}
 	c.Assert(foundS1 && foundS2, IsTrue)
+}
+
+func (s *testStatsSuite) TestIndexUsageInformation(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t_idx")
+	tk.MustExec("create table t_idx(a int, b int)")
+	tk.MustExec("create unique index idx_a on t_idx(a)")
+	tk.MustExec("create unique index idx_b on t_idx(b)")
+	tk.MustQuery("select a from t_idx where a=1")
+	querySQL := `select idx.table_schema, idx.table_name, idx.key_name, stats.query_count, stats.rows_selected 
+					from mysql.schema_index_usage as stats, information_schema.tidb_indexes as idx, information_schema.tables as tables
+					where tables.table_schema = idx.table_schema
+						AND tables.table_name = idx.table_name
+						AND tables.tidb_table_id = stats.table_id
+						AND idx.index_id = stats.index_id
+						AND idx.table_name = "t_idx"`
+	do := s.do
+	err := do.StatsHandle().DumpIndexUsageToKV()
+	c.Assert(err, IsNil)
+	tk.MustQuery(querySQL).Check(testkit.Rows(
+		"test t_idx idx_a 1 0",
+	))
+	tk.MustExec("insert into t_idx values(1, 0)")
+	tk.MustQuery("select a from t_idx where a=1")
+	tk.MustQuery("select a from t_idx where a=1")
+	err = do.StatsHandle().DumpIndexUsageToKV()
+	c.Assert(err, IsNil)
+	tk.MustQuery(querySQL).Check(testkit.Rows(
+		"test t_idx idx_a 3 2",
+	))
+	tk.MustQuery("select b from t_idx where b=0")
+	tk.MustQuery("select b from t_idx where b=0")
+	err = do.StatsHandle().DumpIndexUsageToKV()
+	c.Assert(err, IsNil)
+	tk.MustQuery(querySQL).Check(testkit.Rows(
+		"test t_idx idx_a 3 2",
+		"test t_idx idx_b 2 2",
+	))
 }
