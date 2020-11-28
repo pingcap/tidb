@@ -1106,7 +1106,6 @@ func (s *testChunkSuite) TestAppendRows(c *check.C) {
 	rows := make([]Row, numRows)
 	for i := 0; i < numRows; i++ {
 		rows[i] = chk.GetRow(i)
-
 	}
 	chk2.AppendRows(rows)
 	for i := 0; i < numRows; i++ {
@@ -1125,43 +1124,39 @@ func (s *testChunkSuite) TestAppendRows(c *check.C) {
 		c.Assert(string(row.GetJSON(5).GetString()), check.Equals, str)
 	}
 }
+
+func newBatchChunk(numRows int) (chk *Chunk, chk2 *Chunk) {
+	chk = newChunk(8, 8, 0, 0)
+	for i := 0; i < numRows; i++ {
+		chk.AppendNull(0)
+		chk.AppendInt64(1, 1)
+		chk.AppendString(2, "abcd")
+		chk.AppendBytes(3, []byte("abcd"))
+	}
+	chk2 = newChunk(8, 8, 0, 0)
+	return chk, chk2
+}
+
 func BenchmarkBatchAppendRows(b *testing.B) {
 	b.ReportAllocs()
-	numRows := 4096
-	rowChk := newChunk(8, 8, 0, 0)
-	for i := 0; i < numRows; i++ {
-		rowChk.AppendNull(0)
-		rowChk.AppendInt64(1, 1)
-		rowChk.AppendString(2, "abcd")
-		rowChk.AppendBytes(3, []byte("abcd"))
-	}
-	chk := newChunk(8, 8, 0, 0)
+	rowChk, chk := newBatchChunk(4096)
 	type testCaseConf struct {
 		batchSize int
 	}
-	testCaseConfs := []testCaseConf{
-		{batchSize: 10},
-		{batchSize: 100},
-		{batchSize: 500},
-		{batchSize: 1000},
-		{batchSize: 1500},
-		{batchSize: 2000},
-		{batchSize: 3000},
-		{batchSize: 4000},
-	}
-	for _, conf := range testCaseConfs {
-		b.Run(fmt.Sprintf("row-%d", conf.batchSize), func(b *testing.B) {
+	batchSizes := []int{10, 100, 500, 1000, 1500, 2000, 3000, 4000}
+	for _, batch := range batchSizes {
+		b.Run(fmt.Sprintf("row-%d", batch), func(b *testing.B) {
 			for i := 0; i < b.N; i++ {
 				chk.Reset()
-				for j := 0; j < conf.batchSize; j++ {
+				for j := 0; j < batch; j++ {
 					chk.AppendRow(rowChk.GetRow(j))
 				}
 			}
 		})
 		b.ResetTimer()
-		b.Run(fmt.Sprintf("column-%d", conf.batchSize), func(b *testing.B) {
-			rows := make([]Row, conf.batchSize)
-			for i := 0; i < conf.batchSize; i++ {
+		b.Run(fmt.Sprintf("rows-%d", batch), func(b *testing.B) {
+			rows := make([]Row, batch)
+			for i := 0; i < batch; i++ {
 				rows[i] = rowChk.GetRow(i)
 			}
 			for i := 0; i < b.N; i++ {
