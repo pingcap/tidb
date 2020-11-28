@@ -1139,24 +1139,34 @@ func newBatchChunk(numRows int) (chk *Chunk, chk2 *Chunk) {
 
 func BenchmarkBatchAppendRows(b *testing.B) {
 	b.ReportAllocs()
-	rowChk, chk := newBatchChunk(4096)
+	numRows := 4096
+	rowChk, chk := newBatchChunk(numRows)
 	type testCaseConf struct {
 		batchSize int
 	}
-	batchSizes := []int{10, 100, 500, 1000, 1500, 2000, 3000, 4000}
-	for _, batch := range batchSizes {
-		b.Run(fmt.Sprintf("row-%d", batch), func(b *testing.B) {
+	testCaseConfs := []testCaseConf{
+		{batchSize: 10},
+		{batchSize: 100},
+		{batchSize: 500},
+		{batchSize: 1000},
+		{batchSize: 1500},
+		{batchSize: 2000},
+		{batchSize: 3000},
+		{batchSize: 4000},
+	}
+	for _, conf := range testCaseConfs {
+		b.Run(fmt.Sprintf("row-%d", conf.batchSize), func(b *testing.B) {
 			for i := 0; i < b.N; i++ {
 				chk.Reset()
-				for j := 0; j < batch; j++ {
+				for j := 0; j < conf.batchSize; j++ {
 					chk.AppendRow(rowChk.GetRow(j))
 				}
 			}
 		})
 		b.ResetTimer()
-		b.Run(fmt.Sprintf("rows-%d", batch), func(b *testing.B) {
-			rows := make([]Row, batch)
-			for i := 0; i < batch; i++ {
+		b.Run(fmt.Sprintf("column-%d", conf.batchSize), func(b *testing.B) {
+			rows := make([]Row, conf.batchSize)
+			for i := 0; i < conf.batchSize; i++ {
 				rows[i] = rowChk.GetRow(i)
 			}
 			for i := 0; i < b.N; i++ {
