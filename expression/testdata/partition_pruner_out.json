@@ -683,7 +683,7 @@
           "6 6 6"
         ],
         "Plan": [
-          "Sort_12 16.00 root  Column#10",
+          "Sort_12 16.00 root  schema:[Column#9 Column#10 Column#11], items:Column#10",
           "└─HashAgg_16 16.00 root  group by:Column#10, Column#11, Column#9, funcs:firstrow(Column#9)->Column#9, funcs:firstrow(Column#10)->Column#10, funcs:firstrow(Column#11)->Column#11",
           "  └─Union_17 20.00 root  ",
           "    ├─TableReader_21 10.00 root partition:p1 data:Selection_20",

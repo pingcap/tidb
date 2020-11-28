@@ -4,7 +4,7 @@
     "Cases": [
       [
         "Projection_10 10000.00 root  test.t.i",
-        "└─Sort_4 10000.00 root  Column#3",
+        "└─Sort_4 10000.00 root  schema:[test.t.i], items:Column#3",
         "  └─Projection_11 10000.00 root  test.t.i, plus(test.t.i, 1)->Column#3",
         "    └─TableReader_8 10000.00 root  data:TableFullScan_7",
         "      └─TableFullScan_7 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
