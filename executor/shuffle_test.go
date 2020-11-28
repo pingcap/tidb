@@ -60,5 +60,8 @@ func (s *testPartitionSuite) TestPartitionRangeSplitter(c *C) {
 	splitter := buildPartitionRangeSplitter(ctx, concurrency, byItems)
 	obtained, err := splitter.split(ctx, input, obtained)
 	c.Assert(err, IsNil)
-	c.Assert(obtained, Equals, expected)
+	c.Assert(len(obtained), Equals, len(expected))
+	for i := 0; i < len(obtained); i++ {
+		c.Assert(obtained[i], Equals, expected[i])
+	}
 }
