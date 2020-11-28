@@ -1106,6 +1106,7 @@ func (s *testChunkSuite) TestAppendRows(c *check.C) {
 	rows := make([]Row, numRows)
 	for i := 0; i < numRows; i++ {
 		rows[i] = chk.GetRow(i)
+
 	}
 	chk2.AppendRows(rows)
 	for i := 0; i < numRows; i++ {
@@ -1125,22 +1126,17 @@ func (s *testChunkSuite) TestAppendRows(c *check.C) {
 	}
 }
 
-func newBatchChunk(numRows int) (chk *Chunk, chk2 *Chunk) {
-	chk = newChunk(8, 8, 0, 0)
-	for i := 0; i < numRows; i++ {
-		chk.AppendNull(0)
-		chk.AppendInt64(1, 1)
-		chk.AppendString(2, "abcd")
-		chk.AppendBytes(3, []byte("abcd"))
-	}
-	chk2 = newChunk(8, 8, 0, 0)
-	return chk, chk2
-}
-
 func BenchmarkBatchAppendRows(b *testing.B) {
 	b.ReportAllocs()
 	numRows := 4096
-	rowChk, chk := newBatchChunk(numRows)
+	rowChk := newChunk(8, 8, 0, 0)
+	for i := 0; i < numRows; i++ {
+		rowChk.AppendNull(0)
+		rowChk.AppendInt64(1, 1)
+		rowChk.AppendString(2, "abcd")
+		rowChk.AppendBytes(3, []byte("abcd"))
+	}
+	chk := newChunk(8, 8, 0, 0)
 	type testCaseConf struct {
 		batchSize int
 	}
