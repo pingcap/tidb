@@ -4744,7 +4744,7 @@ func (s *testDBSuite1) TestModifyColumnTime(c *C) {
 		tk.Se.GetSessionVars().TimeZone = originalTz
 	}()
 
-	now := time.Now()
+	now := time.Now().UTC()
 	now = time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
 	timeToDate1 := now.Format("2006-01-02")
 	timeToDate2 := now.AddDate(0, 0, 30).Format("2006-01-02")

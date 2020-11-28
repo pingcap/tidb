@@ -564,7 +564,7 @@ func ConvertJSONToInt(sc *stmtctx.StatementContext, j json.BinaryJSON, unsigned 
 		i := j.GetInt64()
 		if unsigned {
 			uBound := IntergerUnsignedUpperBound(tp)
-			u, err :=  ConvertIntToUint(sc, i, uBound, tp)
+			u, err := ConvertIntToUint(sc, i, uBound, tp)
 			return int64(u), sc.HandleOverflow(err, err)
 		}
 

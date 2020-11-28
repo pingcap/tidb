@@ -1365,6 +1365,12 @@ func (d *Datum) convertToMysqlYear(sc *stmtctx.StatementContext, target *FieldTy
 		y = int64(d.GetMysqlTime().Year())
 	case KindMysqlDuration:
 		y = int64(time.Now().Year())
+	case KindMysqlJSON:
+		y, err = ConvertJSONToInt64(sc, d.GetMysqlJSON(), false)
+		if err != nil {
+			ret.SetInt64(0)
+			return ret, errors.Trace(err)
+		}
 	default:
 		ret, err = d.convertToInt(sc, NewFieldType(mysql.TypeLonglong))
 		if err != nil {
