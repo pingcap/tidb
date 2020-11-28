@@ -415,21 +415,21 @@ func (s *partitionHashSplitter) split(ctx sessionctx.Context, input *chunk.Chunk
 }
 
 type partitionRangeSplitter struct {
-	byItems    []expression.Expression
-	numWorkers int
+	byItems      []expression.Expression
+	numWorkers   int
+	groupChecker *vecGroupChecker
 }
 
 func (s *partitionRangeSplitter) split(ctx sessionctx.Context, input *chunk.Chunk, workerIndices []int) ([]int, error) {
-	groupChecker := newVecGroupChecker(ctx, s.byItems)
-	_, err := groupChecker.splitIntoGroups(input)
+	_, err := s.groupChecker.splitIntoGroups(input)
 	if err != nil {
 		return workerIndices, err
 	}
 
 	workerIndices = workerIndices[:0]
 	idx := -1
-	for i := 0; i < len(groupChecker.sameGroup); i++ {
-		if !groupChecker.sameGroup[i] {
+	for i := 0; i < len(s.groupChecker.sameGroup); i++ {
+		if !s.groupChecker.sameGroup[i] {
 			idx = (idx + 1) % s.numWorkers
 		}
 		workerIndices = append(workerIndices, idx)

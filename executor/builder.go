@@ -3702,8 +3702,9 @@ func (b *executorBuilder) buildShuffle(v *plannercore.PhysicalShuffle) *ShuffleE
 	case plannercore.PartitionRangeSplitterType:
 		for i, byItems := range v.ByItemArrays {
 			splitter := &partitionRangeSplitter{
-				byItems:    byItems,
-				numWorkers: shuffle.concurrency,
+				byItems:      byItems,
+				numWorkers:   shuffle.concurrency,
+				groupChecker: newVecGroupChecker(b.ctx, byItems),
 			}
 			splitters[i] = splitter
 		}
