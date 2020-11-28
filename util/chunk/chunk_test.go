@@ -1142,7 +1142,11 @@ func BenchmarkBatchAppendRows(b *testing.B) {
 	testCaseConfs := []testCaseConf{
 		{batchSize: 10},
 		{batchSize: 100},
+		{batchSize: 500},
 		{batchSize: 1000},
+		{batchSize: 1500},
+		{batchSize: 2000},
+		{batchSize: 3000},
 		{batchSize: 4000},
 	}
 	for _, conf := range testCaseConfs {
