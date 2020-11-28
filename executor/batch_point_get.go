@@ -99,10 +99,7 @@ func (e *BatchPointGetExec) Open(context.Context) error {
 		// The snapshot may contains cache that can reduce RPC call.
 		snapshot = txn.GetSnapshot()
 	} else {
-		snapshot, err = e.ctx.GetStore().GetSnapshot(kv.Version{Ver: e.snapshotTS})
-		if err != nil {
-			return err
-		}
+		snapshot = e.ctx.GetStore().GetSnapshot(kv.Version{Ver: e.snapshotTS})
 	}
 	if e.runtimeStats != nil {
 		snapshotStats := &tikv.SnapshotRuntimeStats{}
@@ -141,6 +138,9 @@ func (e *BatchPointGetExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if atomic.CompareAndSwapUint32(&e.inited, 0, 1) {
 		if err := e.initialize(ctx); err != nil {
 			return err
+		}
+		if e.lock {
+			e.updateDeltaForTableID(e.tblInfo.ID)
 		}
 	}
 
@@ -235,7 +235,11 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 			}
 			e.handles = append(e.handles, handle)
 			if e.tblInfo.Partition != nil {
-				e.physIDs = append(e.physIDs, tablecodec.DecodeTableID(key))
+				pid := tablecodec.DecodeTableID(key)
+				e.physIDs = append(e.physIDs, pid)
+				if e.lock {
+					e.updateDeltaForTableID(pid)
+				}
 			}
 		}
 

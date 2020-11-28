@@ -321,184 +321,193 @@ func (s *testStatsSuite) TestTxnWithFailure(c *C) {
 func (s *testStatsSuite) TestUpdatePartition(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
+	testKit.MustQuery("select @@tidb_partition_prune_mode").Check(testkit.Rows(string(s.do.StatsHandle().CurrentPruneMode())))
 	testKit.MustExec("use test")
-	testKit.MustExec("drop table if exists t")
-	createTable := `CREATE TABLE t (a int, b char(5)) PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (6),PARTITION p1 VALUES LESS THAN (11))`
-	testKit.MustExec(createTable)
-	do := s.do
-	is := do.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	c.Assert(err, IsNil)
-	tableInfo := tbl.Meta()
-	h := do.StatsHandle()
-	err = h.HandleDDLEvent(<-h.DDLEventCh())
-	c.Assert(err, IsNil)
-	pi := tableInfo.GetPartitionInfo()
-	c.Assert(len(pi.Definitions), Equals, 2)
-	bColID := tableInfo.Columns[1].ID
+	testkit.WithPruneMode(testKit, variable.StaticOnly, func() {
+		s.do.StatsHandle().RefreshVars()
+		testKit.MustExec("drop table if exists t")
+		createTable := `CREATE TABLE t (a int, b char(5)) PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (6),PARTITION p1 VALUES LESS THAN (11))`
+		testKit.MustExec(createTable)
+		do := s.do
+		is := do.InfoSchema()
+		tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+		c.Assert(err, IsNil)
+		tableInfo := tbl.Meta()
+		h := do.StatsHandle()
+		err = h.HandleDDLEvent(<-h.DDLEventCh())
+		c.Assert(err, IsNil)
+		pi := tableInfo.GetPartitionInfo()
+		c.Assert(len(pi.Definitions), Equals, 2)
+		bColID := tableInfo.Columns[1].ID
 
-	testKit.MustExec(`insert into t values (1, "a"), (7, "a")`)
-	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
-	c.Assert(h.Update(is), IsNil)
-	for _, def := range pi.Definitions {
-		statsTbl := h.GetPartitionStats(tableInfo, def.ID)
-		c.Assert(statsTbl.ModifyCount, Equals, int64(1))
-		c.Assert(statsTbl.Count, Equals, int64(1))
-		c.Assert(statsTbl.Columns[bColID].TotColSize, Equals, int64(2))
-	}
+		testKit.MustExec(`insert into t values (1, "a"), (7, "a")`)
+		c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+		c.Assert(h.Update(is), IsNil)
+		for _, def := range pi.Definitions {
+			statsTbl := h.GetPartitionStats(tableInfo, def.ID)
+			c.Assert(statsTbl.ModifyCount, Equals, int64(1))
+			c.Assert(statsTbl.Count, Equals, int64(1))
+			c.Assert(statsTbl.Columns[bColID].TotColSize, Equals, int64(2))
+		}
 
-	testKit.MustExec(`update t set a = a + 1, b = "aa"`)
-	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
-	c.Assert(h.Update(is), IsNil)
-	for _, def := range pi.Definitions {
-		statsTbl := h.GetPartitionStats(tableInfo, def.ID)
-		c.Assert(statsTbl.ModifyCount, Equals, int64(2))
-		c.Assert(statsTbl.Count, Equals, int64(1))
-		c.Assert(statsTbl.Columns[bColID].TotColSize, Equals, int64(3))
-	}
+		testKit.MustExec(`update t set a = a + 1, b = "aa"`)
+		c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+		c.Assert(h.Update(is), IsNil)
+		for _, def := range pi.Definitions {
+			statsTbl := h.GetPartitionStats(tableInfo, def.ID)
+			c.Assert(statsTbl.ModifyCount, Equals, int64(2))
+			c.Assert(statsTbl.Count, Equals, int64(1))
+			c.Assert(statsTbl.Columns[bColID].TotColSize, Equals, int64(3))
+		}
 
-	testKit.MustExec("delete from t")
-	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
-	c.Assert(h.Update(is), IsNil)
-	for _, def := range pi.Definitions {
-		statsTbl := h.GetPartitionStats(tableInfo, def.ID)
-		c.Assert(statsTbl.ModifyCount, Equals, int64(3))
-		c.Assert(statsTbl.Count, Equals, int64(0))
-		c.Assert(statsTbl.Columns[bColID].TotColSize, Equals, int64(0))
-	}
+		testKit.MustExec("delete from t")
+		c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+		c.Assert(h.Update(is), IsNil)
+		for _, def := range pi.Definitions {
+			statsTbl := h.GetPartitionStats(tableInfo, def.ID)
+			c.Assert(statsTbl.ModifyCount, Equals, int64(3))
+			c.Assert(statsTbl.Count, Equals, int64(0))
+			c.Assert(statsTbl.Columns[bColID].TotColSize, Equals, int64(0))
+		}
+	})
 }
 
 func (s *testStatsSuite) TestAutoUpdate(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
-	testKit.MustExec("use test")
-	testKit.MustExec("create table t (a varchar(20))")
+	testkit.WithPruneMode(testKit, variable.StaticOnly, func() {
+		testKit.MustExec("use test")
+		testKit.MustExec("create table t (a varchar(20))")
 
-	handle.AutoAnalyzeMinCnt = 0
-	testKit.MustExec("set global tidb_auto_analyze_ratio = 0.2")
-	defer func() {
-		handle.AutoAnalyzeMinCnt = 1000
-		testKit.MustExec("set global tidb_auto_analyze_ratio = 0.0")
-	}()
+		handle.AutoAnalyzeMinCnt = 0
+		testKit.MustExec("set global tidb_auto_analyze_ratio = 0.2")
+		defer func() {
+			handle.AutoAnalyzeMinCnt = 1000
+			testKit.MustExec("set global tidb_auto_analyze_ratio = 0.0")
+		}()
 
-	do := s.do
-	is := do.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	c.Assert(err, IsNil)
-	tableInfo := tbl.Meta()
-	h := do.StatsHandle()
+		do := s.do
+		is := do.InfoSchema()
+		tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+		c.Assert(err, IsNil)
+		tableInfo := tbl.Meta()
+		h := do.StatsHandle()
 
-	h.HandleDDLEvent(<-h.DDLEventCh())
-	c.Assert(h.Update(is), IsNil)
-	stats := h.GetTableStats(tableInfo)
-	c.Assert(stats.Count, Equals, int64(0))
+		h.HandleDDLEvent(<-h.DDLEventCh())
+		c.Assert(h.Update(is), IsNil)
+		stats := h.GetTableStats(tableInfo)
+		c.Assert(stats.Count, Equals, int64(0))
 
-	_, err = testKit.Exec("insert into t values ('ss'), ('ss'), ('ss'), ('ss'), ('ss')")
-	c.Assert(err, IsNil)
-	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
-	c.Assert(h.Update(is), IsNil)
-	h.HandleAutoAnalyze(is)
-	c.Assert(h.Update(is), IsNil)
-	stats = h.GetTableStats(tableInfo)
-	c.Assert(stats.Count, Equals, int64(5))
-	c.Assert(stats.ModifyCount, Equals, int64(0))
-	for _, item := range stats.Columns {
-		// TotColSize = 5*(2(length of 'ss') + 1(size of len byte)).
-		c.Assert(item.TotColSize, Equals, int64(15))
-		break
-	}
+		_, err = testKit.Exec("insert into t values ('ss'), ('ss'), ('ss'), ('ss'), ('ss')")
+		c.Assert(err, IsNil)
+		c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+		c.Assert(h.Update(is), IsNil)
+		h.HandleAutoAnalyze(is)
+		c.Assert(h.Update(is), IsNil)
+		stats = h.GetTableStats(tableInfo)
+		c.Assert(stats.Count, Equals, int64(5))
+		c.Assert(stats.ModifyCount, Equals, int64(0))
+		for _, item := range stats.Columns {
+			// TotColSize = 5*(2(length of 'ss') + 1(size of len byte)).
+			c.Assert(item.TotColSize, Equals, int64(15))
+			break
+		}
 
-	// Test that even if the table is recently modified, we can still analyze the table.
-	h.SetLease(time.Second)
-	defer func() { h.SetLease(0) }()
-	_, err = testKit.Exec("insert into t values ('fff')")
-	c.Assert(err, IsNil)
-	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
-	c.Assert(h.Update(is), IsNil)
-	h.HandleAutoAnalyze(is)
-	c.Assert(h.Update(is), IsNil)
-	stats = h.GetTableStats(tableInfo)
-	c.Assert(stats.Count, Equals, int64(6))
-	c.Assert(stats.ModifyCount, Equals, int64(1))
+		// Test that even if the table is recently modified, we can still analyze the table.
+		h.SetLease(time.Second)
+		defer func() { h.SetLease(0) }()
+		_, err = testKit.Exec("insert into t values ('fff')")
+		c.Assert(err, IsNil)
+		c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+		c.Assert(h.Update(is), IsNil)
+		h.HandleAutoAnalyze(is)
+		c.Assert(h.Update(is), IsNil)
+		stats = h.GetTableStats(tableInfo)
+		c.Assert(stats.Count, Equals, int64(6))
+		c.Assert(stats.ModifyCount, Equals, int64(1))
 
-	_, err = testKit.Exec("insert into t values ('fff')")
-	c.Assert(err, IsNil)
-	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
-	c.Assert(h.Update(is), IsNil)
-	h.HandleAutoAnalyze(is)
-	c.Assert(h.Update(is), IsNil)
-	stats = h.GetTableStats(tableInfo)
-	c.Assert(stats.Count, Equals, int64(7))
-	c.Assert(stats.ModifyCount, Equals, int64(0))
+		_, err = testKit.Exec("insert into t values ('fff')")
+		c.Assert(err, IsNil)
+		c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+		c.Assert(h.Update(is), IsNil)
+		h.HandleAutoAnalyze(is)
+		c.Assert(h.Update(is), IsNil)
+		stats = h.GetTableStats(tableInfo)
+		c.Assert(stats.Count, Equals, int64(7))
+		c.Assert(stats.ModifyCount, Equals, int64(0))
 
-	_, err = testKit.Exec("insert into t values ('eee')")
-	c.Assert(err, IsNil)
-	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
-	c.Assert(h.Update(is), IsNil)
-	h.HandleAutoAnalyze(is)
-	c.Assert(h.Update(is), IsNil)
-	stats = h.GetTableStats(tableInfo)
-	c.Assert(stats.Count, Equals, int64(8))
-	// Modify count is non-zero means that we do not analyze the table.
-	c.Assert(stats.ModifyCount, Equals, int64(1))
-	for _, item := range stats.Columns {
-		// TotColSize = 27, because the table has not been analyzed, and insert statement will add 3(length of 'eee') to TotColSize.
-		c.Assert(item.TotColSize, Equals, int64(27))
-		break
-	}
+		_, err = testKit.Exec("insert into t values ('eee')")
+		c.Assert(err, IsNil)
+		c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+		c.Assert(h.Update(is), IsNil)
+		h.HandleAutoAnalyze(is)
+		c.Assert(h.Update(is), IsNil)
+		stats = h.GetTableStats(tableInfo)
+		c.Assert(stats.Count, Equals, int64(8))
+		// Modify count is non-zero means that we do not analyze the table.
+		c.Assert(stats.ModifyCount, Equals, int64(1))
+		for _, item := range stats.Columns {
+			// TotColSize = 27, because the table has not been analyzed, and insert statement will add 3(length of 'eee') to TotColSize.
+			c.Assert(item.TotColSize, Equals, int64(27))
+			break
+		}
 
-	testKit.MustExec("analyze table t")
-	_, err = testKit.Exec("create index idx on t(a)")
-	c.Assert(err, IsNil)
-	is = do.InfoSchema()
-	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	c.Assert(err, IsNil)
-	tableInfo = tbl.Meta()
-	h.HandleAutoAnalyze(is)
-	c.Assert(h.Update(is), IsNil)
-	stats = h.GetTableStats(tableInfo)
-	c.Assert(stats.Count, Equals, int64(8))
-	c.Assert(stats.ModifyCount, Equals, int64(0))
-	hg, ok := stats.Indices[tableInfo.Indices[0].ID]
-	c.Assert(ok, IsTrue)
-	c.Assert(hg.NDV, Equals, int64(3))
-	c.Assert(hg.Len(), Equals, 3)
+		testKit.MustExec("analyze table t")
+		_, err = testKit.Exec("create index idx on t(a)")
+		c.Assert(err, IsNil)
+		is = do.InfoSchema()
+		tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+		c.Assert(err, IsNil)
+		tableInfo = tbl.Meta()
+		h.HandleAutoAnalyze(is)
+		c.Assert(h.Update(is), IsNil)
+		stats = h.GetTableStats(tableInfo)
+		c.Assert(stats.Count, Equals, int64(8))
+		c.Assert(stats.ModifyCount, Equals, int64(0))
+		hg, ok := stats.Indices[tableInfo.Indices[0].ID]
+		c.Assert(ok, IsTrue)
+		c.Assert(hg.NDV, Equals, int64(3))
+		c.Assert(hg.Len(), Equals, 3)
+	})
 }
 
 func (s *testStatsSuite) TestAutoUpdatePartition(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
-	testKit.MustExec("use test")
-	testKit.MustExec("drop table if exists t")
-	testKit.MustExec("create table t (a int) PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (6))")
-	testKit.MustExec("analyze table t")
+	testkit.WithPruneMode(testKit, variable.StaticOnly, func() {
+		testKit.MustExec("use test")
+		testKit.MustExec("drop table if exists t")
+		testKit.MustExec("create table t (a int) PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (6))")
+		testKit.MustExec("analyze table t")
 
-	handle.AutoAnalyzeMinCnt = 0
-	testKit.MustExec("set global tidb_auto_analyze_ratio = 0.6")
-	defer func() {
-		handle.AutoAnalyzeMinCnt = 1000
-		testKit.MustExec("set global tidb_auto_analyze_ratio = 0.0")
-	}()
+		handle.AutoAnalyzeMinCnt = 0
+		testKit.MustExec("set global tidb_auto_analyze_ratio = 0.6")
+		defer func() {
+			handle.AutoAnalyzeMinCnt = 1000
+			testKit.MustExec("set global tidb_auto_analyze_ratio = 0.0")
+		}()
 
-	do := s.do
-	is := do.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	c.Assert(err, IsNil)
-	tableInfo := tbl.Meta()
-	pi := tableInfo.GetPartitionInfo()
-	h := do.StatsHandle()
+		do := s.do
+		is := do.InfoSchema()
+		tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+		c.Assert(err, IsNil)
+		tableInfo := tbl.Meta()
+		pi := tableInfo.GetPartitionInfo()
+		h := do.StatsHandle()
+		c.Assert(h.RefreshVars(), IsNil)
 
-	c.Assert(h.Update(is), IsNil)
-	stats := h.GetPartitionStats(tableInfo, pi.Definitions[0].ID)
-	c.Assert(stats.Count, Equals, int64(0))
+		c.Assert(h.Update(is), IsNil)
+		stats := h.GetPartitionStats(tableInfo, pi.Definitions[0].ID)
+		c.Assert(stats.Count, Equals, int64(0))
 
-	testKit.MustExec("insert into t values (1)")
-	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
-	c.Assert(h.Update(is), IsNil)
-	h.HandleAutoAnalyze(is)
-	stats = h.GetPartitionStats(tableInfo, pi.Definitions[0].ID)
-	c.Assert(stats.Count, Equals, int64(1))
-	c.Assert(stats.ModifyCount, Equals, int64(0))
+		testKit.MustExec("insert into t values (1)")
+		c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+		c.Assert(h.Update(is), IsNil)
+		h.HandleAutoAnalyze(is)
+		stats = h.GetPartitionStats(tableInfo, pi.Definitions[0].ID)
+		c.Assert(stats.Count, Equals, int64(1))
+		c.Assert(stats.ModifyCount, Equals, int64(0))
+	})
 }
 
 func (s *testStatsSuite) TestTableAnalyzed(c *C) {
@@ -523,7 +532,7 @@ func (s *testStatsSuite) TestTableAnalyzed(c *C) {
 	statsTbl = h.GetTableStats(tableInfo)
 	c.Assert(handle.TableAnalyzed(statsTbl), IsTrue)
 
-	h.Clear()
+	h.Clear4Test()
 	oriLease := h.Lease()
 	// set it to non-zero so we will use load by need strategy
 	h.SetLease(1)
@@ -1724,7 +1733,7 @@ func (s *testStatsSuite) TestLoadHistCorrelation(c *C) {
 	testKit.MustExec("insert into t values(1),(2),(3),(4),(5)")
 	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 	testKit.MustExec("analyze table t")
-	h.Clear()
+	h.Clear4Test()
 	c.Assert(h.Update(s.do.InfoSchema()), IsNil)
 	result := testKit.MustQuery("show stats_histograms where Table_name = 't'")
 	c.Assert(len(result.Rows()), Equals, 0)

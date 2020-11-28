@@ -226,9 +226,9 @@ func (s *testCommitterSuite) TestPrewriteRollback(c *C) {
 		err = committer.prewriteMutations(NewBackofferWithVars(ctx, PrewriteMaxBackoff, nil), committer.mutations)
 		c.Assert(err, IsNil)
 	}
-	committer.commitTS, err = s.store.oracle.GetTimestamp(ctx)
+	committer.commitTS, err = s.store.oracle.GetTimestamp(ctx, &oracle.Option{TxnScope: oracle.GlobalTxnScope})
 	c.Assert(err, IsNil)
-	err = committer.commitMutations(NewBackofferWithVars(ctx, int(atomic.LoadUint64(&CommitMaxBackoff)), nil), CommitterMutations{keys: [][]byte{[]byte("a")}})
+	err = committer.commitMutations(NewBackofferWithVars(ctx, int(atomic.LoadUint64(&CommitMaxBackoff)), nil), &PlainMutations{keys: [][]byte{[]byte("a")}})
 	c.Assert(err, IsNil)
 
 	txn3 := s.begin(c)
@@ -294,6 +294,27 @@ func (s *testCommitterSuite) TestContextCancelRetryable(c *C) {
 	err = txn2.Commit(context.Background())
 	c.Assert(err, NotNil)
 	c.Assert(kv.ErrWriteConflictInTiDB.Equal(err), IsTrue, Commentf("err: %s", err))
+}
+
+func (s *testCommitterSuite) TestContextCancelCausingUndetermined(c *C) {
+	// For a normal transaction, if RPC returns context.Canceled error while sending commit
+	// requests, the transaction should go to the undetermined state.
+	txn := s.begin(c)
+	err := txn.Set([]byte("a"), []byte("va"))
+	c.Assert(err, IsNil)
+	committer, err := newTwoPhaseCommitterWithInit(txn, 0)
+	c.Assert(err, IsNil)
+	committer.prewriteMutations(NewBackofferWithVars(context.Background(), PrewriteMaxBackoff, nil), committer.mutations)
+	c.Assert(err, IsNil)
+
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/rpcContextCancelErr", `return(true)`), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/rpcContextCancelErr"), IsNil)
+	}()
+
+	err = committer.commitMutations(NewBackofferWithVars(context.Background(), PrewriteMaxBackoff, nil), committer.mutations)
+	c.Assert(committer.mu.undeterminedErr, NotNil)
+	c.Assert(errors.Cause(err), Equals, context.Canceled)
 }
 
 func (s *testCommitterSuite) mustGetRegionID(c *C, key []byte) uint64 {
@@ -553,9 +574,9 @@ func (s *testCommitterSuite) TestRejectCommitTS(c *C) {
 	c.Assert(err, IsNil)
 	mutations := []*kvrpcpb.Mutation{
 		{
-			Op:    committer.mutations.ops[0],
-			Key:   committer.mutations.keys[0],
-			Value: committer.mutations.values[0],
+			Op:    committer.mutations.GetOp(0),
+			Key:   committer.mutations.GetKey(0),
+			Value: committer.mutations.GetValue(0),
 		},
 	}
 	prewrite := &kvrpcpb.PrewriteRequest{
@@ -602,7 +623,7 @@ func (s *testCommitterSuite) TestPessimisticPrewriteRequest(c *C) {
 	c.Assert(err, IsNil)
 	committer.forUpdateTS = 100
 	var batch batchMutations
-	batch.mutations = committer.mutations.subRange(0, 1)
+	batch.mutations = committer.mutations.Slice(0, 1)
 	batch.region = RegionVerID{1, 1, 1}
 	req := committer.buildPrewriteRequest(batch, 1)
 	c.Assert(len(req.Prewrite().IsPessimisticLock), Greater, 0)
@@ -656,7 +677,7 @@ func (s *testCommitterSuite) TestPessimisticTTL(c *C) {
 	err = txn.LockKeys(context.Background(), lockCtx, key2)
 	c.Assert(err, IsNil)
 	lockInfo := s.getLockInfo(c, key)
-	msBeforeLockExpired := s.store.GetOracle().UntilExpired(txn.StartTS(), lockInfo.LockTtl)
+	msBeforeLockExpired := s.store.GetOracle().UntilExpired(txn.StartTS(), lockInfo.LockTtl, &oracle.Option{TxnScope: oracle.GlobalTxnScope})
 	c.Assert(msBeforeLockExpired, GreaterEqual, int64(100))
 
 	lr := newLockResolver(s.store)
@@ -669,7 +690,7 @@ func (s *testCommitterSuite) TestPessimisticTTL(c *C) {
 	for i := 0; i < 50; i++ {
 		lockInfoNew := s.getLockInfo(c, key)
 		if lockInfoNew.LockTtl > lockInfo.LockTtl {
-			currentTS, err := lr.store.GetOracle().GetTimestamp(bo.ctx)
+			currentTS, err := lr.store.GetOracle().GetTimestamp(bo.ctx, &oracle.Option{TxnScope: oracle.GlobalTxnScope})
 			c.Assert(err, IsNil)
 			// Check that the TTL is update to a reasonable range.
 			expire := oracle.ExtractPhysical(txn.startTS) + int64(lockInfoNew.LockTtl)
@@ -879,7 +900,7 @@ func (s *testCommitterSuite) getLockInfo(c *C, key []byte) *kvrpcpb.LockInfo {
 	bo := NewBackofferWithVars(context.Background(), getMaxBackoff, nil)
 	loc, err := s.store.regionCache.LocateKey(bo, key)
 	c.Assert(err, IsNil)
-	batch := batchMutations{region: loc.Region, mutations: committer.mutations.subRange(0, 1)}
+	batch := batchMutations{region: loc.Region, mutations: committer.mutations.Slice(0, 1)}
 	req := committer.buildPrewriteRequest(batch, 1)
 	resp, err := s.store.SendReq(bo, req, loc.Region, readTimeoutShort)
 	c.Assert(err, IsNil)
@@ -915,7 +936,7 @@ func (s *testCommitterSuite) TestPkNotFound(c *C) {
 	// while the secondary lock operation succeeded
 	bo := NewBackofferWithVars(context.Background(), pessimisticLockMaxBackoff, nil)
 	txn1.committer.ttlManager.close()
-	err = txn1.committer.pessimisticRollbackMutations(bo, CommitterMutations{keys: [][]byte{k1}})
+	err = txn1.committer.pessimisticRollbackMutations(bo, &PlainMutations{keys: [][]byte{k1}})
 	c.Assert(err, IsNil)
 
 	// Txn2 tries to lock the secondary key k2, dead loop if the left secondary lock by txn1 not resolved
@@ -989,16 +1010,16 @@ func (s *testCommitterSuite) TestPessimisticLockPrimary(c *C) {
 }
 
 func (c *twoPhaseCommitter) mutationsOfKeys(keys [][]byte) CommitterMutations {
-	var res CommitterMutations
-	for i := range c.mutations.keys {
+	var res PlainMutations
+	for i := 0; i < c.mutations.Len(); i++ {
 		for _, key := range keys {
-			if bytes.Equal(c.mutations.keys[i], key) {
-				res.Push(c.mutations.ops[i], c.mutations.keys[i], c.mutations.values[i], c.mutations.isPessimisticLock[i])
+			if bytes.Equal(c.mutations.GetKey(i), key) {
+				res.Push(c.mutations.GetOp(i), c.mutations.GetKey(i), c.mutations.GetValue(i), c.mutations.IsPessimisticLock(i))
 				break
 			}
 		}
 	}
-	return res
+	return &res
 }
 
 func (s *testCommitterSuite) TestCommitDeadLock(c *C) {
@@ -1070,7 +1091,7 @@ func (s *testCommitterSuite) TestPushPessimisticLock(c *C) {
 	err = txn1.committer.initKeysAndMutations()
 	c.Assert(err, IsNil)
 	// Strip the prewrite of the primary key.
-	txn1.committer.mutations = txn1.committer.mutations.subRange(1, 2)
+	txn1.committer.mutations.handles = txn1.committer.mutations.handles[1:2]
 	c.Assert(err, IsNil)
 	err = txn1.committer.prewriteMutations(NewBackofferWithVars(ctx, PrewriteMaxBackoff, nil), txn1.committer.mutations)
 	c.Assert(err, IsNil)
@@ -1139,7 +1160,7 @@ func (s *testCommitterSuite) TestResolveMixed(c *C) {
 	// stop txn ttl manager and remove primary key, make the other keys left behind
 	bo := NewBackofferWithVars(context.Background(), pessimisticLockMaxBackoff, nil)
 	txn1.committer.ttlManager.close()
-	err = txn1.committer.pessimisticRollbackMutations(bo, CommitterMutations{keys: [][]byte{pk}})
+	err = txn1.committer.pessimisticRollbackMutations(bo, &PlainMutations{keys: [][]byte{pk}})
 	c.Assert(err, IsNil)
 
 	// try to resolve the left optimistic locks, use clean whole region
@@ -1228,8 +1249,6 @@ func (s *testCommitterSuite) TestAsyncCommit(c *C) {
 	err = committer.execute(ctx)
 	c.Assert(err, IsNil)
 
-	// TODO remove sleep when recovery logic is done
-	time.Sleep(1 * time.Second)
 	s.checkValues(c, map[string]string{
 		string(pk): string(pkVal),
 		string(k1): string(k1Val),

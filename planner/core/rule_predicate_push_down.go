@@ -430,7 +430,7 @@ func (la *LogicalAggregation) PredicatePushDown(predicates []expression.Expressi
 	for _, fun := range la.AggFuncs {
 		exprsOriginal = append(exprsOriginal, fun.Args[0])
 	}
-	groupByColumns := expression.NewSchema(la.groupByCols...)
+	groupByColumns := expression.NewSchema(la.GetGroupByCols()...)
 	for _, cond := range predicates {
 		switch cond.(type) {
 		case *expression.Constant:

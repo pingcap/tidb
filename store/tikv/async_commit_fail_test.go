@@ -26,33 +26,27 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/store/mockstore/cluster"
-	"github.com/pingcap/tidb/store/mockstore/unistore"
 )
 
 type testAsyncCommitFailSuite struct {
 	OneByOneSuite
 	testAsyncCommitCommon
-	cluster cluster.Cluster
-	store   *tikvStore
 }
 
 var _ = SerialSuites(&testAsyncCommitFailSuite{})
 
 func (s *testAsyncCommitFailSuite) SetUpTest(c *C) {
-	client, pdClient, cluster, err := unistore.New("")
-	c.Assert(err, IsNil)
-	unistore.BootstrapWithSingleStore(cluster)
-	s.cluster = cluster
-	store, err := NewTestTiKVStore(client, pdClient, nil, nil, 0)
-	c.Assert(err, IsNil)
-
-	s.store = store.(*tikvStore)
+	s.testAsyncCommitCommon.setUpTest(c)
 }
 
 // TestFailCommitPrimaryRpcErrors tests rpc errors are handled properly when
 // committing primary region task.
 func (s *testAsyncCommitFailSuite) TestFailAsyncCommitPrewriteRpcErrors(c *C) {
+	// This test doesn't support tikv mode because it needs setting failpoint in unistore.
+	if *WithTiKV {
+		return
+	}
+
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.TiKVClient.AsyncCommit.Enable = true
@@ -85,13 +79,90 @@ func (s *testAsyncCommitFailSuite) TestFailAsyncCommitPrewriteRpcErrors(c *C) {
 	c.Assert(bytes.Equal(res, []byte("a1")), IsTrue)
 }
 
-func (s *testAsyncCommitFailSuite) TestSecondaryListInPrimaryLock(c *C) {
+func (s *testAsyncCommitFailSuite) TestAsyncCommitPrewriteCancelled(c *C) {
+	// This test doesn't support tikv mode because it needs setting failpoint in unistore.
+	if *WithTiKV {
+		return
+	}
+
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.TiKVClient.AsyncCommit.Enable = true
 	})
 
-	s.putAlphabets(c, s.store)
+	// Split into two regions.
+	splitKey := "s"
+	bo := NewBackofferWithVars(context.Background(), 5000, nil)
+	loc, err := s.store.GetRegionCache().LocateKey(bo, []byte(splitKey))
+	c.Assert(err, IsNil)
+	newRegionID := s.cluster.AllocID()
+	newPeerID := s.cluster.AllocID()
+	s.cluster.Split(loc.Region.GetID(), newRegionID, []byte(splitKey), []uint64{newPeerID}, newPeerID)
+	s.store.GetRegionCache().InvalidateCachedRegion(loc.Region)
+
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/rpcPrewriteResult", `1*return("writeConflict")->sleep(50)`), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/rpcPrewriteResult"), IsNil)
+	}()
+
+	t1, err := s.store.Begin()
+	c.Assert(err, IsNil)
+	err = t1.Set([]byte("a"), []byte("a"))
+	c.Assert(err, IsNil)
+	err = t1.Set([]byte("z"), []byte("z"))
+	c.Assert(err, IsNil)
+	ctx := context.WithValue(context.Background(), sessionctx.ConnID, uint64(1))
+	err = t1.Commit(ctx)
+	c.Assert(err, NotNil)
+	c.Assert(kv.ErrWriteConflict.Equal(err), IsTrue, Commentf("%s", errors.ErrorStack(err)))
+}
+
+func (s *testAsyncCommitFailSuite) TestPointGetWithAsyncCommit(c *C) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TiKVClient.AsyncCommit.Enable = true
+	})
+
+	s.putAlphabets(c)
+
+	txn, err := s.store.Begin()
+	c.Assert(err, IsNil)
+	txn.Set([]byte("a"), []byte("v1"))
+	txn.Set([]byte("b"), []byte("v2"))
+	s.mustPointGet(c, []byte("a"), []byte("a"))
+	s.mustPointGet(c, []byte("b"), []byte("b"))
+
+	// PointGet cannot ignore async commit transactions' locks.
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/asyncCommitDoNothing", "return"), IsNil)
+	ctx := context.WithValue(context.Background(), sessionctx.ConnID, uint64(1))
+	err = txn.Commit(ctx)
+	c.Assert(err, IsNil)
+	c.Assert(txn.(*tikvTxn).committer.isAsyncCommit(), IsTrue)
+	s.mustPointGet(c, []byte("a"), []byte("v1"))
+	s.mustPointGet(c, []byte("b"), []byte("v2"))
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/asyncCommitDoNothing"), IsNil)
+
+	// PointGet will not push the `max_ts` to its ts which is MaxUint64.
+	txn2, err := s.store.Begin()
+	c.Assert(err, IsNil)
+	s.mustGetFromTxn(c, txn2, []byte("a"), []byte("v1"))
+	s.mustGetFromTxn(c, txn2, []byte("b"), []byte("v2"))
+	err = txn2.Rollback()
+	c.Assert(err, IsNil)
+}
+
+func (s *testAsyncCommitFailSuite) TestSecondaryListInPrimaryLock(c *C) {
+	// This test doesn't support tikv mode.
+	if *WithTiKV {
+		return
+	}
+
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TiKVClient.AsyncCommit.Enable = true
+	})
+
+	s.putAlphabets(c)
 
 	// Split into several regions.
 	for _, splitKey := range []string{"h", "o", "u"} {
@@ -166,4 +237,27 @@ func (s *testAsyncCommitFailSuite) TestSecondaryListInPrimaryLock(c *C) {
 	test([]string{"a", "b", "d"}, []string{"a3", "b3", "d3"})
 	test([]string{"a", "b", "h", "i", "u"}, []string{"a4", "b4", "h4", "i4", "u4"})
 	test([]string{"i", "a", "z", "u", "b"}, []string{"i5", "a5", "z5", "u5", "b5"})
+}
+
+func (s *testAsyncCommitFailSuite) TestAsyncCommitContextCancelCausingUndetermined(c *C) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TiKVClient.AsyncCommit.Enable = true
+	})
+
+	// For an async commit transaction, if RPC returns context.Canceled error when prewriting, the
+	// transaction should go to undetermined state.
+	txn := s.begin(c)
+	err := txn.Set([]byte("a"), []byte("va"))
+	c.Assert(err, IsNil)
+
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/rpcContextCancelErr", `return(true)`), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/rpcContextCancelErr"), IsNil)
+	}()
+
+	ctx := context.WithValue(context.Background(), sessionctx.ConnID, uint64(1))
+	err = txn.Commit(ctx)
+	c.Assert(err, NotNil)
+	c.Assert(txn.committer.mu.undeterminedErr, NotNil)
 }

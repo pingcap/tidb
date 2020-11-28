@@ -239,6 +239,15 @@ func (s *testExpressionRewriterSuite) TestCompareSubquery(c *C) {
 		"<nil> 2",
 	))
 	tk.MustQuery("select * from t t1 where b = all (select a from t t2)").Check(testkit.Rows())
+
+	// for issue 20059
+	tk.MustExec("DROP TABLE IF EXISTS `t`")
+	tk.MustExec("CREATE TABLE `t` (  `a` int(11) DEFAULT NULL) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;")
+	tk.MustExec("INSERT INTO `t` VALUES (1);")
+	tk.MustExec("DROP TABLE IF EXISTS `table_40_utf8_4`;")
+	tk.MustExec("CREATE TABLE `table_40_utf8_4` (`col_tinyint_key_unsigned` tinyint(4) DEFAULT NULL,  `col_bit64_key_signed` bit(64) DEFAULT NULL) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin;")
+	tk.MustExec("INSERT INTO `table_40_utf8_4` VALUES (31, -18);")
+	tk.MustQuery("select count(1) from table_40_utf8_4 where ( select count(1) from t where table_40_utf8_4.col_bit64_key_signed!=table_40_utf8_4.col_tinyint_key_unsigned)").Check(testkit.Rows("1"))
 }
 
 func (s *testExpressionRewriterSuite) TestCheckFullGroupBy(c *C) {
@@ -297,4 +306,40 @@ func (s *testExpressionRewriterSuite) TestIssue20007(c *C) {
 		tk.MustQuery("select * from t1 where c_int != any (select c_int from t2 where t1.c_str <= t2.c_str); ").Check(
 			testkit.Rows("2 epic wiles 2020-01-02 23:29:51", "3 silly burnell 2020-02-25 07:43:07"))
 	}
+}
+
+func (s *testExpressionRewriterSuite) TestIssue9869(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1(a int, b bigint unsigned);")
+	tk.MustExec("insert into t1 (a, b) values (1,4572794622775114594), (2,18196094287899841997),(3,11120436154190595086);")
+	tk.MustQuery("select (case t1.a when 0 then 0 else t1.b end), cast(t1.b as signed)  from t1;").Check(
+		testkit.Rows("4572794622775114594 4572794622775114594", "18196094287899841997 -250649785809709619", "11120436154190595086 -7326307919518956530"))
+}
+
+func (s *testExpressionRewriterSuite) TestIssue17652(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(x bigint unsigned);")
+	tk.MustExec("insert into t values( 9999999703771440633);")
+	tk.MustQuery("select ifnull(max(x), 0) from t").Check(
+		testkit.Rows("9999999703771440633"))
 }
