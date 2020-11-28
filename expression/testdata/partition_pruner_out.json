@@ -798,7 +798,7 @@
           "2"
         ],
         "Plan": [
-          "Sort_5 3343.33 root  test_partition.t7.a",
+          "Sort_5 3343.33 root  schema:[test_partition.t7.a], items:test_partition.t7.a",
           "└─TableReader_10 3343.33 root partition:all data:Selection_9",
           "  └─Selection_9 3343.33 cop[tikv]  or(isnull(test_partition.t7.a), gt(test_partition.t7.a, 0))",
           "    └─TableFullScan_8 10000.00 cop[tikv] table:t7 keep order:false, stats:pseudo"
