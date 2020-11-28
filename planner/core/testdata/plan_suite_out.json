@@ -1458,9 +1458,9 @@
       {
         "SQL": "select /*+ LIMIT_TO_COP() */ * from tn where a = 1 and b > 10 and b < 20 and c > 50 order by d limit 1",
         "Plan": [
-          "TopN_8 0.83 root  test.tn.d, offset:0, count:1",
+          "TopN_8 0.83 root  schema:[test.tn.a test.tn.b test.tn.c test.tn.d], items:test.tn.d, offset:0, count:1",
           "└─IndexReader_15 0.83 root  index:TopN_14",
-          "  └─TopN_14 0.83 cop[tikv]  test.tn.d, offset:0, count:1",
+          "  └─TopN_14 0.83 cop[tikv]  schema:[test.tn.a test.tn.b test.tn.c test.tn.d], items:test.tn.d, offset:0, count:1",
           "    └─Selection_13 0.83 cop[tikv]  gt(test.tn.c, 50)",
           "      └─IndexRangeScan_12 2.50 cop[tikv] table:tn, index:a(a, b, c, d) range:(1 10,1 20), keep order:false, stats:pseudo"
         ],
@@ -1469,7 +1469,7 @@
       {
         "SQL": "select * from tn where a = 1 and b > 10 and b < 20 and c > 50 order by d limit 1",
         "Plan": [
-          "TopN_10 0.83 root  test.tn.d, offset:0, count:1",
+          "TopN_10 0.83 root  schema:[test.tn.a test.tn.b test.tn.c test.tn.d], items:test.tn.d, offset:0, count:1",
           "└─IndexReader_20 0.83 root  index:Selection_19",
           "  └─Selection_19 0.83 cop[tikv]  gt(test.tn.c, 50)",
           "    └─IndexRangeScan_18 2.50 cop[tikv] table:tn, index:a(a, b, c, d) range:(1 10,1 20), keep order:false, stats:pseudo"
@@ -2044,7 +2044,7 @@
         "SQL": "select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by 3*t1.a",
         "Plan": [
           "Projection_19 12487.50 root  test.t.a",
-          "└─Sort_7 12487.50 root  Column#7",
+          "└─Sort_7 12487.50 root  schema:[test.t.a], items:Column#7",
           "  └─Projection_20 12487.50 root  test.t.a, mul(3, test.t.a)->Column#7",
           "    └─MergeJoin_9 12487.50 root  inner join, left key:test.t.a, right key:test.t.b",
           "      ├─IndexReader_14(Build) 9990.00 root  index:IndexFullScan_13",
@@ -2229,9 +2229,9 @@
       {
         "SQL": "select * from test where age=5;",
         "Plan": [
-          "TableReader_7 2048.00 root  data:Selection_6",
-          "└─Selection_6 2048.00 cop[tikv]  eq(test.test.age, 5)",
-          "  └─TableFullScan_5 2048.00 cop[tikv] table:test keep order:false"
+          "TableReader_7 714.78 root  data:Selection_6",
+          "└─Selection_6 714.78 cop[tikv]  eq(test.test.age, 5)",
+          "  └─TableFullScan_5 1024.00 cop[tikv] table:test keep order:false"
         ],
         "Result": null
       }
@@ -2243,9 +2243,9 @@
       {
         "SQL": "select * from test where age=5;",
         "Plan": [
-          "IndexLookUp_7 2048.00 root  ",
-          "├─IndexRangeScan_5(Build) 2048.00 cop[tikv] table:test, index:idx_age(age) range:[5,5], keep order:false",
-          "└─TableRowIDScan_6(Probe) 2048.00 cop[tikv] table:test keep order:false"
+          "IndexLookUp_7 1441.12 root  ",
+          "├─IndexRangeScan_5(Build) 1441.12 cop[tikv] table:test, index:idx_age(age) range:[5,5], keep order:false",
+          "└─TableRowIDScan_6(Probe) 1441.12 cop[tikv] table:test keep order:false"
         ],
         "Result": null
       }

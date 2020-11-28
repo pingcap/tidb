@@ -442,6 +442,7 @@ func (p *PhysicalTableDual) ExplainInfo() string {
 // ExplainInfo implements Plan interface.
 func (p *PhysicalSort) ExplainInfo() string {
 	buffer := bytes.NewBufferString("")
+	fmt.Fprintf(buffer, "schema:%v, items:", p.Schema().Columns)
 	return explainByItems(buffer, p.ByItems).String()
 }
 
@@ -695,6 +696,7 @@ func (p *PhysicalBroadCastJoin) explainInfo(normalized bool) string {
 // ExplainInfo implements Plan interface.
 func (p *PhysicalTopN) ExplainInfo() string {
 	buffer := bytes.NewBufferString("")
+	fmt.Fprintf(buffer, "schema:%v, items:", p.Schema().Columns)
 	buffer = explainByItems(buffer, p.ByItems)
 	fmt.Fprintf(buffer, ", offset:%v, count:%v", p.Offset, p.Count)
 	return buffer.String()
@@ -703,6 +705,7 @@ func (p *PhysicalTopN) ExplainInfo() string {
 // ExplainNormalizedInfo implements Plan interface.
 func (p *PhysicalTopN) ExplainNormalizedInfo() string {
 	buffer := bytes.NewBufferString("")
+	fmt.Fprintf(buffer, "schema:%v, items:", p.Schema().Columns)
 	buffer = explainNormalizedByItems(buffer, p.ByItems)
 	return buffer.String()
 }
