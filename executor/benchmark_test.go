@@ -1523,6 +1523,123 @@ func prepare4MergeJoin(tc *mergeJoinTestCase, leftExec, rightExec *mockDataSourc
 	return e
 }
 
+func prepare4ShuffleMergeJoin(tc *mergeJoinTestCase, leftExec, rightExec *mockDataSource, concurrency int) *ShuffleExec {
+	outerCols, innerCols := tc.columns(), tc.columns()
+
+	joinSchema := expression.NewSchema()
+	if tc.childrenUsedSchema != nil {
+		for i, used := range tc.childrenUsedSchema[0] {
+			if used {
+				joinSchema.Append(outerCols[i])
+			}
+		}
+		for i, used := range tc.childrenUsedSchema[1] {
+			if used {
+				joinSchema.Append(innerCols[i])
+			}
+		}
+	} else {
+		joinSchema.Append(outerCols...)
+		joinSchema.Append(innerCols...)
+	}
+
+	outerJoinKeys := make([]*expression.Column, 0, len(tc.outerJoinKeyIdx))
+	innerJoinKeys := make([]*expression.Column, 0, len(tc.innerJoinKeyIdx))
+	for _, keyIdx := range tc.outerJoinKeyIdx {
+		outerJoinKeys = append(outerJoinKeys, outerCols[keyIdx])
+	}
+	for _, keyIdx := range tc.innerJoinKeyIdx {
+		innerJoinKeys = append(innerJoinKeys, innerCols[keyIdx])
+	}
+	compareFuncs := make([]expression.CompareFunc, 0, len(outerJoinKeys))
+	outerCompareFuncs := make([]expression.CompareFunc, 0, len(outerJoinKeys))
+	for i := range outerJoinKeys {
+		compareFuncs = append(compareFuncs, expression.GetCmpFunction(nil, outerJoinKeys[i], innerJoinKeys[i]))
+		outerCompareFuncs = append(outerCompareFuncs, expression.GetCmpFunction(nil, outerJoinKeys[i], outerJoinKeys[i]))
+	}
+
+	defaultValues := make([]types.Datum, len(innerCols))
+
+	// build dataSources
+	dataSources := []Executor{leftExec, rightExec}
+	// build splitters
+	innerByItems := make([]expression.Expression, 0, len(innerJoinKeys))
+	for _, innerJoinKey := range innerJoinKeys {
+		innerByItems = append(innerByItems, innerJoinKey)
+	}
+	outerByItems := make([]expression.Expression, 0, len(outerJoinKeys))
+	for _, outerJoinKey := range outerJoinKeys {
+		outerByItems = append(outerByItems, outerJoinKey)
+	}
+	splitters := []partitionSplitter{
+		&partitionHashSplitter{
+			byItems:    innerByItems,
+			numWorkers: concurrency,
+		},
+		&partitionHashSplitter{
+			byItems:    outerByItems,
+			numWorkers: concurrency,
+		},
+	}
+	// build ShuffleMergeJoinExec
+	shuffle := &ShuffleExec{
+		baseExecutor: newBaseExecutor(tc.ctx, joinSchema, 4),
+		concurrency:  concurrency,
+		dataSources:  dataSources,
+		splitters:    splitters,
+	}
+
+	// build workers, only benchmark inner join
+	shuffle.workers = make([]*shuffleWorker, shuffle.concurrency)
+	for i := range shuffle.workers {
+		leftReceiver := shuffleReceiver{
+			baseExecutor: newBaseExecutor(tc.ctx, leftExec.Schema(), 0),
+		}
+		rightReceiver := shuffleReceiver{
+			baseExecutor: newBaseExecutor(tc.ctx, rightExec.Schema(), 0),
+		}
+		w := &shuffleWorker{
+			receivers: []*shuffleReceiver{&leftReceiver, &rightReceiver},
+		}
+		// only benchmark inner join
+		mergeJoinExec := &MergeJoinExec{
+			stmtCtx:      tc.ctx.GetSessionVars().StmtCtx,
+			baseExecutor: newBaseExecutor(tc.ctx, joinSchema, 3, &leftReceiver, &rightReceiver),
+			compareFuncs: compareFuncs,
+			isOuterJoin:  false,
+		}
+
+		mergeJoinExec.joiner = newJoiner(
+			tc.ctx,
+			0,
+			false,
+			defaultValues,
+			nil,
+			retTypes(leftExec),
+			retTypes(rightExec),
+			tc.childrenUsedSchema,
+		)
+
+		mergeJoinExec.innerTable = &mergeJoinTable{
+			isInner:    true,
+			childIndex: 1,
+			joinKeys:   innerJoinKeys,
+		}
+
+		mergeJoinExec.outerTable = &mergeJoinTable{
+			childIndex: 0,
+			filters:    nil,
+			joinKeys:   outerJoinKeys,
+		}
+
+		w.childExec = mergeJoinExec
+
+		shuffle.workers[i] = w
+	}
+
+	return shuffle
+}
+
 func defaultMergeJoinTestCase() *mergeJoinTestCase {
 	return &mergeJoinTestCase{*defaultIndexJoinTestCase(), nil}
 }
@@ -1605,7 +1722,8 @@ func benchmarkMergeJoinExecWithCase(b *testing.B, tc *mergeJoinTestCase, innerDS
 		var exec Executor
 		switch joinType {
 		case innerMergeJoin:
-			exec = prepare4MergeJoin(tc, innerDS, outerDS)
+			//exec = prepare4MergeJoin(tc, innerDS, outerDS)
+			exec = prepare4ShuffleMergeJoin(tc, innerDS, outerDS, 4)
 		}
 
 		tmpCtx := context.Background()
