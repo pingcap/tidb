@@ -7778,17 +7778,7 @@ func (s *testIntegrationSerialSuite) TestIssue20128(c *C) {
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t(a bit(64), b double);")
 	tk.MustExec("insert into t values(-21172, -11623);")
-	tk.MustExec("insert into t values(0, 0);")
-	tk.MustExec("insert into t values(-1, -1);")
-	tk.MustExec("insert into t values(1, 1);")
-	tk.MustExec("insert into t (b)values(1);")
-	tk.MustQuery("select * from t order by a asc;").Check(
-		testkit.Rows(
-			"<nil> 1",
-			"b'0' 0",
-			"b'1' 1",
-			"b'1111111111111111111111111111111111111111111111111010110101001100' -11623",
-			"b'1111111111111111111111111111111111111111111111111111111111111111' -1"))
+	tk.MustQuery("select b from t where a < b;").Check(testkit.Rows("-11623"))
 }
 
 func (s *testIntegrationSerialSuite) TestCollationIndexJoin(c *C) {
