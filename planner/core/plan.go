@@ -161,20 +161,6 @@ func optimizeByShuffle4StreamAgg(pp *PhysicalStreamAgg, ctx sessionctx.Context) 
 		return nil
 	}
 
-	// for test purpose, comment this out, ignore inaccurately estimated cardinality at the moment.
-	// partitionBy := make([]*expression.Column, 0, len(pp.GroupByItems))
-	// for _, item := range pp.GroupByItems {
-	// 	if col, ok := item.(*expression.Column); ok {
-	// 		partitionBy = append(partitionBy, col)
-	// 	}
-	// }
-	//
-	// NDV := int(getCardinality(partitionBy, dataSource.Schema(), dataSource.statsInfo()))
-	// if NDV <= 1 {
-	// 	return nil
-	// }
-
-	// concurrency = mathutil.Min(concurrency, NDV)
 	reqProp := &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64}
 	shuffle := PhysicalShuffle{
 		Concurrency:  concurrency,
