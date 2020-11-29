@@ -427,6 +427,7 @@ type partitionRangeSplitter struct {
 	byItems      []expression.Expression
 	numWorkers   int
 	groupChecker *vecGroupChecker
+	idx          int
 }
 
 func buildPartitionRangeSplitter(ctx sessionctx.Context, concurrency int, byItems []expression.Expression) *partitionRangeSplitter {
@@ -434,9 +435,13 @@ func buildPartitionRangeSplitter(ctx sessionctx.Context, concurrency int, byItem
 		byItems:      byItems,
 		numWorkers:   concurrency,
 		groupChecker: newVecGroupChecker(ctx, byItems),
+		idx:          0,
 	}
 }
 
+// This method is supposed to be used for shuffle with sorted `dataSource`
+// the caller of this method should guarantee that `input` is grouped,
+// which means that rows with the same byItems should be continuous, the order does not matter.
 func (s *partitionRangeSplitter) split(ctx sessionctx.Context, input *chunk.Chunk, workerIndices []int) ([]int, error) {
 	_, err := s.groupChecker.splitIntoGroups(input)
 	if err != nil {
@@ -444,12 +449,13 @@ func (s *partitionRangeSplitter) split(ctx sessionctx.Context, input *chunk.Chun
 	}
 
 	workerIndices = workerIndices[:0]
-	idx := -1
-	for i := 0; i < len(s.groupChecker.sameGroup); i++ {
-		if !s.groupChecker.sameGroup[i] {
-			idx = (idx + 1) % s.numWorkers
+	for !s.groupChecker.isExhausted() {
+		begin, end := s.groupChecker.getNextGroup()
+		for i := begin; i < end; i++ {
+			workerIndices = append(workerIndices, s.idx)
 		}
-		workerIndices = append(workerIndices, idx)
+		s.idx = (s.idx + 1) % s.numWorkers
 	}
+
 	return workerIndices, nil
 }
