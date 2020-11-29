@@ -137,6 +137,7 @@ func (e *ShuffleExec) Open(ctx context.Context) error {
 
 // Close implements the Executor Close interface.
 func (e *ShuffleExec) Close() error {
+	var firstErr error
 	if !e.prepared {
 		for _, w := range e.workers {
 			for _, r := range w.receivers {
@@ -153,6 +154,10 @@ func (e *ShuffleExec) Close() error {
 			for range r.inputCh {
 			}
 		}
+		// close child executor of each worker
+		if err := w.childExec.Close(); err != nil && firstErr == nil {
+			firstErr = err
+		}
 	}
 	for range e.outputCh { // workers exit before `e.outputCh` is closed.
 	}
@@ -165,19 +170,16 @@ func (e *ShuffleExec) Close() error {
 	}
 
 	// close dataSources
-	errArr := make([]error, len(e.dataSources))
-	for i, dataSource := range e.dataSources {
-		errArr[i] = dataSource.Close()
-	}
-	// close baseExecutor
-	baseCloseErr := e.baseExecutor.Close()
-	// check close error
-	for _, err := range errArr {
-		if err != nil {
-			return errors.Trace(err)
+	for _, dataSource := range e.dataSources {
+		if err := dataSource.Close(); err != nil && firstErr == nil {
+			firstErr = err
 		}
 	}
-	return errors.Trace(baseCloseErr)
+	// close baseExecutor
+	if err := e.baseExecutor.Close(); err != nil && firstErr == nil {
+		firstErr = err
+	}
+	return errors.Trace(firstErr)
 }
 
 func (e *ShuffleExec) prepare4ParallelExec(ctx context.Context) {
