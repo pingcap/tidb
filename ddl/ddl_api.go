@@ -534,7 +534,7 @@ func processColumnFlags(col *table.Column) {
 	if col.Tp == mysql.TypeBit {
 		// For BIT field, it's charset is binary but does not have binary flag.
 		col.Flag &= ^mysql.BinaryFlag
-		//col.Flag |= mysql.UnsignedFlag
+		col.Flag |= mysql.UnsignedFlag
 	}
 	if col.Tp == mysql.TypeYear {
 		// For Year field, it's charset is binary but does not have binary flag.

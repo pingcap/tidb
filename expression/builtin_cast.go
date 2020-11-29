@@ -485,7 +485,7 @@ func (b *builtinCastIntAsRealSig) evalReal(row chunk.Row) (res float64, isNull b
 	if isNull || err != nil {
 		return res, isNull, err
 	}
-	if unsignedArgs0 := mysql.HasUnsignedFlag(b.args[0].GetType().Flag); !mysql.HasUnsignedFlag(b.tp.Flag) && !unsignedArgs0 {
+	if unsignedArgs0 := mysql.HasUnsignedFlag(b.args[0].GetType().Flag); !mysql.HasUnsignedFlag(b.tp.Flag) && (!unsignedArgs0 || mysql.TypeBit == b.args[0].GetType().Tp) {
 		res = float64(val)
 	} else if b.inUnion && !unsignedArgs0 && val < 0 {
 		// Round up to 0 if the value is negative but the expression eval type is unsigned in `UNION` statement
@@ -1833,7 +1833,7 @@ func WrapWithCastAsReal(ctx sessionctx.Context, expr Expression) Expression {
 	tp := types.NewFieldType(mysql.TypeDouble)
 	tp.Flen, tp.Decimal = mysql.MaxRealWidth, types.UnspecifiedLength
 	types.SetBinChsClnFlag(tp)
-	tp.Flag |= expr.GetType().Flag & mysql.UnsignedFlag
+	//tp.Flag |= expr.GetType().Flag & mysql.UnsignedFlag
 	return BuildCastFunction(ctx, expr, tp)
 }
 
