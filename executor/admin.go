@@ -86,7 +86,9 @@ func (e *CheckIndexRangeExec) Next(ctx context.Context, req *chunk.Chunk) error 
 				}
 			}
 		}
-		req.AppendRows(appendRows)
+		if len(appendRows) > 0 {
+			req.AppendRows(appendRows)
+		}
 		if req.NumRows() > 0 {
 			return nil
 		}
