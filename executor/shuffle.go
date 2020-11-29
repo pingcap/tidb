@@ -439,6 +439,9 @@ func buildPartitionRangeSplitter(ctx sessionctx.Context, concurrency int, byItem
 	}
 }
 
+// This method is supposed to be used for shuffle with sorted `dataSource`
+// the caller of this method should guarantee that `input` is grouped,
+// which means that rows with the same byItems should be continuous, the order does not matter.
 func (s *partitionRangeSplitter) split(ctx sessionctx.Context, input *chunk.Chunk, workerIndices []int) ([]int, error) {
 	_, err := s.groupChecker.splitIntoGroups(input)
 	if err != nil {
@@ -453,5 +456,6 @@ func (s *partitionRangeSplitter) split(ctx sessionctx.Context, input *chunk.Chun
 		}
 		s.idx = (s.idx + 1) % s.numWorkers
 	}
+
 	return workerIndices, nil
 }
