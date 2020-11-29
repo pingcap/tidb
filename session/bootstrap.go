@@ -479,7 +479,7 @@ var (
 		upgradeToVer37,
 		upgradeToVer38,
 		// We will redo upgradeToVer39 in upgradeToVer46,
-		// so upgradeToVer48 and upgradeToVer49 is skipped here.
+		// so upgradeToVer39 is skipped here.
 		upgradeToVer40,
 		upgradeToVer41,
 		upgradeToVer42,
