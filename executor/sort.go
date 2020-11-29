@@ -412,8 +412,7 @@ func (e *TopNExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		numToAppend := mathutil.Min(len(e.rowPtrs)-e.Idx, req.RequiredRows()-req.NumRows())
 		rows := make([]chunk.Row, numToAppend)
 		for index := 0; index < numToAppend; index++ {
-			row := e.rowChunks.GetRow(e.rowPtrs[e.Idx])
-			rows[index] = row
+			rows[index] = e.rowChunks.GetRow(e.rowPtrs[e.Idx])
 			e.Idx++
 		}
 		req.AppendRows(rows)
