@@ -80,14 +80,14 @@ func enforceProperty(p *property.PhysicalProperty, tsk task, ctx sessionctx.Cont
 }
 
 // optimizeByShuffle insert `PhysicalShuffle` to optimize performance by running in a parallel manner.
-func optimizeByShuffle(pp PhysicalPlan, tsk task, ctx sessionctx.Context) task {
+func optimizeByShuffle(tsk task, ctx sessionctx.Context) task {
 	if tsk.plan() == nil {
 		return tsk
 	}
 
 	// Don't use `tsk.plan()` here, which will probably be different from `pp`.
 	// Eg., when `pp` is `NominalSort`, `tsk.plan()` would be its child.
-	switch p := pp.(type) {
+	switch p := tsk.plan().(type) {
 	case *PhysicalWindow:
 		if shuffle := optimizeByShuffle4Window(p, ctx); shuffle != nil {
 			return shuffle.attach2Task(tsk)
@@ -149,20 +149,28 @@ func optimizeByShuffle4StreamAgg(pp *PhysicalStreamAgg, ctx sessionctx.Context) 
 		return nil
 	}
 
-	childExec, ok := pp.Children()[0].(*PhysicalSort)
-	if !ok {
-		// Multi-thread executing on SORTED data source is not effective enough by current implementation.
-		// TODO: Implement a better one.
+	var (
+		splitter         PartitionSplitterType
+		tail, dataSource PhysicalPlan
+	)
+
+	switch childExec := pp.Children()[0].(type) {
+	case *PhysicalSort:
+		splitter = PartitionHashSplitterType
+		tail, dataSource = childExec, childExec.Children()[0]
+	case *PhysicalIndexReader, *PhysicalIndexScan:
+		splitter = PartitionRangeSplitterType
+		tail, dataSource = pp, childExec
+	default:
 		return nil
 	}
 
-	tail, dataSource := childExec, childExec.Children()[0]
 	reqProp := &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64}
 	shuffle := PhysicalShuffle{
 		Concurrency:  concurrency,
 		Tails:        []PhysicalPlan{tail},
 		DataSources:  []PhysicalPlan{dataSource},
-		SplitterType: PartitionHashSplitterType,
+		SplitterType: splitter,
 		ByItemArrays: [][]expression.Expression{cloneExprs(pp.GroupByItems)},
 	}.Init(ctx, pp.statsInfo(), pp.SelectBlockOffset(), reqProp)
 	return shuffle
