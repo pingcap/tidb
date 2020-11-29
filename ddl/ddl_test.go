@@ -262,26 +262,18 @@ func buildRebaseAutoIDJobJob(dbInfo *model.DBInfo, tblInfo *model.TableInfo, new
 	}
 }
 
-func TestGetIntervalFromPolicy(t *testing.T) {
+func (s *testDDLSuite) TestGetIntervalFromPolicy(c *C) {
 	policy := []time.Duration{
 		1 * time.Second,
 		2 * time.Second,
 	}
 	var val time.Duration
 	val = getIntervalFromPolicy(policy, 0)
-	if val != 1*time.Second {
-		t.Errorf("%v != 1 second", val)
-	}
+	c.Assert(val, Equals, 1*time.Second)
 	val = getIntervalFromPolicy(policy, 1)
-	if val != 2*time.Second {
-		t.Errorf("%v != 2 second", val)
-	}
+	c.Assert(val, Equals, 2*time.Second)
 	val = getIntervalFromPolicy(policy, 2)
-	if val != 2*time.Second {
-		t.Errorf("%v != 2 second", val)
-	}
+	c.Assert(val, Equals, 2*time.Second)
 	val = getIntervalFromPolicy(policy, 3)
-	if val != 2*time.Second {
-		t.Errorf("%v != 2 second", val)
-	}
+	c.Assert(val, Equals, 2*time.Second)
 }
