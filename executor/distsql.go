@@ -26,6 +26,7 @@ import (
 	"time"
 	"unsafe"
 
+	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
@@ -51,7 +52,6 @@ import (
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
-	"modernc.org/mathutil"
 )
 
 var (
@@ -119,9 +119,7 @@ func (task *lookupTableTask) buildResultChunk() {
 	}
 	if task.rows[0].Chunk() != nil {
 		task.chk = chunk.Renew(task.rows[0].Chunk(), task.rows[0].Chunk().NumRows())
-		for _, row := range task.rows {
-			task.chk.AppendRow(row)
-		}
+		task.chk.AppendRows(task.rows)
 	}
 	task.rows = nil
 }
