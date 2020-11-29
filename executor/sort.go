@@ -408,7 +408,7 @@ func (e *TopNExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if e.Idx >= len(e.rowPtrs) {
 		return nil
 	}
-	if !req.IsFull() && e.Idx < len(e.rowPtrs) {
+	if !req.IsFull() {
 		numToAppend := mathutil.Min(len(e.rowPtrs)-e.Idx, req.RequiredRows()-req.NumRows())
 		rows := make([]chunk.Row, numToAppend)
 		for index := 0; index < numToAppend; index++ {
