@@ -1611,6 +1611,9 @@ func prepare4ShuffleMergeJoinWithSort(tc *mergeJoinTestCase, innerDS, outerDS *m
 		ByItems:      make([]*util.ByItems, 0, len(tc.outerJoinKeyIdx)),
 		schema:       outerDS.schema,
 	}
+	for _, key := range outerJoinKeys {
+		rightExec.ByItems = append(rightExec.ByItems, &util.ByItems{Expr: key})
+	}
 	// build ShuffleMergeJoinExec
 	shuffle := &ShuffleExec{
 		baseExecutor: newBaseExecutor(tc.ctx, joinSchema, 4),
