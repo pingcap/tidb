@@ -301,6 +301,7 @@ func buildStreamAggExecutor(ctx sessionctx.Context, srcExec Executor, schema *ex
 	sg.Init(ctx, nil, 0)
 
 	var tail core.PhysicalPlan = sg
+	// if data source is not sorted, we have to attach sort, to make the input of stream-agg sorted
 	if !dataSourceSorted {
 		byItems := make([]*util.ByItems, 0, len(sg.GroupByItems))
 		for _, col := range sg.GroupByItems {
@@ -314,13 +315,19 @@ func buildStreamAggExecutor(ctx sessionctx.Context, srcExec Executor, schema *ex
 		sg.SetChildren(src)
 	}
 
-	var plan core.PhysicalPlan
+	var (
+		plan     core.PhysicalPlan
+		splitter core.PartitionSplitterType = core.PartitionHashSplitterType
+	)
 	if concurrency > 1 {
+		if dataSourceSorted {
+			splitter = core.PartitionRangeSplitterType
+		}
 		plan = core.PhysicalShuffle{
 			Concurrency:  concurrency,
 			Tails:        []core.PhysicalPlan{tail},
 			DataSources:  []core.PhysicalPlan{src},
-			SplitterType: core.PartitionHashSplitterType,
+			SplitterType: splitter,
 			ByItemArrays: [][]expression.Expression{sg.GroupByItems},
 		}.Init(ctx, nil, 0)
 		plan.SetChildren(sg)
@@ -412,7 +419,7 @@ func benchmarkAggExecWithCase(b *testing.B, casTest *aggTestCase) {
 
 func BenchmarkShuffleStreamAggRows(b *testing.B) {
 	b.ReportAllocs()
-	sortTypes := []bool{true}
+	sortTypes := []bool{false, true}
 	rows := []int{10000, 100000, 1000000, 10000000}
 	concurrencies := []int{1, 2, 4, 8}
 	for _, row := range rows {
