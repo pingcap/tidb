@@ -85,8 +85,6 @@ func optimizeByShuffle(tsk task, ctx sessionctx.Context) task {
 		return tsk
 	}
 
-	// Don't use `tsk.plan()` here, which will probably be different from `pp`.
-	// Eg., when `pp` is `NominalSort`, `tsk.plan()` would be its child.
 	switch p := tsk.plan().(type) {
 	case *PhysicalWindow:
 		if shuffle := optimizeByShuffle4Window(p, ctx); shuffle != nil {

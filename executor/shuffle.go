@@ -442,14 +442,22 @@ func (s *partitionRangeSplitter) split(ctx sessionctx.Context, input *chunk.Chun
 	if err != nil {
 		return workerIndices, err
 	}
+	defer func() {
+		if r := recover(); r != nil {
+			err := errors.Errorf("%v", r)
+			logutil.BgLogger().Error("shuffle panicked", zap.Error(err), zap.Stack("stack"))
+		}
+	}()
 
 	workerIndices = workerIndices[:0]
+	numRows := input.NumRows()
 	idx := -1
-	for i := 0; i < len(s.groupChecker.sameGroup); i++ {
+	for i := 0; i < numRows; i++ {
 		if !s.groupChecker.sameGroup[i] {
 			idx = (idx + 1) % s.numWorkers
 		}
 		workerIndices = append(workerIndices, idx)
 	}
+
 	return workerIndices, nil
 }
