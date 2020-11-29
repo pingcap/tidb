@@ -427,6 +427,7 @@ type partitionRangeSplitter struct {
 	byItems      []expression.Expression
 	numWorkers   int
 	groupChecker *vecGroupChecker
+	idx          int
 }
 
 func buildPartitionRangeSplitter(ctx sessionctx.Context, concurrency int, byItems []expression.Expression) *partitionRangeSplitter {
@@ -434,6 +435,7 @@ func buildPartitionRangeSplitter(ctx sessionctx.Context, concurrency int, byItem
 		byItems:      byItems,
 		numWorkers:   concurrency,
 		groupChecker: newVecGroupChecker(ctx, byItems),
+		idx:          0,
 	}
 }
 
@@ -442,22 +444,14 @@ func (s *partitionRangeSplitter) split(ctx sessionctx.Context, input *chunk.Chun
 	if err != nil {
 		return workerIndices, err
 	}
-	defer func() {
-		if r := recover(); r != nil {
-			err := errors.Errorf("%v", r)
-			logutil.BgLogger().Error("shuffle panicked", zap.Error(err), zap.Stack("stack"))
-		}
-	}()
 
 	workerIndices = workerIndices[:0]
-	numRows := input.NumRows()
-	idx := -1
-	for i := 0; i < numRows; i++ {
-		if !s.groupChecker.sameGroup[i] {
-			idx = (idx + 1) % s.numWorkers
+	for !s.groupChecker.isExhausted() {
+		begin, end := s.groupChecker.getNextGroup()
+		for i := begin; i < end; i++ {
+			workerIndices = append(workerIndices, s.idx)
 		}
-		workerIndices = append(workerIndices, idx)
+		s.idx = (s.idx + 1) % s.numWorkers
 	}
-
 	return workerIndices, nil
 }
