@@ -1106,7 +1106,6 @@ func (s *testChunkSuite) TestAppendRows(c *check.C) {
 	rows := make([]Row, numRows)
 	for i := 0; i < numRows; i++ {
 		rows[i] = chk.GetRow(i)
-
 	}
 	chk2.AppendRows(rows)
 	for i := 0; i < numRows; i++ {
