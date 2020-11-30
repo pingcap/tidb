@@ -5169,6 +5169,12 @@ func checkColumnsTypeAndValuesMatch(ctx sessionctx.Context, meta *model.TableInf
 	// partition p0 values less than (expr)
 	// check the type of cols[i] and expr is consistent.
 	colNames := meta.Partition.Columns
+	originalValue := ctx.GetSessionVars().StmtCtx.InInsertStmt
+	defer func() {
+		ctx.GetSessionVars().StmtCtx.InInsertStmt = originalValue
+	}()
+	// See ShouldClipToZero function, set InInsertStmt flag to true to detect overflow.
+	ctx.GetSessionVars().StmtCtx.InInsertStmt = true
 	for i, colExpr := range exprs {
 		if _, ok := colExpr.(*ast.MaxValueExpr); ok {
 			continue

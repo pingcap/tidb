@@ -559,6 +559,30 @@ func (s *testIntegrationSuite1) TestCreateTableWithListPartition(c *C) {
 			ddl.ErrNotAllowedTypeInPartition,
 		},
 		{
+			"create table t (id float) partition by list (id) (partition p0 values in (1));",
+			ddl.ErrNotAllowedTypeInPartition,
+		},
+		{
+			"create table t (id double) partition by list (id) (partition p0 values in (1));",
+			ddl.ErrNotAllowedTypeInPartition,
+		},
+		{
+			"create table t (id text) partition by list (id) (partition p0 values in ('abc'));",
+			ddl.ErrNotAllowedTypeInPartition,
+		},
+		{
+			"create table t (id blob) partition by list (id) (partition p0 values in ('abc'));",
+			ddl.ErrNotAllowedTypeInPartition,
+		},
+		{
+			"create table t (id enum('a','b')) partition by list (id) (partition p0 values in ('a'));",
+			ddl.ErrNotAllowedTypeInPartition,
+		},
+		{
+			"create table t (id set('a','b')) partition by list (id) (partition p0 values in ('a'));",
+			ddl.ErrNotAllowedTypeInPartition,
+		},
+		{
 			"create table t (a int) partition by list (a) (partition p0 values in (1), partition p0 values in (2));",
 			ddl.ErrSameNamePartition,
 		},
@@ -606,6 +630,8 @@ func (s *testIntegrationSuite1) TestCreateTableWithListPartition(c *C) {
 
 	validCases := []string{
 		"create table t (a int) partition by list (a) (partition p0 values in (1));",
+		"create table t (a bigint unsigned) partition by list (a) (partition p0 values in (18446744073709551615));",
+		"create table t (a int) partition by list (a) (partition p0 values in (1,null));",
 		"create table t (a int) partition by list (a) (partition p0 values in (1), partition p1 values in (2));",
 		`create table t (id int, name varchar(10), age int) partition by list (id) (
 			partition p0 values in (3,5,6,9,17),
@@ -613,8 +639,12 @@ func (s *testIntegrationSuite1) TestCreateTableWithListPartition(c *C) {
 			partition p2 values in (4,12,13,-14,18),
 			partition p3 values in (7,8,15,+16)
 		);`,
+		"create table t (id year) partition by list (id) (partition p0 values in (2000));",
+		"create table t (a tinyint) partition by list (a) (partition p0 values in (65536));",
+		"create table t (a tinyint) partition by list (a*100) (partition p0 values in (65536));",
 		"create table t (a bigint) partition by list (a) (partition p0 values in (to_seconds('2020-09-28 17:03:38'),to_seconds('2020-09-28 17:03:39')));",
 		"create table t (a datetime) partition by list (to_seconds(a)) (partition p0 values in (to_seconds('2020-09-28 17:03:38'),to_seconds('2020-09-28 17:03:39')));",
+		"create table t (a int, b int generated always as (a+1) virtual) partition by list (b + 1) (partition p0 values in (1));",
 	}
 
 	for _, sql := range validCases {
@@ -688,6 +718,14 @@ func (s *testIntegrationSuite1) TestCreateTableWithListColumnsPartition(c *C) {
 		},
 		{
 			"create table t (a tinyint) partition by list columns (a) (partition p0 values in (65536));",
+			ddl.ErrWrongTypeColumnValue,
+		},
+		{
+			"create table t (a bigint) partition by list columns (a) (partition p0 values in (18446744073709551615));",
+			ddl.ErrWrongTypeColumnValue,
+		},
+		{
+			"create table t (a bigint unsigned) partition by list columns (a) (partition p0 values in (-1));",
 			ddl.ErrWrongTypeColumnValue,
 		},
 		{
@@ -778,6 +816,8 @@ func (s *testIntegrationSuite1) TestCreateTableWithListColumnsPartition(c *C) {
 
 	validCases := []string{
 		"create table t (a int) partition by list columns (a) (partition p0 values in (1));",
+		"create table t (a bigint unsigned) partition by list columns (a) (partition p0 values in (18446744073709551615));",
+		"create table t (a int) partition by list columns (a) (partition p0 values in (1,null));",
 		"create table t (a int) partition by list columns (a) (partition p0 values in (1), partition p1 values in (2));",
 		`create table t (id int, name varchar(10), age int) partition by list columns (id) (
 			partition p0 values in (3,5,6,9,17),
