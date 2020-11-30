@@ -1313,23 +1313,21 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 	}
 	rs, err = s.Exec(ctx)
 	sessVars.TxnCtx.StatementCount++
-	if !s.IsReadOnly(sessVars) {
-		// All the history should be added here.
-		if err == nil && sessVars.TxnCtx.CouldRetry {
+	// Handle the stmt commit/rollback.
+	if se.txn.Valid() {
+		if err == nil && sessVars.TxnCtx.CouldRetry && !s.IsReadOnly(sessVars) {
+			// All the history should be added here.
 			GetHistory(se).Add(s, sessVars.StmtCtx)
 		}
 
-		// Handle the stmt commit/rollback.
-		if se.txn.Valid() {
-			if err != nil {
-				se.StmtRollback()
-			} else {
-				se.StmtCommit()
-			}
+		if err != nil {
+			se.StmtRollback()
+		} else {
+			se.StmtCommit()
 		}
-		err = finishStmt(ctx, se, err, s)
 	}
 	if rs != nil {
+		// It will `finishStmt` in rs.Close().
 		return &execStmtResult{
 			RecordSet: rs,
 			sql:       s,
@@ -1337,6 +1335,7 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 		}, err
 	}
 
+	err = finishStmt(ctx, se, err, s)
 	if se.hasQuerySpecial() {
 		// The special query will be handled later in handleQuerySpecial,
 		// then should call the ExecStmt.FinishExecuteStmt to finish this statement.

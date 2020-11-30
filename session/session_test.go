@@ -755,6 +755,13 @@ func (s *testSessionSuite) TestReadOnlyNotInHistory(c *C) {
 	c.Assert(history.Count(), Equals, 0)
 }
 
+func (s *testSessionSuite) TestInvalidNotInHistory(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("set @@autocommit = 1")
+	history := session.GetHistory(tk.Se)
+	c.Assert(history.Count(), Equals, 0)
+}
+
 func (s *testSessionSuite) TestRetryUnion(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("create table history (a int)")
