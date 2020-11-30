@@ -88,7 +88,26 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 	case tikvrpc.CmdGet:
 		resp.Resp, err = c.usSvr.KvGet(ctx, req.Get())
 	case tikvrpc.CmdScan:
-		resp.Resp, err = c.usSvr.KvScan(ctx, req.Scan())
+		kvScanReq := req.Scan()
+		failpoint.Inject("rpcScanResult", func(val failpoint.Value) {
+			switch val.(string) {
+			case "keyError":
+				failpoint.Return(&tikvrpc.Response{
+					Resp: &kvrpcpb.ScanResponse{Error: &kvrpcpb.KeyError{
+						Locked: &kvrpcpb.LockInfo{
+							PrimaryLock: kvScanReq.StartKey,
+							LockVersion: kvScanReq.Version - 1,
+							Key:         kvScanReq.StartKey,
+							LockTtl:     50,
+							TxnSize:     1,
+							LockType:    kvrpcpb.Op_Put,
+						},
+					}},
+				}, nil)
+			}
+		})
+
+		resp.Resp, err = c.usSvr.KvScan(ctx, kvScanReq)
 	case tikvrpc.CmdPrewrite:
 		failpoint.Inject("rpcPrewriteResult", func(val failpoint.Value) {
 			if val != nil {
@@ -162,7 +181,7 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 							PrimaryLock: batchGetReq.Keys[0],
 							LockVersion: batchGetReq.Version - 1,
 							Key:         batchGetReq.Keys[0],
-							LockTtl:     2000,
+							LockTtl:     50,
 							TxnSize:     1,
 							LockType:    kvrpcpb.Op_Put,
 						},
