@@ -230,7 +230,7 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 		resp.Resp, err = c.handleDebugGetRegionProperties(ctx, req.DebugGetRegionProperties())
 		return resp, err
 	default:
-		err = errors.Errorf("unsupport this request type %v", req.Type)
+		err = errors.Errorf("not support this request type %v", req.Type)
 	}
 	if err != nil {
 		return nil, err
@@ -264,7 +264,6 @@ func (c *RPCClient) handleCopStream(ctx context.Context, req *coprocessor.Reques
 }
 
 func (c *RPCClient) handleEstablishMPPConnection(ctx context.Context, r *mpp.EstablishMPPConnectionRequest, timeout time.Duration) (*tikvrpc.MPPStreamResponse, error) {
-	//c.usSvr.MPPContex = &cophandler.MPPCtx{RpcClient: c, StoreAddr: addr}
 	mockServer := new(mockMPPConnectStreamServer)
 	err := c.usSvr.EstablishMPPConnection(r, mockServer)
 	if err != nil {

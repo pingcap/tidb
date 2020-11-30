@@ -122,7 +122,6 @@ func buildClosureExecutorForTiFlash(dagCtx *dagContext, rootExecutor *tipb.Execu
 }
 
 func buildClosureExecutorFromExecutorList(dagCtx *dagContext, executors []*tipb.Executor, ce *closureExecutor, mppCtx *MPPCtx) error {
-	// todo need more info ???
 	if executors[len(executors)-1].Tp == tipb.ExecType_TypeExchangeSender {
 		ce.exchangeSenderCtx = &exchangeSenderCtx{exchangeSender: executors[len(executors)-1].ExchangeSender}
 		err := ce.exchangeSenderCtx.init(mppCtx)
@@ -638,23 +637,14 @@ type scanCtx struct {
 }
 
 type joinScanCtx struct {
-	count            int
-	limit            int
-	chk              *chunk.Chunk
-	desc             bool
-	decoder          *rowcodec.ChunkDecoder
-	primaryColumnIds []int64
-
-	newCollationRd  *rowcodec.BytesDecoder
-	newCollationIds map[int64]int
-	execDetail      *execDetail
-	buildExec       *closureExecutor
-	probeExec       *closureExecutor
-	buildKey        *expression.Column
-	probeKey        *expression.Column
-	finalSchema     []*types.FieldType
-	innerIndex      int
-	join            *tipb.Join
+	chk         *chunk.Chunk
+	buildExec   *closureExecutor
+	probeExec   *closureExecutor
+	buildKey    *expression.Column
+	probeKey    *expression.Column
+	finalSchema []*types.FieldType
+	innerIndex  int
+	join        *tipb.Join
 }
 
 func (joinCtx *joinScanCtx) doJoin() error {
@@ -742,7 +732,6 @@ func (e *exchangeSenderCtx) init(mppCtx *MPPCtx) error {
 }
 
 type exchangeScanCtx struct {
-	execDetail       *execDetail
 	exchangeReceiver *tipb.ExchangeReceiver
 	fieldTypes       []*types.FieldType
 	chk              *chunk.Chunk
@@ -875,10 +864,10 @@ func (e *closureExecutor) scanFromMockReader(startKey, endKey []byte, limit int,
 }
 
 func (e *closureExecutor) execute() ([]tipb.Chunk, error) {
-	if e.exchangeScanCtx != nil || e.joinScanCtx != nil {
+	if e.scanType == ExchangeScan || e.scanType == JoinScan {
 		// read from exchange client
 		e.mockReader = &mockReader{chk: nil, currentIndex: 0}
-		if e.exchangeScanCtx != nil {
+		if e.scanType == ExchangeScan {
 			serverMetas := make([]*mpp.TaskMeta, 0, len(e.exchangeScanCtx.exchangeReceiver.EncodedTaskMeta))
 			for _, encodedMeta := range e.exchangeScanCtx.exchangeReceiver.EncodedTaskMeta {
 				meta := new(mpp.TaskMeta)
@@ -894,7 +883,7 @@ func (e *closureExecutor) execute() ([]tipb.Chunk, error) {
 			}
 			e.exchangeScanCtx.wg.Wait()
 			e.mockReader.chk = e.exchangeScanCtx.chk
-		} else if e.joinScanCtx != nil {
+		} else {
 			err := e.joinScanCtx.doJoin()
 			if err != nil {
 				return nil, err
