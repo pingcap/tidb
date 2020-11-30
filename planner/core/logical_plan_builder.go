@@ -183,6 +183,7 @@ func (b *PlanBuilder) buildAggregation(ctx context.Context, p LogicalPlan, aggFu
 	// aggIdxMap maps the old index to new index after applying common aggregation functions elimination.
 	aggIndexMap := make(map[int]int)
 
+	allAggsFirstRow := true
 	for i, aggFunc := range aggFuncList {
 		newArgList := make([]expression.Expression, 0, len(aggFunc.Args))
 		for _, arg := range aggFunc.Args {
@@ -196,6 +197,9 @@ func (b *PlanBuilder) buildAggregation(ctx context.Context, p LogicalPlan, aggFu
 		newFunc, err := aggregation.NewAggFuncDesc(b.ctx, aggFunc.F, newArgList, aggFunc.Distinct)
 		if err != nil {
 			return nil, nil, err
+		}
+		if newFunc.Name != ast.AggFuncFirstRow {
+			allAggsFirstRow = false
 		}
 		if aggFunc.Order != nil {
 			trueArgs := aggFunc.Args[:len(aggFunc.Args)-1] // the last argument is SEPARATOR, remote it.
@@ -247,6 +251,14 @@ func (b *PlanBuilder) buildAggregation(ctx context.Context, p LogicalPlan, aggFu
 		newCol.RetType = newFunc.RetTp
 		schema4Agg.Append(newCol)
 		names = append(names, p.OutputNames()[i])
+	}
+	hasGroupBy := len(gbyItems) > 0
+	for i, aggFunc := range plan4Agg.AggFuncs {
+		err := aggFunc.UpdateNotNullFlag4RetType(hasGroupBy, allAggsFirstRow)
+		if err != nil {
+			return nil, nil, err
+		}
+		schema4Agg.Columns[i].RetType = aggFunc.RetTp
 	}
 	plan4Agg.names = names
 	plan4Agg.SetChildren(p)
@@ -359,6 +371,15 @@ func (p *LogicalJoin) ExtractOnCondition(
 	deriveRight bool) (eqCond []*expression.ScalarFunction, leftCond []expression.Expression,
 	rightCond []expression.Expression, otherCond []expression.Expression) {
 	for _, expr := range conditions {
+		// For queries like `select a in (select a from s where s.b = t.b) from t`,
+		// if subquery is empty caused by `s.b = t.b`, the result should always be
+		// false even if t.a is null or s.a is null. To make this join "empty aware",
+		// we should differentiate `t.a = s.a` from other column equal conditions, so
+		// we put it into OtherConditions instead of EqualConditions of join.
+		if expression.IsEQCondFromIn(expr) {
+			otherCond = append(otherCond, expr)
+			continue
+		}
 		binop, ok := expr.(*expression.ScalarFunction)
 		if ok && len(binop.GetArgs()) == 2 {
 			ctx := binop.GetCtx()
@@ -385,12 +406,7 @@ func (p *LogicalJoin) ExtractOnCondition(
 							rightCond = append(rightCond, notNullExpr)
 						}
 					}
-					// For queries like `select a in (select a from s where s.b = t.b) from t`,
-					// if subquery is empty caused by `s.b = t.b`, the result should always be
-					// false even if t.a is null or s.a is null. To make this join "empty aware",
-					// we should differentiate `t.a = s.a` from other column equal conditions, so
-					// we put it into OtherConditions instead of EqualConditions of join.
-					if binop.FuncName.L == ast.EQ && !arg0.InOperand && !arg1.InOperand {
+					if binop.FuncName.L == ast.EQ {
 						cond := expression.NewFunctionInternal(ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), arg0, arg1)
 						eqCond = append(eqCond, cond.(*expression.ScalarFunction))
 						continue
@@ -457,7 +473,11 @@ func extractTableAlias(p Plan, parentOffset int) *hintTableInfo {
 		if blockOffset != parentOffset && blockAsNames != nil && blockAsNames[blockOffset].TableName.L != "" {
 			blockOffset = parentOffset
 		}
-		return &hintTableInfo{dbName: firstName.DBName, tblName: firstName.TblName, selectOffset: blockOffset}
+		dbName := firstName.DBName
+		if dbName.L == "" {
+			dbName = model.NewCIStr(p.SCtx().GetSessionVars().CurrentDB)
+		}
+		return &hintTableInfo{dbName: dbName, tblName: firstName.TblName, selectOffset: blockOffset}
 	}
 	return nil
 }
@@ -708,7 +728,16 @@ func (b *PlanBuilder) buildUsingClause(p *LogicalJoin, leftPlan, rightPlan Logic
 	for _, col := range join.Using {
 		filter[col.Name.L] = true
 	}
-	return b.coalesceCommonColumns(p, leftPlan, rightPlan, join.Tp, filter)
+	err := b.coalesceCommonColumns(p, leftPlan, rightPlan, join.Tp, filter)
+	if err != nil {
+		return err
+	}
+	// We do not need to coalesce columns for update and delete.
+	if b.inUpdateStmt || b.inDeleteStmt {
+		p.setSchemaAndNames(expression.MergeSchema(p.Children()[0].Schema(), p.Children()[1].Schema()),
+			append(p.Children()[0].OutputNames(), p.Children()[1].OutputNames()...))
+	}
+	return nil
 }
 
 // buildNaturalJoin builds natural join output schema. It finds out all the common columns
@@ -718,7 +747,16 @@ func (b *PlanBuilder) buildUsingClause(p *LogicalJoin, leftPlan, rightPlan Logic
 // 	Every column in the first (left) table that is not a common column
 // 	Every column in the second (right) table that is not a common column
 func (b *PlanBuilder) buildNaturalJoin(p *LogicalJoin, leftPlan, rightPlan LogicalPlan, join *ast.Join) error {
-	return b.coalesceCommonColumns(p, leftPlan, rightPlan, join.Tp, nil)
+	err := b.coalesceCommonColumns(p, leftPlan, rightPlan, join.Tp, nil)
+	if err != nil {
+		return err
+	}
+	// We do not need to coalesce columns for update and delete.
+	if b.inUpdateStmt || b.inDeleteStmt {
+		p.setSchemaAndNames(expression.MergeSchema(p.Children()[0].Schema(), p.Children()[1].Schema()),
+			append(p.Children()[0].OutputNames(), p.Children()[1].OutputNames()...))
+	}
+	return nil
 }
 
 // coalesceCommonColumns is used by buildUsingClause and buildNaturalJoin. The filter is used by buildUsingClause.
@@ -801,8 +839,19 @@ func (b *PlanBuilder) coalesceCommonColumns(p *LogicalJoin, leftPlan, rightPlan 
 
 	p.SetSchema(expression.NewSchema(schemaCols...))
 	p.names = names
-	p.redundantSchema = expression.MergeSchema(p.redundantSchema, expression.NewSchema(rColumns[:commonLen]...))
-	p.redundantNames = append(p.redundantNames.Shallow(), rNames[:commonLen]...)
+	if joinTp == ast.RightJoin {
+		leftPlan, rightPlan = rightPlan, leftPlan
+	}
+	// We record the full `rightPlan.Schema` as `redundantSchema` in order to
+	// record the redundant column in `rightPlan` and the output columns order
+	// of the `rightPlan`.
+	// For SQL like `select t1.*, t2.* from t1 left join t2 using(a)`, we can
+	// retrieve the column order of `t2.*` from the `redundantSchema`.
+	p.redundantSchema = expression.MergeSchema(p.redundantSchema, expression.NewSchema(rightPlan.Schema().Clone().Columns...))
+	p.redundantNames = append(p.redundantNames.Shallow(), rightPlan.OutputNames().Shallow()...)
+	if joinTp == ast.RightJoin || joinTp == ast.LeftJoin {
+		resetNotNullFlag(p.redundantSchema, 0, p.redundantSchema.Len())
+	}
 	p.OtherConditions = append(conds, p.OtherConditions...)
 
 	return nil
@@ -943,12 +992,8 @@ func (b *PlanBuilder) buildProjectionField(ctx context.Context, p LogicalPlan, f
 		idx := p.Schema().ColumnIndex(col)
 		var name *types.FieldName
 		// The column maybe the one from join's redundant part.
-		// TODO: Fully support USING/NATURAL JOIN, refactor here.
 		if idx == -1 {
-			if join, ok := p.(*LogicalJoin); ok {
-				idx = join.redundantSchema.ColumnIndex(col)
-				name = join.redundantNames[idx]
-			}
+			name = findColFromNaturalUsingJoin(p, col)
 		} else {
 			name = p.OutputNames()[idx]
 		}
@@ -980,8 +1025,75 @@ func (b *PlanBuilder) buildProjectionField(ctx context.Context, p LogicalPlan, f
 	return newCol, name, nil
 }
 
+type userVarTypeProcessor struct {
+	ctx     context.Context
+	plan    LogicalPlan
+	builder *PlanBuilder
+	mapper  map[*ast.AggregateFuncExpr]int
+	err     error
+}
+
+func (p *userVarTypeProcessor) Enter(in ast.Node) (ast.Node, bool) {
+	v, ok := in.(*ast.VariableExpr)
+	if !ok {
+		return in, false
+	}
+	if v.IsSystem || v.Value == nil {
+		return in, true
+	}
+	_, p.plan, p.err = p.builder.rewrite(p.ctx, v, p.plan, p.mapper, true)
+	return in, true
+}
+
+func (p *userVarTypeProcessor) Leave(in ast.Node) (ast.Node, bool) {
+	return in, p.err == nil
+}
+
+func (b *PlanBuilder) preprocessUserVarTypes(ctx context.Context, p LogicalPlan, fields []*ast.SelectField, mapper map[*ast.AggregateFuncExpr]int) error {
+	aggMapper := make(map[*ast.AggregateFuncExpr]int)
+	for agg, i := range mapper {
+		aggMapper[agg] = i
+	}
+	processor := userVarTypeProcessor{
+		ctx:     ctx,
+		plan:    p,
+		builder: b,
+		mapper:  aggMapper,
+	}
+	for _, field := range fields {
+		field.Expr.Accept(&processor)
+		if processor.err != nil {
+			return processor.err
+		}
+	}
+	return nil
+}
+
+// findColFromNaturalUsingJoin is used to recursively find the column from the
+// underlying natural-using-join.
+// e.g. For SQL like `select t2.a from t1 join t2 using(a) where t2.a > 0`, the
+// plan will be `join->selection->projection`. The schema of the `selection`
+// will be `[t1.a]`, thus we need to recursively retrieve the `t2.a` from the
+// underlying join.
+func findColFromNaturalUsingJoin(p LogicalPlan, col *expression.Column) (name *types.FieldName) {
+	switch x := p.(type) {
+	case *LogicalLimit, *LogicalSelection, *LogicalTopN, *LogicalSort, *LogicalMaxOneRow:
+		return findColFromNaturalUsingJoin(p.Children()[0], col)
+	case *LogicalJoin:
+		if x.redundantSchema != nil {
+			idx := x.redundantSchema.ColumnIndex(col)
+			return x.redundantNames[idx]
+		}
+	}
+	return nil
+}
+
 // buildProjection returns a Projection plan and non-aux columns length.
 func (b *PlanBuilder) buildProjection(ctx context.Context, p LogicalPlan, fields []*ast.SelectField, mapper map[*ast.AggregateFuncExpr]int, windowMapper map[*ast.WindowFuncExpr]int, considerWindow bool, expandGenerateColumn bool) (LogicalPlan, int, error) {
+	err := b.preprocessUserVarTypes(ctx, p, fields, mapper)
+	if err != nil {
+		return nil, 0, err
+	}
 	b.optFlag |= flagEliminateProjection
 	b.curClause = fieldList
 	proj := LogicalProjection{Exprs: make([]expression.Expression, 0, len(fields))}.Init(b.ctx, b.getSelectOffset())
@@ -1636,14 +1748,30 @@ func (a *havingWindowAndOrderbyExprResolver) resolveFromPlan(v *ast.ColumnNameEx
 	if err != nil {
 		return -1, err
 	}
+	schemaCols, outputNames := p.Schema().Columns, p.OutputNames()
 	if idx < 0 {
-		return -1, nil
+		// For SQL like `select t2.a from t1 join t2 using(a) where t2.a > 0
+		// order by t2.a`, the query plan will be `join->selection->sort`. The
+		// schema of selection will be `[t1.a]`, thus we need to recursively
+		// retrieve the `t2.a` from the underlying join.
+		switch x := p.(type) {
+		case *LogicalLimit, *LogicalSelection, *LogicalTopN, *LogicalSort, *LogicalMaxOneRow:
+			return a.resolveFromPlan(v, p.Children()[0])
+		case *LogicalJoin:
+			if len(x.redundantNames) != 0 {
+				idx, err = expression.FindFieldName(x.redundantNames, v.Name)
+				schemaCols, outputNames = x.redundantSchema.Columns, x.redundantNames
+			}
+		}
+		if err != nil || idx < 0 {
+			return -1, err
+		}
 	}
-	col := p.Schema().Columns[idx]
+	col := schemaCols[idx]
 	if col.IsHidden {
 		return -1, ErrUnknownColumn.GenWithStackByArgs(v.Name, clauseMsg[a.curClause])
 	}
-	name := p.OutputNames()[idx]
+	name := outputNames[idx]
 	newColName := &ast.ColumnName{
 		Schema: name.DBName,
 		Table:  name.TblName,
@@ -2391,6 +2519,7 @@ func (b *PlanBuilder) resolveGbyExprs(ctx context.Context, p LogicalPlan, gby *a
 }
 
 func (b *PlanBuilder) unfoldWildStar(p LogicalPlan, selectFields []*ast.SelectField) (resultList []*ast.SelectField, err error) {
+	join, isJoin := p.(*LogicalJoin)
 	for i, field := range selectFields {
 		if field.WildCard == nil {
 			resultList = append(resultList, field)
@@ -2399,35 +2528,48 @@ func (b *PlanBuilder) unfoldWildStar(p LogicalPlan, selectFields []*ast.SelectFi
 		if field.WildCard.Table.L == "" && i > 0 {
 			return nil, ErrInvalidWildCard
 		}
-		dbName := field.WildCard.Schema
-		tblName := field.WildCard.Table
-		findTblNameInSchema := false
-		for i, name := range p.OutputNames() {
-			col := p.Schema().Columns[i]
-			if col.IsHidden {
-				continue
-			}
-			if (dbName.L == "" || dbName.L == name.DBName.L) &&
-				(tblName.L == "" || tblName.L == name.TblName.L) &&
-				col.ID != model.ExtraHandleID {
-				findTblNameInSchema = true
-				colName := &ast.ColumnNameExpr{
-					Name: &ast.ColumnName{
-						Schema: name.DBName,
-						Table:  name.TblName,
-						Name:   name.ColName,
-					}}
-				colName.SetType(col.GetType())
-				field := &ast.SelectField{Expr: colName}
-				field.SetText(name.ColName.O)
-				resultList = append(resultList, field)
+		list := unfoldWildStar(field, p.OutputNames(), p.Schema().Columns)
+		// For sql like `select t1.*, t2.* from t1 join t2 using(a)`, we should
+		// not coalesce the `t2.a` in the output result. Thus we need to unfold
+		// the wildstar from the underlying join.redundantSchema.
+		if isJoin && join.redundantSchema != nil && field.WildCard.Table.L != "" {
+			redundantList := unfoldWildStar(field, join.redundantNames, join.redundantSchema.Columns)
+			if len(redundantList) > len(list) {
+				list = redundantList
 			}
 		}
-		if !findTblNameInSchema {
-			return nil, ErrBadTable.GenWithStackByArgs(tblName)
+		if len(list) == 0 {
+			return nil, ErrBadTable.GenWithStackByArgs(field.WildCard.Table)
 		}
+		resultList = append(resultList, list...)
 	}
 	return resultList, nil
+}
+
+func unfoldWildStar(field *ast.SelectField, outputName types.NameSlice, column []*expression.Column) (resultList []*ast.SelectField) {
+	dbName := field.WildCard.Schema
+	tblName := field.WildCard.Table
+	for i, name := range outputName {
+		col := column[i]
+		if col.IsHidden {
+			continue
+		}
+		if (dbName.L == "" || dbName.L == name.DBName.L) &&
+			(tblName.L == "" || tblName.L == name.TblName.L) &&
+			col.ID != model.ExtraHandleID {
+			colName := &ast.ColumnNameExpr{
+				Name: &ast.ColumnName{
+					Schema: name.DBName,
+					Table:  name.TblName,
+					Name:   name.ColName,
+				}}
+			colName.SetType(col.GetType())
+			field := &ast.SelectField{Expr: colName}
+			field.SetText(name.ColName.O)
+			resultList = append(resultList, field)
+		}
+	}
+	return resultList
 }
 
 func (b *PlanBuilder) pushHintWithoutTableWarning(hint *ast.TableOptimizerHint) {
@@ -3037,7 +3179,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		newCol := &expression.Column{
 			UniqueID: sessionVars.AllocPlanColumnID(),
 			ID:       col.ID,
-			RetType:  &col.FieldType,
+			RetType:  col.FieldType.Clone(),
 			OrigName: names[i].String(),
 			IsHidden: col.Hidden,
 		}
@@ -3251,7 +3393,7 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName model.
 
 	charset, collation := b.ctx.GetSessionVars().GetCharsetInfo()
 	viewParser := parser.New()
-	viewParser.EnableWindowFunc(b.ctx.GetSessionVars().EnableWindowFunction)
+	viewParser.SetParserConfig(b.ctx.GetSessionVars().BuildParserConfig())
 	selectNode, err := viewParser.ParseOneStmt(tableInfo.View.SelectStmt, charset, collation)
 	if err != nil {
 		return nil, err
@@ -3662,13 +3804,29 @@ func checkUpdateList(ctx sessionctx.Context, tblID2table map[int64]table.Table, 
 	if err != nil {
 		return err
 	}
+	isPKUpdated := make(map[int64]model.CIStr)
 	for _, content := range updt.TblColPosInfos {
 		tbl := tblID2table[content.TblID]
 		flags := assignFlags[content.Start:content.End]
+		var updatePK bool
 		for i, col := range tbl.WritableCols() {
 			if flags[i] && col.State != model.StatePublic {
 				return ErrUnknownColumn.GenWithStackByArgs(col.Name, clauseMsg[fieldList])
 			}
+			// Check for multi-updates on primary key,
+			// see https://dev.mysql.com/doc/mysql-errors/5.7/en/server-error-reference.html#error_er_multi_update_key_conflict
+			if !flags[i] {
+				continue
+			}
+			if col.IsPKHandleColumn(tbl.Meta()) || col.IsCommonHandleColumn(tbl.Meta()) {
+				updatePK = true
+			}
+		}
+		if updatePK {
+			if otherTblName, ok := isPKUpdated[tbl.Meta().ID]; ok {
+				return ErrMultiUpdateKeyConflict.GenWithStackByArgs(otherTblName.O, updt.names[content.Start].TblName.O)
+			}
+			isPKUpdated[tbl.Meta().ID] = updt.names[content.Start].TblName
 		}
 	}
 	return nil
@@ -3918,12 +4076,12 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, delete *ast.DeleteStmt) (
 		for _, tn := range delete.Tables.Tables {
 			foundMatch := false
 			for _, v := range tableList {
-				dbName := v.Schema.L
-				if dbName == "" {
-					dbName = b.ctx.GetSessionVars().CurrentDB
+				dbName := v.Schema
+				if dbName.L == "" {
+					dbName = model.NewCIStr(b.ctx.GetSessionVars().CurrentDB)
 				}
-				if (tn.Schema.L == "" || tn.Schema.L == dbName) && tn.Name.L == v.Name.L {
-					tn.Schema.L = dbName
+				if (tn.Schema.L == "" || tn.Schema.L == dbName.L) && tn.Name.L == v.Name.L {
+					tn.Schema = dbName
 					tn.DBInfo = v.DBInfo
 					tn.TableInfo = v.TableInfo
 					foundMatch = true
