@@ -1272,18 +1272,18 @@ func (s *testCommitterSuite) TestAsyncCommitCheck(c *C) {
 
 	committer, err := newTwoPhaseCommitterWithInit(txn, 1)
 	c.Assert(err, IsNil)
-	c.Assert(committer.checkAsyncCommit(), IsTrue)
+	c.Assert(committer.checkAsyncCommit(variable.GetSysVar("tidb_enable_async_commit").Value == "ON"), IsTrue)
 
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.TiKVClient.AsyncCommit.KeysLimit = 15
 	})
-	c.Assert(committer.checkAsyncCommit(), IsFalse)
+	c.Assert(committer.checkAsyncCommit(variable.GetSysVar("tidb_enable_async_commit").Value == "ON"), IsFalse)
 
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.TiKVClient.AsyncCommit.KeysLimit = 20
 		conf.TiKVClient.AsyncCommit.TotalKeySizeLimit = 63
 	})
-	c.Assert(committer.checkAsyncCommit(), IsFalse)
+	c.Assert(committer.checkAsyncCommit(variable.GetSysVar("tidb_enable_async_commit").Value == "ON"), IsFalse)
 }
 
 type mockClient struct {
