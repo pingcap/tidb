@@ -366,6 +366,9 @@ const (
 
 func appendFormatFloat(in []byte, fVal float64, prec, bitSize int) []byte {
 	absVal := math.Abs(fVal)
+	if absVal > math.MaxFloat64 || math.IsNaN(absVal) {
+		return []byte{'0'}
+	}
 	isEFormat := false
 	if bitSize == 32 {
 		isEFormat = (prec == types.UnspecifiedLength && (float32(absVal) >= expFormatBig || (float32(absVal) != 0 && float32(absVal) < expFormatSmall)))
