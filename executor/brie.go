@@ -28,7 +28,7 @@ import (
 
 	"github.com/pingcap/br/pkg/glue"
 	"github.com/pingcap/br/pkg/storage"
-	"github.com/pingcap/br/pkg/task"
+	brtask "github.com/pingcap/br/pkg/task"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
@@ -105,13 +105,15 @@ type brieTaskInfo struct {
 	storage   string
 	connID    uint64
 	originSQL string
-	lock      sync.RWMutex
-	// below member should be protected by lock to access because of periodically flush
-	execTime    types.Time
-	finishTime  types.Time
-	backupTS    uint64
-	archiveSize uint64
-	message     string
+
+	protected struct {
+		sync.RWMutex
+		execTime    types.Time
+		finishTime  types.Time
+		backupTS    uint64
+		archiveSize uint64
+		message     string
+	}
 }
 
 type brieQueueItem struct {
@@ -136,7 +138,7 @@ var globalBRIEQueue = &brieQueue{
 func (bq *brieQueue) registerTask(
 	ctx context.Context,
 	info *brieTaskInfo,
-	s *sessionWithLock,
+	s sqlexec.RestrictedSQLExecutor,
 ) (context.Context, uint64, *brieQueueItem, error) {
 	taskCtx, taskCancel := context.WithCancel(ctx)
 	item := &brieQueueItem{
@@ -161,30 +163,26 @@ func (bq *brieQueue) registerTask(
 		item.progress.GetFraction(),
 		0,
 	)
-	s.Lock()
-	defer s.Unlock()
-	_, err := s.Execute(ctx, sql)
+	_, _, err := s.ExecRestrictedSQLWithContext(ctx, sql)
 	if err != nil {
 		return nil, 0, item, err
 	}
-	rs, err := s.Execute(ctx, "SELECT LAST_INSERT_ID();")
+	sql = fmt.Sprintf("SELECT MAX(id) FROM mysql.brie_tasks WHERE conn_id = %d;", info.connID)
+	rows, _, err := s.ExecRestrictedSQLWithContext(ctx, sql)
 	if err != nil {
 		return nil, 0, item, err
 	}
-	r := rs[0]
-	defer terror.Call(r.Close)
-	req := r.NewChunk()
-	err = r.Next(ctx, req)
-	if err != nil || req.NumRows() != 1 {
-		return nil, 0, item, fmt.Errorf("SELECT LAST_INSERT_ID() didn't return one row, err: %v", err)
+	if len(rows) != 1 {
+		return nil, 0, item, fmt.Errorf("%s didn't return one row, err: %v", sql, err)
 	}
-	taskID := req.GetRow(0).GetUint64(0)
+	r := rows[0]
+	taskID := r.GetUint64(0)
 	return taskCtx, taskID, item, nil
 }
 
 // acquireTask prepares to execute a BRIE task. Only one BRIE task can be
 // executed at a time, and this function blocks until the task is ready.
-func (bq *brieQueue) acquireTask(taskCtx context.Context, taskID uint64, se *sessionWithLock) (err error) {
+func (bq *brieQueue) acquireTask(taskCtx context.Context, taskID uint64, se sqlexec.RestrictedSQLExecutor) (err error) {
 	// wait until we are at the front of the queue.
 	select {
 	case bq.workerCh <- struct{}{}:
@@ -194,25 +192,15 @@ func (bq *brieQueue) acquireTask(taskCtx context.Context, taskID uint64, se *ses
 			}
 		}()
 		sql := fmt.Sprintf("SELECT cancel FROM mysql.brie_tasks WHERE id = %d;", taskID)
-		var rs []sqlexec.RecordSet
-
-		se.Lock()
-		defer se.Unlock()
-		rs, err = se.Execute(taskCtx, sql)
+		rows, _, err := se.ExecRestrictedSQLWithContext(taskCtx, sql)
 		if err != nil {
 			return err
 		}
-		r := rs[0]
-		defer terror.Call(r.Close)
-		req := r.NewChunk()
-		err = r.Next(taskCtx, req)
-		if err != nil {
-			return err
-		}
-		if req.NumRows() == 0 {
+		if len(rows) == 0 {
 			return errors.Errorf("task with ID %d not found", taskID)
 		}
-		if req.GetRow(0).GetUint64(0) == 1 {
+		r := rows[0]
+		if r.GetUint64(0) == 1 {
 			return errors.Errorf("task with ID %d has been canceled", taskID)
 		}
 		return nil
@@ -225,7 +213,7 @@ func (bq *brieQueue) releaseTask() {
 	<-bq.workerCh
 }
 
-func (bq *brieQueue) cancelTask(ctx context.Context, taskID uint64, se *sessionWithLock, delete bool) {
+func (bq *brieQueue) cancelTask(ctx context.Context, taskID uint64, se sqlexec.RestrictedSQLExecutor, delete bool) {
 	var sql string
 	if delete {
 		sql = fmt.Sprintf("DELETE FROM mysql.brie_tasks WHERE id = %d;", taskID)
@@ -233,9 +221,7 @@ func (bq *brieQueue) cancelTask(ctx context.Context, taskID uint64, se *sessionW
 		sql = fmt.Sprintf("UPDATE mysql.brie_tasks SET cancel = 1 WHERE id = %d;", taskID)
 	}
 
-	se.Lock()
-	defer se.Unlock()
-	_, err := se.Execute(ctx, sql)
+	_, _, err := se.ExecRestrictedSQLWithContext(ctx, sql)
 	if err != nil {
 		logutil.Logger(ctx).Error("failed to update BRIE task table to cancel",
 			zap.Uint64("taskID", taskID),
@@ -256,7 +242,7 @@ func (b *executorBuilder) parseTSString(ts string) (uint64, error) {
 	return variable.GoTimeToTS(t1), nil
 }
 
-func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) Executor {
+func (b *executorBuilder) buildBackupRestore(s *ast.BRIEStmt, schema *expression.Schema) Executor {
 	e := &BRIEExec{
 		baseExecutor: newBaseExecutor(b.ctx, schema, 0),
 		info: &brieTaskInfo{
@@ -264,139 +250,77 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 			originSQL: s.SecureText(),
 		},
 	}
-
 	tidbCfg := config.GetGlobalConfig()
-	if tidbCfg.Store != "tikv" {
-		b.err = errors.Errorf("%s requires tikv store, not %s", s.Kind, tidbCfg.Store)
-		return nil
+
+	// BACKUP and RESTORE shares same config
+	var brCfg = brtask.Config{
+		TLS: brtask.TLSConfig{
+			CA:   tidbCfg.Security.ClusterSSLCA,
+			Cert: tidbCfg.Security.ClusterSSLCert,
+			Key:  tidbCfg.Security.ClusterSSLKey,
+		},
+		PD:          strings.Split(tidbCfg.Path, ","),
+		Concurrency: 4,
+		Checksum:    true,
+		SendCreds:   true,
+		LogProgress: true,
 	}
 
-	var (
-		brCfg           task.Config
-		importGlobalCfg *importcfg.GlobalConfig
-		importCfg       *importcfg.Config
-	)
-	switch s.Kind {
-	case ast.BRIEKindBackup, ast.BRIEKindRestore:
-		brCfg = task.Config{
-			TLS: task.TLSConfig{
-				CA:   tidbCfg.Security.ClusterSSLCA,
-				Cert: tidbCfg.Security.ClusterSSLCert,
-				Key:  tidbCfg.Security.ClusterSSLKey,
-			},
-			PD:          strings.Split(tidbCfg.Path, ","),
-			Concurrency: 4,
-			Checksum:    true,
-			SendCreds:   true,
-			LogProgress: true,
-		}
-	case ast.BRIEKindImport:
-		importGlobalCfg = importcfg.NewGlobalConfig()
-		importCfg = importcfg.NewConfig()
-
-		importGlobalCfg.App.StatusAddr = ":8289"
-		importGlobalCfg.App.Level = tidbCfg.Log.Level
-		importGlobalCfg.Security.CAPath = tidbCfg.Security.ClusterSSLCA
-		importGlobalCfg.Security.CertPath = tidbCfg.Security.ClusterSSLCert
-		importGlobalCfg.Security.KeyPath = tidbCfg.Security.ClusterSSLKey
-		// set Port and PdAddr to avoid lightning query TiDB HTTP API
-		importGlobalCfg.TiDB.Port = int(tidbCfg.Port)
-		importGlobalCfg.TiDB.PdAddr = strings.Split(tidbCfg.Path, ",")[0]
-
-		// StatusPort is not used, but maybe we could pass it to improve robust?
-		//importCfg.TiDB.StatusPort = int(tidbCfg.Status.StatusPort)
-		importCfg.TikvImporter.Backend = importcfg.BackendLocal
-		importCfg.TikvImporter.SortedKVDir = filepath.Join(tidbCfg.TempStoragePath, defaultImportID)
-		importCfg.Checkpoint.Schema = defaultImportID
-		importCfg.Checkpoint.Driver = importcfg.CheckpointDriverMySQL
-		importCfg.Mydumper.CSV.Header = false // TODO(lance6716): address this behaviour to user
-		importCfg.PostRestore.Analyze = importcfg.OpLevelRequired
-	default:
-		b.err = errors.Errorf("unsupported BRIE statement kind: %s", s.Kind)
-		return nil
-	}
-
+	// handle s.Storage:
+	// BACKUP ... TO **s.Storage**
+	// RESTORE ... FROM **s.Storage**
 	storageURL, err := url.Parse(s.Storage)
 	if err != nil {
 		b.err = errors.Annotate(err, "invalid destination URL")
 		return nil
 	}
-
-	switch s.Kind {
-	case ast.BRIEKindBackup, ast.BRIEKindRestore:
-		switch storageURL.Scheme {
-		case "s3":
-			storage.ExtractQueryParameters(storageURL, &brCfg.S3)
-		case "gs", "gcs":
-			storage.ExtractQueryParameters(storageURL, &brCfg.GCS)
-		default:
-			break
-		}
-		brCfg.Storage = storageURL.String()
-	case ast.BRIEKindImport:
-		importCfg.Mydumper.SourceDir = storageURL.String()
+	switch storageURL.Scheme {
+	case "s3":
+		storage.ExtractQueryParameters(storageURL, &brCfg.S3)
+	case "gs", "gcs":
+		storage.ExtractQueryParameters(storageURL, &brCfg.GCS)
+	default:
+		break
 	}
-
+	brCfg.Storage = storageURL.String()
 	e.info.storage = storageURL.String()
-
-	if s.Kind == ast.BRIEKindBackup || s.Kind == ast.BRIEKindRestore {
-		for _, opt := range s.Options {
-			switch opt.Tp {
-			case ast.BRIEOptionRateLimit:
-				brCfg.RateLimit = opt.UintValue
-			case ast.BRIEOptionConcurrency:
-				brCfg.Concurrency = uint32(opt.UintValue)
-			case ast.BRIEOptionChecksum:
-				brCfg.Checksum = opt.UintValue != 0
-			case ast.BRIEOptionSendCreds:
-				brCfg.SendCreds = opt.UintValue != 0
-			}
+	for _, opt := range s.Options {
+		switch opt.Tp {
+		case ast.BRIEOptionRateLimit:
+			brCfg.RateLimit = opt.UintValue
+		case ast.BRIEOptionConcurrency:
+			brCfg.Concurrency = uint32(opt.UintValue)
+		case ast.BRIEOptionChecksum:
+			brCfg.Checksum = opt.UintValue != 0
+		case ast.BRIEOptionSendCreds:
+			brCfg.SendCreds = opt.UintValue != 0
 		}
 	}
 
-	switch s.Kind {
-	case ast.BRIEKindBackup, ast.BRIEKindRestore:
-		switch {
-		case len(s.Tables) != 0:
-			tables := make([]filter.Table, 0, len(s.Tables))
-			for _, tbl := range s.Tables {
-				tables = append(tables, filter.Table{Name: tbl.Name.O, Schema: tbl.Schema.O})
-			}
-			brCfg.TableFilter = filter.NewTablesFilter(tables...)
-		case len(s.Schemas) != 0:
-			brCfg.TableFilter = filter.NewSchemasFilter(s.Schemas...)
-		default:
-			brCfg.TableFilter = filter.All()
+	// handle s.Tables:
+	// BACKUP **s.Tables** TO ...
+	// RESTORE **s.Tables** FROM ...
+	switch {
+	case len(s.Tables) != 0:
+		tables := make([]filter.Table, 0, len(s.Tables))
+		for _, tbl := range s.Tables {
+			tables = append(tables, filter.Table{Name: tbl.Name.O, Schema: tbl.Schema.O})
 		}
-
-		if tidbCfg.LowerCaseTableNames != 0 {
-			brCfg.TableFilter = filter.CaseInsensitive(brCfg.TableFilter)
-		}
-	case ast.BRIEKindImport:
-		switch {
-		case len(s.Tables) != 0:
-			tbls := make([]string, 0, len(s.Tables))
-			for _, tbl := range s.Tables {
-				if tbl.Schema.L == "" {
-					b.err = errors.Errorf("please specify schema for %s in IMPORT", tbl.Name.O)
-					return nil
-				}
-				tbls = append(tbls, fmt.Sprintf("%s.%s", tbl.Schema, tbl.Name))
-			}
-			importCfg.Mydumper.Filter = tbls
-		case len(s.Schemas) != 0:
-			dbs := make([]string, 0, len(s.Schemas))
-			for _, db := range s.Schemas {
-				dbs = append(dbs, fmt.Sprintf("%s.*", db))
-			}
-			importCfg.Mydumper.Filter = dbs
-		}
+		brCfg.TableFilter = filter.NewTablesFilter(tables...)
+	case len(s.Schemas) != 0:
+		brCfg.TableFilter = filter.NewSchemasFilter(s.Schemas...)
+	default:
+		brCfg.TableFilter = filter.All()
 	}
 
+	if tidbCfg.LowerCaseTableNames != 0 {
+		brCfg.TableFilter = filter.CaseInsensitive(brCfg.TableFilter)
+	}
+
+	// handle other options
 	switch s.Kind {
 	case ast.BRIEKindBackup:
-		e.backupCfg = &task.BackupConfig{Config: brCfg}
-
+		e.backupCfg = &brtask.BackupConfig{Config: brCfg}
 		for _, opt := range s.Options {
 			switch opt.Tp {
 			case ast.BRIEOptionLastBackupTS:
@@ -423,74 +347,158 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 		}
 
 	case ast.BRIEKindRestore:
-		e.restoreCfg = &task.RestoreConfig{Config: brCfg}
+		e.restoreCfg = &brtask.RestoreConfig{Config: brCfg}
 		for _, opt := range s.Options {
 			switch opt.Tp {
 			case ast.BRIEOptionOnline:
 				e.restoreCfg.Online = opt.UintValue != 0
 			}
 		}
-
-	case ast.BRIEKindImport:
-		for _, opt := range s.Options {
-			switch opt.Tp {
-			case ast.BRIEOptionSkipSchemaFiles:
-				importCfg.Mydumper.NoSchema = opt.UintValue != 0
-			case ast.BRIEOptionStrictFormat:
-				importCfg.Mydumper.StrictFormat = opt.UintValue != 0
-			case ast.BRIEOptionCSVSeparator:
-				importCfg.Mydumper.CSV.Separator = opt.StrValue
-			case ast.BRIEOptionCSVDelimiter:
-				importCfg.Mydumper.CSV.Delimiter = opt.StrValue
-			case ast.BRIEOptionCSVHeader:
-				if opt.UintValue == ast.BRIECSVHeaderIsColumns {
-					importCfg.Mydumper.CSV.Header = true
-				} else {
-					b.err = errors.Errorf("CSV_HEADER only support FIELDS or COLUMNS to indicate it has header")
-					return nil
-				}
-			case ast.BRIEOptionCSVNotNull:
-				importCfg.Mydumper.CSV.NotNull = opt.UintValue != 0
-			case ast.BRIEOptionCSVNull:
-				importCfg.Mydumper.CSV.Null = opt.StrValue
-			case ast.BRIEOptionCSVBackslashEscape:
-				importCfg.Mydumper.CSV.BackslashEscape = opt.UintValue != 0
-			case ast.BRIEOptionCSVTrimLastSeparators:
-				importCfg.Mydumper.CSV.TrimLastSep = opt.UintValue != 0
-			case ast.BRIEOptionChecksum:
-				// TODO(lance6717): support OpLevelOptional later
-				if opt.UintValue == 0 {
-					importGlobalCfg.PostRestore.Checksum = importcfg.OpLevelOff
-				}
-			case ast.BRIEOptionAnalyze:
-				if opt.UintValue == 0 {
-					importGlobalCfg.PostRestore.Analyze = importcfg.OpLevelOff
-				}
-			}
-		}
-
-		e.importTaskCfg = importCfg
-		e.importGlobalCfg = importGlobalCfg
 	}
 
 	return e
+}
+
+func (b *executorBuilder) buildImport(s *ast.BRIEStmt, schema *expression.Schema) Executor {
+	e := &BRIEExec{
+		baseExecutor: newBaseExecutor(b.ctx, schema, 0),
+		info: &brieTaskInfo{
+			kind:      s.Kind,
+			originSQL: s.SecureText(),
+		},
+	}
+	tidbCfg := config.GetGlobalConfig()
+
+	var (
+		// IMPORT has two types of config, task config for each import task
+		// global config for lightning as a long-term running server that serve many tasks
+		importGlobalCfg = importcfg.NewGlobalConfig()
+		importTaskCfg   = importcfg.NewConfig()
+	)
+	// set proper values to embedded lightning
+	importGlobalCfg.App.StatusAddr = ":8289"
+	importGlobalCfg.App.Level = tidbCfg.Log.Level
+	importGlobalCfg.Security.CAPath = tidbCfg.Security.ClusterSSLCA
+	importGlobalCfg.Security.CertPath = tidbCfg.Security.ClusterSSLCert
+	importGlobalCfg.Security.KeyPath = tidbCfg.Security.ClusterSSLKey
+	importGlobalCfg.TiDB.Port = int(tidbCfg.Port)
+	importGlobalCfg.TiDB.PdAddr = strings.Split(tidbCfg.Path, ",")[0]
+
+	// set Port and PdAddr to avoid lightning query TiDB HTTP API
+	importTaskCfg.TiDB.Port = int(tidbCfg.Port)
+	importTaskCfg.TiDB.PdAddr = strings.Split(tidbCfg.Path, ",")[0]
+	// StatusPort is not used, but we could pass it to improve robust
+	importTaskCfg.TiDB.StatusPort = int(tidbCfg.Status.StatusPort)
+	importTaskCfg.TikvImporter.Backend = importcfg.BackendLocal
+	importTaskCfg.TikvImporter.SortedKVDir = filepath.Join(tidbCfg.TempStoragePath, defaultImportID)
+	importTaskCfg.Checkpoint.Schema = defaultImportID
+	importTaskCfg.Checkpoint.Driver = importcfg.CheckpointDriverMySQL
+	importTaskCfg.Mydumper.CSV.Header = false // TODO(lance6716): address this behaviour to user
+
+	// handle s.Storage:
+	// IMPORT ... FROM **s.Storage**
+	storageURL, err := url.Parse(s.Storage)
+	if err != nil {
+		b.err = errors.Annotate(err, "invalid destination URL")
+		return nil
+	}
+	importTaskCfg.Mydumper.SourceDir = storageURL.String()
+	e.info.storage = storageURL.String()
+
+	// handle s.Tables:
+	// IMPORT **s.Tables** FROM ...
+	switch {
+	case len(s.Tables) != 0:
+		tbls := make([]string, 0, len(s.Tables))
+		for _, tbl := range s.Tables {
+			if tbl.Schema.L == "" {
+				b.err = errors.Errorf("please specify schema for %s in IMPORT", tbl.Name.O)
+				return nil
+			}
+			tbls = append(tbls, fmt.Sprintf("%s.%s", tbl.Schema, tbl.Name))
+		}
+		importTaskCfg.Mydumper.Filter = tbls
+	case len(s.Schemas) != 0:
+		dbs := make([]string, 0, len(s.Schemas))
+		for _, db := range s.Schemas {
+			dbs = append(dbs, fmt.Sprintf("%s.*", db))
+		}
+		importTaskCfg.Mydumper.Filter = dbs
+	default:
+		// no filter means pass all
+	}
+
+	// handle options
+	for _, opt := range s.Options {
+		switch opt.Tp {
+		case ast.BRIEOptionSkipSchemaFiles:
+			importTaskCfg.Mydumper.NoSchema = opt.UintValue != 0
+		case ast.BRIEOptionStrictFormat:
+			importTaskCfg.Mydumper.StrictFormat = opt.UintValue != 0
+		case ast.BRIEOptionCSVSeparator:
+			importTaskCfg.Mydumper.CSV.Separator = opt.StrValue
+		case ast.BRIEOptionCSVDelimiter:
+			importTaskCfg.Mydumper.CSV.Delimiter = opt.StrValue
+		case ast.BRIEOptionCSVHeader:
+			if opt.UintValue == ast.BRIECSVHeaderIsColumns {
+				importTaskCfg.Mydumper.CSV.Header = true
+			} else {
+				b.err = errors.Errorf("CSV_HEADER only support FIELDS or COLUMNS to indicate it has header")
+				return nil
+			}
+		case ast.BRIEOptionCSVNotNull:
+			importTaskCfg.Mydumper.CSV.NotNull = opt.UintValue != 0
+		case ast.BRIEOptionCSVNull:
+			importTaskCfg.Mydumper.CSV.Null = opt.StrValue
+		case ast.BRIEOptionCSVBackslashEscape:
+			importTaskCfg.Mydumper.CSV.BackslashEscape = opt.UintValue != 0
+		case ast.BRIEOptionCSVTrimLastSeparators:
+			importTaskCfg.Mydumper.CSV.TrimLastSep = opt.UintValue != 0
+		case ast.BRIEOptionChecksum:
+			// TODO(lance6717): support OpLevelOptional later
+			if opt.UintValue == 0 {
+				importGlobalCfg.PostRestore.Checksum = importcfg.OpLevelOff
+			}
+		case ast.BRIEOptionAnalyze:
+			if opt.UintValue == 0 {
+				importGlobalCfg.PostRestore.Analyze = importcfg.OpLevelOff
+			}
+		}
+	}
+
+	e.importTaskCfg = importTaskCfg
+	e.importGlobalCfg = importGlobalCfg
+
+	return e
+}
+
+func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) Executor {
+	tidbCfg := config.GetGlobalConfig()
+	if tidbCfg.Store != "tikv" {
+		b.err = errors.Errorf("%s requires tikv store, not %s", s.Kind, tidbCfg.Store)
+		return nil
+	}
+
+	switch s.Kind {
+	case ast.BRIEKindBackup, ast.BRIEKindRestore:
+		return b.buildBackupRestore(s, schema)
+	case ast.BRIEKindImport:
+		return b.buildImport(s, schema)
+	default:
+		b.err = errors.Errorf("unsupported BRIE statement kind: %s", s.Kind)
+		return nil
+	}
 }
 
 // BRIEExec represents an executor for BRIE statements (BACKUP, RESTORE, etc)
 type BRIEExec struct {
 	baseExecutor
 
-	backupCfg       *task.BackupConfig
-	restoreCfg      *task.RestoreConfig
+	backupCfg       *brtask.BackupConfig
+	restoreCfg      *brtask.RestoreConfig
 	importGlobalCfg *importcfg.GlobalConfig
 	importTaskCfg   *importcfg.Config
 	info            *brieTaskInfo
-}
-
-// sessionWithLock protects task session that may be concurrently used to change brie_tasks table
-type sessionWithLock struct {
-	sync.Mutex
-	checkpoints.Session
 }
 
 // Next implements the Executor Next interface.
@@ -507,30 +515,23 @@ func (e *BRIEExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	e.info.connID = e.ctx.GetSessionVars().ConnectionID
 	e.info.queueTime = types.CurrentTime(mysql.TypeDatetime)
 
-	// create new session so processInfo will not be overwritten
-	s, err := CreateSessionForBRIEFunc(e.ctx)
-	if err != nil {
-		return errors.Annotate(err, "create new session in BRIEExec")
-	}
-	defer s.Close()
-	taskSession := &sessionWithLock{Session: s}
+	sqlExecutor := e.ctx.(sqlexec.RestrictedSQLExecutor)
 
-	taskCtx, taskID, item, err := bq.registerTask(ctx, e.info, taskSession)
+	taskCtx, taskID, item, err := bq.registerTask(ctx, e.info, sqlExecutor)
 	if err != nil {
 		return err
 	}
 	defer func() {
 		if !taskExecuted {
-			bq.cancelTask(ctx, taskID, taskSession, e.info.kind != ast.BRIEKindImport)
+			bq.cancelTask(ctx, taskID, sqlExecutor, e.info.kind != ast.BRIEKindImport)
 		}
 		item.cancel()
 	}()
 
 	glue := &tidbGlueSession{
-		se:                e.ctx,
-		progress:          item.progress,
-		info:              e.info,
-		importTaskSession: taskSession,
+		se:       e.ctx,
+		progress: item.progress,
+		info:     e.info,
 	}
 
 	// manually monitor the Killed status...
@@ -541,7 +542,7 @@ func (e *BRIEExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			select {
 			case <-ticker.C:
 				if atomic.LoadUint32(&e.ctx.GetSessionVars().Killed) == 1 {
-					bq.cancelTask(ctx, taskID, taskSession, e.info.kind != ast.BRIEKindImport)
+					bq.cancelTask(ctx, taskID, sqlExecutor, e.info.kind != ast.BRIEKindImport)
 					item.cancel()
 					return
 				}
@@ -552,30 +553,30 @@ func (e *BRIEExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		}
 	}()
 
-	err = bq.acquireTask(taskCtx, taskID, taskSession)
+	err = bq.acquireTask(taskCtx, taskID, sqlExecutor)
 	if err != nil {
 		return err
 	}
 	defer bq.releaseTask()
 
-	e.info.lock.Lock()
-	e.info.execTime = types.CurrentTime(mysql.TypeDatetime)
-	e.info.lock.Unlock()
+	e.info.protected.Lock()
+	e.info.protected.execTime = types.CurrentTime(mysql.TypeDatetime)
+	e.info.protected.Unlock()
 
 	switch e.info.kind {
 	case ast.BRIEKindBackup:
-		err = handleBRIEError(task.RunBackup(taskCtx, glue, "Backup", e.backupCfg), ErrBRIEBackupFailed)
+		err = handleBRIEError(brtask.RunBackup(taskCtx, glue, "Backup", e.backupCfg), ErrBRIEBackupFailed)
 	case ast.BRIEKindRestore:
-		err = handleBRIEError(task.RunRestore(taskCtx, glue, "Restore", e.restoreCfg), ErrBRIERestoreFailed)
+		err = handleBRIEError(brtask.RunRestore(taskCtx, glue, "Restore", e.restoreCfg), ErrBRIERestoreFailed)
 	case ast.BRIEKindImport:
 		l := lightning.New(e.importGlobalCfg)
 		e.importTaskCfg.Checkpoint.Schema += strconv.FormatUint(taskID, 10)
 		e.importTaskCfg.TikvImporter.SortedKVDir += strconv.FormatUint(taskID, 10)
 		err2 := handleBRIEError(l.RunOnce(taskCtx, e.importTaskCfg, glue, logutil.Logger(ctx)), ErrBRIEImportFailed)
 		if err2 != nil {
-			e.info.lock.Lock()
-			e.info.message = err2.Error()
-			e.info.lock.Unlock()
+			e.info.protected.Lock()
+			e.info.protected.message = err2.Error()
+			e.info.protected.Unlock()
 			item.progress.lock.Lock()
 			item.progress.cmd = "Stop"
 			item.progress.lock.Unlock()
@@ -588,9 +589,9 @@ func (e *BRIEExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	default:
 		return errors.Errorf("unsupported BRIE statement kind: %s", e.info.kind)
 	}
-	e.info.lock.Lock()
-	e.info.finishTime = types.CurrentTime(mysql.TypeDatetime)
-	e.info.lock.Unlock()
+	e.info.protected.Lock()
+	e.info.protected.finishTime = types.CurrentTime(mysql.TypeDatetime)
+	e.info.protected.Unlock()
 	glue.Flush(ctx, taskID)
 	taskExecuted = true
 	if err != nil {
@@ -600,19 +601,19 @@ func (e *BRIEExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	switch e.info.kind {
 	case ast.BRIEKindBackup, ast.BRIEKindRestore:
 		req.AppendString(0, e.info.storage)
-		req.AppendUint64(1, e.info.archiveSize)
-		req.AppendUint64(2, e.info.backupTS)
+		req.AppendUint64(1, e.info.protected.archiveSize)
+		req.AppendUint64(2, e.info.protected.backupTS)
 		req.AppendTime(3, e.info.queueTime)
-		req.AppendTime(4, e.info.execTime)
+		req.AppendTime(4, e.info.protected.execTime)
 	case ast.BRIEKindImport:
 		req.AppendUint64(0, taskID)
 		req.AppendString(1, item.progress.cmd)
 		req.AppendString(2, e.info.storage)
-		req.AppendUint64(3, e.info.archiveSize)
+		req.AppendUint64(3, e.info.protected.archiveSize)
 		req.AppendTime(4, e.info.queueTime)
-		req.AppendTime(5, e.info.execTime)
-		req.AppendTime(6, e.info.finishTime)
-		req.AppendString(7, e.info.message)
+		req.AppendTime(5, e.info.protected.execTime)
+		req.AppendTime(6, e.info.protected.finishTime)
+		req.AppendString(7, e.info.protected.message)
 	}
 
 	e.info = nil
@@ -672,10 +673,9 @@ func (e *ShowExec) fetchShowBRIE(ctx context.Context, kind ast.BRIEKind) error {
 }
 
 type tidbGlueSession struct {
-	se                sessionctx.Context
-	progress          *brieTaskProgress
-	info              *brieTaskInfo
-	importTaskSession *sessionWithLock
+	se       sessionctx.Context
+	progress *brieTaskProgress
+	info     *brieTaskInfo
 }
 
 // GetDomain implements glue.Glue
@@ -786,13 +786,13 @@ func (gs *tidbGlueSession) StartProgress(ctx context.Context, cmdName string, to
 
 // Record implements glue.Glue
 func (gs *tidbGlueSession) Record(name string, value uint64) {
-	gs.info.lock.Lock()
-	defer gs.info.lock.Unlock()
+	gs.info.protected.Lock()
+	defer gs.info.protected.Unlock()
 	switch name {
 	case "BackupTS":
-		gs.info.backupTS = value
+		gs.info.protected.backupTS = value
 	case "Size":
-		gs.info.archiveSize = value
+		gs.info.protected.archiveSize = value
 	case importglue.RecordEstimatedChunk:
 		gs.progress.lock.Lock()
 		gs.progress.total = int64(value)
@@ -813,7 +813,7 @@ func (gs *tidbGlueSession) Record(name string, value uint64) {
 }
 
 func (gs *tidbGlueSession) Flush(ctx context.Context, taskID uint64) {
-	gs.info.lock.RLock()
+	gs.info.protected.RLock()
 	gs.progress.lock.Lock()
 	sql := fmt.Sprintf(`UPDATE mysql.brie_tasks SET
 					exec_time = '%s',
@@ -824,20 +824,19 @@ func (gs *tidbGlueSession) Flush(ctx context.Context, taskID uint64) {
 					progress = %f,
 					message = '%s'
 				WHERE id = %d`,
-		gs.info.execTime.String(),
-		gs.info.finishTime.String(),
-		gs.info.backupTS,
-		gs.info.archiveSize,
+		gs.info.protected.execTime.String(),
+		gs.info.protected.finishTime.String(),
+		gs.info.protected.backupTS,
+		gs.info.protected.archiveSize,
 		gs.progress.cmd,
 		gs.progress.GetFraction(),
-		base64.StdEncoding.EncodeToString([]byte(gs.info.message)),
+		base64.StdEncoding.EncodeToString([]byte(gs.info.protected.message)),
 		taskID)
 	gs.progress.lock.Unlock()
-	gs.info.lock.RUnlock()
+	gs.info.protected.RUnlock()
 
-	gs.importTaskSession.Lock()
-	defer gs.importTaskSession.Unlock()
-	_, err := gs.importTaskSession.Execute(ctx, sql)
+	sqlExecutor := gs.se.(sqlexec.RestrictedSQLExecutor)
+	_, _, err := sqlExecutor.ExecRestrictedSQLWithContext(ctx, sql)
 	if err != nil {
 		logutil.Logger(ctx).Error("failed to update BRIE task table",
 			zap.Uint64("taskID", taskID),
