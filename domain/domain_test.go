@@ -89,7 +89,7 @@ func unixSocketAvailable() bool {
 }
 
 func TestInfo(t *testing.T) {
-	err := failpoint.Enable("github.com/pingcap/tidb/domain/FailPlacement", `return(true)`)
+	err := failpoint.Enable("github.com/pingcap/tidb/domain/infosync/FailPlacement", `return(true)`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -230,7 +230,7 @@ func TestInfo(t *testing.T) {
 		t.Fatalf("dom.refreshServerIDTTL err %v", err)
 	}
 
-	err = failpoint.Disable("github.com/pingcap/tidb/domain/FailPlacement")
+	err = failpoint.Disable("github.com/pingcap/tidb/domain/infosync/FailPlacement")
 	if err != nil {
 		t.Fatal(err)
 	}

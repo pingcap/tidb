@@ -1250,8 +1250,7 @@ type PhysicalShuffle struct {
 	DataSources []PhysicalPlan
 
 	SplitterType PartitionSplitterType
-	// each DataSource has an array of HashByItems
-	HashByItemArrays [][]expression.Expression
+	ByItemArrays [][]expression.Expression
 }
 
 // PartitionSplitterType is the type of `Shuffle` executor splitter, which splits data source into partitions.
@@ -1260,6 +1259,8 @@ type PartitionSplitterType int
 const (
 	// PartitionHashSplitterType is the splitter splits by hash.
 	PartitionHashSplitterType = iota
+	// PartitionRangeSplitterType is the splitter that split sorted data into the same range
+	PartitionRangeSplitterType
 )
 
 // PhysicalShuffleReceiverStub represents a receiver stub of `PhysicalShuffle`,
