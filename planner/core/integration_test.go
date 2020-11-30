@@ -1907,7 +1907,7 @@ func (s *testIntegrationSuite) TestUpdateMultiUpdatePK(c *C) {
 	tk.MustQuery("SELECT * FROM t").Check(testkit.Rows("2 12"))
 }
 
-func (s *testIntegrationSuite) TestPreferRangeScan(c *C) {
+func (s *testIntegrationSerialSuite) TestPreferRangeScan(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists test;")
