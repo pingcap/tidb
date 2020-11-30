@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/mpp"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/store/mockstore/mocktikv"
+	"github.com/pingcap/tidb/store/mockstore/unistore/client"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/uber-go/atomic"
@@ -49,7 +49,7 @@ type MPPTaskHandler struct {
 	TunnelSet map[int64]*ExchangerTunnel
 
 	Meta      *mpp.TaskMeta
-	RPCClient mocktikv.Client
+	RPCClient client.Client
 
 	Status atomic.Int32
 	Err    error
