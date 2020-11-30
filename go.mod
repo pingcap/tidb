@@ -34,18 +34,10 @@ require (
 	github.com/pingcap/goleveldb v0.0.0-20191226122134-f82aafb29989
 	github.com/pingcap/kvproto v0.0.0-20200907074027-32a3a0accf7d
 	github.com/pingcap/log v0.0.0-20201112100606-8f1e84a3abc8
-<<<<<<< HEAD
 	github.com/pingcap/parser v0.0.0-20201123083041-dfb0acc7c2fa
 	github.com/pingcap/sysutil v0.0.0-20200715082929-4c47bcac246a
-	github.com/pingcap/tidb-tools v4.0.6-0.20200828085514-03575b185007+incompatible
-	github.com/pingcap/tipb v0.0.0-20200618092958-4fad48b4c8c3
-=======
-	github.com/pingcap/parser v0.0.0-20201123080035-8f4c6ab94e11
-	github.com/pingcap/sysutil v0.0.0-20201021075216-f93ced2829e2
-	github.com/pingcap/tidb-lightning v4.0.9-0.20201106041742-a1ac97827a27+incompatible
 	github.com/pingcap/tidb-tools v4.0.9-0.20201127090955-2707c97b3853+incompatible
-	github.com/pingcap/tipb v0.0.0-20201026044621-45e60c77588f
->>>>>>> 76427cbd0... *: update the tools dependence (#21370)
+	github.com/pingcap/tipb v0.0.0-20200618092958-4fad48b4c8c3
 	github.com/prometheus/client_golang v1.5.1
 	github.com/prometheus/client_model v0.2.0
 	github.com/prometheus/common v0.9.1
