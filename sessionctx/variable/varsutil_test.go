@@ -74,12 +74,14 @@ func (s *testVarsutilSuite) TestNewSessionVars(c *C) {
 	c.Assert(vars.hashAggPartialConcurrency, Equals, ConcurrencyUnset)
 	c.Assert(vars.hashAggFinalConcurrency, Equals, ConcurrencyUnset)
 	c.Assert(vars.windowConcurrency, Equals, ConcurrencyUnset)
+	c.Assert(vars.mergeJoinConcurrency, Equals, DefTiDBMergeJoinConcurrency)
 	c.Assert(vars.streamAggConcurrency, Equals, DefTiDBStreamAggConcurrency)
 	c.Assert(vars.distSQLScanConcurrency, Equals, DefDistSQLScanConcurrency)
 	c.Assert(vars.ProjectionConcurrency(), Equals, DefExecutorConcurrency)
 	c.Assert(vars.HashAggPartialConcurrency(), Equals, DefExecutorConcurrency)
 	c.Assert(vars.HashAggFinalConcurrency(), Equals, DefExecutorConcurrency)
 	c.Assert(vars.WindowConcurrency(), Equals, DefExecutorConcurrency)
+	c.Assert(vars.MergeJoinConcurrency(), Equals, DefTiDBMergeJoinConcurrency)
 	c.Assert(vars.StreamAggConcurrency(), Equals, DefTiDBStreamAggConcurrency)
 	c.Assert(vars.DistSQLScanConcurrency(), Equals, DefDistSQLScanConcurrency)
 	c.Assert(vars.ExecutorConcurrency, Equals, DefExecutorConcurrency)
@@ -667,6 +669,14 @@ func (s *testVarsutilSuite) TestConcurrencyVariables(c *C) {
 	c.Assert(vars.windowConcurrency, Equals, wdConcurrency)
 	c.Assert(vars.WindowConcurrency(), Equals, wdConcurrency)
 
+	mjConcurrency := 2
+	c.Assert(vars.mergeJoinConcurrency, Equals, DefTiDBMergeJoinConcurrency)
+	c.Assert(vars.MergeJoinConcurrency(), Equals, DefTiDBMergeJoinConcurrency)
+	err = SetSessionSystemVar(vars, TiDBMergeJoinConcurrency, types.NewIntDatum(int64(mjConcurrency)))
+	c.Assert(err, IsNil)
+	c.Assert(vars.mergeJoinConcurrency, Equals, mjConcurrency)
+	c.Assert(vars.MergeJoinConcurrency(), Equals, mjConcurrency)
+
 	saConcurrency := 2
 	c.Assert(vars.streamAggConcurrency, Equals, DefTiDBStreamAggConcurrency)
 	c.Assert(vars.StreamAggConcurrency(), Equals, DefTiDBStreamAggConcurrency)
@@ -683,6 +693,7 @@ func (s *testVarsutilSuite) TestConcurrencyVariables(c *C) {
 	c.Assert(vars.indexLookupConcurrency, Equals, ConcurrencyUnset)
 	c.Assert(vars.IndexLookupConcurrency(), Equals, exeConcurrency)
 	c.Assert(vars.WindowConcurrency(), Equals, wdConcurrency)
+	c.Assert(vars.MergeJoinConcurrency(), Equals, mjConcurrency)
 	c.Assert(vars.StreamAggConcurrency(), Equals, saConcurrency)
 
 }
