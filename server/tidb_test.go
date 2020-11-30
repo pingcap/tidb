@@ -146,6 +146,10 @@ func (ts *tidbTestSerialSuite) TestLoadData(c *C) {
 	ts.runTestLoadDataForSlowLog(c, ts.server)
 }
 
+func (ts *tidbTestSerialSuite) TestExplainFor(c *C) {
+	ts.runTestExplainForConn(c)
+}
+
 func (ts *tidbTestSerialSuite) TestStmtCount(c *C) {
 	ts.runTestStmtCount(c)
 }
