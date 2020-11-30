@@ -36,8 +36,8 @@ func (s *testkSuite) TestErrorRedact(c *C) {
 	defer func() { errors.RedactLogEnabled.Store(original) }()
 
 	class := ErrClass{}
-	err := class.NewStd(errno.ErrDupEntry).GenWithStackByArgs("sensitive", "data")
+	err := class.NewStd(errno.ErrDupEntry).GenWithStackByArgs("sensitive_data", "no_sensitive")
 	c.Assert(strings.Contains(err.Error(), "?"), IsTrue)
-	c.Assert(strings.Contains(err.Error(), "sensitive"), IsFalse)
-	c.Assert(strings.Contains(err.Error(), "data"), IsFalse)
+	c.Assert(strings.Contains(err.Error(), "no_sensitive"), IsTrue)
+	c.Assert(strings.Contains(err.Error(), "sensitive_data"), IsFalse)
 }
