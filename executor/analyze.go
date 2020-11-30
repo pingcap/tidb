@@ -29,6 +29,7 @@ import (
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/log"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -552,6 +553,10 @@ func (e *AnalyzeColumnsExec) buildStats(ranges []*ranger.Range, needExtStats boo
 			return nil, nil, nil, nil, err
 		}
 		topNs = append(topNs, collectors[i].TopN)
+		log.Warn("column analyze",
+			zap.Int("topn size", len(collectors[i].TopN.TopN)),
+			zap.String("anzlyze opt", fmt.Sprintf("%v", e.opts)),
+		)
 		for j, s := range collectors[i].Samples {
 			collectors[i].Samples[j].Ordinal = j
 			collectors[i].Samples[j].Value, err = tablecodec.DecodeColumnValue(s.Value.GetBytes(), &col.FieldType, timeZone)
