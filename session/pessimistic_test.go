@@ -1209,6 +1209,36 @@ func (s *testPessimisticSuite) TestRCSubQuery(c *C) {
 	tk.MustExec("rollback")
 }
 
+func (s *testPessimisticSuite) TestRCIndexMerge(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists t")
+	tk.MustExec(`create table t (id int primary key, v int, a int not null, b int not null,
+		index ia (a), index ib (b))`)
+	tk.MustExec("insert into t values (1, 10, 1, 1)")
+
+	tk.MustExec("set transaction isolation level read committed")
+	tk.MustExec("begin pessimistic")
+	tk.MustQuery("select /*+ USE_INDEX_MERGE(t, ia, ib) */ * from t where a > 0 or b > 0").Check(
+		testkit.Rows("1 10 1 1"),
+	)
+	tk.MustQuery("select /*+ NO_INDEX_MERGE() */ * from t where a > 0 or b > 0").Check(
+		testkit.Rows("1 10 1 1"),
+	)
+
+	tk2 := testkit.NewTestKitWithInit(c, s.store)
+	tk2.MustExec("update t set v = 11 where id = 1")
+
+	// Make sure index merge plan is used.
+	plan := tk.MustQuery("explain select /*+ USE_INDEX_MERGE(t, ia, ib) */ * from t where a > 0 or b > 0").Rows()[0][0].(string)
+	c.Assert(strings.Contains(plan, "IndexMerge_"), IsTrue)
+	tk.MustQuery("select /*+ USE_INDEX_MERGE(t, ia, ib) */ * from t where a > 0 or b > 0").Check(
+		testkit.Rows("1 11 1 1"),
+	)
+	tk.MustQuery("select /*+ NO_INDEX_MERGE() */ * from t where a > 0 or b > 0").Check(
+		testkit.Rows("1 11 1 1"),
+	)
+}
+
 func (s *testPessimisticSuite) TestGenerateColPointGet(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	defer func() {
@@ -1762,4 +1792,43 @@ func (s *testPessimisticSuite) TestAmendForUniqueIndex(c *C) {
 	tk.MustExec("insert into t1 values(5, 5, 5)")
 	tk.MustExec("commit")
 	tk2.MustExec("admin check table t1")
+
+	// Update the old value with same unique key value, should abort.
+	tk2.MustExec("drop table if exists t;")
+	tk2.MustExec("create table t (id int auto_increment primary key, c int);")
+	tk2.MustExec("insert into t (id, c) values (1, 2), (3, 4);")
+	tk.MustExec("begin pessimistic")
+	tk2.MustExec("alter table t add unique index uk(c);")
+	tk.MustExec("update t set c = 2 where id = 3;")
+	err = tk.ExecToErr("commit")
+	c.Assert(err, NotNil)
+	tk2.MustExec("admin check table t")
+
+	// Update the old value with same unique key, but the row key has changed.
+	tk2.MustExec("drop table if exists t;")
+	tk2.MustExec("create table t (id int auto_increment primary key, c int);")
+	tk2.MustExec("insert into t (id, c) values (1, 2), (3, 4);")
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("insert into t values (3, 2) on duplicate key update id = values(id) and c = values(c)")
+	finishCh := make(chan error)
+	go func() {
+		err := tk2.ExecToErr("alter table t add unique index uk(c);")
+		finishCh <- err
+	}()
+	time.Sleep(100 * time.Millisecond)
+	tk.MustExec("commit")
+	err = <-finishCh
+	c.Assert(err, IsNil)
+	tk2.MustExec("admin check table t")
+
+	// Update the old value with same unique key, but the row key has changed.
+	tk2.MustExec("drop table if exists t;")
+	tk2.MustExec("create table t (id int auto_increment primary key, c int);")
+	tk2.MustExec("insert into t (id, c) values (1, 2), (3, 4);")
+	tk.MustExec("begin pessimistic")
+	err = tk2.ExecToErr("alter table t add unique index uk(c);")
+	c.Assert(err, IsNil)
+	tk.MustExec("insert into t values (3, 2) on duplicate key update id = values(id) and c = values(c)")
+	tk.MustExec("commit")
+	tk2.MustExec("admin check table t")
 }

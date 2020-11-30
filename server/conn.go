@@ -64,6 +64,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/plugin"
+	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/arena"
@@ -129,6 +130,9 @@ var (
 	queryDurationHistogramExecute  = metrics.QueryDurationHistogram.WithLabelValues("Execute")
 	queryDurationHistogramSet      = metrics.QueryDurationHistogram.WithLabelValues("Set")
 	queryDurationHistogramGeneral  = metrics.QueryDurationHistogram.WithLabelValues(metrics.LblGeneral)
+
+	connIdleDurationHistogramNotInTxn = metrics.ConnIdleDurationHistogram.WithLabelValues("0")
+	connIdleDurationHistogramInTxn    = metrics.ConnIdleDurationHistogram.WithLabelValues("1")
 )
 
 // newClientConn creates a *clientConn object.
@@ -139,6 +143,7 @@ func newClientConn(s *Server) *clientConn {
 		collation:    mysql.DefaultCollationID,
 		alloc:        arena.NewAllocator(32 * 1024),
 		status:       connStatusDispatching,
+		lastActive:   time.Now(),
 	}
 }
 
@@ -163,6 +168,7 @@ type clientConn struct {
 	status       int32             // dispatching/reading/shutdown/waitshutdown
 	lastCode     uint16            // last error code
 	collation    uint8             // collation used by client, may be different from the collation used by database.
+	lastActive   time.Time
 
 	// mu is used for cancelling the execution of current transaction.
 	mu struct {
@@ -790,7 +796,7 @@ func (cc *clientConn) Run(ctx context.Context) {
 				zap.String("status", cc.SessionStatusToString()),
 				zap.Stringer("sql", getLastStmtInConn{cc}),
 				zap.String("txn_mode", txnMode),
-				zap.String("err", errStrForLog(err)),
+				zap.String("err", errStrForLog(err, cc.ctx.GetSessionVars().EnableRedactLog)),
 			)
 			err1 := cc.writeError(ctx, err)
 			terror.Log(err1)
@@ -824,7 +830,14 @@ func queryStrForLog(query string) string {
 	return query
 }
 
-func errStrForLog(err error) string {
+func errStrForLog(err error, enableRedactLog bool) string {
+	if enableRedactLog {
+		// currently, only ErrParse is considered when enableRedactLog because it may contain sensitive information like
+		// password or accesskey
+		if parser.ErrParse.Equal(err) {
+			return "fail to parse SQL and can't redact when enable log redaction"
+		}
+	}
 	if kv.ErrKeyExists.Equal(err) || parser.ErrParse.Equal(err) {
 		// Do not log stack for duplicated entry error.
 		return err.Error()
@@ -902,6 +915,13 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 		// reset killed for each request
 		atomic.StoreUint32(&cc.ctx.GetSessionVars().Killed, 0)
 	}()
+	t := time.Now()
+	if (cc.ctx.Status() & mysql.ServerStatusInTrans) > 0 {
+		connIdleDurationHistogramInTxn.Observe(t.Sub(cc.lastActive).Seconds())
+	} else {
+		connIdleDurationHistogramNotInTxn.Observe(t.Sub(cc.lastActive).Seconds())
+	}
+
 	span := opentracing.StartSpan("server.dispatch")
 
 	var cancelFunc context.CancelFunc
@@ -910,7 +930,6 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 	cc.mu.cancelFunc = cancelFunc
 	cc.mu.Unlock()
 
-	t := time.Now()
 	cc.lastPacket = data
 	cmd := data[0]
 	data = data[1:]
@@ -947,6 +966,7 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 
 		cc.server.releaseToken(token)
 		span.Finish()
+		cc.lastActive = time.Now()
 	}()
 
 	vars := cc.ctx.GetSessionVars()
@@ -1009,7 +1029,7 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 	case mysql.ComChangeUser:
 		return cc.handleChangeUser(ctx, data)
 	default:
-		return mysql.NewErrf(mysql.ErrUnknown, "command %d not supported now", cmd)
+		return mysql.NewErrf(mysql.ErrUnknown, "command %d not supported now", nil, cmd)
 	}
 }
 
@@ -1082,7 +1102,7 @@ func (cc *clientConn) writeError(ctx context.Context, e error) error {
 		case *terror.Error:
 			m = terror.ToSQLError(y)
 		default:
-			m = mysql.NewErrf(mysql.ErrUnknown, "%s", e.Error())
+			m = mysql.NewErrf(mysql.ErrUnknown, "%s", nil, e.Error())
 		}
 	}
 
@@ -1380,34 +1400,48 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 			err = cc.writeMultiResultset(ctx, rss, false)
 		}
 	} else {
-		loadDataInfo := cc.ctx.Value(executor.LoadDataVarKey)
-		if loadDataInfo != nil {
-			defer cc.ctx.SetValue(executor.LoadDataVarKey, nil)
-			if err = cc.handleLoadData(ctx, loadDataInfo.(*executor.LoadDataInfo)); err != nil {
-				return err
+		var handled bool
+		handled, err = cc.handleQuerySpecial(ctx)
+		if handled {
+			execStmt := cc.ctx.Value(session.ExecStmtVarKey)
+			if execStmt != nil {
+				execStmt.(*executor.ExecStmt).FinishExecuteStmt(0, err == nil, false)
 			}
 		}
-
-		loadStats := cc.ctx.Value(executor.LoadStatsVarKey)
-		if loadStats != nil {
-			defer cc.ctx.SetValue(executor.LoadStatsVarKey, nil)
-			if err = cc.handleLoadStats(ctx, loadStats.(*executor.LoadStatsInfo)); err != nil {
-				return err
-			}
-		}
-
-		indexAdvise := cc.ctx.Value(executor.IndexAdviseVarKey)
-		if indexAdvise != nil {
-			defer cc.ctx.SetValue(executor.IndexAdviseVarKey, nil)
-			err = cc.handleIndexAdvise(ctx, indexAdvise.(*executor.IndexAdviseInfo))
-			if err != nil {
-				return err
-			}
-		}
-
-		err = cc.writeOK(ctx)
 	}
 	return err
+}
+
+func (cc *clientConn) handleQuerySpecial(ctx context.Context) (handled bool, err error) {
+	loadDataInfo := cc.ctx.Value(executor.LoadDataVarKey)
+	if loadDataInfo != nil {
+		handled = true
+		defer cc.ctx.SetValue(executor.LoadDataVarKey, nil)
+		if err = cc.handleLoadData(ctx, loadDataInfo.(*executor.LoadDataInfo)); err != nil {
+			return handled, err
+		}
+	}
+
+	loadStats := cc.ctx.Value(executor.LoadStatsVarKey)
+	if loadStats != nil {
+		handled = true
+		defer cc.ctx.SetValue(executor.LoadStatsVarKey, nil)
+		if err = cc.handleLoadStats(ctx, loadStats.(*executor.LoadStatsInfo)); err != nil {
+			return handled, err
+		}
+	}
+
+	indexAdvise := cc.ctx.Value(executor.IndexAdviseVarKey)
+	if indexAdvise != nil {
+		handled = true
+		defer cc.ctx.SetValue(executor.IndexAdviseVarKey, nil)
+		err = cc.handleIndexAdvise(ctx, indexAdvise.(*executor.IndexAdviseInfo))
+		if err != nil {
+			return handled, err
+		}
+	}
+
+	return handled, cc.writeOK(ctx)
 }
 
 // handleFieldList returns the field list for a table.
@@ -1730,8 +1764,8 @@ func (cc getLastStmtInConn) String() string {
 		return "ListFields " + string(data)
 	case mysql.ComQuery, mysql.ComStmtPrepare:
 		sql := string(hack.String(data))
-		if config.RedactLogEnabled() {
-			sql, _ = parser.NormalizeDigest(sql)
+		if cc.ctx.GetSessionVars().EnableRedactLog {
+			sql = parser.Normalize(sql)
 		}
 		return queryStrForLog(sql)
 	case mysql.ComStmtExecute, mysql.ComStmtFetch:

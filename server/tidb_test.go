@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
@@ -87,6 +88,8 @@ func (ts *tidbTestSuiteBase) SetUpSuite(c *C) {
 	cfg.Status.ReportStatus = true
 	cfg.Status.StatusPort = ts.statusPort
 	cfg.Performance.TCPKeepAlive = true
+	err = logutil.InitLogger(cfg.Log.ToLogConfig())
+	c.Assert(err, IsNil)
 
 	server, err := NewServer(cfg, ts.tidbdrv)
 	c.Assert(err, IsNil)
@@ -140,6 +143,11 @@ func (ts *tidbTestSuite) TestPreparedTimestamp(c *C) {
 func (ts *tidbTestSerialSuite) TestLoadData(c *C) {
 	ts.runTestLoadData(c, ts.server)
 	ts.runTestLoadDataWithSelectIntoOutfile(c, ts.server)
+	ts.runTestLoadDataForSlowLog(c, ts.server)
+}
+
+func (ts *tidbTestSerialSuite) TestExplainFor(c *C) {
+	ts.runTestExplainForConn(c)
 }
 
 func (ts *tidbTestSerialSuite) TestStmtCount(c *C) {
@@ -921,6 +929,44 @@ func (ts *tidbTestSuite) TestNullFlag(c *C) {
 	c.Assert(len(cols), Equals, 1)
 	expectFlag := uint16(tmysql.NotNullFlag | tmysql.BinaryFlag)
 	c.Assert(dumpFlag(cols[0].Type, cols[0].Flag), Equals, expectFlag)
+}
+
+func (ts *tidbTestSuite) TestGracefulShutdown(c *C) {
+	var err error
+	ts.store, err = mockstore.NewMockTikvStore()
+	session.DisableStats4Test()
+	c.Assert(err, IsNil)
+	ts.domain, err = session.BootstrapSession(ts.store)
+	c.Assert(err, IsNil)
+	ts.tidbdrv = NewTiDBDriver(ts.store)
+	cli := newTestServerClient()
+	cfg := config.NewConfig()
+	cfg.GracefulWaitBeforeShutdown = 2 // wait before shutdown
+	cfg.Port = 0
+	cfg.Status.StatusPort = 0
+	cfg.Status.ReportStatus = true
+	cfg.Performance.TCPKeepAlive = true
+	server, err := NewServer(cfg, ts.tidbdrv)
+	c.Assert(err, IsNil)
+	c.Assert(server, NotNil)
+	cli.port = getPortFromTCPAddr(server.listener.Addr())
+	cli.statusPort = getPortFromTCPAddr(server.statusListener.Addr())
+	go server.Run()
+	time.Sleep(time.Millisecond * 100)
+
+	_, err = cli.fetchStatus("/status") // server is up
+	c.Assert(err, IsNil)
+
+	go server.Close()
+	time.Sleep(time.Millisecond * 500)
+
+	resp, _ := cli.fetchStatus("/status") // should return 5xx code
+	c.Assert(resp.StatusCode, Equals, 500)
+
+	time.Sleep(time.Second * 2)
+
+	_, err = cli.fetchStatus("/status") // status is gone
+	c.Assert(err, ErrorMatches, ".*connect: connection refused")
 }
 
 func (ts *tidbTestSuite) TestPessimisticInsertSelectForUpdate(c *C) {
