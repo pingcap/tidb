@@ -132,8 +132,11 @@ func tryToReplaceCond(ctx sessionctx.Context, src *Column, tgt *Column, cond Exp
 	if _, ok := inequalFunctions[sf.FuncName.L]; ok {
 		return false, true, cond
 	}
-	// See https://github.com/pingcap/tidb/issues/15782. The null sensitive function's result may rely on the original
-	// nullable information of the outer side column. Its args cannot be replaced easily.
+	// See
+	//	https://github.com/pingcap/tidb/issues/15782
+	//  https://github.com/pingcap/tidb/issues/17817
+	// The null sensitive function's result may rely on the original nullable information of the outer side column.
+	// Its args cannot be replaced easily.
 	// A more strict check is that after we replace the arg. We check the nullability of the new expression.
 	// But we haven't maintained it yet, so don't replace the arg of the control function currently.
 	if rejectNullSens &&
