@@ -689,10 +689,11 @@ func (s *testEvaluatorSuite) TestExprPushDownToFlash(c *C) {
 	c.Assert(err, IsNil)
 	exprs = append(exprs, function)
 
+	// TODO: Wait for TiFlash to fix CastDecimalAsString
 	// CastDecimalAsString
-	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeString), decimalColumn)
-	c.Assert(err, IsNil)
-	exprs = append(exprs, function)
+	// function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeString), decimalColumn)
+	// c.Assert(err, IsNil)
+	// exprs = append(exprs, function)
 
 	// CastStringAsString
 	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeString), stringColumn)
