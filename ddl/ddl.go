@@ -477,15 +477,15 @@ var (
 	}
 )
 
-func getIntervalFromPolicy(policy []time.Duration, i int) time.Duration {
+func getIntervalFromPolicy(policy []time.Duration, i int) (time.Duration, bool) {
 	plen := len(policy)
 	if i < plen {
-		return policy[i]
+		return policy[i], true
 	}
-	return policy[plen-1]
+	return policy[plen-1], false
 }
 
-func getJobInterval(job *model.Job, i int) time.Duration {
+func getJobCheckInterval(job *model.Job, i int) (time.Duration, bool) {
 	switch job.Type {
 	case model.ActionAddIndex, model.ActionAddPrimaryKey:
 		return getIntervalFromPolicy(slowDDLIntervalPolicy, i)
@@ -507,6 +507,16 @@ func (d *ddl) asyncNotifyWorker(jobTp model.ActionType) {
 	} else {
 		asyncNotify(d.workers[generalWorker].ddlJobCh)
 	}
+}
+
+func updateTickerInterval(ticker *time.Ticker, lease time.Duration, job *model.Job, i int) *time.Ticker {
+	interval, changed := getJobCheckInterval(job, i)
+	if !changed {
+		return ticker
+	}
+	// For now we should stop old ticker and create a new ticker
+	ticker.Stop()
+	return time.NewTicker(chooseLeaseTime(lease, interval))
 }
 
 // doDDLJob will return
@@ -532,7 +542,8 @@ func (d *ddl) doDDLJob(ctx sessionctx.Context, job *model.Job) error {
 	// For a job from start to end, the state of it will be none -> delete only -> write only -> reorganization -> public
 	// For every state changes, we will wait as lease 2 * lease time, so here the ticker check is 10 * lease.
 	// But we use etcd to speed up, normally it takes less than 0.5s now, so we use 0.5s or 1s or 3s as the max value.
-	ticker := time.NewTicker(chooseLeaseTime(10*d.lease, getJobInterval(job, 0)))
+	initInterval, _ := getJobCheckInterval(job, 0)
+	ticker := time.NewTicker(chooseLeaseTime(10*d.lease, initInterval))
 	startTime := time.Now()
 	metrics.JobsGauge.WithLabelValues(job.Type.String()).Inc()
 	defer func() {
@@ -550,7 +561,7 @@ func (d *ddl) doDDLJob(ctx sessionctx.Context, job *model.Job) error {
 		case <-d.ddlJobDoneCh:
 		case <-ticker.C:
 			i++
-			ticker.Reset(chooseLeaseTime(10*d.lease, getJobInterval(job, i)))
+			ticker = updateTickerInterval(ticker, 10*d.lease, job, i)
 		case <-d.ctx.Done():
 			logutil.BgLogger().Error("[ddl] doDDLJob will quit because context done", zap.Error(d.ctx.Err()))
 			err = d.ctx.Err()

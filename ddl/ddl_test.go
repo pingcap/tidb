@@ -267,13 +267,24 @@ func (s *testDDLSuite) TestGetIntervalFromPolicy(c *C) {
 		1 * time.Second,
 		2 * time.Second,
 	}
-	var val time.Duration
-	val = getIntervalFromPolicy(policy, 0)
+	var (
+		val     time.Duration
+		changed bool
+	)
+
+	val, changed = getIntervalFromPolicy(policy, 0)
 	c.Assert(val, Equals, 1*time.Second)
-	val = getIntervalFromPolicy(policy, 1)
+	c.Assert(changed, Equals, true)
+
+	val, changed = getIntervalFromPolicy(policy, 1)
 	c.Assert(val, Equals, 2*time.Second)
-	val = getIntervalFromPolicy(policy, 2)
+	c.Assert(changed, Equals, true)
+
+	val, changed = getIntervalFromPolicy(policy, 2)
 	c.Assert(val, Equals, 2*time.Second)
-	val = getIntervalFromPolicy(policy, 3)
+	c.Assert(changed, Equals, false)
+
+	val, changed = getIntervalFromPolicy(policy, 3)
 	c.Assert(val, Equals, 2*time.Second)
+	c.Assert(changed, Equals, false)
 }
