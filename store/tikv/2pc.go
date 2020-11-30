@@ -908,6 +908,10 @@ func (c *twoPhaseCommitter) checkOnePC(enable1PCOption interface{}) bool {
 	return c.connID > 0 && !c.shouldWriteBinlog() && enable1PCOption != nil && enable1PCOption.(bool)
 }
 
+func (c *twoPhaseCommitter) needExternalConsistency(guaranteeExternalConsistencyOption interface{}) bool {
+	return guaranteeExternalConsistencyOption != nil && guaranteeExternalConsistencyOption.(bool)
+}
+
 func (c *twoPhaseCommitter) isAsyncCommit() bool {
 	return atomic.LoadUint32(&c.useAsyncCommit) > 0
 }
@@ -1016,7 +1020,7 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 	// all nodes, we have to make sure the commit TS of this transaction is greater
 	// than the snapshot TS of all existent readers. So we get a new timestamp
 	// from PD as our MinCommitTS.
-	if commitTSMayBeCalculated && config.GetGlobalConfig().TiKVClient.ExternalConsistency {
+	if commitTSMayBeCalculated && c.needExternalConsistency(c.txn.us.GetOption(kv.GuaranteeExternalConsistency)) {
 		minCommitTS, err := c.store.oracle.GetTimestamp(ctx, &oracle.Option{TxnScope: oracle.GlobalTxnScope})
 		// If we fail to get a timestamp from PD, we just propagate the failure
 		// instead of falling back to the normal 2PC because a normal 2PC will
