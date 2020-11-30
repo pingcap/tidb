@@ -60,6 +60,8 @@ const (
 	CommitHook
 	// EnableAsyncCommit indicates whether async commit is enabled
 	EnableAsyncCommit
+	// Enable1Pc indicates whether one-phase commit is enabled
+	Enable1PC
 )
 
 // Priority value for transaction priority.

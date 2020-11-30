@@ -902,11 +902,6 @@ func (c *twoPhaseCommitter) checkAsyncCommit(enableAsyncCommit bool) bool {
 	return false
 }
 
-// checkOnePC checks if 1PC protocol is available for current transaction.
-func (c *twoPhaseCommitter) checkOnePC() bool {
-	return config.GetGlobalConfig().TiKVClient.EnableOnePC && c.connID > 0 && !c.shouldWriteBinlog()
-}
-
 func (c *twoPhaseCommitter) isAsyncCommit() bool {
 	return atomic.LoadUint32(&c.useAsyncCommit) > 0
 }
@@ -1002,13 +997,14 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 
 	commitTSMayBeCalculated := false
 	// Check async commit is available or not.
-	enableAsyncCommit := c.txn.us.GetOption(kv.EnableAsyncCommit)
-	if c.checkAsyncCommit(enableAsyncCommit != nil && enableAsyncCommit.(bool)) {
+	enableAsyncCommitOption := c.txn.us.GetOption(kv.EnableAsyncCommit)
+	if c.checkAsyncCommit(enableAsyncCommitOption != nil && enableAsyncCommitOption.(bool)) {
 		commitTSMayBeCalculated = true
 		c.setAsyncCommit(true)
 	}
 	// Check if 1PC is enabled.
-	if c.checkOnePC() {
+	enable1PCOption := c.txn.us.GetOption(kv.Enable1PC)
+	if enable1PCOption != nil && enable1PCOption.(bool) {
 		commitTSMayBeCalculated = true
 		c.setOnePC(true)
 	}

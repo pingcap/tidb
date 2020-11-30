@@ -509,8 +509,6 @@ type TiKVClient struct {
 	// CommitTimeout is the max time which command 'commit' will wait.
 	CommitTimeout string      `toml:"commit-timeout" json:"commit-timeout"`
 	AsyncCommit   AsyncCommit `toml:"async-commit" json:"async-commit"`
-	// Allow TiDB try to use 1PC protocol to commit transactions that involves only one region.
-	EnableOnePC bool `toml:"enable-one-pc" json:"enable-one-pc"`
 	// MaxBatchSize is the max batch size when calling batch commands API.
 	MaxBatchSize uint `toml:"max-batch-size" json:"max-batch-size"`
 	// If TiKV load is greater than this, TiDB will wait for a while to avoid little batch.
@@ -732,7 +730,6 @@ var defaultConf = Config{
 			SafeWindow:        2 * time.Second,
 			AllowedClockDrift: 500 * time.Millisecond,
 		},
-		EnableOnePC:         false,
 		ExternalConsistency: false,
 
 		MaxBatchSize:      128,

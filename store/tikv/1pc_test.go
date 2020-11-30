@@ -17,8 +17,8 @@ import (
 	"context"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 )
 
@@ -36,10 +36,8 @@ func (s *testOnePCSuite) SetUpTest(c *C) {
 }
 
 func (s *testOnePCSuite) Test1PC(c *C) {
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.TiKVClient.EnableOnePC = true
-	})
+	variable.SetSysVar("tidb_enable_1pc", "ON")
+	defer variable.SetSysVar("tidb_enable_1pc", "OFF")
 
 	ctx := context.WithValue(context.Background(), sessionctx.ConnID, uint64(1))
 
@@ -70,10 +68,9 @@ func (s *testOnePCSuite) Test1PC(c *C) {
 	c.Assert(txn.committer.onePCCommitTS, Equals, uint64(0))
 	c.Assert(txn.committer.commitTS, Greater, txn.startTS)
 
-	// 1PC doesn't work if config not set
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.TiKVClient.EnableOnePC = false
-	})
+	// 1PC doesn't work if system variable not set
+	variable.SetSysVar("tidb_enable_1pc", "OFF")
+
 	k3 := []byte("k3")
 	v3 := []byte("v3")
 
@@ -86,9 +83,8 @@ func (s *testOnePCSuite) Test1PC(c *C) {
 	c.Assert(txn.committer.onePCCommitTS, Equals, uint64(0))
 	c.Assert(txn.committer.commitTS, Greater, txn.startTS)
 
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.TiKVClient.EnableOnePC = true
-	})
+	variable.SetSysVar("tidb_enable_1pc", "ON")
+	defer variable.SetSysVar("tidb_enable_1pc", "OFF")
 
 	// Test multiple keys
 	k4 := []byte("k4")
@@ -145,10 +141,8 @@ func (s *testOnePCSuite) Test1PC(c *C) {
 }
 
 func (s *testOnePCSuite) Test1PCIsolation(c *C) {
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.TiKVClient.EnableOnePC = true
-	})
+	variable.SetSysVar("tidb_enable_1pc", "ON")
+	defer variable.SetSysVar("tidb_enable_1pc", "OFF")
 
 	ctx := context.WithValue(context.Background(), sessionctx.ConnID, uint64(1))
 
@@ -191,10 +185,8 @@ func (s *testOnePCSuite) Test1PCDisallowMultiRegion(c *C) {
 		return
 	}
 
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.TiKVClient.EnableOnePC = true
-	})
+	variable.SetSysVar("tidb_enable_1pc", "ON")
+	defer variable.SetSysVar("tidb_enable_1pc", "OFF")
 
 	ctx := context.WithValue(context.Background(), sessionctx.ConnID, uint64(1))
 
@@ -241,11 +233,8 @@ func (s *testOnePCSuite) Test1PCDisallowMultiRegion(c *C) {
 // It's just a simple validation of external consistency.
 // Extra tests are needed to test this feature with the control of the TiKV cluster.
 func (s *testOnePCSuite) Test1PCExternalConsistency(c *C) {
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.TiKVClient.EnableOnePC = true
-		conf.TiKVClient.ExternalConsistency = true
-	})
+	variable.SetSysVar("tidb_enable_1pc", "ON")
+	defer variable.SetSysVar("tidb_enable_1pc", "OFF")
 
 	t1, err := s.store.Begin()
 	c.Assert(err, IsNil)

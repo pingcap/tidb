@@ -2079,9 +2079,10 @@ func (s *testPessimisticSuite) Test1PCWithSchemaChange(c *C) {
 		return
 	}
 
+	variable.SetSysVar("tidb_enable_1pc", "ON")
+	defer variable.SetSysVar("tidb_enable_1pc", "OFF")
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
-		conf.TiKVClient.EnableOnePC = true
 		conf.TiKVClient.AsyncCommit.SafeWindow = time.Second
 		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
 	})

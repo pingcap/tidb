@@ -388,9 +388,6 @@ grpc-compression-type = "none"
 # Max time for commit command, must be twice bigger than raft election timeout.
 commit-timeout = "41s"
 
-# Allow TiDB try to use 1PC protocol to commit transactions that involves only one region.
-enable-one-pc = false
-
 # Ensure external consistency when async commit or 1PC is enabled. When this option is enabled,
 # TiDB needs to get a timestamp from PD before committing a transaction and thus latency is increased.
 external-consistency = false
