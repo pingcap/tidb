@@ -655,6 +655,50 @@ func (s *testIntegrationSuite1) TestCreateTableWithListColumnsPartition(c *C) {
 			ddl.ErrNotAllowedTypeInPartition,
 		},
 		{
+			"create table t (id year) partition by list columns (id) (partition p0 values in (2000));",
+			ddl.ErrNotAllowedTypeInPartition,
+		},
+		{
+			"create table t (id float) partition by list columns (id) (partition p0 values in (1));",
+			ddl.ErrNotAllowedTypeInPartition,
+		},
+		{
+			"create table t (id double) partition by list columns (id) (partition p0 values in (1));",
+			ddl.ErrNotAllowedTypeInPartition,
+		},
+		{
+			"create table t (id text) partition by list columns (id) (partition p0 values in ('abc'));",
+			ddl.ErrNotAllowedTypeInPartition,
+		},
+		{
+			"create table t (id blob) partition by list columns (id) (partition p0 values in ('abc'));",
+			ddl.ErrNotAllowedTypeInPartition,
+		},
+		{
+			"create table t (id enum('a','b')) partition by list columns (id) (partition p0 values in ('a'));",
+			ddl.ErrNotAllowedTypeInPartition,
+		},
+		{
+			"create table t (id set('a','b')) partition by list columns (id) (partition p0 values in ('a'));",
+			ddl.ErrNotAllowedTypeInPartition,
+		},
+		{
+			"create table t (a varchar(2)) partition by list columns (a) (partition p0 values in ('abc'));",
+			ddl.ErrWrongTypeColumnValue,
+		},
+		{
+			"create table t (a tinyint) partition by list columns (a) (partition p0 values in (65536));",
+			ddl.ErrWrongTypeColumnValue,
+		},
+		{
+			"create table t (a char) partition by list columns (a) (partition p0 values in ('abc'));",
+			ddl.ErrWrongTypeColumnValue,
+		},
+		{
+			"create table t (a datetime) partition by list columns (a) (partition p0 values in ('2020-11-31 12:00:00'));",
+			ddl.ErrWrongTypeColumnValue,
+		},
+		{
 			"create table t (a int) partition by list columns (a) (partition p0 values in (1), partition p0 values in (2));",
 			ddl.ErrSameNamePartition,
 		},
@@ -745,6 +789,13 @@ func (s *testIntegrationSuite1) TestCreateTableWithListColumnsPartition(c *C) {
 		"create table t (a date) partition by list columns (a) (partition p0 values in ('2020-09-28','2020-09-29'));",
 		"create table t (a bigint, b date) partition by list columns (a,b) (partition p0 values in ((1,'2020-09-28'),(1,'2020-09-29')));",
 		"create table t (a bigint)   partition by list columns (a) (partition p0 values in (to_seconds('2020-09-28 17:03:38'),to_seconds('2020-09-28 17:03:39')));",
+		"create table t (a varchar(10)) partition by list columns (a) (partition p0 values in ('abc'));",
+		"create table t (a char) partition by list columns (a) (partition p0 values in ('a'));",
+		"create table t (a bool) partition by list columns (a) (partition p0 values in (1));",
+		"create table t (c1 bool, c2 tinyint, c3 int, c4 bigint, c5 datetime, c6 date,c7 varchar(10), c8 char) " +
+			"partition by list columns (c1,c2,c3,c4,c5,c6,c7,c8) (" +
+			"partition p0 values in ((1,2,3,4,'2020-11-30 00:00:01', '2020-11-30','abc','a')));",
+		"create table t (a int, b int generated always as (a+1) virtual) partition by list columns (b) (partition p0 values in (1));",
 	}
 
 	for _, sql := range validCases {

@@ -5216,6 +5216,10 @@ func checkColumnsTypeAndValuesMatch(ctx sessionctx.Context, meta *model.TableInf
 				return ErrWrongTypeColumnValue.GenWithStackByArgs()
 			}
 		}
+		_, err = val.ConvertTo(ctx.GetSessionVars().StmtCtx, &colInfo.FieldType)
+		if err != nil {
+			return ErrWrongTypeColumnValue.GenWithStackByArgs()
+		}
 	}
 	return nil
 }
