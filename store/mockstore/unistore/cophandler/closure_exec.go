@@ -336,7 +336,6 @@ func (e *closureExecutor) initExchangeScanCtx(exchangeScan *tipb.ExchangeReceive
 }
 
 func (e *closureExecutor) initJoinScanCtx(dagCtx *dagContext, join *tipb.Join, mppCtx *MPPCtx) error {
-	var err error = nil
 	if join.JoinType != tipb.JoinType_TypeInnerJoin {
 		return errors.New("Only support Inner join right now")
 	}
@@ -348,11 +347,12 @@ func (e *closureExecutor) initJoinScanCtx(dagCtx *dagContext, join *tipb.Join, m
 	}
 	e.joinScanCtx = new(joinScanCtx)
 	e.joinScanCtx.join = join
-	e.joinScanCtx.finalSchema = make([]*types.FieldType, 0, 0)
+	e.joinScanCtx.finalSchema = make([]*types.FieldType, 0)
 	e.joinScanCtx.innerIndex = int(join.InnerIdx)
 
 	buildDagCtx := *dagCtx
 	buildDagCtx.evalContext = &evalContext{sc: dagCtx.sc}
+	var err error
 	e.joinScanCtx.buildExec, err = buildClosureExecutorForTiFlash(&buildDagCtx, join.Children[join.InnerIdx], mppCtx)
 	if err != nil {
 		return err
@@ -655,7 +655,10 @@ func (joinCtx *joinScanCtx) doJoin() error {
 	buildChunk := chunk.NewChunkWithCapacity(joinCtx.buildExec.fieldTps, 0)
 	for _, pbChunk := range buildPbChunks {
 		chk := chunk.NewChunkWithCapacity(joinCtx.buildExec.fieldTps, 0)
-		pbChunkToChunk(pbChunk, chk, joinCtx.buildExec.fieldTps)
+		err = pbChunkToChunk(pbChunk, chk, joinCtx.buildExec.fieldTps)
+		if err != nil {
+			return err
+		}
 		buildChunk.Append(chk, 0, chk.NumRows())
 	}
 	probePbChunks, err := joinCtx.probeExec.execute()
@@ -665,7 +668,10 @@ func (joinCtx *joinScanCtx) doJoin() error {
 	probeChunk := chunk.NewChunkWithCapacity(joinCtx.probeExec.fieldTps, 0)
 	for _, pbChunk := range probePbChunks {
 		chk := chunk.NewChunkWithCapacity(joinCtx.probeExec.fieldTps, 0)
-		pbChunkToChunk(pbChunk, chk, joinCtx.probeExec.fieldTps)
+		err = pbChunkToChunk(pbChunk, chk, joinCtx.probeExec.fieldTps)
+		if err != nil {
+			return err
+		}
 		probeChunk.Append(chk, 0, chk.NumRows())
 	}
 	// build hash table
@@ -682,8 +688,7 @@ func (joinCtx *joinScanCtx) doJoin() error {
 	joinCtx.chk = chunk.NewChunkWithCapacity(joinCtx.finalSchema, 0)
 	// probe
 	for i := 0; i < probeChunk.NumRows(); i++ {
-		keyColString := string(probeChunk.Column(joinCtx.probeKey.Index).GetRaw(i))
-		if rowSet, ok := hashMap[keyColString]; ok {
+		if rowSet, ok := hashMap[string(probeChunk.Column(joinCtx.probeKey.Index).GetRaw(i))]; ok {
 			// construct output row
 			if joinCtx.innerIndex == 0 {
 				// build is child 0, probe is child 1
@@ -800,13 +805,22 @@ func (e *exchangeScanCtx) runTunnelWorker(h *MPPTaskHandler, meta *mpp.TaskMeta)
 	}
 	if err != nil {
 		e.err = err
+		return
 	}
 	for _, mppData := range resp {
 		var selectResp tipb.SelectResponse
-		selectResp.Unmarshal(mppData.Data)
+		err = selectResp.Unmarshal(mppData.Data)
+		if err != nil {
+			e.err = err
+			return
+		}
 		for _, tipbChunk := range selectResp.Chunks {
 			chk := chunk.NewChunkWithCapacity(e.fieldTypes, 0)
-			pbChunkToChunk(tipbChunk, chk, e.fieldTypes)
+			err = pbChunkToChunk(tipbChunk, chk, e.fieldTypes)
+			if err != nil {
+				e.err = err
+				return
+			}
 			e.lock.Lock()
 			e.chk.Append(chk, 0, chk.NumRows())
 			e.lock.Unlock()
@@ -882,6 +896,9 @@ func (e *closureExecutor) execute() ([]tipb.Chunk, error) {
 				go e.exchangeScanCtx.runTunnelWorker(e.exchangeScanCtx.mppCtx.TaskHandler, meta)
 			}
 			e.exchangeScanCtx.wg.Wait()
+			if e.exchangeScanCtx.err != nil {
+				return nil, e.exchangeScanCtx.err
+			}
 			e.mockReader.chk = e.exchangeScanCtx.chk
 		} else {
 			err := e.joinScanCtx.doJoin()
@@ -1274,7 +1291,7 @@ func (e *closureExecutor) chunkToOldChunk(chk *chunk.Chunk) error {
 			}
 		} else {
 			for colIdx := 0; colIdx < chk.NumCols(); colIdx++ {
-				d := chk.GetRow(i).GetDatum(int(colIdx), e.fieldTps[colIdx])
+				d := chk.GetRow(i).GetDatum(colIdx, e.fieldTps[colIdx])
 				oldRow = append(oldRow, d)
 			}
 		}

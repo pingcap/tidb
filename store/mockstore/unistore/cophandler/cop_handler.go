@@ -32,7 +32,7 @@ import (
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -42,15 +42,11 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 )
 
+// MPPCtx is the mpp execution context
 type MPPCtx struct {
-	RpcClient   tikv.Client
+	RPCClient   mocktikv.Client
 	StoreAddr   string
 	TaskHandler *MPPTaskHandler
-}
-
-type RPCHandler struct {
-	tikv.Client
-	StoreId uint64
 }
 
 // HandleCopRequest handles coprocessor request.
@@ -150,9 +146,8 @@ func handleCopDAGRequest(dbReader *dbreader.DBReader, lockStore *lockstore.MemSt
 			}
 		}
 		return nil
-	} else {
-		return buildResp(chunks, closureExec, dagReq, err, dagCtx.sc.GetWarnings(), time.Since(startTime))
 	}
+	return buildResp(chunks, closureExec, dagReq, err, dagCtx.sc.GetWarnings(), time.Since(startTime))
 }
 
 func buildDAG(reader *dbreader.DBReader, lockStore *lockstore.MemStore, req *coprocessor.Request) (*dagContext, *tipb.DAGRequest, error) {

@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/mpp"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/uber-go/atomic"
@@ -49,20 +49,21 @@ type MPPTaskHandler struct {
 	TunnelSet map[int64]*ExchangerTunnel
 
 	Meta      *mpp.TaskMeta
-	RPCClient tikv.Client
+	RPCClient mocktikv.Client
 
 	Status atomic.Int32
 	Err    error
 }
 
-func (h *MPPTaskHandler) HandleMPPDispatch(ctx context.Context, req *mpp.DispatchTaskRequest, storeAddr string, storeId uint64) (*mpp.DispatchTaskResponse, error) {
+// HandleMPPDispatch handle DispatchTaskRequest
+func (h *MPPTaskHandler) HandleMPPDispatch(ctx context.Context, req *mpp.DispatchTaskRequest, storeAddr string, storeID uint64) (*mpp.DispatchTaskResponse, error) {
 	// At first register task to store.
 	kvContext := kvrpcpb.Context{
 		RegionId:    req.Regions[0].RegionId,
 		RegionEpoch: req.Regions[0].RegionEpoch,
 		// this is a hack to reuse task id in kvContext to pass mpp task id
 		TaskId: uint64(h.Meta.TaskId),
-		Peer:   &metapb.Peer{StoreId: storeId},
+		Peer:   &metapb.Peer{StoreId: storeID},
 	}
 	copReq := &coprocessor.Request{
 		Tp:      kv.ReqTypeDAG,
@@ -94,6 +95,7 @@ func (h *MPPTaskHandler) run(ctx context.Context, addr string, req *tikvrpc.Requ
 	}
 }
 
+// HandleEstablishConn handles EstablishMPPConnectionRequest
 func (h *MPPTaskHandler) HandleEstablishConn(_ context.Context, req *mpp.EstablishMPPConnectionRequest) (*ExchangerTunnel, error) {
 	meta := req.ReceiverMeta
 	for i := 0; i < 10; i++ {
@@ -141,6 +143,7 @@ type ExchangerTunnel struct {
 	ErrCh  chan error
 }
 
+// RecvChunk recive tipb chunk
 func (tunnel *ExchangerTunnel) RecvChunk() (tipbChunk *tipb.Chunk, err error) {
 	tipbChunk = <-tunnel.DataCh
 	select {
