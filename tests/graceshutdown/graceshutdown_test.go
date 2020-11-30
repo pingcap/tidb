@@ -114,7 +114,6 @@ func (s *TestGracefulShutdownSuite) TestGracefulShutdown(c *C) {
 	port := *tidbStartPort + 1
 	tidb, err := s.startTiDBWithoutPD(port, *tidbStatusPort)
 	c.Assert(err, IsNil)
-	defer s.stopService("tidb", tidb)
 
 	db, err := s.connectTiDB(port)
 	c.Assert(err, IsNil)
