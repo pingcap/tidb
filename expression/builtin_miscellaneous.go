@@ -1012,6 +1012,7 @@ func (c *uuidFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 	bf.tp.Charset, bf.tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
 	bf.tp.Flen = 36
 	sig := &builtinUUIDSig{bf}
+	sig.setPbCode(tipb.ScalarFuncSig_UUID)
 	return sig, nil
 }
 
