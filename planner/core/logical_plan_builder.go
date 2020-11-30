@@ -162,7 +162,8 @@ func (a *aggOrderByResolver) Leave(inNode ast.Node) (ast.Node, bool) {
 	return inNode, true
 }
 
-func (b *PlanBuilder) buildAggregation(ctx context.Context, p LogicalPlan, aggFuncList []*ast.AggregateFuncExpr, gbyItems []expression.Expression) (LogicalPlan, map[int]int, error) {
+func (b *PlanBuilder) buildAggregation(ctx context.Context, p LogicalPlan, aggFuncList []*ast.AggregateFuncExpr, gbyItems []expression.Expression,
+	corAggMap map[*ast.AggregateFuncExpr]int) (LogicalPlan, map[int]int, error) {
 	b.optFlag |= flagBuildKeyInfo
 	b.optFlag |= flagPushDownAgg
 	// We may apply aggregation eliminate optimization.
@@ -227,6 +228,9 @@ func (b *PlanBuilder) buildAggregation(ctx context.Context, p LogicalPlan, aggFu
 			if oldFunc.Equal(b.ctx, newFunc) {
 				aggIndexMap[i] = j
 				combined = true
+				if _, ok := corAggMap[aggFunc]; ok {
+					b.corAggMapper[aggFunc] = b.corAggMapper[aggFuncList[j]]
+				}
 				break
 			}
 		}
@@ -234,11 +238,17 @@ func (b *PlanBuilder) buildAggregation(ctx context.Context, p LogicalPlan, aggFu
 			position := len(plan4Agg.AggFuncs)
 			aggIndexMap[i] = position
 			plan4Agg.AggFuncs = append(plan4Agg.AggFuncs, newFunc)
-			schema4Agg.Append(&expression.Column{
+			column := expression.Column{
 				UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
 				RetType:  newFunc.RetTp,
-			})
+			}
+			schema4Agg.Append(&column)
 			names = append(names, types.EmptyName)
+			if _, ok := corAggMap[aggFunc]; ok {
+				b.corAggMapper[aggFunc] = &expression.CorrelatedColumn{
+					Column: column,
+				}
+			}
 		}
 	}
 	for i, col := range p.Schema().Columns {
@@ -1948,19 +1958,20 @@ func (b *PlanBuilder) resolveHavingAndOrderBy(sel *ast.SelectStmt, p LogicalPlan
 	return havingAggMapper, extractor.aggMapper, nil
 }
 
-func (b *PlanBuilder) extractAggFuncs(fields []*ast.SelectField) ([]*ast.AggregateFuncExpr, map[*ast.AggregateFuncExpr]int) {
-	extractor := &AggregateFuncExtractor{}
+func (b *PlanBuilder) extractAggFuncs(ctx context.Context, p LogicalPlan, fields []*ast.SelectField) ([]*ast.AggregateFuncExpr, map[*ast.AggregateFuncExpr]int, []*ast.AggregateFuncExpr) {
+	extractor := &AggregateFuncExtractor{ctx: ctx, b: b, p: p}
 	for _, f := range fields {
 		n, _ := f.Expr.Accept(extractor)
 		f.Expr = n.(ast.ExprNode)
 	}
 	aggList := extractor.AggFuncs
 	totalAggMapper := make(map[*ast.AggregateFuncExpr]int, len(aggList))
+	outerAggList := extractor.OuterAggFuncs
 
 	for i, agg := range aggList {
 		totalAggMapper[agg] = i
 	}
-	return aggList, totalAggMapper
+	return aggList, totalAggMapper, outerAggList
 }
 
 // resolveWindowFunction will process window functions and resolve the columns that don't exist in select fields.
@@ -2792,6 +2803,7 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 		aggFuncs                      []*ast.AggregateFuncExpr
 		havingMap, orderMap, totalMap map[*ast.AggregateFuncExpr]int
 		windowAggMap                  map[*ast.AggregateFuncExpr]int
+		corAggMap                     map[*ast.AggregateFuncExpr]int
 		gbyCols                       []expression.Expression
 	)
 
@@ -2842,6 +2854,11 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 		return nil, err
 	}
 
+	corAggMap, err = b.resolveSubquery(ctx, sel, p)
+	if err != nil {
+		return nil, err
+	}
+
 	// b.allNames will be used in evalDefaultExpr(). Default function is special because it needs to find the
 	// corresponding column name, but does not need the value in the column.
 	// For example, select a from t order by default(b), the column b will not be in select fields. Also because
@@ -2869,14 +2886,16 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 
 	hasAgg := b.detectSelectAgg(sel)
 	if hasAgg {
-		aggFuncs, totalMap = b.extractAggFuncs(sel.Fields.Fields)
-		var aggIndexMap map[int]int
-		p, aggIndexMap, err = b.buildAggregation(ctx, p, aggFuncs, gbyCols)
-		if err != nil {
-			return nil, err
-		}
-		for k, v := range totalMap {
-			totalMap[k] = aggIndexMap[v]
+		aggFuncs, totalMap, _ = b.extractAggFuncs(ctx, p, sel.Fields.Fields)
+		if len(aggFuncs) > 0 {
+			var aggIndexMap map[int]int
+			p, aggIndexMap, err = b.buildAggregation(ctx, p, aggFuncs, gbyCols, corAggMap)
+			if err != nil {
+				return nil, err
+			}
+			for k, v := range totalMap {
+				totalMap[k] = aggIndexMap[v]
+			}
 		}
 	}
 

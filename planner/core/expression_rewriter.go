@@ -338,11 +338,15 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 		if er.aggrMap != nil {
 			index, ok = er.aggrMap[v]
 		}
-		if !ok {
-			er.err = ErrInvalidGroupFuncUse
+		if ok {
+			er.ctxStackAppend(er.schema.Columns[index], er.names[index])
 			return inNode, true
 		}
-		er.ctxStackAppend(er.schema.Columns[index], er.names[index])
+		if col, ok := er.b.corAggMapper[v]; ok {
+			er.ctxStackAppend(col, types.EmptyName)
+			return inNode, true
+		}
+		er.err = ErrInvalidGroupFuncUse
 		return inNode, true
 	case *ast.ColumnNameExpr:
 		if index, ok := er.b.colMapper[v]; ok {

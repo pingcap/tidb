@@ -41,7 +41,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/parser_driver"
+	driver "github.com/pingcap/tidb/types/parser_driver"
 	util2 "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/execdetails"
@@ -454,6 +454,9 @@ type PlanBuilder struct {
 	// evalDefaultExpr needs this information to find the corresponding column.
 	// It stores the OutputNames before buildProjection.
 	allNames [][]*types.FieldName
+
+	// corAggMapper stores columns for correlated aggregates (parent aggregate inside sub-query).
+	corAggMapper map[*ast.AggregateFuncExpr]*expression.CorrelatedColumn
 }
 
 type handleColHelper struct {
@@ -557,6 +560,7 @@ func NewPlanBuilder(sctx sessionctx.Context, is infoschema.InfoSchema, processor
 		colMapper:     make(map[*ast.ColumnNameExpr]int),
 		handleHelper:  &handleColHelper{id2HandleMapStack: make([]map[int64][]HandleCols, 0)},
 		hintProcessor: processor,
+		corAggMapper:  make(map[*ast.AggregateFuncExpr]*expression.CorrelatedColumn),
 	}
 }
 
