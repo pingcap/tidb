@@ -195,6 +195,8 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		}
 	case *ast.CreateStatisticsStmt, *ast.DropStatisticsStmt:
 		p.checkStatisticsOpGrammar(in)
+	case *ast.AggregateFuncExpr:
+		p.checkAggFuncDistinct(node)
 	default:
 		p.flag &= ^parentIsJoin
 	}
@@ -1100,5 +1102,15 @@ func (p *preprocessor) resolveCreateSequenceStmt(stmt *ast.CreateSequenceStmt) {
 	if isIncorrectName(sName) {
 		p.err = ddl.ErrWrongTableName.GenWithStackByArgs(sName)
 		return
+	}
+}
+
+func (p *preprocessor) checkAggFuncDistinct(aggFunc *ast.AggregateFuncExpr) {
+	if aggFunc.Distinct {
+		if aggFunc.F == ast.AggFuncVarPop ||
+			aggFunc.F == ast.AggFuncStddevPop ||
+			aggFunc.F == ast.AggFuncStddevSamp {
+			p.err = util.SyntaxError(errors.New(aggFunc.F + " with distinct"))
+		}
 	}
 }
