@@ -1327,7 +1327,6 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 				se.StmtCommit()
 			}
 		}
-		err = finishStmt(ctx, se, err, s)
 	}
 	if rs != nil {
 		return &execStmtResult{
@@ -1337,6 +1336,7 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 		}, err
 	}
 
+	err = finishStmt(ctx, se, err, s)
 	if se.hasQuerySpecial() {
 		// The special query will be handled later in handleQuerySpecial,
 		// then should call the ExecStmt.FinishExecuteStmt to finish this statement.
