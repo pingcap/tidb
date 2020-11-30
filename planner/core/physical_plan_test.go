@@ -784,6 +784,23 @@ func (s *testPlanSuite) TestAggregationHints(c *C) {
 	}
 }
 
+func (s *testPlanSuite) TestExplainJoinHints(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	tk := testkit.NewTestKit(c, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, c int, key(b), key(c))")
+	tk.MustQuery("explain format='hint' select /*+ inl_hash_join(t2) */ * from t t1 inner join t t2 on t1.b = t2.b and t1.c = 1").Check(testkit.Rows(
+		"use_index(@`sel_1` `test`.`t1` `c`), use_index(@`sel_1` `test`.`t2` `b`), inl_hash_join(@`sel_1` `test`.`t2`), inl_hash_join(`t2`)",
+	))
+}
+
 func (s *testPlanSuite) TestAggToCopHint(c *C) {
 	defer testleak.AfterTest(c)()
 	store, dom, err := newStoreWithBootstrap()
