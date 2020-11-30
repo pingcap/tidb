@@ -8,10 +8,10 @@
           "EXPLAIN SELECT * FROM t WHERE b = 2 ORDER BY a limit 1;"
         ],
         "Plan": [
-          "TopN_8 1.00 root  test.t.a, offset:0, count:1",
-          "└─IndexReader_16 1.00 root  index:TopN_15",
-          "  └─TopN_15 1.00 cop[tikv]  test.t.a, offset:0, count:1",
-          "    └─IndexRangeScan_14 10.00 cop[tikv] table:t, index:idx_bc(b, c) range:[2,2], keep order:false, stats:pseudo"
+          "Limit_11 1.00 root  offset:0, count:1",
+          "└─IndexReader_21 1.00 root  index:Limit_20",
+          "  └─Limit_20 1.00 cop[tikv]  offset:0, count:1",
+          "    └─IndexRangeScan_19 1.00 cop[tikv] table:t, index:idx_bc(b, c) range:[2,2], keep order:true, stats:pseudo"
         ]
       },
       {
@@ -21,10 +21,10 @@
           "EXPLAIN SELECT * FROM t WHERE b = 2 ORDER BY a limit 1"
         ],
         "Plan": [
-          "TopN_8 1.00 root  test.t.a, offset:0, count:1",
-          "└─IndexReader_16 1.00 root  index:TopN_15",
-          "  └─TopN_15 1.00 cop[tikv]  test.t.a, offset:0, count:1",
-          "    └─IndexRangeScan_14 6.00 cop[tikv] table:t, index:idx_bc(b, c) range:[2,2], keep order:false"
+          "Limit_11 1.00 root  offset:0, count:1",
+          "└─IndexReader_21 1.00 root  index:Limit_20",
+          "  └─Limit_20 1.00 cop[tikv]  offset:0, count:1",
+          "    └─IndexRangeScan_19 1.00 cop[tikv] table:t, index:idx_bc(b, c) range:[2,2], keep order:true"
         ]
       },
       {
@@ -64,10 +64,10 @@
           "EXPLAIN SELECT * FROM t WHERE b = 1 ORDER BY a desc limit 1"
         ],
         "Plan": [
-          "TopN_8 1.00 root  test.t.a:desc, offset:0, count:1",
-          "└─IndexReader_16 1.00 root  index:TopN_15",
-          "  └─TopN_15 1.00 cop[tikv]  test.t.a:desc, offset:0, count:1",
-          "    └─IndexRangeScan_14 6.00 cop[tikv] table:t, index:idx_bc(b, c) range:[1,1], keep order:false"
+          "Limit_11 1.00 root  offset:0, count:1",
+          "└─IndexReader_21 1.00 root  index:Limit_20",
+          "  └─Limit_20 1.00 cop[tikv]  offset:0, count:1",
+          "    └─IndexRangeScan_19 1.00 cop[tikv] table:t, index:idx_bc(b, c) range:[1,1], keep order:true, desc"
         ]
       },
       {
@@ -79,10 +79,9 @@
         ],
         "Plan": [
           "Limit_11 1.00 root  offset:0, count:1",
-          "└─TableReader_22 1.00 root  data:Limit_21",
-          "  └─Limit_21 1.00 cop[tikv]  offset:0, count:1",
-          "    └─Selection_20 1.00 cop[tikv]  eq(test.t.b, 2)",
-          "      └─TableFullScan_19 4.17 cop[tikv] table:t keep order:true"
+          "└─IndexReader_21 1.00 root  index:Limit_20",
+          "  └─Limit_20 1.00 cop[tikv]  offset:0, count:1",
+          "    └─IndexRangeScan_19 1.00 cop[tikv] table:t, index:idx_bc(b, c) range:[2,2], keep order:true"
         ]
       },
       {
@@ -91,10 +90,10 @@
           "EXPLAIN SELECT * FROM t WHERE b = 2 ORDER BY a limit 1"
         ],
         "Plan": [
-          "TopN_8 1.00 root  test.t.a, offset:0, count:1",
-          "└─IndexReader_16 1.00 root  index:TopN_15",
-          "  └─TopN_15 1.00 cop[tikv]  test.t.a, offset:0, count:1",
-          "    └─IndexRangeScan_14 6.00 cop[tikv] table:t, index:idx_bc(b, c) range:[2,2], keep order:false"
+          "Limit_11 1.00 root  offset:0, count:1",
+          "└─IndexReader_21 1.00 root  index:Limit_20",
+          "  └─Limit_20 1.00 cop[tikv]  offset:0, count:1",
+          "    └─IndexRangeScan_19 1.00 cop[tikv] table:t, index:idx_bc(b, c) range:[2,2], keep order:true"
         ]
       },
       {
@@ -106,11 +105,11 @@
           "EXPLAIN SELECT * FROM t WHERE b = 2 and a > 0 ORDER BY a limit 1"
         ],
         "Plan": [
-          "TopN_8 1.00 root  test.t.a, offset:0, count:1",
-          "└─IndexReader_19 1.00 root  index:TopN_18",
-          "  └─TopN_18 1.00 cop[tikv]  test.t.a, offset:0, count:1",
-          "    └─Selection_17 6.00 cop[tikv]  gt(test.t.a, 0)",
-          "      └─IndexRangeScan_16 6.00 cop[tikv] table:t, index:idx_bc(b, c) range:[2,2], keep order:false"
+          "Limit_11 1.00 root  offset:0, count:1",
+          "└─IndexReader_31 1.00 root  index:Limit_30",
+          "  └─Limit_30 1.00 cop[tikv]  offset:0, count:1",
+          "    └─Selection_29 1.00 cop[tikv]  gt(test.t.a, 0)",
+          "      └─IndexRangeScan_28 1.00 cop[tikv] table:t, index:idx_bc(b, c) range:[2,2], keep order:true"
         ]
       },
       {
@@ -334,7 +333,7 @@
       "TableReader(Table(t)->Sel([le(test.t.b, 10000000000)]))",
       "TableReader(Table(t)->Sel([le(test.t.b, 50)]))",
       "TableReader(Table(t)->Sel([le(test.t.b, 100)])->Limit)->Limit",
-      "IndexLookUp(Index(t.b)[[-inf,1]]->TopN([test.t.a],0,10), Table(t))->TopN([test.t.a],0,10)",
+      "IndexLookUp(Index(t.b)[[-inf,1]]->Limit, Table(t))",
       "IndexLookUp(Index(t.b)[[1,1]], Table(t))",
       "IndexLookUp(Index(t.d)[[-inf,1991-09-05 00:00:00)], Table(t))",
       "IndexLookUp(Index(t.ts)[[-inf,1991-09-05 00:00:00)], Table(t))",
@@ -371,10 +370,10 @@
         "SQL": "explain select c, b from t where a = 7639902 order by b asc limit 6",
         "Plan": [
           "Projection_7 6.00 root  test.t.c, test.t.b",
-          "└─TopN_8 6.00 root  test.t.b, offset:0, count:6",
-          "  └─IndexReader_16 6.00 root  index:TopN_15",
-          "    └─TopN_15 6.00 cop[tikv]  test.t.b, offset:0, count:6",
-          "      └─IndexRangeScan_14 6.68 cop[tikv] table:t, index:PRIMARY(a, c, b) range:[7639902,7639902], keep order:false"
+          "└─Limit_11 6.00 root  offset:0, count:6",
+          "  └─IndexReader_21 6.00 root  index:Limit_20",
+          "    └─Limit_20 6.00 cop[tikv]  offset:0, count:6",
+          "      └─IndexRangeScan_19 6.00 cop[tikv] table:t, index:PRIMARY(a, c, b) range:[7639902,7639902], keep order:true"
         ]
       }
     ]

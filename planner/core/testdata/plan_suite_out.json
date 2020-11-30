@@ -281,7 +281,7 @@
       },
       {
         "SQL": "select * from t where t.c = 1 and t.e = 1 order by t.e limit 1",
-        "Best": "IndexLookUp(Index(t.c_d_e)[[1,1]]->Sel([eq(test.t.e, 1)]), Table(t))->TopN([test.t.e],0,1)"
+        "Best": "IndexLookUp(Index(t.c_d_e)[[1,1]]->Sel([eq(test.t.e, 1)])->Limit, Table(t))"
       },
       {
         "SQL": "select * from t where t.c = 1 and t.e = 1 order by t.d limit 1",
@@ -666,8 +666,8 @@
       },
       {
         "SQL": "update t set a = 5 where b < 1 order by d limit 1",
-        "Best": "TableReader(Table(t)->Sel([lt(test.t.b, 1)])->TopN([test.t.d],0,1))->TopN([test.t.d],0,1)->Update",
-        "Hints": "use_index(@`upd_1` `test`.`t` )"
+        "Best": "IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t)->Sel([lt(test.t.b, 1)]))->Limit->Update",
+        "Hints": "use_index(@`upd_1` `test`.`t` `c_d_e`)"
       },
       {
         "SQL": "update t set a = 5",
@@ -696,8 +696,8 @@
       },
       {
         "SQL": "delete from t where b < 1 order by d limit 1",
-        "Best": "TableReader(Table(t)->Sel([lt(test.t.b, 1)])->TopN([test.t.d],0,1))->TopN([test.t.d],0,1)->Delete",
-        "Hints": "use_index(@`del_1` `test`.`t` )"
+        "Best": "IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t)->Sel([lt(test.t.b, 1)]))->Limit->Delete",
+        "Hints": "use_index(@`del_1` `test`.`t` `c_d_e`)"
       },
       {
         "SQL": "delete from t",
@@ -711,8 +711,8 @@
       },
       {
         "SQL": "insert into t select * from t where b < 1 order by d limit 1",
-        "Best": "TableReader(Table(t)->Sel([lt(test.t.b, 1)])->TopN([test.t.d],0,1))->TopN([test.t.d],0,1)->Insert",
-        "Hints": "use_index(@`sel_1` `test`.`t` )"
+        "Best": "IndexLookUp(Index(t.c_d_e)[[NULL,+inf]], Table(t)->Sel([lt(test.t.b, 1)]))->Limit->Insert",
+        "Hints": "use_index(@`sel_1` `test`.`t` `c_d_e`)"
       },
       {
         "SQL": "insert into t (a, b, c, e, f, g) values(0,0,0,0,0,0)",
@@ -2229,9 +2229,9 @@
       {
         "SQL": "select * from test where age=5;",
         "Plan": [
-          "TableReader_7 2048.00 root  data:Selection_6",
-          "└─Selection_6 2048.00 cop[tikv]  eq(test.test.age, 5)",
-          "  └─TableFullScan_5 2048.00 cop[tikv] table:test keep order:false"
+          "TableReader_7 714.78 root  data:Selection_6",
+          "└─Selection_6 714.78 cop[tikv]  eq(test.test.age, 5)",
+          "  └─TableFullScan_5 1024.00 cop[tikv] table:test keep order:false"
         ],
         "Result": null
       }
@@ -2243,9 +2243,9 @@
       {
         "SQL": "select * from test where age=5;",
         "Plan": [
-          "IndexLookUp_7 2048.00 root  ",
-          "├─IndexRangeScan_5(Build) 2048.00 cop[tikv] table:test, index:idx_age(age) range:[5,5], keep order:false",
-          "└─TableRowIDScan_6(Probe) 2048.00 cop[tikv] table:test keep order:false"
+          "IndexLookUp_7 1441.12 root  ",
+          "├─IndexRangeScan_5(Build) 1441.12 cop[tikv] table:test, index:idx_age(age) range:[5,5], keep order:false",
+          "└─TableRowIDScan_6(Probe) 1441.12 cop[tikv] table:test keep order:false"
         ],
         "Result": null
       }

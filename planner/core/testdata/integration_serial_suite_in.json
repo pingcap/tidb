@@ -89,5 +89,12 @@
       "explain select /*+ inl_hash_join(s) */ * from t join s on t.a=s.a and t.b = s.a",
       "explain select /*+ inl_hash_join(s) */ * from t join s on t.a=s.a and t.a = s.b"
     ]
+  },
+  {
+    "name": "TestIssue17153",
+    "cases": [
+      "desc select * from t where a >= 2 and a <= 2 order by b limit 2;",
+      "desc select * from t where a = 2 order by b limit 2;"
+    ]
   }
 ]

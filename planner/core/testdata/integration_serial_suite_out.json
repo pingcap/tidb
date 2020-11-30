@@ -593,5 +593,28 @@
         ]
       }
     ]
+  },
+  {
+    "Name": "TestIssue17153",
+    "Cases": [
+      {
+        "SQL": "desc select * from t where a >= 2 and a <= 2 order by b limit 2;",
+        "Plan": [
+          "Limit_11 2.00 root  offset:0, count:2",
+          "└─IndexReader_21 2.00 root  index:Limit_20",
+          "  └─Limit_20 2.00 cop[tikv]  offset:0, count:2",
+          "    └─IndexRangeScan_19 2.00 cop[tikv] table:t, index:a(a, b) range:[2,2], keep order:true, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "desc select * from t where a = 2 order by b limit 2;",
+        "Plan": [
+          "Limit_11 2.00 root  offset:0, count:2",
+          "└─IndexReader_21 2.00 root  index:Limit_20",
+          "  └─Limit_20 2.00 cop[tikv]  offset:0, count:2",
+          "    └─IndexRangeScan_19 2.00 cop[tikv] table:t, index:a(a, b) range:[2,2], keep order:true, stats:pseudo"
+        ]
+      }
+    ]
   }
 ]
