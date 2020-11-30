@@ -902,6 +902,11 @@ func (c *twoPhaseCommitter) checkAsyncCommit(enableAsyncCommit bool) bool {
 	return false
 }
 
+// checkOnePC checks if 1PC protocol is available for current transaction.
+func (c *twoPhaseCommitter) checkOnePC(enable1PCOption interface{}) bool {
+	return c.connID > 0 && !c.shouldWriteBinlog() && enable1PCOption != nil && enable1PCOption.(bool)
+}
+
 func (c *twoPhaseCommitter) isAsyncCommit() bool {
 	return atomic.LoadUint32(&c.useAsyncCommit) > 0
 }
@@ -1003,8 +1008,7 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 		c.setAsyncCommit(true)
 	}
 	// Check if 1PC is enabled.
-	enable1PCOption := c.txn.us.GetOption(kv.Enable1PC)
-	if enable1PCOption != nil && enable1PCOption.(bool) {
+	if c.checkOnePC(c.txn.us.GetOption(kv.Enable1PC)) {
 		commitTSMayBeCalculated = true
 		c.setOnePC(true)
 	}
