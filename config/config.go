@@ -58,8 +58,6 @@ const (
 	DefStatusHost = "0.0.0.0"
 	// DefStoreLivenessTimeout is the default value for store liveness timeout.
 	DefStoreLivenessTimeout = "5s"
-	// DefTiDBRedactLog is the default value for redact log.
-	DefTiDBRedactLog = 0
 )
 
 // Valid config maps
@@ -146,8 +144,6 @@ type Config struct {
 	SkipRegisterToDashboard bool `toml:"skip-register-to-dashboard" json:"skip-register-to-dashboard"`
 	// EnableTelemetry enables the usage data report to PingCAP.
 	EnableTelemetry bool `toml:"enable-telemetry" json:"enable-telemetry"`
-	// EnableRedactLog indicates that whether redact log, 0 is disable. 1 is enable.
-	EnableRedactLog int32 `toml:"enable-redact-log" json:"enable-redact-log"`
 }
 
 // UpdateTempStoragePath is to update the `TempStoragePath` if port/statusPort was changed
@@ -697,7 +693,6 @@ var defaultConf = Config{
 	},
 	EnableCollectExecutionInfo: true,
 	EnableTelemetry:            true,
-	EnableRedactLog:            DefTiDBRedactLog,
 }
 
 var (
@@ -731,6 +726,7 @@ var deprecatedConfig = map[string]struct{}{
 	"txn-local-latches.capacity":     {},
 	"max-txn-time-use":               {},
 	"experimental.allow-auto-random": {},
+	"enable-redact-log":              {}, // use variable tidb_redact_log instead
 }
 
 func isAllDeprecatedConfigItems(items []string) bool {
@@ -741,6 +737,10 @@ func isAllDeprecatedConfigItems(items []string) bool {
 	}
 	return true
 }
+
+// IsMemoryQuotaQuerySetByUser indicates whether the config item mem-quota-query
+// is set by the user.
+var IsMemoryQuotaQuerySetByUser bool
 
 // InitializeConfig initialize the global config handler.
 // The function enforceCmdArgs is used to merge the config file with command arguments:
@@ -796,6 +796,9 @@ func (c *Config) Load(confFile string) error {
 	metaData, err := toml.DecodeFile(confFile, c)
 	if c.TokenLimit == 0 {
 		c.TokenLimit = 1000
+	}
+	if metaData.IsDefined("mem-quota-query") {
+		IsMemoryQuotaQuerySetByUser = true
 	}
 	if len(c.ServerVersion) > 0 {
 		mysql.ServerVersion = c.ServerVersion
@@ -932,23 +935,6 @@ func TableLockEnabled() bool {
 // TableLockDelayClean uses to get the time of delay clean table lock.
 var TableLockDelayClean = func() uint64 {
 	return GetGlobalConfig().DelayCleanTableLock
-}
-
-// RedactLogEnabled uses to check whether enabled the log redact.
-func RedactLogEnabled() bool {
-	return atomic.LoadInt32(&GetGlobalConfig().EnableRedactLog) == 1
-}
-
-// SetRedactLog uses to set log redact status.
-func SetRedactLog(enable bool) {
-	value := int32(0)
-	if enable {
-		value = 1
-	}
-	g := GetGlobalConfig()
-	newConf := *g
-	newConf.EnableRedactLog = value
-	StoreGlobalConfig(&newConf)
 }
 
 // ToLogConfig converts *Log to *logutil.LogConfig.

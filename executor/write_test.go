@@ -2872,3 +2872,22 @@ func (s *testSerialSuite1) TestIssue20724(c *C) {
 	tk.MustQuery("select * from t1").Check(testkit.Rows("A"))
 	tk.MustExec("drop table t1")
 }
+
+func (s *testSuite) TestIssue21232(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t, t1")
+	tk.MustExec("create table t(a varchar(1), index idx(a))")
+	tk.MustExec("create table t1(a varchar(5), index idx(a))")
+	tk.MustExec("insert into t values('a'), ('b')")
+	tk.MustExec("insert into t1 values('a'), ('bbbbb')")
+	tk.MustExec("update /*+ INL_JOIN(t) */ t, t1 set t.a='a' where t.a=t1.a")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustQuery("select * from t").Check(testkit.Rows("a", "b"))
+	tk.MustExec("update /*+ INL_HASH_JOIN(t) */ t, t1 set t.a='a' where t.a=t1.a")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustQuery("select * from t").Check(testkit.Rows("a", "b"))
+	tk.MustExec("update /*+ INL_MERGE_JOIN(t) */ t, t1 set t.a='a' where t.a=t1.a")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustQuery("select * from t").Check(testkit.Rows("a", "b"))
+}
