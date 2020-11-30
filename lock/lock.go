@@ -34,7 +34,7 @@ func NewChecker(ctx sessionctx.Context, is infoschema.InfoSchema) *Checker {
 }
 
 // CheckTableLock uses to check table lock.
-func (c *Checker) CheckTableLock(db, table string, privilege mysql.PrivilegeType) error {
+func (c *Checker) CheckTableLock(db, table string, privilege mysql.PrivilegeType, alterWriteable bool) error {
 	if db == "" && table == "" {
 		return nil
 	}
@@ -43,7 +43,7 @@ func (c *Checker) CheckTableLock(db, table string, privilege mysql.PrivilegeType
 		return nil
 	}
 	// check operation on database.
-	if table == "" {
+	if !alterWriteable && table == "" {
 		return c.CheckLockInDB(db, privilege)
 	}
 	switch privilege {
@@ -67,7 +67,7 @@ func (c *Checker) CheckTableLock(db, table string, privilege mysql.PrivilegeType
 	if err != nil {
 		return err
 	}
-	if c.ctx.HasLockedTables() {
+	if !alterWriteable && c.ctx.HasLockedTables() {
 		if locked, tp := c.ctx.CheckTableLocked(tb.Meta().ID); locked {
 			if checkLockTpMeetPrivilege(tp, privilege) {
 				return nil
@@ -83,19 +83,24 @@ func (c *Checker) CheckTableLock(db, table string, privilege mysql.PrivilegeType
 
 	if privilege == mysql.SelectPriv {
 		switch tb.Meta().Lock.Tp {
-		case model.TableLockRead, model.TableLockWriteLocal:
+		case model.TableLockRead, model.TableLockWriteLocal, model.TableLockReadOnly:
 			return nil
 		}
 	}
+	if alterWriteable && tb.Meta().Lock.Tp == model.TableLockReadOnly {
+		return nil
+	}
+
 	return infoschema.ErrTableLocked.GenWithStackByArgs(tb.Meta().Name.L, tb.Meta().Lock.Tp, tb.Meta().Lock.Sessions[0])
 }
 
 func checkLockTpMeetPrivilege(tp model.TableLockType, privilege mysql.PrivilegeType) bool {
+	// TableLockReadOnly doesn't need to check in this, because it is session unrelated.
 	switch tp {
 	case model.TableLockWrite, model.TableLockWriteLocal:
 		return true
 	case model.TableLockRead:
-		// ShowDBPriv, AllPrivMask,CreatePriv, CreateViewPriv already checked before.
+		// ShowDBPriv, AllPrivMask, CreatePriv, CreateViewPriv already checked before.
 		// The other privilege in read lock was not allowed.
 		if privilege == mysql.SelectPriv {
 			return true
@@ -117,7 +122,7 @@ func (c *Checker) CheckLockInDB(db string, privilege mysql.PrivilegeType) error 
 	}
 	tables := c.is.SchemaTables(model.NewCIStr(db))
 	for _, tbl := range tables {
-		err := c.CheckTableLock(db, tbl.Meta().Name.L, privilege)
+		err := c.CheckTableLock(db, tbl.Meta().Name.L, privilege, false)
 		if err != nil {
 			return err
 		}

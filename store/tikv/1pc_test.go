@@ -19,6 +19,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 )
 
 type testOnePCSuite struct {
@@ -166,7 +167,7 @@ func (s *testOnePCSuite) Test1PCIsolation(c *C) {
 	// Make `txn`'s commitTs more likely to be less than `txn2`'s startTs if there's bug in commitTs
 	// calculation.
 	for i := 0; i < 10; i++ {
-		_, err := s.store.oracle.GetTimestamp(ctx)
+		_, err := s.store.oracle.GetTimestamp(ctx, &oracle.Option{TxnScope: oracle.GlobalTxnScope})
 		c.Assert(err, IsNil)
 	}
 

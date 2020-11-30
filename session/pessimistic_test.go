@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/testkit"
@@ -1330,6 +1331,36 @@ func (s *testPessimisticSuite) TestRCSubQuery(c *C) {
 	tk.MustExec("rollback")
 }
 
+func (s *testPessimisticSuite) TestRCIndexMerge(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists t")
+	tk.MustExec(`create table t (id int primary key, v int, a int not null, b int not null,
+		index ia (a), index ib (b))`)
+	tk.MustExec("insert into t values (1, 10, 1, 1)")
+
+	tk.MustExec("set transaction isolation level read committed")
+	tk.MustExec("begin pessimistic")
+	tk.MustQuery("select /*+ USE_INDEX_MERGE(t, ia, ib) */ * from t where a > 0 or b > 0").Check(
+		testkit.Rows("1 10 1 1"),
+	)
+	tk.MustQuery("select /*+ NO_INDEX_MERGE() */ * from t where a > 0 or b > 0").Check(
+		testkit.Rows("1 10 1 1"),
+	)
+
+	tk2 := testkit.NewTestKitWithInit(c, s.store)
+	tk2.MustExec("update t set v = 11 where id = 1")
+
+	// Make sure index merge plan is used.
+	plan := tk.MustQuery("explain select /*+ USE_INDEX_MERGE(t, ia, ib) */ * from t where a > 0 or b > 0").Rows()[0][0].(string)
+	c.Assert(strings.Contains(plan, "IndexMerge_"), IsTrue)
+	tk.MustQuery("select /*+ USE_INDEX_MERGE(t, ia, ib) */ * from t where a > 0 or b > 0").Check(
+		testkit.Rows("1 11 1 1"),
+	)
+	tk.MustQuery("select /*+ NO_INDEX_MERGE() */ * from t where a > 0 or b > 0").Check(
+		testkit.Rows("1 11 1 1"),
+	)
+}
+
 func (s *testPessimisticSuite) TestGenerateColPointGet(c *C) {
 	atomic.StoreUint64(&tikv.ManagedLockTTL, 3000)
 	defer atomic.StoreUint64(&tikv.ManagedLockTTL, 300)
@@ -1950,14 +1981,14 @@ func (s *testPessimisticSuite) TestSelectForUpdateConflictRetry(c *C) {
 	tsCh := make(chan uint64)
 	go func() {
 		tk3.MustExec("update tk set c2 = c2 + 1 where c1 = 1")
-		lastTS, err := s.store.GetOracle().GetLowResolutionTimestamp(context.Background())
+		lastTS, err := s.store.GetOracle().GetLowResolutionTimestamp(context.Background(), &oracle.Option{TxnScope: oracle.GlobalTxnScope})
 		c.Assert(err, IsNil)
 		tsCh <- lastTS
 		tk3.MustExec("commit")
 		tsCh <- lastTS
 	}()
 	// tk2LastTS should be its forUpdateTS
-	tk2LastTS, err := s.store.GetOracle().GetLowResolutionTimestamp(context.Background())
+	tk2LastTS, err := s.store.GetOracle().GetLowResolutionTimestamp(context.Background(), &oracle.Option{TxnScope: oracle.GlobalTxnScope})
 	c.Assert(err, IsNil)
 	tk2.MustExec("commit")
 
@@ -1994,26 +2025,39 @@ func (s *testPessimisticSuite) TestAsyncCommitWithSchemaChange(c *C) {
 	tk3 := testkit.NewTestKitWithInit(c, s.store)
 
 	// The txn tk writes something but with failpoint the primary key is not committed.
-	tk.MustExec("begin optimistic")
+	tk.MustExec("begin pessimistic")
 	tk.MustExec("insert into tk values(2, 2, 2)")
-	// Add index for c2 before commit
-	tk2.MustExec("alter table tk add index k2(c2)")
+	tk.MustExec("update tk set c2 = 10 where c1 = 1")
+	ch := make(chan struct{})
+	go func() {
+		// Add index for c2 before commit
+		tk2.MustExec("alter table tk add index k2(c2)")
+		ch <- struct{}{}
+	}()
+	// sleep 100ms to let add index run first
+	time.Sleep(100 * time.Millisecond)
 	// key for c2 should be amended
 	tk.MustExec("commit")
+	<-ch
+	tk3.MustQuery("select * from tk where c2 = 1").Check(testkit.Rows())
 	tk3.MustQuery("select * from tk where c2 = 2").Check(testkit.Rows("2 2 2"))
+	tk3.MustQuery("select * from tk where c2 = 10").Check(testkit.Rows("1 10 1"))
 	tk3.MustExec("admin check table tk")
 
-	tk.MustExec("begin optimistic")
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("update tk set c3 = 20 where c1 = 2")
 	tk.MustExec("insert into tk values(3, 3, 3)")
 	tk.MustExec("commit")
 	// Add index for c3 after commit
 	tk2.MustExec("alter table tk add index k3(c3)")
+	tk3.MustQuery("select * from tk where c3 = 2").Check(testkit.Rows())
+	tk3.MustQuery("select * from tk where c3 = 20").Check(testkit.Rows("2 2 20"))
 	tk3.MustQuery("select * from tk where c3 = 3").Check(testkit.Rows("3 3 3"))
 	tk3.MustExec("admin check table tk")
 
 	tk.MustExec("drop table if exists tk")
 	tk.MustExec("create table tk (c1 int primary key, c2 int)")
-	tk.MustExec("begin optimistic")
+	tk.MustExec("begin pessimistic")
 	tk.MustExec("insert into tk values(1, 1)")
 	go func() {
 		time.Sleep(200 * time.Millisecond)
@@ -2045,19 +2089,30 @@ func (s *testPessimisticSuite) Test1PCWithSchemaChange(c *C) {
 
 	tk.MustExec("drop table if exists tk")
 	tk.MustExec("create table tk (c1 int primary key, c2 int)")
+	tk.MustExec("insert into tk values (1, 1)")
 
-	tk.MustExec("begin optimistic")
+	tk.MustExec("begin pessimistic")
 	tk.MustExec("insert into tk values(2, 2)")
-	// Add index for c2 before commit
-	tk2.MustExec("alter table tk add index k2(c2)")
+	tk.MustExec("update tk set c2 = 10 where c1 = 1")
+	ch := make(chan struct{})
+	go func() {
+		// Add index for c2 before commit
+		tk2.MustExec("alter table tk add index k2(c2)")
+		ch <- struct{}{}
+	}()
+	// sleep 100ms to let add index run first
+	time.Sleep(100 * time.Millisecond)
 	// key for c2 should be amended
 	tk.MustExec("commit")
+	<-ch
 	tk3.MustQuery("select * from tk where c2 = 2").Check(testkit.Rows("2 2"))
+	tk3.MustQuery("select * from tk where c2 = 1").Check(testkit.Rows())
+	tk3.MustQuery("select * from tk where c2 = 10").Check(testkit.Rows("1 10"))
 	tk3.MustExec("admin check table tk")
 
 	tk.MustExec("drop table if exists tk")
 	tk.MustExec("create table tk (c1 int primary key, c2 int)")
-	tk.MustExec("begin optimistic")
+	tk.MustExec("begin pessimistic")
 	tk.MustExec("insert into tk values(1, 1)")
 	go func() {
 		time.Sleep(200 * time.Millisecond)

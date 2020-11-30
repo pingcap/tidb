@@ -267,7 +267,7 @@ func (e *slowQueryRetriever) getBatchLog(reader *bufio.Reader, offset *offset, n
 			line = string(hack.String(lineByte))
 			log = append(log, line)
 			if strings.HasSuffix(line, variable.SlowLogSQLSuffixStr) {
-				if strings.HasPrefix(line, "use") {
+				if strings.HasPrefix(line, "use") || strings.HasPrefix(line, variable.SlowLogRowPrefixStr) {
 					continue
 				}
 				break
@@ -484,6 +484,7 @@ type slowQueryTuple struct {
 	isInternal                bool
 	succ                      bool
 	planFromCache             bool
+	planFromBinding           bool
 	prepared                  bool
 	kvTotal                   float64
 	pdTotal                   float64
@@ -642,6 +643,8 @@ func (st *slowQueryTuple) setFieldValue(tz *time.Location, field, value string, 
 		st.succ, err = strconv.ParseBool(value)
 	case variable.SlowLogPlanFromCache:
 		st.planFromCache, err = strconv.ParseBool(value)
+	case variable.SlowLogPlanFromBinding:
+		st.planFromBinding, err = strconv.ParseBool(value)
 	case variable.SlowLogPlan:
 		st.plan = value
 	case variable.SlowLogPlanDigest:
@@ -752,6 +755,11 @@ func (st *slowQueryTuple) convertToDatumRow() []types.Datum {
 		record = append(record, types.NewIntDatum(0))
 	}
 	if st.planFromCache {
+		record = append(record, types.NewIntDatum(1))
+	} else {
+		record = append(record, types.NewIntDatum(0))
+	}
+	if st.planFromBinding {
 		record = append(record, types.NewIntDatum(1))
 	} else {
 		record = append(record, types.NewIntDatum(0))
@@ -936,8 +944,9 @@ type slowQueryRuntimeStats struct {
 // String implements the RuntimeStats interface.
 func (s *slowQueryRuntimeStats) String() string {
 	return fmt.Sprintf("initialize: %s, read_file: %s, parse_log: {time:%s, concurrency:%v}, total_file: %v, read_file: %v, read_size: %s",
-		s.initialize, s.readFile, time.Duration(s.parseLog), s.concurrent,
-		s.totalFileNum, s.readFileNum, memory.BytesToString(s.readFileSize))
+		execdetails.FormatDuration(s.initialize), execdetails.FormatDuration(s.readFile),
+		execdetails.FormatDuration(time.Duration(s.parseLog)), s.concurrent,
+		s.totalFileNum, s.readFileNum, memory.FormatBytes(s.readFileSize))
 }
 
 // Merge implements the RuntimeStats interface.

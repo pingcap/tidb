@@ -724,6 +724,20 @@ func (s *testIntegrationSuite) TestPartitionPruningForInExpr(c *C) {
 	}
 }
 
+func (s *testIntegrationSerialSuite) TestPartitionPruningWithDateType(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a datetime) partition by range columns (a) (partition p1 values less than ('20000101'), partition p2 values less than ('2000-10-01'));")
+	tk.MustExec("insert into t values ('20000201'), ('19000101');")
+
+	// cannot get the statistical information immediately
+	// tk.MustQuery(`SELECT PARTITION_NAME,TABLE_ROWS FROM INFORMATION_SCHEMA.PARTITIONS WHERE TABLE_NAME = 't';`).Check(testkit.Rows("p1 1", "p2 1"))
+	str := tk.MustQuery(`desc select * from t where a < '2000-01-01';`).Rows()[0][3].(string)
+	c.Assert(strings.Contains(str, "partition:p1"), IsTrue)
+}
+
 func (s *testIntegrationSuite) TestPartitionPruningForEQ(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -1856,4 +1870,70 @@ func (s *testIntegrationSuite) TestIssue10448(c *C) {
 	tk.MustExec("create table t(pk int(11) primary key)")
 	tk.MustExec("insert into t values(1),(2),(3)")
 	tk.MustQuery("select a from (select pk as a from t) t1 where a = 18446744073709551615").Check(testkit.Rows())
+}
+
+func (s *testIntegrationSuite) TestUpdateMultiUpdatePK(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int not null primary key)")
+	tk.MustExec("insert into t values (1)")
+	tk.MustGetErrMsg(`UPDATE t m, t n SET m.a = m.a + 10, n.a = n.a + 10`,
+		`[planner:1706]Primary key/partition key update is not allowed since the table is updated both as 'm' and 'n'.`)
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a varchar(10) not null primary key)")
+	tk.MustExec("insert into t values ('abc')")
+	tk.MustGetErrMsg(`UPDATE t m, t n SET m.a = 'def', n.a = 'xyz'`,
+		`[planner:1706]Primary key/partition key update is not allowed since the table is updated both as 'm' and 'n'.`)
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int, primary key (a, b))")
+	tk.MustExec("insert into t values (1, 2)")
+	tk.MustGetErrMsg(`UPDATE t m, t n SET m.a = m.a + 10, n.b = n.b + 10`,
+		`[planner:1706]Primary key/partition key update is not allowed since the table is updated both as 'm' and 'n'.`)
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int primary key, b int)")
+	tk.MustExec("insert into t values (1, 2)")
+	tk.MustGetErrMsg(`UPDATE t m, t n SET m.a = m.a + 10, n.a = n.a + 10`,
+		`[planner:1706]Primary key/partition key update is not allowed since the table is updated both as 'm' and 'n'.`)
+
+	tk.MustExec(`UPDATE t m, t n SET m.b = m.b + 10, n.b = n.b + 10`)
+	tk.MustQuery("SELECT * FROM t").Check(testkit.Rows("1 12"))
+
+	tk.MustExec(`UPDATE t m, t n SET m.a = m.a + 1, n.b = n.b + 10`)
+	tk.MustQuery("SELECT * FROM t").Check(testkit.Rows("2 12"))
+}
+
+func (s *testIntegrationSerialSuite) TestPreferRangeScan(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists test;")
+	tk.MustExec("create table test(`id` int(10) NOT NULL AUTO_INCREMENT,`name` varchar(50) NOT NULL DEFAULT 'tidb',`age` int(11) NOT NULL,`addr` varchar(50) DEFAULT 'The ocean of stars',PRIMARY KEY (`id`),KEY `idx_age` (`age`))")
+	tk.MustExec("insert into test(age) values(5);")
+	tk.MustExec("insert into test(name,age,addr) select name,age,addr from test;")
+	tk.MustExec("insert into test(name,age,addr) select name,age,addr from test;")
+	tk.MustExec("insert into test(name,age,addr) select name,age,addr from test;")
+	tk.MustExec("insert into test(name,age,addr) select name,age,addr from test;")
+	tk.MustExec("insert into test(name,age,addr) select name,age,addr from test;")
+	tk.MustExec("insert into test(name,age,addr) select name,age,addr from test;")
+	tk.MustExec("insert into test(name,age,addr) select name,age,addr from test;")
+	tk.MustExec("insert into test(name,age,addr) select name,age,addr from test;")
+	tk.MustExec("insert into test(name,age,addr) select name,age,addr from test;")
+	tk.MustExec("insert into test(name,age,addr) select name,age,addr from test;")
+	tk.MustExec("insert into test(name,age,addr) select name,age,addr from test;")
+	tk.MustExec("analyze table test;")
+	tk.MustExec("set session tidb_opt_prefer_range_scan=0")
+	tk.MustQuery("explain select * from test where age=5").Check(testkit.Rows(
+		"TableReader_7 2048.00 root  data:Selection_6",
+		"└─Selection_6 2048.00 cop[tikv]  eq(test.test.age, 5)",
+		"  └─TableFullScan_5 2048.00 cop[tikv] table:test keep order:false"))
+
+	tk.MustExec("set session tidb_opt_prefer_range_scan=1")
+	tk.MustQuery("explain select * from test where age=5").Check(testkit.Rows(
+		"IndexLookUp_7 2048.00 root  ",
+		"├─IndexRangeScan_5(Build) 2048.00 cop[tikv] table:test, index:idx_age(age) range:[5,5], keep order:false",
+		"└─TableRowIDScan_6(Probe) 2048.00 cop[tikv] table:test keep order:false"))
 }
