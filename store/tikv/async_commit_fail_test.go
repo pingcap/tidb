@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/variable"
 )
 
 type testAsyncCommitFailSuite struct {
@@ -47,8 +46,6 @@ func (s *testAsyncCommitFailSuite) TestFailAsyncCommitPrewriteRpcErrors(c *C) {
 		return
 	}
 
-	variable.SetSysVar("tidb_enable_async_commit", "ON")
-	defer variable.SetSysVar("tidb_enable_async_commit", "OFF")
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/noRetryOnRpcError", "return(true)"), IsNil)
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/rpcPrewriteTimeout", `return(true)`), IsNil)
 	defer func() {
@@ -56,9 +53,8 @@ func (s *testAsyncCommitFailSuite) TestFailAsyncCommitPrewriteRpcErrors(c *C) {
 		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/noRetryOnRpcError"), IsNil)
 	}()
 	// The rpc error will be wrapped to ErrResultUndetermined.
-	t1, err := s.store.Begin()
-	c.Assert(err, IsNil)
-	err = t1.Set([]byte("a"), []byte("a1"))
+	t1 := s.beginAsyncCommit(c)
+	err := t1.Set([]byte("a"), []byte("a1"))
 	c.Assert(err, IsNil)
 	ctx := context.WithValue(context.Background(), sessionctx.ConnID, uint64(1))
 	err = t1.Commit(ctx)
@@ -70,8 +66,7 @@ func (s *testAsyncCommitFailSuite) TestFailAsyncCommitPrewriteRpcErrors(c *C) {
 	c.Assert(err, Equals, kv.ErrInvalidTxn)
 
 	// Create a new transaction to check. The previous transaction should actually commit.
-	t2, err := s.store.Begin()
-	c.Assert(err, IsNil)
+	t2 := s.beginAsyncCommit(c)
 	res, err := t2.Get(context.Background(), []byte("a"))
 	c.Assert(err, IsNil)
 	c.Assert(bytes.Equal(res, []byte("a1")), IsTrue)
@@ -82,9 +77,6 @@ func (s *testAsyncCommitFailSuite) TestAsyncCommitPrewriteCancelled(c *C) {
 	if *WithTiKV {
 		return
 	}
-
-	variable.SetSysVar("tidb_enable_async_commit", "ON")
-	defer variable.SetSysVar("tidb_enable_async_commit", "OFF")
 
 	// Split into two regions.
 	splitKey := "s"
@@ -101,8 +93,7 @@ func (s *testAsyncCommitFailSuite) TestAsyncCommitPrewriteCancelled(c *C) {
 		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/rpcPrewriteResult"), IsNil)
 	}()
 
-	t1, err := s.store.Begin()
-	c.Assert(err, IsNil)
+	t1 := s.beginAsyncCommit(c)
 	err = t1.Set([]byte("a"), []byte("a"))
 	c.Assert(err, IsNil)
 	err = t1.Set([]byte("z"), []byte("z"))
@@ -114,13 +105,9 @@ func (s *testAsyncCommitFailSuite) TestAsyncCommitPrewriteCancelled(c *C) {
 }
 
 func (s *testAsyncCommitFailSuite) TestPointGetWithAsyncCommit(c *C) {
-	variable.SetSysVar("tidb_enable_async_commit", "ON")
-	defer variable.SetSysVar("tidb_enable_async_commit", "OFF")
+	s.putAlphabets(c, true)
 
-	s.putAlphabets(c)
-
-	txn, err := s.store.Begin()
-	c.Assert(err, IsNil)
+	txn := s.beginAsyncCommit(c)
 	txn.Set([]byte("a"), []byte("v1"))
 	txn.Set([]byte("b"), []byte("v2"))
 	s.mustPointGet(c, []byte("a"), []byte("a"))
@@ -129,16 +116,15 @@ func (s *testAsyncCommitFailSuite) TestPointGetWithAsyncCommit(c *C) {
 	// PointGet cannot ignore async commit transactions' locks.
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/asyncCommitDoNothing", "return"), IsNil)
 	ctx := context.WithValue(context.Background(), sessionctx.ConnID, uint64(1))
-	err = txn.Commit(ctx)
+	err := txn.Commit(ctx)
 	c.Assert(err, IsNil)
-	c.Assert(txn.(*tikvTxn).committer.isAsyncCommit(), IsTrue)
+	c.Assert(txn.committer.isAsyncCommit(), IsTrue)
 	s.mustPointGet(c, []byte("a"), []byte("v1"))
 	s.mustPointGet(c, []byte("b"), []byte("v2"))
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/asyncCommitDoNothing"), IsNil)
 
 	// PointGet will not push the `max_ts` to its ts which is MaxUint64.
-	txn2, err := s.store.Begin()
-	c.Assert(err, IsNil)
+	txn2 := s.beginAsyncCommit(c)
 	s.mustGetFromTxn(c, txn2, []byte("a"), []byte("v1"))
 	s.mustGetFromTxn(c, txn2, []byte("b"), []byte("v2"))
 	err = txn2.Rollback()
@@ -151,10 +137,7 @@ func (s *testAsyncCommitFailSuite) TestSecondaryListInPrimaryLock(c *C) {
 		return
 	}
 
-	variable.SetSysVar("tidb_enable_async_commit", "ON")
-	defer variable.SetSysVar("tidb_enable_async_commit", "OFF")
-
-	s.putAlphabets(c)
+	s.putAlphabets(c, true)
 
 	// Split into several regions.
 	for _, splitKey := range []string{"h", "o", "u"} {
@@ -184,8 +167,7 @@ func (s *testAsyncCommitFailSuite) TestSecondaryListInPrimaryLock(c *C) {
 		connID++
 		ctx := context.WithValue(context.Background(), sessionctx.ConnID, connID)
 
-		txn, err := s.store.Begin()
-		c.Assert(err, IsNil)
+		txn := s.beginAsyncCommit(c)
 		for i := range keys {
 			txn.Set([]byte(keys[i]), []byte(values[i]))
 		}
@@ -195,8 +177,7 @@ func (s *testAsyncCommitFailSuite) TestSecondaryListInPrimaryLock(c *C) {
 		err = txn.Commit(ctx)
 		c.Assert(err, IsNil)
 
-		tikvTxn := txn.(*tikvTxn)
-		primary := tikvTxn.committer.primary()
+		primary := txn.committer.primary()
 		bo := NewBackofferWithVars(context.Background(), 5000, nil)
 		txnStatus, err := s.store.lockResolver.getTxnStatus(bo, txn.StartTS(), primary, 0, 0, false)
 		c.Assert(err, IsNil)
@@ -232,12 +213,9 @@ func (s *testAsyncCommitFailSuite) TestSecondaryListInPrimaryLock(c *C) {
 }
 
 func (s *testAsyncCommitFailSuite) TestAsyncCommitContextCancelCausingUndetermined(c *C) {
-	variable.SetSysVar("tidb_enable_async_commit", "ON")
-	defer variable.SetSysVar("tidb_enable_async_commit", "OFF")
-
 	// For an async commit transaction, if RPC returns context.Canceled error when prewriting, the
 	// transaction should go to undetermined state.
-	txn := s.begin(c)
+	txn := s.beginAsyncCommit(c)
 	err := txn.Set([]byte("a"), []byte("va"))
 	c.Assert(err, IsNil)
 

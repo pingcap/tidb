@@ -1960,8 +1960,6 @@ func (s *testPessimisticSuite) TestSelectForUpdateWaitSeconds(c *C) {
 }
 
 func (s *testPessimisticSuite) TestSelectForUpdateConflictRetry(c *C) {
-	variable.SetSysVar("tidb_enable_async_commit", "ON")
-	defer variable.SetSysVar("tidb_enable_async_commit", "OFF")
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.TiKVClient.AsyncCommit.SafeWindow = 500 * time.Millisecond
@@ -1969,11 +1967,14 @@ func (s *testPessimisticSuite) TestSelectForUpdateConflictRetry(c *C) {
 	})
 
 	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.Se.GetSessionVars().EnableAsyncCommit = true
 	tk.MustExec("drop table if exists tk")
 	tk.MustExec("create table tk (c1 int primary key, c2 int)")
 	tk.MustExec("insert into tk values(1,1),(2,2)")
 	tk2 := testkit.NewTestKitWithInit(c, s.store)
+	tk2.Se.GetSessionVars().EnableAsyncCommit = true
 	tk3 := testkit.NewTestKitWithInit(c, s.store)
+	tk3.Se.GetSessionVars().EnableAsyncCommit = true
 
 	tk2.MustExec("begin pessimistic")
 	tk3.MustExec("begin pessimistic")
@@ -2007,8 +2008,6 @@ func (s *testPessimisticSuite) TestAsyncCommitWithSchemaChange(c *C) {
 		return
 	}
 
-	variable.SetSysVar("tidb_enable_async_commit", "ON")
-	defer variable.SetSysVar("tidb_enable_async_commit", "OFF")
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.TiKVClient.AsyncCommit.SafeWindow = time.Second
@@ -2020,11 +2019,14 @@ func (s *testPessimisticSuite) TestAsyncCommitWithSchemaChange(c *C) {
 	}()
 
 	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.Se.GetSessionVars().EnableAsyncCommit = true
 	tk.MustExec("drop table if exists tk")
 	tk.MustExec("create table tk (c1 int primary key, c2 int, c3 int)")
 	tk.MustExec("insert into tk values(1, 1, 1)")
 	tk2 := testkit.NewTestKitWithInit(c, s.store)
+	tk2.Se.GetSessionVars().EnableAsyncCommit = true
 	tk3 := testkit.NewTestKitWithInit(c, s.store)
+	tk3.Se.GetSessionVars().EnableAsyncCommit = true
 
 	// The txn tk writes something but with failpoint the primary key is not committed.
 	tk.MustExec("begin pessimistic")
@@ -2079,8 +2081,6 @@ func (s *testPessimisticSuite) Test1PCWithSchemaChange(c *C) {
 		return
 	}
 
-	variable.SetSysVar("tidb_enable_1pc", "ON")
-	defer variable.SetSysVar("tidb_enable_1pc", "OFF")
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.TiKVClient.AsyncCommit.SafeWindow = time.Second
@@ -2090,6 +2090,9 @@ func (s *testPessimisticSuite) Test1PCWithSchemaChange(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk2 := testkit.NewTestKitWithInit(c, s.store)
 	tk3 := testkit.NewTestKitWithInit(c, s.store)
+	tk.Se.GetSessionVars().EnableAsyncCommit = true
+	tk2.Se.GetSessionVars().EnableAsyncCommit = true
+	tk3.Se.GetSessionVars().EnableAsyncCommit = true
 
 	tk.MustExec("drop table if exists tk")
 	tk.MustExec("create table tk (c1 int primary key, c2 int)")

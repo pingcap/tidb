@@ -17,10 +17,17 @@ import (
 	"context"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 )
+
+func (s *testAsyncCommitCommon) begin1PC(c *C) *tikvTxn {
+	txn, err := s.store.Begin()
+	c.Assert(err, IsNil)
+	txn.SetOption(kv.Enable1PC, true)
+	return txn.(*tikvTxn)
+}
 
 type testOnePCSuite struct {
 	OneByOneSuite
@@ -36,15 +43,12 @@ func (s *testOnePCSuite) SetUpTest(c *C) {
 }
 
 func (s *testOnePCSuite) Test1PC(c *C) {
-	variable.SetSysVar("tidb_enable_1pc", "ON")
-	defer variable.SetSysVar("tidb_enable_1pc", "OFF")
-
 	ctx := context.WithValue(context.Background(), sessionctx.ConnID, uint64(1))
 
 	k1 := []byte("k1")
 	v1 := []byte("v1")
 
-	txn := s.begin(c)
+	txn := s.begin1PC(c)
 	err := txn.Set(k1, v1)
 	c.Assert(err, IsNil)
 	err = txn.Commit(ctx)
@@ -59,7 +63,7 @@ func (s *testOnePCSuite) Test1PC(c *C) {
 	k2 := []byte("k2")
 	v2 := []byte("v2")
 
-	txn = s.begin(c)
+	txn = s.begin1PC(c)
 	err = txn.Set(k2, v2)
 	c.Assert(err, IsNil)
 	err = txn.Commit(context.Background())
@@ -69,7 +73,6 @@ func (s *testOnePCSuite) Test1PC(c *C) {
 	c.Assert(txn.committer.commitTS, Greater, txn.startTS)
 
 	// 1PC doesn't work if system variable not set
-	variable.SetSysVar("tidb_enable_1pc", "OFF")
 
 	k3 := []byte("k3")
 	v3 := []byte("v3")
@@ -83,9 +86,6 @@ func (s *testOnePCSuite) Test1PC(c *C) {
 	c.Assert(txn.committer.onePCCommitTS, Equals, uint64(0))
 	c.Assert(txn.committer.commitTS, Greater, txn.startTS)
 
-	variable.SetSysVar("tidb_enable_1pc", "ON")
-	defer variable.SetSysVar("tidb_enable_1pc", "OFF")
-
 	// Test multiple keys
 	k4 := []byte("k4")
 	v4 := []byte("v4")
@@ -94,7 +94,7 @@ func (s *testOnePCSuite) Test1PC(c *C) {
 	k6 := []byte("k6")
 	v6 := []byte("v6")
 
-	txn = s.begin(c)
+	txn = s.begin1PC(c)
 	err = txn.Set(k4, v4)
 	c.Assert(err, IsNil)
 	err = txn.Set(k5, v5)
@@ -116,7 +116,7 @@ func (s *testOnePCSuite) Test1PC(c *C) {
 
 	// Overwriting in MVCC
 	v6New := []byte("v6new")
-	txn = s.begin(c)
+	txn = s.begin1PC(c)
 	err = txn.Set(k6, v6New)
 	c.Assert(err, IsNil)
 	err = txn.Commit(ctx)
@@ -141,21 +141,18 @@ func (s *testOnePCSuite) Test1PC(c *C) {
 }
 
 func (s *testOnePCSuite) Test1PCIsolation(c *C) {
-	variable.SetSysVar("tidb_enable_1pc", "ON")
-	defer variable.SetSysVar("tidb_enable_1pc", "OFF")
-
 	ctx := context.WithValue(context.Background(), sessionctx.ConnID, uint64(1))
 
 	k := []byte("k")
 	v1 := []byte("v1")
 
-	txn := s.begin(c)
+	txn := s.begin1PC(c)
 	txn.Set(k, v1)
 	err := txn.Commit(ctx)
 	c.Assert(err, IsNil)
 
 	v2 := []byte("v2")
-	txn = s.begin(c)
+	txn = s.begin1PC(c)
 	txn.Set(k, v2)
 
 	// Make `txn`'s commitTs more likely to be less than `txn2`'s startTs if there's bug in commitTs
@@ -165,7 +162,7 @@ func (s *testOnePCSuite) Test1PCIsolation(c *C) {
 		c.Assert(err, IsNil)
 	}
 
-	txn2 := s.begin(c)
+	txn2 := s.begin1PC(c)
 	s.mustGetFromTxn(c, txn2, k, v1)
 
 	err = txn.Commit(ctx)
@@ -185,12 +182,9 @@ func (s *testOnePCSuite) Test1PCDisallowMultiRegion(c *C) {
 		return
 	}
 
-	variable.SetSysVar("tidb_enable_1pc", "ON")
-	defer variable.SetSysVar("tidb_enable_1pc", "OFF")
-
 	ctx := context.WithValue(context.Background(), sessionctx.ConnID, uint64(1))
 
-	txn := s.begin(c)
+	txn := s.begin1PC(c)
 
 	keys := []string{"k0", "k1", "k2", "k3"}
 	values := []string{"v0", "v1", "v2", "v3"}
@@ -209,7 +203,7 @@ func (s *testOnePCSuite) Test1PCDisallowMultiRegion(c *C) {
 	newPeerID := s.cluster.AllocID()
 	s.cluster.Split(loc.Region.id, newRegionID, []byte(keys[2]), []uint64{newPeerID}, newPeerID)
 
-	txn = s.begin(c)
+	txn = s.begin1PC(c)
 	err = txn.Set([]byte(keys[1]), []byte(values[1]))
 	c.Assert(err, IsNil)
 	err = txn.Set([]byte(keys[2]), []byte(values[2]))
@@ -233,9 +227,6 @@ func (s *testOnePCSuite) Test1PCDisallowMultiRegion(c *C) {
 // It's just a simple validation of external consistency.
 // Extra tests are needed to test this feature with the control of the TiKV cluster.
 func (s *testOnePCSuite) Test1PCExternalConsistency(c *C) {
-	variable.SetSysVar("tidb_enable_1pc", "ON")
-	defer variable.SetSysVar("tidb_enable_1pc", "OFF")
-
 	t1, err := s.store.Begin()
 	c.Assert(err, IsNil)
 	t2, err := s.store.Begin()
