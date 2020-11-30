@@ -758,6 +758,14 @@ type SessionVars struct {
 	EnabledRateLimitAction bool
 }
 
+// CheckAndGetTxnScope will return the transaction scope we should use in the current session.
+func (s *SessionVars) CheckAndGetTxnScope() string {
+	if s.InRestrictedSQL {
+		return oracle.GlobalTxnScope
+	}
+	return s.TxnScope
+}
+
 // UseDynamicPartitionPrune indicates whether use new dynamic partition prune.
 func (s *SessionVars) UseDynamicPartitionPrune() bool {
 	return PartitionPruneMode(s.PartitionPruneMode.Load()) == DynamicOnly

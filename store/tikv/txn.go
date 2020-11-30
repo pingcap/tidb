@@ -60,6 +60,7 @@ type tikvTxn struct {
 	snapshot  *tikvSnapshot
 	us        kv.UnionStore
 	store     *tikvStore // for connection to region.
+	txnScope  string     // txn_scope indicates which txn_scope this TiKV transaction will work on.
 	startTS   uint64
 	startTime time.Time // Monotonic timestamp for recording txn time consuming.
 	commitTS  uint64
@@ -87,23 +88,24 @@ type tikvTxn struct {
 	commitCallback func(info kv.TxnInfo, err error)
 }
 
-func newTiKVTxn(store *tikvStore) (*tikvTxn, error) {
+func newTiKVTxn(store *tikvStore, txnScope string) (*tikvTxn, error) {
 	bo := NewBackofferWithVars(context.Background(), tsoMaxBackoff, nil)
-	startTS, err := store.getTimestampWithRetry(bo)
+	startTS, err := store.getTimestampWithRetry(bo, txnScope)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return newTikvTxnWithStartTS(store, startTS, store.nextReplicaReadSeed())
+	return newTikvTxnWithStartTS(store, txnScope, startTS, store.nextReplicaReadSeed())
 }
 
 // newTikvTxnWithStartTS creates a txn with startTS.
-func newTikvTxnWithStartTS(store *tikvStore, startTS uint64, replicaReadSeed uint32) (*tikvTxn, error) {
+func newTikvTxnWithStartTS(store *tikvStore, txnScope string, startTS uint64, replicaReadSeed uint32) (*tikvTxn, error) {
 	ver := kv.NewVersion(startTS)
 	snapshot := newTiKVSnapshot(store, ver, replicaReadSeed)
 	return &tikvTxn{
 		snapshot:  snapshot,
 		us:        kv.NewUnionStore(snapshot),
 		store:     store,
+		txnScope:  txnScope,
 		startTS:   startTS,
 		startTime: time.Now(),
 		valid:     true,
