@@ -54,3 +54,10 @@ func (s *testMath) TestStrLenOfUint64Fast_ManualTestCases(c *C) {
 		c.Assert(actual, Equals, expected)
 	}
 }
+
+func (s *testMath) TestMinInt(c *C) {
+	c.Assert(MinInt(1, 2), Equals, 1)
+	c.Assert(MinInt(2, 1), Equals, 1)
+	c.Assert(MinInt(4, 2, 1, 3), Equals, 1)
+	c.Assert(MinInt(1, 1), Equals, 1)
+}

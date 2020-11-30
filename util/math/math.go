@@ -48,3 +48,14 @@ func StrLenOfInt64Fast(x int64) int {
 	}
 	return size + StrLenOfUint64Fast(uint64(Abs(x)))
 }
+
+// MinInt choice smallest integer from its arguments.
+func MinInt(x int, xs ...int) int {
+	min := x
+	for _, n := range xs {
+		if n < min {
+			min = n
+		}
+	}
+	return min
+}
