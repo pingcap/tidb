@@ -1862,6 +1862,17 @@ func (s *testIntegrationSerialSuite) TestIssue20710(c *C) {
 	}
 }
 
+func (s *testIntegrationSuite) TestQueryBlockTableAliasInHint(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	c.Assert(tk.HasPlan("select /*+ HASH_JOIN(@sel_1 t2) */ * FROM (select 1) t1 NATURAL LEFT JOIN (select 2) t2", "HashJoin"), IsTrue)
+	tk.MustQuery("select /*+ HASH_JOIN(@sel_1 t2) */ * FROM (select 1) t1 NATURAL LEFT JOIN (select 2) t2").Check(testkit.Rows(
+		"1 2",
+	))
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 0)
+}
+
 func (s *testIntegrationSuite) TestIssue10448(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -1905,4 +1916,35 @@ func (s *testIntegrationSuite) TestUpdateMultiUpdatePK(c *C) {
 
 	tk.MustExec(`UPDATE t m, t n SET m.a = m.a + 1, n.b = n.b + 10`)
 	tk.MustQuery("SELECT * FROM t").Check(testkit.Rows("2 12"))
+}
+
+func (s *testIntegrationSerialSuite) TestPreferRangeScan(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists test;")
+	tk.MustExec("create table test(`id` int(10) NOT NULL AUTO_INCREMENT,`name` varchar(50) NOT NULL DEFAULT 'tidb',`age` int(11) NOT NULL,`addr` varchar(50) DEFAULT 'The ocean of stars',PRIMARY KEY (`id`),KEY `idx_age` (`age`))")
+	tk.MustExec("insert into test(age) values(5);")
+	tk.MustExec("insert into test(name,age,addr) select name,age,addr from test;")
+	tk.MustExec("insert into test(name,age,addr) select name,age,addr from test;")
+	tk.MustExec("insert into test(name,age,addr) select name,age,addr from test;")
+	tk.MustExec("insert into test(name,age,addr) select name,age,addr from test;")
+	tk.MustExec("insert into test(name,age,addr) select name,age,addr from test;")
+	tk.MustExec("insert into test(name,age,addr) select name,age,addr from test;")
+	tk.MustExec("insert into test(name,age,addr) select name,age,addr from test;")
+	tk.MustExec("insert into test(name,age,addr) select name,age,addr from test;")
+	tk.MustExec("insert into test(name,age,addr) select name,age,addr from test;")
+	tk.MustExec("insert into test(name,age,addr) select name,age,addr from test;")
+	tk.MustExec("insert into test(name,age,addr) select name,age,addr from test;")
+	tk.MustExec("analyze table test;")
+	tk.MustExec("set session tidb_opt_prefer_range_scan=0")
+	tk.MustQuery("explain select * from test where age=5").Check(testkit.Rows(
+		"TableReader_7 2048.00 root  data:Selection_6",
+		"└─Selection_6 2048.00 cop[tikv]  eq(test.test.age, 5)",
+		"  └─TableFullScan_5 2048.00 cop[tikv] table:test keep order:false"))
+
+	tk.MustExec("set session tidb_opt_prefer_range_scan=1")
+	tk.MustQuery("explain select * from test where age=5").Check(testkit.Rows(
+		"IndexLookUp_7 2048.00 root  ",
+		"├─IndexRangeScan_5(Build) 2048.00 cop[tikv] table:test, index:idx_age(age) range:[5,5], keep order:false",
+		"└─TableRowIDScan_6(Probe) 2048.00 cop[tikv] table:test keep order:false"))
 }
