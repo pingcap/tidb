@@ -448,6 +448,10 @@ type PlanBuilder struct {
 	buildingViewStack set.StringSet
 	// renamingViewName is the name of the view which is being renamed.
 	renamingViewName string
+
+	// evalDefaultExpr needs this information to find the corresponding column.
+	// It stores the OutputNames before buildProjection.
+	allNames [][]*types.FieldName
 }
 
 type handleColHelper struct {
