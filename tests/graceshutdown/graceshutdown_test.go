@@ -119,7 +119,7 @@ func (s *TestGracefulShutdownSuite) TestGracefulShutdown(c *C) {
 	c.Assert(err, IsNil)
 	defer db.Close()
 
-	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(100*time.Second))
+	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(10*time.Second))
 	defer cancel()
 	conn1, err := db.Conn(ctx)
 	c.Assert(err, IsNil)
