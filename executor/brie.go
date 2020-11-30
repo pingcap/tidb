@@ -455,13 +455,22 @@ func (b *executorBuilder) buildImport(s *ast.BRIEStmt, schema *expression.Schema
 		case ast.BRIEOptionCSVTrimLastSeparators:
 			importTaskCfg.Mydumper.CSV.TrimLastSep = opt.UintValue != 0
 		case ast.BRIEOptionChecksum:
-			// TODO(lance6717): support OpLevelOptional later
-			if opt.UintValue == 0 {
+			switch opt.UintValue {
+			case uint64(ast.BRIEOptionLevelOff):
 				importGlobalCfg.PostRestore.Checksum = importcfg.OpLevelOff
+			case uint64(ast.BRIEOptionLevelOptional):
+				importGlobalCfg.PostRestore.Checksum = importcfg.OpLevelOptional
+			default:
+				importGlobalCfg.PostRestore.Checksum = importcfg.OpLevelRequired
 			}
 		case ast.BRIEOptionAnalyze:
-			if opt.UintValue == 0 {
+			switch opt.UintValue {
+			case uint64(ast.BRIEOptionLevelOff):
 				importGlobalCfg.PostRestore.Analyze = importcfg.OpLevelOff
+			case uint64(ast.BRIEOptionLevelOptional):
+				importGlobalCfg.PostRestore.Analyze = importcfg.OpLevelOptional
+			default:
+				importGlobalCfg.PostRestore.Analyze = importcfg.OpLevelRequired
 			}
 		}
 	}

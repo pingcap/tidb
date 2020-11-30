@@ -39,7 +39,7 @@ require (
 	github.com/phayes/freeport v0.0.0-20180830031419-95f893ade6f2
 	github.com/pierrec/lz4 v2.5.2+incompatible // indirect
 	github.com/pingcap/badger v1.5.1-0.20200908111422-2e78ee155d19
-	github.com/pingcap/br v4.0.0-beta.2.0.20201014031603-5676c8fdad1a+incompatible
+	github.com/pingcap/br v4.0.0-beta.2.0.20201126125541-df49ebdd2800+incompatible
 	github.com/pingcap/check v0.0.0-20200212061837-5e12011dc712
 	github.com/pingcap/errors v0.11.5-0.20201126102027-b0a155152ca3
 	github.com/pingcap/failpoint v0.0.0-20200702092429-9f69995143ce
@@ -49,7 +49,7 @@ require (
 	github.com/pingcap/log v0.0.0-20201112100606-8f1e84a3abc8
 	github.com/pingcap/parser v0.0.0-20201130065939-7119e3f6cbf7
 	github.com/pingcap/sysutil v0.0.0-20201130064824-f0c8aa6a6966
-	github.com/pingcap/tidb-lightning v4.0.9-0.20201123023740-da8b24e5b6c5+incompatible
+	github.com/pingcap/tidb-lightning v4.0.9-0.20201127112505-8a276c0282e5+incompatible
 	github.com/pingcap/tidb-tools v4.0.9-0.20201127090955-2707c97b3853+incompatible
 	github.com/pingcap/tipb v0.0.0-20201026044621-45e60c77588f
 	github.com/prometheus/client_golang v1.5.1
