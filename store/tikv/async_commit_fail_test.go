@@ -23,9 +23,9 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 )
 
 type testAsyncCommitFailSuite struct {
@@ -47,10 +47,8 @@ func (s *testAsyncCommitFailSuite) TestFailAsyncCommitPrewriteRpcErrors(c *C) {
 		return
 	}
 
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.TiKVClient.AsyncCommit.Enable = true
-	})
+	variable.SetSysVar("tidb_enable_async_commit", "ON")
+	defer variable.SetSysVar("tidb_enable_async_commit", "OFF")
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/noRetryOnRpcError", "return(true)"), IsNil)
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/rpcPrewriteTimeout", `return(true)`), IsNil)
 	defer func() {
@@ -85,10 +83,8 @@ func (s *testAsyncCommitFailSuite) TestAsyncCommitPrewriteCancelled(c *C) {
 		return
 	}
 
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.TiKVClient.AsyncCommit.Enable = true
-	})
+	variable.SetSysVar("tidb_enable_async_commit", "ON")
+	defer variable.SetSysVar("tidb_enable_async_commit", "OFF")
 
 	// Split into two regions.
 	splitKey := "s"
@@ -118,10 +114,8 @@ func (s *testAsyncCommitFailSuite) TestAsyncCommitPrewriteCancelled(c *C) {
 }
 
 func (s *testAsyncCommitFailSuite) TestPointGetWithAsyncCommit(c *C) {
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.TiKVClient.AsyncCommit.Enable = true
-	})
+	variable.SetSysVar("tidb_enable_async_commit", "ON")
+	defer variable.SetSysVar("tidb_enable_async_commit", "OFF")
 
 	s.putAlphabets(c)
 
@@ -157,10 +151,8 @@ func (s *testAsyncCommitFailSuite) TestSecondaryListInPrimaryLock(c *C) {
 		return
 	}
 
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.TiKVClient.AsyncCommit.Enable = true
-	})
+	variable.SetSysVar("tidb_enable_async_commit", "ON")
+	defer variable.SetSysVar("tidb_enable_async_commit", "OFF")
 
 	s.putAlphabets(c)
 
@@ -240,10 +232,8 @@ func (s *testAsyncCommitFailSuite) TestSecondaryListInPrimaryLock(c *C) {
 }
 
 func (s *testAsyncCommitFailSuite) TestAsyncCommitContextCancelCausingUndetermined(c *C) {
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.TiKVClient.AsyncCommit.Enable = true
-	})
+	variable.SetSysVar("tidb_enable_async_commit", "ON")
+	defer variable.SetSysVar("tidb_enable_async_commit", "OFF")
 
 	// For an async commit transaction, if RPC returns context.Canceled error when prewriting, the
 	// transaction should go to undetermined state.

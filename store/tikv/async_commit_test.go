@@ -23,9 +23,9 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore/cluster"
 	"github.com/pingcap/tidb/store/mockstore/unistore"
 	"github.com/pingcap/tidb/store/tikv/oracle"
@@ -176,10 +176,8 @@ func (s *testAsyncCommitSuite) TestCheckSecondaries(c *C) {
 		return
 	}
 
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.TiKVClient.AsyncCommit.Enable = true
-	})
+	variable.SetSysVar("tidb_enable_async_commit", "ON")
+	defer variable.SetSysVar("tidb_enable_async_commit", "OFF")
 
 	s.putAlphabets(c)
 
@@ -323,10 +321,8 @@ func (s *testAsyncCommitSuite) TestCheckSecondaries(c *C) {
 }
 
 func (s *testAsyncCommitSuite) TestRepeatableRead(c *C) {
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.TiKVClient.AsyncCommit.Enable = true
-	})
+	variable.SetSysVar("tidb_enable_async_commit", "ON")
+	defer variable.SetSysVar("tidb_enable_async_commit", "OFF")
 
 	var connID uint64 = 0
 	test := func(isPessimistic bool) {
@@ -371,11 +367,8 @@ func (s *testAsyncCommitSuite) TestRepeatableRead(c *C) {
 // It's just a simple validation of external consistency.
 // Extra tests are needed to test this feature with the control of the TiKV cluster.
 func (s *testAsyncCommitSuite) TestAsyncCommitExternalConsistency(c *C) {
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.TiKVClient.AsyncCommit.Enable = true
-		conf.TiKVClient.ExternalConsistency = true
-	})
+	variable.SetSysVar("tidb_enable_async_commit", "ON")
+	defer variable.SetSysVar("tidb_enable_async_commit", "OFF")
 
 	t1, err := s.store.Begin()
 	c.Assert(err, IsNil)

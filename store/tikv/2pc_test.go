@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore/cluster"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
@@ -1187,10 +1188,8 @@ func (s *testCommitterSuite) TestResolveMixed(c *C) {
 // TestSecondaryKeys tests that when async commit is enabled, each prewrite message includes an
 // accurate list of secondary keys.
 func (s *testCommitterSuite) TestPrewriteSecondaryKeys(c *C) {
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.TiKVClient.AsyncCommit.Enable = true
-	})
+	variable.SetSysVar("tidb_enable_async_commit", "ON")
+	defer variable.SetSysVar("tidb_enable_async_commit", "OFF")
 
 	// Prepare two regions first: (, 100) and [100, )
 	region, _ := s.cluster.GetRegionByKey([]byte{50})
@@ -1226,10 +1225,8 @@ func (s *testCommitterSuite) TestPrewriteSecondaryKeys(c *C) {
 }
 
 func (s *testCommitterSuite) TestAsyncCommit(c *C) {
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.TiKVClient.AsyncCommit.Enable = true
-	})
+	variable.SetSysVar("tidb_enable_async_commit", "ON")
+	defer variable.SetSysVar("tidb_enable_async_commit", "OFF")
 
 	ctx := context.Background()
 	pk := kv.Key("tpk")
@@ -1258,10 +1255,11 @@ func (s *testCommitterSuite) TestAsyncCommit(c *C) {
 func (s *testCommitterSuite) TestAsyncCommitCheck(c *C) {
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
-		conf.TiKVClient.AsyncCommit.Enable = true
 		conf.TiKVClient.AsyncCommit.KeysLimit = 16
 		conf.TiKVClient.AsyncCommit.TotalKeySizeLimit = 64
 	})
+	variable.SetSysVar("tidb_enable_async_commit", "ON")
+	defer variable.SetSysVar("tidb_enable_async_commit", "OFF")
 
 	txn := s.begin(c)
 	buf := []byte{0, 0, 0, 0}
