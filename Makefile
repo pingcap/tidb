@@ -237,7 +237,7 @@ tools/bin/failpoint-ctl: go.mod
 	$(GO) build -o $@ github.com/pingcap/failpoint/failpoint-ctl
 
 tools/bin/errdoc-gen: go.mod
-	$(GO) build -o $@ github.com/pingcap/tiup/components/errdoc/errdoc-gen
+	$(GO) build -o $@ github.com/pingcap/errors/errdoc-gen
 
 tools/bin/golangci-lint:
 	curl -sfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh| sh -s -- -b ./tools/bin v1.29.0
