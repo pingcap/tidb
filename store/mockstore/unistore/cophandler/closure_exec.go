@@ -144,12 +144,23 @@ func buildClosureExecutorFromExecutorList(dagCtx *dagContext, executors []*tipb.
 		ce.processor = &mockReaderScanProcessor{closureExecutor: ce}
 	}
 	outputFieldTypes := make([]*types.FieldType, 0, 1)
+	lastExecutor := executors[len(executors)-1-extraExecutorLength]
+	originalOutputFieldTypes := dagCtx.fieldTps
+	if lastExecutor.Tp == tipb.ExecType_TypeAggregation || lastExecutor.Tp == tipb.ExecType_TypeStreamAgg {
+		originalOutputFieldTypes = nil
+		for _, agg := range lastExecutor.Aggregation.AggFunc {
+			originalOutputFieldTypes = append(originalOutputFieldTypes, expression.PbTypeToFieldType(agg.FieldType))
+		}
+		for _, gby := range lastExecutor.Aggregation.GroupBy {
+			originalOutputFieldTypes = append(originalOutputFieldTypes, expression.PbTypeToFieldType(gby.FieldType))
+		}
+	}
 	if ce.outputOff != nil {
 		for _, idx := range ce.outputOff {
-			outputFieldTypes = append(outputFieldTypes, dagCtx.fieldTps[idx])
+			outputFieldTypes = append(outputFieldTypes, originalOutputFieldTypes[idx])
 		}
 	} else {
-		for _, tp := range dagCtx.fieldTps {
+		for _, tp := range originalOutputFieldTypes {
 			outputFieldTypes = append(outputFieldTypes, tp)
 		}
 	}
@@ -166,7 +177,6 @@ func buildClosureExecutorFromExecutorList(dagCtx *dagContext, executors []*tipb.
 		ce.selectionCtx.execDetail = new(execDetail)
 		ce.processor = &selectionProcessor{closureExecutor: ce}
 	}
-	lastExecutor := executors[len(executors)-1-extraExecutorLength]
 	switch lastExecutor.Tp {
 	case tipb.ExecType_TypeLimit:
 		ce.limit = int(lastExecutor.Limit.Limit)
@@ -174,16 +184,8 @@ func buildClosureExecutorFromExecutorList(dagCtx *dagContext, executors []*tipb.
 		err = buildTopNProcessor(ce, lastExecutor.TopN)
 	case tipb.ExecType_TypeAggregation:
 		err = buildHashAggProcessor(ce, dagCtx, lastExecutor.Aggregation)
-		outputFieldTypes = make([]*types.FieldType, 0, 1)
-		for _, agg := range lastExecutor.Aggregation.AggFunc {
-			outputFieldTypes = append(outputFieldTypes, expression.FieldTypeFromPB(agg.FieldType))
-		}
 	case tipb.ExecType_TypeStreamAgg:
 		err = buildStreamAggProcessor(ce, dagCtx, executors)
-		outputFieldTypes = make([]*types.FieldType, 0, 1)
-		for _, agg := range lastExecutor.Aggregation.AggFunc {
-			outputFieldTypes = append(outputFieldTypes, expression.FieldTypeFromPB(agg.FieldType))
-		}
 	case tipb.ExecType_TypeSelection:
 		ce.processor = &selectionProcessor{closureExecutor: ce}
 	default:
