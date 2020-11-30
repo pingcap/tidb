@@ -14,8 +14,11 @@
 package memory
 
 import (
+	"errors"
 	"math/rand"
 	"os"
+	"strconv"
+	"strings"
 	"sync"
 	"testing"
 
@@ -234,7 +237,7 @@ func (s *testSuite) TestToString(c *C) {
 
 	c.Assert(parent.String(), Equals, `
 "1"{
-  "consumed": 4.00293168798089 GB
+  "consumed": 4.00 GB
   "2"{
     "quota": 1000 Bytes
     "consumed": 100 Bytes
@@ -326,6 +329,89 @@ func (s *testSuite) TestGlobalTracker(c *C) {
 	c2.AttachTo(commonTracker)
 	c2.DetachFromGlobalTracker()
 
+}
+
+func (s *testSuite) parseByteUnit(str string) (int64, error) {
+	u := strings.TrimSpace(str)
+	switch u {
+	case "GB":
+		return byteSizeGB, nil
+	case "MB":
+		return byteSizeMB, nil
+	case "KB":
+		return byteSizeKB, nil
+	case "Bytes":
+		return byteSizeBB, nil
+	}
+	return 0, errors.New("invalid byte unit: " + str)
+}
+
+func (s *testSuite) parseByte(str string) (int64, error) {
+	vBuf := make([]byte, 0, len(str))
+	uBuf := make([]byte, 0, 2)
+	b := int64(0)
+	for _, v := range str {
+		if (v >= '0' && v <= '9') || v == '.' {
+			vBuf = append(vBuf, byte(v))
+		} else if v != ' ' {
+			uBuf = append(uBuf, byte(v))
+		}
+	}
+	unit, err := s.parseByteUnit(string(uBuf))
+	if err != nil {
+		return 0, err
+	}
+	v, err := strconv.ParseFloat(string(vBuf), 64)
+	if err != nil {
+		return 0, err
+	}
+	b = int64(v * float64(unit))
+	return b, nil
+}
+
+func (s *testSuite) TestFormatBytesWithPrune(c *C) {
+	cases := []struct {
+		b string
+		s string
+	}{
+		{"0 Bytes", "0 Bytes"},
+		{"1 Bytes", "1 Bytes"},
+		{"9 Bytes", "9 Bytes"},
+		{"10 Bytes", "10 Bytes"},
+		{"999 Bytes", "999 Bytes"},
+		{"1 KB", "1024 Bytes"},
+		{"1.123 KB", "1.12 KB"},
+		{"1.023 KB", "1.02 KB"},
+		{"1.003 KB", "1.00 KB"},
+		{"10.456 KB", "10.5 KB"},
+		{"10.956 KB", "11.0 KB"},
+		{"999.056 KB", "999.1 KB"},
+		{"999.988 KB", "1000.0 KB"},
+		{"1.123 MB", "1.12 MB"},
+		{"1.023 MB", "1.02 MB"},
+		{"1.003 MB", "1.00 MB"},
+		{"10.456 MB", "10.5 MB"},
+		{"10.956 MB", "11.0 MB"},
+		{"999.056 MB", "999.1 MB"},
+		{"999.988 MB", "1000.0 MB"},
+		{"1.123 GB", "1.12 GB"},
+		{"1.023 GB", "1.02 GB"},
+		{"1.003 GB", "1.00 GB"},
+		{"10.456 GB", "10.5 GB"},
+		{"10.956 GB", "11.0 GB"},
+		{"9.412345 MB", "9.41 MB"},
+		{"10.412345 MB", "10.4 MB"},
+		{"5.999 GB", "6.00 GB"},
+		{"100.46 KB", "100.5 KB"},
+		{"18.399999618530273 MB", "18.4 MB"},
+		{"9.15999984741211 MB", "9.16 MB"},
+	}
+	for _, ca := range cases {
+		b, err := s.parseByte(ca.b)
+		c.Assert(err, IsNil)
+		result := FormatBytes(b)
+		c.Assert(result, Equals, ca.s, Commentf("input: %v", ca.b))
+	}
 }
 
 func BenchmarkConsume(b *testing.B) {
