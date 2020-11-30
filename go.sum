@@ -454,7 +454,8 @@ github.com/pingcap/sysutil v0.0.0-20200206130906-2bfa6dc40bcd/go.mod h1:EB/852NM
 github.com/pingcap/sysutil v0.0.0-20200408114249-ed3bd6f7fdb1/go.mod h1:EB/852NMQ+aRKioCpToQ94Wl7fktV+FNnxf3CX/TTXI=
 github.com/pingcap/sysutil v0.0.0-20200715082929-4c47bcac246a h1:i2RElJ2aykSqZKeY+3SK18NHhajil8cQdG77wHe+P1Y=
 github.com/pingcap/sysutil v0.0.0-20200715082929-4c47bcac246a/go.mod h1:EB/852NMQ+aRKioCpToQ94Wl7fktV+FNnxf3CX/TTXI=
-<<<<<<< HEAD
+github.com/pingcap/sysutil v0.0.0-20201130064824-f0c8aa6a6966 h1:JI0wOAb8aQML0vAVLHcxTEEC0VIwrk6gtw3WjbHvJLA=
+github.com/pingcap/sysutil v0.0.0-20201130064824-f0c8aa6a6966/go.mod h1:EB/852NMQ+aRKioCpToQ94Wl7fktV+FNnxf3CX/TTXI=
 github.com/pingcap/tidb v1.1.0-beta.0.20200424154252-5ede18f10eed/go.mod h1:m2VDlJDbUeHPCXAfKPajqLmB1uLvWpkKk3zALNqDYdw=
 github.com/pingcap/tidb v1.1.0-beta.0.20200509133407-a9dc72cf2558/go.mod h1:cXNbVSQAkwwmjFQmEnEPI00Z2/Y/KOhouttUPERiInE=
 github.com/pingcap/tidb v1.1.0-beta.0.20200606093724-b5b4da0e6a90/go.mod h1:aaBBi3OJmYjENWY31YYOY8K6UoZZYgjZVZH56D0QIdE=
@@ -462,16 +463,6 @@ github.com/pingcap/tidb v1.1.0-beta.0.20200715100003-b4da443a3c4c/go.mod h1:TplK
 github.com/pingcap/tidb v1.1.0-beta.0.20200716023258-b10faca6ff89/go.mod h1:hDlQ5BJ4rLLCOUlvXqW3skyYEjyymzeTA3eXpNEDx38=
 github.com/pingcap/tidb v1.1.0-beta.0.20200820092836-c5b7658b0896/go.mod h1:IAStISSVhEI9Gp/sE4w6Ms0WxpdBJ9qNTczNyskvd5A=
 github.com/pingcap/tidb v1.1.0-beta.0.20200921100526-29e8c0913100/go.mod h1:iLesxD6gb1IAt/hIH8+4YZk6yIGn6mRxB/iCDG8Tk9U=
-=======
-github.com/pingcap/sysutil v0.0.0-20201021075216-f93ced2829e2/go.mod h1:EB/852NMQ+aRKioCpToQ94Wl7fktV+FNnxf3CX/TTXI=
-github.com/pingcap/sysutil v0.0.0-20201130064824-f0c8aa6a6966 h1:JI0wOAb8aQML0vAVLHcxTEEC0VIwrk6gtw3WjbHvJLA=
-github.com/pingcap/sysutil v0.0.0-20201130064824-f0c8aa6a6966/go.mod h1:EB/852NMQ+aRKioCpToQ94Wl7fktV+FNnxf3CX/TTXI=
-github.com/pingcap/tidb v1.1.0-beta.0.20200423094549-0ad7ce6cdae6/go.mod h1:KJXj2xHYfl1x4zcusC2JEANzVci+ietFOMh/CAmrYdw=
-github.com/pingcap/tidb-insight v0.3.1/go.mod h1:HZ6cGBYxViftTKLbl/V4moRol79bifZzI9ImGavJms0=
-github.com/pingcap/tidb-lightning v4.0.9-0.20201106041742-a1ac97827a27+incompatible h1:y6cwuJJo8tLeHjgjODpwCSqNAv1g+9WUtcsFOHu/7ag=
-github.com/pingcap/tidb-lightning v4.0.9-0.20201106041742-a1ac97827a27+incompatible/go.mod h1:UrN2l06neiEfkass87Tjvv5JFIMsOMb2DT7P7s+fwMc=
-github.com/pingcap/tidb-tools v3.0.13+incompatible/go.mod h1:XGdcy9+yqlDSEMTpOXnwf3hiTeqrV6MN/u1se9N8yIM=
->>>>>>> 026305eb0... *: update go.mod for sysutil (#21373)
 github.com/pingcap/tidb-tools v4.0.0-beta.1.0.20200306084441-875bd09aa3d5+incompatible/go.mod h1:XGdcy9+yqlDSEMTpOXnwf3hiTeqrV6MN/u1se9N8yIM=
 github.com/pingcap/tidb-tools v4.0.0-rc.1.0.20200421113014-507d2bb3a15e+incompatible/go.mod h1:XGdcy9+yqlDSEMTpOXnwf3hiTeqrV6MN/u1se9N8yIM=
 github.com/pingcap/tidb-tools v4.0.0-rc.1.0.20200514040632-f76b3e428e19+incompatible/go.mod h1:XGdcy9+yqlDSEMTpOXnwf3hiTeqrV6MN/u1se9N8yIM=
