@@ -448,8 +448,6 @@ type PlanBuilder struct {
 	buildingViewStack set.StringSet
 	// renamingViewName is the name of the view which is being renamed.
 	renamingViewName string
-	// CreateView needs this information to check whether exists nested view.
-	underlyingViewNames set.StringSet
 
 	// evalDefaultExpr needs this information to find the corresponding column.
 	// It stores the OutputNames before buildProjection.
