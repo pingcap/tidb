@@ -41,8 +41,8 @@ var AllowCartesianProduct = atomic.NewBool(true)
 
 const (
 	flagGcSubstitute uint64 = 1 << iota
-	flagStabilizeResults
 	flagPrunColumns
+	flagStabilizeResults
 	flagBuildKeyInfo
 	flagDecorrelate
 	flagEliminateAgg
@@ -59,8 +59,8 @@ const (
 
 var optRuleList = []logicalOptRule{
 	&gcSubstituter{},
-	&resultsStabilizer{},
 	&columnPruner{},
+	&resultsStabilizer{},
 	&buildKeySolver{},
 	&decorrelateSolver{},
 	&aggregationEliminator{},
