@@ -3450,8 +3450,8 @@ out:
 			break out
 		default:
 			// Close issue #14636
-			// Now the add column action has not been amendable, it will cause `Information schema is changed`
-			// error when it is finished in the process of a insert statement.
+			// Because add column action is not amendable now, it causes an error when the schema is changed
+			// in the process of an insert statement.
 			_, err := tk.Exec("update tnn set c2 = c2 + 1 where c1 = 99")
 			if err == nil {
 				updateCnt++
