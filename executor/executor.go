@@ -103,6 +103,7 @@ type baseExecutor struct {
 
 // globalPanicOnExceed panics when GlobalDisTracker storage usage exceeds storage quota.
 type globalPanicOnExceed struct {
+	memory.BaseOOMAction
 	mutex sync.Mutex // For synchronization.
 }
 
@@ -116,8 +117,10 @@ func (a *globalPanicOnExceed) Action(t *memory.Tracker) {
 	panic(globalPanicStorageExceed)
 }
 
-// SetFallback sets a fallback action.
-func (a *globalPanicOnExceed) SetFallback(memory.ActionOnExceed) {}
+// GetPriority get the priority of the Action
+func (a *globalPanicOnExceed) GetPriority() int64 {
+	return memory.DefPanicPriority
+}
 
 const (
 	// globalPanicStorageExceed represents the panic message when out of storage quota.
