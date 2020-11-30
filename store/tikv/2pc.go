@@ -883,7 +883,8 @@ func sendTxnHeartBeat(bo *Backoffer, store *tikvStore, primary []byte, startTS, 
 }
 
 // checkAsyncCommit checks if async commit protocol is available for current transaction commit, true is returned if possible.
-func (c *twoPhaseCommitter) checkAsyncCommit(enableAsyncCommitOption interface{}) bool {
+func (c *twoPhaseCommitter) checkAsyncCommit() bool {
+	enableAsyncCommitOption := c.txn.us.GetOption(kv.EnableAsyncCommit)
 	enableAsyncCommit := enableAsyncCommitOption != nil && enableAsyncCommitOption.(bool)
 	asyncCommitCfg := config.GetGlobalConfig().TiKVClient.AsyncCommit
 	// TODO the keys limit need more tests, this value makes the unit test pass by now.
@@ -904,11 +905,13 @@ func (c *twoPhaseCommitter) checkAsyncCommit(enableAsyncCommitOption interface{}
 }
 
 // checkOnePC checks if 1PC protocol is available for current transaction.
-func (c *twoPhaseCommitter) checkOnePC(enable1PCOption interface{}) bool {
+func (c *twoPhaseCommitter) checkOnePC() bool {
+	enable1PCOption := c.txn.us.GetOption(kv.Enable1PC)
 	return c.connID > 0 && !c.shouldWriteBinlog() && enable1PCOption != nil && enable1PCOption.(bool)
 }
 
-func (c *twoPhaseCommitter) needExternalConsistency(guaranteeExternalConsistencyOption interface{}) bool {
+func (c *twoPhaseCommitter) needExternalConsistency() bool {
+	guaranteeExternalConsistencyOption := c.txn.us.GetOption(kv.GuaranteeExternalConsistency)
 	return guaranteeExternalConsistencyOption != nil && guaranteeExternalConsistencyOption.(bool)
 }
 
@@ -1007,12 +1010,12 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 
 	commitTSMayBeCalculated := false
 	// Check async commit is available or not.
-	if c.checkAsyncCommit(c.txn.us.GetOption(kv.EnableAsyncCommit)) {
+	if c.checkAsyncCommit() {
 		commitTSMayBeCalculated = true
 		c.setAsyncCommit(true)
 	}
 	// Check if 1PC is enabled.
-	if c.checkOnePC(c.txn.us.GetOption(kv.Enable1PC)) {
+	if c.checkOnePC() {
 		commitTSMayBeCalculated = true
 		c.setOnePC(true)
 	}
@@ -1020,7 +1023,7 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 	// all nodes, we have to make sure the commit TS of this transaction is greater
 	// than the snapshot TS of all existent readers. So we get a new timestamp
 	// from PD as our MinCommitTS.
-	if commitTSMayBeCalculated && c.needExternalConsistency(c.txn.us.GetOption(kv.GuaranteeExternalConsistency)) {
+	if commitTSMayBeCalculated && c.needExternalConsistency() {
 		minCommitTS, err := c.store.oracle.GetTimestamp(ctx, &oracle.Option{TxnScope: oracle.GlobalTxnScope})
 		// If we fail to get a timestamp from PD, we just propagate the failure
 		// instead of falling back to the normal 2PC because a normal 2PC will
