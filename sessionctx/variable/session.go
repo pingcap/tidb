@@ -759,6 +759,9 @@ type SessionVars struct {
 
 	// EnableAsyncCommit indicates whether to enable the async commit feature.
 	EnableAsyncCommit bool
+
+	// Enable1PC indicates whether to enable the one-phase commit feature.
+	Enable1PC bool
 }
 
 // UseDynamicPartitionPrune indicates whether use new dynamic partition prune.
@@ -899,6 +902,7 @@ func NewSessionVars() *SessionVars {
 		TxnScope:                    config.GetGlobalConfig().TxnScope,
 		EnabledRateLimitAction:      DefTiDBEnableRateLimitAction,
 		EnableAsyncCommit:           DefTiDBEnableAsyncCommit,
+		Enable1PC:                   DefTiDBEnable1PC,
 	}
 	vars.KVVars = kv.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{
@@ -1605,6 +1609,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.EnabledRateLimitAction = TiDBOptOn(val)
 	case TiDBEnableAsyncCommit:
 		s.EnableAsyncCommit = TiDBOptOn(val)
+	case TiDBEnable1PC:
+		s.Enable1PC = TiDBOptOn(val)
 	}
 	s.systems[name] = val
 	return nil

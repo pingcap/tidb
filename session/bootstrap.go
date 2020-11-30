@@ -1336,6 +1336,9 @@ func doDMLWorks(s Session) {
 			if v.Name == variable.TiDBEnableAsyncCommit {
 				vVal = variable.BoolOn
 			}
+			if v.Name == variable.TiDBEnable1PC {
+				vVal = variable.BoolOn
+			}
 			value := fmt.Sprintf(`("%s", "%s")`, strings.ToLower(k), vVal)
 			values = append(values, value)
 		}

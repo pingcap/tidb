@@ -1154,6 +1154,7 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal, Name: "slave_rows_search_algorithms", Value: "TABLE_SCAN,INDEX_SCAN"},
 	{Scope: ScopeGlobal, Name: SlaveAllowBatching, Value: BoolOff, Type: TypeBool},
 	{Scope: ScopeGlobal, Name: TiDBEnableAsyncCommit, Value: BoolToOnOff(DefTiDBEnableAsyncCommit), Type: TypeBool},
+	{Scope: ScopeGlobal, Name: TiDBEnable1PC, Value: BoolToOnOff(DefTiDBEnable1PC), Type: TypeBool},
 }
 
 // SynonymsSysVariables is synonyms of system variables.

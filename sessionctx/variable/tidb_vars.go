@@ -479,6 +479,9 @@ const (
 
 	// TiDBEnableAsyncCommit indicates whether to enable the async commit feature.
 	TiDBEnableAsyncCommit = "tidb_enable_async_commit"
+
+	// TiDBEnable1PC indicates whether to enable the one-phase commit feature.
+	TiDBEnable1PC = "tidb_enable_1pc"
 )
 
 // Default TiDB system variable values.
@@ -593,6 +596,7 @@ const (
 	DefTiDBPartitionPruneMode          = "static-only"
 	DefTiDBEnableRateLimitAction       = true
 	DefTiDBEnableAsyncCommit           = false
+	DefTiDBEnable1PC                   = false
 )
 
 // Process global variables.
