@@ -1406,7 +1406,7 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 			// If schema check failed between commitTS and newCommitTs, report schema change error.
 			_, _, err = c.checkSchemaValid(ctx, newCommitTS, relatedSchemaChange.LatestInfoSchema, false)
 			if err != nil {
-				logutil.Logger(ctx).Info("schema check after amend failed",
+				logutil.Logger(ctx).Info("schema check after amend failed, it means the schema version changed again",
 					zap.Uint64("startTS", c.startTS),
 					zap.Uint64("amendTS", c.commitTS),
 					zap.Int64("amendedSchemaVersion", relatedSchemaChange.LatestInfoSchema.SchemaMetaVersion()),
