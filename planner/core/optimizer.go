@@ -127,9 +127,6 @@ func DoOptimize(ctx context.Context, sctx sessionctx.Context, flag uint64, logic
 	if flag&flagPrunColumns > 0 && flag-flagPrunColumns > flagPrunColumns {
 		flag |= flagPrunColumnsAgain
 	}
-	if sctx.GetSessionVars().EnableStableResults {
-		flag |= flagStabilizeResults
-	}
 	logic, err := logicalOptimize(ctx, flag, logic)
 	if err != nil {
 		return nil, 0, err

@@ -2496,6 +2496,9 @@ func (b *PlanBuilder) TableHints() *tableHintInfo {
 }
 
 func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p LogicalPlan, err error) {
+	if b.ctx.GetSessionVars().EnableStableResults {
+		b.optFlag |= flagStabilizeResults
+	}
 	b.pushSelectOffset(sel.QueryBlockOffset)
 	b.pushTableHints(sel.TableHints, utilhint.TypeSelect, sel.QueryBlockOffset)
 	defer func() {
