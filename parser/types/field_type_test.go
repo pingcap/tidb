@@ -191,6 +191,18 @@ func (s *testFieldTypeSuite) TestFieldType(c *C) {
 	ft.Decimal = 2
 	c.Assert(ft.String(), Equals, "year(2)") // Note: Invalid year.
 	c.Assert(HasCharset(ft), IsFalse)
+
+	ft = NewFieldType(mysql.TypeVarchar)
+	ft.Flen = 0
+	ft.Decimal = 0
+	c.Assert(ft.String(), Equals, "varchar(0)")
+	c.Assert(HasCharset(ft), IsTrue)
+
+	ft = NewFieldType(mysql.TypeString)
+	ft.Flen = 0
+	ft.Decimal = 0
+	c.Assert(ft.String(), Equals, "char(0)")
+	c.Assert(HasCharset(ft), IsTrue)
 }
 
 func (s *testFieldTypeSuite) TestHasCharsetFromStmt(c *C) {
