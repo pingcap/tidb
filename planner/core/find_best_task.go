@@ -511,7 +511,7 @@ func (ds *DataSource) getIndexCandidate(path *util.AccessPath, prop *property.Ph
 			if col.Equal(nil, prop.SortItems[0].Col) {
 				candidate.isMatchProp = matchIndicesProp(path.IdxCols[i:], path.IdxColLens[i:], prop.SortItems)
 				break
-			} else if i >= path.EqCondCount && i > eqCondCount {
+			} else if i >= path.EqCondCount && i >= eqCondCount {
 				break
 			}
 		}
