@@ -631,6 +631,7 @@ func (s *testIntegrationSuite1) TestCreateTableWithListPartition(c *C) {
 	validCases := []string{
 		"create table t (a int) partition by list (a) (partition p0 values in (1));",
 		"create table t (a bigint unsigned) partition by list (a) (partition p0 values in (18446744073709551615));",
+		"create table t (a bigint unsigned) partition by list (a) (partition p0 values in (18446744073709551615 - 1));",
 		"create table t (a int) partition by list (a) (partition p0 values in (1,null));",
 		"create table t (a int) partition by list (a) (partition p0 values in (1), partition p1 values in (2));",
 		`create table t (id int, name varchar(10), age int) partition by list (id) (
@@ -817,6 +818,7 @@ func (s *testIntegrationSuite1) TestCreateTableWithListColumnsPartition(c *C) {
 	validCases := []string{
 		"create table t (a int) partition by list columns (a) (partition p0 values in (1));",
 		"create table t (a bigint unsigned) partition by list columns (a) (partition p0 values in (18446744073709551615));",
+		"create table t (a bigint unsigned) partition by list columns (a) (partition p0 values in (18446744073709551615 - 1));",
 		"create table t (a int) partition by list columns (a) (partition p0 values in (1,null));",
 		"create table t (a int) partition by list columns (a) (partition p0 values in (1), partition p1 values in (2));",
 		`create table t (id int, name varchar(10), age int) partition by list columns (id) (
