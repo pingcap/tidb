@@ -243,10 +243,8 @@ func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPl
 		// Combine best child tasks with parent physical plan.
 		curTask := pp.attach2Task(childTasks...)
 
-		if prop.IsFlashProp() {
-			if prop.TaskTp == property.RootTaskType {
-				curTask = curTask.convertToRootTask(p.ctx)
-			}
+		if _, ok := curTask.(*mppTask); ok && prop.TaskTp == property.RootTaskType {
+			curTask = curTask.convertToRootTask(p.ctx)
 		}
 
 		// Enforce curTask property
