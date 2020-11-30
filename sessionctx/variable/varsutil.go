@@ -132,6 +132,8 @@ func GetSessionOnlySysVars(s *SessionVars, key string) (string, bool, error) {
 		return val, true, nil
 	case TiDBExpensiveQueryTimeThreshold:
 		return fmt.Sprintf("%d", atomic.LoadUint64(&ExpensiveQueryTimeThreshold)), true, nil
+	case TiDBMemoryUsageAlarmRatio:
+		return fmt.Sprintf("%g", MemoryUsageAlarmRatio.Load()), true, nil
 	case TiDBConfig:
 		conf := config.GetGlobalConfig()
 		j, err := json.MarshalIndent(conf, "", "\t")
@@ -207,10 +209,11 @@ const epochShiftBits = 18
 
 // SetSessionSystemVar sets system variable and updates SessionVars states.
 func SetSessionSystemVar(vars *SessionVars, name string, value types.Datum) error {
+	orgName := name
 	name = strings.ToLower(name)
 	sysVar := SysVars[name]
 	if sysVar == nil {
-		return ErrUnknownSystemVar
+		return ErrUnknownSystemVar.GenWithStackByArgs(orgName)
 	}
 	sVal := ""
 	var err error

@@ -448,6 +448,10 @@ type PlanBuilder struct {
 	buildingViewStack set.StringSet
 	// renamingViewName is the name of the view which is being renamed.
 	renamingViewName string
+
+	// evalDefaultExpr needs this information to find the corresponding column.
+	// It stores the OutputNames before buildProjection.
+	allNames [][]*types.FieldName
 }
 
 type handleColHelper struct {
@@ -971,7 +975,12 @@ func (b *PlanBuilder) buildPrepare(x *ast.PrepareStmt) Plan {
 	}
 	if x.SQLVar != nil {
 		if v, ok := b.ctx.GetSessionVars().Users[strings.ToLower(x.SQLVar.Name)]; ok {
-			p.SQLText = v.GetString()
+			var err error
+			p.SQLText, err = v.ToString()
+			if err != nil {
+				b.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+				p.SQLText = "NULL"
+			}
 		} else {
 			p.SQLText = "NULL"
 		}
