@@ -1086,6 +1086,59 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 		c.Assert(res.String(), Equals, resAfter)
 	}
 
+	castToDurationCases3 := []struct {
+		before *Column
+		after  types.Duration
+		row    chunk.MutRow
+	}{
+		// cast real as Duration.
+		{
+			&Column{RetType: types.NewFieldType(mysql.TypeDouble), Index: 0},
+			types.ZeroDuration,
+			chunk.MutRowFromDatums([]types.Datum{types.NewFloat64Datum(177783)}),
+		},
+		// cast decimal as Duration.
+		{
+			&Column{RetType: types.NewFieldType(mysql.TypeNewDecimal), Index: 0},
+			types.ZeroDuration,
+			chunk.MutRowFromDatums([]types.Datum{types.NewDecimalDatum(types.NewDecFromInt(177783))}),
+		},
+		// cast int as Duration.
+		{
+			&Column{RetType: types.NewFieldType(mysql.TypeLonglong), Index: 0},
+			types.ZeroDuration,
+			chunk.MutRowFromDatums([]types.Datum{types.NewIntDatum(177783)}),
+		},
+		// cast string as Duration.
+		{
+			&Column{RetType: types.NewFieldType(mysql.TypeString), Index: 0},
+			types.ZeroDuration,
+			chunk.MutRowFromDatums([]types.Datum{types.NewStringDatum("17:77:83")}),
+		},
+	}
+	for i, t := range castToDurationCases3 {
+		args := []Expression{t.before}
+		tp := types.NewFieldType(mysql.TypeDuration)
+		tp.Decimal = int(types.DefaultFsp)
+		durationFunc, err := newBaseBuiltinFunc(ctx, "", args, 0)
+		c.Assert(err, IsNil)
+		durationFunc.tp = tp
+		switch i {
+		case 0:
+			sig = &builtinCastRealAsDurationSig{durationFunc}
+		case 1:
+			sig = &builtinCastDecimalAsDurationSig{durationFunc}
+		case 2:
+			sig = &builtinCastIntAsDurationSig{durationFunc}
+		case 3:
+			sig = &builtinCastStringAsDurationSig{durationFunc}
+		}
+		res, isNull, err := sig.evalDuration(t.row.ToRow())
+		c.Assert(isNull, Equals, true)
+		c.Assert(err, IsNil)
+		c.Assert(res.String(), Equals, t.after.String())
+	}
+
 	// null case
 	args := []Expression{&Column{RetType: types.NewFieldType(mysql.TypeDouble), Index: 0}}
 	row := chunk.MutRowFromDatums([]types.Datum{types.NewDatum(nil)})
