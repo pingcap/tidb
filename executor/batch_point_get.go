@@ -181,7 +181,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 	if e.idxInfo != nil && !isCommonHandleRead(e.tblInfo, e.idxInfo) {
 		// `SELECT a, b FROM t WHERE (a, b) IN ((1, 2), (1, 2), (2, 1), (1, 2))` should not return duplicated rows
 		dedup := make(map[hack.MutableString]struct{})
-		keys := make([]kv.Key, 0, len(e.idxVals))
+		toFetchIndexKeys := make([]kv.Key, 0, len(e.idxVals))
 		for _, idxVals := range e.idxVals {
 			// For all x, 'x IN (null)' evaluate to null, so the query get no result.
 			if datumsContainNull(idxVals) {
@@ -198,14 +198,14 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 				continue
 			}
 			dedup[s] = struct{}{}
-			keys = append(keys, idxKey)
+			toFetchIndexKeys = append(toFetchIndexKeys, idxKey)
 		}
 		if e.keepOrder {
-			sort.Slice(keys, func(i int, j int) bool {
+			sort.Slice(toFetchIndexKeys, func(i int, j int) bool {
 				if e.desc {
-					return keys[i].Cmp(keys[j]) > 0
+					return toFetchIndexKeys[i].Cmp(toFetchIndexKeys[j]) > 0
 				}
-				return keys[i].Cmp(keys[j]) < 0
+				return toFetchIndexKeys[i].Cmp(toFetchIndexKeys[j]) < 0
 			})
 		}
 
@@ -213,27 +213,27 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 		// for read consistency, only lock exist keys,
 		// indexKeys will be generated after getting handles.
 		if !rc {
-			indexKeys = keys
+			indexKeys = toFetchIndexKeys
 		} else {
-			indexKeys = make([]kv.Key, 0, len(keys))
+			indexKeys = make([]kv.Key, 0, len(toFetchIndexKeys))
 		}
 
 		// SELECT * FROM t WHERE x IN (null), in this case there is no key.
-		if len(keys) == 0 {
+		if len(toFetchIndexKeys) == 0 {
 			return nil
 		}
 
 		// Fetch all handles.
-		handleVals, err = batchGetter.BatchGet(ctx, keys)
+		handleVals, err = batchGetter.BatchGet(ctx, toFetchIndexKeys)
 		if err != nil {
 			return err
 		}
 
-		e.handles = make([]kv.Handle, 0, len(keys))
+		e.handles = make([]kv.Handle, 0, len(toFetchIndexKeys))
 		if e.tblInfo.Partition != nil {
-			e.physIDs = make([]int64, 0, len(keys))
+			e.physIDs = make([]int64, 0, len(toFetchIndexKeys))
 		}
-		for _, key := range keys {
+		for _, key := range toFetchIndexKeys {
 			handleVal := handleVals[string(key)]
 			if len(handleVal) == 0 {
 				continue
@@ -243,7 +243,9 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 				return err1
 			}
 			e.handles = append(e.handles, handle)
-			indexKeys = append(indexKeys, key)
+			if rc {
+				indexKeys = append(indexKeys, key)
+			}
 			if e.tblInfo.Partition != nil {
 				pid := tablecodec.DecodeTableID(key)
 				e.physIDs = append(e.physIDs, pid)
@@ -355,8 +357,9 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 		if e.lock && rc {
 			existKeys = append(existKeys, key)
 			// when e.handles is set in builder directly, index should be primary key and the plan is CommonHandleRead
-			// with clustered index enabled, lock primary key for clustered index table is redundant
-			if i < len(indexKeys) {
+			// with clustered index enabled, indexKeys is empty in this situation
+			// lock primary key for clustered index table is redundant
+			if len(indexKeys) != 0 {
 				existKeys = append(existKeys, indexKeys[i])
 			}
 		}

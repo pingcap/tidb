@@ -6,7 +6,7 @@
 //
 //     http://www.apache.org/licenses/LICENSE-2.0
 //
-// Unless required by applicable law or agreed to in writing, software
+// Unless required by applicable law or agreed to in writing, software/
 // distributed under the License is distributed on an "AS IS" BASIS,
 // See the License for the specific language governing permissions and
 // limitations under the License.
@@ -28,12 +28,14 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockstore/cluster"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"github.com/pingcap/tidb/tablecodec"
 )
 
 type testCommitterSuite struct {
@@ -1020,6 +1022,25 @@ func (c *twoPhaseCommitter) mutationsOfKeys(keys [][]byte) CommitterMutations {
 		}
 	}
 	return &res
+}
+
+func (s *testCommitterSuite) TestResolvePessimisticLock(c *C) {
+	untouchedKey := kv.Key("t000000001i000000001")
+	untouchedValue := []byte{0, 0, 0, 0, 0, 0, 0, 1, 49}
+	c.Assert(tablecodec.IsUntouchedIndexKValue(untouchedKey, untouchedValue), IsTrue)
+	txn := s.begin(c)
+	err := txn.Set(untouchedKey, untouchedValue)
+	c.Assert(err, IsNil)
+	lockCtx := &kv.LockCtx{ForUpdateTS: txn.startTS, WaitStartTime: time.Now(), LockWaitTime: kv.LockNoWait}
+	err = txn.LockKeys(context.Background(), lockCtx, untouchedKey)
+	c.Assert(err, IsNil)
+	commit, err := newTwoPhaseCommitterWithInit(txn, 1)
+	c.Assert(err, IsNil)
+	mutation := commit.mutationsOfKeys([][]byte{untouchedKey})
+	c.Assert(mutation.Len(), Equals, 1)
+	c.Assert(mutation.GetOp(0), Equals, pb.Op_Lock)
+	c.Assert(mutation.GetKey(0), Equals, untouchedKey)
+	c.Assert(mutation.GetValue(0), Equals, untouchedValue)
 }
 
 func (s *testCommitterSuite) TestCommitDeadLock(c *C) {

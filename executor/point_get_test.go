@@ -684,8 +684,9 @@ func (s *testPointGetSuite) TestPointGetWriteLock(c *C) {
 func (s *testPointGetSuite) TestPointGetLockExistKey(c *C) {
 	var wg sync.WaitGroup
 
-	testLock := func(tk1, tk2 *testkit.TestKit, rc bool, key string, tableName string) {
+	testLock := func(rc bool, key string, tableName string) {
 		doneCh := make(chan struct{}, 1)
+		tk1, tk2 := testkit.NewTestKit(c, s.store), testkit.NewTestKit(c, s.store)
 
 		tk1.MustExec("use test")
 		tk2.MustExec("use test")
@@ -700,9 +701,9 @@ func (s *testPointGetSuite) TestPointGetLockExistKey(c *C) {
 			tk2.MustExec("set tx_isolation = 'READ-COMMITTED'")
 		}
 
+		// select for update
 		tk1.MustExec("begin pessimistic")
 		tk2.MustExec("begin pessimistic")
-
 		// lock exist key
 		tk1.MustExec(fmt.Sprintf("select * from %s where id = 1 and v = 1 for update", tableName))
 		// read committed will not lock non-exist key
@@ -711,20 +712,71 @@ func (s *testPointGetSuite) TestPointGetLockExistKey(c *C) {
 		}
 		tk2.MustExec(fmt.Sprintf("insert into %s values(2, 2, 2)", tableName))
 		go func() {
-			tk2.MustExec(fmt.Sprintf("insert into %s values(1, 1, 2)", tableName))
+			tk2.MustExec(fmt.Sprintf("insert into %s values(1, 1, 10)", tableName))
 			doneCh <- struct{}{}
 		}()
-		time.Sleep(50 * time.Millisecond)
+		time.Sleep(150 * time.Millisecond)
 		tk1.MustExec(fmt.Sprintf("update %s set v = 2 where id = 1 and v = 1", tableName))
-
 		tk1.MustExec("commit")
 		<-doneCh
 		tk2.MustExec("commit")
-
 		tk1.MustQuery(fmt.Sprintf("select * from %s", tableName)).Check(testkit.Rows(
 			"1 2 1",
 			"2 2 2",
-			"1 1 2",
+			"1 1 10",
+		))
+
+		// update
+		tk1.MustExec("begin pessimistic")
+		tk2.MustExec("begin pessimistic")
+		// lock exist key
+		tk1.MustExec(fmt.Sprintf("update %s set v = 3 where id = 2 and v = 2", tableName))
+		// read committed will not lock non-exist key
+		if rc {
+			tk1.MustExec(fmt.Sprintf("update %s set v =4 where id = 3 and v = 3", tableName))
+		}
+		tk2.MustExec(fmt.Sprintf("insert into %s values(3, 3, 3)", tableName))
+		go func() {
+			tk2.MustExec(fmt.Sprintf("insert into %s values(2, 2, 20)", tableName))
+			doneCh <- struct{}{}
+		}()
+		time.Sleep(150 * time.Millisecond)
+		tk1.MustExec("commit")
+		<-doneCh
+		tk2.MustExec("commit")
+		tk1.MustQuery(fmt.Sprintf("select * from %s", tableName)).Check(testkit.Rows(
+			"1 2 1",
+			"2 3 2",
+			"1 1 10",
+			"3 3 3",
+			"2 2 20",
+		))
+
+		// delete
+		tk1.MustExec("begin pessimistic")
+		tk2.MustExec("begin pessimistic")
+		// lock exist key
+		tk1.MustExec(fmt.Sprintf("delete from %s where id = 3 and v = 3", tableName))
+		// read committed will not lock non-exist key
+		if rc {
+			tk1.MustExec(fmt.Sprintf("delete from %s where id = 4 and v = 4", tableName))
+		}
+		tk2.MustExec(fmt.Sprintf("insert into %s values(4, 4, 4)", tableName))
+		go func() {
+			tk2.MustExec(fmt.Sprintf("insert into %s values(3, 3, 30)", tableName))
+			doneCh <- struct{}{}
+		}()
+		time.Sleep(50 * time.Millisecond)
+		tk1.MustExec("commit")
+		<-doneCh
+		tk2.MustExec("commit")
+		tk1.MustQuery(fmt.Sprintf("select * from %s", tableName)).Check(testkit.Rows(
+			"1 2 1",
+			"2 3 2",
+			"1 1 10",
+			"2 2 20",
+			"4 4 4",
+			"3 3 30",
 		))
 		wg.Done()
 	}
@@ -740,7 +792,7 @@ func (s *testPointGetSuite) TestPointGetLockExistKey(c *C) {
 	} {
 		wg.Add(1)
 		tableName := fmt.Sprintf("t_%d", i)
-		go testLock(testkit.NewTestKit(c, s.store), testkit.NewTestKit(c, s.store), one.rc, one.key, tableName)
+		go testLock(one.rc, one.key, tableName)
 	}
 	wg.Wait()
 }
