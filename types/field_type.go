@@ -193,9 +193,9 @@ func hasVariantFieldLength(tp *FieldType) bool {
 
 // DefaultTypeForValue returns the default FieldType for the value.
 func DefaultTypeForValue(value interface{}, tp *FieldType, char string, collate string) {
-	// if value != nil {
-	// 	tp.Flag |= mysql.NotNullFlag
-	// }
+	if value != nil {
+		tp.Flag |= mysql.NotNullFlag
+	}
 	switch x := value.(type) {
 	case nil:
 		tp.Tp = mysql.TypeNull
