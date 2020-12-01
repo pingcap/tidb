@@ -473,7 +473,11 @@ func extractTableAlias(p Plan, parentOffset int) *hintTableInfo {
 		if blockOffset != parentOffset && blockAsNames != nil && blockAsNames[blockOffset].TableName.L != "" {
 			blockOffset = parentOffset
 		}
-		return &hintTableInfo{dbName: firstName.DBName, tblName: firstName.TblName, selectOffset: blockOffset}
+		dbName := firstName.DBName
+		if dbName.L == "" {
+			dbName = model.NewCIStr(p.SCtx().GetSessionVars().CurrentDB)
+		}
+		return &hintTableInfo{dbName: dbName, tblName: firstName.TblName, selectOffset: blockOffset}
 	}
 	return nil
 }
@@ -724,7 +728,16 @@ func (b *PlanBuilder) buildUsingClause(p *LogicalJoin, leftPlan, rightPlan Logic
 	for _, col := range join.Using {
 		filter[col.Name.L] = true
 	}
-	return b.coalesceCommonColumns(p, leftPlan, rightPlan, join.Tp, filter)
+	err := b.coalesceCommonColumns(p, leftPlan, rightPlan, join.Tp, filter)
+	if err != nil {
+		return err
+	}
+	// We do not need to coalesce columns for update and delete.
+	if b.inUpdateStmt || b.inDeleteStmt {
+		p.setSchemaAndNames(expression.MergeSchema(p.Children()[0].Schema(), p.Children()[1].Schema()),
+			append(p.Children()[0].OutputNames(), p.Children()[1].OutputNames()...))
+	}
+	return nil
 }
 
 // buildNaturalJoin builds natural join output schema. It finds out all the common columns
@@ -734,7 +747,16 @@ func (b *PlanBuilder) buildUsingClause(p *LogicalJoin, leftPlan, rightPlan Logic
 // 	Every column in the first (left) table that is not a common column
 // 	Every column in the second (right) table that is not a common column
 func (b *PlanBuilder) buildNaturalJoin(p *LogicalJoin, leftPlan, rightPlan LogicalPlan, join *ast.Join) error {
-	return b.coalesceCommonColumns(p, leftPlan, rightPlan, join.Tp, nil)
+	err := b.coalesceCommonColumns(p, leftPlan, rightPlan, join.Tp, nil)
+	if err != nil {
+		return err
+	}
+	// We do not need to coalesce columns for update and delete.
+	if b.inUpdateStmt || b.inDeleteStmt {
+		p.setSchemaAndNames(expression.MergeSchema(p.Children()[0].Schema(), p.Children()[1].Schema()),
+			append(p.Children()[0].OutputNames(), p.Children()[1].OutputNames()...))
+	}
+	return nil
 }
 
 // coalesceCommonColumns is used by buildUsingClause and buildNaturalJoin. The filter is used by buildUsingClause.
@@ -1003,6 +1025,50 @@ func (b *PlanBuilder) buildProjectionField(ctx context.Context, p LogicalPlan, f
 	return newCol, name, nil
 }
 
+type userVarTypeProcessor struct {
+	ctx     context.Context
+	plan    LogicalPlan
+	builder *PlanBuilder
+	mapper  map[*ast.AggregateFuncExpr]int
+	err     error
+}
+
+func (p *userVarTypeProcessor) Enter(in ast.Node) (ast.Node, bool) {
+	v, ok := in.(*ast.VariableExpr)
+	if !ok {
+		return in, false
+	}
+	if v.IsSystem || v.Value == nil {
+		return in, true
+	}
+	_, p.plan, p.err = p.builder.rewrite(p.ctx, v, p.plan, p.mapper, true)
+	return in, true
+}
+
+func (p *userVarTypeProcessor) Leave(in ast.Node) (ast.Node, bool) {
+	return in, p.err == nil
+}
+
+func (b *PlanBuilder) preprocessUserVarTypes(ctx context.Context, p LogicalPlan, fields []*ast.SelectField, mapper map[*ast.AggregateFuncExpr]int) error {
+	aggMapper := make(map[*ast.AggregateFuncExpr]int)
+	for agg, i := range mapper {
+		aggMapper[agg] = i
+	}
+	processor := userVarTypeProcessor{
+		ctx:     ctx,
+		plan:    p,
+		builder: b,
+		mapper:  aggMapper,
+	}
+	for _, field := range fields {
+		field.Expr.Accept(&processor)
+		if processor.err != nil {
+			return processor.err
+		}
+	}
+	return nil
+}
+
 // findColFromNaturalUsingJoin is used to recursively find the column from the
 // underlying natural-using-join.
 // e.g. For SQL like `select t2.a from t1 join t2 using(a) where t2.a > 0`, the
@@ -1024,6 +1090,10 @@ func findColFromNaturalUsingJoin(p LogicalPlan, col *expression.Column) (name *t
 
 // buildProjection returns a Projection plan and non-aux columns length.
 func (b *PlanBuilder) buildProjection(ctx context.Context, p LogicalPlan, fields []*ast.SelectField, mapper map[*ast.AggregateFuncExpr]int, windowMapper map[*ast.WindowFuncExpr]int, considerWindow bool, expandGenerateColumn bool) (LogicalPlan, int, error) {
+	err := b.preprocessUserVarTypes(ctx, p, fields, mapper)
+	if err != nil {
+		return nil, 0, err
+	}
 	b.optFlag |= flagEliminateProjection
 	b.curClause = fieldList
 	proj := LogicalProjection{Exprs: make([]expression.Expression, 0, len(fields))}.Init(b.ctx, b.getSelectOffset())
@@ -3323,7 +3393,7 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName model.
 
 	charset, collation := b.ctx.GetSessionVars().GetCharsetInfo()
 	viewParser := parser.New()
-	viewParser.EnableWindowFunc(b.ctx.GetSessionVars().EnableWindowFunction)
+	viewParser.SetParserConfig(b.ctx.GetSessionVars().BuildParserConfig())
 	selectNode, err := viewParser.ParseOneStmt(tableInfo.View.SelectStmt, charset, collation)
 	if err != nil {
 		return nil, err
@@ -3734,13 +3804,29 @@ func checkUpdateList(ctx sessionctx.Context, tblID2table map[int64]table.Table, 
 	if err != nil {
 		return err
 	}
+	isPKUpdated := make(map[int64]model.CIStr)
 	for _, content := range updt.TblColPosInfos {
 		tbl := tblID2table[content.TblID]
 		flags := assignFlags[content.Start:content.End]
+		var updatePK bool
 		for i, col := range tbl.WritableCols() {
 			if flags[i] && col.State != model.StatePublic {
 				return ErrUnknownColumn.GenWithStackByArgs(col.Name, clauseMsg[fieldList])
 			}
+			// Check for multi-updates on primary key,
+			// see https://dev.mysql.com/doc/mysql-errors/5.7/en/server-error-reference.html#error_er_multi_update_key_conflict
+			if !flags[i] {
+				continue
+			}
+			if col.IsPKHandleColumn(tbl.Meta()) || col.IsCommonHandleColumn(tbl.Meta()) {
+				updatePK = true
+			}
+		}
+		if updatePK {
+			if otherTblName, ok := isPKUpdated[tbl.Meta().ID]; ok {
+				return ErrMultiUpdateKeyConflict.GenWithStackByArgs(otherTblName.O, updt.names[content.Start].TblName.O)
+			}
+			isPKUpdated[tbl.Meta().ID] = updt.names[content.Start].TblName
 		}
 	}
 	return nil
@@ -3990,12 +4076,12 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, delete *ast.DeleteStmt) (
 		for _, tn := range delete.Tables.Tables {
 			foundMatch := false
 			for _, v := range tableList {
-				dbName := v.Schema.L
-				if dbName == "" {
-					dbName = b.ctx.GetSessionVars().CurrentDB
+				dbName := v.Schema
+				if dbName.L == "" {
+					dbName = model.NewCIStr(b.ctx.GetSessionVars().CurrentDB)
 				}
-				if (tn.Schema.L == "" || tn.Schema.L == dbName) && tn.Name.L == v.Name.L {
-					tn.Schema.L = dbName
+				if (tn.Schema.L == "" || tn.Schema.L == dbName.L) && tn.Name.L == v.Name.L {
+					tn.Schema = dbName
 					tn.DBInfo = v.DBInfo
 					tn.TableInfo = v.TableInfo
 					foundMatch = true
