@@ -642,7 +642,7 @@ func (s *testSuiteJoin1) TestUsing(c *C) {
 	tk.MustExec(`INSERT INTO t1 VALUES (1,1)`)
 	tk.MustExec(`INSERT INTO t2 VALUES (1,1)`)
 	tk.MustExec(`INSERT INTO t3 VALUES (1,1)`)
-	tk.MustGetErrMsg(`SELECT * FROM t1 JOIN (t2 JOIN t3 USING (b)) USING (a)`, "ERROR 1052 (23000): Column 'a' in from clause is ambiguous")
+	tk.MustGetErrMsg(`SELECT * FROM t1 JOIN (t2 JOIN t3 USING (b)) USING (a)`, "[planner:1052]Column 'a' in from clause is ambiguous")
 }
 
 func (s *testSuiteJoin1) TestNaturalJoin(c *C) {
