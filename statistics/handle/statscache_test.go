@@ -36,11 +36,9 @@ func (s *testStatsSuite) TestStatsCacheMiniMemoryLimit(c *C) {
 	c.Assert(err, IsNil)
 	tableInfo1 := tbl1.Meta()
 	statsTbl1 := do.StatsHandle().GetTableStats(tableInfo1)
-	time.Sleep(10 * time.Millisecond)
 	c.Assert(statsTbl1.Pseudo, IsTrue)
 
 	testKit.MustExec("analyze table t1")
-	time.Sleep(10 * time.Millisecond)
 	statsTbl1 = do.StatsHandle().GetTableStats(tableInfo1)
 	c.Assert(statsTbl1.Pseudo, IsFalse)
 	// set new BytesLimit
@@ -49,7 +47,6 @@ func (s *testStatsSuite) TestStatsCacheMiniMemoryLimit(c *C) {
 	//create t2 and kick t1 of cache
 	testKit.MustExec("create table t2 (c1 int, c2 int)")
 	testKit.MustExec("insert into t2 values(1, 2)")
-	time.Sleep(10 * time.Millisecond)
 	do = s.do
 	is = do.InfoSchema()
 	tbl2, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
@@ -61,12 +58,10 @@ func (s *testStatsSuite) TestStatsCacheMiniMemoryLimit(c *C) {
 	c.Assert(statsTbl2.Pseudo, IsTrue)
 	testKit.MustExec("analyze table t2")
 	// wait 10 ms  for cache to evict old cache
-	time.Sleep(10 * time.Millisecond)
 	tbl2, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
 	c.Assert(err, IsNil)
 
 	statsTbl2 = do.StatsHandle().GetTableStats(tableInfo2)
-	time.Sleep(10 * time.Millisecond)
 	c.Assert(statsTbl2.Pseudo, IsFalse)
 
 	c.Assert(BytesLimit >= do.StatsHandle().GetMemConsumed(), IsTrue)
