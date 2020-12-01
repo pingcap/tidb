@@ -476,8 +476,11 @@ type SessionVars struct {
 	// TiDBAllowAutoRandExplicitInsert indicates whether explicit insertion on auto_random column is allowed.
 	AllowAutoRandExplicitInsert bool
 
-	// BroadcastJoinThreshold is used to limit the size of smaller table.
-	BroadcastJoinThreshold int64
+	// BroadcastJoinThresholdSize is used to limit the size of smaller table.
+	BroadcastJoinThresholdSize int64
+
+	// BroadcastJoinThresholdCount is used to limit the total count of smaller table.
+	BroadcastJoinThresholdCount int64
 
 	// AllowWriteRowID can be set to false to forbid write data to _tidb_rowid.
 	// CorrelationThreshold is the guard to enable row count estimation using column order correlation.
@@ -815,7 +818,8 @@ func NewSessionVars() *SessionVars {
 		StmtCtx:                     new(stmtctx.StatementContext),
 		AllowAggPushDown:            false,
 		AllowBCJ:                    false,
-		BroadcastJoinThreshold:      DefBroadcastJoinThreshold,
+		BroadcastJoinThresholdSize:  DefBroadcastJoinThresholdSize,
+		BroadcastJoinThresholdCount: DefBroadcastJoinThresholdSize,
 		OptimizerSelectivityLevel:   DefTiDBOptimizerSelectivityLevel,
 		RetryLimit:                  DefTiDBRetryLimit,
 		DisableTxnAutoRetry:         DefTiDBDisableTxnAutoRetry,
@@ -1277,8 +1281,10 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.AllowAggPushDown = TiDBOptOn(val)
 	case TiDBOptBCJ:
 		s.AllowBCJ = TiDBOptOn(val)
-	case TiDBBCJThreshold:
-		s.BroadcastJoinThreshold = tidbOptInt64(val, DefBroadcastJoinThreshold)
+	case TiDBBCJThresholdSize:
+		s.BroadcastJoinThresholdSize = tidbOptInt64(val, DefBroadcastJoinThresholdSize)
+	case TiDBBCJThresholdCount:
+		s.BroadcastJoinThresholdCount = tidbOptInt64(val, DefBroadcastJoinThresholdCount)
 	case TiDBOptDistinctAggPushDown:
 		s.AllowDistinctAggPushDown = TiDBOptOn(val)
 	case TiDBOptWriteRowID:

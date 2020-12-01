@@ -1558,25 +1558,25 @@ func (p *LogicalJoin) tryToGetIndexJoin(prop *property.PhysicalProperty) (indexJ
 	return append(allLeftOuterJoins, allRightOuterJoins...), false
 }
 
+func checkChildFitBC(p Plan) bool {
+	if p.statsInfo().HistColl == nil {
+		return p.statsInfo().Count() < p.SCtx().GetSessionVars().BroadcastJoinThresholdSize
+	}
+	avg := p.statsInfo().HistColl.GetAvgRowSize(p.SCtx(), p.Schema().Columns, false, false)
+	sz := avg * float64(p.statsInfo().Count())
+	return sz < float64(p.SCtx().GetSessionVars().BroadcastJoinThresholdCount)
+}
+
 func (p *LogicalJoin) shouldUseMPPBCJ() bool {
-	if p.ctx.GetSessionVars().BroadcastJoinThreshold == 0 {
+	if p.ctx.GetSessionVars().BroadcastJoinThresholdSize == 0 || p.ctx.GetSessionVars().BroadcastJoinThresholdCount == 0 {
 		return p.ctx.GetSessionVars().AllowBCJ
 	}
-	var lSize, rSize float64
-	if p.children[0].statsInfo().HistColl == nil {
-		lSize = math.MaxFloat64
-	} else {
-		lAvg := p.children[0].statsInfo().HistColl.GetAvgRowSize(p.ctx, p.schema.Columns, false, false)
-		lSize = float64(p.children[0].statsInfo().Count()) * lAvg
+	if p.JoinType == LeftOuterJoin || p.JoinType == SemiJoin || p.JoinType == AntiSemiJoin {
+		return checkChildFitBC(p.children[1])
+	} else if p.JoinType == RightOuterJoin {
+		return checkChildFitBC(p.children[0])
 	}
-	if p.children[1].statsInfo().HistColl == nil {
-		rSize = math.MaxFloat64
-	} else {
-		rAvg := p.children[1].statsInfo().HistColl.GetAvgRowSize(p.ctx, p.schema.Columns, false, false)
-		rSize = float64(p.children[1].statsInfo().Count()) * rAvg
-	}
-	minSize := math.Min(lSize, rSize)
-	return minSize <= float64(p.ctx.GetSessionVars().BroadcastJoinThreshold)
+	return checkChildFitBC(p.children[0]) || checkChildFitBC(p.children[1])
 }
 
 // LogicalJoin can generates hash join, index join and sort merge join.
