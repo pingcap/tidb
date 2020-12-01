@@ -1628,6 +1628,7 @@ func (s *session) isTxnRetryable() bool {
 func (s *session) NewTxn(ctx context.Context) error {
 	if s.txn.Valid() {
 		txnID := s.txn.StartTS()
+		txnScope := s.txn.Scope()
 		err := s.CommitTxn(ctx)
 		if err != nil {
 			return err
@@ -1636,7 +1637,7 @@ func (s *session) NewTxn(ctx context.Context) error {
 		logutil.Logger(ctx).Info("NewTxn() inside a transaction auto commit",
 			zap.Int64("schemaVersion", vars.TxnCtx.SchemaVersion),
 			zap.Uint64("txnStartTS", txnID),
-			zap.String("txnScope", s.txn.Scope()))
+			zap.String("txnScope", txnScope))
 	}
 
 	txn, err := s.store.Begin()
