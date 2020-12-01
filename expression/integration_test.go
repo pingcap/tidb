@@ -7290,7 +7290,7 @@ func (s *testIntegrationSerialSuite) TestIssue21290(c *C) {
 	tk.MustExec("insert into t1 values (20100202);")
 	tk.MustQuery("select a in ('2020-02-02', 20100202) from t1;").Check(testkit.Rows("1"))
 }
-	
+
 func (s *testIntegrationSuite) TestIssue11645(c *C) {
 	defer s.cleanEnv(c)
 	tk := testkit.NewTestKit(c, s.store)
