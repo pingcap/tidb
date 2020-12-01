@@ -54,6 +54,14 @@ var (
 	_ builtinFunc = &builtinIfJSONSig{}
 )
 
+func maxlen(lhsFlen, rhsFlen int) int {
+	// -1 indicates that the length is unknown, such as the case for expressions.
+	if lhsFlen < 0 || rhsFlen < 0 {
+		return mysql.MaxRealWidth
+	}
+	return mathutil.Max(lhsFlen, rhsFlen)
+}
+
 // InferType4ControlFuncs infer result type for builtin IF, IFNULL, NULLIF, LEAD and LAG.
 func InferType4ControlFuncs(lhs, rhs *types.FieldType) *types.FieldType {
 	resultFieldType := &types.FieldType{}
@@ -111,9 +119,10 @@ func InferType4ControlFuncs(lhs, rhs *types.FieldType) *types.FieldType {
 			if lhs.Decimal != types.UnspecifiedLength {
 				rhsFlen -= rhs.Decimal
 			}
-			resultFieldType.Flen = mathutil.Max(lhsFlen, rhsFlen) + resultFieldType.Decimal + 1
+			flen := maxlen(lhsFlen, rhsFlen) + resultFieldType.Decimal + 1   // account for -1 len fields
+			resultFieldType.Flen = mathutil.Min(flen, mysql.MaxDecimalWidth) // make sure it doesn't overflow
 		} else {
-			resultFieldType.Flen = mathutil.Max(lhs.Flen, rhs.Flen)
+			resultFieldType.Flen = maxlen(lhs.Flen, rhs.Flen)
 		}
 	}
 	// Fix decimal for int and string.
