@@ -238,6 +238,8 @@ type MemBuffer interface {
 // This is not thread safe.
 type Transaction interface {
 	RetrieverMutator
+	// Scope returns the scope of this transaction.
+	Scope() string
 	// Size returns sum of keys and values length.
 	Size() int
 	// Len returns the number of entries in the DB.
