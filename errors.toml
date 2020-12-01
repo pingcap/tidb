@@ -581,6 +581,11 @@ error = '''
 Export failed: %s
 '''
 
+["executor:8128"]
+error = '''
+Unsupported BRIE statement kind: %s
+'''
+
 ["expression:1139"]
 error = '''
 Got error '%-.64s' from regexp
