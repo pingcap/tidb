@@ -27,9 +27,6 @@ import (
 func (s *testStatsSuite) TestStatsCacheMiniMemoryLimit(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
-	//set new BytesLimit
-	BytesLimit := int64(90000)
-	s.do.StatsHandle().SetBytesLimit4Test(BytesLimit)
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t1 (c1 int, c2 int)")
 	testKit.MustExec("insert into t1 values(1, 2)")
@@ -45,6 +42,9 @@ func (s *testStatsSuite) TestStatsCacheMiniMemoryLimit(c *C) {
 	time.Sleep(10 * time.Millisecond)
 	statsTbl1 = do.StatsHandle().GetTableStats(tableInfo1)
 	c.Assert(statsTbl1.Pseudo, IsFalse)
+	// set new BytesLimit
+	BytesLimit := int64(90000)
+	s.do.StatsHandle().SetBytesLimit4Test(BytesLimit)
 	//create t2 and kick t1 of cache
 	testKit.MustExec("create table t2 (c1 int, c2 int)")
 	testKit.MustExec("insert into t2 values(1, 2)")

@@ -186,17 +186,15 @@ func (sc *simpleStatsCache) GetAll() []*statistics.Table {
 // Update updates the statistics table cache.
 func (sc *simpleStatsCache) Update(tables []*statistics.Table, deletedIDs []int64, newVersion uint64) {
 	sc.mu.Lock()
+	defer sc.mu.Unlock()
 	if sc.version <= newVersion {
 		sc.version = newVersion
-		sc.mu.Unlock()
 		for _, id := range deletedIDs {
 			sc.Erase(id)
 		}
 		for _, tbl := range tables {
 			sc.Insert(tbl)
 		}
-	} else {
-		sc.mu.Unlock()
 	}
 }
 
@@ -204,6 +202,7 @@ func (sc *simpleStatsCache) Update(tables []*statistics.Table, deletedIDs []int6
 func (sc *simpleStatsCache) GetBytesLimit() int64 {
 	return sc.memTracker.GetBytesLimit()
 }
+
 func (sc *simpleStatsCache) GetVersion() uint64 {
 	sc.mu.Lock()
 	defer sc.mu.Unlock()

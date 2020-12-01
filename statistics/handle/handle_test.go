@@ -56,10 +56,6 @@ func cleanEnv(c *C, store kv.Storage, do *domain.Domain) {
 	do.StatsHandle().Clear4Test()
 }
 
-func cleanHandle(c *C, do *domain.Domain) {
-	do.StatsHandle().Clear4Test()
-}
-
 func (s *testStatsSuite) TestStatsCache(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
@@ -103,6 +99,7 @@ func (s *testStatsSuite) TestStatsCache(c *C) {
 	// If the new schema add a column, the table stats can still work.
 	testKit.MustExec("alter table t add column c10 int")
 	is = do.InfoSchema()
+
 	do.StatsHandle().Clear4Test()
 	do.StatsHandle().Update(is)
 	time.Sleep(10 * time.Millisecond)
@@ -131,11 +128,11 @@ func (s *testStatsSuite) TestStatsCacheMemTracker(c *C) {
 	c.Assert(do.StatsHandle().GetAllTableStatsMemUsage4Test(), Equals, do.StatsHandle().GetMemConsumed())
 
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
+
 	c.Assert(statsTbl.Pseudo, IsFalse)
 	testKit.MustExec("create index idx_t on t(c1)")
 	time.Sleep(10 * time.Millisecond)
 	do.InfoSchema()
-
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
 	// If index is build, but stats is not updated. statsTbl can also work.
 	c.Assert(statsTbl.Pseudo, IsFalse)
