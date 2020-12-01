@@ -704,7 +704,7 @@
       {
         "SQL": "insert into t select * from t where b < 1 order by d limit 1",
         "Best": "TableReader(Table(t)->Sel([lt(test.t.b, 1)])->TopN([test.t.d],0,1))->TopN([test.t.d],0,1)->Insert",
-        "Hints": ""
+        "Hints": "use_index(@`sel_1` `test`.`t` )"
       },
       {
         "SQL": "insert into t (a, b, c, e, f, g) values(0,0,0,0,0,0)",

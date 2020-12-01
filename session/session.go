@@ -44,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -65,6 +66,7 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/logutil"
@@ -1671,6 +1673,30 @@ func loadCollationParameter(se *session) (bool, error) {
 	return false, nil
 }
 
+// loadDefMemQuotaQuery loads the default value of mem-quota-query.
+// We'll read a tuple if the cluster is upgraded from v3.0.x to v4.0.9+.
+// An empty result will be returned if it's a newly deployed cluster whose
+// version is v4.0.9.
+// See the comment upon the function `upgradeToVer49` for details.
+func loadDefMemQuotaQuery(se *session) (int64, error) {
+	defMemQuotaQuery, err := loadParameter(se, tidbDefMemoryQuotaQuery)
+	if err != nil {
+		if err == errResultIsEmpty {
+			return 1 << 30, nil
+		}
+		return 1 << 30, err
+	}
+	if quota, err := strconv.Atoi(defMemQuotaQuery); err != nil || quota != 32<<30 {
+		logutil.BgLogger().Warn("Unexpected value of 'default_memory_quota_query' in 'mysql.tidb', use '34359738368' instead",
+			zap.String("value", defMemQuotaQuery))
+	}
+	return 32 << 30, nil
+}
+
+var (
+	errResultIsEmpty = dbterror.ClassExecutor.NewStd(errno.ErrResultIsEmpty)
+)
+
 // loadParameter loads read-only parameter from mysql.tidb
 func loadParameter(se *session, name string) (string, error) {
 	sql := "select variable_value from mysql.tidb where variable_name = '" + name + "'"
@@ -1687,6 +1713,9 @@ func loadParameter(se *session, name string) (string, error) {
 	req := rss[0].NewChunk()
 	if err := rss[0].Next(context.Background(), req); err != nil {
 		return "", err
+	}
+	if req.NumRows() == 0 {
+		return "", errResultIsEmpty
 	}
 	return req.GetRow(0).GetString(0), nil
 }
@@ -1734,6 +1763,19 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 
 	if newCollationEnabled {
 		collate.EnableNewCollations()
+	}
+
+	if !config.IsMemoryQuotaQuerySetByUser {
+		newMemoryQuotaQuery, err := loadDefMemQuotaQuery(se)
+		if err != nil {
+			return nil, err
+		}
+		if newMemoryQuotaQuery != cfg.MemQuotaQuery {
+			newCfg := *(config.GetGlobalConfig())
+			newCfg.MemQuotaQuery = newMemoryQuotaQuery
+			config.StoreGlobalConfig(&newCfg)
+			variable.SysVars[variable.TIDBMemQuotaQuery].Value = strconv.FormatInt(newCfg.MemQuotaQuery, 10)
+		}
 	}
 
 	dom := domain.GetDomain(se)
@@ -1888,7 +1930,7 @@ func CreateSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 
 const (
 	notBootstrapped         = 0
-	currentBootstrapVersion = version48
+	currentBootstrapVersion = version49
 )
 
 func getStoreBootstrapVersion(store kv.Storage) int64 {
@@ -2029,6 +2071,7 @@ var builtinGlobalVariable = []string{
 	variable.TiDBEnableTelemetry,
 	variable.TiDBEnableAmendPessimisticTxn,
 	variable.TiDBEnableRateLimitAction,
+	variable.TiDBMemoryUsageAlarmRatio,
 }
 
 var (
