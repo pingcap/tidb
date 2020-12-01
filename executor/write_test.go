@@ -2968,6 +2968,254 @@ func (s *testSuite4) TestWriteListColumnsPartitionTable(c *C) {
 	tk.MustQuery("select * from t order by id").Check(testkit.Rows("1 a", "2 b"))
 }
 
+func (s *testSuite4) TestWriteListPartitionTable1(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@session.tidb_enable_table_partition = 1")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec(`create table t (id int, name varchar(10)) partition by list  (id) (
+    	partition p0 values in (3,5,6,9,17),
+    	partition p1 values in (1,2,10,11,19,20),
+    	partition p2 values in (4,12,13,14,18),
+    	partition p3 values in (7,8,15,16,null)
+	);`)
+
+	// Test add unique index failed.
+	tk.MustExec("insert into t values  (1, 'a'),(1,'b')")
+	_, err := tk.Exec("alter table t add unique index idx (id)")
+	c.Assert(err.Error(), Equals, "[kv:1062]Duplicate entry '1' for key 'idx'")
+	// Test add unique index success.
+	tk.MustExec("delete from t where name='b'")
+	tk.MustExec("alter table t add unique index idx (id)")
+
+	// --------------------------Test insert---------------------------
+	// Test insert 1 partition.
+	tk.MustExec("delete from t")
+	tk.MustExec("insert into t values  (1, 'a'),(2,'b'),(10,'c')")
+	tk.MustQuery("select * from t partition(p1) order by id").Check(testkit.Rows("1 a", "2 b", "10 c"))
+	// Test insert multi-partitions.
+	tk.MustExec("delete from t")
+	tk.MustExec("insert into t values  (1, 'a'),(3,'c'),(4,'e')")
+	tk.MustQuery("select * from t partition(p0) order by id").Check(testkit.Rows("3 c"))
+	tk.MustQuery("select * from t partition(p1) order by id").Check(testkit.Rows("1 a"))
+	tk.MustQuery("select * from t partition(p2) order by id").Check(testkit.Rows("4 e"))
+	tk.MustQuery("select * from t partition(p3) order by id").Check(testkit.Rows())
+	// Test insert on duplicate.
+	tk.MustExec("insert into t values (1, 'd'), (3,'f'),(5,'g') on duplicate key update name='x'")
+	tk.MustQuery("select * from t partition(p0) order by id").Check(testkit.Rows("3 x", "5 g"))
+	tk.MustQuery("select * from t partition(p1) order by id").Check(testkit.Rows("1 x"))
+	tk.MustQuery("select * from t partition(p2) order by id").Check(testkit.Rows("4 e"))
+	tk.MustQuery("select * from t partition(p3) order by id").Check(testkit.Rows())
+	// Test insert on duplicate error
+	_, err = tk.Exec("insert into t values (3, 'a'), (11,'x') on duplicate key update id=id+1")
+	c.Assert(err.Error(), Equals, "[kv:1062]Duplicate entry '4' for key 'idx'")
+	tk.MustQuery("select * from t order by id").Check(testkit.Rows("1 x", "3 x", "4 e", "5 g"))
+	// Test insert ignore with duplicate
+	tk.MustExec("insert ignore into t values  (1, 'b'), (5,'a'),(null,'y')")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1062 Duplicate entry '1' for key 'idx'", "Warning 1062 Duplicate entry '5' for key 'idx'"))
+	tk.MustQuery("select * from t partition(p0) order by id").Check(testkit.Rows("3 x", "5 g"))
+	tk.MustQuery("select * from t partition(p1) order by id").Check(testkit.Rows("1 x"))
+	tk.MustQuery("select * from t partition(p2) order by id").Check(testkit.Rows("4 e"))
+	tk.MustQuery("select * from t partition(p3) order by id").Check(testkit.Rows("<nil> y"))
+	// Test insert ignore without duplicate
+	tk.MustExec("insert ignore into t values  (15, 'a'),(17,'a')")
+	tk.MustQuery("select * from t partition(p0,p1,p2) order by id").Check(testkit.Rows("1 x", "3 x", "4 e", "5 g", "17 a"))
+	tk.MustQuery("select * from t partition(p3) order by id").Check(testkit.Rows("<nil> y", "15 a"))
+	// Test insert meet no partition error.
+	_, err = tk.Exec("insert into t values (100, 'd')")
+	c.Assert(err.Error(), Equals, "[table:1526]Table has no partition for value 100")
+
+	// --------------------------Test update---------------------------
+	// Test update 1 partition.
+	tk.MustExec("delete from t")
+	tk.MustExec("insert into t values  (1, 'a'),(2,'b'),(3,'c')")
+	tk.MustExec("update t set name='b' where id=2;")
+	tk.MustQuery("select * from t partition(p1)").Check(testkit.Rows("1 a", "2 b"))
+	tk.MustExec("update t set name='x' where id in (1,2)")
+	tk.MustQuery("select * from t partition(p1)").Check(testkit.Rows("1 x", "2 x"))
+	tk.MustExec("update t set name='y' where id < 3")
+	tk.MustQuery("select * from t order by id").Check(testkit.Rows("1 y", "2 y", "3 c"))
+	// Test update meet duplicate error.
+	_, err = tk.Exec("update t set id=2 where id = 1")
+	c.Assert(err.Error(), Equals, "[kv:1062]Duplicate entry '2' for key 'idx'")
+	tk.MustQuery("select * from t order by id").Check(testkit.Rows("1 y", "2 y", "3 c"))
+
+	// Test update multi-partitions
+	tk.MustExec("update t set name='z' where id in (1,2,3);")
+	tk.MustQuery("select * from t order by id").Check(testkit.Rows("1 z", "2 z", "3 z"))
+	tk.MustExec("update t set name='a' limit 3")
+	tk.MustQuery("select * from t order by id").Check(testkit.Rows("1 a", "2 a", "3 a"))
+	tk.MustExec("update t set id=id*10 where id in (1,2)")
+	tk.MustQuery("select * from t order by id").Check(testkit.Rows("3 a", "10 a", "20 a"))
+	// Test update meet duplicate error.
+	_, err = tk.Exec("update t set id=id+17 where id in (3,10)")
+	c.Assert(err.Error(), Equals, "[kv:1062]Duplicate entry '20' for key 'idx'")
+	tk.MustQuery("select * from t order by id").Check(testkit.Rows("3 a", "10 a", "20 a"))
+	// Test update meet no partition error.
+	_, err = tk.Exec("update t set id=id*2 where id in (3,20)")
+	c.Assert(err.Error(), Equals, "[table:1526]Table has no partition for value 40")
+	tk.MustQuery("select * from t order by id").Check(testkit.Rows("3 a", "10 a", "20 a"))
+
+	// --------------------------Test replace---------------------------
+	// Test replace 1 partition.
+	tk.MustExec("delete from t")
+	tk.MustExec("replace into t values  (1, 'a'),(2,'b')")
+	tk.MustQuery("select * from t order by id").Check(testkit.Rows("1 a", "2 b"))
+	// Test replace multi-partitions.
+	tk.MustExec("replace into t values  (3, 'c'),(4,'d'),(7,'f')")
+	tk.MustQuery("select * from t partition(p0) order by id").Check(testkit.Rows("3 c"))
+	tk.MustQuery("select * from t partition(p1) order by id").Check(testkit.Rows("1 a", "2 b"))
+	tk.MustQuery("select * from t partition(p2) order by id").Check(testkit.Rows("4 d"))
+	tk.MustQuery("select * from t partition(p3) order by id").Check(testkit.Rows("7 f"))
+	// Test replace on duplicate.
+	tk.MustExec("replace into t values  (1, 'x'),(7,'x')")
+	tk.MustQuery("select * from t order by id").Check(testkit.Rows("1 x", "2 b", "3 c", "4 d", "7 x"))
+	// Test replace meet no partition error.
+	_, err = tk.Exec("replace into t values  (10,'x'),(50,'x')")
+	c.Assert(err.Error(), Equals, "[table:1526]Table has no partition for value 50")
+	tk.MustQuery("select * from t order by id").Check(testkit.Rows("1 x", "2 b", "3 c", "4 d", "7 x"))
+
+	// --------------------------Test delete---------------------------
+	// Test delete 1 partition.
+	tk.MustExec("delete from t where id = 3")
+	tk.MustQuery("select * from t partition(p0) order by id").Check(testkit.Rows())
+	tk.MustExec("delete from t where id in (1,2)")
+	tk.MustQuery("select * from t partition(p1) order by id").Check(testkit.Rows())
+	// Test delete multi-partitions.
+	tk.MustExec("delete from t where id in (4,7,10,11)")
+	tk.MustQuery("select * from t").Check(testkit.Rows())
+	tk.MustExec("insert into t values  (3, 'c'),(4,'d'),(7,'f')")
+	tk.MustExec("delete from t where id < 10")
+	tk.MustQuery("select * from t").Check(testkit.Rows())
+	tk.MustExec("insert into t values  (3, 'c'),(4,'d'),(7,'f')")
+	tk.MustExec("delete from t limit 3")
+	tk.MustQuery("select * from t").Check(testkit.Rows())
+}
+
+func (s *testSuite4) TestWriteListColumnsPartitionTable1(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@session.tidb_enable_table_partition = 1")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec(`create table t (id int, name varchar(10)) partition by list columns (id) (
+    	partition p0 values in (3,5,6,9,17),
+    	partition p1 values in (1,2,10,11,19,20),
+    	partition p2 values in (4,12,13,14,18),
+    	partition p3 values in (7,8,15,16,null)
+	);`)
+
+	// Test add unique index failed.
+	tk.MustExec("insert into t values  (1, 'a'),(1,'b')")
+	_, err := tk.Exec("alter table t add unique index idx (id)")
+	c.Assert(err.Error(), Equals, "[kv:1062]Duplicate entry '1' for key 'idx'")
+	// Test add unique index success.
+	tk.MustExec("delete from t where name='b'")
+	tk.MustExec("alter table t add unique index idx (id)")
+
+	// --------------------------Test insert---------------------------
+	// Test insert 1 partition.
+	tk.MustExec("delete from t")
+	tk.MustExec("insert into t values  (1, 'a'),(2,'b'),(10,'c')")
+	tk.MustQuery("select * from t partition(p1) order by id").Check(testkit.Rows("1 a", "2 b", "10 c"))
+	// Test insert multi-partitions.
+	tk.MustExec("delete from t")
+	tk.MustExec("insert into t values  (1, 'a'),(3,'c'),(4,'e')")
+	tk.MustQuery("select * from t partition(p0) order by id").Check(testkit.Rows("3 c"))
+	tk.MustQuery("select * from t partition(p1) order by id").Check(testkit.Rows("1 a"))
+	tk.MustQuery("select * from t partition(p2) order by id").Check(testkit.Rows("4 e"))
+	tk.MustQuery("select * from t partition(p3) order by id").Check(testkit.Rows())
+	// Test insert on duplicate.
+	tk.MustExec("insert into t values (1, 'd'), (3,'f'),(5,'g') on duplicate key update name='x'")
+	tk.MustQuery("select * from t partition(p0) order by id").Check(testkit.Rows("3 x", "5 g"))
+	tk.MustQuery("select * from t partition(p1) order by id").Check(testkit.Rows("1 x"))
+	tk.MustQuery("select * from t partition(p2) order by id").Check(testkit.Rows("4 e"))
+	tk.MustQuery("select * from t partition(p3) order by id").Check(testkit.Rows())
+	// Test insert on duplicate error
+	_, err = tk.Exec("insert into t values (3, 'a'), (11,'x') on duplicate key update id=id+1")
+	c.Assert(err.Error(), Equals, "[kv:1062]Duplicate entry '4' for key 'idx'")
+	tk.MustQuery("select * from t order by id").Check(testkit.Rows("1 x", "3 x", "4 e", "5 g"))
+	// Test insert ignore with duplicate
+	tk.MustExec("insert ignore into t values  (1, 'b'), (5,'a'),(null,'y')")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1062 Duplicate entry '1' for key 'idx'", "Warning 1062 Duplicate entry '5' for key 'idx'"))
+	tk.MustQuery("select * from t partition(p0) order by id").Check(testkit.Rows("3 x", "5 g"))
+	tk.MustQuery("select * from t partition(p1) order by id").Check(testkit.Rows("1 x"))
+	tk.MustQuery("select * from t partition(p2) order by id").Check(testkit.Rows("4 e"))
+	tk.MustQuery("select * from t partition(p3) order by id").Check(testkit.Rows("<nil> y"))
+	// Test insert ignore without duplicate
+	tk.MustExec("insert ignore into t values  (15, 'a'),(17,'a')")
+	tk.MustQuery("select * from t partition(p0,p1,p2) order by id").Check(testkit.Rows("1 x", "3 x", "4 e", "5 g", "17 a"))
+	tk.MustQuery("select * from t partition(p3) order by id").Check(testkit.Rows("<nil> y", "15 a"))
+	// Test insert meet no partition error.
+	_, err = tk.Exec("insert into t values (100, 'd')")
+	c.Assert(err.Error(), Equals, "[table:1526]Table has no partition for value from column_list")
+
+	// --------------------------Test update---------------------------
+	// Test update 1 partition.
+	tk.MustExec("delete from t")
+	tk.MustExec("insert into t values  (1, 'a'),(2,'b'),(3,'c')")
+	tk.MustExec("update t set name='b' where id=2;")
+	tk.MustQuery("select * from t partition(p1)").Check(testkit.Rows("1 a", "2 b"))
+	tk.MustExec("update t set name='x' where id in (1,2)")
+	tk.MustQuery("select * from t partition(p1)").Check(testkit.Rows("1 x", "2 x"))
+	tk.MustExec("update t set name='y' where id < 3")
+	tk.MustQuery("select * from t order by id").Check(testkit.Rows("1 y", "2 y", "3 c"))
+	// Test update meet duplicate error.
+	_, err = tk.Exec("update t set id=2 where id = 1")
+	c.Assert(err.Error(), Equals, "[kv:1062]Duplicate entry '2' for key 'idx'")
+	tk.MustQuery("select * from t order by id").Check(testkit.Rows("1 y", "2 y", "3 c"))
+
+	// Test update multi-partitions
+	tk.MustExec("update t set name='z' where id in (1,2,3);")
+	tk.MustQuery("select * from t order by id").Check(testkit.Rows("1 z", "2 z", "3 z"))
+	tk.MustExec("update t set name='a' limit 3")
+	tk.MustQuery("select * from t order by id").Check(testkit.Rows("1 a", "2 a", "3 a"))
+	tk.MustExec("update t set id=id*10 where id in (1,2)")
+	tk.MustQuery("select * from t order by id").Check(testkit.Rows("3 a", "10 a", "20 a"))
+	// Test update meet duplicate error.
+	_, err = tk.Exec("update t set id=id+17 where id in (3,10)")
+	c.Assert(err.Error(), Equals, "[kv:1062]Duplicate entry '20' for key 'idx'")
+	tk.MustQuery("select * from t order by id").Check(testkit.Rows("3 a", "10 a", "20 a"))
+	// Test update meet no partition error.
+	_, err = tk.Exec("update t set id=id*2 where id in (3,20)")
+	c.Assert(err.Error(), Equals, "[table:1526]Table has no partition for value from column_list")
+	tk.MustQuery("select * from t order by id").Check(testkit.Rows("3 a", "10 a", "20 a"))
+
+	// --------------------------Test replace---------------------------
+	// Test replace 1 partition.
+	tk.MustExec("delete from t")
+	tk.MustExec("replace into t values  (1, 'a'),(2,'b')")
+	tk.MustQuery("select * from t order by id").Check(testkit.Rows("1 a", "2 b"))
+	// Test replace multi-partitions.
+	tk.MustExec("replace into t values  (3, 'c'),(4,'d'),(7,'f')")
+	tk.MustQuery("select * from t partition(p0) order by id").Check(testkit.Rows("3 c"))
+	tk.MustQuery("select * from t partition(p1) order by id").Check(testkit.Rows("1 a", "2 b"))
+	tk.MustQuery("select * from t partition(p2) order by id").Check(testkit.Rows("4 d"))
+	tk.MustQuery("select * from t partition(p3) order by id").Check(testkit.Rows("7 f"))
+	// Test replace on duplicate.
+	tk.MustExec("replace into t values  (1, 'x'),(7,'x')")
+	tk.MustQuery("select * from t order by id").Check(testkit.Rows("1 x", "2 b", "3 c", "4 d", "7 x"))
+	// Test replace meet no partition error.
+	_, err = tk.Exec("replace into t values  (10,'x'),(100,'x')")
+	c.Assert(err.Error(), Equals, "[table:1526]Table has no partition for value from column_list")
+	tk.MustQuery("select * from t order by id").Check(testkit.Rows("1 x", "2 b", "3 c", "4 d", "7 x"))
+
+	// --------------------------Test delete---------------------------
+	// Test delete 1 partition.
+	tk.MustExec("delete from t where id = 3")
+	tk.MustQuery("select * from t partition(p0) order by id").Check(testkit.Rows())
+	tk.MustExec("delete from t where id in (1,2)")
+	tk.MustQuery("select * from t partition(p1) order by id").Check(testkit.Rows())
+	// Test delete multi-partitions.
+	tk.MustExec("delete from t where id in (4,7,10,11)")
+	tk.MustQuery("select * from t").Check(testkit.Rows())
+	tk.MustExec("insert into t values  (3, 'c'),(4,'d'),(7,'f')")
+	tk.MustExec("delete from t where id < 10")
+	tk.MustQuery("select * from t").Check(testkit.Rows())
+	tk.MustExec("insert into t values  (3, 'c'),(4,'d'),(7,'f')")
+	tk.MustExec("delete from t limit 3")
+	tk.MustQuery("select * from t").Check(testkit.Rows())
+}
+
 func (s *testSerialSuite) TestIssue20724(c *C) {
 	collate.SetNewCollationEnabledForTest(true)
 	defer collate.SetNewCollationEnabledForTest(false)
