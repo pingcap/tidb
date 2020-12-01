@@ -563,8 +563,8 @@ func outOfRangeEQSelectivity(ndv, modifyRows, totalRows int64) float64 {
 	return selectivity
 }
 
-func outOfRangeIntervalSelectivity(idx *Index, ran *ranger.Range, modifyCount int64) float64 {
-	statWidth := idx.calcStatWidth(int(idx.ID)/2, &ran.LowVal[0])
+func outOfRangeIntervalSelectivity(col *Column, ran *ranger.Range, modifyCount int64) float64 {
+	statWidth := col.calcStatWidth(ran.LowVal[0].Kind())
 	lowVal := math.MaxFloat64
 	for _, val := range ran.LowVal {
 		if val.GetFloat64() < lowVal {
@@ -578,7 +578,7 @@ func outOfRangeIntervalSelectivity(idx *Index, ran *ranger.Range, modifyCount in
 		}
 	}
 	rangeWidth := highVal - lowVal
-	rangeCount := idx.TotalRowCount() * (rangeWidth / statWidth)
+	rangeCount := col.TotalRowCount() * (rangeWidth / statWidth)
 	return math.Min(rangeCount, float64(modifyCount))
 }
 

@@ -298,9 +298,9 @@ func calcWidth(lower, upper float64) float64 {
 	return upper - lower
 }
 
-func (hg *Histogram) calcStatWidth(index int, value *types.Datum) float64 {
-	lower, upper := hg.Bounds.GetRow(2*index), hg.Bounds.GetRow(2*index+1)
-	switch value.Kind() {
+func (hg *Histogram) calcStatWidth(kind byte) float64 {
+	lower, upper := hg.Bounds.GetRow(0), hg.Bounds.GetRow(2*(len(hg.Buckets)-1)+1)
+	switch kind {
 	case types.KindFloat32:
 		return calcWidth(float64(lower.GetFloat32(0)), float64(upper.GetFloat32(0)))
 	case types.KindFloat64:
@@ -312,9 +312,11 @@ func (hg *Histogram) calcStatWidth(index int, value *types.Datum) float64 {
 	case types.KindMysqlDuration:
 		return calcWidth(float64(lower.GetDuration(0, 0).Duration), float64(upper.GetDuration(0, 0).Duration))
 	case types.KindMysqlDecimal, types.KindMysqlTime:
-		return calcWidth(hg.scalars[index].lower, hg.scalars[index].upper)
+		// TODO
+		return 0.0
 	case types.KindBytes, types.KindString:
-		return calcWidth(hg.scalars[index].lower, hg.scalars[index].upper)
+		// TODO
+		return 0.0
 	}
 	return 0.0
 }
