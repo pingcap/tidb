@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/util/logutil"
@@ -150,7 +149,7 @@ func (action actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoff
 				// After writing the primary key, if the size of the transaction is larger than 32M,
 				// start the ttlManager. The ttlManager will be closed in tikvTxn.Commit().
 				// In this case 1PC is not expected to be used, but still check it for safety.
-				if int64(c.txnSize) > config.GetGlobalConfig().TiKVClient.TTLRefreshedTxnSize &&
+				if uint64(c.txnSize) > RefreshTxnTTLThreshold &&
 					prewriteResp.OnePcCommitTs == 0 {
 					c.run(c, nil)
 				}

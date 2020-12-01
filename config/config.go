@@ -530,8 +530,6 @@ type TiKVClient struct {
 	// StoreLivenessTimeout is the timeout for store liveness check request.
 	StoreLivenessTimeout string           `toml:"store-liveness-timeout" json:"store-liveness-timeout"`
 	CoprCache            CoprocessorCache `toml:"copr-cache" json:"copr-cache"`
-	// TTLRefreshedTxnSize controls whether a transaction should update its TTL or not.
-	TTLRefreshedTxnSize int64 `toml:"ttl-refreshed-txn-size" json:"ttl-refreshed-txn-size"`
 	// Ensure external consistency when async commit or 1PC is enabled. When this option is enabled,
 	// TiDB needs to get a timestamp from PD before committing a transaction and thus latency is increased.
 	ExternalConsistency bool `toml:"external-consistency" json:"external-consistency"`
@@ -748,8 +746,6 @@ var defaultConf = Config{
 		RegionCacheTTL:       600,
 		StoreLimit:           0,
 		StoreLivenessTimeout: DefStoreLivenessTimeout,
-
-		TTLRefreshedTxnSize: 32 * 1024 * 1024,
 
 		CoprCache: CoprocessorCache{
 			Enable:                true,

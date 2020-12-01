@@ -63,9 +63,9 @@ var (
 	tikvOnePCTxnCounterError                       = metrics.TiKVOnePCTxnCounter.WithLabelValues("err")
 )
 
-// Global variable set by config file.
 var (
-	ManagedLockTTL uint64 = 20000 // 20s
+	ManagedLockTTL         uint64 = 6000        // 6s
+	RefreshTxnTTLThreshold uint64 = bytesPerMiB // 1MiB
 )
 
 // metricsTag returns detail tag for metrics.
@@ -542,7 +542,8 @@ func txnLockTTL(startTime time.Time, txnSize int) uint64 {
 	// Increase lockTTL for large transactions.
 	// The formula is `ttl = ttlFactor * sqrt(sizeInMiB)`.
 	// When writeSize is less than 256KB, the base ttl is defaultTTL (3s);
-	// When writeSize is 1MiB, 4MiB, or 10MiB, ttl is 6s, 12s, 20s correspondingly;
+	// When writeSize exceeds 1MiB, TTL will be ManagedLockTTL (6s) and a ttlManager
+	// will be started to keep this transaction alive;
 	lockTTL := defaultLockTTL
 	if txnSize >= txnCommitBatchSize {
 		sizeMiB := float64(txnSize) / bytesPerMiB
