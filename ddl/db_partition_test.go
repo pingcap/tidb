@@ -591,6 +591,14 @@ func (s *testIntegrationSuite1) TestCreateTableWithListPartition(c *C) {
 			ddl.ErrSameNamePartition,
 		},
 		{
+			"create table t (id bigint) partition by list (cast(id as unsigned)) (partition p0 values in (1))",
+			ddl.ErrPartitionFunctionIsNotAllowed,
+		},
+		{
+			"create table t (id float) partition by list (ceiling(id)) (partition p0 values in (1))",
+			ddl.ErrPartitionFuncNotAllowed,
+		},
+		{
 			"create table t(b char(10)) partition by range columns (b) (partition p1 values less than ('G' collate utf8mb4_unicode_ci));",
 			ddl.ErrPartitionFunctionIsNotAllowed,
 		},
