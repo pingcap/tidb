@@ -67,7 +67,7 @@ func rewriteAstExpr(sctx sessionctx.Context, expr ast.ExprNode, schema *expressi
 	if sctx.GetSessionVars().TxnCtx.InfoSchema != nil {
 		is = sctx.GetSessionVars().TxnCtx.InfoSchema.(infoschema.InfoSchema)
 	}
-	b := NewPlanBuilder(sctx, is, &hint.BlockHintProcessor{})
+	b := NewPlanBuilder(sctx, is, &hint.BlockHintProcessor{}, &SetVarCollectProcessor{})
 	fakePlan := LogicalTableDual{}.Init(sctx, 0)
 	if schema != nil {
 		fakePlan.schema = schema
@@ -1833,7 +1833,7 @@ func (er *expressionRewriter) getVarTryFoldOrNotStart(name string) bool {
 	tryFold := false
 	svv := er.setVarCollectProcessor
 	// We can only fold the GetVar into a constant if the query contains no SetVar for the same user variable.
-	if svv != nil {
+	if svv != nil && svv.SetVarMap != nil {
 		tryFold = !svv.SetVarMap[name]
 	} // else setVarCollectProcessor is nil, no need to disable fold
 

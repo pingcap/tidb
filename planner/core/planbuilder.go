@@ -550,26 +550,21 @@ func (b *PlanBuilder) popSelectOffset() {
 	b.selectOffset = b.selectOffset[:len(b.selectOffset)-1]
 }
 
-// NewPlanBuilderWithSetVarCollect creates a new PlanBuilder with setVarCollectProcessor.
-func NewPlanBuilderWithSetVarCollect(sctx sessionctx.Context, is infoschema.InfoSchema, processor *hint.BlockHintProcessor, setVarCollectProcessor *SetVarCollectProcessor) *PlanBuilder {
-	if processor == nil {
+// NewPlanBuilder creates a new PlanBuilder.
+func NewPlanBuilder(sctx sessionctx.Context, is infoschema.InfoSchema, blockHintProcessor *hint.BlockHintProcessor, setVarCollectProcessor *SetVarCollectProcessor) *PlanBuilder {
+	if blockHintProcessor == nil {
 		sctx.GetSessionVars().PlannerSelectBlockAsName = nil
 	} else {
-		sctx.GetSessionVars().PlannerSelectBlockAsName = make([]ast.HintTable, processor.MaxSelectStmtOffset()+1)
+		sctx.GetSessionVars().PlannerSelectBlockAsName = make([]ast.HintTable, blockHintProcessor.MaxSelectStmtOffset()+1)
 	}
 	return &PlanBuilder{
 		ctx:                    sctx,
 		is:                     is,
 		colMapper:              make(map[*ast.ColumnNameExpr]int),
 		handleHelper:           &handleColHelper{id2HandleMapStack: make([]map[int64][]HandleCols, 0)},
-		hintProcessor:          processor,
+		hintProcessor:          blockHintProcessor,
 		setVarCollectProcessor: setVarCollectProcessor,
 	}
-}
-
-// NewPlanBuilder creates a new PlanBuilder.
-func NewPlanBuilder(sctx sessionctx.Context, is infoschema.InfoSchema, processor *hint.BlockHintProcessor) *PlanBuilder {
-	return NewPlanBuilderWithSetVarCollect(sctx, is, processor, nil)
 }
 
 // Build builds the ast node to a Plan.

@@ -224,7 +224,7 @@ func optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 
 	setVarCollectProcessor := plannercore.NewSetVarCollectProcessor()
 	node.Accept(setVarCollectProcessor) // collect SetVar first
-	builder := plannercore.NewPlanBuilderWithSetVarCollect(sctx, is, hintProcessor, setVarCollectProcessor)
+	builder := plannercore.NewPlanBuilder(sctx, is, hintProcessor, setVarCollectProcessor)
 
 	// reset fields about rewrite
 	sctx.GetSessionVars().RewritePhaseInfo.Reset()
@@ -402,7 +402,7 @@ func OptimizeExecStmt(ctx context.Context, sctx sessionctx.Context,
 	execAst *ast.ExecuteStmt, is infoschema.InfoSchema) (plannercore.Plan, error) {
 	defer trace.StartRegion(ctx, "Optimize").End()
 	var err error
-	builder := plannercore.NewPlanBuilder(sctx, is, nil)
+	builder := plannercore.NewPlanBuilder(sctx, is, nil, nil)
 	p, err := builder.Build(ctx, execAst)
 	if err != nil {
 		return nil, err
