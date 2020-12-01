@@ -74,11 +74,15 @@ func (s *testVarsutilSuite) TestNewSessionVars(c *C) {
 	c.Assert(vars.hashAggPartialConcurrency, Equals, ConcurrencyUnset)
 	c.Assert(vars.hashAggFinalConcurrency, Equals, ConcurrencyUnset)
 	c.Assert(vars.windowConcurrency, Equals, ConcurrencyUnset)
+	c.Assert(vars.mergeJoinConcurrency, Equals, DefTiDBMergeJoinConcurrency)
+	c.Assert(vars.streamAggConcurrency, Equals, DefTiDBStreamAggConcurrency)
 	c.Assert(vars.distSQLScanConcurrency, Equals, DefDistSQLScanConcurrency)
 	c.Assert(vars.ProjectionConcurrency(), Equals, DefExecutorConcurrency)
 	c.Assert(vars.HashAggPartialConcurrency(), Equals, DefExecutorConcurrency)
 	c.Assert(vars.HashAggFinalConcurrency(), Equals, DefExecutorConcurrency)
 	c.Assert(vars.WindowConcurrency(), Equals, DefExecutorConcurrency)
+	c.Assert(vars.MergeJoinConcurrency(), Equals, DefTiDBMergeJoinConcurrency)
+	c.Assert(vars.StreamAggConcurrency(), Equals, DefTiDBStreamAggConcurrency)
 	c.Assert(vars.DistSQLScanConcurrency(), Equals, DefDistSQLScanConcurrency)
 	c.Assert(vars.ExecutorConcurrency, Equals, DefExecutorConcurrency)
 	c.Assert(vars.MaxChunkSize, Equals, DefMaxChunkSize)
@@ -97,6 +101,7 @@ func (s *testVarsutilSuite) TestNewSessionVars(c *C) {
 	c.Assert(vars.TiDBOptJoinReorderThreshold, Equals, DefTiDBOptJoinReorderThreshold)
 	c.Assert(vars.EnableFastAnalyze, Equals, DefTiDBUseFastAnalyze)
 	c.Assert(vars.FoundInPlanCache, Equals, DefTiDBFoundInPlanCache)
+	c.Assert(vars.FoundInBinding, Equals, DefTiDBFoundInBinding)
 	c.Assert(vars.AllowAutoRandExplicitInsert, Equals, DefTiDBAllowAutoRandExplicitInsert)
 	c.Assert(vars.ShardAllocateStep, Equals, int64(DefTiDBShardAllocateStep))
 	c.Assert(vars.EnableChangeColumnType, Equals, DefTiDBChangeColumnType)
@@ -296,13 +301,13 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	c.Assert(err, IsNil)
 	val, err = GetSessionSystemVar(v, TiDBCheckMb4ValueInUTF8)
 	c.Assert(err, IsNil)
-	c.Assert(val, Equals, "1")
+	c.Assert(val, Equals, "ON")
 	c.Assert(config.GetGlobalConfig().CheckMb4ValueInUTF8, Equals, true)
 	err = SetSessionSystemVar(v, TiDBCheckMb4ValueInUTF8, types.NewStringDatum("0"))
 	c.Assert(err, IsNil)
 	val, err = GetSessionSystemVar(v, TiDBCheckMb4ValueInUTF8)
 	c.Assert(err, IsNil)
-	c.Assert(val, Equals, "0")
+	c.Assert(val, Equals, "OFF")
 	c.Assert(config.GetGlobalConfig().CheckMb4ValueInUTF8, Equals, false)
 
 	SetSessionSystemVar(v, TiDBLowResolutionTSO, types.NewStringDatum("1"))
@@ -464,8 +469,15 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	c.Assert(err, IsNil)
 	val, err = GetSessionSystemVar(v, TiDBFoundInPlanCache)
 	c.Assert(err, IsNil)
-	c.Assert(val, Equals, "0")
+	c.Assert(val, Equals, "OFF")
 	c.Assert(v.systems[TiDBFoundInPlanCache], Equals, "ON")
+
+	err = SetSessionSystemVar(v, TiDBFoundInBinding, types.NewStringDatum("1"))
+	c.Assert(err, IsNil)
+	val, err = GetSessionSystemVar(v, TiDBFoundInBinding)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "OFF")
+	c.Assert(v.systems[TiDBFoundInBinding], Equals, "ON")
 
 	err = SetSessionSystemVar(v, TiDBEnableChangeColumnType, types.NewStringDatum("ON"))
 	c.Assert(err, IsNil)
@@ -657,6 +669,22 @@ func (s *testVarsutilSuite) TestConcurrencyVariables(c *C) {
 	c.Assert(vars.windowConcurrency, Equals, wdConcurrency)
 	c.Assert(vars.WindowConcurrency(), Equals, wdConcurrency)
 
+	mjConcurrency := 2
+	c.Assert(vars.mergeJoinConcurrency, Equals, DefTiDBMergeJoinConcurrency)
+	c.Assert(vars.MergeJoinConcurrency(), Equals, DefTiDBMergeJoinConcurrency)
+	err = SetSessionSystemVar(vars, TiDBMergeJoinConcurrency, types.NewIntDatum(int64(mjConcurrency)))
+	c.Assert(err, IsNil)
+	c.Assert(vars.mergeJoinConcurrency, Equals, mjConcurrency)
+	c.Assert(vars.MergeJoinConcurrency(), Equals, mjConcurrency)
+
+	saConcurrency := 2
+	c.Assert(vars.streamAggConcurrency, Equals, DefTiDBStreamAggConcurrency)
+	c.Assert(vars.StreamAggConcurrency(), Equals, DefTiDBStreamAggConcurrency)
+	err = SetSessionSystemVar(vars, TiDBStreamAggConcurrency, types.NewIntDatum(int64(saConcurrency)))
+	c.Assert(err, IsNil)
+	c.Assert(vars.streamAggConcurrency, Equals, saConcurrency)
+	c.Assert(vars.StreamAggConcurrency(), Equals, saConcurrency)
+
 	c.Assert(vars.indexLookupConcurrency, Equals, ConcurrencyUnset)
 	c.Assert(vars.IndexLookupConcurrency(), Equals, DefExecutorConcurrency)
 	exeConcurrency := DefExecutorConcurrency + 1
@@ -665,4 +693,7 @@ func (s *testVarsutilSuite) TestConcurrencyVariables(c *C) {
 	c.Assert(vars.indexLookupConcurrency, Equals, ConcurrencyUnset)
 	c.Assert(vars.IndexLookupConcurrency(), Equals, exeConcurrency)
 	c.Assert(vars.WindowConcurrency(), Equals, wdConcurrency)
+	c.Assert(vars.MergeJoinConcurrency(), Equals, mjConcurrency)
+	c.Assert(vars.StreamAggConcurrency(), Equals, saConcurrency)
+
 }
