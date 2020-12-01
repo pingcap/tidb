@@ -145,6 +145,7 @@ type StatementContext struct {
 	// planNormalized use for cache the normalized plan, avoid duplicate builds.
 	planNormalized        string
 	planDigest            string
+	encodedPlan           string
 	Tables                []TableEntry
 	PointExec             bool  // for point update cached execution, Constant expression need to set "paramMarker"
 	lockWaitStartTime     int64 // LockWaitStartTime stores the pessimistic lock wait start time
@@ -177,6 +178,7 @@ type StmtHints struct {
 	HasReplicaReadHint             bool
 	HasMaxExecutionTime            bool
 	HasEnableCascadesPlannerHint   bool
+	SetVars                        map[string]string
 }
 
 // TaskMapNeedBackUp indicates that whether we need to back up taskMap during physical optimizing.
@@ -223,6 +225,16 @@ func (sc *StatementContext) GetPlanDigest() (normalized, planDigest string) {
 // SetPlanDigest sets the normalized plan and plan digest.
 func (sc *StatementContext) SetPlanDigest(normalized, planDigest string) {
 	sc.planNormalized, sc.planDigest = normalized, planDigest
+}
+
+// GetEncodedPlan gets the encoded plan, it is used to avoid repeated encode.
+func (sc *StatementContext) GetEncodedPlan() string {
+	return sc.encodedPlan
+}
+
+// SetEncodedPlan sets the encoded plan, it is used to avoid repeated encode.
+func (sc *StatementContext) SetEncodedPlan(encodedPlan string) {
+	sc.encodedPlan = encodedPlan
 }
 
 // TableEntry presents table in db.
@@ -491,6 +503,7 @@ func (sc *StatementContext) ResetForRetry() {
 // the information in slow query log.
 func (sc *StatementContext) MergeExecDetails(details *execdetails.ExecDetails, commitDetails *execdetails.CommitDetails) {
 	sc.mu.Lock()
+	defer sc.mu.Unlock()
 	if details != nil {
 		sc.mu.execDetails.CopTime += details.CopTime
 		sc.mu.execDetails.ProcessTime += details.ProcessTime
@@ -500,12 +513,21 @@ func (sc *StatementContext) MergeExecDetails(details *execdetails.ExecDetails, c
 		sc.MergeCopDetails(details.CopDetail)
 		sc.mu.allExecDetails = append(sc.mu.allExecDetails, details)
 	}
-	sc.mu.execDetails.CommitDetail = commitDetails
-	sc.mu.Unlock()
+	if commitDetails != nil {
+		if sc.mu.execDetails.CommitDetail == nil {
+			sc.mu.execDetails.CommitDetail = commitDetails
+		} else {
+			sc.mu.execDetails.CommitDetail.Merge(commitDetails)
+		}
+	}
 }
 
 // MergeCopDetails merges cop details into self.
 func (sc *StatementContext) MergeCopDetails(copDetails *execdetails.CopDetails) {
+	// Currently TiFlash cop task does not fill copDetails, so need to skip it if copDetails is nil
+	if copDetails == nil {
+		return
+	}
 	if sc.mu.execDetails.CopDetail == nil {
 		sc.mu.execDetails.CopDetail = copDetails
 	} else {

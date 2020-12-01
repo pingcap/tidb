@@ -14,6 +14,7 @@
 package server
 
 import (
+	"strconv"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -85,7 +86,7 @@ func (s *testUtilSuite) TestDumpBinaryTime(c *C) {
 	c.Assert(err, IsNil)
 	d = dumpBinaryDateTime(nil, t)
 	// 201 & 7 composed to uint16 1993 (litter-endian)
-	c.Assert(d, DeepEquals, []byte{11, 201, 7, 7, 13, 1, 1, 1, 0, 0, 0, 0})
+	c.Assert(d, DeepEquals, []byte{7, 201, 7, 7, 13, 1, 1, 1})
 
 	t, err = types.ParseDate(nil, "0000-00-00")
 	c.Assert(err, IsNil)
@@ -251,6 +252,7 @@ func mustDecodeStr(c *C, b []byte) string {
 }
 
 func (s *testUtilSuite) TestAppendFormatFloat(c *C) {
+	infVal, _ := strconv.ParseFloat("+Inf", 64)
 	tests := []struct {
 		fVal    float64
 		out     string
@@ -388,6 +390,30 @@ func (s *testUtilSuite) TestAppendFormatFloat(c *C) {
 			"10",
 			-1,
 			32,
+		},
+		{
+			999999986991104,
+			"1e15",
+			-1,
+			32,
+		},
+		{
+			1e15,
+			"1e15",
+			-1,
+			32,
+		},
+		{
+			infVal,
+			"0",
+			-1,
+			64,
+		},
+		{
+			-infVal,
+			"0",
+			-1,
+			64,
 		},
 	}
 	for _, t := range tests {

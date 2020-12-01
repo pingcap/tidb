@@ -139,6 +139,10 @@ func (c *index) GenIndexKey(sc *stmtctx.StatementContext, indexedValues []types.
 	return tablecodec.GenIndexKey(sc, c.tblInfo, c.idxInfo, idxTblID, indexedValues, h, buf)
 }
 
+func (c *index) GenIndexValue(sc *stmtctx.StatementContext, indexedValues []types.Datum, distinct bool, untouched bool, h kv.Handle) (val []byte, err error) {
+	return tablecodec.GenIndexValueNew(sc, c.tblInfo, c.idxInfo, c.containNonBinaryString, distinct, untouched, indexedValues, h, c.phyTblID)
+}
+
 // Create creates a new entry in the kvIndex data.
 // If the index is unique and there is an existing entry with the same key,
 // Create will return the existing entry's handle as the first return value, ErrKeyExists as the second return value.
@@ -255,13 +259,17 @@ func (c *index) Create(sctx sessionctx.Context, us kv.UnionStore, indexedValues 
 	return handle, kv.ErrKeyExists
 }
 
-// Delete removes the entry for handle h and indexdValues from KV index.
-func (c *index) Delete(sc *stmtctx.StatementContext, m kv.Mutator, indexedValues []types.Datum, h kv.Handle) error {
-	key, _, err := c.GenIndexKey(sc, indexedValues, h, nil)
+// Delete removes the entry for handle h and indexedValues from KV index.
+func (c *index) Delete(sc *stmtctx.StatementContext, us kv.UnionStore, indexedValues []types.Datum, h kv.Handle) error {
+	key, distinct, err := c.GenIndexKey(sc, indexedValues, h, nil)
 	if err != nil {
 		return err
 	}
-	err = m.Delete(key)
+	if distinct {
+		err = us.GetMemBuffer().DeleteWithFlags(key, kv.SetNeedLocked)
+	} else {
+		err = us.GetMemBuffer().Delete(key)
+	}
 	return err
 }
 
