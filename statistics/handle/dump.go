@@ -96,6 +96,7 @@ type jsonColumn struct {
 	TotColSize        int64           `json:"tot_col_size"`
 	LastUpdateVersion uint64          `json:"last_update_version"`
 	Correlation       float64         `json:"correlation"`
+	// StatsVer is a pointer here since the old version json file would not contain version information.
 	StatsVer          *int64            `json:"stats_ver"`
 }
 
