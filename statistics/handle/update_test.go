@@ -176,7 +176,6 @@ func (s *testStatsSuite) TestSingleSessionInsert(c *C) {
 	}
 	h.DumpStatsDeltaToKV(handle.DumpDelta)
 	c.Assert(h.Update(is), IsNil)
-
 	stats1 = h.GetTableStats(tableInfo1)
 	c.Assert(stats1.Count, Equals, int64(rowCount1))
 
@@ -423,7 +422,6 @@ func (s *testStatsSuite) TestAutoUpdate(c *C) {
 		c.Assert(h.Update(is), IsNil)
 		h.HandleAutoAnalyze(is)
 		c.Assert(h.Update(is), IsNil)
-
 		stats = h.GetTableStats(tableInfo)
 		c.Assert(stats.Count, Equals, int64(6))
 		c.Assert(stats.ModifyCount, Equals, int64(1))
@@ -535,7 +533,6 @@ func (s *testStatsSuite) TestTableAnalyzed(c *C) {
 	c.Assert(handle.TableAnalyzed(statsTbl), IsTrue)
 
 	h.Clear4Test()
-
 	oriLease := h.Lease()
 	// set it to non-zero so we will use load by need strategy
 	h.SetLease(1)

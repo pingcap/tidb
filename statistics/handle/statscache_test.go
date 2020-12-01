@@ -38,6 +38,7 @@ func (s *testStatsSuite) TestStatsCacheMiniMemoryLimit(c *C) {
 	statsTbl1 := do.StatsHandle().GetTableStats(tableInfo1)
 	time.Sleep(10 * time.Millisecond)
 	c.Assert(statsTbl1.Pseudo, IsTrue)
+
 	testKit.MustExec("analyze table t1")
 	time.Sleep(10 * time.Millisecond)
 	statsTbl1 = do.StatsHandle().GetTableStats(tableInfo1)
@@ -56,15 +57,18 @@ func (s *testStatsSuite) TestStatsCacheMiniMemoryLimit(c *C) {
 	tableInfo2 := tbl2.Meta()
 	statsTbl2 := do.StatsHandle().GetTableStats(tableInfo2)
 	statsTbl1 = do.StatsHandle().GetTableStats(tableInfo1)
+
 	c.Assert(statsTbl2.Pseudo, IsTrue)
 	testKit.MustExec("analyze table t2")
 	// wait 10 ms  for cache to evict old cache
 	time.Sleep(10 * time.Millisecond)
 	tbl2, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
 	c.Assert(err, IsNil)
+
 	statsTbl2 = do.StatsHandle().GetTableStats(tableInfo2)
 	time.Sleep(10 * time.Millisecond)
 	c.Assert(statsTbl2.Pseudo, IsFalse)
+
 	c.Assert(BytesLimit >= do.StatsHandle().GetMemConsumed(), IsTrue)
 }
 
@@ -77,6 +81,7 @@ func (s *testStatsSuite) TestLoadHistWithLimit(c *C) {
 	defer func() { h.SetLease(origLease) }()
 	BytesLimit := int64(300000)
 	h.SetBytesLimit4Test(BytesLimit)
+
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t1(c int)")
 	testKit.MustExec("insert into t1 values(1),(2),(3),(4),(5)")
@@ -84,6 +89,7 @@ func (s *testStatsSuite) TestLoadHistWithLimit(c *C) {
 	testKit.MustExec("analyze table t1")
 	h.Clear4Test()
 	h.SetBytesLimit4Test(BytesLimit)
+
 	c.Assert(h.Update(s.do.InfoSchema()), IsNil)
 	result := testKit.MustQuery("show stats_histograms where Table_name = 't1'")
 	c.Assert(len(result.Rows()), Equals, 0)
@@ -93,6 +99,7 @@ func (s *testStatsSuite) TestLoadHistWithLimit(c *C) {
 	c.Assert(len(result.Rows()), Equals, 1)
 	c.Assert(result.Rows()[0][9], Equals, "1")
 	c.Assert(BytesLimit >= h.GetMemConsumed(), IsTrue)
+
 	// create new table
 	testKit.MustExec("create table t2(c int)")
 	testKit.MustExec("insert into t2 values(1),(2),(3),(4),(5)")
@@ -110,19 +117,24 @@ func (s *testStatsSuite) TestLoadHistWithInvalidIndex(c *C) {
 	defer func() { h.SetLease(origLease) }()
 	BytesLimit := int64(300000)
 	h.SetBytesLimit4Test(BytesLimit)
+
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t1(c int)")
 	testKit.MustExec("insert into t1 values(1),(2),(3),(4),(5)")
 	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 	testKit.MustExec("create index idx_t on t1(c)")
+
 	testKit.MustExec("analyze table t1")
 	// update all information to statscache
 	c.Assert(h.Update(s.do.InfoSchema()), IsNil)
+
 	tbl1, err := s.do.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
 	c.Assert(err, IsNil)
 	tableInfo1 := tbl1.Meta()
+
 	// erase old table
 	h.EraseTable4Test(tbl1.Meta().ID)
+
 	// add empty table
 	statsTbl1 := h.GetTableStats(tableInfo1)
 	c.Assert(statsTbl1.Indices[tbl1.Meta().Indices[0].ID].Len() == 0, IsTrue)
@@ -137,6 +149,7 @@ func (s *testStatsSuite) TestLoadHistWithInvalidIndex(c *C) {
 	c.Assert(BytesLimit >= h.GetMemConsumed(), IsTrue)
 	statsTbl1new := h.GetTableStats(tableInfo1)
 	c.Assert(statsTbl1new.Indices[tbl1.Meta().Indices[0].ID].Len() > 0, IsTrue)
+
 	c.Assert(statsTbl1new.Indices[tbl1.Meta().Indices[0].ID].String(), Equals, "index:1 ndv:5\n"+
 		"num: 1 lower_bound: 1 upper_bound: 1 repeats: 1\n"+
 		"num: 1 lower_bound: 2 upper_bound: 2 repeats: 1\n"+
@@ -158,42 +171,49 @@ func (s *testStatsSuite) TestManyTableChange(c *C) {
 	origLease := h.Lease()
 	h.SetLease(time.Second)
 	defer func() { h.SetLease(origLease) }()
+
 	BytesLimit := int64(300000)
 	h.SetBytesLimit4Test(BytesLimit)
 	tableSize := 100
 	testKit.MustExec("use test")
-	for i := 0; i < tableSize; i++ {
+	for i := 0; i <= tableSize; i++ {
 		testKit.MustExec(fmt.Sprintf("create table t%d(c int)", i))
 		testKit.MustExec(fmt.Sprintf("insert into t%d values(1),(2),(3)", i))
 		testKit.MustExec(fmt.Sprintf("analyze table t%d", i))
 	}
+
 	// update all information to statscache
 	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+
 	c.Assert(h.Update(s.do.InfoSchema()), IsNil)
-	for i := 0; i < tableSize; i++ {
+	for i := 0; i <= tableSize; i++ {
 		tableName := fmt.Sprintf("t%d", i)
 		tbl, err := s.do.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr(tableName))
 		c.Assert(err, IsNil)
 		tableInfo := tbl.Meta()
+
 		// add empty table
 		statsTbl := h.GetTableStats(tableInfo)
+
 		// load indices and column
 		for _, v := range statsTbl.Indices {
 			v.IsInvalid(&stmtctx.StatementContext{}, false)
 		}
+
 		for _, v := range statsTbl.Columns {
 			v.IsInvalid(&stmtctx.StatementContext{}, false)
 		}
 		c.Assert(h.LoadNeededHistograms(), IsNil)
+		c.Assert(BytesLimit >= h.GetMemConsumed(), IsTrue)
 		statsTblnew := h.GetTableStats(tableInfo)
 		c.Assert(statsTblnew.MemoryUsage() > 0, IsTrue)
+
 		for _, v := range statsTblnew.Columns {
 			c.Assert(v.IsInvalid(&stmtctx.StatementContext{}, false), IsFalse)
 		}
 		for _, v := range statsTblnew.Indices {
 			c.Assert(v.IsInvalid(&stmtctx.StatementContext{}, false), IsFalse)
 		}
-		c.Assert(BytesLimit >= h.GetMemConsumed(), IsTrue)
 	}
 }
 
@@ -204,6 +224,7 @@ func (s *testStatsSuite) TestManyTableChangeWithQuery(c *C) {
 	origLease := h.Lease()
 	h.SetLease(time.Second)
 	defer func() { h.SetLease(origLease) }()
+
 	BytesLimit := int64(300000)
 	h.SetBytesLimit4Test(BytesLimit)
 	tableSize := 100
@@ -216,6 +237,7 @@ func (s *testStatsSuite) TestManyTableChangeWithQuery(c *C) {
 
 	// update all information to statscache
 	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+
 	c.Assert(h.Update(s.do.InfoSchema()), IsNil)
 	for i := 0; i <= tableSize; i++ {
 		tableName := fmt.Sprintf("t%d", i)
@@ -225,15 +247,16 @@ func (s *testStatsSuite) TestManyTableChangeWithQuery(c *C) {
 		testKit.MustQuery(fmt.Sprintf("select * from t%d use index(idx) where b <= 5", i))
 		testKit.MustQuery(fmt.Sprintf("select * from t%d where a > 1", i))
 		testKit.MustQuery(fmt.Sprintf("select * from t%d use index(idx) where b = 5", i))
+		c.Assert(h.LoadNeededHistograms(), IsNil)
 		c.Assert(BytesLimit >= h.GetMemConsumed(), IsTrue)
 		statsTblNew := h.GetTableStats(tableInfo)
 		c.Assert(statsTblNew.MemoryUsage() > 0, IsTrue)
+
 		for _, v := range statsTblNew.Columns {
 			c.Assert(v.IsInvalid(&stmtctx.StatementContext{}, false), IsFalse)
 		}
 		for _, v := range statsTblNew.Indices {
 			c.Assert(v.IsInvalid(&stmtctx.StatementContext{}, false), IsFalse)
 		}
-		c.Assert(BytesLimit >= h.GetMemConsumed(), IsTrue)
 	}
 }
