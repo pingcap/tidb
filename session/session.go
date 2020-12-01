@@ -1640,7 +1640,7 @@ func (s *session) NewTxn(ctx context.Context) error {
 			zap.String("txnScope", txnScope))
 	}
 
-	txn, err := s.store.Begin()
+	txn, err := s.store.BeginWithTxnScope(s.sessionVars.CheckAndGetTxnScope())
 	if err != nil {
 		return err
 	}
@@ -1656,7 +1656,6 @@ func (s *session) NewTxn(ctx context.Context) error {
 		CreateTime:    time.Now(),
 		StartTS:       txn.StartTS(),
 		ShardStep:     int(s.sessionVars.ShardAllocateStep),
-		TxnScope:      oracle.GlobalTxnScope,
 	}
 	return nil
 }
@@ -2369,7 +2368,6 @@ func (s *session) PrepareTxnCtx(ctx context.Context) {
 		SchemaVersion: is.SchemaMetaVersion(),
 		CreateTime:    time.Now(),
 		ShardStep:     int(s.sessionVars.ShardAllocateStep),
-		TxnScope:      s.GetSessionVars().TxnScope,
 	}
 	if !s.sessionVars.IsAutocommit() || s.sessionVars.RetryInfo.Retrying {
 		if s.sessionVars.TxnMode == ast.Pessimistic {
@@ -2508,7 +2506,8 @@ func (s *session) recordOnTransactionExecution(err error, counter int, duration 
 
 func (s *session) checkPlacementPolicyBeforeCommit() error {
 	var err error
-	txnScope := s.GetSessionVars().TxnCtx.TxnScope
+	// Get the txnScope of the transaction we're going to commit.
+	txnScope := s.txn.Scope()
 	if txnScope == "" {
 		txnScope = config.DefTxnScope
 	}

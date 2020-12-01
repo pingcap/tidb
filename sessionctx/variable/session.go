@@ -168,9 +168,6 @@ type TransactionContext struct {
 
 	// TableDeltaMap lock to prevent potential data race
 	tdmLock sync.Mutex
-
-	// TxnScope stores the value of 'txn_scope'.
-	TxnScope string
 }
 
 // GetShard returns the shard prefix for the next `count` rowids.
