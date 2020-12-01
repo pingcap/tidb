@@ -1751,9 +1751,8 @@ func onAlterTablePartition(t *meta.Meta, job *model.Job) (ver int64, err error) 
 		return 0, errors.Trace(err)
 	}
 
-	tblInfo, err := getTableInfo(t, job.TableID, job.SchemaID)
+	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, job.SchemaID)
 	if err != nil {
-		job.State = model.JobStateCancelled
 		return 0, err
 	}
 
