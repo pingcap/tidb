@@ -2543,12 +2543,7 @@ func (s *session) checkPlacementPolicyBeforeCommit() error {
 				}
 				tblInfo := tbl.Meta()
 				tableID := tblInfo.ID
-				state, ok := tblInfo.Partition.GetStateByID(partitionID)
-				if !ok {
-					err = ddl.ErrInvalidPlacementPolicyCheck.GenWithStackByArgs(
-						fmt.Sprintf("failed to find table %v partition %v's SchemaState", tableID, partitionID))
-					break
-				}
+				state := tblInfo.Partition.GetStateByID(partitionID)
 				if state == model.StateGlobalTxnOnly {
 					err = ddl.ErrInvalidPlacementPolicyCheck.GenWithStackByArgs(
 						fmt.Sprintf("The SchemaState of table %v's partition %v is under StateGlobalTxnOnly",

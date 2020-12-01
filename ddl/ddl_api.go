@@ -1688,18 +1688,6 @@ func (d *ddl) assignPartitionIDs(defs []model.PartitionDefinition) error {
 	return nil
 }
 
-func (d *ddl) assignPartitionStates(partInfo *model.PartitionInfo) {
-	newpState := make([]model.PartitionState, 0, len(partInfo.Definitions))
-	for _, def := range partInfo.Definitions {
-		newpState = append(newpState, model.PartitionState{ID: def.ID, State: model.StatePublic})
-	}
-	if partInfo.States == nil {
-		partInfo.States = newpState
-	} else {
-		partInfo.States = append(partInfo.States, newpState...)
-	}
-}
-
 func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err error) {
 	ident := ast.Ident{Schema: s.Table.Schema, Name: s.Table.Name}
 	is := d.GetInfoSchemaWithInterceptor(ctx)
@@ -1789,7 +1777,6 @@ func (d *ddl) CreateTableWithInfo(
 		if err := d.assignPartitionIDs(tbInfo.Partition.Definitions); err != nil {
 			return errors.Trace(err)
 		}
-		d.assignPartitionStates(tbInfo.Partition)
 	}
 
 	if err := checkTableInfoValidExtra(tbInfo); err != nil {
@@ -2876,7 +2863,6 @@ func (d *ddl) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, spec *
 	if err := d.assignPartitionIDs(partInfo.Definitions); err != nil {
 		return errors.Trace(err)
 	}
-	d.assignPartitionStates(partInfo)
 
 	// partInfo contains only the new added partition, we have to combine it with the
 	// old partitions to check all partitions is strictly increasing.
