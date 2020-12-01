@@ -966,6 +966,23 @@ func (ts *tidbTestSuite) TestNullFlag(c *C) {
 		expectFlag := uint16(tmysql.BinaryFlag)
 		c.Assert(dumpFlag(cols[0].Type, cols[0].Flag), Equals, expectFlag)
 	}
+	{
+
+		rs, err := Execute(ctx, qctx, "select if(1, null, 1) ;")
+		c.Assert(err, IsNil)
+		cols := rs.Columns()
+		c.Assert(len(cols), Equals, 1)
+		expectFlag := uint16(tmysql.BinaryFlag)
+		c.Assert(dumpFlag(cols[0].Type, cols[0].Flag), Equals, expectFlag)
+	}
+	{
+		rs, err := Execute(ctx, qctx, "select CASE 1 WHEN 2 THEN 1 END ;")
+		c.Assert(err, IsNil)
+		cols := rs.Columns()
+		c.Assert(len(cols), Equals, 1)
+		expectFlag := uint16(tmysql.BinaryFlag)
+		c.Assert(dumpFlag(cols[0].Type, cols[0].Flag), Equals, expectFlag)
+	}
 }
 
 func (ts *tidbTestSuite) TestGracefulShutdown(c *C) {
