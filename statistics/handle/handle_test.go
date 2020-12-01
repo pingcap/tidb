@@ -126,14 +126,17 @@ func (s *testStatsSuite) TestStatsCacheMemTracker(c *C) {
 	testKit.MustExec("create index idx_t on t(c1)")
 	do.InfoSchema()
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
+
 	// If index is build, but stats is not updated. statsTbl can also work.
 	c.Assert(statsTbl.Pseudo, IsFalse)
 	// But the added index will not work.
 	c.Assert(statsTbl.Indices[int64(1)], IsNil)
+
 	testKit.MustExec("analyze table t")
 
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
 	c.Assert(statsTbl.Pseudo, IsFalse)
+
 	// If the new schema drop a column, the table stats can still work.
 	testKit.MustExec("alter table t drop column c2")
 	is = do.InfoSchema()
@@ -228,12 +231,10 @@ func (s *testStatsSuite) TestStatsStoreAndLoad(c *C) {
 	tableInfo := tbl.Meta()
 
 	testKit.MustExec("analyze table t")
-
 	statsTbl1 := do.StatsHandle().GetTableStats(tableInfo)
 
 	do.StatsHandle().Clear4Test()
 	do.StatsHandle().Update(is)
-
 	statsTbl2 := do.StatsHandle().GetTableStats(tableInfo)
 	c.Assert(statsTbl2.Pseudo, IsFalse)
 	c.Assert(statsTbl2.Count, Equals, int64(recordCount))
@@ -295,7 +296,6 @@ func (s *testStatsSuite) TestAvgColLen(c *C) {
 	testKit.MustExec("create table t (c1 int, c2 varchar(100), c3 float, c4 datetime, c5 varchar(100))")
 	testKit.MustExec("insert into t values(1, '1234567', 12.3, '2018-03-07 19:00:57', NULL)")
 	testKit.MustExec("analyze table t")
-
 	do := s.do
 	is := do.InfoSchema()
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
@@ -376,7 +376,6 @@ func (s *testStatsSuite) TestVersion(c *C) {
 	testKit.MustExec("update mysql.stats_meta set version = ? where table_id = ?", unit, tableInfo2.ID)
 	c.Assert(h.Update(is), IsNil)
 	c.Assert(h.LastUpdateVersion(), Equals, 2*unit)
-
 	statsTbl2 := h.GetTableStats(tableInfo2)
 	c.Assert(statsTbl2.Pseudo, IsFalse)
 
@@ -386,7 +385,6 @@ func (s *testStatsSuite) TestVersion(c *C) {
 	testKit.MustExec("update mysql.stats_meta set version = ? where table_id = ?", offset+4, tableInfo1.ID)
 	c.Assert(h.Update(is), IsNil)
 	c.Assert(h.LastUpdateVersion(), Equals, offset+uint64(4))
-
 	statsTbl1 = h.GetTableStats(tableInfo1)
 	c.Assert(statsTbl1.Count, Equals, int64(1))
 
@@ -396,7 +394,6 @@ func (s *testStatsSuite) TestVersion(c *C) {
 	testKit.MustExec("update mysql.stats_meta set version = ? where table_id = ?", offset+3, tableInfo2.ID)
 	c.Assert(h.Update(is), IsNil)
 	c.Assert(h.LastUpdateVersion(), Equals, offset+uint64(4))
-
 	statsTbl2 = h.GetTableStats(tableInfo2)
 	c.Assert(statsTbl2.Count, Equals, int64(1))
 
@@ -406,7 +403,6 @@ func (s *testStatsSuite) TestVersion(c *C) {
 	testKit.MustExec("update mysql.stats_meta set version = 1 where table_id = ?", tableInfo2.ID)
 	c.Assert(h.Update(is), IsNil)
 	c.Assert(h.LastUpdateVersion(), Equals, offset+uint64(4))
-
 	statsTbl2 = h.GetTableStats(tableInfo2)
 	c.Assert(statsTbl2.Count, Equals, int64(1))
 
@@ -415,14 +411,12 @@ func (s *testStatsSuite) TestVersion(c *C) {
 	testKit.MustExec("analyze table t2")
 	// load it with old schema.
 	c.Assert(h.Update(is), IsNil)
-
 	statsTbl2 = h.GetTableStats(tableInfo2)
 	c.Assert(statsTbl2.Pseudo, IsFalse)
 	c.Assert(statsTbl2.Columns[int64(3)], IsNil)
 	// Next time DDL updated.
 	is = do.InfoSchema()
 	c.Assert(h.Update(is), IsNil)
-
 	statsTbl2 = h.GetTableStats(tableInfo2)
 	c.Assert(statsTbl2.Pseudo, IsFalse)
 	// We can read it without analyze again! Thanks for PrevLastVersion.
@@ -453,7 +447,6 @@ func (s *testStatsSuite) TestLoadHist(c *C) {
 	}
 	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 	h.Update(do.InfoSchema())
-
 	newStatsTbl := h.GetTableStats(tableInfo)
 	// The stats table is updated.
 	c.Assert(oldStatsTbl == newStatsTbl, IsFalse)
@@ -505,7 +498,6 @@ func (s *testStatsSuite) TestInitStats(c *C) {
 
 	h.Clear4Test()
 	c.Assert(h.InitStats(is), IsNil)
-
 	table0 := h.GetTableStats(tbl.Meta())
 	cols := table0.Columns
 	c.Assert(cols[1].LastAnalyzePos.GetBytes()[0], Equals, uint8(0x36))
