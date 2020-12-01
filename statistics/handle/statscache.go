@@ -41,21 +41,21 @@ type StatsCache interface {
 type statsCacheType int8
 
 const (
-	SimpleLRUCache statsCacheType = iota
+	simpleLRUCache statsCacheType = iota
 )
 
-var defaultStatsCacheType = SimpleLRUCache
+var defaultStatsCacheType = simpleLRUCache
 
 // newStatsCacheWithMemCap returns a new stats cache with memory capacity.
 func newStatsCacheWithMemCap(memoryCapacity int64, tp statsCacheType) (StatsCache, error) {
 	switch tp {
-	case SimpleLRUCache:
+	case simpleLRUCache:
 		return newSimpleLRUStatsCache(memoryCapacity), nil
 	}
 	return nil, errors.New("wrong statsCache type")
 }
 
-// simpleLRUStatsCache uses the SimpleLRUCache to store the cache of statistics.
+// simpleLRUStatsCache uses the simpleLRUCache to store the cache of statistics.
 type simpleLRUStatsCache struct {
 	mu          sync.Mutex
 	cache       *kvcache.SimpleLRUCache
