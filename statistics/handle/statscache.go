@@ -33,7 +33,6 @@ type StatsCache interface {
 
 	// interface below are used only for test
 	Clear()
-	Close()
 	GetBytesLimit() int64
 	SetBytesLimit(bytesLimit int64)
 	BytesConsumed() int64
@@ -42,24 +41,22 @@ type StatsCache interface {
 type statsCacheType int8
 
 const (
-	//SimpleLRUStatsCacheType simple type
-	SimpleLRUStatsCacheType statsCacheType = iota
+	SimpleLRUCache statsCacheType = iota
 )
 
-// DefStatsCacheType defines statistic cache type
-var DefStatsCacheType = SimpleLRUStatsCacheType
+var defaultStatsCacheType = SimpleLRUCache
 
-// NewStatsCache returns a new statsCahce with capacity memoryLimit(initial 1G)
-func NewStatsCache(memoryLimit int64, tp statsCacheType) (StatsCache, error) {
+// newStatsCacheWithMemCap returns a new stats cache with memory capacity.
+func newStatsCacheWithMemCap(memoryCapacity int64, tp statsCacheType) (StatsCache, error) {
 	switch tp {
-	case SimpleLRUStatsCacheType:
-		return newSimpleStatsCache(memoryLimit), nil
+	case SimpleLRUCache:
+		return newSimpleLRUStatsCache(memoryCapacity), nil
 	}
 	return nil, errors.New("wrong statsCache type")
 }
 
-// simpleStatsCache caches Regions loaded from PD.
-type simpleStatsCache struct {
+// simpleLRUStatsCache uses the SimpleLRUCache to store the cache of statistics.
+type simpleLRUStatsCache struct {
 	mu          sync.Mutex
 	cache       *kvcache.SimpleLRUCache
 	memCapacity int64
@@ -75,32 +72,31 @@ func (key statsCacheKey) Hash() []byte {
 	return buf
 }
 
-// newstatsCache returns a new statsCahce with capacity memoryLimit(initial 1G)
-func newSimpleStatsCache(memoryLimit int64) *simpleStatsCache {
-	// since newstatsCache controls the memory usage by itself, set the capacity of
+func newSimpleLRUStatsCache(memoryCapacity int64) *simpleLRUStatsCache {
+	// since stats cache controls the memory usage by itself, set the capacity of
 	// the underlying LRUCache to max to close its memory control
-	cache := kvcache.NewSimpleLRUCache(uint(memoryLimit), 0.1, 0)
-	c := simpleStatsCache{
+	cache := kvcache.NewSimpleLRUCache(uint(memoryCapacity), 0.1, 0)
+	c := simpleLRUStatsCache{
 		cache:       cache,
-		memCapacity: memoryLimit,
-		memTracker:  memory.NewTracker(memory.LabelForStatsCache, memoryLimit),
+		memCapacity: memoryCapacity,
+		memTracker:  memory.NewTracker(memory.LabelForStatsCache, memoryCapacity),
 	}
 	return &c
 }
 
 // SetBytesLimit sets the bytes limit for this tracker.
-func (sc *simpleStatsCache) SetBytesLimit(BytesLimit int64) {
+func (sc *simpleLRUStatsCache) SetBytesLimit(BytesLimit int64) {
 	sc.memTracker.SetBytesLimit(BytesLimit)
 	sc.memCapacity = BytesLimit
 }
 
 // BytesConsumed returns the consumed memory usage value in bytes.
-func (sc *simpleStatsCache) BytesConsumed() int64 {
+func (sc *simpleLRUStatsCache) BytesConsumed() int64 {
 	return sc.memTracker.BytesConsumed()
 }
 
 // lookupUnsafe get table with id without Lock.
-func (sc *simpleStatsCache) lookupUnsafe(id int64) (*statistics.Table, bool) {
+func (sc *simpleLRUStatsCache) lookupUnsafe(id int64) (*statistics.Table, bool) {
 	var key = statsCacheKey(id)
 	value, hit := sc.cache.Get(key)
 	if !hit {
@@ -110,12 +106,8 @@ func (sc *simpleStatsCache) lookupUnsafe(id int64) (*statistics.Table, bool) {
 	return table, true
 }
 
-func (sc *simpleStatsCache) Close() {
-	sc.Clear()
-}
-
 // Clear clears the cache
-func (sc *simpleStatsCache) Clear() {
+func (sc *simpleLRUStatsCache) Clear() {
 	sc.mu.Lock()
 	defer sc.mu.Unlock()
 	sc.version = 0
@@ -124,7 +116,7 @@ func (sc *simpleStatsCache) Clear() {
 }
 
 // Lookup get table with id.
-func (sc *simpleStatsCache) Lookup(id int64) (*statistics.Table, bool) {
+func (sc *simpleLRUStatsCache) Lookup(id int64) (*statistics.Table, bool) {
 	sc.mu.Lock()
 	defer sc.mu.Unlock()
 	return sc.lookupUnsafe(id)
@@ -133,7 +125,7 @@ func (sc *simpleStatsCache) Lookup(id int64) (*statistics.Table, bool) {
 // Insert inserts a new table to the statsCache.
 // If the memory consumption exceeds the capacity, remove the buckets and
 // CMSketch of the oldest cache and add metadata of it
-func (sc *simpleStatsCache) Insert(table *statistics.Table) {
+func (sc *simpleLRUStatsCache) Insert(table *statistics.Table) {
 	if table == nil {
 		return
 	}
@@ -158,7 +150,7 @@ func (sc *simpleStatsCache) Insert(table *statistics.Table) {
 }
 
 // Erase Erase a stateCache with physical id
-func (sc *simpleStatsCache) Erase(deletedID int64) bool {
+func (sc *simpleLRUStatsCache) Erase(deletedID int64) bool {
 	table, hit := sc.lookupUnsafe(deletedID)
 	if !hit {
 		return false
@@ -170,7 +162,7 @@ func (sc *simpleStatsCache) Erase(deletedID int64) bool {
 }
 
 // GetAll get all the tables point.
-func (sc *simpleStatsCache) GetAll() []*statistics.Table {
+func (sc *simpleLRUStatsCache) GetAll() []*statistics.Table {
 	sc.mu.Lock()
 	defer sc.mu.Unlock()
 	values := sc.cache.GetAll()
@@ -184,7 +176,7 @@ func (sc *simpleStatsCache) GetAll() []*statistics.Table {
 }
 
 // Update updates the statistics table cache.
-func (sc *simpleStatsCache) Update(tables []*statistics.Table, deletedIDs []int64, newVersion uint64) {
+func (sc *simpleLRUStatsCache) Update(tables []*statistics.Table, deletedIDs []int64, newVersion uint64) {
 	sc.mu.Lock()
 	defer sc.mu.Unlock()
 	if sc.version <= newVersion {
@@ -199,11 +191,11 @@ func (sc *simpleStatsCache) Update(tables []*statistics.Table, deletedIDs []int6
 }
 
 // GetBytesLimit get the limits of memory.
-func (sc *simpleStatsCache) GetBytesLimit() int64 {
+func (sc *simpleLRUStatsCache) GetBytesLimit() int64 {
 	return sc.memTracker.GetBytesLimit()
 }
 
-func (sc *simpleStatsCache) GetVersion() uint64 {
+func (sc *simpleLRUStatsCache) GetVersion() uint64 {
 	sc.mu.Lock()
 	defer sc.mu.Unlock()
 	return sc.version
@@ -211,7 +203,7 @@ func (sc *simpleStatsCache) GetVersion() uint64 {
 
 // InitStatsCache should be called after the tables and their stats are initilazed
 // using tables map and version to init statscache
-func (sc *simpleStatsCache) InitStatsCache(tables map[int64]*statistics.Table, version uint64) {
+func (sc *simpleLRUStatsCache) InitStatsCache(tables map[int64]*statistics.Table, version uint64) {
 	sc.mu.Lock()
 	defer sc.mu.Unlock()
 	for _, tbl := range tables {

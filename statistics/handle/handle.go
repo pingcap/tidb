@@ -113,7 +113,7 @@ func NewHandle(ctx sessionctx.Context, lease time.Duration) (*Handle, error) {
 		handle.restrictedExec = exec
 	}
 	var err error
-	handle.statsCache, err = NewStatsCache(ctx.GetSessionVars().MemQuotaStatistics, DefStatsCacheType)
+	handle.statsCache, err = newStatsCacheWithMemCap(ctx.GetSessionVars().MemQuotaStatistics, defaultStatsCacheType)
 	if err != nil {
 		return nil, err
 	}
