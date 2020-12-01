@@ -1251,7 +1251,7 @@ func (s *testSuiteAgg) TestIssue20658(c *C) {
 	aggFuncs := []string{"count(a)", "sum(a)", "avg(a)", "max(a)", "min(a)", "bit_or(a)", "bit_xor(a)", "bit_and(a)"}
 	aggFuncs2 := []string{"var_pop(a)", "var_samp(a)", "stddev_pop(a)", "stddev_samp(a)", "approx_count_distinct(a)", "approx_percentile(a, 7)"}
 	sqlFormat := "select /*+ stream_agg() */ %s from t group by b;"
-	castFormat := "cast(%s as decimal(32, 2))"
+	castFormat := "cast(%s as decimal(32, 1))"
 
 	sqls := make([]string, 0, len(aggFuncs)+len(aggFuncs2))
 	for _, af := range aggFuncs {
