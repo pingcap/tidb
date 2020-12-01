@@ -6484,3 +6484,11 @@ func (s *testDBSuite4) TestAnonymousIndex(c *C) {
 	res = tk.MustQuery("show index from t where key_name='bbbbbbbbbbbbbbbbbbbbbbbbbbbbbb_2';")
 	c.Assert(len(res.Rows()), Equals, 1)
 }
+
+func (s *testDBSuite4) TestUnsupportedAlterTableOption(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test_db")
+	tk.MustExec("DROP TABLE IF EXISTS t")
+	tk.MustExec("create table t(a char(10) not null,b char(20)) shard_row_id_bits=6;")
+	tk.MustGetErrCode("alter table t pre_split_regions=6;", errno.ErrUnsupportedDDLOperation)
+}
