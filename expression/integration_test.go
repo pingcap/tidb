@@ -7282,17 +7282,6 @@ func (s *testIntegrationSuite) TestIssue20860(c *C) {
 	c.Assert(tk.ExecToErr("update t set d = adddate(d, interval 1 day) where id < 10"), NotNil)
 }
 
-<<<<<<< HEAD
-func (s *testIntegrationSuite) TestIssue11645(c *C) {
-	defer s.cleanEnv(c)
-=======
-func (s *testIntegrationSerialSuite) TestIssue20608(c *C) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustQuery("select '䇇Հ' collate utf8mb4_bin like '___Հ';").Check(testkit.Rows("0"))
-}
-
 func (s *testIntegrationSerialSuite) TestIssue21290(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -7301,9 +7290,9 @@ func (s *testIntegrationSerialSuite) TestIssue21290(c *C) {
 	tk.MustExec("insert into t1 values (20100202);")
 	tk.MustQuery("select a in ('2020-02-02', 20100202) from t1;").Check(testkit.Rows("1"))
 }
-
-func (s *testIntegrationSuite) TestIssue17868(c *C) {
->>>>>>> 35eec1b06... expression: fix the `in` function get the wrong result if args is time type (#21293)
+	
+func (s *testIntegrationSuite) TestIssue11645(c *C) {
+	defer s.cleanEnv(c)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustQuery(`SELECT DATE_ADD('1000-01-01 00:00:00', INTERVAL -2 HOUR);`).Check(testkit.Rows("0999-12-31 22:00:00"))
 	tk.MustQuery(`SELECT DATE_ADD('1000-01-01 00:00:00', INTERVAL -200 HOUR);`).Check(testkit.Rows("0999-12-23 16:00:00"))
