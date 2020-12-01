@@ -38,14 +38,16 @@ func init() {
 
 // HintsSet contains all hints of a query.
 type HintsSet struct {
-	tableHints [][]*ast.TableOptimizerHint // Slice offset is the traversal order of `SelectStmt` in the ast.
-	indexHints [][]*ast.IndexHint          // Slice offset is the traversal order of `TableName` in the ast.
+	tableHints map[int][]*ast.TableOptimizerHint // Key is the traversal order of `SelectStmt` in the ast.
+	indexHints map[int][]*ast.IndexHint          // Key is the traversal order of `TableName` in the ast.
 }
 
 // GetFirstTableHints gets the first table hints.
 func (hs *HintsSet) GetFirstTableHints() []*ast.TableOptimizerHint {
 	if len(hs.tableHints) > 0 {
-		return hs.tableHints[0]
+		for _, hint := range hs.tableHints {
+			return hint
+		}
 	}
 	return nil
 }
@@ -190,7 +192,6 @@ type hintProcessor struct {
 	*HintsSet
 	// bindHint2Ast indicates the behavior of the processor, `true` for bind hint to ast, `false` for extract hint from ast.
 	bindHint2Ast bool
-	tableCounter int
 	indexCounter int
 	blockCounter int
 }
@@ -199,14 +200,19 @@ func (hp *hintProcessor) Enter(in ast.Node) (ast.Node, bool) {
 	switch v := in.(type) {
 	case *ast.SelectStmt, *ast.UpdateStmt, *ast.DeleteStmt:
 		if hp.bindHint2Ast {
-			if hp.tableCounter < len(hp.tableHints) {
-				setTableHints4StmtNode(in, hp.tableHints[hp.tableCounter])
-			} else {
+			if hp.tableHints == nil {
 				setTableHints4StmtNode(in, nil)
+			} else {
+				setTableHints4StmtNode(in, hp.tableHints[hp.blockCounter])
 			}
-			hp.tableCounter++
 		} else {
-			hp.tableHints = append(hp.tableHints, ExtractTableHintsFromStmtNode(in, nil))
+			hints := ExtractTableHintsFromStmtNode(in, nil)
+			if len(hints) > 0 {
+				if hp.tableHints == nil {
+					hp.tableHints = make(map[int][]*ast.TableOptimizerHint)
+				}
+				hp.tableHints[hp.blockCounter] = hints
+			}
 		}
 		hp.blockCounter++
 	case *ast.TableName:
@@ -215,15 +221,21 @@ func (hp *hintProcessor) Enter(in ast.Node) (ast.Node, bool) {
 			return in, false
 		}
 		if hp.bindHint2Ast {
-			if hp.indexCounter < len(hp.indexHints) {
-				v.IndexHints = hp.indexHints[hp.indexCounter]
-			} else {
+			if hp.indexHints == nil {
 				v.IndexHints = nil
+			} else {
+				v.IndexHints = hp.indexHints[hp.indexCounter]
 			}
-			hp.indexCounter++
 		} else {
-			hp.indexHints = append(hp.indexHints, v.IndexHints)
+			hints := v.IndexHints
+			if len(hints) > 0 {
+				if hp.indexHints == nil {
+					hp.indexHints = make(map[int][]*ast.IndexHint)
+				}
+				hp.indexHints[hp.indexCounter] = hints
+			}
 		}
+		hp.indexCounter++
 	}
 	return in, false
 }
@@ -238,7 +250,7 @@ func (hp *hintProcessor) Leave(in ast.Node) (ast.Node, bool) {
 
 // CollectHint collects hints for a statement.
 func CollectHint(in ast.StmtNode) *HintsSet {
-	hp := hintProcessor{HintsSet: &HintsSet{tableHints: make([][]*ast.TableOptimizerHint, 0, 4), indexHints: make([][]*ast.IndexHint, 0, 4)}}
+	hp := hintProcessor{HintsSet: &HintsSet{}}
 	in.Accept(&hp)
 	return hp.HintsSet
 }
