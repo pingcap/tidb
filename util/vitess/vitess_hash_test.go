@@ -1,4 +1,4 @@
-// Copyright 2017 PingCAP, Inc.
+// Copyright 2020 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -15,11 +15,12 @@ package vitess
 
 import (
 	"encoding/hex"
-	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/util/testleak"
 	"math"
 	"strings"
 	"testing"
+
+	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/util/testleak"
 )
 
 var _ = Suite(&testVitessSuite{})
