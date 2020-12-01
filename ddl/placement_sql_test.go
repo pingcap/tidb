@@ -596,6 +596,7 @@ alter placement policy
 	replicas=1`)
 	c.Assert(err, IsNil)
 	s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
+	c.Assert(done, Equals, true)
 	c.Assert(chkErr, NotNil)
-	c.Assert(chkErr.Error(),Matches,".*under StateGlobalTxnWriteOnly.*")
+	c.Assert(chkErr.Error(), Matches, ".*under StateGlobalTxnWriteOnly.*")
 }
