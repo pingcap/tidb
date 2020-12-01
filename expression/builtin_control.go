@@ -193,6 +193,12 @@ func (c *caseWhenFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 		fieldTp.Flen, fieldTp.Decimal = 0, types.UnspecifiedLength
 		types.SetBinChsClnFlag(fieldTp)
 	}
+	// it's hard to distinguish not null flag, because
+	// 1. the args[0] may be null
+	// 2. no ELSE part
+	// and MySQL 8.0 also does not provide any not null flag in CASE WHEN
+	fieldTp.Flag &^= mysql.NotNullFlag
+
 	argTps := make([]types.EvalType, 0, l)
 	for i := 0; i < l-1; i += 2 {
 		if args[i], err = wrapWithIsTrue(ctx, true, args[i], false); err != nil {

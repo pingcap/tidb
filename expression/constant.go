@@ -59,7 +59,7 @@ func NewNull() *Constant {
 type Constant struct {
 	Value types.Datum
 	// once protects the changes of RetType
-	once    sync.Once
+	lock    sync.Mutex
 	RetType *types.FieldType
 	// DeferredExpr holds deferred function in PlanCache cached plan.
 	// it's only used to represent non-deterministic functions(see expression.DeferredFunctions)
@@ -77,7 +77,6 @@ type Constant struct {
 func (c *Constant) Clone() Expression {
 	con := &Constant{
 		Value:         c.Value,
-		once:          sync.Once{},
 		RetType:       c.RetType,
 		DeferredExpr:  c.DeferredExpr,
 		ParamMarker:   c.ParamMarker,
@@ -125,11 +124,22 @@ func (c *Constant) GetType() *types.FieldType {
 		types.DefaultParamTypeForValue(dt.GetValue(), tp)
 		return tp
 	}
-	if !c.Value.IsNull() && c.RetType.Flag&mysql.NotNullFlag == 0 {
-		c.once.Do(func() {
-			c.RetType = c.RetType.Clone()
-			c.RetType.Flag |= mysql.NotNullFlag
-		})
+	if !c.Value.IsNull() {
+		// c.once.Do(func() {
+		// 	c.RetType = c.RetType.Clone()
+		// 	c.RetType.Flag |= mysql.NotNullFlag
+		// })
+		// tp := c.RetType.Clone()
+		// tp.Flag |= mysql.NotNullFlag
+		// return tp
+
+		c.lock.Lock()
+		c.RetType.Flag |= mysql.NotNullFlag
+		c.lock.Unlock()
+	} else {
+		c.lock.Lock()
+		c.RetType.Flag &^= mysql.NotNullFlag
+		c.lock.Unlock()
 	}
 	return c.RetType
 }

@@ -66,8 +66,12 @@ func NewFieldTypeWithCollation(tp byte, collation string, length int) *FieldType
 // Aggregation is performed by MergeFieldType function.
 func AggFieldType(tps []*FieldType) *FieldType {
 	var currType FieldType
+	notNull := true
 	isMixedSign := false
 	for i, t := range tps {
+		if t.Flag&mysql.NotNullFlag == 0 {
+			notNull = false
+		}
 		if i == 0 && currType.Tp == mysql.TypeUnspecified {
 			currType = *t
 			continue
@@ -97,6 +101,9 @@ func AggFieldType(tps []*FieldType) *FieldType {
 				currType.Tp = mysql.TypeNewDecimal
 			}
 		}
+	}
+	if !notNull {
+		currType.Flag &^= mysql.NotNullFlag
 	}
 
 	return &currType
@@ -193,9 +200,9 @@ func hasVariantFieldLength(tp *FieldType) bool {
 
 // DefaultTypeForValue returns the default FieldType for the value.
 func DefaultTypeForValue(value interface{}, tp *FieldType, char string, collate string) {
-	if value != nil {
-		tp.Flag |= mysql.NotNullFlag
-	}
+	// if value != nil {
+	// 	tp.Flag |= mysql.NotNullFlag
+	// }
 	switch x := value.(type) {
 	case nil:
 		tp.Tp = mysql.TypeNull
