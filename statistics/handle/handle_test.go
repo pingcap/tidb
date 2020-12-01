@@ -133,7 +133,6 @@ func (s *testStatsSuite) TestStatsCacheMemTracker(c *C) {
 	c.Assert(statsTbl.Indices[int64(1)], IsNil)
 
 	testKit.MustExec("analyze table t")
-
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
 	c.Assert(statsTbl.Pseudo, IsFalse)
 

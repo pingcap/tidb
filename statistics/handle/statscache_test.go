@@ -41,8 +41,10 @@ func (s *testStatsSuite) TestStatsCacheMiniMemoryLimit(c *C) {
 	testKit.MustExec("analyze table t1")
 	statsTbl1 = do.StatsHandle().GetTableStats(tableInfo1)
 	c.Assert(statsTbl1.Pseudo, IsFalse)
+
 	// set new BytesLimit
 	BytesLimit := int64(90000)
+
 	s.do.StatsHandle().SetBytesLimit4Test(BytesLimit)
 	//create t2 and kick t1 of cache
 	testKit.MustExec("create table t2 (c1 int, c2 int)")
@@ -57,7 +59,6 @@ func (s *testStatsSuite) TestStatsCacheMiniMemoryLimit(c *C) {
 
 	c.Assert(statsTbl2.Pseudo, IsTrue)
 	testKit.MustExec("analyze table t2")
-	// wait 10 ms  for cache to evict old cache
 	tbl2, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
 	c.Assert(err, IsNil)
 
@@ -242,6 +243,7 @@ func (s *testStatsSuite) TestManyTableChangeWithQuery(c *C) {
 		testKit.MustQuery(fmt.Sprintf("select * from t%d use index(idx) where b <= 5", i))
 		testKit.MustQuery(fmt.Sprintf("select * from t%d where a > 1", i))
 		testKit.MustQuery(fmt.Sprintf("select * from t%d use index(idx) where b = 5", i))
+
 		c.Assert(h.LoadNeededHistograms(), IsNil)
 		c.Assert(BytesLimit >= h.GetMemConsumed(), IsTrue)
 		statsTblNew := h.GetTableStats(tableInfo)
