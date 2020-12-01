@@ -114,16 +114,24 @@ var (
 			Help:      "Speed of add index",
 		}, []string{LblType})
 
-	AddIndexProgress = prometheus.NewGauge(
+	BackfillProgressGauge = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: "tidb",
 			Subsystem: "ddl",
-			Name:      "add_index_percentage_progress",
-			Help:      "Percentage progress of add index",
-		})
+			Name:      "backfill_percentage_progress",
+			Help:      "Percentage progress of backfill",
+		}, []string{LblType})
 )
 
 // Label constants.
 const (
 	LblAction = "action"
+
+	LblAddIndex     = "add_index"
+	LblModifyColumn = "modify_column"
 )
+
+// GetBackfillProgressByLabel returns the Gauge showing the percentage progress for the given type label.
+func GetBackfillProgressByLabel(lbl string) prometheus.Gauge {
+	return BackfillProgressGauge.WithLabelValues(lbl)
+}
