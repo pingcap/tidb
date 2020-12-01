@@ -1039,8 +1039,8 @@ func (s *testCommitterSuite) TestResolvePessimisticLock(c *C) {
 	mutation := commit.mutationsOfKeys([][]byte{untouchedKey})
 	c.Assert(mutation.Len(), Equals, 1)
 	c.Assert(mutation.GetOp(0), Equals, pb.Op_Lock)
-	c.Assert(mutation.GetKey(0), Equals, untouchedKey)
-	c.Assert(mutation.GetValue(0), Equals, untouchedValue)
+	c.Assert(mutation.GetKey(0), BytesEquals, []byte(untouchedKey))
+	c.Assert(mutation.GetValue(0), BytesEquals, untouchedValue)
 }
 
 func (s *testCommitterSuite) TestCommitDeadLock(c *C) {
