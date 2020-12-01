@@ -43,4 +43,4 @@ drop view if exists v;
 create view v as select cast(replace(substring_index(substring_index("",',',1),':',-1),'"','') as CHAR(32)) as event_id;
 desc v;
 Field	Type	Null	Key	Default	Extra
-event_id	varchar(32)	YES		NULL	
+event_id	varchar(32)	NO		NULL	

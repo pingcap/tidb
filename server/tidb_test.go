@@ -952,6 +952,20 @@ func (ts *tidbTestSuite) TestNullFlag(c *C) {
 		expectFlag := uint16(tmysql.BinaryFlag)
 		c.Assert(dumpFlag(cols[0].Type, cols[0].Flag), Equals, expectFlag)
 	}
+
+	{
+		// issue #18488
+		_, err := Execute(ctx, qctx, "use test")
+		c.Assert(err, IsNil)
+		_, err = Execute(ctx, qctx, "CREATE TABLE `test` (`iD` bigint(20) NOT NULL, `INT_TEST` int(11) DEFAULT NULL);")
+		c.Assert(err, IsNil)
+		rs, err := Execute(ctx, qctx, `SELECT id + int_test as res FROM test  GROUP BY res ORDER BY res;`)
+		c.Assert(err, IsNil)
+		cols := rs.Columns()
+		c.Assert(len(cols), Equals, 1)
+		expectFlag := uint16(tmysql.BinaryFlag)
+		c.Assert(dumpFlag(cols[0].Type, cols[0].Flag), Equals, expectFlag)
+	}
 }
 
 func (ts *tidbTestSuite) TestGracefulShutdown(c *C) {
