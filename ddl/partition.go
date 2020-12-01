@@ -345,14 +345,6 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.PartitionOptions, tb
 
 // buildPartitionDefinitionsInfo build partition definitions info without assign partition id. tbInfo will be constant
 func buildPartitionDefinitionsInfo(ctx sessionctx.Context, defs []*ast.PartitionDefinition, tbInfo *model.TableInfo) (pdefs []model.PartitionDefinition, err error) {
-	defer func() {
-		if err == nil && len(pdefs) > 0 {
-			for i, pdef := range pdefs {
-				pdef.State = model.StatePublic
-				pdefs[i] = pdef
-			}
-		}
-	}()
 	switch tbInfo.Partition.Type {
 	case model.PartitionTypeRange:
 		return buildRangePartitionDefinitions(ctx, defs, tbInfo)
@@ -1761,6 +1753,7 @@ func onAlterTablePartition(t *meta.Meta, job *model.Job) (ver int64, err error) 
 
 	tblInfo, err := getTableInfo(t, job.TableID, job.SchemaID)
 	if err != nil {
+		job.State = model.JobStateCancelled
 		return 0, err
 	}
 
@@ -1769,6 +1762,7 @@ func onAlterTablePartition(t *meta.Meta, job *model.Job) (ver int64, err error) 
 		job.State = model.JobStateCancelled
 		return 0, errors.Trace(table.ErrUnknownPartition.GenWithStackByArgs("drop?", tblInfo.Name.O))
 	}
+
 	pstate, found := ptInfo.GetStateByID(partitionID)
 	if !found {
 		job.State = model.JobStateCancelled
@@ -1784,9 +1778,9 @@ func onAlterTablePartition(t *meta.Meta, job *model.Job) (ver int64, err error) 
 		}
 		ok := ptInfo.SetStateByID(partitionID, model.StateGlobalTxnWriteOnly)
 		if !ok {
+			job.State = model.JobStateCancelled
 			return 0, errors.Wrapf(err, "failed to set partition state")
 		}
-		tblInfo.State = model.StateGlobalTxnWriteOnly
 		// used by ApplyDiff in updateSchemaVersion
 		job.CtxVars = []interface{}{partitionID, model.StateGlobalTxnWriteOnly}
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
@@ -1797,9 +1791,9 @@ func onAlterTablePartition(t *meta.Meta, job *model.Job) (ver int64, err error) 
 	case model.StateGlobalTxnWriteOnly:
 		ok := ptInfo.SetStateByID(partitionID, model.StatePublic)
 		if !ok {
+			job.State = model.JobStateCancelled
 			return 0, errors.Wrapf(err, "failed to set partition state")
 		}
-		tblInfo.State = model.StatePublic
 		// used by ApplyDiff in updateSchemaVersion
 		job.CtxVars = []interface{}{partitionID, model.StatePublic}
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
