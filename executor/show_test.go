@@ -16,6 +16,7 @@ package executor_test
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
@@ -889,6 +890,27 @@ func (s *testAutoRandomSuite) TestAutoRandomBase(c *C) {
 			"  UNIQUE KEY `b` (`b`)\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=5100 /*T![auto_rand_base] AUTO_RANDOM_BASE=6001 */",
 	))
+}
+
+func (s *testAutoRandomSuite) TestAutoRandomWithLargeSignedShowTableRegions(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create database if not exists auto_random_db;")
+	defer tk.MustExec("drop database if exists auto_random_db;")
+	tk.MustExec("use auto_random_db;")
+	tk.MustExec("drop table if exists t;")
+
+	testutil.ConfigTestUtils.SetupAutoRandomTestConfig()
+	defer testutil.ConfigTestUtils.RestoreAutoRandomTestConfig()
+	tk.MustExec("create table t (a bigint unsigned auto_random primary key);")
+	tk.MustExec("set @@global.tidb_scatter_region=1;")
+	// 18446744073709541615 is MaxUint64 - 10000.
+	// 18446744073709551615 is the MaxUint64.
+	tk.MustQuery("split table t between (18446744073709541615) and (18446744073709551615) regions 2;").
+		Check(testkit.Rows("1 1"))
+	startKey := tk.MustQuery("show table t regions;").Rows()[1][1].(string)
+	idx := strings.Index(startKey, "_r_")
+	c.Assert(idx == -1, IsFalse)
+	c.Assert(startKey[idx+3] == '-', IsFalse, Commentf("actual key: %s", startKey))
 }
 
 func (s *testSuite5) TestShowEscape(c *C) {
