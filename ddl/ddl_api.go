@@ -1961,12 +1961,29 @@ func checkPartitionByRange(ctx sessionctx.Context, tbInfo *model.TableInfo) erro
 		return checkRangePartitionValue(ctx, tbInfo)
 	}
 
+	// Check for range columns partition.
+	if err := checkColumnsPartitionType(tbInfo); err != nil {
+		return err
+	}
+
 	return checkRangeColumnsPartitionValue(ctx, tbInfo)
 }
 
 // checkPartitionByList checks validity of a "BY LIST" partition.
 func checkPartitionByList(ctx sessionctx.Context, tbInfo *model.TableInfo) error {
-	return checkListPartitionValue(ctx, tbInfo)
+	pi := tbInfo.Partition
+
+	if err := checkListPartitionValue(ctx, tbInfo); err != nil {
+		return err
+	}
+
+	if len(pi.Columns) != 0 {
+		if err := checkColumnsPartitionType(tbInfo); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 func checkColumnsPartitionType(tbInfo *model.TableInfo) error {
@@ -5163,12 +5180,6 @@ func checkColumnsTypeAndValuesMatch(ctx sessionctx.Context, meta *model.TableInf
 	// partition p0 values less than (expr)
 	// check the type of cols[i] and expr is consistent.
 	colNames := meta.Partition.Columns
-	originalValue := ctx.GetSessionVars().StmtCtx.InInsertStmt
-	defer func() {
-		ctx.GetSessionVars().StmtCtx.InInsertStmt = originalValue
-	}()
-	// See ShouldClipToZero function, set InInsertStmt flag to true to detect overflow.
-	ctx.GetSessionVars().StmtCtx.InInsertStmt = true
 	for i, colExpr := range exprs {
 		if _, ok := colExpr.(*ast.MaxValueExpr); ok {
 			continue
@@ -5215,10 +5226,6 @@ func checkColumnsTypeAndValuesMatch(ctx sessionctx.Context, meta *model.TableInf
 			default:
 				return ErrWrongTypeColumnValue.GenWithStackByArgs()
 			}
-		}
-		_, err = val.ConvertTo(ctx.GetSessionVars().StmtCtx, &colInfo.FieldType)
-		if err != nil {
-			return ErrWrongTypeColumnValue.GenWithStackByArgs()
 		}
 	}
 	return nil
