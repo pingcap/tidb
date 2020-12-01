@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	tidbmath "github.com/pingcap/tidb/util/math"
 )
 
 // baseFuncDesc describes an function signature, only used in planner.
@@ -176,19 +175,18 @@ func (a *baseFuncDesc) typeInfer4ApproxPercentile(ctx sessionctx.Context) error 
 	return nil
 }
 
-// typeInfer4Sum should returns a "decimal", otherwise it returns a "double".
-// Because child returns integer or decimal type.
+// typeInfer4Sum returns "decimal" or "double" according to its child returns integer or decimal type.
 func (a *baseFuncDesc) typeInfer4Sum(ctx sessionctx.Context) {
 	switch a.Args[0].GetType().Tp {
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeYear:
 		a.RetTp = types.NewFieldType(mysql.TypeNewDecimal)
-		a.RetTp.Flen, a.RetTp.Decimal = tidbmath.MinInt(a.Args[0].GetType().Flen+21, mysql.MaxDecimalWidth), 0
+		a.RetTp.Flen, a.RetTp.Decimal = mathutil.Min(a.Args[0].GetType().Flen+21, mysql.MaxDecimalWidth), 0
 		if a.Args[0].GetType().Flen < 0 || a.RetTp.Flen > mysql.MaxDecimalWidth {
 			a.RetTp.Flen = mysql.MaxDecimalWidth
 		}
 	case mysql.TypeNewDecimal:
 		a.RetTp = types.NewFieldType(mysql.TypeNewDecimal)
-		a.RetTp.Flen, a.RetTp.Decimal = tidbmath.MinInt(a.Args[0].GetType().Flen+22), a.Args[0].GetType().Decimal
+		a.RetTp.Flen, a.RetTp.Decimal = a.Args[0].GetType().Flen+22, a.Args[0].GetType().Decimal
 		if a.Args[0].GetType().Flen < 0 || a.RetTp.Flen > mysql.MaxDecimalWidth {
 			a.RetTp.Flen = mysql.MaxDecimalWidth
 		}
@@ -216,7 +214,7 @@ func (a *baseFuncDesc) typeInfer4Avg(ctx sessionctx.Context) {
 		} else {
 			a.RetTp.Decimal = mathutil.Min(a.Args[0].GetType().Decimal+types.DivFracIncr, mysql.MaxDecimalScale)
 		}
-		a.RetTp.Flen = tidbmath.MinInt(mysql.MaxDecimalWidth, a.Args[0].GetType().Flen+types.DivFracIncr)
+		a.RetTp.Flen = mathutil.Min(mysql.MaxDecimalWidth, a.Args[0].GetType().Flen+types.DivFracIncr)
 		if a.Args[0].GetType().Flen < 0 {
 			a.RetTp.Flen = mysql.MaxDecimalWidth
 		}

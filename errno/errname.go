@@ -1026,6 +1026,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrBRIERestoreFailed: mysql.Message("Restore failed: %s", nil),
 	ErrBRIEImportFailed:  mysql.Message("Import failed: %s", nil),
 	ErrBRIEExportFailed:  mysql.Message("Export failed: %s", nil),
+	ErrBRIEUnsupported:   mysql.Message("Unsupported BRIE statement kind: %s", nil),
 
 	ErrInvalidPlacementSpec: mysql.Message("Invalid placement policy '%s': %s", nil),
 	ErrPlacementPolicyCheck: mysql.Message("Placement policy didn't meet the constraint, reason: %s", nil),

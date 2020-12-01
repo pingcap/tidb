@@ -60,6 +60,16 @@ import (
 
 const (
 	defaultImportID = "tidb_import_"
+
+	// current commands/status that displayed in progress
+	// there're still some commands didn't list here, whereas they are used as arguments of StartProgress in BR
+	cmdWait        = "Wait"
+	cmdBackup      = "Backup"
+	cmdRestore     = "Restore"
+	cmdImport      = "Import"
+	cmdPostProcess = "Post-process"
+	cmdStop        = "Stop"
+	cmdFinish      = "Finish"
 )
 
 var (
@@ -69,17 +79,35 @@ var (
 
 // brieTaskProgress tracks a task's current progress.
 type brieTaskProgress struct {
-	// current progress of the task.
-	// this field is atomically updated outside of the lock below.
+	// cmd is the name of the step the BRIE task is currently performing.
+	// We didn't keep it consistent with below two numeric fields. That is to say, user may see
+	// Import 99% -> Import 100% -> Post Process 100% , where 100% always means "Post Process"
+	// To avoid concurrency problems, always use getter/setter
+	cmd atomic.Value
+
+	// current progress of the task. When update current merely, we could use atomic operation.
+	// When update current according to total, we should lock total first
 	current int64
 
-	// lock is the mutex protected the two fields below.
+	// lock protects total. In some scenarios, current is decided by total, so locking total first could also keep
+	// consistency of those two fields
 	lock sync.Mutex
-	// cmd is the name of the step the BRIE task is currently performing.
-	cmd string
+
 	// total is the total progress of the task.
 	// the percentage of completeness is `(100%) * current / total`.
 	total int64
+}
+
+func (p *brieTaskProgress) getCmd() string {
+	inner := p.cmd.Load()
+	if inner == nil {
+		return ""
+	}
+	return inner.(string)
+}
+
+func (p *brieTaskProgress) setCmd(c string) {
+	p.cmd.Store(c)
 }
 
 // Inc implements glue.Progress
@@ -94,26 +122,81 @@ func (p *brieTaskProgress) Close() {
 	p.lock.Unlock()
 }
 
-// GetFraction returns a real number whose range is [0, 100]
-func (p *brieTaskProgress) GetFraction() float64 {
-	return float64(100*p.current) / float64(p.total)
+// getFraction returns a real number whose range is [0, 100]
+func (p *brieTaskProgress) getFraction() float64 {
+	p.lock.Lock()
+	result := 100 * float64(atomic.LoadInt64(&p.current)) / float64(p.total)
+	p.lock.Unlock()
+	// progress of import task is estimated, so may exceed 100%. we simply adjust here
+	if result > 100 {
+		result = 100
+	}
+	return result
 }
 
 type brieTaskInfo struct {
-	queueTime types.Time
-	kind      ast.BRIEKind
-	storage   string
-	connID    uint64
-	originSQL string
+	queueTime   types.Time
+	kind        ast.BRIEKind
+	storage     string
+	connID      uint64
+	originSQL   string
+	execTime    atomic.Value
+	finishTime  atomic.Value
+	backupTS    uint64
+	archiveSize uint64
+	message     atomic.Value
+}
 
-	protected struct {
-		sync.RWMutex
-		execTime    types.Time
-		finishTime  types.Time
-		backupTS    uint64
-		archiveSize uint64
-		message     string
+func (b *brieTaskInfo) getExecTime() types.Time {
+	inner := b.execTime.Load()
+	if inner == nil {
+		return types.ZeroTime
 	}
+	return inner.(types.Time)
+}
+
+func (b *brieTaskInfo) setExecTime(t types.Time) {
+	b.execTime.Store(t)
+}
+
+func (b *brieTaskInfo) getFinishTime() types.Time {
+	inner := b.finishTime.Load()
+	if inner == nil {
+		return types.ZeroTime
+	}
+	return inner.(types.Time)
+}
+
+func (b *brieTaskInfo) setFinishTime(t types.Time) {
+	b.finishTime.Store(t)
+}
+
+func (b *brieTaskInfo) getBackupTS() uint64 {
+	return atomic.LoadUint64(&b.backupTS)
+}
+
+func (b *brieTaskInfo) setBackupTS(ts uint64) {
+	atomic.StoreUint64(&b.backupTS, ts)
+}
+
+func (b *brieTaskInfo) getArchiveSize() uint64 {
+	return atomic.LoadUint64(&b.archiveSize)
+}
+
+func (b *brieTaskInfo) setArchiveSize(s uint64) {
+	atomic.StoreUint64(&b.archiveSize, s)
+}
+
+func (b *brieTaskInfo) getMessage() string {
+	inner := b.message.Load()
+	if inner == nil {
+		return ""
+	}
+	return inner.(string)
+}
+
+func (b *brieTaskInfo) SetMessage(m string) {
+	b.message.Store(m)
 }
 
 type brieQueueItem struct {
@@ -145,10 +228,10 @@ func (bq *brieQueue) registerTask(
 		info:   info,
 		cancel: taskCancel,
 		progress: &brieTaskProgress{
-			cmd:   "Wait",
 			total: 1,
 		},
 	}
+	item.progress.setCmd(cmdWait)
 
 	// use base64 encode to avoid SQL injection
 	sql := fmt.Sprintf(`INSERT INTO mysql.brie_tasks (
@@ -159,8 +242,8 @@ func (bq *brieQueue) registerTask(
 		info.queueTime.String(),
 		base64.StdEncoding.EncodeToString([]byte(info.storage)),
 		info.connID,
-		item.progress.cmd,
-		item.progress.GetFraction(),
+		item.progress.getCmd(),
+		item.progress.getFraction(),
 		0,
 	)
 	_, _, err := s.ExecRestrictedSQLWithContext(ctx, sql)
@@ -213,6 +296,8 @@ func (bq *brieQueue) releaseTask() {
 	<-bq.workerCh
 }
 
+// cancelTask cleans task status in mysql.brie_tasks. please note that cancellation of ctx is outside of this fucntion.
+// delete param means if it should delete record or update cancel status of record. The latter is used in import tasks.
 func (bq *brieQueue) cancelTask(ctx context.Context, taskID uint64, se sqlexec.RestrictedSQLExecutor, delete bool) {
 	var sql string
 	if delete {
@@ -494,7 +579,7 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 	case ast.BRIEKindImport:
 		return b.buildImport(s, schema)
 	default:
-		b.err = errors.Errorf("unsupported BRIE statement kind: %s", s.Kind)
+		b.err = ErrBRIEUnsupported.GenWithStackByArgs(s.Kind.String())
 		return nil
 	}
 }
@@ -568,39 +653,29 @@ func (e *BRIEExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 	defer bq.releaseTask()
 
-	e.info.protected.Lock()
-	e.info.protected.execTime = types.CurrentTime(mysql.TypeDatetime)
-	e.info.protected.Unlock()
+	e.info.setExecTime(types.CurrentTime(mysql.TypeDatetime))
 
 	switch e.info.kind {
 	case ast.BRIEKindBackup:
-		err = handleBRIEError(brtask.RunBackup(taskCtx, glue, "Backup", e.backupCfg), ErrBRIEBackupFailed)
+		err = handleBRIEError(brtask.RunBackup(taskCtx, glue, cmdBackup, e.backupCfg), ErrBRIEBackupFailed)
 	case ast.BRIEKindRestore:
-		err = handleBRIEError(brtask.RunRestore(taskCtx, glue, "Restore", e.restoreCfg), ErrBRIERestoreFailed)
+		err = handleBRIEError(brtask.RunRestore(taskCtx, glue, cmdRestore, e.restoreCfg), ErrBRIERestoreFailed)
 	case ast.BRIEKindImport:
 		l := lightning.New(e.importGlobalCfg)
 		e.importTaskCfg.Checkpoint.Schema += strconv.FormatUint(taskID, 10)
 		e.importTaskCfg.TikvImporter.SortedKVDir += strconv.FormatUint(taskID, 10)
 		err2 := handleBRIEError(l.RunOnce(taskCtx, e.importTaskCfg, glue, logutil.Logger(ctx)), ErrBRIEImportFailed)
 		if err2 != nil {
-			e.info.protected.Lock()
-			e.info.protected.message = err2.Error()
-			e.info.protected.Unlock()
-			item.progress.lock.Lock()
-			item.progress.cmd = "Stop"
-			item.progress.lock.Unlock()
+			e.info.SetMessage(err2.Error())
+			item.progress.setCmd(cmdStop)
 		} else {
-			item.progress.lock.Lock()
-			item.progress.cmd = "Finish"
-			item.progress.current = item.progress.total
-			item.progress.lock.Unlock()
+			item.progress.Close()
+			item.progress.setCmd(cmdFinish)
 		}
 	default:
-		return errors.Errorf("unsupported BRIE statement kind: %s", e.info.kind)
+		return ErrBRIEUnsupported.GenWithStackByArgs(e.info.kind.String())
 	}
-	e.info.protected.Lock()
-	e.info.protected.finishTime = types.CurrentTime(mysql.TypeDatetime)
-	e.info.protected.Unlock()
+	e.info.setFinishTime(types.CurrentTime(mysql.TypeDatetime))
 	glue.Flush(ctx, taskID)
 	taskExecuted = true
 	if err != nil {
@@ -610,19 +685,19 @@ func (e *BRIEExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	switch e.info.kind {
 	case ast.BRIEKindBackup, ast.BRIEKindRestore:
 		req.AppendString(0, e.info.storage)
-		req.AppendUint64(1, e.info.protected.archiveSize)
-		req.AppendUint64(2, e.info.protected.backupTS)
+		req.AppendUint64(1, e.info.getArchiveSize())
+		req.AppendUint64(2, e.info.getBackupTS())
 		req.AppendTime(3, e.info.queueTime)
-		req.AppendTime(4, e.info.protected.execTime)
+		req.AppendTime(4, e.info.getExecTime())
 	case ast.BRIEKindImport:
 		req.AppendUint64(0, taskID)
-		req.AppendString(1, item.progress.cmd)
+		req.AppendString(1, item.progress.getCmd())
 		req.AppendString(2, e.info.storage)
-		req.AppendUint64(3, e.info.protected.archiveSize)
+		req.AppendUint64(3, e.info.getArchiveSize())
 		req.AppendTime(4, e.info.queueTime)
-		req.AppendTime(5, e.info.protected.execTime)
-		req.AppendTime(6, e.info.protected.finishTime)
-		req.AppendString(7, e.info.protected.message)
+		req.AppendTime(5, e.info.getExecTime())
+		req.AppendTime(6, e.info.getFinishTime())
+		req.AppendString(7, e.info.getMessage())
 	}
 
 	e.info = nil
@@ -639,44 +714,32 @@ func handleBRIEError(err error, terror *terror.Error) error {
 func (e *ShowExec) fetchShowBRIE(ctx context.Context, kind ast.BRIEKind) error {
 	sql := fmt.Sprintf(`SELECT id, data_path, status, progress, queue_time, exec_time, finish_time, conn_id, message
 			FROM mysql.brie_tasks WHERE kind = '%s';`, kind.String())
-	rs, err := e.ctx.(sqlexec.SQLExecutor).Execute(ctx, sql)
+	rows, _, err := e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQLWithContext(ctx, sql)
 	if err != nil {
 		return err
 	}
-	r := rs[0]
-	defer terror.Call(r.Close)
-	req := r.NewChunk()
-	it := chunk.NewIterator4Chunk(req)
-	for {
-		err = r.Next(ctx, req)
-		if err != nil {
-			return err
-		}
-		if req.NumRows() == 0 {
-			break
-		}
 
-		for row := it.Begin(); row != it.End(); row = it.Next() {
-			e.result.AppendUint64(0, row.GetUint64(0))
-			dataPath, err := base64.StdEncoding.DecodeString(row.GetString(1))
-			if err != nil {
-				logutil.Logger(ctx).Error("failed to decode base64", zap.Error(err))
-				continue
-			}
-			e.result.AppendBytes(1, dataPath)
-			e.result.AppendString(2, row.GetString(2))
-			e.result.AppendFloat32(3, row.GetFloat32(3))
-			e.result.AppendTime(4, row.GetTime(4))
-			e.result.AppendTime(5, row.GetTime(5))
-			e.result.AppendTime(6, row.GetTime(6))
-			e.result.AppendUint64(7, row.GetUint64(7))
-			msg, err := base64.StdEncoding.DecodeString(row.GetString(8))
-			if err != nil {
-				logutil.Logger(ctx).Error("failed to decode base64", zap.Error(err))
-				continue
-			}
-			e.result.AppendBytes(8, msg)
+	for _, row := range rows {
+		id := row.GetUint64(0)
+		e.result.AppendUint64(0, id)
+		dataPath, err := base64.StdEncoding.DecodeString(row.GetString(1))
+		if err != nil {
+			logutil.Logger(ctx).Error("failed to decode base64", zap.Error(err), zap.Uint64("taskID", id))
+			continue
 		}
+		e.result.AppendBytes(1, dataPath)
+		e.result.AppendString(2, row.GetString(2))
+		e.result.AppendFloat32(3, row.GetFloat32(3))
+		e.result.AppendTime(4, row.GetTime(4))
+		e.result.AppendTime(5, row.GetTime(5))
+		e.result.AppendTime(6, row.GetTime(6))
+		e.result.AppendUint64(7, row.GetUint64(7))
+		msg, err := base64.StdEncoding.DecodeString(row.GetString(8))
+		if err != nil {
+			logutil.Logger(ctx).Error("failed to decode base64", zap.Error(err), zap.Uint64("taskID", id))
+			continue
+		}
+		e.result.AppendBytes(8, msg)
 	}
 	return nil
 }
@@ -703,42 +766,28 @@ func (gs *tidbGlueSession) Execute(ctx context.Context, sql string) error {
 	return err
 }
 
+// ExecuteWithLog implements importglue.SQLExecutor
 func (gs *tidbGlueSession) ExecuteWithLog(ctx context.Context, sql string, purpose string, logger importlog.Logger) error {
-	se, err := gs.GetSession()
-	if err != nil {
-		return err
-	}
-	defer se.Close()
+	sqlExecutor := gs.se.(sqlexec.RestrictedSQLExecutor)
 	return common.Retry(purpose, logger, func() error {
-		_, err := se.Execute(ctx, sql)
+		_, _, err := sqlExecutor.ExecRestrictedSQLWithContext(ctx, sql)
 		return err
 	})
 }
 
+// ObtainStringWithLog implements importglue.SQLExecutor
 func (gs *tidbGlueSession) ObtainStringWithLog(ctx context.Context, sql string, purpose string, logger importlog.Logger) (string, error) {
-	se, err := gs.GetSession()
-	if err != nil {
-		return "", err
-	}
-	defer se.Close()
+	sqlExecutor := gs.se.(sqlexec.RestrictedSQLExecutor)
 	var result string
-	err = common.Retry(purpose, logger, func() error {
-		rs, err := se.Execute(ctx, sql)
+	err := common.Retry(purpose, logger, func() error {
+		rows, _, err := sqlExecutor.ExecRestrictedSQLWithContext(ctx, sql)
 		if err != nil {
 			return err
 		}
-		r := rs[0]
-		defer terror.Call(r.Close)
-		req := r.NewChunk()
-		err = r.Next(ctx, req)
-		if err != nil {
-			return err
-		}
-		if req.NumRows() == 0 {
+		if len(rows) == 0 {
 			return errors.Errorf("empty result while expecting a string, purpose: %s, sql: %s", purpose, sql)
 		}
-		row := req.GetRow(0)
-		result = row.GetString(0)
+		result = rows[0].GetString(0)
 		return nil
 	})
 	return result, err
@@ -786,7 +835,7 @@ func (gs *tidbGlueSession) OwnsStorage() bool {
 // StartProgress implements glue.Glue
 func (gs *tidbGlueSession) StartProgress(ctx context.Context, cmdName string, total int64, redirectLog bool) glue.Progress {
 	gs.progress.lock.Lock()
-	gs.progress.cmd = cmdName
+	gs.progress.setCmd(cmdName)
 	gs.progress.total = total
 	atomic.StoreInt64(&gs.progress.current, 0)
 	gs.progress.lock.Unlock()
@@ -795,35 +844,27 @@ func (gs *tidbGlueSession) StartProgress(ctx context.Context, cmdName string, to
 
 // Record implements glue.Glue
 func (gs *tidbGlueSession) Record(name string, value uint64) {
-	gs.info.protected.Lock()
-	defer gs.info.protected.Unlock()
 	switch name {
 	case "BackupTS":
-		gs.info.protected.backupTS = value
+		gs.info.setBackupTS(value)
 	case "Size":
-		gs.info.protected.archiveSize = value
+		gs.info.setArchiveSize(value)
+	// importglue.RecordEstimatedChunk is sent only once and before importglue.RecordFinishedChunk
 	case importglue.RecordEstimatedChunk:
-		gs.progress.lock.Lock()
-		gs.progress.total = int64(value)
-		gs.progress.lock.Unlock()
+		gs.StartProgress(context.Background(), cmdImport, int64(value), false)
 	case importglue.RecordFinishedChunk:
-		gs.progress.lock.Lock()
 		current := int64(value)
-		if current < gs.progress.total {
-			gs.progress.cmd = "Import"
-		} else {
-			current = gs.progress.total
-			// TODO(lance6717): to be more exact, lightning could report status of restoring tables
-			gs.progress.cmd = "Post-process"
+		gs.progress.lock.Lock()
+		if current >= gs.progress.total {
+			// TODO(lance6717): to be more exact, lightning could report status of restoring tables instead of chunks
+			gs.progress.setCmd(cmdPostProcess)
 		}
-		gs.progress.current = current
+		atomic.StoreInt64(&gs.progress.current, current)
 		gs.progress.lock.Unlock()
 	}
 }
 
 func (gs *tidbGlueSession) Flush(ctx context.Context, taskID uint64) {
-	gs.info.protected.RLock()
-	gs.progress.lock.Lock()
 	sql := fmt.Sprintf(`UPDATE mysql.brie_tasks SET
 					exec_time = '%s',
 					finish_time = '%s',
@@ -833,16 +874,14 @@ func (gs *tidbGlueSession) Flush(ctx context.Context, taskID uint64) {
 					progress = %f,
 					message = '%s'
 				WHERE id = %d`,
-		gs.info.protected.execTime.String(),
-		gs.info.protected.finishTime.String(),
-		gs.info.protected.backupTS,
-		gs.info.protected.archiveSize,
-		gs.progress.cmd,
-		gs.progress.GetFraction(),
-		base64.StdEncoding.EncodeToString([]byte(gs.info.protected.message)),
+		gs.info.getExecTime().String(),
+		gs.info.getFinishTime().String(),
+		gs.info.getBackupTS(),
+		gs.info.getArchiveSize(),
+		gs.progress.getCmd(),
+		gs.progress.getFraction(),
+		base64.StdEncoding.EncodeToString([]byte(gs.info.getMessage())),
 		taskID)
-	gs.progress.lock.Unlock()
-	gs.info.protected.RUnlock()
 
 	sqlExecutor := gs.se.(sqlexec.RestrictedSQLExecutor)
 	_, _, err := sqlExecutor.ExecRestrictedSQLWithContext(ctx, sql)
