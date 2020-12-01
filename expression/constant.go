@@ -125,7 +125,7 @@ func (c *Constant) GetType() *types.FieldType {
 		types.DefaultParamTypeForValue(dt.GetValue(), tp)
 		return tp
 	}
-	if !c.Value.IsNull() {
+	if !c.Value.IsNull() && c.RetType.Flag&mysql.NotNullFlag == 0 {
 		c.once.Do(func() {
 			c.RetType = c.RetType.Clone()
 			c.RetType.Flag |= mysql.NotNullFlag
