@@ -53,11 +53,13 @@ func cleanEnv(c *C, store kv.Storage, do *domain.Domain) {
 	tk.MustExec("delete from mysql.stats_buckets")
 	tk.MustExec("delete from mysql.stats_extended")
 	tk.MustExec("delete from mysql.schema_index_usage")
-	cleanHandle(c, do)
+	do.StatsHandle().Clear4Test()
 }
+
 func cleanHandle(c *C, do *domain.Domain) {
 	do.StatsHandle().Clear4Test()
 }
+
 func (s *testStatsSuite) TestStatsCache(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
@@ -92,7 +94,7 @@ func (s *testStatsSuite) TestStatsCache(c *C) {
 	// If the new schema drop a column, the table stats can still work.
 	testKit.MustExec("alter table t drop column c2")
 	is = do.InfoSchema()
-	cleanHandle(c, s.do)
+	do.StatsHandle().Clear4Test()
 	do.StatsHandle().Update(is)
 	time.Sleep(10 * time.Millisecond)
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
@@ -101,7 +103,7 @@ func (s *testStatsSuite) TestStatsCache(c *C) {
 	// If the new schema add a column, the table stats can still work.
 	testKit.MustExec("alter table t add column c10 int")
 	is = do.InfoSchema()
-	cleanHandle(c, s.do)
+	do.StatsHandle().Clear4Test()
 	do.StatsHandle().Update(is)
 	time.Sleep(10 * time.Millisecond)
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
@@ -123,14 +125,17 @@ func (s *testStatsSuite) TestStatsCacheMemTracker(c *C) {
 	statsTbl := do.StatsHandle().GetTableStats(tableInfo)
 	c.Assert(statsTbl.Pseudo, IsTrue)
 	testKit.MustExec("analyze table t")
+
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
 	c.Assert(statsTbl.MemoryUsage() > 0, IsTrue)
 	c.Assert(do.StatsHandle().GetAllTableStatsMemUsage4Test(), Equals, do.StatsHandle().GetMemConsumed())
+
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
 	c.Assert(statsTbl.Pseudo, IsFalse)
 	testKit.MustExec("create index idx_t on t(c1)")
 	time.Sleep(10 * time.Millisecond)
 	do.InfoSchema()
+
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
 	// If index is build, but stats is not updated. statsTbl can also work.
 	c.Assert(statsTbl.Pseudo, IsFalse)
@@ -138,14 +143,16 @@ func (s *testStatsSuite) TestStatsCacheMemTracker(c *C) {
 	c.Assert(statsTbl.Indices[int64(1)], IsNil)
 	testKit.MustExec("analyze table t")
 	time.Sleep(10 * time.Millisecond)
+
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
 	c.Assert(statsTbl.Pseudo, IsFalse)
 	// If the new schema drop a column, the table stats can still work.
 	testKit.MustExec("alter table t drop column c2")
 	is = do.InfoSchema()
-	cleanHandle(c, s.do)
+	do.StatsHandle().Clear4Test()
 	do.StatsHandle().Update(is)
 	time.Sleep(10 * time.Millisecond)
+
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
 	c.Assert(statsTbl.MemoryUsage() >= 0, IsTrue)
 
@@ -156,7 +163,7 @@ func (s *testStatsSuite) TestStatsCacheMemTracker(c *C) {
 	testKit.MustExec("alter table t add column c10 int")
 	is = do.InfoSchema()
 
-	cleanHandle(c, s.do)
+	do.StatsHandle().Clear4Test()
 	do.StatsHandle().Update(is)
 	time.Sleep(10 * time.Millisecond)
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
@@ -239,8 +246,7 @@ func (s *testStatsSuite) TestStatsStoreAndLoad(c *C) {
 
 	statsTbl1 := do.StatsHandle().GetTableStats(tableInfo)
 
-	cleanHandle(c, s.do)
-
+	do.StatsHandle().Clear4Test()
 	do.StatsHandle().Update(is)
 	time.Sleep(10 * time.Millisecond)
 
@@ -289,7 +295,7 @@ func (s *testStatsSuite) TestColumnIDs(c *C) {
 	// Drop a column and the offset changed,
 	testKit.MustExec("alter table t drop column c1")
 	is = do.InfoSchema()
-	cleanHandle(c, do)
+	do.StatsHandle().Clear4Test()
 	do.StatsHandle().Update(is)
 	time.Sleep(10 * time.Millisecond)
 	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
@@ -526,7 +532,7 @@ func (s *testStatsSuite) TestInitStats(c *C) {
 	// `Lease` is not 0, so here we just change it.
 	h.SetLease(time.Millisecond)
 
-	cleanHandle(c, s.do)
+	h.Clear4Test()
 	c.Assert(h.InitStats(is), IsNil)
 	time.Sleep(10 * time.Millisecond)
 
@@ -535,7 +541,7 @@ func (s *testStatsSuite) TestInitStats(c *C) {
 	c.Assert(cols[1].LastAnalyzePos.GetBytes()[0], Equals, uint8(0x36))
 	c.Assert(cols[2].LastAnalyzePos.GetBytes()[0], Equals, uint8(0x37))
 	c.Assert(cols[3].LastAnalyzePos.GetBytes()[0], Equals, uint8(0x38))
-	cleanHandle(c, s.do)
+	h.Clear4Test()
 	c.Assert(h.Update(is), IsNil)
 	time.Sleep(10 * time.Millisecond)
 	table1 := h.GetTableStats(tbl.Meta())

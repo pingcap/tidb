@@ -20,7 +20,6 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/util/testkit"
 )
@@ -83,7 +82,7 @@ func (s *testStatsSuite) TestLoadHistWithLimit(c *C) {
 	testKit.MustExec("insert into t1 values(1),(2),(3),(4),(5)")
 	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 	testKit.MustExec("analyze table t1")
-	cleanHandle(c, s.do)
+	h.Clear4Test()
 	h.SetBytesLimit4Test(BytesLimit)
 	c.Assert(h.Update(s.do.InfoSchema()), IsNil)
 	result := testKit.MustQuery("show stats_histograms where Table_name = 't1'")
@@ -185,15 +184,8 @@ func (s *testStatsSuite) TestManyTableChange(c *C) {
 		for _, v := range statsTbl.Columns {
 			v.IsInvalid(&stmtctx.StatementContext{}, false)
 		}
-		var statsTblnew *statistics.Table
-		//lookup more time to guarantee table in the cache
-		maxTime := i*3 + 1
-		for j := 0; j < maxTime; j++ {
-			statsTblnew = h.GetTableStats(tableInfo)
-		}
 		c.Assert(h.LoadNeededHistograms(), IsNil)
-		time.Sleep(10 * time.Millisecond)
-		statsTblnew = h.GetTableStats(tableInfo)
+		statsTblnew := h.GetTableStats(tableInfo)
 		c.Assert(statsTblnew.MemoryUsage() > 0, IsTrue)
 		for _, v := range statsTblnew.Columns {
 			c.Assert(v.IsInvalid(&stmtctx.StatementContext{}, false), IsFalse)
@@ -233,17 +225,13 @@ func (s *testStatsSuite) TestManyTableChangeWithQuery(c *C) {
 		testKit.MustQuery(fmt.Sprintf("select * from t%d use index(idx) where b <= 5", i))
 		testKit.MustQuery(fmt.Sprintf("select * from t%d where a > 1", i))
 		testKit.MustQuery(fmt.Sprintf("select * from t%d use index(idx) where b = 5", i))
-		c.Assert(h.LoadNeededHistograms(), IsNil)
-		time.Sleep(10 * time.Millisecond)
-		var statsTblnew *statistics.Table
-		for j := 0; j < 10; j++ {
-			statsTblnew = h.GetTableStats(tableInfo)
-		}
-		c.Assert(statsTblnew.MemoryUsage() > 0, IsTrue)
-		for _, v := range statsTblnew.Columns {
+		c.Assert(BytesLimit >= h.GetMemConsumed(), IsTrue)
+		statsTblNew := h.GetTableStats(tableInfo)
+		c.Assert(statsTblNew.MemoryUsage() > 0, IsTrue)
+		for _, v := range statsTblNew.Columns {
 			c.Assert(v.IsInvalid(&stmtctx.StatementContext{}, false), IsFalse)
 		}
-		for _, v := range statsTblnew.Indices {
+		for _, v := range statsTblNew.Indices {
 			c.Assert(v.IsInvalid(&stmtctx.StatementContext{}, false), IsFalse)
 		}
 		c.Assert(BytesLimit >= h.GetMemConsumed(), IsTrue)

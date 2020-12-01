@@ -176,7 +176,6 @@ func (s *testStatsSuite) TestDDLHistogram(c *C) {
 
 	testKit.MustExec("create index i on t(c2, c1)")
 	testKit.MustExec("analyze table t")
-
 	rs := testKit.MustQuery("select count(*) from mysql.stats_histograms where table_id = ? and hist_id = 1 and is_index =1", tableInfo.ID)
 	rs.Check(testkit.Rows("1"))
 	rs = testKit.MustQuery("select count(*) from mysql.stats_buckets where table_id = ? and hist_id = 1 and is_index = 1", tableInfo.ID)
@@ -206,7 +205,6 @@ PARTITION BY RANGE ( a ) (
 		err = h.HandleDDLEvent(<-h.DDLEventCh())
 		c.Assert(err, IsNil)
 		c.Assert(h.Update(is), IsNil)
-
 		pi := tableInfo.GetPartitionInfo()
 		for _, def := range pi.Definitions {
 			statsTbl := h.GetPartitionStats(tableInfo, def.ID)

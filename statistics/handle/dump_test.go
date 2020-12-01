@@ -50,7 +50,6 @@ func (s *testStatsSuite) TestConversion(c *C) {
 	assertTableEqual(c, loadTbl, tbl)
 
 	cleanEnv(c, s.store, s.do)
-
 	wg := sync.WaitGroup{}
 	wg.Add(1)
 	go func() {
@@ -99,10 +98,9 @@ PARTITION BY RANGE ( a ) (
 	tk.MustExec("delete from mysql.stats_meta")
 	tk.MustExec("delete from mysql.stats_histograms")
 	tk.MustExec("delete from mysql.stats_buckets")
-	cleanHandle(c, s.do)
+	h.Clear4Test()
 
 	err = h.LoadStatsFromJSON(s.do.InfoSchema(), jsonTbl)
-
 	c.Assert(err, IsNil)
 	for i, def := range pi.Definitions {
 		t := h.GetPartitionStats(tableInfo, def.ID)
@@ -129,8 +127,8 @@ func (s *testStatsSuite) TestDumpAlteredTable(c *C) {
 }
 
 func (s *testStatsSuite) TestDumpCMSketchWithTopN(c *C) {
-	defer cleanEnv(c, s.store, s.do)
 	// Just test if we can store and recover the Top N elements stored in database.
+	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t(a int)")
