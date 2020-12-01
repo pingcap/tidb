@@ -640,6 +640,7 @@ var tokenMap = map[string]int{
 	"STATS_BUCKETS":            statsBuckets,
 	"STATS_HEALTHY":            statsHealthy,
 	"STATS_HISTOGRAMS":         statsHistograms,
+	"STATS_TOPN":               statsTopN,
 	"STATS_META":               statsMeta,
 	"STATS_PERSISTENT":         statsPersistent,
 	"STATS_SAMPLE_PAGES":       statsSamplePages,
