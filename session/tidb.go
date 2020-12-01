@@ -325,7 +325,6 @@ func runStmt(ctx context.Context, sctx sessionctx.Context, s sqlexec.Statement) 
 		} else {
 			logutil.BgLogger().Error("get txn failed", zap.Error(err1))
 		}
-		err = finishStmt(ctx, se, err, s)
 	}
 
 	if rs != nil {
@@ -336,6 +335,7 @@ func runStmt(ctx context.Context, sctx sessionctx.Context, s sqlexec.Statement) 
 		}, err
 	}
 
+	err = finishStmt(ctx, se, err, s)
 	if se.hasQuerySpecial() {
 		// The special query will be handled later in handleQuerySpecial,
 		// then should call the ExecStmt.FinishExecuteStmt to finish this statement.
