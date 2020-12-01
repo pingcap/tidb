@@ -524,7 +524,7 @@ add placement policy
 	c.Assert(err, IsNil)
 }
 
-func (s *testDBSuite1) TestGlobalTxnWriteStateHow(c *C) {
+func (s *testDBSuite1) TestGlobalTxnWriteState(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
@@ -580,7 +580,7 @@ add placement policy
 	var chkErr error
 	hook.OnJobUpdatedExported = func(job *model.Job) {
 		if job.Type == model.ActionAlterTableAlterPartition && job.State == model.JobStateRunning &&
-			job.SchemaState == model.StateGlobalTxnWriteOnly && job.SchemaID == dbInfo.ID && done == false {
+			job.SchemaState == model.StateGlobalTxnOnly && job.SchemaID == dbInfo.ID && done == false {
 			done = true
 			tk2.MustExec("use test")
 			tk2.MustExec("set @@txn_scope=bj")

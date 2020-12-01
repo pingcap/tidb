@@ -935,8 +935,8 @@ func updateSchemaVersion(t *meta.Meta, job *model.Job) (int64, error) {
 			}
 		}
 	case model.ActionAlterTableAlterPartition:
-		diff.TableID = job.CtxVars[0].(int64)
-		diff.State = job.CtxVars[1].(model.SchemaState)
+		diff.PartitionID = job.CtxVars[0].(int64)
+		diff.TableID = job.CtxVars[1].(int64)
 	default:
 		diff.TableID = job.TableID
 	}

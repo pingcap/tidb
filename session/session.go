@@ -2548,7 +2548,7 @@ func (s *session) checkPlacementPolicyBeforeCommit() error {
 						fmt.Sprintf("failed to find table %v partition %v's SchemaState", tableID, partitionID))
 					break
 				}
-				if state == model.StateGlobalTxnWriteOnly {
+				if state == model.StateGlobalTxnOnly {
 					err = ddl.ErrInvalidPlacementPolicyCheck.GenWithStackByArgs(
 						fmt.Sprintf("The SchemaState of table %v's partition %v is under StateGlobalTxnWriteOnly",
 							tableID, partitionID))

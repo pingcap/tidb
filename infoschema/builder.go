@@ -50,13 +50,6 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 		return tblIDs, nil
 	case model.ActionModifySchemaCharsetAndCollate:
 		return nil, b.applyModifySchemaCharsetAndCollate(m, diff)
-	case model.ActionAlterTableAlterPartition:
-		if diff.State == model.StateGlobalTxnWriteOnly || diff.State == model.StatePublic {
-			t, _, _ := b.is.FindTableByPartitionID(diff.TableID)
-			t.Meta().Partition.SetStateByID(diff.TableID, model.StateGlobalTxnWriteOnly)
-		}
-		// TODO: enhancement: If the leader Placement Policy isn't updated, maybe we can omit the diff.
-		return []int64{diff.TableID}, b.applyPlacementUpdate(placement.GroupID(diff.TableID))
 	}
 	roDBInfo, ok := b.is.SchemaByID(diff.SchemaID)
 	if !ok {
@@ -93,6 +86,15 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 	}
 	dbInfo := b.copySchemaTables(roDBInfo.Name.L)
 	b.copySortedTables(oldTableID, newTableID)
+	switch diff.Type {
+	case model.ActionAlterTableAlterPartition:
+		_, err := b.applyCreateTable(m, dbInfo, diff.TableID, nil, model.ActionAlterTableAlterPartition, nil)
+		if err != nil {
+			return nil, err
+		}
+		// TODO: enhancement: If the leader Placement Policy isn't updated, maybe we can omit the diff.
+		return []int64{diff.TableID}, b.applyPlacementUpdate(placement.GroupID(diff.PartitionID))
+	}
 
 	tblIDs := make([]int64, 0, 2)
 	// We try to reuse the old allocator, so the cached auto ID can be reused.

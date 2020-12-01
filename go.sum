@@ -936,6 +936,10 @@ github.com/yisaer/parser v0.0.0-20201127095335-efec7344de7b h1:wWljz9JaVzECZjMPD
 github.com/yisaer/parser v0.0.0-20201127095335-efec7344de7b/go.mod h1:GbEr2PgY72/4XqPZzmzstlOU/+il/wrjeTNFs6ihsSE=
 github.com/yisaer/parser v0.0.0-20201201042248-3d119d6228b8 h1:F6jA0zhacymse/Y3D+HoPs1kLlE12jVZi0ab7YKzGxs=
 github.com/yisaer/parser v0.0.0-20201201042248-3d119d6228b8/go.mod h1:GbEr2PgY72/4XqPZzmzstlOU/+il/wrjeTNFs6ihsSE=
+github.com/yisaer/parser v0.0.0-20201201072929-51f8701bec3b h1:Q/52g6JC+wDec7Y3R7WkDJBhdW9uZawTXVHcGm9N1MA=
+github.com/yisaer/parser v0.0.0-20201201072929-51f8701bec3b/go.mod h1:GbEr2PgY72/4XqPZzmzstlOU/+il/wrjeTNFs6ihsSE=
+github.com/yisaer/parser v0.0.0-20201201075051-b52925aed970 h1:QBH5+utPHB9PvDRtZ8efpCrmoexI/GiiojKOh3wP0w0=
+github.com/yisaer/parser v0.0.0-20201201075051-b52925aed970/go.mod h1:GbEr2PgY72/4XqPZzmzstlOU/+il/wrjeTNFs6ihsSE=
 github.com/yookoala/realpath v1.0.0/go.mod h1:gJJMA9wuX7AcqLy1+ffPatSCySA1FQ2S8Ya9AIoYBpE=
 github.com/yuin/goldmark v1.1.25/go.mod h1:3hX8gzYuyVAZsxl0MRgGTJEmQBFcNTphYh9decYSb74=
 github.com/yuin/goldmark v1.1.27/go.mod h1:3hX8gzYuyVAZsxl0MRgGTJEmQBFcNTphYh9decYSb74=

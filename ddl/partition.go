@@ -1776,26 +1776,26 @@ func onAlterTablePartition(t *meta.Meta, job *model.Job) (ver int64, err error) 
 			job.State = model.JobStateCancelled
 			return 0, errors.Wrapf(err, "failed to notify PD the placement rules")
 		}
-		ok := ptInfo.SetStateByID(partitionID, model.StateGlobalTxnWriteOnly)
+		ok := ptInfo.SetStateByID(partitionID, model.StateGlobalTxnOnly)
 		if !ok {
 			job.State = model.JobStateCancelled
 			return 0, errors.Wrapf(err, "failed to set partition state")
 		}
 		// used by ApplyDiff in updateSchemaVersion
-		job.CtxVars = []interface{}{partitionID, model.StateGlobalTxnWriteOnly}
+		job.CtxVars = []interface{}{partitionID, tblInfo.ID}
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		job.SchemaState = model.StateGlobalTxnWriteOnly
-	case model.StateGlobalTxnWriteOnly:
+		job.SchemaState = model.StateGlobalTxnOnly
+	case model.StateGlobalTxnOnly:
 		ok := ptInfo.SetStateByID(partitionID, model.StatePublic)
 		if !ok {
 			job.State = model.JobStateCancelled
 			return 0, errors.Wrapf(err, "failed to set partition state")
 		}
 		// used by ApplyDiff in updateSchemaVersion
-		job.CtxVars = []interface{}{partitionID, model.StatePublic}
+		job.CtxVars = []interface{}{partitionID, tblInfo.ID}
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
 		if err != nil {
 			return ver, errors.Trace(err)
