@@ -27,9 +27,12 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/testkit"
 )
@@ -1541,3 +1544,29 @@ func (s *testColumnTypeChangeSuite) TestColumnTypeChangeFromJsonToOthers(c *C) {
 	tk.MustExec("alter table t modify str year")
 	tk.MustQuery("select * from t").Check(testkit.Rows("0 0 0 2001 0 2020 1991 2009 2020"))
 }
+
+// TestRowFormat is used to close issue #21391, the encoded row in column type change should be aware of the new row format.
+func (s *testColumnTypeChangeSuite) TestRowFormat(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	// Enable column change variable.
+	tk.Se.GetSessionVars().EnableChangeColumnType = true
+	defer func() {
+		tk.Se.GetSessionVars().EnableChangeColumnType = false
+	}()
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id int primary key, v varchar(10))")
+	tk.MustExec("insert into t values (1, \"123\");")
+	tk.MustExec("alter table t modify column v varchar(5);")
+
+	tbl := testGetTableByName(c, tk.Se, "test", "t")
+	encodedKey := tablecodec.EncodeRowKeyWithHandle(tbl.Meta().ID, kv.IntHandle(1))
+
+	h := helper.NewHelper(s.store.(tikv.Storage))
+	data, err := h.GetMvccByEncodedKey(encodedKey)
+	c.Assert(err, IsNil)
+	// The new format will start with CodecVer = 128 (0x80).
+	c.Assert(data.Info.Writes[0].ShortValue, DeepEquals, []byte{0x80, 0x0, 0x3, 0x0, 0x0, 0x0, 0x1, 0x2, 0x3, 0x1, 0x0, 0x4, 0x0, 0x7, 0x0, 0x1, 0x31, 0x32, 0x33, 0x31, 0x32, 0x33})
+	tk.MustExec("drop table if exists t")
+}
+

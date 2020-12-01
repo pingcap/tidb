@@ -569,6 +569,7 @@ func (w *worker) writePhysicalTableRecord(t table.PhysicalTable, bfWorkerType ba
 			logutil.BgLogger().Error("[ddl] load DDL reorganization variable failed", zap.Error(err))
 		}
 		workerCnt = variable.GetDDLReorgWorkerCounter()
+		rowFormat := variable.GetDDLReorgRowFormat()
 		// If only have 1 range, we can only start 1 worker.
 		if len(kvRanges) < int(workerCnt) {
 			workerCnt = int32(len(kvRanges))
@@ -577,6 +578,12 @@ func (w *worker) writePhysicalTableRecord(t table.PhysicalTable, bfWorkerType ba
 		for i := len(backfillWorkers); i < int(workerCnt); i++ {
 			sessCtx := newContext(reorgInfo.d.store)
 			sessCtx.GetSessionVars().StmtCtx.IsDDLJobInQueue = true
+			// Set the row encode format to version 2.
+			if rowFormat == variable.DefTiDBRowFormatV1 {
+				sessCtx.GetSessionVars().RowEncoder.Enable = false
+			} else {
+				sessCtx.GetSessionVars().RowEncoder.Enable = true
+			}
 			// Simulate the sql mode environment in the worker sessionCtx.
 			sqlMode := reorgInfo.ReorgMeta.SQLMode
 			sessCtx.GetSessionVars().SQLMode = sqlMode
