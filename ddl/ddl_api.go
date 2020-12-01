@@ -1961,29 +1961,12 @@ func checkPartitionByRange(ctx sessionctx.Context, tbInfo *model.TableInfo) erro
 		return checkRangePartitionValue(ctx, tbInfo)
 	}
 
-	// Check for range columns partition.
-	if err := checkColumnsPartitionType(tbInfo); err != nil {
-		return err
-	}
-
 	return checkRangeColumnsPartitionValue(ctx, tbInfo)
 }
 
 // checkPartitionByList checks validity of a "BY LIST" partition.
 func checkPartitionByList(ctx sessionctx.Context, tbInfo *model.TableInfo) error {
-	pi := tbInfo.Partition
-
-	if err := checkListPartitionValue(ctx, tbInfo); err != nil {
-		return err
-	}
-
-	if len(pi.Columns) != 0 {
-		if err := checkColumnsPartitionType(tbInfo); err != nil {
-			return err
-		}
-	}
-
-	return nil
+	return checkListPartitionValue(ctx, tbInfo)
 }
 
 func checkColumnsPartitionType(tbInfo *model.TableInfo) error {
