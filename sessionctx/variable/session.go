@@ -1287,8 +1287,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		if err := sv.SetSessionFromHook(s, val); err != nil {
 			return err
 		}
-		s.systems[name] = val
 	}
+	s.systems[name] = val
 	return nil
 }
 
