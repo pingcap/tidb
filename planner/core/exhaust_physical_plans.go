@@ -925,6 +925,7 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 		}
 		cop.tablePlan = ts
 	}
+<<<<<<< HEAD
 	is.initSchema(path.Index, path.FullIdxCols, cop.tablePlan != nil)
 	indexConds, tblConds := splitIndexFilterConditions(filterConds, path.FullIdxCols, path.FullIdxColLens, ds.tableInfo)
 	// Specially handle cases when input rowCount is 0, which can only happen in 2 scenarios:
@@ -937,6 +938,13 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 	if rowCount <= 0 {
 		rowCount = ds.tableStats.RowCount
 	}
+=======
+	if cop.tablePlan != nil && ds.tableInfo.IsCommonHandle {
+		cop.commonHandleCols = ds.commonHandleCols
+	}
+	is.initSchema(append(path.FullIdxCols, ds.commonHandleCols...), cop.tablePlan != nil)
+	indexConds, tblConds := ds.splitIndexFilterConditions(filterConds, path.FullIdxCols, path.FullIdxColLens, ds.tableInfo)
+>>>>>>> c4e5096aa... planner: fix unexpected bad plan when IndexJoin inner side estRow is 0. (#21084)
 	if maxOneRow {
 		// Theoretically, this line is unnecessary because row count estimation of join should guarantee rowCount is not larger
 		// than 1.0; however, there may be rowCount larger than 1.0 in reality, e.g, pseudo statistics cases, which does not reflect
