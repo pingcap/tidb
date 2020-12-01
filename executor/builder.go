@@ -3688,21 +3688,20 @@ func (b *executorBuilder) buildShuffle(v *plannercore.PhysicalShuffle) *ShuffleE
 		concurrency:  v.Concurrency,
 	}
 
+	splitters := make([]partitionSplitter, len(v.ByItemArrays))
 	switch v.SplitterType {
 	case plannercore.PartitionHashSplitterType:
-		splitters := make([]partitionSplitter, len(v.HashByItemArrays))
-		for i, hashByItemArray := range v.HashByItemArrays {
-			hashSplitter := &partitionHashSplitter{
-				byItems:    hashByItemArray,
-				numWorkers: shuffle.concurrency,
-			}
-			copy(hashSplitter.byItems, hashByItemArray)
-			splitters[i] = hashSplitter
+		for i, byItems := range v.ByItemArrays {
+			splitters[i] = buildPartitionHashSplitter(shuffle.concurrency, byItems)
 		}
-		shuffle.splitters = splitters
+	case plannercore.PartitionRangeSplitterType:
+		for i, byItems := range v.ByItemArrays {
+			splitters[i] = buildPartitionRangeSplitter(b.ctx, shuffle.concurrency, byItems)
+		}
 	default:
 		panic("Not implemented. Should not reach here.")
 	}
+	shuffle.splitters = splitters
 
 	shuffle.dataSources = make([]Executor, len(v.DataSources))
 	for i, dataSource := range v.DataSources {
