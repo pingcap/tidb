@@ -1640,7 +1640,10 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.AllowInvalidDate = vars.SQLMode.HasAllowInvalidDatesMode()
 		sc.IgnoreZeroInDate = !vars.SQLMode.HasNoZeroInDateMode() || !vars.SQLMode.HasNoZeroDateMode() || !vars.StrictSQLMode || stmt.IgnoreErr || sc.AllowInvalidDate
 		sc.Priority = stmt.Priority
-	case *ast.CreateTableStmt, *ast.AlterTableStmt:
+	case *ast.CreateTableStmt:
+		// Make sure the sql_mode is strict when checking column default value.
+		sc.InCreateTableStmt = true
+	case *ast.AlterTableStmt:
 		// Make sure the sql_mode is strict when checking column default value.
 	case *ast.LoadDataStmt:
 		sc.DupKeyAsWarning = true
