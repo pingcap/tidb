@@ -93,7 +93,7 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 			return nil, err
 		}
 		// TODO: enhancement: If the leader Placement Policy isn't updated, maybe we can omit the diff.
-		return []int64{diff.TableID}, b.applyPlacementUpdate(placement.GroupID(diff.PartitionID))
+		return []int64{diff.PartitionID}, b.applyPlacementUpdate(placement.GroupID(diff.PartitionID))
 	}
 
 	tblIDs := make([]int64, 0, 2)

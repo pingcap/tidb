@@ -574,29 +574,70 @@ add placement policy
 		}
 	}
 	dbInfo := testGetSchemaByName(c, tk.Se, "test")
-	hook := &ddl.TestDDLCallback{}
-	done := false
 	tk2 := testkit.NewTestKit(c, s.store)
 	var chkErr error
-	hook.OnJobUpdatedExported = func(job *model.Job) {
-		if job.Type == model.ActionAlterTableAlterPartition && job.State == model.JobStateRunning &&
-			job.SchemaState == model.StateGlobalTxnOnly && job.SchemaID == dbInfo.ID && done == false {
-			done = true
-			tk2.MustExec("use test")
-			tk2.MustExec("set @@txn_scope=bj")
-			_, chkErr = tk2.Exec("insert into t1 (c) values (1);")
-		}
+	done := false
+	testcases := []struct {
+		name      string
+		hook      *ddl.TestDDLCallback
+		expectErr error
+	}{
+		{
+			name: "write partition p0 during StateGlobalTxnOnly",
+			hook: func() *ddl.TestDDLCallback {
+				hook := &ddl.TestDDLCallback{}
+				hook.OnJobUpdatedExported = func(job *model.Job) {
+					if job.Type == model.ActionAlterTableAlterPartition && job.State == model.JobStateRunning &&
+						job.SchemaState == model.StateGlobalTxnOnly && job.SchemaID == dbInfo.ID && done == false {
+						done = true
+						tk2.MustExec("use test")
+						tk2.MustExec("set @@txn_scope=bj")
+						_, chkErr = tk2.Exec("insert into t1 (c) values (1);")
+					}
+				}
+				return hook
+			}(),
+			expectErr: fmt.Errorf(".*under StateGlobalTxnOnly.*"),
+		},
+		// FIXME: support abort read txn during StateGlobalTxnOnly
+		//{
+		//	name: "read partition p0 during middle state",
+		//	hook: func() *ddl.TestDDLCallback {
+		//		hook := &ddl.TestDDLCallback{}
+		//		hook.OnJobUpdatedExported = func(job *model.Job) {
+		//			if job.Type == model.ActionAlterTableAlterPartition && job.State == model.JobStateRunning &&
+		//				job.SchemaState == model.StateGlobalTxnOnly && job.SchemaID == dbInfo.ID && done == false {
+		//				done = true
+		//				tk2.MustExec("use test")
+		//				tk2.MustExec("set @@txn_scope=bj")
+		//				tk2.MustExec("begin;")
+		//				tk2.MustExec("select * from t1 where c < 6;")
+		//				_, chkErr = tk2.Exec("commit")
+		//			}
+		//		}
+		//		return hook
+		//	}(),
+		//	expectErr: fmt.Errorf(".*under StateGlobalTxnOnly.*"),
+		//},
 	}
 	originalHook := s.dom.DDL().GetHook()
-	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
-	_, err = tk.Exec(`alter table t1 alter partition p0
+	for _, testcase := range testcases {
+		c.Log(testcase.name)
+		done = false
+		s.dom.DDL().(ddl.DDLForTest).SetHook(testcase.hook)
+		_, err = tk.Exec(`alter table t1 alter partition p0
 alter placement policy
 	constraints='["+zone=bj"]'
 	role=leader
 	replicas=1`)
-	c.Assert(err, IsNil)
-	s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
-	c.Assert(done, Equals, true)
-	c.Assert(chkErr, NotNil)
-	c.Assert(chkErr.Error(), Matches, ".*under StateGlobalTxnWriteOnly.*")
+		c.Assert(err, IsNil)
+		s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
+		c.Assert(done, Equals, true)
+		if testcase.expectErr != nil {
+			c.Assert(chkErr, NotNil)
+			c.Assert(chkErr.Error(), Matches, testcase.expectErr.Error())
+		} else {
+			c.Assert(chkErr, IsNil)
+		}
+	}
 }

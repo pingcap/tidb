@@ -2511,7 +2511,8 @@ func (s *session) checkPlacementPolicyBeforeCommit() error {
 	}
 	if txnScope != config.DefTxnScope {
 		is := infoschema.GetInfoSchema(s)
-		for physicalTableID := range s.GetSessionVars().TxnCtx.TableDeltaMap {
+		deltaMap := s.GetSessionVars().TxnCtx.TableDeltaMap
+		for physicalTableID := range deltaMap {
 			bundle, ok := is.BundleByName(placement.GroupID(physicalTableID))
 			if !ok {
 				err = ddl.ErrInvalidPlacementPolicyCheck.GenWithStackByArgs(
@@ -2550,7 +2551,7 @@ func (s *session) checkPlacementPolicyBeforeCommit() error {
 				}
 				if state == model.StateGlobalTxnOnly {
 					err = ddl.ErrInvalidPlacementPolicyCheck.GenWithStackByArgs(
-						fmt.Sprintf("The SchemaState of table %v's partition %v is under StateGlobalTxnWriteOnly",
+						fmt.Sprintf("The SchemaState of table %v's partition %v is under StateGlobalTxnOnly",
 							tableID, partitionID))
 					break
 				}
