@@ -269,13 +269,11 @@ func generateRetFlag(res Expression, evalType types.EvalType, args []Expression)
 		if evalType == types.ETInt || evalType == types.ETReal {
 			lfg, rfg := args[0].GetType().Flag, args[1].GetType().Flag
 			if mysql.TypeBit == lhs.GetType().Tp || mysql.TypeBit == rhs.GetType().Tp {
+				retType.Flag |= mysql.UnsignedFlag
 				if mysql.TypeBit == rhs.GetType().Tp {
-					lfg, rfg = rfg, lfg
-				}
-				if mysql.UnsignedFlag&rfg != 0 {
-					retType.Flag |= mysql.UnsignedFlag
+					retType.Flag &= ^(mysql.UnsignedFlag ^ lfg)
 				} else {
-					retType.Flag &= ^mysql.UnsignedFlag
+					retType.Flag &= ^(mysql.UnsignedFlag ^ rfg)
 				}
 			}
 		} else if evalType == types.ETDecimal && mysql.TypeEnum == lhs.GetType().Tp || mysql.TypeEnum == rhs.GetType().Tp {
