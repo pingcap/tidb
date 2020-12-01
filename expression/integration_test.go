@@ -7751,6 +7751,15 @@ func (s *testIntegrationSerialSuite) TestIssue20608(c *C) {
 	tk.MustQuery("select '䇇Հ' collate utf8mb4_bin like '___Հ';").Check(testkit.Rows("0"))
 }
 
+func (s *testIntegrationSerialSuite) TestIssue21290(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1(a date);")
+	tk.MustExec("insert into t1 values (20100202);")
+	tk.MustQuery("select a in ('2020-02-02', 20100202) from t1;").Check(testkit.Rows("1"))
+}
+
 func (s *testIntegrationSuite) TestIssue17868(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
