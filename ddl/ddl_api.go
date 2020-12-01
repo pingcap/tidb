@@ -4609,10 +4609,12 @@ func getIdentKey(ident ast.Ident) string {
 }
 
 func getAnonymousIndex(t table.Table, colName model.CIStr, idxName model.CIStr) model.CIStr {
+	// `id` is used to indicated the index name's suffix.
 	id := 2
 	l := len(t.Indices())
 	indexName := colName
 	if idxName.O != "" {
+		// Use the provided index name, it only happens when the original index name is too long and be truncated.
 		indexName = idxName
 		id = 3
 	}
