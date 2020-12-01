@@ -40,12 +40,12 @@ type Fragment struct {
 type mppTaskGenerator struct {
 	ctx         sessionctx.Context
 	startTS     uint64
-	allocTaskID int64
+	allocTaskID *int64
 }
 
 // GenerateRootMPPTasks generate all mpp tasks and return root ones.
-func GenerateRootMPPTasks(ctx sessionctx.Context, startTs uint64, sender *PhysicalExchangeSender) ([]*kv.MPPTask, error) {
-	g := &mppTaskGenerator{ctx: ctx, startTS: startTs}
+func GenerateRootMPPTasks(ctx sessionctx.Context, startTs uint64, sender *PhysicalExchangeSender, allocTaskID *int64) ([]*kv.MPPTask, error) {
+	g := &mppTaskGenerator{ctx: ctx, startTS: startTs, allocTaskID: allocTaskID}
 	return g.generateMPPTasks(sender)
 }
 
@@ -101,8 +101,8 @@ func (e *mppTaskGenerator) constructSinglePhysicalTable(ctx context.Context, tab
 	}
 	tasks := make([]*kv.MPPTask, 0, len(metas))
 	for _, meta := range metas {
-		e.allocTaskID++
-		tasks = append(tasks, &kv.MPPTask{Meta: meta, ID: e.allocTaskID, StartTs: e.startTS, TableID: tableID})
+		*e.allocTaskID++
+		tasks = append(tasks, &kv.MPPTask{Meta: meta, ID: *e.allocTaskID, StartTs: e.startTS, TableID: tableID})
 	}
 	return tasks, nil
 }
