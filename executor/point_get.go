@@ -36,19 +36,13 @@ import (
 )
 
 func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) Executor {
-	if b.ctx.GetSessionVars().IsPessimisticReadConsistency() {
-		if err := b.refreshForUpdateTSForRC(); err != nil {
-			b.err = err
-			return nil
-		}
-	}
 	startTS, err := b.getSnapshotTS()
 	if err != nil {
 		b.err = err
 		return nil
 	}
 	e := &PointGetExecutor{
-		baseExecutor: newBaseExecutor(b.ctx, p.Schema(), p.ExplainID()),
+		baseExecutor: newBaseExecutor(b.ctx, p.Schema(), p.ID()),
 	}
 	e.base().initCap = 1
 	e.base().maxChunkSize = 1
@@ -86,7 +80,7 @@ type PointGetExecutor struct {
 	// virtualColumnRetFieldTypes records the RetFieldTypes of virtual columns.
 	virtualColumnRetFieldTypes []*types.FieldType
 
-	stats *pointGetRuntimeStats
+	stats *runtimeStatsWithSnapshot
 }
 
 // Init set fields needed for PointGetExecutor reuse, this does NOT change baseExecutor field
@@ -132,19 +126,15 @@ func (e *PointGetExecutor) Open(context.Context) error {
 	if e.txn.Valid() && txnCtx.StartTS == txnCtx.GetForUpdateTS() {
 		e.snapshot = e.txn.GetSnapshot()
 	} else {
-		e.snapshot, err = e.ctx.GetStore().GetSnapshot(kv.Version{Ver: snapshotTS})
-		if err != nil {
-			return err
-		}
+		e.snapshot = e.ctx.GetStore().GetSnapshot(kv.Version{Ver: snapshotTS})
 	}
 	if e.runtimeStats != nil {
 		snapshotStats := &tikv.SnapshotRuntimeStats{}
-		e.stats = &pointGetRuntimeStats{
-			BasicRuntimeStats:    e.runtimeStats,
+		e.stats = &runtimeStatsWithSnapshot{
 			SnapshotRuntimeStats: snapshotStats,
 		}
 		e.snapshot.SetOption(kv.CollectRuntimeStats, snapshotStats)
-		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id.String(), e.stats)
+		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
 	}
 	if e.ctx.GetSessionVars().GetReplicaRead().IsFollowerRead() {
 		e.snapshot.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
@@ -158,6 +148,14 @@ func (e *PointGetExecutor) Close() error {
 	if e.runtimeStats != nil && e.snapshot != nil {
 		e.snapshot.DelOption(kv.CollectRuntimeStats)
 	}
+	if e.idxInfo != nil && e.tblInfo != nil {
+		actRows := int64(0)
+		if e.runtimeStats != nil {
+			actRows = e.runtimeStats.GetActRows()
+		}
+		e.ctx.StoreIndexUsage(e.tblInfo.ID, e.idxInfo.ID, actRows)
+	}
+	e.done = false
 	return nil
 }
 
@@ -176,9 +174,12 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 	} else {
 		tblID = e.tblInfo.ID
 	}
+	if e.lock {
+		e.updateDeltaForTableID(tblID)
+	}
 	if e.idxInfo != nil {
 		if isCommonHandleRead(e.tblInfo, e.idxInfo) {
-			handleBytes, err := codec.EncodeKey(e.ctx.GetSessionVars().StmtCtx, nil, e.idxVals...)
+			handleBytes, err := EncodeUniqueIndexValuesForKey(e.ctx, e.tblInfo, e.idxInfo, e.idxVals)
 			if err != nil {
 				return err
 			}
@@ -314,10 +315,16 @@ func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) ([]byte, error) 
 	if len(key) == 0 {
 		return nil, kv.ErrNotExist
 	}
+
+	var (
+		val []byte
+		err error
+	)
+
 	if e.txn.Valid() && !e.txn.IsReadOnly() {
 		// We cannot use txn.Get directly here because the snapshot in txn and the snapshot of e.snapshot may be
 		// different for pessimistic transaction.
-		val, err := e.txn.GetMemBuffer().Get(ctx, key)
+		val, err = e.txn.GetMemBuffer().Get(ctx, key)
 		if err == nil {
 			return val, err
 		}
@@ -332,11 +339,40 @@ func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) ([]byte, error) 
 		}
 		// fallthrough to snapshot get.
 	}
+
+	lock := e.tblInfo.Lock
+	if lock != nil && (lock.Tp == model.TableLockRead || lock.Tp == model.TableLockReadOnly) {
+		cacheDB := e.ctx.GetStore().GetMemCache()
+		val = cacheDB.Get(ctx, e.tblInfo.ID, key)
+		// key does not exist then get from snapshot and set to cache
+		if val == nil {
+			val, err = e.snapshot.Get(ctx, key)
+			if err != nil {
+				return nil, err
+			}
+
+			err := cacheDB.Set(e.tblInfo.ID, key, val)
+			if err != nil {
+				return nil, err
+			}
+		}
+		return val, nil
+	}
+	// if not read lock or table was unlock then snapshot get
 	return e.snapshot.Get(ctx, key)
 }
 
 // EncodeUniqueIndexKey encodes a unique index key.
 func EncodeUniqueIndexKey(ctx sessionctx.Context, tblInfo *model.TableInfo, idxInfo *model.IndexInfo, idxVals []types.Datum, tID int64) (_ []byte, err error) {
+	encodedIdxVals, err := EncodeUniqueIndexValuesForKey(ctx, tblInfo, idxInfo, idxVals)
+	if err != nil {
+		return nil, err
+	}
+	return tablecodec.EncodeIndexSeekKey(tID, idxInfo.ID, encodedIdxVals), nil
+}
+
+// EncodeUniqueIndexValuesForKey encodes unique index values for a key.
+func EncodeUniqueIndexValuesForKey(ctx sessionctx.Context, tblInfo *model.TableInfo, idxInfo *model.IndexInfo, idxVals []types.Datum) (_ []byte, err error) {
 	sc := ctx.GetSessionVars().StmtCtx
 	for i := range idxVals {
 		colInfo := tblInfo.Columns[idxInfo.Columns[i].Offset]
@@ -362,7 +398,7 @@ func EncodeUniqueIndexKey(ctx sessionctx.Context, tblInfo *model.TableInfo, idxI
 	if err != nil {
 		return nil, err
 	}
-	return tablecodec.EncodeIndexSeekKey(tID, idxInfo.ID, encodedIdxVals), nil
+	return encodedIdxVals, nil
 }
 
 // DecodeRowValToChunk decodes row value into chunk checking row format used.
@@ -455,24 +491,44 @@ func getColInfoByID(tbl *model.TableInfo, colID int64) *model.ColumnInfo {
 	return nil
 }
 
-type pointGetRuntimeStats struct {
-	*execdetails.BasicRuntimeStats
+type runtimeStatsWithSnapshot struct {
 	*tikv.SnapshotRuntimeStats
 }
 
-func (e *pointGetRuntimeStats) String() string {
-	var basic, rpcStatsStr string
-	if e.BasicRuntimeStats != nil {
-		basic = e.BasicRuntimeStats.String()
-	}
+func (e *runtimeStatsWithSnapshot) String() string {
 	if e.SnapshotRuntimeStats != nil {
-		rpcStatsStr = e.SnapshotRuntimeStats.String()
+		return e.SnapshotRuntimeStats.String()
 	}
-	if rpcStatsStr == "" {
-		return basic
+	return ""
+}
+
+// Clone implements the RuntimeStats interface.
+func (e *runtimeStatsWithSnapshot) Clone() execdetails.RuntimeStats {
+	newRs := &runtimeStatsWithSnapshot{}
+	if e.SnapshotRuntimeStats != nil {
+		snapshotStats := e.SnapshotRuntimeStats.Clone()
+		newRs.SnapshotRuntimeStats = snapshotStats.(*tikv.SnapshotRuntimeStats)
 	}
-	if basic == "" {
-		return rpcStatsStr
+	return newRs
+}
+
+// Merge implements the RuntimeStats interface.
+func (e *runtimeStatsWithSnapshot) Merge(other execdetails.RuntimeStats) {
+	tmp, ok := other.(*runtimeStatsWithSnapshot)
+	if !ok {
+		return
 	}
-	return basic + ", " + rpcStatsStr
+	if tmp.SnapshotRuntimeStats != nil {
+		if e.SnapshotRuntimeStats == nil {
+			snapshotStats := tmp.SnapshotRuntimeStats.Clone()
+			e.SnapshotRuntimeStats = snapshotStats.(*tikv.SnapshotRuntimeStats)
+			return
+		}
+		e.SnapshotRuntimeStats.Merge(tmp.SnapshotRuntimeStats)
+	}
+}
+
+// Tp implements the RuntimeStats interface.
+func (e *runtimeStatsWithSnapshot) Tp() int {
+	return execdetails.TpRuntimeStatsWithSnapshot
 }

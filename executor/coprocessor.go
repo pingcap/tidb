@@ -76,6 +76,9 @@ func (h *CoprocessorDAGHandler) HandleRequest(ctx context.Context, req *coproces
 		}
 		totalChunks = append(totalChunks, partChunks...)
 	}
+	if err := e.Close(); err != nil {
+		return h.buildErrorResponse(err)
+	}
 	return h.buildUnaryResponse(totalChunks)
 }
 
@@ -163,6 +166,7 @@ func (h *CoprocessorDAGHandler) buildDAGExecutor(req *coprocessor.Request) (Exec
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	plan = core.InjectExtraProjection(plan)
 	// Build executor.
 	b := newExecutorBuilder(h.sctx, is)
 	return b.build(plan), nil

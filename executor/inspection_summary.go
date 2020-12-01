@@ -140,6 +140,7 @@ var inspectionSummaryRules = map[string][]string{
 		"tidb_distsql_partial_scan_key_num",
 		"tidb_distsql_qps",
 		"tidb_distsql_scan_key_num",
+		"tidb_distsql_copr_cache",
 		"tidb_region_cache_ops",
 		"tidb_batch_client_pending_req_count",
 		"tidb_batch_client_unavailable_duration",

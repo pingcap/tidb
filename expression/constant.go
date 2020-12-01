@@ -29,17 +29,21 @@ import (
 
 // NewOne stands for a number 1.
 func NewOne() *Constant {
+	retT := types.NewFieldType(mysql.TypeTiny)
+	retT.Flag |= mysql.UnsignedFlag // shrink range to avoid integral promotion
 	return &Constant{
 		Value:   types.NewDatum(1),
-		RetType: types.NewFieldType(mysql.TypeTiny),
+		RetType: retT,
 	}
 }
 
 // NewZero stands for a number 0.
 func NewZero() *Constant {
+	retT := types.NewFieldType(mysql.TypeTiny)
+	retT.Flag |= mysql.UnsignedFlag // shrink range to avoid integral promotion
 	return &Constant{
 		Value:   types.NewDatum(0),
-		RetType: types.NewFieldType(mysql.TypeTiny),
+		RetType: retT,
 	}
 }
 
@@ -108,7 +112,7 @@ func (c *Constant) String() string {
 
 // MarshalJSON implements json.Marshaler interface.
 func (c *Constant) MarshalJSON() ([]byte, error) {
-	return []byte(fmt.Sprintf("\"%s\"", c)), nil
+	return []byte(fmt.Sprintf("%q", c)), nil
 }
 
 // GetType implements Expression interface.

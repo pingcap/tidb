@@ -240,8 +240,8 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 		}
 		for _, col := range x.ColTasks {
 			var colNames []string
-			if col.PKInfo != nil {
-				colNames = append(colNames, col.PKInfo.Name.O)
+			if col.HandleCols != nil {
+				colNames = append(colNames, col.HandleCols.String())
 			}
 			for _, c := range col.ColsInfo {
 				colNames = append(colNames, c.Name.O)
@@ -266,8 +266,8 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 		str = fmt.Sprintf("Window(%s)", x.ExplainInfo())
 	case *PhysicalShuffle:
 		str = fmt.Sprintf("Partition(%s)", x.ExplainInfo())
-	case *PhysicalShuffleDataSourceStub:
-		str = fmt.Sprintf("PartitionDataSourceStub(%s)", x.ExplainInfo())
+	case *PhysicalShuffleReceiverStub:
+		str = fmt.Sprintf("PartitionReceiverStub(%s)", x.ExplainInfo())
 	case *PointGetPlan:
 		str = fmt.Sprintf("PointGet(")
 		if x.IndexInfo != nil {

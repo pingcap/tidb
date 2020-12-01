@@ -11,161 +11,299 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package ddl_test
+package ddl
 
 import (
+	"encoding/hex"
+	"encoding/json"
+
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/ddl"
-	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/tidb/ddl/placement"
+	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/util/codec"
 )
 
-func (s *testDBSuite1) TestAlterTableAlterPartition(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1")
-	defer tk.MustExec("drop table if exists t1")
+var _ = Suite(&testPlacementSuite{})
 
-	tk.MustExec(`create table t1 (c int)
-PARTITION BY RANGE (c) (
-	PARTITION p0 VALUES LESS THAN (6),
-	PARTITION p1 VALUES LESS THAN (11),
-	PARTITION p2 VALUES LESS THAN (16),
-	PARTITION p3 VALUES LESS THAN (21)
-);`)
+type testPlacementSuite struct {
+}
 
-	// normal cases
-	_, err := tk.Exec(`alter table t1 alter partition p0
-add placement policy
-	constraints='["+zone=sh"]'
-	role=leader
-	replicas=3`)
-	c.Assert(err, ErrorMatches, ".*pd unavailable.*")
+func (s *testPlacementSuite) TestPlacementBuild(c *C) {
+	tests := []struct {
+		input  []*ast.PlacementSpec
+		bundle *placement.Bundle
+		output []*placement.Rule
+		err    string
+	}{
+		{
+			input:  []*ast.PlacementSpec{},
+			output: []*placement.Rule{},
+		},
 
-	_, err = tk.Exec(`alter table t1 alter partition p0
-add placement policy
-	constraints='["+   zone   =   sh  ",     "- zone = bj    "]'
-	role=leader
-	replicas=3`)
-	c.Assert(err, ErrorMatches, ".*pd unavailable.*")
+		{
+			input: []*ast.PlacementSpec{{
+				Role:        ast.PlacementRoleVoter,
+				Tp:          ast.PlacementAdd,
+				Replicas:    3,
+				Constraints: `["+  zone=sh", "-zone = bj"]`,
+			}},
+			output: []*placement.Rule{
+				{
+					Role:  placement.Voter,
+					Count: 3,
+					LabelConstraints: []placement.LabelConstraint{
+						{Key: "zone", Op: "in", Values: []string{"sh"}},
+						{Key: "zone", Op: "notIn", Values: []string{"bj"}},
+					},
+				},
+			},
+		},
 
-	_, err = tk.Exec(`alter table t1 alter partition p0
-add placement policy
-	constraints='{"+   zone   =   sh  ": 1}'
-	role=leader
-	replicas=3`)
-	c.Assert(err, ErrorMatches, ".*pd unavailable.*")
+		{
+			input: []*ast.PlacementSpec{
+				{
+					Role:        ast.PlacementRoleVoter,
+					Tp:          ast.PlacementAdd,
+					Replicas:    3,
+					Constraints: `["+  zone=sh", "-zone = bj"]`,
+				},
+				{
+					Role:        ast.PlacementRoleFollower,
+					Tp:          ast.PlacementAdd,
+					Replicas:    2,
+					Constraints: `["-  zone=sh", "+zone = bj"]`,
+				},
+			},
+			output: []*placement.Rule{
+				{
+					Role:  placement.Voter,
+					Count: 3,
+					LabelConstraints: []placement.LabelConstraint{
+						{Key: "zone", Op: "in", Values: []string{"sh"}},
+						{Key: "zone", Op: "notIn", Values: []string{"bj"}},
+					},
+				},
+				{
+					Role:  placement.Follower,
+					Count: 2,
+					LabelConstraints: []placement.LabelConstraint{
+						{Key: "zone", Op: "notIn", Values: []string{"sh"}},
+						{Key: "zone", Op: "in", Values: []string{"bj"}},
+					},
+				},
+			},
+		},
 
-	_, err = tk.Exec(`alter table t1 alter partition p0
-add placement policy
-	constraints='{"+   zone   =   sh, -zone =   bj ": 1}'
-	role=leader
-	replicas=3`)
-	c.Assert(err, ErrorMatches, ".*pd unavailable.*")
+		{
+			input: []*ast.PlacementSpec{
+				{
+					Role:        ast.PlacementRoleVoter,
+					Tp:          ast.PlacementAdd,
+					Replicas:    3,
+					Constraints: `["+  zone=sh", "-zone = bj"]`,
+				},
+				{
+					Role:        ast.PlacementRoleVoter,
+					Tp:          ast.PlacementAlter,
+					Replicas:    2,
+					Constraints: `["-  zone=sh", "+zone = bj"]`,
+				},
+			},
+			output: []*placement.Rule{
+				{
+					Role:  placement.Voter,
+					Count: 2,
+					LabelConstraints: []placement.LabelConstraint{
+						{Key: "zone", Op: "notIn", Values: []string{"sh"}},
+						{Key: "zone", Op: "in", Values: []string{"bj"}},
+					},
+				},
+			},
+		},
 
-	_, err = tk.Exec(`alter table t1 alter partition p0
-add placement policy
-	constraints='{"+   zone   =   sh  ": 1, "- zone = bj": 2}'
-	role=leader
-	replicas=3`)
-	c.Assert(err, ErrorMatches, ".*pd unavailable.*")
+		{
+			input: []*ast.PlacementSpec{
+				{
+					Role:        ast.PlacementRoleVoter,
+					Tp:          ast.PlacementAdd,
+					Replicas:    3,
+					Constraints: `["+  zone=sh", "-zone = bj"]`,
+				},
+				{
+					Role:        ast.PlacementRoleVoter,
+					Tp:          ast.PlacementAlter,
+					Replicas:    3,
+					Constraints: `{"-  zone=sh":1, "+zone = bj":1}`,
+				},
+			},
+			output: []*placement.Rule{
+				{
+					Role:             placement.Voter,
+					Count:            1,
+					LabelConstraints: []placement.LabelConstraint{{Key: "zone", Op: "notIn", Values: []string{"sh"}}},
+				},
+				{
+					Role:             placement.Voter,
+					Count:            1,
+					LabelConstraints: []placement.LabelConstraint{{Key: "zone", Op: "in", Values: []string{"bj"}}},
+				},
+				{
+					Role:  placement.Voter,
+					Count: 1,
+				},
+			},
+		},
 
-	// list/dict detection
-	_, err = tk.Exec(`alter table t1 alter partition p0
-add placement policy
-	constraints=',,,'
-	role=leader
-	replicas=3`)
-	c.Assert(err, ErrorMatches, ".*array or object.*")
+		{
+			input: []*ast.PlacementSpec{
+				{
+					Role:        ast.PlacementRoleVoter,
+					Tp:          ast.PlacementAdd,
+					Replicas:    3,
+					Constraints: `["+  zone=sh", "-zone = bj"]`,
+				},
+				{
+					Role: ast.PlacementRoleVoter,
+					Tp:   ast.PlacementDrop,
+				},
+			},
+			output: []*placement.Rule{},
+		},
 
-	_, err = tk.Exec(`alter table t1 alter partition p0
-add placement policy
-	constraints='[,,,'
-	role=leader
-	replicas=3`)
-	c.Assert(err, ErrorMatches, ".*invalid character.*")
+		{
+			input: []*ast.PlacementSpec{
+				{
+					Role: ast.PlacementRoleLearner,
+					Tp:   ast.PlacementDrop,
+				},
+				{
+					Role: ast.PlacementRoleVoter,
+					Tp:   ast.PlacementDrop,
+				},
+			},
+			bundle: &placement.Bundle{Rules: []*placement.Rule{
+				{Role: placement.Learner},
+				{Role: placement.Voter},
+				{Role: placement.Learner},
+				{Role: placement.Voter},
+			}},
+			output: []*placement.Rule{},
+		},
 
-	_, err = tk.Exec(`alter table t1 alter partition p0
-add placement policy
-	constraints='{,,,'
-	role=leader
-	replicas=3`)
-	c.Assert(err, ErrorMatches, ".*invalid character.*")
+		{
+			input: []*ast.PlacementSpec{
+				{
+					Role:        ast.PlacementRoleLearner,
+					Tp:          ast.PlacementAdd,
+					Replicas:    3,
+					Constraints: `["+  zone=sh", "-zone = bj"]`,
+				},
+				{
+					Role: ast.PlacementRoleVoter,
+					Tp:   ast.PlacementDrop,
+				},
+			},
+			output: []*placement.Rule{
+				{
+					Role:  placement.Learner,
+					Count: 3,
+					LabelConstraints: []placement.LabelConstraint{
+						{Key: "zone", Op: "in", Values: []string{"sh"}},
+						{Key: "zone", Op: "notIn", Values: []string{"bj"}},
+					},
+				},
+			},
+		},
+	}
+	for i, t := range tests {
+		var bundle *placement.Bundle
+		if t.bundle == nil {
+			bundle = &placement.Bundle{Rules: []*placement.Rule{}}
+		} else {
+			bundle = t.bundle
+		}
+		out, err := buildPlacementSpecs(bundle, t.input)
+		if err == nil {
+			expected, err := json.Marshal(t.output)
+			c.Assert(err, IsNil)
+			got, err := json.Marshal(out.Rules)
+			c.Assert(err, IsNil)
+			c.Assert(len(t.output), Equals, len(out.Rules))
+			for _, r1 := range t.output {
+				found := false
+				for _, r2 := range out.Rules {
+					if ok, _ := DeepEquals.Check([]interface{}{r1, r2}, nil); ok {
+						found = true
+						break
+					}
+				}
+				c.Assert(found, IsTrue, Commentf("%d test\nexpected %s\nbut got %s", i, expected, got))
+			}
+		} else {
+			c.Assert(err.Error(), ErrorMatches, t.err)
+		}
+	}
+}
 
-	// checkPlacementSpecConstraint
-	_, err = tk.Exec(`alter table t1 alter partition p0
-add placement policy
-	constraints='[",,,"]'
-	role=leader
-	replicas=3`)
-	c.Assert(err, ErrorMatches, ".*label constraint should be in format.*")
+func (s *testPlacementSuite) TestPlacementBuildDrop(c *C) {
+	tests := []struct {
+		input  int64
+		output *placement.Bundle
+	}{
+		{
+			input:  2,
+			output: &placement.Bundle{ID: placement.GroupID(2)},
+		},
+		{
+			input:  1,
+			output: &placement.Bundle{ID: placement.GroupID(1)},
+		},
+	}
+	for _, t := range tests {
+		out := placement.BuildPlacementDropBundle(t.input)
+		c.Assert(t.output, DeepEquals, out)
+	}
+}
 
-	_, err = tk.Exec(`alter table t1 alter partition p0
-add placement policy
-	constraints='["+    "]'
-	role=leader
-	replicas=3`)
-	c.Assert(err, ErrorMatches, ".*label constraint should be in format.*")
+func (s *testPlacementSuite) TestPlacementBuildTruncate(c *C) {
+	bundle := &placement.Bundle{
+		ID:    placement.GroupID(-1),
+		Rules: []*placement.Rule{{GroupID: placement.GroupID(-1)}},
+	}
 
-	// unknown operation
-	_, err = tk.Exec(`alter table t1 alter partition p0
-add placement policy
-	constraints='["0000"]'
-	role=leader
-	replicas=3`)
-	c.Assert(err, ErrorMatches, ".*label constraint should be in format.*")
-
-	// without =
-	_, err = tk.Exec(`alter table t1 alter partition p0
-add placement policy
-	constraints='["+000"]'
-	role=leader
-	replicas=3`)
-	c.Assert(err, ErrorMatches, ".*label constraint should be in format.*")
-
-	// empty key
-	_, err = tk.Exec(`alter table t1 alter partition p0
-add placement policy
-	constraints='["+ =zone1"]'
-	role=leader
-	replicas=3`)
-	c.Assert(err, ErrorMatches, ".*label constraint should be in format.*")
-
-	_, err = tk.Exec(`alter table t1 alter partition p0
-add placement policy
-	constraints='["+  =   z"]'
-	role=leader
-	replicas=3`)
-	c.Assert(err, ErrorMatches, ".*label constraint should be in format.*")
-
-	// empty value
-	_, err = tk.Exec(`alter table t1 alter partition p0
-add placement policy
-	constraints='["+zone="]'
-	role=leader
-	replicas=3`)
-	c.Assert(err, ErrorMatches, ".*label constraint should be in format.*")
-
-	_, err = tk.Exec(`alter table t1 alter partition p0
-add placement policy
-	constraints='["+z  =   "]'
-	role=leader
-	replicas=3`)
-	c.Assert(err, ErrorMatches, ".*label constraint should be in format.*")
-
-	_, err = tk.Exec(`alter table t1 alter partition p
-add placement policy
-	constraints='["+zone=sh"]'
-	role=leader
-	replicas=3`)
-	c.Assert(err, ErrorMatches, ".*Unknown partition.*")
-
-	tk.MustExec("drop table if exists t1")
-	tk.MustExec("create table t1 (c int)")
-
-	_, err = tk.Exec(`alter table t1 alter partition p
-add placement policy
-	constraints='["+zone=sh"]'
-	role=leader
-	replicas=3`)
-	c.Assert(ddl.ErrPartitionMgmtOnNonpartitioned.Equal(err), IsTrue)
+	tests := []struct {
+		input  int64
+		output *placement.Bundle
+	}{
+		{
+			input: 1,
+			output: &placement.Bundle{
+				ID: placement.GroupID(1),
+				Rules: []*placement.Rule{{
+					GroupID:     placement.GroupID(1),
+					StartKeyHex: hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(1))),
+					EndKeyHex:   hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(2))),
+				}},
+			},
+		},
+		{
+			input: 2,
+			output: &placement.Bundle{
+				ID: placement.GroupID(2),
+				Rules: []*placement.Rule{{
+					GroupID:     placement.GroupID(2),
+					StartKeyHex: hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(2))),
+					EndKeyHex:   hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(3))),
+				}},
+			},
+		},
+	}
+	for _, t := range tests {
+		out := placement.BuildPlacementCopyBundle(bundle, t.input)
+		c.Assert(t.output, DeepEquals, out)
+		c.Assert(bundle.ID, Equals, placement.GroupID(-1))
+		c.Assert(bundle.Rules, HasLen, 1)
+		c.Assert(bundle.Rules[0].GroupID, Equals, placement.GroupID(-1))
+	}
 }

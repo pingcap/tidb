@@ -20,6 +20,7 @@ import (
 	"math/rand"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -141,7 +142,7 @@ type listInDiskWriteDisk struct {
 
 func newListInDiskWriteDisk(fieldTypes []*types.FieldType) (*listInDiskWriteDisk, error) {
 	l := listInDiskWriteDisk{*NewListInDisk(fieldTypes)}
-	disk, err := ioutil.TempFile(config.GetGlobalConfig().TempStoragePath, l.diskTracker.Label().String())
+	disk, err := ioutil.TempFile(config.GetGlobalConfig().TempStoragePath, strconv.Itoa(l.diskTracker.Label()))
 	if err != nil {
 		return nil, err
 	}
@@ -177,7 +178,7 @@ func checkRow(c *check.C, row1, row2 Row) {
 	}
 }
 
-func (s *testChunkSuite) TestListInDiskWithChecksum(c *check.C) {
+func testListInDisk(c *check.C) {
 	numChk, numRow := 10, 1000
 	chks, fields := initChunks(numChk, numRow)
 	lChecksum := NewListInDisk(fields)
@@ -209,4 +210,21 @@ func (s *testChunkSuite) TestListInDiskWithChecksum(c *check.C) {
 		c.Assert(err, check.IsNil)
 		checkRow(c, row1, row2)
 	}
+}
+
+func (s *testChunkSuite) TestListInDiskWithChecksum(c *check.C) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Security.SpilledFileEncryptionMethod = config.SpilledFileEncryptionMethodPlaintext
+	})
+	testListInDisk(c)
+
+}
+
+func (s *testChunkSuite) TestListInDiskWithChecksumAndEncrypt(c *check.C) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Security.SpilledFileEncryptionMethod = config.SpilledFileEncryptionMethodAES128CTR
+	})
+	testListInDisk(c)
 }

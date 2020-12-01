@@ -60,7 +60,7 @@ type CommonHandleCols struct {
 }
 
 func (cb *CommonHandleCols) buildHandleByDatumsBuffer(datumBuf []types.Datum) (kv.Handle, error) {
-	datumBuf = tablecodec.TruncateIndexValuesIfNeeded(cb.tblInfo, cb.idxInfo, datumBuf)
+	tablecodec.TruncateIndexValues(cb.tblInfo, cb.idxInfo, datumBuf)
 	handleBytes, err := codec.EncodeKey(cb.sc, nil, datumBuf...)
 	if err != nil {
 		return nil, err

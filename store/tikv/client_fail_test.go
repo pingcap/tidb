@@ -29,19 +29,13 @@ type testClientFailSuite struct {
 	OneByOneSuite
 }
 
-func (s *testClientFailSuite) SetUpSuite(c *C) {
+func (s *testClientFailSuite) SetUpSuite(_ *C) {
 	// This lock make testClientFailSuite runs exclusively.
 	withTiKVGlobalLock.Lock()
 }
 
-func (s testClientFailSuite) TearDownSuite(c *C) {
+func (s testClientFailSuite) TearDownSuite(_ *C) {
 	withTiKVGlobalLock.Unlock()
-}
-
-func setGrpcConnectionCount(count uint) {
-	newConf := config.NewConfig()
-	newConf.TiKVClient.GrpcConnectionCount = count
-	config.StoreGlobalConfig(newConf)
 }
 
 func (s *testClientFailSuite) TestPanicInRecvLoop(c *C) {
@@ -50,26 +44,26 @@ func (s *testClientFailSuite) TestPanicInRecvLoop(c *C) {
 
 	server, port := startMockTikvService()
 	c.Assert(port > 0, IsTrue)
+	defer server.Stop()
 
-	grpcConnectionCount := config.GetGlobalConfig().TiKVClient.GrpcConnectionCount
-	setGrpcConnectionCount(1)
 	addr := fmt.Sprintf("%s:%d", "127.0.0.1", port)
 	rpcClient := newRPCClient(config.Security{}, func(c *rpcClient) {
 		c.dialTimeout = time.Second / 3
 	})
 
 	// Start batchRecvLoop, and it should panic in `failPendingRequests`.
-	_, err := rpcClient.getConnArray(addr, true)
-	c.Assert(err, IsNil)
-
-	time.Sleep(time.Second)
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/gotErrorInRecvLoop"), IsNil)
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/panicInFailPendingRequests"), IsNil)
-	time.Sleep(time.Second)
+	_, err := rpcClient.getConnArray(addr, true, func(cfg *config.TiKVClient) { cfg.GrpcConnectionCount = 1 })
+	c.Assert(err, IsNil, Commentf("cannot establish local connection due to env problems(e.g. heavy load in test machine), please retry again"))
 
 	req := tikvrpc.NewRequest(tikvrpc.CmdEmpty, &tikvpb.BatchCommandsEmptyRequest{})
-	_, err = rpcClient.SendRequest(context.Background(), addr, req, time.Second)
+	_, err = rpcClient.SendRequest(context.Background(), addr, req, time.Second/2)
+	c.Assert(err, NotNil)
+
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/gotErrorInRecvLoop"), IsNil)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/panicInFailPendingRequests"), IsNil)
+	time.Sleep(time.Second * 2)
+
+	req = tikvrpc.NewRequest(tikvrpc.CmdEmpty, &tikvpb.BatchCommandsEmptyRequest{})
+	_, err = rpcClient.SendRequest(context.Background(), addr, req, time.Second*4)
 	c.Assert(err, IsNil)
-	server.Stop()
-	setGrpcConnectionCount(grpcConnectionCount)
 }

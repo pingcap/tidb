@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
@@ -37,6 +38,10 @@ import (
 )
 
 func TestT(t *testing.T) {
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TiKVClient.AsyncCommit.SafeWindow = 0
+		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
+	})
 	TestingT(t)
 }
 
@@ -129,7 +134,7 @@ func (s *testStatisticsSuite) SetUpSuite(c *C) {
 		samples[i].Value.SetInt64(samples[i].Value.GetInt64() + 2)
 	}
 	sc := new(stmtctx.StatementContext)
-	err := SortSampleItems(sc, samples)
+	samples, err := SortSampleItems(sc, samples)
 	c.Check(err, IsNil)
 	s.samples = samples
 

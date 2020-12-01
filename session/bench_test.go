@@ -1515,3 +1515,67 @@ func BenchmarkRangeColumnPartitionPruning(b *testing.B) {
 	}
 	b.StopTimer()
 }
+
+func BenchmarkHashPartitionPruningPointSelect(b *testing.B) {
+	ctx := context.Background()
+	se, do, st := prepareBenchSession()
+	defer func() {
+		se.Close()
+		do.Close()
+		st.Close()
+	}()
+
+	mustExecute(se, `create table t (id int, dt datetime) partition by hash(id) partitions 1024;`)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		rs, err := se.Execute(ctx, "select * from t where id = 2330")
+		if err != nil {
+			b.Fatal(err)
+		}
+		_, err = drainRecordSet(ctx, se.(*session), rs[0])
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+	b.StopTimer()
+}
+
+func BenchmarkHashPartitionPruningMultiSelect(b *testing.B) {
+	ctx := context.Background()
+	se, do, st := prepareBenchSession()
+	defer func() {
+		se.Close()
+		do.Close()
+		st.Close()
+	}()
+
+	mustExecute(se, `create table t (id int, dt datetime) partition by hash(id) partitions 1024;`)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		rs, err := se.Execute(ctx, "select * from t where id = 2330")
+		if err != nil {
+			b.Fatal(err)
+		}
+		_, err = drainRecordSet(ctx, se.(*session), rs[0])
+		if err != nil {
+			b.Fatal(err)
+		}
+		rs, err = se.Execute(ctx, "select * from t where id = 1233 or id = 1512")
+		if err != nil {
+			b.Fatal(err)
+		}
+		_, err = drainRecordSet(ctx, se.(*session), rs[0])
+		if err != nil {
+			b.Fatal(err)
+		}
+		rs, err = se.Execute(ctx, "select * from t where id in (117, 1233, 15678)")
+		if err != nil {
+			b.Fatal(err)
+		}
+		_, err = drainRecordSet(ctx, se.(*session), rs[0])
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+	b.StopTimer()
+}

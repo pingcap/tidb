@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
@@ -34,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
 	decoder "github.com/pingcap/tidb/util/rowDecoder"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -43,7 +43,7 @@ import (
 // DDLInfo is for DDL information.
 type DDLInfo struct {
 	SchemaVer   int64
-	ReorgHandle kv.Handle    // It's only used for DDL information.
+	ReorgHandle kv.Key       // It's only used for DDL information.
 	Jobs        []*model.Job // It's the currently running jobs.
 }
 
@@ -77,12 +77,11 @@ func GetDDLInfo(txn kv.Transaction) (*DDLInfo, error) {
 		return info, nil
 	}
 
-	tbl, err := t.GetTable(addIdxJob.SchemaID, addIdxJob.TableID)
+	_, info.ReorgHandle, _, _, err = t.GetDDLReorgHandle(addIdxJob)
 	if err != nil {
-		return info, nil
-	}
-	info.ReorgHandle, _, _, err = t.GetDDLReorgHandle(addIdxJob, tbl.IsCommonHandle)
-	if err != nil {
+		if meta.ErrDDLReorgElementNotExist.Equal(err) {
+			return info, nil
+		}
 		return nil, errors.Trace(err)
 	}
 
@@ -111,8 +110,7 @@ func IsJobRollbackable(job *model.Job) bool {
 		}
 	case model.ActionAddTablePartition:
 		return job.SchemaState == model.StateNone || job.SchemaState == model.StateReplicaOnly
-	case model.ActionDropColumn, model.ActionDropColumns, model.ActionModifyColumn,
-		model.ActionDropTablePartition,
+	case model.ActionDropColumn, model.ActionDropColumns, model.ActionDropTablePartition,
 		model.ActionRebaseAutoID, model.ActionShardRowID,
 		model.ActionTruncateTable, model.ActionAddForeignKey,
 		model.ActionDropForeignKey, model.ActionRenameTable,
@@ -342,7 +340,7 @@ func CheckIndicesCount(ctx sessionctx.Context, dbName, tableName string, indices
 		} else if idxCnt > tblCnt {
 			ret = IdxCntGreater
 		}
-		return ret, i, errors.Errorf("table count %d != index(%s) count %d", tblCnt, idx, idxCnt)
+		return ret, i, ErrAdminCheckTable.GenWithStack("table count %d != index(%s) count %d", tblCnt, idx, idxCnt)
 	}
 	return 0, 0, nil
 }
@@ -360,7 +358,7 @@ func CheckRecordAndIndex(sessCtx sessionctx.Context, txn kv.Transaction, t table
 		for i, val := range vals1 {
 			col := cols[i]
 			if val.IsNull() {
-				if mysql.HasNotNullFlag(col.Flag) && col.ToInfo().OriginDefaultValue == nil {
+				if mysql.HasNotNullFlag(col.Flag) && col.ToInfo().GetOriginDefaultValue() == nil {
 					return false, errors.Errorf("Column %v define as not null, but can't find the value where handle is %v", col.Name, h1)
 				}
 				// NULL value is regarded as its default value.
@@ -397,14 +395,14 @@ func CheckRecordAndIndex(sessCtx sessionctx.Context, txn kv.Transaction, t table
 
 func makeRowDecoder(t table.Table, sctx sessionctx.Context) (*decoder.RowDecoder, error) {
 	dbName := model.NewCIStr(sctx.GetSessionVars().CurrentDB)
-	exprCols, _, err := expression.ColumnInfos2ColumnsAndNames(sctx, dbName, t.Meta().Name, t.Meta().Columns, t.Meta())
+	exprCols, _, err := expression.ColumnInfos2ColumnsAndNames(sctx, dbName, t.Meta().Name, t.Meta().Cols(), t.Meta())
 	if err != nil {
 		return nil, err
 	}
 	mockSchema := expression.NewSchema(exprCols...)
-	decodeColsMap := decoder.BuildFullDecodeColMap(t, mockSchema)
+	decodeColsMap := decoder.BuildFullDecodeColMap(t.Cols(), mockSchema)
 
-	return decoder.NewRowDecoder(t, decodeColsMap), nil
+	return decoder.NewRowDecoder(t, t.Cols(), decodeColsMap), nil
 }
 
 func iterRecords(sessCtx sessionctx.Context, retriever kv.Retriever, t table.Table, startKey kv.Key, cols []*table.Column, fn table.RecordIterFunc) error {
@@ -463,11 +461,13 @@ func iterRecords(sessCtx sessionctx.Context, retriever kv.Retriever, t table.Tab
 
 var (
 	// ErrDataInConsistent indicate that meets inconsistent data.
-	ErrDataInConsistent = terror.ClassAdmin.New(errno.ErrDataInConsistent, errno.MySQLErrName[errno.ErrDataInConsistent])
+	ErrDataInConsistent = dbterror.ClassAdmin.NewStd(errno.ErrDataInConsistent)
 	// ErrDDLJobNotFound indicates the job id was not found.
-	ErrDDLJobNotFound = terror.ClassAdmin.New(errno.ErrDDLJobNotFound, errno.MySQLErrName[errno.ErrDDLJobNotFound])
+	ErrDDLJobNotFound = dbterror.ClassAdmin.NewStd(errno.ErrDDLJobNotFound)
 	// ErrCancelFinishedDDLJob returns when cancel a finished ddl job.
-	ErrCancelFinishedDDLJob = terror.ClassAdmin.New(errno.ErrCancelFinishedDDLJob, errno.MySQLErrName[errno.ErrCancelFinishedDDLJob])
+	ErrCancelFinishedDDLJob = dbterror.ClassAdmin.NewStd(errno.ErrCancelFinishedDDLJob)
 	// ErrCannotCancelDDLJob returns when cancel a almost finished ddl job, because cancel in now may cause data inconsistency.
-	ErrCannotCancelDDLJob = terror.ClassAdmin.New(errno.ErrCannotCancelDDLJob, errno.MySQLErrName[errno.ErrCannotCancelDDLJob])
+	ErrCannotCancelDDLJob = dbterror.ClassAdmin.NewStd(errno.ErrCannotCancelDDLJob)
+	// ErrAdminCheckTable returns when the table records is inconsistent with the index values.
+	ErrAdminCheckTable = dbterror.ClassAdmin.NewStd(errno.ErrAdminCheckTable)
 )

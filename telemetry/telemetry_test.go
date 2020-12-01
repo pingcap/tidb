@@ -15,6 +15,7 @@ package telemetry_test
 
 import (
 	"context"
+	"runtime"
 	"testing"
 
 	"github.com/Jeffail/gabs/v2"
@@ -45,6 +46,9 @@ func TestT(t *testing.T) {
 }
 
 func (s *testSuite) SetUpSuite(c *C) {
+	if runtime.GOOS == "windows" {
+		c.Skip("integration.NewClusterV3 will create file contains a colon which is not allowed on Windows")
+	}
 	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
 
@@ -65,6 +69,9 @@ func (s *testSuite) SetUpSuite(c *C) {
 }
 
 func (s *testSuite) TearDownSuite(c *C) {
+	if runtime.GOOS == "windows" {
+		return
+	}
 	s.se.Close()
 	s.etcdCluster.Terminate(telemetryTestT)
 	s.dom.Close()

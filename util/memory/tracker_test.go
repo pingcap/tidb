@@ -14,16 +14,19 @@
 package memory
 
 import (
+	"errors"
 	"math/rand"
 	"os"
+	"strconv"
+	"strings"
 	"sync"
 	"testing"
 
 	"github.com/cznic/mathutil"
 	. "github.com/pingcap/check"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/testleak"
 )
 
@@ -44,14 +47,14 @@ func (s *testSuite) SetUpTest(c *C)     { testleak.BeforeTest() }
 func (s *testSuite) TearDownTest(c *C)  { testleak.AfterTest(c)() }
 
 func (s *testSuite) TestSetLabel(c *C) {
-	tracker := NewTracker(stringutil.StringerStr("old label"), -1)
-	c.Assert(tracker.label.String(), Equals, "old label")
+	tracker := NewTracker(1, -1)
+	c.Assert(tracker.label, Equals, 1)
 	c.Assert(tracker.BytesConsumed(), Equals, int64(0))
 	c.Assert(tracker.bytesLimit, Equals, int64(-1))
 	c.Assert(tracker.getParent(), IsNil)
 	c.Assert(len(tracker.mu.children), Equals, 0)
-	tracker.SetLabel(stringutil.StringerStr("new label"))
-	c.Assert(tracker.label.String(), Equals, "new label")
+	tracker.SetLabel(2)
+	c.Assert(tracker.label, Equals, 2)
 	c.Assert(tracker.BytesConsumed(), Equals, int64(0))
 	c.Assert(tracker.bytesLimit, Equals, int64(-1))
 	c.Assert(tracker.getParent(), IsNil)
@@ -59,7 +62,7 @@ func (s *testSuite) TestSetLabel(c *C) {
 }
 
 func (s *testSuite) TestConsume(c *C) {
-	tracker := NewTracker(stringutil.StringerStr("tracker"), -1)
+	tracker := NewTracker(1, -1)
 	c.Assert(tracker.BytesConsumed(), Equals, int64(0))
 
 	tracker.Consume(100)
@@ -86,11 +89,11 @@ func (s *testSuite) TestConsume(c *C) {
 }
 
 func (s *testSuite) TestOOMAction(c *C) {
-	tracker := NewTracker(stringutil.StringerStr("oom tracker"), 100)
+	tracker := NewTracker(1, 100)
 	// make sure no panic here.
 	tracker.Consume(10000)
 
-	tracker = NewTracker(stringutil.StringerStr("oom tracker"), 100)
+	tracker = NewTracker(1, 100)
 	action := &mockAction{}
 	tracker.SetActionOnExceed(action)
 
@@ -106,44 +109,45 @@ func (s *testSuite) TestOOMAction(c *C) {
 	c.Assert(action1.called, IsFalse)
 	c.Assert(action2.called, IsFalse)
 	tracker.Consume(10000)
-	c.Assert(action1.called, IsFalse)
-	c.Assert(action2.called, IsTrue)
+	c.Assert(action1.called, IsTrue)
+	c.Assert(action2.called, IsFalse)
 	tracker.Consume(10000)
 	c.Assert(action1.called, IsTrue)
 	c.Assert(action2.called, IsTrue)
 }
 
 type mockAction struct {
+	BaseOOMAction
 	called   bool
-	fallback ActionOnExceed
+	priority int64
 }
 
 func (a *mockAction) SetLogHook(hook func(uint64)) {
 }
 
 func (a *mockAction) Action(t *Tracker) {
-	if a.called && a.fallback != nil {
-		a.fallback.Action(t)
+	if a.called && a.fallbackAction != nil {
+		a.fallbackAction.Action(t)
 		return
 	}
 	a.called = true
 }
 
-func (a *mockAction) SetFallback(fallback ActionOnExceed) {
-	a.fallback = fallback
+func (a *mockAction) GetPriority() int64 {
+	return a.priority
 }
 
 func (s *testSuite) TestAttachTo(c *C) {
-	oldParent := NewTracker(stringutil.StringerStr("old parent"), -1)
-	newParent := NewTracker(stringutil.StringerStr("new parent"), -1)
-	child := NewTracker(stringutil.StringerStr("child"), -1)
+	oldParent := NewTracker(1, -1)
+	newParent := NewTracker(2, -1)
+	child := NewTracker(3, -1)
 	child.Consume(100)
 	child.AttachTo(oldParent)
 	c.Assert(child.BytesConsumed(), Equals, int64(100))
 	c.Assert(oldParent.BytesConsumed(), Equals, int64(100))
 	c.Assert(child.getParent(), DeepEquals, oldParent)
 	c.Assert(len(oldParent.mu.children), Equals, 1)
-	c.Assert(oldParent.mu.children[0], DeepEquals, child)
+	c.Assert(oldParent.mu.children[child.label][0], DeepEquals, child)
 
 	child.AttachTo(newParent)
 	c.Assert(child.BytesConsumed(), Equals, int64(100))
@@ -151,19 +155,19 @@ func (s *testSuite) TestAttachTo(c *C) {
 	c.Assert(newParent.BytesConsumed(), Equals, int64(100))
 	c.Assert(child.getParent(), DeepEquals, newParent)
 	c.Assert(len(newParent.mu.children), Equals, 1)
-	c.Assert(newParent.mu.children[0], DeepEquals, child)
+	c.Assert(newParent.mu.children[child.label][0], DeepEquals, child)
 	c.Assert(len(oldParent.mu.children), Equals, 0)
 }
 
 func (s *testSuite) TestDetach(c *C) {
-	parent := NewTracker(stringutil.StringerStr("parent"), -1)
-	child := NewTracker(stringutil.StringerStr("child"), -1)
+	parent := NewTracker(1, -1)
+	child := NewTracker(2, -1)
 	child.Consume(100)
 	child.AttachTo(parent)
 	c.Assert(child.BytesConsumed(), Equals, int64(100))
 	c.Assert(parent.BytesConsumed(), Equals, int64(100))
 	c.Assert(len(parent.mu.children), Equals, 1)
-	c.Assert(parent.mu.children[0], DeepEquals, child)
+	c.Assert(parent.mu.children[child.label][0], DeepEquals, child)
 
 	child.Detach()
 	c.Assert(child.BytesConsumed(), Equals, int64(100))
@@ -173,11 +177,11 @@ func (s *testSuite) TestDetach(c *C) {
 }
 
 func (s *testSuite) TestReplaceChild(c *C) {
-	oldChild := NewTracker(stringutil.StringerStr("old child"), -1)
+	oldChild := NewTracker(1, -1)
 	oldChild.Consume(100)
-	newChild := NewTracker(stringutil.StringerStr("new child"), -1)
+	newChild := NewTracker(2, -1)
 	newChild.Consume(500)
-	parent := NewTracker(stringutil.StringerStr("parent"), -1)
+	parent := NewTracker(3, -1)
 
 	oldChild.AttachTo(parent)
 	c.Assert(parent.BytesConsumed(), Equals, int64(100))
@@ -185,14 +189,14 @@ func (s *testSuite) TestReplaceChild(c *C) {
 	parent.ReplaceChild(oldChild, newChild)
 	c.Assert(parent.BytesConsumed(), Equals, int64(500))
 	c.Assert(len(parent.mu.children), Equals, 1)
-	c.Assert(parent.mu.children[0], DeepEquals, newChild)
+	c.Assert(parent.mu.children[newChild.label][0], DeepEquals, newChild)
 	c.Assert(newChild.getParent(), DeepEquals, parent)
 	c.Assert(oldChild.getParent(), IsNil)
 
 	parent.ReplaceChild(oldChild, nil)
 	c.Assert(parent.BytesConsumed(), Equals, int64(500))
 	c.Assert(len(parent.mu.children), Equals, 1)
-	c.Assert(parent.mu.children[0], DeepEquals, newChild)
+	c.Assert(parent.mu.children[newChild.label][0], DeepEquals, newChild)
 	c.Assert(newChild.getParent(), DeepEquals, parent)
 	c.Assert(oldChild.getParent(), IsNil)
 
@@ -202,9 +206,9 @@ func (s *testSuite) TestReplaceChild(c *C) {
 	c.Assert(newChild.getParent(), IsNil)
 	c.Assert(oldChild.getParent(), IsNil)
 
-	node1 := NewTracker(stringutil.StringerStr("Node1"), -1)
-	node2 := NewTracker(stringutil.StringerStr("Node2"), -1)
-	node3 := NewTracker(stringutil.StringerStr("Node3"), -1)
+	node1 := NewTracker(1, -1)
+	node2 := NewTracker(2, -1)
+	node3 := NewTracker(3, -1)
 	node2.AttachTo(node1)
 	node3.AttachTo(node2)
 	node3.Consume(100)
@@ -215,12 +219,11 @@ func (s *testSuite) TestReplaceChild(c *C) {
 }
 
 func (s *testSuite) TestToString(c *C) {
-	parent := NewTracker(stringutil.StringerStr("parent"), -1)
-
-	child1 := NewTracker(stringutil.StringerStr("child 1"), 1000)
-	child2 := NewTracker(stringutil.StringerStr("child 2"), -1)
-	child3 := NewTracker(stringutil.StringerStr("child 3"), -1)
-	child4 := NewTracker(stringutil.StringerStr("child 4"), -1)
+	parent := NewTracker(1, -1)
+	child1 := NewTracker(2, 1000)
+	child2 := NewTracker(3, -1)
+	child3 := NewTracker(4, -1)
+	child4 := NewTracker(5, -1)
 
 	child1.AttachTo(parent)
 	child2.AttachTo(parent)
@@ -233,19 +236,19 @@ func (s *testSuite) TestToString(c *C) {
 	child4.Consume(4 * 1024 * 1024 * 1024)
 
 	c.Assert(parent.String(), Equals, `
-"parent"{
-  "consumed": 4.00293168798089 GB
-  "child 1"{
+"1"{
+  "consumed": 4.00 GB
+  "2"{
     "quota": 1000 Bytes
     "consumed": 100 Bytes
   }
-  "child 2"{
+  "3"{
     "consumed": 2 KB
   }
-  "child 3"{
+  "4"{
     "consumed": 3 MB
   }
-  "child 4"{
+  "5"{
     "consumed": 4 GB
   }
 }
@@ -253,10 +256,10 @@ func (s *testSuite) TestToString(c *C) {
 }
 
 func (s *testSuite) TestMaxConsumed(c *C) {
-	r := NewTracker(stringutil.StringerStr("root"), -1)
-	c1 := NewTracker(stringutil.StringerStr("child 1"), -1)
-	c2 := NewTracker(stringutil.StringerStr("child 2"), -1)
-	cc1 := NewTracker(stringutil.StringerStr("child of child 1"), -1)
+	r := NewTracker(1, -1)
+	c1 := NewTracker(2, -1)
+	c2 := NewTracker(3, -1)
+	cc1 := NewTracker(4, -1)
 
 	c1.AttachTo(r)
 	c2.AttachTo(r)
@@ -280,9 +283,9 @@ func (s *testSuite) TestMaxConsumed(c *C) {
 }
 
 func (s *testSuite) TestGlobalTracker(c *C) {
-	r := NewGlobalTracker(stringutil.StringerStr("root"), -1)
-	c1 := NewTracker(stringutil.StringerStr("child 1"), -1)
-	c2 := NewTracker(stringutil.StringerStr("child 2"), -1)
+	r := NewGlobalTracker(1, -1)
+	c1 := NewTracker(2, -1)
+	c2 := NewTracker(3, -1)
 	c1.Consume(100)
 	c2.Consume(200)
 
@@ -304,7 +307,7 @@ func (s *testSuite) TestGlobalTracker(c *C) {
 		v := recover()
 		c.Assert(v, Equals, "Attach to a non-GlobalTracker")
 	}()
-	commonTracker := NewTracker(stringutil.StringerStr("common"), -1)
+	commonTracker := NewTracker(4, -1)
 	c1.AttachToGlobalTracker(commonTracker)
 
 	c1.AttachTo(commonTracker)
@@ -328,10 +331,93 @@ func (s *testSuite) TestGlobalTracker(c *C) {
 
 }
 
+func (s *testSuite) parseByteUnit(str string) (int64, error) {
+	u := strings.TrimSpace(str)
+	switch u {
+	case "GB":
+		return byteSizeGB, nil
+	case "MB":
+		return byteSizeMB, nil
+	case "KB":
+		return byteSizeKB, nil
+	case "Bytes":
+		return byteSizeBB, nil
+	}
+	return 0, errors.New("invalid byte unit: " + str)
+}
+
+func (s *testSuite) parseByte(str string) (int64, error) {
+	vBuf := make([]byte, 0, len(str))
+	uBuf := make([]byte, 0, 2)
+	b := int64(0)
+	for _, v := range str {
+		if (v >= '0' && v <= '9') || v == '.' {
+			vBuf = append(vBuf, byte(v))
+		} else if v != ' ' {
+			uBuf = append(uBuf, byte(v))
+		}
+	}
+	unit, err := s.parseByteUnit(string(uBuf))
+	if err != nil {
+		return 0, err
+	}
+	v, err := strconv.ParseFloat(string(vBuf), 64)
+	if err != nil {
+		return 0, err
+	}
+	b = int64(v * float64(unit))
+	return b, nil
+}
+
+func (s *testSuite) TestFormatBytesWithPrune(c *C) {
+	cases := []struct {
+		b string
+		s string
+	}{
+		{"0 Bytes", "0 Bytes"},
+		{"1 Bytes", "1 Bytes"},
+		{"9 Bytes", "9 Bytes"},
+		{"10 Bytes", "10 Bytes"},
+		{"999 Bytes", "999 Bytes"},
+		{"1 KB", "1024 Bytes"},
+		{"1.123 KB", "1.12 KB"},
+		{"1.023 KB", "1.02 KB"},
+		{"1.003 KB", "1.00 KB"},
+		{"10.456 KB", "10.5 KB"},
+		{"10.956 KB", "11.0 KB"},
+		{"999.056 KB", "999.1 KB"},
+		{"999.988 KB", "1000.0 KB"},
+		{"1.123 MB", "1.12 MB"},
+		{"1.023 MB", "1.02 MB"},
+		{"1.003 MB", "1.00 MB"},
+		{"10.456 MB", "10.5 MB"},
+		{"10.956 MB", "11.0 MB"},
+		{"999.056 MB", "999.1 MB"},
+		{"999.988 MB", "1000.0 MB"},
+		{"1.123 GB", "1.12 GB"},
+		{"1.023 GB", "1.02 GB"},
+		{"1.003 GB", "1.00 GB"},
+		{"10.456 GB", "10.5 GB"},
+		{"10.956 GB", "11.0 GB"},
+		{"9.412345 MB", "9.41 MB"},
+		{"10.412345 MB", "10.4 MB"},
+		{"5.999 GB", "6.00 GB"},
+		{"100.46 KB", "100.5 KB"},
+		{"18.399999618530273 MB", "18.4 MB"},
+		{"9.15999984741211 MB", "9.16 MB"},
+	}
+	for _, ca := range cases {
+		b, err := s.parseByte(ca.b)
+		c.Assert(err, IsNil)
+		result := FormatBytes(b)
+		c.Assert(result, Equals, ca.s, Commentf("input: %v", ca.b))
+	}
+}
+
 func BenchmarkConsume(b *testing.B) {
-	tracker := NewTracker(stringutil.StringerStr("root"), -1)
+	tracker := NewTracker(1, -1)
 	b.RunParallel(func(pb *testing.PB) {
-		childTracker := NewTracker(stringutil.StringerStr("child"), -1)
+		childTracker := NewTracker(2, -1)
 		childTracker.AttachTo(tracker)
 		for pb.Next() {
 			childTracker.Consume(256 << 20)
@@ -340,5 +426,40 @@ func BenchmarkConsume(b *testing.B) {
 }
 
 func (s *testSuite) TestErrorCode(c *C) {
-	c.Assert(int(errMemExceedThreshold.ToSQLError().Code), Equals, errno.ErrMemExceedThreshold)
+	c.Assert(int(terror.ToSQLError(errMemExceedThreshold).Code), Equals, errno.ErrMemExceedThreshold)
+}
+
+func (s *testSuite) TestOOMActionPriority(c *C) {
+	tracker := NewTracker(1, 100)
+	// make sure no panic here.
+	tracker.Consume(10000)
+
+	tracker = NewTracker(1, 1)
+	tracker.actionMu.actionOnExceed = nil
+	n := 100
+	actions := make([]*mockAction, n)
+	for i := 0; i < n; i++ {
+		actions[i] = &mockAction{priority: int64(i)}
+	}
+
+	randomSuffle := make([]int, n)
+	for i := 0; i < n; i++ {
+		randomSuffle[i] = i
+		pos := rand.Int() % (i + 1)
+		randomSuffle[i], randomSuffle[pos] = randomSuffle[pos], randomSuffle[i]
+	}
+
+	for i := 0; i < n; i++ {
+		tracker.FallbackOldAndSetNewAction(actions[randomSuffle[i]])
+	}
+	for i := n - 1; i >= 0; i-- {
+		tracker.Consume(100)
+		for j := n - 1; j >= 0; j-- {
+			if j >= i {
+				c.Assert(actions[j].called, IsTrue)
+			} else {
+				c.Assert(actions[j].called, IsFalse)
+			}
+		}
+	}
 }

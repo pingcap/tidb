@@ -78,7 +78,7 @@ func (p *mockBinlogPump) PullBinlogs(req *binlog.PullBinlogReq, srv binlog.Pump_
 	return nil
 }
 
-var _ = Suite(&testBinlogSuite{})
+var _ = SerialSuites(&testBinlogSuite{})
 
 type testBinlogSuite struct {
 	store    kv.Storage
@@ -187,6 +187,7 @@ func (s *testBinlogSuite) TestBinlog(c *C) {
 	c.Assert(gotRows, DeepEquals, expected)
 
 	// Test table primary key is not integer.
+	tk.MustExec("set @@tidb_enable_clustered_index=0;")
 	tk.MustExec("create table local_binlog2 (name varchar(64) primary key, age int)")
 	tk.MustExec("insert local_binlog2 values ('abc', 16), ('def', 18)")
 	tk.MustExec("delete from local_binlog2 where name = 'def'")

@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	pd "github.com/pingcap/pd/v4/client"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
@@ -44,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	pd "github.com/tikv/pd/client"
 )
 
 func TestT(t *testing.T) {
@@ -60,7 +60,7 @@ type testGCWorkerSuite struct {
 	pdClient pd.Client
 }
 
-var _ = Suite(&testGCWorkerSuite{})
+var _ = SerialSuites(&testGCWorkerSuite{})
 
 func (s *testGCWorkerSuite) SetUpTest(c *C) {
 	tikv.NewGCHandlerFunc = NewGCWorker
@@ -120,17 +120,15 @@ func (s *testGCWorkerSuite) mustPut(c *C, key, value string) {
 }
 
 func (s *testGCWorkerSuite) mustGet(c *C, key string, ts uint64) string {
-	snap, err := s.store.GetSnapshot(kv.Version{Ver: ts})
-	c.Assert(err, IsNil)
+	snap := s.store.GetSnapshot(kv.Version{Ver: ts})
 	value, err := snap.Get(context.TODO(), []byte(key))
 	c.Assert(err, IsNil)
 	return string(value)
 }
 
 func (s *testGCWorkerSuite) mustGetNone(c *C, key string, ts uint64) {
-	snap, err := s.store.GetSnapshot(kv.Version{Ver: ts})
-	c.Assert(err, IsNil)
-	_, err = snap.Get(context.TODO(), []byte(key))
+	snap := s.store.GetSnapshot(kv.Version{Ver: ts})
+	_, err := snap.Get(context.TODO(), []byte(key))
 	if err != nil {
 		// Unistore's gc is based on compaction filter.
 		// So skip the error check if err == nil.
@@ -139,7 +137,7 @@ func (s *testGCWorkerSuite) mustGetNone(c *C, key string, ts uint64) {
 }
 
 func (s *testGCWorkerSuite) mustAllocTs(c *C) uint64 {
-	ts, err := s.oracle.GetTimestamp(context.Background())
+	ts, err := s.oracle.GetTimestamp(context.Background(), &oracle.Option{})
 	c.Assert(err, IsNil)
 	return ts
 }
@@ -546,6 +544,11 @@ const (
 )
 
 func (s *testGCWorkerSuite) testDeleteRangesFailureImpl(c *C, failType int) {
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/gcworker/mockHistoryJobForGC", "return(1)"), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/gcworker/mockHistoryJobForGC"), IsNil)
+	}()
+
 	// Put some delete range tasks.
 	se := createSession(s.gcWorker.store)
 	defer se.Close()
@@ -1470,4 +1473,16 @@ func (s *testGCWorkerSuite) TestPhyscailScanLockDeadlock(c *C) {
 	case <-time.After(5 * time.Second):
 		c.Fatal("physicalScanAndResolveLocks blocks")
 	}
+}
+
+func (s *testGCWorkerSuite) TestGCPlacementRules(c *C) {
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/gcworker/mockHistoryJobForGC", "return(1)"), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/gcworker/mockHistoryJobForGC"), IsNil)
+	}()
+
+	dr := util.DelRangeTask{JobID: 1, ElementID: 1}
+	pid, err := s.gcWorker.doGCPlacementRules(dr)
+	c.Assert(pid, Equals, int64(1))
+	c.Assert(err, IsNil)
 }

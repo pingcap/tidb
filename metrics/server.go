@@ -14,8 +14,6 @@
 package metrics
 
 import (
-	"strconv"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/terror"
 	"github.com/prometheus/client_golang/prometheus"
@@ -28,6 +26,15 @@ var (
 
 // Metrics
 var (
+	PacketIOHistogram = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "packet_io_bytes",
+			Help:      "Bucketed histogram of packet IO bytes.",
+			Buckets:   prometheus.ExponentialBuckets(4, 4, 21), // 4Bytes ~ 4TB
+		}, []string{LblType})
+
 	QueryDurationHistogram = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
@@ -171,6 +178,23 @@ var (
 			Name:      "maxprocs",
 			Help:      "The value of GOMAXPROCS.",
 		})
+
+	GOGC = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "gogc",
+			Help:      "The value of GOGC",
+		})
+
+	ConnIdleDurationHistogram = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "conn_idle_duration_seconds",
+			Help:      "Bucketed histogram of connection idle time (s).",
+			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 29), // 0.5ms ~ 1.5days
+		}, []string{LblInTxn})
 )
 
 // ExecuteErrorToLabel converts an execute error to label.
@@ -178,7 +202,7 @@ func ExecuteErrorToLabel(err error) string {
 	err = errors.Cause(err)
 	switch x := err.(type) {
 	case *terror.Error:
-		return x.Class().String() + ":" + strconv.Itoa(int(x.Code()))
+		return string(x.RFCCode())
 	default:
 		return "unknown"
 	}

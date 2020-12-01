@@ -159,6 +159,15 @@ type rpcHandler struct {
 	resolvedLocks  []uint64
 }
 
+func isTiFlashStore(store *metapb.Store) bool {
+	for _, l := range store.GetLabels() {
+		if l.GetKey() == "engine" && l.GetValue() == "tiflash" {
+			return true
+		}
+	}
+	return false
+}
+
 func (h *rpcHandler) checkRequestContext(ctx *kvrpcpb.Context) *errorpb.Error {
 	ctxPeer := ctx.GetPeer()
 	if ctxPeer != nil && ctxPeer.GetStoreId() != h.storeID {
@@ -204,8 +213,8 @@ func (h *rpcHandler) checkRequestContext(ctx *kvrpcpb.Context) *errorpb.Error {
 			},
 		}
 	}
-	// The Peer on the Store is not leader.
-	if storePeer.GetId() != leaderPeer.GetId() {
+	// The Peer on the Store is not leader. If it's tiflash store , we pass this check.
+	if storePeer.GetId() != leaderPeer.GetId() && !isTiFlashStore(h.cluster.GetStore(storePeer.GetStoreId())) {
 		return &errorpb.Error{
 			Message: *proto.String("not leader"),
 			NotLeader: &errorpb.NotLeader{
@@ -689,7 +698,7 @@ func (h *rpcHandler) handleBatchCopRequest(ctx context.Context, req *coprocessor
 			StartTs: req.StartTs,
 			Ranges:  ri.Ranges,
 		}
-		_, exec, dagReq, err := h.buildDAGExecutor(&cop, true)
+		_, exec, dagReq, err := h.buildDAGExecutor(&cop)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -1061,6 +1070,7 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 					OtherError: err.Message,
 				},
 			}
+			return resp, nil
 		}
 		ctx1, cancel := context.WithCancel(ctx)
 		batchCopStream, err := handler.handleBatchCopRequest(ctx1, r)

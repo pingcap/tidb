@@ -33,7 +33,7 @@ func (ds *DataSource) PreparePossibleProperties(schema *expression.Schema, child
 	result := make([][]*expression.Column, 0, len(ds.possibleAccessPaths))
 
 	for _, path := range ds.possibleAccessPaths {
-		if path.IsTablePath() {
+		if path.IsIntHandlePath {
 			col := ds.getPKIsHandleCol()
 			if col != nil {
 				result = append(result, []*expression.Column{col})
@@ -200,10 +200,11 @@ func (la *LogicalAggregation) PreparePossibleProperties(schema *expression.Schem
 		return nil
 	}
 	resultProperties := make([][]*expression.Column, 0, len(childProps))
+	groupByCols := la.GetGroupByCols()
 	for _, possibleChildProperty := range childProps {
-		sortColOffsets := getMaxSortPrefix(possibleChildProperty, la.groupByCols)
-		if len(sortColOffsets) == len(la.groupByCols) {
-			resultProperties = append(resultProperties, possibleChildProperty[:len(la.groupByCols)])
+		sortColOffsets := getMaxSortPrefix(possibleChildProperty, groupByCols)
+		if len(sortColOffsets) == len(groupByCols) {
+			resultProperties = append(resultProperties, possibleChildProperty[:len(groupByCols)])
 		}
 	}
 	la.possibleProperties = resultProperties
