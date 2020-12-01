@@ -452,7 +452,7 @@ type Driver interface {
 type Storage interface {
 	// Begin a global transaction
 	Begin() (Transaction, error)
-	// Begin transaction with the given txnScope (local or global)
+	// Begin a transaction with the given txnScope (local or global)
 	BeginWithTxnScope(txnScope string) (Transaction, error)
 	// BeginWithStartTS begins transaction with given txnScope and startTS.
 	BeginWithStartTS(txnScope string, startTS uint64) (Transaction, error)

@@ -157,7 +157,7 @@ func (*mockTxn) IsPessimistic() bool {
 	return false
 }
 
-// BeginWithStartTS begins a transaction with startTS.
+// BeginWithStartTS begins transaction with given txnScope and startTS.
 func (s *mockStorage) BeginWithStartTS(txnScope string, startTS uint64) (Transaction, error) {
 	return s.Begin()
 }
@@ -181,6 +181,7 @@ func (s *mockStorage) CurrentVersion() (Version, error) {
 	return NewVersion(1), nil
 }
 
+// CurrentVersionWithTxnScope returns current max committed version with the given txnScope.
 func (s *mockStorage) CurrentVersionWithTxnScope(txnScope string) (Version, error) {
 	return NewVersion(1), nil
 }
