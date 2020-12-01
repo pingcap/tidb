@@ -1815,7 +1815,8 @@ func (s *testPessimisticSuite) TestAmendForUniqueIndex(c *C) {
 		err := tk2.ExecToErr("alter table t add unique index uk(c);")
 		finishCh <- err
 	}()
-	time.Sleep(100 * time.Millisecond)
+	// This sleep should not be too short to avoid schema version change after amend.
+	time.Sleep(350 * time.Millisecond)
 	tk.MustExec("commit")
 	err = <-finishCh
 	c.Assert(err, IsNil)
