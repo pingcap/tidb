@@ -296,7 +296,7 @@ func (bq *brieQueue) releaseTask() {
 	<-bq.workerCh
 }
 
-// cancelTask cleans task status in mysql.brie_tasks. please note that cancellation of ctx is outside of this fucntion.
+// cancelTask cleans task status in mysql.brie_tasks. please note that cancellation of ctx is outside of this function.
 // delete param means if it should delete record or update cancel status of record. The latter is used in import tasks.
 func (bq *brieQueue) cancelTask(ctx context.Context, taskID uint64, se sqlexec.RestrictedSQLExecutor, delete bool) {
 	var sql string
