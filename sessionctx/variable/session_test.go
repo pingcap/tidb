@@ -203,6 +203,7 @@ func (*testSessionSuite) TestSlowLogFormat(c *C) {
 # Disk_max: 6666
 # Prepared: true
 # Plan_from_cache: true
+# Plan_from_binding: true
 # Has_more_results: true
 # KV_total: 10
 # PD_total: 11
@@ -228,6 +229,7 @@ func (*testSessionSuite) TestSlowLogFormat(c *C) {
 		DiskMax:           diskMax,
 		Prepared:          true,
 		PlanFromCache:     true,
+		PlanFromBinding:   true,
 		HasMoreResults:    true,
 		KVTotal:           10 * time.Second,
 		PDTotal:           11 * time.Second,

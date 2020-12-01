@@ -114,12 +114,13 @@ type twoPhaseCommitter struct {
 		noFallBack           bool
 	}
 
-	useAsyncCommit  uint32
-	minCommitTS     uint64
-	maxCommitTS     uint64
-	prewriteStarted bool
-	useOnePC        uint32
-	onePCCommitTS   uint64
+	useAsyncCommit    uint32
+	minCommitTS       uint64
+	maxCommitTS       uint64
+	prewriteStarted   bool
+	prewriteCancelled uint32
+	useOnePC          uint32
+	onePCCommitTS     uint64
 }
 
 type memBufferMutations struct {
@@ -799,7 +800,7 @@ func (tm *ttlManager) keepAlive(c *twoPhaseCommitter) {
 				return
 			}
 			bo := NewBackofferWithVars(context.Background(), pessimisticLockMaxBackoff, c.txn.vars)
-			now, err := c.store.GetOracle().GetTimestamp(bo.ctx)
+			now, err := c.store.GetOracle().GetTimestamp(bo.ctx, &oracle.Option{TxnScope: oracle.GlobalTxnScope})
 			if err != nil {
 				err1 := bo.Backoff(BoPDRPC, err)
 				if err1 != nil {
@@ -970,7 +971,7 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 		} else if c.isAsyncCommit() {
 			// The error means the async commit should not succeed.
 			if err != nil {
-				if c.prewriteStarted && c.getUndeterminedErr() == nil {
+				if c.getUndeterminedErr() == nil {
 					c.cleanup(ctx)
 				}
 				tikvAsyncCommitTxnCounterError.Inc()
@@ -983,7 +984,7 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 			committed := c.mu.committed
 			undetermined := c.mu.undeterminedErr != nil
 			c.mu.RUnlock()
-			if c.prewriteStarted && !committed && !undetermined {
+			if !committed && !undetermined {
 				c.cleanup(ctx)
 			}
 			c.txn.commitTS = c.commitTS
@@ -1015,7 +1016,7 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 	// than the snapshot TS of all existent readers. So we get a new timestamp
 	// from PD as our MinCommitTS.
 	if commitTSMayBeCalculated && config.GetGlobalConfig().TiKVClient.ExternalConsistency {
-		minCommitTS, err := c.store.oracle.GetTimestamp(ctx)
+		minCommitTS, err := c.store.oracle.GetTimestamp(ctx, &oracle.Option{TxnScope: oracle.GlobalTxnScope})
 		// If we fail to get a timestamp from PD, we just propagate the failure
 		// instead of falling back to the normal 2PC because a normal 2PC will
 		// also be likely to fail due to the same timestamp issue.
@@ -1125,6 +1126,7 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 
 	if c.connID > 0 {
 		failpoint.Inject("beforeSchemaCheck", func() {
+			c.ttlManager.close()
 			failpoint.Return()
 		})
 	}
@@ -1158,7 +1160,7 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 	}
 	c.commitTS = commitTS
 
-	if c.store.oracle.IsExpired(c.startTS, kv.MaxTxnTimeUse) {
+	if c.store.oracle.IsExpired(c.startTS, kv.MaxTxnTimeUse, &oracle.Option{TxnScope: oracle.GlobalTxnScope}) {
 		err = errors.Errorf("conn %d txn takes too much time, txnStartTS: %d, comm: %d",
 			c.connID, c.startTS, c.commitTS)
 		return err
@@ -1283,11 +1285,19 @@ func (c *twoPhaseCommitter) tryAmendTxn(ctx context.Context, startInfoSchema Sch
 		memBuf := c.txn.GetMemBuffer()
 		for i := 0; i < addMutations.Len(); i++ {
 			key := addMutations.GetKey(i)
-			if err := memBuf.Set(key, addMutations.GetValue(i)); err != nil {
+			op := addMutations.GetOp(i)
+			var err error
+			if op == pb.Op_Del {
+				err = memBuf.Delete(key)
+			} else {
+				err = memBuf.Set(key, addMutations.GetValue(i))
+			}
+			if err != nil {
+				logutil.Logger(ctx).Warn("amend mutations has failed", zap.Error(err), zap.Uint64("txnStartTS", c.startTS))
 				return false, err
 			}
 			handle := c.txn.GetMemBuffer().IterWithFlags(key, nil).Handle()
-			c.mutations.Push(addMutations.GetOp(i), addMutations.IsPessimisticLock(i), handle)
+			c.mutations.Push(op, addMutations.IsPessimisticLock(i), handle)
 		}
 	}
 	return false, nil
@@ -1614,6 +1624,7 @@ func (batchExe *batchExecutor) process(batches []batchMutations) error {
 					zap.Uint64("conn", batchExe.committer.connID),
 					zap.Stringer("action type", batchExe.action),
 					zap.Uint64("txnStartTS", batchExe.committer.startTS))
+				atomic.StoreUint32(&batchExe.committer.prewriteCancelled, 1)
 				cancel()
 			}
 			if err == nil {
