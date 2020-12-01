@@ -37,6 +37,7 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 		for _, c := range x.Children() {
 			strs, idxs = toString(c, strs, idxs)
 		}
+	case *PhysicalExchangeReceiver: // do nothing
 	case PhysicalPlan:
 		if len(x.Children()) > 1 {
 			idxs = append(idxs, len(strs))
