@@ -24,7 +24,6 @@ import (
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
@@ -485,15 +484,6 @@ var defaultSysVars = []*SysVar{
 			return normalizedValue, errors.Trace(err)
 		}
 		return normalizedValue, nil
-	}, SetSession: func(s *SessionVars, val string) error {
-		coll, err := collate.GetCollationByName(val)
-		if err != nil {
-			logutil.BgLogger().Warn(err.Error())
-			coll, err = collate.GetCollationByName(charset.CollationUTF8MB4)
-		}
-		s.systems[CollationServer] = coll.Name
-		s.systems[CharacterSetServer] = coll.CharsetName
-		return nil
 	}},
 	{Scope: ScopeNone, Name: "have_rtree_keys", Value: "YES"},
 	{Scope: ScopeGlobal, Name: "innodb_old_blocks_pct", Value: "37"},
@@ -643,15 +633,6 @@ var defaultSysVars = []*SysVar{
 			return normalizedValue, errors.Trace(err)
 		}
 		return normalizedValue, nil
-	}, SetSession: func(s *SessionVars, val string) error {
-		coll, err := collate.GetCollationByName(val)
-		if err != nil {
-			logutil.BgLogger().Warn(err.Error())
-			coll, err = collate.GetCollationByName(charset.CollationUTF8MB4)
-		}
-		s.systems[CollationDatabase] = coll.Name
-		s.systems[CharsetDatabase] = coll.CharsetName
-		return nil
 	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: AutoIncrementIncrement, Value: strconv.FormatInt(DefAutoIncrementIncrement, 10), Type: TypeUnsigned, MinValue: 1, MaxValue: math.MaxUint16, AutoConvertOutOfRange: true, SetSession: func(s *SessionVars, val string) error {
 		s.AutoIncrementIncrement = tidbOptPositiveInt32(val, DefAutoIncrementIncrement)
@@ -751,19 +732,7 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal | ScopeSession, Name: BinlogDirectNonTransactionalUpdates, Value: BoolOff, Type: TypeBool},
 	{Scope: ScopeGlobal, Name: "innodb_change_buffering", Value: "all"},
 	{Scope: ScopeGlobal | ScopeSession, Name: SQLBigSelects, Value: BoolOn, Type: TypeBool, IsHintUpdatable: true},
-	{Scope: ScopeGlobal | ScopeSession, Name: CharacterSetResults, Value: mysql.DefaultCharset, SetSession: func(s *SessionVars, val string) error {
-		if val == "" {
-			s.systems[CharacterSetResults] = ""
-			return nil
-		}
-		cht, _, err := charset.GetCharsetInfo(val)
-		if err != nil {
-			logutil.BgLogger().Warn(err.Error())
-			cht, _ = charset.GetDefaultCharsetAndCollate()
-		}
-		s.systems[CharacterSetResults] = cht
-		return nil
-	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: CharacterSetResults, Value: mysql.DefaultCharset},
 	{Scope: ScopeGlobal, Name: "innodb_max_purge_lag_delay", Value: "0"},
 	{Scope: ScopeGlobal | ScopeSession, Name: "session_track_schema", Value: ""},
 	{Scope: ScopeGlobal, Name: "innodb_io_capacity_max", Value: "2000"},
@@ -801,15 +770,6 @@ var defaultSysVars = []*SysVar{
 			return normalizedValue, errors.Trace(err)
 		}
 		return normalizedValue, nil
-	}, SetSession: func(s *SessionVars, val string) error {
-		coll, err := collate.GetCollationByName(val)
-		if err != nil {
-			logutil.BgLogger().Warn(err.Error())
-			coll, err = collate.GetCollationByName(charset.CollationUTF8MB4)
-		}
-		s.systems[CollationConnection] = coll.Name
-		s.systems[CharacterSetConnection] = coll.CharsetName
-		return nil
 	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: "transaction_prealloc_size", Value: "4096"},
 	{Scope: ScopeNone, Name: "performance_schema_setup_objects_size", Value: "100"},
@@ -1006,19 +966,7 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal | ScopeSession, Name: "character_set_connection", Value: mysql.DefaultCharset},
 	{Scope: ScopeGlobal, Name: MyISAMUseMmap, Value: BoolOff, Type: TypeBool, AutoConvertNegativeBool: true},
 	{Scope: ScopeGlobal | ScopeSession, Name: "ndb_join_pushdown", Value: ""},
-	{Scope: ScopeGlobal | ScopeSession, Name: CharacterSetServer, Value: mysql.DefaultCharset, SetSession: func(s *SessionVars, val string) error {
-		if val == "" {
-			return ErrWrongValueForVar.GenWithStackByArgs(CharacterSetServer, "NULL")
-		}
-		cht, coll, err := charset.GetCharsetInfo(val)
-		if err != nil {
-			logutil.BgLogger().Warn(err.Error())
-			cht, coll = charset.GetDefaultCharsetAndCollate()
-		}
-		s.systems[CollationServer] = coll
-		s.systems[CharacterSetServer] = cht
-		return nil
-	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: CharacterSetServer, Value: mysql.DefaultCharset},
 	{Scope: ScopeGlobal, Name: "validate_password_special_char_count", Value: "1"},
 	{Scope: ScopeNone, Name: "performance_schema_max_thread_instances", Value: "402"},
 	{Scope: ScopeGlobal | ScopeSession, Name: "ndbinfo_show_hidden", Value: ""},

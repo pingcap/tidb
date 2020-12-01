@@ -1238,9 +1238,30 @@ func (s *SessionVars) ClearStmtVars() {
 // Validation has already been performed.
 func (s *SessionVars) SetSystemVar(name string, val string) error {
 	switch name {
-	case CharacterSetSystem, CharacterSetConnection, CharacterSetClient, CharsetDatabase, CharacterSetFilesystem:
-		// Special handling, these are not present in SHOW VARIABLES/do not have sysvars.
+	case CollationConnection, CollationDatabase, CollationServer:
+		coll, err := collate.GetCollationByName(val)
+		if err != nil {
+			logutil.BgLogger().Warn(err.Error())
+			coll, err = collate.GetCollationByName(charset.CollationUTF8MB4)
+		}
+		switch name {
+		case CollationConnection:
+			s.systems[CollationConnection] = coll.Name
+			s.systems[CharacterSetConnection] = coll.CharsetName
+		case CollationDatabase:
+			s.systems[CollationDatabase] = coll.Name
+			s.systems[CharsetDatabase] = coll.CharsetName
+		case CollationServer:
+			s.systems[CollationServer] = coll.Name
+			s.systems[CharacterSetServer] = coll.CharsetName
+		}
+	case CharacterSetSystem, CharacterSetConnection, CharacterSetClient, CharacterSetResults,
+		CharacterSetServer, CharsetDatabase, CharacterSetFilesystem:
 		if val == "" {
+			if name == CharacterSetResults {
+				s.systems[CharacterSetResults] = ""
+				return nil
+			}
 			return ErrWrongValueForVar.GenWithStackByArgs(name, "NULL")
 		}
 		cht, coll, err := charset.GetCharsetInfo(val)
@@ -1255,6 +1276,9 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		case CharsetDatabase:
 			s.systems[CollationDatabase] = coll
 			s.systems[CharsetDatabase] = cht
+		case CharacterSetServer:
+			s.systems[CollationServer] = coll
+			s.systems[CharacterSetServer] = cht
 		default:
 			s.systems[name] = cht
 		}
