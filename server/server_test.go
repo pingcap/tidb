@@ -593,8 +593,8 @@ func (cli *testServerClient) runTestLoadDataForListPartition2(c *C) {
 		dbt.mustExec(fmt.Sprintf("load data local infile %q into table t (id,name)", path))
 		rows = dbt.mustQuery("show warnings")
 		cli.checkRows(c, rows,
-			"Warning 1062 Duplicate entry '(1, 2)' for key 'idx'",
-			"Warning 1062 Duplicate entry '(2, 2)' for key 'idx'")
+			"Warning 1062 Duplicate entry '1-2' for key 'idx'",
+			"Warning 1062 Duplicate entry '2-2' for key 'idx'")
 		rows = dbt.mustQuery("select id,name from t order by id")
 		cli.checkRows(c, rows, "1 a", "2 b", "3 c", "4 e", "7 a")
 		// Test load data meet no partition error.
@@ -685,7 +685,7 @@ func (cli *testServerClient) runTestLoadDataForListColumnPartition2(c *C) {
 		cli.prepareLoadDataFile(c, path, "w 1 2", "w 2 2")
 		dbt.mustExec(fmt.Sprintf("load data local infile %q into table t", path))
 		rows = dbt.mustQuery("show warnings")
-		cli.checkRows(c, rows, "Warning 1062 Duplicate entry '(w, 1)' for key 'idx'")
+		cli.checkRows(c, rows, "Warning 1062 Duplicate entry 'w-1' for key 'idx'")
 		rows = dbt.mustQuery("select * from t order by id")
 		cli.checkRows(c, rows, "w 1 1", "w 2 2", "e 5 5", "n 9 9")
 		// Test load data meet no partition error.
@@ -702,7 +702,7 @@ func (cli *testServerClient) runTestLoadDataForListColumnPartition2(c *C) {
 	})
 }
 
-func (_ *testServerClient) checkRows(c *C, rows *sql.Rows, expectedRows ...string) {
+func (cli *testServerClient) checkRows(c *C, rows *sql.Rows, expectedRows ...string) {
 	buf := bytes.NewBuffer(nil)
 	result := make([]string, 0, 2)
 	for rows.Next() {
