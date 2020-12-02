@@ -203,7 +203,6 @@ commit-timeout="41s"
 max-batch-size=128
 region-cache-ttl=6000
 store-limit=0
-ttl-refreshed-txn-size=8192
 [tikv-client.async-commit]
 keys-limit=123
 total-key-size-limit=1024
@@ -245,7 +244,6 @@ spilled-file-encryption-method = "plaintext"
 	c.Assert(conf.TiKVClient.MaxBatchSize, Equals, uint(128))
 	c.Assert(conf.TiKVClient.RegionCacheTTL, Equals, uint(6000))
 	c.Assert(conf.TiKVClient.StoreLimit, Equals, int64(0))
-	c.Assert(conf.TiKVClient.TTLRefreshedTxnSize, Equals, int64(8192))
 	c.Assert(conf.TokenLimit, Equals, uint(1000))
 	c.Assert(conf.EnableTableLock, IsTrue)
 	c.Assert(conf.DelayCleanTableLock, Equals, uint64(5))

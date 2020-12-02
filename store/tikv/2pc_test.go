@@ -133,11 +133,6 @@ func randKV(keyLen, valLen int) (string, string) {
 }
 
 func (s *testCommitterSuite) TestDeleteYourWritesTTL(c *C) {
-	conf := *config.GetGlobalConfig()
-	oldConf := conf
-	defer config.StoreGlobalConfig(&oldConf)
-	conf.TiKVClient.TTLRefreshedTxnSize = 0
-	config.StoreGlobalConfig(&conf)
 	bo := NewBackofferWithVars(context.Background(), getMaxBackoff, nil)
 
 	{
@@ -150,6 +145,8 @@ func (s *testCommitterSuite) TestDeleteYourWritesTTL(c *C) {
 		c.Assert(err, IsNil)
 		committer, err := newTwoPhaseCommitterWithInit(txn, 0)
 		c.Assert(err, IsNil)
+		// mock txnSize to start ttlManager
+		committer.txnSize = 10 * bytesPerMiB
 		err = committer.prewriteMutations(bo, committer.mutations)
 		c.Assert(err, IsNil)
 		state := atomic.LoadUint32((*uint32)(&committer.ttlManager.state))
@@ -166,6 +163,8 @@ func (s *testCommitterSuite) TestDeleteYourWritesTTL(c *C) {
 		c.Assert(err, IsNil)
 		committer, err := newTwoPhaseCommitterWithInit(txn, 0)
 		c.Assert(err, IsNil)
+		// mock txnSize to start ttlManager
+		committer.txnSize = 10 * bytesPerMiB
 		err = committer.prewriteMutations(bo, committer.mutations)
 		c.Assert(err, IsNil)
 		state := atomic.LoadUint32((*uint32)(&committer.ttlManager.state))
