@@ -119,7 +119,7 @@ func validEqualCond(ctx sessionctx.Context, cond Expression) (*Column, *Constant
 //  for 'a, b, a < 3', it returns 'true, false, b < 3'
 //  for 'a, b, sin(a) + cos(a) = 5', it returns 'true, false, returns sin(b) + cos(b) = 5'
 //  for 'a, b, cast(a) < rand()', it returns 'false, true, cast(a) < rand()'
-func tryToReplaceCond(ctx sessionctx.Context, src *Column, tgt *Column, cond Expression, rejectNullSens bool) (bool, bool, Expression) {
+func tryToReplaceCond(ctx sessionctx.Context, src *Column, tgt *Column, cond Expression, nullAware bool) (bool, bool, Expression) {
 	sf, ok := cond.(*ScalarFunction)
 	if !ok {
 		return false, false, cond
@@ -139,7 +139,7 @@ func tryToReplaceCond(ctx sessionctx.Context, src *Column, tgt *Column, cond Exp
 	// Its args cannot be replaced easily.
 	// A more strict check is that after we replace the arg. We check the nullability of the new expression.
 	// But we haven't maintained it yet, so don't replace the arg of the control function currently.
-	if rejectNullSens &&
+	if nullAware &&
 		(sf.FuncName.L == ast.Ifnull ||
 			sf.FuncName.L == ast.If ||
 			sf.FuncName.L == ast.Case ||
@@ -159,7 +159,7 @@ func tryToReplaceCond(ctx sessionctx.Context, src *Column, tgt *Column, cond Exp
 			}
 			args[idx] = tgt
 		} else {
-			subReplaced, isNonDeterministic, subExpr := tryToReplaceCond(ctx, src, tgt, expr, rejectNullSens)
+			subReplaced, isNonDeterministic, subExpr := tryToReplaceCond(ctx, src, tgt, expr, nullAware)
 			if isNonDeterministic {
 				return false, true, cond
 			} else if subReplaced {
