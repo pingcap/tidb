@@ -60,7 +60,7 @@ type tikvTxn struct {
 	snapshot  *tikvSnapshot
 	us        kv.UnionStore
 	store     *tikvStore // for connection to region.
-	txnScope  string     // txn_scope indicates which txn_scope this TiKV transaction will work on.
+	txnScope  string     // txn_scope indicates which txn_scope this TiKV transaction will work with.
 	startTS   uint64
 	startTime time.Time // Monotonic timestamp for recording txn time consuming.
 	commitTS  uint64
