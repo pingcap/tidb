@@ -466,6 +466,9 @@ func (s *session) doCommit(ctx context.Context) error {
 	if s.GetSessionVars().EnableAmendPessimisticTxn {
 		s.txn.SetOption(kv.SchemaAmender, NewSchemaAmenderForTikvTxn(s))
 	}
+	s.txn.SetOption(kv.EnableAsyncCommit, s.GetSessionVars().EnableAsyncCommit)
+	s.txn.SetOption(kv.Enable1PC, s.GetSessionVars().Enable1PC)
+	s.txn.SetOption(kv.GuaranteeExternalConsistency, s.GetSessionVars().GuaranteeExternalConsistency)
 
 	return s.txn.Commit(sessionctx.SetCommitCtx(ctx, s))
 }
@@ -2011,23 +2014,27 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 		}
 	}
 
-	err = executor.LoadExprPushdownBlacklist(se)
+	se4, err := createSession(store)
+	if err != nil {
+		return nil, err
+	}
+	err = executor.LoadExprPushdownBlacklist(se4)
 	if err != nil {
 		return nil, err
 	}
 
-	err = executor.LoadOptRuleBlacklist(se)
+	err = executor.LoadOptRuleBlacklist(se4)
 	if err != nil {
 		return nil, err
 	}
 
-	dom.TelemetryLoop(se)
+	dom.TelemetryLoop(se4)
 
-	se1, err := createSession(store)
+	se5, err := createSession(store)
 	if err != nil {
 		return nil, err
 	}
-	err = dom.UpdateTableStatsLoop(se1)
+	err = dom.UpdateTableStatsLoop(se5)
 	if err != nil {
 		return nil, err
 	}
@@ -2284,6 +2291,9 @@ var builtinGlobalVariable = []string{
 	variable.TiDBEnableAmendPessimisticTxn,
 	variable.TiDBMemoryUsageAlarmRatio,
 	variable.TiDBEnableRateLimitAction,
+	variable.TiDBEnableAsyncCommit,
+	variable.TiDBEnable1PC,
+	variable.TiDBGuaranteeExternalConsistency,
 }
 
 var (
