@@ -524,7 +524,7 @@ const (
 	DefTiDBHashJoinConcurrency         = ConcurrencyUnset
 	DefTiDBProjectionConcurrency       = ConcurrencyUnset
 	DefBroadcastJoinThresholdSize      = 100 * 1024 * 1024
-	DefBroadcastJoinThresholdCount     = 100 * 1024
+	DefBroadcastJoinThresholdCount     = 10 * 1024
 	DefTiDBOptimizerSelectivityLevel   = 0
 	DefTiDBAllowBatchCop               = 1
 	DefTiDBAllowMPPExecution           = false

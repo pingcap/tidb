@@ -1560,11 +1560,11 @@ func (p *LogicalJoin) tryToGetIndexJoin(prop *property.PhysicalProperty) (indexJ
 
 func checkChildFitBC(p Plan) bool {
 	if p.statsInfo().HistColl == nil {
-		return p.statsInfo().Count() < p.SCtx().GetSessionVars().BroadcastJoinThresholdSize
+		return p.statsInfo().Count() < p.SCtx().GetSessionVars().BroadcastJoinThresholdCount
 	}
 	avg := p.statsInfo().HistColl.GetAvgRowSize(p.SCtx(), p.Schema().Columns, false, false)
 	sz := avg * float64(p.statsInfo().Count())
-	return sz < float64(p.SCtx().GetSessionVars().BroadcastJoinThresholdCount)
+	return sz < float64(p.SCtx().GetSessionVars().BroadcastJoinThresholdSize)
 }
 
 func (p *LogicalJoin) shouldUseMPPBCJ() bool {
