@@ -94,6 +94,8 @@ func (sc *simpleLRUStatsCache) SetBytesLimit(BytesLimit int64) {
 
 // BytesConsumed returns the consumed memory usage value in bytes.
 func (sc *simpleLRUStatsCache) BytesConsumed() int64 {
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
 	return sc.memTracker.BytesConsumed()
 }
 
