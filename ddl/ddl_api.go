@@ -4643,10 +4643,16 @@ func getIdentKey(ident ast.Ident) string {
 	return fmt.Sprintf("%s.%s", ident.Schema.L, ident.Name.L)
 }
 
-func getAnonymousIndex(t table.Table, colName model.CIStr) model.CIStr {
+func getAnonymousIndex(t table.Table, colName model.CIStr, idxName model.CIStr) model.CIStr {
+	// `id` is used to indicated the index name's suffix.
 	id := 2
 	l := len(t.Indices())
 	indexName := colName
+	if idxName.O != "" {
+		// Use the provided index name, it only happens when the original index name is too long and be truncated.
+		indexName = idxName
+		id = 3
+	}
 	if strings.EqualFold(indexName.L, mysql.PrimaryKeyName) {
 		indexName = model.NewCIStr(fmt.Sprintf("%s_%d", colName.O, id))
 		id = 3
@@ -4654,6 +4660,9 @@ func getAnonymousIndex(t table.Table, colName model.CIStr) model.CIStr {
 	for i := 0; i < l; i++ {
 		if t.Indices()[i].Meta().Name.L == indexName.L {
 			indexName = model.NewCIStr(fmt.Sprintf("%s_%d", colName.O, id))
+			if err := checkTooLongIndex(indexName); err != nil {
+				indexName = getAnonymousIndex(t, model.NewCIStr(colName.O[:30]), model.NewCIStr(fmt.Sprintf("%s_%d", colName.O[:30], 2)))
+			}
 			i = -1
 			id++
 		}
@@ -4835,7 +4844,7 @@ func (d *ddl) CreateIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 		if indexPartSpecifications[0].Column != nil {
 			colName = indexPartSpecifications[0].Column.Name
 		}
-		indexName = getAnonymousIndex(t, colName)
+		indexName = getAnonymousIndex(t, colName, model.NewCIStr(""))
 	}
 
 	if indexInfo := t.Meta().FindIndexByName(indexName.L); indexInfo != nil {
