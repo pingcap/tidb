@@ -63,7 +63,7 @@ func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *
 			Op:  pb.Op_PessimisticLock,
 			Key: m.GetKey(i),
 		}
-		if c.txn.us.HasPresumeKeyNotExists(m.GetKey(i)) {
+		if c.txn.us.HasPresumeKeyNotExists(m.GetKey(i)) || (c.doingAmend && m.GetOp(i) == pb.Op_Insert) {
 			mut.Assertion = pb.Assertion_NotExist
 		}
 		mutations[i] = mut
