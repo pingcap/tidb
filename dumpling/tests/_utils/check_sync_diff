@@ -1,4 +1,7 @@
 #!/bin/bash
+#
+# Copyright 2020 PingCAP, Inc. Licensed under Apache-2.0.
+
 # parameter 1: config file for sync_diff_inspector
 # parameter 2: max check times
 
