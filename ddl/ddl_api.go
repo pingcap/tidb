@@ -1987,29 +1987,12 @@ func checkPartitionByRange(ctx sessionctx.Context, tbInfo *model.TableInfo) erro
 		return checkRangePartitionValue(ctx, tbInfo)
 	}
 
-	// Check for range columns partition.
-	if err := checkColumnsPartitionType(tbInfo); err != nil {
-		return err
-	}
-
 	return checkRangeColumnsPartitionValue(ctx, tbInfo)
 }
 
 // checkPartitionByList checks validity of a "BY LIST" partition.
 func checkPartitionByList(ctx sessionctx.Context, tbInfo *model.TableInfo) error {
-	pi := tbInfo.Partition
-
-	if err := checkListPartitionValue(ctx, tbInfo); err != nil {
-		return err
-	}
-
-	if len(pi.Columns) != 0 {
-		if err := checkColumnsPartitionType(tbInfo); err != nil {
-			return err
-		}
-	}
-
-	return nil
+	return checkListPartitionValue(ctx, tbInfo)
 }
 
 func checkColumnsPartitionType(tbInfo *model.TableInfo) error {
@@ -5231,9 +5214,7 @@ func checkColumnsTypeAndValuesMatch(ctx sessionctx.Context, meta *model.TableInf
 		case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeDuration:
 			switch vkind {
 			case types.KindString, types.KindBytes:
-				if _, err := val.ConvertTo(ctx.GetSessionVars().StmtCtx, colType); err != nil {
-					return ErrWrongTypeColumnValue.GenWithStackByArgs()
-				}
+				break
 			default:
 				return ErrWrongTypeColumnValue.GenWithStackByArgs()
 			}
@@ -5255,6 +5236,10 @@ func checkColumnsTypeAndValuesMatch(ctx sessionctx.Context, meta *model.TableInf
 			default:
 				return ErrWrongTypeColumnValue.GenWithStackByArgs()
 			}
+		}
+		_, err = val.ConvertTo(ctx.GetSessionVars().StmtCtx, colType)
+		if err != nil {
+			return ErrWrongTypeColumnValue.GenWithStackByArgs()
 		}
 	}
 	return nil
