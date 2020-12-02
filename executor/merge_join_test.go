@@ -623,11 +623,11 @@ func (s *testSuite2) TestShuffleMergeJoin(c *C) {
 	tk.MustExec("insert into s values (4), (1), (3), (2)")
 	tk.MustQuery("explain select s1.a1 from (select a as a1 from s order by s.a desc) as s1 join (select a as a2 from s order by s.a desc) as s2 on s1.a1 = s2.a2 order by s1.a1 desc").Check(testkit.Rows(
 		"MergeJoin_28 12487.50 root  inner join, left key:test.s.a, right key:test.s.a",
-		"├─Sort_31(Build) 9990.00 root  test.s.a:desc",
+		"├─Sort_31(Build) 9990.00 root  schema:[test.s.a], items:test.s.a:desc",
 		"│ └─TableReader_26 9990.00 root  data:Selection_25",
 		"│   └─Selection_25 9990.00 cop[tikv]  not(isnull(test.s.a))",
 		"│     └─TableFullScan_24 10000.00 cop[tikv] table:s keep order:false, stats:pseudo",
-		"└─Sort_29(Probe) 9990.00 root  test.s.a:desc",
+		"└─Sort_29(Probe) 9990.00 root  schema:[test.s.a], items:test.s.a:desc",
 		"  └─TableReader_21 9990.00 root  data:Selection_20",
 		"    └─Selection_20 9990.00 cop[tikv]  not(isnull(test.s.a))",
 		"      └─TableFullScan_19 10000.00 cop[tikv] table:s keep order:false, stats:pseudo",

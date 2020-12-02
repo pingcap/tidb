@@ -488,7 +488,7 @@
       {
         "SQL": "select * from t1 natural right join t2 order by a",
         "Plan": [
-          "Sort_6 12487.50 root  test.t2.a",
+          "Sort_6 12487.50 root  schema:[test.t2.a test.t2.c test.t1.b], items:test.t2.a",
           "└─Projection_8 12487.50 root  test.t2.a, test.t2.c, test.t1.b",
           "  └─HashJoin_9 12487.50 root  right outer join, equal:[eq(test.t1.a, test.t2.a)]",
           "    ├─TableReader_13(Build) 9990.00 root  data:Selection_12",
