@@ -586,6 +586,11 @@ error = '''
 Unsupported BRIE statement kind: %s
 '''
 
+["executor:8129"]
+error = '''
+Failed to update BRIE task metadata: %s
+'''
+
 ["expression:1139"]
 error = '''
 Got error '%-.64s' from regexp

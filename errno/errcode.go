@@ -986,6 +986,7 @@ const (
 	ErrBRIEImportFailed                    = 8126
 	ErrBRIEExportFailed                    = 8127
 	ErrBRIEUnsupported                     = 8128
+	ErrBRIETaskMeta                        = 8129
 
 	// Error codes used by TiDB ddl package
 	ErrUnsupportedDDLOperation            = 8200

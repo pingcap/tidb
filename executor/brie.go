@@ -85,17 +85,13 @@ type brieTaskProgress struct {
 	// To avoid concurrency problems, always use getter/setter
 	cmd atomic.Value
 
-	// current progress of the task. When update current merely, we could use atomic operation.
-	// When update current according to total, we should lock total first
-	current int64
-
-	// lock protects total. In some scenarios, current is decided by total, so locking total first could also keep
-	// consistency of those two fields
-	lock sync.Mutex
-
-	// total is the total progress of the task.
 	// the percentage of completeness is `(100%) * current / total`.
-	total int64
+	// in order to keep those two fields consistent, we must acquire mutex firstly.
+	lock struct {
+		sync.Mutex
+		current int64
+		total   int64
+	}
 }
 
 func (p *brieTaskProgress) getCmd() string {
@@ -112,20 +108,25 @@ func (p *brieTaskProgress) setCmd(c string) {
 
 // Inc implements glue.Progress
 func (p *brieTaskProgress) Inc() {
-	atomic.AddInt64(&p.current, 1)
+	p.lock.Lock()
+	p.lock.current += 1
+	p.lock.Unlock()
 }
 
 // Close implements glue.Progress
 func (p *brieTaskProgress) Close() {
 	p.lock.Lock()
-	atomic.StoreInt64(&p.current, p.total)
+	p.lock.current = p.lock.total
 	p.lock.Unlock()
 }
 
 // getFraction returns a real number whose range is [0, 100]
 func (p *brieTaskProgress) getFraction() float64 {
 	p.lock.Lock()
-	result := 100 * float64(atomic.LoadInt64(&p.current)) / float64(p.total)
+	if p.lock.total == 0 {
+		return 0
+	}
+	result := 100 * float64(atomic.LoadInt64(&p.lock.current)) / float64(p.lock.total)
 	p.lock.Unlock()
 	// progress of import task is estimated, so may exceed 100%. we simply adjust here
 	if result > 100 {
@@ -217,7 +218,6 @@ var globalBRIEQueue = &brieQueue{
 }
 
 // registerTask registers a BRIE task in the queue.
-// we should ensure returned *brieQueueItem is not nil
 func (bq *brieQueue) registerTask(
 	ctx context.Context,
 	info *brieTaskInfo,
@@ -225,12 +225,11 @@ func (bq *brieQueue) registerTask(
 ) (context.Context, uint64, *brieQueueItem, error) {
 	taskCtx, taskCancel := context.WithCancel(ctx)
 	item := &brieQueueItem{
-		info:   info,
-		cancel: taskCancel,
-		progress: &brieTaskProgress{
-			total: 1,
-		},
+		info:     info,
+		cancel:   taskCancel,
+		progress: &brieTaskProgress{},
 	}
+	item.progress.lock.total = 1
 	item.progress.setCmd(cmdWait)
 
 	// use base64 encode to avoid SQL injection
@@ -248,15 +247,15 @@ func (bq *brieQueue) registerTask(
 	)
 	_, _, err := s.ExecRestrictedSQLWithContext(ctx, sql)
 	if err != nil {
-		return nil, 0, item, err
+		return nil, 0, nil, err
 	}
 	sql = fmt.Sprintf("SELECT MAX(id) FROM mysql.brie_tasks WHERE conn_id = %d;", info.connID)
 	rows, _, err := s.ExecRestrictedSQLWithContext(ctx, sql)
 	if err != nil {
-		return nil, 0, item, err
+		return nil, 0, nil, err
 	}
 	if len(rows) != 1 {
-		return nil, 0, item, fmt.Errorf("%s didn't return one row, err: %v", sql, err)
+		return nil, 0, nil, fmt.Errorf("%s didn't return one row, err: %v", sql, err)
 	}
 	r := rows[0]
 	taskID := r.GetUint64(0)
@@ -613,7 +612,7 @@ func (e *BRIEExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 	taskCtx, taskID, item, err := bq.registerTask(ctx, e.info, sqlExecutor)
 	if err != nil {
-		return err
+		return handleBRIEError(err, ErrBRIETaskMeta)
 	}
 	defer func() {
 		if !taskExecuted {
@@ -640,7 +639,7 @@ func (e *BRIEExec) Next(ctx context.Context, req *chunk.Chunk) error {
 					item.cancel()
 					return
 				}
-				glue.Flush(taskCtx, taskID)
+				glue.flush(taskCtx, taskID)
 			case <-taskCtx.Done():
 				return
 			}
@@ -649,7 +648,7 @@ func (e *BRIEExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 	err = bq.acquireTask(taskCtx, taskID, sqlExecutor)
 	if err != nil {
-		return err
+		return handleBRIEError(err, ErrBRIETaskMeta)
 	}
 	defer bq.releaseTask()
 
@@ -676,7 +675,7 @@ func (e *BRIEExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		return ErrBRIEUnsupported.GenWithStackByArgs(e.info.kind.String())
 	}
 	e.info.setFinishTime(types.CurrentTime(mysql.TypeDatetime))
-	glue.Flush(ctx, taskID)
+	glue.flush(ctx, taskID)
 	taskExecuted = true
 	if err != nil {
 		return err
@@ -836,8 +835,8 @@ func (gs *tidbGlueSession) OwnsStorage() bool {
 func (gs *tidbGlueSession) StartProgress(ctx context.Context, cmdName string, total int64, redirectLog bool) glue.Progress {
 	gs.progress.lock.Lock()
 	gs.progress.setCmd(cmdName)
-	gs.progress.total = total
-	atomic.StoreInt64(&gs.progress.current, 0)
+	gs.progress.lock.current = 0
+	gs.progress.lock.total = total
 	gs.progress.lock.Unlock()
 	return gs.progress
 }
@@ -855,16 +854,16 @@ func (gs *tidbGlueSession) Record(name string, value uint64) {
 	case importglue.RecordFinishedChunk:
 		current := int64(value)
 		gs.progress.lock.Lock()
-		if current >= gs.progress.total {
+		if current >= gs.progress.lock.total {
 			// TODO(lance6717): to be more exact, lightning could report status of restoring tables instead of chunks
 			gs.progress.setCmd(cmdPostProcess)
 		}
-		atomic.StoreInt64(&gs.progress.current, current)
+		gs.progress.lock.current = current
 		gs.progress.lock.Unlock()
 	}
 }
 
-func (gs *tidbGlueSession) Flush(ctx context.Context, taskID uint64) {
+func (gs *tidbGlueSession) flush(ctx context.Context, taskID uint64) {
 	sql := fmt.Sprintf(`UPDATE mysql.brie_tasks SET
 					exec_time = '%s',
 					finish_time = '%s',
@@ -892,24 +891,29 @@ func (gs *tidbGlueSession) Flush(ctx context.Context, taskID uint64) {
 	}
 }
 
+// OwnsSQLExecutor implements importglue.Glue
 func (gs *tidbGlueSession) OwnsSQLExecutor() bool {
 	return false
 }
 
+// GetSQLExecutor implements importglue.Glue
 func (gs *tidbGlueSession) GetSQLExecutor() importglue.SQLExecutor {
 	return gs
 }
 
+// GetParser implements importglue.Glue
 func (gs *tidbGlueSession) GetParser() *parser.Parser {
 	p := parser.New()
 	p.SetSQLMode(gs.se.GetSessionVars().SQLMode)
 	return p
 }
 
+// GetDB implements importglue.Glue
 func (gs *tidbGlueSession) GetDB() (*sql.DB, error) {
 	return nil, errors.New("tidbGlueSession can't perform GetDB")
 }
 
+// GetTables implements importglue.Glue
 func (gs *tidbGlueSession) GetTables(ctx context.Context, schemaName string) ([]*model.TableInfo, error) {
 	is := domain.GetDomain(gs.se).InfoSchema()
 	tables := is.SchemaTables(model.NewCIStr(schemaName))
@@ -920,6 +924,7 @@ func (gs *tidbGlueSession) GetTables(ctx context.Context, schemaName string) ([]
 	return tbsInfo, nil
 }
 
+// GetSession implements importglue.Glue
 func (gs *tidbGlueSession) GetSession() (checkpoints.Session, error) {
 	s, err := CreateSessionForBRIEFunc(gs.se)
 	if err != nil {
@@ -928,6 +933,7 @@ func (gs *tidbGlueSession) GetSession() (checkpoints.Session, error) {
 	return s, nil
 }
 
+// OpenCheckpointsDB implements importglue.Glue
 func (gs *tidbGlueSession) OpenCheckpointsDB(ctx context.Context, c *importcfg.Config) (checkpoints.CheckpointsDB, error) {
 	se, err := gs.GetSession()
 	if err != nil {

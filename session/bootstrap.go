@@ -458,7 +458,7 @@ const (
 	// version56 fixes the bug that upgradeToVer49 would be missed when upgrading from v4.0 to a new version
 	version56 = 56
 	// version57 add mysql.brie_jobs table.
-	version57 = 55
+	version57 = 57
 )
 
 var (

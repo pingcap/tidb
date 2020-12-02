@@ -49,4 +49,5 @@ var (
 	ErrBRIEImportFailed  = dbterror.ClassExecutor.NewStd(mysql.ErrBRIEImportFailed)
 	ErrBRIEExportFailed  = dbterror.ClassExecutor.NewStd(mysql.ErrBRIEExportFailed)
 	ErrBRIEUnsupported   = dbterror.ClassExecutor.NewStd(mysql.ErrBRIEUnsupported)
+	ErrBRIETaskMeta      = dbterror.ClassExecutor.NewStd(mysql.ErrBRIETaskMeta)
 )
