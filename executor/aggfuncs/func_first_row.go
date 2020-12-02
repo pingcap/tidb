@@ -52,8 +52,6 @@ type basePartialResult4FirstRow struct {
 	// gotFirstRow indicates whether the first row has been got,
 	// if so, we would avoid evaluating the values of the remained rows.
 	gotFirstRow bool
-	// finishedRows indicates the number of rows has been got.
-	finishedRows int
 }
 
 type partialResult4FirstRowInt struct {
@@ -131,7 +129,6 @@ func (e *firstRow4Int) ResetPartialResult(pr PartialResult) {
 
 func (e *firstRow4Int) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
 	p := (*partialResult4FirstRowInt)(pr)
-	p.finishedRows++
 	if p.gotFirstRow {
 		return memDelta, nil
 	}
@@ -163,9 +160,8 @@ func (e *firstRow4Int) AppendFinalResult2Chunk(sctx sessionctx.Context, pr Parti
 	return nil
 }
 
-func (e *firstRow4Int) GetFinishedRows(pr PartialResult) int {
-	p := (*partialResult4FirstRowInt)(pr)
-	return p.finishedRows
+func (e *firstRow4Int) IsFirstRow() bool {
+	return true
 }
 
 type firstRow4Float32 struct {
@@ -183,7 +179,6 @@ func (e *firstRow4Float32) ResetPartialResult(pr PartialResult) {
 
 func (e *firstRow4Float32) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
 	p := (*partialResult4FirstRowFloat32)(pr)
-	p.finishedRows++
 	if p.gotFirstRow {
 		return memDelta, nil
 	}
@@ -215,9 +210,8 @@ func (e *firstRow4Float32) AppendFinalResult2Chunk(sctx sessionctx.Context, pr P
 	return nil
 }
 
-func (e *firstRow4Float32) GetFinishedRows(pr PartialResult) int {
-	p := (*partialResult4FirstRowFloat32)(pr)
-	return p.finishedRows
+func (e *firstRow4Float32) IsFirstRow() bool {
+	return true
 }
 
 type firstRow4Float64 struct {
@@ -235,7 +229,6 @@ func (e *firstRow4Float64) ResetPartialResult(pr PartialResult) {
 
 func (e *firstRow4Float64) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
 	p := (*partialResult4FirstRowFloat64)(pr)
-	p.finishedRows++
 	if p.gotFirstRow {
 		return memDelta, nil
 	}
@@ -267,9 +260,8 @@ func (e *firstRow4Float64) AppendFinalResult2Chunk(sctx sessionctx.Context, pr P
 	return nil
 }
 
-func (e *firstRow4Float64) GetFinishedRows(pr PartialResult) int {
-	p := (*partialResult4FirstRowFloat64)(pr)
-	return p.finishedRows
+func (e *firstRow4Float64) IsFirstRow() bool {
+	return true
 }
 
 type firstRow4String struct {
@@ -287,7 +279,6 @@ func (e *firstRow4String) ResetPartialResult(pr PartialResult) {
 
 func (e *firstRow4String) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
 	p := (*partialResult4FirstRowString)(pr)
-	p.finishedRows++
 	if p.gotFirstRow {
 		return memDelta, nil
 	}
@@ -320,9 +311,8 @@ func (e *firstRow4String) AppendFinalResult2Chunk(sctx sessionctx.Context, pr Pa
 	return nil
 }
 
-func (e *firstRow4String) GetFinishedRows(pr PartialResult) int {
-	p := (*partialResult4FirstRowString)(pr)
-	return p.finishedRows
+func (e *firstRow4String) IsFirstRow() bool {
+	return true
 }
 
 type firstRow4Time struct {
@@ -340,7 +330,6 @@ func (e *firstRow4Time) ResetPartialResult(pr PartialResult) {
 
 func (e *firstRow4Time) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
 	p := (*partialResult4FirstRowTime)(pr)
-	p.finishedRows++
 	if p.gotFirstRow {
 		return memDelta, nil
 	}
@@ -372,9 +361,8 @@ func (e *firstRow4Time) AppendFinalResult2Chunk(sctx sessionctx.Context, pr Part
 	return nil
 }
 
-func (e *firstRow4Time) GetFinishedRows(pr PartialResult) int {
-	p := (*partialResult4FirstRowTime)(pr)
-	return p.finishedRows
+func (e *firstRow4Time) IsFirstRow() bool {
+	return true
 }
 
 type firstRow4Duration struct {
@@ -392,7 +380,6 @@ func (e *firstRow4Duration) ResetPartialResult(pr PartialResult) {
 
 func (e *firstRow4Duration) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
 	p := (*partialResult4FirstRowDuration)(pr)
-	p.finishedRows++
 	if p.gotFirstRow {
 		return memDelta, nil
 	}
@@ -424,9 +411,8 @@ func (e *firstRow4Duration) AppendFinalResult2Chunk(sctx sessionctx.Context, pr 
 	return nil
 }
 
-func (e *firstRow4Duration) GetFinishedRows(pr PartialResult) int {
-	p := (*partialResult4FirstRowDuration)(pr)
-	return p.finishedRows
+func (e *firstRow4Duration) IsFirstRow(pr PartialResult) bool {
+	return true
 }
 
 type firstRow4JSON struct {
@@ -444,7 +430,6 @@ func (e *firstRow4JSON) ResetPartialResult(pr PartialResult) {
 
 func (e *firstRow4JSON) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
 	p := (*partialResult4FirstRowJSON)(pr)
-	p.finishedRows++
 	if p.gotFirstRow {
 		return memDelta, nil
 	}
@@ -476,9 +461,8 @@ func (e *firstRow4JSON) AppendFinalResult2Chunk(sctx sessionctx.Context, pr Part
 	return nil
 }
 
-func (e *firstRow4JSON) GetFinishedRows(pr PartialResult) int {
-	p := (*partialResult4FirstRowJSON)(pr)
-	return p.finishedRows
+func (e *firstRow4JSON) IsFirstRow() bool {
+	return true
 }
 
 type firstRow4Decimal struct {
@@ -496,7 +480,6 @@ func (e *firstRow4Decimal) ResetPartialResult(pr PartialResult) {
 
 func (e *firstRow4Decimal) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
 	p := (*partialResult4FirstRowDecimal)(pr)
-	p.finishedRows++
 	if p.gotFirstRow {
 		return memDelta, nil
 	}
@@ -535,9 +518,8 @@ func (*firstRow4Decimal) MergePartialResult(sctx sessionctx.Context, src, dst Pa
 	return memDelta, nil
 }
 
-func (e *firstRow4Decimal) GetFinishedRows(pr PartialResult) int {
-	p := (*partialResult4FirstRowDecimal)(pr)
-	return p.finishedRows
+func (e *firstRow4Decimal) IsFirstRow() bool {
+	return true
 }
 
 type firstRow4Enum struct {
@@ -555,7 +537,6 @@ func (e *firstRow4Enum) ResetPartialResult(pr PartialResult) {
 
 func (e *firstRow4Enum) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
 	p := (*partialResult4FirstRowEnum)(pr)
-	p.finishedRows++
 	if p.gotFirstRow {
 		return memDelta, nil
 	}
@@ -589,9 +570,8 @@ func (e *firstRow4Enum) AppendFinalResult2Chunk(sctx sessionctx.Context, pr Part
 	return nil
 }
 
-func (e *firstRow4Enum) GetFinishedRows(pr PartialResult) int {
-	p := (*partialResult4FirstRowEnum)(pr)
-	return p.finishedRows
+func (e *firstRow4Enum) IsFirstRow() bool {
+	return true
 }
 
 type firstRow4Set struct {
@@ -609,7 +589,6 @@ func (e *firstRow4Set) ResetPartialResult(pr PartialResult) {
 
 func (e *firstRow4Set) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
 	p := (*partialResult4FirstRowSet)(pr)
-	p.finishedRows++
 	if p.gotFirstRow {
 		return memDelta, nil
 	}
@@ -643,7 +622,6 @@ func (e *firstRow4Set) AppendFinalResult2Chunk(sctx sessionctx.Context, pr Parti
 	return nil
 }
 
-func (e *firstRow4Set) GetFinishedRows(pr PartialResult) int {
-	p := (*partialResult4FirstRowSet)(pr)
-	return p.finishedRows
+func (e *firstRow4Set) IsFirstRow() bool {
+	return true
 }

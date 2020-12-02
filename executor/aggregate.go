@@ -720,51 +720,53 @@ func (e *HashAggExec) parallelExec(ctx context.Context, chk *chunk.Chunk) error 
 
 // unparallelExec executes hash aggregation algorithm in single thread.
 func (e *HashAggExec) unparallelExec(ctx context.Context, chk *chunk.Chunk) error {
-	// In this stage we consider all data from src as a single group.
-	if !e.prepared {
-		err := e.execute(ctx, chk.RequiredRows())
-		if err != nil {
-			return err
-		}
-		if (len(e.groupSet) == 0) && len(e.GroupByItems) == 0 {
-			// If no groupby and no data, we should add an empty group.
-			// For example:
-			// "select count(c) from t;" should return one row [0]
-			// "select count(c) from t group by c1;" should return empty result set.
-			e.groupSet.Insert("")
-			e.groupKeys = append(e.groupKeys, "")
-		}
-		e.prepared = true
-	}
-	chk.Reset()
-
-	// Since we return e.maxChunkSize rows every time, so we should not traverse
-	// `groupSet` because of its randomness.
-	for ; e.cursor4GroupKey < len(e.groupKeys); e.cursor4GroupKey++ {
-		partialResults := e.getPartialResults(e.groupKeys[e.cursor4GroupKey])
-		if len(e.PartialAggFuncs) == 0 {
-			chk.SetNumVirtualRows(chk.NumRows() + 1)
-		}
-		for i, af := range e.PartialAggFuncs {
-			if err := af.AppendFinalResult2Chunk(e.ctx, partialResults[i], chk); err != nil {
+	if e.isAllFirstRowAgg() {
+		e.executeFirstRow(ctx, chk)
+		return nil
+	} else {
+		// In this stage we consider all data from src as a single group.
+		if !e.prepared {
+			err := e.execute(ctx)
+			if err != nil {
 				return err
 			}
+			if (len(e.groupSet) == 0) && len(e.GroupByItems) == 0 {
+				// If no groupby and no data, we should add an empty group.
+				// For example:
+				// "select count(c) from t;" should return one row [0]
+				// "select count(c) from t group by c1;" should return empty result set.
+				e.groupSet.Insert("")
+				e.groupKeys = append(e.groupKeys, "")
+			}
+			e.prepared = true
 		}
-		if chk.IsFull() {
-			e.cursor4GroupKey++
-			return nil
+		chk.Reset()
+
+		// Since we return e.maxChunkSize rows every time, so we should not traverse
+		// `groupSet` because of its randomness.
+		for ; e.cursor4GroupKey < len(e.groupKeys); e.cursor4GroupKey++ {
+			partialResults := e.getPartialResults(e.groupKeys[e.cursor4GroupKey])
+			if len(e.PartialAggFuncs) == 0 {
+				chk.SetNumVirtualRows(chk.NumRows() + 1)
+			}
+			for i, af := range e.PartialAggFuncs {
+				if err := af.AppendFinalResult2Chunk(e.ctx, partialResults[i], chk); err != nil {
+					return err
+				}
+			}
+			if chk.IsFull() {
+				e.cursor4GroupKey++
+				return nil
+			}
 		}
 	}
 	return nil
 }
 
 // execute fetches Chunks from src and update each aggregate function for each row in Chunk.
-func (e *HashAggExec) execute(ctx context.Context, requiredRows int) (err error) {
-	finishedDistinctRows := 0
-	fetchAllDistinctRows := false
+func (e *HashAggExec) execute(ctx context.Context) (err error) {
 	for {
 		mSize := e.childResult.MemoryUsage()
-		e.childResult.SetRequiredRows(requiredRows, requiredRows)
 		err := Next(ctx, e.children[0], e.childResult)
 		e.memTracker.Consume(e.childResult.MemoryUsage() - mSize)
 		if err != nil {
@@ -799,20 +801,8 @@ func (e *HashAggExec) execute(ctx context.Context, requiredRows int) (err error)
 				if err != nil {
 					return err
 				}
-				if a, ok := af.(aggfuncs.FinishedRows); ok {
-					if a.GetFinishedRows(partialResults[i]) == 1 {
-						finishedDistinctRows++
-					}
-				}
 				e.memTracker.Consume(memDelta)
 			}
-			if finishedDistinctRows == requiredRows {
-				fetchAllDistinctRows = true
-				break
-			}
-		}
-		if fetchAllDistinctRows {
-			break
 		}
 	}
 	return nil
@@ -830,6 +820,56 @@ func (e *HashAggExec) getPartialResults(groupKey string) []aggfuncs.PartialResul
 		e.partialResultMap[groupKey] = partialResults
 	}
 	return partialResults
+}
+
+func (e *HashAggExec) executeFirstRow(ctx context.Context, chk *chunk.Chunk) (err error) {
+	for {
+		mSize := e.childResult.MemoryUsage()
+		err := Next(ctx, e.children[0], e.childResult)
+		e.memTracker.Consume(e.childResult.MemoryUsage() - mSize)
+		if err != nil {
+			return err
+		}
+
+		failpoint.Inject("unparallelHashAggError", func(val failpoint.Value) {
+			if val.(bool) {
+				failpoint.Return(errors.New("HashAggExec.unparallelExec error"))
+			}
+		})
+
+		// no more data.
+		if e.childResult.NumRows() == 0 {
+			return nil
+		}
+
+		e.groupKeyBuffer, err = getGroupKey(e.ctx, e.childResult, e.groupKeyBuffer, e.GroupByItems)
+		if err != nil {
+			return err
+		}
+
+		for j := 0; j < e.childResult.NumRows(); j++ {
+			groupKey := string(e.groupKeyBuffer[j]) // do memory copy here, because e.groupKeyBuffer may be reused.
+			if !e.groupSet.Exist(groupKey) {
+				e.groupSet.Insert(groupKey)
+				e.groupKeys = append(e.groupKeys, groupKey)
+					chk.AppendRow(e.childResult.GetRow(j))
+			}
+			if chk.IsFull() {
+				e.cursor4GroupKey++
+				return nil
+			}
+		}
+	}
+	return nil
+}
+
+func (e *HashAggExec) isAllFirstRowAgg() bool {
+	for _, af := range e.PartialAggFuncs {
+		if _, ok := af.(aggfuncs.FirstRow); !ok {
+			return false
+		}
+	}
+	return true
 }
 
 // StreamAggExec deals with all the aggregate functions.
