@@ -545,6 +545,9 @@ func (c *TopN) QueryTopN(d []byte) (uint64, bool) {
 }
 
 func (c *TopN) findTopN(d []byte) int {
+	if c == nil {
+		return -1
+	}
 	match := false
 	idx := sort.Search(len(c.TopN), func(i int) bool {
 		cmp := bytes.Compare(c.TopN[i].Encoded, d)
@@ -562,6 +565,9 @@ func (c *TopN) findTopN(d []byte) int {
 // LowerBound searches on the sorted top-n items,
 // returns the smallest index i such that the value at element i is not less than `d`.
 func (c *TopN) LowerBound(d []byte) (idx int, match bool) {
+	if c == nil {
+		return 0, false
+	}
 	idx = sort.Search(len(c.TopN), func(i int) bool {
 		cmp := bytes.Compare(c.TopN[i].Encoded, d)
 		if cmp == 0 {
@@ -589,6 +595,9 @@ func (c *TopN) BetweenCount(l, r []byte) uint64 {
 
 // Sort sorts the topn items.
 func (c *TopN) Sort() {
+	if c == nil {
+		return
+	}
 	sort.Slice(c.TopN, func(i, j int) bool {
 		return bytes.Compare(c.TopN[i].Encoded, c.TopN[j].Encoded) < 0
 	})

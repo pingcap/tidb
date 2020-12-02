@@ -246,6 +246,9 @@ func analyzeIndexPushdown(idxExec *AnalyzeIndexExec) analyzeResult {
 	if hist.Len() > 0 {
 		result.Count += hist.Buckets[hist.Len()-1].Count
 	}
+	if topN.TotalCount() > 0 {
+		result.Count += int64(topN.TotalCount())
+	}
 	return result
 }
 

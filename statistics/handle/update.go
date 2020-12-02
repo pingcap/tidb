@@ -557,6 +557,10 @@ func (h *Handle) UpdateStatsByLocalFeedback(is infoschema.InfoSchema) {
 				}
 				newIdx := *idx
 				eqFB, ranFB := statistics.SplitFeedbackByQueryType(fb.Feedback)
+				// For StatsVersion higher than Version1, the topn is extracted out of histogram. So we don't update the histogram if the feedback overlaps with some topn.
+				if idx.StatsVer >= statistics.Version2 {
+					ranFB = statistics.CleanRangeFeedbackByTopN(ranFB, idx.TopN)
+				}
 				newIdx.CMSketch, newIdx.TopN = statistics.UpdateCMSketchAndTopN(idx.CMSketch, idx.TopN, eqFB)
 				newIdx.Histogram = *statistics.UpdateHistogram(&idx.Histogram, &statistics.QueryFeedback{Feedback: ranFB})
 				newIdx.Histogram.PreCalculateScalar()
@@ -1160,7 +1164,7 @@ func (h *Handle) DumpFeedbackForIndex(q *statistics.QueryFeedback, t *statistics
 		return nil
 	}
 	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
-	if idx.CMSketch == nil || idx.StatsVer != statistics.Version1 {
+	if idx.CMSketch == nil || idx.StatsVer < statistics.Version1 {
 		return h.DumpFeedbackToKV(q)
 	}
 	ranges, err := q.DecodeToRanges(true)

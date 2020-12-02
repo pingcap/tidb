@@ -36,7 +36,6 @@ import (
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
-	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
 
@@ -67,8 +66,8 @@ func (s *testStatsSuite) registerHook() {
 	conf := &log.Config{Level: os.Getenv("log_level"), File: log.FileLogConfig{}}
 	_, r, _ := log.InitLogger(conf)
 	s.hook = &logHook{r.Core, ""}
-	lg := zap.New(s.hook)
-	log.ReplaceGlobals(lg, r)
+	// lg := zap.New(s.hook)
+	// log.ReplaceGlobals(lg, r)
 }
 
 func (s *testStatsSuite) TestSingleSessionInsert(c *C) {
@@ -743,7 +742,7 @@ func (s *testStatsSuite) TestQueryFeedback(c *C) {
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t (a bigint(64), b bigint(64), primary key(a), index idx(b))")
 	testKit.MustExec("insert into t values (1,2),(2,2),(4,5)")
-	testKit.MustExec("analyze table t")
+	testKit.MustExec("analyze table t with 0 topn")
 	testKit.MustExec("insert into t values (3,4)")
 
 	h := s.do.StatsHandle()
@@ -994,7 +993,7 @@ func (s *testStatsSuite) TestUpdateStatsByLocalFeedback(c *C) {
 	testKit.MustExec(`set @@tidb_partition_prune_mode='` + string(variable.StaticOnly) + `'`)
 	testKit.MustExec("create table t (a bigint(64), b bigint(64), primary key(a), index idx(b))")
 	testKit.MustExec("insert into t values (1,2),(2,2),(4,5)")
-	testKit.MustExec("analyze table t")
+	testKit.MustExec("analyze table t with 0 topn")
 	testKit.MustExec("insert into t values (3,5)")
 	h := s.do.StatsHandle()
 	oriProbability := statistics.FeedbackProbability
@@ -1504,7 +1503,7 @@ func (s *testStatsSuite) TestAbnormalIndexFeedback(c *C) {
 	for i := 0; i < 20; i++ {
 		testKit.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i/5, i))
 	}
-	testKit.MustExec("analyze table t with 3 buckets")
+	testKit.MustExec("analyze table t with 3 buckets, 0 topn")
 	testKit.MustExec("delete from t where a = 1")
 	testKit.MustExec("delete from t where b > 10")
 	is := s.do.InfoSchema()
