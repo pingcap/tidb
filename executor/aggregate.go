@@ -767,8 +767,10 @@ func (e *HashAggExec) parallelExec(ctx context.Context, chk *chunk.Chunk) error 
 // unparallelExec executes hash aggregation algorithm in single thread.
 func (e *HashAggExec) unparallelExec(ctx context.Context, chk *chunk.Chunk) error {
 	if e.isAllFirstRowAgg() {
-		e.executeFirstRow(ctx, chk)
-		return nil
+		err := e.executeFirstRow(ctx, chk)
+		if err != nil {
+			return err
+		}
 	} else {
 		// In this stage we consider all data from src as a single group.
 		if !e.prepared {
