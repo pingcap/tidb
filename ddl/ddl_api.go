@@ -5185,9 +5185,7 @@ func checkColumnsTypeAndValuesMatch(ctx sessionctx.Context, meta *model.TableInf
 		case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeDuration:
 			switch vkind {
 			case types.KindString, types.KindBytes:
-				if _, err := val.ConvertTo(ctx.GetSessionVars().StmtCtx, colType); err != nil {
-					return ErrWrongTypeColumnValue.GenWithStackByArgs()
-				}
+				break
 			default:
 				return ErrWrongTypeColumnValue.GenWithStackByArgs()
 			}
@@ -5210,7 +5208,7 @@ func checkColumnsTypeAndValuesMatch(ctx sessionctx.Context, meta *model.TableInf
 				return ErrWrongTypeColumnValue.GenWithStackByArgs()
 			}
 		}
-		_, err = val.ConvertTo(ctx.GetSessionVars().StmtCtx, &colInfo.FieldType)
+		_, err = val.ConvertTo(ctx.GetSessionVars().StmtCtx, colType)
 		if err != nil {
 			return ErrWrongTypeColumnValue.GenWithStackByArgs()
 		}
