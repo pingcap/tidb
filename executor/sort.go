@@ -429,7 +429,7 @@ func (e *TopNExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 func (e *TopNExec) loadChunksUntilTotalLimit(ctx context.Context) error {
 	e.chkHeap = &topNChunkHeap{e}
-	e.rowChunks = newList(e)
+	e.rowChunks = newList(e.children[0])
 	e.rowChunks.GetMemTracker().AttachTo(e.memTracker)
 	e.rowChunks.GetMemTracker().SetLabel(memory.LabelForRowChunks)
 	for uint64(e.rowChunks.Len()) < e.totalLimit {
@@ -508,9 +508,7 @@ func (e *TopNExec) doCompaction() error {
 	newRowChunks := newList(e.children[0])
 	newRowPtrs := make([]chunk.RowPtr, 0, e.rowChunks.Len())
 	for _, rowPtr := range e.rowPtrs {
-		originRow := e.rowChunks.GetRow(rowPtr)
-		newRowPtr := newRowChunks.AppendRow(originRow)
-		newRowPtrs = append(newRowPtrs, newRowPtr)
+		newRowPtrs = append(newRowPtrs, newRowChunks.AppendRow(e.rowChunks.GetRow(rowPtr)))
 	}
 	newRowChunks.GetMemTracker().SetLabel(memory.LabelForRowChunks)
 	e.memTracker.ReplaceChild(e.rowChunks.GetMemTracker(), newRowChunks.GetMemTracker())
