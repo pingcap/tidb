@@ -3492,6 +3492,17 @@ func (s *testSuite4) TestWriteListColumnsPartitionTable2(c *C) {
 	tk.MustQuery("select * from t order by id").Check(testkit.Rows())
 }
 
+// TestWriteListColumnsPartitionTable2 test for write list partition when the partition by multi-columns.
+func (s *testSuite4) TestWriteListPartitionTableIssue21437(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@session.tidb_enable_table_partition = 1")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec(`create table t (a int) partition by list (a%10) (partition p0 values in (0,1));`)
+	_, err := tk.Exec("replace into t values  (null)")
+	c.Assert(err.Error(), Equals, "[table:1526]Table has no partition for value NULL")
+}
+
 func (s *testSerialSuite) TestIssue20724(c *C) {
 	collate.SetNewCollationEnabledForTest(true)
 	defer collate.SetNewCollationEnabledForTest(false)
