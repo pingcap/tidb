@@ -194,6 +194,8 @@ func (sc *simpleLRUStatsCache) Update(tables []*statistics.Table, deletedIDs []i
 
 // GetBytesLimit get the limits of memory.
 func (sc *simpleLRUStatsCache) GetBytesLimit() int64 {
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
 	return sc.memTracker.GetBytesLimit()
 }
 
