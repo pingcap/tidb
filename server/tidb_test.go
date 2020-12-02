@@ -147,6 +147,11 @@ func (ts *tidbTestSerialSuite) TestLoadData(c *C) {
 	ts.runTestLoadDataForSlowLog(c, ts.server)
 }
 
+func (ts *tidbTestSerialSuite) TestLoadDataListPartition(c *C) {
+	ts.runTestLoadDataForListPartition(c)
+	ts.runTestLoadDataForListPartition2(c)
+}
+
 func (ts *tidbTestSerialSuite) TestExplainFor(c *C) {
 	ts.runTestExplainForConn(c)
 }
