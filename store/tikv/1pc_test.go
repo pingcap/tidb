@@ -15,6 +15,7 @@ package tikv
 
 import (
 	"context"
+	config "github.com/pingcap/tidb/config"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/config"
@@ -269,14 +270,12 @@ func (s *testOnePCSuite) Test1PCExternalConsistency(c *C) {
 func (s *testAsyncCommitSuite) Test1PCExceedingMaxCommitTS(c *C) {
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
-		conf.TiKVClient.EnableOnePC = true
 		conf.TiKVClient.AsyncCommit.SafeWindow = 0
 		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
 	})
 
-	t1, err := s.store.Begin()
-	c.Assert(err, IsNil)
-	err = t1.Set([]byte("a"), []byte("a1"))
+	t1 := s.begin1PC(c)
+	err := t1.Set([]byte("a"), []byte("a1"))
 	c.Assert(err, IsNil)
 	err = t1.Set([]byte("b"), []byte("b1"))
 	c.Assert(err, IsNil)
@@ -284,8 +283,7 @@ func (s *testAsyncCommitSuite) Test1PCExceedingMaxCommitTS(c *C) {
 	err = t1.Commit(ctx)
 	c.Assert(err, IsNil)
 
-	t2, err := s.store.Begin()
-	c.Assert(err, IsNil)
+	t2 := s.begin1PC(c)
 	v, err := t2.Get(context.Background(), []byte("a"))
 	c.Assert(err, IsNil)
 	c.Assert(v, DeepEquals, []byte("a1"))

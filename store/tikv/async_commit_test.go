@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	config "github.com/pingcap/tidb/config"
 	"sync/atomic"
 	"time"
 
@@ -399,14 +400,12 @@ func (s *testAsyncCommitSuite) TestAsyncCommitExternalConsistency(c *C) {
 func (s *testAsyncCommitSuite) TestAsyncCommitExceedingMaxCommitTS(c *C) {
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
-		conf.TiKVClient.AsyncCommit.Enable = true
 		conf.TiKVClient.AsyncCommit.SafeWindow = 0
 		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
 	})
 
-	t1, err := s.store.Begin()
-	c.Assert(err, IsNil)
-	err = t1.Set([]byte("a"), []byte("a1"))
+	t1 := s.beginAsyncCommit(c)
+	err := t1.Set([]byte("a"), []byte("a1"))
 	c.Assert(err, IsNil)
 	err = t1.Set([]byte("b"), []byte("b1"))
 	c.Assert(err, IsNil)
@@ -414,8 +413,7 @@ func (s *testAsyncCommitSuite) TestAsyncCommitExceedingMaxCommitTS(c *C) {
 	err = t1.Commit(ctx)
 	c.Assert(err, IsNil)
 
-	t2, err := s.store.Begin()
-	c.Assert(err, IsNil)
+	t2 := s.beginAsyncCommit(c)
 	v, err := t2.Get(context.Background(), []byte("a"))
 	c.Assert(err, IsNil)
 	c.Assert(v, DeepEquals, []byte("a1"))
