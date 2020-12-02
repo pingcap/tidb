@@ -150,6 +150,8 @@ func (ts *tidbTestSerialSuite) TestLoadData(c *C) {
 func (ts *tidbTestSerialSuite) TestLoadDataListPartition(c *C) {
 	ts.runTestLoadDataForListPartition(c)
 	ts.runTestLoadDataForListPartition2(c)
+	ts.runTestLoadDataForListColumnPartition(c)
+	ts.runTestLoadDataForListColumnPartition2(c)
 }
 
 func (ts *tidbTestSerialSuite) TestExplainFor(c *C) {
