@@ -655,7 +655,7 @@ func checkListPartitionValue(ctx sessionctx.Context, tblInfo *model.TableInfo) e
 	}
 	expStr, err := formatListPartitionValue(ctx, tblInfo)
 	if err != nil {
-		return err
+		return errors.Trace(err)
 	}
 
 	partitionsValuesMap := make(map[string]struct{})
@@ -710,7 +710,7 @@ func formatListPartitionValue(ctx sessionctx.Context, tblInfo *model.TableInfo) 
 				if err != nil {
 					return nil, errors.Trace(err)
 				}
-				if colTps[k].EvalType() == types.ETInt {
+				if !eval.IsNull() && colTps[k].EvalType() == types.ETInt {
 					defs[i].InValues[j][k] = s
 				}
 				if colTps[k].EvalType() == types.ETString {
