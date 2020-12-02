@@ -921,6 +921,53 @@ func (s *testIntegrationSuite5) TestAlterTableAddPartitionByList(c *C) {
 			i, t.sql, t.err, err,
 		))
 	}
+
+	errorCases2 := []struct {
+		create string
+		alter  string
+		err    *terror.Error
+	}{
+		{
+			"create table t (a bigint unsigned) partition by list columns (a) (partition p0 values in (1));",
+			"alter table t add partition (partition p1 values in (-1))",
+			ddl.ErrWrongTypeColumnValue,
+		},
+		{
+			"create table t (a varchar(2)) partition by list columns (a) (partition p0 values in ('a','b'));",
+			"alter table t add partition (partition p1 values in ('abc'))",
+			ddl.ErrWrongTypeColumnValue,
+		},
+		{
+			"create table t (a tinyint) partition by list columns (a) (partition p0 values in (1,2,3));",
+			"alter table t add partition (partition p1 values in (65536))",
+			ddl.ErrWrongTypeColumnValue,
+		},
+		{
+			"create table t (a bigint) partition by list columns (a) (partition p0 values in (1,2,3));",
+			"alter table t add partition (partition p1 values in (18446744073709551615))",
+			ddl.ErrWrongTypeColumnValue,
+		},
+		{
+			"create table t (a char) partition by list columns (a) (partition p0 values in ('a','b'));",
+			"alter table t add partition (partition p1 values in ('abc'))",
+			ddl.ErrWrongTypeColumnValue,
+		},
+		{
+			"create table t (a datetime) partition by list columns (a) (partition p0 values in ('2020-11-30 12:00:00'));",
+			"alter table t add partition (partition p1 values in ('2020-11-31 12:00:00'))",
+			ddl.ErrWrongTypeColumnValue,
+		},
+	}
+
+	for i, t := range errorCases2 {
+		tk.MustExec("drop table if exists t;")
+		tk.MustExec(t.create)
+		_, err := tk.Exec(t.alter)
+		c.Assert(t.err.Equal(err), IsTrue, Commentf(
+			"case %d fail, sql = `%s`\nexpected error = `%v`\n  actual error = `%v`",
+			i, t.alter, t.err, err,
+		))
+	}
 }
 
 func (s *testIntegrationSuite5) TestAlterTableAddPartitionByListColumns(c *C) {

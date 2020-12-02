@@ -67,7 +67,7 @@ type StatementContext struct {
 	InSelectStmt           bool
 	InLoadDataStmt         bool
 	InExplainStmt          bool
-	InCreateTableStmt      bool
+	InCreateOrAlterStmt    bool
 	IgnoreTruncate         bool
 	IgnoreZeroInDate       bool
 	DupKeyAsWarning        bool
@@ -563,7 +563,7 @@ func (sc *StatementContext) GetExecDetails() execdetails.ExecDetails {
 func (sc *StatementContext) ShouldClipToZero() bool {
 	// TODO: Currently altering column of integer to unsigned integer is not supported.
 	// If it is supported one day, that case should be added here.
-	return sc.InInsertStmt || sc.InLoadDataStmt || sc.InUpdateStmt || sc.InCreateTableStmt
+	return sc.InInsertStmt || sc.InLoadDataStmt || sc.InUpdateStmt || sc.InCreateOrAlterStmt
 }
 
 // ShouldIgnoreOverflowError indicates whether we should ignore the error when type conversion overflows,
