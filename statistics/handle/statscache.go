@@ -166,7 +166,7 @@ func (sc *simpleLRUStatsCache) GetAll() []*statistics.Table {
 	sc.mu.Lock()
 	defer sc.mu.Unlock()
 	values := sc.cache.GetAll()
-	tables := make([]*statistics.Table, 0)
+	tables := make([]*statistics.Table, 0, len(values))
 	for _, v := range values {
 		if t, ok := v.(*statistics.Table); ok && t != nil {
 			tables = append(tables, t)
