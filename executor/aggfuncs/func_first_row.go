@@ -163,9 +163,9 @@ func (e *firstRow4Int) AppendFinalResult2Chunk(sctx sessionctx.Context, pr Parti
 	return nil
 }
 
-func (e *firstRow4Int) HasFinishedFirstRow(pr PartialResult) bool {
+func (e *firstRow4Int) GetFinishedRows(pr PartialResult) int {
 	p := (*partialResult4FirstRowInt)(pr)
-	return p.finishedRows == 1
+	return p.finishedRows
 }
 
 type firstRow4Float32 struct {
@@ -215,9 +215,9 @@ func (e *firstRow4Float32) AppendFinalResult2Chunk(sctx sessionctx.Context, pr P
 	return nil
 }
 
-func (e *firstRow4Float32) HasFinishedFirstRow(pr PartialResult) bool {
+func (e *firstRow4Float32) GetFinishedRows(pr PartialResult) int {
 	p := (*partialResult4FirstRowFloat32)(pr)
-	return p.finishedRows == 1
+	return p.finishedRows
 }
 
 type firstRow4Float64 struct {
@@ -267,9 +267,9 @@ func (e *firstRow4Float64) AppendFinalResult2Chunk(sctx sessionctx.Context, pr P
 	return nil
 }
 
-func (e *firstRow4Float64) HasFinishedFirstRow(pr PartialResult) bool {
+func (e *firstRow4Float64) GetFinishedRows(pr PartialResult) int {
 	p := (*partialResult4FirstRowFloat64)(pr)
-	return p.finishedRows == 1
+	return p.finishedRows
 }
 
 type firstRow4String struct {
@@ -320,9 +320,9 @@ func (e *firstRow4String) AppendFinalResult2Chunk(sctx sessionctx.Context, pr Pa
 	return nil
 }
 
-func (e *firstRow4String) HasFinishedFirstRow(pr PartialResult) bool {
+func (e *firstRow4String) GetFinishedRows(pr PartialResult) int {
 	p := (*partialResult4FirstRowString)(pr)
-	return p.finishedRows == 1
+	return p.finishedRows
 }
 
 type firstRow4Time struct {
@@ -372,9 +372,9 @@ func (e *firstRow4Time) AppendFinalResult2Chunk(sctx sessionctx.Context, pr Part
 	return nil
 }
 
-func (e *firstRow4Time) HasFinishedFirstRow(pr PartialResult) bool {
+func (e *firstRow4Time) GetFinishedRows(pr PartialResult) int {
 	p := (*partialResult4FirstRowTime)(pr)
-	return p.finishedRows == 1
+	return p.finishedRows
 }
 
 type firstRow4Duration struct {
@@ -424,9 +424,9 @@ func (e *firstRow4Duration) AppendFinalResult2Chunk(sctx sessionctx.Context, pr 
 	return nil
 }
 
-func (e *firstRow4Duration) HasFinishedFirstRow(pr PartialResult) bool {
+func (e *firstRow4Duration) GetFinishedRows(pr PartialResult) int {
 	p := (*partialResult4FirstRowDuration)(pr)
-	return p.finishedRows == 1
+	return p.finishedRows
 }
 
 type firstRow4JSON struct {
@@ -476,9 +476,9 @@ func (e *firstRow4JSON) AppendFinalResult2Chunk(sctx sessionctx.Context, pr Part
 	return nil
 }
 
-func (e *firstRow4JSON) HasFinishedFirstRow(pr PartialResult) bool {
+func (e *firstRow4JSON) GetFinishedRows(pr PartialResult) int {
 	p := (*partialResult4FirstRowJSON)(pr)
-	return p.finishedRows == 1
+	return p.finishedRows
 }
 
 type firstRow4Decimal struct {
@@ -535,9 +535,9 @@ func (*firstRow4Decimal) MergePartialResult(sctx sessionctx.Context, src, dst Pa
 	return memDelta, nil
 }
 
-func (e *firstRow4Decimal) HasFinishedFirstRow(pr PartialResult) bool {
+func (e *firstRow4Decimal) GetFinishedRows(pr PartialResult) int {
 	p := (*partialResult4FirstRowDecimal)(pr)
-	return p.finishedRows == 1
+	return p.finishedRows
 }
 
 type firstRow4Enum struct {
@@ -589,9 +589,9 @@ func (e *firstRow4Enum) AppendFinalResult2Chunk(sctx sessionctx.Context, pr Part
 	return nil
 }
 
-func (e *firstRow4Enum) HasFinishedFirstRow(pr PartialResult) bool {
+func (e *firstRow4Enum) GetFinishedRows(pr PartialResult) int {
 	p := (*partialResult4FirstRowEnum)(pr)
-	return p.finishedRows == 1
+	return p.finishedRows
 }
 
 type firstRow4Set struct {
@@ -643,7 +643,7 @@ func (e *firstRow4Set) AppendFinalResult2Chunk(sctx sessionctx.Context, pr Parti
 	return nil
 }
 
-func (e *firstRow4Set) HasFinishedFirstRow(pr PartialResult) bool {
+func (e *firstRow4Set) GetFinishedRows(pr PartialResult) int {
 	p := (*partialResult4FirstRowSet)(pr)
-	return p.finishedRows == 1
+	return p.finishedRows
 }

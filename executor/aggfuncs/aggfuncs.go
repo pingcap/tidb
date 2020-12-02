@@ -206,5 +206,5 @@ type SlidingWindowAggFunc interface {
 
 // FinishedRows is the interface the record whether the first row of the aggregate functions has got.
 type FinishedRows interface {
-	HasFinishedFirstRow(pr PartialResult) bool
+	GetFinishedRows(pr PartialResult) int
 }

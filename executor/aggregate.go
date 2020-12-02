@@ -761,7 +761,6 @@ func (e *HashAggExec) unparallelExec(ctx context.Context, chk *chunk.Chunk) erro
 // execute fetches Chunks from src and update each aggregate function for each row in Chunk.
 func (e *HashAggExec) execute(ctx context.Context, requiredRows int) (err error) {
 	finishedDistinctRows := 0
-	fmt.Printf("required rows %d\n", requiredRows)
 	fetchAllDistinctRows := false
 	for {
 		mSize := e.childResult.MemoryUsage()
@@ -801,7 +800,7 @@ func (e *HashAggExec) execute(ctx context.Context, requiredRows int) (err error)
 					return err
 				}
 				if a, ok := af.(aggfuncs.FinishedRows); ok {
-					if a.HasFinishedFirstRow(partialResults[i]) {
+					if a.GetFinishedRows(partialResults[i]) == 1 {
 						finishedDistinctRows++
 					}
 				}
