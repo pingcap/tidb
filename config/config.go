@@ -36,7 +36,6 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/versioninfo"
 	tracing "github.com/uber/jaeger-client-go/config"
-
 	"go.uber.org/zap"
 	"google.golang.org/grpc/encoding/gzip"
 )
@@ -64,6 +63,8 @@ const (
 	DefStatusHost = "0.0.0.0"
 	// DefStoreLivenessTimeout is the default value for store liveness timeout.
 	DefStoreLivenessTimeout = "5s"
+	// DefTxnScope is the default value for TxnScope
+	DefTxnScope = "global"
 )
 
 // Valid config maps
@@ -162,6 +163,8 @@ type Config struct {
 	EnableGlobalIndex bool `toml:"enable-global-index" json:"enable-global-index"`
 	// DeprecateIntegerDisplayWidth indicates whether deprecating the max display length for integer.
 	DeprecateIntegerDisplayWidth bool `toml:"deprecate-integer-display-length" json:"deprecate-integer-display-length"`
+	// TxnScope indicates the default value for session variable txn_scope
+	TxnScope string `toml:"txn-scope" json:"txn-scope"`
 	// EnableEnumLengthLimit indicates whether the enum/set element length is limited.
 	// According to MySQL 8.0 Refman:
 	// The maximum supported length of an individual SET element is M <= 255 and (M x w) <= 1020,
@@ -506,8 +509,6 @@ type TiKVClient struct {
 	// CommitTimeout is the max time which command 'commit' will wait.
 	CommitTimeout string      `toml:"commit-timeout" json:"commit-timeout"`
 	AsyncCommit   AsyncCommit `toml:"async-commit" json:"async-commit"`
-	// Allow TiDB try to use 1PC protocol to commit transactions that involves only one region.
-	EnableOnePC bool `toml:"enable-one-pc" json:"enable-one-pc"`
 	// MaxBatchSize is the max batch size when calling batch commands API.
 	MaxBatchSize uint `toml:"max-batch-size" json:"max-batch-size"`
 	// If TiKV load is greater than this, TiDB will wait for a while to avoid little batch.
@@ -531,10 +532,8 @@ type TiKVClient struct {
 	TTLRefreshedTxnSize int64 `toml:"ttl-refreshed-txn-size" json:"ttl-refreshed-txn-size"`
 }
 
-// AsyncCommit is the config for the async commit feature.
+// AsyncCommit is the config for the async commit feature. The switch to enable it is a system variable.
 type AsyncCommit struct {
-	// Whether to enable the async commit feature.
-	Enable bool `toml:"enable" json:"enable"`
 	// Use async commit only if the number of keys does not exceed KeysLimit.
 	KeysLimit uint `toml:"keys-limit" json:"keys-limit"`
 	// Use async commit only if the total size of keys does not exceed TotalKeySizeLimit.
@@ -722,14 +721,12 @@ var defaultConf = Config{
 		GrpcCompressionType:  "none",
 		CommitTimeout:        "41s",
 		AsyncCommit: AsyncCommit{
-			Enable: false,
 			// FIXME: Find an appropriate default limit.
 			KeysLimit:         256,
 			TotalKeySizeLimit: 4 * 1024, // 4 KiB
 			SafeWindow:        2 * time.Second,
 			AllowedClockDrift: 500 * time.Millisecond,
 		},
-		EnableOnePC: false,
 
 		MaxBatchSize:      128,
 		OverloadThreshold: 200,
@@ -778,6 +775,7 @@ var defaultConf = Config{
 		SpilledFileEncryptionMethod: SpilledFileEncryptionMethodPlaintext,
 	},
 	DeprecateIntegerDisplayWidth: false,
+	TxnScope:                     DefTxnScope,
 	EnableEnumLengthLimit:        true,
 }
 
@@ -825,6 +823,10 @@ func isAllDeprecatedConfigItems(items []string) bool {
 	}
 	return true
 }
+
+// IsMemoryQuotaQuerySetByUser indicates whether the config item mem-quota-query
+// is set by the user.
+var IsMemoryQuotaQuerySetByUser bool
 
 // InitializeConfig initialize the global config handler.
 // The function enforceCmdArgs is used to merge the config file with command arguments:
@@ -880,6 +882,9 @@ func (c *Config) Load(confFile string) error {
 	metaData, err := toml.DecodeFile(confFile, c)
 	if c.TokenLimit == 0 {
 		c.TokenLimit = 1000
+	}
+	if metaData.IsDefined("mem-quota-query") {
+		IsMemoryQuotaQuerySetByUser = true
 	}
 	if len(c.ServerVersion) > 0 {
 		mysql.ServerVersion = c.ServerVersion

@@ -58,9 +58,6 @@ tmp-storage-quota = -1
 # Valid options: ["log", "cancel"]
 oom-action = "cancel"
 
-# Enable coprocessor streaming.
-enable-streaming = false
-
 # Enable batch commit for the DMLs.
 enable-batch-dml = false
 
@@ -126,6 +123,9 @@ enable-telemetry = true
 # deprecate-integer-display-length is used to be compatible with MySQL 8.0 in which the integer declared with display length will be returned with
 # a warning like `Integer display width is deprecated and will be removed in a future release`.
 deprecate-integer-display-length = false
+
+# txn-scope indicates the default value for the `txn_scope` session variable.
+txn-scope = "global"
 
 # enable-enum-length-limit is used to deal with compatibility issues. When true, the enum/set element length is limited.
 # According to MySQL 8.0 Refman:
@@ -388,9 +388,6 @@ grpc-compression-type = "none"
 # Max time for commit command, must be twice bigger than raft election timeout.
 commit-timeout = "41s"
 
-# Allow TiDB try to use 1PC protocol to commit transactions that involves only one region.
-enable-one-pc = false
-
 # Max batch size in gRPC.
 max-batch-size = 128
 # Overload threshold of TiKV.
@@ -420,8 +417,6 @@ store-liveness-timeout = "5s"
 ttl-refreshed-txn-size = 33554432
 
 [tikv-client.async-commit]
-# Whether to enable the async commit feature. This feature reduces the latency of the two-phase commit.
-enable = false
 # The maximum allowed keys in an async commit transaction. Transactions with more keys than the limit
 # will be committed with normal 2PC way.
 keys-limit = 256
