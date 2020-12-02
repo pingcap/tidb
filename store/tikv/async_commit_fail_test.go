@@ -16,7 +16,6 @@ package tikv
 import (
 	"bytes"
 	"context"
-	"github.com/pingcap/tidb/config"
 	"sort"
 
 	. "github.com/pingcap/check"
@@ -24,6 +23,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 )
