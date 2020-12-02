@@ -385,11 +385,11 @@ func (s *testLockSuite) TestCheckTxnStatusNoWait(c *C) {
 	c.Assert(status.action, Equals, kvrpcpb.Action_LockNotExistRollback)
 }
 
-func (s *testLockSuite) prewriteTxn(c *C, txn *tikvTxn) {
-	s.prewriteTxnWithTTL(c, txn, 0)
+func (s *testLockSuite) prewriteTxn(c *C, txn *tikvTxn) *twoPhaseCommitter {
+	return s.prewriteTxnWithTTL(c, txn, 0)
 }
 
-func (s *testLockSuite) prewriteTxnWithTTL(c *C, txn *tikvTxn, ttl uint64) {
+func (s *testLockSuite) prewriteTxnWithTTL(c *C, txn *tikvTxn, ttl uint64) *twoPhaseCommitter {
 	committer, err := newTwoPhaseCommitterWithInit(txn, 0)
 	c.Assert(err, IsNil)
 	if ttl > 0 {
@@ -398,6 +398,7 @@ func (s *testLockSuite) prewriteTxnWithTTL(c *C, txn *tikvTxn, ttl uint64) {
 	}
 	err = committer.prewriteMutations(NewBackofferWithVars(context.Background(), PrewriteMaxBackoff, nil), committer.mutations)
 	c.Assert(err, IsNil)
+	return committer
 }
 
 func (s *testLockSuite) mustGetLock(c *C, key []byte) *Lock {
@@ -440,7 +441,7 @@ func (s *testLockSuite) TestLockTTL(c *C) {
 	l := s.mustGetLock(c, []byte("key"))
 	c.Assert(l.TTL >= defaultLockTTL, IsTrue)
 
-	// Huge txn has a greater TTL.
+	// Huge txn uses ManagedLockTTL and starts a ttlManager.
 	txn, err = s.store.Begin()
 	start := time.Now()
 	c.Assert(err, IsNil)
@@ -449,11 +450,13 @@ func (s *testLockSuite) TestLockTTL(c *C) {
 		k, v := randKV(1024, 1024)
 		txn.Set(kv.Key(k), []byte(v))
 	}
-	s.prewriteTxn(c, txn.(*tikvTxn))
+	committer := s.prewriteTxn(c, txn.(*tikvTxn))
 	l = s.mustGetLock(c, []byte("key"))
-	s.ttlEquals(c, l.TTL, uint64(ttlFactor*2)+uint64(time.Since(start)/time.Millisecond))
+	s.ttlEquals(c, l.TTL, ManagedLockTTL+uint64(time.Since(start)/time.Millisecond))
+	c.Assert(committer.ttlManager.state, Equals, stateRunning)
 
 	// Txn with long read time.
+	committer.ttlManager.close()
 	start = time.Now()
 	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
