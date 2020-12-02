@@ -578,12 +578,8 @@ func (w *worker) writePhysicalTableRecord(t table.PhysicalTable, bfWorkerType ba
 		for i := len(backfillWorkers); i < int(workerCnt); i++ {
 			sessCtx := newContext(reorgInfo.d.store)
 			sessCtx.GetSessionVars().StmtCtx.IsDDLJobInQueue = true
-			// Set the row encode format to version 2.
-			if rowFormat == variable.DefTiDBRowFormatV1 {
-				sessCtx.GetSessionVars().RowEncoder.Enable = false
-			} else {
-				sessCtx.GetSessionVars().RowEncoder.Enable = true
-			}
+			// Set the row encode format version.
+			sessCtx.GetSessionVars().RowEncoder.Enable = rowFormat != variable.DefTiDBRowFormatV1
 			// Simulate the sql mode environment in the worker sessionCtx.
 			sqlMode := reorgInfo.ReorgMeta.SQLMode
 			sessCtx.GetSessionVars().SQLMode = sqlMode

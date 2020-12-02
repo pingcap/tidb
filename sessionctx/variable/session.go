@@ -1682,7 +1682,7 @@ func SetLocalSystemVar(name string, val string) {
 	case TiDBDDLErrorCountLimit:
 		SetDDLErrorCountLimit(tidbOptInt64(val, DefTiDBDDLErrorCountLimit))
 	case TiDBRowFormatVersion:
-		SetDDLReorgRowFormat(tidbOptInt64(val, DefTiDBRowFormatV1))
+		SetDDLReorgRowFormat(tidbOptInt64(val, DefTiDBRowFormatV2))
 	}
 }
 
