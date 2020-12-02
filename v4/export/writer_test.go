@@ -1,12 +1,15 @@
+// Copyright 2020 PingCAP, Inc. Licensed under Apache-2.0.
+
 package export
 
 import (
 	"context"
 	"database/sql/driver"
-	"github.com/pingcap/br/pkg/storage"
 	"io/ioutil"
 	"os"
 	"path"
+
+	"github.com/pingcap/br/pkg/storage"
 
 	. "github.com/pingcap/check"
 )
