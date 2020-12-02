@@ -1655,7 +1655,7 @@ func newBatchExecutor(rateLimit int, committer *twoPhaseCommitter,
 
 // initUtils do initialize batchExecutor related policies like rateLimit util
 func (batchExe *batchExecutor) initUtils() error {
-	// init rateLimiter by injected rate limit number
+	// init rateLimiter bytikv/1pc_test.go injected rate limit number
 	batchExe.rateLimiter = newRateLimit(batchExe.rateLim)
 	return nil
 }

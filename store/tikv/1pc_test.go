@@ -15,9 +15,9 @@ package tikv
 
 import (
 	"context"
-	config "github.com/pingcap/tidb/config"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/tikv/oracle"
