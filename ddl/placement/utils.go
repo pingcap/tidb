@@ -131,3 +131,23 @@ func BuildPlacementCopyBundle(oldBundle *Bundle, newID int64) *Bundle {
 	}
 	return newBundle
 }
+
+// GetLeaderDCByBundle returns the leader's DC by Bundle if found
+func GetLeaderDCByBundle(bundle *Bundle, dcLabelKey string) (string, bool) {
+	for _, rule := range bundle.Rules {
+		if isValidLeaderRule(rule, dcLabelKey) {
+			return rule.LabelConstraints[0].Values[0], true
+		}
+	}
+	return "", false
+}
+
+func isValidLeaderRule(rule *Rule, dcLabelKey string) bool {
+	if rule.Role == Leader && rule.Count == 1 && len(rule.LabelConstraints) == 1 {
+		cons := rule.LabelConstraints[0]
+		if cons.Op == In && cons.Key == dcLabelKey && len(cons.Values) == 1 {
+			return true
+		}
+	}
+	return false
+}
