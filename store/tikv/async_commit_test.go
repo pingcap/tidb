@@ -17,7 +17,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	config "github.com/pingcap/tidb/config"
 	"sync/atomic"
 	"time"
 
