@@ -454,6 +454,7 @@ PARTITION BY RANGE (c) (
 		tk.MustExec(fmt.Sprintf("set @@txn_scope = %v", testcase.txnScope))
 		if testcase.disableAutoCommit {
 			tk.MustExec("set @@autocommit = 0")
+			tk.MustExec("begin")
 			tk.MustExec(testcase.sql)
 			_, err = tk.Exec("commit")
 		} else {
@@ -464,7 +465,6 @@ PARTITION BY RANGE (c) (
 		} else {
 			c.Assert(err, NotNil)
 			c.Assert(err.Error(), Matches, testcase.err.Error())
-			fmt.Println(err.Error())
 		}
 	}
 }
