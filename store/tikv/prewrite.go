@@ -15,6 +15,7 @@ package tikv
 
 import (
 	"bytes"
+	"golang.org/x/tools/go/ssa/interp/testdata/src/fmt"
 	"math"
 	"sync/atomic"
 	"time"
@@ -291,6 +292,14 @@ func (c *twoPhaseCommitter) reprewritePrimary(bo *Backoffer) {
 	}
 	c.reprewrite.Add(1)
 	go func() {
+		defer func() {
+			if err := recover(); err != nil {
+				if c.reprewrite.err != nil {
+					c.reprewrite.err = errors.Trace(errors.New(fmt.Sprint(err)))
+				}
+			}
+			c.reprewrite.Done()
+		}()
 		// It is slow to find the primary mutation by iterating the mutations.
 		// But it is not a big problem because fallback happens rarely and the number of mutations are
 		// small in async commit or 1PC.
@@ -302,6 +311,5 @@ func (c *twoPhaseCommitter) reprewritePrimary(bo *Backoffer) {
 			}
 		}
 		c.reprewrite.err = errors.Trace(c.prewriteMutations(bo, mutation))
-		c.reprewrite.Done()
 	}()
 }

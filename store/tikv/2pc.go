@@ -1670,6 +1670,7 @@ func (batchExe *batchExecutor) startWorker(exitCh chan struct{}, ch chan error, 
 			go func() {
 				defer batchExe.rateLimiter.putToken()
 				var singleBatchBackoffer *Backoffer
+				var singleBatchCancel context.CancelFunc
 				if _, ok := batchExe.action.(actionCommit); ok {
 					// Because the secondary batches of the commit actions are implemented to be
 					// committed asynchronously in background goroutines, we should not
@@ -1680,7 +1681,12 @@ func (batchExe *batchExecutor) startWorker(exitCh chan struct{}, ch chan error, 
 					// in concurrent goroutines.
 					singleBatchBackoffer = batchExe.backoffer.Clone()
 				} else {
-					singleBatchBackoffer, _ = batchExe.backoffer.Fork()
+					singleBatchBackoffer, singleBatchCancel = batchExe.backoffer.Fork()
+					defer func() {
+						if singleBatchCancel != nil {
+							singleBatchCancel()
+						}
+					}()
 				}
 				beforeSleep := singleBatchBackoffer.totalSleep
 				ch <- batchExe.action.handleSingleBatch(batchExe.committer, singleBatchBackoffer, batch)
@@ -1693,6 +1699,8 @@ func (batchExe *batchExecutor) startWorker(exitCh chan struct{}, ch chan error, 
 						commitDetail.Mu.Unlock()
 					}
 				}
+				// set cancel to nil to avoid cancelling primary lock reprewriting
+				singleBatchCancel = nil
 			}()
 		} else {
 			logutil.Logger(batchExe.backoffer.ctx).Info("break startWorker",
@@ -1716,6 +1724,11 @@ func (batchExe *batchExecutor) process(batches []batchMutations) error {
 	var cancel context.CancelFunc
 	if _, ok := batchExe.action.(actionPrewrite); ok {
 		batchExe.backoffer, cancel = batchExe.backoffer.Fork()
+		defer func() {
+			if cancel != nil {
+				cancel()
+			}
+		}()
 	}
 	// concurrently do the work for each batch.
 	ch := make(chan error, len(batches))
@@ -1745,6 +1758,8 @@ func (batchExe *batchExecutor) process(batches []batchMutations) error {
 	}
 	close(exitCh)
 	metrics.TiKVTokenWaitDuration.Observe(batchExe.tokenWaitDuration.Seconds())
+	// set cancel to nil to avoid cancelling primary lock reprewriting
+	cancel = nil
 	return err
 }
 
