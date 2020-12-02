@@ -554,18 +554,7 @@ func processColumnFlags(col *table.Column) {
 	}
 }
 
-// columnDefToCol converts ColumnDef to Col and TableConstraints.
-// outPriKeyConstraint is the primary key constraint out of column definition. such as: create table t1 (id int , age int, primary key(id));
-func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, outPriKeyConstraint *ast.Constraint) (*table.Column, []*ast.Constraint, error) {
-	var constraints = make([]*ast.Constraint, 0)
-	col := table.ToColumn(&model.ColumnInfo{
-		Offset:    offset,
-		Name:      colDef.Name.Name,
-		FieldType: *colDef.Tp,
-		// TODO: remove this version field after there is no old version.
-		Version: model.CurrLatestColumnInfoVersion,
-	})
-
+func adjustBlobTypesFlen(col *table.Column) {
 	if col.FieldType.Tp == mysql.TypeBlob {
 		if col.FieldType.Flen <= tinyBlobMaxLength {
 			logutil.BgLogger().Info(fmt.Sprintf("Automatically convert BLOB(%d) to TINYBLOB", col.FieldType.Flen))
@@ -583,6 +572,21 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 			col.FieldType.Tp = mysql.TypeLongBlob
 		}
 	}
+}
+
+// columnDefToCol converts ColumnDef to Col and TableConstraints.
+// outPriKeyConstraint is the primary key constraint out of column definition. such as: create table t1 (id int , age int, primary key(id));
+func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, outPriKeyConstraint *ast.Constraint) (*table.Column, []*ast.Constraint, error) {
+	var constraints = make([]*ast.Constraint, 0)
+	col := table.ToColumn(&model.ColumnInfo{
+		Offset:    offset,
+		Name:      colDef.Name.Name,
+		FieldType: *colDef.Tp,
+		// TODO: remove this version field after there is no old version.
+		Version: model.CurrLatestColumnInfoVersion,
+	})
+
+	adjustBlobTypesFlen(col)
 
 	if !isExplicitTimeStamp() {
 		// Check and set TimestampFlag, OnUpdateNowFlag and NotNullFlag.
@@ -3451,17 +3455,6 @@ func CheckModifyTypeCompatible(origin *types.FieldType, to *types.FieldType) (ca
 	return true, notCompatibleMsg, errUnsupportedModifyColumn.GenWithStackByArgs(notCompatibleMsg)
 }
 
-// checkConvertedBlobFlenSame is used for situation where the new Flen is less than the old one
-// but will be same after db automatically converts the Flen
-func checkConvertedBlobFlenSame(originFlen int, toFlen int) bool {
-	if (toFlen <= tinyBlobMaxLength && originFlen > tinyBlobMaxLength) ||
-		(toFlen <= blobMaxLength && originFlen > blobMaxLength) ||
-		(toFlen <= mediumBlobMaxLength && originFlen > mediumBlobMaxLength) {
-		return false
-	}
-	return true
-}
-
 func needReorgToChange(origin *types.FieldType, to *types.FieldType) (needOreg bool, reasonMsg string) {
 	toFlen := to.Flen
 	originFlen := origin.Flen
@@ -3472,9 +3465,7 @@ func needReorgToChange(origin *types.FieldType, to *types.FieldType) (needOreg b
 		toFlen, _ = mysql.GetDefaultFieldLengthAndDecimal(to.Tp)
 	}
 
-	if toFlen > 0 && toFlen < originFlen &&
-		!(to.Tp == mysql.TypeBlob &&
-			checkConvertedBlobFlenSame(origin.Flen, to.Flen)) {
+	if toFlen > 0 && toFlen < originFlen {
 		return true, fmt.Sprintf("length %d is less than origin %d", to.Flen, origin.Flen)
 	}
 	if to.Decimal > 0 && to.Decimal < origin.Decimal {
@@ -3756,6 +3747,9 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 	if err = setCharsetCollationFlenDecimal(&newCol.FieldType, chs, coll); err != nil {
 		return nil, errors.Trace(err)
 	}
+
+	// Adjust the flen for blob types after the default flen is set.
+	adjustBlobTypesFlen(newCol)
 
 	if err = processColumnOptions(ctx, newCol, specNewColumn.Options); err != nil {
 		return nil, errors.Trace(err)
