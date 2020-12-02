@@ -115,6 +115,12 @@ func (s *testAsyncCommitCommon) mustGetNoneFromSnapshot(c *C, version uint64, ke
 	c.Assert(errors.Cause(err), Equals, kv.ErrNotExist)
 }
 
+func (s *testAsyncCommitCommon) beginAsyncCommitWithExternalConsistency(c *C) *tikvTxn {
+	txn := s.beginAsyncCommit(c)
+	txn.SetOption(kv.GuaranteeExternalConsistency, true)
+	return txn
+}
+
 func (s *testAsyncCommitCommon) beginAsyncCommit(c *C) *tikvTxn {
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
@@ -363,8 +369,8 @@ func (s *testAsyncCommitSuite) TestRepeatableRead(c *C) {
 // It's just a simple validation of external consistency.
 // Extra tests are needed to test this feature with the control of the TiKV cluster.
 func (s *testAsyncCommitSuite) TestAsyncCommitExternalConsistency(c *C) {
-	t1 := s.beginAsyncCommit(c)
-	t2 := s.beginAsyncCommit(c)
+	t1 := s.beginAsyncCommitWithExternalConsistency(c)
+	t2 := s.beginAsyncCommitWithExternalConsistency(c)
 	err := t1.Set([]byte("a"), []byte("a1"))
 	c.Assert(err, IsNil)
 	err = t2.Set([]byte("b"), []byte("b1"))
