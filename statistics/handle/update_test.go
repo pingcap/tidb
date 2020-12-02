@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
+	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
 
@@ -66,8 +67,8 @@ func (s *testStatsSuite) registerHook() {
 	conf := &log.Config{Level: os.Getenv("log_level"), File: log.FileLogConfig{}}
 	_, r, _ := log.InitLogger(conf)
 	s.hook = &logHook{r.Core, ""}
-	// lg := zap.New(s.hook)
-	// log.ReplaceGlobals(lg, r)
+	lg := zap.New(s.hook)
+	log.ReplaceGlobals(lg, r)
 }
 
 func (s *testStatsSuite) TestSingleSessionInsert(c *C) {
