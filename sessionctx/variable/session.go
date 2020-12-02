@@ -637,17 +637,10 @@ type SessionVars struct {
 	// PrevFoundInPlanCache indicates whether the last statement was found in plan cache.
 	PrevFoundInPlanCache bool
 
-<<<<<<< HEAD
-=======
 	// FoundInBinding indicates whether the execution plan is matched with the hints in the binding.
 	FoundInBinding bool
 	// PrevFoundInBinding indicates whether the last execution plan is matched with the hints in the binding.
 	PrevFoundInBinding bool
-
-	// OptimizerUseInvisibleIndexes indicates whether optimizer can use invisible index
-	OptimizerUseInvisibleIndexes bool
-
->>>>>>> 2c66371d8... planner, sessionctx : Add 'last_plan_from_binding' to help know whether sql's plan is matched with the hints in the binding (#18017)
 	// SelectLimit limits the max counts of select statement's output
 	SelectLimit uint64
 
@@ -1364,13 +1357,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		config.GetGlobalConfig().CheckMb4ValueInUTF8 = TiDBOptOn(val)
 	case TiDBFoundInPlanCache:
 		s.FoundInPlanCache = TiDBOptOn(val)
-<<<<<<< HEAD
-=======
 	case TiDBFoundInBinding:
 		s.FoundInBinding = TiDBOptOn(val)
-	case TiDBEnableCollectExecutionInfo:
-		config.GetGlobalConfig().EnableCollectExecutionInfo = TiDBOptOn(val)
->>>>>>> 2c66371d8... planner, sessionctx : Add 'last_plan_from_binding' to help know whether sql's plan is matched with the hints in the binding (#18017)
 	case SQLSelectLimit:
 		result, err := strconv.ParseUint(val, 10, 64)
 		if err != nil {

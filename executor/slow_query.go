@@ -430,7 +430,6 @@ func (e *slowQueryRetriever) parseLog(ctx sessionctx.Context, log []string, offs
 }
 
 type slowQueryTuple struct {
-<<<<<<< HEAD
 	time                   types.Time
 	txnStartTs             uint64
 	user                   string
@@ -483,6 +482,7 @@ type slowQueryTuple struct {
 	isInternal             bool
 	succ                   bool
 	planFromCache          bool
+	planFromBinding        bool
 	prepared               bool
 	kvTotal                float64
 	pdTotal                float64
@@ -491,76 +491,6 @@ type slowQueryTuple struct {
 	plan                   string
 	planDigest             string
 	backoffDetail          string
-=======
-	time                      types.Time
-	txnStartTs                uint64
-	user                      string
-	host                      string
-	connID                    uint64
-	execRetryCount            uint64
-	execRetryTime             float64
-	queryTime                 float64
-	parseTime                 float64
-	compileTime               float64
-	rewriteTime               float64
-	preprocSubqueries         uint64
-	preprocSubQueryTime       float64
-	optimizeTime              float64
-	waitTSTime                float64
-	preWriteTime              float64
-	waitPrewriteBinlogTime    float64
-	commitTime                float64
-	getCommitTSTime           float64
-	commitBackoffTime         float64
-	backoffTypes              string
-	resolveLockTime           float64
-	localLatchWaitTime        float64
-	writeKeys                 uint64
-	writeSize                 uint64
-	prewriteRegion            uint64
-	txnRetry                  uint64
-	copTime                   float64
-	processTime               float64
-	waitTime                  float64
-	backOffTime               float64
-	lockKeysTime              float64
-	requestCount              uint64
-	totalKeys                 uint64
-	processKeys               uint64
-	db                        string
-	indexIDs                  string
-	digest                    string
-	statsInfo                 string
-	avgProcessTime            float64
-	p90ProcessTime            float64
-	maxProcessTime            float64
-	maxProcessAddress         string
-	avgWaitTime               float64
-	p90WaitTime               float64
-	maxWaitTime               float64
-	maxWaitAddress            string
-	memMax                    int64
-	diskMax                   int64
-	prevStmt                  string
-	sql                       string
-	isInternal                bool
-	succ                      bool
-	planFromCache             bool
-	planFromBinding           bool
-	prepared                  bool
-	kvTotal                   float64
-	pdTotal                   float64
-	backoffTotal              float64
-	writeSQLRespTotal         float64
-	plan                      string
-	planDigest                string
-	backoffDetail             string
-	rocksdbDeleteSkippedCount uint64
-	rocksdbKeySkippedCount    uint64
-	rocksdbBlockCacheCount    uint64
-	rocksdbBlockReadCount     uint64
-	rocksdbBlockReadByte      uint64
->>>>>>> 2c66371d8... planner, sessionctx : Add 'last_plan_from_binding' to help know whether sql's plan is matched with the hints in the binding (#18017)
 }
 
 func (st *slowQueryTuple) setFieldValue(tz *time.Location, field, value string, lineNum int, checker *slowLogChecker) (valid bool, err error) {

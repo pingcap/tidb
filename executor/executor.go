@@ -1707,12 +1707,8 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	vars.StmtCtx = sc
 	vars.PrevFoundInPlanCache = vars.FoundInPlanCache
 	vars.FoundInPlanCache = false
-<<<<<<< HEAD
-=======
-	vars.ClearStmtVars()
 	vars.PrevFoundInBinding = vars.FoundInBinding
 	vars.FoundInBinding = false
->>>>>>> 2c66371d8... planner, sessionctx : Add 'last_plan_from_binding' to help know whether sql's plan is matched with the hints in the binding (#18017)
 	return
 }
 

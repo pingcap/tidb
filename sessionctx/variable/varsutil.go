@@ -162,13 +162,9 @@ func GetSessionOnlySysVars(s *SessionVars, key string) (string, bool, error) {
 	case TiDBCapturePlanBaseline:
 		return CapturePlanBaseline.GetVal(), true, nil
 	case TiDBFoundInPlanCache:
-<<<<<<< HEAD
 		return BoolToIntStr(s.PrevFoundInPlanCache), true, nil
-=======
-		return BoolToOnOff(s.PrevFoundInPlanCache), true, nil
 	case TiDBFoundInBinding:
-		return BoolToOnOff(s.PrevFoundInBinding), true, nil
->>>>>>> 2c66371d8... planner, sessionctx : Add 'last_plan_from_binding' to help know whether sql's plan is matched with the hints in the binding (#18017)
+		return BoolToIntStr(s.PrevFoundInBinding), true, nil
 	case TiDBEnableCollectExecutionInfo:
 		return BoolToIntStr(config.GetGlobalConfig().EnableCollectExecutionInfo), true, nil
 	}

@@ -19,7 +19,6 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"strconv"
 	"testing"
 	"time"
 
@@ -1427,45 +1426,6 @@ func (s *testSuite) TestbindingSource(c *C) {
 	c.Assert(bind.Source, Equals, bindinfo.Capture)
 }
 
-<<<<<<< HEAD
-func (s *testSuite) TestIssue19836(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	s.cleanBindingEnv(tk)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int, key (a));")
-	tk.MustExec("CREATE SESSION BINDING FOR select * from t where a = 1 limit 5, 5 USING select * from t ignore index (a) where a = 1 limit 5, 5;")
-	tk.MustExec("PREPARE stmt FROM 'select * from t where a = 40 limit ?, ?';")
-	tk.MustExec("set @a=1;")
-	tk.MustExec("set @b=2;")
-	tk.MustExec("EXECUTE stmt USING @a, @b;")
-	tk.Se.SetSessionManager(&mockSessionManager{
-		PS: []*util.ProcessInfo{tk.Se.ShowProcess()},
-	})
-	explainResult := testkit.Rows(
-		"Limit_8 2.00 0 root  time:0s, loops:0 offset:1, count:2 N/A N/A",
-		"└─TableReader_14 3.00 0 root  time:0s, loops:0 data:Limit_13 N/A N/A",
-		"  └─Limit_13 3.00 0 cop[tikv]  time:0ns, loops:0 offset:0, count:3 N/A N/A",
-		"    └─Selection_12 3.00 0 cop[tikv]  time:0ns, loops:0 eq(test.t.a, 40) N/A N/A",
-		"      └─TableFullScan_11 3000.00 0 cop[tikv] table:t time:0ns, loops:0 keep order:false, stats:pseudo N/A N/A",
-	)
-	tk.MustQuery("explain for connection " + strconv.FormatUint(tk.Se.ShowProcess().ID, 10)).Check(explainResult)
-}
-
-func (s *testSuite) TestDMLIndexHintBind(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	s.cleanBindingEnv(tk)
-	tk.MustExec("use test")
-	tk.MustExec("create table t(a int, b int, c int, key idx_b(b), key idx_c(c))")
-
-	tk.MustExec("delete from t where b = 1 and c > 1")
-	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t:idx_b")
-	c.Assert(tk.MustUseIndex("delete from t where b = 1 and c > 1", "idx_b(b)"), IsTrue)
-	tk.MustExec("create global binding for delete from t where b = 1 and c > 1 using delete from t use index(idx_c) where b = 1 and c > 1")
-	tk.MustExec("delete from t where b = 1 and c > 1")
-	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t:idx_c")
-	c.Assert(tk.MustUseIndex("delete from t where b = 1 and c > 1", "idx_c(c)"), IsTrue)
-=======
 func (s *testSuite) TestSPMHitInfo(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	s.cleanBindingEnv(tk)
@@ -1486,5 +1446,4 @@ func (s *testSuite) TestSPMHitInfo(c *C) {
 	tk.MustExec("SELECT * from t1,t2 where t1.id = t2.id")
 	tk.MustQuery(`select @@last_plan_from_binding;`).Check(testkit.Rows("1"))
 	tk.MustExec("drop global binding for SELECT * from t1,t2 where t1.id = t2.id")
->>>>>>> 2c66371d8... planner, sessionctx : Add 'last_plan_from_binding' to help know whether sql's plan is matched with the hints in the binding (#18017)
 }
