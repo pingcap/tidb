@@ -466,6 +466,9 @@ func (s *session) doCommit(ctx context.Context) error {
 	if s.GetSessionVars().EnableAmendPessimisticTxn {
 		s.txn.SetOption(kv.SchemaAmender, NewSchemaAmenderForTikvTxn(s))
 	}
+	s.txn.SetOption(kv.EnableAsyncCommit, s.GetSessionVars().EnableAsyncCommit)
+	s.txn.SetOption(kv.Enable1PC, s.GetSessionVars().Enable1PC)
+	s.txn.SetOption(kv.GuaranteeExternalConsistency, s.GetSessionVars().GuaranteeExternalConsistency)
 
 	return s.txn.Commit(sessionctx.SetCommitCtx(ctx, s))
 }
@@ -2284,6 +2287,9 @@ var builtinGlobalVariable = []string{
 	variable.TiDBEnableAmendPessimisticTxn,
 	variable.TiDBMemoryUsageAlarmRatio,
 	variable.TiDBEnableRateLimitAction,
+	variable.TiDBEnableAsyncCommit,
+	variable.TiDBEnable1PC,
+	variable.TiDBGuaranteeExternalConsistency,
 }
 
 var (
