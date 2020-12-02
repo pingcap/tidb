@@ -15,7 +15,7 @@ package tikv
 
 import (
 	"bytes"
-	"golang.org/x/tools/go/ssa/interp/testdata/src/fmt"
+	"fmt"
 	"math"
 	"sync/atomic"
 	"time"
