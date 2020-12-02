@@ -86,16 +86,6 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 	}
 	dbInfo := b.copySchemaTables(roDBInfo.Name.L)
 	b.copySortedTables(oldTableID, newTableID)
-	switch diff.Type {
-	case model.ActionAlterTableAlterPartition:
-		b.applyDropTable(dbInfo, diff.TableID, nil)
-		_, err := b.applyCreateTable(m, dbInfo, diff.TableID, nil, model.ActionAlterTableAlterPartition, nil)
-		if err != nil {
-			return nil, err
-		}
-		// TODO: enhancement: If the leader Placement Policy isn't updated, maybe we can omit the diff.
-		return []int64{diff.PartitionID}, b.applyPlacementUpdate(placement.GroupID(diff.PartitionID))
-	}
 
 	tblIDs := make([]int64, 0, 2)
 	// We try to reuse the old allocator, so the cached auto ID can be reused.
@@ -147,6 +137,17 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 			// While session 1 performs the DML operation associated with partition 1,
 			// the TRUNCATE operation of session 2 on partition 2 does not cause the operation of session 1 to fail.
 			switch diff.Type {
+			case model.ActionAlterTableAlterPartition:
+				tblIDs = append(tblIDs, opt.PartitionID)
+				b.applyDropTable(dbInfo, diff.TableID, nil)
+				_, err := b.applyCreateTable(m, dbInfo, diff.TableID, nil, model.ActionAlterTableAlterPartition, nil)
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
+				if err := b.applyPlacementUpdate(placement.GroupID(opt.PartitionID)); err != nil {
+					return nil, errors.Trace(err)
+				}
+				continue
 			case model.ActionTruncateTablePartition:
 				tblIDs = append(tblIDs, opt.OldTableID)
 				b.applyPlacementDelete(placement.GroupID(opt.OldTableID))
