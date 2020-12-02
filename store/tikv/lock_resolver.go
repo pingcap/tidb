@@ -366,7 +366,10 @@ func (lr *LockResolver) resolveLocks(bo *Backoffer, callerStartTS uint64, locks 
 				// Treat nonAsyncCommitLock error as a soft error. It happens when a transaction
 				// just fallbacks from async commit, so a simple retry will work.
 				if _, ok := err.(*nonAsyncCommitLock); ok {
+					logutil.BgLogger().Info("transaction has just fallen back from async commit, retry resolve lock",
+						zap.Uint64("startTS", l.TxnID))
 					msBeforeTxnExpired.update(0)
+					err = nil
 				}
 			} else if l.LockType == kvrpcpb.Op_PessimisticLock {
 				err = lr.resolvePessimisticLock(bo, l, cleanRegions)
