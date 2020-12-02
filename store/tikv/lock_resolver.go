@@ -803,26 +803,22 @@ func (lr *LockResolver) checkAllSecondaries(bo *Backoffer, l *Lock, status *TxnS
 	}
 
 	errChan := make(chan error, len(regions))
-
+	checkBo, cancel := bo.Fork()
+	defer cancel()
 	for regionID, keys := range regions {
 		curRegionID := regionID
 		curKeys := keys
 
 		go func() {
-			errChan <- lr.checkSecondaries(bo, l.TxnID, curKeys, curRegionID, &shared)
+			errChan <- lr.checkSecondaries(checkBo, l.TxnID, curKeys, curRegionID, &shared)
 		}()
 	}
 
-	var errs []string
 	for range regions {
-		err1 := <-errChan
-		if err1 != nil {
-			errs = append(errs, err1.Error())
+		err := <-errChan
+		if err != nil {
+			return nil, err
 		}
-	}
-
-	if len(errs) > 0 {
-		return nil, errors.Errorf("async commit recovery (sending CheckSecondaryLocks) finished with errors: %v", errs)
 	}
 
 	return &shared, nil

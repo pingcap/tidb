@@ -86,7 +86,7 @@ func (c *twoPhaseCommitter) buildPrewriteRequest(batch batchMutations, txnSize u
 		MaxCommitTs:       c.maxCommitTS,
 	}
 
-	failpoint.Inject("invalidMaxCommitTS", func(_ failpoint.Value) {
+	failpoint.Inject("invalidMaxCommitTS", func() {
 		if req.MaxCommitTs > 0 {
 			req.MaxCommitTs = minCommitTS - 1
 		}
