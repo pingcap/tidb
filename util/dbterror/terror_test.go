@@ -14,6 +14,7 @@
 package dbterror
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -30,14 +31,33 @@ var _ = Suite(&testkSuite{})
 
 type testkSuite struct{}
 
+func genErrMsg(pattern string, a ...interface{}) string {
+	return fmt.Sprintf(pattern, a...)
+}
+
 func (s *testkSuite) TestErrorRedact(c *C) {
 	original := errors.RedactLogEnabled.Load()
 	errors.RedactLogEnabled.Store(true)
 	defer func() { errors.RedactLogEnabled.Store(original) }()
 
 	class := ErrClass{}
-	err := class.NewStd(errno.ErrDupEntry).GenWithStackByArgs("sensitive_data", "no_sensitive")
-	c.Assert(strings.Contains(err.Error(), "?"), IsTrue)
-	c.Assert(strings.Contains(err.Error(), "no_sensitive"), IsTrue)
-	c.Assert(strings.Contains(err.Error(), "sensitive_data"), IsFalse)
+
+	NoSensitiveValue := "no_sensitive"
+	SensitiveData := "sensitive_data"
+	QuestionMark := "?"
+
+	err := class.NewStd(errno.ErrDupEntry).GenWithStackByArgs(SensitiveData, NoSensitiveValue)
+	c.Assert(strings.Contains(err.Error(), genErrMsg(errno.MySQLErrName[errno.ErrDupEntry].Raw, QuestionMark, NoSensitiveValue)), IsTrue)
+	err = class.NewStd(errno.ErrPartitionWrongValues).GenWithStackByArgs(NoSensitiveValue, SensitiveData)
+	c.Assert(strings.Contains(err.Error(), genErrMsg(errno.MySQLErrName[errno.ErrPartitionWrongValues].Raw, NoSensitiveValue, QuestionMark)), IsTrue)
+	err = class.NewStd(errno.ErrNoParts).GenWithStackByArgs(SensitiveData)
+	c.Assert(strings.Contains(err.Error(), genErrMsg(errno.MySQLErrName[errno.ErrNoParts].Raw, QuestionMark)), IsTrue)
+	err = class.NewStd(errno.ErrWrongValue).GenWithStackByArgs(SensitiveData, SensitiveData)
+	c.Assert(strings.Contains(err.Error(), genErrMsg(errno.MySQLErrName[errno.ErrWrongValue].Raw, QuestionMark, QuestionMark)), IsTrue)
+	err = class.NewStd(errno.ErrNoPartitionForGivenValue).GenWithStackByArgs(SensitiveData)
+	c.Assert(strings.Contains(err.Error(), genErrMsg(errno.MySQLErrName[errno.ErrNoPartitionForGivenValue].Raw, QuestionMark)), IsTrue)
+	err = class.NewStd(errno.ErrTooLongIndexComment).GenWithStackByArgs(SensitiveData, NoSensitiveValue)
+	c.Assert(strings.Contains(err.Error(), genErrMsg(errno.MySQLErrName[errno.ErrTooLongIndexComment].Raw, QuestionMark, NoSensitiveValue)), IsTrue)
+	err = class.NewStd(errno.ErrDataOutOfRange).GenWithStackByArgs(SensitiveData, SensitiveData)
+	c.Assert(strings.Contains(err.Error(), genErrMsg(errno.MySQLErrName[errno.ErrDataOutOfRange].Raw, QuestionMark, QuestionMark)), IsTrue)
 }
