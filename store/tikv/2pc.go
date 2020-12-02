@@ -64,7 +64,9 @@ var (
 )
 
 var (
-	ManagedLockTTL         uint64 = 6000        // 6s
+	// ManagedLockTTL is the TTL for locks of pessimistic transactions or large transactions.
+	ManagedLockTTL uint64 = 6000 // 6s
+	// RefreshTxnTTLThreshold is the minimal transaction size to start a ttlManager in prewrite.
 	RefreshTxnTTLThreshold uint64 = bytesPerMiB // 1MiB
 )
 
