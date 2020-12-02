@@ -1338,9 +1338,7 @@ func doDMLWorks(s Session) {
 			if v.Name == variable.TiDBEnableAsyncCommit && config.GetGlobalConfig().Store == "tikv" {
 				vVal = variable.BoolOn
 			}
-			if v.Name == variable.TiDBEnable1PC && config.GetGlobalConfig().Store == "tikv" {
-				vVal = variable.BoolOn
-			}
+			// TODO: Enable 1PC by default for new cluster once it's ready.
 			value := fmt.Sprintf(`("%s", "%s")`, strings.ToLower(k), vVal)
 			values = append(values, value)
 		}
