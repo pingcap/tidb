@@ -636,8 +636,9 @@ func (b *builtinCastIntAsStringSig) vecEvalString(input *chunk.Chunk, result *ch
 		return err
 	}
 
-	isUnsigned := mysql.HasUnsignedFlag(b.args[0].GetType().Flag)
-	isYearType := b.args[0].GetType().Tp == mysql.TypeYear
+	tp := b.args[0].GetType()
+	isUnsigned := mysql.HasUnsignedFlag(tp.Flag)
+	isYearType := tp.Tp == mysql.TypeYear
 	result.ReserveString(n)
 	i64s := buf.Int64s()
 	for i := 0; i < n; i++ {
