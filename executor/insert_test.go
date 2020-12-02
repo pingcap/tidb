@@ -1284,3 +1284,44 @@ func (s *testSuite9) TestIssue10402(c *C) {
 	tk.MustQuery("select * from vctt").Check(testkit.Rows("ab\n\n ab\n\n", "ab\t\t ab\t\t", "ab   ab", "ab\r\r ab\r\r"))
 	tk.MustQuery("select length(v), length(c) from vctt").Check(testkit.Rows("4 4", "4 4", "4 2", "4 4"))
 }
+<<<<<<< HEAD
+=======
+
+func combination(items []string) func() []string {
+	current := 1
+	buf := make([]string, len(items))
+	return func() []string {
+		if current >= int(math.Pow(2, float64(len(items)))) {
+			return nil
+		}
+		buf = buf[:0]
+		for i, e := range items {
+			if (1<<i)&current != 0 {
+				buf = append(buf, e)
+			}
+		}
+		current++
+		return buf
+	}
+}
+
+func (s *testSuite10) TestBinaryLiteralInsertToEnum(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test`)
+	tk.MustExec("drop table if exists bintest")
+
+	tk.MustExec("create table bintest (h enum(0x61, '1', 'b')) character set utf8mb4")
+	tk.MustExec("insert into bintest(h) values(0x61)")
+	tk.MustQuery("select * from bintest").Check(testkit.Rows("a"))
+}
+
+func (s *testSuite10) TestBinaryLiteralInsertToSet(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test`)
+	tk.MustExec("drop table if exists bintest")
+
+	tk.MustExec("create table bintest (h set(0x61, '1', 'b')) character set utf8mb4")
+	tk.MustExec("insert into bintest(h) values(0x61)")
+	tk.MustQuery("select * from bintest").Check(testkit.Rows("a"))
+}
+>>>>>>> 0c3c4c588... *: Let binary literal can be convert to enum and set (#20789)
