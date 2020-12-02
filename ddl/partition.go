@@ -494,6 +494,9 @@ func buildRangePartitionDefinitions(ctx sessionctx.Context, defs []*ast.Partitio
 
 func checkPartitionValuesIsInt(ctx sessionctx.Context, def *ast.PartitionDefinition, exprs []ast.ExprNode) error {
 	for _, exp := range exprs {
+		if _, ok := exp.(*ast.MaxValueExpr); ok {
+			continue
+		}
 		val, err := expression.EvalAstExpr(ctx, exp)
 		if err != nil {
 			return err
