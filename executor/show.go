@@ -183,6 +183,8 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 		return e.fetchShowStatsHistogram()
 	case ast.ShowStatsBuckets:
 		return e.fetchShowStatsBuckets()
+	case ast.ShowStatsTopN:
+		return e.fetchShowStatsTopN()
 	case ast.ShowStatsHealthy:
 		e.fetchShowStatsHealthy()
 		return nil
@@ -292,9 +294,7 @@ func (e *ShowExec) fetchShowEngines() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	for _, row := range rows {
-		e.result.AppendRow(row)
-	}
+	e.result.AppendRows(rows)
 	return nil
 }
 
