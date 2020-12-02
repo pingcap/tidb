@@ -1862,6 +1862,17 @@ func (s *testIntegrationSerialSuite) TestIssue20710(c *C) {
 	}
 }
 
+func (s *testIntegrationSuite) TestQueryBlockTableAliasInHint(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	c.Assert(tk.HasPlan("select /*+ HASH_JOIN(@sel_1 t2) */ * FROM (select 1) t1 NATURAL LEFT JOIN (select 2) t2", "HashJoin"), IsTrue)
+	tk.MustQuery("select /*+ HASH_JOIN(@sel_1 t2) */ * FROM (select 1) t1 NATURAL LEFT JOIN (select 2) t2").Check(testkit.Rows(
+		"1 2",
+	))
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 0)
+}
+
 func (s *testIntegrationSuite) TestIssue10448(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -1907,7 +1918,7 @@ func (s *testIntegrationSuite) TestUpdateMultiUpdatePK(c *C) {
 	tk.MustQuery("SELECT * FROM t").Check(testkit.Rows("2 12"))
 }
 
-func (s *testIntegrationSuite) TestPreferRangeScan(c *C) {
+func (s *testIntegrationSerialSuite) TestPreferRangeScan(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists test;")
