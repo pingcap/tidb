@@ -60,8 +60,6 @@ type InfoSchema interface {
 	RuleBundles() map[string]*placement.Bundle
 	// MockBundles is only used for TEST.
 	MockBundles(map[string]*placement.Bundle)
-	// IsPartitionID returns whether the physicalTableID is a partition table ID
-	IsPartitionID(physicalTableID int64) bool
 }
 
 type sortedTables []table.Table
@@ -414,22 +412,4 @@ func (is *infoSchema) RuleBundles() map[string]*placement.Bundle {
 
 func (is *infoSchema) MockBundles(ruleBundleMap map[string]*placement.Bundle) {
 	is.ruleBundleMap = ruleBundleMap
-}
-
-// IsPartitionID returns whether the physicalTableID is a partition table ID
-func (is *infoSchema) IsPartitionID(physicalTableID int64) bool {
-	for _, v := range is.schemaMap {
-		for _, tbl := range v.tables {
-			pi := tbl.Meta().GetPartitionInfo()
-			if pi == nil {
-				continue
-			}
-			for _, p := range pi.Definitions {
-				if p.ID == physicalTableID {
-					return true
-				}
-			}
-		}
-	}
-	return false
 }

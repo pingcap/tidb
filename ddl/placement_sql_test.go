@@ -524,7 +524,7 @@ add placement policy
 	c.Assert(err, IsNil)
 }
 
-func (s *testDBSuite1) TestGlobalTxnWriteState(c *C) {
+func (s *testDBSuite1) TestGlobalTxnState(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 

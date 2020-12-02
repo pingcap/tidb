@@ -2533,14 +2533,9 @@ func (s *session) checkPlacementPolicyBeforeCommit() error {
 			}
 			// FIXME: currently we assumes the physicalTableID is the partition ID. In future, we should consider the situation
 			// if the physicalTableID belongs to a Table.
-			if is.IsPartitionID(physicalTableID) {
-				partitionID := physicalTableID
-				tbl, _, _ := is.FindTableByPartitionID(partitionID)
-				if tbl == nil || tbl.Meta().Partition == nil {
-					err = ddl.ErrInvalidPlacementPolicyCheck.GenWithStackByArgs(
-						fmt.Sprintf("failed to find partition %v's information", partitionID))
-					break
-				}
+			partitionID := physicalTableID
+			tbl, _, _ := is.FindTableByPartitionID(partitionID)
+			if tbl != nil {
 				tblInfo := tbl.Meta()
 				tableID := tblInfo.ID
 				state := tblInfo.Partition.GetStateByID(partitionID)

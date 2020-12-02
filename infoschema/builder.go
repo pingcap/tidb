@@ -88,6 +88,7 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 	b.copySortedTables(oldTableID, newTableID)
 	switch diff.Type {
 	case model.ActionAlterTableAlterPartition:
+		b.applyDropTable(dbInfo, diff.TableID, nil)
 		_, err := b.applyCreateTable(m, dbInfo, diff.TableID, nil, model.ActionAlterTableAlterPartition, nil)
 		if err != nil {
 			return nil, err

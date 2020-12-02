@@ -1772,7 +1772,7 @@ func onAlterTablePartition(t *meta.Meta, job *model.Job) (ver int64, err error) 
 		}
 		ptInfo.SetStateByID(partitionID, model.StateGlobalTxnOnly)
 		// used by ApplyDiff in updateSchemaVersion
-		job.CtxVars = []interface{}{partitionID, tblInfo.ID}
+		job.CtxVars = []interface{}{partitionID}
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
 		if err != nil {
 			return ver, errors.Trace(err)
@@ -1781,7 +1781,7 @@ func onAlterTablePartition(t *meta.Meta, job *model.Job) (ver int64, err error) 
 	case model.StateGlobalTxnOnly:
 		ptInfo.SetStateByID(partitionID, model.StatePublic)
 		// used by ApplyDiff in updateSchemaVersion
-		job.CtxVars = []interface{}{partitionID, tblInfo.ID}
+		job.CtxVars = []interface{}{partitionID}
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
 		if err != nil {
 			return ver, errors.Trace(err)
