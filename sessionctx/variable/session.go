@@ -756,6 +756,14 @@ type SessionVars struct {
 
 	// EnabledRateLimitAction indicates whether enabled ratelimit action during coprocessor
 	EnabledRateLimitAction bool
+
+	// EnableAsyncCommit indicates whether to enable the async commit feature.
+	EnableAsyncCommit bool
+
+	// Enable1PC indicates whether to enable the one-phase commit feature.
+	Enable1PC bool
+
+	GuaranteeExternalConsistency bool
 }
 
 // UseDynamicPartitionPrune indicates whether use new dynamic partition prune.
@@ -826,75 +834,78 @@ type ConnectionInfo struct {
 // NewSessionVars creates a session vars object.
 func NewSessionVars() *SessionVars {
 	vars := &SessionVars{
-		Users:                       make(map[string]types.Datum),
-		UserVarTypes:                make(map[string]*types.FieldType),
-		systems:                     make(map[string]string),
-		stmtVars:                    make(map[string]string),
-		PreparedStmts:               make(map[uint32]interface{}),
-		PreparedStmtNameToID:        make(map[string]uint32),
-		PreparedParams:              make([]types.Datum, 0, 10),
-		TxnCtx:                      &TransactionContext{},
-		RetryInfo:                   &RetryInfo{},
-		ActiveRoles:                 make([]*auth.RoleIdentity, 0, 10),
-		StrictSQLMode:               true,
-		AutoIncrementIncrement:      DefAutoIncrementIncrement,
-		AutoIncrementOffset:         DefAutoIncrementOffset,
-		Status:                      mysql.ServerStatusAutocommit,
-		StmtCtx:                     new(stmtctx.StatementContext),
-		AllowAggPushDown:            false,
-		AllowBCJ:                    false,
-		OptimizerSelectivityLevel:   DefTiDBOptimizerSelectivityLevel,
-		RetryLimit:                  DefTiDBRetryLimit,
-		DisableTxnAutoRetry:         DefTiDBDisableTxnAutoRetry,
-		DDLReorgPriority:            kv.PriorityLow,
-		allowInSubqToJoinAndAgg:     DefOptInSubqToJoinAndAgg,
-		preferRangeScan:             DefOptPreferRangeScan,
-		CorrelationThreshold:        DefOptCorrelationThreshold,
-		CorrelationExpFactor:        DefOptCorrelationExpFactor,
-		CPUFactor:                   DefOptCPUFactor,
-		CopCPUFactor:                DefOptCopCPUFactor,
-		CopTiFlashConcurrencyFactor: DefOptTiFlashConcurrencyFactor,
-		NetworkFactor:               DefOptNetworkFactor,
-		ScanFactor:                  DefOptScanFactor,
-		DescScanFactor:              DefOptDescScanFactor,
-		SeekFactor:                  DefOptSeekFactor,
-		MemoryFactor:                DefOptMemoryFactor,
-		DiskFactor:                  DefOptDiskFactor,
-		ConcurrencyFactor:           DefOptConcurrencyFactor,
-		EnableRadixJoin:             false,
-		EnableVectorizedExpression:  DefEnableVectorizedExpression,
-		L2CacheSize:                 cpuid.CPU.Cache.L2,
-		CommandValue:                uint32(mysql.ComSleep),
-		TiDBOptJoinReorderThreshold: DefTiDBOptJoinReorderThreshold,
-		SlowQueryFile:               config.GetGlobalConfig().Log.SlowQueryFile,
-		WaitSplitRegionFinish:       DefTiDBWaitSplitRegionFinish,
-		WaitSplitRegionTimeout:      DefWaitSplitRegionTimeout,
-		enableIndexMerge:            false,
-		EnableNoopFuncs:             DefTiDBEnableNoopFuncs,
-		replicaRead:                 kv.ReplicaReadLeader,
-		AllowRemoveAutoInc:          DefTiDBAllowRemoveAutoInc,
-		UsePlanBaselines:            DefTiDBUsePlanBaselines,
-		EvolvePlanBaselines:         DefTiDBEvolvePlanBaselines,
-		IsolationReadEngines:        make(map[kv.StoreType]struct{}),
-		LockWaitTimeout:             DefInnodbLockWaitTimeout * 1000,
-		MetricSchemaStep:            DefTiDBMetricSchemaStep,
-		MetricSchemaRangeDuration:   DefTiDBMetricSchemaRangeDuration,
-		SequenceState:               NewSequenceState(),
-		WindowingUseHighPrecision:   true,
-		PrevFoundInPlanCache:        DefTiDBFoundInPlanCache,
-		FoundInPlanCache:            DefTiDBFoundInPlanCache,
-		PrevFoundInBinding:          DefTiDBFoundInBinding,
-		FoundInBinding:              DefTiDBFoundInBinding,
-		SelectLimit:                 math.MaxUint64,
-		AllowAutoRandExplicitInsert: DefTiDBAllowAutoRandExplicitInsert,
-		EnableClusteredIndex:        DefTiDBEnableClusteredIndex,
-		EnableParallelApply:         DefTiDBEnableParallelApply,
-		ShardAllocateStep:           DefTiDBShardAllocateStep,
-		EnableChangeColumnType:      DefTiDBChangeColumnType,
-		EnableAmendPessimisticTxn:   DefTiDBEnableAmendPessimisticTxn,
-		PartitionPruneMode:          *atomic2.NewString(DefTiDBPartitionPruneMode),
-		TxnScope:                    config.GetGlobalConfig().TxnScope,
-		EnabledRateLimitAction:      DefTiDBEnableRateLimitAction,
+		Users:                        make(map[string]types.Datum),
+		UserVarTypes:                 make(map[string]*types.FieldType),
+		systems:                      make(map[string]string),
+		stmtVars:                     make(map[string]string),
+		PreparedStmts:                make(map[uint32]interface{}),
+		PreparedStmtNameToID:         make(map[string]uint32),
+		PreparedParams:               make([]types.Datum, 0, 10),
+		TxnCtx:                       &TransactionContext{},
+		RetryInfo:                    &RetryInfo{},
+		ActiveRoles:                  make([]*auth.RoleIdentity, 0, 10),
+		StrictSQLMode:                true,
+		AutoIncrementIncrement:       DefAutoIncrementIncrement,
+		AutoIncrementOffset:          DefAutoIncrementOffset,
+		Status:                       mysql.ServerStatusAutocommit,
+		StmtCtx:                      new(stmtctx.StatementContext),
+		AllowAggPushDown:             false,
+		AllowBCJ:                     false,
+		OptimizerSelectivityLevel:    DefTiDBOptimizerSelectivityLevel,
+		RetryLimit:                   DefTiDBRetryLimit,
+		DisableTxnAutoRetry:          DefTiDBDisableTxnAutoRetry,
+		DDLReorgPriority:             kv.PriorityLow,
+		allowInSubqToJoinAndAgg:      DefOptInSubqToJoinAndAgg,
+		preferRangeScan:              DefOptPreferRangeScan,
+		CorrelationThreshold:         DefOptCorrelationThreshold,
+		CorrelationExpFactor:         DefOptCorrelationExpFactor,
+		CPUFactor:                    DefOptCPUFactor,
+		CopCPUFactor:                 DefOptCopCPUFactor,
+		CopTiFlashConcurrencyFactor:  DefOptTiFlashConcurrencyFactor,
+		NetworkFactor:                DefOptNetworkFactor,
+		ScanFactor:                   DefOptScanFactor,
+		DescScanFactor:               DefOptDescScanFactor,
+		SeekFactor:                   DefOptSeekFactor,
+		MemoryFactor:                 DefOptMemoryFactor,
+		DiskFactor:                   DefOptDiskFactor,
+		ConcurrencyFactor:            DefOptConcurrencyFactor,
+		EnableRadixJoin:              false,
+		EnableVectorizedExpression:   DefEnableVectorizedExpression,
+		L2CacheSize:                  cpuid.CPU.Cache.L2,
+		CommandValue:                 uint32(mysql.ComSleep),
+		TiDBOptJoinReorderThreshold:  DefTiDBOptJoinReorderThreshold,
+		SlowQueryFile:                config.GetGlobalConfig().Log.SlowQueryFile,
+		WaitSplitRegionFinish:        DefTiDBWaitSplitRegionFinish,
+		WaitSplitRegionTimeout:       DefWaitSplitRegionTimeout,
+		enableIndexMerge:             false,
+		EnableNoopFuncs:              DefTiDBEnableNoopFuncs,
+		replicaRead:                  kv.ReplicaReadLeader,
+		AllowRemoveAutoInc:           DefTiDBAllowRemoveAutoInc,
+		UsePlanBaselines:             DefTiDBUsePlanBaselines,
+		EvolvePlanBaselines:          DefTiDBEvolvePlanBaselines,
+		IsolationReadEngines:         make(map[kv.StoreType]struct{}),
+		LockWaitTimeout:              DefInnodbLockWaitTimeout * 1000,
+		MetricSchemaStep:             DefTiDBMetricSchemaStep,
+		MetricSchemaRangeDuration:    DefTiDBMetricSchemaRangeDuration,
+		SequenceState:                NewSequenceState(),
+		WindowingUseHighPrecision:    true,
+		PrevFoundInPlanCache:         DefTiDBFoundInPlanCache,
+		FoundInPlanCache:             DefTiDBFoundInPlanCache,
+		PrevFoundInBinding:           DefTiDBFoundInBinding,
+		FoundInBinding:               DefTiDBFoundInBinding,
+		SelectLimit:                  math.MaxUint64,
+		AllowAutoRandExplicitInsert:  DefTiDBAllowAutoRandExplicitInsert,
+		EnableClusteredIndex:         DefTiDBEnableClusteredIndex,
+		EnableParallelApply:          DefTiDBEnableParallelApply,
+		ShardAllocateStep:            DefTiDBShardAllocateStep,
+		EnableChangeColumnType:       DefTiDBChangeColumnType,
+		EnableAmendPessimisticTxn:    DefTiDBEnableAmendPessimisticTxn,
+		PartitionPruneMode:           *atomic2.NewString(DefTiDBPartitionPruneMode),
+		TxnScope:                     config.GetGlobalConfig().TxnScope,
+		EnabledRateLimitAction:       DefTiDBEnableRateLimitAction,
+		EnableAsyncCommit:            DefTiDBEnableAsyncCommit,
+		Enable1PC:                    DefTiDBEnable1PC,
+		GuaranteeExternalConsistency: DefTiDBGuaranteeExternalConsistency,
 	}
 	vars.KVVars = kv.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{
@@ -1566,7 +1577,13 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	case TiDBFoundInBinding:
 		s.FoundInBinding = TiDBOptOn(val)
 	case TiDBEnableCollectExecutionInfo:
-		config.GetGlobalConfig().EnableCollectExecutionInfo = TiDBOptOn(val)
+		oldConfig := config.GetGlobalConfig()
+		newValue := TiDBOptOn(val)
+		if oldConfig.EnableCollectExecutionInfo != newValue {
+			newConfig := *oldConfig
+			newConfig.EnableCollectExecutionInfo = newValue
+			config.StoreGlobalConfig(&newConfig)
+		}
 	case SQLSelectLimit:
 		result, err := strconv.ParseUint(val, 10, 64)
 		if err != nil {
@@ -1599,6 +1616,12 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		MemoryUsageAlarmRatio.Store(tidbOptFloat64(val, 0.8))
 	case TiDBEnableRateLimitAction:
 		s.EnabledRateLimitAction = TiDBOptOn(val)
+	case TiDBEnableAsyncCommit:
+		s.EnableAsyncCommit = TiDBOptOn(val)
+	case TiDBEnable1PC:
+		s.Enable1PC = TiDBOptOn(val)
+	case TiDBGuaranteeExternalConsistency:
+		s.GuaranteeExternalConsistency = TiDBOptOn(val)
 	}
 	s.systems[name] = val
 	return nil
