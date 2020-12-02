@@ -911,7 +911,7 @@ func (s *testIntegrationSuite5) TestAlterTableAddPartitionByList(c *C) {
 			ddl.ErrMultipleDefConstInListPart,
 		},
 		{"alter table t add partition (partition p6 values in ('a'))",
-			ddl.ErrNotAllowedTypeInPartition,
+			ddl.ErrWrongTypeColumnValue,
 		},
 	}
 

@@ -326,6 +326,9 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.PartitionOptions, tb
 		if err := checkPartitionFuncValid(ctx, tbInfo, s.Expr); err != nil {
 			return errors.Trace(err)
 		}
+		if err := checkPartitionFuncType(ctx, s.Expr, tbInfo); err != nil {
+			return errors.Trace(err)
+		}
 		buf := new(bytes.Buffer)
 		restoreCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, buf)
 		if err := s.Expr.Restore(restoreCtx); err != nil {
@@ -396,6 +399,12 @@ func buildListPartitionDefinitions(ctx sessionctx.Context, defs []*ast.Partition
 					return nil, err
 				}
 			}
+		} else {
+			for _, vs := range clause.Values {
+				if err := checkPartitionValuesIsInt(ctx, def, vs); err != nil {
+					return nil, err
+				}
+			}
 		}
 		comment, _ := def.Comment()
 		err := checkTooLongTable(def.Name)
@@ -427,6 +436,19 @@ func buildListPartitionDefinitions(ctx sessionctx.Context, defs []*ast.Partition
 	return definitions, nil
 }
 
+func collectColumnsType(tbInfo *model.TableInfo) []types.FieldType {
+	if len(tbInfo.Partition.Columns) > 0 {
+		colTypes := make([]types.FieldType, 0, len(tbInfo.Partition.Columns))
+		for _, col := range tbInfo.Partition.Columns {
+			colTypes = append(colTypes, findColumnByName(col.L, tbInfo).FieldType)
+		}
+
+		return colTypes
+	}
+
+	return nil
+}
+
 func buildRangePartitionDefinitions(ctx sessionctx.Context, defs []*ast.PartitionDefinition, tbInfo *model.TableInfo) ([]model.PartitionDefinition, error) {
 	definitions := make([]model.PartitionDefinition, 0, len(defs))
 	exprChecker := newPartitionExprChecker(ctx, nil, checkPartitionExprAllowed, checkPartitionExprFuncAllowed)
@@ -437,6 +459,10 @@ func buildRangePartitionDefinitions(ctx sessionctx.Context, defs []*ast.Partitio
 		clause := def.Clause.(*ast.PartitionDefinitionClauseLessThan)
 		if len(tbInfo.Partition.Columns) > 0 {
 			if err := checkColumnsTypeAndValuesMatch(ctx, tbInfo, clause.Exprs); err != nil {
+				return nil, err
+			}
+		} else {
+			if err := checkPartitionValuesIsInt(ctx, def, clause.Exprs); err != nil {
 				return nil, err
 			}
 		}
@@ -464,6 +490,22 @@ func buildRangePartitionDefinitions(ctx sessionctx.Context, defs []*ast.Partitio
 		definitions = append(definitions, piDef)
 	}
 	return definitions, nil
+}
+
+func checkPartitionValuesIsInt(ctx sessionctx.Context, def *ast.PartitionDefinition, exprs []ast.ExprNode) error {
+	for _, exp := range exprs {
+		val, err := expression.EvalAstExpr(ctx, exp)
+		if err != nil {
+			return err
+		}
+		switch val.Kind() {
+		case types.KindInt64, types.KindUint64, types.KindNull, types.KindMaxValue:
+		default:
+			return ErrValuesIsNotIntType.GenWithStackByArgs(def.Name)
+		}
+	}
+
+	return nil
 }
 
 func checkPartitionNameUnique(pi *model.PartitionInfo) error {
