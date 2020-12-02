@@ -23,6 +23,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/cznic/mathutil"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
@@ -436,9 +437,10 @@ func (c *chunkRowRecordSet) Fields() []*ast.ResultField {
 
 func (c *chunkRowRecordSet) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
-	for !chk.IsFull() && c.idx < len(c.rows) {
-		chk.AppendRow(c.rows[c.idx])
-		c.idx++
+	if !chk.IsFull() && c.idx < len(c.rows) {
+		numToAppend := mathutil.Min(len(c.rows)-c.idx, chk.RequiredRows()-chk.NumRows())
+		chk.AppendRows(c.rows[c.idx : c.idx+numToAppend])
+		c.idx += numToAppend
 	}
 	return nil
 }
