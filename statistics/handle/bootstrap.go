@@ -481,7 +481,7 @@ func (h *Handle) InitStats(is infoschema.InfoSchema) (err error) {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	h.statsCache.initStatsCache(tables, version)
+	h.statsCache.InitStatsCache(tables, version)
 	return nil
 }
 
