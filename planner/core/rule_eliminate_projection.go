@@ -83,7 +83,10 @@ func doPhysicalProjectionElimination(p PhysicalPlan) PhysicalPlan {
 	}
 
 	proj, isProj := p.(*PhysicalProjection)
-	if isProj && !canProjectionBeEliminatedStrict(proj) {
+	if isProj && canProjectionBeEliminatedStrict(proj) {
+		return p.Children()[0]
+	}
+	if isProj {
 		if child, ok := p.Children()[0].(*PhysicalProjection); ok && !ExprsHasSideEffects(child.Exprs) {
 			for i := range proj.Exprs {
 				proj.Exprs[i] = expression.FoldConstant(ReplaceColumnOfExprInPhysicalProjection(proj.Exprs[i], child, child.Schema()))
@@ -92,12 +95,8 @@ func doPhysicalProjectionElimination(p PhysicalPlan) PhysicalPlan {
 		}
 		return p
 	}
-	if !isProj {
-		return p
-	}
 
-	child := p.Children()[0]
-	return child
+	return p
 }
 
 // eliminatePhysicalProjection should be called after physical optimization to
