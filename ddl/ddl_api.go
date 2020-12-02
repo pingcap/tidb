@@ -1090,8 +1090,8 @@ func checkTooManyColumns(colDefs []*model.ColumnInfo) error {
 }
 
 func checkTooManyIndexes(idxDefs []*model.IndexInfo) error {
-	if uint32(len(idxDefs)) > atomic.LoadUint32(&TableIndexCountLimit) {
-		return errTooManyKeys.GenWithStackByArgs(TableIndexCountLimit)
+	if len(idxDefs) > config.GetGlobalConfig().IndexLimit {
+		return errTooManyKeys.GenWithStackByArgs(config.GetGlobalConfig().IndexLimit)
 	}
 	return nil
 }
