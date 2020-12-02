@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/tidb/util/memory"
 )
 
-// StatsCache a interface can LookUp Update
+// StatsCache is an interface for the collection of statistics.
 type StatsCache interface {
 	Lookup(id int64) (*statistics.Table, bool)
 	Update(tables []*statistics.Table, deletedIDs []int64, newVersion uint64)
@@ -31,7 +31,7 @@ type StatsCache interface {
 	InitStatsCache(tables map[int64]*statistics.Table, version uint64)
 	GetAll() []*statistics.Table
 
-	// interface below are used only for test
+	// Interface below are used only for test.
 	Clear()
 	GetBytesLimit() int64
 	SetBytesLimit(bytesLimit int64)
@@ -86,6 +86,8 @@ func newSimpleLRUStatsCache(memoryCapacity int64) *simpleLRUStatsCache {
 
 // SetBytesLimit sets the bytes limit for this tracker.
 func (sc *simpleLRUStatsCache) SetBytesLimit(BytesLimit int64) {
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
 	sc.memTracker.SetBytesLimit(BytesLimit)
 	sc.memCapacity = BytesLimit
 }
@@ -149,7 +151,7 @@ func (sc *simpleLRUStatsCache) Insert(table *statistics.Table) {
 	return
 }
 
-// Erase Erase a stateCache with physical id
+// Erase removes a stateCache with physical id.
 func (sc *simpleLRUStatsCache) Erase(deletedID int64) bool {
 	table, hit := sc.lookupUnsafe(deletedID)
 	if !hit {
