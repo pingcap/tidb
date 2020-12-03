@@ -62,7 +62,7 @@ func (s *extractorSuite) getLogicalMemTable(c *C, se session.Session, parser *pa
 	c.Assert(err, IsNil)
 
 	ctx := context.Background()
-	builder := plannercore.NewPlanBuilder(se, s.dom.InfoSchema(), &hint.BlockHintProcessor{})
+	builder, _ := plannercore.NewPlanBuilder(se, s.dom.InfoSchema(), &hint.BlockHintProcessor{})
 	plan, err := builder.Build(ctx, stmt)
 	c.Assert(err, IsNil)
 
