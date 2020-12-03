@@ -221,7 +221,7 @@ func optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	sctx.GetSessionVars().PlanColumnID = 0
 	hintProcessor := &hint.BlockHintProcessor{Ctx: sctx}
 	node.Accept(hintProcessor)
-	builder := plannercore.NewPlanBuilder(sctx, is, hintProcessor)
+	builder, _ := plannercore.NewPlanBuilder(sctx, is, hintProcessor)
 
 	// reset fields about rewrite
 	sctx.GetSessionVars().RewritePhaseInfo.Reset()
@@ -399,7 +399,7 @@ func OptimizeExecStmt(ctx context.Context, sctx sessionctx.Context,
 	execAst *ast.ExecuteStmt, is infoschema.InfoSchema) (plannercore.Plan, error) {
 	defer trace.StartRegion(ctx, "Optimize").End()
 	var err error
-	builder := plannercore.NewPlanBuilder(sctx, is, nil)
+	builder, _ := plannercore.NewPlanBuilder(sctx, is, nil)
 	p, err := builder.Build(ctx, execAst)
 	if err != nil {
 		return nil, err

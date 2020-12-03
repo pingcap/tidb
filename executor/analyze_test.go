@@ -641,6 +641,8 @@ func (s *testSuite1) TestExtractTopN(c *C) {
 	c.Assert(len(idxStats.TopN.TopN), Equals, 1)
 	idxItem := idxStats.TopN.TopN[0]
 	c.Assert(idxItem.Count, Equals, uint64(11))
+	// The columns are: DBName, table name, column name, is index, value, count.
+	tk.MustQuery("show stats_topn").Sort().Check(testkit.Rows("test t  b 0 0 11", "test t  index_b 1 0 11"))
 }
 
 func (s *testSuite1) TestHashInTopN(c *C) {
