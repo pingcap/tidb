@@ -47,7 +47,7 @@ require (
 	github.com/pingcap/goleveldb v0.0.0-20191226122134-f82aafb29989
 	github.com/pingcap/kvproto v0.0.0-20201124110645-494a2fb764b7
 	github.com/pingcap/log v0.0.0-20201112100606-8f1e84a3abc8
-	github.com/pingcap/parser v0.0.0-20201123080035-8f4c6ab94e11
+	github.com/pingcap/parser v0.0.0-20201203085211-44f6be1df1c4
 	github.com/pingcap/sysutil v0.0.0-20201021075216-f93ced2829e2
 	github.com/pingcap/tidb-lightning v4.0.9-0.20201106041742-a1ac97827a27+incompatible
 	github.com/pingcap/tidb-tools v4.0.5-0.20200820092506-34ea90c93237+incompatible
@@ -89,5 +89,3 @@ require (
 )
 
 go 1.13
-
-replace github.com/pingcap/parser => github.com/yisaer/parser v0.0.0-20201203050019-e331bbae3292

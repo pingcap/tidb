@@ -2531,18 +2531,17 @@ func (s *session) checkPlacementPolicyBeforeCommit() error {
 					fmt.Sprintf("table or partition %v's leader location %v is out of txn_scope %v", physicalTableID, dcLocation, txnScope))
 				break
 			}
-			// FIXME: currently we assumes the physicalTableID is the partition ID. In future, we should consider the situation
+			// FIXME: currently we assume the physicalTableID is the partition ID. In future, we should consider the situation
 			// if the physicalTableID belongs to a Table.
 			partitionID := physicalTableID
-			tbl, _, _ := is.FindTableByPartitionID(partitionID)
+			tbl, _, partitionDefInfo := is.FindTableByPartitionID(partitionID)
 			if tbl != nil {
 				tblInfo := tbl.Meta()
-				tableID := tblInfo.ID
 				state := tblInfo.Partition.GetStateByID(partitionID)
 				if state == model.StateGlobalTxnOnly {
 					err = ddl.ErrInvalidPlacementPolicyCheck.GenWithStackByArgs(
-						fmt.Sprintf("The SchemaState of table %v's partition %v is under StateGlobalTxnOnly",
-							tableID, partitionID))
+						fmt.Sprintf("Partition %s of table %s can not be written by local transactions when its placement policy is being altered",
+							tblInfo.Name, partitionDefInfo.Name))
 					break
 				}
 			}

@@ -534,14 +534,6 @@ PARTITION BY RANGE (c) (
 	PARTITION p1 VALUES LESS THAN (11)
 );`)
 
-	// normal cases
-	_, err := tk.Exec(`alter table t1 alter partition p0
-add placement policy
-	constraints='["+zone=sh"]'
-	role=leader
-	replicas=1`)
-	c.Assert(err, IsNil)
-
 	bundles := make(map[string]*placement.Bundle)
 	is := s.dom.InfoSchema()
 	is.MockBundles(bundles)
@@ -621,23 +613,29 @@ add placement policy
 		//},
 	}
 	originalHook := s.dom.DDL().GetHook()
-	for _, testcase := range testcases {
-		c.Log(testcase.name)
+	testFunc := func(name string, hook *ddl.TestDDLCallback, expectErr error) {
+		c.Log(name)
 		done = false
-		s.dom.DDL().(ddl.DDLForTest).SetHook(testcase.hook)
+		s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
+		defer func() {
+			s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
+		}()
 		_, err = tk.Exec(`alter table t1 alter partition p0
 alter placement policy
 	constraints='["+zone=bj"]'
 	role=leader
 	replicas=1`)
 		c.Assert(err, IsNil)
-		s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
 		c.Assert(done, Equals, true)
-		if testcase.expectErr != nil {
+		if expectErr != nil {
 			c.Assert(chkErr, NotNil)
-			c.Assert(chkErr.Error(), Matches, testcase.expectErr.Error())
+			c.Assert(chkErr.Error(), Matches, expectErr.Error())
 		} else {
 			c.Assert(chkErr, IsNil)
 		}
+	}
+
+	for _, testcase := range testcases {
+		testFunc(testcase.name, testcase.hook, testcase.expectErr)
 	}
 }
