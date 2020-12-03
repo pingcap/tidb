@@ -1,6 +1,7 @@
 package logutil
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"sync"
@@ -12,16 +13,19 @@ var (
 	zeroTime                          = time.Time{}
 )
 
+// InvalidLogFile indicates the log file format is invalid.
+var InvalidLogFile = errors.New("invalid format of log file")
+
 type LogFileMetaCache struct {
 	mu       sync.RWMutex
 	cache    map[string]*LogFileMeta
-	Capacity int
+	capacity int
 }
 
 func NewLogFileMetaCache() *LogFileMetaCache {
 	return &LogFileMetaCache{
 		cache:    make(map[string]*LogFileMeta),
-		Capacity: defaultLoLogFileMetaCacheCapacity,
+		capacity: defaultLoLogFileMetaCacheCapacity,
 	}
 }
 
@@ -35,7 +39,7 @@ func (c *LogFileMetaCache) GetFileMata(stat os.FileInfo) *LogFileMeta {
 	if !ok {
 		return nil
 	}
-	if m.checkFileNotModified(stat) {
+	if m.CheckFileNotModified(stat) {
 		return m
 	}
 	return nil
@@ -48,30 +52,21 @@ func (c *LogFileMetaCache) AddFileMataToCache(stat os.FileInfo, meta *LogFileMet
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	// TODO: Use LRU ?
-	if len(c.cache) < c.Capacity {
+	if len(c.cache) < c.capacity {
 		c.cache[stat.Name()] = meta
 	}
 }
 
-type FileType = int
-
-const (
-	FileTypeUnknown FileType = 0
-	FileTypeLog     FileType = 1
-	FileTypeSlowLog FileType = 2
-)
-
 type LogFileMeta struct {
+	inValid   bool
 	mu        sync.Mutex
-	Type      FileType
 	ModTime   time.Time
 	startTime time.Time
 	endTime   time.Time
 }
 
-func NewLogFileMeta(fileType FileType, info os.FileInfo) *LogFileMeta {
+func NewLogFileMeta(info os.FileInfo) *LogFileMeta {
 	return &LogFileMeta{
-		Type:    fileType,
 		ModTime: info.ModTime(),
 	}
 }
@@ -87,7 +82,7 @@ func (l *LogFileMeta) GetStartTime(stat os.FileInfo, getStartTime func() (time.T
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	t := l.startTime
-	if l.checkLogTimeValid(t) && l.checkFileNotModified(stat) {
+	if l.CheckLogTimeValid(t) && l.CheckFileNotModified(stat) {
 		return t, nil
 	}
 	if getStartTime == nil {
@@ -95,8 +90,13 @@ func (l *LogFileMeta) GetStartTime(stat os.FileInfo, getStartTime func() (time.T
 	}
 	t, err := getStartTime()
 	if err != nil {
+		if err == InvalidLogFile {
+			l.inValid = true
+		}
 		return t, err
 	}
+	l.inValid = false
+	l.ModTime = stat.ModTime()
 	l.startTime = t
 	return t, nil
 }
@@ -108,7 +108,7 @@ func (l *LogFileMeta) GetEndTime(stat os.FileInfo, getEndTime func() (time.Time,
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	t := l.endTime
-	if l.checkLogTimeValid(t) && l.checkFileNotModified(stat) {
+	if l.CheckLogTimeValid(t) && l.CheckFileNotModified(stat) {
 		return t, nil
 	}
 	if getEndTime == nil {
@@ -116,18 +116,30 @@ func (l *LogFileMeta) GetEndTime(stat os.FileInfo, getEndTime func() (time.Time,
 	}
 	t, err := getEndTime()
 	if err != nil {
+		if err == InvalidLogFile {
+			l.inValid = true
+		}
 		return t, err
 	}
+	l.inValid = false
+	l.ModTime = stat.ModTime()
 	l.endTime = t
 	return t, nil
 }
 
-// checkLogTimeValid returns true if t != zeroTime.
-func (l *LogFileMeta) checkLogTimeValid(t time.Time) bool {
+func (l *LogFileMeta) IsInValid() bool {
+	l.mu.Lock()
+	invalid := l.inValid
+	l.mu.Unlock()
+	return invalid
+}
+
+// CheckLogTimeValid returns true if t != zeroTime.
+func (l *LogFileMeta) CheckLogTimeValid(t time.Time) bool {
 	return !t.Equal(zeroTime)
 }
 
-// checkFileNotModified returns true if the file hasn't been modified.
-func (l *LogFileMeta) checkFileNotModified(info os.FileInfo) bool {
+// CheckFileNotModified returns true if the file hasn't been modified.
+func (l *LogFileMeta) CheckFileNotModified(info os.FileInfo) bool {
 	return l.ModTime.Equal(info.ModTime())
 }

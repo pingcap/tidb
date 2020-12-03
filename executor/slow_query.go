@@ -858,6 +858,8 @@ func (e *slowQueryRetriever) getAllFiles(ctx context.Context, sctx sessionctx.Co
 	var cache *logutil.LogFileMetaCache
 	if dom != nil {
 		cache = dom.GetLogFileMetaCache()
+	} else {
+		cache = logutil.NewLogFileMetaCache()
 	}
 	walkFn := func(path string, info os.FileInfo) error {
 		if info.IsDir() {
@@ -885,18 +887,14 @@ func (e *slowQueryRetriever) getAllFiles(ctx context.Context, sctx sessionctx.Co
 		if err != nil {
 			return handleErr(err)
 		}
-		var meta *logutil.LogFileMeta
-		if cache != nil {
-			meta = cache.GetFileMata(stat)
-		}
+		meta := cache.GetFileMata(stat)
 		if meta == nil {
-			meta = logutil.NewLogFileMeta(logutil.FileTypeSlowLog, stat)
-			if cache != nil {
-				defer cache.AddFileMataToCache(stat, meta)
+			meta = logutil.NewLogFileMeta(stat)
+			defer cache.AddFileMataToCache(stat, meta)
+		} else {
+			if meta.CheckFileNotModified(stat) && meta.IsInValid() {
+				return nil
 			}
-		}
-		if meta.Type != logutil.FileTypeSlowLog {
-			return nil
 		}
 		// Get the file start time.
 		fileStartTime, err := meta.GetStartTime(stat, func() (time.Time, error) {
@@ -958,6 +956,9 @@ func (e *slowQueryRetriever) getFileStartTime(ctx context.Context, file *os.File
 	for {
 		lineByte, err := getOneLine(reader)
 		if err != nil {
+			if err == io.EOF {
+				return t, logutil.InvalidLogFile
+			}
 			return t, err
 		}
 		line := string(lineByte)
@@ -972,7 +973,7 @@ func (e *slowQueryRetriever) getFileStartTime(ctx context.Context, file *os.File
 			return t, ctx.Err()
 		}
 	}
-	return t, errors.Errorf("malform slow query file %v", file.Name())
+	return t, logutil.InvalidLogFile
 }
 
 func (e *slowQueryRetriever) getRuntimeStats() execdetails.RuntimeStats {
@@ -1054,7 +1055,7 @@ func (e *slowQueryRetriever) getFileEndTime(ctx context.Context, file *os.File) 
 			return t, ctx.Err()
 		}
 	}
-	return t, errors.Errorf("invalid slow query file %v", file.Name())
+	return t, logutil.InvalidLogFile
 }
 
 const maxReadCacheSize = 1024 * 1024 * 64
