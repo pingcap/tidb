@@ -34,15 +34,9 @@ func (c *LogFileMetaCache) GetFileMata(stat os.FileInfo) *LogFileMeta {
 		return nil
 	}
 	c.mu.RLock()
-	m, ok := c.cache[stat.Name()]
+	m := c.cache[stat.Name()]
 	c.mu.RUnlock()
-	if !ok {
-		return nil
-	}
-	if m.CheckFileNotModified(stat) {
-		return m
-	}
-	return nil
+	return m
 }
 
 func (c *LogFileMetaCache) AddFileMataToCache(stat os.FileInfo, meta *LogFileMeta) {
@@ -51,10 +45,24 @@ func (c *LogFileMetaCache) AddFileMataToCache(stat os.FileInfo, meta *LogFileMet
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	// TODO: Use LRU ?
-	if len(c.cache) < c.capacity {
-		c.cache[stat.Name()] = meta
+
+	name := stat.Name()
+	_, ok := c.cache[name]
+	if ok {
+		c.cache[name] = meta
+	} else {
+		// TODO: Use LRU ?
+		if len(c.cache) < c.capacity {
+			c.cache[name] = meta
+		}
 	}
+}
+
+func (c *LogFileMetaCache) Len() int {
+	c.mu.RLock()
+	l := len(c.cache)
+	c.mu.RUnlock()
+	return l
 }
 
 type LogFileMeta struct {
