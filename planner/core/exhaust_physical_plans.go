@@ -1686,7 +1686,7 @@ func (p *LogicalJoin) tryToGetMppHashJoin(prop *property.PhysicalProperty, useBC
 		}
 		if prop.PartitionTp == property.HashType {
 			hashKeys := rkeys
-			if preferredBuildIndex == 0 {
+			if preferredBuildIndex == 1 {
 				hashKeys = lkeys
 			}
 			if prop.MatchPartCols(hashKeys) {
