@@ -695,7 +695,47 @@ func checkListPartitionValue(ctx sessionctx.Context, tblInfo *model.TableInfo) e
 	if len(pi.Definitions) == 0 {
 		return ast.ErrPartitionsMustBeDefined.GenWithStackByArgs("LIST")
 	}
-	expStr, err := formatListPartitionValue(ctx, tblInfo)
+	if err := formatListPartitionValue(ctx, tblInfo); err != nil {
+		return err
+	}
+
+	var partitionsValuesMap []map[string]struct{}
+	partitionsValuesMap = append(partitionsValuesMap, make(map[string]struct{}))
+	for i := 1; i < len(pi.Columns); i++ {
+		partitionsValuesMap = append(partitionsValuesMap, make(map[string]struct{}))
+	}
+
+	checkUniqueValue := func(vs []string) error {
+		found := 0
+		for i, v := range vs {
+			m := partitionsValuesMap[i]
+			if _, ok := m[v]; ok {
+				found++
+			}
+			m[v] = struct{}{}
+		}
+		if found == len(vs) {
+			return errors.Trace(ErrMultipleDefConstInListPart)
+		}
+		return nil
+	}
+	for _, def := range pi.Definitions {
+		for _, vs := range def.InValues {
+			if err := checkUniqueValue(vs); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+
+func checkListPartitionValue1(ctx sessionctx.Context, tblInfo *model.TableInfo) error {
+	pi := tblInfo.Partition
+	if len(pi.Definitions) == 0 {
+		return ast.ErrPartitionsMustBeDefined.GenWithStackByArgs("LIST")
+	}
+	expStr, err := formatListPartitionValue1(ctx, tblInfo)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -711,7 +751,47 @@ func checkListPartitionValue(ctx sessionctx.Context, tblInfo *model.TableInfo) e
 	return nil
 }
 
-func formatListPartitionValue(ctx sessionctx.Context, tblInfo *model.TableInfo) ([]string, error) {
+func formatListPartitionValue(ctx sessionctx.Context, tblInfo *model.TableInfo) error {
+	defs := tblInfo.Partition.Definitions
+	pi := tblInfo.Partition
+	var colTps []*types.FieldType
+	if len(pi.Columns) == 0 {
+		tp := types.NewFieldType(mysql.TypeLonglong)
+		if isRangePartitionColUnsignedBigint(tblInfo.Columns, tblInfo.Partition) {
+			tp.Flag |= mysql.UnsignedFlag
+		}
+		colTps = []*types.FieldType{tp}
+	} else {
+		colTps = make([]*types.FieldType, 0, len(pi.Columns))
+		for _, colName := range pi.Columns {
+			colInfo := findColumnByName(colName.L, tblInfo)
+			if colInfo == nil {
+				return errors.Trace(ErrFieldNotFoundPart)
+			}
+			colTps = append(colTps, &colInfo.FieldType)
+		}
+	}
+	for i := range defs {
+		for j, vs := range defs[i].InValues {
+			for k, v := range vs {
+				if colTps[k].EvalType() != types.ETInt {
+					continue
+				}
+				isUnsigned := mysql.HasUnsignedFlag(colTps[k].Flag)
+				currentRangeValue, isNull, err := getListPartitionValue(ctx, v, isUnsigned)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				if !isNull {
+					defs[i].InValues[j][k] = fmt.Sprintf("%d", currentRangeValue)
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func formatListPartitionValue1(ctx sessionctx.Context, tblInfo *model.TableInfo) ([]string, error) {
 	defs := tblInfo.Partition.Definitions
 	pi := tblInfo.Partition
 	var colTps []*types.FieldType
@@ -765,6 +845,43 @@ func formatListPartitionValue(ctx sessionctx.Context, tblInfo *model.TableInfo) 
 		}
 	}
 	return exprStrs, nil
+}
+
+// getListPartitionValue gets an integer/null from the string value.
+// The returned boolean value indicates whether the input string is a null.
+func getListPartitionValue(ctx sessionctx.Context, str string, unsignedBigint bool) (interface{}, bool, error) {
+	// The input value maybe an integer or constant expression or null.
+	// For example:
+	// PARTITION p0 VALUES IN (1)
+	// PARTITION p0 VALUES IN (TO_SECONDS('2004-01-01'))
+	// PARTITION p0 VALUES IN (NULL)
+	if unsignedBigint {
+		if value, err := strconv.ParseUint(str, 10, 64); err == nil {
+			return value, false, nil
+		}
+
+		e, err1 := expression.ParseSimpleExprWithTableInfo(ctx, str, &model.TableInfo{})
+		if err1 != nil {
+			return 0, false, err1
+		}
+		res, isNull, err2 := e.EvalInt(ctx, chunk.Row{})
+		if err2 == nil {
+			return uint64(res), isNull, nil
+		}
+	} else {
+		if value, err := strconv.ParseInt(str, 10, 64); err == nil {
+			return value, false, nil
+		}
+		e, err1 := expression.ParseSimpleExprWithTableInfo(ctx, str, &model.TableInfo{})
+		if err1 != nil {
+			return 0, false, err1
+		}
+		res, isNull, err2 := e.EvalInt(ctx, chunk.Row{})
+		if err2 == nil {
+			return res, isNull, nil
+		}
+	}
+	return 0, false, ErrNotAllowedTypeInPartition.GenWithStackByArgs(str)
 }
 
 // getRangeValue gets an integer from the range value string.
