@@ -1467,13 +1467,8 @@ func (d *Datum) convertToMysqlEnum(sc *stmtctx.StatementContext, target *FieldTy
 		err error
 	)
 	switch d.k {
-<<<<<<< HEAD
-	case KindString, KindBytes:
-		e, err = ParseEnumName(target.Elems, d.GetString(), target.Collate)
-=======
 	case KindString, KindBytes, KindBinaryLiteral:
-		e, err = ParseEnum(target.Elems, d.GetString(), target.Collate)
->>>>>>> 0c3c4c588... *: Let binary literal can be convert to enum and set (#20789)
+		e, err = ParseEnumName(target.Elems, d.GetString(), target.Collate)
 	case KindMysqlEnum:
 		e, err = ParseEnumName(target.Elems, d.GetMysqlEnum().Name, target.Collate)
 	case KindMysqlSet:
@@ -1499,13 +1494,8 @@ func (d *Datum) convertToMysqlSet(sc *stmtctx.StatementContext, target *FieldTyp
 		err error
 	)
 	switch d.k {
-<<<<<<< HEAD
-	case KindString, KindBytes:
-		s, err = ParseSetName(target.Elems, d.GetString(), target.Collate)
-=======
 	case KindString, KindBytes, KindBinaryLiteral:
-		s, err = ParseSet(target.Elems, d.GetString(), target.Collate)
->>>>>>> 0c3c4c588... *: Let binary literal can be convert to enum and set (#20789)
+		s, err = ParseSetName(target.Elems, d.GetString(), target.Collate)
 	case KindMysqlEnum:
 		s, err = ParseSetName(target.Elems, d.GetMysqlEnum().Name, target.Collate)
 	case KindMysqlSet:
