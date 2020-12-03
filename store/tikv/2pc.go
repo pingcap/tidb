@@ -479,13 +479,18 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 			value = it.Value()
 			if len(value) > 0 {
 				if tablecodec.IsUntouchedIndexKValue(key, value) {
-					continue
+					if !flags.HasLocked() {
+						continue
+					}
+					op = pb.Op_Lock
+					lockCnt++
+				} else {
+					op = pb.Op_Put
+					if flags.HasPresumeKeyNotExists() {
+						op = pb.Op_Insert
+					}
+					putCnt++
 				}
-				op = pb.Op_Put
-				if flags.HasPresumeKeyNotExists() {
-					op = pb.Op_Insert
-				}
-				putCnt++
 			} else {
 				if !txn.IsPessimistic() && flags.HasPresumeKeyNotExists() {
 					// delete-your-writes keys in optimistic txn need check not exists in prewrite-phase
