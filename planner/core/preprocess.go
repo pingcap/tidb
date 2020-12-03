@@ -196,6 +196,13 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		if _, ok := node.Source.(*ast.SelectStmt); ok && !isModeOracle && len(node.AsName.L) == 0 {
 			p.err = ddl.ErrDerivedMustHaveAlias.GenWithStackByArgs()
 		}
+		if v, ok := node.Source.(*ast.TableName); ok && v.TableSample != nil {
+			switch v.TableSample.SampleMethod {
+			case ast.SampleMethodTypeTiDBRegion:
+			default:
+				p.err = expression.ErrInvalidTableSample.GenWithStackByArgs("Only supports REGIONS sampling method")
+			}
+		}
 	case *ast.CreateStatisticsStmt, *ast.DropStatisticsStmt:
 		p.checkStatisticsOpGrammar(in)
 	default:

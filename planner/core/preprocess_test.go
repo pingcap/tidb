@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -279,6 +280,12 @@ func (s *testValidatorSuite) TestValidator(c *C) {
 		{"select CONVERT( 2, DECIMAL(28,29) )", true, types.ErrMBiggerThanD.GenWithStackByArgs("2")},
 		{"select CONVERT( 2, DECIMAL(30,65) )", true, types.ErrMBiggerThanD.GenWithStackByArgs("2")},
 		{"select CONVERT( 2, DECIMAL(66,99) )", true, types.ErrMBiggerThanD.GenWithStackByArgs("2")},
+
+		// TABLESAMPLE
+		{"select * from t tablesample bernoulli();", false, expression.ErrInvalidTableSample},
+		{"select * from t tablesample bernoulli(10 rows);", false, expression.ErrInvalidTableSample},
+		{"select * from t tablesample bernoulli(23 percent) repeatable (23);", false, expression.ErrInvalidTableSample},
+		{"select * from t tablesample system() repeatable (10);", false, expression.ErrInvalidTableSample},
 	}
 
 	_, err := s.se.Execute(context.Background(), "use test")
