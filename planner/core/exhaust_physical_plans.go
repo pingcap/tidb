@@ -1672,9 +1672,7 @@ func (p *LogicalJoin) tryToGetMppHashJoin(prop *property.PhysicalProperty, useBC
 		if p.children[0].statsInfo().Count() > p.children[1].statsInfo().Count() {
 			preferredBuildIndex = 1
 		}
-	} else if p.JoinType == LeftOuterJoin {
-		preferredBuildIndex = 1
-	} else if p.JoinType == SemiJoin || p.JoinType == AntiSemiJoin {
+	} else if p.JoinType == SemiJoin || p.JoinType == AntiSemiJoin || p.JoinType == LeftOuterJoin {
 		preferredBuildIndex = 1
 	}
 	baseJoin.InnerChildIdx = preferredBuildIndex

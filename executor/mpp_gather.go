@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 )
 
-// Currently we only use mpp for broadcast join.
 func useMPPExecution(ctx sessionctx.Context, tr *plannercore.PhysicalTableReader) bool {
 	if !ctx.GetSessionVars().AllowMPPExecution {
 		return false
@@ -93,7 +92,6 @@ func (e *MPPGather) appendMPPDispatchReq(pf *plannercore.Fragment, tasks []*kv.M
 
 // Open decides the task counts and locations and generate exchange operators for every plan fragment.
 // Then dispatch tasks to tiflash stores. If any task fails, it would cancel the rest tasks.
-// TODO: We should retry when the request fails for pure rpc error.
 func (e *MPPGather) Open(ctx context.Context) (err error) {
 	// TODO: Move the construct tasks logic to planner, so we can see the explain results.
 	sender := e.originalPlan.(*plannercore.PhysicalExchangeSender)
