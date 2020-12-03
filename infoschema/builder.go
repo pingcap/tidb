@@ -139,12 +139,7 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 			switch diff.Type {
 			case model.ActionAlterTableAlterPartition:
 				tblIDs = append(tblIDs, opt.PartitionID)
-				b.applyDropTable(dbInfo, diff.TableID, nil)
-				_, err := b.applyCreateTable(m, dbInfo, diff.TableID, nil, model.ActionAlterTableAlterPartition, nil)
-				if err != nil {
-					return nil, errors.Trace(err)
-				}
-				if err := b.applyPlacementUpdate(placement.GroupID(opt.PartitionID)); err != nil {
+				if err := b.applyPlacementUpdate(placement.GroupID(opt.TableID)); err != nil {
 					return nil, errors.Trace(err)
 				}
 				continue

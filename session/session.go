@@ -426,6 +426,10 @@ func (s *session) doCommit(ctx context.Context) error {
 	if s.txn.IsReadOnly() {
 		return nil
 	}
+	err := s.checkPlacementPolicyBeforeCommit()
+	if err != nil {
+		return err
+	}
 
 	// mockCommitError and mockGetTSErrorInRetry use to test PR #8743.
 	failpoint.Inject("mockCommitError", func(val failpoint.Value) {
@@ -481,10 +485,6 @@ func (s *session) doCommitWithRetry(ctx context.Context) error {
 		return nil
 	}
 	var err error
-	err = s.checkPlacementPolicyBeforeCommit()
-	if err != nil {
-		return err
-	}
 	txnSize := s.txn.Size()
 	isPessimistic := s.txn.IsPessimistic()
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {

@@ -938,7 +938,7 @@ func updateSchemaVersion(t *meta.Meta, job *model.Job) (int64, error) {
 		diff.TableID = job.TableID
 		diff.AffectedOpts = []*model.AffectedOption{
 			{
-				PartitionID: job.CtxVars[0].(int64),
+				TableID: job.CtxVars[0].(int64),
 			},
 		}
 	default:
