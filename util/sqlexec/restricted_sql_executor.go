@@ -58,7 +58,7 @@ var ExecOptionIgnoreWarning OptionFuncAlias = func(option *ExecOption) {
 	option.IgnoreWarning = true
 }
 
-// ExecOptionIgnoreWarning tells ExecRestrictedSQLWithContext to use a snapshot.
+// ExecOptionWithSnapshot tells ExecRestrictedSQLWithContext to use a snapshot.
 func ExecOptionWithSnapshot(snapshot uint64) OptionFuncAlias {
 	return func(option *ExecOption) {
 		option.SnapshotTS = snapshot
