@@ -4,6 +4,7 @@ package export
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/DATA-DOG/go-sqlmock"
@@ -268,4 +269,19 @@ func (s *testMetaDataSuite) TestTiDBSnapshotMetaData(c *C) {
 		"\tPos: 420633273211289601\n"+
 		"\tGTID:\n\n")
 	c.Assert(mock.ExpectationsWereMet(), IsNil)
+}
+
+func (s *testMetaDataSuite) TestNoPrivilege(c *C) {
+	db, mock, err := sqlmock.New()
+	c.Assert(err, IsNil)
+	defer db.Close()
+	conn, err := db.Conn(context.Background())
+	c.Assert(err, IsNil)
+
+	mock.ExpectQuery("SHOW MASTER STATUS").WillReturnError(errors.New("lack SUPER or REPLICATION CLIENT privilege"))
+
+	m := newGlobalMetadata(s.createStorage(c), "")
+	// some consistencyType will ignore this error, this test make sure no extra message is written
+	c.Assert(m.recordGlobalMetaData(conn, ServerTypeTiDB, false), NotNil)
+	c.Assert(m.buffer.String(), Equals, "")
 }
