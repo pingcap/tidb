@@ -180,7 +180,7 @@ func (s *testClusteredSuite) TestClusteredPrefixingPrimaryKey(c *C) {
 
 	tk.MustGetErrCode("update t set name = 'aaaaa' where name = 'bbb'", errno.ErrDupEntry)
 	tk.MustExec("update ignore t set name = 'aaaaa' where name = 'bbb'")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1062 Duplicate entry 'aa' for key 'PRIMARY'"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1062 Duplicate entry 'aaaaa' for key 'PRIMARY'"))
 	tk.MustExec("admin check table t;")
 }
 
@@ -203,4 +203,16 @@ func (s *testClusteredSuite) TestIssue20002(c *C) {
 	tk.MustExec("select c_int, c_str, c_datetime from t where c_datetime between '2020-01-09 22:00:28' and '2020-04-08 15:12:37';")
 	tk.MustExec("commit;")
 	tk.MustExec("admin check index t `c_datetime`;")
+}
+
+// https://github.com/pingcap/tidb/issues/20727
+func (s *testClusteredSuite) TestClusteredIndexSplitAndAddIndex(c *C) {
+	tk := s.newTK(c)
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a varchar(255), b int, primary key(a));")
+	tk.MustExec("insert into t values ('a', 1), ('b', 2), ('c', 3), ('u', 1);")
+	tk.MustQuery("split table t between ('a') and ('z') regions 5;").Check(testkit.Rows("4 1"))
+	tk.MustExec("create index idx on t (b);")
+	tk.MustQuery("select a from t order by a;").Check(testkit.Rows("a", "b", "c", "u"))
+	tk.MustQuery("select a from t use index (idx) order by a;").Check(testkit.Rows("a", "b", "c", "u"))
 }

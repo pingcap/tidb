@@ -200,6 +200,16 @@ func IsEQCondFromIn(expr Expression) bool {
 	return len(cols) > 0
 }
 
+// ExprNotNull checks if an expression is possible to be null.
+func ExprNotNull(expr Expression) bool {
+	if c, ok := expr.(*Constant); ok {
+		return !c.Value.IsNull()
+	}
+	// For ScalarFunction, the result would not be correct until we support maintaining
+	// NotNull flag for it.
+	return mysql.HasNotNullFlag(expr.GetType().Flag)
+}
+
 // HandleOverflowOnSelection handles Overflow errors when evaluating selection filters.
 // We should ignore overflow errors when evaluating selection conditions:
 //		INSERT INTO t VALUES ("999999999999999999");
@@ -789,7 +799,7 @@ func ColumnInfos2ColumnsAndNames(ctx sessionctx.Context, dbName, tblName model.C
 			ColName:     col.Name,
 		})
 		newCol := &Column{
-			RetType:  &col.FieldType,
+			RetType:  col.FieldType.Clone(),
 			ID:       col.ID,
 			UniqueID: ctx.GetSessionVars().AllocPlanColumnID(),
 			Index:    col.Offset,
@@ -1006,7 +1016,8 @@ func canFuncBePushed(sf *ScalarFunction, storeType kv.StoreType) bool {
 		ast.IsIPv4,
 		ast.IsIPv4Compat,
 		ast.IsIPv4Mapped,
-		ast.IsIPv6:
+		ast.IsIPv6,
+		ast.UUID:
 		ret = true
 
 	// A special case: Only push down Round by signature

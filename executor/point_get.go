@@ -36,12 +36,6 @@ import (
 )
 
 func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) Executor {
-	if b.ctx.GetSessionVars().IsPessimisticReadConsistency() {
-		if err := b.refreshForUpdateTSForRC(); err != nil {
-			b.err = err
-			return nil
-		}
-	}
 	startTS, err := b.getSnapshotTS()
 	if err != nil {
 		b.err = err
@@ -180,6 +174,9 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 	} else {
 		tblID = e.tblInfo.ID
 	}
+	if e.lock {
+		e.updateDeltaForTableID(tblID)
+	}
 	if e.idxInfo != nil {
 		if isCommonHandleRead(e.tblInfo, e.idxInfo) {
 			handleBytes, err := EncodeUniqueIndexValuesForKey(e.ctx, e.tblInfo, e.idxInfo, e.idxVals)
@@ -202,13 +199,19 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 					return err
 				}
 			}
-			if len(e.handleVal) == 0 {
-				// handle is not found, try lock the index key if isolation level is not read consistency
-				if e.ctx.GetSessionVars().IsPessimisticReadConsistency() {
-					return nil
+
+			// try lock the index key if isolation level is not read consistency
+			// also lock key if read consistency read a value
+			if !e.ctx.GetSessionVars().IsPessimisticReadConsistency() || len(e.handleVal) > 0 {
+				err = e.lockKeyIfNeeded(ctx, e.idxKey)
+				if err != nil {
+					return err
 				}
-				return e.lockKeyIfNeeded(ctx, e.idxKey)
 			}
+			if len(e.handleVal) == 0 {
+				return nil
+			}
+
 			var iv kv.Handle
 			iv, err = tablecodec.DecodeHandleInUniqueIndexValue(e.handleVal, e.tblInfo.IsCommonHandle)
 			if err != nil {
@@ -318,10 +321,16 @@ func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) ([]byte, error) 
 	if len(key) == 0 {
 		return nil, kv.ErrNotExist
 	}
+
+	var (
+		val []byte
+		err error
+	)
+
 	if e.txn.Valid() && !e.txn.IsReadOnly() {
 		// We cannot use txn.Get directly here because the snapshot in txn and the snapshot of e.snapshot may be
 		// different for pessimistic transaction.
-		val, err := e.txn.GetMemBuffer().Get(ctx, key)
+		val, err = e.txn.GetMemBuffer().Get(ctx, key)
 		if err == nil {
 			return val, err
 		}
@@ -336,6 +345,26 @@ func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) ([]byte, error) 
 		}
 		// fallthrough to snapshot get.
 	}
+
+	lock := e.tblInfo.Lock
+	if lock != nil && (lock.Tp == model.TableLockRead || lock.Tp == model.TableLockReadOnly) {
+		cacheDB := e.ctx.GetStore().GetMemCache()
+		val = cacheDB.Get(ctx, e.tblInfo.ID, key)
+		// key does not exist then get from snapshot and set to cache
+		if val == nil {
+			val, err = e.snapshot.Get(ctx, key)
+			if err != nil {
+				return nil, err
+			}
+
+			err := cacheDB.Set(e.tblInfo.ID, key, val)
+			if err != nil {
+				return nil, err
+			}
+		}
+		return val, nil
+	}
+	// if not read lock or table was unlock then snapshot get
 	return e.snapshot.Get(ctx, key)
 }
 
