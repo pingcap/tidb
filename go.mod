@@ -89,3 +89,5 @@ require (
 )
 
 go 1.13
+
+replace github.com/pingcap/sysutil => github.com/crazycs520/sysutil v0.0.0-20201207085517-9dd18ed31826

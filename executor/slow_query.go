@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/sysutil/cache"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
 	plannercore "github.com/pingcap/tidb/planner/core"
@@ -855,11 +856,11 @@ func (e *slowQueryRetriever) getAllFiles(ctx context.Context, sctx sessionctx.Co
 		return nil, err
 	}
 	dom := domain.GetDomain(sctx)
-	var cache *logutil.LogFileMetaCache
+	var ca *cache.LogFileMetaCache
 	if dom != nil {
-		cache = dom.GetLogFileMetaCache()
+		ca = dom.GetLogFileMetaCache()
 	} else {
-		cache = logutil.NewLogFileMetaCache()
+		ca = cache.NewLogFileMetaCache()
 	}
 	walkFn := func(path string, info os.FileInfo) error {
 		if info.IsDir() {
@@ -887,10 +888,10 @@ func (e *slowQueryRetriever) getAllFiles(ctx context.Context, sctx sessionctx.Co
 		if err != nil {
 			return handleErr(err)
 		}
-		meta := cache.GetFileMata(stat)
+		meta := ca.GetFileMata(stat)
 		if meta == nil {
-			meta = logutil.NewLogFileMeta(stat)
-			defer cache.AddFileMataToCache(stat, meta)
+			meta = cache.NewLogFileMeta(stat)
+			defer ca.AddFileMataToCache(stat, meta)
 		} else {
 			if meta.CheckFileNotModified(stat) && meta.IsInValid() {
 				return nil
@@ -957,7 +958,7 @@ func (e *slowQueryRetriever) getFileStartTime(ctx context.Context, file *os.File
 		lineByte, err := getOneLine(reader)
 		if err != nil {
 			if err == io.EOF {
-				return t, logutil.InvalidLogFile
+				return t, cache.InvalidLogFile
 			}
 			return t, err
 		}
@@ -973,7 +974,7 @@ func (e *slowQueryRetriever) getFileStartTime(ctx context.Context, file *os.File
 			return t, ctx.Err()
 		}
 	}
-	return t, logutil.InvalidLogFile
+	return t, cache.InvalidLogFile
 }
 
 func (e *slowQueryRetriever) getRuntimeStats() execdetails.RuntimeStats {
@@ -1055,7 +1056,7 @@ func (e *slowQueryRetriever) getFileEndTime(ctx context.Context, file *os.File) 
 			return t, ctx.Err()
 		}
 	}
-	return t, logutil.InvalidLogFile
+	return t, cache.InvalidLogFile
 }
 
 const maxReadCacheSize = 1024 * 1024 * 64
