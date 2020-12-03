@@ -1692,7 +1692,10 @@ func (p *LogicalJoin) tryToGetMppHashJoin(prop *property.PhysicalProperty, useBC
 		return nil
 	}
 
-	lkeys, rkeys, _, _ := p.GetJoinKeys()
+	lkeys, rkeys, _, nullEQ := p.GetJoinKeys()
+	if nullEQ {
+		return nil
+	}
 	// check match property
 	baseJoin := basePhysicalJoin{
 		JoinType:        p.JoinType,
