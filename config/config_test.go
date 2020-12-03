@@ -191,6 +191,7 @@ mem-quota-query = 10000
 mem-quota-statistics = 10000
 nested-loop-join-cache-capacity = 100
 max-index-length = 3080
+index-limit = 70
 skip-register-to-dashboard = true
 deprecate-integer-display-length = true
 txn-scope = "dc-1"
@@ -203,10 +204,7 @@ max-batch-size=128
 region-cache-ttl=6000
 store-limit=0
 ttl-refreshed-txn-size=8192
-enable-one-pc=true
-external-consistency=true
 [tikv-client.async-commit]
-enable=true
 keys-limit=123
 total-key-size-limit=1024
 [stmt-summary]
@@ -242,15 +240,12 @@ spilled-file-encryption-method = "plaintext"
 	c.Assert(conf.AlterPrimaryKey, Equals, true)
 
 	c.Assert(conf.TiKVClient.CommitTimeout, Equals, "41s")
-	c.Assert(conf.TiKVClient.AsyncCommit.Enable, Equals, true)
 	c.Assert(conf.TiKVClient.AsyncCommit.KeysLimit, Equals, uint(123))
 	c.Assert(conf.TiKVClient.AsyncCommit.TotalKeySizeLimit, Equals, uint64(1024))
-	c.Assert(conf.TiKVClient.EnableOnePC, Equals, true)
 	c.Assert(conf.TiKVClient.MaxBatchSize, Equals, uint(128))
 	c.Assert(conf.TiKVClient.RegionCacheTTL, Equals, uint(6000))
 	c.Assert(conf.TiKVClient.StoreLimit, Equals, int64(0))
 	c.Assert(conf.TiKVClient.TTLRefreshedTxnSize, Equals, int64(8192))
-	c.Assert(conf.TiKVClient.ExternalConsistency, Equals, true)
 	c.Assert(conf.TokenLimit, Equals, uint(1000))
 	c.Assert(conf.EnableTableLock, IsTrue)
 	c.Assert(conf.DelayCleanTableLock, Equals, uint64(5))
@@ -269,6 +264,7 @@ spilled-file-encryption-method = "plaintext"
 	c.Assert(conf.NestedLoopJoinCacheCapacity, Equals, int64(100))
 	c.Assert(conf.IsolationRead.Engines, DeepEquals, []string{"tiflash"})
 	c.Assert(conf.MaxIndexLength, Equals, 3080)
+	c.Assert(conf.IndexLimit, Equals, 70)
 	c.Assert(conf.SkipRegisterToDashboard, Equals, true)
 	c.Assert(len(conf.Labels), Equals, 2)
 	c.Assert(conf.Labels["foo"], Equals, "bar")
@@ -476,6 +472,18 @@ func (s *testConfigSuite) TestMaxIndexLength(c *C) {
 	checkValid(DefMaxIndexLength-1, false)
 	checkValid(DefMaxOfMaxIndexLength, true)
 	checkValid(DefMaxOfMaxIndexLength+1, false)
+}
+
+func (s *testConfigSuite) TestIndexLimit(c *C) {
+	conf := NewConfig()
+	checkValid := func(indexLimit int, shouldBeValid bool) {
+		conf.IndexLimit = indexLimit
+		c.Assert(conf.Valid() == nil, Equals, shouldBeValid)
+	}
+	checkValid(DefIndexLimit, true)
+	checkValid(DefIndexLimit-1, false)
+	checkValid(DefMaxOfIndexLimit, true)
+	checkValid(DefMaxOfIndexLimit+1, false)
 }
 
 func (s *testConfigSuite) TestParsePath(c *C) {
