@@ -312,8 +312,9 @@ func (r *builder) buildFormBinOp(expr *expression.ScalarFunction) []point {
 func handleUnsignedCol(ft *types.FieldType, val types.Datum, op string) (types.Datum, string, bool) {
 	isUnsigned := mysql.HasUnsignedFlag(ft.Flag)
 	isNegative := (val.Kind() == types.KindInt64 && val.GetInt64() < 0) ||
-		(val.Kind() == types.KindMysqlDecimal && val.GetMysqlDecimal().IsNegative()) ||
-		(val.Kind() == types.KindFloat64 && val.GetFloat64() < 0)
+		(val.Kind() == types.KindFloat32 && val.GetFloat32() < 0) ||
+		(val.Kind() == types.KindFloat64 && val.GetFloat64() < 0) ||
+		(val.Kind() == types.KindMysqlDecimal && val.GetMysqlDecimal().IsNegative())
 
 	if !isUnsigned || !isNegative {
 		return val, op, true
@@ -326,6 +327,8 @@ func handleUnsignedCol(ft *types.FieldType, val types.Datum, op string) (types.D
 		switch val.Kind() {
 		case types.KindInt64:
 			val.SetUint64(0)
+		case types.KindFloat32:
+			val.SetFloat32(0)
 		case types.KindFloat64:
 			val.SetFloat64(0)
 		case types.KindMysqlDecimal:
