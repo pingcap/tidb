@@ -94,6 +94,13 @@ func (s *testCommitterSuite) begin(c *C) *tikvTxn {
 	return txn.(*tikvTxn)
 }
 
+func (s *testCommitterSuite) beginAsyncCommit(c *C) *tikvTxn {
+	txn, err := s.store.Begin()
+	c.Assert(err, IsNil)
+	txn.SetOption(kv.EnableAsyncCommit, true)
+	return txn.(*tikvTxn)
+}
+
 func (s *testCommitterSuite) checkValues(c *C, m map[string]string) {
 	txn := s.begin(c)
 	for k, v := range m {
@@ -1212,18 +1219,13 @@ func (s *testCommitterSuite) TestResolveMixed(c *C) {
 // TestSecondaryKeys tests that when async commit is enabled, each prewrite message includes an
 // accurate list of secondary keys.
 func (s *testCommitterSuite) TestPrewriteSecondaryKeys(c *C) {
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.TiKVClient.AsyncCommit.Enable = true
-	})
-
 	// Prepare two regions first: (, 100) and [100, )
 	region, _ := s.cluster.GetRegionByKey([]byte{50})
 	newRegionID := s.cluster.AllocID()
 	newPeerID := s.cluster.AllocID()
 	s.cluster.Split(region.Id, newRegionID, []byte{100}, []uint64{newPeerID}, newPeerID)
 
-	txn := s.begin(c)
+	txn := s.beginAsyncCommit(c)
 	var val [1024]byte
 	for i := byte(50); i < 120; i++ {
 		err := txn.Set([]byte{i}, val[:])
@@ -1251,17 +1253,12 @@ func (s *testCommitterSuite) TestPrewriteSecondaryKeys(c *C) {
 }
 
 func (s *testCommitterSuite) TestAsyncCommit(c *C) {
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.TiKVClient.AsyncCommit.Enable = true
-	})
-
 	ctx := context.Background()
 	pk := kv.Key("tpk")
 	pkVal := []byte("pkVal")
 	k1 := kv.Key("tk1")
 	k1Val := []byte("k1Val")
-	txn1 := s.begin(c)
+	txn1 := s.beginAsyncCommit(c)
 	err := txn1.Set(pk, pkVal)
 	c.Assert(err, IsNil)
 	err = txn1.Set(k1, k1Val)
@@ -1283,12 +1280,11 @@ func (s *testCommitterSuite) TestAsyncCommit(c *C) {
 func (s *testCommitterSuite) TestAsyncCommitCheck(c *C) {
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
-		conf.TiKVClient.AsyncCommit.Enable = true
 		conf.TiKVClient.AsyncCommit.KeysLimit = 16
 		conf.TiKVClient.AsyncCommit.TotalKeySizeLimit = 64
 	})
 
-	txn := s.begin(c)
+	txn := s.beginAsyncCommit(c)
 	buf := []byte{0, 0, 0, 0}
 	// Set 16 keys, each key is 4 bytes long. So the total size of keys is 64 bytes.
 	for i := 0; i < 16; i++ {
