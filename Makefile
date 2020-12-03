@@ -126,7 +126,7 @@ ifeq ("$(TRAVIS_COVERAGE)", "1")
 	@export log_level=error; \
 	$(OVERALLS) -project=github.com/pingcap/tidb \
 			-covermode=count \
-			-ignore='.git,vendor,cmd,docs,LICENSES' \
+			-ignore='.git,vendor,cmd,docs,tests,LICENSES' \
 			-concurrency=4 \
 			-- -coverpkg=./... \
 			|| { $(FAILPOINT_DISABLE); exit 1; }
