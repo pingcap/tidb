@@ -589,7 +589,7 @@ PARTITION BY RANGE (c) (
 				}
 				return hook
 			}(),
-			expectErr: fmt.Errorf(".*under StateGlobalTxnOnly.*"),
+			expectErr: fmt.Errorf(".*can not be written by local transactions when its placement policy is being altered.*"),
 		},
 		// FIXME: support abort read txn during StateGlobalTxnOnly
 		//{
@@ -609,7 +609,7 @@ PARTITION BY RANGE (c) (
 		//		}
 		//		return hook
 		//	}(),
-		//	expectErr: fmt.Errorf(".*under StateGlobalTxnOnly.*"),
+		//	expectErr: fmt.Errorf(".*can not be written by local transactions when its placement policy is being altered.*"),
 		//},
 	}
 	originalHook := s.dom.DDL().GetHook()
