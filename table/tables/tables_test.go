@@ -46,7 +46,7 @@ func TestT(t *testing.T) {
 	TestingT(t)
 }
 
-var _ = SerialSuites(&testSuite{})
+var _ = Suite(&testSuite{})
 
 type testSuite struct {
 	store kv.Storage

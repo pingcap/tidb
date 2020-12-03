@@ -740,7 +740,7 @@ func formatListPartitionValue(ctx sessionctx.Context, tblInfo *model.TableInfo) 
 		for j, vs := range defs[i].InValues {
 			inValueStrs = inValueStrs[:0]
 			for k, v := range vs {
-				expr, err := expression.ParseSimpleExprCastWithTableInfo(ctx, v, &model.TableInfo{}, colTps[k])
+				expr, err := expression.ParseSimpleExprCastWithTableInfo(ctx, v, &model.TableInfo{}, colTps[k].Clone())
 				if err != nil {
 					return nil, errors.Trace(err)
 				}
