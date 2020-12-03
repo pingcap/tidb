@@ -1193,7 +1193,7 @@ func (s *testRangerSuite) TestIndexStringIsTrueRange(c *C) {
 	testKit.MustExec("drop table if exists t0")
 	testKit.MustExec("CREATE TABLE t0(c0 TEXT(10));")
 	testKit.MustExec("INSERT INTO t0(c0) VALUES (1);")
-	testKit.MustExec("CREATE INDEX i0 ON t0(c0(10));")
+	testKit.MustExec("CREATE INDEX i0 ON t0(c0(255));")
 	testKit.MustExec("analyze table t0;")
 
 	var input []string
@@ -1306,6 +1306,42 @@ func (s *testRangerSuite) TestCompIndexMultiColDNF2(c *C) {
 		})
 		testKit.MustQuery("explain " + tt).Check(testkit.Rows(output[i].Plan...))
 		testKit.MustQuery(tt).Check(testkit.Rows(output[i].Result...))
+	}
+}
+
+func (s *testRangerSuite) TestPrefixIndexMultiColDNF(c *C) {
+	defer testleak.AfterTest(c)()
+	dom, store, err := newDomainStoreWithBootstrap(c)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	c.Assert(err, IsNil)
+	testKit := testkit.NewTestKit(c, store)
+	testKit.MustExec("use test;")
+	testKit.MustExec("drop table if exists t2;")
+	testKit.MustExec("create table t2 (id int unsigned not null auto_increment primary key, t text, index(t(3)));")
+	testKit.MustExec("insert into t2 (t) values ('aaaa'),('a');")
+
+	var input []string
+	var output []struct {
+		SQL    string
+		Plan   []string
+		Result []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	inputLen := len(input)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(testKit.MustQuery("explain " + tt).Rows())
+			output[i].Result = s.testData.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
+		})
+		testKit.MustQuery("explain " + tt).Check(testkit.Rows(output[i].Plan...))
+		testKit.MustQuery(tt).Check(testkit.Rows(output[i].Result...))
+		if i+1 == inputLen/2 {
+			testKit.MustExec("analyze table t2;")
+		}
 	}
 }
 

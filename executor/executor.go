@@ -112,6 +112,7 @@ const (
 
 // globalPanicOnExceed panics when GlobalDisTracker storage usage exceeds storage quota.
 type globalPanicOnExceed struct {
+	memory.BaseOOMAction
 	mutex sync.Mutex // For synchronization.
 }
 
@@ -142,8 +143,10 @@ func (a *globalPanicOnExceed) Action(t *memory.Tracker) {
 	panic(msg)
 }
 
-// SetFallback sets a fallback action.
-func (a *globalPanicOnExceed) SetFallback(memory.ActionOnExceed) {}
+// GetPriority get the priority of the Action
+func (a *globalPanicOnExceed) GetPriority() int64 {
+	return memory.DefPanicPriority
+}
 
 // base returns the baseExecutor of an executor, don't override this method!
 func (e *baseExecutor) base() *baseExecutor {
@@ -1639,6 +1642,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.Priority = stmt.Priority
 	case *ast.CreateTableStmt, *ast.AlterTableStmt:
 		// Make sure the sql_mode is strict when checking column default value.
+		sc.InCreateOrAlterStmt = true
 	case *ast.LoadDataStmt:
 		sc.DupKeyAsWarning = true
 		sc.BadNullAsWarning = true

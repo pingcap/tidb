@@ -58,6 +58,12 @@ const (
 	SampleStep
 	// CommitHook is a callback function called right after the transaction gets committed
 	CommitHook
+	// EnableAsyncCommit indicates whether async commit is enabled
+	EnableAsyncCommit
+	// Enable1PC indicates whether one-phase commit is enabled
+	Enable1PC
+	// GuaranteeExternalConsistency indicates whether to guarantee external consistency at the cost of an extra tso request before prewrite
+	GuaranteeExternalConsistency
 )
 
 // Priority value for transaction priority.
@@ -306,7 +312,7 @@ type ReturnedValue struct {
 // Client is used to send request to KV layer.
 type Client interface {
 	// Send sends request to KV layer, returns a Response.
-	Send(ctx context.Context, req *Request, vars *Variables, sessionMemTracker *memory.Tracker) Response
+	Send(ctx context.Context, req *Request, vars *Variables, sessionMemTracker *memory.Tracker, enabledRateLimitAction bool) Response
 
 	// IsRequestTypeSupported checks if reqType and subType is supported.
 	IsRequestTypeSupported(reqType, subType int64) bool
