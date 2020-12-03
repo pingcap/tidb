@@ -57,11 +57,6 @@ func (s *Store) UUID() string { return "mock" }
 // CurrentVersion implements kv.Storage interface.
 func (s *Store) CurrentVersion() (kv.Version, error) { return kv.Version{}, nil }
 
-// CurrentVersionWithTxnScope implements kv.Storage interface.
-func (s *Store) CurrentVersionWithTxnScope(txnScope string) (kv.Version, error) {
-	return kv.Version{}, nil
-}
-
 // SupportDeleteRange implements kv.Storage interface.
 func (s *Store) SupportDeleteRange() bool { return false }
 

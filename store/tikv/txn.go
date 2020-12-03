@@ -354,7 +354,7 @@ func (txn *tikvTxn) collectLockedKeys() [][]byte {
 
 func (txn *tikvTxn) onCommitted(err error) {
 	if txn.commitCallback != nil {
-		info := kv.TxnInfo{TxnScope: txn.Scope(), StartTS: txn.startTS, CommitTS: txn.commitTS}
+		info := kv.TxnInfo{TxnScope: txn.GetUnionStore().GetOption(kv.TxnScope).(string), StartTS: txn.startTS, CommitTS: txn.commitTS}
 		if err != nil {
 			info.ErrMsg = err.Error()
 		}

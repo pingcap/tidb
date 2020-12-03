@@ -246,8 +246,6 @@ type MemBuffer interface {
 // This is not thread safe.
 type Transaction interface {
 	RetrieverMutator
-	// Scope returns the scope of this transaction.
-	Scope() string
 	// Size returns sum of keys and values length.
 	Size() int
 	// Len returns the number of entries in the DB.
@@ -479,8 +477,6 @@ type Storage interface {
 	UUID() string
 	// CurrentVersion returns current max committed version.
 	CurrentVersion() (Version, error)
-	// CurrentVersionWithTxnScope returns current max committed version with the given txnScope.
-	CurrentVersionWithTxnScope(txnScope string) (Version, error)
 	// GetOracle gets a timestamp oracle client.
 	GetOracle() oracle.Oracle
 	// SupportDeleteRange gets the storage support delete range or not.

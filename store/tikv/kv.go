@@ -385,12 +385,8 @@ func (s *tikvStore) UUID() string {
 }
 
 func (s *tikvStore) CurrentVersion() (kv.Version, error) {
-	return s.CurrentVersionWithTxnScope(oracle.GlobalTxnScope)
-}
-
-func (s *tikvStore) CurrentVersionWithTxnScope(txnScope string) (kv.Version, error) {
 	bo := NewBackofferWithVars(context.Background(), tsoMaxBackoff, nil)
-	startTS, err := s.getTimestampWithRetry(bo, txnScope)
+	startTS, err := s.getTimestampWithRetry(bo, oracle.GlobalTxnScope)
 	if err != nil {
 		return kv.NewVersion(0), errors.Trace(err)
 	}

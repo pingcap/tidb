@@ -1631,7 +1631,7 @@ func (s *session) isTxnRetryable() bool {
 func (s *session) NewTxn(ctx context.Context) error {
 	if s.txn.Valid() {
 		txnID := s.txn.StartTS()
-		txnScope := s.txn.Scope()
+		txnScope := s.txn.GetUnionStore().GetOption(kv.TxnScope).(string)
 		err := s.CommitTxn(ctx)
 		if err != nil {
 			return err
@@ -2517,7 +2517,7 @@ func (s *session) recordOnTransactionExecution(err error, counter int, duration 
 func (s *session) checkPlacementPolicyBeforeCommit() error {
 	var err error
 	// Get the txnScope of the transaction we're going to commit.
-	txnScope := s.txn.Scope()
+	txnScope := s.txn.GetUnionStore().GetOption(kv.TxnScope)
 	if txnScope == "" {
 		txnScope = config.DefTxnScope
 	}

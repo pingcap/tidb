@@ -185,11 +185,6 @@ func (s *mockStorage) CurrentVersion() (Version, error) {
 	return NewVersion(1), nil
 }
 
-// CurrentVersionWithTxnScope returns current max committed version with the given txnScope.
-func (s *mockStorage) CurrentVersionWithTxnScope(txnScope string) (Version, error) {
-	return NewVersion(1), nil
-}
-
 func (s *mockStorage) GetClient() Client {
 	return nil
 }
