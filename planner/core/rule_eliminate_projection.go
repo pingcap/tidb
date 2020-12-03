@@ -82,6 +82,14 @@ func doPhysicalProjectionElimination(p PhysicalPlan) PhysicalPlan {
 		p.Children()[i] = doPhysicalProjectionElimination(child)
 	}
 
+	// eliminate projection in a coprocessor task
+	tableReader, isTableReader := p.(*PhysicalTableReader)
+	if isTableReader {
+		tableReader.tablePlan = eliminatePhysicalProjection(tableReader.tablePlan)
+		tableReader.TablePlans = flattenPushDownPlan(tableReader.tablePlan)
+		return p
+	}
+
 	proj, isProj := p.(*PhysicalProjection)
 	if !isProj || !canProjectionBeEliminatedStrict(proj) {
 		return p
