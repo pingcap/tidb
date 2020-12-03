@@ -174,7 +174,8 @@ type HashAggExec struct {
 	prepared         bool
 	executed         bool
 
-	isAllFirstRow bool
+	isAllFirstRow     bool
+	firstRowProcessed int
 
 	memTracker *memory.Tracker // track memory usage.
 
@@ -874,10 +875,12 @@ func (e *HashAggExec) getPartialResults(groupKey string) []aggfuncs.PartialResul
 func (e *HashAggExec) executeFirstRow(ctx context.Context, chk *chunk.Chunk) (err error) {
 	for {
 		mSize := e.childResult.MemoryUsage()
-		err := Next(ctx, e.children[0], e.childResult)
-		e.memTracker.Consume(e.childResult.MemoryUsage() - mSize)
-		if err != nil {
-			return err
+		if e.childResult == nil || e.firstRowProcessed == e.childResult.NumRows() {
+			err := Next(ctx, e.children[0], e.childResult)
+			e.memTracker.Consume(e.childResult.MemoryUsage() - mSize)
+			if err != nil {
+				return err
+			}
 		}
 
 		failpoint.Inject("unparallelHashAggError", func(val failpoint.Value) {
@@ -896,13 +899,14 @@ func (e *HashAggExec) executeFirstRow(ctx context.Context, chk *chunk.Chunk) (er
 			return err
 		}
 
-		for j := 0; j < e.childResult.NumRows(); j++ {
+		for j := e.firstRowProcessed; j < e.childResult.NumRows(); j++ {
 			groupKey := string(e.groupKeyBuffer[j]) // do memory copy here, because e.groupKeyBuffer may be reused.
 			if !e.groupSet.Exist(groupKey) {
 				e.groupSet.Insert(groupKey)
 				e.groupKeys = append(e.groupKeys, groupKey)
 				chk.AppendRow(e.childResult.GetRow(j))
 			}
+			e.firstRowProcessed++
 			if chk.IsFull() {
 				e.cursor4GroupKey++
 				return nil
