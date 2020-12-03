@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"math/rand"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -1293,4 +1294,26 @@ func (s *testSuiteAgg) TestIssue20658(c *C) {
 
 		}
 	}
+}
+
+func (s *testSuiteAgg) TestIssue15284(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a int);")
+	for i := 0; i < 3000; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t values (%d)", i))
+	}
+	tk.MustExec("set @@tidb_hashagg_partial_concurrency=1")
+	tk.MustExec("set @@tidb_hashagg_final_concurrency=1")
+
+	ans := make([]string, 0, 3000)
+	for i := 0; i < 5; i++ {
+		ans = append(ans, strconv.Itoa(i))
+	}
+	tk.MustQuery("SELECT distinct a FROM t limit 5").Check(testkit.Rows(ans...))
+	for i := 5; i < 3000; i++ {
+		ans = append(ans, strconv.Itoa(i))
+	}
+	tk.MustQuery("SELECT distinct a FROM t limit 3000").Check(testkit.Rows(ans...))
 }

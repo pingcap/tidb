@@ -174,6 +174,8 @@ type HashAggExec struct {
 	prepared         bool
 	executed         bool
 
+	isAllFirstRow    bool
+
 	memTracker *memory.Tracker // track memory usage.
 
 	stats *HashAggRuntimeStats
@@ -766,7 +768,7 @@ func (e *HashAggExec) parallelExec(ctx context.Context, chk *chunk.Chunk) error 
 
 // unparallelExec executes hash aggregation algorithm in single thread.
 func (e *HashAggExec) unparallelExec(ctx context.Context, chk *chunk.Chunk) error {
-	if e.isAllFirstRowAgg() {
+	if e.isAllFirstRow {
 		err := e.executeFirstRow(ctx, chk)
 		if err != nil {
 			return err
@@ -853,7 +855,6 @@ func (e *HashAggExec) execute(ctx context.Context) (err error) {
 			}
 		}
 	}
-	return nil
 }
 
 func (e *HashAggExec) getPartialResults(groupKey string) []aggfuncs.PartialResult {
@@ -908,7 +909,6 @@ func (e *HashAggExec) executeFirstRow(ctx context.Context, chk *chunk.Chunk) (er
 			}
 		}
 	}
-	return nil
 }
 
 func (e *HashAggExec) isAllFirstRowAgg() bool {
