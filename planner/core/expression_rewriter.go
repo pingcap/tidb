@@ -1533,7 +1533,13 @@ func (er *expressionRewriter) wrapExpWithCast() (expr, lexp, rexp expression.Exp
 	case types.ETDecimal:
 		castFunc = expression.WrapWithCastAsDecimal
 	case types.ETString:
-		castFunc = expression.WrapWithCastAsString
+		castFunc = func(ctx sessionctx.Context, e expression.Expression) expression.Expression {
+			// string kind expression do not need cast
+			if e.GetType().EvalType().IsStringKind() {
+				return e
+			}
+			return expression.WrapWithCastAsString(ctx, e)
+		}
 	case types.ETDatetime:
 		expr = expression.WrapWithCastAsTime(er.sctx, expr, types.NewFieldType(mysql.TypeDatetime))
 		lexp = expression.WrapWithCastAsTime(er.sctx, lexp, types.NewFieldType(mysql.TypeDatetime))
