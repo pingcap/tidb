@@ -1082,6 +1082,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrBRIEExportFailed:  mysql.Message("Export failed: %s", nil),
 
 	// TiKV/PD errors.
+<<<<<<< HEAD
 	ErrPDServerTimeout:        mysql.Message("PD server timeout", nil),
 	ErrTiKVServerTimeout:      mysql.Message("TiKV server timeout", nil),
 	ErrTiKVServerBusy:         mysql.Message("TiKV server is busy", nil),
@@ -1092,4 +1093,19 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrTiKVStoreLimit:         mysql.Message("Store token is up to the limit, store id = %d", nil),
 	ErrPrometheusAddrIsNotSet: mysql.Message("Prometheus address is not set in PD and etcd", nil),
 	ErrTiKVStaleCommand:       mysql.Message("TiKV server reports stale command", nil),
+=======
+	ErrPDServerTimeout:           mysql.Message("PD server timeout", nil),
+	ErrTiKVServerTimeout:         mysql.Message("TiKV server timeout", nil),
+	ErrTiKVServerBusy:            mysql.Message("TiKV server is busy", nil),
+	ErrTiFlashServerTimeout:      mysql.Message("TiFlash server timeout", nil),
+	ErrTiFlashServerBusy:         mysql.Message("TiFlash server is busy", nil),
+	ErrResolveLockTimeout:        mysql.Message("Resolve lock timeout", nil),
+	ErrRegionUnavailable:         mysql.Message("Region is unavailable", nil),
+	ErrGCTooEarly:                mysql.Message("GC life time is shorter than transaction duration, transaction starts at %v, GC safe point is %v", nil),
+	ErrWriteConflict:             mysql.Message("Write conflict, txnStartTS=%d, conflictStartTS=%d, conflictCommitTS=%d, key=%s", nil),
+	ErrTiKVStoreLimit:            mysql.Message("Store token is up to the limit, store id = %d", nil),
+	ErrPrometheusAddrIsNotSet:    mysql.Message("Prometheus address is not set in PD and etcd", nil),
+	ErrTiKVStaleCommand:          mysql.Message("TiKV server reports stale command", nil),
+	ErrTiKVMaxTimestampNotSynced: mysql.Message("TiKV max timestamp is not synced", nil),
+>>>>>>> 78ad1447c... tikv: distinguish server timeout and server busy error for TiKV and TiFlash (#21109)
 }
