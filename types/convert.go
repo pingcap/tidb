@@ -570,7 +570,8 @@ func ConvertJSONToInt(sc *stmtctx.StatementContext, j json.BinaryJSON, unsigned 
 
 		lBound := IntergerSignedLowerBound(tp)
 		uBound := IntergerSignedUpperBound(tp)
-		return ConvertIntToInt(i, lBound, uBound, tp)
+		i, err := ConvertIntToInt(i, lBound, uBound, tp)
+		return i, sc.HandleOverflow(err, err)
 	case json.TypeCodeUint64:
 		u := j.GetUint64()
 		if unsigned {
@@ -580,7 +581,8 @@ func ConvertJSONToInt(sc *stmtctx.StatementContext, j json.BinaryJSON, unsigned 
 		}
 
 		uBound := IntergerSignedUpperBound(tp)
-		return ConvertUintToInt(u, uBound, tp)
+		i, err := ConvertUintToInt(u, uBound, tp)
+		return i, sc.HandleOverflow(err, err)
 	case json.TypeCodeFloat64:
 		f := j.GetFloat64()
 		if !unsigned {
