@@ -1025,22 +1025,26 @@ func (c *twoPhaseCommitter) mutationsOfKeys(keys [][]byte) CommitterMutations {
 }
 
 func (s *testCommitterSuite) TestResolvePessimisticLock(c *C) {
-	untouchedKey := kv.Key("t000000001i000000001")
-	untouchedValue := []byte{0, 0, 0, 0, 0, 0, 0, 1, 49}
-	c.Assert(tablecodec.IsUntouchedIndexKValue(untouchedKey, untouchedValue), IsTrue)
+	untouchedIndexKey := kv.Key("t00000001_i000000001")
+	untouchedIndexValue := []byte{0, 0, 0, 0, 0, 0, 0, 1, 49}
+	noValueIndexKey := kv.Key("t00000001_i000000002")
+	c.Assert(tablecodec.IsUntouchedIndexKValue(untouchedIndexKey, untouchedIndexValue), IsTrue)
 	txn := s.begin(c)
-	err := txn.Set(untouchedKey, untouchedValue)
+	err := txn.Set(untouchedIndexKey, untouchedIndexValue)
 	c.Assert(err, IsNil)
 	lockCtx := &kv.LockCtx{ForUpdateTS: txn.startTS, WaitStartTime: time.Now(), LockWaitTime: kv.LockNoWait}
-	err = txn.LockKeys(context.Background(), lockCtx, untouchedKey)
+	err = txn.LockKeys(context.Background(), lockCtx, untouchedIndexKey, noValueIndexKey)
 	c.Assert(err, IsNil)
 	commit, err := newTwoPhaseCommitterWithInit(txn, 1)
 	c.Assert(err, IsNil)
-	mutation := commit.mutationsOfKeys([][]byte{untouchedKey})
-	c.Assert(mutation.Len(), Equals, 1)
+	mutation := commit.mutationsOfKeys([][]byte{untouchedIndexKey, noValueIndexKey})
+	c.Assert(mutation.Len(), Equals, 2)
 	c.Assert(mutation.GetOp(0), Equals, pb.Op_Lock)
-	c.Assert(mutation.GetKey(0), BytesEquals, []byte(untouchedKey))
-	c.Assert(mutation.GetValue(0), BytesEquals, untouchedValue)
+	c.Assert(mutation.GetKey(0), BytesEquals, []byte(untouchedIndexKey))
+	c.Assert(mutation.GetValue(0), BytesEquals, untouchedIndexValue)
+	c.Assert(mutation.GetOp(1), Equals, pb.Op_Lock)
+	c.Assert(mutation.GetKey(1), BytesEquals, []byte(noValueIndexKey))
+	c.Assert(mutation.GetValue(1), BytesEquals, []byte{})
 }
 
 func (s *testCommitterSuite) TestCommitDeadLock(c *C) {

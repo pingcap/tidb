@@ -169,46 +169,48 @@ func (s *testBatchPointGetSuite) TestBatchPointGetUnsignedHandleWithSort(c *C) {
 
 func (s *testBatchPointGetSuite) TestBatchPointGetLockExistKey(c *C) {
 	var wg sync.WaitGroup
+	errCh := make(chan error)
+
 	testLock := func(rc bool, key string, tableName string) {
 		doneCh := make(chan struct{}, 1)
 		tk1, tk2 := testkit.NewTestKit(c, s.store), testkit.NewTestKit(c, s.store)
 
-		tk1.MustExec("use test")
-		tk2.MustExec("use test")
-		tk1.MustExec("set session tidb_enable_clustered_index = 0")
+		errCh <- tk1.ExecToErr("use test")
+		errCh <- tk2.ExecToErr("use test")
+		errCh <- tk1.ExecToErr("set session tidb_enable_clustered_index = 0")
 
-		tk1.MustExec(fmt.Sprintf("drop table if exists %s", tableName))
-		tk1.MustExec(fmt.Sprintf("create table %s(id int, v int, k int, %s key0(id, v))", tableName, key))
-		tk1.MustExec(fmt.Sprintf("insert into %s values(1, 1, 1), (2, 2, 2)", tableName))
+		errCh <- tk1.ExecToErr(fmt.Sprintf("drop table if exists %s", tableName))
+		errCh <- tk1.ExecToErr(fmt.Sprintf("create table %s(id int, v int, k int, %s key0(id, v))", tableName, key))
+		errCh <- tk1.ExecToErr(fmt.Sprintf("insert into %s values(1, 1, 1), (2, 2, 2)", tableName))
 
 		if rc {
-			tk1.MustExec("set tx_isolation = 'READ-COMMITTED'")
-			tk2.MustExec("set tx_isolation = 'READ-COMMITTED'")
+			errCh <- tk1.ExecToErr("set tx_isolation = 'READ-COMMITTED'")
+			errCh <- tk2.ExecToErr("set tx_isolation = 'READ-COMMITTED'")
 		}
 
-		tk1.MustExec("begin pessimistic")
-		tk2.MustExec("begin pessimistic")
+		errCh <- tk1.ExecToErr("begin pessimistic")
+		errCh <- tk2.ExecToErr("begin pessimistic")
 
 		// select for update
 		if !rc {
 			// lock exist key only for repeatable read
-			tk1.MustExec(fmt.Sprintf("select * from %s where (id, v) in ((1, 1), (2, 2)) for update", tableName))
+			errCh <- tk1.ExecToErr(fmt.Sprintf("select * from %s where (id, v) in ((1, 1), (2, 2)) for update", tableName))
 		} else {
 			// read committed will not lock non-exist key
-			tk1.MustExec(fmt.Sprintf("select * from %s where (id, v) in ((1, 1), (2, 2), (3, 3)) for update", tableName))
+			errCh <- tk1.ExecToErr(fmt.Sprintf("select * from %s where (id, v) in ((1, 1), (2, 2), (3, 3)) for update", tableName))
 		}
-		tk2.MustExec(fmt.Sprintf("insert into %s values(3, 3, 3)", tableName))
+		errCh <- tk2.ExecToErr(fmt.Sprintf("insert into %s values(3, 3, 3)", tableName))
 		go func() {
-			tk2.MustExec(fmt.Sprintf("insert into %s values(1, 1, 10)", tableName))
+			errCh <- tk2.ExecToErr(fmt.Sprintf("insert into %s values(1, 1, 10)", tableName))
 			doneCh <- struct{}{}
 		}()
 
 		time.Sleep(150 * time.Millisecond)
-		tk1.MustExec(fmt.Sprintf("update %s set v = 2 where id = 1 and v = 1", tableName))
+		errCh <- tk1.ExecToErr(fmt.Sprintf("update %s set v = 2 where id = 1 and v = 1", tableName))
 
-		tk1.MustExec("commit")
+		errCh <- tk1.ExecToErr("commit")
 		<-doneCh
-		tk2.MustExec("commit")
+		errCh <- tk2.ExecToErr("commit")
 		tk1.MustQuery(fmt.Sprintf("select * from %s", tableName)).Check(testkit.Rows(
 			"1 2 1",
 			"2 2 2",
@@ -217,24 +219,24 @@ func (s *testBatchPointGetSuite) TestBatchPointGetLockExistKey(c *C) {
 		))
 
 		// update
-		tk1.MustExec("begin pessimistic")
-		tk2.MustExec("begin pessimistic")
+		errCh <- tk1.ExecToErr("begin pessimistic")
+		errCh <- tk2.ExecToErr("begin pessimistic")
 		if !rc {
 			// lock exist key only for repeatable read
-			tk1.MustExec(fmt.Sprintf("update %s set v = v + 1 where (id, v) in ((2, 2), (3, 3))", tableName))
+			errCh <- tk1.ExecToErr(fmt.Sprintf("update %s set v = v + 1 where (id, v) in ((2, 2), (3, 3))", tableName))
 		} else {
 			// read committed will not lock non-exist key
-			tk1.MustExec(fmt.Sprintf("update %s set v = v + 1 where (id, v) in ((2, 2), (3, 3), (4, 4))", tableName))
+			errCh <- tk1.ExecToErr(fmt.Sprintf("update %s set v = v + 1 where (id, v) in ((2, 2), (3, 3), (4, 4))", tableName))
 		}
-		tk2.MustExec(fmt.Sprintf("insert into %s values(4, 4, 4)", tableName))
+		errCh <- tk2.ExecToErr(fmt.Sprintf("insert into %s values(4, 4, 4)", tableName))
 		go func() {
-			tk2.MustExec(fmt.Sprintf("insert into %s values(3, 3, 30)", tableName))
+			errCh <- tk2.ExecToErr(fmt.Sprintf("insert into %s values(3, 3, 30)", tableName))
 			doneCh <- struct{}{}
 		}()
 		time.Sleep(150 * time.Millisecond)
-		tk1.MustExec("commit")
+		errCh <- tk1.ExecToErr("commit")
 		<-doneCh
-		tk2.MustExec("commit")
+		errCh <- tk2.ExecToErr("commit")
 		tk1.MustQuery(fmt.Sprintf("select * from %s", tableName)).Check(testkit.Rows(
 			"1 2 1",
 			"2 3 2",
@@ -245,24 +247,24 @@ func (s *testBatchPointGetSuite) TestBatchPointGetLockExistKey(c *C) {
 		))
 
 		// delete
-		tk1.MustExec("begin pessimistic")
-		tk2.MustExec("begin pessimistic")
+		errCh <- tk1.ExecToErr("begin pessimistic")
+		errCh <- tk2.ExecToErr("begin pessimistic")
 		if !rc {
 			// lock exist key only for repeatable read
-			tk1.MustExec(fmt.Sprintf("delete from %s where (id, v) in ((3, 4), (4, 4))", tableName))
+			errCh <- tk1.ExecToErr(fmt.Sprintf("delete from %s where (id, v) in ((3, 4), (4, 4))", tableName))
 		} else {
 			// read committed will not lock non-exist key
-			tk1.MustExec(fmt.Sprintf("delete from %s where (id, v) in ((3, 4), (4, 4), (5, 5))", tableName))
+			errCh <- tk1.ExecToErr(fmt.Sprintf("delete from %s where (id, v) in ((3, 4), (4, 4), (5, 5))", tableName))
 		}
-		tk2.MustExec(fmt.Sprintf("insert into %s values(5, 5, 5)", tableName))
+		errCh <- tk2.ExecToErr(fmt.Sprintf("insert into %s values(5, 5, 5)", tableName))
 		go func() {
-			tk2.MustExec(fmt.Sprintf("insert into %s values(4, 4,40)", tableName))
+			errCh <- tk2.ExecToErr(fmt.Sprintf("insert into %s values(4, 4,40)", tableName))
 			doneCh <- struct{}{}
 		}()
 		time.Sleep(150 * time.Millisecond)
-		tk1.MustExec("commit")
+		errCh <- tk1.ExecToErr("commit")
 		<-doneCh
-		tk2.MustExec("commit")
+		errCh <- tk2.ExecToErr("commit")
 		tk1.MustQuery(fmt.Sprintf("select * from %s", tableName)).Check(testkit.Rows(
 			"1 2 1",
 			"2 3 2",
@@ -299,5 +301,11 @@ func (s *testBatchPointGetSuite) TestBatchPointGetLockExistKey(c *C) {
 	tk.MustExec("select * from t where id in('1', '2') for update")
 	tk.MustExec("commit")
 
-	wg.Wait()
+	go func() {
+		wg.Wait()
+		close(errCh)
+	}()
+	for err := range errCh {
+		c.Assert(err, IsNil)
+	}
 }
