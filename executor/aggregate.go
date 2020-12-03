@@ -881,6 +881,7 @@ func (e *HashAggExec) executeFirstRow(ctx context.Context, chk *chunk.Chunk) (er
 			if err != nil {
 				return err
 			}
+			e.firstRowProcessed = 0
 		}
 
 		failpoint.Inject("unparallelHashAggError", func(val failpoint.Value) {

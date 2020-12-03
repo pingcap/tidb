@@ -203,8 +203,3 @@ type SlidingWindowAggFunc interface {
 	// completely.
 	Slide(sctx sessionctx.Context, rows []chunk.Row, lastStart, lastEnd uint64, shiftStart, shiftEnd uint64, pr PartialResult) error
 }
-
-// FirstRow is the interface to indicate whether the aggregate function is first row.
-type FirstRow interface {
-	IsFirstRow() bool
-}

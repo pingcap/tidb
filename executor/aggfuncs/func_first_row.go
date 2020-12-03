@@ -160,10 +160,6 @@ func (e *firstRow4Int) AppendFinalResult2Chunk(sctx sessionctx.Context, pr Parti
 	return nil
 }
 
-func (e *firstRow4Int) IsFirstRow() bool {
-	return true
-}
-
 type firstRow4Float32 struct {
 	baseAggFunc
 }
@@ -260,10 +256,6 @@ func (e *firstRow4Float64) AppendFinalResult2Chunk(sctx sessionctx.Context, pr P
 	return nil
 }
 
-func (e *firstRow4Float64) IsFirstRow() bool {
-	return true
-}
-
 type firstRow4String struct {
 	baseAggFunc
 }
@@ -309,10 +301,6 @@ func (e *firstRow4String) AppendFinalResult2Chunk(sctx sessionctx.Context, pr Pa
 	}
 	chk.AppendString(e.ordinal, p.val)
 	return nil
-}
-
-func (e *firstRow4String) IsFirstRow() bool {
-	return true
 }
 
 type firstRow4Time struct {
@@ -361,10 +349,6 @@ func (e *firstRow4Time) AppendFinalResult2Chunk(sctx sessionctx.Context, pr Part
 	return nil
 }
 
-func (e *firstRow4Time) IsFirstRow() bool {
-	return true
-}
-
 type firstRow4Duration struct {
 	baseAggFunc
 }
@@ -411,10 +395,6 @@ func (e *firstRow4Duration) AppendFinalResult2Chunk(sctx sessionctx.Context, pr 
 	return nil
 }
 
-func (e *firstRow4Duration) IsFirstRow(pr PartialResult) bool {
-	return true
-}
-
 type firstRow4JSON struct {
 	baseAggFunc
 }
@@ -459,10 +439,6 @@ func (e *firstRow4JSON) AppendFinalResult2Chunk(sctx sessionctx.Context, pr Part
 	}
 	chk.AppendJSON(e.ordinal, p.val)
 	return nil
-}
-
-func (e *firstRow4JSON) IsFirstRow() bool {
-	return true
 }
 
 type firstRow4Decimal struct {
@@ -518,10 +494,6 @@ func (*firstRow4Decimal) MergePartialResult(sctx sessionctx.Context, src, dst Pa
 	return memDelta, nil
 }
 
-func (e *firstRow4Decimal) IsFirstRow() bool {
-	return true
-}
-
 type firstRow4Enum struct {
 	baseAggFunc
 }
@@ -570,10 +542,6 @@ func (e *firstRow4Enum) AppendFinalResult2Chunk(sctx sessionctx.Context, pr Part
 	return nil
 }
 
-func (e *firstRow4Enum) IsFirstRow() bool {
-	return true
-}
-
 type firstRow4Set struct {
 	baseAggFunc
 }
@@ -620,8 +588,4 @@ func (e *firstRow4Set) AppendFinalResult2Chunk(sctx sessionctx.Context, pr Parti
 	}
 	chk.AppendSet(e.ordinal, p.val)
 	return nil
-}
-
-func (e *firstRow4Set) IsFirstRow() bool {
-	return true
 }
