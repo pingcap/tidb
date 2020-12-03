@@ -256,6 +256,7 @@ func (testModelSuite) TestState(c *C) {
 		StateWriteReorganization,
 		StateDeleteReorganization,
 		StatePublic,
+		StateGlobalTxnOnly,
 	}
 
 	for _, state := range schemaTbl {

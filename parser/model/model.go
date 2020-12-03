@@ -44,6 +44,8 @@ const (
 	StatePublic
 	// StateReplica means we're waiting tiflash replica to be finished.
 	StateReplicaOnly
+	// StateGlobalTxnOnly means we can only use global txn for operator on this schema element
+	StateGlobalTxnOnly
 	/*
 	 *  Please add the new state at the end to keep the values consistent across versions.
 	 */
@@ -64,6 +66,8 @@ func (s SchemaState) String() string {
 		return "public"
 	case StateReplicaOnly:
 		return "replica only"
+	case StateGlobalTxnOnly:
+		return "global txn only"
 	default:
 		return "none"
 	}
@@ -753,6 +757,7 @@ type PartitionInfo struct {
 	AddingDefinitions []PartitionDefinition `json:"adding_definitions"`
 	// DroppingDefinitions is filled when dropping a partition that is in the mid state.
 	DroppingDefinitions []PartitionDefinition `json:"dropping_definitions"`
+	States              []PartitionState      `json:"states"`
 	Num                 uint64                `json:"num"`
 }
 
@@ -767,6 +772,54 @@ func (pi *PartitionInfo) GetNameByID(id int64) string {
 		}
 	}
 	return ""
+}
+
+func (pi *PartitionInfo) GetStateByID(id int64) SchemaState {
+	for _, pstate := range pi.States {
+		if pstate.ID == id {
+			return pstate.State
+		}
+	}
+	return StatePublic
+}
+
+func (pi *PartitionInfo) SetStateByID(id int64, state SchemaState) {
+	newState := PartitionState{ID: id, State: state}
+	for i, pstate := range pi.States {
+		if pstate.ID == id {
+			pi.States[i] = newState
+			return
+		}
+	}
+	if pi.States == nil {
+		pi.States = make([]PartitionState, 0, 1)
+	}
+	pi.States = append(pi.States, newState)
+}
+
+func (pi *PartitionInfo) GCPartitionStates() {
+	if len(pi.States) < 1 {
+		return
+	}
+	newStates := make([]PartitionState, 0, len(pi.Definitions))
+	for _, state := range pi.States {
+		found := false
+		for _, def := range pi.Definitions {
+			if def.ID == state.ID {
+				found = true
+				break
+			}
+		}
+		if found {
+			newStates = append(newStates, state)
+		}
+	}
+	pi.States = newStates
+}
+
+type PartitionState struct {
+	ID    int64       `json:"id"`
+	State SchemaState `json:"state"`
 }
 
 // PartitionDefinition defines a single partition.
