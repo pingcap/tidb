@@ -101,7 +101,7 @@ func (actionCommit) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, batch
 			}
 
 			// Update commit ts and retry.
-			commitTS, err := c.store.getTimestampWithRetry(bo, c.txn.txnScope)
+			commitTS, err := c.store.getTimestampWithRetry(bo, c.txn.Scope())
 			if err != nil {
 				logutil.Logger(bo.ctx).Warn("2PC get commitTS failed",
 					zap.Error(err),

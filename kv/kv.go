@@ -64,6 +64,8 @@ const (
 	Enable1PC
 	// GuaranteeExternalConsistency indicates whether to guarantee external consistency at the cost of an extra tso request before prewrite
 	GuaranteeExternalConsistency
+	// TxnScope indicates which @@txn_scope this transaction will work with.
+	TxnScope
 )
 
 // Priority value for transaction priority.

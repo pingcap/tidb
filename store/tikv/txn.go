@@ -60,7 +60,6 @@ type tikvTxn struct {
 	snapshot  *tikvSnapshot
 	us        kv.UnionStore
 	store     *tikvStore // for connection to region.
-	txnScope  string     // txn_scope indicates which txn_scope this TiKV transaction will work with.
 	startTS   uint64
 	startTime time.Time // Monotonic timestamp for recording txn time consuming.
 	commitTS  uint64
@@ -94,23 +93,24 @@ func newTiKVTxn(store *tikvStore, txnScope string) (*tikvTxn, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return newTikvTxnWithStartTS(store, txnScope, startTS, store.nextReplicaReadSeed())
+	return newTiKVTxnWithStartTS(store, txnScope, startTS, store.nextReplicaReadSeed())
 }
 
-// newTikvTxnWithStartTS creates a txn with startTS.
-func newTikvTxnWithStartTS(store *tikvStore, txnScope string, startTS uint64, replicaReadSeed uint32) (*tikvTxn, error) {
+// newTiKVTxnWithStartTS creates a txn with startTS.
+func newTiKVTxnWithStartTS(store *tikvStore, txnScope string, startTS uint64, replicaReadSeed uint32) (*tikvTxn, error) {
 	ver := kv.NewVersion(startTS)
 	snapshot := newTiKVSnapshot(store, ver, replicaReadSeed)
-	return &tikvTxn{
+	newTiKVTxn := &tikvTxn{
 		snapshot:  snapshot,
 		us:        kv.NewUnionStore(snapshot),
 		store:     store,
-		txnScope:  txnScope,
 		startTS:   startTS,
 		startTime: time.Now(),
 		valid:     true,
 		vars:      kv.DefaultVars,
-	}, nil
+	}
+	newTiKVTxn.SetOption(kv.TxnScope, txnScope)
+	return newTiKVTxn, nil
 }
 
 type assertionPair struct {
@@ -354,7 +354,7 @@ func (txn *tikvTxn) collectLockedKeys() [][]byte {
 
 func (txn *tikvTxn) onCommitted(err error) {
 	if txn.commitCallback != nil {
-		info := kv.TxnInfo{StartTS: txn.startTS, CommitTS: txn.commitTS}
+		info := kv.TxnInfo{TxnScope: txn.Scope(), StartTS: txn.startTS, CommitTS: txn.commitTS}
 		if err != nil {
 			info.ErrMsg = err.Error()
 		}
@@ -571,7 +571,7 @@ func (txn *tikvTxn) Len() int {
 }
 
 func (txn *tikvTxn) Scope() string {
-	return txn.txnScope
+	return txn.us.GetOption(kv.TxnScope).(string)
 }
 
 func (txn *tikvTxn) Size() int {
