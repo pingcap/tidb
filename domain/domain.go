@@ -85,6 +85,7 @@ type Domain struct {
 	statsUpdating        sync2.AtomicInt32
 	cancel               context.CancelFunc
 	indexUsageSyncLease  time.Duration
+	logFileMetaCache     *logutil.LogFileMetaCache
 
 	serverID             uint64
 	serverIDSession      *concurrency.Session
@@ -679,6 +680,7 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 		infoHandle:          infoschema.NewHandle(store),
 		slowQuery:           newTopNSlowQueries(30, time.Hour*24*7, 500),
 		indexUsageSyncLease: idxUsageSyncLease,
+		logFileMetaCache:    logutil.NewLogFileMetaCache(),
 	}
 
 	do.SchemaValidator = NewSchemaValidator(ddlLease, do)
@@ -1308,6 +1310,10 @@ func (do *Domain) ServerID() uint64 {
 // IsLostConnectionToPD indicates lost connection to PD or not.
 func (do *Domain) IsLostConnectionToPD() bool {
 	return do.isLostConnectionToPD.Get() != 0
+}
+
+func (do *Domain) GetLogFileMetaCache() *logutil.LogFileMetaCache {
+	return do.logFileMetaCache
 }
 
 const (

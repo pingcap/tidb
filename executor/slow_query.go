@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/privilege"
@@ -853,6 +854,11 @@ func (e *slowQueryRetriever) getAllFiles(ctx context.Context, sctx sessionctx.Co
 	if err != nil {
 		return nil, err
 	}
+	dom := domain.GetDomain(sctx)
+	var cache *logutil.LogFileMetaCache
+	if dom != nil {
+		cache = dom.GetLogFileMetaCache()
+	}
 	walkFn := func(path string, info os.FileInfo) error {
 		if info.IsDir() {
 			return nil
@@ -875,18 +881,40 @@ func (e *slowQueryRetriever) getAllFiles(ctx context.Context, sctx sessionctx.Co
 				terror.Log(file.Close())
 			}
 		}()
-		// Get the file start time.
-		fileStartTime, err := e.getFileStartTime(ctx, file)
+		stat, err := file.Stat()
 		if err != nil {
 			return handleErr(err)
 		}
+		var meta *logutil.LogFileMeta
+		if cache != nil {
+			meta = cache.GetFileMata(stat)
+		}
+		if meta == nil {
+			meta = logutil.NewLogFileMeta(logutil.FileTypeSlowLog, stat)
+			if cache != nil {
+				defer cache.AddFileMataToCache(stat, meta)
+			}
+		}
+		if meta.Type != logutil.FileTypeSlowLog {
+			return nil
+		}
+		// Get the file start time.
+		fileStartTime, err := meta.GetStartTime(stat, func() (time.Time, error) {
+			return e.getFileStartTime(ctx, file)
+		})
+		if err != nil {
+			return handleErr(err)
+		}
+
 		start := types.NewTime(types.FromGoTime(fileStartTime), mysql.TypeDatetime, types.MaxFsp)
 		if start.Compare(e.checker.endTime) > 0 {
 			return nil
 		}
 
 		// Get the file end time.
-		fileEndTime, err := e.getFileEndTime(ctx, file)
+		fileEndTime, err := meta.GetEndTime(stat, func() (time.Time, error) {
+			return e.getFileEndTime(ctx, file)
+		})
 		if err != nil {
 			return handleErr(err)
 		}
