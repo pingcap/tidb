@@ -1209,6 +1209,10 @@ func (s *testColumnSuite) TestAutoConvertBlobTypeByLength(c *C) {
 		WithStore(s.store),
 		WithLease(testLease),
 	)
+	// Close the customized ddl(worker goroutine included) after the test is finished, otherwise, it will
+	// cause go routine in TiDB leak test.
+	defer d.Stop()
+
 	sql := fmt.Sprintf("create table t0(c0 Blob(%d), c1 Blob(%d), c2 Blob(%d), c3 Blob(%d))",
 		tinyBlobMaxLength-1, blobMaxLength-1, mediumBlobMaxLength-1, longBlobMaxLength-1)
 	stmt, err := parser.New().ParseOneStmt(sql, "", "")
