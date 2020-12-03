@@ -556,7 +556,7 @@ func (s *testIntegrationSuite1) TestCreateTableWithListPartition(c *C) {
 		},
 		{
 			"create table t (id decimal) partition by list (id) (partition p0 values in ('2019-01-09 11:23:34'));",
-			ddl.ErrNotAllowedTypeInPartition,
+			ddl.ErrValuesIsNotIntType,
 		},
 		{
 			"create table t (id float) partition by list (id) (partition p0 values in (1));",

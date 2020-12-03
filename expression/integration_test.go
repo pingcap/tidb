@@ -7634,7 +7634,7 @@ func (s *testIntegrationSuite) TestIssue19596(c *C) {
 	tk.MustGetErrMsg("alter table t add partition (partition p1 values less than (a));", "[planner:1054]Unknown column 'a' in 'expression'")
 	tk.MustQuery("select * from t;")
 	tk.MustExec("drop table if exists t;")
-	tk.MustGetErrMsg("create table t (a int) partition by range(a) (PARTITION p0 VALUES LESS THAN (a));", "[ddl:1054]Unknown column 'a' in 'partition function'")
+	tk.MustGetErrMsg("create table t (a int) partition by range(a) (PARTITION p0 VALUES LESS THAN (a));", "[planner:1054]Unknown column 'a' in 'expression'")
 }
 
 func (s *testIntegrationSuite) TestIssue17476(c *C) {
