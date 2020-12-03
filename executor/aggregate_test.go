@@ -1322,7 +1322,7 @@ func (s *testSuiteAgg) TestIssue15284(c *C) {
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("CREATE TABLE t1 (a int,b int)")
 	tk.MustExec("insert into t1 values (0, 0), (1, 1), (1, 2), (1, 3), (2, 4), (2, 5), (2, 6), (3, 7), (3, 10), (3, 11), (12, 12), (12, 13), (14, 14), (14, 15), (20, 20), (20, 21), (20, 22), (23, 23), (23, 24), (23, 25), (31, 30), (31, 31), (31, 32), (33, 33), (33, 34), (33, 35), (36, 36), (80, 80), (90, 90), (100, 100)")
-	tk.MustQuery("SELECT distinct a,b FROM t limit 10").Check(testkit.Rows("0 0",
+	tk.MustQuery("SELECT distinct a,b FROM t1 limit 10").Check(testkit.Rows("0 0",
 		"1 1",
 		"1 2",
 		"1 3",
