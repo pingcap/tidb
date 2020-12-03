@@ -740,6 +740,27 @@ func (s *testSuite) TestCapturePlanBaseline(c *C) {
 	c.Assert(rows[0][1], Equals, "SELECT /*+ use_index(@`sel_1` `test`.`t` )*/ * FROM `t` WHERE `a`>10")
 }
 
+func (s *testSuite) TestCaptureDBCaseSensitivity(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	s.cleanBindingEnv(tk)
+	stmtsummary.StmtSummaryByDigestMap.Clear()
+	tk.MustExec("drop database if exists SPM")
+	tk.MustExec("create database SPM")
+	tk.MustExec("use SPM")
+	tk.MustExec("create table t(a int, b int, key(b))")
+	tk.MustExec("create global binding for select * from t using select /*+ use_index(t) */ * from t")
+	c.Assert(tk.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil), IsTrue)
+	tk.MustExec("select /*+ use_index(t,b) */ * from t")
+	tk.MustExec("select /*+ use_index(t,b) */ * from t")
+	tk.MustExec("admin capture bindings")
+	// The capture should ignore the case sensitivity for DB name when checking if any binding exists,
+	// so there would be no new binding captured.
+	rows := tk.MustQuery("show global bindings").Rows()
+	c.Assert(len(rows), Equals, 1)
+	c.Assert(rows[0][1], Equals, "select /*+ use_index(t) */ * from t")
+	c.Assert(rows[0][8], Equals, "manual")
+}
+
 func (s *testSuite) TestCaptureBaselinesDefaultDB(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	s.cleanBindingEnv(tk)
