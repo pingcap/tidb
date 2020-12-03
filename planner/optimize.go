@@ -276,40 +276,23 @@ func optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 func extractSelectAndNormalizeDigest(stmtNode ast.StmtNode) (ast.StmtNode, string, string) {
 	switch x := stmtNode.(type) {
 	case *ast.ExplainStmt:
-		switch x.Stmt.(type) {
-		case *ast.SelectStmt, *ast.DeleteStmt, *ast.UpdateStmt, *ast.InsertStmt:
-			plannercore.EraseLastSemicolon(x)
-			normalizeExplainSQL := parser.Normalize(x.Text())
-			idx := int(0)
-			switch n := x.Stmt.(type) {
-			case *ast.SelectStmt:
-				idx = strings.Index(normalizeExplainSQL, "select")
-			case *ast.DeleteStmt:
-				idx = strings.Index(normalizeExplainSQL, "delete")
-			case *ast.UpdateStmt:
-				idx = strings.Index(normalizeExplainSQL, "update")
-			case *ast.InsertStmt:
-				if n.IsReplace {
-					idx = strings.Index(normalizeExplainSQL, "replace")
-				} else {
-					idx = strings.Index(normalizeExplainSQL, "insert")
-				}
-			}
-			normalizeSQL := normalizeExplainSQL[idx:]
-			hash := parser.DigestNormalized(normalizeSQL)
-			return x.Stmt, normalizeSQL, hash
-		case *ast.SetOprStmt:
-			plannercore.EraseLastSemicolon(x)
-			normalizeExplainSQL := parser.Normalize(x.Text())
-			idx := strings.Index(normalizeExplainSQL, "select")
-			parenthesesIdx := strings.Index(normalizeExplainSQL, "(")
-			if parenthesesIdx != -1 && parenthesesIdx < idx {
-				idx = parenthesesIdx
-			}
-			normalizeSQL := normalizeExplainSQL[idx:]
-			hash := parser.DigestNormalized(normalizeSQL)
-			return x.Stmt, normalizeSQL, hash
+		plannercore.EraseLastSemicolon(x)
+		normalizeExplainSQL := parser.Normalize(x.Text())
+		keyword, err := hint.ExplainableStmtKeyword(x.Stmt)
+		if err != nil {
+			panic(err)
 		}
+		idx := strings.Index(normalizeExplainSQL, strings.ToLower(keyword))
+		parenthesesIdx := -1
+		if _, ok := x.Stmt.(*ast.SetOprStmt); ok {
+			parenthesesIdx = strings.Index(normalizeExplainSQL, "(")
+		}
+		if parenthesesIdx != -1 && parenthesesIdx < idx {
+			idx = parenthesesIdx
+		}
+		normalizeSQL := normalizeExplainSQL[idx:]
+		hash := parser.DigestNormalized(normalizeSQL)
+		return x.Stmt, normalizeSQL, hash
 	case *ast.SelectStmt, *ast.SetOprStmt, *ast.DeleteStmt, *ast.UpdateStmt, *ast.InsertStmt:
 		plannercore.EraseLastSemicolon(x)
 		normalizedSQL, hash := parser.NormalizeDigest(x.Text())

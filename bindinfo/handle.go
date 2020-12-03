@@ -691,35 +691,15 @@ func GenerateBindSQL(ctx context.Context, stmtNode ast.StmtNode, planHint string
 		logutil.Logger(ctx).Warn("Restore SQL failed", zap.Error(err))
 	}
 	bindSQL := sb.String()
-	switch n := stmtNode.(type) {
-	case *ast.DeleteStmt:
-		deleteIdx := strings.Index(bindSQL, "DELETE")
-		// Remove possible `explain` prefix.
-		bindSQL = bindSQL[deleteIdx:]
-		return strings.Replace(bindSQL, "DELETE", fmt.Sprintf("DELETE /*+ %s*/", planHint), 1)
-	case *ast.UpdateStmt:
-		updateIdx := strings.Index(bindSQL, "UPDATE")
-		// Remove possible `explain` prefix.
-		bindSQL = bindSQL[updateIdx:]
-		return strings.Replace(bindSQL, "UPDATE", fmt.Sprintf("UPDATE /*+ %s*/", planHint), 1)
-	case *ast.SelectStmt:
-		selectIdx := strings.Index(bindSQL, "SELECT")
-		// Remove possible `explain` prefix.
-		bindSQL = bindSQL[selectIdx:]
-		return strings.Replace(bindSQL, "SELECT", fmt.Sprintf("SELECT /*+ %s*/", planHint), 1)
-	case *ast.InsertStmt:
-		insertIdx := int(0)
-		if n.IsReplace {
-			insertIdx = strings.Index(bindSQL, "REPLACE")
-		} else {
-			insertIdx = strings.Index(bindSQL, "INSERT")
-		}
-		// Remove possible `explain` prefix.
-		bindSQL = bindSQL[insertIdx:]
-		return strings.Replace(bindSQL, "SELECT", fmt.Sprintf("SELECT /*+ %s*/", planHint), 1)
+	keyword, err := hint.ExplainableStmtKeyword(stmtNode)
+	if err != nil {
+		logutil.Logger(ctx).Warn("Unexpected statement type")
+		return ""
 	}
-	logutil.Logger(ctx).Warn("Unexpected statement type")
-	return ""
+	idx := strings.Index(bindSQL, keyword)
+	// Remove possible `explain` prefix.
+	bindSQL = bindSQL[idx:]
+	return strings.Replace(bindSQL, keyword, fmt.Sprintf("%s /*+ %s*/", keyword, planHint), 1)
 }
 
 type paramMarkerChecker struct {
