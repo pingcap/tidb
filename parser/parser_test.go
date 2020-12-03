@@ -3141,6 +3141,10 @@ func (s *testParserSuite) TestHintError(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(len(warns), Equals, 1)
 	c.Assert(warns[0], ErrorMatches, `.*near '/\*\+' at line 1`)
+
+	stmt, warns, err = parser.Parse("create global binding for select /*+ max_execution_time(1) */ 1 using select /*+ max_execution_time(1) */ 1;\n", "", "")
+	c.Assert(err, IsNil)
+	c.Assert(len(warns), Equals, 0)
 }
 
 func (s *testParserSuite) TestErrorMsg(c *C) {
