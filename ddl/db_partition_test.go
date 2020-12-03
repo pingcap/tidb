@@ -568,19 +568,19 @@ func (s *testIntegrationSuite1) TestCreateTableWithListPartition(c *C) {
 		},
 		{
 			"create table t (id text) partition by list (id) (partition p0 values in ('abc'));",
-			ddl.ErrNotAllowedTypeInPartition,
+			ddl.ErrValuesIsNotIntType,
 		},
 		{
 			"create table t (id blob) partition by list (id) (partition p0 values in ('abc'));",
-			ddl.ErrNotAllowedTypeInPartition,
+			ddl.ErrValuesIsNotIntType,
 		},
 		{
 			"create table t (id enum('a','b')) partition by list (id) (partition p0 values in ('a'));",
-			ddl.ErrNotAllowedTypeInPartition,
+			ddl.ErrValuesIsNotIntType,
 		},
 		{
 			"create table t (id set('a','b')) partition by list (id) (partition p0 values in ('a'));",
-			ddl.ErrNotAllowedTypeInPartition,
+			ddl.ErrValuesIsNotIntType,
 		},
 		{
 			"create table t (a int) partition by list (a) (partition p0 values in (1), partition p0 values in (2));",
