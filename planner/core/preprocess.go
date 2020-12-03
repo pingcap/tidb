@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/format"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/ddl"
@@ -128,6 +129,43 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		// So skip check table name here, otherwise, recover table [table_name] syntax will return
 		// table not exists error. But recover table statement is use to recover the dropped table. So skip children here.
 		return in, true
+<<<<<<< HEAD
+=======
+	case *ast.RepairTableStmt:
+		// The RepairTable should consist of the logic for creating tables and renaming tables.
+		p.flag |= inRepairTable
+		p.checkRepairTableGrammar(node)
+	case *ast.CreateSequenceStmt:
+		p.flag |= inCreateOrDropTable
+		p.resolveCreateSequenceStmt(node)
+	case *ast.DropSequenceStmt:
+		p.flag |= inCreateOrDropTable
+		p.checkDropSequenceGrammar(node)
+	case *ast.FuncCastExpr:
+		p.checkFuncCastExpr(node)
+	case *ast.FuncCallExpr:
+		if node.FnName.L == ast.NextVal || node.FnName.L == ast.LastVal || node.FnName.L == ast.SetVal {
+			p.flag |= inSequenceFunction
+		}
+	case *ast.BRIEStmt:
+		if node.Kind == ast.BRIEKindRestore {
+			p.flag |= inCreateOrDropTable
+		}
+	case *ast.TableSource:
+		isModeOracle := p.ctx.GetSessionVars().SQLMode&mysql.ModeOracle != 0
+		if _, ok := node.Source.(*ast.SelectStmt); ok && !isModeOracle && len(node.AsName.L) == 0 {
+			p.err = ddl.ErrDerivedMustHaveAlias.GenWithStackByArgs()
+		}
+		if v, ok := node.Source.(*ast.TableName); ok && v.TableSample != nil {
+			switch v.TableSample.SampleMethod {
+			case ast.SampleMethodTypeTiDBRegion:
+			default:
+				p.err = expression.ErrInvalidTableSample.GenWithStackByArgs("Only supports REGIONS sampling method")
+			}
+		}
+	case *ast.CreateStatisticsStmt, *ast.DropStatisticsStmt:
+		p.checkStatisticsOpGrammar(in)
+>>>>>>> 7a88ad852... planner: check for decimal format in cast expr (#20836)
 	default:
 		p.flag &= ^parentIsJoin
 	}
@@ -773,6 +811,34 @@ func (p *preprocessor) resolveAlterTableStmt(node *ast.AlterTableStmt) {
 		if spec.Tp == ast.AlterTableRenameTable {
 			p.flag |= inCreateOrDropTable
 			break
+		}
+	}
+}
+
+func (p *preprocessor) checkFuncCastExpr(node *ast.FuncCastExpr) {
+	if node.Tp.EvalType() == types.ETDecimal {
+		if node.Tp.Flen >= node.Tp.Decimal && node.Tp.Flen <= mysql.MaxDecimalWidth && node.Tp.Decimal <= mysql.MaxDecimalScale {
+			// valid
+			return
+		}
+
+		var buf strings.Builder
+		restoreCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, &buf)
+		if err := node.Expr.Restore(restoreCtx); err != nil {
+			p.err = err
+			return
+		}
+		if node.Tp.Flen < node.Tp.Decimal {
+			p.err = types.ErrMBiggerThanD.GenWithStackByArgs(buf.String())
+			return
+		}
+		if node.Tp.Flen > mysql.MaxDecimalWidth {
+			p.err = types.ErrTooBigPrecision.GenWithStackByArgs(node.Tp.Flen, buf.String(), mysql.MaxDecimalWidth)
+			return
+		}
+		if node.Tp.Decimal > mysql.MaxDecimalScale {
+			p.err = types.ErrTooBigScale.GenWithStackByArgs(node.Tp.Decimal, buf.String(), mysql.MaxDecimalScale)
+			return
 		}
 	}
 }

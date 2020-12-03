@@ -2195,7 +2195,6 @@ func (s *testIntegrationSuite) TestBuiltin(c *C) {
 	defer s.cleanEnv(c)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	ctx := context.Background()
 
 	// for is true && is false
 	tk.MustExec("drop table if exists t")
@@ -2539,12 +2538,9 @@ func (s *testIntegrationSuite) TestBuiltin(c *C) {
 	c.Assert(err, NotNil)
 
 	// test case decimal precision less than the scale.
-	rs, err := tk.Exec("select cast(12.1 as decimal(3, 4));")
-	c.Assert(err, IsNil)
-	_, err = session.GetRows4Test(ctx, tk.Se, rs)
+	_, err = tk.Exec("select cast(12.1 as decimal(3, 4));")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[types:1427]For float(M,D), double(M,D) or decimal(M,D), M must be >= D (column '').")
-	c.Assert(rs.Close(), IsNil)
+	c.Assert(err.Error(), Equals, "[types:1427]For float(M,D), double(M,D) or decimal(M,D), M must be >= D (column '12.1').")
 
 	// test unhex and hex
 	result = tk.MustQuery("select unhex('4D7953514C')")
