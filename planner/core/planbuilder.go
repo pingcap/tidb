@@ -455,6 +455,9 @@ type PlanBuilder struct {
 	// It stores the OutputNames before buildProjection.
 	allNames [][]*types.FieldName
 
+	// isSampling indicates whether the query is sampling.
+	isSampling bool
+
 	// corAggMapper stores columns for correlated aggregates (parent aggregate inside sub-query).
 	corAggMapper map[*ast.AggregateFuncExpr]*expression.CorrelatedColumn
 }
@@ -529,6 +532,11 @@ func (b *PlanBuilder) GetDBTableInfo() []stmtctx.TableEntry {
 
 // GetOptFlag gets the optFlag of the PlanBuilder.
 func (b *PlanBuilder) GetOptFlag() uint64 {
+	if b.isSampling {
+		// Disable logical optimization to avoid the optimizer
+		// push down/eliminate operands like Selection, Limit or Sort.
+		return 0
+	}
 	return b.optFlag
 }
 
@@ -547,8 +555,10 @@ func (b *PlanBuilder) popSelectOffset() {
 	b.selectOffset = b.selectOffset[:len(b.selectOffset)-1]
 }
 
-// NewPlanBuilder creates a new PlanBuilder.
-func NewPlanBuilder(sctx sessionctx.Context, is infoschema.InfoSchema, processor *hint.BlockHintProcessor) *PlanBuilder {
+// NewPlanBuilder creates a new PlanBuilder. Return the original PlannerSelectBlockAsName as well, callers decide if
+// PlannerSelectBlockAsName should be restored after using this builder.
+func NewPlanBuilder(sctx sessionctx.Context, is infoschema.InfoSchema, processor *hint.BlockHintProcessor) (*PlanBuilder, []ast.HintTable) {
+	savedBlockNames := sctx.GetSessionVars().PlannerSelectBlockAsName
 	if processor == nil {
 		sctx.GetSessionVars().PlannerSelectBlockAsName = nil
 	} else {
@@ -561,7 +571,7 @@ func NewPlanBuilder(sctx sessionctx.Context, is infoschema.InfoSchema, processor
 		handleHelper:  &handleColHelper{id2HandleMapStack: make([]map[int64][]HandleCols, 0)},
 		hintProcessor: processor,
 		corAggMapper:  make(map[*ast.AggregateFuncExpr]*expression.CorrelatedColumn),
-	}
+	}, savedBlockNames
 }
 
 // Build builds the ast node to a Plan.
