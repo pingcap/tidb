@@ -82,7 +82,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrTooLongIdent:                             mysql.Message("Identifier name '%-.100s' is too long", nil),
 	ErrDupFieldName:                             mysql.Message("Duplicate column name '%-.192s'", nil),
 	ErrDupKeyName:                               mysql.Message("Duplicate key name '%-.192s'", nil),
-	ErrDupEntry:                                 mysql.Message("Duplicate entry '%-.64s' for key '%-.192s'", []int{0, 1}),
+	ErrDupEntry:                                 mysql.Message("Duplicate entry '%-.64s' for key '%-.192s'", []int{0}),
 	ErrWrongFieldSpec:                           mysql.Message("Incorrect column specifier for column '%-.192s'", nil),
 	ErrParse:                                    mysql.Message("%s %s", nil),
 	ErrEmptyQuery:                               mysql.Message("Query was empty", nil),
@@ -849,6 +849,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrUserAlreadyExists:                                     mysql.Message("User %s already exists.", nil),
 	ErrInvalidJSONPathArrayCell:                              mysql.Message("A path expression is not a path to a cell in an array.", nil),
 	ErrInvalidEncryptionOption:                               mysql.Message("Invalid encryption option.", nil),
+	ErrTooLongValueForType:                                   mysql.Message("Too long enumeration/set value for column %s.", nil),
 	ErrPKIndexCantBeInvisible:                                mysql.Message("A primary key index cannot be invisible", nil),
 	ErrWindowNoSuchWindow:                                    mysql.Message("Window name '%s' is not defined.", nil),
 	ErrWindowCircularityInWindowGraph:                        mysql.Message("There is a circularity in the window dependency graph.", nil),
@@ -1027,6 +1028,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrBRIEExportFailed:  mysql.Message("Export failed: %s", nil),
 
 	ErrInvalidPlacementSpec: mysql.Message("Invalid placement policy '%s': %s", nil),
+	ErrPlacementPolicyCheck: mysql.Message("Placement policy didn't meet the constraint, reason: %s", nil),
 
 	// TiKV/PD errors.
 	ErrPDServerTimeout:           mysql.Message("PD server timeout", nil),
