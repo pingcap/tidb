@@ -1367,14 +1367,15 @@ func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Express
 
 // refineArgsByTypeRange handle the case that constant exceeds the range corresponding to the type of column when `column <cmp> constant`.
 // If necessary, we will convert the result of the comparison into constant true or constant false.
-// Now, we only handle int cases, cause MySQL declares that `UNSIGNED` is deprecated for FLOAT, DOUBLE and DECIMAL types,
-// and support for it would be removed in a future version.
 func (c *compareFunctionClass) refineArgsByTypeRange(ctx sessionctx.Context, args []Expression) []Expression {
 	// We should guarantee the number of arguments are equal to two.
 	if len(args) != 2 {
 		return args
 	}
 	arg0Tp, arg1Tp := args[0].GetType(), args[1].GetType()
+	// Now, we only handle int cases, cause MySQL declares that `UNSIGNED` is deprecated for FLOAT, DOUBLE and DECIMAL types,
+	// and support for it would be removed in a future version.
+	// Besides, we also ignore the year type, because it can be handled correctly by the calling function `refineArgs`.
 	if arg0Tp.EvalType() != types.ETInt || arg1Tp.EvalType() != types.ETInt ||
 		arg0Tp.Tp == mysql.TypeYear || arg1Tp.Tp == mysql.TypeYear {
 		return args
@@ -1413,14 +1414,8 @@ func (c *compareFunctionClass) refineArgsByTypeRange(ctx sessionctx.Context, arg
 				if _, err := types.ConvertUintToInt(uint64(v), upperBound, col.RetType.Tp); err != nil {
 					// If `err != nil`, means the value of const is bigger than the upper bound of colum. For example, v = 200.
 					finalCol, finalCon, succ = c.determineConstComparisonResult(op, colHasNotNullFlag, true, true)
-					if succ {
-						args[i], args[1-i] = finalCol, finalCon
-					}
 				} else if uint64(v) == uint64(upperBound) {
 					finalCol, finalCon, succ = c.determineConstComparisonResult(op, colHasNotNullFlag, false, true)
-					if succ {
-						args[i], args[1-i] = finalCol, finalCon
-					}
 				}
 			}
 			if mysql.HasUnsignedFlag(col.RetType.Flag) && !mysql.HasUnsignedFlag(con.RetType.Flag) {
@@ -1433,19 +1428,10 @@ func (c *compareFunctionClass) refineArgsByTypeRange(ctx sessionctx.Context, arg
 				}
 				if v < 0 {
 					finalCol, finalCon, succ = c.determineConstComparisonResult(op, colHasNotNullFlag, true, false)
-					if succ {
-						args[i], args[1-i] = finalCol, finalCon
-					}
 				} else if uintV > upperBound {
 					finalCol, finalCon, succ = c.determineConstComparisonResult(op, colHasNotNullFlag, true, true)
-					if succ {
-						args[i], args[1-i] = finalCol, finalCon
-					}
 				} else if v == 0 || uintV == upperBound {
 					finalCol, finalCon, succ = c.determineConstComparisonResult(op, colHasNotNullFlag, false, uintV == upperBound)
-					if succ {
-						args[i], args[1-i] = finalCol, finalCon
-					}
 				}
 			}
 			if !mysql.HasUnsignedFlag(con.RetType.Flag) && !mysql.HasUnsignedFlag(col.RetType.Flag) {
@@ -1458,20 +1444,14 @@ func (c *compareFunctionClass) refineArgsByTypeRange(ctx sessionctx.Context, arg
 				}
 				if upperOverflow { // the constant value always greater than the column value
 					finalCol, finalCon, succ = c.determineConstComparisonResult(op, colHasNotNullFlag, true, true)
-					if succ {
-						args[i], args[1-i] = finalCol, finalCon
-					}
 				} else if lowerOverflow { // the constant value always less than the column value
 					finalCol, finalCon, succ = c.determineConstComparisonResult(op, colHasNotNullFlag, true, false)
-					if succ {
-						args[i], args[1-i] = finalCol, finalCon
-					}
 				} else if v == lowerBound || v == upperBound {
 					finalCol, finalCon, succ = c.determineConstComparisonResult(op, colHasNotNullFlag, false, v == upperBound)
-					if succ {
-						args[i], args[1-i] = finalCol, finalCon
-					}
 				}
+			}
+			if succ {
+				args[i], args[1-i] = finalCol, finalCon
 			}
 		}
 	}
