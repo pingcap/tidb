@@ -59,7 +59,7 @@ type Handle struct {
 
 	// It can be read by multiple readers at the same time without acquiring lock, but it can be
 	// written only after acquiring the lock.
-	statsCache *statsCache
+	statsCache StatsCache
 
 	restrictedExec sqlexec.RestrictedSQLExecutor
 
@@ -112,10 +112,14 @@ func NewHandle(ctx sessionctx.Context, lease time.Duration) (*Handle, error) {
 	if exec, ok := ctx.(sqlexec.RestrictedSQLExecutor); ok {
 		handle.restrictedExec = exec
 	}
-	handle.statsCache = newStatsCache(ctx.GetSessionVars().MemQuotaStatistics)
+	var err error
+	handle.statsCache, err = newStatsCacheWithMemCap(ctx.GetSessionVars().MemQuotaStatistics, defaultStatsCacheType)
+	if err != nil {
+		return nil, err
+	}
 	handle.mu.ctx = ctx
 	handle.mu.rateMap = make(errorRateDeltaMap)
-	err := handle.RefreshVars()
+	err = handle.RefreshVars()
 	if err != nil {
 		return nil, err
 	}
@@ -232,17 +236,14 @@ func buildPartitionID2TableID(is infoschema.InfoSchema) map[int64]int64 {
 
 // GetMemConsumed returns the mem size of statscache consumed
 func (h *Handle) GetMemConsumed() (size int64) {
-	h.statsCache.mu.Lock()
-	size = h.statsCache.memTracker.BytesConsumed()
-	h.statsCache.mu.Unlock()
-	return
+	return h.statsCache.BytesConsumed()
 }
 
 // EraseTable4Test erase a table by ID and add new empty (with Meta) table.
 // ONLY used for test.
 func (h *Handle) EraseTable4Test(ID int64) {
 	table, _ := h.statsCache.Lookup(ID)
-	h.statsCache.Insert(table.CopyWithoutBucketsAndCMS())
+	h.statsCache.Update([]*statistics.Table{table.CopyWithoutBucketsAndCMS()}, nil, h.statsCache.GetVersion())
 }
 
 // GetAllTableStatsMemUsage4Test get all the mem usage with true table.
@@ -276,10 +277,7 @@ func (h *Handle) GetPartitionStats(tblInfo *model.TableInfo, pid int64) *statist
 // SetBytesLimit4Test sets the bytes limit for this tracker. "bytesLimit <= 0" means no limit.
 // Only used for test.
 func (h *Handle) SetBytesLimit4Test(bytesLimit int64) {
-	h.statsCache.mu.Lock()
-	h.statsCache.memTracker.SetBytesLimit(bytesLimit)
-	h.statsCache.memCapacity = bytesLimit
-	h.statsCache.mu.Unlock()
+	h.statsCache.SetBytesLimit(bytesLimit)
 }
 
 // CanRuntimePrune indicates whether tbl support runtime prune for table and first partition id.
@@ -333,7 +331,7 @@ func (h *Handle) LoadNeededHistograms() (err error) {
 		if err != nil {
 			return errors.Trace(err)
 		}
-		cms, err := h.cmSketchFromStorage(reader, col.TableID, 0, col.ColumnID)
+		cms, topN, err := h.cmSketchAndTopNFromStorage(reader, col.TableID, 0, col.ColumnID)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -342,6 +340,7 @@ func (h *Handle) LoadNeededHistograms() (err error) {
 			Histogram:  *hg,
 			Info:       c.Info,
 			CMSketch:   cms,
+			TopN:       topN,
 			Count:      int64(hg.TotalRowCount()),
 			IsHandle:   c.IsHandle,
 		}
@@ -364,13 +363,14 @@ func (h *Handle) LoadNeededHistograms() (err error) {
 		if err != nil {
 			return errors.Trace(err)
 		}
-		cms, err := h.cmSketchFromStorage(reader, pidx.TableID, 1, pidx.IndexID)
+		cms, topN, err := h.cmSketchAndTopNFromStorage(reader, pidx.TableID, 1, pidx.IndexID)
 		if err != nil {
 			return errors.Trace(err)
 		}
 		tbl.Indices[idx.ID] = &statistics.Index{
 			Histogram:  *hg,
 			CMSketch:   cms,
+			TopN:       topN,
 			PhysicalID: pidx.TableID,
 			Info:       idx.Info,
 			StatsVer:   idx.StatsVer,
@@ -408,18 +408,18 @@ func (h *Handle) FlushStats() {
 	}
 }
 
-func (h *Handle) cmSketchFromStorage(reader *statsReader, tblID int64, isIndex, histID int64) (_ *statistics.CMSketch, err error) {
+func (h *Handle) cmSketchAndTopNFromStorage(reader *statsReader, tblID int64, isIndex, histID int64) (_ *statistics.CMSketch, _ *statistics.TopN, err error) {
 	selSQL := fmt.Sprintf("select cm_sketch from mysql.stats_histograms where table_id = %d and is_index = %d and hist_id = %d", tblID, isIndex, histID)
 	rows, _, err := reader.read(selSQL)
 	if err != nil || len(rows) == 0 {
-		return nil, err
+		return nil, nil, err
 	}
 	selSQL = fmt.Sprintf("select HIGH_PRIORITY value, count from mysql.stats_top_n where table_id = %d and is_index = %d and hist_id = %d", tblID, isIndex, histID)
 	topNRows, _, err := reader.read(selSQL)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return statistics.DecodeCMSketch(rows[0].GetBytes(0), topNRows)
+	return statistics.DecodeCMSketchAndTopN(rows[0].GetBytes(0), topNRows)
 }
 
 func (h *Handle) indexStatsFromStorage(reader *statsReader, row chunk.Row, table *statistics.Table, tableInfo *model.TableInfo) error {
@@ -445,11 +445,11 @@ func (h *Handle) indexStatsFromStorage(reader *statsReader, row chunk.Row, table
 			if err != nil {
 				return errors.Trace(err)
 			}
-			cms, err := h.cmSketchFromStorage(reader, table.PhysicalID, 1, idxInfo.ID)
+			cms, topN, err := h.cmSketchAndTopNFromStorage(reader, table.PhysicalID, 1, idxInfo.ID)
 			if err != nil {
 				return errors.Trace(err)
 			}
-			idx = &statistics.Index{Histogram: *hg, CMSketch: cms, Info: idxInfo, ErrorRate: errorRate, StatsVer: row.GetInt64(7), Flag: flag, PhysicalID: table.PhysicalID}
+			idx = &statistics.Index{Histogram: *hg, CMSketch: cms, TopN: topN, Info: idxInfo, ErrorRate: errorRate, StatsVer: row.GetInt64(7), Flag: flag, PhysicalID: table.PhysicalID}
 			lastAnalyzePos.Copy(&idx.LastAnalyzePos)
 		}
 		break
@@ -515,7 +515,7 @@ func (h *Handle) columnStatsFromStorage(reader *statsReader, row chunk.Row, tabl
 			if err != nil {
 				return errors.Trace(err)
 			}
-			cms, err := h.cmSketchFromStorage(reader, table.PhysicalID, 0, colInfo.ID)
+			cms, topN, err := h.cmSketchAndTopNFromStorage(reader, table.PhysicalID, 0, colInfo.ID)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -524,6 +524,7 @@ func (h *Handle) columnStatsFromStorage(reader *statsReader, row chunk.Row, tabl
 				Histogram:  *hg,
 				Info:       colInfo,
 				CMSketch:   cms,
+				TopN:       topN,
 				Count:      int64(hg.TotalRowCount()),
 				ErrorRate:  errorRate,
 				IsHandle:   tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.Flag),
@@ -641,7 +642,7 @@ func (h *Handle) extendedStatsFromStorage(reader *statsReader, table *statistics
 }
 
 // SaveStatsToStorage saves the stats to storage.
-func (h *Handle) SaveStatsToStorage(tableID int64, count int64, isIndex int, hg *statistics.Histogram, cms *statistics.CMSketch, isAnalyzed int64) (err error) {
+func (h *Handle) SaveStatsToStorage(tableID int64, count int64, isIndex int, hg *statistics.Histogram, cms *statistics.CMSketch, topN *statistics.TopN, isAnalyzed int64) (err error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	ctx := context.TODO()
@@ -672,8 +673,10 @@ func (h *Handle) SaveStatsToStorage(tableID int64, count int64, isIndex int, hg 
 	}
 	// Delete outdated data
 	sqls = append(sqls, fmt.Sprintf("delete from mysql.stats_top_n where table_id = %d and is_index = %d and hist_id = %d", tableID, isIndex, hg.ID))
-	for _, meta := range cms.TopN() {
-		sqls = append(sqls, fmt.Sprintf("insert into mysql.stats_top_n (table_id, is_index, hist_id, value, count) values (%d, %d, %d, X'%X', %d)", tableID, isIndex, hg.ID, meta.Data, meta.Count))
+	if topN != nil {
+		for _, meta := range topN.TopN {
+			sqls = append(sqls, fmt.Sprintf("insert into mysql.stats_top_n (table_id, is_index, hist_id, value, count) values (%d, %d, %d, X'%X', %d)", tableID, isIndex, hg.ID, meta.Encoded, meta.Count))
+		}
 	}
 	flag := 0
 	if isAnalyzed == 1 {
@@ -959,7 +962,6 @@ func (h *Handle) ReloadExtendedStatistics() error {
 	tables := make([]*statistics.Table, 0, len(allTables))
 	for _, tbl := range allTables {
 		t, err := h.extendedStatsFromStorage(reader, tbl.Copy(), tbl.PhysicalID, true)
-
 		if err != nil {
 			return err
 		}

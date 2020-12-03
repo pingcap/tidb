@@ -58,6 +58,12 @@ const (
 	SampleStep
 	// CommitHook is a callback function called right after the transaction gets committed
 	CommitHook
+	// EnableAsyncCommit indicates whether async commit is enabled
+	EnableAsyncCommit
+	// Enable1PC indicates whether one-phase commit is enabled
+	Enable1PC
+	// GuaranteeExternalConsistency indicates whether to guarantee external consistency at the cost of an extra tso request before prewrite
+	GuaranteeExternalConsistency
 )
 
 // Priority value for transaction priority.
@@ -195,6 +201,8 @@ type MemBuffer interface {
 	SetWithFlags(Key, []byte, ...FlagsOp) error
 	// UpdateFlags update the flags associated with key.
 	UpdateFlags(Key, ...FlagsOp)
+	// DeleteWithFlags delete key with the given KeyFlags
+	DeleteWithFlags(Key, ...FlagsOp) error
 
 	GetKeyByHandle(MemKeyHandle) []byte
 	GetValueByHandle(MemKeyHandle) ([]byte, bool)
@@ -301,20 +309,10 @@ type ReturnedValue struct {
 	AlreadyLocked bool
 }
 
-// MPPClient accepts and processes mpp requests.
-type MPPClient interface {
-	// ConstructMPPTasks schedules task for a plan fragment.
-	// TODO:: This interface will be refined after we support more executors.
-	ConstructMPPTasks(context.Context, *MPPBuildTasksRequest) ([]MPPTask, error)
-
-	// DispatchMPPTasks dispatches ALL mpp requests at once, and returns an iterator that transfers the data.
-	DispatchMPPTasks(context.Context, []*MPPDispatchRequest) Response
-}
-
 // Client is used to send request to KV layer.
 type Client interface {
 	// Send sends request to KV layer, returns a Response.
-	Send(ctx context.Context, req *Request, vars *Variables, sessionMemTracker *memory.Tracker) Response
+	Send(ctx context.Context, req *Request, vars *Variables, sessionMemTracker *memory.Tracker, enabledRateLimitAction bool) Response
 
 	// IsRequestTypeSupported checks if reqType and subType is supported.
 	IsRequestTypeSupported(reqType, subType int64) bool
@@ -404,31 +402,8 @@ type Request struct {
 	BatchCop bool
 	// TaskID is an unique ID for an execution of a statement
 	TaskID uint64
-}
-
-// MPPTask stands for a min execution unit for mpp.
-type MPPTask interface {
-	// GetAddress indicates which node this task should execute on.
-	GetAddress() string
-}
-
-// MPPBuildTasksRequest request the stores allocation for a mpp plan fragment.
-// However, the request doesn't contain the particular plan, because only key ranges take effect on the location assignment.
-type MPPBuildTasksRequest struct {
-	KeyRanges []KeyRange
-	StartTS   uint64
-}
-
-// MPPDispatchRequest stands for a dispatching task.
-type MPPDispatchRequest struct {
-	Data    []byte  // data encodes the dag coprocessor request.
-	Task    MPPTask // mpp store is the location of tiflash store.
-	IsRoot  bool    // root task returns data to tidb directly.
-	Timeout uint64  // If task is assigned but doesn't receive a connect request during timeout, the task should be destroyed.
-	// SchemaVer is for any schema-ful storage (like tiflash) to validate schema correctness if necessary.
-	SchemaVar int64
-	StartTs   uint64
-	ID        int64 // identify a single task
+	// TiDBServerID is the specified TiDB serverID to execute request. `0` means all TiDB instances.
+	TiDBServerID uint64
 }
 
 // ResultSubset represents a result subset from a single storage unit.
@@ -508,6 +483,8 @@ type Storage interface {
 	Describe() string
 	// ShowStatus returns the specified status of the storage
 	ShowStatus(ctx context.Context, key string) (interface{}, error)
+	// GetMemCache return memory mamager of the storage
+	GetMemCache() MemManager
 }
 
 // FnKeyCmp is the function for iterator the keys

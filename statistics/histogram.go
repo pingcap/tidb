@@ -23,6 +23,7 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
@@ -90,6 +91,13 @@ type scalar struct {
 
 // NewHistogram creates a new histogram.
 func NewHistogram(id, ndv, nullCount int64, version uint64, tp *types.FieldType, bucketSize int, totColSize int64) *Histogram {
+	if tp.EvalType() == types.ETString {
+		// The histogram will store the string value's 'sort key' representation of its collation.
+		// If we directly set the field type's collation to its original one. We would decode the Key representation using its collation.
+		// This would cause panic. So we apply a little trick here to avoid decoding it by explicitly changing the collation to 'CollationBin'.
+		tp = tp.Clone()
+		tp.Collate = charset.CollationBin
+	}
 	return &Histogram{
 		ID:                id,
 		NDV:               ndv,
@@ -746,6 +754,7 @@ func (e *ErrorRate) Merge(rate *ErrorRate) {
 type Column struct {
 	Histogram
 	*CMSketch
+	*TopN
 	PhysicalID int64
 	Count      int64
 	Info       *model.ColumnInfo
@@ -798,7 +807,7 @@ func (c *Column) equalRowCount(sc *stmtctx.StatementContext, val types.Datum, mo
 		return outOfRangeEQSelectivity(c.NDV, modifyCount, int64(c.TotalRowCount())) * c.TotalRowCount(), nil
 	}
 	if c.CMSketch != nil {
-		count, err := c.CMSketch.queryValue(sc, val)
+		count, err := queryValue(sc, c.CMSketch, c.TopN, val)
 		return float64(count), errors.Trace(err)
 	}
 	return c.Histogram.equalRowCount(val), nil
@@ -811,18 +820,10 @@ func (c *Column) GetColumnRowCount(sc *stmtctx.StatementContext, ranges []*range
 		highVal := *rg.HighVal[0].Clone()
 		lowVal := *rg.LowVal[0].Clone()
 		if highVal.Kind() == types.KindString {
-			highVal.SetBytesAsString(collate.GetCollator(
-				highVal.Collation()).Key(highVal.GetString()),
-				highVal.Collation(),
-				uint32(highVal.Length()),
-			)
+			highVal.SetBytes(collate.GetCollator(highVal.Collation()).Key(highVal.GetString()))
 		}
 		if lowVal.Kind() == types.KindString {
-			lowVal.SetBytesAsString(collate.GetCollator(
-				lowVal.Collation()).Key(lowVal.GetString()),
-				lowVal.Collation(),
-				uint32(lowVal.Length()),
-			)
+			lowVal.SetBytes(collate.GetCollator(lowVal.Collation()).Key(lowVal.GetString()))
 		}
 		cmp, err := lowVal.CompareDatum(sc, &highVal)
 		if err != nil {
@@ -896,6 +897,7 @@ func (c *Column) GetColumnRowCount(sc *stmtctx.StatementContext, ranges []*range
 type Index struct {
 	Histogram
 	*CMSketch
+	*TopN
 	ErrorRate
 	StatsVer       int64 // StatsVer is the version of the current stats, used to maintain compatibility
 	Info           *model.IndexInfo
@@ -949,9 +951,18 @@ func (idx *Index) equalRowCount(sc *stmtctx.StatementContext, b []byte, modifyCo
 		return outOfRangeEQSelectivity(idx.NDV, modifyCount, int64(idx.TotalRowCount())) * idx.TotalRowCount(), nil
 	}
 	if idx.CMSketch != nil {
-		return float64(idx.CMSketch.QueryBytes(b)), nil
+		return float64(idx.QueryBytes(b)), nil
 	}
 	return idx.Histogram.equalRowCount(val), nil
+}
+
+// QueryBytes is used to query the count of specified bytes.
+func (idx *Index) QueryBytes(d []byte) uint64 {
+	h1, h2 := murmur3.Sum128(d)
+	if count, ok := idx.TopN.QueryTopN(d); ok {
+		return count
+	}
+	return idx.queryHashValue(h1, h2)
 }
 
 // GetRowCount returns the row count of the given ranges.
@@ -1224,7 +1235,7 @@ func getIndexPrefixLens(data []byte, numCols int) (prefixLens []int, err error) 
 }
 
 // ExtractTopN extracts topn from histogram.
-func (hg *Histogram) ExtractTopN(cms *CMSketch, numCols int, numTopN uint32) error {
+func (hg *Histogram) ExtractTopN(cms *CMSketch, topN *TopN, numCols int, numTopN uint32) error {
 	if hg.Len() == 0 || cms == nil || numTopN == 0 {
 		return nil
 	}
@@ -1257,12 +1268,13 @@ func (hg *Histogram) ExtractTopN(cms *CMSketch, numCols int, numTopN uint32) err
 	if len(dataCnts) > int(numTopN) {
 		dataCnts = dataCnts[:numTopN]
 	}
-	cms.topN = make(map[uint64][]*TopNMeta, len(dataCnts))
+	topN.TopN = make([]TopNMeta, 0, len(dataCnts))
 	for _, dataCnt := range dataCnts {
 		h1, h2 := murmur3.Sum128(dataCnt.data)
 		realCnt := cms.queryHashValue(h1, h2)
 		cms.subValue(h1, h2, realCnt)
-		cms.topN[h1] = append(cms.topN[h1], &TopNMeta{h2, dataCnt.data, realCnt})
+		topN.AppendTopN(dataCnt.data, realCnt)
 	}
+	topN.Sort()
 	return nil
 }

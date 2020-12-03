@@ -782,6 +782,7 @@ var slowQueryCols = []columnInfo{
 	{name: variable.SlowLogPrepared, tp: mysql.TypeTiny, size: 1},
 	{name: variable.SlowLogSucc, tp: mysql.TypeTiny, size: 1},
 	{name: variable.SlowLogPlanFromCache, tp: mysql.TypeTiny, size: 1},
+	{name: variable.SlowLogPlanFromBinding, tp: mysql.TypeTiny, size: 1},
 	{name: variable.SlowLogPlan, tp: mysql.TypeLongBlob, size: types.UnspecifiedLength},
 	{name: variable.SlowLogPlanDigest, tp: mysql.TypeVarchar, size: 128},
 	{name: variable.SlowLogPrevStmt, tp: mysql.TypeLongBlob, size: types.UnspecifiedLength},
@@ -970,6 +971,7 @@ var tableClusterInfoCols = []columnInfo{
 	{name: "GIT_HASH", tp: mysql.TypeVarchar, size: 64},
 	{name: "START_TIME", tp: mysql.TypeVarchar, size: 32},
 	{name: "UPTIME", tp: mysql.TypeVarchar, size: 32},
+	{name: "SERVER_ID", tp: mysql.TypeLonglong, size: 21},
 }
 
 var tableTableTiFlashReplicaCols = []columnInfo{
@@ -1155,6 +1157,7 @@ var tableStatementsSummaryCols = []columnInfo{
 	{name: "LAST_SEEN", tp: mysql.TypeTimestamp, size: 26, flag: mysql.NotNullFlag, comment: "The time these statements are seen for the last time"},
 	{name: "PLAN_IN_CACHE", tp: mysql.TypeTiny, size: 1, flag: mysql.NotNullFlag, comment: "Whether the last statement hit plan cache"},
 	{name: "PLAN_CACHE_HITS", tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag, comment: "The number of times these statements hit plan cache"},
+	{name: "PLAN_IN_BINDING", tp: mysql.TypeTiny, size: 1, flag: mysql.NotNullFlag, comment: "Whether the last statement is matched with the hints in the binding"},
 	{name: "QUERY_SAMPLE_TEXT", tp: mysql.TypeBlob, size: types.UnspecifiedLength, comment: "Sampled original statement"},
 	{name: "PREV_SAMPLE_TEXT", tp: mysql.TypeBlob, size: types.UnspecifiedLength, comment: "The previous statement before commit"},
 	{name: "PLAN_DIGEST", tp: mysql.TypeVarchar, size: 64, comment: "Digest of its execution plan"},
@@ -1306,6 +1309,7 @@ type ServerInfo struct {
 	Version        string
 	GitHash        string
 	StartTimestamp int64
+	ServerID       uint64
 }
 
 func (s *ServerInfo) isLoopBackOrUnspecifiedAddr(addr string) bool {
@@ -1345,12 +1349,17 @@ func GetClusterServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 			var servers []ServerInfo
 			for _, server := range strings.Split(s, ";") {
 				parts := strings.Split(server, ",")
+				serverID, err := strconv.ParseUint(parts[5], 10, 64)
+				if err != nil {
+					panic("convert parts[5] to uint64 failed")
+				}
 				servers = append(servers, ServerInfo{
 					ServerType: parts[0],
 					Address:    parts[1],
 					StatusAddr: parts[2],
 					Version:    parts[3],
 					GitHash:    parts[4],
+					ServerID:   serverID,
 				})
 			}
 			failpoint.Return(servers, nil)
@@ -1392,6 +1401,7 @@ func GetTiDBServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 			Version:        FormatVersion(node.Version, isDefaultVersion),
 			GitHash:        node.GitHash,
 			StartTimestamp: node.StartTimestamp,
+			ServerID:       node.ServerIDGetter(),
 		})
 	}
 	return servers, nil

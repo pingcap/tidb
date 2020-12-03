@@ -118,8 +118,8 @@ func BuildPlacementDropBundle(partitionID int64) *Bundle {
 	}
 }
 
-// BuildPlacementTruncateBundle builds the bundle to copy placement rules from old id to new id.
-func BuildPlacementTruncateBundle(oldBundle *Bundle, newID int64) *Bundle {
+// BuildPlacementCopyBundle copies a new bundle from the old, with a new name and a new key range.
+func BuildPlacementCopyBundle(oldBundle *Bundle, newID int64) *Bundle {
 	newBundle := oldBundle.Clone()
 	newBundle.ID = GroupID(newID)
 	startKey := hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(newID)))
@@ -130,4 +130,24 @@ func BuildPlacementTruncateBundle(oldBundle *Bundle, newID int64) *Bundle {
 		rule.EndKeyHex = endKey
 	}
 	return newBundle
+}
+
+// GetLeaderDCByBundle returns the leader's DC by Bundle if found
+func GetLeaderDCByBundle(bundle *Bundle, dcLabelKey string) (string, bool) {
+	for _, rule := range bundle.Rules {
+		if isValidLeaderRule(rule, dcLabelKey) {
+			return rule.LabelConstraints[0].Values[0], true
+		}
+	}
+	return "", false
+}
+
+func isValidLeaderRule(rule *Rule, dcLabelKey string) bool {
+	if rule.Role == Leader && rule.Count == 1 && len(rule.LabelConstraints) == 1 {
+		cons := rule.LabelConstraints[0]
+		if cons.Op == In && cons.Key == dcLabelKey && len(cons.Values) == 1 {
+			return true
+		}
+	}
+	return false
 }

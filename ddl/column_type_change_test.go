@@ -444,3 +444,726 @@ func (s *testColumnTypeChangeSuite) TestColumnTypeChangeFromIntegerToOthers(c *C
 	// TiDB can't take integer as the set element string to cast, while the MySQL can.
 	tk.MustGetErrCode("alter table t modify e set(\"11111\", \"22222\")", mysql.WarnDataTruncated)
 }
+
+func (s *testColumnTypeChangeSuite) TestColumnTypeChangeFromStringToOthers(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	// Enable column change variable.
+	tk.Se.GetSessionVars().EnableChangeColumnType = true
+
+	// Set time zone to UTC.
+	originalTz := tk.Se.GetSessionVars().TimeZone
+	tk.Se.GetSessionVars().TimeZone = time.UTC
+	defer func() {
+		tk.Se.GetSessionVars().EnableChangeColumnType = false
+		tk.Se.GetSessionVars().TimeZone = originalTz
+	}()
+
+	// Init string date type table.
+	reset := func(tk *testkit.TestKit) {
+		tk.MustExec("drop table if exists t")
+		tk.MustExec(`
+			create table t (
+				c char(8),
+				vc varchar(8),
+				bny binary(8),
+				vbny varbinary(8),
+				bb blob,
+				txt text,
+				e enum('123', '2020-07-15 18:32:17.888', 'str', '{"k1": "value"}'),
+				s set('123', '2020-07-15 18:32:17.888', 'str', '{"k1": "value"}')
+			)
+		`)
+	}
+
+	// To numeric data types.
+	// tinyint
+	reset(tk)
+	tk.MustExec("insert into t values ('123', '123', '123', '123', '123', '123', '123', '123')")
+	tk.MustExec("alter table t modify c tinyint")
+	tk.MustExec("alter table t modify vc tinyint")
+	tk.MustExec("alter table t modify bny tinyint")
+	tk.MustExec("alter table t modify vbny tinyint")
+	tk.MustExec("alter table t modify bb tinyint")
+	tk.MustExec("alter table t modify txt tinyint")
+	tk.MustExec("alter table t modify e tinyint")
+	tk.MustExec("alter table t modify s tinyint")
+	tk.MustQuery("select * from t").Check(testkit.Rows("123 123 123 123 123 123 1 1"))
+	// int
+	reset(tk)
+	tk.MustExec("insert into t values ('17305', '17305', '17305', '17305', '17305', '17305', '123', '123')")
+	tk.MustExec("alter table t modify c int")
+	tk.MustExec("alter table t modify vc int")
+	tk.MustExec("alter table t modify bny int")
+	tk.MustExec("alter table t modify vbny int")
+	tk.MustExec("alter table t modify bb int")
+	tk.MustExec("alter table t modify txt int")
+	tk.MustExec("alter table t modify e int")
+	tk.MustExec("alter table t modify s int")
+	tk.MustQuery("select * from t").Check(testkit.Rows("17305 17305 17305 17305 17305 17305 1 1"))
+	// bigint
+	reset(tk)
+	tk.MustExec("insert into t values ('17305867', '17305867', '17305867', '17305867', '17305867', '17305867', '123', '123')")
+	tk.MustExec("alter table t modify c bigint")
+	tk.MustExec("alter table t modify vc bigint")
+	tk.MustExec("alter table t modify bny bigint")
+	tk.MustExec("alter table t modify vbny bigint")
+	tk.MustExec("alter table t modify bb bigint")
+	tk.MustExec("alter table t modify txt bigint")
+	tk.MustExec("alter table t modify e bigint")
+	tk.MustExec("alter table t modify s bigint")
+	tk.MustQuery("select * from t").Check(testkit.Rows("17305867 17305867 17305867 17305867 17305867 17305867 1 1"))
+	// bit
+	reset(tk)
+	tk.MustExec("insert into t values ('1', '1', '1', '1', '1', '1', '123', '123')")
+	tk.MustGetErrCode("alter table t modify c bit", mysql.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify vc bit", mysql.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify bny bit", mysql.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify vbny bit", mysql.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify bb bit", mysql.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify txt bit", mysql.ErrUnsupportedDDLOperation)
+	tk.MustExec("alter table t modify e bit")
+	tk.MustExec("alter table t modify s bit")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 1 1\x00\x00\x00\x00\x00\x00\x00 1 1 1 \x01 \x01"))
+	// decimal
+	reset(tk)
+	tk.MustExec("insert into t values ('123.45', '123.45', '123.45', '123.45', '123.45', '123.45', '123', '123')")
+	tk.MustExec("alter table t modify c decimal(7, 4)")
+	tk.MustExec("alter table t modify vc decimal(7, 4)")
+	tk.MustExec("alter table t modify bny decimal(7, 4)")
+	tk.MustExec("alter table t modify vbny decimal(7, 4)")
+	tk.MustExec("alter table t modify bb decimal(7, 4)")
+	tk.MustExec("alter table t modify txt decimal(7, 4)")
+	tk.MustExec("alter table t modify e decimal(7, 4)")
+	tk.MustExec("alter table t modify s decimal(7, 4)")
+	tk.MustQuery("select * from t").Check(testkit.Rows("123.4500 123.4500 123.4500 123.4500 123.4500 123.4500 1.0000 1.0000"))
+	// double
+	reset(tk)
+	tk.MustExec("insert into t values ('123.45', '123.45', '123.45', '123.45', '123.45', '123.45', '123', '123')")
+	tk.MustExec("alter table t modify c double(7, 4)")
+	tk.MustExec("alter table t modify vc double(7, 4)")
+	tk.MustExec("alter table t modify bny double(7, 4)")
+	tk.MustExec("alter table t modify vbny double(7, 4)")
+	tk.MustExec("alter table t modify bb double(7, 4)")
+	tk.MustExec("alter table t modify txt double(7, 4)")
+	tk.MustExec("alter table t modify e double(7, 4)")
+	tk.MustExec("alter table t modify s double(7, 4)")
+	tk.MustQuery("select * from t").Check(testkit.Rows("123.45 123.45 123.45 123.45 123.45 123.45 1 1"))
+
+	// To date and time data types.
+	// date
+	reset(tk)
+	tk.MustExec("insert into t values ('20200826', '2008261', '20200826', '200826', '2020-08-26', '08-26 19:35:41', '2020-07-15 18:32:17.888', '2020-07-15 18:32:17.888')")
+	tk.MustExec("alter table t modify c date")
+	tk.MustExec("alter table t modify vc date")
+	tk.MustExec("alter table t modify bny date")
+	tk.MustExec("alter table t modify vbny date")
+	tk.MustExec("alter table t modify bb date")
+	// Alter text '08-26 19:35:41' to date will error. (same as mysql does)
+	tk.MustGetErrCode("alter table t modify txt date", mysql.ErrTruncatedWrongValue)
+	tk.MustGetErrCode("alter table t modify e date", mysql.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify s date", mysql.ErrUnsupportedDDLOperation)
+	tk.MustQuery("select * from t").Check(testkit.Rows("2020-08-26 2020-08-26 2020-08-26 2020-08-26 2020-08-26 08-26 19:35:41 2020-07-15 18:32:17.888 2020-07-15 18:32:17.888"))
+	// time
+	reset(tk)
+	tk.MustExec("insert into t values ('19:35:41', '19:35:41', '19:35:41', '19:35:41', '19:35:41.45678', '19:35:41.45678', '2020-07-15 18:32:17.888', '2020-07-15 18:32:17.888')")
+	tk.MustExec("alter table t modify c time")
+	tk.MustExec("alter table t modify vc time")
+	tk.MustExec("alter table t modify bny time")
+	tk.MustExec("alter table t modify vbny time")
+	tk.MustExec("alter table t modify bb time")
+	tk.MustExec("alter table t modify txt time")
+	tk.MustGetErrCode("alter table t modify e time", mysql.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify s time", mysql.ErrUnsupportedDDLOperation)
+	tk.MustQuery("select * from t").Check(testkit.Rows("19:35:41 19:35:41 19:35:41 19:35:41 19:35:41 19:35:41 2020-07-15 18:32:17.888 2020-07-15 18:32:17.888"))
+	// datetime
+	reset(tk)
+	tk.MustExec("alter table t modify c char(23)")
+	tk.MustExec("alter table t modify vc varchar(23)")
+	tk.MustExec("alter table t modify bny binary(23)")
+	tk.MustExec("alter table t modify vbny varbinary(23)")
+	tk.MustExec("insert into t values ('2020-07-15 18:32:17.888', '2020-07-15 18:32:17.888', '2020-07-15 18:32:17.888', '2020-07-15 18:32:17.888', '2020-07-15 18:32:17.888', '2020-07-15 18:32:17.888', '2020-07-15 18:32:17.888', '2020-07-15 18:32:17.888')")
+	tk.MustExec("alter table t modify c datetime")
+	tk.MustExec("alter table t modify vc datetime")
+	tk.MustExec("alter table t modify bny datetime")
+	tk.MustExec("alter table t modify vbny datetime")
+	tk.MustExec("alter table t modify bb datetime")
+	tk.MustExec("alter table t modify txt datetime")
+	tk.MustGetErrCode("alter table t modify e datetime", mysql.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify s datetime", mysql.ErrUnsupportedDDLOperation)
+	tk.MustQuery("select * from t").Check(testkit.Rows("2020-07-15 18:32:18 2020-07-15 18:32:18 2020-07-15 18:32:18 2020-07-15 18:32:18 2020-07-15 18:32:18 2020-07-15 18:32:18 2020-07-15 18:32:17.888 2020-07-15 18:32:17.888"))
+	// timestamp
+	reset(tk)
+	tk.MustExec("alter table t modify c char(23)")
+	tk.MustExec("alter table t modify vc varchar(23)")
+	tk.MustExec("alter table t modify bny binary(23)")
+	tk.MustExec("alter table t modify vbny varbinary(23)")
+	tk.MustExec("insert into t values ('2020-07-15 18:32:17.888', '2020-07-15 18:32:17.888', '2020-07-15 18:32:17.888', '2020-07-15 18:32:17.888', '2020-07-15 18:32:17.888', '2020-07-15 18:32:17.888', '2020-07-15 18:32:17.888', '2020-07-15 18:32:17.888')")
+	tk.MustExec("alter table t modify c timestamp")
+	tk.MustExec("alter table t modify vc timestamp")
+	tk.MustExec("alter table t modify bny timestamp")
+	tk.MustExec("alter table t modify vbny timestamp")
+	tk.MustExec("alter table t modify bb timestamp")
+	tk.MustExec("alter table t modify txt timestamp")
+	tk.MustGetErrCode("alter table t modify e timestamp", mysql.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify s timestamp", mysql.ErrUnsupportedDDLOperation)
+	tk.MustQuery("select * from t").Check(testkit.Rows("2020-07-15 18:32:18 2020-07-15 18:32:18 2020-07-15 18:32:18 2020-07-15 18:32:18 2020-07-15 18:32:18 2020-07-15 18:32:18 2020-07-15 18:32:17.888 2020-07-15 18:32:17.888"))
+	// year
+	reset(tk)
+	tk.MustExec("insert into t values ('2020', '91', '2', '2020', '20', '99', '2020-07-15 18:32:17.888', '2020-07-15 18:32:17.888')")
+	tk.MustExec("alter table t modify c year")
+	tk.MustExec("alter table t modify vc year")
+	tk.MustExec("alter table t modify bny year")
+	tk.MustExec("alter table t modify vbny year")
+	tk.MustExec("alter table t modify bb year")
+	tk.MustExec("alter table t modify txt year")
+	tk.MustExec("alter table t modify e year")
+	tk.MustExec("alter table t modify s year")
+	tk.MustQuery("select * from t").Check(testkit.Rows("2020 1991 2002 2020 2020 1999 2002 2002"))
+
+	// To json data type.
+	reset(tk)
+	tk.MustExec("alter table t modify c char(15)")
+	tk.MustExec("alter table t modify vc varchar(15)")
+	tk.MustExec("alter table t modify bny binary(15)")
+	tk.MustExec("alter table t modify vbny varbinary(15)")
+	tk.MustExec("insert into t values ('{\"k1\": \"value\"}', '{\"k1\": \"value\"}', '{\"k1\": \"value\"}', '{\"k1\": \"value\"}', '{\"k1\": \"value\"}', '{\"k1\": \"value\"}', '{\"k1\": \"value\"}', '{\"k1\": \"value\"}')")
+	tk.MustExec("alter table t modify c json")
+	tk.MustExec("alter table t modify vc json")
+	tk.MustExec("alter table t modify bny json")
+	tk.MustExec("alter table t modify vbny json")
+	tk.MustExec("alter table t modify bb json")
+	tk.MustExec("alter table t modify txt json")
+	tk.MustExec("alter table t modify e json")
+	tk.MustExec("alter table t modify s json")
+	tk.MustQuery("select * from t").Check(testkit.Rows("{\"k1\": \"value\"} {\"k1\": \"value\"} {\"k1\": \"value\"} {\"k1\": \"value\"} {\"k1\": \"value\"} {\"k1\": \"value\"} \"{\\\"k1\\\": \\\"value\\\"}\" \"{\\\"k1\\\": \\\"value\\\"}\""))
+
+	reset(tk)
+	tk.MustExec("insert into t values ('123x', 'x123', 'abc', 'datetime', 'timestamp', 'date', '123', '123')")
+	tk.MustGetErrCode("alter table t modify c int", mysql.ErrTruncatedWrongValue)
+
+	tk.MustGetErrCode("alter table t modify vc smallint", mysql.ErrTruncatedWrongValue)
+
+	tk.MustGetErrCode("alter table t modify bny bigint", mysql.ErrTruncatedWrongValue)
+
+	tk.MustGetErrCode("alter table t modify vbny datetime", mysql.ErrTruncatedWrongValue)
+
+	tk.MustGetErrCode("alter table t modify bb timestamp", mysql.ErrTruncatedWrongValue)
+
+	tk.MustGetErrCode("alter table t modify txt date", mysql.ErrTruncatedWrongValue)
+
+	reset(tk)
+	tk.MustExec("alter table t modify vc varchar(20)")
+	tk.MustExec("insert into t(c, vc) values ('1x', '20200915110836')")
+	tk.MustGetErrCode("alter table t modify c year", mysql.ErrTruncatedWrongValue)
+
+	// Special cases about different behavior between TiDB and MySQL.
+	// MySQL will get warning but TiDB not.
+	// MySQL will get "Warning 1292 Incorrect time value: '20200915110836' for column 'vc'"
+	tk.MustExec("alter table t modify vc time")
+	tk.MustQuery("select vc from t").Check(testkit.Rows("11:08:36"))
+
+	// Both error but different error message.
+	// MySQL will get "ERROR 3140 (22032): Invalid JSON text: "The document root must not be followed by other values." at position 1 in value for column '#sql-5b_42.c'." error.
+	reset(tk)
+	tk.MustExec("alter table t modify c char(15)")
+	tk.MustExec("insert into t(c) values ('{\"k1\": \"value\"')")
+	tk.MustGetErrCode("alter table t modify c json", mysql.ErrInvalidJSONText)
+
+	// MySQL will get "ERROR 1366 (HY000): Incorrect DECIMAL value: '0' for column '' at row -1" error.
+	tk.MustExec("insert into t(vc) values ('abc')")
+	tk.MustGetErrCode("alter table t modify vc decimal(5,3)", mysql.ErrBadNumber)
+}
+
+func (s *testColumnTypeChangeSuite) TestColumnTypeChangeFromNumericToOthers(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	// Enable column change variable.
+	tk.Se.GetSessionVars().EnableChangeColumnType = true
+
+	// Set time zone to UTC.
+	originalTz := tk.Se.GetSessionVars().TimeZone
+	tk.Se.GetSessionVars().TimeZone = time.UTC
+	defer func() {
+		tk.Se.GetSessionVars().EnableChangeColumnType = false
+		tk.Se.GetSessionVars().TimeZone = originalTz
+	}()
+
+	// Init string date type table.
+	reset := func(tk *testkit.TestKit) {
+		tk.MustExec("drop table if exists t")
+		tk.MustExec(`
+			create table t (
+				d decimal(13, 7),
+				n numeric(5, 2),
+				r real(20, 12),
+				db real(32, 11),
+				f32 float(23),
+				f64 double,
+				b bit(5)
+			)
+		`)
+	}
+
+	// To integer data types.
+	// tinyint
+	reset(tk)
+	tk.MustExec("insert into t values (-258.12345, 333.33, 2000000.20000002, 323232323.3232323232, -111.11111111, -222222222222.222222222222222, b'10101')")
+	tk.MustGetErrCode("alter table t modify d tinyint", mysql.ErrDataOutOfRange)
+	tk.MustGetErrCode("alter table t modify n tinyint", mysql.ErrDataOutOfRange)
+	tk.MustGetErrCode("alter table t modify r tinyint", mysql.ErrDataOutOfRange)
+	tk.MustGetErrCode("alter table t modify db tinyint", mysql.ErrDataOutOfRange)
+	tk.MustExec("alter table t modify f32 tinyint")
+	tk.MustGetErrCode("alter table t modify f64 tinyint", mysql.ErrDataOutOfRange)
+	tk.MustExec("alter table t modify b tinyint")
+	tk.MustQuery("select * from t").Check(testkit.Rows("-258.1234500 333.33 2000000.20000002 323232323.32323235 -111 -222222222222.22223 21"))
+	// int
+	reset(tk)
+	tk.MustExec("insert into t values (-258.12345, 333.33, 2000000.20000002, 323232323.3232323232, -111.11111111, -222222222222.222222222222222, b'10101')")
+	tk.MustExec("alter table t modify d int")
+	tk.MustExec("alter table t modify n int")
+	tk.MustExec("alter table t modify r int")
+	tk.MustExec("alter table t modify db int")
+	tk.MustExec("alter table t modify f32 int")
+	tk.MustGetErrCode("alter table t modify f64 int", mysql.ErrDataOutOfRange)
+	tk.MustExec("alter table t modify b int")
+	tk.MustQuery("select * from t").Check(testkit.Rows("-258 333 2000000 323232323 -111 -222222222222.22223 21"))
+	// bigint
+	reset(tk)
+	tk.MustExec("insert into t values (-258.12345, 333.33, 2000000.20000002, 323232323.3232323232, -111.11111111, -222222222222.222222222222222, b'10101')")
+	tk.MustExec("alter table t modify d bigint")
+	tk.MustExec("alter table t modify n bigint")
+	tk.MustExec("alter table t modify r bigint")
+	tk.MustExec("alter table t modify db bigint")
+	tk.MustExec("alter table t modify f32 bigint")
+	tk.MustExec("alter table t modify f64 bigint")
+	tk.MustExec("alter table t modify b bigint")
+	tk.MustQuery("select * from t").Check(testkit.Rows("-258 333 2000000 323232323 -111 -222222222222 21"))
+	// unsigned bigint
+	reset(tk)
+	tk.MustExec("insert into t values (-258.12345, 333.33, 2000000.20000002, 323232323.3232323232, -111.11111111, -222222222222.222222222222222, b'10101')")
+	// MySQL will get "ERROR 1264 (22001): Data truncation: Out of range value for column 'd' at row 1".
+	tk.MustGetErrCode("alter table t modify d bigint unsigned", mysql.ErrDataOutOfRange)
+	tk.MustExec("alter table t modify n bigint unsigned")
+	tk.MustExec("alter table t modify r bigint unsigned")
+	tk.MustExec("alter table t modify db bigint unsigned")
+	// MySQL will get "ERROR 1264 (22001): Data truncation: Out of range value for column 'f32' at row 1".
+	tk.MustGetErrCode("alter table t modify f32 bigint unsigned", mysql.ErrDataOutOfRange)
+	// MySQL will get "ERROR 1264 (22001): Data truncation: Out of range value for column 'f64' at row 1".
+	tk.MustGetErrCode("alter table t modify f64 bigint unsigned", mysql.ErrDataOutOfRange)
+	tk.MustExec("alter table t modify b int")
+	tk.MustQuery("select * from t").Check(testkit.Rows("-258.1234500 333 2000000 323232323 -111.111115 -222222222222.22223 21"))
+
+	// To string data types.
+	// char
+	reset(tk)
+	tk.MustExec("insert into t values (-258.12345, 333.33, 2000000.20000002, 323232323.3232323232, -111.11111111, -222222222222.222222222222222, b'10101')")
+	tk.MustExec("alter table t modify d char(20)")
+	tk.MustExec("alter table t modify n char(20)")
+	tk.MustExec("alter table t modify r char(20)")
+	// MySQL will get "ERROR 1406 (22001): Data truncation: Data too long for column 'db' at row 1".
+	tk.MustExec("alter table t modify db char(20)")
+	// MySQL will get "-111.111" rather than "-111.111115" at TiDB.
+	tk.MustExec("alter table t modify f32 char(20)")
+	// MySQL will get "ERROR 1406 (22001): Data truncation: Data too long for column 'f64' at row 1".
+	tk.MustExec("alter table t modify f64 char(20)")
+	tk.MustExec("alter table t modify b char(20)")
+	tk.MustQuery("select * from t").Check(testkit.Rows("-258.1234500 333.33 2000000.20000002 323232323.32323235 -111.111115 -222222222222.22223 \x15"))
+
+	// varchar
+	reset(tk)
+	tk.MustExec("insert into t values (-258.12345, 333.33, 2000000.20000002, 323232323.3232323232, -111.11111111, -222222222222.222222222222222, b'10101')")
+	tk.MustExec("alter table t modify d varchar(30)")
+	tk.MustExec("alter table t modify n varchar(30)")
+	tk.MustExec("alter table t modify r varchar(30)")
+	tk.MustExec("alter table t modify db varchar(30)")
+	// MySQL will get "-111.111" rather than "-111.111115" at TiDB.
+	tk.MustExec("alter table t modify f32 varchar(30)")
+	// MySQL will get "ERROR 1406 (22001): Data truncation: Data too long for column 'f64' at row 1".
+	tk.MustExec("alter table t modify f64 varchar(30)")
+	tk.MustExec("alter table t modify b varchar(30)")
+	tk.MustQuery("select * from t").Check(testkit.Rows("-258.1234500 333.33 2000000.20000002 323232323.32323235 -111.111115 -222222222222.22223 \x15"))
+
+	// binary
+	reset(tk)
+	tk.MustExec("insert into t values (-258.12345, 333.33, 2000000.20000002, 323232323.3232323232, -111.11111111, -222222222222.222222222222222, b'10101')")
+	tk.MustGetErrCode("alter table t modify d binary(10)", mysql.ErrDataTooLong)
+	tk.MustExec("alter table t modify n binary(10)")
+	tk.MustGetErrCode("alter table t modify r binary(10)", mysql.ErrDataTooLong)
+	tk.MustGetErrCode("alter table t modify db binary(10)", mysql.ErrDataTooLong)
+	// MySQL will run with no error.
+	tk.MustGetErrCode("alter table t modify f32 binary(10)", mysql.ErrDataTooLong)
+	tk.MustGetErrCode("alter table t modify f64 binary(10)", mysql.ErrDataTooLong)
+	tk.MustExec("alter table t modify b binary(10)")
+	tk.MustQuery("select * from t").Check(testkit.Rows("-258.1234500 333.33\x00\x00\x00\x00 2000000.20000002 323232323.32323235 -111.111115 -222222222222.22223 \x15\x00\x00\x00\x00\x00\x00\x00\x00\x00"))
+
+	// varbinary
+	reset(tk)
+	tk.MustExec("insert into t values (-258.12345, 333.33, 2000000.20000002, 323232323.3232323232, -111.11111111, -222222222222.222222222222222, b'10101')")
+	tk.MustExec("alter table t modify d varbinary(30)")
+	tk.MustExec("alter table t modify n varbinary(30)")
+	tk.MustExec("alter table t modify r varbinary(30)")
+	tk.MustExec("alter table t modify db varbinary(30)")
+	// MySQL will get "-111.111" rather than "-111.111115" at TiDB.
+	tk.MustExec("alter table t modify f32 varbinary(30)")
+	// MySQL will get "ERROR 1406 (22001): Data truncation: Data too long for column 'f64' at row 1".
+	tk.MustExec("alter table t modify f64 varbinary(30)")
+	tk.MustExec("alter table t modify b varbinary(30)")
+	tk.MustQuery("select * from t").Check(testkit.Rows("-258.1234500 333.33 2000000.20000002 323232323.32323235 -111.111115 -222222222222.22223 \x15"))
+
+	// blob
+	reset(tk)
+	tk.MustExec("insert into t values (-258.12345, 333.33, 2000000.20000002, 323232323.3232323232, -111.11111111, -222222222222.222222222222222, b'10101')")
+	tk.MustExec("alter table t modify d blob")
+	tk.MustExec("alter table t modify n blob")
+	tk.MustExec("alter table t modify r blob")
+	tk.MustExec("alter table t modify db blob")
+	// MySQL will get "-111.111" rather than "-111.111115" at TiDB.
+	tk.MustExec("alter table t modify f32 blob")
+	tk.MustExec("alter table t modify f64 blob")
+	tk.MustExec("alter table t modify b blob")
+	tk.MustQuery("select * from t").Check(testkit.Rows("-258.1234500 333.33 2000000.20000002 323232323.32323235 -111.111115 -222222222222.22223 \x15"))
+
+	// text
+	reset(tk)
+	tk.MustExec("insert into t values (-258.12345, 333.33, 2000000.20000002, 323232323.3232323232, -111.11111111, -222222222222.222222222222222, b'10101')")
+	tk.MustExec("alter table t modify d text")
+	tk.MustExec("alter table t modify n text")
+	tk.MustExec("alter table t modify r text")
+	tk.MustExec("alter table t modify db text")
+	// MySQL will get "-111.111" rather than "-111.111115" at TiDB.
+	tk.MustExec("alter table t modify f32 text")
+	tk.MustExec("alter table t modify f64 text")
+	tk.MustExec("alter table t modify b text")
+	tk.MustQuery("select * from t").Check(testkit.Rows("-258.1234500 333.33 2000000.20000002 323232323.32323235 -111.111115 -222222222222.22223 \x15"))
+
+	// enum
+	reset(tk)
+	tk.MustExec("insert into t values (-258.12345, 333.33, 2000000.20000002, 323232323.3232323232, -111.111, -222222222222.222222222222222, b'10101')")
+	tk.MustGetErrCode("alter table t modify d enum('-258.12345', '333.33', '2000000.20000002', '323232323.3232323232', '-111.111', '-222222222222.222222222222222', b'10101')", mysql.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify n enum('-258.12345', '333.33', '2000000.20000002', '323232323.3232323232', '-111.111', '-222222222222.222222222222222', b'10101')", mysql.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify r enum('-258.12345', '333.33', '2000000.20000002', '323232323.3232323232', '-111.111', '-222222222222.222222222222222', b'10101')", mysql.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify db enum('-258.12345', '333.33', '2000000.20000002', '323232323.3232323232', '-111.111', '-222222222222.222222222222222', b'10101')", mysql.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify f32 enum('-258.12345', '333.33', '2000000.20000002', '323232323.3232323232', '-111.111', '-222222222222.222222222222222', b'10101')", mysql.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify f64 enum('-258.12345', '333.33', '2000000.20000002', '323232323.3232323232', '-111.111', '-222222222222.222222222222222', b'10101')", mysql.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify b enum('-258.12345', '333.33', '2000000.20000002', '323232323.3232323232', '-111.111', '-222222222222.222222222222222', b'10101')", mysql.ErrUnsupportedDDLOperation)
+	tk.MustQuery("select * from t").Check(testkit.Rows("-258.1234500 333.33 2000000.20000002 323232323.32323235 -111.111 -222222222222.22223 \x15"))
+
+	// set
+	reset(tk)
+	tk.MustExec("insert into t values (-258.12345, 333.33, 2000000.20000002, 323232323.3232323232, -111.111, -222222222222.222222222222222, b'10101')")
+	tk.MustGetErrCode("alter table t modify d set('-258.12345', '333.33', '2000000.20000002', '323232323.3232323232', '-111.111', '-222222222222.222222222222222', b'10101')", mysql.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify n set('-258.12345', '333.33', '2000000.20000002', '323232323.3232323232', '-111.111', '-222222222222.222222222222222', b'10101')", mysql.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify r set('-258.12345', '333.33', '2000000.20000002', '323232323.3232323232', '-111.111', '-222222222222.222222222222222', b'10101')", mysql.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify db set('-258.12345', '333.33', '2000000.20000002', '323232323.3232323232', '-111.111', '-222222222222.222222222222222', b'10101')", mysql.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify f32 set('-258.12345', '333.33', '2000000.20000002', '323232323.3232323232', '-111.111', '-222222222222.222222222222222', b'10101')", mysql.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify f64 set('-258.12345', '333.33', '2000000.20000002', '323232323.3232323232', '-111.111', '-222222222222.222222222222222', b'10101')", mysql.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify b set('-258.12345', '333.33', '2000000.20000002', '323232323.3232323232', '-111.111', '-222222222222.222222222222222', b'10101')", mysql.ErrUnsupportedDDLOperation)
+	tk.MustQuery("select * from t").Check(testkit.Rows("-258.1234500 333.33 2000000.20000002 323232323.32323235 -111.111 -222222222222.22223 \x15"))
+
+	// To date and time data types.
+	// datetime
+	reset(tk)
+	tk.MustExec("insert into t values (200805.11, 307.333, 20200805.11111111, 20200805111307.11111111, 200805111307.11111111, 20200805111307.11111111, b'10101')")
+	// MySQL will get "ERROR 1292 (22001) Data truncation: Incorrect datetime value: '200805.1100000' for column 'd' at row 1".
+	tk.MustExec("alter table t modify d datetime")
+	// MySQL will get "ERROR 1292 (22001) Data truncation: Incorrect datetime value: '307.33' for column 'n' at row 1".
+	tk.MustExec("alter table t modify n datetime")
+	tk.MustGetErrCode("alter table t modify r datetime", mysql.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify db datetime", mysql.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify f32 datetime", mysql.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify f64 datetime", mysql.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify b datetime", mysql.ErrUnsupportedDDLOperation)
+	tk.MustQuery("select * from t").Check(testkit.Rows("2020-08-05 00:00:00 2000-03-07 00:00:00 20200805.11111111 20200805111307.11 200805100000 20200805111307.11 \x15"))
+	// time
+	reset(tk)
+	tk.MustExec("insert into t values (200805.11, 307.333, 20200805.11111111, 20200805111307.11111111, 200805111307.11111111, 20200805111307.11111111, b'10101')")
+	tk.MustExec("alter table t modify d time")
+	tk.MustExec("alter table t modify n time")
+	tk.MustGetErrCode("alter table t modify r time", mysql.ErrTruncatedWrongValue)
+	tk.MustExec("alter table t modify db time")
+	tk.MustExec("alter table t modify f32 time")
+	tk.MustExec("alter table t modify f64 time")
+	tk.MustGetErrCode("alter table t modify b time", mysql.ErrUnsupportedDDLOperation)
+	tk.MustQuery("select * from t").Check(testkit.Rows("20:08:05 00:03:07 20200805.11111111 11:13:07 10:00:00 11:13:07 \x15"))
+	// date
+	reset(tk)
+	tk.MustExec("insert into t values (200805.11, 307.333, 20200805.11111111, 20200805111307.11111111, 200805111307.11111111, 20200805111307.11111111, b'10101')")
+	// MySQL will get "ERROR 1292 (22001) Data truncation: Incorrect date value: '200805.1100000' for column 'd' at row 1".
+	tk.MustExec("alter table t modify d date")
+	// MySQL will get "ERROR 1292 (22001) Data truncation: Incorrect date value: '307.33' for column 'n' at row 1".
+	tk.MustExec("alter table t modify n date")
+	tk.MustGetErrCode("alter table t modify r date", mysql.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify db date", mysql.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify f32 date", mysql.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify f64 date", mysql.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify b date", mysql.ErrUnsupportedDDLOperation)
+	tk.MustQuery("select * from t").Check(testkit.Rows("2020-08-05 2000-03-07 20200805.11111111 20200805111307.11 200805100000 20200805111307.11 \x15"))
+	// timestamp
+	reset(tk)
+	tk.MustExec("insert into t values (200805.11, 307.333, 20200805.11111111, 20200805111307.11111111, 200805111307.11111111, 20200805111307.11111111, b'10101')")
+	// MySQL will get "ERROR 1292 (22001) Data truncation: Incorrect datetime value: '200805.1100000' for column 'd' at row 1".
+	tk.MustExec("alter table t modify d timestamp")
+	// MySQL will get "ERROR 1292 (22001) Data truncation: Incorrect datetime value: '307.33' for column 'n' at row 1".
+	tk.MustExec("alter table t modify n timestamp")
+	tk.MustGetErrCode("alter table t modify r timestamp", mysql.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify db timestamp", mysql.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify f32 timestamp", mysql.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify f64 timestamp", mysql.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify b timestamp", mysql.ErrUnsupportedDDLOperation)
+	tk.MustQuery("select * from t").Check(testkit.Rows("2020-08-05 00:00:00 2000-03-07 00:00:00 20200805.11111111 20200805111307.11 200805100000 20200805111307.11 \x15"))
+	// year
+	reset(tk)
+	tk.MustExec("insert into t values (200805.11, 307.333, 2.55555, 98.1111111, 2154.00001, 20200805111307.11111111, b'10101')")
+	tk.MustGetErrMsg("alter table t modify d year", "[types:8033]Invalid year value for column 'd', value is 'KindMysqlDecimal 200805.1100000'")
+	tk.MustGetErrCode("alter table t modify n year", mysql.ErrInvalidYear)
+	// MySQL will get "ERROR 1264 (22001) Data truncation: Out of range value for column 'r' at row 1".
+	tk.MustExec("alter table t modify r year")
+	// MySQL will get "ERROR 1264 (22001) Data truncation: Out of range value for column 'db' at row 1".
+	tk.MustExec("alter table t modify db year")
+	// MySQL will get "ERROR 1264 (22001) Data truncation: Out of range value for column 'f32' at row 1".
+	tk.MustExec("alter table t modify f32 year")
+	tk.MustGetErrMsg("alter table t modify f64 year", "[types:8033]Invalid year value for column 'f64', value is 'KindFloat64 2.020080511130711e+13'")
+	tk.MustExec("alter table t modify b year")
+	tk.MustQuery("select * from t").Check(testkit.Rows("200805.1100000 307.33 2003 1998 2154 20200805111307.11 2021"))
+
+	// To json data type.
+	reset(tk)
+	tk.MustExec("insert into t values (-258.12345, 333.33, 2000000.20000002, 323232323.3232323232, -111.11111111, -222222222222.222222222222222, b'10101')")
+	tk.MustExec("alter table t modify d json")
+	tk.MustExec("alter table t modify n json")
+	tk.MustExec("alter table t modify r json")
+	tk.MustExec("alter table t modify db json")
+	tk.MustExec("alter table t modify f32 json")
+	tk.MustExec("alter table t modify f64 json")
+	tk.MustExec("alter table t modify b json")
+	tk.MustQuery("select * from t").Check(testkit.Rows("-258.12345 333.33 2000000.20000002 323232323.32323235 -111.11111450195312 -222222222222.22223 \"\\u0015\""))
+}
+
+// Test issue #20529.
+func (s *testColumnTypeChangeSuite) TestColumnTypeChangeIgnoreDisplayLength(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.Se.GetSessionVars().EnableChangeColumnType = true
+	defer func() {
+		tk.Se.GetSessionVars().EnableChangeColumnType = false
+	}()
+
+	originalHook := s.dom.DDL().GetHook()
+	defer s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
+
+	var assertResult bool
+	assertHasAlterWriteReorg := func(tbl table.Table) {
+		// Restore the assert result to false.
+		assertResult = false
+		hook := &ddl.TestDDLCallback{}
+		hook.OnJobRunBeforeExported = func(job *model.Job) {
+			if tbl.Meta().ID != job.TableID {
+				return
+			}
+			if job.SchemaState == model.StateWriteReorganization {
+				assertResult = true
+			}
+		}
+		s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
+	}
+
+	// Change int to tinyint.
+	// Although display length is increased, the default flen is decreased, reorg is needed.
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int(1))")
+	tbl := testGetTableByName(c, tk.Se, "test", "t")
+	assertHasAlterWriteReorg(tbl)
+	tk.MustExec("alter table t modify column a tinyint(3)")
+	c.Assert(assertResult, Equals, true)
+
+	// Change tinyint to tinyint
+	// Although display length is decreased, default flen is the same, reorg is not needed.
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a tinyint(3))")
+	tbl = testGetTableByName(c, tk.Se, "test", "t")
+	assertHasAlterWriteReorg(tbl)
+	tk.MustExec("alter table t modify column a tinyint(1)")
+	c.Assert(assertResult, Equals, false)
+	tk.MustExec("drop table if exists t")
+}
+
+func (s *testColumnTypeChangeSuite) TestColumnTypeChangeFromDateTimeTypeToOthers(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	// Enable column change variable.
+	tk.Se.GetSessionVars().EnableChangeColumnType = true
+
+	// Set time zone to UTC.
+	originalTz := tk.Se.GetSessionVars().TimeZone
+	tk.Se.GetSessionVars().TimeZone = time.UTC
+	defer func() {
+		tk.Se.GetSessionVars().EnableChangeColumnType = false
+		tk.Se.GetSessionVars().TimeZone = originalTz
+	}()
+
+	// Init string date type table.
+	reset := func(tk *testkit.TestKit) {
+		tk.MustExec("drop table if exists t")
+		tk.MustExec(`
+			create table t (
+                   d date,
+                   t time(3),
+                   dt datetime(6),
+                   tmp timestamp(6),
+                   y year
+			)
+		`)
+	}
+
+	// To numeric data types.
+	// tinyint
+	reset(tk)
+	tk.MustExec("insert into t values ('2020-10-30', '19:38:25.001', 20201030082133.455555, 20201030082133.455555, 2020)")
+	tk.MustGetErrCode("alter table t modify d tinyint", mysql.ErrDataOutOfRange)
+	tk.MustGetErrCode("alter table t modify t tinyint", mysql.ErrDataOutOfRange)
+	tk.MustGetErrCode("alter table t modify dt tinyint", mysql.ErrDataOutOfRange)
+	tk.MustGetErrCode("alter table t modify tmp tinyint", mysql.ErrDataOutOfRange)
+	tk.MustGetErrCode("alter table t modify y tinyint", mysql.ErrDataOutOfRange)
+	tk.MustQuery("select * from t").Check(testkit.Rows("2020-10-30 19:38:25.001 2020-10-30 08:21:33.455555 2020-10-30 08:21:33.455555 2020"))
+	// int
+	reset(tk)
+	tk.MustExec("insert into t values ('2020-10-30', '19:38:25.001', 20201030082133.455555, 20201030082133.455555, 2020)")
+	tk.MustExec("alter table t modify d int")
+	tk.MustExec("alter table t modify t int")
+	tk.MustGetErrCode("alter table t modify dt int", mysql.ErrDataOutOfRange)
+	tk.MustGetErrCode("alter table t modify tmp int", mysql.ErrDataOutOfRange)
+	tk.MustExec("alter table t modify y int")
+	tk.MustQuery("select * from t").Check(testkit.Rows("20201030 193825 2020-10-30 08:21:33.455555 2020-10-30 08:21:33.455555 2020"))
+	// bigint
+	reset(tk)
+	tk.MustExec("insert into t values ('2020-10-30', '19:38:25.001', 20201030082133.455555, 20201030082133.455555, 2020)")
+	tk.MustExec("alter table t modify d bigint")
+	tk.MustExec("alter table t modify t bigint")
+	tk.MustExec("alter table t modify dt bigint")
+	tk.MustExec("alter table t modify tmp bigint")
+	tk.MustExec("alter table t modify y bigint")
+	tk.MustQuery("select * from t").Check(testkit.Rows("20201030 193825 20201030082133 20201030082133 2020"))
+	// bit
+	reset(tk)
+	tk.MustExec("insert into t values ('2020-10-30', '19:38:25.001', 20201030082133.455555, 20201030082133.455555, 2020)")
+	tk.MustGetErrCode("alter table t modify d bit", mysql.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify t bit", mysql.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify dt bit", mysql.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify tmp bit", mysql.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify y bit", mysql.ErrUnsupportedDDLOperation)
+	tk.MustQuery("select * from t").Check(testkit.Rows("2020-10-30 19:38:25.001 2020-10-30 08:21:33.455555 2020-10-30 08:21:33.455555 2020"))
+	// decimal
+	reset(tk)
+	tk.MustExec("insert into t values ('2020-10-30', '19:38:25.001', 20201030082133.455555, 20201030082133.455555, 2020)")
+	tk.MustExec("alter table t modify d decimal")
+	tk.MustExec("alter table t modify t decimal(10, 4)")
+	tk.MustExec("alter table t modify dt decimal(20, 6)")
+	tk.MustExec("alter table t modify tmp decimal(22, 8)")
+	tk.MustExec("alter table t modify y decimal")
+	tk.MustQuery("select * from t").Check(testkit.Rows("20201030 193825.0010 20201030082133.455555 20201030082133.45555500 2020"))
+	// double
+	reset(tk)
+	tk.MustExec("insert into t values ('2020-10-30', '19:38:25.001', 20201030082133.455555, 20201030082133.455555, 2020)")
+	tk.MustExec("alter table t modify d double")
+	tk.MustExec("alter table t modify t double(10, 4)")
+	tk.MustExec("alter table t modify dt double(20, 6)")
+	tk.MustExec("alter table t modify tmp double(22, 8)")
+	tk.MustExec("alter table t modify y double")
+	tk.MustQuery("select * from t").Check(testkit.Rows("20201030 193825.001 20201030082133.457 20201030082133.457 2020"))
+
+	// To string data types.
+	// char
+	reset(tk)
+	tk.MustExec("insert into t values ('2020-10-30', '19:38:25.001', 20201030082133.455555, 20201030082133.455555, 2020)")
+	tk.MustExec("alter table t modify d char(30)")
+	tk.MustExec("alter table t modify t char(30)")
+	tk.MustExec("alter table t modify dt char(30)")
+	tk.MustExec("alter table t modify tmp char(30)")
+	tk.MustExec("alter table t modify y char(30)")
+	tk.MustQuery("select * from t").Check(testkit.Rows("2020-10-30 19:38:25.001 2020-10-30 08:21:33.455555 2020-10-30 08:21:33.455555 2020"))
+
+	// varchar
+	reset(tk)
+	tk.MustExec("insert into t values ('2020-10-30', '19:38:25.001', 20201030082133.455555, 20201030082133.455555, 2020)")
+	tk.MustExec("alter table t modify d varchar(30)")
+	tk.MustExec("alter table t modify t varchar(30)")
+	tk.MustExec("alter table t modify dt varchar(30)")
+	tk.MustExec("alter table t modify tmp varchar(30)")
+	tk.MustExec("alter table t modify y varchar(30)")
+	tk.MustQuery("select * from t").Check(testkit.Rows("2020-10-30 19:38:25.001 2020-10-30 08:21:33.455555 2020-10-30 08:21:33.455555 2020"))
+
+	// binary
+	reset(tk)
+	tk.MustExec("insert into t values ('2020-10-30', '19:38:25.001', 20201030082133.455555, 20201030082133.455555, 2020)")
+	tk.MustExec("alter table t modify d binary(30)")
+	tk.MustExec("alter table t modify t binary(30)")
+	tk.MustExec("alter table t modify dt binary(30)")
+	tk.MustExec("alter table t modify tmp binary(30)")
+	tk.MustExec("alter table t modify y binary(30)")
+	tk.MustQuery("select * from t").Check(testkit.Rows("2020-10-30\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00 " +
+		"19:38:25.001\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00 " +
+		"2020-10-30 08:21:33.455555\x00\x00\x00\x00 " +
+		"2020-10-30 08:21:33.455555\x00\x00\x00\x00 " +
+		"2020\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00"))
+
+	// varbinary
+	reset(tk)
+	tk.MustExec("insert into t values ('2020-10-30', '19:38:25.001', 20201030082133.455555, 20201030082133.455555, 2020)")
+	tk.MustExec("alter table t modify d varbinary(30)")
+	tk.MustExec("alter table t modify t varbinary(30)")
+	tk.MustExec("alter table t modify dt varbinary(30)")
+	tk.MustExec("alter table t modify tmp varbinary(30)")
+	tk.MustExec("alter table t modify y varbinary(30)")
+	tk.MustQuery("select * from t").Check(testkit.Rows("2020-10-30 19:38:25.001 2020-10-30 08:21:33.455555 2020-10-30 08:21:33.455555 2020"))
+
+	// text
+	reset(tk)
+	tk.MustExec("insert into t values ('2020-10-30', '19:38:25.001', 20201030082133.455555, 20201030082133.455555, 2020)")
+	tk.MustExec("alter table t modify d text")
+	tk.MustExec("alter table t modify t text")
+	tk.MustExec("alter table t modify dt text")
+	tk.MustExec("alter table t modify tmp text")
+	tk.MustExec("alter table t modify y text")
+	tk.MustQuery("select * from t").Check(testkit.Rows("2020-10-30 19:38:25.001 2020-10-30 08:21:33.455555 2020-10-30 08:21:33.455555 2020"))
+
+	// blob
+	reset(tk)
+	tk.MustExec("insert into t values ('2020-10-30', '19:38:25.001', 20201030082133.455555, 20201030082133.455555, 2020)")
+	tk.MustExec("alter table t modify d blob")
+	tk.MustExec("alter table t modify t blob")
+	tk.MustExec("alter table t modify dt blob")
+	tk.MustExec("alter table t modify tmp blob")
+	tk.MustExec("alter table t modify y blob")
+	tk.MustQuery("select * from t").Check(testkit.Rows("2020-10-30 19:38:25.001 2020-10-30 08:21:33.455555 2020-10-30 08:21:33.455555 2020"))
+
+	// enum
+	reset(tk)
+	tk.MustExec("insert into t values ('2020-10-30', '19:38:25.001', 20201030082133.455555, 20201030082133.455555, 2020)")
+	tk.MustGetErrCode("alter table t modify d enum('2020-10-30', '19:38:25.001', '20201030082133.455555', '2020')", mysql.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify t enum('2020-10-30', '19:38:25.001', '20201030082133.455555', '2020')", mysql.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify dt enum('2020-10-30', '19:38:25.001', '20201030082133.455555', '2020')", mysql.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify tmp enum('2020-10-30', '19:38:25.001', '20201030082133.455555', '2020')", mysql.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify y enum('2020-10-30', '19:38:25.001', '20201030082133.455555', '2020')", mysql.ErrUnsupportedDDLOperation)
+	tk.MustQuery("select * from t").Check(testkit.Rows("2020-10-30 19:38:25.001 2020-10-30 08:21:33.455555 2020-10-30 08:21:33.455555 2020"))
+
+	// set
+	reset(tk)
+	tk.MustExec("insert into t values ('2020-10-30', '19:38:25.001', 20201030082133.455555, 20201030082133.455555, 2020)")
+	tk.MustGetErrCode("alter table t modify d set('2020-10-30', '19:38:25.001', '20201030082133.455555', '2020')", mysql.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify t set('2020-10-30', '19:38:25.001', '20201030082133.455555', '2020')", mysql.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify dt set('2020-10-30', '19:38:25.001', '20201030082133.455555', '2020')", mysql.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify tmp set('2020-10-30', '19:38:25.001', '20201030082133.455555', '2020')", mysql.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify y set('2020-10-30', '19:38:25.001', '20201030082133.455555', '2020')", mysql.ErrUnsupportedDDLOperation)
+	tk.MustQuery("select * from t").Check(testkit.Rows("2020-10-30 19:38:25.001 2020-10-30 08:21:33.455555 2020-10-30 08:21:33.455555 2020"))
+
+	// To json data type.
+	reset(tk)
+	tk.MustExec("insert into t values ('2020-10-30', '19:38:25.001', 20201030082133.455555, 20201030082133.455555, 2020)")
+	tk.MustExec("alter table t modify d json")
+	tk.MustExec("alter table t modify t json")
+	tk.MustExec("alter table t modify dt json")
+	tk.MustExec("alter table t modify tmp json")
+	tk.MustExec("alter table t modify y json")
+	tk.MustQuery("select * from t").Check(testkit.Rows("\"2020-10-30\" \"19:38:25.001\" \"2020-10-30 08:21:33.455555\" \"2020-10-30 08:21:33.455555\" 2020"))
+}

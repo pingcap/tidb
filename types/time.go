@@ -1224,16 +1224,34 @@ func adjustYear(y int) int {
 }
 
 // AdjustYear is used for adjusting year and checking its validation.
-func AdjustYear(y int64, shouldAdjust bool) (int64, error) {
-	if y == 0 && !shouldAdjust {
+func AdjustYear(y int64, adjustZero bool) (int64, error) {
+	if y == 0 && !adjustZero {
 		return y, nil
 	}
 	y = int64(adjustYear(int(y)))
-	if y < int64(MinYear) || y > int64(MaxYear) {
+	if y < 0 {
 		return 0, errors.Trace(ErrInvalidYear)
+	}
+	if y < int64(MinYear) {
+		return int64(MinYear), errors.Trace(ErrInvalidYear)
+	}
+	if y > int64(MaxYear) {
+		return int64(MaxYear), errors.Trace(ErrInvalidYear)
 	}
 
 	return y, nil
+}
+
+func adjustYearForFloat(y float64, shouldAdjust bool) float64 {
+	if y == 0 && !shouldAdjust {
+		return y
+	}
+	if y >= 0 && y <= 69 {
+		y = 2000 + y
+	} else if y >= 70 && y <= 99 {
+		y = 1900 + y
+	}
+	return y
 }
 
 // NewDuration construct duration with time.
@@ -2678,7 +2696,8 @@ func abbrDayOfMonth(day int) string {
 func (t *Time) StrToDate(sc *stmtctx.StatementContext, date, format string) bool {
 	ctx := make(map[string]int)
 	var tm CoreTime
-	if !strToDate(&tm, date, format, ctx) {
+	success, warning := strToDate(&tm, date, format, ctx)
+	if !success {
 		t.SetCoreTime(ZeroCoreTime)
 		t.SetType(mysql.TypeDatetime)
 		t.SetFsp(0)
@@ -2690,7 +2709,15 @@ func (t *Time) StrToDate(sc *stmtctx.StatementContext, date, format string) bool
 
 	t.SetCoreTime(tm)
 	t.SetType(mysql.TypeDatetime)
-	return t.check(sc) == nil
+	if t.check(sc) != nil {
+		return false
+	}
+	if warning {
+		// Only append this warning when success but still need warning.
+		// Currently this only happens when `date` has extra characters at the end.
+		sc.AppendWarning(ErrTruncatedWrongVal.GenWithStackByArgs(DateTimeStr, date))
+	}
+	return true
 }
 
 // mysqlTimeFix fixes the Time use the values in the context.
@@ -2728,30 +2755,35 @@ func mysqlTimeFix(t *CoreTime, ctx map[string]int) error {
 	return nil
 }
 
-// strToDate converts date string according to format, returns true on success,
+// strToDate converts date string according to format,
 // the value will be stored in argument t or ctx.
-func strToDate(t *CoreTime, date string, format string, ctx map[string]int) bool {
+// The second return value is true when success but still need to append a warning.
+func strToDate(t *CoreTime, date string, format string, ctx map[string]int) (success bool, warning bool) {
 	date = skipWhiteSpace(date)
 	format = skipWhiteSpace(format)
 
 	token, formatRemain, succ := getFormatToken(format)
 	if !succ {
-		return false
+		return false, false
 	}
 
 	if token == "" {
-		// Extra characters at the end of date are ignored.
-		return true
+		if len(date) != 0 {
+			// Extra characters at the end of date are ignored, but a warning should be reported at this case.
+			return true, true
+		}
+		// Normal case. Both token and date are empty now.
+		return true, false
 	}
 
 	if len(date) == 0 {
 		ctx[token] = 0
-		return true
+		return true, false
 	}
 
 	dateRemain, succ := matchDateWithToken(t, date, token, ctx)
 	if !succ {
-		return false
+		return false, false
 	}
 
 	return strToDate(t, dateRemain, formatRemain, ctx)
@@ -2948,8 +2980,10 @@ func time12Hour(t *CoreTime, input string, ctx map[string]int) (string, bool) {
 	switch {
 	case strings.HasPrefix(remain, "AM"):
 		t.setHour(uint8(hour))
+		remain = strings.TrimPrefix(remain, "AM")
 	case strings.HasPrefix(remain, "PM"):
 		t.setHour(uint8(hour + 12))
+		remain = strings.TrimPrefix(remain, "PM")
 	default:
 		return input, false
 	}

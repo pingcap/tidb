@@ -134,7 +134,6 @@ func (s *testStatsSuite) TestStatsCacheMemTracker(c *C) {
 
 	testKit.MustExec("analyze table t")
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
-
 	c.Assert(statsTbl.Pseudo, IsFalse)
 
 	// If the new schema drop a column, the table stats can still work.
@@ -537,7 +536,8 @@ func (s *testStatsSuite) TestLoadStats(c *C) {
 	hg = stat.Indices[tableInfo.Indices[0].ID].Histogram
 	c.Assert(hg.Len(), Greater, 0)
 	cms = stat.Indices[tableInfo.Indices[0].ID].CMSketch
-	c.Assert(cms.TotalCount(), Greater, uint64(0))
+	topN := stat.Indices[tableInfo.Indices[0].ID].TopN
+	c.Assert(cms.TotalCount()+topN.TotalCount(), Greater, uint64(0))
 	hg = stat.Columns[tableInfo.Columns[2].ID].Histogram
 	c.Assert(hg.Len(), Equals, 0)
 	cms = stat.Columns[tableInfo.Columns[2].ID].CMSketch

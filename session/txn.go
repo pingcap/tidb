@@ -288,11 +288,12 @@ func keyNeedToLock(k, v []byte, flags kv.KeyFlags) bool {
 	if flags.HasPresumeKeyNotExists() {
 		return true
 	}
-	isDelete := len(v) == 0
-	if isDelete {
-		// only need to delete row key.
-		return k[10] == 'r'
+
+	// lock row key, primary key and unique index for delete operation,
+	if len(v) == 0 {
+		return flags.HasNeedLocked() || tablecodec.IsRecordKey(k)
 	}
+
 	if tablecodec.IsUntouchedIndexKValue(k, v) {
 		return false
 	}
@@ -357,9 +358,9 @@ func (s *session) getTxnFuture(ctx context.Context) *txnFuture {
 	oracleStore := s.store.GetOracle()
 	var tsFuture oracle.Future
 	if s.sessionVars.LowResolutionTSO {
-		tsFuture = oracleStore.GetLowResolutionTimestampAsync(ctx)
+		tsFuture = oracleStore.GetLowResolutionTimestampAsync(ctx, &oracle.Option{TxnScope: oracle.GlobalTxnScope})
 	} else {
-		tsFuture = oracleStore.GetTimestampAsync(ctx)
+		tsFuture = oracleStore.GetTimestampAsync(ctx, &oracle.Option{TxnScope: oracle.GlobalTxnScope})
 	}
 	ret := &txnFuture{future: tsFuture, store: s.store}
 	failpoint.InjectContext(ctx, "mockGetTSFail", func() {

@@ -77,11 +77,11 @@ func handleCopDAGRequest(dbReader *dbreader.DBReader, lockStore *lockstore.MemSt
 					resp.CanBeCached = true
 					resp.CacheLastVersion = uint64(cacheVersion.(int))
 					if resp.ExecDetails == nil {
-						resp.ExecDetails = &kvrpcpb.ExecDetails{HandleTime: &kvrpcpb.HandleTime{ProcessMs: 500}}
-					} else if resp.ExecDetails.HandleTime == nil {
-						resp.ExecDetails.HandleTime = &kvrpcpb.HandleTime{ProcessMs: 500}
+						resp.ExecDetails = &kvrpcpb.ExecDetails{TimeDetail: &kvrpcpb.TimeDetail{ProcessWallTimeMs: 500}}
+					} else if resp.ExecDetails.TimeDetail == nil {
+						resp.ExecDetails.TimeDetail = &kvrpcpb.TimeDetail{ProcessWallTimeMs: 500}
 					} else {
-						resp.ExecDetails.HandleTime.ProcessMs = 500
+						resp.ExecDetails.TimeDetail.ProcessWallTimeMs = 500
 					}
 				}()
 			}
@@ -97,7 +97,7 @@ func handleCopDAGRequest(dbReader *dbreader.DBReader, lockStore *lockstore.MemSt
 		return buildResp(nil, nil, dagReq, err, dagCtx.sc.GetWarnings(), time.Since(startTime))
 	}
 	chunks, err := closureExec.execute()
-	return buildResp(chunks, closureExec.counts, dagReq, err, dagCtx.sc.GetWarnings(), time.Since(startTime))
+	return buildResp(chunks, closureExec, dagReq, err, dagCtx.sc.GetWarnings(), time.Since(startTime))
 }
 
 func buildDAG(reader *dbreader.DBReader, lockStore *lockstore.MemStore, req *coprocessor.Request) (*dagContext, *tipb.DAGRequest, error) {
@@ -124,7 +124,11 @@ func buildDAG(reader *dbreader.DBReader, lockStore *lockstore.MemStore, req *cop
 		startTS:       req.StartTs,
 		resolvedLocks: req.Context.ResolvedLocks,
 	}
-	scanExec := dagReq.Executors[0]
+	var scanExec *tipb.Executor = nil
+	scanExec, err = getScanExec(dagReq)
+	if err != nil {
+		return nil, nil, err
+	}
 	if scanExec.Tp == tipb.ExecType_TypeTableScan {
 		ctx.setColumnInfo(scanExec.TblScan.Columns)
 		ctx.primaryCols = scanExec.TblScan.PrimaryColumnIds
@@ -288,18 +292,48 @@ func (e *ErrLocked) Error() string {
 	return fmt.Sprintf("key is locked, key: %q, Type: %v, primary: %q, startTS: %v", e.Key, e.LockType, e.Primary, e.StartTS)
 }
 
-func buildResp(chunks []tipb.Chunk, counts []int64, dagReq *tipb.DAGRequest, err error, warnings []stmtctx.SQLWarn, dur time.Duration) *coprocessor.Response {
+func buildResp(chunks []tipb.Chunk, closureExecutor *closureExecutor, dagReq *tipb.DAGRequest, err error, warnings []stmtctx.SQLWarn, dur time.Duration) *coprocessor.Response {
 	resp := &coprocessor.Response{}
+	var counts []int64
+	if closureExecutor != nil {
+		counts = closureExecutor.counts
+	}
 	selResp := &tipb.SelectResponse{
 		Error:        toPBError(err),
 		Chunks:       chunks,
 		OutputCounts: counts,
 	}
+	executors := dagReq.Executors
 	if dagReq.CollectExecutionSummaries != nil && *dagReq.CollectExecutionSummaries {
-		execSummary := make([]*tipb.ExecutorExecutionSummary, len(dagReq.Executors))
+		execSummary := make([]*tipb.ExecutorExecutionSummary, len(executors))
 		for i := range execSummary {
-			// TODO: Add real executor execution summary information.
-			execSummary[i] = &tipb.ExecutorExecutionSummary{}
+			if closureExecutor == nil {
+				selResp.ExecutionSummaries = execSummary
+				continue
+			}
+			switch executors[i].Tp {
+			case tipb.ExecType_TypeTableScan:
+				execSummary[i] = closureExecutor.scanCtx.execDetail.buildSummary()
+			case tipb.ExecType_TypeIndexScan:
+				execSummary[i] = closureExecutor.idxScanCtx.execDetail.buildSummary()
+			case tipb.ExecType_TypeSelection:
+				execSummary[i] = closureExecutor.selectionCtx.execDetail.buildSummary()
+			case tipb.ExecType_TypeTopN:
+				execSummary[i] = closureExecutor.topNCtx.execDetail.buildSummary()
+			case tipb.ExecType_TypeAggregation, tipb.ExecType_TypeStreamAgg:
+				execSummary[i] = closureExecutor.aggCtx.execDetail.buildSummary()
+			case tipb.ExecType_TypeLimit:
+				costNs := uint64(0)
+				rows := uint64(closureExecutor.rowCount)
+				numIter := uint64(1)
+				execSummary[i] = &tipb.ExecutorExecutionSummary{
+					TimeProcessedNs: &costNs,
+					NumProducedRows: &rows,
+					NumIterations:   &numIter,
+				}
+			default:
+				execSummary[i] = &tipb.ExecutorExecutionSummary{}
+			}
 		}
 		selResp.ExecutionSummaries = execSummary
 	}
@@ -318,7 +352,10 @@ func buildResp(chunks []tipb.Chunk, counts []int64, dagReq *tipb.DAGRequest, err
 		}
 	}
 	resp.ExecDetails = &kvrpcpb.ExecDetails{
-		HandleTime: &kvrpcpb.HandleTime{ProcessMs: int64(dur / time.Millisecond)},
+		TimeDetail: &kvrpcpb.TimeDetail{ProcessWallTimeMs: int64(dur / time.Millisecond)},
+	}
+	resp.ExecDetailsV2 = &kvrpcpb.ExecDetailsV2{
+		TimeDetail: resp.ExecDetails.TimeDetail,
 	}
 	data, err := proto.Marshal(selResp)
 	if err != nil {
@@ -419,7 +456,7 @@ func fieldTypeFromPBColumn(col *tipb.ColumnInfo) *types.FieldType {
 		Flen:    int(col.GetColumnLen()),
 		Decimal: int(col.GetDecimal()),
 		Elems:   col.Elems,
-		Collate: mysql.Collations[uint8(collate.RestoreCollationIDIfNeeded(col.GetCollation()))],
+		Collate: collate.CollationID2Name(collate.RestoreCollationIDIfNeeded(col.GetCollation())),
 	}
 }
 

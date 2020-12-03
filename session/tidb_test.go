@@ -24,6 +24,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/auth"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/planner/core"
@@ -40,6 +41,10 @@ func TestT(t *testing.T) {
 	logutil.InitLogger(logutil.NewLogConfig(logLevel, logutil.DefaultLogFormat, "", logutil.EmptyFileLogConfig, false))
 	CustomVerboseFlag = true
 	SetSchemaLease(20 * time.Millisecond)
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TiKVClient.AsyncCommit.SafeWindow = 0
+		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
+	})
 	TestingT(t)
 }
 
