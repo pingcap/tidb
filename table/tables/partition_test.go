@@ -505,13 +505,12 @@ func (ts *testSuite) TestHashPartitionAndConditionConflict(c *C) {
 	tk.MustQuery("select * from t2 partition (p1) where t2.a = 6;").Check(testkit.Rows())
 }
 
-// this test should pass when https://github.com/pingcap/tidb/issues/21290 has been fixed
 func (ts *testSuite) TestPartitionListWithTimeType(c *C) {
 	tk := testkit.NewTestKitWithInit(c, ts.store)
 	tk.MustExec("use test;")
-	tk.MustExec("create table t(a date) partition by list columns (a) (partition p0 values in ('2010-02-02', '20180203'), partition p1 values in ('20200202'));")
-	tk.MustExec("insert into t(a) values (20180203);")
-	tk.MustQuery(`select * from t partition (p0);`).Check(testkit.Rows("2018-02-03"))
+	tk.MustExec("create table t_list1(a date) partition by list columns (a) (partition p0 values in ('2010-02-02', '20180203'), partition p1 values in ('20200202'));")
+	tk.MustExec("insert into t_list1(a) values (20180203);")
+	tk.MustQuery(`select * from t_list1 partition (p0);`).Check(testkit.Rows("2018-02-03"))
 }
 
 func (ts *testSuite) TestPartitionListWithNewCollation(c *C) {
