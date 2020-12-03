@@ -1314,10 +1314,6 @@ func (s *testSuiteAgg) TestIssue15284(c *C) {
 		ans = append(ans, strconv.Itoa(i))
 	}
 	tk.MustQuery("SELECT distinct a FROM t limit 3").Sort().Check(testkit.Rows(ans[:3]...))
-	for i := 5; i < 3000; i++ {
-		ans = append(ans, strconv.Itoa(i))
-	}
-	tk.MustQuery("SELECT distinct a FROM t limit 2000").Sort().Check(testkit.Rows(ans[:2000]...))
 
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("CREATE TABLE t1 (a int,b int)")
