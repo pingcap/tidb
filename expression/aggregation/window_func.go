@@ -57,8 +57,12 @@ func NewWindowFuncDesc(ctx sessionctx.Context, name string, args []expression.Ex
 	return &WindowFuncDesc{base}, nil
 }
 
-// ignoreFrameWindowFuncs is the functions that operate on the entire partition,
-// they should not have frame specifications.
+// ignoreFrameWindowFuncs is the functions that operate on the entire partition.
+// Standard SQL specifies that window functions that operate on the entire
+// partition should have no frame clause. MySQL permits a frame clause for such
+// functions but ignores it. These functions use the entire partition even if a
+// frame is specified.
+//
 // see https://dev.mysql.com/doc/refman/8.0/en/window-functions-frames.html
 var ignoreFrameWindowFuncs = map[string]struct{}{
 	ast.WindowFuncCumeDist:    {},
