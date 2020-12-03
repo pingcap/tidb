@@ -294,10 +294,11 @@ func WriteInsertInCsv(pCtx context.Context, tblIR TableDataIR, w storage.Writer,
 		counter         uint64
 		lastCounter     uint64
 		escapeBackSlash = tblIR.EscapeBackSlash()
+		selectedFields  = tblIR.SelectedField()
 		err             error
 	)
 
-	if !cfg.NoHeader && len(tblIR.ColumnNames()) != 0 && tblIR.SelectedField() != "" {
+	if !cfg.NoHeader && len(tblIR.ColumnNames()) != 0 && selectedFields != "" {
 		for i, col := range tblIR.ColumnNames() {
 			bf.Write(opt.delimiter)
 			escape([]byte(col), bf, getEscapeQuotation(escapeBackSlash, opt.delimiter))
@@ -312,7 +313,7 @@ func WriteInsertInCsv(pCtx context.Context, tblIR TableDataIR, w storage.Writer,
 
 	for fileRowIter.HasNext() {
 		lastBfSize := bf.Len()
-		if tblIR.SelectedField() != "" {
+		if selectedFields != "" {
 			if err = fileRowIter.Decode(row); err != nil {
 				log.Error("scanning from sql.Row failed", zap.Error(err))
 				return err
