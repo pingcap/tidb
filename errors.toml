@@ -636,6 +636,11 @@ error = '''
 Incorrect type for argument %s in function %s.
 '''
 
+["expression:8128"]
+error = '''
+Invalid TABLESAMPLE: %s
+'''
+
 ["json:3069"]
 error = '''
 Invalid JSON data provided to function %s: %s
@@ -1389,6 +1394,16 @@ TiKV server reports stale command
 ["tikv:9011"]
 error = '''
 TiKV max timestamp is not synced
+'''
+
+["tikv:9012"]
+error = '''
+TiFlash server timeout
+'''
+
+["tikv:9013"]
+error = '''
+TiFlash server is busy
 '''
 
 ["types:1063"]
