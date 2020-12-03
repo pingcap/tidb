@@ -466,6 +466,9 @@ func (s *session) doCommit(ctx context.Context) error {
 	if s.GetSessionVars().EnableAmendPessimisticTxn {
 		s.txn.SetOption(kv.SchemaAmender, NewSchemaAmenderForTikvTxn(s))
 	}
+	s.txn.SetOption(kv.EnableAsyncCommit, s.GetSessionVars().EnableAsyncCommit)
+	s.txn.SetOption(kv.Enable1PC, s.GetSessionVars().Enable1PC)
+	s.txn.SetOption(kv.GuaranteeExternalConsistency, s.GetSessionVars().GuaranteeExternalConsistency)
 
 	return s.txn.Commit(sessionctx.SetCommitCtx(ctx, s))
 }
@@ -1134,7 +1137,11 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 		}
 	}
 	_, pi.Digest = s.sessionVars.StmtCtx.SQLDigest()
-	s.currentPlan = nil
+	// DO NOT reset the currentPlan to nil until this query finishes execution, otherwise reentrant calls
+	// of SetProcessInfo would override Plan and PlanExplainRows to nil.
+	if command == mysql.ComSleep {
+		s.currentPlan = nil
+	}
 	if s.sessionVars.User != nil {
 		pi.User = s.sessionVars.User.Username
 		pi.Host = s.sessionVars.User.Hostname
@@ -1327,7 +1334,6 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 				se.StmtCommit()
 			}
 		}
-		err = finishStmt(ctx, se, err, s)
 	}
 	if rs != nil {
 		return &execStmtResult{
@@ -1337,6 +1343,7 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 		}, err
 	}
 
+	err = finishStmt(ctx, se, err, s)
 	if se.hasQuerySpecial() {
 		// The special query will be handled later in handleQuerySpecial,
 		// then should call the ExecStmt.FinishExecuteStmt to finish this statement.
@@ -2011,23 +2018,27 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 		}
 	}
 
-	err = executor.LoadExprPushdownBlacklist(se)
+	se4, err := createSession(store)
+	if err != nil {
+		return nil, err
+	}
+	err = executor.LoadExprPushdownBlacklist(se4)
 	if err != nil {
 		return nil, err
 	}
 
-	err = executor.LoadOptRuleBlacklist(se)
+	err = executor.LoadOptRuleBlacklist(se4)
 	if err != nil {
 		return nil, err
 	}
 
-	dom.TelemetryLoop(se)
+	dom.TelemetryLoop(se4)
 
-	se1, err := createSession(store)
+	se5, err := createSession(store)
 	if err != nil {
 		return nil, err
 	}
-	err = dom.UpdateTableStatsLoop(se1)
+	err = dom.UpdateTableStatsLoop(se5)
 	if err != nil {
 		return nil, err
 	}
@@ -2132,7 +2143,7 @@ func CreateSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 
 const (
 	notBootstrapped         = 0
-	currentBootstrapVersion = version54
+	currentBootstrapVersion = version56
 )
 
 func getStoreBootstrapVersion(store kv.Storage) int64 {
@@ -2284,6 +2295,9 @@ var builtinGlobalVariable = []string{
 	variable.TiDBEnableAmendPessimisticTxn,
 	variable.TiDBMemoryUsageAlarmRatio,
 	variable.TiDBEnableRateLimitAction,
+	variable.TiDBEnableAsyncCommit,
+	variable.TiDBEnable1PC,
+	variable.TiDBGuaranteeExternalConsistency,
 }
 
 var (

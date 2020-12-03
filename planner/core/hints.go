@@ -80,6 +80,9 @@ func extractTableAsName(p PhysicalPlan) (*model.CIStr, *model.CIStr) {
 }
 
 func getJoinHints(sctx sessionctx.Context, joinType string, parentOffset int, nodeType utilhint.NodeType, children ...PhysicalPlan) (res []*ast.TableOptimizerHint) {
+	if parentOffset == -1 {
+		return res
+	}
 	for _, child := range children {
 		blockOffset := child.SelectBlockOffset()
 		if blockOffset == -1 {

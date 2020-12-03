@@ -319,6 +319,7 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.PartitionOptions, tb
 		Enable: enable,
 		Num:    s.Num,
 	}
+	tbInfo.Partition = pi
 	if s.Expr != nil {
 		if err := checkPartitionFuncValid(ctx, tbInfo, s.Expr); err != nil {
 			return errors.Trace(err)
@@ -334,9 +335,11 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.PartitionOptions, tb
 		for _, cn := range s.ColumnNames {
 			pi.Columns = append(pi.Columns, cn.Name)
 		}
+		if err := checkColumnsPartitionType(tbInfo); err != nil {
+			return err
+		}
 	}
 
-	tbInfo.Partition = pi
 	defs, err := buildPartitionDefinitionsInfo(ctx, s.Definitions, tbInfo)
 	if err != nil {
 		return errors.Trace(err)
