@@ -770,45 +770,41 @@ func (e *HashAggExec) parallelExec(ctx context.Context, chk *chunk.Chunk) error 
 // unparallelExec executes hash aggregation algorithm in single thread.
 func (e *HashAggExec) unparallelExec(ctx context.Context, chk *chunk.Chunk) error {
 	if e.isAllFirstRow {
-		err := e.executeFirstRow(ctx, chk)
+		return e.executeFirstRow(ctx, chk)
+	}
+	// In this stage we consider all data from src as a single group.
+	if !e.prepared {
+		err := e.execute(ctx)
 		if err != nil {
 			return err
 		}
-	} else {
-		// In this stage we consider all data from src as a single group.
-		if !e.prepared {
-			err := e.execute(ctx)
-			if err != nil {
+		if (len(e.groupSet) == 0) && len(e.GroupByItems) == 0 {
+			// If no groupby and no data, we should add an empty group.
+			// For example:
+			// "select count(c) from t;" should return one row [0]
+			// "select count(c) from t group by c1;" should return empty result set.
+			e.groupSet.Insert("")
+			e.groupKeys = append(e.groupKeys, "")
+		}
+		e.prepared = true
+	}
+	chk.Reset()
+
+	// Since we return e.maxChunkSize rows every time, so we should not traverse
+	// `groupSet` because of its randomness.
+	for ; e.cursor4GroupKey < len(e.groupKeys); e.cursor4GroupKey++ {
+		partialResults := e.getPartialResults(e.groupKeys[e.cursor4GroupKey])
+		if len(e.PartialAggFuncs) == 0 {
+			chk.SetNumVirtualRows(chk.NumRows() + 1)
+		}
+		for i, af := range e.PartialAggFuncs {
+			if err := af.AppendFinalResult2Chunk(e.ctx, partialResults[i], chk); err != nil {
 				return err
 			}
-			if (len(e.groupSet) == 0) && len(e.GroupByItems) == 0 {
-				// If no groupby and no data, we should add an empty group.
-				// For example:
-				// "select count(c) from t;" should return one row [0]
-				// "select count(c) from t group by c1;" should return empty result set.
-				e.groupSet.Insert("")
-				e.groupKeys = append(e.groupKeys, "")
-			}
-			e.prepared = true
 		}
-		chk.Reset()
-
-		// Since we return e.maxChunkSize rows every time, so we should not traverse
-		// `groupSet` because of its randomness.
-		for ; e.cursor4GroupKey < len(e.groupKeys); e.cursor4GroupKey++ {
-			partialResults := e.getPartialResults(e.groupKeys[e.cursor4GroupKey])
-			if len(e.PartialAggFuncs) == 0 {
-				chk.SetNumVirtualRows(chk.NumRows() + 1)
-			}
-			for i, af := range e.PartialAggFuncs {
-				if err := af.AppendFinalResult2Chunk(e.ctx, partialResults[i], chk); err != nil {
-					return err
-				}
-			}
-			if chk.IsFull() {
-				e.cursor4GroupKey++
-				return nil
-			}
+		if chk.IsFull() {
+			e.cursor4GroupKey++
+			return nil
 		}
 	}
 	return nil
@@ -874,10 +870,18 @@ func (e *HashAggExec) getPartialResults(groupKey string) []aggfuncs.PartialResul
 
 func (e *HashAggExec) executeFirstRow(ctx context.Context, chk *chunk.Chunk) (err error) {
 	for {
-		mSize := e.childResult.MemoryUsage()
-		if e.childResult == nil || e.firstRowProcessed == e.childResult.NumRows() {
+		if e.firstRowProcessed == e.childResult.NumRows() {
+			mSize := e.childResult.MemoryUsage()
 			err := Next(ctx, e.children[0], e.childResult)
 			e.memTracker.Consume(e.childResult.MemoryUsage() - mSize)
+			if err != nil {
+				return err
+			}
+			// no more data.
+			if e.childResult.NumRows() == 0 {
+				return nil
+			}
+			e.groupKeyBuffer, err = getGroupKey(e.ctx, e.childResult, e.groupKeyBuffer, e.GroupByItems)
 			if err != nil {
 				return err
 			}
@@ -890,26 +894,15 @@ func (e *HashAggExec) executeFirstRow(ctx context.Context, chk *chunk.Chunk) (er
 			}
 		})
 
-		// no more data.
-		if e.childResult.NumRows() == 0 {
-			return nil
-		}
-
-		e.groupKeyBuffer, err = getGroupKey(e.ctx, e.childResult, e.groupKeyBuffer, e.GroupByItems)
-		if err != nil {
-			return err
-		}
-
-		for j := e.firstRowProcessed; j < e.childResult.NumRows(); j++ {
-			groupKey := string(e.groupKeyBuffer[j]) // do memory copy here, because e.groupKeyBuffer may be reused.
+		for e.firstRowProcessed < e.childResult.NumRows() {
+			groupKey := string(e.groupKeyBuffer[e.firstRowProcessed]) // do memory copy here, because e.groupKeyBuffer may be reused.
 			if !e.groupSet.Exist(groupKey) {
 				e.groupSet.Insert(groupKey)
 				e.groupKeys = append(e.groupKeys, groupKey)
-				chk.AppendRow(e.childResult.GetRow(j))
+				chk.AppendRow(e.childResult.GetRow(e.firstRowProcessed))
 			}
 			e.firstRowProcessed++
 			if chk.IsFull() {
-				e.cursor4GroupKey++
 				return nil
 			}
 		}

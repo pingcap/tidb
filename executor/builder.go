@@ -1232,9 +1232,8 @@ func (b *executorBuilder) buildHashAgg(v *plannercore.PhysicalHashAgg) Executor 
 	// |  NULL  |
 	// +--------+
 	// 1 row in set (0.00 sec)
-	isAllFirstRow := aggregation.IsAllFirstRow(v.AggFuncs)
-	e.isAllFirstRow = isAllFirstRow
-	if len(v.GroupByItems) != 0 || isAllFirstRow {
+	e.isAllFirstRow = aggregation.IsAllFirstRow(v.AggFuncs)
+	if len(v.GroupByItems) != 0 || e.isAllFirstRow {
 		e.defaultVal = nil
 	} else {
 		e.defaultVal = chunk.NewChunkWithCapacity(retTypes(e), 1)
