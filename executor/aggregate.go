@@ -174,7 +174,7 @@ type HashAggExec struct {
 	prepared         bool
 	executed         bool
 
-	isAllFirstRow    bool
+	isAllFirstRow bool
 
 	memTracker *memory.Tracker // track memory usage.
 
