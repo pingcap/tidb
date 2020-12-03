@@ -206,10 +206,6 @@ func (e *firstRow4Float32) AppendFinalResult2Chunk(sctx sessionctx.Context, pr P
 	return nil
 }
 
-func (e *firstRow4Float32) IsFirstRow() bool {
-	return true
-}
-
 type firstRow4Float64 struct {
 	baseAggFunc
 }

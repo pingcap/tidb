@@ -916,15 +916,6 @@ func (e *HashAggExec) executeFirstRow(ctx context.Context, chk *chunk.Chunk) (er
 	}
 }
 
-func (e *HashAggExec) isAllFirstRowAgg() bool {
-	for _, af := range e.PartialAggFuncs {
-		if _, ok := af.(aggfuncs.FirstRow); !ok {
-			return false
-		}
-	}
-	return true
-}
-
 func (e *HashAggExec) initRuntimeStats() {
 	if e.runtimeStats != nil && e.stats == nil {
 		stats := &HashAggRuntimeStats{
