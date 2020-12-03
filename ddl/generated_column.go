@@ -170,13 +170,16 @@ func checkModifyGeneratedColumn(tbl table.Table, oldCol, newCol *table.Column, n
 
 	// rule 2.
 	originCols := tbl.Cols()
+	var err error
 	var colName2Generation = make(map[string]columnGenerationInDDL, len(originCols))
 	for i, column := range originCols {
 		// We can compare the pointers simply.
 		if column == oldCol {
-			i, err := findPositionRelativeColumn(originCols, pos)
-			if err != nil {
-				return errors.Trace(err)
+			if pos != nil && pos.Tp != ast.ColumnPositionNone {
+				i, err = findPositionRelativeColumn(originCols, pos)
+				if err != nil {
+					return errors.Trace(err)
+				}
 			}
 			colName2Generation[newCol.Name.L] = columnGenerationInDDL{
 				position:    i,
