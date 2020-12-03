@@ -128,7 +128,7 @@ ifeq ("$(TRAVIS_COVERAGE)", "1")
 			-covermode=count \
 			-ignore='.git,vendor,cmd,docs,LICENSES' \
 			-concurrency=4 \
-			-- -coverpkg=./... \
+			-- -coverpkg=$(PACKAGES) \
 			|| { $(FAILPOINT_DISABLE); exit 1; }
 else
 	@echo "Running in native mode."
