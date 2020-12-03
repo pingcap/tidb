@@ -799,7 +799,7 @@ func ColumnInfos2ColumnsAndNames(ctx sessionctx.Context, dbName, tblName model.C
 			ColName:     col.Name,
 		})
 		newCol := &Column{
-			RetType:  &col.FieldType,
+			RetType:  col.FieldType.Clone(),
 			ID:       col.ID,
 			UniqueID: ctx.GetSessionVars().AllocPlanColumnID(),
 			Index:    col.Offset,
@@ -1016,7 +1016,8 @@ func canFuncBePushed(sf *ScalarFunction, storeType kv.StoreType) bool {
 		ast.IsIPv4,
 		ast.IsIPv4Compat,
 		ast.IsIPv4Mapped,
-		ast.IsIPv6:
+		ast.IsIPv6,
+		ast.UUID:
 		ret = true
 
 	// A special case: Only push down Round by signature

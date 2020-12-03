@@ -27,6 +27,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"time"
 
 	"github.com/go-sql-driver/mysql"
@@ -38,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
@@ -143,6 +145,10 @@ func (ts *tidbTestSerialSuite) TestLoadData(c *C) {
 	ts.runTestLoadData(c, ts.server)
 	ts.runTestLoadDataWithSelectIntoOutfile(c, ts.server)
 	ts.runTestLoadDataForSlowLog(c, ts.server)
+}
+
+func (ts *tidbTestSerialSuite) TestExplainFor(c *C) {
+	ts.runTestExplainForConn(c)
 }
 
 func (ts *tidbTestSerialSuite) TestStmtCount(c *C) {
@@ -936,6 +942,26 @@ func (ts *tidbTestSuite) TestNullFlag(c *C) {
 	c.Assert(dumpFlag(cols[0].Type, cols[0].Flag), Equals, expectFlag)
 }
 
+func (ts *tidbTestSuite) TestNO_DEFAULT_VALUEFlag(c *C) {
+	// issue #21465
+	qctx, err := ts.tidbdrv.OpenCtx(uint64(0), 0, uint8(tmysql.DefaultCollationID), "test", nil)
+	c.Assert(err, IsNil)
+
+	ctx := context.Background()
+	_, err = Execute(ctx, qctx, "use test")
+	c.Assert(err, IsNil)
+	_, err = Execute(ctx, qctx, "drop table if exists t")
+	c.Assert(err, IsNil)
+	_, err = Execute(ctx, qctx, "create table t(c1 int key, c2 int);")
+	c.Assert(err, IsNil)
+	rs, err := Execute(ctx, qctx, "select c1 from t;")
+	c.Assert(err, IsNil)
+	cols := rs.Columns()
+	c.Assert(len(cols), Equals, 1)
+	expectFlag := uint16(tmysql.NotNullFlag | tmysql.PriKeyFlag | tmysql.NoDefaultValueFlag)
+	c.Assert(dumpFlag(cols[0].Type, cols[0].Flag), Equals, expectFlag)
+}
+
 func (ts *tidbTestSuite) TestGracefulShutdown(c *C) {
 	var err error
 	ts.store, err = mockstore.NewMockStore()
@@ -993,4 +1019,24 @@ func (ts *tidbTestSuite) TestPessimisticInsertSelectForUpdate(c *C) {
 	rs, err := Execute(ctx, qctx, "INSERT INTO t2 (id) select id from t1 where id = 1 for update")
 	c.Assert(err, IsNil)
 	c.Assert(rs, IsNil) // should be no delay
+}
+
+func (ts *tidbTestSerialSuite) TestPrepareCount(c *C) {
+	qctx, err := ts.tidbdrv.OpenCtx(uint64(0), 0, uint8(tmysql.DefaultCollationID), "test", nil)
+	c.Assert(err, IsNil)
+	prepareCnt := atomic.LoadInt64(&variable.PreparedStmtCount)
+	ctx := context.Background()
+	_, err = Execute(ctx, qctx, "use test;")
+	c.Assert(err, IsNil)
+	_, err = Execute(ctx, qctx, "drop table if exists t1")
+	c.Assert(err, IsNil)
+	_, err = Execute(ctx, qctx, "create table t1 (id int)")
+	c.Assert(err, IsNil)
+	stmt, _, _, err := qctx.Prepare("insert into t1 values (?)")
+	c.Assert(err, IsNil)
+	c.Assert(atomic.LoadInt64(&variable.PreparedStmtCount), Equals, prepareCnt+1)
+	c.Assert(err, IsNil)
+	err = qctx.GetStatement(stmt.ID()).Close()
+	c.Assert(err, IsNil)
+	c.Assert(atomic.LoadInt64(&variable.PreparedStmtCount), Equals, prepareCnt)
 }

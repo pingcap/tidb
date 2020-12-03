@@ -67,7 +67,7 @@ func rewriteAstExpr(sctx sessionctx.Context, expr ast.ExprNode, schema *expressi
 	if sctx.GetSessionVars().TxnCtx.InfoSchema != nil {
 		is = sctx.GetSessionVars().TxnCtx.InfoSchema.(infoschema.InfoSchema)
 	}
-	b := NewPlanBuilder(sctx, is, &hint.BlockHintProcessor{})
+	b, savedBlockNames := NewPlanBuilder(sctx, is, &hint.BlockHintProcessor{})
 	fakePlan := LogicalTableDual{}.Init(sctx, 0)
 	if schema != nil {
 		fakePlan.schema = schema
@@ -78,6 +78,7 @@ func rewriteAstExpr(sctx sessionctx.Context, expr ast.ExprNode, schema *expressi
 	if err != nil {
 		return nil, err
 	}
+	sctx.GetSessionVars().PlannerSelectBlockAsName = savedBlockNames
 	return newExpr, nil
 }
 
@@ -410,6 +411,7 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 		er.ctxStackAppend(er.schema.Columns[index], er.names[index])
 		return inNode, true
 	case *ast.FuncCallExpr:
+		er.asScalar = true
 		if _, ok := expression.DisableFoldFunctions[v.FnName.L]; ok {
 			er.disableFoldCounter++
 		}
@@ -417,10 +419,16 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 			er.tryFoldCounter++
 		}
 	case *ast.CaseExpr:
+		er.asScalar = true
 		if _, ok := expression.DisableFoldFunctions["case"]; ok {
 			er.disableFoldCounter++
 		}
 		if _, ok := expression.TryFoldFunctions["case"]; ok {
+			er.tryFoldCounter++
+		}
+	case *ast.BinaryOperationExpr:
+		er.asScalar = true
+		if v.Op == opcode.LogicAnd || v.Op == opcode.LogicOr {
 			er.tryFoldCounter++
 		}
 	case *ast.SetCollationExpr:
@@ -1021,6 +1029,9 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 	case *ast.UnaryOperationExpr:
 		er.unaryOpToExpression(v)
 	case *ast.BinaryOperationExpr:
+		if v.Op == opcode.LogicAnd || v.Op == opcode.LogicOr {
+			er.tryFoldCounter--
+		}
 		er.binaryOpToExpression(v)
 	case *ast.BetweenExpr:
 		er.betweenToExpression(v)
@@ -1148,17 +1159,27 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
 	sessionVars := er.b.ctx.GetSessionVars()
 	if !v.IsSystem {
 		if v.Value != nil {
-			er.ctxStack[stkLen-1], er.err = er.newFunction(ast.SetVar,
-				er.ctxStack[stkLen-1].GetType(),
+			tp := er.ctxStack[stkLen-1].GetType()
+			er.ctxStack[stkLen-1], er.err = er.newFunction(ast.SetVar, tp,
 				expression.DatumToConstant(types.NewDatum(name), mysql.TypeString),
 				er.ctxStack[stkLen-1])
 			er.ctxNameStk[stkLen-1] = types.EmptyName
+			// Store the field type of the variable into SessionVars.UserVarTypes.
+			// Normally we can infer the type from SessionVars.User, but we need SessionVars.UserVarTypes when
+			// GetVar has not been executed to fill the SessionVars.Users.
+			sessionVars.UsersLock.Lock()
+			sessionVars.UserVarTypes[name] = tp
+			sessionVars.UsersLock.Unlock()
 			return
 		}
-		f, err := er.newFunction(ast.GetVar,
-			// TODO: Here is wrong, the sessionVars should store a name -> Datum map. Will fix it later.
-			types.NewFieldType(mysql.TypeString),
-			expression.DatumToConstant(types.NewStringDatum(name), mysql.TypeString))
+		sessionVars.UsersLock.RLock()
+		tp, ok := sessionVars.UserVarTypes[name]
+		sessionVars.UsersLock.RUnlock()
+		if !ok {
+			tp = types.NewFieldType(mysql.TypeVarString)
+			tp.Flen = mysql.MaxFieldVarCharLength
+		}
+		f, err := er.newFunction(ast.GetVar, tp, expression.DatumToConstant(types.NewStringDatum(name), mysql.TypeString))
 		if err != nil {
 			er.err = err
 			return

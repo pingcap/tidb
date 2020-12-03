@@ -28,3 +28,7 @@ const (
 	// RuleIndexIndex is the index for a rule of index.
 	RuleIndexIndex
 )
+
+// DCLabelKey indicates the key of label which represents the dc for Store.
+// FIXME: currently we assumes "zone" is the dcLabel key in Store
+const DCLabelKey = "zone"
