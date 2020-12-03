@@ -1968,7 +1968,7 @@ func (s *testIntegrationSerialSuite) TestPreferRangeScan(c *C) {
 		"└─TableRowIDScan_6(Probe) 2048.00 cop[tikv] table:test keep order:false"))
 }
 
-func (s *testIntegrationSuite) TestCorrelatedAggInSubquery(c *C) {
+func (s *testIntegrationSuite) TestCorrelatedAggregate(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 

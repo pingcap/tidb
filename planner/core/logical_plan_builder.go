@@ -1962,20 +1962,47 @@ func (b *PlanBuilder) resolveHavingAndOrderBy(sel *ast.SelectStmt, p LogicalPlan
 	return havingAggMapper, extractor.aggMapper, nil
 }
 
-func (b *PlanBuilder) extractAggFuncs(ctx context.Context, p LogicalPlan, fields []*ast.SelectField) ([]*ast.AggregateFuncExpr, map[*ast.AggregateFuncExpr]int, []*ast.AggregateFuncExpr) {
-	extractor := &AggregateFuncExtractor{ctx: ctx, b: b, p: p}
+func (b *PlanBuilder) extractAggFuncs(ctx context.Context, p LogicalPlan, fields []*ast.SelectField) (
+	[]*ast.AggregateFuncExpr, map[*ast.AggregateFuncExpr]int, []*ast.AggregateFuncExpr, error) {
+	extractor := &AggregateFuncExtractor{}
 	for _, f := range fields {
 		n, _ := f.Expr.Accept(extractor)
 		f.Expr = n.(ast.ExprNode)
 	}
-	aggList := extractor.AggFuncs
+	aggList, outerAggList, err := b.splitOuterAggFuncs(ctx, p, extractor.AggFuncs)
+	if err != nil {
+		return nil, nil, nil, err
+	}
 	totalAggMapper := make(map[*ast.AggregateFuncExpr]int, len(aggList))
-	outerAggList := extractor.OuterAggFuncs
 
 	for i, agg := range aggList {
 		totalAggMapper[agg] = i
 	}
-	return aggList, totalAggMapper, outerAggList
+	return aggList, totalAggMapper, outerAggList, nil
+}
+
+func (b *PlanBuilder) splitOuterAggFuncs(ctx context.Context, p LogicalPlan, aggFuncs []*ast.AggregateFuncExpr) (
+	inner []*ast.AggregateFuncExpr, outer []*ast.AggregateFuncExpr, err error) {
+	var corCols []*expression.CorrelatedColumn
+	var cols []*expression.Column
+	for _, agg := range aggFuncs {
+		corCols = corCols[:0]
+		cols = cols[:0]
+		for _, arg := range agg.Args {
+			expr, _, err := b.rewrite(ctx, arg, p, nil, true)
+			if err != nil {
+				return nil, nil, err
+			}
+			corCols = append(corCols, expression.ExtractCorColumns(expr)...)
+			cols = append(cols, expression.ExtractDependentColumns(expr)...)
+		}
+		if len(corCols) > 0 && len(cols) == 0 {
+			outer = append(outer, agg)
+		} else {
+			inner = append(inner, agg)
+		}
+	}
+	return
 }
 
 // resolveWindowFunction will process window functions and resolve the columns that don't exist in select fields.
@@ -2083,7 +2110,10 @@ func (r *subqueryResolver) resolveSelect(sel *ast.SelectStmt) error {
 
 	hasAgg := r.b.detectSelectAgg(sel)
 	if hasAgg {
-		_, _, outerAggFuncs := r.b.extractAggFuncs(r.ctx, p, sel.Fields.Fields)
+		_, _, outerAggFuncs, err := r.b.extractAggFuncs(r.ctx, p, sel.Fields.Fields)
+		if err != nil {
+			return err
+		}
 		r.outerAggFuncs = append(r.outerAggFuncs, outerAggFuncs...)
 	}
 
@@ -2100,12 +2130,13 @@ func (r *subqueryResolver) resolveSelect(sel *ast.SelectStmt) error {
 }
 
 func (r *subqueryResolver) extractAggFromWhere(ctx context.Context, p LogicalPlan, where ast.ExprNode) ([]*ast.AggregateFuncExpr, error) {
-	extractor := &AggregateFuncExtractor{ctx: ctx, b: r.b, p: p}
-	_, ok := where.Accept(extractor)
-	if !ok {
-		return nil, extractor.err
+	extractor := &AggregateFuncExtractor{}
+	_, _ = where.Accept(extractor)
+	_, outerAggList, err := r.b.splitOuterAggFuncs(ctx, p, extractor.AggFuncs)
+	if err != nil {
+		return nil, err
 	}
-	return extractor.OuterAggFuncs, nil
+	return outerAggList, nil
 }
 
 func (r *subqueryResolver) Leave(n ast.Node) (ast.Node, bool) {
@@ -3019,7 +3050,10 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 
 	hasAgg := b.detectSelectAgg(sel)
 	if hasAgg {
-		aggFuncs, totalMap, _ = b.extractAggFuncs(ctx, p, sel.Fields.Fields)
+		aggFuncs, totalMap, _, err = b.extractAggFuncs(ctx, p, sel.Fields.Fields)
+		if err != nil {
+			return nil, err
+		}
 		if len(aggFuncs) > 0 {
 			var aggIndexMap map[int]int
 			p, aggIndexMap, err = b.buildAggregation(ctx, p, aggFuncs, gbyCols, corAggMap)

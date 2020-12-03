@@ -14,7 +14,6 @@
 package core
 
 import (
-	"context"
 	"fmt"
 	"sort"
 	"strings"
@@ -32,13 +31,8 @@ import (
 // It converts ColunmNameExpr to AggregateFuncExpr and collects AggregateFuncExpr.
 type AggregateFuncExtractor struct {
 	inAggregateFuncExpr bool
-	ctx                 context.Context
-	p                   LogicalPlan
-	b                   *PlanBuilder
-	err                 error
 	// AggFuncs is the collected AggregateFuncExprs.
-	AggFuncs      []*ast.AggregateFuncExpr
-	OuterAggFuncs []*ast.AggregateFuncExpr
+	AggFuncs []*ast.AggregateFuncExpr
 }
 
 // Enter implements Visitor interface.
@@ -57,24 +51,7 @@ func (a *AggregateFuncExtractor) Leave(n ast.Node) (ast.Node, bool) {
 	switch v := n.(type) {
 	case *ast.AggregateFuncExpr:
 		a.inAggregateFuncExpr = false
-		fullyCorrelated := true
-		for _, arg := range v.Args {
-			expr, _, err := a.b.rewrite(a.ctx, arg, a.p, nil, true)
-			if err != nil {
-				a.err = err
-			}
-			corCols := expression.ExtractCorColumns(expr)
-			cols := expression.ExtractDependentColumns(expr)
-			if len(corCols) == 0 || len(cols) > 0 {
-				fullyCorrelated = false
-				break
-			}
-		}
-		if fullyCorrelated {
-			a.OuterAggFuncs = append(a.OuterAggFuncs, v)
-		} else {
-			a.AggFuncs = append(a.AggFuncs, v)
-		}
+		a.AggFuncs = append(a.AggFuncs, v)
 	}
 	return n, true
 }
