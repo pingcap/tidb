@@ -552,7 +552,7 @@ func (s *testIntegrationSuite1) TestCreateTableWithListPartition(c *C) {
 		},
 		{
 			"create table t (id timestamp) partition by list (id) (partition p0 values in ('2019-01-09 11:23:34'));",
-			ddl.ErrNotAllowedTypeInPartition,
+			ddl.ErrValuesIsNotIntType,
 		},
 		{
 			"create table t (id decimal) partition by list (id) (partition p0 values in ('2019-01-09 11:23:34'));",
@@ -911,7 +911,7 @@ func (s *testIntegrationSuite5) TestAlterTableAddPartitionByList(c *C) {
 			ddl.ErrMultipleDefConstInListPart,
 		},
 		{"alter table t add partition (partition p6 values in ('a'))",
-			ddl.ErrWrongTypeColumnValue,
+			ddl.ErrValuesIsNotIntType,
 		},
 	}
 
