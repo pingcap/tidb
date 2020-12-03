@@ -1291,7 +1291,7 @@ func (s *testSuiteAgg) TestIssue20658(c *C) {
 					c.Assert(err, IsNil)
 					v2, err := strconv.ParseFloat(expected[i][0].(string), 64)
 					c.Assert(err, IsNil)
-					c.Assert(math.Abs(v1-v2), Less, 0.005)
+					c.Assert(math.Abs(v1-v2), Less, 1e-3)
 				}
 			}
 		}
