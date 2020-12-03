@@ -37,6 +37,8 @@
       "EXPLAIN SELECT * FROM t1 WHERE col1 = -200 ORDER BY id;",
       "EXPLAIN SELECT * FROM t1 WHERE col1 < 200 ORDER BY id;",
       "EXPLAIN SELECT * FROM t1 WHERE col1 > -200 ORDER BY id;",
+      "EXPLAIN SELECT * FROM t1 WHERE col1 < -128 ORDER BY id;",
+      "EXPLAIN SELECT * FROM t1 WHERE col1 > 127 ORDER BY id;",
       // beyond tinyint unsigned range
       "EXPLAIN SELECT * FROM t1 WHERE col2 > 300 ORDER BY id;",
       "EXPLAIN SELECT * FROM t1 WHERE col2 < -1 ORDER BY id;",
@@ -44,6 +46,8 @@
       "EXPLAIN SELECT * FROM t1 WHERE col2 = -1 ORDER BY id;",
       "EXPLAIN SELECT * FROM t1 WHERE col2 < 300 ORDER BY id;",
       "EXPLAIN SELECT * FROM t1 WHERE col2 > -1 ORDER BY id;",
+      "EXPLAIN SELECT * FROM t1 WHERE col2 < 0 ORDER BY id;",
+      "EXPLAIN SELECT * FROM t1 WHERE col2 > 256 ORDER BY id;",
 
       // smallint
       "EXPLAIN SELECT * FROM t1 WHERE col3 > 100 ORDER BY id;",
@@ -54,6 +58,8 @@
       "EXPLAIN SELECT * FROM t1 WHERE col3 = -50000 ORDER BY id;",
       "EXPLAIN SELECT * FROM t1 WHERE col3 < 50000 ORDER BY id;",
       "EXPLAIN SELECT * FROM t1 WHERE col3 > -50000 ORDER BY id;",
+      "EXPLAIN SELECT * FROM t1 WHERE col3 > 32767 ORDER BY id;",
+      "EXPLAIN SELECT * FROM t1 WHERE col3 < -32768 ORDER BY id;",
       // beyond smallint unsigned range
       "EXPLAIN SELECT * FROM t1 WHERE col4 > 100000 ORDER BY id;",
       "EXPLAIN SELECT * FROM t1 WHERE col4 < -1 ORDER BY id;",
@@ -61,6 +67,8 @@
       "EXPLAIN SELECT * FROM t1 WHERE col4 = -1 ORDER BY id;",
       "EXPLAIN SELECT * FROM t1 WHERE col4 < 100000 ORDER BY id;",
       "EXPLAIN SELECT * FROM t1 WHERE col4 > -1 ORDER BY id;",
+      "EXPLAIN SELECT * FROM t1 WHERE col4 < 0 ORDER BY id;",
+      "EXPLAIN SELECT * FROM t1 WHERE col4 > 65535 ORDER BY id;",
 
       // mediumint
       "EXPLAIN SELECT * FROM t1 WHERE col5 > 100 ORDER BY id;",
@@ -71,6 +79,8 @@
       "EXPLAIN SELECT * FROM t1 WHERE col5 = -8388609 ORDER BY id;",
       "EXPLAIN SELECT * FROM t1 WHERE col5 < 8388608 ORDER BY id;",
       "EXPLAIN SELECT * FROM t1 WHERE col5 > -8388609 ORDER BY id;",
+      "EXPLAIN SELECT * FROM t1 WHERE col5 > 8388607 ORDER BY id;",
+      "EXPLAIN SELECT * FROM t1 WHERE col5 < -8388608 ORDER BY id;",
       // beyond mediumint unsigned range
       "EXPLAIN SELECT * FROM t1 WHERE col6 > 16777216 ORDER BY id;",
       "EXPLAIN SELECT * FROM t1 WHERE col6 < -1 ORDER BY id;",
@@ -78,6 +88,8 @@
       "EXPLAIN SELECT * FROM t1 WHERE col6 = -1 ORDER BY id;",
       "EXPLAIN SELECT * FROM t1 WHERE col6 < 16777216 ORDER BY id;",
       "EXPLAIN SELECT * FROM t1 WHERE col6 > -1 ORDER BY id;",
+      "EXPLAIN SELECT * FROM t1 WHERE col6 > 16777215 ORDER BY id;",
+      "EXPLAIN SELECT * FROM t1 WHERE col6 < 0 ORDER BY id;",
 
       // int
       "EXPLAIN SELECT * FROM t1 WHERE col7 > 100 ORDER BY id;",
@@ -88,6 +100,8 @@
       "EXPLAIN SELECT * FROM t1 WHERE col7 = -2147483649 ORDER BY id;",
       "EXPLAIN SELECT * FROM t1 WHERE col7 < 2147483648 ORDER BY id;",
       "EXPLAIN SELECT * FROM t1 WHERE col7 > -2147483649 ORDER BY id;",
+      "EXPLAIN SELECT * FROM t1 WHERE col7 > 2147483647 ORDER BY id;",
+      "EXPLAIN SELECT * FROM t1 WHERE col7 < -2147483648 ORDER BY id;",
       // beyond int unsigned range
       "EXPLAIN SELECT * FROM t1 WHERE col8 > 4294967296 ORDER BY id;",
       "EXPLAIN SELECT * FROM t1 WHERE col8 < -1 ORDER BY id;",
@@ -95,6 +109,8 @@
       "EXPLAIN SELECT * FROM t1 WHERE col8 = -1 ORDER BY id;",
       "EXPLAIN SELECT * FROM t1 WHERE col8 < 4294967296 ORDER BY id;",
       "EXPLAIN SELECT * FROM t1 WHERE col8 > -1 ORDER BY id;",
+      "EXPLAIN SELECT * FROM t1 WHERE col8 > 4294967295 ORDER BY id;",
+      "EXPLAIN SELECT * FROM t1 WHERE col8 < 0 ORDER BY id;",
 
       // bigint
       "EXPLAIN SELECT * FROM t1 WHERE col9 > 100 ORDER BY id;",
@@ -105,6 +121,8 @@
       "EXPLAIN SELECT * FROM t1 WHERE col9 = -9223372036854775809 ORDER BY id;",
       "EXPLAIN SELECT * FROM t1 WHERE col9 < 9223372036854775808 ORDER BY id;",
       "EXPLAIN SELECT * FROM t1 WHERE col9 > -9223372036854775809 ORDER BY id;",
+      "EXPLAIN SELECT * FROM t1 WHERE col9 > 9223372036854775807 ORDER BY id;",
+      "EXPLAIN SELECT * FROM t1 WHERE col9 < -9223372036854775808 ORDER BY id;",
       // beyond bigint unsigned range
       "EXPLAIN SELECT * FROM t1 WHERE col10 > 18446744073709551616 ORDER BY id;",
       "EXPLAIN SELECT * FROM t1 WHERE col10 < -1 ORDER BY id;",
@@ -112,6 +130,7 @@
       "EXPLAIN SELECT * FROM t1 WHERE col10 = -1 ORDER BY id;",
       "EXPLAIN SELECT * FROM t1 WHERE col10 < 18446744073709551616 ORDER BY id;",
       "EXPLAIN SELECT * FROM t1 WHERE col10 > -1 ORDER BY id;",
+      "EXPLAIN SELECT * FROM t1 WHERE col10 < 0 ORDER BY id;",
 
 
 
@@ -122,11 +141,15 @@
       "EXPLAIN SELECT * FROM t1 WHERE col11 > -200 ORDER BY id;",
       "EXPLAIN SELECT * FROM t1 WHERE col11 != 200 ORDER BY id;",
       "EXPLAIN SELECT * FROM t1 WHERE col11 != -200 ORDER BY id;",
+      "EXPLAIN SELECT * FROM t1 WHERE col11 <= 127 ORDER BY id;",
+      "EXPLAIN SELECT * FROM t1 WHERE col11 >= -128 ORDER BY id;",
       // beyond tinyint unsigned range
       "EXPLAIN SELECT * FROM t1 WHERE col12 < 300 ORDER BY id;",
       "EXPLAIN SELECT * FROM t1 WHERE col12 > -1 ORDER BY id;",
       "EXPLAIN SELECT * FROM t1 WHERE col12 != 300 ORDER BY id;",
       "EXPLAIN SELECT * FROM t1 WHERE col12 != -1 ORDER BY id;",
+      "EXPLAIN SELECT * FROM t1 WHERE col12 <= 255 ORDER BY id;",
+      "EXPLAIN SELECT * FROM t1 WHERE col12 >= 0 ORDER BY id;",
 
       // smallint
       // beyond smallint signed range
@@ -134,11 +157,15 @@
       "EXPLAIN SELECT * FROM t1 WHERE col13 > -50000 ORDER BY id;",
       "EXPLAIN SELECT * FROM t1 WHERE col13 != 50000 ORDER BY id;",
       "EXPLAIN SELECT * FROM t1 WHERE col13 != -50000 ORDER BY id;",
+      "EXPLAIN SELECT * FROM t1 WHERE col13 <= 32767 ORDER BY id;",
+      "EXPLAIN SELECT * FROM t1 WHERE col13 >= -32768 ORDER BY id;",
       // beyond smallint unsigned range
       "EXPLAIN SELECT * FROM t1 WHERE col14 < 100000 ORDER BY id;",
       "EXPLAIN SELECT * FROM t1 WHERE col14 > -1 ORDER BY id;",
       "EXPLAIN SELECT * FROM t1 WHERE col14 != 100000 ORDER BY id;",
       "EXPLAIN SELECT * FROM t1 WHERE col14 != -1 ORDER BY id;",
+      "EXPLAIN SELECT * FROM t1 WHERE col14 <= 65535 ORDER BY id;",
+      "EXPLAIN SELECT * FROM t1 WHERE col14 >= 0 ORDER BY id;",
 
       // mediumint
       // beyond mediumint signed range
@@ -146,11 +173,15 @@
       "EXPLAIN SELECT * FROM t1 WHERE col15 > -8388609 ORDER BY id;",
       "EXPLAIN SELECT * FROM t1 WHERE col15 != 8388608 ORDER BY id;",
       "EXPLAIN SELECT * FROM t1 WHERE col15 != -8388609 ORDER BY id;",
+      "EXPLAIN SELECT * FROM t1 WHERE col15 <= 8388607 ORDER BY id;",
+      "EXPLAIN SELECT * FROM t1 WHERE col15 >= -8388608 ORDER BY id;",
       // beyond mediumint unsigned range
       "EXPLAIN SELECT * FROM t1 WHERE col16 < 16777216 ORDER BY id;",
       "EXPLAIN SELECT * FROM t1 WHERE col16 > -1 ORDER BY id;",
       "EXPLAIN SELECT * FROM t1 WHERE col16 != 16777216 ORDER BY id;",
       "EXPLAIN SELECT * FROM t1 WHERE col16 != -1 ORDER BY id;",
+      "EXPLAIN SELECT * FROM t1 WHERE col16 <= 16777215 ORDER BY id;",
+      "EXPLAIN SELECT * FROM t1 WHERE col16 >= 0 ORDER BY id;",
 
       // int
       // beyond int signed range
@@ -158,11 +189,15 @@
       "EXPLAIN SELECT * FROM t1 WHERE col17 > -2147483649 ORDER BY id;",
       "EXPLAIN SELECT * FROM t1 WHERE col17 != 2147483648 ORDER BY id;",
       "EXPLAIN SELECT * FROM t1 WHERE col17 != -2147483649 ORDER BY id;",
+      "EXPLAIN SELECT * FROM t1 WHERE col17 <= 2147483647 ORDER BY id;",
+      "EXPLAIN SELECT * FROM t1 WHERE col17 >= -2147483648 ORDER BY id;",
       // beyond int unsigned range
       "EXPLAIN SELECT * FROM t1 WHERE col18 < 4294967296 ORDER BY id;",
       "EXPLAIN SELECT * FROM t1 WHERE col18 > -1 ORDER BY id;",
       "EXPLAIN SELECT * FROM t1 WHERE col18 != 4294967296 ORDER BY id;",
       "EXPLAIN SELECT * FROM t1 WHERE col18 != -1 ORDER BY id;",
+      "EXPLAIN SELECT * FROM t1 WHERE col18 <= 4294967295 ORDER BY id;",
+      "EXPLAIN SELECT * FROM t1 WHERE col18 >= 0 ORDER BY id;",
 
       // bigint
       // beyond bigint signed range
@@ -170,11 +205,14 @@
       "EXPLAIN SELECT * FROM t1 WHERE col19 > -9223372036854775809 ORDER BY id;",
       "EXPLAIN SELECT * FROM t1 WHERE col19 != 9223372036854775808 ORDER BY id;",
       "EXPLAIN SELECT * FROM t1 WHERE col19 != -9223372036854775809 ORDER BY id;",
+      "EXPLAIN SELECT * FROM t1 WHERE col19 <= 9223372036854775807 ORDER BY id;",
+      "EXPLAIN SELECT * FROM t1 WHERE col19 >= -9223372036854775808 ORDER BY id;",
       // beyond bigint unsigned range
       "EXPLAIN SELECT * FROM t1 WHERE col20 < 18446744073709551616 ORDER BY id;",
       "EXPLAIN SELECT * FROM t1 WHERE col20 > -1 ORDER BY id;",
       "EXPLAIN SELECT * FROM t1 WHERE col20 != 18446744073709551616 ORDER BY id;",
-      "EXPLAIN SELECT * FROM t1 WHERE col20 != -1 ORDER BY id;"
+      "EXPLAIN SELECT * FROM t1 WHERE col20 != -1 ORDER BY id;",
+      "EXPLAIN SELECT * FROM t1 WHERE col20 >= 0 ORDER BY id;"
     ]
   }
 ]

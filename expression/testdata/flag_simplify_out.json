@@ -163,9 +163,7 @@
       {
         "SQL": "EXPLAIN SELECT * FROM t1 WHERE col1 = -200 ORDER BY id;",
         "Plan": [
-          "TableReader_14 10.00 root  data:Selection_13",
-          "└─Selection_13 10.00 cop[tikv]  eq(test.t1.col1, -200)",
-          "  └─TableFullScan_12 10000.00 cop[tikv] table:t1 keep order:true, stats:pseudo"
+          "TableDual_11 0.00 root  rows:0"
         ]
       },
       {
@@ -182,6 +180,18 @@
           "TableReader_14 3333.33 root  data:Selection_13",
           "└─Selection_13 3333.33 cop[tikv]  gt(test.t1.col1, -200)",
           "  └─TableFullScan_12 10000.00 cop[tikv] table:t1 keep order:true, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "EXPLAIN SELECT * FROM t1 WHERE col1 < -128 ORDER BY id;",
+        "Plan": [
+          "TableDual_11 0.00 root  rows:0"
+        ]
+      },
+      {
+        "SQL": "EXPLAIN SELECT * FROM t1 WHERE col1 > 127 ORDER BY id;",
+        "Plan": [
+          "TableDual_11 0.00 root  rows:0"
         ]
       },
       {
@@ -225,6 +235,18 @@
         ]
       },
       {
+        "SQL": "EXPLAIN SELECT * FROM t1 WHERE col2 < 0 ORDER BY id;",
+        "Plan": [
+          "TableDual_11 0.00 root  rows:0"
+        ]
+      },
+      {
+        "SQL": "EXPLAIN SELECT * FROM t1 WHERE col2 > 256 ORDER BY id;",
+        "Plan": [
+          "TableDual_11 0.00 root  rows:0"
+        ]
+      },
+      {
         "SQL": "EXPLAIN SELECT * FROM t1 WHERE col3 > 100 ORDER BY id;",
         "Plan": [
           "TableReader_14 3333.33 root  data:Selection_13",
@@ -253,9 +275,7 @@
       {
         "SQL": "EXPLAIN SELECT * FROM t1 WHERE col3 = -50000 ORDER BY id;",
         "Plan": [
-          "TableReader_14 10.00 root  data:Selection_13",
-          "└─Selection_13 10.00 cop[tikv]  eq(test.t1.col3, -50000)",
-          "  └─TableFullScan_12 10000.00 cop[tikv] table:t1 keep order:true, stats:pseudo"
+          "TableDual_11 0.00 root  rows:0"
         ]
       },
       {
@@ -272,6 +292,18 @@
           "TableReader_14 3333.33 root  data:Selection_13",
           "└─Selection_13 3333.33 cop[tikv]  gt(test.t1.col3, -50000)",
           "  └─TableFullScan_12 10000.00 cop[tikv] table:t1 keep order:true, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "EXPLAIN SELECT * FROM t1 WHERE col3 > 32767 ORDER BY id;",
+        "Plan": [
+          "TableDual_11 0.00 root  rows:0"
+        ]
+      },
+      {
+        "SQL": "EXPLAIN SELECT * FROM t1 WHERE col3 < -32768 ORDER BY id;",
+        "Plan": [
+          "TableDual_11 0.00 root  rows:0"
         ]
       },
       {
@@ -315,6 +347,18 @@
         ]
       },
       {
+        "SQL": "EXPLAIN SELECT * FROM t1 WHERE col4 < 0 ORDER BY id;",
+        "Plan": [
+          "TableDual_11 0.00 root  rows:0"
+        ]
+      },
+      {
+        "SQL": "EXPLAIN SELECT * FROM t1 WHERE col4 > 65535 ORDER BY id;",
+        "Plan": [
+          "TableDual_11 0.00 root  rows:0"
+        ]
+      },
+      {
         "SQL": "EXPLAIN SELECT * FROM t1 WHERE col5 > 100 ORDER BY id;",
         "Plan": [
           "TableReader_14 3333.33 root  data:Selection_13",
@@ -343,9 +387,7 @@
       {
         "SQL": "EXPLAIN SELECT * FROM t1 WHERE col5 = -8388609 ORDER BY id;",
         "Plan": [
-          "TableReader_14 10.00 root  data:Selection_13",
-          "└─Selection_13 10.00 cop[tikv]  eq(test.t1.col5, -8388609)",
-          "  └─TableFullScan_12 10000.00 cop[tikv] table:t1 keep order:true, stats:pseudo"
+          "TableDual_11 0.00 root  rows:0"
         ]
       },
       {
@@ -362,6 +404,18 @@
           "TableReader_14 3333.33 root  data:Selection_13",
           "└─Selection_13 3333.33 cop[tikv]  gt(test.t1.col5, -8388609)",
           "  └─TableFullScan_12 10000.00 cop[tikv] table:t1 keep order:true, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "EXPLAIN SELECT * FROM t1 WHERE col5 > 8388607 ORDER BY id;",
+        "Plan": [
+          "TableDual_11 0.00 root  rows:0"
+        ]
+      },
+      {
+        "SQL": "EXPLAIN SELECT * FROM t1 WHERE col5 < -8388608 ORDER BY id;",
+        "Plan": [
+          "TableDual_11 0.00 root  rows:0"
         ]
       },
       {
@@ -405,6 +459,18 @@
         ]
       },
       {
+        "SQL": "EXPLAIN SELECT * FROM t1 WHERE col6 > 16777215 ORDER BY id;",
+        "Plan": [
+          "TableDual_11 0.00 root  rows:0"
+        ]
+      },
+      {
+        "SQL": "EXPLAIN SELECT * FROM t1 WHERE col6 < 0 ORDER BY id;",
+        "Plan": [
+          "TableDual_11 0.00 root  rows:0"
+        ]
+      },
+      {
         "SQL": "EXPLAIN SELECT * FROM t1 WHERE col7 > 100 ORDER BY id;",
         "Plan": [
           "TableReader_14 3333.33 root  data:Selection_13",
@@ -433,9 +499,7 @@
       {
         "SQL": "EXPLAIN SELECT * FROM t1 WHERE col7 = -2147483649 ORDER BY id;",
         "Plan": [
-          "TableReader_14 10.00 root  data:Selection_13",
-          "└─Selection_13 10.00 cop[tikv]  eq(test.t1.col7, -2147483649)",
-          "  └─TableFullScan_12 10000.00 cop[tikv] table:t1 keep order:true, stats:pseudo"
+          "TableDual_11 0.00 root  rows:0"
         ]
       },
       {
@@ -452,6 +516,18 @@
           "TableReader_14 3333.33 root  data:Selection_13",
           "└─Selection_13 3333.33 cop[tikv]  gt(test.t1.col7, -2147483649)",
           "  └─TableFullScan_12 10000.00 cop[tikv] table:t1 keep order:true, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "EXPLAIN SELECT * FROM t1 WHERE col7 > 2147483647 ORDER BY id;",
+        "Plan": [
+          "TableDual_11 0.00 root  rows:0"
+        ]
+      },
+      {
+        "SQL": "EXPLAIN SELECT * FROM t1 WHERE col7 < -2147483648 ORDER BY id;",
+        "Plan": [
+          "TableDual_11 0.00 root  rows:0"
         ]
       },
       {
@@ -495,6 +571,18 @@
         ]
       },
       {
+        "SQL": "EXPLAIN SELECT * FROM t1 WHERE col8 > 4294967295 ORDER BY id;",
+        "Plan": [
+          "TableDual_11 0.00 root  rows:0"
+        ]
+      },
+      {
+        "SQL": "EXPLAIN SELECT * FROM t1 WHERE col8 < 0 ORDER BY id;",
+        "Plan": [
+          "TableDual_11 0.00 root  rows:0"
+        ]
+      },
+      {
         "SQL": "EXPLAIN SELECT * FROM t1 WHERE col9 > 100 ORDER BY id;",
         "Plan": [
           "TableReader_14 3333.33 root  data:Selection_13",
@@ -505,9 +593,7 @@
       {
         "SQL": "EXPLAIN SELECT * FROM t1 WHERE col9 > 9223372036854775808 ORDER BY id;",
         "Plan": [
-          "TableReader_14 8000.00 root  data:Selection_13",
-          "└─Selection_13 8000.00 cop[tikv]  gt(test.t1.col9, 9223372036854775808)",
-          "  └─TableFullScan_12 10000.00 cop[tikv] table:t1 keep order:true, stats:pseudo"
+          "TableDual_11 0.00 root  rows:0"
         ]
       },
       {
@@ -541,6 +627,18 @@
         "Plan": [
           "TableReader_12 10000.00 root  data:TableFullScan_11",
           "└─TableFullScan_11 10000.00 cop[tikv] table:t1 keep order:true, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "EXPLAIN SELECT * FROM t1 WHERE col9 > 9223372036854775807 ORDER BY id;",
+        "Plan": [
+          "TableDual_11 0.00 root  rows:0"
+        ]
+      },
+      {
+        "SQL": "EXPLAIN SELECT * FROM t1 WHERE col9 < -9223372036854775808 ORDER BY id;",
+        "Plan": [
+          "TableDual_11 0.00 root  rows:0"
         ]
       },
       {
@@ -583,6 +681,12 @@
         ]
       },
       {
+        "SQL": "EXPLAIN SELECT * FROM t1 WHERE col10 < 0 ORDER BY id;",
+        "Plan": [
+          "TableDual_11 0.00 root  rows:0"
+        ]
+      },
+      {
         "SQL": "EXPLAIN SELECT * FROM t1 WHERE col11 < 200 ORDER BY id;",
         "Plan": [
           "TableReader_12 10000.00 root  data:TableFullScan_11",
@@ -605,6 +709,20 @@
       },
       {
         "SQL": "EXPLAIN SELECT * FROM t1 WHERE col11 != -200 ORDER BY id;",
+        "Plan": [
+          "TableReader_12 10000.00 root  data:TableFullScan_11",
+          "└─TableFullScan_11 10000.00 cop[tikv] table:t1 keep order:true, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "EXPLAIN SELECT * FROM t1 WHERE col11 <= 127 ORDER BY id;",
+        "Plan": [
+          "TableReader_12 10000.00 root  data:TableFullScan_11",
+          "└─TableFullScan_11 10000.00 cop[tikv] table:t1 keep order:true, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "EXPLAIN SELECT * FROM t1 WHERE col11 >= -128 ORDER BY id;",
         "Plan": [
           "TableReader_12 10000.00 root  data:TableFullScan_11",
           "└─TableFullScan_11 10000.00 cop[tikv] table:t1 keep order:true, stats:pseudo"
@@ -639,6 +757,20 @@
         ]
       },
       {
+        "SQL": "EXPLAIN SELECT * FROM t1 WHERE col12 <= 255 ORDER BY id;",
+        "Plan": [
+          "TableReader_12 10000.00 root  data:TableFullScan_11",
+          "└─TableFullScan_11 10000.00 cop[tikv] table:t1 keep order:true, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "EXPLAIN SELECT * FROM t1 WHERE col12 >= 0 ORDER BY id;",
+        "Plan": [
+          "TableReader_12 10000.00 root  data:TableFullScan_11",
+          "└─TableFullScan_11 10000.00 cop[tikv] table:t1 keep order:true, stats:pseudo"
+        ]
+      },
+      {
         "SQL": "EXPLAIN SELECT * FROM t1 WHERE col13 < 50000 ORDER BY id;",
         "Plan": [
           "TableReader_12 10000.00 root  data:TableFullScan_11",
@@ -661,6 +793,20 @@
       },
       {
         "SQL": "EXPLAIN SELECT * FROM t1 WHERE col13 != -50000 ORDER BY id;",
+        "Plan": [
+          "TableReader_12 10000.00 root  data:TableFullScan_11",
+          "└─TableFullScan_11 10000.00 cop[tikv] table:t1 keep order:true, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "EXPLAIN SELECT * FROM t1 WHERE col13 <= 32767 ORDER BY id;",
+        "Plan": [
+          "TableReader_12 10000.00 root  data:TableFullScan_11",
+          "└─TableFullScan_11 10000.00 cop[tikv] table:t1 keep order:true, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "EXPLAIN SELECT * FROM t1 WHERE col13 >= -32768 ORDER BY id;",
         "Plan": [
           "TableReader_12 10000.00 root  data:TableFullScan_11",
           "└─TableFullScan_11 10000.00 cop[tikv] table:t1 keep order:true, stats:pseudo"
@@ -695,6 +841,20 @@
         ]
       },
       {
+        "SQL": "EXPLAIN SELECT * FROM t1 WHERE col14 <= 65535 ORDER BY id;",
+        "Plan": [
+          "TableReader_12 10000.00 root  data:TableFullScan_11",
+          "└─TableFullScan_11 10000.00 cop[tikv] table:t1 keep order:true, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "EXPLAIN SELECT * FROM t1 WHERE col14 >= 0 ORDER BY id;",
+        "Plan": [
+          "TableReader_12 10000.00 root  data:TableFullScan_11",
+          "└─TableFullScan_11 10000.00 cop[tikv] table:t1 keep order:true, stats:pseudo"
+        ]
+      },
+      {
         "SQL": "EXPLAIN SELECT * FROM t1 WHERE col15 < 8388608 ORDER BY id;",
         "Plan": [
           "TableReader_12 10000.00 root  data:TableFullScan_11",
@@ -717,6 +877,20 @@
       },
       {
         "SQL": "EXPLAIN SELECT * FROM t1 WHERE col15 != -8388609 ORDER BY id;",
+        "Plan": [
+          "TableReader_12 10000.00 root  data:TableFullScan_11",
+          "└─TableFullScan_11 10000.00 cop[tikv] table:t1 keep order:true, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "EXPLAIN SELECT * FROM t1 WHERE col15 <= 8388607 ORDER BY id;",
+        "Plan": [
+          "TableReader_12 10000.00 root  data:TableFullScan_11",
+          "└─TableFullScan_11 10000.00 cop[tikv] table:t1 keep order:true, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "EXPLAIN SELECT * FROM t1 WHERE col15 >= -8388608 ORDER BY id;",
         "Plan": [
           "TableReader_12 10000.00 root  data:TableFullScan_11",
           "└─TableFullScan_11 10000.00 cop[tikv] table:t1 keep order:true, stats:pseudo"
@@ -751,6 +925,20 @@
         ]
       },
       {
+        "SQL": "EXPLAIN SELECT * FROM t1 WHERE col16 <= 16777215 ORDER BY id;",
+        "Plan": [
+          "TableReader_12 10000.00 root  data:TableFullScan_11",
+          "└─TableFullScan_11 10000.00 cop[tikv] table:t1 keep order:true, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "EXPLAIN SELECT * FROM t1 WHERE col16 >= 0 ORDER BY id;",
+        "Plan": [
+          "TableReader_12 10000.00 root  data:TableFullScan_11",
+          "└─TableFullScan_11 10000.00 cop[tikv] table:t1 keep order:true, stats:pseudo"
+        ]
+      },
+      {
         "SQL": "EXPLAIN SELECT * FROM t1 WHERE col17 < 2147483648 ORDER BY id;",
         "Plan": [
           "TableReader_12 10000.00 root  data:TableFullScan_11",
@@ -773,6 +961,20 @@
       },
       {
         "SQL": "EXPLAIN SELECT * FROM t1 WHERE col17 != -2147483649 ORDER BY id;",
+        "Plan": [
+          "TableReader_12 10000.00 root  data:TableFullScan_11",
+          "└─TableFullScan_11 10000.00 cop[tikv] table:t1 keep order:true, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "EXPLAIN SELECT * FROM t1 WHERE col17 <= 2147483647 ORDER BY id;",
+        "Plan": [
+          "TableReader_12 10000.00 root  data:TableFullScan_11",
+          "└─TableFullScan_11 10000.00 cop[tikv] table:t1 keep order:true, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "EXPLAIN SELECT * FROM t1 WHERE col17 >= -2147483648 ORDER BY id;",
         "Plan": [
           "TableReader_12 10000.00 root  data:TableFullScan_11",
           "└─TableFullScan_11 10000.00 cop[tikv] table:t1 keep order:true, stats:pseudo"
@@ -807,11 +1009,24 @@
         ]
       },
       {
+        "SQL": "EXPLAIN SELECT * FROM t1 WHERE col18 <= 4294967295 ORDER BY id;",
+        "Plan": [
+          "TableReader_12 10000.00 root  data:TableFullScan_11",
+          "└─TableFullScan_11 10000.00 cop[tikv] table:t1 keep order:true, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "EXPLAIN SELECT * FROM t1 WHERE col18 >= 0 ORDER BY id;",
+        "Plan": [
+          "TableReader_12 10000.00 root  data:TableFullScan_11",
+          "└─TableFullScan_11 10000.00 cop[tikv] table:t1 keep order:true, stats:pseudo"
+        ]
+      },
+      {
         "SQL": "EXPLAIN SELECT * FROM t1 WHERE col19 < 9223372036854775808 ORDER BY id;",
         "Plan": [
-          "TableReader_14 8000.00 root  data:Selection_13",
-          "└─Selection_13 8000.00 cop[tikv]  lt(test.t1.col19, 9223372036854775808)",
-          "  └─TableFullScan_12 10000.00 cop[tikv] table:t1 keep order:true, stats:pseudo"
+          "TableReader_12 10000.00 root  data:TableFullScan_11",
+          "└─TableFullScan_11 10000.00 cop[tikv] table:t1 keep order:true, stats:pseudo"
         ]
       },
       {
@@ -824,13 +1039,26 @@
       {
         "SQL": "EXPLAIN SELECT * FROM t1 WHERE col19 != 9223372036854775808 ORDER BY id;",
         "Plan": [
-          "TableReader_14 8000.00 root  data:Selection_13",
-          "└─Selection_13 8000.00 cop[tikv]  ne(test.t1.col19, 9223372036854775808)",
-          "  └─TableFullScan_12 10000.00 cop[tikv] table:t1 keep order:true, stats:pseudo"
+          "TableReader_12 10000.00 root  data:TableFullScan_11",
+          "└─TableFullScan_11 10000.00 cop[tikv] table:t1 keep order:true, stats:pseudo"
         ]
       },
       {
         "SQL": "EXPLAIN SELECT * FROM t1 WHERE col19 != -9223372036854775809 ORDER BY id;",
+        "Plan": [
+          "TableReader_12 10000.00 root  data:TableFullScan_11",
+          "└─TableFullScan_11 10000.00 cop[tikv] table:t1 keep order:true, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "EXPLAIN SELECT * FROM t1 WHERE col19 <= 9223372036854775807 ORDER BY id;",
+        "Plan": [
+          "TableReader_12 10000.00 root  data:TableFullScan_11",
+          "└─TableFullScan_11 10000.00 cop[tikv] table:t1 keep order:true, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "EXPLAIN SELECT * FROM t1 WHERE col19 >= -9223372036854775808 ORDER BY id;",
         "Plan": [
           "TableReader_12 10000.00 root  data:TableFullScan_11",
           "└─TableFullScan_11 10000.00 cop[tikv] table:t1 keep order:true, stats:pseudo"
@@ -859,6 +1087,13 @@
       },
       {
         "SQL": "EXPLAIN SELECT * FROM t1 WHERE col20 != -1 ORDER BY id;",
+        "Plan": [
+          "TableReader_12 10000.00 root  data:TableFullScan_11",
+          "└─TableFullScan_11 10000.00 cop[tikv] table:t1 keep order:true, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "EXPLAIN SELECT * FROM t1 WHERE col20 >= 0 ORDER BY id;",
         "Plan": [
           "TableReader_12 10000.00 root  data:TableFullScan_11",
           "└─TableFullScan_11 10000.00 cop[tikv] table:t1 keep order:true, stats:pseudo"
