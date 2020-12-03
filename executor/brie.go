@@ -355,7 +355,7 @@ func (b *executorBuilder) buildBackupRestore(s *ast.BRIEStmt, schema *expression
 	// RESTORE ... FROM **s.Storage**
 	storageURL, err := url.Parse(s.Storage)
 	if err != nil {
-		b.err = errors.Annotate(err, "invalid destination URL")
+		b.err = ErrBRIEInvalidExternalStore.GenWithStackByArgs(s.Storage, err)
 		return nil
 	}
 	switch storageURL.Scheme {
@@ -410,7 +410,7 @@ func (b *executorBuilder) buildBackupRestore(s *ast.BRIEStmt, schema *expression
 			case ast.BRIEOptionLastBackupTS:
 				tso, err := b.parseTSString(opt.StrValue)
 				if err != nil {
-					b.err = err
+					b.err = ErrBRIEInvalidOption.GenWithStackByArgs(opt.StrValue, err)
 					return nil
 				}
 				e.backupCfg.LastBackupTS = tso
@@ -423,7 +423,7 @@ func (b *executorBuilder) buildBackupRestore(s *ast.BRIEStmt, schema *expression
 			case ast.BRIEOptionBackupTS:
 				tso, err := b.parseTSString(opt.StrValue)
 				if err != nil {
-					b.err = err
+					b.err = ErrBRIEInvalidOption.GenWithStackByArgs(opt.StrValue, err)
 					return nil
 				}
 				e.backupCfg.BackupTS = tso
@@ -483,7 +483,7 @@ func (b *executorBuilder) buildImport(s *ast.BRIEStmt, schema *expression.Schema
 	// IMPORT ... FROM **s.Storage**
 	storageURL, err := url.Parse(s.Storage)
 	if err != nil {
-		b.err = errors.Annotate(err, "invalid destination URL")
+		b.err = ErrBRIEInvalidExternalStore.GenWithStackByArgs(s.Storage, err)
 		return nil
 	}
 	importTaskCfg.Mydumper.SourceDir = storageURL.String()
@@ -496,7 +496,7 @@ func (b *executorBuilder) buildImport(s *ast.BRIEStmt, schema *expression.Schema
 		tbls := make([]string, 0, len(s.Tables))
 		for _, tbl := range s.Tables {
 			if tbl.Schema.L == "" {
-				b.err = errors.Errorf("please specify schema for %s in IMPORT", tbl.Name.O)
+				b.err = ErrBRIEInvalidTable.GenWithStackByArgs(fmt.Sprintf("please specify schema for %s in IMPORT", tbl.Name.O))
 				return nil
 			}
 			tbls = append(tbls, fmt.Sprintf("%s.%s", tbl.Schema, tbl.Name))
@@ -527,7 +527,7 @@ func (b *executorBuilder) buildImport(s *ast.BRIEStmt, schema *expression.Schema
 			if opt.UintValue == ast.BRIECSVHeaderIsColumns {
 				importTaskCfg.Mydumper.CSV.Header = true
 			} else {
-				b.err = errors.Errorf("CSV_HEADER only support FIELDS or COLUMNS to indicate it has header")
+				b.err = ErrBRIEInvalidOption.GenWithStackByArgs("CSV_HEADER", "only support FIELDS or COLUMNS to indicate it has header")
 				return nil
 			}
 		case ast.BRIEOptionCSVNotNull:
@@ -568,7 +568,7 @@ func (b *executorBuilder) buildImport(s *ast.BRIEStmt, schema *expression.Schema
 func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) Executor {
 	tidbCfg := config.GetGlobalConfig()
 	if tidbCfg.Store != "tikv" {
-		b.err = errors.Errorf("%s requires tikv store, not %s", s.Kind, tidbCfg.Store)
+		b.err = ErrBRIERequireTiKV.GenWithStackByArgs(s.Kind, tidbCfg.Store)
 		return nil
 	}
 
@@ -578,7 +578,7 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 	case ast.BRIEKindImport:
 		return b.buildImport(s, schema)
 	default:
-		b.err = ErrBRIEUnsupported.GenWithStackByArgs(s.Kind.String())
+		b.err = ErrBRIEUnsupported.GenWithStackByArgs(s.Kind)
 		return nil
 	}
 }
@@ -672,7 +672,7 @@ func (e *BRIEExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			item.progress.setCmd(cmdFinish)
 		}
 	default:
-		return ErrBRIEUnsupported.GenWithStackByArgs(e.info.kind.String())
+		return ErrBRIEUnsupported.GenWithStackByArgs(e.info.kind)
 	}
 	e.info.setFinishTime(types.CurrentTime(mysql.TypeDatetime))
 	glue.flush(ctx, taskID)

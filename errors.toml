@@ -591,6 +591,26 @@ error = '''
 Failed to update BRIE task metadata: %s
 '''
 
+["executor:8130"]
+error = '''
+%s requires TiKV store, not %s
+'''
+
+["executor:8131"]
+error = '''
+Invalid BRIE data store URL: %s, err: %v
+'''
+
+["executor:8132"]
+error = '''
+Invalid BRIE selected databases/tables: %s
+'''
+
+["executor:8133"]
+error = '''
+Invalid BRIE option: %s, err: %v
+'''
+
 ["expression:1139"]
 error = '''
 Got error '%-.64s' from regexp
