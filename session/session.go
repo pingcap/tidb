@@ -804,6 +804,7 @@ func (s *session) ExecRestrictedSQLWithContext(ctx context.Context, sql string, 
 	if err != nil {
 		return nil, nil, err
 	}
+	defer s.sysSessionPool().Put(tmp)
 	se := tmp.(*session)
 	// The special session will share the `InspectionTableCache` with current session
 	// if the current session in inspection mode.
@@ -824,7 +825,6 @@ func (s *session) ExecRestrictedSQLWithContext(ctx context.Context, sql string, 
 			}
 		}
 		se.sessionVars.PartitionPruneMode.Store(prePruneMode)
-		s.sysSessionPool().Put(tmp)
 	}()
 
 	if execOption.SnapshotTS != 0 {
