@@ -508,8 +508,6 @@ func (d *ddl) asyncNotifyWorker(jobTp model.ActionType) {
 	}
 }
 
-<<<<<<< HEAD
-=======
 func updateTickerInterval(ticker *time.Ticker, lease time.Duration, job *model.Job, i int) *time.Ticker {
 	interval, changed := getJobCheckInterval(job, i)
 	if !changed {
@@ -524,7 +522,6 @@ func updateTickerInterval(ticker *time.Ticker, lease time.Duration, job *model.J
 // - nil: found in history DDL job and no job error
 // - context.Cancel: job has been sent to worker, but not found in history DDL job before cancel
 // - other: found in history DDL job and return that job error
->>>>>>> 3a32bd2df... ddl: change ddl wait duration logic (#21361)
 func (d *ddl) doDDLJob(ctx sessionctx.Context, job *model.Job) error {
 	// Get a global job ID and put the DDL job in the queue.
 	job.Query, _ = ctx.Value(sessionctx.QueryString).(string)
@@ -559,15 +556,8 @@ func (d *ddl) doDDLJob(ctx sessionctx.Context, job *model.Job) error {
 		select {
 		case <-d.ddlJobDoneCh:
 		case <-ticker.C:
-<<<<<<< HEAD
-=======
 			i++
 			ticker = updateTickerInterval(ticker, 10*d.lease, job, i)
-		case <-d.ctx.Done():
-			logutil.BgLogger().Error("[ddl] doDDLJob will quit because context done", zap.Error(d.ctx.Err()))
-			err = d.ctx.Err()
-			return err
->>>>>>> 3a32bd2df... ddl: change ddl wait duration logic (#21361)
 		}
 
 		historyJob, err = d.getHistoryDDLJob(jobID)
