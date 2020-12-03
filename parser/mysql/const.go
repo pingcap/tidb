@@ -42,6 +42,9 @@ const (
 	LocalInFileHeader byte = 0xfb
 )
 
+// Protocol Features
+const AuthSwitchRequest byte = 0xfe
+
 // Server information.
 const (
 	ServerStatusInTrans            uint16 = 0x0001
@@ -161,7 +164,8 @@ const (
 
 // Auth name information.
 const (
-	AuthName = "mysql_native_password"
+	AuthNativePassword      = "mysql_native_password"
+	AuthCachingSha2Password = "caching_sha2_password"
 )
 
 // MySQL database and tables.
