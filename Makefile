@@ -126,9 +126,9 @@ ifeq ("$(TRAVIS_COVERAGE)", "1")
 	@export log_level=error; \
 	$(OVERALLS) -project=github.com/pingcap/tidb \
 			-covermode=count \
-			-ignore='.git,vendor,cmd,docs,LICENSES' \
+			-ignore='.git,vendor,cmd,docs,LICENSES,tests' \
 			-concurrency=4 \
-			-- -coverpkg=$(PACKAGES) \
+			-- -coverpkg=./... \
 			|| { $(FAILPOINT_DISABLE); exit 1; }
 else
 	@echo "Running in native mode."
