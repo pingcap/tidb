@@ -1282,8 +1282,9 @@ func RefineComparedConstant(ctx sessionctx.Context, targetFieldType types.FieldT
 }
 
 // refineArgs will rewrite the arguments if the compare expression is `int column <cmp> non-int constant` or
-// `non-int constant <cmp> int column`. E.g., `a < 1.1` will be rewritten to `a < 2`. It also handles comparing year type
-// with int constant if the int constant falls into a sensible year representation.
+// `non-int constant <cmp> int column`. E.g., `a < 1.1` will be rewritten to `a < 2`.
+// It also handles comparing year type with int constant if the int constant falls into a sensible year representation.
+// In addition, it will also handle the case that constant exceeds the range corresponding to the type of column when `column <cmp> constant`.
 func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Expression) []Expression {
 	if ContainMutableConst(ctx, args) {
 		return args
@@ -1364,9 +1365,15 @@ func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Express
 	return c.refineArgsByTypeRange(ctx, []Expression{finalArg0, finalArg1})
 }
 
+// refineArgsByTypeRange handle the case that constant exceeds the range corresponding to the type of column when `column <cmp> constant`.
+// If necessary, we will convert the result of the comparison into constant true or constant false.
+// Now, we only handle int cases, cause MySQL declares that `UNSIGNED` is deprecated for FLOAT, DOUBLE and DECIMAL types,
+// and support for it would be removed in a future version.
 func (c *compareFunctionClass) refineArgsByTypeRange(ctx sessionctx.Context, args []Expression) []Expression {
-	// Only handle int cases, cause MySQL declares that `UNSIGNED` is deprecated for FLOAT, DOUBLE and DECIMAL types,
-	// and support for it would be removed in a future version.
+	// We should guarantee the number of arguments are equal to two.
+	if len(args) != 2 {
+		return args
+	}
 	arg0Tp, arg1Tp := args[0].GetType(), args[1].GetType()
 	if arg0Tp.EvalType() != types.ETInt || arg1Tp.EvalType() != types.ETInt ||
 		arg0Tp.Tp == mysql.TypeYear || arg1Tp.Tp == mysql.TypeYear {
@@ -1391,15 +1398,28 @@ func (c *compareFunctionClass) refineArgsByTypeRange(ctx sessionctx.Context, arg
 				return args
 			}
 			colHasNotNullFlag := mysql.HasNotNullFlag(col.RetType.Flag)
+			finalCol, finalCon, succ := args[i], args[1-i], false
+			// handle the case that `unsigned constant <cmp> signed column`
 			if mysql.HasUnsignedFlag(con.RetType.Flag) && !mysql.HasUnsignedFlag(col.RetType.Flag) {
 				op := c.op
+				// Let argument args[i] always corresponding to column, and argument args[1-i] always corresponding to constant.
 				if i == 1 {
 					op = symmetricOp[c.op]
 				}
-				if op == opcode.EQ || op == opcode.NullEQ {
-					if _, err := types.ConvertUintToInt(uint64(v), types.IntergerSignedUpperBound(col.RetType.Tp), col.RetType.Tp); err != nil {
-						args[i], args[1-i] = NewOne(), NewZero()
-						return args
+				// Convert the value of `unsigned constant` from uint to int.
+				// And use the converted result to check whether it exceeds the upper bound of column.
+				// For example: column type are tinyint, so the range of column are [-128, 127].
+				upperBound := types.IntergerSignedUpperBound(col.RetType.Tp)
+				if _, err := types.ConvertUintToInt(uint64(v), upperBound, col.RetType.Tp); err != nil {
+					// If `err != nil`, means the value of const is bigger than the upper bound of colum. For example, v = 200.
+					finalCol, finalCon, succ = c.determineConstComparisonResult(op, colHasNotNullFlag, true, true)
+					if succ {
+						args[i], args[1-i] = finalCol, finalCon
+					}
+				} else if uint64(v) == uint64(upperBound) {
+					finalCol, finalCon, succ = c.determineConstComparisonResult(op, colHasNotNullFlag, false, true)
+					if succ {
+						args[i], args[1-i] = finalCol, finalCon
 					}
 				}
 			}
@@ -1407,35 +1427,26 @@ func (c *compareFunctionClass) refineArgsByTypeRange(ctx sessionctx.Context, arg
 				op := c.op
 				tp := col.RetType.Tp
 				upperBound := types.IntergerUnsignedUpperBound(tp)
+				uintV := uint64(v)
 				if i == 1 {
 					op = symmetricOp[c.op]
 				}
-				if v == 0 && (op == opcode.LE || op == opcode.GT || op == opcode.NullEQ || op == opcode.EQ || op == opcode.NE) {
-					// do nothing. In this situation, the args do not change.
-				} else if v <= 0 {
-					if colHasNotNullFlag { // Set the comparison result to true, need to consider the case of Null
-						// `unsigned_col < 0` equals to `1 < 0`,
-						// `unsigned_col > -1` equals to `1 > 0`,
-						// `unsigned_col <= -1` equals to `1 <= 0`,
-						// `unsigned_col >= 0` equals to `1 >= 0`,
-						// `unsigned_col == -1` equals to `1 == 0`,
-						// `unsigned_col != -1` equals to `1 != 0`,
-						// `unsigned_col <=> -1` equals to `1 <=> 0`,
-						// so we can replace the column argument with `1`, and the other constant argument with `0`.
-						args[i], args[1-i] = NewOne(), NewZero()
-					} else {
-						if op == opcode.LT || op == opcode.EQ { // Set the comparison result to false, need not to consider the case of Null
-							args[i], args[1-i] = NewOne(), NewZero()
-						}
+				if v < 0 {
+					finalCol, finalCon, succ = c.determineConstComparisonResult(op, colHasNotNullFlag, true, false)
+					if succ {
+						args[i], args[1-i] = finalCol, finalCon
 					}
-				} else if v > 0 && uint64(v) > upperBound {
-					if (op == opcode.NE || op == opcode.LE || op == opcode.LT) && colHasNotNullFlag {
-						args[i], args[1-i] = NewZero(), NewOne()
-					} else if op == opcode.EQ || op == opcode.GE || op == opcode.GT {
-						args[i], args[1-i] = NewZero(), NewOne()
+				} else if uintV > upperBound {
+					finalCol, finalCon, succ = c.determineConstComparisonResult(op, colHasNotNullFlag, true, true)
+					if succ {
+						args[i], args[1-i] = finalCol, finalCon
+					}
+				} else if v == 0 || uintV == upperBound {
+					finalCol, finalCon, succ = c.determineConstComparisonResult(op, colHasNotNullFlag, false, uintV == upperBound)
+					if succ {
+						args[i], args[1-i] = finalCol, finalCon
 					}
 				}
-				return args
 			}
 			if !mysql.HasUnsignedFlag(con.RetType.Flag) && !mysql.HasUnsignedFlag(col.RetType.Flag) {
 				tp := col.RetType.Tp
@@ -1445,29 +1456,98 @@ func (c *compareFunctionClass) refineArgsByTypeRange(ctx sessionctx.Context, arg
 				if i == 1 {
 					op = symmetricOp[c.op]
 				}
-				// Check whether the range of the column value matches the range corresponding to the column type
-				// for example: column a is tinyint type -> [-128, 127]
-				// when there have a selection 'a > 200', the constant 200 is always greater than the maximum value that tinyint can achieve.
-				// So, the selection `a > 200` always be false.
-				// TODO: Consider the case where `v = upperbound || v = lowerBound`
 				if upperOverflow { // the constant value always greater than the column value
-					if op == opcode.EQ || op == opcode.GE || op == opcode.GT {
-						args[i], args[1-i] = NewZero(), NewOne()
-					} else if (op == opcode.LE || op == opcode.NE || op == opcode.LT) && colHasNotNullFlag {
-						args[i], args[1-i] = NewZero(), NewOne()
+					finalCol, finalCon, succ = c.determineConstComparisonResult(op, colHasNotNullFlag, true, true)
+					if succ {
+						args[i], args[1-i] = finalCol, finalCon
 					}
 				} else if lowerOverflow { // the constant value always less than the column value
-					if (op == opcode.EQ || op == opcode.GE || op == opcode.GT) && colHasNotNullFlag {
-						args[i], args[1-i] = NewOne(), NewZero()
-					} else if op == opcode.LE || op == opcode.NE || op == opcode.LT {
-						args[i], args[1-i] = NewOne(), NewZero()
+					finalCol, finalCon, succ = c.determineConstComparisonResult(op, colHasNotNullFlag, true, false)
+					if succ {
+						args[i], args[1-i] = finalCol, finalCon
+					}
+				} else if v == lowerBound || v == upperBound {
+					finalCol, finalCon, succ = c.determineConstComparisonResult(op, colHasNotNullFlag, false, v == upperBound)
+					if succ {
+						args[i], args[1-i] = finalCol, finalCon
 					}
 				}
-				return args
 			}
 		}
 	}
 	return args
+}
+
+// determineConstComparisonResult used to convert the result of the comparison into constant true or constant false if necessary.
+// The comparison is like `column <op> constant`. colHasNotNullFlag means whether the column has not null flag.
+// isOverflow is used to indicate whether the value of constant exceeds the range of the column.
+// If `isOverflow = false` means the value of constant is equal to upper/ lower bound of column.
+// upper is used to indicate whether it is the upper boundary.
+func (c *compareFunctionClass) determineConstComparisonResult(op opcode.Op, colHasNotNullFlag bool, isOverflow bool, upper bool) (col Expression, con Expression, succ bool) {
+	if isOverflow {
+		if upper { // upperOverflow
+			// The value of constant bigger than the upper bound of column.
+			// For example: column is tinyint type, the range of tinyint is [-128, 127]; the value constant are 200;
+			// 200 > 128 => The value of constant(200) is bigger than the upper bound of column(127). => upperOverflow
+			if op == opcode.EQ || op == opcode.NullEQ || op == opcode.GE || op == opcode.GT {
+				// 127(max) = 200 => always false => 0(column) = 1(constant)
+				// 127(max) <=> 200 => always false => 0(column) <=> 1(constant)
+				// 127(max) >= 200 => always false => 0(column) >= 1(constant)
+				// 127(max) > 200 => always false => 0(column) > 1(constant)
+				col, con, succ = NewZero(), NewOne(), true
+			} else if (op == opcode.NE || op == opcode.LE || op == opcode.LT) && colHasNotNullFlag {
+				// If we want to get the `always true` result, we should guarantee the column have not null flag.
+				// 127(max) != 200 => always true => 0(column) != 1(constant)
+				// 127(max) <= 200 => always true => 0(column) <= 1(constant)
+				// 127(max) < 200 => always true => 0(column) < 1(constant)
+				col, con, succ = NewZero(), NewOne(), true
+			}
+		} else { // lowerOverflow
+			// The value of constant smaller than the lower bound of column.
+			// For example: column is tinyint type, the range of tinyint is [-128, 127]; the value constant are -200;
+			// -200 < -128 => The value of constant(-200) is smaller than the lower bound of column(-128). => upperOverflow
+			if (op == opcode.NE || op == opcode.GE || op == opcode.GT) && colHasNotNullFlag {
+				// If we want to get the `always true` result, we should guarantee the column have not null flag.
+				// -128(min) != -200 => always true => 1(column) != 0(constant)
+				// -128(min) >= -200 => always true => 1(column) >= 0(constant)
+				// -128(min) > -200 => always true => 1(column) > 0(constant)
+				col, con, succ = NewOne(), NewZero(), true
+			} else if op == opcode.EQ || op == opcode.NullEQ || op == opcode.LE || op == opcode.LT {
+				// -128(min) = -200 => always false => 1(column) = 0(constant)
+				// -128(min) <=> -200 => always false => 1(column) <=> 0(constant)
+				// -128(min) <= -200 => always false => 1(column) <= 0(constant)
+				// -128(min) < -200 => always false => 1(column) < 0(constant)
+				col, con, succ = NewOne(), NewZero(), true
+			}
+		}
+	} else {
+		if upper {
+			// The value of constant equal to the upper bound of column.
+			// For example: column is tinyint type, the range of tinyint is [-128, 127]; the value constant are 127;
+			// 127 == 127 => The value of constant(127) is equal to the upper bound of column(127).
+			if op == opcode.GT {
+				// 127(column value) > 127(constant) => always false => 0 > 1
+				col, con, succ = NewZero(), NewOne(), true
+			} else if (op == opcode.LE) && colHasNotNullFlag {
+				// If we want to get the `always true` result, we should guarantee the column have not null flag.
+				// 127(column value) <= 127(constant) => always true => 0 <= 1
+				col, con, succ = NewZero(), NewOne(), true
+			}
+		} else {
+			// The value of constant equal to the lower bound of column.
+			// For example: column is tinyint type, the range of tinyint is [-128, 127]; the value constant are -128;
+			// -128 == -128 => The value of constant(-128) is equal to the lower bound of column(-128).
+			if op == opcode.LT {
+				// -128(column value) < -128(constant) => always false => 1 < 0
+				col, con, succ = NewOne(), NewZero(), true
+			} else if (op == opcode.GE) && colHasNotNullFlag {
+				// If we want to get the `always true` result, we should guarantee the column have not null flag.
+				// -128(column value) >= -128(constant) => always true => 1 > 0
+				col, con, succ = NewOne(), NewZero(), true
+			}
+		}
+	}
+	return col, con, succ
 }
 
 // getFunction sets compare built-in function signatures for various types.
