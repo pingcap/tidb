@@ -521,15 +521,15 @@ const (
 	TpJoinRuntimeStats
 	// TpSelectResultRuntimeStats is the tp for SelectResultRuntimeStats.
 	TpSelectResultRuntimeStats
-	// TpInsertRuntimeStat is the tp for InsertRuntimeStat
-	TpInsertRuntimeStat
-	// TpIndexLookUpRunTimeStats is the tp for TpIndexLookUpRunTimeStats
+	// TpInsertRuntimeStats is the tp for InsertRuntimeStats.
+	TpInsertRuntimeStats
+	// TpIndexLookUpRunTimeStats is the tp for IndexLookUpRunTimeStats.
 	TpIndexLookUpRunTimeStats
-	// TpSlowQueryRuntimeStat is the tp for TpSlowQueryRuntimeStat
-	TpSlowQueryRuntimeStat
-	// TpHashAggRuntimeStat is the tp for HashAggRuntimeStat
-	TpHashAggRuntimeStat
-	// TpIndexMergeRunTimeStats is the tp for TpIndexMergeRunTimeStats
+	// TpSlowQueryRuntimeStats is the tp for SlowQueryRuntimeStats.
+	TpSlowQueryRuntimeStats
+	// TpHashAggRuntimeStats is the tp for HashAggRuntimeStats.
+	TpHashAggRuntimeStats
+	// TpIndexMergeRunTimeStats is the tp for IndexMergeRunTimeStats.
 	TpIndexMergeRunTimeStats
 )
 

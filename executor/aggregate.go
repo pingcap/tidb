@@ -971,7 +971,7 @@ func (e *HashAggRuntimeStats) Merge(other execdetails.RuntimeStats) {
 
 // Tp implements the RuntimeStats interface.
 func (e *HashAggRuntimeStats) Tp() int {
-	return execdetails.TpHashAggRuntimeStat
+	return execdetails.TpHashAggRuntimeStats
 }
 
 // StreamAggExec deals with all the aggregate functions.

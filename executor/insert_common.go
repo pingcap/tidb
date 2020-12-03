@@ -1115,5 +1115,5 @@ func (e *InsertRuntimeStat) Merge(other execdetails.RuntimeStats) {
 
 // Tp implements the RuntimeStats interface.
 func (e *InsertRuntimeStat) Tp() int {
-	return execdetails.TpInsertRuntimeStat
+	return execdetails.TpInsertRuntimeStats
 }
