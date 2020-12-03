@@ -734,7 +734,18 @@ func (t *partitionedTable) locateRangePartition(ctx sessionctx.Context, pi *mode
 // TODO: supports linear hashing
 func (t *partitionedTable) locateHashPartition(ctx sessionctx.Context, pi *model.PartitionInfo, r []types.Datum) (int, error) {
 	if col, ok := t.partitionExpr.Expr.(*expression.Column); ok {
-		ret := r[col.Index].GetInt64()
+		var data types.Datum
+		switch r[col.Index].Kind() {
+		case types.KindInt64, types.KindUint64:
+			data = r[col.Index]
+		default:
+			var err error
+			data, err = r[col.Index].ConvertTo(ctx.GetSessionVars().StmtCtx, types.NewFieldType(mysql.TypeLong))
+			if err != nil {
+				return 0, err
+			}
+		}
+		ret := data.GetInt64()
 		ret = ret % int64(t.meta.Partition.Num)
 		if ret < 0 {
 			ret = -ret
@@ -823,6 +834,14 @@ func (t *partitionTableWithGivenSets) AddRecord(ctx sessionctx.Context, r []type
 	return partitionedTableAddRecord(ctx, t.partitionedTable, r, t.partitions, opts)
 }
 
+func (t *partitionTableWithGivenSets) GetAllPartitionIDs() []int64 {
+	ptIDs := make([]int64, 0, len(t.partitions))
+	for id := range t.partitions {
+		ptIDs = append(ptIDs, id)
+	}
+	return ptIDs
+}
+
 // RemoveRecord implements table.Table RemoveRecord interface.
 func (t *partitionedTable) RemoveRecord(ctx sessionctx.Context, h kv.Handle, r []types.Datum) error {
 	partitionInfo := t.meta.GetPartitionInfo()
@@ -833,6 +852,14 @@ func (t *partitionedTable) RemoveRecord(ctx sessionctx.Context, h kv.Handle, r [
 
 	tbl := t.GetPartition(pid)
 	return tbl.RemoveRecord(ctx, h, r)
+}
+
+func (t *partitionedTable) GetAllPartitionIDs() []int64 {
+	ptIDs := make([]int64, 0, len(t.partitions))
+	for id := range t.partitions {
+		ptIDs = append(ptIDs, id)
+	}
+	return ptIDs
 }
 
 // UpdateRecord implements table.Table UpdateRecord interface.

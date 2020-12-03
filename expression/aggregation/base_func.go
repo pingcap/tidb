@@ -183,13 +183,13 @@ func (a *baseFuncDesc) typeInfer4Sum(ctx sessionctx.Context) {
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeYear:
 		a.RetTp = types.NewFieldType(mysql.TypeNewDecimal)
 		a.RetTp.Flen, a.RetTp.Decimal = utils.MinInt(a.Args[0].GetType().Flen+21, mysql.MaxDecimalWidth), 0
-		if a.Args[0].GetType().Flen < 0 {
+		if a.Args[0].GetType().Flen < 0 || a.RetTp.Flen > mysql.MaxDecimalWidth {
 			a.RetTp.Flen = mysql.MaxDecimalWidth
 		}
 	case mysql.TypeNewDecimal:
 		a.RetTp = types.NewFieldType(mysql.TypeNewDecimal)
 		a.RetTp.Flen, a.RetTp.Decimal = utils.MinInt(a.Args[0].GetType().Flen+22), a.Args[0].GetType().Decimal
-		if a.Args[0].GetType().Flen < 0 {
+		if a.Args[0].GetType().Flen < 0 || a.RetTp.Flen > mysql.MaxDecimalWidth {
 			a.RetTp.Flen = mysql.MaxDecimalWidth
 		}
 		if a.RetTp.Decimal < 0 || a.RetTp.Decimal > mysql.MaxDecimalScale {
@@ -356,6 +356,18 @@ var noNeedCastAggFuncs = map[string]struct{}{
 	ast.AggFuncFirstRow:            {},
 	ast.WindowFuncNtile:            {},
 	ast.AggFuncJsonObjectAgg:       {},
+}
+
+// WrapCastAsDecimalForAggArgs wraps the args of some specific aggregate functions
+// with a cast as decimal function. See issue #19426
+func (a *baseFuncDesc) WrapCastAsDecimalForAggArgs(ctx sessionctx.Context) {
+	if a.Name == ast.AggFuncGroupConcat {
+		for i := 0; i < len(a.Args)-1; i++ {
+			if tp := a.Args[i].GetType(); tp.Tp == mysql.TypeNewDecimal {
+				a.Args[i] = expression.BuildCastFunction(ctx, a.Args[i], tp)
+			}
+		}
+	}
 }
 
 // WrapCastForAggArgs wraps the args of an aggregate function with a cast function.
