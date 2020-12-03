@@ -500,18 +500,11 @@ func (ds *DataSource) getIndexCandidate(path *util.AccessPath, prop *property.Ph
 	// When the prop is empty or `all` is false, `isMatchProp` is better to be `false` because
 	// it needs not to keep order for index scan.
 	if !prop.IsEmpty() && all {
-		eqCondCount := 0
-		for _, ran := range path.Ranges {
-			// Some expressions such as `a >= 2 && a <= 2` can also convert to a equal condition like `a = 2`.
-			if ran.IsPoint(ds.ctx.GetSessionVars().StmtCtx) {
-				eqCondCount++
-			}
-		}
 		for i, col := range path.IdxCols {
 			if col.Equal(nil, prop.SortItems[0].Col) {
 				candidate.isMatchProp = matchIndicesProp(path.IdxCols[i:], path.IdxColLens[i:], prop.SortItems)
 				break
-			} else if i >= path.EqCondCount && i >= eqCondCount {
+			} else if i >= path.EqCondCount {
 				break
 			}
 		}

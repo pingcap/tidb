@@ -248,18 +248,20 @@ func (d *rangeDetacher) detachCNFCondAndBuildRangeForIndex(conditions []expressi
 	if emptyRange {
 		return res, nil
 	}
-	for ; eqCount < len(accessConds); eqCount++ {
-		if accessConds[eqCount].(*expression.ScalarFunction).FuncName.L != ast.EQ {
-			break
-		}
-	}
 	eqOrInCount := len(accessConds)
-	res.EqCondCount = eqCount
 	res.EqOrInCount = eqOrInCount
 	ranges, err = d.buildCNFIndexRange(tpSlice, eqOrInCount, accessConds)
 	if err != nil {
 		return res, err
 	}
+	for _, ran := range ranges {
+		// Some expressions such as `a >= 2 && a <= 2` can also convert to a equal condition like `a = 2`.
+		// Thus the number of `equal conditions` are equal to the number of point range.
+		if ran.IsPoint(d.sctx.GetSessionVars().StmtCtx) {
+			eqCount++
+		}
+	}
+	res.EqCondCount = eqCount
 	res.Ranges = ranges
 	res.AccessConds = accessConds
 	res.RemainedConds = filterConds
