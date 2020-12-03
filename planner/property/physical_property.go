@@ -96,8 +96,9 @@ func SortItemsFromCols(cols []*expression.Column, desc bool) []SortItem {
 }
 
 // MatchPartCols check if the keys can match the needs of partition.
+// TODO: Actually the check of order is unnessary.
 func (p *PhysicalProperty) MatchPartCols(keys []*expression.Column) bool {
-	if len(p.PartitionCols) > len(keys) {
+	if len(p.PartitionCols) == len(keys) {
 		return false
 	}
 	for i, partCol := range p.PartitionCols {
