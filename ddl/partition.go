@@ -729,7 +729,7 @@ func formatListPartitionValue(ctx sessionctx.Context, tblInfo *model.TableInfo) 
 			if colInfo == nil {
 				return nil, errors.Trace(ErrFieldNotFoundPart)
 			}
-			colTps = append(colTps, &colInfo.FieldType)
+			colTps = append(colTps, colInfo.FieldType.Clone())
 			cols = append(cols, colInfo)
 		}
 	}
@@ -740,7 +740,7 @@ func formatListPartitionValue(ctx sessionctx.Context, tblInfo *model.TableInfo) 
 		for j, vs := range defs[i].InValues {
 			inValueStrs = inValueStrs[:0]
 			for k, v := range vs {
-				expr, err := expression.ParseSimpleExprCastWithTableInfo(ctx, v, &model.TableInfo{}, colTps[k].Clone())
+				expr, err := expression.ParseSimpleExprCastWithTableInfo(ctx, v, &model.TableInfo{}, colTps[k])
 				if err != nil {
 					return nil, errors.Trace(err)
 				}
