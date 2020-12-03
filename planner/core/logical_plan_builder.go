@@ -473,7 +473,11 @@ func extractTableAlias(p Plan, parentOffset int) *hintTableInfo {
 		if blockOffset != parentOffset && blockAsNames != nil && blockAsNames[blockOffset].TableName.L != "" {
 			blockOffset = parentOffset
 		}
-		return &hintTableInfo{dbName: firstName.DBName, tblName: firstName.TblName, selectOffset: blockOffset}
+		dbName := firstName.DBName
+		if dbName.L == "" {
+			dbName = model.NewCIStr(p.SCtx().GetSessionVars().CurrentDB)
+		}
+		return &hintTableInfo{dbName: dbName, tblName: firstName.TblName, selectOffset: blockOffset}
 	}
 	return nil
 }
@@ -774,6 +778,10 @@ func (b *PlanBuilder) coalesceCommonColumns(p *LogicalJoin, leftPlan, rightPlan 
 	// Find out all the common columns and put them ahead.
 	commonLen := 0
 	for i, lName := range lNames {
+		// Natural join should ignore _tidb_rowid
+		if lName.ColName.L == "_tidb_rowid" {
+			continue
+		}
 		for j := commonLen; j < len(rNames); j++ {
 			if lName.ColName.L != rNames[j].ColName.L {
 				continue
@@ -2824,7 +2832,10 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 	}
 
 	hasWindowFuncField := b.detectSelectWindow(sel)
-	if hasWindowFuncField {
+	// Some SQL statements define WINDOW but do not use them. But we also need to check the window specification list.
+	// For example: select id from t group by id WINDOW w AS (ORDER BY uids DESC) ORDER BY id;
+	// We don't use the WINDOW w, but if the 'uids' column is not in the table t, we still need to report an error.
+	if hasWindowFuncField || sel.WindowSpecs != nil {
 		windowAggMap, err = b.resolveWindowFunction(sel, p)
 		if err != nil {
 			return nil, err
@@ -3026,10 +3037,16 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, dbName.L, tableInfo.Name.L, "", authErr)
 
 	if tbl.Type().IsVirtualTable() {
+		if tn.TableSample != nil {
+			return nil, expression.ErrInvalidTableSample.GenWithStackByArgs("Unsupported TABLESAMPLE in virtual tables")
+		}
 		return b.buildMemTable(ctx, dbName, tableInfo)
 	}
 
 	if tableInfo.IsView() {
+		if tn.TableSample != nil {
+			return nil, expression.ErrInvalidTableSample.GenWithStackByArgs("Unsupported TABLESAMPLE in views")
+		}
 		return b.BuildDataSourceFromView(ctx, dbName, tableInfo)
 	}
 
@@ -3212,6 +3229,8 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	ds.SetSchema(schema)
 	ds.names = names
 	ds.setPreferredStoreType(b.TableHints())
+	ds.SampleInfo = NewTableSampleInfo(tn.TableSample, schema.Clone(), b.partitionedTable)
+	b.isSampling = ds.SampleInfo != nil
 
 	// Init commonHandleCols and commonHandleLens for data source.
 	if tableInfo.IsCommonHandle {
@@ -3884,7 +3903,7 @@ func (b *PlanBuilder) buildUpdateLists(
 			if !colInfo.IsGenerated() {
 				continue
 			}
-			columnFullName := fmt.Sprintf("%s.%s.%s", tn.Schema.L, tn.Name.L, colInfo.Name.L)
+			columnFullName := fmt.Sprintf("%s.%s.%s", tn.DBInfo.Name.L, tn.Name.L, colInfo.Name.L)
 			isDefault, ok := modifyColumns[columnFullName]
 			if ok && colInfo.Hidden {
 				return nil, nil, false, ErrUnknownColumn.GenWithStackByArgs(colInfo.Name, clauseMsg[fieldList])
@@ -4072,12 +4091,12 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, delete *ast.DeleteStmt) (
 		for _, tn := range delete.Tables.Tables {
 			foundMatch := false
 			for _, v := range tableList {
-				dbName := v.Schema.L
-				if dbName == "" {
-					dbName = b.ctx.GetSessionVars().CurrentDB
+				dbName := v.Schema
+				if dbName.L == "" {
+					dbName = model.NewCIStr(b.ctx.GetSessionVars().CurrentDB)
 				}
-				if (tn.Schema.L == "" || tn.Schema.L == dbName) && tn.Name.L == v.Name.L {
-					tn.Schema.L = dbName
+				if (tn.Schema.L == "" || tn.Schema.L == dbName.L) && tn.Name.L == v.Name.L {
+					tn.Schema = dbName
 					tn.DBInfo = v.DBInfo
 					tn.TableInfo = v.TableInfo
 					foundMatch = true

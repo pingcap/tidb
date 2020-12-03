@@ -34,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
-	"github.com/pingcap/tidb/ddl/placement"
 	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/errno"
@@ -150,12 +149,6 @@ func (do *Domain) loadInfoSchema(handle *infoschema.Handle, usedSchemaVersion in
 	}
 
 	bundles, err := infosync.GetAllRuleBundles(nil)
-	failpoint.Inject("FailPlacement", func(val failpoint.Value) {
-		if val.(bool) {
-			bundles = []*placement.Bundle{}
-			err = nil
-		}
-	})
 	if err != nil {
 		return 0, nil, fullLoad, err
 	}
