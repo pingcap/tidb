@@ -1526,6 +1526,9 @@ func checkTableInfoValidWithStmt(ctx sessionctx.Context, tbInfo *model.TableInfo
 		if err := checkPartitionDefinitionConstraints(ctx, tbInfo); err != nil {
 			return errors.Trace(err)
 		}
+		if err := checkPartitionFuncType(ctx, s.Partition.Expr, tbInfo); err != nil {
+			return errors.Trace(err)
+		}
 		if err := checkPartitioningKeysConstraints(ctx, s, tbInfo); err != nil {
 			return errors.Trace(err)
 		}

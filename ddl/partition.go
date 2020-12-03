@@ -326,9 +326,6 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.PartitionOptions, tb
 		if err := checkPartitionFuncValid(ctx, tbInfo, s.Expr); err != nil {
 			return errors.Trace(err)
 		}
-		if err := checkPartitionFuncType(ctx, s.Expr, tbInfo); err != nil {
-			return errors.Trace(err)
-		}
 		buf := new(bytes.Buffer)
 		restoreCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, buf)
 		if err := s.Expr.Restore(restoreCtx); err != nil {
