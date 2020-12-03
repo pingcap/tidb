@@ -636,6 +636,11 @@ error = '''
 Incorrect type for argument %s in function %s.
 '''
 
+["expression:8128"]
+error = '''
+Invalid TABLESAMPLE: %s
+'''
+
 ["json:3069"]
 error = '''
 Invalid JSON data provided to function %s: %s
