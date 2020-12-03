@@ -82,7 +82,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrTooLongIdent:                             mysql.Message("Identifier name '%-.100s' is too long", nil),
 	ErrDupFieldName:                             mysql.Message("Duplicate column name '%-.192s'", nil),
 	ErrDupKeyName:                               mysql.Message("Duplicate key name '%-.192s'", nil),
-	ErrDupEntry:                                 mysql.Message("Duplicate entry '%-.64s' for key '%-.192s'", []int{0, 1}),
+	ErrDupEntry:                                 mysql.Message("Duplicate entry '%-.64s' for key '%-.192s'", []int{0}),
 	ErrWrongFieldSpec:                           mysql.Message("Incorrect column specifier for column '%-.192s'", nil),
 	ErrParse:                                    mysql.Message("%s %s", nil),
 	ErrEmptyQuery:                               mysql.Message("Query was empty", nil),
@@ -1028,6 +1028,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrBRIEExportFailed:  mysql.Message("Export failed: %s", nil),
 
 	ErrInvalidPlacementSpec: mysql.Message("Invalid placement policy '%s': %s", nil),
+	ErrPlacementPolicyCheck: mysql.Message("Placement policy didn't meet the constraint, reason: %s", nil),
 
 	// TiKV/PD errors.
 	ErrPDServerTimeout:           mysql.Message("PD server timeout", nil),

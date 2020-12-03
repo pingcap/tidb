@@ -255,14 +255,14 @@ func (s *tikvStore) EtcdAddrs() ([]string, error) {
 	}
 
 	ctx := context.Background()
-	bo := NewBackoffer(ctx, GetMemberInfoBackoff)
+	bo := NewBackoffer(ctx, GetAllMembersBackoff)
 	etcdAddrs := make([]string, 0)
 	pdClient := s.pdClient
 	if pdClient == nil {
 		return nil, errors.New("Etcd client not found")
 	}
 	for {
-		members, err := pdClient.GetMemberInfo(ctx)
+		members, err := pdClient.GetAllMembers(ctx)
 		if err != nil {
 			err := bo.Backoff(BoRegionMiss, err)
 			if err != nil {
@@ -397,7 +397,7 @@ func (s *tikvStore) getTimestampWithRetry(bo *Backoffer) (uint64, error) {
 	}
 
 	for {
-		startTS, err := s.oracle.GetTimestamp(bo.ctx)
+		startTS, err := s.oracle.GetTimestamp(bo.ctx, &oracle.Option{TxnScope: oracle.GlobalTxnScope})
 		// mockGetTSErrorInRetry should wait MockCommitErrorOnce first, then will run into retry() logic.
 		// Then mockGetTSErrorInRetry will return retryable error when first retry.
 		// Before PR #8743, we don't cleanup txn after meet error such as error like: PD server timeout
