@@ -339,13 +339,13 @@ func (s *testColumnTypeChangeSuite) TestColumnTypeChangeFromIntegerToOthers(c *C
 	tk.MustExec("alter table t modify e blob(10)")
 	modifiedColumn = getModifyColumn(c, tk.Se, "test", "t", "e", false)
 	c.Assert(modifiedColumn, NotNil)
-	c.Assert(modifiedColumn.Tp, Equals, parser_mysql.TypeBlob)
+	c.Assert(modifiedColumn.Tp, Equals, parser_mysql.TypeTinyBlob)
 	tk.MustQuery("select e from t").Check(testkit.Rows("11111"))
 
 	tk.MustExec("alter table t modify f text(10)")
 	modifiedColumn = getModifyColumn(c, tk.Se, "test", "t", "f", false)
 	c.Assert(modifiedColumn, NotNil)
-	c.Assert(modifiedColumn.Tp, Equals, parser_mysql.TypeBlob)
+	c.Assert(modifiedColumn.Tp, Equals, parser_mysql.TypeTinyBlob)
 	tk.MustQuery("select f from t").Check(testkit.Rows("111111"))
 
 	// integer to decimal
