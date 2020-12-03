@@ -11,10 +11,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-BASE_DIR := $(abspath $(dir $(lastword $(MAKEFILE_LIST)))/../..)
-OUT_DIR := $(abspath $(dir $(lastword $(MAKEFILE_LIST)))/bin)
+BASE_DIR := $(abspath ${CURDIR}/../..)
+OUT_DIR := $(abspath ${CURDIR}/bin)
 
-include $(BASE_DIR)/Makefile.common
+GO              := GO111MODULE=on go
+GOBUILD         := $(GO) build $(BUILD_FLAG) -tags codes
 
 .PHONY: server buildsucc
 
@@ -24,10 +25,5 @@ buildsucc:
 	@echo "Build TiDB Server successfully!"
 
 server:
-ifeq ($(TARGET), "")
 	cd ${BASE_DIR} && \
 	CGO_ENABLED=1 $(GOBUILD) -ldflags '$(LDFLAGS)' -o $(OUT_DIR)/tidb-server tidb-server/main.go
-else
-	cd ${BASE_DIR} && \
-	CGO_ENABLED=1 $(GOBUILD) -ldflags '$(LDFLAGS)' -o '$(TARGET)' tidb-server/main.go
-endif

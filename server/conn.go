@@ -1380,7 +1380,7 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 		return err
 	}
 	status := atomic.LoadInt32(&cc.status)
-	if rss != nil && (status == connStatusShutdown || status == connStatusWaitShutdown) {
+	if rss != nil && status == connStatusShutdown {
 		for _, rs := range rss {
 			terror.Call(rs.Close)
 		}
@@ -1400,42 +1400,7 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 				return errMultiStatementDisabled
 			}
 
-<<<<<<< HEAD
 			err = cc.writeMultiResultset(ctx, rss, false)
-=======
-func (cc *clientConn) handleStmt(ctx context.Context, stmt ast.StmtNode, warns []stmtctx.SQLWarn, lastStmt bool) error {
-	ctx = context.WithValue(ctx, execdetails.StmtExecDetailKey, &execdetails.StmtExecDetails{})
-	reg := trace.StartRegion(ctx, "ExecuteStmt")
-	rs, err := cc.ctx.ExecuteStmt(ctx, stmt)
-	reg.End()
-	// The session tracker detachment from global tracker is solved in the `rs.Close` in most cases.
-	// If the rs is nil, the detachment will be done in the `handleNoDelay`.
-	if rs != nil {
-		defer terror.Call(rs.Close)
-	}
-	if err != nil {
-		return err
-	}
-
-	if lastStmt {
-		cc.ctx.GetSessionVars().StmtCtx.AppendWarnings(warns)
-	}
-
-	status := cc.ctx.Status()
-	if !lastStmt {
-		status |= mysql.ServerMoreResultsExists
-	}
-
-	if rs != nil {
-		connStatus := atomic.LoadInt32(&cc.status)
-		if connStatus == connStatusShutdown {
-			return executor.ErrQueryInterrupted
-		}
-
-		err = cc.writeResultset(ctx, rs, false, status, 0)
-		if err != nil {
-			return err
->>>>>>> d67a10211... server: return results of ongoing queries when graceful shutdown (#19669)
 		}
 	} else {
 		var handled bool
