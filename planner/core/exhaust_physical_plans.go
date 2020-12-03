@@ -1914,17 +1914,28 @@ func (p *LogicalProjection) TryToGetChildProp(prop *property.PhysicalProperty) (
 }
 
 func (p *LogicalProjection) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]PhysicalPlan, bool) {
-	newProp, ok := p.TryToGetChildProp(prop)
-	if !ok {
-		return nil, true
+	allTaskTypes := prop.GetAllPossibleChildTaskTypes()
+	// TODO: only for TiFlash now, support push down projection in TiKV later
+	_, tikv := p.SCtx().GetSessionVars().GetIsolationReadEngines()[kv.TiKV]
+	if tikv {
+		allTaskTypes = []property.TaskType{prop.TaskTp}
 	}
-	proj := PhysicalProjection{
-		Exprs:                p.Exprs,
-		CalculateNoDelay:     p.CalculateNoDelay,
-		AvoidColumnEvaluator: p.AvoidColumnEvaluator,
-	}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), p.blockOffset, newProp)
-	proj.SetSchema(p.schema)
-	return []PhysicalPlan{proj}, true
+	ret := make([]PhysicalPlan, 0, len(allTaskTypes))
+	for _, tp := range allTaskTypes {
+		newProp, ok := p.TryToGetChildProp(prop)
+		newProp.TaskTp = tp
+		if !ok {
+			break
+		}
+		proj := PhysicalProjection{
+			Exprs:                p.Exprs,
+			CalculateNoDelay:     p.CalculateNoDelay,
+			AvoidColumnEvaluator: p.AvoidColumnEvaluator,
+		}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), p.blockOffset, newProp)
+		proj.SetSchema(p.schema)
+		ret = append(ret, proj)
+	}
+	return ret, true
 }
 
 func (lt *LogicalTopN) canPushToCop() bool {

@@ -247,6 +247,13 @@ func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPl
 		if _, ok := curTask.(*mppTask); ok && prop.TaskTp == property.RootTaskType {
 			curTask = curTask.convertToRootTask(p.ctx)
 		}
+		// convert to root task as needed to satisfy property
+		if prop.TaskTp == property.RootTaskType {
+			_, ok := curTask.(*rootTask)
+			if prop.IsFlashProp() || !ok {
+				curTask = finishCopTask(p.ctx, curTask)
+			}
+		}
 
 		// Enforce curTask property
 		if addEnforcer {
