@@ -926,6 +926,8 @@ github.com/xo/xoutil v0.0.0-20171112033149-46189f4026a5/go.mod h1:GngMELAA694UVF
 github.com/xordataexchange/crypt v0.0.3-0.20170626215501-b2862e3d0a77/go.mod h1:aYKd//L2LvnjZzWKhF00oedf4jCCReLcmhLdhm1A27Q=
 github.com/yisaer/parser v0.0.0-20201202115448-3e219661201b h1:1aFYH8G10aHaCmw/fyVe8y2J+pWoFKNEF72SiUoDBF8=
 github.com/yisaer/parser v0.0.0-20201202115448-3e219661201b/go.mod h1:GbEr2PgY72/4XqPZzmzstlOU/+il/wrjeTNFs6ihsSE=
+github.com/yisaer/parser v0.0.0-20201203050019-e331bbae3292 h1:OGtmf6ofHap1aIrgQVk8ZqyG4eHLcmEOj7wU3uXhmeI=
+github.com/yisaer/parser v0.0.0-20201203050019-e331bbae3292/go.mod h1:GbEr2PgY72/4XqPZzmzstlOU/+il/wrjeTNFs6ihsSE=
 github.com/yookoala/realpath v1.0.0/go.mod h1:gJJMA9wuX7AcqLy1+ffPatSCySA1FQ2S8Ya9AIoYBpE=
 github.com/yuin/goldmark v1.1.25/go.mod h1:3hX8gzYuyVAZsxl0MRgGTJEmQBFcNTphYh9decYSb74=
 github.com/yuin/goldmark v1.1.27/go.mod h1:3hX8gzYuyVAZsxl0MRgGTJEmQBFcNTphYh9decYSb74=
