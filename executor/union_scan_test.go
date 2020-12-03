@@ -333,6 +333,31 @@ func (s *testSuite7) TestForUpdateUntouchedIndex(c *C) {
 	tk.MustExec("admin check table t")
 }
 
+func (s *testSuite7) TestUpdateScanningHandles(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a int primary key, b int);")
+	tk.MustExec("begin")
+	for i := 2; i < 100000; i++ {
+		tk.MustExec("insert into t values (?, ?)", i, i)
+	}
+	tk.MustExec("commit;")
+
+	tk.MustExec("set tidb_distsql_scan_concurrency = 1;")
+	tk.MustExec("set tidb_index_lookup_join_concurrency = 1;")
+	tk.MustExec("set tidb_projection_concurrency=1;")
+	tk.MustExec("set tidb_init_chunk_size=1;")
+	tk.MustExec("set tidb_max_chunk_size=32;")
+
+	tk.MustExec("begin")
+	tk.MustExec("insert into t values (1, 1);")
+	tk.MustExec("update /*+ INL_JOIN(t1) */ t t1, (select a, b from t) t2 set t1.b = t2.b where t1.a = t2.a + 1000;")
+	result := tk.MustQuery("select a, a-b from t where a > 1000 and a - b != 1000;")
+	c.Assert(result.Rows(), HasLen, 0)
+	tk.MustExec("rollback;")
+}
+
 // See https://github.com/pingcap/tidb/issues/19136
 func (s *testSuite7) TestForApplyAndUnionScan(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
@@ -358,7 +383,7 @@ func (s *testSuite7) TestForApplyAndUnionScan(c *C) {
 
 	// See https://github.com/pingcap/tidb/issues/19431
 	tk.MustExec("DROP TABLE IF EXISTS `t`")
-	tk.MustExec("CREATE TABLE `t` ( `c_int` int(11) NOT NULL, `c_str` varchar(40) NOT NULL, `c_datetime` datetime NOT NULL, PRIMARY KEY (`c_int`,`c_str`,`c_datetime`), KEY `c_str` (`c_str`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin; /*!40101 SET character_set_client = @saved_cs_client */")
+	tk.MustExec("CREATE TABLE `t` ( `c_int` int(11) NOT NULL, `c_str` varchar(40) NOT NULL, `c_datetime` datetime NOT NULL, PRIMARY KEY (`c_int`,`c_str`,`c_datetime`), KEY `c_str` (`c_str`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;")
 	tk.MustExec("INSERT INTO `t` VALUES (1,'cool pasteur','2020-04-21 19:01:04'),(3,'friendly stonebraker','2020-06-09 18:58:00'),(5,'happy shannon','2020-02-29 21:39:08'),(6,'competent torvalds','2020-05-24 04:18:45'),(7,'fervent kapitsa','2020-05-21 16:58:12'),(8,'quirky jennings','2020-03-12 12:52:58'),(9,'adoring swartz','2020-04-19 02:20:32'),(14,'intelligent keller','2020-01-08 09:47:42'),(15,'vibrant zhukovsky','2020-04-15 15:15:55'),(18,'keen chatterjee','2020-02-09 06:39:31'),(20,'elastic gauss','2020-03-01 13:34:06'),(21,'affectionate margulis','2020-06-20 10:20:29'),(27,'busy keldysh','2020-05-21 09:10:45'),(31,'flamboyant banach','2020-03-04 21:28:44'),(39,'keen banach','2020-06-09 03:07:57'),(41,'nervous gagarin','2020-06-12 23:43:04'),(47,'wonderful chebyshev','2020-04-15 14:51:17'),(50,'reverent brahmagupta','2020-06-25 21:50:52'),(52,'suspicious elbakyan','2020-05-28 04:55:34'),(55,'epic lichterman','2020-05-16 19:24:09'),(57,'determined taussig','2020-06-18 22:51:37')")
 	tk.MustExec("DROP TABLE IF EXISTS `t1`")
 	tk.MustExec("CREATE TABLE `t1` ( `c_int` int(11) DEFAULT NULL, `c_str` varchar(40) NOT NULL, `c_datetime` datetime DEFAULT NULL, PRIMARY KEY (`c_str`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin")

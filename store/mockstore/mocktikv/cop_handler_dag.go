@@ -807,14 +807,14 @@ func toPBError(err error) *tipb.Error {
 	perr := new(tipb.Error)
 	switch x := err.(type) {
 	case *terror.Error:
-		sqlErr := x.ToSQLError()
+		sqlErr := terror.ToSQLError(x)
 		perr.Code = int32(sqlErr.Code)
 		perr.Msg = sqlErr.Message
 	default:
 		e := errors.Cause(err)
 		switch y := e.(type) {
 		case *terror.Error:
-			tmp := y.ToSQLError()
+			tmp := terror.ToSQLError(y)
 			perr.Code = int32(tmp.Code)
 			perr.Msg = tmp.Message
 		default:
@@ -925,6 +925,6 @@ func fieldTypeFromPBColumn(col *tipb.ColumnInfo) *types.FieldType {
 		Flen:    int(col.GetColumnLen()),
 		Decimal: int(col.GetDecimal()),
 		Elems:   col.Elems,
-		Collate: mysql.Collations[uint8(collate.RestoreCollationIDIfNeeded(col.GetCollation()))],
+		Collate: collate.CollationID2Name(collate.RestoreCollationIDIfNeeded(col.GetCollation())),
 	}
 }

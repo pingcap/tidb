@@ -122,7 +122,10 @@ func (h *Helper) FetchHotRegion(rw string) (map[uint64]RegionMetric, error) {
 	if !ok {
 		return nil, errors.WithStack(errors.New("not implemented"))
 	}
-	pdHosts := etcd.EtcdAddrs()
+	pdHosts, err := etcd.EtcdAddrs()
+	if err != nil {
+		return nil, err
+	}
 	if len(pdHosts) == 0 {
 		return nil, errors.New("pd unavailable")
 	}
@@ -201,6 +204,7 @@ type HotTableIndex struct {
 func (h *Helper) FetchRegionTableIndex(metrics map[uint64]RegionMetric, allSchemas []*model.DBInfo) ([]HotTableIndex, error) {
 	hotTables := make([]HotTableIndex, 0, len(metrics))
 	for regionID, regionMetric := range metrics {
+		regionMetric := regionMetric
 		t := HotTableIndex{RegionID: regionID, RegionMetric: &regionMetric}
 		region, err := h.RegionCache.LocateRegionByID(tikv.NewBackofferWithVars(context.Background(), 500, nil), regionID)
 		if err != nil {
@@ -639,11 +643,13 @@ func (h *Helper) requestPD(method, uri string, body io.Reader, res interface{}) 
 	if !ok {
 		return errors.WithStack(errors.New("not implemented"))
 	}
-	pdHosts := etcd.EtcdAddrs()
+	pdHosts, err := etcd.EtcdAddrs()
+	if err != nil {
+		return err
+	}
 	if len(pdHosts) == 0 {
 		return errors.New("pd unavailable")
 	}
-
 	logutil.BgLogger().Debug("RequestPD URL", zap.String("url", util.InternalHTTPSchema()+"://"+pdHosts[0]+uri))
 	req, err := http.NewRequest(method, util.InternalHTTPSchema()+"://"+pdHosts[0]+uri, body)
 	if err != nil {
@@ -723,7 +729,10 @@ func (h *Helper) GetStoresStat() (*StoresStat, error) {
 	if !ok {
 		return nil, errors.WithStack(errors.New("not implemented"))
 	}
-	pdHosts := etcd.EtcdAddrs()
+	pdHosts, err := etcd.EtcdAddrs()
+	if err != nil {
+		return nil, err
+	}
 	if len(pdHosts) == 0 {
 		return nil, errors.New("pd unavailable")
 	}
@@ -751,12 +760,14 @@ func (h *Helper) GetStoresStat() (*StoresStat, error) {
 
 // GetPDAddr return the PD Address.
 func (h *Helper) GetPDAddr() ([]string, error) {
-	var pdAddrs []string
 	etcd, ok := h.Store.(tikv.EtcdBackend)
 	if !ok {
 		return nil, errors.New("not implemented")
 	}
-	pdAddrs = etcd.EtcdAddrs()
+	pdAddrs, err := etcd.EtcdAddrs()
+	if err != nil {
+		return nil, err
+	}
 	if len(pdAddrs) == 0 {
 		return nil, errors.New("pd unavailable")
 	}

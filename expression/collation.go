@@ -129,6 +129,8 @@ var (
 	CollationStrictnessGroup = map[string]int{
 		"utf8_general_ci":        1,
 		"utf8mb4_general_ci":     1,
+		"utf8_unicode_ci":        2,
+		"utf8mb4_unicode_ci":     2,
 		charset.CollationASCII:   3,
 		charset.CollationLatin1:  3,
 		charset.CollationUTF8:    3,
@@ -141,6 +143,7 @@ var (
 	// collation group id in value is stricter than collation group id in key
 	CollationStrictness = map[int][]int{
 		1: {3, 4},
+		2: {3, 4},
 		3: {4},
 		4: {},
 	}
@@ -150,7 +153,7 @@ func deriveCoercibilityForScarlarFunc(sf *ScalarFunction) Coercibility {
 	if _, ok := sysConstFuncs[sf.FuncName.L]; ok {
 		return CoercibilitySysconst
 	}
-	if !types.IsString(sf.RetType.Tp) {
+	if sf.RetType.EvalType() != types.ETString {
 		return CoercibilityNumeric
 	}
 
@@ -167,14 +170,14 @@ func deriveCoercibilityForScarlarFunc(sf *ScalarFunction) Coercibility {
 func deriveCoercibilityForConstant(c *Constant) Coercibility {
 	if c.Value.IsNull() {
 		return CoercibilityIgnorable
-	} else if !types.IsString(c.RetType.Tp) {
+	} else if c.RetType.EvalType() != types.ETString {
 		return CoercibilityNumeric
 	}
 	return CoercibilityCoercible
 }
 
 func deriveCoercibilityForColumn(c *Column) Coercibility {
-	if !types.IsString(c.RetType.Tp) {
+	if c.RetType.EvalType() != types.ETString {
 		return CoercibilityNumeric
 	}
 	return CoercibilityImplicit

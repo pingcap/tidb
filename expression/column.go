@@ -331,7 +331,7 @@ func (col *Column) String() string {
 
 // MarshalJSON implements json.Marshaler interface.
 func (col *Column) MarshalJSON() ([]byte, error) {
-	return []byte(fmt.Sprintf("\"%s\"", col)), nil
+	return []byte(fmt.Sprintf("%q", col)), nil
 }
 
 // GetType implements Expression interface.

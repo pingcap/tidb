@@ -119,7 +119,7 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		stmts, err = sqlParser.ParseSQL(e.sqlText, charset, collation)
 	} else {
 		p := parser.New()
-		p.EnableWindowFunc(vars.EnableWindowFunction)
+		p.SetParserConfig(vars.BuildParserConfig())
 		var warns []error
 		stmts, warns, err = p.Parse(e.sqlText, charset, collation)
 		for _, warn := range warns {
@@ -145,6 +145,10 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	// DDL Statements can not accept parameters
 	if _, ok := stmt.(ast.DDLNode); ok && len(extractor.markers) > 0 {
 		return ErrPrepareDDL
+	}
+
+	if _, ok := stmt.(*ast.LoadDataStmt); ok {
+		return ErrUnsupportedPs
 	}
 
 	// Prepare parameters should NOT over 2 bytes(MaxUint16)
@@ -174,7 +178,15 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		SchemaVersion: e.is.SchemaMetaVersion(),
 	}
 
-	prepared.UseCache = plannercore.PreparedPlanCacheEnabled() && plannercore.Cacheable(stmt, e.is)
+	if !plannercore.PreparedPlanCacheEnabled() {
+		prepared.UseCache = false
+	} else {
+		if !e.ctx.GetSessionVars().UseDynamicPartitionPrune() {
+			prepared.UseCache = plannercore.Cacheable(stmt, e.is)
+		} else {
+			prepared.UseCache = plannercore.Cacheable(stmt, nil)
+		}
+	}
 
 	// We try to build the real statement of preparedStmt.
 	for i := range prepared.Params {

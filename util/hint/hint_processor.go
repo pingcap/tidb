@@ -23,9 +23,9 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/format"
 	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
@@ -60,6 +60,18 @@ func (hs *HintsSet) ContainTableHint(hint string) bool {
 		}
 	}
 	return false
+}
+
+// setTableHints4StmtNode sets table hints for select/update/delete.
+func setTableHints4StmtNode(node ast.Node, hints []*ast.TableOptimizerHint) {
+	switch x := node.(type) {
+	case *ast.SelectStmt:
+		x.TableHints = hints
+	case *ast.UpdateStmt:
+		x.TableHints = hints
+	case *ast.DeleteStmt:
+		x.TableHints = hints
+	}
 }
 
 // ExtractTableHintsFromStmtNode extracts table hints from this node.
@@ -105,7 +117,7 @@ func checkInsertStmtHintDuplicated(node ast.Node, sctx sessionctx.Context) {
 				}
 				if duplicatedHint != nil {
 					hint := fmt.Sprintf("%s(`%v`)", duplicatedHint.HintName.O, duplicatedHint.HintData)
-					err := terror.ClassUtil.New(errno.ErrWarnConflictingHint, fmt.Sprintf(errno.MySQLErrName[errno.ErrWarnConflictingHint], hint))
+					err := dbterror.ClassUtil.NewStd(errno.ErrWarnConflictingHint).FastGenByArgs(hint)
 					sctx.GetSessionVars().StmtCtx.AppendWarning(err)
 				}
 			}
@@ -180,22 +192,28 @@ type hintProcessor struct {
 	bindHint2Ast bool
 	tableCounter int
 	indexCounter int
+	blockCounter int
 }
 
 func (hp *hintProcessor) Enter(in ast.Node) (ast.Node, bool) {
 	switch v := in.(type) {
-	case *ast.SelectStmt:
+	case *ast.SelectStmt, *ast.UpdateStmt, *ast.DeleteStmt:
 		if hp.bindHint2Ast {
 			if hp.tableCounter < len(hp.tableHints) {
-				v.TableHints = hp.tableHints[hp.tableCounter]
+				setTableHints4StmtNode(in, hp.tableHints[hp.tableCounter])
 			} else {
-				v.TableHints = nil
+				setTableHints4StmtNode(in, nil)
 			}
 			hp.tableCounter++
 		} else {
-			hp.tableHints = append(hp.tableHints, v.TableHints)
+			hp.tableHints = append(hp.tableHints, ExtractTableHintsFromStmtNode(in, nil))
 		}
+		hp.blockCounter++
 	case *ast.TableName:
+		// Insert cases.
+		if hp.blockCounter == 0 {
+			return in, false
+		}
 		if hp.bindHint2Ast {
 			if hp.indexCounter < len(hp.indexHints) {
 				v.IndexHints = hp.indexHints[hp.indexCounter]
@@ -211,6 +229,10 @@ func (hp *hintProcessor) Enter(in ast.Node) (ast.Node, bool) {
 }
 
 func (hp *hintProcessor) Leave(in ast.Node) (ast.Node, bool) {
+	switch in.(type) {
+	case *ast.SelectStmt, *ast.UpdateStmt, *ast.DeleteStmt:
+		hp.blockCounter--
+	}
 	return in, true
 }
 
@@ -240,18 +262,19 @@ func ParseHintsSet(p *parser.Parser, sql, charset, collation, db string) (*Hints
 	hs := CollectHint(stmtNodes[0])
 	processor := &BlockHintProcessor{}
 	stmtNodes[0].Accept(processor)
+	hintNodeType := nodeType4Stmt(stmtNodes[0])
 	for i, tblHints := range hs.tableHints {
 		newHints := make([]*ast.TableOptimizerHint, 0, len(tblHints))
 		for _, tblHint := range tblHints {
 			if tblHint.HintName.L == hintQBName {
 				continue
 			}
-			offset := processor.GetHintOffset(tblHint.QBName, TypeSelect, i+1)
-			if offset < 0 || !processor.checkTableQBName(tblHint.Tables, TypeSelect) {
+			offset := processor.GetHintOffset(tblHint.QBName, hintNodeType, i+1)
+			if offset < 0 || !processor.checkTableQBName(tblHint.Tables, hintNodeType) {
 				hintStr := RestoreTableOptimizerHint(tblHint)
 				return nil, nil, errors.New(fmt.Sprintf("Unknown query block name in hint %s", hintStr))
 			}
-			tblHint.QBName = GenerateQBName(TypeSelect, offset)
+			tblHint.QBName = GenerateQBName(hintNodeType, offset)
 			for i, tbl := range tblHint.Tables {
 				if tbl.DBName.String() == "" {
 					tblHint.Tables[i].DBName = model.NewCIStr(db)
@@ -360,7 +383,23 @@ const (
 	TypeDelete
 	// TypeSelect for SELECT.
 	TypeSelect
+	// TypeInvalid for unexpected statements.
+	TypeInvalid
 )
+
+// nodeType4Stmt returns the NodeType for a statement. The type is used for SQL bind.
+func nodeType4Stmt(node ast.StmtNode) NodeType {
+	switch node.(type) {
+	// This type is used by SQL bind, we only handle SQL bind for INSERT INTO SELECT, so we treat InsertStmt as TypeSelect.
+	case *ast.SelectStmt, *ast.InsertStmt:
+		return TypeSelect
+	case *ast.UpdateStmt:
+		return TypeUpdate
+	case *ast.DeleteStmt:
+		return TypeDelete
+	}
+	return TypeInvalid
+}
 
 // getBlockName finds the offset of query block name. It use 0 as offset for top level update or delete,
 // -1 for invalid block name.
@@ -428,9 +467,9 @@ func (p *BlockHintProcessor) GetCurrentStmtHints(hints []*ast.TableOptimizerHint
 
 // GenerateQBName builds QBName from offset.
 func GenerateQBName(nodeType NodeType, blockOffset int) model.CIStr {
-	if nodeType == TypeDelete && blockOffset == 0 {
+	if nodeType == TypeDelete && (blockOffset == 0 || blockOffset == 1) {
 		return model.NewCIStr(defaultDeleteBlockName)
-	} else if nodeType == TypeUpdate && blockOffset == 0 {
+	} else if nodeType == TypeUpdate && (blockOffset == 0 || blockOffset == 1) {
 		return model.NewCIStr(defaultUpdateBlockName)
 	}
 	return model.NewCIStr(fmt.Sprintf("%s%d", defaultSelectBlockPrefix, blockOffset))

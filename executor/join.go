@@ -14,11 +14,14 @@
 package executor
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"runtime/trace"
+	"strconv"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -87,6 +90,8 @@ type HashJoinExec struct {
 	// joinWorkerWaitGroup is for sync multiple join workers.
 	joinWorkerWaitGroup sync.WaitGroup
 	finished            atomic.Value
+
+	stats *hashJoinRuntimeStats
 }
 
 // probeChkResource stores the result of the join probe side fetch worker,
@@ -140,14 +145,8 @@ func (e *HashJoinExec) Close() error {
 	}
 	e.outerMatchedStatus = e.outerMatchedStatus[:0]
 
-	if e.runtimeStats != nil {
-		concurrency := cap(e.joiners)
-		runtimeStats := newJoinRuntimeStats(e.runtimeStats)
-		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, runtimeStats)
-		runtimeStats.SetConcurrencyInfo(execdetails.NewConcurrencyInfo("Concurrency", concurrency))
-		if e.rowContainer != nil {
-			runtimeStats.setHashStat(e.rowContainer.stat)
-		}
+	if e.stats != nil && e.rowContainer != nil {
+		e.stats.hashStat = e.rowContainer.stat
 	}
 	err := e.baseExecutor.Close()
 	return err
@@ -175,6 +174,12 @@ func (e *HashJoinExec) Open(ctx context.Context) error {
 	}
 	if e.buildTypes == nil {
 		e.buildTypes = retTypes(e.buildSideExec)
+	}
+	if e.runtimeStats != nil {
+		e.stats = &hashJoinRuntimeStats{
+			concurrent: cap(e.joiners),
+		}
+		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
 	}
 	return nil
 }
@@ -405,6 +410,17 @@ func (e *HashJoinExec) waitJoinWorkersAndCloseResultChan() {
 }
 
 func (e *HashJoinExec) runJoinWorker(workerID uint, probeKeyColIdx []int) {
+	probeTime := int64(0)
+	if e.stats != nil {
+		start := time.Now()
+		defer func() {
+			t := time.Since(start)
+			atomic.AddInt64(&e.stats.probe, probeTime)
+			atomic.AddInt64(&e.stats.fetchAndProbe, int64(t))
+			e.stats.setMaxFetchAndProbeTime(int64(t))
+		}()
+	}
+
 	var (
 		probeSideResult *chunk.Chunk
 		selected        = make([]bool, 0, chunk.InitialCapacity)
@@ -434,11 +450,13 @@ func (e *HashJoinExec) runJoinWorker(workerID uint, probeKeyColIdx []int) {
 		if !ok {
 			break
 		}
+		start := time.Now()
 		if e.useOuterToBuild {
 			ok, joinResult = e.join2ChunkForOuterHashJoin(workerID, probeSideResult, hCtx, joinResult)
 		} else {
 			ok, joinResult = e.join2Chunk(workerID, probeSideResult, hCtx, joinResult, selected)
 		}
+		probeTime += int64(time.Since(start))
 		if !ok {
 			break
 		}
@@ -561,6 +579,16 @@ func (e *HashJoinExec) join2Chunk(workerID uint, probeSideChk *chunk.Chunk, hCtx
 	}
 
 	for i := range selected {
+		killed := atomic.LoadUint32(&e.ctx.GetSessionVars().Killed) == 1
+		failpoint.Inject("killedInJoin2Chunk", func(val failpoint.Value) {
+			if val.(bool) {
+				killed = true
+			}
+		})
+		if killed {
+			joinResult.err = ErrQueryInterrupted
+			return false, joinResult
+		}
 		if !selected[i] || hCtx.hasNull[i] { // process unmatched probe side rows
 			e.joiners[workerID].onMissMatch(false, probeSideChk.GetRow(i), joinResult.chk)
 		} else { // process matched probe side rows
@@ -592,6 +620,16 @@ func (e *HashJoinExec) join2ChunkForOuterHashJoin(workerID uint, probeSideChk *c
 		}
 	}
 	for i := 0; i < probeSideChk.NumRows(); i++ {
+		killed := atomic.LoadUint32(&e.ctx.GetSessionVars().Killed) == 1
+		failpoint.Inject("killedInJoin2ChunkForOuterHashJoin", func(val failpoint.Value) {
+			if val.(bool) {
+				killed = true
+			}
+		})
+		if killed {
+			joinResult.err = ErrQueryInterrupted
+			return false, joinResult
+		}
 		probeKey, probeRow := hCtx.hashVals[i].Sum64(), probeSideChk.GetRow(i)
 		ok, joinResult = e.joinMatchedProbeSideRow2ChunkForOuterHashJoin(workerID, probeKey, probeRow, hCtx, joinResult)
 		if !ok {
@@ -648,6 +686,12 @@ func (e *HashJoinExec) handleFetchAndBuildHashTablePanic(r interface{}) {
 }
 
 func (e *HashJoinExec) fetchAndBuildHashTable(ctx context.Context) {
+	if e.stats != nil {
+		start := time.Now()
+		defer func() {
+			e.stats.fetchAndBuildHashTable = time.Since(start)
+		}()
+	}
 	// buildSideResultCh transfers build side chunk from build side fetch to build hash table.
 	buildSideResultCh := make(chan *chunk.Chunk, 1)
 	doneCh := make(chan struct{})
@@ -780,7 +824,7 @@ func (e *NestedLoopApplyExec) Close() error {
 	e.innerRows = nil
 	e.memTracker = nil
 	if e.runtimeStats != nil {
-		runtimeStats := newJoinRuntimeStats(e.runtimeStats)
+		runtimeStats := newJoinRuntimeStats()
 		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, runtimeStats)
 		if e.canUseCache {
 			var hitRatio float64
@@ -825,6 +869,39 @@ func (e *NestedLoopApplyExec) Open(ctx context.Context) error {
 	return nil
 }
 
+// aggExecutorTreeInputEmpty checks whether the executor tree returns empty if without aggregate operators.
+// Note that, the prerequisite is that this executor tree has been executed already and it returns one row.
+func aggExecutorTreeInputEmpty(e Executor) bool {
+	children := e.base().children
+	if len(children) == 0 {
+		return false
+	}
+	if len(children) > 1 {
+		_, ok := e.(*UnionExec)
+		if !ok {
+			// It is a Join executor.
+			return false
+		}
+		for _, child := range children {
+			if !aggExecutorTreeInputEmpty(child) {
+				return false
+			}
+		}
+		return true
+	}
+	// Single child executors.
+	if aggExecutorTreeInputEmpty(children[0]) {
+		return true
+	}
+	if hashAgg, ok := e.(*HashAggExec); ok {
+		return hashAgg.isChildReturnEmpty
+	}
+	if streamAgg, ok := e.(*StreamAggExec); ok {
+		return streamAgg.isChildReturnEmpty
+	}
+	return false
+}
+
 func (e *NestedLoopApplyExec) fetchSelectedOuterRow(ctx context.Context, chk *chunk.Chunk) (*chunk.Row, error) {
 	outerIter := chunk.NewIterator4Chunk(e.outerChunk)
 	for {
@@ -839,6 +916,13 @@ func (e *NestedLoopApplyExec) fetchSelectedOuterRow(ctx context.Context, chk *ch
 			e.outerSelected, err = expression.VectorizedFilter(e.ctx, e.outerFilter, outerIter, e.outerSelected)
 			if err != nil {
 				return nil, err
+			}
+			// For cases like `select count(1), (select count(1) from s where s.a > t.a) as sub from t where t.a = 1`,
+			// if outer child has no row satisfying `t.a = 1`, `sub` should be `null` instead of `0` theoretically; however, the
+			// outer `count(1)` produces one row <0, null> over the empty input, we should specially mark this outer row
+			// as not selected, to trigger the mismatch join procedure.
+			if e.outerChunkCursor == 0 && e.outerChunk.NumRows() == 1 && e.outerSelected[0] && aggExecutorTreeInputEmpty(e.outerExec) {
+				e.outerSelected[0] = false
 			}
 			e.outerChunkCursor = 0
 		}
@@ -971,11 +1055,9 @@ type joinRuntimeStats struct {
 	hashStat    hashStatistic
 }
 
-func newJoinRuntimeStats(basic *execdetails.BasicRuntimeStats) *joinRuntimeStats {
+func newJoinRuntimeStats() *joinRuntimeStats {
 	stats := &joinRuntimeStats{
-		RuntimeStatsWithConcurrencyInfo: &execdetails.RuntimeStatsWithConcurrencyInfo{
-			BasicRuntimeStats: basic,
-		},
+		RuntimeStatsWithConcurrencyInfo: &execdetails.RuntimeStatsWithConcurrencyInfo{},
 	}
 	return stats
 }
@@ -997,16 +1079,105 @@ func (e *joinRuntimeStats) setHashStat(hashStat hashStatistic) {
 }
 
 func (e *joinRuntimeStats) String() string {
-	result := e.RuntimeStatsWithConcurrencyInfo.String()
+	buf := bytes.NewBuffer(make([]byte, 0, 16))
+	buf.WriteString(e.RuntimeStatsWithConcurrencyInfo.String())
 	if e.applyCache {
 		if e.cache.useCache {
-			result += fmt.Sprintf(", cache:ON, cacheHitRatio:%.3f%%", e.cache.hitRatio*100)
+			buf.WriteString(fmt.Sprintf(", cache:ON, cacheHitRatio:%.3f%%", e.cache.hitRatio*100))
 		} else {
-			result += fmt.Sprintf(", cache:OFF")
+			buf.WriteString(fmt.Sprintf(", cache:OFF"))
 		}
 	}
 	if e.hasHashStat {
-		result += ", " + e.hashStat.String()
+		buf.WriteString(", " + e.hashStat.String())
 	}
-	return result
+	return buf.String()
+}
+
+// Tp implements the RuntimeStats interface.
+func (e *joinRuntimeStats) Tp() int {
+	return execdetails.TpJoinRuntimeStats
+}
+
+type hashJoinRuntimeStats struct {
+	fetchAndBuildHashTable time.Duration
+	hashStat               hashStatistic
+	fetchAndProbe          int64
+	probe                  int64
+	concurrent             int
+	maxFetchAndProbe       int64
+}
+
+func (e *hashJoinRuntimeStats) setMaxFetchAndProbeTime(t int64) {
+	for {
+		value := atomic.LoadInt64(&e.maxFetchAndProbe)
+		if t <= value {
+			return
+		}
+		if atomic.CompareAndSwapInt64(&e.maxFetchAndProbe, value, t) {
+			return
+		}
+	}
+}
+
+// Tp implements the RuntimeStats interface.
+func (e *hashJoinRuntimeStats) Tp() int {
+	return execdetails.TpHashJoinRuntimeStats
+}
+
+func (e *hashJoinRuntimeStats) String() string {
+	buf := bytes.NewBuffer(make([]byte, 0, 128))
+	if e.fetchAndBuildHashTable > 0 {
+		buf.WriteString("build_hash_table:{total:")
+		buf.WriteString(execdetails.FormatDuration(e.fetchAndBuildHashTable))
+		buf.WriteString(", fetch:")
+		buf.WriteString(execdetails.FormatDuration((e.fetchAndBuildHashTable - e.hashStat.buildTableElapse)))
+		buf.WriteString(", build:")
+		buf.WriteString(execdetails.FormatDuration(e.hashStat.buildTableElapse))
+		buf.WriteString("}")
+	}
+	if e.probe > 0 {
+		buf.WriteString(", probe:{concurrency:")
+		buf.WriteString(strconv.Itoa(e.concurrent))
+		buf.WriteString(", total:")
+		buf.WriteString(execdetails.FormatDuration(time.Duration(e.fetchAndProbe)))
+		buf.WriteString(", max:")
+		buf.WriteString(execdetails.FormatDuration(time.Duration(atomic.LoadInt64(&e.maxFetchAndProbe))))
+		buf.WriteString(", probe:")
+		buf.WriteString(execdetails.FormatDuration(time.Duration(e.probe)))
+		buf.WriteString(", fetch:")
+		buf.WriteString(execdetails.FormatDuration(time.Duration(e.fetchAndProbe - e.probe)))
+		if e.hashStat.probeCollision > 0 {
+			buf.WriteString(", probe_collision:")
+			buf.WriteString(strconv.Itoa(e.hashStat.probeCollision))
+		}
+		buf.WriteString("}")
+	}
+	return buf.String()
+}
+
+func (e *hashJoinRuntimeStats) Clone() execdetails.RuntimeStats {
+	return &hashJoinRuntimeStats{
+		fetchAndBuildHashTable: e.fetchAndBuildHashTable,
+		hashStat:               e.hashStat,
+		fetchAndProbe:          e.fetchAndProbe,
+		probe:                  e.probe,
+		concurrent:             e.concurrent,
+		maxFetchAndProbe:       e.maxFetchAndProbe,
+	}
+}
+
+func (e *hashJoinRuntimeStats) Merge(rs execdetails.RuntimeStats) {
+	tmp, ok := rs.(*hashJoinRuntimeStats)
+	if !ok {
+		return
+	}
+	e.fetchAndBuildHashTable += tmp.fetchAndBuildHashTable
+	e.hashStat.buildTableElapse += tmp.hashStat.buildTableElapse
+	e.hashStat.probeCollision += tmp.hashStat.probeCollision
+	e.fetchAndProbe += tmp.fetchAndProbe
+	e.probe += tmp.probe
+	if e.maxFetchAndProbe < tmp.maxFetchAndProbe {
+		e.maxFetchAndProbe = tmp.maxFetchAndProbe
+	}
 }

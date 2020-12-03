@@ -67,12 +67,10 @@ func (p *UserPrivileges) RequestVerification(activeRoles []*auth.RoleIdentity, d
 		return true
 	// We should be very careful of limiting privileges, so ignore `mysql` for now.
 	case util.PerformanceSchemaName.L, util.MetricSchemaName.L:
-		// CREATE and DROP privileges are not limited in the older versions, so ignore them now.
-		// User may have created some tables in these schema, but predefined tables can't be altered or modified.
 		if (dbLowerName == util.PerformanceSchemaName.L && perfschema.IsPredefinedTable(table)) ||
 			(dbLowerName == util.MetricSchemaName.L && infoschema.IsMetricTable(table)) {
 			switch priv {
-			case mysql.AlterPriv, mysql.DropPriv, mysql.IndexPriv, mysql.InsertPriv, mysql.UpdatePriv, mysql.DeletePriv:
+			case mysql.CreatePriv, mysql.AlterPriv, mysql.DropPriv, mysql.IndexPriv, mysql.InsertPriv, mysql.UpdatePriv, mysql.DeletePriv:
 				return false
 			case mysql.SelectPriv:
 				return true

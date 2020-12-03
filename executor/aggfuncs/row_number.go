@@ -14,8 +14,15 @@
 package aggfuncs
 
 import (
+	"unsafe"
+
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/chunk"
+)
+
+const (
+	// DefPartialResult4RowNumberSize is the size of partialResult4RowNumberSize
+	DefPartialResult4RowNumberSize = int64(unsafe.Sizeof(partialResult4RowNumber{}))
 )
 
 type rowNumber struct {
@@ -27,7 +34,7 @@ type partialResult4RowNumber struct {
 }
 
 func (rn *rowNumber) AllocPartialResult() (pr PartialResult, memDelta int64) {
-	return PartialResult(&partialResult4RowNumber{}), 0
+	return PartialResult(&partialResult4RowNumber{}), DefPartialResult4RowNumberSize
 }
 
 func (rn *rowNumber) ResetPartialResult(pr PartialResult) {
