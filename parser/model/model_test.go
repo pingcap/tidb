@@ -121,7 +121,8 @@ func (*testModelSuite) TestModelBasic(c *C) {
 	c.Assert(has, Equals, true)
 	t := table.GetUpdateTime()
 	c.Assert(t, Equals, TSConvert2Time(table.UpdateTS))
-	c.Assert(table2.IsSequence(), Equals, true)
+	c.Assert(table2.IsSequence(), IsTrue)
+	c.Assert(table2.IsBaseTable(), IsFalse)
 
 	// Corner cases
 	column.Flag ^= mysql.PriKeyFlag
