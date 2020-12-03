@@ -258,7 +258,7 @@ func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPl
 		// Optimize by shuffle executor to running in parallel manner.
 		if prop.IsEmpty() {
 			// Currently, we do not regard shuffled plan as a new plan.
-			curTask = optimizeByShuffle(pp, curTask, p.basePlan.ctx)
+			curTask = optimizeByShuffle(curTask, p.basePlan.ctx)
 		}
 
 		cntPlan += curCntPlan
