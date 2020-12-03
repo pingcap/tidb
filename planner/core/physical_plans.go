@@ -62,6 +62,7 @@ var (
 	_ PhysicalPlan = &PhysicalShuffle{}
 	_ PhysicalPlan = &PhysicalShuffleReceiverStub{}
 	_ PhysicalPlan = &BatchPointGetPlan{}
+	_ PhysicalPlan = &PhysicalTableSample{}
 )
 
 // PhysicalTableReader is the table reader in tidb.
@@ -469,6 +470,8 @@ type PhysicalTableScan struct {
 	isChildOfIndexLookUp bool
 
 	PartitionInfo PartitionInfo
+
+	SampleInfo *TableSampleInfo
 }
 
 // Clone implements PhysicalPlan interface.
@@ -1250,8 +1253,7 @@ type PhysicalShuffle struct {
 	DataSources []PhysicalPlan
 
 	SplitterType PartitionSplitterType
-	// each DataSource has an array of HashByItems
-	HashByItemArrays [][]expression.Expression
+	ByItemArrays [][]expression.Expression
 }
 
 // PartitionSplitterType is the type of `Shuffle` executor splitter, which splits data source into partitions.
@@ -1260,6 +1262,8 @@ type PartitionSplitterType int
 const (
 	// PartitionHashSplitterType is the splitter splits by hash.
 	PartitionHashSplitterType = iota
+	// PartitionRangeSplitterType is the splitter that split sorted data into the same range
+	PartitionRangeSplitterType
 )
 
 // PhysicalShuffleReceiverStub represents a receiver stub of `PhysicalShuffle`,
@@ -1327,4 +1331,32 @@ func SafeClone(v PhysicalPlan) (_ PhysicalPlan, err error) {
 		}
 	}()
 	return v.Clone()
+}
+
+// PhysicalTableSample represents a table sample plan.
+// It returns the sample rows to its parent operand.
+type PhysicalTableSample struct {
+	physicalSchemaProducer
+	TableSampleInfo *TableSampleInfo
+	TableInfo       table.Table
+	Desc            bool
+}
+
+// TableSampleInfo contains the information for PhysicalTableSample.
+type TableSampleInfo struct {
+	AstNode    *ast.TableSample
+	FullSchema *expression.Schema
+	Partitions []table.PartitionedTable
+}
+
+// NewTableSampleInfo creates a new TableSampleInfo.
+func NewTableSampleInfo(node *ast.TableSample, fullSchema *expression.Schema, pt []table.PartitionedTable) *TableSampleInfo {
+	if node == nil {
+		return nil
+	}
+	return &TableSampleInfo{
+		AstNode:    node,
+		FullSchema: fullSchema,
+		Partitions: pt,
+	}
 }

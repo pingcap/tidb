@@ -34,11 +34,11 @@ import (
 type Type int16
 
 const (
-	// NormalTable , store data in tikv, mocktikv and so on.
+	// NormalTable stores data in tikv, mocktikv and so on.
 	NormalTable Type = iota
-	// VirtualTable , store no data, just extract data from the memory struct.
+	// VirtualTable stores no data, just extract data from the memory struct.
 	VirtualTable
-	// ClusterTable , contain the `VirtualTable` in the all cluster tidb nodes.
+	// ClusterTable contains the `VirtualTable` in the all cluster tidb nodes.
 	ClusterTable
 )
 
@@ -260,6 +260,7 @@ type PartitionedTable interface {
 	Table
 	GetPartition(physicalID int64) PhysicalTable
 	GetPartitionByRow(sessionctx.Context, []types.Datum) (PhysicalTable, error)
+	GetAllPartitionIDs() []int64
 }
 
 // TableFromMeta builds a table.Table from *model.TableInfo.
