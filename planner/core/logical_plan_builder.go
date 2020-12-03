@@ -788,6 +788,10 @@ func (b *PlanBuilder) coalesceCommonColumns(p *LogicalJoin, leftPlan, rightPlan 
 	// Find out all the common columns and put them ahead.
 	commonLen := 0
 	for i, lName := range lNames {
+		// Natural join should ignore _tidb_rowid
+		if lName.ColName.L == "_tidb_rowid" {
+			continue
+		}
 		for j := commonLen; j < len(rNames); j++ {
 			if lName.ColName.L != rNames[j].ColName.L {
 				continue
@@ -2966,7 +2970,10 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 	}
 
 	hasWindowFuncField := b.detectSelectWindow(sel)
-	if hasWindowFuncField {
+	// Some SQL statements define WINDOW but do not use them. But we also need to check the window specification list.
+	// For example: select id from t group by id WINDOW w AS (ORDER BY uids DESC) ORDER BY id;
+	// We don't use the WINDOW w, but if the 'uids' column is not in the table t, we still need to report an error.
+	if hasWindowFuncField || sel.WindowSpecs != nil {
 		windowAggMap, err = b.resolveWindowFunction(sel, p)
 		if err != nil {
 			return nil, err
@@ -4033,7 +4040,7 @@ func (b *PlanBuilder) buildUpdateLists(
 			if !colInfo.IsGenerated() {
 				continue
 			}
-			columnFullName := fmt.Sprintf("%s.%s.%s", tn.Schema.L, tn.Name.L, colInfo.Name.L)
+			columnFullName := fmt.Sprintf("%s.%s.%s", tn.DBInfo.Name.L, tn.Name.L, colInfo.Name.L)
 			isDefault, ok := modifyColumns[columnFullName]
 			if ok && colInfo.Hidden {
 				return nil, nil, false, ErrUnknownColumn.GenWithStackByArgs(colInfo.Name, clauseMsg[fieldList])
