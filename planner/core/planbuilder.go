@@ -460,6 +460,9 @@ type PlanBuilder struct {
 	// NOTE: assign to `expressionRewriter.SetVarCollectProcessor`
 	//       when `PlanBuilder.getExpressionRewriter` invoke
 	setVarCollectProcessor *SetVarCollectProcessor
+
+	// isSampling indicates whether the query is sampling.
+	isSampling bool
 }
 
 type handleColHelper struct {
@@ -532,6 +535,11 @@ func (b *PlanBuilder) GetDBTableInfo() []stmtctx.TableEntry {
 
 // GetOptFlag gets the optFlag of the PlanBuilder.
 func (b *PlanBuilder) GetOptFlag() uint64 {
+	if b.isSampling {
+		// Disable logical optimization to avoid the optimizer
+		// push down/eliminate operands like Selection, Limit or Sort.
+		return 0
+	}
 	return b.optFlag
 }
 
@@ -550,12 +558,14 @@ func (b *PlanBuilder) popSelectOffset() {
 	b.selectOffset = b.selectOffset[:len(b.selectOffset)-1]
 }
 
-// NewPlanBuilder creates a new PlanBuilder.
-func NewPlanBuilder(sctx sessionctx.Context, is infoschema.InfoSchema, blockHintProcessor *hint.BlockHintProcessor, setVarCollectProcessor *SetVarCollectProcessor) *PlanBuilder {
+// NewPlanBuilder creates a new PlanBuilder. Return the original PlannerSelectBlockAsName as well, callers decide if
+// PlannerSelectBlockAsName should be restored after using this builder.
+func NewPlanBuilder(sctx sessionctx.Context, is infoschema.InfoSchema, blockHintProcessor *hint.BlockHintProcessor, setVarCollectProcessor *SetVarCollectProcessor) (*PlanBuilder, []ast.HintTable) {
+	savedBlockNames := sctx.GetSessionVars().PlannerSelectBlockAsName
 	if blockHintProcessor == nil {
 		sctx.GetSessionVars().PlannerSelectBlockAsName = nil
 	} else {
-		sctx.GetSessionVars().PlannerSelectBlockAsName = make([]ast.HintTable, blockHintProcessor.MaxSelectStmtOffset()+1)
+		sctx.GetSessionVars().PlannerSelectBlockAsName = make([]ast.HintTable, processor.MaxSelectStmtOffset()+1)
 	}
 	return &PlanBuilder{
 		ctx:                    sctx,
@@ -564,7 +574,7 @@ func NewPlanBuilder(sctx sessionctx.Context, is infoschema.InfoSchema, blockHint
 		handleHelper:           &handleColHelper{id2HandleMapStack: make([]map[int64][]HandleCols, 0)},
 		hintProcessor:          blockHintProcessor,
 		setVarCollectProcessor: setVarCollectProcessor,
-	}
+	}, savedBlockNames
 }
 
 // Build builds the ast node to a Plan.
