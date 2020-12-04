@@ -1031,7 +1031,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrBRIERequireTiKV:          mysql.Message("%s requires TiKV store, not %s", nil),
 	ErrBRIEInvalidExternalStore: mysql.Message("Invalid BRIE data store URL '%s': %v", nil),
 	ErrBRIEInvalidTable:         mysql.Message("Invalid BRIE selected databases/tables: %s", nil),
-	ErrBRIEInvalidOption:        mysql.Message("Invalid BRIE option: %s, err: %v", nil),
+	ErrBRIEInvalidOption:        mysql.Message("Invalid BRIE option %s: %v", nil),
 
 	ErrInvalidPlacementSpec: mysql.Message("Invalid placement policy '%s': %s", nil),
 	ErrPlacementPolicyCheck: mysql.Message("Placement policy didn't meet the constraint, reason: %s", nil),
