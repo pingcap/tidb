@@ -1692,47 +1692,45 @@ func checkPartitionExprFuncAllowed(_ sessionctx.Context, _ *model.TableInfo, e a
 func checkPartitionExprArgs(_ sessionctx.Context, tblInfo *model.TableInfo, e ast.ExprNode) error {
 	switch expr := e.(type) {
 	case *ast.FuncCallExpr:
-		{
-			switch expr.FnName.L {
-			case ast.ToDays, ast.ToSeconds, ast.DayOfMonth, ast.Month, ast.DayOfYear, ast.Quarter, ast.YearWeek,
-				ast.Year, ast.Weekday, ast.DayOfWeek, ast.Day:
+		switch expr.FnName.L {
+		case ast.ToDays, ast.ToSeconds, ast.DayOfMonth, ast.Month, ast.DayOfYear, ast.Quarter, ast.YearWeek,
+			ast.Year, ast.Weekday, ast.DayOfWeek, ast.Day:
+			return errors.Trace(checkResultOK(hasDateArgs(tblInfo, expr)))
+		case ast.Hour, ast.Minute, ast.Second, ast.TimeToSec, ast.MicroSecond:
+			return errors.Trace(checkResultOK(hasTimeArgs(tblInfo, expr)))
+		case ast.UnixTimestamp:
+			return errors.Trace(checkResultOK(hasTimestampArgs(tblInfo, expr)))
+		case ast.FromDays:
+			if err := checkResultOK(hasDateArgs(tblInfo, expr)); err != nil {
+				return errors.Trace(err)
+			}
+			return errors.Trace(checkResultOK(hasTimeArgs(tblInfo, expr)))
+		case ast.Extract:
+			switch expr.Args[0].(*ast.TimeUnitExpr).Unit {
+			case ast.TimeUnitYear, ast.TimeUnitYearMonth, ast.TimeUnitQuarter, ast.TimeUnitMonth, ast.TimeUnitDay:
 				return errors.Trace(checkResultOK(hasDateArgs(tblInfo, expr)))
-			case ast.Hour, ast.Minute, ast.Second, ast.TimeToSec, ast.MicroSecond:
+			case ast.TimeUnitDayMicrosecond, ast.TimeUnitDayHour, ast.TimeUnitDayMinute, ast.TimeUnitDaySecond:
+				return errors.Trace(checkResultOK(hasDatetimeArgs(tblInfo, expr)))
+			case ast.TimeUnitHour, ast.TimeUnitHourMinute, ast.TimeUnitHourSecond, ast.TimeUnitMinute, ast.TimeUnitMinuteSecond,
+				ast.TimeUnitSecond, ast.TimeUnitMicrosecond, ast.TimeUnitHourMicrosecond, ast.TimeUnitMinuteMicrosecond, ast.TimeUnitSecondMicrosecond:
 				return errors.Trace(checkResultOK(hasTimeArgs(tblInfo, expr)))
-			case ast.UnixTimestamp:
-				return errors.Trace(checkResultOK(hasTimestampArgs(tblInfo, expr)))
-			case ast.FromDays:
-				if err := checkResultOK(hasDateArgs(tblInfo, expr)); err != nil {
-					return errors.Trace(err)
-				}
-				return errors.Trace(checkResultOK(hasTimeArgs(tblInfo, expr)))
-			case ast.Extract:
-				switch expr.Args[0].(*ast.TimeUnitExpr).Unit {
-				case ast.TimeUnitYear, ast.TimeUnitYearMonth, ast.TimeUnitQuarter, ast.TimeUnitMonth, ast.TimeUnitDay:
-					return errors.Trace(checkResultOK(hasDateArgs(tblInfo, expr)))
-				case ast.TimeUnitDayMicrosecond, ast.TimeUnitDayHour, ast.TimeUnitDayMinute, ast.TimeUnitDaySecond:
-					return errors.Trace(checkResultOK(hasDatetimeArgs(tblInfo, expr)))
-				case ast.TimeUnitHour, ast.TimeUnitHourMinute, ast.TimeUnitHourSecond, ast.TimeUnitMinute, ast.TimeUnitMinuteSecond,
-					ast.TimeUnitSecond, ast.TimeUnitMicrosecond, ast.TimeUnitHourMicrosecond, ast.TimeUnitMinuteMicrosecond, ast.TimeUnitSecondMicrosecond:
-					return errors.Trace(checkResultOK(hasTimeArgs(tblInfo, expr)))
-				default:
-					return errors.Trace(ErrWrongExprInPartitionFunc)
-				}
-			case ast.Abs, ast.Ceiling, ast.DateDiff, ast.Floor, ast.Mod:
-				has, err := hasTimestampArgs(tblInfo, expr)
-				if err != nil {
-					return errors.Trace(err)
-				}
-				if has {
-					return errors.Trace(ErrWrongExprInPartitionFunc)
-				}
+			default:
+				return errors.Trace(ErrWrongExprInPartitionFunc)
+			}
+		case ast.Abs, ast.Ceiling, ast.DateDiff, ast.Floor, ast.Mod:
+			has, err := hasTimestampArgs(tblInfo, expr)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if has {
+				return errors.Trace(ErrWrongExprInPartitionFunc)
 			}
 		}
 	case *ast.UnaryOperationExpr:
 		switch expr.Op {
 		// We can not build partition with `not` expression. But in TiDB, `not` will be regard as a operator.
 		case opcode.Not, opcode.Not2:
-			return errors.Trace(ErrWrongExprInPartitionFunc)
+			return errors.Trace(ErrPartitionFunctionIsNotAllowed)
 		}
 	}
 	return nil
