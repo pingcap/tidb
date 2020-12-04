@@ -3497,6 +3497,11 @@ func checkTypeChangeSupported(origin *types.FieldType, to *types.FieldType) bool
 		return false
 	}
 
+	if origin.Tp == mysql.TypeJSON && (to.Tp == mysql.TypeEnum || to.Tp == mysql.TypeSet || to.Tp == mysql.TypeBit) {
+		// TODO: Currently json cast to enum/set/bit are not support yet, should fix here after supported.
+		return false
+	}
+
 	return true
 }
 
