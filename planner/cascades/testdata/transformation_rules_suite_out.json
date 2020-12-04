@@ -761,7 +761,7 @@
         "SQL": "(select a from t) union all (select b from t) order by a limit 2;",
         "Result": [
           "Group#0 Schema:[Column#25]",
-          "    TopN_10 input:[Group#1], schema:[], items:Column#25, offset:0, count:2",
+          "    TopN_10 input:[Group#1], schema:[Column#25], items:Column#25, offset:0, count:2",
           "Group#1 Schema:[Column#25]",
           "    Union_5 input:[Group#2,Group#3]",
           "Group#2 Schema:[Column#25]",
@@ -986,7 +986,7 @@
         "SQL": "(select a from t) union all (select sum(a) from t where a > 2 group by b) order by a limit 2;",
         "Result": [
           "Group#0 Schema:[Column#26]",
-          "    TopN_12 input:[Group#1], schema:[], items:Column#26, offset:0, count:2",
+          "    TopN_12 input:[Group#1], schema:[Column#26], items:Column#26, offset:0, count:2",
           "Group#1 Schema:[Column#26]",
           "    Union_7 input:[Group#2,Group#3]",
           "Group#2 Schema:[Column#26]",
@@ -1063,7 +1063,7 @@
         "SQL": "(select a from t) union all (select sum(a) from t where a > 2 group by b) order by a limit 1, 2;",
         "Result": [
           "Group#0 Schema:[Column#26]",
-          "    TopN_12 input:[Group#1], schema:[], items:Column#26, offset:1, count:2",
+          "    TopN_12 input:[Group#1], schema:[Column#26], items:Column#26, offset:1, count:2",
           "Group#1 Schema:[Column#26]",
           "    Union_7 input:[Group#2,Group#3]",
           "Group#2 Schema:[Column#26]",
@@ -1140,7 +1140,7 @@
         "SQL": "(select a from t where a = 1) union all (select b from t where a = 2) union all (select c from t where a = 3) order by a limit 2;",
         "Result": [
           "Group#0 Schema:[Column#37]",
-          "    TopN_16 input:[Group#1], schema:[], items:Column#37, offset:0, count:2",
+          "    TopN_16 input:[Group#1], schema:[Column#37], items:Column#37, offset:0, count:2",
           "Group#1 Schema:[Column#37]",
           "    Union_10 input:[Group#2,Group#3,Group#4]",
           "Group#2 Schema:[Column#37]",
@@ -1645,7 +1645,7 @@
         "SQL": "select a from (select a, b from t order by b limit 10) as t1",
         "Result": [
           "Group#0 Schema:[test.t.a]",
-          "    TopN_6 input:[Group#1], schema:[], items:test.t.b, offset:0, count:10",
+          "    TopN_6 input:[Group#1], schema:[test.t.a], items:test.t.b, offset:0, count:10",
           "Group#1 Schema:[test.t.a,test.t.b]",
           "    DataSource_1 table:t"
         ]

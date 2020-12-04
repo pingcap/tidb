@@ -737,6 +737,7 @@ func (r *TransformLimitToTopN) OnTransform(old *memo.ExprIter) (newExprs []*memo
 		Offset:  limit.Offset,
 		Count:   limit.Count,
 	}.Init(limit.SCtx(), limit.SelectBlockOffset())
+	topN.SetSchema(limit.Schema())
 	topNExpr := memo.NewGroupExpr(topN)
 	topNExpr.SetChildren(childGroup)
 	return []*memo.GroupExpr{topNExpr}, true, false, nil
