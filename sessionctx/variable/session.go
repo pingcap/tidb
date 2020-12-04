@@ -168,9 +168,6 @@ type TransactionContext struct {
 
 	// TableDeltaMap lock to prevent potential data race
 	tdmLock sync.Mutex
-
-	// TxnScope stores the value of 'txn_scope'.
-	TxnScope string
 }
 
 // GetShard returns the shard prefix for the next `count` rowids.
@@ -764,6 +761,14 @@ type SessionVars struct {
 	Enable1PC bool
 
 	GuaranteeExternalConsistency bool
+}
+
+// CheckAndGetTxnScope will return the transaction scope we should use in the current session.
+func (s *SessionVars) CheckAndGetTxnScope() string {
+	if s.InRestrictedSQL {
+		return oracle.GlobalTxnScope
+	}
+	return s.TxnScope
 }
 
 // UseDynamicPartitionPrune indicates whether use new dynamic partition prune.
