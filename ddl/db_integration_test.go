@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/cluster"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/collate"
@@ -1305,7 +1306,7 @@ func getMaxTableHandle(ctx *testMaxTableRowIDContext, store kv.Storage) (kv.Hand
 	c := ctx.c
 	d := ctx.d
 	tbl := ctx.tbl
-	curVer, err := store.CurrentVersion()
+	curVer, err := store.CurrentVersion(oracle.GlobalTxnScope)
 	c.Assert(err, IsNil)
 	maxHandle, emptyTable, err := d.GetTableMaxHandle(curVer.Ver, tbl.(table.PhysicalTable))
 	c.Assert(err, IsNil)
@@ -2247,6 +2248,7 @@ func (s *testIntegrationSuite7) TestCreateExpressionIndexError(c *C) {
 	tk.MustExec("create table t (j json, key k ((j+1),(j+1)))")
 
 	tk.MustGetErrCode("create table t1 (col1 int, index ((concat(''))));", errno.ErrWrongKeyColumnFunctionalIndex)
+	tk.MustGetErrCode("CREATE TABLE t1 (col1 INT, PRIMARY KEY ((ABS(col1))));", errno.ErrFunctionalIndexPrimaryKey)
 }
 
 func (s *testIntegrationSuite7) TestAddExpressionIndexOnPartition(c *C) {
