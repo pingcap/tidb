@@ -345,7 +345,7 @@ func (s *testSuiteP1) TestShow(c *C) {
 	c.Assert(len(tk.MustQuery("show table status").Rows()), Equals, 1)
 }
 
-func (s *testSuite3) TestAdmin(c *C) {
+func (s *testSuite5) TestAdmin(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists admin_test")
@@ -3651,7 +3651,7 @@ func setColValue(c *C, txn kv.Transaction, key kv.Key, v types.Datum) {
 	c.Assert(err, IsNil)
 }
 
-func (s *testSuite) TestCheckTable(c *C) {
+func (s *testSuite5) TestCheckTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
 	// Test 'admin check table' when the table has a unique index with null values.
@@ -3662,7 +3662,7 @@ func (s *testSuite) TestCheckTable(c *C) {
 	tk.MustExec("admin check table admin_test;")
 }
 
-func (s *testSuite) TestCheckTableClusterIndex(c *C) {
+func (s *testSuite5) TestCheckTableClusterIndex(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
 	tk.MustExec("use test;")
