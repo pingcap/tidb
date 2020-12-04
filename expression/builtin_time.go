@@ -1318,7 +1318,7 @@ func (b *builtinDayOfYearSig) evalInt(row chunk.Row) (int64, bool, error) {
 		return 0, isNull, handleInvalidTimeError(b.ctx, err)
 	}
 	if arg.InvalidZero() {
-		isNull, err := handleInvalidZeroTime(b.ctx, t)
+		isNull, err := handleInvalidZeroTime(b.ctx, arg)
 		return 0, isNull, err
 	}
 
@@ -1553,7 +1553,7 @@ func (b *builtinYearSig) evalInt(row chunk.Row) (int64, bool, error) {
 
 	if date.IsZero() {
 		if b.ctx.GetSessionVars().SQLMode.HasNoZeroDateMode() {
-			isNull, err := handleInvalidZeroTime(b.ctx, t)
+			isNull, err := handleInvalidZeroTime(b.ctx, date)
 			return 0, isNull, err
 		}
 		return 0, false, nil
@@ -2663,7 +2663,7 @@ func (b *builtinExtractDatetimeSig) evalInt(row chunk.Row) (int64, bool, error) 
 	}
 	if dt.IsZero() {
 		if b.ctx.GetSessionVars().SQLMode.HasNoZeroDateMode() {
-			isNull, err := handleInvalidZeroTime(b.ctx, t)
+			isNull, err := handleInvalidZeroTime(b.ctx, dt)
 			return 0, isNull, err
 		}
 		return 0, false, nil
@@ -6024,7 +6024,7 @@ func (b *builtinQuarterSig) evalInt(row chunk.Row) (int64, bool, error) {
 	}
 
 	if date.IsZero() {
-		isNull, err := handleInvalidZeroTime(b.ctx, t)
+		isNull, err := handleInvalidZeroTime(b.ctx, date)
 		return 0, isNull, err
 	}
 
