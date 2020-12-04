@@ -498,6 +498,7 @@ func (s *testSuite) TestExplainForConnectionPartitionTable(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic-only'")
 	tk.MustExec("create table xx (id int) partition by hash(id) partitions 4")
+	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
 	tk.MustQuery("select * from xx where id = 1")
 	tk.Se.SetSessionManager(&mockSessionManager1{
 		PS: []*util.ProcessInfo{tk.Se.ShowProcess()},
@@ -510,11 +511,12 @@ func (s *testSuite) TestExplainForConnectionPartitionTable(c *C) {
 			"└─Selection_6 10.00 cop[tikv]  eq(test.xx.id, 1)",
 			"  └─TableFullScan_5 10000.00 cop[tikv] table:xx keep order:false, stats:pseudo"))
 
-	// This bug is not fixed yet, explain for another connection.
+	// TODO: This bug is not fixed yet, explain for another connection.
 	// se1: select * from xx where id = 1
 	// se2: explain for connection 1;  -- wrong result
 	tk.MustQuery("select * from xx where id = 1")
 	tk1 := testkit.NewTestKitWithInit(c, s.store)
+	tk1.MustExec("set @@tidb_enable_collect_execution_info=0;")
 	tk1.Se.SetSessionManager(&mockSessionManager1{
 		PS: []*util.ProcessInfo{tk.Se.ShowProcess()},
 	})
