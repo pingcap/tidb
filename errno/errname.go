@@ -1029,7 +1029,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrBRIEUnsupported:          mysql.Message("Unsupported BRIE statement kind: %s", nil),
 	ErrBRIETaskMeta:             mysql.Message("Failed to update BRIE task metadata: %s", nil),
 	ErrBRIERequireTiKV:          mysql.Message("%s requires TiKV store, not %s", nil),
-	ErrBRIEInvalidExternalStore: mysql.Message("Invalid BRIE data store URL: %s, err: %v", nil),
+	ErrBRIEInvalidExternalStore: mysql.Message("Invalid BRIE data store URL '%s': %v", nil),
 	ErrBRIEInvalidTable:         mysql.Message("Invalid BRIE selected databases/tables: %s", nil),
 	ErrBRIEInvalidOption:        mysql.Message("Invalid BRIE option: %s, err: %v", nil),
 
