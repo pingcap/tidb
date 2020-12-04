@@ -217,6 +217,7 @@ func (e *HashAggExec) Close() error {
 		e.childResult = nil
 		e.groupSet = nil
 		e.partialResultMap = nil
+		e.firstRowProcessed = 0
 		return e.baseExecutor.Close()
 	}
 	// `Close` may be called after `Open` without calling `Next` in test.
@@ -770,6 +771,8 @@ func (e *HashAggExec) parallelExec(ctx context.Context, chk *chunk.Chunk) error 
 // unparallelExec executes hash aggregation algorithm in single thread.
 func (e *HashAggExec) unparallelExec(ctx context.Context, chk *chunk.Chunk) error {
 	if e.isAllFirstRow {
+		// If all the agg func is first row, we can return the result immediately
+		// once we have got row_count unique rows, so we optimize it by using a separate logic.
 		return e.executeFirstRow(ctx, chk)
 	}
 	// In this stage we consider all data from src as a single group.
@@ -898,8 +901,17 @@ func (e *HashAggExec) executeFirstRow(ctx context.Context, chk *chunk.Chunk) (er
 			groupKey := string(e.groupKeyBuffer[e.firstRowProcessed]) // do memory copy here, because e.groupKeyBuffer may be reused.
 			if !e.groupSet.Exist(groupKey) {
 				e.groupSet.Insert(groupKey)
-				e.groupKeys = append(e.groupKeys, groupKey)
-				chk.AppendRow(e.childResult.GetRow(e.firstRowProcessed))
+				partialResults := e.getPartialResults(groupKey)
+				for i, af := range e.PartialAggFuncs {
+					memDelta, err := af.UpdatePartialResult(e.ctx, []chunk.Row{e.childResult.GetRow(e.firstRowProcessed)}, partialResults[i])
+					if err != nil {
+						return err
+					}
+					e.memTracker.Consume(memDelta)
+					if err := af.AppendFinalResult2Chunk(e.ctx, partialResults[i], chk); err != nil {
+						return err
+					}
+				}
 			}
 			e.firstRowProcessed++
 			if chk.IsFull() {
