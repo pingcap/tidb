@@ -2461,6 +2461,7 @@ func (b *builtinDayOfWeekSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 				return err
 			}
 			result.SetNull(i, isNull)
+			continue
 		}
 		i64s[i] = int64(ds[i].Weekday() + 1)
 	}
@@ -2712,6 +2713,7 @@ func (b *builtinDayOfMonthSig) vecEvalInt(input *chunk.Chunk, result *chunk.Colu
 					return err
 				}
 				result.SetNull(i, isNull)
+				continue
 			}
 			i64s[i] = 0
 			continue
