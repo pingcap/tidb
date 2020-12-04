@@ -168,6 +168,7 @@ func (action actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoff
 						zap.Uint64("startTS", c.startTS))
 					tikvOnePCTxnCounterFallback.Inc()
 					c.setOnePC(false)
+					c.setAsyncCommit(false)
 				} else {
 					// For 1PC, there's no racing to access to access `onePCCommmitTS` so it's safe
 					// not to lock the mutex.
