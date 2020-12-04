@@ -337,7 +337,7 @@ func (e *InsertValues) evalRow(ctx context.Context, list []expression.Expression
 	e.evalBuffer.SetDatums(row...)
 	for i, expr := range list {
 		val, err := expr.Eval(e.evalBuffer.ToRow())
-		if err = e.handleErr(e.insertColumns[i], &val, rowIdx, err); err != nil {
+		if err != nil {
 			return nil, err
 		}
 		val1, err := table.CastValue(e.ctx, val, e.insertColumns[i].ToInfo(), false, false)
