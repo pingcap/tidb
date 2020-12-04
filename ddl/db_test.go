@@ -415,6 +415,10 @@ LOOP:
 			// delete some rows, and add some data
 			for i := count; i < count+step; i++ {
 				n := rand.Intn(count)
+				// Don't delete this row, otherwise error message would change.
+				if n == defaultBatchSize*2-10 {
+					continue
+				}
 				tk.MustExec("delete from t1 where c1 = ?", n)
 				tk.MustExec("insert into t1 values (?, ?, ?)", i+10, i, i)
 			}
