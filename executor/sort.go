@@ -412,15 +412,17 @@ func (e *TopNExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 	if !req.IsFull() {
 		numToAppend := mathutil.Min(len(e.rowPtrs)-e.Idx, req.RequiredRows()-req.NumRows())
+		rows := make([]chunk.Row, 0, numToAppend)
 		for index := 0; index < numToAppend; index++ {
-			// Be carefule, if inline projection occurs.
-			// TopN's schema may be not match child executor's output columns.
-			// We should extract only the required columns from child's executor.
-			// Do not do it on `loadChunksUntilTotalLimit` or `processChildChk`,
-			// cauz it may destroy the correctness of executor's `keyColumns`.
-			req.AppendRowByColIdxs(e.rowChunks.GetRow(e.rowPtrs[e.Idx]), e.columnIdxsUsedByChild)
+			rows = append(rows, e.rowChunks.GetRow(e.rowPtrs[e.Idx]))
 			e.Idx++
 		}
+		// Be carefule, if inline projection occurs.
+		// TopN's schema may be not match child executor's output columns.
+		// We should extract only the required columns from child's executor.
+		// Do not do it on `loadChunksUntilTotalLimit` or `processChildChk`,
+		// cauz it may destroy the correctness of executor's `keyColumns`.
+		req.AppendRowsByColIdxs(rows, e.columnIdxsUsedByChild)
 	}
 	return nil
 }
