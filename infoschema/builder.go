@@ -138,11 +138,8 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 			// the TRUNCATE operation of session 2 on partition 2 does not cause the operation of session 1 to fail.
 			switch diff.Type {
 			case model.ActionAlterTableAlterPartition:
-				tblIDs = append(tblIDs, opt.TableID)
-				if err := b.applyPlacementUpdate(placement.GroupID(opt.TableID)); err != nil {
-					return nil, errors.Trace(err)
-				}
-				continue
+				partitionID := opt.TableID
+				return []int64{partitionID}, b.applyPlacementUpdate(placement.GroupID(partitionID))
 			case model.ActionTruncateTablePartition:
 				tblIDs = append(tblIDs, opt.OldTableID)
 				b.applyPlacementDelete(placement.GroupID(opt.OldTableID))

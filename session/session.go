@@ -64,6 +64,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
@@ -2521,9 +2522,9 @@ func (s *session) checkPlacementPolicyBeforeCommit() error {
 	var err error
 	txnScope := s.GetSessionVars().TxnCtx.TxnScope
 	if txnScope == "" {
-		txnScope = config.DefTxnScope
+		txnScope = oracle.GlobalTxnScope
 	}
-	if txnScope != config.DefTxnScope {
+	if txnScope != oracle.GlobalTxnScope {
 		is := infoschema.GetInfoSchema(s)
 		deltaMap := s.GetSessionVars().TxnCtx.TableDeltaMap
 		for physicalTableID := range deltaMap {
