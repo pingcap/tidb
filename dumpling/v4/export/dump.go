@@ -3,8 +3,11 @@
 package export
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
+	"fmt"
+	"math/big"
 	"strings"
 	"time"
 
@@ -13,7 +16,6 @@ import (
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/pingcap/br/pkg/storage"
 	"github.com/pingcap/br/pkg/summary"
-	"github.com/pingcap/br/pkg/utils"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	pd "github.com/tikv/pd/client"
@@ -42,7 +44,8 @@ func NewDumper(ctx context.Context, conf *Config) (*Dumper, error) {
 	err := adjustConfig(conf,
 		initLogger,
 		registerTLSConfig,
-		validateSpecifiedSQL)
+		validateSpecifiedSQL,
+		validateFileFormat)
 	if err != nil {
 		return nil, err
 	}
@@ -114,26 +117,57 @@ func (d *Dumper) Dump() (err error) {
 		conn.Close()
 	}
 
-	connectPool, err := newConnectionsPool(ctx, conf.Threads, pool)
+	metaConn, err := createConnWithConsistency(ctx, pool)
 	if err != nil {
 		return err
 	}
-	defer connectPool.Close()
 
 	if conf.PosAfterConnect {
 		// record again, to provide a location to exit safe mode for DM
-		err = m.recordGlobalMetaData(connectPool.extraConn(), conf.ServerInfo.ServerType, true)
+		err = m.recordGlobalMetaData(metaConn, conf.ServerInfo.ServerType, true)
 		if err != nil {
 			log.Info("get global metadata (after connection pool established) failed", zap.Error(err))
 		}
 	}
 
 	if conf.Consistency != consistencyTypeLock {
-		if err = prepareTableListToDump(conf, connectPool.extraConn()); err != nil {
+		if err = prepareTableListToDump(conf, metaConn); err != nil {
 			return err
 		}
 	}
 
+	failpoint.Inject("ConsistencyCheck", nil)
+	rebuildConn := func(conn *sql.Conn) (*sql.Conn, error) {
+		// make sure that the lock connection is still alive
+		err := conCtrl.PingContext(ctx)
+		if err != nil {
+			return conn, err
+		}
+		// give up the last broken connection
+		conn.Close()
+		newConn, err := createConnWithConsistency(ctx, pool)
+		if err != nil {
+			return conn, err
+		}
+		conn = newConn
+		// renew the master status after connection. dm can't close safe-mode until dm reaches current pos
+		if conf.PosAfterConnect {
+			err = m.recordGlobalMetaData(conn, conf.ServerInfo.ServerType, true)
+			if err != nil {
+				return conn, err
+			}
+		}
+		return conn, nil
+	}
+
+	taskChan := make(chan Task, defaultDumpThreads)
+	taskChannelCapacity.With(conf.Labels).Add(defaultDumpThreads)
+	wg, writingCtx := errgroup.WithContext(ctx)
+	writers, tearDownWriters, err := d.startWriters(writingCtx, wg, taskChan, rebuildConn)
+	if err != nil {
+		return err
+	}
+	defer tearDownWriters()
 	if conf.TransactionalConsistency {
 		if conf.Consistency == consistencyTypeFlush || conf.Consistency == consistencyTypeLock {
 			log.Info("All the dumping transactions have started. Start to unlock tables")
@@ -143,133 +177,322 @@ func (d *Dumper) Dump() (err error) {
 		}
 	}
 
-	failpoint.Inject("ConsistencyCheck", nil)
-
-	simpleWriter, err := NewSimpleWriter(conf, d.extStore)
-	if err != nil {
-		return err
-	}
-	var writer Writer
-	switch strings.ToLower(conf.FileType) {
-	case "sql":
-		writer = SQLWriter{SimpleWriter: simpleWriter}
-	case "csv":
-		writer = CSVWriter{SimpleWriter: simpleWriter}
-	default:
-		return errors.Errorf("unsupported filetype %s", conf.FileType)
-	}
-
 	summary.SetLogCollector(summary.NewLogCollector(log.Info))
 	summary.SetUnit(summary.BackupUnit)
 	defer summary.Summary(summary.BackupUnit)
+
+	tableDataStartTime := time.Now()
 	if conf.Sql == "" {
-		if err = dumpDatabases(ctx, conf, connectPool, writer, func(conn *sql.Conn) (*sql.Conn, error) {
-			// make sure that the lock connection is still alive
-			err := conCtrl.PingContext(ctx)
-			if err != nil {
-				return conn, err
-			}
-			// give up the last broken connection
-			conn.Close()
-			newConn, err := createConnWithConsistency(ctx, pool)
-			if err != nil {
-				return conn, err
-			}
-			conn = newConn
-			// renew the master status after connection. dm can't close safe-mode until dm reaches current pos
-			if conf.PosAfterConnect {
-				err = m.recordGlobalMetaData(conn, conf.ServerInfo.ServerType, true)
-				if err != nil {
-					return conn, err
-				}
-			}
-			return conn, nil
-		}); err != nil {
+		if err = d.dumpDatabases(metaConn, taskChan); err != nil {
 			return err
 		}
 	} else {
-		if err = dumpSql(ctx, conf, connectPool, writer); err != nil {
+		if err = d.dumpSql(metaConn, taskChan); err != nil {
 			return err
 		}
 	}
+	close(taskChan)
+	if err := wg.Wait(); err != nil {
+		summary.CollectFailureUnit("dump table data", err)
+		return err
+	}
+	summary.CollectSuccessUnit("dump cost", countTotalTask(writers), time.Since(tableDataStartTime))
 
 	summary.SetSuccessStatus(true)
 	m.recordFinishTime(time.Now())
 	return nil
 }
 
-func dumpDatabases(pCtx context.Context, conf *Config, connectPool *connectionsPool, writer Writer, rebuildConnFunc func(*sql.Conn) (*sql.Conn, error)) error {
+func (d *Dumper) startWriters(ctx context.Context, wg *errgroup.Group, taskChan <-chan Task,
+	rebuildConnFn func(*sql.Conn) (*sql.Conn, error)) ([]*Writer, func(), error) {
+	conf, pool := d.conf, d.dbHandle
+	writers := make([]*Writer, conf.Threads)
+	for i := 0; i < conf.Threads; i++ {
+		conn, err := createConnWithConsistency(ctx, pool)
+		if err != nil {
+			return nil, func() {}, err
+		}
+		writer := NewWriter(int64(i), ctx, conf, conn, d.extStore)
+		writer.rebuildConnFn = rebuildConnFn
+		writer.finishTableCallBack = func(task Task) {
+			if td, ok := task.(*TaskTableData); ok {
+				log.Debug("finished dumping table data",
+					zap.String("database", td.Meta.DatabaseName()),
+					zap.String("table", td.Meta.TableName()))
+			}
+		}
+		writer.finishTaskCallBack = func(task Task) {
+			taskChannelCapacity.With(conf.Labels).Inc()
+		}
+		wg.Go(func() error {
+			return writer.run(taskChan)
+		})
+		writers[i] = writer
+	}
+	tearDown := func() {
+		for _, w := range writers {
+			w.conn.Close()
+		}
+	}
+	return writers, tearDown, nil
+}
+
+func (d *Dumper) dumpDatabases(metaConn *sql.Conn, taskChan chan<- Task) error {
+	conf := d.conf
 	allTables := conf.Tables
-	g, ctx := errgroup.WithContext(pCtx)
-	tableDataIRTotal := make([]TableDataIR, 0, len(allTables))
-	splitChunkStart := time.Now()
 	for dbName, tables := range allTables {
-		createDatabaseSQL, err := ShowCreateDatabase(connectPool.extraConn(), dbName)
+		createDatabaseSQL, err := ShowCreateDatabase(metaConn, dbName)
 		if err != nil {
 			return err
 		}
-		if err := writer.WriteDatabaseMeta(ctx, dbName, createDatabaseSQL); err != nil {
-			return err
-		}
+		task := NewTaskDatabaseMeta(dbName, createDatabaseSQL)
+		d.sendTaskToChan(task, taskChan)
 
-		if len(tables) == 0 {
-			continue
-		}
 		for _, table := range tables {
-			table := table
-			tableDataIRArray, err := dumpTable(ctx, conf, connectPool.extraConn(), dbName, table, writer)
+			log.Debug("start dumping table...",
+				zap.String("table", table.Name))
+			meta, err := dumpTableMeta(conf, metaConn, dbName, table)
 			if err != nil {
 				return err
 			}
-			tableDataIRTotal = append(tableDataIRTotal, tableDataIRArray...)
+
+			if table.Type == TableTypeView {
+				task := NewTaskViewMeta(dbName, table.Name, meta.ShowCreateTable(), meta.ShowCreateView())
+				d.sendTaskToChan(task, taskChan)
+			} else {
+				task := NewTaskTableMeta(dbName, table.Name, meta.ShowCreateTable())
+				d.sendTaskToChan(task, taskChan)
+			}
+			err = d.dumpTableData(metaConn, meta, taskChan)
+			if err != nil {
+				return err
+			}
 		}
 	}
-	summary.CollectDuration("split chunks", time.Since(splitChunkStart))
-	progressPrinter := utils.StartProgress(ctx, "dumpling", int64(len(tableDataIRTotal)), shouldRedirectLog(conf), log.Info)
-	defer progressPrinter.Close()
-	tableDataStartTime := time.Now()
-	for _, tableIR := range tableDataIRTotal {
-		tableIR := tableIR
-		g.Go(func() error {
-			conn := connectPool.getConn()
-			defer func() {
-				connectPool.releaseConn(conn)
-			}()
-			retryTime := 0
-			var lastErr error
-			return utils.WithRetry(ctx, func() (err error) {
-				defer func() {
-					lastErr = err
-					if err == nil {
-						progressPrinter.Inc()
-					} else {
-						errorCount.With(conf.Labels).Inc()
-					}
-				}()
-				retryTime += 1
-				log.Debug("trying to dump table chunk", zap.Int("retryTime", retryTime), zap.String("db", tableIR.DatabaseName()),
-					zap.String("table", tableIR.TableName()), zap.Int("chunkIndex", tableIR.ChunkIndex()), zap.NamedError("lastError", lastErr))
-				if retryTime > 1 {
-					conn, err = rebuildConnFunc(conn)
-					if err != nil {
-						return
-					}
-				}
-				err = tableIR.Start(ctx, conn)
-				if err != nil {
-					return
-				}
-				return writer.WriteTableData(ctx, tableIR)
-			}, newDumpChunkBackoffer(canRebuildConn(conf.Consistency, conf.TransactionalConsistency)))
-		})
+	return nil
+}
+
+func (d *Dumper) dumpTableData(conn *sql.Conn, meta TableMeta, taskChan chan<- Task) error {
+	conf := d.conf
+	if conf.NoData {
+		return nil
 	}
-	if err := g.Wait(); err != nil {
-		summary.CollectFailureUnit("dump", err)
+	if conf.Rows == UnspecifiedSize {
+		return d.sequentialDumpTable(conn, meta, taskChan)
+	}
+	return d.concurrentDumpTable(conn, meta, taskChan)
+}
+
+func (d *Dumper) sequentialDumpTable(conn *sql.Conn, meta TableMeta, taskChan chan<- Task) error {
+	conf := d.conf
+	db, tbl := meta.DatabaseName(), meta.TableName()
+	tableIR, err := SelectAllFromTable(conf, conn, db, tbl)
+	if err != nil {
 		return err
-	} else {
-		summary.CollectSuccessUnit("dump cost", len(tableDataIRTotal), time.Since(tableDataStartTime))
+	}
+	task := NewTaskTableData(meta, tableIR, 0, 1)
+	d.sendTaskToChan(task, taskChan)
+	return nil
+}
+
+func (d *Dumper) concurrentDumpTable(conn *sql.Conn, meta TableMeta, taskChan chan<- Task) error {
+	conf := d.conf
+	db, tbl := meta.DatabaseName(), meta.TableName()
+	if conf.ServerInfo.ServerType == ServerTypeTiDB &&
+		conf.ServerInfo.ServerVersion != nil &&
+		conf.ServerInfo.ServerVersion.Compare(*tableSampleVersion) >= 0 {
+		log.Debug("dumping TiDB tables with TABLESAMPLE",
+			zap.String("database", db), zap.String("table", tbl))
+		return d.concurrentDumpTiDBTables(conn, meta, taskChan)
+	}
+	field, err := pickupPossibleField(db, tbl, conn, conf)
+	if err != nil {
+		return nil
+	}
+	if field == "" {
+		// skip split chunk logic if not found proper field
+		log.Debug("fallback to sequential dump due to no proper field", zap.String("field", field))
+		return d.sequentialDumpTable(conn, meta, taskChan)
+	}
+
+	min, max, err := d.selectMinAndMaxIntValue(conn, db, tbl, field)
+	if err != nil {
+		return err
+	}
+	log.Debug("get int bounding values",
+		zap.String("lower", min.String()),
+		zap.String("upper", max.String()))
+
+	count := estimateCount(db, tbl, conn, field, conf)
+	log.Info("get estimated rows count", zap.Uint64("estimateCount", count))
+	if count < conf.Rows {
+		// skip chunk logic if estimates are low
+		log.Debug("skip concurrent dump due to estimate count < rows",
+			zap.Uint64("estimate count", count),
+			zap.Uint64("conf.rows", conf.Rows),
+		)
+		return d.sequentialDumpTable(conn, meta, taskChan)
+	}
+
+	// every chunk would have eventual adjustments
+	estimatedChunks := count / conf.Rows
+	estimatedStep := new(big.Int).Sub(max, min).Uint64()/estimatedChunks + 1
+	bigEstimatedStep := new(big.Int).SetUint64(estimatedStep)
+	cutoff := new(big.Int).Set(min)
+	totalChunks := estimatedChunks
+	if estimatedStep == 1 {
+		totalChunks = new(big.Int).Sub(max, min).Uint64()
+	}
+
+	selectField, selectLen, err := buildSelectField(conn, db, tbl, conf.CompleteInsert)
+	if err != nil {
+		return err
+	}
+
+	orderByClause, err := buildOrderByClause(conf, conn, db, tbl)
+	if err != nil {
+		return err
+	}
+
+	chunkIndex := 0
+	nullValueCondition := fmt.Sprintf("`%s` IS NULL OR ", escapeString(field))
+	for max.Cmp(cutoff) >= 0 {
+		nextCutOff := new(big.Int).Add(cutoff, bigEstimatedStep)
+		where := fmt.Sprintf("%s(`%s` >= %d AND `%s` < %d)", nullValueCondition, escapeString(field), cutoff, escapeString(field), nextCutOff)
+		query := buildSelectQuery(db, tbl, selectField, buildWhereCondition(conf, where), orderByClause)
+		if len(nullValueCondition) > 0 {
+			nullValueCondition = ""
+		}
+		task := NewTaskTableData(meta, newTableData(query, selectLen), chunkIndex, int(totalChunks))
+		ctxDone := d.sendTaskToChan(task, taskChan)
+		if ctxDone {
+			break
+		}
+		cutoff = nextCutOff
+		chunkIndex++
 	}
 	return nil
+}
+
+func (d *Dumper) sendTaskToChan(task Task, taskChan chan<- Task) (ctxDone bool) {
+	ctx, conf := d.ctx, d.conf
+	select {
+	case <-ctx.Done():
+		return true
+	case taskChan <- task:
+		log.Debug("send task to writer",
+			zap.String("task", task.Brief()))
+		taskChannelCapacity.With(conf.Labels).Desc()
+		return false
+	}
+}
+
+func (d *Dumper) selectMinAndMaxIntValue(conn *sql.Conn, db, tbl, field string) (*big.Int, *big.Int, error) {
+	ctx, conf, zero := d.ctx, d.conf, &big.Int{}
+	query := fmt.Sprintf("SELECT MIN(`%s`),MAX(`%s`) FROM `%s`.`%s`",
+		escapeString(field), escapeString(field), escapeString(db), escapeString(tbl))
+	if conf.Where != "" {
+		query = fmt.Sprintf("%s WHERE %s", query, conf.Where)
+	}
+	log.Debug("split chunks", zap.String("query", query))
+
+	var smin sql.NullString
+	var smax sql.NullString
+	row := conn.QueryRowContext(ctx, query)
+	err := row.Scan(&smin, &smax)
+	if err != nil {
+		log.Error("split chunks - get max min failed", zap.String("query", query), zap.Error(err))
+		return zero, zero, err
+	}
+	if !smax.Valid || !smin.Valid {
+		// found no data
+		log.Warn("no data to dump", zap.String("schema", db), zap.String("table", tbl))
+		return zero, zero, nil
+	}
+
+	max := new(big.Int)
+	min := new(big.Int)
+	var ok bool
+	if max, ok = max.SetString(smax.String, 10); !ok {
+		return zero, zero, errors.Errorf("fail to convert max value %s in query %s", smax.String, query)
+	}
+	if min, ok = min.SetString(smin.String, 10); !ok {
+		return zero, zero, errors.Errorf("fail to convert min value %s in query %s", smin.String, query)
+	}
+	return min, max, nil
+}
+
+func (d *Dumper) concurrentDumpTiDBTables(conn *sql.Conn, meta TableMeta, taskChan chan<- Task) error {
+	conf := d.conf
+	db, tbl := meta.DatabaseName(), meta.TableName()
+
+	handleColNames, handleVals, err := selectTiDBTableSample(conn, db, tbl)
+	if err != nil {
+		return err
+	}
+	if len(handleVals) == 0 {
+		return nil
+	}
+	selectField, selectLen, err := buildSelectField(conn, db, tbl, conf.CompleteInsert)
+	if err != nil {
+		return err
+	}
+	where := buildWhereClauses(handleColNames, handleVals)
+	orderByClause := buildOrderByClauseString(handleColNames)
+
+	for i, w := range where {
+		query := buildSelectQuery(db, tbl, selectField, buildWhereCondition(conf, w), orderByClause)
+		task := NewTaskTableData(meta, newTableData(query, selectLen), i, len(where))
+		ctxDone := d.sendTaskToChan(task, taskChan)
+		if ctxDone {
+			break
+		}
+	}
+	return nil
+}
+
+func selectTiDBTableSample(conn *sql.Conn, dbName, tableName string) (pkFields []string, pkVals []string, err error) {
+	pkFields, pkColTypes, err := GetPrimaryKeyAndColumnTypes(conn, dbName, tableName)
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
+	hasImplicitRowID, err := SelectTiDBRowID(conn, dbName, tableName)
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
+	if hasImplicitRowID {
+		pkFields, pkColTypes = []string{"_tidb_rowid"}, []string{"BIGINT"}
+	}
+	query := buildTiDBTableSampleQuery(pkFields, dbName, tableName)
+	rows, err := conn.QueryContext(context.Background(), query)
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
+	iter := newRowIter(rows, len(pkFields))
+	defer iter.Close()
+	rowRec := MakeRowReceiver(pkColTypes)
+	buf := new(bytes.Buffer)
+	for iter.HasNext() {
+		err = iter.Decode(rowRec)
+		if err != nil {
+			return nil, nil, errors.Trace(err)
+		}
+		rowRec.WriteToBuffer(buf, true)
+		pkVals = append(pkVals, buf.String())
+		buf.Reset()
+		iter.Next()
+	}
+	return pkFields, pkVals, nil
+}
+
+func buildTiDBTableSampleQuery(pkFields []string, dbName, tblName string) string {
+	template := "SELECT %s FROM `%s`.`%s` TABLESAMPLE REGIONS() ORDER BY %s"
+	quotaPk := make([]string, len(pkFields))
+	for i, s := range pkFields {
+		quotaPk[i] = fmt.Sprintf("`%s`", escapeString(s))
+	}
+	pks := strings.Join(quotaPk, ",")
+	return fmt.Sprintf(template, pks, escapeString(dbName), escapeString(tblName), pks)
 }
 
 func prepareTableListToDump(conf *Config, pool *sql.Conn) error {
@@ -295,96 +518,65 @@ func prepareTableListToDump(conf *Config, pool *sql.Conn) error {
 	return nil
 }
 
-func dumpSql(ctx context.Context, conf *Config, connectPool *connectionsPool, writer Writer) error {
-	tableIR, err := SelectFromSql(conf, connectPool.extraConn())
-	if err != nil {
-		return err
-	}
-
-	tableDataStartTime := time.Now()
-	err = writer.WriteTableData(ctx, tableIR)
-	if err != nil {
-		summary.CollectFailureUnit("dump", err)
-		return err
-	} else {
-		summary.CollectSuccessUnit("dump cost", 1, time.Since(tableDataStartTime))
-	}
-	return nil
-}
-
-func dumpTable(ctx context.Context, conf *Config, db *sql.Conn, dbName string, table *TableInfo, writer Writer) ([]TableDataIR, error) {
-	tableName := table.Name
-	if !conf.NoSchemas {
-		if table.Type == TableTypeView {
-			viewName := table.Name
-			createTableSQL, createViewSQL, err := ShowCreateView(db, dbName, viewName)
-			if err != nil {
-				return nil, err
-			}
-			return nil, writer.WriteViewMeta(ctx, dbName, viewName, createTableSQL, createViewSQL)
-		}
-		createTableSQL, err := ShowCreateTable(db, dbName, tableName)
-		if err != nil {
-			return nil, err
-		}
-		if err := writer.WriteTableMeta(ctx, dbName, tableName, createTableSQL); err != nil {
-			return nil, err
-		}
-	}
-	// Do not dump table data and return nil
-	if conf.NoData {
-		return nil, nil
-	}
-
-	if conf.Rows != UnspecifiedSize {
-		finished, chunksIterArray, err := concurrentDumpTable(ctx, conf, db, dbName, tableName)
-		if err != nil || finished {
-			return chunksIterArray, err
-		}
-	}
-	tableIR, err := SelectAllFromTable(conf, db, dbName, tableName)
+func dumpTableMeta(conf *Config, conn *sql.Conn, db string, table *TableInfo) (TableMeta, error) {
+	tbl := table.Name
+	selectField, _, err := buildSelectField(conn, db, tbl, conf.CompleteInsert)
 	if err != nil {
 		return nil, err
 	}
 
-	return []TableDataIR{tableIR}, nil
+	var colTypes []*sql.ColumnType
+	// If all columns are generated
+	if selectField == "" {
+		colTypes, err = GetColumnTypes(conn, "*", db, tbl)
+	} else {
+		colTypes, err = GetColumnTypes(conn, selectField, db, tbl)
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	meta := &tableMeta{
+		database:      db,
+		table:         tbl,
+		colTypes:      colTypes,
+		selectedField: selectField,
+		specCmts: []string{
+			"/*!40101 SET NAMES binary*/;",
+		},
+	}
+
+	if conf.NoSchemas {
+		return meta, nil
+	}
+	if table.Type == TableTypeView {
+		viewName := table.Name
+		createTableSQL, createViewSQL, err := ShowCreateView(conn, db, viewName)
+		if err != nil {
+			return meta, err
+		}
+		meta.showCreateTable = createTableSQL
+		meta.showCreateView = createViewSQL
+		return meta, nil
+	}
+	createTableSQL, err := ShowCreateTable(conn, db, tbl)
+	if err != nil {
+		return nil, err
+	}
+	meta.showCreateTable = createTableSQL
+	return meta, nil
 }
 
-func concurrentDumpTable(ctx context.Context, conf *Config, db *sql.Conn, dbName string, tableName string) (bool, []TableDataIR, error) {
-	// try dump table concurrently by split table to chunks
-	chunksIterCh := make(chan TableDataIR, defaultDumpThreads)
-	errCh := make(chan error, defaultDumpThreads)
-	linear := make(chan struct{})
-
-	ctx1, cancel1 := context.WithCancel(ctx)
-	defer cancel1()
-	var g errgroup.Group
-	chunksIterArray := make([]TableDataIR, 0)
-	g.Go(func() error {
-		splitTableDataIntoChunks(ctx1, chunksIterCh, errCh, linear, dbName, tableName, db, conf)
-		return nil
-	})
-
-Loop:
-	for {
-		select {
-		case <-ctx.Done():
-			return true, chunksIterArray, nil
-		case <-linear:
-			return false, chunksIterArray, nil
-		case chunksIter, ok := <-chunksIterCh:
-			if !ok {
-				break Loop
-			}
-			chunksIterArray = append(chunksIterArray, chunksIter)
-		case err := <-errCh:
-			return false, chunksIterArray, err
-		}
+func (d *Dumper) dumpSql(metaConn *sql.Conn, taskChan chan<- Task) error {
+	conf := d.conf
+	meta, tableIR, err := SelectFromSql(conf, metaConn)
+	if err != nil {
+		return err
 	}
-	if err := g.Wait(); err != nil {
-		return true, chunksIterArray, err
-	}
-	return true, chunksIterArray, nil
+
+	task := NewTaskTableData(meta, tableIR, 0, 1)
+	d.sendTaskToChan(task, taskChan)
+	return nil
 }
 
 func canRebuildConn(consistency string, trxConsistencyOnly bool) bool {

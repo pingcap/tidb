@@ -54,7 +54,7 @@ if [ "$file_num" -ne 50 ]; then
   echo "obtain file number: $file_num, but expect: 50" && exit 1
 fi
 
-for i in `seq 1 10`
+for i in `seq 0 9`
 do
   r=$(printf "%02d" $i)
   for j in `seq 0 4`

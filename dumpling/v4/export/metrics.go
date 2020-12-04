@@ -44,6 +44,13 @@ var (
 			Name:      "error_count",
 			Help:      "Total error count during dumping progress",
 		}, []string{})
+	taskChannelCapacity = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "dumpling",
+			Subsystem: "dump",
+			Name:      "channel_capacity",
+			Help:      "The task channel capacity during dumping progress",
+		}, []string{})
 )
 
 // RegisterMetrics registers metrics.
@@ -53,6 +60,7 @@ func RegisterMetrics(registry *prometheus.Registry) {
 	registry.MustRegister(writeTimeHistogram)
 	registry.MustRegister(receiveWriteChunkTimeHistogram)
 	registry.MustRegister(errorCount)
+	registry.MustRegister(taskChannelCapacity)
 }
 
 func RemoveLabelValuesWithTaskInMetrics(labels prometheus.Labels) {
@@ -61,4 +69,5 @@ func RemoveLabelValuesWithTaskInMetrics(labels prometheus.Labels) {
 	writeTimeHistogram.Delete(labels)
 	receiveWriteChunkTimeHistogram.Delete(labels)
 	errorCount.Delete(labels)
+	taskChannelCapacity.Delete(labels)
 }

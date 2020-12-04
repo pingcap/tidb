@@ -542,7 +542,10 @@ const (
 	defaultEtcdDialTimeOut     = 3 * time.Second
 )
 
-var gcSafePointVersion, _ = semver.NewVersion("4.0.0")
+var (
+	gcSafePointVersion = semver.New("4.0.0")
+	tableSampleVersion = semver.New("5.0.0")
+)
 
 type ServerInfo struct {
 	ServerType    ServerType
@@ -668,4 +671,13 @@ func validateSpecifiedSQL(conf *Config) error {
 		return errors.New("can't specify both --sql and --where at the same time. Please try to combine them into --sql")
 	}
 	return nil
+}
+
+func validateFileFormat(conf *Config) error {
+	conf.FileType = strings.ToLower(conf.FileType)
+	switch conf.FileType {
+	case "sql", "csv":
+		return nil
+	}
+	return errors.Errorf("unknown config.FileType '%s'", conf.FileType)
 }

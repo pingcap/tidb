@@ -88,6 +88,14 @@ type mockTableIR struct {
 	SQLRowIter
 }
 
+func (m *mockTableIR) ShowCreateTable() string {
+	return ""
+}
+
+func (m *mockTableIR) ShowCreateView() string {
+	return ""
+}
+
 func (m *mockTableIR) Start(ctx context.Context, conn *sql.Conn) error {
 	return nil
 }

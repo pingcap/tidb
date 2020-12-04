@@ -25,7 +25,7 @@ type testUtilSuite struct {
 	mockCfg *Config
 }
 
-func (s *testUtilSuite) SetUpSuite(c *C) {
+func (s *testUtilSuite) SetUpSuite(_ *C) {
 	s.mockCfg = &Config{
 		FileSize: UnspecifiedSize,
 	}
@@ -63,7 +63,8 @@ func (s *testUtilSuite) TestWriteInsert(c *C) {
 	tableIR := newMockTableIR("test", "employee", data, specCmts, colTypes)
 	bf := storage.NewBufferWriter()
 
-	err := WriteInsert(context.Background(), tableIR, bf, configForWriteSQL(UnspecifiedSize, UnspecifiedSize))
+	conf := configForWriteSQL(UnspecifiedSize, UnspecifiedSize)
+	err := WriteInsert(context.Background(), conf, tableIR, tableIR, bf)
 	c.Assert(err, IsNil)
 	expected := "/*!40101 SET NAMES binary*/;\n" +
 		"/*!40014 SET FOREIGN_KEY_CHECKS=0*/;\n" +
@@ -93,7 +94,8 @@ func (s *testUtilSuite) TestWriteInsertReturnsError(c *C) {
 	tableIR.rowErr = rowErr
 	bf := storage.NewBufferWriter()
 
-	err := WriteInsert(context.Background(), tableIR, bf, configForWriteSQL(UnspecifiedSize, UnspecifiedSize))
+	conf := configForWriteSQL(UnspecifiedSize, UnspecifiedSize)
+	err := WriteInsert(context.Background(), conf, tableIR, tableIR, bf)
 	c.Assert(err, Equals, rowErr)
 	expected := "/*!40101 SET NAMES binary*/;\n" +
 		"/*!40014 SET FOREIGN_KEY_CHECKS=0*/;\n" +
@@ -117,7 +119,8 @@ func (s *testUtilSuite) TestWriteInsertInCsv(c *C) {
 
 	// test nullValue
 	opt := &csvOption{separator: []byte(","), delimiter: doubleQuotationMark, nullValue: "\\N"}
-	err := WriteInsertInCsv(context.Background(), tableIR, bf, configForWriteCSV(true, opt, UnspecifiedSize))
+	conf := configForWriteCSV(true, opt, UnspecifiedSize)
+	err := WriteInsertInCsv(context.Background(), conf, tableIR, tableIR, bf)
 	c.Assert(err, IsNil)
 	expected := "1,\"male\",\"bob@mail.com\",\"020-1234\",\\N\n" +
 		"2,\"female\",\"sarah@mail.com\",\"020-1253\",\"healthy\"\n" +
@@ -129,7 +132,8 @@ func (s *testUtilSuite) TestWriteInsertInCsv(c *C) {
 	bf.Reset()
 	opt.delimiter = quotationMark
 	tableIR = newMockTableIR("test", "employee", data, nil, colTypes)
-	err = WriteInsertInCsv(context.Background(), tableIR, bf, configForWriteCSV(true, opt, UnspecifiedSize))
+	conf = configForWriteCSV(true, opt, UnspecifiedSize)
+	err = WriteInsertInCsv(context.Background(), conf, tableIR, tableIR, bf)
 	c.Assert(err, IsNil)
 	expected = "1,'male','bob@mail.com','020-1234',\\N\n" +
 		"2,'female','sarah@mail.com','020-1253','healthy'\n" +
@@ -141,7 +145,8 @@ func (s *testUtilSuite) TestWriteInsertInCsv(c *C) {
 	bf.Reset()
 	opt.separator = []byte(";")
 	tableIR = newMockTableIR("test", "employee", data, nil, colTypes)
-	err = WriteInsertInCsv(context.Background(), tableIR, bf, configForWriteCSV(true, opt, UnspecifiedSize))
+	conf = configForWriteCSV(true, opt, UnspecifiedSize)
+	err = WriteInsertInCsv(context.Background(), conf, tableIR, tableIR, bf)
 	c.Assert(err, IsNil)
 	expected = "1;'male';'bob@mail.com';'020-1234';\\N\n" +
 		"2;'female';'sarah@mail.com';'020-1253';'healthy'\n" +
@@ -155,7 +160,8 @@ func (s *testUtilSuite) TestWriteInsertInCsv(c *C) {
 	opt.delimiter = []byte("ma")
 	tableIR = newMockTableIR("test", "employee", data, nil, colTypes)
 	tableIR.colNames = []string{"id", "gender", "email", "phone_number", "status"}
-	err = WriteInsertInCsv(context.Background(), tableIR, bf, configForWriteCSV(false, opt, UnspecifiedSize))
+	conf = configForWriteCSV(false, opt, UnspecifiedSize)
+	err = WriteInsertInCsv(context.Background(), conf, tableIR, tableIR, bf)
 	c.Assert(err, IsNil)
 	expected = "maidma&;,?magenderma&;,?maemamailma&;,?maphone_numberma&;,?mastatusma\n" +
 		"1&;,?mamamalema&;,?mabob@mamail.comma&;,?ma020-1234ma&;,?\\N\n" +
@@ -180,7 +186,8 @@ func (s *testUtilSuite) TestSQLDataTypes(c *C) {
 		tableIR := newMockTableIR("test", "t", tableData, nil, colType)
 		bf := storage.NewBufferWriter()
 
-		err := WriteInsert(context.Background(), tableIR, bf, configForWriteSQL(UnspecifiedSize, UnspecifiedSize))
+		conf := configForWriteSQL(UnspecifiedSize, UnspecifiedSize)
+		err := WriteInsert(context.Background(), conf, tableIR, tableIR, bf)
 		c.Assert(err, IsNil)
 		lines := strings.Split(bf.String(), "\n")
 		c.Assert(len(lines), Equals, 3)
