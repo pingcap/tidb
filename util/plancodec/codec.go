@@ -16,6 +16,7 @@ package plancodec
 import (
 	"bytes"
 	"encoding/base64"
+	"math"
 	"strconv"
 	"strings"
 	"sync"
@@ -320,7 +321,11 @@ func EncodePlanNode(depth, pid int, planType string, rowCount float64,
 	buf.WriteByte(separator)
 	buf.WriteString(taskTypeInfo)
 	buf.WriteByte(separator)
-	buf.WriteString(strconv.FormatFloat(rowCount, 'f', -1, 64))
+	if math.Round(rowCount) == rowCount {
+		buf.WriteString(strconv.FormatFloat(rowCount, 'f', 0, 64))
+	} else {
+		buf.WriteString(strconv.FormatFloat(rowCount, 'f', 2, 64))
+	}
 	buf.WriteByte(separator)
 	buf.WriteString(explainInfo)
 	// Check whether has runtime info.
@@ -338,17 +343,13 @@ func EncodePlanNode(depth, pid int, planType string, rowCount float64,
 }
 
 // NormalizePlanNode is used to normalize the plan to a string.
-func NormalizePlanNode(depth int, planType string, isRoot bool, explainInfo string, buf *bytes.Buffer) {
+func NormalizePlanNode(depth int, planType string, taskTypeInfo string, explainInfo string, buf *bytes.Buffer) {
 	buf.WriteString(strconv.Itoa(depth))
 	buf.WriteByte(separator)
 	planID := TypeStringToPhysicalID(planType)
 	buf.WriteString(strconv.Itoa(planID))
 	buf.WriteByte(separator)
-	if isRoot {
-		buf.WriteString(rootTaskType)
-	} else {
-		buf.WriteString(copTaskType)
-	}
+	buf.WriteString(taskTypeInfo)
 	buf.WriteByte(separator)
 	buf.WriteString(explainInfo)
 	buf.WriteByte(lineBreaker)
@@ -363,6 +364,16 @@ func encodeID(planType string, id int) string {
 func EncodeTaskType(isRoot bool, storeType kv.StoreType) string {
 	if isRoot {
 		return rootTaskType
+	}
+	return copTaskType + idSeparator + strconv.Itoa((int)(storeType))
+}
+
+// EncodeTaskTypeForNormalize is used to encode task type to a string. Only use for normalize plan.
+func EncodeTaskTypeForNormalize(isRoot bool, storeType kv.StoreType) string {
+	if isRoot {
+		return rootTaskType
+	} else if storeType == kv.TiKV {
+		return copTaskType
 	}
 	return copTaskType + idSeparator + strconv.Itoa((int)(storeType))
 }

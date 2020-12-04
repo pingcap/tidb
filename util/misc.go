@@ -165,7 +165,7 @@ func SyntaxError(err error) error {
 	if err == nil {
 		return nil
 	}
-	logutil.BgLogger().Error("syntax error", zap.Error(err))
+	logutil.BgLogger().Debug("syntax error", zap.Error(err))
 
 	// If the error is already a terror with stack, pass it through.
 	if errors.HasStack(err) {
@@ -440,7 +440,8 @@ type SequenceSchema interface {
 	SequenceByName(schema, sequence model.CIStr) (SequenceTable, error)
 }
 
-// SequenceTable is implemented by tableCommon, and it is specialised in handling sequence operation.
+// SequenceTable is implemented by tableCommon,
+// and it is specialised in handling sequence operation.
 // Otherwise calling table will cause import cycle problem.
 type SequenceTable interface {
 	GetSequenceID() int64

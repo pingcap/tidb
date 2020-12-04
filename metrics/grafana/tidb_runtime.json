@@ -142,7 +142,7 @@
               "refId": "A"
             },
             {
-              "expr": "go_memstats_next_gc_bytes{instance=~\"$instance\"} / 2",
+              "expr": "go_memstats_next_gc_bytes{instance=~\"$instance\"} / (1 + tidb_server_gogc{instance=~\"$instance\"} / 100)",
               "format": "time_series",
               "hide": false,
               "intervalFactor": 1,
@@ -150,7 +150,7 @@
               "refId": "H"
             },
             {
-              "expr": "go_memstats_heap_alloc_bytes{instance=~\"$instance\"} - go_memstats_next_gc_bytes{instance=~\"$instance\"} / 2",
+              "expr": "go_memstats_heap_alloc_bytes{instance=~\"$instance\"} - go_memstats_next_gc_bytes{instance=~\"$instance\"} / (1 + tidb_server_gogc{instance=~\"$instance\"} / 100)",
               "format": "time_series",
               "hide": false,
               "intervalFactor": 1,
@@ -233,14 +233,128 @@
           }
         },
         {
-          "type": "graph",
-          "title": "Estimated Live Objects",
+          "aliasColors": {},
+          "bars": false,
+          "dashLength": 10,
+          "dashes": false,
+          "datasource": "${DS_TEST-CLUSTER}",
+          "description": "TiDB cpu usage calculated with process cpu running seconds",
+          "editable": true,
+          "error": false,
+          "fill": 1,
+          "grid": {},
           "gridPos": {
-            "x": 12,
-            "y": 1,
+            "h": 7,
             "w": 12,
-            "h": 7
+            "x": 0,
+            "y": 8
           },
+          "id": 6,
+          "legend": {
+            "alignAsTable": false,
+            "avg": false,
+            "current": true,
+            "max": false,
+            "min": false,
+            "rightSide": false,
+            "show": true,
+            "total": false,
+            "values": true
+          },
+          "lines": true,
+          "linewidth": 1,
+          "links": [],
+          "nullPointMode": "null as zero",
+          "percentage": false,
+          "pointradius": 5,
+          "points": false,
+          "renderer": "flot",
+          "seriesOverrides": [
+            {
+              "alias": "total",
+              "fill": 0,
+              "lines": false
+            },
+            {
+              "alias": "/limit/",
+              "color": "#C4162A",
+              "fill": 0,
+              "nullPointMode": "null"
+            }
+          ],
+          "spaceLength": 10,
+          "stack": false,
+          "steppedLine": false,
+          "targets": [
+            {
+              "expr": "irate(process_cpu_seconds_total{instance=~\"$instance\"}[30s])",
+              "format": "time_series",
+              "hide": false,
+              "interval": "",
+              "intervalFactor": 1,
+              "legendFormat": "cpu-usage",
+              "refId": "A",
+              "step": 40
+            },
+            {
+              "expr": "(idelta((go_memstats_gc_cpu_fraction{instance=~\"$instance\"} * (go_memstats_last_gc_time_seconds{instance=~\"$instance\"} - process_start_time_seconds{instance=~\"$instance\"}) * tidb_server_maxprocs{instance=~\"$instance\"})[30s:]) > 0) / 15",
+              "format": "time_series",
+              "intervalFactor": 1,
+              "legendFormat": "gc-cpu",
+              "refId": "C"
+            },
+            {
+              "expr": "tidb_server_maxprocs{instance=~\"$instance\"}",
+              "format": "time_series",
+              "interval": "",
+              "intervalFactor": 1,
+              "legendFormat": "limit",
+              "refId": "B"
+            }
+          ],
+          "thresholds": [],
+          "timeFrom": null,
+          "timeRegions": [],
+          "timeShift": null,
+          "title": "CPU Usage",
+          "tooltip": {
+            "msResolution": false,
+            "shared": true,
+            "sort": 0,
+            "value_type": "individual"
+          },
+          "type": "graph",
+          "xaxis": {
+            "buckets": null,
+            "mode": "time",
+            "name": null,
+            "show": true,
+            "values": []
+          },
+          "yaxes": [
+            {
+              "format": "percentunit",
+              "label": null,
+              "logBase": 1,
+              "max": null,
+              "min": "0",
+              "show": true
+            },
+            {
+              "format": "short",
+              "label": null,
+              "logBase": 1,
+              "max": null,
+              "min": null,
+              "show": true
+            }
+          ],
+          "yaxis": {
+            "align": false,
+            "alignLevel": null
+          }
+        },
+        {
           "aliasColors": {},
           "bars": false,
           "cacheTimeout": null,
@@ -252,6 +366,12 @@
           "error": false,
           "fill": 0,
           "grid": {},
+          "gridPos": {
+            "h": 7,
+            "w": 12,
+            "x": 12,
+            "y": 1
+          },
           "id": 21,
           "legend": {
             "alignAsTable": false,
@@ -297,12 +417,14 @@
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
+          "title": "Estimated Live Objects",
           "tooltip": {
             "msResolution": true,
             "shared": true,
             "sort": 0,
             "value_type": "individual"
           },
+          "type": "graph",
           "xaxis": {
             "buckets": null,
             "mode": "time",
@@ -349,7 +471,7 @@
             "h": 7,
             "w": 12,
             "x": 12,
-            "y": 1
+            "y": 8
           },
           "id": 8,
           "legend": {
@@ -454,322 +576,13 @@
           "dashLength": 10,
           "dashes": false,
           "datasource": "${DS_TEST-CLUSTER}",
-          "description": "TiDB cpu usage calculated with process cpu running seconds",
-          "editable": true,
-          "error": false,
-          "fill": 1,
-          "grid": {},
-          "gridPos": {
-            "h": 7,
-            "w": 12,
-            "x": 0,
-            "y": 8
-          },
-          "id": 6,
-          "legend": {
-            "alignAsTable": false,
-            "avg": false,
-            "current": true,
-            "max": false,
-            "min": false,
-            "rightSide": false,
-            "show": true,
-            "total": false,
-            "values": true
-          },
-          "lines": true,
-          "linewidth": 1,
-          "links": [],
-          "nullPointMode": "null as zero",
-          "percentage": false,
-          "pointradius": 5,
-          "points": false,
-          "renderer": "flot",
-          "seriesOverrides": [
-            {
-              "alias": "total",
-              "fill": 0,
-              "lines": false
-            },
-            {
-              "alias": "/limit/",
-              "color": "#C4162A",
-              "fill": 0,
-              "nullPointMode": "null"
-            }
-          ],
-          "spaceLength": 10,
-          "stack": false,
-          "steppedLine": false,
-          "targets": [
-            {
-              "expr": "irate(process_cpu_seconds_total{instance=~\"$instance\"}[30s])",
-              "format": "time_series",
-              "hide": false,
-              "interval": "",
-              "intervalFactor": 1,
-              "legendFormat": "cpu-usage",
-              "refId": "A",
-              "step": 40
-            },
-            {
-              "expr": "tidb_server_maxprocs{instance=~\"$instance\"}",
-              "format": "time_series",
-              "interval": "",
-              "intervalFactor": 1,
-              "legendFormat": "limit",
-              "refId": "B"
-            }
-          ],
-          "thresholds": [],
-          "timeFrom": null,
-          "timeRegions": [],
-          "timeShift": null,
-          "title": "CPU Usage",
-          "tooltip": {
-            "msResolution": false,
-            "shared": true,
-            "sort": 0,
-            "value_type": "individual"
-          },
-          "type": "graph",
-          "xaxis": {
-            "buckets": null,
-            "mode": "time",
-            "name": null,
-            "show": true,
-            "values": []
-          },
-          "yaxes": [
-            {
-              "format": "percentunit",
-              "label": null,
-              "logBase": 1,
-              "max": null,
-              "min": "0",
-              "show": true
-            },
-            {
-              "format": "short",
-              "label": null,
-              "logBase": 1,
-              "max": null,
-              "min": null,
-              "show": true
-            }
-          ],
-          "yaxis": {
-            "align": false,
-            "alignLevel": null
-          }
-        },
-        {
-          "aliasColors": {},
-          "bars": false,
-          "dashLength": 10,
-          "dashes": false,
-          "datasource": "${DS_TEST-CLUSTER}",
-          "description": "The CPU time (aggregated) used by grabage collector.",
-          "editable": true,
-          "error": false,
-          "fill": 1,
-          "grid": {},
-          "gridPos": {
-            "h": 7,
-            "w": 12,
-            "x": 12,
-            "y": 8
-          },
-          "id": 14,
-          "legend": {
-            "alignAsTable": false,
-            "avg": false,
-            "current": true,
-            "max": true,
-            "min": false,
-            "rightSide": false,
-            "show": true,
-            "total": false,
-            "values": true
-          },
-          "lines": true,
-          "linewidth": 1,
-          "links": [],
-          "nullPointMode": "null as zero",
-          "percentage": false,
-          "pointradius": 5,
-          "points": false,
-          "renderer": "flot",
-          "seriesOverrides": [],
-          "spaceLength": 10,
-          "stack": false,
-          "steppedLine": false,
-          "targets": [
-            {
-              "expr": "(idelta((go_memstats_gc_cpu_fraction{instance=~\"$instance\"} * (go_memstats_last_gc_time_seconds{instance=~\"$instance\"} - process_start_time_seconds{instance=~\"$instance\"}) * tidb_server_maxprocs{instance=~\"$instance\"})[30s:]) / idelta(go_gc_duration_seconds_count{instance=~\"$instance\"}[30s])) > 0",
-              "format": "time_series",
-              "hide": false,
-              "intervalFactor": 1,
-              "legendFormat": "cpu-time",
-              "refId": "B"
-            }
-          ],
-          "thresholds": [],
-          "timeFrom": null,
-          "timeRegions": [],
-          "timeShift": null,
-          "title": "GC CPU Time",
-          "tooltip": {
-            "msResolution": false,
-            "shared": true,
-            "sort": 0,
-            "value_type": "individual"
-          },
-          "type": "graph",
-          "xaxis": {
-            "buckets": null,
-            "mode": "time",
-            "name": null,
-            "show": true,
-            "values": []
-          },
-          "yaxes": [
-            {
-              "format": "s",
-              "label": null,
-              "logBase": 1,
-              "max": null,
-              "min": "0",
-              "show": true
-            },
-            {
-              "format": "none",
-              "label": null,
-              "logBase": 1,
-              "max": null,
-              "min": null,
-              "show": true
-            }
-          ],
-          "yaxis": {
-            "align": false,
-            "alignLevel": null
-          }
-        },
-        {
-          "aliasColors": {},
-          "bars": false,
-          "dashLength": 10,
-          "dashes": false,
-          "datasource": "${DS_TEST-CLUSTER}",
-          "description": "TiDB process current goroutines count",
-          "fill": 1,
-          "gridPos": {
-            "h": 7,
-            "w": 12,
-            "x": 0,
-            "y": 15
-          },
-          "id": 12,
-          "legend": {
-            "alignAsTable": false,
-            "avg": false,
-            "current": true,
-            "max": true,
-            "min": false,
-            "rightSide": false,
-            "show": true,
-            "total": false,
-            "values": true
-          },
-          "lines": true,
-          "linewidth": 1,
-          "links": [],
-          "nullPointMode": "null",
-          "percentage": false,
-          "pointradius": 5,
-          "points": false,
-          "renderer": "flot",
-          "seriesOverrides": [
-            {
-              "alias": "threads",
-              "fill": 0,
-              "yaxis": 2
-            }
-          ],
-          "spaceLength": 10,
-          "stack": false,
-          "steppedLine": false,
-          "targets": [
-            {
-              "expr": " go_goroutines{instance=~\"$instance\"}",
-              "format": "time_series",
-              "intervalFactor": 1,
-              "legendFormat": "goroutines",
-              "refId": "A"
-            },
-            {
-              "expr": "go_threads{instance=~\"$instance\"}",
-              "format": "time_series",
-              "intervalFactor": 1,
-              "legendFormat": "threads",
-              "refId": "B"
-            }
-          ],
-          "thresholds": [],
-          "timeFrom": null,
-          "timeRegions": [],
-          "timeShift": null,
-          "title": "Goroutine Count",
-          "tooltip": {
-            "shared": true,
-            "sort": 0,
-            "value_type": "individual"
-          },
-          "type": "graph",
-          "xaxis": {
-            "buckets": null,
-            "mode": "time",
-            "name": null,
-            "show": true,
-            "values": []
-          },
-          "yaxes": [
-            {
-              "format": "short",
-              "label": null,
-              "logBase": 1,
-              "max": null,
-              "min": null,
-              "show": true
-            },
-            {
-              "format": "short",
-              "label": null,
-              "logBase": 1,
-              "max": null,
-              "min": null,
-              "show": true
-            }
-          ],
-          "yaxis": {
-            "align": false,
-            "alignLevel": null
-          }
-        },
-        {
-          "aliasColors": {},
-          "bars": false,
-          "dashLength": 10,
-          "dashes": false,
-          "datasource": "${DS_TEST-CLUSTER}",
           "description": "The throughput of Go's memory allocator.",
           "fill": 1,
           "gridPos": {
             "h": 7,
             "w": 12,
             "x": 12,
-            "y": 15
+            "y": 22
           },
           "id": 16,
           "legend": {
@@ -886,13 +699,208 @@
           "dashLength": 10,
           "dashes": false,
           "datasource": "${DS_TEST-CLUSTER}",
-          "description": "TiDB side and PD side TSO RPC duration.",
+          "description": "TiDB process current goroutines count",
           "fill": 1,
           "gridPos": {
             "h": 7,
             "w": 12,
             "x": 0,
-            "y": 22
+            "y": 15
+          },
+          "id": 12,
+          "legend": {
+            "alignAsTable": false,
+            "avg": false,
+            "current": true,
+            "max": true,
+            "min": false,
+            "rightSide": false,
+            "show": true,
+            "total": false,
+            "values": true
+          },
+          "lines": true,
+          "linewidth": 1,
+          "links": [],
+          "nullPointMode": "null",
+          "percentage": false,
+          "pointradius": 5,
+          "points": false,
+          "renderer": "flot",
+          "seriesOverrides": [
+            {
+              "alias": "threads",
+              "fill": 0,
+              "yaxis": 2
+            }
+          ],
+          "spaceLength": 10,
+          "stack": false,
+          "steppedLine": false,
+          "targets": [
+            {
+              "expr": " go_goroutines{instance=~\"$instance\"}",
+              "format": "time_series",
+              "intervalFactor": 1,
+              "legendFormat": "goroutines",
+              "refId": "A"
+            },
+            {
+              "expr": "go_threads{instance=~\"$instance\"}",
+              "format": "time_series",
+              "intervalFactor": 1,
+              "legendFormat": "threads",
+              "refId": "B"
+            }
+          ],
+          "thresholds": [],
+          "timeFrom": null,
+          "timeRegions": [],
+          "timeShift": null,
+          "title": "Goroutine Count",
+          "tooltip": {
+            "shared": true,
+            "sort": 0,
+            "value_type": "individual"
+          },
+          "type": "graph",
+          "xaxis": {
+            "buckets": null,
+            "mode": "time",
+            "name": null,
+            "show": true,
+            "values": []
+          },
+          "yaxes": [
+            {
+              "format": "short",
+              "label": null,
+              "logBase": 1,
+              "max": null,
+              "min": null,
+              "show": true
+            },
+            {
+              "format": "short",
+              "label": null,
+              "logBase": 1,
+              "max": null,
+              "min": null,
+              "show": true
+            }
+          ],
+          "yaxis": {
+            "align": false,
+            "alignLevel": null
+          }
+        },
+        {
+          "aliasColors": {},
+          "bars": false,
+          "dashLength": 10,
+          "dashes": false,
+          "datasource": "${DS_TEST-CLUSTER}",
+          "description": "TiDB side and TiKV side RPC duration.",
+          "fill": 1,
+          "gridPos": {
+            "h": 7,
+            "w": 12,
+            "x": 0,
+            "y": 29
+          },
+          "id": 19,
+          "legend": {
+            "avg": false,
+            "current": false,
+            "hideEmpty": true,
+            "max": true,
+            "min": false,
+            "show": true,
+            "total": false,
+            "values": true
+          },
+          "lines": true,
+          "linewidth": 1,
+          "links": [],
+          "nullPointMode": "null",
+          "percentage": false,
+          "pointradius": 2,
+          "points": false,
+          "renderer": "flot",
+          "seriesOverrides": [],
+          "spaceLength": 10,
+          "stack": false,
+          "steppedLine": false,
+          "targets": [
+            {
+              "expr": "histogram_quantile(0.99, sum(rate(tidb_tikvclient_request_seconds_bucket{store!=\"0\",instance=~\"$instance\"}[30s])) by (le, store))",
+              "format": "time_series",
+              "intervalFactor": 1,
+              "legendFormat": "tidb-to-store{{store}}",
+              "refId": "A"
+            },
+            {
+              "expr": "histogram_quantile(0.99, sum(rate(tikv_grpc_msg_duration_seconds_bucket{type!=\"kv_gc\"}[30s])) by (le, instance))",
+              "format": "time_series",
+              "intervalFactor": 1,
+              "legendFormat": "tikv-{{instance}}-side",
+              "refId": "B"
+            }
+          ],
+          "thresholds": [],
+          "timeFrom": null,
+          "timeRegions": [],
+          "timeShift": null,
+          "title": "KV RPC Latency",
+          "tooltip": {
+            "shared": true,
+            "sort": 0,
+            "value_type": "individual"
+          },
+          "type": "graph",
+          "xaxis": {
+            "buckets": null,
+            "mode": "time",
+            "name": null,
+            "show": true,
+            "values": []
+          },
+          "yaxes": [
+            {
+              "format": "s",
+              "label": null,
+              "logBase": 1,
+              "max": null,
+              "min": null,
+              "show": true
+            },
+            {
+              "format": "short",
+              "label": null,
+              "logBase": 1,
+              "max": null,
+              "min": null,
+              "show": true
+            }
+          ],
+          "yaxis": {
+            "align": false,
+            "alignLevel": null
+          }
+        },
+        {
+          "aliasColors": {},
+          "bars": false,
+          "dashLength": 10,
+          "dashes": false,
+          "datasource": "${DS_TEST-CLUSTER}",
+          "description": "TiDB side and PD side TSO RPC duration.",
+          "fill": 1,
+          "gridPos": {
+            "h": 7,
+            "w": 12,
+            "x": 12,
+            "y": 29
           },
           "id": 18,
           "legend": {
@@ -912,6 +920,7 @@
           "pointradius": 2,
           "points": false,
           "renderer": "flot",
+          "seriesOverrides": [],
           "spaceLength": 10,
           "stack": false,
           "steppedLine": false,
@@ -973,35 +982,170 @@
           }
         },
         {
-          "aliasColors": {},
-          "bars": true,
-          "dashLength": 10,
-          "dashes": false,
+          "cards": {
+            "cardPadding": null,
+            "cardRound": null
+          },
+          "color": {
+            "cardColor": "#b4ff00",
+            "colorScale": "sqrt",
+            "colorScheme": "interpolateSpectral",
+            "exponent": 0.5,
+            "mode": "spectrum"
+          },
+          "dataFormat": "tsbuckets",
           "datasource": "${DS_TEST-CLUSTER}",
-          "description": "The Go garbage collection counts in the last 15s",
-          "fill": 1,
+          "description": "Number of requests in each batch",
+          "gridPos": {
+            "h": 7,
+            "w": 12,
+            "x": 0,
+            "y": 36
+          },
+          "heatmap": {},
+          "hideZeroBuckets": true,
+          "highlightCards": true,
+          "id": 23,
+          "legend": {
+            "show": false
+          },
+          "links": [],
+          "reverseYBuckets": false,
+          "targets": [
+            {
+              "expr": "sum(increase(tidb_tikvclient_batch_requests_bucket{instance=~\"$instance\"}[30s])) by (le)",
+              "format": "heatmap",
+              "intervalFactor": 1,
+              "legendFormat": "{{le}}",
+              "refId": "A",
+              "step": 40
+            }
+          ],
+          "timeFrom": null,
+          "timeShift": null,
+          "title": "Requests Batch Size",
+          "tooltip": {
+            "show": true,
+            "showHistogram": false
+          },
+          "type": "heatmap",
+          "xAxis": {
+            "show": true
+          },
+          "xBucketNumber": null,
+          "xBucketSize": null,
+          "yAxis": {
+            "decimals": null,
+            "format": "none",
+            "logBase": 1,
+            "max": null,
+            "min": null,
+            "show": true,
+            "splitFactor": null
+          },
+          "yBucketBound": "auto",
+          "yBucketNumber": null,
+          "yBucketSize": null
+        },
+        {
+          "cards": {
+            "cardPadding": null,
+            "cardRound": null
+          },
+          "color": {
+            "cardColor": "#b4ff00",
+            "colorScale": "sqrt",
+            "colorScheme": "interpolateSpectral",
+            "exponent": 0.5,
+            "mode": "spectrum"
+          },
+          "dataFormat": "tsbuckets",
+          "datasource": "${DS_TEST-CLUSTER}",
+          "description": "Number of requests in queue",
           "gridPos": {
             "h": 7,
             "w": 12,
             "x": 12,
-            "y": 22
+            "y": 36
           },
-          "id": 10,
+          "heatmap": {},
+          "hideZeroBuckets": true,
+          "highlightCards": true,
+          "id": 24,
+          "legend": {
+            "show": false
+          },
+          "links": [],
+          "reverseYBuckets": false,
+          "targets": [
+            {
+              "expr": "sum(increase(tidb_tikvclient_batch_pending_requests_bucket{instance=~\"$instance\"}[30s])) by (le)",
+              "format": "heatmap",
+              "intervalFactor": 1,
+              "legendFormat": "{{le}}",
+              "refId": "A",
+              "step": 40
+            }
+          ],
+          "timeFrom": null,
+          "timeShift": null,
+          "title": "Pending Requests",
+          "tooltip": {
+            "show": true,
+            "showHistogram": false
+          },
+          "type": "heatmap",
+          "xAxis": {
+            "show": true
+          },
+          "xBucketNumber": null,
+          "xBucketSize": null,
+          "yAxis": {
+            "decimals": null,
+            "format": "none",
+            "logBase": 1,
+            "max": null,
+            "min": null,
+            "show": true,
+            "splitFactor": null
+          },
+          "yBucketBound": "auto",
+          "yBucketNumber": null,
+          "yBucketSize": null
+        },
+        {
+          "aliasColors": {},
+          "bars": false,
+          "dashLength": 10,
+          "dashes": false,
+          "datasource": "${DS_TEST-CLUSTER}",
+          "description": "The time spend on enqueue request",
+          "editable": true,
+          "error": false,
+          "fill": 1,
+          "grid": {},
+          "gridPos": {
+            "h": 7,
+            "w": 12,
+            "x": 0,
+            "y": 43
+          },
+          "id": 26,
           "legend": {
             "alignAsTable": false,
             "avg": false,
-            "current": true,
-            "max": true,
+            "current": false,
+            "max": false,
             "min": false,
             "rightSide": false,
             "show": true,
             "total": false,
-            "values": true
+            "values": false
           },
-          "lines": false,
-          "linewidth": 1,
+          "lines": true,
+          "linewidth": 2,
           "links": [],
-          "nullPointMode": "null",
+          "nullPointMode": "null as zero",
           "percentage": false,
           "pointradius": 5,
           "points": false,
@@ -1012,22 +1156,40 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "idelta(go_gc_duration_seconds_count{instance=~\"$instance\"}[30s]) > 0",
+              "expr": "histogram_quantile(0.999, sum(rate(tidb_tikvclient_batch_wait_duration_bucket{instance=~\"$instance\"}[30s])) by (le, instance))",
               "format": "time_series",
               "intervalFactor": 1,
-              "legendFormat": "count",
-              "refId": "A"
+              "legendFormat": "999",
+              "refId": "A",
+              "step": 10
+            },
+            {
+              "expr": "histogram_quantile(0.99, sum(rate(tidb_tikvclient_batch_wait_duration_bucket{instance=~\"$instance\"}[30s])) by (le, instance))",
+              "format": "time_series",
+              "intervalFactor": 1,
+              "legendFormat": "99",
+              "refId": "B",
+              "step": 10
+            },
+            {
+              "expr": "histogram_quantile(0.95, sum(rate(tidb_tikvclient_batch_wait_duration_bucket{instance=~\"$instance\"}[30s])) by (le, instance))",
+              "format": "time_series",
+              "intervalFactor": 1,
+              "legendFormat": "95",
+              "refId": "C",
+              "step": 10
             }
           ],
           "thresholds": [],
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "GC Count (in the last 15s)",
+          "title": "Request Enqueue Duration",
           "tooltip": {
+            "msResolution": false,
             "shared": true,
             "sort": 0,
-            "value_type": "individual"
+            "value_type": "cumulative"
           },
           "type": "graph",
           "xaxis": {
@@ -1039,11 +1201,11 @@
           },
           "yaxes": [
             {
-              "format": "none",
+              "format": "ns",
               "label": null,
               "logBase": 1,
               "max": null,
-              "min": null,
+              "min": "0",
               "show": true
             },
             {
@@ -1066,61 +1228,77 @@
           "dashLength": 10,
           "dashes": false,
           "datasource": "${DS_TEST-CLUSTER}",
-          "description": "TiDB side and TiKV side RPC duration.",
+          "description": "Time spend on enqueue batch into gRPC",
+          "editable": true,
+          "error": false,
           "fill": 1,
+          "grid": {},
           "gridPos": {
             "h": 7,
             "w": 12,
-            "x": 0,
-            "y": 29
+            "x": 12,
+            "y": 43
           },
-          "id": 19,
+          "id": 28,
           "legend": {
+            "alignAsTable": false,
             "avg": false,
             "current": false,
-            "hideEmpty": true,
-            "max": true,
+            "max": false,
             "min": false,
+            "rightSide": false,
             "show": true,
             "total": false,
-            "values": true
+            "values": false
           },
           "lines": true,
-          "linewidth": 1,
+          "linewidth": 2,
           "links": [],
-          "nullPointMode": "null",
+          "nullPointMode": "null as zero",
           "percentage": false,
-          "pointradius": 2,
+          "pointradius": 5,
           "points": false,
           "renderer": "flot",
+          "seriesOverrides": [],
           "spaceLength": 10,
           "stack": false,
           "steppedLine": false,
           "targets": [
             {
-              "expr": "histogram_quantile(0.99, sum(rate(tidb_tikvclient_request_seconds_bucket{type!=\"GC\",instance=~\"$instance\"}[30s])) by (le, store))",
+              "expr": "histogram_quantile(0.9999, sum(rate(tidb_tikvclient_batch_send_latency_bucket{instance=~\"$instance\"}[30s])) by (le, instance))",
               "format": "time_series",
               "intervalFactor": 1,
-              "legendFormat": "tidb-to-store{{store}}",
-              "refId": "A"
+              "legendFormat": "9999",
+              "refId": "A",
+              "step": 10
             },
             {
-              "expr": "histogram_quantile(0.99, sum(rate(tikv_grpc_msg_duration_seconds_bucket{type!=\"kv_gc\"}[30s])) by (le, instance))",
+              "expr": "histogram_quantile(0.999, sum(rate(tidb_tikvclient_batch_send_latency_bucket{instance=~\"$instance\"}[30s])) by (le, instance))",
               "format": "time_series",
               "intervalFactor": 1,
-              "legendFormat": "tikv-{{instance}}-side",
-              "refId": "B"
+              "legendFormat": "999",
+              "refId": "B",
+              "step": 10
+            },
+            {
+              "expr": "histogram_quantile(0.99, sum(rate(tidb_tikvclient_batch_send_latency_bucket{instance=~\"$instance\"}[30s])) by (le, instance))",
+              "format": "time_series",
+              "intervalFactor": 1,
+              "legendFormat": "99",
+              "refId": "C",
+              "step": 10
             }
           ],
           "thresholds": [],
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "KV RPC Latency",
+          "title": "Batch Enqueue Duration",
           "tooltip": {
+            "msResolution": false,
             "shared": true,
             "sort": 0,
-            "value_type": "individual"
+            "value_type": "cumulative"
           },
           "type": "graph",
           "xaxis": {
@@ -1132,11 +1310,11 @@
           },
           "yaxes": [
             {
-              "format": "s",
+              "format": "ns",
               "label": null,
               "logBase": 1,
               "max": null,
-              "min": null,
+              "min": "0",
               "show": true
             },
             {

@@ -834,6 +834,7 @@ const (
 	ErrDependentByGeneratedColumn                                   = 3108
 	ErrGeneratedColumnRefAutoInc                                    = 3109
 	ErrWarnConflictingHint                                          = 3126
+	ErrUnresolvedHintName                                           = 3128
 	ErrInvalidJSONText                                              = 3140
 	ErrInvalidJSONPath                                              = 3143
 	ErrInvalidTypeForJSON                                           = 3146
@@ -846,6 +847,7 @@ const (
 	ErrUserAlreadyExists                                            = 3163
 	ErrInvalidJSONPathArrayCell                                     = 3165
 	ErrInvalidEncryptionOption                                      = 3184
+	ErrTooLongValueForType                                          = 3505
 	ErrPKIndexCantBeInvisible                                       = 3522
 	ErrRoleNotGranted                                               = 3530
 	ErrLockAcquireFailAndNoWaitSet                                  = 3572
@@ -870,6 +872,7 @@ const (
 	ErrWindowNoGroupOrderUnused                                     = 3597
 	ErrWindowExplainJSON                                            = 3598
 	ErrWindowFunctionIgnoresFrame                                   = 3599
+	ErrNotHintUpdatable                                             = 3637
 	ErrDataTruncatedFunctionalIndex                                 = 3751
 	ErrDataOutOfRangeFunctionalIndex                                = 3752
 	ErrFunctionalIndexOnJSONOrGeometryFunction                      = 3753
@@ -882,6 +885,7 @@ const (
 	ErrSpatialFunctionalIndex                                       = 3760
 	ErrWrongKeyColumnFunctionalIndex                                = 3761
 	ErrFunctionalIndexOnField                                       = 3762
+	ErrGeneratedColumnRowValueIsNotAllowed                          = 3764
 	ErrFKIncompatibleColumns                                        = 3780
 	ErrFunctionalIndexRowValueIsNotAllowed                          = 3800
 	ErrDependentByFunctionalIndex                                   = 3837
@@ -981,6 +985,7 @@ const (
 	ErrBRIERestoreFailed                   = 8125
 	ErrBRIEImportFailed                    = 8126
 	ErrBRIEExportFailed                    = 8127
+	ErrInvalidTableSample                  = 8128
 
 	// Error codes used by TiDB ddl package
 	ErrUnsupportedDDLOperation            = 8200
@@ -1018,8 +1023,10 @@ const (
 	ErrTableOptionUnionUnsupported        = 8232
 	ErrTableOptionInsertMethodUnsupported = 8233
 	ErrInvalidPlacementSpec               = 8234
+	ErrDDLReorgElementNotExist            = 8235
+	ErrPlacementPolicyCheck               = 8236
 
-	// TiKV/PD errors.
+	// TiKV/PD/TiFlash errors.
 	ErrPDServerTimeout           = 9001
 	ErrTiKVServerTimeout         = 9002
 	ErrTiKVServerBusy            = 9003
@@ -1031,4 +1038,6 @@ const (
 	ErrPrometheusAddrIsNotSet    = 9009
 	ErrTiKVStaleCommand          = 9010
 	ErrTiKVMaxTimestampNotSynced = 9011
+	ErrTiFlashServerTimeout      = 9012
+	ErrTiFlashServerBusy         = 9013
 )

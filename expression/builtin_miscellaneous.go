@@ -222,8 +222,9 @@ func (c *anyValueFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	if err != nil {
 		return nil, err
 	}
-	args[0].GetType().Flag |= bf.tp.Flag
-	*bf.tp = *args[0].GetType()
+	ft := args[0].GetType().Clone()
+	ft.Flag |= bf.tp.Flag
+	*bf.tp = *ft
 	var sig builtinFunc
 	switch argTp {
 	case types.ETDecimal:
@@ -1012,6 +1013,7 @@ func (c *uuidFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 	bf.tp.Charset, bf.tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
 	bf.tp.Flen = 36
 	sig := &builtinUUIDSig{bf}
+	sig.setPbCode(tipb.ScalarFuncSig_UUID)
 	return sig, nil
 }
 
