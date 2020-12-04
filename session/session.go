@@ -64,6 +64,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
@@ -1137,7 +1138,11 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 		}
 	}
 	_, pi.Digest = s.sessionVars.StmtCtx.SQLDigest()
-	s.currentPlan = nil
+	// DO NOT reset the currentPlan to nil until this query finishes execution, otherwise reentrant calls
+	// of SetProcessInfo would override Plan and PlanExplainRows to nil.
+	if command == mysql.ComSleep {
+		s.currentPlan = nil
+	}
 	if s.sessionVars.User != nil {
 		pi.User = s.sessionVars.User.Username
 		pi.Host = s.sessionVars.User.Hostname
@@ -1630,6 +1635,7 @@ func (s *session) isTxnRetryable() bool {
 func (s *session) NewTxn(ctx context.Context) error {
 	if s.txn.Valid() {
 		txnID := s.txn.StartTS()
+		txnScope := s.txn.GetUnionStore().GetOption(kv.TxnScope).(string)
 		err := s.CommitTxn(ctx)
 		if err != nil {
 			return err
@@ -1637,10 +1643,11 @@ func (s *session) NewTxn(ctx context.Context) error {
 		vars := s.GetSessionVars()
 		logutil.Logger(ctx).Info("NewTxn() inside a transaction auto commit",
 			zap.Int64("schemaVersion", vars.TxnCtx.SchemaVersion),
-			zap.Uint64("txnStartTS", txnID))
+			zap.Uint64("txnStartTS", txnID),
+			zap.String("txnScope", txnScope))
 	}
 
-	txn, err := s.store.Begin()
+	txn, err := s.store.BeginWithTxnScope(s.sessionVars.CheckAndGetTxnScope())
 	if err != nil {
 		return err
 	}
@@ -1656,7 +1663,6 @@ func (s *session) NewTxn(ctx context.Context) error {
 		CreateTime:    time.Now(),
 		StartTS:       txn.StartTS(),
 		ShardStep:     int(s.sessionVars.ShardAllocateStep),
-		TxnScope:      s.GetSessionVars().TxnScope,
 	}
 	return nil
 }
@@ -2376,7 +2382,6 @@ func (s *session) PrepareTxnCtx(ctx context.Context) {
 		SchemaVersion: is.SchemaMetaVersion(),
 		CreateTime:    time.Now(),
 		ShardStep:     int(s.sessionVars.ShardAllocateStep),
-		TxnScope:      s.GetSessionVars().TxnScope,
 	}
 	if !s.sessionVars.IsAutocommit() || s.sessionVars.RetryInfo.Retrying {
 		if s.sessionVars.TxnMode == ast.Pessimistic {
@@ -2419,7 +2424,7 @@ func (s *session) InitTxnWithStartTS(startTS uint64) error {
 	}
 
 	// no need to get txn from txnFutureCh since txn should init with startTs
-	txn, err := s.store.BeginWithStartTS(startTS)
+	txn, err := s.store.BeginWithStartTS(oracle.GlobalTxnScope, startTS)
 	if err != nil {
 		return err
 	}
@@ -2515,7 +2520,8 @@ func (s *session) recordOnTransactionExecution(err error, counter int, duration 
 
 func (s *session) checkPlacementPolicyBeforeCommit() error {
 	var err error
-	txnScope := s.GetSessionVars().TxnCtx.TxnScope
+	// Get the txnScope of the transaction we're going to commit.
+	txnScope := s.txn.GetUnionStore().GetOption(kv.TxnScope)
 	if txnScope == "" {
 		txnScope = config.DefTxnScope
 	}
