@@ -228,9 +228,6 @@ func (b *PlanBuilder) buildAggregation(ctx context.Context, p LogicalPlan, aggFu
 			if oldFunc.Equal(b.ctx, newFunc) {
 				aggIndexMap[i] = j
 				combined = true
-				if _, ok := corAggMap[aggFunc]; ok {
-					b.corAggMapper[aggFunc] = b.corAggMapper[aggFuncList[j]]
-				}
 				break
 			}
 		}
@@ -2204,7 +2201,7 @@ func (b *PlanBuilder) resolveSubquery(ctx context.Context, sel *ast.SelectStmt, 
 	for _, field := range sel.Fields.Fields {
 		resolver.outerAggFuncs = resolver.outerAggFuncs[:0]
 		switch v := field.Expr.(type) {
-		case *ast.SubqueryExpr:
+		case *ast.SubqueryExpr, *ast.PatternInExpr, *ast.ExistsSubqueryExpr, *ast.CompareSubqueryExpr:
 			_, ok := v.Accept(resolver)
 			if !ok {
 				return nil, resolver.err
@@ -3103,6 +3100,8 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 			totalMap[agg] = aggIndexMap[idx]
 		}
 		for agg, _ := range corAggMap {
+			idx := totalMap[agg]
+			b.corAggMapper[agg] = b.corAggMapper[aggFuncs[idx]]
 			agg.SetFlag(agg.GetFlag() &^ ast.FlagHasAggregateFunc)
 		}
 	}
