@@ -382,7 +382,7 @@ func temporalWithDateAsNumEvalType(argTp *types.FieldType) (argEvalType types.Ev
 	return
 }
 
-// GetCmpTp4MinMax gets compare type for GREATEST and LEAST and BETWEEN (mainly for datetime).
+// GetCmpTp4MinMax gets compare type for GREATEST and LEAST and BETWEEN
 func GetCmpTp4MinMax(args []Expression) (argTp types.EvalType) {
 	datetimeFound, isAllStr := false, true
 	cmpEvalType, isStr, isTemporalWithDate := temporalWithDateAsNumEvalType(args[0].GetType())
