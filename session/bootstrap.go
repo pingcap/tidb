@@ -327,7 +327,7 @@ const (
 		ts			BIGINT(64) UNSIGNED NULL,
 		data_size	BIGINT(64) UNSIGNED NULL,
 		status		VARCHAR(64) NOT NULL,
-		progress	FLOAT(5,2) NOT NULL,
+		progress	FLOAT NOT NULL,
 		cancel		TINYINT(1) NOT NULL,
 		message     TEXT NULL,
 		last_update DATETIME NULL,

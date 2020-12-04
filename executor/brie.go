@@ -16,7 +16,6 @@ package executor
 import (
 	"context"
 	"database/sql"
-	"encoding/base64"
 	"fmt"
 	"net/url"
 	"path/filepath"
@@ -52,6 +51,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/format"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	pd "github.com/tikv/pd/client"
@@ -126,7 +126,7 @@ func (p *brieTaskProgress) getFraction() float64 {
 	if p.lock.total == 0 {
 		return 0
 	}
-	result := 100 * float64(atomic.LoadInt64(&p.lock.current)) / float64(p.lock.total)
+	result := 100 * float64(p.lock.current) / float64(p.lock.total)
 	p.lock.Unlock()
 	// progress of import task is estimated, so may exceed 100%. we simply adjust here
 	if result > 100 {
@@ -237,9 +237,9 @@ func (bq *brieQueue) registerTask(
 				kind, origin_sql, queue_time, data_path, conn_id, status, progress, cancel
 			) VALUES ('%s', '%s', '%s', '%s', %d, '%s', %f, %d);`,
 		info.kind.String(),
-		base64.StdEncoding.EncodeToString([]byte(info.originSQL)),
+		format.OutputFormat(info.originSQL),
 		info.queueTime.String(),
-		base64.StdEncoding.EncodeToString([]byte(info.storage)),
+		format.OutputFormat(info.storage),
 		info.connID,
 		item.progress.getCmd(),
 		item.progress.getFraction(),
@@ -721,24 +721,14 @@ func (e *ShowExec) fetchShowBRIE(ctx context.Context, kind ast.BRIEKind) error {
 	for _, row := range rows {
 		id := row.GetUint64(0)
 		e.result.AppendUint64(0, id)
-		dataPath, err := base64.StdEncoding.DecodeString(row.GetString(1))
-		if err != nil {
-			logutil.Logger(ctx).Error("failed to decode base64", zap.Error(err), zap.Uint64("taskID", id))
-			continue
-		}
-		e.result.AppendBytes(1, dataPath)
+		e.result.AppendString(1, row.GetString(1))
 		e.result.AppendString(2, row.GetString(2))
 		e.result.AppendFloat32(3, row.GetFloat32(3))
 		e.result.AppendTime(4, row.GetTime(4))
 		e.result.AppendTime(5, row.GetTime(5))
 		e.result.AppendTime(6, row.GetTime(6))
 		e.result.AppendUint64(7, row.GetUint64(7))
-		msg, err := base64.StdEncoding.DecodeString(row.GetString(8))
-		if err != nil {
-			logutil.Logger(ctx).Error("failed to decode base64", zap.Error(err), zap.Uint64("taskID", id))
-			continue
-		}
-		e.result.AppendBytes(8, msg)
+		e.result.AppendString(8, row.GetString(8))
 	}
 	return nil
 }
@@ -879,7 +869,7 @@ func (gs *tidbGlueSession) flush(ctx context.Context, taskID uint64) {
 		gs.info.getArchiveSize(),
 		gs.progress.getCmd(),
 		gs.progress.getFraction(),
-		base64.StdEncoding.EncodeToString([]byte(gs.info.getMessage())),
+		format.OutputFormat(gs.info.getMessage()),
 		taskID)
 
 	sqlExecutor := gs.se.(sqlexec.RestrictedSQLExecutor)
