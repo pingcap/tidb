@@ -621,6 +621,8 @@ func (s *testPointGetSuite) TestPointGetReadLock(c *C) {
 	c.Assert(ok, IsFalse)
 	tk.MustExec("unlock tables")
 
+	// Force reload schema to ensure the cache is released.
+	c.Assert(s.dom.Reload(), IsNil)
 	rows = tk.MustQuery("explain analyze select * from point where id = 1").Rows()
 	c.Assert(len(rows), Equals, 1)
 	explain = fmt.Sprintf("%v", rows[0])
