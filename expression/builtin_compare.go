@@ -1469,8 +1469,9 @@ func (c *compareFunctionClass) determineConstComparisonResult(op opcode.Op, colH
 			// The value of constant bigger than the upper bound of column.
 			// For example: column is tinyint type, the range of tinyint is [-128, 127]; the value constant are 200;
 			// 200 > 128 => The value of constant(200) is bigger than the upper bound of column(127). => upperOverflow
-			if op == opcode.EQ || op == opcode.GE || op == opcode.GT {
+			if op == opcode.EQ || op == opcode.NullEQ || op == opcode.GE || op == opcode.GT {
 				// 127(max) = 200 => always false => 0(column) = 1(constant)
+				// 127(max) <=> 200 => always false => 0(column) <=> 1(constant)
 				// 127(max) >= 200 => always false => 0(column) >= 1(constant)
 				// 127(max) > 200 => always false => 0(column) > 1(constant)
 				col, con, succ = NewZero(), NewOne(), true
@@ -1491,8 +1492,9 @@ func (c *compareFunctionClass) determineConstComparisonResult(op opcode.Op, colH
 				// -128(min) >= -200 => always true => 1(column) >= 0(constant)
 				// -128(min) > -200 => always true => 1(column) > 0(constant)
 				col, con, succ = NewOne(), NewZero(), true
-			} else if op == opcode.EQ || op == opcode.LE || op == opcode.LT {
+			} else if op == opcode.EQ || op == opcode.NullEQ || op == opcode.LE || op == opcode.LT {
 				// -128(min) = -200 => always false => 1(column) = 0(constant)
+				// -128(min) <=> -200 => always false => 1(column) <=> 0(constant)
 				// -128(min) <= -200 => always false => 1(column) <= 0(constant)
 				// -128(min) < -200 => always false => 1(column) < 0(constant)
 				col, con, succ = NewOne(), NewZero(), true
