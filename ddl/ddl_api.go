@@ -66,6 +66,10 @@ const (
 	changingColumnPrefix  = "_Col$_"
 	changingIndexPrefix   = "_Idx$_"
 	tableNotExist         = -1
+	tinyBlobMaxLength     = 255
+	blobMaxLength         = 65535
+	mediumBlobMaxLength   = 16777215
+	longBlobMaxLength     = 4294967295
 )
 
 func (d *ddl) CreateSchema(ctx sessionctx.Context, schema model.CIStr, charsetInfo *ast.CharsetOpt) error {
@@ -550,6 +554,26 @@ func processColumnFlags(col *table.Column) {
 	}
 }
 
+func adjustBlobTypesFlen(col *table.Column) {
+	if col.FieldType.Tp == mysql.TypeBlob {
+		if col.FieldType.Flen <= tinyBlobMaxLength {
+			logutil.BgLogger().Info(fmt.Sprintf("Automatically convert BLOB(%d) to TINYBLOB", col.FieldType.Flen))
+			col.FieldType.Flen = tinyBlobMaxLength
+			col.FieldType.Tp = mysql.TypeTinyBlob
+		} else if col.FieldType.Flen <= blobMaxLength {
+			col.FieldType.Flen = blobMaxLength
+		} else if col.FieldType.Flen <= mediumBlobMaxLength {
+			logutil.BgLogger().Info(fmt.Sprintf("Automatically convert BLOB(%d) to MEDIUMBLOB", col.FieldType.Flen))
+			col.FieldType.Flen = mediumBlobMaxLength
+			col.FieldType.Tp = mysql.TypeMediumBlob
+		} else if col.FieldType.Flen <= longBlobMaxLength {
+			logutil.BgLogger().Info(fmt.Sprintf("Automatically convert BLOB(%d) to LONGBLOB", col.FieldType.Flen))
+			col.FieldType.Flen = longBlobMaxLength
+			col.FieldType.Tp = mysql.TypeLongBlob
+		}
+	}
+}
+
 // columnDefToCol converts ColumnDef to Col and TableConstraints.
 // outPriKeyConstraint is the primary key constraint out of column definition. such as: create table t1 (id int , age int, primary key(id));
 func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, outPriKeyConstraint *ast.Constraint) (*table.Column, []*ast.Constraint, error) {
@@ -561,6 +585,8 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 		// TODO: remove this version field after there is no old version.
 		Version: model.CurrLatestColumnInfoVersion,
 	})
+
+	adjustBlobTypesFlen(col)
 
 	if !isExplicitTimeStamp() {
 		// Check and set TimestampFlag, OnUpdateNowFlag and NotNullFlag.
@@ -605,6 +631,8 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 					constraint := &ast.Constraint{Tp: ast.ConstraintPrimaryKey, Keys: keys}
 					constraints = append(constraints, constraint)
 					col.Flag |= mysql.PriKeyFlag
+					// Add NotNullFlag early so that processColumnFlags() can see it.
+					col.Flag |= mysql.NotNullFlag
 				}
 			case ast.ColumnOptionUniqKey:
 				// Check UniqueFlag first to avoid extra duplicate constraints.
@@ -1090,8 +1118,8 @@ func checkTooManyColumns(colDefs []*model.ColumnInfo) error {
 }
 
 func checkTooManyIndexes(idxDefs []*model.IndexInfo) error {
-	if uint32(len(idxDefs)) > atomic.LoadUint32(&TableIndexCountLimit) {
-		return errTooManyKeys.GenWithStackByArgs(TableIndexCountLimit)
+	if len(idxDefs) > config.GetGlobalConfig().IndexLimit {
+		return errTooManyKeys.GenWithStackByArgs(config.GetGlobalConfig().IndexLimit)
 	}
 	return nil
 }
@@ -1522,35 +1550,38 @@ func checkTableInfoValidWithStmt(ctx sessionctx.Context, tbInfo *model.TableInfo
 	if err := checkGeneratedColumn(s.Cols); err != nil {
 		return errors.Trace(err)
 	}
-	if s.Partition != nil {
-		if err := checkPartitionFuncValid(ctx, tbInfo, s.Partition.Expr); err != nil {
+	if tbInfo.Partition != nil && s.Partition != nil {
+		if err := checkPartitionDefinitionConstraints(ctx, tbInfo); err != nil {
 			return errors.Trace(err)
 		}
-
-		var err error
-		pi := tbInfo.Partition
-		if pi != nil {
-			switch pi.Type {
-			case model.PartitionTypeRange:
-				err = checkPartitionByRange(ctx, tbInfo)
-			case model.PartitionTypeHash:
-				err = checkPartitionByHash(ctx, tbInfo)
-			case model.PartitionTypeList:
-				err = checkPartitionByList(ctx, tbInfo)
-			}
-			if err != nil {
-				return errors.Trace(err)
-			}
-		}
-
-		if err := checkPartitionFuncType(ctx, s, tbInfo); err != nil {
+		if err := checkPartitionFuncType(ctx, s.Partition.Expr, tbInfo); err != nil {
 			return errors.Trace(err)
 		}
-		if err = checkPartitioningKeysConstraints(ctx, s, tbInfo); err != nil {
+		if err := checkPartitioningKeysConstraints(ctx, s, tbInfo); err != nil {
 			return errors.Trace(err)
 		}
 	}
 	return nil
+}
+
+func checkPartitionDefinitionConstraints(ctx sessionctx.Context, tbInfo *model.TableInfo) error {
+	var err error
+	if err = checkPartitionNameUnique(tbInfo.Partition); err != nil {
+		return errors.Trace(err)
+	}
+	if err = checkAddPartitionTooManyPartitions(uint64(len(tbInfo.Partition.Definitions))); err != nil {
+		return errors.Trace(err)
+	}
+
+	switch tbInfo.Partition.Type {
+	case model.PartitionTypeRange:
+		err = checkPartitionByRange(ctx, tbInfo)
+	case model.PartitionTypeHash:
+		err = checkPartitionByHash(ctx, tbInfo)
+	case model.PartitionTypeList:
+		err = checkPartitionByList(ctx, tbInfo)
+	}
+	return errors.Trace(err)
 }
 
 // checkTableInfoValid uses to check table info valid. This is used to validate table info.
@@ -1944,15 +1975,7 @@ func buildViewInfo(ctx sessionctx.Context, s *ast.CreateViewStmt) (*model.ViewIn
 }
 
 func checkPartitionByHash(ctx sessionctx.Context, tbInfo *model.TableInfo) error {
-	pi := tbInfo.Partition
-	if err := checkPartitionNameUnique(pi); err != nil {
-		return err
-	}
-	if err := checkAddPartitionTooManyPartitions(pi.Num); err != nil {
-		return err
-	}
-
-	return checkNoHashPartitions(ctx, pi.Num)
+	return checkNoHashPartitions(ctx, tbInfo.Partition.Num)
 }
 
 // checkPartitionByRange checks validity of a "BY RANGE" partition.
@@ -1961,25 +1984,9 @@ func checkPartitionByRange(ctx sessionctx.Context, tbInfo *model.TableInfo) erro
 		panic("Out Of Memory Quota!")
 	})
 	pi := tbInfo.Partition
-	if err := checkPartitionNameUnique(pi); err != nil {
-		return err
-	}
-
-	if err := checkAddPartitionTooManyPartitions(uint64(len(pi.Definitions))); err != nil {
-		return err
-	}
-
-	if err := checkNoRangePartitions(len(pi.Definitions)); err != nil {
-		return err
-	}
 
 	if len(pi.Columns) == 0 {
 		return checkRangePartitionValue(ctx, tbInfo)
-	}
-
-	// Check for range columns partition.
-	if err := checkColumnsPartitionType(tbInfo); err != nil {
-		return err
 	}
 
 	return checkRangeColumnsPartitionValue(ctx, tbInfo)
@@ -1987,26 +1994,7 @@ func checkPartitionByRange(ctx sessionctx.Context, tbInfo *model.TableInfo) erro
 
 // checkPartitionByList checks validity of a "BY LIST" partition.
 func checkPartitionByList(ctx sessionctx.Context, tbInfo *model.TableInfo) error {
-	pi := tbInfo.Partition
-	if err := checkPartitionNameUnique(pi); err != nil {
-		return err
-	}
-
-	if err := checkAddPartitionTooManyPartitions(uint64(len(pi.Definitions))); err != nil {
-		return err
-	}
-
-	if err := checkListPartitionValue(ctx, tbInfo); err != nil {
-		return err
-	}
-
-	if len(pi.Columns) != 0 {
-		if err := checkColumnsPartitionType(tbInfo); err != nil {
-			return err
-		}
-	}
-
-	return nil
+	return checkListPartitionValue(ctx, tbInfo)
 }
 
 func checkColumnsPartitionType(tbInfo *model.TableInfo) error {
@@ -2479,6 +2467,8 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 					needsOverwriteCols := needToOverwriteColCharset(spec.Options)
 					err = d.AlterTableCharsetAndCollate(ctx, ident, toCharset, toCollate, needsOverwriteCols)
 					handledCharsetOrCollate = true
+				default:
+					err = errUnsupportedAlterTableOption
 				}
 
 				if err != nil {
@@ -2870,13 +2860,7 @@ func (d *ddl) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, spec *
 	tmp := *partInfo
 	tmp.Definitions = append(pi.Definitions, tmp.Definitions...)
 	clonedMeta.Partition = &tmp
-	switch pi.Type {
-	case model.PartitionTypeRange:
-		err = checkPartitionByRange(ctx, clonedMeta)
-	case model.PartitionTypeList:
-		err = checkPartitionByList(ctx, clonedMeta)
-	}
-	if err != nil {
+	if err := checkPartitionDefinitionConstraints(ctx, clonedMeta); err != nil {
 		if ErrSameNamePartition.Equal(err) && spec.IfNotExists {
 			ctx.GetSessionVars().StmtCtx.AppendNote(err)
 			return nil
@@ -3513,6 +3497,11 @@ func checkTypeChangeSupported(origin *types.FieldType, to *types.FieldType) bool
 		return false
 	}
 
+	if origin.Tp == mysql.TypeJSON && (to.Tp == mysql.TypeEnum || to.Tp == mysql.TypeSet || to.Tp == mysql.TypeBit) {
+		// TODO: Currently json cast to enum/set/bit are not support yet, should fix here after supported.
+		return false
+	}
+
 	return true
 }
 
@@ -3749,6 +3738,9 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 		return nil, errors.Trace(err)
 	}
 
+	// Adjust the flen for blob types after the default flen is set.
+	adjustBlobTypesFlen(newCol)
+
 	if err = processColumnOptions(ctx, newCol, specNewColumn.Options); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -3810,7 +3802,7 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 	}
 
 	// As same with MySQL, we don't support modifying the stored status for generated columns.
-	if err = checkModifyGeneratedColumn(t, col, newCol, specNewColumn); err != nil {
+	if err = checkModifyGeneratedColumn(t, col, newCol, specNewColumn, spec.Position); err != nil {
 		return nil, errors.Trace(err)
 	}
 
@@ -4635,10 +4627,16 @@ func getIdentKey(ident ast.Ident) string {
 	return fmt.Sprintf("%s.%s", ident.Schema.L, ident.Name.L)
 }
 
-func getAnonymousIndex(t table.Table, colName model.CIStr) model.CIStr {
+func getAnonymousIndex(t table.Table, colName model.CIStr, idxName model.CIStr) model.CIStr {
+	// `id` is used to indicated the index name's suffix.
 	id := 2
 	l := len(t.Indices())
 	indexName := colName
+	if idxName.O != "" {
+		// Use the provided index name, it only happens when the original index name is too long and be truncated.
+		indexName = idxName
+		id = 3
+	}
 	if strings.EqualFold(indexName.L, mysql.PrimaryKeyName) {
 		indexName = model.NewCIStr(fmt.Sprintf("%s_%d", colName.O, id))
 		id = 3
@@ -4646,6 +4644,9 @@ func getAnonymousIndex(t table.Table, colName model.CIStr) model.CIStr {
 	for i := 0; i < l; i++ {
 		if t.Indices()[i].Meta().Name.L == indexName.L {
 			indexName = model.NewCIStr(fmt.Sprintf("%s_%d", colName.O, id))
+			if err := checkTooLongIndex(indexName); err != nil {
+				indexName = getAnonymousIndex(t, model.NewCIStr(colName.O[:30]), model.NewCIStr(fmt.Sprintf("%s_%d", colName.O[:30], 2)))
+			}
 			i = -1
 			id++
 		}
@@ -4827,7 +4828,7 @@ func (d *ddl) CreateIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 		if indexPartSpecifications[0].Column != nil {
 			colName = indexPartSpecifications[0].Column.Name
 		}
-		indexName = getAnonymousIndex(t, colName)
+		indexName = getAnonymousIndex(t, colName, model.NewCIStr(""))
 	}
 
 	if indexInfo := t.Meta().FindIndexByName(indexName.L); indexInfo != nil {
@@ -5220,9 +5221,7 @@ func checkColumnsTypeAndValuesMatch(ctx sessionctx.Context, meta *model.TableInf
 		case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeDuration:
 			switch vkind {
 			case types.KindString, types.KindBytes:
-				if _, err := val.ConvertTo(ctx.GetSessionVars().StmtCtx, colType); err != nil {
-					return ErrWrongTypeColumnValue.GenWithStackByArgs()
-				}
+				break
 			default:
 				return ErrWrongTypeColumnValue.GenWithStackByArgs()
 			}
@@ -5244,6 +5243,10 @@ func checkColumnsTypeAndValuesMatch(ctx sessionctx.Context, meta *model.TableInf
 			default:
 				return ErrWrongTypeColumnValue.GenWithStackByArgs()
 			}
+		}
+		_, err = val.ConvertTo(ctx.GetSessionVars().StmtCtx, colType)
+		if err != nil {
+			return ErrWrongTypeColumnValue.GenWithStackByArgs()
 		}
 	}
 	return nil
