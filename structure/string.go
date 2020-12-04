@@ -15,6 +15,8 @@ package structure
 
 import (
 	"context"
+	"github.com/prometheus/common/log"
+	"go.uber.org/zap"
 	"strconv"
 
 	"github.com/pingcap/errors"
@@ -33,6 +35,7 @@ func (t *TxStructure) Set(key []byte, value []byte) error {
 // Get gets the string value of a key.
 func (t *TxStructure) Get(key []byte) ([]byte, error) {
 	ek := t.encodeStringDataKey(key)
+	log.Warnf("(t *TxStructure) Get", zap.ByteString("key", ek))
 	value, err := t.reader.Get(context.TODO(), ek)
 	if kv.ErrNotExist.Equal(err) {
 		err = nil
