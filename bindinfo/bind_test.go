@@ -639,7 +639,7 @@ func (s *testSuite) TestDMLSQLBind(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	s.cleanBindingEnv(tk)
 	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
+	tk.MustExec("drop table if exists t1, t2")
 	tk.MustExec("create table t1(a int, b int, c int, key idx_b(b), key idx_c(c))")
 	tk.MustExec("create table t2(a int, b int, c int, key idx_b(b), key idx_c(c))")
 
@@ -920,6 +920,27 @@ func (s *testSuite) TestCapturePlanBaseline(c *C) {
 	c.Assert(len(rows), Equals, 1)
 	c.Assert(rows[0][0], Equals, "select * from t where a > ?")
 	c.Assert(rows[0][1], Equals, "SELECT /*+ use_index(@`sel_1` `test`.`t` )*/ * FROM `t` WHERE `a`>10")
+}
+
+func (s *testSuite) TestCaptureDBCaseSensitivity(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	s.cleanBindingEnv(tk)
+	stmtsummary.StmtSummaryByDigestMap.Clear()
+	tk.MustExec("drop database if exists SPM")
+	tk.MustExec("create database SPM")
+	tk.MustExec("use SPM")
+	tk.MustExec("create table t(a int, b int, key(b))")
+	tk.MustExec("create global binding for select * from t using select /*+ use_index(t) */ * from t")
+	c.Assert(tk.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil), IsTrue)
+	tk.MustExec("select /*+ use_index(t,b) */ * from t")
+	tk.MustExec("select /*+ use_index(t,b) */ * from t")
+	tk.MustExec("admin capture bindings")
+	// The capture should ignore the case sensitivity for DB name when checking if any binding exists,
+	// so there would be no new binding captured.
+	rows := tk.MustQuery("show global bindings").Rows()
+	c.Assert(len(rows), Equals, 1)
+	c.Assert(rows[0][1], Equals, "select /*+ use_index(t) */ * from t")
+	c.Assert(rows[0][8], Equals, "manual")
 }
 
 func (s *testSuite) TestCaptureBaselinesDefaultDB(c *C) {
@@ -1687,4 +1708,48 @@ func (s *testSuite) TestIssue19836(c *C) {
 		"      └─TableFullScan_11 3000.00 0 cop[tikv] table:t  keep order:false, stats:pseudo N/A N/A",
 	)
 	tk.MustQuery("explain for connection " + strconv.FormatUint(tk.Se.ShowProcess().ID, 10)).Check(explainResult)
+}
+
+func (s *testSuite) TestReCreateBind(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	s.cleanBindingEnv(tk)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, index idx(a))")
+
+	tk.MustQuery("select * from mysql.bind_info").Check(testkit.Rows())
+	tk.MustQuery("show global bindings").Check(testkit.Rows())
+
+	tk.MustExec("create global binding for select * from t using select * from t")
+	tk.MustQuery("select original_sql, status from mysql.bind_info").Check(testkit.Rows(
+		"select * from t using",
+	))
+	rows := tk.MustQuery("show global bindings").Rows()
+	c.Assert(len(rows), Equals, 1)
+	c.Assert(rows[0][0], Equals, "select * from t")
+	c.Assert(rows[0][3], Equals, "using")
+
+	tk.MustExec("create global binding for select * from t using select * from t")
+	tk.MustQuery("select original_sql, status from mysql.bind_info").Check(testkit.Rows(
+		"select * from t using",
+	))
+	rows = tk.MustQuery("show global bindings").Rows()
+	c.Assert(len(rows), Equals, 1)
+	c.Assert(rows[0][0], Equals, "select * from t")
+	c.Assert(rows[0][3], Equals, "using")
+}
+
+func (s *testSuite) TestDMLIndexHintBind(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	s.cleanBindingEnv(tk)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int, c int, key idx_b(b), key idx_c(c))")
+
+	tk.MustExec("delete from t where b = 1 and c > 1")
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t:idx_b")
+	c.Assert(tk.MustUseIndex("delete from t where b = 1 and c > 1", "idx_b(b)"), IsTrue)
+	tk.MustExec("create global binding for delete from t where b = 1 and c > 1 using delete from t use index(idx_c) where b = 1 and c > 1")
+	tk.MustExec("delete from t where b = 1 and c > 1")
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t:idx_c")
+	c.Assert(tk.MustUseIndex("delete from t where b = 1 and c > 1", "idx_c(c)"), IsTrue)
 }

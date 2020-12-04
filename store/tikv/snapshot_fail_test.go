@@ -43,7 +43,7 @@ func (s *testSnapshotFailSuite) TearDownSuite(c *C) {
 	s.OneByOneSuite.TearDownSuite(c)
 }
 
-func (s *testSnapshotSuite) TestBatchGetResponseKeyError(c *C) {
+func (s *testSnapshotFailSuite) TestBatchGetResponseKeyError(c *C) {
 	// Meaningless to test with tikv because it has a mock key error
 	if *WithTiKV {
 		return
@@ -58,9 +58,9 @@ func (s *testSnapshotSuite) TestBatchGetResponseKeyError(c *C) {
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/mockstore/mocktikv/rpcBatchGetResult", `1*return("keyError")`), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/rpcBatchGetResult", `1*return("keyError")`), IsNil)
 	defer func() {
-		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/mockstore/mocktikv/rpcBatchGetResult"), IsNil)
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/rpcBatchGetResult"), IsNil)
 	}()
 
 	txn, err = s.store.Begin()
@@ -68,4 +68,53 @@ func (s *testSnapshotSuite) TestBatchGetResponseKeyError(c *C) {
 	res, err := txn.BatchGet(context.Background(), []kv.Key{[]byte("k1"), []byte("k2")})
 	c.Assert(err, IsNil)
 	c.Assert(res, DeepEquals, map[string][]byte{"k1": []byte("v1"), "k2": []byte("v2")})
+}
+
+func (s *testSnapshotFailSuite) TestScanResponseKeyError(c *C) {
+	// Meaningless to test with tikv because it has a mock key error
+	if *WithTiKV {
+		return
+	}
+	// Put two KV pairs
+	txn, err := s.store.Begin()
+	c.Assert(err, IsNil)
+	err = txn.Set([]byte("k1"), []byte("v1"))
+	c.Assert(err, IsNil)
+	err = txn.Set([]byte("k2"), []byte("v2"))
+	c.Assert(err, IsNil)
+	err = txn.Set([]byte("k3"), []byte("v3"))
+	c.Assert(err, IsNil)
+	err = txn.Commit(context.Background())
+	c.Assert(err, IsNil)
+
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/rpcScanResult", `1*return("keyError")`), IsNil)
+	txn, err = s.store.Begin()
+	c.Assert(err, IsNil)
+	iter, err := txn.Iter([]byte("a"), []byte("z"))
+	c.Assert(err, IsNil)
+	c.Assert(iter.Key(), DeepEquals, kv.Key("k1"))
+	c.Assert(iter.Value(), DeepEquals, []byte("v1"))
+	c.Assert(iter.Next(), IsNil)
+	c.Assert(iter.Key(), DeepEquals, kv.Key("k2"))
+	c.Assert(iter.Value(), DeepEquals, []byte("v2"))
+	c.Assert(iter.Next(), IsNil)
+	c.Assert(iter.Key(), DeepEquals, kv.Key("k3"))
+	c.Assert(iter.Value(), DeepEquals, []byte("v3"))
+	c.Assert(iter.Next(), IsNil)
+	c.Assert(iter.Valid(), IsFalse)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/rpcScanResult"), IsNil)
+
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/rpcScanResult", `1*return("keyError")`), IsNil)
+	txn, err = s.store.Begin()
+	c.Assert(err, IsNil)
+	iter, err = txn.Iter([]byte("k2"), []byte("k4"))
+	c.Assert(err, IsNil)
+	c.Assert(iter.Key(), DeepEquals, kv.Key("k2"))
+	c.Assert(iter.Value(), DeepEquals, []byte("v2"))
+	c.Assert(iter.Next(), IsNil)
+	c.Assert(iter.Key(), DeepEquals, kv.Key("k3"))
+	c.Assert(iter.Value(), DeepEquals, []byte("v3"))
+	c.Assert(iter.Next(), IsNil)
+	c.Assert(iter.Valid(), IsFalse)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/rpcScanResult"), IsNil)
 }
