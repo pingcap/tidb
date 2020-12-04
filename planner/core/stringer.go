@@ -283,6 +283,16 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 		} else {
 			str += fmt.Sprintf("Handle(%s.%s)%v)", x.TblInfo.Name.L, x.TblInfo.GetPkName().L, x.Handles)
 		}
+	case *PhysicalExchangeReceiver:
+		str = fmt.Sprintf("Recv(")
+		for _, task := range x.Tasks {
+			str += fmt.Sprint("%d, ", task.ID)
+		}
+	case *PhysicalExchangeSender:
+		str = fmt.Sprintf("Send(")
+		for _, task := range x.Tasks {
+			str += fmt.Sprint("%d, ", task.ID)
+		}
 	default:
 		str = fmt.Sprintf("%T", in)
 	}
