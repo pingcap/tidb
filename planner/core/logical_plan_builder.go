@@ -775,9 +775,38 @@ func (b *PlanBuilder) coalesceCommonColumns(p *LogicalJoin, leftPlan, rightPlan 
 		lColumns, rColumns = rsc.Columns, lsc.Columns
 	}
 
+	// Check using clause with ambiguous columns.
+	if filter != nil {
+		checkAmbiguous := func(names types.NameSlice) error {
+			columnNameInFilter := set.StringSet{}
+			for _, name := range names {
+				if _, ok := filter[name.ColName.L]; !ok {
+					continue
+				}
+				if columnNameInFilter.Exist(name.ColName.L) {
+					return ErrAmbiguous.GenWithStackByArgs(name.ColName.L, "from clause")
+				}
+				columnNameInFilter.Insert(name.ColName.L)
+			}
+			return nil
+		}
+		err := checkAmbiguous(lNames)
+		if err != nil {
+			return err
+		}
+		err = checkAmbiguous(rNames)
+		if err != nil {
+			return err
+		}
+	}
+
 	// Find out all the common columns and put them ahead.
 	commonLen := 0
 	for i, lName := range lNames {
+		// Natural join should ignore _tidb_rowid
+		if lName.ColName.L == "_tidb_rowid" {
+			continue
+		}
 		for j := commonLen; j < len(rNames); j++ {
 			if lName.ColName.L != rNames[j].ColName.L {
 				continue
@@ -1854,9 +1883,10 @@ func (a *havingWindowAndOrderbyExprResolver) Leave(n ast.Node) (node ast.Node, o
 					if index != -1 {
 						// For SQLs like:
 						//   select a+1 from t having t.a;
-						newV := v
-						newV.Name = &ast.ColumnName{Name: v.Name.Name}
-						index, a.err = resolveFromSelectFields(newV, a.selectFields, true)
+						field := a.selectFields[index]
+						if field.Auxiliary { //having can't use auxiliary field
+							index = -1
+						}
 					}
 				} else {
 					index, a.err = resolveFromSelectFields(v, a.selectFields, true)
@@ -2828,7 +2858,10 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 	}
 
 	hasWindowFuncField := b.detectSelectWindow(sel)
-	if hasWindowFuncField {
+	// Some SQL statements define WINDOW but do not use them. But we also need to check the window specification list.
+	// For example: select id from t group by id WINDOW w AS (ORDER BY uids DESC) ORDER BY id;
+	// We don't use the WINDOW w, but if the 'uids' column is not in the table t, we still need to report an error.
+	if hasWindowFuncField || sel.WindowSpecs != nil {
 		windowAggMap, err = b.resolveWindowFunction(sel, p)
 		if err != nil {
 			return nil, err
@@ -3030,10 +3063,16 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, dbName.L, tableInfo.Name.L, "", authErr)
 
 	if tbl.Type().IsVirtualTable() {
+		if tn.TableSample != nil {
+			return nil, expression.ErrInvalidTableSample.GenWithStackByArgs("Unsupported TABLESAMPLE in virtual tables")
+		}
 		return b.buildMemTable(ctx, dbName, tableInfo)
 	}
 
 	if tableInfo.IsView() {
+		if tn.TableSample != nil {
+			return nil, expression.ErrInvalidTableSample.GenWithStackByArgs("Unsupported TABLESAMPLE in views")
+		}
 		return b.BuildDataSourceFromView(ctx, dbName, tableInfo)
 	}
 
@@ -3216,6 +3255,8 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	ds.SetSchema(schema)
 	ds.names = names
 	ds.setPreferredStoreType(b.TableHints())
+	ds.SampleInfo = NewTableSampleInfo(tn.TableSample, schema.Clone(), b.partitionedTable)
+	b.isSampling = ds.SampleInfo != nil
 
 	// Init commonHandleCols and commonHandleLens for data source.
 	if tableInfo.IsCommonHandle {
@@ -3888,7 +3929,7 @@ func (b *PlanBuilder) buildUpdateLists(
 			if !colInfo.IsGenerated() {
 				continue
 			}
-			columnFullName := fmt.Sprintf("%s.%s.%s", tn.Schema.L, tn.Name.L, colInfo.Name.L)
+			columnFullName := fmt.Sprintf("%s.%s.%s", tn.DBInfo.Name.L, tn.Name.L, colInfo.Name.L)
 			isDefault, ok := modifyColumns[columnFullName]
 			if ok && colInfo.Hidden {
 				return nil, nil, false, ErrUnknownColumn.GenWithStackByArgs(colInfo.Name, clauseMsg[fieldList])
