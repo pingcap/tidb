@@ -985,12 +985,13 @@ const (
 	ErrBRIERestoreFailed                   = 8125
 	ErrBRIEImportFailed                    = 8126
 	ErrBRIEExportFailed                    = 8127
-	ErrBRIEUnsupported                     = 8128
-	ErrBRIETaskMeta                        = 8129
-	ErrBRIERequireTiKV                     = 8130
-	ErrBRIEInvalidExternalStore            = 8131
-	ErrBRIEInvalidTable                    = 8132
-	ErrBRIEInvalidOption                   = 8133
+	ErrInvalidTableSample                  = 8128
+	ErrBRIEUnsupported                     = 8129
+	ErrBRIETaskMeta                        = 8130
+	ErrBRIERequireTiKV                     = 8131
+	ErrBRIEInvalidExternalStore            = 8132
+	ErrBRIEInvalidTable                    = 8133
+	ErrBRIEInvalidOption                   = 8134
 
 	// Error codes used by TiDB ddl package
 	ErrUnsupportedDDLOperation            = 8200
@@ -1031,7 +1032,7 @@ const (
 	ErrDDLReorgElementNotExist            = 8235
 	ErrPlacementPolicyCheck               = 8236
 
-	// TiKV/PD errors.
+	// TiKV/PD/TiFlash errors.
 	ErrPDServerTimeout           = 9001
 	ErrTiKVServerTimeout         = 9002
 	ErrTiKVServerBusy            = 9003
@@ -1043,4 +1044,6 @@ const (
 	ErrPrometheusAddrIsNotSet    = 9009
 	ErrTiKVStaleCommand          = 9010
 	ErrTiKVMaxTimestampNotSynced = 9011
+	ErrTiFlashServerTimeout      = 9012
+	ErrTiFlashServerBusy         = 9013
 )

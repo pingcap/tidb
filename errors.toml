@@ -581,34 +581,34 @@ error = '''
 Export failed: %s
 '''
 
-["executor:8128"]
+["executor:8129"]
 error = '''
 Unsupported BRIE statement kind: %s
 '''
 
-["executor:8129"]
+["executor:8130"]
 error = '''
 Failed to update BRIE task metadata: %s
 '''
 
-["executor:8130"]
+["executor:8131"]
 error = '''
 %s requires TiKV store, not %s
 '''
 
-["executor:8131"]
-error = '''
-Invalid BRIE data store URL: %s, err: %v
-'''
-
 ["executor:8132"]
 error = '''
-Invalid BRIE selected databases/tables: %s
+Invalid BRIE data store URL '%s': %v
 '''
 
 ["executor:8133"]
 error = '''
-Invalid BRIE option: %s, err: %v
+Invalid BRIE selected databases/tables: %s
+'''
+
+["executor:8134"]
+error = '''
+Invalid BRIE option %s: %v
 '''
 
 ["expression:1139"]
@@ -664,6 +664,11 @@ Invalid argument for logarithm
 ["expression:3064"]
 error = '''
 Incorrect type for argument %s in function %s.
+'''
+
+["expression:8128"]
+error = '''
+Invalid TABLESAMPLE: %s
 '''
 
 ["json:3069"]
@@ -1419,6 +1424,16 @@ TiKV server reports stale command
 ["tikv:9011"]
 error = '''
 TiKV max timestamp is not synced
+'''
+
+["tikv:9012"]
+error = '''
+TiFlash server timeout
+'''
+
+["tikv:9013"]
+error = '''
+TiFlash server is busy
 '''
 
 ["types:1063"]

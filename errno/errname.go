@@ -1033,6 +1033,8 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrBRIEInvalidTable:         mysql.Message("Invalid BRIE selected databases/tables: %s", nil),
 	ErrBRIEInvalidOption:        mysql.Message("Invalid BRIE option %s: %v", nil),
 
+	ErrInvalidTableSample: mysql.Message("Invalid TABLESAMPLE: %s", nil),
+
 	ErrInvalidPlacementSpec: mysql.Message("Invalid placement policy '%s': %s", nil),
 	ErrPlacementPolicyCheck: mysql.Message("Placement policy didn't meet the constraint, reason: %s", nil),
 
@@ -1040,6 +1042,8 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrPDServerTimeout:           mysql.Message("PD server timeout", nil),
 	ErrTiKVServerTimeout:         mysql.Message("TiKV server timeout", nil),
 	ErrTiKVServerBusy:            mysql.Message("TiKV server is busy", nil),
+	ErrTiFlashServerTimeout:      mysql.Message("TiFlash server timeout", nil),
+	ErrTiFlashServerBusy:         mysql.Message("TiFlash server is busy", nil),
 	ErrResolveLockTimeout:        mysql.Message("Resolve lock timeout", nil),
 	ErrRegionUnavailable:         mysql.Message("Region is unavailable", nil),
 	ErrGCTooEarly:                mysql.Message("GC life time is shorter than transaction duration, transaction starts at %v, GC safe point is %v", nil),
