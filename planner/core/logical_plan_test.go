@@ -791,6 +791,10 @@ func (s *testPlanSuite) TestValidate(c *C) {
 			sql: "select a + 1 from t having a",
 			err: ErrUnknownColumn,
 		},
+		{ // issue (#20509)
+			sql: "select * from t left join t2 on t.a=t2.a having not (t.a <=> t2.a)",
+			err: nil,
+		},
 		{
 			sql: "select a from t having sum(avg(a))",
 			err: ErrInvalidGroupFuncUse,
