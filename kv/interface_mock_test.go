@@ -93,10 +93,6 @@ func (t *mockTxn) Len() int {
 	return 0
 }
 
-func (t *mockTxn) Scope() string {
-	return oracle.GlobalTxnScope
-}
-
 func (t *mockTxn) Size() int {
 	return 0
 }

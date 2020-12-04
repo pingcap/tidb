@@ -570,10 +570,6 @@ func (txn *tikvTxn) Len() int {
 	return txn.us.GetMemBuffer().Len()
 }
 
-func (txn *tikvTxn) Scope() string {
-	return txn.us.GetOption(kv.TxnScope).(string)
-}
-
 func (txn *tikvTxn) Size() int {
 	return txn.us.GetMemBuffer().Size()
 }
