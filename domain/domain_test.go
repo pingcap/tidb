@@ -341,7 +341,7 @@ func (*testSuite) TestT(c *C) {
 
 	// for schemaValidator
 	schemaVer := dom.SchemaValidator.(*schemaValidator).LatestSchemaVersion()
-	ver, err := store.CurrentVersion()
+	ver, err := store.CurrentVersion(oracle.GlobalTxnScope)
 	c.Assert(err, IsNil)
 	ts := ver.Ver
 
@@ -354,7 +354,7 @@ func (*testSuite) TestT(c *C) {
 	c.Assert(succ, Equals, ResultSucc)
 	time.Sleep(ddlLease)
 
-	ver, err = store.CurrentVersion()
+	ver, err = store.CurrentVersion(oracle.GlobalTxnScope)
 	c.Assert(err, IsNil)
 	ts = ver.Ver
 	_, succ = dom.SchemaValidator.Check(ts, schemaVer, nil)
