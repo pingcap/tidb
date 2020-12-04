@@ -320,12 +320,9 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 		handles = append(handles, e.handles[i])
 		if e.lock && rc {
 			existKeys = append(existKeys, key)
-			// when e.handles is set in builder directly, index should be primary key and the plan is CommonHandleRead
-			// with clustered index enabled, indexKeys is empty in this situation
-			// lock primary key for clustered index table is redundant
-			if len(indexKeys) != 0 {
-				existKeys = append(existKeys, indexKeys[i])
-			}
+			// there is no clustered index table in release-4.0
+			// indexKeys will always have the same length with keys
+			existKeys = append(existKeys, indexKeys[i])
 		}
 	}
 	// Lock exists keys only for Read Committed Isolation.
