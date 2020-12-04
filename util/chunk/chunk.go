@@ -725,3 +725,34 @@ func (c *Chunk) AppendPartialRows(colOff int, rows []Row) {
 		}
 	}
 }
+
+// AppendRowsByColIdxs appends multiple rows by its colIdxs to the chunk.
+// 1. every columns are used if colIdxs is nil.
+// 2. no columns are used if colIdxs is not nil but the size of colIdxs is 0.
+func (c *Chunk) AppendRowsByColIdxs(rows []Row, colIdxs []int) (wide int) {
+	wide = c.AppendPartialRowsByColIdxs(0, rows, colIdxs)
+	c.numVirtualRows++
+	return
+}
+
+// AppendPartialRowsByColIdxs appends multiple rows by its colIdxs to the chunk.
+// 1. every columns are used if colIdxs is nil.
+// 2. no columns are used if colIdxs is not nil but the size of colIdxs is 0.
+func (c *Chunk) AppendPartialRowsByColIdxs(colOff int, rows []Row, colIdxs []int) (wide int) {
+	if colIdxs == nil {
+		if len(rows) == 0 {
+			return 0
+		}
+		c.AppendPartialRows(colOff, rows)
+		return len(rows) * rows[0].Len()
+	}
+	for i, colIdx := range colIdxs {
+		for _, srcRow := range rows {
+			if i == 0 {
+				c.appendSel(colOff)
+			}
+			appendCellByCell(c.columns[colOff+i], srcRow.c.columns[colIdx], srcRow.idx)
+		}
+	}
+	return len(colIdxs) * len(rows)
+}
