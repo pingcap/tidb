@@ -1681,6 +1681,8 @@ func SetLocalSystemVar(name string, val string) {
 		SetDDLReorgBatchSize(int32(tidbOptPositiveInt32(val, DefTiDBDDLReorgBatchSize)))
 	case TiDBDDLErrorCountLimit:
 		SetDDLErrorCountLimit(tidbOptInt64(val, DefTiDBDDLErrorCountLimit))
+	case TiDBRowFormatVersion:
+		SetDDLReorgRowFormat(tidbOptInt64(val, DefTiDBRowFormatV2))
 	}
 }
 
