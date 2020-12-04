@@ -7016,12 +7016,7 @@ func (s *testSuite) TestZeroDateTimeCompatibility(c *C) {
 		`select EXTRACT(WEEK FROM 0000-00-00), EXTRACT(WEEK FROM "0000-00-00")`,
 		`select EXTRACT(QUARTER FROM 0000-00-00), EXTRACT(QUARTER FROM "0000-00-00")`,
 	}
-
-	store, err := mockstore.NewMockStore()
-	c.Assert(err, IsNil)
-	_, err = session.BootstrapSession(store)
-	c.Assert(err, IsNil)
-	tk := testkit.NewTestKit(c, store)
+	tk := testkit.NewTestKit(c, s.store)
 
 	for _, t := range SQLs {
 		tk.MustQuery(t).Check(testkit.Rows("0 <nil>"))
