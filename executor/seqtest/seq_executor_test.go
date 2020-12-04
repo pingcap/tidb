@@ -765,7 +765,7 @@ func (s *seqTestSuite) TestUnparallelHashAggClose(c *C) {
 		c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/unparallelHashAggError"), IsNil)
 	}()
 	ctx := context.Background()
-	rss, err := tk.Se.Execute(ctx, "select sum(distinct a) from (select cast(t.a as signed) as a, b from t) t group by b;")
+	rss, err := tk.Se.Execute(ctx, "select group_concat(a order by a) from (select cast(t.a as signed) as a, b from t) t group by b;")
 	c.Assert(err, IsNil)
 	rs := rss[0]
 	req := rs.NewChunk()
