@@ -16,6 +16,7 @@ package executor_test
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
@@ -891,6 +892,27 @@ func (s *testAutoRandomSuite) TestAutoRandomBase(c *C) {
 	))
 }
 
+func (s *testAutoRandomSuite) TestAutoRandomWithLargeSignedShowTableRegions(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create database if not exists auto_random_db;")
+	defer tk.MustExec("drop database if exists auto_random_db;")
+	tk.MustExec("use auto_random_db;")
+	tk.MustExec("drop table if exists t;")
+
+	testutil.ConfigTestUtils.SetupAutoRandomTestConfig()
+	defer testutil.ConfigTestUtils.RestoreAutoRandomTestConfig()
+	tk.MustExec("create table t (a bigint unsigned auto_random primary key);")
+	tk.MustExec("set @@global.tidb_scatter_region=1;")
+	// 18446744073709541615 is MaxUint64 - 10000.
+	// 18446744073709551615 is the MaxUint64.
+	tk.MustQuery("split table t between (18446744073709541615) and (18446744073709551615) regions 2;").
+		Check(testkit.Rows("1 1"))
+	startKey := tk.MustQuery("show table t regions;").Rows()[1][1].(string)
+	idx := strings.Index(startKey, "_r_")
+	c.Assert(idx == -1, IsFalse)
+	c.Assert(startKey[idx+3] == '-', IsFalse, Commentf("actual key: %s", startKey))
+}
+
 func (s *testSuite5) TestShowEscape(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
@@ -925,9 +947,9 @@ func (s *testSuite5) TestShowBuiltin(c *C) {
 	res := tk.MustQuery("show builtins;")
 	c.Assert(res, NotNil)
 	rows := res.Rows()
-	c.Assert(268, Equals, len(rows))
+	c.Assert(267, Equals, len(rows))
 	c.Assert("abs", Equals, rows[0][0].(string))
-	c.Assert("yearweek", Equals, rows[267][0].(string))
+	c.Assert("yearweek", Equals, rows[266][0].(string))
 }
 
 func (s *testSuite5) TestShowClusterConfig(c *C) {

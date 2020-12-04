@@ -338,8 +338,8 @@ func (ssMap *stmtSummaryByDigestMap) ToHistoryDatum(user *auth.UserIdentity, isS
 	return rows
 }
 
-// GetMoreThanOnceSelect gets users' select SQLs that occurred more than once.
-func (ssMap *stmtSummaryByDigestMap) GetMoreThanOnceSelect() ([]string, []string) {
+// GetMoreThanOnceBindableStmt gets users' select/update/delete SQLs that occurred more than once.
+func (ssMap *stmtSummaryByDigestMap) GetMoreThanOnceBindableStmt() ([]string, []string) {
 	ssMap.Lock()
 	values := ssMap.summaryMap.Values()
 	ssMap.Unlock()
@@ -351,7 +351,7 @@ func (ssMap *stmtSummaryByDigestMap) GetMoreThanOnceSelect() ([]string, []string
 		func() {
 			ssbd.Lock()
 			defer ssbd.Unlock()
-			if ssbd.initialized && ssbd.stmtType == "Select" {
+			if ssbd.initialized && (ssbd.stmtType == "Select" || ssbd.stmtType == "Delete" || ssbd.stmtType == "Update" || ssbd.stmtType == "Insert" || ssbd.stmtType == "Replace") {
 				if ssbd.history.Len() > 0 {
 					ssElement := ssbd.history.Back().Value.(*stmtSummaryByDigestElement)
 					ssElement.Lock()
