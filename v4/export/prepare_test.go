@@ -119,4 +119,11 @@ func (s *testPrepareSuite) TestConfigValidation(c *C) {
 	c.Assert(validateSpecifiedSQL(conf), ErrorMatches, "can't specify both --sql and --where at the same time. Please try to combine them into --sql")
 	conf.Where = ""
 	c.Assert(validateSpecifiedSQL(conf), IsNil)
+
+	conf.FileType = "sql"
+	c.Assert(validateFileFormat(conf), IsNil)
+	conf.FileType = "csv"
+	c.Assert(validateFileFormat(conf), IsNil)
+	conf.FileType = "rand_str"
+	c.Assert(validateFileFormat(conf), ErrorMatches, "unknown config.FileType 'rand_str'")
 }
