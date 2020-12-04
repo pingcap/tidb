@@ -48,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/telemetry"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/dbterror"
@@ -364,7 +365,7 @@ func (do *Domain) Reload() error {
 	var err error
 	var neededSchemaVersion int64
 
-	ver, err := do.store.CurrentVersion()
+	ver, err := do.store.CurrentVersion(oracle.GlobalTxnScope)
 	if err != nil {
 		return err
 	}
