@@ -347,7 +347,7 @@ func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) ([]byte, error) 
 	}
 
 	lock := e.tblInfo.Lock
-	if lock != nil && (lock.Tp == model.TableLockRead || lock.Tp == model.TableLockReadOnly) {
+	if lock != nil && lock.TS < e.startTS && (lock.Tp == model.TableLockRead || lock.Tp == model.TableLockReadOnly) {
 		cacheDB := e.ctx.GetStore().GetMemCache()
 		val = cacheDB.Get(ctx, e.tblInfo.ID, key)
 		// key does not exist then get from snapshot and set to cache

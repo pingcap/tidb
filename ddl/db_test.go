@@ -5691,8 +5691,8 @@ func (s *testDBSuite4) TestLockTableReadOnly(c *C) {
 	tk2.MustExec("alter table t1 read only")
 	tk2.MustQuery("select * from t1 where a = 1").Check(testkit.Rows("1 3"))
 	tk.MustQuery("select * from t1 where a = 1").Check(testkit.Rows("1 2"))
-	tk.MustExec("update t1 set b = 4")
-	c.Assert(terror.ErrorEqual(tk.ExecToErr("commit"), domain.ErrInfoSchemaChanged), IsTrue)
+	tk.MustGetErrCode("update t1 set b = 4", errno.ErrTableLocked)
+	tk.MustExec("commit")
 	tk2.MustExec("alter table t1 read write")
 }
 
