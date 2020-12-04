@@ -3156,3 +3156,16 @@ func (s *testIntegrationSuite7) TestAddPartitionForTableWithWrongType(c *C) {
 	c.Assert(err, NotNil)
 	c.Assert(ddl.ErrWrongTypeColumnValue.Equal(err), IsTrue)
 }
+
+func (s *testIntegrationSuite5) TestBuildPartitionWithExpr(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set @@session.tidb_enable_table_partition = 1;")
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t;")
+
+	sql1 := `CREATE TABLE t1(c0 INT) PARTITION BY HASH((NOT c0)) PARTITIONS 2;`
+	tk.MustGetErrCode(sql1, tmysql.ErrWrongExprInPartitionFunc)
+
+	sql2 := `CREATE TABLE t1(c0 INT) PARTITION BY HASH(!c0) PARTITIONS 2;`
+	tk.MustGetErrCode(sql2, tmysql.ErrWrongExprInPartitionFunc)
+}
