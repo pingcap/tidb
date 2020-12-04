@@ -286,13 +286,15 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 	case *PhysicalExchangeReceiver:
 		str = fmt.Sprintf("Recv(")
 		for _, task := range x.Tasks {
-			str += fmt.Sprint("%d, ", task.ID)
+			str += fmt.Sprintf("%d, ", task.ID)
 		}
+		str = fmt.Sprintf(")")
 	case *PhysicalExchangeSender:
 		str = fmt.Sprintf("Send(")
 		for _, task := range x.Tasks {
-			str += fmt.Sprint("%d, ", task.ID)
+			str += fmt.Sprintf("%d, ", task.ID)
 		}
+		str = fmt.Sprintf(")")
 	default:
 		str = fmt.Sprintf("%T", in)
 	}
