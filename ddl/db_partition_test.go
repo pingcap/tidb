@@ -3164,8 +3164,8 @@ func (s *testIntegrationSuite5) TestBuildPartitionWithExpr(c *C) {
 	tk.MustExec("drop table if exists t;")
 
 	sql1 := `CREATE TABLE t1(c0 INT) PARTITION BY HASH((NOT c0)) PARTITIONS 2;`
-	tk.MustGetErrCode(sql1, tmysql.ErrWrongExprInPartitionFunc)
+	tk.MustGetErrCode(sql1, tmysql.ErrPartitionFunctionIsNotAllowed)
 
 	sql2 := `CREATE TABLE t1(c0 INT) PARTITION BY HASH(!c0) PARTITIONS 2;`
-	tk.MustGetErrCode(sql2, tmysql.ErrWrongExprInPartitionFunc)
+	tk.MustGetErrCode(sql2, tmysql.ErrPartitionFunctionIsNotAllowed)
 }
