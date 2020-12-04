@@ -458,7 +458,7 @@ type PlanBuilder struct {
 	// isSampling indicates whether the query is sampling.
 	isSampling bool
 
-	// corAggMapper stores columns for correlated aggregates (parent aggregate inside sub-query).
+	// corAggMapper stores columns for correlated aggregates which should be evaluated in outer query.
 	corAggMapper map[*ast.AggregateFuncExpr]*expression.CorrelatedColumn
 }
 
