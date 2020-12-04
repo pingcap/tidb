@@ -277,6 +277,27 @@ func (b *PlanBuilder) buildAggregation(ctx context.Context, p LogicalPlan, aggFu
 	return plan4Agg, aggIndexMap, nil
 }
 
+func (b *PlanBuilder) buildSelectFrom(ctx context.Context, from *ast.TableRefsClause) (p LogicalPlan, err error) {
+	if from == nil {
+		p = b.buildTableDual()
+		return
+	}
+	var ok bool
+	p, ok = b.cachedResultSetNodes[from.TableRefs]
+	if ok {
+		m := b.cachedHandleHelperMap[from.TableRefs]
+		b.handleHelper.pushMap(m)
+		return
+	}
+	p, err = b.buildResultSetNode(ctx, from.TableRefs)
+	if err != nil {
+		return nil, err
+	}
+	b.cachedResultSetNodes[from.TableRefs] = p
+	b.cachedHandleHelperMap[from.TableRefs] = b.handleHelper.tailMap()
+	return
+}
+
 func (b *PlanBuilder) buildResultSetNode(ctx context.Context, node ast.ResultSetNode) (p LogicalPlan, err error) {
 	switch x := node.(type) {
 	case *ast.Join:
@@ -2097,13 +2118,10 @@ func (r *subqueryResolver) resolveSelect(sel *ast.SelectStmt) error {
 		p   LogicalPlan
 		err error
 	)
-	if sel.From != nil {
-		p, err = r.b.buildResultSetNode(r.ctx, sel.From.TableRefs)
-		if err != nil {
-			return err
-		}
-	} else {
-		p = r.b.buildTableDual()
+
+	p, err = r.b.buildSelectFrom(r.ctx, sel.From)
+	if err != nil {
+		return err
 	}
 
 	originalFields := sel.Fields.Fields
@@ -2151,6 +2169,7 @@ func (r *subqueryResolver) resolveSelect(sel *ast.SelectStmt) error {
 	}
 
 	sel.Fields.Fields = originalFields
+	r.b.handleHelper.popMap()
 	return nil
 }
 
@@ -2993,13 +3012,9 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 		gbyCols                       []expression.Expression
 	)
 
-	if sel.From != nil {
-		p, err = b.buildResultSetNode(ctx, sel.From.TableRefs)
-		if err != nil {
-			return nil, err
-		}
-	} else {
-		p = b.buildTableDual()
+	p, err = b.buildSelectFrom(ctx, sel.From)
+	if err != nil {
+		return nil, err
 	}
 
 	originalFields := sel.Fields.Fields
