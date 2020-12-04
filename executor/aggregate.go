@@ -872,6 +872,7 @@ func (e *HashAggExec) executeFirstRow(ctx context.Context, chk *chunk.Chunk) (er
 	for {
 		if e.firstRowProcessed == e.childResult.NumRows() {
 			mSize := e.childResult.MemoryUsage()
+			e.firstRowProcessed = 0
 			err := Next(ctx, e.children[0], e.childResult)
 			e.memTracker.Consume(e.childResult.MemoryUsage() - mSize)
 			if err != nil {
@@ -885,7 +886,6 @@ func (e *HashAggExec) executeFirstRow(ctx context.Context, chk *chunk.Chunk) (er
 			if err != nil {
 				return err
 			}
-			e.firstRowProcessed = 0
 		}
 
 		failpoint.Inject("unparallelHashAggError", func(val failpoint.Value) {
