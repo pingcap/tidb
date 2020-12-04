@@ -2009,24 +2009,23 @@ func (b *PlanBuilder) extractAggFuncs(ctx context.Context, p LogicalPlan, fields
 
 func (b *PlanBuilder) splitOuterAggFuncs(ctx context.Context, p LogicalPlan, aggFuncs []*ast.AggregateFuncExpr) (
 	inner []*ast.AggregateFuncExpr, outer []*ast.AggregateFuncExpr, err error) {
-	var corCols []*expression.CorrelatedColumn
-	var cols []*expression.Column
+	corCols := make([]*expression.CorrelatedColumn, 0, len(aggFuncs))
+	cols := make([]*expression.Column, 0, len(aggFuncs))
 	for _, agg := range aggFuncs {
-		corCols = corCols[:0]
-		cols = cols[:0]
 		for _, arg := range agg.Args {
 			expr, _, err := b.rewrite(ctx, arg, p, nil, true)
 			if err != nil {
 				return nil, nil, err
 			}
 			corCols = append(corCols, expression.ExtractCorColumns(expr)...)
-			cols = append(cols, expression.ExtractDependentColumns(expr)...)
+			cols = append(cols, expression.ExtractColumns(expr)...)
 		}
 		if len(corCols) > 0 && len(cols) == 0 {
 			outer = append(outer, agg)
 		} else {
 			inner = append(inner, agg)
 		}
+		corCols, cols = corCols[:0], cols[:0]
 	}
 	return
 }
@@ -3080,15 +3079,16 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 		if err != nil {
 			return nil, err
 		}
-		if len(aggFuncs) > 0 {
-			var aggIndexMap map[int]int
-			p, aggIndexMap, err = b.buildAggregation(ctx, p, aggFuncs, gbyCols, corAggMap)
-			if err != nil {
-				return nil, err
-			}
-			for k, v := range totalMap {
-				totalMap[k] = aggIndexMap[v]
-			}
+		var aggIndexMap map[int]int
+		p, aggIndexMap, err = b.buildAggregation(ctx, p, aggFuncs, gbyCols, corAggMap)
+		if err != nil {
+			return nil, err
+		}
+		for agg, idx := range totalMap {
+			totalMap[agg] = aggIndexMap[idx]
+		}
+		for agg, _ := range corAggMap {
+			agg.SetFlag(agg.GetFlag() &^ ast.FlagHasAggregateFunc)
 		}
 	}
 
