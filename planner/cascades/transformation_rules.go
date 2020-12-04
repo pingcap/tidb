@@ -1153,6 +1153,7 @@ func pushTopNDownOuterJoinToChild(topN *plannercore.LogicalTopN, outerGroup *mem
 		Count:   topN.Count + topN.Offset,
 		ByItems: make([]*util.ByItems, len(topN.ByItems)),
 	}.Init(topN.SCtx(), topN.SelectBlockOffset())
+	newTopN.SetSchema(outerGroup.Prop.Schema)
 
 	for i := range topN.ByItems {
 		newTopN.ByItems[i] = topN.ByItems[i].Clone()
@@ -1229,6 +1230,7 @@ func (r *PushTopNDownProjection) OnTransform(old *memo.ExprIter) (newExprs []*me
 		Offset: topN.Offset,
 		Count:  topN.Count,
 	}.Init(topN.SCtx(), topN.SelectBlockOffset())
+	newTopN.SetSchema(childGroup.Prop.Schema)
 
 	newTopN.ByItems = make([]*util.ByItems, 0, len(topN.ByItems))
 	for _, by := range topN.ByItems {
@@ -1286,6 +1288,7 @@ func (r *PushTopNDownUnionAll) OnTransform(old *memo.ExprIter) (newExprs []*memo
 		Count:   topN.Count + topN.Offset,
 		ByItems: topN.ByItems,
 	}.Init(topN.SCtx(), topN.SelectBlockOffset())
+	newTopN.SetSchema(unionAll.Schema())
 
 	newUnionAllExpr := memo.NewGroupExpr(unionAll)
 	for _, childGroup := range old.Children[0].GetExpr().Children {
@@ -1338,6 +1341,7 @@ func (r *PushTopNDownTiKVSingleGather) OnTransform(old *memo.ExprIter) (newExprs
 		ByItems: topN.ByItems,
 		Count:   topN.Count + topN.Offset,
 	}.Init(topN.SCtx(), topN.SelectBlockOffset())
+	particalTopN.SetSchema(topNSchema)
 	partialTopNExpr := memo.NewGroupExpr(particalTopN)
 	partialTopNExpr.SetChildren(childGroup)
 	partialTopNGroup := memo.NewGroupWithSchema(partialTopNExpr, topNSchema).SetEngineType(childGroup.EngineType)
@@ -1407,6 +1411,7 @@ func (r *MergeAdjacentTopN) OnTransform(old *memo.ExprIter) (newExprs []*memo.Gr
 		Offset:  offset,
 		ByItems: child.ByItems,
 	}.Init(child.SCtx(), child.SelectBlockOffset())
+	newTopN.SetSchema(child.Schema())
 	newTopNExpr := memo.NewGroupExpr(newTopN)
 	newTopNExpr.SetChildren(childGroups...)
 	return []*memo.GroupExpr{newTopNExpr}, true, false, nil
@@ -1552,6 +1557,7 @@ func (r *EliminateSingleMaxMin) OnTransform(old *memo.ExprIter) (newExprs []*mem
 			ByItems: byItems,
 			Count:   1,
 		}.Init(ctx, agg.SelectBlockOffset())
+		top1.SetSchema(childGroup.Prop.Schema)
 		top1Expr := memo.NewGroupExpr(top1)
 		top1Expr.SetChildren(childGroup)
 		top1Group := memo.NewGroupWithSchema(top1Expr, childGroup.Prop.Schema)
@@ -2211,7 +2217,7 @@ func (r *InjectProjectionBelowTopN) OnTransform(old *memo.ExprIter) (newExprs []
 		Offset:  topN.Offset,
 		Count:   topN.Count,
 	}.Init(topN.SCtx(), topN.SelectBlockOffset())
-
+	newTopN.SetSchema(newSchema)
 	// Construct GroupExpr, Group (TopProj -> TopN -> BottomProj -> Child)
 	bottomProjGroupExpr := memo.NewGroupExpr(bottomProj)
 	bottomProjGroupExpr.SetChildren(old.GetExpr().Children[0])
