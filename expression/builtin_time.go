@@ -829,8 +829,16 @@ func (b *builtinDateFormatSig) evalString(row chunk.Row) (string, bool, error) {
 	}
 
 	if t.InvalidZero() {
-		isNull, err := handleInvalidZeroTime(b.ctx, t)
-		return "", isNull, err
+		// MySQL compatibility, #11203
+		// 0 | 0.0 should be converted to null without warnings
+		n, err := t.ToNumber().ToInt()
+		isOriginalIntOrDecimalZero := err == nil && n == 0
+		// Args like "0000-00-00", "0000-00-00 00:00:00" set Fsp to 6
+		isOriginalStringZero := t.Fsp() > 0
+		if isOriginalIntOrDecimalZero && !isOriginalStringZero {
+			return "", true, nil
+		}
+		return "", true, handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, t.String()))
 	}
 
 	res, err := t.DateFormat(formatMask)
@@ -7025,7 +7033,7 @@ func handleInvalidZeroTime(ctx sessionctx.Context, t types.Time) (bool, error) {
 	// Args like "0000-00-00", "0000-00-00 00:00:00" set Fsp to 6
 	isOriginalStringZero := t.Fsp() > 0
 	if isOriginalIntOrDecimalZero && !isOriginalStringZero {
-		return true, nil
+		return false, nil
 	}
 	return true, handleInvalidTimeError(ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, t.String()))
 }
