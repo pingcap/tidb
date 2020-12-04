@@ -775,6 +775,31 @@ func (b *PlanBuilder) coalesceCommonColumns(p *LogicalJoin, leftPlan, rightPlan 
 		lColumns, rColumns = rsc.Columns, lsc.Columns
 	}
 
+	// Check using clause with ambiguous columns.
+	if filter != nil {
+		checkAmbiguous := func(names types.NameSlice) error {
+			columnNameInFilter := set.StringSet{}
+			for _, name := range names {
+				if _, ok := filter[name.ColName.L]; !ok {
+					continue
+				}
+				if columnNameInFilter.Exist(name.ColName.L) {
+					return ErrAmbiguous.GenWithStackByArgs(name.ColName.L, "from clause")
+				}
+				columnNameInFilter.Insert(name.ColName.L)
+			}
+			return nil
+		}
+		err := checkAmbiguous(lNames)
+		if err != nil {
+			return err
+		}
+		err = checkAmbiguous(rNames)
+		if err != nil {
+			return err
+		}
+	}
+
 	// Find out all the common columns and put them ahead.
 	commonLen := 0
 	for i, lName := range lNames {
@@ -3037,10 +3062,16 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, dbName.L, tableInfo.Name.L, "", authErr)
 
 	if tbl.Type().IsVirtualTable() {
+		if tn.TableSample != nil {
+			return nil, expression.ErrInvalidTableSample.GenWithStackByArgs("Unsupported TABLESAMPLE in virtual tables")
+		}
 		return b.buildMemTable(ctx, dbName, tableInfo)
 	}
 
 	if tableInfo.IsView() {
+		if tn.TableSample != nil {
+			return nil, expression.ErrInvalidTableSample.GenWithStackByArgs("Unsupported TABLESAMPLE in views")
+		}
 		return b.BuildDataSourceFromView(ctx, dbName, tableInfo)
 	}
 
@@ -3223,6 +3254,8 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	ds.SetSchema(schema)
 	ds.names = names
 	ds.setPreferredStoreType(b.TableHints())
+	ds.SampleInfo = NewTableSampleInfo(tn.TableSample, schema.Clone(), b.partitionedTable)
+	b.isSampling = ds.SampleInfo != nil
 
 	// Init commonHandleCols and commonHandleLens for data source.
 	if tableInfo.IsCommonHandle {

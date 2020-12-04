@@ -631,6 +631,8 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 					constraint := &ast.Constraint{Tp: ast.ConstraintPrimaryKey, Keys: keys}
 					constraints = append(constraints, constraint)
 					col.Flag |= mysql.PriKeyFlag
+					// Add NotNullFlag early so that processColumnFlags() can see it.
+					col.Flag |= mysql.NotNullFlag
 				}
 			case ast.ColumnOptionUniqKey:
 				// Check UniqueFlag first to avoid extra duplicate constraints.
@@ -3495,6 +3497,11 @@ func checkTypeChangeSupported(origin *types.FieldType, to *types.FieldType) bool
 		return false
 	}
 
+	if origin.Tp == mysql.TypeJSON && (to.Tp == mysql.TypeEnum || to.Tp == mysql.TypeSet || to.Tp == mysql.TypeBit) {
+		// TODO: Currently json cast to enum/set/bit are not support yet, should fix here after supported.
+		return false
+	}
+
 	return true
 }
 
@@ -3795,7 +3802,7 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 	}
 
 	// As same with MySQL, we don't support modifying the stored status for generated columns.
-	if err = checkModifyGeneratedColumn(t, col, newCol, specNewColumn); err != nil {
+	if err = checkModifyGeneratedColumn(t, col, newCol, specNewColumn, spec.Position); err != nil {
 		return nil, errors.Trace(err)
 	}
 
