@@ -95,18 +95,26 @@ func SortItemsFromCols(cols []*expression.Column, desc bool) []SortItem {
 	return items
 }
 
-// MatchPartCols check if the keys can match the needs of partition.
-// TODO: Actually the check of order is unnessary.
-func (p *PhysicalProperty) MatchPartCols(keys []*expression.Column) bool {
-	if len(p.PartitionCols) == len(keys) {
-		return false
+// IsSubsetOf check if the keys can match the needs of partition.
+func (p *PhysicalProperty) IsSubsetOf(keys []*expression.Column) []int {
+	if len(p.PartitionCols) > len(keys) {
+		return nil
 	}
-	for i, partCol := range p.PartitionCols {
-		if !partCol.Equal(nil, keys[i]) {
-			return false
+	matches := make([]int, 0, len(keys))
+	for _, partCol := range p.PartitionCols {
+		found := false
+		for i, key := range keys {
+			if partCol.Equal(nil, key) {
+				found = true
+				matches = append(matches, i)
+				break
+			}
+		}
+		if !found {
+			return nil
 		}
 	}
-	return true
+	return matches
 }
 
 // AllColsFromSchema checks whether all the columns needed by this physical

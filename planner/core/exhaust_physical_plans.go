@@ -1729,8 +1729,8 @@ func (p *LogicalJoin) tryToGetMppHashJoin(prop *property.PhysicalProperty, useBC
 			if preferredBuildIndex == 1 {
 				hashKeys = lkeys
 			}
-			if prop.MatchPartCols(hashKeys) {
-				childrenProps[1-preferredBuildIndex] = &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: expCnt, PartitionTp: property.HashType, PartitionCols: hashKeys}
+			if matches := prop.IsSubsetOf(hashKeys); len(matches) != 0 {
+				childrenProps[1-preferredBuildIndex] = &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: expCnt, PartitionTp: property.HashType, PartitionCols: prop.PartitionCols}
 			} else {
 				return nil
 			}
@@ -1739,9 +1739,15 @@ func (p *LogicalJoin) tryToGetMppHashJoin(prop *property.PhysicalProperty, useBC
 		}
 	} else {
 		if prop.PartitionTp == property.HashType {
-			if !prop.MatchPartCols(lkeys) && !prop.MatchPartCols(rkeys) {
+			var matches []int
+			if matches = prop.IsSubsetOf(lkeys); len(matches) == 0 {
+				matches = prop.IsSubsetOf(rkeys)
+			}
+			if len(matches) == 0 {
 				return nil
 			}
+			lkeys = chooseSubsetOfJoinKeys(lkeys, matches)
+			rkeys = chooseSubsetOfJoinKeys(rkeys, matches)
 		}
 		childrenProps[0] = &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, PartitionTp: property.HashType, PartitionCols: lkeys, Enforced: true}
 		childrenProps[1] = &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, PartitionTp: property.HashType, PartitionCols: rkeys, Enforced: true}
@@ -1753,6 +1759,14 @@ func (p *LogicalJoin) tryToGetMppHashJoin(prop *property.PhysicalProperty, useBC
 		storeTp:          kv.TiFlash,
 	}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), p.blockOffset, childrenProps...)
 	return []PhysicalPlan{join}
+}
+
+func chooseSubsetOfJoinKeys(keys []*expression.Column, matches []int) []*expression.Column {
+	newKeys := make([]*expression.Column, 0, len(matches))
+	for _, id := range matches {
+		newKeys = append(newKeys, keys[id])
+	}
+	return newKeys
 }
 
 func (p *LogicalJoin) tryToGetBroadCastJoin(prop *property.PhysicalProperty) []PhysicalPlan {
