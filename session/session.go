@@ -461,8 +461,8 @@ func (s *session) doCommit(ctx context.Context) error {
 		physicalTableIDs = append(physicalTableIDs, id)
 	}
 	// Set this option for 2 phase commit to validate schema lease.
-	s.txn.SetOption(kv.SchemaChecker, domain.NewSchemaChecker(domain.GetDomain(s), s.sessionVars.TxnCtx.SchemaVersion, physicalTableIDs))
-	s.txn.SetOption(kv.InfoSchema, s.sessionVars.TxnCtx.InfoSchema)
+	s.txn.SetOption(kv.SchemaChecker, domain.NewSchemaChecker(domain.GetDomain(s), s.sessionVars.TxnCtx.OrgSchemaVer, physicalTableIDs))
+	s.txn.SetOption(kv.InfoSchema, s.sessionVars.TxnCtx.OrgInfoSchema)
 	s.txn.SetOption(kv.CommitHook, func(info kv.TxnInfo, _ error) { s.sessionVars.LastTxnInfo = info })
 	if s.GetSessionVars().EnableAmendPessimisticTxn {
 		s.txn.SetOption(kv.SchemaAmender, NewSchemaAmenderForTikvTxn(s))
@@ -1646,6 +1646,8 @@ func (s *session) NewTxn(ctx context.Context) error {
 	s.txn.changeInvalidToValid(txn)
 	is := domain.GetDomain(s).InfoSchema()
 	s.sessionVars.TxnCtx = &variable.TransactionContext{
+		OrgInfoSchema: is,
+		OrgSchemaVer:  is.SchemaMetaVersion(),
 		InfoSchema:    is,
 		SchemaVersion: is.SchemaMetaVersion(),
 		CreateTime:    time.Now(),
@@ -2361,12 +2363,19 @@ func (s *session) loadCommonGlobalVariablesIfNeeded() error {
 func (s *session) PrepareTxnCtx(ctx context.Context) {
 	s.currentCtx = ctx
 	if s.txn.validOrPending() {
+		if s.sessionVars.TxnCtx.IsPessimistic {
+			is := domain.GetDomain(s).InfoSchema()
+			s.sessionVars.TxnCtx.InfoSchema = is
+			s.sessionVars.TxnCtx.SchemaVersion = is.SchemaMetaVersion()
+		}
 		return
 	}
 
 	is := domain.GetDomain(s).InfoSchema()
 	s.sessionVars.TxnCtx = &variable.TransactionContext{
+		OrgInfoSchema: is,
 		InfoSchema:    is,
+		OrgSchemaVer:  is.SchemaMetaVersion(),
 		SchemaVersion: is.SchemaMetaVersion(),
 		CreateTime:    time.Now(),
 		ShardStep:     int(s.sessionVars.ShardAllocateStep),

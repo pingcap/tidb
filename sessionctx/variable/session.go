@@ -133,8 +133,10 @@ type TransactionContext struct {
 	forUpdateTS   uint64
 	stmtFuture    oracle.Future
 	Binlog        interface{}
+	OrgInfoSchema interface{}
 	InfoSchema    interface{}
 	History       interface{}
+	OrgSchemaVer  int64
 	SchemaVersion int64
 	StartTS       uint64
 

@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -1111,6 +1112,35 @@ func (s *testPessimisticSuite) TestPessimisticLockNonExistsKey(c *C) {
 	c.Check(tikv.ErrLockAcquireFailAndNoWaitSet.Equal(err), IsTrue)
 	tk.MustExec("rollback")
 	tk1.MustExec("rollback")
+}
+
+func (s *testPessimisticSuite) TestPessimisticSchemaChange(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("use test")
+	tk1 := testkit.NewTestKitWithInit(c, s.store)
+	tk1.MustExec("use test")
+	tk.MustExec(`create table t (id int primary key, v int, unique index iv (v));`)
+	tk.MustExec(`insert into t values (1, 10), (2, 20), (3, 30), (4, 40);`)
+	tk.MustExec("set tidb_txn_mode = 'pessimistic'")
+	tk1.MustExec("set tidb_txn_mode = 'pessimistic'")
+	tk.MustExec(`set transaction isolation level read committed; begin;`)
+	tk.MustQuery(`select * from t use index (iv) where v = 10;`).Check(testkit.Rows("1 10"))
+	tk1.MustExec(`alter table t drop index iv;`)
+	tk1.MustExec(`update t set v = 11 where id = 1;`)
+	c.Assert(s.dom.Reload(), IsNil)
+	tk.MustGetErrCode("select v from t use index (iv) where v = 10;", errno.ErrKeyDoesNotExist)
+	tk.MustQuery(`select * from t where id = 1;`).Check(testkit.Rows("1 11"))
+	tk.MustExec("rollback")
+
+	tk.MustExec(`alter table t add unique index iv (v);`)
+	tk.MustExec(`begin;`)
+	tk.MustQuery(`select * from t use index (iv) where v = 11;`).Check(testkit.Rows("1 11"))
+	tk1.MustExec(`alter table t drop index iv;`)
+	tk1.MustExec(`update t set v = 12 where id = 1;`)
+	c.Assert(s.dom.Reload(), IsNil)
+	tk.MustGetErrCode("select v from t use index (iv) where v = 10 for update;", errno.ErrKeyDoesNotExist)
+	tk.MustQuery(`select * from t where id = 1;`).Check(testkit.Rows("1 11"))
+	tk.MustExec("rollback")
 }
 
 func (s *testPessimisticSuite) TestPessimisticCommitReadLock(c *C) {
