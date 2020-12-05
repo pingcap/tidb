@@ -170,6 +170,7 @@ func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, funcName string, args []Ex
 		case types.ETJson:
 			args[i] = WrapWithCastAsJSON(ctx, args[i])
 		}
+		generateRetFlag(args[i], argTps[i], orgArgs)
 	}
 
 	if err = checkIllegalMixCollation(funcName, args, retType); err != nil {
@@ -256,6 +257,31 @@ func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, funcName string, args []Ex
 	bf.SetCharsetAndCollation(derivedCharset, derivedCollate)
 	bf.setCollator(collate.GetCollator(derivedCollate))
 	return bf, nil
+}
+
+func generateRetFlag(res Expression, evalType types.EvalType, args []Expression) {
+	if len(args) < 2 {
+		return
+	}
+	var retType = res.GetType()
+	lhs, rhs := args[0], args[1]
+	if fun, ok := res.(*ScalarFunction); (ok && fun.FuncName.L == ast.Cast) || res.GetType().Tp == mysql.TypeBit {
+		if evalType == types.ETInt || evalType == types.ETReal {
+			lfg, rfg := args[0].GetType().Flag, args[1].GetType().Flag
+			if mysql.TypeBit == lhs.GetType().Tp || mysql.TypeBit == rhs.GetType().Tp {
+				retType.Flag |= mysql.UnsignedFlag
+				if mysql.TypeBit == rhs.GetType().Tp {
+					retType.Flag &= ^(mysql.UnsignedFlag ^ lfg)
+				} else {
+					retType.Flag &= ^(mysql.UnsignedFlag ^ rfg)
+				}
+			}
+		} else if evalType == types.ETDecimal && mysql.TypeEnum == lhs.GetType().Tp || mysql.TypeEnum == rhs.GetType().Tp {
+			if mysql.TypeNewDecimal == retType.Tp {
+				retType.Flen, retType.Decimal = types.UnspecifiedLength, types.UnspecifiedLength
+			}
+		}
+	}
 }
 
 // newBaseBuiltinFuncWithFieldType create BaseBuiltinFunc with FieldType charset and collation.
