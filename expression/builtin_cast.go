@@ -485,7 +485,7 @@ func (b *builtinCastIntAsRealSig) evalReal(row chunk.Row) (res float64, isNull b
 	if isNull || err != nil {
 		return res, isNull, err
 	}
-	if unsignedArgs0 := mysql.HasUnsignedFlag(b.args[0].GetType().Flag); !mysql.HasUnsignedFlag(b.tp.Flag) && (!unsignedArgs0 || mysql.TypeBit == b.args[0].GetType().Tp) {
+	if unsignedArgs0 := mysql.HasUnsignedFlag(b.args[0].GetType().Flag); !mysql.HasUnsignedFlag(b.tp.Flag) && !unsignedArgs0 {
 		res = float64(val)
 	} else if b.inUnion && !unsignedArgs0 && val < 0 {
 		// Round up to 0 if the value is negative but the expression eval type is unsigned in `UNION` statement

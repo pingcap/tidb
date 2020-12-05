@@ -228,12 +228,6 @@ func (s *testUtilSuite) TestDumpTextValue(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(mustDecodeStr(c, bs), Equals, "ename")
 
-	bit := types.NewMysqlBitDatum([]byte{255, 255, 255, 255, 255, 255, 255, 255})
-	columns[0].Type = mysql.TypeBit
-	bs, err = dumpTextRow(nil, columns, chunk.MutRowFromDatums([]types.Datum{bit}).ToRow())
-	c.Assert(err, IsNil)
-	c.Assert(mustDecodeStr(c, bs), Equals, "b'1111111111111111111111111111111111111111111111111111111111111111'")
-
 	set := types.Datum{}
 	set.SetMysqlSet(types.Set{Name: "sname", Value: 0}, mysql.DefaultCollationName)
 	columns[0].Type = mysql.TypeSet

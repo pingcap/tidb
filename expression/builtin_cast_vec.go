@@ -108,7 +108,7 @@ func (b *builtinCastIntAsRealSig) vecEvalReal(input *chunk.Chunk, result *chunk.
 		if result.IsNull(i) {
 			continue
 		}
-		if !hasUnsignedFlag0 && (!hasUnsignedFlag1 || b.args[0].GetType().Tp == mysql.TypeBit) {
+		if !hasUnsignedFlag0 && !hasUnsignedFlag1 {
 			rs[i] = float64(i64s[i])
 		} else if b.inUnion && !hasUnsignedFlag1 && i64s[i] < 0 {
 			// Round up to 0 if the value is negative but the expression eval type is unsigned in `UNION` statement

@@ -230,42 +230,6 @@ func dumpBinaryDateTime(data []byte, t types.Time) []byte {
 	return data
 }
 
-func dumpLengthEncodedBit(buffer []byte, bytes []byte) []byte {
-	br := make([]byte, 0)
-	if len(bytes) > 0 {
-		br = append(br, 'b', '\'')
-	}
-	for i := 0; i < len(bytes); i++ {
-		bt := bytes[i]
-		if bt == 0 && len(br) == 2 {
-			continue
-		}
-		for j := 0; j < 8; j++ {
-			v := bt & 0x80
-			if len(br) == 2 && v == 0 {
-				bt <<= 1
-				continue
-			}
-			if v > 0 {
-				br = append(br, '1')
-			} else {
-				br = append(br, '0')
-			}
-			bt <<= 1
-		}
-	}
-
-	if len(br) >= 2 {
-		if len(br) == 2 {
-			br = append(br, '0')
-		}
-		br = append(br, '\'')
-	}
-	buffer = dumpLengthEncodedInt(buffer, uint64(len(br)))
-	buffer = append(buffer, br...)
-	return buffer
-}
-
 func dumpBinaryRow(buffer []byte, columns []*ColumnInfo, row chunk.Row) ([]byte, error) {
 	buffer = append(buffer, mysql.OKHeader)
 	nullBitmapOff := len(buffer)
@@ -358,11 +322,9 @@ func dumpTextRow(buffer []byte, columns []*ColumnInfo, row chunk.Row) ([]byte, e
 			buffer = dumpLengthEncodedString(buffer, tmp)
 		case mysql.TypeNewDecimal:
 			buffer = dumpLengthEncodedString(buffer, hack.Slice(row.GetMyDecimal(i).String()))
-		case mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar, mysql.TypeTinyBlob,
-			mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeBlob:
+		case mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar, mysql.TypeBit,
+			mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeBlob:
 			buffer = dumpLengthEncodedString(buffer, row.GetBytes(i))
-		case mysql.TypeBit:
-			buffer = dumpLengthEncodedBit(buffer, row.GetBytes(i))
 		case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
 			buffer = dumpLengthEncodedString(buffer, hack.Slice(row.GetTime(i).String()))
 		case mysql.TypeDuration:
