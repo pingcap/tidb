@@ -154,7 +154,7 @@ func (w *worker) start(d *ddlCtx) {
 
 		err := w.handleDDLJobQueue(d)
 		if err != nil {
-			logutil.Logger(w.logCtx).Error("[ddl] handle DDL job failed", zap.Error(err))
+			logutil.Logger(w.logCtx).Warn("[ddl] handle DDL job failed", zap.Error(err))
 		}
 	}
 }

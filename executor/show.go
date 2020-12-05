@@ -183,6 +183,8 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 		return e.fetchShowStatsHistogram()
 	case ast.ShowStatsBuckets:
 		return e.fetchShowStatsBuckets()
+	case ast.ShowStatsTopN:
+		return e.fetchShowStatsTopN()
 	case ast.ShowStatsHealthy:
 		e.fetchShowStatsHealthy()
 		return nil
@@ -292,9 +294,7 @@ func (e *ShowExec) fetchShowEngines() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	for _, row := range rows {
-		e.result.AppendRow(row)
-	}
+	e.result.AppendRows(rows)
 	return nil
 }
 
@@ -462,7 +462,7 @@ func (e *ShowExec) fetchShowColumns(ctx context.Context) error {
 	if tb.Meta().IsView() {
 		// Because view's undertable's column could change or recreate, so view's column type may change overtime.
 		// To avoid this situation we need to generate a logical plan and extract current column types from Schema.
-		planBuilder := plannercore.NewPlanBuilder(e.ctx, e.is, &hint.BlockHintProcessor{})
+		planBuilder, _ := plannercore.NewPlanBuilder(e.ctx, e.is, &hint.BlockHintProcessor{})
 		viewLogicalPlan, err := planBuilder.BuildDataSourceFromView(ctx, e.DBName, tb.Meta())
 		if err != nil {
 			return err
@@ -587,8 +587,9 @@ func (e *ShowExec) fetchShowIndex() error {
 				subPart = col.Length
 			}
 
+			tblCol := tb.Meta().Columns[col.Offset]
 			nullVal := "YES"
-			if idx.Meta().Name.O == mysql.PrimaryKeyName {
+			if mysql.HasNotNullFlag(tblCol.Flag) {
 				nullVal = ""
 			}
 
@@ -599,7 +600,6 @@ func (e *ShowExec) fetchShowIndex() error {
 
 			colName := col.Name.O
 			expression := "NULL"
-			tblCol := tb.Meta().Columns[col.Offset]
 			if tblCol.Hidden {
 				colName = "NULL"
 				expression = fmt.Sprintf("(%s)", tblCol.GeneratedExprString)

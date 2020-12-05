@@ -665,7 +665,7 @@ func (s *testExecSuite) TestStreamAggRequiredRows(c *C) {
 		aggFunc, err := aggregation.NewAggFuncDesc(sctx, testCase.aggFunc, []expression.Expression{childCols[0]}, true)
 		c.Assert(err, IsNil)
 		aggFuncs := []*aggregation.AggFuncDesc{aggFunc}
-		exec := buildStreamAggExecutor(sctx, ds, schema, aggFuncs, groupBy)
+		exec := buildStreamAggExecutor(sctx, ds, schema, aggFuncs, groupBy, 1, true)
 		c.Assert(exec.Open(ctx), IsNil)
 		chk := newFirstChunk(exec)
 		for i := range testCase.requiredRows {

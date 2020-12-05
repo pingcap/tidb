@@ -31,6 +31,9 @@ func GenHintsFromPhysicalPlan(p Plan) []*ast.TableOptimizerHint {
 		hints = genHintsFromPhysicalPlan(pp.SelectPlan, utilhint.TypeUpdate)
 	case *Delete:
 		hints = genHintsFromPhysicalPlan(pp.SelectPlan, utilhint.TypeDelete)
+	// For Insert, we only generate hints that would be used in select query block.
+	case *Insert:
+		hints = genHintsFromPhysicalPlan(pp.SelectPlan, utilhint.TypeSelect)
 	case PhysicalPlan:
 		hints = genHintsFromPhysicalPlan(pp, utilhint.TypeSelect)
 	}
@@ -45,6 +48,11 @@ func getTableName(tblName model.CIStr, asName *model.CIStr) model.CIStr {
 }
 
 func extractTableAsName(p PhysicalPlan) (*model.CIStr, *model.CIStr) {
+	_, isProj := p.(*PhysicalProjection)
+	_, isUnionScan := p.(*PhysicalUnionScan)
+	if isProj || isUnionScan {
+		return extractTableAsName(p.Children()[0])
+	}
 	if len(p.Children()) > 1 {
 		return nil, nil
 	}
@@ -72,6 +80,9 @@ func extractTableAsName(p PhysicalPlan) (*model.CIStr, *model.CIStr) {
 }
 
 func getJoinHints(sctx sessionctx.Context, joinType string, parentOffset int, nodeType utilhint.NodeType, children ...PhysicalPlan) (res []*ast.TableOptimizerHint) {
+	if parentOffset == -1 {
+		return res
+	}
 	for _, child := range children {
 		blockOffset := child.SelectBlockOffset()
 		if blockOffset == -1 {
@@ -99,6 +110,9 @@ func getJoinHints(sctx sessionctx.Context, joinType string, parentOffset int, no
 }
 
 func genHintsFromPhysicalPlan(p PhysicalPlan, nodeType utilhint.NodeType) (res []*ast.TableOptimizerHint) {
+	if p == nil {
+		return res
+	}
 	for _, child := range p.Children() {
 		res = append(res, genHintsFromPhysicalPlan(child, nodeType)...)
 	}

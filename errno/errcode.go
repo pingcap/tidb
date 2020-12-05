@@ -985,6 +985,7 @@ const (
 	ErrBRIERestoreFailed                   = 8125
 	ErrBRIEImportFailed                    = 8126
 	ErrBRIEExportFailed                    = 8127
+	ErrInvalidTableSample                  = 8128
 
 	// Error codes used by TiDB ddl package
 	ErrUnsupportedDDLOperation            = 8200
@@ -1023,8 +1024,9 @@ const (
 	ErrTableOptionInsertMethodUnsupported = 8233
 	ErrInvalidPlacementSpec               = 8234
 	ErrDDLReorgElementNotExist            = 8235
+	ErrPlacementPolicyCheck               = 8236
 
-	// TiKV/PD errors.
+	// TiKV/PD/TiFlash errors.
 	ErrPDServerTimeout           = 9001
 	ErrTiKVServerTimeout         = 9002
 	ErrTiKVServerBusy            = 9003
@@ -1036,4 +1038,6 @@ const (
 	ErrPrometheusAddrIsNotSet    = 9009
 	ErrTiKVStaleCommand          = 9010
 	ErrTiKVMaxTimestampNotSynced = 9011
+	ErrTiFlashServerTimeout      = 9012
+	ErrTiFlashServerBusy         = 9013
 )

@@ -25,7 +25,7 @@ func (s *testSuite8) TestDeleteLockKey(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
-	tk.MustExec(`drop table if exists t1, t2, t3, t4;`)
+	tk.MustExec(`drop table if exists t1, t2, t3, t4, t5, t6;`)
 
 	cases := []struct {
 		ddl     string
@@ -51,6 +51,24 @@ func (s *testSuite8) TestDeleteLockKey(c *C) {
 			"delete from t3 where vv = 4",
 			"insert into t3 values(1, 2, 3, 5)",
 		},
+		{
+			"create table t4(k int, kk int, val int, vv int, primary key(k, kk), unique key(val))",
+			"insert into t4 values(1, 2, 3, 4)",
+			"delete from t4 where 1",
+			"insert into t4 values(1, 2, 3, 5)",
+		},
+		{
+			"create table t5(k int, kk int, val int, vv int, primary key(k, kk), unique key(val))",
+			"insert into t5 values(1, 2, 3, 4), (2, 3, 4, 5)",
+			"delete from t5 where k in (1, 2, 3, 4)",
+			"insert into t5 values(1, 2, 3, 5)",
+		},
+		{
+			"create table t6(k int, kk int, val int, vv int, primary key(k, kk), unique key(val))",
+			"insert into t6 values(1, 2, 3, 4), (2, 3, 4, 5)",
+			"delete from t6 where kk between 0 and 10",
+			"insert into t6 values(1, 2, 3, 5), (2, 3, 4, 6)",
+		},
 	}
 	var wg sync.WaitGroup
 	for _, t := range cases {
@@ -75,7 +93,7 @@ func (s *testSuite8) TestDeleteLockKey(c *C) {
 				tk2.MustExec(t.tk2Stmt)
 				doneCh <- struct{}{}
 			}()
-			time.Sleep(20 * time.Millisecond)
+			time.Sleep(50 * time.Millisecond)
 			tk1.MustExec("commit")
 			<-doneCh
 			tk2.MustExec("commit")
@@ -83,4 +101,24 @@ func (s *testSuite8) TestDeleteLockKey(c *C) {
 		}(t)
 	}
 	wg.Wait()
+}
+
+func (s *testSuite8) TestIssue21200(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("drop database if exists TEST1")
+	tk.MustExec("create database TEST1")
+	tk.MustExec("use TEST1")
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("create table t1(a int)")
+	tk.MustExec("insert into t values(1)")
+	tk.MustExec("insert into t1 values(1)")
+	tk.MustExec("delete a from t a where exists (select 1 from t1 where t1.a=a.a)")
+	tk.MustQuery("select * from t").Check(testkit.Rows())
+
+	tk.MustExec("insert into t values(1), (2)")
+	tk.MustExec("insert into t1 values(2)")
+	tk.MustExec("prepare stmt from 'delete a from t a where exists (select 1 from t1 where a.a=t1.a and t1.a=?)'")
+	tk.MustExec("set @a=1")
+	tk.MustExec("execute stmt using @a")
+	tk.MustQuery("select * from t").Check(testkit.Rows("2"))
 }

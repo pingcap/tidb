@@ -23,6 +23,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/cznic/mathutil"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
@@ -436,9 +437,10 @@ func (c *chunkRowRecordSet) Fields() []*ast.ResultField {
 
 func (c *chunkRowRecordSet) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
-	for !chk.IsFull() && c.idx < len(c.rows) {
-		chk.AppendRow(c.rows[c.idx])
-		c.idx++
+	if !chk.IsFull() && c.idx < len(c.rows) {
+		numToAppend := mathutil.Min(len(c.rows)-c.idx, chk.RequiredRows()-chk.NumRows())
+		chk.AppendRows(c.rows[c.idx : c.idx+numToAppend])
+		c.idx += numToAppend
 	}
 	return nil
 }
@@ -602,7 +604,9 @@ func UpdateForUpdateTS(seCtx sessionctx.Context, newForUpdateTS uint64) error {
 		return nil
 	}
 	if newForUpdateTS == 0 {
-		version, err := seCtx.GetStore().CurrentVersion()
+		// Because the ForUpdateTS is used for the snapshot for reading data in DML.
+		// We can avoid allocating a global TSO here to speed it up by using the local TSO.
+		version, err := seCtx.GetStore().CurrentVersion(txn.GetUnionStore().GetOption(kv.TxnScope).(string))
 		if err != nil {
 			return err
 		}
@@ -913,11 +917,12 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		MemMax:            memMax,
 		DiskMax:           diskMax,
 		Succ:              succ,
-		Plan:              getPlanTree(a.Plan),
+		Plan:              getPlanTree(a.Ctx, a.Plan),
 		PlanDigest:        planDigest,
 		Prepared:          a.isPreparedStmt,
 		HasMoreResults:    hasMoreResults,
 		PlanFromCache:     sessVars.FoundInPlanCache,
+		PlanFromBinding:   sessVars.FoundInBinding,
 		RewriteInfo:       sessVars.RewritePhaseInfo,
 		KVTotal:           time.Duration(atomic.LoadInt64(&stmtDetail.WaitKVRespDuration)),
 		PDTotal:           time.Duration(atomic.LoadInt64(&stmtDetail.WaitPDRespDuration)),
@@ -964,12 +969,12 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 }
 
 // getPlanTree will try to get the select plan tree if the plan is select or the select plan of delete/update/insert statement.
-func getPlanTree(p plannercore.Plan) string {
+func getPlanTree(sctx sessionctx.Context, p plannercore.Plan) string {
 	cfg := config.GetGlobalConfig()
 	if atomic.LoadUint32(&cfg.Log.RecordPlanInSlowLog) == 0 {
 		return ""
 	}
-	planTree := plannercore.EncodePlan(p)
+	planTree := getEncodedPlan(sctx, p)
 	if len(planTree) == 0 {
 		return planTree
 	}
@@ -984,6 +989,17 @@ func getPlanDigest(sctx sessionctx.Context, p plannercore.Plan) (normalized, pla
 	}
 	normalized, planDigest = plannercore.NormalizePlan(p)
 	sctx.GetSessionVars().StmtCtx.SetPlanDigest(normalized, planDigest)
+	return
+}
+
+// getEncodedPlan uses to get encoded plan.
+func getEncodedPlan(sctx sessionctx.Context, p plannercore.Plan) (encodedPlan string) {
+	encodedPlan = sctx.GetSessionVars().StmtCtx.GetEncodedPlan()
+	if len(encodedPlan) > 0 {
+		return
+	}
+	encodedPlan = plannercore.EncodePlan(p)
+	sctx.GetSessionVars().StmtCtx.SetEncodedPlan(encodedPlan)
 	return
 }
 
@@ -1021,7 +1037,7 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 
 	// No need to encode every time, so encode lazily.
 	planGenerator := func() string {
-		return plannercore.EncodePlan(a.Plan)
+		return getEncodedPlan(a.Ctx, a.Plan)
 	}
 	// Generating plan digest is slow, only generate it once if it's 'Point_Get'.
 	// If it's a point get, different SQLs leads to different plans, so SQL digest
@@ -1070,6 +1086,7 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 		IsInternal:      sessVars.InRestrictedSQL,
 		Succeed:         succ,
 		PlanInCache:     sessVars.FoundInPlanCache,
+		PlanInBinding:   sessVars.FoundInBinding,
 		ExecRetryCount:  a.retryCount,
 		StmtExecDetails: stmtDetail,
 		Prepared:        a.isPreparedStmt,

@@ -34,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
-	"github.com/pingcap/tidb/ddl/placement"
 	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/errno"
@@ -49,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/telemetry"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/dbterror"
@@ -150,12 +150,6 @@ func (do *Domain) loadInfoSchema(handle *infoschema.Handle, usedSchemaVersion in
 	}
 
 	bundles, err := infosync.GetAllRuleBundles(nil)
-	failpoint.Inject("FailPlacement", func(val failpoint.Value) {
-		if val.(bool) {
-			bundles = []*placement.Bundle{}
-			err = nil
-		}
-	})
 	if err != nil {
 		return 0, nil, fullLoad, err
 	}
@@ -371,7 +365,7 @@ func (do *Domain) Reload() error {
 	var err error
 	var neededSchemaVersion int64
 
-	ver, err := do.store.CurrentVersion()
+	ver, err := do.store.CurrentVersion(oracle.GlobalTxnScope)
 	if err != nil {
 		return err
 	}
@@ -1548,5 +1542,5 @@ var (
 	ErrInfoSchemaExpired = dbterror.ClassDomain.NewStd(errno.ErrInfoSchemaExpired)
 	// ErrInfoSchemaChanged returns the error that information schema is changed.
 	ErrInfoSchemaChanged = dbterror.ClassDomain.NewStdErr(errno.ErrInfoSchemaChanged,
-		mysql.Message(errno.MySQLErrName[errno.ErrInfoSchemaChanged].Raw+". "+kv.TxnRetryableMark, nil), "", "")
+		mysql.Message(errno.MySQLErrName[errno.ErrInfoSchemaChanged].Raw+". "+kv.TxnRetryableMark, nil))
 )
