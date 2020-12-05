@@ -7770,6 +7770,26 @@ func (s *testIntegrationSuite) TestIssue17868(c *C) {
 	tk.MustQuery("select col2 != 1 from t7").Check(testkit.Rows("1"))
 }
 
+// for issue 20128
+func (s *testIntegrationSerialSuite) TestIssue20128(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(b enum('a','b','c','d','e','f','g','h','i','j','k','l','m','n','o','p','q','r','s','t','u','v','w','x','y','z') DEFAULT NULL, c decimal(40,20));")
+	tk.MustExec("insert into t values('z', 19.18040000000000000000);")
+	tk.MustExec("insert into t values('z', 26.18040000000000000000);")
+	tk.MustExec("insert into t values('z', 25.18040000000000000000);")
+	tk.MustQuery("select * from t where t.b > t.c;").Check(testkit.Rows("z 19.18040000000000000000", "z 25.18040000000000000000"))
+	tk.MustQuery("select * from t where t.b < t.c;").Check(testkit.Rows("z 26.18040000000000000000"))
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a bit(64), b double);")
+	tk.MustExec("insert into t values(-21172, -11623);")
+	tk.MustQuery("select b from t where a < b;").Check(testkit.Rows("-11623"))
+}
+
 func (s *testIntegrationSerialSuite) TestCollationIndexJoin(c *C) {
 	collate.SetNewCollationEnabledForTest(true)
 	defer collate.SetNewCollationEnabledForTest(false)
