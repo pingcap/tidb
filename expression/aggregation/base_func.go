@@ -223,6 +223,9 @@ func (a *baseFuncDesc) typeInfer4Avg(ctx sessionctx.Context) {
 	case mysql.TypeDouble, mysql.TypeFloat:
 		a.RetTp = types.NewFieldType(mysql.TypeDouble)
 		a.RetTp.Flen, a.RetTp.Decimal = mysql.MaxRealWidth, a.Args[0].GetType().Decimal
+	case mysql.TypeDate, mysql.TypeDuration, mysql.TypeDatetime, mysql.TypeTimestamp:
+		a.RetTp = types.NewFieldType(mysql.TypeDouble)
+		a.RetTp.Flen, a.RetTp.Decimal = mysql.MaxRealWidth, 4
 	default:
 		a.RetTp = types.NewFieldType(mysql.TypeDouble)
 		a.RetTp.Flen, a.RetTp.Decimal = mysql.MaxRealWidth, types.UnspecifiedLength
