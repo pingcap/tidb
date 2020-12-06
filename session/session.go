@@ -2288,6 +2288,7 @@ var builtinGlobalVariable = []string{
 	variable.TiDBEnableAsyncCommit,
 	variable.TiDBEnable1PC,
 	variable.TiDBGuaranteeExternalConsistency,
+	variable.TiDBAnalyzeVersion,
 }
 
 var (
