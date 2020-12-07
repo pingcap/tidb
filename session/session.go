@@ -2209,6 +2209,7 @@ var builtinGlobalVariable = []string{
 	variable.InnodbLockWaitTimeout,
 	variable.WindowingUseHighPrecision,
 	variable.SQLSelectLimit,
+	variable.InitConnect,
 
 	/* TiDB specific global variables: */
 	variable.TiDBSkipASCIICheck,

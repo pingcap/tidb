@@ -761,6 +761,9 @@ type SessionVars struct {
 	Enable1PC bool
 
 	GuaranteeExternalConsistency bool
+
+	// InitConnect indicates if a statement should be run on connection creation
+	InitConnect string
 }
 
 // CheckAndGetTxnScope will return the transaction scope we should use in the current session.
@@ -1627,6 +1630,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.Enable1PC = TiDBOptOn(val)
 	case TiDBGuaranteeExternalConsistency:
 		s.GuaranteeExternalConsistency = TiDBOptOn(val)
+	case InitConnect:
+		s.InitConnect = val
 	}
 	s.systems[name] = val
 	return nil

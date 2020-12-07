@@ -719,6 +719,18 @@ func (cc *clientConn) PeerHost(hasPassword string) (host string, err error) {
 	return
 }
 
+func (cc *clientConn) initConnectApplies() bool {
+	return true
+	/*
+		val, _ := cc.ctx.GetSessionVars().GetSystemVar(variable.InitConnect)
+		if val != "" {
+			// TODO: Check if we don't have the super privilege
+			return true
+		}
+		return false
+	*/
+}
+
 // Run reads client query and writes query result to client in for loop, if there is a panic during query handling,
 // it will be recovered and log the panic error.
 // This function returns and the connection is closed if there is an IO error or there is a panic.
@@ -744,6 +756,38 @@ func (cc *clientConn) Run(ctx context.Context) {
 			terror.Log(err)
 		}
 	}()
+
+	/* TODO:
+	   - Use actual value from variable.
+	   - Does init_connect apply to com_change_user or refresh?
+	   - What happens to errors in init_connect?
+	   - Do I need to increment metrics about disconnects?
+	*/
+
+	// If there is an initConnect set, read the result-sets for each of the results.
+	// This is required to make sure the statements execute.
+	if cc.initConnectApplies() {
+		initConnect, _ := cc.ctx.GetSessionVars().GetSystemVar(variable.InitConnect)
+		logutil.Logger(ctx).Info("executing init_connect", zap.String("initConnect", initConnect))
+		rss, err := cc.ctx.Execute(ctx, initConnect)
+		for _, rs := range rss {
+			req := rs.NewChunk()
+			for {
+				_ = rs.Next(ctx, req)
+				if req.NumRows() == 0 {
+					break
+				}
+			}
+			rs.Close()
+		}
+
+		if err != nil {
+			logutil.Logger(ctx).Warn("error running init connect", zap.Error(err))
+		} else {
+			logutil.Logger(ctx).Info("init connect complete")
+		}
+	}
+
 	// Usually, client connection status changes between [dispatching] <=> [reading].
 	// When some event happens, server may notify this client connection by setting
 	// the status to special values, for example: kill or graceful shutdown.

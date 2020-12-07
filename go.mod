@@ -17,7 +17,9 @@ require (
 	github.com/dgryski/go-farm v0.0.0-20190423205320-6a90982ecee2
 	github.com/frankban/quicktest v1.11.1 // indirect
 	github.com/fsouza/fake-gcs-server v1.17.0 // indirect
+	github.com/go-critic/go-critic v0.5.2 // indirect
 	github.com/go-sql-driver/mysql v1.5.0
+	github.com/go-toolsmith/pkgload v1.0.1 // indirect
 	github.com/gogo/protobuf v1.3.1
 	github.com/golang/protobuf v1.3.4
 	github.com/golang/snappy v0.0.2-0.20190904063534-ff6b7dc882cf
@@ -30,6 +32,7 @@ require (
 	github.com/joho/sqltocsv v0.0.0-20190824231449-5650f27fd5b6 // indirect
 	github.com/klauspost/cpuid v1.2.1
 	github.com/kr/text v0.2.0 // indirect
+	github.com/logrusorgru/aurora v2.0.3+incompatible // indirect
 	github.com/ngaut/pools v0.0.0-20180318154953-b7bc8c42aac7
 	github.com/ngaut/sync2 v0.0.0-20141008032647-7a24ed77b2ef
 	github.com/ngaut/unistore v0.0.0-20201113064408-907e3fcf8e7d
@@ -55,6 +58,8 @@ require (
 	github.com/prometheus/client_golang v1.5.1
 	github.com/prometheus/client_model v0.2.0
 	github.com/prometheus/common v0.9.1
+	github.com/quasilyte/go-ruleguard v0.2.1 // indirect
+	github.com/quasilyte/regex/syntax v0.0.0-20200805063351-8f842688393c // indirect
 	github.com/shirou/gopsutil v2.20.3+incompatible
 	github.com/sirupsen/logrus v1.6.0
 	github.com/soheilhy/cmux v0.1.4
@@ -73,11 +78,12 @@ require (
 	go.uber.org/multierr v1.6.0 // indirect
 	go.uber.org/zap v1.16.0
 	golang.org/x/crypto v0.0.0-20200820211705-5c72a883971a // indirect
-	golang.org/x/net v0.0.0-20200904194848-62affa334b73
+	golang.org/x/mod v0.4.0 // indirect
+	golang.org/x/net v0.0.0-20201021035429-f5854403a974
 	golang.org/x/sync v0.0.0-20201020160332-67f06af15bc9
-	golang.org/x/sys v0.0.0-20200819171115-d785dc25833f
+	golang.org/x/sys v0.0.0-20200930185726-fdedc70b468f
 	golang.org/x/text v0.3.4
-	golang.org/x/tools v0.0.0-20200820010801-b793a1359eac
+	golang.org/x/tools v0.0.0-20201207174214-6d2eea543038
 	google.golang.org/grpc v1.27.1
 	gopkg.in/check.v1 v1.0.0-20200902074654-038fdea0a05b // indirect
 	gopkg.in/natefinch/lumberjack.v2 v2.0.0
