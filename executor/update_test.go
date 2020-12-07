@@ -485,3 +485,13 @@ func getPresumeExistsCount(c *C, se session.Session) int {
 	}
 	return presumeNotExistsCnt
 }
+
+func (s *testSuite11) TestOutOfRangeWithUnsigned(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`drop table if exists t`)
+	tk.MustExec(`create table t(ts int(10) unsigned NULL DEFAULT NULL)`)
+	tk.MustExec(`insert into t values(1)`)
+	_, err := tk.Exec("update t set ts = IF(ts < (0 - ts), 1,1) where ts>0")
+	c.Assert(err.Error(), Equals, "[types:1690]BIGINT UNSIGNED value is out of range in '(0 - test.t.ts)'")
+}

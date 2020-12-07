@@ -1065,7 +1065,7 @@ func (d *Datum) convertToUint(sc *stmtctx.StatementContext, target *FieldType) (
 		}
 	case KindMysqlJSON:
 		var i64 int64
-		i64, err = ConvertJSONToInt(sc, d.GetMysqlJSON(), true)
+		i64, err = ConvertJSONToInt(sc, d.GetMysqlJSON(), true, tp)
 		val = uint64(i64)
 	default:
 		return invalidConv(d, target.Tp)
@@ -1365,6 +1365,12 @@ func (d *Datum) convertToMysqlYear(sc *stmtctx.StatementContext, target *FieldTy
 		y = int64(d.GetMysqlTime().Year())
 	case KindMysqlDuration:
 		y = int64(time.Now().Year())
+	case KindMysqlJSON:
+		y, err = ConvertJSONToInt64(sc, d.GetMysqlJSON(), false)
+		if err != nil {
+			ret.SetInt64(0)
+			return ret, errors.Trace(err)
+		}
 	default:
 		ret, err = d.convertToInt(sc, NewFieldType(mysql.TypeLonglong))
 		if err != nil {
@@ -1458,7 +1464,7 @@ func (d *Datum) convertToMysqlEnum(sc *stmtctx.StatementContext, target *FieldTy
 		err error
 	)
 	switch d.k {
-	case KindString, KindBytes:
+	case KindString, KindBytes, KindBinaryLiteral:
 		e, err = ParseEnum(target.Elems, d.GetString(), target.Collate)
 	case KindMysqlEnum:
 		e, err = ParseEnum(target.Elems, d.GetMysqlEnum().Name, target.Collate)
@@ -1485,7 +1491,7 @@ func (d *Datum) convertToMysqlSet(sc *stmtctx.StatementContext, target *FieldTyp
 		err error
 	)
 	switch d.k {
-	case KindString, KindBytes:
+	case KindString, KindBytes, KindBinaryLiteral:
 		s, err = ParseSet(target.Elems, d.GetString(), target.Collate)
 	case KindMysqlEnum:
 		s, err = ParseSet(target.Elems, d.GetMysqlEnum().Name, target.Collate)
@@ -1712,7 +1718,7 @@ func (d *Datum) toSignedInteger(sc *stmtctx.StatementContext, tp byte) (int64, e
 		fval := d.GetMysqlSet().ToNumber()
 		return ConvertFloatToInt(fval, lowerBound, upperBound, tp)
 	case KindMysqlJSON:
-		return ConvertJSONToInt(sc, d.GetMysqlJSON(), false)
+		return ConvertJSONToInt(sc, d.GetMysqlJSON(), false, tp)
 	case KindBinaryLiteral, KindMysqlBit:
 		val, err := d.GetBinaryLiteral().ToInt(sc)
 		if err != nil {
