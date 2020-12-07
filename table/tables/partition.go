@@ -834,6 +834,14 @@ func (t *partitionTableWithGivenSets) AddRecord(ctx sessionctx.Context, r []type
 	return partitionedTableAddRecord(ctx, t.partitionedTable, r, t.partitions, opts)
 }
 
+func (t *partitionTableWithGivenSets) GetAllPartitionIDs() []int64 {
+	ptIDs := make([]int64, 0, len(t.partitions))
+	for id := range t.partitions {
+		ptIDs = append(ptIDs, id)
+	}
+	return ptIDs
+}
+
 // RemoveRecord implements table.Table RemoveRecord interface.
 func (t *partitionedTable) RemoveRecord(ctx sessionctx.Context, h kv.Handle, r []types.Datum) error {
 	partitionInfo := t.meta.GetPartitionInfo()
@@ -844,6 +852,14 @@ func (t *partitionedTable) RemoveRecord(ctx sessionctx.Context, h kv.Handle, r [
 
 	tbl := t.GetPartition(pid)
 	return tbl.RemoveRecord(ctx, h, r)
+}
+
+func (t *partitionedTable) GetAllPartitionIDs() []int64 {
+	ptIDs := make([]int64, 0, len(t.partitions))
+	for id := range t.partitions {
+		ptIDs = append(ptIDs, id)
+	}
+	return ptIDs
 }
 
 // UpdateRecord implements table.Table UpdateRecord interface.

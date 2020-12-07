@@ -14,6 +14,10 @@
 package executor_test
 
 import (
+	"fmt"
+	"sync"
+	"time"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/domain"
@@ -161,4 +165,147 @@ func (s *testBatchPointGetSuite) TestBatchPointGetUnsignedHandleWithSort(c *C) {
 	tk.MustExec("insert into t2 values (1)")
 	tk.MustQuery("select id from t2 where id in (8738875760185212610, 1, 9814441339970117597) order by id").Check(testkit.Rows("1", "8738875760185212610", "9814441339970117597"))
 	tk.MustQuery("select id from t2 where id in (8738875760185212610, 1, 9814441339970117597) order by id desc").Check(testkit.Rows("9814441339970117597", "8738875760185212610", "1"))
+}
+
+func (s *testBatchPointGetSuite) TestBatchPointGetLockExistKey(c *C) {
+	var wg sync.WaitGroup
+	errCh := make(chan error)
+
+	testLock := func(rc bool, key string, tableName string) {
+		doneCh := make(chan struct{}, 1)
+		tk1, tk2 := testkit.NewTestKit(c, s.store), testkit.NewTestKit(c, s.store)
+
+		errCh <- tk1.ExecToErr("use test")
+		errCh <- tk2.ExecToErr("use test")
+		errCh <- tk1.ExecToErr("set session tidb_enable_clustered_index = 0")
+
+		errCh <- tk1.ExecToErr(fmt.Sprintf("drop table if exists %s", tableName))
+		errCh <- tk1.ExecToErr(fmt.Sprintf("create table %s(id int, v int, k int, %s key0(id, v))", tableName, key))
+		errCh <- tk1.ExecToErr(fmt.Sprintf("insert into %s values(1, 1, 1), (2, 2, 2)", tableName))
+
+		if rc {
+			errCh <- tk1.ExecToErr("set tx_isolation = 'READ-COMMITTED'")
+			errCh <- tk2.ExecToErr("set tx_isolation = 'READ-COMMITTED'")
+		}
+
+		errCh <- tk1.ExecToErr("begin pessimistic")
+		errCh <- tk2.ExecToErr("begin pessimistic")
+
+		// select for update
+		if !rc {
+			// lock exist key only for repeatable read
+			errCh <- tk1.ExecToErr(fmt.Sprintf("select * from %s where (id, v) in ((1, 1), (2, 2)) for update", tableName))
+		} else {
+			// read committed will not lock non-exist key
+			errCh <- tk1.ExecToErr(fmt.Sprintf("select * from %s where (id, v) in ((1, 1), (2, 2), (3, 3)) for update", tableName))
+		}
+		errCh <- tk2.ExecToErr(fmt.Sprintf("insert into %s values(3, 3, 3)", tableName))
+		go func() {
+			errCh <- tk2.ExecToErr(fmt.Sprintf("insert into %s values(1, 1, 10)", tableName))
+			doneCh <- struct{}{}
+		}()
+
+		time.Sleep(150 * time.Millisecond)
+		errCh <- tk1.ExecToErr(fmt.Sprintf("update %s set v = 2 where id = 1 and v = 1", tableName))
+
+		errCh <- tk1.ExecToErr("commit")
+		<-doneCh
+		errCh <- tk2.ExecToErr("commit")
+		tk1.MustQuery(fmt.Sprintf("select * from %s", tableName)).Check(testkit.Rows(
+			"1 2 1",
+			"2 2 2",
+			"3 3 3",
+			"1 1 10",
+		))
+
+		// update
+		errCh <- tk1.ExecToErr("begin pessimistic")
+		errCh <- tk2.ExecToErr("begin pessimistic")
+		if !rc {
+			// lock exist key only for repeatable read
+			errCh <- tk1.ExecToErr(fmt.Sprintf("update %s set v = v + 1 where (id, v) in ((2, 2), (3, 3))", tableName))
+		} else {
+			// read committed will not lock non-exist key
+			errCh <- tk1.ExecToErr(fmt.Sprintf("update %s set v = v + 1 where (id, v) in ((2, 2), (3, 3), (4, 4))", tableName))
+		}
+		errCh <- tk2.ExecToErr(fmt.Sprintf("insert into %s values(4, 4, 4)", tableName))
+		go func() {
+			errCh <- tk2.ExecToErr(fmt.Sprintf("insert into %s values(3, 3, 30)", tableName))
+			doneCh <- struct{}{}
+		}()
+		time.Sleep(150 * time.Millisecond)
+		errCh <- tk1.ExecToErr("commit")
+		<-doneCh
+		errCh <- tk2.ExecToErr("commit")
+		tk1.MustQuery(fmt.Sprintf("select * from %s", tableName)).Check(testkit.Rows(
+			"1 2 1",
+			"2 3 2",
+			"3 4 3",
+			"1 1 10",
+			"4 4 4",
+			"3 3 30",
+		))
+
+		// delete
+		errCh <- tk1.ExecToErr("begin pessimistic")
+		errCh <- tk2.ExecToErr("begin pessimistic")
+		if !rc {
+			// lock exist key only for repeatable read
+			errCh <- tk1.ExecToErr(fmt.Sprintf("delete from %s where (id, v) in ((3, 4), (4, 4))", tableName))
+		} else {
+			// read committed will not lock non-exist key
+			errCh <- tk1.ExecToErr(fmt.Sprintf("delete from %s where (id, v) in ((3, 4), (4, 4), (5, 5))", tableName))
+		}
+		errCh <- tk2.ExecToErr(fmt.Sprintf("insert into %s values(5, 5, 5)", tableName))
+		go func() {
+			errCh <- tk2.ExecToErr(fmt.Sprintf("insert into %s values(4, 4,40)", tableName))
+			doneCh <- struct{}{}
+		}()
+		time.Sleep(150 * time.Millisecond)
+		errCh <- tk1.ExecToErr("commit")
+		<-doneCh
+		errCh <- tk2.ExecToErr("commit")
+		tk1.MustQuery(fmt.Sprintf("select * from %s", tableName)).Check(testkit.Rows(
+			"1 2 1",
+			"2 3 2",
+			"1 1 10",
+			"3 3 30",
+			"5 5 5",
+			"4 4 40",
+		))
+		wg.Done()
+	}
+
+	for i, one := range []struct {
+		rc  bool
+		key string
+	}{
+		{rc: false, key: "primary key"},
+		{rc: false, key: "unique key"},
+		{rc: true, key: "primary key"},
+		{rc: true, key: "unique key"},
+	} {
+		wg.Add(1)
+		tableName := fmt.Sprintf("t_%d", i)
+		go testLock(one.rc, one.key, tableName)
+	}
+
+	// should works for common handle in clustered index
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(id varchar(40) primary key)")
+	tk.MustExec("insert into t values('1'), ('2')")
+	tk.MustExec("set tx_isolation = 'READ-COMMITTED'")
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("select * from t where id in('1', '2') for update")
+	tk.MustExec("commit")
+
+	go func() {
+		wg.Wait()
+		close(errCh)
+	}()
+	for err := range errCh {
+		c.Assert(err, IsNil)
+	}
 }

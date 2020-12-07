@@ -2611,11 +2611,11 @@ func (s *testSuiteP2) TestHistoryRead(c *C) {
 	// SnapshotTS Is not updated if check failed.
 	c.Assert(tk.Se.GetSessionVars().SnapshotTS, Equals, uint64(0))
 
-	curVer1, _ := s.store.CurrentVersion()
+	curVer1, _ := s.store.CurrentVersion(oracle.GlobalTxnScope)
 	time.Sleep(time.Millisecond)
 	snapshotTime := time.Now()
 	time.Sleep(time.Millisecond)
-	curVer2, _ := s.store.CurrentVersion()
+	curVer2, _ := s.store.CurrentVersion(oracle.GlobalTxnScope)
 	tk.MustExec("insert history_read values (2)")
 	tk.MustQuery("select * from history_read").Check(testkit.Rows("1", "2"))
 	tk.MustExec("set @@tidb_snapshot = '" + snapshotTime.Format("2006-01-02 15:04:05.999999") + "'")
@@ -6505,7 +6505,7 @@ func (s *testSerialSuite) TestPrevStmtDesensitization(c *C) {
 	tk.MustExec("begin")
 	tk.MustExec("insert into t values (1),(2)")
 	c.Assert(tk.Se.GetSessionVars().PrevStmt.String(), Equals, "insert into t values ( ? ) , ( ? )")
-	c.Assert(tk.ExecToErr("insert into t values (1)").Error(), Equals, `[kv:1062]Duplicate entry '?' for key '?'`)
+	c.Assert(tk.ExecToErr("insert into t values (1)").Error(), Equals, `[kv:1062]Duplicate entry '?' for key 'a'`)
 }
 
 func (s *testSuite) TestIssue19372(c *C) {
@@ -6533,6 +6533,36 @@ func (s *testSerialSuite1) TestCollectCopRuntimeStats(c *C) {
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/tikvStoreRespResult"), IsNil)
 }
 
+func (s *testSerialSuite1) TestIndexLookupRuntimeStats(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (a int, b int, index(a))")
+	tk.MustExec("insert into t1 values (1,2),(2,3),(3,4)")
+	sql := "explain analyze select * from t1 use index(a) where a > 1;"
+	rows := tk.MustQuery(sql).Rows()
+	c.Assert(len(rows), Equals, 3)
+	explain := fmt.Sprintf("%v", rows[0])
+	c.Assert(explain, Matches, ".*time:.*loops:.*index_task:.*table_task: {num.*concurrency.*time.*}.*")
+	indexExplain := fmt.Sprintf("%v", rows[1])
+	tableExplain := fmt.Sprintf("%v", rows[2])
+	c.Assert(indexExplain, Matches, ".*time:.*loops:.*cop_task:.*")
+	c.Assert(tableExplain, Matches, ".*time:.*loops:.*cop_task:.*")
+}
+
+func (s *testSerialSuite1) TestHashAggRuntimeStats(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (a int, b int)")
+	tk.MustExec("insert into t1 values (1,2),(2,3),(3,4)")
+	sql := "explain analyze SELECT /*+ HASH_AGG() */ count(*) FROM t1 WHERE a < 10;"
+	rows := tk.MustQuery(sql).Rows()
+	c.Assert(len(rows), Equals, 5)
+	explain := fmt.Sprintf("%v", rows[0])
+	c.Assert(explain, Matches, ".*time:.*loops:.*partial_worker:{wall_time:.*concurrency:.*task_num:.*tot_wait:.*tot_exec:.*tot_time:.*max:.*p95:.*}.*final_worker:{wall_time:.*concurrency:.*task_num:.*tot_wait:.*tot_exec:.*tot_time:.*max:.*p95:.*}.*")
+}
+
 func (s *testSerialSuite1) TestIndexMergeRuntimeStats(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test;")
@@ -6556,23 +6586,6 @@ func (s *testSerialSuite1) TestIndexMergeRuntimeStats(c *C) {
 	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
 	sql = "select /*+ use_index_merge(t1, primary, t1a) */ * from t1 where id < 2 or a > 4 order by a"
 	tk.MustQuery(sql).Check(testkit.Rows("1 1 1 1 1", "5 5 5 5 5"))
-}
-
-func (s *testSerialSuite1) TestIndexlookupRuntimeStats(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test;")
-	tk.MustExec("drop table if exists t1")
-	tk.MustExec("create table t1 (a int, b int, index(a))")
-	tk.MustExec("insert into t1 values (1,2),(2,3),(3,4)")
-	sql := "explain analyze select * from t1 use index(a) where a > 1;"
-	rows := tk.MustQuery(sql).Rows()
-	c.Assert(len(rows), Equals, 3)
-	explain := fmt.Sprintf("%v", rows[0])
-	c.Assert(explain, Matches, ".*time:.*loops:.*index_task:.*table_task:{num.*concurrency.*time.*}.*")
-	indexExplain := fmt.Sprintf("%v", rows[1])
-	tableExplain := fmt.Sprintf("%v", rows[2])
-	c.Assert(indexExplain, Matches, ".*time:.*loops:.*cop_task:.*")
-	c.Assert(tableExplain, Matches, ".*time:.*loops:.*cop_task:.*")
 }
 
 func (s *testSuite) TestCollectDMLRuntimeStats(c *C) {
@@ -6614,12 +6627,12 @@ func (s *testSuite) TestCollectDMLRuntimeStats(c *C) {
 
 	tk.MustExec("begin pessimistic")
 	tk.MustExec("insert ignore into t1 values (9,9)")
-	c.Assert(getRootStats(), Matches, "time:.*, loops:.*, prepare:.*, check_insert:{total_time:.*, mem_insert_time:.*, prefetch:.*, rpc:{BatchGet:{num_rpc:.*, total_time:.*}}}.*")
+	c.Assert(getRootStats(), Matches, "time:.*, loops:.*, prepare:.*, check_insert: {total_time:.*, mem_insert_time:.*, prefetch:.*, rpc:{BatchGet:{num_rpc:.*, total_time:.*}}}.*")
 	tk.MustExec("rollback")
 
 	tk.MustExec("begin pessimistic")
 	tk.MustExec("insert into t1 values (10,10) on duplicate key update a=a+1")
-	c.Assert(getRootStats(), Matches, "time:.*, loops:.*, prepare:.*, check_insert:{total_time:.*, mem_insert_time:.*, prefetch:.*, rpc:{BatchGet:{num_rpc:.*, total_time:.*}.*")
+	c.Assert(getRootStats(), Matches, "time:.*, loops:.*, prepare:.*, check_insert: {total_time:.*, mem_insert_time:.*, prefetch:.*, rpc:{BatchGet:{num_rpc:.*, total_time:.*}.*")
 	tk.MustExec("rollback")
 
 	tk.MustExec("begin pessimistic")
@@ -6629,7 +6642,7 @@ func (s *testSuite) TestCollectDMLRuntimeStats(c *C) {
 
 	tk.MustExec("begin pessimistic")
 	tk.MustExec("insert ignore into t1 values(11,11) on duplicate key update `a`=`a`+1")
-	c.Assert(getRootStats(), Matches, "time:.*, loops:.*, prepare:.*, check_insert:{total_time:.*, mem_insert_time:.*, prefetch:.*, rpc:.*}")
+	c.Assert(getRootStats(), Matches, "time:.*, loops:.*, prepare:.*, check_insert: {total_time:.*, mem_insert_time:.*, prefetch:.*, rpc:.*}")
 	tk.MustExec("rollback")
 
 	tk.MustExec("begin pessimistic")
@@ -6712,6 +6725,85 @@ func (s *testCoprCache) TestIntegrationCopCache(c *C) {
 	hitRatio, err := strconv.ParseFloat(rows[0][5].(string)[hitRatioIdx:hitRatioIdx+4], 64)
 	c.Assert(err, IsNil)
 	c.Assert(hitRatio > 0, Equals, true)
+
+	// Test for cop cache disabled.
+	cfg := config.NewConfig()
+	cfg.TiKVClient.CoprCache.Enable = false
+	config.StoreGlobalConfig(cfg)
+	rows = tk.MustQuery("explain analyze select * from t where t.a < 10").Rows()
+	c.Assert(rows[0][2], Equals, "9")
+	c.Assert(strings.Contains(rows[0][5].(string), "copr_cache: disabled"), Equals, true)
+}
+
+func (s *testSerialSuite) TestCoprocessorOOMTicase(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec(`set @@tidb_wait_split_region_finish=1`)
+	// create table for non keep-order case
+	tk.MustExec("drop table if exists t5")
+	tk.MustExec("create table t5(id int)")
+	tk.MustQuery(`split table t5 between (0) and (10000) regions 10`).Check(testkit.Rows("9 1"))
+	// create table for keep-order case
+	tk.MustExec("drop table if exists t6")
+	tk.MustExec("create table t6(id int, index(id))")
+	tk.MustQuery(`split table t6 between (0) and (10000) regions 10`).Check(testkit.Rows("10 1"))
+	tk.MustQuery("split table t6 INDEX id between (0) and (10000) regions 10;").Check(testkit.Rows("10 1"))
+	count := 10
+	for i := 0; i < count; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t5 (id) values (%v)", i))
+		tk.MustExec(fmt.Sprintf("insert into t6 (id) values (%v)", i))
+	}
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.OOMAction = config.OOMActionLog
+	})
+	testcases := []struct {
+		name string
+		sql  string
+	}{
+		{
+			name: "keep Order",
+			sql:  "select id from t6 order by id",
+		},
+		{
+			name: "non keep Order",
+			sql:  "select id from t5",
+		},
+	}
+
+	f := func() {
+		for _, testcase := range testcases {
+			c.Log(testcase.name)
+			// larger than one copResponse, smaller than 2 copResponse
+			quota := 2*tikv.MockResponseSizeForTest - 100
+			se, err := session.CreateSession4Test(s.store)
+			c.Check(err, IsNil)
+			tk.Se = se
+			tk.MustExec("use test")
+			tk.MustExec(fmt.Sprintf("set @@tidb_mem_quota_query=%v;", quota))
+			var expect []string
+			for i := 0; i < count; i++ {
+				expect = append(expect, fmt.Sprintf("%v", i))
+			}
+			tk.MustQuery(testcase.sql).Sort().Check(testkit.Rows(expect...))
+			// assert oom action worked by max consumed > memory quota
+			c.Assert(tk.Se.GetSessionVars().StmtCtx.MemTracker.MaxConsumed(), Greater, int64(quota))
+			se.Close()
+		}
+	}
+
+	// ticase-4169, trigger oom action twice after workers consuming all the data
+	failpoint.Enable("github.com/pingcap/tidb/store/tikv/ticase-4169", `return(true)`)
+	f()
+	failpoint.Disable("github.com/pingcap/tidb/store/tikv/ticase-4169")
+	// ticase-4170, trigger oom action twice after iterator receiving all the data.
+	failpoint.Enable("github.com/pingcap/tidb/store/tikv/ticase-4170", `return(true)`)
+	f()
+	failpoint.Disable("github.com/pingcap/tidb/store/tikv/ticase-4170")
+	// ticase-4171, trigger oom before reading or consuming any data
+	failpoint.Enable("github.com/pingcap/tidb/store/tikv/ticase-4171", `return(true)`)
+	f()
+	failpoint.Disable("github.com/pingcap/tidb/store/tikv/ticase-4171")
 }
 
 func (s *testSuite) TestIssue20237(c *C) {
