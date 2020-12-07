@@ -724,6 +724,20 @@ func (s *testIntegrationSuite) TestPartitionPruningForInExpr(c *C) {
 	}
 }
 
+func (s *testIntegrationSerialSuite) TestPartitionPruningWithDateType(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a datetime) partition by range columns (a) (partition p1 values less than ('20000101'), partition p2 values less than ('2000-10-01'));")
+	tk.MustExec("insert into t values ('20000201'), ('19000101');")
+
+	// cannot get the statistical information immediately
+	// tk.MustQuery(`SELECT PARTITION_NAME,TABLE_ROWS FROM INFORMATION_SCHEMA.PARTITIONS WHERE TABLE_NAME = 't';`).Check(testkit.Rows("p1 1", "p2 1"))
+	str := tk.MustQuery(`desc select * from t where a < '2000-01-01';`).Rows()[0][3].(string)
+	c.Assert(strings.Contains(str, "partition:p1"), IsTrue)
+}
+
 func (s *testIntegrationSuite) TestPartitionPruningForEQ(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -1848,6 +1862,17 @@ func (s *testIntegrationSerialSuite) TestIssue20710(c *C) {
 	}
 }
 
+func (s *testIntegrationSuite) TestQueryBlockTableAliasInHint(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	c.Assert(tk.HasPlan("select /*+ HASH_JOIN(@sel_1 t2) */ * FROM (select 1) t1 NATURAL LEFT JOIN (select 2) t2", "HashJoin"), IsTrue)
+	tk.MustQuery("select /*+ HASH_JOIN(@sel_1 t2) */ * FROM (select 1) t1 NATURAL LEFT JOIN (select 2) t2").Check(testkit.Rows(
+		"1 2",
+	))
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 0)
+}
+
 func (s *testIntegrationSuite) TestIssue10448(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -1903,4 +1928,54 @@ func (s *testIntegrationSuite) TestOrderByHavingNotInSelect(c *C) {
 		"[planner:3029]Expression #1 of ORDER BY contains aggregate function and applies to the result of a non-aggregated query")
 	tk.MustGetErrMsg("select v1 from ttest having count(v2)",
 		"[planner:8123]In aggregated query without GROUP BY, expression #1 of SELECT list contains nonaggregated column 'v1'; this is incompatible with sql_mode=only_full_group_by")
+}
+
+func (s *testIntegrationSuite) TestUpdateSetDefault(c *C) {
+	// #20598
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table tt (x int, z int as (x+10) stored)")
+	tk.MustExec("insert into tt(x) values (1)")
+	tk.MustExec("update tt set x=2, z = default")
+	tk.MustQuery("select * from tt").Check(testkit.Rows("2 12"))
+
+	tk.MustGetErrMsg("update tt set z = 123",
+		"[planner:3105]The value specified for generated column 'z' in table 'tt' is not allowed.")
+	tk.MustGetErrMsg("update tt as ss set z = 123",
+		"[planner:3105]The value specified for generated column 'z' in table 'tt' is not allowed.")
+	tk.MustGetErrMsg("update tt as ss set x = 3, z = 13",
+		"[planner:3105]The value specified for generated column 'z' in table 'tt' is not allowed.")
+	tk.MustGetErrMsg("update tt as s1, tt as s2 set s1.z = default, s2.z = 456",
+		"[planner:3105]The value specified for generated column 'z' in table 'tt' is not allowed.")
+}
+
+func (s *testIntegrationSerialSuite) TestPreferRangeScan(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists test;")
+	tk.MustExec("create table test(`id` int(10) NOT NULL AUTO_INCREMENT,`name` varchar(50) NOT NULL DEFAULT 'tidb',`age` int(11) NOT NULL,`addr` varchar(50) DEFAULT 'The ocean of stars',PRIMARY KEY (`id`),KEY `idx_age` (`age`))")
+	tk.MustExec("insert into test(age) values(5);")
+	tk.MustExec("insert into test(name,age,addr) select name,age,addr from test;")
+	tk.MustExec("insert into test(name,age,addr) select name,age,addr from test;")
+	tk.MustExec("insert into test(name,age,addr) select name,age,addr from test;")
+	tk.MustExec("insert into test(name,age,addr) select name,age,addr from test;")
+	tk.MustExec("insert into test(name,age,addr) select name,age,addr from test;")
+	tk.MustExec("insert into test(name,age,addr) select name,age,addr from test;")
+	tk.MustExec("insert into test(name,age,addr) select name,age,addr from test;")
+	tk.MustExec("insert into test(name,age,addr) select name,age,addr from test;")
+	tk.MustExec("insert into test(name,age,addr) select name,age,addr from test;")
+	tk.MustExec("insert into test(name,age,addr) select name,age,addr from test;")
+	tk.MustExec("insert into test(name,age,addr) select name,age,addr from test;")
+	tk.MustExec("analyze table test;")
+	tk.MustExec("set session tidb_opt_prefer_range_scan=0")
+	tk.MustQuery("explain select * from test where age=5").Check(testkit.Rows(
+		"TableReader_7 2048.00 root  data:Selection_6",
+		"└─Selection_6 2048.00 cop[tikv]  eq(test.test.age, 5)",
+		"  └─TableFullScan_5 2048.00 cop[tikv] table:test keep order:false"))
+
+	tk.MustExec("set session tidb_opt_prefer_range_scan=1")
+	tk.MustQuery("explain select * from test where age=5").Check(testkit.Rows(
+		"IndexLookUp_7 2048.00 root  ",
+		"├─IndexRangeScan_5(Build) 2048.00 cop[tikv] table:test, index:idx_age(age) range:[5,5], keep order:false",
+		"└─TableRowIDScan_6(Probe) 2048.00 cop[tikv] table:test keep order:false"))
 }
