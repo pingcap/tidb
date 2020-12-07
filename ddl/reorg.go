@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
@@ -531,7 +532,7 @@ func getTableRange(d *ddlCtx, tbl table.PhysicalTable, snapshotVer uint64, prior
 }
 
 func getValidCurrentVersion(store kv.Storage) (ver kv.Version, err error) {
-	ver, err = store.CurrentVersion()
+	ver, err = store.CurrentVersion(oracle.GlobalTxnScope)
 	if err != nil {
 		return ver, errors.Trace(err)
 	} else if ver.Ver <= 0 {

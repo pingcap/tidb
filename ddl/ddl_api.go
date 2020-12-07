@@ -3451,7 +3451,7 @@ func needReorgToChange(origin *types.FieldType, to *types.FieldType) (needOreg b
 	}
 
 	if toFlen > 0 && toFlen < originFlen {
-		return true, fmt.Sprintf("length %d is less than origin %d", to.Flen, origin.Flen)
+		return true, fmt.Sprintf("length %d is less than origin %d", toFlen, originFlen)
 	}
 	if to.Decimal > 0 && to.Decimal < origin.Decimal {
 		return true, fmt.Sprintf("decimal %d is less than origin %d", to.Decimal, origin.Decimal)
@@ -3494,6 +3494,11 @@ func checkTypeChangeSupported(origin *types.FieldType, to *types.FieldType) bool
 
 	if origin.Tp == mysql.TypeNewDecimal && (to.Tp == mysql.TypeEnum || to.Tp == mysql.TypeSet) {
 		// TODO: Currently decimal cast to enum/set are not support yet, should fix here after supported.
+		return false
+	}
+
+	if origin.Tp == mysql.TypeJSON && (to.Tp == mysql.TypeEnum || to.Tp == mysql.TypeSet || to.Tp == mysql.TypeBit) {
+		// TODO: Currently json cast to enum/set/bit are not support yet, should fix here after supported.
 		return false
 	}
 
