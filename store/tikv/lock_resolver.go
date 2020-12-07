@@ -473,7 +473,7 @@ func (lr *LockResolver) getTxnStatusFromLock(bo *Backoffer, l *Lock, callerStart
 	var currentTS uint64
 	var err error
 	var status TxnStatus
-	if l.UseAsyncCommit {
+	if l.UseAsyncCommit && !forceSyncCommit {
 		// Async commit doesn't need the current ts since it uses the minCommitTS.
 		currentTS = 0
 		// Set to 0 so as not to push forward min commit ts.

@@ -617,6 +617,26 @@ func (s *testLockSuite) prepareTxnFallenBackFromAsyncCommit(c *C) {
 	c.Assert(committer.isAsyncCommit(), IsFalse) // Fallback due to MaxCommitTsTooLarge
 }
 
+func (s *testLockSuite) TestCheckLocksFallenBackFromAsyncCommit(c *C) {
+	s.prepareTxnFallenBackFromAsyncCommit(c)
+
+	lock := s.mustGetLock(c, []byte("fb1"))
+	c.Assert(lock.UseAsyncCommit, IsTrue)
+	bo := NewBackoffer(context.Background(), getMaxBackoff)
+	lr := newLockResolver(s.store)
+	status, err := lr.getTxnStatusFromLock(bo, lock, 0, false)
+	c.Assert(err, IsNil)
+	c.Assert(NewLock(status.primaryLock), DeepEquals, lock)
+
+	_, err = lr.checkAllSecondaries(bo, lock, &status)
+	c.Assert(err.(*nonAsyncCommitLock), NotNil)
+
+	status, err = lr.getTxnStatusFromLock(bo, lock, 0, true)
+	c.Assert(err, IsNil)
+	c.Assert(status.action, Equals, kvrpcpb.Action_TTLExpireRollback)
+	c.Assert(status.TTL(), Equals, uint64(0))
+}
+
 func (s *testLockSuite) TestResolveTxnFallenBackFromAsyncCommit(c *C) {
 	s.prepareTxnFallenBackFromAsyncCommit(c)
 
@@ -624,6 +644,7 @@ func (s *testLockSuite) TestResolveTxnFallenBackFromAsyncCommit(c *C) {
 	c.Assert(lock.UseAsyncCommit, IsTrue)
 	bo := NewBackoffer(context.Background(), getMaxBackoff)
 	expire, pushed, err := newLockResolver(s.store).ResolveLocks(bo, 0, []*Lock{lock})
+	c.Assert(err, IsNil)
 	c.Assert(expire, Equals, int64(0))
 	c.Assert(len(pushed), Equals, 0)
 
