@@ -1586,11 +1586,6 @@ func onAlterTablePartition(t *meta.Meta, job *model.Job) (ver int64, err error) 
 	pstate := ptInfo.GetStateByID(partitionID)
 	switch pstate {
 	case model.StatePublic:
-		err = infosync.PutRuleBundles(nil, []*placement.Bundle{bundle})
-		if err != nil {
-			job.State = model.JobStateCancelled
-			return 0, errors.Wrapf(err, "failed to notify PD the placement rules")
-		}
 		ptInfo.SetStateByID(partitionID, model.StateGlobalTxnOnly)
 		// used by ApplyDiff in updateSchemaVersion
 		job.CtxVars = []interface{}{partitionID}
@@ -1600,6 +1595,11 @@ func onAlterTablePartition(t *meta.Meta, job *model.Job) (ver int64, err error) 
 		}
 		job.SchemaState = model.StateGlobalTxnOnly
 	case model.StateGlobalTxnOnly:
+		err = infosync.PutRuleBundles(nil, []*placement.Bundle{bundle})
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return 0, errors.Wrapf(err, "failed to notify PD the placement rules")
+		}
 		ptInfo.SetStateByID(partitionID, model.StatePublic)
 		// used by ApplyDiff in updateSchemaVersion
 		job.CtxVars = []interface{}{partitionID}

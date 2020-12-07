@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
@@ -540,30 +541,25 @@ PARTITION BY RANGE (c) (
 
 	tb, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
 	c.Assert(err, IsNil)
-	partDefs := tb.Meta().GetPartitionInfo().Definitions
-
-	for _, def := range partDefs {
-		if def.Name.String() == "p0" {
-			groupID := placement.GroupID(def.ID)
-			bundles[groupID] = &placement.Bundle{
-				ID: groupID,
-				Rules: []*placement.Rule{
+	pid, err := tables.FindPartitionByName(tb.Meta(), "p0")
+	c.Assert(err, IsNil)
+	groupID := placement.GroupID(pid)
+	bundles[groupID] = &placement.Bundle{
+		ID: groupID,
+		Rules: []*placement.Rule{
+			{
+				GroupID: groupID,
+				Role:    placement.Leader,
+				Count:   1,
+				LabelConstraints: []placement.LabelConstraint{
 					{
-						GroupID: groupID,
-						Role:    placement.Leader,
-						Count:   1,
-						LabelConstraints: []placement.LabelConstraint{
-							{
-								Key:    placement.DCLabelKey,
-								Op:     placement.In,
-								Values: []string{"bj"},
-							},
-						},
+						Key:    placement.DCLabelKey,
+						Op:     placement.In,
+						Values: []string{"bj"},
 					},
 				},
-			}
-			break
-		}
+			},
+		},
 	}
 	dbInfo := testGetSchemaByName(c, tk.Se, "test")
 	tk2 := testkit.NewTestKit(c, s.store)
