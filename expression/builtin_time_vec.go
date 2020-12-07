@@ -237,6 +237,17 @@ func (b *builtinExtractDatetimeSig) vecEvalInt(input *chunk.Chunk, result *chunk
 		if result.IsNull(i) {
 			continue
 		}
+		if ds[i].IsZero() {
+			i64s[i] = 0
+			if b.ctx.GetSessionVars().SQLMode.HasNoZeroDateMode() {
+				isNull, err := handleInvalidZeroTime(b.ctx, ds[i])
+				if err != nil {
+					return err
+				}
+				result.SetNull(i, isNull)
+			}
+			continue
+		}
 		res, err := types.ExtractDatetimeNum(&ds[i], buf.GetString(i))
 		if err != nil {
 			return err
