@@ -19,8 +19,6 @@ import (
 	"sort"
 	"sync/atomic"
 
-	"go.uber.org/zap"
-
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -33,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/hack"
-	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/math"
 	"github.com/pingcap/tidb/util/rowcodec"
 )
@@ -341,12 +338,6 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 	}
 	// Fetch all values.
 	values, err = batchGetter.BatchGet(ctx, keys)
-	if e.ctx.GetSessionVars().ConnectionID > 0 {
-		logutil.Logger(ctx).Info("MYLOG, batch point get values",
-			zap.String("values", fmt.Sprintln(values)),
-			zap.String("batch getter", fmt.Sprintf("%T", batchGetter)),
-			zap.Error(err))
-	}
 	if err != nil {
 		return err
 	}
