@@ -89,8 +89,8 @@ require (
 )
 
 replace (
-	github.com/ngaut/unistore => github.com/sticnarf/unistore v0.0.0-20201204093230-c652d61e5b9b
-	github.com/pingcap/kvproto => github.com/sticnarf/kvproto v0.0.0-20201203161608-0599ca68618d
+	github.com/ngaut/unistore => github.com/sticnarf/unistore v0.0.0-20201207034424-9251bbaff2c9
+	github.com/pingcap/kvproto => github.com/sticnarf/kvproto v0.0.0-20201207033407-2932f1492fd7
 )
 
 go 1.13

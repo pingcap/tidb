@@ -816,10 +816,10 @@ github.com/spf13/pflag v1.0.5/go.mod h1:McXfInJRrz4CZXVZOBLb0bTZqETkiAhM9Iw0y3An
 github.com/spf13/viper v1.3.2/go.mod h1:ZiWeW+zYFKm7srdB9IoDzzZXaJaI5eL9QjNiN/DMA2s=
 github.com/spf13/viper v1.4.0/go.mod h1:PTJ7Z/lr49W6bUbkmS1V3by4uWynFiR9p7+dSq/yZzE=
 github.com/steveyen/gtreap v0.1.0/go.mod h1:kl/5J7XbrOmlIbYIXdRHDDE5QxHqpk0cmkT7Z4dM9/Y=
-github.com/sticnarf/kvproto v0.0.0-20201203161608-0599ca68618d h1:8ajKQTbBabED9A8KeMpqsUZQOTgH9Ix+s/ExmitrIhM=
-github.com/sticnarf/kvproto v0.0.0-20201203161608-0599ca68618d/go.mod h1:IOdRDPLyda8GX2hE/jO7gqaCV/PNFh8BZQCQZXfIOqI=
-github.com/sticnarf/unistore v0.0.0-20201204093230-c652d61e5b9b h1:dsfXtIdOK2hZzJe6pno2c8rgORjhFqiPBqf4w6bBjJ4=
-github.com/sticnarf/unistore v0.0.0-20201204093230-c652d61e5b9b/go.mod h1:INaogn3OAu9DwRqdB9HUcds5ENOIYKsGQzmwroEpzxM=
+github.com/sticnarf/kvproto v0.0.0-20201207033407-2932f1492fd7 h1:pCPB0gQoHcYToCuB7VbnKx7lSzykfZ7xakUzjn/Tk1g=
+github.com/sticnarf/kvproto v0.0.0-20201207033407-2932f1492fd7/go.mod h1:IOdRDPLyda8GX2hE/jO7gqaCV/PNFh8BZQCQZXfIOqI=
+github.com/sticnarf/unistore v0.0.0-20201207034424-9251bbaff2c9 h1:T1yJSupfZJ+SvXXRgxzuoMQUw3B9N3zPBKfbOxr+tTg=
+github.com/sticnarf/unistore v0.0.0-20201207034424-9251bbaff2c9/go.mod h1:INaogn3OAu9DwRqdB9HUcds5ENOIYKsGQzmwroEpzxM=
 github.com/stretchr/objx v0.1.0/go.mod h1:HFkY916IF+rwdDfMAkV7OtwuqBVzrE8GR6GFx+wExME=
 github.com/stretchr/objx v0.1.1/go.mod h1:HFkY916IF+rwdDfMAkV7OtwuqBVzrE8GR6GFx+wExME=
 github.com/stretchr/objx v0.2.0/go.mod h1:qt09Ya8vawLte6SNmTgCsAVtYtaKzEcn8ATUoHMkEqE=

@@ -549,7 +549,7 @@ func (e txnNotFoundErr) Error() string {
 // getTxnStatus sends the CheckTxnStatus request to the TiKV server.
 // When rollbackIfNotExist is false, the caller should be careful with the txnNotFoundErr error.
 func (lr *LockResolver) getTxnStatus(bo *Backoffer, txnID uint64, primary []byte,
-	callerStartTS, currentTS uint64, rollbackIfNotExist bool, rollbackAsyncCommit bool) (TxnStatus, error) {
+	callerStartTS, currentTS uint64, rollbackIfNotExist bool, asyncCommitFallback bool) (TxnStatus, error) {
 	if s, ok := lr.getResolved(txnID); ok {
 		return s, nil
 	}
@@ -572,7 +572,7 @@ func (lr *LockResolver) getTxnStatus(bo *Backoffer, txnID uint64, primary []byte
 		CallerStartTs:       callerStartTS,
 		CurrentTs:           currentTS,
 		RollbackIfNotExist:  rollbackIfNotExist,
-		RollbackAsyncCommit: rollbackAsyncCommit,
+		AsyncCommitFallback: asyncCommitFallback,
 	})
 	for {
 		loc, err := lr.store.GetRegionCache().LocateKey(bo, primary)
