@@ -927,6 +927,28 @@
           "  └─Selection_10 10.02 cop[tikv]  1, or(eq(test_partition.t1.a, 1), and(eq(test_partition.t1.a, 3), in(test_partition.t1.b, 3, 5)))",
           "    └─TableFullScan_9 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ]
+      },
+      {
+        "SQL": "select * from t1 where a = 1",
+        "Result": [
+          "1 1 1"
+        ],
+        "Plan": [
+          "TableReader_7 10.00 root partition:all data:Selection_6",
+          "└─Selection_6 10.00 cop[tikv]  eq(test_partition.t1.a, 1)",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t1 where b = 1",
+        "Result": [
+          "1 1 1"
+        ],
+        "Plan": [
+          "TableReader_7 10.00 root partition:all data:Selection_6",
+          "└─Selection_6 10.00 cop[tikv]  eq(test_partition.t1.b, 1)",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ]
       }
     ]
   }

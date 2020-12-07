@@ -199,8 +199,14 @@ func parseSimpleExprWithNames(p *parser.Parser, ctx sessionctx.Context, exprStr 
 
 // ForListPruning is used for list partition pruning.
 type ForListPruning struct {
-	Exprs    []expression.Expression
-	ExprCols []*expression.Column
+	Exprs     []expression.Expression
+	ExprCols  []*expression.Column
+	ColPrunes []ForListColumnPruning
+}
+
+type ForListColumnPruning struct {
+	Exprs   []expression.Expression
+	ExprCol *expression.Column
 }
 
 // ForRangePruning is used for range partition pruning.
@@ -429,9 +435,35 @@ func generateListPartitionExpr(ctx sessionctx.Context, pi *model.PartitionInfo,
 
 		pruneExprs = append(pruneExprs, pruneExpr)
 	}
+
+	colPrunes := make([]ForListColumnPruning, 0, len(pi.Columns))
+	if len(pi.Columns) > 1 {
+		for i := range pi.Columns {
+			colPrune := ForListColumnPruning{}
+			for _, def := range pi.Definitions {
+				colPruneExpr, err := generateListColumnPartitionExprStr(ctx, pi, schema, names, i, &def, p)
+				if err != nil {
+					return nil, err
+				}
+				expr, err := parseSimpleExprWithNames(p, ctx, colPruneExpr, schema, names)
+				if err != nil {
+					// If it got an error here, ddl may hang forever, so this error log is important.
+					logutil.BgLogger().Error("wrong table partition expression", zap.String("expression", colPruneExpr), zap.Error(err))
+					return nil, errors.Trace(err)
+				}
+				if colPrune.ExprCol == nil {
+					cols := expression.ExtractColumns(expr)
+					cols[0].Index = 0
+					colPrune.ExprCol = cols[0]
+				}
+				colPrune.Exprs = append(colPrune.Exprs, expr)
+			}
+			colPrunes = append(colPrunes, colPrune)
+		}
+	}
 	ret := &PartitionExpr{
 		InValues:       locateExprs,
-		ForListPruning: &ForListPruning{Exprs: pruneExprs, ExprCols: exprCols},
+		ForListPruning: &ForListPruning{Exprs: pruneExprs, ExprCols: exprCols, ColPrunes: colPrunes},
 		ColumnOffset:   offset,
 	}
 	return ret, nil
@@ -443,6 +475,41 @@ func generateListPartitionExprStr(ctx sessionctx.Context, pi *model.PartitionInf
 		return generateListColumnsPartitionExprStr(ctx, pi, schema, names, def, p)
 	}
 	return generateMultiListColumnsPartitionExprStr(ctx, pi, schema, names, def, p)
+}
+
+func generateListColumnPartitionExprStr(ctx sessionctx.Context, pi *model.PartitionInfo,
+	schema *expression.Schema, names types.NameSlice, colIdx int, def *model.PartitionDefinition, p *parser.Parser) (string, error) {
+	var colName = pi.Columns[colIdx].L
+	var buf = bytes.NewBuffer(make([]byte, 0, 8))
+	hasNull := false
+	fmt.Fprintf(buf, "(%s in (", colName)
+	for i, vs := range def.InValues {
+		if i > 0 {
+			buf.WriteByte(',')
+		}
+		buf.WriteString(vs[colIdx])
+		// check null
+		if hasNull {
+			continue
+		}
+		expr, err := parseSimpleExprWithNames(p, ctx, vs[colIdx], schema, names)
+		if err != nil {
+			return "", errors.Trace(err)
+		}
+		v, err := expr.Eval(chunk.Row{})
+		if err != nil {
+			return "", errors.Trace(err)
+		}
+		if v.IsNull() {
+			hasNull = true
+		}
+	}
+	buf.WriteString("))")
+	if hasNull {
+		fmt.Fprintf(buf, " or (%s is null)", colName)
+	}
+	fmt.Printf("col expr: %v ----\n\n", buf.String())
+	return buf.String(), nil
 }
 
 func generateListColumnsPartitionExprStr(ctx sessionctx.Context, pi *model.PartitionInfo,

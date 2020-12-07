@@ -291,6 +291,89 @@ func (s *partitionProcessor) findUsedListPartitions(ctx sessionctx.Context, tbl 
 			break
 		}
 	}
+	if _, ok := used[FullRange]; ok && len(pruneList.ColPrunes) > 1 {
+		// --------------------------------------
+		subUseds := make([]map[int]struct{}, 0, len(pruneList.ColPrunes))
+		for _, colPrune := range pruneList.ColPrunes {
+			col := colPrune.ExprCol.Clone().(*expression.Column)
+			colLen := []int{types.UnspecifiedLength}
+			if uniqueID, ok := colIDToUniqueID[col.ID]; ok {
+				col.UniqueID = uniqueID
+			}
+			cols := []*expression.Column{col}
+			detachedResult, err := ranger.DetachCondAndBuildRangeForPartition(ctx, conds, cols, colLen)
+			if err != nil {
+				return nil, err
+			}
+			ranges := detachedResult.Ranges
+			subUsed := make(map[int]struct{}, len(ranges))
+			for _, r := range ranges {
+				if r.IsPointNullable(ctx.GetSessionVars().StmtCtx) {
+					if !r.HighVal[0].IsNull() {
+						if len(r.HighVal) != len(cols) {
+							subUsed[FullRange] = struct{}{}
+							break
+						}
+					}
+					found := int64(-1)
+					row := chunk.MutRowFromDatums(r.HighVal).ToRow()
+					for j, expr := range colPrune.Exprs {
+						ret, _, err := expr.EvalInt(ctx, row)
+						if err != nil {
+							return nil, err
+						}
+						if ret > 0 {
+							found = int64(j)
+							break
+						}
+					}
+					if found == -1 {
+						continue
+					}
+					if len(partitionNames) > 0 && !s.findByName(partitionNames, pi.Definitions[found].Name.L) {
+						continue
+					}
+					subUsed[int(found)] = struct{}{}
+				} else {
+					subUsed[FullRange] = struct{}{}
+					break
+				}
+			}
+			subUseds = append(subUseds, subUsed)
+		}
+		used = make(map[int]struct{}, len(ranges))
+		notFullRangIdx := -1
+		for i := 0; i < len(subUseds); i++ {
+			_, ok := subUseds[i][FullRange]
+			if !ok {
+				notFullRangIdx = i
+				break
+			}
+		}
+		if notFullRangIdx != -1 {
+			subUsed := subUseds[notFullRangIdx]
+			for k := range subUsed {
+				exist := true
+				for i := 0; i < len(subUseds); i++ {
+					_, ok := subUseds[i][FullRange]
+					if ok {
+						continue
+					}
+					_, ok = subUseds[i][k]
+					if !ok {
+						exist = false
+						break
+					}
+				}
+				if exist {
+					used[k] = struct{}{}
+				}
+			}
+		} else {
+			used[FullRange] = struct{}{}
+		}
+		// --------------------------------------
+	}
 	if _, ok := used[FullRange]; ok {
 		or := partitionRangeOR{partitionRange{0, len(pi.Definitions)}}
 		return s.convertToIntSlice(or, pi, partitionNames), nil
