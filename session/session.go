@@ -794,12 +794,18 @@ func (s *session) ExecRestrictedSQL(sql string) ([]chunk.Row, []*ast.ResultField
 }
 
 // ExecRestrictedSQLWithContext implements RestrictedSQLExecutor interface.
-func (s *session) ExecRestrictedSQLWithContext(ctx context.Context, sql string) ([]chunk.Row, []*ast.ResultField, error) {
+func (s *session) ExecRestrictedSQLWithContext(ctx context.Context, sql string, opts ...sqlexec.OptionFuncAlias) (
+	[]chunk.Row, []*ast.ResultField, error) {
+	var execOption sqlexec.ExecOption
+	for _, opt := range opts {
+		opt(&execOption)
+	}
 	// Use special session to execute the sql.
 	tmp, err := s.sysSessionPool().Get()
 	if err != nil {
 		return nil, nil, err
 	}
+	defer s.sysSessionPool().Put(tmp)
 	se := tmp.(*session)
 	// The special session will share the `InspectionTableCache` with current session
 	// if the current session in inspection mode.
@@ -813,13 +819,31 @@ func (s *session) ExecRestrictedSQLWithContext(ctx context.Context, sql string) 
 	}
 	prePruneMode := se.sessionVars.PartitionPruneMode.Load()
 	defer func() {
-		if se != nil && se.GetSessionVars().StmtCtx.WarningCount() > 0 {
-			warnings := se.GetSessionVars().StmtCtx.GetWarnings()
-			s.GetSessionVars().StmtCtx.AppendWarnings(warnings)
+		if !execOption.IgnoreWarning {
+			if se != nil && se.GetSessionVars().StmtCtx.WarningCount() > 0 {
+				warnings := se.GetSessionVars().StmtCtx.GetWarnings()
+				s.GetSessionVars().StmtCtx.AppendWarnings(warnings)
+			}
 		}
 		se.sessionVars.PartitionPruneMode.Store(prePruneMode)
-		s.sysSessionPool().Put(tmp)
 	}()
+
+	if execOption.SnapshotTS != 0 {
+		se.sessionVars.SnapshotInfoschema, err = domain.GetDomain(s).GetSnapshotInfoSchema(execOption.SnapshotTS)
+		if err != nil {
+			return nil, nil, err
+		}
+		if err := se.sessionVars.SetSystemVar(variable.TiDBSnapshot, strconv.FormatUint(execOption.SnapshotTS, 10)); err != nil {
+			return nil, nil, err
+		}
+		defer func() {
+			if err := se.sessionVars.SetSystemVar(variable.TiDBSnapshot, ""); err != nil {
+				logutil.BgLogger().Error("set tidbSnapshot error", zap.Error(err))
+			}
+			se.sessionVars.SnapshotInfoschema = nil
+		}()
+	}
+
 	// for analyze stmt we need let worker session follow user session that executing stmt.
 	se.sessionVars.PartitionPruneMode.Store(s.sessionVars.PartitionPruneMode.Load())
 	metrics.SessionRestrictedSQLCounter.Inc()
@@ -832,22 +856,6 @@ func (s *session) ExecRestrictedSQLWithContext(ctx context.Context, sql string) 
 // If current session sets the snapshot timestamp, then execute with this snapshot timestamp.
 // Otherwise, execute with the current transaction start timestamp if the transaction is valid.
 func (s *session) ExecRestrictedSQLWithSnapshot(sql string) ([]chunk.Row, []*ast.ResultField, error) {
-	ctx := context.TODO()
-
-	// Use special session to execute the sql.
-	tmp, err := s.sysSessionPool().Get()
-	if err != nil {
-		return nil, nil, err
-	}
-	se := tmp.(*session)
-	// The special session will share the `InspectionTableCache` with current session
-	// if the current session in inspection mode.
-	if cache := s.sessionVars.InspectionTableCache; cache != nil {
-		se.sessionVars.InspectionTableCache = cache
-		defer func() { se.sessionVars.InspectionTableCache = nil }()
-	}
-	defer s.sysSessionPool().Put(tmp)
-	metrics.SessionRestrictedSQLCounter.Inc()
 	var snapshot uint64
 	txn, err := s.Txn(false)
 	if err != nil {
@@ -859,27 +867,7 @@ func (s *session) ExecRestrictedSQLWithSnapshot(sql string) ([]chunk.Row, []*ast
 	if s.sessionVars.SnapshotTS != 0 {
 		snapshot = s.sessionVars.SnapshotTS
 	}
-	// Set snapshot.
-	if snapshot != 0 {
-		se.sessionVars.SnapshotInfoschema, err = domain.GetDomain(s).GetSnapshotInfoSchema(snapshot)
-		if err != nil {
-			return nil, nil, err
-		}
-		if err := se.sessionVars.SetSystemVar(variable.TiDBSnapshot, strconv.FormatUint(snapshot, 10)); err != nil {
-			return nil, nil, err
-		}
-		defer func() {
-			if err := se.sessionVars.SetSystemVar(variable.TiDBSnapshot, ""); err != nil {
-				logutil.BgLogger().Error("set tidbSnapshot error", zap.Error(err))
-			}
-			se.sessionVars.SnapshotInfoschema = nil
-		}()
-	}
-	if ok := s.sessionVars.OptimizerUseInvisibleIndexes; ok {
-		se.sessionVars.OptimizerUseInvisibleIndexes = true
-		defer func() { se.sessionVars.OptimizerUseInvisibleIndexes = false }()
-	}
-	return execRestrictedSQL(ctx, se, sql)
+	return s.ExecRestrictedSQLWithContext(context.TODO(), sql, sqlexec.ExecOptionWithSnapshot(snapshot))
 }
 
 func execRestrictedSQL(ctx context.Context, se *session, sql string) ([]chunk.Row, []*ast.ResultField, error) {
