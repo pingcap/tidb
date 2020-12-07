@@ -1171,3 +1171,43 @@ func BenchmarkBatchAppendRows(b *testing.B) {
 		})
 	}
 }
+
+func (s *testChunkSuite) TestAppendRowsByColsIdx(c *check.C) {
+	numCols := 6
+	numRows := 10
+	chk := newChunk(8, 8, 0, 0, 40, 0)
+	strFmt := "%d.12345"
+	for i := 0; i < numRows; i++ {
+		chk.AppendNull(0)
+		chk.AppendInt64(1, int64(i))
+		str := fmt.Sprintf(strFmt, i)
+		chk.AppendString(2, str)
+		chk.AppendBytes(3, []byte(str))
+		chk.AppendMyDecimal(4, types.NewDecFromStringForTest(str))
+		chk.AppendJSON(5, json.CreateBinary(str))
+	}
+	c.Assert(chk.NumCols(), check.Equals, numCols)
+	c.Assert(chk.NumRows(), check.Equals, numRows)
+
+	colsIdx := []int{5, 3, 4}
+	chk2 := newChunk(0, 0, 40)
+	c.Assert(chk2.NumCols(), check.Equals, len(colsIdx))
+	rows := make([]Row, numRows)
+	for i := 0; i < numRows; i++ {
+		rows[i] = chk.GetRow(i)
+	}
+	wide := chk2.AppendRowsByColIdxs(rows, colsIdx)
+	c.Assert(chk2.NumRows(), check.Equals, 10)
+	c.Assert(wide, check.Equals, numRows*len(colsIdx))
+
+	for i := 0; i < numRows; i++ {
+		row := chk2.GetRow(i)
+		str := fmt.Sprintf(strFmt, i)
+		c.Assert(row.IsNull(0), check.IsFalse)
+		c.Assert(string(row.GetJSON(0).GetString()), check.Equals, str)
+		c.Assert(row.IsNull(1), check.IsFalse)
+		c.Assert(row.GetBytes(1), check.BytesEquals, []byte(str))
+		c.Assert(row.IsNull(2), check.IsFalse)
+		c.Assert(row.GetMyDecimal(2).String(), check.Equals, str)
+	}
+}
