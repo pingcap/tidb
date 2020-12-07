@@ -382,7 +382,7 @@ func buildHashPartitionDefinitions(_ sessionctx.Context, defs []*ast.PartitionDe
 
 func buildListPartitionDefinitions(ctx sessionctx.Context, defs []*ast.PartitionDefinition, tbInfo *model.TableInfo) ([]model.PartitionDefinition, error) {
 	definitions := make([]model.PartitionDefinition, 0, len(defs))
-	exprChecker := newPartitionExprChecker(ctx, nil, checkPartitionExprAllowed, checkPartitionExprFuncAllowed)
+	exprChecker := newPartitionExprChecker(ctx, nil, checkPartitionExprAllowed)
 	for _, def := range defs {
 		if err := def.Clause.Validate(model.PartitionTypeList, len(tbInfo.Partition.Columns)); err != nil {
 			return nil, err
@@ -427,7 +427,7 @@ func buildListPartitionDefinitions(ctx sessionctx.Context, defs []*ast.Partition
 
 func buildRangePartitionDefinitions(ctx sessionctx.Context, defs []*ast.PartitionDefinition, tbInfo *model.TableInfo) ([]model.PartitionDefinition, error) {
 	definitions := make([]model.PartitionDefinition, 0, len(defs))
-	exprChecker := newPartitionExprChecker(ctx, nil, checkPartitionExprAllowed, checkPartitionExprFuncAllowed)
+	exprChecker := newPartitionExprChecker(ctx, nil, checkPartitionExprAllowed)
 	for _, def := range defs {
 		if err := def.Clause.Validate(model.PartitionTypeRange, len(tbInfo.Partition.Columns)); err != nil {
 			return nil, err
@@ -551,7 +551,7 @@ func checkPartitionFuncValid(ctx sessionctx.Context, tblInfo *model.TableInfo, e
 	if expr == nil {
 		return nil
 	}
-	exprChecker := newPartitionExprChecker(ctx, tblInfo, checkPartitionExprArgs, checkPartitionExprAllowed, checkPartitionExprFuncAllowed)
+	exprChecker := newPartitionExprChecker(ctx, tblInfo, checkPartitionExprArgs, checkPartitionExprAllowed)
 	expr.Accept(exprChecker)
 	if exprChecker.err != nil {
 		return errors.Trace(exprChecker.err)
@@ -1664,37 +1664,13 @@ func checkPartitionExprAllowed(_ sessionctx.Context, _ *model.TableInfo, e ast.E
 			return errors.Trace(ErrPartitionFunctionIsNotAllowed)
 		}
 	case *ast.UnaryOperationExpr:
-		if v.Op == opcode.BitNeg {
+		switch v.Op {
+		case opcode.BitNeg, opcode.Not, opcode.Not2:
 			return errors.Trace(ErrPartitionFunctionIsNotAllowed)
 		}
 	}
 	return nil
 }
-
-func checkPartitionExprFuncAllowed(_ sessionctx.Context, _ *model.TableInfo, e ast.ExprNode) error {
-	var err error
-	switch expr := e.(type) {
-	case *ast.FuncCallExpr:
-		allowedFuncMap := map[string]struct{}{
-			ast.ToDays: {}, ast.ToSeconds: {}, ast.DayOfMonth: {}, ast.Month: {}, ast.DayOfYear: {},
-			ast.Quarter: {}, ast.YearWeek: {}, ast.Year: {}, ast.Weekday: {}, ast.DayOfWeek: {}, ast.Day: {},
-			ast.Hour: {}, ast.Minute: {}, ast.Second: {}, ast.TimeToSec: {}, ast.MicroSecond: {},
-			ast.UnixTimestamp: {}, ast.FromDays: {}, ast.Extract: {}, ast.Abs: {}, ast.Ceiling: {},
-			ast.DateDiff: {}, ast.Floor: {}, ast.Mod: {},
-		}
-		if _, ok := allowedFuncMap[expr.FnName.L]; !ok {
-			err = errors.Trace(ErrPartitionFunctionIsNotAllowed)
-		}
-	case *ast.UnaryOperationExpr:
-		switch expr.Op {
-		// We can not build partition with `not` expression. But in TiDB, `not` will be regard as a operator.
-		case opcode.Not, opcode.Not2:
-			err = errors.Trace(ErrPartitionFunctionIsNotAllowed)
-		}
-	}
-	return err
-}
-
 func checkPartitionExprArgs(_ sessionctx.Context, tblInfo *model.TableInfo, e ast.ExprNode) error {
 	expr, ok := e.(*ast.FuncCallExpr)
 	if !ok {
