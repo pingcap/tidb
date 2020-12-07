@@ -2200,14 +2200,11 @@ func (b *PlanBuilder) resolveSubquery(ctx context.Context, sel *ast.SelectStmt, 
 	corAggList := make([]*ast.AggregateFuncExpr, 0)
 	for _, field := range sel.Fields.Fields {
 		resolver.outerAggFuncs = resolver.outerAggFuncs[:0]
-		switch v := field.Expr.(type) {
-		case *ast.SubqueryExpr, *ast.PatternInExpr, *ast.ExistsSubqueryExpr, *ast.CompareSubqueryExpr:
-			_, ok := v.Accept(resolver)
-			if !ok {
-				return nil, resolver.err
-			}
-			corAggList = append(corAggList, resolver.outerAggFuncs...)
+		_, ok := field.Expr.Accept(resolver)
+		if !ok {
+			return nil, resolver.err
 		}
+		corAggList = append(corAggList, resolver.outerAggFuncs...)
 	}
 	corAggMap := make(map[*ast.AggregateFuncExpr]int)
 	for _, aggFunc := range corAggList {
