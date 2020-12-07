@@ -7282,15 +7282,6 @@ func (s *testIntegrationSuite) TestIssue20860(c *C) {
 	c.Assert(tk.ExecToErr("update t set d = adddate(d, interval 1 day) where id < 10"), NotNil)
 }
 
-<<<<<<< HEAD
-=======
-func (s *testIntegrationSerialSuite) TestIssue20608(c *C) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustQuery("select '䇇Հ' collate utf8mb4_bin like '___Հ';").Check(testkit.Rows("0"))
-}
-
 func (s *testIntegrationSuite) TestIssue10462(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -7328,7 +7319,6 @@ func (s *testIntegrationSuite) TestIssue10462(c *C) {
 	tk.MustQuery("select json_array(is_ipv6('1a6b:8888:ff66:77ee:0000:1234:5678:bcde'))").Check(testkit.Rows("[true]"))
 }
 
->>>>>>> c3c3063b6... expression: set IsBooleanFlag for boolean scalar functions (#20706)
 func (s *testIntegrationSerialSuite) TestIssue21290(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
