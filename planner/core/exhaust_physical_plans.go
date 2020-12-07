@@ -1918,10 +1918,10 @@ func (p *LogicalProjection) exhaustPhysicalPlans(prop *property.PhysicalProperty
 	ret := make([]PhysicalPlan, 0, len(allTaskTypes))
 	for _, tp := range allTaskTypes {
 		newProp, ok := p.TryToGetChildProp(prop)
-		newProp.TaskTp = tp
 		if !ok {
 			break
 		}
+		newProp.TaskTp = tp
 		proj := PhysicalProjection{
 			Exprs:                p.Exprs,
 			CalculateNoDelay:     p.CalculateNoDelay,
