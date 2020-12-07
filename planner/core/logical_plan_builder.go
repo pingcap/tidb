@@ -4624,18 +4624,18 @@ func (b *PlanBuilder) buildWindowFunctions(ctx context.Context, p LogicalPlan, g
 		if err != nil {
 			return nil, nil, err
 		}
-		err = b.checkOriginWindowFuncs(funcs)
-		if err != nil {
-			return nil, nil, err
-		}
-		err = b.checkOriginWindowSpec(spec, orderBy)
-		if err != nil {
-			return nil, nil, err
-		}
 		if len(funcs) == 0 {
-			// len(funcs) == 0 indicates this a named window spec but not used,
+			// len(funcs) == 0 indicates this an unused named window spec,
 			// so we just check for its validity and don't have to build plan for it.
+			err := b.checkOriginWindowSpec(spec, orderBy)
+			if err != nil {
+				return nil, nil, err
+			}
 			continue
+		}
+		err = b.checkOriginWindowFuncs(funcs, orderBy)
+		if err != nil {
+			return nil, nil, err
 		}
 		frame, err := b.buildWindowFunctionFrame(ctx, spec, orderBy)
 		if err != nil {
@@ -4678,8 +4678,9 @@ func (b *PlanBuilder) buildWindowFunctions(ctx context.Context, p LogicalPlan, g
 	return p, windowMap, nil
 }
 
-// checkOriginWindowFuncs checks the validity for origin window functions.
-func (b *PlanBuilder) checkOriginWindowFuncs(funcs []*ast.WindowFuncExpr) error {
+// checkOriginWindowFuncs checks the validity for original window specifications for a group of functions.
+// Because the grouped specification is different from them, we should especially check them before build window frame.
+func (b *PlanBuilder) checkOriginWindowFuncs(funcs []*ast.WindowFuncExpr, orderByItems []property.SortItem) error {
 	for _, f := range funcs {
 		if f.IgnoreNull {
 			return ErrNotSupportedYet.GenWithStackByArgs("IGNORE NULLS")
@@ -4690,12 +4691,18 @@ func (b *PlanBuilder) checkOriginWindowFuncs(funcs []*ast.WindowFuncExpr) error 
 		if f.FromLast {
 			return ErrNotSupportedYet.GenWithStackByArgs("FROM LAST")
 		}
+		spec := &f.Spec
+		if f.Spec.Name.L != "" {
+			spec = b.windowSpecs[f.Spec.Name.L]
+		}
+		if err := b.checkOriginWindowSpec(spec, orderByItems); err != nil {
+			return err
+		}
 	}
 	return nil
 }
 
-// checkOriginWindowSpec checks the validity for origin window specifications for a group of functions.
-// Because of the grouped specification is different from it, we should especially check them before build window frame.
+// checkOriginWindowSpec checks the validity for given window specification.
 func (b *PlanBuilder) checkOriginWindowSpec(spec *ast.WindowSpec, orderByItems []property.SortItem) error {
 	if spec.Frame == nil {
 		return nil
@@ -4850,9 +4857,13 @@ func (b *PlanBuilder) groupWindowFuncs(windowFuncs []*ast.WindowFuncExpr) (map[*
 	// Unused window specs should also be checked in b.buildWindowFunctions,
 	// so we add them to `groupedWindow` with empty window functions.
 	for _, spec := range b.windowSpecs {
-		if _, ok := groupedWindow[spec]; !ok {
-			groupedWindow[spec] = []*ast.WindowFuncExpr{}
+		if _, ok := groupedWindow[spec]; ok {
+			continue
 		}
+		if _, ok := updatedSpecMap[spec.Name.L]; ok {
+			continue
+		}
+		groupedWindow[spec] = []*ast.WindowFuncExpr{}
 	}
 	return groupedWindow, nil
 }
