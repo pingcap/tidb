@@ -350,8 +350,8 @@ func (lr *LockResolver) resolveLocks(bo *Backoffer, callerStartTS uint64, locks 
 	}
 
 	var resolve func(*Lock, bool) error
-	resolve = func(l *Lock, rollbackAsyncCommit bool) error {
-		status, err := lr.getTxnStatusFromLock(bo, l, callerStartTS, rollbackAsyncCommit)
+	resolve = func(l *Lock, forceSyncCommit bool) error {
+		status, err := lr.getTxnStatusFromLock(bo, l, callerStartTS, forceSyncCommit)
 		if err != nil {
 			return err
 		}
@@ -365,7 +365,7 @@ func (lr *LockResolver) resolveLocks(bo *Backoffer, callerStartTS uint64, locks 
 				cleanTxns[l.TxnID] = cleanRegions
 			}
 
-			if status.primaryLock != nil && status.primaryLock.UseAsyncCommit && !exists {
+			if status.primaryLock != nil && !forceSyncCommit && status.primaryLock.UseAsyncCommit && !exists {
 				err = lr.resolveLockAsync(bo, l, status)
 				if _, ok := err.(*nonAsyncCommitLock); ok {
 					err = resolve(l, true)
@@ -469,7 +469,7 @@ func (lr *LockResolver) GetTxnStatus(txnID uint64, callerStartTS uint64, primary
 	return lr.getTxnStatus(bo, txnID, primary, callerStartTS, currentTS, true, false)
 }
 
-func (lr *LockResolver) getTxnStatusFromLock(bo *Backoffer, l *Lock, callerStartTS uint64, rollbackAsyncCommit bool) (TxnStatus, error) {
+func (lr *LockResolver) getTxnStatusFromLock(bo *Backoffer, l *Lock, callerStartTS uint64, forceSyncCommit bool) (TxnStatus, error) {
 	var currentTS uint64
 	var err error
 	var status TxnStatus
@@ -496,7 +496,7 @@ func (lr *LockResolver) getTxnStatusFromLock(bo *Backoffer, l *Lock, callerStart
 		time.Sleep(100 * time.Millisecond)
 	})
 	for {
-		status, err = lr.getTxnStatus(bo, l.TxnID, l.Primary, callerStartTS, currentTS, rollbackIfNotExist, rollbackAsyncCommit)
+		status, err = lr.getTxnStatus(bo, l.TxnID, l.Primary, callerStartTS, currentTS, rollbackIfNotExist, forceSyncCommit)
 		if err == nil {
 			return status, nil
 		}
