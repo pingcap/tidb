@@ -6414,3 +6414,14 @@ func (s *testSuite) TestOOMActionPriority(c *C) {
 	}
 	c.Assert(action.GetPriority(), Equals, int64(memory.DefLogPriority))
 }
+
+func (s *testSuite) Test17780(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t0")
+	tk.MustExec("create table t0 (c0 double)")
+	tk.MustExec("insert into t0 values (1e30)")
+	tk.MustExec("update t0 set c0=0 where t0.c0 like 0")
+	// the update should not affect c0
+	tk.MustQuery("select count(*) from t0 where c0 = 0").Check(testkit.Rows("0"))
+}
