@@ -37,7 +37,7 @@ import (
 	"github.com/pingcap/tidb/util/testutil"
 )
 
-func (s *testSuite5) TestSetVar(c *C) {
+func (s *testSerialSuite1) TestSetVar(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	testSQL := "SET @a = 1;"
 	tk.MustExec(testSQL)

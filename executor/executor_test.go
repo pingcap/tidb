@@ -103,6 +103,7 @@ var _ = Suite(&testSuite{&baseTestSuite{}})
 var _ = Suite(&testSuiteP1{&baseTestSuite{}})
 var _ = Suite(&testSuiteP2{&baseTestSuite{}})
 var _ = Suite(&testSuite1{})
+var _ = SerialSuites(&testSerialSuite2{})
 var _ = Suite(&testSuite2{&baseTestSuite{}})
 var _ = Suite(&testSuite3{&baseTestSuite{}})
 var _ = Suite(&testSuite4{&baseTestSuite{}})
@@ -3120,6 +3121,10 @@ type testSuiteWithCliBase struct {
 }
 
 type testSuite1 struct {
+	testSuiteWithCliBase
+}
+
+type testSerialSuite2 struct {
 	testSuiteWithCliBase
 }
 
@@ -7000,6 +7005,29 @@ func (s *testSuite) TestIssue20305(c *C) {
 	tk.MustExec("CREATE TABLE `t3` (`y` year DEFAULT NULL, `a` int DEFAULT NULL)")
 	tk.MustExec("INSERT INTO `t3` VALUES (2069, 70), (2010, 11), (2155, 2156), (2069, 69)")
 	tk.MustQuery("SELECT * FROM `t3` where y <= a").Check(testkit.Rows("2155 2156"))
+}
+
+func (s *testSuite) TestZeroDateTimeCompatibility(c *C) {
+	SQLs := []string{
+		`select YEAR(0000-00-00), YEAR("0000-00-00")`,
+		`select MONTH(0000-00-00), MONTH("0000-00-00")`,
+		`select DAYOFWEEK(0000-00-00), DAYOFWEEK("0000-00-00")`,
+		`select DAYOFMONTH(0000-00-00), DAYOFMONTH("0000-00-00")`,
+		`select DAYOFYEAR(0000-00-00), DAYOFYEAR("0000-00-00")`,
+		`select QUARTER(0000-00-00), QUARTER("0000-00-00")`,
+		`select EXTRACT(DAY FROM 0000-00-00), EXTRACT(DAY FROM "0000-00-00")`,
+		`select EXTRACT(MONTH FROM 0000-00-00), EXTRACT(MONTH FROM "0000-00-00")`,
+		`select EXTRACT(YEAR FROM 0000-00-00), EXTRACT(YEAR FROM "0000-00-00")`,
+		`select EXTRACT(WEEK FROM 0000-00-00), EXTRACT(WEEK FROM "0000-00-00")`,
+		`select EXTRACT(QUARTER FROM 0000-00-00), EXTRACT(QUARTER FROM "0000-00-00")`,
+	}
+	tk := testkit.NewTestKit(c, s.store)
+
+	for _, t := range SQLs {
+		fmt.Println(t)
+		tk.MustQuery(t).Check(testkit.Rows("0 <nil>"))
+		c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
+	}
 }
 
 func (s *testSuite) TestOOMActionPriority(c *C) {
