@@ -1584,7 +1584,7 @@ func (b *PlanBuilder) buildSortForSelect(ctx context.Context, p LogicalPlan, byI
 
 		// check whether order by items show up in select distinct fields, see #12442
 		if hasDistinct && projExprs != nil {
-			err = b.checkOrderInDistinct(item, i, it, p, projExprs, oldLen)
+			err = b.checkOrderByInDistinct(item, i, it, p, projExprs, oldLen)
 			if err != nil {
 				return nil, err
 			}
@@ -1598,7 +1598,7 @@ func (b *PlanBuilder) buildSortForSelect(ctx context.Context, p LogicalPlan, byI
 	return sort, nil
 }
 
-func (b *PlanBuilder) checkOrderInDistinct(byItem *ast.ByItem, idx int, expr expression.Expression, p LogicalPlan, originalExprs []expression.Expression, length int) error {
+func (b *PlanBuilder) checkOrderByInDistinct(byItem *ast.ByItem, idx int, expr expression.Expression, p LogicalPlan, originalExprs []expression.Expression, length int) error {
 	// check if expressions directly match
 	for j := 0; j < length; j++ {
 		// both check original expression & as name
