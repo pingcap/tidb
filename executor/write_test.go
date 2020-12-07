@@ -3139,7 +3139,7 @@ func (s *testSuite4) TestWriteListPartitionTable2(c *C) {
 	tk.MustQuery("select id,name from t order by id").Check(testkit.Rows("1 x", "3 x", "4 e", "5 g"))
 	// Test insert ignore with duplicate
 	tk.MustExec("insert ignore into t (id,name) values  (1, 'b'), (5,'a'),(null,'y')")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1062 Duplicate entry '(1, 2)' for key 'idx'", "Warning 1062 Duplicate entry '(5, 2)' for key 'idx'"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1062 Duplicate entry '1-2' for key 'idx'", "Warning 1062 Duplicate entry '5-2' for key 'idx'"))
 	tk.MustQuery("select id,name from t partition(p0) order by id").Check(testkit.Rows("3 x", "5 g"))
 	tk.MustQuery("select id,name from t partition(p1) order by id").Check(testkit.Rows("1 x"))
 	tk.MustQuery("select id,name from t partition(p2) order by id").Check(testkit.Rows("4 e"))
@@ -3390,7 +3390,7 @@ func (s *testSuite4) TestWriteListColumnsPartitionTable2(c *C) {
 	tk.MustQuery("select * from t partition(p_west) order by id").Check(testkit.Rows("w 1 1", "w 2 2"))
 	// Test insert ignore with duplicate
 	tk.MustExec("insert ignore into t values  ('w', 2, 2), ('w', 3, 3), ('n', 10, 10)")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1062 Duplicate entry '(w, 2)' for key 'idx'"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1062 Duplicate entry 'w-2' for key 'idx'"))
 	tk.MustQuery("select * from t partition(p_west) order by id").Check(testkit.Rows("w 1 1", "w 2 2", "w 3 3"))
 	tk.MustQuery("select * from t partition(p_north) order by id").Check(testkit.Rows("n 9 9", "n 10 10"))
 	// Test insert ignore without duplicate
