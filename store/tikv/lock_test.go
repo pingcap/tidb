@@ -288,7 +288,7 @@ func (s *testLockSuite) TestCheckTxnStatus(c *C) {
 	bo := NewBackofferWithVars(context.Background(), PrewriteMaxBackoff, nil)
 	resolver := newLockResolver(s.store)
 	// Call getTxnStatus to check the lock status.
-	status, err := resolver.getTxnStatus(bo, txn.StartTS(), []byte("key"), currentTS, currentTS, true)
+	status, err := resolver.getTxnStatus(bo, txn.StartTS(), []byte("key"), currentTS, currentTS, true, false)
 	c.Assert(err, IsNil)
 	c.Assert(status.IsCommitted(), IsFalse)
 	c.Assert(status.ttl, Greater, uint64(0))
@@ -310,7 +310,7 @@ func (s *testLockSuite) TestCheckTxnStatus(c *C) {
 	// Then call getTxnStatus again and check the lock status.
 	currentTS, err = o.GetTimestamp(context.Background(), &oracle.Option{TxnScope: oracle.GlobalTxnScope})
 	c.Assert(err, IsNil)
-	status, err = newLockResolver(s.store).getTxnStatus(bo, txn.StartTS(), []byte("key"), currentTS, 0, true)
+	status, err = newLockResolver(s.store).getTxnStatus(bo, txn.StartTS(), []byte("key"), currentTS, 0, true, false)
 	c.Assert(err, IsNil)
 	c.Assert(status.ttl, Equals, uint64(0))
 	c.Assert(status.commitTS, Equals, uint64(0))
@@ -318,7 +318,7 @@ func (s *testLockSuite) TestCheckTxnStatus(c *C) {
 
 	// Call getTxnStatus on a committed transaction.
 	startTS, commitTS := s.putKV(c, []byte("a"), []byte("a"))
-	status, err = newLockResolver(s.store).getTxnStatus(bo, startTS, []byte("a"), currentTS, currentTS, true)
+	status, err = newLockResolver(s.store).getTxnStatus(bo, startTS, []byte("a"), currentTS, currentTS, true, false)
 	c.Assert(err, IsNil)
 	c.Assert(status.ttl, Equals, uint64(0))
 	c.Assert(status.commitTS, Equals, commitTS)
@@ -346,7 +346,7 @@ func (s *testLockSuite) TestCheckTxnStatusNoWait(c *C) {
 	resolver := newLockResolver(s.store)
 
 	// Call getTxnStatus for the TxnNotFound case.
-	_, err = resolver.getTxnStatus(bo, txn.StartTS(), []byte("key"), currentTS, currentTS, false)
+	_, err = resolver.getTxnStatus(bo, txn.StartTS(), []byte("key"), currentTS, currentTS, false, false)
 	c.Assert(err, NotNil)
 	_, ok := errors.Cause(err).(txnNotFoundErr)
 	c.Assert(ok, IsTrue)
@@ -363,7 +363,7 @@ func (s *testLockSuite) TestCheckTxnStatusNoWait(c *C) {
 		TTL:     100000,
 	}
 	// Call getTxnStatusFromLock to cover the retry logic.
-	status, err := resolver.getTxnStatusFromLock(bo, lock, currentTS)
+	status, err := resolver.getTxnStatusFromLock(bo, lock, currentTS, false)
 	c.Assert(err, IsNil)
 	c.Assert(status.ttl, Greater, uint64(0))
 	c.Assert(<-errCh, IsNil)
@@ -378,7 +378,7 @@ func (s *testLockSuite) TestCheckTxnStatusNoWait(c *C) {
 		TxnID:   startTS,
 		TTL:     1000,
 	}
-	status, err = resolver.getTxnStatusFromLock(bo, lock, currentTS)
+	status, err = resolver.getTxnStatusFromLock(bo, lock, currentTS, false)
 	c.Assert(err, IsNil)
 	c.Assert(status.ttl, Equals, uint64(0))
 	c.Assert(status.commitTS, Equals, uint64(0))

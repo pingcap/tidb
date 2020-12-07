@@ -488,6 +488,10 @@ func (s *mockTikvGrpcServer) VerDeleteRange(context.Context, *kvrpcpb.VerDeleteR
 	return nil, errors.New("unreachable")
 }
 
+func (s *mockTikvGrpcServer) CheckLeader(context.Context, *kvrpcpb.CheckLeaderRequest) (*kvrpcpb.CheckLeaderResponse, error) {
+	return nil, errors.New("unreachable")
+}
+
 func (s *testRegionRequestToSingleStoreSuite) TestNoReloadRegionForGrpcWhenCtxCanceled(c *C) {
 	// prepare a mock tikv grpc server
 	addr := "localhost:56341"
