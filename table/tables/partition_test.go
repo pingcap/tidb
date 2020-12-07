@@ -15,8 +15,6 @@ package tables_test
 
 import (
 	"context"
-	"strings"
-
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/ddl"
@@ -25,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
@@ -503,28 +500,6 @@ func (ts *testSuite) TestHashPartitionAndConditionConflict(c *C) {
 		Check(testkit.Rows())
 
 	tk.MustQuery("select * from t2 partition (p1) where t2.a = 6;").Check(testkit.Rows())
-}
-
-func (ts *testSuite) TestPartitionListWithTimeType(c *C) {
-	tk := testkit.NewTestKitWithInit(c, ts.store)
-	tk.MustExec("use test;")
-	tk.MustExec("create table t_list1(a date) partition by list columns (a) (partition p0 values in ('2010-02-02', '20180203'), partition p1 values in ('20200202'));")
-	tk.MustExec("insert into t_list1(a) values (20180203);")
-	tk.MustQuery(`select * from t_list1 partition (p0);`).Check(testkit.Rows("2018-02-03"))
-}
-
-func (ts *testSuite) TestPartitionListWithNewCollation(c *C) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
-	tk := testkit.NewTestKitWithInit(c, ts.store)
-	tk.MustExec("use test;")
-	tk.MustExec("create table t11(a char(10) collate utf8mb4_general_ci) partition by list columns (a) (partition p0 values in ('a', 'b'), partition p1 values in ('C', 'D'));")
-	tk.MustExec("insert into t11(a) values ('A'), ('c'), ('C'), ('d'), ('B');")
-	tk.MustQuery(`select * from t11 order by a;`).Check(testkit.Rows("A", "B", "c", "C", "d"))
-	tk.MustQuery(`select * from t11 partition (p0);`).Check(testkit.Rows("A", "B"))
-	tk.MustQuery(`select * from t11 partition (p1);`).Check(testkit.Rows("c", "C", "d"))
-	str := tk.MustQuery(`desc select * from t11 where a = 'b';`).Rows()[0][3].(string)
-	c.Assert(strings.Contains(str, "partition:p0"), IsTrue)
 }
 
 func (ts *testSuite) TestHashPartitionInsertValue(c *C) {
