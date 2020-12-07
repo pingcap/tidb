@@ -1567,6 +1567,7 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		default:
 			s.systems[name] = cht
 		}
+		val = cht
 	case TiDBSlowLogThreshold:
 		atomic.StoreUint64(&config.GetGlobalConfig().Log.SlowThreshold, uint64(tidbOptInt64(val, logutil.DefaultSlowThreshold)))
 	case TiDBRecordPlanInSlowLog:
