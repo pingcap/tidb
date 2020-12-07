@@ -476,10 +476,5 @@ func (s *testEvaluatorSuite) TestVecMonth(c *C) {
 	c.Assert(len(ctx.GetSessionVars().StmtCtx.GetWarnings()), Equals, 0)
 
 	ctx.GetSessionVars().StmtCtx.InInsertStmt = true
-<<<<<<< HEAD
-	c.Assert(f.vecEvalInt(input, result), NotNil)
-=======
-	ctx.GetSessionVars().StmtCtx.TruncateAsWarning = false
 	c.Assert(f.vecEvalInt(input, result), IsNil)
->>>>>>> 0deb0a342... expression: fix compatibility behaviors in zero datetime with MySQL (#21220)
 }
