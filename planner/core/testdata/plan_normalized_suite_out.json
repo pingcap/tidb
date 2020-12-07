@@ -56,16 +56,16 @@
         "SQL": "select * from t1 where t1.b > 1 and  t1.a in (select sum(t2.b) from t2 where t2.a=t1.a and t2.b is not null)",
         "Plan": [
           " Projection_11            root test.t1.a, test.t1.b, test.t1.c",
-          " └─Apply_13               root semi join, inner:StreamAgg_36, equal:eq(cast(test.t1.a), 5_col_0)",
+          " └─MergeJoin_12           root semi join, left key:test.t1.a, right key:test.t2.a, other cond:eq(cast(test.t1.a), 5_col_0)",
           "   ├─Projection_14        root cast(test.t1.a), test.t1.a, test.t1.b, test.t1.c",
-          "   │ └─IndexLookUp_20     root ",
-          "   │   ├─IndexScan_18     cop  table:t1, index:b, range:[?,?], keep order:false",
-          "   │   └─TableScan_19     cop  table:t1, keep order:false",
-          "   └─StreamAgg_36         root funcs:sum(col_0)",
-          "     └─TableReader_37     root data:StreamAgg_25",
-          "       └─StreamAgg_25     cop  funcs:sum(test.t2.b)",
-          "         └─Selection_35   cop  not(isnull(test.t2.b))",
-          "           └─TableScan_34 cop  table:t2, range: decided by eq(test.t2.a, test.t1.a), keep order:false"
+          "   │ └─TableReader_17     root data:Selection_16",
+          "   │   └─Selection_16     cop  gt(test.t1.b, ?)",
+          "   │     └─TableScan_15   cop  table:t1, range:[?,?], keep order:true",
+          "   └─Projection_18        root cast(test.t2.b), test.t2.a",
+          "     └─Selection_19       root eq(cast(test.t2.a), cast(test.t2.b))",
+          "       └─TableReader_22   root data:Selection_21",
+          "         └─Selection_21   cop  not(isnull(test.t2.b))",
+          "           └─TableScan_20 cop  table:t2, range:[?,?], keep order:true"
         ]
       },
       {
