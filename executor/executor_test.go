@@ -4599,5 +4599,73 @@ func (s *testSuite) TestIssue19667(c *C) {
 
 func (s *testSuite) TestPrepareLoadData(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
+<<<<<<< HEAD
 	tk.MustGetErrCode(`prepare stmt from "load data local infile '/tmp/load_data_test.csv' into table test";`, mysql.ErrUnsupportedPs)
+=======
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t2 (a year(4))")
+	tk.MustExec("insert into t2 values(69)")
+	tk.MustQuery("select * from t2 where a <= 69").Check(testkit.Rows("2069"))
+	// the following test is a regression test that matches MySQL's behavior.
+	tk.MustExec("drop table if exists t3")
+	tk.MustExec("CREATE TABLE `t3` (`y` year DEFAULT NULL, `a` int DEFAULT NULL)")
+	tk.MustExec("INSERT INTO `t3` VALUES (2069, 70), (2010, 11), (2155, 2156), (2069, 69)")
+	tk.MustQuery("SELECT * FROM `t3` where y <= a").Check(testkit.Rows("2155 2156"))
+}
+
+func (s *testSuite) TestZeroDateTimeCompatibility(c *C) {
+	SQLs := []string{
+		`select YEAR(0000-00-00), YEAR("0000-00-00")`,
+		`select MONTH(0000-00-00), MONTH("0000-00-00")`,
+		`select DAYOFWEEK(0000-00-00), DAYOFWEEK("0000-00-00")`,
+		`select DAYOFMONTH(0000-00-00), DAYOFMONTH("0000-00-00")`,
+		`select DAYOFYEAR(0000-00-00), DAYOFYEAR("0000-00-00")`,
+		`select QUARTER(0000-00-00), QUARTER("0000-00-00")`,
+		`select EXTRACT(DAY FROM 0000-00-00), EXTRACT(DAY FROM "0000-00-00")`,
+		`select EXTRACT(MONTH FROM 0000-00-00), EXTRACT(MONTH FROM "0000-00-00")`,
+		`select EXTRACT(YEAR FROM 0000-00-00), EXTRACT(YEAR FROM "0000-00-00")`,
+		`select EXTRACT(WEEK FROM 0000-00-00), EXTRACT(WEEK FROM "0000-00-00")`,
+		`select EXTRACT(QUARTER FROM 0000-00-00), EXTRACT(QUARTER FROM "0000-00-00")`,
+	}
+	tk := testkit.NewTestKit(c, s.store)
+
+	for _, t := range SQLs {
+		fmt.Println(t)
+		tk.MustQuery(t).Check(testkit.Rows("0 <nil>"))
+		c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
+	}
+}
+
+func (s *testSuite) TestOOMActionPriority(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t0")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("drop table if exists t3")
+	tk.MustExec("drop table if exists t4")
+	tk.MustExec("create table t0(a int)")
+	tk.MustExec("insert into t0 values(1)")
+	tk.MustExec("create table t1(a int)")
+	tk.MustExec("insert into t1 values(1)")
+	tk.MustExec("create table t2(a int)")
+	tk.MustExec("insert into t2 values(1)")
+	tk.MustExec("create table t3(a int)")
+	tk.MustExec("insert into t3 values(1)")
+	tk.MustExec("create table t4(a int)")
+	tk.MustExec("insert into t4 values(1)")
+	tk.MustQuery("select * from t0 join t1 join t2 join t3 join t4 order by t0.a").Check(testkit.Rows("1 1 1 1 1"))
+	action := tk.Se.GetSessionVars().StmtCtx.MemTracker.GetFallbackForTest()
+	// check the first 5 actions is rate limit.
+	for i := 0; i < 5; i++ {
+		c.Assert(action.GetPriority(), Equals, int64(memory.DefRateLimitPriority))
+		action = action.GetFallback()
+	}
+	for action.GetFallback() != nil {
+		c.Assert(action.GetPriority(), Equals, int64(memory.DefSpillPriority))
+		action = action.GetFallback()
+	}
+	c.Assert(action.GetPriority(), Equals, int64(memory.DefLogPriority))
+>>>>>>> 0deb0a342... expression: fix compatibility behaviors in zero datetime with MySQL (#21220)
 }

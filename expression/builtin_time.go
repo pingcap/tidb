@@ -1018,7 +1018,12 @@ func (b *builtinMonthSig) evalInt(row chunk.Row) (int64, bool, error) {
 
 	if date.IsZero() {
 		if b.ctx.GetSessionVars().SQLMode.HasNoZeroDateMode() {
+<<<<<<< HEAD
 			return 0, true, handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(date.String()))
+=======
+			isNull, err = handleInvalidZeroTime(b.ctx, date)
+			return 0, isNull, err
+>>>>>>> 0deb0a342... expression: fix compatibility behaviors in zero datetime with MySQL (#21220)
 		}
 		return 0, false, nil
 	}
@@ -1163,7 +1168,12 @@ func (b *builtinDayOfMonthSig) evalInt(row chunk.Row) (int64, bool, error) {
 	}
 	if arg.IsZero() {
 		if b.ctx.GetSessionVars().SQLMode.HasNoZeroDateMode() {
+<<<<<<< HEAD
 			return 0, true, handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(arg.String()))
+=======
+			isNull, err = handleInvalidZeroTime(b.ctx, arg)
+			return 0, isNull, err
+>>>>>>> 0deb0a342... expression: fix compatibility behaviors in zero datetime with MySQL (#21220)
 		}
 		return 0, false, nil
 	}
@@ -1202,7 +1212,12 @@ func (b *builtinDayOfWeekSig) evalInt(row chunk.Row) (int64, bool, error) {
 		return 0, true, handleInvalidTimeError(b.ctx, err)
 	}
 	if arg.InvalidZero() {
+<<<<<<< HEAD
 		return 0, true, handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(arg.String()))
+=======
+		isNull, err = handleInvalidZeroTime(b.ctx, arg)
+		return 0, isNull, err
+>>>>>>> 0deb0a342... expression: fix compatibility behaviors in zero datetime with MySQL (#21220)
 	}
 	// 1 is Sunday, 2 is Monday, .... 7 is Saturday
 	return int64(arg.Time.Weekday() + 1), false, nil
@@ -1240,7 +1255,12 @@ func (b *builtinDayOfYearSig) evalInt(row chunk.Row) (int64, bool, error) {
 		return 0, isNull, handleInvalidTimeError(b.ctx, err)
 	}
 	if arg.InvalidZero() {
+<<<<<<< HEAD
 		return 0, true, handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(arg.String()))
+=======
+		isNull, err := handleInvalidZeroTime(b.ctx, arg)
+		return 0, isNull, err
+>>>>>>> 0deb0a342... expression: fix compatibility behaviors in zero datetime with MySQL (#21220)
 	}
 
 	return int64(arg.Time.YearDay()), false, nil
@@ -1457,7 +1477,12 @@ func (b *builtinYearSig) evalInt(row chunk.Row) (int64, bool, error) {
 
 	if date.IsZero() {
 		if b.ctx.GetSessionVars().SQLMode.HasNoZeroDateMode() {
+<<<<<<< HEAD
 			return 0, true, handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(date.String()))
+=======
+			isNull, err := handleInvalidZeroTime(b.ctx, date)
+			return 0, isNull, err
+>>>>>>> 0deb0a342... expression: fix compatibility behaviors in zero datetime with MySQL (#21220)
 		}
 		return 0, false, nil
 	}
@@ -2535,6 +2560,13 @@ func (b *builtinExtractDatetimeSig) evalInt(row chunk.Row) (int64, bool, error) 
 	dt, isNull, err := b.args[1].EvalTime(b.ctx, row)
 	if isNull || err != nil {
 		return 0, isNull, err
+	}
+	if dt.IsZero() {
+		if b.ctx.GetSessionVars().SQLMode.HasNoZeroDateMode() {
+			isNull, err := handleInvalidZeroTime(b.ctx, dt)
+			return 0, isNull, err
+		}
+		return 0, false, nil
 	}
 	res, err := types.ExtractDatetimeNum(&dt, unit)
 	return res, err != nil, err
@@ -5537,7 +5569,12 @@ func (b *builtinQuarterSig) evalInt(row chunk.Row) (int64, bool, error) {
 	}
 
 	if date.IsZero() {
+<<<<<<< HEAD
 		return 0, true, handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenWithStackByArgs(date.String()))
+=======
+		isNull, err := handleInvalidZeroTime(b.ctx, date)
+		return 0, isNull, err
+>>>>>>> 0deb0a342... expression: fix compatibility behaviors in zero datetime with MySQL (#21220)
 	}
 
 	return int64((date.Time.Month() + 2) / 3), false, nil
@@ -6492,4 +6529,17 @@ func (b *builtinTidbParseTsoSig) evalTime(row chunk.Row) (types.Time, bool, erro
 		return types.Time{}, true, err
 	}
 	return result, false, nil
+}
+
+func handleInvalidZeroTime(ctx sessionctx.Context, t types.Time) (bool, error) {
+	// MySQL compatibility, #11203
+	// 0 | 0.0 should be converted to null without warnings
+	n, err := t.ToNumber().ToInt()
+	isOriginalIntOrDecimalZero := err == nil && n == 0
+	// Args like "0000-00-00", "0000-00-00 00:00:00" set Fsp to 6
+	isOriginalStringZero := t.Fsp() > 0
+	if isOriginalIntOrDecimalZero && !isOriginalStringZero {
+		return false, nil
+	}
+	return true, handleInvalidTimeError(ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, t.String()))
 }
