@@ -1915,11 +1915,6 @@ func (p *LogicalProjection) TryToGetChildProp(prop *property.PhysicalProperty) (
 
 func (p *LogicalProjection) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]PhysicalPlan, bool) {
 	allTaskTypes := prop.GetAllPossibleChildTaskTypes()
-	// TODO: only for TiFlash now, support push down projection in TiKV later
-	_, tikv := p.SCtx().GetSessionVars().GetIsolationReadEngines()[kv.TiKV]
-	if tikv {
-		allTaskTypes = []property.TaskType{prop.TaskTp}
-	}
 	ret := make([]PhysicalPlan, 0, len(allTaskTypes))
 	for _, tp := range allTaskTypes {
 		newProp, ok := p.TryToGetChildProp(prop)

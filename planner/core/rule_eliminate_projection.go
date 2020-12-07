@@ -15,6 +15,7 @@ package core
 
 import (
 	"context"
+	"github.com/pingcap/tidb/kv"
 
 	"github.com/pingcap/tidb/expression"
 )
@@ -84,7 +85,7 @@ func doPhysicalProjectionElimination(p PhysicalPlan) PhysicalPlan {
 
 	// eliminate projection in a coprocessor task
 	tableReader, isTableReader := p.(*PhysicalTableReader)
-	if isTableReader {
+	if isTableReader && tableReader.StoreType == kv.TiFlash {
 		tableReader.tablePlan = eliminatePhysicalProjection(tableReader.tablePlan)
 		tableReader.TablePlans = flattenPushDownPlan(tableReader.tablePlan)
 		return p

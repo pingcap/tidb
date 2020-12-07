@@ -129,6 +129,8 @@ func (p *PhysicalProjection) ToPB(ctx sessionctx.Context, storeType kv.StoreType
 			return nil, errors.Trace(err)
 		}
 		executorID = p.ExplainID().String()
+	} else {
+		return nil, errors.Errorf("The projection can only be pushed down to TiFlash now, not %s.", storeType.Name())
 	}
 	return &tipb.Executor{Tp: tipb.ExecType_TypeProjection, Projection: projExec, ExecutorId: &executorID}, nil
 }
