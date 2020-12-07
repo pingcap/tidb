@@ -3451,7 +3451,7 @@ func needReorgToChange(origin *types.FieldType, to *types.FieldType) (needOreg b
 	}
 
 	if toFlen > 0 && toFlen < originFlen {
-		return true, fmt.Sprintf("length %d is less than origin %d", to.Flen, origin.Flen)
+		return true, fmt.Sprintf("length %d is less than origin %d", toFlen, originFlen)
 	}
 	if to.Decimal > 0 && to.Decimal < origin.Decimal {
 		return true, fmt.Sprintf("decimal %d is less than origin %d", to.Decimal, origin.Decimal)
