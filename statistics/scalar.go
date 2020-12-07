@@ -109,24 +109,8 @@ func (hg *Histogram) PreCalculateScalar() {
 }
 
 func (hg *Histogram) calcFraction(index int, value *types.Datum) float64 {
-	lower, upper := hg.Bounds.GetRow(2*index), hg.Bounds.GetRow(2*index+1)
-	switch value.Kind() {
-	case types.KindFloat32:
-		return calcFraction(float64(lower.GetFloat32(0)), float64(upper.GetFloat32(0)), float64(value.GetFloat32()))
-	case types.KindFloat64:
-		return calcFraction(lower.GetFloat64(0), upper.GetFloat64(0), value.GetFloat64())
-	case types.KindInt64:
-		return calcFraction(float64(lower.GetInt64(0)), float64(upper.GetInt64(0)), float64(value.GetInt64()))
-	case types.KindUint64:
-		return calcFraction(float64(lower.GetUint64(0)), float64(upper.GetUint64(0)), float64(value.GetUint64()))
-	case types.KindMysqlDuration:
-		return calcFraction(float64(lower.GetDuration(0, 0).Duration), float64(upper.GetDuration(0, 0).Duration), float64(value.GetMysqlDuration().Duration))
-	case types.KindMysqlDecimal, types.KindMysqlTime:
-		return calcFraction(hg.scalars[index].lower, hg.scalars[index].upper, convertDatumToScalar(value, 0))
-	case types.KindBytes, types.KindString:
-		return calcFraction(hg.scalars[index].lower, hg.scalars[index].upper, convertDatumToScalar(value, hg.scalars[index].commonPfxLen))
-	}
-	return 0.5
+	lower, upper := hg.GetLower(index), hg.GetUpper(index)
+	return hg.calcWidth(index, lower, value) / hg.calcWidth(index, lower, upper)
 }
 
 func commonPrefixLength(lower, upper []byte) int {
@@ -289,34 +273,29 @@ func enumRangeValues(low, high types.Datum, lowExclude, highExclude bool) []type
 	return nil
 }
 
-// calcWidth is used to calculate the width of the interval [lower, upper] that lies within the [lower, value]
-// using the continuous-value assumption.
+// calcWidth is used to calculate the width of the interval [lower, upper]
 func calcWidth(lower, upper float64) float64 {
-	if upper <= lower {
-		return 0.0
-	}
 	return upper - lower
 }
 
-func (hg *Histogram) calcStatWidth(kind byte) float64 {
-	lower, upper := hg.Bounds.GetRow(0), hg.Bounds.GetRow(2*(len(hg.Buckets)-1)+1)
-	switch kind {
+func (hg *Histogram) calcWidth(index int, left, right *types.Datum) float64 {
+	switch left.Kind() {
 	case types.KindFloat32:
-		return calcWidth(float64(lower.GetFloat32(0)), float64(upper.GetFloat32(0)))
+		return calcWidth(float64(left.GetFloat32()), float64(right.GetFloat32()))
 	case types.KindFloat64:
-		return calcWidth(lower.GetFloat64(0), upper.GetFloat64(0))
+		return calcWidth(left.GetFloat64(), right.GetFloat64())
 	case types.KindInt64:
-		return calcWidth(float64(lower.GetInt64(0)), float64(upper.GetInt64(0)))
+		return calcWidth(float64(left.GetInt64()), float64(right.GetInt64()))
 	case types.KindUint64:
-		return calcWidth(float64(lower.GetUint64(0)), float64(upper.GetUint64(0)))
+		return calcWidth(float64(left.GetUint64()), float64(right.GetUint64()))
 	case types.KindMysqlDuration:
-		return calcWidth(float64(lower.GetDuration(0, 0).Duration), float64(upper.GetDuration(0, 0).Duration))
+		return calcWidth(float64(left.GetMysqlDuration().Duration), float64(right.GetMysqlDuration().Duration))
 	case types.KindMysqlDecimal, types.KindMysqlTime:
-		// TODO
-		return 0.0
+		return calcWidth(convertDatumToScalar(left, 0), convertDatumToScalar(right, 0))
 	case types.KindBytes, types.KindString:
-		// TODO
-		return 0.0
+		lower, upper := hg.GetLower(index), hg.GetUpper(index)
+		commonPfxLen := commonPrefixLength(lower.GetBytes(), upper.GetBytes())
+		return calcWidth(convertDatumToScalar(left, commonPfxLen), convertDatumToScalar(right, commonPfxLen))
 	}
 	return 0.0
 }
