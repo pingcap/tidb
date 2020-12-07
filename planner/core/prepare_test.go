@@ -21,6 +21,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/auth"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/infoschema"
@@ -855,4 +856,30 @@ func (s *testPrepareSuite) TestInvisibleIndex(c *C) {
 	tk.MustQuery("execute stmt1").Check(testkit.Rows("1"))
 	c.Assert(len(tk.Se.GetSessionVars().StmtCtx.IndexNames), Equals, 1)
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.IndexNames[0], Equals, "t:idx_a")
+}
+
+func (s *testPrepareSuite) TestNestedPrepareStmt(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	tk.MustExec("prepare stmt1 from 'select 1'")
+	tk.MustGetErrCode("prepare stmt2 from 'execute stmt1'", mysql.ErrUnsupportedPs)
+	tk.MustExec("execute stmt1")
+	tk.MustExec("prepare stmt2 from 'select 2'")
+	tk.MustExec("execute stmt2")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int)")
+	tk.MustExec("insert into t values(1)")
+	tk.MustExec("prepare stmt3 from 'select a from t'")
+	tk.MustExec("execute stmt3")
+	tk.MustExec("prepare stmt4 from 'select * from t'")
+	tk.MustExec("execute stmt4")
+	tk.MustExec("prepare stmt5 from 'select * from t where a = 1'")
+	tk.MustExec("execute stmt5")
 }

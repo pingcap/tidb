@@ -134,6 +134,10 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 	stmt := stmts[0]
 
+	if _, ok := stmt.(*ast.ExecuteStmt); ok {
+		return ErrUnsupportedPs
+	}
+
 	err = ResetContextOfStmt(e.ctx, stmt)
 	if err != nil {
 		return err
