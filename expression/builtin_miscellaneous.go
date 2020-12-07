@@ -1069,7 +1069,7 @@ func (b *builtinUUIDShortSig) Clone() builtinFunc {
 
 // evalInt evals a builtinUUIDShortSig.
 // See https://dev.mysql.com/doc/refman/8.0/en/miscellaneous-functions.html#function_uuid-short
-func (b *builtinUUIDShortSig) EvalInt(_ chunk.Row) (d int64, isNull bool, err error) {
+func (b *builtinUUIDShortSig) evalInt(_ chunk.Row) (d int64, isNull bool, err error) {
 	now, seq, err := uuid.GetTime()
 	if err != nil {
 		return d, false, err
