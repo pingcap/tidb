@@ -17,7 +17,9 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"io/ioutil"
 	"math/rand"
+	"os"
 	"sort"
 	"strings"
 	"sync"
@@ -1673,5 +1675,38 @@ func BenchmarkSortExec(b *testing.B) {
 		b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
 			benchmarkSortExec(b, cas)
 		})
+	}
+}
+
+func BenchmarkReadLastLinesOfHugeLine(b *testing.B) {
+	// step 1. initial a huge line log file
+	hugeLine := make([]byte, 1024*1024*10)
+	for i := range hugeLine {
+		hugeLine[i] = 'a' + byte(i%26)
+	}
+	fileName := "tidb.log"
+	err := ioutil.WriteFile(fileName, hugeLine, 0644)
+	if err != nil {
+		b.Fatal(err)
+	}
+	file, err := os.OpenFile(fileName, os.O_RDONLY, os.ModePerm)
+	if err != nil {
+		b.Fatal(err)
+	}
+	defer func() {
+		file.Close()
+		os.Remove(fileName)
+	}()
+	stat, _ := file.Stat()
+	filesize := stat.Size()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, n, err := readLastLines(context.Background(), file, filesize)
+		if err != nil {
+			b.Fatal(err)
+		}
+		if n != len(hugeLine) {
+			b.Fatalf("len %v, expected: %v", n, len(hugeLine))
+		}
 	}
 }
