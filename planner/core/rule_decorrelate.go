@@ -231,6 +231,9 @@ func (s *decorrelateSolver) optimize(ctx context.Context, p LogicalPlan) (Logica
 							proj.Exprs = expression.Column2Exprs(apply.schema.Columns)
 							for i, val := range defaultValueMap {
 								pos := proj.schema.ColumnIndex(agg.schema.Columns[i])
+								if pos == -1 {
+									continue
+								}
 								ifNullFunc := expression.NewFunctionInternal(agg.ctx, ast.Ifnull, types.NewFieldType(mysql.TypeLonglong), agg.schema.Columns[i], val)
 								proj.Exprs[pos] = ifNullFunc
 							}
