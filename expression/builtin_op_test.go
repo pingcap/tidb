@@ -14,6 +14,7 @@
 package expression
 
 import (
+	"github.com/pingcap/parser/mysql"
 	"math"
 
 	. "github.com/pingcap/check"
@@ -539,6 +540,26 @@ func (s *testEvaluatorSuite) TestIsTrueOrFalse(c *C) {
 			args:    []interface{}{nil},
 			isTrue:  0,
 			isFalse: 0,
+		},
+		{
+			args:    []interface{}{types.NewDuration(0, 0, 0, 1000, 3)},
+			isTrue:  1,
+			isFalse: 0,
+		},
+		{
+			args:    []interface{}{types.NewDuration(0, 0, 0, 0, 3)},
+			isTrue:  0,
+			isFalse: 1,
+		},
+		{
+			args:    []interface{}{types.NewTime(types.FromDate(0, 0, 0, 0, 0, 0, 1000), mysql.TypeDatetime, 3)},
+			isTrue:  1,
+			isFalse: 0,
+		},
+		{
+			args:    []interface{}{types.NewTime(types.CoreTime(0), mysql.TypeTimestamp, 3)},
+			isTrue:  0,
+			isFalse: 1,
 		},
 	}
 
