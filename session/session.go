@@ -1815,8 +1815,6 @@ func CreateSession4TestWithOpt(store kv.Storage, opt *Opt) (Session, error) {
 		// initialize session variables for test.
 		s.GetSessionVars().InitChunkSize = 2
 		s.GetSessionVars().MaxChunkSize = 32
-		// make the config variable be compatible with those old test.
-		s.GetSessionVars().EnableMultiSchemaChange = true
 	}
 	return s, err
 }
