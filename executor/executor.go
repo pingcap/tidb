@@ -17,6 +17,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"math/rand"
 	"runtime"
 	"runtime/trace"
 	"strconv"
@@ -60,7 +61,6 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"go.uber.org/zap"
-	"math/rand"
 )
 
 var (
