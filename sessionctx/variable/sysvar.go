@@ -546,7 +546,7 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal | ScopeSession, Name: QueryCacheType, Value: BoolOff, Type: TypeEnum, PossibleValues: []string{BoolOff, BoolOn, "DEMAND"}},
 	{Scope: ScopeNone, Name: "innodb_rollback_on_timeout", Value: "0"},
 	{Scope: ScopeGlobal | ScopeSession, Name: "query_alloc_block_size", Value: "8192"},
-	{Scope: ScopeGlobal | ScopeSession, Name: InitConnect, Value: ""},
+	{Scope: ScopeGlobal, Name: InitConnect, Value: ""},
 	{Scope: ScopeNone, Name: "have_compress", Value: "YES"},
 	{Scope: ScopeNone, Name: "thread_concurrency", Value: "10"},
 	{Scope: ScopeGlobal | ScopeSession, Name: "query_prealloc_size", Value: "8192"},

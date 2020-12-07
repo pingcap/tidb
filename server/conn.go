@@ -68,6 +68,7 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/plugin"
+	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -719,16 +720,38 @@ func (cc *clientConn) PeerHost(hasPassword string) (host string, err error) {
 	return
 }
 
-func (cc *clientConn) initConnectApplies() bool {
-	return true
-	/*
-		val, _ := cc.ctx.GetSessionVars().GetSystemVar(variable.InitConnect)
-		if val != "" {
-			// TODO: Check if we don't have the super privilege
-			return true
+func (cc *clientConn) initConnect(ctx context.Context) error {
+	val, _ := cc.ctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.InitConnect)
+	if val == "" {
+		return nil
+	}
+	// This is different to most privilege checks.
+	// init_connect *does not* apply to SUPER users.
+	checker := privilege.GetPrivilegeManager(cc.ctx.Session)
+	activeRoles := cc.ctx.GetSessionVars().ActiveRoles
+	if checker != nil && checker.RequestVerification(activeRoles, "", "", "", mysql.SuperPriv) {
+		return nil
+	}
+	logutil.Logger(ctx).Debug("executing init_connect", zap.String("initConnect", val))
+	// We don't care about the results, but the semantics of
+	// init_connect requires that they are fully read.
+	rss, err := cc.ctx.Execute(ctx, val)
+	for _, rs := range rss {
+		req := rs.NewChunk()
+		for {
+			_ = rs.Next(ctx, req)
+			if req.NumRows() == 0 {
+				break
+			}
 		}
-		return false
-	*/
+		rs.Close()
+	}
+	if err != nil {
+		logutil.Logger(ctx).Warn("init_connect failed", zap.Error(err))
+		return err
+	}
+	logutil.Logger(ctx).Debug("init_connect complete")
+	return nil
 }
 
 // Run reads client query and writes query result to client in for loop, if there is a panic during query handling,
@@ -757,35 +780,13 @@ func (cc *clientConn) Run(ctx context.Context) {
 		}
 	}()
 
-	/* TODO:
-	   - Use actual value from variable.
-	   - Does init_connect apply to com_change_user or refresh?
-	   - What happens to errors in init_connect?
-	   - Do I need to increment metrics about disconnects?
-	*/
-
-	// If there is an initConnect set, read the result-sets for each of the results.
-	// This is required to make sure the statements execute.
-	if cc.initConnectApplies() {
-		initConnect, _ := cc.ctx.GetSessionVars().GetSystemVar(variable.InitConnect)
-		logutil.Logger(ctx).Info("executing init_connect", zap.String("initConnect", initConnect))
-		rss, err := cc.ctx.Execute(ctx, initConnect)
-		for _, rs := range rss {
-			req := rs.NewChunk()
-			for {
-				_ = rs.Next(ctx, req)
-				if req.NumRows() == 0 {
-					break
-				}
-			}
-			rs.Close()
-		}
-
-		if err != nil {
-			logutil.Logger(ctx).Warn("error running init connect", zap.Error(err))
-		} else {
-			logutil.Logger(ctx).Info("init connect complete")
-		}
+	// MySQL supports an "init_connect" query, which can be run on initial connection.
+	// The query must return a non-error or the client is disconnected.
+	// It is not executed for SUPER users.
+	if err := cc.initConnect(ctx); err != nil {
+		initErr := errNewAbortingConnection.FastGenByArgs(cc.connectionID, "unconnected", cc.user, cc.peerHost, "init_connect command failed")
+		cc.writeError(ctx, initErr)
+		return
 	}
 
 	// Usually, client connection status changes between [dispatching] <=> [reading].

@@ -1569,3 +1569,36 @@ func (s *testColumnTypeChangeSuite) TestRowFormat(c *C) {
 	c.Assert(data.Info.Writes[0].ShortValue, DeepEquals, []byte{0x80, 0x0, 0x3, 0x0, 0x0, 0x0, 0x1, 0x2, 0x3, 0x1, 0x0, 0x4, 0x0, 0x7, 0x0, 0x1, 0x31, 0x32, 0x33, 0x31, 0x32, 0x33})
 	tk.MustExec("drop table if exists t")
 }
+
+// Close issue #17530
+func (s *testColumnTypeChangeSuite) TestColumnTypeChangeFlenErrorMsg(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int4)")
+	_, err := tk.Exec("alter table t MODIFY COLUMN a tinyint(11)")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify column: length 4 is less than origin 11, and tidb_enable_change_column_type is false")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a decimal(20))")
+	tk.MustExec("insert into t values (12345678901234567890)")
+	_, err = tk.Exec("alter table t modify column a bigint")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify column: type bigint(20) not match origin decimal(20,0), and tidb_enable_change_column_type is false")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table a (a bigint(2))")
+	tk.MustExec("insert into a values(123456),(789123)")
+	_, err = tk.Exec("alter table a modify column a tinyint")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify column: length 4 is less than origin 20, and tidb_enable_change_column_type is false")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("CREATE TABLE t ( id int not null primary key auto_increment, token varchar(512) NOT NULL DEFAULT '', index (token))")
+	tk.MustExec("INSERT INTO t VALUES (NULL, 'aa')")
+	_, err = tk.Exec("ALTER TABLE t CHANGE COLUMN token token varchar(255) DEFAULT '' NOT NULL")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify column: length 255 is less than origin 512, and tidb_enable_change_column_type is false")
+}
