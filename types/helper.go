@@ -98,7 +98,7 @@ func TruncateFloat(f float64, flen int, decimal int) (float64, error) {
 }
 
 func isSpace(c byte) bool {
-	return c == ' ' || c == '\t'
+	return c == ' ' || c == '\t' || c == '\r' || c == '\n'
 }
 
 func isDigit(c byte) bool {
