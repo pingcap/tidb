@@ -2471,7 +2471,7 @@ func logQuery(query string, vars *variable.SessionVars) {
 	if variable.ProcessGeneralLog.Load() && !vars.InRestrictedSQL {
 		query = executor.QueryReplacer.Replace(query)
 		if !vars.EnableRedactLog {
-			query = query + vars.PreparedParams.String()
+			query += vars.PreparedParams.String()
 		}
 		logutil.BgLogger().Info("GENERAL_LOG",
 			zap.Uint64("conn", vars.ConnectionID),
