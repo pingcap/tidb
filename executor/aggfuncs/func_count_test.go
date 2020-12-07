@@ -149,9 +149,9 @@ func (s *testSuite) TestMemCount(c *C) {
 			aggfuncs.DefPartialResult4CountDistinctDurationSize, distinctUpdateMemDeltaGens, true),
 		buildAggMemTester(ast.AggFuncCount, mysql.TypeJSON, 5,
 			aggfuncs.DefPartialResult4CountWithDistinctSize, distinctUpdateMemDeltaGens, true),
-		buildAggMemTester(ast.AggFuncApproxCountDistinct, mysql.TypeLonglong, 100000,
+		buildAggMemTester(ast.AggFuncApproxCountDistinct, mysql.TypeLonglong, 5,
 			aggfuncs.DefPartialResult4ApproxCountDistinctSize, approxCountDistinctUpdateMemDeltaGens, true),
-		buildAggMemTester(ast.AggFuncApproxCountDistinct, mysql.TypeString, 100000,
+		buildAggMemTester(ast.AggFuncApproxCountDistinct, mysql.TypeString, 5,
 			aggfuncs.DefPartialResult4ApproxCountDistinctSize, approxCountDistinctUpdateMemDeltaGens, true),
 	}
 	for _, test := range tests {
