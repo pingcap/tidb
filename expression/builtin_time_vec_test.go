@@ -473,8 +473,13 @@ func (s *testEvaluatorSuite) TestVecMonth(c *C) {
 	f, _, _, result := genVecBuiltinFuncBenchCase(ctx, ast.Month, vecExprBenchCase{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDatetime}})
 	c.Assert(ctx.GetSessionVars().StrictSQLMode, IsTrue)
 	c.Assert(f.vecEvalInt(input, result), IsNil)
-	c.Assert(len(ctx.GetSessionVars().StmtCtx.GetWarnings()), Equals, 2)
+	c.Assert(len(ctx.GetSessionVars().StmtCtx.GetWarnings()), Equals, 0)
 
 	ctx.GetSessionVars().StmtCtx.InInsertStmt = true
+<<<<<<< HEAD
 	c.Assert(f.vecEvalInt(input, result), NotNil)
+=======
+	ctx.GetSessionVars().StmtCtx.TruncateAsWarning = false
+	c.Assert(f.vecEvalInt(input, result), IsNil)
+>>>>>>> 0deb0a342... expression: fix compatibility behaviors in zero datetime with MySQL (#21220)
 }
