@@ -151,7 +151,7 @@ func (s *testCoprocessorSuite) TestAdmission(c *C) {
 	c.Assert(v, Equals, true)
 
 	v = cache.CheckRequestAdmission(6)
-	c.Assert(v, Equals, true)
+	c.Assert(v, Equals, false)
 }
 
 func (s *testCoprocessorSuite) TestCacheValueLen(c *C) {
