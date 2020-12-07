@@ -775,6 +775,31 @@ func (b *PlanBuilder) coalesceCommonColumns(p *LogicalJoin, leftPlan, rightPlan 
 		lColumns, rColumns = rsc.Columns, lsc.Columns
 	}
 
+	// Check using clause with ambiguous columns.
+	if filter != nil {
+		checkAmbiguous := func(names types.NameSlice) error {
+			columnNameInFilter := set.StringSet{}
+			for _, name := range names {
+				if _, ok := filter[name.ColName.L]; !ok {
+					continue
+				}
+				if columnNameInFilter.Exist(name.ColName.L) {
+					return ErrAmbiguous.GenWithStackByArgs(name.ColName.L, "from clause")
+				}
+				columnNameInFilter.Insert(name.ColName.L)
+			}
+			return nil
+		}
+		err := checkAmbiguous(lNames)
+		if err != nil {
+			return err
+		}
+		err = checkAmbiguous(rNames)
+		if err != nil {
+			return err
+		}
+	}
+
 	// Find out all the common columns and put them ahead.
 	commonLen := 0
 	for i, lName := range lNames {
@@ -1858,9 +1883,10 @@ func (a *havingWindowAndOrderbyExprResolver) Leave(n ast.Node) (node ast.Node, o
 					if index != -1 {
 						// For SQLs like:
 						//   select a+1 from t having t.a;
-						newV := v
-						newV.Name = &ast.ColumnName{Name: v.Name.Name}
-						index, a.err = resolveFromSelectFields(newV, a.selectFields, true)
+						field := a.selectFields[index]
+						if field.Auxiliary { //having can't use auxiliary field
+							index = -1
+						}
 					}
 				} else {
 					index, a.err = resolveFromSelectFields(v, a.selectFields, true)

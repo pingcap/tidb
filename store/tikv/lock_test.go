@@ -49,7 +49,7 @@ func (s *testLockSuite) TearDownTest(c *C) {
 }
 
 func (s *testLockSuite) lockKey(c *C, key, value, primaryKey, primaryValue []byte, commitPrimary bool) (uint64, uint64) {
-	txn, err := newTiKVTxn(s.store)
+	txn, err := newTiKVTxn(s.store, oracle.GlobalTxnScope)
 	c.Assert(err, IsNil)
 	if len(value) > 0 {
 		err = txn.Set(key, value)
@@ -160,7 +160,7 @@ func (s *testLockSuite) TestScanLockResolveWithBatchGet(c *C) {
 		keys = append(keys, []byte{ch})
 	}
 
-	ver, err := s.store.CurrentVersion()
+	ver, err := s.store.CurrentVersion(oracle.GlobalTxnScope)
 	c.Assert(err, IsNil)
 	snapshot := newTiKVSnapshot(s.store, ver, 0)
 	m, err := snapshot.BatchGet(context.Background(), keys)
@@ -401,7 +401,7 @@ func (s *testLockSuite) prewriteTxnWithTTL(c *C, txn *tikvTxn, ttl uint64) {
 }
 
 func (s *testLockSuite) mustGetLock(c *C, key []byte) *Lock {
-	ver, err := s.store.CurrentVersion()
+	ver, err := s.store.CurrentVersion(oracle.GlobalTxnScope)
 	c.Assert(err, IsNil)
 	bo := NewBackofferWithVars(context.Background(), getMaxBackoff, nil)
 	req := tikvrpc.NewRequest(tikvrpc.CmdGet, &kvrpcpb.GetRequest{
