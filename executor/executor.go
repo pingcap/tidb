@@ -28,6 +28,7 @@ import (
 	"github.com/cznic/mathutil"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/model"
@@ -59,6 +60,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"go.uber.org/zap"
+	"math/rand"
 )
 
 var (
@@ -1439,6 +1441,13 @@ type UnionExec struct {
 	results     []*chunk.Chunk
 	wg          sync.WaitGroup
 	initialized bool
+	// lastOpenedChildID indicates the ID of the last child been opened.
+	// e.concurrency child at most will be opened during execution to avoid the
+	// overhead of starting too many data-readers simultaneously.
+	lastOpenedChildID atomic.Value
+	openNewChild      chan struct{}
+
+	childExecInFlightForTest int32
 }
 
 // unionWorkerResult stores the result for a union worker.
@@ -1453,40 +1462,87 @@ type unionWorkerResult struct {
 
 func (e *UnionExec) waitAllFinished() {
 	e.wg.Wait()
+	failpoint.Inject("issue21441", func() {
+		time.Sleep(time.Duration(rand.Intn(1000)) * time.Microsecond)
+	})
+	close(e.openNewChild)
+	for range e.openNewChild {
+	}
 	close(e.resultPool)
 }
 
 // Open implements the Executor Open interface.
 func (e *UnionExec) Open(ctx context.Context) error {
-	if err := e.baseExecutor.Open(ctx); err != nil {
-		return err
+	if e.concurrency > len(e.children) {
+		e.concurrency = len(e.children)
 	}
+	e.childIDChan = make(chan int, len(e.children))
+	for i := 0; i < e.concurrency; i++ {
+		if err := e.children[i].Open(ctx); err != nil {
+			return err
+		}
+		e.lastOpenedChildID.Store(i)
+		e.childIDChan <- i
+		failpoint.Inject("issue21441", func() {
+			atomic.AddInt32(&(e.childExecInFlightForTest), 1)
+		})
+	}
+	e.openNewChild = make(chan struct{}, e.concurrency)
 	e.stopFetchData.Store(false)
 	e.initialized = false
 	e.finished = make(chan struct{})
 	return nil
 }
 
-func (e *UnionExec) initialize(ctx context.Context) {
-	if e.concurrency > len(e.children) {
-		e.concurrency = len(e.children)
+// childExecLauncher opens a new child executor after a resultPuller finish
+// reading all the data from one child executor.
+func (e *UnionExec) childExecLauncher(ctx context.Context) {
+	defer func() {
+		close(e.childIDChan)
+	}()
+	for {
+		select {
+		case _, ok := <-e.openNewChild:
+			if !ok {
+				return
+			}
+			lastOpenedChildID := e.lastOpenedChildID.Load().(int)
+			if lastOpenedChildID+1 == len(e.children) {
+				return
+			}
+			lastOpenedChildID++
+			if err := e.children[lastOpenedChildID].Open(ctx); err != nil {
+				atomic.AddInt32(&(e.childExecInFlightForTest), 1)
+				select {
+				case e.resultPool <- &unionWorkerResult{err: err, chk: nil}:
+				case <-e.finished:
+				}
+				return
+			}
+			e.lastOpenedChildID.Store(lastOpenedChildID)
+			failpoint.Inject("issue21441", func() {
+				time.Sleep(time.Duration(rand.Intn(1000)) * time.Microsecond)
+			})
+			e.childIDChan <- lastOpenedChildID
+		case <-e.finished:
+			return
+		}
 	}
+}
+
+func (e *UnionExec) initialize(ctx context.Context) {
 	for i := 0; i < e.concurrency; i++ {
 		e.results = append(e.results, newFirstChunk(e.children[0]))
 	}
 	e.resultPool = make(chan *unionWorkerResult, e.concurrency)
 	e.resourcePools = make([]chan *chunk.Chunk, e.concurrency)
-	e.childIDChan = make(chan int, len(e.children))
 	for i := 0; i < e.concurrency; i++ {
 		e.resourcePools[i] = make(chan *chunk.Chunk, 1)
 		e.resourcePools[i] <- e.results[i]
 		e.wg.Add(1)
 		go e.resultPuller(ctx, i)
 	}
-	for i := 0; i < len(e.children); i++ {
-		e.childIDChan <- i
-	}
-	close(e.childIDChan)
+	go e.childExecLauncher(ctx)
 	go e.waitAllFinished()
 }
 
@@ -1519,6 +1575,11 @@ func (e *UnionExec) resultPuller(ctx context.Context, workerID int) {
 			case result.chk = <-e.resourcePools[workerID]:
 			}
 			result.err = Next(ctx, e.children[childID], result.chk)
+			failpoint.Inject("issue21441", func() {
+				if atomic.LoadInt32(&(e.childExecInFlightForTest)) > int32(e.concurrency) {
+					panic("more than e.concurrency child executor is opened in UnionExec")
+				}
+			})
 			if result.err == nil && result.chk.NumRows() == 0 {
 				e.resourcePools[workerID] <- result.chk
 				break
@@ -1528,6 +1589,14 @@ func (e *UnionExec) resultPuller(ctx context.Context, workerID int) {
 				e.stopFetchData.Store(true)
 				return
 			}
+		}
+		failpoint.Inject("issue21441", func() {
+			time.Sleep(time.Duration(rand.Intn(1000)) * time.Microsecond)
+			atomic.AddInt32(&(e.childExecInFlightForTest), -1)
+		})
+		select {
+		case e.openNewChild <- struct{}{}:
+		case <-e.finished:
 		}
 	}
 }
@@ -1567,7 +1636,12 @@ func (e *UnionExec) Close() error {
 		for range e.childIDChan {
 		}
 	}
-	return e.baseExecutor.Close()
+	for i := 0; i < e.lastOpenedChildID.Load().(int); i++ {
+		if err := e.children[i].Close(); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // ResetContextOfStmt resets the StmtContext and session variables.
