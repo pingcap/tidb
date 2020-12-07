@@ -799,10 +799,6 @@ func (s *testIntegrationSuite1) TestCreateTableWithListColumnsPartition(c *C) {
 			ddl.ErrUniqueKeyNeedAllFieldsInPf,
 		},
 		{
-			"create table t (a char(10) collate utf8mb4_general_ci) partition by list columns (a) (partition p0 values in ('a', 'A'));",
-			ddl.ErrMultipleDefConstInListPart,
-		},
-		{
 			"create table t (a date) partition by list columns (a) (partition p0 values in ('2020-02-02'), partition p1 values in ('20200202'));",
 			ddl.ErrMultipleDefConstInListPart,
 		},
@@ -3179,6 +3175,7 @@ func (s *testIntegrationSuite7) TestPartitionListWithNewCollation(c *C) {
 	defer collate.SetNewCollationEnabledForTest(false)
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("use test;")
+	tk.MustGetErrCode(`create table t (a char(10) collate utf8mb4_general_ci) partition by list columns (a) (partition p0 values in ('a', 'A'));`, mysql.ErrMultipleDefConstInListPart)
 	tk.MustExec("create table t11(a char(10) collate utf8mb4_general_ci) partition by list columns (a) (partition p0 values in ('a', 'b'), partition p1 values in ('C', 'D'));")
 	tk.MustExec("insert into t11(a) values ('A'), ('c'), ('C'), ('d'), ('B');")
 	tk.MustQuery(`select * from t11 order by a;`).Check(testkit.Rows("A", "B", "c", "C", "d"))
