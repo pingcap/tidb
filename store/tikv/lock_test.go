@@ -585,3 +585,72 @@ func (s *testLockSuite) TestDeduplicateKeys(c *C) {
 		c.Assert(out, Equals, "a b c")
 	}
 }
+
+func (s *testLockSuite) prepareTxnFallenBackFromAsyncCommit(c *C) {
+	txn, err := s.store.Begin()
+	c.Assert(err, IsNil)
+	err = txn.Set([]byte("fb1"), []byte("1"))
+	c.Assert(err, IsNil)
+	err = txn.Set([]byte("fb2"), []byte("2"))
+	c.Assert(err, IsNil)
+
+	committer, err := newTwoPhaseCommitterWithInit(txn.(*tikvTxn), 1)
+	c.Assert(err, IsNil)
+	c.Assert(committer.mutations.Len(), Equals, 2)
+	committer.lockTTL = 50
+	committer.setAsyncCommit(true)
+	committer.maxCommitTS = committer.startTS + (100 << 18) // 100ms
+
+	bo := NewBackoffer(context.Background(), PrewriteMaxBackoff)
+	err = committer.prewriteMutations(bo, committer.mutations.Slice(0, 1))
+	c.Assert(err, IsNil)
+	c.Assert(committer.isAsyncCommit(), IsTrue)
+
+	// Update MaxTs of TiKV
+	time.Sleep(time.Millisecond * 105)
+	t2, err := s.store.Begin()
+	c.Assert(err, IsNil)
+	_, _ = t2.Get(context.Background(), []byte("b"))
+
+	err = committer.prewriteMutations(bo, committer.mutations.Slice(1, 2))
+	c.Assert(err, IsNil)
+	c.Assert(committer.isAsyncCommit(), IsFalse) // Fallback due to MaxCommitTsTooLarge
+}
+
+func (s *testLockSuite) TestResolveTxnFallenBackFromAsyncCommit(c *C) {
+	s.prepareTxnFallenBackFromAsyncCommit(c)
+
+	lock := s.mustGetLock(c, []byte("fb1"))
+	c.Assert(lock.UseAsyncCommit, IsTrue)
+	bo := NewBackoffer(context.Background(), getMaxBackoff)
+	expire, pushed, err := newLockResolver(s.store).ResolveLocks(bo, 0, []*Lock{lock})
+	c.Assert(expire, Equals, int64(0))
+	c.Assert(len(pushed), Equals, 0)
+
+	t3, err := s.store.Begin()
+	c.Assert(err, IsNil)
+	_, err = t3.Get(context.Background(), []byte("fb1"))
+	errMsgMustContain(c, err, "key not exist")
+	_, err = t3.Get(context.Background(), []byte("fb2"))
+	errMsgMustContain(c, err, "key not exist")
+}
+
+func (s *testLockSuite) TestBatchResolveTxnFallenBackFromAsyncCommit(c *C) {
+	s.prepareTxnFallenBackFromAsyncCommit(c)
+
+	lock := s.mustGetLock(c, []byte("fb1"))
+	c.Assert(lock.UseAsyncCommit, IsTrue)
+	bo := NewBackoffer(context.Background(), getMaxBackoff)
+	loc, err := s.store.regionCache.LocateKey(bo, []byte("fb1"))
+	c.Assert(err, IsNil)
+	ok, err := newLockResolver(s.store).BatchResolveLocks(bo, []*Lock{lock}, loc.Region)
+	c.Assert(err, IsNil)
+	c.Assert(ok, IsTrue)
+
+	t3, err := s.store.Begin()
+	c.Assert(err, IsNil)
+	_, err = t3.Get(context.Background(), []byte("fb1"))
+	errMsgMustContain(c, err, "key not exist")
+	_, err = t3.Get(context.Background(), []byte("fb2"))
+	errMsgMustContain(c, err, "key not exist")
+}

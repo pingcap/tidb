@@ -820,6 +820,8 @@ github.com/sticnarf/kvproto v0.0.0-20201207033407-2932f1492fd7 h1:pCPB0gQoHcYToC
 github.com/sticnarf/kvproto v0.0.0-20201207033407-2932f1492fd7/go.mod h1:IOdRDPLyda8GX2hE/jO7gqaCV/PNFh8BZQCQZXfIOqI=
 github.com/sticnarf/unistore v0.0.0-20201207034424-9251bbaff2c9 h1:T1yJSupfZJ+SvXXRgxzuoMQUw3B9N3zPBKfbOxr+tTg=
 github.com/sticnarf/unistore v0.0.0-20201207034424-9251bbaff2c9/go.mod h1:INaogn3OAu9DwRqdB9HUcds5ENOIYKsGQzmwroEpzxM=
+github.com/sticnarf/unistore v0.0.0-20201207053328-54c70b24342c h1:nCxME+/c3lQVhi8arskgpZ8uoCzxGTkTo4V69PniUL8=
+github.com/sticnarf/unistore v0.0.0-20201207053328-54c70b24342c/go.mod h1:INaogn3OAu9DwRqdB9HUcds5ENOIYKsGQzmwroEpzxM=
 github.com/stretchr/objx v0.1.0/go.mod h1:HFkY916IF+rwdDfMAkV7OtwuqBVzrE8GR6GFx+wExME=
 github.com/stretchr/objx v0.1.1/go.mod h1:HFkY916IF+rwdDfMAkV7OtwuqBVzrE8GR6GFx+wExME=
 github.com/stretchr/objx v0.2.0/go.mod h1:qt09Ya8vawLte6SNmTgCsAVtYtaKzEcn8ATUoHMkEqE=

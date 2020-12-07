@@ -89,7 +89,7 @@ require (
 )
 
 replace (
-	github.com/ngaut/unistore => github.com/sticnarf/unistore v0.0.0-20201207034424-9251bbaff2c9
+	github.com/ngaut/unistore => github.com/sticnarf/unistore v0.0.0-20201207053328-54c70b24342c
 	github.com/pingcap/kvproto => github.com/sticnarf/kvproto v0.0.0-20201207033407-2932f1492fd7
 )
 
