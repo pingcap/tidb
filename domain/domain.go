@@ -1314,6 +1314,7 @@ func (do *Domain) IsLostConnectionToPD() bool {
 	return do.isLostConnectionToPD.Get() != 0
 }
 
+// GetLogFileMetaCache gets slow-log file meta cache.
 func (do *Domain) GetLogFileMetaCache() *cache.LogFileMetaCache {
 	return do.logFileMetaCache
 }
