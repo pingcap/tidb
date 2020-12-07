@@ -1206,52 +1206,6 @@ func (b *PlanBuilder) buildProjection(ctx context.Context, p LogicalPlan, fields
 	return proj, proj.Exprs, oldLen, nil
 }
 
-func (b *PlanBuilder) checkDistinct(ctx context.Context, sel *ast.SelectStmt, p LogicalPlan, originalExprs []expression.Expression,
-	aggMapper map[*ast.AggregateFuncExpr]int, windowMapper map[*ast.WindowFuncExpr]int, length int) error {
-	if sel.OrderBy == nil {
-		return nil
-	}
-	// Check whether ORDER BY items show up in SELECT fields
-	for i, byItem := range sel.OrderBy.Items {
-		it, _, err := b.rewriteWithPreprocess(ctx, byItem.Expr, p, aggMapper, windowMapper, true, nil)
-		if err != nil {
-			return err
-		}
-
-		var ok bool
-		// check if expressions match
-		for j := 0; j < length; j++ {
-			// both check original expression & as name
-			if it.Equal(b.ctx, originalExprs[j]) || it.Equal(b.ctx, p.Schema().Columns[j]) {
-				ok = true
-				break
-			}
-		}
-		if ok {
-			continue
-		}
-		// check if referenced columns match
-		cols := expression.ExtractDependentColumns(it)
-		for _, col := range cols {
-			for j := 0; j < length; j++ {
-				if col.Equal(b.ctx, originalExprs[j]) || col.Equal(b.ctx, p.Schema().Columns[j]) {
-					ok = true
-					break
-				}
-			}
-			if ok {
-				continue
-			}
-
-			if _, ok := byItem.Expr.(*ast.AggregateFuncExpr); ok {
-				return ErrAggregateInOrderNotSelect.GenWithStackByArgs(i+1, "DISTINCT")
-			}
-			return ErrFieldInOrderNotSelect.GenWithStackByArgs(i+1, col.OrigName, "DISTINCT")
-		}
-	}
-	return nil
-}
-
 func (b *PlanBuilder) buildDistinct(child LogicalPlan, length int) (*LogicalAggregation, error) {
 	b.optFlag = b.optFlag | flagBuildKeyInfo
 	b.optFlag = b.optFlag | flagPushDownAgg
@@ -1607,6 +1561,11 @@ func (t *itemTransformer) Leave(inNode ast.Node) (ast.Node, bool) {
 }
 
 func (b *PlanBuilder) buildSort(ctx context.Context, p LogicalPlan, byItems []*ast.ByItem, aggMapper map[*ast.AggregateFuncExpr]int, windowMapper map[*ast.WindowFuncExpr]int) (*LogicalSort, error) {
+	return b.buildSortForSelect(ctx, p, byItems, nil, 0, false, aggMapper, windowMapper)
+}
+
+func (b *PlanBuilder) buildSortForSelect(ctx context.Context, p LogicalPlan, byItems []*ast.ByItem, projExprs []expression.Expression, oldLen int,
+	hasDistinct bool, aggMapper map[*ast.AggregateFuncExpr]int, windowMapper map[*ast.WindowFuncExpr]int) (*LogicalSort, error) {
 	if _, isUnion := p.(*LogicalUnionAll); isUnion {
 		b.curClause = globalOrderByClause
 	} else {
@@ -1615,12 +1574,20 @@ func (b *PlanBuilder) buildSort(ctx context.Context, p LogicalPlan, byItems []*a
 	sort := LogicalSort{}.Init(b.ctx, b.getSelectOffset())
 	exprs := make([]*util.ByItems, 0, len(byItems))
 	transformer := &itemTransformer{}
-	for _, item := range byItems {
+	for i, item := range byItems {
 		newExpr, _ := item.Expr.Accept(transformer)
 		item.Expr = newExpr.(ast.ExprNode)
 		it, np, err := b.rewriteWithPreprocess(ctx, item.Expr, p, aggMapper, windowMapper, true, nil)
 		if err != nil {
 			return nil, err
+		}
+
+		// check whether order by items show up in select distinct fields, see #12442
+		if hasDistinct && projExprs != nil {
+			err = b.checkOrderInDistinct(item, i, it, p, projExprs, oldLen)
+			if err != nil {
+				return nil, err
+			}
 		}
 
 		p = np
@@ -1629,6 +1596,33 @@ func (b *PlanBuilder) buildSort(ctx context.Context, p LogicalPlan, byItems []*a
 	sort.ByItems = exprs
 	sort.SetChildren(p)
 	return sort, nil
+}
+
+func (b *PlanBuilder) checkOrderInDistinct(byItem *ast.ByItem, idx int, expr expression.Expression, p LogicalPlan, originalExprs []expression.Expression, length int) error {
+	// check if expressions directly match
+	for j := 0; j < length; j++ {
+		// both check original expression & as name
+		if expr.Equal(b.ctx, originalExprs[j]) || expr.Equal(b.ctx, p.Schema().Columns[j]) {
+			return nil
+		}
+	}
+
+	// check if referenced columns match
+	cols := expression.ExtractColumns(expr)
+CheckReferenced:
+	for _, col := range cols {
+		for j := 0; j < length; j++ {
+			if col.Equal(b.ctx, originalExprs[j]) || col.Equal(b.ctx, p.Schema().Columns[j]) {
+				continue CheckReferenced
+			}
+		}
+
+		if _, ok := byItem.Expr.(*ast.AggregateFuncExpr); ok {
+			return ErrAggregateInOrderNotSelect.GenWithStackByArgs(idx+1, "DISTINCT")
+		}
+		return ErrFieldInOrderNotSelect.GenWithStackByArgs(idx+1, col.OrigName, "DISTINCT")
+	}
+	return nil
 }
 
 // getUintFromNode gets uint64 value from ast.Node.
@@ -3006,10 +3000,6 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 	}
 
 	if sel.Distinct {
-		err = b.checkDistinct(ctx, sel, p, projExprs, totalMap, windowMapper, oldLen)
-		if err != nil {
-			return nil, err
-		}
 		p, err = b.buildDistinct(p, oldLen)
 		if err != nil {
 			return nil, err
@@ -3017,7 +3007,7 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 	}
 
 	if sel.OrderBy != nil {
-		p, err = b.buildSort(ctx, p, sel.OrderBy.Items, orderMap, windowMapper)
+		p, err = b.buildSortForSelect(ctx, p, sel.OrderBy.Items, projExprs, oldLen, sel.Distinct, orderMap, windowMapper)
 		if err != nil {
 			return nil, err
 		}
