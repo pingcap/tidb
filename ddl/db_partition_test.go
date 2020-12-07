@@ -799,6 +799,14 @@ func (s *testIntegrationSuite1) TestCreateTableWithListColumnsPartition(c *C) {
 			ddl.ErrUniqueKeyNeedAllFieldsInPf,
 		},
 		{
+			"create table t (a char(10) collate utf8mb4_general_ci) partition by list columns (a) (partition p0 values in ('a', 'A'));",
+			ddl.ErrMultipleDefConstInListPart,
+		},
+		{
+			"create table t (a date) partition by list columns (a) (partition p0 values in ('2020-02-02'), partition p1 values in ('20200202'));",
+			ddl.ErrMultipleDefConstInListPart,
+		},
+		{
 			"create table t (a int, b varchar(10)) partition by list columns (a,b) (partition p0 values in (1));",
 			ast.ErrPartitionColumnList,
 		},
@@ -3158,18 +3166,18 @@ func (s *testIntegrationSuite7) TestAddPartitionForTableWithWrongType(c *C) {
 	c.Assert(ddl.ErrWrongTypeColumnValue.Equal(err), IsTrue)
 }
 
-func (ts *testIntegrationSuite7) TestPartitionListWithTimeType(c *C) {
-	tk := testkit.NewTestKitWithInit(c, ts.store)
+func (s *testIntegrationSuite7) TestPartitionListWithTimeType(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("use test;")
 	tk.MustExec("create table t_list1(a date) partition by list columns (a) (partition p0 values in ('2010-02-02', '20180203'), partition p1 values in ('20200202'));")
 	tk.MustExec("insert into t_list1(a) values (20180203);")
 	tk.MustQuery(`select * from t_list1 partition (p0);`).Check(testkit.Rows("2018-02-03"))
 }
 
-func (ts *testIntegrationSuite7) TestPartitionListWithNewCollation(c *C) {
+func (s *testIntegrationSuite7) TestPartitionListWithNewCollation(c *C) {
 	collate.SetNewCollationEnabledForTest(true)
 	defer collate.SetNewCollationEnabledForTest(false)
-	tk := testkit.NewTestKitWithInit(c, ts.store)
+	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("use test;")
 	tk.MustExec("create table t11(a char(10) collate utf8mb4_general_ci) partition by list columns (a) (partition p0 values in ('a', 'b'), partition p1 values in ('C', 'D'));")
 	tk.MustExec("insert into t11(a) values ('A'), ('c'), ('C'), ('d'), ('B');")

@@ -499,7 +499,7 @@ func checkPartitionValuesIsInt(ctx sessionctx.Context, def *ast.PartitionDefinit
 			return err
 		}
 		switch val.Kind() {
-		case types.KindInt64, types.KindUint64, types.KindNull, types.KindMaxValue:
+		case types.KindInt64, types.KindUint64, types.KindNull:
 		default:
 			return ErrValuesIsNotIntType.GenWithStackByArgs(def.Name)
 		}
