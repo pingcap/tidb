@@ -631,6 +631,8 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 					constraint := &ast.Constraint{Tp: ast.ConstraintPrimaryKey, Keys: keys}
 					constraints = append(constraints, constraint)
 					col.Flag |= mysql.PriKeyFlag
+					// Add NotNullFlag early so that processColumnFlags() can see it.
+					col.Flag |= mysql.NotNullFlag
 				}
 			case ast.ColumnOptionUniqKey:
 				// Check UniqueFlag first to avoid extra duplicate constraints.
@@ -3449,7 +3451,7 @@ func needReorgToChange(origin *types.FieldType, to *types.FieldType) (needOreg b
 	}
 
 	if toFlen > 0 && toFlen < originFlen {
-		return true, fmt.Sprintf("length %d is less than origin %d", to.Flen, origin.Flen)
+		return true, fmt.Sprintf("length %d is less than origin %d", toFlen, originFlen)
 	}
 	if to.Decimal > 0 && to.Decimal < origin.Decimal {
 		return true, fmt.Sprintf("decimal %d is less than origin %d", to.Decimal, origin.Decimal)
@@ -3492,6 +3494,11 @@ func checkTypeChangeSupported(origin *types.FieldType, to *types.FieldType) bool
 
 	if origin.Tp == mysql.TypeNewDecimal && (to.Tp == mysql.TypeEnum || to.Tp == mysql.TypeSet) {
 		// TODO: Currently decimal cast to enum/set are not support yet, should fix here after supported.
+		return false
+	}
+
+	if origin.Tp == mysql.TypeJSON && (to.Tp == mysql.TypeEnum || to.Tp == mysql.TypeSet || to.Tp == mysql.TypeBit) {
+		// TODO: Currently json cast to enum/set/bit are not support yet, should fix here after supported.
 		return false
 	}
 
@@ -3795,7 +3802,7 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 	}
 
 	// As same with MySQL, we don't support modifying the stored status for generated columns.
-	if err = checkModifyGeneratedColumn(t, col, newCol, specNewColumn); err != nil {
+	if err = checkModifyGeneratedColumn(t, col, newCol, specNewColumn, spec.Position); err != nil {
 		return nil, errors.Trace(err)
 	}
 
