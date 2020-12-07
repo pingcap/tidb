@@ -901,7 +901,10 @@ func (h *Handle) autoAnalyzeTable(tblInfo *model.TableInfo, statsTbl *statistics
 
 func (h *Handle) execAutoAnalyze(sql string) {
 	startTime := time.Now()
-	_, _, err := h.restrictedExec.ExecRestrictedSQL(sql)
+	// Ignore warnings to get rid of a data race here https://github.com/pingcap/tidb/issues/21393
+	// Handle is a single instance, updateStatsWorker() and autoAnalyzeWorker() are both using the session,
+	// One of them is executing ResetContextOfStmt and the other is appending warnings to the StmtCtx, lead to the data race.
+	_, _, err := h.restrictedExec.ExecRestrictedSQLWithContext(context.Background(), sql, sqlexec.ExecOptionIgnoreWarning)
 	dur := time.Since(startTime)
 	metrics.AutoAnalyzeHistogram.Observe(dur.Seconds())
 	if err != nil {
