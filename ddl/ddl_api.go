@@ -672,7 +672,7 @@ func getDefaultValue(ctx sessionctx.Context, col *table.Column, c *ast.ColumnOpt
 		if tp == mysql.TypeBit ||
 			tp == mysql.TypeString || tp == mysql.TypeVarchar || tp == mysql.TypeVarString ||
 			tp == mysql.TypeBlob || tp == mysql.TypeLongBlob || tp == mysql.TypeMediumBlob || tp == mysql.TypeTinyBlob ||
-			tp == mysql.TypeJSON {
+			tp == mysql.TypeJSON || tp == mysql.TypeEnum || tp == mysql.TypeSet {
 			// For BinaryLiteral / string fields, when getting default value we cast the value into BinaryLiteral{}, thus we return
 			// its raw string content here.
 			return v.GetBinaryLiteral().ToString(), false, nil
@@ -1699,6 +1699,9 @@ func buildViewInfo(ctx sessionctx.Context, s *ast.CreateViewStmt) (*model.ViewIn
 
 func checkPartitionByHash(ctx sessionctx.Context, tbInfo *model.TableInfo, s *ast.CreateTableStmt) error {
 	pi := tbInfo.Partition
+	if err := checkPartitionNameUnique(pi); err != nil {
+		return err
+	}
 	if err := checkAddPartitionTooManyPartitions(pi.Num); err != nil {
 		return err
 	}
@@ -1772,7 +1775,7 @@ func checkRangeColumnsPartitionType(tbInfo *model.TableInfo) error {
 		// See https://dev.mysql.com/doc/mysql-partitioning-excerpt/5.7/en/partitioning-columns.html
 		switch colInfo.FieldType.Tp {
 		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
-		case mysql.TypeDate, mysql.TypeDatetime:
+		case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeDuration:
 		case mysql.TypeVarchar, mysql.TypeString:
 		default:
 			return ErrNotAllowedTypeInPartition.GenWithStackByArgs(col.O)
@@ -1845,11 +1848,11 @@ func checkTwoRangeColumns(ctx sessionctx.Context, curr, prev *model.PartitionDef
 }
 
 func parseAndEvalBoolExpr(ctx sessionctx.Context, l, r string, colInfo *model.ColumnInfo, tbInfo *model.TableInfo) (bool, error) {
-	lexpr, err := expression.ParseSimpleExprWithTableInfo(ctx, l, tbInfo)
+	lexpr, err := expression.ParseSimpleExprCastWithTableInfo(ctx, l, tbInfo, &colInfo.FieldType)
 	if err != nil {
 		return false, err
 	}
-	rexpr, err := expression.ParseSimpleExprWithTableInfo(ctx, r, tbInfo)
+	rexpr, err := expression.ParseSimpleExprCastWithTableInfo(ctx, r, tbInfo, &colInfo.FieldType)
 	if err != nil {
 		return false, err
 	}
@@ -4358,7 +4361,7 @@ func checkRangeColumnsTypeAndValuesMatch(ctx sessionctx.Context, meta *model.Tab
 		// Check val.ConvertTo(colType) doesn't work, so we need this case by case check.
 		vkind := val.Kind()
 		switch colType.Tp {
-		case mysql.TypeDate, mysql.TypeDatetime:
+		case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeDuration:
 			switch vkind {
 			case types.KindString, types.KindBytes:
 				if _, err := val.ConvertTo(ctx.GetSessionVars().StmtCtx, colType); err != nil {

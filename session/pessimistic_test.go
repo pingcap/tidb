@@ -1209,6 +1209,36 @@ func (s *testPessimisticSuite) TestRCSubQuery(c *C) {
 	tk.MustExec("rollback")
 }
 
+func (s *testPessimisticSuite) TestRCIndexMerge(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists t")
+	tk.MustExec(`create table t (id int primary key, v int, a int not null, b int not null,
+		index ia (a), index ib (b))`)
+	tk.MustExec("insert into t values (1, 10, 1, 1)")
+
+	tk.MustExec("set transaction isolation level read committed")
+	tk.MustExec("begin pessimistic")
+	tk.MustQuery("select /*+ USE_INDEX_MERGE(t, ia, ib) */ * from t where a > 0 or b > 0").Check(
+		testkit.Rows("1 10 1 1"),
+	)
+	tk.MustQuery("select /*+ NO_INDEX_MERGE() */ * from t where a > 0 or b > 0").Check(
+		testkit.Rows("1 10 1 1"),
+	)
+
+	tk2 := testkit.NewTestKitWithInit(c, s.store)
+	tk2.MustExec("update t set v = 11 where id = 1")
+
+	// Make sure index merge plan is used.
+	plan := tk.MustQuery("explain select /*+ USE_INDEX_MERGE(t, ia, ib) */ * from t where a > 0 or b > 0").Rows()[0][0].(string)
+	c.Assert(strings.Contains(plan, "IndexMerge_"), IsTrue)
+	tk.MustQuery("select /*+ USE_INDEX_MERGE(t, ia, ib) */ * from t where a > 0 or b > 0").Check(
+		testkit.Rows("1 11 1 1"),
+	)
+	tk.MustQuery("select /*+ NO_INDEX_MERGE() */ * from t where a > 0 or b > 0").Check(
+		testkit.Rows("1 11 1 1"),
+	)
+}
+
 func (s *testPessimisticSuite) TestGenerateColPointGet(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	defer func() {
@@ -1785,7 +1815,8 @@ func (s *testPessimisticSuite) TestAmendForUniqueIndex(c *C) {
 		err := tk2.ExecToErr("alter table t add unique index uk(c);")
 		finishCh <- err
 	}()
-	time.Sleep(100 * time.Millisecond)
+	// This sleep should not be too short to avoid schema version change after amend.
+	time.Sleep(350 * time.Millisecond)
 	tk.MustExec("commit")
 	err = <-finishCh
 	c.Assert(err, IsNil)

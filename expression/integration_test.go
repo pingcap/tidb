@@ -2170,6 +2170,44 @@ func (s *testIntegrationSuite2) TestTimeBuiltin(c *C) {
 	result = tk.MustQuery("select time(\"-- --1\");")
 	result.Check(testkit.Rows("00:00:00"))
 	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1292 Truncated incorrect time value: '-- --1'"))
+
+	// fix issue #15185
+	result = tk.MustQuery(`select timestamp(11111.1111)`)
+	result.Check(testkit.Rows("2001-11-11 00:00:00.0000"))
+	result = tk.MustQuery(`select timestamp(cast(11111.1111 as decimal(60, 5)))`)
+	result.Check(testkit.Rows("2001-11-11 00:00:00.00000"))
+	result = tk.MustQuery(`select timestamp(1021121141105.4324)`)
+	result.Check(testkit.Rows("0102-11-21 14:11:05.4324"))
+	result = tk.MustQuery(`select timestamp(cast(1021121141105.4324 as decimal(60, 5)))`)
+	result.Check(testkit.Rows("0102-11-21 14:11:05.43240"))
+	result = tk.MustQuery(`select timestamp(21121141105.101)`)
+	result.Check(testkit.Rows("2002-11-21 14:11:05.101"))
+	result = tk.MustQuery(`select timestamp(cast(21121141105.101 as decimal(60, 5)))`)
+	result.Check(testkit.Rows("2002-11-21 14:11:05.10100"))
+	result = tk.MustQuery(`select timestamp(1121141105.799055)`)
+	result.Check(testkit.Rows("2000-11-21 14:11:05.799055"))
+	result = tk.MustQuery(`select timestamp(cast(1121141105.799055 as decimal(60, 5)))`)
+	result.Check(testkit.Rows("2000-11-21 14:11:05.79906"))
+	result = tk.MustQuery(`select timestamp(121141105.123)`)
+	result.Check(testkit.Rows("2000-01-21 14:11:05.123"))
+	result = tk.MustQuery(`select timestamp(cast(121141105.123 as decimal(60, 5)))`)
+	result.Check(testkit.Rows("2000-01-21 14:11:05.12300"))
+	result = tk.MustQuery(`select timestamp(1141105)`)
+	result.Check(testkit.Rows("0114-11-05 00:00:00"))
+	result = tk.MustQuery(`select timestamp(cast(1141105 as decimal(60, 5)))`)
+	result.Check(testkit.Rows("0114-11-05 00:00:00.00000"))
+	result = tk.MustQuery(`select timestamp(41105.11)`)
+	result.Check(testkit.Rows("2004-11-05 00:00:00.00"))
+	result = tk.MustQuery(`select timestamp(cast(41105.11 as decimal(60, 5)))`)
+	result.Check(testkit.Rows("2004-11-05 00:00:00.00000"))
+	result = tk.MustQuery(`select timestamp(1105.3)`)
+	result.Check(testkit.Rows("2000-11-05 00:00:00.0"))
+	result = tk.MustQuery(`select timestamp(cast(1105.3 as decimal(60, 5)))`)
+	result.Check(testkit.Rows("2000-11-05 00:00:00.00000"))
+	result = tk.MustQuery(`select timestamp(105)`)
+	result.Check(testkit.Rows("2000-01-05 00:00:00"))
+	result = tk.MustQuery(`select timestamp(cast(105 as decimal(60, 5)))`)
+	result.Check(testkit.Rows("2000-01-05 00:00:00.00000"))
 }
 
 func (s *testIntegrationSuite) TestOpBuiltin(c *C) {
@@ -5854,9 +5892,6 @@ func (s *testIntegrationSuite) TestCollation(c *C) {
 	tk.MustExec("set names utf8mb4 collate utf8mb4_general_ci")
 	tk.MustExec("set @test_collate_var = 'a'")
 	tk.MustQuery("select collation(@test_collate_var)").Check(testkit.Rows("utf8mb4_general_ci"))
-	tk.MustExec("set names utf8mb4 collate utf8mb4_general_ci")
-	tk.MustExec("set @test_collate_var = 1")
-	tk.MustQuery("select collation(@test_collate_var)").Check(testkit.Rows("utf8mb4_general_ci"))
 	tk.MustExec("set @test_collate_var = concat(\"a\", \"b\" collate utf8mb4_bin)")
 	tk.MustQuery("select collation(@test_collate_var)").Check(testkit.Rows("utf8mb4_bin"))
 }
@@ -7228,6 +7263,34 @@ func (s *testIntegrationSuite) TestIssue20180(c *C) {
 	tk.MustQuery("select * from t where a > 1  and a = \"b\";").Check(testkit.Rows("b"))
 }
 
+func (s *testIntegrationSuite) TestIssue20730(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("DROP TABLE IF EXISTS tmp;")
+	tk.MustExec("CREATE TABLE tmp (id int(11) NOT NULL,value int(1) NOT NULL,PRIMARY KEY (id))")
+	tk.MustExec("INSERT INTO tmp VALUES (1, 1),(2,2),(3,3),(4,4),(5,5)")
+	tk.MustExec("SET @sum := 10")
+	tk.MustQuery("SELECT @sum := IF(@sum=20,4,@sum + tmp.value) sum FROM tmp ORDER BY tmp.id").Check(testkit.Rows("11", "13", "16", "20", "4"))
+}
+
+func (s *testIntegrationSuite) TestIssue20860(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(id int primary key, c int, d timestamp null default null)")
+	tk.MustExec("insert into t values(1, 2, '2038-01-18 20:20:30')")
+	c.Assert(tk.ExecToErr("update t set d = adddate(d, interval 1 day) where id < 10"), NotNil)
+}
+
+func (s *testIntegrationSerialSuite) TestIssue21290(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1(a date);")
+	tk.MustExec("insert into t1 values (20100202);")
+	tk.MustQuery("select a in ('2020-02-02', 20100202) from t1;").Check(testkit.Rows("1"))
+}
+
 func (s *testIntegrationSuite) TestIssue11645(c *C) {
 	defer s.cleanEnv(c)
 	tk := testkit.NewTestKit(c, s.store)
@@ -7241,4 +7304,26 @@ func (s *testIntegrationSuite) TestIssue11645(c *C) {
 	tk.MustQuery(`SELECT DATE_ADD('0001-01-02 00:00:00', INTERVAL -24 HOUR);`).Check(testkit.Rows("0001-01-01 00:00:00"))
 	tk.MustQuery(`SELECT DATE_ADD('0001-01-02 00:00:00', INTERVAL -25 HOUR);`).Check(testkit.Rows("0000-00-00 23:00:00"))
 	tk.MustQuery(`SELECT DATE_ADD('0001-01-02 00:00:00', INTERVAL -8785 HOUR);`).Check(testkit.Rows("0000-00-00 23:00:00"))
+}
+
+func (s *testIntegrationSerialSuite) TestCollationIndexJoin(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(a int, b char(10), key(b)) collate utf8mb4_general_ci")
+	tk.MustExec("create table t2(a int, b char(10), key(b)) collate ascii_bin")
+	tk.MustExec("insert into t1 values (1, 'a')")
+	tk.MustExec("insert into t2 values (1, 'A')")
+
+	tk.MustQuery("select /*+ inl_join(t1) */ t1.b, t2.b from t1 join t2 where t1.b=t2.b").Check(testkit.Rows("a A"))
+	tk.MustQuery("select /*+ hash_join(t1) */ t1.b, t2.b from t1 join t2 where t1.b=t2.b").Check(testkit.Rows("a A"))
+	tk.MustQuery("select /*+ merge_join(t1) */ t1.b, t2.b from t1 join t2 where t1.b=t2.b").Check(testkit.Rows("a A"))
+	tk.MustQuery("select /*+ inl_hash_join(t1) */ t1.b, t2.b from t1 join t2 where t1.b=t2.b").Check(testkit.Rows("a A"))
+	tk.MustQuery("select /*+ inl_hash_join(t2) */ t1.b, t2.b from t1 join t2 where t1.b=t2.b").Check(testkit.Rows("a A"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1815 Optimizer Hint /*+ INL_HASH_JOIN(t2) */ is inapplicable"))
+	tk.MustQuery("select /*+ inl_merge_join(t1) */ t1.b, t2.b from t1 join t2 where t1.b=t2.b").Check(testkit.Rows("a A"))
+	tk.MustQuery("select /*+ inl_merge_join(t2) */ t1.b, t2.b from t1 join t2 where t1.b=t2.b").Check(testkit.Rows("a A"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1815 Optimizer Hint /*+ INL_MERGE_JOIN(t2) */ is inapplicable"))
 }
