@@ -461,6 +461,7 @@ type PlanBuilder struct {
 	// correlatedAggMapper stores columns for correlated aggregates which should be evaluated in outer query.
 	correlatedAggMapper map[*ast.AggregateFuncExpr]*expression.CorrelatedColumn
 
+	// cache ResultSetNodes and HandleHelperMap to avoid rebuilding.
 	cachedResultSetNodes  map[*ast.Join]LogicalPlan
 	cachedHandleHelperMap map[*ast.Join]map[int64][]HandleCols
 }

@@ -1054,7 +1054,7 @@
           "        └─Limit_51 1.00 cop[tikv]  offset:0, count:1",
           "          └─Selection_52 1.00 cop[tikv]  eq(test.t1.b, test.t2.b)",
           "            └─TableFullScan_53 1.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
-      ],
+        ],
         "Result": [
           "6 1 11"
         ]
