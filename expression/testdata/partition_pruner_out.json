@@ -977,6 +977,41 @@
         ]
       },
       {
+        "SQL": "select * from t1 where a = 1 or (a is null and b = 10)",
+        "Result": [
+          "1 1 1"
+        ],
+        "Plan": [
+          "TableReader_7 10.01 root partition:p0 data:Selection_6",
+          "└─Selection_6 10.01 cop[tikv]  or(eq(test_partition.t1.a, 1), and(isnull(test_partition.t1.a), eq(test_partition.t1.b, 10)))",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t1 where a = 1 or (a = 10 and b is null)",
+        "Result": [
+          "1 1 1",
+          "<nil> 10 <nil>"
+        ],
+        "Plan": [
+          "TableReader_7 10.01 root partition:p0,p1 data:Selection_6",
+          "└─Selection_6 10.01 cop[tikv]  or(eq(test_partition.t1.a, 1), and(eq(test_partition.t1.a, 10), isnull(test_partition.t1.b)))",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from t1 where a = 8 or (a = 10 and b is null)",
+        "Result": [
+          "8 8 8",
+          "<nil> 10 <nil>"
+        ],
+        "Plan": [
+          "TableReader_7 10.01 root partition:p1 data:Selection_6",
+          "└─Selection_6 10.01 cop[tikv]  or(eq(test_partition.t1.a, 8), and(eq(test_partition.t1.a, 10), isnull(test_partition.t1.b)))",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ]
+      },
+      {
         "SQL": "select * from t1 where a = 1 and false",
         "Result": null,
         "Plan": [

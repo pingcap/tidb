@@ -224,35 +224,36 @@ func (s *partitionProcessor) processHashPartition(ds *DataSource, pi *model.Part
 	return tableDual, nil
 }
 
-type listColumnsPartitionPruner struct {
+// listPartitionPruner uses to prune partition for list partition.
+type listPartitionPruner struct {
 	*partitionProcessor
 	ctx             sessionctx.Context
-	tbl             table.Table
+	pi              *model.PartitionInfo
 	partitionNames  []model.CIStr
 	colIDToUniqueID map[int64]int64
-	colPrunes       []tables.ForListColumnPruning
 	used            map[int]struct{}
+	pruneList       *tables.ForListPruning
 }
 
-func newListColumnsPartitionPruner(ctx sessionctx.Context, tbl table.Table, partitionNames []model.CIStr,
-	s *partitionProcessor, colIDToUniqueID map[int64]int64, colPrunes []tables.ForListColumnPruning) *listColumnsPartitionPruner {
-	return &listColumnsPartitionPruner{
+func newListPartitionPruner(ctx sessionctx.Context, tbl table.Table, partitionNames []model.CIStr,
+	s *partitionProcessor, colIDToUniqueID map[int64]int64, pruneList *tables.ForListPruning) *listPartitionPruner {
+	return &listPartitionPruner{
 		partitionProcessor: s,
 		ctx:                ctx,
-		tbl:                tbl,
+		pi:                 tbl.Meta().Partition,
 		partitionNames:     partitionNames,
 		colIDToUniqueID:    colIDToUniqueID,
-		colPrunes:          colPrunes,
 		used:               make(map[int]struct{}),
+		pruneList:          pruneList,
 	}
 }
 
-func (l *listColumnsPartitionPruner) fullRange() map[int]struct{} {
+func (l *listPartitionPruner) fullRange() map[int]struct{} {
 	l.used[FullRange] = struct{}{}
 	return l.used
 }
 
-func (l *listColumnsPartitionPruner) findUsedPartitionForCondition(cond expression.Expression) (map[int]struct{}, bool, error) {
+func (l *listPartitionPruner) locatePartition(cond expression.Expression) (map[int]struct{}, bool, error) {
 	sf, ok := cond.(*expression.ScalarFunction)
 	if !ok {
 		return nil, false, nil
@@ -260,26 +261,27 @@ func (l *listColumnsPartitionPruner) findUsedPartitionForCondition(cond expressi
 	switch sf.FuncName.L {
 	case ast.LogicOr:
 		dnfItems := expression.FlattenDNFConditions(sf)
-		return l.findUsedPartitionForDNFCondition(dnfItems)
+		return l.locatePartitionByDNFCondition(dnfItems)
 	case ast.LogicAnd:
-		cnfItems := expression.SplitCNFItems(cond)
-		return l.findUsedPartitionForCNFCondition(cnfItems)
+		cnfItems := expression.FlattenCNFConditions(sf)
+		return l.locatePartitionByCNFCondition(cnfItems)
 	}
-	return l.findUsedPartitionForExpression(cond)
+	return l.locateUsedPartitionByCondition(sf)
 }
 
-func (l *listColumnsPartitionPruner) findUsedPartitionForCNFCondition(conds []expression.Expression) (map[int]struct{}, bool, error) {
+func (l *listPartitionPruner) locatePartitionByCNFCondition(conds []expression.Expression) (map[int]struct{}, bool, error) {
 	cnfUseds := make([]map[int]struct{}, 0, len(conds))
 	for _, cond := range conds {
-		cnfUsed, ok, err := l.findUsedPartitionForCondition(cond)
+		cnfUsed, ok, err := l.locatePartition(cond)
 		if err != nil || !ok {
-			return l.fullRange(), false, err
+			return nil, false, err
 		}
 		if len(cnfUsed) == 0 {
-			// no partition.
+			// No partition for intersection, just return 0 partition.
 			return make(map[int]struct{}), true, nil
 		}
 		if _, ok := cnfUsed[FullRange]; ok {
+			// Full range partition for intersection, just ignore it.
 			continue
 		}
 		cnfUseds = append(cnfUseds, cnfUsed)
@@ -287,18 +289,19 @@ func (l *listColumnsPartitionPruner) findUsedPartitionForCNFCondition(conds []ex
 	return l.intersection(cnfUseds), true, nil
 }
 
-func (l *listColumnsPartitionPruner) findUsedPartitionForDNFCondition(conds []expression.Expression) (map[int]struct{}, bool, error) {
+func (l *listPartitionPruner) locatePartitionByDNFCondition(conds []expression.Expression) (map[int]struct{}, bool, error) {
 	dnfUseds := make([]map[int]struct{}, 0, len(conds))
 	for _, cond := range conds {
-		dnfUsed, ok, err := l.findUsedPartitionForCondition(cond)
+		dnfUsed, ok, err := l.locatePartition(cond)
 		if err != nil || !ok {
-			return l.fullRange(), false, err
+			return nil, false, err
 		}
 		if len(dnfUsed) == 0 {
-			// no partition need to merge.
+			// No partition need to merge, just ignore it.
 			continue
 		}
 		if _, ok := dnfUsed[FullRange]; ok {
+			// Full range partition for merge, just return full range as soon as possible.
 			return l.fullRange(), true, nil
 		}
 		dnfUseds = append(dnfUseds, dnfUsed)
@@ -306,7 +309,7 @@ func (l *listColumnsPartitionPruner) findUsedPartitionForDNFCondition(conds []ex
 	return l.merge(dnfUseds), true, nil
 }
 
-func (l *listColumnsPartitionPruner) intersection(subUseds []map[int]struct{}) map[int]struct{} {
+func (l *listPartitionPruner) intersection(subUseds []map[int]struct{}) map[int]struct{} {
 	used := make(map[int]struct{})
 	if len(subUseds) == 0 {
 		return used
@@ -328,7 +331,7 @@ func (l *listColumnsPartitionPruner) intersection(subUseds []map[int]struct{}) m
 	return used
 }
 
-func (l *listColumnsPartitionPruner) merge(subUseds []map[int]struct{}) map[int]struct{} {
+func (l *listPartitionPruner) merge(subUseds []map[int]struct{}) map[int]struct{} {
 	used := make(map[int]struct{})
 	for _, subUsed := range subUseds {
 		for p := range subUsed {
@@ -338,14 +341,14 @@ func (l *listColumnsPartitionPruner) merge(subUseds []map[int]struct{}) map[int]
 	return used
 }
 
-func (l *listColumnsPartitionPruner) findUsedPartitionForExpression(cond expression.Expression) (map[int]struct{}, bool, error) {
+func (l *listPartitionPruner) locateUsedPartitionByCondition(cond *expression.ScalarFunction) (map[int]struct{}, bool, error) {
 	condCols := expression.ExtractColumns(cond)
 	if len(condCols) != 1 {
 		return nil, false, nil
 	}
 	var pruneExprs []expression.Expression
 	var pruneCol *expression.Column
-	for _, colPrune := range l.colPrunes {
+	for _, colPrune := range l.pruneList.ColPrunes {
 		if colPrune.ExprCol.ID == condCols[0].ID {
 			pruneExprs = colPrune.Exprs
 			pruneCol = colPrune.ExprCol
@@ -354,19 +357,50 @@ func (l *listColumnsPartitionPruner) findUsedPartitionForExpression(cond express
 	if len(pruneExprs) == 0 {
 		return nil, false, nil
 	}
-	col := pruneCol.Clone().(*expression.Column)
-	if uniqueID, ok := l.colIDToUniqueID[col.ID]; ok {
-		col.UniqueID = uniqueID
+	return l.locateUsedPartitionsByConditions([]expression.Expression{cond}, []*expression.Column{pruneCol}, pruneExprs)
+}
+
+func (l *listPartitionPruner) findUsedListColumnsPartitions(conds []expression.Expression) (map[int]struct{}, error) {
+	used, ok, err := l.locatePartitionByCNFCondition(conds)
+	if err != nil {
+		return nil, err
 	}
-	cols := []*expression.Column{col}
-	colLen := []int{types.UnspecifiedLength}
-	detachedResult, err := ranger.DetachCondAndBuildRangeForPartition(l.ctx, []expression.Expression{cond}, cols, colLen)
+	if !ok {
+		used = l.fullRange()
+	}
+	return used, nil
+}
+
+func (l *listPartitionPruner) findUsedListPartitions(conds []expression.Expression) (map[int]struct{}, error) {
+	used, ok, err := l.locateUsedPartitionsByConditions(conds, l.pruneList.ExprCols, l.pruneList.Exprs)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		used = l.fullRange()
+	}
+	return used, nil
+}
+
+func (l *listPartitionPruner) locateUsedPartitionsByConditions(conds []expression.Expression, exprCols []*expression.Column, locateExprs []expression.Expression) (map[int]struct{}, bool, error) {
+	cols := make([]*expression.Column, 0, len(exprCols))
+	colLen := make([]int, 0, len(exprCols))
+	for _, c := range exprCols {
+		c = c.Clone().(*expression.Column)
+		if uniqueID, ok := l.colIDToUniqueID[c.ID]; ok {
+			c.UniqueID = uniqueID
+		}
+		cols = append(cols, c)
+		colLen = append(colLen, types.UnspecifiedLength)
+	}
+
+	detachedResult, err := ranger.DetachCondAndBuildRangeForPartition(l.ctx, conds, cols, colLen)
 	if err != nil {
 		return nil, false, err
 	}
+
 	ranges := detachedResult.Ranges
-	pi := l.tbl.Meta().Partition
-	subUsed := make(map[int]struct{}, len(ranges))
+	used := make(map[int]struct{}, len(ranges))
 	for _, r := range ranges {
 		if r.IsPointNullable(l.ctx.GetSessionVars().StmtCtx) {
 			if !r.HighVal[0].IsNull() {
@@ -376,7 +410,7 @@ func (l *listColumnsPartitionPruner) findUsedPartitionForExpression(cond express
 			}
 			found := int64(-1)
 			row := chunk.MutRowFromDatums(r.HighVal).ToRow()
-			for j, expr := range pruneExprs {
+			for j, expr := range locateExprs {
 				ret, _, err := expr.EvalInt(l.ctx, row)
 				if err != nil {
 					return nil, false, err
@@ -389,26 +423,15 @@ func (l *listColumnsPartitionPruner) findUsedPartitionForExpression(cond express
 			if found == -1 {
 				continue
 			}
-			if len(l.partitionNames) > 0 && !l.findByName(l.partitionNames, pi.Definitions[found].Name.L) {
+			if len(l.partitionNames) > 0 && !l.findByName(l.partitionNames, l.pi.Definitions[found].Name.L) {
 				continue
 			}
-			subUsed[int(found)] = struct{}{}
+			used[int(found)] = struct{}{}
 		} else {
 			return nil, false, nil
 		}
 	}
-	return subUsed, true, nil
-}
-
-func (l *listColumnsPartitionPruner) findUsedListColumnsPartitions(conds []expression.Expression) (map[int]struct{}, error) {
-	used, ok, err := l.findUsedPartitionForCNFCondition(conds)
-	if err != nil {
-		return nil, err
-	}
-	if !ok {
-		used = l.fullRange()
-	}
-	return used, nil
+	return used, true, nil
 }
 
 func (s *partitionProcessor) findUsedListPartitions(ctx sessionctx.Context, tbl table.Table, partitionNames []model.CIStr,
@@ -428,55 +451,10 @@ func (s *partitionProcessor) findUsedListPartitions(ctx sessionctx.Context, tbl 
 	}
 
 	pruneList := partExpr.ForListPruning
-	cols := make([]*expression.Column, 0, len(pruneList.ExprCols))
-	colLen := make([]int, 0, len(pruneList.ExprCols))
-	for _, c := range pruneList.ExprCols {
-		c = c.Clone().(*expression.Column)
-		if uniqueID, ok := colIDToUniqueID[c.ID]; ok {
-			c.UniqueID = uniqueID
-		}
-		cols = append(cols, c)
-		colLen = append(colLen, types.UnspecifiedLength)
-	}
-
-	detachedResult, err := ranger.DetachCondAndBuildRangeForPartition(ctx, conds, cols, colLen)
+	lc := newListPartitionPruner(ctx, tbl, partitionNames, s, colIDToUniqueID, pruneList)
+	used, err := lc.findUsedListPartitions(conds)
 	if err != nil {
 		return nil, err
-	}
-
-	ranges := detachedResult.Ranges
-	used := make(map[int]struct{}, len(ranges))
-	for _, r := range ranges {
-		if r.IsPointNullable(ctx.GetSessionVars().StmtCtx) {
-			if !r.HighVal[0].IsNull() {
-				if len(r.HighVal) != len(cols) {
-					used[FullRange] = struct{}{}
-					break
-				}
-			}
-			found := int64(-1)
-			row := chunk.MutRowFromDatums(r.HighVal).ToRow()
-			for j, expr := range pruneList.Exprs {
-				ret, _, err := expr.EvalInt(ctx, row)
-				if err != nil {
-					return nil, err
-				}
-				if ret > 0 {
-					found = int64(j)
-					break
-				}
-			}
-			if found == -1 {
-				continue
-			}
-			if len(partitionNames) > 0 && !s.findByName(partitionNames, pi.Definitions[found].Name.L) {
-				continue
-			}
-			used[int(found)] = struct{}{}
-		} else {
-			used[FullRange] = struct{}{}
-			break
-		}
 	}
 	if _, ok := used[FullRange]; ok && len(pruneList.ColPrunes) > 1 {
 		// For list columns partition, try to prune partition by multi-single columns.
@@ -485,7 +463,6 @@ func (s *partitionProcessor) findUsedListPartitions(ctx sessionctx.Context, tbl 
 		// Why just directly use this to prune list columns partition? Here is an example:
 		// For condition: `a=1 and b=2`, if we directly use multi-single to prune partition, the prune result will be `p0`,
 		// But actually no partition for condition `a=1 and b=2`.
-		lc := newListColumnsPartitionPruner(ctx, tbl, partitionNames, s, colIDToUniqueID, pruneList.ColPrunes)
 		used, err = lc.findUsedListColumnsPartitions(conds)
 		if err != nil {
 			return nil, err
