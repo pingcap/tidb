@@ -350,8 +350,7 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 			err = w.deleteRange(job)
 		}
 	}
-	switch job.Type {
-	case model.ActionRecoverTable:
+	if job.Type == model.ActionRecoverTable {
 		err = finishRecoverTable(w, t, job)
 	}
 	if err != nil {

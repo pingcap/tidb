@@ -149,7 +149,7 @@ func (ts *TiDBStatement) Reset() {
 
 // Close implements PreparedStatement Close method.
 func (ts *TiDBStatement) Close() error {
-	//TODO close at tidb level
+	// TODO close at tidb level
 	if ts.ctx.GetSessionVars().TxnCtx != nil && ts.ctx.GetSessionVars().TxnCtx.CouldRetry {
 		err := ts.ctx.DropPreparedStmt(ts.id)
 		if err != nil {
@@ -392,9 +392,9 @@ func convertColumnInfo(fld *ast.ResultField) (ci *ColumnInfo) {
 		// client such as Navicat. Now we only allow string type enter this branch.
 		charsetDesc, err := charset.GetCharsetDesc(fld.Column.Charset)
 		if err != nil {
-			ci.ColumnLength = ci.ColumnLength * 4
+			ci.ColumnLength *= 4
 		} else {
-			ci.ColumnLength = ci.ColumnLength * uint32(charsetDesc.Maxlen)
+			ci.ColumnLength *= uint32(charsetDesc.Maxlen)
 		}
 	}
 
