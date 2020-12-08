@@ -537,7 +537,7 @@ func (s *testIntegrationSuite2) TestMathBuiltin(c *C) {
 	result.Check(testkit.Rows("10"))
 	result = tk.MustQuery("SELECT CONV(0b10, 16, 8)")
 	result.Check(testkit.Rows("2"))
-	tk.MustExec("drop table if exist bit")
+	tk.MustExec("drop table if exists bit")
 	tk.MustExec("create table bit(b bit(10))")
 	tk.MustExec(`INSERT INTO bit (b) VALUES
 			(0b0000010101),
